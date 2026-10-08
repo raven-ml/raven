@@ -12,8 +12,17 @@ type ('a, 'r, 'i) dm =
 
 type ('a, 'r) im = (module Sigs.Io with type t = 'a and type region = 'r)
 
-(* A region of a driver, with the module and the device that hold it. *)
-type region = Region : { m : ('a, 'r, 'i) dm; h : 'a; r : 'r } -> region
+(* A region of a driver, with the module and the device that hold it, and the
+   witness of its type, which equates the regions of one device. *)
+type region =
+  | Region : {
+      m : ('a, 'r, 'i) dm;
+      h : 'a;
+      r : 'r;
+      rid : 'r Type.Id.t;
+    }
+      -> region
+
 type io_region = Io_region : { m : ('a, 'r) im; h : 'a; r : 'r } -> io_region
 type capability = Capability : 'c Type.Id.t * 'c -> capability
 
@@ -23,7 +32,7 @@ type token
 
 type kind =
   | Host
-  | Driver : { m : ('a, 'r, 'i) dm; h : 'a } -> kind
+  | Driver : { m : ('a, 'r, 'i) dm; h : 'a; rid : 'r Type.Id.t } -> kind
   | Io : { m : ('a, 'r) im; h : 'a } -> kind
 
 (* How a device's word advances. *)
@@ -78,7 +87,7 @@ and mapping = { on : device; map : region; at : int; by : nativeint }
 
 (* A release that waits for a value of its device, which covers the work that
    may use it without naming it. *)
-and pending = Free of entry | Unmap of region | Unload of image * int
+and pending = Free of entry | Unmap of region | Unload of image * entry option
 and image = Image : { m : ('a, 'r, 'i) dm; h : 'a; i : 'i } -> image
 
 type claim = {
@@ -116,13 +125,7 @@ type buffer = {
   generation : int;
 }
 
-type program = {
-  pdev : device;
-  image : image;
-  code_bytes : int;
-  ptoken : token;
-}
-
+type program = { pdev : device; image : image; ptoken : token }
 type hold = { hstamps : int; members : buffer list; htoken : token }
 
 type event =
@@ -156,5 +159,5 @@ type event =
 (* What a release list holds. *)
 type released =
   | Memory of entry
-  | Program of image * int  (** The image and its code's bytes. *)
+  | Program of image * entry option  (** The image and its code's memory. *)
   | Release of { stamps : int; release : unit -> unit }

@@ -12,20 +12,20 @@ external blit_string : string -> int -> unit = "caml_device_core_blit_string"
 
 type t = program
 
-(* Places [code] at the start of the region [r] of [d]: by a copy on [d]'s copy
+(* Places [code] at the start of [d]'s code memory [e]: by a copy on [d]'s copy
    queue from pinned memory, or by the host where [d] runs no copy, after [d]'s
-   queued work either way. *)
-let place d r code =
+   queued work either way, and waits for it. *)
+let place d (e : entry) code =
   let n = String.length code in
-  let address, handle, host = Memory.region_info r in
-  let stamps = Memory.stamps_new () in
-  let entry = Memory.entry ~region:r d Memory.kept_kind n stamps in
-  let dst =
-    Buffer.of_memory
-      (Memory.make ~host ~address ~handle d n entry)
-      Scalar.UInt8 n
+  let address, handle, host =
+    match e.region with Some r -> Memory.region_info r | None -> (-1, 0n, -1)
   in
   if Dev.copies d then begin
+    let dst =
+      Buffer.of_memory
+        (Memory.make ~host ~address ~handle d e.bytes e)
+        Scalar.UInt8 n
+    in
     let src = Buffer.create ~memory:Buffer.Pinned d Scalar.UInt8 n in
     blit_string code src.mem.host;
     let queue =
@@ -34,57 +34,56 @@ let place d r code =
     let part =
       { Submission.queue; after = [||]; work = Submission.Copy { src; dst } }
     in
-    let p =
-      Submission.submit
-        (Submission.make ~reads:0 ~writes:0 ~waits:0 d [| part |])
-    in
-    Dev.wait d (Point.value p);
-    Memory.stamps_unref stamps
+    let s = Submission.make ~reads:0 ~writes:0 ~waits:0 d [| part |] in
+    Dev.wait d (Point.value (Submission.submit s))
   end
   else begin
     if host < 0 then
       invalid_argf
-        "Device_core.Program.load: %s's code region has no host address" d.name;
+        "Device_core.Program.load: %s's code memory has no host address" d.name;
     Dev.wait d (Dev.submitted d);
-    blit_string code host;
-    Memory.stamps_unref stamps
+    blit_string code host
   end
 
-let rec load_image d binary round =
+(* The image of [binary] on [d], and the memory its code lies in where [d]'s
+   memory holds it. *)
+let image d binary =
   match d.kind with
-  | Driver { m; h } -> (
+  | Driver { m; h; rid } -> (
       let module D = (val m) in
       match Dev.counted d (fun () -> D.image h binary) with
-      | Ok (i, upload) ->
-          let bytes =
-            match upload with
-            | None -> 0
-            | Some (r, code) ->
-                place d (Region { m; h; r }) code;
-                String.length code
-          in
-          Ok (Image { m; h; i }, bytes)
-      | Error (`Refused why) -> Error (strf "%s: %s" d.name why)
-      | Error (`No_memory n) ->
-          if round >= Memory.rounds then raise (Dev.Out_of_memory (d, n));
-          Memory.reclaim d round;
-          load_image d binary (round + 1))
+      | Error why -> Error (strf "%s: %s" d.name why)
+      | Ok (`Loaded i) -> Ok (Image { m; h; i }, None)
+      | Ok (`Place (n, lay)) -> (
+          let e = Memory.alloc_entry d Memory.device_kind n in
+          (* [d]'s regions are of [d]'s region type. *)
+          match e.region with
+          | Some (Region { r; rid = rid'; _ }) -> (
+              match Type.Id.provably_equal rid rid' with
+              | Some Type.Equal -> (
+                  let i, code = lay r in
+                  match place d e code with
+                  | () -> Ok (Image { m; h; i }, Some e)
+                  | exception x ->
+                      Dev.counted d (fun () -> D.unload h i);
+                      Memory.free_entry e;
+                      raise x)
+              | None -> assert false)
+          | None -> assert false))
   | _ -> invalid_argf "Device_core.Program.load: %s loads no code" d.name
 
 let load d binary =
   if Dev.is_lost d then Dev.raise_lost d;
-  Memory.drain d;
-  match load_image d binary 1 with
+  match image d binary with
   | Error _ as e -> e
-  | Ok (image, bytes) ->
-      Mutex.protect d.lock (fun () -> d.used <- d.used + bytes);
-      Memory.note d;
+  | Ok (image, code) ->
+      let bytes = match code with Some e -> e.bytes | None -> 0 in
       let ptoken =
         Memory.token d.release
-          (Program (image, bytes))
+          (Program (image, code))
           bytes (Memory.room d) (-1)
       in
-      let p = { pdev = d; image; code_bytes = bytes; ptoken } in
+      let p = { pdev = d; image; ptoken } in
       if Prof.enabled () then
         Prof.record (Load { program = p; binary; time = Prof.now () });
       Ok p

@@ -31,8 +31,8 @@ module type Driver = sig
   val image :
     t ->
     string ->
-    ( image * (region * string) option,
-      [ `Refused of string | `No_memory of int ] )
+    ( [ `Loaded of image | `Place of int * (region -> image * string) ],
+      string )
     result
 
   val entry : image -> string -> int option

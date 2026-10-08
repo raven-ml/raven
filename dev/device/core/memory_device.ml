@@ -55,7 +55,7 @@ module D = struct
   let map_peer _ _ r = Some { r with owned = false }
   let map_host _ p _ = Some { at = Nativeint.to_int p; owned = false }
   let unmap _ _ = ()
-  let image _ _ = Error (`Refused "a memory device loads no code")
+  let image _ _ = Error "a memory device loads no code"
   let entry () _ = None
   let unload _ () = ()
   let word d = { at = Nativeint.to_int d.self; owned = false }

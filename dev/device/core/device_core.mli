@@ -655,19 +655,21 @@ module Program : sig
 
   val load : device -> string -> (t, string) result
   (** [load d binary] loads [binary] on [d]: a code object for AMD, a cubin for
-      NV, a CUDA module for CUDA, a metallib for Metal. Where [d]'s driver
-      places code in [d]'s memory, [load] copies it there as a submission on
-      [d], after [d]'s queued work, and waits for it. Each call loads anew. The
-      image stays loaded while [t] is reachable, and is unloaded once it is not
-      and the work [d] was handed until then is done.
+      NV, a CUDA module for CUDA, a metallib for Metal. Where [d]'s memory holds
+      the code, [load] allocates it as {!Buffer.create} allocates [Device]
+      memory, so the code counts in [d]'s {!budget}, then copies it there as a
+      submission on [d], after [d]'s queued work, and waits for it. Each call
+      loads anew. The image stays loaded while [t] is reachable, and is unloaded
+      once it is not and the work [d] was handed until then is done; its memory
+      then returns to [d].
 
       [Error why] if [d]'s driver rejects [binary], with its reason, which
       starts with [d]'s {!name}. [d] stays usable.
 
       Raises [Invalid_argument] if [d] loads no code (a host or an {!Io}
-      device), {!Out_of_memory} if [d]'s driver has no memory for the code once
-      the reclamation rounds ({!reclaim}) ran, and {!Lost} if [d] is lost or is
-      lost by the load. *)
+      device), {!Out_of_memory} if [d] cannot allocate the code's memory after
+      the release, drain and collection {!reclaim} describes, and {!Lost} if [d]
+      is lost or is lost by the load. *)
 
   val device : t -> device
   (** [device p] is the device [p] is loaded on. *)
@@ -910,23 +912,26 @@ module type Driver = sig
   val image :
     t ->
     string ->
-    ( image * (region * string) option,
-      [ `Refused of string | `No_memory of int ] )
+    ( [ `Loaded of image | `Place of int * (region -> image * string) ],
+      string )
     result
-  (** [image d b] loads the binary [b]: the image, and the region its code goes
-      into with the bytes to place there, or [None] where the driver's library
-      placed the code itself. The result is [`Refused why] if [b] is no binary
-      [d] runs, and [`No_memory n] if [d] has not the [n] bytes its code needs,
-      which this library answers as {!alloc}'s [None]: it reclaims and tries
-      again. Counted. *)
+  (** [image d b] loads the binary [b]. It is [`Loaded i] where the driver's
+      library places the code itself, and [`Place (n, lay)] where the code goes
+      into [n] bytes of [d]'s [`Device] memory: [lay r] is the image over the
+      region [r], which this library allocated with at least [n] bytes, and the
+      bytes to place at [r]'s start, at most [n]. [image] makes nothing on [d]
+      before [lay] is called, so a [`Place] whose function is never called
+      leaves nothing to release; [lay] calls no library function and raises
+      nothing. [Error why] if [d] refuses [b]. Counted. *)
 
   val entry : image -> string -> int option
   (** [entry i f] is the driver's name for [i]'s function [f]: an address or an
       object. Counted. *)
 
   val unload : t -> image -> unit
-  (** [unload d i] releases [i], once no work of [d] that runs it can run.
-      Counted. *)
+  (** [unload d i] releases what {!image} made for [i], once no work of [d] that
+      runs it can run. The region of a [`Place] is not [i]'s: this library frees
+      it after. Counted. *)
 
   val word : t -> region
   (** [word d] is [d]'s timeline word, never freed: other devices may map it,

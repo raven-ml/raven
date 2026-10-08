@@ -102,7 +102,19 @@ val reclaim : device -> int -> unit
    the second round, collects. *)
 
 val room : device -> int
+val free_entry : entry -> unit
+(* [free_entry e] gives [e]'s region back to its driver, unmapping other
+   devices' mappings of it once their work is done. *)
+
+val alloc_entry : device -> int -> int -> entry
+(* [alloc_entry d kind n] allocates [n] bytes of [d]'s memory of [kind] on the
+   allocation path: drains, the cache, the budget, the reclaim rounds, then
+   [Out_of_memory]. *)
+
 val alloc : device -> int -> int -> memory
+
+(* [alloc d kind n] is a memory record over [alloc_entry d kind n], with its
+   token. *)
 val host_memory : int -> memory
 val set_budget : device -> int -> unit
 val free_cache : device -> unit

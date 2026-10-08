@@ -110,7 +110,7 @@ let host_address fn b =
 let check_part d ~queue ~after
     (w : [ `Words of int array | `Fill of nativeint * nativeint * int * int ]) =
   match d.kind with
-  | Driver { m; h } ->
+  | Driver { m; h; _ } ->
       let module D = (val m) in
       let w =
         (w

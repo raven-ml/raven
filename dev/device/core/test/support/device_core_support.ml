@@ -77,17 +77,11 @@ module Driver = struct
     match String.split_on_char ':' b with
     | [ "code"; n ] ->
         let n = int_of_string n in
-        let r = { at = host_alloc n; owned = true } in
-        Ok (r, Some (r, String.make n 'c'))
-    | [ "nomem"; n ] -> Error (`No_memory (int_of_string n))
-    | _ -> Error (`Refused "not a polled binary")
+        Ok (`Place (n, fun r -> (r, String.make n 'c')))
+    | _ -> Error "not a polled binary"
 
   let entry r f = if f = "main" then Some r.at else None
-
-  let unload d r =
-    note d "unload";
-    host_free r.at
-
+  let unload d _ = note d "unload"
   let word d = { at = Nativeint.to_int d.c; owned = false }
   let signaled d = polled_word d.c
 

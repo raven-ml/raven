@@ -194,11 +194,11 @@ let poly kind =
 
 let driver_alloc d kind n =
   match d.kind with
-  | Driver { m; h } -> (
+  | Driver { m; h; rid } -> (
       let module D = (val m) in
       match Dev.counted d (fun () -> D.alloc h (poly kind) n) with
       | None -> None
-      | Some r -> Some (Region { m; h; r }))
+      | Some r -> Some (Region { m; h; r; rid }))
   | _ -> None
 
 (* After [d]'s loss, its memory is freed, unmapped and unloaded only once its
@@ -206,11 +206,11 @@ let driver_alloc d kind n =
 let call d f =
   if Dev.is_lost d then try f () with _ -> () else Dev.counted d f
 
-let free_region d (Region { m; h; r }) =
+let free_region d (Region { m; h; r; _ }) =
   let module D = (val m) in
   call d (fun () -> D.free h r)
 
-let unmap_region d (Region { m; h; r }) =
+let unmap_region d (Region { m; h; r; _ }) =
   let module D = (val m) in
   call d (fun () -> D.unmap h r)
 
@@ -305,26 +305,29 @@ let drain_holds () =
 (* The release list of holds, which every drain reads. *)
 let holds_list = Dev.release_list ()
 
+(* Puts the entry [e] of [d] in [d]'s cache, for reuse. [d]'s lock is held. *)
+let cache d e =
+  let k = cache_key e in
+  let l = Option.value ~default:[] (Hashtbl.find_opt d.cache k) in
+  Hashtbl.replace d.cache k (e :: l);
+  d.cached <- d.cached + e.bytes
+
+let to_cache d e = Mutex.protect d.lock (fun () -> cache d e)
+
 (* Routes a record [d]'s release list gave. *)
 let route d = function
   | Memory e when e.memory = heap_kind || e.memory = kept_kind ->
       unmap_all e;
       drop_stamps e
   | Memory e ->
-      let cache =
+      let cached =
         (not (Dev.is_lost d))
         && (not e.held)
         && reached ~except:d.index e.stamps
       in
       Mutex.protect d.lock (fun () ->
-          if cache then begin
-            let k = cache_key e in
-            let l = Option.value ~default:[] (Hashtbl.find_opt d.cache k) in
-            Hashtbl.replace d.cache k (e :: l);
-            d.cached <- d.cached + e.bytes
-          end
-          else d.retiring <- e :: d.retiring)
-  | Program (image, bytes) -> defer d (Unload (image, bytes))
+          if cached then cache d e else d.retiring <- e :: d.retiring)
+  | Program (image, code) -> defer d (Unload (image, code))
   | Release { stamps; release } ->
       Mutex.protect holds_lock (fun () -> holds := (stamps, release) :: !holds)
 
@@ -346,10 +349,7 @@ let due d =
                 false)
               else true
             else if (not e.held) && reached ~except:d.index e.stamps then begin
-              let k = cache_key e in
-              let l = Option.value ~default:[] (Hashtbl.find_opt d.cache k) in
-              Hashtbl.replace d.cache k (e :: l);
-              d.cached <- d.cached + e.bytes;
+              cache d e;
               false
             end
             else if e.held && reached e.stamps then (
@@ -371,10 +371,12 @@ let due d =
 let run_pending d = function
   | Free e -> free_entry e
   | Unmap r -> unmap_region d r
-  | Unload (image, bytes) ->
+  | Unload (image, code) -> (
       unload d image;
-      Mutex.protect d.lock (fun () -> d.used <- d.used - bytes);
-      note d
+      match code with
+      | Some e when Dev.is_lost d -> free_entry e
+      | Some e -> to_cache d e
+      | None -> ())
 
 (* Lost devices whose answer was recorded and that still hold memory: every
    drain drains them, and reads the word of those that answered [Unknown]. *)
@@ -523,11 +525,13 @@ let rec alloc_entry d kind n round =
           alloc_entry d kind n (round + 1)
       | None -> raise (Dev.Out_of_memory (d, n)))
 
-let alloc d kind n =
+let alloc_entry d kind n =
   let kind = if kind = mapped_kind && n > d.budget then pinned_kind else kind in
   if owns kind && n > d.budget then raise (Dev.Out_of_memory (d, n));
   drain d;
-  of_entry d (alloc_entry d kind n 1)
+  alloc_entry d kind n 1
+
+let alloc d kind n = of_entry d (alloc_entry d kind n)
 
 let rec heap_reserved n round =
   if heap_reserve n Dev.host.budget then ()
@@ -565,11 +569,11 @@ let find_map (e : entry) d = List.find_opt (fun mp -> mp.on == d) e.maps
 
 let map_host_range d start n =
   match d.kind with
-  | Driver { m = dm; h } -> (
+  | Driver { m = dm; h; rid } -> (
       let module D = (val dm) in
       let p = Nativeint.of_int start in
       match Dev.counted d (fun () -> D.map_host h p n) with
-      | Some r -> Some (Region { m = dm; h; r })
+      | Some r -> Some (Region { m = dm; h; r; rid })
       | None -> None)
   | _ -> None
 
@@ -577,15 +581,15 @@ let map_host d m = map_host_range d m.host m.bytes
 
 (* [d]'s mapping of the region of another device of [d]'s driver. The region's
    module types it; the keys' equality types [d]'s handle. *)
-let map_peer_region d (Region { m = om; h = oh; r }) =
+let map_peer_region d (Region { m = om; h = oh; r; rid }) =
   match d.kind with
-  | Driver { m = dm; h } -> (
+  | Driver { m = dm; h; _ } -> (
       let module D = (val dm) in
       let module O = (val om) in
       match Type.Id.provably_equal D.key O.key with
       | Some Type.Equal -> (
           match Dev.counted d (fun () -> O.map_peer h oh r) with
-          | Some r -> Some (Region { m = om; h; r })
+          | Some r -> Some (Region { m = om; h; r; rid })
           | None -> None)
       | None -> None)
   | _ -> None

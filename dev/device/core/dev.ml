@@ -160,7 +160,7 @@ let answered : (device -> unit) ref = ref ignore
 let stop d =
   let answer =
     match d.kind with
-    | Driver { m; h } -> (
+    | Driver { m; h; _ } -> (
         let module D = (val m) in
         match D.stop h with
         | `Stopped -> answer_stopped
@@ -211,7 +211,7 @@ let word d =
   else if d.word <> 0 then c_word d.c
   else
     match d.kind with
-    | Driver { m; h } ->
+    | Driver { m; h; _ } ->
         let module D = (val m) in
         let w = counted d (fun () -> D.signaled h) in
         c_set_seen d.c w;
@@ -222,7 +222,7 @@ let signaled d = if d.c = 0 then 0 else word d
 
 let sleep d ~seen ~still_ms =
   match d.kind with
-  | Driver { m; h } ->
+  | Driver { m; h; _ } ->
       let module D = (val m) in
       counted d (fun () -> D.sleep h ~seen ~still_ms)
   | _ -> ()
@@ -368,6 +368,7 @@ let completion_of = function
 let driver_device (type a) (module D : Sigs.Driver with type t = a) (h : a)
     ~index ~name ~machine ~memory_device =
   let m : (a, D.region, D.image) dm = (module D) in
+  let rid : D.region Type.Id.t = Type.Id.make () in
   let word_region = D.word h in
   let word = match D.host word_region with Some p -> p | None -> 0n in
   let c =
@@ -377,13 +378,13 @@ let driver_device (type a) (module D : Sigs.Driver with type t = a) (h : a)
   in
   let d =
     make_device ~index ~name ~machine
-      ~kind:(Driver { m; h })
+      ~kind:(Driver { m; h; rid })
       ~c ~arch:(D.arch h)
       ~queues:(Array.of_list (D.queues h))
       ~completion:(completion_of (D.completion h))
       ~waits:(D.waits_on h `Store, D.waits_on h `Object, D.waits_on h `Host)
       ~word:(Nativeint.to_int word)
-      ~word_region:(Some (Region { m; h; r = word_region }))
+      ~word_region:(Some (Region { m; h; r = word_region; rid }))
       ~key:(Type.Id.uid D.key) ~memory_device
       ~fault:(function D.Fault why -> Some why | _ -> None)
       ~capability:(Some (Capability (D.capability_key, D.capability h)))
@@ -430,7 +431,7 @@ let open_io (type a) (module I : Sigs.Io with type t = a) ?machine
 
 let peer d d' =
   match (d.kind, d'.kind) with
-  | Driver { m; h }, Driver { m = m'; h = h' } -> (
+  | Driver { m; h; _ }, Driver { m = m'; h = h'; _ } -> (
       let module D = (val m) in
       let module D' = (val m') in
       match Type.Id.provably_equal D.key D'.key with
