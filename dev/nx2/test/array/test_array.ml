@@ -557,30 +557,31 @@ let int4_commands =
       (fun i a -> A.get a [| i |]);
   ]
 
-(* A gather into elements 1 to 4 of six int4s writes their bytes, the first and
-   last shared with elements 0 and 5: stores to those from another domain are
-   kept. The source starts on a byte or inside one. Gathers from two domains
-   race on elements 1 to 4, so only elements 0 and 5 are read. *)
+(* A gather into elements 1 and 2 of four int4s writes two bytes, each shared
+   with a neighbour, element 0 or 3: stores to those from another domain are
+   kept. The source starts on a byte or inside one. The gather stores no whole
+   byte, which only elements of its own run would share: two gathers from two
+   domains still race on elements 1 and 2, so only elements 0 and 3 are read. *)
 let gather_into phase xs a =
   let all =
-    A.of_array D.Int4 [| phase + 4 |] (Array.append (Array.make phase 0) xs)
+    A.of_array D.Int4 [| phase + 2 |] (Array.append (Array.make phase 0) xs)
   in
-  let range start = M.Slice [| { M.start; count = 4; step = 1 } |] in
+  let range start = M.Slice [| { M.start; count = 2; step = 1 } |] in
   let src = Option.get (A.move (range phase) all) in
   S.copy_into (Option.get (A.move (range 1) a)) src
 
 let gather_commands =
-  let nibbles = Gen.array ~size:(const 4) nibble in
-  let neighbour = Gen.map (fun last -> if last then 5 else 0) Gen.bool in
+  let nibbles = Gen.array ~size:(const 2) nibble in
+  let neighbour = Gen.map (fun last -> if last then 3 else 0) Gen.bool in
   [
     command "create"
       (Gen.unit @-> makes int4s)
-      (fun () -> Array.make 6 0)
-      (fun () -> A.of_array D.Int4 [| 6 |] (Array.make 6 0));
+      (fun () -> Array.make 4 0)
+      (fun () -> A.of_array D.Int4 [| 4 |] (Array.make 4 0));
     command "copy"
       (Gen.int_range 0 1 @-> nibbles @-> int4s ^-> returns int)
       (fun _ xs m ->
-        Array.blit xs 0 m 1 4;
+        Array.blit xs 0 m 1 2;
         0)
       gather_into;
     command "set"
