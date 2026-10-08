@@ -48,7 +48,10 @@ let create ?(memory = Device) d s n =
   if Dev.is_lost d then Dev.raise_lost d;
   let mem =
     if Dev.is_host d then Memory.host_memory bytes
-    else if bytes = 0 then Memory.make d 0 Memory.no_entry
+    else if bytes = 0 then begin
+      Memory.drain d;
+      Memory.make d 0 Memory.no_entry
+    end
     else Memory.alloc d (kind_of memory) bytes
   in
   of_memory mem s n

@@ -585,12 +585,12 @@ let empty = Bigarray.Array1.create Bigarray.char Bigarray.c_layout 0
 let empty_keep = Heap (empty, no_token)
 
 let host_memory n =
+  drain Dev.host;
   if n = 0 then
     let addr = ba_address empty in
     own ~keep:empty_keep ~host:addr ~address:addr ~handle:0n ~token:no_token
       Dev.host 0 no_entry
   else begin
-    drain Dev.host;
     heap_reserved n 1;
     let ba = heap_bytes n in
     let addr = ba_address ba in
