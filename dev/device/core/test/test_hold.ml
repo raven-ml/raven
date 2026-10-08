@@ -119,6 +119,27 @@ let test_release_counted () =
   Thread.join t;
   equal ~msg:"once it returned" int 1 (count "stop" p)
 
+(* Held memory returns once the hold is unreachable and its stamp reached. *)
+let test_memory_returns () =
+  let d, p = P.open_ "hold:memory" in
+  let at =
+    (fun () ->
+      let m = B.create d S.UInt8 64 in
+      ignore (submit_held d m (Atomic.make 0));
+      B.address m)
+      ()
+  in
+  let freed () =
+    Gc.full_major ();
+    drain d;
+    C.free_cache d;
+    drain d;
+    List.exists (fun (a, _) -> a = at) (P.frees p)
+  in
+  equal ~msg:"while its stamp is unreached" bool false (freed ());
+  ignore (P.run p);
+  equal ~msg:"once it is reached" bool true (freed ())
+
 (* Refusals *)
 
 let test_refusals () =
@@ -159,6 +180,8 @@ let tests =
     group ~timeout "memory"
       [
         test "a read of held memory waits for the hold's work" test_wait_held;
+        test "held memory returns once its hold is unreachable and reached"
+          test_memory_returns;
         test "held memory is named only with its hold, in one hold"
           test_refusals;
         test "a dead buffer is not held" test_dead;

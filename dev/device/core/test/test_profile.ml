@@ -131,6 +131,65 @@ let test_after_disabled () =
   Prof.after p (fun () -> failf "read while no profile is taken");
   C.wait d (C.Point.value p)
 
+(* Events after a point go to the profiles taken when [after] is called. *)
+let test_after_profiles () =
+  let d, _ = P.open_ "profile:after-profiles" in
+  let event name =
+    Prof.Span { device = d; lane = "COMPUTE:0"; name; start = 0; stop = 1 }
+  in
+  let (), outer =
+    Prof.take (fun () ->
+        let (), inner =
+          Prof.take (fun () ->
+              let q = C.submit (Sub.make ~reads:0 ~writes:0 ~waits:0 d [||]) in
+              Prof.after q (fun () -> [ event "both" ]))
+        in
+        equal ~msg:"inner" (list string) [ "both" ] (named inner))
+  in
+  equal ~msg:"outer" (list string) [ "both" ] (named outer);
+  let q = C.submit (Sub.make ~reads:0 ~writes:0 ~waits:0 d [||]) in
+  Prof.after q (fun () -> [ event "before" ]);
+  let (), later = Prof.take (fun () -> C.wait d (C.Point.value q)) in
+  equal ~msg:"a profile taken after" (list string) [] (named later)
+
+(* A profile leaves out the events of a device lost before they were read. *)
+let test_after_lost () =
+  let d, p = P.open_ "profile:after-lost" in
+  let (), events =
+    Prof.take (fun () ->
+        let q = C.submit (Sub.make ~reads:0 ~writes:0 ~waits:0 d [||]) in
+        Prof.after q (fun () ->
+            [
+              Prof.Span
+                { device = d; lane = "l"; name = "unread"; start = 0; stop = 1 };
+            ]);
+        P.fail p;
+        try ignore (C.submit (Sub.make ~reads:0 ~writes:0 ~waits:0 d [||]))
+        with C.Lost _ -> ())
+  in
+  equal (list string) [] (named events)
+
+(* A span records a function that raises. *)
+let test_span_raises () =
+  let (), events =
+    Prof.take (fun () ->
+        try Prof.span "raises" (fun () -> raise Exit) with Exit -> ())
+  in
+  equal (list string) [ "raises" ] (named events)
+
+let test_allocation () =
+  let d, _ = P.open_ "profile:allocation" in
+  let b, events = Prof.take (fun () -> B.create d S.UInt8 4096) in
+  let allocations =
+    List.filter_map
+      (function
+        | Prof.Allocation a when C.equal a.device d -> Some a.allocated
+        | _ -> None)
+      events
+  in
+  ignore (Sys.opaque_identity b);
+  at_least int ~than:4096 (List.fold_left Int.max 0 allocations)
+
 (* [record] reads the second and fourth words of its stamps. *)
 let test_record () =
   let d, _ = P.open_ "profile:record" in
@@ -186,8 +245,40 @@ let test_untaken () =
 
 let test_chrome () =
   let d = memory "profile:chrome" in
+  let polled, _ = P.open_ "profile:chrome-code" in
+  let program =
+    require_ok ~pp:Format.pp_print_string
+      (Device_core.Program.load polled "code:8")
+  in
   let events =
     [
+      Prof.Span
+        {
+          device = C.host;
+          lane = "domain 1";
+          name = "a \"quoted\" \\ name";
+          start = 1_500;
+          stop = 1_600;
+        };
+      Prof.Load { program; binary = "code:8"; time = 1_200 };
+      Prof.Counters
+        {
+          device = d;
+          name = "kernel";
+          start = 2_000;
+          stop = 3_500;
+          counters = [ ("waves", [| 3; 4 |]) ];
+        };
+      Prof.Trace
+        {
+          device = d;
+          name = "kernel";
+          start = 2_000;
+          stop = 3_500;
+          part = 1;
+          data = "\001\002";
+        };
+      Prof.Overwritten { device = d; time = 3_600; runs = 2 };
       Prof.Span
         {
           device = C.host;
@@ -220,12 +311,20 @@ let test_chrome () =
     {"ph":"M","pid":1,"tid":0,"name":"process_name","args":{"name":"CPU"}},
     {"ph":"M","pid":1,"tid":1,"name":"thread_name","args":{"name":"domain 0"}},
     {"ph":"X","pid":1,"tid":1,"ts":0.000,"dur":3.000,"name":"host"},
-    {"ph":"M","pid":2,"tid":0,"name":"process_name","args":{"name":"profile:chrome"}},
-    {"ph":"M","pid":2,"tid":2,"name":"thread_name","args":{"name":"COMPUTE:0"}},
-    {"ph":"X","pid":2,"tid":2,"ts":1.000,"dur":1.500,"name":"kernel"},
-    {"ph":"C","pid":2,"tid":0,"ts":1.500,"name":"memory","args":{"allocated":4096}},
-    {"ph":"M","pid":1,"tid":3,"name":"thread_name","args":{"name":"copy"}},
-    {"ph":"X","pid":1,"tid":3,"ts":2.000,"dur":0.200,"name":"copy","args":{"to":"profile:chrome","bytes":64}}
+    {"ph":"M","pid":2,"tid":0,"name":"process_name","args":{"name":"profile:chrome-code"}},
+    {"ph":"i","pid":2,"tid":0,"ts":0.200,"s":"p","name":"load"},
+    {"ph":"M","pid":1,"tid":2,"name":"thread_name","args":{"name":"domain 1"}},
+    {"ph":"X","pid":1,"tid":2,"ts":0.500,"dur":0.100,"name":"a \"quoted\" \\ name"},
+    {"ph":"M","pid":3,"tid":0,"name":"process_name","args":{"name":"profile:chrome"}},
+    {"ph":"M","pid":3,"tid":3,"name":"thread_name","args":{"name":"counters"}},
+    {"ph":"X","pid":3,"tid":3,"ts":1.000,"dur":1.500,"name":"kernel","args":{"waves":7}},
+    {"ph":"i","pid":3,"tid":0,"ts":1.000,"s":"p","name":"kernel","args":{"part":1,"bytes":2}},
+    {"ph":"M","pid":3,"tid":4,"name":"thread_name","args":{"name":"COMPUTE:0"}},
+    {"ph":"X","pid":3,"tid":4,"ts":1.000,"dur":1.500,"name":"kernel"},
+    {"ph":"C","pid":3,"tid":0,"ts":1.500,"name":"memory","args":{"allocated":4096}},
+    {"ph":"M","pid":1,"tid":5,"name":"thread_name","args":{"name":"copy"}},
+    {"ph":"X","pid":1,"tid":5,"ts":2.000,"dur":0.200,"name":"copy","args":{"to":"profile:chrome","bytes":64}},
+    {"ph":"i","pid":3,"tid":0,"ts":2.600,"s":"p","name":"overwritten","args":{"runs":2}}
     ]}
     |}
 
@@ -237,6 +336,8 @@ let tests =
         test "a span is in the profiles taken when it starts" test_span_starts;
         test "a profile whose function raises raises again" test_raises;
         test "a profile holds another domain's spans" test_two_domains;
+        test "a span records a function that raises" test_span_raises;
+        test "an allocation is an event of the profiles taken" test_allocation;
         test "counters and traces are those the profiles taken ask for"
           test_counters;
       ];
@@ -248,6 +349,10 @@ let tests =
           test_after;
         test "events after a point are not read while no profile is taken"
           test_after_disabled;
+        test "events after a point go to the profiles taken at the call"
+          test_after_profiles;
+        test "a profile leaves out a lost device's unread events"
+          test_after_lost;
         test "a recorded span reads its stamps' second and fourth words"
           test_record;
         test "a recorded span refuses three words"

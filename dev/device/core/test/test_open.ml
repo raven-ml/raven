@@ -34,6 +34,84 @@ let test_facts () =
   equal device C.host (C.host_of d);
   is_some (C.capability p P.capability_key)
 
+let test_host () =
+  equal string "CPU" (C.name C.host);
+  mem string (C.arch C.host) [ "arm64"; "x86_64" ];
+  equal bool true (C.computes C.host);
+  equal bool true (C.runs_on_host C.host);
+  equal bool true (C.shares_host_memory C.host);
+  equal device C.host (C.host_of C.host)
+
+(* What a driver's device reaches follows its copy queue and its peers. *)
+let test_reach () =
+  let d, _ = P.open_ "open:reach" in
+  let e, _ = P.open_ "open:reach-peer" in
+  let f, _ = P.open_ ~peers:false "open:reach-alone" in
+  let g, _ = P.open_ ~copies:false "open:reach-no-copy" in
+  equal string "polled" (C.arch d);
+  equal (list bool) [ true; false; false ]
+    [ C.reaches d C.host; C.reaches C.host d; C.shares_host_memory d ];
+  equal (list bool) [ true; true; true ]
+    [ C.reaches g C.host; C.reaches C.host g; C.shares_host_memory g ];
+  equal (list bool) [ true; false ] [ C.reaches d e; C.reaches f d ]
+
+(* An io device whose memory is bytes that nothing reads. *)
+module Store = struct
+  type t = unit
+  type region = Bytes.t
+
+  exception Fault of string
+
+  let budget () = max_int
+  let alloc () n = Some (Bytes.create n)
+  let free () _ = ()
+  let read () _ ~at:_ ~dst:_ ~len:_ = ()
+  let write () _ ~at:_ ~src:_ ~len:_ = ()
+  let stop () = ()
+end
+
+let open_store ?machine ?host name =
+  require_ok ~pp:Format.pp_print_string
+    (C.open_io (module Store) ?machine ?host ~name (fun () -> Ok ()))
+
+let test_io () =
+  let io = open_store "open:io" in
+  equal string "" (C.arch io);
+  equal bool false (C.computes io);
+  equal (list bool) [ false; false ]
+    [ C.reaches io C.host; C.reaches C.host io ];
+  raises_match Exn.invalid_arg (fun () ->
+      Device_core.Buffer.create io Device_dtype.Scalar.UInt8 8)
+
+(* A device of another machine is named after it, and its host is the io device
+   opened as that machine's. *)
+let test_machine () =
+  let far = open_store ~machine:"far" ~host:true "HOST" in
+  let g =
+    require_ok ~pp:Format.pp_print_string
+      (C.open_
+         (module P)
+         ~machine:"far" ~name:"open:gpu"
+         (fun () -> Ok (P.make ())))
+  in
+  equal string "open:gpu@far" (C.name g);
+  equal device far (C.host_of g);
+  equal device far (C.host_of far);
+  equal (list bool) [ false; false ] [ C.reaches g C.host; C.reaches C.host g ]
+
+let test_point () =
+  let d = memory "open:point" in
+  let p = C.submit (C.Submission.make ~reads:0 ~writes:0 ~waits:0 d [||]) in
+  equal string "open:point:1" (Format.asprintf "%a" C.Point.pp p)
+
+(* An opener's error is the open's, and leaves the name free. *)
+let test_failed_open () =
+  let fails () = Error "no hardware" in
+  equal (result device string) (Error "no hardware")
+    (C.open_ (module P) ~name:"open:failed" fails);
+  let d, _ = P.open_ "open:failed" in
+  equal string "open:failed" (C.name d)
+
 let test_reopen () =
   let d, p = P.open_ "open:reopen" in
   let s = C.Submission.make ~reads:0 ~writes:0 ~waits:0 d [||] in
@@ -76,6 +154,13 @@ let tests =
       test "one name opens one device, until it is lost" test_same_name;
       test "a name open as another driver's device raises" test_other_driver;
       test "a device states its facts" test_facts;
+      test "the host states its facts" test_host;
+      test "a driver's device reaches by its copies and its peers" test_reach;
+      test "an io device computes nothing and reaches nothing" test_io;
+      test "a device of another machine is named after it, its host the io's"
+        test_machine;
+      test "a point prints as its device's name and its value" test_point;
+      test "an opener's error leaves the name free" test_failed_open;
       test "a lost device's name opens anew once its stop answered" test_reopen;
       test "a blocked opener holds back no other name" test_blocked_opener;
     ]

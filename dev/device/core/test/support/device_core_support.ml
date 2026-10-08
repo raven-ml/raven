@@ -28,9 +28,15 @@ let bump = bump ()
 let poke = poke ()
 
 module Driver = struct
+  type kind = [ `Device | `Pinned | `Mapped ]
+
   type t = {
     c : nativeint;
     copies : bool;
+    host_visible : bool;
+    peers : bool;
+    budget : int;
+    limits : kind -> int;
     may_block : bool;
     waits_host : bool;
     answer : [ `Stopped | `Unknown ];
@@ -38,6 +44,9 @@ module Driver = struct
     opened : Condition.t;
     mutable calls : string list;
     mutable frees : (int * int) list;
+    mutable allocs : (kind * int * bool) list;
+    mutable maps : int list;
+    mutable held : (kind * int) list;
     mutable fault : string option;
     mutable interrupt_next : bool;
     mutable stalls : int;
@@ -45,7 +54,8 @@ module Driver = struct
     mutable sleepers : int;
   }
 
-  type region = { at : int; owned : bool }
+  (* A region the driver allocated has a kind; a mapping has none. *)
+  type region = { at : int; kind : kind option; bytes : int; visible : bool }
   type image = region
   type part = unit
   type capability = unit
@@ -56,37 +66,66 @@ module Driver = struct
   let log d = Mutex.protect d.lock (fun () -> List.rev d.calls)
   let key : t Type.Id.t = Type.Id.make ()
   let arch _ = "polled"
-  let budget _ = 1 lsl 30
+  let budget d = d.budget
   let queues d = if d.copies then [ "COMPUTE:0"; "COPY:0" ] else [ "COMPUTE:0" ]
 
-  let alloc d _ n =
-    note d "alloc";
-    let at = host_alloc n in
-    if at = 0 then None else Some { at; owned = true }
+  (* A counted call of a faulted device raises its fault. *)
+  let counted d call =
+    note d call;
+    match Mutex.protect d.lock (fun () -> d.fault) with
+    | Some why -> raise (Fault why)
+    | None -> ()
+
+  let holding d kind =
+    List.fold_left (fun n (k, b) -> if k = kind then n + b else n) 0 d.held
+
+  let alloc d kind n =
+    counted d "alloc";
+    let fits =
+      Mutex.protect d.lock (fun () ->
+          let fits = holding d kind + n <= d.limits kind in
+          d.allocs <- (kind, n, fits) :: d.allocs;
+          if fits then d.held <- (kind, n) :: d.held;
+          fits)
+    in
+    if not fits then None
+    else
+      let at = host_alloc n in
+      let visible = d.host_visible || kind <> `Device in
+      Some { at; kind = Some kind; bytes = n; visible }
+
+  let rec remove x = function
+    | [] -> []
+    | y :: l -> if y = x then l else y :: remove x l
 
   let free d r =
     note d "free";
     let w = polled_word d.c in
-    Mutex.protect d.lock (fun () -> d.frees <- (r.at, w) :: d.frees);
-    if r.owned then host_free r.at
+    Mutex.protect d.lock (fun () ->
+        d.frees <- (r.at, w) :: d.frees;
+        match r.kind with
+        | Some k -> d.held <- remove (k, r.bytes) d.held
+        | None -> ());
+    if r.kind <> None then host_free r.at
 
   let address r = Some r.at
   let handle r = Nativeint.of_int r.at
-  let host r = Some (Nativeint.of_int r.at)
-  let peer _ _ = true
+  let host r = if r.visible then Some (Nativeint.of_int r.at) else None
+  let peer d _ = d.peers
 
   let map_peer d _ r =
-    note d "map_peer";
-    Some { r with owned = false }
+    counted d "map_peer";
+    if d.peers then Some { r with kind = None } else None
 
-  let map_host d p _ =
-    note d "map_host";
-    Some { at = Nativeint.to_int p; owned = false }
+  let map_host d p n =
+    counted d "map_host";
+    Mutex.protect d.lock (fun () -> d.maps <- n :: d.maps);
+    Some { at = Nativeint.to_int p; kind = None; bytes = n; visible = true }
 
   let unmap d _ = note d "unmap"
 
   let image d b =
-    note d "image";
+    counted d "image";
     match String.split_on_char ':' b with
     | [ "code"; n ] ->
         let n = int_of_string n in
@@ -95,7 +134,10 @@ module Driver = struct
 
   let entry r f = if f = "main" then Some r.at else None
   let unload d _ = note d "unload"
-  let word d = { at = Nativeint.to_int d.c; owned = false }
+
+  let word d =
+    { at = Nativeint.to_int d.c; kind = None; bytes = 8; visible = true }
+
   let signaled d = polled_word d.c
 
   (* What a sleep does once its gate opens. *)
@@ -149,11 +191,22 @@ end
 module Polled = struct
   include Driver
 
-  let make ?(capacity = 1024) ?(copies = true) ?(may_block = false)
-      ?(waits_host = false) ?(answer = `Stopped) () =
+  let make ?(capacity = 1024) ?(copies = true) ?(host_visible = true)
+      ?(peers = true) ?(budget = 1 lsl 30) ?(memory = max_int)
+      ?(window = max_int) ?(may_block = false) ?(waits_host = false)
+      ?(answer = `Stopped) () =
+    let limits = function
+      | `Device -> memory
+      | `Mapped -> window
+      | `Pinned -> max_int
+    in
     {
       c = polled_new capacity may_block;
       copies;
+      host_visible;
+      peers;
+      budget;
+      limits;
       may_block;
       waits_host;
       answer;
@@ -161,6 +214,9 @@ module Polled = struct
       opened = Condition.create ();
       calls = [];
       frees = [];
+      allocs = [];
+      maps = [];
+      held = [];
       fault = None;
       interrupt_next = false;
       stalls = 0;
@@ -168,8 +224,12 @@ module Polled = struct
       sleepers = 0;
     }
 
-  let open_ ?capacity ?copies ?may_block ?waits_host ?answer name =
-    let p = make ?capacity ?copies ?may_block ?waits_host ?answer () in
+  let open_ ?capacity ?copies ?host_visible ?peers ?budget ?memory ?window
+      ?may_block ?waits_host ?answer name =
+    let p =
+      make ?capacity ?copies ?host_visible ?peers ?budget ?memory ?window
+        ?may_block ?waits_host ?answer ()
+    in
     match Device_core.open_ (module Driver) ~name (fun () -> Ok p) with
     | Ok d -> (d, p)
     | Error e -> failwith e
@@ -182,6 +242,9 @@ module Polled = struct
   let set_word d v = polled_set_word d.c v
   let blocked d = polled_blocked d.c
   let frees d = Mutex.protect d.lock (fun () -> List.rev d.frees)
+  let allocs d = Mutex.protect d.lock (fun () -> List.rev d.allocs)
+  let host_maps d = Mutex.protect d.lock (fun () -> List.rev d.maps)
+  let allocated d kind = Mutex.protect d.lock (fun () -> holding d kind)
   let interrupt d = Mutex.protect d.lock (fun () -> d.interrupt_next <- true)
   let stall d n = Mutex.protect d.lock (fun () -> d.stalls <- n)
   let gate d = Mutex.protect d.lock (fun () -> d.gated <- true)

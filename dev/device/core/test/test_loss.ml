@@ -122,6 +122,41 @@ let test_two_sleeps () =
   equal (option string) (Some "the engine hung") (C.lost d);
   equal int 1 (count "stop" p)
 
+let test_printed () =
+  let d, p = P.open_ "loss:printed" in
+  P.fail p;
+  match C.submit (empty d) with
+  | _ -> failf "the failed submit returned"
+  | exception e ->
+      equal string "loss:printed lost: the submission failed"
+        (Printexc.to_string e)
+
+(* A loss reaches the lost device and the memory its stamps name, even work that
+   was reached; other devices and their memory go on. *)
+let test_others_go_on () =
+  let d, p = P.open_ "loss:lost" in
+  let e, _ = P.open_ "loss:kept" in
+  let named = B.create e S.UInt8 64 and kept = B.create e S.UInt8 64 in
+  let s = Sub.make ~reads:1 ~writes:0 ~waits:0 d [||] in
+  Sub.read s 0 named;
+  C.wait d (C.Point.value (C.submit s));
+  P.fail p;
+  raises_match (lost d) (fun () -> C.submit (empty d));
+  raises_match (lost d) (fun () -> B.wait named B.Read_write);
+  B.wait kept B.Read_write;
+  let w = Sub.make ~reads:0 ~writes:1 ~waits:0 e [||] in
+  Sub.write w 0 kept;
+  C.wait e (C.Point.value (C.submit w));
+  equal (option string) None (C.lost e)
+
+(* A fault a counted call raises, such as an allocation's, loses the device. *)
+let test_alloc_fault () =
+  let d, p = P.open_ "loss:alloc" in
+  P.fault p "the device fell off the bus";
+  raises_match (lost d) (fun () -> B.create d S.UInt8 64);
+  equal (option string) (Some "the device fell off the bus") (C.lost d);
+  equal int 1 (count "stop" p)
+
 let tests =
   [
     group ~timeout "loss"
@@ -136,6 +171,10 @@ let tests =
           test_reached;
         test "a fault two domains' sleeps find loses the device once"
           test_two_sleeps;
+        test "Lost prints the device and the reason" test_printed;
+        test "a loss leaves other devices and their memory working"
+          test_others_go_on;
+        test "a fault an allocation raises loses the device" test_alloc_fault;
       ];
   ]
 

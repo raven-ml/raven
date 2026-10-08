@@ -61,6 +61,21 @@ let test_later_releases () =
   P.open_gate p;
   equal outcome (Ok 3) (waiting ())
 
+(* A fault found while a submit waits for room loses the device, and the submit
+   commits nothing. *)
+let test_fault_waiting () =
+  let d, p = P.open_ ~capacity:1 "turn:fault-room" in
+  equal int 1 (value (one_part d));
+  P.gate p;
+  let waiting = spawn (fun () -> value (one_part d)) in
+  Support.await "a sleep at the gate" (fun () -> P.sleepers p = 1);
+  P.fault p "the engine hung";
+  P.open_gate p;
+  (match waiting () with
+  | Error e -> equal bool true (lost d e)
+  | Ok v -> failf "the waiting submit returned %d" v);
+  equal int 1 (C.submitted d)
+
 let test_never () =
   let d, _ = P.open_ ~capacity:1 "turn:never" in
   let never = Sub.make ~reads:0 ~writes:0 ~waits:0 d [| bump (); bump () |] in
@@ -164,6 +179,8 @@ let tests =
         test "a submit waiting for room lets a submission that fits through"
           test_later_releases;
         test "parts that never fit assign no value" test_never;
+        test "a fault while a submit waits for room commits nothing"
+          test_fault_waiting;
       ];
     group ~timeout "turns"
       [

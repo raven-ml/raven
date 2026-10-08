@@ -14,6 +14,11 @@ module Polled : sig
   val make :
     ?capacity:int ->
     ?copies:bool ->
+    ?host_visible:bool ->
+    ?peers:bool ->
+    ?budget:int ->
+    ?memory:int ->
+    ?window:int ->
     ?may_block:bool ->
     ?waits_host:bool ->
     ?answer:[ `Stopped | `Unknown ] ->
@@ -22,12 +27,22 @@ module Polled : sig
   (** [make ()] is a device whose queue holds [capacity] parts (defaults to
       1024): beyond it [room] answers [`Later], or, with [may_block], submit
       waits for room. Without [copies] (defaults to [true]) it lists no copy
-      queue. With [waits_host] its queue waits for host-written words. Its stop
-      answers [answer] (defaults to [`Stopped]). *)
+      queue. Without [host_visible] (defaults to [true]) the host does not
+      address its [`Device] memory. Without [peers] (defaults to [true]) it maps
+      no memory of another device. Its budget is [budget] (defaults to 1 GiB);
+      it holds at most [memory] bytes of [`Device] memory and [window] bytes of
+      [`Mapped] memory (default to [max_int]); [`Pinned] memory is unbounded.
+      With [waits_host] its queue waits for host-written words. Its stop answers
+      [answer] (defaults to [`Stopped]). *)
 
   val open_ :
     ?capacity:int ->
     ?copies:bool ->
+    ?host_visible:bool ->
+    ?peers:bool ->
+    ?budget:int ->
+    ?memory:int ->
+    ?window:int ->
     ?may_block:bool ->
     ?waits_host:bool ->
     ?answer:[ `Stopped | `Unknown ] ->
@@ -45,8 +60,8 @@ module Polled : sig
   (** [fail d] makes [d]'s next submit fail. *)
 
   val fault : t -> string -> unit
-  (** [fault d why] makes [d]'s sleeps raise [Fault why] from now on, as a
-      faulted device's do. *)
+  (** [fault d why] makes [d]'s sleeps, allocations, mappings and loads raise
+      [Fault why] from now on, as a faulted device's do. *)
 
   val set_word : t -> int -> unit
   (** [set_word d v] writes [v] into [d]'s word. *)
@@ -58,6 +73,17 @@ module Polled : sig
   val frees : t -> (int * int) list
   (** [frees d] is the address of each region [d] freed, oldest first, with
       [d]'s word when it was freed. *)
+
+  val allocs : t -> ([ `Device | `Pinned | `Mapped ] * int * bool) list
+  (** [allocs d] is each allocation asked of [d], oldest first: its kind, its
+      bytes and whether [d] gave it. *)
+
+  val host_maps : t -> int list
+  (** [host_maps d] is the bytes of each host memory [d] mapped, oldest first.
+  *)
+
+  val allocated : t -> [ `Device | `Pinned | `Mapped ] -> int
+  (** [allocated d kind] is the bytes of [kind] [d] holds allocated. *)
 
   val blocked : t -> int
   (** [blocked d] is the number of submits waiting for room in [d]'s [may_block]

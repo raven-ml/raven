@@ -82,6 +82,17 @@ let test_refusals () =
       Sub.make ~reads:(-1) ~writes:0 ~waits:0 d [||]);
   raises_match Exn.invalid_arg (fun () -> C.submit (empty ~reads:1 d))
 
+(* A slot whose buffer died after it was set refuses the submit. *)
+let test_dead_slot () =
+  let d = memory "submit:dead-slot" in
+  let b = B.create C.host S.UInt8 8 in
+  let s = empty ~reads:1 d in
+  Sub.read s 0 b;
+  C.Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
+      ignore (C.Claim.consume c ~why:"donated" b));
+  raises_match Exn.invalid_arg (fun () -> C.submit s);
+  equal int 0 (C.submitted d)
+
 let test_unset_wait () =
   let d = memory "submit:unset-wait" in
   equal int 1 (C.Point.value (C.submit (empty ~waits:2 d)))
@@ -314,6 +325,7 @@ let tests =
     group ~timeout "refusals"
       [
         test "a submission refuses what it cannot run" test_refusals;
+        test "a slot whose buffer died refuses the submit" test_dead_slot;
         test "a copy on a device that runs no copies is refused"
           test_copy_refused;
       ];

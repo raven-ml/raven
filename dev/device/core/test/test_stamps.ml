@@ -130,6 +130,13 @@ let wait_model access r = function
           at_least ~msg:"device 0's use" int ~than:r.uses.(0) s0;
           at_least ~msg:"device 1's use" int ~than:r.uses.(1) s1)
 
+(* A copy of the memory into a fresh buffer of device [i] reads it: it waits for
+   the memory's last write. *)
+let copy_system i t =
+  let dst = B.create (fst t.devices.(i)) S.UInt8 64 in
+  B.copy ~src:t.m ~dst;
+  (signaled t 0, signaled t 1)
+
 let commands =
   [
     command "open" (Gen.unit @-> makes memory) open_model open_system;
@@ -147,6 +154,10 @@ let commands =
     command "wait"
       (access @-> memory ^-> judges (pair int int))
       wait_model wait_system;
+    command "copy"
+      (device @-> memory ^-> judges (pair int int))
+      (fun _ -> wait_model B.Read)
+      copy_system;
     command "run"
       (device @-> memory ^-> returns unit)
       (fun _ _ -> ())

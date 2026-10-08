@@ -7,7 +7,10 @@
   test_turn
   test_fork
   test_hold
-  test_stamps)
+  test_stamps
+  test_memory
+  test_claim
+  test_program)
  (modules
   test_open
   test_buffer
@@ -16,7 +19,10 @@
   test_turn
   test_fork
   test_hold
-  test_stamps)
+  test_stamps
+  test_memory
+  test_claim
+  test_program)
  (libraries device_core device_dtype device_core_support threads.posix unix
   windtrap))
 
