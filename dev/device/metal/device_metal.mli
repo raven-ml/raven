@@ -180,10 +180,14 @@ type region
 *)
 
 val alloc : t -> [ `Device | `Pinned | `Mapped ] -> int -> region option
-(** [alloc d kind n] is a region of [n] bytes of [d], starting at a multiple of
-    the host's page size (16 KiB on Apple silicon), or [None] if Metal has no
+(** [alloc d kind n] is a region of [n] bytes of [d], or [None] if Metal has no
     memory for it. Every kind is the same shared memory. The region is resident
     for the work of every submission that starts after the call returns.
+
+    The region's GPU and host addresses are multiples of 256 bytes. Apple
+    documents no alignment for a buffer's first byte, so the driver checks the
+    one Metal gives: an allocation that breaks it is given back and raises
+    {!Fault}.
 
     Raises [Invalid_argument] if [n < 1]. *)
 
@@ -349,7 +353,8 @@ val sleep : t -> seen:int -> still_ms:int -> unit
 (** {1:loss Loss} *)
 
 exception Fault of string
-(** [Fault why] is raised by {!sleep} once a submission failed. *)
+(** [Fault why] is raised by {!sleep} once a submission failed, and by {!alloc}
+    when Metal breaks the alignment it states. *)
 
 val stop : t -> [ `Stopped | `Unknown ]
 (** [stop d] answers [`Stopped] if every command buffer [d] committed has

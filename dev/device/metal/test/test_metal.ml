@@ -489,11 +489,11 @@ let shared_both_ways (offset, pages) =
   Device_metal.unmap t.d r;
   Device_metal.free t.d args
 
-let page_aligned n =
+let aligned_256 n =
   let t = dev () in
   let r = alloc t n in
-  equal int 0 (Nativeint.to_int (host r) mod page);
-  equal int 0 (gpu r mod page);
+  equal int 0 (Nativeint.to_int (host r) mod 256);
+  equal int 0 (gpu r mod 256);
   Device_metal.free t.d r
 
 let misused_regions () =
@@ -520,17 +520,10 @@ let memory =
         "map_host"
         [ (0, 1); (1, 1); (2, 2); (4095, 3); (0, 3) ]
         shared_both_ways;
-      cases
-        ~name:(strf "an allocation of %d bytes starts at a page")
-        "alloc"
-        [ page; page + 1; 1 lsl 20; 64 lsl 20 ]
-        page_aligned;
-      xfail
-        ~reason:
-          "Metal places a shared buffer below a page at a multiple of 256 bytes"
-        (cases
-           ~name:(strf "an allocation of %d bytes starts at a page")
-           "alloc below a page" [ 1; 2; 4095; 4096 ] page_aligned);
+      prop "an allocation starts at a multiple of 256 bytes"
+        ~examples:[ 1; 2; 255; 256; 257; 4095; 4096; page; page + 1 ]
+        (Gen.int_range 1 (64 lsl 20))
+        aligned_256;
       test "free and unmap refuse a region of the wrong kind or given back"
         misused_regions;
     ]

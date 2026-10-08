@@ -51,6 +51,8 @@ external entries : unit -> nativeint * nativeint * nativeint
 
 let room_entry, submit_entry, split = entries ()
 
+exception Fault of string
+
 (* Memory *)
 
 type kind = Alloc | Mapped | Word
@@ -167,9 +169,28 @@ let self d = Nativeint.of_int d.self
 
 (* Memory *)
 
+(* Apple documents no alignment for a shared buffer's first byte; Metal places
+   one below a page at a multiple of 256 bytes, larger ones at a page. The
+   driver promises 256 and checks it. *)
+let region_align = 256
+
 let alloc d _ n =
   if n < 1 then invalid_argf "Device_metal.alloc: %d bytes, below 1" n;
-  Option.map (region d.self Alloc) (alloc_buffer d.self n)
+  match alloc_buffer d.self n with
+  | None -> None
+  | Some ((handle, address, host) as b) ->
+      let host = Nativeint.to_int host in
+      if address mod region_align = 0 && host mod region_align = 0 then
+        Some (region d.self Alloc b)
+      else begin
+        free_buffer d.self handle;
+        raise
+          (Fault
+             (strf
+                "Metal placed %d bytes at GPU address 0x%x and host address \
+                 0x%x, expected multiples of %d"
+                n address host region_align))
+      end
 
 let map_host d p n =
   if n < 1 then invalid_argf "Device_metal.map_host: %d bytes, below 1" n;
@@ -255,8 +276,6 @@ let submit d ~v ~waits ~handles:_ ps =
   match submit_parts d.self v ps with None -> `Ok | Some why -> `Failed why
 
 (* Timeline and loss *)
-
-exception Fault of string
 
 let word d = d.word
 let signaled d = signaled_word d.self
