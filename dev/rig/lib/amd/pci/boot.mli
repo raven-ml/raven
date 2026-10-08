@@ -74,6 +74,14 @@ val start :
     does not answer, naming the step: the GPU is then stopped ({!stop}). An
     exception raised during the boot stops it too, and passes through. *)
 
+val writes : pcie:int option -> rebars:int list -> (int * int) list
+(** [writes ~pcie ~rebars] is the configuration a reset restores, as (offset,
+    bytes) in the order it writes them, for a function whose PCI Express
+    capability is at [pcie] and whose resizable BARs' controls are at [rebars]:
+    the PCI Express controls, the resizable BARs' controls, which clear their
+    BARs' addresses when written, the header with the BARs, and the command
+    register last, as the kernel's pci_restore_state. Pure. *)
+
 val reset : Rig_pci.Function.t -> (unit, string) result
 (** [reset f] resets the GPU of [f] as [Rig_amd_pci.reset] states, its bus
     mastering off: if its security processor and power manager run, it stops the

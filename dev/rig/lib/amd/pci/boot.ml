@@ -88,16 +88,20 @@ let set_bus_master f on =
   Function.set_config16 f command
     (if on then c lor bus_master else c land lnot bus_master)
 
-(* L1 across retimers makes reads oscillate to all ones; clearing the GPU's end
-   is enough, since L1 needs both ends. The walk is bounded: a dead link can
-   give back pointers for ever. *)
-let disable_aspm f =
+(* The PCI Express capability. The walk is bounded: a dead link can give back
+   pointers for ever. *)
+let pcie_at f =
   let rec walk cap seen =
     if cap = 0 || List.mem cap seen then None
     else if Function.config8 f cap = pcie_capability then Some cap
     else walk (Function.config8 f (cap + 1) land 0xfc) (cap :: seen)
   in
-  match walk (Function.config8 f capabilities land 0xfc) [] with
+  walk (Function.config8 f capabilities land 0xfc) []
+
+(* L1 across retimers makes reads oscillate to all ones; clearing the GPU's end
+   is enough, since L1 needs both ends. *)
+let disable_aspm f =
+  match pcie_at f with
   | Some cap ->
       let at = cap + link_control in
       Function.set_config16 f at (Function.config16 f at land lnot aspm)
@@ -579,8 +583,8 @@ let quiesce_ms = 100
    (amdgpu_device_load_pci_state, pci_restore_state), in its order: the PCI
    Express capability's controls, each resizable BAR's control (extended
    capability 0x15, PCI Express Base Specification 7.8.6), which clears its
-   BAR's address when written, then the header's last dwords, the BARs and
-   the cache line size, and the command register last. *)
+   BAR's address when written, then the header's last dwords, the BARs and the
+   cache line size, and the command register last. *)
 let pcie_controls = [ 0x08; 0x10; 0x28; 0x30 ]
 let header = [ 0x3c; 0x30; 0x10; 0x14; 0x18; 0x1c; 0x20; 0x24; 0x0c ]
 let extended = 0x100
@@ -589,18 +593,10 @@ let rebar_id = 0x15
 let writes ~pcie ~rebars =
   let at16 o = (o, 2) and at32 o = (o, 4) in
   (match pcie with
-  | Some cap -> List.map (fun o -> at16 (cap + o)) pcie_controls
-  | None -> [])
+    | Some cap -> List.map (fun o -> at16 (cap + o)) pcie_controls
+    | None -> [])
   @ List.map at32 rebars @ List.map at32 header
   @ [ at16 command ]
-
-let pcie_at f =
-  let rec walk cap seen =
-    if cap = 0 || List.mem cap seen then None
-    else if Function.config8 f cap = pcie_capability then Some cap
-    else walk (Function.config8 f (cap + 1) land 0xfc) (cap :: seen)
-  in
-  walk (Function.config8 f capabilities land 0xfc) []
 
 let rebar_controls f =
   let rec walk at seen =

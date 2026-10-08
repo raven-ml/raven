@@ -707,6 +707,34 @@ let sessions =
     ]
     (fun (_, (got, want)) -> equal string (how want) (how got))
 
+(* The order of pci_restore_state: the PCI Express capability (DevCtl, LnkCtl,
+   DevCtl2, LnkCtl2), the resizable BARs, the header from its end with the BARs,
+   the command register last. *)
+let restoration =
+  test "a reset restores the resizable BARs before the BARs, the command last"
+    (fun () ->
+      equal
+        (list (pair int int))
+        [
+          (0x88, 2);
+          (0x90, 2);
+          (0xa8, 2);
+          (0xb0, 2);
+          (0x208, 4);
+          (0x210, 4);
+          (0x3c, 4);
+          (0x30, 4);
+          (0x10, 4);
+          (0x14, 4);
+          (0x18, 4);
+          (0x1c, 4);
+          (0x20, 4);
+          (0x24, 4);
+          (0x0c, 4);
+          (0x04, 2);
+        ]
+        (Boot.writes ~pcie:(Some 0x80) ~rebars:[ 0x208; 0x210 ]))
+
 (* Interrupts *)
 
 module Ih = Rig_amd_pci.Ih
@@ -1168,6 +1196,7 @@ let () =
          security;
          queues;
          sessions;
+         restoration;
          interrupts;
          firmware;
          numbering;
