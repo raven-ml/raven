@@ -25,7 +25,8 @@ let rec reap pid =
   | _, st -> Some st
   | exception Unix.Unix_error (Unix.EINTR, _, _) -> reap pid
 
-let kill pid = try Unix.kill pid Sys.sigkill with Unix.Unix_error _ -> ()
+let signal pid s = try Unix.kill pid s with Unix.Unix_error _ -> ()
+let kill pid = signal pid Sys.sigkill
 
 (* OCaml names the POSIX signals and gives others as their own number. *)
 let name s =

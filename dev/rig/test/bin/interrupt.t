@@ -62,3 +62,20 @@ agents, and its job fails.
   $ cat err
   Fatal error: exception Failure("the job failed")
   $ ./support/gone $machines
+
+The program gets the signal first, and its agents serve it while it ends:
+time to save its work.
+
+  $ rm -f attempts out
+  $ rig run --on a,b -- ./support/ctl.exe save >out 2>err &
+  $ run=$!
+  $ ./support/await out joined
+  $ kill -TERM $run
+  $ wait $run 2>/dev/null
+  [143]
+  $ cat out
+  attempt 1
+  joined
+  copied 1
+  $ cat err
+  rig: interrupted; ending the job

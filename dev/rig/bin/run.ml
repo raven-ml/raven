@@ -324,8 +324,18 @@ and finish a =
     a.sessions;
   wait a ended
 
+(* The program gets the signal, and [exit_s] to end, with its agents, before it
+   is killed: a scheduler that preempts a job leaves it time to save its
+   work. *)
 and interrupted a s =
   sayf "interrupted; ending the job";
+  Option.iter
+    (fun p ->
+      if p.status = None then begin
+        Proc.signal p.pid s;
+        wait ~until:(after exit_s) a (fun _ -> p.status <> None)
+      end)
+    a.program;
   finish a;
   Proc.die_by s
 
@@ -355,8 +365,8 @@ let ends a =
         [ Death (strf "%s %s" prog (was (Proc.cause st))) ]
     | _ -> []
   in
-  (* An agent that fails before it listens (its key, its lock) names no
-     machine: the reason gets its machine's name. *)
+  (* An agent that fails before it listens (its key, its lock) names no machine:
+     the reason gets its machine's name. *)
   let session s =
     let named why = strf "%s: %s" s.m.name why in
     match (s.final, s.broken) with

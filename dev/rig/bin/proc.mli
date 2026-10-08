@@ -36,9 +36,12 @@ val inherited : Unix.file_descr -> (unit -> 'a) -> 'a
 val reap : int -> Unix.process_status option
 (** [reap pid] is how [pid] ended, if it has, without waiting. *)
 
+val signal : int -> int -> unit
+(** [signal pid s] sends signal [s] to [pid]. [pid] must not have been reaped: a
+    reaped pid may name another process. *)
+
 val kill : int -> unit
-(** [kill pid] kills [pid] (SIGKILL). [pid] must not have been reaped: a reaped
-    pid may name another process. *)
+(** [kill pid] is [signal pid Sys.sigkill]. *)
 
 val cause : Unix.process_status -> string
 (** [cause st] is ["exited with status N"], or ["killed by SIGNAME"], SIGNAME a

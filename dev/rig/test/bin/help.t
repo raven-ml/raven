@@ -117,8 +117,10 @@ output and its exit status. A page goes to standard output, and rig exits 0.
   
          125    on a bug in rig.
   
-         On SIGINT, SIGTERM or SIGHUP, rig run ends the job and is then
-         killed by the same signal: a shell reports 128 + N.
+         On SIGINT, SIGTERM or SIGHUP, rig run sends the same signal to the
+         program and gives it 15 seconds to end, its agents still serving it,
+         so that it can save its work. Then rig run kills it, ends the
+         agents, and is killed by the signal: a shell reports 128 + N.
   
   ENVIRONMENT
          The program runs in rig run's environment, with these variables,

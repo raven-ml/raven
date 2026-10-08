@@ -14,8 +14,9 @@
    its first attempt, then copies. - wait: prints "joined" once the job started,
    waits for it to fail and raises; wait-first: at its first attempt, then
    copies. - linger-first: at its first attempt, prints "joined" once the job
-   started and never exits; then copies. - fork: forks a child that exits 0,
-   then copies. - exec SCRIPT: runs [sh -c SCRIPT] to its end, then copies. *)
+   started and never exits; then copies. - save: prints "joined" once the job
+   started, and on SIGTERM copies. - fork: forks a child that exits 0, then
+   copies. - exec SCRIPT: runs [sh -c SCRIPT] to its end, then copies. *)
 
 let attempt () =
   let n =
@@ -108,6 +109,16 @@ let () =
           Unix.sleepf 0.05
         done
       end
+  | [ "save" ] ->
+      let j = job () in
+      let term = Atomic.make false in
+      Sys.set_signal Sys.sigterm
+        (Sys.Signal_handle (fun _ -> Atomic.set term true));
+      print_endline "joined";
+      while not (Atomic.get term) do
+        Unix.sleepf 0.05
+      done;
+      copy j
   | [ "wait" ] -> wait_failure (job ())
   | [ "wait-first" ] ->
       let j = job () in
