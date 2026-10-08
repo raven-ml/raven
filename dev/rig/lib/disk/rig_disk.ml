@@ -192,9 +192,7 @@ module Io = struct
       "Rig.Buffer.create: DISK makes no memory: open a file with \
        Rig_disk.of_file or Rig_disk.create_file"
 
-  let free () f =
-    f.pages <- None;
-    Mutex.protect lock (fun () -> close_fd f)
+  let free () f = Mutex.protect lock (fun () -> close_fd f)
 
   let read () f ~at ~dst ~len =
     using f @@ fun fd ->
