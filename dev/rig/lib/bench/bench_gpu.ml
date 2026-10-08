@@ -245,11 +245,23 @@ let gpu_rows (type a) (module D : C.Driver with type t = a) ?(sleeps = false) v
     if Sys.file_exists p then Sys.remove p;
     (B.create g file_bytes, ok (Rig_disk.create_file p file_bytes))
   in
+  (* Host memory and a borrow on the GPU of other host memory: the host copies
+     between them, as between any memory it addresses. *)
+  let borrowed () =
+    let g, _ = opened () in
+    ( B.create C.host file_bytes,
+      Option.get (B.borrow g (B.create C.host file_bytes)) )
+  in
   [
     Thumper.group (strf "file/%s" v)
       [
         row "to-device-256M" to_device (fun (src, dst) -> B.copy ~src ~dst);
         row "from-device-256M" from_device (fun (src, dst) -> B.copy ~src ~dst);
+      ];
+    Thumper.group (strf "copy/%s" v)
+      [
+        row "host-to-borrow-256M" borrowed (fun (h, b) -> B.copy ~src:h ~dst:b);
+        row "borrow-to-host-256M" borrowed (fun (h, b) -> B.copy ~src:b ~dst:h);
       ];
     Thumper.group (strf "submit/%s" v)
       [
