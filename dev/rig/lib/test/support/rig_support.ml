@@ -22,15 +22,16 @@ external polled_room : unit -> nativeint = "rig_test_polled_room"
 external polled_submit : unit -> nativeint = "rig_test_polled_submit"
 external polled_word : nativeint -> int = "rig_test_polled_word"
 external polled_stop : nativeint -> unit = "rig_test_polled_stop"
-
-external polled_set_word : nativeint -> int -> unit
-  = "rig_test_polled_set_word"
-
+external polled_set_word : nativeint -> int -> unit = "rig_test_polled_set_word"
 external host_alloc : int -> int = "rig_test_alloc"
 external host_free : int -> unit = "rig_test_free"
 external bump : unit -> nativeint = "rig_test_bump"
 external poke : unit -> nativeint = "rig_test_poke"
 external interrupt : unit -> unit = "rig_test_interrupt"
+
+external shares : ('a, 'b, 'c) Bigarray.Array1.t -> int = "rig_test_shares"
+[@@noalloc]
+
 external load : int -> int = "rig_test_load"
 external store : int -> int -> unit = "rig_test_store"
 external move : dst:int -> src:int -> int -> unit = "rig_test_move"
@@ -294,7 +295,5 @@ let await what f =
 module Reader = struct
   external host : Rig.Buffer.t -> int = "rig_test_reader_host"
   external bytes : Rig.Buffer.t -> int = "rig_test_reader_bytes"
-
-  external why : Rig.Buffer.t -> string option
-    = "rig_test_reader_why"
+  external why : Rig.Buffer.t -> string option = "rig_test_reader_why"
 end

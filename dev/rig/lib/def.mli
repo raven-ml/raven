@@ -80,7 +80,10 @@ and entry = {
   mutable own : int;  (** The memory's own stamps. *)
   mutable maps : mapping list;  (** Other devices' mappings of it. *)
   mutable held : bool;
-  mutable pages : pages;  (** An io memory's pages, asked at its first borrow. *)
+  mutable pages : pages;
+      (** An io memory's pages, asked at its first borrow. *)
+  mutable proxy : int;
+      (** The C proxy of the bigarrays over the memory, 0 before the first. *)
 }
 
 and pages =

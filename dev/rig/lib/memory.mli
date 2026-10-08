@@ -80,6 +80,10 @@ val ensure_entry : memory -> unit
 (* [ensure_entry m] gives host memory [m] stamps and a token, which unmaps its
    mappings once it is collected. *)
 
+val proxy : entry -> int
+(* [proxy e] is the C proxy that bigarrays over [e]'s memory share, made at the
+   first: [e]'s memory is neither reused nor freed while one is reachable. *)
+
 (* Mappings and borrows *)
 
 val map_host_range : device -> int -> int -> region option

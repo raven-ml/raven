@@ -17,7 +17,12 @@ let timeout = 60.
 let page_bytes = 1 lsl 16
 
 module Pages = struct
-  type t = { lock : Mutex.t; mutable calls : string list }
+  (* [during] runs as a read or a write starts. *)
+  type t = {
+    lock : Mutex.t;
+    mutable calls : string list;
+    mutable during : unit -> unit;
+  }
 
   (* Its bytes, and the host buffer that holds them on a page. *)
   type region = {
@@ -43,10 +48,12 @@ module Pages = struct
 
   let read t r ~at ~dst ~len =
     note t "read";
+    t.during ();
     Support.move ~dst ~src:(base r + at) len
 
   let write t r ~at ~src ~len =
     note t "write";
+    t.during ();
     Support.move ~dst:(base r + at) ~src len
 
   let pages t r =
@@ -60,7 +67,9 @@ end
 let opened = Atomic.make 0
 
 let open_pages () =
-  let t = { Pages.lock = Mutex.create (); calls = [] } in
+  let t =
+    { Pages.lock = Mutex.create (); calls = []; during = (fun () -> ()) }
+  in
   let name = Printf.sprintf "io:pages-%d" (Atomic.fetch_and_add opened 1) in
   let io =
     require_ok ~pp:Format.pp_print_string
@@ -169,6 +178,46 @@ let test_free () =
   drain ();
   equal ~msg:"once it is reached" int 1 (count "free" t)
 
+(* A host buffer of [c] bytes whose collection sets [collected]. *)
+let watched collected n c =
+  let b = filled n c in
+  Gc.finalise (fun _ -> collected := true) b;
+  b
+
+(* Makes [t]'s reads and writes collect and drain [io] as they start, and [seen]
+   what they saw: whether [collected] was set, and [io]'s frees so far. *)
+let collecting t io collected seen =
+  t.Pages.during <-
+    (fun () ->
+      Gc.full_major ();
+      Gc.full_major ();
+      ignore (B.create io 0);
+      seen :=
+        [
+          Printf.sprintf "collected: %b" !collected;
+          Printf.sprintf "frees: %d" (count "free" t);
+        ])
+
+(* A copy into io memory keeps both buffers until the write returned: a
+   collection during it frees neither the source nor the io memory. *)
+let test_write_keeps () =
+  let io, t = open_pages () in
+  let collected = ref false and seen = ref [] in
+  collecting t io collected seen;
+  B.copy ~src:(watched collected page_bytes 'k') ~dst:(B.create io page_bytes);
+  equal (list string) [ "collected: false"; "frees: 0" ] !seen
+
+(* A copy from io memory keeps both buffers until the read returned. *)
+let test_read_keeps () =
+  let io, t = open_pages () in
+  let collected = ref false and seen = ref [] in
+  let src = B.create io page_bytes in
+  B.copy ~src:(filled page_bytes 'k') ~dst:src;
+  collecting t io collected seen;
+  B.copy ~src ~dst:(watched collected page_bytes 'x');
+  equal (list string) [ "collected: false"; "frees: 0" ] !seen;
+  ignore (Sys.opaque_identity src)
+
 let tests =
   [
     group ~timeout "io memory"
@@ -181,6 +230,10 @@ let tests =
           test_copy_order;
         test "a host access of io memory waits for a borrower's work" test_wait;
         test "io memory returns once unreachable and its uses reached" test_free;
+        test "a copy into io memory keeps its buffers until written"
+          test_write_keeps;
+        test "a copy from io memory keeps its buffers until read"
+          test_read_keeps;
       ];
   ]
 

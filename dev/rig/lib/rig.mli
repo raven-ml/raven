@@ -390,11 +390,11 @@ module Buffer : sig
     ('a, 'b) Bigarray.kind -> t -> ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t
   (** [bigarray k b] is the bytes of the host buffer [b] read as elements of
       kind [k], without a copy: [length b / Bigarray.kind_size_in_bytes k] of
-      them, in the host's byte order. Writing through it writes [b]. It keeps
-      [b]'s memory alive while it is reachable, except memory {!of_bigarray}'s
-      caller keeps alive and memory a borrow on the host maps, which that borrow
-      keeps. Access through it is the host's: {!wait} orders it after devices'
-      work.
+      them, in the host's byte order. Writing through it writes [b]. It, and
+      every array made from it, keeps [b]'s memory alive while reachable,
+      memory a borrow on the host maps included: no buffer reuses it and its
+      device does not free it until then. Access through it is the host's:
+      {!wait} orders it after devices' work.
 
       Raises [Invalid_argument] if [b] is not on {!host}, or [b]'s bytes are not
       a whole number of elements of [k] starting at a multiple of their size (of

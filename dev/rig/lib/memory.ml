@@ -11,13 +11,8 @@ let strf = Printf.sprintf
 
 external stamps_new : unit -> int = "caml_rig_stamps_new"
 external stamps_ref : int -> unit = "caml_rig_stamps_ref" [@@noalloc]
-
-external stamps_unref : int -> unit = "caml_rig_stamps_unref"
-[@@noalloc]
-
-external stamps_get : int -> int -> int = "caml_rig_stamps_get"
-[@@noalloc]
-
+external stamps_unref : int -> unit = "caml_rig_stamps_unref" [@@noalloc]
+external stamps_get : int -> int -> int = "caml_rig_stamps_get" [@@noalloc]
 external stamps_absorb : int -> int -> unit = "caml_rig_stamps_absorb"
 
 (* [f] over the points of the stamps [st], the last write first; [write] only
@@ -63,10 +58,7 @@ external token : int -> released -> int -> int -> int -> token
 
 external no_token : unit -> token = "%identity"
 external released : int -> released list = "caml_rig_released"
-
-external released_any : int -> bool = "caml_rig_released_any"
-[@@noalloc]
-
+external released_any : int -> bool = "caml_rig_released_any" [@@noalloc]
 external page_size : unit -> int = "caml_rig_page_size"
 
 let no_token = no_token ()
@@ -82,10 +74,7 @@ type bytes_ba =
   (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
 
 external heap_alloc : int -> bytes_ba = "caml_rig_heap_alloc"
-
-external heap_aligned : int -> int -> bytes_ba option
-  = "caml_rig_heap_aligned"
-
+external heap_aligned : int -> int -> bytes_ba option = "caml_rig_heap_aligned"
 external heap_drop : unit -> unit = "caml_rig_heap_drop"
 
 external ba_address : ('a, 'b, 'c) Bigarray.Array1.t -> int
@@ -140,6 +129,7 @@ let entry ?region ?io_region owner memory bytes stamps =
     maps = [];
     held = false;
     pages = Unasked;
+    proxy = 0;
   }
 
 (* The entry of host memory no device borrowed: no stamps, no mapping. *)
@@ -351,6 +341,27 @@ let drain_holds () =
 (* The release list of holds, which every drain reads. *)
 let holds_list = Dev.release_list ()
 
+(* Bigarrays over memory *)
+
+external proxy_new : unit -> int = "caml_rig_proxy_new"
+external proxy_drop : int -> bool = "caml_rig_proxy_drop" [@@noalloc]
+
+(* The proxy that bigarrays over [e]'s memory share, made at the first. *)
+let proxy (e : entry) =
+  Dev.protect e.owner (fun () ->
+      if e.proxy = 0 then e.proxy <- proxy_new ();
+      e.proxy)
+
+(* Whether a bigarray over [e]'s memory may be reachable, which keeps the memory
+   from reuse and from its free. Once none is, the proxy is freed. *)
+let viewed (e : entry) =
+  if e.proxy = 0 then false
+  else if proxy_drop e.proxy then begin
+    e.proxy <- 0;
+    false
+  end
+  else true
+
 (* Puts the entry [e] of [d] in [d]'s cache, for reuse. [d]'s lock is held. *)
 let cache d e =
   let k = cache_key e in
@@ -371,6 +382,7 @@ let route d = function
         && (not e.held)
         && (not (is_io_memory e))
         && reached ~except:d.index e.stamps
+        && not (viewed e)
       in
       Dev.protect d (fun () ->
           if cached then cache d e else d.retiring <- e :: d.retiring)
@@ -378,10 +390,10 @@ let route d = function
   | Release { stamps; release } ->
       Mutex.protect holds_lock (fun () -> holds := (stamps, release) :: !holds)
 
-(* Takes what became due: retiring memory whose foreign uses are reached enters
-   the cache, or is freed if [d] is lost and counts as stopped; pending releases
-   whose value [d] reached. In a forked child, io memory waits for no use: the
-   parent's devices work on the parent's copy. *)
+(* Takes what became due: retiring memory no bigarray reads and whose foreign
+   uses are reached enters the cache, or is freed if [d] is lost and counts as
+   stopped; pending releases whose value [d] reached. In a forked child, io
+   memory waits for no use: the parent's devices work on the parent's copy. *)
 let due d =
   let child = Dev.forked () in
   let lost = Dev.is_lost d in
@@ -392,7 +404,8 @@ let due d =
       d.retiring <-
         List.filter
           (fun e ->
-            if lost then
+            if viewed e then true
+            else if lost then
               if free_lost && reached e.stamps then (
                 frees := e :: !frees;
                 false)
@@ -765,8 +778,7 @@ let of_io d r n =
 let trim d = release_cache ~upto:d.budget ~wait:false d
 
 let set_budget d n =
-  if n < 0 then
-    invalid_arg (strf "Rig.set_budget: budget %d is negative" n);
+  if n < 0 then invalid_arg (strf "Rig.set_budget: budget %d is negative" n);
   Dev.protect d (fun () -> d.budget <- n);
   trim d
 

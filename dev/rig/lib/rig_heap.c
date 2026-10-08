@@ -581,6 +581,52 @@ value caml_rig_external_bytes(value v_addr, value v_n) {
                        (void *)Long_val(v_addr), &dim);
 }
 
+/* Bigarrays over memory the core frees share a proxy whose first share
+   is the core's own. The runtime frees a proxy, and the memory it names,
+   only when its count falls to 0: the core's share keeps the runtime from
+   ever freeing a device's or an io library's memory. The proxy names no
+   memory, so the runtime's free of it would free nothing else. The core
+   gives up its share once the memory's buffers are collected and it is the
+   last ([caml_rig_proxy_drop]), then frees the memory itself. */
+
+value caml_rig_proxy_new(value unit) {
+  (void)unit;
+  struct caml_ba_proxy *p = malloc(sizeof *p);
+  if (p == NULL) caml_raise_out_of_memory();
+  atomic_store_explicit(&p->refcount, 1, memory_order_relaxed);
+  p->data = NULL;
+  p->size = 0;
+  return Val_long((intnat)p);
+}
+
+/* The [v_n] bytes at [v_addr] as a [char] bigarray sharing the proxy
+   [v_p]. No allocation runs between the array's and its proxy's setting,
+   so the runtime never finalises it without the proxy. */
+value caml_rig_proxy_bytes(value v_p, value v_addr, value v_n) {
+  struct caml_ba_proxy *p = (struct caml_ba_proxy *)Long_val(v_p);
+  intnat dim = Long_val(v_n);
+  value ba = caml_ba_alloc(CAML_BA_CHAR | CAML_BA_C_LAYOUT | CAML_BA_MANAGED,
+                           1, (void *)Long_val(v_addr), &dim);
+  atomic_fetch_add_explicit(&p->refcount, 1, memory_order_relaxed);
+  Caml_ba_array_val(ba)->proxy = p;
+  return ba;
+}
+
+/* Gives up the core's share of the proxy [v_p] if it is the last, and
+   frees the proxy: [true] then, as no bigarray over its memory is left.
+   The count falls from 1 to 0 in one step, after the runtime's last
+   decrement, which a view finalised on another domain made. */
+value caml_rig_proxy_drop(value v_p) {
+  struct caml_ba_proxy *p = (struct caml_ba_proxy *)Long_val(v_p);
+  uintnat last = 1;
+  if (!atomic_compare_exchange_strong_explicit(&p->refcount, &last, 0,
+                                               memory_order_acq_rel,
+                                               memory_order_acquire))
+    return Val_false;
+  free(p);
+  return Val_true;
+}
+
 value caml_rig_bigarray_address(value ba) {
   return Val_long((intnat)Caml_ba_data_val(ba));
 }

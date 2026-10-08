@@ -104,8 +104,7 @@ let rec copy ~src ~dst =
   let n = Buffer.length src in
   if n <> Buffer.length dst then
     invalid_argf "Rig.%s: %d bytes into %d" fn n (Buffer.length dst);
-  if Buffer.overlaps src dst then
-    invalid_argf "Rig.%s: the buffers overlap" fn;
+  if Buffer.overlaps src dst then invalid_argf "Rig.%s: the buffers overlap" fn;
   let sd = src.mem.dev and dd = dst.mem.dev in
   if Dev.is_lost sd then Dev.raise_lost sd;
   if Dev.is_lost dd then Dev.raise_lost dd;
@@ -114,6 +113,11 @@ let rec copy ~src ~dst =
   if n > 0 then begin
     let start = Prof.now () in
     route src dst n;
+    (* A read, a write or a move hands over addresses only: the buffers stay
+       reachable until it returned, or a collection could free their memory
+       under it. *)
+    ignore (Sys.opaque_identity src);
+    ignore (Sys.opaque_identity dst);
     record sd dd n start
   end
 
@@ -139,8 +143,8 @@ and route src dst n =
     let copied = (not (Dev.is_io runner)) && on_queue runner src dst in
     if copied then ()
     else if is_slot src.mem || is_slot dst.mem then
-      invalid_argf "Rig.%s: no device copies between %s and %s" fn
-        sd.name dd.name
+      invalid_argf "Rig.%s: no device copies between %s and %s" fn sd.name
+        dd.name
     else staged src dst n
 
 (* Through the host's staging memory, a slot at a time. *)

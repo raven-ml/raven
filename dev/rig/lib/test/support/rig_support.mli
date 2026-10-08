@@ -154,6 +154,10 @@ val move : dst:int -> src:int -> int -> unit
 (** [move ~dst ~src n] copies the [n] bytes at host address [src] to host
     address [dst]. *)
 
+val shares : ('a, 'b, 'c) Bigarray.Array1.t -> int
+(** [shares ba] is how many holders share [ba]'s storage, as the runtime counts
+    them on the proxy its arrays share: [0] if they share none. *)
+
 val await : string -> (unit -> bool) -> unit
 (** [await what f] returns once [f ()] holds, yielding to other threads between
     checks. It raises [Failure] naming [what] after 10 s. *)

@@ -410,6 +410,68 @@ let test_bigarray_keeps () =
   Bigarray.Array1.fill (B.bigarray Bigarray.char (B.create C.host n)) 'w';
   equal char 'v' view.{n - 1}
 
+(* A pinned buffer on [d] filled with [c], seen through a borrow on the host. *)
+let viewed d n c =
+  let m = B.create ~memory:Pinned d n in
+  let view = B.bigarray Bigarray.char (require_some (B.borrow C.host m)) in
+  Bigarray.Array1.fill view c;
+  (B.address m, view)
+
+(* Collects, then drains [d], as an allocation on it does first. *)
+let collect d =
+  Gc.full_major ();
+  Gc.full_major ();
+  ignore (Sys.opaque_identity (B.create ~memory:Pinned d 8))
+
+(* A bigarray over a borrow on the host keeps the device memory it reads, as
+   does an array made from it: no buffer reuses that memory while one is
+   reachable. Collected, it returns to its device's cache. *)
+let test_bigarray_keeps_borrowed () =
+  let d, _ = P.open_ "buffer:viewed" in
+  let n = 4096 in
+  let at, view = viewed d n 'v' in
+  let view = ref (Some view) in
+  let sub = ref (Some (Bigarray.Array1.sub (Option.get !view) 0 8)) in
+  view := None;
+  collect d;
+  let other = B.create ~memory:Pinned d n in
+  Bigarray.Array1.fill
+    (B.bigarray Bigarray.char (require_some (B.borrow C.host other)))
+    'w';
+  equal ~msg:"another buffer's memory" bool false (B.address other = at);
+  equal ~msg:"read through the array" char 'v' (Option.get !sub).{7};
+  sub := None;
+  collect d;
+  let again = B.create ~memory:Pinned d n in
+  equal ~msg:"once no array reads it" int at (B.address again);
+  ignore (Sys.opaque_identity other)
+
+(* The core holds a share of the storage of every bigarray over a borrow: once
+   collected, the views dropped while its memory lives leave that share and free
+   nothing. *)
+let test_bigarray_shares () =
+  let d, _ = P.open_ "buffer:shared" in
+  let m = B.create ~memory:Pinned d 4096 in
+  let on_host = require_some (B.borrow C.host m) in
+  let collected_shares () =
+    Gc.full_major ();
+    Gc.full_major ();
+    let view = B.bigarray Bigarray.char on_host in
+    Gc.full_major ();
+    (view, Rig_support.shares view)
+  in
+  let first () =
+    let view, alone = collected_shares () in
+    Bigarray.Array1.fill view 's';
+    let sub = Bigarray.Array1.sub view 0 8 in
+    [ alone; Rig_support.shares sub ]
+  in
+  equal ~msg:"the core and a view, then its sub" (list int) [ 2; 3 ] (first ());
+  let view, alone = collected_shares () in
+  equal ~msg:"the core and a new view" int 2 alone;
+  equal ~msg:"the bytes" char 's' view.{4095};
+  ignore (Sys.opaque_identity m)
+
 let tests =
   [
     group ~timeout "host buffers"
@@ -467,6 +529,9 @@ let tests =
           test_bigarray_refusals;
         test "a bigarray keeps its memory once its buffer is collected"
           test_bigarray_keeps;
+        test "a bigarray over a borrow keeps the device memory it reads"
+          test_bigarray_keeps_borrowed;
+        test "a bigarray's storage keeps the core's share" test_bigarray_shares;
       ];
     group ~timeout "waits"
       [

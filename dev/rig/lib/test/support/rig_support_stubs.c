@@ -18,6 +18,7 @@
 
 #define CAML_NAME_SPACE
 #include <caml/alloc.h>
+#include <caml/bigarray.h>
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
@@ -404,4 +405,10 @@ value rig_test_reader_why(value v_b) {
   CAMLparam1(v_b);
   const char *why = rig_buffer_why(v_b);
   CAMLreturn(why == NULL ? Val_none : caml_alloc_some(caml_copy_string(why)));
+}
+
+/* How many holders share [v_ba]'s storage, as its proxy counts them. */
+value rig_test_shares(value v_ba) {
+  struct caml_ba_proxy *p = Caml_ba_array_val(v_ba)->proxy;
+  return Val_long(p == NULL ? 0 : (intnat)atomic_load(&p->refcount));
 }

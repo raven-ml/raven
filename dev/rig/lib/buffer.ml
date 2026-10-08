@@ -52,9 +52,8 @@ let of_io (type r) d (k : r Type.Id.t) (r : r) n =
           mem.claim.count <- 1;
           of_memory mem n
       | None ->
-          invalid_argf
-            "Rig.Buffer.of_io: %s is another io library's device" d.name
-      )
+          invalid_argf "Rig.Buffer.of_io: %s is another io library's device"
+            d.name)
   | _ -> invalid_argf "Rig.Buffer.of_io: %s is no io device" d.name
 
 let io (type r) b (k : r Type.Id.t) : r option =
@@ -91,8 +90,7 @@ let view b ~first ~length =
   if first < 0 || length < 0 || first > b.length || length > b.length - first
   then
     invalid_argf
-      "Rig.Buffer.view: %d bytes from byte %d lie outside the buffer's \
-       %d"
+      "Rig.Buffer.view: %d bytes from byte %d lie outside the buffer's %d"
       length first b.length;
   { b with offset = b.offset + first; length }
 
@@ -137,11 +135,13 @@ external bigarray_view :
   int ->
   int ->
   int ->
-  ('c, 'd, Bigarray.c_layout) Bigarray.Array1.t
-  = "caml_rig_bigarray_view"
+  ('c, 'd, Bigarray.c_layout) Bigarray.Array1.t = "caml_rig_bigarray_view"
 
 external external_bytes : int -> int -> Memory.bytes_ba
   = "caml_rig_external_bytes"
+
+external proxy_bytes : int -> int -> int -> Memory.bytes_ba
+  = "caml_rig_proxy_bytes"
 
 (* The runtime's code of each kind, [caml_ba_kind]'s order. *)
 let kind_code (type a b) (k : (a, b) Bigarray.kind) =
@@ -177,8 +177,8 @@ let bigarray (type a b) (k : (a, b) Bigarray.kind) b :
   let bytes = b.length in
   if bytes mod size <> 0 || (b.mem.host + b.offset) mod unit <> 0 then
     invalid_argf
-      "Rig.Buffer.bigarray: %d bytes at offset %d are no whole number \
-       of aligned %d-byte elements"
+      "Rig.Buffer.bigarray: %d bytes at offset %d are no whole number of \
+       aligned %d-byte elements"
       bytes b.offset size;
   let root = b.mem.root in
   let at = b.mem.host - root.host + b.offset in
@@ -186,8 +186,12 @@ let bigarray (type a b) (k : (a, b) Bigarray.kind) b :
   match root.keep with
   | Heap (ba, _) -> bigarray_view ba code at n
   | Bigarray ba -> bigarray_view ba code at n
-  | Nothing ->
+  | Nothing when root.entry == Memory.no_entry ->
+      (* No bytes: nothing to keep. *)
       bigarray_view (external_bytes b.mem.host b.mem.bytes) code b.offset n
+  | Nothing ->
+      let p = Memory.proxy root.entry in
+      bigarray_view (proxy_bytes p b.mem.host b.mem.bytes) code b.offset n
 
 (* Low level *)
 
@@ -197,8 +201,7 @@ let address b =
     invalid_argf "Rig.Buffer.address: the buffer is on the io device %s"
       b.mem.dev.name;
   if b.mem.address < 0 then
-    invalid_argf
-      "Rig.Buffer.address: %s names this memory by handle only"
+    invalid_argf "Rig.Buffer.address: %s names this memory by handle only"
       b.mem.dev.name;
   b.mem.address + b.offset
 
