@@ -38,7 +38,7 @@ let gpu ~compute_class ~sass_version =
 
 (* An RTX 5000 Ada and an RTX 5090. *)
 let ada = gpu ~compute_class:0xc9c0 ~sass_version:0x89
-let blackwell = gpu ~compute_class:0xcec0 ~sass_version:0xc0
+let blackwell = gpu ~compute_class:0xcec0 ~sass_version:0xa4
 
 (* The suite's fixture. ../test/fixtures/README.md says how it is made. *)
 

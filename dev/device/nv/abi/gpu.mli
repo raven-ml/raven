@@ -38,8 +38,11 @@ type t = {
       (** The class of its compute engine: one of [0xc7c0] (Ampere), [0xc9c0]
           (Ada) and [0xcec0] (Blackwell). *)
   sass_version : int;
-      (** The version of the machine code its multiprocessors run, its major in
-          bits 4 to 7 and its minor in bits 0 to 3: [0x89] for sm_89. *)
+      (** The version of the machine code its multiprocessors run, from the SM
+          version the GPU reports (NV2080_CTRL_GR_INFO_INDEX_SM_VERSION): that
+          version's bits 8 to 11 in bits 4 to 7, and its bits 0 to 3 in bits 0
+          to 3. The SM version [0x809] (sm_89) gives [0x89], [0xa04] (sm_120)
+          gives [0xa4]. *)
   gpcs : int;  (** Its graphics processing clusters. *)
   tpcs_per_gpc : int;  (** The texture processing clusters of one. *)
   sms_per_tpc : int;  (** The streaming multiprocessors of one of those. *)
