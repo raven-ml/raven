@@ -122,6 +122,23 @@ let test_two_sleeps () =
   equal (option string) (Some "the engine hung") (C.lost d);
   equal int 1 (count "stop" p)
 
+(* A lost device still answers its facts: its name and budget as before, the
+   last value handed over and the last value its word reached. *)
+let test_facts () =
+  let d, p = P.open_ "loss:facts" in
+  C.set_budget d 4096;
+  ignore (C.submit (empty d));
+  ignore (C.submit (empty d));
+  ignore (P.run p);
+  ignore (C.submit (empty d));
+  P.fault p "the engine hung";
+  raises_match (lost d) (fun () -> C.wait d 3);
+  equal string "loss:facts" (C.name d);
+  equal int 4096 (C.budget d);
+  equal int 3 (C.submitted d);
+  equal int 2 (C.signaled d);
+  equal (option string) (Some "the engine hung") (C.lost d)
+
 let test_printed () =
   let d, p = P.open_ "loss:printed" in
   P.fail p;
@@ -171,6 +188,7 @@ let tests =
           test_reached;
         test "a fault two domains' sleeps find loses the device once"
           test_two_sleeps;
+        test "a lost device answers its name, budget and values" test_facts;
         test "Lost prints the device and the reason" test_printed;
         test "a loss leaves other devices and their memory working"
           test_others_go_on;
