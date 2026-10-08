@@ -180,6 +180,13 @@ let trees =
       [ ("sys/fs/cpu.max", quota 100000); (cpu_max session, no_quota) ]
       (-1);
     {
+      name = "the root of a cgroup namespace";
+      cgroup = [ "0::/" ];
+      mounts = [ host_mount ];
+      limits = [ ("sys/fs/cgroup/cpu.max", quota 150000) ];
+      cpus = 2;
+    };
+    {
       name = "a mount of a cgroup below the hierarchy's root";
       cgroup = [ "0::/kubepods/pod1/c1" ];
       mounts = [ mount ~root:"/kubepods" "/sys/fs/cgroup" ];
