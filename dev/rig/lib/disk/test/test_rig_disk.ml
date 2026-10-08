@@ -450,12 +450,12 @@ let test_cold_read () =
           same s (read b))
   | code -> failf "drop_pages: errno %d" code
 
-let test_copy_into_opened n =
+let test_copy_into_opened () =
   let path = make_file "x" in
   removing [ path ] @@ fun () ->
-  let dst = B.view (of_file path) ~first:0 ~length:n in
+  let dst = of_file path in
   raises_match (Exn.invalid_arg ~substring:"Rig.Buffer.copy: ") (fun () ->
-      B.copy ~src:(host_of_string (String.make n 'y')) ~dst);
+      B.copy ~src:(host_of_string "y") ~dst);
   equal octets ~msg:"the file" "x" (contents path)
 
 (* 20,000 copies of 64 bytes into a file, each from a fresh host buffer that
@@ -491,8 +491,8 @@ let copies =
       test
         "a copy into a file writes its source's bytes, which nothing else holds"
         test_source_held;
-      test "a copy into a file opened for reading is refused" (fun () ->
-          test_copy_into_opened 1);
+      test "a copy into a file opened for reading is refused"
+        test_copy_into_opened;
     ]
 
 (* Borrows *)
@@ -801,7 +801,7 @@ let test_replaced (kind, how, k, op) =
   cover "after more files than the disk keeps descriptors of"
     (k >= max_descriptors);
   cover "renamed over" (how = Rename);
-  if List.mem Recreate hows then cover "recreated" (how = Recreate);
+  cover "recreated" (how = Recreate);
   match op with
   | Copy -> (
       match read file with
