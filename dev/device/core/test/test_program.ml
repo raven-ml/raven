@@ -45,14 +45,16 @@ let test_no_code () =
   raises_match Exn.invalid_arg (fun () -> Program.load C.host "code:64")
 
 (* An unreachable program is unloaded once the work its device was handed until
-   then is done. *)
+   then is done, and its code's memory then returns to its device. *)
 let test_unload () =
   let d, pd = P.open_ "program:unload" in
-  (fun () ->
-    let p = load d "code:64" in
-    ignore (C.submit (Sub.make ~reads:0 ~writes:0 ~waits:0 d [||]));
-    ignore (Sys.opaque_identity p))
-    ();
+  let code =
+    (fun () ->
+      let p = load d "code:64" in
+      ignore (C.submit (Sub.make ~reads:0 ~writes:0 ~waits:0 d [||]));
+      require_some (Program.entry p "main"))
+      ()
+  in
   let drain () =
     Gc.full_major ();
     Gc.full_major ();
@@ -62,7 +64,10 @@ let test_unload () =
   equal ~msg:"while its work is unrun" int 0 (count "unload" pd);
   ignore (P.run pd);
   drain ();
-  equal ~msg:"once it ran" int 1 (count "unload" pd)
+  equal ~msg:"once it ran" int 1 (count "unload" pd);
+  C.free_cache d;
+  equal ~msg:"its code's memory" bool true
+    (List.exists (fun (a, _) -> a = code) (P.frees pd))
 
 let test_budget () =
   let d, _ = P.open_ "program:budget" in
