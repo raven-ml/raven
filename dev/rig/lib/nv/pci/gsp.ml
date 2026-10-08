@@ -525,12 +525,17 @@ let object_memory g n =
 
 let paddr (m : Page_table.mapping) = fst (List.hd m.pages)
 
+(* A memory descriptor of a channel's allocation, cached: the GSP's RM gives
+   system memory described cached the coherent aperture, whose accesses snoop
+   the processors' caches, and any other the non-coherent one
+   (kgmmuGetHwPteApertureFromMemdesc_GM107). A channel's USERD in system
+   memory, which the host writes, must be snooped. *)
 let memdesc p field ~base ~size ~space =
   let module M = Defs.Memory_desc in
   pset p (at field M.base) base;
   pset p (at field M.size) size;
   pset p (at field M.address_space) space;
-  pset p (at field M.cache_attrib) 0
+  pset p (at field M.cache_attrib) Defs.nv_memory_cached
 
 (* A channel's instance block, RAMFC and method buffer, which CPU-RM gives the
    GSP: a page, its first 0x200 bytes the RAMFC, and 0x5000 bytes. *)

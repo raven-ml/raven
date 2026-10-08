@@ -87,6 +87,7 @@ SOURCES = {
     "kern_fsp_cot_payload.h": KERNEL + "src/nvidia/inc/kernel/gpu/fsp/kern_fsp_cot_payload.h",
     "g_os_nvoc.h": KERNEL + "src/nvidia/generated/g_os_nvoc.h",
     "g_mem_desc_nvoc.h": KERNEL + "src/nvidia/generated/g_mem_desc_nvoc.h",
+    "nv_memory_type.h": KERNEL + "src/nvidia/inc/kernel/os/nv_memory_type.h",
     "g_allclasses.h": KERNEL + "src/nvidia/generated/g_allclasses.h",
     "nvlimits.h": KERNEL + SDK + "nvlimits.h",
     "nvmisc.h": KERNEL + "kernel-open/common/inc/nvmisc.h",
@@ -243,7 +244,7 @@ CONSTANTS = [
 CONSTANTS += [
     "LIBOS_MEMORY_REGION_CONTIGUOUS", "LIBOS_MEMORY_REGION_LOC_SYSMEM", "LIBOS_MEMORY_REGION_RADIX_PAGE_LOG2",
     "GSP_DMA_TARGET_COHERENT_SYSTEM", "NVDM_TYPE_COT", "REGISTRY_TABLE_ENTRY_TYPE_DWORD", "ADDR_SYSMEM",
-    "ADDR_FBMEM", "GSP_SEQ_BUF_OPCODE_REG_WRITE", "GSP_SEQ_BUF_OPCODE_REG_MODIFY", "GSP_SEQ_BUF_OPCODE_REG_POLL",
+    "ADDR_FBMEM", "NV_MEMORY_CACHED", "GSP_SEQ_BUF_OPCODE_REG_WRITE", "GSP_SEQ_BUF_OPCODE_REG_MODIFY", "GSP_SEQ_BUF_OPCODE_REG_POLL",
     "GSP_SEQ_BUF_OPCODE_DELAY_US", "GSP_SEQ_BUF_OPCODE_REG_STORE", "GSP_SEQ_BUF_OPCODE_CORE_RESET",
     "GSP_SEQ_BUF_OPCODE_CORE_START", "GSP_SEQ_BUF_OPCODE_CORE_WAIT_FOR_HALT", "GSP_SEQ_BUF_OPCODE_CORE_RESUME",
     "NV01_ROOT", "NV01_DEVICE_0", "NV20_SUBDEVICE_0", "FERMI_VASPACE_A", "AMPERE_CHANNEL_GPFIFO_A",

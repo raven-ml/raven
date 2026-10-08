@@ -67,6 +67,7 @@
  "https://raw.githubusercontent.com/NVIDIA/open-gpu-kernel-modules/570.144/src/nvidia/inc/kernel/gpu/gsp/gsp_init_args.h": "6d1117eaf4f4ca805715a95bd7edd46f1f87160b78b4e440936cae499d13631c",
  "https://raw.githubusercontent.com/NVIDIA/open-gpu-kernel-modules/570.144/src/nvidia/inc/kernel/gpu/gsp/gsp_static_config.h": "0da3987d47f05f6d6701cc5653adc3abf410d0c4f070aa7f723894c9c8cbf86d",
  "https://raw.githubusercontent.com/NVIDIA/open-gpu-kernel-modules/570.144/src/nvidia/inc/kernel/gpu/gsp/message_queue_priv.h": "cbb3aa6001524c75ba3f570dc0e92523f042a293aa6e3779ac00162c100a2980",
+ "https://raw.githubusercontent.com/NVIDIA/open-gpu-kernel-modules/570.144/src/nvidia/inc/kernel/os/nv_memory_type.h": "c6472e939ac912d5df5e2e17dab35f8444269b964e2b1536f05df874990354cb",
  "https://raw.githubusercontent.com/NVIDIA/open-gpu-kernel-modules/570.144/src/nvidia/inc/kernel/platform/pci_exp_table.h": "9f4a53209e7ea22e1104d77333e18e34e1cfad3bcd082cefec4664748d7522f7",
  "https://raw.githubusercontent.com/NVIDIA/open-gpu-kernel-modules/570.144/src/nvidia/inc/kernel/vgpu/rpc_global_enums.h": "73298aa3a20b905835c47c76c482dac0b764a645d787d7ffad14511d5fda1c14",
  "https://raw.githubusercontent.com/NVIDIA/open-gpu-kernel-modules/570.144/src/nvidia/inc/kernel/vgpu/rpc_headers.h": "c1cc58b8816039afb81c318bba36b95eea7f6d180e73b19b5540365cc70c46ee",

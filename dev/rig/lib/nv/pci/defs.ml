@@ -34,6 +34,7 @@
    Copyright (c) 2019-2020 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2019-2022 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2019-2025 NVIDIA CORPORATION & AFFILIATES
+   Copyright (c) 2020 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2020-2024 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2020-2025 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2021-2021 NVIDIA CORPORATION & AFFILIATES
@@ -118,6 +119,7 @@ let nvdm_type_cot = 0x14
 let registry_table_entry_type_dword = 1
 let addr_sysmem = 1
 let addr_fbmem = 2
+let nv_memory_cached = 0
 let gsp_seq_buf_opcode_reg_write = 0
 let gsp_seq_buf_opcode_reg_modify = 1
 let gsp_seq_buf_opcode_reg_poll = 2
