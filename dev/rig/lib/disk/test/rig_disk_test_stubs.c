@@ -3,8 +3,9 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* What the disk's suite asks of the system that OCaml's Unix does not give: a
-   limit on this process's open files, and dropping a file's cached pages. */
+/* What the disk's suite asks of the system that OCaml's Unix does not give:
+   limits on this process's open files and file sizes, and dropping a file's
+   cached pages. */
 
 #define _GNU_SOURCE
 
@@ -14,6 +15,7 @@
 
 #ifndef _WIN32
 #include <fcntl.h>
+#include <signal.h>
 #include <sys/resource.h>
 #include <unistd.h>
 #endif
@@ -30,6 +32,23 @@ value rig_disk_test_set_open_files(value v_n) {
   if (getrlimit(RLIMIT_NOFILE, &l) != 0) return Val_int(errno);
   l.rlim_cur = (rlim_t)Long_val(v_n);
   return Val_int(setrlimit(RLIMIT_NOFILE, &l) == 0 ? 0 : errno);
+#endif
+}
+
+/* [set_file_size n] sets this process's soft limit of a file's size to [n]
+   bytes and ignores SIGXFSZ, so growing a file past it fails with EFBIG: 0,
+   the errno, or -1 on Windows, which has no such limit. Keeps the runtime:
+   setrlimit does not block. */
+value rig_disk_test_set_file_size(value v_n) {
+#ifdef _WIN32
+  (void)v_n;
+  return Val_int(-1);
+#else
+  struct rlimit l;
+  if (getrlimit(RLIMIT_FSIZE, &l) != 0) return Val_int(errno);
+  l.rlim_cur = (rlim_t)Long_val(v_n);
+  if (signal(SIGXFSZ, SIG_IGN) == SIG_ERR) return Val_int(errno);
+  return Val_int(setrlimit(RLIMIT_FSIZE, &l) == 0 ? 0 : errno);
 #endif
 }
 

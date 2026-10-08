@@ -24,6 +24,7 @@ let max_descriptors = 64
 let segment = 2 lsl 20
 
 external set_open_files : int -> int = "rig_disk_test_set_open_files"
+external set_file_size : int -> int = "rig_disk_test_set_file_size"
 external drop_pages : string -> int = "rig_disk_test_drop_pages"
 
 let contains s sub =
@@ -767,6 +768,12 @@ let test_create_empty () =
   let file = create path 0 in
   equal (pair int string) (0, "") (B.length file, contents path)
 
+let test_unsized () =
+  if Sys.win32 then skip ~reason:"no limit of a file's size" ();
+  let path = new_path () in
+  removing [ path ] @@ fun () ->
+  equal string "refused, removed" (child [ "unsized"; path ])
+
 let opening =
   group ~timeout "opening and creating"
     [
@@ -795,6 +802,7 @@ let opening =
         [ 0o022; 0o077; 0o002 ] test_umask;
       test "a created file of no bytes is an empty file at its path"
         test_create_empty;
+      test "a file create_file could not size is removed" test_unsized;
     ]
 
 (* Descriptors *)
@@ -1295,10 +1303,27 @@ let open_files_child () =
   Printf.printf "first: %s\n" (said opened.(0));
   List.iter Unix.close taken
 
+(* Lowers this process's limit of a file's size to 4 KiB, then creates a file of
+   1 MiB, and prints whether the creation was refused, naming its path, and
+   whether the path names anything after. *)
+let unsized_child path =
+  (match set_file_size 4096 with
+  | 0 -> ()
+  | e -> failwith (strf "setrlimit: errno %d" e));
+  let refused =
+    match Rig_disk.create_file path (1 lsl 20) with
+    | Ok _ -> "created"
+    | Error why when String.starts_with ~prefix:path why -> "refused"
+    | Error why -> "refused, not naming the path: " ^ why
+  in
+  Printf.printf "%s, %s" refused
+    (if Sys.file_exists path then "left" else "removed")
+
 let () =
   match Array.to_list Sys.argv with
   | [ _; "open-on"; ino ] -> open_on_child ino
   | [ _; "open-files" ] -> open_files_child ()
+  | [ _; "unsized"; path ] -> unsized_child path
   | _ ->
       clear dir;
       let code =
