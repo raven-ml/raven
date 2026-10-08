@@ -172,33 +172,38 @@ and route ~wait src dst n =
    the slot fills one half while the device drains the other. *)
 and staged src dst n =
   let i = take_slot () in
-  let slot = slot i in
   let half = slot_bytes / 2 in
   let pieces = (n + half - 1) / half in
   let len k = Int.min half (n - (k * half)) in
-  let into k =
-    leg
-      ~src:(Buffer.view src ~first:(k * half) ~length:(len k))
-      ~dst:(Buffer.view slot ~first:(k land 1 * half) ~length:(len k))
+  let run slot =
+    let into k =
+      leg
+        ~src:(Buffer.view src ~first:(k * half) ~length:(len k))
+        ~dst:(Buffer.view slot ~first:(k land 1 * half) ~length:(len k))
+    in
+    let out_of k =
+      leg
+        ~src:(Buffer.view slot ~first:(k land 1 * half) ~length:(len k))
+        ~dst:(Buffer.view dst ~first:(k * half) ~length:(len k))
+    in
+    let ahead = not (local src.mem || Dev.is_io src.mem.dev) in
+    if ahead then into 0;
+    for k = 0 to pieces - 1 do
+      if ahead then (if k + 1 < pieces then into (k + 1)) else into k;
+      out_of k
+    done;
+    Buffer.wait dst Buffer.Read_write
   in
-  let out_of k =
-    leg
-      ~src:(Buffer.view slot ~first:(k land 1 * half) ~length:(len k))
-      ~dst:(Buffer.view dst ~first:(k * half) ~length:(len k))
+  (* No leg outlives the copy: the slot is given back unused, also when making
+     its memory raised. *)
+  let settle () =
+    Option.iter (fun b -> Buffer.wait b Buffer.Read_write) slots.(i)
   in
-  let ahead = not (local src.mem || Dev.is_io src.mem.dev) in
   Fun.protect
     ~finally:(fun () ->
-      (* No leg outlives the copy: the slot is given back unused. *)
-      (try Buffer.wait slot Buffer.Read_write with Dev.Lost _ -> ());
+      (try settle () with Dev.Lost _ -> ());
       give_slot i)
-    (fun () ->
-      if ahead then into 0;
-      for k = 0 to pieces - 1 do
-        if ahead then (if k + 1 < pieces then into (k + 1)) else into k;
-        out_of k
-      done;
-      Buffer.wait dst Buffer.Read_write)
+    (fun () -> run (slot i))
 
 (* One leg of a staged copy, which a device's queue runs without the host
    waiting. *)
