@@ -134,16 +134,14 @@ let registers m bus =
   Array.init bars (fun i ->
       Int32.to_int (String.get_int32_le s (bar_base + (4 * i))) land 0xffff_ffff)
 
-let resource m bus i =
-  let file = path m bus "resource" in
-  match List.nth_opt (String.split_on_char '\n' (read file)) i with
-  | None -> None
-  | Some line -> (
-      match String.split_on_char ' ' line with
-      | start :: stop :: _ ->
-          let start = hex file start and stop = hex file stop in
-          if stop <= start then None else Some (stop - start + 1)
-      | _ -> None)
+(* The size of the BAR on [line] of the [resource] file [file]: its start, end
+   and flags, the end 0 for no BAR. *)
+let size file line =
+  match String.split_on_char ' ' line with
+  | start :: stop :: _ ->
+      let start = hex file start and stop = hex file stop in
+      if stop <= start then None else Some (stop - start + 1)
+  | _ -> None
 
 (* The bus address in the registers of BAR [i]; [None] for the upper half of a
    64-bit BAR. *)
@@ -159,12 +157,14 @@ let address regs i =
     if wide i && i + 1 < bars then Some (low lor (regs.(i + 1) lsl 32))
     else Some low
 
-let bar m bus i =
-  if i < 0 || i >= bars then None
-  else
-    match (address (registers m bus) i, resource m bus i) with
-    | Some a, Some size -> Some (a, size)
-    | _ -> None
+let bars m bus =
+  let regs = registers m bus and file = path m bus "resource" in
+  let lines = Array.of_list (String.split_on_char '\n' (read file)) in
+  Array.init bars (fun i ->
+      match address regs i with
+      | Some a when i < Array.length lines ->
+          Option.map (fun n -> (a, n)) (size file lines.(i))
+      | _ -> None)
 
 (* How a function is taken *)
 
@@ -187,11 +187,11 @@ let iommu_of m bus =
   match group m bus with
   | None -> No_iommu
   | Some g when Sys.file_exists (noiommu_file m g) -> No_iommu
-  | Some g -> (
-      match read (strf "%s/%s/type" m.groups g) with
-      | "identity" -> Identity
-      | _ -> Translating
-      | exception Fail.Failed _ -> Translating)
+  | Some g ->
+      (* A group without a [type] file counts as translated. *)
+      let file = strf "%s/%s/type" m.groups g in
+      if Sys.file_exists file && read file = "identity" then Identity
+      else Translating
 
 (* The kernel's lockdown file lists the modes with the current one in
    brackets. *)

@@ -93,6 +93,24 @@ let test_missing () =
         (fun sub -> contains ~msg:"names" ~sub why)
         [ name; pinned; a; b; Filename.concat a name ]
 
+(* A file that cannot be read is no image, and a refusal says why. *)
+let test_unreadable () =
+  if Unix.geteuid () = 0 then
+    skip ~reason:"root reads a file whatever its mode" ();
+  let a = temp_dir () and b = temp_dir () in
+  write a name image;
+  Unix.chmod (Filename.concat a name) 0o000;
+  (match Firmware.find [ a ] name ~digest:pinned with
+  | Ok _ -> fail "an unreadable file was loaded"
+  | Error why ->
+      contains ~msg:"names the file and its cause"
+        ~sub:("reading " ^ Filename.concat a name ^ ": ")
+        why);
+  write b name image;
+  equal ~msg:"the next directory gives it" found (Ok image)
+    (Firmware.find [ a; b ] name ~digest:pinned);
+  Unix.chmod (Filename.concat a name) 0o644
+
 let test_no_directory () =
   is_error ~msg:"no directory holds anything"
     (Firmware.find [] name ~digest:pinned)
@@ -136,6 +154,7 @@ let () =
                "an image nowhere is refused, naming the image, its digest, the \
                 directories and the files with another digest"
                test_missing;
+             test "an unreadable file is refused with its cause" test_unreadable;
              test "no directory holds nothing" test_no_directory;
              test "a lookup writes nothing" test_writes_nothing;
              test "a compressed file is not the image" test_compressed;

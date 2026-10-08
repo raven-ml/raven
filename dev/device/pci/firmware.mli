@@ -18,7 +18,8 @@ val find : string list -> string -> digest:string -> (string, string) result
     compressed image is another file.
 
     [Error why] if no directory holds the image, [why] naming it, its digest,
-    the directories and the files with another digest. *)
+    the directories, the files with another digest and the files that cannot be
+    read, with their cause. *)
 
 val digest : string -> string
 (** [digest s] is the lowercase hexadecimal BLAKE2b digest of [s], 32 bytes

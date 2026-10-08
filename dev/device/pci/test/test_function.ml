@@ -1210,6 +1210,16 @@ let refusals =
       "0000:03:00.0",
       [ "lockdown" ],
       [ "the kernel is locked down"; "0000:03:00.0" ] );
+    ( "BARs that cannot be read",
+      [ Tree.gpu "0000:03:00.0" ],
+      "0000:03:00.0",
+      [ "unreadable:sys/bus/pci/devices/0000:03:00.0/resource" ],
+      [ "reading "; "0000:03:00.0/resource: " ] );
+    ( "an IOMMU group whose type cannot be read",
+      [ Tree.gpu ~group:"12" "0000:03:00.0" ],
+      "0000:03:00.0",
+      [ "identity"; "unreadable:sys/kernel/iommu_groups/12/type" ],
+      [ "reading "; "iommu_groups/12/type: " ] );
   ]
 
 let test_refusal (_, fns, bus, opts, subs) =
@@ -1217,14 +1227,23 @@ let test_refusal (_, fns, bus, opts, subs) =
     if List.mem "lockdown" opts then Some "none [integrity] confidentiality"
     else None
   in
-  let root = Tree.make ?lockdown fns in
-  if List.mem "read-only" opts then begin
+  let groups =
+    if List.mem "identity" opts then [ ("12", "identity") ] else []
+  in
+  let root = Tree.make ?lockdown ~groups fns in
+  let chmod file mode =
     if Unix.geteuid () = 0 then
       skip ~reason:"root opens a file whatever its mode" ();
-    Unix.chmod
-      (Filename.concat root ("sys/bus/pci/devices/" ^ bus ^ "/config"))
-      0o444
-  end;
+    Unix.chmod (Filename.concat root file) mode
+  in
+  List.iter
+    (fun opt ->
+      match String.split_on_char ':' opt with
+      | [ "read-only" ] ->
+          chmod ("sys/bus/pci/devices/" ^ bus ^ "/config") 0o444
+      | "unreadable" :: path -> chmod (String.concat ":" path) 0o000
+      | _ -> ())
+    opts;
   let why = require_error (Function.take (Machine.at root) bus) in
   List.iter (fun sub -> contains ~sub why) subs
 

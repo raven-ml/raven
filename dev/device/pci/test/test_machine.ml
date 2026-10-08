@@ -239,7 +239,7 @@ let test_reserve_this () =
   let n = 4 lsl 20 in
   let reserve () = Machine.reserve Machine.this ~base:free_base n in
   if not on_linux then
-    ignore (require_error ~msg:"off Linux" (reserve ()) : string)
+    contains ~msg:"off Linux" ~sub:"needs Linux" (require_error (reserve ()))
   else begin
     require_ok (reserve ());
     require_ok ~msg:"again" (reserve ());

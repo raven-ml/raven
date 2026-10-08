@@ -47,6 +47,7 @@ type taken = {
   files : Sysfs.t;
   bus : string;
   config : Unix.file_descr * int; (* where configuration space starts in it *)
+  bars : (int * int) option array; (* read once: a held function keeps them *)
   seek : Mutex.t; (* a seek and its read or write, one at a time *)
   interrupts : Unix.file_descr option; (* the eventfd VFIO signals *)
   container : Vfio.t option; (* behind an IOMMU *)
@@ -126,7 +127,7 @@ let pages off n =
    offers a prefetchable BAR's addresses write-combined through [resourceN_wc];
    VFIO maps BARs uncached. *)
 let map t ~combine i off n =
-  if n = 0 then Window.v (fst (Option.get (Sysfs.bar t.files t.bus i)) + off) 0
+  if n = 0 then Window.v (fst (Option.get t.bars.(i)) + off) 0
   else
     let first, len = pages off n in
     let window ?combines fd base =
@@ -224,11 +225,7 @@ let fn t =
     set_config8 = (fun off x -> set_config t off 1 x);
     set_config16 = (fun off x -> set_config t off 2 x);
     set_config32 = (fun off x -> set_config t off 4 x);
-    bar =
-      (fun i ->
-        match Sysfs.bar t.files t.bus i with
-        | bar -> bar
-        | exception Fail.Failed _ -> None);
+    bar = (fun i -> if i < Array.length t.bars then t.bars.(i) else None);
     map =
       (fun ~combine i off n -> Fail.result (fun () -> map t ~combine i off n));
     unmap;
@@ -243,12 +240,13 @@ let fn t =
     release = (fun () -> release t);
   }
 
-let take_iommu files fds bus =
+let take_iommu files fds bus bars =
   let c, efd = Vfio.open_ files fds bus in
   {
     files;
     bus;
     config = (Vfio.device c, Vfio.config_offset bus (Vfio.device c));
+    bars;
     seek = Mutex.create ();
     interrupts = Some efd;
     container = Some c;
@@ -257,7 +255,7 @@ let take_iommu files fds bus =
 
 (* Bound to vfio-pci, a function taken physically has its interrupts through
    VFIO's no-IOMMU mode. *)
-let take_physical files fds bus =
+let take_physical files fds bus bars =
   let file = Sysfs.path files bus "config" in
   let config =
     try Unix.openfile file [ O_RDWR; O_SYNC; O_CLOEXEC ] 0 with
@@ -282,6 +280,7 @@ let take_physical files fds bus =
       files;
       bus;
       config = (config, 0);
+      bars;
       seek = Mutex.create ();
       interrupts;
       container = None;
@@ -303,12 +302,13 @@ let take files bus =
     in
     match
       let* addressing = Sysfs.access files bus in
+      let bars = Sysfs.bars files bus in
       let by =
         match addressing with
         | Ops.Iommu -> take_iommu
         | Physical -> take_physical
       in
-      Ok (fn (by files fds bus))
+      Ok (fn (by files fds bus bars))
     with
     | Ok _ as fn -> fn
     | Error why -> refused why

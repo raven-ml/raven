@@ -37,6 +37,8 @@ let reserve ~base n =
     | () -> ()
     | exception Unix.Unix_error (EEXIST, _, _) ->
         Fail.fail "addresses %s are in use" (range base n)
+    | exception Unix.Unix_error (ENOSYS, _, _) ->
+        Fail.fail "reserving addresses %s needs Linux" (range base n)
     | exception Unix.Unix_error (e, _, _) ->
         Fail.fail "reserving addresses %s: %s" (range base n)
           (Unix.error_message e));
@@ -55,7 +57,8 @@ let pages_of a n = List.init ((n + page - 1) / page) (fun i -> a + (i * page))
 (* Physical addresses *)
 
 (* Locked pages stay at the physical address the process read for them only
-   while the kernel does not compact them. *)
+   while the kernel does not compact them. The setting is read until it reads 0
+   once: turning it back on while the process runs is not seen. *)
 let setting = "/proc/sys/vm/compact_unevictable_allowed"
 let checked = Atomic.make false
 
@@ -86,7 +89,7 @@ let pagemap a pages =
     let rec go got =
       if got < n then
         match Unix.read fd b got (n - got) with
-        | 0 -> raise (Unix.Unix_error (EIO, "read", pagemap_file))
+        | 0 -> Fail.fail "reading %s: got %d of %d bytes" pagemap_file got n
         | k -> go (got + k)
     in
     go 0

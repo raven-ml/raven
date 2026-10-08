@@ -29,9 +29,11 @@ val driver : t -> string -> string option
 val group : t -> string -> string option
 (** [group m bus] is the IOMMU group of the function at [bus]. *)
 
-val bar : t -> string -> int -> (int * int) option
-(** [bar m bus i] is BAR [i]'s bus address, from its register, and its size;
-    [None] if there is no BAR [i], such as the upper index of a 64-bit BAR. *)
+val bars : t -> string -> (int * int) option array
+(** [bars m bus] is, for each of the six BARs of the function at [bus], its bus
+    address, from its register, and its size; [None] where there is no BAR, such
+    as at the upper index of a 64-bit BAR. Raises {!Fail.Failed} if a file
+    cannot be read. *)
 
 val path : t -> string -> string -> string
 (** [path m bus file] is the file [file] of the function at [bus]. *)
