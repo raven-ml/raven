@@ -295,7 +295,7 @@ let map_peer g g' r =
   if not reach then None
   else Some { r with owner = g.self; kind = Peer kind; live = true }
 
-let registry : (int, registration) Hashtbl.t = Hashtbl.create 16
+let registry : registration list ref = ref []
 let registry_lock = Mutex.create ()
 let page = page_size ()
 let pages a n = (a / page * page, (a + n + page - 1) / page * page)
@@ -315,7 +315,7 @@ let page_lock g a n =
     | address when address < 0 -> fault (page_locking n a) (-address)
     | address ->
         let e = { start = a; bytes = n; address; maps = 1; stuck = false } in
-        Hashtbl.replace registry a e;
+        registry := e :: !registry;
         Some (locked g (Some e) a n address)
 
 let map_host g a n =
@@ -329,13 +329,12 @@ let map_host g a n =
     lo < hi' && lo' < hi
   in
   Mutex.protect registry_lock @@ fun () ->
-  let entries = Hashtbl.to_seq_values registry in
-  match Seq.find inside entries with
+  match List.find_opt inside !registry with
   | Some e when e.stuck -> None
   | Some e ->
       e.maps <- e.maps + 1;
       Some (locked g (Some e) a n (e.address + (a - e.start)))
-  | None -> if Seq.exists shares entries then None else page_lock g a n
+  | None -> if List.exists shares !registry then None else page_lock g a n
 
 let unmap g r =
   (match r.kind with
@@ -348,7 +347,8 @@ let unmap g r =
       Mutex.protect registry_lock @@ fun () ->
       e.maps <- e.maps - 1;
       if e.maps = 0 && not e.stuck then
-        if lock g.self false e.start 0 = 0 then Hashtbl.remove registry e.start
+        if lock g.self false e.start 0 = 0 then
+          registry := List.filter (fun e' -> e' != e) !registry
         else e.stuck <- true
   | _ -> ()
 
