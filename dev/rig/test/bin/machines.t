@@ -107,3 +107,22 @@ machine's name.
   rig: c: ssh exited with status 255 before its agent listened
   [123]
   $ rm machines/c/down
+
+A program that reported the failure but does not exit is killed once the
+job's processes had their time to end, and its report is still the cause.
+Here b's agent is stopped, so the program alone reports b's silence.
+
+  $ rm -f attempts
+  $ rig run --on a,b -- ./support/ctl.exe linger-first >out 2>err &
+  $ run=$!
+  $ ./support/await out joined
+  $ kill -STOP $(agent_of b)
+  $ wait $run
+  $ cat out
+  attempt 1
+  joined
+  attempt 2
+  copied 1
+  $ cat err
+  rig: job failed: b: silent for 10 s
+  rig: restarting the job (1 of 3)

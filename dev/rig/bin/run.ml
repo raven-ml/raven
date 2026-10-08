@@ -268,9 +268,11 @@ let poll_program p =
 
 type attempt = { sessions : session list; mutable program : program option }
 
-let ended a =
+let exited a =
   Option.fold ~none:true ~some:(fun p -> p.status <> None) a.program
-  && List.for_all (fun (s : session) -> s.status <> None) a.sessions
+
+let ended a =
+  exited a && List.for_all (fun (s : session) -> s.status <> None) a.sessions
 
 (* Takes in what came, after waiting for anything, until [until] at most. An
    interrupt ends the job and rig run with it. It is taken after the polls:
@@ -333,55 +335,67 @@ let quit a code =
 
 (* Ranking *)
 
-(* How a process of a failed attempt ended. *)
+(* How a process of a failed attempt ended. A death after a report, or one rig
+   run caused, is none. *)
 type end_ = Death of string | Report of string | Silent of machine
 
 let ends a =
   let program =
     match a.program with
-    | Some { killed = true; _ } | None -> []
     | Some { end_ = Some (Line.Failed why); _ } -> [ Report why ]
-    | Some { end_ = None; status = Some st; started = true; prog; _ } ->
+    | Some
+        {
+          end_ = None;
+          status = Some st;
+          started = true;
+          killed = false;
+          prog;
+          _;
+        } ->
         [ Death (strf "%s %s" prog (was (Proc.cause st))) ]
-    | Some _ -> []
+    | _ -> []
   in
+  (* An agent that fails before it listens (its key, its lock) names no
+     machine: the reason gets its machine's name. *)
   let session s =
+    let named why = strf "%s: %s" s.m.name why in
     match (s.final, s.broken) with
     | Some (Line.Died c), _ ->
         [ Death (strf "the agent on %s %s" s.m.name (was c)) ]
-    | Some (Line.Failed why), _ -> [ Report why ]
-    | _, Some why -> [ Report (strf "%s: %s" s.m.name why) ]
+    | Some (Line.Failed why), _ when s.port <> None -> [ Report why ]
+    | Some (Line.Failed why), _ | _, Some why -> [ Report (named why) ]
     | _ when s.lost -> [ Silent s.m ]
     | _ -> []
   in
   program @ List.concat_map session a.sessions
 
-(* The cause of a failed attempt: the first death no process reported, then the
-   first report, then the first machine that does not answer; and the machines
-   that do not answer. *)
-let rank ends =
-  let first f = List.find_map f ends in
+let started a = Option.fold ~none:false ~some:(fun p -> p.started) a.program
+
+(* A failed attempt: its cause, the machines that do not answer, and whether the
+   program had started the job. *)
+type failure = { cause : string; down : machine list; started : bool }
+
+(* The cause is the first death no process reported, then the first report, then
+   the first machine that does not answer. *)
+let rank a =
+  let ends = ends a in
+  let death = function Death c -> Some c | _ -> None
+  and report = function Report c -> Some c | _ -> None
+  and silence = function Silent m -> Some (silent m) | _ -> None in
   let cause =
-    match first (function Death c -> Some c | _ -> None) with
-    | Some c -> c
-    | None -> (
-        match first (function Report c -> Some c | _ -> None) with
-        | Some c -> c
-        | None -> (
-            match
-              first (function Silent m -> Some (silent m) | _ -> None)
-            with
-            | Some c -> c
-            | None -> "the job ended"))
+    List.find_map (fun f -> List.find_map f ends) [ death; report; silence ]
+    |> Option.value ~default:"the job ended"
   in
-  (cause, List.filter_map (function Silent m -> Some m | _ -> None) ends)
+  let down = List.filter_map (function Silent m -> Some m | _ -> None) ends in
+  { cause; down; started = started a }
 
 (* Lets the processes of a failed attempt end by themselves, ends the rest, and
-   ranks how they ended. *)
+   ranks how they ended. Before the program started the job, no job tells the
+   agents of the failure: only the program is waited for. *)
 let collect a =
-  wait ~until:(after exit_s) a ended;
+  wait ~until:(after exit_s) a (if started a then ended else exited);
   finish a;
-  rank (ends a)
+  rank a
 
 (* A start *)
 
@@ -395,10 +409,10 @@ let refused s =
       Some (strf "ssh %s before its agent listened" (Proc.cause st))
   | _ -> None
 
-(* Starts a session per machine and waits until each listens. The first start
-   ends at its first failure. A restart waits for every machine: when one does
-   not answer, it ends the start and tries again after [retry_s], the errors of
-   that machine's tries dropped. *)
+(* Starts a session per machine and waits until each listens; with the machines
+   waited for. The first start ends at its first failure. A restart waits for
+   every machine: when one does not answer, it ends the start and tries again
+   after [retry_s], the errors of that machine's tries dropped. *)
 let rec start ~first ~waited key machines =
   let quiet m = List.memq m waited in
   let ss = List.map (fun m -> session ~quiet:(quiet m) key m) machines in
@@ -417,7 +431,10 @@ let rec start ~first ~waited key machines =
       in
       sayf "%s: %s" s.m.name why;
       quit a 123
-  | down when List.exists (fun s -> not s.lost) down -> Error (collect a)
+  (* No program runs: nothing tells the listening agents the start failed. *)
+  | down when List.exists (fun s -> not s.lost) down ->
+      finish a;
+      Error (rank a, waited)
   | down ->
       let lost = List.map (fun s -> s.m) down in
       List.iter (fun m -> if not (quiet m) then sayf "%s" (silent m)) lost;
@@ -464,27 +481,32 @@ let orderly a p =
   finish a;
   exit (Proc.status (Option.get p.status))
 
-(* Runs one attempt to its end, and is its failure: its cause and the machines
-   that do not answer. *)
+let restarting ~count = function
+  | [] -> sayf "restarting the job (%d of %d)" count restarts
+  | ms ->
+      let names = String.concat ", " (List.map (fun m -> m.name) ms) in
+      let verb = if List.length ms = 1 then "answers" else "answer" in
+      sayf "%s %s; restarting the job (%d of %d)" names verb count restarts
+
+(* Runs one attempt to its end, and is its failure. A restart says so once its
+   start ended, failed or not, so that every attempt is counted aloud. *)
 let attempt ~first ~count ~waited machines prog args =
   let key = key () in
-  match start ~first ~waited key machines with
-  | Error f -> f
-  | Ok (a, waited) -> (
-      (match waited with
-      | [] when first -> ()
-      | [] -> sayf "restarting the job (%d of %d)" count restarts
-      | ms ->
-          let names = String.concat ", " (List.map (fun m -> m.name) ms) in
-          let verb = if List.length ms = 1 then "answers" else "answer" in
-          sayf "%s %s; restarting the job (%d of %d)" names verb count restarts);
+  let started = start ~first ~waited key machines in
+  (match started with
+  | (Ok (_, waited) | Error (_, waited)) when not first ->
+      restarting ~count waited
+  | _ -> ());
+  match started with
+  | Error (f, _) -> f
+  | Ok (a, _) -> (
       match program a.sessions key prog args with
       | Error why when first ->
           sayf "%s" why;
           quit a 123
       | Error why ->
           finish a;
-          (why, [])
+          { cause = why; down = []; started = false }
       | Ok p -> (
           a.program <- Some p;
           wait a (fun a -> event a p <> None);
@@ -503,26 +525,29 @@ let attempt ~first ~count ~waited machines prog args =
               } ->
                   early a p st
               | { started = false; _ } when first ->
-                  sayf "the job did not start: %s" (fst f);
+                  sayf "the job did not start: %s" f.cause;
                   exit 123
               | _ -> f)))
 
+(* Failures in a row count toward [restarts]: those before the program started
+   the job whatever their causes, those after it with one cause. *)
 let run ~misuse names prog args =
   (* Before ssh -G runs: an ignored SIGCHLD would have it reaped by the
      kernel. *)
   Proc.signals [ Sys.sigint; Sys.sigterm; Sys.sighup ];
   let machines = machines ~misuse names in
   let rec loop ~count ~last ~waited =
-    let cause, down =
-      attempt ~first:(last = None) ~count ~waited machines prog args
-    in
-    sayf "job failed: %s" cause;
-    List.iter (fun m -> if silent m <> cause then sayf "%s" (silent m)) down;
-    let n = if last = Some cause then count + 1 else 1 in
+    let f = attempt ~first:(count = 0) ~count ~waited machines prog args in
+    sayf "job failed: %s" f.cause;
+    List.iter (fun m -> if silent m <> f.cause then sayf "%s" (silent m)) f.down;
+    let cause = if f.started then Some f.cause else None in
+    let n = if cause = last then count + 1 else 1 in
     if n > restarts then begin
-      sayf "the job failed %d times in a row with this cause; giving up" n;
+      if f.started then
+        sayf "the job failed %d times in a row with this cause; giving up" n
+      else sayf "the job failed %d times in a row before starting; giving up" n;
       exit 123
     end;
-    loop ~count:n ~last:(Some cause) ~waited:down
+    loop ~count:n ~last:cause ~waited:f.down
   in
   loop ~count:0 ~last:None ~waited:[]

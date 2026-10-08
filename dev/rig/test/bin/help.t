@@ -74,8 +74,9 @@ output and its exit status. A page goes to standard output, and rig exits 0.
          ssh session ends. rig run then gives every process of the job 15
          seconds to end, ends the rest, and names the cause. It waits for
          every machine to answer, and starts the job again: fresh agents, a
-         fresh key, and the program from its beginning. When the job fails
-         four times in a row with one cause, rig run gives up.
+         fresh key, and the program from its beginning. rig run gives up
+         when the job fails four times in a row before the program joined
+         it, whatever the causes, or four times in a row with one cause.
   
          rig run waits for a machine that does not answer as long as it
          takes, trying every 5 seconds. Interrupt it to stop.
@@ -160,6 +161,7 @@ output and its exit status. A page goes to standard output, and rig exits 0.
              N counts the failures in a row with this cause.
   
          rig: the job failed 4 times in a row with this cause; giving up
+         rig: the job failed 4 times in a row before starting; giving up
   
          rig: MACHINE: WHY
          rig: PROGRAM: WHY

@@ -95,4 +95,39 @@ start: a new cause, counted from 1.
   rig: job failed: b: PWD/machines/b/rig-agent-UID.lock is no regular file
   rig: restarting the job (3 of 3)
   rig: job failed: b: PWD/machines/b/rig-agent-UID.lock is no regular file
-  rig: the job failed 4 times in a row with this cause; giving up
+  rig: the job failed 4 times in a row before starting; giving up
+
+Failures before the program joins its job count together, whatever their
+causes. Here, from its second attempt, the program finds agents it cannot
+read, other ones each time.
+
+  $ rm attempts
+  $ rmdir machines/b/rig-agent-$(id -u).lock
+  $ cat >unread <<'EOS'
+  > #!/bin/sh
+  > n=$(cat attempts 2>/dev/null || echo 0)
+  > [ "$n" -ge 1 ] && export RIG_REMOTE_AGENTS=x$n
+  > exec ./support/ctl.exe kill-first
+  > EOS
+  $ chmod +x unread
+  $ rig run --on a,b -- ./unread
+  attempt 1
+  rig: job failed: ./unread was killed by SIGKILL
+  rig: restarting the job (1 of 3)
+  attempt 2
+  ctl.exe: RIG_REMOTE_AGENTS: "x1" is not NAME=ADDRESS:PORT
+  rig: job failed: RIG_REMOTE_AGENTS: "x1" is not NAME=ADDRESS:PORT
+  rig: restarting the job (1 of 3)
+  attempt 3
+  ctl.exe: RIG_REMOTE_AGENTS: "x2" is not NAME=ADDRESS:PORT
+  rig: job failed: RIG_REMOTE_AGENTS: "x2" is not NAME=ADDRESS:PORT
+  rig: restarting the job (2 of 3)
+  attempt 4
+  ctl.exe: RIG_REMOTE_AGENTS: "x3" is not NAME=ADDRESS:PORT
+  rig: job failed: RIG_REMOTE_AGENTS: "x3" is not NAME=ADDRESS:PORT
+  rig: restarting the job (3 of 3)
+  attempt 5
+  ctl.exe: RIG_REMOTE_AGENTS: "x4" is not NAME=ADDRESS:PORT
+  rig: job failed: RIG_REMOTE_AGENTS: "x4" is not NAME=ADDRESS:PORT
+  rig: the job failed 4 times in a row before starting; giving up
+  [123]
