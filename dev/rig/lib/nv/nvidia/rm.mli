@@ -12,9 +12,6 @@
 
 (** {1:files Files and mappings} *)
 
-val ctl_path : string
-(** [ctl_path] is the RM's control file, [/dev/nvidiactl]. *)
-
 val open_file : string -> (int, string) result
 (** [open_file path] is the descriptor of the device file [path]. *)
 
@@ -29,12 +26,9 @@ val map : int -> int -> int -> (unit, string) result
 (** [map fd at n] maps [n] bytes of [fd], or anonymous memory if [fd < 0], at
     the address [at] of the process. *)
 
-val reserve : int -> int -> (unit, string) result
-(** [reserve at n] makes the [n] addresses at [at] inaccessible, so that nothing
-    else maps there. *)
-
-val release : int -> int -> unit
-(** [release at n] returns [n] mapped bytes at [at] to the reservation. *)
+val unmap : int -> int -> unit
+(** [unmap at n] returns the [n] bytes {!map} mapped at [at] to the process's
+    reservation of the GPU's addresses. *)
 
 (** {1:client The client} *)
 
@@ -42,8 +36,8 @@ type t = {
   ctl : int;  (** [/dev/nvidiactl]. *)
   uvm : int;  (** [/dev/nvidia-uvm]. *)
   root : int;  (** The client's handle. *)
-  release : (module Defs.RELEASE);  (** The kernel driver's release. *)
-  number : int;  (** Its number, such as [615]. *)
+  layouts : (module Defs.RELEASE);  (** The layouts of the driver's release. *)
+  release : int;  (** The release's number, such as [615]. *)
   low : Va.t;  (** The GPU's addresses of memory the host maps too. *)
   main : Va.t;  (** The GPU's addresses of the rest. *)
 }

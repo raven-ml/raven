@@ -608,6 +608,14 @@ let refusal () =
   done;
   N.free g (require_some ~msg:"64 MiB after" (N.alloc g `Device (64 lsl 20)))
 
+(* Host memory no page backs is refused: map_host answers None. *)
+let refused_host () =
+  S.with_driver @@ fun g ->
+  let p = S.pages S.page in
+  S.free_pages p S.page;
+  equal bool ~msg:"an unmapped page" true (Option.is_none (N.map_host g p 8));
+  equal bool ~msg:"address 0" true (Option.is_none (N.map_host g 0 8))
+
 let memory =
   group ~timeout:120. "memory"
     [
@@ -620,6 +628,7 @@ let memory =
         "an allocation past the GPU's memory is None, and gives back what it \
          took"
         refusal;
+      test "map_host answers None for host memory no page backs" refused_host;
     ]
 
 (* Work *)

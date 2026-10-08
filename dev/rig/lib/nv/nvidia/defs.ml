@@ -16,6 +16,7 @@
    Copyright (c) 2001-2022 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2001-2022, NVIDIA CORPORATION
    Copyright (c) 2002-2022 NVIDIA CORPORATION & AFFILIATES
+   Copyright (c) 2003-2016 NVIDIA Corporation
    Copyright (c) 2004-2024 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2004-2026 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2005-2024 NVIDIA CORPORATION & AFFILIATES
@@ -88,6 +89,8 @@ let nv_esc_rm_control = 0x2a
 let nv_esc_rm_free = 0x29
 let nv_esc_rm_map_memory = 0x4e
 let nv_esc_rm_map_memory_dma = 0x57
+let nv_max_devices = 0x20
+let nv_mmu_pte_kind_generic_memory = 6
 let nvos02_flags_physicality_noncontiguous = 1
 let nvos02_flags_coherency_cached = 1
 let nvos02_flags_mapping_no_map = 1
@@ -148,6 +151,8 @@ let uvm_gpu_mapping_type_read_write_atomic = 1
 (* Statuses, the same in every release. *)
 let nv_ok = 0
 let nv_err_no_memory = 0x51
+let nv_err_invalid_address = 0x1e
+let nv_err_invalid_argument = 0x1f
 
 (* Bit fields of their words: (lowest bit, bits). *)
 let nvos02_flags_physicality = (4, 4)

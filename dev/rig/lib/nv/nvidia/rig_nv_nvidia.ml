@@ -4,8 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 (* Any domain may call any function. A GPU's objects are made once, under
-   [gpus_lock], and kept for the process; the host ranges [map_host] maps are
-   kept under [ranges_lock]. *)
+   [gpus_lock], and kept for the process, its registered channels and whether
+   a device of it is open under the same lock; the host ranges [map_host] maps
+   are kept under [ranges_lock]. *)
 
 module D = Defs
 
@@ -52,8 +53,8 @@ type gpu = {
   budget : int;
   index : int; (* its number, in bus order *)
   mutable refused : int list; (* the GPUs peer access was refused with *)
-  channels : (int * int) list Atomic.t; (* registered, with their ranges *)
-  opened : bool Atomic.t; (* whether a device of it is open *)
+  mutable channels : (int * int) list; (* registered, with their ranges *)
+  mutable opened : bool; (* whether a device of it is open and not stopped *)
 }
 
 (* GPU memory *)
@@ -87,16 +88,16 @@ and range = {
 }
 
 let key : mem Type.Id.t = Type.Id.make ()
+let gpus_lock = Mutex.create ()
 
-(* A file the RM maps memory through: each mapping has its own, as the driver
-   keeps one mapping context per file. *)
-let with_file g ~system f =
-  let path = if system then Rm.ctl_path else strf "/dev/nvidia%d" g.minor in
-  let* fd = Rm.open_file path in
+(* A file of [g]'s the RM maps memory through: each mapping has its own, as the
+   driver keeps one mapping context per file. *)
+let with_file g f =
+  let* fd = Rm.open_file (strf "/dev/nvidia%d" g.minor) in
   Fun.protect
     ~finally:(fun () -> Rm.close fd)
     (fun () ->
-      let* () = if system then Ok () else Rm.register fd ~ctl:g.c.ctl in
+      let* () = Rm.register fd ~ctl:g.c.ctl in
       f fd)
 
 (* Whether the status [s] of [what] is NV_OK: [Ok false] for
@@ -107,10 +108,11 @@ let fits g what s =
     let* () = Rm.check g.c what s in
     Ok true
 
-(* Maps the memory object [h] of [size] bytes into the process at [va]: [Ok
-   false] if the GPU's window onto its memory (BAR1) has no room. *)
-let map_to_cpu g h size va ~caching ~system =
-  with_file g ~system @@ fun fd ->
+(* Maps the memory object [h] of [size] bytes into the process at [va],
+   uncached: [Ok false] if the GPU's window onto its memory (BAR1) has no
+   room. *)
+let map_to_cpu g h size va =
+  with_file g @@ fun fd ->
   let module W = D.Nvos33_with_fd in
   let module M = D.Nvos33 in
   let w = params W.sizeof in
@@ -120,7 +122,8 @@ let map_to_cpu g h size va ~caching ~system =
   set w (at M.h_device) g.device;
   set w (at M.h_memory) h;
   set w (at M.length) size;
-  set w (at M.flags) (bits D.nvos33_flags_caching_type caching);
+  set w (at M.flags)
+    (bits D.nvos33_flags_caching_type D.nvos33_flags_caching_type_uncached);
   let what = "mapping GPU memory into the process" in
   let* () = Rm.escape g.c.ctl D.nv_esc_rm_map_memory w what in
   let* ok = fits g what (get w (at M.status)) in
@@ -132,7 +135,7 @@ let map_to_cpu g h size va ~caching ~system =
 (* Maps the memory object [h] at [va] of [g]'s virtual memory: [Ok false] if [g]
    has no memory for the mapping's page tables. *)
 let map_dma g va size h =
-  let (module R : D.RELEASE) = g.c.release in
+  let (module R : D.RELEASE) = g.c.layouts in
   let module M = R.Nvos46 in
   let m = params M.sizeof in
   set m M.h_client g.c.root;
@@ -178,37 +181,35 @@ let map_external g va size h =
 
 (* Frees the unified memory range at [va], unmapping it from every GPU. *)
 let uvm_free c va size =
-  let (module R : D.RELEASE) = c.Rm.release in
+  let (module R : D.RELEASE) = c.Rm.layouts in
   let module U = R.Uvm_free in
   let u = params U.sizeof in
   set u U.base va;
   Option.iter (fun l -> set u l size) U.length;
   Rm.uvm_call c D.uvm_free u U.rm_status "unmapping GPU memory"
 
-(* Maps [size] bytes of the memory object [h] at [va] for [g]: creating the
-   unified memory range there and the object's mapping in [g]'s virtual memory
-   first if [create]. [Ok false] if [g] has no memory for it; a range it created
-   is then freed, so that the addresses stay free. *)
-let uvm_map g ~create va size h =
-  if not create then map_external g va size h
-  else
-    let module E = D.Uvm_create_external_range in
-    let e = params E.sizeof in
-    set e E.base va;
-    set e E.length size;
-    let* () =
-      Rm.uvm_call g.c D.uvm_create_external_range e E.rm_status
-        "reserving GPU addresses"
-    in
-    let mapped =
-      let* ok = map_dma g va size h in
-      if ok then map_external g va size h else Ok false
-    in
-    match mapped with
-    | Ok true -> Ok true
-    | Ok false | Error _ ->
-        ignore (uvm_free g.c va size : (unit, string) result);
-        mapped
+(* Makes the unified memory range of [size] bytes at [va] and maps the memory
+   object [h] there for [g], in [g]'s virtual memory first. [Ok false] if [g]
+   has no memory for it; the range is then freed, so that the addresses stay
+   free. *)
+let uvm_map g va size h =
+  let module E = D.Uvm_create_external_range in
+  let e = params E.sizeof in
+  set e E.base va;
+  set e E.length size;
+  let* () =
+    Rm.uvm_call g.c D.uvm_create_external_range e E.rm_status
+      "reserving GPU addresses"
+  in
+  let mapped =
+    let* ok = map_dma g va size h in
+    if ok then map_external g va size h else Ok false
+  in
+  match mapped with
+  | Ok true -> Ok true
+  | Ok false | Error _ ->
+      ignore (uvm_free g.c va size : (unit, string) result);
+      mapped
 
 (* Unmaps for [g] the [size] bytes at [va] of a range that stays. *)
 let uvm_unmap g va size =
@@ -219,8 +220,13 @@ let uvm_unmap g va size =
   set_uuid u U.gpu_uuid g.uuid;
   Rm.uvm_call g.c D.uvm_unmap_external u U.rm_status "unmapping GPU memory"
 
+(* The RM's refusals of host memory to describe: an address no memory backs,
+   such as an unmapped page, or memory it cannot pin. *)
+let refusals =
+  [ D.nv_err_invalid_address; D.nv_err_invalid_argument; D.nv_err_no_memory ]
+
 (* Describes the process's memory at [va] to the RM as system memory of [g]: the
-   description's handle. *)
+   description's handle, or [None] if the RM refuses the memory. *)
 let describe g va size =
   let h = Rm.handle () in
   let module W = D.Nvos02_with_fd in
@@ -240,11 +246,14 @@ let describe g va size =
     lor bits D.nvos02_flags_mapping D.nvos02_flags_mapping_no_map);
   let what = "describing host memory to the GPU" in
   let* () =
-    with_file g ~system:false (fun fd ->
+    with_file g (fun fd ->
         Rm.escape fd D.nv_esc_rm_alloc_memory w what)
   in
-  let* () = Rm.check g.c what (get w (at O.status)) in
-  Ok h
+  let s = get w (at O.status) in
+  if List.mem s refusals then Ok None
+  else
+    let* () = Rm.check g.c what s in
+    Ok (Some h)
 
 let free_object g h =
   ignore ((Rm.rm g.c).free ~parent:g.device h : (unit, string) result)
@@ -257,7 +266,7 @@ let video_params g ~contiguous ~page_size size =
   set p A.owner g.c.root;
   set p A.alignment page_size;
   set p A.limit (size - 1);
-  set p A.format 6;
+  set p A.format D.nv_mmu_pte_kind_generic_memory;
   set p A.size size;
   set p A.type_ D.nvos32_type_image;
   set p A.attr
@@ -298,15 +307,15 @@ let alloc_host g size =
   with_addresses g.c.low ~align:page size @@ fun va ->
   let* () = Rm.map (-1) va size in
   match describe g va size with
-  | Error e ->
-      Rm.release va size;
-      Error e
-  | Ok h -> (
-      match uvm_map g ~create:true va size h with
+  | (Error _ | Ok None) as r ->
+      Rm.unmap va size;
+      Result.map (fun _ -> None) r
+  | Ok (Some h) -> (
+      match uvm_map g va size h with
       | Ok true -> Ok (Some (h, va))
       | (Ok false | Error _) as r ->
           free_object g h;
-          Rm.release va size;
+          Rm.unmap va size;
           Result.map (fun _ -> None) r)
 
 (* Video memory, mapped for the host too through BAR1 if [cpu]. The RM allocates
@@ -325,15 +334,14 @@ let alloc_video g ~cpu size =
       let* bar =
         if not cpu then Ok true
         else
-          map_to_cpu g h size va ~system:false
-            ~caching:D.nvos33_flags_caching_type_uncached
+          map_to_cpu g h size va
       in
       if not bar then Ok None
       else
-        match uvm_map g ~create:true va size h with
+        match uvm_map g va size h with
         | Ok true -> Ok (Some va)
         | (Ok false | Error _) as r ->
-            if cpu then Rm.release va size;
+            if cpu then Rm.unmap va size;
             Result.map (fun _ -> None) r
     in
     match placed with
@@ -417,7 +425,7 @@ let map_host g a n =
           Some (mem r)
       | None -> (
           match
-            fault (uvm_map g ~create:false r.gpu_addr r.bytes r.descriptor)
+            fault (map_external g r.gpu_addr r.bytes r.descriptor)
           with
           | false -> None
           | true ->
@@ -426,32 +434,34 @@ let map_host g a n =
   | None when List.exists overlaps !ranges -> None
   | None -> (
       let size = a1 - a0 in
-      let h = fault (describe g a0 size) in
-      let placed =
-        with_addresses g.c.low ~align:page size @@ fun va ->
-        let* ok = uvm_map g ~create:true va size h in
-        Ok (if ok then Some va else None)
-      in
-      match placed with
-      | Ok (Some gpu_addr) ->
-          let r =
-            {
-              addr = a0;
-              bytes = size;
-              gpu_addr;
-              descriptor = h;
-              parent = g;
-              users = [ (g, 1) ];
-            }
+      match fault (describe g a0 size) with
+      | None -> None
+      | Some h -> (
+          let placed =
+            with_addresses g.c.low ~align:page size @@ fun va ->
+            let* ok = uvm_map g va size h in
+            Ok (if ok then Some va else None)
           in
-          ranges := r :: !ranges;
-          Some (mem r)
-      | Ok None ->
-          free_object g h;
-          None
-      | Error e ->
-          free_object g h;
-          raise (Rig_nv.Fault e))
+          match placed with
+          | Ok (Some gpu_addr) ->
+              let r =
+                {
+                  addr = a0;
+                  bytes = size;
+                  gpu_addr;
+                  descriptor = h;
+                  parent = g;
+                  users = [ (g, 1) ];
+                }
+              in
+              ranges := r :: !ranges;
+              Some (mem r)
+          | Ok None ->
+              free_object g h;
+              None
+          | Error e ->
+              free_object g h;
+              raise (Rig_nv.Fault e)))
 
 (* Another GPU's video memory needs peer access, which may be refused; host
    memory needs none. *)
@@ -460,7 +470,7 @@ let map_peer g (m : mem Rig_nv.memory) =
   let refused = function Some u -> List.mem u g.refused | None -> false in
   if refused peer.video then None
   else
-    match fault (uvm_map g ~create:false peer.va peer.size peer.handle) with
+    match fault (map_external g peer.va peer.size peer.handle) with
     | false -> None
     | true -> Some (memory { peer with of_ = Peer })
 
@@ -486,13 +496,12 @@ let free g (m : mem Rig_nv.memory) =
   | Own space ->
       free_object g m.handle;
       fault (uvm_free g.c m.va m.size);
-      (match m.host with Some a -> Rm.release a m.size | None -> ());
+      (match m.host with Some a -> Rm.unmap a m.size | None -> ());
       Va.free space m.va m.size
 
 (* Channels *)
 
-(* Registers the channel [ch] with unified memory at a range of its own; a GPU
-   has no open device once none of its channels is registered. *)
+(* Registers the channel [ch] with unified memory at a range of its own. *)
 let register g ch =
   let* base =
     match Va.alloc g.c.low ~align:page channel_range with
@@ -515,16 +524,12 @@ let register g ch =
       Va.free g.c.low base channel_range;
       e
   | Ok () ->
-      let rec add () =
-        let l = Atomic.get g.channels in
-        if not (Atomic.compare_and_set g.channels l ((ch, base) :: l)) then
-          add ()
-      in
-      add ();
+      Mutex.protect gpus_lock (fun () ->
+          g.channels <- (ch, base) :: g.channels);
       Ok ()
 
 let unregister g ch =
-  let (module R : D.RELEASE) = g.c.release in
+  let (module R : D.RELEASE) = g.c.layouts in
   let module U = R.Uvm_unregister_channel in
   let u = params U.sizeof in
   Option.iter (fun f -> set_uuid u f g.uuid) U.gpu_uuid;
@@ -534,18 +539,13 @@ let unregister g ch =
     Rm.uvm_call g.c D.uvm_unregister_channel u U.rm_status
       "unregistering a GPU channel"
   in
-  let rec remove () =
-    let l = Atomic.get g.channels in
-    let l' = List.filter (fun (c, _) -> c <> ch) l in
-    if not (Atomic.compare_and_set g.channels l l') then remove ()
-    else begin
-      List.iter
-        (fun (c, base) -> if c = ch then Va.free g.c.low base channel_range)
-        l;
-      if l' = [] then Atomic.set g.opened false
-    end
+  let gone =
+    Mutex.protect gpus_lock @@ fun () ->
+    let gone, kept = List.partition (fun (c, _) -> c = ch) g.channels in
+    g.channels <- kept;
+    gone
   in
-  remove ();
+  List.iter (fun (_, base) -> Va.free g.c.low base channel_range) gone;
   Ok ()
 
 (* Opening a GPU *)
@@ -556,7 +556,7 @@ let unregister g ch =
    function number, which is 0 for NVIDIA's GPUs. *)
 let cards c =
   let module C = D.Card_info in
-  let n = 64 in
+  let n = D.nv_max_devices in
   let t = params (n * C.sizeof) in
   let* () = Rm.escape c.Rm.ctl D.nv_esc_card_info t "reading NVIDIA's GPUs" in
   Ok
@@ -625,7 +625,7 @@ let gr_info rm subdevice =
 
 (* The frame buffer's fact [index], in bytes. *)
 let fb_info c rm subdevice index =
-  let (module R : D.RELEASE) = c.Rm.release in
+  let (module R : D.RELEASE) = c.Rm.layouts in
   let module G = R.Fb_get_info in
   let module F = D.Fb_info in
   let p = params G.sizeof in
@@ -639,10 +639,11 @@ let fb_info c rm subdevice index =
   let* () =
     rm.Rig_nv.control subdevice D.nv2080_ctrl_cmd_fb_get_info_v2 (Some p)
   in
+  (* The RM reports the frame buffer's facts in KiB. *)
   Ok (get p (elt F.data) * 1024)
 
-let opened : (string * gpu) list Atomic.t = Atomic.make []
-let gpus_lock = Mutex.create ()
+(* The GPUs made, by bus address, under [gpus_lock]. *)
+let gpus : (string * gpu) list ref = ref []
 
 (* GPU [bus]'s objects, made at its first open and kept for the process; a
    failed open gives back what it took, last first. *)
@@ -690,7 +691,7 @@ let make_gpu c ~index bus =
         (fun p -> set p D.Memory_virtual_alloc.limit va_limit)
         D.Memory_virtual_alloc.sizeof
     in
-    let (module R : D.RELEASE) = c.release in
+    let (module R : D.RELEASE) = c.layouts in
     let* vaspace =
       alloc ~parent:device D.fermi_vaspace_a
         (fun p ->
@@ -769,18 +770,15 @@ let make_gpu c ~index bus =
         budget;
         index;
         refused = [];
-        channels = Atomic.make [];
-        opened = Atomic.make false;
+        channels = [];
+        opened = false;
       }
     in
-    let* mapped =
-      map_to_cpu g usermode usermode_bytes doorbell ~system:false
-        ~caching:D.nvos33_flags_caching_type_uncached
-    in
+    let* mapped = map_to_cpu g usermode usermode_bytes doorbell in
     let* () =
       if mapped then Ok () else Error "no room to map the GPU's doorbell"
     in
-    taken (fun () -> Rm.release doorbell usermode_bytes);
+    taken (fun () -> Rm.unmap doorbell usermode_bytes);
     let module U = D.Uvm_register_gpu in
     let u = params U.sizeof in
     set_uuid u U.gpu_uuid uuid;
@@ -793,7 +791,8 @@ let make_gpu c ~index bus =
       let u = params U.sizeof in
       set_uuid u U.gpu_uuid uuid;
       ignore
-        (Rm.uvm_call c D.uvm_unregister_gpu u U.rm_status ""
+        (Rm.uvm_call c D.uvm_unregister_gpu u U.rm_status
+           "unregistering the GPU"
           : (unit, string) result)
     in
     taken unregister_gpu;
@@ -836,13 +835,12 @@ let enable_peers g others =
 
 let gpu c ~index bus =
   Mutex.protect gpus_lock @@ fun () ->
-  match List.assoc_opt bus (Atomic.get opened) with
+  match List.assoc_opt bus !gpus with
   | Some g -> Ok g
   | None ->
       let* g = make_gpu c ~index bus in
-      let others = List.map snd (Atomic.get opened) in
-      enable_peers g others;
-      Atomic.set opened ((bus, g) :: Atomic.get opened);
+      enable_peers g (List.map snd !gpus);
+      gpus := (bus, g) :: !gpus;
       Ok g
 
 let path g =
@@ -868,7 +866,10 @@ let path g =
        still run. *)
     check = ignore;
     hang_ms = None;
-    stop = (fun () -> `Unknown);
+    stop =
+      (fun () ->
+        Mutex.protect gpus_lock (fun () -> g.opened <- false);
+        `Unknown);
   }
 
 (* Opening *)
@@ -891,11 +892,16 @@ let open_ i =
   | Some bus -> (
       let* c = Rm.client () in
       let* g = gpu c ~index:i bus in
-      if not (Atomic.compare_and_set g.opened false true) then
-        Error (strf "%s has a device open" bus)
+      let claimed =
+        Mutex.protect gpus_lock @@ fun () ->
+        let free = not g.opened in
+        g.opened <- true;
+        free
+      in
+      if not claimed then Error (strf "%s has a device open" bus)
       else
         match Rig_nv.make (path g) with
         | Ok d -> Ok d
         | Error _ as e ->
-            Atomic.set g.opened false;
+            Mutex.protect gpus_lock (fun () -> g.opened <- false);
             e)

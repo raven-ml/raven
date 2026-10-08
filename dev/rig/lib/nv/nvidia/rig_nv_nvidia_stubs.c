@@ -63,8 +63,11 @@ value caml_rig_nv_nvidia_close(value v_fd) {
 
 /* Runs the ioctl [v_request] on [v_fd] with [v_params]' bytes, which may
    point to other bytes the caller keeps alive, retrying an interrupted
-   call. Releases the runtime: the RM may take time to answer. */
+   call. Releases the runtime: the RM may take time to answer, and
+   [v_params] stays rooted, so another domain's collection cannot free the
+   bytes the kernel writes. */
 value caml_rig_nv_nvidia_ioctl(value v_fd, value v_request, value v_params) {
+  CAMLparam1(v_params);
   int fd = Int_val(v_fd);
   unsigned long request = (unsigned long)Long_val(v_request);
   void *arg = Caml_ba_data_val(v_params);
@@ -74,7 +77,7 @@ value caml_rig_nv_nvidia_ioctl(value v_fd, value v_request, value v_params) {
   while (r < 0 && errno == EINTR);
   int e = errno;
   caml_acquire_runtime_system();
-  return Val_long(r < 0 ? -e : 0);
+  CAMLreturn(Val_long(r < 0 ? -e : 0));
 }
 
 /* Maps [v_n] bytes at [v_at], readable, writable and shared: of [v_fd] from
@@ -111,7 +114,7 @@ value caml_rig_nv_nvidia_reserve(value v_at, value v_n) {
 }
 
 /* Returns the [v_n] bytes at [v_at] to the reservation they came from. */
-value caml_rig_nv_nvidia_release(value v_at, value v_n) {
+value caml_rig_nv_nvidia_unmap(value v_at, value v_n) {
   void *p = mmap(PTR(v_at), (size_t)Long_val(v_n), PROT_NONE,
                  MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED, -1,
                  0);
@@ -150,7 +153,7 @@ value caml_rig_nv_nvidia_reserve(value v_at, value v_n) {
   return Val_long(-ENOSYS);
 }
 
-value caml_rig_nv_nvidia_release(value v_at, value v_n) {
+value caml_rig_nv_nvidia_unmap(value v_at, value v_n) {
   (void)v_at;
   (void)v_n;
   return Val_long(-ENOSYS);

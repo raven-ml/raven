@@ -16,7 +16,7 @@ external ioctl : int -> int -> Rig_nv.params -> int
 
 external map_raw : int -> int -> int -> int = "caml_rig_nv_nvidia_map"
 external reserve_raw : int -> int -> int = "caml_rig_nv_nvidia_reserve"
-external release_raw : int -> int -> int = "caml_rig_nv_nvidia_release"
+external unmap_raw : int -> int -> int = "caml_rig_nv_nvidia_unmap"
 external strerror : int -> string = "caml_rig_nv_nvidia_strerror"
 external address : Rig_nv.params -> int = "caml_rig_nv_nvidia_address"
 
@@ -70,18 +70,23 @@ let reserve at n =
 
 (* Returning addresses to the reservation cannot fail but for a bad argument,
    which is this library's: its error is dropped. *)
-let release at n = ignore (release_raw at n : int)
+let unmap at n = ignore (unmap_raw at n : int)
 
 (* The RM *)
 
-(* An escape ioctl: read and write, of the parameters' size, in the driver's
-   magic. *)
+(* Linux's _IOWR(type, nr, size) (asm-generic/ioctl.h): read and write in bits
+   31:30, the size in 29:16, the type in 15:8, the number in 7:0. *)
+let ioc_read_write = 3
+let ioc_size_bits = 14
+
+let iowr ~type_ nr size =
+  if size >= 1 lsl ioc_size_bits then
+    invalid_arg (strf "Rm.escape: %d bytes of parameters, past 16 KiB" size);
+  (ioc_read_write lsl 30) lor (size lsl 16) lor (type_ lsl 8) lor nr
+
+(* An escape ioctl of the driver's magic, with the parameters [p]. *)
 let escape fd nr p what =
-  let request =
-    (3 lsl 30)
-    lor ((Bigarray.Array1.dim p land 0x1fff) lsl 16)
-    lor (D.nv_ioctl_magic lsl 8) lor nr
-  in
+  let request = iowr ~type_:D.nv_ioctl_magic nr (Bigarray.Array1.dim p) in
   Result.map ignore (result what (ioctl fd request p))
 
 let register fd ~ctl =
@@ -93,8 +98,8 @@ type t = {
   ctl : int;
   uvm : int;
   root : int;
-  release : (module D.RELEASE);
-  number : int;
+  layouts : (module D.RELEASE);
+  release : int;
   low : Va.t;
   main : Va.t;
 }
@@ -104,7 +109,7 @@ let status_name (module R : D.RELEASE) s =
 
 let check c what s =
   if s = D.nv_ok then Ok ()
-  else Error (strf "%s: %s" what (status_name c.release s))
+  else Error (strf "%s: %s" what (status_name c.layouts s))
 
 (* NV_ESC_RM_ALLOC under [root]: the status and the new handle. *)
 let alloc_raw ctl ~root ~parent cls p =
@@ -154,7 +159,7 @@ let rm c =
     let* () = escape c.ctl D.nv_esc_rm_free a "freeing a GPU object" in
     check c "freeing a GPU object" (get a F.status)
   in
-  { Rig_nv.release = c.number; client = c.root; alloc; control; free }
+  { Rig_nv.release = c.release; client = c.root; alloc; control; free }
 
 (* Unified memory *)
 
@@ -236,16 +241,16 @@ let make_client () =
     let* mm = open_file uvm_path in
     taken (fun () -> close mm);
     let* () = reserve low_base (main_base - low_base) in
-    taken (fun () -> release low_base (main_base - low_base));
+    taken (fun () -> unmap low_base (main_base - low_base));
     let* () = reserve main_base (top - main_base) in
-    taken (fun () -> release main_base (top - main_base));
+    taken (fun () -> unmap main_base (top - main_base));
     let c =
       {
         ctl;
         uvm = uvm_fd;
         root;
-        release = layouts;
-        number;
+        layouts;
+        release = number;
         low = Va.make ~base:low_base (main_base - low_base);
         main = Va.make ~base:main_base (top - main_base);
       }

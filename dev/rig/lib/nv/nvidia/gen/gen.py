@@ -90,6 +90,7 @@ SOURCES = {
     "uvm_ioctl.h": UVM + "uvm_ioctl.h",
     "uvm_linux_ioctl.h": UVM + "uvm_linux_ioctl.h",
     "nvstatuscodes.h": COMMON + "nvstatuscodes.h",
+    "dev_mmu.h": UVM + "hwref/turing/tu102/dev_mmu.h",
 }
 
 # The headers some releases lack, by the first release that has each: the
@@ -113,7 +114,7 @@ CONSTANTS = [
     "NV_IOCTL_MAGIC", "NV_ESC_CARD_INFO", "NV_ESC_REGISTER_FD", "NV_ESC_RM_ALLOC", "NV_ESC_RM_ALLOC_MEMORY",
     "NV_ESC_RM_CONTROL", "NV_ESC_RM_FREE", "NV_ESC_RM_MAP_MEMORY", "NV_ESC_RM_MAP_MEMORY_DMA",
     # memory
-    "NVOS02_FLAGS_PHYSICALITY_NONCONTIGUOUS", "NVOS02_FLAGS_COHERENCY_CACHED", "NVOS02_FLAGS_MAPPING_NO_MAP",
+    "NV_MAX_DEVICES", "NV_MMU_PTE_KIND_GENERIC_MEMORY", "NVOS02_FLAGS_PHYSICALITY_NONCONTIGUOUS", "NVOS02_FLAGS_COHERENCY_CACHED", "NVOS02_FLAGS_MAPPING_NO_MAP",
     "NVOS32_ATTR_PHYSICALITY_CONTIGUOUS", "NVOS32_ATTR_PHYSICALITY_ALLOW_NONCONTIGUOUS",
     "NVOS32_ATTR_PAGE_SIZE_HUGE", "NVOS32_ATTR_LOCATION_VIDMEM", "NVOS32_ATTR_LOCATION_PCI",
     "NVOS32_ATTR2_GPU_CACHEABLE_YES", "NVOS32_ATTR2_GPU_CACHEABLE_NO", "NVOS32_ATTR2_PAGE_SIZE_HUGE_2MB",
@@ -210,7 +211,7 @@ STATUS = re.compile(r'^[ \t]*NV_STATUS_CODE\(\s*(\w+)\s*,\s*(0[xX][0-9A-Fa-f]+)\
 STATUS_HEADER = "nvstatuscodes.h"
 
 # The statuses read by name, the same in every release.
-STATUSES = ["NV_OK", "NV_ERR_NO_MEMORY"]
+STATUSES = ["NV_OK", "NV_ERR_NO_MEMORY", "NV_ERR_INVALID_ADDRESS", "NV_ERR_INVALID_ARGUMENT"]
 
 # C headers
 
