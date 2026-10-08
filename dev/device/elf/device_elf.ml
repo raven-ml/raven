@@ -3,6 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
 type place =
@@ -250,8 +251,13 @@ let string_at obj named tab off =
     | Some e when e < first + n ->
         let len = e - first - off in
         named := !named + len;
+        (* A raise of its own: [fail] here makes every read 13% slower
+           (amd_128_gfx1100.hsaco, M1 Max). *)
         if !named > String.length obj then
-          raise (Malformed "the names are longer than the object");
+          raise
+            (Malformed
+               (strf "the names total more than the object's %d bytes"
+                  (String.length obj)));
         String.sub obj (first + off) len
     | _ -> fail "the name at %d is unterminated" off
   end
@@ -589,13 +595,14 @@ let read ~align ?held obj =
         (fun a ->
           if a < address || a - address >= size || holds lacks a then
             fail
-              "a relocation patches address %d, which the image does not hold" a;
+              "a relocation patches address 0x%x, which the image does not hold"
+              a;
           a - address)
         (fun x ->
           let i = holding offsets hs (Lazy.force by_offset) x in
           if i < 0 then
             fail
-              "a relocation without an addend patches address %d, where the \
+              "a relocation without an addend patches address 0x%x, where the \
                object has no bytes"
               (x + address);
           implicit hs.(i) (Option.get offsets.(i)) x)
