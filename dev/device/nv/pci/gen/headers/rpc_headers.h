@@ -21,6 +21,14 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
+#define NV_VGPU_MSG_HEADER_VERSION_MAJOR                             31:24 /* R---D */
+
+#define NV_VGPU_MSG_HEADER_VERSION_MINOR                             23:16 /* R---D */
+
+#define NV_VGPU_MSG_HEADER_VERSION_MAJOR_TOT                    0x00000003 /* R---D */
+
+#define NV_VGPU_MSG_HEADER_VERSION_MINOR_TOT                    0x00000000 /* R---D */
+
 #define NV_VGPU_MSG_SIGNATURE_VALID                             0x43505256 /* RW--V */
 
 #define NV_VGPU_MSG_RESULT_RPC_PENDING                   0xFFFFFFFF /* RW--V */

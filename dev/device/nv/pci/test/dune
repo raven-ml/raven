@@ -1,3 +1,5 @@
 (tests
- (names test_chip test_mmu test_layout)
- (libraries device_nv_pci device_pci windtrap))
+ (names test_chip test_mmu test_layout test_vbios)
+ (libraries device_nv_pci device_pci windtrap)
+ (deps
+  (source_tree fixtures)))

@@ -48,6 +48,8 @@
 (* Constants. *)
 let nv_vgpu_msg_signature_valid = 0x43505256
 let nv_vgpu_msg_result_rpc_pending = 0xffffffff
+let nv_vgpu_msg_header_version_major_tot = 3
+let nv_vgpu_msg_header_version_minor_tot = 0
 let gsp_fw_wpr_meta_revision = 1
 let gsp_fw_wpr_meta_magic = 0xdc3aae21371a60b3L
 let bit_header_signature = 0x544942
@@ -70,10 +72,31 @@ let offsetof_pci_exp_rom_pci_data_struct_ptr = 0x18
 let offsetof_pci_data_struct_image_len = 0x10
 let offsetof_pci_data_struct_code_type = 0x14
 let pci_rom_image_block_size = 0x200
+let bit_header_id = 0xb8ff
+let bit_header_size_offset = 8
+let falcon_ucode_table_hdr_v1_version = 1
+let falcon_ucode_table_hdr_v1_size_6 = 6
+let falcon_ucode_table_entry_v1_size_6 = 6
+let falcon_ucode_entry_appid_firmware_sec_lic = 5
+let pci_data_struct_signature = 0x52494350
+let pci_data_struct_signature_nv = 0x5344504e
+let pci_data_struct_signature_nv2 = 0x53494752
+let offsetof_pci_data_struct_len = 0xa
+let offsetof_pci_data_struct_last_image = 0x15
+let nv_pci_data_ext_sig = 0x4544504e
+let nv_pci_data_ext_rev_10 = 0x100
+let nv_pci_data_ext_rev_11 = 0x101
+let offsetof_pci_data_ext_struct_sig = 0
+let offsetof_pci_data_ext_struct_len = 6
+let offsetof_pci_data_ext_struct_rev = 4
+let offsetof_pci_data_ext_struct_subimage_len = 8
+let offsetof_pci_data_ext_struct_last_image = 0xa
 
 (* Bit fields of 32-bit words: (lowest bit, bits). *)
 let nv_bit_falcon_ucode_desc_header_vdesc_version = (8, 8)
 let nv_bit_falcon_ucode_desc_header_vdesc_size = (0x10, 0x10)
+let nv_vgpu_msg_header_version_major = (0x18, 8)
+let nv_vgpu_msg_header_version_minor = (0x10, 8)
 
 (* The GSP's functions and events (rpc_global_enums.h). *)
 let nv_vgpu_msg_function_continuation_record = 0x47
@@ -192,6 +215,14 @@ module Dmem_mapper = struct
   let sizeof = 64
   let cmd_in_buffer_offset = (8, 4)
   let init_cmd = (0x2c, 4)
+end
+
+module Read_vbios_desc = struct
+  let sizeof = 24
+end
+
+module Frts_region_desc = struct
+  let sizeof = 20
 end
 
 module Frts_cmd = struct

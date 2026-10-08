@@ -21,13 +21,16 @@ val read : Chip.t -> string
 
 type fwsec = {
   image : string;
-      (** The image, patched to run FRTS, its production signature in place. *)
+      (** The image, its code then its data, patched to run FRTS, its production
+          signature in place. *)
   imem_pa : int;  (** The falcon's address of its code. *)
   imem_va : int;  (** The virtual address of its code. *)
   imem_size : int;  (** The size of its code. *)
   dmem_pa : int;  (** The falcon's address of its data. *)
   dmem_size : int;  (** The size of its data. *)
-  signature : int;  (** The offset of its signature in [image]. *)
+  pkc : int;
+      (** The offset in its data of its signature, which the falcon's boot ROM
+          checks it with. *)
   engines : int;  (** The engines it runs on, as a mask. *)
   ucode : int;  (** Its ucode ID. *)
 }
@@ -35,6 +38,11 @@ type fwsec = {
 
 val fwsec : string -> frts:int -> (fwsec, string) result
 (** [fwsec rom ~frts] is the FWSEC of the VBIOS [rom], patched to set up the
-    FRTS region at the byte [frts] of the GPU's memory. [Error] names what the
-    ROM lacks: an expansion ROM, the BIT table, the falcon data, FWSEC, a
-    version 3 descriptor, or the DMEM mapper. *)
+    FRTS region at the byte [frts] of the GPU's memory. The walk is the RM's
+    ([kernel_gsp_vbios_tu102.c], [kernel_gsp_fwsec.c]): the PCI expansion ROM
+    images, by their PCI data structures and NVIDIA's extension of them, the BIT
+    table, found by its signature and checksum, its falcon data, and the first
+    production FWSEC entry of the ucode table. [Error] names what the ROM lacks:
+    valid images, the BIT table, a production FWSEC with a version 3 descriptor,
+    or the DMEM mapper, or a structure that points past its end. The signature
+    in place is the last of the descriptor's. *)

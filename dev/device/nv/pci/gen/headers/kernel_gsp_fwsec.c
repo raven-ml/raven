@@ -21,7 +21,11 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
+#define BIT_HEADER_ID                     0xB8FF
+
 #define BIT_HEADER_SIGNATURE              0x00544942  // "BIT\0"
+
+#define BIT_HEADER_SIZE_OFFSET            8
 
 struct BIT_HEADER_V1_00
 {
@@ -73,6 +77,10 @@ typedef struct
     bios_U008 DescSize;
 } FALCON_UCODE_TABLE_HDR_V1;
 
+#define FALCON_UCODE_TABLE_HDR_V1_VERSION   1
+
+#define FALCON_UCODE_TABLE_HDR_V1_SIZE_6    6
+
 #define FALCON_UCODE_TABLE_HDR_V1_6_FMT     "6b"
 
 typedef struct
@@ -82,7 +90,11 @@ typedef struct
     bios_U032 DescPtr;
 } FALCON_UCODE_TABLE_ENTRY_V1;
 
+#define FALCON_UCODE_TABLE_ENTRY_V1_SIZE_6              6
+
 #define FALCON_UCODE_TABLE_ENTRY_V1_6_FMT               "2b1d"
+
+#define FALCON_UCODE_ENTRY_APPID_FIRMWARE_SEC_LIC       0x05
 
 #define FALCON_UCODE_ENTRY_APPID_FWSEC_PROD             0x85
 
