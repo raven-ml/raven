@@ -404,7 +404,8 @@ void dc_sub_raise(struct dc_sub *s, uint64_t p) {
 /* Unsets [s]'s slots and forgets its waits. */
 value caml_rig_sub_clear(value v_s) {
   struct dc_sub *s = Sub_val(v_s);
-  memset(s->slots, 0, (size_t)(s->nreads + s->nwrites) * sizeof *s->slots);
+  if (s->nreads + s->nwrites > 0)
+    memset(s->slots, 0, (size_t)(s->nreads + s->nwrites) * sizeof *s->slots);
   if (s->nwait_slots > 0)
     memset(s->wait_slots, 0, (size_t)s->nwait_slots * sizeof *s->wait_slots);
   s->npoints = s->nwaits = s->nhandles = 0;

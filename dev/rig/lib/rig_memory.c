@@ -133,7 +133,8 @@ value caml_rig_load64(value v_addr) {
 
 /* Copies the string [v_s] to the host address [v_dst]. */
 value caml_rig_blit_string(value v_s, value v_dst) {
-  memcpy((void *)Long_val(v_dst), String_val(v_s), caml_string_length(v_s));
+  size_t n = caml_string_length(v_s);
+  if (n > 0) memcpy((void *)Long_val(v_dst), String_val(v_s), n);
   return Val_unit;
 }
 

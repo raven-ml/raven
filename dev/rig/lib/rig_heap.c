@@ -678,6 +678,7 @@ value caml_rig_memmove(value v_dst, value v_src, value v_n) {
   void *dst = (void *)Long_val(v_dst);
   const void *src = (const void *)Long_val(v_src);
   size_t n = (size_t)Long_val(v_n);
+  if (n == 0) return Val_unit;
   if (n >= DC_BLOCKING_BYTES) {
     caml_enter_blocking_section_no_pending();
     memmove(dst, src, n);

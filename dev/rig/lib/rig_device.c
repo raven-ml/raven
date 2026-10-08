@@ -535,7 +535,8 @@ value caml_rig_ensure_record(value v_d, value v_n) {
   released = take(d);
   struct dc_entry *old = NULL;
   if (d->crecord < c) {
-    memcpy(grown, d->record, (size_t)d->nrecord * sizeof *grown);
+    if (d->nrecord > 0)
+      memcpy(grown, d->record, (size_t)d->nrecord * sizeof *grown);
     old = d->record;
     d->record = grown;
     d->crecord = c;
