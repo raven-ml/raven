@@ -1,0 +1,27 @@
+(executable
+ (name main)
+ (libraries rig rig.metal rig.metal.abi)
+ (foreign_stubs
+  (language c)
+  (names run)
+  (flags
+   (:standard
+    (:include objc_flags.sexp)))))
+
+(rule
+ (targets objc_flags.sexp)
+ (enabled_if
+  (= %{system} macosx))
+ (action
+  (with-stdout-to
+   objc_flags.sexp
+   (echo "(-x objective-c)"))))
+
+(rule
+ (targets objc_flags.sexp)
+ (enabled_if
+  (<> %{system} macosx))
+ (action
+  (with-stdout-to
+   objc_flags.sexp
+   (echo "()"))))

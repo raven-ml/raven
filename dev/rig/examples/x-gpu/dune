@@ -1,0 +1,3 @@
+(executable
+ (name main)
+ (libraries rig rig.metal rig.cuda rig.nv rig.nv.nvidia rig.amd rig.amd.amdgpu))
