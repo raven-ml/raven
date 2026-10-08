@@ -6,8 +6,10 @@
 (** Test drivers and probes for rig's suites. *)
 
 (** A driver over host memory whose queue runs only when its {!run} or its sleep
-    runs it: a wait that returns before it slept leaves work unrun. Every driver
-    call is logged. *)
+    runs it: a wait that returns before it slept leaves work unrun. A sleep
+    first runs the queues of the Polled devices whose words its first queued
+    submission waits for, as a device runs its own work while the host sleeps
+    on another. Every driver call is logged. *)
 module Polled : sig
   include Rig.Driver
 

@@ -6,7 +6,8 @@
 /* Polled: a test driver over host memory whose queue runs only when its
    sleep, or the test, runs it. A submission is queued with its waits, its
    copies and its fills; running the queue runs each submission whose waits
-   hold, in order, and stores its value in the word. None of these calls
+   hold, in order, and stores its value in the word. A sleep first runs the
+   Polled devices its first submission waits for. None of these calls
    blocks but a full queue's submit, which waits for room. */
 
 #define _GNU_SOURCE
@@ -56,6 +57,7 @@
 
 #ifdef _WIN32
 typedef SRWLOCK lock_t;
+#define LOCK_INITIALIZER SRWLOCK_INIT
 typedef CONDITION_VARIABLE cond_t;
 static void lock_init(lock_t *l) { InitializeSRWLock(l); }
 static void lock(lock_t *l) { AcquireSRWLockExclusive(l); }
@@ -72,6 +74,7 @@ static void *aligned(size_t align, size_t n) {
 static void aligned_free(void *p) { _aligned_free(p); }
 #else
 typedef pthread_mutex_t lock_t;
+#define LOCK_INITIALIZER PTHREAD_MUTEX_INITIALIZER
 typedef pthread_cond_t cond_t;
 static void lock_init(lock_t *l) { pthread_mutex_init(l, NULL); }
 static void lock(lock_t *l) { pthread_mutex_lock(l); }
@@ -124,6 +127,36 @@ struct polled {
 
 #define Polled_val(v) ((struct polled *)Nativeint_val(v))
 
+/* Every Polled device, never freed: a sleep runs the ones whose words the
+   sleeper's work waits for. */
+static lock_t all_mu = LOCK_INITIALIZER;
+static struct polled **all;
+static int nall, call;
+
+static void enrol(struct polled *p) {
+  lock(&all_mu);
+  if (nall == call) {
+    int c = call == 0 ? 16 : 2 * call;
+    struct polled **a = realloc(all, (size_t)c * sizeof *a);
+    if (a == NULL) {
+      unlock(&all_mu);
+      caml_raise_out_of_memory();
+    }
+    all = a;
+    call = c;
+  }
+  all[nall++] = p;
+  unlock(&all_mu);
+}
+
+static int enrolled(uintptr_t at) {
+  lock(&all_mu);
+  int found = 0;
+  for (int i = 0; i < nall && !found; i++) found = (uintptr_t)all[i] == at;
+  unlock(&all_mu);
+  return found;
+}
+
 value rig_test_polled_new(value v_capacity, value v_may_block) {
   struct polled *p = aligned(page(), page() > sizeof *p ? page() : sizeof *p);
   if (p == NULL) caml_raise_out_of_memory();
@@ -132,6 +165,7 @@ value rig_test_polled_new(value v_capacity, value v_may_block) {
   cond_init(&p->cv);
   p->capacity = Int_val(v_capacity);
   p->may_block = Bool_val(v_may_block);
+  enrol(p);
   return caml_copy_nativeint((intnat)p);
 }
 
@@ -327,6 +361,32 @@ static int run(struct polled *p) {
 
 value rig_test_polled_run(value v_p) {
   return Val_int(run(Polled_val(v_p)));
+}
+
+/* How deep a sleep follows Polled devices waiting on one another. */
+#define DRIVE_DEPTH 8
+
+/* Runs [p]'s queue after the queues of the Polled devices whose words its
+   first submission waits for, as devices run their own work while the host
+   sleeps on another one. */
+static int drive(struct polled *p, int depth) {
+  struct polled *wanted[LAST];
+  int n = 0;
+  lock(&p->mu);
+  if (p->n > 0 && depth > 0) {
+    struct queued *s = &p->q[0];
+    for (int i = 0; i < s->nwaits && n < LAST; i++)
+      if (enrolled((uintptr_t)s->waits[i].at))
+        wanted[n++] = (struct polled *)(uintptr_t)s->waits[i].at;
+  }
+  unlock(&p->mu);
+  for (int i = 0; i < n; i++)
+    if (wanted[i] != p) drive(wanted[i], depth - 1);
+  return run(p);
+}
+
+value rig_test_polled_drive(value v_p) {
+  return Val_int(drive(Polled_val(v_p), DRIVE_DEPTH));
 }
 
 static int polled_room(void *self, const struct rig_part *parts, int n) {

@@ -6,6 +6,7 @@
 external polled_new : int -> bool -> nativeint = "rig_test_polled_new"
 external polled_fail : nativeint -> unit = "rig_test_polled_fail"
 external polled_run : nativeint -> int = "rig_test_polled_run"
+external polled_drive : nativeint -> int = "rig_test_polled_drive"
 external polled_queued : nativeint -> int = "rig_test_polled_queued"
 external polled_submits : nativeint -> int = "rig_test_polled_submits"
 external polled_blocked : nativeint -> int = "rig_test_polled_blocked"
@@ -254,7 +255,7 @@ module Driver = struct
     | `Fault why -> raise (Fault why)
     | `Interrupt -> interrupt ()
     | `Stall -> Thread.delay (float still_ms /. 1000.)
-    | `Run -> ignore (polled_run d.c)
+    | `Run -> ignore (polled_drive d.c)
 
   let completion d = fact d (if d.objects then `Object d.c else `Host)
   let waits_on d c = fact d (List.mem c d.waits)

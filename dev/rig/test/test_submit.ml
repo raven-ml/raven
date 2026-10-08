@@ -291,6 +291,19 @@ let test_unmapped_wait () =
 let test_in_queue () = in_queue ~completion:`Host
 let test_in_queue_object () = in_queue ~completion:`Object
 
+(* A wait on a device whose queue waits for a producer's work returns though
+   nothing else runs the producer: a device runs its own work while the host
+   sleeps on another. *)
+let test_wait_in_queue () =
+  let producer, _ = P.open_ "submit:sleep-producer" in
+  let consumer, cp = P.open_ ~waits_on:[ `Host ] "submit:sleep-consumer" in
+  let a = submit (empty producer) in
+  let b = submit (empty consumer) ~waits:[| a |] in
+  equal ~msg:"waits in the queue" int 1 (List.length (P.last_waits cp));
+  Rig.wait consumer (Rig.Point.value b);
+  equal ~msg:"the producer's word" int (Rig.Point.value a)
+    (Rig.signaled producer)
+
 (* A submit hands its driver the handle of each region its run and parts use,
    once. A case reads the buffers [reads] picks among [n], and writes those
    [writes] picks. *)
@@ -620,6 +633,8 @@ let tests =
           test_run_keeps;
         test "a part's buffers wait as a run's do" test_part_points;
         test "a queue that waits on host words waits in the queue" test_in_queue;
+        test "a wait on a queue waiting for a producer runs the producer"
+          test_wait_in_queue;
         test "a producer whose word the device cannot map is waited on the host"
           test_unmapped_wait;
         test "waits beyond the queue's bound are waited for on the host"
