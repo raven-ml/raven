@@ -8,25 +8,15 @@
    device the row opened, then a spin until the device's timeline word
    holds the last value. The submission is the least sequence the hardware
    needs (the driver's words in a segment, a ring entry, GP_PUT, the
-   doorbell), so a floor's distance to its row is the OCaml side of the
-   driver.
+   doorbell), so a row's distance to its floor is what the core and the
+   driver's OCaml side add.
 
-   Also host memory for the rows: page-aligned bytes, and stores into memory
-   the host addresses. A failing call raises Failure. Every stub holds the
-   runtime. */
+   A failing call raises Failure. Every stub holds the runtime. */
 
 #define _GNU_SOURCE
 
 #include <stdatomic.h>
 #include <stdint.h>
-#include <stdlib.h>
-#include <string.h>
-
-#if defined(_WIN32)
-#include <windows.h>
-#else
-#include <sys/mman.h>
-#endif
 
 #define CAML_NAME_SPACE
 #include <caml/alloc.h>
@@ -112,32 +102,5 @@ value device_nv_bench_copy(value v_dst, value v_src, value v_n) {
                       .copy_bytes = (uint64_t)Long_val(v_n)};
   submit(NULL, 0, &p, 1);
   spin();
-  return Val_unit;
-}
-
-/* Host memory */
-
-/* [v_n] zeroed bytes from a page boundary, kept for the process's life. */
-value device_nv_bench_pages(value v_n) {
-  size_t n = Long_val(v_n);
-#if defined(_WIN32)
-  void *p = VirtualAlloc(NULL, n, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-  if (p == NULL) caml_raise_out_of_memory();
-#else
-  void *p = mmap(NULL, n, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS,
-                 -1, 0);
-  if (p == MAP_FAILED) caml_raise_out_of_memory();
-#endif
-  return Val_long((intnat)p);
-}
-
-value device_nv_bench_write(value v_p, value v_s) {
-  memcpy((void *)Long_val(v_p), String_val(v_s), caml_string_length(v_s));
-  return Val_unit;
-}
-
-value device_nv_bench_set64(value v_p, value v_x) {
-  _Atomic uint64_t *p = (_Atomic uint64_t *)Long_val(v_p);
-  atomic_store_explicit(p, (uint64_t)Long_val(v_x), memory_order_release);
   return Val_unit;
 }

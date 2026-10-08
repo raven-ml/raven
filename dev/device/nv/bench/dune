@@ -15,6 +15,7 @@
   device_nv_abi
   device_nv_bench
   device_nv_nvidia
+  device_nv_support
   thumper))
 
 (rule

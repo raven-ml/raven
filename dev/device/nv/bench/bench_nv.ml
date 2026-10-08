@@ -17,6 +17,7 @@ module C = Device_core
 module B = Device_core.Buffer
 module Sub = Device_core.Submission
 module Abi = Device_nv_abi
+module S = Device_nv_support
 
 external start : nativeint -> int -> int -> unit = "device_nv_bench_start"
 external floor_release : int -> unit = "device_nv_bench_release"
@@ -24,9 +25,6 @@ external floor_switch : unit -> unit = "device_nv_bench_switch"
 external floor_waits : int -> int -> unit = "device_nv_bench_waits"
 external floor_entry : int -> int -> unit = "device_nv_bench_entry"
 external floor_copy : int -> int -> int -> unit = "device_nv_bench_copy"
-external pages : int -> int = "device_nv_bench_pages"
-external write : int -> string -> unit = "device_nv_bench_write"
-external set64 : int -> int -> unit = "device_nv_bench_set64"
 
 let kib = 1024
 let mib = 1024 * kib
@@ -112,19 +110,19 @@ let launches t count =
     |> Abi.Qmd.set_local_memory local.per_thread
   in
   let q = List.fold_left bank q (Abi.Launch.banks l) in
-  write (host bank0) (encode (Abi.Qmd.parameters q));
+  S.write (host bank0) (encode (Abi.Qmd.parameters q));
   let stride = 512 in
   let qmds = alloc t `Mapped (count * stride) in
   for i = 0 to count - 1 do
     let next = address qmds + ((i + 1) * stride) in
     let q = if i < count - 1 then Abi.Qmd.chain next q else q in
-    write (at qmds (i * stride)) (encode (Abi.Qmd.structure q))
+    S.write (at qmds (i * stride)) (encode (Abi.Qmd.structure q))
   done;
   let segment = alloc t `Mapped 4096 in
   let ws =
     Abi.Packet.encode Int64.of_int (Abi.Method.schedule (address qmds))
   in
-  write (host segment) ws;
+  S.write (host segment) ws;
   let e =
     Abi.Gpfifo.entry (address segment) ~offset:0 ~words:(String.length ws / 4)
   in
@@ -178,7 +176,7 @@ let wait_rows =
         (fun () ->
           let t = dev () in
           let w = alloc t `Pinned 8 in
-          set64 (host w) 1;
+          S.set64 (host w) 1;
           ignore (floor t);
           (t, address w))
         (fun (_, at) -> floor_waits at 4);
@@ -250,7 +248,7 @@ let map_host_rows =
   Thumper.group "map-host"
     [
       row "256MiB"
-        (fun () -> (dev (), pages n))
+        (fun () -> (dev (), S.pages n))
         (fun (t, p) -> N.free t.g (Option.get (N.map_host t.g p n)));
     ]
 
