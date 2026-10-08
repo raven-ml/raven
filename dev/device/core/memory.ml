@@ -24,21 +24,26 @@ external stamps_absorb : int -> int -> unit = "caml_device_core_stamps_absorb"
 
 (* [f] over the points of the stamps [st], the last write first; [write] only
    that one. *)
-let iter_points ?(write = false) f st =
-  if st <> 0 then begin
-    let rec go k =
-      let p = stamps_get st k in
-      if p <> -1 then begin
-        if p <> 0 then f p;
-        if not (write && k = 0) then go (k + 1)
-      end
-    in
-    go 0
+let rec iter_from f st k =
+  let p = stamps_get st k in
+  if p <> -1 then begin
+    if p <> 0 then f p;
+    iter_from f st (k + 1)
   end
 
-let for_all_points ?write f st =
+(* [f] over the points of the stamps [st], the last write first. Neither it nor
+   [iter_write] allocates. *)
+let iter_points f st = if st <> 0 then iter_from f st 0
+
+(* [f] of the last write of [st], if any. *)
+let iter_write f st =
+  if st <> 0 then
+    let p = stamps_get st 0 in
+    if p > 0 then f p
+
+let for_all_points f st =
   let ok = ref true in
-  iter_points ?write (fun p -> if not (f p) then ok := false) st;
+  iter_points (fun p -> if not (f p) then ok := false) st;
   !ok
 
 (* Raises [Lost] if a point of [st] is on a lost device. *)

@@ -134,13 +134,13 @@ let borrow d b =
     | Some mem -> Some { b with mem }
     | None -> None
 
+let wait_point p = Dev.wait (Dev.of_index (Point.index p)) (Point.value p)
+
 let wait b access =
   check_live "Buffer.wait" b;
   let e = b.mem.root.entry in
-  let write = access = Read && not e.held in
-  Memory.iter_points ~write
-    (fun p -> Dev.wait (Dev.of_index (Point.index p)) (Point.value p))
-    e.stamps
+  if access = Read && not e.held then Memory.iter_write wait_point e.stamps
+  else Memory.iter_points wait_point e.stamps
 
 (* Bigarrays *)
 

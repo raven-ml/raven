@@ -23,9 +23,12 @@ val stamps_reserve : int -> int -> unit
 val stamps_absorb : int -> int -> unit
 (* [stamps_absorb dst src] raises [dst] with every point of [src]. *)
 
-val iter_points : ?write:bool -> (int -> unit) -> int -> unit
-(* [iter_points f st] is [f] over the points of [st], the last write first; with
-   [write], that one only. *)
+val iter_points : (int -> unit) -> int -> unit
+(* [iter_points f st] is [f] over the points of [st], the last write first. It
+   allocates nothing. *)
+
+val iter_write : (int -> unit) -> int -> unit
+(* [iter_write f st] is [f] of [st]'s last write, if any. *)
 
 val check_points : int -> unit
 (* [check_points st] raises [Lost] if a point of [st] is on a lost device. *)

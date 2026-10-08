@@ -261,30 +261,32 @@ let reached d w =
   if is_lost d then raise_lost d;
   if d.afters <> [] then run_afters d w
 
+(* Waits for [d]'s value [v], the word having read [seen] since [since]. Top
+   level, so a wait that finds its value reached allocates nothing. *)
+let rec wait_from d v seen since =
+  let w = word d in
+  if w >= v then reached d w
+  else begin
+    if is_lost d then raise_lost d;
+    let now = now_ms () in
+    let since = if w <> seen then now else since in
+    let still = now - since in
+    (match d.completion with
+    | Host_writes -> sleep d ~seen:w ~still_ms
+    | (Store | Object _) when d.word = 0 -> sleep d ~seen:w ~still_ms
+    | (Store | Object _) when still >= still_ms ->
+        look_at_producers d;
+        sleep d ~seen:w ~still_ms
+    | Store | Object _ -> ignore (c_spin d.c v (still_ms - still)));
+    wait_from d v w since
+  end
+
 let wait d v =
   let s = submitted d in
   if v > s then
     invalid_argf "Device_core.wait: %d is beyond %s's last value %d" v d.name s;
-  let rec go seen since =
-    let w = word d in
-    if w >= v then reached d w
-    else begin
-      if is_lost d then raise_lost d;
-      let now = now_ms () in
-      let since = if w <> seen then now else since in
-      let still = now - since in
-      (match d.completion with
-      | Host_writes -> sleep d ~seen:w ~still_ms
-      | (Store | Object _) when d.word = 0 -> sleep d ~seen:w ~still_ms
-      | (Store | Object _) when still >= still_ms ->
-          look_at_producers d;
-          sleep d ~seen:w ~still_ms
-      | Store | Object _ -> ignore (c_spin d.c v (still_ms - still)));
-      go w since
-    end
-  in
   let w = word d in
-  if w >= v then reached d w else go w (now_ms ())
+  if w >= v then reached d w else wait_from d v w (now_ms ())
 
 (* Whether [p] is reached: its device's word reads it. A forked child reads no
    word of a lost device. *)
