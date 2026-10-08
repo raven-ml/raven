@@ -403,6 +403,9 @@ type 'm path = {
   key : 'm Type.Id.t;
       (** The path's key. Devices whose paths have one key map each other's
           memory with [map_peer]. *)
+  index : int;
+      (** The GPU's number among the machine's NVIDIA GPUs in bus order
+          ({!is_gpu}). *)
   rm : rm;  (** The GPU's RM. *)
   device : int;  (** The RM's device object of the GPU. *)
   subdevice : int;  (** Its subdevice object. *)
@@ -426,9 +429,9 @@ type 'm path = {
           GPU, or [None] if the path refuses them. The path maps whole pages,
           once per process for the pages of one range, and keeps them mapped
           until every memory it gave over them is freed. *)
-  reaches : 'm path -> bool;
-      (** [reaches p'] is [true] iff this GPU's work addresses the GPU memory of
-          the GPU [p'] reaches, another of this path. *)
+  reaches : int -> bool;
+      (** [reaches i] is [true] iff this GPU's work addresses the GPU memory of
+          GPU [i] of this path, another GPU. *)
   map_peer : 'm memory -> 'm memory option;
       (** [map_peer m] is the memory [m] of another GPU of this path, mapped for
           this one, or [None] if this GPU cannot address it. *)

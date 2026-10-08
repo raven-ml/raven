@@ -50,7 +50,8 @@ type gpu = {
   doorbell : int;
   facts : Device_nv.gpu;
   budget : int;
-  mutable refused : string list; (* the GPUs peer access was refused with *)
+  index : int; (* its number, in bus order *)
+  mutable refused : int list; (* the GPUs peer access was refused with *)
   channels : (int * int) list Atomic.t; (* registered, with their ranges *)
   opened : bool Atomic.t; (* whether a device of it is open *)
 }
@@ -62,7 +63,7 @@ type mem = {
   size : int;
   handle : int;
   cpu : bool; (* whether the process maps it at [va] *)
-  video : string option; (* the GPU whose memory it is, by UUID *)
+  video : int option; (* the GPU whose memory it is, by number *)
   of_ : owner;
 }
 
@@ -385,7 +386,7 @@ let alloc g kind n =
                  size;
                  handle = h;
                  cpu = k = `Bar;
-                 video = Some g.uuid;
+                 video = Some g.index;
                  of_ = Own space;
                })
            v)
@@ -638,7 +639,7 @@ let gpus_lock = Mutex.create ()
 
 (* GPU [bus]'s objects, made at its first open and kept for the process; a
    failed open gives back what it took, last first. *)
-let make_gpu c bus =
+let make_gpu c ~index bus =
   let undo = ref [] in
   let taken f = undo := f :: !undo in
   let rm = Rm.rm c in
@@ -759,6 +760,7 @@ let make_gpu c bus =
             warps_per_sm = warps;
           };
         budget;
+        index;
         refused = [];
         channels = Atomic.make [];
         opened = Atomic.make false;
@@ -821,29 +823,20 @@ let enable_peers g others =
       with
       | Ok () -> ()
       | Error _ ->
-          g.refused <- g'.uuid :: g.refused;
-          g'.refused <- g.uuid :: g'.refused)
+          g.refused <- g'.index :: g.refused;
+          g'.refused <- g.index :: g'.refused)
     others
 
-let gpu c bus =
+let gpu c ~index bus =
   Mutex.protect gpus_lock @@ fun () ->
   match List.assoc_opt bus (Atomic.get opened) with
   | Some g -> Ok g
   | None ->
-      let* g = make_gpu c bus in
+      let* g = make_gpu c ~index bus in
       let others = List.map snd (Atomic.get opened) in
       enable_peers g others;
       Atomic.set opened ((bus, g) :: Atomic.get opened);
       Ok g
-
-(* Whether [g] reaches the GPU memory of the GPU [p'] reaches, by the RM device
-   each holds, unique in the process's client. *)
-let reaches g (p' : mem Device_nv.path) =
-  match
-    List.find_opt (fun (_, g') -> g'.device = p'.device) (Atomic.get opened)
-  with
-  | Some (_, g') -> not (List.mem g'.uuid g.refused)
-  | None -> false
 
 let path g =
   {
@@ -857,7 +850,8 @@ let path g =
     doorbell = g.doorbell + doorbell_at;
     alloc = alloc g;
     map_host = map_host g;
-    reaches = reaches g;
+    index = g.index;
+    reaches = (fun i -> not (List.mem i g.refused));
     map_peer = map_peer g;
     free = free g;
     register = register g;
@@ -883,7 +877,7 @@ let open_ i =
         (strf "no GPU %d: the machine has %d NVIDIA GPUs" i (List.length buses))
   | Some bus -> (
       let* c = Rm.client () in
-      let* g = gpu c bus in
+      let* g = gpu c ~index:i bus in
       if not (Atomic.compare_and_set g.opened false true) then
         Error (strf "%s has a device open" bus)
       else

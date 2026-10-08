@@ -48,6 +48,7 @@ type 'm memory = { address : int; host : int option; handle : int; data : 'm }
 
 type 'm path = {
   key : 'm Type.Id.t;
+  index : int;
   rm : rm;
   device : int;
   subdevice : int;
@@ -57,7 +58,7 @@ type 'm path = {
   doorbell : int;
   alloc : [ `Gpu | `Bar | `System ] -> int -> 'm memory option;
   map_host : int -> int -> 'm memory option;
-  reaches : 'm path -> bool;
+  reaches : int -> bool;
   map_peer : 'm memory -> 'm memory option;
   free : 'm memory -> unit;
   register : int -> (unit, string) result;
@@ -635,7 +636,7 @@ let peer (T d) (T d') =
   d.self <> d'.self
   &&
   match Type.Id.provably_equal d.path.key d'.path.key with
-  | Some Type.Equal -> d.path.reaches d'.path
+  | Some Type.Equal -> d.path.reaches d'.path.index
   | None -> false
 
 let map_peer (T d) (T d') r =

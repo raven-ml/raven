@@ -20,6 +20,7 @@ let path release : unit Device_nv.path =
   in
   {
     Device_nv.key = Type.Id.make ();
+    index = 0;
     rm;
     device = 0;
     subdevice = 0;
