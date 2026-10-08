@@ -60,6 +60,21 @@ let tests =
           in
           let bytes = S.round_up (per_tpc * g.tpcs_per_gpc * g.gpcs) 0x20000 in
           equal local { per_thread; per_tpc; bytes } (Local.make g n));
+      test "2^40 bytes a thread on an RTX 5000 Ada" (fun () ->
+          (* 2^45 bytes a warp, 96 warps a TPC, 66 TPCs: no step wraps. *)
+          let per_thread = 1 lsl 40 in
+          let per_tpc = per_thread * 32 * 96 in
+          equal local
+            { per_thread; per_tpc; bytes = per_tpc * 66 }
+            (Local.make (S.gpu ()) per_thread));
+      cases ~name:string_of_int
+        "a need whose allocation would pass max_int is refused"
+        (* Each step wraps first for one of them: the thread's rounding, the
+           warp's share, the TPC's, the allocation. *)
+        [ max_int; max_int - 30; (max_int / 32) + 1; 1 lsl 52; 1 lsl 45 ]
+        (fun n ->
+          raises_match (Exn.invalid_arg ~substring:"Local.make") (fun () ->
+              Local.make (S.gpu ()) n));
       cases ~name:string_of_int "a negative need is refused" [ min_int; -1 ]
         (fun n ->
           raises_match (Exn.invalid_arg ~substring:"Local.make") (fun () ->

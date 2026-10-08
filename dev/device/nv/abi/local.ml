@@ -7,7 +7,15 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
 type t = { per_thread : int; per_tpc : int; bytes : int }
 
-let round_up n a = (n + a - 1) / a * a
+(* Rounding up and products of non-negative ints for the need [n], which raise
+   where they would wrap past max_int. *)
+let too_large n =
+  invalid_argf "Local.make: %d bytes a thread need an allocation past max_int" n
+
+let round_up n x a =
+  if x > max_int - (a - 1) then too_large n else (x + a - 1) / a * a
+
+let mul n a b = if b <> 0 && a > max_int / b then too_large n else a * b
 
 (* The alignments of NVK's chain (Mesa 25.2, nvk_device.c:55-95): a warp's share
    to 512 bytes, a TPC's to 32 KiB (SET_SHADER_LOCAL_MEMORY_NON_THROTTLED
@@ -21,10 +29,10 @@ let warp = 32
 
 let make (g : Gpu.t) n =
   if n < 0 then invalid_argf "Local.make: %d bytes, expected 0 or more" n;
-  let per_thread = round_up n thread_align in
-  let per_warp = round_up (per_thread * warp) warp_align in
-  let per_tpc =
-    round_up (per_warp * g.warps_per_sm * g.sms_per_tpc) tpc_align
-  in
-  let bytes = round_up (per_tpc * g.tpcs_per_gpc * g.gpcs) bytes_align in
+  let per_thread = round_up n n thread_align in
+  let per_warp = round_up n (mul n per_thread warp) warp_align in
+  let per_sm = mul n per_warp g.warps_per_sm in
+  let per_tpc = round_up n (mul n per_sm g.sms_per_tpc) tpc_align in
+  let per_gpc = mul n per_tpc g.tpcs_per_gpc in
+  let bytes = round_up n (mul n per_gpc g.gpcs) bytes_align in
   { per_thread; per_tpc; bytes }

@@ -34,4 +34,5 @@ val make : Gpu.t -> int -> t
 
     It is all [0] for [n = 0].
 
-    Raises [Invalid_argument] if [n] is negative. *)
+    Raises [Invalid_argument] if [n] is negative, or so large that [bytes] would
+    be past [max_int]. *)
