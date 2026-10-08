@@ -72,16 +72,8 @@ let is_slot m =
     (Array.exists (function Some b -> b.mem.root == m.root | None -> false))
     slots
 
-(* A copy on [d]'s copy queue, its point. *)
-let submit_copy d queue ~src ~dst =
-  let part =
-    { Submission.queue; after = [||]; work = Submission.Copy { src; dst } }
-  in
-  let s = Submission.make ~reads:0 ~writes:0 ~waits:0 d [| part |] in
-  Submission.submit s
-
 let queued d queue ~src ~dst =
-  Dev.wait d (Point.value (submit_copy d queue ~src ~dst))
+  Dev.wait d (Point.value (Submission.copy d queue ~src ~dst))
 
 (* A copy of [n] bytes on [d]'s copy queue between buffers [d] maps, asked at
    [start] and waited for when [wait]. Unwaited, it is recorded once a wait sees
@@ -91,7 +83,7 @@ let on_queue ~wait d src dst n start =
   | Some queue, Some s, Some t ->
       let v =
         Point.value
-          (submit_copy d queue ~src:{ src with mem = s }
+          (Submission.copy d queue ~src:{ src with mem = s }
              ~dst:{ dst with mem = t })
       in
       let recorded () = record src.mem.dev dst.mem.dev n start in

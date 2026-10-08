@@ -69,6 +69,10 @@ type t = {
   nreads : int;
   nwaits : int;
   hold : hold option;
+  any_hold : bool;
+      (** Its parts may name memory of any hold: it is made and submitted at
+          once, so it raises each memory's stamps as they are, a hold's for held
+          memory. *)
 }
 
 (* The slot no submit has set. *)
@@ -105,7 +109,7 @@ let check_buffer fn hold_stamps b =
   if e.held && e.stamps <> hold_stamps then
     invalid_argf "Rig.%s: a part names memory of another hold" fn
 
-let make ?hold ~reads ~writes ~waits d parts =
+let build ~any_hold ?hold ~reads ~writes ~waits d parts =
   let fn = "Submission.make" in
   if reads < 0 || writes < 0 || waits < 0 then
     invalid_argf "Rig.%s: a slot count is negative" fn;
@@ -113,7 +117,9 @@ let make ?hold ~reads ~writes ~waits d parts =
   if Dev.is_host d || Dev.is_io d then
     invalid_argf "Rig.%s: %s runs no submitted work" fn d.name;
   let hold_stamps = hold_stamps hold in
-  let check_buffer = check_buffer fn hold_stamps in
+  let check_buffer =
+    if any_hold then Buffer.check_live fn else check_buffer fn hold_stamps
+  in
   let nafter = ref 0 and nfixed = ref 0 in
   Array.iteri
     (fun i p ->
@@ -184,7 +190,11 @@ let make ?hold ~reads ~writes ~waits d parts =
     nreads = reads;
     nwaits = waits;
     hold;
+    any_hold;
   }
+
+let make ?hold ~reads ~writes ~waits d parts =
+  build ~any_hold:false ?hold ~reads ~writes ~waits d parts
 
 let set fn s k b =
   (* A queue reaches other memory only through a borrow on its device. *)
@@ -299,7 +309,7 @@ let check_part held st p =
    named with the hold. A process that never made a hold holds no memory, and
    checks liveness only. *)
 let check_slots s =
-  let held = Atomic.get Memory.any_held in
+  let held = Atomic.get Memory.any_held && not s.any_hold in
   let st = hold_stamps s.hold in
   for k = 0 to Array.length s.parts - 1 do
     check_part held st s.parts.(k)
@@ -391,3 +401,7 @@ let submit s =
       clear s;
       sub_give s.c;
       raise e
+
+let copy d queue ~src ~dst =
+  let part = { queue; after = [||]; work = Copy { src; dst } } in
+  submit (build ~any_hold:true ~reads:0 ~writes:0 ~waits:0 d [| part |])

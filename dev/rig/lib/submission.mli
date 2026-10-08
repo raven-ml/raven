@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Prepared submissions and submit, documented in rig.mli. A
-   submission's slots are set and submitted by one domain at a time. *)
+(* Prepared submissions and submit, documented in rig.mli. A submission's slots
+   are set and submitted by one domain at a time. *)
 
 open Def
 
@@ -35,3 +35,7 @@ val read : t -> int -> buffer -> unit
 val write : t -> int -> buffer -> unit
 val wait_for : t -> int -> int -> unit
 val submit : t -> int
+val copy : device -> string -> src:buffer -> dst:buffer -> int
+(* [copy d queue ~src ~dst] submits a copy of [src] into [dst], memory of [d],
+   on [d]'s copy queue [queue], made and submitted at once: its point. The
+   buffers may be held, by any hold. *)

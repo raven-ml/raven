@@ -198,6 +198,21 @@ let test_release_transport_fault () =
 (* Memory put in a hold after a submission named it is refused at the next
    submit, by a part or by a slot: work on held memory raises the hold's stamps,
    which only a submission made with the hold does. *)
+(* Held memory a device's queue copies copies in and out: the copy's stamps are
+   the hold's, so the hold's release waits for it. *)
+let test_copy_held () =
+  let d, _ = P.open_ ~host_visible:false "hold:copy" in
+  let m = B.create d 64 in
+  let h = H.make [ m ] in
+  let into = B.create C.host 64 and back = B.create C.host 64 in
+  Bigarray.Array1.fill (B.bigarray Bigarray.char into) 'h';
+  B.copy ~src:into ~dst:m;
+  B.copy ~src:m ~dst:back;
+  equal string (String.make 64 'h')
+    (let ba = B.bigarray Bigarray.char back in
+     String.init 64 (Bigarray.Array1.get ba));
+  ignore (Sys.opaque_identity h)
+
 let test_held_after () =
   let d, _ = P.open_ "hold:after" in
   let src = B.create d 64 and dst = B.create d 64 in
@@ -269,6 +284,8 @@ let tests =
         test "held memory is named only with its hold, in one hold"
           test_refusals;
         test "a dead buffer is not held" test_dead;
+        test "held memory a device's queue copies copies in and out"
+          test_copy_held;
         test "memory held after a submission named it is refused at submit"
           test_held_after;
         stateful ~domains:2 "two domains holding one memory: one hold takes it"
