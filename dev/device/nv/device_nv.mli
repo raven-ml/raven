@@ -231,7 +231,8 @@ val entry : image -> string -> int option
 
 val unload : t -> image -> unit
 (** [unload g c] ends [c]: its code region goes back to the caller, who frees
-    it. The caller unloads it once no work that runs its kernels runs.
+    it. The caller unloads it once no work that runs its kernels runs, and
+    never after {!stop}, which ends [g]'s images itself.
 
     Raises [Invalid_argument] if [c] is another device's or was unloaded. *)
 
@@ -344,8 +345,9 @@ val stop : t -> unit
     word holds the last value {!submit} was given, written with release order,
     so work of other devices that waits on it runs on: before [stop] returns if
     the RM freed the channels or had stopped them on a fault, and otherwise by
-    the channels' own releases as their work ends. After [stop], only {!free} is
-    called on [g], and it raises no {!Fault}. *)
+    the channels' own releases as their work ends. [stop] ends [g]'s images too:
+    an image holds nothing of [g] but its code region, which the caller frees.
+    After [stop], only {!free} is called on [g], and it raises no {!Fault}. *)
 
 (** {1:paths Paths}
 
