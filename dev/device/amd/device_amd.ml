@@ -136,6 +136,14 @@ type t = {
   word : region;
   own : mem list; (* rings, pointers, segment, slots *)
   scratch : scratch;
+  traces : traces;
+}
+
+(* The device's trace buffers, made at the first trace: the capability's record
+   and the memory under it. *)
+and traces = {
+  traces_lock : Mutex.t;
+  mutable made : (Abi.Capability.trace * mem list) option;
 }
 
 (* An AQL queue's scratch: in its descriptor, published for the next submission
@@ -302,13 +310,58 @@ let grow_scratch self ops (g : Abi.Gpu.t) ~desc st n =
         st.pending <- Some (m, n);
         Ok ()
 
-let capability_of (p : _ path) ~aql ~grow =
+(* Traces *)
+
+(* The runs a device's trace buffers hold, and the bytes each shader engine
+   traces into over all of them. *)
+let trace_slots = 32
+let trace_bytes = 256 lsl 20
+
+(* The trace buffers, in GPU memory the host reads through the BAR where the
+   path has some, else in host memory, and the end words in host memory. *)
+let make_trace (p : _ path) ops st () =
+  Mutex.protect st.traces_lock @@ fun () ->
+  match st.made with
+  | Some (t, _) -> Ok t
+  | None -> (
+      let* () = p.stable_power () in
+      let engines = p.gpu.shader_engines * p.gpu.xccs in
+      let window = trace_bytes / trace_slots in
+      let n = window * trace_slots * engines in
+      let buffers =
+        match ops.alloc `Bar n with
+        | Some m -> Some m
+        | None -> ops.alloc `System n
+      in
+      match (buffers, ops.alloc `System (4 * trace_slots * engines)) with
+      | Some b, Some e when mem_host b <> None && mem_host e <> None ->
+          let t =
+            {
+              Abi.Capability.buffers = mem_address b;
+              buffers_host = Option.get (mem_host b);
+              window;
+              slots = trace_slots;
+              engines;
+              ends = mem_address e;
+              ends_host = Option.get (mem_host e);
+            }
+          in
+          st.made <- Some (t, [ b; e ]);
+          Ok t
+      | b, e ->
+          Option.iter ops.free b;
+          Option.iter ops.free e;
+          Error (strf "no memory for %d bytes of trace buffers" n))
+
+let capability_of (p : _ path) ~aql ~grow ~trace =
   {
     Abi.Capability.gpu = p.gpu;
     clock_hz = p.clock_hz;
     compute = (if aql then Aql { scratch = grow } else Pm4);
     place = Nativeint.of_int (place_entry ());
     segment = Nativeint.of_int (segment_entry ());
+    wgps = p.wgps;
+    trace;
   }
 
 let host_of what m =
@@ -382,6 +435,8 @@ let make (type m) (p : m path) =
     let scratch =
       { lock = Mutex.create (); installed = None; pending = None; retired = [] }
     in
+    let traces = { traces_lock = Mutex.create (); made = None } in
+    let trace = make_trace p ops traces in
     let grow =
       grow_scratch self ops p.gpu ~desc:(mem_address pointers) scratch
     in
@@ -407,10 +462,11 @@ let make (type m) (p : m path) =
         hdp = p.hdp;
         hdps = Mutex.create ();
         ops;
-        capability = capability_of p ~aql ~grow;
+        capability = capability_of p ~aql ~grow ~trace;
         word;
         own = [ slot_words; segment; compute; copy; pointers ];
         scratch;
+        traces;
       }
   in
   match opened with
@@ -736,5 +792,7 @@ let stop g =
       settle g.self;
       let st = g.scratch in
       let buffers = Option.to_list st.installed @ Option.to_list st.pending in
-      List.iter (give_back g) (List.map fst (buffers @ st.retired) @ g.own);
+      let traces = match g.traces.made with Some (_, ms) -> ms | None -> [] in
+      List.iter (give_back g)
+        (List.map fst (buffers @ st.retired) @ traces @ g.own);
       `Stopped

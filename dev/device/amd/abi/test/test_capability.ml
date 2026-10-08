@@ -32,6 +32,8 @@ let record =
     compute = Pm4;
     place = 0x7f00_1000n;
     segment = 0x7f00_2000n;
+    wgps = [| [| 0xff; 0xff |] |];
+    trace = (fun () -> Error "no trace buffers");
   }
 
 let key =

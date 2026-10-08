@@ -43,6 +43,24 @@ type compute =
           result is [Error msg] if the device cannot allocate it. Any domain may
           call it. *)
 
+type trace = {
+  buffers : int;  (** The GPU address of the trace windows. *)
+  buffers_host : nativeint;  (** Their host address. *)
+  window : int;  (** The bytes of a run's trace of one shader engine. *)
+  slots : int;  (** The runs the buffers hold. *)
+  engines : int;  (** The shader engines, numbered across dies. *)
+  ends : int;  (** The GPU address of the end words. *)
+  ends_host : nativeint;  (** Their host address. *)
+}
+(** The type for the device's thread trace buffers: one set per GPU, which every
+    program that traces writes ({!Thread_trace}). Each of [slots] runs traces
+    each shader engine into a window of its own: shader engine [e] of the run in
+    slot [s] writes the [window] bytes at
+    [buffers + ((e * slots) + s) * window], and its end at the 32-bit word at
+    [ends + 4 * ((s * engines) + e)] ({!Thread_trace.stop}). Two runs whose
+    traces have not been read take two slots: the programs that trace share the
+    slots, and the reader reads a slot's trace before a later run takes it. *)
+
 type t = {
   gpu : Gpu.t;  (** The device's GPU, as the encoders take it. *)
   clock_hz : int;  (** The frequency of the GPU's clock, in hertz. *)
@@ -72,6 +90,18 @@ type t = {
           It returns [0], or a failure that the fill returns as its own: a
           failure if the bytes would pass the segment bytes its work declared.
           Only a fill, during its call, may call it. *)
+  wgps : int array array;
+      (** The work-group processors that run work: [wgps.(e).(a)] has bit [w]
+          set iff processor [w] of shader array [a] of shader engine [e] does,
+          engines numbered across dies. A counter's value for a processor that
+          runs no work stays [0] ({!Counter}). *)
+  trace : unit -> (trace, string) result;
+      (** [trace ()] is the device's trace buffers, made at the first call and
+          the same at every later one. The first call also holds the GPU's
+          clocks and shader engines steady for the rest of the process, as
+          tracing needs. The result is [Error msg] if the device has not the
+          memory, or cannot hold its GPU steady, such as when another process
+          holds it so. Any domain may call it. *)
 }
 (** The type for what compiled code needs from an AMD device. *)
 

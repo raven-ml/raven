@@ -301,6 +301,26 @@ let give_back_commands =
     command "free" (freed ^-> returns unit) once (fun r -> A.free (dev ()) r);
   ]
 
+let traces =
+  group ~timeout:60. "traces"
+    [
+      test "a device's trace buffers are made once, the host reading them"
+        (fun () ->
+          S.with_gpu @@ fun g ->
+          let c = A.capability g in
+          match (c.trace (), c.trace ()) with
+          | Ok t, Ok t' ->
+              equal bool ~msg:"the same buffers" true (t = t');
+              equal int ~msg:"engines"
+                (c.gpu.shader_engines * c.gpu.xccs)
+                t.engines;
+              equal int ~msg:"window, a multiple of 4096" 0 (t.window mod 4096);
+              S.write t.ends_host (String.make (4 * t.slots * t.engines) 'x');
+              equal string ~msg:"the ends, host memory" (String.make 4 'x')
+                (S.read t.ends_host 4)
+          | Error why, _ | _, Error why -> fail why);
+    ]
+
 let domains =
   group ~timeout:60. "domains"
     [
@@ -309,4 +329,4 @@ let domains =
         give_back_commands;
     ]
 
-let () = exit (run "device_amd" [ gpus; work; code; domains ])
+let () = exit (run "device_amd" [ gpus; work; code; traces; domains ])

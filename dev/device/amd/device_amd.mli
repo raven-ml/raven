@@ -111,9 +111,10 @@ type capability = Device_amd_abi.Capability.t
 (** The type for what compiled code needs from a device. *)
 
 val capability : t -> capability
-(** [capability g] is the GPU, its clock, its compute queue's packets, and the C
-    functions a fill calls. On an AQL queue its [scratch] grows the device's
-    scratch memory. *)
+(** [capability g] is the GPU, its clock, its compute queue's packets, the C
+    functions a fill calls, its active work-group processors, and its trace
+    buffers, made at the first [trace]. On an AQL queue its [scratch] grows the
+    device's scratch memory. *)
 
 val capability_key : capability Type.Id.t
 (** [capability_key] is {!Device_amd_abi.Capability.key}. *)
