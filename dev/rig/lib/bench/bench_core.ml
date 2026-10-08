@@ -217,6 +217,14 @@ let buffer_rows =
           for i = 0 to slots - 1 do
             B.wait (Array.unsafe_get bs i) B.Read_write
           done);
+      (* A view of 64 MiB a memory device holds, borrowed on the host: the view
+         paces no collection. *)
+      Thumper.bench_with_setup
+        ~metrics:Thumper.Metric.[ wall_time; alloc_words; major_collections ]
+        ~setup:(fun () ->
+          Option.get (B.borrow C.host (B.create (memory ()) (64 * mib))))
+        "bigarray-64M"
+        (fun b -> B.bigarray Bigarray.char b);
     ]
 
 let claim_rows =
@@ -271,12 +279,29 @@ let wait_rows =
 
 (* A host buffer of 64 MiB collected: the end of the cycle returns it, being
    more than the cache keeps. *)
+(* A host buffer of 64 KiB taken and dropped; the minor collection hands its
+   memory back to the cache, from which the next take comes. *)
+let take () =
+  create C.host (64 * kib) ();
+  Gc.minor ()
+
+(* The host cache holding [others] buffers of other sizes, 68 KiB to 464 KiB, 26
+   MiB in all, under the cache's floor: a take walks only its own size's. *)
+let others = 100
+
+let caching () =
+  let keep = List.init others (fun i -> host ((17 + i) * 4 * kib)) in
+  ignore (Sys.opaque_identity keep);
+  Gc.full_major ()
+
 let heap_rows =
   Thumper.group "heap"
     [
       Thumper.bench "trim-64M" (fun () ->
           create C.host (64 * mib) ();
           Gc.full_major ());
+      Thumper.bench "take-64K" take;
+      row "take-64K-cached-100" caching take;
     ]
 
 let memory_floor_rows =
