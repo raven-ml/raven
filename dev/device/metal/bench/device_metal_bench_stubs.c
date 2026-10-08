@@ -37,6 +37,7 @@ struct floor {
    freed. */
 value device_metal_bench_floor(value v_b) {
   struct floor *f = calloc(1, sizeof *f);
+  if (f == NULL) caml_raise_out_of_memory();
   @autoreleasepool {
     f->device = MTLCreateSystemDefaultDevice();
     f->queue = [f->device newCommandQueueWithMaxCommandBufferCount:1024];

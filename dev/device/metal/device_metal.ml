@@ -119,7 +119,10 @@ let icb self align buffer (ds : Device_metal_abi.dispatch array) =
       Ok { Device_metal_abi.handle = objects.(1); commands; release }
   | why, _ -> Error why
 
-(* The causes of open's failures, by the stubs' codes. *)
+(* The causes of open's failures, by the stubs' codes, and the code of the
+   host's lack of memory. *)
+let no_memory = 6
+
 let open_failure = function
   | 1 -> "Metal exists on macOS only"
   | 2 -> "no GPU of this Mac supports Metal"
@@ -132,7 +135,8 @@ let open_ i =
   if i > 0 then Error (strf "no device %d: a Mac has one GPU, device 0" i)
   else
     let self = open_device () in
-    if self < 0 then Error (open_failure (-self))
+    if self = -no_memory then raise Out_of_memory
+    else if self < 0 then Error (open_failure (-self))
     else
       let arch, budget, word = facts self in
       let align = if String.starts_with ~prefix:"Apple" arch then 4 else 256 in

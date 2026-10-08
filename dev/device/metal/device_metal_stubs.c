@@ -28,7 +28,7 @@
 #include "device_metal.h"
 
 /* Why open fails, as device_metal.ml reads it from a negative address. */
-enum { not_macos = 1, no_device, before_15, no_family, no_queue };
+enum { not_macos = 1, no_device, before_15, no_family, no_queue, no_memory };
 
 /* [None], or [Some why] once a submission failed. */
 static value failure(const char *why) {
@@ -84,7 +84,7 @@ static intnat open_device(void) API_AVAILABLE(macos(15.0)) {
   struct device_metal *d = arch[0] ? calloc(1, sizeof *d) : NULL;
   if (d == NULL) {
     [device release];
-    return arch[0] ? -no_queue : -no_family;
+    return arch[0] ? -no_memory : -no_family;
   }
   MTLResidencySetDescriptor *desc = [[MTLResidencySetDescriptor alloc] init];
   d->device = device;
@@ -198,12 +198,15 @@ value caml_device_metal_image(value v_d, value v_b) {
       dispatch_data_create(String_val(v_b), caml_string_length(v_b), NULL,
                            DISPATCH_DATA_DESTRUCTOR_DEFAULT);
   char text[512] = "";
+  int oom;
   @autoreleasepool {
     caml_enter_blocking_section_no_pending();
     NSError *error = nil;
     id<MTLLibrary> library = [device newLibraryWithData:data error:&error];
     NSArray<NSString *> *fs = library ? library.functionNames : @[];
     id *ps = calloc(fs.count + 1, sizeof(id));
+    if (ps == NULL) fs = @[];
+    oom = ps == NULL;
     if (library == nil)
       snprintf(text, sizeof text, "%s", error.localizedDescription.UTF8String);
     for (NSUInteger i = 0; i < fs.count && text[0] == '\0'; i++) {
@@ -238,6 +241,7 @@ value caml_device_metal_image(value v_d, value v_b) {
     free(ps);
   }
   dispatch_release(data);
+  if (oom) caml_raise_out_of_memory();
   why = caml_copy_string(text);
   CAMLreturn(tuple(3, why, names, pipelines));
 }
@@ -303,8 +307,10 @@ value caml_device_metal_icb(value v_d, value v_buffer, value v_pipelines,
   int n = (int)Wosize_val(v_pipelines);
   char text[160] = "";
   check(d, args, v_pipelines, v_sizes, text, sizeof text);
-  struct icb *b = text[0] ? NULL : calloc(1, sizeof *b + 2 * n * sizeof(id));
-  if (b != NULL) {
+  struct icb *b = NULL;
+  if (text[0] == '\0') {
+    b = calloc(1, sizeof *b + 2 * n * sizeof(id));
+    if (b == NULL) caml_raise_out_of_memory();
     MTLIndirectCommandBufferDescriptor *desc =
         [[MTLIndirectCommandBufferDescriptor alloc] init];
     desc.commandTypes = MTLIndirectCommandTypeConcurrentDispatch;
