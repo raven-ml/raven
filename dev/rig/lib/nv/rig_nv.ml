@@ -248,6 +248,9 @@ let budget (T d) = d.path.budget
 let queues (T _) = [ "COMPUTE:0"; "COPY:0" ]
 let completion (T _) = `Store
 let waits_on (T _) = function `Store | `Host -> true | `Object -> false
+
+(* rig_nv_ring.c's MAX_WAITS. *)
+let max_waits (T _) = 256
 let blocks (T _) = `Returns
 
 type capability = Abi.Gpu.t

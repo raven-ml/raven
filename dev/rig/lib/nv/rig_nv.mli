@@ -105,6 +105,10 @@ val waits_on : t -> [ `Store | `Object | `Host ] -> bool
 (** [waits_on g c] is [true] for [`Store] and [`Host]: [g]'s channels wait on
     any 64-bit word [g] maps, whoever writes it. It is [false] for [`Object]. *)
 
+val max_waits : t -> int
+(** [max_waits g] is [256]: a submission's channels take that many waits, for
+    which [rig_nv_room] keeps room. *)
+
 val blocks : t -> [ `Returns | `May_block ]
 (** [blocks g] is [`Returns]: [rig_nv_room] and [rig_nv_submit] store to
     memory and never block. *)
