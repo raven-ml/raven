@@ -525,7 +525,8 @@ let test_dead_empty () =
   let a = A.v f32 (L.contiguous [| 0 |]) b in
   kill b;
   raises_match (Exn.invalid_arg ~substring:"dead") (fun () ->
-      A.to_device Rig.host a)
+      A.to_device Rig.host a);
+  raises_match (Exn.invalid_arg ~substring:"dead") (fun () -> A.to_array a)
 
 (* A copy the host cannot make is refused before it allocates. *)
 let test_refused_copy () =
@@ -1197,7 +1198,8 @@ let tests =
         test "a dead buffer is refused" test_dead_access;
         test "memory held exclusive is refused" test_exclusive;
         test "bigarray refuses a dead buffer off the host" test_dead_bigarray;
-        test "to_device refuses a dead buffer under no element" test_dead_empty;
+        test "to_device and to_array refuse a dead buffer under no element"
+          test_dead_empty;
         test "a refused copy allocates nothing" test_refused_copy;
         stateful ~domains:2
           "writes to one byte from two domains keep each other" int4_commands;

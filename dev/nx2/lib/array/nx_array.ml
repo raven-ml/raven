@@ -420,30 +420,28 @@ let to_array (type v s) (a : (v, s) t) : v array =
     read ();
     out
   in
-  if n = 0 then [||]
-  else
-    match a.dtype with
-    | Float64 -> into (Array.create_float n)
-    | Float32 -> into (Array.create_float n)
-    | Float16 -> into (Array.create_float n)
-    | Bfloat16 -> into (Array.create_float n)
-    | Float8_e4m3fn -> into (Array.create_float n)
-    | Float8_e5m2 -> into (Array.create_float n)
-    | Float4_e2m1fn -> into (Array.create_float n)
-    | Int16 -> into (Array.make n 0)
-    | Uint16 -> into (Array.make n 0)
-    | Int8 -> into (Array.make n 0)
-    | Uint8 -> into (Array.make n 0)
-    | Int4 -> into (Array.make n 0)
-    | Uint4 -> into (Array.make n 0)
-    | Bool -> into (Array.make n false)
-    | Bit -> into (Array.make n false)
-    | Int32 -> int32s fn a n
-    | Uint32 -> int32s fn a n
-    | Int64 -> int64s fn a n
-    | Uint64 -> int64s fn a n
-    | Complex64 -> complex32s fn a n
-    | Complex128 -> complex64s fn a n
+  match a.dtype with
+  | Float64 -> into (Array.create_float n)
+  | Float32 -> into (Array.create_float n)
+  | Float16 -> into (Array.create_float n)
+  | Bfloat16 -> into (Array.create_float n)
+  | Float8_e4m3fn -> into (Array.create_float n)
+  | Float8_e5m2 -> into (Array.create_float n)
+  | Float4_e2m1fn -> into (Array.create_float n)
+  | Int16 -> into (Array.make n 0)
+  | Uint16 -> into (Array.make n 0)
+  | Int8 -> into (Array.make n 0)
+  | Uint8 -> into (Array.make n 0)
+  | Int4 -> into (Array.make n 0)
+  | Uint4 -> into (Array.make n 0)
+  | Bool -> into (Array.make n false)
+  | Bit -> into (Array.make n false)
+  | Int32 -> int32s fn a n
+  | Uint32 -> int32s fn a n
+  | Int64 -> int64s fn a n
+  | Uint64 -> int64s fn a n
+  | Complex64 -> complex32s fn a n
+  | Complex128 -> complex64s fn a n
 
 let of_array (type v s) (dt : (v, s) Dtype.t) s (values : v array) =
   let fn = "Nx_array.of_array" in
