@@ -7,7 +7,6 @@
  (modules_without_implementation
   device_amd_pci
   regs
-  discovery
   images
   gmc
   ih

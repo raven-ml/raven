@@ -1,0 +1,5 @@
+{
+ "https://raw.githubusercontent.com/ROCm/ROCK-Kernel-Driver/33970e1351f5e511029602454979f3de7e22260f/drivers/gpu/drm/amd/amdgpu/amdgpu_discovery.h": "b4583234ff25eef4e8cd19d322e5cae3315af7348916f63d906930a51b5737f6",
+ "https://raw.githubusercontent.com/ROCm/ROCK-Kernel-Driver/33970e1351f5e511029602454979f3de7e22260f/drivers/gpu/drm/amd/include/discovery.h": "bd64513b3397e3b2633a0a3e45e95a546b26dd5789f30d1a902a8b415528c8d3",
+ "https://raw.githubusercontent.com/ROCm/ROCK-Kernel-Driver/33970e1351f5e511029602454979f3de7e22260f/drivers/gpu/drm/amd/include/soc15_hw_ip.h": "34a04ab0e1411f4833f2d2676ffd4c5b4b301b9bdef9d1f242adb89105bc733f"
+}
