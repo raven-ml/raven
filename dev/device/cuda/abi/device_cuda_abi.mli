@@ -25,18 +25,32 @@
     - [arg], the argument the work was given with;
     - [v], the value the work completes on the device's timeline.
 
-    The fill enqueues its work on that stream, and does nothing else: waiting
-    for earlier work and signalling [v] are the driver's. It stops at the first
-    call that fails and returns that call's [CUresult], or returns [0]
-    ([CUDA_SUCCESS]) once every call succeeded. A call can fail for earlier work
-    on the device, which CUDA reports at a later call. The driver loses the
-    device on any failure, returned by the fill or met by its work after the
-    fill returned.
+    The fill enqueues its work on that stream and does nothing else. It may call
+    [cuLaunchKernel], [cuGraphLaunch], [cuMemcpyAsync] and [cuLaunchHostFunc] on
+    [queue] any number of times. Each call may block until the device's earlier
+    work frees room in the stream; nothing bounds what a fill enqueues, so work
+    given as a fill declares [0] ring units, which the driver does not read. The
+    fill does not wait for work ([cuStreamSynchronize], [cuEventSynchronize],
+    [cuCtxSynchronize]), does not enqueue on another stream, and does not change
+    the current context. Waiting for earlier work and signalling [v] are the
+    driver's.
+
+    A host function the fill enqueues runs on a thread of the CUDA library. It
+    calls no CUDA function and takes no lock that a fill, or the code that calls
+    the device's driver, may hold while a CUDA call blocks.
+
+    The fill stops at the first call that fails and returns that call's
+    [CUresult], or returns [0] ([CUDA_SUCCESS]) once every call succeeded. A
+    call can fail because of earlier work on the device, which CUDA reports at a
+    later call. The driver loses the device on any failure, whether the fill
+    returned it or its work met it after the fill returned.
 
     {b References.}
     - {{:https://docs.nvidia.com/cuda/cuda-driver-api/}CUDA Driver API}:
-      Execution Control ([cuLaunchKernel], [cuLaunchHostFunc]), Memory
-      Management ([cuMemcpyAsync]) and Data types used by CUDA driver
+      Execution Control ([cuLaunchKernel], [cuLaunchHostFunc]), Graph Management
+      ([cuGraphLaunch]), Memory Management ([cuMemcpyAsync]), Stream Management
+      ([cuStreamSynchronize]), Event Management ([cuEventSynchronize]), Context
+      Management ([cuCtxSynchronize]) and Data types used by CUDA driver
       ([CUstream], [CUresult]). *)
 
 type t = {
