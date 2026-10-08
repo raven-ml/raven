@@ -87,7 +87,10 @@ val release : hold -> unit
 
 val lose : hold -> unit
 (** [lose h] is {!release}, for a GPU the driver lost. A GPU {!open_pci} took
-    then opens again only after a {!reset}.
+    then opens again only after a {!reset}: the driver lost it in a state it
+    cannot know, perhaps still running and reaching memory, which only the
+    vendor's reset clears, since the function's own reset does not reset every
+    GPU.
 
     Raises [Invalid_argument] if [h] was given back already. *)
 
@@ -112,9 +115,8 @@ val detach : t -> Machine.t -> int -> (unit, string) result
     [Error why] if [m] is reached through a transport, if [i] is no GPU, if the
     process holds it, if the process may not write a file, or if the GPU is
     still not detached, saying why, such as when an IOMMU translates its
-    addresses and it is not bound to [vfio-pci]. A memory BAR left small on
-    [vfio-pci] is no error; the message of the open that needs it names the
-    unbind, detach and bind that enlarge it. *)
+    addresses and it is not bound to [vfio-pci]. A memory BAR left small is no
+    error: on [vfio-pci], or where the kernel refuses every larger size. *)
 
 val attach : t -> Machine.t -> int -> (unit, string) result
 (** [attach g m i] gives GPU [i] of [m] back to its kernel driver: Linux rescans

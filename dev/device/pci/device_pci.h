@@ -38,8 +38,9 @@
    before it reaches the machine; its failure then shows at a later access.
    They may block, and may be called from several threads at once, never
    holding the OCaml runtime; the accesses one thread makes complete in the
-   order it makes them. [failed] is the reason the transport failed, or
-   NULL; once it is not NULL it stays. */
+   order it makes them. [failed] is the reason the transport failed,
+   starting with the machine's name, or NULL; once it is not NULL it
+   stays. */
 struct device_pci_transport {
   void *ctx;
   int (*read)(void *ctx, uint64_t address, void *dst, size_t n);

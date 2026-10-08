@@ -82,8 +82,9 @@ val wait : t -> ms:int -> (unit -> bool) -> bool
     A library that reaches another machine makes it a machine with {!make}, from
     the operations below. A transport runs each operation on the other machine
     as the same operation of {!this} runs here. A request it cannot run returns
-    [Error why], [why] starting with the machine's name; once its transport
-    failed, its accesses read all ones and drop writes, and raise nothing.
+    [Error why], [why] starting with the machine's name, as does the reason its
+    transport failed ({!failed}); once it failed, its accesses read all ones and
+    drop writes, and raise nothing.
 
     {!Function} refuses misuse before an operation is called, and counts the
     windows and pins of each function. An operation is called only with
