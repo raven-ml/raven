@@ -65,14 +65,17 @@
     {!exception-Fault} with the context's error once a fault left one there. The
     functions that raise it are {!alloc}, {!map_peer}, {!map_host},
     {!val-image}, {!entry}, {!unload} and {!sleep}; the submit answers
-    [RIG_FAILED] instead. Misuse, such as a region of another device, raises
-    [Invalid_argument].
+    [RIG_FAILED] instead, and the [graph] function of {!val-capability} answers
+    [Error] with the context's error. Misuse, such as a region of another
+    device, raises [Invalid_argument].
 
     {b Domains.} Every value may be called from any domain, at the same time as
     others, with three exceptions. The C room and submit run one call at a time,
     in value order: their caller serialises them. {!stop} is called once, after
-    every other call returned; after it only {!free} and the [symbol] function
-    of {!val-capability} are called. {!sleep} may run while another domain
+    every other call returned but the [graph] function of {!val-capability},
+    which compiled code may call at any time and which a stop waits for; after
+    it only {!free}, the [symbol] and [graph] functions of {!val-capability} and
+    the release of a graph are called. {!sleep} may run while another domain
     submits.
 
     {b References.}
@@ -81,7 +84,9 @@
       Operations ([cuStreamWaitValue64], [cuStreamWriteValue64],
       [cuStreamBatchMemOp], [CUstreamWaitValue_flags]), Memory Management
       ([cuMemHostAlloc], [cuMemHostRegister]), Unified Addressing, Peer Context
-      Memory Access, Module Management, Error Handling. *)
+      Memory Access, Module Management, Graph Management
+      ([cuGraphAddKernelNode], [cuGraphInstantiateWithFlags]), Error Handling.
+*)
 
 (** {1:opening Opening} *)
 
@@ -149,8 +154,8 @@ type capability = Rig_cuda_abi.t
 (** The type for what compiled code needs from a device. *)
 
 val capability : t -> capability
-(** [capability g] finds the functions of the CUDA library [g] was opened with.
-*)
+(** [capability g] is [g]'s record: the functions of the CUDA library [g] was
+    opened with, and the maker of graphs in [g]'s context. *)
 
 val capability_key : capability Type.Id.t
 (** [capability_key] is {!Rig_cuda_abi.key}. *)
@@ -369,6 +374,8 @@ val stop : t -> unit
     never [g]'s own. Otherwise the timeline word reaches the last value the
     submit was given once that work ends, unless it waits on a word of another
     device that never reaches its value; the GPU opens again once that work
-    ends, and that open unloads the images the work kept. After [stop], only
-    {!free} and the [symbol] function of {!val-capability} may be called on [g],
-    neither raising {!exception-Fault}, and {!unload} is not called. *)
+    ends, and that open unloads the images the work kept. A [graph] call of
+    {!val-capability} in flight returns before [stop] begins, and every later
+    one answers [Error]. After [stop], only {!free}, the [symbol] and [graph]
+    functions of {!val-capability} and the release of a graph may be called on
+    [g], none raising {!exception-Fault}, and {!unload} is not called. *)

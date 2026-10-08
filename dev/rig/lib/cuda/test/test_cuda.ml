@@ -68,7 +68,7 @@ let facts () =
 
 let symbols () =
   S.with_gpu @@ fun g ->
-  let { Rig_cuda_abi.symbol } = C.capability g in
+  let symbol = (C.capability g).symbol in
   let found n = Option.is_some (symbol n) in
   equal (list bool)
     [ true; true; true; true; false; false ]
@@ -546,6 +546,178 @@ let two_gpus () =
 
 let two =
   group ~timeout:60. "two GPUs" [ test "map each other's memory" two_gpus ]
+
+(* Graphs *)
+
+let graph g ks = (C.capability g).graph ks
+let stopped_graph = "making the graph: the device was stopped"
+
+(* A 64-bit word of pinned memory, zeroed. *)
+let counter g =
+  let r = require_some (C.alloc g `Pinned 8) in
+  S.set64 (host r) 0;
+  r
+
+(* [launch g gr us] submits a fill that updates [gr]'s nodes [us] and launches
+   it, and is its value. *)
+let launch g gr us =
+  S.submit g [| S.part ~queue:"COMPUTE:0" (S.graph_launch gr us) |]
+
+(* The steps [first], [first + 1], ... of [n] nodes on the word [out]. *)
+let steps step out ~first n =
+  Array.init n (fun j -> S.kernel step (address out) (first + j))
+
+let chain n =
+  S.with_gpu @@ fun g ->
+  let m, kernel = S.kernels g in
+  let out = counter g in
+  let gr = require_ok (graph g (steps (kernel "step") out ~first:0 n)) in
+  equal int ~msg:"its nodes" n (Array.length gr.nodes);
+  S.wait g (launch g gr [||]);
+  equal int ~msg:"the word" n (S.get64 (host out));
+  gr.release ();
+  C.unload g m;
+  C.free g out
+
+let arguments () =
+  S.with_gpu @@ fun g ->
+  let m, kernel = S.kernels g in
+  let out = require_some (C.alloc g `Pinned 256) in
+  S.write (host out) (String.make 256 '\000');
+  let k = S.kernel (kernel "double_index") ~block:64 (address out) 37 in
+  let gr = require_ok (graph g [| k |]) in
+  S.wait g (launch g gr [||]);
+  equal (list int) ~msg:"words 0 to 39"
+    (List.init 40 (fun i -> if i < 37 then 2 * i else 0))
+    (List.init 40 (S.get32 (host out)));
+  gr.release ();
+  C.unload g m;
+  C.free g out
+
+(* Runs in flight, each on one of two words and updating every node first: each
+   word counts its runs' steps only if every launch ran the parameters of its
+   own fill, and none of a later fill. *)
+let width = 8
+
+let updates schedule =
+  S.with_gpu @@ fun g ->
+  let m, kernel = S.kernels g in
+  let step = kernel "step" in
+  let outs = [| counter g; counter g |] in
+  let gr = require_ok (graph g (steps step outs.(0) ~first:0 width)) in
+  let runs = [| 0; 0 |] in
+  let last = ref 0 in
+  List.iteri
+    (fun r b ->
+      cover "a run on the other word than the run before"
+        (r > 0 && b <> List.nth schedule (r - 1));
+      cover "a run on the same word as the run before"
+        (r > 0 && b = List.nth schedule (r - 1));
+      let ks = steps step outs.(b) ~first:(runs.(b) * width) width in
+      runs.(b) <- runs.(b) + 1;
+      last := launch g gr (Array.mapi (fun j k -> (j, k)) ks))
+    schedule;
+  S.wait g !last;
+  equal (list int) ~msg:"each word's steps"
+    (List.map (fun n -> n * width) (Array.to_list runs))
+    (List.map (fun r -> S.get64 (host r)) (Array.to_list outs));
+  gr.release ();
+  C.unload g m;
+  Array.iter (C.free g) outs
+
+let refusals () =
+  S.with_gpu @@ fun g ->
+  let m, kernel = S.kernels g in
+  let step = kernel "step" in
+  let k = S.kernel step 0 0 in
+  let invalid ks = raises_match Exn.invalid_arg (fun () -> graph g ks) in
+  invalid [| { k with grid = (0, 1, 1) } |];
+  invalid [| { k with grid = (1, 1, 1 lsl 32) } |];
+  invalid [| { k with block = (1, 0, 1) } |];
+  invalid [| { k with shared = -1 } |];
+  invalid [| { k with shared = 1 lsl 32 } |];
+  invalid [| k; { k with func = step + 1 } |];
+  let e = require_error (graph g [| { k with shared = (1 lsl 32) - 1 } |]) in
+  starts_with ~affix:"making the graph: CUDA_ERROR_" e;
+  let empty = require_ok (graph g [||]) in
+  equal int ~msg:"an empty graph's nodes" 0 (Array.length empty.nodes);
+  empty.release ();
+  C.unload g m;
+  invalid [| k |]
+
+let released_twice () =
+  S.with_gpu @@ fun g ->
+  let m, kernel = S.kernels g in
+  let gr = require_ok (graph g [| S.kernel (kernel "empty") 0 0 |]) in
+  gr.release ();
+  raises_match Exn.invalid_arg gr.release;
+  C.unload g m
+
+(* A stop unloads the images still loaded, the graph's included; its release
+   follows. *)
+let release_after_stop () =
+  let g = S.gpu () in
+  let _, kernel = S.kernels g in
+  let gr = require_ok (graph g [| S.kernel (kernel "empty") 0 0 |]) in
+  S.wait g (launch g gr [||]);
+  S.stop g;
+  gr.release ();
+  raises_match Exn.invalid_arg gr.release
+
+let after_stop () =
+  let g = S.gpu () in
+  let _, kernel = S.kernels g in
+  let k = S.kernel (kernel "empty") 0 0 in
+  S.stop g;
+  equal (result pass string) ~msg:"after the stop" (Error stopped_graph)
+    (Result.map ignore (graph g [| k |]))
+
+(* Graph calls on another domain while the device stops: each answers as made
+   before the stop or after it. The GPU has one device at a time, so the calls
+   are checked against the only orders a stop allows: graphs made, then the
+   stop's answer, and nothing else, such as CUDA's error for a kernel unloaded
+   under the call. *)
+let beside_stop () =
+  let g = S.gpu () in
+  let _, kernel = S.kernels g in
+  let ks = Array.init 64 (fun i -> S.kernel (kernel "step") 0 i) in
+  let made = Atomic.make 0 in
+  let rec make () =
+    match graph g ks with
+    | Ok gr ->
+        gr.release ();
+        Atomic.incr made;
+        make ()
+    | Error e -> e
+  in
+  let maker = Domain.spawn make in
+  while Atomic.get made = 0 do
+    Domain.cpu_relax ()
+  done;
+  S.stop g;
+  let after = Result.map ignore (graph g ks) in
+  equal string ~msg:"the other domain's last answer" stopped_graph
+    (Domain.join maker);
+  equal (result pass string) ~msg:"after the stop" (Error stopped_graph) after
+
+let graphs =
+  group ~timeout:60. "graphs"
+    [
+      cases
+        ~name:(strf "a chain of %d kernels runs each after the one before")
+        "chain" [ 0; 1; 17; 64 ] chain;
+      test "a kernel reads its argument block" arguments;
+      prop ~count:30
+        "a launch runs the updates of its own fill, none of a later one"
+        (Gen.list ~size:(Gen.int_range 1 40) (Gen.int_range 0 1))
+        updates;
+      test "refuses what it cannot record" refusals;
+      test "release raises when called twice" released_twice;
+      test "release follows a stop that unloaded the graph's image"
+        release_after_stop;
+      test "a graph call after the stop answers the stop" after_stop;
+      test "graph calls beside a stop answer as before or after it" beside_stop;
+    ]
 
 (* The shared device: the stateful tests' programs use one device, opened by the
    first and stopped when the run ends. *)
@@ -1033,4 +1205,4 @@ let () =
   S.hold_gpu ();
   exit
     (run "rig_cuda"
-       [ opening; facts; memory; work; images; timeline; two; stateful ])
+       [ opening; facts; memory; work; images; graphs; timeline; two; stateful ])

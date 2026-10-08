@@ -60,6 +60,23 @@ DONE:
   ret;
 }
 
+// Stores i + 1 into the 64-bit word at out if it holds i: steps 0, 1, ...
+// count only if each runs after the one before.
+.visible .entry step(.param .u64 out, .param .u64 i)
+{
+  .reg .pred %p;
+  .reg .u64 %rd<5>;
+  ld.param.u64 %rd1, [out];
+  ld.param.u64 %rd2, [i];
+  ld.volatile.u64 %rd3, [%rd1];
+  setp.ne.u64 %p, %rd3, %rd2;
+  @%p bra DONE;
+  add.u64 %rd4, %rd2, 1;
+  st.volatile.u64 [%rd1], %rd4;
+DONE:
+  ret;
+}
+
 // Stores to address 0, which no memory backs.
 .visible .entry fault(.param .u64 a, .param .u64 b)
 {

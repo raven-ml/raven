@@ -7,7 +7,9 @@
    table of GPUs and the page-lock registry are the process's, each behind a
    mutex of its own; a region or an image ends once, by compare-and-set; a
    device's C state is written only by [submit] and [stop], which their caller
-   serialises. *)
+   serialises. Compiled code calls a device's graph maker beside every other
+   call, so the maker and [stop] exclude each other under the device's
+   [guard]. *)
 
 let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
@@ -147,7 +149,12 @@ let rec on_host = function
 
 (* Opening *)
 
-type image = { owner : int; m : int; loaded : bool Atomic.t }
+type image = {
+  owner : int;
+  m : int;
+  loaded : bool Atomic.t;
+  functions : int list Atomic.t; (* those [entry] gave *)
+}
 
 type t = {
   self : int;
@@ -157,6 +164,9 @@ type t = {
   held : int Atomic.t;
   left : int list Atomic.t;
   images : image list Atomic.t; (* loaded, for stop to unload *)
+  guard : Mutex.t; (* held by a graph call and by stop *)
+  stopped : bool Atomic.t; (* stop began *)
+  cap : Rig_cuda_abi.t;
 }
 
 external open_device : int -> int = "caml_rig_cuda_open"
@@ -175,6 +185,73 @@ let driver () =
   match driver_version () with
   | v when v < 0 -> "a CUDA driver of unknown version"
   | v -> strf "the CUDA %d.%d driver" (v / 1000) (v mod 1000 / 10)
+
+let find_symbol name =
+  if String.contains name '\000' then None
+  else match symbol name with 0 -> None | a -> Some (Nativeint.of_int a)
+
+(* Graphs *)
+
+external make_graph :
+  int ->
+  int array ->
+  int array ->
+  string array ->
+  int * nativeint * nativeint * nativeint array = "caml_rig_cuda_graph"
+
+external release_graph : int -> nativeint -> nativeint -> unit
+  = "caml_rig_cuda_graph_release"
+
+(* CUDA takes each size as a 32-bit unsigned integer. *)
+let size_max = 0xffff_ffff
+
+(* The grid, block and shared memory sizes of kernel [i], checked. *)
+let sizes i (k : Rig_cuda_abi.kernel) =
+  let gx, gy, gz = k.grid and bx, by, bz = k.block in
+  let within lo x = lo <= x && x <= size_max in
+  if not (List.for_all (within 1) [ gx; gy; gz; bx; by; bz ]) then
+    invalid_argf
+      "Rig_cuda_abi.graph: kernel %d has grid %dx%dx%d and block %dx%dx%d, \
+       expected each from 1 to %d"
+      i gx gy gz bx by bz size_max;
+  if not (within 0 k.shared) then
+    invalid_argf
+      "Rig_cuda_abi.graph: kernel %d has %d bytes of shared memory, expected 0 \
+       to %d"
+      i k.shared size_max;
+  [| gx; gy; gz; bx; by; bz; k.shared |]
+
+(* Whether [f] is a function that [entry] gave for an image still loaded. *)
+let known images f =
+  let gave (i : image) = List.mem f (Atomic.get i.functions) in
+  List.exists gave (Atomic.get images)
+
+let graph self guard stopped images (ks : Rig_cuda_abi.kernel array) =
+  let sizes = Array.concat (Array.to_list (Array.mapi sizes ks)) in
+  Mutex.protect guard @@ fun () ->
+  if Atomic.get stopped then Error "making the graph: the device was stopped"
+  else begin
+    let func i (k : Rig_cuda_abi.kernel) =
+      if not (known images k.func) then
+        invalid_argf
+          "Rig_cuda_abi.graph: kernel %d's function is of no image the device \
+           loaded"
+          i;
+      k.func
+    in
+    let funcs = Array.mapi func ks in
+    let args = Array.map (fun (k : Rig_cuda_abi.kernel) -> k.args) ks in
+    match make_graph self funcs sizes args with
+    | 0, handle, g, nodes ->
+        let released = Atomic.make false in
+        let release () =
+          if not (Atomic.compare_and_set released false true) then
+            invalid_arg "Rig_cuda_abi.graph: release called twice";
+          release_graph self handle g
+        in
+        Ok { Rig_cuda_abi.handle; nodes; release }
+    | s, _, _, _ -> Error ("making the graph: " ^ error s)
+  end
 
 (* Unloads the modules [ms] of the device [self]. CUDA's answers are dropped:
    after a fault the modules stay with the context, which the process keeps. *)
@@ -234,7 +311,22 @@ let open_ i =
           let word = region self Word ~address:w ~handle:w in
           let arch = strf "sm_%d%d" major minor in
           let images = Atomic.make [] in
-          Ok { self; arch; budget; word; held; left; images }
+          let guard = Mutex.create () and stopped = Atomic.make false in
+          let graph = graph self guard stopped images in
+          let cap = { Rig_cuda_abi.symbol = find_symbol; graph } in
+          Ok
+            {
+              self;
+              arch;
+              budget;
+              word;
+              held;
+              left;
+              images;
+              guard;
+              stopped;
+              cap;
+            }
         end
 
 (* Facts *)
@@ -250,14 +342,7 @@ let blocks _ = `May_block
 
 type capability = Rig_cuda_abi.t
 
-let functions =
-  let symbol name =
-    if String.contains name '\000' then None
-    else match symbol name with 0 -> None | a -> Some (Nativeint.of_int a)
-  in
-  { Rig_cuda_abi.symbol }
-
-let capability _ = functions
+let capability g = g.cap
 let capability_key = Rig_cuda_abi.key
 let self g = Nativeint.of_int g.self
 
@@ -383,7 +468,14 @@ let rec update a f =
 let image g bin =
   match load_module g.self bin with
   | m when m >= 0 ->
-      let i = { owner = g.self; m; loaded = Atomic.make true } in
+      let i =
+        {
+          owner = g.self;
+          m;
+          loaded = Atomic.make true;
+          functions = Atomic.make [];
+        }
+      in
       update g.images (List.cons i);
       Ok (`Loaded i)
   | s ->
@@ -396,7 +488,9 @@ let entry (m : image) f =
   if String.contains f '\000' then None
   else
     match get_function m.owner m.m f with
-    | h when h >= 0 -> Some h
+    | h when h >= 0 ->
+        update m.functions (fun fs -> if List.mem h fs then fs else h :: fs);
+        Some h
     | _ -> refused (strf "finding kernel %S" f) m.owner None
 
 let unload g (m : image) =
@@ -433,6 +527,8 @@ let sleep g ~seen ~still_ms =
 (* Loss *)
 
 let stop g =
+  Mutex.protect g.guard @@ fun () ->
+  Atomic.set g.stopped true;
   let stopped = stop_device g.self in
   let loaded (i : image) =
     if Atomic.compare_and_set i.loaded true false then Some i.m else None

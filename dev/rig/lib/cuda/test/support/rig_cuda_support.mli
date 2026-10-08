@@ -16,9 +16,10 @@ val hold_gpu : unit -> unit
     [hold_gpu] before [Windtrap.run], so that the wait counts against no test's
     timeout, and {!gpu} calls it again. A bench calls it before [Thumper.run],
     so that the workers it forks run under the lock: [hold_gpu] starts no vendor
-    library, which a process must not start before it forks. It returns at once, taking nothing, if the variable
-    [RIG_GPU_LOCK_HELD] is set: the process that started this one holds the
-    lock for it, as a timing run takes it before the host's timing locks.
+    library, which a process must not start before it forks. It returns at once,
+    taking nothing, if the variable [RIG_GPU_LOCK_HELD] is set: the process that
+    started this one holds the lock for it, as a timing run takes it before the
+    host's timing locks.
 
     Raises [Failure] naming the holder if another process still holds the lock
     after 300 s, or naming the errno if the file cannot be locked. *)
@@ -158,6 +159,17 @@ val delayed :
     [src] to the address [dst]: a copy that starts at least [ns] nanoseconds
     late while the 32-bit word at [flag] is [0]. *)
 
+val kernel : ?grid:int -> ?block:int -> int -> int -> int -> Rig_cuda_abi.kernel
+(** [kernel ~grid ~block f a b] is a launch of the kernel [f] over [grid] blocks
+    (defaults to [1]) of [block] threads (defaults to [1]) with the 64-bit
+    parameters [a] and [b] as its argument block, no shared memory. *)
+
+val graph_launch :
+  Rig_cuda_abi.graph -> (int * Rig_cuda_abi.kernel) array -> fill
+(** [graph_launch g us] updates node [i] of [g] to the kernel [k] for each
+    [(i, k)] of [us], in order, then launches [g], through the device's
+    capability. Each argument block holds at most 64 bytes. *)
+
 val seen : fill -> nativeint
 (** [seen f] is the context current while the {!launch} fill [f] last ran. *)
 
@@ -200,7 +212,8 @@ val fixture : ?dir:string -> string -> string
 (** [fixture ~dir f] is the file [f] of [dir] (defaults to ["fixtures"]):
     ["kernels.ptx"] holds the kernels [empty], [double_index out n] (the 32-bit
     word [i] at [out] is [2i] for [i < n]), [spin flag ns] (runs until the
-    32-bit word at [flag] is not [0] or for [ns] nanoseconds) and [fault]
+    32-bit word at [flag] is not [0] or for [ns] nanoseconds), [step out i]
+    (stores [i + 1] into the 64-bit word at [out] if it holds [i]) and [fault]
     (stores to address [0]), each of two 64-bit parameters; ["kernels.cubin"] is
     them compiled for [sm_89]; ["global.ptx"] holds [touch], of the same
     parameters, which stores to a global of 256 MiB. *)

@@ -21,10 +21,12 @@ let find : type a. a Type.Id.t -> binding list -> a option =
 
 let launch_kernel = 0x7f00_1000n
 let symbol = function "cuLaunchKernel" -> Some launch_kernel | _ -> None
+let graph _ = Error "no graphs here"
+let record = { Cuda.symbol; graph }
 
 let test_found () =
   let other : int Type.Id.t = Type.Id.make () in
-  let bindings = [ B (other, 1); B (Cuda.key, { Cuda.symbol }) ] in
+  let bindings = [ B (other, 1); B (Cuda.key, record) ] in
   match find Cuda.key bindings with
   | None -> fail "no record under the key"
   | Some cuda ->
@@ -34,9 +36,9 @@ let test_found () =
 let test_alone () =
   let other : Cuda.t Type.Id.t = Type.Id.make () in
   is_none ~msg:"another key of the same type"
-    (find other [ B (Cuda.key, { Cuda.symbol }) ]);
+    (find other [ B (Cuda.key, record) ]);
   is_none ~msg:"the key under another key's binding"
-    (find Cuda.key [ B (other, { Cuda.symbol }) ])
+    (find Cuda.key [ B (other, record) ])
 
 let () =
   exit

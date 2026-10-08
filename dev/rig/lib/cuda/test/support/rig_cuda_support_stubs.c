@@ -66,12 +66,14 @@ static CUresult(CUDAAPI *memcpy_htod)(uint64_t, const void *, size_t);
 static CUresult(CUDAAPI *host_register)(void *, size_t, unsigned int);
 static CUresult(CUDAAPI *host_unregister)(void *);
 static CUresult(CUDAAPI *mem_get_info)(size_t *, size_t *);
+static CUresult(CUDAAPI *set_params)(void *, void *, const void *);
+static CUresult(CUDAAPI *graph_launch_fn)(void *, void *);
 
 /* Binds cuLaunchKernel, cuCtxGetCurrent, cuDevicePrimaryCtxRetain,
    cuCtxPushCurrent_v2, cuCtxPopCurrent_v2, cuMemHostGetDevicePointer_v2,
    cuDeviceGetAttribute, cuMemcpyAsync, cuMemcpyDtoH_v2, cuMemcpyHtoD_v2,
-   cuMemHostRegister_v2, cuMemHostUnregister and cuMemGetInfo_v2, in this
-   order. */
+   cuMemHostRegister_v2, cuMemHostUnregister, cuMemGetInfo_v2,
+   cuGraphExecKernelNodeSetParams_v2 and cuGraphLaunch, in this order. */
 value rig_cuda_test_bind(value v_f) {
   launch_kernel = Ptr_val(Field(v_f, 0));
   get_current = Ptr_val(Field(v_f, 1));
@@ -86,6 +88,8 @@ value rig_cuda_test_bind(value v_f) {
   host_register = Ptr_val(Field(v_f, 10));
   host_unregister = Ptr_val(Field(v_f, 11));
   mem_get_info = Ptr_val(Field(v_f, 12));
+  set_params = Ptr_val(Field(v_f, 13));
+  graph_launch_fn = Ptr_val(Field(v_f, 14));
   return Val_unit;
 }
 
@@ -389,6 +393,81 @@ value rig_cuda_test_launch_fill(value unit) {
 
 value rig_cuda_test_seen(value v_arg) {
   return caml_copy_nativeint((intnat)((struct launch *)Arg_val(v_arg))->seen);
+}
+
+/* A fill that updates nodes of a graph, then launches it. */
+
+#define ARGS_MAX 64
+
+/* CUDA_KERNEL_NODE_PARAMS_v2. */
+struct kernel_node {
+  void *func;
+  unsigned int grid[3], block[3], shared;
+  void **params, **extra;
+  void *kern;
+  CUcontext context;
+};
+
+struct update {
+  void *node, *func;
+  unsigned int sizes[7]; /* grid x y z, block x y z, shared memory bytes */
+  size_t length;
+  unsigned char args[ARGS_MAX];
+};
+
+struct graph_launch {
+  void *exec;
+  int n;
+  struct update u[];
+};
+
+static int graph_launch(void *queue, void *arg, uint64_t v) {
+  struct graph_launch *g = arg;
+  (void)v;
+  for (int i = 0; i < g->n; i++) {
+    struct update *u = &g->u[i];
+    size_t length = u->length;
+    void *extra[] = {(void *)1, u->args, (void *)2, &length, (void *)0};
+    const unsigned int *z = u->sizes;
+    struct kernel_node p = {u->func, {z[0], z[1], z[2]}, {z[3], z[4], z[5]},
+                            z[6], NULL, length > 0 ? extra : NULL, NULL, NULL};
+    CUresult s = set_params(g->exec, u->node, &p);
+    if (s != 0) return s;
+  }
+  return graph_launch_fn(g->exec, queue);
+}
+
+/* The argument of a fill that launches the executable [v_exec] after
+   updating, for each [i], the node [v_nodes.(i)] to the kernel [v_funcs.(i)]
+   of the sizes [v_sizes] (seven per update) and the argument block
+   [v_args.(i)], of at most ARGS_MAX bytes. */
+value rig_cuda_test_graph(value v_exec, value v_nodes, value v_funcs,
+                          value v_sizes, value v_args) {
+  CAMLparam5(v_exec, v_nodes, v_funcs, v_sizes, v_args);
+  CAMLlocal1(v);
+  int n = (int)Wosize_val(v_nodes);
+  v = arg(sizeof(struct graph_launch) + (size_t)n * sizeof(struct update));
+  struct graph_launch *g = Arg_val(v);
+  g->exec = Ptr_val(v_exec);
+  g->n = n;
+  for (int i = 0; i < n; i++) {
+    struct update *u = &g->u[i];
+    value a = Field(v_args, i);
+    if (caml_string_length(a) > ARGS_MAX)
+      caml_invalid_argument("rig_cuda_test_graph: argument block too long");
+    u->node = Ptr_val(Field(v_nodes, i));
+    u->func = (void *)Long_val(Field(v_funcs, i));
+    for (int k = 0; k < 7; k++)
+      u->sizes[k] = (unsigned int)Long_val(Field(v_sizes, 7 * i + k));
+    u->length = caml_string_length(a);
+    memcpy(u->args, String_val(a), u->length);
+  }
+  CAMLreturn(v);
+}
+
+value rig_cuda_test_graph_fill(value unit) {
+  (void)unit;
+  return caml_copy_nativeint((intnat)graph_launch);
 }
 
 /* What rig_cuda_room answers for one fill on queue [v_queue], with one

@@ -51,7 +51,7 @@ let hold_gpu () =
 (* The GPU *)
 
 let bind g =
-  let { Rig_cuda_abi.symbol } = Rig_cuda.capability g in
+  let symbol = (Rig_cuda.capability g).symbol in
   bind_symbols
     (Array.map
        (fun n -> Option.get (symbol n))
@@ -69,6 +69,8 @@ let bind g =
          "cuMemHostRegister_v2";
          "cuMemHostUnregister";
          "cuMemGetInfo_v2";
+         "cuGraphExecKernelNodeSetParams_v2";
+         "cuGraphLaunch";
        |])
 
 (* The device gpu opened and rig's device over it, until a test stops it or rig
@@ -206,6 +208,39 @@ external delayed_fill : unit -> nativeint = "rig_cuda_test_delayed_fill"
 
 let delayed ~spin ~flag ~ns ~dst ~src n =
   { fn = delayed_fill (); arg = delayed_arg spin flag ns dst src n }
+
+let kernel ?(grid = 1) ?(block = 1) func a b =
+  let args = Bytes.create 16 in
+  Bytes.set_int64_le args 0 (Int64.of_int a);
+  Bytes.set_int64_le args 8 (Int64.of_int b);
+  {
+    Rig_cuda_abi.func;
+    grid = (grid, 1, 1);
+    block = (block, 1, 1);
+    shared = 0;
+    args = Bytes.to_string args;
+  }
+
+external graph_arg :
+  nativeint -> nativeint array -> int array -> int array -> string array -> arg
+  = "rig_cuda_test_graph"
+
+external graph_fill : unit -> nativeint = "rig_cuda_test_graph_fill"
+
+let graph_launch (g : Rig_cuda_abi.graph) updates =
+  let node (i, _) = g.nodes.(i) in
+  let func (_, (k : Rig_cuda_abi.kernel)) = k.func in
+  let sizes (_, (k : Rig_cuda_abi.kernel)) =
+    let gx, gy, gz = k.grid and bx, by, bz = k.block in
+    [| gx; gy; gz; bx; by; bz; k.shared |]
+  in
+  let args (_, (k : Rig_cuda_abi.kernel)) = k.args in
+  let sizes = Array.concat (Array.to_list (Array.map sizes updates)) in
+  let arg =
+    graph_arg g.handle (Array.map node updates) (Array.map func updates) sizes
+      (Array.map args updates)
+  in
+  { fn = graph_fill (); arg }
 
 external room : nativeint -> int -> bool -> int -> int -> int array -> int
   = "rig_cuda_test_room_byte" "rig_cuda_test_room"

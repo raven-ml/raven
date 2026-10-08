@@ -99,6 +99,18 @@ typedef void *CUstream;
 typedef void *CUevent;
 typedef void *CUmodule;
 typedef void *CUfunction;
+typedef void *CUgraph;
+typedef void *CUgraphNode;
+typedef void *CUgraphExec;
+
+/* CUDA_KERNEL_NODE_PARAMS_v2. */
+typedef struct {
+  CUfunction func;
+  unsigned int grid[3], block[3], shared;
+  void **params, **extra;
+  void *kern;
+  CUcontext context;
+} kernel_node;
 
 /* CUstreamBatchMemOpParams: a union of 48 bytes, of which waits use this
    member. */
@@ -125,6 +137,11 @@ enum {
   CU_STREAM_WAIT_VALUE_GEQ = 0x0,
   CU_STREAM_WAIT_VALUE_FLUSH = 1 << 30,
 };
+
+/* The keys of cuLaunchKernel's [extra] list. */
+#define CU_LAUNCH_PARAM_END ((void *)0x00)
+#define CU_LAUNCH_PARAM_BUFFER_POINTER ((void *)0x01)
+#define CU_LAUNCH_PARAM_BUFFER_SIZE ((void *)0x02)
 
 /* A batch holds fewer than 256 operations. */
 #define BATCH 255
@@ -163,6 +180,12 @@ enum {
   X(cuModuleLoadData, (CUmodule *, const void *))                              \
   X(cuModuleGetFunction, (CUfunction *, CUmodule, const char *))               \
   X(cuModuleUnload, (CUmodule))                                                \
+  X(cuGraphCreate, (CUgraph *, unsigned int))                                  \
+  X(cuGraphAddKernelNode_v2, (CUgraphNode *, CUgraph, const CUgraphNode *,     \
+                              size_t, const kernel_node *))                    \
+  X(cuGraphInstantiateWithFlags, (CUgraphExec *, CUgraph, unsigned long long)) \
+  X(cuGraphExecDestroy, (CUgraphExec))                                         \
+  X(cuGraphDestroy, (CUgraph))                                                 \
   X(cuGetErrorName, (CUresult, const char **))                                 \
   X(cuGetErrorString, (CUresult, const char **))
 
@@ -526,6 +549,111 @@ value caml_rig_cuda_unload(value v_self, value v_module) {
   CUresult s;
   RELEASED(IN_CONTEXT(s, d, p_cuModuleUnload(m)));
   return Val_int(s);
+}
+
+/* Graphs */
+
+/* A graph of [n] kernels: their functions, their sizes (grid x y z, block
+   x y z and shared memory bytes, seven per kernel) and their argument
+   blocks, [n] blocks back to back whose lengths [lengths] gives. */
+struct kernels {
+  int n;
+  CUfunction *funcs;
+  unsigned int *sizes;
+  char *args;
+  size_t *lengths;
+};
+
+/* Makes the graph of [k] as a chain, each kernel after the one before, and
+   instantiates it: [*graph], [*exec] and [nodes], or CUDA's status and
+   nothing. CUDA copies each node's arguments as it adds it. */
+static CUresult make_graph(const struct kernels *k, CUgraph *graph,
+                           CUgraphExec *exec, CUgraphNode *nodes) {
+  CUresult s = p_cuGraphCreate(graph, 0);
+  char *args = k->args;
+  for (int i = 0; i < k->n && s == CUDA_SUCCESS; i++) {
+    size_t length = k->lengths[i];
+    void *extra[] = {CU_LAUNCH_PARAM_BUFFER_POINTER, args,
+                     CU_LAUNCH_PARAM_BUFFER_SIZE, &length, CU_LAUNCH_PARAM_END};
+    const unsigned int *z = k->sizes + 7 * i;
+    kernel_node p = {k->funcs[i], {z[0], z[1], z[2]}, {z[3], z[4], z[5]}, z[6],
+                     NULL, length > 0 ? extra : NULL, NULL, NULL};
+    const CUgraphNode *before = i > 0 ? &nodes[i - 1] : NULL;
+    s = p_cuGraphAddKernelNode_v2(&nodes[i], *graph, before, i > 0, &p);
+    args += length;
+  }
+  if (s == CUDA_SUCCESS) s = p_cuGraphInstantiateWithFlags(exec, *graph, 0);
+  if (s != CUDA_SUCCESS && *graph != NULL) p_cuGraphDestroy(*graph);
+  return s;
+}
+
+/* The graph of the kernels [v_funcs], [v_sizes] (seven per kernel, each
+   checked to fit 32 bits) and [v_args] in [v_self]'s context, as
+   [(0, exec, graph, nodes)], or [(status, 0, 0, [||])] with CUDA's status.
+   Releases the runtime: CUDA instantiates the graph. */
+value caml_rig_cuda_graph(value v_self, value v_funcs, value v_sizes,
+                          value v_args) {
+  CAMLparam3(v_funcs, v_sizes, v_args);
+  CAMLlocal3(r, v_nodes, x);
+  struct device *d = Device_val(v_self);
+  int n = (int)Wosize_val(v_funcs);
+  size_t total = 0;
+  for (int i = 0; i < n; i++) total += caml_string_length(Field(v_args, i));
+  struct kernels k = {n, calloc(n + 1, sizeof(CUfunction)),
+                      calloc(7 * n + 1, sizeof(unsigned int)),
+                      malloc(total + 1), calloc(n + 1, sizeof(size_t))};
+  CUgraphNode *nodes = calloc(n + 1, sizeof(CUgraphNode));
+  if (k.funcs == NULL || k.sizes == NULL || k.args == NULL ||
+      k.lengths == NULL || nodes == NULL) {
+    free(k.funcs), free(k.sizes), free(k.args), free(k.lengths), free(nodes);
+    caml_raise_out_of_memory();
+  }
+  char *at = k.args;
+  for (int i = 0; i < n; i++) {
+    value a = Field(v_args, i);
+    k.funcs[i] = (CUfunction)Long_val(Field(v_funcs, i));
+    k.lengths[i] = caml_string_length(a);
+    memcpy(at, String_val(a), k.lengths[i]);
+    at += k.lengths[i];
+  }
+  for (int i = 0; i < 7 * n; i++)
+    k.sizes[i] = (unsigned int)Long_val(Field(v_sizes, i));
+  CUgraph graph = NULL;
+  CUgraphExec exec = NULL;
+  CUresult s;
+  RELEASED(IN_CONTEXT(s, d, make_graph(&k, &graph, &exec, nodes)));
+  free(k.funcs), free(k.sizes), free(k.args), free(k.lengths);
+  v_nodes = caml_alloc(s == CUDA_SUCCESS ? n : 0, 0);
+  for (int i = 0; s == CUDA_SUCCESS && i < n; i++) {
+    x = caml_copy_nativeint((intnat)nodes[i]);
+    Store_field(v_nodes, i, x);
+  }
+  free(nodes);
+  r = caml_alloc_tuple(4);
+  Store_field(r, 0, Val_int(s));
+  x = caml_copy_nativeint(s == CUDA_SUCCESS ? (intnat)exec : 0);
+  Store_field(r, 1, x);
+  x = caml_copy_nativeint(s == CUDA_SUCCESS ? (intnat)graph : 0);
+  Store_field(r, 2, x);
+  Store_field(r, 3, v_nodes);
+  CAMLreturn(r);
+}
+
+/* Destroys the executable [v_exec] and the graph [v_graph] in [v_self]'s
+   context. CUDA's answers are dropped: after a fault or a stop the context
+   remains, and its error is the only answer. Releases the runtime. */
+value caml_rig_cuda_graph_release(value v_self, value v_exec, value v_graph) {
+  struct device *d = Device_val(v_self);
+  CUgraphExec exec = (CUgraphExec)Nativeint_val(v_exec);
+  CUgraph graph = (CUgraph)Nativeint_val(v_graph);
+  caml_enter_blocking_section_no_pending();
+  if (push(d->context) == CUDA_SUCCESS) {
+    p_cuGraphExecDestroy(exec);
+    p_cuGraphDestroy(graph);
+    pop(CUDA_SUCCESS);
+  }
+  caml_leave_blocking_section();
+  return Val_unit;
 }
 
 /* A stream's error, or success while its work runs. */

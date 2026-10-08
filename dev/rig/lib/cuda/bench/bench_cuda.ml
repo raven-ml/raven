@@ -81,7 +81,7 @@ let run t s =
 (* The floor's calls, found by a device's capability. *)
 let floor () =
   let g = get (C.open_ 0) in
-  let { Rig_cuda_abi.symbol } = C.capability g in
+  let symbol = (C.capability g).symbol in
   bind (Array.map (fun n -> Option.get (symbol n)) (names ()));
   start ();
   g
