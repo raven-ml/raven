@@ -510,10 +510,24 @@ let test_pp () =
   let l = L.v ~offset:17 ~strides:[| 23; 19 |] [| 7; 5 |] in
   in_order ~subs:[ "7"; "5"; "23"; "19"; "17" ] (Format.asprintf "%a" L.pp l)
 
+(* A refusal names the axis at fault. *)
+let test_messages () =
+  raises_match
+    (Exn.invalid_arg ~substring:"Layout.v: axis 1 of [2; -1] is -1, below 0")
+    (fun () -> L.v ~strides:[| 1; 1 |] [| 2; -1 |]);
+  raises_match
+    (Exn.invalid_arg
+       ~substring:"Layout.v: axis 1 has extent 3 and stride 2305843009213693952")
+    (fun () -> L.v ~strides:[| 1; (max_int / 2) + 1 |] [| 2; 3 |]);
+  raises_match
+    (Exn.invalid_arg ~substring:"Layout.contiguous: axis 0 of [-4] is -4")
+    (fun () -> L.contiguous [| -4 |])
+
 let tests =
   [
     group "construction"
       [
+        test "refusals name the axis at fault" test_messages;
         test "max_rank is 32, and 32 axes are accepted" test_bounds;
         prop ~count:1000
           "v keeps its arguments in canonical form, and raises iff they do not \

@@ -173,7 +173,9 @@ let v ?(offset = 0) ~strides s =
   for i = 0 to r - 1 do
     let d = s.(i) and st = strides.(i) in
     if d > 1 && (st = min_int || abs st > max_int / (d - 1)) then
-      invalid_argf "Layout.v: stride %d of an axis of extent %d overflows" st d
+      invalid_argf
+        "Layout.v: axis %d has extent %d and stride %d: its reach overflows" i d
+        st
   done;
   finish "Layout.v" (Array.copy s) (Array.copy strides) offset
 

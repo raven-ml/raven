@@ -36,8 +36,10 @@ let broadcast s s' =
   for i = 0 to r - 1 do
     let d = s.(i) and d' = s'.(r' - r + i) in
     if d <> 1 && d <> d' then
-      invalid_argf "Move.Broadcast: %a does not broadcast to %a" pp_ints s
-        pp_ints s'
+      invalid_argf
+        "Move.Broadcast: %a does not broadcast to %a: axis %d has %d, neither \
+         1 nor %d"
+        pp_ints s pp_ints s' i d d'
   done;
   Array.copy s'
 
@@ -51,9 +53,16 @@ let permute s p =
   let seen = ref 0 in
   for i = 0 to r - 1 do
     let a = p.(i) in
-    if a < 0 || a >= r || !seen land (1 lsl a) <> 0 then
-      invalid_argf "Move.Permute: %a is not a permutation of %d axes" pp_ints p
-        r;
+    if a < 0 || a >= r then
+      invalid_argf
+        "Move.Permute: %a is not a permutation of %d axes: entry %d, %d, is \
+         not an axis of %d"
+        pp_ints p r i a r;
+    if !seen land (1 lsl a) <> 0 then
+      invalid_argf
+        "Move.Permute: %a is not a permutation of %d axes: entry %d repeats \
+         axis %d"
+        pp_ints p r i a;
     seen := !seen lor (1 lsl a)
   done;
   let s' = Array.make r 0 in
@@ -107,7 +116,10 @@ let window s ws =
       if w.axis < 0 || w.axis >= r then
         invalid_argf "Move.Window: axis %d of %d" w.axis r;
       if j > 0 && w.axis <= ws.(j - 1).axis then
-        invalid_argf "Move.Window: axes are not strictly increasing";
+        invalid_argf
+          "Move.Window: axes are not strictly increasing: window %d's axis %d \
+           is not after window %d's axis %d"
+          j w.axis (j - 1) ws.(j - 1).axis;
       let n = windows s.(w.axis) w in
       if n < 0 then
         invalid_argf

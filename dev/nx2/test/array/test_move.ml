@@ -227,8 +227,40 @@ let test_fresh () =
   out.(0) <- 0;
   equal ints [| 6 |] s
 
+(* A refusal names the axis at fault, so that the caller sees which extent
+   breaks the rule. *)
+let messages =
+  let w axis = { M.axis; size = 1; step = 1; dilation = 1 } in
+  [
+    ( "a broadcast names the axis that neither is 1 nor matches",
+      (fun () -> M.shape (M.Broadcast [| 3; 5 |]) [| 3; 4 |]),
+      "Move.Broadcast: [3; 4] does not broadcast to [3; 5]: axis 1 has 4, \
+       neither 1 nor 5" );
+    ( "a broadcast's axis counts from the argument's first",
+      (fun () -> M.shape (M.Broadcast [| 2; 3; 5 |]) [| 4; 1 |]),
+      "axis 0 has 4, neither 1 nor 3" );
+    ( "a negative extent names its axis",
+      (fun () -> M.shape (M.Reshape [| 2; -3 |]) [| 6 |]),
+      "Move.Reshape: axis 1 of [2; -3] is -3, below 0" );
+    ( "a repeated axis names its entry",
+      (fun () -> M.shape (M.Permute [| 0; 1; 0 |]) [| 2; 3; 4 |]),
+      "entry 2 repeats axis 0" );
+    ( "an axis past the argument names its entry",
+      (fun () -> M.shape (M.Permute [| 0; 3 |]) [| 2; 3 |]),
+      "entry 1, 3, is not an axis of 2" );
+    ( "windows out of order name both",
+      (fun () -> M.shape (M.Window [| w 1; w 0 |]) [| 3; 3 |]),
+      "window 1's axis 0 is not after window 0's axis 1" );
+  ]
+
+let test_message (_, f, text) =
+  raises_match (Exn.invalid_arg ~substring:text) (fun () -> ignore (f ()))
+
 let tests =
   [
+    cases
+      ~name:(fun (n, _, _) -> n)
+      "refusals name the axis at fault" messages test_message;
     group "shape"
       [
         prop ~count:1000

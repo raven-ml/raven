@@ -23,7 +23,7 @@ let numel fn s =
   let r = Array.length s and zero = ref false in
   for i = 0 to r - 1 do
     let d = Array.unsafe_get s i in
-    if d < 0 then invalid_argf "%s: extent %d of %a is negative" fn d pp s;
+    if d < 0 then invalid_argf "%s: axis %d of %a is %d, below 0" fn i pp s d;
     if d = 0 then zero := true
   done;
   if !zero then 0
