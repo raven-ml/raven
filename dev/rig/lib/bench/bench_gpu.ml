@@ -278,8 +278,7 @@ let gpu_rows (type a) (module D : C.Driver with type t = a) ?(sleeps = false)
      between them, as between any memory it addresses. *)
   let borrowed () =
     let g, _ = opened () in
-    ( B.create C.host file_bytes,
-      Option.get (B.borrow g (B.create C.host file_bytes)) )
+    (written file_bytes, Option.get (B.borrow g (written file_bytes)))
   in
   let copying host ~to_device () =
     let g, _ = opened () in
