@@ -32,7 +32,7 @@ type block = {
 type t = {
   base : int;
   length : int;
-  blocks : (int, block) Hashtbl.t;
+  blocks : block Tables.Address.t;
   heads : int array; (* the first free block of each class *)
   seconds : int array;
   mutable firsts : int;
@@ -80,7 +80,7 @@ let slot (f, s) = (f * classes) + s
 
 (* Free lists *)
 
-let find t start = Hashtbl.find t.blocks start
+let find t start = Tables.Address.find t.blocks start
 
 let insert t start b =
   let ((f, s) as c) = class_of b.size in
@@ -132,19 +132,19 @@ let carve t start b n =
       prev_free = none;
     }
   in
-  (match Hashtbl.find_opt t.blocks (start + b.size) with
+  (match Tables.Address.find_opt t.blocks (start + b.size) with
   | Some next -> next.prev <- rest
   | None -> ());
   b.size <- n;
-  Hashtbl.replace t.blocks rest r;
+  Tables.Address.replace t.blocks rest r;
   (rest, r)
 
 (* Joins the block at [next] to [b], before it. Neither is on a list. *)
 let absorb t start b next =
   let n = find t next in
   b.size <- b.size + n.size;
-  Hashtbl.remove t.blocks next;
-  match Hashtbl.find_opt t.blocks (start + b.size) with
+  Tables.Address.remove t.blocks next;
+  match Tables.Address.find_opt t.blocks (start + b.size) with
   | Some after -> after.prev <- start
   | None -> ()
 
@@ -156,7 +156,7 @@ let create ~base length =
     {
       base;
       length;
-      blocks = Hashtbl.create 64;
+      blocks = Tables.Address.create 64;
       heads = Array.make (levels * classes) none;
       seconds = Array.make levels 0;
       firsts = 0;
@@ -172,7 +172,7 @@ let create ~base length =
         prev_free = none;
       }
     in
-    Hashtbl.replace t.blocks 0 b;
+    Tables.Address.replace t.blocks 0 b;
     insert t 0 b
   end;
   t
@@ -217,17 +217,17 @@ let alloc ?(align = 1) t n =
 
 let free t x =
   let start = x - t.base in
-  match Hashtbl.find_opt t.blocks start with
+  match Tables.Address.find_opt t.blocks start with
   | Some b when not b.free ->
       let start, b =
-        match Hashtbl.find_opt t.blocks b.prev with
+        match Tables.Address.find_opt t.blocks b.prev with
         | Some p when p.free ->
             remove t p;
             absorb t b.prev p start;
             (b.prev, p)
         | _ -> (start, b)
       in
-      (match Hashtbl.find_opt t.blocks (start + b.size) with
+      (match Tables.Address.find_opt t.blocks (start + b.size) with
       | Some n when n.free ->
           remove t n;
           absorb t start b (start + b.size)

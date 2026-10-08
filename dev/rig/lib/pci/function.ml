@@ -17,9 +17,9 @@ type t = {
   fn : Machine.fn;
   mutable released : bool;
   lock : Mutex.t;
-  maps : (Window.t, int * bool) Hashtbl.t; (* to its BAR and [combine] *)
-  dmas : (Window.t, unit) Hashtbl.t;
-  pins : (int * int, unit) Hashtbl.t; (* (address, bytes) *)
+  maps : (int * bool) Tables.Window.t; (* to its BAR and [combine] *)
+  dmas : unit Tables.Window.t;
+  pins : unit Tables.Range.t; (* (address, bytes) *)
 }
 
 (* A bus is parsed before it names a file of the machine's. *)
@@ -39,9 +39,9 @@ let take machine bus =
         fn;
         released = false;
         lock = Mutex.create ();
-        maps = Hashtbl.create 16;
-        dmas = Hashtbl.create 16;
-        pins = Hashtbl.create 16;
+        maps = Tables.Window.create 16;
+        dmas = Tables.Window.create 16;
+        pins = Tables.Range.create 16;
       })
     taken
 
@@ -56,8 +56,8 @@ let release f =
     f.released <- true;
     let maps =
       Mutex.protect f.lock (fun () ->
-          let ws = List.of_seq (Hashtbl.to_seq_keys f.maps) in
-          Hashtbl.reset f.maps;
+          let ws = List.of_seq (Tables.Window.to_seq_keys f.maps) in
+          Tables.Window.reset f.maps;
           ws)
     in
     List.iter f.fn.unmap maps;
@@ -127,7 +127,9 @@ let map ?combine ?(off = 0) ?length f i =
      so it reads them without the lock; a GPU holds a handful of windows, so the
      walk costs less than the mapping it precedes. *)
   let live =
-    Hashtbl.fold (fun _ (j, c) w -> if j = i then Some c else w) f.maps None
+    Tables.Window.fold
+      (fun _ (j, c) w -> if j = i then Some c else w)
+      f.maps None
   in
   let combine =
     match (combine, live) with
@@ -139,15 +141,15 @@ let map ?combine ?(off = 0) ?length f i =
     | None, None -> false
   in
   let* w = f.fn.map ~combine i off length in
-  Mutex.protect f.lock (fun () -> Hashtbl.add f.maps w (i, combine));
+  Mutex.protect f.lock (fun () -> Tables.Window.add f.maps w (i, combine));
   Ok w
 
 (* Removes one binding of the live window [w] from [table], or refuses [w]. *)
 let forget f table fn w =
   Mutex.protect f.lock @@ fun () ->
-  if not (Hashtbl.mem table w) then
+  if not (Tables.Window.mem table w) then
     invalid_argf "Function.%s: no such window of %s" fn f.bus;
-  Hashtbl.remove table w
+  Tables.Window.remove table w
 
 let unmap f w =
   forget f f.maps "unmap" w;
@@ -227,7 +229,7 @@ let alloc_dma ?(contiguous = false) ?va f n =
            Machine.reserve reserved"
           mapped va);
   let* ((w, _) as dma) = f.fn.alloc_dma ~contiguous ~va n in
-  Mutex.protect f.lock (fun () -> Hashtbl.add f.dmas w ());
+  Mutex.protect f.lock (fun () -> Tables.Window.add f.dmas w ());
   Ok dma
 
 let free_dma f w =
@@ -239,12 +241,12 @@ let pin f a n =
   on_page f "pin" a;
   if n <= 0 then invalid_argf "Function.pin: %d bytes, expected more than 0" n;
   let* runs = f.fn.pin a n in
-  Mutex.protect f.lock (fun () -> Hashtbl.add f.pins (a, n) ());
+  Mutex.protect f.lock (fun () -> Tables.Range.add f.pins (a, n) ());
   Ok runs
 
 let unpin f a n =
   Mutex.protect f.lock (fun () ->
-      if not (Hashtbl.mem f.pins (a, n)) then
+      if not (Tables.Range.mem f.pins (a, n)) then
         invalid_argf "Function.unpin: 0x%x is not pinned for %s" a f.bus;
-      Hashtbl.remove f.pins (a, n));
+      Tables.Range.remove f.pins (a, n));
   f.fn.unpin a n

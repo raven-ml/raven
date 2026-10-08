@@ -232,7 +232,7 @@ type t = {
   fd : fd;
   device : fd; (* the function's *)
   iova : Space.t;
-  maps : (int * int, int * int) Hashtbl.t; (* to (device address, count) *)
+  maps : (int * int) Tables.Range.t; (* to (device address, count) *)
   mutex : Mutex.t;
   mutable closed : bool;
 }
@@ -242,7 +242,7 @@ type t = {
 let open_ files fds bus =
   let fd, device, efd = open_function files fds bus Type1v2 in
   let iova = iova bus fd in
-  let maps = Hashtbl.create 64 in
+  let maps = Tables.Range.create 64 in
   ({ fd; device; iova; maps; mutex = Mutex.create (); closed = false }, efd)
 
 (* The device address at which [c] maps the [n] bytes at [a], mapping them for
@@ -250,9 +250,9 @@ let open_ files fds bus =
 let map_dma fn bus c a n =
   Mutex.protect c.mutex @@ fun () ->
   if c.closed then Fail.err_released fn bus;
-  match Hashtbl.find_opt c.maps (a, n) with
+  match Tables.Range.find_opt c.maps (a, n) with
   | Some (iova, k) ->
-      Hashtbl.replace c.maps (a, n) (iova, k + 1);
+      Tables.Range.replace c.maps (a, n) (iova, k + 1);
       iova
   | None ->
       let iova =
@@ -265,20 +265,20 @@ let map_dma fn bus c a n =
       | exception Unix.Unix_error (e, _, _) ->
           Space.free c.iova iova;
           Fail.fail "%s" (map_error bus n e));
-      Hashtbl.replace c.maps (a, n) (iova, 1);
+      Tables.Range.replace c.maps (a, n) (iova, 1);
       iova
 
 (* Drops a count of the [n] bytes at [a], unmapping them with the last. A
    released function's container has unmapped them already. *)
 let unmap_dma bus c a n =
   Mutex.protect c.mutex @@ fun () ->
-  match Hashtbl.find c.maps (a, n) with
-  | iova, k when k > 1 -> Hashtbl.replace c.maps (a, n) (iova, k - 1)
+  match Tables.Range.find c.maps (a, n) with
+  | iova, k when k > 1 -> Tables.Range.replace c.maps (a, n) (iova, k - 1)
   | iova, _ ->
       if not c.closed then
         Fail.bug (strf "unmapping %d bytes for %s" n bus) (fun () ->
             unmap c.fd iova n);
-      Hashtbl.remove c.maps (a, n);
+      Tables.Range.remove c.maps (a, n);
       Space.free c.iova iova
 
 let device c = c.device

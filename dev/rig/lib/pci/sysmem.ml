@@ -25,13 +25,13 @@ let huge = 2 lsl 20
 (* The ranges [reserve] reserved, and pins, counted per page across the process:
    munlock is not counted. [lock] guards both. *)
 let lock = Mutex.create ()
-let reserved : (int * int, unit) Hashtbl.t = Hashtbl.create 4
-let pins : (int, int) Hashtbl.t = Hashtbl.create 64
+let reserved : unit Tables.Range.t = Tables.Range.create 4
+let pins : int Tables.Address.t = Tables.Address.create 64
 let range a n = strf "[0x%x, 0x%x)" a (a + n)
 
 let reserve ~base n =
   Mutex.protect lock @@ fun () ->
-  if not (Hashtbl.mem reserved (base, n)) then begin
+  if not (Tables.Range.mem reserved (base, n)) then begin
     (match reserve_at base n with
     | () -> ()
     | exception Unix.Unix_error (EEXIST, _, _) ->
@@ -41,13 +41,13 @@ let reserve ~base n =
     | exception Unix.Unix_error (e, _, _) ->
         Fail.fail "reserving addresses %s: %s" (range base n)
           (Unix.error_message e));
-    Hashtbl.add reserved (base, n) ()
+    Tables.Range.add reserved (base, n) ()
   end
 
 (* Whether the [n] bytes at [a] lie in a range [reserve] reserved. [lock] is
    held. *)
 let reserved_at a n =
-  Hashtbl.fold
+  Tables.Range.fold
     (fun (base, len) () r -> r || (a >= base && a + n <= base + len))
     reserved false
 
@@ -124,8 +124,8 @@ let physical a n =
 let add_pins a n =
   List.iter
     (fun p ->
-      Hashtbl.replace pins p
-        (1 + Option.value ~default:0 (Hashtbl.find_opt pins p)))
+      Tables.Address.replace pins p
+        (1 + Option.value ~default:0 (Tables.Address.find_opt pins p)))
     (pages_of a n)
 
 (* Drops one pin of each page of [a, a + n), unlocking the pages whose last pin
@@ -133,11 +133,11 @@ let add_pins a n =
 let drop_pins a n =
   List.iter
     (fun p ->
-      match Hashtbl.find pins p with
+      match Tables.Address.find pins p with
       | 1 ->
-          Hashtbl.remove pins p;
+          Tables.Address.remove pins p;
           Fail.bug "unlocking memory" (fun () -> unlock_at p page)
-      | k -> Hashtbl.replace pins p (k - 1))
+      | k -> Tables.Address.replace pins p (k - 1))
     (pages_of a n)
 
 let pin a n =
@@ -206,8 +206,8 @@ let free w =
   Mutex.protect lock (fun () ->
       List.iter
         (fun p ->
-          match Hashtbl.find_opt pins p with
-          | Some 1 | None -> Hashtbl.remove pins p
-          | Some k -> Hashtbl.replace pins p (k - 1))
+          match Tables.Address.find_opt pins p with
+          | Some 1 | None -> Tables.Address.remove pins p
+          | Some k -> Tables.Address.replace pins p (k - 1))
         (pages_of a n));
   unmap a n

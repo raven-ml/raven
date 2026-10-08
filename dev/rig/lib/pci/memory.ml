@@ -23,8 +23,8 @@ type t = {
   bar : int;
   bar_size : int;
   peer : (int * int) list -> (int * int) list * Page_table.target;
-  allocated : (int, region) Hashtbl.t;
-  mapped : (int, region) Hashtbl.t;
+  allocated : region Tables.Address.t;
+  mapped : region Tables.Address.t;
 }
 
 (* The GPU's page is 4 KiB, the page every format's leaf level maps
@@ -53,8 +53,8 @@ let create ?peer fn tables ~bar =
     bar;
     bar_size;
     peer = Option.value peer ~default:through_bar;
-    allocated = Hashtbl.create 64;
-    mapped = Hashtbl.create 16;
+    allocated = Tables.Address.create 64;
+    mapped = Tables.Address.create 16;
   }
 
 let small_bar m = m.bar_size < Page_table.memory m.tables
@@ -139,13 +139,13 @@ let alloc ?(uncached = false) m kind n =
     | Bar | Visible -> gpu m ~uncached ~bar:true n
   in
   (match mem with
-  | Ok (Some mem) -> Hashtbl.replace m.allocated mem.mapping.va mem
+  | Ok (Some mem) -> Tables.Address.replace m.allocated mem.mapping.va mem
   | Ok None | Error _ -> ());
   mem
 
 (* Removes [mem] from [table], or refuses it. *)
 let held table fn mem =
-  match Hashtbl.find_opt table mem.mapping.va with
+  match Tables.Address.find_opt table mem.mapping.va with
   | Some mem' when mem' == mem -> ()
   | _ ->
       invalid_argf
@@ -162,7 +162,7 @@ let free m mem =
   held m.allocated "free" mem;
   let map = mem.mapping and live = not (Function.released m.fn) in
   if live then Page_table.unmap m.tables ~va:map.va map.size;
-  Hashtbl.remove m.allocated map.va;
+  Tables.Address.remove m.allocated map.va;
   (match (map.target, mem.host) with
   | System, Some view -> Function.free_dma m.fn view
   | _, Some view when live -> Function.unmap m.fn view
@@ -210,7 +210,7 @@ let map_host m a n =
                 Printexc.raise_with_backtrace e bt
             | Some mapping ->
                 let mem = { mapping; host = None; source = Borrowed a } in
-                Hashtbl.replace m.mapped va mem;
+                Tables.Address.replace m.mapped va mem;
                 Ok mem
             | None ->
                 give_back ();
@@ -219,7 +219,7 @@ let map_host m a n =
 let map_peer m ~owner mem =
   live "map_peer" m;
   live "map_peer" owner;
-  (match Hashtbl.find_opt owner.allocated mem.mapping.va with
+  (match Tables.Address.find_opt owner.allocated mem.mapping.va with
   | Some mem' when mem' == mem -> ()
   | _ ->
       invalid_argf "Memory.map_peer: the memory at 0x%x is not its owner's"
@@ -248,7 +248,7 @@ let map_peer m ~owner mem =
     with
     | Some mapping ->
         let mem = { mapping; host = None; source = Peer } in
-        Hashtbl.replace m.mapped map.va mem;
+        Tables.Address.replace m.mapped map.va mem;
         Ok mem
     | None -> Error no_room
 
@@ -257,7 +257,7 @@ let unmap m mem =
   let map = mem.mapping in
   if not (Function.released m.fn) then
     Page_table.unmap m.tables ~va:map.va map.size;
-  Hashtbl.remove m.mapped map.va;
+  Tables.Address.remove m.mapped map.va;
   match mem.source with
   | Borrowed a ->
       Function.unpin m.fn a map.size;
