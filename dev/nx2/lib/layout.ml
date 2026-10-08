@@ -3,9 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* A layout is the bytes of nx_array.h's nx_layout, words in native order: the
-   rank, the flags (CONTIGUOUS 1, DISTINCT 2, EMPTY 4), the offset in elements,
-   the span's lo and hi, then the rank extents and the rank strides.
+(* A layout is the bytes of nx_layout.h's nx_layout, words in native order; the
+   two change together.
 
    Every layout is built by [finish], which puts it in canonical form: an axis
    of extent 1 has stride 0, and a layout with no element has offset 0 and every

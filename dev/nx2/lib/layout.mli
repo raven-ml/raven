@@ -9,7 +9,9 @@
     element position [offset + Σ i{_j}·s{_j}], counted in elements from a
     buffer's first byte: [d{_j}] are its extents, its {e shape}, and [s{_j}] its
     strides. Positions are non-negative. An element at position [p] of a dtype
-    of [b] bits occupies bits [p·b] to [p·b + b - 1] of the buffer.
+    of [b] bits occupies bits [p·b] to [p·b + b - 1] of the buffer, where bit
+    [8q + r] is bit [r] of byte [q], counted from the least significant: element
+    [p] of a 4-bit dtype is the low half of byte [p / 2] for an even [p].
 
     A layout is immutable and in one {e canonical form}: an axis of extent 1 has
     stride 0, and a layout with no element has offset 0 and every stride 0. Two
@@ -37,14 +39,17 @@ val v : ?offset:int -> strides:int array -> int array -> t
     [offset] (defaults to [0]), in canonical form.
 
     Raises [Invalid_argument] as {!contiguous} does, if [strides] does not have
-    [s]'s length, if [d·|t|] does not fit in an [int] for an axis of extent [d]
-    and stride [t], or if a position is negative or does not fit in an [int]. *)
+    [s]'s length, if [(d - 1)·|t|] does not fit in an [int] for an axis of
+    extent [d] and stride [t], or if a position is negative or does not fit in
+    an [int]. *)
 
-(** {1:queries Queries} *)
+(** {1:queries Queries}
+
+    {!rank}, {!dim}, {!stride}, {!offset}, {!numel}, {!is_contiguous} and
+    {!is_distinct} allocate nothing. *)
 
 val rank : t -> int
-(** [rank l] is [l]'s number of axes. {!rank}, {!dim}, {!stride}, {!offset} and
-    the flags allocate nothing. *)
+(** [rank l] is [l]'s number of axes. *)
 
 val dim : t -> int -> int
 (** [dim l i] is the extent of [l]'s axis [i].
@@ -77,13 +82,13 @@ val is_contiguous : t -> bool
     [offset l + k]. *)
 
 val is_distinct : t -> bool
-(** [is_distinct l] is [true] if no two indices of [l] reach one position. It is
-    exact for the layouts {!contiguous} reaches by [Permute], [Slice] and
-    windows whose step is at least their extent [dilation·(size - 1) + 1],
-    [false] for every broadcast and overlapping window, and may be [false] for
-    some other strides given to {!v}: its test sorts the axes of extent above 1
-    by [|stride|] and asks each stride to exceed the reach
-    [Σ (d{_j} - 1)·|s{_j}|] of the smaller ones. *)
+(** [is_distinct l] is [true] iff, with [l]'s axes of extent above 1 ordered by
+    [|stride|], ties by axis, each stride exceeds the reach
+    [Σ (d{_j} - 1)·|s{_j}|] of the axes before it. Then no two indices of [l]
+    reach one position. It is [true] of every layout {!contiguous} reaches by
+    [Permute], [Slice] and windows whose step is at least their extent
+    [dilation·(size - 1) + 1], and [false] of every broadcast and overlapping
+    window. *)
 
 (** {1:moving Moving} *)
 

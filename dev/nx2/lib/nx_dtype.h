@@ -9,22 +9,9 @@
    NX_DTYPES. The OCaml library's Dtype.code gives the same codes and its
    rows the same facts.
 
-   Every store of a value into a dtype follows one rule. A finite value
-   rounds once to the format's nearest value, ties to even, as if the
-   exponent were unbounded; the result then stores as:
-
-     x, after rounding        f64 f32 f16 bf16   e5m2     e4m3fn  e2m1fn
-     finite, in range         x
-     past the largest finite  ±inf               ±57344   ±448    ±6
-     below the least normal   a subnormal or ±0
-     ±inf                     ±inf               ±57344   ±448    ±6
-     NaN                      NaN                NaN      NaN     +0
-
-   The formats of a byte or less saturate: past the largest finite value,
-   infinities included, a store is the largest finite value of its sign
-   (OFP8's saturating conversion). NaN stays NaN where the format has one;
-   e2m1fn has none and stores +0, as integers do. Integers truncate toward
-   zero, saturate to their range and take NaN to 0. Booleans are x != 0.
+   The encoders below implement the store rule that Dtype.of_float states
+   (dtype.mli). A kernel stores into their formats through them, or through
+   a conversion that gives the same bits.
 
    C, CUDA and HIP sources compile this header with no OCaml header. Metal
    sources compile it too, without the row table and the functions of
@@ -244,7 +231,7 @@ static inline uint32_t nx_mini_saturate(float f, int m, int bias,
   return q > max ? max : q;
 }
 
-/* e4m3fn (OCP E4M3): no infinity; S.1111.111 is NaN; largest finite 448. */
+/* e4m3fn: no infinity; S.1111.111 is NaN; largest finite 448. */
 
 static inline uint8_t nx_float_to_e4m3fn(float f) {
   uint8_t sign = nx_signbit(f) ? 0x80 : 0;
@@ -258,8 +245,7 @@ static inline float nx_e4m3fn_to_float(uint8_t c) {
   return s * nx_mini_value(c & 0x7F, 3, 7);
 }
 
-/* e5m2 (OCP E5M2): IEEE-like, with infinities, which decode but never
-   store; largest finite 57344. */
+/* e5m2: IEEE-like, with infinities; largest finite 57344. */
 
 static inline uint8_t nx_float_to_e5m2(float f) {
   uint8_t sign = nx_signbit(f) ? 0x80 : 0;
@@ -274,9 +260,8 @@ static inline float nx_e5m2_to_float(uint8_t c) {
   return s * (q == 0x7C ? INFINITY : nx_mini_value(q, 2, 15));
 }
 
-/* e2m1fn (OCP FP4 E2M1): no infinity and no NaN, values ±{0, 0.5, 1, 1.5,
-   2, 3, 4, 6}. NaN stores as +0, as it does in integers. A code is the low
-   four bits of its byte. */
+/* e2m1fn: no infinity and no NaN, values ±{0, 0.5, 1, 1.5, 2, 3, 4, 6}. A
+   code is the low four bits of its byte. */
 
 static inline uint8_t nx_float_to_e2m1fn(float f) {
   if (nx_isnan(f)) return 0;
@@ -345,10 +330,9 @@ static inline uint8_t nx_double_to_e2m1fn(double x) {
 
 /* Integers
 
-   A double truncates toward zero and saturates to the range; NaN is 0.
-   Comparing against the range's bounds as doubles is exact: each bound
-   below is a power of two, or one less than a power of two where the bound
-   is below 2^53. */
+   Comparing a double against a range's bounds is exact: each bound below
+   is a power of two, or one less than a power of two where the bound is
+   below 2^53. */
 
 static inline int64_t nx_double_to_i64(double x) {
   if (x != x) return 0;

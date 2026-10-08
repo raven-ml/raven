@@ -14,13 +14,14 @@
 
     A dtype's facts (its {!name}, {!bits}, {!kind} and {!float_format}) are rows
     of one table indexed by its {!code}, which the C header [nx_dtype.h] holds
-    too. *)
+    too. Every store of a [float] into a dtype follows one rule, stated with
+    {!of_float}. *)
 
 (** {1:elt Storage formats}
 
     The second parameter of a dtype. Bigarray's element types name the formats
-    Bigarray has; the others are nx's own and have no values. A dtype's name
-    counts the bits of a whole element, Bigarray's element types one
+    Bigarray has; the others are types of this module with no values. A dtype's
+    name counts the bits of a whole element, Bigarray's element types one
     component's: [Complex64]'s elements are [complex32_elt]. *)
 
 type float64_elt = Bigarray.float64_elt
@@ -35,18 +36,16 @@ type float16_elt = Bigarray.float16_elt
 (** bfloat16: binary32's sign, 8 exponent bits and the top 7 fraction bits. *)
 type bfloat16_elt = |
 
-(** OCP float8 E4M3, the format interchange formats name [float8_e4m3fn]: 4
-    exponent bits, 3 fraction bits, exponent bias 7, no infinity; [S.1111.111]
-    is NaN. *)
+(** float8 E4M3FN: 4 exponent bits, 3 fraction bits, exponent bias 7, no
+    infinity; [S.1111.111] is NaN. Its largest finite value is 448. *)
 type float8_e4m3fn_elt = |
 
-(** OCP float8 E5M2: 5 exponent bits, 2 fraction bits, exponent bias 15, with
-    infinities and NaNs as in IEEE 754. *)
+(** float8 E5M2: 5 exponent bits, 2 fraction bits, exponent bias 15, with
+    infinities and NaNs as in IEEE 754. Its largest finite value is 57344. *)
 type float8_e5m2_elt = |
 
-(** OCP float4 E2M1, named [float4_e2m1fn] as in interchange formats: 2 exponent
-    bits, 1 fraction bit, exponent bias 1, no infinity and no NaN. Its values
-    are ±\{0, 0.5, 1, 1.5, 2, 3, 4, 6\}. *)
+(** float4 E2M1FN: 2 exponent bits, 1 fraction bit, exponent bias 1, no infinity
+    and no NaN. Its values are ±\{0, 0.5, 1, 1.5, 2, 3, 4, 6\}. *)
 type float4_e2m1fn_elt = |
 
 type int64_elt = Bigarray.int64_elt
@@ -99,11 +98,7 @@ type bit_elt = |
 
     An unsigned format carries its bits in the type of its width, and the dtype
     says how to read them: {!pp_value} prints them unsigned, and the [Uint32]
-    value [-1l] is 4294967295.
-
-    Elements narrower than a byte lie LSB first within it: element [p] of a
-    4-bit format is bits [4p] to [4p + 3] of the buffer, counting from bit 0 of
-    byte 0. *)
+    value [-1l] is 4294967295. *)
 type ('v, 's) t =
   | Float64 : (float, float64_elt) t
   | Float32 : (float, float32_elt) t
@@ -190,29 +185,7 @@ val equal_witness :
   ('v, 's) t -> ('w, 'r) t -> (('v, 's) t, ('w, 'r) t) Type.eq option
 (** [equal_witness dt dt'] is [Some Equal] iff [equal dt dt']. *)
 
-(** {1:values Values}
-
-    {b Stores.} Every store of a [float] into a dtype follows one rule,
-    [of_float]'s here and every kernel's:
-
-    - A finite value rounds once to the format's nearest value, ties to even, as
-      if the exponent were unbounded. A result below the least normal magnitude
-      is a subnormal or a zero of its sign.
-    - A result whose magnitude exceeds the largest finite value is the infinity
-      of its sign in [Float64], [Float32], [Float16] and [Bfloat16]: [65519.]
-      stores in [Float16] as [65504.] and [65520.] as infinity. An infinity
-      stays one there.
-    - The formats of a byte or less saturate: past the largest finite value,
-      infinities included, a store is ±57344 in [Float8_e5m2], ±448 in
-      [Float8_e4m3fn] and ±6 in [Float4_e2m1fn]. [Float8_e5m2]'s infinities are
-      values a buffer may hold, which no store writes.
-    - NaN is NaN, except in [Float4_e2m1fn], which has none: it stores [+0.], as
-      integers do.
-    - Integers truncate toward zero, saturate to their range and store NaN as
-      [0], signed and unsigned alike.
-    - Complex numbers store the value as their real part, rounded to their
-      component's format, and a zero imaginary part; booleans store [x <> 0.].
-*)
+(** {1:values Values} *)
 
 val zero : ('v, 's) t -> 'v
 (** [zero dt] is [dt]'s additive identity: [0], and [false] for booleans. *)
@@ -236,15 +209,36 @@ val max_value : ('v, 's) t -> 'v
 
     Raises [Invalid_argument] if [dt] is complex. *)
 
-val of_float : ('v, 's) t -> float -> 'v
-(** [of_float dt x] is the value a store of [x] into [dt] holds, by the rule
-    above: [of_float Float16 0.1] is [0x1.998p-4], the binary16 nearest to
-    [0.1]. *)
-
 val pp_value : ('v, 's) t -> Format.formatter -> 'v -> unit
 (** [pp_value dt] formats a value of [dt]: a float as the shortest decimal that
     a store into [dt] reads back as the same value ([nan], [inf] and [-inf] for
     the others), an unsigned integer unsigned, a complex number as [re+imi]. *)
+
+(** {1:stores Stores} *)
+
+val of_float : ('v, 's) t -> float -> 'v
+(** [of_float dt x] is the value a store of [x] into [dt] holds. Every store of
+    a [float] into a dtype follows this rule, a kernel's included:
+
+    - A finite [x] rounds once, ties to even, to the nearest value of the format
+      with its exponent range unbounded above. Below the least normal magnitude
+      the result is a subnormal or a zero of [x]'s sign.
+    - Past the largest finite value, a rounded result or an infinity is the
+      infinity of its sign in [Float64], [Float32], [Float16] and [Bfloat16],
+      and saturates in the formats of a byte or less: ±57344 in [Float8_e5m2],
+      ±448 in [Float8_e4m3fn] and ±6 in [Float4_e2m1fn].
+    - NaN is NaN, except in [Float4_e2m1fn], which has none: NaN stores as
+      [+0.].
+    - Integers truncate toward zero and saturate to their range, signed and
+      unsigned alike; NaN stores as [0].
+    - Complex numbers store [x] as their real part, rounded to their component's
+      format, and a zero imaginary part. Booleans store [x <> 0.], [true] for
+      NaN.
+
+    So [of_float Float16 0.1] is [0x1.998p-4], the binary16 nearest to [0.1];
+    [65519.] stores in [Float16] as [65504.] and [65520.] as infinity; and no
+    store makes [Float8_e5m2]'s infinities, which come only from bytes already
+    in a buffer. *)
 
 (** {1:floats Float formats} *)
 

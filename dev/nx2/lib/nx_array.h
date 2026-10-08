@@ -5,11 +5,10 @@
 
 /* Arrays from C.
 
-   C reads arrays only through nx_read, which takes every operand of a call
-   with the dtype the kernel's loads assume and whether it is written. It
-   checks every operand, claims every operand's memory and fills its
-   descriptor, or, if it refuses one, claims nothing and fills nothing. A
-   kernel then calls nx_done on every path:
+   A host kernel reads arrays only through the door: nx_read checks every
+   operand of a call and claims every operand's memory, or refuses and claims
+   none; the kernel runs over the descriptors nx_read filled, and nx_done
+   ends the claims:
 
      nx_operand in[3] = { { vz, dt, 1 }, { vx, dt, 0 }, { vy, dt, 0 } };
      nx_array a[3];
@@ -20,24 +19,14 @@
      nx_done(3, a);
      return e;
 
-   A kernel answers the code to its OCaml wrapper, which calls the kernel
-   again after Nx_array.settle returns, for NX_PENDING, and raises through it
-   otherwise.
+   The kernel answers its code to its OCaml wrapper, which hands any code but
+   NX_OK to Nx_array.settle. For NX_PENDING settle waits for the device work
+   and returns, and the wrapper calls the kernel again; for every other code
+   it raises.
 
-   A descriptor holds no pointer into the OCaml heap: it stays valid after the
-   kernel allocates or releases the domain lock, and nx_read keeps each
-   operand's buffer reachable until nx_done. nx_read and nx_done run with the
-   domain lock held, on one thread. A kernel that may release the lock reads
-   no OCaml value while it is released.
-
-   A layout maps an index (i0, …, ik-1), 0 <= ij < dj, to the element
-   position offset + Σ ij·sj, counted in elements from the buffer's first
-   byte. An element at position p of a dtype of b bits occupies bits p·b to
-   p·b + b - 1 of the buffer, LSB first within a byte.
-
-   The coalescer turns operands of one shape into a loop: their extent-1
-   axes dropped and the adjacent axes every operand lays out as one run
-   merged. */
+   A descriptor's element at index (i0, …, ik-1), 0 <= ij < dim[j], lies at
+   position offset + Σ ij·dim[rank + j], counted in elements from base, as
+   Layout places it (layout.mli). */
 
 #ifndef NX_ARRAY_H
 #define NX_ARRAY_H
@@ -54,8 +43,8 @@
 
 /* A layout's flags, computed when it is made. */
 enum {
-  NX_CONTIGUOUS = 1, /* element k in C order is at offset + k */
-  NX_DISTINCT = 2,   /* no two indices reach one position */
+  NX_CONTIGUOUS = 1, /* Layout.is_contiguous */
+  NX_DISTINCT = 2,   /* Layout.is_distinct */
   NX_EMPTY = 4       /* no element */
 };
 
@@ -76,7 +65,24 @@ enum {
   NX_ARITY         /* no operand, or more than NX_MAX_OPERANDS, to a loop */
 };
 
-/* The door */
+/* The door
+
+   From nx_read to nx_done, each operand's memory is claimed and its buffer
+   is a local root of the domain: a kernel needs no CAMLparam to keep its
+   operands reachable. A descriptor holds no pointer into the OCaml heap, so
+   it stays valid when the kernel allocates or releases the domain lock. In
+   return the kernel keeps these rules:
+
+   - nx_read and nx_done run on one thread, with the domain lock held.
+   - Descriptors stay where nx_read filled them, in the frame of the C
+     function that called it, and are passed by pointer, never copied or
+     moved, until nx_done.
+   - nx_done runs once per successful nx_read, never after a refusal, before
+     that function returns or raises.
+   - Between nx_read and nx_done, no CAMLreturn or CAMLdrop pops a root frame
+     registered before nx_read. nx_done ends the process if it finds the
+     descriptors' roots popped.
+   - While the domain lock is released, the kernel reads no OCaml value. */
 
 /* An operand of a call: an OCaml array, the dtype the kernel's loads assume,
    and whether the kernel writes it. nx_read reads [array] once; the
@@ -87,13 +93,8 @@ typedef struct {
   int written;
 } nx_operand;
 
-/* An operand, read. Its memory is claimed and its buffer is a local root of
-   the domain from nx_read to nx_done: a kernel needs no CAMLparam to keep
-   its operands reachable. Descriptors stay where nx_read filled them, in the
-   frame of the C function that called it, and are passed by pointer, never
-   copied or moved, until nx_done; nx_done runs once per successful nx_read,
-   never after a refusal, before that function returns or raises. [base] is
-   NULL for an operand with no element. */
+/* An operand, read: its descriptor. [base] is NULL for an operand with no
+   element. */
 typedef struct {
   uint8_t *base; /* host address of the buffer's first byte */
   int dtype, bits, rank, flags;
@@ -108,22 +109,19 @@ typedef struct {
 int nx_array_dtype(value v);
 
 /* Reads the [n] operands [in] into [out] and answers NX_OK, or answers why
-   it refuses one and fills nothing. Per operand it checks the dtype, the
-   layout, that the buffer lives and the host addresses it; per written
-   operand that it is NX_DISTINCT and shares no byte with any other operand.
-   It then claims each operand's memory, for writing if written: NX_PENDING
-   while earlier device work on it is unfinished (wait on the buffer with
-   Rig.Buffer.wait and read again), NX_EXCLUSIVE if it is held exclusive,
-   NX_READ_ONLY if a written operand's memory is Read. It allocates nothing
-   and raises nothing. With no operand it answers NX_OK.
-
-   Between nx_read and nx_done the function that called nx_read does not
-   return, and no CAMLreturn or CAMLdrop pops a root frame registered before
-   nx_read: the descriptors' buffers are local roots linked into that
-   frame. */
+   it refuses one, claims nothing and leaves [out] unspecified. Per operand
+   it checks the dtype, the layout, that the buffer lives and, unless the
+   operand has no element, that the host addresses it; per written operand,
+   that it is NX_DISTINCT and shares no byte with another operand. It then
+   claims each operand's memory, for writing if written: NX_PENDING while
+   device work the access must follow is unfinished, NX_EXCLUSIVE if the
+   memory is held exclusive, NX_READ_ONLY if a written operand's memory is
+   Read. It allocates nothing and raises nothing. With no operand it answers
+   NX_OK. */
 int nx_read(int n, const nx_operand *in, nx_array *out);
 
-/* Releases the claims of the [n] operands a successful nx_read filled. */
+/* Releases the claims of the [n] operands a successful nx_read filled and
+   unlinks their roots. */
 void nx_done(int n, nx_array *a);
 
 /* Coalescing */
