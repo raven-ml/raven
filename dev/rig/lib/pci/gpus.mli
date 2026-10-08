@@ -50,6 +50,11 @@ val buses : t -> Machine.t -> string list
     the world's failures as [Error]s, the library's requests returning them and
     its accesses raising nothing ({{!Rig_pci.errors}errors}).
 
+    A driver whose start fails after it wrote to the GPU gives it back itself,
+    inside [f]: with {!lose}, the GPU then opens again only after a {!reset},
+    which a failure that left it in a state the driver cannot know needs. [f]
+    then answers [Error _] or raises, and the open gives back nothing more.
+
     At its exit the process stops each GPU it still holds, as the open's
     [at_exit] says, before its functions' bus mastering is turned off and their
     files closed. A child of [fork] stops none of its parent's GPUs: they are
@@ -76,7 +81,9 @@ val open_ :
 
     [Error why] without calling [f] if [m] has no GPU [i], saying how many it
     has, if the process holds it already, if it was lost and not {!reset} since,
-    or if its function cannot be taken, [why] being {!Function.take}'s. *)
+    or if its function cannot be taken, [why] being {!Function.take}'s.
+
+    Raises [Invalid_argument] if [f] gave the GPU back and answered [Ok _]. *)
 
 val release : hold -> unit
 (** [release h] gives the GPU [h] holds back: it releases its function, and the

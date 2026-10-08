@@ -568,16 +568,42 @@ type vendor_sys = { g : Gpus.t; m : Machine.t; fake : fake }
 exception Refused
 exception Driver_failed
 
-type start = Starts | Fails | Raises_invalid
+(* An open that raised [Invalid_argument] for a driver that gave its GPU back
+   and answered [Ok]. *)
+exception Misused
+
+(* How the driver's start ends. A driver that wrote to the GPU before it failed
+   gives it back inside the open: lost, or released. Giving it back and
+   answering [Ok] is a driver bug. *)
+type start =
+  | Starts
+  | Fails
+  | Raises_invalid
+  | Loses_and_fails
+  | Releases_and_fails
+  | Loses_and_starts
 
 let pp_start ppf s =
   Format.pp_print_string ppf
     (match s with
     | Starts -> "starts"
     | Fails -> "fails"
-    | Raises_invalid -> "raises-invalid")
+    | Raises_invalid -> "raises-invalid"
+    | Loses_and_fails -> "loses-and-fails"
+    | Releases_and_fails -> "releases-and-fails"
+    | Loses_and_starts -> "loses-and-starts")
 
-let starts = Gen.of_list ~pp:pp_start [ Starts; Fails; Raises_invalid ]
+let starts =
+  Gen.of_list ~pp:pp_start
+    [
+      Starts;
+      Fails;
+      Raises_invalid;
+      Loses_and_fails;
+      Releases_and_fails;
+      Loses_and_starts;
+    ]
+
 let indices l = Gen.of_list ~pp:Format.pp_print_int l
 
 let two_gpus =
@@ -613,8 +639,14 @@ let open_ref v start i =
   | Starts ->
       v.states.(i) <- Held;
       { v; i; back = false }
-  | Fails -> raise Driver_failed
+  | Fails | Releases_and_fails -> raise Driver_failed
   | Raises_invalid -> invalid_arg err_driver_bug
+  | Loses_and_fails ->
+      v.states.(i) <- Lost;
+      raise Driver_failed
+  | Loses_and_starts ->
+      v.states.(i) <- Lost;
+      raise Misused
 
 let open_sys s start i =
   let started = ref false in
@@ -626,10 +658,21 @@ let open_sys s start i =
     | Starts -> Ok h
     | Fails -> Error "the GPU did not start"
     | Raises_invalid -> invalid_arg err_driver_bug
+    | Loses_and_fails ->
+        Gpus.lose h;
+        Error "the GPU did not start"
+    | Releases_and_fails ->
+        Gpus.release h;
+        Error "the GPU did not start"
+    | Loses_and_starts ->
+        Gpus.lose h;
+        Ok h
   in
   match Gpus.open_ s.g s.m i ~at_exit:ignore driver with
   | Ok h -> h
   | Error _ -> if !started then raise Driver_failed else raise Refused
+  | exception Invalid_argument _ when start = Loses_and_starts && !started ->
+      raise Misused
 
 let try_open_ref v i =
   check_index i;

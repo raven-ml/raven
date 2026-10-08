@@ -10,10 +10,10 @@ let ( let* ) = Result.bind
 (* A vendor's GPUs. [mutex] serializes opens, resets and changes, drivers
    included, and guards [exits], whether the exit hook is registered. Only opens
    add holds and only resets clear lost GPUs, so what they check stays true
-   while they run. [holds] guards the GPUs held, each with how it stops at exit,
-   and those lost, which open again only after a reset; it is held briefly, so
-   that giving a GPU back waits for no driver. A GPU is named by its machine and
-   bus address. *)
+   while they run. [holds] guards the GPUs held, from the start of their open,
+   with how each stops at exit, and those lost, which open again only after a
+   reset; it is held briefly, so that giving a GPU back waits for no driver. A
+   GPU is named by its machine and bus address. *)
 type t = {
   memory_bar : int;
   nodes : read:(string -> string option) -> string -> string list;
@@ -21,18 +21,20 @@ type t = {
   mutex : Mutex.t;
   mutable exits : bool;
   holds : Mutex.t;
-  mutable held : (hold * (unit -> unit)) list;
+  mutable held : hold list;
   mutable spent : (Machine.t * string) list;
 }
 
 (* [pid] is the process that opened it: a child of fork inherits the hold, and
-   it stays the parent's. *)
+   it stays the parent's. [stop] is what the exit hook calls: nothing while the
+   open runs. *)
 and hold = {
   gpus : t;
   machine : Machine.t;
   bus : string;
   fn : Function.t;
   pid : int;
+  mutable stop : unit -> unit;
 }
 
 let make ~memory_bar ~nodes is_gpu =
@@ -66,14 +68,14 @@ let gpu g m i =
   | None -> Error (strf "no such GPU; the machine has %d" (List.length all))
   | Some bus
     when Mutex.protect g.holds (fun () ->
-             List.exists (fun (h, _) -> h.machine == m && h.bus = bus) g.held)
-    ->
+             List.exists (fun h -> h.machine == m && h.bus = bus) g.held) ->
       Error (bus ^ " is open in this process")
   | Some bus -> Ok bus
 
 (* Opening *)
 
-let hold g m bus fn = { gpus = g; machine = m; bus; fn; pid = Unix.getpid () }
+let hold g m bus fn =
+  { gpus = g; machine = m; bus; fn; pid = Unix.getpid (); stop = ignore }
 
 let lost g m bus =
   Mutex.protect g.holds (fun () ->
@@ -87,22 +89,29 @@ let lost g m bus =
    stop that gives its GPU back takes it. *)
 let stop_held g =
   let pid = Unix.getpid () in
-  let stop (h, at_exit) =
+  let stop h =
     if h.pid = pid then
-      try at_exit ()
+      try h.stop ()
       with e ->
         prerr_endline
           (strf "stopping %s at exit: %s" h.bus (Printexc.to_string e))
   in
   List.iter stop g.held
 
-let keep g h at_exit =
+let register_exit g =
   if not g.exits then begin
     g.exits <- true;
     Stdlib.at_exit (fun () -> stop_held g)
-  end;
-  Mutex.protect g.holds (fun () -> g.held <- (h, at_exit) :: g.held)
+  end
 
+(* [drop g h] gives back [h]'s function, under [holds]: no open or reset sees
+   the GPU free with its function still taken. *)
+let drop g h =
+  g.held <- List.filter (fun h' -> h' != h) g.held;
+  Function.release h.fn
+
+(* The driver may give the GPU back inside the open: the open then gives back
+   nothing more. *)
 let open_ g m i ~at_exit f =
   index "open_" i;
   Mutex.protect g.mutex @@ fun () ->
@@ -113,15 +122,24 @@ let open_ g m i ~at_exit f =
   in
   let* fn = Function.take m bus in
   let h = hold g m bus fn in
+  Mutex.protect g.holds (fun () -> g.held <- h :: g.held);
+  let give_back () =
+    Mutex.protect g.holds (fun () -> if List.memq h g.held then drop g h)
+  in
   match f h fn with
   | Ok v ->
-      keep g h (fun () -> at_exit v);
+      register_exit g;
+      Mutex.protect g.holds (fun () ->
+          if not (List.memq h g.held) then
+            invalid_argf
+              "Gpus.open_: the driver gave %s back and its open answered Ok" bus;
+          h.stop <- (fun () -> at_exit v));
       Ok v
   | Error _ as e ->
-      Function.release fn;
+      give_back ();
       e
   | exception e ->
-      Function.release fn;
+      give_back ();
       raise e
 
 type ending = Released | Lost
@@ -131,13 +149,12 @@ type ending = Released | Lost
 let give_back ending h =
   let g = h.gpus in
   Mutex.protect g.holds @@ fun () ->
-  if not (List.exists (fun (h', _) -> h' == h) g.held) then
+  if not (List.memq h g.held) then
     invalid_argf "Gpus.%s: %s was given back already"
       (match ending with Released -> "release" | Lost -> "lose")
       h.bus;
-  g.held <- List.filter (fun (h', _) -> h' != h) g.held;
   if ending = Lost then g.spent <- (h.machine, h.bus) :: g.spent;
-  Function.release h.fn
+  drop g h
 
 let release h = give_back Released h
 let lose h = give_back Lost h
