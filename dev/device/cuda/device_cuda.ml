@@ -47,9 +47,9 @@ external failed : int -> int = "caml_device_cuda_failed"
    every call, and [refused] raises it. *)
 let refused self x = match failed self with 0 -> x | e -> fault e
 
-(* Loads the library and finds its GPUs at the first call that needs them,
-   until they are found: a failed load is tried again by the next call, so a
-   driver installed meanwhile is found. *)
+(* Loads the library and finds its GPUs at the first call that needs them, until
+   they are found: a failed load is tried again by the next call, so a driver
+   installed meanwhile is found. *)
 
 type gpus = { devices : int array; busy : bool Atomic.t array }
 
@@ -475,6 +475,8 @@ let word g = g.word
 let signaled g = signaled g.self
 
 let sleep g ~seen ~still_ms =
+  if still_ms < 0 then
+    invalid_argf "Device_cuda.sleep: still_ms %d is negative" still_ms;
   match sleep g.self seen still_ms with 0 -> () | s -> fault s
 
 (* Loss *)
