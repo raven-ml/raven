@@ -107,29 +107,70 @@ let test_dead () =
   raises_match (Exn.invalid_arg ~substring:"dead") (fun () ->
       A.v f32 (L.contiguous [| 4 |]) b)
 
-(* The last byte of a fresh sub-byte array: its bits past the last element are
-   zero. *)
-let test_tail () =
-  let tail dt n mask =
-    let a = A.create Rig.host dt [| n |] in
-    let b = A.buffer a in
-    let byte =
-      A.get (A.v D.Uint8 (L.contiguous [| B.length b |]) b) [| B.length b - 1 |]
-    in
-    equal ~msg:(D.name dt) int 0 (byte land mask)
-  in
-  tail D.Int4 3 0xF0;
-  tail D.Uint4 1 0xF0;
-  tail D.Float4_e2m1fn 5 0xF0;
-  tail D.Bit 5 0xE0;
-  tail D.Bit 1 0xFE
+(* The alignment [v] asks of a dtype's first element, in bytes: its width, one
+   component's for complex dtypes, none below a byte. *)
+let alignment (D.Any dt) =
+  match D.kind dt with D.Complex -> D.bits dt / 16 | _ -> max 1 (D.bits dt / 8)
 
-let test_create () =
-  let a = A.create Rig.host D.Complex64 [| 2; 3 |] in
-  equal layout (L.contiguous [| 2; 3 |]) (A.layout a);
-  equal int 48 (B.length (A.buffer a));
-  equal int 2 (B.length (A.buffer (A.create Rig.host D.Int4 [| 3 |])));
-  equal bool true (Rig.equal Rig.host (A.device a))
+(* Bytes [n] elements of [b] bits reach, rounded up. *)
+let reach_bytes b n = ((n * b) + 7) / 8
+let any_dtype = Gen.of_list ~pp:(fun ppf (D.Any dt) -> D.pp ppf dt) D.all
+
+(* A dtype, a layout and a view of a host buffer at any byte. *)
+let parts =
+  let open Gen in
+  with_pp
+    (fun ppf (D.Any dt, l, first, length) ->
+      Format.fprintf ppf "%a %a, bytes %d to %d" D.pp dt L.pp l first
+        (first + length))
+    (let* dt = any_dtype in
+     let* l = any_layout in
+     let* first = int_range 0 17 in
+     let (D.Any d) = dt in
+     let need = reach_bytes (D.bits d) (snd (L.span l)) - first in
+     let+ length = int_range (max 0 (need - 2)) (max 0 need + 2) in
+     (dt, l, first, length))
+
+let law_v (D.Any dt, l, first, length) =
+  let b = B.view (B.create Rig.host (first + length)) ~first ~length in
+  let within = reach_bytes (D.bits dt) (snd (L.span l)) <= length in
+  let aligned = B.address b mod alignment (D.Any dt) = 0 in
+  let empty = L.numel l = 0 in
+  cover "no element" empty;
+  cover "past the bytes" ((not empty) && not within);
+  cover "misaligned" ((not empty) && within && not aligned);
+  cover "accepted" ((not empty) && within && aligned);
+  if empty || (within && aligned) then equal layout l (A.layout (A.v dt l b))
+  else raises_match Exn.invalid_arg (fun () -> A.v dt l b)
+
+(* [create] is contiguous at offset 0 over the bytes its elements fill, and a
+   sub-byte array's last byte is zero past its last element. *)
+let law_create (D.Any dt, s) =
+  let a = A.create Rig.host dt s in
+  let n = L.numel (L.contiguous s) in
+  let b = A.buffer a in
+  equal layout (L.contiguous s) (A.layout a);
+  equal int (D.bytes dt n) (B.length b);
+  equal bool true (Rig.equal Rig.host (A.device a));
+  let used = n * D.bits dt mod 8 in
+  if used > 0 then begin
+    cover "a partial last byte" true;
+    let bytes = A.v D.Uint8 (L.contiguous [| B.length b |]) b in
+    let last = A.get bytes [| B.length b - 1 |] in
+    equal ~msg:"bits past the last element" int 0 (last lsr used)
+  end
+
+let dtype_and_shape =
+  Gen.with_pp
+    (fun ppf (D.Any dt, s) -> Format.fprintf ppf "%a %a" D.pp dt pp_ints s)
+    Gen.(pair any_dtype (array ~size:(int_range 0 3) (int_range 0 9)))
+
+let test_create_refuses () =
+  raises_match Exn.invalid_arg (fun () -> A.create Rig.host f32 [| 2; -1 |]);
+  raises_match Exn.invalid_arg (fun () ->
+      A.create Rig.host f32 (Array.make 33 1));
+  raises_match Exn.invalid_arg (fun () ->
+      A.create Rig.host f32 [| max_int; 2 |])
 
 (* Every movement keeps the array inside its buffer: [v] takes its parts
    back. *)
@@ -142,6 +183,19 @@ let law_bounds (Case (a, m)) =
       | Some b ->
           cover "a view" true;
           ignore (A.v (A.dtype b) (A.layout b) (A.buffer b)))
+
+let law_move (Case (a, m)) =
+  match m with
+  | None -> ()
+  | Some m -> (
+      match (A.move m a, L.move m (A.layout a)) with
+      | None, None -> cover "no view" true
+      | Some b, Some l ->
+          cover "a view" true;
+          equal layout l (A.layout b);
+          equal bool true (A.buffer a == A.buffer b)
+      | Some _, None -> fail "move answered a view Layout.move refuses"
+      | None, Some _ -> fail "move answered None where Layout.move has a view")
 
 (* The reshape hole: the shape a movement takes is not kept. *)
 let test_reshape_ownership () =
@@ -219,6 +273,86 @@ let law_bitcast_round_trip (Case (a, m)) =
             cover "a strided array" (not (L.is_contiguous (A.layout a)));
             equal layout (A.layout a) (A.layout back))
 
+(* The layout [bitcast] gives a layout [l] of [src] read as [dst] over [b], by
+   the rule its interface states; [None] where widening's conditions fail or the
+   first element is misaligned for [dst]. *)
+let bitcast_reference (D.Any src) (D.Any dst) l b =
+  let bs = D.bits src and bd = D.bits dst in
+  let s = L.shape l and st = L.strides l and o = L.offset l in
+  let r = Array.length s in
+  let result =
+    if bs = bd then Some l
+    else if bs > bd then
+      let k = bs / bd in
+      Some
+        (L.v ~offset:(o * k)
+           ~strides:(Array.append (Array.map (( * ) k) st) [| 1 |])
+           (Array.append s [| k |]))
+    else
+      let k = bd / bs in
+      let outer = Array.sub s 0 (max 0 (r - 1)) in
+      if r = 0 || s.(r - 1) <> k then None
+      else if L.numel l = 0 then
+        Some (L.v ~strides:(Array.make (r - 1) 0) outer)
+      else
+        let st' = Array.sub st 0 (r - 1) in
+        if
+          st.(r - 1) <> 1
+          || o mod k <> 0
+          || Array.exists (fun t -> t mod k <> 0) st'
+        then None
+        else
+          Some
+            (L.v ~offset:(o / k)
+               ~strides:(Array.map (fun t -> t / k) st')
+               outer)
+  in
+  Option.bind result (fun l' ->
+      if L.numel l' = 0 || B.address b mod alignment (D.Any dst) = 0 then
+        Some l'
+      else None)
+
+(* Two dtypes and a layout of the first over a host buffer at any byte where its
+   elements are aligned: often the narrowing of a layout of the second, so that
+   widening has its trailing axis. *)
+let bitcast_case =
+  let open Gen in
+  with_pp
+    (fun ppf (D.Any src, D.Any dst, l, first) ->
+      Format.fprintf ppf "%a to %a, %a at byte %d" D.pp src D.pp dst L.pp l
+        first)
+    (let* (D.Any src as s) = any_dtype in
+     let* (D.Any dst as d) = any_dtype in
+     let* l0 = any_layout in
+     let k = D.bits dst / D.bits src in
+     let* narrowed = bool in
+     let l =
+       if narrowed && k >= 2 && L.rank l0 < L.max_rank then
+         L.v
+           ~offset:(L.offset l0 * k)
+           ~strides:(Array.append (Array.map (( * ) k) (L.strides l0)) [| 1 |])
+           (Array.append (L.shape l0) [| k |])
+       else l0
+     in
+     let+ slot = int_range 0 4 in
+     (s, d, l, slot * alignment s))
+
+let law_bitcast (D.Any src, (D.Any dst as d), l, first) =
+  let length = reach_bytes (D.bits src) (snd (L.span l)) in
+  let b = B.view (B.create Rig.host (length + 64)) ~first ~length in
+  let a = A.v src l b in
+  let bs = D.bits src and bd = D.bits dst in
+  cover "equal widths" (bs = bd);
+  cover "narrowing" (bs > bd);
+  match (bitcast_reference (D.Any src) d l b, A.bitcast dst a) with
+  | Some l', Some c ->
+      cover "widening" (bs < bd);
+      equal layout l' (A.layout c);
+      equal bool true (A.buffer c == b)
+  | None, None -> cover "widening refused" true
+  | Some l', None -> failf "None where %a was expected" L.pp l'
+  | None, Some c -> failf "%a where None was expected" L.pp (A.layout c)
+
 let test_expect () =
   let a = floats32 [| 1 |] [| 3. |] in
   equal (values f32) [| 3. |] (A.to_array (A.expect f32 (A.Any a)));
@@ -239,6 +373,23 @@ let test_settle () =
   raises_match (Exn.invalid_arg ~substring:"shapes") (fun () ->
       A.settle "add" 10 [ A.Any a ])
 
+(* Every refusal code raises, naming the function and each operand, with a
+   reason of its own. *)
+let test_settle_codes () =
+  let a = floats32 [| 2; 3 |] (Array.make 6 0.) in
+  let refusals = [ 1; 2; 3; 5; 6; 7; 8; 9; 10; 11 ] in
+  let reason code =
+    match A.settle "Nx.f" code [ A.Any a ] with
+    | () -> failf "settle returned on code %d" code
+    | exception Invalid_argument m ->
+        starts_with ~msg:(string_of_int code) ~affix:"Nx.f: " m;
+        contains ~msg:(string_of_int code) ~sub:"float32 [2; 3]" m;
+        m
+  in
+  let reasons = List.map reason refusals in
+  equal int (List.length refusals)
+    (List.length (List.sort_uniq compare reasons))
+
 (* Elements *)
 
 let law_set_get (Case (a, _)) =
@@ -253,6 +404,51 @@ let law_set_get (Case (a, _)) =
       (indices (L.shape (A.layout a)))
   in
   check a
+
+(* An [int] outside its dtype's range is refused by [set] and [of_array], and
+   one inside stores as itself. *)
+let law_range (type s) (dt : (int, s) D.t) =
+  let lo = D.min_value dt and hi = D.max_value dt in
+  let x =
+    Gen.frequency
+      [
+        (4, Gen.int_range (lo - 3) (hi + 3));
+        ( 2,
+          Gen.of_list ~pp:Format.pp_print_int
+            [ min_int; lo - 1; lo; hi; hi + 1; max_int ] );
+      ]
+  in
+  prop (D.name dt) x (fun x ->
+      let a = A.create Rig.host dt [| 1 |] in
+      if x < lo || x > hi then begin
+        cover "out of range" true;
+        raises_match Exn.invalid_arg (fun () -> A.set a [| 0 |] x);
+        raises_match Exn.invalid_arg (fun () -> A.of_array dt [| 1 |] [| x |])
+      end
+      else begin
+        cover "a bound" (x = lo || x = hi);
+        A.set a [| 0 |] x;
+        equal int x (A.get a [| 0 |]);
+        equal (array int) [| x |] (A.to_array (A.of_array dt [| 1 |] [| x |]))
+      end)
+
+let ranges =
+  [
+    law_range D.Int4;
+    law_range D.Uint4;
+    law_range D.Int8;
+    law_range D.Uint8;
+    law_range D.Int16;
+    law_range D.Uint16;
+  ]
+
+let test_of_array_refuses () =
+  raises_match Exn.invalid_arg (fun () -> A.of_array f32 [| 2; 2 |] [| 1. |]);
+  raises_match Exn.invalid_arg (fun () -> A.of_array f32 [| 1 |] [| 1.; 2. |]);
+  raises_match Exn.invalid_arg (fun () -> A.of_array f32 [| -1 |] [||]);
+  let a = A.of_array f32 [| 0; 3 |] [||] in
+  equal bool true (Rig.equal Rig.host (A.device a));
+  equal layout (L.contiguous [| 0; 3 |]) (A.layout a)
 
 let test_index () =
   let a = floats32 [| 2; 3 |] (Array.make 6 0.) in
@@ -298,6 +494,24 @@ let test_dead_access () =
   fails (fun () -> A.to_array a);
   fails (fun () -> A.bitcast D.Uint32 a);
   fails (fun () -> A.bitcast D.Uint8 a)
+
+(* Memory held exclusive is refused by every function that reads it on the
+   host. *)
+let test_exclusive () =
+  let a = floats32 [| 2 |] [| 1.; 2. |] in
+  Rig.Claim.with_ ~read:[]
+    ~donate:[ [ A.buffer a ] ]
+    (fun c ->
+      equal bool true (Rig.Claim.exclusive c (A.buffer a));
+      let fails what f =
+        raises_match ~msg:what (Exn.invalid_arg ~substring:"exclusive") f
+      in
+      fails "get" (fun () -> A.get a [| 0 |]);
+      fails "set" (fun () -> A.set a [| 0 |] 0.);
+      fails "to_array" (fun () -> A.to_array a);
+      fails "copy" (fun () -> A.copy a);
+      fails "to_device" (fun () -> A.to_device Rig.host a);
+      fails "bigarray" (fun () -> A.bigarray Bigarray.float32 a))
 
 let test_dead_bigarray () =
   let a = A.to_device (S.io_device ()) (floats32 [| 2 |] [| 1.; 2. |]) in
@@ -436,10 +650,43 @@ let law_copy (Case (a, m)) =
       check b
   | None -> check a
 
+(* Arrays of every byte-wide dtype over drawn bytes, NaN payloads, non-0/1 bools
+   and every other pattern included, and a movement of them. *)
+let raw =
+  let open Gen in
+  let byte_wide = List.filter (fun (D.Any dt) -> D.bits dt >= 8) D.all in
+  let* (D.Any dt) = of_list ~pp:(fun ppf (D.Any dt) -> D.pp ppf dt) byte_wide in
+  let* s = shape in
+  let w = D.bits dt / 8 in
+  let n = Array.fold_left ( * ) 1 s * w in
+  let* bytes = array ~size:(const n) (int_range 0 255) in
+  let u = A.of_array D.Uint8 (Array.append s [| w |]) bytes in
+  let a = Option.get (A.bitcast dt u) in
+  let+ m = option (movement ~apart:false (L.shape (A.layout a))) in
+  Case (a, m)
+
+let raw = Gen.with_pp pp_case raw
+
+(* The bytes of [a]'s elements in C order of indices. *)
+let bytes_of a = A.to_array (Option.get (A.bitcast D.Uint8 a))
+
+let law_copy_bits (Case (a, m)) =
+  let a = Option.value ~default:a (Option.bind m (fun m -> A.move m a)) in
+  cover "a strided view" (not (L.is_contiguous (A.layout a)));
+  equal (array int) (bytes_of a) (bytes_of (A.copy a))
+
 let law_to_device (Case (a, m)) =
   let check : type v s. (v, s) A.t -> unit =
    fun a ->
     let c = A.to_device Rig.host a in
+    let bits = D.bits (A.dtype a) in
+    let lo, hi = L.span (A.layout a) in
+    let first = lo * bits / 8 in
+    equal ~msg:"bytes" int (reach_bytes bits hi - first) (B.length (A.buffer c));
+    equal ~msg:"offset" int
+      (L.offset (A.layout a) - (8 * first / bits))
+      (L.offset (A.layout c));
+    equal ints (L.shape (A.layout a)) (L.shape (A.layout c));
     equal ints (L.strides (A.layout a)) (L.strides (A.layout c));
     equal (values (A.dtype a)) (A.to_array a) (A.to_array c);
     if B.length (A.buffer c) > 0 then
@@ -485,6 +732,54 @@ let test_bigarray () =
   let g = Option.get (A.bigarray Bigarray.float32 row) in
   equal float_exact 9. (Bigarray.Genarray.get g [| 0; 2 |]);
   equal bool false (unclaimed (A.buffer a))
+
+(* Bigarray's kind for a dtype, where Bigarray has the format. *)
+let kind : type v s. (v, s) D.t -> (v, s) Bigarray.kind option = function
+  | D.Float64 -> Some Bigarray.float64
+  | D.Float32 -> Some Bigarray.float32
+  | D.Float16 -> Some Bigarray.float16
+  | D.Int64 -> Some Bigarray.int64
+  | D.Int32 -> Some Bigarray.int32
+  | D.Int16 -> Some Bigarray.int16_signed
+  | D.Uint16 -> Some Bigarray.int16_unsigned
+  | D.Int8 -> Some Bigarray.int8_signed
+  | D.Uint8 -> Some Bigarray.int8_unsigned
+  | D.Complex128 -> Some Bigarray.complex64
+  | D.Complex64 -> Some Bigarray.complex32
+  | _ -> None
+
+(* [bigarray] is [Some] iff the array is C-contiguous, of rank at most 16, and
+   its elements are the array's. *)
+let law_bigarray (Case (a, m)) =
+  let check : type v s. (v, s) A.t -> unit =
+   fun a ->
+    match kind (A.dtype a) with
+    | None -> ()
+    | Some k -> (
+        let l = A.layout a in
+        match A.bigarray k a with
+        | None ->
+            cover "None" true;
+            equal bool false (L.is_contiguous l && L.rank l <= 16)
+        | Some g ->
+            cover "Some" true;
+            equal bool true (L.is_contiguous l);
+            equal ints (L.shape l) (Bigarray.Genarray.dims g);
+            equal
+              (values (A.dtype a))
+              (A.to_array a)
+              (Array.of_list
+                 (List.map (Bigarray.Genarray.get g) (indices (L.shape l)))))
+  in
+  match Option.bind m (fun m -> A.move m a) with
+  | Some b -> check b
+  | None -> check a
+
+let test_bigarray_rank () =
+  let a = A.create Rig.host D.Uint8 (Array.make 16 1) in
+  is_some (A.bigarray Bigarray.int8_unsigned a);
+  let a = A.create Rig.host D.Uint8 (Array.make 17 1) in
+  is_none (A.bigarray Bigarray.int8_unsigned a)
 
 let test_of_bigarray () =
   let g =
@@ -577,6 +872,11 @@ let test_door_buffers () =
       equal bool true (Rig.Claim.exclusive c (A.buffer held));
       equal ~msg:"exclusive" int exclusive (S.add (zeros [| 2 |]) x held))
 
+(* An operand with no element passes the door wherever its memory lies. *)
+let test_door_empty () =
+  let io = A.to_device (S.io_device ()) (zeros [| 0; 2 |]) in
+  equal int ok (S.add (zeros [| 0; 2 |]) io io)
+
 let test_door_releases () =
   let z = zeros [| 2 |] and x = floats32 [| 2 |] [| 1.; 2. |] in
   equal int ok (S.add z x x);
@@ -599,8 +899,16 @@ let tests =
         test "v keeps the layout inside the buffer" test_bounds;
         test "v refuses a misaligned first element" test_alignment;
         test "v refuses a dead buffer" test_dead;
-        test "create is C-contiguous at offset 0" test_create;
-        test "a fresh sub-byte array's tail bits are zero" test_tail;
+        prop ~count:500
+          "v takes a layout within its buffer's bytes on an aligned first \
+           element, and only those"
+          parts law_v;
+        prop
+          "create is C-contiguous at offset 0 over its bytes, its tail bits \
+           zero"
+          dtype_and_shape law_create;
+        test "create refuses what contiguous refuses" test_create_refuses;
+        prop "move is Layout.move over the same buffer" case law_move;
         prop "every movement keeps an array in its buffer" case law_bounds;
         test "no shape a movement takes or returns is held"
           test_reshape_ownership;
@@ -613,9 +921,12 @@ let tests =
         test "a widening refuses strides it cannot divide" test_bitcast_refuses;
         prop "a narrowing then its widening is the identity" case
           law_bitcast_round_trip;
+        prop ~count:1000 "bitcast follows its rule over any layout" bitcast_case
+          law_bitcast;
         test "expect recovers the dtype or names both" test_expect;
         test "settle returns on pending work and names every refusal"
           test_settle;
+        test "settle gives each refusal its own reason" test_settle_codes;
       ];
     group "elements"
       [
@@ -623,8 +934,12 @@ let tests =
         test "an index outside the shape is refused" test_index;
         test "set refuses repeated elements and ints out of range"
           test_set_refuses;
+        group "an int outside its dtype's range is refused" ranges;
+        test "of_array refuses a count other than the shape's"
+          test_of_array_refuses;
         test "memory the host does not address is refused" test_io_refuses;
         test "a dead buffer is refused" test_dead_access;
+        test "memory held exclusive is refused" test_exclusive;
         test "bigarray refuses a dead buffer off the host" test_dead_bigarray;
         test "to_device refuses a dead buffer under no element" test_dead_empty;
         test "a refused copy allocates nothing" test_refused_copy;
@@ -642,6 +957,7 @@ let tests =
         test "copy gathers into a fresh buffer" test_copy;
         test "copy keeps NaN payloads" test_copy_bits;
         prop "copy is contiguous with the same elements" case law_copy;
+        prop "copy keeps every byte of every element" raw law_copy_bits;
         prop "to_device copies and keeps the layout" case law_to_device;
         test "to_device moves sub-byte views through an io device"
           test_to_device_io;
@@ -650,6 +966,8 @@ let tests =
       [
         test "bigarray shares a contiguous host array's bytes" test_bigarray;
         test "of_bigarray shares the bigarray's bytes" test_of_bigarray;
+        prop "bigarray views a C-contiguous host array" case law_bigarray;
+        test "bigarray takes up to 16 axes" test_bigarray_rank;
       ];
     group "door"
       [
@@ -658,6 +976,7 @@ let tests =
           test_door_positions;
         test "a written operand must be distinct and alone" test_door_written;
         test "dead, foreign and exclusive buffers are refused" test_door_buffers;
+        test "an operand with no element passes off the host" test_door_empty;
         test "a read releases its claims" test_door_releases;
         test "a read survives a moving collection" test_door_moving_gc;
       ];
