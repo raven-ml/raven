@@ -213,9 +213,11 @@ let trees =
   ]
 
 (* [with_files files f] is [f dir], with each (path, contents) of [files]
-   written under a new directory [dir], which is removed after. *)
+   written under [dir], beside the executable in _build, and removed after. A
+   killed run leaves [dir], so it is cleared first. The native and bytecode
+   suites, which may run at once, each have their own. *)
 let with_files files f =
-  let dir = Filename.temp_dir "nx_pool" "" in
+  let dir = Sys.executable_name ^ ".cgroup" in
   let rec make path =
     if not (Sys.file_exists path) then (
       make (Filename.dirname path);
@@ -227,6 +229,8 @@ let with_files files f =
       Sys.rmdir path)
     else Sys.remove path
   in
+  if Sys.file_exists dir then remove dir;
+  Sys.mkdir dir 0o755;
   List.iter
     (fun (path, contents) ->
       let file = Filename.concat dir path in
