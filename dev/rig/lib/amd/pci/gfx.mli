@@ -85,6 +85,10 @@ val dequeue : t -> wait:bool -> bool
 val halt : t -> unit
 (** [halt g] halts the micro-engines. *)
 
+val untrace : t -> unit
+(** [untrace g] turns off a thread trace that may run: every shader engine's,
+    then the compute queues' trace enable. A virtual function traces nothing. *)
+
 val gate : t -> unit
 (** [gate g] enables the GC's clock gating, under the RLC's safe mode. *)
 

@@ -520,6 +520,29 @@ let index l sel =
           ("instance_broadcast_writes", 1);
         ])
 
+(* Every engine's thread trace off, then the compute queues' trace enable, with
+   the GRBM index broadcast again, as Mesa's stop program turns a trace off: a
+   trace a stop overtakes would go on writing tokens at addresses the next
+   session's tables may map. A virtual function traces nothing. *)
+let untrace g =
+  let r = g.r in
+  let l = Regs.layout_of r in
+  let reg =
+    if g.gc < (10, 0, 0) then "regSQ_THREAD_TRACE_MODE"
+    else "regSQ_THREAD_TRACE_CTRL"
+  in
+  if (not (Regs.vf r)) && Regs.has l reg then
+    each_xcc g (fun inst ->
+        let select sel =
+          Regs.write ~inst ~value:(index l sel) r "regGRBM_GFX_INDEX" []
+        in
+        for se = 0 to (Regs.discovery l).gc.engines - 1 do
+          select (`Array (se, 0));
+          Regs.update ~inst r reg [ ("mode", 0) ]
+        done;
+        select `All;
+        Regs.write ~inst ~value:0 r "regCOMPUTE_THREAD_TRACE_ENABLE" [])
+
 let wgps g =
   let r = g.r in
   let l = Regs.layout_of r in

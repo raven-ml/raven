@@ -293,6 +293,7 @@ let stop_locked g =
        | Error _ -> ());
     let left =
       match
+        Gfx.untrace g.gfx;
         Sdma.stop g.sdma;
         Gfx.dequeue g.gfx ~wait:(g.fault = None)
       with
