@@ -713,8 +713,8 @@ let printed =
     Printed (D.Complex64, { Complex.re = 1.; im = 2. }, "1+2i");
     Printed (D.Complex128, { Complex.re = 1.; im = -2. }, "1-2i");
     Printed (D.Float32, -.nan, "nan");
-    Printed (D.Float16, 65504., "65504");
-    Printed (D.Float8_e4m3fn, -448., "-448");
+    Printed (D.Float16, 65504., "65500");
+    Printed (D.Float8_e4m3fn, -448., "-450");
     Printed (D.Float16, 0x1p-6, "0.01563");
     Printed (D.Float8_e4m3fn, 0.125, "0.13");
     Printed (D.Bfloat16, 0x1p+97, "1.59e+29");
@@ -794,23 +794,23 @@ let shorter s =
       let sign = if s.[0] = '-' then "-" else "" in
       [ strf "%s%de%d" sign q (e + 1); strf "%s%de%d" sign (q + 1) (e + 1) ]
 
-let check_printed dt v =
+(* Whether the decimal [t] reads back as [v] in [f]: [t] rounds to [v] at [f]'s
+   precision with the exponent unbounded, so a decimal that saturates to the
+   largest finite value does not read back as it. *)
+let reads_back f v t =
+  Testable.equal float_exact v (nearest f (float_of_string t))
+
+let check_printed (F (dt, f)) v =
   let s = Format.asprintf "%a" (D.pp_value dt) v in
-  let reads_back t =
-    Testable.equal float_exact v (D.of_float dt (float_of_string t))
-  in
+  let reads_back = reads_back f v in
   let special =
     if Float.is_nan v then Some "nan"
     else if v = inf then Some "inf"
     else if v = -.inf then Some "-inf"
     else None
   in
-  let whole = Float.is_integer v && Float.abs v < 1e16 in
   match special with
   | Some t -> if s = t then None else Some (strf "%h printed %s" v s)
-  | None when whole ->
-      let t = strf "%.0f" v in
-      if s = t then None else Some (strf "%h printed %s, not %s" v s t)
   | None when not (reads_back s) -> Some (strf "%h printed %s" v s)
   | None -> (
       match List.filter reads_back (shorter s) with
@@ -835,7 +835,7 @@ let test_every_value_printed (F (dt, f)) =
   for c = 0 to (1 lsl (f.exp + f.frac)) - 1 do
     List.iter
       (fun v ->
-        match check_printed dt v with
+        match check_printed (F (dt, f)) v with
         | Some e -> wrong := e :: !wrong
         | None -> ())
       [ decode f c; -.decode f c ]
@@ -853,7 +853,7 @@ let law_printed (F (dt, f)) =
     List.init (emax - emin + 1) (fun e -> Float.ldexp 1. (emin + e))
   in
   prop (D.name dt) ~examples:powers (Gen.with_pp pp_hex Gen.any_float) (fun x ->
-      equal (option string) None (check_printed dt (D.of_float dt x)))
+      equal (option string) None (check_printed (F (dt, f)) (D.of_float dt x)))
 
 (* The suite *)
 
@@ -924,12 +924,12 @@ let tests =
           test_printed;
         group "integers print in their dtype's reading" printing_integers;
         cases ~name:format_name
-          "every value prints in full if a whole number, else as the shortest \
-           decimal that reads back"
+          "every value prints as the shortest decimal that reads back, the \
+           nearest of those"
           narrow test_every_value_printed;
         group
-          "a wider float prints in full if a whole number, else as the \
-           shortest decimal that reads back"
+          "a wider float prints as the shortest decimal that reads back, the \
+           nearest of those"
           (List.map law_printed
              (List.filter (fun (F (dt, _)) -> D.bits dt >= 32) formats));
       ];
