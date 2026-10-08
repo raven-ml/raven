@@ -30,10 +30,13 @@
     those the accepting end can serve; the second refuses a dialing end that
     does not prove the key, or that the accepting end does not admit, such as a
     second controller. A reason has at most 4096 bytes: a longer one is cut
-    there, and one announced longer is malformed. A proof is HMAC-BLAKE2b-256,
-    keyed by the BLAKE2b-256 hash of the job's key, over its end's label, both
-    processes and both nonces; the two ends' labels differ, so neither proof
-    answers for the other. The key itself never crosses the connection.
+    there, and one announced longer is malformed.
+
+    A proof is HMAC-BLAKE2b-256, keyed by the BLAKE2b-256 hash of the job's key,
+    over its end's label (["rig-job dialing"] or ["rig-job accepting"]), the
+    dialing end's process, the accepting end's process, the accepting end's
+    nonce and the dialing end's nonce. The two ends' labels differ, so neither
+    proof answers for the other. The key itself never crosses the connection.
 
     {1:frames Frames}
 
@@ -66,9 +69,9 @@
 
     A process sends a [beat] after a second in which it sent nothing on a
     connection, and fails the job when no byte came on one for 10 seconds. An
-    [abort] fails the job with its reason. A connection ends in order once each
-    end sent a [close] and received the other's; one that ends otherwise fails
-    the job.
+    [abort] fails the job with its reason, which has at most 4096 bytes. A
+    connection ends in order once each end sent a [close] and received the
+    other's; one that ends otherwise fails the job.
 
     {1:references References}
 
@@ -105,8 +108,9 @@ val dial :
     answer.
 
     [Error why] if the accepting end refused, before the proofs or after them,
-    [why] its reason; speaks another version, [why] naming both; proves another
-    key; or fails to answer in time, or the stream fails.
+    [why] its reason; speaks another version, [why] naming both; is no process
+    of a job; proves another key; sends a malformed handshake; or fails to
+    answer in time, or the stream fails.
 
     Raises [Invalid_argument] if [key] has fewer than {!min_key} or more than
     {!max_key} bytes, [self] or [peer] is an agent outside [1] to
@@ -224,6 +228,7 @@ type handover = {
 (** The type for the frames an agent reads from its controller. *)
 type command =
   | Request : 'a request -> command
+      (** A request, which the agent answers in the order requests came. *)
   | Handover : handover * Rig_remote_abi.area array -> command
       (** A hand-over and the bytes of its copies from [Local], one area per
           such copy, in its parts' order. *)

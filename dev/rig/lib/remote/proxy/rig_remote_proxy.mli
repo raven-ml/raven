@@ -57,8 +57,9 @@ val make : Link.t -> Wire.account -> capability -> t
 (** [make l a c] is the proxy on [l] of the agent's device [a], whose record is
     [c]. It sends nothing: [a] is the agent's answer for a device it opened.
 
-    Raises [Invalid_argument] if [c] is [Host _] and [a]'s id is not [0], or
-    [Device { id }] and [id] is not [a]'s. *)
+    Raises [Invalid_argument] if [c] is [Host _] and [a]'s id is not [0], if [c]
+    is [Device { id }] and [id] is not [a]'s, or if [l] has a proxy of [a]'s
+    device. *)
 
 exception Fault of string
 (** [Fault why] reports that the proxy's job failed, [why] its root cause. *)
@@ -230,8 +231,8 @@ val submit_entry : nativeint
     the link's queue is full.
 
     It answers [RIG_OK] once the frame is queued. It answers [RIG_FAILED] with
-    the job's root cause if the job failed or closes, and with
-    ["out of memory for a hand-over"] if memory ran out. *)
+    the job's root cause if the job failed, with ["the job is closed"] if it
+    closes, and with ["out of memory for a hand-over"] if memory ran out. *)
 
 val self : t -> nativeint
 (** [self d] is the address of [d]'s C state, the [self] argument of the room
