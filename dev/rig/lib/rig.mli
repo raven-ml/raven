@@ -641,8 +641,9 @@ module Submission : sig
   (** [read s i b] sets read slot [i] to [b]: the next submit waits for the last
       write of [b]'s memory, and stamps its use by [s]'s device.
 
-      Raises [Invalid_argument] if [i] is not a read slot of [s], or [b]'s
-      memory is in a hold. *)
+      Raises [Invalid_argument] if [i] is not a read slot of [s], [b]'s memory
+      is in a hold, or [b] is an {!Io} device's memory, which no queue reaches:
+      a slot takes a {!Buffer.borrow} of its pages. *)
 
   val write : t -> int -> Buffer.t -> unit
   (** [write s i b] sets write slot [i] to [b]: the next submit waits for every

@@ -187,6 +187,10 @@ let make ?hold ~reads ~writes ~waits d parts =
   }
 
 let set fn s k b =
+  (* No queue reaches io memory itself, only a borrow of its pages. *)
+  if Dev.is_io b.mem.dev then
+    invalid_argf "Rig.%s: %s's memory is io memory, which no queue reaches" fn
+      b.mem.dev.name;
   let e = entry_of b in
   if e.held then invalid_argf "Rig.%s: the buffer's memory is in a hold" fn;
   sub_slot s.c k e.stamps b.mem.handle;

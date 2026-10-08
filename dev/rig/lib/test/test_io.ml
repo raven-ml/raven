@@ -233,6 +233,19 @@ let collecting t io collected seen =
           Printf.sprintf "frees: %d" (count "free" t);
         ])
 
+(* No device's work reaches io memory itself, only a borrow of its pages: a slot
+   refuses an io device's buffer and takes the borrow. *)
+let test_slots () =
+  let io, _ = open_pages () in
+  let d, _ = P.open_ "io:slots" in
+  let m = B.create io page_bytes in
+  let s = Sub.make ~reads:1 ~writes:1 ~waits:0 d [||] in
+  raises_match Exn.invalid_arg (fun () -> Sub.read s 0 m);
+  raises_match Exn.invalid_arg (fun () -> Sub.write s 0 m);
+  Sub.read s 0 (require_some (B.borrow d m));
+  Sub.write s 0 (B.create d 8);
+  ignore (C.submit s)
+
 (* The minor words [f ()] allocates. *)
 let minor_words f =
   let before = Gc.minor_words () in
@@ -336,6 +349,8 @@ let tests =
         test "io memory returns once unreachable and its uses reached" test_free;
         test "a collected io memory's release costs few words"
           test_release_words;
+        test "a slot refuses io memory and takes a borrow of its pages"
+          test_slots;
         test "a fault of io loses its device, a failure of its memory nothing"
           test_faults;
         test "a region an io library made is a buffer of its device alone"
