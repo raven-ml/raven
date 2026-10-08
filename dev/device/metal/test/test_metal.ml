@@ -513,6 +513,18 @@ let misused_regions () =
   Device_metal.free other o;
   invalid (fun () -> Device_metal.map_peer t.d other o)
 
+let given_back () =
+  let t = dev () in
+  let r = alloc t 64 in
+  let m = require_some (Device_metal.map_host t.d (S.pages page) page) in
+  let wr = S.weak (Device_metal.handle r)
+  and wm = S.weak (Device_metal.handle m) in
+  S.wait t.d (submit_ok t [||]);
+  Device_metal.free t.d r;
+  Device_metal.unmap t.d m;
+  equal bool ~msg:"freed" false (S.alive wr);
+  equal bool ~msg:"unmapped" false (S.alive wm)
+
 let memory =
   group ~timeout:60. "memory"
     [
@@ -530,6 +542,7 @@ let memory =
         "free, unmap and map_peer refuse a region of the wrong kind or given \
          back"
         misused_regions;
+      test "free and unmap release the region's buffer" given_back;
     ]
 
 (* Images *)
