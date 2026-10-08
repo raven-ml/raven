@@ -1,0 +1,9 @@
+; What the NV suites share: the GPU lock, host memory, values, the C room
+; check, and launches of the fixtures' kernels.
+
+(library
+ (name device_nv_support)
+ (libraries device_nv device_nv_abi device_nv_nvidia device_edge unix windtrap)
+ (foreign_stubs
+  (language c)
+  (names device_nv_support_stubs)))

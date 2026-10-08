@@ -3,7 +3,9 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-extern "C" __global__ void simple_add(int* out, const int* a, const int* b, int n) {
-  int i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i < n) out[i] = a[i] + b[i];
+/* The 32-bit word i at [out] is 3i, for i < n, in blocks of 256 threads. Its
+   twin twice.cu differs only in the factor. */
+extern "C" __global__ void index(int *out, int n) {
+  int i = blockIdx.x * 256 + threadIdx.x;
+  if (i < n) out[i] = 3 * i;
 }
