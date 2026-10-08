@@ -7,6 +7,7 @@
 #include <caml/mlvalues.h>
 
 #include "nx_array.h"
+#include "rig.h"
 
 /* The door alone: three operands read and released, with no kernel. */
 
@@ -17,6 +18,34 @@ value nx_array_bench_read_3(value z, value x, value y) {
   int e = nx_read(3, in, a);
   if (!e) nx_done(3, a);
   return Val_int(e);
+}
+
+/* The door and the coalescer: three operands read, one loop formed, the
+   operands released. */
+
+value nx_array_bench_loop_3(value z, value x, value y) {
+  int dt = nx_array_dtype(z);
+  nx_operand in[3] = {{z, dt, 1}, {x, dt, 0}, {y, dt, 0}};
+  nx_array a[3];
+  nx_loop l;
+  int e = nx_read(3, in, a);
+  if (e) return Val_int(e);
+  e = nx_coalesce(3, a, &l);
+  nx_done(3, a);
+  return Val_int(e ? e : l.rank);
+}
+
+/* The door's floor: the claims nx_read takes on three buffers, for writing
+   the first, and their release. */
+
+value nx_array_bench_claim_3(value z, value x, value y) {
+  enum rig_claim cz = rig_buffer_claim(z, RIG_READ_WRITE);
+  enum rig_claim cx = rig_buffer_claim(x, RIG_READ);
+  enum rig_claim cy = rig_buffer_claim(y, RIG_READ);
+  if (cz == RIG_CLAIMED) rig_buffer_release(z);
+  if (cx == RIG_CLAIMED) rig_buffer_release(x);
+  if (cy == RIG_CLAIMED) rig_buffer_release(y);
+  return Val_unit;
 }
 
 /* Conversions over runs

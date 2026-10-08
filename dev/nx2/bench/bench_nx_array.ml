@@ -20,6 +20,13 @@ external read_3 : ('v, 's) A.t -> ('v, 's) A.t -> ('v, 's) A.t -> int
   = "nx_array_bench_read_3"
 [@@noalloc]
 
+external loop_3 : ('v, 's) A.t -> ('v, 's) A.t -> ('v, 's) A.t -> int
+  = "nx_array_bench_loop_3"
+[@@noalloc]
+
+external claim_3 : B.t -> B.t -> B.t -> unit = "nx_array_bench_claim_3"
+[@@noalloc]
+
 let mib = 1024 * 1024
 let row name setup f = Thumper.bench_with_setup ~setup name f
 let f32 = D.Float32
@@ -213,6 +220,8 @@ let layout_rows =
       row "equal-4"
         (fun () -> (L.contiguous rank4, L.contiguous rank4))
         (fun (a, b) -> L.equal a b);
+      Thumper.bench ~budgets:no_alloc "hash-4" (fun () ->
+          L.hash (Thumper.black_box l));
       Thumper.bench ~budgets:no_alloc "dim-4" (fun () ->
           let l = Thumper.black_box l in
           L.dim l 0 + L.dim l 1 + L.dim l 2 + L.dim l 3 + L.rank l);
@@ -222,8 +231,19 @@ let layout_rows =
           L.coalesce (Thumper.black_box [| t; c; c |]));
     ]
 
+(* Arrays and the door. A kernel's operands are rank-4 float32 arrays of 120
+   elements on the host; [t] is the transposed view of one. *)
+
+let ok name e = if e <> 0 then failwith (name ^ ": the door refused")
+let operand ?(shape = rank4) () = A.create Rig.host f32 shape
+
+(* [a] with its axes reversed. *)
+let transpose a =
+  let r = L.rank (A.layout a) in
+  Option.get (A.move (M.Permute (Array.init r (fun i -> r - 1 - i))) a)
+
 (* A kernel of one element: the result made, three operands read through the
-   door and coalesced, one add. *)
+   door and coalesced, one add. Its floor is rig's buffer. *)
 let array_rows =
   Thumper.group "array"
     [
@@ -231,45 +251,86 @@ let array_rows =
         (fun () -> (one (), one ()))
         (fun (x, y) ->
           let z = A.create Rig.host f32 [| 1 |] in
-          ignore (Nx_array_support.add_noalloc z x y));
+          ok "add-1" (Nx_array_support.add_noalloc z x y));
       row "add-1-layout-shared"
         (fun () -> (one (), one ()))
         (fun (x, y) ->
           let z = A.v f32 (A.layout x) (B.create Rig.host 4) in
-          ignore (Nx_array_support.add_noalloc z x y));
-      Thumper.bench "host-create-16" (fun () -> ignore (B.create Rig.host 16));
+          ok "add-1-layout-shared" (Nx_array_support.add_noalloc z x y));
+      Thumper.bench "create-1" (fun () -> A.create Rig.host f32 [| 1 |]);
+      Thumper.bench "floor-host-create-16" (fun () -> B.create Rig.host 16);
+      Thumper.bench "move-permute-4"
+        (let a = operand () in
+         fun () -> A.move (M.Permute [| 3; 1; 2; 0 |]) (Thumper.black_box a));
     ]
 
 let door_rows =
-  let operand () = A.create Rig.host f32 rank4 in
+  let three () = (operand (), operand (), operand ()) in
   Thumper.group "door"
     [
-      row "read-3"
-        (fun () -> (operand (), operand (), operand ()))
-        (fun (z, x, y) -> read_3 z x y);
+      row "read-3" three (fun (z, x, y) -> ok "read-3" (read_3 z x y));
+      row "loop-3" three (fun (z, x, y) -> loop_3 z x y);
+      row "loop-3-transposed"
+        (fun () ->
+          let shape = [| 5; 4; 3; 2 |] in
+          (operand ~shape (), transpose (operand ()), operand ~shape ()))
+        (fun (z, x, y) -> loop_3 z x y);
+      row "floor-claim-3"
+        (fun () ->
+          let z, x, y = three () in
+          (A.buffer z, A.buffer x, A.buffer y))
+        (fun (z, x, y) -> claim_3 z x y);
     ]
 
+(* Element and bulk access over 1 Mi float32 elements, each beside the
+   allocation it fills or the copy that bounds it. *)
 let access_rows =
   let n = mib in
+  let host x = A.of_array f32 [| n |] (Array.make n x) in
+  let i4 = [| 1; 2; 3; 4 |] in
+  let int4 () = A.of_array D.Int4 rank4 (Array.make 120 3) in
+  let square = [| 512; 512 |] in
   Thumper.group "access"
     [
-      row "to_array-f32-1M"
-        (fun () -> A.of_array f32 [| n |] (Array.make n 1.5))
+      row "get-f32-4" (fun () -> operand ()) (fun a -> A.get a i4);
+      row "set-f32-4" (fun () -> operand ()) (fun a -> A.set a i4 1.5);
+      row "get-i4-4" int4 (fun a -> A.get a i4);
+      row "set-i4-4" int4 (fun a -> A.set a i4 5);
+      row "to_array-f32-1M" (fun () -> host 1.5) A.to_array;
+      row "to_array-f16-1M"
+        (fun () -> A.of_array D.Float16 [| n |] (Array.make n 1.5))
         A.to_array;
       row "to_array-i32-1M"
         (fun () -> A.of_array D.Int32 [| n |] (Array.make n 7l))
         A.to_array;
+      row "of_array-f32-1M"
+        (fun () -> Array.make n 1.5)
+        (A.of_array f32 [| n |]);
       Thumper.bench "create-f32-1M" (fun () -> A.create Rig.host f32 [| n |]);
-      row "bigarray-f32-1M"
-        (fun () -> A.of_array f32 [| n |] (Array.make n 1.5))
-        (A.bigarray Bigarray.float32);
-      (* Twins: the OCaml arrays [to_array] fills, and the bigarray of
-         [create]'s bytes. *)
-      Thumper.bench "float-array-1M" (fun () -> Array.create_float n);
-      Thumper.bench "int32-array-1M" (fun () ->
+      row "copy-f32-1M" (fun () -> host 1.5) A.copy;
+      row "copy-transposed-512x512"
+        (fun () ->
+          transpose (A.of_array f32 square (Array.make (512 * 512) 1.5)))
+        A.copy;
+      row "bigarray-f32-1M" (fun () -> host 1.5) (A.bigarray Bigarray.float32);
+      row "of_bigarray-f32-1M"
+        (fun () ->
+          Bigarray.genarray_of_array1
+            (Bigarray.Array1.create Bigarray.float32 Bigarray.c_layout n))
+        (A.of_bigarray f32);
+      (* Floors: the OCaml arrays [to_array] fills, the bigarray of [create]'s
+         bytes, and a copy of 4 MiB into a fresh bigarray. *)
+      Thumper.bench "floor-float-array-1M" (fun () -> Array.create_float n);
+      Thumper.bench "floor-int32-array-1M" (fun () ->
           Array.init n (fun i -> Int32.of_int (Sys.opaque_identity i)));
-      Thumper.bench "bigarray-create-f32-1M" (fun () ->
-          Bigarray.Array1.create Bigarray.float32 Bigarray.c_layout n);
+      Thumper.bench "floor-bigarray-create-f32-1M" (fun () ->
+          A1.create Bigarray.float32 Bigarray.c_layout n);
+      row "floor-bigarray-copy-f32-1M"
+        (fun () -> values float32)
+        (fun x ->
+          let y = vec float32 in
+          A1.blit x y;
+          y);
     ]
 
 let () =

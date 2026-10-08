@@ -1,10 +1,12 @@
 (library
  (name nx_array_bench)
  (modules)
- (libraries nx_array)
+ (libraries nx_array rig)
  (foreign_stubs
   (language c)
-  (include_dirs ../lib)
+  (include_dirs
+   ../lib
+   (lib rig))
   (names nx_array_bench_stubs)))
 
 (executable
