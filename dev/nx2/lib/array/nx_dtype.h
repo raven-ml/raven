@@ -22,8 +22,6 @@
 
 #ifdef __METAL_VERSION__
 #include <metal_stdlib>
-#define nx_ldexpf metal::ldexp
-#define nx_copysignf metal::copysign
 #define nx_signbit metal::signbit
 #define nx_isfinite metal::isfinite
 #define nx_isnan metal::isnan
@@ -31,8 +29,6 @@
 #include <math.h>
 #include <stdint.h>
 #include <string.h>
-#define nx_ldexpf ldexpf
-#define nx_copysignf copysignf
 #define nx_signbit signbit
 #define nx_isfinite isfinite
 #define nx_isnan isnan
@@ -218,11 +214,21 @@ static inline uint32_t nx_mini_round(float f, int m, int bias) {
   return base + q;
 }
 
+/* The value of the magnitude code [q]: a subnormal's is frac·2^(1-bias-m), a
+   normal's binary32 bits are its fields moved into place. Both are exact and
+   both are computed, so a loop over codes does not branch. */
 static inline float nx_mini_value(uint32_t q, int m, int bias) {
   uint32_t exp = q >> m;
   uint32_t frac = q & ((1u << m) - 1);
-  if (exp == 0) return nx_ldexpf((float)frac, 1 - bias - m);
-  return nx_ldexpf((float)(frac | (1u << m)), (int)exp - bias - m);
+  float sub = (float)frac * nx_bits_float((uint32_t)(128 - bias - m) << 23);
+  float normal =
+      nx_bits_float(((exp + 127 - (uint32_t)bias) << 23) | (frac << (23 - m)));
+  return exp == 0 ? sub : normal;
+}
+
+/* [v], positive, with the sign bit of [sign] (0 or 1). */
+static inline float nx_with_sign(float v, uint32_t sign) {
+  return nx_bits_float(nx_float_bits(v) | (sign << 31));
 }
 
 static inline uint32_t nx_mini_saturate(float f, int m, int bias,
@@ -240,9 +246,8 @@ static inline uint8_t nx_float_to_e4m3fn(float f) {
 }
 
 static inline float nx_e4m3fn_to_float(uint8_t c) {
-  float s = (c & 0x80) ? -1.f : 1.f;
-  if ((c & 0x7F) == 0x7F) return nx_copysignf(NAN, s);
-  return s * nx_mini_value(c & 0x7F, 3, 7);
+  uint32_t q = c & 0x7F;
+  return nx_with_sign(q == 0x7F ? NAN : nx_mini_value(q, 3, 7), c >> 7);
 }
 
 /* e5m2: IEEE-like, with infinities; largest finite 57344. */
@@ -254,10 +259,9 @@ static inline uint8_t nx_float_to_e5m2(float f) {
 }
 
 static inline float nx_e5m2_to_float(uint8_t c) {
-  float s = (c & 0x80) ? -1.f : 1.f;
   uint32_t q = c & 0x7F;
-  if (q > 0x7C) return nx_copysignf(NAN, s);
-  return s * (q == 0x7C ? INFINITY : nx_mini_value(q, 2, 15));
+  float v = q > 0x7C ? NAN : q == 0x7C ? INFINITY : nx_mini_value(q, 2, 15);
+  return nx_with_sign(v, c >> 7);
 }
 
 /* e2m1fn: no infinity and no NaN, values ±{0, 0.5, 1, 1.5, 2, 3, 4, 6}. A
@@ -269,8 +273,7 @@ static inline uint8_t nx_float_to_e2m1fn(float f) {
 }
 
 static inline float nx_e2m1fn_to_float(uint8_t c) {
-  float v = nx_mini_value(c & 0x7, 1, 1);
-  return (c & 0x8) ? -v : v;
+  return nx_with_sign(nx_mini_value(c & 0x7, 1, 1), (c >> 3) & 1);
 }
 
 /* The value of the bits [c] of an element of the narrow float dtype [dt]. */
