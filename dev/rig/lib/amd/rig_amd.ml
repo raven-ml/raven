@@ -283,18 +283,17 @@ let scratch_writes (g : Abi.Gpu.t) ~desc m n bytes =
 (* Moves a published scratch the queue took to installed, retiring the one it
    replaced, and frees the retired ones the word passed. *)
 let settle_scratch self ops st =
+  let taken = scratch_taken self in
   (match st.pending with
-  | Some p when scratch_taken self > 0 ->
-      let taken = scratch_taken self in
+  | Some p when taken > 0 ->
       Option.iter
         (fun (m, _) -> st.retired <- (m, taken) :: st.retired)
         st.installed;
       st.installed <- Some p;
       st.pending <- None
   | Some _ | None -> ());
-  let reached, kept =
-    List.partition (fun (_, v) -> signaled_word self >= v) st.retired
-  in
+  let word = signaled_word self in
+  let reached, kept = List.partition (fun (_, v) -> word >= v) st.retired in
   List.iter (fun (m, _) -> ops.free m) reached;
   st.retired <- kept
 
