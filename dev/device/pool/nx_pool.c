@@ -154,13 +154,12 @@ static size_t cgroup_dir(const char *root, char *dir, size_t size) {
    so rounding a quota of 1.5 down would leave a third of it idle. A file
    reads "max PERIOD" without a quota and "QUOTA PERIOD" with one. */
 long nx_pool_cgroup_cpus(const char *root) {
-  char dir[4096], file[4200];
+  char dir[4096];
   size_t stop = cgroup_dir(root, dir, sizeof dir);
   if (stop == 0) return -1;
   long least = -1;
   for (;;) {
-    snprintf(file, sizeof file, "%s/cpu.max", dir);
-    FILE *f = fopen(file, "r");
+    FILE *f = open_under(dir, "/cpu.max");
     long quota, period;
     if (f != NULL) {
       if (fscanf(f, "%ld %ld", &quota, &period) == 2 && quota > 0 &&
