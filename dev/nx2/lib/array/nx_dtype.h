@@ -19,7 +19,8 @@
 
    C, CUDA and HIP sources compile this header with no OCaml header, their
    device code included. Metal sources compile it too, without the row
-   table and the functions of doubles, which Metal lacks. */
+   table and the functions of doubles, which Metal lacks. Runs over many
+   elements, which use the host's vector instructions, are in nx_array.h. */
 
 #ifndef NX_DTYPE_H
 #define NX_DTYPE_H
@@ -151,80 +152,26 @@ NX_INLINE float nx_bf16_to_float(uint16_t c) {
 
 /* float16: IEEE 754 binary16 */
 
-NX_INLINE uint16_t nx_float_to_f16(float f) {
 #if defined(__aarch64__) && !defined(__METAL_VERSION__) && !defined(__CUDA_ARCH__)
-  /* FCVT, from s to h, rounds and keeps NaN payloads as the code below
-     does. */
+/* FCVT rounds from s to h, and widens from h to s exactly; a NaN keeps its
+   sign and top payload bits and is quieted, as the code below does. */
+NX_INLINE uint16_t nx_float_to_f16(float f) {
   __fp16 h = (__fp16)f;
   uint16_t c;
   memcpy(&c, &h, 2);
   return c;
-#else
-  uint32_t bits = nx_float_bits(f);
-  uint16_t sign = (uint16_t)((bits & 0x80000000u) >> 16);
-  uint32_t exp = bits & 0x7F800000u;
-  uint32_t sig = bits & 0x007FFFFFu;
-
-  /* Past the largest exponent: inf, or a quiet NaN keeping its top payload
-     bits, as the hardware's conversion gives. */
-  if (exp >= 0x47800000u) {
-    if (exp == 0x7F800000u && sig != 0)
-      return sign | 0x7E00u | (uint16_t)(sig >> 13);
-    return sign + 0x7C00u;
-  }
-
-  /* Below the least normal: a subnormal or zero. */
-  if (exp <= 0x38000000u) {
-    if (exp < 0x33000000u) return sign; /* below 2^-25 */
-    exp >>= 23;
-    sig += 0x00800000u;
-    sig >>= (113 - exp);
-    /* The shift drops up to 11 bits: the word's low bits break a tie. */
-    if (((sig & 0x00003FFFu) != 0x00001000u) || (bits & 0x000007FFu))
-      sig += 0x00001000u;
-    /* A carry into the exponent gives the least normal, as it should. */
-    return sign + (uint16_t)(sig >> 13);
-  }
-
-  uint16_t hexp = (uint16_t)((exp - 0x38000000u) >> 13);
-  if ((sig & 0x00003FFFu) != 0x00001000u) sig += 0x00001000u;
-  /* A carry may raise the exponent to 31: inf, as it should. */
-  return sign + hexp + (uint16_t)(sig >> 13);
-#endif
 }
 
 NX_INLINE float nx_f16_to_float(uint16_t c) {
-#if defined(__aarch64__) && !defined(__METAL_VERSION__) && !defined(__CUDA_ARCH__)
-  /* FCVT, from h to s, is exact and keeps NaN payloads as the code below
-     does. */
   __fp16 h;
   memcpy(&h, &c, 2);
   return (float)h;
-#else
-  uint32_t sign = ((uint32_t)(c & 0x8000u)) << 16;
-  uint32_t exp = (c & 0x7C00u) >> 10;
-  uint32_t mant = c & 0x3FFu;
-  if (exp == 0x1F) {
-    exp = 0xFFu << 23;
-    mant = mant != 0 ? (mant << 13) | 0x400000u : 0;
-  } else if (exp == 0) {
-    if (mant != 0) {
-      exp = 1;
-      while ((mant & 0x400u) == 0) {
-        mant <<= 1;
-        exp--;
-      }
-      mant &= 0x3FFu;
-      exp = (exp + 112) << 23;
-      mant <<= 13;
-    }
-  } else {
-    exp = (exp + 112) << 23;
-    mant <<= 13;
-  }
-  return nx_bits_float(sign | exp | mant);
-#endif
 }
+#else
+/* Defined below, with the minifloats. */
+NX_INLINE uint16_t nx_float_to_f16(float f);
+NX_INLINE float nx_f16_to_float(uint16_t c);
+#endif
 
 /* Minifloats: float8 e4m3fn, e5m2 and float4 e2m1fn
 
@@ -282,6 +229,27 @@ NX_INLINE float nx_mini_value(uint32_t q, int m, int bias) {
 NX_INLINE float nx_with_sign(float v, uint32_t sign) {
   return nx_bits_float(nx_float_bits(v) | (sign << 31));
 }
+
+#if !defined(__aarch64__) || defined(__METAL_VERSION__) || defined(__CUDA_ARCH__)
+/* float16 is the minifloat of 10 fraction bits and bias 15, with
+   infinities, and NaNs whose payload it keeps in its top bits. Every case is
+   computed and one selected, so a loop over values vectorises. */
+NX_INLINE uint16_t nx_float_to_f16(float f) {
+  uint32_t u = nx_float_bits(f) & 0x7FFFFFFFu;
+  uint32_t q = nx_mini_round(f, 10, 15);
+  uint32_t nan = 0x7E00u | ((u >> 13) & 0x3FFu);
+  uint32_t code = u > 0x7F800000u ? nan : q > 0x7C00u ? 0x7C00u : q;
+  return (uint16_t)((nx_float_sign(f) << 15) | code);
+}
+
+NX_INLINE float nx_f16_to_float(uint16_t c) {
+  uint32_t q = c & 0x7FFFu, frac = q & 0x3FFu;
+  uint32_t quiet = frac != 0 ? 0x400000u : 0;
+  float special = nx_bits_float(0x7F800000u | (frac << 13) | quiet);
+  float v = q >= 0x7C00u ? special : nx_mini_value(q, 10, 15);
+  return nx_with_sign(v, (uint32_t)c >> 15);
+}
+#endif
 
 NX_INLINE uint32_t nx_mini_saturate(float f, int m, int bias,
                                     uint32_t max) {
@@ -388,8 +356,15 @@ NX_INLINE uint8_t nx_double_to_e2m1fn(double x) {
    rounding to odd once at the coarser precision, so the encoders from a
    double then round the integer once, as in nx_double_to_bf16(nx_i64_odd(v)).
    Converting to double rounds to nearest, which can land on a tie of a narrow
-   format. A value that rounds to 2^63 or 2^64 cannot be converted back, and
-   rounded away from zero. */
+   format.
+
+   The integer is split into its high and low 32 bits, each exact as a
+   double; their sum rounds to nearest, and its error, exact by Fast2Sum
+   since the high part dominates, says whether the sum was inexact and which
+   way it went. Only 32-bit conversions and double arithmetic are used, so a
+   loop over integers vectorises where the hardware has no 64-bit integer
+   conversion. An unsigned word w converts as the signed word w ^ 2^31, plus
+   2^31: a vector unit may lack the unsigned conversion. */
 
 NX_INLINE uint64_t nx_double_bits(double d) {
   uint64_t i;
@@ -403,22 +378,26 @@ NX_INLINE double nx_bits_double(uint64_t i) {
   return d;
 }
 
+/* hi + lo, |hi| >= |lo| or hi = 0, rounded to odd. */
+NX_INLINE double nx_sum_odd(double hi, double lo) {
+  double s = hi + lo, e = lo - (s - hi);
+  uint64_t away = (e != 0) & ((e < 0) != (s < 0));
+  return nx_bits_double((nx_double_bits(s) - away) | (uint64_t)(e != 0));
+}
+
+/* The unsigned word [w] as a double, from its signed reading. */
+NX_INLINE double nx_u32_double(uint32_t w) {
+  return (double)(int32_t)(w ^ 0x80000000u) + 0x1p31;
+}
+
 NX_INLINE double nx_u64_odd(uint64_t a) {
-  double d = (double)a;
-  uint64_t top = d >= 18446744073709551616.0;
-  uint64_t back = top ? 0 : (uint64_t)d;
-  uint64_t away = top | (back > a);
-  uint64_t inexact = top | (back != a);
-  return nx_bits_double((nx_double_bits(d) - away) | inexact);
+  return nx_sum_odd(nx_u32_double((uint32_t)(a >> 32)) * 0x1p32,
+                    nx_u32_double((uint32_t)a));
 }
 
 NX_INLINE double nx_i64_odd(int64_t v) {
-  double d = (double)v;
-  uint64_t top = d >= 9223372036854775808.0;
-  int64_t back = top ? 0 : (int64_t)d;
-  uint64_t away = top | (v > 0 ? back > v : back < v);
-  uint64_t inexact = top | (back != v);
-  return nx_bits_double((nx_double_bits(d) - away) | inexact);
+  int32_t hi = (int32_t)(uint32_t)((uint64_t)v >> 32);
+  return nx_sum_odd((double)hi * 0x1p32, nx_u32_double((uint32_t)v));
 }
 
 /* Integers
@@ -427,17 +406,22 @@ NX_INLINE double nx_i64_odd(int64_t v) {
    is a power of two, or one less than a power of two where the bound is
    below 2^53. */
 
+/* 2^63 - 1024 and 2^64 - 2048 are the largest doubles below 2^63 and 2^64.
+   A value is clamped below them, converted, and the bound selected for one
+   at or past the limit: only values in range convert, with no branch, so a
+   loop over values vectorises. */
+
 NX_INLINE int64_t nx_double_to_i64(double x) {
-  if (x != x) return 0;
-  if (x <= -9223372036854775808.0) return INT64_MIN;
-  if (x >= 9223372036854775808.0) return INT64_MAX;
-  return (int64_t)x;
+  double y = x == x ? x : 0.0;
+  y = y < -0x1p63 ? -0x1p63 : y;
+  y = y > 0x1.fffffffffffffp62 ? 0x1.fffffffffffffp62 : y;
+  return x >= 0x1p63 ? INT64_MAX : (int64_t)y;
 }
 
 NX_INLINE uint64_t nx_double_to_u64(double x) {
-  if (!(x > 0.0)) return 0; /* NaN too */
-  if (x >= 18446744073709551616.0) return UINT64_MAX;
-  return (uint64_t)x;
+  double y = x > 0.0 ? x : 0.0; /* NaN too */
+  y = y > 0x1.fffffffffffffp63 ? 0x1.fffffffffffffp63 : y;
+  return x >= 0x1p64 ? UINT64_MAX : (uint64_t)y;
 }
 
 /* Saturates [x] to [[lo, hi]], a range of at most 32 bits; NaN gives 0. The
@@ -448,6 +432,23 @@ NX_INLINE int64_t nx_double_to_int(double x, int64_t lo, int64_t hi) {
   y = y < (double)lo ? (double)lo : y;
   y = y > (double)hi ? (double)hi : y;
   return (int64_t)y;
+}
+
+/* nx_double_to_int of a binary32, computed in binary32 so that a loop over
+   values vectorises at its width: the low 32 bits of the result. [[lo, hi]]
+   is an integer dtype's range of at most 32 bits. A value is clamped to hi
+   where binary32 holds hi, as it does every bound of a range of 16 bits or
+   less. Otherwise it is clamped to the binary32 below hi + 1, which
+   truncates to at most hi, and one from hi + 1 on selects hi. */
+NX_INLINE uint32_t nx_float_to_int(float x, int64_t lo, int64_t hi) {
+  float top = (float)(hi + 1);
+  int exact = (int64_t)(float)hi == hi;
+  float cap = exact ? (float)hi : nx_bits_float(nx_float_bits(top) - 1);
+  float y = x == x ? x : 0.0f;
+  y = y < (float)lo ? (float)lo : y;
+  y = y < cap ? y : cap;
+  uint32_t t = lo < 0 ? (uint32_t)(int32_t)y : (uint32_t)y;
+  return !exact && x >= top ? (uint32_t)hi : t;
 }
 
 /* The bits a store of [x] writes into an element of the integer, boolean or
@@ -473,49 +474,6 @@ NX_INLINE int64_t nx_double_to_bits(int dt, double x) {
     case NX_UINT4: return nx_double_to_int(x, 0, 15);
     default: return x != 0.0; /* bool, bit */
   }
-}
-
-/* Runs
-
-   The same conversions over [n] contiguous elements, where the hardware has
-   them. arm64 widens float16 with FCVT and FCVTL, exactly. A double narrows
-   to __fp16 in one rounding: clang narrows a vector through FCVTXN (round to
-   odd) then FCVTN, gcc converts each element with FCVT from d to h. A
-   sub-byte format has no run form: its elements share bytes. */
-
-#if defined(__aarch64__) && !defined(__CUDA_ARCH__)
-/* The run forms read and write uint16_t memory as __fp16. */
-typedef __fp16 __attribute__((may_alias)) nx_fp16;
-#endif
-
-NX_INLINE void nx_f16_to_double_run(const uint16_t *src, double *dst,
-                                    size_t n) {
-#if defined(__aarch64__) && !defined(__CUDA_ARCH__)
-  const nx_fp16 *h = (const nx_fp16 *)src;
-  for (size_t i = 0; i < n; i++) dst[i] = (double)h[i];
-#else
-  for (size_t i = 0; i < n; i++) dst[i] = nx_f16_to_float(src[i]);
-#endif
-}
-
-NX_INLINE void nx_double_to_f16_run(const double *src, uint16_t *dst,
-                                    size_t n) {
-#if defined(__aarch64__) && !defined(__CUDA_ARCH__)
-  nx_fp16 *h = (nx_fp16 *)dst;
-  for (size_t i = 0; i < n; i++) h[i] = (__fp16)src[i];
-#else
-  for (size_t i = 0; i < n; i++) dst[i] = nx_double_to_f16(src[i]);
-#endif
-}
-
-NX_INLINE void nx_bf16_to_double_run(const uint16_t *src, double *dst,
-                                     size_t n) {
-  for (size_t i = 0; i < n; i++) dst[i] = nx_bf16_to_float(src[i]);
-}
-
-NX_INLINE void nx_double_to_bf16_run(const double *src, uint16_t *dst,
-                                     size_t n) {
-  for (size_t i = 0; i < n; i++) dst[i] = nx_double_to_bf16(src[i]);
 }
 
 #endif /* __METAL_VERSION__ */

@@ -13,6 +13,12 @@
 ; nx_mini_value's products are exact scalings by powers of two. The flag
 ; keeps an exact identity that needs one from being fused.
 ;
+; Every profile also passes -fno-trapping-math and -fno-math-errno, which
+; change no value: no code here enables a floating-point trap or reads errno.
+; Without them gcc vectorises neither a codec that selects between results of
+; float operations, since one might trap, nor a loop that calls a libm
+; function such as sqrt, which may set errno.
+;
 ; The sanitize profile compiles the C with AddressSanitizer and
 ; UndefinedBehaviorSanitizer and links their runtimes and the debug runtime
 ; into every executable, with rig's options: a report ends the process, and
@@ -26,7 +32,14 @@
 (env
  (release
   (c_flags
-   (:standard -std=c11 -O3 -ffp-contract=off -Wall -Wextra))
+   (:standard
+    -std=c11
+    -O3
+    -ffp-contract=off
+    -fno-trapping-math
+    -fno-math-errno
+    -Wall
+    -Wextra))
   (env-vars
    (WINDTRAP_TIMEOUT 60)))
  (sanitize
@@ -34,6 +47,8 @@
    (:standard
     -std=c11
     -ffp-contract=off
+    -fno-trapping-math
+    -fno-math-errno
     -Wall
     -Wextra
     -Werror
@@ -52,11 +67,25 @@
   (flags
    (:standard %{dune-warnings}))
   (c_flags
-   (:standard -std=c11 -ffp-contract=off -Wall -Wextra -Werror))
+   (:standard
+    -std=c11
+    -ffp-contract=off
+    -fno-trapping-math
+    -fno-math-errno
+    -Wall
+    -Wextra
+    -Werror))
   (env-vars
    (WINDTRAP_TIMEOUT 60)))
  (_
   (c_flags
-   (:standard -std=c11 -ffp-contract=off -Wall -Wextra -Werror))
+   (:standard
+    -std=c11
+    -ffp-contract=off
+    -fno-trapping-math
+    -fno-math-errno
+    -Wall
+    -Wextra
+    -Werror))
   (env-vars
    (WINDTRAP_TIMEOUT 60))))

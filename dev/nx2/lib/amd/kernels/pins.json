@@ -36,11 +36,11 @@
   "lib/amd/kernels/libc/math.h": "d5ee181299753e520bbe83b02d6e0190ac42e87733e08b52f939d1052e420fd1",
   "lib/amd/kernels/libc/stdint.h": "9a60210520ab3b74fdfc225a0617148e393f73109bb001360d191d5bfe601e6d",
   "lib/amd/kernels/libc/string.h": "874e93e9055dba9cc5ff5269deca224cffbb655d96ce03042a4662024dbbcd45",
-  "lib/array/nx_dtype.h": "5c559dbcdfbccf69838ac44d4e35ebcfdb43ff1f5d475b7e87902ce2156720cf",
+  "lib/array/nx_dtype.h": "c8cc210b13d22644e92873bce6f82699c23b893c7ae7442b4782f24bfe9609ac",
   "test/amd/support/harness.h": "d273f8732060511f6bdf123ca6c6d61ad3125a2d057e5ab4f27c42b2876a21f7",
   "test/amd/support/harness.hip": "a01409929cb4f5d1f6703ccaa01a60a24beaa5b9de76b6a5bede9248236dcda1"
  },
  "outputs": {
-  "test/amd/support/gfx1201.co": "61e01cc1659d2de636508639e379646cb74332aa7315343bf8aa0af6459cdee8"
+  "test/amd/support/gfx1201.co": "5f6bcd022cc66a4704b08d4610b578e37ec843fa19947caebe41ba7138d7e4e4"
  }
 }
