@@ -404,14 +404,15 @@ static void refresh_slot(struct rig_amd *d, uint64_t v) {
   d->slot_last[i] = v - 1;
 }
 
-/* After a fill failed: drops every word placed for v and places only v's
+/* After a fill failed, or waits the queue cannot hold, with [failure_text]
+   set: drops every word placed for v and places only v's
    release, after every earlier value, on compute. On an AQL ring the
    dropped packets keep valid headers past the write position, which the
    queue may read: each gets the invalid header type. Bytes the fill took
    stay v's, and return once the word reaches v. Scratch writes v took are
    dropped too, yet count as placed: no work runs after v, so the scratch
    the descriptor still names is retired safely once the word reaches v. */
-static int fail(struct submission *s, int part, int code) {
+static int fail(struct submission *s) {
   struct rig_amd *d = s->d;
   for (int q = 0; q < RIG_AMD_QUEUES; q++) {
     struct rig_amd_ring *r = &d->rings[q];
@@ -424,9 +425,6 @@ static int fail(struct submission *s, int part, int code) {
   }
   s->nsignalled = 0;
   d->ib_n = 0;
-  snprintf(d->failure_text, sizeof d->failure_text,
-           "a fill on %s failed with %d",
-           part == RIG_AMD_COMPUTE ? "COMPUTE:0" : "COPY:0", code);
   enter(s, RIG_AMD_COMPUTE, NULL, 0, 0);
   release(s, RIG_AMD_COMPUTE);
   mark(&d->segment.marks, s->v, d->segment.put);
@@ -463,6 +461,21 @@ int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
   for (int q = 0; q < RIG_AMD_QUEUES; q++)
     d->rings[q].start = d->rings[q].put;
 
+  /* Room budgets RIG_AMD_WAITS waits, and a GPU without 64-bit waits has
+     an empty wait template: either would hand over work that does not
+     wait. */
+  if (nwaits > RIG_AMD_WAITS || (nwaits > 0 && d->templates[T_WAIT64].n == 0)) {
+    if (nwaits > RIG_AMD_WAITS)
+      snprintf(d->failure_text, sizeof d->failure_text,
+               "%d waits; the device holds at most %d", nwaits, RIG_AMD_WAITS);
+    else
+      snprintf(d->failure_text, sizeof d->failure_text,
+               "a wait on a word; the device's compute queue cannot wait");
+    int answer = fail(&s);
+    *failure = d->failure;
+    return answer;
+  }
+
   /* The submission's segment bytes lie in one run, which never wraps. */
   uint64_t words[RIG_AMD_QUEUES], bytes;
   need(d, parts, nparts, words, &bytes);
@@ -487,7 +500,10 @@ int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
           g->put + align_up(p->segment_bytes, SEGMENT_ALIGN)};
       int code = p->fill(&w, p->arg, v);
       if (code != 0) {
-        int answer = fail(&s, q, code);
+        snprintf(d->failure_text, sizeof d->failure_text,
+                 "a fill on %s failed with %d",
+                 q == RIG_AMD_COMPUTE ? "COMPUTE:0" : "COPY:0", code);
+        int answer = fail(&s);
         *failure = d->failure;
         return answer;
       }

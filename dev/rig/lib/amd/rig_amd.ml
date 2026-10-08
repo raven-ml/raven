@@ -100,8 +100,7 @@ external create : unit -> int = "caml_rig_amd_create"
 external set_memory : int -> int -> int -> int -> int -> unit
   = "caml_rig_amd_memory"
 
-external set_segment : int -> int -> int -> int -> unit
-  = "caml_rig_amd_segment"
+external set_segment : int -> int -> int -> int -> unit = "caml_rig_amd_segment"
 
 external set_ring : int -> int -> int -> int -> int -> int -> int -> unit
   = "caml_rig_amd_ring_byte" "caml_rig_amd_ring"
@@ -117,9 +116,7 @@ external poke32 : int -> int -> int -> unit = "caml_rig_amd_poke32"
 external publish_scratch : int -> int array -> int array -> unit
   = "caml_rig_amd_scratch"
 
-external scratch_taken : int -> int = "caml_rig_amd_scratch_taken"
-[@@noalloc]
-
+external scratch_taken : int -> int = "caml_rig_amd_scratch_taken" [@@noalloc]
 external signaled_word : int -> int = "caml_rig_amd_signaled" [@@noalloc]
 external now_ms : unit -> int = "caml_rig_amd_now_ms" [@@noalloc]
 
@@ -387,8 +384,8 @@ let make (type m) (p : m path) =
   Option.iter
     (fun n ->
       if n < 1 then
-        invalid_argf
-          "Rig_amd.make: a hang bound of %d ms, expected at least 1" n)
+        invalid_argf "Rig_amd.make: a hang bound of %d ms, expected at least 1"
+          n)
     p.hang_ms;
   let* () = supported p.gpu in
   let ops = ops p in
@@ -575,8 +572,7 @@ let host (r : region) = r.host
 let peer g g' = g.self <> g'.self && g.path = g'.path && g.ops.reaches g'.index
 
 let map_peer g g' r =
-  if g.self = g'.self then
-    invalid_arg "Rig_amd.map_peer: the devices are one";
+  if g.self = g'.self then invalid_arg "Rig_amd.map_peer: the devices are one";
   if r.owner <> g'.self || not (Atomic.get r.live) then
     invalid_arg "Rig_amd.map_peer: the region is no live region of the peer";
   match g.ops.map_peer r.mem with
@@ -591,8 +587,7 @@ let map_peer g g' r =
       | None -> view None)
 
 let map_host g a n =
-  if n < 1 then
-    invalid_argf "Rig_amd.map_host: %d bytes, expected at least 1" n;
+  if n < 1 then invalid_argf "Rig_amd.map_host: %d bytes, expected at least 1" n;
   Option.map (region g n) (g.ops.map_host a n)
 
 (* Images *)
@@ -662,128 +657,11 @@ let unload g m =
   if not (Atomic.compare_and_set m.loaded true false) then
     invalid_arg "Rig_amd.unload: the image was unloaded"
 
-(* Work. A part is the ints the C submit reads: the device's state, then
-   rig_part's queue, fill, arg, ring units, segment bytes, copy_dst,
-   copy_dst_offset, copy_src, copy_src_offset and copy_bytes, the counts of
-   [after] indices and of words, then the indices, then the words. *)
-
-type part = int array
-
-let after_at = 13
-let nafter_at = 11
-
-(* rig_edge.h's codes *)
-
-let rig_word = 0
-let rig_ok = 0
-let max_waits = 255
+(* Work *)
 
 external last : int -> int = "caml_rig_amd_last" [@@noalloc]
-external room_parts : int -> part array -> int = "caml_rig_amd_room"
-
-external submit_parts : int -> int -> int array -> part array -> int
-  = "caml_rig_amd_submit"
-
-external failure : int -> string = "caml_rig_amd_failure"
 external room_entry : unit -> int = "caml_rig_amd_room_entry"
 external submit_entry : unit -> int = "caml_rig_amd_submit_entry"
-
-let part g ~queue ?(after = [||]) w =
-  let queue =
-    match queue with
-    | "COMPUTE:0" -> 0
-    | "COPY:0" -> 1
-    | q ->
-        invalid_argf "Rig_amd.part: queue %S, expected COMPUTE:0 or COPY:0" q
-  in
-  Array.iter
-    (fun j ->
-      if j < 0 then invalid_argf "Rig_amd.part: after index %d is negative" j)
-    after;
-  let part work words =
-    Array.concat
-      [
-        [| g.self; queue |];
-        work;
-        [| Array.length after; Array.length words |];
-        after;
-        words;
-      ]
-  in
-  match w with
-  | `Words ws ->
-      let ws = Array.map (fun w -> w land 0xffff_ffff) ws in
-      part [| 0; 0; Array.length ws; 0; 0; 0; 0; 0; 0 |] ws
-  | `Fill (f, arg, units, bytes) ->
-      if units < 0 || bytes < 0 then
-        invalid_argf
-          "Rig_amd.part: the fill declares %d ring units and %d segment \
-           bytes, expected at least 0"
-          units bytes;
-      part
-        [|
-          Nativeint.to_int f; Nativeint.to_int arg; units; bytes; 0; 0; 0; 0; 0;
-        |]
-        [||]
-  | `Copy ((dst, o), (src, o'), n) ->
-      if queue <> 1 then invalid_arg "Rig_amd.part: a copy runs on COPY:0";
-      let check what (r : region) o =
-        if r.owner <> g.self || not (Atomic.get r.live) then
-          invalid_argf
-            "Rig_amd.part: the copy's %s is no live region of the device"
-            what;
-        if o < 0 || n < 0 || o + n > r.bytes then
-          invalid_argf
-            "Rig_amd.part: the copy's %s range [%d, %d) lies outside its %d \
-             bytes"
-            what o (o + n) r.bytes
-      in
-      check "destination" dst o;
-      check "source" src o';
-      part [| 0; 0; 0; 0; dst.address; o; src.address; o'; n |] [||]
-
-let room g parts =
-  match room_parts g.self parts with 0 -> `Fits | 1 -> `Later | _ -> `Never
-
-let check_part self i (p : part) =
-  if p.(0) <> self then
-    invalid_argf "Rig_amd.submit: part %d is another device's" i;
-  for k = after_at to after_at + p.(nafter_at) - 1 do
-    if p.(k) >= i then
-      invalid_argf
-        "Rig_amd.submit: part %d waits for part %d, expected an earlier part"
-        i p.(k)
-  done
-
-let wait_kind = function
-  | `Word -> rig_word
-  | `Object ->
-      invalid_arg
-        "Rig_amd.submit: the device waits only on other devices' timeline \
-         words"
-
-(* Allocates nothing for a submission without waits. *)
-let submit g ~v ~waits ~handles:_ parts =
-  let next = last g.self + 1 in
-  if v <> next then
-    invalid_argf "Rig_amd.submit: value %d, expected %d" v next;
-  for i = 0 to Array.length parts - 1 do
-    check_part g.self i parts.(i)
-  done;
-  let n = Array.length waits in
-  if n > 0 && not g.waits64 then
-    invalid_arg "Rig_amd.submit: the device waits on no other device";
-  if n > max_waits then
-    invalid_argf "Rig_amd.submit: %d waits, expected at most %d" n max_waits;
-  let words = if n = 0 then [||] else Array.make (3 * n) 0 in
-  for k = 0 to n - 1 do
-    let kind, a, w = waits.(k) in
-    words.(3 * k) <- wait_kind kind;
-    words.((3 * k) + 1) <- a;
-    words.((3 * k) + 2) <- w
-  done;
-  if submit_parts g.self v words parts = rig_ok then `Ok
-  else `Failed (failure g.self)
 
 let room_entry = Nativeint.of_int (room_entry ())
 let submit_entry = Nativeint.of_int (submit_entry ())
@@ -841,6 +719,5 @@ let renumber g v =
   if signaled g <> last then
     invalid_arg "Rig_amd.renumber: the device's work runs";
   if v - 1 < last then
-    invalid_argf "Rig_amd.renumber: value %d, expected at least %d" v
-      (last + 1);
+    invalid_argf "Rig_amd.renumber: value %d, expected at least %d" v (last + 1);
   renumber_device g.self v

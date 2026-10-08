@@ -3,8 +3,8 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* The machine's GPU lock, host memory, fills and the C room, for the AMD
-   suites. */
+/* The machine's GPU lock, host memory, fills and the C entries, for the
+   AMD suite. */
 
 #define _GNU_SOURCE
 
@@ -16,6 +16,7 @@
 
 #define CAML_NAME_SPACE
 #include <caml/alloc.h>
+#include <caml/bigarray.h>
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
@@ -130,7 +131,8 @@ value rig_amd_test_write(value v_a, value v_s) {
 
 /* A fill: words to place, in two calls if [split] is inside them, and
    segment bytes to take, through the capability's functions, then its own
-   answer. [address] is where its last call took the bytes. */
+   answer. [address] is where its last call took the bytes. It lives in a
+   bigarray, rig's buffer for the fill's argument. */
 struct fill {
   int (*place)(void *queue, const uint32_t *words, size_t n);
   int (*segment)(void *queue, size_t n, void **host, uint64_t *address);
@@ -162,10 +164,13 @@ value rig_amd_test_fill_entry(value unit) {
 }
 
 value rig_amd_test_fill_arg(value v_place, value v_segment, value v_ws,
-                               value v_split, value v_bytes, value v_code) {
+                            value v_split, value v_bytes, value v_code) {
+  CAMLparam3(v_place, v_segment, v_ws);
+  CAMLlocal1(v_arg);
   size_t n = Wosize_val(v_ws);
-  struct fill *f = malloc(sizeof *f + n * sizeof(uint32_t));
-  if (f == NULL) caml_raise_out_of_memory();
+  v_arg = caml_ba_alloc_dims(CAML_BA_UINT8 | CAML_BA_C_LAYOUT, 1, NULL,
+                             (intnat)(sizeof(struct fill) + n * sizeof(uint32_t)));
+  struct fill *f = Caml_ba_data_val(v_arg);
   f->place = (int (*)(void *, const uint32_t *, size_t))Nativeint_val(v_place);
   f->segment =
       (int (*)(void *, size_t, void **, uint64_t *))Nativeint_val(v_segment);
@@ -174,45 +179,125 @@ value rig_amd_test_fill_arg(value v_place, value v_segment, value v_ws,
   f->address = 0;
   f->bytes = (size_t)Long_val(v_bytes);
   f->code = Int_val(v_code);
-  for (size_t i = 0; i < n; i++) f->words[i] = (uint32_t)Long_val(Field(v_ws, i));
-  return caml_copy_nativeint((intnat)f);
-}
-
-value rig_amd_test_fill_address(value v_arg) {
-  return Val_long((intnat)((struct fill *)Nativeint_val(v_arg))->address);
+  for (size_t i = 0; i < n; i++)
+    f->words[i] = (uint32_t)Long_val(Field(v_ws, i));
+  CAMLreturn(v_arg);
 }
 
 value rig_amd_test_fill_arg_byte(value *argv, int argn) {
   (void)argn;
   return rig_amd_test_fill_arg(argv[0], argv[1], argv[2], argv[3], argv[4],
-                                  argv[5]);
+                               argv[5]);
 }
 
-/* What the room function at [v_entry] answers for one part on queue
-   [v_queue] of [v_words] words (none at all if 0), a fill if [v_fill],
-   [v_copy] bytes of copy if positive, running after part [v_after] if it
-   is not negative. */
-value rig_amd_test_room(value v_entry, value v_self, value v_queue,
-                           value v_words, value v_fill, value v_copy,
-                           value v_after) {
-  static const uint32_t words[64];
-  int after = Int_val(v_after);
-  struct rig_part p = {
-      .queue = Int_val(v_queue),
-      .words = Long_val(v_words) > 0 ? words : NULL,
-      .n = (size_t)Long_val(v_words),
-      .fill = Bool_val(v_fill) ? fill : NULL,
-      .copy_bytes = (uint64_t)Long_val(v_copy),
-      .after = &after,
-      .nafter = after >= 0,
-  };
-  if (p.n > 64) caml_invalid_argument("rig_amd_test_room");
+value rig_amd_test_fill_address(value v_arg) {
+  return Val_long((intnat)((struct fill *)Caml_ba_data_val(v_arg))->address);
+}
+
+value rig_amd_test_data(value v_ba) {
+  return Val_long((intnat)Caml_ba_data_val(v_ba));
+}
+
+/* The C entries. A part is the ints Rig_amd_support.Edge makes: the queue,
+   the fill, its argument, ring units, segment bytes, the copy's
+   destination, source and bytes, the counts of [after] indices and of
+   words, then the indices, then the words. */
+
+enum {
+  part_queue,
+  part_fill,
+  part_arg,
+  part_units,
+  part_bytes,
+  part_dst,
+  part_src,
+  part_copy,
+  part_nafter,
+  part_nwords,
+  part_after
+};
+
+static intnat at(value a, int i) { return Long_val(Field(a, i)); }
+
+/* The parts and waits in C, in one allocation the caller frees. */
+static void *edge(value v_waits, value v_parts, struct rig_wait **wp,
+                  struct rig_part **pp) {
+  int nwaits = (int)(Wosize_val(v_waits) / 2);
+  int nparts = (int)Wosize_val(v_parts);
+  size_t nafter = 0, nwords = 0;
+  for (int i = 0; i < nparts; i++) {
+    value p = Field(v_parts, i);
+    nafter += (size_t)at(p, part_nafter);
+    nwords += (size_t)at(p, part_nwords);
+  }
+  size_t size = nwaits * sizeof(struct rig_wait) +
+                nparts * sizeof(struct rig_part) + nafter * sizeof(int) +
+                nwords * sizeof(uint32_t) + 1;
+  char *mem = malloc(size);
+  if (mem == NULL) caml_raise_out_of_memory();
+  struct rig_wait *w = (struct rig_wait *)mem;
+  struct rig_part *p = (struct rig_part *)(w + nwaits);
+  int *after = (int *)(p + nparts);
+  uint32_t *words = (uint32_t *)(after + nafter);
+  for (int i = 0; i < nwaits; i++) {
+    w[i].kind = RIG_WORD;
+    w[i].at = (uint64_t)at(v_waits, 2 * i);
+    w[i].value = (uint64_t)at(v_waits, 2 * i + 1);
+  }
+  for (int i = 0; i < nparts; i++) {
+    value k = Field(v_parts, i);
+    int na = (int)at(k, part_nafter), nw = (int)at(k, part_nwords);
+    p[i] = (struct rig_part){
+        .queue = (int)at(k, part_queue),
+        .words = nw > 0 ? words : NULL,
+        .n = (size_t)nw,
+        .fill = (int (*)(void *, void *, uint64_t))at(k, part_fill),
+        .arg = (void *)at(k, part_arg),
+        .ring_units = (size_t)at(k, part_units),
+        .segment_bytes = (size_t)at(k, part_bytes),
+        .copy_dst = (uint64_t)at(k, part_dst),
+        .copy_src = (uint64_t)at(k, part_src),
+        .copy_bytes = (uint64_t)at(k, part_copy),
+        .after = na > 0 ? after : NULL,
+        .nafter = na};
+    for (int j = 0; j < na; j++) *after++ = (int)at(k, part_after + j);
+    for (int j = 0; j < nw; j++)
+      *words++ = (uint32_t)at(k, part_after + na + j);
+  }
+  *wp = w;
+  *pp = p;
+  return mem;
+}
+
+/* What the room entry [v_entry] answers for [v_parts] on the device
+   [v_self]. */
+value rig_amd_test_room(value v_entry, value v_self, value v_parts) {
+  struct rig_wait *w;
+  struct rig_part *p;
+  void *mem = edge(Atom(0), v_parts, &w, &p);
   rig_room_fn *room = (rig_room_fn *)Nativeint_val(v_entry);
-  return Val_int(room((void *)Nativeint_val(v_self), &p, 1));
+  int r = room((void *)Nativeint_val(v_self), p, (int)Wosize_val(v_parts));
+  free(mem);
+  return Val_int(r);
 }
 
-value rig_amd_test_room_byte(value *argv, int argn) {
-  (void)argn;
-  return rig_amd_test_room(argv[0], argv[1], argv[2], argv[3], argv[4],
-                              argv[5], argv[6]);
+/* What the submit entry [v_entry] answers for [v_parts] as the value [v_v]
+   after the waits [v_waits] (address, value pairs): [None], or [Some why]
+   for RIG_FAILED. */
+value rig_amd_test_submit(value v_entry, value v_self, value v_v,
+                          value v_waits, value v_parts) {
+  CAMLparam5(v_entry, v_self, v_v, v_waits, v_parts);
+  CAMLlocal1(v_why);
+  struct rig_wait *w;
+  struct rig_part *p;
+  void *mem = edge(v_waits, v_parts, &w, &p);
+  rig_submit_fn *submit = (rig_submit_fn *)Nativeint_val(v_entry);
+  const char *failure = NULL;
+  int r = submit((void *)Nativeint_val(v_self),
+                 (uint64_t)Long_val(v_v), w, (int)(Wosize_val(v_waits) / 2), p,
+                 (int)Wosize_val(v_parts), NULL, 0, &failure);
+  free(mem);
+  if (r == RIG_OK) CAMLreturn(Val_none);
+  v_why = caml_copy_string(failure ? failure : "");
+  CAMLreturn(caml_alloc_some(v_why));
 }

@@ -3,9 +3,8 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* Rig_amd's C state, filled from OCaml, and the OCaml forms of room and
-   submit. No stub here releases the runtime: none blocks. A device's state
-   is named in OCaml by its address, an int. */
+/* Rig_amd's C state, filled from OCaml. No stub here releases the runtime:
+   none blocks. A device's state is named in OCaml by its address, an int. */
 
 #define _GNU_SOURCE
 
@@ -147,105 +146,7 @@ value caml_rig_amd_hdp(value v_self, value v_reg, value v_delta) {
   return Val_true;
 }
 
-/* Work. A part is the ints Rig_amd.part makes: the device's state, the
-   queue, fill, arg, ring units, segment bytes, copy_dst, copy_dst_offset,
-   copy_src, copy_src_offset, copy_bytes, the number of [after] indices and
-   of words, then the indices, then the words. */
-
-enum {
-  part_self,
-  part_queue,
-  part_fill,
-  part_arg,
-  part_units,
-  part_bytes,
-  part_dst,
-  part_dst_offset,
-  part_src,
-  part_src_offset,
-  part_copy_bytes,
-  part_nafter,
-  part_nwords,
-  part_after
-};
-
-/* The parts and waits in C, in one allocation the caller frees. */
-static void *edge(value v_waits, value v_parts, struct rig_wait **wp,
-                  struct rig_part **pp) {
-  int nwaits = (int)(Wosize_val(v_waits) / 3);
-  int nparts = (int)Wosize_val(v_parts);
-  size_t nafter = 0, nwords = 0;
-  for (int i = 0; i < nparts; i++) {
-    value p = Field(v_parts, i);
-    nafter += (size_t)at(p, part_nafter);
-    nwords += (size_t)at(p, part_nwords);
-  }
-  size_t size = nwaits * sizeof(struct rig_wait) +
-                nparts * sizeof(struct rig_part) + nafter * sizeof(int) +
-                nwords * sizeof(uint32_t);
-  char *mem = size == 0 ? NULL : malloc(size);
-  if (size != 0 && mem == NULL) caml_raise_out_of_memory();
-  struct rig_wait *w = (struct rig_wait *)mem;
-  struct rig_part *p = (struct rig_part *)(w + nwaits);
-  int *after = (int *)(p + nparts);
-  uint32_t *words = (uint32_t *)(after + nafter);
-  for (int i = 0; i < nwaits; i++) {
-    w[i].kind = (int)at(v_waits, 3 * i);
-    w[i].at = (uint64_t)at(v_waits, 3 * i + 1);
-    w[i].value = (uint64_t)at(v_waits, 3 * i + 2);
-  }
-  for (int i = 0; i < nparts; i++) {
-    value k = Field(v_parts, i);
-    int na = (int)at(k, part_nafter), nw = (int)at(k, part_nwords);
-    p[i] = (struct rig_part){
-        .queue = (int)at(k, part_queue),
-        .words = nw > 0 ? words : NULL,
-        .n = (size_t)nw,
-        .fill = (int (*)(void *, void *, uint64_t))at(k, part_fill),
-        .arg = (void *)at(k, part_arg),
-        .ring_units = (size_t)at(k, part_units),
-        .segment_bytes = (size_t)at(k, part_bytes),
-        .copy_dst = (uint64_t)at(k, part_dst),
-        .copy_dst_offset = (uint64_t)at(k, part_dst_offset),
-        .copy_src = (uint64_t)at(k, part_src),
-        .copy_src_offset = (uint64_t)at(k, part_src_offset),
-        .copy_bytes = (uint64_t)at(k, part_copy_bytes),
-        .after = na > 0 ? after : NULL,
-        .nafter = na};
-    for (int j = 0; j < na; j++) *after++ = (int)at(k, part_after + j);
-    for (int j = 0; j < nw; j++)
-      *words++ = (uint32_t)at(k, part_after + na + j);
-  }
-  *wp = w;
-  *pp = p;
-  return mem;
-}
-
-value caml_rig_amd_room(value v_self, value v_parts) {
-  struct rig_wait *w;
-  struct rig_part *p;
-  void *mem = edge(Atom(0), v_parts, &w, &p);
-  int r = rig_amd_room(Device_val(v_self), p, (int)Wosize_val(v_parts));
-  free(mem);
-  return Val_int(r);
-}
-
-value caml_rig_amd_submit(value v_self, value v_v, value v_waits,
-                             value v_parts) {
-  struct rig_wait *w;
-  struct rig_part *p;
-  void *mem = edge(v_waits, v_parts, &w, &p);
-  const char *failure = NULL;
-  int r = rig_amd_submit(Device_val(v_self), (uint64_t)Long_val(v_v), w,
-                            (int)(Wosize_val(v_waits) / 3), p,
-                            (int)Wosize_val(v_parts), NULL, 0, &failure);
-  free(mem);
-  return Val_int(r);
-}
-
-value caml_rig_amd_failure(value v_self) {
-  return caml_copy_string(Device_val(v_self)->failure);
-}
+/* Work */
 
 value caml_rig_amd_last(value v_self) {
   return Val_long(Device_val(v_self)->last);

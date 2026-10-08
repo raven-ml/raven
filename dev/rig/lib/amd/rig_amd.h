@@ -5,7 +5,7 @@
 
 /* Submitting to an AMD device from C.
 
-   Rig_amd.room and Rig_amd.submit, for a caller that holds its
+   A device's room check and submit, for the caller that holds its
    submissions in C, over the structures and codes of rig_edge.h. [self] is
    Rig_amd.self. Both are called without the OCaml runtime: they call no
    function of it and read no OCaml value, and neither blocks.
@@ -14,8 +14,9 @@
    "COPY:0". A part is words placed on its queue, a fill called with the
    queue's writer (rig_amd_abi's Capability), or, on queue 1, a copy
    between handles, which are GPU addresses. A wait is RIG_WORD on a 64-bit
-   word the device maps, which the compute queue waits on.
-   [handles] is ignored: the GPU's work names its memory by address. */
+   word the device maps, which the compute queue waits on, at most 255 per
+   submission. [handles] is ignored: the GPU's work names its memory by
+   address. Rig_amd's interface states the rules in full. */
 
 #ifndef RIG_AMD_H
 #define RIG_AMD_H
@@ -33,7 +34,8 @@ int rig_amd_room(void *self, const struct rig_part *parts, int n);
 
 /* Places [parts], which rig_amd_room answered RIG_FITS for, as the work
    of [v], the value after the last one it received, and rings the queues'
-   doorbells: RIG_OK, or RIG_FAILED with [*failure] set when a fill failed.
+   doorbells: RIG_OK, or RIG_FAILED with [*failure] set when a fill failed
+   or the waits are more than the device holds or ones it cannot make.
    The queues then run none of [parts], and the timeline word still reaches
    [v]. After a failure every call answers RIG_FAILED with the first
    failure's message, which lives as long as the process. */
