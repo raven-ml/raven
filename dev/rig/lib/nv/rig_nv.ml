@@ -5,8 +5,9 @@
 
 (* Any domain may call any function, as the interface says. The C state is
    written by [make], then by [room] and [submit] under the caller's turn;
-   [local] holds the device's lock while it grows the local memory; regions'
-   [live] flags only detect misuse. *)
+   [local] holds the device's lock while it grows the local memory, and [stop]
+   while it marks the device stopped; regions' [live] flags only detect
+   misuse. *)
 
 module D = Defs
 module Abi = Rig_nv_abi
@@ -203,8 +204,8 @@ type 'm dev = {
   debugger : int;
   channels : int list;
   compute_channel : int;
-  stopped : bool Atomic.t;
   local_lock : Mutex.t;
+  mutable stopped : bool;
   mutable per_thread : int;
   mutable local_current : 'm memory option;
   mutable local_pending : ('m memory * int) option;
@@ -297,7 +298,7 @@ let publish d m packed =
 
 let local d n =
   Mutex.protect d.local_lock @@ fun () ->
-  if Atomic.get d.stopped then Error "the device is stopped"
+  if d.stopped then Error "the device is stopped"
   else begin
     settle d;
     retire d;
@@ -321,14 +322,10 @@ let local d n =
    width and number of operations, then each operation's shift (an addition if
    [0]) and addend. *)
 let hole_ints (at, (word : int Packet.word)) =
-  let rec ops : int Packet.term -> int * (int * int64) list = function
-    | Packet.Value s -> (s, [])
-    | Packet.Add (t, n) ->
-        let s, l = ops t in
-        (s, l @ [ (0, n) ])
-    | Packet.Shift (t, n) ->
-        let s, l = ops t in
-        (s, l @ [ (n, 0L) ])
+  let rec ops acc : int Packet.term -> int * (int * int64) list = function
+    | Packet.Value s -> (s, acc)
+    | Packet.Add (t, n) -> ops ((0, n) :: acc) t
+    | Packet.Shift (t, n) -> ops ((n, 0L) :: acc) t
   in
   let wide, term =
     match word with
@@ -336,7 +333,7 @@ let hole_ints (at, (word : int Packet.word)) =
     | Packet.W64 t -> (1, t)
     | Packet.Dword _ -> invalid_arg "Rig_nv: a template hole holds no value"
   in
-  let slot, l = ops term in
+  let slot, l = ops [] term in
   if List.length l > hole_ops then
     invalid_arg "Rig_nv: a template hole takes too many operations";
   let op (shift, n) =
@@ -580,8 +577,8 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
         debugger;
         channels = [ compute; copy ];
         compute_channel = compute;
-        stopped = Atomic.make false;
         local_lock = Mutex.create ();
+        stopped = false;
         per_thread = 0;
         local_current = None;
         local_pending = None;
@@ -812,7 +809,7 @@ let sleep (T d) ~seen ~still_ms =
 (* Loss *)
 
 let stop (T d) =
-  Mutex.protect d.local_lock (fun () -> Atomic.set d.stopped true);
+  Mutex.protect d.local_lock (fun () -> d.stopped <- true);
   let ok = function Ok () -> true | Error _ -> false in
   let rm = d.path.rm in
   let unregistered =
