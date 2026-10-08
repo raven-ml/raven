@@ -17,13 +17,15 @@ let timeout = 60.
 let page_bytes = 1 lsl 16
 
 module Pages = struct
-  (* [during] runs as a read or a write starts; [mapped] is how [pages]
-     answers. *)
+  (* [during] runs as a read or a write starts; [mapped] is how [pages] answers.
+     With [read_only], writes are refused and a region's pages are the process's
+     own copy, as a file opened for reading maps. *)
   type t = {
     lock : Mutex.t;
     mutable calls : string list;
     mutable during : unit -> unit;
     mutable mapped : [ `Pages | `None | `Fails ];
+    mutable read_only : bool;
   }
 
   (* Its bytes, and the host buffer that holds them on a page. *)
@@ -55,12 +57,20 @@ module Pages = struct
 
   let write t r ~at ~src ~len =
     note t "write";
+    if t.read_only then invalid_arg "Pages.write: the region is for reading";
     t.during ();
     Support.move ~dst:(base r + at) ~src len
 
   let pages t r =
     note t "pages";
     match t.mapped with
+    | `Pages when t.read_only ->
+        let own =
+          Bigarray.Array1.create Bigarray.char Bigarray.c_layout
+            (Bigarray.Array1.dim r.bytes)
+        in
+        Bigarray.Array1.blit r.bytes own;
+        Some own
     | `Pages -> Some r.bytes
     | `None -> None
     | `Fails -> raise (Sys_error "too many open files")
@@ -78,6 +88,7 @@ let open_pages () =
       calls = [];
       during = (fun () -> ());
       mapped = `Pages;
+      read_only = false;
     }
   in
   let name = Printf.sprintf "io:pages-%d" (Atomic.fetch_and_add opened 1) in
@@ -358,6 +369,25 @@ let test_io_refusals () =
   raises_match Exn.invalid_arg (fun () -> B.handle m);
   raises_match Exn.invalid_arg (fun () -> C.Program.load io "code:8")
 
+(* A copy reads and writes io memory through its device's reads and writes,
+   never through pages of the process's own: into memory held for reading it
+   raises the device's refusal, and out of it, it reads the memory. *)
+let test_copy_read_only () =
+  let io, t = open_pages () in
+  let d, _ = P.open_ ~host_visible:false "io:read-only" in
+  let m = B.create io page_bytes in
+  B.copy ~src:(filled page_bytes 'm') ~dst:m;
+  t.read_only <- true;
+  let into = B.create d page_bytes in
+  B.copy ~src:(filled page_bytes 'd') ~dst:into;
+  raises_match Exn.invalid_arg (fun () -> B.copy ~src:into ~dst:m);
+  let own = require_some (B.borrow C.host m) in
+  Bigarray.Array1.fill (B.bigarray Bigarray.char own) 'o';
+  let out = B.create d page_bytes and back = B.create C.host page_bytes in
+  B.copy ~src:m ~dst:out;
+  B.copy ~src:out ~dst:back;
+  equal string (String.make page_bytes 'm') (bytes back)
+
 let tests =
   [
     group ~timeout "io memory"
@@ -390,6 +420,15 @@ let tests =
           test_write_keeps;
         test "a copy from io memory keeps its buffers until read"
           test_read_keeps;
+        xfail
+          ~reason:
+            "a copy run on a device's queue reaches io memory through its \
+             pages, which for memory held for reading are the process's own \
+             copy"
+          (test
+             "a copy reads and writes io memory held for reading through its \
+              device"
+             test_copy_read_only);
       ];
   ]
 
