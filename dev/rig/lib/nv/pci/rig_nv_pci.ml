@@ -49,15 +49,6 @@ let named i r = Result.map_error (fun why -> device_name i ^ ": " ^ why) r
    every GPU: a peer's memory maps at its owner's address. *)
 let space = Space.create ~base:(64 * gib) ((1 lsl 40) - (64 * gib))
 
-(* Host memory [map_host] mapped for a GPU: whole pages from [at], mapped once
-   for every memory given over them, which [users] counts. *)
-type range = {
-  at : int;
-  bytes : int;
-  region : Memory.region;
-  mutable users : int;
-}
-
 (* A GPU this path opened. [handles] holds the names the path gave its memory,
    which the RM's channel allocations take, with the region this GPU sees under
    each and the memory's offset in it. *)
@@ -68,18 +59,16 @@ type gpu = {
   memory : Memory.t;
   handles : (int, Memory.region * int) Hashtbl.t;
   mutable next : int;
-  mutable ranges : range list;
-  lock : Mutex.t; (* its memory, page tables, handles and ranges *)
+  lock : Mutex.t; (* its memory, page tables and handles *)
 }
 
-(* The memory a path gives a device: its own, another GPU's mapped for it, a
-   view of its own GPU's, which maps nothing, or host memory in a range. A peer
+(* The memory a path gives a device: its own, host memory among it, another
+   GPU's mapped for it, or a view of its own GPU's, which maps nothing. A peer
    mapping keeps its owner's region, which a third GPU maps in turn. *)
 type mem =
   | Own of gpu * Memory.region
   | Peer of { owner : gpu; region : Memory.region; mapped : Memory.region }
   | View of gpu * Memory.region
-  | Host of gpu * range
 
 let key : mem Type.Id.t = Type.Id.make ()
 let protect g f = Mutex.protect g.lock f
@@ -136,55 +125,14 @@ let alloc g kind n =
 
 let round_up n a = (n + a - 1) / a * a
 
-(* The end of the GPU addresses a device takes memory at. *)
-let addresses_end = 1 lsl 40
-
-(* This GPU's own system memory that holds the [n] bytes at [a]: there the GPU
-   addresses it as the process does. *)
-let own g a n =
-  let holds _ ((r : Memory.region), _) found =
-    let m = r.mapping in
-    match found with
-    | Some _ -> found
-    | None when r.source = Allocated && m.target = System ->
-        if m.va <= a && a + n <= m.va + m.size then Some r else None
-    | None -> None
-  in
-  protect g (fun () -> Hashtbl.fold holds g.handles None)
-
-(* Host memory maps by whole pages, once for the pages of one range: a range
-   inside one mapped already shares it, and one that overlaps a mapped range
-   without lying inside it is refused. The GPU addresses it where the process
-   does, which must lie below [addresses_end]. *)
+(* Host memory maps by whole pages, at GPU addresses of the GPU's space. *)
 let map_host g a n =
   let page = Machine.page g.machine in
   let at = a land lnot (page - 1) in
   let bytes = round_up (a + n) page - at in
-  let inside r = r.at <= at && at + bytes <= r.at + r.bytes in
-  let overlaps r = at < r.at + r.bytes && r.at < at + bytes in
-  let range () =
-    match List.find_opt inside g.ranges with
-    | Some r ->
-        r.users <- r.users + 1;
-        Some r
-    | None when List.exists overlaps g.ranges -> None
-    | None when at + bytes > addresses_end -> None
-    | None -> (
-        match Memory.map_host g.memory at bytes with
-        | Error _ -> None
-        | Ok region ->
-            let r = { at; bytes; region; users = 1 } in
-            g.ranges <- r :: g.ranges;
-            Some r)
-  in
-  match own g a n with
-  | Some r ->
-      Some (memory g (View (g, r)) r ~off:(a - r.mapping.va) ~host:(Some a))
-  | None ->
-      Option.map
-        (fun r ->
-          memory g (Host (g, r)) r.region ~off:(a - r.at) ~host:(Some a))
-        (protect g range)
+  match protect g (fun () -> Memory.map_host g.memory at bytes) with
+  | Ok r -> Some (memory g (Own (g, r)) r ~off:(a - at) ~host:(Some a))
+  | Error _ -> None
 
 (* The GPUs open, for [reaches]. *)
 let opened : gpu list ref = ref []
@@ -201,22 +149,29 @@ let reaches g j =
   | Some o -> physical g && physical o && not (Memory.small_bar o.memory)
   | None -> false
 
+(* Another GPU's host memory maps for this one as host memory; its GPU memory
+   through the owner's BAR or link. *)
 let map_peer g (m : mem Rig_nv.memory) =
-  match m.data with
-  | Host (o, r) when o == g ->
-      protect g (fun () -> r.users <- r.users + 1);
-      let off = m.address - r.region.mapping.va in
-      Some (memory g m.data r.region ~off ~host:m.host)
-  | Host _ -> None
-  | Own (owner, region) | View (owner, region) | Peer { owner; region; _ } -> (
-      if owner == g then Some (whole g (View (owner, region)) region)
-      else
-        match
-          protect g (fun () ->
-              Memory.map_peer g.memory ~owner:owner.memory region)
-        with
-        | Ok mapped -> Some (whole g (Peer { owner; region; mapped }) mapped)
-        | Error _ -> None)
+  let owner, (region : Memory.region) =
+    match m.data with
+    | Own (o, r) | View (o, r) -> (o, r)
+    | Peer { owner; region; _ } -> (owner, region)
+  in
+  let off = m.address - region.mapping.va in
+  if owner == g then
+    Some (memory g (View (owner, region)) region ~off ~host:m.host)
+  else
+    let mapped () =
+      match region.source with
+      | Borrowed at -> Memory.map_host g.memory at region.mapping.size
+      | Allocated | Peer -> Memory.map_peer g.memory ~owner:owner.memory region
+    in
+    match protect g mapped with
+    | Error _ -> None
+    | Ok mapped when region.source = Allocated ->
+        Some
+          (memory g (Peer { owner; region; mapped }) mapped ~off ~host:m.host)
+    | Ok mapped -> Some (memory g (Own (g, mapped)) mapped ~off ~host:m.host)
 
 let free g (m : mem Rig_nv.memory) =
   protect g @@ fun () ->
@@ -224,12 +179,6 @@ let free g (m : mem Rig_nv.memory) =
   match m.data with
   | View _ -> ()
   | Peer { mapped; _ } -> Memory.unmap g.memory mapped
-  | Host (_, r) ->
-      r.users <- r.users - 1;
-      if r.users = 0 then begin
-        g.ranges <- List.filter (fun r' -> r' != r) g.ranges;
-        Memory.unmap g.memory r.region
-      end
   | Own (_, r) -> (
       match r.source with
       | Memory.Allocated -> Memory.free g.memory r
@@ -377,7 +326,6 @@ let boot ~firmware ~index machine hold fn =
           memory = Memory.create fn tables ~bar:memory_bar;
           handles = Hashtbl.create 64;
           next = 1;
-          ranges = [];
           lock = Mutex.create ();
         }
       in
