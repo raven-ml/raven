@@ -284,6 +284,7 @@ let residency_rows =
 let config = Thumper.Config.(default |> deadline 120.)
 
 let () =
+  S.hold_gpu ();
   exit
   @@ Thumper.run ~config "rig_metal"
        [

@@ -9,12 +9,14 @@
 
 val hold_gpu : unit -> unit
 (** [hold_gpu ()] returns once the process holds the machine's GPU lock, which
-    it keeps until it exits, or at once if the machine has no Metal GPU. The
-    lock is [flock] on [/tmp/raven-rig-gpu.lock], the file every suite that
-    acts on a GPU of the machine locks; its holder writes its executable and
-    process id into it. A suite calls [hold_gpu] before [Windtrap.run], so that
-    the wait counts against no test's timeout; the suite calls it again before
-    each open.
+    it keeps until it exits, or at once if the machine has no Metal framework.
+    The lock is [flock] on [/tmp/raven-rig-gpu.lock], the file every suite and
+    bench that acts on a GPU of the machine locks; its holder writes its
+    executable and process id into it. A suite calls [hold_gpu] before
+    [Windtrap.run], so that the wait counts against no test's timeout, and the
+    suite calls it again before each open. A bench calls it before
+    [Thumper.run], so that the workers it forks run under the lock: [hold_gpu]
+    starts no vendor library, which a process must not start before it forks.
 
     Raises [Failure] naming the holder if another process still holds the lock
     after 300 s, or naming the errno if the file cannot be locked. *)

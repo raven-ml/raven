@@ -30,7 +30,8 @@ let rec take refused =
         (strf "%s: still held after %d s, by %s" gpu_lock gpu_wait (holder ()))
   | errno -> failwith (strf "%s: errno %d" gpu_lock errno)
 
-let hold_gpu () = if Rig_metal.count () > 0 then take 0
+let hold_gpu () =
+  if Sys.file_exists "/System/Library/Frameworks/Metal.framework" then take 0
 
 (* A device's ring, by hand *)
 
