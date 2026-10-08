@@ -6,6 +6,9 @@
 open Windtrap
 module N = Device_nv
 module A = Device_nv_abi
+module C = Device_core
+module B = Device_core.Buffer
+module Sub = Device_core.Submission
 
 let strf = Printf.sprintf
 
@@ -38,33 +41,85 @@ let hold_gpu () = if Device_nv_nvidia.count () > 0 then take 0
 
 (* The GPU *)
 
-(* The device gpu opened, until a test stops it: one a failed test left open is
-   stopped by the next gpu. *)
+type dev = { d : C.t; g : N.t }
+
+(* The driver device a test opened, with its core device if it has one, until a
+   test stops it: one a failed test left open is stopped by the next. The core
+   stops a device it lost. *)
 let opened = ref None
 
 let stop g =
-  (match !opened with Some o when o == g -> opened := None | _ -> ());
+  (match !opened with Some (o, _) when o == g -> opened := None | _ -> ());
   N.stop g
 
-let gpu () =
+(* Before a core device's driver stops, the core gives back what the device
+   mapped of collected host memory: the host's next allocation hands each
+   mapping to its device, whose next allocation gives it back. A stopped device
+   allocates no more, and the path would keep mappings of memory the process may
+   map anew at the same addresses. *)
+let drain d =
+  Gc.full_major ();
+  Gc.full_major ();
+  ignore (Sys.opaque_identity (B.create C.host 1));
+  C.wait d (C.submitted d);
+  ignore (Sys.opaque_identity (B.create d 1))
+
+let stop_opened () =
+  match !opened with
+  | Some (_, Some d) when Option.is_some (C.lost d) -> opened := None
+  | Some (g, Some d) ->
+      drain d;
+      stop g
+  | Some (g, None) -> stop g
+  | None -> ()
+
+let open_driver () =
   if Device_nv_nvidia.count () = 0 then
     skip ~reason:"the machine has no NVIDIA GPU" ();
   hold_gpu ();
-  Option.iter (fun g -> ignore (stop g)) !opened;
-  let g =
-    match Device_nv_nvidia.open_ 0 with
-    | Ok g -> g
-    | Error why -> failf "opening GPU 0: %s" why
-  in
-  opened := Some g;
+  stop_opened ();
+  match Device_nv_nvidia.open_ 0 with
+  | Ok g -> g
+  | Error why -> failf "opening GPU 0: %s" why
+
+let driver () =
+  let g = open_driver () in
+  opened := Some (g, None);
   g
 
+(* Each core device takes a name of its own: the core keeps a name's device open
+   until it is lost, and a test stops the driver device under it. *)
+let names = ref 0
+
+let gpu () =
+  let g = open_driver () in
+  incr names;
+  match C.open_ (module N) ~name:(strf "NV:test%d" !names) (fun () -> Ok g) with
+  | Ok d ->
+      opened := Some (g, Some d);
+      { d; g }
+  | Error why ->
+      opened := Some (g, None);
+      failf "opening GPU 0 in the core: %s" why
+
+let close t =
+  if Option.is_none (C.lost t.d) then begin
+    drain t.d;
+    stop t.g
+  end
+  else
+    match !opened with Some (o, _) when o == t.g -> opened := None | _ -> ()
+
+let stop_left g =
+  match !opened with Some (o, _) when o == g -> stop_opened () | _ -> ()
+
+let with_driver f =
+  let g = driver () in
+  Fun.protect ~finally:(fun () -> stop_left g) (fun () -> f g)
+
 let with_gpu f =
-  let g = gpu () in
-  let stop_left () =
-    match !opened with Some o when o == g -> ignore (stop g) | _ -> ()
-  in
-  Fun.protect ~finally:stop_left (fun () -> f g)
+  let t = gpu () in
+  Fun.protect ~finally:(fun () -> stop_left t.g) (fun () -> f t)
 
 (* Host memory *)
 
@@ -88,52 +143,68 @@ let address r = Option.get (N.address r)
 let get32 a i =
   Int32.to_int (String.get_int32_le (read (a + (4 * i)) 4) 0) land 0xffff_ffff
 
-(* Values *)
+(* Work through the core *)
 
-let values : (N.t * int ref) list ref = ref []
+let submit t ps =
+  C.Point.value (C.submit (Sub.make ~reads:0 ~writes:0 ~waits:0 t.d ps))
 
-let value g =
-  match List.assq_opt g !values with
-  | Some v -> v
-  | None ->
-      let v = ref 0 in
-      values := (g, v) :: !values;
-      v
+let run t ps = C.wait t.d (submit t ps)
 
-let last g = !(value g)
-let given g v = value g := v
+let words ?(after = [||]) ws =
+  let b = B.create C.host (4 * Array.length ws) in
+  let ba = B.bigarray Bigarray.int32 b in
+  Array.iteri (fun i w -> Bigarray.Array1.set ba i (Int32.of_int w)) ws;
+  { Sub.queue = "COMPUTE:0"; after; work = Words b }
+
+let copy ?(after = [||]) ~dst src =
+  { Sub.queue = "COPY:0"; after; work = Copy { src; dst } }
+
+(* Host buffers of 64 KiB or more start on a page, which a device borrows. *)
+let shared t n =
+  let h = B.view (B.create C.host (max n 65536)) ~first:0 ~length:n in
+  match B.borrow t.d h with
+  | Some b -> (b, B.address h)
+  | None -> fail "the device does not borrow host memory"
+
+(* Work at the C edge *)
+
+type part = {
+  queue : int;
+  after : int array;
+  work : [ `Words of int array | `Copy of int * int * int | `Fill of int * int ];
+}
+
+let flat p =
+  let kind, a, b, c, ws =
+    match p.work with
+    | `Words ws -> (0, Array.length ws, 0, 0, ws)
+    | `Copy (dst, src, n) -> (1, dst, src, n, [||])
+    | `Fill (units, bytes) -> (2, units, bytes, 0, [||])
+  in
+  Array.concat
+    [ [| p.queue; kind; a; b; c; Array.length p.after |]; p.after; ws ]
+
+external room : nativeint -> int array array -> int = "device_nv_test_room"
+
+external edge_submit_ : nativeint -> int -> int array -> int array array -> int
+  = "device_nv_test_submit"
+
+let edge_room g ps = room (N.self g) (Array.map flat ps)
+
+let edge_submit g ~v ~waits ps =
+  let w =
+    Array.concat (List.map (fun (a, x) -> [| a; x |]) (Array.to_list waits))
+  in
+  let r = edge_submit_ (N.self g) v w (Array.map flat ps) in
+  if r <> 0 then failf "device_nv_submit of %d answered %d" v r
 
 let wait g v =
   let word = host (N.word g) in
-  let t0 = Sys.time () in
+  let t0 = Unix.gettimeofday () in
   while get64 word < v do
-    if Sys.time () -. t0 > 10. then
-      failf "the word stayed at %d below %d for 10 s" (get64 word) v;
-    Domain.cpu_relax ()
+    if Unix.gettimeofday () -. t0 < 0.2 then Domain.cpu_relax ()
+    else N.sleep g ~seen:(get64 word) ~still_ms:100
   done
-
-let answer =
-  Testable.make
-    ~pp:(fun ppf -> function
-      | `Ok -> Format.pp_print_string ppf "`Ok"
-      | `Failed why -> Format.fprintf ppf "`Failed %S" why)
-    ~equal:( = )
-
-let submit ?(waits = [||]) g ps =
-  let rec fits () =
-    match N.room g ps with
-    | `Fits -> ()
-    | `Later ->
-        wait g (last g);
-        fits ()
-    | `Never -> fail "room is Never"
-  in
-  fits ();
-  let v = last g + 1 in
-  (match N.submit g ~v ~waits ~handles:[||] ps with
-  | `Ok -> given g v
-  | `Failed why -> failf "submit of %d failed: %s" v why);
-  v
 
 let still ?msg w x f ~ms =
   let t0 = Sys.time () in
@@ -160,47 +231,32 @@ let watchdog what f =
       Domain.join d)
     f
 
-external room :
-  nativeint -> int -> int -> bool -> int -> int -> bool -> int array -> int
-  = "device_nv_test_room_byte" "device_nv_test_room"
-
-let room g ~queue ~words ?(fill = false) ?(units = 0) ?(bytes = 0)
-    ?(copy = false) after =
-  room (N.self g) queue words fill units bytes copy after
-
 (* Kernels *)
 
 let fixture f =
   In_channel.with_open_bin (Filename.concat "fixtures" f) In_channel.input_all
 
-type kernels = { cubin : A.Cubin.t; image : N.image; code : N.region }
+let cubin_of file bin =
+  match A.Cubin.of_string bin with
+  | Ok c -> c
+  | Error e -> failf "%s: %s" file e
 
-let image k = k.image
-let code k = k.code
+type kernels = { cubin : A.Cubin.t; program : C.Program.t }
 
-let kernels ?(file = "kernels_sm89.cubin") g =
+let kernels ?(file = "kernels_sm89.cubin") t =
   let bin = fixture file in
-  let cubin =
-    match A.Cubin.of_string bin with
-    | Ok c -> c
-    | Error e -> failf "%s: %s" file e
-  in
-  match N.image g bin with
+  match C.Program.load t.d bin with
+  | Ok program -> { cubin = cubin_of file bin; program }
   | Error e -> failf "loading %s: %s" file e
-  | Ok (`Loaded _) -> failf "%s has no code to place" file
-  | Ok (`Place (n, lay)) ->
-      let code = require_some (N.alloc g `Device n) in
-      let image, bytes = lay code in
-      let staging = require_some (N.alloc g `Pinned n) in
-      write (host staging) bytes;
-      let copy = `Copy ((code, 0), (staging, 0), n) in
-      wait g (submit g [| N.part g ~queue:"COPY:0" copy |]);
-      N.free g staging;
-      { cubin; image; code }
 
-let unload g k =
-  N.unload g k.image;
-  N.free g k.code
+let image g bin =
+  match N.image g bin with
+  | Error e -> failf "loading: %s" e
+  | Ok (`Loaded _) -> fail "an image with nothing to place"
+  | Ok (`Place (n, lay)) ->
+      let r = require_some (N.alloc g `Device n) in
+      let i, bytes = lay r in
+      (i, r, bytes)
 
 (* Launches *)
 
@@ -217,7 +273,7 @@ let launches g =
   { g; memory = require_some (N.alloc g `Mapped (slots * slot)); next = 0 }
 
 let reset l = l.next <- 0
-let free_launches g l = N.free g l.memory
+let free_launches l = N.free l.g l.memory
 
 let take l =
   if l.next = slots then fail "no launch slot left";
@@ -228,35 +284,33 @@ let take l =
 let at_host l at = host l.memory + at
 let at_gpu l at = address l.memory + at
 
-(* The entry of the segment of the words [p] in a new slot. *)
-let segment l at p =
-  let words = A.Packet.encode Int64.of_int p in
-  write (at_host l (at + segment_at)) words;
+let entry_of l at words =
   let e =
     A.Packet.encode Int64.of_int
-      (A.Gpfifo.entry
-         (at_gpu l (at + segment_at))
-         ~offset:0
-         ~words:(String.length words / 4))
+      (A.Gpfifo.entry (at_gpu l at) ~offset:0 ~words:(String.length words / 4))
   in
   Array.init 2 (fun i ->
       Int32.to_int (String.get_int32_le e (4 * i)) land 0xffff_ffff)
 
-let release l a x = segment l (take l) (A.Method.release System a x)
+let segment l p =
+  let at = take l + segment_at in
+  let words = A.Packet.encode Int64.of_int p in
+  write (at_host l at) words;
+  entry_of l at words
 
-let launch l k f ~blocks args =
+(* A launch of [kernel] of [cubin], whose first instruction is at [entry]. *)
+let launch_kernel l cubin name entry ~blocks args =
   let g = l.g in
   let kernel =
-    match A.Cubin.kernel k.cubin f with
+    match A.Cubin.kernel cubin name with
     | Some k -> k
-    | None -> failf "no kernel %s" f
+    | None -> failf "no kernel %s" name
   in
-  let entry = Option.get (N.entry k.image f) in
   let cap = N.capability g in
   let launch =
     match A.Launch.make cap kernel with
     | Ok l -> l
-    | Error e -> failf "%s: %s" f e
+    | Error e -> failf "%s: %s" name e
   in
   let bytes = A.Launch.local_bytes launch in
   (match cap.local bytes with Ok () -> () | Error e -> failf "local: %s" e);
@@ -289,4 +343,19 @@ let launch l k f ~blocks args =
         (Bytes.to_string b))
     args;
   write (at_host l at) (A.Structure.encode Int64.of_int (A.Qmd.structure q));
-  segment l at (A.Method.schedule (at_gpu l at))
+  let words = A.Packet.encode Int64.of_int (A.Method.schedule (at_gpu l at)) in
+  write (at_host l (at + segment_at)) words;
+  entry_of l (at + segment_at) words
+
+let launch l k f ~blocks args =
+  let entry =
+    match C.Program.entry k.program f with
+    | Some e -> e
+    | None -> failf "no kernel %s" f
+  in
+  launch_kernel l k.cubin f entry ~blocks args
+
+let launch_at l ~code bin f ~blocks args =
+  let cubin = cubin_of f bin in
+  let kernel = Option.get (A.Cubin.kernel cubin f) in
+  launch_kernel l cubin f (code + kernel.code) ~blocks args

@@ -18,46 +18,86 @@ val hold_gpu : unit -> unit
     Raises [Failure] naming the holder if another process still holds the lock
     after 300 s, or naming the errno if the file cannot be locked. *)
 
-val gpu : unit -> Device_nv.t
-(** [gpu ()] is GPU [0], opened through {!Device_nv_nvidia}, after stopping the
-    device an earlier {!gpu} opened if no {!stop} stopped it, as a failed test
-    leaves it, while the process holds the machine's GPU lock ({!hold_gpu}). It
+type dev = { d : Device_core.t; g : Device_nv.t }
+(** The type for an open GPU: [d] as programs reach it, [g] its driver's device.
+*)
+
+val gpu : unit -> dev
+(** [gpu ()] is GPU [0], opened through {!Device_nv_nvidia} and
+    {!Device_core.open_} under a name of its own, after stopping the driver
+    device an earlier {!gpu} or {!driver} opened if no {!stop} stopped it, as a
+    failed test leaves it. It holds the machine's GPU lock ({!hold_gpu}), and
     skips the test if the machine has no NVIDIA GPU. *)
 
+val driver : unit -> Device_nv.t
+(** [driver ()] is {!gpu}'s driver device alone, for work handed over at the C
+    edge ({!edge_submit}). *)
+
 val stop : Device_nv.t -> unit
-(** [stop g] is [Device_nv.stop g]. Tests stop the devices {!gpu} opened through
-    it. *)
+(** [stop g] is [Device_nv.stop g]. Tests stop the devices {!gpu} and {!driver}
+    opened through it. *)
 
-val with_gpu : (Device_nv.t -> 'a) -> 'a
-(** [with_gpu f] is [f g], [g] the {!gpu} opened for [f] and stopped after it,
-    whether it returns or raises, unless [f] stopped it. *)
+val close : dev -> unit
+(** [close t] stops [t]'s driver device, once the core gave back what it mapped
+    of collected memory, unless the core lost [t], which stopped it. *)
 
-(** {1:values Values} *)
+val with_gpu : (dev -> 'a) -> 'a
+(** [with_gpu f] is [f t], [t] the {!gpu} opened for [f] and its driver device
+    stopped after it, whether it returns or raises, unless [f] stopped it or the
+    core lost it, which stops it. *)
 
-val last : Device_nv.t -> int
-(** [last g] is the last value {!submit} gave [g], [0] before the first. A test
-    that calls {!Device_nv.submit} itself gives [last g + 1] and then calls
-    {!given}. *)
+val with_driver : (Device_nv.t -> 'a) -> 'a
+(** [with_driver f] is {!with_gpu} for {!driver}. *)
 
-val given : Device_nv.t -> int -> unit
-(** [given g v] records that [v] was given to [g]. *)
+(** {1:work Work through the core} *)
 
-val submit :
-  ?waits:([ `Word | `Object ] * int * int) array ->
-  Device_nv.t ->
-  Device_nv.part array ->
-  int
-(** [submit ~waits g ps] is the value [v] after {!last}[ g], once
-    {!Device_nv.submit} took [ps] as [v] with [waits] (defaults to none). While
-    {!Device_nv.room} answers [`Later] it waits for {!last}[ g]. It fails the
-    test if room answers [`Never] or the submission [`Failed]. *)
+module Sub := Device_core.Submission
+
+val submit : dev -> Sub.part array -> int
+(** [submit t ps] is the value {!Device_core.submit} gave [ps] on [t]. *)
+
+val run : dev -> Sub.part array -> unit
+(** [run t ps] submits [ps] and waits for their value. *)
+
+val words : ?after:int array -> int array -> Sub.part
+(** [words ~after ws] is the ring words [ws] on ["COMPUTE:0"]. *)
+
+val copy :
+  ?after:int array ->
+  dst:Device_core.Buffer.t ->
+  Device_core.Buffer.t ->
+  Sub.part
+(** [copy ~after ~dst src] is a copy of [src] into [dst] on ["COPY:0"]. *)
+
+val shared : dev -> int -> Device_core.Buffer.t * int
+(** [shared t n] is [(b, a)]: [n] bytes of host memory at [a], which [b], a
+    buffer of [t]'s, borrows. *)
+
+(** {1:edge Work at the C edge} *)
+
+type part = {
+  queue : int;  (** [0] for ["COMPUTE:0"], [1] for ["COPY:0"]. *)
+  after : int array;
+  work : [ `Words of int array | `Copy of int * int * int | `Fill of int * int ];
+      (** Ring words; a copy [(dst, src, n)] between addresses; a fill of ring
+          units and segment bytes. *)
+}
+(** The type for parts as [nx_edge.h] describes them. *)
+
+val edge_room : Device_nv.t -> part array -> int
+(** [edge_room g ps] is what [device_nv_room] answers for [ps]: [0] NX_FITS, [1]
+    NX_LATER, [2] NX_NEVER. *)
+
+val edge_submit :
+  Device_nv.t -> v:int -> waits:(int * int) array -> part array -> unit
+(** [edge_submit g ~v ~waits ps] hands [ps] to [device_nv_submit] as the value
+    [v], after the waits [(address, value)]. It fails the test unless the answer
+    is NX_OK. *)
 
 val wait : Device_nv.t -> int -> unit
-(** [wait g v] returns once [g]'s word, read as host memory, reaches [v]. It
-    fails the test after 10 seconds of CPU time. *)
-
-val answer : [ `Ok | `Failed of string ] Windtrap.testable
-(** [answer] prints and compares what {!Device_nv.submit} answers. *)
+(** [wait g v] returns once [g]'s word, read as host memory, reaches [v]: it
+    spins for 200 ms, then sleeps in {!Device_nv.sleep} between reads, which
+    raises the device's {!Device_nv.Fault}. *)
 
 val still :
   ?msg:string -> 'a Windtrap.testable -> 'a -> (unit -> 'a) -> ms:int -> unit
@@ -68,22 +108,6 @@ val watchdog : string -> (unit -> 'a) -> 'a
 (** [watchdog what f] is [f ()]. If [f] has not returned after 10 seconds, it
     prints [what] and ends the process: [f] blocks in C, where no timeout of the
     test reaches it. *)
-
-val room :
-  Device_nv.t ->
-  queue:int ->
-  words:int ->
-  ?fill:bool ->
-  ?units:int ->
-  ?bytes:int ->
-  ?copy:bool ->
-  int array ->
-  int
-(** [room g ~queue ~words ~fill ~units ~bytes ~copy after] is what
-    [device_nv_room] answers for one part on the queue at index [queue]: [words]
-    zero words, a fill iff [fill], [units] ring units, [bytes] segment bytes, a
-    copy of one byte iff [copy], and the indices [after]. [0] is NX_FITS, [1]
-    NX_LATER, [2] NX_NEVER. Options default to [false] and [0]. *)
 
 (** {1:host Host memory} *)
 
@@ -134,26 +158,20 @@ val fixture : string -> string
 (** [fixture f] is the contents of the file [f] of ["fixtures"]. *)
 
 type kernels
-(** The type for a cubin loaded on a device and uploaded. *)
+(** The type for a cubin loaded on a device. *)
 
-val kernels : ?file:string -> Device_nv.t -> kernels
-(** [kernels ~file g] is the cubin [file] (defaults to ["kernels_sm89.cubin"])
-    of the fixtures loaded on [g] over a new [`Device] region, its image copied
-    there by a submission that completed. ["kernels_sm89.cubin"] holds the
-    kernels of ["kernels.cu"]. *)
+val kernels : ?file:string -> dev -> kernels
+(** [kernels ~file t] is the cubin [file] (defaults to ["kernels_sm89.cubin"])
+    of the fixtures, loaded on [t] by {!Device_core.Program.load}.
+    ["kernels_sm89.cubin"] holds the kernels of ["kernels.cu"]. *)
 
-val image : kernels -> Device_nv.image
-(** [image k] is [k]'s image. *)
-
-val code : kernels -> Device_nv.region
-(** [code k] is [k]'s code region, which {!unload} frees. *)
-
-val unload : Device_nv.t -> kernels -> unit
-(** [unload g k] unloads [k]'s image, then frees its code region. *)
+val image : Device_nv.t -> string -> Device_nv.image * Device_nv.region * string
+(** [image g bin] is the cubin [bin] loaded on [g] by the driver alone: the
+    image, its new [`Device] code region and the bytes to write there. *)
 
 type launches
-(** The type for memory that holds launches: their descriptors, constant banks
-    and ring segments. *)
+(** The type for driver memory that holds launches: their descriptors, constant
+    banks and ring segments. *)
 
 val launches : Device_nv.t -> launches
 (** [launches g] is new memory for launches on [g]. *)
@@ -165,14 +183,24 @@ val launch :
     with the 64-bit parameters [args], after making the local memory of [l]'s
     device serve it. The memory it uses is [l]'s until {!reset}. *)
 
-val release : launches -> int -> int -> int array
-(** [release l a x] is the ring entry, as two words, of a segment that writes
-    the 64-bit [x] at the address [a] once the channel's earlier work completed.
-*)
+val launch_at :
+  launches ->
+  code:int ->
+  string ->
+  string ->
+  blocks:int ->
+  int list ->
+  int array
+(** [launch_at l ~code bin f ~blocks args] is {!launch} for the kernel [f] of
+    the cubin [bin] whose image the caller placed at the address [code]. *)
+
+val segment : launches -> int Device_nv_abi.Packet.t -> int array
+(** [segment l p] is the ring entry, as two words, of a segment of the words
+    [p]. *)
 
 val reset : launches -> unit
 (** [reset l] makes [l]'s memory free for new launches. The caller resets [l]
     once no work uses its launches. *)
 
-val free_launches : Device_nv.t -> launches -> unit
-(** [free_launches g l] frees [l]'s memory. *)
+val free_launches : launches -> unit
+(** [free_launches l] frees [l]'s memory. *)

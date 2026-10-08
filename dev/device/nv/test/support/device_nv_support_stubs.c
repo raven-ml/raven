@@ -12,6 +12,7 @@
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define CAML_NAME_SPACE
@@ -174,7 +175,7 @@ value device_nv_test_mismatch(value v_p, value v_n, value v_seed) {
   return Val_long(-1);
 }
 
-/* The room check */
+/* The C edge */
 
 static int no_fill(void *queue, void *arg, uint64_t v) {
   (void)queue;
@@ -183,34 +184,76 @@ static int no_fill(void *queue, void *arg, uint64_t v) {
   return 0;
 }
 
-/* What device_nv_room answers for one part on queue [v_queue]: [v_words]
-   zero words, a fill iff [v_fill], [v_units] ring units, [v_bytes] segment
-   bytes, a copy of one byte between the handles 0 iff [v_copy], and the
-   indices [v_after]. */
-value device_nv_test_room(value v_self, value v_queue, value v_words,
-                          value v_fill, value v_units, value v_bytes,
-                          value v_copy, value v_after) {
-  static const uint32_t words[8];
-  int after[8];
-  struct nx_part p;
-  memset(&p, 0, sizeof p);
-  p.queue = Int_val(v_queue);
-  p.n = Long_val(v_words);
-  if (p.n > 8) caml_invalid_argument("device_nv_test_room");
-  p.words = p.n > 0 ? words : NULL;
-  p.fill = Bool_val(v_fill) ? no_fill : NULL;
-  p.ring_units = Long_val(v_units);
-  p.segment_bytes = Long_val(v_bytes);
-  p.copy_bytes = Bool_val(v_copy) ? 1 : 0;
-  p.nafter = (int)Wosize_val(v_after);
-  if (p.nafter > 8) caml_invalid_argument("device_nv_test_room");
-  for (int i = 0; i < p.nafter; i++) after[i] = Int_val(Field(v_after, i));
-  p.after = after;
-  return Val_int(device_nv_room((void *)Nativeint_val(v_self), &p, 1));
+/* The parts [v_parts], each an int array [| queue; kind; a; b; c; nafter;
+   after...; words... |]: kind 0 is [a] ring words, 1 a copy of [c] bytes
+   from the address [b] to the address [a], 2 a fill of [a] ring units and
+   [b] segment bytes. In memory of their own, which the caller frees: the
+   parts, then their after indices, then their words. */
+static struct nx_part *parts_of(value v_parts) {
+  int n = (int)Wosize_val(v_parts);
+  size_t extra = 0;
+  for (int i = 0; i < n; i++) extra += Wosize_val(Field(v_parts, i));
+  struct nx_part *p =
+      calloc(1, n * sizeof *p + extra * (sizeof(int) + sizeof(uint32_t)) + 1);
+  if (p == NULL) caml_raise_out_of_memory();
+  int *after = (int *)(p + n);
+  uint32_t *words = (uint32_t *)(after + extra);
+  for (int i = 0; i < n; i++) {
+    value f = Field(v_parts, i);
+    intnat kind = Long_val(Field(f, 1)), a = Long_val(Field(f, 2)),
+           b = Long_val(Field(f, 3)), c = Long_val(Field(f, 4));
+    int nafter = (int)Long_val(Field(f, 5));
+    p[i].queue = (int)Long_val(Field(f, 0));
+    p[i].nafter = nafter;
+    p[i].after = after;
+    for (int j = 0; j < nafter; j++) after[j] = (int)Long_val(Field(f, 6 + j));
+    after += nafter;
+    if (kind == 0) {
+      p[i].n = (size_t)a;
+      p[i].words = words;
+      for (intnat j = 0; j < a; j++)
+        words[j] = (uint32_t)Long_val(Field(f, 6 + nafter + j));
+      words += a;
+    } else if (kind == 1) {
+      p[i].copy_dst = (uint64_t)a;
+      p[i].copy_src = (uint64_t)b;
+      p[i].copy_bytes = (uint64_t)c;
+    } else {
+      p[i].fill = no_fill;
+      p[i].ring_units = (size_t)a;
+      p[i].segment_bytes = (size_t)b;
+    }
+  }
+  return p;
 }
 
-value device_nv_test_room_byte(value *argv, int argn) {
-  (void)argn;
-  return device_nv_test_room(argv[0], argv[1], argv[2], argv[3], argv[4],
-                             argv[5], argv[6], argv[7]);
+/* What device_nv_room answers for [v_parts]. */
+value device_nv_test_room(value v_self, value v_parts) {
+  struct nx_part *p = parts_of(v_parts);
+  int r = device_nv_room((void *)Nativeint_val(v_self), p,
+                         (int)Wosize_val(v_parts));
+  free(p);
+  return Val_int(r);
+}
+
+/* device_nv_submit of [v_parts] as the value [v_v], after the waits
+   [v_waits], an address and a value each. */
+value device_nv_test_submit(value v_self, value v_v, value v_waits,
+                            value v_parts) {
+  int nwaits = (int)(Wosize_val(v_waits) / 2);
+  struct nx_wait *w = calloc(nwaits + 1, sizeof *w);
+  if (w == NULL) caml_raise_out_of_memory();
+  for (int i = 0; i < nwaits; i++)
+    w[i] = (struct nx_wait){
+        .at = (uint64_t)Long_val(Field(v_waits, 2 * i)),
+        .value = (uint64_t)Long_val(Field(v_waits, 2 * i + 1)),
+        .kind = NX_WORD};
+  struct nx_part *p = parts_of(v_parts);
+  const char *failure = NULL;
+  int r = device_nv_submit((void *)Nativeint_val(v_self),
+                           (uint64_t)Long_val(v_v), w, nwaits, p,
+                           (int)Wosize_val(v_parts), NULL, 0, &failure);
+  free(p);
+  free(w);
+  return Val_int(r);
 }
