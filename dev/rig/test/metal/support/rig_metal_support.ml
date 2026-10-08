@@ -81,8 +81,7 @@ external split_arg : arg -> nativeint -> int -> int -> unit
 
 external dispatch_fill : unit -> nativeint = "rig_metal_test_dispatch_fill"
 
-external execute_arg : nativeint -> int -> nativeint array -> arg
-  = "rig_metal_test_execute"
+external execute_arg : nativeint -> int -> arg = "rig_metal_test_execute"
 
 external execute_fill : unit -> nativeint = "rig_metal_test_execute_fill"
 
@@ -109,10 +108,8 @@ let dispatch ~pipeline ?(offset = 0) args ~groups ~threads =
 let split f d k ~times =
   split_arg f.arg (Rig_metal.capability d).split k times
 
-let execute (b : Rig_metal_abi.icb) ~pipelines =
-  let n = Array.length b.commands in
-  let arg = execute_arg b.handle n (Array.map Nativeint.of_int pipelines) in
-  { fn = execute_fill (); arg }
+let execute (b : Rig_metal_abi.icb) =
+  { fn = execute_fill (); arg = execute_arg b.handle (Array.length b.commands) }
 
 external watching_arg : unit -> arg * nativeint = "rig_metal_test_watching"
 external watching_fill : unit -> nativeint = "rig_metal_test_watching_fill"

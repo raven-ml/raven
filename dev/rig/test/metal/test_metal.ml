@@ -354,7 +354,7 @@ let bumps_counted fills =
     | `Icb n ->
         let b = require_ok (icb t args (bumps n)) in
         icbs := b :: !icbs;
-        S.execute b ~pipelines:[| bump |]
+        S.execute b
   in
   let rec pairs = function
     | a :: (b :: _ as rest) -> (a, b) :: pairs rest
@@ -448,8 +448,7 @@ let work =
 
 (* Indirect command buffers *)
 
-let run_icb t (b : Rig_metal_abi.icb) pipelines =
-  S.wait t.d (submit t [| S.execute b ~pipelines |])
+let run_icb t b = S.wait t.d (submit t [| S.execute b |])
 
 let chain n =
   let t = dev () in
@@ -457,7 +456,7 @@ let chain n =
   set_args args ~at:0 ~out:(gpu out) ~c:0;
   let step = pipeline t "step" in
   let b = require_ok (icb t args (Array.make n (dispatch step))) in
-  run_icb t b [| step |];
+  run_icb t b;
   equal int n (S.get32 (host out) 0);
   b.release ();
   List.iter (Rig_metal.free t.d) [ out; args ]
@@ -468,11 +467,11 @@ let resized () =
   set_args args ~at:0 ~out:(gpu out) ~c:4;
   let fill = pipeline t "fill" in
   let b = require_ok (icb t args [| dispatch ~threads:(4, 1, 1) fill |]) in
-  run_icb t b [| fill |];
+  run_icb t b;
   equal bool true (filled out ~c:4 4);
   equal int 0 (S.get32 (host out) 4);
   S.resize b.commands.(0) ~groups:2 ~threads:4;
-  run_icb t b [| fill |];
+  run_icb t b;
   equal bool true (filled out ~c:4 8);
   b.release ();
   List.iter (Rig_metal.free t.d) [ out; args ]
@@ -522,7 +521,7 @@ let after_unload () =
   let b = require_ok (icb t args [| dispatch step; dispatch step |]) in
   Rig_metal.unload t.d i;
   Gc.full_major ();
-  run_icb t b [||];
+  run_icb t b;
   equal int 2 (S.get32 (host out) 0);
   b.release ();
   List.iter (Rig_metal.free t.d) [ out; args ]
@@ -970,7 +969,7 @@ let stopped_running () =
   let spin = pipeline t "spin" in
   let b = require_ok (icb t args [| dispatch spin |]) in
   let w = S.weak b.handle in
-  let v = submit t [| S.execute b ~pipelines:[| spin |] |] in
+  let v = submit t [| S.execute b |] in
   Rig_metal.stop t.d;
   S.wait t.d v;
   equal bool true (S.get32 (host out) 0 <> 0);

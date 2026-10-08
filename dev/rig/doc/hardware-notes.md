@@ -514,6 +514,21 @@ steps of 3,452 dispatches ran 12-15% slower (1.21 s against 1.04-1.09 s).
 Encoding costs 0.5-0.7 µs per dispatch either way. The crossover lies between
 those sizes and was not located.
 
+### An indirect command buffer needs no pipeline set on the encoder
+
+Some runtimes set each pipeline of an indirect command buffer on the encoder,
+with an empty dispatch, before running it on GPUs before the Apple9 family,
+after GPU faults seen on M1 and M2 Macs in 2024. On the M1 Max it is not
+needed. An indirect command buffer of five dispatches over three pipelines,
+each pipeline from an image loaded for that run and never set on an encoder,
+ran as the only command of its command buffer 520 times across 13 processes
+and wrote every word, in two of the processes under Metal's API or shader
+validation. A
+runtime that sets the pipelines ran, without that step, 988 indirect command
+buffers whose pipelines were made apart from those of its direct dispatches;
+each matched the direct dispatches' result. Neither the Metal driver nor the
+fills of its tests set an indirect command buffer's pipelines.
+
 ### Memory is wired again after 1 to 3 seconds idle
 
 After 1.2-3 s without work, the first submission on the M1 Max waits before

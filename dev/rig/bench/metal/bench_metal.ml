@@ -103,7 +103,7 @@ let launch t n =
   let b =
     get ((M.capability t.d).icb (M.handle t.args) (Array.make n dispatch))
   in
-  let f = S.execute b ~pipelines:[| t.step |] in
+  let f = S.execute b in
   (f, prepare t [| S.part f |])
 
 (* A part dispatching [step] once, directly. *)

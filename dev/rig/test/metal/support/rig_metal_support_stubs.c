@@ -188,40 +188,26 @@ value rig_metal_test_dispatch_fill(value unit) {
   return caml_copy_nativeint((intnat)dispatch);
 }
 
-/* The [n] commands of an indirect command buffer, after setting each of
-   [pipelines] on the encoder with an empty dispatch, which GPUs before the
-   Apple9 family need before they run an indirect command buffer's
-   pipelines (tinygrad's runtime/graph/metal.py does the same). */
+/* The [n] commands of an indirect command buffer. */
 struct execute {
   id<MTLIndirectCommandBuffer> icb;
-  uint64_t n, npipelines;
-  id<MTLComputePipelineState> pipelines[];
+  uint64_t n;
 };
 
 static int execute(void *queue, void *arg, uint64_t v) {
   (void)v;
   struct execute *a = arg;
-  id<MTLComputeCommandEncoder> e = *(id *)queue;
-  for (uint64_t i = 0; i < a->npipelines; i++) {
-    [e setComputePipelineState:a->pipelines[i]];
-    [e dispatchThreadgroups:MTLSizeMake(0, 0, 0)
-        threadsPerThreadgroup:MTLSizeMake(1, 1, 1)];
-  }
-  [e executeCommandsInBuffer:a->icb withRange:NSMakeRange(0, a->n)];
+  [*(id *)queue executeCommandsInBuffer:a->icb withRange:NSMakeRange(0, a->n)];
   return 0;
 }
 
-value rig_metal_test_execute(value v_icb, value v_n, value v_pipelines) {
-  CAMLparam3(v_icb, v_n, v_pipelines);
+value rig_metal_test_execute(value v_icb, value v_n) {
+  CAMLparam2(v_icb, v_n);
   CAMLlocal1(v);
-  size_t np = Wosize_val(v_pipelines);
-  v = arg(sizeof(struct execute) + np * sizeof(id));
+  v = arg(sizeof(struct execute));
   struct execute *a = Arg_val(v);
   a->icb = Object_val(v_icb);
   a->n = (uint64_t)Long_val(v_n);
-  a->npipelines = np;
-  for (size_t i = 0; i < np; i++)
-    a->pipelines[i] = Object_val(Field(v_pipelines, i));
   CAMLreturn(v);
 }
 
@@ -311,8 +297,8 @@ value rig_metal_test_split(value a, value b, value c, value d) {
   (void)a, (void)b, (void)c, (void)d, no_metal();
 }
 value rig_metal_test_dispatch_fill(value a) { (void)a, no_metal(); }
-value rig_metal_test_execute(value a, value b, value c) {
-  (void)a, (void)b, (void)c, no_metal();
+value rig_metal_test_execute(value a, value b) {
+  (void)a, (void)b, no_metal();
 }
 value rig_metal_test_execute_fill(value a) { (void)a, no_metal(); }
 value rig_metal_test_watching(value a) { (void)a, no_metal(); }

@@ -115,9 +115,8 @@ val split : fill -> Rig_metal.t -> int -> times:int -> unit
     [split], dispatching again after each, and write the times of split [i] at
     the 64-bit words [2i] and [2i + 1] at [times], unless [times] is [0]. *)
 
-val execute : Rig_metal_abi.icb -> pipelines:int array -> fill
-(** [execute b ~pipelines] runs every command of [b] after setting each of
-    [pipelines] on the encoder. *)
+val execute : Rig_metal_abi.icb -> fill
+(** [execute b] runs every command of [b]. *)
 
 val watching : unit -> fill * nativeint
 (** [watching ()] is [(f, w)] with [f] a fill that encodes nothing and makes [w]

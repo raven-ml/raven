@@ -140,7 +140,7 @@ value rig_metal_bench_icb(value v_f, value v_n) {
 }
 
 /* The [v_n] commands of the indirect command buffer [v_b] in one command
-   buffer, after the empty dispatch that sets their pipeline, waited. */
+   buffer, waited. */
 value rig_metal_bench_execute(value v_f, value v_b, value v_n) {
   struct floor *f = Floor_val(v_f);
   @autoreleasepool {
@@ -148,9 +148,6 @@ value rig_metal_bench_execute(value v_f, value v_b, value v_n) {
     id<MTLComputeCommandEncoder> e =
         [b computeCommandEncoderWithDispatchType:MTLDispatchTypeSerial];
     [e useResource:f->out usage:MTLResourceUsageWrite];
-    [e setComputePipelineState:f->indirect];
-    [e dispatchThreadgroups:MTLSizeMake(0, 0, 0)
-        threadsPerThreadgroup:MTLSizeMake(1, 1, 1)];
     [e executeCommandsInBuffer:(id)Nativeint_val(v_b)
                      withRange:NSMakeRange(0, (NSUInteger)Long_val(v_n))];
     [e endEncoding];
