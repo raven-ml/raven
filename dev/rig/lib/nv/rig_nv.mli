@@ -7,8 +7,8 @@
 
     A device of this library is one NVIDIA GPU, which a {e path} opened: a
     library that reaches the GPU's resource manager (RM) one way, such as
-    {!Rig_nv_nvidia} through NVIDIA's kernel driver, and fills a {!path}
-    record. The device itself is the same whichever path opened it.
+    {!Rig_nv_nvidia} through NVIDIA's kernel driver, and fills a {!path} record.
+    The device itself is the same whichever path opened it.
 
     A device runs work on two {e channels}, the GPU's hardware queues: its
     queues ["COMPUTE:0"] and ["COPY:0"]. Its work is one sequence of
@@ -49,22 +49,21 @@
 
     {b Faults.} The RM stops a channel that faults, such as on a read its page
     tables refuse, and writes the error into the channel's notifier; the GPU's
-    multiprocessors report their own errors to it. {!sleep} reads both, and
-    raises {!Fault} with the report, and the path's own ({!field-check}). Work
-    that runs long is no fault, unless the path bounds it ({!field-hang_ms}):
-    a wait lasts until the work ends.
+    multiprocessors report their own errors to the RM. {!sleep} reads both
+    reports and the path's ({!field-check}), and raises {!Fault} with them. Work
+    that runs long is no fault unless the path bounds it ({!field-hang_ms}): a
+    wait lasts until the work ends.
 
     A function that calls the RM answers its refusal of the arguments as its
     result ([None], [Error]) and raises {!Fault} for any other failure.
     {!signaled}, {!free} and {!stop} never raise it.
 
     {b Domains.} Any domain may call any function, at the same time as others,
-    with three exceptions. [rig_nv_room] and [rig_nv_submit] are called one at
-    a time: the caller holds the device's {e turn} from [rig_nv_room] to the
-    end of [rig_nv_submit].
-    {!stop} is called once, after every other call returned; after it only
-    {!free} and the capability's [local] are called. {!sleep} may run while
-    another domain submits.
+    under two rules. [rig_nv_room] and [rig_nv_submit] run one at a time: the
+    caller holds the device's {e turn} from [rig_nv_room] to the end of
+    [rig_nv_submit], while {!sleep} may run in another domain. {!stop} is called
+    once, after every other call returned; after it, only {!free}, {!signaled}
+    and the capability's [local] are called.
 
     {b References.}
     - NVIDIA's
@@ -78,7 +77,9 @@
       [manuals/ampere/ga100/dev_pbdma.ref.txt] (GPFIFO entries, semaphores,
       [RELEASE_WFI]) and [dev_ram.ref.txt] (USERD, the doorbell). *)
 
-(** {1:facts Facts} *)
+(** {1:facts Facts}
+
+    What a device is, read once when it opens. *)
 
 type t
 (** The type for open NVIDIA GPUs: a GPU's channels, its memory and its timeline
@@ -111,8 +112,8 @@ val max_waits : t -> int
     which [rig_nv_room] keeps room. *)
 
 val blocks : t -> [ `Returns | `May_block ]
-(** [blocks g] is [`Returns]: [rig_nv_room] and [rig_nv_submit] store to
-    memory and never block. *)
+(** [blocks g] is [`Returns]: [rig_nv_room] and [rig_nv_submit] store to memory
+    and never block. *)
 
 type capability = Rig_nv_abi.Gpu.t
 (** The type for what compiled code needs from a device. *)
@@ -121,19 +122,13 @@ val capability : t -> capability
 (** [capability g] is [g]'s GPU as its formats depend on it: the classes and
     counts its path read, the shared and local memory windows [g] set on its
     compute channel, and [local], which grows the local memory [g]'s compute
-    channel gives kernels ({!Rig_nv_abi.Gpu.field-local}). A growth takes
-    effect at the next submission that uses ["COMPUTE:0"], before its parts; the
-    memory it replaces stays allocated until the work before that submission
-    completed. After {!stop}, [local] is [Error]. *)
+    channel gives kernels ({!Rig_nv_abi.Gpu.field-local}). A growth takes effect
+    at the next submission that uses ["COMPUTE:0"], before its parts; the memory
+    it replaces stays allocated until the work before that submission completed.
+    After {!stop}, [local] is [Error]. *)
 
 val capability_key : capability Type.Id.t
 (** [capability_key] is {!Rig_nv_abi.Gpu.key}. *)
-
-val self : t -> nativeint
-(** [self g] is the address of [g]'s state, the first argument of
-    [rig_nv_room] and [rig_nv_submit]. It is valid while the process runs:
-    the state holds the {!word}, which other devices may read after [g] is gone,
-    so neither is ever freed. *)
 
 (** {1:memory Memory} *)
 
@@ -151,14 +146,15 @@ val alloc : t -> [ `Device | `Pinned | `Mapped ] -> int -> region option
       stores to it reach the GPU before the work of any later submission of [g]
       reads it.
 
-    It is [None] if the GPU or the host has not the memory.
+    It is [None] if the GPU or the host lacks the memory.
 
     Raises [Invalid_argument] if [n < 1]. *)
 
 val free : t -> region -> unit
-(** [free g r] gives back the region [r]: an allocation, or a mapping
-    {!map_peer} or {!map_host} gave, of which it ends only [r]. The caller frees
-    it once no work that uses it runs.
+(** [free g r] gives back [r], an allocation or a mapping {!map_peer} or
+    {!map_host} gave. Freeing a mapping ends only that region: the memory it
+    maps, and other regions over it, stay. The caller frees [r] once no work
+    that uses it runs.
 
     Raises [Invalid_argument] if [r] is not a region of [g], is the timeline
     word, or was freed. *)
@@ -191,9 +187,9 @@ val map_peer : t -> t -> region -> region option
 
 val map_host : t -> int -> int -> region option
 (** [map_host g a n] is [Some r] with [r] the [n] bytes of host memory at [a],
-    mapped for [g]'s GPU, unless its path refuses them. The path maps whole
-    pages, and keeps the pages mapped until every region over them is freed. The
-    host memory must stay mapped until [r] is freed.
+    mapped for [g]'s GPU, or [None] if its path refuses them. The path maps
+    whole pages, and keeps the pages mapped until every region over them is
+    freed. The host memory must stay mapped until [r] is freed.
 
     Raises [Invalid_argument] if [n < 1]. *)
 
@@ -209,13 +205,13 @@ val image :
     string )
   result
 (** [image g bin] is [Ok (`Place (n, lay))] for the cubin [bin], whose image is
-    [n] bytes ({!Rig_nv_abi.Cubin.size}). The caller allocates a region [r]
-    of [`Device] memory of [g] of at least [n] bytes; [lay r] is the loaded
-    cubin over [r] and the [n] bytes of its image, relocated for [r]'s address,
-    which the caller writes to [r]'s start, such as with a [`Copy] part, before
-    work runs its kernels. [image] makes nothing on [g], and [lay] calls no
-    driver function and raises nothing. [r] stays the caller's: it frees [r]
-    after {!unload}.
+    [n] bytes ({!Rig_nv_abi.Cubin.size}). The caller allocates a region [r] of
+    [`Device] memory of [g] of at least [n] bytes; [lay r] is the loaded cubin
+    over [r] and the [n] bytes of its image, relocated for [r]'s address, which
+    the caller writes to [r]'s start, such as with a [`Copy] part, before work
+    runs its kernels. [image] makes nothing on [g], and [lay] calls no driver
+    function and raises nothing. [r] stays the caller's: it frees [r] after
+    {!unload}.
 
     The device invalidates its compute engine's instruction cache at its next
     submission that uses ["COMPUTE:0"] after [lay], before its parts: a cubin
@@ -227,40 +223,16 @@ val image :
 val entry : image -> string -> int option
 (** [entry c f] is [Some a], [a] the address of the first instruction of the
     kernel [f] of [c], or [None] if [c] has no kernel [f]. The cubin's image
-    starts at [a] minus the kernel's code offset
-    ({!Rig_nv_abi.Cubin.kernel}).
+    starts at [a] minus the kernel's code offset ({!Rig_nv_abi.Cubin.kernel}).
 
     Raises [Invalid_argument] if [c] was unloaded. *)
 
 val unload : t -> image -> unit
 (** [unload g c] ends [c]: its code region goes back to the caller, who frees
-    it. The caller unloads it once no work that runs its kernels runs, and
-    never after {!stop}, which ends [g]'s images itself.
+    it. The caller unloads it once no work that runs its kernels runs, and never
+    after {!stop}, which ends [g]'s images itself.
 
     Raises [Invalid_argument] if [c] is another device's or was unloaded. *)
-
-(** {1:work Work} *)
-
-val room_entry : nativeint
-(** [room_entry] is the address of the C function [rig_nv_room], which
-    [rig_nv.h] declares. It answers whether [g]'s rings take a submission's
-    parts now ([RIG_FITS]), once one of [g]'s values is reached ([RIG_LATER]),
-    or never ([RIG_NEVER]): for parts that exceed [g]'s empty rings, more than
-    65,535 parts, or a part the device does not run. It reads the timeline word
-    first, so [RIG_LATER] means a value [g] was given is not yet reached. *)
-
-val submit_entry : nativeint
-(** [submit_entry] is the address of the C function [rig_nv_submit], which
-    [rig_nv.h] declares. It hands over parts that [rig_nv_room] answered
-    [RIG_FITS] for as [g]'s value [v], the value after the last one [g] was
-    given, and calls no function of the OCaml runtime. A [RIG_WORD] wait at the
-    address [a] below [2{^40}], which [g]'s work addresses, holds the work back
-    until the aligned 64-bit word there holds at least the wait's value [w],
-    compared circularly: [x] is at least [w] if [x - w], as a signed 64-bit
-    integer, is not negative. The work runs after every earlier value of [g]
-    and after the waits, its parts on one queue in array order ({!queues}).
-    Once it completed, the timeline word holds [v]. A submission of no parts
-    writes [v] after its waits and after every earlier value. *)
 
 (** {1:timeline Timeline} *)
 
@@ -279,38 +251,73 @@ val signaled : t -> int
 
 val sleep : t -> seen:int -> still_ms:int -> unit
 (** [sleep g ~seen ~still_ms] returns once [g]'s timeline word differs from
-    [seen], at once if it does already, or after [still_ms] milliseconds,
-    whichever comes first; [still_ms] is not negative. It reads the word and the
-    channels' error notifiers each millisecond, and the RM's report of the
-    multiprocessors' errors and the path's {!field-check} once per call. It lets
-    other domains run while it waits, and may run while [rig_nv_submit] does.
+    [seen], at once if it already does, or after [still_ms] milliseconds,
+    whichever comes first; [still_ms >= 0]. It reads the word and the channels'
+    error notifiers every millisecond, and the multiprocessors' errors and the
+    path's {!field-check} as it starts and once a notifier holds an error. It
+    lets other domains run while it waits.
 
     Raises {!Fault} with the report if [g]'s work faulted. If the path bounds
     progress ([hang_ms] is [Some n]), it also raises {!Fault} once work is
-    outstanding and the word has not moved for [n] milliseconds. The clock runs
-    only while the last value given is above the word: it starts at the later
-    of the word's last move and the first [sleep] after the device was idle, as
-    [sleep] observes them, so an idle device never hangs and the report may come
-    late but never early. *)
+    outstanding and the word has not moved for [n] milliseconds. That clock runs
+    while a value given is above the word, from the later of the word's last
+    move and the first [sleep] after the device was idle, as [sleep] observes
+    them: an idle device never hangs, and the report may come late but never
+    early. *)
+
+(** {1:work Work}
+
+    The C functions [Rig] submits with, which [rig_nv.h] declares. *)
+
+val room_entry : nativeint
+(** [room_entry] is the address of [rig_nv_room]. It answers whether the
+    device's rings take a submission's parts now ([RIG_FITS]), once one of the
+    device's values is reached ([RIG_LATER]), or never ([RIG_NEVER]): for parts
+    that exceed the device's empty rings, more than 65,535 parts, or a part the
+    device does not run. It reads the timeline word first, so [RIG_LATER] means
+    a value the device was given is not yet reached. *)
+
+val submit_entry : nativeint
+(** [submit_entry] is the address of [rig_nv_submit]. It hands over parts that
+    [rig_nv_room] answered [RIG_FITS] for as the device's value [v], the value
+    after the last one the device was given, and calls no function of the OCaml
+    runtime. The work runs after every earlier value of the device and after the
+    waits, its parts on one queue in array order ({!queues}). Once it completed,
+    the timeline word holds [v]. A submission of no parts writes [v] after its
+    waits and after every earlier value.
+
+    A [RIG_WORD] wait names an aligned 64-bit word at an address below [2{^40}]
+    that the device's work addresses, and a value [w]. It holds the work back
+    until the word holds at least [w], compared circularly: [x] is at least [w]
+    iff [x - w], as a signed 64-bit integer, is not negative. *)
+
+val self : t -> nativeint
+(** [self g] is the address of [g]'s state, the [self] argument of [rig_nv_room]
+    and [rig_nv_submit] for [g]. It is valid while the process runs: the state
+    holds the {!word}, which other devices may read after [g] is gone, so
+    neither is ever freed. *)
 
 (** {1:loss Loss} *)
 
 exception Fault of string
-(** The exception for a fault of a device's work, with the RM's report. *)
+(** [Fault why] reports that a device's work faulted or its GPU failed: [why] is
+    the RM's or the path's report. *)
 
 val stop : t -> unit
-(** [stop g] stops [g] for good, never waiting for its work: it ends its path's
-    registration of [g]'s channels ({!field-unregister}), then frees them, and
-    the RM preempts what they run; then it asks the path to stop
-    ({!field-stop}). Once none of [g]'s work runs, the timeline word holds the
-    last value [rig_nv_submit] was given, written with release order, so work
-    of other devices that waits on it runs on: before [stop] returns if the RM
-    freed the channels, the path answered [`Stopped] or the RM had stopped the
-    channels on a fault, and otherwise by the channels' own releases as their
-    work ends. [g]'s memory goes back to the path in the first two cases.
+(** [stop g] stops [g] for good, never waiting for its work. It ends its path's
+    registration of [g]'s channels ({!field-unregister}) and frees them, and the
+    RM preempts what they run; then it asks the path to stop ({!field-stop}).
+
+    Once none of [g]'s work runs, the timeline word holds the last value
+    [rig_nv_submit] was given, written with release order, so work of other
+    devices that waits on it runs on. The word holds it before [stop] returns if
+    the RM freed the channels, the path answered [`Stopped] or the RM had
+    stopped the channels on a fault; otherwise the channels' own releases write
+    it as their work ends. [g]'s memory goes back to the path in the first two
+    cases.
+
     [stop] ends [g]'s images too: an image holds nothing of [g] but its code
-    region, which the caller frees. After [stop], only {!free} is called on
-    [g], and it raises no {!Fault}. *)
+    region, which the caller frees. *)
 
 (** {1:paths Paths}
 
@@ -337,7 +344,8 @@ type rm = {
       (** [control obj cmd p] runs the command [cmd] on [obj], which reads and
           writes [p] in place, or is the RM's refusal. *)
   free : parent:int -> int -> (unit, string) result;
-      (** [free ~parent obj] frees [obj] and every object under it. *)
+      (** [free ~parent obj] frees [obj] and every object under it, or is the
+          RM's refusal. *)
 }
 (** The type for a GPU's resource manager, as a path reaches it. Any domain may
     call its functions at any time. *)
@@ -359,14 +367,12 @@ type gpu = {
 
 type 'm memory = {
   address : int;
-      (** The GPU address of its first byte, below [2{^40}] with its last
-          byte. [`Bar] and [`System] memory and [map_host]'s are there because
-          they hold rings and timeline words, whose addresses rings and
-          semaphores take in 40 bits, so a path maps host memory at a GPU
-          address of its own if the host's is higher. [`Gpu] memory is there
-          because the device packs its local memory's address in 40 bits and
-          keeps kernels' windows onto shared and local memory above. A device
-          raises [Invalid_argument] for memory a path answers above. *)
+      (** The GPU address of its first byte. The memory lies below [2{^40}], its
+          last byte included: rings and semaphores take addresses of 40 bits,
+          and the device packs its local memory's address in 40 bits and keeps
+          kernels' windows onto shared and local memory above. A path maps host
+          memory at a GPU address of its own where the host's is higher. A
+          device raises [Invalid_argument] for memory a path answers above. *)
   host : int option;
       (** The host address of its first byte, if the host addresses it. *)
   handle : int;  (** The RM's name for it, which channel allocations take. *)
@@ -393,7 +399,7 @@ type 'm path = {
           ([NVC361_NOTIFY_CHANNEL_PENDING]). *)
   alloc : [ `Gpu | `Bar | `System ] -> int -> 'm memory option;
       (** [alloc k n] is [n] new bytes at an address aligned to 4 KiB, or [None]
-          if the GPU or the host has not the memory:
+          if the GPU or the host lacks the memory:
           - [`Gpu], GPU memory, which the host does not address;
           - [`Bar], GPU memory that the host also addresses, through the GPU's
             memory BAR, mapped uncached;
@@ -442,8 +448,8 @@ val make : 'm path -> (t, string) result
     a channel group with one context share, the channels ["COMPUTE:0"] and
     ["COPY:0"] and their memory, and asks the RM to run the GPU at its highest
     clocks. The result is [Error msg] if [p.rm.release] is none of [570], [580],
-    [610] and [615], if the RM refuses an object, or if [p] has not the memory.
-    A failed [make] frees what it allocated; [p]'s own objects stay [p]'s, and
+    [610] and [615], if the RM refuses an object, or if [p] lacks the memory. A
+    failed [make] frees what it allocated; [p]'s own objects stay [p]'s, and
     another [make] may use them once this one's device is stopped or failed.
 
     Raises [Invalid_argument] if [p.hang_ms] is [Some n] with [n < 1]. *)

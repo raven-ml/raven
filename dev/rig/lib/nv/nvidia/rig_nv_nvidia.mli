@@ -5,16 +5,16 @@
 
 (** NVIDIA GPUs of this machine, through NVIDIA's kernel driver.
 
-    Opens a GPU that NVIDIA's Linux kernel driver holds as a {!Rig_nv.t}:
-    through the driver's resource manager ([/dev/nvidiactl] and the GPU's
-    [/dev/nvidiaN]) and its unified memory driver ([/dev/nvidia-uvm]), which
-    maps memory into the GPU's address space. The kernel driver owns the GPU and
-    shares it with other programs; it alone reports the GPU's faults, and lets
-    work run as long as it takes.
+    {!open_} opens a GPU that NVIDIA's Linux kernel driver holds as a
+    {!Rig_nv.t}, through the driver's resource manager ([/dev/nvidiactl] and the
+    GPU's [/dev/nvidiaN]) and its unified memory driver ([/dev/nvidia-uvm]),
+    which maps memory into the GPU's address space. The kernel driver owns the
+    GPU and shares it with other programs; it alone reports the GPU's faults,
+    and lets work run as long as it takes.
 
     {b Numbering.} GPU [i] is the [i]th of the machine's NVIDIA GPUs
-    ({!Rig_nv.is_gpu}) in bus order, whichever kernel driver holds each: a
-    GPU another driver holds keeps its index, and does not open here.
+    ({!Rig_nv.is_gpu}) in bus order, whichever kernel driver holds each: a GPU
+    another driver holds keeps its index, and does not open here.
 
     {b Releases.} The kernel driver's releases 570, 580, 610 and 615 open; a GPU
     of another release answers [Error] naming them.
@@ -23,8 +23,8 @@
     this library reserves in the process at its first open, from [384 GiB] up.
     Memory the library allocates for the host lies at the same address for the
     host and the GPU; host memory [Rig_nv.map_host] maps lies at its own GPU
-    address, as the host's may lie higher. The memory [`Mapped] gives the host through the GPU's BAR1, which the kernel
-    driver sizes, often at 256 MiB.
+    address, as the host's may lie higher. {!Rig_nv.alloc}'s [`Mapped] memory
+    lies in the GPU's BAR1, which the kernel driver sizes, often at 256 MiB.
 
     {b Domains.} Any domain may call any function, at the same time as others.
 
