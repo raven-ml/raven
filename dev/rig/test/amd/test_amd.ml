@@ -2040,11 +2040,13 @@ let queue_order =
 (* Through the C entries, on a device rig does not drive *)
 
 (* A device of GPU 0 opened by [S.open_gpu], for work handed to its C entries
-   directly, with values the test numbers. *)
+   directly, with values the test numbers, once the device [S.gpu] opened last
+   is stopped. *)
 let raw =
   fixture ~teardown:A.stop (fun () ->
       if S.gpus () = 0 then skip ~reason:"the machine has no AMD GPU" ();
       S.hold_gpu ();
+      S.stop_gpu ();
       match S.open_gpu () with Ok g -> g | Error why -> failwith why)
 
 (* A device's values, numbered as it submits them. *)

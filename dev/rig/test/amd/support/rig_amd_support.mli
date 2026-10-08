@@ -59,6 +59,12 @@ val stop : Rig_amd.t -> unit
 (** [stop g] is [Rig_amd.stop g]. Tests stop the devices {!gpu} opened through
     it. *)
 
+val stop_gpu : unit -> unit
+(** [stop_gpu ()] stops the device {!gpu} opened last, unless {!stop} or rig's
+    loss stopped it. A test that opens a device of its own through {!open_gpu}
+    calls it first: with no kernel driver, a process holds one device of a
+    GPU. *)
+
 val with_gpu : (Rig_amd.t -> 'a) -> 'a
 (** [with_gpu f] is [f (gpu ())], the device stopped after unless rig lost it.
 *)

@@ -82,11 +82,13 @@ let stop g =
   (match !opened with Some (o, _) when o == g -> opened := None | _ -> ());
   Rig_amd.stop g
 
+let stop_gpu () = Option.iter (fun (o, _) -> stop o) !opened
+
 let gpu () =
   if gpus () = 0 then
     skip ~reason:"the machine has no AMD GPU" ();
   hold_gpu ();
-  Option.iter (fun (o, _) -> stop o) !opened;
+  stop_gpu ();
   incr opens;
   let g = ref None in
   let make () =
