@@ -1395,10 +1395,12 @@ let bus_master = 0x4
    interrupts, its INTx line (PCI Express Base Specification, 7.5.1.1.3). *)
 let intx_disable = 0x400
 
-(* [take_mastering m bus] takes [bus] on [m] and turns its bus mastering on. *)
+(* [take_mastering m bus] takes [bus] on [m] and turns its memory space and bus
+   mastering on, keeping the command register's other bits, as a driver does. *)
 let take_mastering m bus =
   let f = require_ok (Function.take m bus) in
-  Function.set_config16 f command (memory_space lor bus_master);
+  Function.set_config16 f command
+    (Function.config16 f command lor memory_space lor bus_master);
   f
 
 let test_release_stops_dma () =
@@ -1459,10 +1461,11 @@ let exit_mastering root bus =
   | child -> ignore (Unix.waitpid [] child));
   exit (if Function.config16 f command land bus_master <> 0 then 0 else 1)
 
-let test_exit_stops_dma () =
+let test_exit (_, before) =
   if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
   let fn = Tree.gpu "0000:03:00.0" in
   let root = Tree.make [ fn ] in
+  set_command root fn.bus (memory_space lor before);
   let exe = Sys.executable_name in
   let pid =
     Unix.create_process exe
@@ -1484,7 +1487,9 @@ let test_exit_stops_dma () =
   let code = match !status with Some (WEXITED c) -> c | _ -> -1 in
   equal ~msg:"its child's exit left it mastering the bus" int 0 code;
   equal ~msg:"its own exit stopped it" hex 0
-    (command_in root fn.bus land bus_master)
+    (command_in root fn.bus land bus_master);
+  equal ~msg:"its own exit gave its INTx back" hex before
+    (command_in root fn.bus land intx_disable)
 
 (* Linux offers a prefetchable BAR combining through [resourceN_wc]: BAR 0 of
    the fixture's GPU is prefetchable, BAR 5 is not. *)
@@ -1542,10 +1547,11 @@ let tree_files =
         "a function taken physically has its INTx off while taken, as found \
          after"
         ~name:fst intx_states test_intx;
-      test
-        "a function taken physically stops mastering the bus when its process \
-         exits, and a child that process forked exits without stopping it"
-        test_exit_stops_dma;
+      cases
+        "a function taken physically stops mastering the bus and has its INTx \
+         as found when its process exits, and a child that process forked \
+         exits without stopping it"
+        ~name:fst intx_states test_exit;
     ]
 
 (* Locked system memory

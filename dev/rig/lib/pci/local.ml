@@ -128,6 +128,17 @@ let intx_off t =
   set_config t command 2 (c lor intx_disable);
   c land intx_disable
 
+(* Leaves a physical take's function as the take found it: its DMA stopped, its
+   INTx as it was, and, once its bus mastering reads off, its memory files
+   gone. *)
+let give_back t s =
+  stop_dma t;
+  Option.iter
+    (fun bit ->
+      set_config t command 2 (config t command 2 land lnot intx_disable lor bit))
+    t.intx;
+  close_memory t s
+
 (* The functions processes hold physically, with the process that took each.
    VFIO stops a function's DMA when its files close, at release or at exit;
    closing a physical take's files stops nothing, so this library does, before
@@ -145,12 +156,10 @@ let () =
       let pid = Unix.getpid () in
       List.iter
         (fun (owner, t) ->
-          if owner = pid then begin
-            stop_dma t;
+          if owner = pid then
             match t.way with
-            | Physical_take s -> close_memory t s
-            | Iommu_take _ -> ()
-          end)
+            | Physical_take s -> give_back t s
+            | Iommu_take _ -> stop_dma t)
         (Atomic.get physical))
 
 (* mmap maps whole pages from an offset on a page: the pages that hold the [n]
@@ -258,22 +267,14 @@ let unpin t a n =
   | Physical_take _ -> () (* a physical take pins nothing *)
   | Iommu_take c -> Vfio.unmap_dma t.bus c a (round_page n)
 
-(* Release gives the function its INTx back as the take found it. Once its bus
-   mastering reads off, a physical take's memory files go. Its descriptors close
-   whatever happens before. *)
+(* A take's descriptors close whatever happens before. *)
 let release t =
   Fun.protect ~finally:(fun () -> List.iter Unix.close t.fds) @@ fun () ->
   match t.way with
   | Iommu_take c -> Vfio.close c
   | Physical_take s ->
-      stop_dma t;
-      Option.iter
-        (fun bit ->
-          set_config t command 2
-            (config t command 2 land lnot intx_disable lor bit))
-        t.intx;
       forget t;
-      close_memory t s
+      give_back t s
 
 let fn t =
   {
