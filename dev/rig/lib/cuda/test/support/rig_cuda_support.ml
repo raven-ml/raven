@@ -42,7 +42,7 @@ let rec take refused =
         (strf "%s: still held after %d s, by %s" gpu_lock gpu_wait (holder ()))
   | errno -> failwith (strf "%s: errno %d" gpu_lock errno)
 
-let hold_gpu () = if Rig_cuda.count () > 0 then take 0
+let hold_gpu () = if Sys.file_exists "/dev/nvidiactl" then take 0
 
 (* The GPU *)
 

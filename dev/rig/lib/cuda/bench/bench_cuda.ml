@@ -194,6 +194,7 @@ let map_host_rows =
     ]
 
 let () =
+  S.hold_gpu ();
   if Sys.file_exists "/dev/nvidiactl" then
     exit
     @@ Thumper.run "rig_cuda"
