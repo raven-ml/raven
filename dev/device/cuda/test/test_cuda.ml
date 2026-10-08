@@ -640,6 +640,9 @@ module Registry = struct
                (Gen.map
                   (fun (a, n) -> (Arena, scale a, scale n))
                   (Gen.pair (Gen.of_list point) (Gen.of_list length))) );
+           (* One range drawn often, so that a range equal to a registered one
+              is drawn too. *)
+           (2, Gen.constant (Arena, 0, S.page));
            ( 1,
              Gen.map
                (fun a -> (Foreign, scale a, 64))
