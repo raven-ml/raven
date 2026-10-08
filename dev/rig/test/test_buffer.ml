@@ -319,6 +319,26 @@ let test_copyless_borrow () =
     (let ba = B.bigarray Bigarray.char back in
      String.init 64 (Bigarray.Array1.get ba))
 
+(* A borrow of a lost device's buffer raises its loss, empty or not. *)
+let test_borrow_lost () =
+  let d, p = P.open_ "buffer:borrow-lost" in
+  let e, _ = P.open_ "buffer:borrow-lost-on" in
+  let m = B.create d 64 and empty = B.create d 0 in
+  P.fail p;
+  (try ignore (submit (Sub.make ~reads:0 ~writes:0 d [||]))
+   with Rig.Lost _ -> ());
+  raises_match ~msg:"64 bytes" lost (fun () -> B.borrow e m);
+  raises_match ~msg:"empty" lost (fun () -> B.borrow e empty)
+
+(* A device that maps no host memory maps a peer's memory the host addresses,
+   through its driver's peer mapping. *)
+let test_peer_no_host () =
+  let owner, _ = P.open_ "buffer:peer-visible" in
+  let d, p = P.open_ ~maps_host:false "buffer:peer-no-host" in
+  let m = B.create owner 64 in
+  equal ~msg:"borrowed" bool true (Option.is_some (B.borrow d m));
+  equal ~msg:"host maps" (list int) [] (P.host_maps p)
+
 let test_borrow_own () =
   let d, _ = P.open_ "buffer:own" in
   let b = B.create d 64 in
@@ -871,6 +891,10 @@ let tests =
           test_empty_address;
         test "a borrow of a peer's memory on a device that runs no copy copies"
           test_copyless_borrow;
+        test "a borrow of a lost device's buffer raises its loss"
+          test_borrow_lost;
+        test "a device that maps no host memory maps a peer's visible memory"
+          test_peer_no_host;
         test "empty host memory borrows on a device with no mapping"
           test_empty_borrow;
         test "a device that maps no host memory borrows none" test_maps_no_host;

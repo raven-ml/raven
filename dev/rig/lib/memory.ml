@@ -913,8 +913,13 @@ let mapping d m host =
   match found with
   | Some mp -> Some mp
   | None -> (
+      (* Memory of a device of [d]'s driver maps as a peer's; other memory the
+         host addresses, as host memory. *)
       let made =
-        if host >= 0 then map_host_range d host m.bytes else map_peer d m
+        match m.dev.kind with
+        | Driver _ when m.dev.key = d.key -> map_peer d m
+        | _ when host >= 0 -> map_host_range d host m.bytes
+        | _ -> map_peer d m
       in
       match made with
       | None -> None

@@ -110,6 +110,7 @@ let overlaps b b' =
 let borrow d b =
   check_live "Buffer.borrow" b;
   if Dev.is_lost d then Dev.raise_lost d;
+  if Dev.is_lost b.mem.dev then Dev.raise_lost b.mem.dev;
   Memory.check_points (Memory.stamps b.mem);
   if b.mem.dev == d then Some b
   else
