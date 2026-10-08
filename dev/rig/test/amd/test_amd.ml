@@ -624,7 +624,7 @@ let pp_step ppf = function
   | Burst n -> Format.fprintf ppf "%d empty submissions" n
   | Reach p -> Format.fprintf ppf "reach %d%%" p
 
-let zeros = lazy (Array.make (1 lsl 20) 0)
+let zeros = lazy (Array.make (1 lsl 21) 0)
 
 (* Fills that place nothing and take [bytes] of the segment, made once: every
    device's capability has the same C functions. *)
@@ -658,7 +658,12 @@ let spec =
     if compute then
       frequency
         [
-          (3, map (fun n -> Words n) (of_list [ 1; 64; 1 lsl 16; 1 lsl 20 ]));
+          (* Half the compute ring in one part: programs wrap the ring often
+             enough that each run's 40 do, even its first, short ones. *)
+          ( 3,
+            map
+              (fun n -> Words n)
+              (of_list [ 1; 64; 1 lsl 16; 1 lsl 20; 1 lsl 21 ]) );
           ( 2,
             let+ u = of_list [ 0; 64; 1 lsl 18 ]
             and+ b = of_list [ 0; 64; 4096; 1 lsl 17 ] in
