@@ -139,7 +139,7 @@ let doubled n =
          Bytes.set_int32_le b 0 (Int32.of_int (2 * i));
          Bytes.to_string b))
 
-let kernels =
+let code =
   group ~timeout:60. "kernels"
     [
       test "a kernel loaded from its image computes" (fun () ->
@@ -261,4 +261,52 @@ let kernels =
           done);
     ]
 
-let () = exit (run "device_amd" [ gpus; work; kernels ])
+(* Images and regions given back from two domains: whatever the order, the first
+   unload or free returns and every later one raises. *)
+
+let shared = lazy (S.gpu ())
+let dev () = Lazy.force shared
+
+type live = { mutable live : bool }
+
+let once m =
+  if not m.live then invalid_arg "given back";
+  m.live <- false
+
+let unloaded =
+  abstract "image" ~release:(fun i ->
+      try A.unload (dev ()) i with Invalid_argument _ -> ())
+
+let freed =
+  abstract "region" ~release:(fun r ->
+      try A.free (dev ()) r with Invalid_argument _ -> ())
+
+let give_back_commands =
+  [
+    command "image"
+      (Gen.unit @-> makes unloaded)
+      (fun () -> { live = true })
+      (fun () ->
+        match A.image (dev ()) (Lazy.force kernels).binary with
+        | Ok (m, _) -> m
+        | Error why -> fail why);
+    command "unload"
+      (unloaded ^-> returns unit)
+      once
+      (fun m -> A.unload (dev ()) m);
+    command "alloc"
+      (Gen.unit @-> makes freed)
+      (fun () -> { live = true })
+      (fun () -> Option.get (A.alloc (dev ()) `Pinned 4096));
+    command "free" (freed ^-> returns unit) once (fun r -> A.free (dev ()) r);
+  ]
+
+let domains =
+  group ~timeout:60. "domains"
+    [
+      stateful ~domains:2 ~count:30
+        "images and regions are given back once from two domains"
+        give_back_commands;
+    ]
+
+let () = exit (run "device_amd" [ gpus; work; code; domains ])

@@ -88,7 +88,7 @@ type region = {
   bytes : int;
   mem : mem;
   flush : nativeint option; (* the HDP register this region keeps flushed *)
-  mutable live : bool;
+  live : bool Atomic.t; (* taken once, by the free or unmap that ends it *)
 }
 
 (* C state *)
@@ -394,7 +394,7 @@ let make (type m) (p : m path) =
         bytes = 8;
         mem = word;
         flush = None;
-        live = true;
+        live = Atomic.make true;
       }
     in
     Ok
@@ -459,7 +459,7 @@ let region g kind ?flush n m =
     bytes = n;
     mem = m;
     flush;
-    live = true;
+    live = Atomic.make true;
   }
 
 let alloc g kind n =
@@ -478,15 +478,16 @@ let alloc g kind n =
               ignore (count_hdp g reg 1);
               Some (region g Alloc ~flush:reg n m)))
 
+(* Gives back [r], whose [live] the caller took. *)
 let release g r =
-  r.live <- false;
   Option.iter (fun reg -> ignore (count_hdp g reg (-1))) r.flush;
   g.ops.free r.mem
 
 let free g r =
   if r.owner <> g.self || r.kind <> Alloc then
     invalid_arg "Device_amd.free: the region is no allocation of the device";
-  if not r.live then invalid_arg "Device_amd.free: the region was freed";
+  if not (Atomic.compare_and_set r.live true false) then
+    invalid_arg "Device_amd.free: the region was freed";
   release g r
 
 let address (r : region) = Some r.address
@@ -496,7 +497,7 @@ let host (r : region) = r.host
 let map_peer g g' r =
   if g.self = g'.self then
     invalid_arg "Device_amd.map_peer: the devices are one";
-  if r.owner <> g'.self || not r.live then
+  if r.owner <> g'.self || not (Atomic.get r.live) then
     invalid_arg "Device_amd.map_peer: the region is no live region of the peer";
   match g.ops.map_peer r.mem with
   | None -> None
@@ -517,7 +518,8 @@ let map_host g a n =
 let unmap g r =
   if r.owner <> g.self || (r.kind <> View && r.kind <> Borrowed) then
     invalid_arg "Device_amd.unmap: the region is no mapping of the device";
-  if not r.live then invalid_arg "Device_amd.unmap: the region was unmapped";
+  if not (Atomic.compare_and_set r.live true false) then
+    invalid_arg "Device_amd.unmap: the region was unmapped";
   release g r
 
 (* Images *)
@@ -528,7 +530,7 @@ type image = {
   holder : int;
   co : Code_object.t;
   code : region;
-  mutable loaded : bool;
+  loaded : bool Atomic.t; (* taken once, by the unload *)
 }
 
 (* The image's bytes, as the code object lays them out. *)
@@ -572,11 +574,12 @@ let image g bin =
         | Some m ->
             let code = region g Alloc n m in
             Ok
-              ( { holder = g.self; co; code; loaded = true },
+              ( { holder = g.self; co; code; loaded = Atomic.make true },
                 Some (code, image_bytes co) ))
 
 let entry m f =
-  if not m.loaded then invalid_arg "Device_amd.entry: the image was unloaded";
+  if not (Atomic.get m.loaded) then
+    invalid_arg "Device_amd.entry: the image was unloaded";
   Option.map
     (fun (k : Code_object.kernel) -> m.code.address + k.descriptor)
     (Code_object.kernel m.co f)
@@ -584,8 +587,9 @@ let entry m f =
 let unload g m =
   if m.holder <> g.self then
     invalid_arg "Device_amd.unload: the image is another device's";
-  if not m.loaded then invalid_arg "Device_amd.unload: the image was unloaded";
-  m.loaded <- false;
+  if not (Atomic.compare_and_set m.loaded true false) then
+    invalid_arg "Device_amd.unload: the image was unloaded";
+  Atomic.set m.code.live false;
   release g m.code
 
 (* Work. A part is the ints the C submit reads: the device's state, then
@@ -654,7 +658,7 @@ let part g ~queue ?(after = [||]) w =
   | `Copy ((dst, o), (src, o'), n) ->
       if queue <> 1 then invalid_arg "Device_amd.part: a copy runs on COPY:0";
       let check what (r : region) o =
-        if r.owner <> g.self || not r.live then
+        if r.owner <> g.self || not (Atomic.get r.live) then
           invalid_argf
             "Device_amd.part: the copy's %s is no live region of the device"
             what;
