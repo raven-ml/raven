@@ -120,8 +120,8 @@ let window s ws =
   ignore (numel "Move.Window" s');
   s'
 
-(* An argument of more than [max_rank] axes has no layout, and [permute]'s
-   bit set tells only that many axes apart: refuse it before any movement. *)
+(* An argument of more than [max_rank] axes has no layout, and [permute]'s bit
+   set tells only that many axes apart: refuse it before any movement. *)
 let shape m s =
   check_rank "Move.shape" (Array.length s);
   ignore (numel "Move.shape" s);
