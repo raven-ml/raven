@@ -1,0 +1,95 @@
+# thumper baseline v1
+# suite: rig-gpu
+
+# machine: 6e4c99d648da0929
+# host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.1 · 64-bit · release
+
+floor/cuda/cost	alloc_words	exact	0
+floor/cuda/cost	wall_time	batch=4096	n=20	1.763e-06	1.756e-06 1.762e-06 1.762e-06 1.762e-06 1.762e-06 1.763e-06 1.763e-06 1.763e-06 1.763e-06 1.763e-06 1.763e-06 1.763e-06 1.764e-06 1.764e-06 1.764e-06 1.764e-06 1.764e-06 1.764e-06 1.765e-06 1.766e-06
+floor/cuda/kernel-pipelined-100	alloc_words	exact	6
+floor/cuda/kernel-pipelined-100	wall_time	batch=32	n=20	2.899e-04	2.891e-04 2.892e-04 2.893e-04 2.895e-04 2.895e-04 2.895e-04 2.896e-04 2.896e-04 2.899e-04 2.899e-04 2.900e-04 2.901e-04 2.904e-04 2.911e-04 2.912e-04 2.915e-04 2.923e-04 2.927e-04 2.929e-04 2.938e-04
+floor/cuda/pipelined-100	alloc_words	exact	0
+floor/cuda/pipelined-100	wall_time	batch=32	n=20	1.739e-04	1.737e-04 1.737e-04 1.738e-04 1.738e-04 1.738e-04 1.739e-04 1.739e-04 1.739e-04 1.739e-04 1.739e-04 1.740e-04 1.740e-04 1.740e-04 1.740e-04 1.740e-04 1.740e-04 1.740e-04 1.740e-04 1.741e-04 1.742e-04
+floor/cuda/release	alloc_words	exact	0
+floor/cuda/release	wall_time	batch=2048	n=20	3.761e-06	3.752e-06 3.754e-06 3.758e-06 3.759e-06 3.759e-06 3.759e-06 3.759e-06 3.759e-06 3.759e-06 3.761e-06 3.761e-06 3.762e-06 3.762e-06 3.762e-06 3.763e-06 3.763e-06 3.763e-06 3.765e-06 3.766e-06 3.769e-06
+floor/cuda/run	alloc_words	exact	0
+floor/cuda/run	wall_time	batch=4096	n=20	3.006e-06	1.722e-06 1.722e-06 1.980e-06 2.746e-06 2.747e-06 2.747e-06 2.748e-06 2.748e-06 3.005e-06 3.005e-06 3.006e-06 3.007e-06 3.007e-06 3.007e-06 3.007e-06 3.007e-06 3.007e-06 3.007e-06 3.008e-06 3.263e-06
+floor/nv/cost	alloc_words	exact	0
+floor/nv/cost	wall_time	batch=8192	n=20	7.879e-07	7.842e-07 7.870e-07 7.872e-07 7.873e-07 7.874e-07 7.875e-07 7.875e-07 7.878e-07 7.878e-07 7.878e-07 7.879e-07 7.879e-07 7.879e-07 7.880e-07 7.880e-07 7.882e-07 7.883e-07 7.885e-07 7.885e-07 7.886e-07
+floor/nv/kernel-pipelined-100	alloc_words	exact	6
+floor/nv/kernel-pipelined-100	wall_time	batch=32	n=20	2.389e-04	2.358e-04 2.366e-04 2.366e-04 2.369e-04 2.374e-04 2.379e-04 2.379e-04 2.385e-04 2.385e-04 2.386e-04 2.392e-04 2.394e-04 2.396e-04 2.396e-04 2.400e-04 2.401e-04 2.401e-04 2.402e-04 2.402e-04 2.404e-04
+floor/nv/pipelined-100	alloc_words	exact	0
+floor/nv/pipelined-100	wall_time	batch=32	n=20	1.675e-04	1.574e-04 1.638e-04 1.650e-04 1.655e-04 1.657e-04 1.661e-04 1.667e-04 1.668e-04 1.671e-04 1.672e-04 1.678e-04 1.679e-04 1.680e-04 1.680e-04 1.680e-04 1.682e-04 1.684e-04 1.685e-04 1.687e-04 1.697e-04
+floor/nv/release	alloc_words	exact	0
+floor/nv/release	wall_time	batch=2048	n=20	3.393e-06	3.386e-06 3.388e-06 3.388e-06 3.388e-06 3.390e-06 3.391e-06 3.391e-06 3.391e-06 3.393e-06 3.393e-06 3.393e-06 3.393e-06 3.394e-06 3.394e-06 3.394e-06 3.394e-06 3.394e-06 3.394e-06 3.395e-06 3.397e-06
+floor/nv/run	alloc_words	exact	0
+floor/nv/run	wall_time	batch=4096	n=20	1.521e-06	1.467e-06 1.472e-06 1.473e-06 1.486e-06 1.492e-06 1.495e-06 1.501e-06 1.514e-06 1.515e-06 1.518e-06 1.524e-06 1.530e-06 1.544e-06 1.548e-06 1.576e-06 1.594e-06 1.606e-06 1.622e-06 1.661e-06 1.676e-06
+replay/cuda/kernel-pipelined-100	alloc_words	exact	3
+replay/cuda/kernel-pipelined-100	wall_time	batch=16	n=20	3.701e-04	3.694e-04 3.694e-04 3.695e-04 3.695e-04 3.696e-04 3.698e-04 3.699e-04 3.699e-04 3.700e-04 3.700e-04 3.701e-04 3.701e-04 3.704e-04 3.705e-04 3.705e-04 3.709e-04 3.711e-04 3.715e-04 3.727e-04 3.727e-04
+replay/cuda/params-24	alloc_words	exact	0
+replay/cuda/params-24	wall_time	batch=4096	n=20	2.037e-06	2.031e-06 2.032e-06 2.033e-06 2.033e-06 2.035e-06 2.036e-06 2.036e-06 2.036e-06 2.037e-06 2.037e-06 2.037e-06 2.037e-06 2.037e-06 2.037e-06 2.037e-06 2.039e-06 2.039e-06 2.040e-06 2.040e-06 2.041e-06
+replay/cuda/pipelined-100	alloc_words	exact	0
+replay/cuda/pipelined-100	wall_time	batch=32	n=20	2.075e-04	2.061e-04 2.065e-04 2.066e-04 2.066e-04 2.066e-04 2.068e-04 2.068e-04 2.069e-04 2.073e-04 2.075e-04 2.075e-04 2.076e-04 2.076e-04 2.077e-04 2.078e-04 2.079e-04 2.081e-04 2.081e-04 2.082e-04 2.082e-04
+replay/nv/kernel-pipelined-100	alloc_words	exact	3
+replay/nv/kernel-pipelined-100	wall_time	batch=32	n=20	2.490e-04	2.487e-04 2.487e-04 2.487e-04 2.488e-04 2.489e-04 2.489e-04 2.489e-04 2.490e-04 2.490e-04 2.490e-04 2.490e-04 2.490e-04 2.491e-04 2.491e-04 2.492e-04 2.492e-04 2.492e-04 2.492e-04 2.492e-04 2.495e-04
+replay/nv/params-24	alloc_words	exact	0
+replay/nv/params-24	wall_time	batch=4096	n=20	1.927e-06	1.911e-06 1.913e-06 1.923e-06 1.923e-06 1.924e-06 1.924e-06 1.924e-06 1.925e-06 1.925e-06 1.927e-06 1.927e-06 1.929e-06 1.929e-06 1.930e-06 1.935e-06 1.935e-06 1.936e-06 1.940e-06 1.940e-06 1.944e-06
+replay/nv/pipelined-100	alloc_words	exact	0
+replay/nv/pipelined-100	wall_time	batch=32	n=20	1.865e-04	1.857e-04 1.859e-04 1.860e-04 1.861e-04 1.861e-04 1.862e-04 1.862e-04 1.863e-04 1.863e-04 1.864e-04 1.865e-04 1.867e-04 1.867e-04 1.870e-04 1.870e-04 1.871e-04 1.871e-04 1.871e-04 1.872e-04 1.873e-04
+submit/cuda/cost	alloc_words	exact	0
+submit/cuda/cost	wall_time	batch=4096	n=20	1.732e-06	1.729e-06 1.730e-06 1.731e-06 1.732e-06 1.732e-06 1.732e-06 1.732e-06 1.732e-06 1.732e-06 1.732e-06 1.732e-06 1.732e-06 1.732e-06 1.732e-06 1.733e-06 1.733e-06 1.733e-06 1.733e-06 1.733e-06 1.734e-06
+submit/cuda/empty	alloc_words	exact	0
+submit/cuda/empty	wall_time	batch=2048	n=20	3.969e-06	3.962e-06 3.963e-06 3.963e-06 3.964e-06 3.964e-06 3.965e-06 3.968e-06 3.968e-06 3.968e-06 3.969e-06 3.969e-06 3.969e-06 3.971e-06 3.971e-06 3.971e-06 3.973e-06 3.974e-06 3.974e-06 3.978e-06 4.026e-06
+submit/nv/cost	alloc_words	exact	0
+submit/nv/cost	wall_time	batch=8192	n=20	7.776e-07	7.748e-07 7.766e-07 7.772e-07 7.774e-07 7.775e-07 7.775e-07 7.775e-07 7.776e-07 7.776e-07 7.776e-07 7.777e-07 7.777e-07 7.778e-07 7.778e-07 7.778e-07 7.778e-07 7.779e-07 7.780e-07 7.780e-07 7.781e-07
+submit/nv/empty	alloc_words	exact	0
+submit/nv/empty	wall_time	batch=2048	n=20	3.498e-06	3.493e-06 3.493e-06 3.495e-06 3.495e-06 3.495e-06 3.495e-06 3.496e-06 3.497e-06 3.498e-06 3.498e-06 3.499e-06 3.499e-06 3.500e-06 3.501e-06 3.501e-06 3.501e-06 3.502e-06 3.502e-06 3.503e-06 3.564e-06
+
+# machine: 943935ae6b4f79ac
+# host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
+# ocaml: 5.5.1 · 64-bit · release
+
+floor/metal/cost	alloc_words	exact	0
+floor/metal/cost	wall_time	batch=4096	n=20	3.206e-06	2.585e-06 2.758e-06 2.954e-06 2.967e-06 2.974e-06 3.082e-06 3.153e-06 3.173e-06 3.193e-06 3.198e-06 3.214e-06 3.235e-06 3.241e-06 3.249e-06 3.265e-06 3.372e-06 3.417e-06 3.432e-06 3.505e-06 3.522e-06
+floor/metal/kernel-pipelined-100	alloc_words	exact	6
+floor/metal/kernel-pipelined-100	wall_time	batch=1	n=20	1.009e-02	8.200e-03 8.980e-03 9.030e-03 9.134e-03 9.300e-03 9.423e-03 9.455e-03 9.912e-03 1.006e-02 1.007e-02 1.012e-02 1.014e-02 1.016e-02 1.028e-02 1.034e-02 1.045e-02 1.066e-02 1.069e-02 1.074e-02 1.145e-02
+floor/metal/pipelined-100	alloc_words	exact	0
+floor/metal/pipelined-100	wall_time	batch=8	n=20	1.050e-03	8.010e-04 8.509e-04 8.779e-04 8.858e-04 9.685e-04 9.940e-04 1.020e-03 1.031e-03 1.042e-03 1.044e-03 1.056e-03 1.074e-03 1.108e-03 1.124e-03 1.170e-03 1.173e-03 1.224e-03 1.225e-03 1.266e-03 1.336e-03
+floor/metal/release	alloc_words	exact	0
+floor/metal/release	wall_time	batch=256	n=20	1.900e-05	1.190e-05 1.502e-05 1.590e-05 1.597e-05 1.597e-05 1.759e-05 1.761e-05 1.882e-05 1.885e-05 1.899e-05 1.900e-05 1.920e-05 1.926e-05 1.928e-05 1.930e-05 1.948e-05 1.958e-05 1.960e-05 1.991e-05 2.096e-05
+floor/metal/release-sleep	alloc_words	exact	0
+floor/metal/release-sleep	wall_time	batch=512	n=20	1.712e-05	1.512e-05 1.583e-05 1.607e-05 1.607e-05 1.622e-05 1.645e-05 1.667e-05 1.668e-05 1.670e-05 1.703e-05 1.721e-05 1.725e-05 1.742e-05 1.760e-05 1.872e-05 1.880e-05 1.952e-05 2.013e-05 2.080e-05 2.083e-05
+floor/metal/run	alloc_words	exact	0
+floor/metal/run	wall_time	batch=512	n=20	9.853e-06	8.360e-06 8.440e-06 8.491e-06 8.657e-06 8.729e-06 9.054e-06 9.110e-06 9.150e-06 9.742e-06 9.842e-06 9.865e-06 9.946e-06 1.184e-05 1.193e-05 1.200e-05 1.213e-05 1.302e-05 1.389e-05 1.436e-05 1.602e-05
+replay/metal/kernel-pipelined-100	alloc_words	exact	367
+replay/metal/kernel-pipelined-100	wall_time	batch=1	n=20	9.802e-03	8.726e-03 8.805e-03 8.937e-03 9.210e-03 9.370e-03 9.372e-03 9.509e-03 9.591e-03 9.662e-03 9.799e-03 9.805e-03 9.867e-03 9.869e-03 9.986e-03 9.994e-03 1.015e-02 1.021e-02 1.032e-02 1.040e-02 1.130e-02
+replay/metal/params-24	alloc_words	batch=512	n=20	3.580e+00	3.566e+00 3.566e+00 3.580e+00 3.580e+00 3.580e+00 3.580e+00 3.580e+00 3.580e+00 3.580e+00 3.580e+00 3.580e+00 3.580e+00 3.594e+00 3.594e+00 3.594e+00 3.594e+00 3.594e+00 3.607e+00 3.607e+00 3.607e+00
+replay/metal/params-24	wall_time	batch=512	n=20	9.052e-06	7.627e-06 8.175e-06 8.214e-06 8.301e-06 8.317e-06 8.626e-06 8.685e-06 8.761e-06 8.790e-06 8.892e-06 9.212e-06 9.462e-06 1.053e-05 1.177e-05 1.178e-05 1.201e-05 1.227e-05 1.234e-05 1.327e-05 1.328e-05
+replay/metal/pipelined-100	alloc_words	batch=8	n=20	3.574e+02	3.551e+02 3.560e+02 3.560e+02 3.560e+02 3.560e+02 3.569e+02 3.569e+02 3.569e+02 3.569e+02 3.569e+02 3.578e+02 3.578e+02 3.586e+02 3.586e+02 3.595e+02 3.595e+02 3.595e+02 3.604e+02 3.621e+02 3.621e+02
+replay/metal/pipelined-100	wall_time	batch=8	n=20	9.135e-04	8.127e-04 8.424e-04 8.503e-04 8.563e-04 8.569e-04 8.699e-04 8.857e-04 8.859e-04 8.887e-04 9.084e-04 9.187e-04 9.611e-04 9.681e-04 9.808e-04 9.840e-04 1.033e-03 1.107e-03 1.242e-03 1.302e-03 1.306e-03
+submit/metal/cost	alloc_words	batch=2048	n=20	1.454e+00	9.839e-01 1.104e+00 1.192e+00 1.230e+00 1.237e+00 1.244e+00 1.315e+00 1.401e+00 1.411e+00 1.438e+00 1.469e+00 1.483e+00 1.538e+00 1.548e+00 1.637e+00 1.654e+00 1.712e+00 1.719e+00 1.729e+00 1.900e+00
+submit/metal/cost	wall_time	batch=2048	n=20	3.475e-06	2.629e-06 2.841e-06 3.024e-06 3.068e-06 3.141e-06 3.173e-06 3.204e-06 3.294e-06 3.345e-06 3.474e-06 3.475e-06 3.527e-06 3.532e-06 3.661e-06 3.686e-06 3.703e-06 3.788e-06 3.834e-06 4.053e-06 4.076e-06
+submit/metal/empty	alloc_words	exact	7
+submit/metal/empty	wall_time	batch=256	n=20	1.578e-05	1.309e-05 1.333e-05 1.344e-05 1.344e-05 1.350e-05 1.353e-05 1.391e-05 1.401e-05 1.540e-05 1.544e-05 1.612e-05 1.635e-05 1.652e-05 1.715e-05 1.723e-05 1.736e-05 1.792e-05 1.806e-05 1.832e-05 2.165e-05
+
+# machine: baccbeca132e3ae9
+# host: nonnormal · Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz · x86_64 · linux
+# ocaml: 5.5.1 · 64-bit · release
+
+floor/amd/cost	alloc_words	exact	0
+floor/amd/cost	wall_time	batch=4096	n=20	1.405e-06	1.374e-06 1.381e-06 1.381e-06 1.382e-06 1.383e-06 1.389e-06 1.395e-06 1.395e-06 1.402e-06 1.405e-06 1.406e-06 1.408e-06 1.411e-06 1.421e-06 1.423e-06 1.432e-06 1.437e-06 1.441e-06 1.479e-06 1.481e-06
+floor/amd/pipelined-100	alloc_words	exact	0
+floor/amd/pipelined-100	wall_time	batch=8	n=20	8.161e-04	7.624e-04 7.645e-04 7.677e-04 7.684e-04 7.699e-04 7.710e-04 7.723e-04 8.107e-04 8.110e-04 8.127e-04 8.196e-04 8.228e-04 8.257e-04 8.301e-04 8.307e-04 8.334e-04 8.339e-04 8.373e-04 8.382e-04 8.473e-04
+floor/amd/release	alloc_words	exact	0
+floor/amd/release	wall_time	batch=512	n=20	1.458e-05	1.433e-05 1.436e-05 1.440e-05 1.440e-05 1.441e-05 1.442e-05 1.442e-05 1.444e-05 1.453e-05 1.453e-05 1.462e-05 1.469e-05 1.474e-05 1.480e-05 1.481e-05 1.483e-05 1.483e-05 1.484e-05 1.485e-05 1.489e-05
+floor/amd/run	alloc_words	exact	0
+floor/amd/run	wall_time	batch=1024	n=20	7.634e-06	7.487e-06 7.493e-06 7.533e-06 7.576e-06 7.584e-06 7.608e-06 7.611e-06 7.618e-06 7.620e-06 7.632e-06 7.635e-06 7.638e-06 7.646e-06 7.654e-06 7.658e-06 7.682e-06 7.691e-06 7.692e-06 7.757e-06 7.848e-06
+replay/amd/params-24	alloc_words	exact	0
+replay/amd/params-24	wall_time	batch=1024	n=20	9.161e-06	9.014e-06 9.076e-06 9.079e-06 9.101e-06 9.108e-06 9.113e-06 9.116e-06 9.141e-06 9.148e-06 9.160e-06 9.162e-06 9.225e-06 9.233e-06 9.236e-06 9.238e-06 9.267e-06 9.273e-06 9.304e-06 9.452e-06 9.478e-06
+replay/amd/pipelined-100	alloc_words	exact	0
+replay/amd/pipelined-100	wall_time	batch=8	n=20	7.886e-04	7.826e-04 7.831e-04 7.836e-04 7.842e-04 7.849e-04 7.860e-04 7.871e-04 7.874e-04 7.882e-04 7.885e-04 7.886e-04 7.888e-04 7.893e-04 7.896e-04 7.915e-04 7.931e-04 7.941e-04 7.950e-04 8.006e-04 8.020e-04
+submit/amd/cost	alloc_words	exact	0
+submit/amd/cost	wall_time	batch=4096	n=20	1.346e-06	1.295e-06 1.298e-06 1.309e-06 1.315e-06 1.315e-06 1.320e-06 1.332e-06 1.333e-06 1.343e-06 1.346e-06 1.347e-06 1.357e-06 1.357e-06 1.357e-06 1.364e-06 1.366e-06 1.373e-06 1.374e-06 1.379e-06 1.379e-06
+submit/amd/empty	alloc_words	exact	0
+submit/amd/empty	wall_time	batch=512	n=20	1.481e-05	1.457e-05 1.461e-05 1.465e-05 1.469e-05 1.470e-05 1.471e-05 1.472e-05 1.475e-05 1.478e-05 1.479e-05 1.483e-05 1.483e-05 1.483e-05 1.483e-05 1.484e-05 1.484e-05 1.484e-05 1.485e-05 1.486e-05 1.489e-05

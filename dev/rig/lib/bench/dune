@@ -9,10 +9,17 @@
 (executable
  (name bench_core)
  (modules bench_core)
+ (libraries rig rig_bench rig_support thumper))
+
+; The GPU rows link every GPU driver, which makes each full collection longer:
+; they run in an executable of their own, beside the host rows' lean one.
+
+(executable
+ (name bench_gpu)
+ (modules bench_gpu)
  (libraries
   rig
   rig_bench
-  rig_support
   rig_metal
   rig_cuda
   rig_amd
@@ -33,4 +40,6 @@
   (glob_files *.thumper)
   (source_tree fixtures))
  (action
-  (run %{exe:bench_core.exe})))
+  (progn
+   (run %{exe:bench_core.exe})
+   (run %{exe:bench_gpu.exe}))))
