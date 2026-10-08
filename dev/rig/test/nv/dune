@@ -10,6 +10,7 @@
 
 (test
  (name test_nv)
+ (modules test_nv)
  (libraries
   rig
   rig_nv
@@ -17,5 +18,15 @@
   rig_nv_nvidia
   rig_nv_support
   windtrap)
+ (deps
+  (glob_files fixtures/*)))
+
+; test_fault faults the GPU, one fault per run in a forked child: a suite of
+; its own, which runs no other test.
+
+(test
+ (name test_fault)
+ (modules test_fault)
+ (libraries rig rig_nv rig_nv_nvidia rig_nv_support unix windtrap)
  (deps
   (glob_files fixtures/*)))
