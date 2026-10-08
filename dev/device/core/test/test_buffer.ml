@@ -348,6 +348,8 @@ let kinds =
       Kind ("int16_unsigned", int16_unsigned, Fun.id);
       Kind ("int32", int32, Int32.of_int);
       Kind ("int64", int64, Int64.of_int);
+      Kind ("int", int, Fun.id);
+      Kind ("nativeint", nativeint, Nativeint.of_int);
       Kind
         ( "complex32",
           complex32,
@@ -382,6 +384,13 @@ let test_bigarray_refusals () =
       B.bigarray Bigarray.float32 (B.view b ~first:0 ~length:6));
   raises_match Exn.invalid_arg (fun () ->
       B.bigarray Bigarray.float32 (B.view b ~first:2 ~length:4));
+  (* A complex element starts at a multiple of one component's size. *)
+  let c = B.create C.host 32 in
+  equal int 1
+    (Bigarray.Array1.dim
+       (B.bigarray Bigarray.complex64 (B.view c ~first:8 ~length:16)));
+  raises_match Exn.invalid_arg (fun () ->
+      B.bigarray Bigarray.complex64 (B.view c ~first:4 ~length:16));
   let d, _ = P.open_ "buffer:not-host" in
   raises_match Exn.invalid_arg (fun () ->
       B.bigarray Bigarray.char (B.create d 8))
@@ -451,7 +460,7 @@ let tests =
       ];
     cases ~timeout
       ~name:(fun (Kind (n, _, _)) -> n)
-      "a bigarray's buffer is its elements" kinds test_kind;
+      "a bigarray's buffer is its bytes" kinds test_kind;
     group ~timeout "bigarrays"
       [
         test "a bigarray refuses kinds, sizes and alignments it cannot read"
@@ -470,7 +479,7 @@ let tests =
 let words =
   group ~timeout "words"
     [
-      test "a host buffer of 16 floats costs at most 61 words" test_create_words;
+      test "a host buffer of 64 bytes costs at most 61 words" test_create_words;
       test "a host buffer of 1 MiB costs at most 54 and 7 major words"
         test_create_large_words;
       test "a host buffer of no bytes costs at most 32 words"
