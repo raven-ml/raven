@@ -531,12 +531,9 @@ let test_waits () =
       P.counted_calls () = 4);
   Domain.join waiting
 
-let pp_small_job ppf (threads, total, chunks) =
-  Format.fprintf ppf "threads %d, total %LdL, chunks %LdL" threads total chunks
-
 let job_commands =
   let small_job =
-    Gen.with_pp pp_small_job
+    Gen.with_pp pp_job
       (Gen.triple
          (Gen.int_range (-1) (cores + 1))
          (Gen.int64_range (-1L) 2000L)
