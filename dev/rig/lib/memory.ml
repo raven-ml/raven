@@ -25,11 +25,8 @@ let rec iter_from f st k =
     iter_from f st (k + 1)
   end
 
-(* [f] over the points of the stamps [st], the last write first. Neither it nor
-   [iter_write] allocates. *)
 let iter_points f st = if st <> 0 then iter_from f st 0
 
-(* [f] of the last write of [st], if any. *)
 let iter_write f st =
   if st <> 0 then
     let p = stamps_get st 0 in
@@ -40,7 +37,6 @@ let for_all_points f st =
   iter_points (fun p -> if not (f p) then ok := false) st;
   !ok
 
-(* Raises [Lost] if a point of [st] is on a lost device. *)
 let check_points st =
   iter_points
     (fun p ->
@@ -143,7 +139,6 @@ let entry ?region ?io_region ?(access = Read_write) owner memory bytes stamps =
     kept = Nothing;
   }
 
-(* The entry of host memory no device borrowed: no stamps, no mapping. *)
 let no_entry = entry Dev.host Host_kept 0 0
 
 (* The root a record holds until it is set to the record itself: a record made
@@ -309,8 +304,6 @@ let defer d p =
   let v = Dev.submitted d in
   Dev.protect d (fun () -> d.pending <- (v, p) :: d.pending)
 
-(* Frees [e] once [d] reached the value it has submitted now, or, lost, once it
-   counts as stopped. *)
 let retire d e = defer d (Free e)
 
 let drop_stamps (e : entry) =
@@ -342,11 +335,9 @@ let unmap_now mp =
        true
      end
 
-(* Gives [e] back once no other device maps its memory: each mapping is released
-   once its mapper's work submitted until now is done, and the last release
-   gives [e] back. Until then a mapper's driver may still name the memory's
-   pages, and a driver that maps host memory by its address would hand them to
-   new memory at that address. *)
+(* [e] waits for its last unmap: until then a mapper's driver may still name the
+   memory's pages, and a driver that maps host memory by its address would hand
+   them to new memory at that address. *)
 let free_entry (e : entry) =
   let later = List.filter (fun mp -> not (unmap_now mp)) e.maps in
   e.maps <- [];
@@ -432,11 +423,7 @@ let drain_holds () =
     Option.iter raise !first
   end
 
-(* Whether a hold was ever made in this process: until one is, no memory is held
-   and a submit checks no buffer for a hold. *)
 let any_held = Atomic.make false
-
-(* The release list of holds, which every drain reads. *)
 let holds_list = Dev.release_list ()
 
 (* Bigarrays over memory *)
@@ -444,7 +431,6 @@ let holds_list = Dev.release_list ()
 external proxy_new : unit -> int = "caml_rig_proxy_new"
 external proxy_drop : int -> bool = "caml_rig_proxy_drop" [@@noalloc]
 
-(* The proxy that bigarrays over [e]'s memory share, made at the first. *)
 let proxy (e : entry) =
   Dev.protect e.owner (fun () ->
       if e.proxy = 0 then e.proxy <- proxy_new ();
@@ -469,7 +455,6 @@ let cache d e =
 
 let to_cache d e = Dev.protect d (fun () -> cache d e)
 
-(* Routes a record [d]'s release list gave. *)
 (* Memory the cache never takes: held memory, io memory, and host memory a
    device borrowed, which returns to its keeper once its uses are reached. *)
 let uncached (e : entry) = e.held || e.memory = Host_kept || is_io_memory e
@@ -479,6 +464,7 @@ let uncached (e : entry) = e.held || e.memory = Host_kept || is_io_memory e
    cannot reuse it. *)
 let over_budget d (e : entry) = owns d e.memory && d.used > d.budget
 
+(* Routes a record [d]'s release list gave. *)
 let route d = function
   | Memory e ->
       let cached =
@@ -625,9 +611,6 @@ let rec drain_lost d = function
         drain_own e;
       drain_lost d l
 
-(* Drains [d], then the lost devices that hold memory, then the holds. A device
-   a forked child inherited is never drained: its frees would call its
-   driver. *)
 let drain d =
   if not (Dev.inherited d) then begin
     if not (idle d) then drain_own d;
@@ -708,8 +691,6 @@ let release_cache ?upto ~wait d =
 
 (* Allocation *)
 
-(* The rounds an allocation that its budget or driver refuses runs before it
-   raises: release the cache, drain every other device, collect. *)
 let rounds = 4
 
 let reclaim d round =
@@ -828,8 +809,6 @@ let host_memory n =
 
 (* Borrows *)
 
-(* Gives host memory that a device maps its stamps and a token, which unmaps its
-   mappings once it is collected. *)
 let ensure_entry m =
   let d = m.dev in
   Dev.protect d (fun () ->
@@ -852,8 +831,8 @@ let map_host_range d start n =
       | None -> None)
   | _ -> None
 
-(* [d]'s mapping of the region of another device of [d]'s driver. The region's
-   module types it; the keys' equality types [d]'s handle. *)
+(* The region's module types the mapping; the keys' equality types [d]'s
+   handle. *)
 let map_peer_region d (Region { m = om; h = oh; r; rid }) =
   match d.kind with
   | Driver { m = dm; h; _ } -> (
@@ -951,8 +930,6 @@ let borrow d m =
       | Some mp -> Some (borrow_of m d ~host ~address:mp.at ~handle:mp.by)
     end
 
-(* Asks the io device of [m] to read the bytes of [m] from [at] ahead, for a
-   device other than the host that borrowed them. A hint: it raises nothing. *)
 let prefetch d (m : memory) ~at ~len =
   match m.root.entry.io_region with
   | Some (Io_region { m = im; h; r }) when not (Dev.is_host d) -> (
@@ -960,8 +937,6 @@ let prefetch d (m : memory) ~at ~len =
       try I.prefetch h r ~at ~len with I.Fault _ | Sys_error _ -> ())
   | _ -> ()
 
-(* A memory record over [n] bytes of the region [r] an io library gave the io
-   device [d], which [d]'s free gives back once unreachable. *)
 let of_io d r ~access n =
   drain d;
   let e = entry ~io_region:r ~access d Io_given n (stamps_new ()) in

@@ -3,15 +3,19 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The records the core's modules share. *)
+(** The records the core's modules share.
+
+    [rig_memory.c] reads the first fields of {!buffer}, {!memory} and {!claim}
+    by position, for the readers [rig.h] declares: a change of their order
+    changes it too. *)
 
 type ('a, 'r, 'i) dm =
   (module Sigs.Driver with type t = 'a and type region = 'r and type image = 'i)
 
 type ('a, 'r) im = (module Sigs.Io with type t = 'a and type region = 'r)
 
-(* A region of a driver, with the module and the device that hold it, and the
-   witness of its type, which equates the regions of one device. *)
+(** The type for a region of a driver, with the module and the device that hold
+    it, and the witness of its type, which equates the regions of one device. *)
 type region =
   | Region : {
       m : ('a, 'r, 'i) dm;
@@ -24,26 +28,29 @@ type region =
 type io_region = Io_region : { m : ('a, 'r) im; h : 'a; r : 'r } -> io_region
 type capability = Capability : 'c Type.Id.t * 'c -> capability
 
-(* A custom block whose collection puts a release record on a device's release
-   list. *)
 type token
+(** The type for custom blocks whose collection puts a release record on a
+    release list ({!Memory.token}). *)
 
 type kind =
   | Host
   | Driver : { m : ('a, 'r, 'i) dm; h : 'a; rid : 'r Type.Id.t } -> kind
   | Io : { m : ('a, 'r) im; h : 'a } -> kind
 
-(* How a device's word advances. *)
+(** The type for how a device's word advances ({!Rig.Driver.completion}). *)
 type completion = Store | Object of int | Host_writes
 
-(* A memory's kind: [Buffer.memory]'s three, host memory its keeper frees (a
-   heap bigarray or the caller's), io memory its device made, and io memory its
-   library gave. *)
+(** The type for a memory's kind: {!Rig.Buffer.memory}'s three, host memory its
+    keeper frees (a heap bigarray or the caller's), io memory its device made,
+    and io memory its library gave. *)
 type memory_kind = Device | Pinned | Mapped | Host_kept | Io_made | Io_given
 
-(* The accesses a memory admits, [Buffer.access]. *)
+(** {!Rig.Buffer.access}. *)
 type access = Read | Read_write
 
+(** The type for the host memory a memory record keeps reachable: none, a heap
+    bigarray with the token that returns its bytes to the host's budget, or the
+    caller's bigarray. *)
 type keep =
   | Nothing
   | Heap of
@@ -88,8 +95,13 @@ type device = {
       (** Waiting for other devices' uses. *)
   mutable pending : (int * pending) list; [@atomic]
       (** Waiting for its own value. *)
-  mutable pairs : int array;  (** By producer index: 0 unknown, 1 host. *)
+  mutable pairs : int array;
+      (** By producer index, how its queue waits for the producer's values: [0]
+          undecided, [-1] on the host, otherwise the producer's object or its
+          word's address as this device maps it. Replaced whole, and read
+          without the lock. *)
   mutable pair_maps : region list;
+      (** The mappings of producers' words, kept for good. *)
   mutable afters : (int * (unit -> unit)) list;
 }
 
@@ -105,7 +117,7 @@ and entry = {
   mutable maps : mapping list;  (** Other devices' mappings of it. *)
   mutable unmaps : int; [@atomic]
       (** The unmaps left before a dead memory is given back. *)
-  mutable held : bool;
+  mutable held : bool;  (** In a hold. Guarded by [owner]'s lock. *)
   mutable pages : pages;
       (** An io memory's pages, asked at its first borrow. *)
   mutable proxy : int;
@@ -123,13 +135,13 @@ and pages =
 
 and mapping = { on : device; map : region; at : int; by : nativeint }
 
-(* A release that waits for a value of its device, which covers the work that
-   may use it without naming it. *)
-(* An [Unmap] of a dead memory's mapping names the memory, given back after its
-   last unmap. *)
+(** The type for releases that wait for a value of their device, which covers
+    the work that may use them without naming them. *)
 and pending =
   | Free of entry
   | Unmap of region * entry option
+      (** A mapping, and the dead memory it maps, given back after its last
+          unmap. *)
   | Unload of image * entry option
 
 and image = Image : { m : ('a, 'r, 'i) dm; h : 'a; i : 'i } -> image
@@ -137,10 +149,10 @@ and image = Image : { m : ('a, 'r, 'i) dm; h : 'a; i : 'i } -> image
 type claim = {
   mutable count : int; [@atomic]  (** Readers, or [-1] when exclusive. *)
   mutable generation : int; [@atomic]
+      (** Raised by each consumption: a buffer of an older one is dead. *)
   mutable why : string;  (** The last consumption's reason. *)
 }
 
-(* A memory: owned, or a borrow of [root]'s on [dev]. *)
 type memory = {
   dev : device;
   bytes : int;
@@ -155,11 +167,15 @@ type memory = {
       (** The memory a borrow maps; the record itself otherwise, set once made.
       *)
 }
+(** The type for memory: owned, or a borrow of [root]'s on [dev]. *)
 
 type buffer = { mem : memory; offset : int; length : int; generation : int }
+(** {!Rig.Buffer.t}: live while [generation] is its claim's. *)
+
 type program = { pdev : device; image : image; ptoken : token }
 type hold = { hstamps : int; members : buffer list; htoken : token }
 
+(** {!Rig.Profile.event}. *)
 type event =
   | Span of {
       device : device;
@@ -188,8 +204,8 @@ type event =
   | Overwritten of { device : device; time : int; runs : int }
   | Copy of { src : device; dst : device; bytes : int; start : int; stop : int }
 
-(* What a release list holds. *)
+(** The type for what a release list holds. *)
 type released =
   | Memory of entry
   | Program of image * entry option  (** The image and its code's memory. *)
-  | Release of { stamps : int; release : unit -> unit }
+  | Release of { stamps : int; release : unit -> unit }  (** A hold's. *)
