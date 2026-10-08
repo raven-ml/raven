@@ -299,6 +299,9 @@ let barrier b =
     (invalid_argf "Rig_disk.barrier: the buffer is dead: %s")
     (Rig.Buffer.dead b);
   match Rig.Buffer.io b Io.region_key with
+  | None when Rig.equal (Rig.Buffer.device b) device ->
+      (* A buffer of no bytes, which no file holds. *)
+      ()
   | None -> invalid_arg "Rig_disk.barrier: the buffer is not on DISK"
   | Some f when not f.writable -> ()
   | Some f ->

@@ -129,9 +129,14 @@ val barrier : Rig.Buffer.t -> unit
     On a file system that offers no barrier and no flush of the drive's cache to
     its medium, such as some network file systems on macOS, [barrier] is the
     system's [fsync] and the ordering is the file system's own. A buffer
-    {!of_file} opened is never written: [barrier] returns at once.
+    {!of_file} opened is never written, nor is a buffer of no bytes: [barrier]
+    returns at once on either.
 
-    Raises [Invalid_argument] if [b] is not a buffer of {!device} or is dead
-    ({!Rig.Claim.consume}), and [Sys_error] naming the file if the system cannot
-    order its writes or, as a copy does, if the file cannot be reopened
-    (Descriptors), and {!Rig.Lost} if work it waits for is on a lost device. *)
+    [b] may be a borrow of a buffer of {!device} on another device: its memory
+    is the file's.
+
+    Raises [Invalid_argument] if [b] is neither a buffer of {!device} nor a
+    borrow of one, or is dead ({!Rig.Claim.consume}), and [Sys_error] naming the
+    file if the system cannot order its writes or, as a copy does, if the file
+    cannot be reopened (Descriptors), and {!Rig.Lost} if work it waits for is on
+    a lost device. *)

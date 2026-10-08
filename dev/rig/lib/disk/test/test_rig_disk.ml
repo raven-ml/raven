@@ -1046,6 +1046,18 @@ let barriers =
           raises_match (Exn.invalid_arg ~substring:"Rig_disk.barrier: ")
             (fun () -> Rig_disk.barrier b));
       test "barrier refuses a dead buffer" test_barrier_dead;
+      test "barrier returns on an empty buffer of the disk" (fun () ->
+          Rig_disk.barrier (B.create disk 0));
+      test "barrier orders a created file through a borrow of it" (fun () ->
+          let path = new_path () in
+          removing [ path ] @@ fun () ->
+          let file = create path 4 in
+          let on_device =
+            require_some (B.borrow (Lazy.force memory_device) file)
+          in
+          write on_device "wxyz";
+          Rig_disk.barrier on_device;
+          equal octets "wxyz" (contents path));
     ]
 
 (* A model of files *)
