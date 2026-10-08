@@ -66,10 +66,25 @@
 
 /* Opening, identity, closing, syncing */
 
+/* The most bytes of an identity: a device, a handle's type and its bytes. */
+#define IDENTITY_BYTES 160
+
 #ifdef _WIN32
 
+/* The volume's serial and the 128-bit file ID: NTFS's IDs carry a sequence
+   number a reused record advances, and ReFS's are never reused. A file
+   system without them, such as FAT, gives no exact identity. */
+static void identify(HANDLE h, unsigned char *id, size_t *len) {
+  FILE_ID_INFO info;
+  *len = 0;
+  if (GetFileInformationByHandleEx(h, FileIdInfo, &info, sizeof info)) {
+    memcpy(id, &info, sizeof info);
+    *len = sizeof info;
+  }
+}
+
 static int open_file(const char *path, int mode, int64_t size, intnat *handle,
-                     int64_t *file_size) {
+                     int64_t *file_size, unsigned char *id, size_t *len) {
   int create = mode == MODE_CREATE;
   wchar_t *wpath = caml_stat_strdup_to_utf16(path);
   caml_release_runtime_system();
@@ -98,6 +113,7 @@ static int open_file(const char *path, int mode, int64_t size, intnat *handle,
   } else {
     *file_size = n.QuadPart;
   }
+  if (code == 0) identify(h, id, len);
   if (code != 0 && h != INVALID_HANDLE_VALUE) CloseHandle(h);
   /* The file this call created and could not size goes. */
   if (unsized) DeleteFileW(wpath);
@@ -109,27 +125,68 @@ static int open_file(const char *path, int mode, int64_t size, intnat *handle,
 
 static void close_file(intnat h) { CloseHandle((HANDLE)h); }
 
-/* The volume's serial and the 128-bit file ID: NTFS's IDs carry a sequence
-   number a reused record advances, and ReFS's are never reused. A file
-   system without them, such as FAT, gives no exact identity. */
-static int identify(intnat h, unsigned char *id, size_t *len) {
-  FILE_ID_INFO info;
-  *len = 0;
-  if (GetFileInformationByHandleEx((HANDLE)h, FileIdInfo, &info, sizeof info)) {
-    memcpy(id, &info, sizeof info);
-    *len = sizeof info;
-  }
-  return 0;
-}
-
 static int sync_file(intnat h) {
   return FlushFileBuffers((HANDLE)h) ? 0 : (int)GetLastError();
 }
 
 #else
 
+static void append(unsigned char *id, size_t *len, const void *p, size_t n) {
+  memcpy(id + *len, p, n);
+  *len += n;
+}
+
+#if defined(__linux__)
+
+/* The device and the file's handle (name_to_handle_at(2)), which holds the
+   inode's number and generation on ext4, xfs and btrfs: a reused inode has
+   a new generation, while its number and its coarse-clock times may repeat.
+   A file system that gives no handle gives no exact identity. */
+static void identify(int fd, const struct stat *st, unsigned char *id,
+                     size_t *len) {
+  struct {
+    struct file_handle fh;
+    unsigned char bytes[MAX_HANDLE_SZ];
+  } handle;
+  int mount;
+  *len = 0;
+  handle.fh.handle_bytes = MAX_HANDLE_SZ;
+  if (name_to_handle_at(fd, "", &handle.fh, &mount, AT_EMPTY_PATH) != 0)
+    return;
+  append(id, len, &st->st_dev, sizeof st->st_dev);
+  append(id, len, &handle.fh.handle_type, sizeof handle.fh.handle_type);
+  append(id, len, handle.fh.f_handle, handle.fh.handle_bytes);
+}
+
+#elif defined(__APPLE__)
+
+/* The device, the inode and its birth time: APFS takes inode numbers from a
+   counter it never winds back, and the birth time tells apart an HFS+ inode
+   number reused after its counter wrapped. */
+static void identify(int fd, const struct stat *st, unsigned char *id,
+                     size_t *len) {
+  (void)fd;
+  *len = 0;
+  append(id, len, &st->st_dev, sizeof st->st_dev);
+  append(id, len, &st->st_ino, sizeof st->st_ino);
+  append(id, len, &st->st_birthtimespec, sizeof st->st_birthtimespec);
+}
+
+#else
+
+/* No exact identity known for this system. */
+static void identify(int fd, const struct stat *st, unsigned char *id,
+                     size_t *len) {
+  (void)fd;
+  (void)st;
+  (void)id;
+  *len = 0;
+}
+
+#endif
+
 static int open_file(const char *path, int mode, int64_t size, intnat *handle,
-                     int64_t *file_size) {
+                     int64_t *file_size, unsigned char *id, size_t *len) {
   int create = mode == MODE_CREATE;
   char *p = caml_stat_strdup(path);
   caml_release_runtime_system();
@@ -154,8 +211,10 @@ static int open_file(const char *path, int mode, int64_t size, intnat *handle,
   else if (create && ftruncate(fd, (off_t)size) != 0) {
     code = errno;
     unsized = 1;
-  } else
+  } else {
     *file_size = create ? size : (int64_t)st.st_size;
+    identify(fd, &st, id, len);
+  }
   if (code != 0 && fd >= 0) close(fd);
   /* The file this call created and could not size goes. */
   if (unsized) unlink(p);
@@ -166,62 +225,6 @@ static int open_file(const char *path, int mode, int64_t size, intnat *handle,
 }
 
 static void close_file(intnat h) { close((int)h); }
-
-static void append(unsigned char *id, size_t *len, const void *p, size_t n) {
-  memcpy(id + *len, p, n);
-  *len += n;
-}
-
-#if defined(__linux__)
-
-/* The device and the file's handle (name_to_handle_at(2)), which holds the
-   inode's number and generation on ext4, xfs and btrfs: a reused inode has
-   a new generation, while its number and its coarse-clock times may repeat.
-   A file system that gives no handle gives no exact identity. */
-static int identify(intnat h, unsigned char *id, size_t *len) {
-  struct stat st;
-  struct {
-    struct file_handle fh;
-    unsigned char bytes[MAX_HANDLE_SZ];
-  } handle;
-  int mount;
-  *len = 0;
-  if (fstat((int)h, &st) != 0) return errno;
-  handle.fh.handle_bytes = MAX_HANDLE_SZ;
-  if (name_to_handle_at((int)h, "", &handle.fh, &mount, AT_EMPTY_PATH) != 0)
-    return 0;
-  append(id, len, &st.st_dev, sizeof st.st_dev);
-  append(id, len, &handle.fh.handle_type, sizeof handle.fh.handle_type);
-  append(id, len, handle.fh.f_handle, handle.fh.handle_bytes);
-  return 0;
-}
-
-#elif defined(__APPLE__)
-
-/* The device, the inode and its birth time: APFS takes inode numbers from a
-   counter it never winds back, and the birth time tells apart an HFS+ inode
-   number reused after its counter wrapped. */
-static int identify(intnat h, unsigned char *id, size_t *len) {
-  struct stat st;
-  *len = 0;
-  if (fstat((int)h, &st) != 0) return errno;
-  append(id, len, &st.st_dev, sizeof st.st_dev);
-  append(id, len, &st.st_ino, sizeof st.st_ino);
-  append(id, len, &st.st_birthtimespec, sizeof st.st_birthtimespec);
-  return 0;
-}
-
-#else
-
-/* No exact identity known for this system. */
-static int identify(intnat h, unsigned char *id, size_t *len) {
-  (void)h;
-  (void)id;
-  *len = 0;
-  return 0;
-}
-
-#endif
 
 static int fsync_retrying(int fd) {
   int r;
@@ -251,19 +254,25 @@ static int sync_file(intnat h) { return fsync_retrying((int)h); }
 
 #endif
 
-/* [open_file path mode size] is [(code, handle, size)]. [MODE_CREATE] creates
-   the file at [size] bytes. Releases the runtime. */
+/* [open_file path mode size] is [(code, handle, size, id)]: [id] names the
+   opened file exactly, two files never having the same, or is empty where the
+   system gives no exact identity. [MODE_CREATE] creates the file at [size]
+   bytes. Releases the runtime. */
 value caml_rig_disk_open(value v_path, value v_mode, value v_size) {
   CAMLparam3(v_path, v_mode, v_size);
-  CAMLlocal1(r);
+  CAMLlocal2(r, s);
   intnat h = -1;
   int64_t size = 0;
+  unsigned char id[IDENTITY_BYTES];
+  size_t len = 0;
   int code = open_file(String_val(v_path), Int_val(v_mode), Long_val(v_size),
-                       &h, &size);
-  r = caml_alloc_tuple(3);
+                       &h, &size, id, &len);
+  s = caml_alloc_initialized_string(len, (const char *)id);
+  r = caml_alloc_tuple(4);
   Store_field(r, 0, Val_int(code));
   Store_field(r, 1, Val_long(h));
   Store_field(r, 2, Val_long(size));
+  Store_field(r, 3, s);
   CAMLreturn(r);
 }
 
@@ -274,25 +283,6 @@ value caml_rig_disk_close(value v_handle) {
   close_file(h);
   caml_acquire_runtime_system();
   return Val_unit;
-}
-
-/* The most bytes of an identity: a device, a handle's type and its bytes. */
-#define IDENTITY_BYTES 160
-
-/* [identity h] is [(code, id)]: [id] names the file [h] exactly, two files
-   never having the same, or is empty where the system gives no exact
-   identity. Keeps the runtime: it reads what the open descriptor holds. */
-value caml_rig_disk_identity(value v_handle) {
-  CAMLparam1(v_handle);
-  CAMLlocal2(r, s);
-  unsigned char id[IDENTITY_BYTES];
-  size_t len = 0;
-  int code = identify(Long_val(v_handle), id, &len);
-  s = caml_alloc_initialized_string(len, (const char *)id);
-  r = caml_alloc_tuple(2);
-  Store_field(r, 0, Val_int(code));
-  Store_field(r, 1, s);
-  CAMLreturn(r);
 }
 
 /* [sync h] is 0 once the bytes written to the file [h] are ordered before

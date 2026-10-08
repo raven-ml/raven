@@ -13,11 +13,10 @@ let strf = Printf.sprintf
 type pages =
   (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
 
-external open_path : string -> int -> int -> int * int * int
+external open_path : string -> int -> int -> int * int * int * string
   = "caml_rig_disk_open"
 
 external close : int -> unit = "caml_rig_disk_close"
-external identity : int -> int * string = "caml_rig_disk_identity"
 external sync : int -> int = "caml_rig_disk_sync"
 external error : int -> string = "caml_rig_disk_error"
 
@@ -59,55 +58,80 @@ type file = {
   identity : string;
   mutable fd : int; (* [-1] while closed *)
   mutable users : int; (* copies using [fd] *)
-  mutable used : int; (* when [fd] was last used, by [clock] *)
+  mutable newer : file; (* links in the idle ring, [f] itself out of it *)
+  mutable older : file;
   mutable pages : pages option; (* a writable file's shared mapping *)
 }
-
-let identify fd =
-  match identity fd with 0, id -> Ok id | code, _ -> Error code
 
 let sys_error f why = raise (Sys_error (strf "%s: %s" f.path why))
 
 (* Descriptors *)
 
-(* The table holds the descriptors of files with an identity: at most [max_open]
-   unpinned, the least recently used closed to open another. *)
+(* The table holds the descriptors of files with an identity: at most
+   [max_open], more only while copies pin them, the least recently used unpinned
+   one closed to open another. The unpinned ones are idle, in a ring through
+   [idle] from the most recently used ([idle.newer]) to the least
+   ([idle.older]), so an open or a copy takes the same few steps and allocates
+   nothing however full the table is. *)
 let max_open = 64
 let lock = Mutex.create ()
-let opened : file list ref = ref []
-let clock = ref 0
+let in_table = ref 0
 
-let touch f =
-  incr clock;
-  f.used <- !clock
+(* The ring's ends: a file of no path, never open. *)
+let rec idle =
+  {
+    path = "";
+    writable = false;
+    size = 0;
+    identity = "";
+    fd = -1;
+    users = 0;
+    newer = idle;
+    older = idle;
+    pages = None;
+  }
+
+let unlink f =
+  f.older.newer <- f.newer;
+  f.newer.older <- f.older;
+  f.newer <- f;
+  f.older <- f
+
+(* Puts the unpinned [f] at the ring's most recent end, if its descriptor is in
+   the table. *)
+let rest f =
+  if f.identity <> "" && f.fd >= 0 then begin
+    f.older <- idle;
+    f.newer <- idle.newer;
+    idle.newer.older <- f;
+    idle.newer <- f
+  end
 
 let close_fd f =
   if f.fd >= 0 then begin
     close f.fd;
     f.fd <- -1;
-    opened := List.filter (fun f' -> f' != f) !opened
+    if f.identity <> "" then begin
+      decr in_table;
+      unlink f
+    end
   end
-
-let unpinned () = List.filter (fun f -> f.users = 0) !opened
 
 let admit f fd =
   f.fd <- fd;
   if f.identity <> "" then begin
-    (match unpinned () with
-    | o :: rest when List.length !opened >= max_open ->
-        close_fd
-          (List.fold_left (fun o f -> if f.used < o.used then f else o) o rest)
-    | _ -> ());
-    touch f;
-    opened := f :: !opened
+    if !in_table >= max_open && idle.older != idle then close_fd idle.older;
+    incr in_table
   end
 
 (* Opens [path], closing every unpinned descriptor and trying once more if the
    process has too many open. *)
 let open_retrying path mode n =
   match open_path path mode n with
-  | code, _, _ when code = too_many && unpinned () <> [] ->
-      List.iter close_fd (unpinned ());
+  | code, _, _, _ when code = too_many && idle.older != idle ->
+      while idle.older != idle do
+        close_fd idle.older
+      done;
       open_path path mode n
   | r -> r
 
@@ -117,25 +141,23 @@ let reopen f =
   match
     open_retrying f.path (if f.writable then write_mode else read_mode) 0
   with
-  | 0, fd, _ -> (
-      match identify fd with
-      | Ok i when String.equal i f.identity -> admit f fd
-      | Ok _ ->
-          close fd;
-          sys_error f "the path names another file since its buffers opened it"
-      | Error code ->
-          close fd;
-          sys_error f (error code))
-  | code, _, _ when code = too_many -> sys_error f "too many open files"
-  | code, _, _ -> sys_error f (error code)
+  | 0, fd, _, identity when String.equal identity f.identity -> admit f fd
+  | 0, fd, _, _ ->
+      close fd;
+      sys_error f "the path names another file since its buffers opened it"
+  | code, _, _, _ when code = too_many -> sys_error f "too many open files"
+  | code, _, _, _ -> sys_error f (error code)
 
 let pin f =
   Mutex.protect lock @@ fun () ->
-  if f.fd < 0 then reopen f else touch f;
+  if f.fd < 0 then reopen f else if f.users = 0 then unlink f;
   f.users <- f.users + 1;
   f.fd
 
-let unpin f = Mutex.protect lock @@ fun () -> f.users <- f.users - 1
+let unpin f =
+  Mutex.protect lock @@ fun () ->
+  f.users <- f.users - 1;
+  if f.users = 0 then rest f
 
 (* [using f fn] is [fn fd] with [f]'s descriptor [fd] pinned. Raises [Sys_error]
    naming [f] if it cannot be reopened. *)
@@ -213,31 +235,28 @@ let open_file path mode n =
   let writable = mode <> read_mode in
   let opened () =
     match open_retrying path mode n with
-    | 0, fd, size -> (
-        match identify fd with
-        | Ok identity ->
-            let f =
-              {
-                path;
-                writable;
-                size;
-                identity;
-                fd = -1;
-                users = 0;
-                used = 0;
-                pages = None;
-              }
-            in
-            admit f fd;
-            Ok f
-        | Error code ->
-            close fd;
-            Error (strf "%s: %s" path (error code)))
-    | code, _, _ when code = not_regular ->
+    | 0, fd, size, identity ->
+        let rec f =
+          {
+            path;
+            writable;
+            size;
+            identity;
+            fd = -1;
+            users = 0;
+            newer = f;
+            older = f;
+            pages = None;
+          }
+        in
+        admit f fd;
+        rest f;
+        Ok f
+    | code, _, _, _ when code = not_regular ->
         Error (strf "%s: not a regular file" path)
-    | code, _, _ when code = too_many ->
+    | code, _, _, _ when code = too_many ->
         Error (strf "%s: too many open files" path)
-    | code, _, _ -> Error (strf "%s: %s" path (error code))
+    | code, _, _, _ -> Error (strf "%s: %s" path (error code))
   in
   if String.contains path '\000' then
     Error (strf "%s: a path has no NUL byte" path)
