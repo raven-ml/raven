@@ -405,14 +405,14 @@ static void refresh_slot(struct rig_amd *d, uint64_t v) {
 }
 
 /* After a fill failed, or waits the queue cannot hold, with [failure_text]
-   set: drops every word placed for v and places only v's
-   release, after every earlier value, on compute. On an AQL ring the
+   set: drops every word placed for v, places only v's release, after every
+   earlier value, on compute, and answers the failure. On an AQL ring the
    dropped packets keep valid headers past the write position, which the
    queue may read: each gets the invalid header type. Bytes the fill took
    stay v's, and return once the word reaches v. Scratch writes v took are
    dropped too, yet count as placed: no work runs after v, so the scratch
    the descriptor still names is retired safely once the word reaches v. */
-static int fail(struct submission *s) {
+static int fail(struct submission *s, const char **failure) {
   struct rig_amd *d = s->d;
   for (int q = 0; q < RIG_AMD_QUEUES; q++) {
     struct rig_amd_ring *r = &d->rings[q];
@@ -431,6 +431,7 @@ static int fail(struct submission *s) {
   hand_over(s);
   d->last = s->v;
   d->failure = d->failure_text;
+  *failure = d->failure;
   return RIG_FAILED;
 }
 
@@ -464,16 +465,15 @@ int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
   /* Room budgets RIG_AMD_WAITS waits, and a GPU without 64-bit waits has
      an empty wait template: either would hand over work that does not
      wait. */
-  if (nwaits > RIG_AMD_WAITS || (nwaits > 0 && d->templates[T_WAIT64].n == 0)) {
-    if (nwaits > RIG_AMD_WAITS)
-      snprintf(d->failure_text, sizeof d->failure_text,
-               "%d waits; the device holds at most %d", nwaits, RIG_AMD_WAITS);
-    else
-      snprintf(d->failure_text, sizeof d->failure_text,
-               "a wait on a word; the device's compute queue cannot wait");
-    int answer = fail(&s);
-    *failure = d->failure;
-    return answer;
+  if (nwaits > RIG_AMD_WAITS) {
+    snprintf(d->failure_text, sizeof d->failure_text,
+             "%d waits; the device holds at most %d", nwaits, RIG_AMD_WAITS);
+    return fail(&s, failure);
+  }
+  if (nwaits > 0 && d->templates[T_WAIT64].n == 0) {
+    snprintf(d->failure_text, sizeof d->failure_text,
+             "a wait on a word; the device's compute queue cannot wait");
+    return fail(&s, failure);
   }
 
   /* The submission's segment bytes lie in one run, which never wraps. */
@@ -503,9 +503,7 @@ int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
         snprintf(d->failure_text, sizeof d->failure_text,
                  "a fill on %s failed with %d",
                  q == RIG_AMD_COMPUTE ? "COMPUTE:0" : "COPY:0", code);
-        int answer = fail(&s);
-        *failure = d->failure;
-        return answer;
+        return fail(&s, failure);
       }
     } else if (is_copy(p))
       copy(&s, p);
