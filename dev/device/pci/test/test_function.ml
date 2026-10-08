@@ -672,6 +672,8 @@ let misuse label =
 
 let live f = if f.r_released then misuse "a released function"
 
+(* Without [combine] a window maps its BAR as the live windows of the BAR do,
+   uncached where there is none. *)
 let map_ref f combine i off len =
   live f;
   if i < 0 then misuse "a BAR index below zero";
@@ -682,13 +684,14 @@ let map_ref f combine i off len =
       let len = Option.value len ~default:(size - off) in
       if off < 0 || len < 0 || off > size - len then
         misuse "bytes outside the BAR";
-      if List.exists (fun w -> w.kind = `Bar (i, not combine)) f.r_maps then
-        misuse "a BAR mapped the other way";
+      let way c = List.exists (fun w -> w.kind = `Bar (i, c)) f.r_maps in
+      let combine = match combine with Some c -> c | None -> way true in
+      if way (not combine) then misuse "a BAR mapped the other way";
       let w = { owner = f; kind = `Bar (i, combine); len; at = None } in
       f.r_maps <- w :: f.r_maps;
       w
 
-let map_sys (f, _) combine i off len = map ~combine ?off ?length:len f i
+let map_sys (f, _) combine i off len = map ?combine ?off ?length:len f i
 let without w l = List.filter (fun x -> x != w) l
 
 (* Windows are values: a window equal to a live one, as DMA memory asked twice
@@ -875,7 +878,7 @@ let commands =
       @-> returns (option (pair int int)))
       bar_ref (fsys Function.bar);
     command "map"
-      (fn_t ^-> Gen.bool
+      (fn_t ^-> Gen.option Gen.bool
       @-> ints [ -1; 0; 1; 2; 6 ]
       @-> opt_ints offs @-> opt_ints map_lens @-> makes win_t)
       map_ref map_sys;
@@ -1388,7 +1391,10 @@ let test_combining () =
   let w, c = combines ~combine:true 0 in
   equal ~msg:"a prefetchable BAR, asked" bool true c;
   raises_match ~msg:"the other way while it lives" Exn.invalid_arg (fun () ->
-      Function.map f 0);
+      Function.map ~combine:false f 0);
+  let w', c = combines 0 in
+  equal ~msg:"not asked, as the live window" bool true c;
+  Function.unmap f w';
   Function.unmap f w;
   let w, c = combines 0 in
   equal ~msg:"a prefetchable BAR, not asked" bool false c;

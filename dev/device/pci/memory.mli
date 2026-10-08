@@ -58,8 +58,9 @@ type kind =
   | Bar
       (** The GPU's memory, one block the process reaches through the memory
           BAR, for structures the GPU requires in its own memory. Its window
-          combines ({!Function.map}), so the driver's own windows on the memory
-          BAR combine too. *)
+          maps the BAR as the driver's own windows on it do: it combines if the
+          driver mapped the memory BAR with [~combine:true] ({!Function.map}),
+          and is uncached otherwise. *)
   | Host
       (** System memory of the GPU's machine, which the GPU reaches snooped and
           uncached. *)
@@ -92,9 +93,8 @@ val alloc : ?uncached:bool -> t -> kind -> int -> (region option, string) result
     what it took, [why] naming what is missing as {!Function.alloc_dma} does:
     such a limit is cured by a setting, rarely by freeing memory.
 
-    Raises [Invalid_argument] if [n <= 0], if system memory goes at addresses
-    {!Machine.reserve} did not reserve, or for {!Bar} memory if a live window of
-    the memory BAR does not combine ({!Function.map}). *)
+    Raises [Invalid_argument] if [n <= 0], or if system memory goes at addresses
+    {!Machine.reserve} did not reserve. *)
 
 val free : t -> region -> unit
 (** [free m mem] unmaps and frees [mem] and returns its addresses.

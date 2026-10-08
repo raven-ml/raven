@@ -382,7 +382,8 @@ let placed x rule (mem : Memory.region) =
         (fst x.fake.bar + pa)
         (Window.address w);
       equal ~msg:"as long as the memory" int m.size (Window.length w);
-      equal ~msg:"its window asked to combine" (option bool) (Some true)
+      equal ~msg:"its window uncached, as the driver mapped the BAR no way"
+        (option bool) (Some false)
         (List.nth_opt x.fake.combined 0)
   | In_host ->
       equal ~msg:"system memory" target System m.target;
@@ -589,17 +590,26 @@ let test_raising_format () =
   equal ~msg:"its memory and addresses" (pair int int) before (capacity x);
   Function.release x.fn
 
-(* The processor maps a BAR one way at a time, and Bar memory's window
-   combines. *)
-let test_bar_uncombined () =
-  let x = gpu () in
-  let before = capacity x in
-  let w = require_ok (Function.map ~length:page x.fn 0) in
-  raises_match (Exn.invalid_arg ~substring:"") (fun () ->
-      Memory.alloc x.memory Bar (64 * kib));
-  equal ~msg:"its memory and addresses" (pair int int) before (capacity x);
-  Function.unmap x.fn w;
-  Function.release x.fn
+(* Combining is the driver's choice: Bar memory's window maps the BAR as the
+   driver's own windows on it do, uncached where it has none. *)
+let test_bar_follows =
+  cases "Bar memory's window maps as the driver's windows on its BAR"
+    ~name:(function
+      | None -> "no window"
+      | Some true -> "combining"
+      | Some false -> "uncached")
+    [ None; Some true; Some false ]
+    (fun way ->
+      let x = gpu () in
+      Option.iter
+        (fun combine ->
+          ignore (require_ok (Function.map ~combine ~length:page x.fn 0)))
+        way;
+      ignore (alloc x Bar (64 * kib));
+      equal ~msg:"its window asked" (option bool)
+        (Some (Option.value way ~default:false))
+        (List.nth_opt x.fake.combined 0);
+      Function.release x.fn)
 
 (* Freeing *)
 
@@ -1067,10 +1077,7 @@ let () =
                test_system_refused;
              test "a format that raises passes through, having given back"
                test_raising_format;
-             test
-               "Bar memory beside an uncombined window of its BAR raises, \
-                having given back"
-               test_bar_uncombined;
+             test_bar_follows;
            ];
          group ~timeout:patience "freeing"
            [

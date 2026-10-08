@@ -49,8 +49,8 @@ val sub : t -> int -> int -> t
     of exactly that width, on this machine and through a transport, so a
     register is read and written once each and in program order.
 
-    A window {e combines} if {!Function.map} made it with [~combine:true] where
-    the machine allows it. Through such a window the accesses above are memory
+    A window {e combines} if {!Function.map} made it combining, where the
+    machine allows it. Through such a window the accesses above are memory
     accesses: stores may merge and reach the function in another order, and
     loads may be served early; a {!barrier} orders them. A driver puts a barrier
     between a load of a word the function wrote and the loads that word guards,

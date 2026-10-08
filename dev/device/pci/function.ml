@@ -110,7 +110,7 @@ let bar f i =
   index f "bar" i;
   f.fn.bar i
 
-let map ?(combine = false) ?(off = 0) ?length f i =
+let map ?combine ?(off = 0) ?length f i =
   index f "map" i;
   let size =
     match f.fn.bar i with
@@ -122,15 +122,22 @@ let map ?(combine = false) ?(off = 0) ?length f i =
     invalid_argf "Function.map: %d bytes at %d outside BAR %d of %d bytes"
       length off i size;
   (* The processor maps a BAR's addresses one way at a time: x86's PAT refuses a
-     second mapping of another type, or makes both uncached. Only the owner
-     changes [maps], so it reads them without the lock. *)
-  Hashtbl.iter
-    (fun _ (j, c) ->
-      if j = i && c <> combine then
+     second mapping of another type, or makes both uncached. A window asked no
+     way takes the way of the BAR's live windows. Only the owner changes [maps],
+     so it reads them without the lock; a GPU holds a handful of windows, so the
+     walk costs less than the mapping it precedes. *)
+  let live =
+    Hashtbl.fold (fun _ (j, c) w -> if j = i then Some c else w) f.maps None
+  in
+  let combine =
+    match (combine, live) with
+    | Some c, Some c' when c <> c' ->
         invalid_argf
           "Function.map: a live window maps BAR %d of %s with combine:%b" i
-          f.bus c)
-    f.maps;
+          f.bus c'
+    | Some c, _ | None, Some c -> c
+    | None, None -> false
+  in
   let* w = f.fn.map ~combine i off length in
   Mutex.protect f.lock (fun () -> Hashtbl.add f.maps w (i, combine));
   Ok w

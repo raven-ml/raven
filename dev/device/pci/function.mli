@@ -147,11 +147,12 @@ val map :
     [f]'s BAR [i] from byte [off] (defaults to [0]), until {!unmap} or
     {!release}. Child processes do not inherit it.
 
-    With [~combine:true] (defaults to [false]) the window combines
-    ({!Window.accesses}) where the machine allows it: a prefetchable BAR of a
-    function taken physically. Behind an IOMMU, or on a BAR that is not
-    prefetchable, it is the window [map] makes without it. Map registers and
-    doorbells without it; {!Memory} maps its memory BAR with it.
+    With [~combine:true] the window combines ({!Window.accesses}) where the
+    machine allows it: a prefetchable BAR of a function taken physically. Behind
+    an IOMMU, or on a BAR that is not prefetchable, it is the window
+    [~combine:false] makes. Map registers and doorbells with [~combine:false].
+    Without [combine], the window maps BAR [i] as its live windows do, and with
+    [~combine:false] if it has none.
 
     [Error why] if VFIO or the kernel does not let the process map them.
 
