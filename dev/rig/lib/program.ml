@@ -20,28 +20,20 @@ let place d (e : entry) code =
   let address, handle, host =
     match e.region with Some r -> Memory.region_info r | None -> (-1, 0n, -1)
   in
-  if Dev.copies d then begin
-    let dst =
-      Buffer.of_memory (Memory.make ~host ~address ~handle d e.bytes e) n
-    in
-    let src = Buffer.create ~memory:Buffer.Pinned d n in
-    blit_string code src.mem.host;
-    let queue =
-      Array.to_list d.queues |> List.find (String.starts_with ~prefix:"COPY:")
-    in
-    let part =
-      { Submission.queue; after = [||]; work = Submission.Copy { src; dst } }
-    in
-    let s = Submission.make ~reads:0 ~writes:0 ~waits:0 d [| part |] in
-    Dev.wait d (Point.value (Submission.submit s))
-  end
-  else begin
-    if host < 0 then
-      invalid_argf "Rig.Program.load: %s's code memory has no host address"
-        d.name;
-    Dev.wait d (Dev.submitted d);
-    blit_string code host
-  end
+  match d.copy_queue with
+  | Some queue ->
+      let dst =
+        Buffer.of_memory (Memory.make ~host ~address ~handle d e.bytes e) n
+      in
+      let src = Buffer.create ~memory:Buffer.Pinned d n in
+      blit_string code src.mem.host;
+      Copy.queued d queue ~src ~dst
+  | None ->
+      if host < 0 then
+        invalid_argf "Rig.Program.load: %s's code memory has no host address"
+          d.name;
+      Dev.wait d (Dev.submitted d);
+      blit_string code host
 
 (* The image of [binary] on [d], and the memory its code lies in where [d]'s
    memory holds it. *)

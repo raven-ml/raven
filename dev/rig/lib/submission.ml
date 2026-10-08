@@ -128,7 +128,7 @@ let make ?hold ~reads ~writes ~waits d parts =
           incr nfixed
       | Copy { src; dst } ->
           (* A driver that lists no copy queue runs no copy. *)
-          if not (Dev.copies d) then
+          if d.copy_queue = None then
             invalid_argf "Rig.%s: %s runs no copies" fn d.name;
           check_buffer src;
           check_buffer dst;

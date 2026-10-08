@@ -49,6 +49,7 @@ type device = {
   c : int;  (** The C record, 0 for the host. *)
   arch : string;
   queues : string array;
+  copy_queue : string option;  (** Its first copy queue, which runs copies. *)
   completion : completion;
   waits_store : bool;
   waits_object : bool;

@@ -82,6 +82,7 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~completion ~waits
     c;
     arch;
     queues;
+    copy_queue = Array.find_opt (String.starts_with ~prefix:"COPY:") queues;
     completion;
     waits_store;
     waits_object;
@@ -138,7 +139,6 @@ let is_lost d = d.c <> 0 && c_is_lost d.c
 let lost d = if is_lost d then Some (c_why d.c) else None
 let raise_lost d = raise (Lost (d, c_why d.c))
 let submitted d = if d.c = 0 then 0 else c_submitted d.c
-let copies d = Array.exists (String.starts_with ~prefix:"COPY:") d.queues
 let machines : (string, device) Hashtbl.t = Hashtbl.create 4
 let table_lock = Lock.create ()
 
@@ -464,6 +464,6 @@ let reaches d d' =
      match (d.kind, d'.kind) with
      | Io _, _ | _, Io _ -> false
      | Host, Host -> false
-     | Host, Driver _ -> d'.memory_device || not (copies d')
+     | Host, Driver _ -> d'.memory_device || d'.copy_queue = None
      | Driver _, Host -> true
      | Driver _, Driver _ -> d'.memory_device || peer d d'

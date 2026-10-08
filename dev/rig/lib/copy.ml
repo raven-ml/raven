@@ -66,18 +66,18 @@ let slot i =
 let is_slot m =
   Array.exists (function Some b -> b.mem.root == m.root | None -> false) slots
 
+let queued d queue ~src ~dst =
+  let part =
+    { Submission.queue; after = [||]; work = Submission.Copy { src; dst } }
+  in
+  let s = Submission.make ~reads:0 ~writes:0 ~waits:0 d [| part |] in
+  Dev.wait d (Point.value (Submission.submit s))
+
 (* A copy on [d]'s copy queue between buffers [d] maps, waited for. *)
 let on_queue d src dst =
-  let queue = Array.find_opt (String.starts_with ~prefix:"COPY:") d.queues in
-  match (queue, Memory.borrow d src.mem, Memory.borrow d dst.mem) with
+  match (d.copy_queue, Memory.borrow d src.mem, Memory.borrow d dst.mem) with
   | Some queue, Some s, Some t ->
-      let src = { src with mem = s } and dst = { dst with mem = t } in
-      let part =
-        { Submission.queue; after = [||]; work = Submission.Copy { src; dst } }
-      in
-      let s = Submission.make ~reads:0 ~writes:0 ~waits:0 d [| part |] in
-      let p = Submission.submit s in
-      Dev.wait d (Point.value p);
+      queued d queue ~src:{ src with mem = s } ~dst:{ dst with mem = t };
       true
   | _ -> false
 
