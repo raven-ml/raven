@@ -12,7 +12,8 @@
    completed. A released slot of value v > 0 writes v into the timeline
    word, unless a slot released before it failed: from then on the word
    stays. A slot's times are written when it completes, so before its
-   release.
+   release. Once stopped, the ring writes the last value it was given when
+   no slot is taken any more, whatever that work did.
 
    The ring holds as many slots as the queue holds command buffers, and
    taking a slot waits while every slot is taken: that wait is the
@@ -50,7 +51,8 @@ struct device_metal_ring {
   struct device_metal_slot *slots;
   uint64_t nslots, head, tail; /* slots [head, tail) are taken */
   uint64_t *word;
-  int stopped;       /* a released slot failed: the word stays */
+  int held;          /* a released slot failed: the word stays */
+  uint64_t drain;    /* written once no slot is taken, after stop; 0: none */
   char failure[512]; /* the first failure, "" if none */
 };
 
@@ -82,7 +84,8 @@ const char *device_metal_ring_failure(struct device_metal_ring *r);
 const char *device_metal_ring_sleep(struct device_metal_ring *r, uint64_t seen,
                                     int ms);
 
-/* 1 after writing [last] into the word if no slot is taken, else 0. */
+/* 1 after writing [last] into the word if no slot is taken. Else 0, and the
+   completion that releases the last taken slot writes [last]. */
 int device_metal_ring_stop(struct device_metal_ring *r, uint64_t last);
 
 #endif

@@ -12,7 +12,9 @@ let strf = Printf.sprintf
 
    A model of the ring of a device's command buffers: slots taken in commit
    order, completed in any order, released in commit order. The word is the last
-   value released before the first failed slot. *)
+   value released before the first failed slot, and after stop, once no slot is
+   taken, the last value taken. Completions and releases go on after stop;
+   commits and waits do not. *)
 
 module Ring = struct
   type state = Taken | Done | Failed
@@ -33,7 +35,8 @@ module Ring = struct
     mutable commits : int;
     mutable completed : int list;
     mutable word : int;
-    mutable stopped : bool;
+    mutable held : bool;
+    mutable drain : bool;
     mutable failure : string option;
     mutable ran : int list;
     mutable releases : int;
@@ -49,7 +52,8 @@ module Ring = struct
       commits = 0;
       completed = [];
       word = 0;
-      stopped = false;
+      held = false;
+      drain = false;
       failure = None;
       ran = [];
       releases = 0;
@@ -70,9 +74,9 @@ module Ring = struct
 
   let rec release m = function
     | s :: rest when s.state <> Taken ->
-        if s.state = Failed then m.stopped <- true;
-        cover "a value completes after a failed slot" (m.stopped && s.v > 0);
-        if s.v > 0 && not m.stopped then m.word <- s.v;
+        if s.state = Failed then m.held <- true;
+        cover "a value completes after a failed slot" (m.held && s.v > 0);
+        if s.v > 0 && not m.held then m.word <- s.v;
         m.ran <- s.releases @ m.ran;
         release m rest
     | rest -> rest
@@ -84,7 +88,11 @@ module Ring = struct
     m.completed <- s.k :: m.completed;
     if failed && m.failure = None then
       m.failure <- Some (strf "command buffer %d failed" s.k);
-    m.taken <- release m m.taken
+    m.taken <- release m m.taken;
+    if m.drain && m.taken = [] then begin
+      cover "the last slot completes after stop" true;
+      m.word <- m.values
+    end
 
   let defer m =
     let id = m.releases in
@@ -97,7 +105,7 @@ module Ring = struct
 
   let stop m =
     m.over <- true;
-    if m.taken = [] then m.word <- m.values;
+    if m.taken = [] then m.word <- m.values else m.drain <- true;
     m.taken = []
 
   let pending m =
@@ -132,11 +140,10 @@ let ring_commands =
       (fun m last -> Ring.commit m ~last)
       (fun r last -> S.commit r ~last);
     command "complete"
-      ~pre:(fun m _ _ -> open_ m)
       (ring ^-> slot ^-> Gen.bool @-> returns unit)
       (fun m i failed -> Ring.complete m i ~failed)
       (fun r i failed -> S.complete r i ~failed);
-    command "defer" ~pre:open_ (ring ^-> returns int) Ring.defer S.defer;
+    command "defer" (ring ^-> returns int) Ring.defer S.defer;
     command "sleep" ~pre:open_
       (ring ^-> returns (option string))
       (fun (m : Ring.t) -> m.failure)

@@ -58,7 +58,8 @@ void device_metal_ring_init(struct device_metal_ring *r,
   r->nslots = (uint64_t)n;
   r->head = r->tail = 0;
   r->word = word;
-  r->stopped = 0;
+  r->held = 0;
+  r->drain = 0;
   r->failure[0] = '\0';
 }
 
@@ -86,9 +87,8 @@ void device_metal_ring_complete(struct device_metal_ring *r, int i,
   while (r->head != r->tail) {
     struct device_metal_slot *h = &r->slots[r->head % r->nslots];
     if (h->state == taken) break;
-    if (h->state == failed) r->stopped = 1;
-    if (h->v > 0 && !r->stopped)
-      __atomic_store_n(r->word, h->v, __ATOMIC_RELEASE);
+    if (h->state == failed) r->held = 1;
+    if (h->v > 0 && !r->held) __atomic_store_n(r->word, h->v, __ATOMIC_RELEASE);
     /* Prepend the slot's list, whose order does not matter. */
     for (struct device_metal_release *l = h->releases, *next; l; l = next) {
       next = l->next;
@@ -97,6 +97,8 @@ void device_metal_ring_complete(struct device_metal_ring *r, int i,
     }
     r->head++;
   }
+  if (r->drain && r->head == r->tail)
+    __atomic_store_n(r->word, r->drain, __ATOMIC_RELEASE);
   pthread_cond_broadcast(&r->changed);
   pthread_mutex_unlock(&r->mutex);
   for (struct device_metal_release *next; releases; releases = next) {
@@ -139,7 +141,10 @@ const char *device_metal_ring_sleep(struct device_metal_ring *r, uint64_t seen,
 int device_metal_ring_stop(struct device_metal_ring *r, uint64_t last) {
   pthread_mutex_lock(&r->mutex);
   int idle = r->head == r->tail;
-  if (idle) __atomic_store_n(r->word, last, __ATOMIC_RELEASE);
+  if (idle)
+    __atomic_store_n(r->word, last, __ATOMIC_RELEASE);
+  else
+    r->drain = last;
   pthread_mutex_unlock(&r->mutex);
   return idle;
 }

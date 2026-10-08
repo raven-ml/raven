@@ -326,14 +326,14 @@ val word : t -> region
 (** [word d] is [d]'s timeline word: eight bytes of host memory holding, as an
     unsigned 64-bit integer in the host's byte order, the last value [v] such
     that every submission up to [v] completed. The device's completion handler
-    writes it with release order, and never lowers it. After {!stop} answered
-    [`Stopped], it holds the last value {!submit} received, whatever that work
-    did. It lives while the process runs. *)
+    writes it with release order, and never lowers it. Once {!stop} was called
+    and no work of [d] is in flight, it holds the last value {!submit} received,
+    whatever that work did. It lives while the process runs. *)
 
 val signaled : t -> int
 (** [signaled d] is the value in {!word}, read with acquire order: every
     submission up to it completed, and its writes are visible to the reader,
-    unless {!stop} answered [`Stopped]. *)
+    unless {!stop} was called. *)
 
 val sleep : t -> seen:int -> still_ms:int -> unit
 (** [sleep d ~seen ~still_ms] returns once {!word} holds a value other than
@@ -361,5 +361,7 @@ val stop : t -> [ `Stopped | `Unknown ]
     completed: it then writes the last value {!submit} received into {!word},
     releases [d]'s queue, and no work of [d] writes memory again. It answers
     [`Unknown] if work is still in flight, which may write memory for as long as
-    it runs, and keeps the queue. It never waits. Regions end at {!free} and
-    {!unmap}, which may follow. *)
+    it runs, and keeps the queue; once the last command buffer [d] committed
+    completes, the completion handler writes the last value {!submit} received
+    into {!word}. It never waits. Regions end at {!free} and {!unmap}, which may
+    follow. *)
