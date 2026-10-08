@@ -28,9 +28,11 @@
     ({!Machine.make}), which reaches it as that machine's way allows.
 
     One owner calls a function's operations at a time, except that {!pin},
-    {!unpin}, {!alloc_dma} and {!free_dma} may be called from any domain. After
-    {!release}, every operation but {!free_dma}, {!unpin}, {!machine}, {!bus},
-    {!addressing} and {!released} raises [Invalid_argument].
+    {!unpin}, {!alloc_dma} and {!free_dma} may be called from any domain:
+    {!release} waits for the pins and allocations that run, and those that start
+    after it began raise [Invalid_argument]. After {!release}, every operation
+    but {!free_dma}, {!unpin}, {!machine}, {!bus}, {!addressing} and {!released}
+    raises [Invalid_argument].
 
     Windows are values: a window equal to a live one that {!map} or {!alloc_dma}
     gave names it, and a window of another function or machine is never equal to

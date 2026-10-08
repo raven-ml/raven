@@ -10,13 +10,17 @@ let ( let* ) = Result.bind
 (* What the process holds of a function, so that misuse is refused before its
    machine is asked: its BAR windows, DMA memory and pins. Windows are values,
    so each table binds a window or a pinned range once for each time it is live.
-   The tables are used from any domain under [lock]. *)
+   The tables, [released] and [users], the pins and allocations from other
+   domains that run, are used from any domain under [lock]; [idle] signals the
+   last user's end. *)
 type t = {
   machine : Machine.t;
   bus : string;
   fn : Machine.fn;
-  mutable released : bool;
+  released : bool Atomic.t; (* set under [lock] *)
+  mutable users : int;
   lock : Mutex.t;
+  idle : Condition.t;
   maps : (int * bool) Tables.Window.t; (* to its BAR and [combine] *)
   dmas : unit Tables.Window.t;
   pins : unit Tables.Range.t; (* (address, bytes) *)
@@ -37,8 +41,10 @@ let take machine bus =
         machine;
         bus;
         fn;
-        released = false;
+        released = Atomic.make false;
+        users = 0;
         lock = Mutex.create ();
+        idle = Condition.create ();
         maps = Tables.Window.create 16;
         dmas = Tables.Window.create 16;
         pins = Tables.Range.create 16;
@@ -48,21 +54,51 @@ let take machine bus =
 let machine f = f.machine
 let bus f = f.bus
 let addressing f = f.fn.addressing
-let released f = f.released
-let live f fn = if f.released then Fail.err_released fn f.bus
+let released f = Atomic.get f.released
+let live f fn = if released f then Fail.err_released fn f.bus
+
+(* A pin or an allocation, which any domain may make while the owner releases
+   the function, runs between [enter] and [leave]: the release waits until none
+   runs, and none starts once it began, so the machine sees none after the
+   release. [leave_locked] holds [lock], as the table a pin or an allocation
+   records it in needs. *)
+let enter f fn =
+  Mutex.lock f.lock;
+  if Atomic.get f.released then begin
+    Mutex.unlock f.lock;
+    Fail.err_released fn f.bus
+  end;
+  f.users <- f.users + 1;
+  Mutex.unlock f.lock
+
+let leave_locked f =
+  f.users <- f.users - 1;
+  if f.users = 0 && Atomic.get f.released then Condition.broadcast f.idle
+
+let leave f =
+  Mutex.lock f.lock;
+  leave_locked f;
+  Mutex.unlock f.lock
 
 let release f =
-  if not f.released then begin
-    f.released <- true;
-    let maps =
-      Mutex.protect f.lock (fun () ->
+  let maps =
+    Mutex.protect f.lock (fun () ->
+        if Atomic.get f.released then None
+        else begin
+          Atomic.set f.released true;
+          while f.users > 0 do
+            Condition.wait f.idle f.lock
+          done;
           let ws = List.of_seq (Tables.Window.to_seq_keys f.maps) in
           Tables.Window.reset f.maps;
-          ws)
-    in
-    List.iter f.fn.unmap maps;
-    f.fn.release ()
-  end
+          Some ws
+        end)
+  in
+  Option.iter
+    (fun maps ->
+      List.iter f.fn.unmap maps;
+      f.fn.release ())
+    maps
 
 (* Configuration space *)
 
@@ -198,8 +234,7 @@ let on_page f fn a =
     invalid_argf "Function.%s: 0x%x is not on a %d-byte page" fn a
       (Machine.page f.machine)
 
-let alloc_dma ?(contiguous = false) ?va f n =
-  live f "alloc_dma";
+let alloc_dma_entered ~contiguous ?va f n =
   let page = Machine.page f.machine in
   if n <= 0 || n > max_int - page then
     invalid_argf "Function.alloc_dma: %d bytes, expected 1 to %d" n
@@ -228,21 +263,48 @@ let alloc_dma ?(contiguous = false) ?va f n =
           "Function.alloc_dma: %d bytes at 0x%x lie in no range \
            Machine.reserve reserved"
           mapped va);
-  let* ((w, _) as dma) = f.fn.alloc_dma ~contiguous ~va n in
-  Mutex.protect f.lock (fun () -> Tables.Window.add f.dmas w ());
-  Ok dma
+  f.fn.alloc_dma ~contiguous ~va n
+
+let alloc_dma ?(contiguous = false) ?va f n =
+  enter f "alloc_dma";
+  match alloc_dma_entered ~contiguous ?va f n with
+  | Ok (w, _) as dma ->
+      Mutex.lock f.lock;
+      Tables.Window.add f.dmas w ();
+      leave_locked f;
+      Mutex.unlock f.lock;
+      dma
+  | Error _ as e ->
+      leave f;
+      e
+  | exception e ->
+      leave f;
+      raise e
 
 let free_dma f w =
   forget f f.dmas "free_dma" w;
   f.fn.free_dma w
 
-let pin f a n =
-  live f "pin";
+let pin_entered f a n =
   on_page f "pin" a;
   if n <= 0 then invalid_argf "Function.pin: %d bytes, expected more than 0" n;
-  let* runs = f.fn.pin a n in
-  Mutex.protect f.lock (fun () -> Tables.Range.add f.pins (a, n) ());
-  Ok runs
+  f.fn.pin a n
+
+let pin f a n =
+  enter f "pin";
+  match pin_entered f a n with
+  | Ok _ as runs ->
+      Mutex.lock f.lock;
+      Tables.Range.add f.pins (a, n) ();
+      leave_locked f;
+      Mutex.unlock f.lock;
+      runs
+  | Error _ as e ->
+      leave f;
+      e
+  | exception e ->
+      leave f;
+      raise e
 
 let unpin f a n =
   Mutex.protect f.lock (fun () ->

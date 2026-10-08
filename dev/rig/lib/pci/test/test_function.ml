@@ -31,6 +31,7 @@ type fn_fake = {
   mutable dmas : (int * int) list;
   mutable pins : (int * int) list; (* a multiset *)
   mutable released : bool;
+  mutable before_pin : unit -> unit; (* runs before a pin reaches the fake *)
   mutable calls : string list; (* newest first *)
   mutable wrong : string list;
   lock : Mutex.t;
@@ -87,6 +88,7 @@ let fake_fn m bus =
       dmas = [];
       pins = [];
       released = false;
+      before_pin = ignore;
       calls = [];
       wrong = [];
       lock = Mutex.create ();
@@ -206,6 +208,7 @@ let fake_fn m bus =
             (fun () -> f.dmas <- Option.get (remove (window w) f.dmas)));
       pin =
         (fun a n ->
+          f.before_pin ();
           call "pin"
             (fun () -> if a mod f.page <> 0 then Some "off a page" else None)
             (fun () ->
@@ -220,7 +223,7 @@ let fake_fn m bus =
       release =
         (fun () ->
           call ~after_release:true "release"
-            (fun () -> None)
+            (fun () -> if f.released then Some "released twice" else None)
             (fun () ->
               if not f.released then begin
                 f.released <- true;
@@ -513,11 +516,42 @@ let test_reset_silent () =
     (Error (bus1 ^ " does not answer 1000 ms after its reset"))
     (Function.reset f)
 
+(* A pin from another domain runs while the owner releases the function: the
+   release waits for it, so no pin reaches the machine after the release, and a
+   pin that starts after the release begins is refused. The pin is held inside
+   the function, before the machine; the release is sampled while it waits. *)
+let test_release_waits_pin () =
+  let _, f, fake = take_fake () in
+  let inside = Atomic.make false and go = Atomic.make false in
+  fake.before_pin <-
+    (fun () ->
+      Atomic.set inside true;
+      ignore (poll (fun () -> Atomic.get go)));
+  let pinning = Domain.spawn (fun () -> Function.pin f 0 4096) in
+  equal ~msg:"the pin is inside" bool true (poll (fun () -> Atomic.get inside));
+  fake.before_pin <- ignore;
+  let releasing = Domain.spawn (fun () -> Function.release f) in
+  Unix.sleepf 0.05;
+  equal ~msg:"the release waits for the pin" bool false
+    (Mutex.protect fake.lock (fun () -> fake.released));
+  Atomic.set go true;
+  ignore (require_ok (Domain.join pinning));
+  Domain.join releasing;
+  equal ~msg:"misuse that reached the machine" (list string) []
+    (Mutex.protect fake.lock (fun () -> fake.wrong));
+  equal ~msg:"released" bool true fake.released;
+  raises_match (Exn.invalid_arg ~substring:"released") (fun () ->
+      Function.pin f 0 4096)
+
 let uses =
   group ~timeout:patience "uses"
     [
       test "a function's windows, BARs and runs are its machine's"
         test_machine_values;
+      test
+        "a release waits for a pin from another domain, and refuses later ones \
+         (sampled)"
+        test_release_waits_pin;
       test "a BAR window is the rest of the BAR from its offset by default"
         test_defaults;
       test "a reset asks the machine, then waits for the function to answer"
