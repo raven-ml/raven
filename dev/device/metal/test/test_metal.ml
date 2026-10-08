@@ -319,6 +319,17 @@ let empty_submission () =
   S.wait t.d v;
   equal int v (Device_metal.signaled t.d)
 
+(* Metal hands a command buffer to its completion handler before the word moves
+   and releases it once the handler returned: no signal marks that, so the test
+   waits for it under its group's timeout. *)
+let released_buffer () =
+  let t = dev () in
+  let f, w = S.watching () in
+  S.wait t.d (submit_ok t [| f |]);
+  while S.alive w do
+    Domain.cpu_relax ()
+  done
+
 let failing_fill () =
   let t = dev_of (opened ()) in
   let out = alloc t 256 and args = alloc t args_bytes in
@@ -349,6 +360,8 @@ let work =
         "times" [ 1; 5; 64 ] times_between;
       test "a fill splitting more often than the queue holds completes"
         many_splits;
+      test "a submission's command buffer is released once it completed"
+        released_buffer;
       test "a failed fill stops the word before its value" failing_fill;
     ]
 

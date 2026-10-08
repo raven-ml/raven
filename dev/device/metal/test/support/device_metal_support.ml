@@ -73,6 +73,13 @@ let execute (b : Device_metal_abi.icb) ~pipelines =
   let arg = execute_arg b.handle n (Array.map Nativeint.of_int pipelines) in
   { fn = execute_fill (); arg }
 
+external watching_arg : unit -> arg * nativeint = "device_metal_test_watching"
+external watching_fill : unit -> nativeint = "device_metal_test_watching_fill"
+
+let watching () =
+  let arg, slot = watching_arg () in
+  ({ fn = watching_fill (); arg }, slot)
+
 external resize : nativeint -> groups:int -> threads:int -> unit
   = "device_metal_test_resize"
 

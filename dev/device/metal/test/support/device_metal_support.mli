@@ -101,6 +101,10 @@ val execute : Device_metal_abi.icb -> pipelines:int array -> fill
 (** [execute b ~pipelines] runs every command of [b] after setting each of
     [pipelines] on the encoder. *)
 
+val watching : unit -> fill * nativeint
+(** [watching ()] is [(f, w)] with [f] a fill that encodes nothing and makes [w]
+    a weak reference to its command buffer, read with {!alive}. *)
+
 val resize : nativeint -> groups:int -> threads:int -> unit
 (** [resize c ~groups ~threads] makes the indirect compute command [c] dispatch
     [groups] threadgroups of [threads] threads. *)

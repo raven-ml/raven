@@ -233,6 +233,40 @@ value device_metal_test_execute_fill(value unit) {
   return caml_copy_nativeint((intnat)execute);
 }
 
+/* A fill that encodes nothing and stores, at [*slot], a weak reference to
+   its encoder, which lives as long as the encoder's command buffer. The
+   slot is C memory never freed, since the runtime clears it when the
+   encoder goes. */
+struct watching {
+  id *slot;
+};
+
+static int watching(void *queue, void *arg, uint64_t v) {
+  (void)v;
+  objc_storeWeak(((struct watching *)arg)->slot, *(id *)queue);
+  return 0;
+}
+
+/* [(arg, slot)]. */
+value device_metal_test_watching(value unit) {
+  CAMLparam1(unit);
+  CAMLlocal3(v, slot, r);
+  id *p = calloc(1, sizeof(id));
+  if (p == NULL) caml_raise_out_of_memory();
+  v = arg(sizeof(struct watching));
+  ((struct watching *)Arg_val(v))->slot = p;
+  slot = caml_copy_nativeint((intnat)p);
+  r = caml_alloc_tuple(2);
+  Store_field(r, 0, v);
+  Store_field(r, 1, slot);
+  CAMLreturn(r);
+}
+
+value device_metal_test_watching_fill(value unit) {
+  (void)unit;
+  return caml_copy_nativeint((intnat)watching);
+}
+
 /* Sets the sizes of the indirect compute command [v_command]. */
 value device_metal_test_resize(value v_command, value v_groups,
                                value v_threads) {
@@ -284,6 +318,8 @@ value device_metal_test_execute(value a, value b, value c) {
   (void)a, (void)b, (void)c, no_metal();
 }
 value device_metal_test_execute_fill(value a) { (void)a, no_metal(); }
+value device_metal_test_watching(value a) { (void)a, no_metal(); }
+value device_metal_test_watching_fill(value a) { (void)a, no_metal(); }
 value device_metal_test_resize(value a, value b, value c) {
   (void)a, (void)b, (void)c, no_metal();
 }
