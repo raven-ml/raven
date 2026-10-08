@@ -501,7 +501,8 @@ def main():
     if a.excerpt:
         pins = json.loads(PINS.read_text()) if PINS.exists() else {}
         files = {HEADERS / h: excerpt(h, fetch(url, a.cache, pins, a.pin)) for h, url in SOURCES.items()}
-        files[PINS] = json.dumps(dict(sorted(pins.items())), indent=1) + "\n"
+        if a.pin:
+            files[PINS] = json.dumps(dict(sorted(pins.items())), indent=1) + "\n"
     else:
         files = {OUT: generate()}
     stale = [f for f, text in files.items() if not f.exists() or f.read_text() != text]
