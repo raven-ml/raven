@@ -143,11 +143,12 @@ let floor_part f (p : Sub.part) =
    a driver whose host writes the word ([sleeps]), and the replay floors wait as
    the core waits for that driver: in its [sleep] from the first read, or
    spinning. The kernel floor drives the device the core opened, through its
-   driver's entries alone, after the core loaded the kernel. Each case opens its
-   GPU in its own worker, so that no process forks after a vendor library
-   started. *)
+   driver's entries alone, after the core loaded the kernel. With [graph], the
+   graph rows do the same with the part [graph] makes, the launch of a recorded
+   step of 64 such kernels. Each case opens its GPU in its own worker, so that
+   no process forks after a vendor library started. *)
 let gpu_rows (type a) (module D : C.Driver with type t = a) ?(sleeps = false)
-    ?(copies = true) v ~name open_ ~kernel =
+    ?(copies = true) ?graph v ~name open_ ~kernel =
   let get = function Ok x -> x | Error why -> failwith why in
   let opened () =
     let d = ref None in
@@ -182,9 +183,9 @@ let gpu_rows (type a) (module D : C.Driver with type t = a) ?(sleeps = false)
       ref 0 )
   in
   let replaying () = replay (fst (opened ())) [||] ignore in
-  let kernel_replaying () =
+  let part_replaying make () =
     let g, d = opened () in
-    let p, keep = kernel d g in
+    let p, keep = make d g in
     replay g [| p |] keep
   in
   let run (r, n) =
@@ -217,9 +218,9 @@ let gpu_rows (type a) (module D : C.Driver with type t = a) ?(sleeps = false)
       (Array.init (slots + 2) (fun _ -> D.handle (region ())));
     a
   in
-  let kernel_alone () =
+  let part_alone make () =
     let g, drv = opened () in
-    let p, hold = kernel drv g in
+    let p, hold = make drv g in
     let a =
       {
         drv;
@@ -338,11 +339,13 @@ let gpu_rows (type a) (module D : C.Driver with type t = a) ?(sleeps = false)
             if !n mod drain = 0 then C.wait g (C.Point.value p));
       ];
     Thumper.group (strf "replay/%s" v)
-      [
-        row "params-24" replaying run;
-        row "pipelined-100" replaying pipelined;
-        row "kernel-pipelined-100" kernel_replaying pipelined;
-      ];
+      ([
+         row "params-24" replaying run;
+         row "pipelined-100" replaying pipelined;
+         row "kernel-pipelined-100" (part_replaying kernel) pipelined;
+       ]
+      @ Option.fold graph ~none:[] ~some:(fun g ->
+          [ row "graph-pipelined-100" (part_replaying g) pipelined ]));
     Thumper.group (strf "floor/%s" v)
       ([
          row "release" alone (fun a ->
@@ -353,8 +356,10 @@ let gpu_rows (type a) (module D : C.Driver with type t = a) ?(sleeps = false)
              if !(a.sent) mod drain = 0 then spin a !(a.sent));
          row "run" (fun () -> named (alone ())) floor_run;
          row "pipelined-100" (fun () -> named (alone ())) floor_pipelined;
-         row "kernel-pipelined-100" kernel_alone floor_pipelined;
+         row "kernel-pipelined-100" (part_alone kernel) floor_pipelined;
        ]
+      @ Option.fold graph ~none:[] ~some:(fun g ->
+          [ row "graph-pipelined-100" (part_alone g) floor_pipelined ])
       @ copy_floors
       @
       if sleeps then
@@ -397,6 +402,22 @@ let cuda_kernel g _ =
   let f = S.launch ~count:1 (kernels "empty") ~grid:1 ~block:1 0 0 in
   ( S.part ~queue:"COMPUTE:0" f,
     fun () -> ignore (Sys.opaque_identity (image, f)) )
+
+(* A graph of 64 [empty] kernels over one thread each, made through the device's
+   capability, launched by one part. *)
+let cuda_graph g _ =
+  let module S = Rig_cuda_support in
+  S.bind g;
+  let image, kernels = S.kernels ~dir:fixtures g in
+  let k = S.kernel (kernels "empty") 0 0 in
+  let gr =
+    match (Rig_cuda.capability g).graph (Array.make 64 k) with
+    | Ok gr -> gr
+    | Error why -> failwith why
+  in
+  let f = S.graph_launch gr [||] in
+  ( S.part ~queue:"COMPUTE:0" f,
+    fun () -> ignore (Sys.opaque_identity (image, gr, f)) )
 
 (* [empty] over one block, loaded by the core. *)
 let nv_kernel g c =
@@ -454,7 +475,7 @@ let gpus =
            (module Rig_cuda)
            "cuda" ~name:(Rig_cuda.device_name 0)
            (fun () -> Rig_cuda.open_ 0)
-           ~kernel:cuda_kernel
+           ~kernel:cuda_kernel ~graph:cuda_graph
          @ gpu_rows
              (module Rig_nv)
              "nv"
