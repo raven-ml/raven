@@ -36,7 +36,7 @@ let path release : unit Device_nv.path =
         warps_per_sm = 1;
       };
     budget = 0;
-    doorbell = 0n;
+    doorbell = 0;
     alloc = (fun _ _ -> called "alloc");
     map_host = (fun _ _ -> called "map_host");
     reaches = (fun _ -> called "reaches");

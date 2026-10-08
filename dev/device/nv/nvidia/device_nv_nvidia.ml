@@ -346,7 +346,7 @@ let alloc_video g ~cpu size =
 let memory m =
   {
     Device_nv.address = m.va;
-    host = (if m.cpu then Some (Nativeint.of_int m.va) else None);
+    host = (if m.cpu then Some m.va else None);
     handle = m.handle;
     data = m;
   }
@@ -394,12 +394,12 @@ let ranges_lock = Mutex.create ()
 let ranges : range list ref = ref []
 
 let map_host g a n =
-  let a0 = Nativeint.to_int a land lnot (page - 1) in
-  let a1 = round_up (Nativeint.to_int a + n) page in
+  let a0 = a land lnot (page - 1) in
+  let a1 = round_up (a + n) page in
   let mem r =
     memory
       {
-        va = Nativeint.to_int a;
+        va = a;
         size = n;
         handle = r.descriptor;
         cpu = true;
@@ -854,7 +854,7 @@ let path g =
     vaspace = g.vaspace;
     gpu = g.facts;
     budget = g.budget;
-    doorbell = Nativeint.of_int (g.doorbell + doorbell_at);
+    doorbell = g.doorbell + doorbell_at;
     alloc = alloc g;
     map_host = map_host g;
     reaches = reaches g;

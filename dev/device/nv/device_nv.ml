@@ -44,12 +44,7 @@ type gpu = {
   warps_per_sm : int;
 }
 
-type 'm memory = {
-  address : int;
-  host : nativeint option;
-  handle : int;
-  data : 'm;
-}
+type 'm memory = { address : int; host : int option; handle : int; data : 'm }
 
 type 'm path = {
   key : 'm Type.Id.t;
@@ -59,9 +54,9 @@ type 'm path = {
   vaspace : int;
   gpu : gpu;
   budget : int;
-  doorbell : nativeint;
+  doorbell : int;
   alloc : [ `Gpu | `Bar | `System ] -> int -> 'm memory option;
-  map_host : nativeint -> int -> 'm memory option;
+  map_host : int -> int -> 'm memory option;
   reaches : 'm path -> bool;
   map_peer : 'm memory -> 'm memory option;
   free : 'm memory -> unit;
@@ -393,7 +388,7 @@ let in_rm what = Result.map_error (fun e -> strf "%s: %s" what e)
 
 let host what (m : _ memory) =
   match m.host with
-  | Some h -> Ok (Nativeint.to_int h)
+  | Some h -> Ok h
   | None -> Error (strf "the %s is not mapped for the host" what)
 
 (* The device's objects and memory, each given back by [taken] if a later step
@@ -525,7 +520,7 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
       in_rm "raising the GPU's clocks"
         (rm.control p.subdevice D.nv2080_ctrl_cmd_perf_boost (Some boost))
     in
-    set_doorbell self (Nativeint.to_int p.doorbell);
+    set_doorbell self p.doorbell;
     templates self p.gpu;
     let* () =
       match bar with
@@ -626,8 +621,7 @@ let free (T d) r =
   | Some r -> (
       match r.kind with
       | Word -> invalid_arg "Device_nv.free: the timeline word is never freed"
-      | Mapping -> invalid_arg "Device_nv.free: a mapping is ended by unmap"
-      | Allocation | Bar ->
+      | Allocation | Bar | Mapping ->
           if not (Atomic.compare_and_set r.live true false) then
             invalid_arg "Device_nv.free: the region was freed";
           d.path.free r.mem;
@@ -651,7 +645,7 @@ let map_peer (T d) (T d') r =
   | None ->
       invalid_arg "Device_nv.map_peer: the region is not the other device's"
   | Some r when not (Atomic.get r.live) ->
-      invalid_arg "Device_nv.map_peer: the region was freed or unmapped"
+      invalid_arg "Device_nv.map_peer: the region was freed"
   | Some r -> (
       match Type.Id.provably_equal d.path.key d'.path.key with
       | None -> None
@@ -662,16 +656,6 @@ let map_host (T d) a n =
   if n < 1 then
     invalid_argf "Device_nv.map_host: %d bytes, expected at least 1" n;
   Option.map (region d Mapping n) (d.path.map_host a n)
-
-let unmap (T d) r =
-  match mine d r with
-  | None -> invalid_arg "Device_nv.unmap: the region is not the device's"
-  | Some r when r.kind <> Mapping ->
-      invalid_arg "Device_nv.unmap: the region is no mapping"
-  | Some r ->
-      if not (Atomic.compare_and_set r.live true false) then
-        invalid_arg "Device_nv.unmap: the region was unmapped";
-      d.path.free r.mem
 
 (* Images *)
 
@@ -831,7 +815,7 @@ let submit (T d) ~v ~waits ~handles:_ ps =
     | `Word, at, value ->
         w.(2 * i) <- at;
         w.((2 * i) + 1) <- value
-    | (`Equal | `Object), _, _ ->
+    | `Object, _, _ ->
         invalid_arg "Device_nv.submit: the device waits only with `Word"
   done;
   if room_parts d.self ps <> fits then
@@ -937,17 +921,19 @@ let stop (T d) =
     ok (rm.free ~parent:d.path.device d.debugger)
     && ok (rm.free ~parent:d.path.device d.group)
   in
-  if not (unregistered && freed) then `Unknown
-  else begin
+  if unregistered && freed then begin
     raise_word d.self;
     end_channels d.self;
     (* The work no longer runs: what it used goes back, and a failure to give
-       some back leaves the answer as it is. *)
+       some back leaves the device stopped. *)
     let give m = try d.path.free m with Fault _ -> () in
     List.iter give d.owned;
     Mutex.protect d.local_lock (fun () ->
         Option.iter give d.local_current;
         Option.iter (fun (m, _) -> give m) d.local_pending;
-        List.iter (fun (m, _) -> give m) d.local_retired);
-    `Stopped
+        List.iter (fun (m, _) -> give m) d.local_retired)
   end
+    (* The RM stopped the channels on a fault: nothing runs, though their
+       objects stay. Otherwise their own releases bring the word up as their
+       work ends; a word raised here could be lowered by a late release. *)
+  else if channel_errors d <> [] then raise_word d.self

@@ -58,15 +58,14 @@
 
     A function that calls the RM answers its refusal of the arguments as its
     result ([None], [Error]) and raises {!Fault} for any other failure.
-    {!signaled}, {!free} and {!stop} never raise it, nor does {!unmap} after
-    {!stop}.
+    {!signaled}, {!free} and {!stop} never raise it.
 
     {b Domains.} Any domain may call any function, at the same time as others,
     with three exceptions. {!room} and {!submit} are called one at a time: the
     caller holds the device's {e turn} from {!room} to the end of {!submit}.
     {!stop} is called once, after every other call returned; after it only
-    {!free}, {!unmap} and the capability's [local] are called. {!sleep} may run
-    while another domain submits.
+    {!free} and the capability's [local] are called. {!sleep} may run while
+    another domain submits.
 
     {b References.}
     - NVIDIA's
@@ -152,11 +151,12 @@ val alloc : t -> [ `Device | `Pinned | `Mapped ] -> int -> region option
     Raises [Invalid_argument] if [n < 1]. *)
 
 val free : t -> region -> unit
-(** [free g r] frees the allocation [r]. The caller frees it once no work that
-    uses it runs.
+(** [free g r] gives back the region [r]: an allocation, or a mapping
+    {!map_peer} or {!map_host} gave, of which it ends only [r]. The caller frees
+    it once no work that uses it runs.
 
-    Raises [Invalid_argument] if [r] is not an allocation of [g], is the
-    timeline word, or was freed. *)
+    Raises [Invalid_argument] if [r] is not a region of [g], is the timeline
+    word, or was freed. *)
 
 val address : region -> int option
 (** [address r] is [Some a], [a] the address of [r]'s first byte in the GPU's
@@ -166,7 +166,7 @@ val handle : region -> nativeint
 (** [handle r] is {!address}[ r] as a [nativeint]: the device names memory by
     address. *)
 
-val host : region -> nativeint option
+val host : region -> int option
 (** [host r] is [Some a], [a] the host address of [r]'s first byte, if the host
     addresses [r], and [None] for [`Device] memory. *)
 
@@ -179,26 +179,18 @@ val map_peer : t -> t -> region -> region option
 (** [map_peer g g' r] is [Some r'] with [r'] a new region of [g] over the memory
     of [g']'s region [r], if [g]'s work can address it: if the same path opened
     both devices and it maps [r]'s memory for [g]'s GPU, as the path of two GPUs
-    with peer access does. It is [None] otherwise. {!unmap} of [r'] ends only
-    [r'], and {!free} refuses it.
+    with peer access does. It is [None] otherwise.
 
     Raises [Invalid_argument] if [g'] is [g], or if [r] is no region of [g'] or
-    was freed or unmapped. *)
+    was freed. *)
 
-val map_host : t -> nativeint -> int -> region option
+val map_host : t -> int -> int -> region option
 (** [map_host g a n] is [Some r] with [r] the [n] bytes of host memory at [a],
     mapped for [g]'s GPU, unless its path refuses them. The path maps whole
-    pages, and keeps the pages mapped until every region over them is unmapped.
-    The host memory must stay mapped until [r] is unmapped.
+    pages, and keeps the pages mapped until every region over them is freed. The
+    host memory must stay mapped until [r] is freed.
 
     Raises [Invalid_argument] if [n < 1]. *)
-
-val unmap : t -> region -> unit
-(** [unmap g r] ends the region [r] that {!map_peer} or {!map_host} gave. The
-    caller unmaps it once no work that uses it runs.
-
-    Raises [Invalid_argument] if [r] is an allocation, a region of another
-    device, or was unmapped. *)
 
 (** {1:images Images} *)
 
@@ -269,8 +261,7 @@ val part :
     Raises [Invalid_argument] if [queue] is not a queue of [g], if [w] is
     [`Fill _], which the device does not run, if [ws] has an odd length, if a
     copy is on ["COMPUTE:0"] or its range lies outside its region, if a region
-    is of another device or was freed or unmapped, or if an index of [after] is
-    negative. *)
+    is of another device or was freed, or if an index of [after] is negative. *)
 
 val room : t -> part array -> [ `Fits | `Later | `Never ]
 (** [room g ps] is [`Fits] if [g]'s rings take [ps] now, [`Later] if they take
@@ -282,7 +273,7 @@ val room : t -> part array -> [ `Fits | `Later | `Never ]
 val submit :
   t ->
   v:int ->
-  waits:([ `Word | `Equal | `Object ] * int * int) array ->
+  waits:([ `Word | `Object ] * int * int) array ->
   handles:nativeint array ->
   part array ->
   [ `Ok | `Failed of string ]
@@ -302,8 +293,8 @@ val submit :
     Raises [Invalid_argument] if [v] is not the value after the last one, if
     {!room} does not answer [`Fits] for [ps], if a part is another device's, if
     a part's [after] names a part at or after its own index, if [waits] holds
-    more than 256 waits, or if a wait is [`Equal] or [`Object]: the device waits
-    only for words to reach a value. *)
+    more than 256 waits, or if a wait is [`Object]: the device waits only for
+    words to reach a value. *)
 
 val room_entry : nativeint
 (** [room_entry] is the address of the C function [device_nv_room], {!room} for
@@ -344,17 +335,15 @@ val sleep : t -> seen:int -> still_ms:int -> unit
 exception Fault of string
 (** The exception for a fault of a device's work, with the RM's report. *)
 
-val stop : t -> [ `Stopped | `Unknown ]
-(** [stop g] stops [g] for good: it ends its path's registration of [g]'s
-    channels ({!field-unregister}), then frees them, so that the GPU runs none
-    of their work. It is [`Stopped] if both succeeded: [g]'s work no longer
-    writes memory, and the timeline word holds at least the last value {!submit}
-    was given, so work of other devices that waits on it runs on. It is
-    [`Unknown] otherwise: [g]'s work may still run, and its own releases bring
-    the timeline word to the last value once it ends, unless it faulted or waits
-    on a word that never reaches its value. It never waits for [g]'s work: the
-    RM preempts the channels it frees. After [stop], only {!free} and {!unmap}
-    may be called on [g]; neither raises {!Fault}. *)
+val stop : t -> unit
+(** [stop g] stops [g] for good, never waiting for its work: it ends its path's
+    registration of [g]'s channels ({!field-unregister}), then frees them, and
+    the RM preempts what they run. Once none of [g]'s work runs, the timeline
+    word holds the last value {!submit} was given, written with release order,
+    so work of other devices that waits on it runs on: before [stop] returns if
+    the RM freed the channels or had stopped them on a fault, and otherwise by
+    the channels' own releases as their work ends. After [stop], only {!free} is
+    called on [g], and it raises no {!Fault}. *)
 
 (** {1:paths Paths}
 
@@ -403,7 +392,7 @@ type gpu = {
 
 type 'm memory = {
   address : int;  (** The GPU address of its first byte, below [2{^40}]. *)
-  host : nativeint option;
+  host : int option;
       (** The host address of its first byte, if the host addresses it. *)
   handle : int;  (** The RM's name for it, which channel allocations take. *)
   data : 'm;  (** The path's own data for it. *)
@@ -420,7 +409,7 @@ type 'm path = {
   vaspace : int;  (** The virtual address space the device's channels use. *)
   gpu : gpu;  (** The GPU's classes and counts. *)
   budget : int;  (** The GPU's memory its work may allocate, in bytes. *)
-  doorbell : nativeint;
+  doorbell : int;
       (** The host address of the 4-byte register into which the device stores a
           channel's work submit token to wake the channel
           ([NVC361_NOTIFY_CHANNEL_PENDING]). *)
@@ -432,7 +421,7 @@ type 'm path = {
             memory BAR, mapped uncached;
           - [`System], host memory that the GPU reads and writes coherently with
             the host. *)
-  map_host : nativeint -> int -> 'm memory option;
+  map_host : int -> int -> 'm memory option;
       (** [map_host a n] is the [n] bytes of host memory at [a], mapped for the
           GPU, or [None] if the path refuses them. The path maps whole pages,
           once per process for the pages of one range, and keeps them mapped
