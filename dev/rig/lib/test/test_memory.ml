@@ -114,6 +114,17 @@ let with_host_budget n f =
   C.set_budget C.host n;
   Fun.protect ~finally:(fun () -> C.set_budget C.host before) f
 
+(* A host allocation the C library refuses raises Out_of_memory for the host,
+   and gives its bytes back to the host's budget: a later buffer under a budget
+   below the refused size is made. *)
+let test_host_refused () =
+  let n = 1 lsl 60 in
+  raises_match (out_of_memory C.host n) (fun () -> B.create C.host n);
+  with_host_budget
+    (64 * 1024 * kib)
+    (fun () ->
+      equal int (32 * 1024 * kib) (B.length (B.create C.host (32 * 1024 * kib))))
+
 (* On a device with copies, pinned memory is host memory: it counts in the
    host's budget, not the device's. *)
 let test_pinned () =
@@ -252,6 +263,35 @@ let test_borrowed_host () =
   equal ~msg:"once it ran" int at (B.address (B.create C.host n));
   ignore (Sys.opaque_identity other)
 
+(* A bigarray a device borrowed through of_bigarray stays reachable until that
+   device's queued work on it ran. *)
+let test_borrowed_bigarray () =
+  let d, p = P.open_ "memory:borrowed-bigarray" in
+  let n = 1 lsl 16 in
+  let collected = Atomic.make false in
+  let[@inline never] written () =
+    let ba = B.bigarray Bigarray.char (B.create C.host n) in
+    Gc.finalise (fun _ -> Atomic.set collected true) ba;
+    let src = B.create d n in
+    let dst = require_some (B.borrow d (B.of_bigarray ba)) in
+    let part =
+      { Sub.queue = "COPY:0"; after = [||]; work = Sub.Copy { src; dst } }
+    in
+    ignore (C.submit (Sub.make ~reads:0 ~writes:0 ~waits:0 d [| part |]))
+  in
+  let settle () =
+    Gc.full_major ();
+    ignore (B.create C.host 0);
+    Gc.full_major ();
+    Gc.full_major ()
+  in
+  written ();
+  settle ();
+  equal ~msg:"while the work is queued" bool false (Atomic.get collected);
+  ignore (P.run p);
+  settle ();
+  equal ~msg:"once it ran" bool true (Atomic.get collected)
+
 (* free_cache on the host returns what the host keeps for reuse. *)
 let test_host_free_cache () =
   ignore (dropped C.host ((64 * kib) + 4093));
@@ -384,6 +424,8 @@ let tests =
         test "free_cache with no work in flight returns the cache at once"
           test_free_cache;
         test "the host's budget is max_int" test_host_budget;
+        test "a host allocation the C library refuses raises for the host"
+          test_host_refused;
       ];
     group ~timeout "kinds"
       [
@@ -409,6 +451,8 @@ let tests =
         test "free_cache on the host returns what it keeps" test_host_free_cache;
         test "host memory a device borrowed returns once its work ran"
           test_borrowed_host;
+        test "a bigarray a device borrowed lives until its work ran"
+          test_borrowed_bigarray;
         test "the host keeps a buffer's bytes when a view outlives it"
           test_host_keeps_size;
       ];

@@ -694,15 +694,33 @@ let alloc_entry d kind n =
 
 let alloc d kind n = of_entry d (alloc_entry d kind n)
 
+(* A round of the host's reclaim: its kept buffers, every other device's drain,
+   and from the second round a collection. *)
+let reclaim_host round =
+  heap_drop ();
+  drain_others Dev.host;
+  if round >= 2 then Gc.full_major ()
+
 let rec heap_reserved n round =
   if heap_reserve n Dev.host.budget then ()
   else if round < rounds then begin
-    heap_drop ();
-    drain_others Dev.host;
-    if round >= 2 then Gc.full_major ();
+    reclaim_host round;
     heap_reserved n (round + 1)
   end
   else raise (Dev.Out_of_memory (Dev.host, n))
+
+(* [n] reserved bytes of the heap. A refusal of the C library runs the host's
+   reclaim, and after its rounds gives the reservation back and raises the
+   host's [Out_of_memory]. *)
+let rec host_bytes n round =
+  match heap_bytes n with
+  | ba -> ba
+  | exception Stdlib.Out_of_memory when round < rounds ->
+      reclaim_host round;
+      host_bytes n (round + 1)
+  | exception Stdlib.Out_of_memory ->
+      heap_release n;
+      raise (Dev.Out_of_memory (Dev.host, n))
 
 (* What every host buffer of no bytes keeps: nothing to free. *)
 let empty = Bigarray.Array1.create Bigarray.char Bigarray.c_layout 0
@@ -716,7 +734,7 @@ let host_memory n =
       Dev.host 0 no_entry
   else begin
     heap_reserved n 1;
-    let ba = heap_bytes n in
+    let ba = host_bytes n 1 in
     let addr = ba_address ba in
     own
       ~keep:(Heap (ba, heap_token n))
