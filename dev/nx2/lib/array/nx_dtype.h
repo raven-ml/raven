@@ -189,26 +189,23 @@ static inline float nx_f16_to_float(uint16_t c) {
 
 /* The magnitude code of the binary32 [f], not NaN, rounded to nearest, ties
    to even; a code past the format's largest finite one means [f] overflows,
-   as an infinity does. */
+   as an infinity does. It has no branch: in a loop over values, a branch on
+   the rounding mispredicts half the time. */
 static inline uint32_t nx_mini_round(float f, int m, int bias) {
   uint32_t i = nx_float_bits(f);
   int exp = (int)((i >> 23) & 0xFF) - 127;
-  uint32_t sig = i & 0x7FFFFF;
-  uint32_t base = 0;
-  int shift = 23 - m;
-  if (exp >= 1 - bias) {
-    base = (uint32_t)(exp + bias) << m;
-  } else {
-    /* Subnormal or zero: denormalise to the least normal's scale, keeping
-       every shifted-out bit for the rounding. */
-    sig |= 0x800000;
-    shift += 1 - bias - exp;
-    if (shift > 24) return 0; /* below half the least subnormal */
-  }
+  /* Below the least normal exponent a value is denormalised to its scale,
+     keeping every shifted-out bit for the rounding; a shift of 25 leaves
+     less than half the least subnormal, which rounds to 0. */
+  int below = 1 - bias - exp;
+  uint32_t sig = (i & 0x7FFFFF) | (below > 0 ? 0x800000u : 0);
+  int shift = 23 - m + (below > 0 ? below : 0);
+  shift = shift < 25 ? shift : 25;
+  uint32_t base = below > 0 ? 0 : (uint32_t)(exp + bias) << m;
   uint32_t q = sig >> shift;
   uint32_t rem = sig & ((1u << shift) - 1);
   uint32_t tie = 1u << (shift - 1);
-  if (rem > tie || (rem == tie && (q & 1))) q++;
+  q += (rem > tie) | ((rem == tie) & (q & 1));
   /* A carry runs into the exponent, and a subnormal that rounds up to 2^m is
      the least normal: the codes line up. */
   return base + q;
@@ -240,9 +237,8 @@ static inline uint32_t nx_mini_saturate(float f, int m, int bias,
 /* e4m3fn: no infinity; S.1111.111 is NaN; largest finite 448. */
 
 static inline uint8_t nx_float_to_e4m3fn(float f) {
-  uint8_t sign = nx_signbit(f) ? 0x80 : 0;
-  if (nx_isnan(f)) return sign | 0x7F;
-  return sign | (uint8_t)nx_mini_saturate(f, 3, 7, 0x7E);
+  uint32_t q = nx_mini_saturate(f, 3, 7, 0x7E);
+  return (uint8_t)((nx_signbit(f) ? 0x80 : 0) | (nx_isnan(f) ? 0x7F : q));
 }
 
 static inline float nx_e4m3fn_to_float(uint8_t c) {
@@ -253,9 +249,8 @@ static inline float nx_e4m3fn_to_float(uint8_t c) {
 /* e5m2: IEEE-like, with infinities; largest finite 57344. */
 
 static inline uint8_t nx_float_to_e5m2(float f) {
-  uint8_t sign = nx_signbit(f) ? 0x80 : 0;
-  if (nx_isnan(f)) return sign | 0x7F;
-  return sign | (uint8_t)nx_mini_saturate(f, 2, 15, 0x7B);
+  uint32_t q = nx_mini_saturate(f, 2, 15, 0x7B);
+  return (uint8_t)((nx_signbit(f) ? 0x80 : 0) | (nx_isnan(f) ? 0x7F : q));
 }
 
 static inline float nx_e5m2_to_float(uint8_t c) {
@@ -268,8 +263,8 @@ static inline float nx_e5m2_to_float(uint8_t c) {
    code is the low four bits of its byte. */
 
 static inline uint8_t nx_float_to_e2m1fn(float f) {
-  if (nx_isnan(f)) return 0;
-  return (nx_signbit(f) ? 0x8 : 0) | (uint8_t)nx_mini_saturate(f, 1, 1, 0x7);
+  uint32_t q = nx_mini_saturate(f, 1, 1, 0x7);
+  return (uint8_t)(nx_isnan(f) ? 0 : (nx_signbit(f) ? 0x8 : 0) | q);
 }
 
 static inline float nx_e2m1fn_to_float(uint8_t c) {
