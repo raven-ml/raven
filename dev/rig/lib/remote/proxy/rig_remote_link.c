@@ -248,16 +248,20 @@ static void close_if_idle(struct rig_remote_link *l) {
 
 /* Sends an abort with [why], a string as wire.mli lays it out, if the
    stream takes it at once. */
-static void try_abort(struct rig_remote_link *l, const struct rig_remote_why *why) {
-#ifdef _WIN32
-  (void)l;
-  (void)why;
-#else
+static void try_abort(struct rig_remote_link *l,
+                      const struct rig_remote_why *why) {
   unsigned char buf[HEADER + 4 + MAX_WHY];
   put_header(buf, 4 + why->n, K_ABORT);
   for (int i = 0; i < 4; i++)
     buf[HEADER + i] = (unsigned char)(why->n >> (8 * i));
   memcpy(buf + HEADER + 4, why->s, why->n);
+#ifdef _WIN32
+  /* Winsock has no per-call MSG_DONTWAIT: the socket turns non-blocking for
+     good, as nothing sends on it after the abort. */
+  u_long on = 1;
+  (void)ioctlsocket(l->fd, FIONBIO, &on);
+  (void)send(l->fd, (const char *)buf, (int)(HEADER + 4 + why->n), 0);
+#else
   (void)send(l->fd, buf, HEADER + 4 + why->n,
              MSG_DONTWAIT | RIG_REMOTE_NOSIGNAL);
 #endif

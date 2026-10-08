@@ -153,10 +153,11 @@ static int proxy_submit(void *self, uint64_t v, const struct rig_wait *waits,
   for (int i = 0; i < nparts; i++) {
     const struct rig_part *p = &parts[i];
     if (is_words(p)) {
+      /* Little-endian, as wire.mli lays words out, whatever this host's
+         order. */
       *b++ = 0;
       b = put_u32(b, (uint32_t)p->n);
-      memcpy(b, p->words, 4 * p->n);
-      b += 4 * p->n;
+      for (size_t w = 0; w < p->n; w++) b = put_u32(b, p->words[w]);
       continue;
     }
     *b++ = 1;
