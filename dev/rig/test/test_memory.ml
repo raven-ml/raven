@@ -109,6 +109,29 @@ let test_over_budget_cache () =
   raises_match (out_of_memory d (4 * kib)) (fun () -> B.create d (4 * kib));
   ignore (Sys.opaque_identity live)
 
+(* Memory queued work reads returns to the driver over the budget only once
+   that work ran: an over-budget return skips the cache, never the wait. *)
+let test_over_budget_queued () =
+  let d, p = P.open_ "memory:over-budget-queued" in
+  let reads = Sub.make ~reads:1 ~writes:0 d [||] in
+  let[@inline never] queued () =
+    let b = B.create d 64 in
+    ignore (submit reads ~reads:[| b |]);
+    B.address b
+  in
+  let at = queued () in
+  Rig.set_budget d 0;
+  let drain () =
+    Gc.full_major ();
+    Gc.full_major ();
+    ignore (B.create d 0)
+  in
+  drain ();
+  equal ~msg:"before the read ran" bool false (freed p at);
+  ignore (P.run p);
+  drain ();
+  equal ~msg:"once it ran" bool true (freed p at)
+
 let test_free_cache () =
   let d, p = P.open_ "memory:free-cache" in
   let at = dropped d (4 * kib) in
@@ -580,6 +603,8 @@ let tests =
           test_refused;
         test "memory collected over the budget is not reused past it"
           test_over_budget_cache;
+        test "memory queued work reads is freed over the budget once it ran"
+          test_over_budget_queued;
         test "an allocation the driver refuses collects unreachable buffers"
           test_collects;
         test "set_budget returns cached memory, never live memory"

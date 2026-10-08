@@ -476,7 +476,8 @@ let uncached (e : entry) = e.held || e.memory = Host_kept || is_io_memory e
 
 (* Whether [d] holds more than its budget in the memory that [e]'s counts in:
    [e] then returns to the driver, so a later allocation the budget refuses
-   cannot reuse it. *)
+   cannot reuse it. It skips the cache, never the wait: the driver gets [e]
+   once every point of it is reached, [d]'s own included. *)
 let over_budget d (e : entry) = owns d e.memory && d.used > d.budget
 
 (* Routes a record [d]'s release list gave. *)
@@ -505,9 +506,9 @@ type fate = Stays | Cached | Freed
 let fate d ~lost ~free_lost (e : entry) =
   if viewed e then Stays
   else if lost then if free_lost && reached e.stamps then Freed else Stays
-  else if uncached e then if reached e.stamps then Freed else Stays
-  else if reached ~except:d.index e.stamps then
-    if over_budget d e then Freed else Cached
+  else if uncached e || over_budget d e then
+    if reached e.stamps then Freed else Stays
+  else if reached ~except:d.index e.stamps then Cached
   else Stays
 
 (* Judges each retiring entry of [l] with no lock held, puts back those that
