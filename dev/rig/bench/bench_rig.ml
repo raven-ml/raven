@@ -181,6 +181,12 @@ let replay_rows =
 let kib = 1024
 let mib = 1024 * kib
 
+(* A copy of 64 MiB times at one of three levels 5% apart on an i9-9900K, set by
+   where its two buffers lie physically, apart for each row of a process: the
+   memcpy floor, which runs no rig code, shows them too. The budget admits all
+   three; the 4 KiB rows time the same paths at the default 5%. *)
+let copy_64M = [ Thumper.Budget.no_slower_than 0.15 ]
+
 let memory () =
   incr opened;
   match Rig.memory_device (strf "memory:%d" !opened) with
@@ -223,8 +229,9 @@ let buffer_rows =
       row "blit-from-string-4K"
         (fun () -> (String.make (4 * kib) 's', host (4 * kib)))
         (fun (s, b) -> B.blit_from_string s 0 b 0 (4 * kib));
-      row "blit-to-bytes-64M"
-        (fun () -> (host (64 * mib), Bytes.create (64 * mib)))
+      Thumper.bench_with_setup ~budgets:copy_64M
+        ~setup:(fun () -> (host (64 * mib), Bytes.create (64 * mib)))
+        "blit-to-bytes-64M"
         (fun (b, s) -> B.blit_to_bytes b 0 s 0 (64 * mib));
     ]
 
@@ -250,7 +257,9 @@ let copy_rows =
   Thumper.group "copy"
     [
       row "host-4K" (pair Rig.host (4 * kib)) copy;
-      row "host-64M" (pair Rig.host (64 * mib)) copy;
+      Thumper.bench_with_setup ~budgets:copy_64M
+        ~setup:(pair Rig.host (64 * mib))
+        "host-64M" copy;
       row "memory-4K" (fun () -> pair (memory ()) (4 * kib) ()) copy;
       row "queue-64K"
         (fun () ->
@@ -330,7 +339,9 @@ let memory_floor_rows =
         ignore (Atomic.compare_and_set a 0 1);
         ignore (Atomic.compare_and_set a 1 0));
     row "memcpy-4K" (chars2 (4 * kib)) blit;
-    row "memcpy-64M" (chars2 (64 * mib)) blit;
+    Thumper.bench_with_setup ~budgets:copy_64M
+      ~setup:(chars2 (64 * mib))
+      "memcpy-64M" blit;
     Thumper.bench "bigarray-dropped-1000" (fun () ->
         for _ = 1 to dropped do
           ignore (chars (4 * kib))
