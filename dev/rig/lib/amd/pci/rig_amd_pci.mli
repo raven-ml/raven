@@ -164,12 +164,13 @@ val attach : int -> (unit, string) result
 val reset : ?machine:Rig_pci.Machine.t -> int -> (unit, string) result
 (** [reset ~machine i] stops whatever runs on GPU [i] of [machine] (defaults to
     {!Rig_pci.Machine.this}) and resets it with the GPU's whole reset (mode 1),
-    which clears what any driver left. Its engines are stopped and its clocks
-    lowered first, and its bus mastering turned off. A GPU no firmware runs on
-    is left as it is, but for its interrupt rings, which it turns off. A GPU of
-    several joined by a fabric (XGMI) is only stopped, since such GPUs reset
-    together, as their kernel driver does when it takes them back; it then opens
-    only after that. A virtual function gives back its access instead, and its
+    which clears what any driver left, whatever ran on it. Its bus mastering is
+    turned off, and running engines are stopped and its clocks lowered first. A
+    GPU whose power manager does not answer cannot be reset: its interrupt rings
+    are turned off, and it is an [Error] if its firmware runs. A GPU of several
+    joined by a fabric (XGMI) is only stopped, since such GPUs reset together,
+    as their kernel driver does when it takes them back; it then opens only
+    after that. A virtual function gives back its access instead, and its
     physical function resets it. Afterwards the GPU opens with a full boot.
 
     The result is [Error msg] if [i] is no GPU, if this process holds it, if its
