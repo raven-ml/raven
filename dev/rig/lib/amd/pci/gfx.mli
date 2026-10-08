@@ -61,8 +61,9 @@ val start : t -> Rig_pci.Memory.t -> Images.t -> partial:bool -> unit
     the GC's firmware ({!wait_autoload}), the RS64 ones from the start addresses
     of [images]: a full boot configures them and their doorbell ranges, and a
     virtual function its KIQ, in system memory of [m]; a partial boot dequeues
-    the queues the last boot left and resets the engines. The GC's hub is
-    started before ({!Gmc.start_hub}). *)
+    the queues the last boot left and resets the engines. Either enables the
+    interrupt a release of the compute queue raises. The GC's hub is started
+    before ({!Gmc.start_hub}). *)
 
 val queue :
   t ->

@@ -267,6 +267,8 @@
 #define regCP_MEC_DOORBELL_RANGE_LOWER_BASE_IDX                                                         0
 #define regCP_MEC_DOORBELL_RANGE_UPPER                                                                  0x105d
 #define regCP_MEC_DOORBELL_RANGE_UPPER_BASE_IDX                                                         0
+#define regCP_ME1_PIPE0_INT_CNTL                                                                        0x1085
+#define regCP_ME1_PIPE0_INT_CNTL_BASE_IDX                                                               0
 #define regCP_PFP_PRGRM_CNTR_START                                                                      0x10a4
 #define regCP_PFP_PRGRM_CNTR_START_BASE_IDX                                                             0
 #define regCP_ME_PRGRM_CNTR_START                                                                       0x10a5

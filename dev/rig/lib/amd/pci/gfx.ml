@@ -359,6 +359,14 @@ let wait_autoload g =
         Regs.read r "regCP_STAT" = 0
         && Regs.field r "regRLC_RLCS_BOOTLOAD_STATUS" "bootload_complete" = 1)
 
+(* The end-of-pipe interrupt of MEC 1's pipe 0, which a release of its queue
+   raises: without it a waiter on the interrupt ring sleeps its whole bound
+   (gfx_v12_0_set_compute_eop_interrupt_state). *)
+let eop_interrupts g =
+  each_xcc g (fun inst ->
+      Regs.update ~inst g.r "regCP_ME1_PIPE0_INT_CNTL"
+        [ ("time_stamp_int_enable", 1); ("generic0_int_enable", 1) ])
+
 let start g m images ~partial =
   g.starts <- images.Images.starts;
   let r = g.r in
@@ -419,7 +427,8 @@ let start g m images ~partial =
     end;
     enable_mec g;
     if Regs.vf r then start_kiq g m
-  end
+  end;
+  eop_interrupts g
 
 (* Clock gating *)
 
