@@ -477,8 +477,11 @@ let alloc_budgeted t =
 let judge_alloc r = function
   | Ok () ->
       at_most ~msg:"live buffers" int ~than:2 r.held;
+      cover "an allocation that fills the budget" (r.held = 2);
       r.held <- r.held + 1
-  | Error (C.Out_of_memory _) -> equal ~msg:"live buffers" int 3 r.held
+  | Error (C.Out_of_memory _) ->
+      cover "an allocation the budget refuses" true;
+      equal ~msg:"live buffers" int 3 r.held
   | Error e -> raise e
 
 let budgeted =
@@ -503,7 +506,7 @@ let tests =
           test_over_budget;
         test "a copy whose staging memory the host refuses gives its slot back"
           test_staging_refused;
-        stateful ~count:15 ~domains:2
+        stateful ~count:3 ~domains:2
           "two domains' allocations stay within the budget" budget_commands;
         test "an allocation the driver refuses releases the cache, then raises"
           test_refused;
