@@ -589,6 +589,20 @@ let test_prefetch_unopened () =
     (Some (String.sub s first length))
     (borrowed (Lazy.force memory_device) (B.view file ~first ~length))
 
+(* A borrow whose file cannot be reopened for the moment raises, and borrowing
+   comes back once the path names the file again. *)
+let test_borrow_retried () =
+  let s = pattern 8 16384 in
+  let path = make_file s in
+  let aside = path ^ "-aside" in
+  removing [ path; aside ] @@ fun () ->
+  let file = of_file path in
+  use_all_others ();
+  Sys.rename path aside;
+  raises_match (Exn.sys_error ~substring:path) (fun () -> B.borrow host file);
+  Sys.rename aside path;
+  equal (option octets) (Some s) (borrowed host file)
+
 let test_empty_borrows () =
   let path = new_path () and empty = make_file "" in
   removing [ path; empty ] @@ fun () ->
@@ -622,6 +636,10 @@ let borrows =
         "a device borrows a file whose path names nothing any more, and its \
          bytes are the file's"
         test_prefetch_unopened;
+      test
+        "a borrow whose file cannot be reopened for the moment raises \
+         Sys_error naming it, and a later borrow maps it"
+        test_borrow_retried;
       test "a file of no bytes borrows as no bytes" test_empty_borrows;
     ]
 
@@ -1076,30 +1094,29 @@ let model_commands =
         let at, len = clamp (B.length f.buf) r in
         sys_result f (fun () -> read (B.view f.buf ~first:at ~length:len)));
     command "borrow"
-      (file ^-> ranges @-> judges (option octets))
+      (file ^-> ranges @-> judges (result (option octets) string))
       (fun m r outcome ->
         let at, len = clamp (Bytes.length m.bytes) r in
-        match outcome with
-        | Ok (Some s) -> equal octets (Bytes.sub_string m.pages at len) s
-        | Ok None when m.replaced -> ()
-        | Ok None -> fail "the host's borrow of a file is None"
-        | Error e -> raise e)
+        judged m outcome (function
+          | Some s -> equal octets (Bytes.sub_string m.pages at len) s
+          | None -> fail "the host's borrow of a file is None"))
       (fun f r ->
         let at, len = clamp (B.length f.buf) r in
-        borrowed host (B.view f.buf ~first:at ~length:len));
+        sys_result f (fun () ->
+            borrowed host (B.view f.buf ~first:at ~length:len)));
     command "write through a borrow"
       ~pre:(fun m _ _ -> Bytes.length m.bytes > 0)
-      (file ^-> small_extent @-> letters @-> judges (option unit))
+      (file ^-> small_extent @-> letters
+      @-> judges (result (option unit) string))
       (fun m a c outcome ->
-        match outcome with
-        | Ok (Some ()) -> Bytes.set m.pages (min a (Bytes.length m.pages - 1)) c
-        | Ok None when m.replaced -> ()
-        | Ok None -> fail "the host's borrow of a file is None"
-        | Error e -> raise e)
+        judged m outcome (function
+          | Some () -> Bytes.set m.pages (min a (Bytes.length m.pages - 1)) c
+          | None -> fail "the host's borrow of a file is None"))
       (fun f a c ->
-        Option.map
-          (fun p -> poke p (min a (B.length f.buf - 1)) c)
-          (B.borrow host f.buf));
+        sys_result f (fun () ->
+            Option.map
+              (fun p -> poke p (min a (B.length f.buf - 1)) c)
+              (B.borrow host f.buf)));
     command "read its path"
       ~pre:(fun m -> not m.replaced)
       (file ^-> returns octets)

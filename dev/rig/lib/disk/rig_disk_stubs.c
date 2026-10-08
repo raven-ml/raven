@@ -9,9 +9,9 @@
 
    A descriptor crosses to OCaml as an int: a file descriptor on POSIX, a
    HANDLE on Windows. A failure crosses as a code: 0 for none, the system's
-   error (errno, or GetLastError on Windows) positive, or one of NOT_REGULAR
-   and TOO_MANY; a transfer returns the error negated. The OCaml side names
-   the file. */
+   error (errno, or GetLastError on Windows) positive, or one of NOT_REGULAR,
+   TOO_MANY and UNMAPPABLE; a transfer returns the error negated. The OCaml
+   side names the file. */
 
 #define _GNU_SOURCE
 
@@ -53,6 +53,9 @@
 
 /* Too many open files, in the process or the system. */
 #define TOO_MANY (-2)
+
+/* A file its file system can never map. */
+#define UNMAPPABLE (-3)
 
 /* How a file is opened: for reading, for reading and writing, or created for
    reading and writing where its path names nothing. */
@@ -612,6 +615,19 @@ static struct custom_operations mapping_ops = {
     custom_serialize_default,   custom_deserialize_default,
     custom_compare_ext_default, custom_fixed_length_default};
 
+/* The failures that say the file system can never map the file, whatever
+   the moment: no mapping for its kind of file, or a file too large for the
+   address space. Others, such as a lack of memory or of mappings, may pass. */
+static int unmappable(int code) {
+#ifdef _WIN32
+  return code == ERROR_FILE_INVALID || code == ERROR_INVALID_PARAMETER ||
+         code == ERROR_NOT_SUPPORTED;
+#else
+  return code == ENODEV || code == EINVAL || code == EOVERFLOW ||
+         code == ENOTSUP;
+#endif
+}
+
 static void *map_file(intnat h, intnat n, int shared, int *code) {
 #ifdef _WIN32
   HANDLE m = CreateFileMappingW((HANDLE)h, NULL,
@@ -635,8 +651,9 @@ static void *map_file(intnat h, intnat n, int shared, int *code) {
 #endif
 }
 
-/* [map h n shared] is [(code, mapping)], [mapping] empty unless [code] is 0.
-   Releases the runtime. */
+/* [map h n shared] is [(0, Some mapping)], [(UNMAPPABLE, None)] if the file
+   system can never map the file, or [(code, None)] for a failure that may
+   pass. Releases the runtime. */
 value caml_rig_disk_map(value v_handle, value v_n, value v_shared) {
   CAMLparam3(v_handle, v_n, v_shared);
   CAMLlocal2(r, ba);
@@ -645,21 +662,21 @@ value caml_rig_disk_map(value v_handle, value v_n, value v_shared) {
   caml_release_runtime_system();
   void *addr = map_file(h, n, shared, &code);
   caml_acquire_runtime_system();
-  if (code == 0) {
-    ba = caml_alloc_custom(&mapping_ops, SIZEOF_BA_ARRAY + sizeof(intnat), 0,
-                           1);
-    struct caml_ba_array *b = Caml_ba_array_val(ba);
-    b->data = addr;
-    b->num_dims = 1;
-    b->flags = CAML_BA_CHAR | CAML_BA_C_LAYOUT | CAML_BA_MAPPED_FILE;
-    b->proxy = NULL;
-    b->dim[0] = n;
-  } else {
-    ba = caml_ba_alloc_dims(CAML_BA_CHAR | CAML_BA_C_LAYOUT, 1, NULL, 0);
-  }
   r = caml_alloc_tuple(2);
-  Store_field(r, 0, Val_int(code));
-  Store_field(r, 1, ba);
+  if (code != 0) {
+    Store_field(r, 0, Val_int(unmappable(code) ? UNMAPPABLE : code));
+    Store_field(r, 1, Val_none);
+    CAMLreturn(r);
+  }
+  ba = caml_alloc_custom(&mapping_ops, SIZEOF_BA_ARRAY + sizeof(intnat), 0, 1);
+  struct caml_ba_array *b = Caml_ba_array_val(ba);
+  b->data = addr;
+  b->num_dims = 1;
+  b->flags = CAML_BA_CHAR | CAML_BA_C_LAYOUT | CAML_BA_MAPPED_FILE;
+  b->proxy = NULL;
+  b->dim[0] = n;
+  Store_field(r, 0, Val_int(0));
+  Store_field(r, 1, caml_alloc_some(ba));
   CAMLreturn(r);
 }
 

@@ -34,13 +34,14 @@ external write :
   (int[@untagged]) ->
   (int[@untagged]) = "caml_rig_disk_write_byte" "caml_rig_disk_write"
 
-external map : int -> int -> bool -> int * pages = "caml_rig_disk_map"
+external map : int -> int -> bool -> int * pages option = "caml_rig_disk_map"
 external advise : int -> int -> int -> unit = "caml_rig_disk_advise"
 external msync : pages -> int = "caml_rig_disk_msync"
 
 (* The codes [open_path] answers besides the system's, and its modes. *)
 let not_regular = -1
 let too_many = -2
+let unmappable = -3
 let read_mode = 0
 let write_mode = 1
 let create_mode = 2
@@ -211,13 +212,15 @@ module Io = struct
 
   (* A file opened for writing maps shared, so the mapping is the file; one
      opened for reading maps copy-on-write. *)
+  (* A failure that may pass, such as a file that cannot be reopened for the
+     moment, raises; [None] says the file system can never map the file. *)
   let pages () f =
     match using f (fun fd -> map fd f.size f.writable) with
-    | 0, ba ->
-        if f.writable then f.pages <- Some ba;
-        Some ba
-    | _ -> None
-    | exception Sys_error _ -> None
+    | 0, pages ->
+        if f.writable then f.pages <- pages;
+        pages
+    | code, _ when code = unmappable -> None
+    | code, _ -> sys_error f (error code)
 
   (* A file that cannot be reopened gets no advice; its pages, mapped already,
      stay valid. *)

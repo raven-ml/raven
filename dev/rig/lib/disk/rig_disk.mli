@@ -21,9 +21,11 @@
     {b Borrows.} A borrow of a disk buffer by the host, or by a device that
     addresses the host's memory, is the file's pages: the disk maps the whole
     file into host memory at the first such borrow of its memory, and keeps the
-    mapping while the memory lives. If the disk cannot map the file then,
-    because the system refuses or the file cannot be reopened (Descriptors),
-    that borrow and every later one of the same memory is [None].
+    mapping while the memory lives. A borrow raises [Sys_error] naming the file
+    if the disk cannot map it for the moment, such as when the file cannot be
+    reopened (Descriptors), and a later borrow tries again. It is [None], for
+    that borrow and every later one of the same memory, if the file system can
+    never map the file.
 
     The system reads a page when the host first touches it; on Linux and macOS,
     for a device other than the host, the disk asks the system to read the
