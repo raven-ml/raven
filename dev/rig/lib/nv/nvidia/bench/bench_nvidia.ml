@@ -15,6 +15,7 @@ let open_stop () =
   | Error why -> failwith why
 
 let () =
+  Rig_nv_nvidia_support.hold_gpu ();
   if Rig_nv_nvidia.count () > 0 then
     exit
     @@ Thumper.run "rig_nv_nvidia"

@@ -1,6 +1,6 @@
 (executable
  (name bench_nvidia)
- (libraries rig_nv rig_nv_nvidia thumper))
+ (libraries rig_nv rig_nv_nvidia rig_nv_nvidia_support thumper))
 
 (rule
  (alias bench)

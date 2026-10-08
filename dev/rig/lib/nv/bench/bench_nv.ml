@@ -281,6 +281,7 @@ let image_rows =
     ]
 
 let () =
+  S.hold_gpu ();
   if Rig_nv_nvidia.count () > 0 then
     exit
     @@ Thumper.run "rig_nv"
