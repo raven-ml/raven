@@ -12,9 +12,15 @@ val gpu_lock : string
     file: ["DEVICE_CUDA_TEST_GPU_LOCK"]. *)
 
 val gpu : unit -> Device_cuda.t
-(** [gpu ()] is GPU [0], opened. It skips the test if CUDA sees no GPU, if
-    {!gpu_lock} names no file, or if another process holds the lock, which this
-    process keeps until it exits once it took it. *)
+(** [gpu ()] is GPU [0], opened, after stopping the device an earlier {!gpu}
+    opened if no {!stop} stopped it, as a failed test leaves it. It skips the
+    test if CUDA sees no GPU, if {!gpu_lock} names no file, or if another
+    process holds the lock, which this process keeps until it exits once it took
+    it. *)
+
+val stop : Device_cuda.t -> [ `Stopped | `Unknown ]
+(** [stop g] is [Device_cuda.stop g]. Tests stop the devices {!gpu} opened
+    through it. *)
 
 val bind : Device_cuda.t -> unit
 (** [bind g] makes the CUDA functions of [g]'s capability those {!attribute},
@@ -23,7 +29,7 @@ val bind : Device_cuda.t -> unit
 
 val with_gpu : (Device_cuda.t -> 'a) -> 'a
 (** [with_gpu f] is [f g], [g] the {!gpu} opened for [f] and stopped after it,
-    whether it returns or raises. *)
+    whether it returns or raises, unless [f] stopped it. *)
 
 val attribute : int -> int
 (** [attribute a] is the value of CUDA's device attribute [a] of CUDA's device

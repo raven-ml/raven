@@ -50,17 +50,30 @@ let bind g =
          "cuMemcpyHtoD_v2";
        |])
 
+(* The device gpu opened, until a test stops it: one a failed test left open is
+   stopped by the next gpu. *)
+let opened = ref None
+
+let stop g =
+  (match !opened with Some o when o == g -> opened := None | _ -> ());
+  Device_cuda.stop g
+
 let gpu () =
   if Device_cuda.count () = 0 then skip ~reason:"CUDA sees no GPU" ();
   if not (take_lock ()) then
     skip ~reason:"another process holds the GPU lock" ();
+  Option.iter (fun g -> ignore (stop g)) !opened;
   let g = Result.get_ok (Device_cuda.open_ 0) in
+  opened := Some g;
   bind g;
   g
 
 let with_gpu f =
   let g = gpu () in
-  Fun.protect ~finally:(fun () -> ignore (Device_cuda.stop g)) (fun () -> f g)
+  let stop_left () =
+    match !opened with Some o when o == g -> ignore (stop g) | _ -> ()
+  in
+  Fun.protect ~finally:stop_left (fun () -> f g)
 
 (* Host memory *)
 

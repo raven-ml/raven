@@ -504,6 +504,12 @@ value caml_device_cuda_unload(value v_self, value v_module) {
   return Val_int(s);
 }
 
+/* A stream's error, or success while its work runs. */
+static CUresult query(CUstream q) {
+  CUresult s = p_cuStreamQuery(q);
+  return s == CUDA_ERROR_NOT_READY ? CUDA_SUCCESS : s;
+}
+
 /* Submissions */
 
 /* One submission's progress: the streams it entered, whether its foreign
@@ -637,14 +643,14 @@ static void fail(struct device *d, const struct submission *s, CUresult e) {
              s->step != NULL ? s->step : "ordering the streams", cause);
 }
 
-/* After a failure, releases [v] after the work [s] queued, if CUDA takes
-   every call that orders the release so: on COMPUTE:0 after COPY:0's work,
-   or on the one stream entered. Otherwise it writes nothing, and the word
-   stays below [v]. */
+/* After a failure, releases [v] after the work [s] queued, so that the word
+   still reaches every value: on COMPUTE:0 after COPY:0's work, or on the one
+   stream entered. It writes nothing if the context failed, whose work no
+   longer runs, or if CUDA refuses a call that orders the release so. */
 static void drain(struct submission *s, uint64_t v) {
   struct device *d = s->d;
   int r = s->entered[1] && !s->entered[0];
-  CUresult e = CUDA_SUCCESS;
+  CUresult e = query(d->streams[0]);
   if (s->entered[0] && s->entered[1]) {
     e = p_cuEventRecord(d->done[1], d->streams[1]);
     if (e == CUDA_SUCCESS) e = p_cuStreamWaitEvent(d->streams[0], d->done[1], 0);
@@ -676,17 +682,15 @@ int device_cuda_submit(void *self, uint64_t v, const struct nx_wait *waits,
   (void)handles;
   (void)nhandles;
   d->last = v;
-  if (!d->failed) {
-    CUresult e = push(d->context);
-    if (e == CUDA_SUCCESS) {
-      e = run(&s, v, parts, nparts);
-      if (e != CUDA_SUCCESS) drain(&s, v);
-      e = pop(e);
-    }
-    if (e != CUDA_SUCCESS) {
-      fail(d, &s, e);
-      d->failed = 1;
-    }
+  CUresult e = push(d->context);
+  if (e == CUDA_SUCCESS) {
+    if (!d->failed) e = run(&s, v, parts, nparts);
+    if (d->failed || e != CUDA_SUCCESS) drain(&s, v);
+    e = pop(e);
+  }
+  if (e != CUDA_SUCCESS && !d->failed) {
+    fail(d, &s, e);
+    d->failed = 1;
   }
   if (!d->failed) return NX_OK;
   *failure = d->failure;
@@ -777,12 +781,6 @@ value caml_device_cuda_last(value v_self) {
 
 value caml_device_cuda_word(value v_self) {
   return Val_long((intnat)Device_val(v_self)->word);
-}
-
-/* A stream's error, or success while its work runs. */
-static CUresult query(CUstream q) {
-  CUresult s = p_cuStreamQuery(q);
-  return s == CUDA_ERROR_NOT_READY ? CUDA_SUCCESS : s;
 }
 
 /* The error that ended the context's work, which CUDA answers to every call

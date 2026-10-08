@@ -54,9 +54,9 @@
     that runs long is no fault: only CUDA's report is ({!sleep}). After a fault
     the context's error lasts for the process, and the GPU no longer opens.
 
-    A function that calls CUDA answers CUDA's refusal of its arguments as its
-    result ([None], [Error]) and raises {!Fault} with CUDA's error for any other
-    failure, such as the error a fault left in the context. {!signaled}, {!free}
+    A function that calls CUDA answers a failure as its result ([None], [Error])
+    while [g]'s context is sound, and raises {!Fault} with the context's error
+    once a fault left one there. {!signaled}, {!free}, {!unmap} after {!stop},
     and {!stop} never raise it.
 
     {b Domains.} Every value may be called from any domain, at the same time as
@@ -164,7 +164,8 @@ val alloc : t -> [ `Device | `Pinned | `Mapped ] -> int -> region option
       fast as other memory. CUDA maps no GPU memory for the host, so [`Mapped]
       is host memory too.
 
-    It is [None] if CUDA has not the memory.
+    It is [None] if CUDA refuses the allocation, for lack of memory or
+    otherwise.
 
     Raises [Invalid_argument] if [n < 1]. *)
 
@@ -277,7 +278,10 @@ val part :
     [`Words _], which names ring words a CUDA device has not, if [units] or
     [bytes] is not [0], if a copy's range lies outside its region, if a region
     is of another device or was freed or unmapped, or if an index of [after] is
-    negative. *)
+    negative.
+
+    A part names its regions until it is submitted: the caller frees or unmaps
+    none of them before. *)
 
 val room : t -> part array -> [ `Fits | `Later | `Never ]
 (** [room g ps] is [`Fits]: CUDA's streams take any amount of work, and a call
@@ -306,11 +310,10 @@ val submit :
     The result is [`Ok] once every part is enqueued, or [`Failed why] with the
     step and the error of the first CUDA call that failed, a fill's included, as
     ["running a fill: CUDA_ERROR_ILLEGAL_ADDRESS: an illegal memory access was
-     encountered"]. Enqueued work may have run. The word still reaches [v] once
-    the work [submit] enqueued for [v] completes, on either stream, if CUDA took
-    the calls that order the write of [v] after it; otherwise [v] is never
-    written. Every later [submit] answers the same [`Failed] and writes nothing:
-    the context may hold an error for the process.
+     encountered"]. Enqueued work may have run. Unless the context failed, [v]
+    is still written into the timeline word once the work enqueued for it
+    completed. Every later [submit] answers the same [`Failed]: the context may
+    hold an error for the process.
 
     [submit] may block while a stream is full, until the device's earlier work
     completes, and lets other domains run meanwhile.
@@ -365,6 +368,8 @@ val stop : t -> [ `Stopped | `Unknown ]
     idle, or an error ended the context's work. The timeline word then holds at
     least the last value {!submit} was given, so work of other devices that
     waits on it runs on, and [g]'s streams are destroyed. It is [`Unknown] if
-    work still runs; the GPU then opens again once that work ends. After [stop],
-    only {!free}, {!unmap} and the functions of {!capability} may be called on
-    [g]; none raises {!Fault}. *)
+    work still runs. The timeline word then reaches the last value {!submit} was
+    given once that work ends, unless it waits on a word of another device that
+    never reaches its value; the GPU opens again once that work ends. It never
+    waits. After [stop], only {!free}, {!unmap} and the functions of
+    {!capability} may be called on [g]; none raises {!Fault}. *)

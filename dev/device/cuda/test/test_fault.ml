@@ -54,7 +54,7 @@ let faults () =
       | _ -> false)
     (fun () -> fault g (Sys.time ()));
   equal int ~msg:"the word after the fault" 0 (S.get64 (host (C.word g)));
-  (match C.stop g with
+  (match S.stop g with
   | `Stopped -> ()
   | `Unknown -> fail "stop is Unknown after a fault");
   let w = C.signaled g in

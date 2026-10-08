@@ -23,6 +23,8 @@ let stop_answer =
       | `Unknown -> Format.pp_print_string ppf "`Unknown")
     ~equal:( = )
 
+let watchdog = 17 (* CU_DEVICE_ATTRIBUTE_KERNEL_EXEC_TIMEOUT *)
+let second = 1_000_000_000
 let address r = Option.get (C.address r)
 let host r = Option.get (C.host r)
 let word g = host (C.word g)
@@ -42,9 +44,9 @@ let gpu_once () =
   let g = S.gpu () in
   let e = require_error (C.open_ 0) in
   contains ~sub:"open" e;
-  equal stop_answer `Stopped (C.stop g);
+  equal stop_answer `Stopped (S.stop g);
   let g' = require_ok (C.open_ 0) in
-  equal stop_answer `Stopped (C.stop g')
+  equal stop_answer `Stopped (S.stop g')
 
 let opening =
   group ~timeout:60. "opening"
@@ -182,7 +184,7 @@ let fills_in_a_fresh_domain () =
   C.free g out
 
 (* A copy on COPY:0, then a fill on COMPUTE:0 that fails: the failed value is
-   still written after the copy, the next one never is. *)
+   still written after the copy, and so is the next one. *)
 let failed_fill () =
   let g = S.gpu () in
   let src = require_some (C.alloc g `Device 64) in
@@ -197,13 +199,35 @@ let failed_fill () =
   S.wait g 1;
   equal string ~msg:"copied before the word" data (S.read (host dst) 64);
   equal answer ~msg:"the next submit" (`Failed why) (submit g ~v:2 [||]);
-  still g 1 ~ms:20;
-  equal stop_answer `Stopped (C.stop g);
-  equal int ~msg:"the word holds the last value" 2 (C.signaled g)
+  S.wait g 2;
+  equal stop_answer `Stopped (S.stop g)
 
-(* A wait on a host word holds the work until the host writes it. *)
-(* A wait on a host word holds a submission's work on both queues until the
-   host writes the word: each queue copies GPU memory to a host buffer. *)
+(* A fill that fails behind a 100 ms kernel: stop finds the kernel running, and
+   the word still reaches the failed value once it ends. *)
+let failed_behind_work () =
+  let g = S.gpu () in
+  if S.attribute watchdog <> 0 then
+    skip ~reason:"a display watchdog ends long kernels" ();
+  let flag = require_some (C.alloc g `Pinned 8) in
+  S.set64 (host flag) 0;
+  Fun.protect ~finally:(fun () -> S.set64 (host flag) 1) @@ fun () ->
+  let _, kernel = S.kernels g in
+  let spin =
+    S.launch (kernel "spin") ~grid:1 ~block:1 (address flag) (second / 10)
+  in
+  let parts =
+    [|
+      S.part g ~queue:"COMPUTE:0" spin;
+      S.part g ~queue:"COMPUTE:0" (S.failing 1);
+    |]
+  in
+  let r = submit g ~v:1 parts in
+  ignore (require_match (function `Failed w -> Some w | `Ok -> None) r);
+  equal stop_answer `Unknown (S.stop g);
+  S.wait g 1
+
+(* A wait on a host word holds a submission's work on both queues until the host
+   writes the word: each queue copies GPU memory to a host buffer. *)
 let held g ~kind ~start ~wait ~below ~release =
   let w = require_some (C.alloc g `Pinned 8) in
   let src = require_some (C.alloc g `Device 64) in
@@ -292,7 +316,7 @@ let misuse () =
 let another_device () =
   let a = S.gpu () in
   let r = require_some (C.alloc a `Pinned 64) in
-  equal stop_answer `Stopped (C.stop a);
+  equal stop_answer `Stopped (S.stop a);
   S.with_gpu @@ fun b ->
   raises_match Exn.invalid_arg (fun () ->
       C.part b ~queue:"COPY:0" (`Copy ((r, 0), (r, 32), 8)));
@@ -320,6 +344,8 @@ let work =
        test "a fill runs with the context current from a fresh domain"
          fills_in_a_fresh_domain;
        test "a failed fill is Failed and its value still drains" failed_fill;
+       test "a value failed behind running work drains once it ends"
+         failed_behind_work;
        test "misuse raises" misuse;
        test "a region of another device raises" another_device;
        test "the C room refuses what part refuses" room;
@@ -357,9 +383,6 @@ let images =
 
 (* Timeline and loss *)
 
-let watchdog = 17 (* CU_DEVICE_ATTRIBUTE_KERNEL_EXEC_TIMEOUT *)
-let second = 1_000_000_000
-
 (* [spin g flag] submits, as value 1, a kernel that runs until [flag]'s first
    word is not 0, for at most 10 seconds. *)
 let spin g flag =
@@ -392,7 +415,7 @@ let stop_idle () =
   equal bool ~msg:"locked" true (S.locked p);
   equal answer `Ok (submit g ~v:1 [||]);
   S.wait g 1;
-  equal stop_answer `Stopped (C.stop g);
+  equal stop_answer `Stopped (S.stop g);
   equal int ~msg:"the word" 1 (C.signaled g);
   C.unmap g r;
   equal bool ~msg:"locked after unmap" false (S.locked p);
@@ -405,26 +428,26 @@ let stop_running () =
   let flag = require_some (C.alloc g `Pinned 8) in
   Fun.protect ~finally:(fun () -> S.set64 (host flag) 1) @@ fun () ->
   ignore (spin g flag);
-  equal stop_answer `Unknown (C.stop g);
+  equal stop_answer `Unknown (S.stop g);
   let e = require_error (C.open_ 0) in
   contains ~sub:"still runs" e;
   S.set64 (host flag) 1;
   S.wait g 1;
   let g' = require_ok (C.open_ 0) in
-  equal stop_answer `Stopped (C.stop g')
+  equal stop_answer `Stopped (S.stop g')
 
 let registry_is_the_process () =
   let p = S.pages S.page in
   let a = S.gpu () in
   let ra = require_some (C.map_host a p 256) in
-  equal stop_answer `Stopped (C.stop a);
+  equal stop_answer `Stopped (S.stop a);
   let b = S.gpu () in
   let rb = require_some (C.map_host b (Nativeint.add p 64n) 64) in
   C.unmap a ra;
   equal bool ~msg:"locked after the first unmap" true (S.locked p);
   C.unmap b rb;
   equal bool ~msg:"locked after the last unmap" false (S.locked p);
-  equal stop_answer `Stopped (C.stop b);
+  equal stop_answer `Stopped (S.stop b);
   S.free_pages p S.page
 
 let timeline =
@@ -442,9 +465,9 @@ let timeline =
 let two_gpus () =
   if C.count () < 2 then skip ~reason:"CUDA sees fewer than two GPUs" ();
   let a = S.gpu () in
-  Fun.protect ~finally:(fun () -> ignore (C.stop a)) @@ fun () ->
+  Fun.protect ~finally:(fun () -> ignore (S.stop a)) @@ fun () ->
   let b = require_ok (C.open_ 1) in
-  Fun.protect ~finally:(fun () -> ignore (C.stop b)) @@ fun () ->
+  Fun.protect ~finally:(fun () -> ignore (S.stop b)) @@ fun () ->
   let h = require_some (C.alloc b `Pinned 64) in
   let d = require_some (C.alloc b `Device 64) in
   let ph = require_some (C.map_peer a b h) in
@@ -464,7 +487,7 @@ let two =
 (* The shared device: the stateful tests' programs use one device, opened by the
    first and stopped when the run ends. *)
 
-let shared = fixture ~teardown:(fun g -> ignore (C.stop g)) S.gpu
+let shared = fixture ~teardown:(fun g -> ignore (S.stop g)) S.gpu
 
 (* map_host: the registry *)
 
