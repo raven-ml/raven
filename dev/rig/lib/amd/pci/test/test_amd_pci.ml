@@ -450,6 +450,26 @@ let security =
           equal (list int)
             [ 5; 0; 2; 0x40_0000; 2; 0; 3 ]
             (words b [ 8; 28; 32; 36; 40; 44; 48 ]));
+      test "the bootloader loads every component the kernel loads, in order"
+        (fun () ->
+          (* amdgpu_psp.c psp_hw_start: KDB, SPL, SYS_DRV, SOC_DRV, INTF_DRV,
+             DBG_DRV, RAS_DRV, IPKEYMGR_DRV, SPDM_DRV, then SOS; the types of
+             amdgpu_ucode.h and the commands of amdgpu_psp.h. *)
+          equal
+            (list (pair int int))
+            [
+              (3, 0x80000);
+              (5, 0x10000000);
+              (2, 0x10000);
+              (7, 0xb0000);
+              (8, 0xd0000);
+              (9, 0xc0000);
+              (10, 0xe0000);
+              (11, 0xf0000);
+              (12, 0x20000000);
+              (1, 0x20000);
+            ]
+            Psp.steps);
       test "the RLC's autoload and a partition carry their IDs" (fun () ->
           equal (list int) [ 0x21 ] (words Psp.autoload_rlc [ 8 ]);
           equal (list int) [ 0x27; 1 ] (words (Psp.partition ~mode:1) [ 8; 28 ]));

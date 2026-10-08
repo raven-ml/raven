@@ -140,6 +140,11 @@ let read p n = Regs.read p.r (reg p n)
 let write p n v = Regs.write ~value:v p.r (reg p n) []
 let ready = 0x8000_0000
 
+let bootloader r =
+  let mp0 = Regs.version (Regs.layout_of r) D.mp0_hwid in
+  let v = Regs.read r (strf "%s_35" (prefix_of mp0)) in
+  v <> 0xffff_ffff && v land ready <> 0
+
 let running r =
   let mp0 = Regs.version (Regs.layout_of r) D.mp0_hwid in
   Regs.read r (strf "%s_81" (prefix_of mp0)) <> 0
@@ -153,13 +158,14 @@ let boot_time_tmr p =
 
 let autoload_tmr p = not (List.mem p.mp0 [ (13, 0, 6); (13, 0, 14) ])
 
-(* Writes [data] into the message buffer, zero-padded to 16 bytes past a word,
-   and has it reach the GPU's memory. *)
+(* Writes [data] into the message buffer, the rest of the buffer zeroed as
+   amdgpu does before each component, and has it reach the GPU's memory. *)
 let message p data =
-  let n = (String.length data + 4 + 15) / 16 * 16 in
+  let n = String.length data in
   if n > Window.length p.msg then
     raise (Regs.Stuck (strf "a message of %d bytes exceeds the PSP's buffer" n));
-  Window.write p.msg 0 (data ^ String.make (n - String.length data) '\000');
+  Window.write p.msg 0 data;
+  Window.fill p.msg n (Window.length p.msg - n) '\000';
   Window.flush p.msg;
   Gmc.flush_hdp p.gmc
 
@@ -191,6 +197,7 @@ let submit p what cmd =
   in
   Window.write p.vram (p.m.ring + at) f;
   Window.flush p.vram;
+  Gmc.flush_hdp p.gmc;
   write p 67 ((wptr + (String.length f / 4)) mod (ring_bytes / 4));
   Regs.wait p.r (strf "the PSP's command %s" what) (fun () ->
       Window.get32 p.vram p.m.fence = v);
@@ -261,8 +268,8 @@ let ring_create p =
   Regs.wait p.r "the PSP's ring" (fun () -> read p 64 land 0x8000_ffff = ready);
   p.fence_value <- Window.get32 p.vram p.m.fence
 
-(* The bootloader's steps, in order: each loads one of the SOS's components,
-   when the image has it. *)
+(* The bootloader's steps, in amdgpu_psp.c's order: each loads one of the SOS's
+   components, when the image has it. *)
 let steps =
   D.
     [
@@ -273,6 +280,8 @@ let steps =
       (psp_fw_type_psp_intf_drv, psp_bl__load_intfdrv);
       (psp_fw_type_psp_dbg_drv, psp_bl__load_dbgdrv);
       (psp_fw_type_psp_ras_drv, psp_bl__load_rasdrv);
+      (psp_fw_type_psp_ipkeymgr_drv, psp_bl__load_ipkeymgrdrv);
+      (psp_fw_type_psp_spdm_drv, psp_bl__load_spdmdrv);
       (psp_fw_type_psp_sos, psp_bl__load_sosdrv);
     ]
 

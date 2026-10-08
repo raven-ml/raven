@@ -70,12 +70,21 @@ val make :
   Regs.t -> Gmc.t -> Rig_pci.Window.t -> Rig_pci.Page_table.t -> memory -> t
 (** [make r gmc vram tables m] is the processor, whose memory is [m]. *)
 
+val bootloader : Regs.t -> bool
+(** [bootloader r] is [true] iff the bootloader of the security processor of
+    [r]'s GPU is ready for a command, as after a reset. *)
+
 val running : Regs.t -> bool
 (** [running r] is [true] iff the OS of the security processor of [r]'s GPU
     runs, as its sign-of-life register says. *)
 
 val alive : t -> bool
 (** [alive p] is [running] of [p]'s GPU. *)
+
+val steps : (int * int) list
+(** [steps] is the bootloader's steps, in the order it takes them: the type of
+    the SOS component each loads ([PSP_FW_TYPE_*]) and the command that loads it
+    ([PSP_BL__LOAD_*]). The last loads the SOS itself. Pure. *)
 
 val start : t -> Images.t -> partial:bool -> unit
 (** [start p images ~partial] starts the processor and loads [images]: a full

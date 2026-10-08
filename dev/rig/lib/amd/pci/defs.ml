@@ -401,6 +401,8 @@ let psp_bl__load_socdrv = 0xb0000
 let psp_bl__load_intfdrv = 0xd0000
 let psp_bl__load_dbgdrv = 0xc0000
 let psp_bl__load_rasdrv = 0xe0000
+let psp_bl__load_ipkeymgrdrv = 0xf0000
+let psp_bl__load_spdmdrv = 0x20000000
 let psp_bl__load_sosdrv = 0x20000
 let psp_ring_type__km = 2
 let psp_fence_buffer_size = 0x1000
@@ -1641,6 +1643,8 @@ let psp_fw_type_psp_soc_drv = 7
 let psp_fw_type_psp_intf_drv = 8
 let psp_fw_type_psp_dbg_drv = 9
 let psp_fw_type_psp_ras_drv = 10
+let psp_fw_type_psp_ipkeymgr_drv = 11
+let psp_fw_type_psp_spdm_drv = 12
 
 (* The types the PSP loads the other images' pieces as. *)
 let gfx_fw_type_cp_me = 1
