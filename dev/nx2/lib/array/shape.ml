@@ -20,15 +20,17 @@ let check_rank fn r =
    product is 0 before any of them is multiplied. Each product is formed only
    once it is known to fit. *)
 let numel fn s =
-  Array.iter
-    (fun d ->
-      if d < 0 then invalid_argf "%s: extent %d of %a is negative" fn d pp s)
-    s;
-  if Array.mem 0 s then 0
+  let r = Array.length s and zero = ref false in
+  for i = 0 to r - 1 do
+    let d = Array.unsafe_get s i in
+    if d < 0 then invalid_argf "%s: extent %d of %a is negative" fn d pp s;
+    if d = 0 then zero := true
+  done;
+  if !zero then 0
   else begin
     let n = ref 1 in
-    for i = 0 to Array.length s - 1 do
-      let d = s.(i) in
+    for i = 0 to r - 1 do
+      let d = Array.unsafe_get s i in
       if !n > max_int / d then
         invalid_argf "%s: the number of elements of %a overflows" fn pp s;
       n := !n * d
