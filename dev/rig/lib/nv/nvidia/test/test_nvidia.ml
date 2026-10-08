@@ -65,6 +65,17 @@ let numbering () =
     [ "0000:01:00.0"; "0000:0a:00.0"; "ffff:00:00.0"; "10000:00:01.0" ]
     (N.gpus_at root)
 
+(* The kernel driver lists the GPUs it holds under /proc, by bus address: on a
+   machine whose driver holds every NVIDIA GPU, they are the GPUs the path
+   numbers. *)
+let proc_gpus = "/proc/driver/nvidia/gpus"
+
+let kernel_list () =
+  if not (Sys.file_exists proc_gpus) then
+    skip ~reason:"NVIDIA's kernel driver is not loaded" ();
+  let held = List.sort compare (Array.to_list (Sys.readdir proc_gpus)) in
+  equal (list string) held (List.sort compare (N.gpus_at "/"))
+
 (* A device's objects are the GPU's for the process: a stopped device's GPU
    opens again. *)
 let once () =
@@ -88,8 +99,8 @@ let () =
                numbering;
              test "a machine without PCI functions has no GPU" (fun () ->
                  equal (list string) [] (N.gpus_at "no-such-directory"));
-             test "this machine's GPUs are those its /sys lists" (fun () ->
-                 equal int (List.length (N.gpus_at "/")) (N.count ()));
+             test "this machine's GPUs are those NVIDIA's kernel driver lists"
+               kernel_list;
              test "names GPU 0 NV and GPU i NV:i" (fun () ->
                  equal (list string) [ "NV"; "NV:1"; "NV:7" ]
                    (List.map N.device_name [ 0; 1; 7 ]));
