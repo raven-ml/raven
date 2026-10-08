@@ -27,10 +27,13 @@
     per GPU, which the first open takes and the process keeps until it exits.
     Every device of a GPU works in it, and a fault of one device's work is
     reported to every device of the GPU. An open after a device of the GPU was
-    lost makes new queues there, unless {!Rig_amd.sleep} raised a fault for a
-    device of the GPU: the kernel driver then schedules none of the process's
-    queues on the GPU again, so {!open_} answers [Error] and another process
-    opens the GPU.
+    lost makes new queues there, unless the kernel driver reported a fault of
+    the GPU's work in the process, which {!open_} asks the GPU's open devices:
+    the kernel driver then schedules none of the process's queues on the GPU
+    again, so {!open_} answers [Error], every later {!Rig_amd.sleep} of a device
+    of the GPU raises the fault, and another process opens the GPU. A forked
+    child opens a GPU anew, in an address space of its own: the parent's devices
+    stay the parent's.
 
     {b Faults.} The kernel driver reports a fault of the GPU's work, a page
     fault or a hardware exception such as a reset, with its address or cause;
@@ -89,3 +92,16 @@ val gpu_at : string -> string -> (Rig_amd_abi.Gpu.t, string) result
    [root]: each die's area and its debugger area, as the kernel driver requires.
    [Error msg] as [gpu_at]. *)
 val save_area_at : string -> string -> (int, string) result
+
+(* [wgps_of gpu ~arrays ~per_array cus] is the work-group processors of each
+   shader array of [gpu], engines numbered across dies ({!Rig_amd.path}'s
+   [wgps]), from the render node's compute-unit bitmap [cus] (16 ints, engine by
+   engine as [cu_bitmap] lays them out), which describes the first die: later
+   dies have each of an array's [per_array] compute units set. [arrays] is the
+   shader arrays of an engine. *)
+val wgps_of :
+  Rig_amd_abi.Gpu.t ->
+  arrays:int ->
+  per_array:int ->
+  int array ->
+  int array array

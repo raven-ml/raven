@@ -240,9 +240,12 @@ val signaled : t -> int
 
 val sleep : t -> seen:int -> still_ms:int -> unit
 (** [sleep g ~seen ~still_ms] returns once [g]'s timeline word differs from
-    [seen], at once if it does already, or after [still_ms] milliseconds,
-    whichever comes first. [still_ms >= 0]. It blocks on the path's interrupt,
-    which every release raises, and lets other domains run while it waits.
+    [seen], at once if it does already, and at the latest after [still_ms]
+    milliseconds. [still_ms >= 0]. It may return earlier with the word still
+    [seen]: on an interrupt of an earlier release, or of other work of the GPU,
+    or when the hang bound's clock restarts. A caller reads the word again after
+    every return. It blocks on the path's interrupt, which every release raises,
+    and lets other domains run while it waits.
 
     Raises {!Fault} with the path's report if [g]'s work met a fault. Where the
     path bounds progress ([hang_ms] is [Some n]), it also raises {!Fault} once
@@ -250,7 +253,8 @@ val sleep : t -> seen:int -> still_ms:int -> unit
     clock runs only while the last value given is above the word: it starts at
     the later of the word's last move and the first [sleep] after the device was
     idle, as [sleep] observes them, so an idle device never hangs and the report
-    may come late but never early. *)
+    may come late but never early. Once [sleep] raised {!Fault}, every later
+    call on [g] raises it again. *)
 
 (** {1:work Work}
 
@@ -346,7 +350,8 @@ type 'm path = {
   wgps : int array array;
       (** The work-group processors that run work: [wgps.(e).(a)] has bit [w]
           set iff processor [w] of shader array [a] of shader engine [e] does,
-          engines numbered across dies. *)
+          engines numbered across dies. A die whose processors the path cannot
+          read has every processor of its arrays set. *)
   budget : int;  (** The bytes of the GPU's own memory. *)
   alloc : [ `Gpu | `Bar | `System ] -> int -> 'm memory option;
       (** [alloc k n] is [n] new bytes: [`Gpu], GPU memory the host does not

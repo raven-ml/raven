@@ -140,7 +140,7 @@ struct rig_amd {
   _Atomic int scratch_ready;
   _Atomic int scratch_lock;     /* held while the writes change or are read */
   _Atomic uint64_t scratch_taken;   /* the value that placed them */
-  uint64_t last;
+  _Atomic uint64_t last;
   const char *failure;
   char failure_text[96];
 };

@@ -93,8 +93,10 @@ type t = {
   wgps : int array array;
       (** The work-group processors that run work: [wgps.(e).(a)] has bit [w]
           set iff processor [w] of shader array [a] of shader engine [e] does,
-          engines numbered across dies. A counter's value for a processor that
-          runs no work stays [0] ({!Counter}). *)
+          engines numbered across dies, except on a die whose processors the
+          path cannot read, where every processor of its arrays is set. A
+          counter's value for a processor that runs no work stays [0]
+          ({!Counter}). *)
   trace : unit -> (trace, string) result;
       (** [trace ()] is the device's trace buffers, made at the first call and
           the same at every later one. The first call also holds the GPU's

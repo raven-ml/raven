@@ -10,9 +10,11 @@ let strf = Printf.sprintf
 external read : int -> int -> string = "rig_amd_test_read"
 external write : int -> string -> unit = "rig_amd_test_write"
 external pages : int -> int = "rig_amd_test_pages"
+external now_ns : unit -> int = "rig_amd_test_now"
 external free_pages : int -> int -> unit = "rig_amd_test_free_pages"
 
-type arg = (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+type arg =
+  (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
 
 external fill_arg :
   nativeint -> nativeint -> int array -> int -> int -> int -> arg
@@ -122,7 +124,10 @@ let still ?msg w x f ~ms =
 type fill = { entry : nativeint; arg : arg }
 
 let fill ?(code = 0) ?(split = 0) (c : Rig_amd.capability) ws ~bytes =
-  { entry = fill_entry (); arg = fill_arg c.place c.segment ws split bytes code }
+  {
+    entry = fill_entry ();
+    arg = fill_arg c.place c.segment ws split bytes code;
+  }
 
 let fill_address f = fill_address f.arg
 
@@ -149,8 +154,8 @@ let words_part ~queue ?(after = [||]) ws =
 
 module Edge = struct
   (* The ints the C side reads: queue, fill, argument, ring units, segment
-     bytes, copy destination, source and bytes, the counts of [after]
-     indices and of words, the indices, the words. *)
+     bytes, copy destination, source and bytes, the counts of [after] indices
+     and of words, the indices, the words. *)
   type part = { ints : int array; keep : arg option }
 
   let index = function
@@ -158,8 +163,8 @@ module Edge = struct
     | "COPY:0" -> 1
     | q -> invalid_arg ("Rig_amd_support.Edge: queue " ^ q)
 
-  let make ?keep ~queue ~after ?(fill = 0n) ?(arg = 0) ?(units = 0)
-      ?(bytes = 0) ?(dst = 0) ?(src = 0) ?(copy = 0) words =
+  let make ?keep ~queue ~after ?(fill = 0n) ?(arg = 0) ?(units = 0) ?(bytes = 0)
+      ?(dst = 0) ?(src = 0) ?(copy = 0) words =
     let head =
       [|
         queue;
@@ -174,7 +179,12 @@ module Edge = struct
         Array.length words;
       |]
     in
-    { ints = Array.concat [ head; after; Array.map (fun w -> w land 0xffff_ffff) words ]; keep }
+    {
+      ints =
+        Array.concat
+          [ head; after; Array.map (fun w -> w land 0xffff_ffff) words ];
+      keep;
+    }
 
   let words ~queue ?(after = [||]) ws = make ~queue:(index queue) ~after ws
 
@@ -193,17 +203,26 @@ module Edge = struct
     = "rig_amd_test_room"
 
   external submit_c :
-    nativeint -> nativeint -> int -> int array -> int array array -> string option
-    = "rig_amd_test_submit"
+    nativeint ->
+    nativeint ->
+    int ->
+    int array ->
+    int array array ->
+    string option = "rig_amd_test_submit"
 
   let room g ps =
-    match room_c Rig_amd.room_entry (Rig_amd.self g) (Array.map (fun p -> p.ints) ps) with
+    match
+      room_c Rig_amd.room_entry (Rig_amd.self g)
+        (Array.map (fun p -> p.ints) ps)
+    with
     | 0 -> `Fits
     | 1 -> `Later
     | _ -> `Never
 
   let submit g ~v ?(waits = [||]) ps =
-    let w = Array.concat (Array.to_list (Array.map (fun (a, x) -> [| a; x |]) waits)) in
+    let w =
+      Array.concat (Array.to_list (Array.map (fun (a, x) -> [| a; x |]) waits))
+    in
     let r =
       submit_c Rig_amd.submit_entry (Rig_amd.self g) v w
         (Array.map (fun p -> p.ints) ps)

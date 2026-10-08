@@ -37,12 +37,12 @@ val submit : Rig_amd.t -> Rig.Submission.part array -> int
     stop [g] again. *)
 
 val stop : Rig_amd.t -> unit
-(** [stop g] is [Rig_amd.stop g]. Tests stop the devices {!gpu} opened
-    through it. *)
+(** [stop g] is [Rig_amd.stop g]. Tests stop the devices {!gpu} opened through
+    it. *)
 
 val with_gpu : (Rig_amd.t -> 'a) -> 'a
-(** [with_gpu f] is [f (gpu ())], the device stopped after unless rig lost
-    it. *)
+(** [with_gpu f] is [f (gpu ())], the device stopped after unless rig lost it.
+*)
 
 val wait : Rig_amd.t -> int -> unit
 (** [wait g v] returns once [g]'s timeline word reaches [v], sleeping on the
@@ -53,6 +53,10 @@ val still :
 (** [still w x f ~ms] reads [f ()] for about [ms] milliseconds of CPU time, and
     asserts under [w] that each read is [x]. *)
 
+val now_ns : unit -> int
+(** [now_ns ()] is the monotonic clock, in nanoseconds: the clock a device's
+    [hang_ms] bound counts. *)
+
 val read : int -> int -> string
 (** [read a n] is the [n] bytes of host memory at [a]. *)
 
@@ -60,8 +64,8 @@ val write : int -> string -> unit
 (** [write a s] writes [s] to host memory at [a]. *)
 
 val pages : int -> int
-(** [pages n] is the host address of [n] new zeroed bytes on pages of their
-    own. *)
+(** [pages n] is the host address of [n] new zeroed bytes on pages of their own.
+*)
 
 val free_pages : int -> int -> unit
 (** [free_pages a n] gives back the [n] bytes at [a] that {!pages} gave. *)
@@ -69,11 +73,16 @@ val free_pages : int -> int -> unit
 (** {1:fills Fills} *)
 
 type fill
-(** The type for fills: a C function and its argument, a buffer of host
-    memory. *)
+(** The type for fills: a C function and its argument, a buffer of host memory.
+*)
 
 val fill :
-  ?code:int -> ?split:int -> Rig_amd.capability -> int array -> bytes:int -> fill
+  ?code:int ->
+  ?split:int ->
+  Rig_amd.capability ->
+  int array ->
+  bytes:int ->
+  fill
 (** [fill ~code ~split c ws ~bytes] is a fill that places the words [ws] with
     [c]'s [place], in two calls, the first of the first [split] words, if
     [0 < split < Array.length ws] (defaults to [0]: one call), then takes
@@ -85,14 +94,19 @@ val fill_address : fill -> int
     last call, or [0] if it took none. *)
 
 val fill_part :
-  queue:string -> ?after:int array -> fill -> units:int -> bytes:int ->
+  queue:string ->
+  ?after:int array ->
+  fill ->
+  units:int ->
+  bytes:int ->
   Rig.Submission.part
 (** [fill_part ~queue ~after f ~units ~bytes] is [f] as a part for rig,
     declaring [units] ring words and [bytes] segment bytes. *)
 
-val words_part : queue:string -> ?after:int array -> int array -> Rig.Submission.part
-(** [words_part ~queue ~after ws] is the words [ws], each integer's low 32
-    bits, as a part for rig, in a host buffer of their own. *)
+val words_part :
+  queue:string -> ?after:int array -> int array -> Rig.Submission.part
+(** [words_part ~queue ~after ws] is the words [ws], each integer's low 32 bits,
+    as a part for rig, in a host buffer of their own. *)
 
 (** {1:edge The C entries}
 
@@ -107,7 +121,8 @@ module Edge : sig
   val words : queue:string -> ?after:int array -> int array -> part
   (** [words ~queue ~after ws] is the words [ws] on [queue]. *)
 
-  val fill : queue:string -> ?after:int array -> fill -> units:int -> bytes:int -> part
+  val fill :
+    queue:string -> ?after:int array -> fill -> units:int -> bytes:int -> part
   (** [fill ~queue ~after f ~units ~bytes] is [f] on [queue], declaring [units]
       ring words and [bytes] segment bytes. *)
 
@@ -116,8 +131,13 @@ module Edge : sig
       [src] to [dst], on ["COPY:0"]. *)
 
   val raw :
-    queue:int -> ?words:int -> ?fill:bool -> ?copy:int -> ?after:int array ->
-    unit -> part
+    queue:int ->
+    ?words:int ->
+    ?fill:bool ->
+    ?copy:int ->
+    ?after:int array ->
+    unit ->
+    part
   (** [raw ~queue ~words ~fill ~copy ~after ()] is a part on the queue of index
       [queue] with [words] zero words (defaults to none), the support's fill
       function with no argument if [fill], and a copy of [copy] bytes between
@@ -127,9 +147,12 @@ module Edge : sig
   (** [room g ps] is what [g]'s room entry answers for [ps]. *)
 
   val submit :
-    Rig_amd.t -> v:int -> ?waits:(int * int) array -> part array ->
+    Rig_amd.t ->
+    v:int ->
+    ?waits:(int * int) array ->
+    part array ->
     [ `Ok | `Failed of string ]
-  (** [submit g ~v ~waits ps] is what [g]'s submit entry answers for [ps] as
-      the value [v], after the waits [(a, w)]: the 64-bit word at [a] holds at
-      least [w]. *)
+  (** [submit g ~v ~waits ps] is what [g]'s submit entry answers for [ps] as the
+      value [v], after the waits [(a, w)]: the 64-bit word at [a] holds at least
+      [w]. *)
 end

@@ -57,6 +57,7 @@ external device_info : int -> int array -> int
   = "caml_rig_amd_amdgpu_device_info"
 
 external stable_pstate : int -> int = "caml_rig_amd_amdgpu_stable_power"
+external pid : unit -> int = "caml_rig_amd_amdgpu_pid"
 
 (* Errors *)
 
@@ -92,10 +93,15 @@ type gpu = {
   mutable stable : bool;
   faulted : string option Atomic.t;
       (* the first fault the kernel driver reported in the address space *)
+  links : int list; (* the topology nodes this GPU has a link to *)
+  mutable live : int array list;
+      (* the exception events, memory and hardware, of its open devices *)
 }
 
 let opening = Mutex.create ()
-let kfd = ref None
+
+(* The process that opened the file, and the file. *)
+let kfd : (int * int) option ref = ref None
 
 (* The GPUs whose address space the process acquired, by GPU id: the kernel
    driver lets a process acquire one once. *)
@@ -104,14 +110,25 @@ let acquired : (int, gpu) Hashtbl.t = Hashtbl.create 4
 (* The process's event page: its handle, host address and GPU. *)
 let event_page : (int * int * int) option ref = ref None
 
+(* Views of another GPU's memory, by its handle and the viewing GPU's id: KFD
+   maps a memory once per GPU, so the last view's free unmaps it. *)
+let views : (int * int, int) Hashtbl.t = Hashtbl.create 16
+let views_lock = Mutex.create ()
+
+(* KFD serves a file to the process that opened it only: a forked child opens
+   its own, and the parent's address spaces, event page and views stay the
+   parent's. *)
 let kfd_fd () =
   match !kfd with
-  | Some fd -> Ok fd
-  | None ->
+  | Some (p, fd) when p = pid () -> Ok fd
+  | _ ->
+      Hashtbl.reset acquired;
+      Hashtbl.reset views;
+      event_page := None;
       let* fd =
         opened "/dev/kfd" "the compute interface" (open_file "/dev/kfd")
       in
-      kfd := Some fd;
+      kfd := Some (pid (), fd);
       Ok fd
 
 (* Memory *)
@@ -150,10 +167,15 @@ let alloc fd g kind n : mem Amd.memory option =
         fault (strf "allocating %d bytes of GPU memory" n) e
     | _ ->
         let handle = get64 b 0 in
-        if kind <> `Gpu then
-          check "mapping GPU memory" (map_file g.drm at n (offset b));
-        check "mapping memory for the GPU"
-          (map_gpu fd handle g.node.gpu_id true);
+        let undo step e =
+          ignore (kfd_free fd handle);
+          unmap_mem at n;
+          fault step e
+        in
+        let e = if kind = `Gpu then 0 else map_file g.drm at n (offset b) in
+        if e < 0 then undo "mapping GPU memory" e;
+        let e = map_gpu fd handle g.node.gpu_id true in
+        if e < 0 then undo "mapping memory for the GPU" e;
         let host = if kind = `Gpu then None else Some at in
         let data = { handle; bytes = n; at; kind = Own; owner = g } in
         Some { Amd.address = at; host; data }
@@ -166,8 +188,17 @@ let free fd g (m : mem Amd.memory) =
   match p.kind with
   | View -> ()
   | Peer ->
-      check "unmapping another GPU's memory"
-        (map_gpu fd p.handle g.node.gpu_id false)
+      let key = (p.handle, g.node.gpu_id) in
+      let last =
+        Mutex.protect views_lock (fun () ->
+            let n = Hashtbl.find views key - 1 in
+            if n = 0 then Hashtbl.remove views key
+            else Hashtbl.replace views key n;
+            n = 0)
+      in
+      if last then
+        check "unmapping another GPU's memory"
+          (map_gpu fd p.handle g.node.gpu_id false)
   | Own | Borrowed ->
       ignore (map_gpu fd p.handle g.node.gpu_id false);
       check "freeing GPU memory" (kfd_free fd p.handle);
@@ -191,24 +222,22 @@ let map_host fd g a n : mem Amd.memory option =
 (* Memory of another device: of the same GPU, in this address space already; of
    a GPU the topology links this one to, mapped for it. *)
 let linked g (n : Topology.node) =
-  n.gpu_id = g.node.gpu_id || Topology.linked "/" g.node.index n.index
-
-(* GPU [j] in bus order: this one, or one the topology links it to. *)
-let reaches g ~index j =
-  j = index
-  ||
-  match List.nth_opt (Topology.gpus "/") j with
-  | None -> false
-  | Some bus -> (
-      match Topology.node "/" bus with Ok n -> linked g n | Error _ -> false)
+  n.gpu_id = g.node.gpu_id || List.mem n.index g.links
 
 let map_peer fd g (m : mem Amd.memory) =
   let o = m.data.owner in
   if o.node.gpu_id = g.node.gpu_id then
     Some { m with data = { m.data with kind = View } }
   else if not (linked g o.node) then None
-  else if map_gpu fd m.data.handle g.node.gpu_id true < 0 then None
-  else Some { m with data = { m.data with kind = Peer } }
+  else
+    let key = (m.data.handle, g.node.gpu_id) in
+    Mutex.protect views_lock @@ fun () ->
+    let n = Option.value ~default:0 (Hashtbl.find_opt views key) in
+    if n = 0 && map_gpu fd m.data.handle g.node.gpu_id true < 0 then None
+    else begin
+      Hashtbl.replace views key (n + 1);
+      Some { m with data = { m.data with kind = Peer } }
+    end
 
 (* Opening a GPU *)
 
@@ -224,10 +253,36 @@ let remap_hdp fd gpu_id =
   end
   else
     let p = map_file fd at page (offset b) in
-    if p < 0 then None else Some p
+    if p >= 0 then Some p
+    else begin
+      ignore (kfd_free fd (get64 b 0));
+      unmap_mem at page;
+      None
+    end
 
 (* KFD 1.14 asks a process to enable its runtime before using queues. *)
 let runtime_from = 1014
+
+(* The machine's AMD GPUs in bus order, with their topology nodes, read once:
+   the kernel driver's topology does not change while the process runs. *)
+let machine = ref None
+let machine_lock = Mutex.create ()
+
+let topology () =
+  Mutex.protect machine_lock @@ fun () ->
+  match !machine with
+  | Some t -> t
+  | None ->
+      let t =
+        if not (linux ()) then [||]
+        else
+          Array.of_list
+            (List.map
+               (fun bus -> (bus, Topology.node "/" bus))
+               (Topology.gpus "/"))
+      in
+      machine := Some t;
+      t
 
 let acquire fd (node : Topology.node) =
   match Hashtbl.find_opt acquired node.gpu_id with
@@ -250,6 +305,14 @@ let acquire fd (node : Topology.node) =
       in
       let cus = Array.make 16 0 in
       let* khz = ok "reading the GPU's facts" (device_info drm cus) in
+      let links =
+        Array.to_list (topology ())
+        |> List.filter_map (function
+          | _, Ok (n : Topology.node)
+            when Topology.linked "/" node.index n.index ->
+              Some n.index
+          | _ -> None)
+      in
       let g =
         {
           node;
@@ -261,6 +324,8 @@ let acquire fd (node : Topology.node) =
           events_mapped = false;
           stable = false;
           faulted = Atomic.make None;
+          links;
+          live = [];
         }
       in
       Hashtbl.replace acquired node.gpu_id g;
@@ -301,14 +366,17 @@ let page_for fd g =
 
 let make_events fd g =
   page_for fd g;
-  let ids =
-    Array.map
-      (fun k ->
-        let id = event fd k 0 in
-        check "making a KFD event" id;
-        id)
-      [| signal; memory_exception; hardware_exception |]
+  let made = ref [] in
+  let make k =
+    let id = event fd k 0 in
+    if id < 0 then begin
+      List.iter (fun id -> ignore (destroy_event fd id)) !made;
+      fault "making a KFD event" id
+    end;
+    made := id :: !made;
+    id
   in
+  let ids = Array.map make [| signal; memory_exception; hardware_exception |] in
   arm ids.(0);
   ids
 
@@ -327,6 +395,8 @@ type device = {
 let drop_events d =
   if d.events_held then begin
     d.events_held <- false;
+    Mutex.protect opening (fun () ->
+        d.gpu.live <- List.filter (fun e -> e != d.events) d.gpu.live);
     Array.iter (fun id -> ignore (destroy_event d.fd id)) d.events
   end
 
@@ -379,7 +449,17 @@ let queue d kind ~ring ~bytes ~read ~write =
   let address = function Some (m : _ Amd.memory) -> m.address | None -> 0 in
   let node = d.gpu.node in
   let* eop = gpu_mem "end-of-pipe buffer" eop_bytes in
-  let* save = gpu_mem "context save area" (save_bytes node) in
+  let* save =
+    let give_back () = Option.iter (free d.fd d.gpu) eop in
+    match gpu_mem "context save area" (save_bytes node) with
+    | Ok _ as s -> s
+    | Error _ as e ->
+        give_back ();
+        e
+    | exception (Amd.Fault _ as e) ->
+        give_back ();
+        raise e
+  in
   let taken = List.filter_map Fun.id [ eop; save ] in
   let args =
     [|
@@ -404,30 +484,52 @@ let queue d kind ~ring ~bytes ~read ~write =
       d.queues <- (get64 b 0, taken) :: d.queues;
       Ok (Mutex.protect opening (fun () -> doorbell d (Bytes.get_int64_le b 8)))
 
-(* A fault leaves the process's queues on the GPU unscheduled, those made after
-   it too, so the GPU keeps the report for later opens. *)
-let faulted d why =
-  ignore (Atomic.compare_and_set d.gpu.faulted None (Some why));
-  raise (Amd.Fault why)
+(* The fault [wait]'s answer [e] reports, with its data [r]. A fault leaves the
+   process's queues on the GPU unscheduled, those made after it too, so the GPU
+   keeps the first for every later sleep and open. *)
+let report g e r =
+  let why =
+    match e with
+    | 1 ->
+        Some
+          (strf
+             "memory fault at 0x%x (not present %d, read-only %d, no execute \
+              %d, imprecise %d, error type %d)"
+             r.(0) r.(1) r.(2) r.(3) r.(4) r.(5))
+    | 2 ->
+        Some
+          (strf
+             "hardware exception (reset type %d, reset cause %d, memory lost \
+              %d)"
+             r.(0) r.(1) r.(2))
+    | _ -> None
+  in
+  Option.iter
+    (fun w -> ignore (Atomic.compare_and_set g.faulted None (Some w)))
+    why
 
 let sleep d ~ms =
+  let g = d.gpu in
+  let raise_fault () =
+    Option.iter (fun why -> raise (Amd.Fault why)) (Atomic.get g.faulted)
+  in
+  raise_fault ();
   let r = Array.make 6 0 in
-  let e = wait d.fd d.events d.gpu.node.gpu_id ms r in
+  let e = wait d.fd d.events g.node.gpu_id ms r in
   arm d.events.(0);
-  match e with
-  | 0 -> ()
-  | 1 ->
-      faulted d
-        (strf
-           "memory fault at 0x%x (not present %d, read-only %d, no execute %d, \
-            imprecise %d, error type %d)"
-           r.(0) r.(1) r.(2) r.(3) r.(4) r.(5))
-  | 2 ->
-      faulted d
-        (strf
-           "hardware exception (reset type %d, reset cause %d, memory lost %d)"
-           r.(0) r.(1) r.(2))
-  | e -> fault "waiting for KFD events" e
+  if e < 0 then fault "waiting for KFD events" e;
+  report g e r;
+  raise_fault ()
+
+(* Asks the exception events of the GPU's open devices, without waiting, for a
+   fault no sleep has read yet. The events stay set: they reset only by hand. *)
+let poll_faults fd g =
+  let r = Array.make 6 0 in
+  List.iter
+    (fun ev ->
+      if Atomic.get g.faulted = None then
+        report g (wait fd [| ev.(1); ev.(2) |] g.node.gpu_id 0 r) r)
+    g.live
 
 let stable_power g () =
   Mutex.protect opening @@ fun () ->
@@ -446,23 +548,32 @@ let stable_power g () =
             (strf "the amdgpu driver refused the GPU's stable power state: %s"
                (strerror (-e))))
 
-(* Each queue destroyed: once none runs, its memory goes back. *)
+(* Each queue destroyed, and the memory of those destroyed given back. A queue
+   the kernel driver kept may still run and raise the device's interrupt, so its
+   memory and the events stay. *)
 let stop d () =
-  let destroyed (id, _) = destroy_queue d.fd id = 0 in
-  if not (List.for_all destroyed d.queues) then `Unknown
+  let gone, kept =
+    List.partition (fun (id, _) -> destroy_queue d.fd id = 0) d.queues
+  in
+  let give_back m = try free d.fd d.gpu m with Amd.Fault _ -> () in
+  List.iter (fun (_, mems) -> List.iter give_back mems) gone;
+  d.queues <- kept;
+  if kept <> [] then `Unknown
   else begin
-    List.iter (fun (_, mems) -> List.iter (free d.fd d.gpu) mems) d.queues;
-    d.queues <- [];
     drop_events d;
     `Stopped
   end
 
-(* The active work-group processors of each shader array: on GFX10 on, the pairs
-   of compute units both active; on GFX9, the compute units. *)
-let wgps (g : gpu) =
-  let n = g.node in
-  let engines = n.gpu.shader_engines * n.gpu.xccs in
-  let cus e a = g.cus.((4 * (e mod 4)) + a + (e / 4 * n.arrays)) in
+(* The work-group processors that run work in each shader array, engines
+   numbered across dies: on GFX10 on, the pairs of compute units both active; on
+   GFX9, the compute units. [cus] is the render node's bitmap, which holds the
+   first die's alone: AMDGPU_INFO_DEV_INFO copies [cu_info.bitmap[0]] of the
+   kernel's per-die bitmaps (amdgpu_kms.c), and neither KFD's topology nor its
+   debugger snapshot holds another. A later die's arrays therefore have every
+   processor of their [per_array] compute units set; a counter of one that runs
+   no work stays 0. *)
+let wgps_of (gpu : Rig_amd_abi.Gpu.t) ~arrays ~per_array cus =
+  let gfx9 = match gpu.target with 9, _, _ -> true | _ -> false in
   let pairs c =
     let m = ref 0 in
     for w = 0 to 15 do
@@ -470,9 +581,15 @@ let wgps (g : gpu) =
     done;
     !m
   in
-  let gfx9 = match n.gpu.target with 9, _, _ -> true | _ -> false in
-  Array.init engines (fun e ->
-      Array.init n.arrays (fun a -> if gfx9 then cus e a else pairs (cus e a)))
+  let units = if gfx9 then per_array else per_array / 2 in
+  let all = (1 lsl units) - 1 in
+  let engines = gpu.shader_engines in
+  Array.init (engines * gpu.xccs) (fun e ->
+      Array.init arrays (fun a ->
+          if e >= engines then all
+          else
+            let c = cus.((4 * (e mod 4)) + a + (e / 4 * arrays)) in
+            if gfx9 then c else pairs c))
 
 let key : mem Type.Id.t = Type.Id.make ()
 
@@ -486,11 +603,20 @@ let path d ~index : mem Amd.path =
     lds = g.node.lds;
     clock_hz = g.clock_khz * 1000;
     mec = g.node.mec;
-    wgps = wgps g;
+    wgps =
+      wgps_of g.node.gpu ~arrays:g.node.arrays ~per_array:g.node.cu_per_array
+        g.cus;
     budget = g.node.budget;
     alloc = alloc fd g;
     map_host = map_host fd g;
-    reaches = reaches g ~index;
+    reaches =
+      (let reached =
+         Array.mapi
+           (fun j (_, n) ->
+             j = index || match n with Ok n -> linked g n | Error _ -> false)
+           (topology ())
+       in
+       fun j -> j >= 0 && j < Array.length reached && reached.(j));
     map_peer = map_peer fd g;
     free = free fd g;
     queue = queue d;
@@ -510,7 +636,7 @@ let gpu_at root bus =
   Result.map (fun (n : Topology.node) -> n.gpu) (Topology.node root bus)
 
 let save_area_at root bus = Result.map save_bytes (Topology.node root bus)
-let count () = if linux () then List.length (gpus_at "/") else 0
+let count () = Array.length (topology ())
 
 let device_name i =
   if i < 0 then
@@ -519,34 +645,38 @@ let device_name i =
 
 let open_ i =
   if i < 0 then invalid_argf "Rig_amd_amdgpu.open_: GPU %d is negative" i;
-  let gpus = if linux () then gpus_at "/" else [] in
-  match List.nth_opt gpus i with
-  | None ->
-      Error (strf "no GPU %d; the machine has %d AMD GPUs" i (List.length gpus))
-  | Some bus -> (
-      let* node = Topology.node "/" bus in
-      let* fd, g, events =
-        Mutex.protect opening (fun () ->
-            let* fd = kfd_fd () in
-            let* g = acquire fd node in
-            match Atomic.get g.faulted with
-            | Some why ->
-                Error
-                  (strf
-                     "GPU %d faulted in this process (%s); a new process opens \
-                      it"
-                     i why)
-            | None -> (
-                match make_events fd g with
-                | events -> Ok (fd, g, events)
-                | exception Amd.Fault why -> Error why))
-      in
-      let d = { fd; gpu = g; events; events_held = true; queues = [] } in
-      match Amd.make (path d ~index:i) with
-      | Ok _ as r -> r
-      | Error _ as e ->
-          drop_events d;
-          e
-      | exception Amd.Fault why ->
-          drop_events d;
-          Error why)
+  let gpus = topology () in
+  if i >= Array.length gpus then
+    Error (strf "no GPU %d; the machine has %d AMD GPUs" i (Array.length gpus))
+  else
+    let* node = snd gpus.(i) in
+    let* fd, g, events =
+      Mutex.protect opening (fun () ->
+          let* fd = kfd_fd () in
+          let* g = acquire fd node in
+          poll_faults fd g;
+          match Atomic.get g.faulted with
+          | Some why ->
+              Error
+                (strf
+                   "GPU %d faulted in this process (%s); a new process opens it"
+                   i why)
+          | None -> (
+              match make_events fd g with
+              | events -> Ok (fd, g, events)
+              | exception Amd.Fault why -> Error why))
+    in
+    let d = { fd; gpu = g; events; events_held = true; queues = [] } in
+    (* The events stay while a queue the path could not stop may still raise the
+       interrupt. *)
+    let give_back () = if d.queues = [] then drop_events d in
+    match Amd.make (path d ~index:i) with
+    | Ok _ as r ->
+        Mutex.protect opening (fun () -> g.live <- events :: g.live);
+        r
+    | Error _ as e ->
+        give_back ();
+        e
+    | exception Amd.Fault why ->
+        give_back ();
+        Error why

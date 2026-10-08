@@ -118,6 +118,21 @@ value rig_amd_test_free_pages(value v_a, value v_n) {
   return Val_unit;
 }
 
+/* The monotonic clock, in nanoseconds. */
+value rig_amd_test_now(value unit) {
+  (void)unit;
+#if defined(_WIN32)
+  LARGE_INTEGER t, f;
+  QueryPerformanceCounter(&t);
+  QueryPerformanceFrequency(&f);
+  return Val_long((intnat)((double)t.QuadPart * 1e9 / (double)f.QuadPart));
+#else
+  struct timespec t;
+  clock_gettime(CLOCK_MONOTONIC, &t);
+  return Val_long((intnat)t.tv_sec * 1000000000 + t.tv_nsec);
+#endif
+}
+
 value rig_amd_test_read(value v_a, value v_n) {
   CAMLparam2(v_a, v_n);
   CAMLreturn(caml_alloc_initialized_string(Long_val(v_n),

@@ -8,7 +8,8 @@
    A device's room check and submit, for the caller that holds its
    submissions in C, over the structures and codes of rig_edge.h. [self] is
    Rig_amd.self. Both are called without the OCaml runtime: they call no
-   function of it and read no OCaml value, and neither blocks.
+   function of it and read no OCaml value, and neither blocks, but the
+   submit may wait out the publication of a new AQL scratch, a few stores.
 
    Queue 0 is the compute queue "COMPUTE:0", queue 1 the copy queue
    "COPY:0". A part is words placed on its queue, a fill called with the

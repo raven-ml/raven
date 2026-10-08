@@ -114,7 +114,7 @@ external hdp_count : int -> int -> int -> bool = "caml_rig_amd_hdp"
 external zero : int -> int -> unit = "caml_rig_amd_zero"
 external poke32 : int -> int -> int -> unit = "caml_rig_amd_poke32"
 
-external publish_scratch : int -> int array -> int array -> unit
+external publish_scratch : int -> int array -> int array -> int
   = "caml_rig_amd_scratch"
 
 external scratch_taken : int -> int = "caml_rig_amd_scratch_taken" [@@noalloc]
@@ -141,6 +141,7 @@ type t = {
   traces : traces;
   hang_ms : int option;
   progress : progress Atomic.t;
+  fault : string option Atomic.t; (* the first fault sleep raised *)
 }
 
 (* The word as [sleep] last saw it, whether the device was idle then, and since
@@ -280,18 +281,20 @@ let scratch_writes (g : Abi.Gpu.t) ~desc m n bytes =
   @ List.init 4 (fun i ->
       (desc + scratch_resource_descriptor + (4 * i), word i))
 
-(* Moves a published scratch the queue took to installed, retiring the one it
-   replaced, and frees the retired ones the word passed. *)
+(* [p], placed by the submission of [v], replaces the installed scratch, which
+   is freed once the word reaches [v]. *)
+let install st p v =
+  Option.iter (fun (m, _) -> st.retired <- (m, v) :: st.retired) st.installed;
+  st.installed <- Some p;
+  st.pending <- None
+
+(* Installs a published scratch the queue took, and frees the retired ones the
+   word passed. *)
 let settle_scratch self ops st =
   let taken = scratch_taken self in
   (match st.pending with
-  | Some p when taken > 0 ->
-      Option.iter
-        (fun (m, _) -> st.retired <- (m, taken) :: st.retired)
-        st.installed;
-      st.installed <- Some p;
-      st.pending <- None
-  | Some _ | None -> ());
+  | Some p when taken > 0 -> install st p taken
+  | _ -> ());
   let word = signaled_word self in
   let reached, kept = List.partition (fun (_, v) -> word >= v) st.retired in
   List.iter (fun (m, _) -> ops.free m) reached;
@@ -312,9 +315,16 @@ let grow_scratch self ops (g : Abi.Gpu.t) ~desc st n =
     | None -> Error (strf "no GPU memory for %d bytes of scratch" bytes)
     | Some m ->
         let ats, values = List.split (scratch_writes g ~desc m n bytes) in
-        publish_scratch self (Array.of_list ats) (Array.of_list values);
-        (* A buffer published and never taken was never in the queue's use. *)
-        Option.iter (fun (old, _) -> ops.free old) st.pending;
+        let took =
+          publish_scratch self (Array.of_list ats) (Array.of_list values)
+        in
+        (* The publication this one replaces: placed by the submission of [took]
+           since the settle above, or never placed and never in the queue's
+           use. *)
+        (match st.pending with
+        | Some p when took > 0 -> install st p took
+        | Some (old, _) -> ops.free old
+        | None -> ());
         st.pending <- Some (m, n);
         Ok ()
 
@@ -391,9 +401,18 @@ let make (type m) (p : m path) =
   let* () = supported p.gpu in
   let ops = ops p in
   let taken = ref [] and queues = ref false in
+  (* Memory a queue the path could not stop may still read stays. *)
   let give_back () =
-    if !queues then ignore (ops.stop ());
-    List.iter ops.free !taken
+    let stopped =
+      (not !queues)
+      ||
+      match ops.stop () with
+      | `Stopped -> true
+      | `Unknown -> false
+      | exception Fault _ -> false
+    in
+    if stopped then
+      List.iter (fun m -> try ops.free m with Fault _ -> ()) !taken
   in
   let alloc what n =
     match ops.alloc `System n with
@@ -403,7 +422,7 @@ let make (type m) (p : m path) =
     | None -> Error (strf "no memory for its %s" what)
   in
   let waits64 = waits64 p and aql = p.gpu.xccs > 1 in
-  let opened =
+  let open_device () =
     let* word = alloc "timeline word" 8 in
     let* slot_words = alloc "slot words" (8 * slots) in
     let* segment = alloc "argument segment" segment_bytes in
@@ -414,15 +433,8 @@ let make (type m) (p : m path) =
     let* slots_host = host_of "slot words" slot_words in
     let* segment_host = host_of "argument segment" segment in
     let* pointers_host = host_of "queue positions" pointers in
-    let self = create () in
-    set_memory self word_host (mem_address word) slots_host
-      (mem_address slot_words);
-    set_segment self segment_host (mem_address segment) segment_bytes;
-    (* The GPU's own register takes the first of the empty table's slots, with
-       no region counted, so that its own [`Mapped] memory always finds one and
-       views of other GPUs' take at most the rest. *)
-    Option.iter (fun reg -> ignore (hdp_count self reg 0)) p.hdp;
-    set_templates self p.gpu ~interrupt:p.interrupt ~waits64 ~aql;
+    let* compute_host = host_of "compute ring" compute in
+    let* copy_host = host_of "copy ring" copy in
     zero pointers_host pointers_bytes;
     if aql then begin
       let cus = p.gpu.compute_units * p.gpu.xccs in
@@ -433,7 +445,6 @@ let make (type m) (p : m path) =
       poke32 pointers_host max_wave_id (p.waves - 1)
     end;
     let queue q kind ring =
-      let* ring_host = host_of "ring" ring in
       let at = mem_address pointers in
       let* doorbell =
         p.queue kind ~ring:(mem_address ring) ~bytes:ring_bytes
@@ -441,13 +452,30 @@ let make (type m) (p : m path) =
           ~write:(at + write_at ~aql q)
       in
       queues := true;
-      let write = pointers_host + write_at ~aql q in
-      let kind = match kind with `Pm4 -> 0 | `Aql -> 1 | `Sdma -> 2 in
-      set_ring self q ring_host ring_bytes write doorbell kind;
-      Ok ()
+      Ok doorbell
     in
-    let* () = queue 0 (if aql then `Aql else `Pm4) compute in
-    let* () = queue 1 `Sdma copy in
+    let compute_kind = if aql then `Aql else `Pm4 in
+    let* compute_bell = queue 0 compute_kind compute in
+    let* copy_bell = queue 1 `Sdma copy in
+    (* The C state, made once nothing can fail: the queues read none of it
+       before a doorbell. *)
+    let self = create () in
+    set_memory self word_host (mem_address word) slots_host
+      (mem_address slot_words);
+    set_segment self segment_host (mem_address segment) segment_bytes;
+    (* The GPU's own register takes the first of the empty table's slots, with
+       no region counted, so that its own [`Mapped] memory always finds one and
+       views of other GPUs' take at most the rest. *)
+    Option.iter (fun reg -> ignore (hdp_count self reg 0)) p.hdp;
+    set_templates self p.gpu ~interrupt:p.interrupt ~waits64 ~aql;
+    let ring q kind host bell =
+      let kind = match kind with `Pm4 -> 0 | `Aql -> 1 | `Sdma -> 2 in
+      set_ring self q host ring_bytes
+        (pointers_host + write_at ~aql q)
+        bell kind
+    in
+    ring 0 compute_kind compute_host compute_bell;
+    ring 1 `Sdma copy_host copy_bell;
     let scratch =
       { lock = Mutex.create (); installed = None; pending = None; retired = [] }
     in
@@ -476,9 +504,10 @@ let make (type m) (p : m path) =
         traces;
         hang_ms = p.hang_ms;
         progress = Atomic.make { seen = 0; idle = true; since = 0 };
+        fault = Atomic.make None;
       }
   in
-  match opened with
+  match open_device () with
   | Ok _ as g -> g
   | Error _ as e ->
       give_back ();
@@ -533,10 +562,14 @@ let alloc g kind n =
               ignore (count_hdp g reg 1);
               Some (region g.self ~flush:reg n m)))
 
+(* Gives back [m]: a free the path refuses loses the memory, which no caller can
+   act on. *)
+let give_back g m = try g.ops.free m with Fault _ -> ()
+
 (* Gives back [r], whose [live] the caller took. *)
 let release g r =
   Option.iter (fun reg -> ignore (count_hdp g reg (-1))) r.flush;
-  g.ops.free r.mem
+  give_back g r.mem
 
 let free g r =
   if r.owner <> g.self || r == g.word then
@@ -652,28 +685,35 @@ external settle : int -> unit = "caml_rig_amd_settle"
 let word g = g.word
 let signaled g = signaled_word g.self
 
+(* A fault is the device's for good: the first one raised is raised again by
+   every later call. *)
+let faulted g why =
+  ignore (Atomic.compare_and_set g.fault None (Some why));
+  raise (Fault why)
+
+let path_sleep g ms = try g.ops.sleep ~ms with Fault why -> faulted g why
+
 (* The clock restarts when the word moved or the device was idle at the last
    look, and runs on while the same value stays outstanding. *)
 let sleep g ~seen ~still_ms =
+  Option.iter (fun why -> raise (Fault why)) (Atomic.get g.fault);
   let w = signaled g in
   if w = seen then
     match g.hang_ms with
-    | None -> g.ops.sleep ~ms:still_ms
+    | None -> path_sleep g still_ms
     | Some hang ->
         let now = now_ms () and p = Atomic.get g.progress in
         let idle = last g.self <= w in
         if idle || p.idle || p.seen <> w then begin
           Atomic.set g.progress { seen = w; idle; since = now };
-          g.ops.sleep ~ms:(if idle then still_ms else min still_ms hang)
+          path_sleep g (if idle then still_ms else Int.min still_ms hang)
         end
         else
           let left = p.since + hang - now in
-          if left <= 0 then raise (Fault (strf "no progress for %d ms" hang));
-          g.ops.sleep ~ms:(min still_ms left)
+          if left <= 0 then faulted g (strf "no progress for %d ms" hang);
+          path_sleep g (Int.min still_ms left)
 
 (* Loss *)
-
-let give_back g m = try g.ops.free m with Fault _ -> ()
 
 (* A queue the path could not destroy may still run, so its memory stays and its
    own releases raise the word. *)

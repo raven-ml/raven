@@ -139,6 +139,7 @@ let mi300x () =
        [
          ("simd_count", 1216);
          ("simd_per_cu", 4);
+         ("cu_per_simd_array", 10);
          ("max_waves_per_simd", 8);
          ("array_count", 32);
          ("simd_arrays_per_engine", 1);
@@ -155,6 +156,7 @@ let mi210 () =
        [
          ("simd_count", 416);
          ("simd_per_cu", 4);
+         ("cu_per_simd_array", 16);
          ("max_waves_per_simd", 8);
          ("array_count", 8);
          ("simd_arrays_per_engine", 1);
@@ -243,10 +245,9 @@ let facts =
     ]
 
 (* The context save area KFD requires (kfd_queue.c): each die's [cwsr_size],
-   then a debugger area of 32 bytes per wave rounded up to 64, the whole
-   rounded up to a page. Its waves are 32 per compute unit of a die from GFX
-   10.1; before, 40 per compute unit up to 512 per shader engine of the
-   GPU. *)
+   then a debugger area of 32 bytes per wave rounded up to 64, the whole rounded
+   up to a page. Its waves are 32 per compute unit of a die from GFX 10.1;
+   before, 40 per compute unit up to 512 per shader engine of the GPU. *)
 let save_area =
   let result_int =
     Testable.make
@@ -266,14 +267,93 @@ let save_area =
         (fun () ->
           let die = 17965000 + (1520 * 32) in
           equal result_int
-            (Ok ((((8 * die) + 4095) / 4096) * 4096))
+            (Ok (((8 * die) + 4095) / 4096 * 4096))
             (at (mi300x ())));
       test "an MI210's: 4096 waves, 512 for each of 8 engines" (fun () ->
           equal result_int (Ok (9043968 + (4096 * 32))) (at (mi210 ())));
       test "a GPU the driver holds no node of has none" (fun () ->
           equal result_int
             (Error "0000:05:00.0 is not held by the amdgpu driver")
-            (P.save_area_at (tree "unheld" (functions r9700_functions)) "0000:05:00.0"));
+            (P.save_area_at
+               (tree "unheld" (functions r9700_functions))
+               "0000:05:00.0"));
+    ]
+
+(* The work-group processors of each shader array, engines numbered across dies.
+   The render node's bitmap holds the first die's compute units, engine by
+   engine (four ints an engine, an int an array); a later die's arrays have
+   every one of their compute units set. On GFX10 on a work-group processor is a
+   pair of compute units, both active. *)
+
+let bitmap ~bits =
+  Gen.with_pp
+    (fun ppf cus ->
+      Format.fprintf ppf "[%s]"
+        (String.concat "; " (Array.to_list (Array.map (strf "0x%x") cus))))
+    Gen.(
+      map Array.of_list
+        (list ~size:(constant 16) (int_range 0 ((1 lsl bits) - 1))))
+
+let wgps =
+  Testable.make
+    ~pp:(fun ppf a ->
+      Format.fprintf ppf "[%s]"
+        (String.concat "; "
+           (Array.to_list
+              (Array.map
+                 (fun e ->
+                   "["
+                   ^ String.concat "; "
+                       (Array.to_list (Array.map (strf "0x%x") e))
+                   ^ "]")
+                 a))))
+    ~equal:( = )
+
+let mi300x_gpu =
+  {
+    Gpu.target = (9, 4, 2);
+    gc = (9, 4, 3);
+    sdma = (4, 4, 2);
+    xccs = 8;
+    shader_engines = 4;
+    compute_units = 38;
+    scratch_slots = 32;
+  }
+
+let r9700_gpu =
+  {
+    Gpu.target = (12, 0, 1);
+    gc = (12, 0, 1);
+    sdma = (7, 0, 1);
+    xccs = 1;
+    shader_engines = 4;
+    compute_units = 64;
+    scratch_slots = 32;
+  }
+
+(* Bit [w] of a GFX10 array's processors: compute units [2w] and [2w + 1]. *)
+let pairs c =
+  List.fold_left
+    (fun m w -> if (c lsr (2 * w)) land 3 = 3 then m lor (1 lsl w) else m)
+    0 (List.init 16 Fun.id)
+
+let processors =
+  group ~timeout:10. "processors"
+    [
+      prop "an MI300X's 32 engines: die 0's from the bitmap, the others all set"
+        (bitmap ~bits:10) (fun cus ->
+          let expected =
+            Array.init 32 (fun e ->
+                [| (if e < 4 then cus.(4 * e) else 0x3ff) |])
+          in
+          equal wgps expected (P.wgps_of mi300x_gpu ~arrays:1 ~per_array:10 cus));
+      prop "an R9700's processors are its arrays' pairs of active compute units"
+        (bitmap ~bits:8) (fun cus ->
+          let expected =
+            Array.init 4 (fun e ->
+                Array.init 2 (fun a -> pairs cus.((4 * e) + a)))
+          in
+          equal wgps expected (P.wgps_of r9700_gpu ~arrays:2 ~per_array:8 cus));
     ]
 
 let names =
@@ -298,4 +378,5 @@ let names =
                 why);
     ]
 
-let () = exit (run "rig_amd_amdgpu" [ numbering; facts; save_area; names ])
+let () =
+  exit (run "rig_amd_amdgpu" [ numbering; facts; save_area; processors; names ])

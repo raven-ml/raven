@@ -237,24 +237,39 @@ value caml_rig_amd_amdgpu_queue(value v_fd, value v_k, value v_q,
   return Val_int(0);
 }
 
+value caml_rig_amd_amdgpu_pid(value unit) {
+  (void)unit;
+  return Val_long(getpid());
+}
+
 value caml_rig_amd_amdgpu_destroy_queue(value v_fd, value v_id) {
   struct kfd_ioctl_destroy_queue_args a = {.queue_id = (uint32_t)Int_val(v_id)};
   return Val_int(request(Int_val(v_fd), AMDKFD_IOC_DESTROY_QUEUE, &a));
 }
 
-/* Waits at most [ms] for the events [ids] (signal, memory, hardware), with
-   the runtime released. 0 if none reports a fault of GPU [gpu]; 1, a
+/* Resets the exception event [id], set by another GPU's fault: it does not
+   reset itself, and would end every later wait at once. */
+static void reset_event(int fd, uint32_t id) {
+  struct kfd_ioctl_reset_event_args a = {.event_id = id};
+  (void)request(fd, AMDKFD_IOC_RESET_EVENT, &a);
+}
+
+/* Waits at most [ms] for the events [ids], with the runtime released: a
+   signal event, then a memory and a hardware exception event, or the two
+   exception events alone. 0 if none reports a fault of GPU [gpu]; 1, a
    memory fault, with its address, not-present, read-only, no-execute,
    imprecise and error type in [r]; 2, a hardware exception, with its reset
-   type, reset cause and lost memory in [r]; or -errno. */
+   type, reset cause and lost memory in [r]; or -errno. An exception event
+   another GPU's fault set is reset. */
 value caml_rig_amd_amdgpu_wait(value v_fd, value v_ids, value v_gpu,
                                   value v_ms, value v_r) {
   CAMLparam5(v_fd, v_ids, v_gpu, v_ms, v_r);
   struct kfd_event_data ev[3];
   memset(ev, 0, sizeof ev);
-  for (int i = 0; i < 3; i++) ev[i].event_id = (uint32_t)Int_val(Field(v_ids, i));
+  int n = (int)Wosize_val(v_ids);
+  for (int i = 0; i < n; i++) ev[i].event_id = (uint32_t)Int_val(Field(v_ids, i));
   struct kfd_ioctl_wait_events_args a = {.events_ptr = (uint64_t)(uintptr_t)ev,
-                                         .num_events = 3,
+                                         .num_events = (uint32_t)n,
                                          .wait_for_all = 0,
                                          .timeout = (uint32_t)Int_val(v_ms)};
   int fd = Int_val(v_fd);
@@ -263,8 +278,10 @@ value caml_rig_amd_amdgpu_wait(value v_fd, value v_ids, value v_gpu,
   int e = request(fd, AMDKFD_IOC_WAIT_EVENTS, &a);
   caml_acquire_runtime_system();
   if (e) CAMLreturn(Val_int(e));
-  struct kfd_hsa_memory_exception_data *m = &ev[1].memory_exception_data;
-  struct kfd_hsa_hw_exception_data *h = &ev[2].hw_exception_data;
+  struct kfd_hsa_memory_exception_data *m = &ev[n - 2].memory_exception_data;
+  struct kfd_hsa_hw_exception_data *h = &ev[n - 1].hw_exception_data;
+  if (m->gpu_id != 0 && m->gpu_id != me) reset_event(fd, ev[n - 2].event_id);
+  if (h->gpu_id != 0 && h->gpu_id != me) reset_event(fd, ev[n - 1].event_id);
   if (m->gpu_id == me) {
     intnat f[] = {(intnat)m->va, m->failure.NotPresent, m->failure.ReadOnly,
                   m->failure.NoExecute, m->failure.imprecise, m->ErrorType};
@@ -353,5 +370,6 @@ NONE(wait, value a UNUSED, value b UNUSED, value c UNUSED, value d UNUSED,
      value e UNUSED)
 NONE(device_info, value a UNUSED, value b UNUSED)
 NONE(stable_power, value a UNUSED)
+NONE(pid, value a UNUSED)
 
 #endif

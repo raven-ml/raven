@@ -271,17 +271,20 @@ static uint64_t slot_gpu(const struct rig_amd *d, int i) {
 }
 
 /* The pending writes of a new AQL scratch to the queue's descriptor, placed
-   once, by the queue, between submissions. */
+   once, by the queue, between submissions. The one publisher holds the lock
+   for a few stores, which the submit waits out: a kernel of this submission
+   may need the scratch being published. */
 static void scratch(struct submission *s, struct rig_amd_ring *r) {
   struct rig_amd *d = s->d;
+  if (!atomic_load_explicit(&d->scratch_ready, memory_order_acquire)) return;
   int idle = 0;
-  if (!atomic_load_explicit(&d->scratch_ready, memory_order_acquire) ||
-      !atomic_compare_exchange_strong(&d->scratch_lock, &idle, 1))
-    return;
-  for (int i = 0; i < d->scratch_n; i++)
-    emit(d, r, T_WRITE, d->scratch_at[i], d->scratch_value[i], 0);
-  atomic_store_explicit(&d->scratch_ready, 0, memory_order_relaxed);
-  atomic_store_explicit(&d->scratch_taken, s->v, memory_order_release);
+  while (!atomic_compare_exchange_weak(&d->scratch_lock, &idle, 1)) idle = 0;
+  if (atomic_load_explicit(&d->scratch_ready, memory_order_relaxed)) {
+    for (int i = 0; i < d->scratch_n; i++)
+      emit(d, r, T_WRITE, d->scratch_at[i], d->scratch_value[i], 0);
+    atomic_store_explicit(&d->scratch_ready, 0, memory_order_relaxed);
+    atomic_store_explicit(&d->scratch_taken, s->v, memory_order_release);
+  }
   atomic_store_explicit(&d->scratch_lock, 0, memory_order_release);
 }
 
@@ -429,7 +432,7 @@ static int fail(struct submission *s, const char **failure) {
   release(s, RIG_AMD_COMPUTE);
   mark(&d->segment.marks, s->v, d->segment.put);
   hand_over(s);
-  d->last = s->v;
+  atomic_store_explicit(&d->last, s->v, memory_order_release);
   d->failure = d->failure_text;
   *failure = d->failure;
   return RIG_FAILED;
@@ -517,6 +520,6 @@ int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
   mark(&g->marks, v, g->put);
   hand_over(&s);
   for (int i = 0; i < s.nsignalled; i++) d->slot_last[s.slot[i]] = v;
-  d->last = v;
+  atomic_store_explicit(&d->last, v, memory_order_release);
   return RIG_OK;
 }

@@ -89,11 +89,17 @@ value caml_rig_amd_template(value v_self, value v_t, value v_words,
                                value v_holes) {
   struct rig_amd_template *t =
       &Device_val(v_self)->templates[Int_val(v_t)];
-  t->n = (int)(caml_string_length(v_words) / 4);
+  size_t bytes = caml_string_length(v_words);
+  if (bytes > sizeof t->words)
+    caml_invalid_argument("Rig_amd.make: a packet template exceeds 16 words");
+  t->n = (int)(bytes / 4);
   memcpy(t->words, String_val(v_words), 4 * (size_t)t->n);
   int n = (int)Wosize_val(v_holes), k = 0;
   t->nholes = 0;
   while (k < n) {
+    if (t->nholes == RIG_AMD_TEMPLATE_HOLES ||
+        at(v_holes, k + 3) > RIG_AMD_HOLE_OPS)
+      caml_invalid_argument("Rig_amd.make: a packet template has too many holes");
     struct rig_amd_hole *h = &t->holes[t->nholes++];
     h->at = (uint8_t)at(v_holes, k);
     h->wide = (uint8_t)at(v_holes, k + 1);
@@ -149,7 +155,8 @@ value caml_rig_amd_hdp(value v_self, value v_reg, value v_delta) {
 /* Work */
 
 value caml_rig_amd_last(value v_self) {
-  return Val_long(Device_val(v_self)->last);
+  return Val_long(atomic_load_explicit(&Device_val(v_self)->last,
+                                       memory_order_acquire));
 }
 
 value caml_rig_amd_room_entry(value unit) {
@@ -184,9 +191,10 @@ value caml_rig_amd_signaled(value v_self) {
    else writes it. */
 value caml_rig_amd_settle(value v_self) {
   struct rig_amd *d = Device_val(v_self);
+  uint64_t last = atomic_load_explicit(&d->last, memory_order_relaxed);
   uint64_t seen = atomic_load_explicit(d->word, memory_order_acquire);
-  while (seen < d->last &&
-         !atomic_compare_exchange_weak_explicit(d->word, &seen, d->last,
+  while (seen < last &&
+         !atomic_compare_exchange_weak_explicit(d->word, &seen, last,
                                                 memory_order_release,
                                                 memory_order_acquire)) {
   }
@@ -195,20 +203,24 @@ value caml_rig_amd_settle(value v_self) {
 
 /* Publishes the writes of a new AQL scratch to the queue's descriptor: the
    32-bit [values] at the GPU addresses [at], which the next submission
-   places. */
+   places. Answers the value whose submission placed the publication this
+   one replaces, or 0 if none did, read under the lock. */
 value caml_rig_amd_scratch(value v_self, value v_at, value v_values) {
   struct rig_amd *d = Device_val(v_self);
   int n = (int)Wosize_val(v_at), idle = 0;
+  if (n > RIG_AMD_SCRATCH_WRITES)
+    caml_invalid_argument("Rig_amd: too many scratch writes");
   while (!atomic_compare_exchange_weak(&d->scratch_lock, &idle, 1)) idle = 0;
+  uint64_t took = atomic_load_explicit(&d->scratch_taken, memory_order_relaxed);
   for (int i = 0; i < n; i++) {
     d->scratch_at[i] = (uint64_t)at(v_at, i);
     d->scratch_value[i] = (uint32_t)at(v_values, i);
   }
   d->scratch_n = n;
   atomic_store_explicit(&d->scratch_taken, 0, memory_order_relaxed);
-  atomic_store_explicit(&d->scratch_ready, 1, memory_order_release);
+  atomic_store_explicit(&d->scratch_ready, 1, memory_order_relaxed);
   atomic_store_explicit(&d->scratch_lock, 0, memory_order_release);
-  return Val_unit;
+  return Val_long((intnat)took);
 }
 
 /* The value whose submission placed the last scratch writes, or 0. */
@@ -241,9 +253,10 @@ value caml_rig_amd_renumber(value v_self, value v_v, value v_age) {
     d->slots[2 * i] = (uint32_t)written;
     d->slot_last[i] = written;
   }
+  uint64_t last = atomic_load_explicit(&d->last, memory_order_relaxed);
   for (int q = 0; q < RIG_AMD_QUEUES; q++)
-    if (d->rings[q].released == d->last) d->rings[q].released = prev;
-  d->last = prev;
+    if (d->rings[q].released == last) d->rings[q].released = prev;
+  atomic_store_explicit(&d->last, prev, memory_order_relaxed);
   atomic_store_explicit(d->word, prev, memory_order_release);
   return Val_unit;
 }

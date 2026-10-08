@@ -20,6 +20,7 @@ type node = {
   visible : int; (* of it, the bytes the host reaches through the BAR *)
   waves_per_cu : int; (* the most waves a compute unit runs at once *)
   arrays : int; (* the shader arrays of a shader engine *)
+  cu_per_array : int; (* the compute units a shader array has, active or not *)
   cwsr : int; (* a die's context save area, in bytes *)
   ctl_stack : int; (* the part of it that holds the control stack *)
 }
