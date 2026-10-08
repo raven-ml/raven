@@ -103,7 +103,10 @@ val barrier : Device_core.Buffer.t -> unit
     copies or through a borrow, are ordered before every later change to the
     file system: after a crash, a change made after [barrier] returns, such as a
     rename of the file, is seen only with those bytes. It does not make them
-    durable: a crash may lose both the bytes and the later change. A buffer
+    durable: a crash may lose both the bytes and the later change. On a file
+    system that offers no barrier and no flush of the drive's cache to its
+    medium, such as some network file systems on macOS, [barrier] is the
+    system's [fsync] and the ordering is the file system's own. A buffer
     {!of_file} opened is never written: [barrier] returns at once.
 
     Raises [Invalid_argument] if [b] is not a buffer of {!device} or is dead
