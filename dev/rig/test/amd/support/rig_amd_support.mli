@@ -16,13 +16,26 @@ val hold_gpu : unit -> unit
     the lock: [hold_gpu] starts no vendor library, which a process must not
     start before it forks. It returns at once, taking nothing, if the variable
     [RIG_GPU_LOCK_HELD] is set: the process that started this one holds the
-    lock for it, as a timing run takes it before the host's timing locks.
+    lock for it, as a timing run takes it before the host's timing locks. A
+    machine counts a GPU as {!gpus} does.
 
     Raises [Failure] naming the holder if another process still holds the lock
     after 300 s, or naming the errno if the file cannot be locked. *)
 
+val gpus : unit -> int
+(** [gpus ()] is the number of AMD GPUs the suites can open: amdgpu's
+    ({!Rig_amd_amdgpu.count}), or, where the variable [RIG_AMD_PCI_FIRMWARE]
+    is set, the machine's ({!Rig_amd_pci.count}). *)
+
+val open_gpu : unit -> (Rig_amd.t, string) result
+(** [open_gpu ()] opens GPU [0] through amdgpu ({!Rig_amd_amdgpu.open_}), or,
+    where the variable [RIG_AMD_PCI_FIRMWARE] lists directories separated by
+    [:], with no kernel driver, its firmware read from them
+    ({!Rig_amd_pci.open_}): the GPU detached ({!Rig_amd_pci.detach}) and the
+    process privileged to take it. *)
+
 val gpu : unit -> Rig_amd.t
-(** [gpu ()] is AMD GPU [0], opened through the amdgpu path and handed to rig
+(** [gpu ()] is AMD GPU [0], opened by {!open_gpu} and handed to rig
     under a name of its own ({!rig}), after stopping the device an earlier
     {!gpu} opened if no {!stop} stopped it, as a failed test leaves it, while
     the process holds the machine's GPU lock ({!hold_gpu}). It skips the test if

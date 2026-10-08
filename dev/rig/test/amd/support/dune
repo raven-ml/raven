@@ -1,9 +1,10 @@
 ; What the AMD suites share: the GPU lock, the GPU opened through
-; the amdgpu path and rig, host memory, fills and the C entries.
+; the amdgpu path or with no kernel driver, and rig, host memory, fills
+; and the C entries.
 
 (library
  (name rig_amd_support)
- (libraries rig rig_amd rig_amd_amdgpu rig_edge windtrap)
+ (libraries rig rig_amd rig_amd_amdgpu rig_amd_pci rig_edge windtrap)
  (foreign_stubs
   (language c)
   (names rig_amd_support_stubs)))

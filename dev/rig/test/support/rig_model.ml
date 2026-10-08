@@ -108,7 +108,7 @@ let gpus =
          [ Metal ]
        else []);
       (if Sys.file_exists "/dev/nvidiactl" then [ Cuda; Nv ] else []);
-      (if Rig_amd_amdgpu.count () > 0 then [ Amd ] else []);
+      (if Rig_amd_support.gpus () > 0 then [ Amd ] else []);
     ]
 
 let hold_gpu () =
@@ -142,7 +142,7 @@ let opened_gpu g =
         (Rig.open_
            (module Rig_amd)
            ~name:(Rig_amd_amdgpu.device_name 0)
-           (fun () -> Rig_amd_amdgpu.open_ 0))
+           Rig_amd_support.open_gpu)
 
 (* A GPU opens once per process, on first use, and again once a program lost it:
    its queue may wait on a lost Polled device's work. *)

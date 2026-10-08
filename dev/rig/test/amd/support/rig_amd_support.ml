@@ -52,8 +52,22 @@ let rec take refused =
 (* Whether the process that started this one holds the lock for it. *)
 let held_outside () = Sys.getenv_opt "RIG_GPU_LOCK_HELD" <> None
 
-let hold_gpu () =
-  if (not (held_outside ())) && Rig_amd_amdgpu.count () > 0 then take 0
+(* The path *)
+
+let pci_firmware =
+  Option.map (String.split_on_char ':') (Sys.getenv_opt "RIG_AMD_PCI_FIRMWARE")
+
+let gpus () =
+  match pci_firmware with
+  | Some _ -> Rig_amd_pci.count ()
+  | None -> Rig_amd_amdgpu.count ()
+
+let open_gpu () =
+  match pci_firmware with
+  | Some firmware -> Rig_amd_pci.open_ ~firmware 0
+  | None -> Rig_amd_amdgpu.open_ 0
+
+let hold_gpu () = if (not (held_outside ())) && gpus () > 0 then take 0
 
 (* The device gpu opened and rig's device over it, until a test stops it or rig
    loses it: one a failed test left open is stopped by the next gpu. Each open
@@ -67,7 +81,7 @@ let stop g =
   Rig_amd.stop g
 
 let gpu () =
-  if Rig_amd_amdgpu.count () = 0 then
+  if gpus () = 0 then
     skip ~reason:"the machine has no AMD GPU" ();
   hold_gpu ();
   Option.iter (fun (o, _) -> stop o) !opened;
@@ -78,7 +92,7 @@ let gpu () =
       (fun x ->
         g := Some x;
         x)
-      (Rig_amd_amdgpu.open_ 0)
+      (open_gpu ())
   in
   match Rig.open_ (module Rig_amd) ~name:(strf "AMD:test-%d" !opens) make with
   | Error why -> failwith why
