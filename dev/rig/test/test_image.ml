@@ -104,6 +104,48 @@ let test_upload_frees_after_stop () =
   ignore (B.create Rig.host 8);
   equal ~msg:"once it did" int 1 (frees ())
 
+(* Collects, then drains as an allocation does. *)
+let collect () =
+  Gc.full_major ();
+  Gc.full_major ();
+  ignore (B.create Rig.host 8)
+
+let rec after_stop = function
+  | "stop" :: rest -> rest
+  | _ :: rest -> after_stop rest
+  | [] -> []
+
+(* An image still loaded when its device stops is unloaded after the stop, once
+   unreachable: the stop releases nothing this library made. *)
+let test_unload_after_stop () =
+  let d, p = P.open_ "image:unload-after-stop" in
+  let i = ref (Some (load d "code:64")) in
+  let code = require_some (Image.entry (Option.get !i) "main") in
+  P.fail p;
+  raises_match (lost d) (fun () -> submit (Sub.make ~reads:0 ~writes:0 d [||]));
+  equal ~msg:"by the stop" int 0 (count "unload" p);
+  i := None;
+  collect ();
+  equal ~msg:"after the stop" (list string) [ "unload" ]
+    (List.filter (( = ) "unload") (after_stop (P.log p)));
+  equal ~msg:"its code's memory" bool true
+    (List.exists (fun (a, _) -> a = code) (P.frees p))
+
+(* A lost device whose work may still run unloads nothing until its word reads
+   its last value. *)
+let test_unload_after_unknown () =
+  let d, p = P.open_ ~answer:`Unknown "image:unload-unknown" in
+  let i = ref (Some (load d "code:64")) in
+  ignore (submit (Sub.make ~reads:0 ~writes:0 d [||]));
+  P.fail p;
+  raises_match (lost d) (fun () -> submit (Sub.make ~reads:0 ~writes:0 d [||]));
+  i := None;
+  collect ();
+  equal ~msg:"with the word short" int 0 (count "unload" p);
+  P.set_word p (Rig.submitted d);
+  collect ();
+  equal ~msg:"once the word drained" int 1 (count "unload" p)
+
 let test_profiled () =
   let d, _ = P.open_ "image:profiled" in
   let p, events = Prof.take (fun () -> load d "code:64") in
@@ -129,6 +171,10 @@ let tests =
         test "a load whose upload fails loses the device" test_upload_fails;
         test "a failed upload frees its code once the device counts as stopped"
           test_upload_frees_after_stop;
+        test "a lost device's image is unloaded after its stop"
+          test_unload_after_stop;
+        test "a lost device's image waits for its word to drain"
+          test_unload_after_unknown;
         test "a load is an event of the profiles taken" test_profiled;
       ];
   ]

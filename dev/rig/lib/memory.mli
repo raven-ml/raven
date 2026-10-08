@@ -11,11 +11,11 @@
     behind a transport is read through its driver, whose fault stops the device,
     and a stop drains.
 
-    A driver call on a device that is not lost is {{!Dev.counted}counted}, so it
-    raises {!Dev.Lost} if the device is or becomes lost. Once a device is lost,
-    its frees and unmaps wait for its stop and run uncounted, dropping their
-    failures. Lost devices whose stop returned stay on a list that every drain
-    walks, for the life of the process. *)
+    Every object goes back to its driver through {!Dev.give}: counted on a live
+    device, so it raises {!Dev.Lost} if the device is or becomes lost; on a
+    lost device once it is Stopped, uncounted, dropping its failures; and on an
+    orphaned device not at all. Lost devices whose stop returned
+    ({!Dev.ended}) are walked by every drain, for the life of the process. *)
 
 open Def
 
@@ -50,8 +50,16 @@ val iter_write : (int -> unit) -> int -> unit
 *)
 
 val check_points : int -> unit
-(** [check_points st] raises {!Dev.Lost} if a point of [st] is on a lost device.
-*)
+(** [check_points st] raises {!Dev.Lost} if a point of [st] is on a lost device
+    and not done. *)
+
+val check_owner : memory -> unit
+(** [check_owner m] raises {!Dev.Lost} if [m]'s memory is a lost device's, or
+    [m] is a lost device's borrow: the memory a lost device owns or maps. *)
+
+val check : memory -> unit
+(** [check m] is {!check_owner} [m], then {!check_points} of [m]'s stamps: for
+    a use of [m] that follows every point. *)
 
 (** {1:records Records} *)
 
@@ -174,9 +182,9 @@ val of_io : device -> io_region -> access:access -> int -> memory
 val drain : device -> unit
 (** [drain d] returns the memory of [d]'s collected buffers, runs the releases
     due on it and on lost devices, and the holds' releases due, raising the
-    first exception a hold's release raised once all ran. It does nothing on a
-    device a forked child inherited, whose frees would call its parent's driver.
-*)
+    first exception a hold's release raised once all ran. It forgets the holds
+    made before a fork. It does nothing on an orphaned device, whose frees would
+    call its parent's driver. *)
 
 val reclaiming : device -> pool:device -> int -> (unit -> 'a option) -> 'a
 (** [reclaiming d ~pool n f] is the out-of-memory ladder for [n] bytes of [d]
@@ -209,8 +217,7 @@ val retire : device -> entry -> unit
     lost, once it counts as stopped. *)
 
 val unload : device -> loaded -> unit
-(** [unload d i] releases what [d]'s driver made for [i], unless [d] is lost,
-    whose stop releases it. *)
+(** [unload d i] releases what [d]'s driver made for [i] ({!Dev.give}). *)
 
 val alloc_entry : device -> memory_kind -> int -> entry
 (** [alloc_entry d kind n] allocates [n] bytes of [d]'s memory of [kind] on the

@@ -53,7 +53,7 @@
     others, except the C entries and {!stop}. The C entries run one call at a
     time, in value order, which their caller ensures; {!sleep} may run beside
     them. {!stop} is called once, after every other call returned; after it only
-    {!free} and {!signaled} are called.
+    {!free}, {!unload} and {!signaled} are called.
 
     {b References.}
     - LLVM's

@@ -147,6 +147,7 @@ value caml_rig_blit_bytes(value v_src, value v_b, value v_j, value v_n) {
    { owner; memory; bytes; region; io_region; access; stamps; held; ... },
    as rig's Def module lays them out. */
 
+enum { DEVICE_INDEX, DEVICE_NAME, DEVICE_MACHINE, DEVICE_KIND, DEVICE_C };
 enum { BUFFER_MEM, BUFFER_OFFSET, BUFFER_LENGTH, BUFFER_GEN };
 enum { MEMORY_DEV, MEMORY_BYTES, MEMORY_HOST, MEMORY_ADDRESS, MEMORY_HANDLE,
        MEMORY_CLAIM, MEMORY_ENTRY, MEMORY_ROOT };
@@ -188,6 +189,14 @@ const char *rig_buffer_why(value b) {
 
 /* Claims */
 
+/* Whether the device of the memory record [mem] is lost: a borrow's
+   device, or the device whose memory a root is. */
+static int dev_lost(value mem) {
+  struct rig_device *d =
+      (struct rig_device *)Long_val(Field(Field(mem, MEMORY_DEV), DEVICE_C));
+  return atomic_load_explicit(&d->state, memory_order_acquire) != RIG_LIVE;
+}
+
 /* Whether the work of the stamps [s] that an access must follow is done:
    that of the last write, or of every use if [every]. A use word that a
    submission reserved holds no value until its first raise. */
@@ -221,12 +230,14 @@ enum rig_claim rig_buffer_claim(value b, enum rig_access access) {
     rig_buffer_release(b);
     return RIG_DEAD;
   }
-  value entry = load_field(Field(mem, MEMORY_ROOT), MEMORY_ENTRY);
+  value root = Field(mem, MEMORY_ROOT);
+  value entry = load_field(root, MEMORY_ENTRY);
   struct rig_stamps *s =
       (struct rig_stamps *)Long_val(load_field(entry, ENTRY_STAMPS));
-  if (s != NULL &&
-      !stamps_done(s, access == RIG_READ_WRITE ||
-                          Bool_val(load_field(entry, ENTRY_HELD)))) {
+  if (dev_lost(mem) || (root != mem && dev_lost(root)) ||
+      (s != NULL &&
+       !stamps_done(s, access == RIG_READ_WRITE ||
+                           Bool_val(load_field(entry, ENTRY_HELD))))) {
     rig_buffer_release(b);
     return RIG_PENDING;
   }

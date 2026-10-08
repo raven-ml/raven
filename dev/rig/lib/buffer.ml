@@ -110,8 +110,7 @@ let overlaps b b' =
 let borrow d b =
   check_live "Buffer.borrow" b;
   if Dev.is_lost d then Dev.raise_lost d;
-  if Dev.is_lost b.mem.dev then Dev.raise_lost b.mem.dev;
-  Memory.check_points (Memory.stamps b.mem);
+  Memory.check b.mem;
   if b.mem.dev == d then Some b
   else
     match Memory.borrow d b.mem with
@@ -120,13 +119,15 @@ let borrow d b =
         Some { b with mem }
     | None -> None
 
-let wait_point p = Dev.wait (Dev.of_index (Point.index p)) (Point.value p)
+let wait_points b access =
+  let e = b.mem.root.entry in
+  if access = Read && not e.held then Memory.iter_write Dev.wait_point e.stamps
+  else Memory.iter_points Dev.wait_point e.stamps
 
 let wait b access =
   check_live "Buffer.wait" b;
-  let e = b.mem.root.entry in
-  if access = Read && not e.held then Memory.iter_write wait_point e.stamps
-  else Memory.iter_points wait_point e.stamps
+  Memory.check_owner b.mem;
+  wait_points b access
 
 (* Bigarrays *)
 
@@ -167,7 +168,7 @@ let bigarray (type a b) (k : (a, b) Bigarray.kind) b :
   if not (Dev.is_host b.mem.dev) then
     invalid_argf "Rig.Buffer.bigarray: the buffer is on %s, not a host"
       b.mem.dev.name;
-  Memory.check_points (Memory.stamps b.mem);
+  Memory.check b.mem;
   let size = Bigarray.kind_size_in_bytes k in
   let unit =
     match k with

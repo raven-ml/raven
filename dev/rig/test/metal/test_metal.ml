@@ -454,8 +454,7 @@ let after_unload () =
 
 let stopped_icb = "the device was stopped"
 
-(* A stop releases the pipelines of the images still loaded; an icb call after
-   it retains none. *)
+(* An icb call after a stop retains no pipeline: it answers the stop. *)
 let after_stop () =
   let t = dev_of (opened ()) in
   let args = alloc t args_bytes in
@@ -904,9 +903,9 @@ let stopped_running () =
   b.release ();
   await_release w
 
-(* Images still loaded when the device stops are released with it: unload is
-   never called after stop. *)
-let stop_releases_images () =
+(* Images still loaded when the device stops stay loaded: their unload after
+   the stop releases them. *)
+let unload_after_stop () =
   let t = dev_of (opened ()) in
   let i = load t.d in
   let weak f = S.weak (Nativeint.of_int (require_some (Rig_metal.entry i f))) in
@@ -914,7 +913,13 @@ let stop_releases_images () =
   S.wait t.d (submit t [||]);
   Rig_metal.stop t.d;
   List.iteri
-    (fun k w -> equal bool ~msg:(strf "pipeline %d" k) false (S.alive w))
+    (fun k w ->
+      equal bool ~msg:(strf "pipeline %d after the stop" k) true (S.alive w))
+    weaks;
+  Rig_metal.unload t.d i;
+  List.iteri
+    (fun k w ->
+      equal bool ~msg:(strf "pipeline %d after the unload" k) false (S.alive w))
     weaks
 
 let timeline =
@@ -927,7 +932,8 @@ let timeline =
         "stop while work runs: the word reaches the last value once it ends, \
          and its indirect command buffer is released after"
         stopped_running;
-      test "stop releases the images still loaded" stop_releases_images;
+      test "an image a stop left loaded is released by its unload"
+        unload_after_stop;
     ]
 
 (* Opening and misuse *)

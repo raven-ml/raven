@@ -161,10 +161,11 @@ domain arrives and leaves the race unexercised.
 ## Loss and faults
 
 A device whose driver reports a fault, or whose hand-over fails, is lost once
-and for good (`lib/rig.mli`, "Loss"). Every later use of it, and of
-memory whose stamps name it, raises `Lost`; other devices go on; its facts
-still answer; its memory returns only once its word shows its last value
-reached.
+and for good (`lib/rig.mli`, "Loss"); so is a closed device, and every device
+of a failed process. Every later use of it, of its memory, and of other memory
+that waits for a point it did not reach raises `Lost`; other devices go on;
+its facts still answer; its memory returns only once its word shows its last
+value reached.
 
 **Rig's test driver.** Rig's job is to keep that contract over any
 driver, so its suites run on `Rig_support.Polled`
@@ -187,8 +188,10 @@ the driver behaviours rig must handle:
 laws in `test/test_loss.ml` pin each sentence of the contract: "a failed
 hand-over loses the device once", "a fault two domains' sleeps find loses the
 device once", "a queue waiting on a lost device's value is lost", "a lost
-device answers its facts and values", "a loss leaves other devices and their
-memory working". Polled tests rig; it is never used to test a driver.
+device answers its facts and values", "memory whose points a lost device
+reached is ordinary", "a close waits for the work, then ends the device". A
+failed process stays failed, so `test/test_fail.ml` runs each of its cases in
+a forked child. Polled tests rig; it is never used to test a driver.
 
 **Failure walks.** A failure path is reached by few tests, so a walk reaches
 every one. `test/test_walk.ml` runs each operation of rig over Polled

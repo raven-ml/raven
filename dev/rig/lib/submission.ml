@@ -52,7 +52,6 @@ external sub_clear : c -> unit = "caml_rig_sub_clear" [@@noalloc]
 external sub_value : c -> int = "caml_rig_sub_value" [@@noalloc]
 external sub_no_room_at : c -> int = "caml_rig_sub_no_room_at" [@@noalloc]
 external sub_producer : c -> int = "caml_rig_sub_producer" [@@noalloc]
-external sub_claims : c -> int array = "caml_rig_sub_claims"
 external c_submit : c -> int = "caml_rig_submit"
 external sub_take : c -> unit = "caml_rig_sub_take"
 external sub_give : c -> unit = "caml_rig_sub_give" [@@noalloc]
@@ -245,9 +244,7 @@ let busy = 1
 let no_room = 2
 let never = 3
 let producer_lost = 6
-let failed = 7
 let need_record = 8
-let stop_claimed = 16
 let fn = "submit"
 
 (* Checks a part's buffers: live and, once a hold exists, in no hold but the
@@ -284,7 +281,8 @@ let check_counts s reads writes =
 (* Refuses [b], element [i] of the run's array of [access] ([reads] or
    [writes]), unless it is live, on [s]'s device, once a hold exists in no hold,
    and, written, of memory that admits writes; and hands its stamps and handle
-   to the C slot [k]. *)
+   to the C slot [k]. Memory of another device that is lost raises its loss;
+   [s]'s device's own loss is the hand-over's. *)
 let name_one s held (access : access) i k b =
   let what = match access with Read -> "reads" | Read_write -> "writes" in
   if not (Buffer.is_live b) then
@@ -293,7 +291,11 @@ let name_one s held (access : access) i k b =
   if b.mem.dev != s.dev then
     invalid_argf "Rig.%s: %s.(%d) is on %s, not on %s: borrow it" fn what i
       b.mem.dev.name s.dev.name;
-  let e = entry_of b in
+  let m = b.mem.root in
+  if m != b.mem && m.dev != s.dev && Dev.is_lost m.dev then
+    Dev.raise_lost m.dev;
+  if m.entry == Memory.no_entry then Memory.ensure_entry m;
+  let e = m.entry in
   if held && e.held then
     invalid_argf "Rig.%s: %s.(%d)'s memory is in a hold" fn what i;
   if access = Read_write && e.access = Read then
@@ -308,8 +310,11 @@ let rec wait_points s n i count =
   else
     let p = sub_point s.c i in
     let producer = Dev.of_index (Point.index p) and v = Point.value p in
-    if Dev.is_lost producer then Dev.raise_lost producer;
-    if Dev.point_reached p then wait_points s n (i + 1) count
+    if Dev.is_lost producer then begin
+      Dev.check p;
+      wait_points s n (i + 1) count
+    end
+    else if Dev.is_done p then wait_points s n (i + 1) count
     else
       let way =
         if count >= s.dev.max_waits then host_wait else pair s.dev producer
@@ -331,8 +336,7 @@ let rec wait_points s n i count =
 let rec hand_over s nwaits =
   let d = s.dev in
   let r = c_submit s.c in
-  if r land stop_claimed <> 0 then Dev.stop d;
-  let r = r land (stop_claimed - 1) in
+  Dev.run_owed ();
   if r = ok then Point.make d.index (sub_value s.c)
   else if r = busy then hand_over s nwaits
   else if r = no_room then begin
@@ -352,10 +356,6 @@ let rec hand_over s nwaits =
       fn d.name
   else if r = producer_lost then
     Dev.raise_lost (Dev.of_index (sub_producer s.c))
-  else if r = failed then begin
-    Array.iter (fun i -> Dev.stop (Dev.of_index i)) (sub_claims s.c);
-    Dev.raise_lost d
-  end
   else Dev.raise_lost d
 
 (* Names the run's [k]th buffer, a read below [s.nreads], else a write: the
@@ -394,10 +394,10 @@ let rec run s held reads writes waits k =
     p
 
 (* A forked child never waits on a guard its parent's thread may hold: every
-   submission made before the fork is on a device the child inherited, which
-   raises first. *)
+   submission made before the fork is on a device the child inherited, which is
+   lost. *)
 let submit s ~reads ~writes ~waits =
-  if Dev.inherited s.dev then Dev.raise_lost s.dev;
+  if Dev.is_lost s.dev then Dev.raise_lost s.dev;
   check_counts s reads writes;
   sub_take s.c;
   match

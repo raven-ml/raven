@@ -201,65 +201,108 @@ let test_own_device () =
   equal string "exited 0" (status ended);
   equal (list string) [ "not lost"; "reused: true"; "forked" ] lines
 
-(* A thread of the parent inside every lock of rig at the fork, with a
-   profile being taken, leaves the child a working rig: the child makes each
-   lock anew. A child that still waits for one is killed by its alarm. *)
+(* A part that holds one unit of a Polled queue. *)
+let one_part d =
+  let arg = B.create Rig.host 8 in
+  let fill = Support.bump in
+  Sub.make ~reads:0 ~writes:0 d
+    [|
+      {
+        Sub.queue = "COMPUTE:0";
+        after = [||];
+        work = Sub.Fill { fill; arg; ring_units = 0; segment_bytes = 0 };
+      };
+    |]
+
+(* A thread of the parent blocked in a hand-over at the fork, holding its
+   device's turn and its submission, with a profile being taken, leaves the
+   child a working rig: devices the child opens submit, and the parent's are
+   lost at once. A child that waits for what the thread holds is killed by its
+   alarm. *)
 let test_locks () =
   if Sys.win32 then skip ~reason:"Windows has no fork" ();
   let io = open_store "fork:io-locked" in
-  let lock = Mutex.create () and cond = Condition.create () in
-  let inside = ref false and leave = ref false in
-  let hold () =
-    Support.locked (fun () ->
-        Mutex.protect lock (fun () ->
-            inside := true;
-            Condition.broadcast cond;
-            while not !leave do
-              Condition.wait cond lock
-            done))
+  let d, p = P.open_ ~capacity:1 ~may_block:true "fork:blocked" in
+  let s = one_part d in
+  ignore (submit s);
+  let blocked () =
+    try ignore (Rig.Profile.take (fun () -> submit s)) with Rig.Lost _ -> ()
   in
-  let holder = Thread.create (fun () -> ignore (Rig.Profile.take hold)) () in
-  Mutex.protect lock (fun () ->
-      while not !inside do
-        Condition.wait cond lock
-      done);
+  let holder = Thread.create blocked () in
+  Support.await "a blocked submit" (fun () -> P.blocked p = 1);
   let lines, ended =
     in_child (fun () ->
         Sys.set_signal Sys.sigalrm Sys.Signal_default;
         ignore (Unix.alarm 5);
         let made = B.length (B.create io 8) in
-        let d, _ = P.open_ "fork:opened-in-child" in
+        let e, _ = P.open_ ~capacity:1 ~may_block:true "fork:opened-in-child" in
+        let v = Rig.Point.value (submit (one_part e)) in
         Rig.Profile.span "child" (fun () -> ());
         [
           Printf.sprintf "bytes made: %d" made;
-          Option.value ~default:"opened" (Rig.lost d);
-          "span recorded";
+          Printf.sprintf "submitted: %d" v;
+          Option.value ~default:"not lost" (Rig.lost d);
+          Printf.sprintf "submit raises Lost: %b"
+            (raises_lost (fun () -> submit s));
         ])
   in
-  Mutex.protect lock (fun () ->
-      leave := true;
-      Condition.broadcast cond);
+  ignore (P.run p);
   Thread.join holder;
   equal string "exited 0" (status ended);
-  equal (list string) [ "bytes made: 8"; "opened"; "span recorded" ] lines
+  equal (list string)
+    [ "bytes made: 8"; "submitted: 1"; "forked"; "submit raises Lost: true" ]
+    lines
 
-(* A host borrow of a lost device's memory raises its loss in a forked child:
-   a driver's memory need not be mapped in the child, as Metal's buffers are
-   not on macOS. *)
-let test_child_borrow () =
+(* In a forked child, a buffer over an inherited device's memory raises the
+   device's loss, through a borrow on the host too: the child may not map that
+   memory, as it maps no Metal buffer on macOS. *)
+let test_child_memory () =
   if Sys.win32 then skip ~reason:"Windows has no fork" ();
-  let d, _ = P.open_ ~copies:false "fork:borrowed" in
-  let h = require_some (B.borrow Rig.host (B.create d 64)) in
+  let d, _ = P.open_ ~copies:false "fork:memory" in
+  let m = B.create d 64 in
+  let h = require_some (B.borrow Rig.host m) in
+  let outcome f =
+    match f () with
+    | _ -> "returned"
+    | exception Rig.Lost (d', why) when Rig.equal d d' -> why
+  in
   let lines, ended =
     in_child (fun () ->
+        let dst = B.create Rig.host 64 in
         [
-          (match B.bigarray Bigarray.char h with
-          | _ -> "read"
-          | exception Rig.Lost _ -> "lost");
+          outcome (fun () -> B.wait h B.Read_write);
+          outcome (fun () -> B.bigarray Bigarray.char h);
+          outcome (fun () -> B.copy ~src:h ~dst);
+          outcome (fun () -> B.borrow Rig.host m);
         ])
   in
   equal string "exited 0" (status ended);
-  equal (list string) [ "lost" ] lines
+  equal (list string) [ "forked"; "forked"; "forked"; "forked" ] lines;
+  B.wait h B.Read_write
+
+(* A hold made before a fork is forgotten in the child: its release would call
+   the parent's drivers. The parent's runs as before. *)
+let test_hold () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  let runs = Atomic.make 0 in
+  let release () = Atomic.incr runs in
+  let h = ref (Some (Rig.Hold.make ~release [ B.create Rig.host 64 ])) in
+  let lines, ended =
+    in_child (fun () ->
+        h := None;
+        Gc.full_major ();
+        Gc.full_major ();
+        ignore (B.create Rig.host 8);
+        [ Printf.sprintf "releases: %d" (Atomic.get runs) ])
+  in
+  equal string "exited 0" (status ended);
+  equal (list string) [ "releases: 0" ] lines;
+  ignore (Sys.opaque_identity !h);
+  h := None;
+  Gc.full_major ();
+  Gc.full_major ();
+  ignore (B.create Rig.host 8);
+  equal ~msg:"in the parent" int 1 (Atomic.get runs)
 
 let tests =
   [
@@ -272,14 +315,11 @@ let tests =
           test_io_used;
         test "a device a forked child opens drains as in any process"
           test_own_device;
-        test "a forked child uses rig while a parent's thread held its locks"
+        test "a forked child uses rig while a parent's thread held a turn"
           test_locks;
-        xfail
-          ~reason:
-            "a forked child reads a host borrow of its lost device's memory, \
-             which on macOS kills it for Metal's"
-          (test "a forked child's host borrow of a lost device's memory is lost"
-             test_child_borrow);
+        test "a forked child's host borrow of a lost device's memory is lost"
+          test_child_memory;
+        test "a hold made before a fork never releases in the child" test_hold;
       ];
   ]
 

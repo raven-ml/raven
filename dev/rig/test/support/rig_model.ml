@@ -364,16 +364,18 @@ let uses ?(maybe = false) v devs =
       | Fine -> ())
     devs
 
-(* The call waits for [st]'s last write, or with [all], for every point. *)
+(* The call waits for [st]'s last write, or with [all], for every point. A
+   lost device's point raises its loss only if the device had not reached it
+   when lost, which the reference does not know. *)
 let waits ?(all = false) v (st : rstamps) =
-  if all then begin
-    uses v (Option.to_list st.writer @ st.users);
-    uses ~maybe:true v (st.writers @ st.maybe)
-  end
-  else begin
-    uses v (Option.to_list st.writer);
-    uses ~maybe:true v st.writers
-  end
+  if all then
+    uses ~maybe:true v
+      (Option.to_list st.writer @ st.users @ st.writers @ st.maybe)
+  else uses ~maybe:true v (Option.to_list st.writer @ st.writers)
+
+(* The call uses the buffer [b]: memory a lost device allocated, and a lost
+   device's borrow, raise its loss. *)
+let owned v b = uses v [ b.on; b.mem.owner ]
 
 (* The call reads memory [m]: it waits for its last write, or, for memory in a
    hold, for every point of the hold. *)
@@ -994,8 +996,8 @@ let borrow_ref (v : rdevv) src dst outcome =
   | Some b ->
       let vd = verdict () in
       invalid_if vd (dead b);
-      uses vd [ d; b.on ];
-      uses ~maybe:true vd [ b.mem.owner ];
+      uses vd [ d ];
+      owned vd b;
       waits ~all:true vd b.mem.stamps;
       let predicted = maps d b in
       judge w vd outcome (fun got ->
@@ -1065,11 +1067,9 @@ let fill_ref seed last c outcome =
   else
     let vd = verdict () in
     invalid_if vd (dead b);
+    owned vd b;
     if b.on.kind = Host then waits ~all:true vd b.mem.stamps
-    else begin
-      uses vd [ b.on ];
-      if b.length > 0 then waits ~all:true vd b.mem.stamps
-    end;
+    else if b.length > 0 then waits ~all:true vd b.mem.stamps;
     let lost () =
       unknown b;
       if device_work b.on then maybe_write b.mem.stamps b.on
@@ -1103,11 +1103,9 @@ let read_ref last c outcome =
   with_buf c outcome @@ fun b ->
   let vd = verdict () in
   invalid_if vd (dead b);
+  owned vd b;
   if b.on.kind = Host then waits ~all:true vd b.mem.stamps
-  else begin
-    uses vd [ b.on ];
-    if b.length > 0 then reads vd b.mem
-  end;
+  else if b.length > 0 then reads vd b.mem;
   let lost () = if device_work b.on then maybe_use b.mem.stamps b.on in
   judge ~lost c.w vd outcome (fun s ->
       if b.on.kind = Host then b.mem.exported <- true;
@@ -1142,7 +1140,8 @@ let copy_judge ~invalid last src a b outcome =
   let vd = verdict () in
   invalid_if vd invalid;
   invalid_if vd (read_only b.mem);
-  uses vd [ a.on; b.on ];
+  owned vd a;
+  owned vd b;
   if a.length > 0 then begin
     reads vd a.mem;
     waits ~all:true vd b.mem.stamps
@@ -1387,6 +1386,7 @@ let submit_ref last rc wc sc outcome =
       let slot b = if b.on == d then `Some else maps d b in
       invalid_if vd (slot r = `None || slot wb = `None || read_only wb.mem);
       uses ~maybe:true vd [ r.on; wb.on ];
+      uses vd [ r.mem.owner; wb.mem.owner ];
       invalid_if vd
         (List.exists
            (fun b ->
@@ -1539,6 +1539,7 @@ let claim_ref c outcome =
   with_buf c outcome @@ fun b ->
   let vd = verdict () in
   invalid_if vd (dead b);
+  owned vd b;
   waits ~all:true vd b.mem.stamps;
   match outcome with
   | Error (Invalid_argument _) when c.w.two && not (dead b) -> ()
@@ -1560,6 +1561,8 @@ let with_ref r d outcome =
   with_buf d outcome @@ fun b ->
   let vd = verdict () in
   invalid_if vd (dead a || dead b || overlaps a b);
+  owned vd a;
+  owned vd b;
   waits ~all:true vd a.mem.stamps;
   waits ~all:true vd b.mem.stamps;
   match outcome with
@@ -1585,6 +1588,7 @@ let consume_ref src dst outcome =
   with_buf src outcome @@ fun b ->
   let vd = verdict () in
   invalid_if vd (dead b);
+  owned vd b;
   waits ~all:true vd b.mem.stamps;
   match outcome with
   | Error (Invalid_argument _) when src.w.two && not (dead b) -> ()
@@ -1622,6 +1626,7 @@ let wait_ref access c outcome =
   with_buf c outcome @@ fun b ->
   let vd = verdict () in
   invalid_if vd (dead b);
+  owned vd b;
   waits ~all:(access = B.Read_write || b.mem.hold <> None) vd b.mem.stamps;
   judge c.w vd outcome Fun.id
 

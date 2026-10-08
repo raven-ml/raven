@@ -7,8 +7,8 @@
 
     [rig_memory.c] reads by position, for the readers and claims [rig.h]
     declares, the fields of {!buffer} and {!claim}, those of {!memory} up to
-    [root], and those of {!entry} up to [held]: a change of their order changes
-    it too. *)
+    [root], those of {!entry} up to [held], and those of {!device} up to [c]: a
+    change of their order changes it too. *)
 
 type ('a, 'r, 'i) dm =
   (module Sigs.Driver with type t = 'a and type region = 'r and type image = 'i)
@@ -63,7 +63,7 @@ type device = {
   name : string;
   machine : string option;
   kind : kind;
-  c : int;  (** The C record, 0 for the host. *)
+  c : int;  (** The C record. *)
   arch : string;
   queues : string array;
   copy_queue : string option;  (** Its first copy queue, which runs copies. *)
@@ -208,4 +208,5 @@ type event =
 type released =
   | Memory of entry
   | Image of loaded * entry option  (** The image and its code's memory. *)
-  | Release of { stamps : int; release : unit -> unit }  (** A hold's. *)
+  | Release of { stamps : int; release : unit -> unit; generation : int }
+      (** A hold's, with the generation of forks it was made in. *)

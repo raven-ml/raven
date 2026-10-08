@@ -30,6 +30,11 @@ val io : t -> 'r Type.Id.t -> 'r option
 val of_bigarray : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> t
 val borrow : device -> t -> t option
 val wait : t -> access -> unit
+
+val wait_points : t -> access -> unit
+(** [wait_points b access] is {!wait} for a live [b] whose memory and device
+    the caller found not lost. *)
+
 val device : t -> device
 val length : t -> int
 val is_borrowed : t -> bool

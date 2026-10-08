@@ -63,8 +63,9 @@
     caller holds the device's {e turn} from a room check to the end of the
     submit it precedes. {!stop} is called once, after every other call returned
     but the [icb] function of {!val-capability}, which compiled code may call at
-    any time and which a stop waits for. After {!stop} only {!free}, the [icb]
-    function and the release of an indirect command buffer are called. These
+    any time and which a stop waits for. After {!stop} only {!free},
+    {!unload}, the [icb] function and the release of an indirect command buffer
+    are called, also after the GPU opened again. These
     rules are the caller's; the device does not check them. {!sleep} may run
     while another domain submits. A region or an image is given back once: of
     two {!free}s or {!unload}s of one value, from any domains, one gives it back
@@ -351,9 +352,6 @@ val stop : t -> unit
     [d] committed completed, its handler writes the last value the submit
     received into {!word}, whatever that work did.
 
-    Either way it releases the pipelines of every image not unloaded, as
-    {!unload} would: the command buffers in flight and the indirect command
-    buffers that use one keep it until they end. An [icb] call of
-    {!val-capability} in flight returns before [stop] begins, and every later
-    one answers [Error]. {!unload} is not called after [stop]. Regions end at
-    {!free}, which may follow. *)
+    It releases no region and no image: those end at {!free} and {!unload},
+    which may follow. An [icb] call of {!val-capability} in flight returns
+    before [stop] begins, and every later one answers [Error]. *)

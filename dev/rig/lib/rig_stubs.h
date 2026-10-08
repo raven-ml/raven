@@ -37,12 +37,23 @@ typedef pthread_cond_t rig_cond;
 /* Device indices run from 1 to RIG_DEVICES - 1 and are never reused. */
 #define RIG_DEVICES 65536
 
-/* A stop's answer, as the device records it. */
+/* A device's state. A loss moves a live device to LOSING while its loser
+   spreads it, then to OWED, until a claimant takes its stop (STOPPING).
+   Once the stop returned it is ENDED, and STOPPED once its word reads its
+   last submitted value, or at once for an io device. A driver's device a
+   forked child inherited is ORPHANED: its stop never runs and its work is
+   the parent's.
+
+     LIVE -> LOSING -> OWED -> STOPPING -> ENDED -> STOPPED
+     LIVE, or any loss state, -> ORPHANED (in a forked child) */
 enum {
-  RIG_ANSWER_NONE,
-  RIG_ANSWER_STOPPING,
-  RIG_ANSWER_STOPPED,
-  RIG_ANSWER_UNKNOWN
+  RIG_LIVE,
+  RIG_LOSING,
+  RIG_OWED,
+  RIG_STOPPING,
+  RIG_ENDED,
+  RIG_STOPPED,
+  RIG_ORPHANED
 };
 
 /* One in-queue wait of a device's unreached work on another device's value:
@@ -54,15 +65,14 @@ struct rig_entry {
 
 /* A device. Made at open, never freed: other devices map its word, and its
    loss is read for the life of the process. The mutex guards [turn],
-   [inside], [owed], [spreading] and the record; [lost], [answer] and
-   [submitted] are also read without it. */
+   [inside], the record and the moves of [state] but ENDED to STOPPED;
+   [state], [lost] and [submitted] are also read without it. */
 struct rig_device {
   rig_mutex mu;
   rig_cond cv;
   int index;
   char *name;
-  int io;        /* an io device, whose state its library holds */
-  int inherited; /* a driver's device a forked child holds from its parent */
+  int io; /* an io device, whose state its library holds */
   int may_block;
   void *self;
   rig_room_fn *room;
@@ -70,12 +80,11 @@ struct rig_device {
   _Atomic uint64_t *word; /* the timeline word, or NULL behind a transport */
   _Atomic uint64_t seen;  /* the last value a read of the word showed */
   _Atomic uint64_t submitted;
-  _Atomic(char *) lost; /* NULL, or the loss's reason */
-  _Atomic int answer;
-  int turn;      /* a May_block submission is between room and hand-over */
-  int inside;    /* counted calls in flight, the turn holder included */
-  int owed;      /* lost, and its stop not yet claimed */
-  int spreading; /* lost, and its loser has not finished spreading it */
+  _Atomic int state;
+  _Atomic(char *) lost;     /* NULL, or the loss's reason */
+  _Atomic uint64_t reached; /* once lost, the word's value at the loss */
+  int turn;   /* a May_block submission is between room and hand-over */
+  int inside; /* counted calls in flight, the turn holder included */
   struct rig_entry *record;
   int nrecord, crecord;
 };
@@ -147,12 +156,13 @@ struct rig_sub {
   uint64_t no_room_at, v;
   const char *why;
   int producer;
-  int nclaims; /* the stops a failed hand-over's spread claimed */
-  int *claims;
 };
 
-/* Whether the point [p] is reached as the host last read its device's
-   word, and its device is not lost. */
+/* Whether the work up to the point [p] is done: its device's word, as the
+   host last read it, reached [p]'s value, before the loss for a lost
+   device, whose stop raises the word to its last value whatever ran. A
+   point of a device a forked child inherited is never done: its work is
+   the parent's. */
 int rig_point_done(uint64_t p);
 
 /* The host's page size in bytes. */

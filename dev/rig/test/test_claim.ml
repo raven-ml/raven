@@ -462,8 +462,8 @@ let test_c_transport () =
   equal ~msg:"after a wait" answer R.Claimed (R.claim m B.Read);
   R.release m
 
-(* A point on a lost device is Pending even once its word reached it: the wait
-   the caller then makes raises Lost. *)
+(* A lost device's memory is Pending even once its work on it was reached: the
+   wait the caller then makes raises Lost. *)
 let test_c_lost () =
   let d, p = P.open_ "claim:c-lost" in
   let m = B.create d 64 in
@@ -477,6 +477,22 @@ let test_c_lost () =
     (function Rig.Lost _ -> true | _ -> false)
     (fun () -> B.wait m B.Read)
 
+(* Other memory is Pending for a point a lost device did not reach, and Claimed
+   for one it reached: its stop's last value in the word reaches nothing. *)
+let test_c_lost_points () =
+  let d, p = P.open_ "claim:c-lost-points" in
+  let reached = B.create Rig.host (1 lsl 16) in
+  let unreached = B.create Rig.host (1 lsl 16) in
+  write d (require_some (B.borrow d reached));
+  ignore (P.run p);
+  write d (require_some (B.borrow d unreached));
+  P.fail p;
+  (try ignore (submit (Rig.Submission.make ~reads:0 ~writes:0 d [||]))
+   with Rig.Lost _ -> ());
+  equal ~msg:"reached" answer R.Claimed (R.claim reached B.Read_write);
+  R.release reached;
+  equal ~msg:"unreached" answer R.Pending (R.claim unreached B.Read)
+
 (* Held memory follows every point of its hold, whatever the access. *)
 let test_c_held () =
   let d, p = P.open_ "claim:c-held" in
@@ -489,8 +505,8 @@ let test_c_held () =
   R.release m;
   ignore (Sys.opaque_identity h)
 
-(* Claims on memory whose stamps name a lost device raise Lost, and with_
-   releases what it took first. *)
+(* Claims on a lost device's memory raise Lost, and with_ releases what it took
+   first. *)
 let test_lost_claims () =
   let d, p = P.open_ "claim:lost" in
   let m = B.create d 64 in
@@ -572,7 +588,9 @@ let tests =
           test_c_pending;
         test "behind a transport a claim reads the word a wait read"
           test_c_transport;
-        test "a claim on memory a loss reaches is pending" test_c_lost;
+        test "a claim on a lost device's memory is pending" test_c_lost;
+        test "a claim on memory a lost device did not reach is pending"
+          test_c_lost_points;
         test "a claim on held memory follows every point of the hold"
           test_c_held;
       ];

@@ -49,6 +49,9 @@ let wait = Dev.wait
 exception Lost = Dev.Lost
 
 let lost = Dev.lost
+let close = Dev.close
+let fail = Dev.fail
+let failure = Dev.failure
 
 exception Out_of_memory = Dev.Out_of_memory
 

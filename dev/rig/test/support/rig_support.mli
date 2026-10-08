@@ -197,16 +197,6 @@ val host_held : unit -> int
 (** [host_held ()] is the bytes that count in the host's budget: host buffers
     not yet returned, and devices' pinned host memory. *)
 
-val locked : (unit -> 'a) -> 'a
-(** [locked f] is [f ()] run holding every lock of rig at once, as
-    threads inside each would: what a fork during [f] leaves the child. [f] must
-    not call rig, whose calls would wait for those locks. *)
-
-val waiting : unit -> int
-(** [waiting ()] is how many threads wait inside a lock of rig for
-    another to change what it guards, such as a copy waiting for a staging slot.
-*)
-
 val heap_bytes : unit -> int option
 (** [heap_bytes ()] is the bytes the C heap holds allocated, as its allocator
     counts them, or [None] where it does not say. *)

@@ -32,7 +32,7 @@ let take fn b =
   read_claim fn b.mem.claim;
   match
     Buffer.check_live fn b;
-    Memory.check_points (Memory.stamps b.mem)
+    Memory.check b.mem
   with
   | () -> ()
   | exception e ->

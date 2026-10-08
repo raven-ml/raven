@@ -528,30 +528,6 @@ value rig_test_shares(value v_ba) {
   return Val_long(p == NULL ? 0 : (intnat)atomic_load(&p->refcount));
 }
 
-/* Rig's own: every lock it has, in one order. */
-extern void rig_locks_take(void);
-extern void rig_locks_give(void);
-extern int rig_locks_waiting(void);
-
-value rig_test_locks_take(value unit) {
-  (void)unit;
-  caml_enter_blocking_section();
-  rig_locks_take();
-  caml_leave_blocking_section();
-  return Val_unit;
-}
-
-value rig_test_locks_give(value unit) {
-  (void)unit;
-  rig_locks_give();
-  return Val_unit;
-}
-
-value rig_test_locks_waiting(value unit) {
-  (void)unit;
-  return Val_int(rig_locks_waiting());
-}
-
 /* Rig's own: the bytes its host heap keeps for reuse. */
 extern intnat rig_heap_kept(void);
 extern intnat rig_heap_held(void);

@@ -81,7 +81,6 @@ type t = {
   budget : int;
   word : region;
   cap : capability;
-  images : image list Atomic.t; (* loaded, for stop to release *)
   guard : Mutex.t; (* held by an icb call and by stop *)
   stopped : bool Atomic.t; (* stop began *)
 }
@@ -172,7 +171,6 @@ let open_ i =
           budget;
           word;
           cap;
-          images = Atomic.make [];
           guard;
           stopped;
         }
@@ -241,16 +239,11 @@ let free d (r : region) =
 
 (* Images *)
 
-let rec update a f =
-  let x = Atomic.get a in
-  if not (Atomic.compare_and_set a x (f x)) then update a f
-
 let image d b =
   match load d.self b with
   | "", names, pipelines ->
-      let i = { owner = d.self; names; pipelines; loaded = Atomic.make true } in
-      update d.images (List.cons i);
-      Ok (`Loaded i)
+      let loaded = Atomic.make true in
+      Ok (`Loaded { owner = d.self; names; pipelines; loaded })
   | why, _, _ -> Error why
 
 let entry i f =
@@ -264,7 +257,6 @@ let unload d i =
     invalid_arg "Rig_metal.unload: the image is another device's";
   if not (Atomic.compare_and_set i.loaded true false) then
     invalid_arg "Rig_metal.unload: the image was unloaded";
-  update d.images (List.filter (fun i' -> i' != i));
   Array.iter release i.pipelines
 
 (* Timeline and loss *)
@@ -278,9 +270,4 @@ let sleep d ~seen ~still_ms =
 let stop d =
   Mutex.protect d.guard @@ fun () ->
   Atomic.set d.stopped true;
-  stop_ring d.self;
-  let release_loaded i =
-    if Atomic.compare_and_set i.loaded true false then
-      Array.iter release i.pipelines
-  in
-  List.iter release_loaded (Atomic.exchange d.images [])
+  stop_ring d.self

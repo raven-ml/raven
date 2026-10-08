@@ -6,8 +6,9 @@
 (* Loss.
 
    A device whose work fails is lost, once and for good. Every later use of it,
-   and of memory whose stamps name it, raises [Lost]; its facts still answer;
-   other devices go on. Opening its name again makes a new device.
+   of its memory, and of other memory that waits for work it did not finish,
+   raises [Lost]; its facts still answer; other devices go on. Opening its name
+   again makes a new device.
 
    Here a fill that answers a failure ([fail.c]) loses a memory device, as a GPU
    is lost when its driver reports a fault. *)
@@ -49,7 +50,7 @@ let () =
   Printf.printf "%s submitted %d, signaled %d\n" (name a) (submitted a)
     (signaled a);
 
-  (* Every use of it raises, and so does a use of memory its stamps name. *)
+  (* Every use of it raises, and so does a use of its memory. *)
   lost (fun () -> ignore (Buffer.create a 16));
   lost (fun () -> Buffer.copy ~src:x ~dst:(Buffer.create host 16));
 

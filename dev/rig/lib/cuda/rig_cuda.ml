@@ -55,12 +55,8 @@ let refused step self x = match failed self with 0 -> x | e -> fault step e
 
 (* A GPU's holder: [unheld]; [taken], while a device of it is open or being
    opened; or the C state, negated, of a device stopped while its work still
-   ran, whose modules [left] holds until that work ends. *)
-type gpus = {
-  devices : int array;
-  held : int Atomic.t array;
-  left : int list Atomic.t array;
-}
+   ran. *)
+type gpus = { devices : int array; held : int Atomic.t array }
 
 let unheld = 0
 let taken = 1
@@ -99,7 +95,7 @@ let discover () =
   | ds ->
       let devices = Array.of_list (List.map snd (List.sort compare ds)) in
       let each x = Array.map (fun _ -> Atomic.make x) devices in
-      Ok { devices; held = each unheld; left = each [] }
+      Ok { devices; held = each unheld }
 
 (* Loads the library and finds its GPUs at the first call that needs them, until
    they are found: a failed load is tried again by the next call, so a driver
@@ -164,8 +160,7 @@ type t = {
   word : region;
   maps_host : bool; (* CUDA page-locks host memory for the device *)
   held : int Atomic.t;
-  left : int list Atomic.t;
-  images : image list Atomic.t; (* loaded, for stop to unload *)
+  images : image list Atomic.t; (* loaded, whose functions a graph may run *)
   guard : Mutex.t; (* held by a graph call and by stop *)
   stopped : bool Atomic.t; (* stop began *)
   cap : Rig_cuda_abi.t;
@@ -255,19 +250,14 @@ let graph self guard stopped images (ks : Rig_cuda_abi.kernel array) =
     | s, _, _, _ -> Error ("making the graph: " ^ error s)
   end
 
-(* Unloads the modules [ms] of the device [self]. CUDA's answers are dropped:
-   after a fault the modules stay with the context, which the process keeps. *)
-let unload_all self ms = List.iter (fun m -> ignore (unload_module self m)) ms
-
 (* Takes a GPU's [held] for a new device: unheld, or held by a stopped device
-   whose work has since ended, which is then stopped for good and its [left]
-   modules unloaded. *)
-let claim held left =
+   whose work has since ended, which is then stopped for good. *)
+let claim held =
   let p = Atomic.get held in
   if p > 0 || not (Atomic.compare_and_set held p taken) then
     Error "the GPU has a device open; stop it first"
   else if p = unheld then Ok ()
-  else if stop_device (-p) then Ok (unload_all (-p) (Atomic.exchange left []))
+  else if stop_device (-p) then Ok ()
   else begin
     Atomic.set held p;
     Error "the GPU still runs the work of a stopped device"
@@ -301,8 +291,8 @@ let open_ i =
     | _, 0, _, _, _, _ ->
         Error (strf "the GPU lacks unified addressing under %s" (driver ()))
     | _, _, major, minor, registers, budget ->
-        let held = g.held.(i) and left = g.left.(i) in
-        let* () = claim held left in
+        let held = g.held.(i) in
+        let* () = claim held in
         let self = open_device d in
         if self < 0 then begin
           Atomic.set held unheld;
@@ -325,7 +315,6 @@ let open_ i =
               word;
               maps_host = registers <> 0;
               held;
-              left;
               images;
               guard;
               stopped;
@@ -537,9 +526,4 @@ let stop g =
   Mutex.protect g.guard @@ fun () ->
   Atomic.set g.stopped true;
   let stopped = stop_device g.self in
-  let loaded (i : image) =
-    if Atomic.compare_and_set i.loaded true false then Some i.m else None
-  in
-  let ms = List.filter_map loaded (Atomic.exchange g.images []) in
-  if stopped then unload_all g.self ms else Atomic.set g.left ms;
   Atomic.set g.held (if stopped then unheld else -g.self)

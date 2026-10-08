@@ -236,22 +236,92 @@ let test_printed () =
       equal string "loss:printed lost: the submission failed"
         (Printexc.to_string e)
 
-(* A loss reaches the lost device and the memory its stamps name, even work that
-   was reached; other devices and their memory go on. *)
+(* A loss reaches the lost device; memory of other devices whose points it
+   reached is ordinary memory again, and other devices go on. *)
 let test_others_go_on () =
   let d, p = P.open_ "loss:lost" in
   let e, _ = P.open_ "loss:kept" in
-  let named = B.create e 64 and kept = B.create e 64 in
+  let named = B.create e 64 in
   let s = Sub.make ~reads:1 ~writes:0 d [||] in
   Rig.wait d
     (Rig.Point.value (submit s ~reads:[| require_some (B.borrow d named) |]));
   P.fail p;
   raises_match (lost d) (fun () -> submit (empty d));
-  raises_match (lost d) (fun () -> B.wait named B.Read_write);
-  B.wait kept B.Read_write;
+  B.wait named B.Read_write;
+  Rig.Claim.read named;
+  Rig.Claim.release named;
   let w = Sub.make ~reads:0 ~writes:1 e [||] in
-  Rig.wait e (Rig.Point.value (submit w ~writes:[| kept |]));
+  Rig.wait e (Rig.Point.value (submit w ~writes:[| named |]));
   equal (option string) None (Rig.lost e)
+
+(* Other memory raises a lost device's loss for a use that waits for a point the
+   device did not reach, and only for such a use: a read follows the last write
+   alone. *)
+let test_unreached () =
+  let d, p = P.open_ "loss:unreached" in
+  let h = B.create Rig.host (1 lsl 16) in
+  let reads = Sub.make ~reads:1 ~writes:0 d [||] in
+  ignore (submit reads ~reads:[| require_some (B.borrow d h) |]);
+  P.fail p;
+  raises_match (lost d) (fun () -> submit (empty d));
+  B.wait h B.Read;
+  raises_match ~msg:"a write's wait" (lost d) (fun () ->
+      B.wait h B.Read_write);
+  raises_match ~msg:"a bigarray" (lost d) (fun () ->
+      B.bigarray Bigarray.char h);
+  raises_match ~msg:"a claim" (lost d) (fun () -> Rig.Claim.read h)
+
+(* A stop raises the word to the last value whatever ran: work the device did
+   not reach before its loss stays unreached. *)
+let test_stop_reaches_nothing () =
+  let d, p = P.open_ "loss:stop-raises" in
+  let e, _ = P.open_ "loss:stop-other" in
+  let m = B.create e 64 in
+  let writes = Sub.make ~reads:0 ~writes:1 d [||] in
+  let b = require_some (B.borrow d m) in
+  let v = Rig.Point.value (submit writes ~writes:[| b |]) in
+  P.fail p;
+  raises_match (lost d) (fun () -> submit (empty d));
+  equal ~msg:"the word after the stop" bool true (Rig.signaled d >= v);
+  raises_match (lost d) (fun () -> B.wait m B.Read)
+
+(* A lost device's memory raises its loss whatever its points, also with no
+   work ever on it, through any buffer: its own, a borrow on the host, and a
+   borrow on another device. *)
+let test_own_memory () =
+  let d, p = P.open_ ~copies:false "loss:own" in
+  let e, _ = P.open_ "loss:own-peer" in
+  let m = B.create d 64 in
+  let h = require_some (B.borrow Rig.host m) in
+  let b = require_some (B.borrow e m) in
+  let dst = B.create Rig.host 64 in
+  P.fail p;
+  raises_match (lost d) (fun () -> submit (empty d));
+  List.iter
+    (fun (what, f) -> raises_match ~msg:what (lost d) f)
+    [
+      ("a wait", fun () -> B.wait m B.Read);
+      ("a wait on the host's borrow", fun () -> B.wait h B.Read);
+      ("a bigarray", fun () -> ignore (B.bigarray Bigarray.char h));
+      ("a claim", fun () -> Rig.Claim.read h);
+      ("a copy", fun () -> B.copy ~src:h ~dst);
+      ("a borrow", fun () -> ignore (B.borrow Rig.host m));
+      ( "a submit on another device",
+        fun () ->
+          ignore (submit (Sub.make ~reads:1 ~writes:0 e [||]) ~reads:[| b |]) );
+    ];
+  equal (option string) None (Rig.lost e)
+
+(* A lost device's borrow of other memory raises its loss; the memory itself,
+   which the device's work never used, is ordinary. *)
+let test_lost_borrow () =
+  let d, p = P.open_ "loss:borrow" in
+  let h = B.create Rig.host (1 lsl 16) in
+  let b = require_some (B.borrow d h) in
+  P.fail p;
+  raises_match (lost d) (fun () -> submit (empty d));
+  raises_match (lost d) (fun () -> B.wait b B.Read);
+  B.wait h B.Read_write
 
 (* Memory a device used before its loss, once collected and reused from its
    owner's cache, waits for nothing of the lost device: a loss leaves other
@@ -277,6 +347,110 @@ let test_reused_after_loss () =
   let b = B.create a n in
   equal ~msg:"the cached memory" int at (B.address b);
   B.wait b B.Read_write
+
+(* Closing *)
+
+(* A close waits for the work submitted before it, then ends the device as a
+   loss does, with the reason "closed": its stop runs once, before close
+   returns. *)
+let test_close () =
+  let d, p = P.open_ "loss:close" in
+  let v = Rig.Point.value (submit (empty d)) in
+  Rig.close d;
+  equal ~msg:"the work ran" int v (Rig.signaled d);
+  equal (option string) (Some "closed") (Rig.lost d);
+  equal int 1 (count "stop" p);
+  match submit (empty d) with
+  | _ -> failf "a closed device took a submit"
+  | exception (Rig.Lost (d', why) as e) ->
+      equal bool true (Rig.equal d d');
+      equal string "closed" why;
+      equal string "loss:close lost: closed" (Printexc.to_string e)
+
+(* A closed device's name opens a new device. *)
+let test_close_reopen () =
+  let d, _ = P.open_ "loss:reopen" in
+  Rig.close d;
+  let d', _ = P.open_ "loss:reopen" in
+  equal bool false (Rig.equal d d');
+  equal (option string) None (Rig.lost d');
+  equal int 1 (Rig.Point.value (submit (empty d')))
+
+(* Memory that buffers reach after a close returns to the driver as they are
+   collected, each region and mapping once. *)
+let test_close_frees () =
+  let d, p = P.open_ "loss:close-frees" in
+  let kept = ref [ B.create d 64; B.create ~memory:Pinned d 128 ] in
+  let h = ref (Some (B.create Rig.host (1 lsl 16))) in
+  ignore (require_some (B.borrow d (Option.get !h)));
+  Rig.close d;
+  equal ~msg:"held at the close" (slist int compare)
+    [ 64; 128; 1 lsl 16 ]
+    (P.outstanding p);
+  kept := [];
+  collect ();
+  equal ~msg:"once the buffers are collected" (list int) [ 1 lsl 16 ]
+    (P.outstanding p);
+  ignore (Sys.opaque_identity !h);
+  h := None;
+  collect ();
+  equal ~msg:"once the host memory is collected" (list int) []
+    (P.outstanding p);
+  equal ~msg:"frees and unmaps" int 3 (count "free" p + count "unmap" p)
+
+(* A close of a lost device only waits for its stop: the device keeps its
+   loss's reason. *)
+let test_close_lost () =
+  let d, p = P.open_ "loss:close-lost" in
+  P.fail p;
+  raises_match (lost d) (fun () -> submit (empty d));
+  Rig.close d;
+  equal (option string) (Some "the submission failed") (Rig.lost d);
+  equal int 1 (count "stop" p)
+
+(* A close whose device faults while its work runs ends the device lost with
+   the fault's reason. *)
+let test_close_fault () =
+  let d, p = P.open_ "loss:close-fault" in
+  ignore (submit (empty d));
+  P.fault p "the engine hung";
+  Rig.close d;
+  equal (option string) (Some "the engine hung") (Rig.lost d);
+  equal int 1 (count "stop" p)
+
+let test_close_host () =
+  raises_match Exn.invalid_arg (fun () -> Rig.close Rig.host)
+
+(* An io device whose stops are counted. *)
+module Store = struct
+  type t = int Atomic.t
+  type region = unit
+
+  exception Fault of string
+
+  let region_key : region Type.Id.t = Type.Id.make ()
+  let budget _ = max_int
+  let alloc _ _ = Some ()
+  let free _ () = ()
+  let read _ () ~at:_ ~dst:_ ~len:_ = ()
+  let write _ () ~at:_ ~src:_ ~len:_ = ()
+  let pages _ () = None
+  let prefetch _ () ~at:_ ~len:_ = ()
+  let stop stops = Atomic.incr stops
+end
+
+(* An io device's close ends it at once: its work is the caller's. *)
+let test_close_io () =
+  let stops = Atomic.make 0 in
+  let io =
+    require_ok ~pp:Format.pp_print_string
+      (Rig.open_io (module Store) ~name:"loss:close-io" (fun () -> Ok stops))
+  in
+  let b = B.create io 8 in
+  Rig.close io;
+  equal (option string) (Some "closed") (Rig.lost io);
+  equal int 1 (Atomic.get stops);
+  raises_match (lost io) (fun () -> B.copy ~src:b ~dst:(B.create Rig.host 8))
 
 (* A fault a counted call raises, such as an allocation's, loses the device. *)
 let test_alloc_fault () =
@@ -314,11 +488,31 @@ let tests =
         test "a lost device behind a transport answers its last reading"
           (test_facts true);
         test "Lost prints the device and the reason" test_printed;
-        test "a loss leaves other devices and their memory working"
+        test "memory whose points a lost device reached is ordinary"
           test_others_go_on;
+        test "memory a lost device's work did not reach raises its loss"
+          test_unreached;
+        test "a stop's last value reaches no unreached work"
+          test_stop_reaches_nothing;
+        test "a lost device's memory raises its loss through any buffer"
+          test_own_memory;
+        test "a lost device's borrow raises its loss, the memory not"
+          test_lost_borrow;
         test "memory a lost device used, reused, waits for nothing lost"
           test_reused_after_loss;
         test "a fault an allocation raises loses the device" test_alloc_fault;
+      ];
+    group ~timeout "close"
+      [
+        test "a close waits for the work, then ends the device" test_close;
+        test "a closed device's name opens a new device" test_close_reopen;
+        test "a closed device's memory returns as it is collected"
+          test_close_frees;
+        test "a close of a lost device waits for its stop" test_close_lost;
+        test "a fault during a close's wait is the device's loss"
+          test_close_fault;
+        test "the host is never closed" test_close_host;
+        test "an io device's close ends it at once" test_close_io;
       ];
   ]
 

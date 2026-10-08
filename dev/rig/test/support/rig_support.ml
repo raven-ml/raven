@@ -42,14 +42,6 @@ external shares : ('a, 'b, 'c) Bigarray.Array1.t -> int = "rig_test_shares"
 external host_kept : unit -> int = "rig_test_host_kept"
 external host_held : unit -> int = "rig_test_host_held"
 external heap_bytes : unit -> int = "rig_test_heap_bytes"
-external waiting : unit -> int = "rig_test_locks_waiting"
-external locks_take : unit -> unit = "rig_test_locks_take"
-external locks_give : unit -> unit = "rig_test_locks_give" [@@noalloc]
-
-let locked f =
-  locks_take ();
-  Fun.protect ~finally:locks_give f
-
 external load : int -> int = "rig_test_load"
 external store : int -> int -> unit = "rig_test_store"
 external move : dst:int -> src:int -> int -> unit = "rig_test_move"

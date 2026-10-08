@@ -63,8 +63,8 @@
     under two rules. [rig_nv_room] and [rig_nv_submit] run one at a time: the
     caller holds the device's {e turn} from [rig_nv_room] to the end of
     [rig_nv_submit], while {!sleep} may run in another domain. {!stop} is called
-    once, after every other call returned; after it, only {!free}, {!signaled}
-    and the capability's [local] are called.
+    once, after every other call returned; after it, only {!free}, {!unload},
+    {!signaled} and the capability's [local] are called.
 
     {b References.}
     - NVIDIA's
@@ -235,8 +235,8 @@ val entry : image -> string -> int option
 
 val unload : t -> image -> unit
 (** [unload g c] ends [c]: its code region goes back to the caller, who frees
-    it. The caller unloads it once no work that runs its kernels runs, and never
-    after {!stop}: an image of a stopped device needs no ending.
+    it. The caller unloads it once no work that runs its kernels runs, also
+    after {!stop}.
 
     Raises [Invalid_argument] if [c] is another device's or was unloaded. *)
 
@@ -325,8 +325,8 @@ val stop : t -> unit
     it as their work ends. [g]'s memory goes back to the path in the first two
     cases.
 
-    [g]'s images need no {!unload} after [stop]: an image holds nothing of [g]
-    but its code region, which the caller frees. *)
+    It releases no image: an image holds nothing of [g] but its code region,
+    which the caller frees after {!unload}. *)
 
 (** {1:paths Paths}
 

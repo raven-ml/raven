@@ -430,21 +430,25 @@ let global = 256 * 1024 * 1024
 let load_global g =
   let m = S.loaded (require_ok (C.image g (S.fixture "global.ptx"))) in
   let touch = S.launch (Option.get (C.entry m "touch")) ~grid:1 ~block:1 0 0 in
-  S.wait g (S.submit g [| S.part ~queue:"COMPUTE:0" touch |])
+  S.wait g (S.submit g [| S.part ~queue:"COMPUTE:0" touch |]);
+  m
 
-(* An image still loaded when an idle device stops is unloaded by the stop: the
-   global's memory returns. *)
-let stop_unloads () =
+(* A stop unloads no image: the global's memory returns at the unload that
+   follows it. *)
+let unload_after_stop () =
   let g = S.gpu () in
   let before = S.free_memory () in
-  load_global g;
+  let m = load_global g in
   at_most int ~msg:"loaded" ~than:(before - (global / 2)) (S.free_memory ());
   S.stop g;
-  at_least int ~msg:"stopped" ~than:(before - (global / 2)) (S.free_memory ())
+  at_most int ~msg:"stopped" ~than:(before - (global / 2)) (S.free_memory ());
+  C.unload g m;
+  at_least int ~msg:"unloaded" ~than:(before - (global / 2)) (S.free_memory ())
 
-(* A stop that finds work running leaves the images loaded for the work; the
-   GPU's next open, once the work ended, unloads them. *)
-let reopen_unloads () =
+(* A stop that finds work running leaves the GPU to that work; once it ended,
+   the GPU opens again, and the old device's unload then returns its image's
+   memory and leaves the new device working. *)
+let unload_after_reopen () =
   let g = S.gpu () in
   if S.attribute watchdog <> 0 then
     skip ~reason:"a display watchdog ends long kernels" ();
@@ -452,20 +456,20 @@ let reopen_unloads () =
   S.set64 (host flag) 0;
   Fun.protect ~finally:(fun () -> S.set64 (host flag) 1) @@ fun () ->
   let before = S.free_memory () in
-  load_global g;
+  let m = load_global g in
   let _, kernel = S.kernels g in
   let spin =
     S.launch (kernel "spin") ~grid:1 ~block:1 (address flag) (10 * second)
   in
   let v = S.submit g [| S.part ~queue:"COMPUTE:0" spin |] in
   S.stop g;
-  at_most int ~msg:"stopped while running"
-    ~than:(before - (global / 2))
-    (S.free_memory ());
   S.set64 (host flag) 1;
   S.wait g v;
   let g' = S.gpu () in
-  at_least int ~msg:"reopened" ~than:(before - (global / 2)) (S.free_memory ());
+  at_most int ~msg:"reopened" ~than:(before - (global / 2)) (S.free_memory ());
+  C.unload g m;
+  at_least int ~msg:"unloaded" ~than:(before - (global / 2)) (S.free_memory ());
+  S.wait g' (S.submit g' [||]);
   S.stop g'
 
 let stop_idle () =
@@ -520,9 +524,9 @@ let timeline =
       test "stop of a running device leaves the GPU closed until its work ends"
         stop_running;
       test "page-locking is the process's" registry_is_the_process;
-      test "stop of an idle device unloads its images" stop_unloads;
-      test "the next open unloads what a stop left to running work"
-        reopen_unloads;
+      test "an image a stop left loaded is unloaded after it" unload_after_stop;
+      test "an unload after the GPU opened again leaves the new device working"
+        unload_after_reopen;
     ]
 
 (* Two GPUs *)
@@ -653,8 +657,7 @@ let released_twice () =
   raises_match Exn.invalid_arg gr.release;
   C.unload g m
 
-(* A stop unloads the images still loaded, the graph's included; its release
-   follows. *)
+(* A graph's release follows its device's stop. *)
 let release_after_stop () =
   let g = S.gpu () in
   let _, kernel = S.kernels g in
@@ -713,7 +716,7 @@ let graphs =
         updates;
       test "refuses what it cannot record" refusals;
       test "release raises when called twice" released_twice;
-      test "release follows a stop that unloaded the graph's image"
+      test "a graph's release follows its device's stop"
         release_after_stop;
       test "a graph call after the stop answers the stop" after_stop;
       test "graph calls beside a stop answer as before or after it" beside_stop;

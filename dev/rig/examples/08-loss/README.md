@@ -16,7 +16,8 @@ work failed.
 ## What You'll Learn
 
 - `Lost`, raised by the failing submit and by every later use of the device
-- Memory whose stamps name a lost device raises `Lost` too
+- A lost device's memory raises `Lost` too, and so does other memory that
+  waits for work the device did not finish
 - A lost device's facts: `lost`, `name`, `submitted`, `signaled`
 - Other devices go on
 - Opening the name again makes a new device: `equal` tells them apart

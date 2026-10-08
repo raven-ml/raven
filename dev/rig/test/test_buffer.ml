@@ -556,7 +556,9 @@ let test_copy_staged_large () =
   equal ~msg:"bytes that differ" int 0 !wrong
 
 (* The two staging slots are taken in turn: two copies waiting on a device hold
-   both, a third waits for one, and every copy lands once the device runs. *)
+   both, a third waits for one, and every copy lands once the device runs. The
+   third's wait gives no signal: it is sampled for 50 ms, in which it does not
+   reach the device. *)
 let test_staging_turns () =
   let open_ name = P.open_ ~host_visible:false ~peers:false name in
   let d, pd = open_ "buffer:turns-src" in
@@ -571,10 +573,8 @@ let test_staging_turns () =
       [ List.nth dsts 0; List.nth dsts 1 ]
   in
   Support.await "two copies in the slots" (fun () -> P.sleepers pd = 2);
-  let waiting = Support.waiting () in
   let third = copier (List.nth srcs 2) (List.nth dsts 2) in
-  Support.await "the third copy waiting for a slot" (fun () ->
-      Support.waiting () > waiting);
+  Thread.delay 0.05;
   equal ~msg:"copies waiting on the device" int 2 (P.sleepers pd);
   P.open_gate pd;
   List.iter Thread.join (third :: first);
@@ -930,7 +930,8 @@ let tests =
           test_copy_borrowed_host;
         test "a copy larger than a staging slot lands every byte"
           test_copy_staged_large;
-        test "the staging slots are taken in turn" test_staging_turns;
+        test "the staging slots are taken in turn, sampled for 50 ms"
+          test_staging_turns;
         test "a loss with the staging memory leaves other copies working"
           test_staging_after_loss;
       ];

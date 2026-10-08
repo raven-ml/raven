@@ -56,9 +56,10 @@ enum rig_claim {
    exclude. It claims, then checks [b] under the claim, and undoes the
    claim on every other answer. RIG_PENDING means that a point the access
    must follow is not reached as the host last read its device's word, or
-   is on a lost device: Rig.Buffer.wait waits for it or raises Lost, and a
-   claim with no work submitted since is RIG_CLAIMED. A buffer just made
-   is no exception: memory a device reuses carries its earlier uses. */
+   that [b]'s memory is a lost device's as Rig.Lost states it:
+   Rig.Buffer.wait waits for it or raises Lost, and a claim with no work
+   submitted since is RIG_CLAIMED. A buffer just made is no exception:
+   memory a device reuses carries its earlier uses. */
 enum rig_claim rig_buffer_claim(value b, enum rig_access access);
 
 /* Ends a claim that rig_buffer_claim made; [b] may be dead. Ending a

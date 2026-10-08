@@ -51,15 +51,18 @@
     {1:loss Loss}
 
     A device whose driver reports a fault, or whose hand-over fails, is
-    {e lost}, once and for good ({!Lost}). Work that waits in its queue on a
+    {e lost}, once and for good ({!Lost}); so is a device {!close} ended, and
+    every device of a process that {!fail}ed. Work that waits in its queue on a
     lost device's unreached values is lost with it. Every later use of the
-    device that needs its driver, and of memory whose stamps name it, raises
-    {!Lost}; other devices go on. A lost device's facts still answer: {!name},
-    {!arch}, {!budget} and {!capability} as before, {!submitted} the last value
-    handed over, and {!signaled} the last value its word showed, which may stop
-    moving. A lost device's memory returns only once its timeline word shows its
-    last submitted value reached, which it may never do: such memory is kept for
-    the life of the process. Opening the device again makes a new device.
+    device, of its memory, and of other memory that waits for a point the device
+    did not reach raises {!Lost}; memory whose points it reached is ordinary
+    memory again, and other devices go on. A lost device's facts still answer:
+    {!name}, {!arch}, {!budget} and {!capability} as before, {!submitted} the
+    last value handed over, and {!signaled} the last value its word showed,
+    which may stop moving. A lost device's memory returns only once its timeline
+    word shows its last submitted value reached, which it may never do: such
+    memory is kept for the life of the process. Opening the device's name again
+    makes a new device.
 
     {1:reclaim Reclamation}
 
@@ -194,14 +197,49 @@ exception Out_of_memory of t * int
 (** {2:lost Lost devices} *)
 
 exception Lost of t * string
-(** [Lost (d, why)] is raised by every use of the lost device [d] and of memory
-    whose stamps name [d], [why] being the driver's reason or, for a device lost
-    because its queue waited on another lost device, ["NAME lost"] with that
-    device's name. It prints as ["NAME lost: why"]. *)
+(** [Lost (d, why)] is raised by a use of the lost device [d]; by a use of
+    [d]'s memory, which is what [d] allocated, through any buffer, and the
+    borrows on [d] of other memory; and by a use of other memory that waits
+    for a point of [d] that [d] did not reach. Memory whose points [d] reached
+    is ordinary memory again. [why] is the driver's reason, ["closed"] for a
+    device {!close} ended, or, for a device lost because its queue waited on
+    another lost device, ["NAME lost"] with that device's name. It prints as
+    ["NAME lost: why"]. *)
 
 val lost : t -> string option
 (** [lost d] is [Some why] if [d] is lost, [why] being what its {!Lost} carries,
     and [None] otherwise. It raises nothing and waits for nothing. *)
+
+val close : t -> unit
+(** [close d] ends [d]. It waits for the work submitted on [d] before the
+    call, however long it runs, then ends [d] as a loss does, with the
+    reason ["closed"], and returns once [d]'s driver stopped: an open of
+    [d]'s name afterwards makes a new device. Then {!lost}[ d] is
+    [Some "closed"], unless [d] was lost first, and uses of [d] and its
+    memory raise {!Lost}. Memory of [d] that buffers still reach returns to
+    its driver as they are collected. Work another domain submits on [d]
+    during the close may be lost. A close is no failure of the process
+    ({!failure}).
+
+    On a lost or closed [d] it only waits for [d]'s stop. An {!Io} device ends
+    at once: its work is the caller's. A close a [Sys.Break] interrupted is
+    finished by calling [close] again.
+
+    Raises [Invalid_argument] if [d] is {!host}. *)
+
+val fail : string -> unit
+(** [fail why] fails the process: every device but {!host} that is not lost
+    is lost with [why], as a fault loses a device, and every {!open_} and
+    {!open_io} that starts afterwards answers [Error why] without calling
+    its opener; one that races [fail] makes a device that is lost. Devices
+    already lost keep their reason. It returns once each loss is recorded,
+    without waiting for the stops. Only the first call acts, and the process
+    stays failed. *)
+
+val failure : unit -> string option
+(** [failure ()] is the process's first failure, if any: the first loss of
+    a device that no {!close} ended, as {!Lost} prints it, or [why] of
+    {!fail} if that came first. It raises nothing and waits for nothing. *)
 
 (** {1:timeline Timeline} *)
 
@@ -343,9 +381,9 @@ module Buffer : sig
       io device to read the borrowed bytes ahead ({!Io.prefetch}).
 
       Raises [Invalid_argument] if [b] is dead ({!Claim.consume}); {!Lost} if
-      [d] or [b]'s device is lost or is lost by the borrow, or [b]'s stamps name
-      a lost device; and [Sys_error] where asking an io device for [b]'s pages
-      failed and may pass ({!Io.pages}). *)
+      [d] is lost or is lost by the borrow, and for [b] as {!Lost} states; and
+      [Sys_error] where asking an io device for [b]'s pages failed and may pass
+      ({!Io.pages}). *)
 
   val wait : t -> access -> unit
   (** [wait b access] returns once the work on [b]'s memory that an access of
@@ -362,8 +400,8 @@ module Buffer : sig
       submitted after it returns is the caller's to exclude, by a claim taken
       before the wait ({!Claim}) or a lock of its own.
 
-      Raises [Invalid_argument] if [b] is dead, and {!Lost} if a point it waits
-      for is on a lost device. *)
+      Raises [Invalid_argument] if [b] is dead, and {!Lost} as {!Lost} states.
+  *)
 
   val copy : src:t -> dst:t -> unit
   (** [copy ~src ~dst] copies [src]'s bytes into [dst] and returns once they are
@@ -393,10 +431,10 @@ module Buffer : sig
       ({!overlaps}), or either is dead, [dst]'s memory is [Read]
       ({!val-access}), or one is memory of a driver's device of another machine
       and [src]'s device runs no copy or does not reach [dst]'s ({!reaches});
-      {!Lost} if a device involved is lost or is lost by the copy, or a point it
-      waits for is on a lost device; {!Out_of_memory} if a host cannot allocate
-      its staging memory, or a device's driver refuses to map it after the
-      rounds of {{!reclaim}reclamation}; and what an {!Io} device's read or
+      {!Lost} if a device that runs the copy is lost or is lost by it, and for
+      [src] and [dst] as {!Lost} states; {!Out_of_memory} if a host cannot
+      allocate its staging memory, or a device's driver refuses to map it after
+      the rounds of {{!reclaim}reclamation}; and what an {!Io} device's read or
       write raises. *)
 
   val device : t -> device
@@ -464,7 +502,7 @@ module Buffer : sig
       are not a whole number of elements of [k] starting at a multiple of their
       size (of one component's for complex kinds), or [b]'s memory is held
       exclusive by claims that have not consumed it ({!Claim.consume}), and
-      {!Lost} if [b]'s stamps name a lost device. *)
+      {!Lost} as {!Lost} states. *)
 
   val blit_from_string : string -> int -> t -> int -> int -> unit
   (** [blit_from_string s i b j n] copies the [n] bytes of [s] from [i] into the
@@ -473,16 +511,15 @@ module Buffer : sig
       the caller's, as for {!copy}.
 
       Raises [Invalid_argument] if the ranges are not valid, [b] is dead or not
-      on {!host}, or its memory is [Read] ({!val-access}), and {!Lost} if a
-      point it waits for is on a lost device. *)
+      on {!host}, or its memory is [Read] ({!val-access}), and {!Lost} as
+      {!Lost} states. *)
 
   val blit_to_bytes : t -> int -> bytes -> int -> int -> unit
   (** [blit_to_bytes b i s j n] copies the [n] bytes of the host buffer [b] from
       its byte [i] into [s] from [j]. It waits as a {!wait} with [Read] does.
 
       Raises [Invalid_argument] if the ranges are not valid, or [b] is dead or
-      not on {!host}, and {!Lost} if a point it waits for is on a lost device.
-  *)
+      not on {!host}, and {!Lost} as {!Lost} states. *)
 
   (** {1:low Low level}
 
@@ -544,7 +581,7 @@ module Claim : sig
   (** [read b] claims [b]'s memory for reading, beside other readers.
 
       Raises [Invalid_argument] if [b] is dead or its memory is held exclusive,
-      and {!Lost} if [b]'s stamps name a lost device. *)
+      and {!Lost} as {!Lost} states. *)
 
   val release : Buffer.t -> unit
   (** [release b] ends a {!read} of [b]'s memory that the caller made. It
@@ -567,8 +604,8 @@ module Claim : sig
 
       Raises [Invalid_argument] before [f], releasing what it claimed, if a
       buffer is dead, a memory is held exclusive, or a buffer of [donate]
-      overlaps another of [read] or [donate], and {!Lost} likewise if a buffer's
-      stamps name a lost device. *)
+      overlaps another of [read] or [donate], and {!Lost} likewise, for a buffer
+      as {!Lost} states. *)
 
   val exclusive : t -> Buffer.t -> bool
   (** [exclusive c b] is [true] iff [c] holds [b]'s memory exclusive: the caller
@@ -606,9 +643,11 @@ module Hold : sig
 
       [release] (defaults to doing nothing) frees what the hold's work uses
       beyond memory, such as a driver object that work runs. It runs once, after
-      the hold is unreachable and, for each device the hold has a stamp of, that
-      stamp is reached and, if the device is lost, its driver's {!Driver.stop}
-      returned. It runs in the next {{!reclaim}drain} of any device, such as a
+      the hold is unreachable and each device the hold has a stamp of reached
+      that stamp or, lost, stopped with its word at its last value. It never
+      runs while a lost device's word stays below its last value, and never in a
+      child of [fork] for a hold made before the fork. It runs in the next
+      {{!reclaim}drain} of any device, such as a
       {!Buffer.copy}'s, or as a lost device's stop returns. It holds no lock of
       this library, must not call it, and must not raise: an exception it raises
       is raised again by the call whose drain ran it. It counts as a call in
@@ -727,10 +766,10 @@ val submit :
     in a hold, the memory of a buffer of [writes] is [Read]
     ({!Buffer.val-access}), a part names memory of a hold other than the
     submission's, or the parts never fit [d]'s empty queues or name one its
-    driver does not run; and {!Lost} if [d] is lost, [d]'s hand-over fails, a
-    point [s] follows is on a lost device, or a producer [d]'s queue waits on is
-    lost before the hand-over. A device lost after [v] was handed over raises
-    {!Lost}, with [v]'s stamps naming it. *)
+    driver does not run; and {!Lost} if [d] is lost, [d]'s hand-over fails, or
+    a producer [d]'s queue waits on is lost before the hand-over, and for the
+    buffers and the points [s] follows as {!Lost} states. A device lost after
+    [v] was handed over raises {!Lost}, with [v]'s stamps naming it. *)
 
 (** {1:images Images} *)
 
@@ -928,8 +967,8 @@ end
     block or fault, and this library calls them at any time. Every other call
     this library makes on a device that is not lost is {e counted}: {!stop}
     waits for none of them. {!stop} runs once, with no counted call inside, and
-    after it only {!free}, {!signaled} and holds' releases follow. A {!Fault}
-    from a counted call, and a failed hand-over, lose the device. *)
+    after it only {!free}, {!unload}, {!signaled} and holds' releases follow. A
+    {!Fault} from a counted call, and a failed hand-over, lose the device. *)
 module type Driver = sig
   type t
   (** The type for open devices of the driver. *)
@@ -1112,16 +1151,16 @@ module type Driver = sig
   (** {1:stopping Stopping} *)
 
   val stop : t -> unit
-  (** [stop d] stops [d] once it is lost, never waiting. The driver writes the
-      last value its hand-over received into the word, with release order, once
-      no work of [d] runs: before [stop] returns if none does. This library
-      counts [d] as stopped once the word reads that value.
-
-      [stop] also releases what {!image} made for each image not yet
-      {!unload}ed: before it returns if no work of [d] runs, and otherwise once
-      that work has ended, which may be at the device's next open. This library
-      calls no {!unload} after [stop], and frees the region of a [`Place] itself
-      ({!free}). *)
+  (** [stop d] stops the lost [d] without waiting. The driver writes the last
+      value its hand-over received into the word, with release order, once no
+      work of [d] runs: before [stop] returns if none does, otherwise through
+      the queues' releases or its own drain. [stop] releases nothing this
+      library made: this library frees each region and unloads each image
+      itself, also after [stop]. After [stop] it calls only {!free}, {!unload}
+      and {!signaled}, and calls {!free} and {!unload} only once the word reads
+      that last value, uncounted, dropping their faults. {!free} and {!unload}
+      may come after an open of the same hardware made a new device of this
+      driver; they touch nothing of the new device. *)
 end
 
 (** Devices of memory reached by reading and writing.
@@ -1201,7 +1240,7 @@ module type Io = sig
       It is a hint: it raises nothing. *)
 
   val stop : t -> unit
-  (** [stop d] ends [d] once it is lost. *)
+  (** [stop d] ends [d] once it is lost or closed. *)
 end
 
 (** {1:opening Opening} *)
@@ -1220,12 +1259,12 @@ val open_ :
     device of that name is open there, [make ()] opens it, under the name's
     lock, so one name on one machine has one live device; its [Error] is the
     result, and an exception it raises is raised again, the name left unopened.
-    Opens of other names go on meanwhile. A lost device's name opens again once
-    its driver's {!Driver.stop} returned.
+    Opens of other names go on meanwhile. A closed or lost device's name opens
+    again once its driver's {!Driver.stop} returned.
 
     The result is [Error why] if the name's device is lost and its stop has not
-    returned, or if the process opened 65,535 devices already: device indices
-    are never reused.
+    returned, if the process failed ({!fail}), or if the process opened 65,535
+    devices already: device indices are never reused.
 
     Raises [Invalid_argument] if the open device of that name is another
     driver's, or [machine] names another machine whose host is not open

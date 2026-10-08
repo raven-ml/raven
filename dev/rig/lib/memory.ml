@@ -37,27 +37,26 @@ let for_all_points f st =
   iter_points (fun p -> if not (f p) then ok := false) st;
   !ok
 
-let check_points st =
-  iter_points
-    (fun p ->
-      let d = Dev.of_index (Point.index p) in
-      if Dev.is_lost d then Dev.raise_lost d)
-    st
+let check_points st = iter_points Dev.check st
 
-(* Whether [p] is reached, as a release judges it: a device lost by the read of
-   its word has not reached it, and its memory waits for its stop. *)
-let settled p =
-  match Dev.point_reached p with r -> r | exception Dev.Lost _ -> false
+(* Raises [Lost] if [m]'s memory, or [m] itself as a borrow, is a lost
+   device's. *)
+let[@inline] check_owner m =
+  let d = m.dev in
+  if Dev.is_lost d then Dev.raise_lost d;
+  if m.root != m then begin
+    let o = m.root.dev in
+    if o != d && Dev.is_lost o then Dev.raise_lost o
+  end
 
-(* Whether every point of [st] other than [except]'s is reached. A point of a
-   device a forked child inherited names its parent's work, on its parent's copy
-   of the memory: it holds back nothing in the child. *)
+(* Raises [Lost] for a use of [m] that follows every point of its stamps. *)
+let[@inline] check m =
+  check_owner m;
+  check_points m.root.entry.stamps
+
+(* Whether every point of [st] other than [except]'s has settled. *)
 let reached ?(except = -1) st =
-  for_all_points
-    (fun p ->
-      let i = Point.index p in
-      i = except || Dev.inherited (Dev.of_index i) || settled p)
-    st
+  for_all_points (fun p -> Point.index p = except || Dev.settled p) st
 
 (* Tokens and release lists *)
 
@@ -255,29 +254,18 @@ let new_entry d kind n =
                d Io_made n (stamps_new ())))
   | Host -> None
 
-(* After [d]'s loss, its memory and mappings are freed only once its stop
-   returned, and uncounted: a failure of the lost device's free, its fault or
-   its memory's, frees nothing more. *)
-let call d f =
-  if not (Dev.is_lost d) then Dev.counted d f
-  else
-    match f () with
-    | () -> ()
-    | exception Sys_error _ -> ()
-    | exception e when Option.is_some (d.fault e) -> ()
-
 (* Gives back a region [d] allocated or mapped. *)
 let free_region d (Region { m; h; r; _ }) =
   let module D = (val m) in
-  call d (fun () -> D.free h r)
+  Dev.give d (fun () -> D.free h r)
 
 let free_io d (Io_region { m; h; r }) =
   let module I = (val m) in
-  call d (fun () -> I.free h r)
+  Dev.give d (fun () -> I.free h r)
 
 let unload d (Loaded { m; h; i }) =
   let module D = (val m) in
-  if not (Dev.is_lost d) then Dev.counted d (fun () -> D.unload h i)
+  Dev.give d (fun () -> D.unload h i)
 
 (* The budget memory of [kind] on [d] counts in. Pinned memory is [d]'s own
    where the host addresses [d]'s memory, and host memory elsewhere. *)
@@ -337,14 +325,14 @@ let give_back (e : entry) =
   if budget = Device_budget then note d
 
 (* Releases the mapping [mp] now if its mapper ran all the work submitted so
-   far, which is then all that could use it, and is whether it did. A device a
-   forked child inherited maps its parent's copy of the memory, never the
-   child's: the child is done with it without calling its driver. *)
+   far, which is then all that could use it, and is whether it did. An orphaned
+   device maps its parent's copy of the memory, never the child's: the child is
+   done with it without calling its driver. *)
 let unmap_now mp =
   let d = mp.on in
   let v = Dev.submitted d in
-  Dev.inherited d
-  || (not (Dev.is_lost d))
+  Dev.orphaned d
+  || ((not (Dev.is_lost d)) || Dev.stopped d)
      && Dev.word d >= v
      && begin
        free_region d mp.map;
@@ -381,22 +369,32 @@ let key n kind =
 
 let cache_key (e : entry) = key e.bytes e.memory
 
-(* Holds whose release is still to run: their stamps and release. *)
+(* Holds whose release is still to run: their stamps, release and the
+   generation they were made in. *)
 let holds_lock = Lock.create ()
-let holds : (int * (unit -> unit)) list ref = ref []
+let holds : (int * (unit -> unit) * int) list ref = ref []
 
-(* A hold's release is due once each of its points is reached and each of its
-   lost devices' stop returned. *)
-let hold_due (st, _) =
+(* A hold's release is due once each of its points is reached on a live device,
+   and each of its lost devices is Stopped. *)
+let hold_due (st, _, _) =
   for_all_points
     (fun p ->
       let d = Dev.of_index (Point.index p) in
-      settled p && ((not (Dev.is_lost d)) || Dev.stop_returned d))
+      if Dev.is_lost d then Dev.stopped d else Dev.settled p)
     st
+
+(* A hold made before a fork is forgotten in the child: its release would call
+   the parent's drivers. *)
+let forgotten (st, _, generation) =
+  generation <> Dev.generation ()
+  && begin
+    stamps_unref st;
+    true
+  end
 
 (* Runs [release] as a call in flight on each device of [st] that is not
    lost. *)
-let run_release (st, release) =
+let run_release (st, release, _) =
   let devices = ref [] in
   iter_points
     (fun p ->
@@ -421,6 +419,7 @@ let take_due_holds () =
         l)
   in
   let put_back l = Lock.protect holds_lock (fun () -> holds := l @ !holds) in
+  let all = List.filter (fun h -> not (forgotten h)) all in
   match List.partition hold_due all with
   | due, later ->
       put_back later;
@@ -494,8 +493,9 @@ let route d = function
       if cached then cache d e else d.retiring <- e :: d.retiring;
       Dev.release d
   | Image (loaded, code) -> defer d (Unload (loaded, code))
-  | Release { stamps; release } ->
-      Lock.protect holds_lock (fun () -> holds := (stamps, release) :: !holds)
+  | Release { stamps; release; generation } ->
+      Lock.protect holds_lock (fun () ->
+          holds := (stamps, release, generation) :: !holds)
 
 type fate = Stays | Cached | Freed
 
@@ -579,17 +579,6 @@ let run_pending d = function
       | Some e -> to_cache d e
       | None -> ())
 
-(* Lost devices whose stop returned: every drain drains those that hold memory
-   or have a release waiting, and reads the word of those whose work may still
-   run. A device stays for good, since its memory and its mappings of host
-   memory may be dropped long after its stop: their frees and unmaps still go to
-   its driver. *)
-let lost_devices : device list Atomic.t = Atomic.make []
-
-let rec add_lost d =
-  let l = Atomic.get lost_devices in
-  if not (Atomic.compare_and_set lost_devices l (d :: l)) then add_lost d
-
 let rec route_all d = function
   | [] -> ()
   | r :: l ->
@@ -618,28 +607,27 @@ let drain_own d =
    value. A drain of an idle device allocates nothing. *)
 let idle d = d.retiring == [] && d.pending == [] && not (released_any d.release)
 
-(* Drains the lost devices of [l] other than [d]. It allocates nothing for an
-   idle one, as every drain walks them all. *)
+(* Drains the devices of [l] whose stop returned, other than [d]: every drain
+   drains those that hold memory or have a release waiting, and reads the word
+   of those whose work may still run. It allocates nothing for an idle one, as
+   every drain walks them all. *)
 let rec drain_lost d = function
   | [] -> ()
   | e :: l ->
-      if e != d && (not (Dev.inherited e)) && not (idle e && e.cached = 0) then
+      if e != d && (not (Dev.orphaned e)) && not (idle e && e.cached = 0) then
         drain_own e;
       drain_lost d l
 
+(* An orphaned device's objects are forgotten: nothing of it drains. *)
 let drain d =
-  if not (Dev.inherited d) then begin
+  if not (Dev.orphaned d) then begin
     if not (idle d) then drain_own d;
-    drain_lost d (Atomic.get lost_devices);
+    drain_lost d (Dev.ended ());
     if released_any holds_list then List.iter (route d) (released holds_list);
     if !holds != [] then drain_holds ()
   end
 
-let () =
-  Dev.answered :=
-    fun d ->
-      add_lost d;
-      drain d
+let () = Dev.answered := drain
 
 (* The cache *)
 

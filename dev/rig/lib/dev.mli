@@ -10,18 +10,27 @@
     mutable fields; no driver call and no wait runs under it, and it is not
     reentrant.
 
-    A device is lost once: the first loss, by {!lose} or a failed hand-over,
-    records why and spreads to the devices whose queues wait on its unreached
-    work. A lost device's stop runs once no {!counted} call on it is in flight,
-    claimed by the call that lost it, by the counted call that leaves last, or
-    by the next counted call or submit on it.
+    A device's state is one word of its C record:
+
+    {v
+      Live ──loss──> Stopping ──stop returned──> Ended ──last value──> Stopped
+        │                                                  in the word
+        └──fork, in the child, for a driver's device──> Orphaned
+    v}
+
+    A device is lost once: the first loss, by {!lose}, {!close}, {!fail} or a
+    failed hand-over, records why and spreads to the devices whose queues wait
+    on its unreached work. Its stop is then owed, and runs once no {!counted}
+    call on it is in flight, from {!run_owed}: after the loss, after a counted
+    call or a submit, and when a counted call finds the device lost. An io
+    device is Stopped once its stop returned.
 
     A forked child makes every lock anew. Each driver's device it inherited is
-    lost, with the reason ["forked"]: its stop counts as returned and never
-    runs, and the device never counts as {!stopped}. Its io devices stay open.
+    Orphaned, lost with the reason ["forked"] unless it was lost: its stop
+    never runs, its word is never read, and its objects are forgotten without
+    a call. Its io devices stay as they were.
 
-    {!raise_lost} and {!lose} read a device's C record, so they take a device
-    other than the host, which is never lost. *)
+    The host is never lost. *)
 
 open Def
 
@@ -57,6 +66,10 @@ val is_host : device -> bool
 val is_io : device -> bool
 val is_lost : device -> bool
 
+val orphaned : device -> bool
+(** [orphaned d] is [true] iff [d] is a driver's device this process inherited
+    from the parent it was forked from. *)
+
 val lost : device -> string option
 (** {!Rig.lost}. *)
 
@@ -67,18 +80,13 @@ val submitted : device -> int
 (** {!Rig.submitted}. *)
 
 val stop_returned : device -> bool
-(** [stop_returned d] is [true] iff [d] is lost and its stop returned, or [d] is
-    a driver's device a forked child inherited. *)
+(** [stop_returned d] is [true] iff [d] is Ended, Stopped or Orphaned. *)
 
 val stopped : device -> bool
-(** [stopped d] is [true] iff [d] is lost and counts as stopped: its stop
-    returned and, for a driver's device, its word reads its last submitted
-    value, so no work of [d] runs and its memory may be freed. Behind a
-    transport it asks the driver for the word. *)
-
-val inherited : device -> bool
-(** [inherited d] is [true] iff [d] is a driver's device this process inherited
-    from the parent it was forked from. *)
+(** [stopped d] is [true] iff [d] is Stopped: its stop returned and, for a
+    driver's device, its word reads its last submitted value, so no work of [d]
+    runs and its objects may be given back. Behind a transport it asks the
+    driver for the word. *)
 
 val same_machine : device -> device -> bool
 
@@ -89,28 +97,48 @@ val reaches : device -> device -> bool
 (** {!Rig.reaches}. *)
 
 val answered : (device -> unit) ref
-(** [answered] runs once a lost device's stop answered, from {!stop}: {!Memory}
-    sets it to free what the answer makes due. *)
+(** [answered] runs once a lost device's stop returned, from {!run_owed}:
+    {!Memory} sets it to drain. *)
 
-val stop_claimed : int array -> unit
-(** [stop_claimed a] runs the {!stop} of the devices whose indices [a] holds
-    from its second element on, as the C loss and submit answer them. *)
+val ended : unit -> device list
+(** [ended ()] is the devices whose stop returned, newest first: their memory
+    and mappings may be given back long after the stop. *)
 
-val stop : device -> unit
-(** [stop d] runs [d]'s driver's stop, which the caller claimed, records its
-    answer, then runs {!answered}. It does nothing on the host. A fault of the
-    stop is dropped; another exception it raises is raised again once the answer
-    is recorded, without running {!answered}. *)
+val run_owed : unit -> unit
+(** [run_owed ()] runs each owed stop whose device has no counted call in
+    flight, then {!answered}. It is one load while no stop is owed. A fault of
+    a stop is dropped; another exception it raises is raised again once the
+    state moved on, without running {!answered}. *)
 
 val lose : device -> string -> 'a
-(** [lose d why] loses [d] with [why] unless it is lost, runs the stops the loss
-    claimed and raises {!Lost} with the first loss's reason. *)
+(** [lose d why] loses [d] with [why] unless it is lost, which is the
+    process's {!failure} if none came before, runs the owed stops and raises
+    {!Lost} with the first loss's reason. *)
 
 val counted : device -> (unit -> 'a) -> 'a
 (** [counted d f] is [f ()] as a counted call on [d]: [d]'s stop runs only once
     no counted call is in flight. A driver fault that [f] raises loses [d].
-    Raises {!Lost} without calling [f] if [d] is lost, running its stop first if
-    it is due. On the host it is [f ()]. *)
+    Raises {!Lost} without calling [f] if [d] is lost, running the owed stops
+    first. *)
+
+val give : device -> (unit -> unit) -> unit
+(** [give d f] gives an object back to [d]'s driver through [f]: as a
+    {!counted} call on a live device, uncounted on a Stopped one, dropping a
+    fault and a [Sys_error] it raises, and not at all on an Orphaned one. On a
+    device lost and not Stopped it raises {!Lost} without calling [f]. *)
+
+val close : device -> unit
+(** {!Rig.close}. *)
+
+val fail : string -> unit
+(** {!Rig.fail}. *)
+
+val failure : unit -> string option
+(** {!Rig.failure}. *)
+
+val generation : unit -> int
+(** [generation ()] is the number of forks that made this process from the
+    first: a value made in another generation was made before a fork. *)
 
 val word : device -> int
 (** [word d] is the last value [d]'s word showed: read at its host address, or,
@@ -124,14 +152,27 @@ val wait : device -> int -> unit
     [Invalid_argument] if [v] exceeds [submitted d], and {!Lost} if [d] is or
     becomes lost. *)
 
+val wait_point : int -> unit
+(** [wait_point p] is {!wait} on [p]'s device and value, except that a point
+    that is done returns, also on a device lost since: it raises {!Lost} only
+    if [p] is not done and its device is or becomes lost. *)
+
 val after : device -> int -> (unit -> unit) -> unit
 (** [after d v f] runs [f] in the first {!wait} on [d] that finds [v] reached,
     on that wait's domain. Nothing else runs it. *)
 
-val point_reached : int -> bool
-(** [point_reached p] is [true] iff [p]'s device's word reads [p]'s value, and
-    for a point on the host. [false] in a forked child for a device it
-    inherited. It may raise {!Lost} as {!word} does. *)
+val is_done : int -> bool
+(** [is_done p] is [true] iff the work up to [p] is done: [p]'s device's word
+    reads [p]'s value, read before the loss for a lost device, and the device
+    is not {!orphaned}. It may raise {!Lost} as {!word} does. *)
+
+val settled : int -> bool
+(** [settled p] is [true] iff no work up to [p] touches memory any more: it is
+    done, or its device is {!orphaned}, whose work is the parent's. A device
+    lost by the read of its word has not settled. *)
+
+val check : int -> unit
+(** [check p] raises {!Lost} if [p]'s device is lost and [p] is not done. *)
 
 val release_list : unit -> int
 (** [release_list ()] is a new, empty C release list, never freed. *)

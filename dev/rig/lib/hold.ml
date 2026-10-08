@@ -50,7 +50,7 @@ let make ?(release = ignore) bs =
     entries;
   let htoken =
     Memory.token Memory.holds_list
-      (Release { stamps = st; release })
+      (Release { stamps = st; release; generation = Dev.generation () })
       0 max_int (-1)
   in
   { hstamps = st; members = bs; htoken }

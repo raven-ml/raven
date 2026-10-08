@@ -6,6 +6,7 @@
   test_loss
   test_turn
   test_fork
+  test_fail
   test_hold
   test_stamps
   test_memory
@@ -20,6 +21,7 @@
   test_loss
   test_turn
   test_fork
+  test_fail
   test_hold
   test_stamps
   test_memory

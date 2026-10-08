@@ -26,21 +26,17 @@ let record src dst bytes start =
    each copied through by one copy at a time. A slot is two halves, each a
    memory of its own: stamps order the uses of a whole memory, so halves of one
    memory would order every leg after the other half's last one. A half whose
-   stamps name a lost device is replaced, so a loss reaches no other copy. *)
+   stamps name a lost device's work that is not done is replaced, so a loss
+   reaches no other copy. *)
 let half_bytes = 32 * 1024 * 1024
 let slots = [| [| None; None |]; [| None; None |] |]
 let slots_lock = Lock.create ()
 let in_use = [| false; false |]
 
 let names_lost b =
-  match
-    Memory.iter_points
-      (fun p ->
-        if Dev.is_lost (Dev.of_index (Point.index p)) then raise_notrace Exit)
-      (Memory.stamps b.mem)
-  with
+  match Memory.check_points (Memory.stamps b.mem) with
   | () -> false
-  | exception Exit -> true
+  | exception Dev.Lost _ -> true
 
 let take_slot () =
   Lock.protect slots_lock (fun () ->
@@ -148,8 +144,8 @@ type transfer = Move | Io_read | Io_write
 (* The host's copy of [n] bytes from [src] to [dst], after their devices' work,
    asked at [start]. *)
 let on_host transfer src dst n start =
-  Buffer.wait src Buffer.Read;
-  Buffer.wait dst Buffer.Read_write;
+  Buffer.wait_points src Buffer.Read;
+  Buffer.wait_points dst Buffer.Read_write;
   (match transfer with
   | Move -> memmove (host_address dst) (host_address src) n
   | Io_read -> io_read src dst n
@@ -189,8 +185,8 @@ let rec copy ~src ~dst =
   if Buffer.access dst = Read then
     invalid_argf "Rig.%s: the destination's memory admits only reads" fn;
   let sd = src.mem.dev and dd = dst.mem.dev in
-  if Dev.is_lost sd then Dev.raise_lost sd;
-  if Dev.is_lost dd then Dev.raise_lost dd;
+  Memory.check_owner src.mem;
+  Memory.check_owner dst.mem;
   Memory.drain sd;
   if dd != sd then Memory.drain dd;
   if n > 0 then begin

@@ -24,27 +24,36 @@ external c_new :
   int = "caml_rig_device_new_byte" "caml_rig_device_new"
 
 external c_io_new : int -> string -> int = "caml_rig_io_new"
+external c_host_new : string -> int = "caml_rig_host_new"
+external c_publish : int -> unit = "caml_rig_publish"
 external c_word : int -> int = "caml_rig_word" [@@noalloc]
 external c_set_seen : int -> int -> unit = "caml_rig_set_seen" [@@noalloc]
 external c_submitted : int -> int = "caml_rig_submitted" [@@noalloc]
-external c_is_lost : int -> bool = "caml_rig_is_lost" [@@noalloc]
+external c_state : int -> int = "caml_rig_state" [@@noalloc]
+external c_done : int -> bool = "caml_rig_done" [@@noalloc]
 external c_why : int -> string = "caml_rig_why"
-external c_answer : int -> int = "caml_rig_answer" [@@noalloc]
-external c_inherited : int -> bool = "caml_rig_inherited" [@@noalloc]
-external c_lose : int -> string -> int array = "caml_rig_lose"
-external c_set_answer : int -> int -> unit = "caml_rig_set_answer" [@@noalloc]
+external c_lose : int -> string -> bool -> bool = "caml_rig_lose"
+external c_stopped : int -> unit = "caml_rig_stopped"
 external c_upgrade : int -> bool = "caml_rig_upgrade" [@@noalloc]
+external c_await_stop : int -> int -> bool = "caml_rig_await_stop"
+external c_owed : unit -> int = "caml_rig_owed" [@@noalloc]
+external c_claim : unit -> int = "caml_rig_claim"
+external c_fail : string -> bool = "caml_rig_fail"
+external c_failed : unit -> string option = "caml_rig_failed"
+external c_first : unit -> int = "caml_rig_first" [@@noalloc]
+external generation : unit -> int = "caml_rig_generation" [@@noalloc]
 external c_enter : int -> int = "caml_rig_enter"
-external c_exit : int -> bool = "caml_rig_exit"
+external c_exit : int -> unit = "caml_rig_exit"
 external c_spin : int -> int -> int -> int = "caml_rig_spin"
 external c_producers : int -> int array = "caml_rig_producers"
 external release_list : unit -> int = "caml_rig_release_list"
 external host_arch : unit -> string = "caml_rig_arch"
 
-(* A stop's answers, as the C record holds them, after none (0) and stopping
-   (1). *)
-let answer_stopped = 2
-let answer_unknown = 3
+(* The C record's states: [rig_stubs.h]'s enum. *)
+let live = 0
+let ended_state = 4
+let stopped_state = 5
+let orphaned_state = 6
 
 (* How long a wait sees no progress before it blocks in the driver, and the
    longest a blocking call of a wait lasts: each returns to OCaml within it,
@@ -117,7 +126,8 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~completion ~waits
 
 let host =
   let d =
-    make_device ~index:0 ~name:"CPU" ~machine:None ~kind:Host ~c:0
+    make_device ~index:0 ~name:"CPU" ~machine:None ~kind:Host
+      ~c:(c_host_new "CPU")
       ~arch:(host_arch ()) ~queues:[||] ~completion:Host_writes
       ~waits:(false, false, false) ~max_waits:0 ~maps_host:false ~word:0
       ~word_region:None ~key:(-1) ~memory_device:false
@@ -144,11 +154,12 @@ let busy d = Lock.busy d.lock
 
 let is_host d = match d.kind with Host -> true | _ -> false
 let is_io d = match d.kind with Io _ -> true | _ -> false
-let inherited d = d.c <> 0 && c_inherited d.c
-let is_lost d = d.c <> 0 && c_is_lost d.c
+(* The host is never lost: a use of its memory reads no C record. *)
+let[@inline] is_lost d = d != host && c_state d.c <> live
+let orphaned d = c_state d.c = orphaned_state
 let lost d = if is_lost d then Some (c_why d.c) else None
 let raise_lost d = raise (Lost (d, c_why d.c))
-let submitted d = if d.c = 0 then 0 else c_submitted d.c
+let submitted d = c_submitted d.c
 let machines : (string, device) Hashtbl.t = Hashtbl.create 4
 
 (* The machines whose host an open is making, by the host's full name. *)
@@ -165,6 +176,13 @@ let host_of d =
 (* Loss and stops *)
 
 let answered : (device -> unit) ref = ref ignore
+let ended_devices : device list Atomic.t = Atomic.make []
+
+let rec add_ended d =
+  let l = Atomic.get ended_devices in
+  if not (Atomic.compare_and_set ended_devices l (d :: l)) then add_ended d
+
+let ended () = Atomic.get ended_devices
 
 (* Reads a lost device's word behind a transport through its driver, which may
    be called after [stop], so rig's copy of it moves on. *)
@@ -178,78 +196,94 @@ let refresh d =
   | _ -> ()
 
 let upgrade d =
-  d.c <> 0
-  && begin
-    refresh d;
-    c_upgrade d.c
-  end
+  refresh d;
+  c_upgrade d.c
 
-let stop_returned d =
-  d.c <> 0
-  &&
-  let a = c_answer d.c in
-  a = answer_stopped || a = answer_unknown
+let stop_returned d = c_state d.c >= ended_state
 
-let stopped d = is_lost d && (c_answer d.c = answer_stopped || upgrade d)
+let stopped d =
+  let s = c_state d.c in
+  s = stopped_state || (s = ended_state && upgrade d)
 
-(* The answer is recorded whatever the driver's stop did: the device must count
-   as stopped or not. The host has no stop and no answer. *)
+(* The state moves on whatever the driver's stop did: the device must count as
+   stopped or not. *)
 let stop d =
-  if d.c <> 0 then begin
-    let answer () =
-      c_set_answer d.c answer_unknown;
+  let returned () =
+    c_stopped d.c;
+    (match d.kind with Driver _ -> ignore (upgrade d) | _ -> ());
+    add_ended d
+  in
+  Fun.protect ~finally:returned (fun () ->
       match d.kind with
-      | Driver _ -> ignore (upgrade d)
-      | _ -> c_set_answer d.c answer_stopped
-    in
-    Fun.protect ~finally:answer (fun () ->
-        match d.kind with
-        | Driver { m; h; _ } -> (
-            let module D = (val m) in
-            try D.stop h with D.Fault _ -> ())
-        | Io { m; h } -> (
-            let module I = (val m) in
-            try I.stop h with I.Fault _ -> ())
-        | Host -> ());
-    !answered d
-  end
+      | Driver { m; h; _ } -> (
+          let module D = (val m) in
+          try D.stop h with D.Fault _ -> ())
+      | Io { m; h } -> (
+          let module I = (val m) in
+          try I.stop h with I.Fault _ -> ())
+      | Host -> ());
+  !answered d
 
-let stop_claimed indices =
-  for i = 1 to Array.length indices - 1 do
-    stop (of_index indices.(i))
-  done
+let rec run_owed () =
+  if c_owed () > 0 then
+    match c_claim () with
+    | 0 -> ()
+    | i ->
+        stop (of_index i);
+        run_owed ()
 
 let lose d why =
-  stop_claimed (c_lose d.c why);
+  ignore (c_lose d.c why true);
+  run_owed ();
   raise_lost d
 
-let leave d = if c_exit d.c then stop d
+let leave d =
+  c_exit d.c;
+  run_owed ()
 
 let counted d f =
-  if d.c = 0 then f ()
-  else
-    match c_enter d.c with
-    | 0 -> (
-        match f () with
-        | r ->
-            leave d;
-            r
-        | exception e -> (
-            let bt = Printexc.get_raw_backtrace () in
-            leave d;
-            match d.fault e with
-            | Some why -> lose d why
-            | None -> Printexc.raise_with_backtrace e bt))
-    | 3 ->
-        stop d;
-        raise_lost d
-    | _ -> raise_lost d
+  match c_enter d.c with
+  | 0 -> (
+      match f () with
+      | r ->
+          leave d;
+          r
+      | exception e -> (
+          let bt = Printexc.get_raw_backtrace () in
+          leave d;
+          match d.fault e with
+          | Some why -> lose d why
+          | None -> Printexc.raise_with_backtrace e bt))
+  | _ ->
+      run_owed ();
+      raise_lost d
+
+(* On a stopped device a failure of the call, its fault or its memory's, gives
+   back nothing more. *)
+let give d f =
+  let s = c_state d.c in
+  if s = orphaned_state then ()
+  else if s = stopped_state || (s = ended_state && upgrade d) then
+    match f () with
+    | () -> ()
+    | exception Sys_error _ -> ()
+    | exception e when Option.is_some (d.fault e) -> ()
+  else counted d f
+
+let fail why = if c_fail why then run_owed ()
+
+let failure () =
+  match c_first () with
+  | 0 -> None
+  | -1 -> c_failed ()
+  | i ->
+      let d = of_index i in
+      Some (strf "%s lost: %s" d.name (c_why d.c))
 
 (* The timeline *)
 
 let word d =
-  if d.c = 0 then 0
-  else if d.word <> 0 || c_is_lost d.c then c_word d.c
+  if d.word <> 0 || is_lost d then c_word d.c
   else
     match d.kind with
     | Driver { m; h; _ } ->
@@ -295,17 +329,13 @@ let look_at_producers d =
         try sleep p ~seen:(word p) ~still_ms:0 with Lost _ -> ())
     (c_producers d.c)
 
-let reached d w =
-  if is_lost d then raise_lost d;
-  if d.afters != [] then run_afters d w
-
-(* Waits for [d]'s value [v], the word having read [seen] since [since]. Top
-   level, so a wait that finds its value reached allocates nothing. *)
+(* Waits for [d]'s value [v], the word having read [seen] since [since]: the
+   word once it reads [v] or [d] is lost. Top level, so a wait that finds its
+   value reached allocates nothing. *)
 let rec wait_from d v seen since =
   let w = word d in
-  if w >= v then reached d w
+  if w >= v || is_lost d then w
   else begin
-    if is_lost d then raise_lost d;
     let now = now_ms () in
     let since = if w <> seen then now else since in
     let still = now - since in
@@ -324,13 +354,62 @@ let wait d v =
   if v > s then
     invalid_argf "Rig.wait: %d is beyond %s's last value %d" v d.name s;
   let w = word d in
-  if w >= v then reached d w else wait_from d v w (now_ms ())
+  let w = if w >= v || is_lost d then w else wait_from d v w (now_ms ()) in
+  if is_lost d then raise_lost d;
+  if d.afters != [] then run_afters d w
 
-let point_reached p =
+(* Waits for [d]'s value [v] from the word [w], until [d] is lost: a loss its
+   sleep raises is judged by the caller. *)
+let wait_until_lost d v w =
+  match wait_from d v w (now_ms ()) with
+  | w -> w
+  | exception Lost (d', _) when d' == d -> 0
+
+(* A lost device's point is done if its word reached it before the loss: its
+   stop raises the word whatever ran. The word is read before the loss is, so a
+   word the stop raised shows the loss. *)
+let wait_point p =
+  let d = of_index (Point.index p) and v = Point.value p in
+  let w = word d in
+  let w = if w >= v || is_lost d then w else wait_until_lost d v w in
+  if not (is_lost d) then begin
+    if d.afters != [] then run_afters d w
+  end
+  else if not (c_done p) then raise_lost d
+
+(* The word is read before the loss is, as [wait_point] reads them. *)
+let is_done p =
   let d = of_index (Point.index p) in
-  if d.c = 0 then true
-  else if c_inherited d.c then false
-  else word d >= Point.value p
+  if is_lost d then c_done p
+  else
+    let w = word d in
+    if is_lost d then c_done p else w >= Point.value p
+
+let settled p =
+  let d = of_index (Point.index p) in
+  orphaned d
+  || match word d >= Point.value p with r -> r | exception Lost _ -> false
+
+let check p =
+  let d = of_index (Point.index p) in
+  if is_lost d && not (c_done p) then raise_lost d
+
+(* Closing *)
+
+(* Runs the stop if it is owed and claimable, and waits for it, returning to
+   OCaml every still interval. *)
+let rec await_stop d =
+  run_owed ();
+  if not (c_await_stop d.c still_ms) then await_stop d
+
+let close d =
+  if is_host d then invalid_arg "Rig.close: the host is never closed";
+  (match d.kind with
+  | Driver _ when not (is_lost d) -> (
+      try wait d (submitted d) with Lost (d', _) when d' == d -> ())
+  | _ -> ());
+  ignore (c_lose d.c "closed" false);
+  await_stop d
 
 (* Opening *)
 
@@ -363,19 +442,21 @@ let open_named ~fn ~machine ~name ~key ~host make =
         if not (Hashtbl.mem machines m) then
           invalid_argf "Rig.%s: no host of machine %s is open" fn m
   in
+  (* A failed process opens nothing, not calling [make]. *)
   let rec find () =
-    match Hashtbl.find_opt table k with
-    | Some Opening ->
+    match (c_failed (), Hashtbl.find_opt table k) with
+    | Some why, _ -> `Error why
+    | None, Some Opening ->
         Lock.wait table_lock;
         find ()
-    | Some (Open d) when not (is_lost d) ->
+    | None, Some (Open d) when not (is_lost d) ->
         if d.key <> key then
           invalid_argf "Rig.%s: %s is open as another driver's device" fn full;
         `Open d
-    | Some (Open d) ->
+    | None, Some (Open d) ->
         if stop_returned d then `Make
         else `Error (strf "%s is lost and its stop has not answered" full)
-    | None -> `Make
+    | None, None -> `Make
   in
   let found =
     Lock.protect table_lock (fun () ->
@@ -423,9 +504,16 @@ let completion_of = function
   | `Object o -> Object (Nativeint.to_int o)
   | `Host -> Host_writes
 
+(* Puts [d] in the tables, then publishes its C record, which spreads, failures
+   and the fork handler walk for good: a device lost at birth by a failure of
+   the process is stopped here. *)
+let publish d =
+  register d;
+  c_publish d.c;
+  run_owed ()
+
 (* The device of the driver's handle [h]. Every fact is read before the C record
-   is published, which spreads and the fork handler walk for good: a fault
-   reading one leaves nothing made. *)
+   is published: a fault reading one leaves nothing made. *)
 let driver_device (type a) (module D : Sigs.Driver with type t = a) (h : a)
     ~index ~name ~machine ~memory_device =
   let m : (a, D.region, D.image) dm = (module D) in
@@ -452,7 +540,7 @@ let driver_device (type a) (module D : Sigs.Driver with type t = a) (h : a)
       ~fault:(function D.Fault why -> Some why | _ -> None)
       ~capability:(Some capability) ~budget
   in
-  register d;
+  publish d;
   d
 
 let open_driver (type a) ?(memory_device = false)
@@ -494,7 +582,7 @@ let open_io (type a) (module I : Sigs.Io with type t = a) ?machine
               ~fault:(function I.Fault why -> Some why | _ -> None)
               ~capability:None ~budget
           in
-          register d;
+          publish d;
           Ok d)
 
 (* Reach *)

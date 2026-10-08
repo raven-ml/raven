@@ -75,8 +75,10 @@
     in value order: their caller serialises them. {!stop} is called once, after
     every other call returned but the [graph] function of {!val-capability},
     which compiled code may call at any time and which a stop waits for; after
-    it only {!free}, the [symbol] and [graph] functions of {!val-capability} and
-    the release of a graph are called. {!sleep} may run while another domain
+    it only {!free}, {!unload}, the [symbol] and [graph] functions of
+    {!val-capability} and the release of a graph are called, also after the GPU
+    opened again: the device's modules are in the GPU's primary context, which
+    the process keeps. {!sleep} may run while another domain
     submits.
 
     {b References.}
@@ -373,14 +375,12 @@ val stop : t -> unit
     no longer writes memory (the work of every value it was given completed, its
     streams are idle, or a fault ended the context's work), the timeline word
     holds at least the last value the submit was given when [stop] returns, so
-    work of other devices that waits on it runs on, [g]'s streams are destroyed
-    and every image not unloaded is unloaded; CUDA may hold that unload until
-    the work other libraries queued in the shared primary context completes,
-    never [g]'s own. Otherwise the timeline word reaches the last value the
-    submit was given once that work ends, unless it waits on a word of another
-    device that never reaches its value; the GPU opens again once that work
-    ends, and that open unloads the images the work kept. A [graph] call of
-    {!val-capability} in flight returns before [stop] begins, and every later
-    one answers [Error]. After [stop], only {!free}, the [symbol] and [graph]
-    functions of {!val-capability} and the release of a graph may be called on
-    [g], none raising {!exception-Fault}, and {!unload} is not called. *)
+    work of other devices that waits on it runs on, and [g]'s streams are
+    destroyed. Otherwise the timeline word reaches the last value the submit
+    was given once that work ends, unless it waits on a word of another device
+    that never reaches its value; the GPU opens again once that work ends. It
+    releases no region and no image: those end at {!free} and {!unload}, which
+    may follow. A [graph] call of {!val-capability} in flight returns before
+    [stop] begins, and every later one answers [Error]. After [stop], only
+    {!free}, {!unload}, the [symbol] and [graph] functions of
+    {!val-capability} and the release of a graph may be called on [g]. *)

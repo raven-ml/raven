@@ -247,7 +247,6 @@ static void sub_free(struct rig_sub *s) {
   free(s->producers);
   free(s->handles);
   free(s->seen);
-  free(s->claims);
   free(s);
 }
 
@@ -468,12 +467,4 @@ value caml_rig_sub_no_room_at(value v_s) {
 
 value caml_rig_sub_producer(value v_s) {
   return Val_int(Sub_val(v_s)->producer);
-}
-
-value caml_rig_sub_claims(value v_s) {
-  struct rig_sub *s = Sub_val(v_s);
-  value a = caml_alloc_tuple((mlsize_t)s->nclaims);
-  for (int i = 0; i < s->nclaims; i++)
-    Store_field(a, (mlsize_t)i, Val_int(s->claims[i]));
-  return a;
 }
