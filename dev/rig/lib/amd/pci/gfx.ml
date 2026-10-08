@@ -167,8 +167,13 @@ let safe_mode g ~inst f =
 
 (* Micro-engines *)
 
-(* The MEC runs after its enable for 50 ms with no state to poll. *)
-let mec_ms = 50
+(* The MEC runs 50 us after its enable, with no state to poll
+   (gfx_v12_0_cp_compute_enable, gfx_v9_4_3_xcc_cp_compute_enable). Where the
+   kernel then polls a ring test, the queue's first submission waits. *)
+let mec_us = 50
+
+(* The CP's soft reset is held 50 us (gfx_v9_4_3_soft_reset). *)
+let soft_reset_us = 50
 
 let enable_mec g =
   each_xcc g (fun inst ->
@@ -176,7 +181,7 @@ let enable_mec g =
         Regs.update ~inst g.r "regCP_MEC_RS64_CNTL"
           [ ("mec_pipe0_reset", 0); ("mec_pipe0_active", 1); ("mec_halt", 0) ]
       else Regs.write ~inst ~value:0 g.r "regCP_MEC_CNTL" []);
-  Regs.pause g.r mec_ms
+  Regs.pause g.r mec_us
 
 let halt g =
   each_xcc g (fun inst ->
@@ -258,7 +263,7 @@ let reset_mec g =
     each_xcc g (fun inst ->
         Regs.write ~inst g.r "regGRBM_SOFT_RESET"
           [ ("soft_reset_cp", 1); ("soft_reset_cpc", 1) ]);
-    Regs.pause g.r mec_ms;
+    Regs.pause g.r soft_reset_us;
     each_xcc g (fun inst ->
         Regs.write ~inst ~value:0 g.r "regGRBM_SOFT_RESET" [])
   end;
@@ -280,9 +285,7 @@ let program g ~me ~pipe ~queue ~insts ~mqd:at ~kiq ~aql q =
   List.iter
     (fun xcc ->
       grbm_select g ~me ~pipe ~queue ~inst:xcc;
-      let active () =
-        Regs.read ~inst:xcc g.r "regCP_HQD_ACTIVE" land 1 = 1
-      in
+      let active () = Regs.read ~inst:xcc g.r "regCP_HQD_ACTIVE" land 1 = 1 in
       if active () then begin
         Regs.write ~inst:xcc ~value:1 g.r "regCP_HQD_DEQUEUE_REQUEST" [];
         Regs.wait g.r "an active queue's dequeue before its descriptor"
@@ -304,8 +307,8 @@ let program g ~me ~pipe ~queue ~insts ~mqd:at ~kiq ~aql q =
       done;
       Gmc.flush_hdp g.gmc;
       Regs.write ~inst:xcc ~value:1 g.r "regCP_HQD_ACTIVE" [];
-      (* The CP takes the queue's doorbell once told to, as the kernel tells
-         it after activating a queue it programs itself
+      (* The CP takes the queue's doorbell once told to, as the kernel tells it
+         after activating a queue it programs itself
          (gfx_v12_0_kiq_init_register and its siblings). *)
       Regs.update ~inst:xcc g.r "regCP_PQ_STATUS" [ ("doorbell_enable", 1) ];
       grbm_select g ~inst:xcc)
@@ -474,8 +477,8 @@ let gate g =
             ("gfxip_cgcg_override", 0);
           ]))
 
-(* The gating [gate] enables, off again: coarse grain off, medium and fine
-   grain overridden, the perfmon clock held, the gating interrupts off, as the
+(* The gating [gate] enables, off again: coarse grain off, medium and fine grain
+   overridden, the perfmon clock held, the gating interrupts off, as the
    kernel's gfx_v12_0_update_gfx_clock_gating with enable false. *)
 let ungate g =
   let r = g.r in

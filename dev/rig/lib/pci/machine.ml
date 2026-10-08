@@ -96,11 +96,11 @@ let take m bus = m.ops.take bus
 
 (* A wait spins for [spin_ns], where devices mostly answer, then naps [nap_s]
    between calls, so that a long wait holds no core. Elapsed time is compared in
-   whole milliseconds against [ms], which cannot overflow. *)
+   whole microseconds against [us], which cannot overflow. *)
 let spin_ns = 1_000_000
 let nap_s = 0.0001
 
-let wait m ~ms f =
+let wait m ~us f =
   let start = now_ns () in
   let rec go () =
     let holds = f () in
@@ -108,7 +108,7 @@ let wait m ~ms f =
     else if holds then true
     else
       let elapsed = now_ns () - start in
-      if elapsed / 1_000_000 >= ms then false
+      if elapsed / 1_000 >= us then false
       else begin
         if elapsed < spin_ns then Domain.cpu_relax () else Unix.sleepf nap_s;
         go ()

@@ -71,8 +71,7 @@ exception Stuck of string
     failed, with the step and the reason. An open or a reset returns it as its
     [Error]; a sleep raises it as [Rig_amd.Fault]. *)
 
-val make :
-  Rig_pci.Function.t -> Rig_pci.Window.t -> layout -> vf:bool -> t
+val make : Rig_pci.Function.t -> Rig_pci.Window.t -> layout -> vf:bool -> t
 (** [make f mmio l ~vf] is the registers [l] of the GPU of [f], whose register
     BAR is mapped as [mmio]; [vf] if [f] is a virtual function. *)
 
@@ -119,5 +118,5 @@ val wait : ?ms:int -> t -> string -> (unit -> bool) -> unit
     with the function's or machine's failure if it failed. *)
 
 val pause : t -> int -> unit
-(** [pause r ms] waits [ms] milliseconds, the time a block needs with no state
+(** [pause r us] waits [us] microseconds, the time a block needs with no state
     to poll. *)

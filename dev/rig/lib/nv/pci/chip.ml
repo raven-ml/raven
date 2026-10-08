@@ -71,14 +71,15 @@ let memory c =
 let booted c = get c Defs.nv_pfb_pri_mmu_wpr2_addr_hi <> 0
 
 let wait c what ~ms f =
-  if Machine.wait (Function.machine c.fn) ~ms f then Ok ()
+  if Machine.wait (Function.machine c.fn) ~us:(ms * 1000) f then Ok ()
   else
     match Function.failed c.fn with
     | Some why -> Error why
     | None -> Error (strf "%s did not happen within %d ms" what ms)
 
 let delay c ms =
-  ignore (Machine.wait (Function.machine c.fn) ~ms (fun () -> false))
+  ignore
+    (Machine.wait (Function.machine c.fn) ~us:(ms * 1000) (fun () -> false))
 
 (* The command register of the configuration space and its bus master bit (PCI
    Express Base Specification, 7.5.1.1.3). *)

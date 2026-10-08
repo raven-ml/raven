@@ -217,7 +217,7 @@ let reset f =
   live f "reset";
   let* () = f.fn.reset () in
   let answers () = f.fn.config16 0 <> absent in
-  if Machine.wait f.machine ~ms:reset_ms answers then Ok ()
+  if Machine.wait f.machine ~us:(reset_ms * 1000) answers then Ok ()
   else
     match Machine.failed f.machine with
     | Some why -> Error why

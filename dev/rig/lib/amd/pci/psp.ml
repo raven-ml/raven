@@ -250,13 +250,14 @@ let tmr_load p =
   ignore (submit p "set up the TMR" (setup_tmr ~at ~fabric ~bytes))
 
 (* A ring left by the last boot is destroyed first; the processor answers each
-   control command in bit 31 of the control register. *)
-let settle_ms = 20
+   control command in bit 31 of the control register, after 20 ms, as the kernel
+   waits before it polls (psp_v14_0_ring_create, psp_v14_0_ring_stop). *)
+let settle_us = 20_000
 
 let ring_create p =
   if read p 71 <> 0 then begin
     write p 64 D.gfx_ctrl_cmd_id_destroy_rings;
-    Regs.pause p.r settle_ms
+    Regs.pause p.r settle_us
   end;
   Regs.wait p.r "the PSP's OS" (fun () -> read p 64 land ready <> 0);
   let mc = Gmc.mc p.gmc p.m.ring in
@@ -264,7 +265,7 @@ let ring_create p =
   write p 70 (hi32 mc);
   write p 71 ring_bytes;
   write p 64 (D.psp_ring_type__km lsl 16);
-  Regs.pause p.r settle_ms;
+  Regs.pause p.r settle_us;
   Regs.wait p.r "the PSP's ring" (fun () -> read p 64 land 0x8000_ffff = ready);
   p.fence_value <- Window.get32 p.vram p.m.fence
 

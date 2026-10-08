@@ -110,7 +110,7 @@ let disable_aspm f =
 (* Before the registers' layout is known *)
 
 let wait_raw f ~ms what cond =
-  if Machine.wait (Function.machine f) ~ms cond then Ok ()
+  if Machine.wait (Function.machine f) ~us:(ms * 1000) cond then Ok ()
   else
     match Function.failed f with
     | Some why -> Error (strf "%s: %s" what why)
@@ -610,7 +610,7 @@ let sleep g ~ms =
   (match g.fault with Some why -> raise (Rig_amd.Fault why) | None -> ());
   let stopped () = Option.is_some g.stopped in
   ignore
-    (Machine.wait (Function.machine g.f) ~ms (fun () ->
+    (Machine.wait (Function.machine g.f) ~us:(ms * 1000) (fun () ->
          Mutex.protect g.hw (fun () -> stopped () || Ih.pending g.ih)));
   Mutex.protect g.hw @@ fun () ->
   match g.fault with
@@ -642,7 +642,7 @@ let sleep g ~ms =
 
 (* Resetting *)
 
-let quiesce_ms = 100
+let quiesce_us = 100_000
 
 (* The configuration a mode 1 reset clears, which the kernel restores after it
    (amdgpu_device_load_pci_state, pci_restore_state), in its order: the PCI
@@ -748,7 +748,7 @@ let reset f =
                       why));
               Gfx.halt gfx;
               Sdma.halt (Sdma.make r);
-              Regs.pause r quiesce_ms;
+              Regs.pause r quiesce_us;
               if not hive then begin
                 let config = save f in
                 Smu.reset smu;

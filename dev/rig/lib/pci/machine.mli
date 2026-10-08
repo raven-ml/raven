@@ -70,9 +70,9 @@ val reserve : t -> base:int -> int -> (unit, string) result
     [Error why] if part of the range is in use, or if [m] is {!this} and not
     Linux. *)
 
-val wait : t -> ms:int -> (unit -> bool) -> bool
-(** [wait m ~ms f] calls [f], at least once, until it is [true], [m] failed, or
-    at least [ms] milliseconds passed on a monotonic clock. It is [true] iff [f]
+val wait : t -> us:int -> (unit -> bool) -> bool
+(** [wait m ~us f] calls [f], at least once, until it is [true], [m] failed, or
+    at least [us] microseconds passed on a monotonic clock. It is [true] iff [f]
     became [true] while [m] had not failed: [m]'s state is read after each call
     of [f], so an answer computed from the all ones of a failed machine is not
     trusted. For its first millisecond it calls [f] back to back, relaxing the

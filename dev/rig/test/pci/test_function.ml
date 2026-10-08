@@ -1131,7 +1131,7 @@ let data = "0123456789abcdef"
 let step m f w =
   Window.set32 w 0 1;
   let ready () = Window.get32 w 4 land 1 = 1 in
-  if not (Machine.wait m ~ms:1000 ready) then
+  if not (Machine.wait m ~us:1_000_000 ready) then
     Error (Option.value (Function.failed f) ~default:"the device is not ready")
   else
     let s = Window.read w 8 16 in
@@ -1172,7 +1172,7 @@ let test_failed_function () =
   equal ~msg:"a write is dropped" string (String.make 16 '\xff')
     (Window.read w 8 16);
   equal ~msg:"a wait is false" bool false
-    (Machine.wait m ~ms:1000 (fun () -> true));
+    (Machine.wait m ~us:1_000_000 (fun () -> true));
   equal ~msg:"a reset is refused" (result unit string)
     (Error "far: the link broke") (Function.reset f)
 
@@ -1529,8 +1529,8 @@ let tree_files =
          resource file say, all ones past 64 bytes, without interrupts"
         test_physical;
       test
-        "a BAR of a function taken physically maps whole from its file, and \
-         a file shorter than its BAR is refused"
+        "a BAR of a function taken physically maps whole from its file, and a \
+         file shorter than its BAR is refused"
         test_map_files;
       cases
         "a function bound to vfio-pci is taken through VFIO, whatever shares \

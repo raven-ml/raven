@@ -159,7 +159,7 @@ let clocks s level =
       | Some clock when dpm s.mp1 ~features name -> (
           match frequencies s clock with
           | [] -> ()
-          | l ->
+          | l -> (
               let v =
                 match level with
                 | `Lowest -> List.hd l
@@ -172,7 +172,7 @@ let clocks s level =
               let max () =
                 if gc >= (10, 0, 0) then set "PPSMC_MSG_SetSoftMaxByFreq"
               in
-              (match level with
+              match level with
               | `Highest ->
                   max ();
                   min ()
@@ -191,7 +191,7 @@ let debug_mode1 = 2
 (* The GPU answers no register access while it resets: 1 s on SMU 14, 500 ms on
    earlier ones (smu_v14_0_2_mode1_reset, SMU13_MODE1_RESET_WAIT_TIME_IN_MS of
    smu_v13_0.h). *)
-let after_reset_ms s = if s.mp1 >= (14, 0, 0) then 1_000 else 500
+let after_reset_us s = if s.mp1 >= (14, 0, 0) then 1_000_000 else 500_000
 let answer_ms = 2_000
 let amd = 0x1002
 
@@ -212,7 +212,7 @@ let reset s =
   Regs.write ~value:param s.r arg [];
   Regs.write ~value:m s.r cmd [];
   if not (Gmc.hive s.gmc) then begin
-    Regs.pause s.r (after_reset_ms s);
+    Regs.pause s.r (after_reset_us s);
     (* Configuration reads fail fast on a GPU still in reset, where register
        reads would stall the bus. *)
     let fn = Regs.fn s.r in

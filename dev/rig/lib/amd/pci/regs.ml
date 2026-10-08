@@ -189,12 +189,12 @@ let machine r = Rig_pci.Function.machine r.fn
 let default_ms = 10_000
 
 let wait ?(ms = default_ms) r what f =
-  if not (Rig_pci.Machine.wait (machine r) ~ms f) then
+  if not (Rig_pci.Machine.wait (machine r) ~us:(ms * 1000) f) then
     match Rig_pci.Function.failed r.fn with
     | Some why -> raise (Stuck (strf "%s: %s" what why))
     | None -> raise (Stuck (strf "%s did not answer in %d ms" what ms))
 
-let pause r ms = ignore (Rig_pci.Machine.wait (machine r) ~ms (fun () -> false))
+let pause r us = ignore (Rig_pci.Machine.wait (machine r) ~us (fun () -> false))
 let words r = Window.length r.mmio / 4
 let lo32 v = v land 0xffff_ffff
 let hi32 v = (v lsr 32) land 0xffff_ffff

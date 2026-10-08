@@ -297,45 +297,55 @@ let counter () =
 
 let test_at_once () =
   let n, f = counter () in
-  equal ~msg:"result" bool true (Machine.wait Machine.this ~ms:10_000 (f 1));
+  equal ~msg:"result" bool true (Machine.wait Machine.this ~us:10_000_000 (f 1));
   equal ~msg:"calls" int 1 !n
 
 let until_true =
   prop "a wait calls its condition until it holds, and no more"
     (Gen.int_range 1 200) (fun k ->
       let n, f = counter () in
-      equal ~msg:"result" bool true (Machine.wait Machine.this ~ms:10_000 (f k));
+      equal ~msg:"result" bool true
+        (Machine.wait Machine.this ~us:10_000_000 (f k));
       equal ~msg:"calls" int k !n)
 
 let test_times_out () =
   let n, f = counter () in
-  equal ~msg:"result" bool false (Machine.wait Machine.this ~ms:30 (f max_int));
+  equal ~msg:"result" bool false
+    (Machine.wait Machine.this ~us:30_000 (f max_int));
   at_least ~msg:"calls" int ~than:1 !n
 
-(* Ten waits, so that one cut short shows however the machine is loaded. *)
+(* Ten waits of each bound, below and above the first millisecond's spin, so
+   that one cut short shows however the machine is loaded. *)
 let test_full_time () =
-  for _ = 1 to 10 do
-    let t0 = now_ns () in
-    ignore (Machine.wait Machine.this ~ms:2 (fun () -> false) : bool);
-    at_least ~msg:"ns waited" int ~than:2_000_000 (now_ns () - t0)
-  done
+  List.iter
+    (fun us ->
+      for _ = 1 to 10 do
+        let t0 = now_ns () in
+        ignore (Machine.wait Machine.this ~us (fun () -> false) : bool);
+        at_least
+          ~msg:(Printf.sprintf "ns waited for %d us" us)
+          int ~than:(us * 1000)
+          (now_ns () - t0)
+      done)
+    [ 50; 2000 ]
 
 (* A wait of 100 ms spins for its first millisecond only: the rest sleeps. *)
 let test_naps () =
   let t0 = Sys.time () in
-  ignore (Machine.wait Machine.this ~ms:100 (fun () -> false) : bool);
+  ignore (Machine.wait Machine.this ~us:100_000 (fun () -> false) : bool);
   less ~msg:"CPU ms" int ~than:50 (int_of_float ((Sys.time () -. t0) *. 1000.))
 
 let test_zero () =
   let n, f = counter () in
-  equal ~msg:"result" bool true (Machine.wait Machine.this ~ms:0 (f 1));
+  equal ~msg:"result" bool true (Machine.wait Machine.this ~us:0 (f 1));
   equal ~msg:"calls" int 1 !n
 
 let test_failed_wait () =
   let f = fake () in
   break f.far;
   let n, cond = counter () in
-  equal ~msg:"result" bool false (Machine.wait f.machine ~ms:10_000 (cond 1));
+  equal ~msg:"result" bool false
+    (Machine.wait f.machine ~us:10_000_000 (cond 1));
   equal ~msg:"calls" int 1 !n
 
 (* The condition holds on the call during which the machine fails, as one
@@ -348,7 +358,7 @@ let test_fails_during () =
     if !n = 3 then break f.far;
     !n >= 3
   in
-  equal ~msg:"result" bool false (Machine.wait f.machine ~ms:10_000 cond);
+  equal ~msg:"result" bool false (Machine.wait f.machine ~us:10_000_000 cond);
   equal ~msg:"calls" int 3 !n
 
 let waits =

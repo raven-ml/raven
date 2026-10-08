@@ -81,8 +81,9 @@ let halt s =
   if s.v >= (6, 0, 0) then
     Regs.update s.r (strf "regSDMA0_%s_CNTL" s.name) [ ("halt", 1) ]
 
-(* The engines take 10 ms to leave their soft reset, with no state to poll. *)
-let reset_ms = 10
+(* The soft reset's steps are 100 us apart, with no state to poll, as the
+   kernel's sdma_v7_0_soft_reset waits. *)
+let reset_us = 100
 
 (* The queue is disabled whichever process programmed it: a session that died
    left it enabled for the next boot. *)
@@ -102,11 +103,13 @@ let stop s =
       [ ("halt", 1); ((if s.name = "F32" then "th1_reset" else "reset"), 1) ];
     if Regs.has (Regs.layout_of r) "regSDMA0_QUEUE0_PREEMPT" then
       Regs.write ~value:0 r "regSDMA0_QUEUE0_PREEMPT" [];
+    Regs.pause r reset_us;
     Regs.write r "regGRBM_SOFT_RESET" [ ("soft_reset_sdma0", 1) ];
     ignore (Regs.read r "regGRBM_SOFT_RESET");
-    Regs.pause r reset_ms;
+    Regs.pause r reset_us;
     Regs.write ~value:0 r "regGRBM_SOFT_RESET" [];
-    ignore (Regs.read r "regGRBM_SOFT_RESET")
+    ignore (Regs.read r "regGRBM_SOFT_RESET");
+    Regs.pause r reset_us
   end
 
 (* Its doorbell is the first SDMA engine's. *)
