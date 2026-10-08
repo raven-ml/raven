@@ -76,7 +76,7 @@ let names_of names =
   (offsets, Buffer.contents b)
 
 (* The object of [sections] at indexes 1, 2, ..., then its section names. *)
-let write sections =
+let write ?(machine = em_cuda) sections =
   let offsets, shstrtab =
     names_of (List.map (fun s -> s.name) sections @ [ ".shstrtab" ])
   in
@@ -97,7 +97,7 @@ let write sections =
   Buffer.add_string b "\x7fELF\002\001\001";
   Buffer.add_string b (String.make 9 '\000');
   Buffer.add_uint16_le b 2;
-  Buffer.add_uint16_le b em_cuda;
+  Buffer.add_uint16_le b machine;
   Buffer.add_int32_le b 1l;
   Buffer.add_int64_le b 0L;
   Buffer.add_int64_le b 0L;
@@ -663,6 +663,12 @@ let image =
           at_least ~msg:"the image holds the field" int ~than:(code + 20) o.size;
           contains ~sub:"past the end of its section"
             (require_error ~pp:pp_cubin (Cubin.of_string obj)));
+      cases ~name:string_of_int "an object for another machine is refused"
+        (* EM_X86_64, EM_AARCH64, EM_AMDGPU. *)
+        [ 62; 183; 224 ] (fun machine ->
+          contains ~sub:"EM_CUDA"
+            (require_error ~pp:pp_cubin
+               (Cubin.of_string (write ~machine [ code "k" 16 ]))));
       test "an object that is not ELF is refused" (fun () ->
           ignore (require_error ~pp:pp_cubin (Cubin.of_string "\x7fELF")));
       test "reading copies nothing: elf's file is the object" (fun () ->

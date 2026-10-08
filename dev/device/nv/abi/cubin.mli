@@ -46,6 +46,7 @@ val of_string : string -> (t, string) result
     out at an alignment of 128 bytes ({!Device_elf.of_string}). The result is
     [Error msg], [msg] saying which, if [obj] is not a well-formed ELF object,
     or if:
+    - it is not for NVIDIA GPUs: its [e_machine] is not [EM_CUDA] ([190]);
     - its image ({!size}) would be longer than [2{^49}] bytes, more than the
       49-bit virtual addresses of GPUs before Hopper reach, which only a
       corrupted address makes;

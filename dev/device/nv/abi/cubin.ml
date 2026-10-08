@@ -340,9 +340,12 @@ let held (s : Device_elf.section) =
 
 let of_string obj =
   let* o = Device_elf.of_string ~align:section_align ~held obj in
+  (* The object is NVIDIA's, and its image fits: the ELF image's end rounds up
+     to a page, and a page follows. *)
   let* () =
-    (* The ELF image's end rounds up to a page, and a page follows. *)
-    if o.size <= max_image - page then Ok ()
+    if o.machine <> em_cuda then
+      Error (strf "e_machine %d, expected EM_CUDA (%d)" o.machine em_cuda)
+    else if o.size <= max_image - page then Ok ()
     else
       Error
         (strf "the image would be longer than 2^49 bytes: its sections take %d"
