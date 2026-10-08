@@ -21,21 +21,20 @@ alloc-free/visible/4KiB	wall_time	batch=16384	n=20	3.955e-07	3.940e-07 3.941e-07
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
-# forced: blessed under load 17.6 on 10 cores
-# forced: blessed alloc-free/bar/4KiB alloc-free/bar/16MiB under load 5.1 on 10 cores
+# forced: blessed under load 8.8 on 10 cores
 
-alloc-free/bar/16MiB	alloc_words	exact	379
-alloc-free/bar/16MiB	wall_time	batch=8192	n=20	1.155e-06	1.129e-06 1.134e-06 1.146e-06 1.148e-06 1.149e-06 1.150e-06 1.153e-06 1.154e-06 1.155e-06 1.155e-06 1.156e-06 1.168e-06 1.168e-06 1.176e-06 1.176e-06 1.178e-06 1.179e-06 1.184e-06 1.191e-06 1.199e-06
-alloc-free/bar/4KiB	alloc_words	exact	387
-alloc-free/bar/4KiB	wall_time	batch=8192	n=20	9.871e-07	9.690e-07 9.743e-07 9.774e-07 9.807e-07 9.809e-07 9.814e-07 9.816e-07 9.832e-07 9.840e-07 9.861e-07 9.882e-07 9.903e-07 9.907e-07 9.944e-07 9.947e-07 9.950e-07 9.959e-07 9.963e-07 1.001e-06 1.004e-06
-alloc-free/gpu/16MiB	alloc_words	exact	809
-alloc-free/gpu/16MiB	wall_time	batch=2048	n=20	3.103e-06	3.062e-06 3.064e-06 3.065e-06 3.073e-06 3.084e-06 3.088e-06 3.099e-06 3.101e-06 3.101e-06 3.102e-06 3.103e-06 3.107e-06 3.108e-06 3.110e-06 3.112e-06 3.129e-06 3.134e-06 3.141e-06 3.143e-06 3.151e-06
-alloc-free/gpu/4KiB	alloc_words	exact	327
-alloc-free/gpu/4KiB	wall_time	batch=8192	n=20	7.978e-07	7.897e-07 7.903e-07 7.935e-07 7.942e-07 7.946e-07 7.950e-07 7.955e-07 7.960e-07 7.965e-07 7.969e-07 7.987e-07 7.997e-07 8.015e-07 8.021e-07 8.024e-07 8.026e-07 8.046e-07 8.052e-07 8.119e-07 8.289e-07
-alloc-free/visible/16MiB	alloc_words	exact	922
-alloc-free/visible/16MiB	wall_time	batch=32	n=20	1.627e-04	1.588e-04 1.595e-04 1.603e-04 1.611e-04 1.617e-04 1.620e-04 1.622e-04 1.623e-04 1.625e-04 1.627e-04 1.628e-04 1.631e-04 1.633e-04 1.636e-04 1.637e-04 1.640e-04 1.642e-04 1.647e-04 1.652e-04 1.654e-04
-alloc-free/visible/4KiB	alloc_words	exact	264
-alloc-free/visible/4KiB	wall_time	batch=8192	n=20	6.471e-07	6.410e-07 6.432e-07 6.435e-07 6.438e-07 6.453e-07 6.461e-07 6.462e-07 6.465e-07 6.466e-07 6.470e-07 6.472e-07 6.505e-07 6.518e-07 6.521e-07 6.531e-07 6.537e-07 6.546e-07 6.547e-07 6.561e-07 6.568e-07
+alloc-free/bar/16MiB	alloc_words	exact	380
+alloc-free/bar/16MiB	wall_time	batch=8192	n=20	1.110e-06	1.091e-06 1.091e-06 1.093e-06 1.098e-06 1.099e-06 1.103e-06 1.103e-06 1.107e-06 1.110e-06 1.110e-06 1.111e-06 1.111e-06 1.112e-06 1.112e-06 1.117e-06 1.120e-06 1.121e-06 1.123e-06 1.125e-06 1.135e-06
+alloc-free/bar/4KiB	alloc_words	exact	388
+alloc-free/bar/4KiB	wall_time	batch=8192	n=20	9.402e-07	9.185e-07 9.273e-07 9.306e-07 9.323e-07 9.327e-07 9.349e-07 9.350e-07 9.357e-07 9.379e-07 9.390e-07 9.413e-07 9.422e-07 9.424e-07 9.441e-07 9.459e-07 9.460e-07 9.470e-07 9.494e-07 9.518e-07 9.684e-07
+alloc-free/gpu/16MiB	alloc_words	exact	810
+alloc-free/gpu/16MiB	wall_time	batch=2048	n=20	2.989e-06	2.917e-06 2.931e-06 2.937e-06 2.950e-06 2.951e-06 2.968e-06 2.969e-06 2.970e-06 2.971e-06 2.987e-06 2.990e-06 2.993e-06 2.997e-06 3.021e-06 3.094e-06 3.109e-06 3.150e-06 3.277e-06 3.397e-06 3.452e-06
+alloc-free/gpu/4KiB	alloc_words	exact	328
+alloc-free/gpu/4KiB	wall_time	batch=8192	n=20	7.877e-07	7.566e-07 7.667e-07 7.674e-07 7.732e-07 7.768e-07 7.823e-07 7.844e-07 7.850e-07 7.863e-07 7.866e-07 7.888e-07 7.889e-07 7.895e-07 7.923e-07 7.930e-07 7.956e-07 7.967e-07 7.971e-07 7.990e-07 9.047e-07
+alloc-free/visible/16MiB	alloc_words	exact	924
+alloc-free/visible/16MiB	wall_time	batch=32	n=20	1.700e-04	1.662e-04 1.662e-04 1.671e-04 1.684e-04 1.688e-04 1.689e-04 1.690e-04 1.690e-04 1.698e-04 1.700e-04 1.700e-04 1.702e-04 1.703e-04 1.706e-04 1.707e-04 1.709e-04 1.709e-04 1.709e-04 1.718e-04 1.727e-04
+alloc-free/visible/4KiB	alloc_words	exact	266
+alloc-free/visible/4KiB	wall_time	batch=8192	n=20	6.435e-07	6.220e-07 6.287e-07 6.315e-07 6.328e-07 6.355e-07 6.364e-07 6.381e-07 6.404e-07 6.418e-07 6.419e-07 6.452e-07 6.453e-07 6.457e-07 6.468e-07 6.480e-07 6.500e-07 7.009e-07 9.631e-07 9.799e-07 1.492e-06
 
 # machine: baccbeca132e3ae9
 # host: nonnormal · Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz · x86_64 · linux
