@@ -12,7 +12,11 @@
    the status. A stub that calls CUDA in a context pushes the device's
    context on the calling thread and pops it before returning: OCaml domains
    run on threads of their own, and other CUDA libraries in the process keep
-   the context they had current. */
+   the context they had current.
+
+   A stub whose comment says it releases the runtime does so without running
+   pending signal handlers, so no OCaml code runs between CUDA's answer and
+   its caller; every other stub holds the runtime. */
 
 #define _GNU_SOURCE
 
@@ -28,11 +32,16 @@
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 #include <caml/signals.h>
-#include <caml/threads.h>
 
 #include "device_cuda.h"
 
 /* The platform */
+
+/* sleep asks CUDA each POLL_MS milliseconds whether a stream failed, and
+   sleeps between the questions: a fault is found within POLL_MS of CUDA's
+   report, and the wake latency falls on waits nx.device has already spun
+   on, which are long. */
+#define POLL_MS 1
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -45,7 +54,7 @@ static void *library_symbol(void *lib, const char *name) {
   return (void *)GetProcAddress((HMODULE)lib, name);
 }
 static int64_t now_ms(void) { return (int64_t)GetTickCount64(); }
-static void sleep_ms(void) { Sleep(1); }
+static void poll_pause(void) { Sleep(POLL_MS); }
 static long host_page_size(void) {
   SYSTEM_INFO info;
   GetSystemInfo(&info);
@@ -73,8 +82,8 @@ static int64_t now_ms(void) {
   clock_gettime(CLOCK_MONOTONIC, &t);
   return (int64_t)t.tv_sec * 1000 + t.tv_nsec / 1000000;
 }
-static void sleep_ms(void) {
-  struct timespec t = {0, 1000000};
+static void poll_pause(void) {
+  struct timespec t = {0, POLL_MS * 1000000L};
   nanosleep(&t, NULL);
 }
 static long host_page_size(void) { return sysconf(_SC_PAGESIZE); }
@@ -173,7 +182,7 @@ value caml_device_cuda_load(value unit) {
   const char *missing = NULL;
   int code = 0;
   void *lib = NULL;
-  caml_release_runtime_system();
+  caml_enter_blocking_section_no_pending();
   for (int i = 0; library_names[i] != NULL && lib == NULL; i++)
     lib = library_open(library_names[i]);
   if (lib == NULL) {
@@ -192,7 +201,7 @@ value caml_device_cuda_load(value unit) {
 #undef RESOLVE
   if (code == 0) code = p_cuInit(0);
   if (code == 0) library = lib;
-  caml_acquire_runtime_system();
+  caml_leave_blocking_section();
   s = caml_copy_string(missing != NULL ? missing : "");
   r = caml_alloc_tuple(2);
   Store_field(r, 0, Val_int(code));
@@ -387,13 +396,13 @@ value caml_device_cuda_alloc(value v_self, value v_host, value v_n) {
   int host = Bool_val(v_host);
   CUdeviceptr a = 0;
   void *p = NULL;
-  caml_release_runtime_system();
+  caml_enter_blocking_section_no_pending();
   CUresult s = push(d->context);
   if (s == CUDA_SUCCESS && host)
     s = pop(p_cuMemHostAlloc(&p, n, CU_MEMHOST_PORTABLE_DEVICEMAP));
   else if (s == CUDA_SUCCESS)
     s = pop(p_cuMemAlloc_v2(&a, n));
-  caml_acquire_runtime_system();
+  caml_leave_blocking_section();
   if (s != CUDA_SUCCESS) return Val_long(-s);
   return Val_long(host ? (intnat)p : (intnat)a);
 }
@@ -405,12 +414,12 @@ value caml_device_cuda_free(value v_self, value v_host, value v_address) {
   struct device *d = Device_val(v_self);
   int host = Bool_val(v_host);
   intnat a = Long_val(v_address);
-  caml_release_runtime_system();
+  caml_enter_blocking_section_no_pending();
   if (push(d->context) == CUDA_SUCCESS) {
     if (host) pop(p_cuMemFreeHost((void *)a));
     else pop(p_cuMemFree_v2((CUdeviceptr)a));
   }
-  caml_acquire_runtime_system();
+  caml_leave_blocking_section();
   return Val_unit;
 }
 
@@ -433,11 +442,11 @@ value caml_device_cuda_register(value v_self, value v_address, value v_n) {
   struct device *d = Device_val(v_self);
   void *p = (void *)Long_val(v_address);
   size_t n = Long_val(v_n);
-  caml_release_runtime_system();
+  caml_enter_blocking_section_no_pending();
   CUresult s = push(d->context);
   if (s == CUDA_SUCCESS)
     s = pop(p_cuMemHostRegister_v2(p, n, CU_MEMHOST_PORTABLE_DEVICEMAP));
-  caml_acquire_runtime_system();
+  caml_leave_blocking_section();
   return Val_int(s);
 }
 
@@ -445,10 +454,10 @@ value caml_device_cuda_register(value v_self, value v_address, value v_n) {
 value caml_device_cuda_unregister(value v_self, value v_address) {
   struct device *d = Device_val(v_self);
   void *p = (void *)Long_val(v_address);
-  caml_release_runtime_system();
+  caml_enter_blocking_section_no_pending();
   CUresult s = push(d->context);
   if (s == CUDA_SUCCESS) s = pop(p_cuMemHostUnregister(p));
-  caml_acquire_runtime_system();
+  caml_leave_blocking_section();
   return Val_int(s);
 }
 
@@ -738,7 +747,7 @@ value caml_device_cuda_sleep(value v_self, value v_seen, value v_ms) {
   CUresult fault = CUDA_SUCCESS;
   if (atomic_load_explicit(d->word, memory_order_acquire) != seen)
     return Val_int(0);
-  caml_release_runtime_system();
+  caml_enter_blocking_section_no_pending();
   CUresult s = push(d->context);
   if (s == CUDA_SUCCESS) {
     int64_t start = now_ms();
@@ -746,11 +755,11 @@ value caml_device_cuda_sleep(value v_self, value v_seen, value v_ms) {
       fault = query(d->streams[0]);
       if (fault == CUDA_SUCCESS) fault = query(d->streams[1]);
       if (fault != CUDA_SUCCESS || now_ms() - start >= ms) break;
-      sleep_ms();
+      poll_pause();
     }
     s = pop(fault);
   }
-  caml_acquire_runtime_system();
+  caml_leave_blocking_section();
   return Val_int(s);
 }
 
