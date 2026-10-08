@@ -132,8 +132,8 @@ type region = {
   mutable live : bool;
 }
 
-let region owner kind ?(home = owner) ~address ~handle bytes =
-  { owner; kind; address; handle; bytes; home; live = true }
+let region owner kind ~address ~handle bytes =
+  { owner; kind; address; handle; bytes; home = owner; live = true }
 
 let rec on_host = function
   | Device -> false
