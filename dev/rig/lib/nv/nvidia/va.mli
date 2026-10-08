@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** A range of addresses the process hands out (private).
+(** A range of addresses the process hands out.
 
     The GPU's addresses of the process's memory: first fit over the free ranges,
     which a free merges with its neighbours. Any domain may call any function.

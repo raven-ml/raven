@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** A machine's NVIDIA GPUs, from its PCI functions' files (private). *)
+(** A machine's NVIDIA GPUs, from its PCI functions' files. *)
 
 val gpus : string -> string list
 (** [gpus root] is the bus addresses of the NVIDIA GPUs ({!Rig_nv.is_gpu})

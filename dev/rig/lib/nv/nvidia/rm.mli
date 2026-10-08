@@ -4,8 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 (** NVIDIA's kernel driver: its device files, the escapes to its resource
-    manager (RM), its unified memory driver, and the process's client of both
-    (private).
+    manager (RM), its unified memory driver, and the process's client of both.
 
     Every failure is an [Error] naming what failed: the RM's status by name, or
     the system call's error. Any domain may call any function. *)
@@ -16,7 +15,7 @@ val open_file : string -> (int, string) result
 (** [open_file path] is the descriptor of the device file [path]. *)
 
 val close : int -> unit
-(** [close fd] closes [fd]. *)
+(** [close fd] closes [fd], ignoring a failure. *)
 
 val register : int -> ctl:int -> (unit, string) result
 (** [register fd ~ctl] ties the GPU file [fd] to the control file [ctl]; the
