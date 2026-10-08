@@ -192,6 +192,15 @@ let bounds =
       (M.Permute [| 1; 0 |])
       [| max_int; 2 |];
     ok "a permutation of no axis" (M.Permute [||]) [||] [||];
+    refused "a permutation of an argument past the most axes"
+      (M.Permute (Array.init 33 Fun.id))
+      (Array.make 33 1);
+    refused "a permutation of 64 axes"
+      (M.Permute (Array.init 64 Fun.id))
+      (Array.make 64 1);
+    refused "a slice of an argument past the most axes"
+      (M.Slice (Array.make 40 (r 0 1 1)))
+      (Array.make 40 1);
   ]
 
 let test_bound c =
