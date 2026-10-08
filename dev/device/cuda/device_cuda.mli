@@ -349,10 +349,11 @@ val signaled : t -> int
 
 val sleep : t -> seen:int -> still_ms:int -> unit
 (** [sleep g ~seen ~still_ms] returns once [g]'s timeline word differs from
-    [seen], at once if it does already, or after [still_ms] milliseconds. It
-    asks CUDA each millisecond whether [g]'s streams met an error, so it finds a
-    fault at most a millisecond after CUDA reports it. It lets other domains run
-    while it waits, and may run while {!submit} does.
+    [seen], at once if it does already, or after [still_ms] milliseconds;
+    [still_ms] is not negative. It asks CUDA each millisecond whether [g]'s
+    streams met an error, so it finds a fault at most a millisecond after CUDA
+    reports it. It lets other domains run while it waits, and may run while
+    {!submit} does.
 
     Raises {!Fault} with CUDA's error if [g]'s work met one. *)
 
