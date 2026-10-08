@@ -29,11 +29,11 @@
     [cuLaunchKernel], [cuGraphLaunch], [cuMemcpyAsync] and [cuLaunchHostFunc] on
     [queue] any number of times. Each call may block until the device's earlier
     work frees room in the stream; nothing bounds what a fill enqueues, so work
-    given as a fill declares [0] ring units, which the driver does not read. The
-    fill does not wait for work ([cuStreamSynchronize], [cuEventSynchronize],
-    [cuCtxSynchronize]), does not enqueue on another stream, and does not change
-    the current context. Waiting for earlier work and signalling [v] are the
-    driver's.
+    given as a fill declares no room: [0] ring units and [0] segment bytes. The
+    driver refuses work that declares any other. The fill does not wait for work
+    ([cuStreamSynchronize], [cuEventSynchronize], [cuCtxSynchronize]), does not
+    enqueue on another stream, and does not change the current context. Waiting
+    for earlier work and signalling [v] are the driver's.
 
     A host function the fill enqueues runs on a thread of the CUDA library. It
     calls no CUDA function and takes no lock that a fill, or the code that calls
