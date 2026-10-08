@@ -364,6 +364,30 @@ let test_survives () =
   equal int64 16L out.{0};
   equal ~msg:"mapped" bool true (S.mapped (Host.address p))
 
+(* waiting.c, which no value holds but its running call, while another domain
+   collects. *)
+let test_running () =
+  let p = link "waiting" in
+  let address = Host.address p in
+  let held = Atomic.make (Some p) in
+  let w = S.words 2 in
+  let d =
+    Domain.spawn (fun () ->
+        match Atomic.exchange held None with
+        | Some p -> call p [ w ] [| 20_000_000_000 |]
+        | None -> ())
+  in
+  let until = Unix.gettimeofday () +. 10. in
+  while w.{1} = 0L && Unix.gettimeofday () < until do
+    Unix.sleepf 0.001
+  done;
+  equal ~msg:"the program began" int64 1L w.{1};
+  collect ();
+  let mapped = S.mapped address in
+  w.{0} <- 1L;
+  Domain.join d;
+  equal ~msg:"mapped while its call runs" bool true mapped
+
 (* The permissions of the mapping of /proc/self/maps that holds [a]. *)
 let permissions a =
   let holds line =
@@ -392,6 +416,8 @@ let memory_tests =
       test "an unreachable program's code is unmapped" test_unmapped;
       test "a reachable program's code survives collections and runs"
         test_survives;
+      test "a program's code survives collections while a call of it runs"
+        test_running;
       test "the code is never writable once linked" test_never_writable;
     ]
 
