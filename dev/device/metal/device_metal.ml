@@ -14,7 +14,7 @@ type buffer = nativeint * int * nativeint
 
 external count : unit -> int = "caml_device_metal_count"
 external open_device : unit -> int = "caml_device_metal_open"
-external facts : int -> string * int * buffer = "caml_device_metal_facts"
+external facts : int -> int * int * buffer = "caml_device_metal_facts"
 external alloc_buffer : int -> int -> buffer option = "caml_device_metal_alloc"
 
 external map_buffer : int -> nativeint -> int -> buffer option
@@ -119,6 +119,12 @@ let icb self align buffer (ds : Device_metal_abi.dispatch array) =
       Ok { Device_metal_abi.handle = objects.(1); commands; release }
   | why, _ -> Error why
 
+(* The minimum constant buffer offset alignment of Apple GPU families, from the
+   Metal feature set tables (May 21, 2026, page 7). The tables list none for Mac
+   families; 256 meets every smaller power of two and costs only padding. *)
+let apple_align = 4
+let mac_align = 256
+
 (* The causes of open's failures, by the stubs' codes, and the code of the
    host's lack of memory. *)
 let no_memory = 6
@@ -138,8 +144,9 @@ let open_ i =
     if self = -no_memory then raise Out_of_memory
     else if self < 0 then Error (open_failure (-self))
     else
-      let arch, budget, word = facts self in
-      let align = if String.starts_with ~prefix:"Apple" arch then 4 else 256 in
+      let family, budget, word = facts self in
+      let arch = if family > 0 then strf "Apple%d" family else "Mac2" in
+      let align = if family > 0 then apple_align else mac_align in
       let icb = icb self align in
       let word = region self Word word in
       Ok { self; arch; budget; word; cap = { align; icb; split } }

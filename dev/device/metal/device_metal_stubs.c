@@ -65,26 +65,23 @@ value caml_device_metal_count(value unit) {
   return Val_int(device != nil);
 }
 
-/* The highest Apple GPU family [device] supports, else its Mac family,
-   else "". */
-static void family(id<MTLDevice> device, char arch[16]) {
-  arch[0] = '\0';
-  for (int f = 10; f >= 1 && arch[0] == '\0'; f--)
+/* The highest Apple GPU family [device] supports (1 to 10), else 0 for
+   the Mac2 family, else -1. */
+static int family(id<MTLDevice> device) {
+  for (int f = 10; f >= 1; f--)
     if ([device supportsFamily:(MTLGPUFamily)(MTLGPUFamilyApple1 + f - 1)])
-      snprintf(arch, 16, "Apple%d", f);
-  if (arch[0] == '\0' && [device supportsFamily:MTLGPUFamilyMac2])
-    snprintf(arch, 16, "Mac2");
+      return f;
+  return [device supportsFamily:MTLGPUFamilyMac2] ? 0 : -1;
 }
 
 static intnat open_device(void) API_AVAILABLE(macos(15.0)) {
   id<MTLDevice> device = MTLCreateSystemDefaultDevice();
   if (device == nil) return -no_device;
-  char arch[16];
-  family(device, arch);
-  struct device_metal *d = arch[0] ? calloc(1, sizeof *d) : NULL;
+  int f = family(device);
+  struct device_metal *d = f >= 0 ? calloc(1, sizeof *d) : NULL;
   if (d == NULL) {
     [device release];
-    return arch[0] ? -no_memory : -no_family;
+    return f >= 0 ? -no_memory : -no_family;
   }
   MTLResidencySetDescriptor *desc = [[MTLResidencySetDescriptor alloc] init];
   d->device = device;
@@ -123,17 +120,14 @@ static value buffer(id<MTLBuffer> b) {
   CAMLreturn(tuple(3, handle, Val_long((intnat)b.gpuAddress), host));
 }
 
-/* The device's arch, budget and word. */
+/* The device's family, budget and word. */
 value caml_device_metal_facts(value v_d) {
   CAMLparam1(v_d);
-  CAMLlocal2(arch, word);
+  CAMLlocal1(word);
   struct device_metal *d = Device_val(v_d);
-  char a[16];
-  family(d->device, a);
-  arch = caml_copy_string(a);
   word = buffer(d->word);
   intnat budget = (intnat)d->device.recommendedMaxWorkingSetSize;
-  CAMLreturn(tuple(3, arch, Val_long(budget), word));
+  CAMLreturn(tuple(3, Val_int(family(d->device)), Val_long(budget), word));
 }
 
 /* Memory */
