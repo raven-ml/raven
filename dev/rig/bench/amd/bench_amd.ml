@@ -30,7 +30,7 @@ module Sdma = Abi.Sdma
 external start : int array -> unit = "rig_amd_bench_start"
 external interrupt : unit -> int = "rig_amd_bench_interrupt"
 
-external template : int -> string -> int array -> unit
+external template : int -> string -> int64 array -> unit
   = "rig_amd_bench_template"
 
 external floor_release : int -> unit = "rig_amd_bench_release"
@@ -52,7 +52,7 @@ external fill_arg :
   nativeint ->
   int ->
   string ->
-  int array ->
+  int64 array ->
   (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
   = "rig_amd_bench_fill_arg"
 
@@ -118,14 +118,14 @@ let encode p = Packet.encode Int64.of_int p
 
 (* A template's holes as the C reads them: each word's index, its width, the
    argument [arg v] of its value, then the operations on it in the order they
-   apply. *)
+   apply, each with its constant's 64 bits. *)
 let holes arg hs =
   let hole (at, w) =
     let rec flatten ops : _ Packet.term -> _ = function
       | Value v -> (arg v, ops)
-      | Add (t, k) -> flatten ((0, Int64.to_int k) :: ops) t
-      | Shift (t, n) -> flatten ((1, n) :: ops) t
-      | Or (t, k) -> flatten ((2, Int64.to_int k) :: ops) t
+      | Add (t, k) -> flatten ((0L, k) :: ops) t
+      | Shift (t, n) -> flatten ((1L, Int64.of_int n) :: ops) t
+      | Or (t, k) -> flatten ((2L, k) :: ops) t
     in
     let wide, t =
       match (w : _ Packet.word) with
@@ -134,7 +134,7 @@ let holes arg hs =
       | Dword _ -> assert false
     in
     let a, ops = flatten [] t in
-    [ at; wide; a; List.length ops ]
+    List.map Int64.of_int [ at; wide; a; List.length ops ]
     @ List.concat_map (fun (op, k) -> [ op; k ]) ops
   in
   Array.of_list (List.concat_map hole hs)

@@ -16,6 +16,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "rig_amd.h"
 
@@ -82,6 +83,25 @@ struct rig_amd_template {
   int n, nholes;
   struct rig_amd_hole holes[RIG_AMD_TEMPLATE_HOLES];
 };
+
+/* Template [t]'s words in [w], its holes filled from [args]: their
+   count. */
+static inline int rig_amd_fill(const struct rig_amd_template *t,
+                               const uint64_t *args, uint32_t *w) {
+  memcpy(w, t->words, sizeof t->words);
+  for (int i = 0; i < t->nholes; i++) {
+    const struct rig_amd_hole *h = &t->holes[i];
+    uint64_t v = args[h->arg];
+    for (int j = 0; j < h->nops; j++) switch (h->op[j]) {
+        case OP_ADD: v += h->k[j]; break;
+        case OP_SHIFT: v >>= h->k[j]; break;
+        default: v |= h->k[j]; break;
+      }
+    w[h->at] = (uint32_t)v;
+    if (h->wide == 2) w[h->at + 1] = (uint32_t)(v >> 32);
+  }
+  return t->n;
+}
 
 /* A submission that used a ring or the segment: its value, and the
    position its words or bytes end at. */

@@ -106,7 +106,8 @@ external set_segment : int -> int -> int -> int -> unit = "caml_rig_amd_segment"
 external set_ring : int -> int -> int -> int -> int -> int -> int -> unit
   = "caml_rig_amd_ring_byte" "caml_rig_amd_ring"
 
-external set_template : int -> int -> string -> int array -> unit
+external set_template :
+  int -> int -> string -> (int * int Packet.word) list -> unit
   = "caml_rig_amd_template"
 
 external set_max_copy : int -> int -> unit = "caml_rig_amd_max_copy"
@@ -197,32 +198,12 @@ let scratch_resource_descriptor = 144
 let scratch_backing_memory_location = 160
 let scratch_wave64_lane_byte_size = 176
 
-(* Templates: each packet the writer places, its values the arguments 0, 1 and 2
-   of a use. Their order is rig_amd_stubs.h's. *)
+(* Templates *)
 
-let op_add = 0
-let op_shift = 1
-let op_or = 2
-
-let hole (at, w) =
-  let rec flatten ops : int Packet.term -> _ = function
-    | Value i -> (i, ops)
-    | Add (t, k) -> flatten ((op_add, Int64.to_int k) :: ops) t
-    | Shift (t, n) -> flatten ((op_shift, n) :: ops) t
-    | Or (t, k) -> flatten ((op_or, Int64.to_int k) :: ops) t
-  in
-  let wide, t =
-    match (w : int Packet.word) with
-    | W32 t -> (1, t)
-    | W64 t -> (2, t)
-    | Dword _ -> assert false
-  in
-  let arg, ops = flatten [] t in
-  [ at; wide; arg; List.length ops ]
-  @ List.concat_map (fun (op, k) -> [ op; k ]) ops
-
-(* On an AQL queue, whose PM4 words every die runs, a release writes once: on
-   die 0, after the barrier of its packet, every die's work is done. *)
+(* Each packet the writer places, its values the arguments 0, 1 and 2 of a use,
+   in rig_amd_stubs.h's order. On an AQL queue, whose PM4 words every die runs,
+   a release writes once: on die 0, after the barrier of its packet, every die's
+   work is done. *)
 let templates (g : Abi.Gpu.t) ~interrupt ~waits64 ~aql =
   let once p = if aql then Pm4.pred_exec ~xcc_mask:1 p else p in
   [
@@ -243,7 +224,7 @@ let templates (g : Abi.Gpu.t) ~interrupt ~waits64 ~aql =
 let set_templates self g ~interrupt ~waits64 ~aql =
   let set i p =
     let words, holes = Packet.template (fun _ -> None) p in
-    set_template self i words (Array.of_list (List.concat_map hole holes))
+    set_template self i words holes
   in
   List.iteri set (templates g ~interrupt ~waits64 ~aql);
   set_max_copy self (Sdma.max_copy g)

@@ -47,31 +47,6 @@ static int is_copy(const struct rig_part *p) {
 
 /* Templates */
 
-static uint64_t hole_value(const struct rig_amd_hole *h,
-                           const uint64_t *args) {
-  uint64_t v = args[h->arg];
-  for (int i = 0; i < h->nops; i++) switch (h->op[i]) {
-      case OP_ADD: v += h->k[i]; break;
-      case OP_SHIFT: v >>= h->k[i]; break;
-      default: v |= h->k[i]; break;
-    }
-  return v;
-}
-
-/* Template [t]'s words in [w], its holes filled from [args]: their count. */
-static int patch(const struct rig_amd *d, int t, const uint64_t *args,
-                 uint32_t *w) {
-  const struct rig_amd_template *tp = &d->templates[t];
-  memcpy(w, tp->words, sizeof tp->words);
-  for (int i = 0; i < tp->nholes; i++) {
-    const struct rig_amd_hole *h = &tp->holes[i];
-    uint64_t v = hole_value(h, args);
-    w[h->at] = (uint32_t)v;
-    if (h->wide == 2) w[h->at + 1] = (uint32_t)(v >> 32);
-  }
-  return tp->n;
-}
-
 static int words_of(const struct rig_amd *d, int t) {
   return d->templates[t].n;
 }
@@ -104,7 +79,7 @@ static void emit(struct rig_amd *d, struct rig_amd_ring *q, int t,
                  uint64_t a0, uint64_t a1, uint64_t a2) {
   uint64_t args[3] = {a0, a1, a2};
   uint32_t w[RIG_AMD_TEMPLATE_WORDS];
-  int n = patch(d, t, args, w);
+  int n = rig_amd_fill(&d->templates[t], args, w);
   if (q->kind != RING_AQL) {
     put_words(q, w, (size_t)n);
     return;
@@ -121,7 +96,8 @@ static void flush(struct rig_amd *d, struct rig_amd_ring *q) {
   struct rig_amd_segment *g = &d->segment;
   uint64_t args[3] = {g->gpu + d->ib_at % g->size, d->ib_n, 0};
   uint32_t w[RIG_AMD_TEMPLATE_WORDS];
-  put_words(q, w, (size_t)patch(d, A_IB, args, w));
+  int n = rig_amd_fill(&d->templates[A_IB], args, w);
+  put_words(q, w, (size_t)n);
   g->put = d->ib_at + align_up(4 * d->ib_n, SEGMENT_ALIGN);
   d->ib_n = 0;
 }

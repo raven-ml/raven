@@ -83,8 +83,49 @@ value caml_rig_amd_ring_byte(value *argv, int argn) {
                               argv[5], argv[6]);
 }
 
-/* Template [t]: its words as little-endian bytes, and its holes, each as the
-   ints at, wide, arg, nops, then (op, k) per operation. */
+/* Rig_amd_abi.Packet's terms and the words that hold one, by tag: a term
+   is the value, an argument (0), or an addition (1), a right shift (2) or
+   an or (3) of a term and a constant; a word is W32 (1) or W64 (2). */
+enum { TERM_VALUE, TERM_ADD, TERM_SHIFT, TERM_OR };
+enum { WORD_W64 = 2 };
+
+static const uint8_t ops[] = {[TERM_ADD] = OP_ADD, [TERM_SHIFT] = OP_SHIFT,
+                              [TERM_OR] = OP_OR};
+
+/* Sets [h] to the word [v_w] at index [at]: its argument, then its
+   operations in the order they apply, the innermost first. */
+static void read_hole(struct rig_amd_hole *h, intnat at, value v_w) {
+  value t = Field(v_w, 0);
+  int n = 0;
+  for (value u = t; Tag_val(u) != TERM_VALUE; u = Field(u, 0)) n++;
+  if (n > RIG_AMD_HOLE_OPS)
+    caml_invalid_argument("Rig_amd.make: a template hole takes too many "
+                          "operations");
+  h->at = (uint8_t)at;
+  h->wide = Tag_val(v_w) == WORD_W64 ? 2 : 1;
+  h->nops = (uint8_t)n;
+  for (int i = n - 1; i >= 0; i--, t = Field(t, 0)) {
+    h->op[i] = ops[Tag_val(t)];
+    if (Tag_val(t) != TERM_SHIFT) {
+      h->k[i] = (uint64_t)Int64_val(Field(t, 1));
+      continue;
+    }
+    intnat shift = Long_val(Field(t, 1));
+    if (shift < 0 || shift > 63)
+      caml_invalid_argument("Rig_amd.make: a template hole's shift is "
+                            "outside 0 to 63");
+    h->k[i] = (uint64_t)shift;
+  }
+  intnat arg = Long_val(Field(t, 0));
+  if (arg < 0 || arg > 2)
+    caml_invalid_argument("Rig_amd.make: a template hole reads an argument "
+                          "outside 0 to 2");
+  h->arg = (uint8_t)arg;
+}
+
+/* Template [t]: its words as little-endian bytes, and its holes, the
+   list Rig_amd_abi.Packet.template answers over the arguments 0, 1 and
+   2. */
 value caml_rig_amd_template(value v_self, value v_t, value v_words,
                                value v_holes) {
   struct rig_amd_template *t =
@@ -94,22 +135,12 @@ value caml_rig_amd_template(value v_self, value v_t, value v_words,
     caml_invalid_argument("Rig_amd.make: a packet template exceeds 16 words");
   t->n = (int)(bytes / 4);
   memcpy(t->words, String_val(v_words), 4 * (size_t)t->n);
-  int n = (int)Wosize_val(v_holes), k = 0;
   t->nholes = 0;
-  while (k < n) {
-    if (t->nholes == RIG_AMD_TEMPLATE_HOLES ||
-        at(v_holes, k + 3) > RIG_AMD_HOLE_OPS)
+  for (value l = v_holes; l != Val_emptylist; l = Field(l, 1)) {
+    if (t->nholes == RIG_AMD_TEMPLATE_HOLES)
       caml_invalid_argument("Rig_amd.make: a packet template has too many holes");
-    struct rig_amd_hole *h = &t->holes[t->nholes++];
-    h->at = (uint8_t)at(v_holes, k);
-    h->wide = (uint8_t)at(v_holes, k + 1);
-    h->arg = (uint8_t)at(v_holes, k + 2);
-    h->nops = (uint8_t)at(v_holes, k + 3);
-    k += 4;
-    for (int i = 0; i < h->nops; i++, k += 2) {
-      h->op[i] = (uint8_t)at(v_holes, k);
-      h->k[i] = (uint64_t)at(v_holes, k + 1);
-    }
+    value h = Field(l, 0);
+    read_hole(&t->holes[t->nholes++], Long_val(Field(h, 0)), Field(h, 1));
   }
   return Val_unit;
 }

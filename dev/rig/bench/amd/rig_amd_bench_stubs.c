@@ -39,9 +39,8 @@
 #define Addr_val(v) ((void *)Long_val(v))
 
 /* Templates: packet words and the words that hold a computation on an
-   argument, laid out as Rig_amd lays out its own: the word's index, one
-   or two words, the argument, then each operation (add, shift right, or)
-   and its constant. */
+   argument, the word's index, one or two words, the argument, then each
+   operation (add, shift right, or) and its constant, all as int64s. */
 
 #define WORDS 256
 #define HOLES 4
@@ -79,7 +78,7 @@ static void read_template(struct template *t, value v_words, value v_holes) {
   for (mlsize_t i = 0; i < Wosize_val(v_holes);) {
     if (t->nholes == HOLES) caml_failwith("template: too many holes");
     struct hole *h = &t->holes[t->nholes++];
-#define NEXT Long_val(Field(v_holes, i++))
+#define NEXT Int64_val(Field(v_holes, i++))
     h->at = (int)NEXT;
     h->wide = (int)NEXT;
     h->arg = (int)NEXT;
