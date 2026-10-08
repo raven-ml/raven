@@ -213,7 +213,9 @@ let test_chrome () =
   Out_channel.with_open_bin file (fun oc -> Prof.output_chrome_trace oc events);
   let text = In_channel.with_open_bin file In_channel.input_all in
   Sys.remove file;
-  expect text @@ __POS_OF__ {|
+  expect text
+  @@ __POS_OF__
+       {|
     {"traceEvents":[
     {"ph":"M","pid":1,"tid":0,"name":"process_name","args":{"name":"CPU"}},
     {"ph":"M","pid":1,"tid":1,"name":"thread_name","args":{"name":"domain 0"}},
@@ -250,12 +252,8 @@ let tests =
           test_record;
         test "a recorded span refuses three words"
           (refuses_stamps (B.create C.host S.UInt64 3));
-        xfail
-          ~reason:
-            "record takes eight UInt32 as its stamps: it checks for 32 aligned \
-             bytes"
-          (test "a recorded span refuses words of another format"
-             (refuses_stamps (B.create C.host S.UInt32 8)));
+        test "a recorded span refuses words of another format"
+          (refuses_stamps (B.create C.host S.UInt32 8));
       ];
     group ~timeout "copies"
       [ test "a copy records the bytes it moved" test_copy ];
