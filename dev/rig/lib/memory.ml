@@ -663,17 +663,11 @@ let take_cached d kind n =
           Some e
       | _ -> None)
 
-(* Takes cached memory out of [d]'s cache: all of it, or with [upto] only memory
-   that counts in [d]'s budget, until [d] holds at most [upto] bytes, in no
+(* Takes the cached memory of [d] that [take] picks out of its cache, in no
    particular order. *)
-let take_cache ?upto d =
+let take_cache_if d take =
   Dev.protect d (fun () ->
-      let taken = ref [] and held = ref d.used in
-      let take (e : entry) =
-        match upto with
-        | None -> true
-        | Some upto -> owns d e.memory && !held > upto
-      in
+      let taken = ref [] in
       Cache.filter_map_inplace
         (fun _ l ->
           let l =
@@ -681,7 +675,6 @@ let take_cache ?upto d =
               (fun (e : entry) ->
                 if take e then begin
                   taken := e :: !taken;
-                  if owns d e.memory then held := !held - e.bytes;
                   d.cached <- d.cached - e.bytes;
                   false
                 end
@@ -692,18 +685,43 @@ let take_cache ?upto d =
         d.cache;
       !taken)
 
+(* Takes cached memory out of [d]'s cache: all of it, or with [upto] only memory
+   that counts in [d]'s budget, until [d] holds at most [upto] bytes. *)
+let take_cache ?upto d =
+  match upto with
+  | None -> take_cache_if d (fun _ -> true)
+  | Some upto ->
+      let held = ref d.used in
+      take_cache_if d (fun e ->
+          owns d e.memory && !held > upto
+          && begin
+            held := !held - e.bytes;
+            true
+          end)
+
 (* Frees what [take_cache] takes once the work [d] was handed until now is done:
    at once if it is, after waiting for it when [wait], and otherwise each free
    is deferred until it is. A lost device's cache waits for it to count as
    stopped. *)
-let release_cache ?upto ~wait d =
+let release_taken ~wait d take =
   if (not (Dev.is_lost d)) || Dev.stopped d then begin
-    let taken = take_cache ?upto d in
+    let taken = take d in
     let v = Dev.submitted d in
     if wait && not (Dev.is_lost d) then Dev.wait d v;
     if Dev.is_lost d || Dev.word d >= v then List.iter free_entry taken
     else List.iter (fun e -> defer d (Free e)) taken
   end
+
+let release_cache ?upto ~wait d = release_taken ~wait d (take_cache ?upto)
+
+(* Frees every device's cached memory that counts in the host's budget, the
+   pinned memory of devices whose memory the host does not address, once the
+   work each device was handed is done. *)
+let release_host_charged () =
+  Dev.iter (fun d ->
+      if not (Dev.busy d) then
+        release_taken ~wait:false d (fun d ->
+            take_cache_if d (fun e -> budget_of d e.memory = Host_budget)))
 
 (* Allocation *)
 
@@ -755,6 +773,8 @@ let rec alloc_entry d kind n round =
          which keeps its promises, and the cache stays. *)
       | None when kind = Mapped -> alloc_entry d Pinned n round
       | None when round < rounds ->
+          (* The host's budget counts other devices' cached pinned memory. *)
+          if budget_of d kind = Host_budget then release_host_charged ();
           reclaim d round;
           alloc_entry d kind n (round + 1)
       | None -> raise (Dev.Out_of_memory (d, n)))
@@ -773,12 +793,14 @@ let alloc_entry d kind n =
 
 let alloc d kind n = of_entry d (alloc_entry d kind n)
 
-(* A round of the host's reclaim: its kept buffers, every other device's drain,
-   from the second round a collection, then the host's own drain, which frees
-   the host memory devices borrowed that the collection found unreachable and
-   whose uses are reached: the next round's collection returns its bytes. *)
+(* A round of the host's reclaim: its kept buffers, the devices' cached memory
+   its budget counts, every other device's drain, from the second round a
+   collection, then the host's own drain, which frees the host memory devices
+   borrowed that the collection found unreachable and whose uses are reached:
+   the next round's collection returns its bytes. *)
 let reclaim_host round =
   heap_drop ();
+  release_host_charged ();
   drain_others Dev.host;
   if round >= 2 then Gc.full_major ();
   drain Dev.host

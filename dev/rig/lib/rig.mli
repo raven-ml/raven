@@ -73,7 +73,8 @@
     {!Buffer.copy} drain the devices they use first. An allocation of more than
     the device's {!budget} raises {!Out_of_memory} at once and keeps the cache.
     Another that the budget or the driver refuses waits for the device's
-    submitted work, releases its cache, drains every other device, collects
+    submitted work, releases its cache, and for memory the host's budget counts
+    every device's cached memory it counts, drains every other device, collects
     unreachable buffers from its second try on, and tries again, four tries in
     all, before it raises {!Out_of_memory}.
 

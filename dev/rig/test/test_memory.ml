@@ -199,6 +199,18 @@ let test_pinned () =
         (fun () -> B.create ~memory:Pinned d (n + 1)));
   equal ~msg:"asked of the driver" int 1 (List.length (P.allocs p))
 
+(* Pinned memory charged to the host's budget that another device keeps in its
+   cache returns when a pinned allocation the host's budget refuses reclaims:
+   the allocation is made. *)
+let test_pinned_reclaims () =
+  let a, _ = P.open_ "memory:pinned-asker" in
+  let b, _ = P.open_ "memory:pinned-keeper" in
+  let n = 64 * kib in
+  ignore (dropped ~memory:Pinned b n);
+  collect b;
+  with_host_budget (Support.host_held ()) (fun () ->
+      equal int n (B.length (B.create ~memory:Pinned a n)))
+
 (* On a device whose memory the host addresses, pinned memory is the device's
    own: it counts in the device's budget. *)
 let test_pinned_own () =
@@ -568,6 +580,8 @@ let tests =
           test_mapped_window;
         test "mapped memory the budget cannot hold is pinned" test_mapped_budget;
         test "mapped memory is the device's" test_mapped;
+        test "pinned memory another device keeps returns to a refused one"
+          test_pinned_reclaims;
       ];
     group ~timeout "reclamation"
       [
