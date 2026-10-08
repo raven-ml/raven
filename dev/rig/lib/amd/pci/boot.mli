@@ -84,22 +84,23 @@ val writes : pcie:int option -> rebars:int list -> (int * int) list
 
 val reset : Rig_pci.Function.t -> (unit, string) result
 (** [reset f] resets the GPU of [f] as [Rig_amd_pci.reset] states, its bus
-    mastering off. If its power manager answers, it resets the GPU whole (mode
-    1), whatever ran on it, its configuration restored as the kernel restores it
-    and waited for until its bootloader and memory answer: its kernel driver
-    then finds one known state whatever the GPU's history, a bootloader that
-    failed a load included, where the kernel itself resets only a GPU whose
-    security processor's OS runs. If engines run, under that OS, it first stops
-    the compute queues, lowers the clocks and halts the engines, since a mode 1
-    reset over engines at full clocks can stall the GPU. A GPU of a fabric
-    (XGMI) is only stopped: its GPUs reset together, as their kernel driver does
-    when it takes them back. It then turns the interrupt rings off.
+    mastering off. If its security processor's OS and power manager run, as the
+    kernel's init resets a GPU, it stops the compute queues, lowers the clocks
+    and halts the engines, since a mode 1 reset over engines at full clocks can
+    stall the GPU, then resets it whole (mode 1), its configuration restored as
+    the kernel restores it, and waits until its bootloader and memory answer. A
+    GPU of a fabric (XGMI) is only stopped: its GPUs reset together, as their
+    kernel driver does when it takes them back. It then turns the interrupt
+    rings off.
 
     [Ok ()] means no engine or interrupt ring runs, nor firmware but on a
-    fabric's GPU. A GPU of blocks this library does not boot, which it never
-    wrote to, is left as it is. [Error msg] if the GPU does not answer, if its
-    configuration differs after the reset, or if its security processor's OS or
-    a ring still runs after it, as when its power manager is hung. *)
+    fabric's GPU, and the bootloader is ready for the kernel's first command. A
+    GPU of blocks this library does not boot, which it never wrote to, is left
+    as it is. [Error msg] if the GPU does not answer, if its configuration
+    differs after the reset, if its security processor's OS or a ring still runs
+    after it, as when its power manager is hung, or if its bootloader is not
+    ready with no OS running, as after a failed load: only a power cycle
+    recovers that GPU, since the kernel resets only a GPU whose OS runs. *)
 
 val gpu : t -> Rig_amd_abi.Gpu.t
 val gc : t -> Discovery.gc
