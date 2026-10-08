@@ -179,14 +179,18 @@ module Driver = struct
     | None -> polled_word d.c
 
   (* What a sleep does once its gate opens. *)
-  let next d =
+  (* Blocks at [d]'s gate while it is shut. [d]'s lock is held. *)
+  let at_gate d =
     if d.gated then begin
       d.sleepers <- d.sleepers + 1;
       while d.gated do
         Condition.wait d.opened d.lock
       done;
       d.sleepers <- d.sleepers - 1
-    end;
+    end
+
+  let next d =
+    at_gate d;
     match d.fault with
     | Some why -> `Fault why
     | None when d.interrupt_next ->
@@ -217,6 +221,7 @@ module Driver = struct
 
   let stop d =
     note d "stop";
+    Mutex.protect d.lock (fun () -> at_gate d);
     if d.answer = `Stopped then polled_stop d.c
 end
 

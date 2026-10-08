@@ -122,13 +122,13 @@ module Polled : sig
       interruption, a stall. *)
 
   val gate : t -> unit
-  (** [gate d] makes [d]'s sleeps block until {!open_gate}. *)
+  (** [gate d] makes [d]'s sleeps and its stop block until {!open_gate}. *)
 
   val open_gate : t -> unit
-  (** [open_gate d] lets [d]'s blocked sleeps go on. *)
+  (** [open_gate d] lets [d]'s blocked sleeps and stop go on. *)
 
   val sleepers : t -> int
-  (** [sleepers d] is the number of [d]'s sleeps blocked at its gate. *)
+  (** [sleepers d] is the number of [d]'s calls blocked at its gate. *)
 
   val interrupt : t -> unit
   (** [interrupt d] makes [d]'s next sleep raise SIGINT in its thread and return
