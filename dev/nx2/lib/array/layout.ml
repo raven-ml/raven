@@ -3,10 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Every layout is built by [finish], which puts it in canonical form: an axis
-   of extent 1 has stride 0, and a layout with no element has offset 0 and every
-   stride 0. Its arrays are its own: no caller's array is kept or returned, and
-   nothing writes them once [finish] returns.
+(* Every layout is in canonical form: an axis of extent 1 has stride 0, and a
+   layout with no element has offset 0 and every stride 0. [finish] puts any
+   layout in it; [contiguous] builds C order in it directly. A layout's arrays
+   are its own: no caller's array is kept or returned, and nothing writes them
+   once it is built.
 
    C reads the fields in this order (nx_layout.h): the two change together. *)
 
@@ -152,17 +153,24 @@ let finish fn shape strides offset =
 
 let pp_ints = Shape.pp
 
+(* A C-order layout is canonical, contiguous and distinct, with span [[0, n)]:
+   [contiguous] builds it without [finish]'s general checks. *)
 let contiguous s =
   let r = Array.length s in
   Shape.check_rank "Layout.contiguous" r;
-  ignore (Shape.numel "Layout.contiguous" s);
-  let st = Array.make r 0 in
+  let n = Shape.numel "Layout.contiguous" s in
+  let shape = Array.make r 0 and strides = Array.make r 0 in
   let run = ref 1 in
   for i = r - 1 downto 0 do
-    st.(i) <- !run;
-    run := !run * s.(i)
+    let d = Array.unsafe_get s i in
+    Array.unsafe_set shape i d;
+    if n > 0 && d > 1 then Array.unsafe_set strides i !run;
+    run := !run * d
   done;
-  finish "Layout.contiguous" (Array.copy s) st 0
+  let flags = contiguous_flag lor distinct_flag in
+  if n = 0 then
+    { shape; strides; offset = 0; flags = flags lor empty_flag; lo = 0; hi = 0 }
+  else { shape; strides; offset = 0; flags; lo = 0; hi = n }
 
 let v ?(offset = 0) ~strides s =
   let r = Array.length s in
