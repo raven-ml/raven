@@ -11,6 +11,7 @@
  (modules bench_nv)
  (libraries
   rig
+  rig_gpu_support
   rig_nv
   rig_nv_abi
   rig_nv_bench

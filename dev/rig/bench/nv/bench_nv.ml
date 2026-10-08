@@ -16,6 +16,7 @@ module B = Rig.Buffer
 module Sub = Rig.Submission
 module Abi = Rig_nv_abi
 module S = Rig_nv_support
+module H = Rig_gpu_support.Host
 
 external start : nativeint -> int -> int -> unit = "rig_nv_bench_start"
 external floor_release : int -> unit = "rig_nv_bench_release"
@@ -34,17 +35,9 @@ let row name setup f = Thumper.bench_with_setup ~setup name f
 
 (* The device: [d] rig's, [g] its driver's. *)
 
-type dev = { d : Rig.t; g : N.t }
+type dev = S.t = { d : Rig.t; g : N.t }
 
-let dev () =
-  let g = ref None in
-  let make () =
-    let r = Rig_nv_nvidia.open_ 0 in
-    Result.iter (fun x -> g := Some x) r;
-    r
-  in
-  let d = get (Rig.open_ (module N) ~name:"NV" make) in
-  { d; g = Option.get !g }
+let dev = S.open_
 
 let alloc t kind n = Option.get (N.alloc t.g kind n)
 let submission t ps = Sub.make ~reads:0 ~writes:0 t.d ps
@@ -109,7 +102,7 @@ let launches t count how =
     |> Abi.Qmd.set_local_memory local.per_thread
   in
   let q = List.fold_left bank q (Abi.Launch.banks l) in
-  S.write (host bank0) (encode (Abi.Qmd.parameters q));
+  H.write (host bank0) (encode (Abi.Qmd.parameters q));
   let stride = 512 in
   let qmds = alloc t `Mapped (count * stride) in
   for i = 0 to count - 1 do
@@ -117,7 +110,7 @@ let launches t count how =
     let q =
       if how = `Chained && i < count - 1 then Abi.Qmd.chain next q else q
     in
-    S.write (at qmds (i * stride)) (encode (Abi.Qmd.structure q))
+    H.write (at qmds (i * stride)) (encode (Abi.Qmd.structure q))
   done;
   let segments = match how with `Chained -> 1 | `Apart -> count in
   let segment_bytes = 256 in
@@ -125,7 +118,7 @@ let launches t count how =
   let entry i =
     let qmd = address qmds + (i * stride) in
     let ws = Abi.Packet.encode Int64.of_int (Abi.Method.schedule qmd) in
-    S.write (at segment (i * segment_bytes)) ws;
+    H.write (at segment (i * segment_bytes)) ws;
     let start = address segment + (i * segment_bytes) in
     let e = Abi.Gpfifo.entry start ~offset:0 ~words:(String.length ws / 4) in
     words (Abi.Packet.encode Int64.of_int e)
@@ -180,7 +173,7 @@ let wait_rows =
         (fun () ->
           let t = dev () in
           let w = alloc t `Pinned 8 in
-          S.set64 (host w) 1;
+          H.set64 (host w) 1;
           ignore (floor t);
           (t, address w))
         (fun (_, at) -> floor_waits at 4);
@@ -261,7 +254,7 @@ let map_host_rows =
   Thumper.group "map-host"
     [
       row "256MiB"
-        (fun () -> (dev (), S.pages n))
+        (fun () -> (dev (), H.pages n))
         (fun (t, p) -> N.free t.g (Option.get (N.map_host t.g p n)));
     ]
 
@@ -282,7 +275,7 @@ let image_rows =
     ]
 
 let () =
-  S.hold_gpu ();
+  S.hold ();
   if Rig_nv_nvidia.count () > 0 then
     exit
     @@ Thumper.run "rig_nv"

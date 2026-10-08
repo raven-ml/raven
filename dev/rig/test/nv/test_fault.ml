@@ -15,7 +15,6 @@ module N = Rig_nv
 module P = Rig_nv_nvidia
 module S = Rig_nv_support
 
-let strf = Printf.sprintf
 let timeout = 60.
 
 (* The work: [double_index] over [n] 32-bit words at [out]. *)
@@ -45,18 +44,6 @@ let in_child (f : unit -> 'a) : ('a, string) result =
       ignore (Unix.waitpid [] pid);
       result
 
-let names = ref 0
-
-(* GPU 0, opened through rig under a name of its own. *)
-let open_gpu () =
-  let g = Result.get_ok (P.open_ 0) in
-  incr names;
-  match
-    Rig.open_ (module N) ~name:(strf "NV:fault%d" !names) (fun () -> Ok g)
-  with
-  | Ok d -> { S.d; g }
-  | Error why -> failwith why
-
 (* Collects and drains twice: a stopped device's word goes back at the second
    drain, once every domain passed a minor collection since the first. *)
 let collect () =
@@ -78,7 +65,7 @@ let double t out =
 (* Opens the GPU and launches the kernel over pinned memory: whether its words
    are the kernel's. *)
 let launch_correctly () =
-  let t = open_gpu () in
+  let t = S.open_ () in
   let out = Rig.Buffer.create ~memory:Pinned t.d (4 * n) in
   double t (Rig.Buffer.address out);
   let h = Rig.Buffer.create Rig.host (4 * n) in
@@ -117,7 +104,7 @@ let fault () =
   ignore (launch_correctly ());
   collect ();
   let files = open_files () and maps = mappings () in
-  let t = open_gpu () in
+  let t = S.open_ () in
   let d = t.d in
   let run = outcome d (fun () -> double t 0) in
   let later =
@@ -143,7 +130,7 @@ let fault () =
 
 let need_gpu () =
   if P.count () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
-  S.hold_gpu ()
+  S.hold ()
 
 (* The lines of a report that start with [prefix]. *)
 let starting prefix why =
@@ -187,7 +174,7 @@ let test_fresh () =
   equal bool true (require_ok (in_child launch_correctly))
 
 let () =
-  S.hold_gpu ();
+  S.hold ();
   exit
     (run "rig_nv fault"
        [

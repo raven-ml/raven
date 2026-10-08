@@ -7,61 +7,30 @@
 
 (** {1:gpu The GPU} *)
 
-val hold_gpu : unit -> unit
-(** [hold_gpu ()] returns once the process holds the machine's GPU lock, which
-    it keeps until it exits, or at once if the machine has no NVIDIA GPU. The
-    lock is [flock] on [/tmp/raven-rig-gpu.lock], the file every suite and bench
-    that acts on a GPU of the machine locks; its holder writes its executable
-    and process id into it. A suite calls [hold_gpu] before [Windtrap.run], so
-    that the wait counts against no test's timeout, and {!gpu} calls it again. A
-    bench calls it before [Thumper.run], so that the workers it forks run under
-    the lock: [hold_gpu] starts no vendor library, which a process must not
-    start before it forks. It returns at once, taking nothing, if the variable
-    [RIG_GPU_LOCK_HELD] is set: the process that started this one holds the
-    lock for it, as a timing run takes it before the host's timing locks.
-
-    Raises [Failure] naming the holder if another process still holds the lock
-    after 300 s, or naming the errno if the file cannot be locked. *)
-
-type dev = { d : Rig.t; g : Rig_nv.t }
-(** The type for an open GPU: [d] as programs reach it, [g] its driver's device.
-*)
-
-val gpu : unit -> dev
-(** [gpu ()] is GPU [0], opened through {!Rig_nv_nvidia} and
-    {!Rig.open_} under a name of its own, after stopping the driver
-    device an earlier {!gpu} or {!driver} opened if no {!stop} stopped it, as a
-    failed test leaves it. It holds the machine's GPU lock ({!hold_gpu}), and
-    skips the test if the machine has no NVIDIA GPU. *)
+include Rig_gpu_support.S with type gpu = Rig_nv.t
+(** GPU [0], opened through {!Rig_nv_nvidia}. *)
 
 val driver : unit -> Rig_nv.t
-(** [driver ()] is {!gpu}'s driver device alone, for work handed over at the C
-    edge ({!edge_submit}). *)
+(** [driver ()] is GPU [0]'s driver device alone, opened through
+    {!Rig_nv_nvidia} while the process holds the machine's GPU lock, after
+    closing the device {!open_} made ({!release}) and stopping the one an
+    earlier [driver] opened if no {!stop} stopped it, as a failed test leaves
+    them: the GPU has one device at a time. {!open_} stops it too. It skips
+    the test if the machine has no NVIDIA GPU. *)
 
 val stop : Rig_nv.t -> unit
-(** [stop g] is [Rig_nv.stop g]. Tests stop the devices {!gpu} and {!driver}
-    opened through it. *)
-
-val close : dev -> unit
-(** [close t] stops [t]'s driver device, once rig gave back what it mapped
-    of collected memory, unless rig lost [t], which stopped it. *)
-
-val with_gpu : (dev -> 'a) -> 'a
-(** [with_gpu f] is [f t], [t] the {!gpu} opened for [f] and its driver device
-    stopped after it, whether it returns or raises, unless [f] stopped it or the
-    rig lost it, which stops it. *)
+(** [stop g] is [Rig_nv.stop g]. Tests stop the devices {!driver} opened
+    through it. *)
 
 val with_driver : (Rig_nv.t -> 'a) -> 'a
-(** [with_driver f] is {!with_gpu} for {!driver}. *)
+(** [with_driver f] is [f g], [g] the {!driver} opened for [f] and stopped
+    after it, whether it returns or raises. *)
 
 (** {1:work Work through rig} *)
 
 module Sub := Rig.Submission
 
-val submit : dev -> Sub.part array -> int
-(** [submit t ps] is the value {!Rig.submit} gave [ps] on [t]. *)
-
-val run : dev -> Sub.part array -> unit
+val run : t -> Sub.part array -> unit
 (** [run t ps] submits [ps] and waits for their value. *)
 
 val words : ?after:int array -> int array -> Sub.part
@@ -74,40 +43,9 @@ val copy :
   Sub.part
 (** [copy ~after ~dst src] is a copy of [src] into [dst] on ["COPY:0"]. *)
 
-val shared : dev -> int -> Rig.Buffer.t * int
+val shared : t -> int -> Rig.Buffer.t * int
 (** [shared t n] is [(b, a)]: [n] bytes of host memory at [a], which [b], a
     buffer of [t]'s, borrows. *)
-
-(** {1:edge Work at the C edge} *)
-
-type part = {
-  queue : int;  (** [0] for ["COMPUTE:0"], [1] for ["COPY:0"]. *)
-  after : int array;
-  work : [ `Words of int array | `Copy of int * int * int | `Fill of int * int ];
-      (** Ring words; a copy [(dst, src, n)] between addresses; a fill of ring
-          units and segment bytes. *)
-}
-(** The type for parts as [rig_edge.h] describes them. *)
-
-val edge_room : Rig_nv.t -> part array -> int
-(** [edge_room g ps] is what [rig_nv_room] answers for [ps]: [0] RIG_FITS, [1]
-    RIG_LATER, [2] RIG_NEVER. *)
-
-val edge_submit :
-  Rig_nv.t -> v:int -> waits:(int * int) array -> part array -> unit
-(** [edge_submit g ~v ~waits ps] hands [ps] to [rig_nv_submit] as the value
-    [v], after the waits [(address, value)]. It fails the test unless the answer
-    is RIG_OK. *)
-
-val wait : Rig_nv.t -> int -> unit
-(** [wait g v] returns once [g]'s word, read as host memory, reaches [v]: it
-    spins for 200 ms, then sleeps in {!Rig_nv.sleep} between reads, which
-    raises the device's {!Rig_nv.Fault}. *)
-
-val still :
-  ?msg:string -> 'a Windtrap.testable -> 'a -> (unit -> 'a) -> ms:int -> unit
-(** [still w x f ~ms] reads [f ()] for about [ms] milliseconds of CPU time, and
-    fails the test if it is ever other than [x]. *)
 
 val watchdog : string -> (unit -> 'a) -> 'a
 (** [watchdog what f] is [f ()]. If [f] has not returned after 10 seconds, it
@@ -116,37 +54,12 @@ val watchdog : string -> (unit -> 'a) -> 'a
 
 (** {1:host Host memory} *)
 
-val page : int
-(** [page] is the host's page size, in bytes. *)
-
-val pages : int -> int
-(** [pages n] is the address of [n] zeroed writable bytes from a page boundary.
-*)
-
-val free_pages : int -> int -> unit
-(** [free_pages a n] returns the [n] bytes {!pages} gave at [a]. *)
-
 val host : Rig_nv.region -> int
 (** [host r] is [r]'s host address. Fails the test if the host does not address
     [r]. *)
 
 val address : Rig_nv.region -> int
 (** [address r] is [r]'s GPU address. *)
-
-val get64 : int -> int
-(** [get64 a] is the 64-bit word at [a], read with acquire order. *)
-
-val set64 : int -> int -> unit
-(** [set64 a x] stores [x] in the 64-bit word at [a] with release order. *)
-
-val get32 : int -> int -> int
-(** [get32 a i] is the unsigned 32-bit word [i] at [a]. *)
-
-val read : int -> int -> string
-(** [read a n] is the [n] bytes at [a]. *)
-
-val write : int -> string -> unit
-(** [write a s] stores [s] at [a]. *)
 
 val pattern : int -> int -> int -> unit
 (** [pattern a n seed] writes the [n] bytes at [a] with the pattern of [seed]:
@@ -165,7 +78,7 @@ val fixture : string -> string
 type kernels
 (** The type for a cubin loaded on a device. *)
 
-val kernels : ?file:string -> dev -> kernels
+val kernels : ?file:string -> t -> kernels
 (** [kernels ~file t] is the cubin [file] (defaults to ["kernels_sm89.cubin"])
     of the fixtures, loaded on [t] by {!Rig.Image.load}.
     ["kernels_sm89.cubin"] holds the kernels of ["kernels.cu"]. *)

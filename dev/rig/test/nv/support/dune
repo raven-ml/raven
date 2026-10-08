@@ -1,11 +1,11 @@
-; What the NV suites share: the GPU lock, devices through rig, host
-; memory, the C edge, and launches of the fixtures' kernels.
+; What the NV suites share: the GPU through rig or its driver alone, patterns
+; in host memory, and launches of the fixtures' kernels.
 
 (library
  (name rig_nv_support)
  (libraries
   rig
-  rig_edge
+  rig_gpu_support
   rig_nv
   rig_nv_abi
   rig_nv_nvidia

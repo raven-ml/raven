@@ -8,155 +8,59 @@ module N = Rig_nv
 module A = Rig_nv_abi
 module B = Rig.Buffer
 module Sub = Rig.Submission
-
-let strf = Printf.sprintf
-
-(* The machine's GPU lock *)
-
-external lock : string -> string -> int = "rig_nv_test_lock"
-
-let gpu_lock = "/tmp/raven-rig-gpu.lock"
-
-(* The longest wait for the lock, in seconds: the machine's suites, from every
-   checkout and user, take it in turn. *)
-let gpu_wait = 300
-
-let holder () =
-  match In_channel.with_open_bin gpu_lock In_channel.input_all with
-  | note -> String.trim note
-  | exception Sys_error _ -> "a process that left no note"
-
-(* [lock] naps 100 ms each time it is refused. *)
-let rec take refused =
-  match lock gpu_lock Sys.executable_name with
-  | 0 -> ()
-  | -1 when refused < gpu_wait * 10 -> take (refused + 1)
-  | -1 ->
-      failwith
-        (strf "%s: still held after %d s, by %s" gpu_lock gpu_wait (holder ()))
-  | errno -> failwith (strf "%s: errno %d" gpu_lock errno)
-
-(* Whether the process that started this one holds the lock for it. *)
-let held_outside () = Sys.getenv_opt "RIG_GPU_LOCK_HELD" <> None
-
-let hold_gpu () =
-  if (not (held_outside ())) && Rig_nv_nvidia.count () > 0 then take 0
+module H = Rig_gpu_support.Host
 
 (* The GPU *)
 
-type dev = { d : Rig.t; g : N.t }
+let present () = Rig_nv_nvidia.count () > 0
 
-(* The driver device a test opened, with its rig device if it has one, until a
-   test stops it: one a failed test left open is stopped by the next. Rig
-   stops a device it lost. *)
-let opened = ref None
+(* The device [driver] opened last, until a test stops it: the GPU has one
+   device at a time, so each open first stops one a failed test left. *)
+let alone = ref None
 
 let stop g =
-  (match !opened with Some (o, _) when o == g -> opened := None | _ -> ());
+  (match !alone with Some a when a == g -> alone := None | _ -> ());
   N.stop g
 
-(* Before a rig device's driver stops, rig gives back what the device
-   mapped of collected host memory: the host's next allocation hands each
-   mapping to its device, whose next allocation gives it back. A stopped device
-   allocates no more, and the path would keep mappings of memory the process may
-   map anew at the same addresses. *)
-let drain d =
-  Gc.full_major ();
-  Gc.full_major ();
-  ignore (Sys.opaque_identity (B.create Rig.host 1));
-  Rig.wait d (Rig.submitted d);
-  ignore (Sys.opaque_identity (B.create d 1))
+let open_gpu () =
+  Option.iter stop !alone;
+  Rig_nv_nvidia.open_ 0
 
-let stop_opened () =
-  match !opened with
-  | Some (_, Some d) when Option.is_some (Rig.lost d) -> opened := None
-  | Some (g, Some d) ->
-      drain d;
-      stop g
-  | Some (g, None) -> stop g
-  | None -> ()
+include Rig_gpu_support.Make (struct
+  module D = N
 
-let open_driver () =
-  if Rig_nv_nvidia.count () = 0 then
-    skip ~reason:"the machine has no NVIDIA GPU" ();
-  hold_gpu ();
-  stop_opened ();
-  match Rig_nv_nvidia.open_ 0 with
-  | Ok g -> g
-  | Error why -> failf "opening GPU 0: %s" why
+  let class_ = "NV"
+  let present = present
+  let open_ = open_gpu
+end)
 
 let driver () =
-  let g = open_driver () in
-  opened := Some (g, None);
-  g
-
-(* Each rig device takes a name of its own: rig keeps a name's device open
-   until it is lost, and a test stops the driver device under it. *)
-let names = ref 0
-
-let gpu () =
-  let g = open_driver () in
-  incr names;
-  match
-    Rig.open_ (module N) ~name:(strf "NV:test%d" !names) (fun () -> Ok g)
-  with
-  | Ok d ->
-      opened := Some (g, Some d);
-      { d; g }
-  | Error why ->
-      opened := Some (g, None);
-      failf "opening GPU 0 in rig: %s" why
-
-let close t =
-  if Option.is_none (Rig.lost t.d) then begin
-    drain t.d;
-    stop t.g
-  end
-  else
-    match !opened with Some (o, _) when o == t.g -> opened := None | _ -> ()
-
-let stop_left g =
-  match !opened with Some (o, _) when o == g -> stop_opened () | _ -> ()
+  if not (present ()) then skip ~reason:"the machine has no NV GPU" ();
+  hold ();
+  release ();
+  match open_gpu () with
+  | Ok g ->
+      alone := Some g;
+      g
+  | Error why -> failf "opening GPU 0: %s" why
 
 let with_driver f =
   let g = driver () in
-  Fun.protect ~finally:(fun () -> stop_left g) (fun () -> f g)
-
-let with_gpu f =
-  let t = gpu () in
-  Fun.protect ~finally:(fun () -> stop_left t.g) (fun () -> f t)
+  Fun.protect ~finally:(fun () -> stop g) (fun () -> f g)
 
 (* Host memory *)
 
-external page_size : unit -> int = "rig_nv_test_page_size"
-external pages : int -> int = "rig_nv_test_pages"
-external free_pages : int -> int -> unit = "rig_nv_test_free_pages"
-external get64 : int -> int = "rig_nv_test_get64"
-external set64 : int -> int -> unit = "rig_nv_test_set64"
-external read : int -> int -> string = "rig_nv_test_read"
-external write : int -> string -> unit = "rig_nv_test_write"
 external pattern : int -> int -> int -> unit = "rig_nv_test_pattern"
 external mismatch : int -> int -> int -> int = "rig_nv_test_mismatch"
-
-let page = page_size ()
 
 let host r =
   match N.host r with Some a -> a | None -> fail "the host does not address r"
 
 let address r = Option.get (N.address r)
 
-let get32 a i =
-  Int32.to_int (String.get_int32_le (read (a + (4 * i)) 4) 0) land 0xffff_ffff
-
 (* Work through rig *)
 
-let submit t ps =
-  Rig.Point.value
-    (Rig.submit
-       (Sub.make ~reads:0 ~writes:0 t.d ps)
-       ~reads:[||] ~writes:[||] ~waits:[||])
-
-let run t ps = Rig.wait t.d (submit t ps)
+let run t ps = wait t (submit t ps)
 
 let words ?(after = [||]) ws =
   let b = B.create Rig.host (4 * Array.length ws) in
@@ -173,52 +77,6 @@ let shared t n =
   match B.borrow t.d h with
   | Some b -> (b, B.address h)
   | None -> fail "the device does not borrow host memory"
-
-(* Work at the C edge *)
-
-type part = {
-  queue : int;
-  after : int array;
-  work : [ `Words of int array | `Copy of int * int * int | `Fill of int * int ];
-}
-
-let flat p =
-  let kind, a, b, c, ws =
-    match p.work with
-    | `Words ws -> (0, Array.length ws, 0, 0, ws)
-    | `Copy (dst, src, n) -> (1, dst, src, n, [||])
-    | `Fill (units, bytes) -> (2, units, bytes, 0, [||])
-  in
-  Array.concat
-    [ [| p.queue; kind; a; b; c; Array.length p.after |]; p.after; ws ]
-
-external room : nativeint -> int array array -> int = "rig_nv_test_room"
-
-external edge_submit_ : nativeint -> int -> int array -> int array array -> int
-  = "rig_nv_test_submit"
-
-let edge_room g ps = room (N.self g) (Array.map flat ps)
-
-let edge_submit g ~v ~waits ps =
-  let w =
-    Array.concat (List.map (fun (a, x) -> [| a; x |]) (Array.to_list waits))
-  in
-  let r = edge_submit_ (N.self g) v w (Array.map flat ps) in
-  if r <> 0 then failf "rig_nv_submit of %d answered %d" v r
-
-let wait g v =
-  let word = host (N.word g) in
-  let t0 = Unix.gettimeofday () in
-  while get64 word < v do
-    if Unix.gettimeofday () -. t0 < 0.2 then Domain.cpu_relax ()
-    else N.sleep g ~seen:(get64 word) ~still_ms:100
-  done
-
-let still ?msg w x f ~ms =
-  let t0 = Sys.time () in
-  while Sys.time () -. t0 < Float.of_int ms /. 1000. do
-    equal ?msg w x (f ())
-  done
 
 let watchdog what f =
   let finished = Atomic.make false in
@@ -303,7 +161,7 @@ let entry_of l at words =
 let segment l p =
   let at = take l + segment_at in
   let words = A.Packet.encode Int64.of_int p in
-  write (at_host l at) words;
+  H.write (at_host l at) words;
   entry_of l at words
 
 (* A launch of [kernel] of [cubin], whose first instruction is at [entry]. *)
@@ -339,20 +197,20 @@ let launch_kernel l cubin name entry ~blocks args =
     |> A.Qmd.set_local_memory local.per_thread
   in
   let q = List.fold_left bank q (A.Launch.banks launch) in
-  write
+  H.write
     (at_host l (at + bank_at))
     (A.Structure.encode Int64.of_int (A.Qmd.parameters q));
   List.iteri
     (fun i x ->
       let b = Bytes.create 8 in
       Bytes.set_int64_le b 0 (Int64.of_int x);
-      write
+      H.write
         (at_host l (at + bank_at + kernel.params_offset + (8 * i)))
         (Bytes.to_string b))
     args;
-  write (at_host l at) (A.Structure.encode Int64.of_int (A.Qmd.structure q));
+  H.write (at_host l at) (A.Structure.encode Int64.of_int (A.Qmd.structure q));
   let words = A.Packet.encode Int64.of_int (A.Method.schedule (at_gpu l at)) in
-  write (at_host l (at + segment_at)) words;
+  H.write (at_host l (at + segment_at)) words;
   entry_of l (at + segment_at) words
 
 let launch l k f ~blocks args =
