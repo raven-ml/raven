@@ -115,6 +115,7 @@ struct rail {
   uint64_t *send, *receive; /* src, dst and length of each transfer */
   uint64_t nsend, nreceive;
   unsigned char *out, *in, *counts;
+  value areas; /* a root holding [out], [in] and [counts] until released */
   size_t out_stride, in_stride;
   uint64_t posted; /* the sending thread's last count sent */
   uint64_t placed; /* the receiving thread's last count placed */
@@ -1188,7 +1189,12 @@ value caml_rig_remote_link_rail(value vl, value id, value send, value receive,
                                 value out, value in, value counts) {
   CAMLparam5(vl, id, send, receive, out);
   CAMLxparam2(in, counts);
+  CAMLlocal1(areas);
   struct rig_remote_link *l = Link_val(vl);
+  areas = caml_alloc_small(3, 0);
+  Field(areas, 0) = out;
+  Field(areas, 1) = in;
+  Field(areas, 2) = counts;
   struct rail *r = calloc(1, sizeof *r);
   if (r == NULL) caml_raise_out_of_memory();
   r->link = l;
@@ -1206,6 +1212,10 @@ value caml_rig_remote_link_rail(value vl, value id, value send, value receive,
     for (int c = 0; c < 3; c++) atomic_store(count(r, c), INT64_MAX);
     CAMLreturn(caml_copy_nativeint((intnat)r));
   }
+  /* The threads use the areas until the rail is released, whoever else
+     holds them. */
+  r->areas = areas;
+  caml_register_generational_global_root(&r->areas);
   pthread_mutex_lock(&l->mu);
   if (atomic_load(&l->failed))
     for (int c = 0; c < 3; c++) atomic_store(count(r, c), INT64_MAX);
@@ -1243,6 +1253,7 @@ value caml_rig_remote_link_release_rail(value vl, value id) {
   pthread_mutex_unlock(&l->mu);
   caml_acquire_runtime_system();
   if (r != NULL) {
+    caml_remove_generational_global_root(&r->areas);
     free(r->send);
     free(r->receive);
     free(r);

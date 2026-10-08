@@ -354,7 +354,7 @@ type t = {
   name : string;
   lock : Mutex.t;
   asked : any Queue.t; (* requests [next] gave, unanswered, oldest first *)
-  rails : (int, Rig_remote_abi.end_) Hashtbl.t; (* keeps ends reachable *)
+  rails : (int, unit) Hashtbl.t; (* the ids of its rails *)
 }
 
 let make job fd ~name ~peer =
@@ -536,7 +536,7 @@ let rail l ~id ~send ~receive =
       ready_arg = r;
     }
   in
-  Hashtbl.replace l.rails id e;
+  Hashtbl.replace l.rails id ();
   e
 
 let release_rail l id =

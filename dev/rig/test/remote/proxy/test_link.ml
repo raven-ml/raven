@@ -1324,6 +1324,33 @@ let released () =
   | Link.Failed _ -> ()
   | st -> failf "the job is %a" (Testable.pp state) st
 
+(* The link and its rail's end are dropped and collected while the sending
+   thread has 4 MiB to send from the end's memory. *)
+let unreachable_end () =
+  with_job @@ fun j ->
+  let frames = 64 and n = 1 lsl 16 in
+  let p =
+    let d, p = connected () in
+    let l = Link.make j d ~name:"peer" ~peer:(Wire.Agent 1) in
+    let t = { Rig_remote_abi.src = 0; dst = 0; length = n } in
+    let e = Link.rail l ~id:1 ~send:[| t |] ~receive:[||] in
+    Bigarray.Array1.fill e.outbound 'r';
+    e.ready frames;
+    p
+  in
+  Gc.full_major ();
+  Gc.full_major ();
+  Fun.protect ~finally:(fun () -> Unix.close p) @@ fun () ->
+  let others = ref 0 in
+  for c = 1 to frames do
+    match next_frame p with
+    | Some (k, f) when k = k_rail && String.length f = 16 + n ->
+        equal ~msg:"its count" string (u64 c) (String.sub f 8 8);
+        String.iteri (fun i ch -> if i >= 16 && ch <> 'r' then incr others) f
+    | f -> failf "frame %d is %a" c (Testable.pp (option frame_w)) f
+  done;
+  equal ~msg:"bytes other than the end's" int 0 !others
+
 let rails =
   group "rail"
     [
@@ -1340,6 +1367,8 @@ let rails =
         rail_to_raw;
       test "a transfer to a released rail fails the job, release twice is one"
         released;
+      test "a rail's end lives until its release, reachable or not"
+        unreachable_end;
     ]
 
 (* Silence

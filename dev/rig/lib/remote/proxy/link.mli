@@ -181,7 +181,7 @@ val rail :
     From then on the sending thread, which the [ready] function wakes, sends
     transfer [j]'s bytes once [ready] reaches its count, and stores [sent] once
     they are sent; the receiving thread places arriving transfers and stores
-    [arrived].
+    [arrived]. The end's memory lives until {!release_rail}, reachable or not.
 
     Raises [Invalid_argument] if [l] has a rail [id], [send] and [receive] are
     both empty, or a transfer's [length] is not positive or its [src] or [dst]
