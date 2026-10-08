@@ -194,6 +194,7 @@ val reset : ?machine:Rig_pci.Machine.t -> int -> (unit, string) result
 (* The parts of a boot that read files and lay out bytes, for tests on fixtures
    of the pinned firmware and on the layouts NVIDIA's sources state. *)
 module Chip = Chip
+module Falcon = Falcon
 module Held = Held
 module Images = Images
 module Layout = Layout
