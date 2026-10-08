@@ -15,8 +15,6 @@ external stamps_ref : int -> unit = "caml_device_core_stamps_ref" [@@noalloc]
 external stamps_unref : int -> unit = "caml_device_core_stamps_unref"
 [@@noalloc]
 
-external stamps_reserve : int -> int -> unit = "caml_device_core_stamps_reserve"
-
 external stamps_get : int -> int -> int = "caml_device_core_stamps_get"
 [@@noalloc]
 

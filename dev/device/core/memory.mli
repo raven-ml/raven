@@ -17,9 +17,6 @@ val page : int
 val stamps_new : unit -> int
 val stamps_ref : int -> unit
 val stamps_unref : int -> unit
-val stamps_reserve : int -> int -> unit
-(* [stamps_reserve st index] reserves the use slot of the device [index]. *)
-
 val stamps_absorb : int -> int -> unit
 (* [stamps_absorb dst src] raises [dst] with every point of [src]. *)
 

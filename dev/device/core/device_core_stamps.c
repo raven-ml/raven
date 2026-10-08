@@ -57,21 +57,19 @@ value caml_device_core_stamps_unref(value v_s) {
   return Val_unit;
 }
 
-/* Reserves a use slot of the device [v_index] in the stamps: its existing
-   one, or an empty one, claimed with the point (index, 0), in a chunk added
-   if every slot is taken. */
-value caml_device_core_stamps_reserve(value v_s, value v_index) {
-  struct dc_stamps *s = Stamps_val(v_s);
-  int index = Int_val(v_index);
+/* The use word of the device [index] in the stamps [s]: its existing one,
+   or an empty one, claimed with the point (index, 0), in a chunk added if
+   every word is taken. A raise through it allocates nothing. */
+static _Atomic uint64_t *reserve(struct dc_stamps *s, int index) {
   for (;;) {
     for (int i = 0; i < DC_USES; i++) {
       uint64_t p = atomic_load(&s->use[i]);
-      if (p != 0 && DC_INDEX(p) == index) return Val_unit;
+      if (p != 0 && DC_INDEX(p) == index) return &s->use[i];
       if (p == 0) {
         uint64_t mine = DC_POINT(index, 0);
         if (atomic_compare_exchange_strong(&s->use[i], &p, mine))
-          return Val_unit;
-        if (DC_INDEX(p) == index) return Val_unit;
+          return &s->use[i];
+        if (DC_INDEX(p) == index) return &s->use[i];
       }
     }
     struct dc_stamps *next = atomic_load(&s->next);
@@ -90,29 +88,15 @@ static void raise_max(_Atomic uint64_t *slot, uint64_t p) {
   }
 }
 
-/* Raises the use of [p]'s device to [p], in its reserved slot. */
-void dc_raise_use(struct dc_stamps *s, uint64_t p) {
-  int index = DC_INDEX(p);
-  for (; s != NULL; s = atomic_load(&s->next))
-    for (int i = 0; i < DC_USES; i++) {
-      uint64_t cur = atomic_load(&s->use[i]);
-      if (cur != 0 && DC_INDEX(cur) == index) {
-        raise_max(&s->use[i], p);
-        return;
-      }
-    }
-}
-
-/* Makes [p] the last write, which is also a use. A write of another device
-   replaces the last write: its caller ordered the two writes. */
-void dc_raise_write(struct dc_stamps *s, uint64_t p) {
+/* Makes [p] the last write. A write of another device replaces the last
+   write: its caller ordered the two writes. */
+static void raise_last_write(struct dc_stamps *s, uint64_t p) {
   uint64_t cur = atomic_load(&s->write);
   for (;;) {
     uint64_t next = DC_INDEX(cur) == DC_INDEX(p) && cur > p ? cur : p;
     if (next == cur || atomic_compare_exchange_weak(&s->write, &cur, next))
       break;
   }
-  dc_raise_use(s, p);
 }
 
 /* The [v_k]th point of the stamps: 0 the last write, then the uses in
@@ -130,7 +114,7 @@ value caml_device_core_stamps_get(value v_s, value v_k) {
 }
 
 /* Raises [v_dst] with every point of [v_src]: the stamps of memory put in a
-   hold. The source's slots are reserved in [v_dst] first. */
+   hold. */
 value caml_device_core_stamps_absorb(value v_dst, value v_src) {
   struct dc_stamps *dst = Stamps_val(v_dst), *src = Stamps_val(v_src);
   uint64_t w = atomic_load(&src->write);
@@ -138,8 +122,7 @@ value caml_device_core_stamps_absorb(value v_dst, value v_src) {
     for (int i = 0; i < DC_USES; i++) {
       uint64_t p = atomic_load(&src->use[i]);
       if (p == 0) continue;
-      caml_device_core_stamps_reserve(v_dst, Val_int(DC_INDEX(p)));
-      dc_raise_use(dst, p);
+      raise_max(reserve(dst, DC_INDEX(p)), p);
     }
   if (w != 0) {
     uint64_t cur = atomic_load(&dst->write);
@@ -186,6 +169,8 @@ value caml_device_core_sub_new(value v_d, value v_nparts, value v_nafter,
   s->slots = zalloc((size_t)(s->nreads + s->nwrites), sizeof *s->slots);
   s->nwait_slots = Int_val(v_nwaits);
   s->wait_slots = zalloc((size_t)s->nwait_slots, sizeof *s->wait_slots);
+  s->handles = zalloc((size_t)(s->nfixed + s->nreads + s->nwrites),
+                      sizeof *s->handles);
   value v = caml_alloc_custom(&sub_ops, sizeof(struct dc_sub *), 0, 1);
   Sub_val(v) = s;
   return v;
@@ -311,22 +296,8 @@ static void add_point(struct dc_sub *s, int own, uint64_t p) {
       if (s->points[i] < p) s->points[i] = p;
       return;
     }
+  grow((void **)&s->points, &s->cpoints, s->npoints + 1, sizeof *s->points);
   s->points[s->npoints++] = p;
-}
-
-static int count_points(struct dc_stamps *st) {
-  int n = 1;
-  for (; st != NULL; st = atomic_load(&st->next)) n += DC_USES;
-  return n;
-}
-
-static void add_stamps(struct dc_sub *s, int own, struct dc_stamps *st,
-                       int write) {
-  add_point(s, own, atomic_load(&st->write));
-  if (!write) return;
-  for (; st != NULL; st = atomic_load(&st->next))
-    for (int i = 0; i < DC_USES; i++)
-      add_point(s, own, atomic_load(&st->use[i]));
 }
 
 static void add_handle(struct dc_sub *s, uint64_t h) {
@@ -336,32 +307,37 @@ static void add_handle(struct dc_sub *s, uint64_t h) {
   s->handles[s->nhandles++] = h;
 }
 
+/* Adds the points the use of [sl] follows: its last write, and every use if
+   the work writes it. Reserves [own]'s use word in its stamps and adds its
+   handle. */
+static void add_slot(struct dc_sub *s, int own, struct dc_slot *sl, int write) {
+  struct dc_stamps *st = sl->stamps;
+  sl->use = reserve(st, own);
+  add_point(s, own, atomic_load(&st->write));
+  if (write)
+    for (; st != NULL; st = atomic_load(&st->next))
+      for (int i = 0; i < DC_USES; i++)
+        add_point(s, own, atomic_load(&st->use[i]));
+  add_handle(s, sl->handle);
+}
+
 /* Collects the points [s]'s work follows, the greatest per other device,
-   and the handles of the memory it names, each once. Answers the number of
-   points, or -1 if a read or write slot is unset. */
+   and the handles of the memory it names, each once, and reserves the use
+   words its raise stores to. Answers the number of points, or -1 if a read
+   or write slot is unset. */
 value caml_device_core_sub_collect(value v_s) {
   struct dc_sub *s = Sub_val(v_s);
   int own = s->dev->index, nslots = s->nreads + s->nwrites;
-  int want = s->nwait_slots;
-  for (int k = 0; k < s->nfixed; k++) want += count_points(s->fixed[k].stamps);
+  s->npoints = s->nwaits = s->nhandles = 0;
+  for (int k = 0; k < s->nfixed; k++)
+    add_slot(s, own, &s->fixed[k], s->fixed_write[k]);
   for (int k = 0; k < nslots; k++) {
     if (s->slots[k].stamps == NULL) return Val_int(-1);
-    want += count_points(s->slots[k].stamps);
-  }
-  grow((void **)&s->points, &s->cpoints, want, sizeof *s->points);
-  grow((void **)&s->handles, &s->chandles, s->nfixed + nslots,
-       sizeof *s->handles);
-  s->npoints = s->nwaits = s->nhandles = 0;
-  for (int k = 0; k < s->nfixed; k++) {
-    add_stamps(s, own, s->fixed[k].stamps, s->fixed_write[k]);
-    add_handle(s, s->fixed[k].handle);
-  }
-  for (int k = 0; k < nslots; k++) {
-    add_stamps(s, own, s->slots[k].stamps, k >= s->nreads);
-    add_handle(s, s->slots[k].handle);
+    add_slot(s, own, &s->slots[k], k >= s->nreads);
   }
   for (int k = 0; k < s->nwait_slots; k++)
     add_point(s, own, s->wait_slots[k]);
+  if (s->hold != NULL) s->hold_use = reserve(s->hold, own);
   return Val_int(s->npoints);
 }
 
@@ -394,13 +370,16 @@ value caml_device_core_sub_wait(value v_s, value v_producer, value v_at,
 
 /* Raises the stamps [s]'s work names to [p]. */
 void dc_sub_raise(struct dc_sub *s, uint64_t p) {
-  for (int k = 0; k < s->nfixed; k++)
-    if (s->fixed_write[k]) dc_raise_write(s->fixed[k].stamps, p);
-    else dc_raise_use(s->fixed[k].stamps, p);
-  for (int k = 0; k < s->nreads; k++) dc_raise_use(s->slots[k].stamps, p);
-  for (int k = s->nreads; k < s->nreads + s->nwrites; k++)
-    dc_raise_write(s->slots[k].stamps, p);
-  if (s->hold != NULL) dc_raise_use(s->hold, p);
+  for (int k = 0; k < s->nfixed; k++) {
+    if (s->fixed_write[k]) raise_last_write(s->fixed[k].stamps, p);
+    raise_max(s->fixed[k].use, p);
+  }
+  for (int k = 0; k < s->nreads; k++) raise_max(s->slots[k].use, p);
+  for (int k = s->nreads; k < s->nreads + s->nwrites; k++) {
+    raise_last_write(s->slots[k].stamps, p);
+    raise_max(s->slots[k].use, p);
+  }
+  if (s->hold != NULL) raise_max(s->hold_use, p);
 }
 
 /* Unsets [s]'s slots and forgets its waits. */

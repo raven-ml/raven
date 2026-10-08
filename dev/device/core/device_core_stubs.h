@@ -80,8 +80,9 @@ uint64_t dc_word(struct dc_device *d);
 
 /* A memory's stamps: the point of its last write and, per device, the point
    of its last use. A chunk never moves, so a raise is one compare-and-set;
-   a device's use slot is reserved before a submission raises it, so a raise
-   allocates nothing. [refs] counts the memories and holds that share it. */
+   a submission reserves its device's use word before its hand-over, so a
+   raise allocates nothing. [refs] counts the memories and holds that share
+   it. */
 #define DC_USES 4
 
 struct dc_stamps {
@@ -91,14 +92,13 @@ struct dc_stamps {
   _Atomic int refs; /* in the first chunk only */
 };
 
-void dc_raise_use(struct dc_stamps *s, uint64_t p);
-void dc_raise_write(struct dc_stamps *s, uint64_t p);
-
-/* A slot of a prepared submission: a memory's stamps and the handle by
-   which the device names it. */
+/* A slot of a prepared submission: a memory's stamps, the handle by which
+   the device names it, and the device's use word in the stamps, reserved
+   at each submit. */
 struct dc_slot {
   struct dc_stamps *stamps;
   uint64_t handle;
+  _Atomic uint64_t *use;
 };
 
 /* The prepared form of a submission on one device. */
@@ -115,13 +115,14 @@ struct dc_sub {
   int nwait_slots;
   uint64_t *wait_slots;
   struct dc_stamps *hold;
+  _Atomic uint64_t *hold_use;
   /* Built for one submit, cleared after it. */
   int npoints, cpoints;
   uint64_t *points;
   int nwaits, cwaits;
   struct nx_wait *waits;
   int *producers;
-  int nhandles, chandles;
+  int nhandles; /* at most one per fixed buffer and slot */
   uint64_t *handles;
   /* What the submit answered. */
   uint64_t no_room_at, v;
