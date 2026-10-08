@@ -68,11 +68,25 @@ let key = String.make 32 'k'
 (* Room for either frame. *)
 let message () = Bigarray.(Array1.create char c_layout request_bytes)
 
-(* The agent's process: its end of a job with this one. *)
+(* The agent's end of a job with this process: it answers every allocation,
+   allocating nothing, until the job fails. *)
 let far fd =
   let j = Link.job () in
   ignore (ok "accept" (Wire.accept fd ~key ~admit:(fun _ -> Ok ())));
-  agent (Link.make j fd ~name:"controller" ~peer:Wire.Controller)
+  let l = Link.make j fd ~name:"controller" ~peer:Wire.Controller in
+  let reply : type r. r Wire.request -> (r, string) result = function
+    | Wire.Alloc _ -> Ok true
+    | _ -> Error "the bench asks only for allocations"
+  in
+  let rec serve () =
+    match Link.next l with
+    | Ok (Wire.Request r) ->
+        Link.answer l r (reply r);
+        serve ()
+    | Ok _ -> serve ()
+    | Error _ -> ()
+  in
+  serve ()
 
 (* The controller's end of a job with one agent. The bench ends the job by
    failing it: the agent sees the failure and leaves. *)
@@ -160,29 +174,50 @@ let rail_rows =
        sizes)
 
 (* Copies: [n] bytes between this process's memory and memory of another
-   machine's host, whose agent runs in another process over loopback, each way.
-   Their floors are the rails': the same bytes one way over a socket. *)
+   machine's host, each way, the job's agent agent.exe in another process over
+   loopback. Their floors are the rails': the same bytes one way over a
+   socket. *)
 
-let host_account : Wire.account =
-  { id = 0; name = "CPU"; arch = "bench"; budget = 1 lsl 30; reaches = [] }
+(* agent.exe, built beside this bench, serving at a port it chooses: its process
+   and port. *)
+let agent () =
+  let exe =
+    Filename.concat (Filename.dirname Sys.executable_name) "agent.exe"
+  in
+  let key_r, key_w = Unix.pipe ~cloexec:true () in
+  let port_r, port_w = Unix.pipe ~cloexec:true () in
+  let pid =
+    Unix.create_process exe [| exe; "127.0.0.1"; "0" |] key_r port_w Unix.stderr
+  in
+  Unix.close key_r;
+  Unix.close port_w;
+  ignore (Unix.write_substring key_w key 0 (String.length key));
+  Unix.close key_w;
+  let ic = Unix.in_channel_of_descr port_r in
+  let port = In_channel.input_line ic in
+  close_in ic;
+  match Option.bind port int_of_string_opt with
+  | Some port -> (pid, port)
+  | None ->
+      reap pid;
+      failwith "agent.exe: no port"
 
-type copy = { job : Link.job * Link.t * int; near : B.t; far : B.t }
+type copy = { job : Rig_remote.t; pid : int; near : B.t; far : B.t }
 
 let copy n () =
-  let ((_, l, _) as job) = controller () in
-  let machine = "agent" in
-  let rail _ ~send:_ ~receive:_ = Error "the bench makes no rails" in
-  let proxy =
-    Rig_remote_proxy.make l host_account (Rig_remote_abi.Host { machine; rail })
-  in
-  let h =
-    ok "open"
-      (Rig.open_host
-         (module Rig_remote_proxy)
-         ~machine ~name:"CPU"
-         (fun () -> Ok proxy))
-  in
-  { job; near = B.create Rig.host n; far = B.create h n }
+  let pid, port = agent () in
+  match Rig_remote.connect ~key [ ("127.0.0.1", port) ] with
+  | Error why ->
+      Unix.kill pid Sys.sigkill;
+      reap pid;
+      failwith why
+  | Ok job ->
+      let h = List.hd (Rig_remote.hosts job) in
+      { job; pid; near = B.create Rig.host n; far = B.create h n }
+
+let finished c =
+  Rig_remote.close c.job;
+  reap c.pid
 
 let copy_rows =
   Thumper.group "copy"
@@ -191,9 +226,7 @@ let copy_rows =
          let row name f =
            Thumper.bench_with_setup
              (strf "%s-%s" name (size n))
-             ~setup:(copy n)
-             ~teardown:(fun c -> ended c.job)
-             f
+             ~setup:(copy n) ~teardown:finished f
          in
          [
            row "to" (fun c -> B.copy ~src:c.near ~dst:c.far);
@@ -201,8 +234,8 @@ let copy_rows =
          ])
        sizes)
 
-(* Windows has no fork for the agent's process. *)
+(* Windows has no fork for the request's agent. *)
 let () =
   exit
   @@ Thumper.run "rig_remote"
-       ((if Sys.win32 then [] else [ request_rows; copy_rows ]) @ [ rail_rows ])
+       ((if Sys.win32 then [] else [ request_rows ]) @ [ copy_rows; rail_rows ])

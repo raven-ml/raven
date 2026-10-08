@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 (** What the remote bench and its two-machine measurement share: the floors in
-    C, the two machines' halves of a rail's run, a request and an agent.
+    C, the caller's half of a rail's run, and the request the rows time.
 
     Every function that waits releases the runtime. A failure crosses as a
     negated code: errno, or WSAGetLastError on Windows. *)
@@ -49,12 +49,6 @@ external rail_run : Rig_remote_abi.area -> Rig_remote_abi.area -> int -> int
     waits until [arrived] in the counts [receiver] reaches [c]: [0], or [1] if
     the job failed meanwhile. *)
 
-external rail_answer : Rig_remote_abi.area -> Rig_remote_abi.area -> int -> int
-  = "rig_remote_bench_rail_answer"
-(** [rail_answer receiver sender c] waits until [arrived] in the counts
-    [receiver] reaches [c], then stores [ready := c] in the counts [sender]:
-    [0], or [1] if the job failed. *)
-
 (** {1:requests Requests} *)
 
 val alloc : bool Rig_remote_proxy.Wire.request
@@ -65,13 +59,3 @@ val request_bytes : int
 
 val answer_bytes : int
 (** [answer_bytes] is the bytes of its answer's frame: 11. *)
-
-(** {1:agent The agent} *)
-
-val agent : Rig_remote_proxy.Link.t -> unit
-(** [agent l] serves [l]'s controller until the job fails, as an agent whose
-    memory is host memory of its process. It allocates, runs each hand-over's
-    copies in order and then reports its word, and drops what the controller
-    drops. It makes its end of each rail with a thread of its own, which sends
-    its [c]-th transfer once its [c]-th arrived. It refuses every other request
-    and fails on a hand-over that runs code. *)

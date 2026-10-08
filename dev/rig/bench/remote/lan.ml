@@ -3,23 +3,21 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* A link between two machines, timed: what bench_remote.exe times over
-   loopback, over a real network. It lives outside the bench suite because a
-   suite runs on one machine, and this needs two. lan.sh runs it.
+(* A job between two machines, timed: what bench_remote.exe's copy rows time
+   over loopback, over a real network. It lives outside the bench suite because
+   a suite runs on one machine, and this needs two. lan.sh runs it.
 
-   On one machine, [lan.exe agent PORT] serves a job's link on PORT and the
-   floors' connections on PORT + 1. On the other, [lan.exe controller HOST PORT]
-   times against it a request's round trip ([Link.request] of an allocation),
-   and rail runs of one transfer of 4 KiB or 1 MiB from the controller's end,
-   each answered by a transfer of 8 bytes back once the agent's end has it. Each
-   beside its floor: the same bytes there and back, on a connection of their
-   own. Both processes read the job's key on standard input. The agent ends once
-   its job fails, which the controller does when it is done, or when no
-   controller comes for [idle] seconds. *)
+   On one machine, agent.exe serves the job at PORT and [lan.exe floors PORT +
+   1] echoes the floors' bytes. On the other, [lan.exe controller HOST PORT]
+   connects to the agent at HOST and PORT and times an allocation of 4 KiB of
+   the agent's host, a round trip, and copies of 4 KiB and 1 MiB between this
+   process's memory and the agent's host's, each way. Each beside its floor on
+   the echo's connections: the same bytes there and back, the allocation's frame
+   and its answer's, a copy's bytes and 8 back. The controller reads the job's
+   key on standard input. The echo ends when the controller says it is done, or
+   when no connection comes for [idle] seconds. *)
 
 open Rig_remote_bench
-module Wire = Rig_remote_proxy.Wire
-module Link = Rig_remote_proxy.Link
 module B = Rig.Buffer
 
 let strf = Printf.sprintf
@@ -30,17 +28,16 @@ let ok what = function
   | Ok v -> v
   | Error why -> failwith (strf "%s: %s" what why)
 
-let reason = function `Refused why | `Failed why -> why
 let check what r = if r <> 0 then failwith (strf "%s: %d" what r)
 let buffer n = Bigarray.(Array1.create char c_layout n)
 
 (* Seconds an agent waits for a connection before it leaves. *)
 let idle = 60.
 
-(* A rail's answer: one transfer of 8 bytes back. *)
-let ack : Rig_remote_abi.transfer = { src = 0; dst = 0; length = 8 }
+(* What a copy's floor answers: 8 bytes. *)
+let ack = 8
 
-(* The agent *)
+(* The echo *)
 
 let listening port =
   let l = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
@@ -78,34 +75,20 @@ let read_exactly fd n =
   b
 
 (* Each floor connection starts with the sizes of its messages there and back
-   (u64 each), then echoes until it ends. *)
-let floors l =
+   (u64 each), then echoes until it ends; sizes of 0 end the echo. *)
+let floors port =
+  let l = listening port in
   let rec serve () =
     match accepted l with
-    | None -> ()
+    | None -> prerr_endline "lan.exe: no controller came"
     | Some fd ->
         let h = read_exactly fd 16 in
         let there = get_u64 h and back = get_u64 (Bytes.sub h 8 8) in
-        ignore (echo fd (buffer (max there back)) there back);
+        if there > 0 then ignore (echo fd (buffer (max there back)) there back);
         Unix.close fd;
-        serve ()
+        if there > 0 then serve ()
   in
   serve ()
-
-let serve port key =
-  let floor = listening (port + 1) and link = listening port in
-  ignore (Thread.create floors floor);
-  match accepted link with
-  | None ->
-      prerr_endline "lan.exe: no controller came";
-      exit 1
-  | Some fd ->
-      let j = Link.job () in
-      ignore (ok "accept" (Wire.accept fd ~key ~admit:(fun _ -> Ok ())));
-      agent (Link.make j fd ~name:"controller" ~peer:Wire.Controller);
-      let why = Option.value (Link.failure j) ~default:"closed" in
-      prerr_endline ("lan.exe: the job ended: " ^ why);
-      Unix._exit 0
 
 (* The controller *)
 
@@ -173,78 +156,39 @@ let floor host port there back =
   let b = buffer (max there back) in
   (fd, fun () -> check "ask" (ask fd b there back))
 
-(* The sizes of rails' transfers and copies, and the runs timed at each, about 3
-   s at 100 Mb/s. *)
+(* The sizes of copies, and the runs timed at each, about 3 s at 100 Mb/s. *)
 let sizes = [ ("4K", 4 * kib, 500); ("1M", mib, 30) ]
 
-let host_account : Wire.account =
-  { id = 0; name = "CPU"; arch = "bench"; budget = 1 lsl 30; reaches = [] }
-
-(* The proxy of the agent's machine's host, opened on rig. *)
-let proxy l machine =
-  let rail _ ~send:_ ~receive:_ = Error "lan.exe makes no rails here" in
-  let p =
-    Rig_remote_proxy.make l host_account (Rig_remote_abi.Host { machine; rail })
-  in
-  ok "open"
-    (Rig.open_host
-       (module Rig_remote_proxy)
-       ~machine ~name:"CPU"
-       (fun () -> Ok p))
+(* [floored name bytes host port there back runs] reports the floor of [name],
+   [bytes] its bytes of payload. *)
+let floored name bytes host port there back runs =
+  let f, round = floor host port there back in
+  report (name ^ "-floor") bytes (timed runs round);
+  Unix.close f
 
 let controller host port key =
-  let fd = connect host port in
-  ok "dial" (Wire.dial fd ~key ~self:Wire.Controller ~peer:(Wire.Agent 1));
-  let j = Link.job () in
-  let l = Link.make j fd ~name:host ~peer:(Wire.Agent 1) in
-  report "request" 0
-    (timed 1000 (fun () ->
-         if not (ok "request" (Result.map_error reason (Link.request l alloc)))
-         then failwith "request: refused"));
-  let f, round = floor host port request_bytes answer_bytes in
-  report "request-floor" 0 (timed 1000 round);
-  Unix.close f;
-  List.iteri
-    (fun i (size, n, runs) ->
-      let name = "rail-" ^ size in
-      let id = i + 1 in
-      let t : Rig_remote_abi.transfer = { src = 0; dst = 0; length = n } in
-      let e = Link.rail l ~id ~send:[| t |] ~receive:[| ack |] in
-      ok "rail"
-        (Result.map_error reason
-           (Link.request l
-              (Wire.Rail
-                 {
-                   id;
-                   peer = Wire.Controller;
-                   send = [| ack |];
-                   receive = [| t |];
-                 })));
-      let c = ref 0 in
-      report name n
-        (timed runs (fun () ->
-             incr c;
-             check "rail" (rail_run e.counts e.counts !c)));
-      let f, round = floor host port n ack.length in
-      report (name ^ "-floor") n (timed runs round);
-      Unix.close f)
-    sizes;
-  let h = proxy l host in
+  let j = ok "connect" (Rig_remote.connect ~key [ (host, port) ]) in
+  let h = List.hd (Rig_remote.hosts j) in
+  report "alloc-4K" 0 (timed 1000 (fun () -> ignore (B.create h (4 * kib))));
+  floored "alloc-4K" 0 host port request_bytes answer_bytes 1000;
   List.iter
     (fun (size, n, runs) ->
       let near = B.create Rig.host n and far = B.create h n in
       report ("copy-to-" ^ size) n
         (timed runs (fun () -> B.copy ~src:near ~dst:far));
       report ("copy-from-" ^ size) n
-        (timed runs (fun () -> B.copy ~src:far ~dst:near)))
+        (timed runs (fun () -> B.copy ~src:far ~dst:near));
+      floored ("copy-" ^ size) n host port n ack runs)
     sizes;
-  Link.fail j "the measurement ended"
+  Rig_remote.close j;
+  Unix.close (fst (floor host port 0 0))
 
 let () =
-  let key = In_channel.input_all stdin |> String.trim in
   match Array.to_list Sys.argv |> List.tl with
-  | [ "agent"; port ] -> serve (int_of_string port) key
-  | [ "controller"; host; port ] -> controller host (int_of_string port) key
+  | [ "floors"; port ] -> floors (int_of_string port)
+  | [ "controller"; host; port ] ->
+      let key = In_channel.input_all stdin |> String.trim in
+      controller host (int_of_string port) key
   | _ ->
-      prerr_endline "usage: lan.exe agent PORT | lan.exe controller HOST PORT";
+      prerr_endline "usage: lan.exe floors PORT | lan.exe controller HOST PORT";
       exit 2
