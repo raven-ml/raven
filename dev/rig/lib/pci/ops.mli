@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** The operations of a machine and of a function it took (private).
+(** The operations of a machine and of a function it took.
 
     {!Machine} exports and documents them; this machine ({!Local}) and
     transports implement them. They live apart so that {!Local}, below

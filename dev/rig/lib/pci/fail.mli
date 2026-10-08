@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** The world's refusals of a request, inside the library (private).
+(** The world's refusals of a request, inside the library.
 
     {!Failed} never leaves the library: each request converts it to [Error] with
     {!result}. *)

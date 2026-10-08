@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 (** Functions opened through VFIO, and the containers that map system memory for
-    them behind an IOMMU (private).
+    them behind an IOMMU.
 
     A request the kernel refuses raises {!Fail.Failed} naming the step, the
     subject and the system's cause, with the remedy where one exists. *)

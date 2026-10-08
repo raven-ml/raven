@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Hash tables keyed by addresses (private).
+(** Hash tables keyed by addresses.
 
     An address lies on a large alignment, so a key's hash mixes every bit into
     the low ones a table indexes by, and integer keys compare as integers. *)

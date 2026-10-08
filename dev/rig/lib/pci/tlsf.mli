@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Two-level segregated fit allocators of address ranges (private).
+(** Two-level segregated fit allocators of address ranges.
 
     An allocator hands out blocks of a range of addresses. Free blocks are
     indexed by the most significant bit of their size, then by the next four

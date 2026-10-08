@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Bus addresses, ["DDDD:BB:DD.F"] (private). {!Machine} exports them. *)
+(** Bus addresses, ["DDDD:BB:DD.F"]. {!Machine} exports them. *)
 
 val v : domain:int -> bus:int -> device:int -> fn:int -> string
 (** [v ~domain ~bus ~device ~fn] is {!Machine.address}. *)

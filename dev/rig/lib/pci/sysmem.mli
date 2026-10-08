@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** This machine's memory for functions that reach it (private).
+(** This machine's memory for functions that reach it.
 
     {!Function} checks every argument first: sizes are positive, addresses are
     on a page, and contiguous memory is at most 2 MiB, a huge page that starts

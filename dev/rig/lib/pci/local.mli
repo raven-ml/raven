@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** This machine's PCI functions (private): taken through VFIO behind an IOMMU,
-    or physically through [/sys/bus/pci]. *)
+(** This machine's PCI functions: taken through VFIO behind an IOMMU, or
+    physically through [/sys/bus/pci]. *)
 
 val ops : Sysfs.t -> Ops.ops
 (** [ops files] is the operations of the functions of the machine whose files
