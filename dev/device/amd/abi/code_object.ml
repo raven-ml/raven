@@ -59,11 +59,14 @@ let processor (o : Device_elf.t) =
 
 (* The patch of [r]: its target's offset from the field, which REL64 writes. *)
 let patch ~size i (r : Device_elf.relocation) =
+  let* () =
+    if r.kind = r_amdgpu_rel64 then Ok ()
+    else
+      Error
+        (strf "relocation %d is of kind %d, expected R_AMDGPU_REL64" i r.kind)
+  in
   let* target =
     match r.symbol.place with
-    | _ when r.kind <> r_amdgpu_rel64 ->
-        Error
-          (strf "relocation %d is of kind %d, expected R_AMDGPU_REL64" i r.kind)
     | Image { offset; _ } -> Ok offset
     | Undefined | Absolute _ | Outside _ ->
         Error
