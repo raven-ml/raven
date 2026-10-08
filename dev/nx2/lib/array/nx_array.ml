@@ -143,8 +143,13 @@ let narrow fn r l =
   let k = Layout.rank l in
   if k >= Layout.max_rank then
     invalid_argf "%s: a narrowing bitcast of rank %d" fn Layout.max_rank;
-  let shape = Array.append (Layout.shape l) [| r |] in
-  let strides = Array.append (Array.map (( * ) r) (Layout.strides l)) [| 1 |] in
+  let shape = Shape.zeros (k + 1) and strides = Shape.zeros (k + 1) in
+  for i = 0 to k - 1 do
+    shape.(i) <- Layout.dim l i;
+    strides.(i) <- Layout.stride l i * r
+  done;
+  shape.(k) <- r;
+  strides.(k) <- 1;
   Layout.v ~offset:(Layout.offset l * r) ~strides shape
 
 (* A layout of elements [r] times wider over the same bits, if [l] has a
@@ -154,21 +159,23 @@ let widen r l =
   let k = Layout.rank l in
   if k = 0 || Layout.dim l (k - 1) <> r then None
   else
-    let shape = Array.sub (Layout.shape l) 0 (k - 1) in
+    let shape = Shape.zeros (k - 1) in
+    for i = 0 to k - 2 do
+      shape.(i) <- Layout.dim l i
+    done;
     if Layout.numel l = 0 then Some (Layout.contiguous shape)
     else
-      let strides = Layout.strides l in
-      let multiple s = s mod r = 0 in
-      if
-        strides.(k - 1) <> 1
-        || (not (multiple (Layout.offset l)))
-        || not (Array.for_all multiple (Array.sub strides 0 (k - 1)))
-      then None
-      else
-        let strides =
-          Array.map (fun s -> s / r) (Array.sub strides 0 (k - 1))
-        in
-        Some (Layout.v ~offset:(Layout.offset l / r) ~strides shape)
+      let fits =
+        ref (Layout.stride l (k - 1) = 1 && Layout.offset l mod r = 0)
+      in
+      let strides = Shape.zeros (k - 1) in
+      for i = 0 to k - 2 do
+        let s = Layout.stride l i in
+        if s mod r <> 0 then fits := false;
+        strides.(i) <- s / r
+      done;
+      if !fits then Some (Layout.v ~offset:(Layout.offset l / r) ~strides shape)
+      else None
 
 (* A bitcast keeps the bits the array reaches, so its bounds hold. *)
 let bitcast dtype' a =
