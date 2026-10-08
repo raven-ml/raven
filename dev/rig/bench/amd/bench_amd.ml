@@ -20,9 +20,12 @@
    has no rows.
 
    With RIG_AMD_PCI_FIRMWARE set, the GPU detached, the same rows run with no
-   kernel driver ({!Rig_amd_support.open_gpu}), named with a [pci-] marker,
-   beside the opens of a full and a partial boot. The floors and the host
-   mappings, which only KFD has, are left out. *)
+   kernel driver ({!Rig_amd_support.open_gpu}), beside the opens of a full and a
+   partial boot; the floors and the host mappings, which only KFD has, are left
+   out. Driver-less is another configuration of the machine, so its rows are
+   recorded under a machine key of their own, the host's with [-pci] appended,
+   which the run sets (THUMPER_MACHINE): they compare by name with the rows of
+   the section KFD's run records. *)
 
 module A = Rig_amd
 module P = Rig_amd_amdgpu
@@ -75,8 +78,7 @@ let address r = Option.get (A.address r)
 (* Whether the rows open the GPU with no kernel driver. *)
 let pci = Rig_amd_support.driverless ()
 
-let row name setup f =
-  Thumper.bench_with_setup ~setup ((if pci then "pci-" else "") ^ name) f
+let row name setup f = Thumper.bench_with_setup ~setup name f
 
 (* A row of KFD's alone: the floors, and the host mappings. *)
 let kfd_row name setup f = if pci then [] else [ row name setup f ]
@@ -583,6 +585,8 @@ let pci_deadline = 60.
 
 let () =
   Rig_amd_support.hold_gpu ();
+  if pci then
+    Unix.putenv "THUMPER_MACHINE" (Thumper.Baseline.machine_key () ^ "-pci");
   if Rig_amd_support.gpus () > 0 then
     let config =
       if pci then Thumper.Config.(deadline pci_deadline default)
