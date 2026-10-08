@@ -297,20 +297,17 @@ let with_addresses space ~align size f =
 let alloc_host g size =
   with_addresses g.c.low ~align:page size @@ fun va ->
   let* () = Rm.map (-1) va size in
-  let given = describe g va size in
-  let* h =
-    Result.map_error
-      (fun e ->
-        Rm.release va size;
-        e)
-      given
-  in
-  match uvm_map g ~create:true va size h with
-  | Ok true -> Ok (Some (h, va))
-  | (Ok false | Error _) as r ->
-      free_object g h;
+  match describe g va size with
+  | Error e ->
       Rm.release va size;
-      Result.map (fun _ -> None) r
+      Error e
+  | Ok h -> (
+      match uvm_map g ~create:true va size h with
+      | Ok true -> Ok (Some (h, va))
+      | (Ok false | Error _) as r ->
+          free_object g h;
+          Rm.release va size;
+          Result.map (fun _ -> None) r)
 
 (* Video memory, mapped for the host too through BAR1 if [cpu]. The RM allocates
    it first; the addresses follow. *)

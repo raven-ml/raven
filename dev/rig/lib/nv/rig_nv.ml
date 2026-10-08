@@ -628,10 +628,8 @@ let make p =
 
 (* Memory *)
 
-let reg d kind bytes m =
-  { dev = d; mem = m; bytes; kind; live = Atomic.make true }
-
-let region d kind bytes m = R (reg d kind bytes m)
+let region d kind bytes m =
+  R { dev = d; mem = m; bytes; kind; live = Atomic.make true }
 
 let alloc (T d) kind n =
   if n < 1 then invalid_argf "Rig_nv.alloc: %d bytes, expected at least 1" n;
