@@ -159,8 +159,27 @@ let waits =
 let release_event = 0x14 lor (5 lsl 8)
 let release_gcr = 0x1000 lor 0x2000 lor 0x20_0000 lor 0x40_0000
 
-(* GLV_INV, GL1_INV and GL2_INV in a release's GCR bits (nvd.h). *)
-let release_invalidates = 0x4000 lor 0x8000 lor 0x10_0000
+(* The cache bits of a release's control word, by generation and scope. A
+   release writes back what readers of its scope would miss, and invalidates
+   nothing a reader's acquire does not. - GFX9 (soc15d.h EOP_TC_WB_ACTION_EN,
+   EOP_TC_NC_ACTION_EN), at both scopes: an agent of GFX942 may have an L2 per
+   die, which LLVM's memory model writes back with buffer_wbl2 at agent scope
+   (AMDGPUUsage, "Memory Model GFX942"). - GFX11 at System: amdgpu's fence
+   (gfx_v11_0.c), above. - GFX12 at System: amdgpu's fence (gfx_v12_0.c), GL2_WB
+   and SEQ. - GFX11 and GFX12 at Agent: none. The GPU's work shares one L2, and
+   LLVM's memory model releases at agent scope with no write-back (AMDGPUUsage,
+   "Memory Model GFX10-GFX11"; "Memory Model GFX12": global_wb is omitted for
+   scopes below SCOPE_SYS). *)
+let release_caches =
+  let tc_wb = 0x8000 lor 0x8_0000 in
+  [
+    ((gfx9, Packet.Agent), tc_wb);
+    ((gfx9, System), tc_wb);
+    ((gfx11, Agent), 0);
+    ((gfx11, System), release_gcr);
+    ((gpu (12, 0, 0), Agent), 0);
+    ((gpu (12, 0, 0), System), 0x20_0000 lor 0x40_0000);
+  ]
 
 (* The caches an acquire's control word names: scalar, vector, L1, instruction,
    L2 invalidated, L2 written back. GFX9's CP_COHER_CNTL (soc15d.h):
@@ -208,10 +227,6 @@ let caches =
           equal (list int)
             [ packet3 0x49 6; release_event; 1 lsl 29; 0x40; 0; 9; 0; 0 ]
             (words (Pm4.release_mem gfx11 Agent 0x40 (Low_32 9))));
-      test "a GFX9 release writes the L2 back" (fun () ->
-          equal int
-            (release_event lor 0x8000 lor 0x8_0000)
-            (List.nth (words (Pm4.release_mem gfx9 System 0 (Low_32 0))) 1));
       cases
         ~name:(function Packet.Agent, _ -> "agent" | System, _ -> "system")
         "an acquire on GFX11 invalidates the L2 only for the system"
@@ -233,28 +248,14 @@ let caches =
           equal caches_w
             (true, true, true, all, all, all)
             (acquired g (words (Pm4.acquire_mem g scope))));
-      cases ~name "a system release writes the L2 back" generations (fun g ->
-          let control =
-            List.nth (words (Pm4.release_mem g System 0 (Low_32 0))) 1
-          in
-          let wb = match g.gc with 9, _, _ -> 1 lsl 15 | _ -> 1 lsl 21 in
-          equal int wb (control land wb));
-      cases ~name "a GFX10-on release invalidates no cache"
-        [ gfx11; gpu (12, 0, 0) ]
-        (fun g ->
-          let control s =
-            List.nth (words (Pm4.release_mem g s 0 (Low_32 0))) 1
-          in
-          equal (pair int int) (0, 0)
-            ( control System land release_invalidates,
-              control Agent land release_invalidates ));
-      test "a GFX12 system release writes the L2 back and nothing more"
-        (fun () ->
-          equal int
-            (release_event lor 0x20_0000 lor 0x40_0000)
-            (List.nth
-               (words (Pm4.release_mem (gpu (12, 0, 0)) System 0 (Low_32 0)))
-               1));
+      cases
+        ~name:(fun (((g : Gpu.t), s), _) ->
+          strf "%s, %s" (name g)
+            (match s with Packet.Agent -> "agent" | System -> "system"))
+        "a release places its scope's cache operations" release_caches
+        (fun ((g, scope), bits) ->
+          equal int (release_event lor bits)
+            (List.nth (words (Pm4.release_mem g scope 0 (Low_32 0))) 1));
       cases ~name "an interrupt carries its id's low 32 bits" generations
         (fun g ->
           let ws =

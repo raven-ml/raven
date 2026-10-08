@@ -184,12 +184,16 @@ let acquire_mem g scope =
 
 type 'v data = Low_32 of 'v | Data_64 of 'v
 
-(* A release writes back what its readers would otherwise miss; a reader's
-   acquire invalidates what it reads. At [System], the L2, as Linux's amdgpu
-   fences do (gfx_v10_0.c, gfx_v11_0.c, gfx_v12_0.c: GL2_WB and SEQ; before
-   GFX12 with GLM_WB, which GLM_INV must accompany). At [Agent], nothing from
-   GFX10 on, where one L2 keeps memory coherent for the GPU's work. GFX9 writes
-   the L2 back at both scopes: a GPU of several dies has an L2 per die. *)
+(* A release writes back what readers of its scope would otherwise miss; a
+   reader's acquire invalidates what it reads. At [System], the L2, which the
+   host, other devices and, on GFX12, the copy engine read past (Mesa's
+   ac_gpu_info.c: CP and SDMA use system scope): the bits of Linux's amdgpu
+   fences (gfx_v10_0.c, gfx_v11_0.c, gfx_v12_0.c), GL2_WB and SEQ, before GFX12
+   with GLM_WB, which GLM_INV must accompany. At [Agent], nothing from GFX10 on:
+   the GPU's work shares one L2, and LLVM's memory model releases at agent scope
+   with no write-back (AMDGPUUsage, GFX10-GFX11 and GFX12). GFX9 writes the L2
+   back at both scopes: a GFX942 agent may have an L2 per die, which LLVM writes
+   back with buffer_wbl2 at agent scope. *)
 let release_caches g scope =
   match (major g, scope) with
   | 9, (Agent | System) -> Defs.eop_tc_wb_action_en lor Defs.eop_tc_nc_action_en

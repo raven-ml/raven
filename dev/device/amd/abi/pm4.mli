@@ -135,8 +135,10 @@ val release_mem :
 (** [release_mem g s ~interrupt addr d] writes [d] to memory at [addr] once the
     work before it has completed, at the end of the pipe, so that readers of
     scope [s] who see the signal see the work's writes: at [System] it writes
-    the L2 back first. The next packet starts without waiting for it. A 64-bit
-    write is one write: a reader sees the value whole or not at all.
+    the L2 back first; at [Agent] it does only on a GPU of several L2s, one per
+    die (GFX9). Readers invalidate what they read ({!acquire_mem}). The next
+    packet starts without waiting for it. A 64-bit write is one write: a reader
+    sees the value whole or not at all.
 
     With [interrupt], it then raises an interrupt that carries [interrupt]'s low
     32 bits as its context id; without, none. *)
