@@ -50,8 +50,11 @@
     A device whose driver reports a fault, or whose hand-over fails, is
     {e lost}, once and for good ({!Lost}). Work that waits in its queue on a
     lost device's unreached values is lost with it. Every later use of the
-    device, and of memory whose stamps name it, raises {!Lost}; other devices go
-    on. A lost device's memory returns only once its timeline word shows its
+    device that needs its driver, and of memory whose stamps name it, raises
+    {!Lost}; other devices go on. A lost device's facts still answer: {!name},
+    {!arch}, {!budget} and {!capability} as before, {!submitted} the last value
+    handed over, and {!signaled} the last value its word showed, which may stop
+    moving. A lost device's memory returns only once its timeline word shows its
     last submitted value reached, which it may never do: such memory is kept for
     the life of the process. Opening the device again makes a new device.
 

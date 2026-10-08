@@ -206,9 +206,11 @@ let counted d f =
 
 (* The timeline *)
 
+(* The last value [d]'s word showed: read at its host address, or through the
+   driver behind a transport, whose last answer a lost device keeps. *)
 let word d =
   if d.c = 0 then 0
-  else if d.word <> 0 then c_word d.c
+  else if d.word <> 0 || c_is_lost d.c then c_word d.c
   else
     match d.kind with
     | Driver { m; h; _ } ->
