@@ -6,7 +6,15 @@
 (tests
  (names test_amd test_fault test_fork)
  (modules test_amd test_fault test_fork)
- (libraries rig rig_amd rig_amd_abi rig_amd_amdgpu rig_amd_support unix windtrap)
+ (libraries
+  rig
+  rig_amd
+  rig_amd_abi
+  rig_amd_amdgpu
+  rig_amd_support
+  rig_gpu_support
+  unix
+  windtrap)
  (deps
   (glob_files fixtures/*)))
 

@@ -5,23 +5,6 @@
 
 (** What the AMD suites share. *)
 
-val hold_gpu : unit -> unit
-(** [hold_gpu ()] returns once the process holds the machine's GPU lock, which
-    it keeps until it exits, or at once if the machine has no AMD GPU. The lock
-    is [flock] on [/tmp/raven-rig-gpu.lock], the file every suite and bench that
-    acts on a GPU of the machine locks; its holder writes its executable and
-    process id into it. A suite calls [hold_gpu] before [Windtrap.run], so that
-    the wait counts against no test's timeout, and {!gpu} calls it again. A
-    bench calls it before [Thumper.run], so that the workers it forks run under
-    the lock: [hold_gpu] starts no vendor library, which a process must not
-    start before it forks. It returns at once, taking nothing, if the variable
-    [RIG_GPU_LOCK_HELD] is set: the process that started this one holds the
-    lock for it, as a timing run takes it before the host's timing locks. A
-    machine counts a GPU as {!gpus} does.
-
-    Raises [Failure] naming the holder if another process still holds the lock
-    after 300 s, or naming the errno if the file cannot be locked. *)
-
 val driverless : unit -> bool
 (** [driverless ()] is [true] iff {!open_gpu} opens the GPU with no kernel
     driver: the variable [RIG_AMD_PCI_FIRMWARE] is set. *)
@@ -38,62 +21,15 @@ val open_gpu : unit -> (Rig_amd.t, string) result
     ({!Rig_amd_pci.open_}): the GPU detached ({!Rig_amd_pci.detach}) and the
     process privileged to take it. *)
 
-val gpu : unit -> Rig_amd.t
-(** [gpu ()] is AMD GPU [0], opened by {!open_gpu} and handed to rig
-    under a name of its own ({!rig}), after stopping the device an earlier
-    {!gpu} opened if no {!stop} stopped it, as a failed test leaves it, while
-    the process holds the machine's GPU lock ({!hold_gpu}). It skips the test if
-    the machine has no AMD GPU. *)
+(** {1:gpu The GPU} *)
 
-val rig : Rig_amd.t -> Rig.t
-(** [rig g] is rig's device over [g], which {!gpu} opened.
+include Rig_gpu_support.S with type gpu = Rig_amd.t
+(** GPU [0], opened by {!open_gpu}. *)
 
-    Raises [Invalid_argument] if [g] was stopped, lost or opened otherwise. *)
-
-val submit : Rig_amd.t -> Rig.Submission.part array -> int
-(** [submit g ps] submits [ps] through rig on [g] and is their value. Raises
-    what {!Rig.submit} raises; once it raised {!Rig.Lost}, {!with_gpu} does not
-    stop [g] again. *)
-
-val stop : Rig_amd.t -> unit
-(** [stop g] is [Rig_amd.stop g]. Tests stop the devices {!gpu} opened through
-    it. *)
-
-val stop_gpu : unit -> unit
-(** [stop_gpu ()] stops the device {!gpu} opened last, unless {!stop} or rig's
-    loss stopped it. A test that opens a device of its own through {!open_gpu}
-    calls it first: with no kernel driver, a process holds one device of a
-    GPU. *)
-
-val with_gpu : (Rig_amd.t -> 'a) -> 'a
-(** [with_gpu f] is [f (gpu ())], the device stopped after unless rig lost it.
-*)
-
-val wait : Rig_amd.t -> int -> unit
-(** [wait g v] returns once [g]'s timeline word reaches [v], sleeping on the
-    device between reads. *)
-
-val still :
-  ?msg:string -> 'a Windtrap.testable -> 'a -> (unit -> 'a) -> ms:int -> unit
-(** [still w x f ~ms] reads [f ()] for about [ms] milliseconds of CPU time, and
-    asserts under [w] that each read is [x]. *)
-
-val now_ns : unit -> int
-(** [now_ns ()] is the monotonic clock, in nanoseconds: the clock a device's
-    [hang_ms] bound counts. *)
-
-val read : int -> int -> string
-(** [read a n] is the [n] bytes of host memory at [a]. *)
-
-val write : int -> string -> unit
-(** [write a s] writes [s] to host memory at [a]. *)
-
-val pages : int -> int
-(** [pages n] is the host address of [n] new zeroed bytes on pages of their own.
-*)
-
-val free_pages : int -> int -> unit
-(** [free_pages a n] gives back the [n] bytes at [a] that {!pages} gave. *)
+val reached : Rig_amd.t -> int -> unit
+(** [reached g v] returns once [g]'s timeline word reaches [v], sleeping on
+    the device between reads: the wait of values handed over at the C entries
+    ({!Edge}), which rig does not number. *)
 
 (** {1:fills Fills} *)
 

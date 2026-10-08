@@ -351,9 +351,7 @@ test. A test of the driver alone, which rig never takes, opens it with
 test that opens the GPU's driver itself on a GPU that has one device at a
 time. A test of the driver's stop states it through `Rig.close` where the
 statement survives, and through a loss where work must still run when the
-device stops, since a close waits for the work first. CUDA's, Metal's and
-NV's supports apply `Make`; AMD's still keeps its own fixture and a copy of
-the lock.
+device stops, since a close waits for the work first.
 
 One lock order holds everywhere: the GPU lock first, then the hosts' timing
 locks, so nothing waits for the GPU while it holds a timing lock. A timing

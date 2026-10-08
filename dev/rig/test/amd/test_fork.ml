@@ -7,6 +7,7 @@ open Windtrap
 module A = Rig_amd
 module S = Rig_amd_support
 module E = S.Edge
+module H = Rig_gpu_support.Host
 
 let host r = Option.get (A.host r)
 let address r = Option.get (A.address r)
@@ -17,7 +18,7 @@ let address r = Option.get (A.address r)
    kernel driver one process holds a GPU: the child's open is refused, and it
    exits 0 then, 4 if the open succeeds. *)
 let forked () =
-  S.with_gpu @@ fun _ ->
+  S.with_ @@ fun _ ->
   match Unix.fork () with
   | 0 ->
       let code =
@@ -32,8 +33,8 @@ let forked () =
         | Ok c ->
             let src = Option.get (A.alloc c `Pinned 64) in
             let dst = Option.get (A.alloc c `Pinned 64) in
-            S.write (host src) (String.make 64 'f');
-            S.write (host dst) (String.make 64 '\000');
+            H.write (host src) (String.make 64 'f');
+            H.write (host dst) (String.make 64 '\000');
             ignore
               (E.submit c ~v:1
                  [| E.copy ~dst:(address dst) ~src:(address src) 64 |]);
@@ -46,7 +47,7 @@ let forked () =
                  end
             in
             if not (reached 20) then 3
-            else if S.read (host dst) 64 = String.make 64 'f' then 0
+            else if H.read (host dst) 64 = String.make 64 'f' then 0
             else 2
       in
       Unix._exit code
@@ -57,7 +58,7 @@ let forked () =
           failf "the child stopped on signal %d" n)
 
 let () =
-  S.hold_gpu ();
+  S.hold ();
   exit
     (run "rig_amd fork"
        [

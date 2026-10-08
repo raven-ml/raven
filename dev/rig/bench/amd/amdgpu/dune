@@ -1,6 +1,6 @@
 (executable
  (name bench_amdgpu)
- (libraries rig_amd rig_amd_amdgpu rig_amd_support thumper))
+ (libraries rig_amd rig_amd_amdgpu rig_gpu_lock thumper))
 
 (rule
  (alias bench)

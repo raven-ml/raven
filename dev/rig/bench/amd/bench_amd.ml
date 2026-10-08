@@ -70,7 +70,6 @@ external write : int -> string -> unit = "rig_amd_bench_write"
 external raw_submit : nativeint array -> int -> int -> int -> int -> unit
   = "rig_amd_bench_submit"
 
-let strf = Printf.sprintf
 let kib = 1024
 let mib = 1024 * kib
 let get = function Ok x -> x | Error why -> failwith why
@@ -79,9 +78,10 @@ let address r = Option.get (A.address r)
 (* Whether the rows open the GPU with no kernel driver. *)
 let pci = Rig_amd_support.driverless ()
 
-(* The devices this worker opened. A worker ends without the exit's handlers,
-   so each row's teardown stops them: a driver-less GPU left running would go
-   on mastering the bus for the next worker. *)
+(* The devices this worker opened without rig. A worker ends without the
+   exit's handlers, so each row's teardown stops them and closes rig's: a
+   driver-less GPU left running would go on mastering the bus for the next
+   worker. *)
 let opened = ref []
 
 let opening g =
@@ -89,6 +89,7 @@ let opening g =
   g
 
 let stop_opened () =
+  Rig_amd_support.release ();
   List.iter A.stop !opened;
   opened := []
 
@@ -102,21 +103,10 @@ let kfd_row name setup f = if pci then [] else [ row name setup f ]
 
 type dev = { d : Rig.t; g : A.t; mutable v : int }
 
-let opens = ref 0
-
-(* A device opened through rig, under a name of its own. *)
+(* A device opened through rig. *)
 let dev () =
-  incr opens;
-  let g = ref None in
-  let make () =
-    Result.map
-      (fun x ->
-        g := Some x;
-        x)
-      (Rig_amd_support.open_gpu ())
-  in
-  let d = get (Rig.open_ (module A) ~name:(strf "AMD:bench-%d" !opens) make) in
-  { d; g = opening (Option.get !g); v = 0 }
+  let { Rig_amd_support.d; g } = Rig_amd_support.open_ () in
+  { d; g; v = 0 }
 
 (* The prepared submission of [parts] on [t]. *)
 let prepare t parts = Rig.Submission.make ~reads:0 ~writes:0 t.d parts
@@ -610,7 +600,7 @@ let waits_on () =
 let pci_deadline = 60.
 
 let () =
-  Rig_amd_support.hold_gpu ();
+  Rig_amd_support.hold ();
   if pci then
     Unix.putenv "THUMPER_MACHINE" (Thumper.Baseline.machine_key () ^ "-pci");
   if Rig_amd_support.gpus () > 0 then

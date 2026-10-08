@@ -132,7 +132,7 @@ let gpus =
       (if Rig_metal_support.present () then [ Metal ] else []);
       (if Rig_cuda_support.present () then [ Cuda ] else []);
       (if Rig_nv_support.present () then [ Nv ] else []);
-      (if Rig_amd_support.gpus () > 0 then [ Amd ] else []);
+      (if Rig_amd_support.present () then [ Amd ] else []);
     ]
 
 let hold_gpu () = if gpus <> [] then Rig_gpu_lock.hold ()

@@ -7,11 +7,13 @@ open Windtrap
 module A = Rig_amd
 module S = Rig_amd_support
 module E = S.Edge
+module H = Rig_gpu_support.Host
 module Abi = Rig_amd_abi
 module Gpu = Abi.Gpu
 module Pm4 = Abi.Pm4
 
 let strf = Printf.sprintf
+let still = Rig_gpu_support.still
 let host r = Option.get (A.host r)
 let address r = Option.get (A.address r)
 let submit g ~v ps = E.submit g ~v ps
@@ -26,10 +28,6 @@ let le32s ns =
   List.iteri (fun i n -> Bytes.set_int32_le b (4 * i) (Int32.of_int n)) ns;
   Bytes.to_string b
 
-let get64 a = Int64.to_int (String.get_int64_le (S.read a 8) 0)
-let set64 a n = S.write a (le64 n)
-let get32 a = Int32.to_int (String.get_int32_le (S.read a 4) 0) land 0xffff_ffff
-let set32 a n = S.write a (le32s [ n ])
 let at a off = a + off
 
 let answer =
@@ -162,7 +160,7 @@ module Host = struct
     let h =
       {
         lock = Mutex.create ();
-        hdp = S.pages 4;
+        hdp = H.pages 4;
         calls = 0;
         live = 0;
         allocated = 0;
@@ -192,7 +190,7 @@ module Host = struct
       Mutex.protect h.lock @@ fun () ->
       if refused () then None
       else begin
-        let m = memory ~host:(kind <> `Gpu) (S.pages n) n ~view:false in
+        let m = memory ~host:(kind <> `Gpu) (H.pages n) n ~view:false in
         h.live <- h.live + 1;
         h.allocated <- h.allocated + 1;
         if kind = `Gpu then h.last_gpu <- m.A.address;
@@ -218,7 +216,7 @@ module Host = struct
         if not m.data.view then begin
           h.live <- h.live - 1;
           h.held <- List.filter (fun d -> d != m.data) h.held;
-          S.free_pages m.data.at m.data.bytes
+          H.free_pages m.data.at m.data.bytes
         end
       end
     in
@@ -230,7 +228,7 @@ module Host = struct
       end
       else begin
         h.queues <- h.queues @ [ { kind; ring; bytes; write } ];
-        let doorbell = S.pages 8 in
+        let doorbell = H.pages 8 in
         h.doorbells <- doorbell :: h.doorbells;
         Ok doorbell
       end
@@ -272,9 +270,9 @@ module Host = struct
   (* Gives back the host memory the path holds, once its device stopped: its
      own, and what the device kept, such as its timeline word. *)
   let close h =
-    S.free_pages h.hdp 4;
-    List.iter (fun d -> S.free_pages d 8) h.doorbells;
-    List.iter (fun d -> S.free_pages d.at d.bytes) h.held;
+    H.free_pages h.hdp 4;
+    List.iter (fun d -> H.free_pages d 8) h.doorbells;
+    List.iter (fun d -> H.free_pages d.at d.bytes) h.held;
     h.doorbells <- [];
     h.held <- [];
     h.closed <- true
@@ -296,10 +294,10 @@ module Host = struct
 
   (* The position a queue reads its work up to: in words on a PM4 ring, bytes on
      an SDMA ring, packets on an AQL ring. *)
-  let position q = get64 q.write
+  let position q = H.get64 q.write
 
   (* Reaches [v]: what the queue that releases [v] does. *)
-  let reach g v = set64 (host (A.word g)) v
+  let reach g v = H.set64 (host (A.word g)) v
 end
 
 (* Paths *)
@@ -502,7 +500,7 @@ let misuse () =
   raises "alloc" (fun () -> A.alloc g `Pinned 0);
   let r = Option.get (A.alloc g `Pinned 4096) in
   let r' = Option.get (A.alloc g' `Pinned 4096) in
-  let page = S.pages 4096 in
+  let page = H.pages 4096 in
   let mapped = Option.get (A.map_host g page 4096) in
   raises "free" (fun () -> A.free g r');
   raises "map_peer" (fun () -> A.map_peer g g r);
@@ -522,7 +520,7 @@ let misuse () =
   raises "free" (fun () -> A.free g r);
   A.free g mapped;
   A.free g' r';
-  S.free_pages page 4096
+  H.free_pages page 4096
 
 (* What rig_amd_room answers for a part the device does not run. *)
 let c_room () =
@@ -909,7 +907,7 @@ let flushes m d =
        m.regions)
 
 let flushed (ds : sys_machine) d =
-  Array.iter (fun ((h : Host.t), _, _) -> set32 h.hdp 0xffff_ffff) ds;
+  Array.iter (fun ((h : Host.t), _, _) -> H.set32 h.hdp 0xffff_ffff) ds;
   let _, g, last = ds.(d) in
   equal room_answer ~msg:"room" `Fits (E.room g [||]);
   incr last;
@@ -918,7 +916,7 @@ let flushed (ds : sys_machine) d =
   List.filter
     (fun i ->
       let (h : Host.t), _, _ = ds.(i) in
-      get32 h.hdp = 0)
+      H.get32 h.hdp = 0)
     (List.init flushers Fun.id)
 
 let hdp_commands =
@@ -992,9 +990,9 @@ let own_after_views () =
   with_nine @@ fun ((h : Host.t), g) peers ->
   let views = List.filter_map (fun (g', r) -> A.map_peer g g' r) peers in
   let own = Option.get (A.alloc g `Mapped 64) in
-  set32 h.hdp 0xffff_ffff;
+  H.set32 h.hdp 0xffff_ffff;
   equal answer ~msg:"submit" `Ok (submit g ~v:1 [||]);
-  equal int ~msg:"its own HDP register" 0 (get32 h.hdp);
+  equal int ~msg:"its own HDP register" 0 (H.get32 h.hdp);
   List.iter (A.free g) views;
   A.free g own
 
@@ -1023,7 +1021,7 @@ let is_marker w = w land 0xffff_0000 = 0x5eed_0000
    being words. *)
 let handed (q : Host.queue) p p' =
   let size = q.bytes / 4 in
-  List.init (p' - p) (fun i -> get32 (at q.ring (4 * ((p + i) mod size))))
+  List.init (p' - p) (fun i -> H.get32 (at q.ring (4 * ((p + i) mod size))))
 
 type failing = {
   before : (bool * int) list; (* parts before it: queue, words *)
@@ -1097,11 +1095,11 @@ let aql_failure () =
   let fails = E.fill ~queue:"COMPUTE:0" fill ~units:32 ~bytes:0 in
   let q = Host.compute h in
   let slots = q.bytes / 64 in
-  let header s = get32 (at q.ring (64 * (s mod slots))) land 0xff in
+  let header s = H.get32 (at q.ring (64 * (s mod slots))) land 0xff in
   let ours s =
     List.exists is_marker
       (List.init 15 (fun i ->
-           get32 (at q.ring ((64 * (s mod slots)) + (4 * (i + 1))))))
+           H.get32 (at q.ring ((64 * (s mod slots)) + (4 * (i + 1))))))
   in
   let p0 = Host.position q in
   equal answer ~msg:"submit" (`Failed "a fill on COMPUTE:0 failed with 7")
@@ -1171,7 +1169,7 @@ let stops () =
   let case name path_stop word =
     let h, g = Host.device ~stop:path_stop () in
     let r = Option.get (A.alloc g `Pinned 64) in
-    let page = S.pages 64 in
+    let page = H.pages 64 in
     let m = Option.get (A.map_host g page 64) in
     equal answer ~msg:name `Ok (submit g ~v:1 [||]);
     equal answer ~msg:name `Ok (submit g ~v:2 [||]);
@@ -1180,7 +1178,7 @@ let stops () =
     equal int ~msg:(name ^ ": stops") 1 h.stops;
     A.free g r;
     A.free g m;
-    S.free_pages page 64;
+    H.free_pages page 64;
     Host.close h
   in
   case "the path stopped" (fun () -> `Stopped) 2;
@@ -1277,8 +1275,8 @@ let at_the_end =
    most [ms] of the clock. *)
 
 let spin ~ms f =
-  let t0 = S.now_ns () in
-  while S.now_ns () - t0 < ms * 1_000_000 do
+  let t0 = Rig.Profile.now () in
+  while Rig.Profile.now () - t0 < ms * 1_000_000 do
     f ()
   done
 
@@ -1491,11 +1489,11 @@ let allocation_commands =
 let mapping_commands =
   ends_once "m"
     ~make:(fun () ->
-      let g = snd (shared_host ()) and p = S.pages 64 in
+      let g = snd (shared_host ()) and p = H.pages 64 in
       (g, p, Option.get (A.map_host g p 64)))
     ~finish:(fun (g, _, r) -> A.free g r)
     ~release:(fun (g, p, r) ->
-      Fun.protect ~finally:(fun () -> S.free_pages p 64) (fun () -> A.free g r))
+      Fun.protect ~finally:(fun () -> H.free_pages p 64) (fun () -> A.free g r))
 
 let image_commands =
   ends_once "i"
@@ -1558,10 +1556,12 @@ let domains =
 
 (* On a GPU *)
 
-(* Work through rig, on a device [S.gpu] opened *)
+(* Work through rig, on a device [S.open_] opened *)
 
-let buffer ?(memory = Rig.Buffer.Device) g n =
-  Rig.Buffer.create ~memory (S.rig g) n
+type gpu = S.t = { d : Rig.t; g : A.t }
+
+let buffer ?(memory = Rig.Buffer.Device) t n =
+  Rig.Buffer.create ~memory t.d n
 
 let addr = Rig.Buffer.address
 let view b first length = Rig.Buffer.view b ~first ~length
@@ -1589,8 +1589,8 @@ let copy ?(after = [||]) ~dst src =
 let live = ref []
 
 (* Submits [ps] and waits for their value. *)
-let run g ps =
-  Rig.wait (S.rig g) (S.submit g ps);
+let run t ps =
+  Rig.wait t.d (S.submit t ps);
   live := []
 
 let pattern n seed =
@@ -1626,23 +1626,23 @@ let dispatch ?(of_ = kernels) gpu entry name ~args ~groups =
        (Pm4.dispatch gpu k ~program:(base + k.entry) ~scratch:0 ~args ~packet:0
           ~threads:(64, 1, 1) ~groups:(groups, 1, 1) ()))
 
-let image ?(of_ = kernels) g =
-  match Rig.Image.load (S.rig g) (Lazy.force of_).binary with
+let image ?(of_ = kernels) t =
+  match Rig.Image.load t.d (Lazy.force of_).binary with
   | Ok p -> p
   | Error why -> fail why
 
 (* The words of a dispatch of [p]'s [name], its arguments [args] in a buffer of
    their own. *)
-let kernel_words ?of_ g p name ~groups args =
-  let a = buffer ~memory:Pinned g 4096 in
+let kernel_words ?of_ t p name ~groups args =
+  let a = buffer ~memory:Pinned t 4096 in
   put a args;
   live := a :: !live;
   let entry f = Option.get (Rig.Image.entry p f) in
-  dispatch ?of_ (A.capability g).gpu entry name ~args:(addr a) ~groups
+  dispatch ?of_ (A.capability t.g).gpu entry name ~args:(addr a) ~groups
 
-let kernel ?of_ ?after g p name ~groups args =
+let kernel ?of_ ?after t p name ~groups args =
   S.words_part ~queue:"COMPUTE:0" ?after
-    (kernel_words ?of_ g p name ~groups args)
+    (kernel_words ?of_ t p name ~groups args)
 
 let multiples k n = le32s (List.init n (fun i -> k * i))
 let doubled = multiples 2
@@ -1651,33 +1651,34 @@ let work =
   group ~timeout:60. "work"
     [
       test "an empty submission releases its value" (fun () ->
-          S.with_gpu @@ fun g ->
-          run g [||];
-          equal int ~msg:"the word" 1 (A.signaled g));
-      test "an idle device stops with its word at the last value" (fun () ->
-          let g = S.gpu () in
-          run g [||];
-          run g [||];
-          S.stop g;
-          equal int ~msg:"the word" 2 (A.signaled g));
+          S.with_ @@ fun t ->
+          run t [||];
+          equal int ~msg:"the word" 1 (A.signaled t.g));
+      test "a close of an idle device leaves the word at the last value"
+        (fun () ->
+          S.with_ @@ fun t ->
+          run t [||];
+          run t [||];
+          S.close t;
+          equal int ~msg:"the word" 2 (Rig.signaled t.d));
       test "an opened GPU's facts are its capability's" (fun () ->
-          S.with_gpu @@ fun g ->
-          let c = A.capability g in
-          equal string ~msg:"arch" (Gpu.processor c.gpu) (A.arch g);
-          greater int ~msg:"budget" ~than:0 (A.budget g);
+          S.with_ @@ fun t ->
+          let c = A.capability t.g in
+          equal string ~msg:"arch" (Gpu.processor c.gpu) (A.arch t.g);
+          greater int ~msg:"budget" ~than:0 (A.budget t.g);
           greater int ~msg:"clock" ~than:0 c.clock_hz;
           equal bool ~msg:"AQL" (c.gpu.xccs > 1)
             (match c.compute with Aql _ -> true | Pm4 -> false));
       test "an allocation past the GPU's memory is None" (fun () ->
-          S.with_gpu @@ fun g ->
+          S.with_ @@ fun t ->
           equal bool ~msg:"none" true
-            (Option.is_none (A.alloc g `Device (2 * A.budget g))));
+            (Option.is_none (A.alloc t.g `Device (2 * A.budget t.g))));
     ]
 
 (* Memory *)
 
-(* The device the property tests share, stopped when the run ends. *)
-let shared = fixture ~teardown:S.stop S.gpu
+(* The device the property tests share, closed when the run ends. *)
+let shared = fixture ~teardown:S.close S.open_
 let kinds = Rig.Buffer.[ Device; Pinned; Mapped ]
 
 let pp_kind ppf k =
@@ -1693,39 +1694,39 @@ let size = Gen.of_list ~pp:Format.pp_print_int [ 1; 7; 4096; (1 lsl 20) + 7 ]
 let offset = Gen.of_list ~pp:Format.pp_print_int [ 0; 1; 4095 ]
 
 let round_trip (ka, kb, n, (oa, ob)) =
-  let g = shared () in
-  let src = buffer ~memory:Pinned g n and dst = buffer ~memory:Pinned g n in
-  let a = view (buffer ~memory:ka g (oa + n)) oa n in
-  let b = view (buffer ~memory:kb g (ob + n)) ob n in
+  let t = shared () in
+  let src = buffer ~memory:Pinned t n and dst = buffer ~memory:Pinned t n in
+  let a = view (buffer ~memory:ka t (oa + n)) oa n in
+  let b = view (buffer ~memory:kb t (ob + n)) ob n in
   let bytes = pattern n (n + oa) in
   put src bytes;
-  run g [| copy ~dst:a src |];
-  run g [| copy ~dst:b a |];
-  run g [| copy ~dst b |];
+  run t [| copy ~dst:a src |];
+  run t [| copy ~dst:b a |];
+  run t [| copy ~dst b |];
   equal string ~msg:"the bytes" bytes (get dst)
 
 (* Copies of the copy engine's largest packet and its neighbours: the bytes
    before each copy's end arrive, those after stay as they were. Two windows are
    read: the start, and the packet's end. *)
 let around_the_packet () =
-  let g = shared () in
-  let max = Abi.Sdma.max_copy (A.capability g).gpu in
+  let t = shared () in
+  let max = Abi.Sdma.max_copy (A.capability t.g).gpu in
   let w = 4096 in
   let n = max + (w / 2) in
-  let src = buffer ~memory:Pinned g n and dst = buffer g n in
-  let zeros = buffer ~memory:Pinned g w and back = buffer ~memory:Pinned g w in
+  let src = buffer ~memory:Pinned t n and dst = buffer t n in
+  let zeros = buffer ~memory:Pinned t w and back = buffer ~memory:Pinned t w in
   put zeros (String.make w '\000');
   let windows = [ 0; max - (w / 2) ] in
   List.iteri (fun i o -> put (view src o w) (pattern w (i + 1))) windows;
   List.iter
     (fun k ->
-      run g
+      run t
         (Array.of_list
            (List.map (fun o -> copy ~dst:(view dst o w) zeros) windows));
-      run g [| copy ~dst:(view dst 0 k) (view src 0 k) |];
+      run t [| copy ~dst:(view dst 0 k) (view src 0 k) |];
       List.iteri
         (fun i o ->
-          run g [| copy ~dst:back (view dst o w) |];
+          run t [| copy ~dst:back (view dst o w) |];
           let arrived = Int.max 0 (Int.min w (k - o)) in
           let expected =
             String.sub (pattern w (i + 1)) 0 arrived
@@ -1738,21 +1739,21 @@ let around_the_packet () =
 (* Host and GPU writes to the same memory, round after round, are read by the
    next submission and by the host. *)
 let rewrites () =
-  let g = shared () in
+  let t = shared () in
   let n = 4096 in
-  let mapped = buffer ~memory:Mapped g n
-  and pinned = buffer ~memory:Pinned g n in
-  let vram = buffer g n and out = buffer ~memory:Pinned g n in
+  let mapped = buffer ~memory:Mapped t n
+  and pinned = buffer ~memory:Pinned t n in
+  let vram = buffer t n and out = buffer ~memory:Pinned t n in
   for round = 1 to 8 do
     let msg = strf "round %d" round in
     let p = pattern n round in
     put mapped p;
-    run g [| copy ~dst:out mapped |];
+    run t [| copy ~dst:out mapped |];
     equal string ~msg:(msg ^ ": the host's write through the BAR") p (get out);
     let p' = pattern n (round + 100) in
     put pinned p';
-    run g [| copy ~dst:vram pinned |];
-    run g [| copy ~dst:mapped vram |];
+    run t [| copy ~dst:vram pinned |];
+    run t [| copy ~dst:mapped vram |];
     equal string
       ~msg:(msg ^ ": the GPU's write, read through the BAR")
       p' (get mapped)
@@ -1770,16 +1771,16 @@ let memory =
         rewrites;
     ]
 
-let spin g p flag n = kernel g p "spin" ~groups:1 (le64 (addr flag) ^ le64 n)
+let spin t p flag n = kernel t p "spin" ~groups:1 (le64 (addr flag) ^ le64 n)
 
 (* Code placed where other code ran runs as placed: each image is unloaded
    once unreachable and its work done, and the next load reuses the memory. *)
 let stale_code () =
-  S.with_gpu @@ fun g ->
-  let out = buffer ~memory:Pinned g (4 * 64) in
+  S.with_ @@ fun t ->
+  let out = buffer ~memory:Pinned t (4 * 64) in
   let load of_ =
-    let p = image ~of_ g in
-    run g [| kernel ~of_ g p "double_index" ~groups:1 (le64 (addr out)) |];
+    let p = image ~of_ t in
+    run t [| kernel ~of_ t p "double_index" ~groups:1 (le64 (addr out)) |];
     let at = Option.get (Rig.Image.entry p "double_index") in
     (at, get out)
   in
@@ -1802,66 +1803,73 @@ let code =
   group ~timeout:60. "kernels"
     [
       test "a kernel loaded from its image computes" (fun () ->
-          S.with_gpu @@ fun g ->
-          let p = image g in
-          let out = buffer ~memory:Pinned g (4 * 256) in
-          run g [| kernel g p "double_index" ~groups:4 (le64 (addr out)) |];
+          S.with_ @@ fun t ->
+          let p = image t in
+          let out = buffer ~memory:Pinned t (4 * 256) in
+          run t [| kernel t p "double_index" ~groups:4 (le64 (addr out)) |];
           equal string ~msg:"out" (doubled 256) (get out));
       test "code placed where other code ran runs as placed" stale_code;
       test "parts on two queues run in their after order" (fun () ->
-          S.with_gpu @@ fun g ->
-          let p = image g in
-          let out = buffer g (4 * 256)
-          and back = buffer ~memory:Pinned g (4 * 256) in
-          run g
+          S.with_ @@ fun t ->
+          let p = image t in
+          let out = buffer t (4 * 256)
+          and back = buffer ~memory:Pinned t (4 * 256) in
+          run t
             [|
-              kernel g p "double_index" ~groups:4 (le64 (addr out));
+              kernel t p "double_index" ~groups:4 (le64 (addr out));
               copy ~after:[| 0 |] ~dst:back out;
             |];
           equal string ~msg:"back" (doubled 256) (get back));
       test "a fill places its words" (fun () ->
-          S.with_gpu @@ fun g ->
-          let word = buffer ~memory:Pinned g 8 in
+          S.with_ @@ fun t ->
+          let word = buffer ~memory:Pinned t 8 in
           put word (le64 0);
           let ws = words (Pm4.write_data (Memory (addr word)) 0xc0ffee) in
-          let f = S.fill (A.capability g) ws ~bytes:64 in
-          run g
+          let f = S.fill (A.capability t.g) ws ~bytes:64 in
+          run t
             [|
               S.fill_part ~queue:"COMPUTE:0" f ~units:(Array.length ws)
                 ~bytes:64;
             |];
           equal string ~msg:"word" (le64 0xc0ffee) (get word));
       test "long work is no fault" (fun () ->
-          S.with_gpu @@ fun g ->
-          let p = image g in
-          let flag = buffer ~memory:Pinned g 8 in
+          S.with_ @@ fun t ->
+          let p = image t in
+          let flag = buffer ~memory:Pinned t 8 in
           put flag (le64 0);
-          run g [| spin g p flag 150_000 |];
+          run t [| spin t p flag 150_000 |];
           equal string ~msg:"flag" (le32s [ 1 ]) (String.sub (get flag) 0 4));
       test "a release wakes a sleeper well before its bound" (fun () ->
           (* A few milliseconds of work, slept on with a bound of seconds: the
              release's interrupt, not the bound, ends the sleep. *)
-          S.with_gpu @@ fun g ->
-          let p = image g in
-          let flag = buffer ~memory:Pinned g 8 in
+          S.with_ @@ fun t ->
+          let p = image t in
+          let flag = buffer ~memory:Pinned t 8 in
           put flag (le64 0);
-          let v = S.submit g [| spin g p flag 2_000 |] in
-          let t0 = S.now_ns () in
-          while A.signaled g < v do
-            A.sleep g ~seen:(A.signaled g) ~still_ms:5_000
+          let v = S.submit t [| spin t p flag 2_000 |] in
+          let t0 = Rig.Profile.now () in
+          while A.signaled t.g < v do
+            A.sleep t.g ~seen:(A.signaled t.g) ~still_ms:5_000
           done;
           less int ~msg:"ms asleep" ~than:1_000
-            ((S.now_ns () - t0) / 1_000_000));
-      test "a device stopped while its work runs stops it" (fun () ->
-          let g = S.gpu () in
-          let p = image g in
-          let flag = buffer ~memory:Pinned g 8 in
-          put flag (le64 0);
-          let v = S.submit g [| spin g p flag 1_500_000 |] in
-          S.stop g;
-          equal int ~msg:"the word" v (A.signaled g);
-          S.still ~msg:"flag (sampled)" string (String.make 8 '\000')
-            (fun () -> get flag)
+            ((Rig.Profile.now () - t0) / 1_000_000));
+      test "a loss while work runs stops the work" (fun () ->
+          (* The flag is the test's memory, which the stop leaves mapped. *)
+          S.with_ @@ fun t ->
+          let p = image t in
+          let flag = Option.get (A.alloc t.g `Pinned 8) in
+          H.set64 (host flag) 0;
+          let args = le64 (address flag) ^ le64 1_500_000 in
+          let v = S.submit t [| kernel t p "spin" ~groups:1 args |] in
+          let f = S.fill ~code:5 (A.capability t.g) [||] ~bytes:0 in
+          let fails = S.fill_part ~queue:"COMPUTE:0" f ~units:0 ~bytes:0 in
+          raises_match
+            (function Rig.Lost _ -> true | _ -> false)
+            (fun () -> S.submit t [| fails |]);
+          S.close t;
+          equal int ~msg:"the word" (v + 1) (Rig.signaled t.d);
+          still ~msg:"flag (sampled)" int 0
+            (fun () -> H.get64 (host flag))
             ~ms:100);
     ]
 
@@ -1876,8 +1884,8 @@ let code =
 (* The shared device's image of fixtures/work.cl, loaded once. *)
 let work_image = lazy (image ~of_:work_code (shared ()))
 
-let work_words g name ~groups args =
-  kernel_words ~of_:work_code g (Lazy.force work_image) name ~groups args
+let work_words t name ~groups args =
+  kernel_words ~of_:work_code t (Lazy.force work_image) name ~groups args
 
 module Chain = struct
   (* A submission of [incs] compute parts, each adding 1 to the words its
@@ -1915,8 +1923,8 @@ module Chain = struct
 
   let sys =
     lazy
-      (let g = shared () in
-       let pinned () = buffer ~memory:Pinned g (4 * most) in
+      (let t = shared () in
+       let pinned () = buffer ~memory:Pinned t (4 * most) in
        let input = pinned () and garbage = pinned () and out = pinned () in
        put input
          (le32s (List.init most (fun i -> i * 2654435761 land 0xffff_ffff)));
@@ -1925,11 +1933,11 @@ module Chain = struct
          input;
          garbage;
          out;
-         bufs = Array.init buffers (fun _ -> buffer g (4 * most));
+         bufs = Array.init buffers (fun _ -> buffer t (4 * most));
        })
 
   let law c =
-    let g = shared () in
+    let t = shared () in
     let s = Lazy.force sys in
     let n = c.words and bytes = 4 * c.words in
     let part b = view b 0 bytes in
@@ -1942,14 +1950,14 @@ module Chain = struct
     cover "a submission whose copy queue released the value before" c.after_copy;
     cover "every compute unit busy" (n >= 65536);
     (* Garbage in every buffer, then the input in the first. *)
-    run g
+    run t
       (Array.map
          (fun b -> copy ~dst:(part b) (part s.garbage))
          (Array.append s.bufs [| s.out |]));
-    run g [| copy ~dst:(part s.bufs.(0)) (part s.input) |];
+    run t [| copy ~dst:(part s.bufs.(0)) (part s.input) |];
     if c.after_copy then
-      run g [| copy ~dst:(view s.out 0 4) (view s.garbage 0 4) |]
-    else run g [| S.words_part ~queue:"COMPUTE:0" [| pm4_nop |] |];
+      run t [| copy ~dst:(view s.out 0 4) (view s.garbage 0 4) |]
+    else run t [| S.words_part ~queue:"COMPUTE:0" [| pm4_nop |] |];
     let parts = ref [] in
     let add p =
       parts := p :: !parts;
@@ -1962,13 +1970,13 @@ module Chain = struct
         incr next;
         let after = Option.fold ~none:[||] ~some:(fun j -> [| j |]) !copied in
         let ws =
-          work_words g "inc"
+          work_words t "inc"
             ~groups:((n + 63) / 64)
             (le64 (addr out) ^ le64 (addr !src) ^ le32s [ n ])
         in
         let p =
           if fill then
-            let f = S.fill (A.capability g) ws ~bytes:0 in
+            let f = S.fill (A.capability t.g) ws ~bytes:0 in
             S.fill_part ~queue:"COMPUTE:0" ~after f ~units:(Array.length ws)
               ~bytes:0
           else S.words_part ~queue:"COMPUTE:0" ~after ws
@@ -1985,7 +1993,7 @@ module Chain = struct
       c.incs;
     let last = List.length !parts - 1 in
     ignore (add (copy ~after:[| last |] ~dst:(part s.out) (part !src)));
-    run g (Array.of_list (List.rev !parts));
+    run t (Array.of_list (List.rev !parts));
     let input = get (part s.input) in
     let expected = Bytes.create bytes in
     for i = 0 to n - 1 do
@@ -2001,16 +2009,16 @@ end
    to Device memory, and a kernel a copy's, in one submission and in the
    next. *)
 let readers () =
-  let g = shared () in
+  let t = shared () in
   let n = 4096 in
   let bytes = 4 * n in
-  let src = buffer ~memory:Pinned g bytes
-  and pinned = buffer ~memory:Pinned g bytes in
-  let mapped = buffer ~memory:Mapped g bytes and vram = buffer g bytes in
-  let back = buffer ~memory:Pinned g bytes in
+  let src = buffer ~memory:Pinned t bytes
+  and pinned = buffer ~memory:Pinned t bytes in
+  let mapped = buffer ~memory:Mapped t bytes and vram = buffer t bytes in
+  let back = buffer ~memory:Pinned t bytes in
   let kernel ?after dst src =
     S.words_part ~queue:"COMPUTE:0" ?after
-      (work_words g "copy" ~groups:1
+      (work_words t "copy" ~groups:1
          (le64 (addr dst) ^ le64 (addr src) ^ le32s [ n; 0 ]))
   in
   let fresh round k =
@@ -2021,7 +2029,7 @@ let readers () =
   for round = 1 to 8 do
     let msg what = strf "round %d: %s" round what in
     let p = fresh round 0 in
-    run g [| kernel pinned src; kernel mapped src |];
+    run t [| kernel pinned src; kernel mapped src |];
     equal string
       ~msg:(msg "the host reads a kernel's Pinned writes")
       p (get pinned);
@@ -2029,24 +2037,24 @@ let readers () =
       ~msg:(msg "the host reads a kernel's Mapped writes")
       p (get mapped);
     let p = fresh round 1 in
-    run g [| kernel vram src; copy ~after:[| 0 |] ~dst:back vram |];
+    run t [| kernel vram src; copy ~after:[| 0 |] ~dst:back vram |];
     equal string
       ~msg:(msg "a copy reads a kernel's writes, after it")
       p (get back);
     let p = fresh round 2 in
-    run g [| kernel vram src |];
-    run g [| copy ~dst:back vram |];
+    run t [| kernel vram src |];
+    run t [| copy ~dst:back vram |];
     equal string
       ~msg:(msg "a copy reads a kernel's writes, a value later")
       p (get back);
     let p = fresh round 3 in
-    run g [| copy ~dst:vram src; kernel ~after:[| 0 |] back vram |];
+    run t [| copy ~dst:vram src; kernel ~after:[| 0 |] back vram |];
     equal string
       ~msg:(msg "a kernel reads a copy's writes, after it")
       p (get back);
     let p = fresh round 4 in
-    run g [| copy ~dst:vram src |];
-    run g [| kernel back vram |];
+    run t [| copy ~dst:vram src |];
+    run t [| kernel back vram |];
     equal string
       ~msg:(msg "a kernel reads a copy's writes, a value later")
       p (get back)
@@ -2065,15 +2073,9 @@ let queue_order =
 
 (* Through the C entries, on a device rig does not drive *)
 
-(* A device of GPU 0 opened by [S.open_gpu], for work handed to its C entries
-   directly, with values the test numbers, once the device [S.gpu] opened last
-   is stopped. *)
-let raw =
-  fixture ~teardown:A.stop (fun () ->
-      if S.gpus () = 0 then skip ~reason:"the machine has no AMD GPU" ();
-      S.hold_gpu ();
-      S.stop_gpu ();
-      match S.open_gpu () with Ok g -> g | Error why -> failwith why)
+(* A device of GPU 0 opened by its driver alone ([S.driver]), for work handed
+   to its C entries directly, with values the test numbers. *)
+let raw = fixture ~teardown:S.stop_driver S.driver
 
 (* A device's values, numbered as it submits them. *)
 type run = { g : A.t; mutable v : int }
@@ -2093,7 +2095,7 @@ let device g = { g; v = 0 }
 let go r ps =
   r.v <- r.v + 1;
   equal answer ~msg:"submit" `Ok (submit r.g ~v:r.v ps);
-  S.wait r.g r.v
+  S.reached r.g r.v
 
 let entry m f = Option.get (A.entry m f)
 
@@ -2103,12 +2105,12 @@ let laid ?(of_ = kernels) r =
   let m, code, bytes = load r.g (Lazy.force of_).binary in
   let n = String.length bytes in
   let staging = Option.get (A.alloc r.g `Pinned n) in
-  S.write (host staging) bytes;
+  H.write (host staging) bytes;
   (m, code, E.copy ~dst:(address code) ~src:(address staging) n)
 
 let arguments r values =
   let args = Option.get (A.alloc r.g `Pinned 4096) in
-  S.write (host args) (String.concat "" (List.map le64 values));
+  H.write (host args) (String.concat "" (List.map le64 values));
   args
 
 (* A submit answers RIG_FAILED for a fill's failure, runs none of the parts,
@@ -2118,9 +2120,9 @@ let failures_hw =
     [
       test "a fill past its declaration fails, and the word still moves"
         (fun () ->
-          S.with_gpu @@ fun g ->
+          S.with_ @@ fun { g; _ } ->
           let word = Option.get (A.alloc g `Pinned 8) in
-          S.write (host word) (le64 0);
+          H.write (host word) (le64 0);
           let ws = words (Pm4.write_data (Memory (address word)) 1) in
           let f = S.fill (A.capability g) ws ~bytes:0 in
           let p =
@@ -2133,16 +2135,16 @@ let failures_hw =
                 contains ~sub:"a fill on COMPUTE:0 failed with " why;
                 why
           in
-          S.wait g 1;
-          equal string ~msg:"the fill's word" (le64 0) (S.read (host word) 8);
+          S.reached g 1;
+          equal string ~msg:"the fill's word" (le64 0) (H.read (host word) 8);
           equal answer ~msg:"the next" (`Failed why) (submit g ~v:2 [||]));
       test "a failed submission runs none of its parts" (fun () ->
-          S.with_gpu @@ fun g ->
+          S.with_ @@ fun { g; _ } ->
           let n = 4096 in
           let src = Option.get (A.alloc g `Pinned n) in
           let dst = Option.get (A.alloc g `Pinned n) in
-          S.write (host src) (pattern n 1);
-          S.write (host dst) (String.make n '\000');
+          H.write (host src) (pattern n 1);
+          H.write (host dst) (String.make n '\000');
           let f = S.fill ~code:5 (A.capability g) [||] ~bytes:0 in
           equal answer ~msg:"submit" (`Failed "a fill on COPY:0 failed with 5")
             (submit g ~v:1
@@ -2150,16 +2152,16 @@ let failures_hw =
                  E.copy ~dst:(address dst) ~src:(address src) n;
                  E.fill ~queue:"COPY:0" f ~units:0 ~bytes:0;
                |]);
-          S.wait g 1;
-          equal string ~msg:"dst" (String.make n '\000') (S.read (host dst) n));
+          S.reached g 1;
+          equal string ~msg:"dst" (String.make n '\000') (H.read (host dst) n));
       test "a value failed behind running work is reached once it ends"
         (fun () ->
-          let g = S.gpu () in
+          S.with_ @@ fun ({ g; _ } as t) ->
           let r = device g in
           let m, _, upload = laid r in
           go r [| upload |];
           let flag = Option.get (A.alloc g `Pinned 8) in
-          S.write (host flag) (le64 0);
+          H.write (host flag) (le64 0);
           let args = arguments r [ address flag; 150_000 ] in
           let spin =
             E.words ~queue:"COMPUTE:0"
@@ -2171,10 +2173,10 @@ let failures_hw =
           equal answer ~msg:"the failure"
             (`Failed "a fill on COMPUTE:0 failed with 5")
             (submit g ~v:3 [| E.fill ~queue:"COMPUTE:0" f ~units:0 ~bytes:0 |]);
-          S.wait g 3;
+          S.reached g 3;
           equal string ~msg:"the work's flag" (le32s [ 1 ])
-            (S.read (host flag) 4);
-          S.stop g;
+            (H.read (host flag) 4);
+          S.close t;
           equal int ~msg:"the word" 3 (A.signaled g));
     ]
 
@@ -2264,10 +2266,10 @@ module Wrap = struct
     let res = Option.get (A.alloc g `Pinned (4 * slots)) in
     let src = Option.get (A.alloc g `Pinned (8 * slots)) in
     let dst = Option.get (A.alloc g `Pinned (8 * slots)) in
-    S.write (host res) (String.make (4 * slots) '\000');
-    S.write (host src)
+    H.write (host res) (String.make (4 * slots) '\000');
+    H.write (host src)
       (String.concat "" (List.init slots (fun i -> le64 (i + 1))));
-    S.write (host dst) (String.make (8 * slots) '\000');
+    H.write (host dst) (String.make (8 * slots) '\000');
     { res; src; dst }
 
   let write k v =
@@ -2406,7 +2408,7 @@ module Wrap = struct
       | `Fits -> ()
       | `Never -> fail "Never"
       | `Later ->
-          S.wait g (A.signaled g + 1);
+          S.reached g (A.signaled g + 1);
           room ps
     in
     let seen = ref 0 in
@@ -2420,7 +2422,7 @@ module Wrap = struct
         seen := w)
       shapes;
     let last = List.length shapes in
-    S.wait g last;
+    S.reached g last;
     let res = Bytes.make (4 * slots) '\000'
     and dst = Bytes.make (8 * slots) '\000' in
     List.iteri
@@ -2437,11 +2439,12 @@ module Wrap = struct
             copy ())
       shapes;
     equal string ~msg:"the compute writes" (Bytes.to_string res)
-      (S.read (host k.res) (4 * slots));
+      (H.read (host k.res) (4 * slots));
     equal string ~msg:"the copies" (Bytes.to_string dst)
-      (S.read (host k.dst) (8 * slots))
+      (H.read (host k.dst) (8 * slots))
 
-  let law goals = S.with_gpu @@ fun g -> run g (plan (A.capability g).gpu goals)
+  let law goals =
+    S.with_ @@ fun { g; _ } -> run g (plan (A.capability g).gpu goals)
 end
 
 (* Values complete in order *)
@@ -2572,7 +2575,7 @@ module Order = struct
     let regions =
       Array.init buffers (fun b ->
           let reg = Option.get (A.alloc g `Device size) in
-          S.write (host staging) (Bytes.to_string (initial b));
+          H.write (host staging) (Bytes.to_string (initial b));
           go r [| copy_all (reg, 0) (staging, 0) size |];
           reg)
     in
@@ -2601,7 +2604,7 @@ module Order = struct
       else begin
         let a = at (host s.args) (32 * !block) in
         incr block;
-        S.write a
+        H.write a
           (String.concat ""
              [
                le64 (address dst + p.do_);
@@ -2631,7 +2634,7 @@ module Order = struct
       if w < r.v then watch w
     in
     watch (first - 1);
-    S.wait g r.v
+    S.reached g r.v
 
   let invariant m s =
     Array.iteri
@@ -2639,7 +2642,7 @@ module Order = struct
         go s.r [| copy_all (s.staging, 0) (reg, 0) size |];
         equal string ~msg:(strf "buffer %d" b)
           (Bytes.to_string m.bufs.(b))
-          (S.read (host s.staging) size))
+          (H.read (host s.staging) size))
       s.regions
 
   let parts =
@@ -2708,15 +2711,15 @@ let crossing =
       (t - d, t))
 
 let held (w0, t) =
-  S.with_gpu @@ fun g ->
+  S.with_ @@ fun { g; _ } ->
   waits_on g;
   let word = Option.get (A.alloc g `Pinned 8) in
   let src = Option.get (A.alloc g `Pinned 64)
   and dst = Option.get (A.alloc g `Pinned 64) in
   let zeros = String.make 64 '\000' in
-  S.write (host src) (String.make 64 'w');
-  S.write (host dst) zeros;
-  S.write (host word) (le64 w0);
+  H.write (host src) (String.make 64 'w');
+  H.write (host dst) zeros;
+  H.write (host word) (le64 w0);
   let below =
     List.sort_uniq compare
       (List.filter
@@ -2732,18 +2735,18 @@ let held (w0, t) =
        [| E.copy ~dst:(address dst) ~src:(address src) 64 |]);
   List.iter
     (fun x ->
-      S.write (host word) (le64 x);
-      S.still
+      H.write (host word) (le64 x);
+      still
         ~msg:(strf "the copy, the word at %d (sampled)" x)
         string zeros
-        (fun () -> S.read (host dst) 64)
+        (fun () -> H.read (host dst) 64)
         ~ms:20;
       equal int ~msg:(strf "the timeline, the word at %d" x) 0 (A.signaled g))
     below;
-  S.write (host word) (le64 t);
-  S.wait g 1;
+  H.write (host word) (le64 t);
+  S.reached g 1;
   equal string ~msg:"the copy, the word reached" (String.make 64 'w')
-    (S.read (host dst) 64);
+    (H.read (host dst) 64);
   List.iter (A.free g) [ word; src; dst ]
 
 (* Through rig, between two devices of the GPU: the consumer's submission reads
@@ -2755,9 +2758,8 @@ let opens = ref 0
 let in_queue () =
   if S.driverless () then
     skip ~reason:"with no kernel driver, a process holds one device of a GPU" ();
-  S.with_gpu @@ fun g ->
+  S.with_ @@ fun ({ d; g } as t) ->
   waits_on g;
-  let d = S.rig g in
   incr opens;
   let made = ref None in
   let pd =
@@ -2801,16 +2803,16 @@ let in_queue () =
   let vp =
     Rig.Point.value (Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||])
   in
-  let out = buffer ~memory:Pinned g 64 in
+  let out = buffer ~memory:Pinned t 64 in
   put out (String.make 64 '\000');
   let seen = Option.get (Rig.Buffer.borrow d b) in
-  let vc = S.submit g [| copy ~dst:out seen |] in
+  let vc = S.submit t [| copy ~dst:out seen |] in
   less int ~msg:"the producer's word, at the consumer's submit" ~than:vp
     (A.signaled pg);
   less int ~msg:"the consumer's word" ~than:vc (A.signaled g);
   (* amdgpu maps host memory at its GPU address *)
-  S.still ~msg:"the consumer's copy (sampled)" string (String.make 64 '\000')
-    (fun () -> S.read (addr out) 64)
+  still ~msg:"the consumer's copy (sampled)" string (String.make 64 '\000')
+    (fun () -> H.read (addr out) 64)
     ~ms:50;
   Rig.wait d vc;
   at_least int ~msg:"the producer's word, once the consumer's is reached"
@@ -2820,17 +2822,17 @@ let in_queue () =
 
 (* A submission waits on at most 255 words. *)
 let wait_bound () =
-  S.with_gpu @@ fun g ->
+  S.with_ @@ fun { g; _ } ->
   waits_on g;
   let word = Option.get (A.alloc g `Pinned 8) in
-  S.write (host word) (le64 1);
+  H.write (host word) (le64 1);
   let waits n = Array.make n (address word, 1) in
   equal answer ~msg:"255 waits" `Ok (E.submit g ~v:1 ~waits:(waits 255) [||]);
-  S.wait g 1;
+  S.reached g 1;
   match E.submit g ~v:2 ~waits:(waits 256) [||] with
   | `Ok -> fail "256 waits handed over"
   | `Failed why ->
-      S.wait g 2;
+      S.reached g 2;
       equal answer ~msg:"the next submit" (`Failed why) (submit g ~v:3 [||])
 
 let waits =
@@ -2857,13 +2859,13 @@ let waits =
    it copies the token out. A wait that passed early would copy a cell before
    its token. *)
 let aged_slots () =
-  S.with_gpu @@ fun g ->
+  S.with_ @@ fun { g; _ } ->
   let values = 1300 and most = 256 in
   let bytes = 4 * values * most in
   let cells = Option.get (A.alloc g `Pinned bytes) in
   let out = Option.get (A.alloc g `Pinned bytes) in
-  S.write (host cells) (String.make bytes '\000');
-  S.write (host out) (String.make bytes '\000');
+  H.write (host cells) (String.make bytes '\000');
+  H.write (host out) (String.make bytes '\000');
   let token k m = ((k * 1000) + m + 1) land 0xffff_ffff in
   let at r k m = address r + (4 * ((k * most) + m)) in
   let pairs k = if k mod 100 = 0 then most else 8 in
@@ -2874,7 +2876,7 @@ let aged_slots () =
     | `Fits -> ()
     | `Never -> fail "Never"
     | `Later ->
-        S.wait g (A.signaled g + 1);
+        S.reached g (A.signaled g + 1);
         room ps
   in
   for k = 0 to values - 1 do
@@ -2894,8 +2896,8 @@ let aged_slots () =
       `Ok
       (submit g ~v:(base + k) ps)
   done;
-  S.wait g (base + values - 1);
-  let got = S.read (host out) bytes in
+  S.reached g (base + values - 1);
+  let got = H.read (host out) bytes in
   for k = 0 to values - 1 do
     for m = 0 to pairs k - 1 do
       let o = 4 * ((k * most) + m) in
@@ -2930,14 +2932,14 @@ let timeline =
 
 (* With no kernel driver, a process takes a GPU once: a second open is
    refused, naming the GPU taken, and the first device goes on. *)
-let one_gpu_driverless g =
+let one_gpu_driverless t =
   (match S.open_gpu () with
   | Ok g' ->
       A.stop g';
       fail "a second open of a GPU the process took"
   | Error why -> contains ~sub:"is open in this process" why);
-  equal int ~msg:"the first device's next value" 1 (S.submit g [||]);
-  S.wait g 1
+  equal int ~msg:"the first device's next value" 1 (S.submit t [||]);
+  S.wait t 1
 
 (* Through amdgpu, a process opens a GPU as often as it likes: the devices
    share its memory. *)
@@ -2950,13 +2952,13 @@ let one_gpu_shared g =
   let staging' = Option.get (A.alloc g' `Pinned n) in
   let theirs = Option.get (A.alloc g' `Device n) in
   let copy d s = E.copy ~dst:(address d) ~src:(address s) n in
-  S.write (host staging') p;
+  H.write (host staging') p;
   go r' [| copy theirs staging' |];
   let back = Option.get (A.alloc g `Pinned n) in
   let read_through view =
-    S.write (host back) (String.make n '\000');
+    H.write (host back) (String.make n '\000');
     go r [| copy back view |];
-    S.read (host back) n
+    H.read (host back) n
   in
   equal bool ~msg:"peers" true (A.peer g g');
   (match A.map_peer g g' theirs with
@@ -2964,19 +2966,19 @@ let one_gpu_shared g =
   | Some view ->
       equal string ~msg:"read through the view" p (read_through view);
       A.free g view);
-  S.write (host staging') (String.make n '\000');
+  H.write (host staging') (String.make n '\000');
   go r' [| copy staging' theirs |];
-  equal string ~msg:"the memory, its view unmapped" p (S.read (host staging') n);
+  equal string ~msg:"the memory, its view unmapped" p (H.read (host staging') n);
   let mapped' = Option.get (A.alloc g' `Mapped n) in
   (match A.map_peer g g' mapped' with
   | None -> fail "a device refused Mapped memory of its own GPU"
   | Some view ->
       let p = pattern n 11 in
-      S.write (host mapped') p;
+      H.write (host mapped') p;
       equal string ~msg:"the host's writes, read through a view" p
         (read_through view);
       A.free g view);
-  let page = S.pages n in
+  let page = H.pages n in
   let m = Option.get (A.map_host g page n) in
   equal bool ~msg:"a page the other device maps" true
     (Option.is_none (A.map_host g' page n));
@@ -2984,13 +2986,13 @@ let one_gpu_shared g =
   (match A.map_host g' page n with
   | None -> fail "a page no device maps refused"
   | Some m' -> A.free g' m');
-  S.free_pages page n;
+  H.free_pages page n;
   List.iter (A.free g') [ staging'; theirs; mapped' ];
   A.free g back
 
 let one_gpu () =
-  S.with_gpu @@ fun g ->
-  if S.driverless () then one_gpu_driverless g else one_gpu_shared g
+  S.with_ @@ fun t ->
+  if S.driverless () then one_gpu_driverless t else one_gpu_shared t.g
 
 let two =
   group ~timeout:60. "one GPU"
@@ -3020,7 +3022,7 @@ let traces =
     [
       test "a device's trace buffers are made once, the host reading them"
         (fun () ->
-          S.with_gpu @@ fun g ->
+          S.with_ @@ fun { g; _ } ->
           let c = A.capability g in
           match (c.trace (), c.trace ()) with
           | Ok t, Ok t' ->
@@ -3029,9 +3031,9 @@ let traces =
                 (c.gpu.shader_engines * c.gpu.xccs)
                 t.engines;
               equal int ~msg:"window, a multiple of 4096" 0 (t.window mod 4096);
-              S.write t.ends_host (String.make (4 * t.slots * t.engines) 'x');
+              H.write t.ends_host (String.make (4 * t.slots * t.engines) 'x');
               equal string ~msg:"the ends, host memory" (String.make 4 'x')
-                (S.read t.ends_host 4);
+                (H.read t.ends_host 4);
               (* The level is amdgpu's file; a driver-less GPU has none. *)
               if not (S.driverless ()) then
                 equal (option string) ~msg:"the GPU's clocks"
@@ -3040,7 +3042,7 @@ let traces =
     ]
 
 let () =
-  S.hold_gpu ();
+  S.hold ();
   exit
     (Windtrap.run "rig_amd"
        [

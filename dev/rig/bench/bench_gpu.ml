@@ -588,17 +588,12 @@ let gpus =
            (fun () -> Rig_nv_nvidia.open_ 0)
            ~kernel:nv_kernel
        else []);
-      (if Rig_amd_amdgpu.count () > 0 then
-         let opened () =
-           let g = Result.get_ok (Rig_amd_amdgpu.open_ 0) in
-           let name = Rig_amd_amdgpu.device_name 0 in
-           let d = Rig.open_ (module Rig_amd) ~name (fun () -> Ok g) in
-           (Result.get_ok d, g)
-         in
+      (if Rig_amd_support.present () then
          gpu_rows
            (module Rig_amd)
-           "amd" ~opened
-           (fun () -> Rig_amd_amdgpu.open_ 0)
+           "amd"
+           ~opened:(fixture (module Rig_amd_support))
+           Rig_amd_support.open_gpu
            ~kernel:amd_kernel
        else []);
     ]

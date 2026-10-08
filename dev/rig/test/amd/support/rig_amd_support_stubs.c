@@ -3,16 +3,10 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* The machine's GPU lock, host memory, fills and the C entries, for the
-   AMD suite. */
+/* Fills and the C entries, for the AMD suite. */
 
-#define _GNU_SOURCE
-
-#include <errno.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 
 #define CAML_NAME_SPACE
 #include <caml/alloc.h>
@@ -20,129 +14,8 @@
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
-#include <caml/threads.h>
 
 #include "rig_amd.h"
-
-#if defined(_WIN32)
-#include <windows.h>
-#else
-#include <fcntl.h>
-#include <sys/file.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <time.h>
-#include <unistd.h>
-#endif
-
-/* The machine's GPU lock */
-
-/* One try at the exclusive lock of the file [v_path], which the process
-   then holds until it exits. A missing file is made writable by every user
-   of the machine. Once taken, the file names [v_holder] and the process's
-   id, for the processes that wait. Answers [0] once the process holds the
-   lock, [-1] after a nap of 100 ms if another process holds it, or the
-   errno of a failing call. Releases the runtime for the nap. */
-value rig_amd_test_lock(value v_path, value v_holder) {
-#if defined(_WIN32)
-  (void)v_path;
-  (void)v_holder;
-  return Val_int(ENOSYS);
-#else
-  /* The descriptor that holds the lock once taken. The suites take it from
-     one domain. */
-  static int held = -1;
-  if (held >= 0) return Val_int(0);
-  const char *path = String_val(v_path);
-  int fd = open(path, O_RDWR | O_CLOEXEC);
-  /* O_EXCL: Linux refuses O_CREAT on another user's file in /tmp
-     (fs.protected_regular). */
-  if (fd < 0 && errno == ENOENT) {
-    fd = open(path, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0666);
-    if (fd < 0 && errno == EEXIST) fd = open(path, O_RDWR | O_CLOEXEC);
-    else if (fd >= 0 && fchmod(fd, 0666) != 0) {
-      int e = errno;
-      close(fd);
-      return Val_int(e);
-    }
-  }
-  if (fd < 0) return Val_int(errno);
-  if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
-    int e = errno;
-    close(fd);
-    if (e != EWOULDBLOCK) return Val_int(e);
-    struct timespec nap = {0, 100 * 1000 * 1000};
-    caml_release_runtime_system();
-    nanosleep(&nap, NULL);
-    caml_acquire_runtime_system();
-    return Val_int(-1);
-  }
-  char note[1024] = "";
-  snprintf(note, sizeof note, "%s, pid %ld\n", String_val(v_holder),
-           (long)getpid());
-  size_t len = strlen(note);
-  if (ftruncate(fd, 0) != 0 || pwrite(fd, note, len, 0) != (ssize_t)len) {
-    int e = errno;
-    close(fd);
-    return Val_int(e);
-  }
-  held = fd;
-  return Val_int(0);
-#endif
-}
-
-/* [n] zeroed bytes of their own pages, which rig_amd_test_free_pages
-   gives back with the same [n]. The pages are mapped untouched, so a large
-   area costs nothing until used. */
-value rig_amd_test_pages(value v_n) {
-  size_t n = ((size_t)Long_val(v_n) + 4095) & ~(size_t)4095;
-#if defined(_WIN32)
-  void *p = VirtualAlloc(NULL, n, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-  if (p == NULL) caml_raise_out_of_memory();
-#else
-  void *p = mmap(NULL, n, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS,
-                 -1, 0);
-  if (p == MAP_FAILED) caml_raise_out_of_memory();
-#endif
-  return Val_long((intnat)p);
-}
-
-value rig_amd_test_free_pages(value v_a, value v_n) {
-#if defined(_WIN32)
-  (void)v_n;
-  VirtualFree((void *)Long_val(v_a), 0, MEM_RELEASE);
-#else
-  size_t n = ((size_t)Long_val(v_n) + 4095) & ~(size_t)4095;
-  munmap((void *)Long_val(v_a), n);
-#endif
-  return Val_unit;
-}
-
-/* The monotonic clock, in nanoseconds. */
-value rig_amd_test_now(value unit) {
-  (void)unit;
-#if defined(_WIN32)
-  LARGE_INTEGER t, f;
-  QueryPerformanceCounter(&t);
-  QueryPerformanceFrequency(&f);
-  return Val_long((intnat)((double)t.QuadPart * 1e9 / (double)f.QuadPart));
-#else
-  struct timespec t;
-  clock_gettime(CLOCK_MONOTONIC, &t);
-  return Val_long((intnat)t.tv_sec * 1000000000 + t.tv_nsec);
-#endif
-}
-
-value rig_amd_test_read(value v_a, value v_n) {
-  CAMLparam2(v_a, v_n);
-  CAMLreturn(caml_alloc_initialized_string(Long_val(v_n),
-                                           (const char *)Long_val(v_a)));
-}
-
-value rig_amd_test_write(value v_a, value v_s) {
-  memcpy((void *)Long_val(v_a), String_val(v_s), caml_string_length(v_s));
-  return Val_unit;
-}
 
 /* A fill: words to place, in two calls if [split] is inside them, and
    segment bytes to take, through the capability's functions, then its own

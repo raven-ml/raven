@@ -53,37 +53,37 @@ let dispatch g co p name =
           (Pm4.dispatch gpu k ~program:(base + k.entry) ~scratch:0 ~args:0
              ~packet:0 ~threads:(64, 1, 1) ~groups:(1, 1, 1) ())))
 
-let page = 4096
+let page = Rig_gpu_support.Host.page
 
 let lost what f =
   match f () with
   | _ -> failf "%s raised no Lost" what
   | exception Rig.Lost (_, why) -> why
 
+(* GPU 0 in a child, through amdgpu, the path the parent's checks open again,
+   handed to rig. The child exits 1 naming the cause if it does not open: it
+   runs no test, so it raises nothing for a runner to report. *)
+let child_gpu () =
+  let opened =
+    Result.bind (Rig_amd_amdgpu.open_ 0) (fun g ->
+        Rig.open_ (module A) ~name:"AMD" (fun () -> Ok g)
+        |> Result.map (fun c -> (c, g)))
+  in
+  match opened with
+  | Ok x -> x
+  | Error why ->
+      prerr_endline why;
+      exit 1
+
 (* After the fault, in a process of its own: the kernel driver schedules no
    queue of a process whose address space of the GPU faulted, so the GPU's use
    after a fault is another process's. The child runs a copy of 64 bytes through
-   rig and exits 0 once it holds them, 1 if they differ, 2 if its value is not
-   reached within 10 s. The parent holds the GPU lock. *)
+   rig and exits 0 once it holds them, 1 if it does not open or they differ, 2
+   if its value is not reached within 10 s. The parent holds the GPU lock. *)
 let after_env = "RIG_AMD_FAULT_AFTER"
 
 let after () =
-  let made = ref None in
-  let make () =
-    Result.map
-      (fun g ->
-        made := Some g;
-        g)
-      (Rig_amd_amdgpu.open_ 0)
-  in
-  let c =
-    match Rig.open_ (module A) ~name:"AMD:after" make with
-    | Ok c -> c
-    | Error why ->
-        prerr_endline why;
-        exit 1
-  in
-  let g = Option.get !made in
+  let c, g = child_gpu () in
   let src = Rig.Buffer.create ~memory:Pinned c 64 in
   let dst = Rig.Buffer.create c 64
   and back = Rig.Buffer.create ~memory:Pinned c 64 in
@@ -110,22 +110,7 @@ let after () =
 let unread_env = "RIG_AMD_FAULT_UNREAD"
 
 let unread () =
-  let made = ref None in
-  let make () =
-    Result.map
-      (fun g ->
-        made := Some g;
-        g)
-      (Rig_amd_amdgpu.open_ 0)
-  in
-  let c =
-    match Rig.open_ (module A) ~name:"AMD:unread" make with
-    | Ok c -> c
-    | Error why ->
-        prerr_endline why;
-        exit 1
-  in
-  let g = Option.get !made in
+  let c, g = child_gpu () in
   let bin = read_fixture "kernels_gfx1201.hsaco" in
   let co = Result.get_ok (Abi.Code_object.of_string bin) in
   let p =
@@ -158,8 +143,7 @@ let unread () =
    process answers Error naming the fault, whether or not a sleep read it, and a
    new process runs work on the GPU. *)
 let faults () =
-  let g = S.gpu () in
-  let d = S.rig g in
+  let ({ S.d; g } as t) = S.open_ () in
   let bin = read_fixture "kernels_gfx1201.hsaco" in
   let co = Result.get_ok (Abi.Code_object.of_string bin) in
   let p =
@@ -178,8 +162,8 @@ let faults () =
   in
   let src = Rig.Buffer.create ~memory:Pinned d 64 in
   Rig.Buffer.copy ~src:(host_buffer (String.make 64 'x')) ~dst:src;
-  let v1 = S.submit g [| dispatch g co p "wild" |] in
-  let v2 = S.submit g [| copy ~dst:watched src |] in
+  let v1 = S.submit t [| dispatch g co p "wild" |] in
+  let v2 = S.submit t [| copy ~dst:watched src |] in
   let why =
     lost "the wait for the value after the fault" (fun () -> Rig.wait d v2)
   in
@@ -187,8 +171,8 @@ let faults () =
   contains ~msg:"the wait for the fault's own value" ~sub:"memory fault at"
     (lost "the wait for the fault's value" (fun () -> Rig.wait d v1));
   contains ~msg:"a submit after the fault" ~sub:"memory fault at"
-    (lost "a submit after the fault" (fun () -> S.submit g [||]));
-  S.still ~msg:"the watched bytes (sampled)" string zeros
+    (lost "a submit after the fault" (fun () -> S.submit t [||]));
+  Rig_gpu_support.still ~msg:"the watched bytes (sampled)" string zeros
     (fun () -> String.init 64 (fun i -> host.{i}))
     ~ms:200;
   (match Rig_amd_amdgpu.open_ 0 with
@@ -208,7 +192,7 @@ let faults () =
 let () =
   if Sys.getenv_opt after_env = Some "1" then after ();
   if Sys.getenv_opt unread_env = Some "1" then unread ();
-  S.hold_gpu ();
+  S.hold ();
   exit
     (run "rig_amd fault"
        [

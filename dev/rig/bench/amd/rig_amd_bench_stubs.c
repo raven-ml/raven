@@ -215,76 +215,17 @@ value rig_amd_bench_set64(value v_p, value v_v) {
 #include <sys/mman.h>
 #include <unistd.h>
 
-/* The requests of KFD's interface, from its kfd_ioctl.h. */
-
-struct kfd_ioctl_create_queue_args {
-  uint64_t ring_base_address, write_pointer_address, read_pointer_address;
-  uint64_t doorbell_offset;
-  uint32_t ring_size, gpu_id, queue_type, queue_percentage, queue_priority;
-  uint32_t queue_id;
-  uint64_t eop_buffer_address, eop_buffer_size, ctx_save_restore_address;
-  uint32_t ctx_save_restore_size, ctl_stack_size, sdma_engine_id, pad;
-};
-
-struct kfd_ioctl_acquire_vm_args {
-  uint32_t drm_fd, gpu_id;
-};
-
-struct kfd_ioctl_alloc_memory_of_gpu_args {
-  uint64_t va_addr, size, handle, mmap_offset;
-  uint32_t gpu_id, flags;
-};
-
-struct kfd_ioctl_free_memory_of_gpu_args {
-  uint64_t handle;
-};
-
-struct kfd_ioctl_map_memory_to_gpu_args {
-  uint64_t handle, device_ids_array_ptr;
-  uint32_t n_devices, n_success;
-};
-
-struct kfd_ioctl_runtime_enable_args {
-  uint64_t r_debug;
-  uint32_t mode_mask, capabilities_mask;
-};
-
-struct kfd_ioctl_create_event_args {
-  uint64_t event_page_offset;
-  uint32_t event_trigger_data, event_type, auto_reset, node_id, event_id;
-  uint32_t event_slot_index;
-};
-
-#define KFD(nr, type) _IOWR('K', nr, struct kfd_ioctl_##type##_args)
-#define CREATE_QUEUE KFD(0x02, create_queue)
-#define CREATE_EVENT KFD(0x08, create_event)
-#define ACQUIRE_VM _IOW('K', 0x15, struct kfd_ioctl_acquire_vm_args)
-#define ALLOC_MEMORY KFD(0x16, alloc_memory_of_gpu)
-#define FREE_MEMORY _IOW('K', 0x17, struct kfd_ioctl_free_memory_of_gpu_args)
-#define MAP_MEMORY KFD(0x18, map_memory_to_gpu)
-#define UNMAP_MEMORY KFD(0x19, map_memory_to_gpu)
-#define RUNTIME_ENABLE KFD(0x25, runtime_enable)
+#include <linux/kfd_ioctl.h>
 
 /* The memory the floors allocate, as the amdgpu path allocates it: GPU
    memory, and system memory the kernel driver owns. */
-#define WRITABLE (1u << 31)
-#define EXECUTABLE (1u << 30)
-#define PUBLIC (1u << 29)
-#define NO_SUBSTITUTE (1u << 28)
-#define COHERENT (1u << 26)
-#define UNCACHED (1u << 25)
-#define VRAM (1u << 0)
-#define GTT (1u << 1)
-#define USERPTR (1u << 2)
+#define FLAGS(f) KFD_IOC_ALLOC_MEM_FLAGS_##f
+#define ALL (FLAGS(WRITABLE) | FLAGS(NO_SUBSTITUTE) | FLAGS(EXECUTABLE))
+#define HOST (FLAGS(COHERENT) | FLAGS(UNCACHED) | FLAGS(PUBLIC) | ALL)
 
-static const uint32_t kinds[] = {
-    VRAM | WRITABLE | NO_SUBSTITUTE | EXECUTABLE,
-    GTT | COHERENT | UNCACHED | PUBLIC | WRITABLE | NO_SUBSTITUTE | EXECUTABLE,
-};
+static const uint32_t kinds[] = {FLAGS(VRAM) | ALL, FLAGS(GTT) | HOST};
 
-#define USERPTR_FLAGS                                                        \
-  (USERPTR | COHERENT | UNCACHED | PUBLIC | WRITABLE | NO_SUBSTITUTE |        \
-   EXECUTABLE)
+#define USERPTR_FLAGS (FLAGS(USERPTR) | HOST)
 
 static void fail(const char *step, int e) {
   char msg[128];
@@ -317,7 +258,7 @@ static struct mem alloc(int kind, uint64_t n) {
   struct kfd_ioctl_alloc_memory_of_gpu_args a = {
       .va_addr = (uint64_t)(uintptr_t)at, .size = n, .gpu_id = gpu_id,
       .flags = kinds[kind]};
-  request(ALLOC_MEMORY, &a, "allocating GPU memory");
+  request(AMDKFD_IOC_ALLOC_MEMORY_OF_GPU, &a, "allocating GPU memory");
   if (kind == 1 && mmap(at, n, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED,
                         drm, (off_t)a.mmap_offset) == MAP_FAILED)
     fail("mapping GPU memory", errno);
@@ -325,7 +266,7 @@ static struct mem alloc(int kind, uint64_t n) {
   struct kfd_ioctl_map_memory_to_gpu_args m = {
       .handle = a.handle, .device_ids_array_ptr = (uint64_t)(uintptr_t)ids,
       .n_devices = 1};
-  request(MAP_MEMORY, &m, "mapping memory for the GPU");
+  request(AMDKFD_IOC_MAP_MEMORY_TO_GPU, &m, "mapping memory for the GPU");
   return (struct mem){a.handle, (uint64_t)(uintptr_t)at, n};
 }
 
@@ -334,9 +275,10 @@ static void unmap_free(uint64_t handle) {
   struct kfd_ioctl_map_memory_to_gpu_args m = {
       .handle = handle, .device_ids_array_ptr = (uint64_t)(uintptr_t)ids,
       .n_devices = 1};
-  request(UNMAP_MEMORY, &m, "unmapping memory from the GPU");
+  request(AMDKFD_IOC_UNMAP_MEMORY_FROM_GPU, &m,
+          "unmapping memory from the GPU");
   struct kfd_ioctl_free_memory_of_gpu_args f = {.handle = handle};
-  request(FREE_MEMORY, &f, "freeing GPU memory");
+  request(AMDKFD_IOC_FREE_MEMORY_OF_GPU, &f, "freeing GPU memory");
 }
 
 static void free_mem(struct mem m) {
@@ -411,7 +353,7 @@ static void make_queue(struct ring *r, int sdma, uint64_t pos, uint64_t *pos_hos
     a.ctx_save_restore_size = (uint32_t)q[2];
     a.ctl_stack_size = (uint32_t)q[3];
   }
-  request(CREATE_QUEUE, &a, "making a KFD queue");
+  request(AMDKFD_IOC_CREATE_QUEUE, &a, "making a KFD queue");
   r->words = (volatile uint32_t *)(uintptr_t)ring.at;
   r->size = RING_BYTES / 4;
   r->put = 0;
@@ -429,9 +371,9 @@ static void make_interrupt(void) {
   struct mem page = alloc(1, EVENT_PAGE_BYTES);
   struct kfd_ioctl_create_event_args first = {.event_page_offset = page.handle,
                                               .auto_reset = 1};
-  request(CREATE_EVENT, &first, "making the event page");
+  request(AMDKFD_IOC_CREATE_EVENT, &first, "making the event page");
   struct kfd_ioctl_create_event_args e = {.auto_reset = 1};
-  request(CREATE_EVENT, &e, "making a signal event");
+  request(AMDKFD_IOC_CREATE_EVENT, &e, "making a signal event");
   interrupt = e.event_id;
   ((volatile uint64_t *)(uintptr_t)page.at)[interrupt] = interrupt;
 }
@@ -454,9 +396,9 @@ value rig_amd_bench_start(value v_q) {
   if (drm < 0) fail("opening the render node", errno);
   struct kfd_ioctl_acquire_vm_args vm = {.drm_fd = (uint32_t)drm,
                                          .gpu_id = gpu_id};
-  request(ACQUIRE_VM, &vm, "acquiring the GPU's address space");
+  request(AMDKFD_IOC_ACQUIRE_VM, &vm, "acquiring the GPU's address space");
   struct kfd_ioctl_runtime_enable_args rt = {0};
-  if (ioctl(kfd, RUNTIME_ENABLE, &rt) < 0 && errno != EBUSY)
+  if (ioctl(kfd, AMDKFD_IOC_RUNTIME_ENABLE, &rt) < 0 && errno != EBUSY)
     fail("enabling the runtime", errno);
   struct mem w = alloc(1, 4096), pos = alloc(1, 4096);
   word = (_Atomic uint64_t *)(uintptr_t)w.at;
@@ -647,14 +589,15 @@ value rig_amd_bench_alloc(value v_kind, value v_n) {
 }
 
 /* [v_n] bytes of page-aligned host memory, written once, never freed, in
-   pages of 4 KiB. Mapping memory for the GPU walks its pages: 256 MiB took
-   about 6 ms in 4 KiB pages and 1.4 to 3 ms in the huge pages the kernel
-   had free for the process, so a row over huge pages read the machine's
-   fragmentation. */
+   the host's base pages. Mapping memory for the GPU walks its pages: 256
+   MiB took about 6 ms in 4 KiB pages and 1.4 to 3 ms in the huge pages the
+   kernel had free for the process, so a row over huge pages read the
+   machine's fragmentation. */
 value rig_amd_bench_pages(value v_n) {
   void *p;
   size_t n = (size_t)Long_val(v_n);
-  if (posix_memalign(&p, 4096, n)) caml_raise_out_of_memory();
+  if (posix_memalign(&p, (size_t)sysconf(_SC_PAGESIZE), n))
+    caml_raise_out_of_memory();
   if (madvise(p, n, MADV_NOHUGEPAGE)) fail("keeping huge pages out", errno);
   memset(p, 1, n);
   return Val_long((intnat)p);
@@ -667,12 +610,13 @@ value rig_amd_bench_map_host(value v_p, value v_n) {
   struct kfd_ioctl_alloc_memory_of_gpu_args a = {
       .va_addr = p, .size = (uint64_t)Long_val(v_n), .mmap_offset = p,
       .gpu_id = gpu_id, .flags = USERPTR_FLAGS};
-  request(ALLOC_MEMORY, &a, "registering host memory");
+  request(AMDKFD_IOC_ALLOC_MEMORY_OF_GPU, &a, "registering host memory");
   uint32_t ids[1] = {gpu_id};
   struct kfd_ioctl_map_memory_to_gpu_args m = {
       .handle = a.handle, .device_ids_array_ptr = (uint64_t)(uintptr_t)ids,
       .n_devices = 1};
-  request(MAP_MEMORY, &m, "mapping host memory for the GPU");
+  request(AMDKFD_IOC_MAP_MEMORY_TO_GPU, &m,
+          "mapping host memory for the GPU");
   unmap_free(a.handle);
   return Val_unit;
 }

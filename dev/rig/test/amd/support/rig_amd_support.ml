@@ -3,16 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Windtrap
-
-let strf = Printf.sprintf
-
-external read : int -> int -> string = "rig_amd_test_read"
-external write : int -> string -> unit = "rig_amd_test_write"
-external pages : int -> int = "rig_amd_test_pages"
-external now_ns : unit -> int = "rig_amd_test_now"
-external free_pages : int -> int -> unit = "rig_amd_test_free_pages"
-
 type arg =
   (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
 
@@ -23,34 +13,6 @@ external fill_arg :
 external fill_entry : unit -> nativeint = "rig_amd_test_fill_entry"
 external fill_address : arg -> int = "rig_amd_test_fill_address"
 external data : arg -> int = "rig_amd_test_data"
-
-(* The machine's GPU lock *)
-
-external lock : string -> string -> int = "rig_amd_test_lock"
-
-let gpu_lock = "/tmp/raven-rig-gpu.lock"
-
-(* The longest wait for the lock, in seconds: the machine's suites, from every
-   checkout and user, take it in turn. *)
-let gpu_wait = 300
-
-let holder () =
-  match In_channel.with_open_bin gpu_lock In_channel.input_all with
-  | note -> String.trim note
-  | exception Sys_error _ -> "a process that left no note"
-
-(* [lock] naps 100 ms each time it is refused. *)
-let rec take refused =
-  match lock gpu_lock Sys.executable_name with
-  | 0 -> ()
-  | -1 when refused < gpu_wait * 10 -> take (refused + 1)
-  | -1 ->
-      failwith
-        (strf "%s: still held after %d s, by %s" gpu_lock gpu_wait (holder ()))
-  | errno -> failwith (strf "%s: errno %d" gpu_lock errno)
-
-(* Whether the process that started this one holds the lock for it. *)
-let held_outside () = Sys.getenv_opt "RIG_GPU_LOCK_HELD" <> None
 
 (* The path *)
 
@@ -69,63 +31,15 @@ let open_gpu () =
   | Some firmware -> Rig_amd_pci.open_ ~firmware 0
   | None -> Rig_amd_amdgpu.open_ 0
 
-let hold_gpu () = if (not (held_outside ())) && gpus () > 0 then take 0
+include Rig_gpu_support.Make (struct
+  module D = Rig_amd
 
-(* The device gpu opened and rig's device over it, until a test stops it or rig
-   loses it: one a failed test left open is stopped by the next gpu. Each open
-   has a name of its own, since rig keeps a name's device after the driver's
-   stop. *)
-let opened = ref None
-let opens = ref 0
+  let class_ = "AMD"
+  let present () = gpus () > 0
+  let open_ = open_gpu
+end)
 
-let stop g =
-  (match !opened with Some (o, _) when o == g -> opened := None | _ -> ());
-  Rig_amd.stop g
-
-let stop_gpu () = Option.iter (fun (o, _) -> stop o) !opened
-
-let gpu () =
-  if gpus () = 0 then
-    skip ~reason:"the machine has no AMD GPU" ();
-  hold_gpu ();
-  stop_gpu ();
-  incr opens;
-  let g = ref None in
-  let make () =
-    Result.map
-      (fun x ->
-        g := Some x;
-        x)
-      (open_gpu ())
-  in
-  match Rig.open_ (module Rig_amd) ~name:(strf "AMD:test-%d" !opens) make with
-  | Error why -> failwith why
-  | Ok c ->
-      let g = Option.get !g in
-      opened := Some (g, c);
-      g
-
-let rig g =
-  match !opened with
-  | Some (o, c) when o == g -> c
-  | _ -> invalid_arg "Rig_amd_support.rig: the device is not open"
-
-let submit g parts =
-  let s = Rig.Submission.make ~reads:0 ~writes:0 (rig g) parts in
-  match Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||] with
-  | p -> Rig.Point.value p
-  | exception (Rig.Lost _ as e) ->
-      opened := None;
-      raise e
-
-let with_gpu f =
-  let g = gpu () in
-  let stop_left () =
-    match !opened with Some (o, _) when o == g -> stop g | _ -> ()
-  in
-  Fun.protect ~finally:stop_left (fun () -> f g)
-
-let wait g v =
+let reached g v =
   let rec loop () =
     let seen = Rig_amd.signaled g in
     if seen < v then begin
@@ -134,12 +48,6 @@ let wait g v =
     end
   in
   loop ()
-
-let still ?msg w x f ~ms =
-  let t0 = Sys.time () in
-  while Sys.time () -. t0 < Float.of_int ms /. 1000. do
-    equal ?msg w x (f ())
-  done
 
 (* Fills *)
 
