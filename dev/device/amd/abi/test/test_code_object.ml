@@ -280,6 +280,13 @@ let refused ?(sub = "") obj =
   let msg = require_error (Code_object.of_string obj) in
   contains ~sub msg
 
+(* [obj] with the u32 at [field] of kernel "a"'s descriptor set to [v]. *)
+let descriptor_field obj field v =
+  let k = require_some (Code_object.kernel (read obj) "a") in
+  let rodata = section obj ".rodata" in
+  let at = rodata.at + k.descriptor - Option.get rodata.offset in
+  patch obj (at + field) (set_u32 v)
+
 let refusals =
   group ~timeout "refusals"
     [
@@ -364,6 +371,17 @@ let refusals =
             (Option.map
                (fun (k : Code_object.kernel) -> k.entry)
                (Code_object.kernel co' "a")));
+      (* 511 units of 512 bytes, what LDS_SIZE holds on every GPU. *)
+      cases ~name:string_of_int "a kernel's LDS past 511 * 512 bytes is refused"
+        [ 511 * 512; (511 * 512) + 1; 0xffff_ffff ]
+        (fun n ->
+          let obj = descriptor_field (linked ()) 0 n in
+          if n <= 511 * 512 then
+            equal (option int) (Some n)
+              (Option.map
+                 (fun (k : Code_object.kernel) -> k.group_segment)
+                 (Code_object.kernel (read obj) "a"))
+          else refused ~sub:"LDS" obj);
       (* The image starts at 0x300 and ends with .data's 3 bytes. *)
       cases
         ~name:(fun (n, _) -> strf "an image of 2^48%+d bytes" n)

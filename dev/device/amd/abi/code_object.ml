@@ -39,6 +39,11 @@ let rel64_bytes = 8
 (* The longest image: what a GPU's 48-bit virtual addresses reach. *)
 let max_size = 1 lsl 48
 
+(* The most LDS a kernel takes: what COMPUTE_PGM_RSRC2.LDS_SIZE's 9 bits hold in
+   their smallest unit, 512 bytes (AMDGPUUsage, GRANULATED_LDS_SIZE), so that a
+   dispatch on any GPU sets it. *)
+let max_group_segment = 511 * 512
+
 (* The processor of [o]'s flags. A generic processor's code object carries the
    version of the processor's code, which LLVM numbers from 1, in a code object
    of version 6 or later. *)
@@ -129,15 +134,20 @@ let kernel_of o ~size ps name kd =
   else
     let d = read o ps kd K.sizeof in
     let entry = kd + field d K.kernel_code_entry_byte_offset in
+    let group_segment = field d K.group_segment_fixed_size in
+    let has flag = field d K.kernel_code_properties land flag <> 0 in
     if entry < 0 || entry >= size then
       Error (strf "kernel %S's code at %d lies outside the image" name entry)
+    else if group_segment > max_group_segment then
+      Error
+        (strf "kernel %S takes %d bytes of LDS, expected at most %d" name
+           group_segment max_group_segment)
     else
-      let has flag = field d K.kernel_code_properties land flag <> 0 in
       Ok
         {
           descriptor = kd;
           entry;
-          group_segment = field d K.group_segment_fixed_size;
+          group_segment;
           private_segment = field d K.private_segment_fixed_size;
           kernarg_size = field d K.kernarg_size;
           rsrc1 = field d K.compute_pgm_rsrc1;

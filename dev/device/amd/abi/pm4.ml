@@ -320,7 +320,11 @@ let dispatch (g : Gpu.t) (k : Code_object.kernel) ~program ~scratch ~args
   let granule =
     match g.gc with 9, 5, _ -> lds_granule_gfx950 | _ -> lds_granule
   in
-  let lds = (k.group_segment + granule - 1) / granule land lds_mask in
+  let lds = (k.group_segment + granule - 1) / granule in
+  if lds > lds_mask then
+    invalid_argf
+      "Pm4.dispatch: a group segment of %d bytes, expected at most %d on %s"
+      k.group_segment (lds_mask * granule) (gc_name g);
   (* The user SGPRs the descriptor enables, in their fixed order. *)
   let user =
     (if k.private_segment_buffer then

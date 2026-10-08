@@ -50,7 +50,8 @@ val of_string : string -> (t, string) result
       Mesa's and PAL's code objects, never for HSA's (AMDGPUUsage, "Relocation
       Records");
     - a kernel's descriptor, or the instruction it points to, lies outside the
-      image;
+      image, or its group segment is more than 511 * 512 bytes, the most every
+      GPU's LDS field holds;
     - its image is longer than [2{^48}] bytes, which no GPU's virtual addresses
       reach. *)
 

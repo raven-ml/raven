@@ -551,6 +551,23 @@ let runs =
           equal int ((group_segment + 511) / 512) (lds g group_segment));
       test "a GFX950 workgroup's LDS, in 1280-byte units" (fun () ->
           equal int 1 (lds (S.gpu ~target:(9, 5, 0) (9, 5, 0)) 1280));
+      (* LDS_SIZE holds 511 units: of 1280 bytes on GFX950, 512 on the
+         others. *)
+      cases
+        ~name:(fun (g, n, _) -> strf "GC %s, %d bytes" (S.version g.Gpu.gc) n)
+        "a workgroup's LDS is set up to 511 units and refused past them"
+        [
+          (gfx11, 511 * 512, true);
+          (gfx11, (511 * 512) + 1, false);
+          (gfx9, (511 * 512) + 1, false);
+          (S.gpu ~target:(9, 5, 0) (9, 5, 0), 511 * 1280, true);
+          (S.gpu ~target:(9, 5, 0) (9, 5, 0), (511 * 1280) + 1, false);
+        ]
+        (fun (g, n, taken) ->
+          if taken then equal int 511 (lds g n)
+          else
+            raises_match (Exn.invalid_arg ~substring:"Pm4.dispatch") (fun () ->
+                lds g n));
       cases ~name:string_of_int "a wave limit outside 10 bits is refused"
         [ 0; 1024 ] (fun n ->
           raises_match (Exn.invalid_arg ~substring:"waves_per_array") (fun () ->

@@ -46,8 +46,9 @@ val dispatch :
     as many as fit.
 
     [program] and [scratch] are 256-byte aligned. Raises [Invalid_argument] if
-    [g]'s GC has no register of a dispatch, or if [waves_per_array] is not in
-    \[[1];[1023]\]. *)
+    [g]'s GC has no register of a dispatch, if [waves_per_array] is not in
+    \[[1];[1023]\], or if [k]'s group segment is more than the 511 units the LDS
+    field holds. A kernel {!Code_object.of_string} reads never is. *)
 
 val run : Gpu.t -> 'v Packet.t -> 'v Packet.t
 (** [run g p] runs [p], the words of one or more dispatches none of which reads
