@@ -99,7 +99,11 @@ static int open_file(const char *path, int mode, int64_t size, intnat *handle,
   HANDLE h = CreateFileW(
       wpath, mode == MODE_READ ? GENERIC_READ : GENERIC_READ | GENERIC_WRITE,
       FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
-      create ? CREATE_NEW : OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+      create ? CREATE_NEW : OPEN_EXISTING,
+      /* A link at the path is the name that exists: creating there fails
+         rather than create the link's target. */
+      FILE_ATTRIBUTE_NORMAL | (create ? FILE_FLAG_OPEN_REPARSE_POINT : 0),
+      NULL);
   int code = 0, unsized = 0;
   BY_HANDLE_FILE_INFORMATION info;
   LARGE_INTEGER n;
