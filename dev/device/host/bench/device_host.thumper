@@ -51,6 +51,7 @@ split/serial-scale-4Mi	wall_time	batch=1	n=20	1.254e-01	1.254e-01 1.254e-01 1.25
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed under load 7.8 on 10 cores
 # forced: blessed link/affine link/linked link/many-relocations link/floor-map-install-unmap-affine link/floor-map-install-unmap-many link/floor-elf-affine link/floor-elf-linked link/floor-elf-many link/floor-lookup under load 9.9 on 10 cores
+# forced: blessed entry/call-1000 under load 6.2 on 10 cores
 
 call/empty	alloc_words	exact	0
 call/empty	wall_time	batch=131072	n=20	5.308e-08	5.218e-08 5.227e-08 5.232e-08 5.233e-08 5.269e-08 5.270e-08 5.282e-08 5.291e-08 5.297e-08 5.298e-08 5.318e-08 5.320e-08 5.326e-08 5.349e-08 5.354e-08 5.355e-08 5.357e-08 5.371e-08 5.374e-08 5.385e-08
@@ -63,7 +64,7 @@ call/split-1	wall_time	batch=131072	n=20	6.184e-08	6.089e-08 6.119e-08 6.119e-08
 call/split-empty	alloc_words	exact	0
 call/split-empty	wall_time	batch=16384	n=20	5.411e-07	5.224e-07 5.227e-07 5.287e-07 5.334e-07 5.339e-07 5.369e-07 5.373e-07 5.377e-07 5.378e-07 5.409e-07 5.414e-07 5.425e-07 5.427e-07 5.440e-07 5.441e-07 5.449e-07 5.489e-07 5.515e-07 5.579e-07 5.938e-07
 entry/call-1000	alloc_words	exact	0
-entry/call-1000	wall_time	batch=2048	n=20	4.045e-06	3.967e-06 3.973e-06 3.995e-06 4.003e-06 4.008e-06 4.014e-06 4.016e-06 4.028e-06 4.028e-06 4.045e-06 4.045e-06 4.049e-06 4.068e-06 4.073e-06 4.075e-06 4.086e-06 4.101e-06 4.136e-06 4.137e-06 4.154e-06
+entry/call-1000	wall_time	batch=2048	n=20	2.549e-06	2.538e-06 2.540e-06 2.542e-06 2.542e-06 2.543e-06 2.543e-06 2.545e-06 2.545e-06 2.546e-06 2.547e-06 2.552e-06 2.555e-06 2.555e-06 2.555e-06 2.559e-06 2.561e-06 2.563e-06 2.572e-06 2.575e-06 2.609e-06
 entry/floor-direct-call-1000	alloc_words	exact	0
 entry/floor-direct-call-1000	wall_time	batch=8192	n=20	1.026e-06	9.977e-07 1.009e-06 1.010e-06 1.011e-06 1.012e-06 1.013e-06 1.013e-06 1.015e-06 1.019e-06 1.026e-06 1.026e-06 1.026e-06 1.027e-06 1.031e-06 1.035e-06 1.036e-06 1.041e-06 1.041e-06 1.043e-06 1.074e-06
 entry/floor-pool-job-100	alloc_words	exact	0

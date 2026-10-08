@@ -257,16 +257,14 @@ static void run_split(program f, void **buffers, int64_t *copies, int64_t n,
   nx_pool_run(threads, split[0], split[1], body, &j);
 }
 
-/* The entry of linked code. Its copies come from the stack when they fit,
+/* A split call of linked code. Its copies come from the stack when they fit,
    else from malloc, else from the stack for as many threads as fit: at
-   least one, since n <= SMALL_WORDS. */
-SYSV void device_host_call(program f, void **buffers, const int64_t *values,
-                           int64_t n, const int64_t *split) {
-  if (split == NULL) {
-    synchronize();
-    f(buffers, values);
-    return;
-  }
+   least one, since n <= SMALL_WORDS. It is out of line, so that an unsplit
+   call reserves no stack for the copies. */
+static __attribute__((noinline)) void call_split(program f, void **buffers,
+                                                 const int64_t *values,
+                                                 int64_t n,
+                                                 const int64_t *split) {
   int threads = threads_of(split);
   size_t stride = stride_of(n);
   _Alignas(128) int64_t small[SMALL_WORDS];
@@ -281,6 +279,17 @@ SYSV void device_host_call(program f, void **buffers, const int64_t *values,
   memcpy(copies, values, (size_t)n * sizeof *copies);
   run_split(f, buffers, copies, n, split, threads);
   if (copies != small) free(copies);
+}
+
+/* The entry of linked code. */
+SYSV void device_host_call(program f, void **buffers, const int64_t *values,
+                           int64_t n, const int64_t *split) {
+  if (split != NULL) {
+    call_split(f, buffers, values, n, split);
+    return;
+  }
+  synchronize();
+  f(buffers, values);
 }
 
 /* Calls the program at [entry] on [buffers] and [values], split by [split]
