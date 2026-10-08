@@ -130,7 +130,7 @@ let value (o : Device_elf.t) externals (s : Device_elf.symbol) =
 let addend (r : Device_elf.relocation) =
   match r.addend with
   | Explicit a -> a
-  | Implicit ->
+  | Implicit _ ->
       refusef "relocation at 0x%x has its addend in its field (SHT_REL)"
         r.offset
 
