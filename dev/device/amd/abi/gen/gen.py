@@ -23,6 +23,11 @@ and SHA-256 and checked against its pin; downloads are kept in --cache, and
 excerpts alone, offline. --check generates into memory and fails if a
 committed file differs.
 
+Text is read and written as latin-1, one character per byte, so every byte
+of a header round-trips into its excerpt as upstream wrote it. The headers are
+ASCII C; AMDGPUUsage.rst holds UTF-8 outside the lines kept, which latin-1
+reads without failing.
+
 Where two headers define a value the library takes once (PM4's in soc15d.h and
 nvd.h, a thread trace value in each SOC enumeration, an SDMA field in each
 version's header), the script fails unless they agree. Every table is a
