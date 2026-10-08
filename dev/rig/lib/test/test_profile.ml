@@ -281,6 +281,32 @@ let test_staged_copy () =
     [ ("CPU", "profile:staged-dst", 64); ("profile:staged-src", "CPU", 64) ]
     (copies events)
 
+(* A staged copy's leg on a device's queue spans its transfer: the event of a
+   device-to-host copy's leg into staging stops once the host saw it done, after
+   the device's gate opened. *)
+let test_staged_span () =
+  let d, pd =
+    P.open_ ~host_visible:false ~peers:false "profile:staged-span-src"
+  in
+  let src = B.create d 64 and dst = B.create C.host 64 in
+  P.gate pd;
+  let opener =
+    Domain.spawn (fun () ->
+        Support.await "the copy waiting on the device" (fun () ->
+            P.sleepers pd = 1);
+        let opened = Prof.now () in
+        P.open_gate pd;
+        opened)
+  in
+  let (), events = Prof.take (fun () -> B.copy ~src ~dst) in
+  let opened = Domain.join opener in
+  let leg =
+    List.find_map
+      (function Prof.Copy c when C.equal c.src d -> Some c.stop | _ -> None)
+      events
+  in
+  at_least ~msg:"the leg's stop" int ~than:opened (require_some leg)
+
 (* An exception [after]'s function raises is raised again by the wait that ran
    it. *)
 let test_after_raises () =
@@ -430,6 +456,7 @@ let tests =
         test "a copy records the bytes it moved" test_copy;
         test "a staged copy records only its copies into and out of staging"
           test_staged_copy;
+        test "a staged copy's queued leg spans its transfer" test_staged_span;
       ];
     group ~timeout "cost"
       [ test "a span while no profile is taken allocates nothing" test_untaken ];

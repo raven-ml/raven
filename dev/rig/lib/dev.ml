@@ -150,6 +150,9 @@ let lost d = if is_lost d then Some (c_why d.c) else None
 let raise_lost d = raise (Lost (d, c_why d.c))
 let submitted d = if d.c = 0 then 0 else c_submitted d.c
 let machines : (string, device) Hashtbl.t = Hashtbl.create 4
+
+(* The machines whose host an open is making, by the host's full name. *)
+let hosting : (string, string) Hashtbl.t = Hashtbl.create 4
 let table_lock = Lock.create ()
 
 (* A device of another machine opens only once that machine's host is open
@@ -344,9 +347,28 @@ let next_index = Atomic.make 1
 
 (* Opens the device [name] on [machine] with [make], which builds it from its
    index and full name, once no open of that name runs. *)
-let open_named ~machine ~name ~key ~host make =
+let open_named ~fn ~machine ~name ~key ~host make =
   let k = (machine, name) in
   let full = match machine with None -> name | Some m -> name ^ "@" ^ m in
+  (* A machine has one host, open or opening, and its devices open after it. *)
+  let check_machine () =
+    match machine with
+    | None when host ->
+        invalid_argf "Rig.%s: %s is no other machine's host" fn full
+    | None -> ()
+    | Some m when host -> (
+        (match Hashtbl.find_opt machines m with
+        | Some h when h.name <> full && not (is_lost h) ->
+            invalid_argf "Rig.%s: machine %s's host is %s" fn m h.name
+        | _ -> ());
+        match Hashtbl.find_opt hosting m with
+        | Some n when n <> full ->
+            invalid_argf "Rig.%s: machine %s's host is opening as %s" fn m n
+        | _ -> ())
+    | Some m ->
+        if not (Hashtbl.mem machines m) then
+          invalid_argf "Rig.%s: no host of machine %s is open" fn m
+  in
   let rec find () =
     match Hashtbl.find_opt table k with
     | Some Opening ->
@@ -354,7 +376,7 @@ let open_named ~machine ~name ~key ~host make =
         find ()
     | Some (Open d) when not (is_lost d) ->
         if d.key <> key then
-          invalid_argf "Rig.open_: %s is open as another driver's device" full;
+          invalid_argf "Rig.%s: %s is open as another driver's device" fn full;
         `Open d
     | Some (Open d) ->
         if stop_returned d then `Make
@@ -363,13 +385,12 @@ let open_named ~machine ~name ~key ~host make =
   in
   let found =
     Lock.protect table_lock (fun () ->
-        (match machine with
-        | Some m when (not host) && not (Hashtbl.mem machines m) ->
-            invalid_argf "Rig.open_: no host of machine %s is open" m
-        | _ -> ());
+        check_machine ();
         match find () with
         | `Make ->
             Hashtbl.replace table k Opening;
+            if host then
+              Option.iter (fun m -> Hashtbl.replace hosting m full) machine;
             `Make
         | r -> r)
   in
@@ -379,6 +400,7 @@ let open_named ~machine ~name ~key ~host make =
   | `Make -> (
       let finish r =
         Lock.protect table_lock (fun () ->
+            if host then Option.iter (Hashtbl.remove hosting) machine;
             (match r with
             | Ok d ->
                 Hashtbl.replace table k (Open d);
@@ -440,7 +462,8 @@ let driver_device (type a) (module D : Sigs.Driver with type t = a) (h : a)
 
 let open_driver (type a) ?(memory_device = false)
     (module D : Sigs.Driver with type t = a) ?machine ~name make =
-  open_named ~machine ~name ~key:(Type.Id.uid D.key) ~host:false
+  let fn = if memory_device then "memory_device" else "open_" in
+  open_named ~fn ~machine ~name ~key:(Type.Id.uid D.key) ~host:false
   @@ fun ~index ~name:full ->
   match make () with
   | Error e -> Error e
@@ -457,7 +480,7 @@ let open_driver (type a) ?(memory_device = false)
 let open_io (type a) (module I : Sigs.Io with type t = a) ?machine
     ?(host = false) ~name make =
   let key = Type.Id.uid I.region_key in
-  open_named ~machine ~name ~key ~host @@ fun ~index ~name:full ->
+  open_named ~fn:"open_io" ~machine ~name ~key ~host @@ fun ~index ~name:full ->
   match make () with
   | Error e -> Error e
   | Ok h -> (

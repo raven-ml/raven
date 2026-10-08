@@ -16,6 +16,8 @@ let fn = "Buffer.copy"
 let local m = Option.is_none m.dev.machine && m.host >= 0
 let host_address b = b.mem.host + b.offset
 
+(* Records the transfer of [bytes] from [src]'s memory to [dst]'s asked at
+   [start], which the host sees done now. *)
 let record src dst bytes start =
   if Prof.enabled () then
     Prof.record (Copy { src; dst; bytes; start; stop = Prof.now () })
@@ -81,14 +83,23 @@ let submit_copy d queue ~src ~dst =
 let queued d queue ~src ~dst =
   Dev.wait d (Point.value (submit_copy d queue ~src ~dst))
 
-(* A copy on [d]'s copy queue between buffers [d] maps, waited for when
-   [wait]. *)
-let on_queue ~wait d src dst =
+(* A copy of [n] bytes on [d]'s copy queue between buffers [d] maps, asked at
+   [start] and waited for when [wait]. Unwaited, it is recorded once a wait sees
+   it done. *)
+let on_queue ~wait d src dst n start =
   match (d.copy_queue, Memory.borrow d src.mem, Memory.borrow d dst.mem) with
   | Some queue, Some s, Some t ->
-      let src = { src with mem = s } and dst = { dst with mem = t } in
-      if wait then queued d queue ~src ~dst
-      else ignore (submit_copy d queue ~src ~dst);
+      let v =
+        Point.value
+          (submit_copy d queue ~src:{ src with mem = s }
+             ~dst:{ dst with mem = t })
+      in
+      let recorded () = record src.mem.dev dst.mem.dev n start in
+      if wait then begin
+        Dev.wait d v;
+        recorded ()
+      end
+      else if Prof.enabled () then Dev.after d v recorded;
       true
   | _ -> false
 
@@ -112,30 +123,26 @@ let io_write src dst n =
    host between memory it addresses or with an io device's, or a device's copy
    queue between memory it maps. A copy on a queue returns at once unless
    [wait]: what reads or writes its buffers later waits for it by their stamps.
-   Whether it ran. *)
+   Records the transfer, and is whether it ran. *)
 let direct ~wait src dst n =
   let sd = src.mem.dev and dd = dst.mem.dev in
-  if local src.mem && local dst.mem then begin
+  let start = Prof.now () in
+  let on_host transfer =
     Buffer.wait src Buffer.Read;
     Buffer.wait dst Buffer.Read_write;
-    memmove (host_address dst) (host_address src) n;
+    transfer ();
+    record sd dd n start;
     true
-  end
-  else if Dev.is_io sd && local dst.mem then begin
-    Buffer.wait src Buffer.Read;
-    Buffer.wait dst Buffer.Read_write;
-    io_read src dst n;
-    true
-  end
-  else if Dev.is_io dd && local src.mem then begin
-    Buffer.wait src Buffer.Read;
-    Buffer.wait dst Buffer.Read_write;
-    io_write src dst n;
-    true
-  end
+  in
+  if local src.mem && local dst.mem then
+    on_host (fun () -> memmove (host_address dst) (host_address src) n)
+  else if Dev.is_io sd && local dst.mem then
+    on_host (fun () -> io_read src dst n)
+  else if Dev.is_io dd && local src.mem then
+    on_host (fun () -> io_write src dst n)
   else
     let runner = if local src.mem then dd else sd in
-    (not (Dev.is_io runner)) && on_queue ~wait runner src dst
+    (not (Dev.is_io runner)) && on_queue ~wait runner src dst n start
 
 let rec copy ~src ~dst =
   Buffer.check_live fn src;
@@ -162,8 +169,7 @@ let rec copy ~src ~dst =
    recording each transfer that ran. *)
 and route ~wait src dst n =
   let sd = src.mem.dev and dd = dst.mem.dev in
-  let start = Prof.now () in
-  if direct ~wait src dst n then record sd dd n start
+  if direct ~wait src dst n then ()
   else if is_slot src.mem || is_slot dst.mem then
     invalid_argf "Rig.%s: no device copies between %s and %s" fn sd.name dd.name
   else staged src dst n

@@ -336,7 +336,7 @@ module Far_host = struct
 
   let region_key : region Type.Id.t = Type.Id.make ()
   let budget () = max_int
-  let alloc () _ = None
+  let alloc () _ = Some ()
   let free () () = ()
   let read () () ~at:_ ~dst:_ ~len:_ = ()
   let write () () ~at:_ ~src:_ ~len:_ = ()

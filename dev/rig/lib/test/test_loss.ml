@@ -244,7 +244,7 @@ let test_others_go_on () =
   let e, _ = P.open_ "loss:kept" in
   let named = B.create e 64 and kept = B.create e 64 in
   let s = Sub.make ~reads:1 ~writes:0 ~waits:0 d [||] in
-  Sub.read s 0 named;
+  Sub.read s 0 (require_some (B.borrow d named));
   C.wait d (C.Point.value (C.submit s));
   P.fail p;
   raises_match (lost d) (fun () -> C.submit (empty d));

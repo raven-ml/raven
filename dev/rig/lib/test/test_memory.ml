@@ -243,7 +243,7 @@ let test_foreign_use () =
     (fun () ->
       let m = B.create a (4 * kib) in
       let s = Sub.make ~reads:1 ~writes:0 ~waits:0 b [||] in
-      Sub.read s 0 m;
+      Sub.read s 0 (require_some (B.borrow b m));
       ignore (C.submit s);
       B.address m)
       ()
@@ -336,8 +336,10 @@ let test_idle_borrower () =
   with_host_budget room (fun () -> equal int n (B.length (B.create C.host n)))
 
 (* The host gives back what it keeps beyond a major cycle's share of the
-   program's memory at the end of a cycle: the buffers of a working set it kept
-   go back once a cycle finds the set gone. *)
+   program's memory, or 32 MiB where that is more, at the end of a cycle: of 64
+   MiB dropped while the rest lives it keeps 32 MiB at least, whatever the
+   collector's parameters, and the buffers it kept go back once a cycle finds
+   the set gone. *)
 let test_host_trim () =
   let mib = 1 lsl 20 in
   Gc.full_major ();
@@ -347,7 +349,7 @@ let test_host_trim () =
   Gc.full_major ();
   live := List.filteri (fun i _ -> i >= 64) !live;
   Gc.full_major ();
-  at_least ~msg:"kept while the rest lives" int ~than:(48 * mib)
+  at_least ~msg:"kept while the rest lives" int ~than:(32 * mib)
     (Support.host_kept ());
   ignore (Sys.opaque_identity !live);
   live := [];

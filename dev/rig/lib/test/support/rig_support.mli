@@ -188,8 +188,8 @@ val await : string -> (unit -> bool) -> unit
     checks. It raises [Failure] naming [what] after 10 s. *)
 
 val machine : string -> Rig.t
-(** [machine m] is the host of the machine named [m], an io device that makes no
-    memory, opened unless it is open: devices of [m] open once it is. *)
+(** [machine m] is the host of the machine named [m], an io device whose memory
+    holds nothing, opened unless it is open: devices of [m] open once it is. *)
 
 (** The C readers of [rig.h], called from C. *)
 module Reader : sig

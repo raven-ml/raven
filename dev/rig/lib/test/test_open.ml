@@ -160,6 +160,22 @@ let test_machine_without_host () =
   let g = require_ok ~pp:Format.pp_print_string (open_gpu ()) in
   equal device far (C.host_of g)
 
+(* A machine has one host: [~host] names another machine's, and a second host of
+   a machine whose host is open under another name is refused. *)
+let test_one_host () =
+  let open_host ?machine name =
+    C.open_io (module Store) ?machine ~host:true ~name (fun () -> Ok ())
+  in
+  raises_match ~msg:"this machine's" Exn.invalid_arg (fun () ->
+      open_host "open:not-a-host");
+  let h =
+    require_ok ~pp:Format.pp_print_string (open_host ~machine:"one" "A")
+  in
+  raises_match ~msg:"a second" Exn.invalid_arg (fun () ->
+      open_host ~machine:"one" "B");
+  equal ~msg:"the same name" device h
+    (require_ok ~pp:Format.pp_print_string (open_host ~machine:"one" "A"))
+
 (* A fault while the device's facts are read is the open's error, and the
    driver's handle is stopped: nothing it opened stays. *)
 let test_fault_at_open () =
@@ -262,6 +278,7 @@ let tests =
         test_machine;
       test "a device of another machine opens once that machine's host is"
         test_machine_without_host;
+      test "a machine has one host" test_one_host;
       test "a point prints as its device's name and its value" test_point;
       test "an opener's error leaves the name free" test_failed_open;
       test "an opener's exception is raised, the name left free"

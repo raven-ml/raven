@@ -246,19 +246,31 @@ let test_create_empty_words () =
 
 (* Borrows of memory that dies *)
 
-(* A copy between this machine's host memory and another machine's driver memory
-   raises: no device copies between them. *)
+(* Memory of another machine's driver device copies only directly, by the
+   source's device: with this machine's memory, its own machine's io memory, a
+   device the source does not map, or on a device that runs no copy, the copy
+   raises. *)
 let test_copy_machines () =
-  ignore (Support.machine "elsewhere");
-  let g =
+  let far = Support.machine "elsewhere" in
+  let gpu ?copies name =
     require_ok ~pp:Format.pp_print_string
       (C.open_
          (module P)
-         ~machine:"elsewhere" ~name:"buffer:far-gpu"
-         (fun () -> Ok (P.make ())))
+         ~machine:"elsewhere" ~name
+         (fun () -> Ok (P.make ?copies ~host_visible:false ~peers:false ())))
   in
-  raises_match Exn.invalid_arg (fun () ->
-      B.copy ~src:(B.create C.host 64) ~dst:(B.create g 64))
+  let g = gpu "buffer:far-gpu" and g' = gpu "buffer:far-other" in
+  let still = gpu ~copies:false "buffer:far-still" in
+  List.iter
+    (fun (msg, src, dst) ->
+      raises_match ~msg Exn.invalid_arg (fun () -> B.copy ~src ~dst))
+    [
+      ("from this machine's host", B.create C.host 64, B.create g 64);
+      ("into its machine's host", B.create g 64, B.create far 64);
+      ("from its machine's host", B.create far 64, B.create g 64);
+      ("into a device it does not map", B.create g 64, B.create g' 64);
+      ("within a device that runs no copy", B.create still 64, B.create still 64);
+    ]
 
 (* An empty buffer of a driver's device names no memory: its address and its
    handle are 0. *)

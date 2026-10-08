@@ -91,7 +91,8 @@ let submit_system i access t =
   let d = fst t.devices.(i) in
   let reads, writes = if access = B.Read then (1, 0) else (0, 1) in
   let s = Sub.make ~reads ~writes ~waits:0 d [||] in
-  if access = B.Read then Sub.read s 0 t.m else Sub.write s 0 t.m;
+  let m = require_some (B.borrow d t.m) in
+  if access = B.Read then Sub.read s 0 m else Sub.write s 0 m;
   let v = C.Point.value (C.submit s) - t.base.(i) in
   (v, signaled t (other i))
 

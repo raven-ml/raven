@@ -13,6 +13,9 @@ module Support = Rig_support
 let timeout = 60.
 let memory name = require_ok ~pp:Format.pp_print_string (C.memory_device name)
 
+(* [b] borrowed on [d], as a slot of [d]'s takes it. *)
+let on d b = require_some (B.borrow d b)
+
 let empty ?(reads = 0) ?(writes = 0) ?(waits = 0) d =
   Sub.make ~reads ~writes ~waits d [||]
 
@@ -108,6 +111,10 @@ let test_make_refusals () =
       ( "a copy of another device's memory",
         fun () -> make d [| copy arg (B.create C.host 8) |] );
       ("a part's dead buffer", fun () -> make d [| copy dead unseen |]);
+      ("a read slot of the host's memory", fun () -> Sub.read s 0 arg);
+      ( "a write slot of another device's memory",
+        fun () -> Sub.write s 0 (B.create (fst (P.open_ "submit:elsewhere")) 8)
+      );
       ("a read slot past the count", fun () -> Sub.read s 1 arg);
       ("a write slot past the count", fun () -> Sub.write s 1 arg);
       ( "a negative wait slot",
@@ -123,7 +130,7 @@ let test_cleared_on_raise () =
   P.fail pp;
   (try ignore (C.submit (empty producer)) with C.Lost _ -> ());
   let s = empty ~reads:1 ~waits:1 d in
-  Sub.read s 0 (B.create C.host 8);
+  Sub.read s 0 (on d (B.create C.host 8));
   Sub.wait_for s 0 point;
   raises_match (function C.Lost _ -> true | _ -> false) (fun () -> C.submit s);
   raises_match Exn.invalid_arg (fun () -> C.submit s)
@@ -133,7 +140,7 @@ let test_dead_slot () =
   let d = memory "submit:dead-slot" in
   let b = B.create C.host 8 in
   let s = empty ~reads:1 d in
-  Sub.read s 0 b;
+  Sub.read s 0 (on d b);
   C.Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
       ignore (C.Claim.consume c ~why:"donated" b));
   raises_match Exn.invalid_arg (fun () -> C.submit s);
@@ -156,13 +163,13 @@ let test_wait_beyond () =
 let test_read_waits () =
   let producer, pp = P.open_ "submit:producer" in
   let consumer = memory "submit:consumer" in
-  let on = B.create producer page_bytes in
+  let b = B.create producer page_bytes in
   let w = Sub.make ~reads:0 ~writes:1 ~waits:0 producer [||] in
-  Sub.write w 0 on;
+  Sub.write w 0 b;
   ignore (C.submit w);
   equal int 1 (P.queued pp);
   let r = Sub.make ~reads:1 ~writes:0 ~waits:0 consumer [||] in
-  Sub.read r 0 on;
+  Sub.read r 0 (on consumer b);
   ignore (C.submit r);
   equal int 0 (P.queued pp)
 
@@ -178,7 +185,7 @@ let test_part_points () =
   let s = Sub.make ~reads:0 ~writes:0 ~waits:0 d [| copy |] in
   let on_e ~reads ~writes b =
     let w = Sub.make ~reads ~writes ~waits:0 e [||] in
-    if reads = 1 then Sub.read w 0 b else Sub.write w 0 b;
+    if reads = 1 then Sub.read w 0 (on e b) else Sub.write w 0 (on e b);
     ignore (C.submit w)
   in
   on_e ~reads:0 ~writes:1 src;
@@ -503,7 +510,7 @@ let lifetime =
 
 let test_allocation () =
   let d = memory "submit:words" in
-  let s = empty ~reads:1 d and b = B.create C.host 8 in
+  let s = empty ~reads:1 d and b = on d (B.create C.host 8) in
   Sub.read s 0 b;
   ignore (C.submit s);
   let before = Gc.minor_words () in

@@ -170,9 +170,9 @@ val budget : t -> int
     device and {!Io.budget} for an io device; {!set_budget} changes it. *)
 
 val set_budget : t -> int -> unit
-(** [set_budget d n] sets [d]'s budget to [n], returning cached memory to its
-    driver until [d] holds at most [n] bytes or its cache is empty. Live buffers
-    are never released.
+(** [set_budget d n] sets [d]'s budget to [n], returning cached memory
+    ({!free_cache}) until [d] holds at most [n] bytes or its cache is empty.
+    Live buffers are never released.
 
     Raises [Invalid_argument] if [n < 0]. *)
 
@@ -260,8 +260,7 @@ module Buffer : sig
   (** The type for the memories of a device that {!create} allocates. *)
   type memory =
     | Device
-        (** The device's own memory, which counts in the device's {!budget}. On
-            a host, host memory, which counts in the host's. *)
+        (** The device's own memory, which counts in the device's {!budget}. *)
     | Pinned
         (** Host memory that both the device's work and the host address,
             page-locked where the host pages: coherent, with no flush. It counts
@@ -314,11 +313,12 @@ module Buffer : sig
       [b]'s: work through [b'] is work on [b]'s memory, with the one exception
       {!Io.pages} states for memory an io device holds for reading.
 
-      [d] maps host memory of its machine that starts on a page, and memory of a
-      device of its own driver that its driver maps ({!Driver.map_peer}). Every
-      borrow on [d] of one memory shares one mapping, made at the first borrow,
-      which lasts while the memory lives and is released with it, once [d]'s
-      work submitted until then is done: a borrow dropped and made again maps
+      [d] maps host memory of its machine that starts on a page, where its
+      driver maps host memory ({!Driver.map_host}), and memory of a device of
+      its own driver that its driver maps ({!Driver.map_peer}). Every borrow on
+      [d] of one memory shares one mapping, made at the first borrow, which
+      lasts while the memory lives and is released with it, once [d]'s work
+      submitted until then is done: a borrow dropped and made again maps
       nothing. A borrow of a borrow maps the memory the first one maps. A
       {!memory_device} maps any host memory. Host memory that does not start on
       a page, such as a host buffer of fewer than 64 KiB, borrows only on hosts
@@ -365,25 +365,23 @@ module Buffer : sig
       only [src] is host-addressable, [src]'s otherwise, directly between memory
       it addresses or maps, and through the host's {e staging memory} otherwise:
       two slots of 64 MiB of host memory, made at the first copy that needs them
-      and kept for the life of the process ({!domains}). It moves the bytes
-      through its slot's two halves in turn, so one half fills while the other
-      drains. A device that runs no copy has memory the host addresses, which
-      the host copies. An {!Io} device's memory is read and written by its
-      {!Io.read} and {!Io.write}, through the staging memory when the host does
-      not address the other side. Between machines, an {!Io} device's memory
-      copies by its reads and writes, through the staging memory where the host
-      does not address the other side. Memory of a driver's device copies only
-      with memory of its own machine.
+      and kept for the life of the process ({!domains}). A device that runs no
+      copy has memory the host addresses, which the host copies. An {!Io}
+      device's memory, of any machine, is read and written by its {!Io.read} and
+      {!Io.write}, through the staging memory when the host does not address the
+      other side. Memory of a driver's device of another machine copies only
+      directly, by [src]'s device, which no staging memory reaches.
 
       Staging memory that a device lost while it used it is replaced, so a loss
       reaches no other device's copies.
 
       Raises [Invalid_argument] if [src] and [dst] differ in size, overlap
       ({!overlaps}), or either is dead, or one is memory of a driver's device of
-      another machine than the other's; {!Lost} if a device involved is lost or
-      is lost by the copy, or a point it waits for is on a lost device;
-      {!Out_of_memory} if a host cannot allocate its staging memory; and what an
-      {!Io} device's read or write raises. *)
+      another machine and [src]'s device runs no copy or does not reach [dst]'s
+      ({!reaches}); {!Lost} if a device involved is lost or is lost by the copy,
+      or a point it waits for is on a lost device; {!Out_of_memory} if a host
+      cannot allocate its staging memory; and what an {!Io} device's read or
+      write raises. *)
 
   val device : t -> device
   (** [device b] is the device [b] is on: [d] for a buffer that {!create},
@@ -644,8 +642,9 @@ module Submission : sig
       write of [b]'s memory, and stamps its use by [s]'s device.
 
       Raises [Invalid_argument] if [i] is not a read slot of [s], [b]'s memory
-      is in a hold, or [b] is an {!Io} device's memory, which no queue reaches:
-      a slot takes a {!Buffer.borrow} of its pages. *)
+      is in a hold, or [b] is not on [s]'s device ({!Buffer.device}): a slot
+      takes a {!Buffer.borrow} of other memory, an {!Io} device's through its
+      pages. *)
 
   val write : t -> int -> Buffer.t -> unit
   (** [write s i b] sets write slot [i] to [b]: the next submit waits for every
@@ -785,9 +784,9 @@ module Profile : sig
         stop : int;
       }
         (** A transfer of [bytes] from [src]'s memory to [dst]'s, by a
-            {!Buffer.copy}. A copy through staging memory records each piece
-            into and out of it, with {!host} as one side, and no event of its
-            own. *)
+            {!Buffer.copy}, from when it was asked to when the host saw it done.
+            A copy through staging memory records each piece into and out of it,
+            with {!host} as one side, and no event of its own. *)
 
   val take :
     ?counters:string list -> ?trace:bool -> (unit -> 'a) -> 'a * event list
@@ -884,12 +883,12 @@ end
     states, one at a time per device, under the device's turn. A driver's own
     OCaml forms of them, for a driver used alone, are no part of this signature.
 
-    {b Calls.} {!address}, {!handle}, {!host} and {!peer} call no library
-    function, and this library calls them at any time. Every other call this
-    library makes on a device that is not lost is {e counted}: {!stop} waits for
-    none of them. {!stop} runs once, with no counted call inside, and after it
-    only {!free}, {!signaled} and holds' releases follow. A {!Fault} from a
-    counted call, and a failed hand-over, lose the device. *)
+    {b Calls.} {!address}, {!handle}, {!host} and {!peer} call nothing that may
+    block or fault, and this library calls them at any time. Every other call
+    this library makes on a device that is not lost is {e counted}: {!stop}
+    waits for none of them. {!stop} runs once, with no counted call inside, and
+    after it only {!free}, {!signaled} and holds' releases follow. A {!Fault}
+    from a counted call, and a failed hand-over, lose the device. *)
 module type Driver = sig
   type t
   (** The type for open devices of the driver. *)
@@ -944,7 +943,8 @@ module type Driver = sig
   val max_waits : t -> int
   (** [max_waits d] is the most waits in [d]'s queue ({!waits_on}) one
       submission carries, [0] or more: this library waits on the host for the
-      others, before the hand-over. *)
+      others, before the hand-over. It is read only for completions {!waits_on}
+      accepts. *)
 
   val blocks : t -> [ `Returns | `May_block ]
   (** [blocks d] is [`Returns] if the C room check and hand-over never block,
@@ -992,8 +992,9 @@ module type Driver = sig
 
   val map_host : t -> int -> int -> region option
   (** [map_host d p n] is a region of [d] over the [n] bytes of host memory at
-      [p], or [None]. [p] starts a page and [n] is positive. The memory stays
-      mapped until the region is freed ({!free}). Counted. *)
+      [p], or [None] if [d] does not map it, as a GPU taken without an IOMMU
+      maps no host memory. [p] starts a page and [n] is positive. The memory
+      stays mapped until the region is freed ({!free}). Counted. *)
 
   (** {1:code Code} *)
 
@@ -1009,8 +1010,8 @@ module type Driver = sig
       region [r], which this library allocated with at least [n] bytes, and the
       bytes to place at [r]'s start, at most [n]. [image] makes nothing on [d]
       before [lay] is called, so a [`Place] whose function is never called
-      leaves nothing to release; [lay] calls no library function and raises
-      nothing. [Error why] if [d] refuses [b]. Counted. *)
+      leaves nothing to release; [lay] calls nothing that may block or fault,
+      and raises nothing. [Error why] if [d] refuses [b]. Counted. *)
 
   val entry : image -> string -> int option
   (** [entry i f] is the driver's name for [i]'s function [f]: an address or an
@@ -1182,7 +1183,11 @@ val open_io :
   (t, string) result
 (** [open_io (module I) ~machine ~host ~name make] is {!open_} for an io device.
     With [host] (defaults to [false]), the device is [machine]'s host
-    ({!host_of}). *)
+    ({!host_of}), and devices of [machine] open once it is.
+
+    Raises [Invalid_argument] as {!open_}, or if [host] and [machine] is this
+    one, or [machine] has a host of another name, open and not lost or still
+    opening. *)
 
 val memory_device : string -> (t, string) result
 (** [memory_device name] is {!open_} of the device named [name] whose memory is
