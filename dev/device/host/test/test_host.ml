@@ -70,7 +70,7 @@ let test_linked () =
   and inb = Bigarray.(Array1.of_array float64 c_layout [| 27.; 1.25 |]) in
   Host.call p [| S.address out; S.address inb |] [| 2 |];
   ignore (Sys.opaque_identity inb);
-  equal ~msg:"cbrt 27" float_exact (Float.cbrt 27.) out.{0};
+  equal ~msg:"cbrt 27" float_exact 3. out.{0};
   equal ~msg:"table.(2)" float_exact 3.125 out.{1};
   equal ~msg:"twice 1.25" float_exact 2.5 out.{2}
 
@@ -80,7 +80,7 @@ let test_got () =
   and inb = Bigarray.(Array1.of_array float64 c_layout [| -8. |]) in
   Host.call p [| S.address out; S.address inb |] [||];
   ignore (Sys.opaque_identity inb);
-  equal ~msg:"cbrt (-8)" float_exact (Float.cbrt (-8.)) out.{0}
+  equal ~msg:"cbrt (-8)" float_exact (-2.) out.{0}
 
 let program_tests =
   group ~timeout "programs"

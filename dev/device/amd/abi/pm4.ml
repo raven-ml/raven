@@ -303,17 +303,18 @@ let scratch_format = 0x20c14000
 let dispatch (g : Gpu.t) (k : Code_object.kernel) ~program ~scratch ~args
     ~packet:dispatch_packet ~threads:(tx, ty, tz) ~groups:(gx, gy, gz)
     ?waves_per_array () =
-  let fn = "Pm4.dispatch" in
   let d : Defs.dispatch =
     match Defs.dispatch (Defs.gc g.gc) with
     | Some d -> d
-    | None -> invalid_argf "%s: %s has no register of a dispatch" fn (gc_name g)
+    | None ->
+        invalid_argf "Pm4.dispatch: %s has no register of a dispatch"
+          (gc_name g)
   in
   let limits =
     match waves_per_array with
     | None -> no_wave_limit
     | Some n when n < 1 || n > max_waves_per_array ->
-        invalid_argf "%s: waves_per_array %d, expected 1 to 1023" fn n
+        invalid_argf "Pm4.dispatch: waves_per_array %d, expected 1 to 1023" n
     | Some n -> n lsl fst d.waves_per_sh
   in
   let initiator = if k.wave32 then d.initiator_wave32 else d.initiator_wave64 in
