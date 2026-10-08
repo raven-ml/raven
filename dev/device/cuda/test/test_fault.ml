@@ -49,7 +49,8 @@ let faults () =
   raises_match
     (function
       | C.Fault why ->
-          String.starts_with ~prefix:"CUDA_ERROR_ILLEGAL_ADDRESS" why
+          String.starts_with
+            ~prefix:"the GPU's work failed: CUDA_ERROR_ILLEGAL_ADDRESS" why
       | _ -> false)
     (fun () -> fault g (Sys.time ()));
   equal int ~msg:"the word after the fault" 0 (S.get64 (host (C.word g)));

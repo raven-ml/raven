@@ -60,7 +60,7 @@ let opening =
       test "a GPU past the count is an error naming the count" (fun () ->
           let n = C.count () in
           let e = require_error (C.open_ n) in
-          contains ~sub:(if n = 0 then "CUDA" else strf "%d GPU" n) e);
+          contains ~sub:(if n = 0 then "CUDA" else strf "CUDA sees %d" n) e);
       test "a GPU has one device until it is stopped" gpu_once;
     ]
 
@@ -185,7 +185,7 @@ let failed_fill () =
   let g = S.gpu () in
   let r = submit g ~v:1 [| S.part g ~queue:"COMPUTE:0" (S.failing 1) |] in
   let why = require_match (function `Failed w -> Some w | `Ok -> None) r in
-  starts_with ~affix:"CUDA_ERROR_INVALID_VALUE: " why;
+  starts_with ~affix:"running a fill: CUDA_ERROR_INVALID_VALUE: " why;
   equal answer ~msg:"the next submit" (`Failed why) (submit g ~v:2 [||]);
   equal stop_answer `Stopped (C.stop g);
   equal int ~msg:"the word holds the last value" 2 (C.signaled g)
@@ -325,14 +325,14 @@ let images () =
     (Option.is_some (C.entry m "double_index"));
   equal (option int) ~msg:"a missing kernel" None (C.entry m "missing");
   let e = require_error (C.image g "not a module") in
-  starts_with ~affix:"CUDA_ERROR_" e;
+  starts_with ~affix:"loading the image: CUDA_ERROR_" e;
   (match C.image g (S.fixture "kernels.cubin") with
   | Ok (m', _) ->
       equal string ~msg:"the cubin's GPU" "sm_89" (C.arch g);
       C.unload g m'
   | Error e ->
       not_equal string ~msg:"the cubin's GPU" "sm_89" (C.arch g);
-      starts_with ~affix:"CUDA_ERROR_" e);
+      starts_with ~affix:"loading the image: CUDA_ERROR_" e);
   let f = S.launch (Option.get (C.entry m "empty")) ~grid:1 ~block:1 0 0 in
   equal answer `Ok (submit g ~v:1 [| S.part g ~queue:"COMPUTE:0" f |]);
   S.wait g 1;

@@ -510,7 +510,19 @@ struct submission {
   int entered[2];
   int waited;
   int both;
+  const char *step;  /* the step that failed; NULL: ordering the streams */
+  uint64_t bytes;    /* the bytes of the last copy */
 };
+
+/* The steps a failure names, beside ordering the streams. */
+static const char filling[] = "running a fill", copying[] = "copying",
+                  waiting[] = "waiting on a word", writing[] = "writing the word";
+
+/* [r], the status of a call of [step], recorded as the failing step. */
+static CUresult at(struct submission *s, const char *step, CUresult r) {
+  if (r != CUDA_SUCCESS && s->step == NULL) s->step = step;
+  return r;
+}
 
 /* Places [n] waits on [q] in batches; where the GPU can, the last flushes
    the remote writes made before the words it waited for. */
@@ -548,7 +560,7 @@ static CUresult enter(struct submission *s, int q) {
   if (r != CUDA_SUCCESS || s->nwaits == 0) return r;
   if (s->waited) return p_cuStreamWaitEvent(stream, d->waited, 0);
   s->waited = 1;
-  r = wait_words(d, stream, s->waits, s->nwaits);
+  r = at(s, waiting, wait_words(d, stream, s->waits, s->nwaits));
   if (r == CUDA_SUCCESS && s->both) r = p_cuEventRecord(d->waited, stream);
   return r;
 }
@@ -584,12 +596,14 @@ static CUresult run(struct submission *s, uint64_t v, const struct nx_part *p,
       across |= p[p[i].after[k]].queue != q;
     if (e == CUDA_SUCCESS && across)
       e = p_cuStreamWaitEvent(stream, d->done[1 - q], 0);
+    s->bytes = p[i].copy_bytes;
     if (e == CUDA_SUCCESS && p[i].fill != NULL)
-      e = p[i].fill(stream, p[i].arg, v);
+      e = at(s, filling, p[i].fill(stream, p[i].arg, v));
     else if (e == CUDA_SUCCESS)
-      e = p_cuMemcpyAsync(p[i].copy_dst + p[i].copy_dst_offset,
-                          p[i].copy_src + p[i].copy_src_offset,
-                          p[i].copy_bytes, stream);
+      e = at(s, copying,
+             p_cuMemcpyAsync(p[i].copy_dst + p[i].copy_dst_offset,
+                             p[i].copy_src + p[i].copy_src_offset,
+                             p[i].copy_bytes, stream));
     if (e == CUDA_SUCCESS && ((i == last[q] && q != r) || awaited(p, n, i)))
       e = p_cuEventRecord(d->done[q], stream);
   }
@@ -597,11 +611,24 @@ static CUresult run(struct submission *s, uint64_t v, const struct nx_part *p,
   if (e == CUDA_SUCCESS && last[o] >= 0)
     e = p_cuStreamWaitEvent(d->streams[r], d->done[o], 0);
   if (e == CUDA_SUCCESS)
-    e = p_cuStreamWriteValue64_v2(d->streams[r],
-                                  (CUdeviceptr)(uintptr_t)d->word, v, 0);
+    e = at(s, writing,
+           p_cuStreamWriteValue64_v2(d->streams[r],
+                                     (CUdeviceptr)(uintptr_t)d->word, v, 0));
   if (e == CUDA_SUCCESS) e = p_cuEventRecord(d->released, d->streams[r]);
   if (e == CUDA_SUCCESS) d->released_on = r;
   return e;
+}
+
+/* Records "step: NAME: text" for the failure [e] of [s]. */
+static void fail(struct device *d, const struct submission *s, CUresult e) {
+  char cause[192];
+  describe(e, cause, sizeof cause);
+  if (s->step == copying)
+    snprintf(d->failure, sizeof d->failure, "copying %llu bytes: %s",
+             (unsigned long long)s->bytes, cause);
+  else
+    snprintf(d->failure, sizeof d->failure, "%s: %s",
+             s->step != NULL ? s->step : "ordering the streams", cause);
 }
 
 int device_cuda_room(void *self, const struct nx_part *p, int n) {
@@ -619,7 +646,7 @@ int device_cuda_submit(void *self, uint64_t v, const struct nx_wait *waits,
                        const uint64_t *handles, int nhandles,
                        const char **failure) {
   struct device *d = self;
-  struct submission s = {d, waits, nwaits, {0, 0}, 0, 0};
+  struct submission s = {d, waits, nwaits, {0, 0}, 0, 0, NULL, 0};
   (void)handles;
   (void)nhandles;
   d->last = v;
@@ -627,7 +654,7 @@ int device_cuda_submit(void *self, uint64_t v, const struct nx_wait *waits,
     CUresult e = push(d->context);
     if (e == CUDA_SUCCESS) e = pop(run(&s, v, parts, nparts));
     if (e != CUDA_SUCCESS) {
-      describe(e, d->failure, sizeof d->failure);
+      fail(d, &s, e);
       d->failed = 1;
     }
   }

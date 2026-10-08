@@ -37,15 +37,17 @@ let attribute_pci_bus_id = 33
 let attribute_pci_device_id = 34
 let attribute_pci_domain_id = 50
 let attribute_can_use_64_bit_stream_mem_ops = 122
-let fault s = raise (Fault (error s))
-let get r = if r < 0 then fault (-r) else r
+
+(* A CUDA failure with [status], in the step form "[step]: NAME: text". *)
+let fault step status = raise (Fault (strf "%s: %s" step (error status)))
+let get step r = if r < 0 then fault step (-r) else r
 
 external failed : int -> int = "caml_device_cuda_failed"
 
-(* [refused self x] is [x], the answer to CUDA's refusal of a call's arguments,
-   unless the context of the device [self] failed: CUDA answers its error to
-   every call, and [refused] raises it. *)
-let refused self x = match failed self with 0 -> x | e -> fault e
+(* [refused step self x] is [x], the answer to CUDA's refusal of a call's
+   arguments, unless the context of the device [self] failed: CUDA answers its
+   error to every call, and [refused] raises it. *)
+let refused step self x = match failed self with 0 -> x | e -> fault step e
 
 (* Loads the library and finds its GPUs at the first call that needs them, until
    they are found: a failed load is tried again by the next call, so a driver
@@ -76,12 +78,12 @@ let discover () =
   let n = max 0 (device_count ()) in
   let address d =
     List.map
-      (fun a -> get (attribute d a))
+      (fun a -> get "finding CUDA's GPUs" (attribute d a))
       [ attribute_pci_domain_id; attribute_pci_bus_id; attribute_pci_device_id ]
   in
   match
     List.init n (fun k ->
-        let d = get (device k) in
+        let d = get "finding CUDA's GPUs" (device k) in
         (address d, d))
   with
   | exception Fault why -> Error why
@@ -154,10 +156,10 @@ let device_name i =
   if i < 0 then invalid_argf "Device_cuda.device_name: GPU %d is negative" i;
   if i = 0 then "CUDA" else strf "CUDA:%d" i
 
-let version () =
+let driver () =
   match driver_version () with
-  | v when v < 0 -> "of unknown version"
-  | v -> strf "%d.%d" (v / 1000) (v mod 1000 / 10)
+  | v when v < 0 -> "a CUDA driver of unknown version"
+  | v -> strf "the CUDA %d.%d driver" (v / 1000) (v mod 1000 / 10)
 
 let open_ i =
   if i < 0 then invalid_argf "Device_cuda.open_: GPU %d is negative" i;
@@ -165,12 +167,13 @@ let open_ i =
   let n = Array.length g.devices in
   if i >= n then
     Error
-      (strf "GPU %d does not exist: CUDA sees %d GPU%s" i n
-         (if n = 1 then "" else "s"))
+      (if n = 0 then "no such GPU; CUDA sees none"
+       else strf "no such GPU; CUDA sees %d" n)
   else
     let d = g.devices.(i) in
     match
       let a = attribute d in
+      let get = get "reading the GPU's facts" in
       ( get (a attribute_can_use_64_bit_stream_mem_ops),
         get (a attribute_unified_addressing),
         get (a attribute_compute_capability_major),
@@ -180,18 +183,19 @@ let open_ i =
     | exception Fault why -> Error why
     | 0, _, _, _, _ ->
         Error
-          (strf "GPU %d lacks 64-bit stream memory operations (CUDA %s)" i
-             (version ()))
+          (strf "the GPU lacks 64-bit stream memory operations under %s"
+             (driver ()))
     | _, 0, _, _, _ ->
-        Error (strf "GPU %d lacks unified addressing (CUDA %s)" i (version ()))
+        Error (strf "the GPU lacks unified addressing under %s" (driver ()))
     | _, _, major, minor, budget ->
         if not (Atomic.compare_and_set g.busy.(i) false true) then
-          Error (strf "GPU %d has a device open; stop it first" i)
+          Error "the GPU has a device open; stop it first"
         else
           let self = open_device d in
           if self < 0 then begin
             Atomic.set g.busy.(i) false;
-            Error (error (-self))
+            Error
+              ("opening the GPU's primary context and streams: " ^ error (-self))
           end
           else
             let w = word_address self in
@@ -246,7 +250,7 @@ let alloc g kind n =
   | a when a >= 0 ->
       Some
         (region g.self (if host then Host else Device) ~address:a ~handle:a n)
-  | _ -> refused g.self None
+  | _ -> refused (strf "allocating %d bytes" n) g.self None
 
 let free g r =
   match r.kind with
@@ -275,7 +279,7 @@ let map_peer g g' r =
     | 1 -> true
     | 0 -> false
     | s when -s = cuda_error_peer_access_already_enabled -> true
-    | _ -> refused g.self false
+    | _ -> refused "enabling peer access" g.self false
   in
   if not reach then None
   else Some { r with owner = g.self; kind = Peer kind; live = true }
@@ -292,12 +296,14 @@ let page_lock g a n =
   let first = mapped g.self a and last = mapped g.self (a + n - 1) in
   if first >= 0 && last >= 0 then Some (locked g None a n first)
   else if first >= 0 || last >= 0 then None
-  else if register g.self a n <> 0 then refused g.self None
   else
-    let address = get (mapped g.self a) in
-    let e = { start = a; bytes = n; address; maps = 1; stuck = false } in
-    Hashtbl.replace registry a e;
-    Some (locked g (Some e) a n address)
+    let step = strf "page-locking %d bytes at 0x%x" n a in
+    if register g.self a n <> 0 then refused step g.self None
+    else
+      let address = get step (mapped g.self a) in
+      let e = { start = a; bytes = n; address; maps = 1; stuck = false } in
+      Hashtbl.replace registry a e;
+      Some (locked g (Some e) a n address)
 
 let map_host g a n =
   if n < 1 then
@@ -347,7 +353,9 @@ external unload_module : int -> int -> int = "caml_device_cuda_unload"
 let image g bin =
   match load_module g.self bin with
   | m when m >= 0 -> Ok ({ owner = g.self; m; loaded = true }, None)
-  | s -> refused g.self (Error (error (-s)))
+  | s ->
+      let step = "loading the image" in
+      refused step g.self (Error (strf "%s: %s" step (error (-s))))
 
 let entry (m : image) f =
   if not m.loaded then invalid_arg "Device_cuda.entry: the image was unloaded";
@@ -355,14 +363,16 @@ let entry (m : image) f =
   else
     match get_function m.owner m.m f with
     | h when h >= 0 -> Some h
-    | _ -> refused m.owner None
+    | _ -> refused (strf "finding kernel %S" f) m.owner None
 
 let unload g (m : image) =
   if m.owner <> g.self then
     invalid_arg "Device_cuda.unload: the image is another device's";
   if not m.loaded then invalid_arg "Device_cuda.unload: the image was unloaded";
   m.loaded <- false;
-  match unload_module g.self m.m with 0 -> () | s -> fault s
+  match unload_module g.self m.m with
+  | 0 -> ()
+  | s -> fault "unloading the image" s
 
 (* Work. A part is the ints the C submit reads: the device's C state, then
    nx_part's queue, fill, arg, copy_dst, copy_dst_offset, copy_src,
@@ -392,7 +402,9 @@ let part g ~queue ?(after = [||]) w =
     match queue with
     | "COMPUTE:0" -> 0
     | "COPY:0" -> 1
-    | q -> invalid_argf "Device_cuda.part: %S is no queue of the device" q
+    | q ->
+        invalid_argf "Device_cuda.part: queue %S, expected COMPUTE:0 or COPY:0"
+          q
   in
   Array.iter
     (fun j ->
@@ -401,7 +413,7 @@ let part g ~queue ?(after = [||]) w =
     after;
   let part work = Array.concat [ [| g.self; queue |]; work; after ] in
   match w with
-  | `Words _ -> invalid_arg "Device_cuda.part: a CUDA device has no ring words"
+  | `Words _ -> invalid_arg "Device_cuda.part: the device runs no words"
   | `Fill (f, arg, units, bytes) ->
       if units <> 0 || bytes <> 0 then
         invalid_argf
@@ -433,8 +445,8 @@ let check_part self i (p : part) =
   for k = after_at to Array.length p - 1 do
     if p.(k) >= i then
       invalid_argf
-        "Device_cuda.submit: part %d runs after part %d, expected an earlier \
-         one"
+        "Device_cuda.submit: part %d waits for part %d, expected an earlier \
+         part"
         i p.(k)
   done
 
@@ -477,7 +489,9 @@ let signaled g = signaled g.self
 let sleep g ~seen ~still_ms =
   if still_ms < 0 then
     invalid_argf "Device_cuda.sleep: still_ms %d is negative" still_ms;
-  match sleep g.self seen still_ms with 0 -> () | s -> fault s
+  match sleep g.self seen still_ms with
+  | 0 -> ()
+  | s -> fault "the GPU's work failed" s
 
 (* Loss *)
 

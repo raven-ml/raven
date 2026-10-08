@@ -304,10 +304,10 @@ val submit :
     ignored: CUDA's work names its memory by address.
 
     The result is [`Ok] once every part is enqueued, or [`Failed why] with the
-    error of the first CUDA call that failed, a fill's included, as
-    ["CUDA_ERROR_ILLEGAL_ADDRESS: an illegal memory access was encountered"].
-    Enqueued work may have run. Every later [submit] answers the same [`Failed]:
-    the context may hold an error for the process.
+    step and the error of the first CUDA call that failed, a fill's included, as
+    ["running a fill: CUDA_ERROR_ILLEGAL_ADDRESS: an illegal memory access was
+     encountered"]. Enqueued work may have run. Every later [submit] answers the
+    same [`Failed]: the context may hold an error for the process.
 
     [submit] may block while a stream is full, until the device's earlier work
     completes, and lets other domains run meanwhile.
