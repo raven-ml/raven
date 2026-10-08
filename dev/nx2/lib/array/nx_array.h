@@ -139,7 +139,8 @@ typedef struct {
 
 /* Fills [l] for the [n] operands [a] and answers NX_OK, or answers
    NX_ARITY if [n] is not in [1, NX_MAX_OPERANDS], and NX_SHAPE if their
-   shapes differ. */
+   shapes differ. The loop keeps the C order of indices: axes are dropped
+   and merged, never reordered. */
 int nx_coalesce(int n, const nx_array *a, nx_loop *l);
 
 /* Sub-byte elements
@@ -164,9 +165,10 @@ static inline void nx_sub_store(uint8_t *base, int bits, int64_t p,
   uint8_t set = (uint8_t)((v << (bit & 7)) & mask);
   uint8_t *byte = base + (bit >> 3);
   uint8_t old = __atomic_load_n(byte, __ATOMIC_RELAXED);
-  while (!__atomic_compare_exchange_n(byte, &old, (uint8_t)((old & ~mask) | set),
-                                      1, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
-    ;
+  uint8_t next;
+  do next = (uint8_t)((old & ~mask) | set);
+  while (!__atomic_compare_exchange_n(byte, &old, next, 1, __ATOMIC_RELAXED,
+                                      __ATOMIC_RELAXED));
 }
 
 #endif /* NX_ARRAY_H */

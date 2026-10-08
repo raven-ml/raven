@@ -9,7 +9,6 @@ module Layout = Layout
 module Buffer = Rig.Buffer
 
 let invalid_argf fmt = Format.kasprintf invalid_arg fmt
-let pp_ints = Shape.pp
 
 (* nx_array_stubs.c reads the fields in this order. *)
 type ('v, 's) t = {
@@ -45,7 +44,7 @@ let reason = function
   | c -> Printf.sprintf "code %d" c
 
 let pp_operand ppf (Any a) =
-  Format.fprintf ppf "%a %a" Dtype.pp a.dtype pp_ints (Layout.shape a.layout)
+  Format.fprintf ppf "%a %a" Dtype.pp a.dtype Shape.pp (Layout.shape a.layout)
 
 let settle name code operands =
   if code = pending then
@@ -233,12 +232,12 @@ let position fn a idx =
   let l = a.layout in
   let r = Layout.rank l in
   if Array.length idx <> r then
-    invalid_argf "%s: index %a for %d axes" fn pp_ints idx r;
+    invalid_argf "%s: index %a for %d axes" fn Shape.pp idx r;
   let p = ref (Layout.offset l) in
   for i = 0 to r - 1 do
     let j = idx.(i) in
     if j < 0 || j >= Layout.dim l i then
-      invalid_argf "%s: index %a outside shape %a" fn pp_ints idx pp_ints
+      invalid_argf "%s: index %a outside shape %a" fn Shape.pp idx Shape.pp
         (Layout.shape l);
     p := !p + (j * Layout.stride l i)
   done;
@@ -446,7 +445,7 @@ let of_array (type v s) (dt : (v, s) Dtype.t) s (values : v array) =
      element per index of the layout it writes, counted on the same layout. *)
   let layout = Layout.contiguous s in
   if Array.length values <> Layout.numel layout then
-    invalid_argf "%s: %d values for shape %a" fn (Array.length values) pp_ints
+    invalid_argf "%s: %d values for shape %a" fn (Array.length values) Shape.pp
       (Layout.shape layout);
   (* Only integers can fall outside their dtype's range. Iterating over a float
      array would box every element. *)

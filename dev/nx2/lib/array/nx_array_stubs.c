@@ -29,7 +29,8 @@ enum { ARRAY_DTYPE, ARRAY_LAYOUT, ARRAY_BUFFER };
    lives in the OCaml heap, which moves. Answers NX_LAYOUT if its arrays do
    not make a layout. */
 static int read_layout(value v, nx_array *a) {
-  value shape = Field(v, NX_LAYOUT_SHAPE), strides = Field(v, NX_LAYOUT_STRIDES);
+  value shape = Field(v, NX_LAYOUT_SHAPE);
+  value strides = Field(v, NX_LAYOUT_STRIDES);
   mlsize_t r = Wosize_val(shape);
   if (r > NX_MAX_RANK || Wosize_val(strides) != r) return NX_LAYOUT;
   a->rank = (int)r;
@@ -175,7 +176,7 @@ int nx_coalesce(int n, const nx_array *a, nx_loop *l) {
        is this stride times this extent: the two axes are one run. */
     int joins = out > 0;
     for (int k = 0; k < n && joins; k++)
-      joins = l->step[k][out - 1] == a[k].dim[a[k].rank + i] * d;
+      joins = l->step[k][out - 1] == a[k].dim[r + i] * d;
     if (joins) {
       l->extent[out - 1] *= d;
       for (int k = 0; k < n; k++) l->step[k][out - 1] = a[k].dim[r + i];
@@ -237,6 +238,7 @@ value nx_array_coalesce(value ls, value out) {
   int e = nx_coalesce(n, a, &l);
   if (e) return Val_int(e);
   int r = l.rank;
+  /* [out] is an int array: immediates need no write barrier. */
   Field(out, 0) = Val_long(r);
   for (int i = 0; i < r; i++) Field(out, 1 + i) = Val_long(l.extent[i]);
   for (int k = 0; k < n; k++) {
@@ -338,7 +340,9 @@ static void store_float(uint8_t *base, int dt, int64_t p, int part,
     case NX_FLOAT4_E2M1FN:
       nx_sub_store(base, 4, p, (uint32_t)nx_double_to_bits(dt, x));
       return;
-    case NX_COMPLEX128: store_float(base, NX_FLOAT64, 2 * p + part, 0, x); return;
+    case NX_COMPLEX128:
+      store_float(base, NX_FLOAT64, 2 * p + part, 0, x);
+      return;
     default: store_float(base, NX_FLOAT32, 2 * p + part, 0, x); return;
   }
 }
@@ -478,10 +482,6 @@ static void to_run(void *ctx, const int64_t *at, int64_t len) {
 #undef DECODE
 }
 
-/* The loop of one operand, its strides as they come: [to_array] and
-   [of_array] walk in C order of indices, so axes are not reordered. */
-static int loop1(const nx_array *a, nx_loop *l) { return nx_coalesce(1, a, l); }
-
 /* to_array: reads [v]'s elements, in C order of indices, into [out], an
    OCaml array of their number, flat floats or immediates. It allocates
    nothing; elements that box go through nx_array_to_bigarray. */
@@ -492,7 +492,7 @@ value nx_array_to_array(value v, value out) {
   if (representation(in.dtype) == TO_BOXED) return Val_int(NX_DTYPE);
   int e = nx_read(1, &in, &a);
   if (e) return Val_int(e);
-  if (!(e = loop1(&a, &l))) {
+  if (!(e = nx_coalesce(1, &a, &l))) {
     to_ctx c = {&a, &l, out, 0};
     walk(1, &l, &c, to_run);
   }
@@ -569,7 +569,7 @@ value nx_array_of_array(value v, value values) {
   nx_loop l;
   int e = nx_read(1, &in, &a);
   if (e) return Val_int(e);
-  if (!(e = loop1(&a, &l))) {
+  if (!(e = nx_coalesce(1, &a, &l))) {
     of_ctx c = {&a, &l, values, 0};
     walk(1, &l, &c, of_run);
   }

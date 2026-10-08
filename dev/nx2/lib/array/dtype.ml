@@ -115,35 +115,28 @@ type float_format = {
 
 type row = { name : string; bits : int; format : float_format option }
 
-let ieee e m =
-  let bias = (1 lsl (e - 1)) - 1 in
-  let max_finite = Float.ldexp (2. -. Float.ldexp 1. (-m)) bias in
-  Some
-    {
-      exponent_bits = e;
-      fraction_bits = m;
-      infinities = true;
-      nans = true;
-      epsilon = Float.ldexp 1. (-m);
-      min_normal = Float.ldexp 1. (1 - bias);
-      max_finite;
-    }
-
-(* The OCP minifloats e4m3fn and e2m1fn spend the top exponent on finite values:
-   e4m3fn keeps one NaN code per sign, e2m1fn none. *)
-let ocp e m ~nans ~max_finite =
+let format e m ~infinities ~nans ~max_finite =
   let bias = (1 lsl (e - 1)) - 1 in
   Some
     {
       exponent_bits = e;
       fraction_bits = m;
-      infinities = false;
+      infinities;
       nans;
       epsilon = Float.ldexp 1. (-m);
       min_normal = Float.ldexp 1. (1 - bias);
       max_finite;
     }
 
+(* IEEE 754 formats spend the top exponent on infinities and NaNs. *)
+let ieee e m =
+  let bias = (1 lsl (e - 1)) - 1 in
+  let max_finite = Float.ldexp (2. -. Float.ldexp 1. (-m)) bias in
+  format e m ~infinities:true ~nans:true ~max_finite
+
+(* The OCP minifloats e4m3fn and e2m1fn spend the top exponent on finite values:
+   e4m3fn keeps one NaN code per sign, e2m1fn none. *)
+let ocp e m ~nans ~max_finite = format e m ~infinities:false ~nans ~max_finite
 let row name bits format = { name; bits; format }
 
 let rows =

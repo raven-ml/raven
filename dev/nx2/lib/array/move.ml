@@ -14,37 +14,34 @@ type t =
   | Window of window array
 
 let invalid_argf fmt = Format.kasprintf invalid_arg fmt
-let pp_ints = Shape.pp
-let numel = Shape.numel
-let check_rank = Shape.check_rank
 
 (* [n] is the number of elements of [s]. A caller's array is read once: [s'] is
    copied before it is checked, since another domain may write it. *)
 let reshape s n s' =
   let s' = Shape.copy s' in
-  check_rank "Move.Reshape" (Array.length s');
-  let n' = numel "Move.Reshape" s' in
+  Shape.check_rank "Move.Reshape" (Array.length s');
+  let n' = Shape.numel "Move.Reshape" s' in
   if n <> n' then
-    invalid_argf "Move.Reshape: %a has %d elements, %a has %d" pp_ints s n
-      pp_ints s' n';
+    invalid_argf "Move.Reshape: %a has %d elements, %a has %d" Shape.pp s n
+      Shape.pp s' n';
   s'
 
 (* A caller's array is read once, as in [reshape]. *)
 let broadcast s s' =
   let s' = Shape.copy s' in
   let r = Array.length s and r' = Array.length s' in
-  check_rank "Move.Broadcast" r';
-  ignore (numel "Move.Broadcast" s');
+  Shape.check_rank "Move.Broadcast" r';
+  ignore (Shape.numel "Move.Broadcast" s');
   if r' < r then
-    invalid_argf "Move.Broadcast: %a has fewer axes than %a" pp_ints s' pp_ints
-      s;
+    invalid_argf "Move.Broadcast: %a has fewer axes than %a" Shape.pp s'
+      Shape.pp s;
   for i = 0 to r - 1 do
     let d = s.(i) and d' = s'.(r' - r + i) in
     if d <> 1 && d <> d' then
       invalid_argf
         "Move.Broadcast: %a does not broadcast to %a: axis %d has %d, neither \
          1 nor %d"
-        pp_ints s pp_ints s' i d d'
+        Shape.pp s Shape.pp s' i d d'
   done;
   s'
 
@@ -53,7 +50,7 @@ let broadcast s s' =
 let permute s p =
   let r = Array.length s in
   if Array.length p <> r then
-    invalid_argf "Move.Permute: %a has %d axes, not %d" pp_ints p
+    invalid_argf "Move.Permute: %a has %d axes, not %d" Shape.pp p
       (Array.length p) r;
   let seen = ref 0 in
   for i = 0 to r - 1 do
@@ -62,12 +59,12 @@ let permute s p =
       invalid_argf
         "Move.Permute: %a is not a permutation of %d axes: entry %d, %d, is \
          not an axis of %d"
-        pp_ints p r i a r;
+        Shape.pp p r i a r;
     if !seen land (1 lsl a) <> 0 then
       invalid_argf
         "Move.Permute: %a is not a permutation of %d axes: entry %d repeats \
          axis %d"
-        pp_ints p r i a;
+        Shape.pp p r i a;
     seen := !seen lor (1 lsl a)
   done;
   let s' = Shape.zeros r in
@@ -114,7 +111,7 @@ let windows d (w : window) =
 
 let window s ws =
   let r = Array.length s and k = Array.length ws in
-  check_rank "Move.Window" (r + k);
+  Shape.check_rank "Move.Window" (r + k);
   let s' = Array.append s (Array.make k 0) in
   Array.iteri
     (fun j (w : window) ->
@@ -134,14 +131,14 @@ let window s ws =
       s'.(w.axis) <- n;
       s'.(r + j) <- w.size)
     ws;
-  ignore (numel "Move.Window" s');
+  ignore (Shape.numel "Move.Window" s');
   s'
 
 (* An argument of more than [max_rank] axes has no layout, and [permute]'s bit
    set tells only that many axes apart: refuse it before any movement. *)
 let shape m s =
-  check_rank "Move.shape" (Array.length s);
-  let n = numel "Move.shape" s in
+  Shape.check_rank "Move.shape" (Array.length s);
+  let n = Shape.numel "Move.shape" s in
   match m with
   | Reshape s' -> reshape s n s'
   | Broadcast s' -> broadcast s s'

@@ -151,8 +151,6 @@ let finish fn shape strides offset =
 
 (* Constructors *)
 
-let pp_ints = Shape.pp
-
 (* A C-order layout is canonical, contiguous and distinct, with span [[0, n)]:
    [contiguous] builds it without [finish]'s general checks.
 
@@ -330,12 +328,15 @@ let coalesce ls =
   let out = Array.make (1 + max_rank + (n * (1 + max_rank))) 0 in
   let e = coalesce_into ls out in
   if e <> 0 then invalid_argf "Layout.coalesce: the coalescer answered %d" e;
+  (* The coalescer built each layout from checked ones: [finish] computes its
+     span and flags, over arrays of its own. *)
   let r = out.(0) in
-  let shape = Array.sub out 1 r in
   Array.init n (fun k ->
       let at = 1 + r + (k * (1 + r)) in
-      v ~offset:out.(at) ~strides:(Array.sub out (at + 1) r) shape)
+      finish "Layout.coalesce" (Array.sub out 1 r)
+        (Array.sub out (at + 1) r)
+        out.(at))
 
 let pp ppf l =
-  Format.fprintf ppf "{shape = %a; strides = %a; offset = %d}" pp_ints (shape l)
-    pp_ints (strides l) (offset l)
+  Format.fprintf ppf "{shape = %a; strides = %a; offset = %d}" Shape.pp
+    (shape l) Shape.pp (strides l) (offset l)
