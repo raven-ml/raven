@@ -235,9 +235,10 @@ int rig_amd_room(void *self, const struct rig_part *parts, int n) {
 
 int rig_amd_place(void *queue, const uint32_t *words, size_t n) {
   struct rig_amd_writer *w = queue;
-  if (w->q->put + n > w->ring_end) return 1;
+  if (n > w->ring_left) return 1;
   if (w->q->kind == RING_AQL && n % AQL_WORDS) return 3;
   put_words(w->q, words, n);
+  w->ring_left -= n;
   return 0;
 }
 
@@ -407,7 +408,9 @@ static void refresh_slot(struct rig_amd *d, uint64_t v) {
    release, after every earlier value, on compute. On an AQL ring the
    dropped packets keep valid headers past the write position, which the
    queue may read: each gets the invalid header type. Bytes the fill took
-   stay v's, and return once the word reaches v. */
+   stay v's, and return once the word reaches v. Scratch writes v took are
+   dropped too, yet count as placed: no work runs after v, so the scratch
+   the descriptor still names is retired safely once the word reaches v. */
 static int fail(struct submission *s, int part, int code) {
   struct rig_amd *d = s->d;
   for (int q = 0; q < RIG_AMD_QUEUES; q++) {
@@ -480,7 +483,7 @@ int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
     if (p->words) put_words(ring, p->words, p->n);
     else if (p->fill) {
       struct rig_amd_writer w = {
-          d, ring, ring->put + p->ring_units,
+          d, ring, p->ring_units,
           g->put + align_up(p->segment_bytes, SEGMENT_ALIGN)};
       int code = p->fill(&w, p->arg, v);
       if (code != 0) {

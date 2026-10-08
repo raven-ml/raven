@@ -145,12 +145,14 @@ struct rig_amd {
   char failure_text[96];
 };
 
-/* A fill's writer: the device, the queue it places on, and how far the
-   part's declared ring units and segment bytes reach. */
+/* A fill's writer: the device, the queue it places on, the words of the
+   part's declared ring units it has not placed, and how far its declared
+   segment bytes reach. The padding the writer places before an SDMA ring's
+   end is not the fill's. */
 struct rig_amd_writer {
   struct rig_amd *d;
   struct rig_amd_ring *q;
-  uint64_t ring_end, segment_end;
+  uint64_t ring_left, segment_end;
 };
 
 int rig_amd_place(void *queue, const uint32_t *words, size_t n);

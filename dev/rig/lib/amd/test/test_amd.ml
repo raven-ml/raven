@@ -1097,16 +1097,11 @@ let failures =
         "on an AQL queue, a failed fill leaves none of its packets valid past \
          the write position"
         aql_failure;
-      xfail
-        ~reason:
-          "a fill's place charges the zeros that pad the copy ring's end to \
-           the fill's declared units: a fill placing exactly its units in two \
-           calls fails when a call goes past the end"
-        (prop ~count:200
-           ~examples:[ (10, 16, 8); (10, 4, 8) ]
-           "a fill on COPY:0 placing exactly its units runs wherever the \
-            ring's end falls"
-           at_the_end fill_at_the_end);
+      prop ~count:200
+        ~examples:[ (10, 16, 8); (10, 4, 8) ]
+        "a fill on COPY:0 placing exactly its units runs wherever the ring's \
+         end falls"
+        at_the_end fill_at_the_end;
       test "sleep asks the path only while the word holds seen" sleeps;
       test "stop writes the last value only once the path stopped its queues"
         stops;
