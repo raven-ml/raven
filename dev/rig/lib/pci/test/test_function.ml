@@ -1198,6 +1198,11 @@ let refusals =
       "0000:03:00.0",
       [],
       [ "0000:03:00.0 shares its device with 0000:03:00.1" ] );
+    ( "a function on vfio-pci in no IOMMU group",
+      [ Tree.gpu ~driver:"vfio-pci" "0000:03:00.0" ],
+      "0000:03:00.0",
+      [ "flock" ],
+      [ "0000:03:00.0 is bound to vfio-pci but in no IOMMU group" ] );
     ( "a disabled function",
       [ Tree.gpu ~enabled:false "0000:03:00.0" ],
       "0000:03:00.0",
@@ -1226,6 +1231,8 @@ let refusals =
   ]
 
 let test_refusal (_, fns, bus, opts, subs) =
+  if List.mem "flock" opts && not on_linux then
+    skip ~reason:"flock on a function's file needs Linux" ();
   let lockdown =
     if List.mem "lockdown" opts then Some "none [integrity] confidentiality"
     else None

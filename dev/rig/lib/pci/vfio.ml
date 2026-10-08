@@ -9,12 +9,12 @@
 
 let strf = Printf.sprintf
 
-(* The IOMMU models. rig_pci_vfio.c reads the constructors in this order as
-   its enum model: keep the two in sync. *)
+(* The IOMMU models. rig_pci_vfio.c reads the constructors in this order as its
+   enum model: keep the two in sync. *)
 type model = Type1v2 | No_iommu
 
-(* VFIO_API_VERSION, the version of VFIO's requests; rig_pci_vfio.c asserts
-   it against <linux/vfio.h>. *)
+(* VFIO_API_VERSION, the version of VFIO's requests; rig_pci_vfio.c asserts it
+   against <linux/vfio.h>. *)
 let api_version = 0
 
 (* VFIO_PCI_CONFIG_REGION_INDEX: the region of configuration space. *)
@@ -99,7 +99,11 @@ let open_function files fds bus m =
     fds := fd :: !fds;
     fd
   in
-  let g = Option.get (Sysfs.group files bus) in
+  let g =
+    match Sysfs.group files bus with
+    | Some g -> g
+    | None -> Fail.fail "%s is bound to vfio-pci but in no IOMMU group" bus
+  in
   let file =
     match m with
     | Type1v2 -> Sysfs.vfio_file files g
