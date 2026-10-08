@@ -1,0 +1,12 @@
+CPU computes: true, runs on the host: true
+
+a      16 bytes [10; 20; 30; 40]
+mid     8 bytes [99; 30]
+a      16 bytes [10; 99; 30; 40]
+a spans its memory: true, mid: false, they overlap: true
+
+f is borrowed: true; 1.0 as int64 bits: 0x3ff0000000000000
+
+b       8 bytes [99; 30]
+Invalid_argument: Rig.Buffer.copy: 16 bytes into 8
+Invalid_argument: Rig.Buffer.bigarray: 12 bytes at offset 0 are no whole number of aligned 8-byte elements

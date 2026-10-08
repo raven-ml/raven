@@ -1,0 +1,9 @@
+DISK computes: false
+
+numbers.bin holds 16 bytes
+copied   [20; 30]
+borrowed [10; 20; 30; 40]
+written  [7; 20; 30; 40]
+file     [10; 20; 30; 40]
+a copy into a file opened for reading is refused
+missing.bin: No such file or directory

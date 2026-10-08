@@ -1,0 +1,9 @@
+M submitted 0, signaled 0
+first submit: M:1
+again:        M:2
+M submitted 2, signaled 2
+chain:        M:3
+dst  [1; 2; 3; 4]
+empty:        M:4
+M submitted 4, signaled 4
+Rig.wait: 5 is beyond M's last value 4
