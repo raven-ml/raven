@@ -187,6 +187,7 @@ let completion _ = `Host
 let waits_on _ _ = false
 let max_waits _ = 0
 let blocks _ = `May_block
+let maps_host _ = true
 let capability d = d.cap
 let capability_key = Rig_metal_abi.key
 let self d = Nativeint.of_int d.self

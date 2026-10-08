@@ -58,7 +58,7 @@ type 'm path = {
   budget : int;
   doorbell : int;
   alloc : [ `Gpu | `Bar | `System ] -> int -> 'm memory option;
-  map_host : int -> int -> 'm memory option;
+  map_host : (int -> int -> 'm memory option) option;
   reaches : int -> bool;
   map_peer : 'm memory -> 'm memory option;
   free : 'm memory -> unit;
@@ -138,16 +138,13 @@ external destroy : int -> unit = "caml_rig_nv_destroy" [@@noalloc]
 external set_channel : int -> int -> int array -> bool = "caml_rig_nv_channel"
 [@@noalloc]
 
-external set_doorbell : int -> int -> unit = "caml_rig_nv_doorbell"
-[@@noalloc]
+external set_doorbell : int -> int -> unit = "caml_rig_nv_doorbell" [@@noalloc]
 
 external set_template : int -> int -> int array -> int array -> unit
   = "caml_rig_nv_template"
 [@@noalloc]
 
-external set_entry : int -> int -> int -> unit = "caml_rig_nv_entry"
-[@@noalloc]
-
+external set_entry : int -> int -> int -> unit = "caml_rig_nv_entry" [@@noalloc]
 external set_bar : int -> int -> unit = "caml_rig_nv_bar" [@@noalloc]
 external bar_live : int -> int -> unit = "caml_rig_nv_bar_live" [@@noalloc]
 external zero : int -> int -> unit = "caml_rig_nv_zero" [@@noalloc]
@@ -156,13 +153,8 @@ external offer_local : int -> int -> int -> bool = "caml_rig_nv_offer_local"
 [@@noalloc]
 
 external set_local : int -> int -> unit = "caml_rig_nv_set_local" [@@noalloc]
-
-external pending_local : int -> int = "caml_rig_nv_pending_local"
-[@@noalloc]
-
-external owe_invalidate : int -> unit = "caml_rig_nv_owe_invalidate"
-[@@noalloc]
-
+external pending_local : int -> int = "caml_rig_nv_pending_local" [@@noalloc]
+external owe_invalidate : int -> unit = "caml_rig_nv_owe_invalidate" [@@noalloc]
 external read_word : int -> int = "caml_rig_nv_signaled" [@@noalloc]
 
 external notification : int -> int -> int = "caml_rig_nv_notification"
@@ -173,9 +165,7 @@ external last : int -> int = "caml_rig_nv_last" [@@noalloc]
 external now_ms : unit -> int = "caml_rig_nv_now_ms" [@@noalloc]
 external raise_word : int -> unit = "caml_rig_nv_raise" [@@noalloc]
 external end_channels : int -> unit = "caml_rig_nv_end" [@@noalloc]
-
-external room_entry_address : unit -> int = "caml_rig_nv_room_entry"
-[@@noalloc]
+external room_entry_address : unit -> int = "caml_rig_nv_room_entry" [@@noalloc]
 
 external submit_entry_address : unit -> int = "caml_rig_nv_submit_entry"
 [@@noalloc]
@@ -285,7 +275,6 @@ let arch_of v =
 (* The SASS version of SM version [v], as cubins state it: major and minor in
    one byte each nibble. *)
 let sass_of v = ((v land 0xf00) lsr 4) lor (v land 0xf)
-
 let arch (T d) = d.arch
 let budget (T d) = d.path.budget
 let queues (T _) = [ "COMPUTE:0"; "COPY:0" ]
@@ -295,6 +284,7 @@ let waits_on (T _) = function `Store | `Host -> true | `Object -> false
 (* rig_nv_ring.c's MAX_WAITS. *)
 let max_waits (T _) = 256
 let blocks (T _) = `Returns
+let maps_host (T d) = Option.is_some d.path.map_host
 
 type capability = Abi.Gpu.t
 
@@ -364,9 +354,9 @@ let local d n =
 
 (* Templates *)
 
-(* The ints of a hole as caml_rig_nv_template reads them: its index, slot,
-   width and number of operations, then each operation's shift (an addition if
-   [0]) and addend. *)
+(* The ints of a hole as caml_rig_nv_template reads them: its index, slot, width
+   and number of operations, then each operation's shift (an addition if [0])
+   and addend. *)
 let hole_ints (at, (word : int Packet.word)) =
   let rec ops acc : int Packet.term -> int * (int * int64) list = function
     | Packet.Value s -> (s, acc)
@@ -423,8 +413,7 @@ let templates self (g : gpu) =
     (Method.set_object Method.Compute g.compute_class
     @ Method.local_memory_window local_window
     @ Method.shared_memory_window shared_window);
-  template self t_setup_copy ~known
-    (Method.set_object Method.Copy g.copy_class);
+  template self t_setup_copy ~known (Method.set_object Method.Copy g.copy_class);
   template self t_invalidate ~known (Method.invalidate_caches system);
   template self t_idle ~known Method.wait_for_idle;
   (* An entry is its segment's address plus a constant plus its words times
@@ -640,8 +629,7 @@ let make p =
   Option.iter
     (fun n ->
       if n < 1 then
-        invalid_argf "Rig_nv.make: a hang bound of %d ms, expected at least 1"
-          n)
+        invalid_argf "Rig_nv.make: a hang bound of %d ms, expected at least 1" n)
     p.hang_ms;
   match D.release p.rm.release with
   | None ->
@@ -709,8 +697,7 @@ let map_peer (T d) (T d') r =
   if d.self = d'.self then
     invalid_arg "Rig_nv.map_peer: the two devices are one";
   match mine d' r with
-  | None ->
-      invalid_arg "Rig_nv.map_peer: the region is not the other device's"
+  | None -> invalid_arg "Rig_nv.map_peer: the region is not the other device's"
   | Some r when not (Atomic.get r.live) ->
       invalid_arg "Rig_nv.map_peer: the region was freed"
   | Some r -> (
@@ -722,10 +709,12 @@ let map_peer (T d) (T d') r =
             (below d.path "Rig_nv.map_peer" r.bytes m))
 
 let map_host (T d) a n =
-  if n < 1 then
-    invalid_argf "Rig_nv.map_host: %d bytes, expected at least 1" n;
-  let m = below d.path "Rig_nv.map_host" n (d.path.map_host a n) in
-  Option.map (region d Path n) m
+  if n < 1 then invalid_argf "Rig_nv.map_host: %d bytes, expected at least 1" n;
+  match d.path.map_host with
+  | None -> None
+  | Some map ->
+      let m = below d.path "Rig_nv.map_host" n (map a n) in
+      Option.map (region d Path n) m
 
 (* Images *)
 

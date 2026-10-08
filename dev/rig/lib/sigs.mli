@@ -21,6 +21,7 @@ module type Driver = sig
   val waits_on : t -> [ `Store | `Object | `Host ] -> bool
   val max_waits : t -> int
   val blocks : t -> [ `Returns | `May_block ]
+  val maps_host : t -> bool
   val capability : t -> capability
   val capability_key : capability Type.Id.t
   val alloc : t -> [ `Device | `Pinned | `Mapped ] -> int -> region option

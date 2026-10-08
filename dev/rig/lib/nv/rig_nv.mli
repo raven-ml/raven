@@ -116,6 +116,10 @@ val blocks : t -> [ `Returns | `May_block ]
 (** [blocks g] is [`Returns]: [rig_nv_room] and [rig_nv_submit] store to memory
     and never block. *)
 
+val maps_host : t -> bool
+(** [maps_host g] is [true] iff [g]'s path maps host memory ([map_host] of
+    {!type-path}). *)
+
 type capability = Rig_nv_abi.Gpu.t
 (** The type for what compiled code needs from a device. *)
 
@@ -188,9 +192,10 @@ val map_peer : t -> t -> region -> region option
 
 val map_host : t -> int -> int -> region option
 (** [map_host g a n] is [Some r] with [r] the [n] bytes of host memory at [a],
-    mapped for [g]'s GPU, or [None] if its path refuses them. The path maps
-    whole pages, and keeps the pages mapped until every region over them is
-    freed. The host memory must stay mapped until [r] is freed.
+    mapped for [g]'s GPU, or [None] if its path maps no host memory
+    ({!maps_host}) or refuses these pages. The path maps whole pages, and keeps
+    the pages mapped until every region over them is freed. The host memory must
+    stay mapped until [r] is freed.
 
     Raises [Invalid_argument] if [n < 1]. *)
 
@@ -254,10 +259,10 @@ val sleep : t -> seen:int -> still_ms:int -> unit
 (** [sleep g ~seen ~still_ms] returns once [g]'s timeline word differs from
     [seen], at once if it already does, and at the latest after [still_ms]
     milliseconds; [still_ms >= 0]. Under a hang bound it may return earlier,
-    when the bound's clock runs out. It reads the word and the channels'
-    error notifiers every millisecond, and the multiprocessors' errors and the
-    path's {!field-check} as it starts and once a notifier holds an error. It
-    lets other domains run while it waits.
+    when the bound's clock runs out. It reads the word and the channels' error
+    notifiers every millisecond, and the multiprocessors' errors and the path's
+    {!field-check} as it starts and once a notifier holds an error. It lets
+    other domains run while it waits.
 
     Raises {!Fault} with the report if [g]'s work faulted. If the path bounds
     progress ([hang_ms] is [Some n]), it also raises {!Fault} once work is
@@ -373,9 +378,8 @@ type 'm memory = {
           last byte included: rings and semaphores take addresses of 40 bits,
           and the device packs its local memory's address in 40 bits and keeps
           kernels' windows onto shared and local memory above. A path may map
-          host memory at a GPU address of its own, as the host's may lie
-          higher. A device raises [Invalid_argument] for memory a path answers
-          above. *)
+          host memory at a GPU address of its own, as the host's may lie higher.
+          A device raises [Invalid_argument] for memory a path answers above. *)
   host : int option;
       (** The host address of its first byte, if the host addresses it. *)
   handle : int;  (** The RM's name for it, which channel allocations take. *)
@@ -408,11 +412,13 @@ type 'm path = {
             memory BAR, mapped uncached;
           - [`System], host memory that the GPU reads and writes coherently with
             the host. *)
-  map_host : int -> int -> 'm memory option;
-      (** [map_host a n] is the [n] bytes of host memory at [a], mapped for the
-          GPU, or [None] if the path refuses them. The path maps whole pages
-          and keeps them mapped until every memory it gave over them is
-          freed. *)
+  map_host : (int -> int -> 'm memory option) option;
+      (** [Some map] if the GPU maps host memory: [map a n] is the [n] bytes of
+          host memory at [a], mapped for the GPU, or [None] if the path refuses
+          them. The path maps whole pages and keeps them mapped until every
+          memory it gave over them is freed. [None] if the GPU maps no host
+          memory, as one taken without an IOMMU, whose pages would go back to
+          the system at the process's death while the GPU still writes them. *)
   reaches : int -> bool;
       (** [reaches i] is [true] iff this GPU's work addresses the GPU memory of
           GPU [i] of this path, another GPU. *)

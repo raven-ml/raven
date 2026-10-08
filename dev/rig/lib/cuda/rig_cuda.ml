@@ -40,6 +40,7 @@ let attribute_pci_bus_id = 33
 let attribute_pci_device_id = 34
 let attribute_pci_domain_id = 50
 let attribute_can_use_64_bit_stream_mem_ops = 122
+let attribute_host_register_supported = 99
 
 (* A CUDA failure with [status], in the step form "[step]: NAME: text". *)
 let fault step status = raise (Fault (strf "%s: %s" step (error status)))
@@ -161,6 +162,7 @@ type t = {
   arch : string;
   budget : int;
   word : region;
+  maps_host : bool; (* CUDA page-locks host memory for the device *)
   held : int Atomic.t;
   left : int list Atomic.t;
   images : image list Atomic.t; (* loaded, for stop to unload *)
@@ -288,16 +290,17 @@ let open_ i =
         get (a attribute_unified_addressing),
         get (a attribute_compute_capability_major),
         get (a attribute_compute_capability_minor),
+        get (a attribute_host_register_supported),
         get (total_memory d) )
     with
     | exception Fault why -> Error why
-    | 0, _, _, _, _ ->
+    | 0, _, _, _, _, _ ->
         Error
           (strf "the GPU lacks 64-bit stream memory operations under %s"
              (driver ()))
-    | _, 0, _, _, _ ->
+    | _, 0, _, _, _, _ ->
         Error (strf "the GPU lacks unified addressing under %s" (driver ()))
-    | _, _, major, minor, budget ->
+    | _, _, major, minor, registers, budget ->
         let held = g.held.(i) and left = g.left.(i) in
         let* () = claim held left in
         let self = open_device d in
@@ -320,6 +323,7 @@ let open_ i =
               arch;
               budget;
               word;
+              maps_host = registers <> 0;
               held;
               left;
               images;
@@ -339,6 +343,7 @@ let completion _ = `Store
 let waits_on _ = function `Store | `Host -> true | `Object -> false
 let max_waits _ = max_int
 let blocks _ = `May_block
+let maps_host g = g.maps_host
 
 type capability = Rig_cuda_abi.t
 
@@ -420,19 +425,21 @@ let page_lock g a n =
 let map_host g a n =
   if n < 1 then
     invalid_argf "Rig_cuda.map_host: %d bytes, expected at least 1" n;
-  let lo, hi = pages a n in
-  let inside e = e.start <= a && a + n <= e.start + e.bytes in
-  let shares e =
-    let lo', hi' = pages e.start e.bytes in
-    lo < hi' && lo' < hi
-  in
-  Mutex.protect registry_lock @@ fun () ->
-  match List.find_opt inside !registry with
-  | Some e when e.stuck -> None
-  | Some e ->
-      e.maps <- e.maps + 1;
-      Some (locked g (Some e) a (e.address + (a - e.start)))
-  | None -> if List.exists shares !registry then None else page_lock g a n
+  if not g.maps_host then None
+  else
+    let lo, hi = pages a n in
+    let inside e = e.start <= a && a + n <= e.start + e.bytes in
+    let shares e =
+      let lo', hi' = pages e.start e.bytes in
+      lo < hi' && lo' < hi
+    in
+    Mutex.protect registry_lock @@ fun () ->
+    match List.find_opt inside !registry with
+    | Some e when e.stuck -> None
+    | Some e ->
+        e.maps <- e.maps + 1;
+        Some (locked g (Some e) a (e.address + (a - e.start)))
+    | None -> if List.exists shares !registry then None else page_lock g a n
 
 let free g (r : region) =
   (match r.kind with

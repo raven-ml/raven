@@ -105,6 +105,10 @@ val blocks : t -> [ `Returns | `May_block ]
 (** [blocks g] is [`Returns]: the C entries write memory and call no system
     function. *)
 
+val maps_host : t -> bool
+(** [maps_host g] is [true] iff [g]'s path maps host memory ([map_host] of
+    {!type-path}). *)
+
 type capability = Rig_amd_abi.Capability.t
 (** The type for what compiled code needs from a device. *)
 
@@ -176,9 +180,10 @@ val map_host : t -> int -> int -> region option
 (** [map_host g a n] is [Some r] with [r] the [n] bytes of host memory at [a],
     which [g]'s work addresses at {!address}[ r]. The path maps the pages that
     hold them, which must stay mapped in the process until [r] is freed. It is
-    [None] if the path refuses them, such as read-only pages. The kernel
-    driver's path also refuses pages that a region {!map_host} gave a device of
-    the same GPU maps, as it maps a page at most once per GPU.
+    [None] if the path maps no host memory ({!maps_host}) or refuses these
+    pages, such as read-only ones. The kernel driver's path also refuses pages
+    that a region {!map_host} gave a device of the same GPU maps, as it maps a
+    page at most once per GPU.
 
     Raises [Invalid_argument] if [n < 1]. *)
 
@@ -360,11 +365,14 @@ type 'm path = {
           host and snooped by the GPU, which the kernel driver owns, so that no
           unmap of host memory takes it from the GPU. It is [None] if the memory
           of [k] is exhausted, or [`Bar] memory does not exist. *)
-  map_host : int -> int -> 'm memory option;
-      (** [map_host a n] maps for the GPU the pages that hold the [n] bytes of
-          host memory at [a]: the result's [address] is where the GPU reaches
-          the byte at [a], and its [host] is [Some a]. It is [None] where the
-          path refuses the pages, such as read-only ones. *)
+  map_host : (int -> int -> 'm memory option) option;
+      (** [Some map] if the GPU maps host memory: [map a n] maps for the GPU the
+          pages that hold the [n] bytes of host memory at [a], the result's
+          [address] where the GPU reaches the byte at [a] and its [host]
+          [Some a], or is [None] where the path refuses the pages, such as
+          read-only ones. [None] if the GPU maps no host memory, as one taken
+          without an IOMMU, whose pages would go back to the system at the
+          process's death while the GPU still writes them. *)
   reaches : int -> bool;
       (** [reaches j] is [true] iff [map_peer] maps the GPU memory the path
           gives a device of GPU [j], numbered as [index]: this GPU, or one it

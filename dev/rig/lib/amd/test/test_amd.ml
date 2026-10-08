@@ -253,7 +253,7 @@ module Host = struct
         wgps = Array.make (gpu.shader_engines * gpu.xccs) [| 0xff; 0xff |];
         budget = 1 lsl 34;
         alloc;
-        map_host = (fun a n -> Some (memory ~host:true a n ~view:true));
+        map_host = Some (fun a n -> Some (memory ~host:true a n ~view:true));
         reaches = (fun _ -> reaches);
         map_peer = (fun m -> if reaches then Some (view m) else None);
         free;

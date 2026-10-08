@@ -161,6 +161,10 @@ val blocks : t -> [ `Returns | `May_block ]
     oldest command buffer to complete when 1,024 of them are uncommitted or
     uncompleted, as many as [d]'s queue holds. *)
 
+val maps_host : t -> bool
+(** [maps_host d] is [true]: Metal maps host memory that starts on a page
+    without a copy. *)
+
 type capability = Rig_metal_abi.t
 (** The type for what compiled code needs from the device. *)
 

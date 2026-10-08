@@ -150,6 +150,10 @@ val max_waits : t -> int
 val blocks : t -> [ `Returns | `May_block ]
 (** [blocks g] is [`May_block]: the submit calls CUDA, which may block. *)
 
+val maps_host : t -> bool
+(** [maps_host g] is [true] iff CUDA page-locks host memory for [g]'s GPU, as
+    its [CU_DEVICE_ATTRIBUTE_HOST_REGISTER_SUPPORTED] says. *)
+
 type capability = Rig_cuda_abi.t
 (** The type for what compiled code needs from a device. *)
 
@@ -221,10 +225,10 @@ val map_peer : t -> t -> region -> region option
 
 val map_host : t -> int -> int -> region option
 (** [map_host g a n] is [Some r] with [r] the [n] bytes of host memory at [a],
-    page-locked for every CUDA device and mapped, unless CUDA refuses to
-    page-lock them. CUDA refuses read-only memory and memory whose pages another
-    page-locked range shares. The host memory must stay mapped until [r] is
-    freed.
+    page-locked for every CUDA device and mapped, unless [g] maps no host memory
+    ({!maps_host}) or CUDA refuses to page-lock them. CUDA refuses read-only
+    memory and memory whose pages another page-locked range shares. The host
+    memory must stay mapped until [r] is freed.
 
     Page-locking is the process's. A range inside one that {!map_host}
     page-locked counts against it: the pages stay locked until every region

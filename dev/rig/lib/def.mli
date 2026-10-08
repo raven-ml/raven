@@ -62,6 +62,7 @@ type device = {
   waits_object : bool;
   waits_host : bool;
   max_waits : int;  (** The waits in its queue one submission carries. *)
+  maps_host : bool;  (** Whether it maps host memory. *)
   word : int;  (** The word's host address, 0 behind a transport. *)
   word_region : region option;
   key : int;

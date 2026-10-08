@@ -79,8 +79,8 @@ let same_machine d d' = Option.equal String.equal d.machine d'.machine
 module Cache = Hashtbl.Make (Int)
 
 let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~completion ~waits
-    ~max_waits ~word ~word_region ~key ~memory_device ~fault ~capability ~budget
-    =
+    ~max_waits ~maps_host ~word ~word_region ~key ~memory_device ~fault
+    ~capability ~budget =
   let waits_store, waits_object, waits_host = waits in
   {
     index;
@@ -96,6 +96,7 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~completion ~waits
     waits_object;
     waits_host;
     max_waits;
+    maps_host;
     word;
     word_region;
     key;
@@ -119,8 +120,8 @@ let host =
   let d =
     make_device ~index:0 ~name:"CPU" ~machine:None ~kind:Host ~c:0
       ~arch:(host_arch ()) ~queues:[||] ~completion:Host_writes
-      ~waits:(false, false, false) ~max_waits:0 ~word:0 ~word_region:None
-      ~key:(-1) ~memory_device:false
+      ~waits:(false, false, false) ~max_waits:0 ~maps_host:false ~word:0
+      ~word_region:None ~key:(-1) ~memory_device:false
       ~fault:(fun _ -> None)
       ~capability:None ~budget:max_int
   in
@@ -442,6 +443,7 @@ let driver_device (type a) (module D : Sigs.Driver with type t = a) (h : a)
   let completion = completion_of (D.completion h) in
   let waits = (D.waits_on h `Store, D.waits_on h `Object, D.waits_on h `Host) in
   let max_waits = D.max_waits h and budget = D.budget h in
+  let maps_host = D.maps_host h in
   let blocks = D.blocks h = `May_block in
   let capability = Capability (D.capability_key, D.capability h) in
   let c =
@@ -451,7 +453,7 @@ let driver_device (type a) (module D : Sigs.Driver with type t = a) (h : a)
   let d =
     make_device ~index ~name ~machine
       ~kind:(Driver { m; h; rid })
-      ~c ~arch ~queues ~completion ~waits ~max_waits ~word
+      ~c ~arch ~queues ~completion ~waits ~max_waits ~maps_host ~word
       ~word_region:(Some (Region { m; h; r = word_region; rid }))
       ~key:(Type.Id.uid D.key) ~memory_device
       ~fault:(function D.Fault why -> Some why | _ -> None)
@@ -494,7 +496,7 @@ let open_io (type a) (module I : Sigs.Io with type t = a) ?machine
             make_device ~index ~name:full ~machine
               ~kind:(Io { m = (module I); h })
               ~c ~arch:"" ~queues:[||] ~completion:Host_writes
-              ~waits:(false, false, false) ~max_waits:0 ~word:0
+              ~waits:(false, false, false) ~max_waits:0 ~maps_host:false ~word:0
               ~word_region:None ~key ~memory_device:false
               ~fault:(function I.Fault why -> Some why | _ -> None)
               ~capability:None ~budget
@@ -522,5 +524,5 @@ let reaches d d' =
      | Io _, _ | _, Io _ -> false
      | Host, Host -> false
      | Host, Driver _ -> d'.memory_device || d'.copy_queue = None
-     | Driver _, Host -> true
+     | Driver _, Host -> d.maps_host
      | Driver _, Driver _ -> d'.memory_device || peer d d'

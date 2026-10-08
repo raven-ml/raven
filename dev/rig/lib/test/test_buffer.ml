@@ -280,6 +280,17 @@ let test_empty_address () =
   equal ~msg:"address" int 0 (B.address b);
   equal ~msg:"handle" nativeint 0n (B.handle b)
 
+(* A device that maps no host memory reaches none: it shares none with the host,
+   and a borrow of host memory that starts on a page is [None], with no mapping
+   asked of its driver. *)
+let test_maps_no_host () =
+  let d, p = P.open_ ~maps_host:false "buffer:no-host-maps" in
+  let h = B.create C.host (64 * 1024) in
+  equal ~msg:"reaches" bool false (C.reaches d C.host);
+  equal ~msg:"shares" bool false (C.shares_host_memory d);
+  equal ~msg:"borrow" bool true (Option.is_none (B.borrow d h));
+  equal ~msg:"maps" (list int) [] (P.host_maps p)
+
 (* Empty host memory that starts on a page borrows on a driver's device with no
    mapping: the borrow names no memory. *)
 let test_empty_borrow () =
@@ -682,6 +693,7 @@ let tests =
           test_empty_address;
         test "empty host memory borrows on a device with no mapping"
           test_empty_borrow;
+        test "a device that maps no host memory borrows none" test_maps_no_host;
         test "a borrow on its own device is the buffer" test_borrow_own;
         test "a mapping is released once its memory died and its work ran"
           test_mapping_released;

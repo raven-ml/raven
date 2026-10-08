@@ -60,6 +60,7 @@ module Driver = struct
     host_visible : bool;
     transport : bool;
     peers : bool;
+    maps_host : bool;
     budget : int;
     limits : kind -> int;
     may_block : bool;
@@ -145,6 +146,7 @@ module Driver = struct
   let handle r = Nativeint.of_int r.at
   let host r = if r.visible then Some r.at else None
   let peer d _ = d.peers
+  let maps_host d = d.maps_host
 
   let map_peer d _ r =
     counted d "map_peer";
@@ -233,10 +235,10 @@ module Polled = struct
   include Driver
 
   let make ?(capacity = 1024) ?(copies = true) ?(host_visible = true)
-      ?(transport = false) ?(peers = true) ?(budget = 1 lsl 30)
-      ?(memory = max_int) ?(window = max_int) ?(may_block = false)
-      ?(completion = `Host) ?(waits_on = []) ?(max_waits = max_int)
-      ?(answer = `Stopped) () =
+      ?(transport = false) ?(peers = true) ?(maps_host = true)
+      ?(budget = 1 lsl 30) ?(memory = max_int) ?(window = max_int)
+      ?(may_block = false) ?(completion = `Host) ?(waits_on = [])
+      ?(max_waits = max_int) ?(answer = `Stopped) () =
     let limits = function
       | `Device -> memory
       | `Mapped -> window
@@ -248,6 +250,7 @@ module Polled = struct
       host_visible;
       transport;
       peers;
+      maps_host;
       budget;
       limits;
       may_block;
@@ -270,11 +273,11 @@ module Polled = struct
       sleepers = 0;
     }
 
-  let open_ ?capacity ?copies ?host_visible ?transport ?peers ?budget ?memory
-      ?window ?may_block ?completion ?waits_on ?max_waits ?answer name =
+  let open_ ?capacity ?copies ?host_visible ?transport ?peers ?maps_host ?budget
+      ?memory ?window ?may_block ?completion ?waits_on ?max_waits ?answer name =
     let p =
-      make ?capacity ?copies ?host_visible ?transport ?peers ?budget ?memory
-        ?window ?may_block ?completion ?waits_on ?max_waits ?answer ()
+      make ?capacity ?copies ?host_visible ?transport ?peers ?maps_host ?budget
+        ?memory ?window ?may_block ?completion ?waits_on ?max_waits ?answer ()
     in
     match Rig.open_ (module Driver) ~name (fun () -> Ok p) with
     | Ok d -> (d, p)

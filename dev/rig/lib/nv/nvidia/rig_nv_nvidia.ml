@@ -4,9 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 (* Any domain may call any function. A GPU's objects are made once, under
-   [gpus_lock], and kept for the process, its registered channels and whether
-   a device of it is open under the same lock; the host ranges [map_host] maps
-   are kept under [ranges_lock]. *)
+   [gpus_lock], and kept for the process, its registered channels and whether a
+   device of it is open under the same lock; the host ranges [map_host] maps are
+   kept under [ranges_lock]. *)
 
 module D = Defs
 
@@ -246,8 +246,7 @@ let describe g va size =
     lor bits D.nvos02_flags_mapping D.nvos02_flags_mapping_no_map);
   let what = "describing host memory to the GPU" in
   let* () =
-    with_file g (fun fd ->
-        Rm.escape fd D.nv_esc_rm_alloc_memory w what)
+    with_file g (fun fd -> Rm.escape fd D.nv_esc_rm_alloc_memory w what)
   in
   let s = get w (at O.status) in
   if List.mem s refusals then Ok None
@@ -331,11 +330,7 @@ let alloc_video g ~cpu size =
     let space = if cpu then g.c.low else g.c.main in
     let placed =
       with_addresses space ~align:page_size size @@ fun va ->
-      let* bar =
-        if not cpu then Ok true
-        else
-          map_to_cpu g h size va
-      in
+      let* bar = if not cpu then Ok true else map_to_cpu g h size va in
       if not bar then Ok None
       else
         match uvm_map g va size h with
@@ -351,12 +346,7 @@ let alloc_video g ~cpu size =
         Result.map (fun _ -> None) r
 
 let memory m =
-  {
-    Rig_nv.address = m.va;
-    host = m.host;
-    handle = m.handle;
-    data = m;
-  }
+  { Rig_nv.address = m.va; host = m.host; handle = m.handle; data = m }
 
 (* A path function's failure that is no refusal is the driver's fault. *)
 let fault = function Ok x -> x | Error e -> raise (Rig_nv.Fault e)
@@ -424,9 +414,7 @@ let map_host g a n =
           r.users <- (g, k + 1) :: List.remove_assq g r.users;
           Some (mem r)
       | None -> (
-          match
-            fault (map_external g r.gpu_addr r.bytes r.descriptor)
-          with
+          match fault (map_external g r.gpu_addr r.bytes r.descriptor) with
           | false -> None
           | true ->
               r.users <- (g, 1) :: r.users;
@@ -524,8 +512,7 @@ let register g ch =
       Va.free g.c.low base channel_range;
       e
   | Ok () ->
-      Mutex.protect gpus_lock (fun () ->
-          g.channels <- (ch, base) :: g.channels);
+      Mutex.protect gpus_lock (fun () -> g.channels <- (ch, base) :: g.channels);
       Ok ()
 
 let unregister g ch =
@@ -854,7 +841,7 @@ let path g =
     budget = g.budget;
     doorbell = g.doorbell + doorbell_at;
     alloc = alloc g;
-    map_host = map_host g;
+    map_host = Some (map_host g);
     index = g.index;
     reaches = (fun i -> not (List.mem i g.refused));
     map_peer = map_peer g;

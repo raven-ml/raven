@@ -17,6 +17,7 @@ module Polled : sig
     ?host_visible:bool ->
     ?transport:bool ->
     ?peers:bool ->
+    ?maps_host:bool ->
     ?budget:int ->
     ?memory:int ->
     ?window:int ->
@@ -34,16 +35,17 @@ module Polled : sig
       address its [`Device] memory. With [transport] (defaults to [false]) the
       host does not address its word either, which is read through [signaled],
       as behind a transport. Without [peers] (defaults to [true]) it maps no
-      memory of another device. Its budget is [budget] (defaults to 1 GiB); it
-      holds at most [memory] bytes of [`Device] memory and [window] bytes of
-      [`Mapped] memory (default to [max_int]); [`Pinned] memory is unbounded.
-      Its word advances as [completion] says (defaults to [`Host]): with
-      [`Object], it is the driver's object, its handle the word's address. Its
-      queue waits for producers of the completions [waits_on] lists (defaults to
-      none), at most [max_waits] of them per submission (defaults to [max_int]).
-      With [answer] [`Stopped] (the default) its stop drops its queued work and
-      writes the last value it received into its word; with [`Unknown] it leaves
-      both, as a driver whose work may still run. *)
+      memory of another device, and without [maps_host] (defaults to [true]) no
+      host memory. Its budget is [budget] (defaults to 1 GiB); it holds at most
+      [memory] bytes of [`Device] memory and [window] bytes of [`Mapped] memory
+      (default to [max_int]); [`Pinned] memory is unbounded. Its word advances
+      as [completion] says (defaults to [`Host]): with [`Object], it is the
+      driver's object, its handle the word's address. Its queue waits for
+      producers of the completions [waits_on] lists (defaults to none), at most
+      [max_waits] of them per submission (defaults to [max_int]). With [answer]
+      [`Stopped] (the default) its stop drops its queued work and writes the
+      last value it received into its word; with [`Unknown] it leaves both, as a
+      driver whose work may still run. *)
 
   val open_ :
     ?capacity:int ->
@@ -51,6 +53,7 @@ module Polled : sig
     ?host_visible:bool ->
     ?transport:bool ->
     ?peers:bool ->
+    ?maps_host:bool ->
     ?budget:int ->
     ?memory:int ->
     ?window:int ->

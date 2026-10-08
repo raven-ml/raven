@@ -803,6 +803,7 @@ let find_map (e : entry) d = List.find_opt (fun mp -> mp.on == d) e.maps
 
 let map_host_range d start n =
   match d.kind with
+  | Driver _ when not d.maps_host -> None
   | Driver { m = dm; h; rid } -> (
       let module D = (val dm) in
       match Dev.counted d (fun () -> D.map_host h start n) with

@@ -144,8 +144,9 @@ val reaches : t -> t -> bool
     own memory. Of devices of one machine:
     - a host reaches the memory of a {!memory_device} and of a driver's device
       whose driver runs no copy ({!Driver.queues}): that memory is the host's;
-    - a driver's device reaches its host's memory, a memory device's, and that
-      of a device of its own driver that it maps ({!Driver.peer}).
+    - a driver's device reaches its host's memory where it maps host memory
+      ({!Driver.maps_host}), a memory device's, and that of a device of its own
+      driver that it maps ({!Driver.peer}).
 
     Otherwise it is [false]: across machines, and between an {!Io} device and
     any other device. *)
@@ -313,19 +314,18 @@ module Buffer : sig
       [b]'s: work through [b'] is work on [b]'s memory, with the one exception
       {!Io.pages} states for memory an io device holds for reading.
 
-      [d] maps host memory of its machine that starts on a page, where its
-      driver maps host memory ({!Driver.map_host}), and memory of a device of
-      its own driver that its driver maps ({!Driver.map_peer}). Every borrow on
-      [d] of one memory shares one mapping, made at the first borrow, which
-      lasts while the memory lives and is released with it, once [d]'s work
-      submitted until then is done: a borrow dropped and made again maps
-      nothing. A borrow of a borrow maps the memory the first one maps. A
-      {!memory_device} maps any host memory. Host memory that does not start on
-      a page, such as a host buffer of fewer than 64 KiB, borrows only on hosts
-      and memory devices. An io device's memory borrows through its pages
-      ({!Io.pages}), as host memory, where its device maps them; a device other
-      than the host asks the io device to read the borrowed bytes ahead
-      ({!Io.prefetch}).
+      [d] maps host memory of its machine that starts on a page, where it maps
+      host memory at all ({!Driver.maps_host}), and memory of a device of its
+      own driver that its driver maps ({!Driver.map_peer}). Every borrow on [d]
+      of one memory shares one mapping, made at the first borrow, which lasts
+      while the memory lives and is released with it, once [d]'s work submitted
+      until then is done: a borrow dropped and made again maps nothing. A borrow
+      of a borrow maps the memory the first one maps. A {!memory_device} maps
+      any host memory. Host memory that does not start on a page, such as a host
+      buffer of fewer than 64 KiB, borrows only on hosts and memory devices. An
+      io device's memory borrows through its pages ({!Io.pages}), as host
+      memory, where its device maps them; a device other than the host asks the
+      io device to read the borrowed bytes ahead ({!Io.prefetch}).
 
       Raises [Invalid_argument] if [b] is dead ({!Claim.consume}); {!Lost} if
       [d] or [b]'s device is lost or is lost by the borrow, or [b]'s stamps name
@@ -951,6 +951,11 @@ module type Driver = sig
       and [`May_block] if they may block on [d]'s own earlier work, on its own
       transfers or on its library's back-pressure. *)
 
+  val maps_host : t -> bool
+  (** [maps_host d] is [true] iff [d] maps host memory of its machine that
+      starts on a page ({!map_host}). Where it is [false], this library never
+      calls {!map_host}. *)
+
   val capability : t -> capability
   (** [capability d] is [d]'s record, filled when [d] opened. *)
 
@@ -992,9 +997,10 @@ module type Driver = sig
 
   val map_host : t -> int -> int -> region option
   (** [map_host d p n] is a region of [d] over the [n] bytes of host memory at
-      [p], or [None] if [d] does not map it, as a GPU taken without an IOMMU
-      maps no host memory. [p] starts a page and [n] is positive. The memory
-      stays mapped until the region is freed ({!free}). Counted. *)
+      [p], or [None] if [d] does not map these pages, such as read-only ones.
+      [p] starts a page and [n] is positive; it is called only where
+      {!maps_host}. The memory stays mapped until the region is freed ({!free}).
+      Counted. *)
 
   (** {1:code Code} *)
 

@@ -27,7 +27,7 @@ type 'm path = {
   wgps : int array array;
   budget : int;
   alloc : [ `Gpu | `Bar | `System ] -> int -> 'm memory option;
-  map_host : int -> int -> 'm memory option;
+  map_host : (int -> int -> 'm memory option) option;
   reaches : int -> bool;
   map_peer : 'm memory -> 'm memory option;
   free : 'm memory -> unit;
@@ -55,7 +55,7 @@ let mem_host (Mem (_, m)) = m.host
 (* The path's functions over memory whose type the key hides. *)
 type ops = {
   alloc : [ `Gpu | `Bar | `System ] -> int -> mem option;
-  map_host : int -> int -> mem option;
+  map_host : (int -> int -> mem option) option;
   reaches : int -> bool;
   map_peer : mem -> mem option;
   free : mem -> unit;
@@ -72,7 +72,7 @@ let ops (type m) (p : m path) =
   in
   {
     alloc = (fun k n -> Option.map pack (p.alloc k n));
-    map_host = (fun a n -> Option.map pack (p.map_host a n));
+    map_host = Option.map (fun f a n -> Option.map pack (f a n)) p.map_host;
     reaches = p.reaches;
     map_peer =
       (fun m -> Option.bind (own m) (fun m -> Option.map pack (p.map_peer m)));
@@ -532,6 +532,7 @@ let waits_on g = function `Store | `Host -> g.waits64 | `Object -> false
 (* RIG_AMD_WAITS, the waits a submission's reserved room holds *)
 let max_waits _ = 255
 let blocks _ = `Returns
+let maps_host g = Option.is_some g.ops.map_host
 
 type capability = Abi.Capability.t
 
@@ -601,7 +602,9 @@ let map_peer g g' r =
 
 let map_host g a n =
   if n < 1 then invalid_argf "Rig_amd.map_host: %d bytes, expected at least 1" n;
-  Option.map (region g.self n) (g.ops.map_host a n)
+  match g.ops.map_host with
+  | None -> None
+  | Some map -> Option.map (region g.self n) (map a n)
 
 (* Images *)
 

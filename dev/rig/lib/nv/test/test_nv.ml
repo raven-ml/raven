@@ -92,7 +92,7 @@ let path release : unit N.path =
     budget = 0;
     doorbell = 0;
     alloc = (fun _ _ -> called "alloc");
-    map_host = (fun _ _ -> called "map_host");
+    map_host = Some (fun _ _ -> called "map_host");
     reaches = (fun _ -> called "reaches");
     map_peer = (fun _ -> called "map_peer");
     free = (fun _ -> called "free");
@@ -165,8 +165,7 @@ module Fake = struct
           else begin
             if not (List.mem_assoc h f.objects) then
               f.wrong <- Printf.sprintf "freed object %d" h :: f.wrong;
-            f.objects <-
-              List.filter (fun (o, _) -> not (under f o h)) f.objects;
+            f.objects <- List.filter (fun (o, _) -> not (under f o h)) f.objects;
             Ok ()
           end);
     }
@@ -225,7 +224,7 @@ module Fake = struct
       budget = 1 lsl 30;
       doorbell = S.pages S.page;
       alloc = alloc f;
-      map_host = (fun _ n -> alloc f `System n);
+      map_host = Some (fun _ n -> alloc f `System n);
       reaches = (fun _ -> false);
       map_peer = (fun _ -> alloc f `Gpu S.page);
       free = free f;
@@ -358,7 +357,8 @@ let address_limit () =
   in
   let past (what, fn, call) =
     f.at <- Some (limit - S.page);
-    raises_match ~msg:(what ^ " ending past 2^40")
+    raises_match
+      ~msg:(what ^ " ending past 2^40")
       (Exn.invalid_arg ~substring:(fn ^ ":"))
       (fun () -> ignore (call ()));
     equal int ~msg:(what ^ ": the path's memory") held (List.length f.memory)
@@ -417,22 +417,21 @@ let failing_local () =
   f.faults <- false;
   N.stop g
 
-(* A path whose frees raise Fault, as one whose GPU is lost: free and stop
-   still return, as the core calls them after a loss. *)
+(* A path whose frees raise Fault, as one whose GPU is lost: free and stop still
+   return, as the core calls them after a loss. *)
 let failing_frees () =
   let f = Fake.make 0 in
   let g = require_ok (N.make (Fake.path f)) in
   let r = require_some (N.alloc g `Pinned 64) in
   f.faults <- true;
   N.free g r;
-  raises_match ~msg:"a second free"
-    (Exn.invalid_arg ~substring:"was freed")
+  raises_match ~msg:"a second free" (Exn.invalid_arg ~substring:"was freed")
     (fun () -> N.free g r);
   N.stop g
 
-(* A device whose channels the RM keeps at stop: the path's [`Stopped] says
-   none of its work runs, so the word reaches the last value and the memory
-   goes back; [`Unknown] keeps both, as the work may still run. *)
+(* A device whose channels the RM keeps at stop: the path's [`Stopped] says none
+   of its work runs, so the word reaches the last value and the memory goes
+   back; [`Unknown] keeps both, as the work may still run. *)
 let path_stops () =
   List.iter
     (fun answer ->
@@ -444,14 +443,16 @@ let path_stops () =
       N.stop g;
       let stopped = answer = `Stopped in
       let what = if stopped then "`Stopped" else "`Unknown" in
-      equal int ~msg:(what ^ ": the word") (if stopped then 1 else 0)
+      equal int ~msg:(what ^ ": the word")
+        (if stopped then 1 else 0)
         (N.signaled g);
-      equal bool ~msg:(what ^ ": only the word's memory left") stopped
+      equal bool
+        ~msg:(what ^ ": only the word's memory left")
+        stopped
         (List.map (fun (a, _, _) -> a) f.memory = [ address (N.word g) ]))
     [ `Stopped; `Unknown ]
 
-(* A fault the path reports surfaces from sleep while a value is
-   outstanding. *)
+(* A fault the path reports surfaces from sleep while a value is outstanding. *)
 let path_check () =
   let f = Fake.make 0 in
   let g = require_ok (N.make (Fake.path f)) in
@@ -488,8 +489,7 @@ let paths =
       test "image and lay ask the path for nothing" image_asks_nothing;
       test "stop gives back what the path says no work can use" path_stops;
       test "sleep raises the fault the path reports" path_check;
-      test "free and stop raise no Fault when the path's frees do"
-        failing_frees;
+      test "free and stop raise no Fault when the path's frees do" failing_frees;
       test "local memory answers the path's Fault as Error" failing_local;
       test "stop raises the word of channels the RM stopped on a fault"
         faulted_stop;
@@ -987,10 +987,10 @@ let delays = 64
 let delay_step = 40
 
 (* The copy engine's release of a 64-bit value and the compute engine's,
-   unordered on one word across its 32-bit carry: whichever lands last, the
-   word holds one of the two values, never a half of each. The compute release
-   waits for a host word the host sets after a delay it sweeps, so that the
-   two land in both orders and close together. *)
+   unordered on one word across its 32-bit carry: whichever lands last, the word
+   holds one of the two values, never a half of each. The compute release waits
+   for a host word the host sets after a delay it sweeps, so that the two land
+   in both orders and close together. *)
 let carry_tear () =
   S.with_gpu @@ fun t ->
   let l = S.launches t.g in
@@ -1006,8 +1006,7 @@ let carry_tear () =
   let by_compute =
     S.words
       (S.segment l
-         (A.Method.acquire (B.address gate) 1
-         @ A.Method.release System at above))
+         (A.Method.acquire (B.address gate) 1 @ A.Method.release System at above))
   in
   let torn = ref [] and copy_last = ref 0 and compute_last = ref 0 in
   S.watchdog "unordered releases across a carry" (fun () ->
@@ -1029,8 +1028,7 @@ let carry_tear () =
      here. *)
   ignore (Sys.opaque_identity (w, gate));
   equal (list int) ~msg:"torn values" [] !torn;
-  at_least int ~msg:"rounds the copy's release landed last" ~than:1
-    !copy_last;
+  at_least int ~msg:"rounds the copy's release landed last" ~than:1 !copy_last;
   at_least int ~msg:"rounds the compute release landed last" ~than:1
     !compute_last;
   S.free_launches l
@@ -2021,10 +2019,10 @@ let image_commands =
       Fun.protect ~finally:(fun () -> N.free g r) (fun () -> N.unload g i))
 
 (* Local memory handed over from two domains: one grows the kernels' local
-   memory while the other submits, and the word moves on by small steps. A
-   local memory the device replaced goes back to the path only once the word
-   reached every value that could run on it: those handed before its
-   successor's [local] returned. *)
+   memory while the other submits, and the word moves on by small steps. A local
+   memory the device replaced goes back to the path only once the word reached
+   every value that could run on it: those handed before its successor's [local]
+   returned. *)
 module Handover = struct
   type t = {
     g : N.t;
@@ -2070,7 +2068,8 @@ module Handover = struct
               h.early <-
                 Some
                   (strf "0x%x freed at word %d, used up to %d" m.address
-                     (S.get64 (word h)) v)
+                     (S.get64 (word h))
+                     v)
           | Some _ -> h.returned <- h.returned + 1
           | None -> ());
     h
@@ -2095,8 +2094,8 @@ module Handover = struct
         | None, m -> h.newest <- m
         | Some _, _ -> ())
 
-  (* Hands one empty submission, which takes a pending local memory, then
-     moves the word on by [k] values, up to the last handed. *)
+  (* Hands one empty submission, which takes a pending local memory, then moves
+     the word on by [k] values, up to the last handed. *)
   let submit k h =
     Mutex.protect h.turn (fun () ->
         if S.edge_room h.g [||] = 0 then begin
@@ -2202,8 +2201,8 @@ let bounds () =
       let f = Fake.make 0 in
       f.hang_ms <- Some n;
       raises_match ~msg:(strf "hang_ms %d" n)
-        (Exn.invalid_arg ~substring:"Rig_nv.make")
-        (fun () -> N.make (Fake.path f)))
+        (Exn.invalid_arg ~substring:"Rig_nv.make") (fun () ->
+          N.make (Fake.path f)))
     [ 0; -1; min_int ]
 
 let progress =

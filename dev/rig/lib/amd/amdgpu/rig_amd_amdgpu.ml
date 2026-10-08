@@ -40,15 +40,12 @@ external map_gpu : int -> int -> int -> bool -> int
   = "caml_rig_amd_amdgpu_map_gpu"
 
 external event : int -> int -> int -> int = "caml_rig_amd_amdgpu_event"
-
-external destroy_event : int -> int -> int
-  = "caml_rig_amd_amdgpu_destroy_event"
+external destroy_event : int -> int -> int = "caml_rig_amd_amdgpu_destroy_event"
 
 external kfd_queue : int -> int -> int array -> bytes -> int
   = "caml_rig_amd_amdgpu_queue"
 
-external destroy_queue : int -> int -> int
-  = "caml_rig_amd_amdgpu_destroy_queue"
+external destroy_queue : int -> int -> int = "caml_rig_amd_amdgpu_destroy_queue"
 
 external wait : int -> int array -> int -> int -> int array -> int
   = "caml_rig_amd_amdgpu_wait"
@@ -615,7 +612,7 @@ let path d ~index : mem Amd.path =
         g.cus;
     budget = g.node.budget;
     alloc = alloc fd g;
-    map_host = map_host fd g;
+    map_host = Some (map_host fd g);
     reaches =
       (let reached =
          Array.mapi
@@ -646,8 +643,7 @@ let save_area_at root bus = Result.map save_bytes (Topology.node root bus)
 let count () = Array.length (topology ())
 
 let device_name i =
-  if i < 0 then
-    invalid_argf "Rig_amd_amdgpu.device_name: GPU %d is negative" i;
+  if i < 0 then invalid_argf "Rig_amd_amdgpu.device_name: GPU %d is negative" i;
   if i = 0 then "AMD" else strf "AMD:%d" i
 
 let open_ i =

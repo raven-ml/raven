@@ -49,6 +49,8 @@ module D = struct
   let completion _ = `Host
   let waits_on _ _ = false
   let max_waits _ = 0
+  let maps_host _ = true
+
   (* Its hand-over runs the submission's work, which may take long. *)
   let blocks _ = `May_block
   let room_entry = room_entry ()
