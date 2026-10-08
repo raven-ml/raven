@@ -37,9 +37,10 @@ type machine = {
   address : string;  (** Where its agent listens, resolved here. *)
 }
 
-(* The host name ssh reaches [host] at: [ssh -G host]'s. *)
+(* The host name ssh reaches [host] at: [ssh -G host]'s. [-T] keeps ssh from
+   saying it allocates no terminal when stdin is none. *)
 let hostname host =
-  match Unix.open_process_args_in "ssh" [| "ssh"; "-G"; host |] with
+  match Unix.open_process_args_in "ssh" [| "ssh"; "-T"; "-G"; host |] with
   | exception Unix.Unix_error (e, _, _) ->
       Error (strf "ssh: %s" (Unix.error_message e))
   | ic -> (
@@ -107,9 +108,10 @@ let key () =
 let silent m = strf "%s does not answer; waiting for it" m.name
 let was c = if String.starts_with ~prefix:"killed" c then "was " ^ c else c
 
-(* Sessions: [ssh M exec rig agent ADDRESS:0], a machine's half. The remote
-   shell execs the half, whatever shell it is, so the session's process is the
-   half and ends with it. *)
+(* Sessions: [ssh M exec "$SHELL" -lc 'exec rig agent "ADDRESS:0"'], a machine's
+   half, started by the user's login shell so that the user's profile can put
+   rig on PATH. Each shell execs the next, so the session's process is the half
+   and ends with it. *)
 
 type session = {
   m : machine;
@@ -130,22 +132,11 @@ let session ~quiet key m =
   let in_r, in_w = Proc.pipe () in
   let out_r, out_w = Proc.pipe () in
   let err_r, err_w = Proc.pipe () in
-  let agent = strf "'%s'" (Address.with_port m.address 0) in
+  let agent = strf "exec rig agent \"%s\"" (Address.with_port m.address 0) in
   let timeout = strf "ConnectTimeout=%.0f" retry_s in
+  let command = strf "exec \"${SHELL:-/bin/sh}\" -lc '%s'" agent in
   let args =
-    [|
-      "ssh";
-      "-T";
-      "-o";
-      "BatchMode=yes";
-      "-o";
-      timeout;
-      m.host;
-      "exec";
-      "rig";
-      "agent";
-      agent;
-    |]
+    [| "ssh"; "-T"; "-o"; "BatchMode=yes"; "-o"; timeout; m.host; command |]
   in
   let ssh =
     Fun.protect
@@ -415,6 +406,8 @@ let refused s =
   | Some why, _, _ | _, Some (Line.Failed why), _ -> Some why
   | _, Some (Line.Died c), _ -> Some (strf "its agent %s" (was c))
   | _, Some Line.Closed, _ -> Some "its agent ended"
+  | _, _, Some (Unix.WEXITED 127) ->
+      Some (strf "rig is not on %s's PATH; add it in ~/.profile" s.m.name)
   | _, _, Some st ->
       Some (strf "ssh %s before its agent listened" (Proc.cause st))
   | _ -> None

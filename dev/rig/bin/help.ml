@@ -85,9 +85,14 @@ DESCRIPTION
 
 MACHINES
        A machine is a name or an address, an IPv6 address in brackets:
-       [fd00::2]. rig run starts each agent with 'ssh MACHINE rig agent
-       ADDRESS:0'. ssh must reach every machine without a password or a
-       question, and find rig on the machine's PATH.
+       [fd00::2]. rig run starts each agent over ssh, through the user's
+       login shell there:
+
+           ssh MACHINE exec "$SHELL" -lc 'exec rig agent ADDRESS:0'
+
+       ssh must reach every machine without a password or a question, so
+       each machine's host key must be known, and the login shell must
+       find rig on its PATH, which ~/.profile can extend.
 
        rig run finds each MACHINE's address as ssh does: the host name that
        'ssh -G MACHINE' prints, resolved here. Its agent listens at that

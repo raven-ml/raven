@@ -9,14 +9,16 @@
 #
 # [ssh -G M] prints M's configuration as ssh does, its hostname alone: the
 # contents of machines/M/hostname if it exists, else M, as an alias does
-# and as no alias does.
+# and as no alias does. While machines/M/unconfigured exists, it fails as
+# ssh does on a configuration it cannot read.
 #
-# [ssh [OPTION...] M COMMAND...] runs COMMAND here with TMPDIR machines/M,
-# so each machine has its own agent lock. While machines/M/down exists, M
-# does not answer, as ssh says when a machine is off. machines/M/pid holds
-# the process that plays M's end of the session: killing it loses the
-# session. machines/M/bin, if it exists, comes first on M's PATH, so that
-# M can run its own rig.
+# [ssh [OPTION...] M COMMAND...] runs COMMAND here as sshd runs it, in
+# the login shell, /bin/sh, with HOME and TMPDIR machines/M, so each machine
+# has its own profile and agent lock. A machine's ~/.profile, unless a
+# test writes one, puts machines/M/bin and then this PATH first on its
+# PATH. While machines/M/down exists, M does not answer, as ssh says when a
+# machine is off. machines/M/pid holds the process that plays M's end of
+# the session: killing it loses the session.
 
 config=no
 while [ $# -gt 0 ]; do
@@ -33,6 +35,11 @@ shift
 dir=$PWD/machines/$m
 
 if [ $config = yes ]; then
+  if [ -e "$dir/unconfigured" ]; then
+    echo "/etc/ssh/ssh_config: line 1: Bad configuration option: $m" >&2
+    echo "/etc/ssh/ssh_config: terminating, 1 bad configuration options" >&2
+    exit 255
+  fi
   if [ -e "$dir/hostname" ]; then
     echo "hostname $(cat "$dir/hostname")"
   else
@@ -48,5 +55,5 @@ fi
 
 mkdir -p "$dir"
 echo $$ >"$dir/pid"
-[ -d "$dir/bin" ] && PATH=$dir/bin:$PATH
-TMPDIR=$dir exec sh -c "$*"
+[ -e "$dir/.profile" ] || echo "PATH='$dir/bin:$PATH'" >"$dir/.profile"
+SHELL=/bin/sh HOME=$dir TMPDIR=$dir exec /bin/sh -c "$*"

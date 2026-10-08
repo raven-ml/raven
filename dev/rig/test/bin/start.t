@@ -127,3 +127,25 @@ quoted.
   $ rig run --on a,c -- true
   rig: c: wrote "Welcome to c"
   [123]
+
+A machine whose login shell does not find rig fails the start, saying
+so. Here y's ~/.profile leaves rig off its PATH; the shell's own message
+differs between systems.
+
+  $ host y 127.0.0.1
+  $ echo 'PATH=/usr/bin:/bin' >machines/y/.profile
+  $ rig run --on a,y -- true 2>err
+  [123]
+  $ grep '^rig' err
+  rig: y: rig is not on y's PATH; add it in ~/.profile
+
+A machine ssh cannot read the configuration of fails the start, after
+ssh's message.
+
+  $ host z 127.0.0.1
+  $ touch machines/z/unconfigured
+  $ rig run --on a,z -- true
+  /etc/ssh/ssh_config: line 1: Bad configuration option: z
+  /etc/ssh/ssh_config: terminating, 1 bad configuration options
+  rig: z: ssh -G exited with status 255
+  [123]
