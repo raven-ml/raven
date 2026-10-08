@@ -17,7 +17,6 @@ type t = {
 }
 
 let pinned = D.pinned
-let origin = D.origin
 
 (* A defect of an image, named by the caller. *)
 exception Bad of string

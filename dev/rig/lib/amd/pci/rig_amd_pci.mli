@@ -48,11 +48,16 @@
     the GPU still writing them.
 
     {b Firmware.} An open reads the GPU's firmware images from the directories
-    its caller names. Each image has the BLAKE2b-256 digest this library pins
-    ({!pinned}); a file with another digest is skipped, and nothing is
-    downloaded. A directory of linux-firmware at the pinned commit serves every
-    GPU the library boots; a compressed file, such as [psp_13_0_0_sos.bin.zst],
-    is another file, which the library does not read.
+    its caller names, files of linux-firmware's [amdgpu/] directory at commit
+    [0a6871b1], each pinned by its BLAKE2b-256 digest; a file with another
+    digest is skipped, and nothing is downloaded. They are named for the
+    versions of the GPU's blocks: its security processor's [psp_X_sos.bin], its
+    power manager's [smu_X.bin] and its copy engines' [sdma_X.bin], and its GC's
+    [gc_X_mec.bin] and [gc_X_rlc.bin], with [gc_X_imu.bin] from GC 11 and
+    [gc_X_pfp.bin] and [gc_X_me.bin] from GC 12. The R9700, for one, boots with
+    [psp_14_0_3_sos.bin], [smu_14_0_3.bin], [sdma_7_0_1.bin] and
+    [gc_12_0_1_{pfp,me,mec,imu,rlc}.bin]. A compressed file, such as
+    [psp_13_0_0_sos.bin.zst], is another file, which the library does not read.
 
     {b Sessions.} An open leaves a mark on the GPU, and the process stops every
     GPU it holds at exit, leaving it marked clean: the next open, by this
@@ -128,17 +133,6 @@ val open_ :
     through.
 
     Raises [Invalid_argument] if [i < 0]. *)
-
-(** {1:firmware Firmware} *)
-
-val pinned : (string * string) list
-(** [pinned] is every firmware image an open may read: its path under a firmware
-    directory, such as ["amdgpu/psp_13_0_0_sos.bin"], and its lowercase
-    hexadecimal BLAKE2b-256 digest ({!Rig_pci.Firmware.digest}). *)
-
-val origin : string
-(** [origin] is the URL of linux-firmware's tree at the pinned commit:
-    [origin ^ path] downloads the image at [path] of {!pinned}. *)
 
 (** {1:changes Changes to the machine}
 

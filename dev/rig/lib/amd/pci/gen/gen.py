@@ -946,8 +946,7 @@ def generate(h):
         out.append(f"let {n.lower()} = {v}")
     out.append("")
     out.append(f"(* The pinned images of linux-firmware at {FIRMWARE_COMMIT[:12]}: each image's path,")
-    out.append("   and its BLAKE2b-256 digest; [origin ^ path] is its URL. *)")
-    out.append(f"let origin = {json.dumps(FIRMWARE_URL)}")
+    out.append("   and its BLAKE2b-256 digest. *)")
     out.append("let pinned = [")
     for row in h[FIRMWARE].splitlines():
         if row.startswith("#"):

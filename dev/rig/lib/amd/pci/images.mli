@@ -28,10 +28,9 @@ type t = {
 (** The type for a GPU's firmware. *)
 
 val pinned : (string * string) list
-(** [pinned] is [Rig_amd_pci.pinned]. *)
-
-val origin : string
-(** [origin] is [Rig_amd_pci.origin]. *)
+(** [pinned] is every firmware image an open may read: its path under a firmware
+    directory, such as ["amdgpu/psp_13_0_0_sos.bin"], and its lowercase
+    hexadecimal BLAKE2b-256 digest ({!Rig_pci.Firmware.digest}). *)
 
 val names : Discovery.t -> (string list, string) result
 (** [names d] is the paths of the images the blocks of [d] name, in the order

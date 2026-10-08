@@ -18,3 +18,5 @@ names, and download nothing. For NVIDIA GPUs,
 `uv run dev/rig/lib/nv/pci/gen/fetch.py DIR` fills `DIR` with the images
 `rig.nv.pci` boots with, each checked against its pinned digest; open a GPU
 with `Rig_nv_pci.open_ ~firmware:[ DIR ]`.
+For AMD GPUs, `uv run dev/rig/lib/amd/pci/gen/fetch.py DIR` does the same for
+`rig.amd.pci`; open a GPU with `Rig_amd_pci.open_ ~firmware:[ DIR ] i`.

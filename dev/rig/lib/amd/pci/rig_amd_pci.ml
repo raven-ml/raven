@@ -44,11 +44,6 @@ let device_name i =
   index "device_name" i;
   if i = 0 then "AMD-PCI" else strf "AMD-PCI:%d" i
 
-(* Firmware *)
-
-let pinned = Images.pinned
-let origin = Images.origin
-
 (* Memory *)
 
 (* The memory a path gives a device: its own, another GPU's mapped for it, or a

@@ -1703,8 +1703,7 @@ let gfx_fw_type_rs64_me_p0_stack = 92
 let gfx_fw_type_rs64_mec_p0_stack = 94
 
 (* The pinned images of linux-firmware at 0a6871b19abf: each image's path,
-   and its BLAKE2b-256 digest; [origin ^ path] is its URL. *)
-let origin = "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/0a6871b19abf5d6e024b5d208b101ae53e7fa0de/"
+   and its BLAKE2b-256 digest. *)
 let pinned = [
   ("amdgpu/gc_11_0_0_imu.bin", "493bf7818bd22b0f26be3035ab5b55f758157481a6067400b8d51b07f1afee0c");
   ("amdgpu/gc_11_0_0_mec.bin", "56c801ca9770385d631c9e18f2f2d930a377fefc3f2de3267387392730319853");
