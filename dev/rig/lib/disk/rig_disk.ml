@@ -130,11 +130,18 @@ let close_fd f =
     end
   end
 
+(* Closes the least recently used idle descriptors while more than [max_open]
+   are open: the table comes back to its bound once a burst of pins ends. *)
+let trim () =
+  while !in_table > max_open && idle.older != idle do
+    close_fd idle.older
+  done
+
 let admit f fd =
   f.fd <- fd;
   if f.identity <> "" then begin
-    if !in_table >= max_open && idle.older != idle then close_fd idle.older;
-    incr in_table
+    incr in_table;
+    trim ()
   end
 
 (* Opens [path], closing every unpinned descriptor and trying once more if the
@@ -169,7 +176,10 @@ let pin f =
 let unpin f =
   Mutex.protect lock @@ fun () ->
   f.users <- f.users - 1;
-  if f.users = 0 then rest f
+  if f.users = 0 then begin
+    rest f;
+    trim ()
+  end
 
 (* [using f fn] is [fn fd] with [f]'s descriptor [fd] pinned. Raises [Sys_error]
    naming [f] if it cannot be reopened. *)
