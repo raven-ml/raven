@@ -525,7 +525,7 @@ let images () =
     ~affix:(Rig.name m.host) why;
   contains ~msg:"the agent's reason" ~sub:"the agent refuses it" why;
   let why = require_error (Rig.Image.load m.devices.(0) "run") in
-  contains ~msg:"names the machine's host" ~sub:"host" why
+  contains ~msg:"says it loads no code" ~sub:"loads no code" why
 
 let code =
   group "code"

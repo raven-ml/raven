@@ -188,7 +188,7 @@ let devices () =
   in
   not_equal ~msg:"the two devices' ids" int (id d0) (id d1);
   let why = require_error (Rig.Image.load d0 "code") in
-  contains ~msg:"names the machine's host" ~sub:"host" why
+  contains ~msg:"says it loads no code" ~sub:"loads no code" why
 
 let device_errors () =
   with_job @@ fun j agents ->

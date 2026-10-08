@@ -108,8 +108,7 @@ let map_host _ _ _ = None
 (* Code *)
 
 let image d binary =
-  if d.account.id <> 0 then
-    Error (strf "%s loads no code: its machine's host does" d.account.name)
+  if d.account.id <> 0 then Error (strf "%s loads no code" d.account.name)
   else
     let id = Link.fresh () in
     match request d.link (Wire.Load { id; binary }) with

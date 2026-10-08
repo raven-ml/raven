@@ -20,11 +20,12 @@
 
     {b Work.} A proxy runs copies, and the machine's host also runs
     [Rig.Submission.Words] parts: each is a run of the code loaded on that host.
-    A copy moves bytes between memory of the agent's machine, or between that
-    memory and this process's. A copy from this process's memory carries its
-    bytes across the link in its hand-over; a copy into it, in a frame of the
-    agent's, which the receiving thread writes where the copy names before the
-    shadow reaches the copy's value. Either crosses the link once. The agent
+    rig.remote's agent loads and runs no code: a hand-over with words fails its
+    job. A copy moves bytes between memory of the agent's machine, or between
+    that memory and this process's. A copy from this process's memory carries
+    its bytes across the link in its hand-over; a copy into it, in a frame of
+    the agent's, which the receiving thread writes where the copy names before
+    the shadow reaches the copy's value. Either crosses the link once. The agent
     runs a hand-over's parts in their order, after its waits, and after the
     proxy's earlier values.
 
@@ -167,9 +168,9 @@ val image :
     string )
   result
 (** [image d b] loads [b] on the agent's host if [d] is the machine's host: it
-    is [Ok (`Loaded i)], or [Error why] with the agent's reason. On any other
-    proxy it is [Error why], [why] saying that the machine's host loads its
-    code.
+    is [Ok (`Loaded i)], or [Error why] with the agent's reason: rig.remote's
+    agent loads no code, so it refuses every binary. On any other proxy it is
+    [Error why], [why] saying the proxy loads no code.
 
     Raises {!Fault} if [d] is the machine's host and the job failed. *)
 
