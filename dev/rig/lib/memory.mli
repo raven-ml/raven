@@ -116,6 +116,9 @@ val reclaim : device -> int -> unit
 
 val room : device -> int
 val free_entry : entry -> unit
+val any_held : bool Atomic.t
+(* [any_held] is [true] once a hold was made in this process. *)
+
 val retire : device -> entry -> unit
 (* [retire d e] frees [e] once [d] reached the value it has submitted now, or,
    lost, once it counts as stopped. *)

@@ -39,6 +39,7 @@ let make ?(release = ignore) bs =
         if List.memq m.entry acc then acc else m.entry :: acc)
       [] bs
   in
+  Atomic.set Memory.any_held true;
   take_all entries;
   let st = Memory.stamps_new () in
   List.iter

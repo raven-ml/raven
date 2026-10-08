@@ -277,27 +277,34 @@ let need_record = 8
 let stop_claimed = 16
 let fn = "submit"
 
-let check_part st p =
+(* Checks a part's buffers: live and, once a hold exists, in no hold but the
+   submission's, whose stamps are [st]. *)
+let check_held held st b =
+  if held then check_buffer fn st b else Buffer.check_live fn b
+
+let check_part held st p =
   match p.work with
-  | Words b -> check_buffer fn st b
-  | Fill f -> check_buffer fn st f.arg
+  | Words b -> check_held held st b
+  | Fill f -> check_held held st f.arg
   | Copy { src; dst } ->
-      check_buffer fn st src;
-      check_buffer fn st dst
+      check_held held st src;
+      check_held held st dst
 
 (* Checks the slots are set and every buffer the work names is live and in no
    hold but the submission's: memory put in a hold after it was named must be
-   named with the hold. *)
+   named with the hold. A process that never made a hold holds no memory, and
+   checks liveness only. *)
 let check_slots s =
+  let held = Atomic.get Memory.any_held in
   let st = hold_stamps s.hold in
   for k = 0 to Array.length s.parts - 1 do
-    check_part st s.parts.(k)
+    check_part held st s.parts.(k)
   done;
   for k = 0 to Array.length s.slots - 1 do
     let b = s.slots.(k) in
     if b == unset then invalid_argf "Rig.%s: a read or write slot is unset" fn;
     Buffer.check_live fn b;
-    if b.mem.root.entry.held then
+    if held && b.mem.root.entry.held then
       invalid_argf "Rig.%s: the buffer's memory is in a hold" fn
   done
 

@@ -398,6 +398,10 @@ let drain_holds () =
     Option.iter raise !first
   end
 
+(* Whether a hold was ever made in this process: until one is, no memory is held
+   and a submit checks no buffer for a hold. *)
+let any_held = Atomic.make false
+
 (* The release list of holds, which every drain reads. *)
 let holds_list = Dev.release_list ()
 
