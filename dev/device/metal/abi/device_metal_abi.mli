@@ -36,10 +36,9 @@
     encoder and makes no other encoder or command buffer, and waiting for
     earlier work and signalling [v] are the driver's. To start a new command
     buffer it calls {!field-split}; nothing bounds how many command buffers a
-    fill makes, so work given as a fill declares no room: [0] ring units and [0]
-    segment bytes. The driver refuses work that declares any other. It stops at
-    the first [split] that fails and returns its failure, and returns [0]
-    otherwise.
+    fill makes. A fill declares no room: its ring units and segment bytes are
+    [0], and the driver refuses work that declares any other. It stops at the
+    first [split] that fails and returns its failure, and returns [0] otherwise.
 
     After the fill returns, the driver ends the open encoder and commits the
     last command buffer. [v] is reached once every command buffer of the work

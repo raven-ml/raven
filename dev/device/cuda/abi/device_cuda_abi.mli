@@ -28,9 +28,9 @@
     The fill enqueues its work on that stream and does nothing else. It may call
     [cuLaunchKernel], [cuGraphLaunch], [cuMemcpyAsync] and [cuLaunchHostFunc] on
     [queue] any number of times. Each call may block until the device's earlier
-    work frees room in the stream; nothing bounds what a fill enqueues, so work
-    given as a fill declares no room: [0] ring units and [0] segment bytes. The
-    driver refuses work that declares any other. The fill does not wait for work
+    work frees room in the stream; nothing bounds what a fill enqueues. A fill
+    declares no room: its ring units and segment bytes are [0], and the driver
+    refuses work that declares any other. The fill does not wait for work
     ([cuStreamSynchronize], [cuEventSynchronize], [cuCtxSynchronize]), does not
     enqueue on another stream, and does not change the current context. Waiting
     for earlier work and signalling [v] are the driver's.
