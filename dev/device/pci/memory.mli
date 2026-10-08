@@ -21,6 +21,9 @@
     addresses only. A GPU reset and opened again by another instance is not
     written by this one.
 
+    A call whose page tables' format raises ({!Page_table.map}) raises the same
+    exception, having given back what it took.
+
     The GPU's owner serializes calls on one GPU. *)
 
 type t
@@ -87,8 +90,9 @@ val alloc : ?uncached:bool -> t -> kind -> int -> (region option, string) result
     what it took, [why] naming what is missing as {!Function.alloc_dma} does:
     such a limit is cured by a setting, rarely by freeing memory.
 
-    Raises [Invalid_argument] if [n <= 0], or if system memory goes at addresses
-    {!Machine.reserve} did not reserve. *)
+    Raises [Invalid_argument] if [n <= 0], if system memory goes at addresses
+    {!Machine.reserve} did not reserve, or for {!Bar} memory if a live window of
+    the memory BAR does not combine ({!Function.map}). *)
 
 val free : t -> region -> unit
 (** [free m mem] unmaps and frees [mem] and returns its addresses.

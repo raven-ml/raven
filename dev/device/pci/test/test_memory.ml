@@ -225,7 +225,7 @@ type gpu = {
 }
 
 let gpu ?(addressing = Machine.Physical) ?(memory = gpu_memory) ?bar
-    ?(tables = Page_table.Pool) ?peer ?space ?machine:m () =
+    ?(tables = Page_table.Pool) ?(format = Fun.id) ?peer ?space ?machine:m () =
   let m = match m with Some m -> m | None -> machine () in
   let bar = Option.value bar ~default:memory in
   m.config := (addressing, bar);
@@ -242,8 +242,9 @@ let gpu ?(addressing = Machine.Physical) ?(memory = gpu_memory) ?bar
   in
   let g = Tables.memory () in
   let tables =
-    Page_table.create ~base:tables_base (Tables.format g) space ~memory
-      ~boot:mib ~tables ~pages:large_pages
+    Page_table.create ~base:tables_base
+      (format (Tables.format g))
+      space ~memory ~boot:mib ~tables ~pages:large_pages
   in
   Page_table.booted tables;
   let size = memory in
@@ -561,6 +562,43 @@ let test_system_refused () =
   x.fake.refuse <- None;
   is_some ~msg:"allocated once the limit is lifted"
     (alloc_opt x.memory Host (64 * kib));
+  Function.release x.fn
+
+(* A format whose [set_page] raises [Exit] while [armed]. *)
+let raising armed (f : Page_table.format) =
+  {
+    f with
+    set_page =
+      (fun ~level ~table i ~pa tg ~uncached ~snooped ~fragment ->
+        if !armed then raise Exit;
+        f.set_page ~level ~table i ~pa tg ~uncached ~snooped ~fragment);
+  }
+
+let test_raising_format () =
+  let armed = ref false in
+  let x = gpu ~format:(raising armed) () in
+  let before = capacity x in
+  armed := true;
+  raises Exit (fun () ->
+      Memory.map_host x.memory (tables_base + (4 * mib)) page);
+  equal ~msg:"no pin held" ranges [] x.fake.pins;
+  List.iter
+    (fun kind -> raises Exit (fun () -> Memory.alloc x.memory kind (64 * kib)))
+    [ Memory.Gpu; Bar; Host ];
+  equal ~msg:"no system memory held" int 0 (List.length x.fake.dma);
+  equal ~msg:"its memory and addresses" (pair int int) before (capacity x);
+  Function.release x.fn
+
+(* The processor maps a BAR one way at a time, and Bar memory's window
+   combines. *)
+let test_bar_uncombined () =
+  let x = gpu () in
+  let before = capacity x in
+  let w = require_ok (Function.map ~length:page x.fn 0) in
+  raises_match (Exn.invalid_arg ~substring:"") (fun () ->
+      Memory.alloc x.memory Bar (64 * kib));
+  equal ~msg:"its memory and addresses" (pair int int) before (capacity x);
+  Function.unmap x.fn w;
   Function.release x.fn
 
 (* Freeing *)
@@ -997,6 +1035,12 @@ let () =
                "system memory or a BAR window refused is an Error, having \
                 given back its addresses"
                test_system_refused;
+             test "a format that raises passes through, having given back"
+               test_raising_format;
+             test
+               "Bar memory beside an uncombined window of its BAR raises, \
+                having given back"
+               test_bar_uncombined;
            ];
          group ~timeout:patience "freeing"
            [

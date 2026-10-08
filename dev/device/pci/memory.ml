@@ -74,15 +74,22 @@ let system m n =
           Space.free space va;
           Error why
       | Ok (view, runs) -> (
+          let give_back () =
+            Function.free_dma m.fn view;
+            Space.free space va
+          in
           match
             Page_table.map ~snooped:true ~uncached:true m.tables ~va System runs
           with
           | Some mapping ->
               Ok (Some { mapping; host = Some view; source = Allocated })
           | None ->
-              Function.free_dma m.fn view;
-              Space.free space va;
-              Ok None))
+              give_back ();
+              Ok None
+          | exception e ->
+              let bt = Printexc.get_raw_backtrace () in
+              give_back ();
+              Printexc.raise_with_backtrace e bt))
 
 (* The GPU's memory, one block the process reaches through the BAR when [bar],
    or [None] if the block lies beyond it. *)
@@ -105,7 +112,11 @@ let gpu m ~uncached ~bar n =
         | Ok host -> Ok (Some { mapping; host = Some host; source = Allocated })
         | Error why ->
             Page_table.free m.tables mapping;
-            Error why)
+            Error why
+        | exception e ->
+            let bt = Printexc.get_raw_backtrace () in
+            Page_table.free m.tables mapping;
+            Printexc.raise_with_backtrace e bt)
 
 let positive fn n =
   if n <= 0 then invalid_argf "Memory.%s: %d bytes, expected more than 0" fn n
@@ -172,9 +183,10 @@ let map_host m a n =
         match
           Page_table.map ~snooped:true ~uncached:true m.tables ~va:a System runs
         with
-        | exception (Invalid_argument _ as e) ->
+        | exception e ->
+            let bt = Printexc.get_raw_backtrace () in
             Function.unpin m.fn a n;
-            raise e
+            Printexc.raise_with_backtrace e bt
         | Some mapping ->
             let mem = { mapping; host = None; source = Borrowed } in
             Hashtbl.replace m.mapped a mem;
