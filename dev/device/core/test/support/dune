@@ -1,0 +1,9 @@
+; What the core's suites and benches share: Polled, a host-memory driver
+; whose queue runs only when its sleep runs it.
+
+(library
+ (name device_core_support)
+ (libraries device_core device_edge)
+ (foreign_stubs
+  (language c)
+  (names device_core_support_stubs)))
