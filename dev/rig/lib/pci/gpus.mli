@@ -152,8 +152,9 @@ val detach : t -> Machine.t -> int -> (unit, string) result
     every kernel driver off the GPU until {!attach} or a reboot: it sets the
     function's [driver_override] to no driver, which probes, rescans and module
     loads obey, and unbinds the driver. It removes the other functions of its
-    device, such as its audio function, and, unbound, enables the function and
-    makes its memory BAR the largest size the BAR and its bridge take. The
+    device, such as its audio function, and, unbound, enables the function,
+    turns its bus mastering off, which a kernel driver's unbind may leave on,
+    and makes its memory BAR the largest size the BAR and its bridge take. The
     kernel driver's users, a display among them, lose the GPU until {!attach} or
     a reboot.
 

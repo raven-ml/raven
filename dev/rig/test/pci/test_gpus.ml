@@ -927,6 +927,26 @@ let mastering root =
   Bytes.set_uint16_le b 0 (memory_space lor bus_master);
   ignore (Unix.write fd b 0 2)
 
+(* The command register as the fixture's configuration file holds it. *)
+let command_in root =
+  let config =
+    Filename.concat root ("sys/bus/pci/" ^ devices gpu_bus "config")
+  in
+  String.get_uint16_le
+    (In_channel.with_open_bin config In_channel.input_all)
+    command
+
+(* A kernel driver's unbind may leave the GPU mastering the bus: Linux clears
+   the bit only once the function's enable count reaches zero, and an enable
+   through sysfs counts too. Without an IOMMU such a GPU may write any host
+   memory, so detach turns it off, and leaves the rest of the register. *)
+let test_detach_stops_mastering () =
+  needs_flock ();
+  let root = Tree.make [ Tree.gpu gpu_bus ] in
+  mastering root;
+  require_ok (Gpus.detach (gpus ()) (Machine.at root) 0);
+  equal hex memory_space (command_in root)
+
 (* The vendor's reset sees the GPU taken, its bus mastering off, before the bus
    is rescanned and its drivers probed; the GPU is free after. *)
 let test_attach_resets () =
@@ -1279,6 +1299,8 @@ let tree_changes =
         ~name:(fun (n, _, _, _, _) -> n)
         changes test_change;
       test "a GPU the process holds is refused" test_change_held;
+      test "detach leaves the GPU's bus mastering off"
+        test_detach_stops_mastering;
       test
         "attach resets the GPU, its bus mastering off, before the bus is \
          rescanned"

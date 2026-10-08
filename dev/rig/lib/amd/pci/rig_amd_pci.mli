@@ -153,8 +153,9 @@ val open_ :
 val detach : int -> (unit, string) result
 (** [detach i] takes GPU [i] of this machine from its kernel driver, so that
     {!open_} can take its function, unless no driver but [vfio-pci] holds it. It
-    removes the GPU's other functions, such as its audio, and makes its memory
-    BAR as large as the BAR and its bridge allow, so that the process reaches
+    removes the GPU's other functions, such as its audio, turns its bus
+    mastering off, which amdgpu's unbind may leave on, and makes its memory BAR
+    as large as the BAR and its bridge allow, so that the process reaches
     all of the GPU's memory. Its display and the kernel driver's users lose the
     GPU until {!attach} or a reboot.
 

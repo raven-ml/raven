@@ -271,9 +271,34 @@ let access m bus = addressing m bus (state m bus)
 let no_driver = "none"
 let override m bus = path m bus "driver_override"
 
+(* The command register and its bit that lets the function master the bus
+   (PCI Express Base Specification, 7.5.1.1.3). *)
+let command = 0x04
+let bus_master = 0x4
+
+(* Turns [bus]'s bus mastering off. A kernel driver's unbind may leave it on:
+   Linux clears it only once the function's enable count reaches zero, and an
+   enable through sysfs counts too. *)
+let stop_mastering m bus =
+  let file = path m bus "config" in
+  Fail.step ("writing " ^ file) @@ fun () ->
+  let fd = Unix.openfile file [ O_RDWR; O_CLOEXEC ] 0 in
+  Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+  let b = Bytes.create 2 in
+  ignore (Unix.lseek fd command SEEK_SET);
+  if Unix.read fd b 0 2 = 2 then begin
+    let v = Bytes.get_uint16_le b 0 in
+    if v land bus_master <> 0 then begin
+      Bytes.set_uint16_le b 0 (v land lnot bus_master);
+      ignore (Unix.lseek fd command SEEK_SET);
+      ignore (Unix.single_write fd b 0 2)
+    end
+  end
+
 (* Detach decides before it writes anything whether the function will be
    takeable once unbound, alone and enabled: one it could not take then could
-   not be reset to go back to its driver. *)
+   not be reset to go back to its driver. A function it leaves on no driver
+   masters the bus no more: without an IOMMU it could write any host memory. *)
 let detach m bus =
   let s = state m bus in
   if s.driver <> Some vfio_pci then begin
@@ -281,7 +306,7 @@ let detach m bus =
     Result.iter_error (Fail.fail "%s") (addressing m bus detached);
     write (override m bus) no_driver
   end;
-  match addressing m bus s with
+  (match addressing m bus s with
   | Ok _ -> ()
   | Error _ -> (
       (match driver m bus with
@@ -301,7 +326,8 @@ let detach m bus =
             sibling
       | Error _, { driver = None; enabled = false; _ } ->
           Fail.fail "%s is still disabled after enabling it" bus
-      | Error why, _ -> Fail.fail "%s" why)
+      | Error why, _ -> Fail.fail "%s" why));
+  if driver m bus = None then stop_mastering m bus
 
 let reset m bus = write (path m bus "reset") "1"
 

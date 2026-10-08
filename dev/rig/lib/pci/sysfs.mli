@@ -70,7 +70,8 @@ val group_holders : t -> string -> (string * string) list
 val detach : t -> string -> unit
 (** [detach m bus] makes [bus] takeable and keeps kernel drivers off it, unless
     it is bound to [vfio-pci]: it sets its [driver_override] to no driver,
-    unbinds its driver, removes its siblings and, unbound, enables it. Raises
+    unbinds its driver, removes its siblings and, unbound, enables it and turns
+    its bus mastering off. Raises
     {!Fail.Failed}, having written nothing, if it would not be takeable once
     unbound, alone and enabled, and if it is still not takeable after. *)
 
