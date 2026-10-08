@@ -252,6 +252,31 @@ let test_others_go_on () =
   C.wait e (C.Point.value (submit w ~writes:[| kept |]));
   equal (option string) None (C.lost e)
 
+(* Memory a device used before its loss, once collected and reused from its
+   owner's cache, waits for nothing of the lost device: a loss leaves other
+   devices' memory working. *)
+let test_reused_after_loss () =
+  let a, _ = P.open_ "loss:owner" in
+  let u, pu = P.open_ "loss:user" in
+  let n = 4096 in
+  let at =
+    (fun () ->
+      let m = B.create a n in
+      let s = Sub.make ~reads:1 ~writes:0 u [||] in
+      C.wait u
+        (C.Point.value (submit s ~reads:[| require_some (B.borrow u m) |]));
+      B.address m)
+      ()
+  in
+  P.fail pu;
+  raises_match (lost u) (fun () -> submit (empty u));
+  Gc.full_major ();
+  Gc.full_major ();
+  ignore (Sys.opaque_identity (B.create ~memory:Pinned a 8));
+  let b = B.create a n in
+  equal ~msg:"the cached memory" int at (B.address b);
+  B.wait b B.Read_write
+
 (* A fault a counted call raises, such as an allocation's, loses the device. *)
 let test_alloc_fault () =
   let d, p = P.open_ "loss:alloc" in
@@ -290,6 +315,8 @@ let tests =
         test "Lost prints the device and the reason" test_printed;
         test "a loss leaves other devices and their memory working"
           test_others_go_on;
+        test "memory a lost device used, reused, waits for nothing lost"
+          test_reused_after_loss;
         test "a fault an allocation raises loses the device" test_alloc_fault;
       ];
   ]

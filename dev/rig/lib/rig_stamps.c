@@ -135,6 +135,23 @@ value caml_rig_stamps_get(value v_s, value v_k) {
   return Val_long(-1);
 }
 
+/* Forgets every point of the stamps [v_s] but those of the device
+   [v_index]: memory taken out of that device's cache, whose other points its
+   cache reached before it took the memory in. Nothing else names the stamps
+   then, so the stores race with nothing. */
+value caml_rig_stamps_keep(value v_s, value v_index) {
+  struct rig_stamps *s = Stamps_val(v_s);
+  int index = Int_val(v_index);
+  uint64_t w = atomic_load(&s->write);
+  if (w != 0 && RIG_INDEX(w) != index) atomic_store(&s->write, 0);
+  for (; s != NULL; s = atomic_load(&s->next))
+    for (int i = 0; i < RIG_USES; i++) {
+      uint64_t p = atomic_load(&s->use[i]);
+      if (p != 0 && RIG_INDEX(p) != index) atomic_store(&s->use[i], 0);
+    }
+  return Val_unit;
+}
+
 /* Raises [v_dst] with every point of [v_src]: the stamps of memory put in a
    hold. */
 value caml_rig_stamps_absorb(value v_dst, value v_src) {

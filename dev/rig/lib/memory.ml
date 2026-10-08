@@ -15,6 +15,7 @@ external stamps_ref : int -> unit = "caml_rig_stamps_ref" [@@noalloc]
 external stamps_unref : int -> unit = "caml_rig_stamps_unref" [@@noalloc]
 external stamps_get : int -> int -> int = "caml_rig_stamps_get" [@@noalloc]
 external stamps_absorb : int -> int -> unit = "caml_rig_stamps_absorb"
+external stamps_keep : int -> int -> unit = "caml_rig_stamps_keep" [@@noalloc]
 
 (* [f] over the points of the stamps [st] from the [k]th on. *)
 let rec iter_from f st k =
@@ -628,6 +629,9 @@ let take_cached d kind n =
           | [] -> Cache.remove d.cache k
           | _ -> Cache.replace d.cache k rest);
           d.cached <- d.cached - e.bytes;
+          (* A new buffer waits for nothing of the memory's other devices: its
+             cache reached their points, a lost device's included. *)
+          stamps_keep e.stamps d.index;
           Some e
       | _ -> None)
 
