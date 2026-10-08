@@ -516,19 +516,29 @@ static void of_run(void *ctx, const int64_t *at, int64_t len) {
   switch (representation(dt)) {
     case TO_FLAT: {
       const double *src = (const double *)Op_val(c->values) + k;
-      if (dt == NX_FLOAT32) {
-        float *dst = (float *)a->base + p;
-        for (int64_t j = 0; j < len; j++) dst[j * step] = (float)src[j];
-      } else if (dt == NX_FLOAT64) {
-        double *dst = (double *)a->base + p;
-        for (int64_t j = 0; j < len; j++) dst[j * step] = src[j];
-      } else if (dt == NX_FLOAT16 && step == 1) {
-        nx_double_to_f16_run(src, (uint16_t *)a->base + p, (size_t)len);
-      } else {
-        for (int64_t j = 0; j < len; j++, p += step)
-          store_float(a->base, dt, p, 0, src[j]);
+      /* A loop per format, the format's encoder inlined in it. */
+#define ENCODE(T, encode)                                                 \
+  do {                                                                    \
+    T *dst = (T *)a->base + p;                                            \
+    for (int64_t j = 0; j < len; j++) dst[j * step] = encode(src[j]);     \
+  } while (0)
+      switch (dt) {
+        case NX_FLOAT64: ENCODE(double, (double)); return;
+        case NX_FLOAT32: ENCODE(float, (float)); return;
+        case NX_FLOAT16:
+          if (step == 1)
+            nx_double_to_f16_run(src, (uint16_t *)a->base + p, (size_t)len);
+          else ENCODE(uint16_t, nx_double_to_f16);
+          return;
+        case NX_BFLOAT16: ENCODE(uint16_t, nx_double_to_bf16); return;
+        case NX_FLOAT8_E4M3FN: ENCODE(uint8_t, nx_double_to_e4m3fn); return;
+        case NX_FLOAT8_E5M2: ENCODE(uint8_t, nx_double_to_e5m2); return;
+        default: /* float4: elements share bytes */
+          for (int64_t j = 0; j < len; j++, p += step)
+            store_float(a->base, dt, p, 0, src[j]);
+          return;
       }
-      return;
+#undef ENCODE
     }
     case TO_IMMEDIATE:
       for (int64_t j = 0; j < len; j++, p += step)
