@@ -7,11 +7,14 @@ open Windtrap
 module C = Rig
 module B = Rig.Buffer
 module Claim = Rig.Claim
+module P = Rig_support.Polled
+module R = Rig_support.Reader
 
 let submit ?(reads = [||]) ?(writes = [||]) ?(waits = [||]) s =
   C.submit s ~reads ~writes ~waits
 
 let timeout = 60.
+let answer = Testable.make ~pp:R.pp_answer ~equal:( = )
 
 (* Claims through views of one memory, against a model *)
 
@@ -340,6 +343,14 @@ let judge_donate r = function
   | Error (Invalid_argument _) -> equal ~msg:"dead" bool true r.dead
   | Error e -> raise e
 
+let judge_c_claim r = function
+  | Ok R.Claimed ->
+      equal ~msg:"dead" bool false r.dead;
+      r.reads <- r.reads + 1
+  | Ok (R.Dead | R.Exclusive) -> equal ~msg:"dead" bool true r.dead
+  | Ok a -> failf "claim answered %a" R.pp_answer a
+  | Error e -> raise e
+
 let export b = ignore (B.bigarray Bigarray.char b)
 
 let donate b =
@@ -358,6 +369,10 @@ let donation_commands =
       (fun () -> { dead = false; reads = 0; out = false })
       (fun () -> B.create C.host 64);
     command "read" (memory ^-> judges unit) judge_read Claim.read;
+    command "claim from C"
+      (memory ^-> judges answer)
+      judge_c_claim
+      (fun b -> R.claim b B.Read);
     command "export" (memory ^-> judges unit) judge_export export;
     command "donate" (memory ^-> judges bool) judge_donate donate;
   ]
@@ -381,10 +396,102 @@ let test_export_exclusive () =
   raises_match ~msg:"no read claim left" Exn.invalid_arg (fun () ->
       Claim.release b')
 
+(* Claims from C *)
+
+(* A claim from C is a read claim: it sits beside other readers, keeps a
+   donation a read until it is released, and is refused under an exclusive claim
+   and on a dead buffer, where it leaves no claim behind. *)
+let test_c_claims () =
+  let b = B.create C.host 16 in
+  equal ~msg:"for reading" answer R.Claimed (R.claim b B.Read);
+  equal ~msg:"for writing" answer R.Claimed (R.claim b B.Read_write);
+  Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
+      equal ~msg:"donated under two claims" bool false (Claim.exclusive c b));
+  R.release b;
+  R.release b;
+  let b' =
+    Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
+        equal ~msg:"donated once released" bool true (Claim.exclusive c b);
+        equal ~msg:"under an exclusive claim" answer R.Exclusive
+          (R.claim b B.Read);
+        Claim.consume c ~why:"donated" b)
+  in
+  equal ~msg:"dead" answer R.Dead (R.claim b B.Read);
+  equal ~msg:"its reason" (option string) (Some "donated") (R.why b);
+  Claim.with_ ~read:[] ~donate:[ [ b' ] ] (fun c ->
+      equal ~msg:"no claim left" bool true (Claim.exclusive c b'))
+
+let write d m =
+  ignore (submit (C.Submission.make ~reads:0 ~writes:1 d [||]) ~writes:[| m |])
+
+let read d m =
+  ignore (submit (C.Submission.make ~reads:1 ~writes:0 d [||]) ~reads:[| m |])
+
+(* A claim waits for nothing: it is Pending while a point the access must follow
+   is unreached, the last write for reading and every use for writing, and
+   leaves no claim then; Claimed once the word shows the point. *)
+let test_c_pending () =
+  let d, p = P.open_ "claim:c-pending" in
+  let m = B.create d 64 in
+  write d m;
+  equal ~msg:"an unreached write" answer R.Pending (R.claim m B.Read);
+  ignore (P.run p);
+  equal ~msg:"the write reached" answer R.Claimed (R.claim m B.Read);
+  R.release m;
+  read d m;
+  equal ~msg:"an unreached read, for reading" answer R.Claimed
+    (R.claim m B.Read);
+  R.release m;
+  equal ~msg:"an unreached read, for writing" answer R.Pending
+    (R.claim m B.Read_write);
+  B.wait m B.Read_write;
+  equal ~msg:"after a wait" answer R.Claimed (R.claim m B.Read_write);
+  R.release m;
+  Claim.with_ ~read:[] ~donate:[ [ m ] ] (fun c ->
+      equal ~msg:"no claim left" bool true (Claim.exclusive c m))
+
+(* Behind a transport a claim reads the value the host last read: work that ran
+   is Pending until a wait reads the word, and Claimed after it. *)
+let test_c_transport () =
+  let d, p = P.open_ ~transport:true "claim:c-transport" in
+  let m = B.create d 64 in
+  write d m;
+  ignore (P.run p);
+  equal ~msg:"ran, unread" answer R.Pending (R.claim m B.Read);
+  B.wait m B.Read;
+  equal ~msg:"after a wait" answer R.Claimed (R.claim m B.Read);
+  R.release m
+
+(* A point on a lost device is Pending even once its word reached it: the wait
+   the caller then makes raises Lost. *)
+let test_c_lost () =
+  let d, p = P.open_ "claim:c-lost" in
+  let m = B.create d 64 in
+  write d m;
+  ignore (P.run p);
+  P.fail p;
+  (try ignore (submit (C.Submission.make ~reads:0 ~writes:0 d [||]))
+   with C.Lost _ -> ());
+  equal ~msg:"reached, lost" answer R.Pending (R.claim m B.Read);
+  raises_match
+    (function C.Lost _ -> true | _ -> false)
+    (fun () -> B.wait m B.Read)
+
+(* Held memory follows every point of its hold, whatever the access. *)
+let test_c_held () =
+  let d, p = P.open_ "claim:c-held" in
+  let m = B.create d 64 in
+  let h = C.Hold.make [ m ] in
+  ignore (submit (C.Submission.make ~hold:h ~reads:0 ~writes:0 d [||]));
+  equal ~msg:"an unreached use of the hold" answer R.Pending (R.claim m B.Read);
+  ignore (P.run p);
+  equal ~msg:"reached" answer R.Claimed (R.claim m B.Read);
+  R.release m;
+  ignore (Sys.opaque_identity h)
+
 (* Claims on memory whose stamps name a lost device raise Lost, and with_
    releases what it took first. *)
 let test_lost_claims () =
-  let module P = Rig_support.Polled in
   let d, p = P.open_ "claim:lost" in
   let m = B.create d 64 in
   let w = C.Submission.make ~reads:0 ~writes:1 d [||] in
@@ -457,6 +564,17 @@ let tests =
         test "a buffer's death is a fact with its reason" test_dead_fact;
         test "claims on memory a loss reaches raise and release"
           test_lost_claims;
+      ];
+    group ~timeout "claims from C"
+      [
+        test "a claim from C is a read claim" test_c_claims;
+        test "a claim from C is pending until the word shows its points"
+          test_c_pending;
+        test "behind a transport a claim reads the word a wait read"
+          test_c_transport;
+        test "a claim on memory a loss reaches is pending" test_c_lost;
+        test "a claim on held memory follows every point of the hold"
+          test_c_held;
       ];
     group ~timeout "domains"
       [

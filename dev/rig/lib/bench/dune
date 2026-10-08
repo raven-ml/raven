@@ -1,7 +1,7 @@
 (library
  (name rig_bench)
  (modules)
- (libraries rig_edge)
+ (libraries rig rig_edge)
  (foreign_stubs
   (language c)
   (names rig_bench_stubs)))

@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The C readers of rig.h, from native code and from bytecode, where
-   another library's stubs resolve them at load. *)
+(* The C readers of rig.h, from native code and from bytecode, where another
+   library's stubs resolve them at load. *)
 
 open Windtrap
 module C = Rig
@@ -31,6 +31,15 @@ let test_dead () =
       ignore (C.Claim.consume c ~why:"donated" b));
   equal (option string) (Some "donated") (R.why b)
 
+(* A claim from C resolves and claims, and its release ends it. *)
+let test_claim () =
+  let b = B.create C.host 8 in
+  let answer = Testable.make ~pp:R.pp_answer ~equal:( = ) in
+  equal ~msg:"claimed" answer R.Claimed (R.claim b B.Read);
+  R.release b;
+  C.Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
+      equal ~msg:"released" bool true (C.Claim.exclusive c b))
+
 let tests =
   [
     group ~timeout "readers"
@@ -38,6 +47,7 @@ let tests =
         test "a live buffer reads as its address and length" test_live;
         test "a view reads as its own first byte and elements" test_view;
         test "a dead buffer reads as its reason" test_dead;
+        test "a claim from C claims and its release ends it" test_claim;
       ];
   ]
 

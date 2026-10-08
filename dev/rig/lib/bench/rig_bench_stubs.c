@@ -9,7 +9,8 @@
    handles it was given, and the machine's GPU lock. A submit holds the
    runtime, even for a driver whose submit may block, except a turn's: it
    takes the floor's mutex as the core takes a device's turn, by try-lock and
-   otherwise with the runtime released. The lock releases it for its nap. */
+   otherwise with the runtime released. The lock releases it for its nap.
+   And a host kernel's claims on its operands, from C. */
 
 #define _GNU_SOURCE
 
@@ -42,6 +43,7 @@ static void turn_lock(turn *t) { pthread_mutex_lock(t); }
 static void turn_unlock(turn *t) { pthread_mutex_unlock(t); }
 #endif
 
+#include "rig.h"
 #include "rig_edge.h"
 
 #if !defined(_WIN32)
@@ -268,4 +270,16 @@ value rig_bench_evict(value v_path) {
   close(fd);
   return Val_int(e);
 #endif
+}
+
+/* Claims the memory of three buffers for reading, then releases each, as a
+   host kernel with three operands does around its loop. */
+value rig_bench_claim_3(value a, value b, value c) {
+  enum rig_claim ca = rig_buffer_claim(a, RIG_READ);
+  enum rig_claim cb = rig_buffer_claim(b, RIG_READ);
+  enum rig_claim cc = rig_buffer_claim(c, RIG_READ);
+  if (ca == RIG_CLAIMED) rig_buffer_release(a);
+  if (cb == RIG_CLAIMED) rig_buffer_release(b);
+  if (cc == RIG_CLAIMED) rig_buffer_release(c);
+  return Val_unit;
 }

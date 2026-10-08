@@ -5,9 +5,10 @@
 
 (** The records the core's modules share.
 
-    [rig_memory.c] reads the first fields of {!buffer}, {!memory} and {!claim}
-    by position, for the readers [rig.h] declares: a change of their order
-    changes it too. *)
+    [rig_memory.c] reads by position, for the readers and claims [rig.h]
+    declares, the fields of {!buffer} and {!claim}, those of {!memory} up to
+    [root], and those of {!entry} up to [held]: a change of their order changes
+    it too. *)
 
 type ('a, 'r, 'i) dm =
   (module Sigs.Driver with type t = 'a and type region = 'r and type image = 'i)
@@ -113,11 +114,11 @@ and entry = {
   io_region : io_region option;
   access : access;
   mutable stamps : int;  (** The C stamps, a hold's once held; 0 none. *)
+  mutable held : bool;  (** In a hold. Guarded by [owner]'s lock. *)
   mutable own : int;  (** The memory's own stamps. *)
   mutable maps : mapping list;  (** Other devices' mappings of it. *)
   mutable unmaps : int; [@atomic]
       (** The unmaps left before a dead memory is given back. *)
-  mutable held : bool;  (** In a hold. Guarded by [owner]'s lock. *)
   mutable pages : pages;
       (** An io memory's pages, asked at its first borrow. *)
   mutable proxy : int;
@@ -161,11 +162,11 @@ type memory = {
   handle : nativeint;
   claim : claim;
   mutable entry : entry;
-  mutable token : token;
-  keep : keep;
   mutable root : memory;
       (** The memory a borrow maps; the record itself otherwise, set once made.
       *)
+  mutable token : token;
+  keep : keep;
 }
 (** The type for memory: owned, or a borrow of [root]'s on [dev]. *)
 

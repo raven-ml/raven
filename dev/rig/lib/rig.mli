@@ -409,12 +409,13 @@ module Buffer : sig
       views and borrows: [Read_write] for memory {!create} and {!of_bigarray}
       make, and what {!of_io} was given.
 
-      [Read] memory is never written: a {!copy} into it raises, and so does a
-      submission that writes it ({!Submission.make}, {!submit}), and it is never
-      exclusive ({!Claim}). The host writes it only by breaking this, through
-      {!bigarray}, after which what reads of it see is unspecified. A library
-      that writes its caller's buffer checks this first, to refuse a [Read]
-      buffer under its own name. *)
+      [Read] memory is never written: a {!copy} into it raises, and so do a
+      submission that writes it ({!Submission.make}, {!submit}) and a host claim
+      for writing ([rig_buffer_claim] in [rig.h]), and it is never exclusive
+      ({!Claim}). The host writes it only by breaking this, through {!bigarray},
+      after which what reads of it see is unspecified. A library that writes its
+      caller's buffer checks this first, to refuse a [Read] buffer under its own
+      name. *)
 
   val view : t -> first:int -> length:int -> t
   (** [view b ~first ~length] is the [length] bytes of [b] from its byte [first]
@@ -455,7 +456,8 @@ module Buffer : sig
 
       For the libraries that submit work. C code reads a buffer's host address,
       its length and the reason it is dead with [rig_buffer_host],
-      [rig_buffer_bytes] and [rig_buffer_why], declared in [rig.h]. *)
+      [rig_buffer_bytes] and [rig_buffer_why], and claims its memory with
+      [rig_buffer_claim] and [rig_buffer_release], declared in [rig.h]. *)
 
   val address : t -> int
   (** [address b] is the address of [b]'s first byte as [b]'s device's work
@@ -517,8 +519,8 @@ module Claim : sig
       accepts a dead [b].
 
       Raises [Invalid_argument] and changes nothing if the memory has no read
-      claim of a {!read} or a {!with_}: a reader outside the claims is not one.
-  *)
+      claim of a {!read}, a {!with_} or [rig_buffer_claim]: a reader outside the
+      claims is not one. *)
 
   type t
   (** The type for the claims of a {!with_}. *)

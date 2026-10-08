@@ -171,6 +171,12 @@ static int is_lost(struct rig_device *d) {
   return atomic_load_explicit(&d->lost, memory_order_acquire) != NULL;
 }
 
+int rig_point_done(uint64_t p) {
+  struct rig_device *d = device_of(RIG_INDEX(p));
+  if (d == NULL) return 1;
+  return !is_lost(d) && device_word(d) >= RIG_VALUE(p);
+}
+
 #define Device_val(v) ((struct rig_device *)Long_val(v))
 
 /* Locks */

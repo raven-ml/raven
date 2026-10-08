@@ -151,6 +151,10 @@ struct rig_sub {
   int *claims;
 };
 
+/* Whether the point [p] is reached as the host last read its device's
+   word, and its device is not lost. */
+int rig_point_done(uint64_t p);
+
 /* The host's page size in bytes. */
 size_t rig_page_bytes(void);
 

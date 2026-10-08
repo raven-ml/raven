@@ -389,6 +389,18 @@ let test_read_runs () =
   raises_match ~msg:"a copy part's destination" Exn.invalid_arg (fun () ->
       ignore (Sub.make ~reads:0 ~writes:0 d [| copy own on_d |]))
 
+(* A host claim for writing is refused on memory that admits only reads, and one
+   for reading is had. *)
+let test_read_claims () =
+  let module R = Support.Reader in
+  let answer = Testable.make ~pp:R.pp_answer ~equal:( = ) in
+  let io, t = open_pages () in
+  let r = Option.get (Pages.alloc t page_bytes) in
+  let m = B.of_io io Pages.region_key r ~access:Read page_bytes in
+  equal ~msg:"for writing" answer R.Read_only (R.claim m Read_write);
+  equal ~msg:"for reading" answer R.Claimed (R.claim m Read);
+  R.release m
+
 (* Memory admits the accesses it was made with, through its views and borrows,
    and a copy into memory that admits only reads raises, even of no bytes: it
    neither reads its source nor writes the region. *)
@@ -462,6 +474,8 @@ let tests =
           "memory admits its accesses through views and borrows, and a copy \
            into read memory raises"
           test_read_memory;
+        test "a host claim for writing refuses memory that admits only reads"
+          test_read_claims;
       ];
   ]
 

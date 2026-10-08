@@ -407,6 +407,18 @@ value rig_test_reader_why(value v_b) {
   CAMLreturn(why == NULL ? Val_none : caml_alloc_some(caml_copy_string(why)));
 }
 
+/* rig_buffer_claim, whose answer is the constructor of Reader.answer of
+   the same rank, and rig_buffer_release. */
+value rig_test_reader_claim(value v_b, value v_access) {
+  return Val_int(rig_buffer_claim(
+      v_b, Int_val(v_access) == 0 ? RIG_READ : RIG_READ_WRITE));
+}
+
+value rig_test_reader_release(value v_b) {
+  rig_buffer_release(v_b);
+  return Val_unit;
+}
+
 /* How many holders share [v_ba]'s storage, as its proxy counts them. */
 value rig_test_shares(value v_ba) {
   struct caml_ba_proxy *p = Caml_ba_array_val(v_ba)->proxy;

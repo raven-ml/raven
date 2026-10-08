@@ -34,6 +34,9 @@ external floor_turn_submit : nativeint -> int -> unit
 
 external floor_share : nativeint -> nativeint -> unit = "rig_bench_floor_share"
 
+external claim_3 : B.t -> B.t -> B.t -> unit = "rig_bench_claim_3"
+[@@noalloc]
+
 let drain = 64
 let slots = 24
 let runs = 100
@@ -231,6 +234,9 @@ let claim_rows =
       row "with-24"
         (fun () -> (List.init slots (fun _ -> host 16), [ [ host 16 ] ]))
         (fun (read, donate) -> Claim.with_ ~read ~donate ignore);
+      row "c-read-release-3"
+        (fun () -> (host 16, host 16, host 16))
+        (fun (a, b, c) -> claim_3 a b c);
     ]
 
 let copy_rows =

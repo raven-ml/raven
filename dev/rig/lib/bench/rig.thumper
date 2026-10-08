@@ -88,6 +88,7 @@ wait/memory/reached	wall_time	batch=1048576	n=20	4.814e-09	4.811e-09 4.811e-09 4
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed under load 7.8 on 10 cores
+# forced: blessed claim/c-read-release-3 under load 13.2 on 10 cores
 
 buffer/bigarray-64M	alloc_words	exact	18
 buffer/bigarray-64M	major_collections	exact	0
@@ -100,6 +101,8 @@ buffer/memory-create-cached-4K	alloc_words	batch=16384	n=20	6.601e+01	6.541e+01 
 buffer/memory-create-cached-4K	wall_time	batch=16384	n=20	3.887e-07	3.724e-07 3.752e-07 3.769e-07 3.786e-07 3.819e-07 3.825e-07 3.827e-07 3.843e-07 3.868e-07 3.880e-07 3.894e-07 3.905e-07 3.913e-07 3.921e-07 3.927e-07 3.934e-07 3.937e-07 3.964e-07 3.997e-07 4.001e-07
 buffer/wait-reached-24	alloc_words	exact	0
 buffer/wait-reached-24	wall_time	batch=8192	n=20	8.553e-07	8.392e-07 8.404e-07 8.462e-07 8.466e-07 8.500e-07 8.521e-07 8.527e-07 8.534e-07 8.546e-07 8.550e-07 8.557e-07 8.568e-07 8.574e-07 8.608e-07 8.614e-07 8.614e-07 8.625e-07 8.633e-07 8.653e-07 8.673e-07
+claim/c-read-release-3	alloc_words	exact	0
+claim/c-read-release-3	wall_time	batch=262144	n=20	1.868e-08	1.806e-08 1.823e-08 1.834e-08 1.838e-08 1.843e-08 1.848e-08 1.852e-08 1.852e-08 1.858e-08 1.868e-08 1.868e-08 1.872e-08 1.873e-08 1.875e-08 1.883e-08 1.884e-08 1.885e-08 1.898e-08 1.899e-08 1.973e-08
 claim/read-release	alloc_words	exact	0
 claim/read-release	wall_time	batch=524288	n=20	1.271e-08	1.259e-08 1.260e-08 1.262e-08 1.265e-08 1.265e-08 1.265e-08 1.265e-08 1.268e-08 1.269e-08 1.270e-08 1.272e-08 1.273e-08 1.273e-08 1.275e-08 1.276e-08 1.277e-08 1.278e-08 1.279e-08 1.282e-08 1.285e-08
 claim/with-24	alloc_words	exact	991

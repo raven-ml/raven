@@ -364,4 +364,22 @@ module Reader = struct
   external host : Rig.Buffer.t -> int = "rig_test_reader_host"
   external bytes : Rig.Buffer.t -> int = "rig_test_reader_bytes"
   external why : Rig.Buffer.t -> string option = "rig_test_reader_why"
+
+  type answer = Claimed | Pending | Dead | Exclusive | Read_only
+
+  let pp_answer ppf a =
+    Format.pp_print_string ppf
+      (match a with
+      | Claimed -> "Claimed"
+      | Pending -> "Pending"
+      | Dead -> "Dead"
+      | Exclusive -> "Exclusive"
+      | Read_only -> "Read_only")
+
+  external claim : Rig.Buffer.t -> Rig.Buffer.access -> answer
+    = "rig_test_reader_claim"
+  [@@noalloc]
+
+  external release : Rig.Buffer.t -> unit = "rig_test_reader_release"
+  [@@noalloc]
 end
