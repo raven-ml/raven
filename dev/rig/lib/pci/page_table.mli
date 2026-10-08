@@ -215,7 +215,8 @@ val unmap : t -> va:int -> int -> unit
     requires, an address of it is not mapped, or a page maps addresses on both
     sides of its bounds. *)
 
-val alloc : ?uncached:bool -> ?contiguous:bool -> t -> int -> mapping option
+val alloc :
+  ?uncached:bool -> ?contiguous:bool -> ?below:int -> t -> int -> mapping option
 (** [alloc t n] is [n] bytes, rounded up to 4 KiB, of new physical memory from
     the pool {!palloc} takes from by default, mapped at new virtual addresses of
     [space t]:
@@ -223,6 +224,10 @@ val alloc : ?uncached:bool -> ?contiguous:bool -> t -> int -> mapping option
       largest block of [pages] it could hold when the pool has one, so that it
       maps with large pages;
     - otherwise the largest blocks of [pages] the pool has, not zeroed.
+
+    With [below], the memory lies at physical addresses that end at or below it,
+    such as the part of the GPU's memory its BAR reaches, chosen before anything
+    is written.
 
     [None] if the space or the pool cannot supply them, as {!Space.alloc} and
     {!palloc} bound each request, or if a table has no room, having given back

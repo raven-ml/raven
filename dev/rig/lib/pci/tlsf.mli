@@ -39,9 +39,13 @@ val base : t -> int
 val length : t -> int
 (** [length a] is the number of addresses [a] manages. *)
 
-val alloc : ?align:int -> t -> int -> int option
+val alloc : ?align:int -> ?below:int -> t -> int -> int option
 (** [alloc a n] is the first address of a new block of at least [n] bytes, a
     multiple of [align] (defaults to [1]), or [None] as the fit bound allows.
+    With [below], the block ends at or below that address. A bound below the
+    range's end gives the first such block in address order, or [None] if no
+    free block holds it there, and the search walks the blocks; a bound at or
+    past the end bounds nothing.
 
     Raises [Invalid_argument] if [n < 0] or [align <= 0]. *)
 

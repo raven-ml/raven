@@ -1442,17 +1442,46 @@ let create_alloc_tables () =
     ~pages:[ (page, page) ]
     ~length:alloc_space ()
 
+(* The free runs of [p], as (first, end) addresses. *)
+let free_runs p =
+  let live = List.sort compare p.live in
+  let rec go at = function
+    | [] -> if at < p.hi then [ (at, p.hi) ] else []
+    | (a, n) :: rest ->
+        if at < a then (at, a) :: go (a + n) rest else go (a + n) rest
+  in
+  go p.lo live
+
+(* Whether [p] has [size] bytes of free pages that end at or below [bound]: in
+   one run if [contiguous]. *)
+let fits_below p ~contiguous ~bound size =
+  let room (lo, hi) = Int.max 0 ((Int.min hi bound - lo) / page * page) in
+  let rooms = List.map room (free_runs p) in
+  if contiguous then List.exists (fun r -> r >= size) rooms
+  else List.fold_left ( + ) 0 rooms >= size
+
 (* An allocation takes fresh addresses and fresh blocks of the main pool, one
-   zeroed block if contiguous. [None] is accepted where the space or the pool
-   holds no free range of twice the request and its alignment: the request a
-   single block would make. *)
-let alloc_judge contiguous uncached n m got =
+   zeroed block if contiguous, each ending at or below [below]. [None] is
+   accepted where the space or the pool holds no free range of twice the request
+   and its alignment, the request a single block would make; or, under a bound
+   below the pool's end, where the pool has no free pages enough under it. *)
+let alloc_judge ?below contiguous uncached n m got =
   let size = round_up n page and refused = n <= 0 in
   cover "a refused request" refused;
   let space_fits =
     fits ~gap:(largest_gap m.space) size (max page (pow2_floor size))
   in
-  let pool_fits = fits ~gap:(largest_gap m.phys) size page in
+  let bounded =
+    match below with Some b when b < m.phys.hi -> Some b | _ -> None
+  in
+  let pool_fits =
+    match bounded with
+    | Some bound -> fits_below m.phys ~contiguous ~bound size
+    | None -> fits ~gap:(largest_gap m.phys) size page
+  in
+  cover "a bound that excludes part of the pool" (Option.is_some bounded);
+  cover "a bound that leaves no room"
+    (Option.is_some bounded && (not pool_fits) && not refused);
   cover "out of addresses" (not space_fits);
   cover "out of memory" (not pool_fits);
   cover "several blocks"
@@ -1477,6 +1506,10 @@ let alloc_judge contiguous uncached n m got =
       List.iter
         (fun (pa, k) ->
           in_pool ~msg:"block" m.phys ~align:page (pa, k);
+          Option.iter
+            (fun b ->
+              at_most ~msg:"block: under the bound" hex ~than:b (pa + k))
+            below;
           take m.phys (pa, k);
           if contiguous then zeroed ~msg:"zeroed" zs (pa, k))
         a.pages;
@@ -1518,9 +1551,25 @@ let alloc_sizes =
       (1, Gen.of_list ~pp:pp_hex [ 1; 4096; 4097; 256 * kib; mib; 0; -1 ]);
     ]
 
-let alloc contiguous uncached n (t, g) =
+(* Bounds below, on and above the pool's edges and its blocks' ends. *)
+let alloc_bounds =
+  among hex allocs (fun m ->
+      let p = m.phys and mid = (m.phys.lo + m.phys.hi) / 2 in
+      [
+        p.lo - page;
+        p.lo;
+        p.lo + page;
+        mid;
+        mid + 1;
+        p.hi - 1;
+        p.hi;
+        p.hi + page;
+      ]
+      @ List.concat_map (fun (a, k) -> [ a + k - 1; a + k; a + k + 1 ]) p.live)
+
+let alloc ?below contiguous uncached n (t, g) =
   g.zeroed <- [];
-  let m = Page_table.alloc ~contiguous ~uncached t n in
+  let m = Page_table.alloc ~contiguous ~uncached ?below t n in
   Option.map (fun m -> (m, g.zeroed)) m
 
 let alloc_commands =
@@ -1536,6 +1585,11 @@ let alloc_commands =
       (Gen.bool @-> allocs ^-> alloc_edges ^-> judges outcome)
       (fun contiguous m n got -> alloc_judge contiguous false n m got)
       (fun contiguous tg n -> alloc contiguous false n tg);
+    command "alloc"
+      (Gen.bool @-> alloc_sizes @-> allocs ^-> alloc_bounds ^-> judges outcome)
+      (fun contiguous n m below got ->
+        alloc_judge ~below contiguous false n m got)
+      (fun contiguous n tg below -> alloc ~below contiguous false n tg);
     command "free"
       (allocs ^-> live_maps ^-> returns unit)
       free_alloc
@@ -1608,7 +1662,8 @@ let () =
              test_contiguous;
              test "large blocks map as large pages" test_blocks;
              test "free gives back memory and addresses" test_free;
-             stateful "the tables map exactly what is allocated" ~count:200
-               alloc_commands;
+             stateful
+               "the tables map exactly what is allocated, under its bound"
+               ~count:200 alloc_commands;
            ];
        ]

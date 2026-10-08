@@ -12,7 +12,12 @@
    memory BAR; [visible], on a GPU whose BAR is 256 MiB, is system memory, which
    the machine gives as one run per 4 KiB page, apart, mapped an entry each. An
    allocation of each kind and size stays resident, so the rows measure the warm
-   path, without table creation. *)
+   path, without table creation.
+
+   [alloc-free/fragmented/bar/16MiB] is [bar] on a GPU whose memory holds 4096
+   blocks of 4 KiB, every other one free, below the rest: its BAR reaches all of
+   the memory, so the bound the BAR sets excludes nothing and costs what no
+   bound does. *)
 
 module Machine = Rig_pci.Machine
 module Function = Rig_pci.Function
@@ -110,19 +115,40 @@ let alloc_free m kind n =
   | Ok None -> failwith "alloc-free: no memory"
   | Error why -> failwith ("alloc-free: " ^ why)
 
-let rows =
-  let kind (name, kind, bar_size) =
-    let m = lazy (memory kind ~bar_size) in
-    let row (size_name, n) =
-      let n = Thumper.black_box n in
-      Thumper.bench_with_setup
-        ~setup:(fun () -> Lazy.force m)
-        size_name
-        (fun m -> alloc_free m kind n)
-    in
-    Thumper.group name (List.map row sizes)
-  in
-  List.map kind kinds
+let fragments = 4096
 
-let () =
-  exit (Thumper.run "rig_pci_memory" [ Thumper.group "alloc-free" rows ])
+let fragmented () =
+  let m = memory Memory.Bar ~bar_size:gib in
+  List.init fragments (fun _ ->
+      match Memory.alloc m Gpu (4 * kib) with
+      | Ok (Some mem) -> mem
+      | Ok None | Error _ -> failwith "fragmented: no memory")
+  |> List.iteri (fun i mem -> if i mod 2 = 0 then Memory.free m mem);
+  m
+
+let group ?(sizes = sizes) name kind m =
+  let row (size_name, n) =
+    let n = Thumper.black_box n in
+    Thumper.bench_with_setup
+      ~setup:(fun () -> Lazy.force m)
+      size_name
+      (fun m -> alloc_free m kind n)
+  in
+  Thumper.group name (List.map row sizes)
+
+let rows =
+  List.map
+    (fun (name, kind, bar_size) ->
+      group name kind (lazy (memory kind ~bar_size)))
+    kinds
+  @ [
+      Thumper.group "fragmented"
+        [
+          group
+            ~sizes:[ ("16MiB", 16 * mib) ]
+            "bar" Memory.Bar
+            (lazy (fragmented ()));
+        ];
+    ]
+
+let () = exit (Thumper.run "rig_pci_memory" [ Thumper.group "alloc-free" rows ])

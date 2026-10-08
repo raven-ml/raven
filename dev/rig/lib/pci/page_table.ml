@@ -111,11 +111,11 @@ let pool t ~table =
   else if table && Tlsf.length t.tables > 0 then t.tables
   else t.main
 
-let take t tlsf ?(align = page) ?(zero = true) n =
+let take t tlsf ?(align = page) ?(zero = true) ?below n =
   if n > Tlsf.length tlsf then None
   else
     let n = round_up n page in
-    match Tlsf.alloc ~align tlsf n with
+    match Tlsf.alloc ~align ?below tlsf n with
     | Some pa as r ->
         if zero then t.fmt.zero pa n;
         r
@@ -563,7 +563,7 @@ let map ?(uncached = false) ?(snooped = false) t ~va target ranges =
 
 (* Physical blocks for [n] bytes, the largest [pages] allows first, falling to
    smaller ones when the pool has none left. *)
-let blocks t n =
+let blocks ?below t n =
   let pool = pool t ~table:false in
   let rec go acc left = function
     | _ when left = 0 -> Some (List.rev acc)
@@ -572,7 +572,7 @@ let blocks t n =
         None
     | (size, _) :: rest when size > left -> go acc left rest
     | (size, align) :: rest as sizes -> (
-        match take t pool ~align ~zero:false size with
+        match take t pool ~align ~zero:false ?below size with
         | Some pa -> go ((pa, size) :: acc) (left - size) sizes
         | None -> go acc left rest)
   in
@@ -580,15 +580,15 @@ let blocks t n =
 
 (* One block of [n] bytes, aligned as the largest block of [pages] it holds, so
    that it maps with the largest pages, when the pool has such a block. *)
-let block t n =
+let block ?below t n =
   let pool = pool t ~table:false in
   let align =
     match List.find_opt (fun (size, _) -> size <= n) t.pages with
     | Some (_, align) -> align
     | None -> page
   in
-  match take t pool ~align n with
-  | None when align > page -> take t pool n
+  match take t pool ~align ?below n with
+  | None when align > page -> take t pool ?below n
   | found -> found
 
 (* Gives back the addresses at [va] and the blocks [pages] of an allocation that
@@ -597,7 +597,7 @@ let give_back t va pages =
   Option.iter (List.iter (fun (pa, _) -> pfree t pa)) pages;
   Space.free t.space va
 
-let alloc ?(uncached = false) ?(contiguous = false) t n =
+let alloc ?(uncached = false) ?(contiguous = false) ?below t n =
   if n <= 0 then
     invalid_argf "Page_table.alloc: %d bytes, expected more than 0" n;
   if n > Space.length t.space then None
@@ -607,8 +607,9 @@ let alloc ?(uncached = false) ?(contiguous = false) t n =
     | None -> None
     | Some va -> (
         let pages =
-          if contiguous then Option.map (fun pa -> [ (pa, n) ]) (block t n)
-          else blocks t n
+          if contiguous then
+            Option.map (fun pa -> [ (pa, n) ]) (block ?below t n)
+          else blocks ?below t n
         in
         match Option.bind pages (map ~uncached t ~va Gpu) with
         | Some _ as m -> m

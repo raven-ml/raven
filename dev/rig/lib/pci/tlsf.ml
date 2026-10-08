@@ -181,7 +181,43 @@ let base t = t.base
 let length t = t.length
 let round_up n a = (n + a - 1) / a * a
 
-let alloc ?(align = 1) t n =
+(* Takes [req] bytes at the aligned start of the free block [b] at [start]: the
+   gap below and the tail above stay free. *)
+let take_from t ~align start b req =
+  remove t b;
+  (* The gap below the aligned start stays free. Its neighbour before was [b]'s,
+     which is not free. *)
+  let gap = round_up (t.base + start) align - t.base - start in
+  let start, b =
+    if gap = 0 then (start, b)
+    else
+      let a, ab = carve t start b gap in
+      insert t start b;
+      (a, ab)
+  in
+  (* The tail above the request is free, unless smaller than a block. *)
+  if b.size - req >= min_block then begin
+    let r, rb = carve t start b req in
+    insert t r rb
+  end;
+  Some (t.base + start)
+
+(* The first free block, in address order, that holds [req] bytes at an aligned
+   start ending at or below [below]: a walk of the blocks, for a request that
+   the bound excludes part of the range for. *)
+let first_below t ~align ~below req =
+  let rec walk start =
+    if start >= t.length || t.base + start >= below then None
+    else
+      let b = find t start in
+      let at = round_up (t.base + start) align - t.base in
+      if b.free && at + req <= start + b.size && t.base + at + req <= below then
+        take_from t ~align start b req
+      else walk (start + b.size)
+  in
+  walk 0
+
+let alloc ?(align = 1) ?below t n =
   if n < 0 then invalid_argf "Tlsf.alloc: %d bytes" n;
   if align <= 0 then invalid_argf "Tlsf.alloc: align %d" align;
   let req = Int.max min_block n in
@@ -189,31 +225,17 @@ let alloc ?(align = 1) t n =
      None is larger than the range, and the sum could wrap past [max_int]. *)
   if req > t.length - align + 1 then None
   else
-    let need = round_class (req + align - 1) in
-    (* Rounding wraps below 0 only for a range within 2^57 of [max_int]. *)
-    if need < 0 then None
-    else
-      match suitable t (class_of need) with
-      | None -> None
-      | Some start ->
-          let b = find t start in
-          remove t b;
-          (* The gap below the aligned start stays free. Its neighbour before
-             was [b]'s, which is not free. *)
-          let gap = round_up (t.base + start) align - t.base - start in
-          let start, b =
-            if gap = 0 then (start, b)
-            else
-              let a, ab = carve t start b gap in
-              insert t start b;
-              (a, ab)
-          in
-          (* The tail above the request is free, unless smaller than a block. *)
-          if b.size - req >= min_block then begin
-            let r, rb = carve t start b req in
-            insert t r rb
-          end;
-          Some (t.base + start)
+    match below with
+    | Some below when below < t.base + t.length ->
+        first_below t ~align ~below req
+    | _ -> (
+        let need = round_class (req + align - 1) in
+        (* Rounding wraps below 0 only for a range within 2^57 of [max_int]. *)
+        if need < 0 then None
+        else
+          match suitable t (class_of need) with
+          | None -> None
+          | Some start -> take_from t ~align start (find t start) req)
 
 let free t x =
   let start = x - t.base in

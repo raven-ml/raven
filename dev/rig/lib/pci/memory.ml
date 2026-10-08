@@ -99,29 +99,26 @@ let system m n =
               Printexc.raise_with_backtrace e bt))
 
 (* The GPU's memory, one block the process reaches through the BAR when [bar],
-   or [None] if the block lies beyond it. *)
+   placed under the BAR's end before anything is written, or [None] if no block
+   fits there. *)
 let gpu m ~uncached ~bar n =
   let n = round_up n (if n >= large then large_page else page) in
-  match Page_table.alloc ~uncached ~contiguous:bar m.tables n with
+  let below = if bar then Some m.bar_size else None in
+  match Page_table.alloc ~uncached ~contiguous:bar ?below m.tables n with
   | None -> Ok None
   | Some mapping when not bar ->
       Ok (Some { mapping; host = None; source = Allocated })
   | Some mapping -> (
       let pa = fst (List.hd mapping.pages) in
-      if pa + mapping.size > m.bar_size then begin
-        Page_table.free m.tables mapping;
-        Ok None
-      end
-      else
-        match Function.map ~off:pa ~length:mapping.size m.fn m.bar with
-        | Ok host -> Ok (Some { mapping; host = Some host; source = Allocated })
-        | Error why ->
-            Page_table.free m.tables mapping;
-            Error why
-        | exception e ->
-            let bt = Printexc.get_raw_backtrace () in
-            Page_table.free m.tables mapping;
-            Printexc.raise_with_backtrace e bt)
+      match Function.map ~off:pa ~length:mapping.size m.fn m.bar with
+      | Ok host -> Ok (Some { mapping; host = Some host; source = Allocated })
+      | Error why ->
+          Page_table.free m.tables mapping;
+          Error why
+      | exception e ->
+          let bt = Printexc.get_raw_backtrace () in
+          Page_table.free m.tables mapping;
+          Printexc.raise_with_backtrace e bt)
 
 let positive fn n =
   if n <= 0 then invalid_argf "Memory.%s: %d bytes, expected more than 0" fn n

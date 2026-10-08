@@ -518,8 +518,21 @@ let test_out_of_memory () =
   Function.release x.fn;
   Function.release y.fn
 
+(* A format that zeroes through the BAR, as a driver whose BAR does not reach
+   all of its memory does: a block past the BAR raises. *)
+let zero_within bar (f : Page_table.format) =
+  {
+    f with
+    zero =
+      (fun pa n ->
+        if pa + n > bar then
+          invalid_arg (strf "zeroing 0x%x past the BAR's 0x%x bytes" pa bar);
+        f.zero pa n);
+  }
+
 let test_small_bar_fills () =
-  let x = gpu ~memory:(512 * mib) ~bar:(256 * mib) () in
+  let bar = 256 * mib in
+  let x = gpu ~memory:(512 * mib) ~bar ~format:(zero_within bar) () in
   let rec fill acc =
     match alloc_opt x.memory Bar mib with
     | Some mem -> fill (mem :: acc)
@@ -1251,7 +1264,10 @@ let () =
          group ~timeout:patience "exhaustion"
            [
              test "no room is None" test_out_of_memory;
-             test "a small BAR's blocks stay inside it" test_small_bar_fills;
+             test
+               "a small BAR's blocks are placed inside it before they are \
+                zeroed"
+               test_small_bar_fills;
              test "no room for a table is None" test_tables_full;
              test
                "system memory or a BAR window refused is an Error, having \
