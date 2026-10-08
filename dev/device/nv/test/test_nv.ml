@@ -88,6 +88,7 @@ module Fake = struct
     mutable registered : int list;
     mutable wrong : string list; (* what the device gave back wrongly *)
     mutable next : int;
+    mutable at : int option; (* the address of the path's next memory *)
   }
 
   (* The path's own objects. *)
@@ -135,7 +136,9 @@ module Fake = struct
     else
       let bytes = (n + S.page - 1) / S.page * S.page in
       let host = if kind = `Gpu then None else Some (S.pages bytes) in
-      let address = fresh f * (1 lsl 24) in
+      let address =
+        match f.at with Some a -> a | None -> fresh f * (1 lsl 24)
+      in
       f.memory <- (address, host, bytes) :: f.memory;
       Some { N.address; host; handle = fresh f; data = () }
 
@@ -168,7 +171,7 @@ module Fake = struct
       budget = 1 lsl 30;
       doorbell = S.pages S.page;
       alloc = alloc f;
-      map_host = (fun _ _ -> None);
+      map_host = (fun _ n -> alloc f `System n);
       reaches = (fun _ -> false);
       map_peer = (fun _ -> None);
       free = free f;
@@ -195,6 +198,7 @@ module Fake = struct
       registered = [];
       wrong = [];
       next = 16;
+      at = None;
     }
 end
 
@@ -242,6 +246,40 @@ let image_asks_nothing () =
   N.free g r;
   N.stop g
 
+(* The memory a path answers lies below 2^40, the widest address a channel's
+   semaphore takes, up to its last byte; memory past it goes back to the path,
+   and the call raises. *)
+let address_limit () =
+  let f = Fake.make 0 in
+  let g = require_ok (N.make (Fake.path f)) in
+  let held = List.length f.memory in
+  let limit = 1 lsl 40 and n = 2 * S.page in
+  let calls =
+    [
+      ("`Device", fun () -> N.alloc g `Device n);
+      ("`Pinned", fun () -> N.alloc g `Pinned n);
+      ("`Mapped", fun () -> N.alloc g `Mapped n);
+      ("map_host", fun () -> N.map_host g 0 n);
+    ]
+  in
+  let below (what, call) =
+    f.at <- Some (limit - n);
+    let r = require_some ~msg:(what ^ " ending at 2^40") (call ()) in
+    equal int ~msg:(what ^ ": its address") (limit - n) (address r);
+    N.free g r
+  in
+  let past (what, call) =
+    f.at <- Some (limit - S.page);
+    raises_match ~msg:(what ^ " ending past 2^40") Exn.invalid_arg (fun () ->
+        ignore (call ()));
+    equal int ~msg:(what ^ ": the path's memory") held (List.length f.memory)
+  in
+  List.iter below calls;
+  List.iter past calls;
+  f.at <- None;
+  equal (list string) ~msg:"given back wrongly" [] f.wrong;
+  N.stop g
+
 let paths =
   group ~timeout:10. "paths"
     [
@@ -264,6 +302,8 @@ let paths =
          device keeps only its word"
         refused_makes;
       test "image and lay ask the path for nothing" image_asks_nothing;
+      test "memory a path answers past 2^40 goes back, and the call raises"
+        address_limit;
     ]
 
 (* Facts *)
