@@ -33,6 +33,7 @@
 #include <windows.h>
 #else
 #include <fcntl.h>
+#include <pthread.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -402,6 +403,15 @@ static struct {
   struct io_uring_cqe *cqes;
 } ring;
 
+/* A forked child shares the ring's queues with its parent: their requests
+   would mix. The child closes its share and makes a ring of its own at its
+   first long read. */
+static void ring_forget(void) {
+  if (ring_state == 1) close(ring.fd);
+  ring_state = 0;
+  ring_held = 0;
+}
+
 static int supports(struct io_uring_probe *probe, int op) {
   return op <= probe->last_op &&
          (probe->ops[op].flags & IO_URING_OP_SUPPORTED) != 0;
@@ -453,6 +463,8 @@ static int ring_setup(void) {
   ring.cq_mask = (unsigned *)((char *)cq + p.cq_off.ring_mask);
   ring.cqes = (struct io_uring_cqe *)((char *)cq + p.cq_off.cqes);
   ring.sqes = (struct io_uring_sqe *)sqes;
+  static int forgets;
+  if (!forgets) forgets = pthread_atfork(NULL, NULL, ring_forget) == 0;
   return 1;
 }
 
