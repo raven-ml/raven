@@ -15,11 +15,11 @@
       nothing. It waits on nothing but its queue and its socket.
     - the {e receiving thread} reads each frame. It places the transfers of the
       link's rails, and on the controller, writes the bytes of copies into this
-      process's memory, advances the proxies' words and answers {!request}s. It
-      queues every other frame for {!next}, a hand-over with its bytes.
+      process's memory, advances the proxies' words and delivers the answers to
+      {!request}s. It queues every other frame for {!next}, a hand-over with its
+      bytes.
 
-    Frames carry no integrity check after the handshake: the network between a
-    job's machines is trusted.
+    Frames carry no integrity check after the handshake, as {!Wire} states.
 
     {1:failure Jobs and failure}
 
@@ -30,25 +30,28 @@
       ["NAME: closed its connection"], or the system's error after ["NAME: "];
     - no byte comes on a link for 10 seconds: ["NAME: silent for 10 s"];
     - a frame is malformed: ["NAME: a malformed frame"];
+    - a frame is larger than this process can hold:
+      ["NAME: a frame larger than this process can hold"];
     - a peer aborts: its reason, unchanged;
     - {!fail}.
 
-    A reason is any bytes, at most 4096 of them: a longer one is cut there, here
-    and in an agent's refusal ({!answer}).
+    [NAME] is the link's {!name}. A reason is any bytes, at most 4096 of them: a
+    longer one is cut there, here and in an agent's refusal ({!answer}).
 
-    [NAME] is the link's {!name}. Then every link of the job sends its peer an
-    abort with the root cause if its stream takes it at once, and shuts its
-    socket down, so that no thread waits on it. Its queue drops what it is
-    given, {!request} and {!next} answer [Error], the proxies' sleeps return,
-    and every count of every rail of the job reads [Int64.max_int]. Nothing
-    raises from a C thread, and nothing calls OCaml: the process learns of the
-    failure from {!failure}, {!wait} or a function's [Error].
+    Then every link of the job sends its peer an abort with the root cause if
+    its stream takes it at once, and shuts its socket down, so that no thread
+    waits on it. Its queue drops what it is given, {!request} and {!next} answer
+    [Error], the proxies' sleeps return, and every count of every rail of the
+    job reads [Int64.max_int]. Nothing raises from a C thread, and nothing calls
+    OCaml: the process learns of the failure from {!failure}, {!wait} or a
+    function's [Error].
 
     A child of [fork] never uses its parent's links, whose streams it would
     interleave with the parent's: every function compares the process id with
-    the one that started the job before anything else, and in a child the job is
-    failed with ["a child of fork does not use its parent's connections"], in
-    the child's copy alone. The child sends nothing and closes nothing.
+    the one that started the job, and in a child the job is failed with
+    ["a child of fork does not use its parent's connections"], in the child's
+    copy alone. The child sends nothing on its parent's links and closes none of
+    them; a link it makes is failed, its socket closed.
 
     {1:domains Domains}
 
@@ -91,8 +94,9 @@ val close : job -> unit
 (** [close j] ends [j] in order: each of its links sends a close after the
     frames queued before, and [close] returns once every peer's close came and
     the links' threads ended, or once [j] failed. A link's peer sends its close
-    when it ends the job itself, so [close] waits for every peer to end it. On a
-    job that failed or closed it returns at once. *)
+    when it ends the job itself, so [close] waits for every peer to end it. Once
+    a link queued its close, it drops every frame it is given. On a job that
+    failed or closed it returns at once. *)
 
 (** {1:links Links} *)
 
@@ -181,6 +185,6 @@ val rail :
 
 val release_rail : t -> int -> unit
 (** [release_rail l id] ends [l]'s rail [id] here: once it returns, neither
-    thread reads or writes its end, whose memory lives while it is reachable. A
-    transfer of it that arrives later fails the job. It does nothing if [l] has
-    no rail [id]. *)
+    thread reads or writes its end, whose memory lives while it is reachable,
+    and its [ready] function must not be called again. A transfer of it that
+    arrives later fails the job. It does nothing if [l] has no rail [id]. *)
