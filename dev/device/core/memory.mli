@@ -1,0 +1,108 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+(* Memory records, their stamps, the devices' caches, release lists and drains,
+   and the mappings of borrows. Any domain may call any function; each device's
+   lock guards its cache and lists, and no driver call runs under it. *)
+
+open Def
+
+val page : int
+(* [page] is the host's page size. *)
+
+(* Stamps *)
+
+val stamps_new : unit -> int
+val stamps_ref : int -> unit
+val stamps_unref : int -> unit
+val stamps_reserve : int -> int -> unit
+(* [stamps_reserve st index] reserves the use slot of the device [index]. *)
+
+val stamps_absorb : int -> int -> unit
+(* [stamps_absorb dst src] raises [dst] with every point of [src]. *)
+
+val iter_points : ?write:bool -> (int -> unit) -> int -> unit
+(* [iter_points f st] is [f] over the points of [st], the last write first; with
+   [write], that one only. *)
+
+val check_points : int -> unit
+(* [check_points st] raises [Lost] if a point of [st] is on a lost device. *)
+
+(* Records *)
+
+type bytes_ba =
+  (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+
+val ba_address : ('a, 'b, 'c) Bigarray.Array1.t -> int
+val token : int -> released -> int -> int -> int -> token
+(* [token list record bytes room live] puts [record] on the release list [list]
+   once collected, pacing the collector by [bytes] out of [room] ([live] for
+   memory the host shares, [-1] otherwise). *)
+
+val holds_list : int
+(* [holds_list] is the release list of holds, which every drain reads. *)
+
+val device_kind : int
+val pinned_kind : int
+val mapped_kind : int
+val kept_kind : int
+
+val entry :
+  ?region:region -> ?io_region:io_region -> device -> int -> int -> int -> entry
+(* [entry owner kind bytes stamps] is a release record. *)
+
+val no_entry : entry
+(* [no_entry] is the entry of host memory no device borrowed. *)
+
+val make :
+  ?keep:keep ->
+  ?host:int ->
+  ?address:int ->
+  ?handle:nativeint ->
+  ?token:token ->
+  device ->
+  int ->
+  entry ->
+  memory
+
+val stamps : memory -> int
+(* [stamps m] is the stamps of the memory [m] lies in, below its borrows. *)
+
+val region_info : region -> int * nativeint * int
+(* [region_info r] is [r]'s address, handle and host address, [-1] for none. *)
+
+val note : device -> unit
+(* [note d] records [d]'s allocated bytes in the profiles being taken. *)
+
+val ensure_entry : memory -> unit
+(* [ensure_entry m] gives host memory [m] stamps and a token, which unmaps its
+   mappings once it is collected. *)
+
+(* Mappings and borrows *)
+
+val map_host_range : device -> int -> int -> region option
+val map_peer_region : device -> region -> region option
+val borrow : device -> memory -> memory option
+(* [borrow d m] is [d]'s borrow of [m]'s memory, or [None] where [d] cannot map
+   it. *)
+
+(* Allocation and drains *)
+
+val drain : device -> unit
+(* [drain d] returns the memory of [d]'s collected buffers, runs the releases
+   due on it and on lost devices, and the holds' releases due. *)
+
+val rounds : int
+(* [rounds] is the attempts of an allocation the budget or driver refuses. *)
+
+val reclaim : device -> int -> unit
+(* [reclaim d round] releases [d]'s cache, drains every other device and, from
+   the second round, collects. *)
+
+val room : device -> int
+val alloc : device -> int -> int -> memory
+val host_memory : int -> memory
+val set_budget : device -> int -> unit
+val free_cache : device -> unit

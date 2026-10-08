@@ -3,5 +3,12 @@
 (library
  (name device_core)
  (libraries device_dtype device_edge)
- (modules_without_implementation device_core)
- (install_c_headers device_core))
+ (modules_without_implementation def sigs)
+ (install_c_headers device_core)
+ (foreign_stubs
+  (language c)
+  (names
+   device_core_device
+   device_core_stamps
+   device_core_heap
+   device_core_memory)))
