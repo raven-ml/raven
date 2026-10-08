@@ -60,9 +60,10 @@ let layout d =
      clocks. *)
   let* () =
     let has name = List.mem_assoc name (D.smu_messages mp1) in
+    let pair name = has (name ^ "Low") && has (name ^ "High") in
     if
-      has "PPSMC_MSG_GetRunningSmuFeaturesLow"
-      || has "PPSMC_MSG_GetEnabledSmuFeaturesLow"
+      pair "PPSMC_MSG_GetRunningSmuFeatures"
+      || pair "PPSMC_MSG_GetEnabledSmuFeatures"
     then Ok ()
     else unbooted D.mp1_hwid mp1
   in
