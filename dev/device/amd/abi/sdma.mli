@@ -18,6 +18,16 @@ val copy : Gpu.t -> dst:'v -> src:'v -> int -> 'v Packet.t
     Raises [Invalid_argument] if [n] is not in \[[0];[2{^48}]\], what a GPU's
     48-bit virtual addresses reach. *)
 
+val max_copy : Gpu.t -> int
+(** [max_copy g] is the most bytes one linear copy of [g]'s engine moves: 1 GiB
+    from SDMA 4.4.2 below 5 and from 5.2, 4 MiB otherwise. *)
+
+val copy_linear : dst:'v -> src:'v -> bytes:'v -> 'v Packet.t
+(** [copy_linear ~dst ~src ~bytes] copies [bytes] bytes from address [src] to
+    address [dst] in one linear copy of the engine. [bytes] is in
+    \[[1];[max_copy g]\] for the engine's GPU [g]: the caller keeps that range.
+    {!copy} is a sequence of them. *)
+
 val poll : 'v -> Packet.comparison -> 'v -> ?mask:int -> unit -> 'v Packet.t
 (** [poll addr cmp v ~mask ()] waits until the 32 bits at [addr], masked by
     [mask], compare to the low 32 bits of [v] as [cmp] says. [mask] defaults to

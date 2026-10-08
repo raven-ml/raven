@@ -27,6 +27,15 @@ let copy_header =
 (* The longest copy: what a GPU's 48-bit virtual addresses reach. *)
 let max_bytes = 1 lsl 48
 
+let copy_linear ~dst ~src ~bytes =
+  [
+    Dword copy_header;
+    W32 (Add (Value bytes, -1L));
+    Dword 0;
+    W64 (Value src);
+    W64 (Value dst);
+  ]
+
 let copy g ~dst ~src n =
   if n < 0 || n > max_bytes then
     invalid_argf "Sdma.copy: %d bytes, expected 0 to 2^48" n;

@@ -88,6 +88,16 @@ let copy =
             (list (triple int int int))
             (expected 0)
             (pieces (words (Sdma.copy (gpu v) ~dst ~src n))));
+      prop "a linear copy is one piece of its bytes, up to the largest" copies
+        (fun (v, dst, src, n) ->
+          let max = Sdma.max_copy (gpu v) in
+          equal int ~msg:"the largest" (largest v) max;
+          let n = 1 + (n mod max) in
+          cover "the largest" (n = max);
+          equal
+            (list (triple int int int))
+            [ (n, src, dst) ]
+            (pieces (words (Sdma.copy_linear ~dst ~src ~bytes:n))));
       test "a copy of no bytes is no packet" (fun () ->
           equal (list int) []
             (words (Sdma.copy (gpu (6, 0, 0)) ~dst:0 ~src:0 0)));
