@@ -6,8 +6,8 @@
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed under load 3.3 on 6 cores
 
-barrier/1M	alloc_words	exact	87
-barrier/1M	wall_time	batch=1	n=20	6.029e-04	5.993e-04 6.000e-04 6.007e-04 6.008e-04 6.012e-04 6.019e-04 6.021e-04 6.022e-04 6.022e-04 6.026e-04 6.031e-04 6.043e-04 6.044e-04 6.080e-04 6.082e-04 6.084e-04 8.626e-04 8.677e-04 8.680e-04 8.752e-04
+barrier/1M	alloc_words	exact	72
+barrier/1M	wall_time	batch=1	n=20	6.061e-04	6.012e-04 6.028e-04 6.030e-04 6.035e-04 6.048e-04 6.052e-04 6.057e-04 6.059e-04 6.061e-04 6.061e-04 6.062e-04 6.063e-04 6.063e-04 6.125e-04 6.134e-04 6.207e-04 6.271e-04 8.716e-04 8.740e-04 8.762e-04
 barrier/floor-1M	alloc_words	exact	0
 barrier/floor-1M	wall_time	batch=8	n=20	6.268e-04	6.234e-04 6.235e-04 6.245e-04 6.247e-04 6.248e-04 6.249e-04 6.256e-04 6.261e-04 6.266e-04 6.267e-04 6.269e-04 6.271e-04 6.273e-04 6.281e-04 6.558e-04 6.565e-04 6.570e-04 6.574e-04 6.583e-04 6.585e-04
 borrow/cold-read-64M	alloc_words	exact	204
@@ -84,8 +84,8 @@ write/floor-64M	wall_time	batch=1	n=20	7.103e-03	6.943e-03 6.948e-03 6.986e-03 7
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed under load 15.3 on 10 cores
 
-barrier/1M	alloc_words	exact	87
-barrier/1M	wall_time	batch=4	n=20	6.733e-04	6.402e-04 6.420e-04 6.501e-04 6.534e-04 6.539e-04 6.569e-04 6.605e-04 6.619e-04 6.639e-04 6.694e-04 6.772e-04 6.774e-04 6.809e-04 6.845e-04 6.954e-04 7.086e-04 7.109e-04 7.143e-04 7.186e-04 7.463e-04
+barrier/1M	alloc_words	exact	72
+barrier/1M	wall_time	batch=1	n=20	6.365e-04	5.857e-04 5.887e-04 5.888e-04 5.892e-04 5.953e-04 6.164e-04 6.278e-04 6.284e-04 6.321e-04 6.359e-04 6.371e-04 6.386e-04 6.448e-04 6.463e-04 6.524e-04 6.638e-04 6.701e-04 6.798e-04 6.901e-04 8.094e-04
 barrier/floor-1M	alloc_words	exact	0
 barrier/floor-1M	wall_time	batch=8	n=20	6.908e-04	6.547e-04 6.570e-04 6.596e-04 6.661e-04 6.693e-04 6.750e-04 6.877e-04 6.887e-04 6.891e-04 6.902e-04 6.914e-04 7.063e-04 7.178e-04 7.208e-04 7.229e-04 7.333e-04 7.404e-04 7.417e-04 7.450e-04 7.809e-04
 borrow/first-64M	alloc_words	exact	187

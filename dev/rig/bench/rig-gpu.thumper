@@ -7,45 +7,45 @@
 # forced: blessed under load 3.3 on 6 cores
 
 copy/cuda/borrow-to-host-256M	alloc_words	exact	0
-copy/cuda/borrow-to-host-256M	wall_time	batch=1	n=20	9.338e-03	9.286e-03 9.289e-03 9.296e-03 9.301e-03 9.301e-03 9.302e-03 9.314e-03 9.318e-03 9.321e-03 9.337e-03 9.338e-03 9.339e-03 9.345e-03 9.370e-03 9.375e-03 9.394e-03 9.415e-03 9.418e-03 9.451e-03 9.508e-03
-copy/cuda/from-device-256M	alloc_words	exact	127
-copy/cuda/from-device-256M	wall_time	batch=1	n=20	1.410e-02	1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02
-copy/cuda/from-device-off-page-256M	alloc_words	exact	1303
-copy/cuda/from-device-off-page-256M	wall_time	batch=1	n=20	1.722e-02	1.721e-02 1.721e-02 1.721e-02 1.722e-02 1.722e-02 1.722e-02 1.722e-02 1.722e-02 1.722e-02 1.722e-02 1.722e-02 1.723e-02 1.723e-02 1.723e-02 1.723e-02 1.723e-02 1.723e-02 1.724e-02 1.724e-02 1.724e-02
+copy/cuda/borrow-to-host-256M	wall_time	batch=1	n=20	9.340e-03	9.314e-03 9.316e-03 9.320e-03 9.324e-03 9.325e-03 9.330e-03 9.330e-03 9.334e-03 9.336e-03 9.338e-03 9.342e-03 9.344e-03 9.347e-03 9.353e-03 9.355e-03 9.356e-03 9.356e-03 9.362e-03 9.370e-03 9.379e-03
+copy/cuda/from-device-256M	alloc_words	exact	120
+copy/cuda/from-device-256M	wall_time	batch=1	n=20	1.410e-02	1.409e-02 1.409e-02 1.409e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.412e-02
+copy/cuda/from-device-off-page-256M	alloc_words	exact	1201
+copy/cuda/from-device-off-page-256M	wall_time	batch=1	n=20	1.730e-02	1.727e-02 1.729e-02 1.730e-02 1.730e-02 1.730e-02 1.730e-02 1.730e-02 1.730e-02 1.730e-02 1.730e-02 1.730e-02 1.731e-02 1.731e-02 1.731e-02 1.731e-02 1.731e-02 1.731e-02 1.731e-02 1.731e-02 1.732e-02
 copy/cuda/host-to-borrow-256M	alloc_words	exact	0
-copy/cuda/host-to-borrow-256M	wall_time	batch=1	n=20	9.322e-03	9.290e-03 9.292e-03 9.294e-03 9.294e-03 9.295e-03 9.296e-03 9.307e-03 9.320e-03 9.321e-03 9.321e-03 9.323e-03 9.323e-03 9.326e-03 9.327e-03 9.330e-03 9.332e-03 9.334e-03 9.341e-03 9.375e-03 9.503e-03
-copy/cuda/to-device-256M	alloc_words	exact	127
-copy/cuda/to-device-256M	wall_time	batch=1	n=20	1.068e-02	1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.069e-02
-copy/cuda/to-device-off-page-256M	alloc_words	exact	1303
-copy/cuda/to-device-off-page-256M	wall_time	batch=1	n=20	1.381e-02	1.376e-02 1.378e-02 1.379e-02 1.379e-02 1.379e-02 1.379e-02 1.379e-02 1.379e-02 1.380e-02 1.381e-02 1.381e-02 1.381e-02 1.381e-02 1.381e-02 1.382e-02 1.382e-02 1.384e-02 1.384e-02 1.386e-02 1.386e-02
+copy/cuda/host-to-borrow-256M	wall_time	batch=1	n=20	9.354e-03	9.328e-03 9.333e-03 9.334e-03 9.335e-03 9.337e-03 9.337e-03 9.340e-03 9.342e-03 9.354e-03 9.354e-03 9.354e-03 9.355e-03 9.357e-03 9.362e-03 9.363e-03 9.365e-03 9.369e-03 9.374e-03 9.377e-03 9.408e-03
+copy/cuda/to-device-256M	alloc_words	exact	120
+copy/cuda/to-device-256M	wall_time	batch=1	n=20	1.068e-02	1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.069e-02 1.069e-02 1.069e-02 1.069e-02 1.069e-02 1.069e-02
+copy/cuda/to-device-off-page-256M	alloc_words	exact	1201
+copy/cuda/to-device-off-page-256M	wall_time	batch=1	n=20	1.388e-02	1.384e-02 1.386e-02 1.386e-02 1.386e-02 1.386e-02 1.386e-02 1.386e-02 1.387e-02 1.387e-02 1.388e-02 1.388e-02 1.388e-02 1.389e-02 1.390e-02 1.390e-02 1.390e-02 1.391e-02 1.392e-02 1.392e-02 1.393e-02
 copy/nv/borrow-to-host-256M	alloc_words	exact	0
-copy/nv/borrow-to-host-256M	wall_time	batch=1	n=20	9.487e-03	9.458e-03 9.468e-03 9.472e-03 9.476e-03 9.479e-03 9.484e-03 9.484e-03 9.485e-03 9.486e-03 9.486e-03 9.489e-03 9.489e-03 9.494e-03 9.499e-03 9.502e-03 9.504e-03 9.505e-03 9.507e-03 9.513e-03 9.518e-03
-copy/nv/from-device-256M	alloc_words	exact	127
-copy/nv/from-device-256M	wall_time	batch=1	n=20	1.410e-02	1.409e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.411e-02
-copy/nv/from-device-off-page-256M	alloc_words	exact	1303
-copy/nv/from-device-off-page-256M	wall_time	batch=1	n=20	1.717e-02	1.716e-02 1.716e-02 1.716e-02 1.717e-02 1.717e-02 1.717e-02 1.717e-02 1.717e-02 1.717e-02 1.717e-02 1.717e-02 1.717e-02 1.717e-02 1.717e-02 1.718e-02 1.718e-02 1.718e-02 1.719e-02 1.719e-02 1.719e-02
+copy/nv/borrow-to-host-256M	wall_time	batch=1	n=20	9.499e-03	9.471e-03 9.477e-03 9.477e-03 9.482e-03 9.488e-03 9.490e-03 9.492e-03 9.492e-03 9.498e-03 9.498e-03 9.500e-03 9.502e-03 9.503e-03 9.503e-03 9.505e-03 9.508e-03 9.509e-03 9.522e-03 9.527e-03 9.573e-03
+copy/nv/from-device-256M	alloc_words	exact	120
+copy/nv/from-device-256M	wall_time	batch=1	n=20	1.411e-02	1.410e-02 1.410e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.412e-02 1.412e-02 1.412e-02 1.412e-02
+copy/nv/from-device-off-page-256M	alloc_words	exact	1201
+copy/nv/from-device-off-page-256M	wall_time	batch=1	n=20	1.744e-02	1.741e-02 1.742e-02 1.742e-02 1.742e-02 1.742e-02 1.743e-02 1.743e-02 1.743e-02 1.744e-02 1.744e-02 1.744e-02 1.744e-02 1.744e-02 1.744e-02 1.744e-02 1.745e-02 1.745e-02 1.745e-02 1.745e-02 1.777e-02
 copy/nv/host-to-borrow-256M	alloc_words	exact	0
-copy/nv/host-to-borrow-256M	wall_time	batch=1	n=20	9.299e-03	9.270e-03 9.286e-03 9.288e-03 9.290e-03 9.290e-03 9.291e-03 9.292e-03 9.292e-03 9.298e-03 9.298e-03 9.300e-03 9.303e-03 9.304e-03 9.306e-03 9.306e-03 9.310e-03 9.312e-03 9.318e-03 9.323e-03 9.327e-03
-copy/nv/to-device-256M	alloc_words	exact	127
+copy/nv/host-to-borrow-256M	wall_time	batch=1	n=20	9.237e-03	9.221e-03 9.222e-03 9.225e-03 9.226e-03 9.228e-03 9.230e-03 9.231e-03 9.232e-03 9.233e-03 9.237e-03 9.238e-03 9.239e-03 9.242e-03 9.244e-03 9.247e-03 9.249e-03 9.260e-03 9.262e-03 9.273e-03 9.294e-03
+copy/nv/to-device-256M	alloc_words	exact	120
 copy/nv/to-device-256M	wall_time	batch=1	n=20	1.068e-02	1.067e-02 1.067e-02 1.067e-02 1.067e-02 1.067e-02 1.067e-02 1.067e-02 1.067e-02 1.067e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02
-copy/nv/to-device-off-page-256M	alloc_words	exact	1303
-copy/nv/to-device-off-page-256M	wall_time	batch=1	n=20	1.376e-02	1.373e-02 1.373e-02 1.373e-02 1.374e-02 1.374e-02 1.374e-02 1.375e-02 1.375e-02 1.376e-02 1.376e-02 1.376e-02 1.376e-02 1.377e-02 1.377e-02 1.377e-02 1.377e-02 1.377e-02 1.378e-02 1.378e-02 1.383e-02
-file/cuda/from-device-256M	alloc_words	exact	1706
-file/cuda/from-device-256M	wall_time	batch=1	n=20	4.507e-02	4.499e-02 4.500e-02 4.502e-02 4.503e-02 4.503e-02 4.503e-02 4.503e-02 4.504e-02 4.504e-02 4.506e-02 4.507e-02 4.507e-02 4.509e-02 4.509e-02 4.510e-02 4.511e-02 4.511e-02 4.512e-02 4.514e-02 4.524e-02
-file/cuda/load-256M	alloc_words	exact	1754
-file/cuda/load-256M	wall_time	batch=1	n=20	3.572e-02	3.506e-02 3.521e-02 3.526e-02 3.530e-02 3.530e-02 3.534e-02 3.542e-02 3.558e-02 3.565e-02 3.566e-02 3.578e-02 3.586e-02 3.588e-02 3.589e-02 3.591e-02 3.610e-02 3.616e-02 3.617e-02 3.619e-02 3.628e-02
-file/cuda/load-cold-256M	alloc_words	exact	1754
-file/cuda/load-cold-256M	wall_time	batch=1	n=20	9.613e-02	9.326e-02 9.335e-02 9.350e-02 9.354e-02 9.360e-02 9.376e-02 9.378e-02 9.410e-02 9.539e-02 9.581e-02 9.645e-02 9.669e-02 9.679e-02 9.696e-02 9.701e-02 9.735e-02 9.739e-02 9.777e-02 9.786e-02 9.788e-02
-file/cuda/to-device-256M	alloc_words	exact	1597
-file/cuda/to-device-256M	wall_time	batch=1	n=20	3.316e-02	3.306e-02 3.306e-02 3.311e-02 3.312e-02 3.313e-02 3.313e-02 3.315e-02 3.315e-02 3.315e-02 3.316e-02 3.316e-02 3.316e-02 3.317e-02 3.318e-02 3.318e-02 3.319e-02 3.319e-02 3.320e-02 3.321e-02 3.322e-02
-file/nv/from-device-256M	alloc_words	exact	1774
-file/nv/from-device-256M	wall_time	batch=1	n=20	4.773e-02	4.752e-02 4.754e-02 4.754e-02 4.754e-02 4.757e-02 4.758e-02 4.759e-02 4.771e-02 4.772e-02 4.773e-02 4.773e-02 4.776e-02 4.776e-02 4.779e-02 4.779e-02 4.780e-02 4.783e-02 4.786e-02 4.793e-02 4.842e-02
-file/nv/load-256M	alloc_words	exact	1754
-file/nv/load-256M	wall_time	batch=1	n=20	3.580e-02	3.540e-02 3.544e-02 3.547e-02 3.552e-02 3.554e-02 3.556e-02 3.559e-02 3.561e-02 3.572e-02 3.576e-02 3.583e-02 3.584e-02 3.584e-02 3.592e-02 3.594e-02 3.605e-02 3.609e-02 3.612e-02 3.614e-02 3.616e-02
-file/nv/load-cold-256M	alloc_words	exact	1754
-file/nv/load-cold-256M	wall_time	batch=1	n=20	9.778e-02	9.699e-02 9.702e-02 9.710e-02 9.746e-02 9.755e-02 9.758e-02 9.762e-02 9.764e-02 9.772e-02 9.777e-02 9.780e-02 9.782e-02 9.783e-02 9.796e-02 9.796e-02 9.802e-02 9.802e-02 9.803e-02 9.869e-02 9.956e-02
-file/nv/to-device-256M	alloc_words	exact	1597
-file/nv/to-device-256M	wall_time	batch=1	n=20	3.246e-02	3.230e-02 3.235e-02 3.235e-02 3.235e-02 3.236e-02 3.239e-02 3.240e-02 3.240e-02 3.241e-02 3.246e-02 3.246e-02 3.247e-02 3.247e-02 3.249e-02 3.250e-02 3.250e-02 3.261e-02 3.267e-02 3.306e-02 3.648e-02
+copy/nv/to-device-off-page-256M	alloc_words	exact	1201
+copy/nv/to-device-off-page-256M	wall_time	batch=1	n=20	1.372e-02	1.371e-02 1.371e-02 1.372e-02 1.372e-02 1.372e-02 1.372e-02 1.372e-02 1.372e-02 1.372e-02 1.372e-02 1.373e-02 1.373e-02 1.374e-02 1.374e-02 1.375e-02 1.376e-02 1.376e-02 1.376e-02 1.376e-02 1.378e-02
+file/cuda/from-device-256M	alloc_words	exact	1604
+file/cuda/from-device-256M	wall_time	batch=1	n=20	4.850e-02	4.840e-02 4.842e-02 4.844e-02 4.845e-02 4.845e-02 4.845e-02 4.845e-02 4.848e-02 4.848e-02 4.849e-02 4.851e-02 4.851e-02 4.853e-02 4.856e-02 4.867e-02 4.973e-02 4.986e-02 4.988e-02 5.006e-02 5.011e-02
+file/cuda/load-256M	alloc_words	exact	1652
+file/cuda/load-256M	wall_time	batch=1	n=20	3.389e-02	3.342e-02 3.343e-02 3.344e-02 3.346e-02 3.349e-02 3.353e-02 3.358e-02 3.361e-02 3.370e-02 3.371e-02 3.407e-02 3.461e-02 3.475e-02 3.476e-02 3.481e-02 3.485e-02 3.491e-02 3.504e-02 3.526e-02 3.536e-02
+file/cuda/load-cold-256M	alloc_words	exact	1652
+file/cuda/load-cold-256M	wall_time	batch=1	n=20	9.273e-02	9.229e-02 9.246e-02 9.246e-02 9.253e-02 9.261e-02 9.263e-02 9.264e-02 9.265e-02 9.265e-02 9.270e-02 9.276e-02 9.281e-02 9.295e-02 9.302e-02 9.315e-02 9.319e-02 9.320e-02 9.322e-02 9.323e-02 9.379e-02
+file/cuda/to-device-256M	alloc_words	exact	1495
+file/cuda/to-device-256M	wall_time	batch=1	n=20	3.359e-02	3.343e-02 3.344e-02 3.346e-02 3.352e-02 3.355e-02 3.355e-02 3.356e-02 3.357e-02 3.358e-02 3.359e-02 3.359e-02 3.360e-02 3.360e-02 3.361e-02 3.365e-02 3.366e-02 3.366e-02 3.367e-02 3.373e-02 3.798e-02
+file/nv/from-device-256M	alloc_words	exact	1672
+file/nv/from-device-256M	wall_time	batch=1	n=20	4.860e-02	4.846e-02 4.847e-02 4.848e-02 4.849e-02 4.849e-02 4.853e-02 4.855e-02 4.856e-02 4.856e-02 4.859e-02 4.861e-02 4.865e-02 4.865e-02 4.867e-02 4.868e-02 4.868e-02 4.869e-02 4.869e-02 4.871e-02 4.882e-02
+file/nv/load-256M	alloc_words	exact	1652
+file/nv/load-256M	wall_time	batch=1	n=20	3.331e-02	3.324e-02 3.325e-02 3.327e-02 3.328e-02 3.329e-02 3.329e-02 3.329e-02 3.329e-02 3.330e-02 3.330e-02 3.331e-02 3.333e-02 3.333e-02 3.333e-02 3.337e-02 3.339e-02 3.342e-02 3.342e-02 3.343e-02 3.346e-02
+file/nv/load-cold-256M	alloc_words	exact	1652
+file/nv/load-cold-256M	wall_time	batch=1	n=20	9.324e-02	9.252e-02 9.255e-02 9.258e-02 9.266e-02 9.266e-02 9.311e-02 9.311e-02 9.314e-02 9.320e-02 9.323e-02 9.325e-02 9.328e-02 9.329e-02 9.331e-02 9.333e-02 9.336e-02 9.356e-02 9.371e-02 9.374e-02 9.444e-02
+file/nv/to-device-256M	alloc_words	exact	1495
+file/nv/to-device-256M	wall_time	batch=1	n=20	3.308e-02	3.297e-02 3.298e-02 3.301e-02 3.302e-02 3.302e-02 3.302e-02 3.303e-02 3.306e-02 3.306e-02 3.307e-02 3.308e-02 3.308e-02 3.308e-02 3.310e-02 3.310e-02 3.311e-02 3.311e-02 3.311e-02 3.314e-02 3.328e-02
 floor/cuda/copy-from-device-256M	alloc_words	exact	0
 floor/cuda/copy-from-device-256M	wall_time	batch=1	n=20	1.409e-02	1.407e-02 1.408e-02 1.408e-02 1.408e-02 1.408e-02 1.408e-02 1.408e-02 1.409e-02 1.409e-02 1.409e-02 1.409e-02 1.409e-02 1.409e-02 1.409e-02 1.409e-02 1.409e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02
 floor/cuda/copy-to-device-256M	alloc_words	exact	0
