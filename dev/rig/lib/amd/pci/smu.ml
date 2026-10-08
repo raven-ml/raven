@@ -84,14 +84,24 @@ let alive s =
   | _ -> true
   | exception Regs.Stuck _ -> false
 
-(* A clock's frequencies, from the count its last index answers. *)
+(* A clock's frequencies, from the count its last index answers: at most 16, the
+   most levels of a clock SMU 11, 13 and 14 hold (MAX_DPM_LEVELS of smu_v11_0.h,
+   smu_v13_0.h and smu_v14_0.h). *)
+let max_levels = 16
+
 let frequencies s clock =
   match Hashtbl.find_opt s.levels clock with
   | Some l -> l
   | None ->
       let by_index = id s "PPSMC_MSG_GetDpmFreqByIndex" in
       let q i = send s by_index (clock_request ~clock i) land 0x7fff_ffff in
-      let l = List.init (q 0xff) q in
+      let n = q 0xff in
+      if n > max_levels then
+        raise
+          (Regs.Stuck
+             (strf "the power manager counts %d levels of clock %d, past %d" n
+                clock max_levels));
+      let l = List.init n q in
       Hashtbl.replace s.levels clock l;
       l
 
