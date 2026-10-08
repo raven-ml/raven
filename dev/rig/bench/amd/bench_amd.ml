@@ -17,7 +17,12 @@
    Each case opens its device, or the floors' queues, in its own worker: KFD
    gives a process one address space per GPU, kept by the first render node that
    acquires it, so one process cannot hold both. Without an AMD GPU the suite
-   has no rows. *)
+   has no rows.
+
+   With RIG_AMD_PCI_FIRMWARE set, the GPU detached, the same rows run with no
+   kernel driver ({!Rig_amd_support.open_gpu}), named with a [pci-] marker,
+   beside the opens of a full and a partial boot. The floors and the host
+   mappings, which only KFD has, are left out. *)
 
 module A = Rig_amd
 module P = Rig_amd_amdgpu
@@ -67,7 +72,14 @@ let mib = 1024 * kib
 let get = function Ok x -> x | Error why -> failwith why
 let host r = Option.get (A.host r)
 let address r = Option.get (A.address r)
-let row name setup f = Thumper.bench_with_setup ~setup name f
+(* Whether the rows open the GPU with no kernel driver. *)
+let pci = Rig_amd_support.driverless ()
+
+let row name setup f =
+  Thumper.bench_with_setup ~setup ((if pci then "pci-" else "") ^ name) f
+
+(* A row of KFD's alone: the floors, and the host mappings. *)
+let kfd_row name setup f = if pci then [] else [ row name setup f ]
 
 (* The driver *)
 
@@ -84,7 +96,7 @@ let dev () =
       (fun x ->
         g := Some x;
         x)
-      (P.open_ 0)
+      (Rig_amd_support.open_gpu ())
   in
   let d = get (Rig.open_ (module A) ~name:(strf "AMD:bench-%d" !opens) make) in
   { d; g = Option.get !g; v = 0 }
@@ -275,21 +287,26 @@ let release_rows =
     (t, B.create ~memory:Mapped t.d 4096, prepare t [||])
   in
   Thumper.group "release"
+  @@ List.concat
     [
-      row "driver" empty (fun (t, s) -> run t s);
-      row "floor" floor (fun _ -> floor_release 1);
-      row "floor-agent" floor (fun _ -> floor_release_agent 1);
-      row "switch" switching (fun (t, copy, none) ->
-          run t (if t.v land 1 = 0 then copy else none));
-      row "floor-switch" floor (fun _ -> floor_switch ());
-      row "copy" copying (fun (t, s) -> run t s);
-      row "no-wait-100" empty (fun (t, s) ->
-          for _ = 1 to 100 do
-            submit t s
-          done;
-          wait t);
-      row "floor-no-wait-100" floor (fun _ -> floor_release 100);
-      row "mapped" mapped (fun (t, _, s) -> run t s);
+      [ row "driver" empty (fun (t, s) -> run t s) ];
+      kfd_row "floor" floor (fun _ -> floor_release 1);
+      kfd_row "floor-agent" floor (fun _ -> floor_release_agent 1);
+      [
+        row "switch" switching (fun (t, copy, none) ->
+            run t (if t.v land 1 = 0 then copy else none));
+      ];
+      kfd_row "floor-switch" floor (fun _ -> floor_switch ());
+      [
+        row "copy" copying (fun (t, s) -> run t s);
+        row "no-wait-100" empty (fun (t, s) ->
+            for _ = 1 to 100 do
+              submit t s
+            done;
+            wait t);
+      ];
+      kfd_row "floor-no-wait-100" floor (fun _ -> floor_release 100);
+      [ row "mapped" mapped (fun (t, _, s) -> run t s) ];
     ]
 
 (* Waits on a word the host set, and a wait across 2^32: the host sets the word
@@ -302,7 +319,7 @@ let wait_rows =
   (* The driver's entries, the device, and the word's host and GPU addresses,
      read once so that a submission allocates nothing. *)
   let raw () =
-    let g = get (P.open_ 0) in
+    let g = get (Rig_amd_support.open_gpu ()) in
     let w = Option.get (A.alloc g `Pinned 8) in
     ([| A.room_entry; A.submit_entry; A.self g |], g, host w, address w, ref 0)
   in
@@ -318,25 +335,30 @@ let wait_rows =
     done
   in
   Thumper.group "waits"
-    [
-      row "4"
-        (fun () ->
-          let ((_, _, w, _, _) as r) = raw () in
-          set64 w 1;
-          r)
-        (fun (f, g, _, at, v) ->
-          incr v;
-          raw_submit f !v at 1 4;
-          spin g !v);
-      row "floor-4" floor_waiting (fun at -> floor_waits at 4);
-      row "wait64" raw (fun (f, g, w, at, v) ->
-          incr v;
-          let target = !v lsl 32 in
-          set64 w (target - 1);
-          raw_submit f !v at target 1;
-          set64 w target;
-          spin g !v);
-    ]
+  @@ List.concat
+       [
+         [
+           row "4"
+             (fun () ->
+               let ((_, _, w, _, _) as r) = raw () in
+               set64 w 1;
+               r)
+             (fun (f, g, _, at, v) ->
+               incr v;
+               raw_submit f !v at 1 4;
+               spin g !v);
+         ];
+         kfd_row "floor-4" floor_waiting (fun at -> floor_waits at 4);
+         [
+           row "wait64" raw (fun (f, g, w, at, v) ->
+               incr v;
+               let target = !v lsl 32 in
+               set64 w (target - 1);
+               raw_submit f !v at target 1;
+               set64 w target;
+               spin g !v);
+         ];
+       ]
 
 let launch_rows =
   (* A part placing the template [ws] with holes [hs] by the bench's fill, the
@@ -399,16 +421,21 @@ let launch_rows =
     (t, p, host args, address out, prepare t [| filled t (ws, [||]) |])
   in
   Thumper.group "launch"
-    [
-      row "1" (launching 1) (fun (t, _, s) -> run t s);
-      row "64" (launching 64) (fun (t, _, s) -> run t s);
-      row "floor-1" floor_launching (fun w -> floor_launch w 1);
-      row "floor-64" floor_launching (fun w -> floor_launch w 64);
-      row "1-segment" segment (fun (t, _, s) -> run t s);
-      row "1-bar-args" bar (fun (t, _, args, out, s) ->
-          set64 args out;
-          run t s);
-    ]
+  @@ List.concat
+       [
+         [
+           row "1" (launching 1) (fun (t, _, s) -> run t s);
+           row "64" (launching 64) (fun (t, _, s) -> run t s);
+         ];
+         kfd_row "floor-1" floor_launching (fun w -> floor_launch w 1);
+         kfd_row "floor-64" floor_launching (fun w -> floor_launch w 64);
+         [
+           row "1-segment" segment (fun (t, _, s) -> run t s);
+           row "1-bar-args" bar (fun (t, _, args, out, s) ->
+               set64 args out;
+               run t s);
+         ];
+       ]
 
 let copy_rows =
   let n = 256 * mib in
@@ -425,11 +452,9 @@ let copy_rows =
     (buffer dst n, buffer src n)
   in
   let row_pair name n kinds floor_kinds =
-    [
-      row name (copying n kinds) (fun (t, s) -> run t s);
-      row ("floor-" ^ name) (floor_copying n floor_kinds) (fun (dst, src) ->
-          floor_copy dst src n);
-    ]
+    row name (copying n kinds) (fun (t, s) -> run t s)
+    :: kfd_row ("floor-" ^ name) (floor_copying n floor_kinds)
+         (fun (dst, src) -> floor_copy dst src n)
   in
   let both () =
     let t = dev () in
@@ -452,17 +477,15 @@ let copy_rows =
     @ [
         row "bidir-256MiB" both (fun (t, s) -> run t s);
         row "host-read-pinned" pinned (fun (_, p) -> read p host_n);
-        row "floor-host-read-pinned"
-          (fun () -> pages host_n)
-          (fun p -> read p host_n);
-      ])
+      ]
+    @ kfd_row "floor-host-read-pinned"
+        (fun () -> pages host_n)
+        (fun p -> read p host_n))
 
 let alloc_rows =
   let alloc name n =
-    [
-      row name dev (fun t -> A.free t.g (Option.get (A.alloc t.g `Device n)));
-      row ("floor-" ^ name) floor (fun _ -> floor_alloc gpu_memory n);
-    ]
+    row name dev (fun t -> A.free t.g (Option.get (A.alloc t.g `Device n)))
+    :: kfd_row ("floor-" ^ name) floor (fun _ -> floor_alloc gpu_memory n)
   in
   Thumper.group "alloc" (alloc "64KiB" (64 * kib) @ alloc "64MiB" (64 * mib))
 
@@ -523,30 +546,53 @@ let wake_rows =
           sleep t);
     ]
 
+(* Opens of the GPU with no kernel driver: a partial boot over the clean mark
+   the last stop left, and a full one, which only a GPU reset to its bootloader
+   takes, so that row times the reset too. Neither has a KFD twin. *)
+let open_rows =
+  let open_stop () = A.stop (get (Rig_amd_support.open_gpu ())) in
+  Thumper.group "open"
+    [
+      row "partial" open_stop (fun () -> open_stop ());
+      row "full" open_stop (fun () ->
+          get (Rig_amd_pci.reset 0);
+          open_stop ());
+    ]
+
 (* Whether GPU 0's device waits on other devices, asked in a child: this process
-   opens no GPU, so that the workers it forks open theirs alone. *)
+   opens no GPU, so that the workers it forks open theirs alone. The child stops
+   the device before it ends, as it skips the exit's handlers. *)
 let waits_on () =
   match Unix.fork () with
   | 0 ->
       let on =
-        match P.open_ 0 with Ok g -> A.waits_on g `Store | Error _ -> false
+        match Rig_amd_support.open_gpu () with
+        | Ok g ->
+            let on = A.waits_on g `Store in
+            A.stop g;
+            on
+        | Error _ -> false
       in
       Unix._exit (if on then 0 else 1)
   | pid -> (
       match Unix.waitpid [] pid with _, Unix.WEXITED 0 -> true | _ -> false)
 
+(* A full open, a reset included, takes over a second: the trials of the run
+   with no kernel driver may take a minute. *)
+let pci_deadline = 60.
+
 let () =
   Rig_amd_support.hold_gpu ();
-  if P.count () > 0 then
+  if Rig_amd_support.gpus () > 0 then
+    let config =
+      if pci then Thumper.Config.(deadline pci_deadline default)
+      else Thumper.Config.default
+    in
     exit
-    @@ Thumper.run "rig_amd"
-         ([ release_rows ]
+    @@ Thumper.run ~config "rig_amd"
+         ((if pci then [ open_rows ] else [])
+         @ [ release_rows ]
          @ (if waits_on () then [ wait_rows ] else [])
-         @ [
-             launch_rows;
-             copy_rows;
-             alloc_rows;
-             map_host_rows;
-             image_rows;
-             wake_rows;
-           ])
+         @ [ launch_rows; copy_rows; alloc_rows ]
+         @ (if pci then [] else [ map_host_rows ])
+         @ [ image_rows; wake_rows ])
