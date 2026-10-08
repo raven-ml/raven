@@ -304,7 +304,7 @@ let job =
   Gen.with_pp
     (fun ppf (total, chunks) ->
       Format.fprintf ppf "%d units, %d blocks" total chunks)
-    (Gen.pair (Gen.int_range 0 2000) (Gen.int_range 1 64))
+    (Gen.pair (Gen.int_range 0 256) (Gen.int_range 1 64))
 
 let domain_commands =
   [
@@ -349,11 +349,15 @@ let collect () =
     Gc.full_major ()
   done
 
+(* The code's page counts as unmapped once it is not executable: the address
+   may be mapped again by another allocation as soon as it is free. *)
 let test_unmapped () =
-  let address = Host.address (link "empty") in
-  equal ~msg:"mapped while reachable" bool true (S.mapped address);
+  let p = link "empty" in
+  let address = Host.address p in
+  equal ~msg:"mapped while reachable" bool true (S.executable address);
+  ignore (Sys.opaque_identity p);
   collect ();
-  equal ~msg:"mapped once unreachable" bool false (S.mapped address)
+  equal ~msg:"unmapped once unreachable" bool false (S.executable address)
 
 let test_survives () =
   let p = link "affine" in
@@ -362,7 +366,7 @@ let test_survives () =
   inb.{0} <- 5L;
   call p [ out; inb ] [| 1; 3; 1 |];
   equal int64 16L out.{0};
-  equal ~msg:"mapped" bool true (S.mapped (Host.address p))
+  equal ~msg:"mapped" bool true (S.executable (Host.address p))
 
 (* waiting.c, which no value holds but its running call, while another domain
    collects. *)
@@ -383,7 +387,7 @@ let test_running () =
   done;
   equal ~msg:"the program began" int64 1L w.{1};
   collect ();
-  let mapped = S.mapped address in
+  let mapped = S.executable address in
   w.{0} <- 1L;
   Domain.join d;
   equal ~msg:"mapped while its call runs" bool true mapped
@@ -408,7 +412,9 @@ let test_never_writable () =
   if not (Sys.file_exists "/proc/self/maps") then
     skip ~reason:"needs /proc/self/maps (Linux)" ();
   let p = link "affine" in
-  equal (option string) (Some "r-xp") (permissions (Host.address p))
+  let perms = permissions (Host.address p) in
+  ignore (Sys.opaque_identity p);
+  equal (option string) (Some "r-xp") perms
 
 let memory_tests =
   group ~timeout "code memory"

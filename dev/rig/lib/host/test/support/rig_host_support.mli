@@ -23,9 +23,9 @@ val fixture : dir:string -> string -> string
     the directory [dir]: [<f>_<machine>.o], or [<f>_x86_64_windows.o] on x86_64
     Windows when it exists. *)
 
-val mapped : int -> bool
-(** [mapped a] is [true] iff the page holding the address [a] is mapped in the
-    process. *)
+val executable : int -> bool
+(** [executable a] is [true] iff the page holding the address [a] is mapped
+    executable in the process. *)
 
 val count_job : threads:int -> total:int -> chunks:int -> words -> unit
 (** [count_job ~threads ~total ~chunks counts] runs the pool's job of [total]

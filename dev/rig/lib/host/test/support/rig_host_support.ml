@@ -14,7 +14,7 @@ external address : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> int
   = "rig_host_test_address"
 
 external host_machine : unit -> string = "rig_host_test_machine"
-external mapped : int -> bool = "rig_host_test_mapped"
+external executable : int -> bool = "rig_host_test_executable"
 
 external count_job : threads:int -> total:int -> chunks:int -> words -> unit
   = "rig_host_test_count_job"
