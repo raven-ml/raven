@@ -58,10 +58,15 @@ struct device_pci_window {
 void device_pci_window_of(value w, struct device_pci_window *out);
 
 /* Orders every access before it before every access after it, as devices
-   see them; on arm64 the full-system barrier stores to a BAR need. */
+   see them: on arm64 the full-system barrier stores to a BAR need; on
+   x86_64 mfence, as Linux's mb(), which Intel's manual names to order
+   streaming loads from write-combined memory (MOVNTDQA). A C11 fence is
+   not that: gcc compiles it to a locked instruction. */
 static inline void device_pci_barrier(void) {
 #if defined(__aarch64__)
   __asm__ __volatile__("dsb sy" ::: "memory");
+#elif defined(__x86_64__)
+  __asm__ __volatile__("mfence" ::: "memory");
 #else
   __atomic_thread_fence(__ATOMIC_SEQ_CST);
 #endif
