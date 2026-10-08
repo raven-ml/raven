@@ -89,6 +89,18 @@ let refuse_overlaps read donate =
   in
   sweep (-1) min_int min_int all
 
+(* Makes every claim of [cls], each held by one reader, exclusive, or none: a
+   swap that another domain's claim beat undoes the ones before it. *)
+let rec exclusive_all = function
+  | [] -> true
+  | cl :: rest ->
+      swap cl 1 (-1)
+      && (exclusive_all rest
+         || begin
+           ignore (swap cl (-1) 1);
+           false
+         end)
+
 let with_ ~read ~donate f =
   List.iter (Buffer.check_live "Claim.with_") read;
   List.iter (List.iter (Buffer.check_live "Claim.with_")) donate;
@@ -108,11 +120,8 @@ let with_ ~read ~donate f =
   List.iter
     (fun group ->
       let claims = List.map (fun b -> b.mem.claim) group in
-      if
-        List.for_all Buffer.spans group
-        && List.for_all (fun cl -> count cl = 1) claims
-        && List.for_all (fun cl -> swap cl 1 (-1)) claims
-      then c.exclusive <- claims @ c.exclusive)
+      if List.for_all Buffer.spans group && exclusive_all claims then
+        c.exclusive <- claims @ c.exclusive)
     donate;
   let finish () =
     List.iter (fun cl -> ignore (swap cl (-1) 1)) c.exclusive;

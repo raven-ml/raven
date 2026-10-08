@@ -240,6 +240,43 @@ let test_dead_claims () =
   Claim.read live;
   Claim.release live
 
+(* Two domains: with_ of a group of two memories, against a read of the second
+   that ends in the same call. Whatever the order, no claim outlives its call:
+   at the end the group is exclusive again. *)
+type group = { b1 : B.t; b2 : B.t }
+
+let release_group g =
+  Claim.with_ ~read:[]
+    ~donate:[ [ g.b1; g.b2 ] ]
+    (fun c ->
+      equal ~msg:"exclusive at the end" (pair bool bool) (true, true)
+        (Claim.exclusive c g.b1, Claim.exclusive c g.b2))
+
+let two = abstract ~release:release_group "g"
+let make_group () = { b1 = B.create C.host 64; b2 = B.create C.host 64 }
+
+let with_group g =
+  Claim.with_ ~read:[]
+    ~donate:[ [ g.b1; g.b2 ] ]
+    (fun c -> Claim.exclusive c g.b1)
+
+let read_group g =
+  Claim.read g.b2;
+  Claim.release g.b2
+
+(* A call during another domain's with_ may find the memory held exclusive, and
+   a with_ during a read finds the group read. *)
+let judge_any () = function
+  | Ok _ | Error (Invalid_argument _) -> ()
+  | Error e -> raise e
+
+let group_commands =
+  [
+    command "make" (Gen.unit @-> makes two) ignore make_group;
+    command "with_" (two ^-> judges bool) judge_any with_group;
+    command "read" (two ^-> judges unit) judge_any read_group;
+  ]
+
 let tests =
   [
     group ~timeout "claims"
@@ -278,6 +315,12 @@ let tests =
           test_consume_refusals;
         test "a dead buffer refuses claims and accepts a release"
           test_dead_claims;
+      ];
+    group ~timeout "domains"
+      [
+        stateful ~domains:2
+          "with_ of a group and reads of its memory leave no claim behind"
+          group_commands;
       ];
   ]
 

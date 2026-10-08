@@ -93,6 +93,16 @@ let host_address fn b =
   if b.mem.host < 0 then invalid_argf "Rig.%s: the buffer is not host memory" fn;
   b.mem.host + b.offset
 
+let hold_stamps = function Some h -> h.hstamps | None -> 0
+
+(* Refuses a part's buffer that is dead or in a hold other than the
+   submission's, whose stamps are [hold_stamps]. *)
+let check_buffer fn hold_stamps b =
+  Buffer.check_live fn b;
+  let e = b.mem.root.entry in
+  if e.held && e.stamps <> hold_stamps then
+    invalid_argf "Rig.%s: a part names memory of another hold" fn
+
 let make ?hold ~reads ~writes ~waits d parts =
   let fn = "Submission.make" in
   if reads < 0 || writes < 0 || waits < 0 then
@@ -100,13 +110,8 @@ let make ?hold ~reads ~writes ~waits d parts =
   if Dev.is_lost d then Dev.raise_lost d;
   if Dev.is_host d || Dev.is_io d then
     invalid_argf "Rig.%s: %s runs no submitted work" fn d.name;
-  let hold_stamps = match hold with Some h -> h.hstamps | None -> 0 in
-  let check_buffer b =
-    Buffer.check_live fn b;
-    let e = b.mem.root.entry in
-    if e.held && e.stamps <> hold_stamps then
-      invalid_argf "Rig.%s: a part names memory of another hold" fn
-  in
+  let hold_stamps = hold_stamps hold in
+  let check_buffer = check_buffer fn hold_stamps in
   let nafter = ref 0 and nfixed = ref 0 in
   Array.iteri
     (fun i p ->
@@ -140,6 +145,8 @@ let make ?hold ~reads ~writes ~waits d parts =
           nfixed := !nfixed + 2)
     parts;
   let c = sub_new d.c (Array.length parts) !nafter !nfixed reads writes waits in
+  (* The hold keeps its stamps while the submission holds it. *)
+  Option.iter (fun h -> sub_hold c h.hstamps) hold;
   let at = ref 0 and k = ref 0 in
   let fixed b write =
     sub_fixed c !k (entry_of b).stamps b.mem.handle write;
@@ -268,26 +275,28 @@ let need_record = 8
 let stop_claimed = 16
 let fn = "submit"
 
-let check_part p =
+let check_part st p =
   match p.work with
-  | Words b -> Buffer.check_live fn b
-  | Fill f -> Buffer.check_live fn f.arg
+  | Words b -> check_buffer fn st b
+  | Fill f -> check_buffer fn st f.arg
   | Copy { src; dst } ->
-      Buffer.check_live fn src;
-      Buffer.check_live fn dst
+      check_buffer fn st src;
+      check_buffer fn st dst
 
-(* Checks the slots are set and every buffer the work names is live, and gives
-   the C form the hold's stamps, which the hold keeps while the submission holds
-   it. *)
+(* Checks the slots are set and every buffer the work names is live and in no
+   hold but the submission's: memory put in a hold after it was named must be
+   named with the hold. *)
 let check_slots s =
+  let st = hold_stamps s.hold in
   for k = 0 to Array.length s.parts - 1 do
-    check_part s.parts.(k)
+    check_part st s.parts.(k)
   done;
-  (match s.hold with Some h -> sub_hold s.c h.hstamps | None -> ());
   for k = 0 to Array.length s.slots - 1 do
     let b = s.slots.(k) in
     if b == unset then invalid_argf "Rig.%s: a read or write slot is unset" fn;
-    Buffer.check_live fn b
+    Buffer.check_live fn b;
+    if b.mem.root.entry.held then
+      invalid_argf "Rig.%s: the buffer's memory is in a hold" fn
   done
 
 (* Waits on the host for the foreign points [s]'s device cannot wait for in its

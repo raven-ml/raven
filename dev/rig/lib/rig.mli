@@ -525,7 +525,9 @@ end
     the driver objects its work uses reachable through the hold's release. A
     hold has one stamp per device, raised to the point of each submission that
     names it. Its memory is named by submissions only with the hold, and returns
-    once the hold is unreachable and each of its stamps is reached. *)
+    once the hold is unreachable and each of its stamps is reached. A hold is
+    made before work names its memory: a submission that named the memory before
+    is refused at its next {!submit}. *)
 module Hold : sig
   type t
   (** The type for holds. *)
@@ -672,11 +674,12 @@ val submit : Submission.t -> Point.t
     It allocates nothing unless it waits.
 
     Raises [Invalid_argument] if a read or write slot is unset, a buffer of a
-    slot or a part is dead, a wait slot's point is beyond its device's
-    {!submitted} value, or the parts never fit [d]'s empty queues or name one
-    its driver does not run; and {!Lost} if [d] is lost, [d]'s hand-over fails,
-    a point [s] follows is on a lost device, or a producer [d]'s queue waits on
-    is lost before the hand-over. A device lost after [v] was handed over raises
+    slot or a part is dead, a slot or a part names memory of a hold other than
+    the submission's, a wait slot's point is beyond its device's {!submitted}
+    value, or the parts never fit [d]'s empty queues or name one its driver does
+    not run; and {!Lost} if [d] is lost, [d]'s hand-over fails, a point [s]
+    follows is on a lost device, or a producer [d]'s queue waits on is lost
+    before the hand-over. A device lost after [v] was handed over raises
     {!Lost}, with [v]'s stamps naming it. *)
 
 (** {1:programs Programs} *)

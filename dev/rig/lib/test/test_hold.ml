@@ -163,6 +163,53 @@ let test_dead () =
       ignore (C.Claim.consume c ~why:"donated" b));
   raises_match (Exn.invalid_arg ~substring:"donated") (fun () -> H.make [ b ])
 
+(* Memory put in a hold after a submission named it is refused at the next
+   submit, by a part or by a slot: work on held memory raises the hold's stamps,
+   which only a submission made with the hold does. *)
+let test_held_after () =
+  let d, _ = P.open_ "hold:after" in
+  let src = B.create d 64 and dst = B.create d 64 in
+  let copy =
+    { Sub.queue = "COPY:0"; after = [||]; work = Sub.Copy { src; dst } }
+  in
+  let s = Sub.make ~reads:0 ~writes:0 ~waits:0 d [| copy |] in
+  let h = H.make [ src ] in
+  raises_match Exn.invalid_arg (fun () -> C.submit s);
+  let m = B.create d 64 in
+  let r = Sub.make ~reads:1 ~writes:0 ~waits:0 d [||] in
+  Sub.read r 0 m;
+  let h' = H.make [ m ] in
+  raises_match Exn.invalid_arg (fun () -> C.submit r);
+  ignore (Sys.opaque_identity (h, h'))
+
+(* Two domains holding one memory: one hold takes it, the other raises. *)
+type held = { mutable taken : bool }
+
+let holds =
+  abstract ~pp:(fun ppf r -> Format.fprintf ppf "taken %b" r.taken) "m"
+
+let make_memory () =
+  let d = require_ok ~pp:Format.pp_print_string (C.memory_device "hold:m") in
+  (B.create d 64, ref [])
+
+let take_hold (b, kept) = kept := H.make [ b ] :: !kept
+
+let judge_take r = function
+  | Ok () ->
+      equal ~msg:"already held" bool false r.taken;
+      r.taken <- true
+  | Error (Invalid_argument _) -> equal ~msg:"held" bool true r.taken
+  | Error e -> raise e
+
+let hold_commands =
+  [
+    command "make"
+      (Gen.unit @-> makes holds)
+      (fun () -> { taken = false })
+      make_memory;
+    command "hold" (holds ^-> judges unit) judge_take take_hold;
+  ]
+
 let tests =
   [
     group ~timeout "releases"
@@ -184,6 +231,10 @@ let tests =
         test "held memory is named only with its hold, in one hold"
           test_refusals;
         test "a dead buffer is not held" test_dead;
+        test "memory held after a submission named it is refused at submit"
+          test_held_after;
+        stateful ~domains:2 "two domains holding one memory: one hold takes it"
+          hold_commands;
       ];
   ]
 

@@ -7,27 +7,46 @@ open Def
 
 type t = hold
 
+(* Marks [e] held, under its device's lock, if no hold has it. *)
+let take (e : entry) =
+  Dev.protect e.owner (fun () ->
+      (not e.held)
+      && begin
+        e.held <- true;
+        true
+      end)
+
+let give (e : entry) = Dev.protect e.owner (fun () -> e.held <- false)
+
+(* Takes every entry of [es], or none: a refusal gives back those taken. *)
+let rec take_all = function
+  | [] -> ()
+  | e :: rest -> (
+      if not (take e) then
+        invalid_arg "Rig.Hold.make: a buffer's memory is in a hold";
+      try take_all rest
+      with x ->
+        give e;
+        raise x)
+
 let make ?(release = ignore) bs =
-  List.iter
-    (fun b ->
-      Buffer.check_live "Hold.make" b;
-      let m = b.mem.root in
-      if m.entry.held then
-        invalid_arg "Rig.Hold.make: a buffer's memory is in a hold")
-    bs;
+  List.iter (Buffer.check_live "Hold.make") bs;
+  let entries =
+    List.fold_left
+      (fun acc b ->
+        let m = b.mem.root in
+        if m.entry == Memory.no_entry then Memory.ensure_entry m;
+        if List.memq m.entry acc then acc else m.entry :: acc)
+      [] bs
+  in
+  take_all entries;
   let st = Memory.stamps_new () in
   List.iter
-    (fun b ->
-      let m = b.mem.root in
-      if m.entry == Memory.no_entry then Memory.ensure_entry m;
-      let e = m.entry in
-      if not e.held then begin
-        if e.stamps <> 0 then Memory.stamps_absorb st e.stamps;
-        Memory.stamps_ref st;
-        e.stamps <- st;
-        e.held <- true
-      end)
-    bs;
+    (fun (e : entry) ->
+      if e.stamps <> 0 then Memory.stamps_absorb st e.stamps;
+      Memory.stamps_ref st;
+      e.stamps <- st)
+    entries;
   let htoken =
     Memory.token Memory.holds_list
       (Release { stamps = st; release })
