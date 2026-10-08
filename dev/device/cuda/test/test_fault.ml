@@ -15,8 +15,17 @@ let rec fault g t0 =
   C.sleep g ~seen:(C.signaled g) ~still_ms:100;
   fault g t0
 
+(* [f ()] raises Fault with the fault's error, which a fault leaves in the
+   context for every later call. *)
+let sticky name f =
+  match f () with
+  | () -> failf "%s raised no Fault" name
+  | exception C.Fault why ->
+      contains ~msg:name ~sub:"CUDA_ERROR_ILLEGAL_ADDRESS" why
+
 (* Value 1 stores to address 0; value 2, queued behind it, would copy into a
-   watched host buffer and write the word. *)
+   watched host buffer and write the word. Value 3 is submitted after the
+   fault. *)
 let faults () =
   let g = S.gpu () in
   let _, kernel = S.kernels g in
@@ -38,12 +47,17 @@ let faults () =
             ~prefix:"the GPU's work failed: CUDA_ERROR_ILLEGAL_ADDRESS" why
       | _ -> false)
     (fun () -> fault g (Sys.time ()));
+  sticky "alloc" (fun () -> ignore (C.alloc g `Device 64));
+  sticky "image" (fun () -> ignore (C.image g (S.fixture "kernels.ptx")));
+  (match C.submit g ~v:3 ~waits:[||] ~handles:[||] [||] with
+  | `Failed why -> contains ~msg:"submit" ~sub:"CUDA_ERROR_ILLEGAL_ADDRESS" why
+  | `Ok -> fail "a submit after the fault is Ok");
   equal int ~msg:"the word after the fault" 0 (S.get64 (host (C.word g)));
   (match S.stop g with
   | `Stopped -> ()
   | `Unknown -> fail "stop is Unknown after a fault");
   let w = C.signaled g in
-  equal int ~msg:"the word after stop" 2 w;
+  equal int ~msg:"the word after stop" 3 w;
   S.still ~msg:"the word" int w (fun () -> C.signaled g) ~ms:200;
   S.still ~msg:"the watched buffer" string zeros
     (fun () -> S.read (host watched) 64)
