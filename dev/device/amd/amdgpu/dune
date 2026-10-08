@@ -1,0 +1,6 @@
+; AMD GPUs of this machine, opened through Linux's amdgpu driver.
+
+(library
+ (name device_amd_amdgpu)
+ (libraries device_amd device_amd_abi)
+ (modules_without_implementation device_amd_amdgpu))

@@ -1,0 +1,7 @@
+; AMD GPUs, driven once a path opened them.
+
+(library
+ (name device_amd)
+ (libraries device_amd_abi device_elf device_edge)
+ (modules_without_implementation device_amd)
+ (install_c_headers device_amd))
