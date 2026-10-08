@@ -227,9 +227,19 @@ static inline uint32_t nx_mini_round(float f, int m, int bias) {
   return u < (uint32_t)(128 - bias) << 23 ? sub : normal;
 }
 
-/* The value of the magnitude code [q]: a subnormal's is frac·2^(1-bias-m), a
-   normal's binary32 bits are its fields moved into place. Both are exact and
-   both are computed, so a loop over codes does not branch. */
+/* The value of the magnitude code [q]. */
+#if defined(__aarch64__) && !defined(__METAL_VERSION__)
+/* Through binary16, which FCVT widens: the code's bits moved to binary16's
+   exponent and fraction fields read as its value times 2^(bias-15),
+   exactly, subnormals included, so one exact scale finishes it. */
+static inline float nx_mini_value(uint32_t q, int m, int bias) {
+  return nx_f16_to_float((uint16_t)(q << (10 - m))) *
+         nx_bits_float((uint32_t)(127 + 15 - bias) << 23);
+}
+#else
+/* A subnormal's value is frac·2^(1-bias-m), a normal's binary32 bits are
+   its fields moved into place. Both are exact and both are computed, so a
+   loop over codes does not branch. */
 static inline float nx_mini_value(uint32_t q, int m, int bias) {
   uint32_t exp = q >> m;
   uint32_t frac = q & ((1u << m) - 1);
@@ -238,6 +248,7 @@ static inline float nx_mini_value(uint32_t q, int m, int bias) {
       nx_bits_float(((exp + 127 - (uint32_t)bias) << 23) | (frac << (23 - m)));
   return exp == 0 ? sub : normal;
 }
+#endif
 
 /* [v], positive, with the sign bit of [sign] (0 or 1). */
 static inline float nx_with_sign(float v, uint32_t sign) {
