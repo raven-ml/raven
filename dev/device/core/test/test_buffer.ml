@@ -118,7 +118,9 @@ let test_borrow_maps_once () =
 
 let test_borrow_small () =
   let d, _ = P.open_ "buffer:small" in
-  is_none (B.borrow d (B.create C.host S.UInt8 16))
+  let paged = B.create C.host S.UInt8 (1 lsl 16) in
+  let off_page = Bigarray.Array1.sub (B.bigarray Bigarray.char paged) 8 16 in
+  is_none (B.borrow d (B.of_bigarray off_page))
 
 (* Waits *)
 
