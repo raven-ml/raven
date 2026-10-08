@@ -593,6 +593,37 @@ let gather_commands =
       (fun i a -> A.get a [| i |]);
   ]
 
+(* to_device of elements 1 to 4 of six int4s copies the bytes they reach, the
+   first and last shared with elements 0 and 5, while another domain stores
+   those: the copy holds elements 1 to 4, and the stores are kept. *)
+let inner = [| 1; -2; 3; -4 |]
+
+let placed a =
+  let view = M.Slice [| { M.start = 1; count = 4; step = 1 } |] in
+  A.to_array (A.to_device Rig.host (Option.get (A.move view a)))
+
+let to_device_commands =
+  let neighbour = Gen.map (fun last -> if last then 5 else 0) Gen.bool in
+  let start = Array.concat [ [| 0 |]; inner; [| 0 |] ] in
+  [
+    command "create"
+      (Gen.unit @-> makes int4s)
+      (fun () -> Array.copy start)
+      (fun () -> A.of_array D.Int4 [| 6 |] start);
+    command "to_device"
+      (int4s ^-> returns (array int))
+      (fun m -> Array.sub m 1 4)
+      placed;
+    command "set"
+      (neighbour @-> nibble @-> int4s ^-> returns unit)
+      (fun i x m -> m.(i) <- x)
+      (fun i x a -> A.set a [| i |] x);
+    command "get"
+      (neighbour @-> int4s ^-> returns int)
+      (fun i m -> m.(i))
+      (fun i a -> A.get a [| i |]);
+  ]
+
 (* Bulk access *)
 
 let law_round_trip (Case (a, _)) =
@@ -1386,6 +1417,10 @@ let tests =
           "a gather keeps the other elements of its end bytes, written from \
            another domain"
           gather_commands;
+        stateful ~domains:2
+          "to_device copies a sub-byte view while another domain stores its \
+           neighbours"
+          to_device_commands;
       ];
     group "bulk"
       [
