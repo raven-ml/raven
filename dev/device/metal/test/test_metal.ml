@@ -655,6 +655,11 @@ let misused_work () =
       (`Fill (0n, 0n, 0, 0))
   in
   invalid (fun () -> submit ~v [| forward |]);
+  let other = opened () in
+  let fill =
+    Device_metal.part other ~queue:"COMPUTE:0" (`Fill (0n, 0n, 0, 0))
+  in
+  invalid (fun () -> submit ~v [| fill |]);
   Device_metal.free t.d r
 
 let opening =

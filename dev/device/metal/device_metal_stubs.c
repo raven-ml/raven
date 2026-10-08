@@ -451,25 +451,38 @@ value caml_device_metal_entries(value unit) {
   CAMLreturn(tuple(3, room, submit, v_split));
 }
 
-/* Submits the fills of the parts [v_parts], blocks whose first fields are a
-   fill and its argument, as [v_v]'s work: [None], or [Some why] if it
-   failed. */
+/* Device_metal.submit's C side. A part holds ints: its device, nx_part's
+   queue, fill, arg and copy fields in order, then its [after] indices. The
+   parts are copied out of the OCaml heap, then submitted without the
+   runtime: [None], or [Some why] if the submission failed. */
+#define AFTER 9
+
 value caml_device_metal_submit(value v_d, value v_v, value v_parts) {
   CAMLparam3(v_d, v_v, v_parts);
   int n = (int)Wosize_val(v_parts);
-  struct nx_part parts[n > 0 ? n : 1];
-  memset(parts, 0, sizeof parts);
+  size_t nafter = 0;
+  for (int i = 0; i < n; i++) nafter += Wosize_val(Field(v_parts, i)) - AFTER;
+  size_t size = n * sizeof(struct nx_part) + nafter * sizeof(int);
+  struct nx_part *p = size == 0 ? NULL : malloc(size);
+  if (size != 0 && p == NULL) caml_raise_out_of_memory();
+  int *after = p ? (int *)(p + n) : NULL;
   for (int i = 0; i < n; i++) {
-    value p = Field(v_parts, i);
-    parts[i].fill =
-        (int (*)(void *, void *, uint64_t))Nativeint_val(Field(p, 0));
-    parts[i].arg = (void *)Nativeint_val(Field(p, 1));
+    value k = Field(v_parts, i);
+    memset(&p[i], 0, sizeof p[i]);
+    p[i].queue = (int)Long_val(Field(k, 1));
+    p[i].fill = (int (*)(void *, void *, uint64_t))Long_val(Field(k, 2));
+    p[i].arg = (void *)Long_val(Field(k, 3));
+    p[i].nafter = (int)(Wosize_val(k) - AFTER);
+    p[i].after = after;
+    for (int j = 0; j < p[i].nafter; j++)
+      *after++ = (int)Long_val(Field(k, AFTER + j));
   }
   void *self = (void *)Long_val(v_d);
   uint64_t v = (uint64_t)Long_val(v_v);
   const char *why = NULL;
   caml_enter_blocking_section_no_pending();
-  int rc = device_metal_submit(self, v, NULL, 0, parts, n, NULL, 0, &why);
+  int rc = device_metal_submit(self, v, NULL, 0, p, n, NULL, 0, &why);
+  free(p);
   caml_leave_blocking_section();
   CAMLreturn(rc == NX_OK ? Val_none : failure(why));
 }

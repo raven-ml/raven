@@ -194,11 +194,14 @@ let unload _ i = Array.iter release i.pipelines
 
 (* Work *)
 
-(* A fill, its argument and the parts it waits for. The C stub reads the first
-   two. *)
-type part = Fill of nativeint * nativeint * int array
+(* A part is the ints the C submit reads: the device's C state, then nx_part's
+   queue, fill, arg, copy_dst, copy_dst_offset, copy_src, copy_src_offset and
+   copy_bytes, then the [after] indices. *)
+type part = int array
 
-let part _ ~queue ?(after = [||]) w =
+let after_at = 9
+
+let part d ~queue ?(after = [||]) w =
   if queue <> "COMPUTE:0" then
     invalid_argf "Device_metal.part: queue %S is not COMPUTE:0" queue;
   let negative i =
@@ -206,7 +209,9 @@ let part _ ~queue ?(after = [||]) w =
   in
   Array.iter negative after;
   match w with
-  | `Fill (fill, arg, 0, 0) -> Fill (fill, arg, after)
+  | `Fill (fill, arg, 0, 0) ->
+      let fill = Nativeint.to_int fill and arg = Nativeint.to_int arg in
+      Array.append [| d.self; 0; fill; arg; 0; 0; 0; 0; 0 |] after
   | `Fill (_, _, units, bytes) ->
       invalid_argf
         "Device_metal.part: a fill declares %d ring units and %d segment \
@@ -221,20 +226,21 @@ let room _ _ = `Fits
 external submit_parts : int -> int -> part array -> string option
   = "caml_device_metal_submit"
 
+let check_part self i (p : part) =
+  if p.(0) <> self then
+    invalid_argf "Device_metal.submit: part %d is another device's" i;
+  for k = after_at to Array.length p - 1 do
+    if p.(k) >= i then
+      invalid_argf "Device_metal.submit: part %d waits for part %d, not earlier"
+        i p.(k)
+  done
+
 let submit d ~v ~waits ~handles:_ ps =
   let next = last d.self + 1 in
   if v <> next then invalid_argf "Device_metal.submit: value %d, not %d" v next;
   if Array.length waits > 0 then
     invalid_arg "Device_metal.submit: the device waits on no word";
-  let earlier i (Fill (_, _, after)) =
-    let check j =
-      if j >= i then
-        invalid_argf
-          "Device_metal.submit: part %d waits for part %d, not earlier" i j
-    in
-    Array.iter check after
-  in
-  Array.iteri earlier ps;
+  Array.iteri (check_part d.self) ps;
   match submit_parts d.self v ps with None -> `Ok | Some why -> `Failed why
 
 (* Timeline and loss *)
