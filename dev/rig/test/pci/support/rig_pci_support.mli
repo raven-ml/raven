@@ -63,18 +63,9 @@ val this_gpus : unit -> Rig_pci.Machine.id list
 (** [this_gpus ()] is this machine's display controllers, base class [0x03]. *)
 
 val hold_gpu : unit -> unit
-(** [hold_gpu ()] returns once the process holds the machine's GPU lock, which
-    it keeps until it exits, or at once if this machine has no [/sys/bus/pci] or
-    no GPU. The lock is [flock] on [/tmp/raven-rig-gpu.lock], the file every
-    suite that acts on a GPU of the machine locks; its holder writes its
-    executable and process id into it. A suite calls [hold_gpu] before
-    [Windtrap.run], so that the wait counts against no test's timeout, and a
-    test that takes a GPU calls it again. It returns at once, taking nothing, if the variable
-    [RIG_GPU_LOCK_HELD] is set: the process that started this one holds the
-    lock for it, as a timing run takes it before the host's timing locks.
-
-    Raises [Failure] naming the holder if another process still holds the lock
-    after 300 s, or naming the errno if the file cannot be locked. *)
+(** [hold_gpu ()] is {!Rig_gpu_lock.hold} if this machine has a
+    [/sys/bus/pci] and a GPU. A suite calls it before [Windtrap.run], and a
+    test that takes a GPU calls it again. *)
 
 (** {1:memory Process memory and far machines}
 

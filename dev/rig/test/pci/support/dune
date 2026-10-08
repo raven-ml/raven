@@ -4,7 +4,7 @@
 (library
  (name rig_pci_support)
  (modules rig_pci_support)
- (libraries rig_pci unix windtrap)
+ (libraries rig_gpu_lock rig_pci unix windtrap)
  (foreign_stubs
   (language c)
   (names rig_pci_support_stubs)))
