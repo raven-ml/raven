@@ -40,7 +40,7 @@ enum { DEVICE_AMD_COMPUTE, DEVICE_AMD_COPY, DEVICE_AMD_QUEUES };
 enum { RING_PM4, RING_AQL, RING_SDMA };
 
 /* The scratch writes an AQL queue's descriptor takes at the next
-   submission's first compute entry. */
+   submission's first compute part. */
 #define DEVICE_AMD_SCRATCH_WRITES 8
 
 /* The packets the writer places, which Device_amd encodes once per device.

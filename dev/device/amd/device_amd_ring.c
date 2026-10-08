@@ -294,7 +294,6 @@ static void enter(struct submission *s, int q, const struct nx_wait *waits,
   s->used[q] = 1;
   if (q == DEVICE_AMD_COMPUTE) {
     if (r->released != s->v - 1) emit(d, r, T_WAIT, d->word_gpu, s->v - 1, 0);
-    scratch(s, r);
     for (int i = 0; i < nwaits; i++)
       emit(d, r, T_WAIT64, waits[i].at, waits[i].value, 0);
     if (nwaits > 0 && copy_parts) {
@@ -315,10 +314,11 @@ static void wait_slot(struct submission *s, int q, int j) {
 
 /* Orders part [i] after what it follows on its queue: on compute, a partial
    flush of the dispatches before it (for the first part, those of v-1 where
-   this queue released v-1; the own wait covers the other case), then its
-   slot waits, then, for the first part or after a slot wait, the cache
-   acquire, so that it reads what the host, the copy queue and other devices
-   wrote. */
+   this queue released v-1; the own wait covers the other case), for the
+   first part the pending scratch writes, which then change the descriptor
+   while no dispatch runs, then its slot waits, then, for the first part or
+   after a slot wait, the cache acquire, so that it reads what the host, the
+   copy queue and other devices wrote. */
 static void prepare(struct submission *s, const struct nx_part *parts, int i,
                     int first) {
   struct device_amd *d = s->d;
@@ -327,6 +327,7 @@ static void prepare(struct submission *s, const struct nx_part *parts, int i,
   int compute = q == DEVICE_AMD_COMPUTE, acquire = first;
   if (compute && (!first || r->released == s->v - 1))
     emit(d, r, T_FLUSH, 0, 0, 0);
+  if (compute && first) scratch(s, r);
   for (int j = 0; j < parts[i].nafter; j++)
     if (parts[parts[i].after[j]].queue != q) {
       wait_slot(s, q, parts[i].after[j]);
