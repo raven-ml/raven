@@ -1,5 +1,8 @@
 (test
  (name test_metal)
  (libraries rig rig_disk rig_metal rig_metal_abi rig_metal_support windtrap)
+ (foreign_stubs
+  (language c)
+  (names rig_metal_test_bundle))
  (deps
   (source_tree fixtures)))

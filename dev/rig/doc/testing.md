@@ -417,16 +417,21 @@ Constraints a new library meets:
 - With the gap unprotected, AddressSanitizer on x86_64 maps the gap's shadow
   between about 2.3 and 258 GiB. The NV kernel path reserves its GPU addresses
   from 384 GiB, below 2^40, so a GPU opens in the profile.
-- The sanitizer gate is Linux's. On the Mac, Metal's suite stays out of a
-  sanitize run: making a compute pipeline opens Metal's per-user compiler
-  cache, whose index (`functions.list` under the user's cache directory, tens
-  of MiB once many programs compiled) Metal reads with a growing `realloc`.
-  AddressSanitizer turns each `realloc` into a new allocation and a copy, so
-  the read is quadratic: minutes before the suite's first pipeline exists,
-  with or without the collector stress, while it takes no time without the
-  sanitizer. Nothing in rig causes it. A stalled run holds the machine's GPU
-  lock and blocks every other Metal run, so a sanitize run on the Mac leaves
-  out `@dev/rig/test/metal/runtest`.
+- The sanitizer gate is Linux's. On the Mac, Metal keeps the pipelines it
+  compiles in a cache under the user's cache directory. Every executable
+  without a bundle shares one cache, which grows with each program that
+  compiles Metal code: on the M1 Max on 2026-10-08, a 19 MB index
+  (`functions.list`) over 757 MB of data. Loading a pipeline opens the cache,
+  and the open grows a buffer with `realloc` while it reads the index.
+  AddressSanitizer's `realloc` copies the block on every call, so under the
+  profile the open ran for minutes (sampled: `fscache_open_worker` in
+  `realloc` and `relocate_maps`) where the default build opens it at once.
+  The suite's executable therefore carries a bundle identifier
+  (`test/metal/rig_metal_test_bundle.c`), and Metal gives it a cache of its
+  own that holds only the suite's pipelines. Any other executable that loads
+  Metal code under the profile needs the same. Turning the cache off
+  (`MTL_SHADER_CACHE_SIZE=0`) does not do: every load then compiles anew, and
+  the two-domain image test outruns its timeout even without the sanitizers.
 
 A GPU test that skips checks nothing, so read the skip count of a sanitize run
 on a GPU host.
