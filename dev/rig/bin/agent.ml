@@ -52,8 +52,9 @@ let half address =
   in
   Unix.close key_r;
   Unix.close out_w;
+  (* [key_w] stays open until the half exits, however it exits: the agent ends
+     when its input ends. *)
   Proc.write key_w (key ^ "\n");
-  Unix.close key_w;
   let lines = Line.reader out_r and input = Line.reader Unix.stdin in
   let reported = ref None and killed = ref false and status = ref None in
   let relay l =
@@ -95,19 +96,22 @@ let lock () =
       (strf "rig-agent-%d.lock" (Unix.getuid ()))
   in
   let take () =
-    let fd =
-      Unix.openfile path [ Unix.O_RDWR; Unix.O_CREAT; Unix.O_CLOEXEC ] 0o600
-    in
-    match Unix.lockf fd Unix.F_TLOCK 0 with
-    | () -> Ok ()
-    | exception Unix.Unix_error ((Unix.EAGAIN | Unix.EACCES), _, _) ->
+    match
+      let fd =
+        Unix.openfile path [ Unix.O_RDWR; Unix.O_CREAT; Unix.O_CLOEXEC ] 0o600
+      in
+      try Unix.lockf fd Unix.F_TLOCK 0
+      with Unix.Unix_error ((Unix.EAGAIN | Unix.EACCES), _, _) ->
         say Line.Waiting;
         let rec wait () =
           try Unix.lockf fd Unix.F_LOCK 0
           with Unix.Unix_error (Unix.EINTR, _, _) -> wait ()
         in
-        wait ();
-        Ok ()
+        wait ()
+    with
+    | () -> Ok ()
+    | exception Unix.Unix_error (e, _, _) ->
+        Error (strf "%s: %s" path (Unix.error_message e))
   in
   match Unix.lstat path with
   | { st_kind = Unix.S_REG; st_uid; _ } when st_uid <> Unix.getuid () ->
@@ -117,6 +121,18 @@ let lock () =
   | exception Unix.Unix_error (Unix.ENOENT, _, _) -> take ()
   | exception Unix.Unix_error (e, _, _) ->
       Error (strf "%s: %s" path (Unix.error_message e))
+
+(* Ends the agent once its input ends: its half holds the input open until it
+   exits, however it exits. *)
+let orphaned () =
+  let b = Bytes.create 1 in
+  let rec watch () =
+    match Unix.read Unix.stdin b 0 1 with
+    | 0 -> Unix._exit 123
+    | _ -> watch ()
+    | exception Unix.Unix_error (Unix.EINTR, _, _) -> watch ()
+  in
+  ignore (Thread.create watch ())
 
 (* Every GPU a path counts, opened by its driver. *)
 let gpus (type a) (module D : Rig.Driver with type t = a) count name open_ () =
@@ -167,6 +183,7 @@ let agent host port =
     | Ok k -> k
     | Error why -> fail why
   in
+  orphaned ();
   (match lock () with Ok () -> () | Error why -> fail why);
   let a =
     match Rig_remote.listen ~key host port with

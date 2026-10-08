@@ -26,18 +26,16 @@ whatever the program saw of it first.
   rig: job failed: the agent on b was killed by SIGKILL
   rig: restarting the job (1 of 3)
 
-A machine's session lost, here its half killed while its agent runs on.
-The job learns of it when the agent ends, here at once, killed after its
-half. The agent's machine does not answer until rig run reaches it again,
-and its new agent finds no other agent there.
+A machine's session lost, here its half killed. The agent ends with its
+half, and the job learns of it through its connections. The agent's
+machine does not answer until rig run reaches it again, and its new agent
+finds no other agent there.
 
   $ rm attempts
   $ rig run --on a,b,c -- ./support/ctl.exe wait-first >out 2>err &
   $ run=$!
   $ ./support/await out joined
-  $ old=$(agent_of b)
   $ kill -KILL $(cat machines/b/pid)
-  $ kill -KILL $old
   $ wait $run
   $ cat out
   attempt 1

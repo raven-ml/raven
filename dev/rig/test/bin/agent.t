@@ -152,6 +152,23 @@ directory, fails the agent.
   rig-agent VERSION
   failed PWD/other/rig-agent-UID.lock is no regular file
 
+A lock the agent cannot make, here in a directory it may not write,
+fails it the same way.
+
+  $ mkdir closed
+  $ chmod 500 closed
+  $ mkfifo in-closed
+  $ TMPDIR=$PWD/closed rig agent 127.0.0.1:0 <in-closed >out-closed &
+  $ closed=$!
+  $ exec 8>in-closed
+  $ echo $key >&8
+  $ wait $closed
+  [123]
+  $ exec 8>&-
+  $ show out-closed | sed -e "s|$PWD|PWD|" -e "s|-$(id -u)[.]|-UID.|"
+  rig-agent VERSION
+  failed PWD/closed/rig-agent-UID.lock: Permission denied
+
 The agent's last line says how its job ended. The controller here is
 support/ctl.exe, given by hand what rig run gives a program: the agents,
 the key, and a report, the file report.
@@ -226,3 +243,25 @@ An agent killed reports nothing: rig agent says how it died, and exits
   started
   failed b: closed its connection
   $ exec 3>&-
+
+An agent ends with its half, however the half ends: here a half killed
+while its agent listens, and a second agent, waiting, then listens.
+
+  $ mkfifo in13 in14
+  $ rig agent 127.0.0.1:0 <in13 >out13 &
+  $ half=$!
+  $ exec 3>in13
+  $ echo $key >&3
+  $ ./support/await out13 listening
+  $ rig agent 127.0.0.1:0 <in14 >out14 3>&- &
+  $ second=$!
+  $ exec 4>in14
+  $ echo $key >&4
+  $ ./support/await out14 waiting
+  $ kill -KILL $half
+  $ wait $half 2>/dev/null
+  [137]
+  $ ./support/await out14 listening
+  $ exec 3>&- 4>&-
+  $ wait $second
+  [123]

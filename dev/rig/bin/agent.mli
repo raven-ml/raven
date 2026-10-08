@@ -8,8 +8,9 @@
     The half reads the job's key on its standard input, starts the agent
     ([rig agent] again, under [RIG_REMOTE_REPORT]), passes the agent's lines on
     to its standard output, and ends the agent when its input ends. The agent
-    takes the machine's lock, listens and serves one job. Each runs in one
-    thread of its own. *)
+    takes the machine's lock, listens and serves one job, and ends when its
+    input ends. The half runs one thread; the agent adds one that watches its
+    input. *)
 
 val half : string -> 'a
 (** [half address] is the half of the agent at [address], [HOST:PORT] as

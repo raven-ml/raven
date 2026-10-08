@@ -15,7 +15,8 @@
   rig.amd
   rig.amd.amdgpu
   rig.amd.pci
-  unix)
+  unix
+  threads.posix)
  (foreign_stubs
   (language c)
   (names rig_bin_stubs)))
