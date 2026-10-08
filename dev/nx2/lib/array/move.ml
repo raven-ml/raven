@@ -24,7 +24,7 @@ let reshape s s' =
   if n <> n' then
     invalid_argf "Move.Reshape: %a has %d elements, %a has %d" pp_ints s n
       pp_ints s' n';
-  Array.copy s'
+  Shape.copy s'
 
 let broadcast s s' =
   let r = Array.length s and r' = Array.length s' in
@@ -41,7 +41,7 @@ let broadcast s s' =
          1 nor %d"
         pp_ints s pp_ints s' i d d'
   done;
-  Array.copy s'
+  Shape.copy s'
 
 (* The axes [p] names are marked in the bits of an int: a rank is at most
    [Shape.max_rank], below an int's width. *)
@@ -65,7 +65,7 @@ let permute s p =
         pp_ints p r i a;
     seen := !seen lor (1 lsl a)
   done;
-  let s' = Array.make r 0 in
+  let s' = Shape.zeros r in
   for i = 0 to r - 1 do
     s'.(i) <- s.(p.(i))
   done;

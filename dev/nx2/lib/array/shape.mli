@@ -20,5 +20,11 @@ val numel : string -> int array -> int
     [Invalid_argument] if an extent is negative or the product does not fit in
     an [int]. *)
 
+val zeros : int -> int array
+(** [zeros r] is a fresh array of [r] zeros. *)
+
+val copy : int array -> int array
+(** [copy s] is a fresh copy of [s]. *)
+
 val pp : Format.formatter -> int array -> unit
 (** [pp] formats a shape or an index for messages, as [[2; 3]]. *)

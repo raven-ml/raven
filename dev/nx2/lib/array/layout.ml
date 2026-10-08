@@ -51,8 +51,8 @@ let numel l =
     done;
     !n
 
-let shape l = Array.copy l.shape
-let strides l = Array.copy l.strides
+let shape l = Shape.copy l.shape
+let strides l = Shape.copy l.strides
 let is_contiguous l = flags l land contiguous_flag <> 0
 let is_distinct l = flags l land distinct_flag <> 0
 
@@ -159,7 +159,7 @@ let contiguous s =
   let r = Array.length s in
   Shape.check_rank "Layout.contiguous" r;
   let n = Shape.numel "Layout.contiguous" s in
-  let shape = Array.make r 0 and strides = Array.make r 0 in
+  let shape = Shape.zeros r and strides = Shape.zeros r in
   let run = ref 1 in
   for i = r - 1 downto 0 do
     let d = Array.unsafe_get s i in
@@ -185,7 +185,7 @@ let v ?(offset = 0) ~strides s =
         "Layout.v: axis %d has extent %d and stride %d: its reach overflows" i d
         st
   done;
-  finish "Layout.v" (Array.copy s) (Array.copy strides) offset
+  finish "Layout.v" (Shape.copy s) (Shape.copy strides) offset
 
 (* Movements. Each writes the strides of the result, of shape [s'], from [l]'s;
    [finish] makes it canonical. A stride is formed only for an axis of extent
@@ -201,7 +201,7 @@ let reshape l s' =
   let axes n d = List.filter (fun i -> d i > 1) (List.init n Fun.id) in
   let old = Array.of_list (axes (rank l) (unsafe_dim l)) in
   let fresh = Array.of_list (axes (Array.length s') (Array.get s')) in
-  let strides = Array.make (Array.length s') 0 in
+  let strides = Shape.zeros (Array.length s') in
   let rec group oi ni =
     oi >= Array.length old
     ||
@@ -231,7 +231,7 @@ let reshape l s' =
 let move m l =
   let s' = Move.shape m (shape l) in
   let r = rank l and r' = Array.length s' in
-  let st = Array.make r' 0 in
+  let st = Shape.zeros r' in
   if numel l = 0 || Array.mem 0 s' then Some (moved s' st 0)
   else
     match m with
