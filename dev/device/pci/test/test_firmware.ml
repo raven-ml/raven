@@ -125,7 +125,7 @@ let test_compressed () =
 
 let () =
   exit
-  @@ run "device_pci Firmware"
+  @@ run "device_pci.firmware"
        [
          group ~timeout:patience "digest" [ test_digest ];
          group ~timeout:patience "find"

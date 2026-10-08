@@ -1511,7 +1511,7 @@ let () =
   | [| _; arg; root; bus |] when arg = exiting -> exit_mastering root bus
   | _ ->
       exit
-      @@ run "device_pci Function"
+      @@ run "device_pci.function"
            [
              taking;
              uses;

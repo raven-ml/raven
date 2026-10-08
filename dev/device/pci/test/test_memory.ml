@@ -951,7 +951,7 @@ let test_released =
 
 let () =
   exit
-  @@ run "device_pci Memory"
+  @@ run "device_pci.memory"
        [
          group ~timeout:patience "placement"
            [

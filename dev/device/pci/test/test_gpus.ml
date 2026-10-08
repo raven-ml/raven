@@ -906,7 +906,7 @@ let host_changes =
 
 let () =
   exit
-  @@ run "device_pci Gpus"
+  @@ run "device_pci.gpus"
        [
          numbering;
          opening;

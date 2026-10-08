@@ -345,5 +345,5 @@ let waits =
 
 let () =
   exit
-  @@ run "device_pci Machine"
+  @@ run "device_pci.machine"
        [ addresses; machines; functions; reservations; waits ]

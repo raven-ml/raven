@@ -1456,7 +1456,7 @@ let alloc_commands =
 
 let () =
   exit
-  @@ run "device_pci Page_table"
+  @@ run "device_pci.page_table"
        [
          group ~timeout:patience "create"
            [

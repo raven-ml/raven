@@ -222,7 +222,7 @@ let test_whole () =
 
 let () =
   exit
-  @@ run "device_pci Space"
+  @@ run "device_pci.space"
        [
          group ~timeout:patience "ranges"
            [
