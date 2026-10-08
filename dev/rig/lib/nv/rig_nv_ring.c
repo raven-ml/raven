@@ -94,19 +94,21 @@ static uint64_t fill(const struct hole *h, const uint64_t *values) {
 }
 
 /* Writes template [k] with the values [a], [b], [n] into the open segment
-   of [c]. A segment never wraps: one that would is closed, and the words go
-   at the start of the ring. */
+   of [c]. A segment never wraps: one whose words would pass the ring's end,
+   including one that ends exactly there, is closed first, and the words go
+   at the start of the ring when they do not fit before its end. */
 static void emit(const struct device *d, struct channel *c, int k, uint64_t a,
                  uint64_t b, uint64_t n) {
   const struct template *t = &d->t[k];
   uint64_t bytes = 4 * (uint64_t)t->nwords;
-  uint64_t at = c->written & (c->size - 1);
-  if (at + bytes > c->size) {
+  uint64_t start = c->open & (c->size - 1);
+  if (start + 4 * c->open_words + bytes > c->size) {
     close_segment(d, c);
-    c->written += c->size - at;
+    uint64_t end = c->written & (c->size - 1);
+    if (end + bytes > c->size) c->written += c->size - end;
     c->open = c->written;
-    at = 0;
   }
+  uint64_t at = c->written & (c->size - 1);
   uint32_t *w = (uint32_t *)(c->segments + at);
   memcpy(w, t->words, bytes);
   const uint64_t values[3] = {a, b, n};
