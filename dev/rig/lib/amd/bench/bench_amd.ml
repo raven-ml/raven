@@ -134,12 +134,17 @@ let holes arg hs =
 
 (* Kernels *)
 
+(* Read by the rows that run a kernel, so that the others, and a run that
+   selects none of them, start without the fixture. *)
 let binary =
-  In_channel.with_open_bin "../test/fixtures/kernels_gfx1201.hsaco"
-    In_channel.input_all
+  lazy
+    (In_channel.with_open_bin "../test/fixtures/kernels_gfx1201.hsaco"
+       In_channel.input_all)
 
-let code_object = get (Abi.Code_object.of_string binary)
-let kernel name = Option.get (Abi.Code_object.kernel code_object name)
+let code_object = lazy (get (Abi.Code_object.of_string (Lazy.force binary)))
+
+let kernel name =
+  Option.get (Abi.Code_object.kernel (Lazy.force code_object) name)
 
 (* One run of [k] over one workgroup of [threads] work-items, its image at
    [base], its arguments at [args]. *)
@@ -150,7 +155,7 @@ let dispatch gpu (k : Abi.Code_object.kernel) ~base ~args ~threads =
 
 (* The code object loaded on [t], and the address of its image. *)
 let load t =
-  let p = get (C.Program.load t.c binary) in
+  let p = get (C.Program.load t.c (Lazy.force binary)) in
   (p, Option.get (C.Program.entry p "empty") - (kernel "empty").descriptor)
 
 (* The floors *)
@@ -247,8 +252,9 @@ let system_memory = 1
 (* The image of the code object as it lies in memory, at the GPU address of the
    result, copied in by the floor's copy queue. *)
 let floor_load () =
-  let o = Abi.Code_object.elf code_object in
-  let b = Bytes.make (Abi.Code_object.size code_object) '\000' in
+  let co = Lazy.force code_object in
+  let o = Abi.Code_object.elf co in
+  let b = Bytes.make (Abi.Code_object.size co) '\000' in
   let put (s : Rig_elf.section) =
     match s.offset with
     | Some off -> Bytes.blit_string o.file s.at b off s.length
@@ -256,7 +262,7 @@ let floor_load () =
   in
   Iarray.iter put o.sections;
   let patch (off, p) = Bytes.blit_string p 0 b off (String.length p) in
-  List.iter patch (Abi.Code_object.patches code_object);
+  List.iter patch (Abi.Code_object.patches co);
   let n = Bytes.length b in
   let code = buffer gpu_memory n and staging = buffer system_memory n in
   write staging (Bytes.unsafe_to_string b);
@@ -495,7 +501,7 @@ let image_rows =
       (* The code object read, laid over device memory, ended and its memory
          freed. *)
       row "one-object" dev (fun t ->
-          match A.image t.g binary with
+          match A.image t.g (Lazy.force binary) with
           | Ok (`Place (n, lay)) ->
               let code = Option.get (A.alloc t.g `Device n) in
               A.unload t.g (fst (lay code));
