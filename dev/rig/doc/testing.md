@@ -370,7 +370,7 @@ skip when run as root, which opens a file whatever its mode.
 ## Sanitizers
 
 ```
-dune build --profile sanitize @dev/rig/lib/<lib>/runtest
+dune build --profile sanitize @dev/rig/test/<lib>/runtest
 ```
 
 The `sanitize` profile in `dev/rig/dune` compiles the C with
@@ -410,12 +410,16 @@ Constraints a new library meets:
 - With the gap unprotected, AddressSanitizer on x86_64 maps the gap's shadow
   between about 2.3 and 258 GiB. The NV kernel path reserves its GPU addresses
   from 384 GiB, below 2^40, so a GPU opens in the profile.
-- Metal tests that load a metallib do not finish within their timeout under
-  AddressSanitizer on the M1 Max: Metal's shader cache reads its per-user cache
-  through the sanitizer's `realloc`. The ring tests and the tests that open
-  nothing pass. A stalled run holds the machine's GPU lock and blocks every
-  other Metal run, so a sanitize run on the Mac leaves out
-  `@dev/rig/lib/metal/runtest` until that stall is fixed.
+- The sanitizer gate is Linux's. On the Mac, Metal's suite stays out of a
+  sanitize run: making a compute pipeline opens Metal's per-user compiler
+  cache, whose index (`functions.list` under the user's cache directory, tens
+  of MiB once many programs compiled) Metal reads with a growing `realloc`.
+  AddressSanitizer turns each `realloc` into a new allocation and a copy, so
+  the read is quadratic: minutes before the suite's first pipeline exists,
+  with or without the collector stress, while it takes no time without the
+  sanitizer. Nothing in rig causes it. A stalled run holds the machine's GPU
+  lock and blocks every other Metal run, so a sanitize run on the Mac leaves
+  out `@dev/rig/test/metal/runtest`.
 
 A GPU test that skips checks nothing, so read the skip count of a sanitize run
 on a GPU host.
