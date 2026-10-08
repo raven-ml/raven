@@ -2039,14 +2039,13 @@ let queue_order =
 
 (* Through the C entries, on a device rig does not drive *)
 
-(* A device of GPU 0 opened beside [S.gpu]'s, for work handed to its C entries
+(* A device of GPU 0 opened by [S.open_gpu], for work handed to its C entries
    directly, with values the test numbers. *)
 let raw =
   fixture ~teardown:A.stop (fun () ->
-      if Rig_amd_amdgpu.count () = 0 then
-        skip ~reason:"the machine has no AMD GPU" ();
+      if S.gpus () = 0 then skip ~reason:"the machine has no AMD GPU" ();
       S.hold_gpu ();
-      match Rig_amd_amdgpu.open_ 0 with Ok g -> g | Error why -> failwith why)
+      match S.open_gpu () with Ok g -> g | Error why -> failwith why)
 
 (* A device's values, numbered as it submits them. *)
 type run = { g : A.t; mutable v : int }
@@ -2726,6 +2725,8 @@ let held (w0, t) =
 let opens = ref 0
 
 let in_queue () =
+  if S.driverless () then
+    skip ~reason:"with no kernel driver, a process holds one device of a GPU" ();
   S.with_gpu @@ fun g ->
   waits_on g;
   let d = S.rig g in
@@ -2741,7 +2742,7 @@ let in_queue () =
             (fun x ->
               made := Some x;
               x)
-            (Rig_amd_amdgpu.open_ 0))
+            (S.open_gpu ()))
     with
     | Ok pd -> pd
     | Error why -> fail why
@@ -2906,7 +2907,7 @@ let one_gpu_driverless g =
   | Ok g' ->
       A.stop g';
       fail "a second open of a GPU the process took"
-  | Error why -> contains ~sub:"is taken already" why);
+  | Error why -> contains ~sub:"is open in this process" why);
   equal int ~msg:"the first device's next value" 1 (S.submit g [||]);
   S.wait g 1
 
