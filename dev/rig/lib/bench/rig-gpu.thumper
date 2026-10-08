@@ -44,6 +44,8 @@ floor/cuda/copy-to-device-256M	alloc_words	exact	0
 floor/cuda/copy-to-device-256M	wall_time	batch=1	n=20	1.067e-02	1.066e-02 1.066e-02 1.067e-02 1.067e-02 1.067e-02 1.067e-02 1.067e-02 1.067e-02 1.067e-02 1.067e-02 1.067e-02 1.067e-02 1.067e-02 1.067e-02 1.067e-02 1.067e-02 1.067e-02 1.067e-02 1.067e-02 1.067e-02
 floor/cuda/cost	alloc_words	exact	0
 floor/cuda/cost	wall_time	batch=4096	n=20	1.737e-06	1.727e-06 1.735e-06 1.736e-06 1.736e-06 1.736e-06 1.736e-06 1.736e-06 1.736e-06 1.736e-06 1.737e-06 1.737e-06 1.737e-06 1.738e-06 1.738e-06 1.738e-06 1.738e-06 1.738e-06 1.738e-06 1.739e-06 1.739e-06
+floor/cuda/graph-pipelined-100	alloc_words	exact	7
+floor/cuda/graph-pipelined-100	wall_time	batch=2	n=20	3.358e-03	3.358e-03 3.358e-03 3.358e-03 3.358e-03 3.358e-03 3.358e-03 3.358e-03 3.358e-03 3.358e-03 3.358e-03 3.358e-03 3.358e-03 3.358e-03 3.358e-03 3.358e-03 3.358e-03 3.358e-03 3.358e-03 3.358e-03 3.359e-03
 floor/cuda/kernel-pipelined-100	alloc_words	exact	6
 floor/cuda/kernel-pipelined-100	wall_time	batch=32	n=20	2.796e-04	2.793e-04 2.794e-04 2.794e-04 2.794e-04 2.794e-04 2.795e-04 2.795e-04 2.795e-04 2.795e-04 2.796e-04 2.796e-04 2.796e-04 2.796e-04 2.796e-04 2.796e-04 2.796e-04 2.796e-04 2.797e-04 2.797e-04 2.798e-04
 floor/cuda/pipelined-100	alloc_words	exact	0
@@ -68,6 +70,8 @@ floor/nv/release	alloc_words	exact	0
 floor/nv/release	wall_time	batch=2048	n=20	3.410e-06	3.401e-06 3.404e-06 3.406e-06 3.407e-06 3.408e-06 3.409e-06 3.409e-06 3.409e-06 3.409e-06 3.409e-06 3.410e-06 3.410e-06 3.411e-06 3.411e-06 3.412e-06 3.412e-06 3.412e-06 3.413e-06 3.413e-06 3.415e-06
 floor/nv/run	alloc_words	exact	0
 floor/nv/run	wall_time	batch=4096	n=20	1.561e-06	1.472e-06 1.484e-06 1.494e-06 1.504e-06 1.526e-06 1.543e-06 1.549e-06 1.554e-06 1.554e-06 1.557e-06 1.564e-06 1.590e-06 1.593e-06 1.595e-06 1.601e-06 1.605e-06 1.610e-06 1.611e-06 1.614e-06 1.617e-06
+replay/cuda/graph-pipelined-100	alloc_words	exact	4
+replay/cuda/graph-pipelined-100	wall_time	batch=2	n=20	3.358e-03	3.357e-03 3.357e-03 3.358e-03 3.358e-03 3.358e-03 3.358e-03 3.358e-03 3.358e-03 3.358e-03 3.358e-03 3.358e-03 3.358e-03 3.359e-03 3.359e-03 3.493e-03 3.657e-03 3.658e-03 3.658e-03 3.659e-03 3.659e-03
 replay/cuda/kernel-pipelined-100	alloc_words	exact	3
 replay/cuda/kernel-pipelined-100	wall_time	batch=32	n=20	2.947e-04	2.936e-04 2.939e-04 2.939e-04 2.939e-04 2.940e-04 2.941e-04 2.945e-04 2.946e-04 2.947e-04 2.947e-04 2.947e-04 2.948e-04 2.948e-04 2.949e-04 2.949e-04 2.950e-04 2.951e-04 2.952e-04 2.957e-04 2.957e-04
 replay/cuda/params-24	alloc_words	exact	0
