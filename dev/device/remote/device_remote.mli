@@ -49,6 +49,10 @@
       functions is empty;
     - the host's next read or write loses it ({!Device_core.Lost}).
 
+    A child of [fork] never uses its parent's connection, whose stream it would
+    interleave with the parent's: there the connection is failed from the start,
+    and the parent's goes on.
+
     A request the server refuses, such as taking a function another process
     holds, answers [Error] and leaves the connection usable. The server stops
     the DMA of the functions a client took and frees its memory once the
