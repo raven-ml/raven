@@ -1843,6 +1843,7 @@ let traces =
     ]
 
 let () =
+  S.hold_gpu ();
   exit
     (run "device_amd"
        [

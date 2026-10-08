@@ -5,16 +5,22 @@
 
 (** What the AMD suites and bench share. *)
 
-val gpu_lock : string
-(** [gpu_lock] is the environment variable that names the machine's GPU lock
-    file: ["DEVICE_AMD_TEST_GPU_LOCK"]. *)
+val hold_gpu : unit -> unit
+(** [hold_gpu ()] returns once the process holds the machine's GPU lock, which
+    it keeps until it exits, or at once if the machine has no AMD GPU. The lock
+    is [flock] on [/tmp/raven-device-gpu.lock], the file every suite that acts
+    on a GPU of the machine locks; its holder writes its executable and process
+    id into it. A suite calls [hold_gpu] before [Windtrap.run], so that the wait
+    counts against no test's timeout; {!gpu} calls it again.
+
+    Raises [Failure] naming the holder if another process still holds the lock
+    after 300 s, or naming the errno if the file cannot be locked. *)
 
 val gpu : unit -> Device_amd.t
 (** [gpu ()] is AMD GPU [0], opened through the amdgpu path, after stopping the
     device an earlier {!gpu} opened if no {!stop} stopped it, as a failed test
-    leaves it. It skips the test if the machine has no AMD GPU, if {!gpu_lock}
-    names no file, or if another process holds the lock, which this process
-    keeps until it exits once it took it. *)
+    leaves it, while the process holds the machine's GPU lock ({!hold_gpu}). It
+    skips the test if the machine has no AMD GPU. *)
 
 val stop : Device_amd.t -> unit
 (** [stop g] is [Device_amd.stop g]. Tests stop the devices {!gpu} opened
