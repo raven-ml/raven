@@ -37,8 +37,12 @@ floor/bigarray-dropped-1000	alloc_words	exact	9009
 floor/bigarray-dropped-1000	wall_time	batch=8	n=20	6.578e-04	6.555e-04 6.563e-04 6.567e-04 6.567e-04 6.568e-04 6.569e-04 6.569e-04 6.577e-04 6.578e-04 6.578e-04 6.578e-04 6.581e-04 6.583e-04 6.583e-04 6.592e-04 6.596e-04 6.609e-04 6.613e-04 6.673e-04 6.675e-04
 floor/cuda/cost	alloc_words	exact	0
 floor/cuda/cost	wall_time	batch=4096	n=20	1.763e-06	1.756e-06 1.762e-06 1.762e-06 1.762e-06 1.762e-06 1.763e-06 1.763e-06 1.763e-06 1.763e-06 1.763e-06 1.763e-06 1.763e-06 1.764e-06 1.764e-06 1.764e-06 1.764e-06 1.764e-06 1.764e-06 1.765e-06 1.766e-06
+floor/cuda/pipelined-100	alloc_words	exact	0
+floor/cuda/pipelined-100	wall_time	batch=32	n=20	1.739e-04	1.737e-04 1.737e-04 1.738e-04 1.738e-04 1.738e-04 1.739e-04 1.739e-04 1.739e-04 1.739e-04 1.739e-04 1.740e-04 1.740e-04 1.740e-04 1.740e-04 1.740e-04 1.740e-04 1.740e-04 1.740e-04 1.741e-04 1.742e-04
 floor/cuda/release	alloc_words	exact	0
 floor/cuda/release	wall_time	batch=2048	n=20	3.761e-06	3.752e-06 3.754e-06 3.758e-06 3.759e-06 3.759e-06 3.759e-06 3.759e-06 3.759e-06 3.759e-06 3.761e-06 3.761e-06 3.762e-06 3.762e-06 3.762e-06 3.763e-06 3.763e-06 3.763e-06 3.765e-06 3.766e-06 3.769e-06
+floor/cuda/run	alloc_words	exact	0
+floor/cuda/run	wall_time	batch=4096	n=20	3.006e-06	1.722e-06 1.722e-06 1.980e-06 2.746e-06 2.747e-06 2.747e-06 2.748e-06 2.748e-06 3.005e-06 3.005e-06 3.006e-06 3.007e-06 3.007e-06 3.007e-06 3.007e-06 3.007e-06 3.007e-06 3.007e-06 3.008e-06 3.263e-06
 floor/memcpy-4K	alloc_words	exact	0
 floor/memcpy-4K	wall_time	batch=262144	n=20	2.860e-08	2.857e-08 2.857e-08 2.857e-08 2.857e-08 2.858e-08 2.858e-08 2.858e-08 2.859e-08 2.859e-08 2.859e-08 2.861e-08 2.862e-08 2.862e-08 2.863e-08 2.864e-08 2.866e-08 2.866e-08 2.869e-08 2.870e-08 2.877e-08
 floor/memcpy-64M	alloc_words	exact	0
@@ -47,8 +51,12 @@ floor/mutex-section	alloc_words	exact	0
 floor/mutex-section	wall_time	batch=524288	n=20	1.124e-08	1.123e-08 1.123e-08 1.123e-08 1.123e-08 1.123e-08 1.123e-08 1.123e-08 1.123e-08 1.124e-08 1.124e-08 1.124e-08 1.124e-08 1.124e-08 1.124e-08 1.125e-08 1.125e-08 1.126e-08 1.127e-08 1.130e-08 1.149e-08
 floor/nv/cost	alloc_words	exact	0
 floor/nv/cost	wall_time	batch=8192	n=20	7.879e-07	7.842e-07 7.870e-07 7.872e-07 7.873e-07 7.874e-07 7.875e-07 7.875e-07 7.878e-07 7.878e-07 7.878e-07 7.879e-07 7.879e-07 7.879e-07 7.880e-07 7.880e-07 7.882e-07 7.883e-07 7.885e-07 7.885e-07 7.886e-07
+floor/nv/pipelined-100	alloc_words	exact	0
+floor/nv/pipelined-100	wall_time	batch=32	n=20	1.675e-04	1.574e-04 1.638e-04 1.650e-04 1.655e-04 1.657e-04 1.661e-04 1.667e-04 1.668e-04 1.671e-04 1.672e-04 1.678e-04 1.679e-04 1.680e-04 1.680e-04 1.680e-04 1.682e-04 1.684e-04 1.685e-04 1.687e-04 1.697e-04
 floor/nv/release	alloc_words	exact	0
 floor/nv/release	wall_time	batch=2048	n=20	3.393e-06	3.386e-06 3.388e-06 3.388e-06 3.388e-06 3.390e-06 3.391e-06 3.391e-06 3.391e-06 3.393e-06 3.393e-06 3.393e-06 3.393e-06 3.394e-06 3.394e-06 3.394e-06 3.394e-06 3.394e-06 3.394e-06 3.395e-06 3.397e-06
+floor/nv/run	alloc_words	exact	0
+floor/nv/run	wall_time	batch=4096	n=20	1.521e-06	1.467e-06 1.472e-06 1.473e-06 1.486e-06 1.492e-06 1.495e-06 1.501e-06 1.514e-06 1.515e-06 1.518e-06 1.524e-06 1.530e-06 1.544e-06 1.548e-06 1.576e-06 1.594e-06 1.606e-06 1.622e-06 1.661e-06 1.676e-06
 floor/polled/cost	alloc_words	exact	0
 floor/polled/cost	wall_time	batch=262144	n=20	2.897e-08	2.861e-08 2.866e-08 2.869e-08 2.876e-08 2.880e-08 2.882e-08 2.888e-08 2.888e-08 2.888e-08 2.895e-08 2.898e-08 2.901e-08 2.908e-08 2.913e-08 2.933e-08 2.948e-08 2.949e-08 2.949e-08 2.951e-08 2.967e-08
 floor/polled/pipelined-100	alloc_words	exact	0
@@ -59,12 +67,22 @@ floor/polled/run	alloc_words	exact	0
 floor/polled/run	wall_time	batch=262144	n=20	3.239e-08	3.225e-08 3.227e-08 3.227e-08 3.230e-08 3.233e-08 3.234e-08 3.235e-08 3.236e-08 3.237e-08 3.239e-08 3.240e-08 3.246e-08 3.246e-08 3.255e-08 3.260e-08 3.279e-08 3.284e-08 3.306e-08 3.319e-08 3.324e-08
 floor/polled/two-domains	alloc_words	exact	0
 floor/polled/two-domains	wall_time	batch=16384	n=20	3.801e-07	3.616e-07 3.694e-07 3.705e-07 3.716e-07 3.719e-07 3.731e-07 3.753e-07 3.758e-07 3.794e-07 3.798e-07 3.805e-07 3.814e-07 3.819e-07 3.822e-07 3.825e-07 3.825e-07 3.850e-07 3.859e-07 3.876e-07 3.918e-07
+floor/polled/two-domains-turn	alloc_words	exact	0
+floor/polled/two-domains-turn	wall_time	batch=16384	n=20	5.376e-07	5.095e-07 5.190e-07 5.193e-07 5.198e-07 5.207e-07 5.231e-07 5.238e-07 5.322e-07 5.354e-07 5.362e-07 5.389e-07 5.396e-07 5.409e-07 5.446e-07 5.472e-07 5.473e-07 5.480e-07 5.483e-07 5.539e-07 5.713e-07
 floor/word-load	alloc_words	exact	0
 floor/word-load	wall_time	batch=4194304	n=20	1.606e-09	1.602e-09 1.603e-09 1.603e-09 1.603e-09 1.604e-09 1.604e-09 1.604e-09 1.605e-09 1.605e-09 1.606e-09 1.607e-09 1.607e-09 1.607e-09 1.607e-09 1.610e-09 1.611e-09 1.613e-09 1.616e-09 1.618e-09 1.619e-09
 floor/word-load-24	alloc_words	exact	0
 floor/word-load-24	wall_time	batch=262144	n=20	3.697e-08	3.677e-08 3.688e-08 3.688e-08 3.690e-08 3.693e-08 3.693e-08 3.695e-08 3.695e-08 3.695e-08 3.696e-08 3.699e-08 3.699e-08 3.699e-08 3.701e-08 3.701e-08 3.704e-08 3.705e-08 3.706e-08 3.707e-08 3.717e-08
 heap/trim-64M	alloc_words	exact	36
 heap/trim-64M	wall_time	batch=256	n=20	3.560e-05	3.509e-05 3.515e-05 3.525e-05 3.536e-05 3.540e-05 3.542e-05 3.545e-05 3.549e-05 3.558e-05 3.560e-05 3.560e-05 3.562e-05 3.565e-05 3.579e-05 3.579e-05 3.586e-05 3.604e-05 3.611e-05 3.615e-05 3.620e-05
+replay/cuda/params-24	alloc_words	exact	0
+replay/cuda/params-24	wall_time	batch=4096	n=20	2.037e-06	2.031e-06 2.032e-06 2.033e-06 2.033e-06 2.035e-06 2.036e-06 2.036e-06 2.036e-06 2.037e-06 2.037e-06 2.037e-06 2.037e-06 2.037e-06 2.037e-06 2.037e-06 2.039e-06 2.039e-06 2.040e-06 2.040e-06 2.041e-06
+replay/cuda/pipelined-100	alloc_words	exact	0
+replay/cuda/pipelined-100	wall_time	batch=32	n=20	2.075e-04	2.061e-04 2.065e-04 2.066e-04 2.066e-04 2.066e-04 2.068e-04 2.068e-04 2.069e-04 2.073e-04 2.075e-04 2.075e-04 2.076e-04 2.076e-04 2.077e-04 2.078e-04 2.079e-04 2.081e-04 2.081e-04 2.082e-04 2.082e-04
+replay/nv/params-24	alloc_words	exact	0
+replay/nv/params-24	wall_time	batch=4096	n=20	1.927e-06	1.911e-06 1.913e-06 1.923e-06 1.923e-06 1.924e-06 1.924e-06 1.924e-06 1.925e-06 1.925e-06 1.927e-06 1.927e-06 1.929e-06 1.929e-06 1.930e-06 1.935e-06 1.935e-06 1.936e-06 1.940e-06 1.940e-06 1.944e-06
+replay/nv/pipelined-100	alloc_words	exact	0
+replay/nv/pipelined-100	wall_time	batch=32	n=20	1.865e-04	1.857e-04 1.859e-04 1.860e-04 1.861e-04 1.861e-04 1.862e-04 1.862e-04 1.863e-04 1.863e-04 1.864e-04 1.865e-04 1.867e-04 1.867e-04 1.870e-04 1.870e-04 1.871e-04 1.871e-04 1.871e-04 1.872e-04 1.873e-04
 replay/polled/params-24	alloc_words	exact	0
 replay/polled/params-24	wall_time	batch=16384	n=20	3.528e-07	3.493e-07 3.500e-07 3.506e-07 3.508e-07 3.508e-07 3.513e-07 3.517e-07 3.519e-07 3.522e-07 3.527e-07 3.530e-07 3.537e-07 3.537e-07 3.541e-07 3.542e-07 3.548e-07 3.552e-07 3.556e-07 3.556e-07 3.761e-07
 replay/polled/pipelined-100	alloc_words	exact	0
@@ -94,6 +112,7 @@ wait/memory/reached	wall_time	batch=1048576	n=20	5.415e-09	5.412e-09 5.412e-09 5
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed under load 5.4 on 10 cores
+# forced: blessed floor/polled/two-domains-turn replay/metal/params-24 replay/metal/pipelined-100 floor/metal/run floor/metal/pipelined-100 floor/metal/release-sleep under load 10.5 on 10 cores
 
 buffer/host-create-16	alloc_words	exact	36
 buffer/host-create-16	wall_time	batch=65536	n=20	8.384e-08	8.231e-08 8.252e-08 8.273e-08 8.307e-08 8.320e-08 8.322e-08 8.331e-08 8.340e-08 8.353e-08 8.356e-08 8.411e-08 8.450e-08 8.477e-08 8.505e-08 8.510e-08 8.548e-08 8.562e-08 8.722e-08 8.822e-08 8.825e-08
@@ -131,8 +150,14 @@ floor/memcpy-64M	alloc_words	exact	0
 floor/memcpy-64M	wall_time	batch=1	n=20	1.417e-03	1.383e-03 1.393e-03 1.397e-03 1.401e-03 1.404e-03 1.404e-03 1.407e-03 1.407e-03 1.409e-03 1.414e-03 1.420e-03 1.420e-03 1.426e-03 1.426e-03 1.426e-03 1.446e-03 1.456e-03 1.488e-03 1.560e-03 1.575e-03
 floor/metal/cost	alloc_words	exact	0
 floor/metal/cost	wall_time	batch=2048	n=20	2.768e-06	2.475e-06 2.490e-06 2.499e-06 2.516e-06 2.525e-06 2.683e-06 2.699e-06 2.718e-06 2.752e-06 2.764e-06 2.772e-06 2.779e-06 2.796e-06 2.831e-06 2.837e-06 2.859e-06 2.942e-06 2.945e-06 3.128e-06 3.718e-06
+floor/metal/pipelined-100	alloc_words	exact	0
+floor/metal/pipelined-100	wall_time	batch=4	n=20	1.183e-03	9.536e-04 9.803e-04 1.020e-03 1.038e-03 1.060e-03 1.071e-03 1.073e-03 1.095e-03 1.138e-03 1.170e-03 1.196e-03 1.221e-03 1.437e-03 1.484e-03 1.489e-03 1.505e-03 1.508e-03 1.598e-03 1.903e-03 3.376e-03
 floor/metal/release	alloc_words	exact	0
 floor/metal/release	wall_time	batch=256	n=20	2.006e-05	6.604e-06 7.134e-06 7.924e-06 8.419e-06 1.095e-05 1.195e-05 1.427e-05 1.662e-05 1.980e-05 2.002e-05 2.009e-05 2.015e-05 2.034e-05 2.056e-05 2.085e-05 2.089e-05 2.093e-05 2.172e-05 2.178e-05 2.209e-05
+floor/metal/release-sleep	alloc_words	exact	0
+floor/metal/release-sleep	wall_time	batch=256	n=20	1.956e-05	1.480e-05 1.493e-05 1.525e-05 1.528e-05 1.541e-05 1.588e-05 1.602e-05 1.629e-05 1.947e-05 1.956e-05 1.956e-05 1.998e-05 2.077e-05 2.110e-05 2.111e-05 2.175e-05 2.192e-05 2.419e-05 2.473e-05 2.601e-05
+floor/metal/run	alloc_words	exact	0
+floor/metal/run	wall_time	batch=256	n=20	2.354e-05	1.185e-05 1.305e-05 1.648e-05 1.736e-05 1.754e-05 1.801e-05 1.806e-05 1.846e-05 1.863e-05 2.144e-05 2.564e-05 2.737e-05 2.784e-05 2.983e-05 3.491e-05 3.534e-05 3.564e-05 3.841e-05 5.045e-05 5.142e-05
 floor/mutex-section	alloc_words	exact	0
 floor/mutex-section	wall_time	batch=524288	n=20	1.588e-08	1.579e-08 1.580e-08 1.580e-08 1.582e-08 1.583e-08 1.583e-08 1.584e-08 1.585e-08 1.585e-08 1.587e-08 1.589e-08 1.593e-08 1.596e-08 1.597e-08 1.599e-08 1.602e-08 1.608e-08 1.612e-08 1.628e-08 1.654e-08
 floor/polled/cost	alloc_words	exact	0
@@ -145,12 +170,18 @@ floor/polled/run	alloc_words	exact	0
 floor/polled/run	wall_time	batch=131072	n=20	6.458e-08	6.325e-08 6.422e-08 6.423e-08 6.425e-08 6.434e-08 6.444e-08 6.450e-08 6.454e-08 6.456e-08 6.458e-08 6.458e-08 6.460e-08 6.465e-08 6.467e-08 6.472e-08 6.486e-08 6.530e-08 6.538e-08 6.563e-08 7.330e-08
 floor/polled/two-domains	alloc_words	exact	0
 floor/polled/two-domains	wall_time	batch=65536	n=20	1.144e-07	1.043e-07 1.058e-07 1.061e-07 1.071e-07 1.071e-07 1.128e-07 1.130e-07 1.137e-07 1.139e-07 1.142e-07 1.147e-07 1.148e-07 1.148e-07 1.149e-07 1.159e-07 1.170e-07 1.177e-07 1.183e-07 1.196e-07 1.196e-07
+floor/polled/two-domains-turn	alloc_words	exact	0
+floor/polled/two-domains-turn	wall_time	batch=32768	n=20	2.930e-07	1.548e-07 2.202e-07 2.222e-07 2.338e-07 2.376e-07 2.549e-07 2.560e-07 2.581e-07 2.842e-07 2.845e-07 3.015e-07 3.032e-07 3.170e-07 3.398e-07 3.522e-07 3.541e-07 3.767e-07 4.233e-07 6.182e-07 6.611e-07
 floor/word-load	alloc_words	exact	0
 floor/word-load	wall_time	batch=2097152	n=20	3.377e-09	3.297e-09 3.298e-09 3.300e-09 3.309e-09 3.310e-09 3.316e-09 3.341e-09 3.342e-09 3.357e-09 3.375e-09 3.380e-09 3.380e-09 3.380e-09 3.381e-09 3.382e-09 3.388e-09 3.399e-09 3.401e-09 3.419e-09 3.427e-09
 floor/word-load-24	alloc_words	exact	0
 floor/word-load-24	wall_time	batch=65536	n=20	9.218e-08	8.917e-08 9.019e-08 9.106e-08 9.144e-08 9.148e-08 9.163e-08 9.186e-08 9.190e-08 9.217e-08 9.218e-08 9.218e-08 9.235e-08 9.250e-08 9.275e-08 9.280e-08 9.289e-08 9.304e-08 9.308e-08 9.310e-08 9.323e-08
 heap/trim-64M	alloc_words	exact	36
 heap/trim-64M	wall_time	batch=128	n=20	6.598e-05	6.380e-05 6.403e-05 6.465e-05 6.479e-05 6.484e-05 6.529e-05 6.547e-05 6.554e-05 6.575e-05 6.576e-05 6.621e-05 6.623e-05 6.628e-05 6.643e-05 6.663e-05 6.736e-05 6.753e-05 6.789e-05 6.795e-05 6.915e-05
+replay/metal/params-24	alloc_words	batch=512	n=20	3.607e+00	3.553e+00 3.580e+00 3.594e+00 3.594e+00 3.594e+00 3.594e+00 3.594e+00 3.594e+00 3.594e+00 3.607e+00 3.607e+00 3.607e+00 3.607e+00 3.607e+00 3.621e+00 3.621e+00 3.621e+00 3.621e+00 3.621e+00 3.648e+00
+replay/metal/params-24	wall_time	batch=512	n=20	1.716e-05	1.063e-05 1.098e-05 1.479e-05 1.496e-05 1.529e-05 1.549e-05 1.564e-05 1.587e-05 1.687e-05 1.712e-05 1.720e-05 1.744e-05 1.752e-05 1.753e-05 1.766e-05 1.855e-05 1.918e-05 1.933e-05 2.086e-05 3.276e-05
+replay/metal/pipelined-100	alloc_words	batch=2	n=20	3.740e+02	3.705e+02 3.705e+02 3.705e+02 3.705e+02 3.705e+02 3.705e+02 3.740e+02 3.740e+02 3.740e+02 3.740e+02 3.740e+02 3.740e+02 3.740e+02 3.740e+02 3.775e+02 3.775e+02 3.775e+02 3.775e+02 3.810e+02 3.880e+02
+replay/metal/pipelined-100	wall_time	batch=2	n=20	2.109e-03	1.836e-03 1.842e-03 1.854e-03 1.859e-03 1.914e-03 1.919e-03 1.939e-03 2.019e-03 2.099e-03 2.107e-03 2.110e-03 2.114e-03 2.117e-03 2.161e-03 2.162e-03 2.176e-03 2.254e-03 2.280e-03 2.643e-03 3.104e-03
 replay/polled/params-24	alloc_words	exact	0
 replay/polled/params-24	wall_time	batch=16384	n=20	5.788e-07	5.660e-07 5.718e-07 5.762e-07 5.767e-07 5.773e-07 5.777e-07 5.778e-07 5.780e-07 5.786e-07 5.787e-07 5.790e-07 5.792e-07 5.792e-07 5.797e-07 5.802e-07 5.804e-07 5.808e-07 5.811e-07 5.812e-07 5.822e-07
 replay/polled/pipelined-100	alloc_words	exact	0
@@ -226,6 +257,8 @@ floor/polled/run	alloc_words	exact	0
 floor/polled/run	wall_time	batch=131072	n=20	5.227e-08	5.225e-08 5.225e-08 5.225e-08 5.225e-08 5.226e-08 5.226e-08 5.226e-08 5.226e-08 5.227e-08 5.227e-08 5.227e-08 5.228e-08 5.228e-08 5.228e-08 5.228e-08 5.228e-08 5.230e-08 5.230e-08 5.232e-08 5.250e-08
 floor/polled/two-domains	alloc_words	exact	0
 floor/polled/two-domains	wall_time	batch=16384	n=20	4.458e-07	4.119e-07 4.213e-07 4.262e-07 4.325e-07 4.355e-07 4.387e-07 4.398e-07 4.447e-07 4.452e-07 4.454e-07 4.462e-07 4.462e-07 4.490e-07 4.492e-07 4.516e-07 4.526e-07 4.535e-07 4.592e-07 4.628e-07 4.721e-07
+floor/polled/two-domains-turn	alloc_words	exact	0
+floor/polled/two-domains-turn	wall_time	batch=8192	n=20	6.235e-07	5.626e-07 5.753e-07 5.756e-07 5.779e-07 5.810e-07 5.862e-07 5.887e-07 6.053e-07 6.149e-07 6.229e-07 6.241e-07 6.287e-07 6.302e-07 6.305e-07 6.363e-07 6.444e-07 6.561e-07 6.593e-07 6.678e-07 6.708e-07
 floor/word-load	alloc_words	exact	0
 floor/word-load	wall_time	batch=2097152	n=20	2.954e-09	2.908e-09 2.921e-09 2.928e-09 2.929e-09 2.946e-09 2.946e-09 2.947e-09 2.949e-09 2.950e-09 2.952e-09 2.956e-09 2.962e-09 2.963e-09 2.966e-09 2.966e-09 2.971e-09 2.978e-09 2.981e-09 3.003e-09 3.061e-09
 floor/word-load-24	alloc_words	exact	0
