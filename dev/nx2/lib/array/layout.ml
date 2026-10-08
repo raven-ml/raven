@@ -154,16 +154,20 @@ let finish fn shape strides offset =
 let pp_ints = Shape.pp
 
 (* A C-order layout is canonical, contiguous and distinct, with span [[0, n)]:
-   [contiguous] builds it without [finish]'s general checks. *)
+   [contiguous] builds it without [finish]'s general checks.
+
+   A caller's array is read once: another domain may write it while a
+   constructor runs, so each one copies it on entry and checks and uses the
+   copy. *)
 let contiguous s =
-  let r = Array.length s in
+  let shape = Shape.copy s in
+  let r = Array.length shape in
   Shape.check_rank "Layout.contiguous" r;
-  let n = Shape.numel "Layout.contiguous" s in
-  let shape = Shape.zeros r and strides = Shape.zeros r in
+  let n = Shape.numel "Layout.contiguous" shape in
+  let strides = Shape.zeros r in
   let run = ref 1 in
   for i = r - 1 downto 0 do
-    let d = Array.unsafe_get s i in
-    Array.unsafe_set shape i d;
+    let d = Array.unsafe_get shape i in
     if n > 0 && d > 1 then Array.unsafe_set strides i !run;
     run := !run * d
   done;
@@ -173,6 +177,8 @@ let contiguous s =
   else { shape; strides; offset = 0; flags; lo = 0; hi = n }
 
 let v ?(offset = 0) ~strides s =
+  (* A caller's array is read once. *)
+  let s = Shape.copy s and strides = Shape.copy strides in
   let r = Array.length s in
   Shape.check_rank "Layout.v" r;
   if Array.length strides <> r then
@@ -190,7 +196,7 @@ let v ?(offset = 0) ~strides s =
         "Layout.v: axis %d has extent %d and stride %d: its reach overflows" i d
         st
   done;
-  finish "Layout.v" (Shape.copy s) (Shape.copy strides) offset
+  finish "Layout.v" s strides offset
 
 (* Movements. Each writes the strides of the result, of shape [s'], from [l]'s;
    [finish] makes it canonical. A stride is formed only for an axis of extent
@@ -247,8 +253,19 @@ let reshape l s' =
   done;
   if !runs then Some (moved s' strides (offset l)) else None
 
+(* A movement's arrays are its caller's, read once: [move] copies those it reads
+   after [Move.shape] checks them. Of a [Reshape] or a [Broadcast] it reads
+   only the shape [Move.shape] returns, a copy. *)
+let own : Move.t -> Move.t = function
+  | (Reshape _ | Broadcast _) as m -> m
+  | Permute p -> Permute (Shape.copy p)
+  | Slice rs -> Slice (Array.copy rs)
+  | Window ws -> Window (Array.copy ws)
+
+(* [Move.shape] neither keeps nor writes the shape it is given. *)
 let move m l =
-  let s' = Move.shape m (shape l) in
+  let m = own m in
+  let s' = Move.shape m l.shape in
   let r = rank l and r' = Array.length s' in
   let st = Shape.zeros r' in
   if numel l = 0 || Array.mem 0 s' then Some (moved s' st 0)

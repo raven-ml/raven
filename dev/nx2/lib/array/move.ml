@@ -18,16 +18,20 @@ let pp_ints = Shape.pp
 let numel = Shape.numel
 let check_rank = Shape.check_rank
 
-(* [n] is the number of elements of [s]. *)
+(* [n] is the number of elements of [s]. A caller's array is read once: [s'] is
+   copied before it is checked, since another domain may write it. *)
 let reshape s n s' =
+  let s' = Shape.copy s' in
   check_rank "Move.Reshape" (Array.length s');
   let n' = numel "Move.Reshape" s' in
   if n <> n' then
     invalid_argf "Move.Reshape: %a has %d elements, %a has %d" pp_ints s n
       pp_ints s' n';
-  Shape.copy s'
+  s'
 
+(* A caller's array is read once, as in [reshape]. *)
 let broadcast s s' =
+  let s' = Shape.copy s' in
   let r = Array.length s and r' = Array.length s' in
   check_rank "Move.Broadcast" r';
   ignore (numel "Move.Broadcast" s');
@@ -42,7 +46,7 @@ let broadcast s s' =
          1 nor %d"
         pp_ints s pp_ints s' i d d'
   done;
-  Shape.copy s'
+  s'
 
 (* The axes [p] names are marked in the bits of an int: a rank is at most
    [Shape.max_rank], below an int's width. *)

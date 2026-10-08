@@ -123,12 +123,14 @@ let zero_tail bits n b =
         ~dst:(Buffer.view b ~first:last ~length:1)
   end
 
-let create ?memory d dtype s =
-  let layout = Layout.contiguous s in
+(* A fresh array laid out by [layout], C-contiguous at offset 0. *)
+let alloc ?memory d dtype layout =
   let n = Layout.numel layout in
   let buffer = Buffer.create ?memory d (Dtype.bytes dtype n) in
   zero_tail (Dtype.bits dtype) n buffer;
   { dtype; layout; buffer }
+
+let create ?memory d dtype s = alloc ?memory d dtype (Layout.contiguous s)
 
 (* Movements and bitcasts *)
 
@@ -445,14 +447,18 @@ let to_array (type v s) (a : (v, s) t) : v array =
 
 let of_array (type v s) (dt : (v, s) Dtype.t) s (values : v array) =
   let fn = "Nx_array.of_array" in
-  if Array.length values <> Layout.numel (Layout.contiguous s) then
-    invalid_argf "%s: %d values for shape %a" fn (Array.length values) pp_ints s;
+  (* A caller's array is read once: the C store loop takes [values] to hold an
+     element per index of the layout it writes, counted on the same layout. *)
+  let layout = Layout.contiguous s in
+  if Array.length values <> Layout.numel layout then
+    invalid_argf "%s: %d values for shape %a" fn (Array.length values) pp_ints
+      (Layout.shape layout);
   (* Only integers can fall outside their dtype's range. Iterating over a float
      array would box every element. *)
   (match Dtype.kind dt with
   | Float | Complex | Boolean -> ()
   | Signed | Unsigned -> Array.iter (checked fn dt) values);
-  let a = create Rig.host dt s in
+  let a = alloc Rig.host dt layout in
   let rec write () =
     let e = of_array_from a values in
     if e <> 0 then begin
