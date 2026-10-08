@@ -783,6 +783,8 @@ let fault_name table v =
 
 (* The errors the RM wrote into the channels' notifiers when it stopped them,
    such as for a fault of a channel's own methods. *)
+(* The RM writes an error of the channel group into each channel's notifier: a
+   line for each different one. *)
 let channel_errors d =
   let error q =
     let x = notification d.self q in
@@ -794,7 +796,9 @@ let channel_errors d =
            (fault_name d.error_names code)
            status)
   in
-  List.filter_map error [ 0; 1 ]
+  match List.filter_map error [ 0; 1 ] with
+  | [ a; b ] when a = b -> [ a ]
+  | errors -> errors
 
 (* The faults the multiprocessors or the MMU reported to the RM, one per
    line. *)

@@ -264,13 +264,15 @@ val sleep : t -> seen:int -> still_ms:int -> unit
     {!field-check} as it starts and once a notifier holds an error. It lets
     other domains run while it waits.
 
-    Raises {!Fault} with the report if [g]'s work faulted. If the path bounds
-    progress ([hang_ms] is [Some n]), it also raises {!Fault} once work is
-    outstanding and the word has not moved for [n] milliseconds. That clock runs
-    while a value given is above the word, from the later of the word's last
-    move and the first [sleep] after the device was idle, as [sleep] observes
-    them: an idle device never hangs, and the report may come late but never
-    early. *)
+    Raises {!Fault} with the report if [g]'s work faulted: a line for each error
+    the RM wrote into the channels' notifiers, by its number and name, then one
+    for each fault the multiprocessors or the MMU reported, the MMU's with the
+    faulting address and access. If the path bounds progress ([hang_ms] is
+    [Some n]), it also raises {!Fault} once work is outstanding and the word has
+    not moved for [n] milliseconds. That clock runs while a value given is above
+    the word, from the later of the word's last move and the first [sleep] after
+    the device was idle, as [sleep] observes them: an idle device never hangs,
+    and the report may come late but never early. *)
 
 (** {1:work Work}
 
