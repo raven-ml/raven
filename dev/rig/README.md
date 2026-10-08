@@ -81,8 +81,8 @@ submissions are the same calls on every path.
 The process owns the GPU until it stops the device. An AMD GPU stopped
 cleanly opens again with a partial boot of its compute and copy blocks. One
 a dead process left running is reset by the next open. One booted by its
-kernel driver opens after `Rig_amd_pci.reset i`. An NVIDIA GPU opens again
-after `Rig_nv_pci.reset i`.
+kernel driver opens after `Rig_amd_pci.reset i`. An NVIDIA GPU whose GSP
+still runs, however it was left, is reset by the next open.
 
 ### What has run on hardware
 

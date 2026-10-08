@@ -38,18 +38,17 @@
     itself.
 
     {b The machine.} {!open_} changes nothing on the machine but the GPU it
-    boots. A GPU becomes openable by {!detach}, which unbinds its kernel driver,
-    and a GPU booted before, by its kernel driver or another process, by
-    {!reset}. Both persist after the process; {!attach} gives a GPU back to its
-    kernel driver.
+    boots. A GPU becomes openable by {!detach}, which unbinds its kernel driver
+    until {!attach} gives it back, whatever process makes either.
 
     {b Faults and hangs.} The GSP reports the faults of the GPU's work: a
     channel it stopped, or a fault its MMU queued. The device raises them from
     its waits ({!Rig_nv.sleep}). No other program shares a GPU the process
     boots, so its work never waits for theirs: work whose timeline makes no
     progress for 30 seconds is a hang, which the device raises as a fault. A
-    device lost so, or stopped, is the GPU's last: the GPU then opens again only
-    after {!reset}.
+    device lost so, or stopped, leaves the GSP running, and the GPU's next open
+    resets it; a GPU that no longer answered at the stop opens again only after
+    {!reset}.
 
     {b Memory.} The memory a device gives the host is the GPU's own, through its
     memory BAR, while the BAR reaches it ([`Mapped] of {!Rig_nv.alloc}), and the
@@ -133,16 +132,20 @@ val open_ :
     other open of it succeeds, in this process or another, and {!detach},
     {!attach} and {!reset} refuse it.
 
+    A GPU whose GSP runs, as its kernel driver, a stopped device or a process
+    that died leaves it, is reset as {!reset} does before anything is written to
+    it: the open's take proves that no process holds it.
+
     The result is [Error why], having given back what it took, if [machine] is
     reached through a transport, before anything is taken, if
     [i >= count ~machine ()], saying how many GPUs there are, if a kernel driver
     holds GPU [i] (naming {!detach}), if the process holds it, if its function
     cannot be taken ({!Rig_pci.Function.take}'s reason), if it is no chip this
-    library boots, if it was booted before or lost (naming {!reset}), if an
-    image is missing (naming the directories, and the files found with another
-    digest), if the machine refuses the memory or the addresses the GPU needs,
-    or if a step of the boot fails, naming it. A boot that failed after it
-    started the GPU leaves it to {!reset}.
+    library boots, if this process lost it (naming {!reset}), if its GSP still
+    runs after the open's reset, if an image is missing (naming the directories,
+    and the files found with another digest), if the machine refuses the memory
+    or the addresses the GPU needs, or if a step of the boot fails, naming it. A
+    boot that failed after it started the GPU leaves it to {!reset}.
 
     Raises [Invalid_argument] if [i < 0]. *)
 
@@ -189,8 +192,7 @@ val reset : ?machine:Rig_pci.Machine.t -> int -> (unit, string) result
 (** [reset ~machine i] resets GPU [i] of [machine] (defaults to
     {!Rig_pci.Machine.this}): it takes its function, turns its bus mastering off
     and resets the function ({!Rig_pci.Function.reset}), which ends what an
-    earlier boot left running. A GPU booted before, or lost by this process,
-    opens again after it.
+    earlier boot left running. A GPU this process lost opens again after it.
 
     The result is [Error why] if there is no GPU [i], if this process holds it,
     if its function cannot be taken, or if Linux has no reset for it or it does
@@ -202,8 +204,8 @@ val reset : ?machine:Rig_pci.Machine.t -> int -> (unit, string) result
 
 (* [give_up h fn ~unload] ends a device's use of the GPU [h] holds, whose
    function is [fn]: [unload] stops the GPU's work if it can still be reached,
-   then the GPU is lost. It is [`Stopped] if the GPU no longer masters the bus,
-   [`Unknown] if it cannot tell. *)
+   then the GPU is given back. It is [`Stopped] if the GPU no longer masters the
+   bus, [`Unknown], the GPU lost, if it cannot tell. *)
 val give_up :
   Rig_pci.Gpus.hold ->
   Rig_pci.Function.t ->

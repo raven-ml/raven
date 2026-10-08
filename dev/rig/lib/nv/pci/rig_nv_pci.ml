@@ -202,15 +202,20 @@ let check g gsp () =
   Option.iter (fun why -> raise (Rig_nv.Fault why)) why
 
 (* The GSP stops every channel, unless the GPU cannot be reached, which an
-   unload would wait for in vain; then the hold is lost, which turns the GPU's
-   bus mastering off, so it reaches system memory no more whatever its channels
-   do. Whether that write reached the GPU is known only if the GPU answered
-   before it. The GPU opens again after a reset: the GSP runs on. *)
+   unload would wait for in vain. Giving the hold back turns the GPU's bus
+   mastering off, so it reaches system memory no more whatever its channels do.
+   Whether that write reached the GPU is known only if the GPU answered before
+   it; one that did not is lost. The GSP runs on, and the next open resets
+   it. *)
 let give_up hold fn ~unload =
-  let failed = Function.failed fn in
-  if failed = None then unload ();
-  Gpus.lose hold;
-  match failed with None -> `Stopped | Some _ -> `Unknown
+  match Function.failed fn with
+  | None ->
+      unload ();
+      Gpus.release hold;
+      `Stopped
+  | Some _ ->
+      Gpus.lose hold;
+      `Unknown
 
 let stop g gsp hold () =
   Mutex.protect opened_lock (fun () ->
@@ -233,14 +238,18 @@ let wpr2 c =
     (Chip.get c Defs.nv_pfb_pri_mmu_wpr2_addr_lo)
   lsl 12
 
-let started c fn ~index =
-  if Chip.booted c then
-    Error
-      (strf
-         "%s was booted before, by its kernel driver or another process; \
-          Rig_nv_pci.reset %d resets it"
-         (Function.bus fn) index)
-  else Ok ()
+(* A GSP that runs, booted by the GPU's kernel driver or a process, is reset
+   before anything is written: the take proves no live process holds the GPU,
+   and no boot continues from another's GSP. *)
+let started hold c fn =
+  if not (Chip.booted c) then Ok ()
+  else
+    let* () = Gpus.renew hold in
+    if not (Chip.booted c) then Ok ()
+    else
+      Error
+        (strf "%s still runs the GSP's firmware after its reset"
+           (Function.bus fn))
 
 let device g ~gsp ~hold ~tables (c : Chip.t) =
   let* () =
@@ -302,13 +311,14 @@ let start fn (c : Chip.t) (fw : Images.t) =
   let* gsp = Gsp.boot { chip = c; memory; fn; tables; bar; space } fw in
   Ok (gsp, tables)
 
-(* A failure from the first write on, an [Error] or any exception, loses the
-   GPU; one after the GSP booted unloads it first, and gives its memory back
-   once the GPU masters the bus no more. A [Fault] is answered as [Error], any
-   other exception passes through. *)
+(* A failure in [start], an [Error] or any exception, loses the GPU: it may have
+   stopped before WPR2 rose, in a state the next open would not see. One after
+   the GSP booted gives the GPU up as a stop does, and its memory back once the
+   GPU masters the bus no more. A [Fault] is answered as [Error], any other
+   exception passes through. *)
 let boot ~firmware ~index machine hold fn =
   let* c = Chip.of_function fn in
-  let* () = started c fn ~index in
+  let* () = started hold c fn in
   let* fw = Images.read c.family firmware in
   let* () =
     Machine.reserve machine ~base:(Space.base space) (Space.length space)
