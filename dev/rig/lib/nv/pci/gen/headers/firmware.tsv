@@ -1,0 +1,8 @@
+# path	BLAKE2b-256	URL, of linux-firmware at 0a6871b19abf5d6e024b5d208b101ae53e7fa0de
+nvidia/ad102/gsp/booter_load-570.144.bin	3d70b4ad5b9e27983c645019a2dd30f300e0ce869120004eac5357e1e2fe7b40	https://gitlab.com/kernel-firmware/linux-firmware/-/raw/0a6871b19abf5d6e024b5d208b101ae53e7fa0de/nvidia/ad102/gsp/booter_load-570.144.bin
+nvidia/ad102/gsp/bootloader-570.144.bin	a83162120a5e1b6d8a4ef8f61bd4492423da1bd5aa051112c427148bc3e48b31	https://gitlab.com/kernel-firmware/linux-firmware/-/raw/0a6871b19abf5d6e024b5d208b101ae53e7fa0de/nvidia/ad102/gsp/bootloader-570.144.bin
+nvidia/ga102/gsp/booter_load-570.144.bin	5e8b7daacf8bf6bc6a1fb85f556230f584fb06c045b68ed3342caada357f7ea3	https://gitlab.com/kernel-firmware/linux-firmware/-/raw/0a6871b19abf5d6e024b5d208b101ae53e7fa0de/nvidia/ga102/gsp/booter_load-570.144.bin
+nvidia/ga102/gsp/bootloader-570.144.bin	ae4ca5499421f1eb508f2378a242eecd79dcfc6cccb1d038a2c3a65a1d612d22	https://gitlab.com/kernel-firmware/linux-firmware/-/raw/0a6871b19abf5d6e024b5d208b101ae53e7fa0de/nvidia/ga102/gsp/bootloader-570.144.bin
+nvidia/ga102/gsp/gsp-570.144.bin	877edf9f772d262d1ea72b9a6ebe52643e60a37c1d312f6456ebbf7f03feb03f	https://gitlab.com/kernel-firmware/linux-firmware/-/raw/0a6871b19abf5d6e024b5d208b101ae53e7fa0de/nvidia/ga102/gsp/gsp-570.144.bin
+nvidia/gb202/gsp/bootloader-570.144.bin	9cba35e93b2a6776fe68319a0bb1486bccb6a2e493dcf3c57ddab2686b2c0426	https://gitlab.com/kernel-firmware/linux-firmware/-/raw/0a6871b19abf5d6e024b5d208b101ae53e7fa0de/nvidia/gb202/gsp/bootloader-570.144.bin
+nvidia/gb202/gsp/fmc-570.144.bin	eeca0ba4232118ee41adaa2d8f5dc921f8ee23131cfdc5ebeb0fbf11885f6d46	https://gitlab.com/kernel-firmware/linux-firmware/-/raw/0a6871b19abf5d6e024b5d208b101ae53e7fa0de/nvidia/gb202/gsp/fmc-570.144.bin

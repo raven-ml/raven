@@ -439,7 +439,8 @@
 (package
  (name rig)
  (dir dev/rig)
- (license "ISC AND MIT AND NCSA AND Apache-2.0 WITH LLVM-exception")
+ (license
+  "ISC AND MIT AND NCSA AND Apache-2.0 WITH LLVM-exception AND LicenseRef-amdgpu-firmware")
  (synopsis "Compute devices for OCaml")
  (description
   "Rig drives the host's CPU, Metal, CUDA, AMD and NVIDIA GPUs, files and remote machines as devices: their memory, the order of work across them, and the work itself. AMD and NVIDIA GPUs run through their kernel drivers or directly over PCI.")

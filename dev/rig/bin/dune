@@ -15,6 +15,7 @@
   rig.amd
   rig.amd.amdgpu
   rig.amd.pci
+  rig.pci
   unix
   threads.posix)
  (foreign_stubs
@@ -25,3 +26,16 @@
  (with-stdout-to
   version.ml
   (echo "let v = \"%{version:rig}\"\n")))
+
+; Each driver-less driver's list of firmware images, the one its gen.py
+; makes its pins from.
+
+(rule
+ (with-stdout-to
+  images.ml
+  (progn
+   (echo "let amd = {|")
+   (cat %{dep:../lib/amd/pci/gen/headers/firmware.tsv})
+   (echo "|}\n\nlet nv = {|")
+   (cat %{dep:../lib/nv/pci/gen/headers/firmware.tsv})
+   (echo "|}\n"))))

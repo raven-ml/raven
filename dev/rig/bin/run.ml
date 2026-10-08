@@ -35,6 +35,7 @@ type machine = {
   name : string;  (** As written in [--on]. *)
   host : string;  (** For ssh: the name, its brackets taken off. *)
   address : string;  (** Where its agent listens, resolved here. *)
+  command : string;  (** What ssh runs there: the machine's half. *)
 }
 
 (* The host name ssh reaches [host] at: [ssh -G host]'s. [-T] keeps ssh from
@@ -72,7 +73,23 @@ let binds a =
       | () -> true
       | exception Unix.Unix_error _ -> false)
 
-let machines ~misuse names =
+(* Sessions: [ssh M exec "$SHELL" -lc 'exec rig agent --firmware DIR...
+   ADDRESS:0'], a machine's half, started by the user's login shell so that the
+   user's profile can put rig on PATH. Each shell execs the next, so the
+   session's process is the half and ends with it. Each word is quoted for the
+   shell that reads it: sshd's, then the login shell. *)
+let command firmware address =
+  let options =
+    List.concat_map (fun d -> [ "--firmware"; Filename.quote d ]) firmware
+  in
+  let agent =
+    String.concat " "
+      (("exec rig agent" :: options)
+      @ [ Filename.quote (Address.with_port address 0) ])
+  in
+  strf "exec \"${SHELL:-/bin/sh}\" -lc %s" (Filename.quote agent)
+
+let machines ~misuse ~firmware names =
   let found name =
     let host = Result.get_ok (Address.machine name) in
     match hostname host with
@@ -89,7 +106,8 @@ let machines ~misuse names =
   let machine (name, host, h) =
     match addresses h with
     | Unix.ADDR_INET (a, _) :: _ ->
-        { name; host; address = Unix.string_of_inet_addr a }
+        let address = Unix.string_of_inet_addr a in
+        { name; host; address; command = command firmware address }
     | _ ->
         sayf "%s: %s does not resolve here" name h;
         exit 123
@@ -106,11 +124,6 @@ let key () =
 
 let silent m = strf "%s does not answer; waiting for it" m.name
 let was c = if String.starts_with ~prefix:"killed" c then "was " ^ c else c
-
-(* Sessions: [ssh M exec "$SHELL" -lc 'exec rig agent "ADDRESS:0"'], a machine's
-   half, started by the user's login shell so that the user's profile can put
-   rig on PATH. Each shell execs the next, so the session's process is the half
-   and ends with it. *)
 
 type session = {
   m : machine;
@@ -131,11 +144,9 @@ let session ~quiet key m =
   let in_r, in_w = Proc.pipe () in
   let out_r, out_w = Proc.pipe () in
   let err_r, err_w = Proc.pipe () in
-  let agent = strf "exec rig agent \"%s\"" (Address.with_port m.address 0) in
   let timeout = strf "ConnectTimeout=%.0f" retry_s in
-  let command = strf "exec \"${SHELL:-/bin/sh}\" -lc '%s'" agent in
   let args =
-    [| "ssh"; "-T"; "-o"; "BatchMode=yes"; "-o"; timeout; m.host; command |]
+    [| "ssh"; "-T"; "-o"; "BatchMode=yes"; "-o"; timeout; m.host; m.command |]
   in
   let ssh =
     Fun.protect
@@ -528,11 +539,11 @@ let attempt ~first ~count ~waited machines prog args =
 
 (* Failures in a row count toward [restarts]: those before the program started
    the job whatever their causes, those after it with one cause. *)
-let run ~misuse names prog args =
+let run ~misuse ~firmware names prog args =
   (* Before ssh -G runs: an ignored SIGCHLD would have it reaped by the
      kernel. *)
   Proc.signals [ Sys.sigint; Sys.sigterm; Sys.sighup ];
-  let machines = machines ~misuse names in
+  let machines = machines ~misuse ~firmware names in
   let rec loop ~count ~last ~waited =
     let f = attempt ~first:(count = 0) ~count ~waited machines prog args in
     sayf "job failed: %s" f.cause;

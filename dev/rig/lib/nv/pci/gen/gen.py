@@ -18,14 +18,16 @@ the definitions this script reads, verbatim and in the header's order, with
 the definitions they depend on; a few small headers are kept whole, under
 the repository's MIT notice where they carry none. They come from NVIDIA's
 open-gpu-kernel-modules at release 570.144, the GSP firmware's release, and
-from Linux's nouveau driver. firmware.json holds the
-linux-firmware tree the firmware images come from and the BLAKE2b-256 digest
-of each, which fetch.py downloads and checks. --excerpt makes the excerpts and
-firmware.json from the upstream files, each pinned in pins.json by URL and
-SHA-256 and checked against its pin; downloads are kept in --cache, and
---pin records the digests of files not yet pinned. Generating reads the
-excerpts and firmware.json alone, offline. --check generates into memory
-and fails if a committed file differs.
+from Linux's nouveau driver. headers/firmware.tsv lists the firmware
+images of linux-firmware at FIRMWARE_COMMIT: each image's path, BLAKE2b-256
+digest and URL; the page of rig firmware, in dev/rig/bin/help.ml, names
+FIRMWARE_COMMIT too. --excerpt makes the excerpts and firmware.tsv from the
+upstream files, each pinned in pins.json by URL and SHA-256 and checked
+against its pin; downloads are kept in --cache, and --pin records the
+digests of files not yet pinned. Generating reads the excerpts and
+firmware.tsv alone, offline, and requires firmware.tsv to list exactly the
+images of FIRMWARE. --check generates into memory and fails if a committed
+file differs.
 
 Text is read and written as latin-1, one character per byte, so every byte
 of a header round-trips into its excerpt as upstream wrote it.
@@ -48,7 +50,7 @@ import urllib.request
 HERE = pathlib.Path(__file__).resolve().parent
 HEADERS = HERE / "headers"
 PINS = HERE / "pins.json"
-FIRMWARE_DIGESTS = HERE / "firmware.json"
+FIRMWARE_LIST = HEADERS / "firmware.tsv"
 OUT = HERE.parent / "defs.ml"
 
 KERNEL = "https://raw.githubusercontent.com/NVIDIA/open-gpu-kernel-modules/570.144/"
@@ -1126,7 +1128,17 @@ def generate():
         out.append("end")
         out.append("")
 
-    digests = json.loads(FIRMWARE_DIGESTS.read_text())["images"]
+    digests = {}
+    for row in FIRMWARE_LIST.read_text().splitlines():
+        if row.startswith("#"):
+            continue
+        path, digest, url = row.split("\t")
+        if url != ORIGIN + path:
+            sys.exit(f"{path}: URL {url} is not in the pinned tree")
+        digests[path] = digest
+    want = {p for ps in FIRMWARE.values() for p in ps}
+    if set(digests) != want:
+        sys.exit(f"firmware.tsv: extra {sorted(set(digests) - want)}, missing {sorted(want - set(digests))}")
     out.append("(* The firmware images of each family, GSP first, and every image's")
     out.append("   BLAKE2b-256 digest. *)")
     for f, paths in FIRMWARE.items():
@@ -1170,8 +1182,10 @@ def main():
         files = {HEADERS / h: t for h, t in excerpts(texts).items()}
         files.update({HEADERS / h: whole(url, get(url).decode("latin-1")) for h, url in WHOLE.items()})
         images = sorted({p for ps in FIRMWARE.values() for p in ps})
-        digests = {p: hashlib.blake2b(get(ORIGIN + p), digest_size=32).hexdigest() for p in images}
-        files[FIRMWARE_DIGESTS] = json.dumps({"origin": ORIGIN, "images": digests}, indent=1) + "\n"
+        rows = ["# path\tBLAKE2b-256\tURL, of linux-firmware at " + FIRMWARE_COMMIT]
+        for p in images:
+            rows.append(f"{p}\t{hashlib.blake2b(get(ORIGIN + p), digest_size=32).hexdigest()}\t{ORIGIN + p}")
+        files[FIRMWARE_LIST] = "\n".join(rows) + "\n"
         if a.pin:
             files[PINS] = json.dumps(dict(sorted(pins.items())), indent=1) + "\n"
     else:

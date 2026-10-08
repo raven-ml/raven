@@ -10,6 +10,8 @@
   %{bin:rig}
   support/env.sh
   support/ssh
+  support/curl
+  (source_tree fixtures)
   support/await
   support/gone
   support/ctl.exe

@@ -1,0 +1,26 @@
+#!/bin/sh
+#---------------------------------------------------------------------------
+#  Copyright (c) 2026 The Raven authors. All rights reserved.
+#  SPDX-License-Identifier: ISC
+#---------------------------------------------------------------------------
+
+# curl for the tests, first on PATH. It plays linux-firmware's server from
+# the directory served of the current directory.
+#
+# [curl [OPTION...] URL] writes the file served/PATH on its standard
+# output, PATH the part of URL after the tree's commit, then exits with the
+# status in served/PATH.status if that file exists, as curl does when a
+# transfer breaks. Without served/PATH it fails as [curl -fsS] does on a
+# 404.
+
+for url; do :; done
+path=${url#*/-/raw/*/}
+
+if [ ! -f "served/$path" ]; then
+  echo "curl: (22) The requested URL returned error: 404" >&2
+  exit 22
+fi
+cat "served/$path"
+if [ -f "served/$path.status" ]; then
+  exit "$(cat "served/$path.status")"
+fi

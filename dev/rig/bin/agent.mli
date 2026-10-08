@@ -12,10 +12,13 @@
     input ends. The half runs one thread; the agent adds one that watches its
     input. *)
 
-val half : string -> 'a
-(** [half address] is the half of the agent at [address], [HOST:PORT] as
-    written. It exits: 0 once the job closed, 123 otherwise. *)
+val half : firmware:string list -> string -> 'a
+(** [half ~firmware address] is the half of the agent at [address], [HOST:PORT]
+    as written, which passes [firmware] on to its agent. It exits: 0 once the
+    job closed, 123 otherwise. *)
 
-val agent : string -> int -> 'a
-(** [agent host port] is the agent listening at [host] and [port]. It exits: 0
-    once the job closed, 123 otherwise. *)
+val agent : firmware:string list -> string -> int -> 'a
+(** [agent ~firmware host port] is the agent listening at [host] and [port]. Its
+    driver-less paths read firmware images from the directories [firmware], in
+    order, then from [/lib/firmware]. It exits: 0 once the job closed, 123
+    otherwise. *)

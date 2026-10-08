@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** The pages of [rig --help], [rig run --help] and [rig agent --help]. *)
+(** The pages of [rig --help] and of each command's [--help]. *)
 
 val rig : string
 (** [rig] is [rig]'s page. *)
@@ -13,3 +13,6 @@ val run : string
 
 val agent : string
 (** [agent] is [rig agent]'s page. *)
+
+val firmware : string
+(** [firmware] is [rig firmware]'s page. *)

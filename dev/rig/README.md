@@ -59,13 +59,19 @@ submissions are the same calls on every path.
   `Rig_nv_pci.detach i` unbind it and size its memory BAR; `attach i` gives it
   back. Both need `CAP_SYS_ADMIN` and persist after the process.
 - **The firmware.** Each image is pinned by its BLAKE2b-256 digest to
-  linux-firmware commit `0a6871b1`. rig downloads nothing; two scripts fill a
-  directory with the pinned images:
+  linux-firmware commit `0a6871b1`. The libraries download nothing; the `rig`
+  executable fills a directory of your own with the pinned images, downloading
+  with `curl`. Leave `/lib/firmware` to the kernel's drivers: replacing an image
+  there changes what they load.
 
   ```bash
-  uv run dev/rig/lib/amd/pci/gen/fetch.py DIR   # for rig.amd.pci
-  uv run dev/rig/lib/nv/pci/gen/fetch.py DIR    # for rig.nv.pci
+  rig firmware amd ~/rig-firmware   # for rig.amd.pci
+  rig firmware nv ~/rig-firmware    # for rig.nv.pci
   ```
+
+  A program names the directory to the opener, `~firmware:[ dir ]`. A job's
+  agents take it from `rig run --firmware rig-firmware`, a path on each machine
+  relative to the user's home there.
 
   The R9700, for one, boots with `psp_14_0_3_sos.bin`, `smu_14_0_3.bin`,
   `sdma_7_0_1.bin` and `gc_12_0_1_{pfp,me,mec,imu,rlc}.bin`. NVIDIA GPUs boot

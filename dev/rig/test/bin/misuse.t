@@ -4,17 +4,17 @@ Nothing is started.
 
   $ . support/env.sh
   $ rig
-  rig: no command; the commands are run and agent
+  rig: no command; the commands are run, agent and firmware
   Try 'rig --help'.
   [124]
 
   $ rig launch
-  rig: unknown command 'launch'; the commands are run and agent
+  rig: unknown command 'launch'; the commands are run, agent and firmware
   Try 'rig --help'.
   [124]
 
   $ rig --on a,b -- true
-  rig: unknown command '--on'; the commands are run and agent
+  rig: unknown command '--on'; the commands are run, agent and firmware
   Try 'rig --help'.
   [124]
 
@@ -194,3 +194,68 @@ run into the port's.
   rig: the port of '[::1]:http' is no number from 0 to 65535
   Try 'rig agent --help'.
   [124]
+
+--firmware needs a directory, in rig agent as in rig run.
+
+  $ rig agent --firmware
+  rig: --firmware needs its directory
+  Try 'rig agent --help'.
+  [124]
+
+  $ rig agent --firmware '' 127.0.0.1:0
+  rig: --firmware needs its directory
+  Try 'rig agent --help'.
+  [124]
+
+  $ rig agent --firmware= 127.0.0.1:0
+  rig: --firmware needs its directory
+  Try 'rig agent --help'.
+  [124]
+
+  $ rig run --on a,b --firmware
+  rig: --firmware needs its directory
+  Try 'rig run --help'.
+  [124]
+
+rig firmware needs a driver, amd or nv, and one directory.
+
+  $ rig firmware
+  rig: the driver is missing; the drivers are amd and nv
+  Try 'rig firmware --help'.
+  [124]
+
+  $ rig firmware intel fw
+  rig: unknown driver 'intel'; the drivers are amd and nv
+  Try 'rig firmware --help'.
+  [124]
+
+  $ rig firmware amd
+  rig: the directory is missing
+  Try 'rig firmware --help'.
+  [124]
+
+  $ rig firmware amd ''
+  rig: the directory is empty
+  Try 'rig firmware --help'.
+  [124]
+
+  $ rig firmware amd fw fw2
+  rig: unexpected argument 'fw2'
+  Try 'rig firmware --help'.
+  [124]
+
+  $ rig firmware --force amd fw
+  rig: unknown option '--force'
+  Try 'rig firmware --help'.
+  [124]
+
+  $ rig firmware amd -x
+  rig: unknown option '-x'
+  Try 'rig firmware --help'.
+  [124]
+
+Nothing was written.
+
+  $ ls
+  fixtures
+  support

@@ -18,8 +18,10 @@ each is a header's licence notice and the lines this script reads, verbatim
 and in the header's order (a #define, an enumeration, a struct's definition).
 They are all under the MIT licence, whose notice defs.ml carries.
 headers/firmware.tsv lists the pinned firmware images of linux-firmware at
-FIRMWARE_COMMIT: each image's path, BLAKE2b-256 digest and URL. --excerpt
-makes it from the images, each checked against its SHA-256 pin.
+FIRMWARE_COMMIT: each image's path, BLAKE2b-256 digest and URL, exactly the
+images of IMAGES; the page of rig firmware, in dev/rig/bin/help.ml, names
+FIRMWARE_COMMIT too. --excerpt makes it from the images, each checked
+against its SHA-256 pin.
 SOURCES names the header each comes from, at its commit. --excerpt makes them
 from the upstream headers, each pinned in pins.json by URL and SHA-256 and
 checked against its pin; downloads are kept in --cache, and --pin records the
@@ -990,14 +992,19 @@ def generate(h):
     out.append(f"(* The pinned images of linux-firmware at {FIRMWARE_COMMIT[:12]}: each image's path,")
     out.append("   and its BLAKE2b-256 digest. *)")
     out.append("let pinned = [")
+    paths = set()
     for row in h[FIRMWARE].splitlines():
         if row.startswith("#"):
             continue
         path, digest, url = row.split("\t")
         if url != FIRMWARE_URL + path:
             sys.exit(f"{path}: URL {url} is not in the pinned tree")
+        paths.add(path)
         out.append(f"  ({json.dumps(path)}, {json.dumps(digest)});")
     out.append("]")
+    want = {"amdgpu/" + n for n in IMAGES}
+    if paths != want:
+        sys.exit(f"{FIRMWARE}: extra {sorted(paths - want)}, missing {sorted(want - paths)}")
     return "\n".join(out) + "\n"
 
 # Command line

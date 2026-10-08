@@ -8,8 +8,10 @@ let rig =
        rig - run a job on several machines
 
 SYNOPSIS
-       rig run --on MACHINE,MACHINE[,MACHINE...] -- PROGRAM [ARG...]
-       rig agent HOST:PORT
+       rig run [--firmware DIR]... --on MACHINE,MACHINE[,MACHINE...]
+               -- PROGRAM [ARG...]
+       rig agent [--firmware DIR]... HOST:PORT
+       rig firmware amd|nv DIR
        rig --version
 
 DESCRIPTION
@@ -21,6 +23,9 @@ DESCRIPTION
        rig run starts a job and starts it again when it fails. rig agent
        is the agent; rig run starts one on each other machine over ssh.
 
+       rig firmware fetches the firmware that GPUs opened with no kernel
+       driver boot with.
+
        rig runs on Linux and macOS.
 
 COMMANDS
@@ -28,6 +33,10 @@ COMMANDS
               fails.
 
        agent  Serve one job on this machine.
+
+       firmware
+              Fill a directory with the firmware images of GPUs opened with
+              no kernel driver.
 
        'rig COMMAND --help' prints a command's page.
 
@@ -53,7 +62,8 @@ let run =
        fails
 
 SYNOPSIS
-       rig run --on MACHINE,MACHINE[,MACHINE...] -- PROGRAM [ARG...]
+       rig run [--firmware DIR]... --on MACHINE,MACHINE[,MACHINE...]
+               -- PROGRAM [ARG...]
 
 DESCRIPTION
        rig run runs PROGRAM on this machine, the first of --on, and an
@@ -90,6 +100,8 @@ MACHINES
 
            ssh MACHINE exec "$SHELL" -lc 'exec rig agent ADDRESS:0'
 
+       with rig run's --firmware options before ADDRESS:0.
+
        ssh must reach every machine without a password or a question, so
        each machine's host key must be known, and the login shell must
        find rig on its PATH, which ~/.profile can extend.
@@ -112,6 +124,12 @@ ARGUMENTS
 
        PROGRAM [ARG...]
            The controller, run with its arguments, found through PATH.
+
+OPTIONS
+       --firmware DIR
+           Passed to the agent on each other machine; DIR is a path there,
+           relative to the user's home. See 'rig agent --help'. Repeat it
+           to pass several, in order.
 
 EXIT STATUS
        rig run exits with the program's status once the program closed the
@@ -194,6 +212,10 @@ EXAMPLES
        rig run --on h100-a,h100-b -- ./finetune.exe --config 70b.toml
            Run finetune.exe on h100-a, with an agent on h100-b.
 
+       rig run --firmware rig-firmware --on a,b -- ./train.exe
+           Run a job whose agent on b boots its GPUs from b's
+           ~/rig-firmware.
+
 SEE ALSO
        ssh(1), ssh_config(5)
 |}
@@ -203,7 +225,7 @@ let agent =
        rig agent - serve one job on this machine
 
 SYNOPSIS
-       rig agent HOST:PORT
+       rig agent [--firmware DIR]... HOST:PORT
 
 DESCRIPTION
        rig agent lets one job's controller use this machine's devices: its
@@ -224,9 +246,16 @@ DESCRIPTION
        One agent of a user runs on a machine at a time. An agent started
        while another runs waits for it to end.
 
-       NV-PCI and AMD-PCI open the GPUs no kernel driver holds, booting
-       them with the firmware in /lib/firmware. rig agent detaches no GPU
-       from its driver.
+       NV-PCI and AMD-PCI open the GPUs no kernel driver holds. Each image
+       they boot with is the first file with its pinned digest in the
+       directories of --firmware, in order, then in /lib/firmware. 'rig
+       firmware' fills such a directory. rig agent detaches no GPU from
+       its driver.
+
+OPTIONS
+       --firmware DIR
+           A directory of firmware images for NV-PCI and AMD-PCI, searched
+           before /lib/firmware. Repeat it to search several, in order.
 
 EXIT STATUS
        0      the job ended in order.
@@ -282,4 +311,93 @@ EXAMPLES
 
 SEE ALSO
        rig(1), ssh(1)
+|}
+
+let firmware =
+  {|NAME
+       rig firmware - fill a directory with the firmware images of GPUs
+       opened with no kernel driver
+
+SYNOPSIS
+       rig firmware amd DIR
+       rig firmware nv DIR
+
+DESCRIPTION
+       AMD-PCI and NV-PCI, the paths that open a GPU with no kernel driver,
+       boot it with firmware images of linux-firmware, each pinned by its
+       BLAKE2b-256 digest: they load no file with another digest. rig
+       firmware puts the images of one of them in DIR, each under its path
+       in linux-firmware, amdgpu/smu_14_0_3.bin for one, where a program
+       that takes DIR as a firmware directory finds them.
+
+       An image DIR holds with its pinned digest is kept. Any other is
+       downloaded with curl from linux-firmware's tree at commit
+       0a6871b19abf5d6e024b5d208b101ae53e7fa0de, and checked: a download
+       with another digest is refused, and nothing is written for it. An
+       image is written to PATH.part beside its place, flushed to the
+       disk, then renamed into it, so DIR never holds part of one, even
+       after a crash. A file at its place with another digest is replaced.
+
+       An image that fails does not stop the others.
+
+       Fill a directory of your own. The kernel's drivers load images from
+       /lib/firmware, and replacing one there changes what they load.
+
+ARGUMENTS
+       amd
+           The images of AMD-PCI, which Rig_amd_pci.open_ loads.
+
+       nv
+           The images of NV-PCI, which Rig_nv_pci.open_ loads.
+
+       DIR
+           The firmware directory, created if missing.
+
+EXIT STATUS
+       0      every image was kept or fetched.
+
+       123    an image could not be fetched or written, or curl could not
+              run.
+
+       124    on misuse of the command line.
+
+       125    on a bug in rig.
+
+ENVIRONMENT
+       PATH
+           Where curl is found.
+
+OUTPUT
+       rig firmware writes a line per image on its standard output, in the
+       order of their paths:
+
+       kept PATH
+           DIR held the image.
+
+       fetched PATH
+           The image was downloaded and written.
+
+       It writes these lines on its standard error, after any that curl
+       writes there:
+
+       rig: PATH: WHY
+           The image could not be fetched or written.
+
+       rig: curl is not on PATH; rig firmware downloads with it
+       rig: curl: WHY
+           curl could not run. No further image was fetched.
+
+EXAMPLES
+       rig firmware amd ~/rig-firmware
+           Fill ~/rig-firmware with AMD-PCI's images.
+
+       rig run --firmware rig-firmware --on a,b -- ./train.exe
+           Run a job whose agent on b boots its GPUs from b's
+           ~/rig-firmware.
+
+       rig firmware amd firmware
+           Fill ./firmware, for Rig_amd_pci.open_ ~firmware:["firmware"].
+
+SEE ALSO
+       rig(1), curl(1)
 |}

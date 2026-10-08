@@ -5,8 +5,9 @@
 
 let strf = Printf.sprintf
 
-(* The directories driver-less paths read GPU firmware from. *)
-let firmware = [ "/lib/firmware" ]
+(* Where driver-less paths read GPU firmware after the directories of
+   --firmware. *)
+let system_firmware = "/lib/firmware"
 let say l = Proc.write Unix.stdout (Line.to_string l)
 
 (* The job's key: the first line of [fd], read a byte at a time so that nothing
@@ -36,7 +37,7 @@ let fail why =
 
 (* The half *)
 
-let half address =
+let half ~firmware address =
   say (Line.Agent Version.v);
   let key =
     match read_key Unix.stdin with Ok k -> k | Error why -> fail why
@@ -45,9 +46,10 @@ let half address =
   let key_r, key_w = Proc.pipe () and out_r, out_w = Proc.pipe () in
   let env = Array.append (Unix.environment ()) [| "RIG_REMOTE_REPORT=1" |] in
   let exe = Sys.executable_name in
+  let options = List.concat_map (fun d -> [ "--firmware"; d ]) firmware in
   let pid =
     Proc.spawn ~env exe
-      [| exe; "agent"; address |]
+      (Array.of_list ((exe :: "agent" :: options) @ [ address ]))
       ~stdin:key_r ~stdout:out_w ~stderr:Unix.stderr
   in
   Unix.close key_r;
@@ -146,7 +148,8 @@ let gpus (type a) (module D : Rig.Driver with type t = a) count name open_ () =
   in
   go [] 0
 
-let kinds =
+let kinds firmware =
+  let firmware = firmware @ [ system_firmware ] in
   [
     ( "METAL",
       gpus
@@ -177,7 +180,7 @@ let kinds =
         (fun i -> Rig_amd_pci.open_ ~firmware i) );
   ]
 
-let agent host port =
+let agent ~firmware host port =
   let key =
     match Result.bind (read_key Unix.stdin) Rig_remote.key with
     | Ok k -> k
@@ -191,4 +194,6 @@ let agent host port =
     | Error why -> fail why
   in
   say (Line.Listening (Address.with_port host (Rig_remote.port a)));
-  match Rig_remote.serve a kinds with Ok () -> exit 0 | Error _ -> exit 123
+  match Rig_remote.serve a (kinds firmware) with
+  | Ok () -> exit 0
+  | Error _ -> exit 123

@@ -115,6 +115,27 @@ does not disturb the session: rig skips what comes before its greeting.
   attempt 1
   copied 1
 
+rig run passes each --firmware to every agent, in order, each directory
+one argument whatever its characters. Here c's rig records its
+arguments.
+
+  $ cat >machines/c/bin/rig <<EOS
+  > #!/bin/sh
+  > printf '%s\n' "\$@" >$PWD/args
+  > exec $(command -v rig) "\$@"
+  > EOS
+  $ rm attempts
+  $ rig run --firmware 'd i r' --firmware="it's \$HOME \"x\"" --on a,c -- ./support/ctl.exe copy
+  attempt 1
+  copied 1
+  $ cat args
+  agent
+  --firmware
+  d i r
+  --firmware
+  it's $HOME "x"
+  127.0.0.1:0
+
 After the greeting, a line that is none of an agent's breaks the session,
 quoted.
 
