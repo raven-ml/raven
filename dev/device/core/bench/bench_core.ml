@@ -377,17 +377,95 @@ let floor_rows =
      ]
     @ memory_floor_rows)
 
+(* GPUs *)
+
+(* A GPU's submits of no work through the core, beside the same submits through
+   its driver's C entries alone, which spin on the word: [empty] waits for each,
+   [cost] waits every [drain] submits. Each case opens its GPU in its own
+   worker, so that no process forks after a vendor library started. *)
+let gpu_rows (type a) (module D : C.Driver with type t = a) v ~name open_ =
+  let get = function Ok x -> x | Error why -> failwith why in
+  let core () =
+    let g = get (C.open_ (module D) ~name open_) in
+    (g, Sub.make ~reads:0 ~writes:0 ~waits:0 g [||], ref 0)
+  in
+  let alone () =
+    let d = get (open_ ()) in
+    (d, floor_new (D.self d) D.room_entry D.submit_entry 0n, ref 0)
+  in
+  let release (_, f, v) =
+    incr v;
+    floor_submit f 0
+  in
+  let spin (d, _, v) =
+    while D.signaled d < !v do
+      Domain.cpu_relax ()
+    done
+  in
+  [
+    Thumper.group (strf "submit/%s" v)
+      [
+        row "empty" core (fun (g, s, _) ->
+            C.wait g (C.Point.value (C.submit s)));
+        row "cost" core (fun (g, s, n) ->
+            let p = C.submit s in
+            incr n;
+            if !n mod drain = 0 then C.wait g (C.Point.value p));
+      ];
+    Thumper.group (strf "floor/%s" v)
+      [
+        row "release" alone (fun x ->
+            release x;
+            spin x);
+        row "cost" alone (fun ((_, _, v) as x) ->
+            release x;
+            if !v mod drain = 0 then spin x);
+      ];
+  ]
+
+let gpus =
+  List.concat
+    [
+      (if Sys.file_exists "/System/Library/Frameworks/Metal.framework" then
+         gpu_rows
+           (module Device_metal)
+           "metal"
+           ~name:(Device_metal.device_name 0)
+           (fun () -> Device_metal.open_ 0)
+       else []);
+      (if Sys.file_exists "/dev/nvidiactl" then
+         gpu_rows
+           (module Device_cuda)
+           "cuda"
+           ~name:(Device_cuda.device_name 0)
+           (fun () -> Device_cuda.open_ 0)
+         @ gpu_rows
+             (module Device_nv)
+             "nv"
+             ~name:(Device_nv_nvidia.device_name 0)
+             (fun () -> Device_nv_nvidia.open_ 0)
+       else []);
+      (if Device_amd_amdgpu.count () > 0 then
+         gpu_rows
+           (module Device_amd)
+           "amd"
+           ~name:(Device_amd_amdgpu.device_name 0)
+           (fun () -> Device_amd_amdgpu.open_ 0)
+       else []);
+    ]
+
 let () =
   exit
   @@ Thumper.run "device_core"
-       [
-         submit_rows;
-         replay_rows;
-         buffer_rows;
-         claim_rows;
-         copy_rows;
-         drain_rows;
-         wait_rows;
-         heap_rows;
-         floor_rows;
-       ]
+       ([
+          submit_rows;
+          replay_rows;
+          buffer_rows;
+          claim_rows;
+          copy_rows;
+          drain_rows;
+          wait_rows;
+          heap_rows;
+          floor_rows;
+        ]
+       @ gpus)

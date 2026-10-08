@@ -5,8 +5,9 @@
 
 /* The driver alone: a device's room and submit entries called directly, with
    a fill that adds 1 to a word of its own, as the core calls them for a
-   submission of no part or of that fill. Nothing here releases the runtime:
-   the floor is a driver whose calls return at once. */
+   submission of no part or of that fill. Nothing here releases the runtime,
+   even for a driver whose submit may block: each floor runs alone in its
+   process. */
 
 #define _GNU_SOURCE
 
