@@ -15,7 +15,8 @@
 # so each machine has its own agent lock. While machines/M/down exists, M
 # does not answer, as ssh says when a machine is off. machines/M/pid holds
 # the process that plays M's end of the session: killing it loses the
-# session.
+# session. machines/M/bin, if it exists, comes first on M's PATH, so that
+# M can run its own rig.
 
 config=no
 while [ $# -gt 0 ]; do
@@ -47,4 +48,5 @@ fi
 
 mkdir -p "$dir"
 echo $$ >"$dir/pid"
+[ -d "$dir/bin" ] && PATH=$dir/bin:$PATH
 TMPDIR=$dir exec sh -c "$*"

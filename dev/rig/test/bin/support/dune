@@ -1,3 +1,9 @@
 (executable
  (name ctl)
+ (modules ctl)
  (libraries rig rig.remote unix threads.posix))
+
+(executable
+ (name defaults)
+ (modules defaults)
+ (libraries unix))

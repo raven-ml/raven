@@ -1,6 +1,6 @@
 Machines that fail under a running job. rig run's output goes to err, the
-program's to out; each test waits for the program's first attempt before
-it breaks a machine.
+program's to out; each test waits for the program to join its job before it
+breaks a machine.
 
   $ . support/env.sh
   $ host a 127.0.0.1
@@ -13,11 +13,12 @@ whatever the program saw of it first.
 
   $ rig run --on a,b,c -- ./support/ctl.exe wait-first >out 2>err &
   $ run=$!
-  $ ./support/await out "attempt 1"
+  $ ./support/await out joined
   $ kill -KILL $(agent_of b)
   $ wait $run
   $ cat out
   attempt 1
+  joined
   attempt 2
   copied 2
   $ cat err
@@ -33,13 +34,14 @@ and its new agent finds no other agent there.
   $ rm attempts
   $ rig run --on a,b,c -- ./support/ctl.exe wait-first >out 2>err &
   $ run=$!
-  $ ./support/await out "attempt 1"
+  $ ./support/await out joined
   $ old=$(agent_of b)
   $ kill -KILL $(cat machines/b/pid)
   $ kill -KILL $old
   $ wait $run
   $ cat out
   attempt 1
+  joined
   attempt 2
   copied 2
   $ cat err
@@ -54,7 +56,7 @@ its silence, and b's new agent waits until the old one ends.
   $ rm attempts
   $ rig run --on a,b,c -- ./support/ctl.exe wait-first >out 2>err &
   $ run=$!
-  $ ./support/await out "attempt 1"
+  $ ./support/await out joined
   $ old=$(agent_of b)
   $ kill -STOP $old
   $ kill -KILL $(cat machines/b/pid)
@@ -63,6 +65,7 @@ its silence, and b's new agent waits until the old one ends.
   $ wait $run
   $ cat out
   attempt 1
+  joined
   attempt 2
   copied 2
   $ cat err
@@ -78,7 +81,7 @@ answers; only its first try's errors come out.
   $ rm attempts
   $ rig run --on a,b,c -- ./support/ctl.exe wait-first >out 2>err &
   $ run=$!
-  $ ./support/await out "attempt 1"
+  $ ./support/await out joined
   $ touch machines/b/down
   $ kill -KILL $(agent_of b)
   $ ./support/await err "rig: b does not answer"
@@ -86,6 +89,7 @@ answers; only its first try's errors come out.
   $ wait $run
   $ cat out
   attempt 1
+  joined
   attempt 2
   copied 2
   $ cat err

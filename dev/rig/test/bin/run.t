@@ -57,8 +57,35 @@ says so and exits with its status, without starting it again.
   $ rig run --on a,b -- true
   rig: true exited with status 0 before starting the job
 
+A program killed before starting its job exits as a shell reports it,
+128 + N for signal N.
+
+  $ rig run --on a,b,c -- sh -c 'kill -KILL $$'
+  rig: sh was killed by SIGKILL before starting the job
+  [137]
+  $ gone
+
 A program that cannot be run fails the start.
 
   $ rig run --on a,b -- ./nowhere
   rig: ./nowhere: No such file or directory
   [123]
+
+A program's child is no process of the job: its exit neither ends nor
+fails the job.
+
+  $ fresh
+  $ rig run --on a,b,c -- ./support/ctl.exe fork
+  attempt 1
+  copied 2
+  $ gone
+
+A program that the program runs is not launched: it finds none of the
+variables.
+
+  $ fresh
+  $ rig run --on a,b,c -- ./support/ctl.exe exec 'env | grep -c ^RIG_REMOTE_'
+  attempt 1
+  0
+  copied 2
+  $ gone

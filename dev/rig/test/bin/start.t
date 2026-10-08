@@ -60,3 +60,70 @@ when rig run exits.
   [123]
   $ kill -0 $(cat machines/c/pid) 2>/dev/null
   [1]
+
+An agent that fails before it listens fails the start, its reason after
+the machine's name. Here d's lock is a directory.
+
+  $ host d 127.0.0.1
+  $ mkdir machines/d/rig-agent-$(id -u).lock
+  $ rig run --on a,c,d -- true 2>err
+  [123]
+  $ sed -e "s|$PWD|PWD|" -e "s|-$(id -u)[.]|-UID.|" err
+  rig: d: PWD/machines/d/rig-agent-UID.lock is no regular file
+  $ kill -0 $(cat machines/c/pid) 2>/dev/null
+  [1]
+
+A program whose job does not start fails the start: rig run names the
+reason the program gave. Here the program holds a key that is not the
+job's.
+
+  $ zeros=0000000000000000000000000000000000000000000000000000000000000000
+  $ rig run --on a,c -- sh -c "RIG_REMOTE_KEY=$zeros exec ./support/ctl.exe copy"
+  attempt 1
+  ctl.exe: c: the dialing end does not know the job's key
+  rig: the job did not start: c: the dialing end does not know the job's key
+  [123]
+  $ kill -0 $(cat machines/c/pid) 2>/dev/null
+  [1]
+
+Each machine's rig must be this one's version. A machine that runs
+another fails the start. machines/M/bin comes first on M's PATH, so M
+runs the rig there.
+
+  $ mkdir machines/c/bin
+  $ cat >machines/c/bin/rig <<'EOS'
+  > #!/bin/sh
+  > echo rig-agent 0.9
+  > exec cat >/dev/null
+  > EOS
+  $ chmod +x machines/c/bin/rig
+  $ rig run --on a,c -- true 2>err
+  [123]
+  $ sed "s/ $(rig --version)\$/ VERSION/" err
+  rig: c: runs rig 0.9; this is rig VERSION
+
+A shell that writes lines before rig starts, as a .bashrc that echoes,
+does not disturb the session: rig skips what comes before its greeting.
+
+  $ cat >machines/c/bin/rig <<EOS
+  > #!/bin/sh
+  > echo "Welcome to c"
+  > exec $(command -v rig) "\$@"
+  > EOS
+  $ rm attempts
+  $ rig run --on a,c -- ./support/ctl.exe copy
+  attempt 1
+  copied 1
+
+After the greeting, a line that is none of an agent's breaks the session,
+quoted.
+
+  $ cat >machines/c/bin/rig <<EOS
+  > #!/bin/sh
+  > echo "rig-agent $(rig --version)"
+  > echo "Welcome to c"
+  > exec cat >/dev/null
+  > EOS
+  $ rig run --on a,c -- true
+  rig: c: wrote "Welcome to c"
+  [123]

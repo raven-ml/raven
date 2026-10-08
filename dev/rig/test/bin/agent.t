@@ -133,3 +133,78 @@ directory, fails the agent.
   $ show out6 | sed -e "s|$PWD|PWD|" -e "s|-$(id -u)[.]|-UID.|"
   rig-agent VERSION
   failed PWD/other/rig-agent-UID.lock is no regular file
+
+The agent's last line says how its job ended. The controller here is
+support/ctl.exe, given by hand what rig run gives a program: the agents,
+the key, and a report, the file report.
+
+  $ port() { sed -n 's/^listening .*:\([0-9]*\)$/\1/p' "$1"; }
+  $ ctl() { rm -f attempts; RIG_REMOTE_AGENTS=b=127.0.0.1:$(port $1) RIG_REMOTE_KEY=$key$key RIG_REMOTE_REPORT=3 ./support/ctl.exe $2 3>report; }
+
+A job its controller closes ends in order: the agent writes closed and
+exits 0.
+
+  $ mkfifo in10
+  $ rig agent 127.0.0.1:0 <in10 >out10 &
+  $ agent=$!
+  $ exec 3>in10
+  $ echo $key$key >&3
+  $ ./support/await out10 listening
+  $ ctl out10 copy
+  attempt 1
+  copied 1
+  $ wait $agent
+  $ show out10
+  rig-agent VERSION
+  listening 127.0.0.1:PORT
+  closed
+  $ cat report
+  started
+  closed
+  $ exec 3>&-
+
+A job that fails, here as its controller dies, ends the agent with its
+reason: failed, and 123.
+
+  $ mkfifo in11
+  $ rig agent 127.0.0.1:0 <in11 >out11 &
+  $ agent=$!
+  $ exec 3>in11
+  $ echo $key$key >&3
+  $ ./support/await out11 listening
+  $ ctl out11 kill 2>/dev/null
+  attempt 1
+  [137]
+  $ wait $agent
+  [123]
+  $ show out11
+  rig-agent VERSION
+  listening 127.0.0.1:PORT
+  failed controller: closed its connection
+  $ exec 3>&-
+
+An agent killed reports nothing: rig agent says how it died, and exits
+123. The controller learns of the death through its job.
+
+  $ mkfifo in12
+  $ rig agent 127.0.0.1:0 <in12 >out12 &
+  $ agent=$!
+  $ exec 3>in12
+  $ echo $key$key >&3
+  $ ./support/await out12 listening
+  $ ctl out12 wait >ctlout 2>ctlerr &
+  $ controller=$!
+  $ ./support/await ctlout joined
+  $ kill -KILL $(pgrep -P $agent)
+  $ wait $agent
+  [123]
+  $ show out12
+  rig-agent VERSION
+  listening 127.0.0.1:PORT
+  died killed by SIGKILL
+  $ wait $controller
+  [2]
+  $ cat report
+  started
+  failed b: closed its connection
+  $ exec 3>&-

@@ -1,0 +1,24 @@
+#!/bin/sh
+#---------------------------------------------------------------------------
+#  Copyright (c) 2026 The Raven authors. All rights reserved.
+#  SPDX-License-Identifier: ISC
+#---------------------------------------------------------------------------
+
+# [gone PID...] returns once none of the processes PID runs. After 10 s it
+# fails, naming those that run: a hang guard, never a bound on the code's
+# time.
+
+i=0
+while :; do
+  running=
+  for p in "$@"; do
+    kill -0 "$p" 2>/dev/null && running="$running $p"
+  done
+  [ -z "$running" ] && exit 0
+  i=$((i + 1))
+  if [ $i -gt 100 ]; then
+    echo "gone: still running after 10 s:$running" >&2
+    exit 1
+  fi
+  sleep 0.1
+done

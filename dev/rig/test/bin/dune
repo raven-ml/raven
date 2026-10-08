@@ -2,4 +2,11 @@
  (package rig)
  (enabled_if
   (<> %{os_type} Win32))
- (deps %{bin:rig} support/env.sh support/ssh support/await support/ctl.exe))
+ (deps
+  %{bin:rig}
+  support/env.sh
+  support/ssh
+  support/await
+  support/gone
+  support/ctl.exe
+  support/defaults.exe))

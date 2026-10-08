@@ -11,8 +11,10 @@
    raises. - env: prints the agents' names and the key's length, then whether
    the three variables are gone once the job started. - early N: exits N before
    starting the job. - kill: kills itself once the job started; kill-first: at
-   its first attempt, then copies. - wait-first: at its first attempt, waits for
-   the job to fail and raises; then copies. *)
+   its first attempt, then copies. - wait: prints "joined" once the job started,
+   waits for it to fail and raises; wait-first: at its first attempt, then
+   copies. - fork: forks a child that exits 0, then copies. - exec SCRIPT: runs
+   [sh -c SCRIPT] to its end, then copies. *)
 
 let attempt () =
   let n =
@@ -63,6 +65,13 @@ let names () =
 let gone v = Sys.getenv_opt v = None || Sys.getenv_opt v = Some ""
 let kill_self () = Unix.kill (Unix.getpid ()) Sys.sigkill
 
+let wait_failure j =
+  print_endline "joined";
+  while Rig_remote.failure j = None do
+    Unix.sleepf 0.05
+  done;
+  failwith "the job failed"
+
 let () =
   let n = attempt () in
   match List.tl (Array.to_list Sys.argv) with
@@ -89,15 +98,26 @@ let () =
   | [ "kill-first" ] ->
       let j = job () in
       if n = 1 then kill_self () else copy j
+  | [ "wait" ] -> wait_failure (job ())
   | [ "wait-first" ] ->
       let j = job () in
-      if n > 1 then copy j
-      else begin
-        while Rig_remote.failure j = None do
-          Unix.sleepf 0.05
-        done;
-        failwith "the job failed"
-      end
+      if n = 1 then wait_failure j else copy j
+  | [ "fork" ] -> (
+      let j = job () in
+      match Unix.fork () with
+      | 0 -> exit 0
+      | child ->
+          ignore (Unix.waitpid [] child);
+          copy j)
+  | [ "exec"; script ] ->
+      let j = job () in
+      let sh = "/bin/sh" in
+      let pid =
+        Unix.create_process sh [| sh; "-c"; script |] Unix.stdin Unix.stdout
+          Unix.stderr
+      in
+      ignore (Unix.waitpid [] pid);
+      copy j
   | _ ->
       prerr_endline "usage: ctl.exe MODE";
       exit 1
