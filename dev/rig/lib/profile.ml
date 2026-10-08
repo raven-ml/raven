@@ -80,13 +80,11 @@ let traced () = List.exists (fun (p : Prof.t) -> p.trace) (Prof.active ())
 (* Waits for the points whose events are still to be read; a device lost
    meanwhile has them dropped. *)
 let read_pending () =
-  Array.iteri
-    (fun i d ->
-      if i = d.index && d.afters <> [] then
+  Dev.iter (fun d ->
+      if d.afters <> [] then
         let v = List.fold_left (fun m (v, _) -> Int.max m v) 0 d.afters in
         try Dev.wait d v
         with Dev.Lost _ -> Dev.protect d (fun () -> d.afters <- []))
-    (Dev.all ())
 
 let take ?(counters = []) ?(trace = false) f =
   let rec dup = function

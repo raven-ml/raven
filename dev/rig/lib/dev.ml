@@ -53,9 +53,12 @@ let still_ms = 200
 
 (* The table of devices *)
 
+(* The devices by index; an index whose open failed holds the host. *)
 let devices : device array Atomic.t = Atomic.make [||]
 let of_index i = (Atomic.get devices).(i)
-let all () = Atomic.get devices
+
+let iter f =
+  Array.iteri (fun i d -> if i > 0 && i = d.index then f d) (Atomic.get devices)
 
 let register d =
   let rec go () =

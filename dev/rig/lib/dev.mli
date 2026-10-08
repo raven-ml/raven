@@ -20,9 +20,8 @@ val busy : device -> bool
 (* [busy d] is [true] if a call holds [d]'s lock. *)
 
 val of_index : int -> device
-val all : unit -> device array
-(* [all ()] is the devices by index; an index whose open failed holds the
-   host. *)
+val iter : (device -> unit) -> unit
+(* [iter f] is [f] over the open devices other than the host, by index. *)
 
 val is_host : device -> bool
 val is_io : device -> bool

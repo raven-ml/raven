@@ -499,11 +499,7 @@ let () =
 (* Drains every other device, skipping one whose lock another call holds, and
    reads the word of each lost device that answered [Unknown]. *)
 let drain_others d =
-  Array.iteri
-    (fun i e ->
-      if i = e.index && e != d && not (Dev.is_host e) then
-        if not (Dev.busy e) then drain e)
-    (Dev.all ())
+  Dev.iter (fun e -> if e != d && not (Dev.busy e) then drain e)
 
 (* The cache *)
 
