@@ -360,6 +360,12 @@ let set a idx x =
 (* Bulk access *)
 
 external to_array_into : ('v, 's) t -> 'v array -> int = "nx_array_to_array"
+[@@noalloc]
+
+external to_bigarray :
+  ('v, 's) t -> ('v, 'b, Bigarray.c_layout) Bigarray.Array1.t -> int
+  = "nx_array_to_bigarray"
+[@@noalloc]
 
 external of_array_from : ('v, 's) t -> 'v array -> int = "nx_array_of_array"
 [@@noalloc]
@@ -367,25 +373,75 @@ external of_array_from : ('v, 's) t -> 'v array -> int = "nx_array_of_array"
 external copy_into : ('v, 's) t -> ('v, 's) t -> int = "nx_array_copy"
 [@@noalloc]
 
+(* Elements that box are copied unboxed into a bigarray of their width under the
+   claim and boxed after it, so that an allocation that raises holds no claim.
+   Each kind has its own loop, where the bigarray access is inlined. *)
+let unboxed fn a k n =
+  let b = Bigarray.Array1.create k Bigarray.c_layout n in
+  let rec read () =
+    let e = to_bigarray a b in
+    if e <> 0 then begin
+      settle fn e [ Any a ];
+      read ()
+    end
+  in
+  read ();
+  b
+
+let int32s fn a n =
+  let b = unboxed fn a Bigarray.int32 n in
+  Array.init n (fun i -> Bigarray.Array1.unsafe_get b i)
+
+let int64s fn a n =
+  let b = unboxed fn a Bigarray.int64 n in
+  Array.init n (fun i -> Bigarray.Array1.unsafe_get b i)
+
+let complex32s fn a n =
+  let b = unboxed fn a Bigarray.complex32 n in
+  Array.init n (fun i -> Bigarray.Array1.unsafe_get b i)
+
+let complex64s fn a n =
+  let b = unboxed fn a Bigarray.complex64 n in
+  Array.init n (fun i -> Bigarray.Array1.unsafe_get b i)
+
 let to_array (type v s) (a : (v, s) t) : v array =
+  let fn = "Nx_array.to_array" in
   let n = Layout.numel a.layout in
-  if n = 0 then [||]
-  else
-    let out : v array =
-      match Dtype.kind a.dtype with
-      | Float -> Array.create_float n
-      | Complex | Signed | Unsigned | Boolean ->
-          Array.make n (Dtype.zero a.dtype)
-    in
+  let into (out : v array) =
     let rec read () =
       let e = to_array_into a out in
       if e <> 0 then begin
-        settle "Nx_array.to_array" e [ Any a ];
+        settle fn e [ Any a ];
         read ()
       end
     in
     read ();
     out
+  in
+  if n = 0 then [||]
+  else
+    match a.dtype with
+    | Float64 -> into (Array.create_float n)
+    | Float32 -> into (Array.create_float n)
+    | Float16 -> into (Array.create_float n)
+    | Bfloat16 -> into (Array.create_float n)
+    | Float8_e4m3fn -> into (Array.create_float n)
+    | Float8_e5m2 -> into (Array.create_float n)
+    | Float4_e2m1fn -> into (Array.create_float n)
+    | Int16 -> into (Array.make n 0)
+    | Uint16 -> into (Array.make n 0)
+    | Int8 -> into (Array.make n 0)
+    | Uint8 -> into (Array.make n 0)
+    | Int4 -> into (Array.make n 0)
+    | Uint4 -> into (Array.make n 0)
+    | Bool -> into (Array.make n false)
+    | Bit -> into (Array.make n false)
+    | Int32 -> int32s fn a n
+    | Uint32 -> int32s fn a n
+    | Int64 -> int64s fn a n
+    | Uint64 -> int64s fn a n
+    | Complex64 -> complex32s fn a n
+    | Complex128 -> complex64s fn a n
 
 let of_array (type v s) (dt : (v, s) Dtype.t) s (values : v array) =
   let fn = "Nx_array.of_array" in

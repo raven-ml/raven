@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include <caml/alloc.h>
+#include <caml/bigarray.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 
@@ -432,65 +433,48 @@ static int representation(int dt) {
 typedef struct {
   const nx_array *a;
   const nx_loop *l;
-  value *out; /* a root: allocating boxes moves the array */
-  int64_t k;  /* the next element of [out] */
+  value out;
+  int64_t k; /* the next element of [out] */
 } to_ctx;
 
+/* Writes a run of flat or immediate elements: no allocation. */
 static void to_run(void *ctx, const int64_t *at, int64_t len) {
   to_ctx *c = ctx;
   const nx_array *a = c->a;
   int dt = a->dtype;
   int64_t step = c->l->step[0][c->l->rank - 1];
   int64_t p = at[0];
-  switch (representation(dt)) {
-    case TO_FLAT: {
-      double *dst = (double *)Op_val(*c->out) + c->k;
-      c->k += len;
-      /* A loop per format, the format's decoder inlined in it. */
+  if (representation(dt) == TO_IMMEDIATE) {
+    /* Immediates need no write barrier. */
+    for (int64_t j = 0; j < len; j++, p += step)
+      Field(c->out, c->k++) = Val_long(load_int(a->base, dt, p));
+    return;
+  }
+  double *dst = (double *)Op_val(c->out) + c->k;
+  c->k += len;
+  /* A loop per format, the format's decoder inlined in it. */
 #define DECODE(T, decode)                                                 \
   do {                                                                    \
     const T *src = (const T *)a->base + p;                                \
     for (int64_t j = 0; j < len; j++) dst[j] = decode(src[j * step]);     \
   } while (0)
-      switch (dt) {
-        case NX_FLOAT64: DECODE(double, (double)); return;
-        case NX_FLOAT32: DECODE(float, (double)); return;
-        case NX_FLOAT16:
-          if (step == 1)
-            nx_f16_to_double_run((const uint16_t *)a->base + p, dst,
-                                 (size_t)len);
-          else DECODE(uint16_t, nx_f16_to_float);
-          return;
-        case NX_BFLOAT16: DECODE(uint16_t, nx_bf16_to_float); return;
-        case NX_FLOAT8_E4M3FN: DECODE(uint8_t, nx_e4m3fn_to_float); return;
-        case NX_FLOAT8_E5M2: DECODE(uint8_t, nx_e5m2_to_float); return;
-        default: /* float4: elements share bytes */
-          for (int64_t j = 0; j < len; j++, p += step)
-            dst[j] = load_float(a->base, dt, p, 0);
-          return;
-      }
-#undef DECODE
-    }
-    case TO_IMMEDIATE:
-      for (int64_t j = 0; j < len; j++, p += step)
-        Field(*c->out, c->k++) = Val_long(load_int(a->base, dt, p));
+  switch (dt) {
+    case NX_FLOAT64: DECODE(double, (double)); return;
+    case NX_FLOAT32: DECODE(float, (double)); return;
+    case NX_FLOAT16:
+      if (step == 1)
+        nx_f16_to_double_run((const uint16_t *)a->base + p, dst, (size_t)len);
+      else DECODE(uint16_t, nx_f16_to_float);
       return;
-    default:
-      for (int64_t j = 0; j < len; j++, p += step) {
-        value box;
-        if (dt == NX_INT32 || dt == NX_UINT32)
-          box = caml_copy_int32((int32_t)load_int(a->base, dt, p));
-        else if (dt == NX_INT64 || dt == NX_UINT64)
-          box = caml_copy_int64(load_int(a->base, dt, p));
-        else {
-          box = caml_alloc_small(2 * Double_wosize, Double_array_tag);
-          Store_double_flat_field(box, 0, load_float(a->base, dt, p, 0));
-          Store_double_flat_field(box, 1, load_float(a->base, dt, p, 1));
-        }
-        caml_modify(&Field(*c->out, c->k++), box);
-      }
+    case NX_BFLOAT16: DECODE(uint16_t, nx_bf16_to_float); return;
+    case NX_FLOAT8_E4M3FN: DECODE(uint8_t, nx_e4m3fn_to_float); return;
+    case NX_FLOAT8_E5M2: DECODE(uint8_t, nx_e5m2_to_float); return;
+    default: /* float4: elements share bytes */
+      for (int64_t j = 0; j < len; j++, p += step)
+        dst[j] = load_float(a->base, dt, p, 0);
       return;
   }
+#undef DECODE
 }
 
 /* The loop of one operand, its strides as they come: [to_array] and
@@ -498,20 +482,21 @@ static void to_run(void *ctx, const int64_t *at, int64_t len) {
 static int loop1(const nx_array *a, nx_loop *l) { return nx_coalesce(1, a, l); }
 
 /* to_array: reads [v]'s elements, in C order of indices, into [out], an
-   OCaml array of their number in the dtype's representation. */
+   OCaml array of their number, flat floats or immediates. It allocates
+   nothing; elements that box go through nx_array_to_bigarray. */
 value nx_array_to_array(value v, value out) {
-  CAMLparam2(v, out);
   nx_operand in = {v, nx_array_dtype(v), 0};
   nx_array a;
   nx_loop l;
+  if (representation(in.dtype) == TO_BOXED) return Val_int(NX_DTYPE);
   int e = nx_read(1, &in, &a);
-  if (e) CAMLreturn(Val_int(e));
+  if (e) return Val_int(e);
   if (!(e = loop1(&a, &l))) {
-    to_ctx c = {&a, &l, &out, 0};
+    to_ctx c = {&a, &l, out, 0};
     walk(1, &l, &c, to_run);
   }
   nx_done(1, &a);
-  CAMLreturn(Val_int(e));
+  return Val_int(e);
 }
 
 typedef struct {
@@ -876,5 +861,34 @@ value nx_array_copy(value dst, value src) {
   if (e) return Val_int(e);
   e = gather(a);
   nx_done(2, a);
+  return Val_int(e);
+}
+
+/* to_bigarray: gathers [v]'s elements, in C order of indices, into [out], a
+   bigarray of their number and width, bit for bit. to_array boxes elements
+   from there once the claim is released, so that an allocation that raises
+   holds no claim. */
+value nx_array_to_bigarray(value v, value out) {
+  nx_operand in = {v, nx_array_dtype(v), 0};
+  nx_array a[2];
+  int e = nx_read(1, &in, &a[1]);
+  if (e) return Val_int(e);
+  /* [out] as a C-contiguous array of [v]'s dtype and shape. */
+  nx_array *d = &a[0];
+  int r = a[1].rank;
+  d->base = Caml_ba_data_val(out);
+  d->dtype = a[1].dtype;
+  d->bits = a[1].bits;
+  d->rank = r;
+  d->flags = NX_CONTIGUOUS | NX_DISTINCT;
+  d->offset = 0;
+  int64_t stride = 1;
+  for (int i = r - 1; i >= 0; i--) {
+    d->dim[i] = a[1].dim[i];
+    d->dim[r + i] = stride;
+    stride *= a[1].dim[i];
+  }
+  e = gather(a);
+  nx_done(1, &a[1]);
   return Val_int(e);
 }
