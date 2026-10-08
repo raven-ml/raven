@@ -3,7 +3,7 @@
 (library
  (name nx_array)
  (libraries rig)
- (private_modules dtype move layout)
+ (private_modules shape)
  (foreign_stubs
   (language c)
   (include_dirs

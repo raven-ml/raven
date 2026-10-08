@@ -13,7 +13,7 @@
 
 type t = string
 
-let max_rank = Move.max_rank
+let max_rank = Shape.max_rank
 let contiguous_flag = 1
 let distinct_flag = 2
 let empty_flag = 4
@@ -122,13 +122,12 @@ let finish fn b =
 
 (* Constructors *)
 
-let pp_ints = Move.pp_ints
+let pp_ints = Shape.pp
 
 let contiguous s =
   let r = Array.length s in
-  if r > max_rank then
-    invalid_argf "Layout.contiguous: rank %d exceeds %d" r max_rank;
-  ignore (Move.numel "Layout.contiguous" s);
+  Shape.check_rank "Layout.contiguous" r;
+  ignore (Shape.numel "Layout.contiguous" s);
   let b = create r in
   set b 0 r;
   set b 2 0;
@@ -142,10 +141,10 @@ let contiguous s =
 
 let v ?(offset = 0) ~strides s =
   let r = Array.length s in
-  if r > max_rank then invalid_argf "Layout.v: rank %d exceeds %d" r max_rank;
+  Shape.check_rank "Layout.v" r;
   if Array.length strides <> r then
     invalid_argf "Layout.v: %d strides for %d axes" (Array.length strides) r;
-  ignore (Move.numel "Layout.v" s);
+  ignore (Shape.numel "Layout.v" s);
   let b = create r in
   set b 0 r;
   set b 2 offset;

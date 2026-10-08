@@ -9,7 +9,7 @@ module Layout = Layout
 module Buffer = Rig.Buffer
 
 let invalid_argf fmt = Format.kasprintf invalid_arg fmt
-let pp_ints = Move.pp_ints
+let pp_ints = Shape.pp
 
 (* nx_array_stubs.c reads the fields in this order. *)
 type ('v, 's) t = {

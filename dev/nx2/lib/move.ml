@@ -3,8 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-let max_rank = 32
-
 type range = { start : int; count : int; step : int }
 type window = { axis : int; size : int; step : int; dilation : int }
 
@@ -16,29 +14,9 @@ type t =
   | Window of window array
 
 let invalid_argf fmt = Format.kasprintf invalid_arg fmt
-
-let pp_ints ppf a =
-  Format.fprintf ppf "[%a]"
-    (Format.pp_print_array
-       ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
-       Format.pp_print_int)
-    a
-
-(* The number of elements of [s], refusing a negative extent and a product that
-   overflows: each product is formed only once it is known to fit. *)
-let numel fn s =
-  let n = ref 1 in
-  for i = 0 to Array.length s - 1 do
-    let d = s.(i) in
-    if d < 0 then invalid_argf "%s: extent %d of %a is negative" fn d pp_ints s;
-    if d <> 0 && !n > max_int / d then
-      invalid_argf "%s: the number of elements of %a overflows" fn pp_ints s;
-    n := !n * d
-  done;
-  !n
-
-let check_rank fn r =
-  if r > max_rank then invalid_argf "%s: rank %d exceeds %d" fn r max_rank
+let pp_ints = Shape.pp
+let numel = Shape.numel
+let check_rank = Shape.check_rank
 
 let reshape s s' =
   check_rank "Move.Reshape" (Array.length s');
@@ -64,7 +42,7 @@ let broadcast s s' =
   Array.copy s'
 
 (* The axes [p] names are marked in the bits of an int: a rank is at most
-   [max_rank], below an int's width. *)
+   [Shape.max_rank], below an int's width. *)
 let permute s p =
   let r = Array.length s in
   if Array.length p <> r then
