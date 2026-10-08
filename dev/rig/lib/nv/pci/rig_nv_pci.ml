@@ -325,7 +325,7 @@ let device g ~gsp ~hold ~tables (c : Chip.t) =
 (* [start] boots the GPU's GSP, writing to the GPU: from its first write, the
    GPU is in a state only a reset clears. *)
 let start fn (c : Chip.t) (fw : Images.t) =
-  Chip.bus_master c true;
+  Chip.bus_master fn true;
   let* () = Falcon.run c (Falcon.wait_reset c.family) in
   let* memory = Chip.memory c in
   let* bar = Function.map ~combine:false fn memory_bar in
@@ -409,15 +409,12 @@ let attach i =
   if i < 0 then invalid_argf "Rig_nv_pci.attach: index %d < 0" i;
   named i (Gpus.attach gpus Machine.this i)
 
-(* The command register and its bus master bit (PCI Express Base Specification,
-   7.5.1.1.3). *)
-let command = 0x04
-let bus_master = 0x4
-
+(* Bus mastering goes off before the reset: Linux restores the function's
+   configuration as it was before a reset, its command register included, and
+   the GPU must not master the bus after it, whatever ran on it. *)
 let reset ?(machine = Machine.this) i =
   if i < 0 then invalid_argf "Rig_nv_pci.reset: index %d < 0" i;
   named i
   @@ Gpus.reset gpus machine i (fun fn ->
-      Function.set_config16 fn command
-        (Function.config16 fn command land lnot bus_master);
+      Chip.bus_master fn false;
       Function.reset fn)

@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Rig_pci
+open Field
 
 let strf = Printf.sprintf
 
@@ -55,11 +56,6 @@ let records fn body =
   let first = Int.min record_max n in
   (fn, String.sub body 0 first) :: go [] first
 
-let set b (off, n) x =
-  match n with
-  | 4 -> Bytes.set_int32_le b off (Int32.of_int x)
-  | _ -> Bytes.set_int64_le b off (Int64.of_int x)
-
 let element ~seq fn body =
   let n = body_at + String.length body in
   let count = (n + element_size - 1) / element_size in
@@ -85,8 +81,6 @@ let element ~seq fn body =
   Bytes.unsafe_to_string b
 
 type message = { fn : int; result : int; body : string }
-
-let get s (off, _) = Int32.to_int (String.get_int32_le s off) land 0xffff_ffff
 
 let message s =
   if String.length s < body_at then

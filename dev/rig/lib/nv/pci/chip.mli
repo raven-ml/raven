@@ -70,5 +70,6 @@ val wait : t -> string -> ms:int -> (unit -> bool) -> (unit, string) result
 val delay : t -> int -> unit
 (** [delay c ms] waits [ms] milliseconds. *)
 
-val bus_master : t -> bool -> unit
-(** [bus_master c on] turns the function's bus mastering on or off. *)
+val bus_master : Rig_pci.Function.t -> bool -> unit
+(** [bus_master fn on] turns the bus mastering of the GPU's function [fn] on or
+    off. *)

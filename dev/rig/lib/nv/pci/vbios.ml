@@ -31,24 +31,14 @@ let check rom off n =
   if off < 0 || off + n > String.length rom then
     badf "the VBIOS ends before a structure it points to, at 0x%x" off
 
-let u8 rom off =
-  check rom off 1;
-  Char.code rom.[off]
-
-let u16 rom off =
-  check rom off 2;
-  String.get_uint16_le rom off
-
-let u32 rom off =
-  check rom off 4;
-  Int32.to_int (String.get_int32_le rom off) land 0xffff_ffff
-
 (* A field of a packed structure at [base], (offset, bytes). *)
 let get rom base (off, n) =
-  match n with
-  | 1 -> u8 rom (base + off)
-  | 2 -> u16 rom (base + off)
-  | _ -> u32 rom (base + off)
+  check rom (base + off) n;
+  Field.get rom (base + off, n)
+
+let u8 rom off = get rom off (0, 1)
+let u16 rom off = get rom off (0, 2)
+let u32 rom off = get rom off (0, 4)
 
 (* Expansion ROM images *)
 

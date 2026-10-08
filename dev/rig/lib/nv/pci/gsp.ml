@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Rig_pci
+open Field
 
 let strf = Printf.sprintf
 let ( let* ) = Result.bind
@@ -13,33 +14,10 @@ let round_up n a = (n + a - 1) / a * a
 
 (* Bytes *)
 
-let set b (off, n) x =
-  match n with
-  | 1 -> Bytes.set_uint8 b off x
-  | 2 -> Bytes.set_uint16_le b off x
-  | 4 -> Bytes.set_int32_le b off (Int32.of_int x)
-  | _ -> Bytes.set_int64_le b off (Int64.of_int x)
-
-let get s (off, n) =
-  match n with
-  | 1 -> String.get_uint8 s off
-  | 2 -> String.get_uint16_le s off
-  | 4 -> Int32.to_int (String.get_int32_le s off) land 0xffff_ffff
-  | _ -> Int64.to_int (String.get_int64_le s off)
-
 let fst3 (a, _, _) = a
-let mask (lo, n) = ((1 lsl n) - 1) lsl lo
-
-(* A field of a struct at [base] of its parent. *)
-let at (base, _) (off, n) = (base + off, n)
 
 (* The field [f] of element [i] of the array [a]. *)
 let elt (off, size, _) i (f, n) = (off + (i * size) + f, n)
-
-let record size fill =
-  let b = Bytes.make size '\000' in
-  fill b;
-  Bytes.unsafe_to_string b
 
 let u64s l =
   record
@@ -1076,7 +1054,7 @@ let start p (fw : Images.t) ~taken =
 let boot p fw =
   let taken = ref [] in
   let failed () =
-    Chip.bus_master p.chip false;
+    Chip.bus_master p.fn false;
     give_back p taken
   in
   match start p fw ~taken with

@@ -85,7 +85,7 @@ let delay c ms =
 let command = 0x04
 let bus_master_bit = 0x4
 
-let bus_master c on =
-  let v = Function.config16 c.fn command in
+let bus_master fn on =
+  let v = Function.config16 fn command in
   let v = if on then v lor bus_master_bit else v land lnot bus_master_bit in
-  Function.set_config16 c.fn command v
+  Function.set_config16 fn command v

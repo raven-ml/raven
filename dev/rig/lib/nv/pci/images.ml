@@ -42,11 +42,11 @@ let origin = Defs.origin
 exception Short
 exception Bad of string
 
-let u32 s off =
-  if off < 0 || off + 4 > String.length s then raise Short
-  else Int32.to_int (String.get_int32_le s off) land 0xffff_ffff
+let field s base (off, n) =
+  if base + off < 0 || base + off + n > String.length s then raise Short
+  else Field.get s (base + off, n)
 
-let field s base (off, _) = u32 s (base + off)
+let u32 s off = field s off (0, 4)
 
 let sub s at length =
   if at < 0 || length < 0 || at + length > String.length s then raise Short

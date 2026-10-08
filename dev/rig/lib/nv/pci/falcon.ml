@@ -3,6 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+open Field
+
 let strf = Printf.sprintf
 
 module L = Defs.Legacy
@@ -63,8 +65,6 @@ let rec run c = function
 
 (* Fields *)
 
-let mask (lo, n) = ((1 lsl n) - 1) lsl lo
-let put (lo, n) x = (x land ((1 lsl n) - 1)) lsl lo
 let lo32 x = x land 0xffff_ffff
 let hi32 x = (x lsr 32) land 0xffff_ffff
 
@@ -325,20 +325,12 @@ let legacy ~fwsec ~booter ~libos ~wpr_meta =
 
 (* Encodings *)
 
-let set b (off, n) x =
-  match n with
-  | 1 -> Bytes.set_uint8 b off x
-  | 2 -> Bytes.set_uint16_le b off x
-  | 4 -> Bytes.set_int32_le b off (Int32.of_int x)
-  | _ -> Bytes.set_int64_le b off (Int64.of_int x)
-
 let cot_args ~libos ~wpr_meta =
   let module F = Defs.Fmc_boot_params in
   let module A = Defs.Acr_boot_params in
   let module R = Defs.Rm_params in
   let b = Bytes.make F.sizeof '\000' in
-  let within (base, _) (off, n) = (base + off, n) in
-  let acr = within F.boot_gsp_rm_params and rm = within F.gsp_rm_params in
+  let acr = at F.boot_gsp_rm_params and rm = at F.gsp_rm_params in
   set b (acr A.gsp_rm_desc_offset) wpr_meta;
   set b (acr A.gsp_rm_desc_size) Defs.Wpr_meta.sizeof;
   set b (acr A.target) Defs.gsp_dma_target_coherent_system;
