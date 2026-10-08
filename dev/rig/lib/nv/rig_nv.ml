@@ -186,7 +186,9 @@ let bits (lo, n) v = (v land ((1 lsl n) - 1)) lsl lo
 
 (* Devices *)
 
-type kind = Allocation | Bar | Mapping | Word
+(* A region is memory its path gave, through the GPU's BAR or not, or the
+   timeline word. *)
+type kind = Path | Bar | Word
 
 type 'm dev = {
   path : 'm path;
@@ -620,15 +622,14 @@ let region d kind bytes m = R (reg d kind bytes m)
 let alloc (T d) kind n =
   if n < 1 then invalid_argf "Rig_nv.alloc: %d bytes, expected at least 1" n;
   match kind with
-  | `Device -> Option.map (region d Allocation n) (path_alloc d.path `Gpu n)
-  | `Pinned -> Option.map (region d Allocation n) (path_alloc d.path `System n)
+  | `Device -> Option.map (region d Path n) (path_alloc d.path `Gpu n)
+  | `Pinned -> Option.map (region d Path n) (path_alloc d.path `System n)
   | `Mapped -> (
       match if d.bar then path_alloc d.path `Bar n else None with
       | Some m ->
           bar_live d.self 1;
           Some (region d Bar n m)
-      | None ->
-          Option.map (region d Allocation n) (path_alloc d.path `System n))
+      | None -> Option.map (region d Path n) (path_alloc d.path `System n))
 
 let free (T d) r =
   match mine d r with
@@ -636,7 +637,7 @@ let free (T d) r =
   | Some r -> (
       match r.kind with
       | Word -> invalid_arg "Rig_nv.free: the timeline word is never freed"
-      | Allocation | Bar | Mapping ->
+      | Path | Bar ->
           if not (Atomic.compare_and_set r.live true false) then
             invalid_arg "Rig_nv.free: the region was freed";
           d.path.free r.mem;
@@ -665,12 +666,12 @@ let map_peer (T d) (T d') r =
       match Type.Id.provably_equal d.path.key d'.path.key with
       | None -> None
       | Some Type.Equal ->
-          Option.map (region d Mapping r.bytes) (d.path.map_peer r.mem))
+          Option.map (region d Path r.bytes) (d.path.map_peer r.mem))
 
 let map_host (T d) a n =
   if n < 1 then
     invalid_argf "Rig_nv.map_host: %d bytes, expected at least 1" n;
-  Option.map (region d Mapping n) (below d.path n (d.path.map_host a n))
+  Option.map (region d Path n) (below d.path n (d.path.map_host a n))
 
 (* Images *)
 
