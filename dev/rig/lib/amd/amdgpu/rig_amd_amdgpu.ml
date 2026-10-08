@@ -313,8 +313,17 @@ type device = {
   fd : int;
   gpu : gpu;
   events : int array;
+  mutable events_held : bool; (* until destroyed, once *)
   mutable queues : (int * mem Amd.memory list) list; (* id, its memory *)
 }
+
+(* Event ids are the process's: one destroyed twice may already name another
+   device's event, which the second destroy would take from it. *)
+let drop_events d =
+  if d.events_held then begin
+    d.events_held <- false;
+    Array.iter (fun id -> ignore (destroy_event d.fd id)) d.events
+  end
 
 let eop_bytes = 0x1000
 
@@ -436,7 +445,7 @@ let stop d () =
   else begin
     List.iter (fun (_, mems) -> List.iter (free d.fd d.gpu) mems) d.queues;
     d.queues <- [];
-    Array.iter (fun id -> ignore (destroy_event d.fd id)) d.events;
+    drop_events d;
     `Stopped
   end
 
@@ -516,15 +525,12 @@ let open_ i =
             | events -> Ok (fd, g, events)
             | exception Amd.Fault why -> Error why)
       in
-      let d = { fd; gpu = g; events; queues = [] } in
-      let drop () =
-        Array.iter (fun id -> ignore (destroy_event fd id)) events
-      in
+      let d = { fd; gpu = g; events; events_held = true; queues = [] } in
       match Amd.make (path d ~index:i) with
       | Ok _ as r -> r
       | Error _ as e ->
-          drop ();
+          drop_events d;
           e
       | exception Amd.Fault why ->
-          drop ();
+          drop_events d;
           Error why)
