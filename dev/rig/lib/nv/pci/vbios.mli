@@ -15,6 +15,10 @@
     Nothing covers the VBIOS with a digest: a ROM laid out otherwise than this
     walk reads it is an [Error]. Pure functions over the ROM's bytes. *)
 
+val window : int
+(** [window] is the size of the PROM window {!read} reads, 1 MiB, the most the
+    RM reads ([s_getBaseBiosMaxSize_TU102]): no FWSEC image is larger. *)
+
 val read : Chip.t -> string
 (** [read c] is the GPU's VBIOS, read through the PROM window of its registers.
 *)

@@ -201,9 +201,7 @@ let stop g gsp hold () =
 
 (* Opening *)
 
-(* The page tables' boot pool, and the blocks they map memory with: 512 MiB, 2
-   MiB and 4 KiB. *)
-let boot_pool = 2 * mib
+(* The blocks the page tables map memory with: 512 MiB, 2 MiB and 4 KiB. *)
 let pages = [ (512 * mib, 512 * mib); (2 * mib, 2 * mib); (0x1000, 0x1000) ]
 
 (* The usermode doorbell, [NVC361_NOTIFY_CHANNEL_PENDING], in BAR 0. *)
@@ -230,7 +228,6 @@ let device g ~gsp ~hold ~tables (c : Chip.t) =
     | Blackwell -> Layout.check ~wpr2:(wpr2 c) ~top:(Page_table.memory tables)
     | Ampere | Ada -> Ok ()
   in
-  Page_table.booted tables;
   let* rm = Gsp.rm gsp ~locate:(locate g) in
   let* device, subdevice, vaspace = Gsp.objects rm in
   let* gpu = Gsp.gpu gsp rm ~subdevice in
@@ -269,10 +266,14 @@ let start ~index machine hold fn (c : Chip.t) (fw : Images.t) =
       ~image:fw.gsp.length
   in
   let tables =
-    Page_table.create (Mmu.format c bar) space ~memory:top ~boot:boot_pool
+    Page_table.create (Mmu.format c bar) space ~memory:top
+      ~boot:(Gsp.boot_pool fw.start)
       ~tables:(if Window.length bar >= c.memory then Main else Pool)
       ~pages
   in
+  (* The boot pool holds only the falcons' images: the GSP's objects come from
+     the main pool. *)
+  Page_table.booted tables;
   let* gsp = Gsp.boot { chip = c; fn; tables; bar; space } fw in
   let g =
     {

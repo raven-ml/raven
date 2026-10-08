@@ -78,6 +78,14 @@ type placement = {
 }
 (** The type for where a boot places the GSP's memory. *)
 
+val boot_pool : [ `Booter of Images.booter | `Fmc of Images.fmc ] -> int
+(** [boot_pool start] is the size of the boot pool
+    ({!Rig_pci.Page_table.create}'s [boot]) a boot started by [start] needs, on
+    2 MiB: its root table, and on Ampere and Ada the FWSEC ucode, at most
+    {!Vbios.window} bytes, and the booter's image, which the falcons read from
+    GPU memory that any memory BAR reaches. Every other allocation of the boot
+    comes from the main pool. *)
+
 val boot : placement -> Images.t -> (t, string) result
 (** [boot p fw] boots the GSP of [p.chip] with the firmware [fw]: it writes the
     images, the radix-3 table, the queues, the libos arguments, the WPR

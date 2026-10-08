@@ -265,11 +265,24 @@ let sys p ?(contiguous = false) n =
 
 let first s = List.hd s.pages
 
-(* GPU memory the falcons and the GSP's objects read: its physical address and
-   the window on it. *)
+(* The boot pool: the root table's page, then each image a falcon reads from GPU
+   memory, with the room [Page_table.palloc] needs to find a block of [n] bytes,
+   twice [n] and its alignment. *)
+let boot_pool start =
+  let room n = 2 * (round_up n page + page) in
+  let images =
+    match start with
+    | `Booter (b : Images.booter) ->
+        room Vbios.window + room (String.length b.image)
+    | `Fmc _ -> 0
+  in
+  round_up (page + images) (2 * mib)
+
+(* GPU memory a falcon reads, from the boot pool, which the memory BAR reaches
+   however small: its physical address and the window on it. *)
 let vram p n =
-  match Page_table.palloc p.tables n with
-  | None -> Error "no GPU memory for the GSP"
+  match Page_table.palloc ~boot:true p.tables n with
+  | None -> Error "no GPU memory in the boot pool for a falcon's image"
   | Some pa -> Ok (pa, Window.sub p.bar pa (round_up n page))
 
 let blit (r : Images.range) w off =

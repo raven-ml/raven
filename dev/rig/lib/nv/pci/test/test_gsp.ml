@@ -194,6 +194,65 @@ let test_sequence_refused =
       contains ~sub:why
         (require_error (Gsp.sequence ~libos:0 (sequencer words))))
 
+(* The boot pool *)
+
+module Tables = Rig_pci_support.Tables
+module Page_table = Rig_pci.Page_table
+
+let page = 0x1000
+
+(* Page tables in a fake format whose boot pool [Gsp.boot_pool start] sizes. *)
+let tables start =
+  let boot = Gsp.boot_pool start in
+  let s = Rig_pci.Space.create ~base:0 (1 lsl 40) in
+  let t =
+    Page_table.create
+      (Tables.format (Tables.memory ()))
+      s
+      ~memory:(boot + (64 * Rig_pci_support.mib))
+      ~boot ~tables:Main
+      ~pages:[ (page, page) ]
+  in
+  Page_table.booted t;
+  t
+
+let booter n =
+  `Booter
+    {
+      Rig_nv_pci.Images.image = String.make n 'b';
+      code = (0, 0);
+      data = (0, 0);
+      pkc = 0;
+      engines = 0;
+      ucode = 0;
+    }
+
+let test_boot_pool =
+  prop "the boot pool holds FWSEC and the booter once booting ended"
+    Gen.(
+      pair
+        (int_range 1 Rig_nv_pci.Vbios.window)
+        (int_range 1 (2 * Rig_pci_support.mib)))
+    (fun (fwsec, n) ->
+      let t = tables (booter n) in
+      let palloc what n =
+        not_equal ~msg:what (option int) None (Page_table.palloc ~boot:true t n)
+      in
+      palloc "FWSEC" fwsec;
+      palloc "the booter" n)
+
+let test_boot_pool_fmc () =
+  equal int (2 * Rig_pci_support.mib)
+    (Gsp.boot_pool
+       (`Fmc
+          (let r = { Rig_nv_pci.Images.contents = ""; at = 0; length = 0 } in
+           {
+             Rig_nv_pci.Images.fmc = r;
+             hash = r;
+             signature = r;
+             public_key = r;
+           })))
+
 let () =
   exit
   @@ run "rig_nv_pci.gsp"
@@ -213,5 +272,10 @@ let () =
              test "register accesses" test_sequence;
              test "the GSP's falcon" test_sequence_cores;
              test_sequence_refused;
+           ];
+         group ~timeout:10. "boot pool"
+           [
+             test_boot_pool;
+             test "the FMC's needs only the root table" test_boot_pool_fmc;
            ];
        ]
