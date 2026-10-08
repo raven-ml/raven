@@ -17,7 +17,7 @@ let entry addr ~offset ~words =
   if words < 0 || words > max_words then
     invalid_argf "Gpfifo.entry: %d words, expected 0 to %d" words max_words;
   if offset < 0 || offset >= 1 lsl address_bits then
-    invalid_argf "Gpfifo.entry: offset 0x%x, expected 0 to 2^%d-1" offset
+    invalid_argf "Gpfifo.entry: offset %d, expected 0 to 2^%d-1" offset
       address_bits;
   let flags =
     (D.nvc56f_gp_entry1_level_subroutine lsl D.nvc56f_gp_entry1_level.lo)

@@ -11,7 +11,8 @@ type t = { per_thread : int; per_tpc : int; bytes : int }
    where they would wrap past max_int. *)
 let too_large n =
   invalid_argf
-    "Local_memory.make: %d bytes a thread need an allocation past max_int" n
+    "Local_memory.make: %d bytes per thread take more than max_int bytes in all"
+    n
 
 let round_up n x a =
   if x > max_int - (a - 1) then too_large n else (x + a - 1) / a * a

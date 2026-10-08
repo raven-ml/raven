@@ -59,8 +59,8 @@ let bank_refusal (b : Cubin.bank) =
          (descriptor_banks - 1))
   else if b.bytes > max_bank_bytes then
     Some
-      (strf "the kernel's constant bank %d is %d bytes, more than 64 KiB"
-         b.index b.bytes)
+      (strf "the kernel's constant bank %d is %d bytes, expected at most %d"
+         b.index b.bytes max_bank_bytes)
   else None
 
 let rec banks_refusal = function
@@ -74,13 +74,13 @@ let refusal (k : Cubin.kernel) =
   if k.shared_bytes > max_kernel_shared then
     Some
       (strf
-         "the kernel declares %d bytes of shared memory, more than the %d a \
-          launch leaves it beside the driver's 1 KiB"
+         "the kernel declares %d bytes of shared memory, expected at most %d \
+          (the driver keeps 1 KiB)"
          k.shared_bytes max_kernel_shared)
   else if k.registers > max_registers then
     Some
-      (strf "the kernel uses %d registers a thread, more than %d" k.registers
-         max_registers)
+      (strf "the kernel uses %d registers per thread, expected at most %d"
+         k.registers max_registers)
   else banks_refusal k.banks
 
 (* The smallest configuration that holds [bytes]. *)
@@ -103,8 +103,8 @@ let make (g : Gpu.t) (k : Cubin.kernel) =
   in
   let max_sass_version = (1 lsl layout.sass_version.bits) - 1 in
   if g.sass_version < 0 || g.sass_version > max_sass_version then
-    invalid_argf "Launch.make: SASS version 0x%x, expected 0 to 0x%x"
-      g.sass_version max_sass_version;
+    invalid_argf "Launch.make: SASS version %d, expected 0 to %d" g.sass_version
+      max_sass_version;
   match refusal k with
   | Some why -> Error why
   | None ->

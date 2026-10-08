@@ -45,7 +45,7 @@ let rec write_from b ~lo ~bits v i =
 
 let write fn b ~lo ~bits v =
   if v < 0 || v lsr bits <> 0 then
-    invalid_argf "%s: 0x%x does not fit a field of %d bits" fn v bits;
+    invalid_argf "%s: %d does not fit the %d-bit field at bit %d" fn v bits lo;
   write_from b ~lo ~bits v 0
 
 let read_bits s (f : D.field) =

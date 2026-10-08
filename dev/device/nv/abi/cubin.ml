@@ -362,8 +362,7 @@ let of_string obj =
     else if o.size <= max_image - page then Ok ()
     else
       Error
-        (strf "the image would be longer than 2^49 bytes: its sections take %d"
-           o.size)
+        (strf "the sections take %d bytes, expected at most 2^49 - 4096" o.size)
   in
   let rec relocations i acc = function
     | [] -> Ok (List.rev acc)
