@@ -278,12 +278,52 @@ exact only if the value it waits for cannot recur within 2^32 values. On the
 R9700, a device started near 2^32 released across it in order (8b362523b lets
 a test start one there).
 
-### A TRAP after the copy queue's fence makes it visible sooner
+### A TRAP after the copy queue's fence makes it visible sooner, mostly
 
 On the R9700, a copy-queue submission of a 16-byte copy and a `FENCE` of a
 word the host spins on completed in 10.8 µs without a following SDMA `TRAP`
-packet and in 3.2 µs with one, in the same run. The cause was not found. The
-AMD driver ends every copy-queue release with `TRAP`.
+packet and in 3.2 µs with one, in the same run. The AMD driver ends every
+copy-queue release with `TRAP`.
+
+The trap does not always work. Some copies with it take 11-12 µs, as late as
+a copy without it, against 3.0-3.6 µs for the rest. Slow copies come in
+clusters of 4 to 6 consecutive copies every 1.9-2.1 ms, in every process, and
+in episodes of 10 to 100 ms in which half to 97% of copies are slow. Another
+process holding KFD queues on the GPU, even idle, sets off such episodes:
+with one, 3 of 5 processes ran 25-50% slow for their first 1,300-1,500
+copies; alone, none had more than one slow window of 100 copies. Episodes
+also came with no other process seen. Ruled out: the spinning CPU (pinned to
+seven different cores), load on the CPU that takes the GPU's interrupts, the
+teardown of a process that had just exited, the driver (raw KFD queues show
+the same modes), and SMU deep sleep, whose features KFD disables while a
+process has queues (`pp_features`). The cause lies below KFD, in what the
+firmware schedules, and its registers (MES, IH, SDMA) cannot be read without
+root. Measured with a raw KFD copy queue, 16-byte copies one at a time, slow
+meaning above 8 µs.
+
+A latency measured on the copy queue has two modes between processes. Benches
+compare such rows in alternating pairs that report the range, and gate on the
+fastest worker's median.
+
+### A release does not stand in for the next acquire
+
+A compute queue's `RELEASE_MEM` performs its cache actions at the end of the
+pipe, after the packets that follow it have started, and its actions cover
+the L2 and the caches between it and the shaders (`GL2`, `GLM`, `GL1`,
+`GLV`), never the scalar cache (`GLK`), which holds kernel arguments, nor the
+instruction cache (`GLI`). So the next submission's first dispatch can read an
+L2 line that the previous release has not yet invalidated, or stale arguments
+or code. Each submission that runs compute work starts with its own
+`ACQUIRE_MEM`; letting a release stand in for it would need a wait for the
+release's word, a PCIe round trip.
+
+On the R9700 the acquire costs 0.23 µs per pipelined submission at either
+scope: at agent scope (the caches above the L2) it costs the same as at
+system scope (the L2 and instruction cache too). The cost is the packet. A
+release that only writes the L2 back (`GL2_WB` and `SEQ`, the fence amdgpu's
+gfx12 code writes) costs 1.10 µs per pipelined submission, against 1.28 µs
+for one that also invalidates. Measured on a raw KFD compute queue, medians
+of 100 batches, variants alternated in one process.
 
 ### Dispatch and descriptor fields keep the low bits of what does not fit
 
@@ -618,10 +658,10 @@ bench).
 
 On the R9700 the copy engine's 206 GB/s within GPU memory is 32% of its
 640 GB/s, and one copy queue runs the two directions one after the other:
-2 × 256 MiB, one each way, take 38.48 ms, the sum of each alone. A release at
-agent scope costs the same 15 µs as one at system scope, so the round trip is
-not the L2 write-back. The M1 Max has one memory, so its copies are the
-host's.
+2 × 256 MiB, one each way, take 38.48 ms, the sum of each alone. Pipelined,
+a release costs 1.3 µs; the rest of its 15 µs round trip is, as a guess, the
+command processor waking on an idle queue and fetching the ring. The M1 Max
+has one memory, so its copies are the host's.
 
 ## Measuring on these machines
 
@@ -629,10 +669,10 @@ host's.
   one, and an unprivileged process cannot pin the clock. A GPU-bound row moves
   with it: 64 chained launches took 47.6 µs at 2805 MHz and 51.8 µs at 2550.
   Rows record the P-state and clocks.
-- On the R9700 some rows are bimodal between processes and steady within one:
-  a round trip that switches queues takes 14.8 or 18.8 µs, a 16-byte copy 3.9
-  to 6.1 µs. One session ran every latency row, floors included, 1.6 times
-  slower. The cause was not found.
+- On the R9700 rows that wait on a copy-queue fence are bimodal between
+  processes (see the TRAP note above): a round trip that switches queues takes
+  14.5 or 18.8-19.8 µs, a 16-byte copy 3.9 to 6.1 µs. One session ran every
+  latency row, floors included, 1.6 times slower; its cause was not found.
 - The R9700's own link reads 32 GT/s to its PCIe switch, but the root port
   above runs PCIe 3.0 x16, and host copies stop at its 15.75 GB/s. A link
   budget reads every hop up to the root port.
