@@ -238,7 +238,11 @@ val of_float : ('v, 's) t -> float -> 'v
     So [of_float Float16 0.1] is [0x1.998p-4], the binary16 nearest to [0.1];
     [65519.] stores in [Float16] as [65504.] and [65520.] as infinity; and no
     store makes [Float8_e5m2]'s infinities, which come only from bytes already
-    in a buffer. *)
+    in a buffer.
+
+    The rule holds while the process rounds to nearest, the floating-point
+    environment's default: a [Float32] store is the C cast from [double], which
+    follows the current rounding mode. *)
 
 (** {1:floats Float formats} *)
 
