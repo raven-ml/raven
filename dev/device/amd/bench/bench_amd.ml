@@ -5,7 +5,8 @@
 
 (* GPU 0 through the driver, each row beside the packets that bound it, placed
    from C on a compute and a copy queue the bench makes through KFD: a release
-   by a release packet, a ring of the doorbell and a spin on a word; a queue
+   by a release packet that raises the interrupt a sleeping host wakes on, as
+   the driver's does, a ring of the doorbell and a spin on a word; a queue
    switch by the same after a wait for the value before; foreign waits by 64-bit
    waits; launches by the same dispatch words; copies by the same SDMA copies;
    allocations and host mappings by the KFD calls behind them. The floors'
@@ -27,6 +28,7 @@ module Pm4 = Abi.Pm4
 module Sdma = Abi.Sdma
 
 external start : int array -> unit = "device_amd_bench_start"
+external interrupt : unit -> int = "device_amd_bench_interrupt"
 
 external template : int -> string -> int array -> unit
   = "device_amd_bench_template"
@@ -198,10 +200,10 @@ let save_bytes (g : Abi.Gpu.t) ~cwsr =
 
 (* The floors' packets, in device_amd_bench_stubs.c's order, their values the
    arguments 0, 1 and 2 of a use. *)
-let templates gpu ~waits =
+let templates gpu ~waits ~interrupt =
   [
-    Pm4.release_mem gpu System 0 (Data_64 1);
-    Pm4.release_mem gpu Agent 0 (Data_64 1);
+    Pm4.release_mem gpu System ~interrupt 0 (Data_64 1);
+    Pm4.release_mem gpu Agent ~interrupt 0 (Data_64 1);
     Pm4.wait gpu (Memory 0) Equal 1 ();
     (if waits then Pm4.wait_64 gpu 0 Greater_equal 1 () else []);
     Sdma.poll 0 Equal 1 ();
@@ -231,7 +233,7 @@ let floor_with ~waits () =
     let ws, hs = Packet.template (fun _ -> None) p in
     template i ws (holes Fun.id hs)
   in
-  List.iteri set (templates gpu ~waits);
+  List.iteri set (templates gpu ~waits ~interrupt:(interrupt ()));
   gpu
 
 let floor () = floor_with ~waits:false ()

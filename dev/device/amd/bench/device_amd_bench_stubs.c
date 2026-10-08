@@ -195,8 +195,15 @@ struct kfd_ioctl_runtime_enable_args {
   uint32_t mode_mask, capabilities_mask;
 };
 
+struct kfd_ioctl_create_event_args {
+  uint64_t event_page_offset;
+  uint32_t event_trigger_data, event_type, auto_reset, node_id, event_id;
+  uint32_t event_slot_index;
+};
+
 #define KFD(nr, type) _IOWR('K', nr, struct kfd_ioctl_##type##_args)
 #define CREATE_QUEUE KFD(0x02, create_queue)
+#define CREATE_EVENT KFD(0x08, create_event)
 #define ACQUIRE_VM _IOW('K', 0x15, struct kfd_ioctl_acquire_vm_args)
 #define ALLOC_MEMORY KFD(0x16, alloc_memory_of_gpu)
 #define FREE_MEMORY _IOW('K', 0x17, struct kfd_ioctl_free_memory_of_gpu_args)
@@ -287,6 +294,7 @@ static void free_mem(struct mem m) {
 
 #define RING_BYTES (1u << 20)
 #define EOP_BYTES 4096
+#define EVENT_PAGE_BYTES 0x8000
 
 struct ring {
   volatile uint32_t *words;
@@ -300,6 +308,7 @@ enum { COMPUTE, COPY };
 static struct ring rings[2];
 static _Atomic uint64_t *word;
 static uint64_t word_gpu, last, max_copy;
+static uint32_t interrupt;
 static volatile uint64_t *doorbells;
 static uint64_t doorbells_base;
 
@@ -357,6 +366,22 @@ static void make_queue(struct ring *r, int sdma, uint64_t pos, uint64_t *pos_hos
   r->sdma = sdma;
 }
 
+/* A signal event for the compute floors' releases to interrupt with, as the
+   amdgpu path makes its own: an event page made with a first signal event, so
+   that this one's id is above 0, then this one, its slot armed with its id. An
+   interrupt that names it makes KFD look the event up and read its slot, the
+   work a driver's release asks of KFD for a host that may sleep. */
+static void make_interrupt(void) {
+  struct mem page = alloc(1, EVENT_PAGE_BYTES);
+  struct kfd_ioctl_create_event_args first = {.event_page_offset = page.handle,
+                                              .auto_reset = 1};
+  request(CREATE_EVENT, &first, "making the event page");
+  struct kfd_ioctl_create_event_args e = {.auto_reset = 1};
+  request(CREATE_EVENT, &e, "making a signal event");
+  interrupt = e.event_id;
+  ((volatile uint64_t *)(uintptr_t)page.at)[interrupt] = interrupt;
+}
+
 /* Opens GPU [q]: its KFD id, render node minor, a die's context save area
    and control stack bytes, a compute queue's save area bytes, and the
    bytes one SDMA copy moves; then makes the queues and the word. Once per
@@ -387,7 +412,14 @@ value device_amd_bench_start(value v_q) {
   memset(pos_host, 0, 4096);
   make_queue(&rings[COMPUTE], 0, pos.at, pos_host, q);
   make_queue(&rings[COPY], 1, pos.at + 64, pos_host + 8, q);
+  make_interrupt();
   return Val_unit;
+}
+
+/* The interrupt context of the compute floors' releases. */
+value device_amd_bench_interrupt(value unit) {
+  (void)unit;
+  return Val_long(interrupt);
 }
 
 value device_amd_bench_template(value v_i, value v_words, value v_holes) {
@@ -572,6 +604,7 @@ LINUX(start, value a UNUSED)
 LINUX(template, value a UNUSED, value b UNUSED, value c UNUSED)
 LINUX(release, value a UNUSED)
 LINUX(release_agent, value a UNUSED)
+LINUX(interrupt, value a UNUSED)
 LINUX(switch, value a UNUSED)
 LINUX(waits, value a UNUSED, value b UNUSED)
 LINUX(launch, value a UNUSED, value b UNUSED)
