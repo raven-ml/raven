@@ -11,6 +11,5 @@
   held
   images
   layout
-  mmu
   msgq
   vbios))
