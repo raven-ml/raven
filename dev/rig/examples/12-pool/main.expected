@@ -1,0 +1,5 @@
+1 <= performance cores <= cores: true
+sum of squares below 1000000: 333332833333500000
+  one thread        true
+  performance cores true
+  every core        true

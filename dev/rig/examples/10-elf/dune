@@ -1,0 +1,15 @@
+(executable
+ (name main)
+ (libraries rig.elf))
+
+(rule
+ (deps poly_x86_64.o)
+ (action
+  (with-stdout-to
+   main.output
+   (run ./main.exe))))
+
+(rule
+ (alias runtest)
+ (action
+  (diff main.expected main.output)))

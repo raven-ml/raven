@@ -1,0 +1,15 @@
+(executable
+ (name main)
+ (libraries rig rig.host))
+
+(rule
+ (deps affine_x86_64.o affine_aarch64.o)
+ (action
+  (with-stdout-to
+   main.output
+   (run ./main.exe))))
+
+(rule
+ (alias runtest)
+ (action
+  (diff main.expected main.output)))

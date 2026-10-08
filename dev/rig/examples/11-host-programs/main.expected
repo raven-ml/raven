@@ -1,0 +1,3 @@
+out = [1; 4; 7; 10; 13; 16; 19; 22]
+split over 1000000 iterations: 0 wrong
+entry "missing" is no symbol of an executable section
