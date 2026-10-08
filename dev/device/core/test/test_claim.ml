@@ -125,6 +125,14 @@ let law c =
 
 (* Cases *)
 
+(* A donation overlapping a read that begins before a shorter read: the overlap
+   is not with the read next to it in memory order. *)
+let test_nested_overlap () =
+  let b = B.create C.host 27 in
+  let view first length = B.view b ~first ~length in
+  raises_match Exn.invalid_arg (fun () ->
+      Claim.with_ ~read:[ view 0 20; view 2 1 ] ~donate:[ [ view 19 1 ] ] ignore)
+
 let test_claims () =
   let b = B.create C.host 8 in
   Claim.read b;
@@ -226,8 +234,22 @@ let tests =
   [
     group ~timeout "claims"
       [
-        prop "with_ refuses overlapping donations and holds what spans alone"
-          case law;
+        prop
+          ~examples:
+            [
+              {
+                n = 27;
+                views =
+                  [ (0, 0, Read); (19, 1, Donate); (2, 1, Read); (0, 20, Read) ];
+                claimed = false;
+                raises = false;
+              };
+            ]
+          "with_ refuses overlapping donations and holds what spans alone" case
+          law;
+        test
+          "a donation inside a long read with a short read between is refused"
+          test_nested_overlap;
         test "readers share a memory, an exclusive claim excludes them"
           test_claims;
         test "a borrow and the memory it maps share one count"
