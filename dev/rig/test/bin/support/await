@@ -1,0 +1,19 @@
+#!/bin/sh
+#---------------------------------------------------------------------------
+#  Copyright (c) 2026 The Raven authors. All rights reserved.
+#  SPDX-License-Identifier: ISC
+#---------------------------------------------------------------------------
+
+# [await FILE WORD] returns once a line of FILE starts with WORD. After 10 s
+# it fails, printing FILE: a hang guard, never a bound on the code's time.
+
+i=0
+while ! grep -q "^$2" "$1" 2>/dev/null; do
+  i=$((i + 1))
+  if [ $i -gt 100 ]; then
+    echo "await: no line starting with '$2' in $1 after 10 s:" >&2
+    cat "$1" >&2
+    exit 1
+  fi
+  sleep 0.1
+done

@@ -1,0 +1,27 @@
+(executable
+ (name main)
+ (public_name rig)
+ (package rig)
+ (enabled_if
+  (<> %{os_type} Win32))
+ (libraries
+  rig
+  rig.remote
+  rig.remote.proxy
+  rig.metal
+  rig.cuda
+  rig.nv
+  rig.nv.nvidia
+  rig.nv.pci
+  rig.amd
+  rig.amd.amdgpu
+  rig.amd.pci
+  unix)
+ (foreign_stubs
+  (language c)
+  (names rig_bin_stubs)))
+
+(rule
+ (with-stdout-to
+  version.ml
+  (echo "let v = \"%{version:rig}\"\n")))

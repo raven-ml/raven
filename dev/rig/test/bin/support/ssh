@@ -1,0 +1,50 @@
+#!/bin/sh
+#---------------------------------------------------------------------------
+#  Copyright (c) 2026 The Raven authors. All rights reserved.
+#  SPDX-License-Identifier: ISC
+#---------------------------------------------------------------------------
+
+# ssh for the tests, first on PATH. It plays every machine on this one:
+# machine M is the directory machines/M of the current directory.
+#
+# [ssh -G M] prints M's configuration as ssh does, its hostname alone: the
+# contents of machines/M/hostname if it exists, else M, as an alias does
+# and as no alias does.
+#
+# [ssh [OPTION...] M COMMAND...] runs COMMAND here with TMPDIR machines/M,
+# so each machine has its own agent lock. While machines/M/down exists, M
+# does not answer, as ssh says when a machine is off. machines/M/pid holds
+# the process that plays M's end of the session: killing it loses the
+# session.
+
+config=no
+while [ $# -gt 0 ]; do
+  case $1 in
+  -G) config=yes && shift ;;
+  -o) shift 2 ;;
+  -*) shift ;;
+  *) break ;;
+  esac
+done
+
+m=$1
+shift
+dir=$PWD/machines/$m
+
+if [ $config = yes ]; then
+  if [ -e "$dir/hostname" ]; then
+    echo "hostname $(cat "$dir/hostname")"
+  else
+    echo "hostname $m"
+  fi
+  exit 0
+fi
+
+if [ -e "$dir/down" ]; then
+  echo "ssh: connect to host $m port 22: Connection refused" >&2
+  exit 255
+fi
+
+mkdir -p "$dir"
+echo $$ >"$dir/pid"
+TMPDIR=$dir exec sh -c "$*"

@@ -1,0 +1,3 @@
+(executable
+ (name ctl)
+ (libraries rig rig.remote unix threads.posix))
