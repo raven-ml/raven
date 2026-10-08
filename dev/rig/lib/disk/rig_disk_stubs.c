@@ -309,7 +309,9 @@ value caml_rig_disk_sync(value v_handle) {
   return Val_int(code);
 }
 
-/* [error code] is the system's message for the positive [code]. Keeps the
+/* [error code] is the system's message for the positive [code], formatted
+   into a buffer of the call's own, so domains may ask at once (glibc's
+   strerror_r returns its message, POSIX's fills the buffer). Keeps the
    runtime. */
 value caml_rig_disk_error(value v_code) {
 #ifdef _WIN32
@@ -323,8 +325,14 @@ value caml_rig_disk_error(value v_code) {
   if (n == 0) return caml_alloc_sprintf("error %d", Int_val(v_code));
   msg[n] = '\0';
   return caml_copy_string(msg);
+#elif defined(__GLIBC__)
+  char msg[256];
+  return caml_copy_string(strerror_r(Int_val(v_code), msg, sizeof msg));
 #else
-  return caml_copy_string(strerror(Int_val(v_code)));
+  char msg[256];
+  if (strerror_r(Int_val(v_code), msg, sizeof msg) != 0)
+    return caml_alloc_sprintf("error %d", Int_val(v_code));
+  return caml_copy_string(msg);
 #endif
 }
 
