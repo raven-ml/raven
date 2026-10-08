@@ -3,7 +3,6 @@
 (library
  (name device_host)
  (libraries device_elf nx_pool)
- (modules_without_implementation device_host)
  (foreign_stubs
   (language c)
   (names device_host_stubs)))
