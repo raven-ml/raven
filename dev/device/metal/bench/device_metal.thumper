@@ -32,6 +32,10 @@ launch/floor-1	alloc_words	exact	0
 launch/floor-1	wall_time	batch=32	n=20	1.712e-04	1.652e-04 1.662e-04 1.663e-04 1.676e-04 1.683e-04 1.691e-04 1.694e-04 1.697e-04 1.699e-04 1.708e-04 1.716e-04 1.726e-04 1.726e-04 1.728e-04 1.735e-04 1.744e-04 1.749e-04 1.764e-04 1.814e-04 1.819e-04
 launch/floor-64	alloc_words	exact	0
 launch/floor-64	wall_time	batch=16	n=20	3.619e-04	3.047e-04 3.417e-04 3.441e-04 3.476e-04 3.479e-04 3.506e-04 3.519e-04 3.574e-04 3.582e-04 3.613e-04 3.624e-04 3.667e-04 3.673e-04 3.678e-04 3.683e-04 3.698e-04 3.714e-04 3.719e-04 3.722e-04 3.774e-04
+launch/floor-icb-1	alloc_words	exact	0
+launch/floor-icb-1	wall_time	batch=1	n=20	2.259e-04	2.029e-04 2.128e-04 2.135e-04 2.176e-04 2.184e-04 2.226e-04 2.231e-04 2.243e-04 2.247e-04 2.258e-04 2.261e-04 2.265e-04 2.271e-04 2.331e-04 2.423e-04 2.428e-04 2.497e-04 2.648e-04 2.972e-04 3.465e-04
+launch/floor-icb-64	alloc_words	exact	0
+launch/floor-icb-64	wall_time	batch=1	n=20	6.240e-04	6.048e-04 6.088e-04 6.113e-04 6.139e-04 6.161e-04 6.165e-04 6.182e-04 6.207e-04 6.228e-04 6.233e-04 6.247e-04 6.252e-04 6.259e-04 6.264e-04 6.277e-04 6.297e-04 6.329e-04 6.330e-04 6.478e-04 6.657e-04
 map-host/64MiB	alloc_words	exact	29
 map-host/64MiB	wall_time	batch=1024	n=20	6.995e-06	6.768e-06 6.849e-06 6.869e-06 6.909e-06 6.935e-06 6.936e-06 6.949e-06 6.951e-06 6.962e-06 6.983e-06 7.006e-06 7.016e-06 7.036e-06 7.053e-06 7.072e-06 7.120e-06 7.123e-06 7.249e-06 7.306e-06 7.953e-06
 map-host/floor-64MiB	alloc_words	exact	0
@@ -46,6 +50,14 @@ release/floor-pipelined-256	alloc_words	exact	0
 release/floor-pipelined-256	wall_time	batch=16	n=20	5.122e-04	4.911e-04 4.923e-04 4.924e-04 4.995e-04 4.997e-04 5.060e-04 5.072e-04 5.091e-04 5.099e-04 5.115e-04 5.128e-04 5.163e-04 5.215e-04 5.269e-04 5.312e-04 5.379e-04 5.396e-04 5.397e-04 5.627e-04 5.811e-04
 release/pipelined-256	alloc_words	exact	0
 release/pipelined-256	wall_time	batch=16	n=20	5.620e-04	5.110e-04 5.270e-04 5.325e-04 5.336e-04 5.416e-04 5.422e-04 5.433e-04 5.450e-04 5.600e-04 5.619e-04 5.620e-04 5.659e-04 5.685e-04 5.775e-04 5.828e-04 5.979e-04 5.987e-04 6.031e-04 6.802e-04 6.950e-04
+residency/after-idle-3s	alloc_words	exact	0
+residency/after-idle-3s	wall_time	batch=1	n=20	3.038e+00	3.021e+00 3.023e+00 3.023e+00 3.023e+00 3.024e+00 3.024e+00 3.025e+00 3.027e+00 3.029e+00 3.035e+00 3.040e+00 3.041e+00 3.042e+00 3.042e+00 3.042e+00 3.043e+00 3.044e+00 3.046e+00 3.047e+00 3.049e+00
+residency/warm-1GiB	alloc_words	exact	0
+residency/warm-1GiB	wall_time	batch=1	n=20	1.999e-04	1.833e-04 1.833e-04 1.838e-04 1.854e-04 1.883e-04 1.884e-04 1.927e-04 1.951e-04 1.983e-04 1.990e-04 2.007e-04 2.019e-04 2.032e-04 2.072e-04 2.074e-04 2.074e-04 2.088e-04 2.089e-04 2.225e-04 2.545e-04
+sleep/floor-under-load	alloc_words	exact	0
+sleep/floor-under-load	wall_time	batch=1	n=20	2.509e-03	1.965e-04 2.269e-04 4.901e-04 5.630e-04 8.746e-04 9.115e-04 1.439e-03 1.495e-03 1.750e-03 2.431e-03 2.587e-03 2.831e-03 3.066e-03 3.611e-03 4.310e-03 4.666e-03 5.024e-03 5.755e-03 5.835e-03 7.389e-03
+sleep/under-load	alloc_words	exact	0
+sleep/under-load	wall_time	batch=1	n=20	1.407e-03	2.701e-04 4.368e-04 6.078e-04 6.380e-04 6.992e-04 7.629e-04 9.508e-04 1.027e-03 1.156e-03 1.398e-03 1.417e-03 2.064e-03 2.090e-03 2.137e-03 2.326e-03 2.471e-03 2.643e-03 3.068e-03 3.266e-03 6.695e-03
 split/64	alloc_words	exact	0
 split/64	wall_time	batch=4	n=20	1.940e-03	1.883e-03 1.900e-03 1.904e-03 1.906e-03 1.909e-03 1.918e-03 1.925e-03 1.930e-03 1.933e-03 1.939e-03 1.942e-03 1.946e-03 1.950e-03 1.950e-03 1.956e-03 1.960e-03 1.960e-03 1.961e-03 1.968e-03 1.971e-03
 split/floor-64	alloc_words	exact	0
