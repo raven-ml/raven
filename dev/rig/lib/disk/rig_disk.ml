@@ -193,6 +193,7 @@ module Io = struct
       "Rig.Buffer.create: DISK makes no memory: open a file with \
        Rig_disk.of_file or Rig_disk.create_file"
 
+  (* Nothing reaches [f]: no pin is held. *)
   let free () f = Mutex.protect lock (fun () -> close_fd f)
 
   let read () f ~at ~dst ~len =
@@ -270,8 +271,13 @@ let barrier b =
   | None -> invalid_arg "Rig_disk.barrier: the buffer is not on DISK"
   | Some f when not f.writable -> ()
   | Some f ->
+      (* A device's work writing through a borrow writes the file once done: the
+         barrier orders after it, as a copy reading [b] would. *)
+      Rig.Buffer.wait b Read;
       let synced code = if code <> 0 then sys_error f (error code) in
       (* Writes through a shared mapping reach the file by the mapping's own
          flush, which the descriptor's sync does not cover. *)
       Option.iter (fun pages -> synced (msync pages)) f.pages;
-      using f @@ fun fd -> synced (sync fd)
+      using f (fun fd -> synced (sync fd));
+      (* Until the descriptor is unpinned: collecting [b] would close it. *)
+      ignore (Sys.opaque_identity b)

@@ -116,9 +116,9 @@ val barrier : Rig.Buffer.t -> unit
     copies or through a borrow, are ordered before every later change to the
     file system: after a crash, a change made after [barrier] returns, such as a
     rename of the file, is seen only with those bytes. It does not make them
-    durable: a crash may lose both the bytes and the later change. A device's
-    work writes through a borrow once it is done; [barrier] does not wait for
-    it, {!Rig.Buffer.wait} does.
+    durable: a crash may lose both the bytes and the later change. Like a copy
+    that reads [b], [barrier] first waits for the device work that writes [b]
+    through a borrow ({!Rig.Buffer.wait}), so its bytes are among those ordered.
 
     On a file system that offers no barrier and no flush of the drive's cache to
     its medium, such as some network file systems on macOS, [barrier] is the
@@ -128,4 +128,4 @@ val barrier : Rig.Buffer.t -> unit
     Raises [Invalid_argument] if [b] is not a buffer of {!device} or is dead
     ({!Rig.Claim.consume}), and [Sys_error] naming the file if the system cannot
     order its writes or, as a copy does, if the file cannot be reopened
-    (Descriptors). *)
+    (Descriptors), and {!Rig.Lost} if work it waits for is on a lost device. *)
