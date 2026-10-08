@@ -753,19 +753,21 @@ let submit g ~v ~waits ~handles:_ parts =
   let next = last g.self + 1 in
   if v <> next then
     invalid_argf "Device_amd.submit: value %d, expected %d" v next;
-  Array.iteri (check_part g.self) parts;
+  for i = 0 to Array.length parts - 1 do
+    check_part g.self i parts.(i)
+  done;
   let n = Array.length waits in
   if n > 0 && not g.waits64 then
     invalid_arg "Device_amd.submit: the device waits on no other device";
   if n > max_waits then
     invalid_argf "Device_amd.submit: %d waits, expected at most %d" n max_waits;
   let words = if n = 0 then [||] else Array.make (3 * n) 0 in
-  Array.iteri
-    (fun k (kind, a, w) ->
-      words.(3 * k) <- wait_kind kind;
-      words.((3 * k) + 1) <- a;
-      words.((3 * k) + 2) <- w)
-    waits;
+  for k = 0 to n - 1 do
+    let kind, a, w = waits.(k) in
+    words.(3 * k) <- wait_kind kind;
+    words.((3 * k) + 1) <- a;
+    words.((3 * k) + 2) <- w
+  done;
   if submit_parts g.self v words parts = nx_ok then `Ok
   else `Failed (failure g.self)
 
