@@ -6,6 +6,14 @@
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed submit/cuda/empty submit/cuda/cost replay/cuda/params-24 replay/cuda/pipelined-100 replay/cuda/kernel-pipelined-100 under load 3.0 on 4 cores
 
+copy/cuda/borrow-to-host-256M	alloc_words	exact	0
+copy/cuda/borrow-to-host-256M	wall_time	batch=1	n=20	1.370e-02	1.340e-02 1.343e-02 1.347e-02 1.354e-02 1.354e-02 1.356e-02 1.362e-02 1.366e-02 1.370e-02 1.370e-02 1.370e-02 1.370e-02 1.372e-02 1.376e-02 1.377e-02 1.377e-02 1.384e-02 1.387e-02 1.401e-02 1.401e-02
+copy/cuda/host-to-borrow-256M	alloc_words	exact	0
+copy/cuda/host-to-borrow-256M	wall_time	batch=1	n=20	9.662e-03	9.650e-03 9.655e-03 9.655e-03 9.655e-03 9.656e-03 9.656e-03 9.657e-03 9.661e-03 9.661e-03 9.662e-03 9.662e-03 9.663e-03 9.663e-03 9.664e-03 9.664e-03 9.667e-03 9.668e-03 9.669e-03 9.717e-03 9.718e-03
+copy/nv/borrow-to-host-256M	alloc_words	exact	0
+copy/nv/borrow-to-host-256M	wall_time	batch=1	n=20	1.367e-02	1.349e-02 1.349e-02 1.355e-02 1.358e-02 1.360e-02 1.361e-02 1.362e-02 1.362e-02 1.367e-02 1.367e-02 1.367e-02 1.368e-02 1.370e-02 1.375e-02 1.375e-02 1.375e-02 1.376e-02 1.376e-02 1.377e-02 1.378e-02
+copy/nv/host-to-borrow-256M	alloc_words	exact	0
+copy/nv/host-to-borrow-256M	wall_time	batch=1	n=20	9.656e-03	9.653e-03 9.654e-03 9.654e-03 9.654e-03 9.654e-03 9.654e-03 9.654e-03 9.655e-03 9.656e-03 9.656e-03 9.656e-03 9.657e-03 9.657e-03 9.657e-03 9.657e-03 9.657e-03 9.657e-03 9.658e-03 9.661e-03 9.685e-03
 file/cuda/from-device-256M	alloc_words	exact	1614
 file/cuda/from-device-256M	wall_time	batch=1	n=20	5.274e-02	5.127e-02 5.130e-02 5.135e-02 5.144e-02 5.154e-02 5.155e-02 5.158e-02 5.186e-02 5.205e-02 5.258e-02 5.290e-02 5.331e-02 5.358e-02 5.423e-02 5.430e-02 5.505e-02 5.527e-02 5.533e-02 5.539e-02 5.632e-02
 file/cuda/to-device-256M	alloc_words	exact	1508
@@ -58,7 +66,12 @@ submit/nv/empty	wall_time	batch=2048	n=20	3.498e-06	3.493e-06 3.493e-06 3.495e-0
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
+# forced: blessed copy/metal/host-to-borrow-256M copy/metal/borrow-to-host-256M under load 9.8 on 10 cores
 
+copy/metal/borrow-to-host-256M	alloc_words	exact	0
+copy/metal/borrow-to-host-256M	wall_time	batch=1	n=20	5.964e-03	5.604e-03 5.607e-03 5.735e-03 5.737e-03 5.791e-03 5.854e-03 5.881e-03 5.927e-03 5.943e-03 5.962e-03 5.966e-03 5.978e-03 6.067e-03 6.068e-03 6.076e-03 6.119e-03 6.265e-03 6.307e-03 6.507e-03 6.608e-03
+copy/metal/host-to-borrow-256M	alloc_words	exact	0
+copy/metal/host-to-borrow-256M	wall_time	batch=1	n=20	6.213e-03	5.579e-03 5.633e-03 5.684e-03 5.749e-03 5.807e-03 5.874e-03 6.048e-03 6.058e-03 6.098e-03 6.210e-03 6.216e-03 6.252e-03 6.393e-03 6.400e-03 6.438e-03 6.809e-03 6.837e-03 8.045e-03 1.025e-02 1.035e-02
 file/metal/from-device-256M	alloc_words	exact	37
 file/metal/from-device-256M	wall_time	batch=1	n=20	3.453e-02	3.444e-02 3.444e-02 3.445e-02 3.446e-02 3.446e-02 3.447e-02 3.448e-02 3.449e-02 3.450e-02 3.453e-02 3.453e-02 3.454e-02 3.455e-02 3.456e-02 3.459e-02 3.459e-02 3.461e-02 3.468e-02 3.472e-02 3.479e-02
 file/metal/to-device-256M	alloc_words	exact	37
