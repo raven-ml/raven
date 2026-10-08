@@ -292,8 +292,6 @@ let word d = d.word
 let signaled d = signaled_word d.self
 
 let sleep d ~seen ~still_ms =
-  if still_ms < 0 then
-    invalid_argf "Device_metal.sleep: still_ms %d is negative" still_ms;
   match sleep_word d.self seen still_ms with
   | None -> ()
   | Some why -> raise (Fault why)

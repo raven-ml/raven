@@ -340,17 +340,16 @@ val signaled : t -> int
 val sleep : t -> seen:int -> still_ms:int -> unit
 (** [sleep d ~seen ~still_ms] returns once {!word} holds a value other than
     [seen], at once if it already does, or after [still_ms] milliseconds,
-    whichever comes first. It blocks on a condition the completion handler
-    signals, using no processor time while it waits. It may raise the calling
-    thread's scheduling class for the wait, and it restores the thread's own
-    class before it returns. It releases the domain lock while it waits.
+    whichever comes first; [still_ms] is not negative. It blocks on a condition
+    the completion handler signals, using no processor time while it waits. It
+    may raise the calling thread's scheduling class for the wait, and it
+    restores the thread's own class before it returns. It releases the domain
+    lock while it waits.
 
     Raises {!Fault} if a submission of [d] failed, with the failure's reason:
     Metal's for a failed command buffer, such as
     ["Impacting Interactivity
-     (0000000e:kIOGPUCommandBufferCallbackErrorImpactingInteractivity)"].
-
-    Raises [Invalid_argument] if [still_ms < 0]. *)
+     (0000000e:kIOGPUCommandBufferCallbackErrorImpactingInteractivity)"]. *)
 
 (** {1:loss Loss} *)
 
