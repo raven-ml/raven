@@ -252,8 +252,9 @@ val signaled : t -> int
 
 val sleep : t -> seen:int -> still_ms:int -> unit
 (** [sleep g ~seen ~still_ms] returns once [g]'s timeline word differs from
-    [seen], at once if it already does, or after [still_ms] milliseconds,
-    whichever comes first; [still_ms >= 0]. It reads the word and the channels'
+    [seen], at once if it already does, and at the latest after [still_ms]
+    milliseconds; [still_ms >= 0]. Under a hang bound it may return earlier,
+    when the bound's clock runs out. It reads the word and the channels'
     error notifiers every millisecond, and the multiprocessors' errors and the
     path's {!field-check} as it starts and once a notifier holds an error. It
     lets other domains run while it waits.
