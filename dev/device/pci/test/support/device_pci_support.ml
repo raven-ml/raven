@@ -57,23 +57,35 @@ let poll f =
 
 (* This machine's GPUs *)
 
-external flock : Unix.file_descr -> bool = "device_pci_test_flock"
-
-let gpu_lock = "DEVICE_PCI_TEST_GPU_LOCK"
+external lock : string -> string -> int = "device_pci_test_lock"
 
 let this_gpus () =
   List.filter
     (fun (id : Device_pci.Machine.id) -> id.class_ = 0x03)
     (Device_pci.Machine.functions Device_pci.Machine.this)
 
-let with_gpu_lock f =
-  match Sys.getenv_opt gpu_lock with
-  | None | Some "" -> skip ~reason:(gpu_lock ^ " names no lock file") ()
-  | Some file ->
-      let fd = Unix.openfile file [ O_RDONLY; O_CREAT; O_CLOEXEC ] 0o644 in
-      Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
-      if not (flock fd) then skip ~reason:(file ^ " is held by another") ();
-      f ()
+let gpu_lock = "/tmp/raven-device-gpu.lock"
+
+(* The longest wait for the lock, in seconds: the machine's suites, from every
+   checkout and user, take it in turn. *)
+let gpu_wait = 300
+
+let holder () =
+  match In_channel.with_open_bin gpu_lock In_channel.input_all with
+  | note -> String.trim note
+  | exception Sys_error _ -> "a process that left no note"
+
+(* [lock] naps 100 ms each time it is refused. *)
+let rec take refused =
+  match lock gpu_lock Sys.executable_name with
+  | 0 -> ()
+  | -1 when refused < gpu_wait * 10 -> take (refused + 1)
+  | -1 ->
+      failwith
+        (strf "%s: still held after %d s, by %s" gpu_lock gpu_wait (holder ()))
+  | errno -> failwith (strf "%s: errno %d" gpu_lock errno)
+
+let hold_gpu () = if on_linux && this_gpus () <> [] then take 0
 
 (* Process memory and far machines *)
 

@@ -5,7 +5,7 @@
 
 /* What the suites need from C: process memory to map, a far machine reached
    through a transport, the accesses of device_pci.h, the monotonic clock,
-   and the lock that keeps two suites off this machine's GPUs.
+   and the machine's GPU lock, which suites take in turn.
 
    A far machine holds [size] bytes at addresses [base, base + size) and
    nothing else. Its transport logs every access, fails on request, and
@@ -28,11 +28,17 @@
 
 #include "device_pci.h"
 
+#include <errno.h>
+
 /* Windows headers, which unixsupport.h brings, define [far]. */
 #ifndef _WIN32
+#include <caml/threads.h>
 #include <caml/unixsupport.h>
-#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
 #include <sys/file.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 value device_pci_test_memory(value n) {
@@ -260,15 +266,56 @@ value device_pci_test_now_ns(value unit) {
 
 /* The GPU lock */
 
-/* Whether flock took the exclusive lock of [fd] without waiting: false if
-   another open file holds it. Raises Unix_error otherwise. */
-value device_pci_test_flock(value fd) {
-#ifdef _WIN32
-  (void)fd;
-  caml_failwith("device_pci_test_flock: flock needs a POSIX system");
+/* One try at the exclusive lock of the file [v_path], which the process
+   then holds until it exits. A missing file is made writable by every user
+   of the machine. Once taken, the file names [v_holder] and the process's
+   id, for the processes that wait. Answers [0] once the process holds the
+   lock, [-1] after a nap of 100 ms if another process holds it, or the
+   errno of a failing call. Releases the runtime for the nap. */
+value device_pci_test_lock(value v_path, value v_holder) {
+#if defined(_WIN32)
+  (void)v_path;
+  (void)v_holder;
+  return Val_int(ENOSYS);
 #else
-  if (flock(Int_val(fd), LOCK_EX | LOCK_NB) == 0) return Val_true;
-  if (errno == EWOULDBLOCK) return Val_false;
-  caml_uerror("flock", Nothing);
+  /* The descriptor that holds the lock once taken. The suites take it from
+     one domain. */
+  static int held = -1;
+  if (held >= 0) return Val_int(0);
+  const char *path = String_val(v_path);
+  int fd = open(path, O_RDWR | O_CLOEXEC);
+  /* O_EXCL: Linux refuses O_CREAT on another user's file in /tmp
+     (fs.protected_regular). */
+  if (fd < 0 && errno == ENOENT) {
+    fd = open(path, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0666);
+    if (fd < 0 && errno == EEXIST) fd = open(path, O_RDWR | O_CLOEXEC);
+    else if (fd >= 0 && fchmod(fd, 0666) != 0) {
+      int e = errno;
+      close(fd);
+      return Val_int(e);
+    }
+  }
+  if (fd < 0) return Val_int(errno);
+  if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
+    int e = errno;
+    close(fd);
+    if (e != EWOULDBLOCK) return Val_int(e);
+    struct timespec nap = {0, 100 * 1000 * 1000};
+    caml_release_runtime_system();
+    nanosleep(&nap, NULL);
+    caml_acquire_runtime_system();
+    return Val_int(-1);
+  }
+  char note[1024] = "";
+  snprintf(note, sizeof note, "%s, pid %ld\n", String_val(v_holder),
+           (long)getpid());
+  size_t len = strlen(note);
+  if (ftruncate(fd, 0) != 0 || pwrite(fd, note, len, 0) != (ssize_t)len) {
+    int e = errno;
+    close(fd);
+    return Val_int(e);
+  }
+  held = fd;
+  return Val_int(0);
 #endif
 }

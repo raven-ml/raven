@@ -511,7 +511,7 @@ let test_far_leaves () =
    driver. Taking it changes nothing. *)
 let test_pci_fixes () =
   let g = this_gpus () in
-  with_gpu_lock @@ fun () ->
+  hold_gpu ();
   let n = List.length (Gpus.buses g Machine.this) in
   let rec first i =
     if i = n then skip ~reason:"this machine has no function to take" ();
@@ -907,6 +907,7 @@ let tree_changes =
     ]
 
 let () =
+  hold_gpu ();
   exit
   @@ run "device_pci.gpus"
        [

@@ -963,7 +963,7 @@ let test_refused_here () =
    another class of function may be another user's device. *)
 let test_changes_nothing () =
   if not on_linux then skip ~reason:"this machine has no /sys/bus/pci" ();
-  with_gpu_lock @@ fun () ->
+  hold_gpu ();
   let buses = List.map (fun (d : Machine.id) -> d.bus) (this_gpus ()) in
   let before = List.map state buses in
   List.iter
@@ -990,7 +990,7 @@ let takeable () =
 (* One process holds a function at a time, this one included. *)
 let test_held_here () =
   if not on_linux then skip ~reason:"this machine has no /sys/bus/pci" ();
-  with_gpu_lock @@ fun () ->
+  hold_gpu ();
   let d =
     match takeable () with
     | Some d -> d
@@ -1018,7 +1018,7 @@ let vfio_function () =
 
 (* Behind an IOMMU, a function needs no root. *)
 let test_vfio () =
-  with_gpu_lock @@ fun () ->
+  hold_gpu ();
   let d, f = vfio_function () in
   Fun.protect ~finally:(fun () -> Function.release f) @@ fun () ->
   equal ~msg:"its vendor" int d.vendor (Function.config16 f 0);
@@ -1535,6 +1535,7 @@ let () =
   match Sys.argv with
   | [| _; arg; root; bus |] when arg = exiting -> exit_mastering root bus
   | _ ->
+      hold_gpu ();
       exit
       @@ run "device_pci.function"
            [

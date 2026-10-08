@@ -55,18 +55,24 @@ val now_ns : unit -> int
 
 (** {1:this This machine's GPUs}
 
-    Taking a GPU of this machine is a hardware opt-in. A test that takes a
-    function of this machine takes only GPUs, and only while it holds the
-    machine's GPU lock, so that it never holds another user's device. *)
+    A test that takes a function of this machine takes only GPUs, so that it
+    never holds another user's device, and runs while the process holds the
+    machine's GPU lock, so that suites take their turns on the GPUs. *)
 
 val this_gpus : unit -> Device_pci.Machine.id list
 (** [this_gpus ()] is this machine's display controllers, class [0x03]. *)
 
-val with_gpu_lock : (unit -> 'a) -> 'a
-(** [with_gpu_lock f] is [f ()] while the process holds this machine's GPU lock:
-    [flock] on the file the variable [DEVICE_PCI_TEST_GPU_LOCK] names. It skips
-    the running test if the variable is unset or another process holds the lock.
-*)
+val hold_gpu : unit -> unit
+(** [hold_gpu ()] returns once the process holds the machine's GPU lock, which
+    it keeps until it exits, or at once if this machine has no [/sys/bus/pci] or
+    no GPU. The lock is [flock] on [/tmp/raven-device-gpu.lock], the file every
+    suite that acts on a GPU of the machine locks; its holder writes its
+    executable and process id into it. A suite calls [hold_gpu] before
+    [Windtrap.run], so that the wait counts against no test's timeout, and a
+    test that takes a GPU calls it again.
+
+    Raises [Failure] naming the holder if another process still holds the lock
+    after 300 s, or naming the errno if the file cannot be locked. *)
 
 (** {1:memory Process memory and far machines}
 
