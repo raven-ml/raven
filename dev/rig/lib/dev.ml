@@ -193,24 +193,26 @@ let stop_returned d =
 let stopped d = is_lost d && (c_answer d.c = answer_stopped || upgrade d)
 
 (* The answer is recorded whatever the driver's stop did: the device must count
-   as stopped or not. *)
+   as stopped or not. The host has no stop and no answer. *)
 let stop d =
-  let answer () =
-    c_set_answer d.c answer_unknown;
-    match d.kind with
-    | Driver _ -> ignore (upgrade d)
-    | _ -> c_set_answer d.c answer_stopped
-  in
-  Fun.protect ~finally:answer (fun () ->
+  if d.c <> 0 then begin
+    let answer () =
+      c_set_answer d.c answer_unknown;
       match d.kind with
-      | Driver { m; h; _ } -> (
-          let module D = (val m) in
-          try D.stop h with D.Fault _ -> ())
-      | Io { m; h } -> (
-          let module I = (val m) in
-          try I.stop h with I.Fault _ -> ())
-      | Host -> ());
-  !answered d
+      | Driver _ -> ignore (upgrade d)
+      | _ -> c_set_answer d.c answer_stopped
+    in
+    Fun.protect ~finally:answer (fun () ->
+        match d.kind with
+        | Driver { m; h; _ } -> (
+            let module D = (val m) in
+            try D.stop h with D.Fault _ -> ())
+        | Io { m; h } -> (
+            let module I = (val m) in
+            try I.stop h with I.Fault _ -> ())
+        | Host -> ());
+    !answered d
+  end
 
 let stop_claimed indices =
   for i = 1 to Array.length indices - 1 do

@@ -189,8 +189,9 @@ let rig_word = 0
 let rig_object = 1
 let host_wait = -1
 
-(* How [d] waits for [p]'s values, decided once per pair: [host_wait], or the
-   address of [p]'s word as [d] maps it. *)
+(* How [d] waits for [p]'s values, decided once per pair: [host_wait], or for a
+   queue that waits in it, the producer's object for an object completion, or
+   the address of [p]'s word as [d] maps it. *)
 let decide d p =
   let waits =
     match p.completion with

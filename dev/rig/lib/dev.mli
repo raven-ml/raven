@@ -20,8 +20,8 @@
     lost, with the reason ["forked"]: its stop counts as returned and never
     runs, and the device never counts as {!stopped}. Its io devices stay open.
 
-    Functions that read a device's C record ({!raise_lost}, {!lose}, {!stop})
-    take a device other than the host. *)
+    {!raise_lost} and {!lose} read a device's C record, so they take a device
+    other than the host, which is never lost. *)
 
 open Def
 
@@ -98,9 +98,9 @@ val stop_claimed : int array -> unit
 
 val stop : device -> unit
 (** [stop d] runs [d]'s driver's stop, which the caller claimed, records its
-    answer, then runs {!answered}. A fault of the stop is dropped; another
-    exception it raises is raised again once the answer is recorded, without
-    running {!answered}. *)
+    answer, then runs {!answered}. It does nothing on the host. A fault of the
+    stop is dropped; another exception it raises is raised again once the answer
+    is recorded, without running {!answered}. *)
 
 val lose : device -> string -> 'a
 (** [lose d why] loses [d] with [why] unless it is lost, runs the stops the loss
