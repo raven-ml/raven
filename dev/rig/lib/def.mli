@@ -36,6 +36,11 @@ type kind =
 (* How a device's word advances. *)
 type completion = Store | Object of int | Host_writes
 
+(* A memory's kind: [Buffer.memory]'s three, host memory its keeper frees (a
+   heap bigarray or the caller's), io memory its device made, and io memory its
+   library gave. *)
+type memory_kind = Device | Pinned | Mapped | Host_kept | Io_made | Io_given
+
 type device = {
   index : int;
   name : string;
@@ -60,7 +65,7 @@ type device = {
   mutable budget : int;
   mutable used : int;  (** Own bytes in live buffers, code and cache. *)
   mutable cached : int;
-  cache : (int, entry list) Hashtbl.t;  (** By [bytes * 4 + kind]. *)
+  cache : (int, entry list) Hashtbl.t;  (** By [bytes * 8 + kind]. *)
   mutable retiring : entry list;  (** Waiting for other devices' uses. *)
   mutable pending : (int * pending) list;  (** Waiting for its own value. *)
   mutable pairs : int array;  (** By producer index: 0 unknown, 1 host. *)
@@ -68,12 +73,9 @@ type device = {
   mutable afters : (int * (unit -> unit)) list;
 }
 
-(* Memory kinds: [Buffer.memory]'s, and the host's heap. *)
 and entry = {
   owner : device;
-  memory : int;
-      (** 0 device, 1 pinned, 2 mapped, 3 heap, 4 kept by its maker, 5 io memory
-          its device made, 6 io memory its library gave. *)
+  memory : memory_kind;
   bytes : int;
   region : region option;
   io_region : io_region option;

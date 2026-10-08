@@ -112,16 +112,10 @@ let heap_bytes n =
 
 let new_claim () = { count = 0; generation = 0; why = "" }
 
-(* Kinds: [Buffer.memory]'s, then the host's heap, memory its maker keeps, io
-   memory its device made and io memory its library gave. *)
-let device_kind = 0
-let pinned_kind = 1
-let mapped_kind = 2
-let heap_kind = 3
-let kept_kind = 4
-let io_kind = 5
-let given_kind = 6
-let is_io_memory (e : entry) = e.memory = io_kind || e.memory = given_kind
+let is_io_memory (e : entry) =
+  match e.memory with
+  | Io_made | Io_given -> true
+  | Device | Pinned | Mapped | Host_kept -> false
 
 let entry ?region ?io_region owner memory bytes stamps =
   {
@@ -139,7 +133,7 @@ let entry ?region ?io_region owner memory bytes stamps =
   }
 
 (* The entry of host memory no device borrowed: no stamps, no mapping. *)
-let no_entry = entry Dev.host heap_kind 0 0
+let no_entry = entry Dev.host Host_kept 0 0
 
 (* The root a record holds until it is set to the record itself: a record made
    recursively would be made twice. *)
@@ -212,10 +206,10 @@ let note d =
 
 (* Driver calls *)
 
-let poly kind =
-  if kind = pinned_kind then `Pinned
-  else if kind = mapped_kind then `Mapped
-  else `Device
+let poly = function
+  | Pinned -> `Pinned
+  | Mapped -> `Mapped
+  | Device | Host_kept | Io_made | Io_given -> `Device
 
 (* [n] new bytes of [d]'s memory of [kind] as a release record, or [None] if [d]
    has not the room. *)
@@ -236,7 +230,7 @@ let new_entry d kind n =
           Some
             (entry
                ~io_region:(Io_region { m; h; r })
-               d io_kind n (stamps_new ())))
+               d Io_made n (stamps_new ())))
   | Host -> None
 
 (* After [d]'s loss, its memory and mappings are freed only once its stop
@@ -257,7 +251,10 @@ let unload d (Image { m; h; i }) =
   let module D = (val m) in
   if not (Dev.is_lost d) then Dev.counted d (fun () -> D.unload h i)
 
-let owns kind = kind = device_kind || kind = mapped_kind || kind = io_kind
+(* Whether memory of [kind] counts in its device's budget. *)
+let owns = function
+  | Device | Mapped | Io_made -> true
+  | Pinned | Host_kept | Io_given -> false
 
 (* Releases *)
 
@@ -289,7 +286,18 @@ let free_entry (e : entry) =
     note d
   end
 
-let key n kind = (n * 8) + kind
+let key n kind =
+  let k =
+    match kind with
+    | Device -> 0
+    | Pinned -> 1
+    | Mapped -> 2
+    | Host_kept -> 3
+    | Io_made -> 4
+    | Io_given -> 5
+  in
+  (n * 8) + k
+
 let cache_key (e : entry) = key e.bytes e.memory
 
 (* Whether the lost [d] counts as stopped: its stop returned and its word reads
@@ -379,7 +387,7 @@ let to_cache d e = Dev.protect d (fun () -> cache d e)
 
 (* Routes a record [d]'s release list gave. *)
 let route d = function
-  | Memory e when e.memory = heap_kind || e.memory = kept_kind ->
+  | Memory ({ memory = Host_kept; _ } as e) ->
       unmap_all e;
       drop_stamps e
   | Memory e ->
@@ -598,14 +606,14 @@ let rec alloc_entry d kind n round =
           e
       (* Mapped memory the window or the budget cannot hold is pinned memory,
          which keeps its promises, and the cache stays. *)
-      | None when kind = mapped_kind -> alloc_entry d pinned_kind n round
+      | None when kind = Mapped -> alloc_entry d Pinned n round
       | None when round < rounds ->
           reclaim d round;
           alloc_entry d kind n (round + 1)
       | None -> raise (Dev.Out_of_memory (d, n)))
 
 let alloc_entry d kind n =
-  let kind = if kind = mapped_kind && n > d.budget then pinned_kind else kind in
+  let kind = if kind = Mapped && n > d.budget then Pinned else kind in
   if owns kind && n > d.budget then raise (Dev.Out_of_memory (d, n));
   drain d;
   alloc_entry d kind n 1
@@ -649,7 +657,7 @@ let ensure_entry m =
   let d = m.dev in
   Dev.protect d (fun () ->
       if m.entry == no_entry then begin
-        let e = entry d heap_kind m.bytes (stamps_new ()) in
+        let e = entry d Host_kept m.bytes (stamps_new ()) in
         m.entry <- e;
         m.token <- token d.release (Memory e) 0 max_int (-1)
       end)
@@ -768,7 +776,7 @@ let prefetch d (m : memory) ~at ~len =
    device [d], which [d]'s free gives back once unreachable. *)
 let of_io d r n =
   drain d;
-  let e = entry ~io_region:r d given_kind n (stamps_new ()) in
+  let e = entry ~io_region:r d Io_given n (stamps_new ()) in
   let m = make d n e in
   m.token <- token d.release (Memory e) n max_int (-1);
   m

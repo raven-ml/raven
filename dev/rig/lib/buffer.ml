@@ -21,10 +21,10 @@ let check_live fn b =
 let of_memory mem length =
   { mem; offset = 0; length; generation = generation mem.claim }
 
-let kind_of = function
-  | Device -> Memory.device_kind
-  | Pinned -> Memory.pinned_kind
-  | Mapped -> Memory.mapped_kind
+let kind_of : memory -> Def.memory_kind = function
+  | Device -> Def.Device
+  | Pinned -> Def.Pinned
+  | Mapped -> Def.Mapped
 
 let create ?(memory = Device) d n =
   if n < 0 then invalid_argf "Rig.Buffer.create: %d bytes is negative" n;
@@ -35,7 +35,7 @@ let create ?(memory = Device) d n =
       Memory.drain d;
       Memory.make d 0 Memory.no_entry
     end
-    else if Dev.is_io d then Memory.alloc d Memory.device_kind n
+    else if Dev.is_io d then Memory.alloc d Def.Device n
     else Memory.alloc d (kind_of memory) n
   in
   of_memory mem n

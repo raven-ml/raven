@@ -37,8 +37,8 @@ let place d (e : entry) code =
   end
   else begin
     if host < 0 then
-      invalid_argf
-        "Rig.Program.load: %s's code memory has no host address" d.name;
+      invalid_argf "Rig.Program.load: %s's code memory has no host address"
+        d.name;
     Dev.wait d (Dev.submitted d);
     blit_string code host
   end
@@ -53,7 +53,7 @@ let image d binary =
       | Error why -> Error (strf "%s: %s" d.name why)
       | Ok (`Loaded i) -> Ok (Image { m; h; i }, None)
       | Ok (`Place (n, lay)) -> (
-          let e = Memory.alloc_entry d Memory.device_kind n in
+          let e = Memory.alloc_entry d Device n in
           (* [d]'s regions are of [d]'s region type. *)
           match e.region with
           | Some (Region { r; rid = rid'; _ }) -> (

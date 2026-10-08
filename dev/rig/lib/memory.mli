@@ -44,13 +44,14 @@ val token : int -> released -> int -> int -> int -> token
 val holds_list : int
 (* [holds_list] is the release list of holds, which every drain reads. *)
 
-val device_kind : int
-val pinned_kind : int
-val mapped_kind : int
-val kept_kind : int
-
 val entry :
-  ?region:region -> ?io_region:io_region -> device -> int -> int -> int -> entry
+  ?region:region ->
+  ?io_region:io_region ->
+  device ->
+  memory_kind ->
+  int ->
+  int ->
+  entry
 (* [entry owner kind bytes stamps] is a release record. *)
 
 val no_entry : entry
@@ -118,12 +119,12 @@ val free_entry : entry -> unit
 (* [free_entry e] gives [e]'s region back to its driver, unmapping other
    devices' mappings of it once their work is done. *)
 
-val alloc_entry : device -> int -> int -> entry
+val alloc_entry : device -> memory_kind -> int -> entry
 (* [alloc_entry d kind n] allocates [n] bytes of [d]'s memory of [kind] on the
    allocation path: drains, the cache, the budget, the reclaim rounds, then
    [Out_of_memory]. *)
 
-val alloc : device -> int -> int -> memory
+val alloc : device -> memory_kind -> int -> memory
 
 (* [alloc d kind n] is a memory record over [alloc_entry d kind n], with its
    token. *)
