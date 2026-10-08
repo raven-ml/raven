@@ -26,9 +26,9 @@
     device is Stopped once its stop returned.
 
     A forked child makes every lock anew. Each driver's device it inherited is
-    Orphaned, lost with the reason ["forked"] unless it was lost: its stop
-    never runs, its word is never read, and its objects are forgotten without
-    a call. Its io devices stay as they were.
+    Orphaned, lost with the reason ["forked"] unless it was lost: its stop never
+    runs, its word is never read, and its objects are forgotten without a call.
+    Its io devices stay as they were.
 
     A Stopped device's timeline word ends in three steps, each in a drain
     ([Memory]):
@@ -37,13 +37,13 @@
     + Then {!move_word} points the C record's readers at a copy of the word's
       last value in the record. Every later read, a point of the device that a
       stamp names included, reads the copy, so stamps need not be gone.
-    + The driver gets the word back ({!Rig.Driver.free}) once a minor
-      collection ran since the move, after every other device's mapping of it.
-      The collection is the grace period: it waits for every domain that holds
-      its runtime lock, so a reader that loaded the word's address before the
-      move has finished with it. A reader without the runtime lock reads under
-      the device's mutex, or, as a spin on the word, counts as a call inside
-      the device, which the stop and the move wait for.
+    + The driver gets the word back ({!Rig.Driver.free}) once a minor collection
+      ran since the move, after every other device's mapping of it. The
+      collection is the grace period: it waits for every domain that holds its
+      runtime lock, so a reader that loaded the word's address before the move
+      has finished with it. A reader without the runtime lock reads under the
+      device's mutex, or, as a spin on the word, counts as a call inside the
+      device, which the stop and the move wait for.
 
     The host is never lost. *)
 
@@ -121,14 +121,14 @@ val ended : unit -> device list
 
 val run_owed : unit -> unit
 (** [run_owed ()] runs each owed stop whose device has no counted call in
-    flight, then {!answered}. It is one load while no stop is owed. A fault of
-    a stop is dropped; another exception it raises is raised again once the
-    state moved on, without running {!answered}. *)
+    flight, then {!answered}. It is one load while no stop is owed. A fault of a
+    stop is dropped; another exception it raises is raised again once the state
+    moved on, without running {!answered}. *)
 
 val lose : device -> string -> 'a
-(** [lose d why] loses [d] with [why] unless it is lost, which is the
-    process's {!failure} if none came before, runs the owed stops and raises
-    {!Lost} with the first loss's reason. *)
+(** [lose d why] loses [d] with [why] unless it is lost, which is the process's
+    {!failure} if none came before, runs the owed stops and raises {!Lost} with
+    the first loss's reason. *)
 
 val counted : device -> (unit -> 'a) -> 'a
 (** [counted d f] is [f ()] as a counted call on [d]: [d]'s stop runs only once
@@ -137,14 +137,14 @@ val counted : device -> (unit -> 'a) -> 'a
     first. *)
 
 val give : device -> (unit -> unit) -> unit
-(** [give d f] gives an object back to [d]'s driver through [f]: as a
-    {!counted} call on a live device, uncounted on a Stopped one, dropping a
-    fault and a [Sys_error] it raises, and not at all on an Orphaned one. On a
-    device lost and not Stopped it raises {!Lost} without calling [f]. *)
+(** [give d f] gives an object back to [d]'s driver through [f]: as a {!counted}
+    call on a live device, uncounted on a Stopped one, dropping a fault and a
+    [Sys_error] it raises, and not at all on an Orphaned one. On a device lost
+    and not Stopped it raises {!Lost} without calling [f]. *)
 
 val move_word : device -> bool
-(** [move_word d] moves the readers of the stopped [d]'s word to a copy in its
-    C record once nothing else reads the driver's word: no record of another
+(** [move_word d] moves the readers of the stopped [d]'s word to a copy in its C
+    record once nothing else reads the driver's word: no record of another
     device holds a wait on it that its word has not passed. Every reader holding
     a domain's runtime lock may still read the driver's word until that domain
     passed a minor collection ({!minors}). It is [true] once, for the call that
@@ -181,8 +181,8 @@ val wait : device -> int -> unit
 
 val wait_point : int -> unit
 (** [wait_point p] is {!wait} on [p]'s device and value, except that a point
-    that is done returns, also on a device lost since: it raises {!Lost} only
-    if [p] is not done and its device is or becomes lost. *)
+    that is done returns, also on a device lost since: it raises {!Lost} only if
+    [p] is not done and its device is or becomes lost. *)
 
 val after : device -> int -> (unit -> unit) -> unit
 (** [after d v f] runs [f] in the first {!wait} on [d] that finds [v] reached,
@@ -190,8 +190,8 @@ val after : device -> int -> (unit -> unit) -> unit
 
 val is_done : int -> bool
 (** [is_done p] is [true] iff the work up to [p] is done: [p]'s device's word
-    reads [p]'s value, read before the loss for a lost device, and the device
-    is not {!orphaned}. It may raise {!Lost} as {!word} does. *)
+    reads [p]'s value, read before the loss for a lost device, and the device is
+    not {!orphaned}. It may raise {!Lost} as {!word} does. *)
 
 val settled : int -> bool
 (** [settled p] is [true] iff no work up to [p] touches memory any more: it is

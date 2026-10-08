@@ -130,10 +130,9 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~completion ~waits
 let host =
   let d =
     make_device ~index:0 ~name:"CPU" ~machine:None ~kind:Host
-      ~c:(c_host_new "CPU")
-      ~arch:(host_arch ()) ~queues:[||] ~completion:Host_writes
-      ~waits:(false, false, false) ~max_waits:0 ~maps_host:false ~word:0
-      ~word_region:None ~key:(-1) ~memory_device:false
+      ~c:(c_host_new "CPU") ~arch:(host_arch ()) ~queues:[||]
+      ~completion:Host_writes ~waits:(false, false, false) ~max_waits:0
+      ~maps_host:false ~word:0 ~word_region:None ~key:(-1) ~memory_device:false
       ~fault:(fun _ -> None)
       ~capability:None ~budget:max_int
   in
@@ -157,6 +156,7 @@ let busy d = Lock.busy d.lock
 
 let is_host d = match d.kind with Host -> true | _ -> false
 let is_io d = match d.kind with Io _ -> true | _ -> false
+
 (* The host is never lost: a use of its memory reads no C record. *)
 let[@inline] is_lost d = d != host && c_state d.c <> live
 let orphaned d = c_state d.c = orphaned_state
@@ -274,7 +274,6 @@ let give d f =
   else counted d f
 
 let move_word d = c_word_retire d.c
-
 let fail why = if c_fail why then run_owed ()
 
 let failure () =
@@ -377,9 +376,9 @@ let wait_point p =
   let d = of_index (Point.index p) and v = Point.value p in
   let w = word d in
   let w = if w >= v || is_lost d then w else wait_until_lost d v w in
-  if not (is_lost d) then begin
-    if d.afters != [] then run_afters d w
-  end
+  if not (is_lost d) then
+    begin if d.afters != [] then run_afters d w
+    end
   else if not (c_done p) then raise_lost d
 
 (* The word is read before the loss is, as [wait_point] reads them. *)
@@ -548,8 +547,8 @@ let driver_device (type a) (module D : Sigs.Driver with type t = a) (h : a)
   d
 
 let open_driver (type a) ?(memory_device = false)
-    (module D : Sigs.Driver with type t = a) ?machine ?(host = false) ~name
-    make =
+    (module D : Sigs.Driver with type t = a) ?machine ?(host = false) ~name make
+    =
   let fn = if memory_device then "memory_device" else "open_" in
   open_named ~fn ~machine ~name ~key:(Type.Id.uid D.key) ~host
   @@ fun ~index ~name:full ->
@@ -597,9 +596,7 @@ let devices_of m h =
   Lock.protect table_lock @@ fun () ->
   Hashtbl.fold
     (fun (m', _) slot acc ->
-      match slot with
-      | Open d when m' = Some m && d != h -> d :: acc
-      | _ -> acc)
+      match slot with Open d when m' = Some m && d != h -> d :: acc | _ -> acc)
     table []
 
 (* Whether [d] is another machine's host. *)

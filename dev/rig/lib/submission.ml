@@ -100,13 +100,12 @@ let host_address fn b =
 (* Memory this process's host addresses, which a copy on a device of another
    machine names by its host address ([rig_edge.h]'s [copy_local]). *)
 let local b = Option.is_none b.mem.dev.machine && b.mem.host >= 0
-
 let local_none = 0
 let local_src = 1
 let local_dst = 2
 
-(* Which side of a copy on [d] is this process's memory: on a device of
-   another machine, one side may be. *)
+(* Which side of a copy on [d] is this process's memory: on a device of another
+   machine, one side may be. *)
 let copy_local d src dst =
   let far = Option.is_some d.machine in
   if src.mem.dev == d && dst.mem.dev == d then Some local_none
@@ -315,8 +314,7 @@ let name_one s held (access : access) i k b =
     invalid_argf "Rig.%s: %s.(%d) is on %s, not on %s: borrow it" fn what i
       b.mem.dev.name s.dev.name;
   let m = b.mem.root in
-  if m != b.mem && m.dev != s.dev && Dev.is_lost m.dev then
-    Dev.raise_lost m.dev;
+  if m != b.mem && m.dev != s.dev && Dev.is_lost m.dev then Dev.raise_lost m.dev;
   if m.entry == Memory.no_entry then Memory.ensure_entry m;
   let e = m.entry in
   if held && e.held then
