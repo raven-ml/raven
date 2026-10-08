@@ -470,15 +470,17 @@ let test_got () =
     ~affix:(strf "relocation of type %d at 0x" kind)
     (require_error (Host.link ~entry:"got" (obj "got")))
 
-(* affine's code, aligned to 1 MiB, above any system's page. *)
+(* affine's code aligned to [align] bytes. *)
+let aligned align =
+  patch_section (obj "affine") ~kind:sht_progbits (fun b h ->
+      set64 b (h + 48) align)
+
 let test_aligned () =
-  let o =
-    patch_section (obj "affine") ~kind:sht_progbits (fun b h ->
-        set64 b (h + 48) (1 lsl 20))
-  in
-  starts_with
-    ~affix:"a section asks for an alignment of 1048576 bytes, above the page's "
-    (require_error (Host.link ~entry:"affine" o))
+  is_ok ~msg:"4096 bytes" ~pp:Format.pp_print_string
+    (Host.link ~entry:"affine" (aligned 4096));
+  equal string
+    "a section asks for an alignment of 8192 bytes, expected at most 4096"
+    (require_error (Host.link ~entry:"affine" (aligned 8192)))
 
 let test_refusal (_, entry, o, msg) =
   equal string msg (require_error (Host.link ~entry o))
@@ -495,7 +497,7 @@ let refusal_tests =
         test_rel;
       test "a link of a relocation through a global offset table is refused"
         test_got;
-      test "a link of code aligned above the page is refused" test_aligned;
+      test "a link of code aligned above 4096 bytes is refused" test_aligned;
     ]
 
 let () =

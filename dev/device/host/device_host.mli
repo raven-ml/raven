@@ -49,7 +49,8 @@ val link : entry:string -> string -> (t, string) result
       another machine than the host's;
     - an allocated section of [obj] is writable and not empty, such as a [.data]
       or [.bss] in use;
-    - a section of [obj] asks for an alignment above the system's page;
+    - a section of [obj] asks for an alignment above 4096 bytes, the least page
+      of every supported host;
     - [obj] has relocations without addends ([SHT_REL]) that patch an allocated
       section, or one of a type {{!relocations}Linking} does not list, or one
       whose value does not fit its field;

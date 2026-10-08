@@ -9,14 +9,16 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 (* The host *)
 
 external host_machine : unit -> int = "caml_device_host_machine"
-external page_size : unit -> int = "caml_device_host_page_size"
 external error_message : int -> string = "caml_device_host_error_message"
 external workers : unit -> int = "caml_device_host_workers"
 
 let em_x86_64 = 62
 let em_aarch64 = 183
 let host = host_machine ()
-let page = page_size ()
+
+(* The least page of every supported host: a mapping starts at a multiple of
+   it. *)
+let max_align = 4096
 let machine_name m = if m = em_x86_64 then "x86_64" else "arm64"
 
 (* Code memory: a mapping the collector unmaps. [base] is its address, or the
@@ -183,9 +185,9 @@ let check (o : Device_elf.t) =
   if o.machine <> host then
     refusef "the object is for %s, expected %s" (machine o.machine)
       (machine_name host);
-  if o.align > page then
-    refusef "a section asks for an alignment of %d bytes, above the page's %d"
-      o.align page;
+  if o.align > max_align then
+    refusef "a section asks for an alignment of %d bytes, expected at most %d"
+      o.align max_align;
   match Iarray.find_opt writable o.sections with
   | Some s -> refusef "section %s is writable" s.name
   | None -> ()

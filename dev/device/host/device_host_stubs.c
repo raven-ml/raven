@@ -32,7 +32,6 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <sys/mman.h>
-#include <unistd.h>
 #endif
 
 #if defined(__APPLE__) && defined(__aarch64__)
@@ -52,17 +51,6 @@ value caml_device_host_machine(value unit) {
   return Val_int(183);
 #else
   return Val_int(0);
-#endif
-}
-
-value caml_device_host_page_size(value unit) {
-  (void)unit;
-#if defined(_WIN32)
-  SYSTEM_INFO info;
-  GetSystemInfo(&info);
-  return Val_long(info.dwPageSize);
-#else
-  return Val_long(sysconf(_SC_PAGESIZE));
 #endif
 }
 
