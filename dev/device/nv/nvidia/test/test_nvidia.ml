@@ -68,6 +68,7 @@ let numbering () =
 (* A device's objects are the GPU's for the process: a stopped device's GPU
    opens again. *)
 let once () =
+  if N.count () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
   S.hold_gpu ();
   let g = require_ok (N.open_ 0) in
   let e = require_error ~msg:"a second open" (N.open_ 0) in
@@ -77,6 +78,7 @@ let once () =
   Device_nv.stop g'
 
 let () =
+  S.hold_gpu ();
   exit
   @@ run "device_nv_nvidia"
        [

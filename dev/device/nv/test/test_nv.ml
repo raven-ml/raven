@@ -1458,6 +1458,7 @@ let stateful =
     ]
 
 let () =
+  S.hold_gpu ();
   exit
     (run "device_nv"
        [

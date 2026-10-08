@@ -5,14 +5,17 @@
 
 (** What the NVIDIA path's suites share. *)
 
-val gpu_lock : string
-(** [gpu_lock] is the environment variable that names the machine's GPU lock
-    file: ["DEVICE_NV_TEST_GPU_LOCK"]. *)
-
 val hold_gpu : unit -> unit
-(** [hold_gpu ()] returns once this process holds the GPU lock, which it keeps
-    until it exits. It skips the test if the machine has no NVIDIA GPU, if
-    {!gpu_lock} names no file, or if another process holds the lock. *)
+(** [hold_gpu ()] returns once the process holds the machine's GPU lock, which
+    it keeps until it exits, or at once if the machine has no NVIDIA GPU. The
+    lock is [flock] on [/tmp/raven-device-gpu.lock], the file every suite that
+    acts on a GPU of the machine locks; its holder writes its executable and
+    process id into it. A suite calls [hold_gpu] before [Windtrap.run], so that
+    the wait counts against no test's timeout, and a test calls it again before
+    it opens the GPU.
+
+    Raises [Failure] naming the holder if another process still holds the lock
+    after 300 s, or naming the errno if the file cannot be locked. *)
 
 val files : unit -> int
 (** [files ()] is the number of files the process has open. *)

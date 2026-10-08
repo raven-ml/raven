@@ -7,26 +7,36 @@ open Windtrap
 module N = Device_nv
 module A = Device_nv_abi
 
-external lock : string -> bool = "device_nv_test_lock"
+let strf = Printf.sprintf
+
+(* The machine's GPU lock *)
+
+external lock : string -> string -> int = "device_nv_test_lock"
+
+let gpu_lock = "/tmp/raven-device-gpu.lock"
+
+(* The longest wait for the lock, in seconds: the machine's suites, from every
+   checkout and user, take it in turn. *)
+let gpu_wait = 300
+
+let holder () =
+  match In_channel.with_open_bin gpu_lock In_channel.input_all with
+  | note -> String.trim note
+  | exception Sys_error _ -> "a process that left no note"
+
+(* [lock] naps 100 ms each time it is refused. *)
+let rec take refused =
+  match lock gpu_lock Sys.executable_name with
+  | 0 -> ()
+  | -1 when refused < gpu_wait * 10 -> take (refused + 1)
+  | -1 ->
+      failwith
+        (strf "%s: still held after %d s, by %s" gpu_lock gpu_wait (holder ()))
+  | errno -> failwith (strf "%s: errno %d" gpu_lock errno)
+
+let hold_gpu () = if Device_nv_nvidia.count () > 0 then take 0
 
 (* The GPU *)
-
-let gpu_lock = "DEVICE_NV_TEST_GPU_LOCK"
-
-(* The lock is taken once and kept: [Some true] once taken. *)
-let held = ref None
-
-let take_lock () =
-  match !held with
-  | Some taken -> taken
-  | None ->
-      let taken =
-        match Sys.getenv_opt gpu_lock with
-        | None | Some "" -> skip ~reason:(gpu_lock ^ " names no lock file") ()
-        | Some file -> lock file
-      in
-      held := Some taken;
-      taken
 
 (* The device gpu opened, until a test stops it: one a failed test left open is
    stopped by the next gpu. *)
@@ -39,8 +49,7 @@ let stop g =
 let gpu () =
   if Device_nv_nvidia.count () = 0 then
     skip ~reason:"the machine has no NVIDIA GPU" ();
-  if not (take_lock ()) then
-    skip ~reason:"another process holds the GPU lock" ();
+  hold_gpu ();
   Option.iter (fun g -> ignore (stop g)) !opened;
   let g =
     match Device_nv_nvidia.open_ 0 with

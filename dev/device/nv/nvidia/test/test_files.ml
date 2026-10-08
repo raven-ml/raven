@@ -85,6 +85,7 @@ let limited () =
   go 0 []
 
 let files () =
+  if P.count () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
   S.hold_gpu ();
   let fresh = require_ok ~msg:"an open in a fresh process" (in_child taken) in
   let failures, opened =
@@ -104,6 +105,7 @@ let files () =
   equal int ~msg:"files held after the open" fresh opened
 
 let () =
+  S.hold_gpu ();
   exit
     (run "device_nv_nvidia files"
        [
