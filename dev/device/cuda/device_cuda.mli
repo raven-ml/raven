@@ -193,7 +193,8 @@ val map_peer : t -> t -> region -> region option
     then enables for the pair. It is [None] otherwise. {!unmap} of [r'] ends
     only [r'], and {!free} refuses it.
 
-    Raises [Invalid_argument] if [g'] is [g]. *)
+    Raises [Invalid_argument] if [g'] is [g], or if [r] is no region of [g'] or
+    was freed or unmapped. *)
 
 val map_host : t -> nativeint -> int -> region option
 (** [map_host g a n] is [Some r] with [r] the [n] bytes of host memory at [a],
@@ -235,11 +236,15 @@ val image : t -> string -> (image * (region * string) option, string) result
 val entry : image -> string -> int option
 (** [entry m f] is [Some h], [h] the [CUfunction] of the kernel [f] of [m],
     which compiled code passes to [cuLaunchKernel], or [None] if [m] has no
-    kernel [f]. [h] is valid until [m] is unloaded. *)
+    kernel [f]. [h] is valid until [m] is unloaded.
+
+    Raises [Invalid_argument] if [m] was unloaded. *)
 
 val unload : t -> image -> unit
 (** [unload g m] unloads [m]. The caller unloads it once no work that runs its
-    kernels runs. *)
+    kernels runs.
+
+    Raises [Invalid_argument] if [m] is another device's or was unloaded. *)
 
 (** {1:work Work} *)
 
@@ -270,8 +275,9 @@ val part :
 
     Raises [Invalid_argument] if [queue] is not a queue of [g], if [w] is
     [`Words _], which names ring words a CUDA device has not, if [units] or
-    [bytes] is not [0], if a copy's range lies outside its region or a region is
-    of another device, or if an index of [after] is negative. *)
+    [bytes] is not [0], if a copy's range lies outside its region, if a region
+    is of another device or was freed or unmapped, or if an index of [after] is
+    negative. *)
 
 val room : t -> part array -> [ `Fits | `Later | `Never ]
 (** [room g ps] is [`Fits]: CUDA's streams take any amount of work, and a call
@@ -351,8 +357,9 @@ exception Fault of string
 
 val stop : t -> [ `Stopped | `Unknown ]
 (** [stop g] stops [g] for good. It is [`Stopped] if [g]'s work no longer writes
-    memory: its streams are idle, or an error ended the context's work. The
-    timeline word then holds at least the last value {!submit} was given, so
-    work of other devices that waits on it runs on, and [g]'s streams are
-    destroyed. It is [`Unknown] if work still runs. After [stop], only {!free}
-    and {!unmap} may be called on [g]; neither raises {!Fault}. *)
+    memory: the work of every value it was given completed, its streams are
+    idle, or an error ended the context's work. The timeline word then holds at
+    least the last value {!submit} was given, so work of other devices that
+    waits on it runs on, and [g]'s streams are destroyed. It is [`Unknown] if
+    work still runs. After [stop], only {!free} and {!unmap} may be called on
+    [g]; neither raises {!Fault}. *)
