@@ -51,13 +51,15 @@
     file's bytes. The disk keeps at most 64 descriptors open, more only while
     copies use them, and reopens a file by its path when it needs it again, once
     the system confirms that the path still names it: by its file handle on
-    Linux, its inode and birth time on macOS, and its file ID on Windows.
+    Linux, its inode and birth time on macOS's APFS and HFS+, and its file ID on
+    Windows.
 
     A file whose system gives no such identity, such as a Linux file system
-    without file handles, FAT, or any other operating system, keeps its
-    descriptor until its buffers are collected, beyond the 64. Holding many of
-    them can exhaust the process's descriptors, and then {!of_file} and
-    {!create_file} answer [Error] for too many open files.
+    without file handles, FAT, exFAT or a network file system on macOS, or any
+    other operating system, keeps its descriptor until its buffers are
+    collected, beyond the 64. Holding many of them can exhaust the process's
+    descriptors, and then {!of_file} and {!create_file} answer [Error] for too
+    many open files.
 
     {b Errors.} The disk is never lost ({!Rig.Lost}). A copy whose read or write
     of a file fails raises [Sys_error] naming the file. The bytes it was to

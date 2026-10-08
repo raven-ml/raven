@@ -39,6 +39,10 @@
 #include <unistd.h>
 #endif
 
+#if defined(__APPLE__)
+#include <sys/mount.h>
+#endif
+
 #if defined(__linux__) && defined(__has_include)
 #if __has_include(<linux/io_uring.h>)
 #include <linux/io_uring.h>
@@ -164,13 +168,18 @@ static void identify(int fd, const struct stat *st, unsigned char *id,
 
 #elif defined(__APPLE__)
 
-/* The device, the inode and its birth time: APFS takes inode numbers from a
-   counter it never winds back, and the birth time tells apart an HFS+ inode
-   number reused after its counter wrapped. */
+/* The device, the inode and its birth time, on APFS, which takes inode
+   numbers from a counter it never winds back, and HFS+, where the birth time
+   tells apart a number reused after its counter wrapped. Other file systems,
+   such as FAT, exFAT or a network's, may give a new file an old number and no
+   birth time: they give no exact identity. */
 static void identify(int fd, const struct stat *st, unsigned char *id,
                      size_t *len) {
-  (void)fd;
+  struct statfs fs;
   *len = 0;
+  if (fstatfs(fd, &fs) != 0 || (strcmp(fs.f_fstypename, "apfs") != 0 &&
+                                strcmp(fs.f_fstypename, "hfs") != 0))
+    return;
   append(id, len, &st->st_dev, sizeof st->st_dev);
   append(id, len, &st->st_ino, sizeof st->st_ino);
   append(id, len, &st->st_birthtimespec, sizeof st->st_birthtimespec);
