@@ -151,8 +151,7 @@ let connecting =
         listen_misuse;
       test "a second job at one address is another machine, named #2"
         second_connection;
-      xfail ~reason:"close returns before the agents return from serve"
-        (test "once close returned, no agent listens" listens_no_more);
+      test "once close returned, no agent listens" listens_no_more;
     ]
 
 (* Hosts and devices *)
@@ -378,6 +377,8 @@ let copies =
 
 (* Close *)
 
+(* Each agent closes the devices it opened before it returns from serve: one
+   left open would print its name after "closed". *)
 let close_order () =
   with_agents ~n:2 @@ fun agents ->
   let j = connect agents in
@@ -423,7 +424,7 @@ let close_waits () =
 let closes =
   group "close"
     [
-      test "close ends every device, then every agent, which exits 0"
+      test "close ends every device, here and at every agent, which exits 0"
         close_order;
       test "close waits for the work submitted before it" close_waits;
     ]

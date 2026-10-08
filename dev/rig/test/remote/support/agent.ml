@@ -6,7 +6,8 @@
 (* An agent for the suites: [agent.exe KEYFILE [MODE]] listens on the loopback
    at a port the system chooses, prints it, and serves one job, then prints
    "closed" and exits 0 once the job closed, or prints "failed: WHY" and exits 2
-   once it failed.
+   once it failed. After "closed" it prints "open: NAME" for each device it
+   opened that is not closed.
 
    In mode "again" it then listens at the same port and serves a second job
    likewise. In mode "linger" it waits 2 s before it exits. In mode "twice" it
@@ -26,15 +27,21 @@ let fail why =
   print_endline why;
   exit 1
 
+(* The devices the openers made. *)
+let opened = ref []
+
 let mem () =
   let open_ i = Rig.memory_device (Printf.sprintf "MEM:%d" i) in
   match (open_ 0, open_ 1) with
-  | Ok a, Ok b -> Ok [ a; b ]
+  | Ok a, Ok b ->
+      opened := a :: b :: !opened;
+      Ok [ a; b ]
   | Error e, _ | _, Error e -> Error e
 
 let faulty () =
   let d, p = Rig_support.Polled.open_ "FAULTY:0" in
   Rig_support.Polled.fail_at p 1 (`Fault "the agent's device faulted");
+  opened := d :: !opened;
   Ok [ d ]
 
 let kinds =
@@ -46,7 +53,14 @@ let kinds =
 
 let serve a =
   match Rig_remote.serve a kinds with
-  | Ok () -> print_endline "closed"
+  | Ok () ->
+      print_endline "closed";
+      List.iter
+        (fun d ->
+          if Rig.lost d <> Some "closed" then
+            Printf.printf "open: %s\n%!" (Rig.name d))
+        (List.rev !opened);
+      opened := []
   | Error why ->
       Printf.printf "failed: %s\n%!" why;
       exit 2

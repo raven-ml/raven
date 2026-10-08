@@ -22,9 +22,6 @@ let max_pending = 64
    most. *)
 let join_s = 10.
 
-(* How often the acceptor looks whether [serve] ended. *)
-let accept_s = 0.2
-
 let check_key fn key =
   let n = String.length key in
   if n < Wire.min_key || n > Wire.max_key then invalid_arg (err_key fn n)
@@ -101,7 +98,7 @@ type t = {
   mutable self : int;  (** This agent's process, once a controller came. *)
   mutable controller : Link.t option;
   peers : (int, Link.t) Hashtbl.t;  (** The job's other agents' links. *)
-  mutable stopped : bool;
+  mutable stopped : bool;  (** Once it listens no more. *)
 }
 
 let listen ~key host port =
@@ -177,16 +174,14 @@ let handshake a fd =
       | None -> Unix.close fd)
   | Ok (Wire.Controller, Wire.Controller) -> Unix.close fd
 
-(* Accepts connections until [serve] ends, each handshake on a thread of its
-   own. *)
-let accept_loop a =
+(* Accepts connections until [wake] is readable, each handshake on a thread of
+   its own. *)
+let accept_loop a wake =
   let rec loop () =
-    if Mutex.protect a.lock (fun () -> a.stopped) then ()
-    else
-      match Unix.select [ a.socket ] [] [] accept_s with
-      | exception Unix.Unix_error (Unix.EINTR, _, _) -> loop ()
-      | [], _, _ -> loop ()
-      | _ -> accept_one ()
+    match Unix.select [ a.socket; wake ] [] [] (-1.) with
+    | exception Unix.Unix_error (Unix.EINTR, _, _) -> loop ()
+    | ready, _, _ when List.mem wake ready -> ()
+    | _ -> accept_one ()
   and accept_one () =
     match Unix.accept ~cloexec:true a.socket with
     | exception Unix.Unix_error ((Unix.EINTR | Unix.ECONNABORTED), _, _) ->
@@ -206,6 +201,14 @@ let accept_loop a =
         loop ()
   in
   loop ()
+
+(* Ends [a]'s listening: wakes the acceptor through [waker], waits for it, and
+   closes the socket. *)
+let stop a waker acceptor =
+  Mutex.protect a.lock (fun () -> a.stopped <- true);
+  ignore (Unix.write_substring waker "x" 0 1);
+  Thread.join acceptor;
+  Unix.close a.socket
 
 (* Serving *)
 
@@ -383,14 +386,15 @@ let hand_over s (h : Wire.handover) local =
     (List.rev !back);
   Link.word s.link ~device:h.device h.value
 
-(* Applies the controller's commands in order until it closes the job or the job
+(* Applies the controller's commands in order until it closes the job, then
+   releases the job's memory and rails and closes its devices; or until the job
    fails. *)
 let rec apply s =
   match Link.next s.link with
   | Error why -> Error why
   | Ok Wire.Close ->
       Hashtbl.iter (fun id _ -> drop s id) (Hashtbl.copy s.objects);
-      Link.close s.job;
+      Hashtbl.iter (fun id d -> if id <> 0 then Rig.close d) s.devices;
       Ok ()
   | Ok (Wire.Request r) ->
       (match answer s r with
@@ -416,7 +420,10 @@ let serve a kinds =
   if Mutex.protect a.lock (fun () -> a.served) then
     invalid_arg "Rig_remote.serve: the agent served already";
   Mutex.protect a.lock (fun () -> a.served <- true);
-  let acceptor = Thread.create accept_loop a in
+  let wake, waker =
+    Unix.socketpair ~cloexec:true Unix.PF_UNIX Unix.SOCK_STREAM 0
+  in
+  let acceptor = Thread.create (accept_loop a) wake in
   let link =
     Mutex.protect a.lock @@ fun () ->
     while a.controller = None do
@@ -447,8 +454,17 @@ let serve a kinds =
         Link.fail job why;
         Error why
   in
-  (match r with Error why -> Rig.fail why | Ok () -> ());
-  Mutex.protect a.lock (fun () -> a.stopped <- true);
-  Thread.join acceptor;
-  (try Unix.close a.socket with Unix.Unix_error _ -> ());
+  (* The agent listens no more before its close tells the controller the job
+     ended. *)
+  stop a waker acceptor;
+  Unix.close wake;
+  Unix.close waker;
+  let r =
+    match r with
+    | Error _ as e -> e
+    | Ok () -> (
+        Link.close job;
+        match Link.failure job with Some why -> Error why | None -> Ok ())
+  in
+  Result.iter_error Rig.fail r;
   r

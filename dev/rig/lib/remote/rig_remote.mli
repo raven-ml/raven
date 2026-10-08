@@ -183,9 +183,10 @@ val close : t -> unit
 (** [close j] ends [j] in order. It closes each machine's host ({!Rig.close}),
     which waits for the work submitted on each of the machine's devices and
     closes them first; then each agent receives a close, releases what the job
-    held on its machine and returns from {!serve}. It returns once every agent
-    did, or at once if [j] failed or was closed. A close is no failure of the
-    job or of the process. *)
+    held on its machine, closes the devices it opened, stops listening and
+    returns from {!serve}. It returns once every agent stopped listening, or at
+    once if [j] failed or was closed. A close is no failure of the job or of the
+    process. *)
 
 (** {1:agents Agents} *)
 
@@ -222,11 +223,12 @@ val serve :
     the order they were made.
 
     The result is [Ok ()] once the controller closed the job ({!close}), every
-    device's work handed over is done and the job's memory is released, and
-    [Error why] once the job failed, [why] its root cause, every device of the
-    process lost. After [Error], a GPU that no kernel driver resets may still
-    run into memory the process holds: exit the process. [a] listens no more
-    once [serve] returns.
+    device's work handed over is done, the job's memory is released and the
+    devices [serve] opened are closed; and [Error why] once the job failed,
+    [why] its root cause, every device of the process lost. After [Error], a GPU
+    that no kernel driver resets may still run into memory the process holds:
+    exit the process. [a] listens no more once [serve] returns, and after a
+    close, before the controller's {!close} returns.
 
     Raises [Invalid_argument] if [a] served already, or [kinds] names a kind
     twice. *)
