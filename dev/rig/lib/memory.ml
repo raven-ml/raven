@@ -47,9 +47,15 @@ let check_points st =
       if Dev.is_lost d then Dev.raise_lost d)
     st
 
-(* Whether every point of [st] other than [except]'s is reached. *)
+(* Whether every point of [st] other than [except]'s is reached. A point of a
+   device a forked child inherited names its parent's work, on its parent's copy
+   of the memory: it holds back nothing in the child. *)
 let reached ?(except = -1) st =
-  for_all_points (fun p -> Point.index p = except || Dev.point_reached p) st
+  for_all_points
+    (fun p ->
+      let i = Point.index p in
+      i = except || Dev.inherited (Dev.of_index i) || Dev.point_reached p)
+    st
 
 (* Tokens and release lists *)
 
@@ -392,10 +398,8 @@ let route d = function
 
 (* Takes what became due: retiring memory no bigarray reads and whose foreign
    uses are reached enters the cache, or is freed if [d] is lost and counts as
-   stopped; pending releases whose value [d] reached. In a forked child, io
-   memory waits for no use: the parent's devices work on the parent's copy. *)
+   stopped; pending releases whose value [d] reached. *)
 let due d =
-  let child = Dev.forked () in
   let lost = Dev.is_lost d in
   let free_lost = lost && answered d in
   let w = if lost && not free_lost then -1 else Dev.word d in
@@ -418,10 +422,7 @@ let due d =
               cache d e;
               false
             end
-            else if
-              (child && is_io_memory e)
-              || ((e.held || is_io_memory e) && reached e.stamps)
-            then (
+            else if (e.held || is_io_memory e) && reached e.stamps then (
               frees := e :: !frees;
               false)
             else true)
@@ -474,19 +475,20 @@ let idle d = d.retiring == [] && d.pending == [] && not (released_any d.release)
 let rec drain_lost d = function
   | [] -> ()
   | e :: l ->
-      if e != d && not (idle e && e.cached = 0) then drain_own e;
+      if e != d && (not (Dev.inherited e)) && not (idle e && e.cached = 0) then
+        drain_own e;
       drain_lost d l
 
-(* Drains [d], then the lost devices that hold memory, then the holds. A forked
-   child drains only io devices, whose memory frees without a driver call. *)
+(* Drains [d], then the lost devices that hold memory, then the holds. A device
+   a forked child inherited is never drained: its frees would call its
+   driver. *)
 let drain d =
-  if not (Dev.forked ()) then begin
+  if not (Dev.inherited d) then begin
     if not (idle d) then drain_own d;
     drain_lost d (Atomic.get lost_devices);
     if released_any holds_list then List.iter (route d) (released holds_list);
     if !holds != [] then drain_holds ()
   end
-  else if Dev.is_io d && not (idle d) then drain_own d
 
 let () =
   Dev.answered :=

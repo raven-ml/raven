@@ -140,7 +140,6 @@ static int64_t now_ms(void) {
 
 static _Atomic(struct dc_device *) devices[DC_DEVICES];
 static _Atomic int top;
-static _Atomic int forked;
 
 struct dc_device *dc_device_of(int i) {
   if (i <= 0 || i >= DC_DEVICES) return NULL;
@@ -174,27 +173,25 @@ static _Atomic(struct dc_lock *) locks;
 #define Lock_val(v) ((struct dc_lock *)Long_val(v))
 
 /* After fork, the locks are made anew, since a thread of the parent may
-   have held them. A child of a process that opened devices sees every
-   driver's device lost, its stop answered Unknown for good: freeing would
-   call a driver, and a word may be a page the child shares with its
-   parent. An io device's state is its io library's, which decides what a
-   fork does to it: the core leaves it open. Each device's mutex is made
-   anew and its calls in flight forgotten. A child of a process that opened
-   none is a process like any other. */
+   have held them. Each device is made anew and its calls in flight
+   forgotten. A driver's device the child inherits is lost, its stop
+   answered Unknown for good: freeing would call a driver, and a word may
+   be a page the child shares with its parent. An io device's state is its
+   io library's, which decides what a fork does to it: the core leaves it
+   open. A device the child opens is its own. */
 #ifndef _WIN32
 static void forked_child(void) {
   static char why[] = "forked";
   for (struct dc_lock *l = atomic_load(&locks); l != NULL; l = l->next)
     mutex_init(&l->mu);
   int n = atomic_load(&top);
-  if (n == 0) return;
-  atomic_store(&forked, 1);
   for (int i = 1; i <= n; i++) {
     struct dc_device *d = dc_device_of(i);
     if (d == NULL) continue;
     mu_init(d);
     d->turn = d->inside = d->owed = d->spreading = 0;
     if (d->io) continue;
+    d->inherited = 1;
     char *none = NULL;
     atomic_compare_exchange_strong(&d->lost, &none, why);
     atomic_store(&d->answer, DC_UNKNOWN);
@@ -325,9 +322,8 @@ value caml_rig_answer(value v_d) {
   return Val_int(atomic_load(&Device_val(v_d)->answer));
 }
 
-value caml_rig_forked(value unit) {
-  (void)unit;
-  return Val_bool(atomic_load(&forked));
+value caml_rig_inherited(value v_d) {
+  return Val_bool(Device_val(v_d)->inherited);
 }
 
 /* Loss */
@@ -454,10 +450,11 @@ value caml_rig_set_answer(value v_d, value v_answer) {
 /* Records [Stopped] in place of [Unknown] once [d]'s word reads its
    submitted value, read last through its driver for a word behind a
    transport: then no work of [d] runs. Answers whether this call
-   recorded it. Never in a forked child, which reads no word. */
+   recorded it. Never for a device a forked child inherited, whose word
+   it reads not. */
 value caml_rig_upgrade(value v_d) {
   struct dc_device *d = Device_val(v_d);
-  if (atomic_load(&forked)) return Val_false;
+  if (d->inherited) return Val_false;
   if (atomic_load(&d->answer) != DC_UNKNOWN) return Val_false;
   if (dc_word(d) < atomic_load(&d->submitted)) return Val_false;
   int unknown = DC_UNKNOWN;

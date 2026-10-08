@@ -37,7 +37,10 @@ val answer : device -> int
 val answer_stopping : int
 val answer_stopped : int
 val answer_unknown : int
-val forked : unit -> bool
+val inherited : device -> bool
+(* [inherited d] is [true] iff [d] is a driver's device this process inherited
+   from the parent it was forked from. *)
+
 val upgrade : device -> bool
 (* [upgrade d] records [Stopped] in place of [Unknown] once [d]'s word reads its
    submitted value, and is [true] if this call recorded it. *)

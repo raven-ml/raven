@@ -174,6 +174,31 @@ let test_io_used () =
   ignore (P.run p);
   ignore (Sys.opaque_identity !m)
 
+(* A buffer of [n] bytes on [d] that is unreachable once this returns: its
+   address. *)
+let[@inline never] dropped d n = B.address (B.create d n)
+
+(* A device a child opens is its own: memory it drops returns to its cache as in
+   any process, while the devices it inherited stay lost. *)
+let test_own_device () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  let inherited, _ = P.open_ "fork:inherited" in
+  let lines, ended =
+    in_child (fun () ->
+        let d, _ = P.open_ "fork:own" in
+        let at = dropped d 4096 in
+        Gc.full_major ();
+        Gc.full_major ();
+        ignore (B.create ~memory:Pinned d 8);
+        [
+          Option.value ~default:"not lost" (C.lost d);
+          Printf.sprintf "reused: %b" (B.address (B.create d 4096) = at);
+          Option.value ~default:"not lost" (C.lost inherited);
+        ])
+  in
+  equal string "exited 0" (status ended);
+  equal (list string) [ "not lost"; "reused: true"; "forked" ] lines
+
 (* The core's record of the device [d], which only the core reaches. *)
 let record d =
   let name = C.name d in
@@ -226,6 +251,8 @@ let tests =
         test "a forked child frees the io memory it drops" test_io_loop;
         test "a forked child frees io memory a parent's device uses"
           test_io_used;
+        test "a device a forked child opens drains as in any process"
+          test_own_device;
         test "a forked child uses an io device a parent's thread had locked"
           test_io_lock;
       ];

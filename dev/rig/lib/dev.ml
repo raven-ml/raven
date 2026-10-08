@@ -29,20 +29,14 @@ external lock_try : int -> bool = "caml_rig_lock_try" [@@noalloc]
 external lock_take : int -> unit = "caml_rig_lock_take"
 external lock_give : int -> unit = "caml_rig_lock_give" [@@noalloc]
 external c_word : int -> int = "caml_rig_word" [@@noalloc]
-
-external c_set_seen : int -> int -> unit = "caml_rig_set_seen"
-[@@noalloc]
-
+external c_set_seen : int -> int -> unit = "caml_rig_set_seen" [@@noalloc]
 external c_submitted : int -> int = "caml_rig_submitted" [@@noalloc]
 external c_is_lost : int -> bool = "caml_rig_is_lost" [@@noalloc]
 external c_why : int -> string = "caml_rig_why"
 external c_answer : int -> int = "caml_rig_answer" [@@noalloc]
-external forked : unit -> bool = "caml_rig_forked" [@@noalloc]
+external c_inherited : int -> bool = "caml_rig_inherited" [@@noalloc]
 external c_lose : int -> string -> int array = "caml_rig_lose"
-
-external c_set_answer : int -> int -> unit = "caml_rig_set_answer"
-[@@noalloc]
-
+external c_set_answer : int -> int -> unit = "caml_rig_set_answer" [@@noalloc]
 external c_upgrade : int -> bool = "caml_rig_upgrade" [@@noalloc]
 external c_enter : int -> int = "caml_rig_enter"
 external c_exit : int -> bool = "caml_rig_exit"
@@ -156,6 +150,7 @@ let busy d =
 
 let is_host d = match d.kind with Host -> true | _ -> false
 let is_io d = match d.kind with Io _ -> true | _ -> false
+let inherited d = d.c <> 0 && c_inherited d.c
 let is_lost d = d.c <> 0 && c_is_lost d.c
 let lost d = if is_lost d then Some (c_why d.c) else None
 let raise_lost d = raise (Lost (d, c_why d.c))
@@ -327,11 +322,11 @@ let wait d v =
   if w >= v then reached d w else wait_from d v w (now_ms ())
 
 (* Whether [p] is reached: its device's word reads it. A forked child reads no
-   word of a lost device. *)
+   word of a device it inherited. *)
 let point_reached p =
   let d = of_index (Point.index p) in
   if d.c = 0 then true
-  else if forked () && is_lost d then false
+  else if c_inherited d.c then false
   else word d >= Point.value p
 
 (* Opening *)
@@ -354,8 +349,7 @@ let open_named ~machine ~name ~key ~host make =
         find ()
     | Some (Open d) when not (is_lost d) ->
         if d.key <> key then
-          invalid_argf
-            "Rig.open_: %s is open as another driver's device" full;
+          invalid_argf "Rig.open_: %s is open as another driver's device" full;
         `Open d
     | Some (Open d) ->
         let a = c_answer d.c in

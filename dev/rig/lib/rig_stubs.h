@@ -55,7 +55,8 @@ struct dc_device {
   dc_cond cv;
   int index;
   char *name;
-  int io; /* an io device, whose state its library holds */
+  int io;        /* an io device, whose state its library holds */
+  int inherited; /* a driver's device a forked child holds from its parent */
   int may_block;
   void *self;
   rig_room_fn *room;
