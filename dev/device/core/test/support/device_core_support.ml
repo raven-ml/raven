@@ -13,6 +13,9 @@ external polled_blocked : nativeint -> int = "device_core_test_polled_blocked"
 external polled_last_waits : nativeint -> int array
   = "device_core_test_polled_last_waits"
 
+external polled_last_handles : nativeint -> int array
+  = "device_core_test_polled_last_handles"
+
 external nx_word : unit -> int = "device_core_test_nx_word"
 external nx_object : unit -> int = "device_core_test_nx_object"
 external polled_room : unit -> nativeint = "device_core_test_polled_room"
@@ -257,6 +260,7 @@ module Polled = struct
       (Array.length a / 3)
       (fun i -> (a.(3 * i), a.((3 * i) + 1), a.((3 * i) + 2)))
 
+  let last_handles d = Array.to_list (polled_last_handles d.c)
   let frees d = Mutex.protect d.lock (fun () -> List.rev d.frees)
   let allocs d = Mutex.protect d.lock (fun () -> List.rev d.allocs)
   let host_maps d = Mutex.protect d.lock (fun () -> List.rev d.maps)

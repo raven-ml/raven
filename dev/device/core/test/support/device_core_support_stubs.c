@@ -77,6 +77,7 @@ struct queued {
 };
 
 #define LAST 8
+#define LAST_HANDLES 64
 
 struct polled {
   _Atomic uint64_t word; /* first, alone in its page */
@@ -92,6 +93,8 @@ struct polled {
   int blocked; /* submits waiting for room */
   int nlast;   /* the waits of the last submit, the first [LAST] of them */
   struct nx_wait last[LAST];
+  int nlast_handles; /* its handles, the first [LAST_HANDLES] of them */
+  uint64_t last_handles[LAST_HANDLES];
   uint64_t received; /* the last value a submit received */
 };
 
@@ -144,6 +147,21 @@ value device_core_test_polled_last_waits(value v_p) {
     Store_field(a, 3 * i + 1, Val_long((intnat)w[i].at));
     Store_field(a, 3 * i + 2, Val_long((intnat)w[i].value));
   }
+  CAMLreturn(a);
+}
+
+/* The handles of the last submit. */
+value device_core_test_polled_last_handles(value v_p) {
+  CAMLparam1(v_p);
+  CAMLlocal1(a);
+  struct polled *p = Polled_val(v_p);
+  uint64_t h[LAST_HANDLES];
+  lock(&p->mu);
+  int n = p->nlast_handles;
+  memcpy(h, p->last_handles, sizeof h);
+  unlock(&p->mu);
+  a = caml_alloc_tuple((mlsize_t)n);
+  for (int i = 0; i < n; i++) Store_field(a, i, Val_long((intnat)h[i]));
   CAMLreturn(a);
 }
 
@@ -227,8 +245,6 @@ static int polled_submit(void *self, uint64_t v, const struct nx_wait *waits,
                          const uint64_t *handles, int nhandles,
                          const char **failure) {
   struct polled *p = self;
-  (void)handles;
-  (void)nhandles;
   atomic_fetch_add(&p->submits, 1);
   lock(&p->mu);
   p->received = v;
@@ -256,6 +272,10 @@ static int polled_submit(void *self, uint64_t v, const struct nx_wait *waits,
   }
   p->nlast = nwaits < LAST ? nwaits : LAST;
   if (p->nlast > 0) memcpy(p->last, waits, (size_t)p->nlast * sizeof *waits);
+  p->nlast_handles = nhandles < LAST_HANDLES ? nhandles : LAST_HANDLES;
+  if (p->nlast_handles > 0)
+    memcpy(p->last_handles, handles,
+           (size_t)p->nlast_handles * sizeof *handles);
   struct queued *s = &p->q[p->n++];
   s->v = v;
   s->nwaits = nwaits;

@@ -100,6 +100,10 @@ module Polled : sig
   (** [last_waits d] is the waits [d]'s last submit received, at most 8, as
       [(kind, at, value)], [kind] one of {!nx_word} and {!nx_object}. *)
 
+  val last_handles : t -> int list
+  (** [last_handles d] is the handles [d]'s last submit received, at most 64, in
+      the order received. A region's handle is its address. *)
+
   val blocked : t -> int
   (** [blocked d] is the number of submits waiting for room in [d]'s [may_block]
       queue. *)

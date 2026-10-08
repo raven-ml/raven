@@ -176,6 +176,43 @@ let in_queue ~completion =
 let test_in_queue () = in_queue ~completion:`Host
 let test_in_queue_object () = in_queue ~completion:`Object
 
+(* A submit hands its driver the handle of each region its slots and parts use,
+   once. A case sets the read slots to the buffers [reads] picks among [n], and
+   the write slots to those [writes] picks. *)
+type handles = { n : int; reads : int list; writes : int list }
+
+let pp_handles ppf c =
+  let ints = Format.(pp_print_list ~pp_sep:pp_print_space pp_print_int) in
+  Format.fprintf ppf "@[{ n = %d;@ reads = [%a];@ writes = [%a] }@]" c.n ints
+    c.reads ints c.writes
+
+let handles_case =
+  let open Gen in
+  with_pp pp_handles
+    (let* n = int_range 1 40 in
+     let slots k = list ~size:(int_range 0 k) (int_range 0 (n - 1)) in
+     map
+       (fun (reads, writes) -> { n; reads; writes })
+       (pair (slots 24) (slots 8)))
+
+let handles_device = lazy (P.open_ "submit:handles")
+
+let handles_law c =
+  let d, p = Lazy.force handles_device in
+  let bs = Array.init c.n (fun _ -> B.create d 8) in
+  let reads = List.length c.reads and writes = List.length c.writes in
+  let s = Sub.make ~reads ~writes ~waits:0 d [| bump (B.create C.host 8) |] in
+  List.iteri (fun i k -> Sub.read s i bs.(k)) c.reads;
+  List.iteri (fun i k -> Sub.write s i bs.(k)) c.writes;
+  ignore (C.submit s);
+  let named = List.sort_uniq Int.compare (c.reads @ c.writes) in
+  cover "a buffer named twice"
+    (List.length named < List.length c.reads + List.length c.writes);
+  cover "more than 16 buffers named" (List.length named > 16);
+  equal (list int)
+    (List.sort Int.compare (List.map (fun k -> B.address bs.(k)) named))
+    (List.sort Int.compare (P.last_handles p))
+
 (* A full queue answers Later: the submit waits for one more value. *)
 let test_room () =
   let d, p = P.open_ ~capacity:1 "submit:room" in
@@ -355,6 +392,7 @@ let tests =
         test "a queue that waits on objects waits on the producer's object"
           test_in_queue_object;
         test "a full queue's submit waits for room" test_room;
+        prop "a submit names each region it uses once" handles_case handles_law;
       ];
     group ~timeout "lifetime"
       [
