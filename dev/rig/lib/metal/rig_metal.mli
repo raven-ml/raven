@@ -33,14 +33,14 @@
     is a {e fill}, a C function that encodes Metal work into a compute command
     encoder the device gives it ({!Rig_metal_abi}); it declares no ring units or
     segment bytes. The device runs no words and no copies, and waits on no other
-    device's word. The submit runs the fills in order, each in an encoder that
-    waits for the encoders before it, commits the submission's command buffers
-    and returns. It does not wait for the work. Metal calls a handler of the
-    device on one of its own threads once each command buffer completed,
-    successfully or not ([addCompletedHandler:]). The handlers write [v] into
-    the word once every command buffer of the submissions up to [v] completed
-    without failure, whatever order they complete in. Only the handlers and
-    {!stop} write the word.
+    device's word. The submit runs the fills in order in one encoder per command
+    buffer, each command buffer after the ones before it, commits the
+    submission's command buffers and returns. It does not wait for the work.
+    Metal calls a handler of the device on one of its own threads once each
+    command buffer completed, successfully or not ([addCompletedHandler:]). The
+    handlers write [v] into the word once every command buffer of the
+    submissions up to [v] completed without failure, whatever order they
+    complete in. Only the handlers and {!stop} write the word.
 
     {b Failures.} A submission fails at once if a fill returns a failure, if
     Metal makes no command buffer or no encoder, or if Metal raises an

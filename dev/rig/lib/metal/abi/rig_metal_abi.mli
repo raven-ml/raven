@@ -26,10 +26,13 @@
     - [arg], the argument the work was given with;
     - [v], the value the work completes on the device's timeline.
 
-    The encoder runs what the fill encodes in order, each after the one before
-    completed ([MTLDispatchTypeSerial]). Its command buffer runs after the
-    device's earlier work, and every memory of the device is resident while it
-    runs.
+    The encoder runs the commands the fills of the work encode in order, each
+    after the one before completed ([MTLDispatchTypeSerial]). Its command buffer
+    runs after the device's earlier work, and every memory of the device is
+    resident while it runs. The fills of a work share the encoder until one of
+    them splits, so a fill may find state that earlier commands set: it sets
+    every state its commands read, such as a dispatch's pipeline, buffers and
+    threadgroup memory lengths.
 
     The fill encodes into that encoder, for instance
     [executeCommandsInBuffer:withRange:], and does nothing else: it ends no
@@ -40,10 +43,10 @@
     [0], and the driver refuses work that declares any other. It stops at the
     first [split] that fails and returns its failure, and returns [0] otherwise.
 
-    After the fill returns, the driver ends the open encoder and commits the
-    last command buffer. [v] is reached once every command buffer of the work
-    completed. The driver loses the device if the fill returns a failure, or,
-    with Metal's reason, if a command buffer of the work fails.
+    After the work's last fill returns, the driver ends the open encoder and
+    commits the last command buffer. [v] is reached once every command buffer
+    of the work completed. The driver loses the device if a fill returns a
+    failure, or, with Metal's reason, if a command buffer of the work fails.
 
     {b References.}
     - Apple's Metal framework headers (macOS 26 SDK):

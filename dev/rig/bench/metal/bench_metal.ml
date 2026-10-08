@@ -143,6 +143,13 @@ let launch_rows =
     let t = dev () in
     (t, launch t n)
   in
+  (* A submission of [n] parts, each one dispatch of [step]: [floor-64] runs the
+     same dispatches in one encoder. *)
+  let parts n () =
+    let t = dev () in
+    let f = S.dispatch ~pipeline:t.step t.args ~groups:1 ~threads:1 in
+    (t, (f, prepare t (Array.make n (S.part f))))
+  in
   let live () =
     let t, l = launched 1 () in
     let regions = List.init 4096 (fun _ -> alloc t (64 * kib)) in
@@ -156,6 +163,7 @@ let launch_rows =
     [
       row "1" (launched 1) (fun (t, (_, s)) -> run t s);
       row "64" (launched 64) (fun (t, (_, s)) -> run t s);
+      row "parts-64" (parts 64) (fun (t, (_, s)) -> run t s);
       row "floor-icb-1" (indirect 1) (fun (f, b) -> floor_execute f b 1);
       row "floor-icb-64" (indirect 64) (fun (f, b) -> floor_execute f b 64);
       row "floor-1" floor (fun f -> floor_launch f 1);

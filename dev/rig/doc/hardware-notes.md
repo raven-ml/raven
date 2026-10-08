@@ -482,6 +482,22 @@ A kernel can write a shared word that the host spins on, which the host sees
 not take it as completion: Metal reports a failed command buffer only through
 its status.
 
+### A command buffer costs about 26 µs, a dispatch in one about 2 µs
+
+On the M1 Max, command buffers of one one-thread dispatch each, committed
+back to back, start 31 µs apart on the GPU, each busy 5-7 µs: the host
+sustains one every 26 µs at most, at 6 µs of CPU each. With 3 in flight, as
+rig's replay rows run, each costs about 55-60 µs, a third of the round
+trip. The same dispatches in one serial encoder of one command buffer cost
+2.3 µs each, 2.5 µs with an encoder each, and 30 µs with an encoder each
+that waits for a fence and updates it. A fence at each command buffer's
+encoder costs under 5 µs.
+
+The GPU's clock follows its load. After 300 ms idle, 3,000 such command
+buffers with 3 in flight cost 80-145 µs each and never sped up; with 64 in
+flight they reached 29 µs within 1,000. Rows that run 100 command buffers
+after their setup idles measure the low clock: 77-124 µs.
+
 ### An indirect command buffer adds about 16 µs of GPU time
 
 On the M1 Max, running dispatches from an indirect command buffer takes about

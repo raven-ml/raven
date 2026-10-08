@@ -199,6 +199,11 @@ let filled out ?(at = 0) ~c n =
   Array.init n (fun i -> S.get32 (host out) (at + i) = (3 * i) + c)
   |> Array.for_all Fun.id
 
+let dispatch ?(offset = 0) ?(groups = (1, 1, 1)) ?(threads = (1, 1, 1)) p =
+  { Rig_metal_abi.pipeline = p; offset; groups; threads }
+
+let icb t args ds = (Rig_metal.capability t.d).icb (Rig_metal.handle args) ds
+
 (* Work *)
 
 let gen_submission = Gen.list ~size:(Gen.int_range 0 3) (Gen.int_range 0 3)
@@ -308,6 +313,77 @@ let several_fills () =
   equal int 4 (S.get32 (host out) 0);
   List.iter (Rig_metal.free t.d) [ out; args ]
 
+(* A submission's fills, after one that writes [3i + c] at each word of a
+   region: [`Direct k] bumps every byte of the region and splits [k] times,
+   bumping again after each split; [`Icb n] runs an indirect command buffer of
+   [n] bumps. Each bump of the region dispatches 1,024 threadgroups. *)
+let gen_fills =
+  Gen.list ~size:(Gen.int_range 1 6)
+    (Gen.one_of
+       [
+         Gen.map (fun k -> `Direct k) (Gen.int_range 0 2);
+         Gen.map (fun n -> `Icb n) (Gen.int_range 1 3);
+       ])
+
+let bumps_counted fills =
+  let t = dev () in
+  let words = 65536 and c = 7 in
+  let bytes = 4 * words in
+  let out = alloc t bytes and args = alloc t (2 * args_bytes) in
+  set_args args ~at:0 ~out:(gpu out) ~c;
+  set_args args ~at:args_bytes ~out:(gpu out) ~c:bytes;
+  let seed =
+    S.dispatch ~pipeline:(pipeline t "fill") args ~groups:(words / 256)
+      ~threads:256
+  in
+  let bump = pipeline t "bump" in
+  let bumps k =
+    Array.make k
+      (dispatch ~offset:args_bytes ~groups:(bytes / 256, 1, 1)
+         ~threads:(256, 1, 1) bump)
+  in
+  let icbs = ref [] in
+  let fill = function
+    | `Direct k ->
+        let f =
+          S.dispatch ~pipeline:bump ~offset:args_bytes args
+            ~groups:(bytes / 256) ~threads:256
+        in
+        S.split f t.d k ~times:0;
+        f
+    | `Icb n ->
+        let b = require_ok (icb t args (bumps n)) in
+        icbs := b :: !icbs;
+        S.execute b ~pipelines:[| bump |]
+  in
+  let rec pairs = function
+    | a :: (b :: _ as rest) -> (a, b) :: pairs rest
+    | _ -> []
+  in
+  let follows p q = List.exists (fun (a, b) -> p a && q b) (pairs fills) in
+  let direct = function `Direct _ -> true | `Icb _ -> false in
+  let icb_fill f = not (direct f) in
+  let splits = function `Direct k -> k > 0 | `Icb _ -> false in
+  cover "an icb fill after a direct fill" (follows direct icb_fill);
+  cover "a direct fill after an icb fill" (follows icb_fill direct);
+  cover "a fill after one that splits" (follows splits (fun _ -> true));
+  S.wait t.d (submit t (Array.of_list (seed :: List.map fill fills)));
+  let k =
+    List.fold_left
+      (fun k -> function `Direct s -> k + s + 1 | `Icb n -> k + n)
+      0 fills
+  in
+  let byte w i = (((w lsr (8 * i)) + k) land 255) lsl (8 * i) in
+  for i = 0 to words - 1 do
+    let w = (3 * i) + c in
+    let want = byte w 0 lor byte w 1 lor byte w 2 lor byte w 3 in
+    let got = S.get32 (host out) i in
+    if got <> want then
+      failf "word %d reads %#x, not %#x after %d bumps" i got want k
+  done;
+  List.iter (fun (b : Rig_metal_abi.icb) -> b.release ()) !icbs;
+  List.iter (Rig_metal.free t.d) [ out; args ]
+
 let empty_submission () =
   let t = dev () in
   let v = submit t [||] in
@@ -351,6 +427,10 @@ let work =
         prefix_completion;
       test "an empty submission is signaled" empty_submission;
       test "fills of a submission run in order" several_fills;
+      prop ~count:50
+        "every bump of every fill is counted, across indirect command buffers \
+         and splits"
+        gen_fills bumps_counted;
       test "a kernel writes an allocation in the submission after it"
         fresh_allocation;
       cases
@@ -367,11 +447,6 @@ let work =
     ]
 
 (* Indirect command buffers *)
-
-let dispatch ?(offset = 0) ?(groups = (1, 1, 1)) ?(threads = (1, 1, 1)) p =
-  { Rig_metal_abi.pipeline = p; offset; groups; threads }
-
-let icb t args ds = (Rig_metal.capability t.d).icb (Rig_metal.handle args) ds
 
 let run_icb t (b : Rig_metal_abi.icb) pipelines =
   S.wait t.d (submit t [| S.execute b ~pipelines |])

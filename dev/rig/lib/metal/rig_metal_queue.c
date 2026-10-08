@@ -5,12 +5,14 @@
 
 /* Submitting to a device: everything that runs without the OCaml runtime.
 
-   A submission runs its fills in order, each in a serial compute encoder
-   that waits for the device's fence and updates it, so each runs after the
-   encoders before it. Its command buffers take ring slots in commit order;
-   the last carries the submission's value. A failure drops the open
-   command buffer uncommitted and completes its slot as failed, so the word
-   stops before the value. */
+   A submission runs its fills in order in one serial compute encoder per
+   command buffer, which waits for the device's fence and updates it, so
+   each command buffer runs after the ones before. The fills of a command
+   buffer share its encoder: on the M1 Max a fence between two encoders
+   costs about 25 µs, a dependent dispatch in one encoder about 2 µs. Its
+   command buffers take ring slots in commit order; the last carries the
+   submission's value. A failure drops the open command buffer uncommitted
+   and completes its slot as failed, so the word stops before the value. */
 
 #define _GNU_SOURCE
 
@@ -112,8 +114,8 @@ static void commit_residency(struct rig_metal *d) {
   pthread_mutex_unlock(&d->set_mutex);
 }
 
-/* Runs the fills, each in an encoder of its own. A fill that returns 0
-   without an open command buffer broke its contract after a failed split. */
+/* Runs the fills in the open encoder. A fill that returns 0 without an
+   open command buffer broke its contract after a failed split. */
 static const char *run(struct rig_metal *d, uint64_t v,
                        const struct rig_part *parts, int n) {
   struct rig_metal_queue q = {nil, nil, -1, d};
@@ -121,18 +123,15 @@ static const char *run(struct rig_metal *d, uint64_t v,
   @try {
     commit_residency(d);
     why = begin(&q);
+    if (why == NULL && n > 0) why = open_encoder(&q);
     for (int i = 0; i < n && why == NULL; i++) {
-      why = open_encoder(&q);
-      if (why) break;
       int rc = parts[i].fill(&q, parts[i].arg, v);
-      if (rc == 0 && q.slot >= 0) {
-        close_encoder(&q);
-        continue;
-      }
+      if (rc == 0 && q.slot >= 0) continue;
       char text[64];
       snprintf(text, sizeof text, "running a fill: it returned %d", rc);
       why = fail(&q, text);
     }
+    if (why == NULL && n > 0) close_encoder(&q);
     if (why == NULL) commit(&q, v, NULL, NULL);
   } @catch(NSException * e) {
     char text[512];
