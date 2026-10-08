@@ -722,10 +722,12 @@ value caml_rig_submit(value v_s) {
     caml_enter_blocking_section_no_pending();
     released = 1;
     mu_lock(d);
-    int64_t until = now_ms() + STILL_MS;
-    int64_t left;
-    while (d->turn && !is_lost(d) && (left = until - now_ms()) > 0)
-      cv_wait_ms(d, (int)left);
+    /* A free turn reads no clock: the submit is on every run's path. */
+    if (d->turn && !is_lost(d)) {
+      int64_t until = now_ms() + STILL_MS, left;
+      while (d->turn && !is_lost(d) && (left = until - now_ms()) > 0)
+        cv_wait_ms(d, (int)left);
+    }
     if (d->turn && !is_lost(d)) {
       r = SUBMIT_BUSY;
       goto out;
