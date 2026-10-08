@@ -62,13 +62,16 @@ val group_holders : t -> string -> (string * string) list
 (** {1:changes Changes} *)
 
 val detach : t -> string -> unit
-(** [detach m bus] makes [bus] takeable, unless {!access} takes it: it unbinds
-    its driver unless that is [vfio-pci], removes its siblings and, unbound,
-    enables it. Raises {!Fail.Failed} if it is still not takeable. *)
+(** [detach m bus] makes [bus] takeable and keeps kernel drivers off it, unless
+    it is bound to [vfio-pci]: it sets its [driver_override] to no driver,
+    unbinds its driver, removes its siblings and, unbound, enables it. Raises
+    {!Fail.Failed}, having written nothing, if it would not be takeable once
+    unbound, alone and enabled, and if it is still not takeable after. *)
 
 val attach : t -> string -> unit
-(** [attach m bus] gives [bus] back to its kernel driver. Raises {!Fail.Failed}
-    if it is bound to [vfio-pci] or no driver takes it. *)
+(** [attach m bus] gives [bus] back to its kernel driver, clearing its
+    [driver_override]. Raises {!Fail.Failed} if it is bound to [vfio-pci] or no
+    driver takes it. *)
 
 val reset : t -> string -> unit
 (** [reset m bus] resets [bus] with the reset Linux has for it. *)

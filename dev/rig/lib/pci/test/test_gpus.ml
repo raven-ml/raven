@@ -763,11 +763,15 @@ let devices bus file = strf "devices/%s/%s" bus file
 let changes =
   let gpu = Tree.gpu gpu_bus in
   [
-    ( "detach leaves a GPU a process can take as it is",
+    ( "detach leaves a GPU a process can take as it is, but for kernel drivers",
       [ gpu ],
       `Detach,
       None,
-      [ (devices gpu_bus "enable", "1"); (devices gpu_bus "remove", "") ] );
+      [
+        (devices gpu_bus "enable", "1");
+        (devices gpu_bus "remove", "");
+        (devices gpu_bus "driver_override", "none");
+      ] );
     ( "detach enables a disabled GPU",
       [ Tree.gpu ~enabled:false gpu_bus ],
       `Detach,
@@ -777,7 +781,10 @@ let changes =
       [ Tree.gpu ~driver:"amdgpu" gpu_bus ],
       `Detach,
       Some "the driver amdgpu stays bound to 0000:03:00.0",
-      [ ("drivers/amdgpu/unbind", gpu_bus) ] );
+      [
+        ("drivers/amdgpu/unbind", gpu_bus);
+        (devices gpu_bus "driver_override", "none");
+      ] );
     ( "detach removes the other functions of the GPU's device, refused while \
        they stay",
       [ gpu; audio "0000:03:00.1" ],
@@ -788,18 +795,39 @@ let changes =
       [ Tree.gpu ~driver:"vfio-pci" ~group:"12" gpu_bus ],
       `Detach,
       None,
-      [ ("drivers/vfio-pci/unbind", "") ] );
-    ( "detach refuses a GPU whose addresses an IOMMU translates",
+      [
+        ("drivers/vfio-pci/unbind", "");
+        (devices gpu_bus "driver_override", "(null)");
+      ] );
+    ( "detach refuses a GPU whose addresses an IOMMU translates, writing nothing",
       [ Tree.gpu ~group:"12" gpu_bus ],
       `Detach,
       Some "the IOMMU translates the addresses 0000:03:00.0 reaches",
-      [] );
+      [ (devices gpu_bus "driver_override", "(null)") ] );
+    ( "detach refuses a GPU bound to its kernel driver behind a translating \
+       IOMMU, writing nothing",
+      [ Tree.gpu ~driver:"amdgpu" ~group:"12" gpu_bus ],
+      `Detach,
+      Some "the IOMMU translates the addresses 0000:03:00.0 reaches",
+      [
+        ("drivers/amdgpu/unbind", "");
+        (devices gpu_bus "driver_override", "(null)");
+      ] );
+    ( "detach refuses a GPU under a locked-down kernel, writing nothing",
+      [ Tree.gpu ~driver:"amdgpu" gpu_bus ],
+      `Detach_locked_down,
+      Some "the kernel is locked down",
+      [
+        ("drivers/amdgpu/unbind", "");
+        (devices gpu_bus "driver_override", "(null)");
+      ] );
     ( "attach probes the drivers for an unbound GPU, refused when none takes it",
       [ gpu ],
       `Attach,
       Some "no kernel driver took 0000:03:00.0",
       [
         (devices gpu_bus "enable", "0");
+        (devices gpu_bus "driver_override", "");
         ("rescan", "1");
         ("drivers_probe", gpu_bus);
       ] );
@@ -807,7 +835,11 @@ let changes =
       [ Tree.gpu ~driver:"amdgpu" gpu_bus ],
       `Attach,
       None,
-      [ ("rescan", ""); ("drivers_probe", "") ] );
+      [
+        ("rescan", "");
+        ("drivers_probe", "");
+        (devices gpu_bus "driver_override", "(null)");
+      ] );
     ( "attach refuses a GPU bound to vfio-pci, naming its driver_override",
       [ Tree.gpu ~driver:"vfio-pci" gpu_bus ],
       `Attach,
@@ -817,10 +849,17 @@ let changes =
 
 let test_change (_, fns, change, refusal, files) =
   needs_flock ();
-  let root = Tree.make fns in
+  let lockdown =
+    match change with
+    | `Detach_locked_down -> Some "none [integrity] confidentiality"
+    | `Detach | `Attach -> None
+  in
+  let root = Tree.make ?lockdown fns in
   let m = Machine.at root in
   let change =
-    match change with `Detach -> Gpus.detach | `Attach -> Gpus.attach
+    match change with
+    | `Detach | `Detach_locked_down -> Gpus.detach
+    | `Attach -> Gpus.attach
   in
   (match (refusal, change (gpus ()) m 0) with
   | None, r -> require_ok r

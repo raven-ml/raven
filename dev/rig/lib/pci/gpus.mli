@@ -111,18 +111,23 @@ val lose : hold -> unit
 
 val detach : t -> Machine.t -> int -> (unit, string) result
 (** [detach g m i] detaches GPU [i] of [m] from its kernel driver, so that a
-    process can take its function, unless it is detached already. It unbinds the
-    driver unless that is [vfio-pci], removes the other functions of its device,
-    such as its audio function, and, unbound, enables the function and makes its
-    memory BAR the largest size the BAR and its bridge take. The kernel driver's
-    users, a display among them, lose the GPU until {!attach} or a reboot.
+    process can take its function. Unless it is bound to [vfio-pci], it keeps
+    every kernel driver off the GPU until {!attach} or a reboot: it sets the
+    function's [driver_override] to no driver, which probes, rescans and module
+    loads obey, and unbinds the driver. It removes the other functions of its
+    device, such as its audio function, and, unbound, enables the function and
+    makes its memory BAR the largest size the BAR and its bridge take. The
+    kernel driver's users, a display among them, lose the GPU until {!attach} or
+    a reboot.
 
-    [Error why] if [m] is reached through a transport, if [i] is no GPU, if the
-    process holds it, through this library or through a character device of its
-    kernel driver it has open, if the process may not write a file, or if the
-    GPU is still not detached, saying why, such as when an IOMMU translates its
-    addresses and it is not bound to [vfio-pci]. A memory BAR left small is no
-    error: on [vfio-pci], or where the kernel refuses every larger size.
+    [Error why] if [m] is reached through a transport, if [i] is no GPU, if a
+    process could not take its function once detached, such as when an IOMMU
+    translates its addresses and it is not bound to [vfio-pci], changing
+    nothing, if the process holds it, through this library or through a
+    character device of its kernel driver it has open, if the process may not
+    write a file, or if the GPU is still not detached, saying why. A memory BAR
+    left small is no error: on [vfio-pci], or where the kernel refuses every
+    larger size.
 
     The GPU's character devices are those with a [dev] file under its directory
     in [/sys/bus/pci], such as its DRM nodes, and those [nodes] names ({!make}).
@@ -135,8 +140,9 @@ val detach : t -> Machine.t -> int -> (unit, string) result
 val attach : t -> Machine.t -> int -> (unit, string) result
 (** [attach g m i] gives GPU [i] of [m] back to its kernel driver: Linux rescans
     the bus, which brings back the functions {!detach} removed, and binds the
-    GPU's driver. It writes [/sys/bus/pci/rescan] and
-    [/sys/bus/pci/drivers_probe].
+    GPU's driver, once [attach] cleared the function's [driver_override], just
+    before the drivers are probed. It writes [/sys/bus/pci/rescan], the
+    [driver_override] and [/sys/bus/pci/drivers_probe].
 
     [Error why] if [m] is reached through a transport, if [i] is no GPU, if the
     process holds it, if the process may not write a file, if it is bound to

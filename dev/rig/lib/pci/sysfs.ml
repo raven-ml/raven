@@ -42,9 +42,11 @@ let read file =
   | exception Sys_error why -> Fail.fail "reading %s" why
 
 (* Writes [s] to [file] in one write, which sysfs takes whole or refuses. A
-   buffered channel would see the refusal only at its close, which drops it. *)
+   buffered channel would see the refusal only at its close, which drops it.
+   Sysfs ignores the truncation, as a shell's redirection relies on; a plain
+   file holds [s] alone after it. *)
 let put file s =
-  let fd = Unix.openfile file [ O_WRONLY; O_CLOEXEC ] 0 in
+  let fd = Unix.openfile file [ O_WRONLY; O_TRUNC; O_CLOEXEC ] 0 in
   Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
   ignore (Unix.single_write_substring fd s 0 (String.length s))
 
@@ -261,8 +263,24 @@ let access m bus = addressing m bus (state m bus)
 
 (* Changes *)
 
+(* [driver_override] names the one driver that may bind a function; none is
+   named [none]. A function the process detached keeps every kernel driver off
+   it: a probe, a rescan or a module load would otherwise bind its driver, which
+   resets a GPU under whatever runs on it. *)
+let no_driver = "none"
+let override m bus = path m bus "driver_override"
+
+(* Detach decides before it writes anything whether the function will be
+   takeable once unbound, alone and enabled: one it could not take then could
+   not be reset to go back to its driver. *)
 let detach m bus =
-  match access m bus with
+  let s = state m bus in
+  if s.driver <> Some vfio_pci then begin
+    let detached = { s with driver = None; siblings = []; enabled = true } in
+    Result.iter_error (Fail.fail "%s") (addressing m bus detached);
+    write (override m bus) no_driver
+  end;
+  match addressing m bus s with
   | Ok _ -> ()
   | Error _ -> (
       (match driver m bus with
@@ -298,6 +316,7 @@ let attach m bus =
   | None ->
       if enabled m bus then write (path m bus "enable") "0";
       write (Filename.concat m.bus_files "rescan") "1";
+      write (override m bus) "\n";
       write (Filename.concat m.bus_files "drivers_probe") bus;
       if driver m bus = None then
         Fail.fail "no kernel driver took %s; load its module first" bus

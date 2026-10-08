@@ -424,6 +424,7 @@ module Tree = struct
                | Io _ -> [ `None ])
              fn.bars);
         write (d / "remove") "";
+        write (d / "driver_override") "(null)\n";
         Option.iter
           (fun drv ->
             write (sys / "bus/pci/drivers" / drv / "bind") "";

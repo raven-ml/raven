@@ -189,14 +189,14 @@ end
     [enable], [resource] (one line per BAR: start, end and flags), the first 64
     bytes of [config] with its identity and BAR registers, for each memory BAR
     [N] a [resourceN] of 4 KiB of zeroes, and a [resourceN_wc] if it is
-    prefetchable, an empty [remove], and the links [driver] and [iommu_group]
-    when it has them. A driver's directory holds empty [bind] and [unbind], the
-    bus directory empty [rescan] and [drivers_probe], and an IOMMU group's
-    directory its [type] and its functions. The process's [proc/self/fd] is an
-    empty directory, to which a test adds links. The machine takes what a change
-    writes as plain files and acts on none of it. Names hold [:], so trees are
-    written only where the file system allows it: {!make} skips the test on
-    Windows. *)
+    prefetchable, an empty [remove], a [driver_override] that names no driver,
+    as ["(null)"], and the links [driver] and [iommu_group] when it has them. A
+    driver's directory holds empty [bind] and [unbind], the bus directory empty
+    [rescan] and [drivers_probe], and an IOMMU group's directory its [type] and
+    its functions. The process's [proc/self/fd] is an empty directory, to which
+    a test adds links. The machine takes what a change writes as plain files and
+    acts on none of it. Names hold [:], so trees are written only where the file
+    system allows it: {!make} skips the test on Windows. *)
 module Tree : sig
   (** The type for a BAR, in BAR order from BAR 0. *)
   type bar =
