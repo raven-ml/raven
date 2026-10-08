@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*/
 
 /* A device's C state, for the OCaml side: made at open from memory the
-   path gave, read by the wait loop, and the OCaml forms of room and submit.
+   path gave, and read by the wait loop.
 
    A device is named by the address of its state, an OCaml int. Every stub
    holds the runtime, except those whose comment says they release it,
@@ -216,10 +216,6 @@ value caml_rig_nv_signaled(value v_self) {
       atomic_load_explicit(Device_val(v_self)->word, memory_order_acquire));
 }
 
-value caml_rig_nv_last(value v_self) {
-  return Val_long(Device_val(v_self)->last);
-}
-
 /* The error the RM wrote into channel [q]'s notifier, its code and its
    status: [code lsl 16 lor status], or [0] if none. */
 static uint64_t notification(const struct device *d, int q) {
@@ -291,93 +287,4 @@ value caml_rig_nv_room_entry(value unit) {
 value caml_rig_nv_submit_entry(value unit) {
   (void)unit;
   return Val_long((intnat)submit_entry);
-}
-
-/* A part is a record whose second field holds ints: its queue, its copy's
-   five fields in rig_part's order, the number of its words, then its words,
-   then its [after] indices. */
-enum {
-  part_queue,
-  part_copy_dst,
-  part_copy_dst_offset,
-  part_copy_src,
-  part_copy_src_offset,
-  part_copy_bytes,
-  part_words,
-  part_fields
-};
-
-static intnat at(value ints, int f) { return Long_val(Field(ints, f)); }
-
-/* The parts [v_parts] as rig_parts, in memory of their own the caller frees:
-   the parts, then their words, then their [after] indices. NULL without
-   memory, or for no parts. */
-static struct rig_part *parts_of(value v_parts) {
-  int n = (int)Wosize_val(v_parts);
-  size_t words = 0, after = 0;
-  for (int i = 0; i < n; i++) {
-    value k = Field(Field(v_parts, i), 1);
-    size_t w = (size_t)at(k, part_words);
-    words += w;
-    after += Wosize_val(k) - part_fields - w;
-  }
-  size_t size = n * sizeof(struct rig_part) + words * sizeof(uint32_t) +
-                after * sizeof(int);
-  if (size == 0) return NULL;
-  struct rig_part *p = malloc(size);
-  if (p == NULL) caml_raise_out_of_memory();
-  uint32_t *w = (uint32_t *)(p + n);
-  int *a = (int *)(w + words);
-  for (int i = 0; i < n; i++) {
-    value k = Field(Field(v_parts, i), 1);
-    size_t nw = (size_t)at(k, part_words);
-    int na = (int)(Wosize_val(k) - part_fields - nw);
-    p[i] = (struct rig_part){
-        .queue = (int)at(k, part_queue),
-        .words = nw == 0 ? NULL : w,
-        .n = nw,
-        .copy_dst = (uint64_t)at(k, part_copy_dst),
-        .copy_dst_offset = (uint64_t)at(k, part_copy_dst_offset),
-        .copy_src = (uint64_t)at(k, part_copy_src),
-        .copy_src_offset = (uint64_t)at(k, part_copy_src_offset),
-        .copy_bytes = (uint64_t)at(k, part_copy_bytes),
-        .after = na == 0 ? NULL : a,
-        .nafter = na};
-    for (size_t j = 0; j < nw; j++) *w++ = (uint32_t)at(k, part_fields + j);
-    for (int j = 0; j < na; j++) *a++ = (int)at(k, part_fields + nw + j);
-  }
-  return p;
-}
-
-/* Rig_nv.room's C side. */
-value caml_rig_nv_room(value v_self, value v_parts) {
-  struct rig_part *p = parts_of(v_parts);
-  int r = rig_nv_room(Device_val(v_self), p, (int)Wosize_val(v_parts));
-  free(p);
-  return Val_int(r);
-}
-
-/* Rig_nv.submit's C side. [v_waits] holds an address and a value per
-   wait. The writer stores to memory and never blocks, so the runtime is
-   held. */
-value caml_rig_nv_submit(value v_self, value v_v, value v_waits,
-                            value v_parts) {
-  int nwaits = (int)(Wosize_val(v_waits) / 2);
-  struct rig_part *p = parts_of(v_parts);
-  struct rig_wait *w = NULL;
-  if (nwaits > 0 && (w = malloc(nwaits * sizeof *w)) == NULL) {
-    free(p);
-    caml_raise_out_of_memory();
-  }
-  for (int i = 0; i < nwaits; i++)
-    w[i] = (struct rig_wait){.at = (uint64_t)at(v_waits, 2 * i),
-                            .value = (uint64_t)at(v_waits, 2 * i + 1),
-                            .kind = RIG_WORD};
-  const char *failure = NULL;
-  int r = rig_nv_submit(Device_val(v_self), (uint64_t)Long_val(v_v), w,
-                           nwaits, p, (int)Wosize_val(v_parts), NULL, 0,
-                           &failure);
-  free(w);
-  free(p);
-  return Val_int(r);
 }

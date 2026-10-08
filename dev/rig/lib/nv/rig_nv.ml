@@ -95,10 +95,6 @@ let segment_bytes = 1 lsl 20
 let shared_window = 0x7294_0000_0000
 let local_window = 0x7293_0000_0000
 
-(* rig_nv_ring.c's MAX_WAITS and MAX_PARTS. *)
-let max_waits = 256
-let max_parts = 65535
-
 (* rig_nv_stubs.h's templates, by index, and their bounds. *)
 let t_acquire = 0
 let t_release = 1
@@ -145,7 +141,6 @@ external pending_local : int -> int = "caml_rig_nv_pending_local"
 external local_placed : int -> int = "caml_rig_nv_local_placed"
 external owe_invalidate : int -> unit = "caml_rig_nv_owe_invalidate"
 external read_word : int -> int = "caml_rig_nv_signaled" [@@noalloc]
-external last : int -> int = "caml_rig_nv_last" [@@noalloc]
 external notification : int -> int -> int = "caml_rig_nv_notification"
 external watch : int -> int -> int -> bool = "caml_rig_nv_watch"
 external raise_word : int -> unit = "caml_rig_nv_raise"
@@ -727,118 +722,6 @@ let unload (T d) c =
     invalid_arg "Rig_nv.unload: the image was unloaded"
 
 (* Work *)
-
-(* A part is its device and the ints caml_rig_nv_room reads: its queue, its
-   copy's destination, offset, source, offset and bytes, its number of words,
-   its words, then its [after] indices. *)
-type part = { owner : int; ints : int array }
-
-let fields = 7
-let words_at = 6
-
-let part (T d) ~queue ?(after = [||]) w =
-  let q =
-    match queue with
-    | "COMPUTE:0" -> 0
-    | "COPY:0" -> 1
-    | _ ->
-        invalid_argf "Rig_nv.part: queue %S, expected COMPUTE:0 or COPY:0"
-          queue
-  in
-  let check_after j =
-    if j < 0 then invalid_argf "Rig_nv.part: after index %d is negative" j
-  in
-  Array.iter check_after after;
-  let part copy words =
-    let head = Array.append [| q |] copy in
-    let ints = Array.concat [ head; [| Array.length words |]; words; after ] in
-    { owner = d.self; ints }
-  in
-  match w with
-  | `Fill _ -> invalid_arg "Rig_nv.part: the device runs no fill"
-  | `Words ws ->
-      if Array.length ws mod 2 <> 0 then
-        invalid_argf "Rig_nv.part: %d words, expected two per entry"
-          (Array.length ws);
-      let check x =
-        if x < 0 || x > 0xffff_ffff then
-          invalid_argf "Rig_nv.part: word 0x%x exceeds 32 bits" x
-      in
-      Array.iter check ws;
-      part [| 0; 0; 0; 0; 0 |] ws
-  | `Copy ((dst, o), (src, o'), n) ->
-      if q <> 1 then
-        invalid_arg "Rig_nv.part: copies run on COPY:0, not COMPUTE:0";
-      if n < 0 then invalid_argf "Rig_nv.part: a copy of %d bytes" n;
-      let side what r o =
-        match mine d r with
-        | Some r when Atomic.get r.live ->
-            if o < 0 || o + n > r.bytes then
-              invalid_argf
-                "Rig_nv.part: the copy's %s range [%d, %d) lies outside its \
-                 %d bytes"
-                what o (o + n) r.bytes;
-            r.mem.address
-        | Some _ | None ->
-            invalid_argf
-              "Rig_nv.part: the copy's %s is no live region of the device"
-              what
-      in
-      let dst = side "destination" dst o and src = side "source" src o' in
-      part [| dst; o; src; o'; n |] [||]
-
-(* Loops, so that a submission allocates nothing on the OCaml heap. *)
-let check_parts name d ps =
-  if Array.length ps > max_parts then
-    invalid_argf "Rig_nv.%s: %d parts, expected at most %d" name
-      (Array.length ps) max_parts;
-  for i = 0 to Array.length ps - 1 do
-    let p = ps.(i) in
-    if p.owner <> d.self then
-      invalid_argf "Rig_nv.%s: part %d is another device's" name i;
-    for k = fields + p.ints.(words_at) to Array.length p.ints - 1 do
-      if p.ints.(k) >= i then
-        invalid_argf
-          "Rig_nv.%s: part %d runs after part %d, expected an earlier part"
-          name i p.ints.(k)
-    done
-  done
-
-external room_parts : int -> part array -> int = "caml_rig_nv_room"
-
-external submit_parts : int -> int -> int array -> part array -> int
-  = "caml_rig_nv_submit"
-
-(* rig_edge.h's codes. *)
-let fits = 0
-let later = 1
-
-let room (T d) ps =
-  check_parts "room" d ps;
-  let r = room_parts d.self ps in
-  if r = fits then `Fits else if r = later then `Later else `Never
-
-let submit (T d) ~v ~waits ~handles:_ ps =
-  let expected = last d.self + 1 in
-  if v <> expected then
-    invalid_argf "Rig_nv.submit: value %d, expected %d" v expected;
-  if Array.length waits > max_waits then
-    invalid_argf "Rig_nv.submit: %d waits, expected at most %d"
-      (Array.length waits) max_waits;
-  check_parts "submit" d ps;
-  let w = Array.make (2 * Array.length waits) 0 in
-  for i = 0 to Array.length waits - 1 do
-    match waits.(i) with
-    | `Word, at, value ->
-        w.(2 * i) <- at;
-        w.((2 * i) + 1) <- value
-    | `Object, _, _ ->
-        invalid_arg "Rig_nv.submit: the device waits only with `Word"
-  done;
-  if room_parts d.self ps <> fits then
-    invalid_arg "Rig_nv.submit: the parts do not fit the rings now";
-  ignore (submit_parts d.self v w ps : int);
-  `Ok
 
 let room_entry = Nativeint.of_int (room_entry_address ())
 let submit_entry = Nativeint.of_int (submit_entry_address ())

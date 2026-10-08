@@ -5,18 +5,19 @@
 
 /* Submitting to an NVIDIA device from C.
 
-   Rig_nv.room and Rig_nv.submit, for a caller that holds its
-   submissions in C, over the structures and codes of rig_edge.h. [self] is
-   Rig_nv.self. Both are called without the OCaml runtime: they call no
-   function of it and read no OCaml value.
+   The device's room check and submission, over the structures and codes of
+   rig_edge.h, for the core and any caller that holds its submissions in C.
+   [self] is Rig_nv.self. Both are called without the OCaml runtime: they
+   call no function of it and read no OCaml value.
 
    Queue 0 is the channel "COMPUTE:0", queue 1 the channel "COPY:0". A part
    is ring entries, two words each, low first (Rig_nv_abi.Gpfifo), or a
    copy between handles on queue 1; it is no fill and declares no ring units
-   or segment bytes. A wait is RIG_WORD on a 64-bit word the device maps,
-   compared circularly; a submission has at most 256, for which
-   rig_nv_room, which does not see them, keeps room. [handles] is ignored: the device's work names its
-   memory by address. */
+   or segment bytes. The parts on one queue run in array order. A wait is
+   RIG_WORD on a 64-bit word the device maps, compared circularly; a
+   submission has at most 256, for which rig_nv_room, which does not see
+   them, keeps room. [handles] is ignored: the device's work names its memory
+   by address. */
 
 #ifndef RIG_NV_H
 #define RIG_NV_H
@@ -26,8 +27,9 @@
 /* RIG_NEVER if a part is a fill, declares ring units or segment bytes, has an
    odd number of words, is a copy on queue 0, is on no queue of the device,
    has an [after] index not below its own part's, or if the parts exceed the
-   device's empty rings or number more than 65,535; RIG_LATER if they fit once a value the device was
-   given is reached, as its timeline word reads now; RIG_FITS otherwise. */
+   device's empty rings or number more than 65,535; RIG_LATER if they fit
+   once a value the device was given is reached, as its timeline word reads
+   now; RIG_FITS otherwise. */
 int rig_nv_room(void *self, const struct rig_part *parts, int n);
 
 /* Writes [parts], which rig_nv_room answered RIG_FITS for with nothing

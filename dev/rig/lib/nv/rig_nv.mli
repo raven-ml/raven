@@ -17,28 +17,25 @@
     {e timeline word} ({!word}), 64 bits of host memory that hold [v] once the
     work of every value up to [v] completed, whichever channel ran it.
 
-    A program that uses a GPU alone opens it, allocates and submits, then waits
-    for the word:
+    A program opens a GPU through the device core, [Rig], which submits by
+    calling this library's C functions ({!room_entry}, {!submit_entry}):
     {[
-    let g = Result.get_ok (Rig_nv_nvidia.open_ 0) in
-    let src = Option.get (Rig_nv.alloc g `Pinned 4096) in
-    let dst = Option.get (Rig_nv.alloc g `Device 4096) in
-    let copy = `Copy ((dst, 0), (src, 0), 4096) in
-    let p = Rig_nv.part g ~queue:"COPY:0" copy in
-    match Rig_nv.submit g ~v:1 ~waits:[||] ~handles:[||] [| p |] with
-    | `Ok ->
-        let rec wait () =
-          let seen = Rig_nv.signaled g in
-          if seen < 1 then (
-            Rig_nv.sleep g ~seen ~still_ms:200;
-            wait ())
-        in
-        wait ()
-    | `Failed why -> prerr_endline why
+    let d =
+      Result.get_ok
+        (Rig.open_ (module Rig_nv) ~name:"NV" (fun () -> Rig_nv_nvidia.open_ 0))
+    in
+    let src = Rig.Buffer.create ~memory:Pinned d 4096 in
+    let dst = Rig.Buffer.create d 4096 in
+    let copy =
+      let work = Rig.Submission.Copy { src; dst } in
+      { Rig.Submission.queue = "COPY:0"; after = [||]; work }
+    in
+    let s = Rig.Submission.make ~reads:0 ~writes:0 ~waits:0 d [| copy |] in
+    Rig.wait d (Rig.Point.value (Rig.submit s))
     ]}
 
     {b Submissions.} A submission is the work of one value: {e parts}, each for
-    one channel ({!part}), and the waits on other devices' words it starts
+    one channel ([rig_nv.h]), and the waits on other devices' words it starts
     after. The device writes each part into its channel's ring, a GPFIFO, after
     a wait for the value before it and before the release of its own value, and
     wakes the channel. A part is ring entries that compiled code wrote
@@ -61,8 +58,9 @@
     {!signaled}, {!free} and {!stop} never raise it.
 
     {b Domains.} Any domain may call any function, at the same time as others,
-    with three exceptions. {!room} and {!submit} are called one at a time: the
-    caller holds the device's {e turn} from {!room} to the end of {!submit}.
+    with three exceptions. [rig_nv_room] and [rig_nv_submit] are called one at
+    a time: the caller holds the device's {e turn} from [rig_nv_room] to the
+    end of [rig_nv_submit].
     {!stop} is called once, after every other call returned; after it only
     {!free} and the capability's [local] are called. {!sleep} may run while
     another domain submits.
@@ -108,8 +106,8 @@ val waits_on : t -> [ `Store | `Object | `Host ] -> bool
     any 64-bit word [g] maps, whoever writes it. It is [false] for [`Object]. *)
 
 val blocks : t -> [ `Returns | `May_block ]
-(** [blocks g] is [`Returns]: {!room} and {!submit} store to memory and never
-    block. *)
+(** [blocks g] is [`Returns]: [rig_nv_room] and [rig_nv_submit] store to
+    memory and never block. *)
 
 type capability = Rig_nv_abi.Gpu.t
 (** The type for what compiled code needs from a device. *)
@@ -145,7 +143,7 @@ val alloc : t -> [ `Device | `Pinned | `Mapped ] -> int -> region option
       host;
     - [`Mapped], GPU memory that the host also addresses, through the GPU's
       memory BAR, while the BAR has room; then [`Pinned] memory. The host's
-      stores to it reach the GPU before the work of any later {!submit} of [g]
+      stores to it reach the GPU before the work of any later submission of [g]
       reads it.
 
     It is [None] if the GPU or the host has not the memory.
@@ -238,75 +236,26 @@ val unload : t -> image -> unit
 
 (** {1:work Work} *)
 
-type part
-(** The type for work for one channel of a device. *)
-
-val part :
-  t ->
-  queue:string ->
-  ?after:int array ->
-  [ `Words of int array
-  | `Fill of nativeint * nativeint * int * int
-  | `Copy of (region * int) * (region * int) * int ] ->
-  part
-(** [part g ~queue ~after w] is the work [w] for [g]'s channel [queue], one of
-    {!queues}. [after] (defaults to [[||]]) holds the indices, in the array
-    given to {!submit}, of the parts of its submission that it runs after, each
-    smaller than its own. Parts on one channel run in array order; parts on two
-    channels that [after] does not order may run at once. [w] is:
-    - [`Words ws], ring entries ({!Rig_nv_abi.Gpfifo.entry}), each as two
-      32-bit words of [ws], low first. Each names a segment of [g]'s memory,
-      which the caller keeps unchanged until the work completes;
-    - [`Copy ((dst, o), (src, o'), n)], on ["COPY:0"], a copy of the [n] bytes
-      of [src] at offset [o'] to [dst] at offset [o], any two regions of [g],
-      whose ranges do not overlap.
-
-    Raises [Invalid_argument] if [queue] is not a queue of [g], if [w] is
-    [`Fill _], which the device does not run, if [ws] has an odd length, if a
-    copy is on ["COMPUTE:0"] or its range lies outside its region, if a region
-    is of another device or was freed, or if an index of [after] is negative. *)
-
-val room : t -> part array -> [ `Fits | `Later | `Never ]
-(** [room g ps] is [`Fits] if [g]'s rings take [ps] now, [`Later] if they take
-    them once one of [g]'s values is reached, and [`Never] if [ps] exceed [g]'s
-    empty rings or are more than 65,535 parts. It reads the timeline word first,
-    so [`Later] means a value [g] was given is not yet reached. Its C form,
-    [rig_nv_room], also answers [RIG_NEVER] for a part {!part} refuses. *)
-
-val submit :
-  t ->
-  v:int ->
-  waits:([ `Word | `Object ] * int * int) array ->
-  handles:nativeint array ->
-  part array ->
-  [ `Ok | `Failed of string ]
-(** [submit g ~v ~waits ~handles ps] hands over [ps], which {!room} answered
-    [`Fits] for, as [g]'s value [v], the value after the last one [g] was given.
-    Each wait [(`Word, a, w)] holds the work back until the aligned 64-bit word
-    at address [a] below [2{^40}], which [g]'s work addresses, holds at least
-    [w], compared circularly: [x] is at least [w] if [x - w], as a signed 64-bit
-    integer, is not negative. The work runs after every earlier value of [g] and
-    after the waits; once it completed, the timeline word holds [v]. A
-    submission of no parts writes [v] after its waits and after every earlier
-    value. [handles] is ignored: the device's work names its memory by address.
-
-    The result is [`Ok] once every part is in its channel's ring and the
-    channels were woken: stores to this machine's memory cannot fail.
-
-    Raises [Invalid_argument] if [v] is not the value after the last one, if
-    {!room} does not answer [`Fits] for [ps], if a part is another device's, if
-    a part's [after] names a part at or after its own index, if [waits] holds
-    more than 256 waits, or if a wait is [`Object]: the device waits only for
-    words to reach a value. *)
-
 val room_entry : nativeint
-(** [room_entry] is the address of the C function [rig_nv_room], {!room} for
-    C, which [rig_nv.h] declares. *)
+(** [room_entry] is the address of the C function [rig_nv_room], which
+    [rig_nv.h] declares. It answers whether [g]'s rings take a submission's
+    parts now ([RIG_FITS]), once one of [g]'s values is reached ([RIG_LATER]),
+    or never ([RIG_NEVER]): for parts that exceed [g]'s empty rings, more than
+    65,535 parts, or a part the device does not run. It reads the timeline word
+    first, so [RIG_LATER] means a value [g] was given is not yet reached. *)
 
 val submit_entry : nativeint
-(** [submit_entry] is the address of the C function [rig_nv_submit],
-    {!submit} for C, which [rig_nv.h] declares. It calls no function of the
-    OCaml runtime. *)
+(** [submit_entry] is the address of the C function [rig_nv_submit], which
+    [rig_nv.h] declares. It hands over parts that [rig_nv_room] answered
+    [RIG_FITS] for as [g]'s value [v], the value after the last one [g] was
+    given, and calls no function of the OCaml runtime. A [RIG_WORD] wait at the
+    address [a] below [2{^40}], which [g]'s work addresses, holds the work back
+    until the aligned 64-bit word there holds at least the wait's value [w],
+    compared circularly: [x] is at least [w] if [x - w], as a signed 64-bit
+    integer, is not negative. The work runs after every earlier value of [g]
+    and after the waits, its parts on one queue in array order ({!queues}).
+    Once it completed, the timeline word holds [v]. A submission of no parts
+    writes [v] after its waits and after every earlier value. *)
 
 (** {1:timeline Timeline} *)
 
@@ -329,7 +278,7 @@ val sleep : t -> seen:int -> still_ms:int -> unit
     whichever comes first; [still_ms] is not negative. It reads the word and the
     channels' error notifiers each millisecond, and the RM's report of the
     multiprocessors' errors once per call. It lets other domains run while it
-    waits, and may run while {!submit} does.
+    waits, and may run while [rig_nv_submit] does.
 
     Raises {!Fault} with the report if [g]'s work faulted. *)
 
@@ -342,12 +291,13 @@ val stop : t -> unit
 (** [stop g] stops [g] for good, never waiting for its work: it ends its path's
     registration of [g]'s channels ({!field-unregister}), then frees them, and
     the RM preempts what they run. Once none of [g]'s work runs, the timeline
-    word holds the last value {!submit} was given, written with release order,
-    so work of other devices that waits on it runs on: before [stop] returns if
-    the RM freed the channels or had stopped them on a fault, and otherwise by
-    the channels' own releases as their work ends. [stop] ends [g]'s images too:
-    an image holds nothing of [g] but its code region, which the caller frees.
-    After [stop], only {!free} is called on [g], and it raises no {!Fault}. *)
+    word holds the last value [rig_nv_submit] was given, written with release
+    order, so work of other devices that waits on it runs on: before [stop]
+    returns if the RM freed the channels or had stopped them on a fault, and
+    otherwise by the channels' own releases as their work ends. [stop] ends
+    [g]'s images too: an image holds nothing of [g] but its code region, which
+    the caller frees. After [stop], only {!free} is called on [g], and it raises
+    no {!Fault}. *)
 
 (** {1:paths Paths}
 
