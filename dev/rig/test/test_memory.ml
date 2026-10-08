@@ -550,13 +550,20 @@ let budgeted =
     ~pp:(fun ppf r -> Format.fprintf ppf "held %d" r.held)
     ~release:release_budgeted "b"
 
+(* Allocations are drawn three times as often as opens, so a program that opens
+   a device allocates on it. *)
 let budget_commands =
+  let alloc =
+    command "alloc" (budgeted ^-> judges unit) judge_alloc alloc_budgeted
+  in
   [
     command "open"
       (Gen.unit @-> makes budgeted)
       (fun () -> { held = 0 })
       make_budgeted;
-    command "alloc" (budgeted ^-> judges unit) judge_alloc alloc_budgeted;
+    alloc;
+    alloc;
+    alloc;
   ]
 
 let tests =
@@ -567,7 +574,7 @@ let tests =
           test_over_budget;
         test "a copy whose staging memory the host refuses gives its slot back"
           test_staging_refused;
-        stateful ~count:3 ~domains:2
+        stateful ~count:5 ~domains:2
           "two domains' allocations stay within the budget" budget_commands;
         test "an allocation the driver refuses releases the cache, then raises"
           test_refused;
