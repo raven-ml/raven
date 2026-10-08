@@ -142,6 +142,29 @@ let grbm_select ?(me = 0) ?(pipe = 0) ?(queue = 0) ?(vmid = 0) g ~inst =
 
 let each_xcc g f = List.iter (fun inst -> f inst) g.xccs
 
+(* [f ()] with the RLC in safe mode on die [inst]: the GC's clocks held ungated
+   while registers that gating would stall are written. A virtual function's
+   host owns the RLC: [f ()] alone. *)
+let safe_mode g ~inst f =
+  let r = g.r in
+  let mode message =
+    Regs.write ~inst r "regRLC_SAFE_MODE" [ ("message", message); ("cmd", 1) ]
+  in
+  if Regs.vf r then f ()
+  else begin
+    mode 1;
+    Regs.wait r "the RLC's safe mode" (fun () ->
+        Regs.read ~inst r "regRLC_SAFE_MODE" land 1 = 0);
+    match f () with
+    | v ->
+        mode 0;
+        v
+    | exception e ->
+        let bt = Printexc.get_raw_backtrace () in
+        mode 0;
+        Printexc.raise_with_backtrace e bt
+  end
+
 (* Micro-engines *)
 
 (* The MEC runs after its enable for 50 ms with no state to poll. *)
@@ -208,9 +231,12 @@ let dequeue g ~wait =
     [ (1, 0, 0); (1, 0, 1) ] @ if Regs.vf g.r then [ kiq_queue ] else []
   in
   let left = ref true in
-  List.iter
-    (fun (me, pipe, queue) ->
-      each_xcc g (fun inst ->
+  (* Under the RLC's safe mode, which holds the GC's clocks ungated, as the
+     kernel's gfx_v12_0_reset_kcq resets a queue. *)
+  each_xcc g (fun inst ->
+      safe_mode g ~inst @@ fun () ->
+      List.iter
+        (fun (me, pipe, queue) ->
           grbm_select g ~me ~pipe ~queue ~inst;
           if Regs.read ~inst g.r "regCP_HQD_ACTIVE" land 1 = 1 then begin
             Regs.write ~inst ~value:2 g.r "regCP_HQD_DEQUEUE_REQUEST" [];
@@ -221,9 +247,9 @@ let dequeue g ~wait =
                 Regs.wait g.r "a compute queue's dequeue" (fun () ->
                     Regs.read ~inst g.r "regCP_HQD_ACTIVE" land 1 = 0)
               with Regs.Stuck _ -> left := false
-          end))
-    queues;
-  each_xcc g (fun inst -> grbm_select g ~inst);
+          end)
+        queues;
+      grbm_select g ~inst);
   !left
 
 let reset_mec g =
@@ -403,9 +429,7 @@ let gate g =
     Regs.write r "regMM_ATC_L2_MISC_CG" [ ("enable", 1); ("mem_ls_enable", 1) ];
   let major, _, _ = g.gc in
   each_xcc g (fun inst ->
-      Regs.write ~inst r "regRLC_SAFE_MODE" [ ("message", 1); ("cmd", 1) ];
-      Regs.wait r "the RLC's safe mode" (fun () ->
-          Regs.read ~inst r "regRLC_SAFE_MODE" land 1 = 0);
+      safe_mode g ~inst @@ fun () ->
       Regs.update ~inst r "regRLC_CGCG_CGLS_CTRL"
         [
           ("cgcg_gfx_idle_threshold", 0x36);
@@ -439,8 +463,7 @@ let gate g =
             ("gfxip_mgcg_override", 0);
             ("gfxip_cgls_override", 0);
             ("gfxip_cgcg_override", 0);
-          ]);
-      Regs.write ~inst r "regRLC_SAFE_MODE" [ ("message", 0); ("cmd", 1) ])
+          ]))
 
 (* Processors *)
 

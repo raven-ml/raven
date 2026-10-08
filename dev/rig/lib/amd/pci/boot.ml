@@ -722,7 +722,12 @@ let reset f =
             if Psp.running r && Smu.alive smu then begin
               Regs.write ~value:0 r "regSCRATCH_REG7" [];
               let gfx = Gfx.make r gmc vram doorbells ~mqds:[||] in
-              ignore (Gfx.dequeue gfx ~wait:true);
+              (* As the clocks below: a GC that does not answer the dequeue
+                 does not stop the reset that recovers it. *)
+              (try ignore (Gfx.dequeue gfx ~wait:true)
+               with Regs.Stuck why ->
+                 prerr_endline
+                   (strf "rig.amd.pci: dequeuing before a reset: %s" why));
               (* Lowering the clocks is a precaution the kernel does not take
                  before its own mode 1: a power manager that refuses it, as one
                  whose DPM runs without the GC's firmware may, does not stop the
