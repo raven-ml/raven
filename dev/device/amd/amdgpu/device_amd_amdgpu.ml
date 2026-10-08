@@ -477,6 +477,7 @@ let gpus_at = Topology.gpus
 let gpu_at root bus =
   Result.map (fun (n : Topology.node) -> n.gpu) (Topology.node root bus)
 
+let save_area_at root bus = Result.map save_bytes (Topology.node root bus)
 let count () = if linux () then List.length (gpus_at "/") else 0
 
 let device_name i =

@@ -77,3 +77,9 @@ val gpus_at : string -> string list
    describes it under the directory [root]: its topology node and its blocks'
    versions. [Error msg] if the driver does not hold it. *)
 val gpu_at : string -> string -> (Device_amd_abi.Gpu.t, string) result
+
+(* [save_area_at root bus] is the bytes of a compute queue's context save area
+   for the GPU at [bus] as the [amdgpu] driver describes it under the directory
+   [root]: each die's area and its debugger area, as the kernel driver requires.
+   [Error msg] as [gpu_at]. *)
+val save_area_at : string -> string -> (int, string) result
