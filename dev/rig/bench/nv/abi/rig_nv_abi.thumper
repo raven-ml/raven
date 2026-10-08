@@ -46,7 +46,6 @@ qmd/launch/blackwell	wall_time	batch=16384	n=20	4.820e-07	4.778e-07 4.785e-07 4.
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed under load 12.6 on 10 cores
-# forced: blessed qmd/encode/ada gpfifo/entry-encode under load 5.8 on 10 cores
 
 cubin/elf-of-string/nv-128-kernels	alloc_words	exact	22774
 cubin/elf-of-string/nv-128-kernels	wall_time	batch=64	n=20	1.390e-04	1.298e-04 1.322e-04 1.336e-04 1.355e-04 1.368e-04 1.371e-04 1.373e-04 1.376e-04 1.382e-04 1.386e-04 1.394e-04 1.399e-04 1.404e-04 1.406e-04 1.411e-04 1.418e-04 1.421e-04 1.430e-04 1.441e-04 1.549e-04
@@ -57,7 +56,7 @@ cubin/of-string/nv-128-kernels	wall_time	batch=32	n=20	2.280e-04	2.143e-04 2.179
 cubin/patches/128-relocations	alloc_words	exact	1156
 cubin/patches/128-relocations	wall_time	batch=4096	n=20	1.530e-06	1.472e-06 1.485e-06 1.494e-06 1.497e-06 1.497e-06 1.501e-06 1.520e-06 1.522e-06 1.526e-06 1.527e-06 1.533e-06 1.549e-06 1.550e-06 1.567e-06 1.569e-06 1.575e-06 1.578e-06 1.589e-06 1.606e-06 1.616e-06
 gpfifo/entry-encode	alloc_words	exact	30
-gpfifo/entry-encode	wall_time	batch=262144	n=20	2.057e-08	1.989e-08 1.993e-08 2.012e-08 2.020e-08 2.030e-08 2.036e-08 2.039e-08 2.042e-08 2.054e-08 2.054e-08 2.060e-08 2.062e-08 2.063e-08 2.089e-08 2.092e-08 2.093e-08 2.096e-08 2.108e-08 2.112e-08 2.136e-08
+gpfifo/entry-encode	wall_time	batch=262144	n=20	2.655e-08	2.598e-08 2.600e-08 2.615e-08 2.620e-08 2.624e-08 2.628e-08 2.631e-08 2.647e-08 2.654e-08 2.655e-08 2.655e-08 2.672e-08 2.679e-08 2.684e-08 2.699e-08 2.700e-08 2.707e-08 2.712e-08 2.715e-08 2.737e-08
 gpfifo/entry-fill-into-bytes	alloc_words	exact	0
 gpfifo/entry-fill-into-bytes	wall_time	batch=1048576	n=20	9.007e-09	8.804e-09 8.842e-09 8.861e-09 8.900e-09 8.925e-09 8.926e-09 8.933e-09 8.964e-09 8.968e-09 8.998e-09 9.016e-09 9.034e-09 9.060e-09 9.060e-09 9.070e-09 9.073e-09 9.081e-09 9.115e-09 9.130e-09 9.180e-09
 launch/driver-parameters-into-bytes/ada	alloc_words	exact	0
@@ -77,7 +76,7 @@ method/release-fill-into-bytes	wall_time	batch=524288	n=20	9.742e-09	9.352e-09 9
 method/release-template	alloc_words	exact	63
 method/release-template	wall_time	batch=65536	n=20	8.526e-08	8.178e-08 8.292e-08 8.322e-08 8.415e-08 8.425e-08 8.427e-08 8.483e-08 8.492e-08 8.500e-08 8.526e-08 8.527e-08 8.533e-08 8.609e-08 8.686e-08 8.686e-08 8.718e-08 8.730e-08 8.952e-08 1.019e-07 1.301e-07
 qmd/encode/ada	alloc_words	exact	240
-qmd/encode/ada	wall_time	batch=32768	n=20	1.925e-07	1.897e-07 1.919e-07 1.919e-07 1.920e-07 1.921e-07 1.921e-07 1.924e-07 1.924e-07 1.924e-07 1.925e-07 1.925e-07 1.926e-07 1.927e-07 1.932e-07 1.935e-07 1.936e-07 1.950e-07 1.964e-07 2.003e-07 2.053e-07
+qmd/encode/ada	wall_time	batch=32768	n=20	1.810e-07	1.759e-07 1.778e-07 1.780e-07 1.780e-07 1.781e-07 1.782e-07 1.783e-07 1.793e-07 1.799e-07 1.809e-07 1.812e-07 1.822e-07 1.825e-07 1.836e-07 1.840e-07 1.840e-07 1.848e-07 1.853e-07 1.863e-07 1.891e-07
 qmd/fill-into-bytes/ada	alloc_words	exact	0
 qmd/fill-into-bytes/ada	wall_time	batch=262144	n=20	3.306e-08	3.249e-08 3.258e-08 3.266e-08 3.267e-08 3.270e-08 3.273e-08 3.283e-08 3.284e-08 3.288e-08 3.306e-08 3.307e-08 3.308e-08 3.310e-08 3.315e-08 3.335e-08 3.335e-08 3.352e-08 3.369e-08 3.408e-08 3.409e-08
 qmd/launch/ada	alloc_words	exact	709
