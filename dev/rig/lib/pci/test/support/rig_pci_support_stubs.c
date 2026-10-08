@@ -302,10 +302,11 @@ value rig_pci_test_lock(value v_path, value v_holder) {
   (void)v_holder;
   return Val_int(ENOSYS);
 #else
+  CAMLparam2(v_path, v_holder);
   /* The descriptor that holds the lock once taken. The suites take it from
      one domain. */
   static int held = -1;
-  if (held >= 0) return Val_int(0);
+  if (held >= 0) CAMLreturn(Val_int(0));
   const char *path = String_val(v_path);
   int fd = open(path, O_RDWR | O_CLOEXEC);
   /* O_EXCL: Linux refuses O_CREAT on another user's file in /tmp
@@ -316,19 +317,19 @@ value rig_pci_test_lock(value v_path, value v_holder) {
     else if (fd >= 0 && fchmod(fd, 0666) != 0) {
       int e = errno;
       close(fd);
-      return Val_int(e);
+      CAMLreturn(Val_int(e));
     }
   }
-  if (fd < 0) return Val_int(errno);
+  if (fd < 0) CAMLreturn(Val_int(errno));
   if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
     int e = errno;
     close(fd);
-    if (e != EWOULDBLOCK) return Val_int(e);
+    if (e != EWOULDBLOCK) CAMLreturn(Val_int(e));
     struct timespec nap = {0, 100 * 1000 * 1000};
     caml_release_runtime_system();
     nanosleep(&nap, NULL);
     caml_acquire_runtime_system();
-    return Val_int(-1);
+    CAMLreturn(Val_int(-1));
   }
   char note[1024] = "";
   snprintf(note, sizeof note, "%s, pid %ld\n", String_val(v_holder),
@@ -337,9 +338,9 @@ value rig_pci_test_lock(value v_path, value v_holder) {
   if (ftruncate(fd, 0) != 0 || pwrite(fd, note, len, 0) != (ssize_t)len) {
     int e = errno;
     close(fd);
-    return Val_int(e);
+    CAMLreturn(Val_int(e));
   }
   held = fd;
-  return Val_int(0);
+  CAMLreturn(Val_int(0));
 #endif
 }

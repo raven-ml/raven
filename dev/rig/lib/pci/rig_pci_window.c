@@ -315,13 +315,14 @@ static void write_pieces(volatile uint8_t *dst, value s, size_t off, size_t n,
 
 value caml_rig_pci_write_at(value a, value s, value off, value n,
                                value wide) {
+  CAMLparam1(s);
   size_t len = Long_val(n);
   if (len >= PIECE)
     write_pieces(AT(Long_val(a)), s, Long_val(off), len, Bool_val(wide));
   else
     write_bytes(AT(Long_val(a)), (const uint8_t *)String_val(s) + Long_val(off),
                 len, Bool_val(wide));
-  return Val_unit;
+  CAMLreturn(Val_unit);
 }
 
 /* A fill reads no OCaml value: one of PIECE bytes or more runs with the
@@ -405,8 +406,10 @@ value caml_rig_pci_transport_set(intnat tr, intnat a, intnat n, int64_t x) {
   return Val_unit;
 }
 value caml_rig_pci_transport_set_byte(value tr, value a, value n, value x) {
-  return caml_rig_pci_transport_set(Long_val(tr), Long_val(a), Long_val(n),
-                                       Int64_val(x));
+  CAMLparam1(x);
+  caml_rig_pci_transport_set(Long_val(tr), Long_val(a), Long_val(n),
+                             Int64_val(x));
+  CAMLreturn(Val_unit);
 }
 
 value caml_rig_pci_transport_read(value tr, value a, value n) {
