@@ -261,13 +261,13 @@ let create_file path n =
     invalid_arg (strf "Device_disk.create_file: %d bytes is negative" n);
   open_file path create_mode n
 
-let flush b =
+let barrier b =
   match Device_core.Buffer.io b Io.region_key with
-  | None -> invalid_arg "Device_disk.flush: the buffer is not on DISK"
+  | None -> invalid_arg "Device_disk.barrier: the buffer is not on DISK"
   | Some f when not f.writable -> ()
   | Some f ->
       let synced code = if code <> 0 then sys_error f (error code) in
-      (* Writes through a shared mapping reach the file's storage by the
-         mapping's own flush, which a descriptor's does not cover. *)
+      (* Writes through a shared mapping reach the file by the mapping's own
+         flush, which the descriptor's sync does not cover. *)
       Option.iter (fun pages -> synced (msync pages)) f.pages;
       using f @@ fun fd -> synced (sync fd)

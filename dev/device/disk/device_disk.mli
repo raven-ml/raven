@@ -16,8 +16,8 @@
     {b Copies.} A copy from a disk buffer reads the file and a copy into one
     writes it, with positional reads and writes of the file, straight into or
     out of memory the host addresses and through the host's staging memory
-    otherwise. A copy returns once its bytes are in the file; {!flush} makes
-    them durable.
+    otherwise. A copy returns once its bytes are in the file; {!barrier} orders
+    them before later changes to the file system.
 
     {b Borrows.} A borrow of a disk buffer by the host, or by a device that
     addresses the host's memory, is the file's pages: the disk maps the whole
@@ -59,7 +59,7 @@
     - {{:https://pubs.opengroup.org/onlinepubs/9799919799/functions/mmap.html}
        POSIX [mmap]}: private mappings, and [SIGBUS] past the end of a file.
     - {{:https://pubs.opengroup.org/onlinepubs/9799919799/functions/fsync.html}
-       POSIX [fsync]}. *)
+       POSIX [fsync]}, and macOS's fsync(2) on [F_BARRIERFSYNC]. *)
 
 (** {1:disk The disk} *)
 
@@ -98,13 +98,15 @@ val create_file : string -> int -> (Device_core.Buffer.t, string) result
 
     Raises [Invalid_argument] if [n < 0]. *)
 
-val flush : Device_core.Buffer.t -> unit
-(** [flush b] returns once the bytes that copies into [b]'s file returned before
-    it are in the file system's storage device, as the system's [fsync]
-    promises. A device may hold them in its own cache for a while after. A
-    buffer {!of_file} opened is never written: [flush] returns at once.
+val barrier : Device_core.Buffer.t -> unit
+(** [barrier b] returns once the bytes written to [b]'s file before it, by
+    copies or through a borrow, are ordered before every later change to the
+    file system: after a crash, a change made after [barrier] returns, such as a
+    rename of the file, is seen only with those bytes. It does not make them
+    durable: a crash may lose both the bytes and the later change. A buffer
+    {!of_file} opened is never written: [barrier] returns at once.
 
     Raises [Invalid_argument] if [b] is not a buffer of {!device} or is dead
     ({!Device_core.Claim.consume}), and [Sys_error] naming the file if the
-    system cannot flush it or, as a copy does, if its path no longer names it
-    (Descriptors). *)
+    system cannot order its writes or, as a copy does, if its path no longer
+    names it (Descriptors). *)

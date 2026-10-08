@@ -48,7 +48,7 @@ let files =
           let file = require_ok (Device_disk.create_file path 10) in
           B.copy ~src:(host_of_string "abcde")
             ~dst:(B.view file ~first:3 ~length:5);
-          Device_disk.flush file;
+          Device_disk.barrier file;
           equal string "\000\000\000abcde\000\000" (contents path);
           let again = require_ok (Device_disk.of_file path) in
           equal string "abcde" (read (B.view again ~first:3 ~length:5)));

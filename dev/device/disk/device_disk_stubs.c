@@ -5,7 +5,7 @@
 
 /* Files for the disk: opening, identity, positional reads and writes between
    a file and host memory, mappings of a file's pages, read-ahead advice and
-   flushing.
+   ordering a file's writes before later changes.
 
    A descriptor crosses to OCaml as an int: a file descriptor on POSIX, a
    HANDLE on Windows. A failure crosses as a code: 0 for none, the system's
@@ -175,13 +175,31 @@ static int identify(intnat h, int64_t identity[3]) {
   return 0;
 }
 
-static int sync_file(intnat h) {
+static int fsync_retrying(int fd) {
   int r;
   do
-    r = fsync((int)h);
+    r = fsync(fd);
   while (r != 0 && errno == EINTR);
   return r == 0 ? 0 : errno;
 }
+
+#if defined(__APPLE__)
+
+/* macOS's fsync reaches the drive, which may still reorder the writes
+   (fsync(2)); a barrier orders them before later ones. A file system without
+   barriers may take a full flush to the medium, which orders too, and one
+   with neither, such as some network file systems, only fsync. */
+static int sync_file(intnat h) {
+  int fd = (int)h;
+  if (fcntl(fd, F_BARRIERFSYNC) == 0 || fcntl(fd, F_FULLFSYNC) == 0) return 0;
+  return fsync_retrying(fd);
+}
+
+#else
+
+static int sync_file(intnat h) { return fsync_retrying((int)h); }
+
+#endif
 
 #endif
 
@@ -225,8 +243,9 @@ value caml_device_disk_identity(value v_handle) {
   CAMLreturn(r);
 }
 
-/* [sync h] is 0 once the bytes written to the file [h] reached its storage,
-   or a code. Releases the runtime. */
+/* [sync h] is 0 once the bytes written to the file [h] are ordered before
+   every later change to the file system, across a crash, or a code. Releases
+   the runtime. */
 value caml_device_disk_sync(value v_handle) {
   intnat h = Long_val(v_handle);
   caml_release_runtime_system();
