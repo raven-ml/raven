@@ -211,11 +211,18 @@ Each failure runs four times, on a device that ran the operation once, which
 made what the device keeps for good. The heap is the allocator's own count
 (`Rig_support.heap_bytes`: the sanitizer's, glibc's `mallinfo2` or the macOS
 malloc zones), the descriptors are `/dev/fd`'s entries, and both are read
-after the collector ran and the devices drained. Four runs make a leak of a
-few dozen bytes per failure stand out beside the one thing a failure may keep:
-a lost device's reason. A library whose driver has a seam of its own, such as a
-path record or a transport, walks it the same way, with a countdown copied
-into its own support.
+after the collector ran and the devices drained. A leak shows in every run,
+while an allocator's own caches (glibc's per-thread ones) move single runs
+either way, so the walk checks the least growth of the four against 128 bytes:
+the one thing a failure may keep, a lost device's reason, and the allocator's
+rounding.
+
+A library whose driver has a seam of its own, such as a path record or a
+transport, walks it the same way, with a countdown copied into its own
+support. A library without one walks under a limit of a child process alone:
+the disk (`test/disk/test_walk.ml`) under limits of a file's size and of open
+files, and host programs (`test/host/test_walk.ml`) under a limit of the
+address space, on Linux, where it bounds mappings.
 
 **Drivers on their hardware.** A driver's fault path is tested on its GPU. A
 test that faults or hangs a GPU joins a suite only after one guarded run: one
