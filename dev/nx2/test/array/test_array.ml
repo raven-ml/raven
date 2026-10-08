@@ -687,12 +687,11 @@ let law_copy (Case (a, m)) =
       check b
   | None -> check a
 
-(* Arrays of every byte-wide dtype over drawn bytes, NaN payloads, non-0/1 bools
-   and every other pattern included, and a movement of them. *)
-let raw =
+(* Arrays of the byte-wide dtypes [dts] over drawn bytes, NaN payloads, non-0/1
+   bools and every other pattern included, and a movement of them. *)
+let raw_of dts =
   let open Gen in
-  let byte_wide = List.filter (fun (D.Any dt) -> D.bits dt >= 8) D.all in
-  let* (D.Any dt) = of_list ~pp:(fun ppf (D.Any dt) -> D.pp ppf dt) byte_wide in
+  let* (D.Any dt) = of_list ~pp:(fun ppf (D.Any dt) -> D.pp ppf dt) dts in
   let* s = shape in
   let w = D.bits dt / 8 in
   let n = Array.fold_left ( * ) 1 s * w in
@@ -702,7 +701,8 @@ let raw =
   let+ m = option (movement ~apart:false (L.shape (A.layout a))) in
   Case (a, m)
 
-let raw = Gen.with_pp pp_case raw
+let raw_of dts = Gen.with_pp pp_case (raw_of dts)
+let raw = raw_of (List.filter (fun (D.Any dt) -> D.bits dt >= 8) D.all)
 
 (* The bytes of [a]'s elements in C order of indices. *)
 let bytes_of a = A.to_array (Option.get (A.bitcast D.Uint8 a))
@@ -711,6 +711,16 @@ let law_copy_bits (Case (a, m)) =
   let a = Option.value ~default:a (Option.bind m (fun m -> A.move m a)) in
   cover "a strided view" (not (L.is_contiguous (A.layout a)));
   equal (array int) (bytes_of a) (bytes_of (A.copy a))
+
+(* A bool element is true iff its byte is not zero. *)
+let law_bool_bytes (Case (a, m)) =
+  let a = Option.value ~default:a (Option.bind m (fun m -> A.move m a)) in
+  let a = A.expect D.Bool (A.Any a) in
+  let bytes = bytes_of a in
+  cover "a byte other than 0 and 1" (Array.exists (fun b -> b > 1) bytes);
+  let want = Array.map (fun b -> b <> 0) bytes in
+  equal ~msg:"to_array" (array bool) want (A.to_array a);
+  equal ~msg:"get" (array bool) want (gets a)
 
 (* Gathers at tile and block edges
 
@@ -910,6 +920,30 @@ let law_to_device (Case (a, m)) =
       check b
   | None -> check a
 
+(* A bitcast is a view on any device: it keeps the buffer and moves no byte. *)
+let memory =
+  lazy
+    (match Rig.memory_device "nx2-test-memory" with
+    | Ok d -> d
+    | Error e -> failwith e)
+
+let test_bitcast_devices () =
+  let x = floats32 [| 2 |] [| 1.; -2. |] in
+  let want = bytes_of x in
+  let bitcast d =
+    let a = A.to_device d x in
+    let before = S.io_allocations () in
+    let u = Option.get (A.bitcast D.Uint8 a) in
+    equal ~msg:"allocations" int before (S.io_allocations ());
+    equal ~msg:"buffer" bool true (A.buffer u == A.buffer a);
+    equal ~msg:"device" bool true (Rig.equal d (A.device u));
+    u
+  in
+  equal ~msg:"memory device" (array int) want
+    (A.to_array (bitcast (Lazy.force memory)));
+  equal ~msg:"io device" (array int) want
+    (A.to_array (A.to_device Rig.host (bitcast (S.io_device ()))))
+
 let test_to_device_io () =
   let d = S.io_device () in
   let a = A.of_array D.Int4 [| 7 |] [| 1; -2; 3; -4; 5; -6; 7 |] in
@@ -986,6 +1020,12 @@ let law_bigarray (Case (a, m)) =
   match Option.bind m (fun m -> A.move m a) with
   | Some b -> check b
   | None -> check a
+
+let test_of_bigarray_misaligned () =
+  raises_match Exn.invalid_arg (fun () ->
+      A.of_bigarray D.Int16 (S.int16_at 1 4));
+  let a = A.of_bigarray D.Int16 (S.int16_at 2 4) in
+  equal ints [| 4 |] (L.shape (A.layout a))
 
 let test_bigarray_rank () =
   let a = A.create Rig.host D.Uint8 (Array.make 16 1) in
@@ -1178,6 +1218,8 @@ let tests =
         test "copy keeps NaN payloads" test_copy_bits;
         prop "copy is contiguous with the same elements" case law_copy;
         prop "copy keeps every byte of every element" raw law_copy_bits;
+        prop "a bool reads true iff its byte is not zero"
+          (raw_of [ D.Any D.Bool ]) law_bool_bytes;
         prop ~count:300
           "copy, to_array and of_array keep every element across tile and \
            block edges"
@@ -1185,6 +1227,8 @@ let tests =
         prop "to_device copies and keeps the layout" case law_to_device;
         test "to_device moves sub-byte views through an io device"
           test_to_device_io;
+        test "bitcast is a view on a memory device and an io device"
+          test_bitcast_devices;
       ];
     group "bigarray"
       [
@@ -1192,6 +1236,8 @@ let tests =
         test "of_bigarray shares the bigarray's bytes" test_of_bigarray;
         prop "bigarray views a C-contiguous host array" case law_bigarray;
         test "bigarray takes up to 16 axes" test_bigarray_rank;
+        test "of_bigarray refuses a bigarray misaligned for its elements"
+          test_of_bigarray_misaligned;
       ];
     group "door"
       [

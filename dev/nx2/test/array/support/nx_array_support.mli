@@ -37,6 +37,14 @@ val collect : ('v, 's) Nx_array.t -> int
 (** [collect a] reads [a] through [nx_read], empties the minor heap and compacts
     the major one while it holds the read, then calls [nx_done]. *)
 
+val int16_at :
+  int ->
+  int ->
+  (int, Bigarray.int16_signed_elt, Bigarray.c_layout) Bigarray.Genarray.t
+(** [int16_at k n] is a bigarray of [n] int16, at most 120, over memory [k]
+    bytes past a 16-byte boundary, [k] at most 16: misaligned for its elements
+    if [k] is odd. Every call shares the same memory. *)
+
 val io_device : unit -> Rig.t
 (** [io_device ()] is an io device over bigarrays: memory the host does not
     address. *)

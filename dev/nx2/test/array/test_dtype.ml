@@ -454,6 +454,29 @@ let test_nan_sign (F (dt, _)) =
       equal ~msg bool (Float.sign_bit x) (Float.sign_bit (A.get a [| 0 |])))
     [ nan; -.nan ]
 
+(* A float16 store of a NaN sets its quiet bit and keeps its sign and the top
+   ten bits of its payload, as a run, one element at a time, and into an array:
+   the bits of each double and of its float16. *)
+let nan_payloads =
+  [
+    (0x7FF0040000000000L, 0x7E01);
+    (0xFFF0040000000000L, 0xFE01);
+    (0x7FF8080000000000L, 0x7E02);
+    (0x7FF3FF0000000000L, 0x7EFF);
+    (0x7FF0000000000001L, 0x7E00);
+  ]
+
+let test_nan_payloads () =
+  let xs = List.map (fun (x, _) -> Int64.float_of_bits x) nan_payloads in
+  let want = List.map snd nan_payloads in
+  let bits a = A.to_array (Option.get (A.bitcast D.Uint16 a)) in
+  let n = List.length xs in
+  let run = A.of_array D.Float16 [| n |] (Array.of_list xs) in
+  equal ~msg:"of_array" (array int) (Array.of_list want) (bits run);
+  let one = A.create Rig.host D.Float16 [| n |] in
+  List.iteri (fun i x -> A.set one [| i |] x) xs;
+  equal ~msg:"set" (array int) (Array.of_list want) (bits one)
+
 (* Floats compared bit for bit, NaNs by their sign. *)
 let signed_float =
   Testable.make ~pp:pp_hex ~equal:(fun a b ->
@@ -985,6 +1008,10 @@ let tests =
         cases ~name:format_name "a NaN keeps its sign"
           (List.filter (fun (F (_, f)) -> f.top <> Finite) formats)
           test_nan_sign;
+        test
+          "a float16 NaN is quieted, keeping its sign and the top of its \
+           payload"
+          test_nan_payloads;
         cases ~name:format_name "every code reads as its definition's value"
           narrow test_every_code;
         law_float64;

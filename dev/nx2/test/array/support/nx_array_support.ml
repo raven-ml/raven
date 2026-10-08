@@ -13,6 +13,12 @@ external copy_into : ('v, 's) Nx_array.t -> ('v, 's) Nx_array.t -> int
   = "nx_array_copy"
 [@@noalloc]
 
+external int16_at :
+  int ->
+  int ->
+  (int, Bigarray.int16_signed_elt, Bigarray.c_layout) Bigarray.Genarray.t
+  = "nx_array_support_int16_at"
+
 external collect : ('v, 's) Nx_array.t -> int = "nx_array_support_collect"
 
 (* An io device over bigarrays *)

@@ -115,6 +115,15 @@ value nx_array_support_collect(value v) {
   CAMLreturn(Val_int(NX_OK));
 }
 
+/* A bigarray of [n] int16, at most 120, over static memory [at] bytes past a
+   16-byte boundary: misaligned for its elements if [at] is odd. */
+value nx_array_support_int16_at(value at, value n) {
+  static _Alignas(16) uint8_t bytes[256];
+  intnat dim = Long_val(n);
+  return caml_ba_alloc(CAML_BA_SINT16 | CAML_BA_C_LAYOUT | CAML_BA_EXTERNAL, 1,
+                       bytes + Long_val(at), &dim);
+}
+
 /* Copies [len] bytes between host addresses and a bigarray, for an io
    device over bigarrays. */
 value nx_array_support_blit_in(value ba, value at, value src, value len) {
