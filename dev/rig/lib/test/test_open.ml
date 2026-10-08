@@ -142,6 +142,8 @@ let test_machine () =
   equal string "open:gpu@far" (C.name g);
   equal device far (C.host_of g);
   equal device far (C.host_of far);
+  equal ~msg:"shares this process's host memory" (list bool) [ false; false ]
+    [ C.shares_host_memory g; C.shares_host_memory far ];
   equal (list bool) [ false; false ] [ C.reaches g C.host; C.reaches C.host g ]
 
 (* A device of a machine whose host is not open has no host here: it shares no

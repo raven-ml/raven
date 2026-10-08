@@ -130,11 +130,12 @@ val runs_on_host : t -> bool
     device's memory as on its own. *)
 
 val shares_host_memory : t -> bool
-(** [shares_host_memory d] is [true] iff [d] and its host reach each other's
-    memory: [reaches (host_of d) d && reaches d (host_of d)]. It holds for a
-    host, a {!memory_device}, and a driver's device that runs no copy, such as
-    Metal's. It is [false] for a device of another machine whose host is not
-    open. *)
+(** [shares_host_memory d] is [true] iff this process addresses [d]'s memory as
+    host memory: [d] and {!host} reach each other's memory,
+    [reaches host d && reaches d host]. It holds for {!host}, a
+    {!memory_device}, and a driver's device of this machine that runs no copy,
+    such as Metal's; it is [false] for every device of another machine, that
+    machine's host included. *)
 
 val reaches : t -> t -> bool
 (** [reaches d d'] is [true] iff [d]'s work addresses [d']'s own memory

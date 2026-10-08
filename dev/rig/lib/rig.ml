@@ -16,12 +16,7 @@ let arch d = d.arch
 let computes d = not (Dev.is_io d)
 let runs_on_host d = Dev.is_host d || d.memory_device
 let reaches = Dev.reaches
-
-let shares_host_memory d =
-  match Dev.machine_host d with
-  | Some h -> Dev.reaches h d && Dev.reaches d h
-  | None -> false
-
+let shares_host_memory d = Dev.reaches Dev.host d && Dev.reaches d Dev.host
 let budget d = d.budget
 let set_budget = Memory.set_budget
 let free_cache = Memory.free_cache
