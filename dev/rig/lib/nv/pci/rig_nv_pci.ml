@@ -127,8 +127,7 @@ let alloc g kind n =
   in
   match protect g (fun () -> Memory.alloc g.memory kind n) with
   | Ok (Some r) -> Some (memory g (Own (g, r)))
-  | Ok None -> None
-  | Error why -> raise (Rig_nv.Fault why)
+  | Ok None | Error _ -> None
 
 let map_host g a n =
   match protect g (fun () -> Memory.map_host g.memory a n) with
