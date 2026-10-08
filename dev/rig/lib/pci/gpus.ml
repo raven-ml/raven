@@ -116,6 +116,23 @@ let drop g h =
   g.held <- List.filter (fun h' -> h' != h) g.held;
   Function.release h.fn
 
+(* An unbound GPU whose kernel driver has not let go of it yet is not opened:
+   the driver's release, which writes to it, would race the open's writes. *)
+let released g m bus =
+  match Machine.files m with
+  | None -> Ok ()
+  | Some files -> (
+      if Sysfs.driver files bus <> None then Ok ()
+      else
+        match g.unreleased ~root:(Sysfs.root files) bus with
+        | None -> Ok ()
+        | Some why ->
+            Error
+              (strf
+                 "its kernel driver has not let go of %s yet, and writes to it \
+                  when it does: %s"
+                 bus why))
+
 (* The driver may give the GPU back inside the open: the open then gives back
    nothing more. *)
 let open_ g m i ~at_exit f =
@@ -126,6 +143,7 @@ let open_ g m i ~at_exit f =
     if lost g m bus then Error (bus ^ " was lost; reset the GPU first")
     else Ok ()
   in
+  let* () = released g m bus in
   let* fn = Function.take m bus in
   let h = hold g m bus fn in
   Mutex.protect g.holds (fun () -> g.held <- h :: g.held);

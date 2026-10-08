@@ -1248,6 +1248,20 @@ let test_unreleased () =
   contains ~msg:"the vendor's reason" ~sub:"its release pending" why;
   equal ~msg:"nothing written" string original (override root)
 
+(* An unbound GPU its kernel driver has not let go of, still writing to it, is
+   refused an open; it opens once the driver let go. *)
+let test_open_unreleased () =
+  needs_flock ();
+  let root = Tree.make [ Tree.gpu gpu_bus ] in
+  let pending = Atomic.make true in
+  let unreleased ~root:_ _ =
+    if Atomic.get pending then Some "its release pending" else None
+  in
+  let g = gpus ~unreleased () and m = Machine.at root in
+  contains ~sub:"its release pending" (unopened (open_ g m 0));
+  Atomic.set pending false;
+  Gpus.release (hold g m 0)
+
 (* A GPU bound to vfio-pci stays as it is: nothing is waited for. *)
 let test_vfio_unwaited () =
   needs_flock ();
@@ -1297,6 +1311,9 @@ let tree_changes =
         test_unreleased;
       test "detach waits for nothing on a GPU bound to vfio-pci"
         test_vfio_unwaited;
+      test
+        "an unbound GPU its kernel driver has not let go of is refused an open"
+        test_open_unreleased;
       test "a file the process may not write is refused, naming it"
         test_change_unwritable;
       test "another machine reached through a transport is refused"

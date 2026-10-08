@@ -121,16 +121,17 @@ val open_ :
     The result is [Error msg], the GPU left as it was, if [machine] is reached
     through a transport, if [i >= count ~machine ()], saying how many GPUs there
     are, if the process holds the GPU, if this process lost it and did not reset
-    it since, if its function cannot be taken, with {!Rig_pci.Function.take}'s
-    reason, if one of its blocks has a version this library does not boot,
-    naming the block and the version, if an image is missing, with
-    {!Rig_pci.Firmware.find}'s reason, or if firmware this library did not start
-    runs on it, which a {!reset} stops, or if the memory controller does not
-    place all of the GPU's memory. It is also [Error msg] if a block does not
-    answer during the boot, naming the step, or with {!Rig_amd.make}'s message;
-    the GPU is then stopped, and opens again only after a reset. An exception
-    raised after the boot's first write stops the GPU the same way and passes
-    through.
+    it since, if amdgpu, unbound from it, has not let go of it yet (KFD's
+    topology still lists it), naming the holder's reason, if its function cannot
+    be taken, with {!Rig_pci.Function.take}'s reason, if one of its blocks has a
+    version this library does not boot, naming the block and the version, if an
+    image is missing, with {!Rig_pci.Firmware.find}'s reason, or if firmware
+    this library did not start runs on it, which a {!reset} stops, or if the
+    memory controller does not place all of the GPU's memory. It is also
+    [Error msg] if a block does not answer during the boot, naming the step, or
+    with {!Rig_amd.make}'s message; the GPU is then stopped, and opens again
+    only after a reset. An exception raised after the boot's first write stops
+    the GPU the same way and passes through.
 
     Raises [Invalid_argument] if [i < 0]. *)
 

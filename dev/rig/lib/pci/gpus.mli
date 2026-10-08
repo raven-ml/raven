@@ -42,8 +42,8 @@ val make :
       [/sys/bus/pci], by path from [root], such as [["dev/nvidia0"]].
     - [unreleased ~root bus] is [Some why] if the kernel driver, no longer bound
       to the GPU at [bus], has not let go of it, and [None] if it has or the
-      vendor cannot tell. {!detach} asks it only of an unbound GPU. It raises
-      nothing: a file it cannot read is [None].
+      vendor cannot tell. {!detach} and {!open_} ask it only of an unbound GPU.
+      It raises nothing: a file it cannot read is [None].
     - [teardown_ms] is the longest the kernel driver takes to drop the files of
       the GPU's devices that it holds for a process after the process let go of
       them, such as a compute runtime's after its process exits: {!detach} waits
@@ -98,7 +98,9 @@ val open_ :
 
     [Error why] without calling [f] if [m] has no GPU [i], saying how many it
     has, if the process holds it already, if it was lost and not {!reset} since,
-    or if its function cannot be taken, [why] being {!Function.take}'s.
+    if it is unbound and its kernel driver has not let go of it yet, which
+    writes to it ([unreleased] of {!make}), or if its function cannot be taken,
+    [why] being {!Function.take}'s.
 
     Raises [Invalid_argument] if [f] gave the GPU back and answered [Ok _]. *)
 
