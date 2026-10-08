@@ -37,6 +37,7 @@ enum {
   T_SETUP,        /* (): a channel's engine binding, and compute's windows */
   T_SETUP_COPY,   /* (): the copy channel's engine binding */
   T_INVALIDATE,   /* (): the compute engine's caches */
+  T_IDLE,         /* (): wait for the compute engine's launches */
   TEMPLATES
 };
 

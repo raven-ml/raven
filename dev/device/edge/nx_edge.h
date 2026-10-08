@@ -49,8 +49,9 @@ struct nx_wait {
    - a copy: [copy_bytes] bytes from [copy_src_offset] bytes into the
      memory whose handle is [copy_src] to [copy_dst_offset] bytes into the
      memory whose handle is [copy_dst].
-   The part runs after the parts of the same submission whose indices the
-   [nafter] ints at [after] list, each below its own. */
+   The part runs after the parts of the same submission before it on its
+   queue, and after the parts whose indices the [nafter] ints at [after]
+   list, each below its own: [after] orders parts of different queues. */
 struct nx_part {
   int queue;
   const uint32_t *words;

@@ -152,6 +152,7 @@ let nvc7c0_invalidate_shader_caches_no_wfi_global_data_true = 1
 let nvc7c0_invalidate_shader_caches_no_wfi_constant_true = 1
 let nvc7c0_send_pcas_a = 0x2b4
 let nvc7c0_send_signaling_pcas2_b = 0x2c0
+let nvc7c0_wait_for_idle = 0x110
 let nvc7c0_send_signaling_pcas2_b_pcas_action_prefetch_schedule = 9
 let nvc7c0_invalidate_shader_caches_no_wfi_instruction = { lo = 0; bits = 1 }
 let nvc7c0_invalidate_shader_caches_no_wfi_global_data = { lo = 4; bits = 1 }

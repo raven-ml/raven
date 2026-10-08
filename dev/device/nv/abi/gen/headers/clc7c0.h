@@ -22,6 +22,7 @@
  */
 
 #define AMPERE_COMPUTE_B    0xC7C0
+#define NVC7C0_WAIT_FOR_IDLE                                                                               0x0110
 #define NVC7C0_SET_SHADER_SHARED_MEMORY_WINDOW_A                                                           0x02a0
 #define NVC7C0_SET_SHADER_SHARED_MEMORY_WINDOW_B                                                           0x02a4
 #define NVC7C0_SEND_PCAS_A                                                                                 0x02b4

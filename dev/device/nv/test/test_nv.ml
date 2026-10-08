@@ -685,11 +685,7 @@ let work =
     ([
        test "a kernel scheduled from a ring entry computes" launch;
        test "a part runs after the parts of the other channel it names" joins;
-       xfail
-         ~reason:
-           "the kernels two parts on COMPUTE:0 schedule run at once: the \
-            second read memory before the first wrote it"
-         (test "parts on COMPUTE:0 run in array order" compute_order);
+       test "parts on COMPUTE:0 run in array order" compute_order;
        test "misuse raises" misuse;
        test "a region of another device raises" another_device;
        test "the C room refuses what part refuses" room_c;
@@ -1227,18 +1223,12 @@ module Order = struct
 
   let make () = { bufs = Array.init buffers initial; last = None }
 
-  (* Part [i] runs before part [j], [i < j]: both copies, or [j] runs after a
-     part that runs after [i]. Two kernels' parts are ordered only through a
-     copy between them: the device runs kernels of one channel at once (see
-     "parts on COMPUTE:0 run in array order"). *)
+  (* Part [i] runs before part [j], [i < j]: both on one queue, or [j] runs
+     after a part that runs after [i]. *)
   let rec before ps i j =
     let pi = List.nth ps i and pj = List.nth ps j in
-    (pi.copy && pj.copy)
-    || List.exists
-         (fun k ->
-           ((List.nth ps k).copy || pj.copy)
-           && (k = i || (k > i && before ps i k)))
-         pj.after
+    pi.copy = pj.copy
+    || List.exists (fun k -> k = i || (k > i && before ps i k)) pj.after
 
   let overlap (b, o) (b', o') n n' = b = b' && o < o' + n' && o' < o + n
 

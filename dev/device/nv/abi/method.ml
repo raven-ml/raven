@@ -104,6 +104,9 @@ let invalidate_caches = function
                   D.nvc7c0_invalidate_shader_caches_no_wfi_constant_true);
         ]
 
+let wait_for_idle =
+  methods (subchannel Compute) D.nvc7c0_wait_for_idle [ Dword 0 ]
+
 (* SEND_PCAS_A takes the descriptor's address shifted right by 8, as its field
    QMD_ADDRESS_SHIFTED8 says. *)
 let qmd_address_shift = 8

@@ -24,7 +24,12 @@
    channel of the last part (COMPUTE when there is none) waits for the
    other channel's last part, then releases v into the timeline word: on
    COMPUTE a release that waits for the channel to be idle, on COPY a
-   release after its copies completed. */
+   release after its copies completed.
+
+   Order: the parts on one channel run in array order. COPY runs its copies
+   one after another; on COMPUTE a part placed after launches the channel
+   has not waited for starts with a wait for idle, as kernels a channel
+   schedules run at once. */
 
 #define _GNU_SOURCE
 
@@ -188,6 +193,7 @@ static void need(const struct device *d, const struct nx_part *p, int n,
       bytes[q] += (p[i].copy_bytes + COPY_MAX - 1) / COPY_MAX *
                   bytes_of(d, T_COPY);
     bytes[q] += bytes_of(d, q == COMPUTE ? T_RELEASE : T_COPY_RELEASE);
+    if (q == COMPUTE) bytes[q] += bytes_of(d, T_IDLE);
   }
   for (int q = 0; q < CHANNELS; q++) {
     if (!used[q]) continue;
@@ -251,6 +257,7 @@ static void enter(struct device *d, int q, uint64_t v, int *used,
     emit(d, c, T_INVALIDATE, 0, 0, 0);
 }
 
+/* Signals and releases on COMPUTE wait for idle first. */
 static void signal(struct device *d, int q, uint64_t address, uint64_t value) {
   emit(d, &d->ch[q], q == COMPUTE ? T_RELEASE : T_COPY_RELEASE, address,
        value, 0);
@@ -281,6 +288,8 @@ int device_nv_submit(void *self, uint64_t v, const struct nx_wait *waits,
   int r = n > 0 ? p[n - 1].queue : COMPUTE;
   int used[CHANNELS] = {0, 0};
   int last[CHANNELS] = {-1, -1};
+  /* Whether COMPUTE has launches it has not waited for. */
+  int running = 0;
   for (int i = 0; i < n; i++) last[p[i].queue] = i;
   for (int i = 0; i < n; i++) {
     int q = p[i].queue;
@@ -290,9 +299,13 @@ int device_nv_submit(void *self, uint64_t v, const struct nx_wait *waits,
       if (p[a].queue != q)
         emit(d, &d->ch[q], T_ACQUIRE, JOIN_GPU(d, other(q)), tag(v, a), 0);
     }
+    if (q == COMPUTE && running) emit(d, &d->ch[q], T_IDLE, 0, 0, 0);
     place(d, &p[i]);
-    if (awaited(p, n, i) || (i == last[q] && q != r))
+    if (q == COMPUTE) running = 1;
+    if (awaited(p, n, i) || (i == last[q] && q != r)) {
       signal(d, q, JOIN_GPU(d, q), tag(v, i));
+      if (q == COMPUTE) running = 0;
+    }
   }
   enter(d, r, v, used, waits, nwaits);
   int o = other(r);

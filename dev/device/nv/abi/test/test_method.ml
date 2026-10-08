@@ -24,6 +24,7 @@ let sem_addr_hi = 0x060
 let sem_payload_lo = 0x064
 let sem_payload_hi = 0x068
 let sem_execute = 0x06c
+let wait_for_idle = 0x110
 let shared_window_a = 0x2a0
 let shared_window_b = 0x2a4
 let send_pcas_a = 0x2b4
@@ -56,6 +57,7 @@ let names =
     (sem_payload_lo, "SEM_PAYLOAD_LO");
     (sem_payload_hi, "SEM_PAYLOAD_HI");
     (sem_execute, "SEM_EXECUTE");
+    (wait_for_idle, "WAIT_FOR_IDLE");
     (shared_window_a, "SET_SHADER_SHARED_MEMORY_WINDOW_A");
     (shared_window_b, "SET_SHADER_SHARED_MEMORY_WINDOW_B");
     (send_pcas_a, "SEND_PCAS_A");
@@ -135,6 +137,7 @@ type call =
   | Local_window of int64
   | Local_memory of int64 * int64
   | Invalidate of Packet.scope
+  | Wait_for_idle
   | Schedule of int64
   | Copy of int64 * int64 * int64
   | Copy_release of Packet.scope * int64 * int64
@@ -158,6 +161,7 @@ let pp_call ppf = function
   | Local_memory (a, p) ->
       Format.fprintf ppf "local_memory 0x%Lx ~per_tpc:0x%Lx" a p
   | Invalidate s -> Format.fprintf ppf "invalidate_caches %s" (S.scope_name s)
+  | Wait_for_idle -> Format.fprintf ppf "wait_for_idle"
   | Schedule a -> Format.fprintf ppf "schedule 0x%Lx" a
   | Copy (d, s, n) ->
       Format.fprintf ppf "copy ~dst:0x%Lx ~src:0x%Lx 0x%Lx" d s n
@@ -177,6 +181,7 @@ let packet : call -> int64 Packet.t = function
   | Local_window a -> Method.local_memory_window a
   | Local_memory (a, p) -> Method.local_memory a ~per_tpc:p
   | Invalidate s -> Method.invalidate_caches s
+  | Wait_for_idle -> Method.wait_for_idle
   | Schedule a -> Method.schedule a
   | Copy (d, s, n) -> Method.copy ~dst:d ~src:s n
   | Copy_release (s, a, v) -> Method.copy_release s a v
@@ -285,6 +290,8 @@ let expected = function
         trigger = Some (compute, invalidate_no_wfi);
         fields = invalidated s;
       }
+  | Wait_for_idle ->
+      { operands = []; trigger = Some (compute, wait_for_idle); fields = [] }
   | Schedule a ->
       {
         operands = [ (compute, send_pcas_a, Int64.to_int a lsr 8) ];
@@ -354,6 +361,7 @@ let call =
          (let+ s = S.scope and+ a = stamped and+ v = S.u64 in
           Release_stamp (s, a, v));
          constant Interrupt;
+         constant Wait_for_idle;
          map (fun a -> Shared_window a) window;
          map (fun a -> Local_window a) window;
          (let+ a = S.address ~bits:40 ~align:0
@@ -426,6 +434,7 @@ let constructor = function
   | Local_window _ -> "local_memory_window"
   | Local_memory _ -> "local_memory"
   | Invalidate _ -> "invalidate_caches"
+  | Wait_for_idle -> "wait_for_idle"
   | Schedule _ -> "schedule"
   | Copy _ -> "copy"
   | Copy_release _ -> "copy_release"
@@ -442,6 +451,7 @@ let all =
     "local_memory_window";
     "local_memory";
     "invalidate_caches";
+    "wait_for_idle";
     "schedule";
     "copy";
     "copy_release";

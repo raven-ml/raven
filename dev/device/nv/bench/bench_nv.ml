@@ -83,12 +83,13 @@ let words s =
 
 let encode = Abi.Structure.encode Int64.of_int
 
-(* [count] launches of the kernel [empty] over one thread: descriptors chained
-   in [`Mapped] memory, constant bank 0 there too, and one segment that
-   schedules the first, as compiled code places them. The result is the loaded
-   program, which stays loaded while reachable, and the segment's ring entry, as
-   two words. *)
-let launches t count =
+(* [count] launches of the kernel [empty] over one thread, their descriptors and
+   constant bank 0 in [`Mapped] memory, as compiled code places them:
+   [`Chained], descriptors chained from one segment that schedules the first;
+   [`Apart], a segment scheduling each. The result is the loaded program, which
+   stays loaded while reachable, and the segments' ring entries, two words
+   each. *)
+let launches t count how =
   let c = get (Abi.Cubin.of_string (Lazy.force cubin)) in
   let k = Option.get (Abi.Cubin.kernel c "empty") in
   let p = get (C.Program.load t.d (Lazy.force cubin)) in
@@ -115,18 +116,23 @@ let launches t count =
   let qmds = alloc t `Mapped (count * stride) in
   for i = 0 to count - 1 do
     let next = address qmds + ((i + 1) * stride) in
-    let q = if i < count - 1 then Abi.Qmd.chain next q else q in
+    let q =
+      if how = `Chained && i < count - 1 then Abi.Qmd.chain next q else q
+    in
     S.write (at qmds (i * stride)) (encode (Abi.Qmd.structure q))
   done;
-  let segment = alloc t `Mapped 4096 in
-  let ws =
-    Abi.Packet.encode Int64.of_int (Abi.Method.schedule (address qmds))
+  let segments = match how with `Chained -> 1 | `Apart -> count in
+  let segment_bytes = 256 in
+  let segment = alloc t `Mapped (segments * segment_bytes) in
+  let entry i =
+    let qmd = address qmds + (i * stride) in
+    let ws = Abi.Packet.encode Int64.of_int (Abi.Method.schedule qmd) in
+    S.write (at segment (i * segment_bytes)) ws;
+    let start = address segment + (i * segment_bytes) in
+    let e = Abi.Gpfifo.entry start ~offset:0 ~words:(String.length ws / 4) in
+    words (Abi.Packet.encode Int64.of_int e)
   in
-  S.write (host segment) ws;
-  let e =
-    Abi.Gpfifo.entry (address segment) ~offset:0 ~words:(String.length ws / 4)
-  in
-  (p, words (Abi.Packet.encode Int64.of_int e))
+  (p, Array.init segments entry)
 
 (* Rows *)
 
@@ -183,13 +189,17 @@ let wait_rows =
     ]
 
 (* A run of 64 launches follows the GPU's SM clock, which moves by up to a tenth
-   between and within runs and which no unprivileged process pins. *)
+   between and within runs and which no unprivileged process pins. Chained
+   launches in one part are the floor of launches that each wait for the one
+   before; [64-parts] orders them as parts of one queue instead. *)
 let launch_rows =
-  let launching count () =
+  let launching_as how count () =
     let t = dev () in
-    let p, e = launches t count in
-    (t, p, e, submission t [| part "COMPUTE:0" (Words (entry_words e)) |])
+    let p, es = launches t count how in
+    let part e = part "COMPUTE:0" (Words (entry_words e)) in
+    (t, p, es.(0), submission t (Array.map part es))
   in
+  let launching = launching_as `Chained in
   let floor_launching count () =
     let t, p, e, _ = launching count () in
     (floor t, p, e)
@@ -201,6 +211,7 @@ let launch_rows =
       row "floor-1" (floor_launching 1) floor_run;
       row "64" (launching 64) (fun (t, _, _, s) -> run t s);
       row "floor-64" (floor_launching 64) floor_run;
+      row "64-parts" (launching_as `Apart 64) (fun (t, _, _, s) -> run t s);
     ]
 
 let copy_rows =

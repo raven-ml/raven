@@ -96,7 +96,9 @@ val budget : t -> int
     path reports it. *)
 
 val queues : t -> string list
-(** [queues g] is [["COMPUTE:0"; "COPY:0"]], one channel each. *)
+(** [queues g] is [["COMPUTE:0"; "COPY:0"]], one channel each. The parts of a
+    submission on one queue run in array order: a part starts once the parts
+    before it on its queue completed, and reads what they wrote. *)
 
 val completion : t -> [ `Store | `Object of nativeint | `Host ]
 (** [completion g] is [`Store]: [g]'s channels write its timeline word. *)

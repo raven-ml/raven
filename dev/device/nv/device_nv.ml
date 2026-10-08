@@ -108,6 +108,7 @@ let t_local = 4
 let t_setup = 5
 let t_setup_copy = 6
 let t_invalidate = 7
+let t_idle = 8
 let template_words = 16
 let template_holes = 6
 let hole_ops = 3
@@ -380,6 +381,7 @@ let templates self (g : gpu) =
     @ Method.shared_memory_window shared_window);
   template self t_setup_copy ~known (Method.set_object Method.Copy g.copy_class);
   template self t_invalidate ~known (Method.invalidate_caches system);
+  template self t_idle ~known Method.wait_for_idle;
   (* An entry is its segment's address plus a constant plus its words times
      another: the address is a term's value, and the words a field of their
      own. *)

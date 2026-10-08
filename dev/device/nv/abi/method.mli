@@ -84,6 +84,11 @@ val invalidate_caches : Packet.scope -> 'v Packet.t
     least its data and constant caches; at [System], its instruction cache too.
     It does not wait for the engine's work to complete. *)
 
+val wait_for_idle : 'v Packet.t
+(** [wait_for_idle] holds the compute engine's later methods until the launches
+    scheduled before it completed. A launch scheduled after it reads what those
+    wrote. *)
+
 val schedule : 'v -> 'v Packet.t
 (** [schedule addr] schedules the launch descriptor at [addr], 256-byte aligned
     and below [2{^40}], and the descriptors chained to it ({!Qmd.chain}). The
