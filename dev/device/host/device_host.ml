@@ -12,9 +12,7 @@ external host_machine : unit -> int = "caml_device_host_machine"
 external page_size : unit -> int = "caml_device_host_page_size"
 external error_message : int -> string = "caml_device_host_error_message"
 
-external workers : unit -> (int[@untagged])
-  = "caml_device_host_workers_byte" "caml_device_host_workers"
-[@@noalloc]
+external workers : unit -> int = "caml_device_host_workers"
 
 let em_x86_64 = 62
 let em_aarch64 = 183

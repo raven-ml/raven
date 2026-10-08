@@ -67,7 +67,6 @@ value caml_device_host_page_size(value unit) {
 }
 
 value caml_device_host_error_message(value v_error) {
-  CAMLparam1(v_error);
 #if defined(_WIN32)
   char msg[256];
   DWORD n =
@@ -75,9 +74,9 @@ value caml_device_host_error_message(value v_error) {
                      NULL, (DWORD)Long_val(v_error), 0, msg, sizeof msg, NULL);
   while (n > 0 && (msg[n - 1] == '\n' || msg[n - 1] == '\r')) n--;
   msg[n] = '\0';
-  CAMLreturn(caml_copy_string(msg));
+  return caml_copy_string(msg);
 #else
-  CAMLreturn(caml_copy_string(strerror((int)Long_val(v_error))));
+  return caml_copy_string(strerror((int)Long_val(v_error)));
 #endif
 }
 
@@ -345,13 +344,9 @@ value caml_device_host_call(value v_entry, value v_code, value v_buffers,
   CAMLreturn(Val_unit);
 }
 
-intnat caml_device_host_workers(value unit) {
+value caml_device_host_workers(value unit) {
   (void)unit;
-  return nx_pool_performance_cores();
-}
-
-value caml_device_host_workers_byte(value unit) {
-  return Val_long(caml_device_host_workers(unit));
+  return Val_int(nx_pool_performance_cores());
 }
 
 /* Symbols */
