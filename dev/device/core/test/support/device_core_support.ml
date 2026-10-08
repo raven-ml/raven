@@ -34,6 +34,7 @@ module Driver = struct
     c : nativeint;
     copies : bool;
     host_visible : bool;
+    transport : bool;
     peers : bool;
     budget : int;
     limits : kind -> int;
@@ -136,7 +137,12 @@ module Driver = struct
   let unload d _ = note d "unload"
 
   let word d =
-    { at = Nativeint.to_int d.c; kind = None; bytes = 8; visible = true }
+    {
+      at = Nativeint.to_int d.c;
+      kind = None;
+      bytes = 8;
+      visible = not d.transport;
+    }
 
   let signaled d = polled_word d.c
 
@@ -192,9 +198,9 @@ module Polled = struct
   include Driver
 
   let make ?(capacity = 1024) ?(copies = true) ?(host_visible = true)
-      ?(peers = true) ?(budget = 1 lsl 30) ?(memory = max_int)
-      ?(window = max_int) ?(may_block = false) ?(waits_host = false)
-      ?(answer = `Stopped) () =
+      ?(transport = false) ?(peers = true) ?(budget = 1 lsl 30)
+      ?(memory = max_int) ?(window = max_int) ?(may_block = false)
+      ?(waits_host = false) ?(answer = `Stopped) () =
     let limits = function
       | `Device -> memory
       | `Mapped -> window
@@ -204,6 +210,7 @@ module Polled = struct
       c = polled_new capacity may_block;
       copies;
       host_visible;
+      transport;
       peers;
       budget;
       limits;
@@ -224,11 +231,11 @@ module Polled = struct
       sleepers = 0;
     }
 
-  let open_ ?capacity ?copies ?host_visible ?peers ?budget ?memory ?window
-      ?may_block ?waits_host ?answer name =
+  let open_ ?capacity ?copies ?host_visible ?transport ?peers ?budget ?memory
+      ?window ?may_block ?waits_host ?answer name =
     let p =
-      make ?capacity ?copies ?host_visible ?peers ?budget ?memory ?window
-        ?may_block ?waits_host ?answer ()
+      make ?capacity ?copies ?host_visible ?transport ?peers ?budget ?memory
+        ?window ?may_block ?waits_host ?answer ()
     in
     match Device_core.open_ (module Driver) ~name (fun () -> Ok p) with
     | Ok d -> (d, p)

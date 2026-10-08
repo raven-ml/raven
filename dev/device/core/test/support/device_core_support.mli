@@ -15,6 +15,7 @@ module Polled : sig
     ?capacity:int ->
     ?copies:bool ->
     ?host_visible:bool ->
+    ?transport:bool ->
     ?peers:bool ->
     ?budget:int ->
     ?memory:int ->
@@ -28,9 +29,11 @@ module Polled : sig
       1024): beyond it [room] answers [`Later], or, with [may_block], submit
       waits for room. Without [copies] (defaults to [true]) it lists no copy
       queue. Without [host_visible] (defaults to [true]) the host does not
-      address its [`Device] memory. Without [peers] (defaults to [true]) it maps
-      no memory of another device. Its budget is [budget] (defaults to 1 GiB);
-      it holds at most [memory] bytes of [`Device] memory and [window] bytes of
+      address its [`Device] memory. With [transport] (defaults to [false]) the
+      host does not address its word either, which is read through [signaled],
+      as behind a transport. Without [peers] (defaults to [true]) it maps no
+      memory of another device. Its budget is [budget] (defaults to 1 GiB); it
+      holds at most [memory] bytes of [`Device] memory and [window] bytes of
       [`Mapped] memory (default to [max_int]); [`Pinned] memory is unbounded.
       With [waits_host] its queue waits for host-written words. Its stop answers
       [answer] (defaults to [`Stopped]). *)
@@ -39,6 +42,7 @@ module Polled : sig
     ?capacity:int ->
     ?copies:bool ->
     ?host_visible:bool ->
+    ?transport:bool ->
     ?peers:bool ->
     ?budget:int ->
     ?memory:int ->

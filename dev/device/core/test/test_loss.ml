@@ -125,8 +125,11 @@ let test_two_sleeps () =
 (* A lost device still answers its facts: its name, architecture, budget and
    capability as before, the last value handed over and the last value its word
    reached. *)
-let test_facts () =
-  let d, p = P.open_ "loss:facts" in
+let test_facts transport () =
+  let d, p =
+    P.open_ ~transport
+      (if transport then "loss:facts-transport" else "loss:facts")
+  in
   C.set_budget d 4096;
   ignore (C.submit (empty d));
   ignore (C.submit (empty d));
@@ -134,7 +137,7 @@ let test_facts () =
   ignore (C.submit (empty d));
   P.fault p "the engine hung";
   raises_match (lost d) (fun () -> C.wait d 3);
-  equal string "loss:facts" (C.name d);
+  equal bool true (String.starts_with ~prefix:"loss:facts" (C.name d));
   equal string "polled" (C.arch d);
   equal int 4096 (C.budget d);
   is_some (C.capability d P.capability_key);
@@ -191,7 +194,9 @@ let tests =
           test_reached;
         test "a fault two domains' sleeps find loses the device once"
           test_two_sleeps;
-        test "a lost device answers its facts and values" test_facts;
+        test "a lost device answers its facts and values" (test_facts false);
+        test "a lost device behind a transport answers its last reading"
+          (test_facts true);
         test "Lost prints the device and the reason" test_printed;
         test "a loss leaves other devices and their memory working"
           test_others_go_on;
