@@ -3,7 +3,7 @@
 (library
  (name device_nv_pci)
  (libraries device_nv device_pci device_elf)
- (private_modules falcon gsp)
+ (private_modules defs falcon gsp)
  (modules_without_implementation
   device_nv_pci
   chip
