@@ -157,11 +157,31 @@ let find s sub =
   in
   go 0
 
-let parameters cls ?(params_offset = 0) ?shared_window ?local_window () =
-  Launch.driver_parameters
-    (S.launch
-       (S.gpu ~compute_class:cls ?shared_window ?local_window ())
-       (S.kernel ~params_offset ()))
+let launch cls ?(params_offset = 0) ?shared_window ?local_window () =
+  S.launch
+    (S.gpu ~compute_class:cls ?shared_window ?local_window ())
+    (S.kernel ~params_offset ())
+
+let parameters cls ?params_offset ?shared_window ?local_window () =
+  let l = launch cls ?params_offset ?shared_window ?local_window () in
+  Structure.encode Fun.id (Qmd.parameters (Qmd.make l))
+
+(* Where CUDA's code reads a block's sizes and then its grid's, three 32-bit
+   words each, as nvdisasm shows NVCC 13.4's code for sm_89 and sm_120 reading
+   blockDim and gridDim: c[0x0][0x0] to [0x14], and c[0x0][0x360] to [0x368] and
+   [0x370] to [0x378]. *)
+let sizes_at cls = if cls = S.blackwell then (0x360, 0x370) else (0x0, 0xc)
+let dims = Qmd.[ Block X; Block Y; Block Z; Grid X; Grid Y; Grid Z ]
+
+let word_at dim cls =
+  let block, grid = sizes_at cls in
+  match dim with
+  | Qmd.Block X -> block
+  | Block Y -> block + 4
+  | Block Z -> block + 8
+  | Grid X -> grid
+  | Grid Y -> grid + 4
+  | Grid Z -> grid + 8
 
 (* A window at or above 2^40 and below 2^49 whose six low bytes are nonzero, so
    that its bytes are found where it is and nowhere else. *)
@@ -206,6 +226,44 @@ let driver =
               Bytes.blit_string (S.le64 (Int64.of_int w)) 0 b i 8)
             [ s; l ];
           equal string (Bytes.to_string b) p);
+      prop "the parameters hold the launch's sizes where CUDA's code reads them"
+        Gen.(pair S.compute_class (list ~size:(constant 6) (int_range 0 1024)))
+        (fun (cls, sizes) ->
+          let sizes =
+            List.map2 (fun d n -> Int.min n (Qmd.max_size d)) dims sizes
+          in
+          let q =
+            List.fold_left2
+              (fun q d n -> Qmd.set_dim d n q)
+              (Qmd.make (launch cls ()))
+              dims sizes
+          in
+          let p = Structure.encode Fun.id (Qmd.parameters q) in
+          List.iter2
+            (fun d n ->
+              equal ~msg:"a size" int n
+                (Int32.to_int (String.get_int32_le p (word_at d cls))))
+            dims sizes);
+      cases ~name:S.class_name
+        "a size left to a value is a hole of the parameters" S.classes
+        (fun cls ->
+          let q =
+            Qmd.make (launch cls ())
+            |> Qmd.patch_dim (Grid X) 1L |> Qmd.patch_dim (Block Y) 2L
+            |> Qmd.set_dim (Block X) 64
+          in
+          let s = Qmd.parameters q in
+          equal ~msg:"holes"
+            (list (pair int int))
+            (List.sort compare
+               [ (word_at (Grid X) cls, 32); (word_at (Block Y) cls, 32) ])
+            (List.map (fun (h : _ Structure.hole) -> (h.at, h.bits)) s.holes);
+          let p = Structure.encode (fun v -> Int64.mul v 7L) s in
+          List.iter
+            (fun (d, n) ->
+              equal ~msg:"a size" int n
+                (Int32.to_int (String.get_int32_le p (word_at d cls))))
+            [ (Qmd.Grid X, 7); (Block Y, 14); (Block X, 64) ]);
       test "each class's parameters" (fun () ->
           let show cls =
             let p = parameters cls () in

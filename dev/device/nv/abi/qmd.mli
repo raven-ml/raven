@@ -95,6 +95,18 @@ val chain : 'v -> 'v t -> 'v t
     256-byte aligned: scheduling [q] schedules it too, and it starts once [q]'s
     launch completes. *)
 
+(** {1:parameters The driver's parameters} *)
+
+val parameters : 'v t -> 'v Structure.t
+(** [parameters q] is the start of constant bank [0] for the launch [q]
+    describes, which the caller writes before the kernel's parameters: the sizes
+    of [q]'s block and grid along [X], [Y] and [Z], as six unsigned 32-bit words
+    where CUDA's code reads [blockDim] and [gridDim]; the GPU's shared and local
+    memory windows ({!Gpu.t}) and the stack limit; zeros elsewhere. A size
+    {!patch_dim} left to a value is a hole of 32 bits, filled by that value. Its
+    length is the kernel's [params_offset], or the length of the class's
+    parameters if that is longer. *)
+
 (** {1:layout Layout} *)
 
 val structure : 'v t -> 'v Structure.t

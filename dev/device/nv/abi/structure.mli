@@ -9,7 +9,8 @@
     hold integers the layout knows, and the caller's values. Each field a value
     fills is a {e hole}. As with {!Packet}, the caller interprets the
     description: {!encode} with integers, a compiler as its own nodes. Every
-    structure comes from {!Qmd.structure}. *)
+    structure comes from {!Qmd}: a descriptor ({!Qmd.structure}) or the start of
+    its launch's constant bank [0] ({!Qmd.parameters}). *)
 
 type 'v hole = 'v Repr.hole = private {
   at : int;  (** The offset of the field's first byte. *)

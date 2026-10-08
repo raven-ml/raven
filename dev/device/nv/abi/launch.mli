@@ -11,8 +11,8 @@
     memory and threads a launch may take.
 
     Constant bank [0] is written anew for each launch: the driver's parameters
-    ({!driver_parameters}), then the kernel's. A launch's descriptor is built
-    from a {!t} ({!Qmd.make}).
+    ({!Qmd.parameters}), then the kernel's. A launch's descriptor is built from
+    a {!t} ({!Qmd.make}).
 
     {b References.} The CUDA C++ Programming Guide, "Technical Specifications
     per Compute Capability", for compute capabilities 8.0 to 12.0: the registers
@@ -37,12 +37,6 @@ val banks : t -> Cubin.bank list
 (** [banks l] is the constant banks a launch addresses: the kernel's
     ({!Cubin.type-kernel}), with a bank [0] of 352 bytes at offset [0] first if
     it has none. *)
-
-val driver_parameters : t -> string
-(** [driver_parameters l] is the start of constant bank [0]: the GPU's shared
-    and local memory windows ({!Gpu.t}) and the stack limit, at the places the
-    class sets, and zeros elsewhere. Its length is the kernel's [params_offset],
-    or the length of the class's parameters if that is longer. *)
 
 val local_bytes : t -> int
 (** [local_bytes l] is the local memory each thread of a launch needs: the

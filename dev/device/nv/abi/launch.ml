@@ -26,16 +26,6 @@ let max_shared_kib = List.fold_left Int.max 0 shared_configs
 let config kib = (kib * 1024 / 4096) + 1
 let max_shared_config = config max_shared_kib
 
-(* The driver's parameters at the start of bank 0, as 32-bit words: their count,
-   and the words of the shared and local memory windows (64 bits each) and of
-   the stack limit. The CUDA driver's layout, which NVRTC's code reads; no
-   NVIDIA header states it, and kimchi's runs rely on it. *)
-type parameters = { words : int; shared : int; local : int; stack : int }
-
-let before_blackwell = { words = 12; shared = 6; local = 8; stack = 10 }
-let blackwell = { words = 224; shared = 188; local = 190; stack = 223 }
-let stack_limit = 0xfffdc0
-
 (* Bank 0 when the cubin has none: the driver's parameters alone, 352 bytes. *)
 let default_bank0 = { Cubin.index = 0; offset = 0; bytes = 0x160 }
 
@@ -123,17 +113,6 @@ let banks l =
   let banks = l.kernel.banks in
   if List.exists (fun (b : Cubin.bank) -> b.index = 0) banks then banks
   else default_bank0 :: banks
-
-let driver_parameters l =
-  let p =
-    if l.gpu.compute_class = Defs.blackwell_compute_b then blackwell
-    else before_blackwell
-  in
-  let b = Bytes.make (Int.max l.kernel.params_offset (4 * p.words)) '\000' in
-  Bytes.set_int64_le b (4 * p.shared) (Int64.of_int l.gpu.shared_window);
-  Bytes.set_int64_le b (4 * p.local) (Int64.of_int l.gpu.local_window);
-  Bytes.set_int32_le b (4 * p.stack) (Int32.of_int stack_limit);
-  Bytes.unsafe_to_string b
 
 let local_bytes l = l.kernel.stack_bytes + reserved_local
 

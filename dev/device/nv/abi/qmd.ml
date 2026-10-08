@@ -16,6 +16,7 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 type 'v op = Set of D.field * int | Hole of 'v hole
 
 type 'v t = {
+  launch : Repr.launch;
   layout : D.qmd;
   banks : int list; (* the indices of the launch's banks *)
   base : string;
@@ -125,6 +126,7 @@ let make (launch : Launch.t) =
   in
   List.iter bank_fields banks;
   {
+    launch = l;
     layout = q;
     banks = List.map (fun (c : Cubin.bank) -> c.index) banks;
     base = Bytes.unsafe_to_string b;
@@ -226,6 +228,79 @@ let chain addr q =
   in
   let q = { q with ops = sets } in
   hole q p.dependent_qmd0_pointer (shifted addr chain_unit)
+
+(* The driver's parameters *)
+
+(* The driver's parameters at the start of bank 0, as 32-bit words: their count,
+   and the first words of a block's sizes and of a grid's (x, y, z), of the
+   shared and local memory windows (64 bits each) and of the stack limit. The
+   CUDA driver's layout, which no NVIDIA header states: the sizes are where NVCC
+   13.4's code reads blockDim and gridDim, as nvdisasm shows it for sm_89 and
+   sm_120, and kimchi's runs rely on the rest. *)
+type parameters = {
+  words : int;
+  block : int;
+  grid : int;
+  shared : int;
+  local : int;
+  stack : int;
+}
+
+let before_blackwell =
+  { words = 12; block = 0; grid = 3; shared = 6; local = 8; stack = 10 }
+
+let blackwell =
+  {
+    words = 224;
+    block = 216;
+    grid = 220;
+    shared = 188;
+    local = 190;
+    stack = 223;
+  }
+
+let stack_limit = 0xfffdc0
+
+(* The sizes in the order of their words: a block's, then a grid's. *)
+let size = function
+  | 0 -> Block X
+  | 1 -> Block Y
+  | 2 -> Block Z
+  | 3 -> Grid X
+  | 4 -> Grid Y
+  | _ -> Grid Z
+
+(* Writes into [b] at [at] the size of the field [f], the latest operation on
+   it: a value, a term (one more of [holes]), or nothing since [make], which
+   left it 0. *)
+let rec put b at (f : D.field) holes = function
+  | [] -> holes
+  | Set (g, v) :: _ when g.lo = f.lo ->
+      Bytes.set_int32_le b at (Int32.of_int v);
+      holes
+  | Hole h :: _ when h.at * 8 = f.lo ->
+      { at; bits = 32; value = h.value } :: holes
+  | _ :: ops -> put b at f holes ops
+
+(* Writes the sizes from the [i]th on into the parameters [b] of layout [p]. *)
+let rec put_sizes b p q i holes =
+  if i = 6 then holes
+  else
+    let word = if i < 3 then p.block + i else p.grid + i - 3 in
+    put_sizes b p q (i + 1) (put b (4 * word) (field q (size i)) holes q.ops)
+
+let parameters q =
+  let l = q.launch in
+  let p =
+    if l.gpu.compute_class = D.blackwell_compute_b then blackwell
+    else before_blackwell
+  in
+  let b = Bytes.make (Int.max l.kernel.params_offset (4 * p.words)) '\000' in
+  Bytes.set_int64_le b (4 * p.shared) (Int64.of_int l.gpu.shared_window);
+  Bytes.set_int64_le b (4 * p.local) (Int64.of_int l.gpu.local_window);
+  Bytes.set_int32_le b (4 * p.stack) (Int32.of_int stack_limit);
+  let holes = put_sizes b p q 0 [] in
+  { Repr.bytes = Bytes.unsafe_to_string b; holes = List.rev holes }
 
 (* Layout *)
 

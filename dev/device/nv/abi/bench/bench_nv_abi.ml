@@ -151,14 +151,14 @@ let qmd =
     ]
 
 let launch_group =
-  let l = launch ada in
-  let p = Abi.Launch.driver_parameters l in
+  let q = Abi.Qmd.make (launch ada) in
+  let p = Abi.Structure.encode Fun.id (Abi.Qmd.parameters q) in
   Thumper.group "launch"
     [
       Thumper.bench "make/ada" (fun () ->
           Abi.Launch.make (Thumper.black_box ada) kernel);
       Thumper.bench "driver-parameters/ada" (fun () ->
-          Abi.Launch.driver_parameters (Thumper.black_box l));
+          Abi.Qmd.parameters (Thumper.black_box q));
       Thumper.bench "driver-parameters-into-bytes/ada"
         (fill_into_bytes ~template:p ~filled:p []);
     ]
