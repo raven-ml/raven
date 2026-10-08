@@ -101,6 +101,12 @@ struct dc_slot {
   _Atomic uint64_t *use;
 };
 
+/* A handle a collect added, by hash: an entry of an earlier epoch is
+   empty. */
+struct dc_seen {
+  uint64_t handle, epoch;
+};
+
 /* The prepared form of a submission on one device. */
 struct dc_sub {
   struct dc_device *dev;
@@ -124,6 +130,9 @@ struct dc_sub {
   int *producers;
   int nhandles; /* at most one per fixed buffer and slot */
   uint64_t *handles;
+  int seen_bits; /* [seen] has 2^seen_bits entries, twice the handles */
+  struct dc_seen *seen;
+  uint64_t epoch; /* the collect's */
   /* What the submit answered. */
   uint64_t no_room_at, v;
   const char *why;

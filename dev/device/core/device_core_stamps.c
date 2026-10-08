@@ -169,8 +169,12 @@ value caml_device_core_sub_new(value v_d, value v_nparts, value v_nafter,
   s->slots = zalloc((size_t)(s->nreads + s->nwrites), sizeof *s->slots);
   s->nwait_slots = Int_val(v_nwaits);
   s->wait_slots = zalloc((size_t)s->nwait_slots, sizeof *s->wait_slots);
-  s->handles = zalloc((size_t)(s->nfixed + s->nreads + s->nwrites),
-                      sizeof *s->handles);
+  int nhandles = s->nfixed + s->nreads + s->nwrites;
+  s->handles = zalloc((size_t)nhandles, sizeof *s->handles);
+  s->seen_bits = 1;
+  while ((1 << s->seen_bits) < 2 * nhandles) s->seen_bits++;
+  s->seen = zalloc(nhandles == 0 ? 0 : (size_t)1 << s->seen_bits,
+                   sizeof *s->seen);
   value v = caml_alloc_custom(&sub_ops, sizeof(struct dc_sub *), 0, 1);
   Sub_val(v) = s;
   return v;
@@ -193,6 +197,7 @@ static void sub_free(struct dc_sub *s) {
   free(s->waits);
   free(s->producers);
   free(s->handles);
+  free(s->seen);
   free(s->claims);
   free(s);
 }
@@ -300,10 +305,16 @@ static void add_point(struct dc_sub *s, int own, uint64_t p) {
   s->points[s->npoints++] = p;
 }
 
+/* Adds [h] to the handles once. A lookup in [seen], a table of twice their
+   bound, takes a probe or two where a scan of the handles takes one per
+   handle: a submission of 25 buffers would make 300 compares. */
 static void add_handle(struct dc_sub *s, uint64_t h) {
   if (h == 0) return;
-  for (int i = 0; i < s->nhandles; i++)
-    if (s->handles[i] == h) return;
+  uint64_t mask = ((uint64_t)1 << s->seen_bits) - 1;
+  uint64_t i = (h * UINT64_C(0x9E3779B97F4A7C15)) >> (64 - s->seen_bits);
+  for (; s->seen[i].epoch == s->epoch; i = (i + 1) & mask)
+    if (s->seen[i].handle == h) return;
+  s->seen[i] = (struct dc_seen){h, s->epoch};
   s->handles[s->nhandles++] = h;
 }
 
@@ -329,6 +340,7 @@ value caml_device_core_sub_collect(value v_s) {
   struct dc_sub *s = Sub_val(v_s);
   int own = s->dev->index, nslots = s->nreads + s->nwrites;
   s->npoints = s->nwaits = s->nhandles = 0;
+  s->epoch++;
   for (int k = 0; k < s->nfixed; k++)
     add_slot(s, own, &s->fixed[k], s->fixed_write[k]);
   for (int k = 0; k < nslots; k++) {
