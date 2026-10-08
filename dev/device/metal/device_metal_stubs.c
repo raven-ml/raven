@@ -204,7 +204,7 @@ value caml_device_metal_image(value v_d, value v_b) {
     oom = ps == NULL;
     if (library == nil)
       snprintf(text, sizeof text, "loading the image: %s",
-               error.localizedDescription.UTF8String);
+               error.localizedDescription.UTF8String ?: "no reason given");
     for (NSUInteger i = 0; i < fs.count && text[0] == '\0'; i++) {
       MTLComputePipelineDescriptor *desc =
           [[MTLComputePipelineDescriptor alloc] init];
@@ -216,7 +216,8 @@ value caml_device_metal_image(value v_d, value v_b) {
                                                       error:&error];
       if (ps[i] == nil)
         snprintf(text, sizeof text, "building the pipeline of \"%s\": %s",
-                 fs[i].UTF8String, error.localizedDescription.UTF8String);
+                 fs[i].UTF8String,
+                 error.localizedDescription.UTF8String ?: "no reason given");
       [desc release];
     }
     [library release];
