@@ -46,6 +46,7 @@ let in_child child =
    memory dropped in it stays, even once the word reads every submitted value,
    which would free it in a process that read it. *)
 let test_child () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
   let d, p = P.open_ "fork:child" in
   let b = ref (Some (B.create d S.UInt8 64)) in
   let v = C.Point.value (C.submit (empty d)) in

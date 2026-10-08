@@ -24,6 +24,7 @@
 #include <caml/threads.h>
 
 #ifdef _WIN32
+#include <malloc.h>
 #include <windows.h>
 #else
 #include <pthread.h>
@@ -32,6 +33,41 @@
 
 #include "device_core.h"
 #include "nx_edge.h"
+
+/* Locks, conditions and aligned memory, on Windows and on POSIX. */
+
+#ifdef _WIN32
+typedef SRWLOCK lock_t;
+typedef CONDITION_VARIABLE cond_t;
+static void lock_init(lock_t *l) { InitializeSRWLock(l); }
+static void lock(lock_t *l) { AcquireSRWLockExclusive(l); }
+static void unlock(lock_t *l) { ReleaseSRWLockExclusive(l); }
+static void cond_init(cond_t *c) { InitializeConditionVariable(c); }
+static void cond_wait(cond_t *c, lock_t *l) {
+  SleepConditionVariableSRW(c, l, INFINITE, 0);
+}
+static void cond_broadcast(cond_t *c) { WakeAllConditionVariable(c); }
+static size_t page(void) { return 4096; }
+static void *aligned(size_t align, size_t n) {
+  return _aligned_malloc(n, align);
+}
+static void aligned_free(void *p) { _aligned_free(p); }
+#else
+typedef pthread_mutex_t lock_t;
+typedef pthread_cond_t cond_t;
+static void lock_init(lock_t *l) { pthread_mutex_init(l, NULL); }
+static void lock(lock_t *l) { pthread_mutex_lock(l); }
+static void unlock(lock_t *l) { pthread_mutex_unlock(l); }
+static void cond_init(cond_t *c) { pthread_cond_init(c, NULL); }
+static void cond_wait(cond_t *c, lock_t *l) { pthread_cond_wait(c, l); }
+static void cond_broadcast(cond_t *c) { pthread_cond_broadcast(c); }
+static size_t page(void) { return (size_t)sysconf(_SC_PAGESIZE); }
+static void *aligned(size_t align, size_t n) {
+  void *p = NULL;
+  return posix_memalign(&p, align, n) == 0 ? p : NULL;
+}
+static void aligned_free(void *p) { free(p); }
+#endif
 
 struct queued {
   uint64_t v;
@@ -42,8 +78,8 @@ struct queued {
 
 struct polled {
   _Atomic uint64_t word; /* first, alone in its page */
-  pthread_mutex_t mu;
-  pthread_cond_t cv;
+  lock_t mu;
+  cond_t cv;
   int capacity;      /* parts the queue holds */
   int may_block;     /* a full queue's submit waits instead of [room] */
   int fail;          /* the next submit fails */
@@ -54,27 +90,14 @@ struct polled {
   int blocked; /* submits waiting for room */
 };
 
-static size_t page(void) {
-#ifdef _WIN32
-  return 4096;
-#else
-  return (size_t)sysconf(_SC_PAGESIZE);
-#endif
-}
-
-static void *aligned(size_t align, size_t n) {
-  void *p = NULL;
-  return posix_memalign(&p, align, n) == 0 ? p : NULL;
-}
-
 #define Polled_val(v) ((struct polled *)Nativeint_val(v))
 
 value device_core_test_polled_new(value v_capacity, value v_may_block) {
   struct polled *p = aligned(page(), page() > sizeof *p ? page() : sizeof *p);
   if (p == NULL) caml_raise_out_of_memory();
   memset(p, 0, sizeof *p);
-  pthread_mutex_init(&p->mu, NULL);
-  pthread_cond_init(&p->cv, NULL);
+  lock_init(&p->mu);
+  cond_init(&p->cv);
   p->capacity = Int_val(v_capacity);
   p->may_block = Bool_val(v_may_block);
   return caml_copy_nativeint((intnat)p);
@@ -82,9 +105,9 @@ value device_core_test_polled_new(value v_capacity, value v_may_block) {
 
 value device_core_test_polled_fail(value v_p) {
   struct polled *p = Polled_val(v_p);
-  pthread_mutex_lock(&p->mu);
+  lock(&p->mu);
   p->fail = 1;
-  pthread_mutex_unlock(&p->mu);
+  unlock(&p->mu);
   return Val_unit;
 }
 
@@ -94,17 +117,17 @@ value device_core_test_polled_submits(value v_p) {
 
 value device_core_test_polled_blocked(value v_p) {
   struct polled *p = Polled_val(v_p);
-  pthread_mutex_lock(&p->mu);
+  lock(&p->mu);
   int n = p->blocked;
-  pthread_mutex_unlock(&p->mu);
+  unlock(&p->mu);
   return Val_int(n);
 }
 
 value device_core_test_polled_queued(value v_p) {
   struct polled *p = Polled_val(v_p);
-  pthread_mutex_lock(&p->mu);
+  lock(&p->mu);
   int n = p->n;
-  pthread_mutex_unlock(&p->mu);
+  unlock(&p->mu);
   return Val_int(n);
 }
 
@@ -136,13 +159,13 @@ static void run_one(struct polled *p, struct queued *s) {
 /* Runs the queued submissions whose waits hold, in order: answers how
    many ran. */
 static int run(struct polled *p) {
-  pthread_mutex_lock(&p->mu);
+  lock(&p->mu);
   int k = 0;
   while (k < p->n && waits_hold(&p->q[k])) run_one(p, &p->q[k++]);
   memmove(p->q, p->q + k, (size_t)(p->n - k) * sizeof *p->q);
   p->n -= k;
-  pthread_cond_broadcast(&p->cv);
-  pthread_mutex_unlock(&p->mu);
+  cond_broadcast(&p->cv);
+  unlock(&p->mu);
   return k;
 }
 
@@ -156,9 +179,9 @@ static int polled_room(void *self, const struct nx_part *parts, int n) {
     if (parts[i].words != NULL) return NX_NEVER;
   if (n > p->capacity) return NX_NEVER;
   if (p->may_block) return NX_FITS;
-  pthread_mutex_lock(&p->mu);
+  lock(&p->mu);
   int full = p->held + n > p->capacity;
-  pthread_mutex_unlock(&p->mu);
+  unlock(&p->mu);
   return full ? NX_LATER : NX_FITS;
 }
 
@@ -170,23 +193,23 @@ static int polled_submit(void *self, uint64_t v, const struct nx_wait *waits,
   (void)handles;
   (void)nhandles;
   atomic_fetch_add(&p->submits, 1);
-  pthread_mutex_lock(&p->mu);
+  lock(&p->mu);
   if (p->fail) {
     p->fail = 0;
-    pthread_mutex_unlock(&p->mu);
+    unlock(&p->mu);
     *failure = "the submission failed";
     return NX_FAILED;
   }
   while (p->may_block && p->held + nparts > p->capacity) {
     p->blocked++;
-    pthread_cond_wait(&p->cv, &p->mu);
+    cond_wait(&p->cv, &p->mu);
     p->blocked--;
   }
   if (p->n == p->c) {
     int c = p->c == 0 ? 8 : 2 * p->c;
     struct queued *q = realloc(p->q, (size_t)c * sizeof *q);
     if (q == NULL) {
-      pthread_mutex_unlock(&p->mu);
+      unlock(&p->mu);
       *failure = "no memory for the queue";
       return NX_FAILED;
     }
@@ -202,7 +225,7 @@ static int polled_submit(void *self, uint64_t v, const struct nx_wait *waits,
   if (nwaits > 0) memcpy(s->waits, waits, (size_t)nwaits * sizeof *waits);
   if (nparts > 0) memcpy(s->parts, parts, (size_t)nparts * sizeof *parts);
   p->held += nparts;
-  pthread_mutex_unlock(&p->mu);
+  unlock(&p->mu);
   return NX_OK;
 }
 
@@ -234,7 +257,7 @@ value device_core_test_alloc(value v_n) {
 }
 
 value device_core_test_free(value v_a) {
-  free((void *)Long_val(v_a));
+  aligned_free((void *)Long_val(v_a));
   return Val_unit;
 }
 
