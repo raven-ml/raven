@@ -96,11 +96,18 @@ val open_ :
     [f h fn] is [Ok v], the process calls [at_exit v] at its exit if it holds
     the GPU then.
 
+    A GPU a process that died left reaching memory, which it may still write
+    ({!Function.alloc_dma}), is reset as {!reset} does before [f] runs, under
+    the same take: its bus mastering off, the vendor's reset, and that memory
+    given back.
+
     [Error why] without calling [f] if [m] has no GPU [i], saying how many it
     has, if the process holds it already, if it was lost and not {!reset} since,
     if it is unbound and its kernel driver has not let go of it yet, which
-    writes to it ([unreleased] of {!make}), or if its function cannot be taken,
-    [why] being {!Function.take}'s.
+    writes to it ([unreleased] of {!make}), if its function cannot be taken,
+    [why] being {!Function.take}'s, if the memory processes that died left
+    cannot be read, or if the reset of a GPU a process that died left fails,
+    [why] being the vendor's, the GPU then lost.
 
     Raises [Invalid_argument] if [f] gave the GPU back and answered [Ok _]. *)
 

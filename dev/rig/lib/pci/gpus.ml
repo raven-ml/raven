@@ -116,6 +116,36 @@ let drop g h =
   g.held <- List.filter (fun h' -> h' != h) g.held;
   Function.release h.fn
 
+(* Turns the bus mastering of the GPU at [bus] on [m], whose function [fn] is
+   taken, off and resets it as its vendor does. A GPU reset opens again, and the
+   memory processes that died left for it goes; one whose reset failed is
+   lost. *)
+let renew_taken g m bus fn =
+  let c = Function.config16 fn Local.command in
+  Function.set_config16 fn Local.command (c land lnot Local.bus_master);
+  let r = g.reset fn in
+  (* Still taken, so no process holds the function: every file naming it was
+     left by one that died, and the GPU reaches none of it now. *)
+  Mutex.protect g.holds (fun () ->
+      let others = List.filter (fun (m', b) -> not (m' == m && b = bus)) in
+      g.spent <-
+        (match r with
+        | Ok () -> others g.spent
+        | Error _ -> (m, bus) :: others g.spent));
+  if Result.is_ok r then
+    Option.iter
+      (fun files -> Sysmem.forget ~root:(Sysfs.root files) ~bus)
+      (Machine.files m);
+  r
+
+(* Whether a process that died left the GPU at [bus] on [m] reaching its memory:
+   the GPU may still write it, so an open resets it first. *)
+let stale m bus =
+  match Machine.files m with
+  | None -> Ok false
+  | Some files ->
+      Fail.result (fun () -> Sysmem.left ~root:(Sysfs.root files) ~bus)
+
 (* An unbound GPU whose kernel driver has not let go of it yet is not opened:
    the driver's release, which writes to it, would race the open's writes. *)
 let released g m bus =
@@ -145,6 +175,19 @@ let open_ g m i ~at_exit f =
   in
   let* () = released g m bus in
   let* fn = Function.take m bus in
+  let* () =
+    match stale m bus with
+    | Ok false -> Ok ()
+    | Ok true -> (
+        match renew_taken g m bus fn with
+        | Ok () -> Ok ()
+        | Error _ as e ->
+            Function.release fn;
+            e)
+    | Error _ as e ->
+        Function.release fn;
+        e
+  in
   let h = hold g m bus fn in
   Mutex.protect g.holds (fun () -> g.held <- h :: g.held);
   let give_back () =
@@ -287,28 +330,12 @@ let detach g m i =
 
 (* Resets *)
 
-(* Takes the function of the GPU at [bus] on [m], turns its bus mastering off
-   and resets it as its vendor does, releasing it whatever the reset answers. A
-   GPU lost and reset opens again. *)
+(* Takes the function of the GPU at [bus] on [m] and renews it, releasing it
+   whatever the reset answers. *)
 let reset_gpu g m bus =
   let* fn = Function.take m bus in
-  let r =
-    Fun.protect ~finally:(fun () -> Function.release fn) @@ fun () ->
-    let c = Function.config16 fn Local.command in
-    Function.set_config16 fn Local.command (c land lnot Local.bus_master);
-    let r = g.reset fn in
-    (* Still taken, so no process holds the function: every file naming it was
-       left by one that died, and the GPU reaches none of it now. *)
-    if Result.is_ok r then
-      Option.iter
-        (fun files -> Sysmem.forget ~root:(Sysfs.root files) ~bus)
-        (Machine.files m);
-    r
-  in
-  if Result.is_ok r then
-    Mutex.protect g.holds (fun () ->
-        g.spent <- List.filter (fun (m', b) -> not (m' == m && b = bus)) g.spent);
-  r
+  Fun.protect ~finally:(fun () -> Function.release fn) @@ fun () ->
+  renew_taken g m bus fn
 
 let reset g m i =
   index "reset" i;

@@ -559,33 +559,66 @@ let reachers_on_disk path =
   | lines -> Some (List.filter (( <> ) "") lines)
   | exception Sys_error _ -> None
 
-let forget ~root ~bus =
-  Mutex.protect state @@ fun () ->
-  leave ~root bus;
+(* The memory files under [root] other processes made, and the lists that
+   outlived their files. [state] is held. *)
+let others ~root =
   let mine = List.map (fun (f : file) -> f.path) !files in
   let dir = Filename.concat root hugepages in
   match Sys.readdir dir with
-  | exception Sys_error _ -> ()
+  | exception Sys_error _ -> ([], [])
   | names ->
-      Array.iter
-        (fun name ->
+      Array.fold_right
+        (fun name (files, orphans) ->
           let path = Filename.concat dir name in
           if
             String.ends_with ~suffix:reach_suffix name
             && not (Sys.file_exists (Filename.chop_suffix path reach_suffix))
-          then unlink path
+          then (files, path :: orphans)
           else if
             String.starts_with ~prefix name
             && (not (String.ends_with ~suffix:reach_suffix name))
             && (not (String.ends_with ~suffix:tmp_suffix name))
             && not (List.mem path mine)
-          then
-            if_dead path (fun () ->
-                match reachers_on_disk path with
-                | None | Some [] -> delete path
-                | Some buses when List.mem bus buses -> (
-                    match List.filter (( <> ) bus) buses with
-                    | [] -> delete path
-                    | rest -> write_reachers path rest)
-                | Some _ -> ()))
-        names
+          then (path :: files, orphans)
+          else (files, orphans))
+        names ([], [])
+
+let forget ~root ~bus =
+  Mutex.protect state @@ fun () ->
+  leave ~root bus;
+  let files, orphans = others ~root in
+  List.iter unlink orphans;
+  List.iter
+    (fun path ->
+      if_dead path (fun () ->
+          match reachers_on_disk path with
+          | None | Some [] -> delete path
+          | Some buses when List.mem bus buses -> (
+              match List.filter (( <> ) bus) buses with
+              | [] -> delete path
+              | rest -> write_reachers path rest)
+          | Some _ -> ()))
+    files
+
+(* A file that cannot be opened for another reason than its end might hold the
+   GPU's memory: it is no answer. *)
+let left ~root ~bus =
+  Mutex.protect state @@ fun () ->
+  let listed = ref false in
+  List.iter
+    (fun path ->
+      if not !listed then
+        match Unix.openfile path [ O_RDWR; O_CLOEXEC ] 0 with
+        | exception Unix.Unix_error (ENOENT, _, _) -> ()
+        | exception Unix.Unix_error (e, _, _) ->
+            Fail.fail "reading %s: %s" path (Unix.error_message e)
+        | fd -> (
+            Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+            match own_lock fd with
+            | exception Unix.Unix_error _ -> ()
+            | () ->
+                listed :=
+                  List.mem bus
+                    (Option.value (reachers_on_disk path) ~default:[])))
+    (fst (others ~root));
+  !listed

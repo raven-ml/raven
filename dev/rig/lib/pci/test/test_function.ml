@@ -1730,13 +1730,22 @@ let wait_exit pid =
   | Some s -> s
   | None -> assert false
 
-let fixture_gpus () =
+let fixture_gpus ?(reset = fun _ -> Ok ()) () =
   Gpus.make ~memory_bar:0
     ~nodes:(fun ~root:_ _ -> [])
     ~unreleased:(fun ~root:_ _ -> None)
-    ~teardown_ms:0
-    ~reset:(fun _ -> Ok ())
+    ~teardown_ms:0 ~reset
     (fun (id : Machine.id) -> id.class_ lsr 16 = 0x03)
+
+(* A vendor whose resets are counted in [n], each answering [answer ()]. *)
+let counted_gpus ?(answer = fun () -> Ok ()) n =
+  fixture_gpus
+    ~reset:(fun _ ->
+      Atomic.incr n;
+      answer ())
+    ()
+
+let open_held g m = Gpus.open_ g m 0 ~at_exit:ignore (fun h _ -> Ok h)
 
 (* What a process that died left stays through another take and release, which
    does not reset the GPU, and goes once its GPU is reset. *)
@@ -1848,6 +1857,54 @@ let test_released_holder how () =
       equal ~msg:"gone at its process's exit" (list string) []
         (memory_files root)
 
+(* An open of a GPU a process that died left reaching memory resets it first,
+   under its take, and gives that memory back; one nobody left is not reset. *)
+let test_open_after_death () =
+  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  let fn = Tree.gpu "0000:03:00.0" in
+  let root = Tree.make [ fn ] in
+  let va = free_base + (6 * mib) in
+  ignore (frames root va mib);
+  let resets = Atomic.make 0 in
+  let g = counted_gpus resets and m = Machine.at root in
+  Gpus.release (require_ok (open_held g m));
+  equal ~msg:"nobody left it: no reset" int 0 (Atomic.get resets);
+  let pid, feed, said = holder "die" root fn.bus va in
+  Unix.close feed;
+  Unix.close said;
+  (match wait_exit pid with
+  | WSIGNALED s when s = Sys.sigkill -> ()
+  | _ -> fail "the process holding the function did not die by SIGKILL");
+  equal ~msg:"left by the dead process" int 1 (List.length (memory_files root));
+  let h = require_ok (open_held g m) in
+  equal ~msg:"reset before the driver's start" int 1 (Atomic.get resets);
+  equal ~msg:"its memory given back" (list string) [] (memory_files root);
+  Gpus.release h
+
+(* A GPU a process that died left whose reset fails is lost, its memory kept. *)
+let test_open_after_death_stuck () =
+  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  let fn = Tree.gpu "0000:03:00.0" in
+  let root = Tree.make [ fn ] in
+  let va = free_base + (6 * mib) in
+  ignore (frames root va mib);
+  let pid, feed, said = holder "die" root fn.bus va in
+  Unix.close feed;
+  Unix.close said;
+  (match wait_exit pid with
+  | WSIGNALED s when s = Sys.sigkill -> ()
+  | _ -> fail "the process holding the function did not die by SIGKILL");
+  let left = memory_files root in
+  let resets = Atomic.make 0 and m = Machine.at root in
+  let g =
+    counted_gpus ~answer:(fun () -> Error "fake: the GPU is stuck") resets
+  in
+  contains ~msg:"the reset's reason" ~sub:"stuck"
+    (require_error (open_held g m));
+  equal ~msg:"its memory kept" (list string) left (memory_files root);
+  contains ~msg:"lost until reset" ~sub:"was lost"
+    (require_error (open_held g m))
+
 (* A huge page is one block: frames that are not, as a file system that is no
    hugetlbfs gives, are refused, naming the mount. *)
 let test_scattered () =
@@ -1944,6 +2001,14 @@ let system_memory =
         "a reset of a GPU another process holds is refused, its memory kept (a \
          child holds)"
         test_reset_held;
+      test
+        "an open resets a GPU a process that died left reaching memory, giving \
+         it back (SIGKILL in a child)"
+        test_open_after_death;
+      test
+        "an open whose reset of a GPU a process that died left fails leaves it \
+         lost (SIGKILL in a child)"
+        test_open_after_death_stuck;
       test
         "a released function's memory stays, and a later take shares its page"
         test_released_block;

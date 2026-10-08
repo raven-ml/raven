@@ -85,6 +85,12 @@ val reach : a:int -> n:int -> bus:string -> unit
 val unreach : a:int -> n:int -> unit
 (** [unreach ~a ~n] records that a peer's mapping {!reach} recorded is gone. *)
 
+val left : root:string -> bus:string -> bool
+(** [left ~root ~bus] is [true] iff a process that died left memory under [root]
+    that the function at [bus] reaches: the GPU may still write it, and holds
+    its pages until {!forget}. Raises {!Fail.Failed} if a file under [root]
+    cannot be opened for another reason than its end, naming it. *)
+
 val forget : root:string -> bus:string -> unit
 (** [forget ~root ~bus] records that the GPU of the function at [bus] was reset,
     so it reaches no memory: it leaves the list of the process's file and of
