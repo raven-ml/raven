@@ -189,7 +189,12 @@ let launch_vars agents =
     ("RIG_REMOTE_KEY", hex_key);
   ]
 
-type launch = { lpid : int; report : in_channel; said : in_channel }
+type launch = {
+  lpid : int;
+  report : in_channel;
+  said : in_channel;
+  mutable heard : bool;  (** A line of [said] was read. *)
+}
 
 (* Starts support/launched.exe in [mode] with the variables [vars] added to its
    environment, as a launcher does: its descriptor 3 is a pipe read here, the
@@ -211,6 +216,7 @@ let launch ?(args = []) vars mode =
     lpid;
     report = Unix.in_channel_of_descr rr;
     said = Unix.in_channel_of_descr sr;
+    heard = false;
   }
 
 let lines ic =
@@ -223,11 +229,38 @@ let lines ic =
   close_in ic;
   ls
 
+(* The debug runtime, which the sanitize profile links, starts a program's
+   standard error with these lines, before anything the program says. *)
+let banner =
+  [
+    "### OCaml runtime: debug mode ###";
+    "### set OCAMLRUNPARAM=v=0 to silence this message";
+  ]
+
+(* The next line the program said: past the runtime's banner, for the first. *)
+let said_line p =
+  let rec past = function
+    | [] -> input_line p.said
+    | b :: bs ->
+        let l = input_line p.said in
+        if String.equal l b then past bs else l
+  in
+  let first = not p.heard in
+  p.heard <- true;
+  if first then past banner else input_line p.said
+
 (* The program's exit code, its report's lines and what it said, once it
    exited. *)
 let ended p =
   let report = lines p.report in
-  let said = lines p.said in
+  let rec go acc =
+    match said_line p with
+    | l -> go (l :: acc)
+    | exception End_of_file ->
+        close_in p.said;
+        List.rev acc
+  in
+  let said = go [] in
   let code =
     match snd (Unix.waitpid [] p.lpid) with
     | Unix.WEXITED n -> n

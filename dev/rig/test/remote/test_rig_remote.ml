@@ -610,7 +610,7 @@ let agent_killed () =
     ~finally:(fun () ->
       try Unix.kill p.lpid Sys.sigkill with Unix.Unix_error _ -> ())
     (fun () ->
-      equal ~msg:"connected" string "connected" (input_line p.said);
+      equal ~msg:"connected" string "connected" (said_line p);
       kill (List.hd agents);
       equal report_w
         ( -Sys.sigkill,
