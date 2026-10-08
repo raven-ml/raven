@@ -459,6 +459,7 @@ let space t = t.space
 let base t = t.base
 let span t = 1 lsl t.fmt.bits
 let memory t = t.memory
+let main_pool t = Tlsf.length t.main
 
 (* Raises unless the [n] bytes from [va] are whole pages the tables reach. *)
 let check t fn ~va n =

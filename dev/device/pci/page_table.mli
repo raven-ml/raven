@@ -137,6 +137,11 @@ val memory : t -> int
 (** [memory t] is the number of bytes of the GPU's physical memory [t] manages:
     [memory] of {!create}. *)
 
+val main_pool : t -> int
+(** [main_pool t] is the number of bytes of the main pool: {!memory} less the
+    boot pool and the tables' pool. It is the GPU's memory a driver hands out to
+    its users. *)
+
 (** {1:physical Physical memory} *)
 
 val palloc : ?align:int -> ?zero:bool -> ?boot:bool -> t -> int -> int option

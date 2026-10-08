@@ -174,6 +174,7 @@ let test_main_pool =
     (fun (memory, boot, kind, main) ->
       let t, _ = tables ~memory ~boot ~tables:kind () in
       equal ~msg:"the GPU's memory" int memory (Page_table.memory t);
+      equal ~msg:"the main pool's size" int main (Page_table.main_pool t);
       equal ~msg:"the main pool's first block" (option hex)
         (if main = 0 then None else Some (memory - main))
         (Page_table.palloc ~zero:false t page))
