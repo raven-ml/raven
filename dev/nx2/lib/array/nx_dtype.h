@@ -206,26 +206,25 @@ static inline float nx_f16_to_float(uint16_t c) {
 
 /* The magnitude code of the binary32 [f], not NaN, rounded to nearest, ties
    to even; a code past the format's largest finite one means [f] overflows,
-   as an infinity does. It has no branch: in a loop over values, a branch on
-   the rounding mispredicts half the time. */
+   as an infinity does. Both cases below are computed with shifts by
+   constants and one is selected, so a loop over values vectorises.
+
+   Below the least normal, 2^(1-bias), adding 2^(24-bias-m) makes the
+   hardware round the value to a multiple of the least subnormal,
+   2^(1-bias-m), to nearest even: the sum's bits less the addend's count
+   those multiples. A value that rounds up to the least normal counts 2^m,
+   which is its code. This needs the round-to-nearest mode stores assume.
+
+   Above it, the exponent is rebiased and the fraction rounded to m bits in
+   the integer; a carry runs into the exponent. */
 static inline uint32_t nx_mini_round(float f, int m, int bias) {
-  uint32_t i = nx_float_bits(f);
-  int exp = (int)((i >> 23) & 0xFF) - 127;
-  /* Below the least normal exponent a value is denormalised to its scale,
-     keeping every shifted-out bit for the rounding; a shift of 25 leaves
-     less than half the least subnormal, which rounds to 0. */
-  int below = 1 - bias - exp;
-  uint32_t sig = (i & 0x7FFFFF) | (below > 0 ? 0x800000u : 0);
-  int shift = 23 - m + (below > 0 ? below : 0);
-  shift = shift < 25 ? shift : 25;
-  uint32_t base = below > 0 ? 0 : (uint32_t)(exp + bias) << m;
-  uint32_t q = sig >> shift;
-  uint32_t rem = sig & ((1u << shift) - 1);
-  uint32_t tie = 1u << (shift - 1);
-  q += (rem > tie) | ((rem == tie) & (q & 1));
-  /* A carry runs into the exponent, and a subnormal that rounds up to 2^m is
-     the least normal: the codes line up. */
-  return base + q;
+  uint32_t u = nx_float_bits(f) & 0x7FFFFFFFu;
+  float magic = nx_bits_float((uint32_t)(127 + 24 - bias - m) << 23);
+  uint32_t sub = nx_float_bits(nx_bits_float(u) + magic) - nx_float_bits(magic);
+  uint32_t odd = (u >> (23 - m)) & 1;
+  uint32_t normal = (u - ((uint32_t)(127 - bias) << 23) +
+                     (1u << (22 - m)) - 1 + odd) >> (23 - m);
+  return u < (uint32_t)(128 - bias) << 23 ? sub : normal;
 }
 
 /* The value of the magnitude code [q]: a subnormal's is frac·2^(1-bias-m), a
