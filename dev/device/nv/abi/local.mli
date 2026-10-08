@@ -26,9 +26,8 @@ val make : Gpu.t -> int -> t
 (** [make g n] is the local memory of [g] for kernels whose threads need [n]
     bytes each ({!Launch.local_bytes}):
     - [per_thread] is [n] rounded up to a multiple of 32;
-    - [per_tpc] is [w * g.warps_per_sm * g.sms_per_tpc] rounded up to a multiple
-      of 32 KiB, where [w], a warp's share, is [32 * per_thread] rounded up to a
-      multiple of 512;
+    - [per_tpc] is [32 * per_thread * g.warps_per_sm * g.sms_per_tpc], a warp's
+      share for every warp of the cluster, rounded up to a multiple of 32 KiB;
     - [bytes] is [per_tpc * g.tpcs_per_gpc * g.gpcs] rounded up to a multiple of
       128 KiB.
 
