@@ -7,8 +7,8 @@ open Windtrap
 module D = Nx_array.Dtype
 
 let strf = Printf.sprintf
+let pp_hex ppf x = Format.fprintf ppf "%h" x
 let any_name (D.Any dt) = D.name dt
-let any = Testable.make ~pp:(fun ppf (D.Any dt) -> D.pp ppf dt) ~equal:( = )
 
 (* A witness of [dt]'s values that prints them as [dt] does and compares floats
    bit for bit. *)
@@ -24,555 +24,745 @@ let value : type v s. (v, s) D.t -> v testable =
   | D.Boolean -> bool
   | D.Signed | D.Unsigned -> Testable.make ~pp:(D.pp_value dt) ~equal:( = )
 
-let float_dtypes = List.filter (fun (D.Any dt) -> D.is D.Float dt) D.all
+(* The table, as the interface states it *)
 
-(* The table *)
+type kind = Float | Complex | Signed | Unsigned | Boolean
 
-let kind_index : type v s. (v, s) D.t -> int =
+let kind_name = function
+  | Float -> "Float"
+  | Complex -> "Complex"
+  | Signed -> "Signed"
+  | Unsigned -> "Unsigned"
+  | Boolean -> "Boolean"
+
+let kind_w =
+  Testable.make
+    ~pp:(fun ppf k -> Format.pp_print_string ppf (kind_name k))
+    ~equal:( = )
+
+let kind_of : type v s. (v, s) D.t -> kind =
  fun dt ->
   match D.kind dt with
-  | D.Float -> 0
-  | D.Complex -> 1
-  | D.Signed -> 2
-  | D.Unsigned -> 3
-  | D.Boolean -> 4
+  | D.Float -> Float
+  | D.Complex -> Complex
+  | D.Signed -> Signed
+  | D.Unsigned -> Unsigned
+  | D.Boolean -> Boolean
+
+(* Each dtype's name, width and kind. *)
+let table =
+  [
+    (D.Any D.Float64, "float64", 64, Float);
+    (D.Any D.Float32, "float32", 32, Float);
+    (D.Any D.Float16, "float16", 16, Float);
+    (D.Any D.Bfloat16, "bfloat16", 16, Float);
+    (D.Any D.Float8_e4m3fn, "float8_e4m3fn", 8, Float);
+    (D.Any D.Float8_e5m2, "float8_e5m2", 8, Float);
+    (D.Any D.Float4_e2m1fn, "float4_e2m1fn", 4, Float);
+    (D.Any D.Int64, "int64", 64, Signed);
+    (D.Any D.Uint64, "uint64", 64, Unsigned);
+    (D.Any D.Int32, "int32", 32, Signed);
+    (D.Any D.Uint32, "uint32", 32, Unsigned);
+    (D.Any D.Int16, "int16", 16, Signed);
+    (D.Any D.Uint16, "uint16", 16, Unsigned);
+    (D.Any D.Int8, "int8", 8, Signed);
+    (D.Any D.Uint8, "uint8", 8, Unsigned);
+    (D.Any D.Int4, "int4", 4, Signed);
+    (D.Any D.Uint4, "uint4", 4, Unsigned);
+    (D.Any D.Complex128, "complex128", 128, Complex);
+    (D.Any D.Complex64, "complex64", 64, Complex);
+    (D.Any D.Bool, "bool", 8, Boolean);
+    (D.Any D.Bit, "bit", 1, Boolean);
+  ]
+
+let row_name (_, name, _, _) = name
+
+let test_all () =
+  equal
+    (slist string String.compare)
+    (List.map row_name table) (List.map any_name D.all)
 
 let test_codes () =
   List.iteri
     (fun i (D.Any dt) -> equal ~msg:(D.name dt) int i (D.code dt))
-    D.all;
-  equal (option pass) None (Nx_array_support.row (List.length D.all))
+    D.all
 
-let test_header (D.Any dt) =
-  let row = Nx_array_support.row (D.code dt) in
+let test_row (D.Any dt, name, bits, kind) =
+  equal string name (D.name dt);
+  equal string name (Format.asprintf "%a" D.pp dt);
+  equal int bits (D.bits dt);
+  equal kind_w kind (kind_of dt)
+
+(* [is k] for each kind. *)
+let is_kind =
+  [
+    (Float, fun (D.Any dt) -> D.is D.Float dt);
+    (Complex, fun (D.Any dt) -> D.is D.Complex dt);
+    (Signed, fun (D.Any dt) -> D.is D.Signed dt);
+    (Unsigned, fun (D.Any dt) -> D.is D.Unsigned dt);
+    (Boolean, fun (D.Any dt) -> D.is D.Boolean dt);
+  ]
+
+let test_is () =
+  List.iter
+    (fun (k, is) ->
+      List.iter
+        (fun ((D.Any dt as a), _, _, kind) ->
+          equal
+            ~msg:(strf "is %s %s" (kind_name k) (D.name dt))
+            bool (kind = k) (is a))
+        table)
+    is_kind
+
+(* The index of each kind in nx_dtype.h's enum nx_kind. *)
+let kind_index = function
+  | Float -> 0
+  | Complex -> 1
+  | Signed -> 2
+  | Unsigned -> 3
+  | Boolean -> 4
+
+let test_header (D.Any dt, name, bits, kind) =
   equal
     (option (triple string int int))
-    (Some (D.name dt, D.bits dt, kind_index dt))
-    row
+    (Some (name, bits, kind_index kind))
+    (Nx_array_support.row (D.code dt))
 
-let test_bits () =
-  let bits (D.Any dt) = (D.name dt, D.bits dt) in
-  equal
-    (list (pair string int))
-    [
-      ("float64", 64);
-      ("float32", 32);
-      ("float16", 16);
-      ("bfloat16", 16);
-      ("float8_e4m3fn", 8);
-      ("float8_e5m2", 8);
-      ("float4_e2m1fn", 4);
-      ("int64", 64);
-      ("uint64", 64);
-      ("int32", 32);
-      ("uint32", 32);
-      ("int16", 16);
-      ("uint16", 16);
-      ("int8", 8);
-      ("uint8", 8);
-      ("int4", 4);
-      ("uint4", 4);
-      ("complex128", 128);
-      ("complex64", 64);
-      ("bool", 8);
-      ("bit", 1);
-    ]
-    (List.map bits D.all)
+let test_no_row_past_the_last () =
+  equal (option pass) None (Nx_array_support.row (List.length table))
 
-let test_bytes () =
-  equal int 0 (D.bytes D.Bit 0);
-  equal int 1 (D.bytes D.Bit 1);
-  equal int 1 (D.bytes D.Bit 8);
-  equal int 2 (D.bytes D.Bit 9);
-  equal int 2 (D.bytes D.Int4 3);
-  equal int 2 (D.bytes D.Uint4 4);
-  equal int 3 (D.bytes D.Float4_e2m1fn 5);
-  equal int ((max_int / 8) + 1) (D.bytes D.Bit max_int);
-  equal int ((max_int / 2) + 1) (D.bytes D.Int4 max_int);
-  equal int 48 (D.bytes D.Complex128 3);
-  equal int (max_int / 8 * 8) (D.bytes D.Float64 (max_int / 8));
-  raises_match Exn.invalid_arg (fun () -> D.bytes D.Float64 ((max_int / 8) + 1));
-  raises_match Exn.invalid_arg (fun () ->
-      D.bytes D.Complex128 ((max_int / 16) + 1));
-  raises_match Exn.invalid_arg (fun () -> D.bytes D.Uint8 (-1));
-  raises_match Exn.invalid_arg (fun () -> D.bytes D.Bit (-1))
+let names_refused =
+  [
+    "";
+    "Float32";
+    "FLOAT32";
+    " float32";
+    "float32 ";
+    "float";
+    "float8_e4m3";
+    "float4_e2m1";
+    "float8_e4m3fnuz";
+    "float8_e5m2fnuz";
+    "float8_e8m0fnu";
+    "complex32";
+    "uint1";
+  ]
 
-let test_names () =
-  List.iter
-    (fun (D.Any dt as a) -> equal (option any) (Some a) (D.of_name (D.name dt)))
-    D.all;
-  equal (option any) None (D.of_name "Float32");
-  equal (option any) None (D.of_name "float8_e4m3fnuz");
-  equal (option any) None (D.of_name "")
+let test_of_name (D.Any dt, name, _, _) =
+  match D.of_name name with
+  | Some (D.Any found) -> equal ~msg:"code" int (D.code dt) (D.code found)
+  | None -> failf "of_name %S is None" name
+
+let test_of_other_name s =
+  equal (option string) None (Option.map any_name (D.of_name s))
 
 let test_equal () =
   List.iter
     (fun (D.Any a) ->
       List.iter
         (fun (D.Any b) ->
-          let same = D.code a = D.code b in
-          let msg = strf "%s %s" (D.name a) (D.name b) in
+          let same = D.name a = D.name b in
+          let msg = strf "%s, %s" (D.name a) (D.name b) in
           equal ~msg bool same (D.equal a b);
           equal ~msg bool same (Option.is_some (D.equal_witness a b)))
         D.all)
     D.all
 
-let test_kinds () =
-  let kinds k =
-    List.map any_name (List.filter (fun (D.Any dt) -> D.is k dt) D.all)
+(* Bytes *)
+
+(* ⌈n·b/8⌉ with n = 8q + r, or [None] past [max_int]. *)
+let bytes_reference b n =
+  let q = n / 8 and r = n mod 8 in
+  let tail = ((r * b) + 7) / 8 in
+  if q > (max_int - tail) / b then None else Some ((q * b) + tail)
+
+let counts =
+  let edges =
+    List.concat_map
+      (fun k -> [ (max_int / k) - 1; max_int / k; (max_int / k) + 1 ])
+      [ 1; 2; 4; 8; 16 ]
   in
-  equal (list string)
+  Gen.frequency
     [
-      "float64";
-      "float32";
-      "float16";
-      "bfloat16";
-      "float8_e4m3fn";
-      "float8_e5m2";
-      "float4_e2m1fn";
+      (6, Gen.int_range (-2) 40);
+      ( 2,
+        Gen.of_list ~pp:Format.pp_print_int (List.filter (fun n -> n > 0) edges)
+      );
+      (1, Gen.of_list ~pp:Format.pp_print_int [ min_int; min_int + 1; -1 ]);
     ]
-    (kinds D.Float);
-  equal (list string) [ "complex128"; "complex64" ] (kinds D.Complex);
-  equal (list string)
-    [ "int64"; "int32"; "int16"; "int8"; "int4" ]
-    (kinds D.Signed);
-  equal (list string)
-    [ "uint64"; "uint32"; "uint16"; "uint8"; "uint4" ]
-    (kinds D.Unsigned);
-  equal (list string) [ "bool"; "bit" ] (kinds D.Boolean)
 
-(* Float formats *)
+let law_bytes (D.Any dt) =
+  prop (D.name dt) counts (fun n ->
+      let b = D.bits dt in
+      cover "a negative count" (n < 0);
+      if b < 8 then cover "rounds a partial byte up" (n > 0 && n * b mod 8 <> 0);
+      if b > 8 then cover "overflows" (n > 0 && bytes_reference b n = None);
+      match bytes_reference b n with
+      | Some v when n >= 0 -> equal int v (D.bytes dt n)
+      | _ -> raises_match Exn.invalid_arg (fun () -> D.bytes dt n))
 
-let format_row (D.Any dt) =
-  match D.kind dt with
-  | D.Float ->
-      let f = D.float_format dt in
-      Some
-        ( D.name dt,
-          (f.exponent_bits, f.fraction_bits, f.infinities, f.nans),
-          (f.epsilon, f.min_normal, f.max_finite) )
-  | _ -> None
+(* Values: identities and limits *)
 
-let test_formats () =
-  equal
-    (list
-       (triple string (quad int int bool bool)
-          (triple float_exact float_exact float_exact)))
-    [
-      ("float64", (11, 52, true, true), (0x1p-52, 0x1p-1022, Float.max_float));
-      ("float32", (8, 23, true, true), (0x1p-23, 0x1p-126, 0x1.fffffep127));
-      ("float16", (5, 10, true, true), (0x1p-10, 0x1p-14, 65504.));
-      ("bfloat16", (8, 7, true, true), (0x1p-7, 0x1p-126, 0x1.fep127));
-      ("float8_e4m3fn", (4, 3, false, true), (0x1p-3, 0x1p-6, 448.));
-      ("float8_e5m2", (5, 2, true, true), (0x1p-2, 0x1p-14, 57344.));
-      ("float4_e2m1fn", (2, 1, false, false), (0x1p-1, 1., 6.));
-    ]
-    (List.filter_map format_row D.all)
+(* A dtype, its zero and one, and its least and greatest values; [None] where
+   the limits raise. *)
+type values = Values : ('v, 's) D.t * 'v * 'v * ('v * 'v) option -> values
 
-(* Values *)
+let c re = { Complex.re; im = 0. }
+let inf = Float.infinity
+let nan = Float.nan
 
-let test_identities () =
-  let check : type v s. (v, s) D.t -> unit =
-   fun dt ->
-    equal ~msg:(D.name dt) (value dt) (D.of_float dt 0.) (D.zero dt);
-    equal ~msg:(D.name dt) (value dt) (D.of_float dt 1.) (D.one dt)
-  in
-  List.iter (fun (D.Any dt) -> check dt) D.all
+let values =
+  [
+    Values (D.Float64, 0., 1., Some (-.inf, inf));
+    Values (D.Float32, 0., 1., Some (-.inf, inf));
+    Values (D.Float16, 0., 1., Some (-.inf, inf));
+    Values (D.Bfloat16, 0., 1., Some (-.inf, inf));
+    Values (D.Float8_e4m3fn, 0., 1., Some (-448., 448.));
+    Values (D.Float8_e5m2, 0., 1., Some (-.inf, inf));
+    Values (D.Float4_e2m1fn, 0., 1., Some (-6., 6.));
+    Values (D.Int64, 0L, 1L, Some (Int64.min_int, Int64.max_int));
+    Values (D.Uint64, 0L, 1L, Some (0L, -1L));
+    Values (D.Int32, 0l, 1l, Some (Int32.min_int, Int32.max_int));
+    Values (D.Uint32, 0l, 1l, Some (0l, -1l));
+    Values (D.Int16, 0, 1, Some (-32768, 32767));
+    Values (D.Uint16, 0, 1, Some (0, 65535));
+    Values (D.Int8, 0, 1, Some (-128, 127));
+    Values (D.Uint8, 0, 1, Some (0, 255));
+    Values (D.Int4, 0, 1, Some (-8, 7));
+    Values (D.Uint4, 0, 1, Some (0, 15));
+    Values (D.Complex128, c 0., c 1., None);
+    Values (D.Complex64, c 0., c 1., None);
+    Values (D.Bool, false, true, Some (false, true));
+    Values (D.Bit, false, true, Some (false, true));
+  ]
 
-let test_limits () =
-  let ( => ) dt (lo, hi) =
-    equal ~msg:(D.name dt) (value dt) lo (D.min_value dt);
-    equal ~msg:(D.name dt) (value dt) hi (D.max_value dt)
-  in
-  D.Float64 => (Float.neg_infinity, Float.infinity);
-  D.Float16 => (Float.neg_infinity, Float.infinity);
-  D.Float8_e5m2 => (Float.neg_infinity, Float.infinity);
-  D.Float8_e4m3fn => (-448., 448.);
-  D.Float4_e2m1fn => (-6., 6.);
-  D.Int64 => (Int64.min_int, Int64.max_int);
-  D.Uint64 => (0L, -1L);
-  D.Int32 => (Int32.min_int, Int32.max_int);
-  D.Uint32 => (0l, -1l);
-  D.Int16 => (-32768, 32767);
-  D.Uint16 => (0, 65535);
-  D.Int8 => (-128, 127);
-  D.Uint8 => (0, 255);
-  D.Int4 => (-8, 7);
-  D.Uint4 => (0, 15);
-  D.Bool => (false, true);
-  D.Bit => (false, true);
-  raises_match (Exn.invalid_arg ~substring:"complex128") (fun () ->
-      D.min_value D.Complex128);
-  raises_match (Exn.invalid_arg ~substring:"complex64") (fun () ->
-      D.max_value D.Complex64)
+let values_name (Values (dt, _, _, _)) = D.name dt
 
-(* Stores, by the conversion rule. Each row is a dtype, an input and the value
-   the store holds. *)
+let test_identities (Values (dt, zero, one, _)) =
+  equal ~msg:"zero" (value dt) zero (D.zero dt);
+  equal ~msg:"one" (value dt) one (D.one dt)
 
+let test_limits (Values (dt, _, _, limits)) =
+  match limits with
+  | Some (lo, hi) ->
+      equal ~msg:"min_value" (value dt) lo (D.min_value dt);
+      equal ~msg:"max_value" (value dt) hi (D.max_value dt)
+  | None ->
+      raises_match Exn.invalid_arg (fun () -> D.min_value dt);
+      raises_match Exn.invalid_arg (fun () -> D.max_value dt)
+
+(* Float formats, by their definitions *)
+
+(* What an all-ones exponent field encodes: an infinity with a zero fraction and
+   NaN otherwise ([Ieee]), NaN with an all-ones fraction and a finite value
+   otherwise ([Nan_only]), or finite values ([Finite]). *)
+type top = Ieee | Nan_only | Finite
+type format = { exp : int; frac : int; bias : int; top : top }
+type float_dtype = F : (float, 's) D.t * format -> float_dtype
+
+let formats =
+  [
+    F (D.Float64, { exp = 11; frac = 52; bias = 1023; top = Ieee });
+    F (D.Float32, { exp = 8; frac = 23; bias = 127; top = Ieee });
+    F (D.Float16, { exp = 5; frac = 10; bias = 15; top = Ieee });
+    F (D.Bfloat16, { exp = 8; frac = 7; bias = 127; top = Ieee });
+    F (D.Float8_e4m3fn, { exp = 4; frac = 3; bias = 7; top = Nan_only });
+    F (D.Float8_e5m2, { exp = 5; frac = 2; bias = 15; top = Ieee });
+    F (D.Float4_e2m1fn, { exp = 2; frac = 1; bias = 1; top = Finite });
+  ]
+
+let format_name (F (dt, _)) = D.name dt
+
+(* The value of the sign-less code [c] of [f]. *)
+let decode f c =
+  let e = c lsr f.frac and m = c land ((1 lsl f.frac) - 1) in
+  let all_ones = e = (1 lsl f.exp) - 1 in
+  match f.top with
+  | Ieee when all_ones -> if m = 0 then inf else nan
+  | Nan_only when all_ones && m = (1 lsl f.frac) - 1 -> nan
+  | _ ->
+      if e = 0 then Float.ldexp (Float.of_int m) (1 - f.bias - f.frac)
+      else
+        Float.ldexp (Float.of_int (m lor (1 lsl f.frac))) (e - f.bias - f.frac)
+
+(* The code of [f]'s largest finite value. *)
+let last f =
+  match f.top with
+  | Ieee -> (((1 lsl f.exp) - 1) lsl f.frac) - 1
+  | Nan_only -> (1 lsl (f.exp + f.frac)) - 2
+  | Finite -> (1 lsl (f.exp + f.frac)) - 1
+
+(* The value of code [c] as if the exponent were unbounded: past [last f], the
+   values the format would have next. *)
+let unbounded f c = decode { f with top = Finite } c
+
+(* The epsilon, least normal and largest finite value of [f]; binary64's codes
+   do not fit in an [int]. *)
+let facts (F (dt, f)) =
+  match dt with
+  | D.Float64 -> (Float.epsilon, Float.min_float, Float.max_float)
+  | _ -> (Float.ldexp 1. (-f.frac), decode f (1 lsl f.frac), decode f (last f))
+
+let test_float_format (F (dt, f) as fd) =
+  let ff = D.float_format dt in
+  let epsilon, min_normal, max_finite = facts fd in
+  equal int f.exp ff.exponent_bits;
+  equal int f.frac ff.fraction_bits;
+  equal bool (f.top = Ieee) ff.infinities;
+  equal bool (f.top <> Finite) ff.nans;
+  equal float_exact epsilon ff.epsilon;
+  equal float_exact min_normal ff.min_normal;
+  equal float_exact max_finite ff.max_finite
+
+(* Stores *)
+
+(* Stores of the rule's special values and of values a user names. Each row is a
+   dtype, an input and the value the store holds. *)
 type store = Store : ('v, 's) D.t * float * 'v -> store
 
-let pp_store ppf (Store (dt, x, _)) = Format.fprintf ppf "%s %h" (D.name dt) x
-let stores_name s = Format.asprintf "%a" pp_store s
-let check_store (Store (dt, x, v)) = equal (value dt) v (D.of_float dt x)
-let nan = Float.nan
-let inf = Float.infinity
+let store_name (Store (dt, x, _)) = strf "%s %h" (D.name dt) x
+let test_store (Store (dt, x, v)) = equal (value dt) v (D.of_float dt x)
 
-(* Specials: NaN, ±0 and ±inf in every float format. *)
-let specials =
+let conversion_table =
   [
+    (* NaN *)
     Store (D.Float64, nan, nan);
-    Store (D.Float64, -0., -0.);
-    Store (D.Float64, -.inf, -.inf);
     Store (D.Float32, nan, nan);
-    Store (D.Float32, -0., -0.);
-    Store (D.Float32, inf, inf);
-    Store (D.Float32, -.inf, -.inf);
     Store (D.Float16, nan, nan);
-    Store (D.Float16, -0., -0.);
-    Store (D.Float16, inf, inf);
-    Store (D.Float16, -.inf, -.inf);
     Store (D.Bfloat16, nan, nan);
-    Store (D.Bfloat16, -0., -0.);
-    Store (D.Bfloat16, inf, inf);
-    Store (D.Bfloat16, -.inf, -.inf);
     Store (D.Float8_e5m2, nan, nan);
-    Store (D.Float8_e5m2, -0., -0.);
+    Store (D.Float8_e4m3fn, nan, nan);
+    Store (D.Float4_e2m1fn, nan, 0.);
+    Store (D.Float4_e2m1fn, -.nan, 0.);
+    (* Infinities *)
+    Store (D.Float64, inf, inf);
+    Store (D.Float32, -.inf, -.inf);
+    Store (D.Float16, inf, inf);
+    Store (D.Bfloat16, -.inf, -.inf);
     Store (D.Float8_e5m2, inf, 57344.);
     Store (D.Float8_e5m2, -.inf, -57344.);
-    Store (D.Float8_e4m3fn, nan, nan);
-    Store (D.Float8_e4m3fn, -0., -0.);
     Store (D.Float8_e4m3fn, inf, 448.);
     Store (D.Float8_e4m3fn, -.inf, -448.);
-    Store (D.Float4_e2m1fn, nan, 0.);
-    Store (D.Float4_e2m1fn, -0., -0.);
     Store (D.Float4_e2m1fn, inf, 6.);
     Store (D.Float4_e2m1fn, -.inf, -6.);
-  ]
-
-(* Past the largest finite value, and its neighbours. *)
-let overflows =
-  [
-    Store (D.Float32, 0x1.fffffep127, 0x1.fffffep127);
-    Store (D.Float32, 0x1.ffffffp127, inf) (* the tie rounds to even: up *);
-    Store (D.Float32, 0x1.fffffefffffffp127, 0x1.fffffep127);
-    Store (D.Float32, -1e300, -.inf);
-    Store (D.Float16, 65504., 65504.);
-    Store (D.Float16, 65519.99, 65504.);
+    (* Overflow is judged after rounding. *)
+    Store (D.Float16, 65519., 65504.);
     Store (D.Float16, 65520., inf);
-    Store (D.Float16, -1e10, -.inf);
-    Store (D.Bfloat16, 0x1.fep127, 0x1.fep127);
-    Store (D.Bfloat16, 0x1.ffp127, inf);
-    Store (D.Float8_e5m2, 57344., 57344.);
+    Store (D.Float16, -65520., -.inf);
+    Store (D.Float32, 0x1.ffffffp127, inf);
     Store (D.Float8_e5m2, 61440., 57344.);
     Store (D.Float8_e5m2, -1e300, -57344.);
-    Store (D.Float8_e4m3fn, 448., 448.);
     Store (D.Float8_e4m3fn, 464., 448.);
     Store (D.Float8_e4m3fn, 1e300, 448.);
-    Store (D.Float8_e4m3fn, -500., -448.);
-    Store (D.Float4_e2m1fn, 6., 6.);
     Store (D.Float4_e2m1fn, 7., 6.);
     Store (D.Float4_e2m1fn, -1e300, -6.);
-  ]
-
-(* Ties round to even, once from the double: a value just past a tie rounds away
-   from it, where rounding through float32 first would land on the tie and round
-   to even. *)
-let ties =
-  [
-    Store (D.Float32, 1. +. 0x1p-24, 1.);
-    Store (D.Float32, 1. +. 0x3p-24, 1. +. 0x1p-22);
-    Store (D.Float32, 1. +. 0x1p-24 +. 0x1p-50, 1. +. 0x1p-23);
-    Store (D.Float16, 1. +. 0x1p-11, 1.);
-    Store (D.Float16, 1. +. 0x3p-11, 1. +. 0x1p-9);
-    Store (D.Float16, 1. +. 0x1p-11 +. 0x1p-40, 1. +. 0x1p-10);
-    Store (D.Float16, 1. +. 0x1p-11 -. 0x1p-40, 1.);
-    Store (D.Bfloat16, 1. +. 0x1p-8, 1.);
-    Store (D.Bfloat16, 1. +. 0x1p-8 +. 0x1p-40, 1. +. 0x1p-7);
-    Store (D.Float8_e4m3fn, 1. +. 0x1p-4, 1.);
-    Store (D.Float8_e4m3fn, 1. +. 0x3p-4, 1.25);
-    Store (D.Float8_e4m3fn, 1. +. 0x1p-4 +. 0x1p-40, 1.125);
-    Store (D.Float8_e5m2, 1. +. 0x1p-3, 1.);
-    Store (D.Float8_e5m2, 1. +. 0x1p-3 +. 0x1p-40, 1.25);
-    Store (D.Float4_e2m1fn, 1.25, 1.);
-    Store (D.Float4_e2m1fn, 1.75, 2.);
-    Store (D.Float4_e2m1fn, 2.5, 2.);
-    Store (D.Float4_e2m1fn, 3.5, 4.);
-    Store (D.Float4_e2m1fn, 5., 4.);
-    Store (D.Float4_e2m1fn, 5. +. 0x1p-40, 6.);
-    Store (D.Float4_e2m1fn, -0.75, -1.);
+    (* Nearest, once from the double. *)
     Store (D.Float16, 0.1, 0x1.998p-4);
     Store (D.Float32, 0.1, 0x1.99999ap-4);
-  ]
-
-(* Below the least normal: subnormals, and zeros of the value's sign. *)
-let underflows =
-  [
-    Store (D.Float32, 0x1p-149, 0x1p-149);
-    Store (D.Float32, 0x1p-150, 0.);
-    Store (D.Float32, 0x1.000001p-150, 0x1p-149);
-    Store (D.Float32, -0x1p-151, -0.);
-    Store (D.Float16, 0x1p-24, 0x1p-24);
-    Store (D.Float16, 0x1p-25, 0.);
-    Store (D.Float16, 0x1p-25 +. 0x1p-60, 0x1p-24);
-    Store (D.Float16, 0x3p-25, 0x1p-23);
-    Store (D.Float16, -1e-300, -0.);
-    Store (D.Bfloat16, 0x1p-133, 0x1p-133);
-    Store (D.Bfloat16, 0x1p-134, 0.);
-    Store (D.Bfloat16, 1e-300, 0.);
-    Store (D.Float8_e4m3fn, 0x1p-9, 0x1p-9);
-    Store (D.Float8_e4m3fn, 0x1p-10, 0.);
-    Store (D.Float8_e4m3fn, 0x3p-10, 0x1p-8);
-    Store (D.Float8_e5m2, 0x1p-16, 0x1p-16);
-    Store (D.Float8_e5m2, 0x1p-17, 0.);
-    Store (D.Float8_e5m2, -0x1p-17, -0.);
-    Store (D.Float4_e2m1fn, 0.5, 0.5);
-    Store (D.Float4_e2m1fn, 0.25, 0.);
-    Store (D.Float4_e2m1fn, 0.25 +. 0x1p-40, 0.5);
-    Store (D.Float4_e2m1fn, 0.75, 1.);
-    Store (D.Float4_e2m1fn, -0.1, -0.);
-  ]
-
-(* Integers truncate toward zero, saturate and store NaN as 0. *)
-let integers =
-  [
+    Store (D.Float16, 1. +. 0x1p-11 +. 0x1p-40, 1. +. 0x1p-10);
+    (* Integers truncate toward zero, saturate, and store NaN as 0. *)
     Store (D.Int8, 300., 127);
     Store (D.Int8, -300., -128);
-    Store (D.Int8, 127.9, 127);
-    Store (D.Int8, -128.9, -128);
     Store (D.Int8, -2.7, -2);
-    Store (D.Int8, nan, 0);
-    Store (D.Int8, inf, 127);
-    Store (D.Int8, -.inf, -128);
+    Store (D.Int32, 3e9, Int32.max_int);
+    Store (D.Int64, 1e19, Int64.max_int);
     Store (D.Uint8, nan, 0);
     Store (D.Uint8, -1., 0);
-    Store (D.Uint8, -0.5, 0);
-    Store (D.Uint8, 255.5, 255);
-    Store (D.Uint8, 256., 255);
-    Store (D.Uint8, inf, 255);
-    Store (D.Int4, 7.99, 7);
-    Store (D.Int4, 8., 7);
-    Store (D.Int4, -9., -8);
-    Store (D.Uint4, 16., 15);
-    Store (D.Uint4, nan, 0);
-    Store (D.Int16, 40000., 32767);
-    Store (D.Int16, -40000., -32768);
-    Store (D.Uint16, 70000., 65535);
-    Store (D.Uint16, -3., 0);
-    Store (D.Int32, 3e9, Int32.max_int);
-    Store (D.Int32, -3e9, Int32.min_int);
-    Store (D.Int32, 2147483647.5, Int32.max_int);
-    Store (D.Int32, nan, 0l);
-    Store (D.Uint32, 4294967295., -1l);
-    Store (D.Uint32, 5e9, -1l);
-    Store (D.Uint32, 4294967294.9, -2l);
-    Store (D.Uint32, -1., 0l);
     Store (D.Uint32, nan, 0l);
-    Store (D.Int64, 0x1p63, Int64.max_int);
-    Store (D.Int64, -0x1p63, Int64.min_int);
-    Store (D.Int64, -0x1p64, Int64.min_int);
-    Store (D.Int64, 0x1.fffffffffffffp62, 0x7ffffffffffffc00L);
-    Store (D.Int64, nan, 0L);
-    Store (D.Uint64, 0x1p64, -1L);
-    Store (D.Uint64, 0x1p63, Int64.min_int);
-    Store (D.Uint64, 0x1.fffffffffffffp63, 0xfffffffffffff800L);
-    Store (D.Uint64, -1., 0L);
+    Store (D.Uint32, 4294967295., -1l);
     Store (D.Uint64, nan, 0L);
-    Store (D.Uint64, inf, -1L);
-  ]
-
-let others =
-  [
-    Store (D.Complex128, 0.1, { Complex.re = 0.1; im = 0. });
-    Store (D.Complex64, 0.1, { Complex.re = 0x1.99999ap-4; im = 0. });
-    Store (D.Complex64, 1e300, { Complex.re = inf; im = 0. });
-    Store (D.Bool, 0., false);
+    Store (D.Uint64, 1e20, -1L);
+    Store (D.Int4, 8., 7);
+    Store (D.Uint4, 16., 15);
+    (* Complex numbers and booleans *)
+    Store (D.Complex128, 0.1, c 0.1);
+    Store (D.Complex64, 0.1, c 0x1.99999ap-4);
     Store (D.Bool, -0., false);
-    Store (D.Bool, 0.5, true);
     Store (D.Bool, nan, true);
-    Store (D.Bit, 0., false);
     Store (D.Bit, -2., true);
   ]
 
-(* A store into a float format, from its facts alone: scale [x] to the grid of
-   its binade, round half to even, then overflow by the format's rule: the
-   formats of a byte or less saturate. *)
-let reference (f : D.float_format) x =
-  let saturates = f.exponent_bits + f.fraction_bits < 8 in
-  if Float.is_nan x then if f.nans then Float.nan else 0.
-  else if Float.abs x = Float.infinity then
-    if f.infinities && not saturates then x
-    else Float.copy_sign f.max_finite x
-  else
-    let a = Float.abs x in
-    let binade v = snd (Float.frexp v) - 1 in
-    let e = binade (Float.max a f.min_normal) in
-    let q = Float.ldexp 1. (e - f.fraction_bits) in
-    let r = a /. q in
-    let n = Float.floor r in
-    let d = r -. n in
-    let n =
-      if d > 0.5 || (d = 0.5 && Float.rem n 2. = 1.) then n +. 1. else n
-    in
-    let v = n *. q in
-    let v =
-      if v <= f.max_finite then v
-      else if saturates then f.max_finite
-      else Float.infinity
-    in
-    Float.copy_sign v x
+(* Inputs around the neighbouring values [a] and [b] of [f], codes [c] and [c +
+   1], with the values they store: [a], [b], their midpoint, which rounds to the
+   even code, and a double either side of it. Past the largest finite value, [b]
+   is the next value of an unbounded exponent, which overflows. *)
+let around f ~overflow c =
+  let a = decode f c and b = unbounded f (c + 1) in
+  let stored v = if c + 1 > last f && v = b then overflow else v in
+  let mid = (a +. b) /. 2. in
+  let even = if c land 1 = 0 then a else stored b in
+  [
+    (a, a);
+    (b, stored b);
+    (mid, even);
+    (Float.pred mid, a);
+    (Float.succ mid, stored b);
+  ]
 
-(* Doubles near a format's grid, from below its subnormals to past its largest
-   value: points of the grid, ties between them, and a double's step or two
-   either side of each. A draw says whether it is a tie. *)
-let near_grid (f : D.float_format) =
-  let open Gen in
-  let binade v = snd (Float.frexp v) - 1 in
-  let emin = binade f.min_normal and emax = binade f.max_finite in
-  let lo = emin - f.fraction_bits - 2 and hi = emax + 1 in
-  (* Wide formats span hundreds of binades: draw the ends often. *)
-  let+ e =
-    frequency
+(* Stores of [x] and [-x] into [dt] that differ from [v] and [-v]. *)
+let misstores dt inputs =
+  List.concat_map
+    (fun (x, v) ->
+      List.filter_map
+        (fun (x, v) ->
+          let got = D.of_float dt x in
+          if Testable.equal float_exact v got then None
+          else Some (strf "%h stored %h, expected %h" x got v))
+        [ (x, v); (-.x, -.v) ])
+    inputs
+
+let overflow dt f = if D.bits dt <= 8 then decode f (last f) else inf
+
+let extremes dt f =
+  let over = overflow dt f in
+  [
+    (inf, over);
+    (Float.max_float, over);
+    (unbounded f (last f + 1) *. 2., over);
+    (0x1p-1074, 0.);
+    (Float.min_float, 0.);
+    (0., 0.);
+  ]
+
+(* Every finite value of a format of 16 bits or less, every tie between two,
+   their neighbours, overflow and underflow. *)
+let test_every_tie (F (dt, f)) =
+  let overflow = overflow dt f in
+  let wrong = ref (misstores dt (extremes dt f)) in
+  for c = 0 to last f do
+    wrong := misstores dt (around f ~overflow c) @ !wrong
+  done;
+  let n = List.length !wrong in
+  equal ~msg:(strf "%d wrong stores" n) (list string) []
+    (List.filteri (fun i _ -> i < 8) !wrong)
+
+(* Wider formats: ties around codes drawn across the range. *)
+let law_ties (F (dt, f)) =
+  let codes =
+    let top = last f and normal = 1 lsl f.frac in
+    Gen.frequency
       [
-        (2, int_range lo hi);
-        (1, int_range lo (emin + 1));
-        (1, int_range (emax - 1) hi);
+        (6, Gen.int_range 0 top);
+        ( 1,
+          Gen.of_list ~pp:Format.pp_print_int
+            [ 0; 1; normal - 1; normal; top - 1; top ] );
       ]
-  and+ k = int_range 0 (1 lsl (f.fraction_bits + 2))
-  and+ half = bool
-  and+ nudge = int_range (-2) 2
-  and+ neg = bool in
-  let x = Float.of_int ((2 * k) + Bool.to_int half) in
-  let x = Float.ldexp x (e - f.fraction_bits - 1) in
-  let x = x +. Float.ldexp (Float.of_int nudge) (binade x - 52) in
-  ((if neg then -.x else x), half && nudge = 0)
-
-let hex ppf (x, _) = Format.fprintf ppf "%h" x
-
-(* Float64 is left out: its stores keep the double, and a double has no ties of
-   its own grid. *)
-let law_store (D.Any dt) =
-  match D.kind dt with
-  | D.Float when D.bits dt < 64 ->
-      let f = D.float_format dt in
-      [
-        prop (D.name dt)
-          (Gen.with_pp hex (near_grid f))
-          (fun (x, tie) ->
-            let a = Float.abs x in
-            cover "a tie" tie;
-            cover "past the largest" (a > f.max_finite);
-            cover "subnormal" (a > 0. && a < f.min_normal);
-            equal float_exact (reference f x) (D.of_float dt x));
-      ]
-  | _ -> []
-
-(* Integers: truncate, then clamp to the range the limits state. *)
-let law_saturate (D.Any dt) =
-  let check : type v s. (v, s) D.t -> (v -> float) -> float -> float -> test =
-   fun dt to_float lo hi ->
-    let gen =
-      Gen.with_pp
-        (fun ppf x -> Format.fprintf ppf "%h" x)
-        Gen.(
-          frequency
-            [
-              (4, float_range ((2. *. lo) -. 2.) ((2. *. hi) +. 2.));
-              ( 1,
-                map Float.of_int
-                  (int_range (int_of_float lo - 2) (int_of_float lo + 2)) );
-              (1, any_float);
-            ])
-    in
-    prop (D.name dt) gen (fun x ->
-        let expected =
-          if Float.is_nan x then 0.
-          else Float.min hi (Float.max lo (Float.trunc x)) +. 0.
-        in
-        cover "saturates" (x > hi || x < lo);
-        equal float_exact expected (to_float (D.of_float dt x)))
   in
-  let u32 v = Int64.to_float (Int64.logand (Int64.of_int32 v) 0xFFFFFFFFL) in
-  match dt with
-  | D.Int4 -> [ check dt Float.of_int (-8.) 7. ]
-  | D.Uint4 -> [ check dt Float.of_int 0. 15. ]
-  | D.Int8 -> [ check dt Float.of_int (-128.) 127. ]
-  | D.Uint8 -> [ check dt Float.of_int 0. 255. ]
-  | D.Int16 -> [ check dt Float.of_int (-32768.) 32767. ]
-  | D.Uint16 -> [ check dt Float.of_int 0. 65535. ]
-  | D.Int32 -> [ check dt Int32.to_float (-2147483648.) 2147483647. ]
-  | D.Uint32 -> [ check dt u32 0. 4294967295. ]
-  | _ -> []
+  prop (D.name dt) codes (fun c ->
+      cover "a subnormal" (c < 1 lsl f.frac);
+      cover "past the largest" (c = last f);
+      equal (list string) []
+        (misstores dt (around f ~overflow:(overflow dt f) c @ extremes dt f)))
+
+let law_float64 =
+  prop "float64 stores the double" (Gen.with_pp pp_hex Gen.any_float) (fun x ->
+      equal float_exact x (D.of_float D.Float64 x))
+
+(* Integers *)
+
+(* Doubles across [lo, hi], their neighbours and the extremes. *)
+let near lo hi =
+  Gen.with_pp pp_hex
+    (Gen.frequency
+       [
+         (4, Gen.float_range ((2. *. lo) -. 2.) ((2. *. hi) +. 2.));
+         ( 2,
+           Gen.of_list
+             [
+               lo;
+               hi;
+               Float.pred lo;
+               Float.succ hi;
+               Float.pred hi;
+               lo -. 1.;
+               hi +. 1.;
+               -0.5;
+               -0.;
+               0.5;
+             ] );
+         (1, Gen.any_float);
+       ])
+
+(* [x] truncated toward zero and clamped to [lo, hi]; NaN is 0. *)
+let clamp lo hi x =
+  if Float.is_nan x then 0. else Float.min hi (Float.max lo (Float.trunc x))
+
+let law_small (type s) (dt : (int, s) D.t) lo hi =
+  prop (D.name dt) (near lo hi) (fun x ->
+      cover "saturates" (x > hi || x < lo);
+      equal (value dt) (Float.to_int (clamp lo hi x)) (D.of_float dt x))
+
+let law_int32 =
+  let lo = -0x1p31 and hi = 0x1p31 -. 1. in
+  prop "int32" (near lo hi) (fun x ->
+      cover "saturates" (x > hi || x < lo);
+      equal (value D.Int32)
+        (Int32.of_float (clamp lo hi x))
+        (D.of_float D.Int32 x))
+
+let law_uint32 =
+  let hi = 0x1p32 -. 1. in
+  prop "uint32" (near 0. hi) (fun x ->
+      cover "saturates" (x > hi || x < 0.);
+      equal (value D.Uint32)
+        (Int64.to_int32 (Int64.of_float (clamp 0. hi x)))
+        (D.of_float D.Uint32 x))
+
+let law_int64 =
+  prop "int64" (near (-0x1p63) 0x1p63) (fun x ->
+      let expected =
+        if Float.is_nan x then 0L
+        else if x >= 0x1p63 then Int64.max_int
+        else if x < -0x1p63 then Int64.min_int
+        else Int64.of_float x
+      in
+      cover "saturates" (x >= 0x1p63 || x < -0x1p63);
+      equal (value D.Int64) expected (D.of_float D.Int64 x))
+
+let law_uint64 =
+  prop "uint64" (near 0. 0x1p64) (fun x ->
+      let expected =
+        if Float.is_nan x || x < 1. then 0L
+        else if x >= 0x1p64 then -1L
+        else if x >= 0x1p63 then
+          Int64.add (Int64.of_float (x -. 0x1p63)) Int64.min_int
+        else Int64.of_float x
+      in
+      cover "past int64" (x >= 0x1p63 && x < 0x1p64);
+      cover "saturates" (x >= 0x1p64 || x <= -1.);
+      equal (value D.Uint64) expected (D.of_float D.Uint64 x))
+
+let integer_laws =
+  [
+    law_small D.Int4 (-8.) 7.;
+    law_small D.Uint4 0. 15.;
+    law_small D.Int8 (-128.) 127.;
+    law_small D.Uint8 0. 255.;
+    law_small D.Int16 (-32768.) 32767.;
+    law_small D.Uint16 0. 65535.;
+    law_int32;
+    law_uint32;
+    law_int64;
+    law_uint64;
+  ]
+
+(* Complex numbers and booleans *)
+
+(* Either zero. *)
+let a_zero = Testable.make ~pp:pp_hex ~equal:(fun a b -> a = 0. && b = 0.)
+
+let law_complex (type s) (dt : (Complex.t, s) D.t) (component : float -> float)
+    =
+  prop (D.name dt) (Gen.with_pp pp_hex Gen.any_float) (fun x ->
+      let v = D.of_float dt x in
+      equal float_exact (component x) v.re;
+      equal ~msg:"imaginary part" a_zero 0. v.im)
+
+let law_boolean (type s) (dt : (bool, s) D.t) =
+  prop (D.name dt) ~examples:[ -0.; 0.; nan ] (Gen.with_pp pp_hex Gen.any_float)
+    (fun x ->
+      cover "NaN" (Float.is_nan x);
+      cover "-0" (1. /. x = Float.neg_infinity);
+      equal bool (x <> 0.) (D.of_float dt x))
 
 (* Printing *)
 
-let test_printer () =
-  let text dt v = Format.asprintf "%a" (D.pp_value dt) v in
-  equal string "4294967295" (text D.Uint32 (-1l));
-  equal string "18446744073709551615" (text D.Uint64 (-1L));
-  equal string "-1" (text D.Int32 (-1l));
-  equal string "65535" (text D.Uint16 65535);
-  equal string "0.1" (text D.Float32 (D.of_float D.Float32 0.1));
-  equal string "0.1" (text D.Float16 (D.of_float D.Float16 0.1));
-  equal string "0.1" (text D.Float64 0.1);
-  equal string "-0" (text D.Float64 (-0.));
-  equal string "nan" (text D.Float32 Float.nan);
-  equal string "-inf" (text D.Float16 Float.neg_infinity);
-  equal string "448" (text D.Float8_e4m3fn 448.);
-  equal string "1.5" (text D.Float4_e2m1fn 1.5);
-  equal string "1+2i" (text D.Complex64 { Complex.re = 1.; im = 2. });
-  equal string "0.1-0.5i" (text D.Complex128 { Complex.re = 0.1; im = -0.5 });
-  equal string "true" (text D.Bit true)
+type printed = Printed : ('v, 's) D.t * 'v * string -> printed
 
-(* A float prints as a decimal that reads back as itself in its format. *)
-let law_printed (D.Any dt) =
-  match D.kind dt with
-  | D.Float ->
-      [
-        prop (D.name dt)
-          (Gen.with_pp hex (near_grid (D.float_format dt)))
-          (fun (x, _) ->
-            let v = D.of_float dt x in
-            let s = Format.asprintf "%a" (D.pp_value dt) v in
-            equal float_exact v (D.of_float dt (float_of_string s)));
-      ]
-  | _ -> []
+let printed_name (Printed (dt, _, s)) = strf "%s %s" (D.name dt) s
+
+let test_printed (Printed (dt, v, s)) =
+  equal string s (Format.asprintf "%a" (D.pp_value dt) v)
+
+let printed =
+  [
+    Printed (D.Uint32, -1l, "4294967295");
+    Printed (D.Uint64, -1L, "18446744073709551615");
+    Printed (D.Int32, -1l, "-1");
+    Printed (D.Uint16, 65535, "65535");
+    Printed (D.Int4, -8, "-8");
+    Printed (D.Float32, 0x1.99999ap-4, "0.1");
+    Printed (D.Float16, 0x1.998p-4, "0.1");
+    Printed (D.Float64, nan, "nan");
+    Printed (D.Float16, inf, "inf");
+    Printed (D.Float8_e5m2, -.inf, "-inf");
+    Printed (D.Complex64, { Complex.re = 1.; im = 2. }, "1+2i");
+  ]
+
+let law_text gen (text : 'v -> string) dt =
+  prop (D.name dt) gen (fun v ->
+      equal string (text v) (Format.asprintf "%a" (D.pp_value dt) v))
+
+let law_int (type s) (dt : (int, s) D.t) =
+  law_text (Gen.int_range (D.min_value dt) (D.max_value dt)) string_of_int dt
+
+let printing_integers =
+  [
+    law_int D.Int4;
+    law_int D.Uint4;
+    law_int D.Int8;
+    law_int D.Uint8;
+    law_int D.Int16;
+    law_int D.Uint16;
+    law_text Gen.int32 Int32.to_string D.Int32;
+    law_text Gen.int32 (strf "%lu") D.Uint32;
+    law_text Gen.int64 Int64.to_string D.Int64;
+    law_text Gen.int64 (strf "%Lu") D.Uint64;
+  ]
+
+(* The significant digits of a decimal text and the power of ten of its last
+   one, as ("125", -4) for "-0.0125"; [None] for a zero. *)
+let significand s =
+  let s = String.lowercase_ascii s in
+  let s = if s.[0] = '-' then String.sub s 1 (String.length s - 1) else s in
+  let mantissa, exp =
+    match String.split_on_char 'e' s with
+    | [ m ] -> (m, 0)
+    | [ m; e ] ->
+        let e =
+          if e.[0] = '+' then String.sub e 1 (String.length e - 1) else e
+        in
+        (m, int_of_string e)
+    | _ -> failf "%S is not a decimal" s
+  in
+  let whole, frac =
+    match String.split_on_char '.' mantissa with
+    | [ w ] -> (w, "")
+    | [ w; f ] -> (w, f)
+    | _ -> failf "%S is not a decimal" s
+  in
+  let digits = whole ^ frac and exp = exp - String.length frac in
+  let rec drop_leading d =
+    if d <> "" && d.[0] = '0' then
+      drop_leading (String.sub d 1 (String.length d - 1))
+    else d
+  in
+  let rec drop_trailing d e =
+    let n = String.length d in
+    if n > 0 && d.[n - 1] = '0' then
+      drop_trailing (String.sub d 0 (n - 1)) (e + 1)
+    else (d, e)
+  in
+  match drop_trailing (drop_leading digits) exp with
+  | "", _ -> None
+  | d, e -> Some (d, e)
+
+(* The two decimals of one significant digit fewer than [s] that bracket it. If
+   none of them reads back as a value, no shorter decimal does: the decimals
+   that read back as a value form an interval around it. *)
+let shorter s =
+  match significand s with
+  | None -> []
+  | Some (d, _) when String.length d = 1 -> []
+  | Some (d, e) ->
+      let q = int_of_string (String.sub d 0 (String.length d - 1)) in
+      let sign = if s.[0] = '-' then "-" else "" in
+      [ strf "%s%de%d" sign q (e + 1); strf "%s%de%d" sign (q + 1) (e + 1) ]
+
+let check_printed dt v =
+  let s = Format.asprintf "%a" (D.pp_value dt) v in
+  let reads_back t =
+    Testable.equal float_exact v (D.of_float dt (float_of_string t))
+  in
+  let special =
+    if Float.is_nan v then Some "nan"
+    else if v = inf then Some "inf"
+    else if v = -.inf then Some "-inf"
+    else None
+  in
+  match special with
+  | Some t -> if s = t then None else Some (strf "%h printed %s" v s)
+  | None when not (reads_back s) -> Some (strf "%h printed %s" v s)
+  | None -> (
+      match List.filter reads_back (shorter s) with
+      | [] -> None
+      | t :: _ -> Some (strf "%h printed %s, but %s reads back" v s t))
+
+(* Every value of a format of 16 bits or less. *)
+let test_every_value_printed (F (dt, f)) =
+  let wrong = ref [] in
+  for c = 0 to (1 lsl (f.exp + f.frac)) - 1 do
+    List.iter
+      (fun v ->
+        match check_printed dt v with
+        | Some e -> wrong := e :: !wrong
+        | None -> ())
+      [ decode f c; -.decode f c ]
+  done;
+  let n = List.length !wrong in
+  equal
+    ~msg:(strf "%d values misprinted" n)
+    (list string) []
+    (List.filteri (fun i _ -> i < 8) !wrong)
+
+let law_printed (F (dt, _)) =
+  prop (D.name dt) (Gen.with_pp pp_hex Gen.any_float) (fun x ->
+      equal (option string) None (check_printed dt (D.of_float dt x)))
+
+(* The suite *)
+
+let narrow = List.filter (fun (F (dt, _)) -> D.bits dt <= 16) formats
+let wide = List.filter (fun (F (dt, _)) -> D.bits dt = 32) formats
 
 let tests =
   [
     group "table"
       [
-        test "codes count from zero in the order of all" test_codes;
-        cases ~name:any_name "nx_dtype.h states each row" D.all test_header;
-        test "bits are each format's width" test_bits;
-        test "bytes rounds sub-byte runs up and refuses overflow" test_bytes;
-        test "of_name finds every name and nothing else" test_names;
-        test "equal and equal_witness agree with codes" test_equal;
-        test "is partitions the dtypes into kinds" test_kinds;
-        test "float_format states each format's facts" test_formats;
+        test "all holds every dtype once" test_all;
+        test "a dtype's code is its index in all" test_codes;
+        cases ~name:row_name "name, pp, bits and kind state each format" table
+          test_row;
+        test "is k holds of the dtypes of kind k" test_is;
+        cases ~name:row_name "nx_dtype.h states each row" table test_header;
+        test "nx_dtype.h has no row past the last code"
+          test_no_row_past_the_last;
+        test "equal and equal_witness hold of a dtype and itself only"
+          test_equal;
       ];
+    group "names"
+      [
+        cases ~name:row_name "of_name finds each name" table test_of_name;
+        cases ~name:(strf "%S") "of_name refuses other names" names_refused
+          test_of_other_name;
+      ];
+    group "bytes is the bytes n elements fill" (List.map law_bytes D.all);
     group "values"
       [
-        test "zero and one are stores of 0. and 1." test_identities;
-        test "min_value and max_value are the range" test_limits;
+        cases ~name:values_name "zero and one are 0 and 1" values
+          test_identities;
+        cases ~name:values_name "min_value and max_value are the range" values
+          test_limits;
+        cases ~name:format_name "float_format states each format" formats
+          test_float_format;
       ];
     group "stores"
       [
-        cases ~name:stores_name "NaN, zeros and infinities" specials check_store;
-        cases ~name:stores_name "past the largest" overflows check_store;
-        cases ~name:stores_name "ties round once to even" ties check_store;
-        cases ~name:stores_name "below the least normal" underflows check_store;
-        cases ~name:stores_name "integers saturate" integers check_store;
-        cases ~name:stores_name "complex and booleans" others check_store;
-        group "float formats round as their facts say"
-          (List.concat_map law_store float_dtypes);
-        group "integers truncate and saturate"
-          (List.concat_map law_saturate D.all);
+        cases ~name:store_name "the conversion table" conversion_table
+          test_store;
+        cases ~name:format_name
+          "every value, tie and neighbour rounds once to even" narrow
+          test_every_tie;
+        group "ties round once to even" (List.map law_ties wide);
+        law_float64;
+        group "integers truncate toward zero and saturate" integer_laws;
+        group "complex numbers store a real part in their component's format"
+          [
+            law_complex D.Complex128 Fun.id;
+            law_complex D.Complex64 (D.of_float D.Float32);
+          ];
+        group "booleans store x <> 0." [ law_boolean D.Bool; law_boolean D.Bit ];
       ];
     group "printing"
       [
-        test "values print in their dtype's reading" test_printer;
-        group "a float reads back from its text"
-          (List.concat_map law_printed float_dtypes);
+        cases ~name:printed_name "values print in their dtype's reading" printed
+          test_printed;
+        group "integers print in their dtype's reading" printing_integers;
+        cases ~name:format_name
+          "every value prints as the shortest decimal that reads back" narrow
+          test_every_value_printed;
+        group "a wider float prints as the shortest decimal that reads back"
+          (List.map law_printed
+             (List.filter (fun (F (dt, _)) -> D.bits dt >= 32) formats));
       ];
   ]
 
