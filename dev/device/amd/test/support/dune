@@ -1,0 +1,9 @@
+; What the AMD suites and bench share: the GPU lock, and the GPU opened
+; through the amdgpu path.
+
+(library
+ (name device_amd_support)
+ (libraries device_amd device_amd_amdgpu windtrap)
+ (foreign_stubs
+  (language c)
+  (names device_amd_support_stubs)))
