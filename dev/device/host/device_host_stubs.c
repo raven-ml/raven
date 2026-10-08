@@ -204,19 +204,26 @@ static inline void synchronize(void) {
 }
 
 /* The copies of the values that a split's calls take, on the stack when they
-   fit. */
+   fit. Each worker's copy takes whole cache lines, of 128 bytes on the hosts
+   with the largest, so that no two workers write one line. */
 #define SMALL_WORDS 1024
+#define LINE_WORDS 16
+
+static size_t stride_of(int64_t n) {
+  return ((size_t)n + LINE_WORDS - 1) / LINE_WORDS * LINE_WORDS;
+}
 
 typedef struct {
   program f;
   void **buffers;
-  int64_t *copies; /* n values per worker */
-  int64_t n, lo, hi;
+  int64_t *copies; /* a copy of the values per worker, [stride] apart */
+  size_t stride;
+  int64_t lo, hi;
 } job;
 
 static void body(int64_t first, int64_t last, int worker, void *ctx) {
   job *j = ctx;
-  int64_t *v = j->copies + (size_t)worker * (size_t)j->n;
+  int64_t *v = j->copies + (size_t)worker * j->stride;
   v[j->lo] = first;
   v[j->hi] = last;
   synchronize();
@@ -233,19 +240,15 @@ static int threads_of(const int64_t *split) {
   return (int)t;
 }
 
-/* [f] on [buffers] and [copies], once, or split by [split] on [threads]
-   threads, each the pool's worker of its copy of the [n] values. The first
-   copy holds the values; the others are filled here. */
-static void run(program f, void **buffers, int64_t *copies, int64_t n,
-                const int64_t *split, int threads) {
-  if (split == NULL) {
-    synchronize();
-    f(buffers, copies);
-    return;
-  }
+/* [f] split by [split] on [threads] threads, each the pool's worker of its
+   copy of the [n] values in [copies]. The first copy holds the values; the
+   others are filled here. */
+static void run_split(program f, void **buffers, int64_t *copies, int64_t n,
+                      const int64_t *split, int threads) {
+  size_t stride = stride_of(n);
   for (int w = 1; w < threads; w++)
-    memcpy(copies + (size_t)w * (size_t)n, copies, (size_t)n * sizeof *copies);
-  job j = {f, buffers, copies, n, split[2], split[3]};
+    memcpy(copies + (size_t)w * stride, copies, (size_t)n * sizeof *copies);
+  job j = {f, buffers, copies, stride, split[2], split[3]};
   nx_pool_run(threads, split[0], split[1], body, &j);
 }
 
@@ -259,12 +262,14 @@ SYSV void device_host_call(program f, void **buffers, const int64_t *values,
     return;
   }
   int threads = threads_of(split);
-  int64_t small[SMALL_WORDS], *copies = small;
-  if ((size_t)threads * (size_t)n > SMALL_WORDS) {
-    copies = malloc((size_t)threads * (size_t)n * sizeof *copies);
+  size_t stride = stride_of(n);
+  _Alignas(128) int64_t small[SMALL_WORDS];
+  int64_t *copies = small;
+  if ((size_t)threads * stride > SMALL_WORDS) {
+    copies = malloc((size_t)threads * stride * sizeof *copies);
     if (copies == NULL) {
       copies = small;
-      threads = (int)(SMALL_WORDS / n);
+      threads = (int)(SMALL_WORDS / stride);
     }
   }
   if (threads == 0) {
@@ -272,7 +277,7 @@ SYSV void device_host_call(program f, void **buffers, const int64_t *values,
     abort();
   }
   memcpy(copies, values, (size_t)n * sizeof *copies);
-  run(f, buffers, copies, n, split, threads);
+  run_split(f, buffers, copies, n, split, threads);
   if (copies != small) free(copies);
 }
 
@@ -286,17 +291,19 @@ value caml_device_host_call(value v_entry, value v_code, value v_buffers,
   size_t nb = Wosize_val(v_buffers), n = Wosize_val(v_values);
   int64_t split[4], *s = NULL;
   int threads = 1;
+  size_t words = n;
   if (Is_some(v_split)) {
     for (int i = 0; i < 4; i++)
       split[i] = Long_val(Field(Some_val(v_split), i));
     s = split;
     threads = threads_of(s);
+    words = (size_t)threads * stride_of((int64_t)n);
   }
   void *small_b[SMALL_WORDS], **buffers = small_b;
-  int64_t small_v[SMALL_WORDS], *copies = small_v;
+  _Alignas(128) int64_t small_v[SMALL_WORDS];
+  int64_t *copies = small_v;
   if (nb > SMALL_WORDS) buffers = malloc(nb * sizeof *buffers);
-  if ((size_t)threads * n > SMALL_WORDS)
-    copies = malloc((size_t)threads * n * sizeof *copies);
+  if (words > SMALL_WORDS) copies = malloc(words * sizeof *copies);
   if (buffers == NULL || copies == NULL) {
     if (buffers != small_b) free(buffers);
     if (copies != small_v) free(copies);
@@ -307,7 +314,12 @@ value caml_device_host_call(value v_entry, value v_code, value v_buffers,
   for (size_t i = 0; i < n; i++) copies[i] = Long_val(Field(v_values, i));
   program f = (program)Long_val(v_entry);
   caml_release_runtime_system();
-  run(f, buffers, copies, (int64_t)n, s, threads);
+  if (s == NULL) {
+    synchronize();
+    f(buffers, copies);
+  } else {
+    run_split(f, buffers, copies, (int64_t)n, s, threads);
+  }
   caml_acquire_runtime_system();
   if (buffers != small_b) free(buffers);
   if (copies != small_v) free(copies);
