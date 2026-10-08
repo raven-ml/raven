@@ -939,6 +939,18 @@ let test_inherited () =
     (child [ "open-on"; string_of_int ino ]);
   ignore (Sys.opaque_identity file)
 
+(* A forked child reads and writes files with the disk, its parent's opens and
+   its own, with a read long enough to take the io_uring ring on Linux. OCaml
+   forks only a process that started no domain: a child process of the suite's
+   own forks. *)
+let test_forked () =
+  if Sys.win32 then skip ~reason:"no fork" ();
+  let s = pattern 4 ((2 * segment) + 7) in
+  let path = make_file s and out = new_path () in
+  removing [ path; out ] @@ fun () ->
+  equal string "exited 0" (child [ "fork"; path; out ]);
+  same ~msg:"the forked child's file" s (contents out)
+
 let test_too_many () =
   if Sys.win32 then skip ~reason:"no limit of open files" ();
   equal text "ninth: f8\nfirst: f0" (child [ "open-files" ])
@@ -997,6 +1009,7 @@ let descriptors =
         "an open refused for too many files closes the disk's descriptors and \
          tries once more"
         test_too_many;
+      test "a forked child reads and writes files with the disk" test_forked;
       cases
         ~name:(fun k -> Format.asprintf "%a" pp_kind k)
         "a copy past the end of a file truncated since raises Sys_error naming \
@@ -1303,6 +1316,28 @@ let open_files_child () =
   Printf.printf "first: %s\n" (said opened.(0));
   List.iter Unix.close taken
 
+(* Opens [path], reads it, then forks a child that copies it into a new file at
+   [out] and orders it, and prints how the child ended. *)
+let fork_child path out =
+  let opened = of_file path in
+  let s = read opened in
+  match Unix.fork () with
+  | 0 ->
+      let copied () =
+        let created =
+          Result.get_ok (Rig_disk.create_file out (String.length s))
+        in
+        B.copy ~src:opened ~dst:created;
+        Rig_disk.barrier created;
+        read (Result.get_ok (Rig_disk.of_file out)) = s
+      in
+      Unix._exit
+        (match copied () with true -> 0 | false -> 1 | exception _ -> 2)
+  | pid -> (
+      match snd (Unix.waitpid [] pid) with
+      | WEXITED n -> Printf.printf "exited %d" n
+      | WSIGNALED n | WSTOPPED n -> Printf.printf "signal %d" n)
+
 (* Lowers this process's limit of a file's size to 4 KiB, then creates a file of
    1 MiB, and prints whether the creation was refused, naming its path, and
    whether the path names anything after. *)
@@ -1324,6 +1359,7 @@ let () =
   | [ _; "open-on"; ino ] -> open_on_child ino
   | [ _; "open-files" ] -> open_files_child ()
   | [ _; "unsized"; path ] -> unsized_child path
+  | [ _; "fork"; path; out ] -> fork_child path out
   | _ ->
       clear dir;
       let code =

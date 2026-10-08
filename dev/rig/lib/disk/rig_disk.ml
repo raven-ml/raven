@@ -4,9 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 (* Every function may be called from any domain. The descriptor table is guarded
-   by [lock]; a copy pins its file's descriptor under it and moves its bytes
-   outside it, so copies of several domains run at once and a pinned descriptor
-   is never closed under a transfer. *)
+   by one lock ([locked]); a copy pins its file's descriptor under it and moves
+   its bytes outside it, so copies of several domains run at once and a pinned
+   descriptor is never closed under a transfer. *)
 
 let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
@@ -41,6 +41,8 @@ external advise : int -> pages option -> int -> int -> unit
   = "caml_rig_disk_advise"
 
 external msync : pages -> int = "caml_rig_disk_msync"
+external watch_forks : unit -> unit = "caml_rig_disk_watch_forks"
+external forks : unit -> int = "caml_rig_disk_forks" [@@noalloc]
 
 (* The codes [open_path] answers besides the system's, and its modes. *)
 let not_regular = -1
@@ -102,8 +104,23 @@ let sys_error f why = raise (Sys_error (strf "%s: %s" f.path why))
    ([idle.older]), so an open or a copy takes the same few steps and allocates
    nothing however full the table is. *)
 let max_open = 64
-let lock = Mutex.create ()
 let in_table = ref 0
+
+(* The table's lock and the forks it was made after. A forked child makes the
+   lock anew at its first use: a thread of its parent may have held it. *)
+let lock =
+  watch_forks ();
+  Atomic.make (forks (), Mutex.create ())
+
+let rec table_lock () =
+  let ((made, m) as l) = Atomic.get lock and n = forks () in
+  if made = n then m
+  else begin
+    ignore (Atomic.compare_and_set lock l (n, Mutex.create ()));
+    table_lock ()
+  end
+
+let locked f = Mutex.protect (table_lock ()) f
 
 (* The ring's ends: a file of no path, never open. *)
 let idle = file ~path:"" ~writable:false ~size:0 ~identity:""
@@ -172,13 +189,13 @@ let reopen f =
   | code, _, _, _ -> sys_error f (why code)
 
 let pin f =
-  Mutex.protect lock @@ fun () ->
+  locked @@ fun () ->
   if f.fd < 0 then reopen f else if f.users = 0 then unlink f;
   f.users <- f.users + 1;
   f.fd
 
 let unpin f =
-  Mutex.protect lock @@ fun () ->
+  locked @@ fun () ->
   f.users <- f.users - 1;
   if f.users = 0 then begin
     rest f;
@@ -208,7 +225,7 @@ module Io = struct
        Rig_disk.of_file or Rig_disk.create_file"
 
   (* Nothing reaches [f]: no pin is held. *)
-  let free () f = Mutex.protect lock (fun () -> close_fd f)
+  let free () f = locked (fun () -> close_fd f)
 
   let read () f ~at ~dst ~len =
     using f @@ fun fd ->
@@ -268,7 +285,7 @@ let open_file path mode n =
           Ok f
       | code, _, _, _ -> Error (strf "%s: %s" path (why code))
     in
-    Mutex.protect lock opened
+    locked opened
     |> Result.map (fun f -> Rig.Buffer.of_io device Io.region_key f f.size)
 
 let of_file path = open_file path read_mode 0

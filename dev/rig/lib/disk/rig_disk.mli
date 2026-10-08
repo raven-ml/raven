@@ -69,6 +69,10 @@
     {b Domains.} Every function may be called from any domain, at the same time
     as others. Copies of disk buffers from several domains run at once.
 
+    {b Forks.} A forked child goes on using the disk: its buffers, its parent's
+    and its own, read and write their files as in the parent, whatever a thread
+    of the parent was doing at the fork.
+
     {b References.}
     - {{:https://pubs.opengroup.org/onlinepubs/9799919799/functions/mmap.html}
        POSIX [mmap]}: private mappings, and [SIGBUS] past the end of a file.

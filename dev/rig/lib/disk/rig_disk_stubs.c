@@ -432,7 +432,7 @@ static struct {
 
 /* A forked child shares the ring's queues with its parent: their requests
    would mix. The child closes its share and makes a ring of its own at its
-   first long read. */
+   first long read (Forks, below). */
 static void ring_forget(void) {
   if (ring_state == 1) close(ring.fd);
   ring_state = 0;
@@ -491,8 +491,6 @@ static int ring_setup(void) {
   ring.cq_mask = (unsigned *)((char *)cq + p.cq_off.ring_mask);
   ring.cqes = (struct io_uring_cqe *)((char *)cq + p.cq_off.cqes);
   ring.sqes = (struct io_uring_sqe *)sqes;
-  static int forgets;
-  if (!forgets) forgets = pthread_atfork(NULL, NULL, ring_forget) == 0;
   return 1;
 }
 
@@ -592,6 +590,47 @@ static intnat transfer(int write, intnat h, int64_t pos, char *buf,
 }
 
 #endif
+
+/* Forks
+
+   A forked child makes anew what a thread of its parent may have held at the
+   fork: the descriptor table's lock, which the OCaml side makes anew once
+   [forks] has moved, and the io_uring ring. */
+
+#ifndef _WIN32
+static atomic_int forks;
+
+static void forked_child(void) {
+  atomic_fetch_add(&forks, 1);
+#ifdef RIG_DISK_IO_URING
+  ring_forget();
+#endif
+}
+
+static pthread_once_t watch_once = PTHREAD_ONCE_INIT;
+static void watch(void) { pthread_atfork(NULL, NULL, forked_child); }
+#endif
+
+/* [watch_forks ()] has a forked child run [forked_child]. Called as the
+   library starts, before any of its locks can be held. Keeps the runtime. */
+value caml_rig_disk_watch_forks(value unit) {
+  (void)unit;
+#ifndef _WIN32
+  pthread_once(&watch_once, watch);
+#endif
+  return Val_unit;
+}
+
+/* [forks ()] is the number of forks between the process the library started
+   in and this one. Keeps the runtime. */
+value caml_rig_disk_forks(value unit) {
+  (void)unit;
+#ifdef _WIN32
+  return Val_int(0);
+#else
+  return Val_int(atomic_load(&forks));
+#endif
+}
 
 /* [read h pos dst n] reads [n] bytes of the file [h] from byte [pos] into host
    memory at [dst]: the bytes read, or a negated code. Releases the runtime. */
