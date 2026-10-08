@@ -3,27 +3,32 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* A layout is the bytes of nx_layout.h's nx_layout, words in native order; the
-   two change together.
-
-   Every layout is built by [finish], which puts it in canonical form: an axis
+(* Every layout is built by [finish], which puts it in canonical form: an axis
    of extent 1 has stride 0, and a layout with no element has offset 0 and every
-   stride 0. *)
+   stride 0. Its arrays are its own: no caller's array is kept or returned, and
+   nothing writes them once [finish] returns.
 
-type t = string
+   C reads the fields in this order (nx_layout.h): the two change together. *)
+
+type t = {
+  shape : int array;
+  strides : int array;
+  offset : int;
+  flags : int;
+  lo : int;
+  hi : int;
+}
 
 let max_rank = Shape.max_rank
 let contiguous_flag = 1
 let distinct_flag = 2
 let empty_flag = 4
-let header = 5
-let word l i = Int64.to_int (String.get_int64_ne l (8 * i))
-let rank l = word l 0
-let flags l = word l 1
-let offset l = word l 2
-let span l = (word l 3, word l 4)
-let unsafe_dim l i = word l (header + i)
-let unsafe_stride l i = word l (header + rank l + i)
+let rank l = Array.length l.shape
+let flags l = l.flags
+let offset l = l.offset
+let span l = (l.lo, l.hi)
+let unsafe_dim l i = Array.unsafe_get l.shape i
+let unsafe_stride l i = Array.unsafe_get l.strides i
 let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 
 let dim l i =
@@ -45,53 +50,73 @@ let numel l =
     done;
     !n
 
-let shape l = Array.init (rank l) (unsafe_dim l)
-let strides l = Array.init (rank l) (unsafe_stride l)
+let shape l = Array.copy l.shape
+let strides l = Array.copy l.strides
 let is_contiguous l = flags l land contiguous_flag <> 0
 let is_distinct l = flags l land distinct_flag <> 0
-let equal = String.equal
-let hash l = Hashtbl.hash l
+
+let ints_equal (a : int array) (b : int array) =
+  let n = Array.length a in
+  n = Array.length b
+  &&
+  let i = ref 0 in
+  while !i < n && Array.unsafe_get a !i = Array.unsafe_get b !i do
+    incr i
+  done;
+  !i = n
+
+let equal l l' =
+  l == l'
+  || l.offset = l'.offset
+     && ints_equal l.shape l'.shape
+     && ints_equal l.strides l'.strides
+
+(* The fields [equal] compares, mixed into one int: no tuple to hash. *)
+let hash l =
+  let h = ref l.offset in
+  for i = 0 to rank l - 1 do
+    h := (!h * 31) + unsafe_dim l i;
+    h := (!h * 31) + unsafe_stride l i
+  done;
+  Hashtbl.hash !h
 
 (* Building *)
 
-let create r = Bytes.create (8 * (header + (2 * r)))
-let set b i v = Bytes.set_int64_ne b (8 * i) (Int64.of_int v)
-let get b i = Int64.to_int (Bytes.get_int64_ne b (8 * i))
 let overflow fn = invalid_argf "%s: the layout's positions overflow" fn
 
 let add fn a x =
   if (x > 0 && a > max_int - x) || (x < 0 && a < min_int - x) then overflow fn;
   a + x
 
-(* Puts [b], whose rank, offset, extents and strides are set, in canonical form,
-   and sets its flags and span. Extents are non-negative and their product fits;
-   a stride of an axis of extent above 1 times the extent fits. The span is
-   checked to fit. Movements build a layout per call, so this allocates
-   nothing. *)
-let finish fn b =
-  let r = get b 0 in
-  let strides = header + r in
+(* The layout of [shape], [strides] and [offset] in canonical form, with its
+   flags and span. It takes [shape] and [strides] as its own and writes
+   [strides]. Extents are non-negative and their product fits; a stride of an
+   axis of extent above 1 times the extent fits. The span is checked to fit. *)
+let finish fn shape strides offset =
+  let r = Array.length shape in
   let empty = ref false in
   for i = 0 to r - 1 do
-    let d = get b (header + i) in
-    if d = 0 then empty := true else if d = 1 then set b (strides + i) 0
+    let d = shape.(i) in
+    if d = 0 then empty := true else if d = 1 then strides.(i) <- 0
   done;
   if !empty then begin
-    set b 1 (contiguous_flag lor distinct_flag lor empty_flag);
-    set b 2 0;
-    set b 3 0;
-    set b 4 0;
-    for i = 0 to r - 1 do
-      set b (strides + i) 0
-    done
+    Array.fill strides 0 r 0;
+    {
+      shape;
+      strides;
+      offset = 0;
+      flags = contiguous_flag lor distinct_flag lor empty_flag;
+      lo = 0;
+      hi = 0;
+    }
   end
   else begin
     (* The span, from the offset and each axis's reach; C order, where stride i
        is the product of the later extents, or 0 for an axis of extent 1. *)
-    let lo = ref (get b 2) and hi = ref (get b 2) in
+    let lo = ref offset and hi = ref offset in
     let contiguous = ref true and run = ref 1 in
     for i = r - 1 downto 0 do
-      let d = get b (header + i) and st = get b (strides + i) in
+      let d = shape.(i) and st = strides.(i) in
       let reach = (d - 1) * st in
       if reach < 0 then lo := add fn !lo reach else hi := add fn !hi reach;
       if st <> if d = 1 then 0 else !run then contiguous := false;
@@ -105,24 +130,23 @@ let finish fn b =
        axes of smaller stride, ties broken by axis. *)
     let distinct = ref true in
     for j = 0 to r - 1 do
-      let dj = get b (header + j) in
+      let dj = shape.(j) in
       if dj > 1 then begin
-        let sj = abs (get b (strides + j)) and below = ref 0 in
+        let sj = abs strides.(j) and below = ref 0 in
         for k = 0 to r - 1 do
-          let dk = get b (header + k) and sk = abs (get b (strides + k)) in
+          let dk = shape.(k) and sk = abs strides.(k) in
           if dk > 1 && (sk < sj || (sk = sj && k < j)) then
             below := !below + ((dk - 1) * sk)
         done;
         if sj <= !below then distinct := false
       end
     done;
-    set b 1
-      ((if !contiguous then contiguous_flag else 0)
-      lor if !distinct then distinct_flag else 0);
-    set b 3 !lo;
-    set b 4 (add fn !hi 1)
-  end;
-  Bytes.unsafe_to_string b
+    let flags =
+      (if !contiguous then contiguous_flag else 0)
+      lor if !distinct then distinct_flag else 0
+    in
+    { shape; strides; offset; flags; lo = !lo; hi = add fn !hi 1 }
+  end
 
 (* Constructors *)
 
@@ -132,16 +156,13 @@ let contiguous s =
   let r = Array.length s in
   Shape.check_rank "Layout.contiguous" r;
   ignore (Shape.numel "Layout.contiguous" s);
-  let b = create r in
-  set b 0 r;
-  set b 2 0;
+  let st = Array.make r 0 in
   let run = ref 1 in
   for i = r - 1 downto 0 do
-    set b (header + i) s.(i);
-    set b (header + r + i) !run;
+    st.(i) <- !run;
     run := !run * s.(i)
   done;
-  finish "Layout.contiguous" b
+  finish "Layout.contiguous" (Array.copy s) st 0
 
 let v ?(offset = 0) ~strides s =
   let r = Array.length s in
@@ -149,32 +170,16 @@ let v ?(offset = 0) ~strides s =
   if Array.length strides <> r then
     invalid_argf "Layout.v: %d strides for %d axes" (Array.length strides) r;
   ignore (Shape.numel "Layout.v" s);
-  let b = create r in
-  set b 0 r;
-  set b 2 offset;
   for i = 0 to r - 1 do
     let d = s.(i) and st = strides.(i) in
     if d > 1 && (st = min_int || abs st > max_int / (d - 1)) then
-      invalid_argf "Layout.v: stride %d of an axis of extent %d overflows" st d;
-    set b (header + i) d;
-    set b (header + r + i) st
+      invalid_argf "Layout.v: stride %d of an axis of extent %d overflows" st d
   done;
-  finish "Layout.v" b
+  finish "Layout.v" (Array.copy s) (Array.copy strides) offset
 
-(* Movements. Each writes the strides of the result, of shape [s'], from [l]'s
-   into the bytes [start] made; [finish] makes it canonical. A stride is formed
-   only for an axis of extent above 1, where the result's span, inside [l]'s,
-   bounds it. *)
-
-let start s' offset =
-  let r = Array.length s' in
-  let b = create r in
-  set b 0 r;
-  set b 2 offset;
-  for i = 0 to r - 1 do
-    set b (header + i) (Array.unsafe_get s' i)
-  done;
-  b
+(* Movements. Each writes the strides of the result, of shape [s'], from [l]'s;
+   [finish] makes it canonical. A stride is formed only for an axis of extent
+   above 1, where the result's span, inside [l]'s, bounds it. *)
 
 let moved = finish "Layout.move"
 
@@ -211,58 +216,48 @@ let reshape l s' =
     done;
     group oj nj
   in
-  if group 0 0 then begin
-    let b = start s' (offset l) in
-    Array.iteri (fun i st -> set b (header + Array.length s' + i) st) strides;
-    Some (moved b)
-  end
-  else None
+  if group 0 0 then Some (moved s' strides (offset l)) else None
 
 let move m l =
   let s' = Move.shape m (shape l) in
   let r = rank l and r' = Array.length s' in
-  let stride = header + r' in
-  if numel l = 0 || Array.mem 0 s' then Some (moved (start s' 0))
+  let st = Array.make r' 0 in
+  if numel l = 0 || Array.mem 0 s' then Some (moved s' st 0)
   else
     match m with
     | Move.Reshape _ -> reshape l s'
     | Broadcast _ ->
-        let b = start s' (offset l) in
         for i = 0 to r' - 1 do
           let j = i - r' + r in
-          set b (stride + i) (if j < 0 then 0 else unsafe_stride l j)
+          st.(i) <- (if j < 0 then 0 else unsafe_stride l j)
         done;
-        Some (moved b)
+        Some (moved s' st (offset l))
     | Permute p ->
-        let b = start s' (offset l) in
         for i = 0 to r' - 1 do
-          set b (stride + i) (unsafe_stride l (Array.unsafe_get p i))
+          st.(i) <- unsafe_stride l (Array.unsafe_get p i)
         done;
-        Some (moved b)
+        Some (moved s' st (offset l))
     | Slice rs ->
-        let b = start s' (offset l) in
         let offset = ref (offset l) in
         for i = 0 to r - 1 do
-          let x = rs.(i) and st = unsafe_stride l i in
-          offset := !offset + (x.start * st);
-          set b (stride + i) (if x.count > 1 then st * x.step else 0)
+          let x = rs.(i) and s = unsafe_stride l i in
+          offset := !offset + (x.start * s);
+          st.(i) <- (if x.count > 1 then s * x.step else 0)
         done;
-        set b 2 !offset;
-        Some (moved b)
+        Some (moved s' st !offset)
     | Window ws ->
         (* Axis [w.axis] steps from window to window; the appended axis [r + j]
            steps within window [j]. *)
-        let b = start s' (offset l) in
         for i = 0 to r - 1 do
-          set b (stride + i) (unsafe_stride l i)
+          st.(i) <- unsafe_stride l i
         done;
         Array.iteri
           (fun j (w : Move.window) ->
-            let st = unsafe_stride l w.axis in
-            set b (stride + w.axis) (if s'.(w.axis) > 1 then st * w.step else 0);
-            set b (stride + r + j) (if w.size > 1 then st * w.dilation else 0))
+            let s = unsafe_stride l w.axis in
+            st.(w.axis) <- (if s'.(w.axis) > 1 then s * w.step else 0);
+            st.(r + j) <- (if w.size > 1 then s * w.dilation else 0))
           ws;
-        Some (moved b)
+        Some (moved s' st (offset l))
 
 (* Coalescing *)
 

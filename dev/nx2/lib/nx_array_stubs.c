@@ -24,23 +24,22 @@ enum { ARRAY_DTYPE, ARRAY_LAYOUT, ARRAY_BUFFER };
 
 /* Layouts */
 
-/* Copies the layout [v], an OCaml string, into [a]'s rank, flags, offset
-   and dims, and its span into [lo] and [hi]: the string lives in the OCaml
-   heap, which moves. Answers NX_LAYOUT if [v] is not a layout's bytes. */
+/* Copies the layout [v] into [a]'s rank, flags, offset and dims, and its
+   span into [lo] and [hi]: the record lives in the OCaml heap, which moves.
+   Answers NX_LAYOUT if its arrays do not make a layout. */
 static int read_layout(value v, nx_array *a, int64_t *lo, int64_t *hi) {
-  const nx_layout *l = (const nx_layout *)String_val(v);
-  mlsize_t len = caml_string_length(v);
-  if (len < sizeof(nx_layout)) return NX_LAYOUT;
-  int64_t r = l->rank;
-  if (r < 0 || r > NX_MAX_RANK) return NX_LAYOUT;
-  if (len != sizeof(nx_layout) + 2 * (size_t)r * sizeof(int64_t))
-    return NX_LAYOUT;
+  value shape = Field(v, NX_LAYOUT_SHAPE), strides = Field(v, NX_LAYOUT_STRIDES);
+  mlsize_t r = Wosize_val(shape);
+  if (r > NX_MAX_RANK || Wosize_val(strides) != r) return NX_LAYOUT;
   a->rank = (int)r;
-  a->flags = (int)l->flags;
-  a->offset = l->offset;
-  *lo = l->lo;
-  *hi = l->hi;
-  memcpy(a->dim, l->dim, 2 * (size_t)r * sizeof(int64_t));
+  a->offset = Long_val(Field(v, NX_LAYOUT_OFFSET));
+  a->flags = (int)Long_val(Field(v, NX_LAYOUT_FLAGS));
+  *lo = Long_val(Field(v, NX_LAYOUT_LO));
+  *hi = Long_val(Field(v, NX_LAYOUT_HI));
+  for (mlsize_t i = 0; i < r; i++) {
+    a->dim[i] = Long_val(Field(shape, i));
+    a->dim[r + i] = Long_val(Field(strides, i));
+  }
   return NX_OK;
 }
 

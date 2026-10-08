@@ -11,8 +11,8 @@ val row : int -> (string * int * int) option
     has the code. *)
 
 val layout : Nx_array.Layout.t -> int array
-(** [layout l] is [l]'s fields as [nx_layout] in [nx_array.h] reads them: rank,
-    flags, offset, lo, hi, then the extents and the strides. *)
+(** [layout l] is [l]'s fields as C reads them through [nx_layout.h]'s field
+    order: rank, flags, offset, lo, hi, then the extents and the strides. *)
 
 val add : 'z -> 'x -> 'y -> int
 (** [add z x y] is a float32 kernel through [nx_read] and [nx_coalesce]: it

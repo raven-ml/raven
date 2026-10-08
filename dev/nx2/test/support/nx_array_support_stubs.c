@@ -30,20 +30,22 @@ value nx_array_support_row(value code) {
   CAMLreturn(caml_alloc_some(row));
 }
 
-/* The fields of the layout [l] as nx_layout reads them: rank, flags,
+/* The fields of the layout [l] as C reads them (nx_layout.h): rank, flags,
    offset, lo, hi, then the extents and strides. */
 value nx_array_support_layout(value l) {
   CAMLparam1(l);
   CAMLlocal1(out);
-  const nx_layout *v = (const nx_layout *)String_val(l);
-  int64_t r = v->rank;
+  int64_t r = (int64_t)Wosize_val(Field(l, NX_LAYOUT_SHAPE));
   out = caml_alloc_tuple(5 + 2 * r);
-  Store_field(out, 0, Val_long(v->rank));
-  Store_field(out, 1, Val_long(v->flags));
-  Store_field(out, 2, Val_long(v->offset));
-  Store_field(out, 3, Val_long(v->lo));
-  Store_field(out, 4, Val_long(v->hi));
-  for (int64_t i = 0; i < 2 * r; i++) Store_field(out, 5 + i, Val_long(v->dim[i]));
+  Store_field(out, 0, Val_long(r));
+  Store_field(out, 1, Field(l, NX_LAYOUT_FLAGS));
+  Store_field(out, 2, Field(l, NX_LAYOUT_OFFSET));
+  Store_field(out, 3, Field(l, NX_LAYOUT_LO));
+  Store_field(out, 4, Field(l, NX_LAYOUT_HI));
+  for (int64_t i = 0; i < r; i++) {
+    Store_field(out, 5 + i, Field(Field(l, NX_LAYOUT_SHAPE), i));
+    Store_field(out, 5 + r + i, Field(Field(l, NX_LAYOUT_STRIDES), i));
+  }
   CAMLreturn(out);
 }
 
