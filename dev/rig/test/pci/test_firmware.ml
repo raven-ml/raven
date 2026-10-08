@@ -141,6 +141,44 @@ let test_compressed () =
   is_error ~msg:"only the file of that name"
     (Firmware.find [ a ] name ~digest:pinned)
 
+(* Reads *)
+
+(* An image found once is not read again while its file keeps its identity: a
+   file made unreadable since, which keeps its device, inode, size and
+   modification time, still gives it. *)
+let test_read_once () =
+  if Unix.geteuid () = 0 then
+    skip ~reason:"root reads a file whatever its mode" ();
+  let a = temp_dir () in
+  write a name image;
+  equal ~msg:"read" found (Ok image) (Firmware.find [ a ] name ~digest:pinned);
+  Unix.chmod (Filename.concat a name) 0o000;
+  equal ~msg:"not read again" found (Ok image)
+    (Firmware.find [ a ] name ~digest:pinned);
+  Unix.chmod (Filename.concat a name) 0o644
+
+(* A file whose identity changed since a find gave it is verified again: one
+   rewritten with another image is skipped, one removed is not found. *)
+let test_changed () =
+  let a = temp_dir () and b = temp_dir () in
+  write a name image;
+  write b name image;
+  equal ~msg:"read" found (Ok image) (Firmware.find [ a ] name ~digest:pinned);
+  write a name "another image, longer\n";
+  is_error ~msg:"rewritten" (Firmware.find [ a ] name ~digest:pinned);
+  equal ~msg:"skipped" found (Ok image)
+    (Firmware.find [ a; b ] name ~digest:pinned);
+  Sys.remove (Filename.concat b name);
+  is_error ~msg:"removed" (Firmware.find [ b ] name ~digest:pinned)
+
+(* An image found under one digest is no image of another. *)
+let test_other_pin () =
+  let a = temp_dir () in
+  write a name image;
+  equal ~msg:"read" found (Ok image) (Firmware.find [ a ] name ~digest:pinned);
+  is_error ~msg:"another pinned digest"
+    (Firmware.find [ a ] name ~digest:(Firmware.digest "another image\n"))
+
 let () =
   exit
   @@ run "rig_pci.firmware"
@@ -158,5 +196,12 @@ let () =
              test "no directory holds nothing" test_no_directory;
              test "a lookup writes nothing" test_writes_nothing;
              test "a compressed file is not the image" test_compressed;
+           ];
+         group ~timeout:patience "reads"
+           [
+             test "an unchanged file is read once" test_read_once;
+             test "a changed file is verified again" test_changed;
+             test "an image found under one digest is no image of another"
+               test_other_pin;
            ];
        ]

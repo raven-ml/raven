@@ -17,6 +17,13 @@ val find : string list -> string -> digest:string -> (string, string) result
     since systems ship other versions of an image. Files are read as they are: a
     compressed image is another file.
 
+    An image found is kept for the life of the process, with its file's identity
+    when read: its device, inode, size and modification time. A later find of
+    the same file and digest gives it unread while the file keeps that identity,
+    and reads and verifies it again once the identity changed. A file rewritten
+    in place to the same size within its file system's timestamp resolution
+    keeps its identity, and is not read again.
+
     [Error why] if no directory holds the image, [why] naming it, its digest,
     the directories, the files with another digest and the files that cannot be
     read, with their cause. *)
