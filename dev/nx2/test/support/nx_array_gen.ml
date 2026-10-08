@@ -90,6 +90,8 @@ let windows ~apart s =
   let r = Array.length s in
   let axes = List.filter (fun i -> s.(i) >= 1) (List.init r Fun.id) in
   let* axes = subsequence ~pp:Format.pp_print_int axes in
+  (* Each window appends an axis: keep the result within the most axes. *)
+  let axes = List.filteri (fun i _ -> r + i < L.max_rank) axes in
   let window axis =
     let d = s.(axis) in
     let* size = int_range 1 d in
