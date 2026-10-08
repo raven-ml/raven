@@ -244,6 +244,11 @@ let bad_peers =
     (Wire.Controller, Wire.Controller);
     (Wire.Agent 1, Wire.Controller);
     (Wire.Agent 2, Wire.Agent 2);
+    (Wire.Controller, Wire.Agent 0);
+    (Wire.Controller, Wire.Agent (1 lsl 32));
+    (Wire.Agent 0, Wire.Agent 1);
+    (Wire.Agent (-1), Wire.Agent 1);
+    (Wire.Agent (1 lsl 32), Wire.Agent 1);
   ]
 
 let dial_bad_peer (self, peer) =
@@ -373,11 +378,7 @@ let keys_group =
         "ends connect, naming both processes, iff their keys are equal"
         (Gen.with_pp pp_case (Gen.pair keys processes))
         keys_law;
-      xfail
-        ~reason:
-          "HMAC's zero padding: a key and the key with a trailing NUL connect"
-        (test "a key and the key with a trailing NUL do not connect"
-           trailing_nul);
+      test "a key and the key with a trailing NUL do not connect" trailing_nul;
     ]
 
 (* Admission *)
@@ -442,9 +443,19 @@ let refusals =
         ~examples:[ "" ]
         (Gen.with_pp pp_bytes Gen.string)
         refuse_reaches_dial;
-      xfail ~reason:"dial reads at most 4096 bytes of a reason"
-        (test "dial reports a reason of 70000 bytes unchanged" (fun () ->
-             refuse_reaches_dial (String.make 70_000 'r')));
+      test "a reason of 70000 bytes reaches dial as its first 4096" (fun () ->
+          let d, a = connected () in
+          let refused =
+            spawn (fun () -> Wire.refuse a (String.make 70_000 'r'))
+          in
+          let r =
+            Fun.protect
+              ~finally:(fun () -> Unix.close d)
+              (fun () ->
+                Wire.dial d ~key ~self:Wire.Controller ~peer:(Wire.Agent 1))
+          in
+          refused ();
+          equal dialed (Error (String.make 4096 'r')) r);
       test "refuse raises nothing, and the process lives, on a reset peer"
         refuse_reset;
     ]
@@ -729,9 +740,8 @@ let silence =
   group "silence"
     [
       slow "an end gives up on a silent peer after 10 s" (gives_up silent);
-      xfail ~reason:"the 10 s bound is per read, so each byte restarts it"
-        (slow "an end gives up after 10 s on a peer that trickles its answer"
-           (gives_up trickling));
+      slow "an end gives up after 10 s on a peer that trickles its answer"
+        (gives_up trickling);
     ]
 
 let () =

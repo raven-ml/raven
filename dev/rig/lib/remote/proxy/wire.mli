@@ -9,8 +9,8 @@
     machine ({!process}). Each pair of them has one TCP connection, which one
     end {e dials} and the other {e accepts}: the controller dials every agent,
     and each agent dials the agents after it. Every integer is little-endian; a
-    process is a u32, [0] for the controller and [i] for agent [i]; a string is
-    its length (u32) and its bytes.
+    process is a u32, [0] for the controller and [i] for agent [i], from [1] to
+    [2]{^ 32}[ - 1]; a string is its length (u32) and its bytes.
 
     {1:handshake Handshake}
 
@@ -29,10 +29,11 @@
     The first [why] refuses a connection before any proof, such as one beyond
     those the accepting end can serve; the second refuses a dialing end that
     does not prove the key, or that the accepting end does not admit, such as a
-    second controller. A proof is HMAC-BLAKE2b-256 of the job's key over its
-    end's label, both processes and both nonces; the two ends' labels differ, so
-    neither proof answers for the other. The key itself never crosses the
-    connection.
+    second controller. A reason has at most 4096 bytes: a longer one is cut
+    there, and one announced longer is malformed. A proof is HMAC-BLAKE2b-256,
+    keyed by the BLAKE2b-256 hash of the job's key, over its end's label, both
+    processes and both nonces; the two ends' labels differ, so neither proof
+    answers for the other. The key itself never crosses the connection.
 
     {1:frames Frames}
 
@@ -108,7 +109,8 @@ val dial :
     key; or fails to answer in time, or the stream fails.
 
     Raises [Invalid_argument] if [key] has fewer than {!min_key} or more than
-    {!max_key} bytes, or [peer] is [Controller] or [self]. *)
+    {!max_key} bytes, [self] or [peer] is an agent outside [1] to
+    [2]{^ 32}[ - 1], or [peer] is [Controller] or [self]. *)
 
 val accept :
   Unix.file_descr ->
@@ -118,8 +120,8 @@ val accept :
 (** [accept fd ~key ~admit] runs the accepting end's handshake on the connected
     socket [fd], and is the dialing end's process and this end's, as the dialing
     end names it. Once the dialing end proved [key], [admit p] decides, [p] the
-    dialing end's process, and its [Error why] refuses it with [why]. It waits
-    at most 10 seconds for each answer.
+    dialing end's process, and its [Error why] refuses it with [why], cut to
+    4096 bytes. It waits at most 10 seconds for each answer.
 
     [Error why] if the dialing end proves another key, is not admitted, sends a
     malformed handshake, or fails to answer in time, or the stream fails.
@@ -128,8 +130,9 @@ val accept :
     {!max_key} bytes. *)
 
 val refuse : Unix.file_descr -> string -> unit
-(** [refuse fd why] sends the refusal [why] in place of a greeting, then closes
-    [fd]. It raises nothing: a failed send is the peer's loss. *)
+(** [refuse fd why] sends the refusal [why], cut to 4096 bytes, in place of a
+    greeting, then closes [fd]. It raises nothing: a failed send is the peer's
+    loss. *)
 
 (** {1:requests Requests} *)
 

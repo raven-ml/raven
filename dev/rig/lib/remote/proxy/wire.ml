@@ -10,7 +10,9 @@ let ( let* ) = Result.bind
 (* Errors *)
 
 let err_key fn n =
-  strf "Rig_remote_proxy.Wire.%s: the key has %d bytes, not 16 to 4096" fn n
+  strf "Rig_remote_proxy.Wire.%s: a key of %d bytes is outside 16 to 4096" fn n
+
+let err_malformed = "a malformed handshake"
 
 (* Constants *)
 
@@ -20,9 +22,12 @@ let min_key = 16
 let max_key = 4096
 let nonce_bytes = 32
 let proof_bytes = 32
-let timeout_s = 10.0
+let max_agent = 0xFFFF_FFFF
 
-(* The longest refusal read: a refusal is a sentence. *)
+(* The time an end waits for each answer. *)
+let answer_s = 10.0
+
+(* The most bytes of a refusal's reason: a reason is a sentence. *)
 let max_why = 4096
 
 (* The proofs' labels: each end's differs, so neither answers for the other. *)
@@ -34,13 +39,14 @@ type process = Controller | Agent of int
 let process_code = function Controller -> 0 | Agent i -> i
 let process_of_code n = if n = 0 then Controller else Agent n
 
-(* Proofs: HMAC (RFC 2104) over BLAKE2b-256, whose block is 128 bytes. *)
+(* Proofs: HMAC (RFC 2104) over BLAKE2b-256, whose block is 128 bytes, keyed by
+   the hash of the job's key: HMAC pads a shorter key with zeros, so a key and
+   the key with a trailing NUL would prove each other. *)
 
 let block = 128
 let hash = Digest.BLAKE256.string
 
 let hmac key msg =
-  let key = if String.length key > block then hash key else key in
   let pad c =
     String.init block @@ fun i ->
     let k = if i < String.length key then Char.code key.[i] else 0 in
@@ -54,7 +60,7 @@ let u32 n =
   Bytes.unsafe_to_string b
 
 let proof key label ~dialing ~accepting ~dialing_nonce ~accepting_nonce =
-  hmac key
+  hmac (hash key)
     (String.concat ""
        [
          label;
@@ -77,41 +83,54 @@ let same a b =
 external send : Unix.file_descr -> string -> unit = "caml_rig_remote_wire_send"
 external nonce : unit -> string = "caml_rig_remote_wire_nonce"
 
-(* The stream ended or broke, or a field is malformed: the handshake's [Error],
-   with its cause. *)
+(* The stream ended or broke, an answer came late, or a field is malformed: the
+   handshake's [Error], with its cause. *)
 exception Stop of string
 
-let recv fd n =
+(* An answer is due by [until], on the clock of [Unix.gettimeofday]. *)
+let due () = Unix.gettimeofday () +. answer_s
+
+let recv until fd n =
   let b = Bytes.create n in
   let rec go off =
-    if off < n then
-      match Unix.read fd b off (n - off) with
-      | 0 -> raise (Stop "the connection closed during the handshake")
-      | k -> go (off + k)
+    if off < n then begin
+      let left = until -. Unix.gettimeofday () in
+      if left <= 0. then raise (Stop (strf "no answer within %.0f s" answer_s));
+      match Unix.select [ fd ] [] [] left with
+      | exception Unix.Unix_error (Unix.EINTR, _, _) -> go off
+      | [], _, _ -> go off
+      | _ -> (
+          match Unix.read fd b off (n - off) with
+          | 0 -> raise (Stop "the connection closed during the handshake")
+          | k -> go (off + k))
+    end
   in
   go 0;
   Bytes.unsafe_to_string b
 
-let recv_u32 fd =
-  Int32.to_int (String.get_int32_le (recv fd 4) 0) land 0xFFFF_FFFF
+let recv_u32 until fd =
+  Int32.to_int (String.get_int32_le (recv until fd 4) 0) land 0xFFFF_FFFF
 
-let recv_u8 fd = Char.code (recv fd 1).[0]
-let string_bytes s = u32 (String.length s) ^ s
+let recv_u8 until fd = Char.code (recv until fd 1).[0]
 
-let recv_string fd =
-  let n = recv_u32 fd in
-  if n > max_why then raise (Stop "a malformed handshake");
-  recv fd n
+let recv_string until fd =
+  let n = recv_u32 until fd in
+  if n > max_why then raise (Stop err_malformed);
+  recv until fd n
 
-(* Runs [f] with [fd]'s reads and writes bounded by the handshake's timeout, and
-   turns the stream's failures into [Error]. *)
-let guarded fd f =
-  let set t =
-    Unix.setsockopt_float fd Unix.SO_RCVTIMEO t;
-    Unix.setsockopt_float fd Unix.SO_SNDTIMEO t
+(* A refusal, its reason cut to [max_why] bytes. *)
+let refusal why =
+  let why =
+    if String.length why > max_why then String.sub why 0 max_why else why
   in
+  "\001" ^ u32 (String.length why) ^ why
+
+(* Runs [f], its sends bounded by the answer's time, and turns the stream's
+   failures into [Error]. *)
+let guarded fd f =
+  let set t = Unix.setsockopt_float fd Unix.SO_SNDTIMEO t in
   match
-    set timeout_s;
+    set answer_s;
     let r = f () in
     set 0.0;
     r
@@ -119,40 +138,45 @@ let guarded fd f =
   | r -> r
   | exception Stop why -> Error why
   | exception Unix.Unix_error ((Unix.EAGAIN | Unix.EWOULDBLOCK), _, _) ->
-      Error (strf "no answer within %.0f s" timeout_s)
+      Error (strf "no answer within %.0f s" answer_s)
   | exception Unix.Unix_error (e, _, _) -> Error (Unix.error_message e)
 
 let check_key fn key =
   let n = String.length key in
   if n < min_key || n > max_key then invalid_arg (err_key fn n)
 
+let check_agent = function
+  | Controller -> ()
+  | Agent i when i >= 1 && i <= max_agent -> ()
+  | Agent i ->
+      invalid_argf "Rig_remote_proxy.Wire.dial: agent %d is outside 1 to %d" i
+        max_agent
+
 (* Dialing *)
 
-let greeting fd =
-  if recv fd (String.length magic) <> magic then
+let greeting until fd =
+  if recv until fd (String.length magic) <> magic then
     raise (Stop "the peer is no process of a job");
-  let v = recv_u32 fd in
+  let v = recv_u32 until fd in
   if v <> version then
     raise
       (Stop
          (strf "the peer speaks protocol version %d, this process %d" v version));
-  match recv_u8 fd with
-  | 0 -> Ok (recv fd nonce_bytes)
-  | 1 -> Error (recv_string fd)
-  | _ -> raise (Stop "a malformed handshake")
+  match recv_u8 until fd with
+  | 0 -> Ok (recv until fd nonce_bytes)
+  | 1 -> Error (recv_string until fd)
+  | _ -> raise (Stop err_malformed)
 
 let dial fd ~key ~self ~peer =
   check_key "dial" key;
-  (match peer with
-  | Controller ->
-      invalid_arg "Rig_remote_proxy.Wire.dial: the peer is the controller"
-  | Agent _ when peer = self ->
-      invalid_arg "Rig_remote_proxy.Wire.dial: the peer is this process"
-  | Agent i when i < 1 ->
-      invalid_argf "Rig_remote_proxy.Wire.dial: agent %d is no agent" i
-  | Agent _ -> ());
+  check_agent self;
+  check_agent peer;
+  if peer = Controller then
+    invalid_arg "Rig_remote_proxy.Wire.dial: the peer is the controller";
+  if peer = self then
+    invalid_arg "Rig_remote_proxy.Wire.dial: the peer is this process";
   guarded fd @@ fun () ->
-  let* accepting_nonce = greeting fd in
+  let* accepting_nonce = greeting (due ()) fd in
   let dialing_nonce = nonce () in
   let p label =
     proof key label ~dialing:self ~accepting:peer ~dialing_nonce
@@ -166,26 +190,26 @@ let dial fd ~key ~self ~peer =
          u32 (process_code peer);
          p dialing_label;
        ]);
-  match recv_u8 fd with
-  | 1 -> Error (recv_string fd)
+  let until = due () in
+  match recv_u8 until fd with
+  | 1 -> Error (recv_string until fd)
   | 0 ->
-      if same (recv fd proof_bytes) (p accepting_label) then Ok ()
+      if same (recv until fd proof_bytes) (p accepting_label) then Ok ()
       else Error "the peer does not know the job's key"
-  | _ -> raise (Stop "a malformed handshake")
+  | _ -> raise (Stop err_malformed)
 
 (* Accepting *)
-
-let refusal why = "\001" ^ string_bytes why
 
 let accept fd ~key ~admit =
   check_key "accept" key;
   guarded fd @@ fun () ->
   let accepting_nonce = nonce () in
   send fd (String.concat "" [ magic; u32 version; "\000"; accepting_nonce ]);
-  let dialing_nonce = recv fd nonce_bytes in
-  let dialing = process_of_code (recv_u32 fd) in
-  let accepting = process_of_code (recv_u32 fd) in
-  let given = recv fd proof_bytes in
+  let until = due () in
+  let dialing_nonce = recv until fd nonce_bytes in
+  let dialing = process_of_code (recv_u32 until fd) in
+  let accepting = process_of_code (recv_u32 until fd) in
+  let given = recv until fd proof_bytes in
   let p label =
     proof key label ~dialing ~accepting ~dialing_nonce ~accepting_nonce
   in
@@ -194,7 +218,7 @@ let accept fd ~key ~admit =
     Error why
   in
   if accepting = Controller || accepting = dialing then
-    raise (Stop "a malformed handshake");
+    raise (Stop err_malformed);
   if not (same given (p dialing_label)) then
     refuse "the dialing end does not know the job's key"
   else
