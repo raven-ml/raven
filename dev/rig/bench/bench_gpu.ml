@@ -14,11 +14,16 @@ module Sub = Rig.Submission
 let strf = Printf.sprintf
 
 external floor_new :
-  nativeint -> nativeint -> nativeint -> nativeint -> nativeint
+  nativeint -> nativeint -> nativeint -> nativeint -> nativeint -> nativeint
   = "rig_bench_floor_new"
 
 external floor_submit : nativeint -> int -> unit = "rig_bench_floor_submit"
 [@@noalloc]
+
+external floor_encode : nativeint -> int -> unit = "rig_bench_floor_encode"
+[@@noalloc]
+
+external floor_commit : nativeint -> unit = "rig_bench_floor_commit" [@@noalloc]
 
 external floor_handles : nativeint -> nativeint array -> unit
   = "rig_bench_floor_handles"
@@ -172,26 +177,37 @@ let floor_part f (p : Sub.part) =
   | Sub.Words b -> floor_words f (B.address b) (B.length b / 4)
   | Sub.Copy _ -> invalid_arg "floor_part: a copy"
 
-(* A GPU's submits through rig, beside the same submits through its
-   driver's C entries alone. [empty] and [cost] submit no work and wait for each
-   submit or every [drain]. The replay rows run [depth] copies of a step over
-   [slots] parameters, each run waiting for its copy's last run: with no part,
-   and with the part [kernel] makes, a launch of the vendor's smallest kernel. A
-   floor spins on the word; [release-sleep], for a driver whose host writes the
-   word ([sleeps]), and the replay floors wait as rig waits for that
-   driver: in its [sleep] from the first read, or spinning. The kernel floor
-   drives the device rig opened, through its driver's entries alone, after
-   rig loaded the kernel. With [graph], the graph rows do the same with the
-   part [graph] makes, the launch of a recorded step of 64 such kernels. Each
-   case opens its GPU in its own worker, so that no process forks after a vendor
-   library started: through rig with [opened], or the driver alone with
-   [open_]. *)
+(* A GPU's submits through rig, beside the same submits through its driver's C
+   entries alone. [empty] and [cost] submit no work and wait for each submit or
+   every [drain]; [kernel] submits the part [kernel] makes over three buffers
+   and waits every [drain]. A floor submits and commits each value; [encode]
+   commits every [drain], as [cost]'s waits do. The replay rows run [depth]
+   copies of a step over [slots] parameters, each run waiting for its copy's
+   last run: with no part, and with the part [kernel] makes, a launch of the
+   vendor's smallest kernel. A floor spins on the word; [release-sleep], for a
+   driver whose host writes the word ([sleeps]), and the replay floors wait as
+   rig waits for that driver: in its [sleep] from the first read, or spinning.
+   The kernel floor drives the device rig opened, through its driver's entries
+   alone, after rig loaded the kernel. With [graph], the graph rows do the same
+   with the part [graph] makes, the launch of a recorded step of 64 such
+   kernels. Each case opens its GPU in its own worker, so that no process forks
+   after a vendor library started: through rig with [opened], or the driver
+   alone with [open_]. *)
 let gpu_rows (type a) (module D : Rig.Driver with type t = a) ?(sleeps = false)
     ?(copies = true) ?graph v ~opened open_ ~kernel =
   let get = function Ok x -> x | Error why -> failwith why in
   let rig () =
     let g, _ = opened () in
     (g, Sub.make ~reads:0 ~writes:0 g [||], ref 0)
+  in
+  (* A launch of [kernel] reading two buffers and writing a third, as an
+     operation of two operands. *)
+  let kernel_rig () =
+    let g, d = opened () in
+    let p, keep = kernel d g in
+    let buffers n = Array.init n (fun _ -> B.create g 8) in
+    let s = Sub.make ~reads:2 ~writes:1 g [| p |] in
+    (g, s, buffers 2, buffers 1, keep, ref 0)
   in
   let replay g parts keep =
     let gparams = Array.init slots (fun _ -> B.create g 8) in
@@ -225,7 +241,9 @@ let gpu_rows (type a) (module D : Rig.Driver with type t = a) ?(sleeps = false)
     Rig.wait r.g (Rig.submitted r.g);
     r.keep ()
   in
-  let entries d = floor_new (D.self d) D.room_entry D.submit_entry 0n in
+  let entries d =
+    floor_new (D.self d) D.room_entry D.submit_entry D.commit_entry 0n
+  in
   let alone () =
     let drv = get (open_ ()) in
     { drv; entries = entries drv; sent = ref 0; parts = 0; hold = ignore }
@@ -364,6 +382,13 @@ let gpu_rows (type a) (module D : Rig.Driver with type t = a) ?(sleeps = false)
             let p = Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||] in
             incr n;
             if !n mod drain = 0 then Rig.wait g (Rig.Point.value p));
+        row "kernel" kernel_rig (fun (g, s, reads, writes, keep, n) ->
+            let p = Rig.submit s ~reads ~writes ~waits:[||] in
+            incr n;
+            if !n mod drain = 0 then begin
+              Rig.wait g (Rig.Point.value p);
+              keep ()
+            end);
       ];
     Thumper.group (strf "replay/%s" v)
       ([
@@ -381,6 +406,13 @@ let gpu_rows (type a) (module D : Rig.Driver with type t = a) ?(sleeps = false)
          row "cost" alone (fun a ->
              release a;
              if !(a.sent) mod drain = 0 then spin a !(a.sent));
+         row "encode" alone (fun a ->
+             incr a.sent;
+             floor_encode a.entries a.parts;
+             if !(a.sent) mod drain = 0 then begin
+               floor_commit a.entries;
+               spin a !(a.sent)
+             end);
          row "run" (fun () -> named (alone ())) floor_run;
          row "pipelined-100" (fun () -> named (alone ())) floor_pipelined;
          row "kernel-pipelined-100" (part_alone kernel) floor_pipelined;

@@ -46,6 +46,7 @@ external floor_release_agent : int -> unit = "rig_amd_bench_release_agent"
 external floor_switch : unit -> unit = "rig_amd_bench_switch"
 external floor_waits : int -> int -> unit = "rig_amd_bench_waits"
 external floor_launch : string -> int -> unit = "rig_amd_bench_launch"
+external floor_submits : string -> int -> bool -> unit = "rig_amd_bench_submits"
 external floor_copy : int -> int -> int -> unit = "rig_amd_bench_copy"
 external buffer : int -> int -> int = "rig_amd_bench_buffer"
 external floor_alloc : int -> int -> unit = "rig_amd_bench_alloc"
@@ -442,9 +443,20 @@ let launch_rows =
          [
            row "1" (launching 1) (fun (t, _, s) -> run t s);
            row "64" (launching 64) (fun (t, _, s) -> run t s);
+           row "submits-64" (launching 1) (fun (t, _, s) ->
+               for _ = 1 to 64 do
+                 submit t s
+               done;
+               wait t);
          ];
          kfd_row "floor-1" floor_launching (fun w -> floor_launch w 1);
          kfd_row "floor-64" floor_launching (fun w -> floor_launch w 64);
+         (* A submission and a release per launch, or the releases but the last
+            left out: their gap is what the releases cost. *)
+         kfd_row "floor-submits-64" floor_launching (fun w ->
+             floor_submits w 64 true);
+         kfd_row "floor-submits-64-unreleased" floor_launching (fun w ->
+             floor_submits w 64 false);
          [
            row "1-segment" segment (fun (t, _, s) -> run t s);
            row "1-bar-args" bar (fun (t, _, args, out, s) ->

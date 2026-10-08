@@ -190,6 +190,14 @@ value caml_rig_amd_last(value v_self) {
                                        memory_order_acquire));
 }
 
+/* Each value's hand-over writes its release: a commit does nothing. */
+static int rig_amd_commit(void *self, uint64_t v, const char **failure) {
+  (void)self;
+  (void)v;
+  (void)failure;
+  return RIG_OK;
+}
+
 value caml_rig_amd_room_entry(value unit) {
   (void)unit;
   return Val_long((intnat)rig_amd_room);
@@ -198,6 +206,12 @@ value caml_rig_amd_room_entry(value unit) {
 value caml_rig_amd_submit_entry(value unit) {
   (void)unit;
   return Val_long((intnat)rig_amd_submit);
+}
+
+value caml_rig_amd_commit_entry(value unit) {
+  (void)unit;
+  rig_commit_fn *commit = rig_amd_commit;
+  return Val_long((intnat)commit);
 }
 
 value caml_rig_amd_place_entry(value unit) {

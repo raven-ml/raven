@@ -233,9 +233,14 @@ val submit_entry : nativeint
     bytes from that memory, in place, so the bytes they copy are final. It sends
     after the frame the link is sending.
 
-    It answers [RIG_OK] once the frame is sent. It answers [RIG_FAILED] with the
-    job's root cause if the job failed, with ["the job is closed"] if it closes,
-    and with ["out of memory for a hand-over"] if memory ran out. *)
+    It answers [RIG_COMMITTED] once the frame is sent. It answers [RIG_FAILED]
+    with the job's root cause if the job failed, with ["the job is closed"] if
+    it closes, and with ["out of memory for a hand-over"] if memory ran out. *)
+
+val commit_entry : nativeint
+(** [commit_entry] is the address of the proxy's commit, in the shape
+    [rig_commit_fn] of [rig_edge.h]. Each value's hand-over sends its message
+    and answers [RIG_COMMITTED]: [commit_entry] does nothing. *)
 
 val self : t -> nativeint
 (** [self d] is the address of [d]'s C state, the [self] argument of the room

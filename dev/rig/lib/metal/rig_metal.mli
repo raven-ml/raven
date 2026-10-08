@@ -302,7 +302,7 @@ val room_entry : nativeint
 val submit_entry : nativeint
 (** [submit_entry] is the address of [rig_metal_submit], in the shape
     [rig_submit_fn] of [rig_edge.h]: it runs the parts as the work of [v], the
-    value after the last one it received, and answers [RIG_OK] once every
+    value after the last one it received, and answers [RIG_COMMITTED] once every
     command buffer of [v] is committed; [v] is observable in {!word} once they
     all completed. With no part, [v] is observable once the work before it
     completed. Its waits are none and its handles are ignored: every region of
@@ -310,6 +310,11 @@ val submit_entry : nativeint
     the device recorded a failure before; then the parts did not run (Failures,
     above). It calls no function of the OCaml runtime: its caller releases the
     domain lock. *)
+
+val commit_entry : nativeint
+(** [commit_entry] is the address of the device's commit, in the shape
+    [rig_commit_fn] of [rig_edge.h]. Each value's hand-over commits its command
+    buffer and answers [RIG_COMMITTED]: [commit_entry] does nothing. *)
 
 (** {1:timeline Timeline} *)
 

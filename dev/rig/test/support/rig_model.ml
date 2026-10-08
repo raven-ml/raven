@@ -48,6 +48,8 @@ type config = {
   unknown : bool;
   maps_host : bool;
   itself : bool;
+  may_block : bool;
+  lag : int;
 }
 
 let polled =
@@ -63,6 +65,8 @@ let polled =
     unknown = false;
     maps_host = true;
     itself = false;
+    may_block = false;
+    lag = 1;
   }
 
 (* Polled's configurations and the weight each is drawn with: memory the host
@@ -97,6 +101,16 @@ let configs =
     (1, { polled with label = "polled-unknown"; unknown = true });
     (1, { polled with label = "polled-alone"; peers = false });
     (1, { polled with label = "polled-mapless"; maps_host = false });
+    (* A submit that blocks for room waits for the driver's own thread to run
+       the queue, as the program's thread is inside that submit. *)
+    ( 1,
+      {
+        polled with
+        label = "polled-blocking";
+        may_block = true;
+        capacity = 2;
+        itself = true;
+      } );
   ]
 
 type gpu = Metal | Cuda | Nv | Amd
@@ -610,7 +624,7 @@ let fresh kind =
           ~waits_on:(if c.waits then [ `Host; `Object ] else [])
           ~answer:(if c.unknown then `Unknown else `Stopped)
           ~runs:(if c.itself then `Itself else `When_slept)
-          (name ())
+          ~may_block:c.may_block ~lag:c.lag (name ())
       in
       { d; skind = kind; p = Some p; spoiled = false }
 
@@ -811,6 +825,15 @@ let itself configs =
     (fun (k, c) -> (k, { c with label = c.label ^ "-itself"; itself = true }))
     configs
 
+(* Each configuration also as a driver that commits on its own every four
+   values, which runs only committed work: every wait the model makes must
+   commit what it waits for. *)
+let lagged configs =
+  configs
+  @ List.map
+      (fun (k, c) -> (k, { c with label = c.label ^ "-lag4"; lag = 4 }))
+      configs
+
 (* The kinds of device a program opens. On two domains each program runs 50
    times, and a GPU whose queue waits on Polled work that only a sleep on Polled
    runs spins rig's still interval, 200 ms, every time: there too Polled
@@ -818,6 +841,7 @@ let itself configs =
 let kinds ~two =
   let pp ppf k = Format.pp_print_string ppf (kind_name k) in
   let configs = if two || polled_itself then itself configs else configs in
+  let configs = lagged configs in
   Gen.frequency
     ([
        (1, Gen.of_list ~pp [ Host ]);

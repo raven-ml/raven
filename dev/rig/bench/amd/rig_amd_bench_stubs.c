@@ -180,8 +180,8 @@ value rig_amd_bench_submit(value v_f, value v_v, value v_at, value v_value,
                             (uint64_t)Long_val(v_value), RIG_WORD};
   if (room(self, NULL, 0) != RIG_FITS) caml_failwith("submit: no room");
   const char *why = NULL;
-  if (submit(self, (uint64_t)Long_val(v_v), w, n, NULL, 0, NULL, 0, &why) !=
-      RIG_OK)
+  if (submit(self, (uint64_t)Long_val(v_v), w, n, NULL, 0, NULL, 0, &why) ==
+      RIG_FAILED)
     caml_failwith(why);
   return Val_unit;
 }
@@ -599,6 +599,25 @@ value rig_amd_bench_launch(value v_w, value v_k) {
   return Val_unit;
 }
 
+/* [v_k] times the words of [v_w] on the compute queue, each rung as a
+   submission of its own: with [v_each], each with its release; otherwise
+   one release after the last. Then the wait for the last. */
+value rig_amd_bench_submits(value v_w, value v_k, value v_each) {
+  const uint32_t *w = (const uint32_t *)String_val(v_w);
+  size_t n = caml_string_length(v_w) / 4;
+  for (long i = 0; i < Long_val(v_k); i++) {
+    put(&rings[COMPUTE], w, n);
+    if (Bool_val(v_each)) release(COMPUTE);
+    ring(COMPUTE);
+  }
+  if (!Bool_val(v_each)) {
+    release(COMPUTE);
+    ring(COMPUTE);
+  }
+  spin();
+  return Val_unit;
+}
+
 /* A copy of [v_n] bytes between GPU addresses, then a release, on the copy
    queue. */
 value rig_amd_bench_copy(value v_dst, value v_src, value v_n) {
@@ -674,6 +693,7 @@ LINUX(interrupt, value a UNUSED)
 LINUX(switch, value a UNUSED)
 LINUX(waits, value a UNUSED, value b UNUSED)
 LINUX(launch, value a UNUSED, value b UNUSED)
+LINUX(submits, value a UNUSED, value b UNUSED, value c UNUSED)
 LINUX(copy, value a UNUSED, value b UNUSED, value c UNUSED)
 LINUX(buffer, value a UNUSED, value b UNUSED)
 LINUX(alloc, value a UNUSED, value b UNUSED)

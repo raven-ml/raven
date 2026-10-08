@@ -8,8 +8,8 @@
 (** A driver over host memory whose queue runs only when its {!run} or its sleep
     runs it: a wait that returns before it slept leaves work unrun. A sleep
     first runs the queues of the Polled devices whose words its first queued
-    submission waits for, as a device runs its own work while the host sleeps
-    on another. Every driver call is logged. *)
+    submission waits for and has not seen, as a device runs its own work while
+    the host sleeps on another. Every driver call is logged. *)
 module Polled : sig
   include Rig.Driver
 
@@ -29,6 +29,7 @@ module Polled : sig
     ?max_waits:int ->
     ?answer:[ `Stopped | `Unknown ] ->
     ?runs:[ `When_slept | `Itself ] ->
+    ?lag:int ->
     unit ->
     t
   (** [make ()] is a device whose queue holds [capacity] parts (defaults to
@@ -51,7 +52,14 @@ module Polled : sig
       driver whose work may still run. With [runs] [`Itself] (the default is
       [`When_slept]) a thread of the driver also runs its queue as work arrives,
       as a device runs its own work: its work is done at no point a test
-      chooses. *)
+      chooses. With [lag] (defaults to [1]) it commits on its own once [lag]
+      values are uncommitted, and before a submit waits for room: with [1]
+      each hand-over commits its value. Its queue runs only committed
+      submissions, and a sleep that finds only uncommitted ones queued, its
+      word unmoved, raises [Failure "Polled: nothing committed"], as a wait for
+      work nobody committed would hang.
+
+      Raises [Invalid_argument] if [lag < 1]. *)
 
   val open_ :
     ?capacity:int ->
@@ -69,18 +77,23 @@ module Polled : sig
     ?max_waits:int ->
     ?answer:[ `Stopped | `Unknown ] ->
     ?runs:[ `When_slept | `Itself ] ->
+    ?lag:int ->
     string ->
     Rig.t * t
   (** [open_ name] opens a fresh device named [name]. *)
 
   val run : t -> int
-  (** [run d] runs the queued submissions whose waits hold: how many ran. *)
+  (** [run d] runs the queued committed submissions whose waits hold: how many
+      ran. *)
 
   val queued : t -> int
   val submits : t -> int
 
   val fail : t -> unit
   (** [fail d] makes [d]'s next submit fail. *)
+
+  val fail_commit : t -> unit
+  (** [fail_commit d] makes [d]'s next commit of uncommitted values fail. *)
 
   val fault : t -> string -> unit
   (** [fault d why] makes [d]'s sleeps, allocations, mappings, loads and reads
@@ -95,10 +108,11 @@ module Polled : sig
       counting from [1]: its facts, its counted calls and its hand-over. With
       [`Fault why] that call and every later one raises [Fault why], and a
       hand-over among them fails with [why] (at most 63 bytes of it), as on a
-      device that faulted. With [`Refuse k] that call and the [k - 1] after it
-      refuse where they can, as on a device short of memory: [alloc], [map_peer]
-      and [map_host] answer [None], [image] [Error] and [entry] [None]; other
-      calls go on. [`Refuse 0] ends an earlier refusal. *)
+      device that faulted; from then on a commit of uncommitted values fails
+      with [why] too, uncounted. With [`Refuse k] that call and the [k - 1]
+      after it refuse where they can, as on a device short of memory: [alloc],
+      [map_peer] and [map_host] answer [None], [image] [Error] and [entry]
+      [None]; other calls go on. [`Refuse 0] ends an earlier refusal. *)
 
   val steps : t -> int
   (** [steps d] is the number of fallible calls [d] received. *)

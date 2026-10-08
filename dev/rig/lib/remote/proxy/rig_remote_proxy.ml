@@ -36,6 +36,7 @@ external sleep_c : nativeint -> int -> int -> bool
 external stop_c : nativeint -> unit = "caml_rig_remote_proxy_stop"
 external room : unit -> nativeint = "caml_rig_remote_proxy_room_entry"
 external submit : unit -> nativeint = "caml_rig_remote_proxy_submit_entry"
+external commit : unit -> nativeint = "caml_rig_remote_proxy_commit_entry"
 
 let make l (a : Wire.account) c =
   (match c with
@@ -134,5 +135,6 @@ let fault d =
 let sleep d ~seen ~still_ms = if sleep_c d.c seen still_ms then raise (fault d)
 let room_entry = room ()
 let submit_entry = submit ()
+let commit_entry = commit ()
 let self d = d.c
 let stop d = stop_c d.c

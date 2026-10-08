@@ -58,7 +58,11 @@ let prepare t parts = Rig.Submission.make ~reads:0 ~writes:0 t.d parts
 let submit t s =
   t.v <- Rig.Point.value (Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||])
 
-let wait t =
+let wait t = Rig.wait t.d t.v
+
+(* Waits for the value the driver's own entry was handed, which rig did not
+   assign. *)
+let spin t =
   while C.signaled t.g < t.v do
     Domain.cpu_relax ()
   done
@@ -118,7 +122,7 @@ let wait_rows =
       row "4" waiting (fun (t, self, at) ->
           t.v <- t.v + 1;
           entry_waits self t.v at 4;
-          wait t);
+          spin t);
       row "floor-4" floor_waiting (fun at -> floor_waits at 4);
     ]
 
@@ -156,6 +160,11 @@ let launch_rows =
     [
       row "1" (launching 1) (fun (t, s) -> run t s);
       row "64" (launching 64) (fun (t, s) -> run t s);
+      row "submits-64" (launching 1) (fun (t, s) ->
+          for _ = 1 to 64 do
+            submit t s
+          done;
+          wait t);
       row "floor-1" floor_launching (fun f -> floor_launch f 1);
       row "floor-64" floor_launching (fun f -> floor_launch f 64);
       row "graph-1" (graphing 1) graph_launching;

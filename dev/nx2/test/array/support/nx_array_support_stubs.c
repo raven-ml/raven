@@ -248,7 +248,7 @@ static int late_submit(void *self, uint64_t v, const struct rig_wait *waits,
   (void)failure;
   if (nparts == 0) {
     atomic_store_explicit(&l->last, v, memory_order_release);
-    return RIG_OK;
+    return RIG_COMMITTED;
   }
   late_lock(l);
   int q = atomic_load_explicit(&l->queued, memory_order_relaxed);
@@ -257,6 +257,15 @@ static int late_submit(void *self, uint64_t v, const struct rig_wait *waits,
   atomic_store_explicit(&l->queued, q, memory_order_release);
   atomic_store_explicit(&l->last, v, memory_order_release);
   late_unlock(l);
+  return RIG_COMMITTED;
+}
+
+/* Each value's hand-over queues it to run at the next sleep: a commit does
+   nothing. */
+static int late_commit(void *self, uint64_t v, const char **failure) {
+  (void)self;
+  (void)v;
+  (void)failure;
   return RIG_OK;
 }
 
@@ -268,6 +277,11 @@ value nx_array_support_late_room(value unit) {
 value nx_array_support_late_submit(value unit) {
   (void)unit;
   return caml_copy_nativeint((intnat)&late_submit);
+}
+
+value nx_array_support_late_commit(value unit) {
+  (void)unit;
+  return caml_copy_nativeint((intnat)&late_commit);
 }
 
 /* [v_n] bytes and 64 more, so the region can start on a multiple of 64; 0

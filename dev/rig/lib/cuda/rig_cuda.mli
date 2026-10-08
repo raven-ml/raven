@@ -346,8 +346,8 @@ val submit_entry : nativeint
     their words, and a word the work wrote could move backwards or claim work
     that has not completed.
 
-    It answers [RIG_OK] once every part is enqueued, or [RIG_FAILED] with the
-    step and the error of the first CUDA call that failed, a fill's included, as
+    It answers [RIG_COMMITTED] once every part is enqueued, or [RIG_FAILED] with
+    the step and the error of the first CUDA call that failed, a fill too, as
     ["running a fill: CUDA_ERROR_ILLEGAL_ADDRESS: an illegal memory access was
      encountered"]. The parts enqueued before the failure may run; the others
     never do. A failed device stays failed, since CUDA may keep the context's
@@ -360,6 +360,11 @@ val submit_entry : nativeint
 
     It may block while a stream is full, until the device's earlier work
     completes. *)
+
+val commit_entry : nativeint
+(** [commit_entry] is the address of the device's commit, in the shape
+    [rig_commit_fn] of [rig_edge.h]. Each value's hand-over writes its value and
+    answers [RIG_COMMITTED]: [commit_entry] does nothing. *)
 
 val self : t -> nativeint
 (** [self g] is the address of [g]'s state, the first argument of

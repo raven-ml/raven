@@ -46,10 +46,10 @@ external sleep_word : int -> int -> int -> int = "caml_rig_metal_sleep"
 external failure : int -> string = "caml_rig_metal_failure"
 external stop_ring : int -> unit = "caml_rig_metal_stop"
 
-external entries : unit -> nativeint * nativeint * nativeint
+external entries : unit -> nativeint * nativeint * nativeint * nativeint
   = "caml_rig_metal_entries"
 
-let room_entry, submit_entry, split = entries ()
+let room_entry, submit_entry, commit_entry, split = entries ()
 
 exception Fault of string
 

@@ -52,6 +52,8 @@ floor/cuda/copy-to-device-256M	alloc_words	exact	0
 floor/cuda/copy-to-device-256M	wall_time	batch=1	n=20	1.066e-02	1.065e-02 1.066e-02 1.066e-02 1.066e-02 1.066e-02 1.066e-02 1.066e-02 1.066e-02 1.066e-02 1.066e-02 1.066e-02 1.066e-02 1.066e-02 1.066e-02 1.066e-02 1.066e-02 1.066e-02 1.066e-02 1.066e-02 1.066e-02
 floor/cuda/cost	alloc_words	exact	0
 floor/cuda/cost	wall_time	batch=4096	n=20	1.724e-06	1.715e-06 1.723e-06 1.723e-06 1.723e-06 1.723e-06 1.723e-06 1.723e-06 1.724e-06 1.724e-06 1.724e-06 1.724e-06 1.724e-06 1.725e-06 1.725e-06 1.725e-06 1.725e-06 1.725e-06 1.725e-06 1.726e-06 1.727e-06
+floor/cuda/encode	alloc_words	exact	0
+floor/cuda/encode	wall_time	batch=4096	n=20	1.750e-06	1.740e-06 1.747e-06 1.748e-06 1.748e-06 1.748e-06 1.748e-06 1.748e-06 1.749e-06 1.749e-06 1.750e-06 1.750e-06 1.750e-06 1.750e-06 1.750e-06 1.750e-06 1.751e-06 1.751e-06 1.752e-06 1.752e-06 1.753e-06
 floor/cuda/graph-pipelined-100	alloc_words	exact	7
 floor/cuda/graph-pipelined-100	wall_time	batch=2	n=20	3.416e-03	3.416e-03 3.416e-03 3.416e-03 3.416e-03 3.416e-03 3.416e-03 3.416e-03 3.416e-03 3.416e-03 3.416e-03 3.416e-03 3.416e-03 3.416e-03 3.416e-03 3.416e-03 3.416e-03 3.417e-03 3.417e-03 3.417e-03 3.417e-03
 floor/cuda/kernel-pipelined-100	alloc_words	exact	6
@@ -74,6 +76,8 @@ floor/nv/copy-to-device-256M	alloc_words	exact	0
 floor/nv/copy-to-device-256M	wall_time	batch=1	n=20	1.066e-02	1.066e-02 1.066e-02 1.066e-02 1.066e-02 1.066e-02 1.066e-02 1.066e-02 1.066e-02 1.066e-02 1.066e-02 1.066e-02 1.066e-02 1.066e-02 1.066e-02 1.066e-02 1.066e-02 1.066e-02 1.067e-02 1.067e-02 1.067e-02
 floor/nv/cost	alloc_words	exact	0
 floor/nv/cost	wall_time	batch=8192	n=20	7.691e-07	7.657e-07 7.680e-07 7.681e-07 7.682e-07 7.682e-07 7.683e-07 7.688e-07 7.688e-07 7.688e-07 7.691e-07 7.691e-07 7.692e-07 7.693e-07 7.693e-07 7.694e-07 7.694e-07 7.695e-07 7.697e-07 7.698e-07 7.700e-07
+floor/nv/encode	alloc_words	exact	0
+floor/nv/encode	wall_time	batch=8192	n=20	7.868e-07	7.825e-07 7.848e-07 7.854e-07 7.857e-07 7.857e-07 7.859e-07 7.863e-07 7.866e-07 7.866e-07 7.867e-07 7.868e-07 7.870e-07 7.870e-07 7.870e-07 7.872e-07 7.873e-07 7.874e-07 7.874e-07 7.874e-07 7.874e-07
 floor/nv/kernel-pipelined-100	alloc_words	exact	6
 floor/nv/kernel-pipelined-100	wall_time	batch=32	n=20	1.723e-04	1.625e-04 1.627e-04 1.697e-04 1.723e-04 1.723e-04 1.723e-04 1.723e-04 1.723e-04 1.723e-04 1.723e-04 1.723e-04 1.723e-04 1.723e-04 1.724e-04 1.724e-04 1.724e-04 1.724e-04 1.724e-04 1.725e-04 1.725e-04
 floor/nv/pipelined-100	alloc_words	exact	0
@@ -100,15 +104,20 @@ submit/cuda/cost	alloc_words	exact	0
 submit/cuda/cost	wall_time	batch=4096	n=20	1.715e-06	1.708e-06 1.713e-06 1.713e-06 1.714e-06 1.715e-06 1.715e-06 1.715e-06 1.715e-06 1.715e-06 1.715e-06 1.715e-06 1.715e-06 1.715e-06 1.716e-06 1.716e-06 1.716e-06 1.716e-06 1.716e-06 1.717e-06 1.719e-06
 submit/cuda/empty	alloc_words	exact	0
 submit/cuda/empty	wall_time	batch=2048	n=20	3.735e-06	3.724e-06 3.725e-06 3.729e-06 3.730e-06 3.731e-06 3.733e-06 3.733e-06 3.734e-06 3.734e-06 3.734e-06 3.736e-06 3.737e-06 3.737e-06 3.738e-06 3.739e-06 3.740e-06 3.746e-06 3.746e-06 3.749e-06 3.751e-06
+submit/cuda/kernel	alloc_words	batch=2048	n=20	6.689e-02	6.689e-02 6.689e-02 6.689e-02 6.689e-02 6.689e-02 6.689e-02 6.689e-02 6.689e-02 6.689e-02 6.689e-02 6.689e-02 6.689e-02 6.689e-02 6.689e-02 6.689e-02 6.689e-02 6.689e-02 6.689e-02 6.689e-02 6.689e-02
+submit/cuda/kernel	wall_time	batch=2048	n=20	2.781e-06	2.777e-06 2.778e-06 2.779e-06 2.780e-06 2.781e-06 2.781e-06 2.781e-06 2.781e-06 2.781e-06 2.781e-06 2.782e-06 2.783e-06 2.783e-06 2.783e-06 2.783e-06 2.784e-06 2.784e-06 2.785e-06 2.785e-06 2.785e-06
 submit/nv/cost	alloc_words	exact	0
 submit/nv/cost	wall_time	batch=8192	n=20	7.620e-07	7.593e-07 7.609e-07 7.611e-07 7.612e-07 7.614e-07 7.615e-07 7.618e-07 7.618e-07 7.619e-07 7.620e-07 7.620e-07 7.621e-07 7.622e-07 7.623e-07 7.623e-07 7.625e-07 7.625e-07 7.625e-07 7.631e-07 7.771e-07
 submit/nv/empty	alloc_words	exact	0
 submit/nv/empty	wall_time	batch=2048	n=20	3.477e-06	3.470e-06 3.471e-06 3.472e-06 3.472e-06 3.474e-06 3.474e-06 3.474e-06 3.476e-06 3.477e-06 3.477e-06 3.477e-06 3.478e-06 3.478e-06 3.479e-06 3.480e-06 3.480e-06 3.480e-06 3.482e-06 3.483e-06 3.488e-06
+submit/nv/kernel	alloc_words	batch=4096	n=20	5.688e-02	5.688e-02 5.688e-02 5.688e-02 5.688e-02 5.688e-02 5.688e-02 5.688e-02 5.688e-02 5.688e-02 5.688e-02 5.688e-02 5.688e-02 5.688e-02 5.688e-02 5.688e-02 5.688e-02 5.688e-02 5.688e-02 5.688e-02 5.688e-02
+submit/nv/kernel	wall_time	batch=4096	n=20	1.631e-06	1.623e-06 1.630e-06 1.630e-06 1.631e-06 1.631e-06 1.631e-06 1.631e-06 1.631e-06 1.631e-06 1.631e-06 1.632e-06 1.632e-06 1.632e-06 1.632e-06 1.632e-06 1.632e-06 1.632e-06 1.633e-06 1.633e-06 1.633e-06
 
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed under load 8.6 on 10 cores
+# forced: blessed floor/metal/encode under load 12.2 on 10 cores
 
 copy/metal/borrow-to-host-256M	alloc_words	exact	0
 copy/metal/borrow-to-host-256M	wall_time	batch=1	n=20	6.561e-03	6.020e-03 6.160e-03 6.167e-03 6.202e-03 6.253e-03 6.282e-03 6.290e-03 6.339e-03 6.343e-03 6.438e-03 6.684e-03 7.248e-03 7.379e-03 7.382e-03 7.449e-03 7.521e-03 7.553e-03 7.706e-03 7.772e-03 7.986e-03
@@ -138,6 +147,8 @@ floor/host/memcpy-256M	alloc_words	exact	0
 floor/host/memcpy-256M	wall_time	batch=1	n=20	7.262e-03	6.496e-03 6.603e-03 6.628e-03 6.656e-03 6.837e-03 6.925e-03 6.939e-03 7.021e-03 7.103e-03 7.209e-03 7.314e-03 7.359e-03 7.491e-03 7.560e-03 7.999e-03 8.037e-03 8.336e-03 8.835e-03 1.229e-02 2.991e-02
 floor/metal/cost	alloc_words	exact	0
 floor/metal/cost	wall_time	batch=2048	n=20	5.021e-06	4.097e-06 4.124e-06 4.360e-06 4.489e-06 4.612e-06 4.701e-06 4.714e-06 4.757e-06 4.890e-06 5.019e-06 5.024e-06 5.036e-06 5.214e-06 5.277e-06 5.406e-06 5.409e-06 5.574e-06 6.338e-06 7.355e-06 7.579e-06
+floor/metal/encode	alloc_words	exact	0
+floor/metal/encode	wall_time	batch=2048	n=20	2.513e-06	2.311e-06 2.322e-06 2.344e-06 2.392e-06 2.413e-06 2.417e-06 2.437e-06 2.440e-06 2.471e-06 2.485e-06 2.540e-06 2.556e-06 2.660e-06 2.758e-06 3.295e-06 3.416e-06 3.458e-06 3.689e-06 3.746e-06 3.789e-06
 floor/metal/kernel-pipelined-100	alloc_words	exact	6
 floor/metal/kernel-pipelined-100	wall_time	batch=1	n=20	1.665e-02	1.006e-02 1.132e-02 1.141e-02 1.298e-02 1.389e-02 1.462e-02 1.507e-02 1.516e-02 1.548e-02 1.619e-02 1.711e-02 1.801e-02 1.804e-02 1.855e-02 1.862e-02 1.962e-02 2.074e-02 2.094e-02 2.316e-02 3.038e-02
 floor/metal/pipelined-100	alloc_words	exact	0

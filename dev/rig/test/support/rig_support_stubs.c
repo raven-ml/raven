@@ -5,10 +5,12 @@
 
 /* Polled: a test driver over host memory whose queue runs only when its
    sleep, or the test, runs it. A submission is queued with its waits, its
-   copies and its fills; running the queue runs each submission whose waits
-   hold, in order, and stores its value in the word. A sleep first runs the
-   Polled devices its first submission waits for. None of these calls
-   blocks but a full queue's submit, which waits for room. */
+   copies and its fills; running the queue runs each committed submission
+   whose waits hold, in order, and stores its value in the word. The driver
+   commits on its own once [lag] values are uncommitted, and before a
+   submit waits for room. A sleep first runs the Polled devices its first
+   submission waits for. None of these calls blocks but a full queue's
+   submit, which waits for room. */
 
 #define _GNU_SOURCE
 
@@ -126,6 +128,8 @@ struct queued {
 
 struct polled {
   _Atomic uint64_t word; /* first, alone in its page */
+  _Atomic uint64_t committed; /* the last value committed */
+  uint64_t lag;               /* the uncommitted values that commit */
   lock_t mu;
   cond_t cv;
   cond_t work;       /* signalled by a submit to a device that runs itself */
@@ -133,6 +137,7 @@ struct polled {
   int capacity;      /* parts the queue holds */
   int may_block;     /* a full queue's submit waits instead of [room] */
   int fail;          /* the next submit fails */
+  int fail_commit;   /* the next commit of uncommitted values fails */
   int held;          /* parts queued */
   int n, c;
   struct queued *q;
@@ -183,7 +188,8 @@ static int enrolled(uintptr_t at) {
   return found;
 }
 
-value rig_test_polled_new(value v_capacity, value v_may_block) {
+value rig_test_polled_new(value v_capacity, value v_may_block,
+                          value v_lag) {
   struct polled *p = aligned(page(), page() > sizeof *p ? page() : sizeof *p);
   if (p == NULL) caml_raise_out_of_memory();
   memset(p, 0, sizeof *p);
@@ -192,6 +198,7 @@ value rig_test_polled_new(value v_capacity, value v_may_block) {
   cond_init(&p->work);
   p->capacity = Int_val(v_capacity);
   p->may_block = Bool_val(v_may_block);
+  p->lag = (uint64_t)Long_val(v_lag);
   enrol(p);
   return caml_copy_nativeint((intnat)p);
 }
@@ -200,6 +207,14 @@ value rig_test_polled_fail(value v_p) {
   struct polled *p = Polled_val(v_p);
   lock(&p->mu);
   p->fail = 1;
+  unlock(&p->mu);
+  return Val_unit;
+}
+
+value rig_test_polled_fail_commit(value v_p) {
+  struct polled *p = Polled_val(v_p);
+  lock(&p->mu);
+  p->fail_commit = 1;
   unlock(&p->mu);
   return Val_unit;
 }
@@ -342,16 +357,28 @@ value rig_test_polled_queued(value v_p) {
   return Val_int(n);
 }
 
+static int wait_holds(const struct rig_wait *wait) {
+  /* An object is a 64-bit counter at its handle, as Polled's word. */
+  uint64_t w = atomic_load((_Atomic uint64_t *)(uintptr_t)wait->at);
+  return wait->kind == RIG_WORD || wait->kind == RIG_OBJECT ? w >= wait->value
+                                                            : w == wait->value;
+}
+
 static int waits_hold(struct queued *s) {
-  for (int i = 0; i < s->nwaits; i++) {
-    /* An object is a 64-bit counter at its handle, as Polled's word. */
-    int kind = s->waits[i].kind;
-    uint64_t w = atomic_load((_Atomic uint64_t *)(uintptr_t)s->waits[i].at);
-    if (kind == RIG_WORD || kind == RIG_OBJECT ? w < s->waits[i].value
-                                             : w != s->waits[i].value)
-      return 0;
-  }
+  for (int i = 0; i < s->nwaits; i++)
+    if (!wait_holds(&s->waits[i])) return 0;
   return 1;
+}
+
+static int committed(struct polled *p, struct queued *s) {
+  return s->v <= atomic_load_explicit(&p->committed, memory_order_relaxed);
+}
+
+/* Commits [p]'s values up to [v]. [p]'s lock is held. */
+static void commit_upto(struct polled *p, uint64_t v) {
+  if (v <= atomic_load_explicit(&p->committed, memory_order_relaxed)) return;
+  atomic_store_explicit(&p->committed, v, memory_order_release);
+  if (p->itself) cond_broadcast(&p->work);
 }
 
 static void run_one(struct polled *p, struct queued *s) {
@@ -378,7 +405,8 @@ static void run_one(struct polled *p, struct queued *s) {
 static int run(struct polled *p) {
   lock(&p->mu);
   int k = 0;
-  while (k < p->n && waits_hold(&p->q[k])) run_one(p, &p->q[k++]);
+  while (k < p->n && committed(p, &p->q[k]) && waits_hold(&p->q[k]))
+    run_one(p, &p->q[k++]);
   if (k > 0) memmove(p->q, p->q + k, (size_t)(p->n - k) * sizeof *p->q);
   p->n -= k;
   cond_broadcast(&p->cv);
@@ -393,23 +421,30 @@ value rig_test_polled_run(value v_p) {
 /* How deep a sleep follows Polled devices waiting on one another. */
 #define DRIVE_DEPTH 8
 
+/* What [drive] answers when nothing ran for want of a commit. */
+#define STUCK (-1)
+
 /* Runs [p]'s queue after the queues of the Polled devices whose words its
-   first submission waits for, as devices run their own work while the host
-   sleeps on another one. */
+   first submission waits for and has not seen, as devices run their own
+   work while the host sleeps on another one. Answers how many ran, or
+   STUCK if none did while that submission, or the work of one of those
+   devices it waits for, is not committed. */
 static int drive(struct polled *p, int depth) {
   struct polled *wanted[LAST];
-  int n = 0;
+  int n = 0, stuck = 0;
   lock(&p->mu);
-  if (p->n > 0 && depth > 0) {
+  if (p->n > 0) {
     struct queued *s = &p->q[0];
-    for (int i = 0; i < s->nwaits && n < LAST; i++)
-      if (enrolled((uintptr_t)s->waits[i].at))
+    stuck = !committed(p, s);
+    for (int i = 0; i < s->nwaits && n < LAST && depth > 0; i++)
+      if (enrolled((uintptr_t)s->waits[i].at) && !wait_holds(&s->waits[i]))
         wanted[n++] = (struct polled *)(uintptr_t)s->waits[i].at;
   }
   unlock(&p->mu);
   for (int i = 0; i < n; i++)
-    if (wanted[i] != p) drive(wanted[i], depth - 1);
-  return run(p);
+    if (wanted[i] != p && drive(wanted[i], depth - 1) == STUCK) stuck = 1;
+  int k = run(p);
+  return k == 0 && stuck ? STUCK : k;
 }
 
 value rig_test_polled_drive(value v_p) {
@@ -422,7 +457,7 @@ value rig_test_polled_drive(value v_p) {
 static void engine(struct polled *p) {
   for (;;) {
     lock(&p->mu);
-    while (p->n == 0) cond_wait(&p->work, &p->mu);
+    while (p->n == 0 || !committed(p, &p->q[0])) cond_wait(&p->work, &p->mu);
     unlock(&p->mu);
     if (run(p) == 0) nap();
   }
@@ -481,6 +516,7 @@ static int polled_submit(void *self, uint64_t v, const struct rig_wait *waits,
     return RIG_FAILED;
   }
   while (p->may_block && p->held + nparts > p->capacity) {
+    commit_upto(p, v - 1);
     p->blocked++;
     cond_wait(&p->cv, &p->mu);
     p->blocked--;
@@ -520,7 +556,34 @@ static int polled_submit(void *self, uint64_t v, const struct rig_wait *waits,
   if (nwaits > 0) memcpy(s->waits, waits, (size_t)nwaits * sizeof *waits);
   if (nparts > 0) memcpy(s->parts, parts, (size_t)nparts * sizeof *parts);
   p->held += nparts;
-  if (p->itself) cond_broadcast(&p->work);
+  if (v - atomic_load_explicit(&p->committed, memory_order_relaxed) >= p->lag)
+    commit_upto(p, v);
+  int committed =
+      v <= atomic_load_explicit(&p->committed, memory_order_relaxed);
+  unlock(&p->mu);
+  return committed ? RIG_COMMITTED : RIG_OK;
+}
+
+/* A commit of uncommitted values fails as [rig_test_polled_fail_commit]
+   asked, or as the hand-over does once [rig_test_polled_fail_at]'s failure
+   began, without counting a call. */
+static int polled_commit(void *self, uint64_t v, const char **failure) {
+  struct polled *p = self;
+  if (v <= atomic_load_explicit(&p->committed, memory_order_acquire))
+    return RIG_OK;
+  lock(&p->mu);
+  if (p->fail_commit) {
+    p->fail_commit = 0;
+    unlock(&p->mu);
+    *failure = "the commit failed";
+    return RIG_FAILED;
+  }
+  if (p->fail_from > 0 && p->steps >= p->fail_from) {
+    unlock(&p->mu);
+    *failure = p->why;
+    return RIG_FAILED;
+  }
+  commit_upto(p, v);
   unlock(&p->mu);
   return RIG_OK;
 }
@@ -533,6 +596,11 @@ value rig_test_polled_room(value unit) {
 value rig_test_polled_submit(value unit) {
   (void)unit;
   return caml_copy_nativeint((intnat)&polled_submit);
+}
+
+value rig_test_polled_commit(value unit) {
+  (void)unit;
+  return caml_copy_nativeint((intnat)&polled_commit);
 }
 
 value rig_test_polled_word(value v_p) {

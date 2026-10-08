@@ -94,6 +94,10 @@ val raise_lost : device -> 'a
 val submitted : device -> int
 (** {!Rig.submitted}. *)
 
+val committed : device -> int
+(** [committed d] is the last value of [d] known committed: by {!commit}, or
+    by a hand-over that answered [RIG_COMMITTED]; [0] before any. *)
+
 val stop_returned : device -> bool
 (** [stop_returned d] is [true] iff [d] is Ended, Stopped or Orphaned. *)
 
@@ -173,16 +177,35 @@ val word : device -> int
     raise {!Lost}; [0] on the host and an io device. A lost device behind a
     transport answers the last value read. *)
 
+(** What [rig_device.c]'s submit and commit answer. *)
+module Answer : sig
+  val ok : int
+  val busy : int
+  val no_room : int
+  val never : int
+  val producer_lost : int
+  val failed : int
+  val need_record : int
+end
+
+val commit : device -> int -> unit
+(** [commit d v] commits [d]'s submitted work under [d]'s turn
+    ({!Rig.Driver.commit_entry}) unless [v] is committed, waiting for the turn.
+    A commit that fails loses [d]; on a lost device it does nothing. *)
+
+val signaled : device -> int
+(** {!Rig.signaled}. *)
+
 val wait : device -> int -> unit
-(** [wait d v] blocks until [d] reached [v], then runs the {!after} functions
-    due, raising the first exception one raised once all ran. Raises
-    [Invalid_argument] if [v] exceeds [submitted d], and {!Lost} if [d] is or
-    becomes lost. *)
+(** [wait d v] commits [d]'s work if [v] is not committed, blocks until [d]
+    reached [v], then runs the {!after} functions due, raising the first
+    exception one raised once all ran. Raises [Invalid_argument] if [v] exceeds
+    [submitted d], and {!Lost} if [d] is or becomes lost. *)
 
 val wait_point : int -> unit
-(** [wait_point p] is {!wait} on [p]'s device and value, except that a point
-    that is done returns, also on a device lost since: it raises {!Lost} only if
-    [p] is not done and its device is or becomes lost. *)
+(** [wait_point p] is {!wait} on [p]'s device and value, committing as it does,
+    except that a point that is done returns, also on a device lost since: it
+    raises {!Lost} only if [p] is not done and its device is or becomes lost. *)
 
 val after : device -> int -> (unit -> unit) -> unit
 (** [after d v f] runs [f] in the first {!wait} on [d] that finds [v] reached,

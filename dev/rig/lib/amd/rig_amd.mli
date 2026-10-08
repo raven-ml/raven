@@ -307,6 +307,11 @@ val submit_entry : nativeint
 (** [submit_entry] is the address of the C function [rig_amd_submit], which
     [rig_amd.h] declares. *)
 
+val commit_entry : nativeint
+(** [commit_entry] is the address of the device's commit, in the shape
+    [rig_commit_fn] of [rig_edge.h]. Each value's hand-over writes its release
+    and answers [RIG_COMMITTED]: [commit_entry] does nothing. *)
+
 val self : t -> nativeint
 (** [self g] is the address of [g]'s state, the first argument of [rig_amd_room]
     and [rig_amd_submit]. It is valid while the process runs: a device's C state

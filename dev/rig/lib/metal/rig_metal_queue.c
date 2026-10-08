@@ -155,7 +155,7 @@ int rig_metal_submit(void *self, uint64_t v, const struct rig_wait *waits,
       why = run(d, v, parts, nparts);
     }
   }
-  if (why == NULL) return RIG_OK;
+  if (why == NULL) return RIG_COMMITTED;
   *failure = why;
   return RIG_FAILED;
 }

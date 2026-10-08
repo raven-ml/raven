@@ -66,7 +66,7 @@ struct rig_entry {
 /* A device. Made at open, never freed: other devices map its word, and its
    loss is read for the life of the process. The mutex guards [turn],
    [inside], the record and the moves of [state] but ENDED to STOPPED;
-   [state], [lost] and [submitted] are also read without it. */
+   [state], [lost], [submitted] and [committed] are also read without it. */
 struct rig_device {
   rig_mutex mu;
   rig_cond cv;
@@ -77,6 +77,7 @@ struct rig_device {
   void *self;
   rig_room_fn *room;
   rig_submit_fn *submit;
+  rig_commit_fn *commit;
   /* The timeline word, or NULL behind a transport. Once the device is
      stopped and nothing else reads the driver's word, it points to [final],
      and the driver's word is given back ([caml_rig_word_retire]). */
@@ -84,6 +85,7 @@ struct rig_device {
   _Atomic uint64_t final;
   _Atomic uint64_t seen; /* the last value a read of the word showed */
   _Atomic uint64_t submitted;
+  _Atomic uint64_t committed; /* the last value known committed */
   _Atomic int state;
   _Atomic(char *) lost;     /* NULL, or the loss's reason */
   _Atomic uint64_t reached; /* once lost, the word's value at the loss */

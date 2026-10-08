@@ -3,7 +3,8 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* Devices: the turn, the hand-over, loss, spread and the owed stop.
+/* Devices: the turn, the hand-over, the commit, loss, spread and the owed
+   stop.
 
    A device's mutex is held only for a few loads and stores, and, for a
    device whose driver never blocks, across its driver's room check and
@@ -331,12 +332,13 @@ static struct rig_device *record(value v_index, value v_name) {
 value caml_rig_device_new(value v_index, value v_name,
                                   value v_may_block, value v_self,
                                   value v_room, value v_submit,
-                                  value v_word) {
+                                  value v_commit, value v_word) {
   struct rig_device *d = record(v_index, v_name);
   d->may_block = Bool_val(v_may_block);
   d->self = (void *)Nativeint_val(v_self);
   d->room = (rig_room_fn *)Nativeint_val(v_room);
   d->submit = (rig_submit_fn *)Nativeint_val(v_submit);
+  d->commit = (rig_commit_fn *)Nativeint_val(v_commit);
   atomic_init(&d->word, (_Atomic uint64_t *)Nativeint_val(v_word));
   return Val_long((intnat)d);
 }
@@ -352,7 +354,7 @@ value caml_rig_io_new(value v_index, value v_name) {
 value caml_rig_device_new_byte(value *argv, int argn) {
   (void)argn;
   return caml_rig_device_new(argv[0], argv[1], argv[2], argv[3],
-                                     argv[4], argv[5], argv[6]);
+                                     argv[4], argv[5], argv[6], argv[7]);
 }
 
 static void put(struct rig_device *d) {
@@ -389,6 +391,12 @@ value caml_rig_set_seen(value v_d, value v) {
 value caml_rig_submitted(value v_d) {
   struct rig_device *d = Device_val(v_d);
   return Val_long((intnat)atomic_load_explicit(&d->submitted,
+                                               memory_order_acquire));
+}
+
+value caml_rig_committed(value v_d) {
+  struct rig_device *d = Device_val(v_d);
+  return Val_long((intnat)atomic_load_explicit(&d->committed,
                                                memory_order_acquire));
 }
 
@@ -773,6 +781,80 @@ value caml_rig_ensure_record(value v_d, value v_n) {
   return Val_unit;
 }
 
+/* The turn
+
+   A driver that never blocks is called under [d]'s mutex, which is then
+   the turn. One that may block is called with the mutex released and
+   [turn] set, so that waits and loss go on beside it; it is a counted
+   call. */
+
+/* Takes [d]'s mutex and, for a driver that may block, waits for its turn
+   to be free, returning to OCaml after the still interval: whether the
+   mutex is held with the turn free or [d] lost. A driver that may block
+   is waited for with the domain lock released; [*released] says whether
+   it was, for [give]. Without [wait], it takes neither when either is
+   held. */
+static int lock_turn(struct rig_device *d, int wait, int *released) {
+  if (!d->may_block) {
+    if (wait) *released = take(d);
+    else if (mutex_try(&d->mu)) *released = 0;
+    else return 0;
+    return 1;
+  }
+  caml_enter_blocking_section_no_pending();
+  *released = 1;
+  mu_lock(d);
+  /* A free turn reads no clock: the submit is on every run's path. */
+  if (wait && d->turn && !is_lost(d)) {
+    int64_t until = now_ms() + STILL_MS, left;
+    while (d->turn && !is_lost(d) && (left = until - now_ms()) > 0)
+      cv_wait_ms(d, (int)left);
+  }
+  if (!d->turn || is_lost(d)) return 1;
+  give(d, 1);
+  return 0;
+}
+
+/* Takes and gives the turn of [d], whose mutex [lock_turn] took. */
+static void begin_turn(struct rig_device *d) {
+  if (!d->may_block) return;
+  d->turn = 1;
+  d->inside++;
+  mu_unlock(d);
+}
+
+static void end_turn(struct rig_device *d) {
+  if (!d->may_block) return;
+  mu_lock(d);
+  d->turn = 0;
+  d->inside--;
+  cv_broadcast(d);
+}
+
+/* Loses [d] for its driver's failure [why]: SUBMIT_FAILED if this call
+   lost it, whose caller spreads the loss ([spread_failed]), SUBMIT_LOST if
+   it was lost already. The mutex is held. */
+static int fail_locked(struct rig_device *d, const char *why) {
+  char *copy = strdup(why);
+  if (lose_locked(d, copy != NULL ? copy : d->name, 1)) return SUBMIT_FAILED;
+  free(copy);
+  return SUBMIT_LOST;
+}
+
+/* Gives [d]'s mutex back and, if [r] is SUBMIT_FAILED, spreads the loss
+   with the domain lock released: answers [r]. */
+static int give_turn(struct rig_device *d, int released, int r) {
+  mu_unlock(d);
+  if (r == SUBMIT_FAILED) {
+    if (!released) caml_enter_blocking_section_no_pending();
+    released = 1;
+    spread(d);
+    finish(d);
+  }
+  if (released) caml_leave_blocking_section();
+  return r;
+}
+
 /* Submitting */
 
 /* Records [s]'s in-queue waits in [d]'s record, for spread, after dropping
@@ -822,7 +904,9 @@ static int admit(struct rig_device *d, struct rig_sub *s) {
                     s->handles, s->nhandles, &why);
   rig_sub_raise(s, RIG_POINT(d->index, v));
   s->v = v;
-  if (r == RIG_OK) return SUBMIT_OK;
+  if (r == RIG_COMMITTED)
+    atomic_store_explicit(&d->committed, v, memory_order_release);
+  if (r != RIG_FAILED) return SUBMIT_OK;
   s->why = why != NULL ? why : "the driver's submit failed";
   return SUBMIT_FAILED;
 }
@@ -874,57 +958,47 @@ value caml_rig_sub_give(value v_s) {
 value caml_rig_submit(value v_s) {
   struct rig_sub *s = *(struct rig_sub **)Data_custom_val(v_s);
   struct rig_device *d = s->dev;
-  int released = 0, r;
-  if (d->may_block) {
-    caml_enter_blocking_section_no_pending();
-    released = 1;
-    mu_lock(d);
-    /* A free turn reads no clock: the submit is on every run's path. */
-    if (d->turn && !is_lost(d)) {
-      int64_t until = now_ms() + STILL_MS, left;
-      while (d->turn && !is_lost(d) && (left = until - now_ms()) > 0)
-        cv_wait_ms(d, (int)left);
-    }
-    if (d->turn && !is_lost(d)) {
-      r = SUBMIT_BUSY;
-      goto out;
-    }
-  } else
-    released = take(d);
-  if (is_lost(d)) {
-    r = SUBMIT_LOST;
-    goto out;
-  }
-  r = record_waits(d, s);
-  if (r != SUBMIT_OK) goto out;
-  if (!d->may_block) r = admit(d, s);
-  else {
-    d->turn = 1;
-    d->inside++;
-    mu_unlock(d);
-    r = admit(d, s);
-    mu_lock(d);
-    d->turn = 0;
-    d->inside--;
-    cv_broadcast(d);
-  }
+  int released;
+  if (!lock_turn(d, 1, &released)) return Val_int(SUBMIT_BUSY);
+  int r = is_lost(d) ? SUBMIT_LOST : record_waits(d, s);
+  if (r != SUBMIT_OK) return Val_int(give_turn(d, released, r));
+  begin_turn(d);
+  r = admit(d, s);
+  end_turn(d);
   if (r == SUBMIT_NO_ROOM || r == SUBMIT_NEVER) d->nrecord -= s->nwaits;
-  if (r == SUBMIT_FAILED) {
-    char *why = strdup(s->why);
-    if (!lose_locked(d, why != NULL ? why : d->name, 1)) {
-      free(why);
-      r = SUBMIT_LOST;
-    }
-  } else if (r == SUBMIT_OK && is_lost(d))
-    r = SUBMIT_LOST_AFTER;
-out:
-  mu_unlock(d);
-  if (r == SUBMIT_FAILED) {
-    if (!released) caml_enter_blocking_section_no_pending();
-    released = 1;
-    spread(d);
-    finish(d);
+  if (r == SUBMIT_FAILED) r = fail_locked(d, s->why);
+  else if (r == SUBMIT_OK && is_lost(d)) r = SUBMIT_LOST_AFTER;
+  return Val_int(give_turn(d, released, r));
+}
+
+/* Committing */
+
+/* Commits [d]'s submitted work under the turn ([rig_commit_fn]), unless it
+   is committed. The mutex is held, the turn free. */
+static int commit(struct rig_device *d) {
+  uint64_t v = atomic_load(&d->submitted);
+  if (atomic_load(&d->committed) >= v) return SUBMIT_OK;
+  const char *why = NULL;
+  begin_turn(d);
+  int r = d->commit(d->self, v, &why);
+  end_turn(d);
+  if (r == RIG_OK) {
+    atomic_store_explicit(&d->committed, v, memory_order_release);
+    return SUBMIT_OK;
   }
-  if (released) caml_leave_blocking_section();
-  return Val_int(r);
+  return fail_locked(d, why != NULL ? why : "the driver's commit failed");
+}
+
+/* Commits [d]'s submitted work, waiting for the turn if [v_wait] and
+   skipping the commit if the turn is held otherwise. Answers SUBMIT_OK,
+   SUBMIT_BUSY (no commit: the turn stayed held), SUBMIT_LOST, or
+   SUBMIT_FAILED if the commit failed and lost [d]. Releases the runtime
+   while it waits for the turn and, for a driver that may block, while it
+   commits. */
+value caml_rig_commit(value v_d, value v_wait) {
+  struct rig_device *d = Device_val(v_d);
+  int released;
+  if (!lock_turn(d, Bool_val(v_wait), &released)) return Val_int(SUBMIT_BUSY);
+  int r = is_lost(d) ? SUBMIT_LOST : commit(d);
+  return Val_int(give_turn(d, released, r));
 }

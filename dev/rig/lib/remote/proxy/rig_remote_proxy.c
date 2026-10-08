@@ -207,7 +207,7 @@ static int proxy_submit(void *self, uint64_t v, const struct rig_wait *waits,
   free(locals);
 
   int r = rig_remote_send(l, frame, NULL);
-  if (r == 0) return RIG_OK;
+  if (r == 0) return RIG_COMMITTED;
   *failure = r == -3 ? "the job is closed" : why(l);
   return RIG_FAILED;
 }
@@ -284,6 +284,14 @@ value caml_rig_remote_proxy_stop(value vd) {
   return Val_unit;
 }
 
+/* Each value's hand-over sends its message: a commit does nothing. */
+static int proxy_commit(void *self, uint64_t v, const char **failure) {
+  (void)self;
+  (void)v;
+  (void)failure;
+  return RIG_OK;
+}
+
 value caml_rig_remote_proxy_room_entry(value unit) {
   (void)unit;
   return caml_copy_nativeint((intnat)&proxy_room);
@@ -292,4 +300,9 @@ value caml_rig_remote_proxy_room_entry(value unit) {
 value caml_rig_remote_proxy_submit_entry(value unit) {
   (void)unit;
   return caml_copy_nativeint((intnat)&proxy_submit);
+}
+
+value caml_rig_remote_proxy_commit_entry(value unit) {
+  (void)unit;
+  return caml_copy_nativeint((intnat)&proxy_commit);
 }

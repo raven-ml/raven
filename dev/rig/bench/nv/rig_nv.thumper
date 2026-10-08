@@ -43,6 +43,12 @@ launch/floor-1	alloc_words	exact	0
 launch/floor-1	wall_time	batch=2048	n=20	4.681e-06	4.675e-06 4.679e-06 4.679e-06 4.679e-06 4.679e-06 4.679e-06 4.680e-06 4.680e-06 4.681e-06 4.681e-06 4.681e-06 4.682e-06 4.683e-06 4.683e-06 4.684e-06 4.684e-06 4.685e-06 4.685e-06 4.686e-06 4.689e-06
 launch/floor-64	alloc_words	exact	0
 launch/floor-64	wall_time	batch=128	n=20	4.020e-05	4.018e-05 4.018e-05 4.018e-05 4.018e-05 4.018e-05 4.018e-05 4.019e-05 4.019e-05 4.019e-05 4.019e-05 4.020e-05 4.020e-05 4.020e-05 4.020e-05 4.020e-05 4.020e-05 4.021e-05 4.021e-05 4.021e-05 4.021e-05
+launch/floor-submits-64	alloc_words	exact	0
+launch/floor-submits-64	wall_time	batch=64	n=20	1.053e-04	1.051e-04 1.052e-04 1.052e-04 1.052e-04 1.052e-04 1.052e-04 1.052e-04 1.053e-04 1.053e-04 1.053e-04 1.053e-04 1.053e-04 1.053e-04 1.053e-04 1.053e-04 1.053e-04 1.053e-04 1.053e-04 1.053e-04 1.054e-04
+launch/floor-submits-64-unreleased	alloc_words	exact	0
+launch/floor-submits-64-unreleased	wall_time	batch=128	n=20	6.203e-05	6.198e-05 6.198e-05 6.198e-05 6.198e-05 6.199e-05 6.200e-05 6.201e-05 6.202e-05 6.202e-05 6.202e-05 6.203e-05 6.203e-05 6.203e-05 6.203e-05 6.203e-05 6.203e-05 6.203e-05 6.204e-05 6.205e-05 6.205e-05
+launch/submits-64	alloc_words	exact	0
+launch/submits-64	wall_time	batch=64	n=20	1.110e-04	1.109e-04 1.109e-04 1.109e-04 1.109e-04 1.109e-04 1.109e-04 1.109e-04 1.109e-04 1.109e-04 1.110e-04 1.110e-04 1.110e-04 1.110e-04 1.110e-04 1.110e-04 1.110e-04 1.110e-04 1.110e-04 1.110e-04 1.110e-04
 map-host/256MiB	alloc_words	exact	450
 map-host/256MiB	wall_time	batch=1	n=20	7.464e-03	7.411e-03 7.430e-03 7.441e-03 7.446e-03 7.451e-03 7.455e-03 7.456e-03 7.457e-03 7.459e-03 7.462e-03 7.466e-03 7.473e-03 7.473e-03 7.482e-03 7.484e-03 7.489e-03 7.500e-03 7.502e-03 7.559e-03 7.559e-03
 release/driver	alloc_words	exact	0

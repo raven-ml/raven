@@ -40,6 +40,15 @@ enum {
   no_memory
 };
 
+#ifdef __APPLE__
+
+#include "rig_metal_stubs.h"
+
+#define Device_val(v) ((struct rig_metal *)Long_val(v))
+#define Object_val(v) ((id)(intptr_t)Nativeint_val(v))
+
+static value object(id o) { return caml_copy_nativeint((intnat)o); }
+
 static value tuple(int n, value a, value b, value c) {
   CAMLparam3(a, b, c);
   CAMLlocal1(v);
@@ -49,15 +58,6 @@ static value tuple(int n, value a, value b, value c) {
   if (n > 2) Store_field(v, 2, c);
   CAMLreturn(v);
 }
-
-#ifdef __APPLE__
-
-#include "rig_metal_stubs.h"
-
-#define Device_val(v) ((struct rig_metal *)Long_val(v))
-#define Object_val(v) ((id)(intptr_t)Nativeint_val(v))
-
-static value object(id o) { return caml_copy_nativeint((intnat)o); }
 
 value caml_rig_metal_count(value unit) {
   (void)unit;
@@ -495,15 +495,31 @@ value caml_rig_metal_signaled_byte(value v_d) {
   return Val_long(caml_rig_metal_signaled(Long_val(v_d)));
 }
 
-/* The C entries room, submit and split, the first two typed as the edge
-   states. */
+/* Each value's hand-over commits its command buffer: a commit does
+   nothing. */
+static int rig_metal_commit(void *self, uint64_t v, const char **failure) {
+  (void)self;
+  (void)v;
+  (void)failure;
+  return RIG_OK;
+}
+
+/* The C entries room, submit, commit and split, the first three typed as
+   the edge states. */
 value caml_rig_metal_entries(value unit) {
   CAMLparam1(unit);
-  CAMLlocal3(room, submit, v_split);
+  CAMLlocal5(room, submit, commit, v_split, t);
   rig_room_fn *r = rig_metal_room;
   rig_submit_fn *s = rig_metal_submit;
+  rig_commit_fn *c = rig_metal_commit;
   room = caml_copy_nativeint((intnat)r);
   submit = caml_copy_nativeint((intnat)s);
+  commit = caml_copy_nativeint((intnat)c);
   v_split = caml_copy_nativeint((intnat)split);
-  CAMLreturn(tuple(3, room, submit, v_split));
+  t = caml_alloc_tuple(4);
+  Store_field(t, 0, room);
+  Store_field(t, 1, submit);
+  Store_field(t, 2, commit);
+  Store_field(t, 3, v_split);
+  CAMLreturn(t);
 }

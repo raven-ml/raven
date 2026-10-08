@@ -203,7 +203,7 @@ value rig_cuda_bench_entry_waits(value v_self, value v_v, value v_at,
                             .kind = RIG_WORD};
   const char *why = NULL;
   if (rig_cuda_submit((void *)Nativeint_val(v_self), (uint64_t)Long_val(v_v),
-                         w, n, NULL, 0, NULL, 0, &why) != RIG_OK)
+                         w, n, NULL, 0, NULL, 0, &why) == RIG_FAILED)
     caml_failwith(why);
   return Val_unit;
 }

@@ -34,7 +34,8 @@ int rig_nv_room(void *self, const struct rig_part *parts, int n);
 
 /* Writes [parts], which rig_nv_room answered RIG_FITS for with nothing
    submitted since, into the device's rings as the work of [v], the value
-   after the last one it received, and wakes the channels. It answers RIG_OK:
+   after the last one it received, and wakes the channels. It answers
+   RIG_COMMITTED:
    its stores are to this machine's memory and cannot fail. It never
    blocks. */
 int rig_nv_submit(void *self, uint64_t v, const struct rig_wait *waits,

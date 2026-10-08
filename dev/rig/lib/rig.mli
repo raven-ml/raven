@@ -50,8 +50,8 @@
 
     {1:loss Loss}
 
-    A device whose driver reports a fault, or whose hand-over fails, is
-    {e lost}, once and for good ({!Lost}); so is a device {!close} ended, and
+    A device whose driver reports a fault, or whose hand-over or commit fails,
+    is {e lost}, once and for good ({!Lost}); so is a device {!close} ended, and
     every device of a process that {!fail}ed. Work that waits in its queue on a
     lost device's unreached values is lost with it. Every later use of the
     device, of its memory, and of other memory that waits for a point the device
@@ -72,7 +72,9 @@
     every other device's last use of it is reached, and gives it back to its
     driver once its own work is done too. A {e drain} of a device takes back the
     memory of its buffers collected since, and runs the release of every hold
-    that became due ({!Hold}). {!Buffer.create}, {!Buffer.of_io} and
+    that became due ({!Hold}). A device's memory and holds return as its word
+    shows their points reached, which may be late by its driver's bound of
+    values ({!submit}). {!Buffer.create}, {!Buffer.of_io} and
     {!Buffer.copy} drain the devices they use first. An allocation of more than
     the device's {!budget} raises {!Out_of_memory} at once and keeps the cache.
     Another that the budget or the driver refuses runs rounds of reclamation for
@@ -275,16 +277,24 @@ val submitted : t -> int
 
 val signaled : t -> int
 (** [signaled d] is the last value [d]'s timeline word showed reached. Work up
-    to it completed, and its writes are visible to the caller. *)
+    to it completed, and its writes are visible to the caller. It first commits
+    [d]'s work ({!submit}) unless another call holds [d]'s turn, so that called
+    repeatedly it reaches every submitted value once its work completed. The
+    commit may block as [d]'s hand-over does ({!Driver.blocks}), and one that
+    fails loses [d]. On a lost device it only reads the word.
+
+    Raises {!Lost} if [d]'s word is read behind a transport and the read loses
+    [d]. *)
 
 val wait : t -> int -> unit
-(** [wait d v] returns once [d] reached [v]. For a driver whose host writes the
-    word ([`Host] {!Driver.completion}), or whose word the host does not
-    address, it blocks in the driver ({!Driver.sleep}) from the first read of
-    the word. For another, it spins on the word, yielding the processor and with
-    the domain lock released, and blocks in the driver between reads once the
-    word stood still for the still interval. It waits however long the work
-    runs: only [d]'s driver decides that work hung.
+(** [wait d v] returns once [d] reached [v], first committing [d]'s work if
+    [v] is not committed ({!submit}). For a driver whose host writes the word
+    ([`Host] {!Driver.completion}), or whose word the host does not address, it
+    blocks in the driver ({!Driver.sleep}) from the first read of the word. For
+    another, it spins on the word, yielding the processor and with the domain
+    lock released, and blocks in the driver between reads once the word stood
+    still for the still interval. It waits however long the work runs: only
+    [d]'s driver decides that work hung.
 
     Raises [Invalid_argument] if [v > submitted d], and {!Lost} if [d] is lost
     or is lost by the wait. *)
@@ -768,15 +778,26 @@ val submit :
       [d]'s driver waits on the producer's completion ({!Driver.waits_on}) and
       [d] maps the producer's timeline word, decided once per pair of devices,
       up to {!Driver.max_waits} waits; otherwise [submit] waits for it now,
-      holding no lock.
-    + Takes [d]'s {e turn}, the right to be [d]'s one submission between its
-      room check and its hand-over, and asks [d]'s driver for room
+      holding no lock. Either way it first commits the work of the point's
+      device, before it takes [d]'s turn.
+    + Takes [d]'s {e turn}, the right to be the one call of [d]'s room check,
+      hand-over or commit, and asks [d]'s driver for room
       ({!Driver.room_entry}). Once the parts fit, it assigns [v], one more than
-      {!submitted}[ d], hands the work over ({!Driver.submit_entry}), and raises
-      the stamps of [reads], [writes], the parts' buffers and the hold to
-      [(d, v)]. While they do not fit, it waits for [d]'s next value with the
-      turn released, and tries again. No OCaml code runs between the assignment
-      and the turn's release, so a value is handed over or [d] is lost.
+      {!submitted}[ d], hands the work over ({!Driver.submit_entry}), which
+      encodes it on [d]'s queues, and raises the stamps of [reads], [writes],
+      the parts' buffers and the hold to [(d, v)]. While they do not fit, it
+      commits [d]'s work, waits for [d]'s next value with the turn released, and
+      tries again. No OCaml code runs between the assignment and the turn's
+      release, so a value is handed over or [d] is lost.
+
+    The work runs after [d]'s earlier work without another call. [d]'s word
+    shows [v] once [v] is {e committed} and its work completed. Every wait for
+    a value of [d], on the host or in another device's queue, first commits
+    [d]'s work, so no wait waits for work that is not committed. [d]'s driver
+    also commits on its own, at least once every [k] values, [k] a bound of its
+    own ({!Driver.commit_entry}): while work is submitted the word shows each
+    value at most [k] values late, and values submitted since the last commit
+    show after the next wait for [d] or the next [k] values.
 
     It allocates nothing unless it waits.
 
@@ -973,23 +994,25 @@ end
     this library; a program passes it to {!open_}.
 
     A device's {e timeline word} is eight bytes the driver alone writes: the
-    last value [v] such that every submission up to [v] completed. It never
-    moves backwards, and work never writes it. A driver orders the work it is
-    handed on each queue in the order handed ({e prefix order}), and lets the
-    host learn that a prefix completed or that the device faulted
-    ({e observable completion}).
+    last committed value [v] ({!commit_entry}) such that every submission up to
+    [v] completed. It never moves backwards, and work never writes it. A
+    driver orders the work it is handed on each queue in the order handed
+    ({e prefix order}), and lets the host learn that a prefix completed or that
+    the device faulted ({e observable completion}).
 
-    {b Work} crosses in C only: this library calls the driver's C room check and
-    hand-over ({!room_entry}, {!submit_entry}), in the shapes [rig_edge.h]
-    states, one at a time per device, under the device's turn. A driver's own
-    OCaml forms of them, for a driver used alone, are no part of this signature.
+    {b Work} crosses in C only: this library calls the driver's C room check,
+    hand-over and commit ({!room_entry}, {!submit_entry}, {!commit_entry}), in
+    the shapes [rig_edge.h] states, one at a time per device, under the device's
+    turn. A driver's own OCaml forms of them, for a driver used alone, are no
+    part of this signature.
 
     {b Calls.} {!address}, {!handle}, {!host} and {!peer} call nothing that may
     block or fault, and this library calls them at any time. Every other call
     this library makes on a device that is not lost is {e counted}: {!stop}
     waits for none of them. {!stop} runs once, with no counted call inside, and
     after it only {!free}, {!unload}, {!signaled} and holds' releases follow. A
-    {!Fault} from a counted call, and a failed hand-over, lose the device. *)
+    {!Fault} from a counted call, and a failed hand-over or commit, lose the
+    device. *)
 module type Driver = sig
   type t
   (** The type for open devices of the driver. *)
@@ -1034,7 +1057,7 @@ module type Driver = sig
       an object of the driver's API completes, and the driver writes the word
       ([`Object h], [h] fitting in 62 bits, as it crosses the hand-over's waits
       as an integer); or the host writes it from the driver's handler or before
-      the hand-over returns ([`Host]). *)
+      the hand-over or the commit returns ([`Host]). *)
 
   val waits_on : t -> [ `Store | `Object | `Host ] -> bool
   (** [waits_on d c] is [true] iff [d]'s queues wait in the queue for a producer
@@ -1048,11 +1071,11 @@ module type Driver = sig
       accepts. *)
 
   val blocks : t -> [ `Returns | `May_block ]
-  (** [blocks d] is [`Returns] if the C room check and hand-over never block,
-      and [`May_block] if they may block on [d]'s own earlier work, on its own
-      transfers or on its library's back-pressure. A [`May_block] device's room
-      check and hand-over are counted calls: its {!stop} never runs while one
-      blocks. *)
+  (** [blocks d] is [`Returns] if the C room check, hand-over and commit never
+      block, and [`May_block] if they may block on [d]'s own earlier work, on
+      its own transfers or on its library's back-pressure. A [`May_block]
+      device's room check, hand-over and commit are counted calls: its {!stop}
+      never runs while one blocks. *)
 
   val maps_host : t -> bool
   (** [maps_host d] is [true] iff [d] maps host memory of its machine that
@@ -1155,7 +1178,8 @@ module type Driver = sig
       the latest after [still_ms] milliseconds. It may return earlier, on an
       event of other work or a timer of the driver's own: this library reads the
       word again after every return and sleeps again while it is unmoved. It
-      raises {!Fault} once the device faulted. It may run beside the hand-over.
+      raises {!Fault} once the device faulted. It may run beside the hand-over
+      and the commit.
       Counted. *)
 
   val room_entry : nativeint
@@ -1166,12 +1190,25 @@ module type Driver = sig
 
   val submit_entry : nativeint
   (** [submit_entry] is the address of [d]'s hand-over, in the shape
-      [rig_submit_fn] of [rig_edge.h]: it hands the parts to [d] as the work of
-      the value after the last one it received, after the waits and [d]'s
-      earlier work, and writes the value into the word once that work completed.
-      When it returns nothing of the value is left uncommitted; a failure loses
-      [d]. It calls no function of the OCaml runtime and reads no OCaml value.
-  *)
+      [rig_submit_fn] of [rig_edge.h]: it encodes the parts on [d]'s queues as
+      the work of the value after the last one it received, after the waits and
+      [d]'s earlier work. The work runs without another call. [d] writes the
+      value into the word once the value is committed ({!commit_entry}) and the
+      work up to it completed. When it returns, all of the value's work is on
+      [d]'s queues; a failure loses [d]. It calls no function of the OCaml
+      runtime and reads no OCaml value. *)
+
+  val commit_entry : nativeint
+  (** [commit_entry] is the address of [d]'s commit, in the shape
+      [rig_commit_fn] of [rig_edge.h]: given [v], at most the last value [d]
+      received, it makes [d] write [v] or a later value into the word once the
+      work up to it completed. Committing a committed value does nothing. A
+      hand-over that answers [RIG_COMMITTED] committed every value up to its
+      own; a driver whose hand-overs all do is never asked to commit. The
+      driver also commits on its own, at least once every [k] values it
+      receives, [k] a bound of its own, so the word shows each value at most [k]
+      values late while work is submitted. A failure loses [d]. It calls no
+      function of the OCaml runtime and reads no OCaml value. *)
 
   val self : t -> nativeint
   (** [self d] is the [self] argument of the C entries for [d], valid while the
@@ -1183,13 +1220,14 @@ module type Driver = sig
   (** [stop d] stops the lost [d] without waiting. The driver writes the last
       value its hand-over received into the word, with release order, once no
       work of [d] runs: before [stop] returns if none does, otherwise through
-      the queues' releases or its own drain. [stop] releases nothing this
-      library made: this library frees each region and unloads each image
-      itself, also after [stop]. After [stop] it calls only {!free}, {!unload}
-      and {!signaled}, and calls {!free} and {!unload} only once the word reads
-      that last value, uncounted, dropping their faults. {!free} and {!unload}
-      may come after an open of the same hardware made a new device of this
-      driver; they touch nothing of the new device. *)
+      the queues' releases or its own drain. Work [d] encoded that runs only
+      once committed, such as an open command buffer, is dropped. [stop]
+      releases nothing this library made: this library frees each region and
+      unloads each image itself, also after [stop]. After [stop] it calls only
+      {!free}, {!unload} and {!signaled}, and calls {!free} and {!unload} only
+      once the word reads that last value, uncounted, dropping their faults.
+      {!free} and {!unload} may come after an open of the same hardware made a
+      new device of this driver; they touch nothing of the new device. *)
 end
 
 (** Devices of memory reached by reading and writing.

@@ -7,10 +7,10 @@
    beside the raw Metal calls that bound it, made on a queue of their own: a
    release by a commit and a wait; a launch from an indirect command buffer by
    the same indirect command buffer and by the same dispatches encoded directly;
-   memory and images by the Metal objects they make. A row waits by spinning on
-   the word, except the rows of [sleep], which block in the driver's [sleep]
-   while spinning threads hold every core. Each case opens its device in its own
-   worker, so that no process forks after Metal started. *)
+   memory and images by the Metal objects they make. A row waits as a caller
+   does, through rig's wait; the rows of [sleep] wait while spinning threads
+   hold every core. Each case opens its device in its own worker, so that no
+   process forks after Metal started. *)
 
 module M = Rig_metal
 module S = Rig_metal_support
@@ -66,10 +66,7 @@ let prepare t parts = Rig.Submission.make ~reads:0 ~writes:0 t.d parts
 let submit t s =
   t.v <- Rig.Point.value (Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||])
 
-let wait t =
-  while M.signaled t.g < t.v do
-    Domain.cpu_relax ()
-  done
+let wait t = Rig.wait t.d t.v
 
 let run t s =
   submit t s;
@@ -149,6 +146,11 @@ let launch_rows =
       row "1" (launched 1) (fun (t, (_, s)) -> run t s);
       row "64" (launched 64) (fun (t, (_, s)) -> run t s);
       row "parts-64" (parts 64) (fun (t, (_, s)) -> run t s);
+      row "submits-64" (launched 1) (fun (t, (_, s)) ->
+          for _ = 1 to 64 do
+            submit t s
+          done;
+          wait t);
       row "floor-icb-1" (indirect 1) (fun (f, b) -> floor_execute f b 1);
       row "floor-icb-64" (indirect 64) (fun (f, b) -> floor_execute f b 64);
       row "floor-1" floor (fun f -> floor_launch f 1);
@@ -235,11 +237,12 @@ let icb_rows =
   in
   Thumper.group "icb" [ row "64" dev icb ]
 
-(* A launch waited by blocking in [sleep] from a thread of the default class,
-   while one spinning thread per core competes for the processor. On the M1 Max
-   (macOS 26) a process's waits under this load return either about 10 us or
-   about 1.4 ms after the release, the same for the whole process, whatever the
-   waiting thread's class; raw Metal's wait does the same. *)
+(* A launch waited by rig, which blocks in the driver's [sleep], from a thread
+   of the default class, while one spinning thread per core competes for the
+   processor. On the M1 Max (macOS 26) a process's waits under this load return
+   either about 10 us or about 1.4 ms after the release, the same for the whole
+   process, whatever the waiting thread's class; raw Metal's wait does the
+   same. *)
 let sleep_rows =
   let loaded setup () =
     default_class ();
@@ -247,20 +250,13 @@ let sleep_rows =
     load_start (Domain.recommended_domain_count ());
     x
   in
-  let rec sleep t =
-    let seen = M.signaled t.g in
-    if seen < t.v then begin
-      M.sleep t.g ~seen ~still_ms:1000;
-      sleep t
-    end
-  in
   let teardown _ = load_stop () in
   Thumper.group "sleep"
     [
       Thumper.bench_with_setup ~setup:(loaded stepping) ~teardown "under-load"
         (fun (t, (_, s)) ->
           submit t s;
-          sleep t);
+          wait t);
       Thumper.bench_with_setup ~setup:(loaded floor) ~teardown
         "floor-under-load" (fun f -> floor_launch f 1);
     ]

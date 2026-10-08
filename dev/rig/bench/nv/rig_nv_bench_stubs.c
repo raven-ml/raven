@@ -46,7 +46,7 @@ static void submit(const struct rig_wait *waits, int nwaits,
   if (rig_nv_room(self, parts, nparts) != RIG_FITS)
     caml_failwith("rig_nv_room: the parts do not fit");
   if (rig_nv_submit(self, ++last, waits, nwaits, parts, nparts, NULL, 0,
-                       &failure) != RIG_OK)
+                       &failure) == RIG_FAILED)
     caml_failwith(failure);
 }
 
@@ -89,6 +89,31 @@ value rig_nv_bench_entry(value v_lo, value v_hi) {
   uint32_t words[2] = {(uint32_t)Long_val(v_lo), (uint32_t)Long_val(v_hi)};
   struct rig_part p = {.queue = 0, .words = words, .n = 2};
   submit(NULL, 0, &p, 1);
+  spin();
+  return Val_unit;
+}
+
+/* The most ring entries [entries] takes. */
+#define ENTRIES 64
+
+/* The ring entries of two words each, [v_words] one after the other, on
+   COMPUTE:0: with [v_each], a submission per entry, each with its release;
+   otherwise one submission of them all, with one release. Then the wait
+   for the last. */
+value rig_nv_bench_entries(value v_words, value v_each) {
+  uint32_t words[2 * ENTRIES];
+  struct rig_part parts[ENTRIES];
+  int n = (int)Wosize_val(v_words) / 2;
+  if (n > ENTRIES) caml_invalid_argument("rig_nv_bench_entries: too many");
+  for (int i = 0; i < n; i++) {
+    words[2 * i] = (uint32_t)Long_val(Field(v_words, 2 * i));
+    words[2 * i + 1] = (uint32_t)Long_val(Field(v_words, 2 * i + 1));
+    parts[i] = (struct rig_part){.queue = 0, .words = &words[2 * i], .n = 2};
+  }
+  if (Bool_val(v_each))
+    for (int i = 0; i < n; i++) submit(NULL, 0, &parts[i], 1);
+  else
+    submit(NULL, 0, parts, n);
   spin();
   return Val_unit;
 }

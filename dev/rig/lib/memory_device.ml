@@ -8,6 +8,7 @@ external malloc : int -> int = "caml_rig_memory_alloc"
 external free : int -> unit = "caml_rig_memory_free"
 external room_entry : unit -> nativeint = "caml_rig_memory_room"
 external submit_entry : unit -> nativeint = "caml_rig_memory_submit"
+external commit_entry : unit -> nativeint = "caml_rig_memory_commit"
 external load : int -> int = "caml_rig_load64"
 
 module D = struct
@@ -53,6 +54,7 @@ module D = struct
   let blocks _ = `May_block
   let room_entry = room_entry ()
   let submit_entry = submit_entry ()
+  let commit_entry = commit_entry ()
   let self d = d.self
   let capability _ = ()
   let capability_key : capability Type.Id.t = Type.Id.make ()

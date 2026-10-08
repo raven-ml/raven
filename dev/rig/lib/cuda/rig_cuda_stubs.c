@@ -843,15 +843,24 @@ int rig_cuda_submit(void *self, uint64_t v, const struct rig_wait *waits,
     fail(d, &s, e);
     d->failed = 1;
   }
-  if (!d->failed) return RIG_OK;
+  if (!d->failed) return RIG_COMMITTED;
   *failure = d->failure;
   return RIG_FAILED;
+}
+
+/* Each value's hand-over writes its value: a commit does nothing. */
+static int rig_cuda_commit(void *self, uint64_t v, const char **failure) {
+  (void)self;
+  (void)v;
+  (void)failure;
+  return RIG_OK;
 }
 
 /* Assigned to the edge's types, so a signature that drifts from rig_edge.h
    is a compile error. */
 static rig_room_fn *const room_entry = rig_cuda_room;
 static rig_submit_fn *const submit_entry = rig_cuda_submit;
+static rig_commit_fn *const commit_entry = rig_cuda_commit;
 
 value caml_rig_cuda_room_entry(value unit) {
   (void)unit;
@@ -861,6 +870,11 @@ value caml_rig_cuda_room_entry(value unit) {
 value caml_rig_cuda_submit_entry(value unit) {
   (void)unit;
   return Val_long((intnat)submit_entry);
+}
+
+value caml_rig_cuda_commit_entry(value unit) {
+  (void)unit;
+  return Val_long((intnat)commit_entry);
 }
 
 /* Timeline */

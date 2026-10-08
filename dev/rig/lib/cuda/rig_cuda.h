@@ -27,15 +27,15 @@
    queue of the device; RIG_FITS otherwise. */
 int rig_cuda_room(void *self, const struct rig_part *parts, int n);
 
-/* Runs [parts], which rig_cuda_room answered RIG_FITS for and whose
-   [after] name only earlier parts, as the work of [v], the value after the
-   last one it received: RIG_OK, or RIG_FAILED with [*failure] set to the
-   failing step and CUDA's error. After a failure every call enqueues none of
-   its parts and answers RIG_FAILED with the first failure's message, which
-   lives as long as the process. A call that answers RIG_FAILED still writes
-   [v] after its waits, every earlier value and the work it queued, unless
-   the context failed or CUDA refuses a call that orders the write. It may
-   block while a stream is full. */
+/* Runs [parts], which rig_cuda_room answered RIG_FITS for and whose [after]
+   name only earlier parts, as the work of [v], the value after the last one
+   it received: RIG_COMMITTED, or RIG_FAILED with [*failure] set to the
+   failing step and CUDA's error. After a failure every call enqueues none
+   of its parts and answers RIG_FAILED with the first failure's message,
+   which lives as long as the process. A call that answers RIG_FAILED still
+   writes [v] after its waits, every earlier value and the work it queued,
+   unless the context failed or CUDA refuses a call that orders the write.
+   It may block while a stream is full. */
 int rig_cuda_submit(void *self, uint64_t v, const struct rig_wait *waits,
                        int nwaits, const struct rig_part *parts, int nparts,
                        const uint64_t *handles, int nhandles,

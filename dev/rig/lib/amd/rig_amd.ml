@@ -646,9 +646,11 @@ let unload g m =
 external last : int -> int = "caml_rig_amd_last" [@@noalloc]
 external room_entry : unit -> int = "caml_rig_amd_room_entry"
 external submit_entry : unit -> int = "caml_rig_amd_submit_entry"
+external commit_entry : unit -> int = "caml_rig_amd_commit_entry"
 
 let room_entry = Nativeint.of_int (room_entry ())
 let submit_entry = Nativeint.of_int (submit_entry ())
+let commit_entry = Nativeint.of_int (commit_entry ())
 
 (* Timeline *)
 

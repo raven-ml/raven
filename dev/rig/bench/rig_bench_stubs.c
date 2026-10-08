@@ -3,13 +3,14 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* The driver alone: a device's room and submit entries called directly, with
-   a fill that adds 1 to a word of its own, as rig calls them for a
-   submission of no part or of that fill, naming the fill's word or the
-   handles it was given. A submit holds the runtime, even for a driver whose
-   submit may block, except a turn's: it takes the floor's mutex as rig
-   takes a device's turn, by try-lock and otherwise with the runtime
-   released. And a host kernel's claims on its operands, from C. */
+/* The driver alone: a device's room, submit and commit entries called
+   directly, with a fill that adds 1 to a word of its own, as rig calls them
+   for a submission of no part or of that fill, naming the fill's word or
+   the handles it was given, each value committed as rig commits it. A
+   submit holds the runtime, even for a driver whose submit may block,
+   except a turn's: it takes the floor's mutex as rig takes a device's turn,
+   by try-lock and otherwise with the runtime released. And a host kernel's
+   claims on its operands, from C. */
 
 #define _GNU_SOURCE
 
@@ -53,7 +54,9 @@ struct floor {
   void *self;
   rig_room_fn *room;
   rig_submit_fn *submit;
+  rig_commit_fn *commit;
   uint64_t v;
+  uint64_t committed; /* the last value the driver reported or made committed */
   uint64_t word;
   uint64_t handle;
   uint64_t *handles; /* NULL: the fill's word, for each part */
@@ -65,12 +68,13 @@ struct floor {
 #define Floor_val(v) ((struct floor *)Nativeint_val(v))
 
 value rig_bench_floor_new(value v_self, value v_room, value v_submit,
-                                  value v_fill) {
+                          value v_commit, value v_fill) {
   struct floor *f = calloc(1, sizeof *f);
   if (f == NULL) caml_raise_out_of_memory();
   f->self = (void *)Nativeint_val(v_self);
   f->room = (rig_room_fn *)Nativeint_val(v_room);
   f->submit = (rig_submit_fn *)Nativeint_val(v_submit);
+  f->commit = (rig_commit_fn *)Nativeint_val(v_commit);
   f->fill.fill = (int (*)(void *, void *, uint64_t))Nativeint_val(v_fill);
   f->fill.arg = &f->word;
   f->handle = (uint64_t)(uintptr_t)&f->word;
@@ -143,20 +147,46 @@ value rig_bench_floor_handles(value v_f, value v_handles) {
   return Val_unit;
 }
 
-static void submit(struct floor *f, int n) {
+static void encode(struct floor *f, int n) {
   const char *failure = NULL;
   const uint64_t *h = f->handles != NULL ? f->handles : &f->handle;
   int nh = f->handles != NULL ? f->nhandles : n;
   if (f->room(f->self, &f->fill, n) != RIG_FITS) abort();
-  if (f->submit(f->self, ++f->v, NULL, 0, &f->fill, n, h, nh, &failure) !=
-      RIG_OK)
-    abort();
+  int r = f->submit(f->self, ++f->v, NULL, 0, &f->fill, n, h, nh, &failure);
+  if (r == RIG_FAILED) abort();
+  if (r == RIG_COMMITTED) f->committed = f->v;
+}
+
+/* Commits the values up to the last one handed over, unless the driver
+   reported them committed, as rig does. */
+static void commit(struct floor *f) {
+  const char *failure = NULL;
+  if (f->committed >= f->v) return;
+  if (f->commit(f->self, f->v, &failure) != RIG_OK) abort();
+  f->committed = f->v;
+}
+
+static void submit(struct floor *f, int n) {
+  encode(f, n);
+  commit(f);
 }
 
 /* Hands the device the next value with [v_parts] parts, 0 or the fill, as
-   one room check and one submit. */
+   one room check, one submit and its commit. */
 value rig_bench_floor_submit(value v_f, value v_parts) {
   submit(Floor_val(v_f), Int_val(v_parts));
+  return Val_unit;
+}
+
+/* As [rig_bench_floor_submit], without the commit. */
+value rig_bench_floor_encode(value v_f, value v_parts) {
+  encode(Floor_val(v_f), Int_val(v_parts));
+  return Val_unit;
+}
+
+/* Commits the device's values up to the last one the floor handed over. */
+value rig_bench_floor_commit(value v_f) {
+  commit(Floor_val(v_f));
   return Val_unit;
 }
 

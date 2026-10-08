@@ -35,10 +35,10 @@ int rig_amd_room(void *self, const struct rig_part *parts, int n);
 
 /* Places [parts], which rig_amd_room answered RIG_FITS for, as the work
    of [v], the value after the last one it received, and rings the queues'
-   doorbells: RIG_OK, or RIG_FAILED with [*failure] set when a fill failed
-   or the waits are more than the device holds or ones it cannot make.
-   The queues then run none of [parts], and the timeline word still reaches
-   [v]. After a failure every call answers RIG_FAILED with the first
+   doorbells: RIG_COMMITTED, or RIG_FAILED with [*failure] set when a fill
+   failed or the waits are more than the device holds or ones it cannot
+   make. The queues then run none of [parts], and the timeline word still
+   reaches [v]. After a failure every call answers RIG_FAILED with the first
    failure's message, which lives as long as the process. */
 int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
                       int nwaits, const struct rig_part *parts, int nparts,

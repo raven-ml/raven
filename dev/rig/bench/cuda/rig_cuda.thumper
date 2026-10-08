@@ -47,6 +47,8 @@ launch/graph-64	alloc_words	exact	0
 launch/graph-64	wall_time	batch=256	n=20	3.570e-05	3.567e-05 3.567e-05 3.568e-05 3.568e-05 3.568e-05 3.569e-05 3.569e-05 3.569e-05 3.569e-05 3.569e-05 3.570e-05 3.570e-05 3.570e-05 3.570e-05 3.570e-05 3.570e-05 3.570e-05 3.571e-05 3.571e-05 3.571e-05
 launch/graph-64-updated	alloc_words	exact	0
 launch/graph-64-updated	wall_time	batch=128	n=20	4.614e-05	4.612e-05 4.612e-05 4.613e-05 4.613e-05 4.613e-05 4.613e-05 4.614e-05 4.614e-05 4.614e-05 4.614e-05 4.615e-05 4.615e-05 4.616e-05 4.616e-05 4.617e-05 4.620e-05 4.622e-05 4.623e-05 4.623e-05 4.634e-05
+launch/submits-64	alloc_words	exact	0
+launch/submits-64	wall_time	batch=32	n=20	1.780e-04	1.778e-04 1.778e-04 1.778e-04 1.779e-04 1.779e-04 1.779e-04 1.779e-04 1.779e-04 1.780e-04 1.780e-04 1.780e-04 1.780e-04 1.780e-04 1.780e-04 1.780e-04 1.781e-04 1.781e-04 1.782e-04 1.782e-04 1.782e-04
 map-host/256MiB	alloc_words	exact	54
 map-host/256MiB	wall_time	batch=1	n=20	4.171e-03	4.135e-03 4.141e-03 4.142e-03 4.150e-03 4.159e-03 4.164e-03 4.164e-03 4.167e-03 4.167e-03 4.168e-03 4.174e-03 4.176e-03 4.176e-03 4.182e-03 4.186e-03 4.189e-03 4.189e-03 4.198e-03 4.212e-03 4.214e-03
 map-host/floor-256MiB	alloc_words	exact	0

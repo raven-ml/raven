@@ -315,10 +315,19 @@ value caml_rig_nv_end(value v_self) {
 
 /* The edge */
 
+/* Each value's hand-over writes its release: a commit does nothing. */
+static int rig_nv_commit(void *self, uint64_t v, const char **failure) {
+  (void)self;
+  (void)v;
+  (void)failure;
+  return RIG_OK;
+}
+
 /* Assigned to the edge's types, so a signature that drifts from rig_edge.h
    is a compile error. */
 static rig_room_fn *const room_entry = rig_nv_room;
 static rig_submit_fn *const submit_entry = rig_nv_submit;
+static rig_commit_fn *const commit_entry = rig_nv_commit;
 
 value caml_rig_nv_room_entry(value unit) {
   (void)unit;
@@ -328,4 +337,9 @@ value caml_rig_nv_room_entry(value unit) {
 value caml_rig_nv_submit_entry(value unit) {
   (void)unit;
   return Val_long((intnat)submit_entry);
+}
+
+value caml_rig_nv_commit_entry(value unit) {
+  (void)unit;
+  return Val_long((intnat)commit_entry);
 }

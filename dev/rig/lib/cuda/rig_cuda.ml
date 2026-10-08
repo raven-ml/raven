@@ -510,9 +510,11 @@ let unload g (m : image) =
 
 external room_entry : unit -> int = "caml_rig_cuda_room_entry"
 external submit_entry : unit -> int = "caml_rig_cuda_submit_entry"
+external commit_entry : unit -> int = "caml_rig_cuda_commit_entry"
 
 let room_entry = Nativeint.of_int (room_entry ())
 let submit_entry = Nativeint.of_int (submit_entry ())
+let commit_entry = Nativeint.of_int (commit_entry ())
 
 (* Timeline *)
 

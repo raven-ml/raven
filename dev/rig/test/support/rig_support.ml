@@ -3,8 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-external polled_new : int -> bool -> nativeint = "rig_test_polled_new"
+external polled_new : int -> bool -> int -> nativeint = "rig_test_polled_new"
 external polled_fail : nativeint -> unit = "rig_test_polled_fail"
+external polled_fail_commit : nativeint -> unit = "rig_test_polled_fail_commit"
 external polled_run : nativeint -> int = "rig_test_polled_run"
 external polled_drive : nativeint -> int = "rig_test_polled_drive"
 external polled_start : nativeint -> unit = "rig_test_polled_start"
@@ -31,6 +32,7 @@ external rig_word : unit -> int = "rig_test_rig_word"
 external rig_object : unit -> int = "rig_test_rig_object"
 external polled_room : unit -> nativeint = "rig_test_polled_room"
 external polled_submit : unit -> nativeint = "rig_test_polled_submit"
+external polled_commit : unit -> nativeint = "rig_test_polled_commit"
 external polled_word : nativeint -> int = "rig_test_polled_word"
 external polled_stop : nativeint -> unit = "rig_test_polled_stop"
 external polled_set_word : nativeint -> int -> unit = "rig_test_polled_set_word"
@@ -250,13 +252,15 @@ module Driver = struct
         `Stall
     | None -> `Run
 
-  let sleep d ~seen:_ ~still_ms =
+  let sleep d ~seen ~still_ms =
     note d "sleep";
     match Mutex.protect d.lock (fun () -> next d) with
     | `Fault why -> raise (Fault why)
     | `Interrupt -> interrupt ()
     | `Stall -> Thread.delay (float still_ms /. 1000.)
-    | `Run -> ignore (polled_drive d.c)
+    | `Run ->
+        if polled_drive d.c < 0 && polled_word d.c = seen then
+          failwith "Polled: nothing committed"
 
   let completion d = fact d (if d.objects then `Object d.c else `Host)
   let waits_on d c = fact d (List.mem c d.waits)
@@ -264,6 +268,7 @@ module Driver = struct
   let blocks d = fact d (if d.may_block then `May_block else `Returns)
   let room_entry = polled_room ()
   let submit_entry = polled_submit ()
+  let commit_entry = polled_commit ()
   let self d = d.c
   let capability d = fact d ()
   let capability_key : capability Type.Id.t = Type.Id.make ()
@@ -281,7 +286,9 @@ module Polled = struct
       ?(transport = false) ?(peers = true) ?(maps_host = true)
       ?(budget = 1 lsl 30) ?(memory = max_int) ?(window = max_int)
       ?(may_block = false) ?(completion = `Host) ?(waits_on = [])
-      ?(max_waits = max_int) ?(answer = `Stopped) ?(runs = `When_slept) () =
+      ?(max_waits = max_int) ?(answer = `Stopped) ?(runs = `When_slept)
+      ?(lag = 1) () =
+    if lag < 1 then invalid_arg "Polled.make: lag is below 1";
     let limits = function
       | `Device -> memory
       | `Mapped -> window
@@ -289,7 +296,7 @@ module Polled = struct
     in
     let d =
       {
-        c = polled_new capacity may_block;
+        c = polled_new capacity may_block lag;
         copies;
         host_visible;
         transport;
@@ -324,11 +331,11 @@ module Polled = struct
 
   let open_ ?capacity ?copies ?host_visible ?transport ?peers ?maps_host ?budget
       ?memory ?window ?may_block ?completion ?waits_on ?max_waits ?answer ?runs
-      name =
+      ?lag name =
     let p =
       make ?capacity ?copies ?host_visible ?transport ?peers ?maps_host ?budget
-        ?memory ?window ?may_block ?completion ?waits_on ?max_waits ?answer ?runs
-        ()
+        ?memory ?window ?may_block ?completion ?waits_on ?max_waits ?answer
+        ?runs ?lag ()
     in
     match Rig.open_ (module Driver) ~name (fun () -> Ok p) with
     | Ok d -> (d, p)
@@ -338,6 +345,7 @@ module Polled = struct
   let queued d = polled_queued d.c
   let submits d = polled_submits d.c
   let fail d = polled_fail d.c
+  let fail_commit d = polled_fail_commit d.c
   let fault d why = Mutex.protect d.lock (fun () -> d.fault <- Some why)
 
   let fail_at d n how =

@@ -5,6 +5,7 @@
   test_submit
   test_loss
   test_turn
+  test_commit
   test_fork
   test_fail
   test_hold
@@ -20,6 +21,7 @@
   test_submit
   test_loss
   test_turn
+  test_commit
   test_fork
   test_fail
   test_hold

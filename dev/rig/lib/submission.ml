@@ -277,12 +277,6 @@ let pair d p =
 
 (* Submit *)
 
-let ok = 0
-let busy = 1
-let no_room = 2
-let never = 3
-let producer_lost = 6
-let need_record = 8
 let fn = "submit"
 
 (* Checks a part's buffers: live and, once a hold exists, in no hold but the
@@ -340,8 +334,8 @@ let name_one s held (access : access) i k b =
   sub_slot s.c k e.stamps b.mem.handle
 
 (* Waits on the host for the foreign points [s]'s device cannot wait for in its
-   queue, or that its queue has no room for, adds the others to [s]'s waits, and
-   is their number. *)
+   queue, or that its queue has no room for, adds the others to [s]'s waits
+   after committing their producers' work, and is their number. *)
 let rec wait_points s n i count =
   if i = n then count
   else
@@ -361,6 +355,7 @@ let rec wait_points s n i count =
         wait_points s n (i + 1) count
       end
       else begin
+        Dev.commit producer v;
         let kind =
           match producer.completion with
           | Object _ -> rig_object
@@ -374,24 +369,24 @@ let rec hand_over s nwaits =
   let d = s.dev in
   let r = c_submit s.c in
   Dev.run_owed ();
-  if r = ok then Point.make d.index (sub_value s.c)
-  else if r = busy then hand_over s nwaits
-  else if r = no_room then begin
+  if r = Dev.Answer.ok then Point.make d.index (sub_value s.c)
+  else if r = Dev.Answer.busy then hand_over s nwaits
+  else if r = Dev.Answer.no_room then begin
     let at = sub_no_room_at s.c in
     let w = Dev.word d in
     if w < at then Dev.wait d (w + 1);
     hand_over s nwaits
   end
-  else if r = need_record then begin
+  else if r = Dev.Answer.need_record then begin
     ensure_record d.c nwaits;
     hand_over s nwaits
   end
-  else if r = never then
+  else if r = Dev.Answer.never then
     invalid_argf
       "Rig.%s: the parts never fit %s's queues, or name work its driver does \
        not run"
       fn d.name
-  else if r = producer_lost then
+  else if r = Dev.Answer.producer_lost then
     Dev.raise_lost (Dev.of_index (sub_producer s.c))
   else Dev.raise_lost d
 

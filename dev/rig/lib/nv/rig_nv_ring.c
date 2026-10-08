@@ -330,5 +330,5 @@ int rig_nv_submit(void *self, uint64_t v, const struct rig_wait *waits,
   for (int q = 0; q < CHANNELS; q++)
     if (used[q]) *d->doorbell = d->ch[q].token;
   atomic_store_explicit(&d->last, v, memory_order_release);
-  return RIG_OK;
+  return RIG_COMMITTED;
 }

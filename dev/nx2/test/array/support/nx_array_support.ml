@@ -76,6 +76,7 @@ external late_publish : nativeint -> unit = "nx_array_support_late_publish"
 external late_signaled : nativeint -> int = "nx_array_support_late_signaled"
 external late_room : unit -> nativeint = "nx_array_support_late_room"
 external late_submit : unit -> nativeint = "nx_array_support_late_submit"
+external late_commit : unit -> nativeint = "nx_array_support_late_commit"
 external malloc : int -> int = "nx_array_support_malloc"
 external free : int -> unit = "nx_array_support_free"
 external store_fill : unit -> nativeint = "nx_array_support_store"
@@ -126,6 +127,7 @@ module Driver = struct
 
   let room_entry = late_room ()
   let submit_entry = late_submit ()
+  let commit_entry = late_commit ()
   let self d = d.self
   let stop d = late_publish d.self
 end

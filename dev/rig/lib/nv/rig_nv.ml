@@ -167,6 +167,9 @@ external room_entry_address : unit -> int = "caml_rig_nv_room_entry" [@@noalloc]
 external submit_entry_address : unit -> int = "caml_rig_nv_submit_entry"
 [@@noalloc]
 
+external commit_entry_address : unit -> int = "caml_rig_nv_commit_entry"
+[@@noalloc]
+
 (* RM parameters *)
 
 external get16 : params -> int -> int = "%caml_bigstring_get16"
@@ -730,6 +733,7 @@ let unload (T d) c =
 
 let room_entry = Nativeint.of_int (room_entry_address ())
 let submit_entry = Nativeint.of_int (submit_entry_address ())
+let commit_entry = Nativeint.of_int (commit_entry_address ())
 
 (* Timeline *)
 

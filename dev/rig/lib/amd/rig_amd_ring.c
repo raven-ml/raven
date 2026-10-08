@@ -497,5 +497,5 @@ int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
   hand_over(&s);
   for (int i = 0; i < s.nsignalled; i++) d->slot_last[s.slot[i]] = v;
   atomic_store_explicit(&d->last, v, memory_order_release);
-  return RIG_OK;
+  return RIG_COMMITTED;
 }

@@ -312,7 +312,7 @@ value rig_amd_test_submit(value v_entry, value v_self, value v_v,
                  (uint64_t)Long_val(v_v), w, (int)(Wosize_val(v_waits) / 2), p,
                  (int)Wosize_val(v_parts), NULL, 0, &failure);
   free(mem);
-  if (r == RIG_OK) CAMLreturn(Val_none);
+  if (r != RIG_FAILED) CAMLreturn(Val_none);
   v_why = caml_copy_string(failure ? failure : "");
   CAMLreturn(caml_alloc_some(v_why));
 }

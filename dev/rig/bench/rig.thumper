@@ -62,7 +62,7 @@ floor/polled/pipelined-100	wall_time	batch=2048	n=20	3.189e-06	3.185e-06 3.186e-
 floor/polled/release	alloc_words	exact	0
 floor/polled/release	wall_time	batch=262144	n=20	2.383e-08	2.369e-08 2.369e-08 2.370e-08 2.373e-08 2.373e-08 2.375e-08 2.376e-08 2.377e-08 2.378e-08 2.382e-08 2.384e-08 2.387e-08 2.393e-08 2.393e-08 2.397e-08 2.406e-08 2.422e-08 2.439e-08 2.471e-08 2.502e-08
 floor/polled/run	alloc_words	exact	0
-floor/polled/run	wall_time	batch=262144	n=20	3.200e-08	3.197e-08 3.197e-08 3.198e-08 3.198e-08 3.198e-08 3.198e-08 3.198e-08 3.199e-08 3.199e-08 3.200e-08 3.200e-08 3.200e-08 3.200e-08 3.200e-08 3.203e-08 3.203e-08 3.204e-08 3.205e-08 3.206e-08 3.210e-08
+floor/polled/run	wall_time	batch=262144	n=20	3.353e-08	3.347e-08 3.348e-08 3.349e-08 3.349e-08 3.349e-08 3.350e-08 3.351e-08 3.352e-08 3.352e-08 3.353e-08 3.353e-08 3.353e-08 3.354e-08 3.354e-08 3.355e-08 3.356e-08 3.356e-08 3.356e-08 3.356e-08 3.363e-08
 floor/polled/two-domains	alloc_words	exact	0
 floor/polled/two-domains	wall_time	batch=16384	n=20	3.708e-07	3.536e-07 3.548e-07 3.571e-07 3.593e-07 3.627e-07 3.637e-07 3.646e-07 3.651e-07 3.688e-07 3.695e-07 3.721e-07 3.722e-07 3.735e-07 3.754e-07 3.756e-07 3.761e-07 3.775e-07 3.789e-07 3.884e-07 3.994e-07
 floor/polled/two-domains-turn	alloc_words	exact	0

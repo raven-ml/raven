@@ -21,6 +21,7 @@ external c_new :
   nativeint ->
   nativeint ->
   nativeint ->
+  nativeint ->
   int = "caml_rig_device_new_byte" "caml_rig_device_new"
 
 external c_io_new : int -> string -> int = "caml_rig_io_new"
@@ -29,6 +30,8 @@ external c_publish : int -> unit = "caml_rig_publish"
 external c_word : int -> int = "caml_rig_word" [@@noalloc]
 external c_set_seen : int -> int -> unit = "caml_rig_set_seen" [@@noalloc]
 external c_submitted : int -> int = "caml_rig_submitted" [@@noalloc]
+external c_committed : int -> int = "caml_rig_committed" [@@noalloc]
+external c_commit : int -> bool -> int = "caml_rig_commit"
 external c_state : int -> int = "caml_rig_state" [@@noalloc]
 external c_done : int -> bool = "caml_rig_done" [@@noalloc]
 external c_why : int -> string = "caml_rig_why"
@@ -163,6 +166,7 @@ let orphaned d = c_state d.c = orphaned_state
 let lost d = if is_lost d then Some (c_why d.c) else None
 let raise_lost d = raise (Lost (d, c_why d.c))
 let submitted d = c_submitted d.c
+let committed d = c_committed d.c
 let machines : (string, device) Hashtbl.t = Hashtbl.create 4
 
 (* The machines whose host an open is making, by the host's full name. *)
@@ -309,6 +313,31 @@ let sleep d ~seen ~still_ms =
 
 let now_ms () = Prof.now () / 1_000_000
 
+module Answer = struct
+  let ok = 0
+  let busy = 1
+  let no_room = 2
+  let never = 3
+  let producer_lost = 6
+  let failed = 7
+  let need_record = 8
+end
+
+(* Commits [d]'s submitted work if [d]'s turn frees within the still interval:
+   whether it did, or found [d] lost. A commit that fails has lost [d], whose
+   stop is then owed. *)
+let commit_once d =
+  let r = c_commit d.c true in
+  if r = Answer.failed then run_owed ();
+  r <> Answer.busy
+
+let rec commit d v = if committed d < v && not (commit_once d) then commit d v
+
+let signaled d =
+  if (not (is_lost d)) && committed d < submitted d then
+    if c_commit d.c false = Answer.failed then run_owed ();
+  word d
+
 (* Runs the functions registered on [d]'s values up to [w], re-raising the first
    exception one raised once all ran. *)
 let run_afters d w =
@@ -337,12 +366,16 @@ let look_at_producers d =
     (c_producers d.c)
 
 (* Waits for [d]'s value [v], the word having read [seen] since [since]: the
-   word once it reads [v] or [d] is lost. Top level, so a wait that finds its
-   value reached allocates nothing. *)
+   word once it reads [v] or [d] is lost. Until [v] is committed, each round
+   commits [d]'s work unless another holds [d]'s turn throughout the still
+   interval, such as a submit blocked in its driver, whose earlier work runs
+   without another call, so the turn frees and a later round commits. Top
+   level, so a wait that finds its value reached allocates nothing. *)
 let rec wait_from d v seen since =
   let w = word d in
   if w >= v || is_lost d then w
   else begin
+    if committed d < v then ignore (commit_once d : bool);
     let now = now_ms () in
     let since = if w <> seen then now else since in
     let still = now - since in
@@ -546,7 +579,7 @@ let driver_device (type a) (module D : Sigs.Driver with type t = a) (h : a)
   let capability = Capability (D.capability_key, D.capability h) in
   let c =
     c_new index name blocks (D.self h) D.room_entry D.submit_entry
-      (Nativeint.of_int word)
+      D.commit_entry (Nativeint.of_int word)
   in
   let d =
     make_device ~index ~name ~machine

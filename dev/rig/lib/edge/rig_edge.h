@@ -5,12 +5,12 @@
 
 /* Handing work to a device from C.
 
-   A device's driver exports two functions in the shapes rig_room_fn and
-   rig_submit_fn, and the caller that holds its submissions in C calls them
-   with the structures below. [self] is the driver's state for one device.
-   Both functions are called one at a time per device, the room check
-   before its submission, without the OCaml runtime: they call no function
-   of it and read no OCaml value.
+   A device's driver exports three functions in the shapes rig_room_fn,
+   rig_submit_fn and rig_commit_fn, and the caller that holds its
+   submissions in C calls them with the structures below. [self] is the
+   driver's state for one device. The functions are called one at a time
+   per device, the room check before its submission, without the OCaml
+   runtime: they call no function of it and read no OCaml value.
 
    A submission is the work of one value [v] of the device's timeline: an
    array of parts, each on one of the device's queues, and the waits on
@@ -27,9 +27,9 @@
    device's empty queues. */
 enum { RIG_FITS, RIG_LATER, RIG_NEVER };
 
-/* What a submission answers: handed to the device; failed, and the device
-   is lost. */
-enum { RIG_OK, RIG_FAILED };
+/* What a submission and a commit answer: done; failed, and the device is
+   lost; and, for a submission, done with every value up to it committed. */
+enum { RIG_OK, RIG_FAILED, RIG_COMMITTED };
 
 /* A wait's kinds: the 64-bit word at the mapped address [at] holds at
    least [value]; [at] is an object of the driver that reaches [value]. */
@@ -75,15 +75,25 @@ struct rig_part {
 /* Answers RIG_FITS, RIG_LATER or RIG_NEVER for the [n] parts at [parts]. */
 typedef int rig_room_fn(void *self, const struct rig_part *parts, int n);
 
-/* Hands [parts] to the device as the work of [v], the value after the last
-   one it received, which starts after [waits]. [handles] lists [self]'s
-   own memory the work uses, for a driver whose submissions name it; a
-   copy's side that [copy_local] names is not in it. Answers RIG_OK, or
-   RIG_FAILED with [*failure] set to the driver's message, which lives as
-   long as the device. */
+/* Encodes [parts] on the device's queues as the work of [v], the value
+   after the last one it received, which starts after [waits] and runs
+   without another call. The word shows [v] once [v] is committed and its
+   work completed. [handles] lists [self]'s own memory the work uses, for a
+   driver whose submissions name it; a copy's side that [copy_local] names
+   is not in it. Answers RIG_COMMITTED if every value up to [v] is
+   committed, RIG_OK if [v] is encoded only, or RIG_FAILED with [*failure]
+   set to the driver's message, which lives as long as the device. */
 typedef int rig_submit_fn(void *self, uint64_t v, const struct rig_wait *waits,
                          int nwaits, const struct rig_part *parts, int nparts,
                          const uint64_t *handles, int nhandles,
                          const char **failure);
+
+/* Commits the device's work up to [v], at most the last value it received:
+   the device writes [v] or a later value into the word once the work up to
+   it completed. Committing a committed value does nothing. The driver also
+   commits on its own, at least once every [k] values it receives, [k] a
+   bound of its own. Answers RIG_OK, or RIG_FAILED with [*failure] set as a
+   submission's. */
+typedef int rig_commit_fn(void *self, uint64_t v, const char **failure);
 
 #endif

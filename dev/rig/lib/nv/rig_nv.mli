@@ -300,6 +300,11 @@ val submit_entry : nativeint
     until the word holds at least [w], compared circularly: [x] is at least [w]
     iff [x - w], as a signed 64-bit integer, is not negative. *)
 
+val commit_entry : nativeint
+(** [commit_entry] is the address of the device's commit, in the shape
+    [rig_commit_fn] of [rig_edge.h]. Each value's hand-over writes its release
+    and answers [RIG_COMMITTED]: [commit_entry] does nothing. *)
+
 val self : t -> nativeint
 (** [self g] is the address of [g]'s state, the [self] argument of [rig_nv_room]
     and [rig_nv_submit] for [g]. It is valid while the process runs: the state

@@ -103,6 +103,14 @@ static int memory_submit(void *self, uint64_t v, const struct rig_wait *waits,
               (size_t)p->copy_bytes);
   }
   atomic_store_explicit(&m->word, v, memory_order_release);
+  return RIG_COMMITTED;
+}
+
+/* The work ran at its hand-over: nothing is left to commit. */
+static int memory_commit(void *self, uint64_t v, const char **failure) {
+  (void)self;
+  (void)v;
+  (void)failure;
   return RIG_OK;
 }
 
@@ -114,6 +122,11 @@ value caml_rig_memory_room(value unit) {
 value caml_rig_memory_submit(value unit) {
   (void)unit;
   return caml_copy_nativeint((intnat)&memory_submit);
+}
+
+value caml_rig_memory_commit(value unit) {
+  (void)unit;
+  return caml_copy_nativeint((intnat)&memory_commit);
 }
 
 value caml_rig_load64(value v_addr) {

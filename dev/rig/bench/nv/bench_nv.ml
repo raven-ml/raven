@@ -23,6 +23,7 @@ external floor_release : int -> unit = "rig_nv_bench_release"
 external floor_switch : unit -> unit = "rig_nv_bench_switch"
 external floor_waits : int -> int -> unit = "rig_nv_bench_waits"
 external floor_entry : int -> int -> unit = "rig_nv_bench_entry"
+external floor_entries : int array -> bool -> unit = "rig_nv_bench_entries"
 external floor_copy : int -> int -> int -> unit = "rig_nv_bench_copy"
 
 let kib = 1024
@@ -197,6 +198,26 @@ let launch_rows =
     (floor t, p, e)
   in
   let floor_run (_, _, e) = floor_entry e.(0) e.(1) in
+  (* The launches of [64-parts] as 64 submissions, and from C as a submission
+     and a release each, or one submission and one release for them all: the
+     floors' gap bounds what a release and a doorbell cost. *)
+  let submitting () =
+    let t = dev () in
+    let p, es = launches t 64 `Apart in
+    let one e = submission t [| part "COMPUTE:0" (Words (entry_words e)) |] in
+    (t, p, Array.map one es)
+  in
+  let submit_all (t, _, ss) =
+    Array.iter
+      (fun s -> ignore (Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||]))
+      ss;
+    Rig.wait t.d (Rig.submitted t.d)
+  in
+  let floor_apart () =
+    let t = dev () in
+    let p, es = launches t 64 `Apart in
+    (floor t, p, Array.concat (Array.to_list es))
+  in
   Thumper.group "launch"
     [
       row "1" (launching 1) (fun (t, _, _, s) -> run t s);
@@ -204,6 +225,11 @@ let launch_rows =
       row "64" (launching 64) (fun (t, _, _, s) -> run t s);
       row "floor-64" (floor_launching 64) floor_run;
       row "64-parts" (launching_as `Apart 64) (fun (t, _, _, s) -> run t s);
+      row "submits-64" submitting submit_all;
+      row "floor-submits-64" floor_apart (fun (_, _, ws) ->
+          floor_entries ws true);
+      row "floor-submits-64-unreleased" floor_apart (fun (_, _, ws) ->
+          floor_entries ws false);
       row "4096-parts" (launching_as `Apart 4096) (fun (t, _, _, s) -> run t s);
     ]
 

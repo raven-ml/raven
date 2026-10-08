@@ -22,7 +22,7 @@ module Claim = Rig.Claim
 let strf = Printf.sprintf
 
 external floor_new :
-  nativeint -> nativeint -> nativeint -> nativeint -> nativeint
+  nativeint -> nativeint -> nativeint -> nativeint -> nativeint -> nativeint
   = "rig_bench_floor_new"
 
 external floor_submit : nativeint -> int -> unit = "rig_bench_floor_submit"
@@ -373,7 +373,10 @@ type floor = {
 
 let floor () =
   let fp = P.make () in
-  let f = floor_new (P.self fp) P.room_entry P.submit_entry Support.bump in
+  let f =
+    floor_new (P.self fp) P.room_entry P.submit_entry P.commit_entry
+      Support.bump
+  in
   let timeline = Option.get (P.address (P.word fp)) in
   { f; fp; word = B.address (B.create Rig.host 8); timeline; k = 0 }
 
@@ -397,7 +400,9 @@ let floor_contended ~share () =
   let other =
     {
       t with
-      f = floor_new (P.self t.fp) P.room_entry P.submit_entry Support.bump;
+      f =
+        floor_new (P.self t.fp) P.room_entry P.submit_entry P.commit_entry
+          Support.bump;
       k = 0;
     }
   in
