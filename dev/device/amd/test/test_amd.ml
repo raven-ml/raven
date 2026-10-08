@@ -71,13 +71,18 @@ let work =
 
 (* Kernels *)
 
-let binary =
-  lazy
-    (In_channel.with_open_bin "fixtures/kernels_gfx1201.hsaco"
-       In_channel.input_all)
+(* A fixture's code object: its bytes and its description. *)
+type fixture = { binary : string; co : Abi.Code_object.t }
 
-let code_object =
-  lazy (Result.get_ok (Abi.Code_object.of_string (Lazy.force binary)))
+let fixture name =
+  lazy
+    (let binary =
+       In_channel.with_open_bin ("fixtures/" ^ name) In_channel.input_all
+     in
+     { binary; co = Result.get_ok (Abi.Code_object.of_string binary) })
+
+let kernels = fixture "kernels_gfx1201.hsaco"
+let other = fixture "other_gfx1201.hsaco"
 
 let words p =
   let s = Abi.Packet.encode Int64.of_int p in
@@ -102,8 +107,8 @@ let go r ps =
 
 (* [m]'s image, and the part that copies it into its memory from staging memory
    the host wrote. *)
-let image r =
-  match A.image r.g (Lazy.force binary) with
+let image ?(of_ = kernels) r =
+  match A.image r.g (Lazy.force of_).binary with
   | Ok (m, Some (code, bytes)) ->
       let n = String.length bytes in
       let staging = Option.get (A.alloc r.g `Pinned n) in
@@ -113,9 +118,9 @@ let image r =
   | Error why -> fail why
 
 (* A dispatch of [name] over [groups] workgroups of 64, its arguments [args]. *)
-let dispatch r m name ~args ~groups =
+let dispatch ?(of_ = kernels) r m name ~args ~groups =
   let gpu = (A.capability r.g).gpu in
-  let k = Option.get (Abi.Code_object.kernel (Lazy.force code_object) name) in
+  let k = Option.get (Abi.Code_object.kernel (Lazy.force of_).co name) in
   let base = Option.get (A.entry m name) - k.descriptor in
   words
     (Pm4.run gpu
@@ -147,6 +152,43 @@ let kernels =
           let ws = dispatch r m "double_index" ~args:(address args) ~groups:4 in
           go r [| A.part g ~queue:"COMPUTE:0" (`Words ws) |];
           equal string ~msg:"out" (doubled 256) (S.read (host out) (4 * 256)));
+      test "code placed where other code ran runs as placed" (fun () ->
+          S.with_gpu @@ fun g ->
+          let r = device g in
+          let out = Option.get (A.alloc g `Pinned (4 * 64)) in
+          let args = arguments r [ address out ] in
+          let run ?of_ () =
+            let m, upload = image ?of_ r in
+            go r [| upload |];
+            let ws =
+              dispatch ?of_ r m "double_index" ~args:(address args) ~groups:1
+            in
+            go r [| A.part g ~queue:"COMPUTE:0" (`Words ws) |];
+            let at = Option.get (A.entry m "double_index") in
+            A.unload g m;
+            (at, S.read (host out) (4 * 64))
+          in
+          let tripled =
+            String.concat ""
+              (List.init 64 (fun i ->
+                   let b = Bytes.create 4 in
+                   Bytes.set_int32_le b 0 (Int32.of_int (3 * i));
+                   Bytes.to_string b))
+          in
+          let first, doubled_out = run () in
+          equal string ~msg:"the first object's" (doubled 64) doubled_out;
+          let second, tripled_out = run ~of_:other () in
+          equal string ~msg:"the second object's" tripled tripled_out;
+          let base f m =
+            m
+            - (Option.get
+                 (Abi.Code_object.kernel (Lazy.force f).co "double_index"))
+                .descriptor
+          in
+          (* The case an instruction cache could serve stale: the system's
+             addresses for the second object are the first's. *)
+          if base kernels first <> base other second then
+            skip ~reason:"the second object got other addresses" ());
       test "parts on two queues run in their after order" (fun () ->
           S.with_gpu @@ fun g ->
           let r = device g in
