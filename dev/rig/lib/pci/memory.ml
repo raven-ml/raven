@@ -144,9 +144,9 @@ let alloc ?(uncached = false) m kind n =
   mem
 
 (* Removes [mem] from [table], or refuses it. *)
-let forget table fn mem =
+let held table fn mem =
   match Hashtbl.find_opt table mem.mapping.va with
-  | Some mem' when mem' == mem -> Hashtbl.remove table mem.mapping.va
+  | Some mem' when mem' == mem -> ()
   | _ ->
       invalid_argf
         "Memory.%s: the memory at 0x%x is not this GPU's, or was given back" fn
@@ -155,11 +155,14 @@ let forget table fn mem =
 (* Once the function is released the GPU may be another instance's: only system
    memory, pins and addresses are given back, and no entry is written. The
    addresses go back last: the vendor's GPUs share the space, and another GPU's
-   system memory there would be mapped over this one's. *)
+   system memory there would be mapped over this one's. The tables are cleared
+   before anything is given back: if their format raises, the memory stays held,
+   and a later free gives all of it back. *)
 let free m mem =
-  forget m.allocated "free" mem;
+  held m.allocated "free" mem;
   let map = mem.mapping and live = not (Function.released m.fn) in
   if live then Page_table.unmap m.tables ~va:map.va map.size;
+  Hashtbl.remove m.allocated map.va;
   (match (map.target, mem.host) with
   | System, Some view -> Function.free_dma m.fn view
   | _, Some view when live -> Function.unmap m.fn view
@@ -250,10 +253,11 @@ let map_peer m ~owner mem =
     | None -> Error no_room
 
 let unmap m mem =
-  forget m.mapped "unmap" mem;
+  held m.mapped "unmap" mem;
   let map = mem.mapping in
   if not (Function.released m.fn) then
     Page_table.unmap m.tables ~va:map.va map.size;
+  Hashtbl.remove m.mapped map.va;
   match mem.source with
   | Borrowed a ->
       Function.unpin m.fn a map.size;

@@ -23,7 +23,9 @@
     written by this one.
 
     A call whose page tables' format raises ({!Page_table.map}) raises the same
-    exception, having given back what it took.
+    exception, having given back what it took. A {!free} or {!unmap} whose
+    format raises leaves the memory held, all of it: once the GPU is released,
+    the same call gives it back without touching the tables.
 
     The GPU's owner serializes calls on one GPU. *)
 

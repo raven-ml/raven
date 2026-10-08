@@ -575,6 +575,36 @@ let raising armed (f : Page_table.format) =
         f.set_page ~level ~table i ~pa tg ~uncached ~snooped ~fragment);
   }
 
+(* A format whose [flush] raises [Exit] while [armed]. *)
+let raising_flush armed (f : Page_table.format) =
+  {
+    f with
+    flush =
+      (fun () ->
+        if !armed then raise Exit;
+        f.flush ());
+  }
+
+(* A free or unmap the format refuses keeps the memory held: once the GPU is
+   released, the same call gives all of it back. *)
+let test_raising_give_back () =
+  let armed = ref false in
+  let x = gpu ~format:(raising_flush armed) () in
+  let before = capacity x in
+  let mems = [ alloc x Gpu (64 * kib); alloc x Host (64 * kib) ] in
+  let borrowed = Result.get_ok (Memory.map_host x.memory tables_base page) in
+  armed := true;
+  List.iter (fun mem -> raises Exit (fun () -> Memory.free x.memory mem)) mems;
+  raises Exit (fun () -> Memory.unmap x.memory borrowed);
+  equal ~msg:"system memory still held" int 1 (List.length x.fake.dma);
+  equal ~msg:"the pin still held" ranges [ (tables_base, page) ] x.fake.pins;
+  Function.release x.fn;
+  List.iter (Memory.free x.memory) mems;
+  Memory.unmap x.memory borrowed;
+  equal ~msg:"system memory returned" int 0 (List.length x.fake.dma);
+  equal ~msg:"pins returned" ranges [] x.fake.pins;
+  equal ~msg:"addresses returned" int (snd before) (snd (capacity x))
+
 let test_raising_format () =
   let armed = ref false in
   let x = gpu ~format:(raising armed) () in
@@ -1104,6 +1134,10 @@ let () =
                test_system_refused;
              test "a format that raises passes through, having given back"
                test_raising_format;
+             test
+               "a free or unmap the format refuses keeps the memory held, \
+                given back once the GPU is released"
+               test_raising_give_back;
              test_bar_follows;
            ];
          group ~timeout:patience "freeing"
