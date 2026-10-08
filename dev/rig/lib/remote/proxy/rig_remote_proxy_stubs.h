@@ -156,6 +156,7 @@ struct rig_remote_link {
   int sending; /* a frame is being sent, by the thread or an abort */
   int closing, sent_close, got_close, threads, fd_closed;
   int receiving; /* the receiving thread runs: copies' bytes may land */
+  int abort_owed; /* the job failed: the peer is owed an abort */
   _Atomic int failed;
   struct pending *pending, *pending_last;
   struct cmd *cmds, *cmds_last;

@@ -66,6 +66,9 @@ typedef struct pollfd rig_remote_pollfd;
 #define BEAT_NS 1000000000LL
 #define SILENCE_MS 10000
 
+/* The seconds a send may make no progress: the silence a peer fails on. */
+#define SEND_S 10
+
 /* The bytes a link's queue holds before its writers wait. One frame larger
    than this still goes, alone. */
 #define QUEUE_BYTES ((size_t)8 << 20)
@@ -246,25 +249,35 @@ static void close_if_idle(struct rig_remote_link *l) {
   }
 }
 
-/* Sends an abort with [why], a string as wire.mli lays it out, if the
-   stream takes it at once. */
-static void try_abort(struct rig_remote_link *l,
-                      const struct rig_remote_why *why) {
+/* Sends an abort with [why], a string as wire.mli lays it out, after the
+   frames sent before. A send that makes no progress for [SEND_S] seconds
+   gives up: the peer reads nothing. */
+static void send_abort(struct rig_remote_link *l,
+                       const struct rig_remote_why *why) {
   unsigned char buf[HEADER + 4 + MAX_WHY];
   put_header(buf, 4 + why->n, K_ABORT);
   for (int i = 0; i < 4; i++)
     buf[HEADER + i] = (unsigned char)(why->n >> (8 * i));
   memcpy(buf + HEADER + 4, why->s, why->n);
-#ifdef _WIN32
-  /* Winsock has no per-call MSG_DONTWAIT: the socket turns non-blocking for
-     good, as nothing sends on it after the abort. */
-  u_long on = 1;
-  (void)ioctlsocket(l->fd, FIONBIO, &on);
-  (void)send(l->fd, (const char *)buf, (int)(HEADER + 4 + why->n), 0);
-#else
-  (void)send(l->fd, buf, HEADER + 4 + why->n,
-             MSG_DONTWAIT | RIG_REMOTE_NOSIGNAL);
-#endif
+  (void)rig_remote_send_all(l->fd, buf, HEADER + 4 + why->n);
+}
+
+/* Sends the abort a failure owes [l], then shuts its socket down, so that
+   no thread waits on it; nothing while a frame or an abort is being sent,
+   whose sender calls it after. Holds [l]'s lock, which it releases while it
+   sends. */
+static void abort_link(struct rig_remote_link *l) {
+  if (l->fd_closed || l->sending) return;
+  if (l->abort_owed && !l->sent_close) {
+    l->abort_owed = 0;
+    l->sending = 1;
+    pthread_mutex_unlock(&l->mu);
+    send_abort(l, atomic_load(&l->job->why));
+    pthread_mutex_lock(&l->mu);
+    l->sending = 0;
+  }
+  shutdown(l->fd, SHUT_BOTH);
+  close_if_idle(l);
 }
 
 /* Fails [j] with [why], which it takes, unless it failed or closed. */
@@ -283,19 +296,22 @@ static void fail_job(struct rig_remote_job *j, struct rig_remote_why *why) {
     free_entries(l);
     for (struct rail *r = l->rails; r != NULL; r = r->next)
       for (int c = 0; c < 3; c++) atomic_store(count(r, c), INT64_MAX);
-    int claim = !l->sending && !l->sent_close && !l->fd_closed;
-    if (claim) l->sending = 1;
+    l->abort_owed = !l->sent_close;
     pthread_cond_broadcast(&l->cv);
     pthread_mutex_unlock(&l->mu);
-    if (claim) try_abort(l, atomic_load(&j->why));
-    pthread_mutex_lock(&l->mu);
-    if (claim) l->sending = 0;
-    if (!l->fd_closed) shutdown(l->fd, SHUT_BOTH);
-    close_if_idle(l);
-    pthread_mutex_unlock(&l->mu);
   }
+  struct rig_remote_link *links = j->links;
   pthread_cond_broadcast(&j->cv);
   pthread_mutex_unlock(&j->mu);
+  /* The root cause reaches every peer whatever its link does: an idle link
+     sends it here; a link whose sending thread is mid-frame sends it after
+     that frame, as the thread ends. Links are only ever prepended, so the
+     list read under the job's lock stays whole. */
+  for (struct rig_remote_link *l = links; l != NULL; l = l->next) {
+    pthread_mutex_lock(&l->mu);
+    abort_link(l);
+    pthread_mutex_unlock(&l->mu);
+  }
 }
 
 /* Fails [l]'s job with the reason of [code], unless the job failed. */
@@ -434,7 +450,10 @@ static void *sender(void *arg) {
     /* A rail's ready function, a frame queued and a failure wake it. */
     wait_ns(&l->cv, &l->mu, l->sent_ns + BEAT_NS - now);
   }
-  if (atomic_load(&l->failed)) free_entries(l);
+  if (atomic_load(&l->failed)) {
+    free_entries(l);
+    abort_link(l);
+  }
   pthread_mutex_unlock(&l->mu);
   thread_ends(l);
   return NULL;
@@ -907,6 +926,15 @@ value caml_rig_remote_link_make(value vj, value fd, value name, value peer) {
   int one = 1;
   (void)setsockopt(l->fd, IPPROTO_TCP, TCP_NODELAY, (const char *)&one,
                    sizeof one);
+  /* A send that makes no progress for [SEND_S] seconds fails: the peer
+     reads nothing, and a failure's abort waits for no longer. */
+#ifdef _WIN32
+  DWORD bound = SEND_S * 1000;
+#else
+  struct timeval bound = {SEND_S, 0};
+#endif
+  (void)setsockopt(l->fd, SOL_SOCKET, SO_SNDTIMEO, (const char *)&bound,
+                   sizeof bound);
   if (rig_remote_forked(j)) {
     atomic_store(&l->failed, 1);
     l->fd_closed = 1;

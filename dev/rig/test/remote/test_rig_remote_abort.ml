@@ -44,8 +44,7 @@ let () =
        [
          group ~timeout:60. "rig_remote"
            [
-             xfail ~reason:"no abort is sent while the sending thread sends"
-               (test "the root cause reaches the agent while the link is busy"
-                  busy_connection);
+             test "the root cause reaches the agent while the link is busy"
+               busy_connection;
            ];
        ])
