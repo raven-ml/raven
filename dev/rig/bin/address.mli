@@ -9,8 +9,7 @@
 
 val machine : string -> (string, string) result
 (** [machine s] is the host [s] names, its brackets taken off. [Error why] if
-    [s] has a port or a bare address with colons, or is no machine. [s] is not
-    empty. *)
+    [s] has a port or a bare address with colons, or is no machine. *)
 
 val host_port : string -> (string * int, string) result
 (** [host_port s] is the host, its brackets taken off, and the port of [s],

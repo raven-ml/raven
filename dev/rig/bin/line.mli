@@ -10,7 +10,9 @@
     [waiting] and [listening HOST:PORT] before them. A machine's half writes
     [rig-agent VERSION] first on its session, relays its agent's lines, and adds
     [died CAUSE]. Each line ends with a newline; a reason's own newlines are
-    written as spaces. *)
+    written as spaces.
+
+    Used from one thread: readers share one buffer. *)
 
 type t =
   | Agent of string  (** [rig-agent VERSION] *)
@@ -20,11 +22,6 @@ type t =
   | Closed
   | Failed of string
   | Died of string  (** ["killed by SIGSEGV"], ["exited with status 3"] *)
-
-val version : string
-(** [version] is rig's version, which [rig --version] prints and a session's
-    first line carries: a machine's half and [rig run] speak to each other only
-    at one version. *)
 
 val to_string : t -> string
 (** [to_string l] is [l]'s line, its newline included. *)

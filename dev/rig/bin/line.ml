@@ -14,7 +14,6 @@ type t =
   | Failed of string
   | Died of string
 
-let version = Version.v
 let flat s = String.map (function '\n' | '\r' -> ' ' | c -> c) s
 
 let to_string = function

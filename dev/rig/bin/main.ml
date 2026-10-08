@@ -87,7 +87,7 @@ let main () =
   match List.tl (Array.to_list Sys.argv) with
   | [] -> misuse "no command; the commands are run and agent"
   | "--help" :: _ -> page Help.rig
-  | "--version" :: _ -> page (Line.version ^ "\n")
+  | "--version" :: _ -> page (Version.v ^ "\n")
   | "run" :: args -> run args
   | "agent" :: args -> agent args
   | c :: _ ->

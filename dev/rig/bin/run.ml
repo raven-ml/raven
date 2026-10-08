@@ -58,9 +58,8 @@ let hostname host =
       | st, _ -> Error (strf "ssh -G %s" (Proc.cause st)))
 
 let addresses host =
-  match Unix.getaddrinfo host "" [ Unix.AI_SOCKTYPE Unix.SOCK_STREAM ] with
-  | l -> List.map (fun a -> a.Unix.ai_addr) l
-  | exception Not_found -> []
+  Unix.getaddrinfo host "" [ Unix.AI_SOCKTYPE Unix.SOCK_STREAM ]
+  |> List.map (fun a -> a.Unix.ai_addr)
 
 (* Whether [a] is an address of this machine: whether a socket binds to it. A
    system without the address's family has none. *)
@@ -164,8 +163,8 @@ let on_line s l =
   match Line.of_string l with
   | _ when s.final <> None || s.broken <> None -> ()
   | Some (Line.Agent v) when not s.greeted ->
-      if v = Line.version then s.greeted <- true
-      else broke (strf "runs rig %s; this is rig %s" v Line.version)
+      if v = Version.v then s.greeted <- true
+      else broke (strf "runs rig %s; this is rig %s" v Version.v)
   | _ when not s.greeted -> ()
   | Some Line.Waiting ->
       sayf "%s runs another agent of this user; waiting for it to end" s.m.name
@@ -469,12 +468,7 @@ let event a p =
   | None, None -> None
 
 let early a p st =
-  let how =
-    match st with
-    | Unix.WEXITED n -> strf "exited with status %d" n
-    | st -> was (Proc.cause st)
-  in
-  sayf "%s %s before starting the job" p.prog how;
+  sayf "%s %s before starting the job" p.prog (was (Proc.cause st));
   quit a (Proc.status st)
 
 (* The program closed the job: it ends when it ends, and its agents after it. *)

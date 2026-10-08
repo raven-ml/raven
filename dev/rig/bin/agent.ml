@@ -37,7 +37,7 @@ let fail why =
 (* The half *)
 
 let half address =
-  say (Line.Agent Line.version);
+  say (Line.Agent Version.v);
   let key =
     match read_key Unix.stdin with Ok k -> k | Error why -> fail why
   in

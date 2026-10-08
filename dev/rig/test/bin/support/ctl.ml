@@ -6,17 +6,30 @@
 (* A controller for the tests: [ctl.exe MODE] counts its attempts in the file
    attempts of the current directory, prints "attempt N", and does as MODE says.
 
-   - copy: copies 4 KiB to each machine's host and back, prints "copied N" for N
-   machines, closes the job. - exit N: exits N once the job started; raise:
-   raises. - env: prints the agents' names and the key's length, then whether
-   the three variables are gone once the job started. - early N: exits N before
-   starting the job. - kill: kills itself once the job started; kill-first: at
-   its first attempt, then copies. - wait: prints "joined" once the job started,
-   waits for it to fail and raises; wait-first: at its first attempt, then
-   copies. - linger-first: at its first attempt, prints "joined" once the job
-   started and never exits; then copies. - save: prints "joined" once the job
-   started, and on SIGTERM copies. - fork: forks a child that exits 0, then
-   copies. - exec SCRIPT: runs [sh -c SCRIPT] to its end, then copies. *)
+   copy: copies 4 KiB to each machine's host and back, prints "copied N" for N
+   machines, and closes the job.
+
+   exit N: exits N once the job started. raise: raises once it started.
+
+   env: prints the agents' names and the key's length, then whether the three
+   variables are gone once the job started.
+
+   early N: exits N before starting the job.
+
+   kill: kills itself once the job started. kill-first: so at its first attempt,
+   then copies.
+
+   wait: prints "joined" once the job started, waits for it to fail and raises.
+   wait-first: so at its first attempt, then copies.
+
+   linger-first: at its first attempt, prints "joined" once the job started and
+   never exits; then copies.
+
+   save: prints "joined" once the job started, and on SIGTERM copies.
+
+   fork: forks a child that exits 0, then copies.
+
+   exec SCRIPT: runs [sh -c SCRIPT] to its end, then copies. *)
 
 let attempt () =
   let n =
