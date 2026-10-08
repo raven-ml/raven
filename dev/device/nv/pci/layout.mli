@@ -31,10 +31,15 @@ val fmc_sizes : ((int * int) * int) list
 (** [fmc_sizes] is the fields of the WPR metadata the process sets on Blackwell,
     as {!wpr}'s, with their values: the sizes of the parts the FMC lays out. *)
 
-val frts : Chip.family -> memory:int -> int
-(** [frts f ~memory] is the offset in the GPU's memory of the 1 MiB FRTS region:
-    its end is 1 MiB below the end of memory on Ampere and Ada, where {!wpr}
-    puts it, and 28 MiB below it on Blackwell, where the COT payload puts it. *)
+val frts : memory:int -> int
+(** [frts ~memory] is the offset of the 1 MiB FRTS region on an Ampere or Ada
+    GPU of [memory] bytes, where {!wpr} puts it: below the 1 MiB VGA workspace
+    at the end of memory. *)
+
+val cot_frts : int * int
+(** [cot_frts] is where the COT payload puts the FRTS region on Blackwell: its
+    end's distance below the end of memory, 28 MiB, and its size, 1 MiB, as the
+    payload's [frtsVidmemOffset] and [frtsVidmemSize]. *)
 
 val top : Chip.family -> memory:int -> boot:int -> image:int -> int
 (** [top f ~memory ~boot ~image] is the end of the memory the process manages,
