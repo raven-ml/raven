@@ -73,9 +73,10 @@ let dispatch (k : Code_object.kernel) ~descriptor ~args ~threads:(tx, ty, tz)
 
 (* The vendor packet of PM4 commands, amd_aql_pm4_ib in ROCR-Runtime's
    amd_aql_queue.cpp:1521-1547 (rocm-systems cccc350d): its format,
-   AMD_AQL_FORMAT_PM4_IB, and dw_cnt_remain, the words left after its four of
-   PM4. *)
+   AMD_AQL_FORMAT_PM4_IB, in the vendor header that follows the 16-bit AQL
+   header, and dw_cnt_remain, the words left after its four of PM4. *)
 let format_pm4_ib = 1
+let vendor_header_shift = 16
 let dw_count_remain = 10
 
 (* IB_SIZE is 20 bits; bit 20 is CHAIN. *)
@@ -87,7 +88,7 @@ let indirect_buffer addr ~dwords =
   let hdr =
     header
     lor (Defs.hsa_packet_type_vendor_specific lsl Defs.hsa_packet_header_type)
-    lor (format_pm4_ib lsl 16)
+    lor (format_pm4_ib lsl vendor_header_shift)
   in
   (Dword hdr :: Pm4.indirect_buffer addr ~dwords)
   @ (Dword dw_count_remain :: List.init dw_count_remain (fun _ -> Dword 0))
