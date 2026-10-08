@@ -1,0 +1,7 @@
+budget of M: unbounded
+budget of M: 1024 KiB
+
+Out_of_memory: M cannot allocate 2048 KiB
+100 buffers of 256 KiB allocated and dropped
+Out_of_memory: M cannot allocate 256 KiB
+allocated

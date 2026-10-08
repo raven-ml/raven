@@ -1,0 +1,6 @@
+in place           [11; 22; 33]
+Rig.Buffer.bigarray: the buffer is dead: donated to add
+into a new buffer  [11; 22; 33]
+y                  [10; 20; 30]
+into a new buffer  [11; 22; 33]
+into a new buffer  [1; 3; 5]
