@@ -181,6 +181,8 @@ let registers =
           ("mmMP1_SMN_C2PMSG_90", 0x16000 + 0x29a);
           ("regBIF_BX_PF0_RSMU_INDEX", 0x14);
           ("regHDP_MEM_POWER_CTRL", 0xf20 + 0xd4);
+          ("regCC_GC_SHADER_ARRAY_CONFIG", 0x1260 + 0x100f);
+          ("regGC_USER_SHADER_ARRAY_CONFIG", 0xa000 + 0x5b90);
         ]
         (fun (name, a) ->
           equal int a (Regs.address (layout (table "r9700.bin")) name));

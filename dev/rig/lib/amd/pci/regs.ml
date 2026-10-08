@@ -77,8 +77,12 @@ let layout d =
       scratch_slots = g.scratch_slots;
     }
   in
-  let gc_regs = Register.registers gpu in
-  let* () = if gc_regs = [] then unbooted D.gc_hwid gc else Ok () in
+  let* () =
+    if Register.registers gpu = [] then unbooted D.gc_hwid gc else Ok ()
+  in
+  (* The GC registers the queues' format needs, and those of a boot. *)
+  let* _, boot_regs = table "gc" D.gc_hwid in
+  let gc_regs = Register.registers gpu @ boot_regs in
   let* mp = table "mp" D.mp0_hwid in
   let* hdp = table "hdp" D.hdp_hwid in
   let* mmhub = table "mmhub" D.mmhub_hwid in
