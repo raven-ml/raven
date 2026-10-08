@@ -1,0 +1,6 @@
+(executable
+ (name main)
+ (libraries rig rig.cuda rig.cuda.abi)
+ (foreign_stubs
+  (language c)
+  (names run)))

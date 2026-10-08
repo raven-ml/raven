@@ -1,0 +1,44 @@
+// out[i] = a[i] + b[i] for each thread i of the grid below n, the three
+// arrays of floats given by their addresses. PTX for a virtual architecture,
+// which CUDA compiles for the GPU it loads on.
+
+.version 7.0
+.target sm_50
+.address_size 64
+
+.visible .entry add(
+    .param .u64 a,
+    .param .u64 b,
+    .param .u64 out,
+    .param .u32 n
+)
+{
+    .reg .pred %p<2>;
+    .reg .b32 %r<6>;
+    .reg .f32 %f<4>;
+    .reg .b64 %rd<11>;
+
+    ld.param.u64 %rd1, [a];
+    ld.param.u64 %rd2, [b];
+    ld.param.u64 %rd3, [out];
+    ld.param.u32 %r2, [n];
+    mov.u32 %r3, %ctaid.x;
+    mov.u32 %r4, %ntid.x;
+    mov.u32 %r5, %tid.x;
+    mad.lo.s32 %r1, %r3, %r4, %r5;
+    setp.ge.u32 %p1, %r1, %r2;
+    @%p1 bra DONE;
+    cvta.to.global.u64 %rd4, %rd1;
+    cvta.to.global.u64 %rd5, %rd2;
+    cvta.to.global.u64 %rd6, %rd3;
+    mul.wide.u32 %rd7, %r1, 4;
+    add.s64 %rd8, %rd4, %rd7;
+    add.s64 %rd9, %rd5, %rd7;
+    add.s64 %rd10, %rd6, %rd7;
+    ld.global.f32 %f1, [%rd8];
+    ld.global.f32 %f2, [%rd9];
+    add.f32 %f3, %f1, %f2;
+    st.global.f32 [%rd10], %f3;
+DONE:
+    ret;
+}
