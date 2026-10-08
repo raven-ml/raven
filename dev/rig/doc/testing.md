@@ -416,6 +416,13 @@ are not part of `runtest`: build and run them with `dune build @bench`, which
 takes a workspace lock so suites do not time each other. A bench links only
 sandbox libraries.
 
+Baselines are recorded in the release profile, which builds what users run:
+the dev profile compiles with `-opaque`, which removes inlining across
+modules, so its numbers describe no user's program. Build the bench with
+`dune build --profile release` in a worktree whose build directory holds no
+dev build in use (a watch server builds the dev profile), and record from
+there; a dev build checks code, never baselines.
+
 Each row times what a caller calls, beside the floor that bounds it where the
 process can measure one: CUDA's release row beside a row that makes the same
 CUDA calls directly, the core's submit rows beside Polled's own C room and
