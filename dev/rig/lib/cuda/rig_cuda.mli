@@ -355,14 +355,16 @@ exception Fault of string
 (** The exception for a fault of a device's work, with CUDA's error. *)
 
 val stop : t -> unit
-(** [stop g] stops [g] for good, without waiting. If [g]'s work no longer writes
-    memory (the work of every value it was given completed, its streams are
-    idle, or a fault ended the context's work), the timeline word holds at least
-    the last value the submit was given when [stop] returns, so work of other
-    devices that waits on it runs on, [g]'s streams are destroyed and every
-    image not unloaded is unloaded. Otherwise the timeline word reaches the last
-    value the submit was given once that work ends, unless it waits on a word of
-    another device that never reaches its value; the GPU opens again once that
-    work ends, and that open unloads the images the work kept. After [stop],
-    only {!free} and the [symbol] function of {!val-capability} may be called on
-    [g], neither raising {!exception-Fault}, and {!unload} is not called. *)
+(** [stop g] stops [g] for good, without waiting for [g]'s work. If [g]'s work
+    no longer writes memory (the work of every value it was given completed, its
+    streams are idle, or a fault ended the context's work), the timeline word
+    holds at least the last value the submit was given when [stop] returns, so
+    work of other devices that waits on it runs on, [g]'s streams are destroyed
+    and every image not unloaded is unloaded; CUDA may hold that unload until
+    the work other libraries queued in the shared primary context completes,
+    never [g]'s own. Otherwise the timeline word reaches the last value the
+    submit was given once that work ends, unless it waits on a word of another
+    device that never reaches its value; the GPU opens again once that work
+    ends, and that open unloads the images the work kept. After [stop], only
+    {!free} and the [symbol] function of {!val-capability} may be called on [g],
+    neither raising {!exception-Fault}, and {!unload} is not called. *)
