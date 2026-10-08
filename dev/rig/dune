@@ -8,8 +8,15 @@
 ; UndefinedBehaviorSanitizer and links the sanitizer runtimes into every
 ; executable, whose link_flags keep :standard to carry them. Its options are
 ; CI's, so a local run fails where CI does: a report ends the process, leaks
-; are not errors, and a domain's thread exits on the signal stack the OCaml
-; runtime allocated, which AddressSanitizer would unmap as its own.
+; are not errors, a domain's thread exits on the signal stack the OCaml
+; runtime allocated, which AddressSanitizer would unmap as its own, and an
+; allocation the allocator refuses returns NULL as libc's does, so the
+; library's answer to a refusal is what a test sees.
+;
+; The sanitize profile also stresses the collector (OCAMLRUNPARAM) and links
+; the debug runtime, so a value a stub holds unrooted, or memory a finaliser
+; frees while it is still used, fails at once. dev/rig/doc/testing.md gives
+; each setting's effect.
 ;
 ; Benches are not attached to runtest: run them with `dune build @bench`, or
 ; run a built exe from its directory under _build/default. Every bench rule
@@ -41,9 +48,10 @@
     -fno-omit-frame-pointer
     -fsanitize=address,undefined))
   (link_flags
-   (:standard -cclib -fsanitize=address,undefined))
+   (:standard -runtime-variant d -cclib -fsanitize=address,undefined))
   (env-vars
-   (ASAN_OPTIONS halt_on_error=1:detect_leaks=0:use_sigaltstack=0)
+   (OCAMLRUNPARAM s=4k,o=20,M=1,m=1,V=1)
+   (ASAN_OPTIONS halt_on_error=1:detect_leaks=0:use_sigaltstack=0:allocator_may_return_null=1)
    (UBSAN_OPTIONS halt_on_error=1:print_stacktrace=1)
    (WINDTRAP_TIMEOUT 60)))
  (_

@@ -337,6 +337,24 @@ executable, and sets CI's options, so a local run fails where CI does:
 - `detect_leaks=0`: leaks are not errors.
 - `use_sigaltstack=0`: an OCaml domain's thread exits on the signal stack the
   runtime allocated, which AddressSanitizer would unmap as its own.
+- `allocator_may_return_null=1`: an allocation the allocator refuses returns
+  NULL, as libc's does, so a test of a refused allocation sees the library's
+  answer instead of the sanitizer's abort.
+
+The profile also stresses the collector, so a value a stub holds unrooted, or
+memory a finaliser frees while something still uses it, fails at once:
+
+- `OCAMLRUNPARAM=s=4k,o=20,M=1,m=1,V=1`: a 32 KiB minor heap collects at almost
+  every allocating stub; major cycles run far more often, and custom blocks
+  with external memory push them at once, so finalisers run at many more
+  points; the runtime verifies the heap at the end of each major cycle.
+- `-runtime-variant d`: the debug runtime runs its own assertions. It prints
+  a two-line banner on stderr at start.
+
+A test meets the stress as it meets a slow machine: it keeps every value it
+still uses reachable past its last use, waits for a finaliser by its signal
+rather than by a count of collections, and bounds its work so its timeout
+holds on a build an order of magnitude slower.
 
 Constraints a new library meets:
 
@@ -351,7 +369,9 @@ Constraints a new library meets:
 - Metal tests that load a metallib do not finish within their timeout under
   AddressSanitizer on the M1 Max: Metal's shader cache reads its per-user cache
   through the sanitizer's `realloc`. The ring tests and the tests that open
-  nothing pass.
+  nothing pass. A stalled run holds the machine's GPU lock and blocks every
+  other Metal run, so a sanitize run on the Mac leaves out
+  `@dev/rig/lib/metal/runtest` until that stall is fixed.
 
 A GPU test that skips checks nothing, so read the skip count of a sanitize run
 on a GPU host.
