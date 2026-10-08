@@ -78,12 +78,15 @@ val reset : Rig_pci.Function.t -> (unit, string) result
 (** [reset f] resets the GPU of [f] as [Rig_amd_pci.reset] states, its bus
     mastering off: if its security processor and power manager run, it stops the
     compute queues, lowers the clocks, halts the engines and resets the GPU
-    whole (mode 1), waiting until the function answers again. It then turns the
-    interrupt rings off. [Ok ()] means neither firmware nor an interrupt ring
-    runs: a GPU nothing ran on, or one of blocks this library does not boot,
-    which it never wrote to, is left as it is. [Error msg] if the GPU does not
-    answer, if it is in a fabric, or if its security processor's OS or a ring
-    still runs after the reset, as when its power manager is hung. *)
+    whole (mode 1), waiting until the function answers again, its configuration
+    restored. A GPU of a fabric (XGMI) is only stopped: its GPUs reset together,
+    as their kernel driver does when it takes them back. It then turns the
+    interrupt rings off. [Ok ()] means no engine or interrupt ring runs, nor
+    firmware but on a fabric's GPU: a GPU nothing ran on, or one of blocks this
+    library does not boot, which it never wrote to, is left as it is.
+    [Error msg] if the GPU does not answer, if its configuration differs after
+    the reset, or if its security processor's OS or a ring still runs after it,
+    as when its power manager is hung. *)
 
 val gpu : t -> Rig_amd_abi.Gpu.t
 val gc : t -> Discovery.gc

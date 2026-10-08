@@ -165,15 +165,16 @@ val reset : ?machine:Rig_pci.Machine.t -> int -> (unit, string) result
     {!Rig_pci.Machine.this}) and resets it with the GPU's whole reset (mode 1),
     which clears what any driver left. Its engines are stopped and its clocks
     lowered first, and its bus mastering turned off. A GPU no firmware runs on
-    is left as it is, but for its interrupt rings, which it turns off. A virtual
-    function gives back its access instead, and its physical function resets it.
-    Afterwards the GPU opens with a full boot.
+    is left as it is, but for its interrupt rings, which it turns off. A GPU of
+    several joined by a fabric (XGMI) is only stopped, since such GPUs reset
+    together, as their kernel driver does when it takes them back; it then opens
+    only after that. A virtual function gives back its access instead, and its
+    physical function resets it. Afterwards the GPU opens with a full boot.
 
     The result is [Error msg] if [i] is no GPU, if this process holds it, if its
-    function cannot be taken, if it is one of several GPUs joined by a fabric
-    (XGMI), which reset together outside the process, or if it does not answer
-    after the reset, in which case only a power cycle recovers it, or if its
-    security processor or interrupt rings still run after it.
+    function cannot be taken, if it does not answer after the reset, in which
+    case only a power cycle recovers it, if its configuration differs after it,
+    or if its security processor or interrupt rings still run after it.
 
     Raises [Invalid_argument] if [i < 0]. *)
 

@@ -630,12 +630,10 @@ let reset f =
         stuck (fun () ->
             let gmc = Gmc.make r vram in
             let smu = Smu.make r gmc ~table:0 in
+            (* A fabric's GPUs reset together, as their kernel driver does when
+               it takes them back: a GPU of a fabric is only stopped. *)
+            let hive = Gmc.hive gmc in
             if Psp.running r && Smu.alive smu then begin
-              if Gmc.hive gmc then
-                raise
-                  (Regs.Stuck
-                     "the GPU is in a fabric, whose GPUs reset together \
-                      outside this process");
               set_bus_master f false;
               Regs.write ~value:0 r "regSCRATCH_REG7" [];
               (* A mode 1 reset over engines running at full clocks can stall
@@ -646,23 +644,26 @@ let reset f =
               Gfx.halt gfx;
               Sdma.halt (Sdma.make r);
               Regs.pause r quiesce_ms;
-              let config = save f in
-              Smu.reset smu;
-              (match restore f config with
-              | Ok () -> ()
-              | Error why -> raise (Regs.Stuck why));
-              (* As the kernel waits after a mode 1 reset: the security
-                 processor's bootloader ready, the memory size readable. *)
-              Regs.wait r "the PSP's bootloader after the reset" (fun () ->
-                  Psp.bootloader r);
-              Regs.wait r "the GPU's memory size after the reset" (fun () ->
-                  Window.get32 mmio (D.mmrcc_config_memsize * 4) <> 0xffff_ffff)
+              if not hive then begin
+                let config = save f in
+                Smu.reset smu;
+                (match restore f config with
+                | Ok () -> ()
+                | Error why -> raise (Regs.Stuck why));
+                (* As the kernel waits after a mode 1 reset: the security
+                   processor's bootloader ready, the memory size readable. *)
+                Regs.wait r "the PSP's bootloader after the reset" (fun () ->
+                    Psp.bootloader r);
+                Regs.wait r "the GPU's memory size after the reset" (fun () ->
+                    Window.get32 mmio (D.mmrcc_config_memsize * 4)
+                    <> 0xffff_ffff)
+              end
             end;
             (* A boot that failed before its firmware ran may have left the
                interrupt rings on. A GPU goes back to its kernel driver with
                neither firmware nor rings running. *)
             if Ih.running r then Ih.halt r;
-            if Psp.running r || Ih.running r then
+            if Ih.running r || ((not hive) && Psp.running r) then
               raise
                 (Regs.Stuck
                    "the GPU still runs its security processor or interrupt \
