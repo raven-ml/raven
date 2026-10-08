@@ -106,9 +106,6 @@ let indirect =
             @ [ 10 ]
             @ List.init 10 (fun _ -> 0))
             (words (Aql.indirect_buffer 0x1_0000_0100 ~dwords:16)));
-      test "an indirect buffer past IB_SIZE is refused" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"Aql.indirect_buffer")
-            (fun () -> Aql.indirect_buffer 0 ~dwords:(1 lsl 20)));
     ]
 
 let () = exit (run "device_amd_abi.aql" [ dispatch; indirect ])

@@ -159,8 +159,7 @@ val pred_exec : xcc_mask:int -> 'v Packet.t -> 'v Packet.t
     Raises [Invalid_argument] if [xcc_mask] is not in \[[0];[255]\] or
     [Packet.size p] exceeds 16383 words. *)
 
-val indirect_buffer : 'v -> dwords:int -> 'v Packet.t
+val indirect_buffer : 'v -> dwords:'v -> 'v Packet.t
 (** [indirect_buffer addr ~dwords] runs the [dwords] words of PM4 packets at
-    [addr], then the packets after it. [addr] is a multiple of 4.
-
-    Raises [Invalid_argument] if [dwords] is not in \[[0];[1048575]\]. *)
+    [addr], then the packets after it. [addr] is a multiple of 4 and [dwords] is
+    in \[[0];[1048575]\]. *)

@@ -322,11 +322,6 @@ let control =
             (List.nth
                (words (Pm4.indirect_buffer 0 ~dwords:((1 lsl 20) - 1)))
                3));
-      cases ~name:string_of_int "an indirect buffer past IB_SIZE is refused"
-        [ -1; 1 lsl 20 ]
-        (fun dwords ->
-          raises_match (Exn.invalid_arg ~substring:"Pm4.indirect_buffer")
-            (fun () -> Pm4.indirect_buffer 0 ~dwords));
     ]
 
 let kernel : Code_object.kernel =

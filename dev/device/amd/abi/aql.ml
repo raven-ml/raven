@@ -80,11 +80,8 @@ let vendor_header_shift = 16
 let dw_count_remain = 10
 
 (* IB_SIZE is 20 bits; bit 20 is CHAIN. *)
-let max_indirect = 0xf_ffff
 
 let indirect_buffer addr ~dwords =
-  if dwords < 0 || dwords > max_indirect then
-    invalid_argf "Aql.indirect_buffer: %d words, expected 0 to 1048575" dwords;
   let hdr =
     header
     lor (Defs.hsa_packet_type_vendor_specific lsl Defs.hsa_packet_header_type)

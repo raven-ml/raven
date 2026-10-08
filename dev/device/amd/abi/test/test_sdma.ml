@@ -97,7 +97,10 @@ let copy =
           equal
             (list (triple int int int))
             [ (n, src, dst) ]
-            (pieces (words (Sdma.copy_linear ~dst ~src ~bytes:n))));
+            (pieces (words (Sdma.copy_linear ~dst ~src ~bytes:n)));
+          equal (list int) ~msg:"as copy's"
+            (words (Sdma.copy (gpu v) ~dst ~src n))
+            (words (Sdma.copy_linear ~dst ~src ~bytes:n)));
       test "a copy of no bytes is no packet" (fun () ->
           equal (list int) []
             (words (Sdma.copy (gpu (6, 0, 0)) ~dst:0 ~src:0 0)));

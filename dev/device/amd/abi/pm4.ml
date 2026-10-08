@@ -256,13 +256,13 @@ let pred_exec ~xcc_mask p =
   packet Defs.packet3_pred_exec [ Dword ((xcc_mask lsl xcc_select) lor n) ] @ p
 
 (* IB_SIZE is 20 bits; bit 20 is CHAIN. *)
-let max_indirect = 0xf_ffff
 
 let indirect_buffer addr ~dwords =
-  if dwords < 0 || dwords > max_indirect then
-    invalid_argf "Pm4.indirect_buffer: %d words, expected 0 to 1048575" dwords;
   packet Defs.packet3_indirect_buffer
-    [ W64 (Value addr); Dword (dwords lor Defs.indirect_buffer_valid) ]
+    [
+      W64 (Value addr);
+      W32 (Or (Value dwords, Int64.of_int Defs.indirect_buffer_valid));
+    ]
 
 (* Runs *)
 
