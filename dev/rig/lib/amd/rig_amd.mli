@@ -429,8 +429,10 @@ type 'm path = {
     its own state, which this library never names. Each function answers the
     GPU's refusal as its result and raises {!Fault} for any other failure of the
     GPU or of the path's kernel driver. Any domain may call them at the same
-    time, except [stop], which the device calls once, after every other call
-    returned, and after which it calls only [free]. *)
+    time, except [stop], which the device calls once, after which it calls only
+    [free]. A [sleep] that another domain began before [stop] may still be
+    waiting when [stop] runs: it returns without reading the GPU once [stop]
+    began. *)
 
 val make : 'm path -> (t, string) result
 (** [make p] is a device of the GPU [p] reaches: its queues, timeline word and

@@ -152,7 +152,8 @@ val sleep : t -> ms:int -> unit
     milliseconds for the interrupt ring to move, then reads it. It raises
     [Rig_amd.Fault] with every report of a fault, a fatal hardware error and the
     GPU's machine-check banks, or the function's or machine's failure. Once
-    raised, every later sleep raises the same report. *)
+    raised, every later sleep raises the same report. A sleep a {!stop}
+    overtakes returns without reading the ring again. *)
 
 val faulted : t -> string -> unit
 (** [faulted g why] records [why] as a fault of the GPU's work that its

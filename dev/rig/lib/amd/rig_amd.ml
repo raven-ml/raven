@@ -670,7 +670,9 @@ let path_sleep g ms = try g.ops.sleep ~ms with Fault why -> faulted g why
 let sleep g ~seen ~still_ms =
   Option.iter (fun why -> raise (Fault why)) (Atomic.get g.fault);
   let w = signaled g in
-  if w = seen then
+  (* A stopped device's word holds its last value: the path, stopped, is asked
+     nothing more. *)
+  if w = seen && not (Atomic.get g.stopped) then
     match g.hang_ms with
     | None -> path_sleep g still_ms
     | Some hang ->

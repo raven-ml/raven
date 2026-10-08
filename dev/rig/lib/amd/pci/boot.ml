@@ -592,12 +592,19 @@ let fatal g =
          banks)
   end
 
+(* A sleep that a stop overtakes reads nothing more: the stop's release unmaps
+   the windows the interrupt ring lies in. Each look at the ring holds the
+   lock the stop takes. *)
 let sleep g ~ms =
   (match g.fault with Some why -> raise (Rig_amd.Fault why) | None -> ());
-  ignore (Machine.wait (Function.machine g.f) ~ms (fun () -> Ih.pending g.ih));
+  let stopped () = Option.is_some g.stopped in
+  ignore
+    (Machine.wait (Function.machine g.f) ~ms (fun () ->
+         Mutex.protect g.hw (fun () -> stopped () || Ih.pending g.ih)));
   Mutex.protect g.hw @@ fun () ->
   match g.fault with
   | Some why -> raise (Rig_amd.Fault why)
+  | None when stopped () -> ()
   | None -> (
       match Function.failed g.f with
       | Some why -> fault g why

@@ -1130,6 +1130,16 @@ let sleeps () =
   A.stop g;
   Host.close h
 
+(* A stopped device's word holds its last value for good: a sleep after the
+   stop returns without asking the path, whose windows the stop may have
+   unmapped. *)
+let sleeps_after_stop () =
+  let h, g = Host.device () in
+  A.stop g;
+  A.sleep g ~seen:(A.signaled g) ~still_ms:10_000;
+  equal int ~msg:"the path's sleeps" 0 h.sleeps;
+  Host.close h
+
 (* A fault is the device's for good: every sleep after the path reported it
    raises it again, whether the word moved past [seen] or the path would now
    return quietly. *)
@@ -1433,6 +1443,8 @@ let failures =
         at_the_end fill_at_the_end;
       test "a submission that waits where the device cannot fails" waits_refused;
       test "sleep asks the path only while the word holds seen" sleeps;
+      test "a sleep after the device's stop asks nothing of the path"
+        sleeps_after_stop;
       test "every sleep after a fault raises it" sleeps_after_fault;
       test "free returns when the path fails to free" free_through_fault;
       test "stop writes the last value only once the path stopped its queues"
