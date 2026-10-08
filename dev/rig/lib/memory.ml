@@ -989,34 +989,73 @@ let pages (m : memory) =
   | Pages _ | No_pages -> ());
   match e.pages with Pages ba -> ba_address ba | Unasked | No_pages -> -1
 
+(* How [d] reaches the root memory [m] whose host address is [host]: constant
+   answers, so asking builds nothing. *)
+type reach =
+  | Cannot (* [d] cannot map it *)
+  | Itself (* [m] is [d]'s *)
+  | At_host (* [d] is the host, which addresses it *)
+  | Addressed (* [d] addresses host memory as the host does *)
+  | Empty (* no bytes to map *)
+  | Map (* through [d]'s mapping of it *)
+
+let reach d (m : memory) host =
+  if m.dev == d then Itself
+  else if Dev.is_io d || (Dev.is_io m.dev && host < 0) then Cannot
+  else if (not (Dev.same_machine m.dev d)) && not (Dev.is_io m.dev) then Cannot
+  else if Dev.is_host d then if host >= 0 then At_host else Cannot
+  else if d.memory_device && host >= 0 then Addressed
+  else if m.bytes = 0 then Empty
+  else if host >= 0 && m.entry.region = None && host mod page <> 0 then Cannot
+  else Map
+
+(* Whether [m] is io memory of no bytes, which every other device borrows over
+   no pages. *)
+let empty_io d (m : memory) = is_io_memory m.entry && m.bytes = 0 && m.dev != d
+let host_of (m : memory) = if is_io_memory m.entry then pages m else m.host
+
 let borrow d m =
   let m = m.root in
-  if is_io_memory m.entry && m.bytes = 0 && m.dev != d then
-    (* No bytes to map: the borrow is over no pages. *)
+  if empty_io d m then
     let at = ba_address empty in
     Some (borrow_of m d ~host:at ~address:at ~handle:0n)
   else
-    let host = if is_io_memory m.entry then pages m else m.host in
-    if m.dev == d then Some m
-    else if Dev.is_io d || (Dev.is_io m.dev && host < 0) then None
-    else if (not (Dev.same_machine m.dev d)) && not (Dev.is_io m.dev) then None
-    else if Dev.is_host d then
-      if host >= 0 then Some (borrow_of m d ~host ~address:host ~handle:0n)
-      else None
-    else if d.memory_device && host >= 0 then
-      Some (borrow_of m d ~host ~address:host ~handle:(Nativeint.of_int host))
-    else if m.bytes = 0 then
-      (* No bytes to map: the borrow names no memory. *)
-      Some (borrow_of m d ~host ~address:0 ~handle:0n)
-    else if host >= 0 && m.entry.region = None && host mod page <> 0 then None
-    else begin
+    let host = host_of m in
+    match reach d m host with
+    | Cannot -> None
+    | Itself -> Some m
+    | At_host -> Some (borrow_of m d ~host ~address:host ~handle:0n)
+    | Addressed ->
+        Some (borrow_of m d ~host ~address:host ~handle:(Nativeint.of_int host))
+    | Empty -> Some (borrow_of m d ~host ~address:0 ~handle:0n)
+    | Map -> (
+        if m.entry == no_entry then ensure_entry m;
+        (* A borrow of host memory keeps its host address: it is host memory,
+           which the host copies. *)
+        match mapping d m host with
+        | None -> None
+        | Some mp -> Some (borrow_of m d ~host ~address:mp.at ~handle:mp.by))
+
+(* Whether one of [maps] is [d]'s. A loop of its own, so asking builds no
+   closure. *)
+let rec mapped_on d = function
+  | [] -> false
+  | mp :: maps -> mp.on == d || mapped_on d maps
+
+let maps d m =
+  let m = m.root in
+  empty_io d m
+  ||
+  let host = host_of m in
+  match reach d m host with
+  | Cannot -> false
+  | Itself | At_host | Addressed | Empty -> true
+  | Map ->
       if m.entry == no_entry then ensure_entry m;
-      (* A borrow of host memory keeps its host address: it is host memory,
-         which the host copies. *)
-      match mapping d m host with
-      | None -> None
-      | Some mp -> Some (borrow_of m d ~host ~address:mp.at ~handle:mp.by)
-    end
+      Dev.hold m.dev;
+      let made = mapped_on d m.entry.maps in
+      Dev.release m.dev;
+      made || Option.is_some (mapping d m host)
 
 let prefetch d (m : memory) ~at ~len =
   match m.root.entry.io_region with

@@ -71,12 +71,22 @@ let half i h =
    driver refuses is memory [d] cannot give: the out-of-memory ladder reclaims
    for it, then raises [Out_of_memory]. *)
 let map_half d h =
-  match Memory.borrow d h.mem with
-  | Some _ -> ()
-  | None ->
-      ignore
-        (Memory.reclaiming d ~pool:d half_bytes (fun () ->
-             Memory.borrow d h.mem))
+  if not (Memory.maps d h.mem) then
+    Memory.reclaiming d ~pool:d half_bytes (fun () ->
+        if Memory.maps d h.mem then Some () else None)
+
+(* Whether a device of this machine runs the legs of a staged copy to or from
+   [b]; another machine's reaches no staging memory. *)
+let runs b = not (local b.mem || Dev.is_io b.mem.dev)
+
+(* Maps the halves [h0] and [h1] of a staged copy of [pieces] on the device that
+   runs [b]'s legs, if one does, before they run. *)
+let map_halves b ~pieces h0 h1 =
+  let d = b.mem.dev in
+  if runs b && Option.is_none d.machine then begin
+    map_half d h0;
+    if pieces > 1 then map_half d h1
+  end
 
 (* Whether [m] is a staging slot's memory: a copy through it that no device runs
    goes no further. *)
@@ -234,17 +244,8 @@ and staged src dst n =
       leg ~src:(half k)
         ~dst:(Buffer.view dst ~first:(k * half_bytes) ~length:(len k))
     in
-    (* A device of this machine that runs legs maps the halves they use first;
-       another machine's reaches no staging memory. *)
-    let runs b = not (local b.mem || Dev.is_io b.mem.dev) in
-    let maps b =
-      if runs b && Option.is_none b.mem.dev.machine then begin
-        map_half b.mem.dev h0;
-        if pieces > 1 then map_half b.mem.dev h1
-      end
-    in
-    maps src;
-    maps dst;
+    map_halves src ~pieces h0 h1;
+    map_halves dst ~pieces h0 h1;
     let ahead = runs src in
     if ahead then into 0;
     for k = 0 to pieces - 1 do

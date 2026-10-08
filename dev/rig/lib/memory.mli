@@ -168,6 +168,10 @@ val borrow : device -> memory -> memory option
     it. An io memory borrows through its pages, and raises what asking for them
     raises. *)
 
+val maps : device -> memory -> bool
+(** [maps d m] is whether [d] can borrow [m]'s memory, as {!borrow} says, making
+    [d]'s mapping of it if it needs one. It builds no borrow. *)
+
 val prefetch : device -> memory -> at:int -> len:int -> unit
 (** [prefetch d m ~at ~len] asks the io device of [m] to read [len] bytes of it
     from [at] ahead, if [d] is no host. It raises nothing. *)
