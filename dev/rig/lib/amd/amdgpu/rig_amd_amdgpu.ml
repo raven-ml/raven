@@ -262,26 +262,58 @@ let remap_hdp fd gpu_id =
 (* KFD 1.14 asks a process to enable its runtime before using queues. *)
 let runtime_from = 1014
 
-(* The machine's AMD GPUs in bus order, with their topology nodes, read once:
-   the kernel driver's topology does not change while the process runs. *)
-let machine = ref None
-let machine_lock = Mutex.create ()
+(* A machine's AMD GPUs in bus order, read once, with the topology node of each
+   the kernel driver holds. A GPU the driver did not hold at the last look is
+   looked at again at each use: a process may start while a driver-less session
+   holds it detached, and open it once the driver holds it again. A node once
+   found is kept, as the process's KFD state is tied to it. *)
+type machine = {
+  root : string;
+  gpus : (string * (Topology.node, string) result) array;
+  look : Mutex.t;
+}
+
+let machine_at root =
+  let node bus = (bus, Topology.node root bus) in
+  {
+    root;
+    gpus = Array.of_list (List.map node (Topology.gpus root));
+    look = Mutex.create ();
+  }
+
+let nodes m =
+  Mutex.protect m.look @@ fun () ->
+  Array.iteri
+    (fun i (bus, node) ->
+      if Result.is_error node then m.gpus.(i) <- (bus, Topology.node m.root bus))
+    m.gpus;
+  Array.copy m.gpus
+
+let gpus_of m =
+  Array.to_list
+    (Array.map
+       (fun (bus, node) ->
+         (bus, Result.map (fun (n : Topology.node) -> n.gpu) node))
+       (nodes m))
+
+(* This machine, read at the first use. *)
+let this = ref None
+let this_lock = Mutex.create ()
 
 let topology () =
-  Mutex.protect machine_lock @@ fun () ->
-  match !machine with
-  | Some t -> t
-  | None ->
-      let t =
-        if not (linux ()) then [||]
-        else
-          Array.of_list
-            (List.map
-               (fun bus -> (bus, Topology.node "/" bus))
-               (Topology.gpus "/"))
-      in
-      machine := Some t;
-      t
+  let m =
+    Mutex.protect this_lock @@ fun () ->
+    match !this with
+    | Some m -> m
+    | None ->
+        let m =
+          if linux () then machine_at "/"
+          else { root = "/"; gpus = [||]; look = Mutex.create () }
+        in
+        this := Some m;
+        m
+  in
+  nodes m
 
 let acquire fd (node : Topology.node) =
   match Hashtbl.find_opt acquired node.gpu_id with

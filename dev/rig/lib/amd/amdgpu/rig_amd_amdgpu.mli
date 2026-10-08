@@ -87,6 +87,19 @@ val gpus_at : string -> string list
    versions. [Error msg] if the driver does not hold it. *)
 val gpu_at : string -> string -> (Rig_amd_abi.Gpu.t, string) result
 
+(* The type for a machine's AMD GPUs as the [amdgpu] driver describes them, read
+   once, but for a GPU the driver did not hold at the last look. *)
+type machine
+
+(* [machine_at root] is the AMD GPUs of the machine whose files are under the
+   directory [root], as {!gpus_at} lists them, each with the node the driver has
+   for it. *)
+val machine_at : string -> machine
+
+(* [gpus_of m] is the GPUs of [m] in bus order as {!gpu_at} describes each. A
+   GPU [Error] at the last look is looked at again; one found is kept. *)
+val gpus_of : machine -> (string * (Rig_amd_abi.Gpu.t, string) result) list
+
 (* [save_area_at root bus] is the bytes of a compute queue's context save area
    for the GPU at [bus] as the [amdgpu] driver describes it under the directory
    [root]: each die's area and its debugger area, as the kernel driver requires.

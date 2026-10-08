@@ -10,8 +10,8 @@ module Gpu = Rig_amd_abi.Gpu
 let strf = Printf.sprintf
 
 (* Machines as their files show them, written under a temporary directory of
-   this process's own, which it removes at its exit, so that no two runs share
-   a tree: an R9700 (gfx1201) behind two bridges of its own, with its audio
+   this process's own, which it removes at its exit, so that no two runs share a
+   tree: an R9700 (gfx1201) behind two bridges of its own, with its audio
    function, as nonnormal's /sys lists them. *)
 
 let rec mkdirs d =
@@ -34,15 +34,19 @@ let trees =
      at_exit (fun () -> remove d);
      d)
 
-let tree name files =
-  let root = Filename.concat (Lazy.force trees) name in
-  remove root;
+(* [add root files] writes [files], paths from [root] and their contents. *)
+let add root files =
   List.iter
     (fun (path, contents) ->
       let file = Filename.concat root path in
       mkdirs (Filename.dirname file);
       Out_channel.with_open_text file (fun oc -> output_string oc contents))
-    files;
+    files
+
+let tree name files =
+  let root = Filename.concat (Lazy.force trees) name in
+  remove root;
+  add root files;
   root
 
 let functions fns =
@@ -251,6 +255,36 @@ let facts =
             (P.gpu_at root "0000:05:00.0"));
     ]
 
+(* A machine read while the driver held no node of its GPU, as a driver-less
+   session leaves it detached: the GPU is looked at again, found once the driver
+   holds it, and kept once found. *)
+let held =
+  group ~timeout:10. "held"
+    [
+      test
+        "a GPU the driver did not hold is looked at again, and kept once found"
+        (fun () ->
+          let root = tree "rebound" (functions r9700_functions) in
+          let m = P.machine_at root in
+          let bus = "0000:05:00.0" in
+          equal ~msg:"detached"
+            (list (pair string result_gpu))
+            [ (bus, Error (bus ^ " is not held by the amdgpu driver")) ]
+            (P.gpus_of m);
+          add root r9700_node;
+          let found = P.gpu_at root bus in
+          is_ok ~msg:"the driver's node" found;
+          equal ~msg:"given back"
+            (list (pair string result_gpu))
+            [ (bus, found) ]
+            (P.gpus_of m);
+          remove (Filename.concat root "sys/devices");
+          equal ~msg:"kept"
+            (list (pair string result_gpu))
+            [ (bus, found) ]
+            (P.gpus_of m));
+    ]
+
 (* The context save area KFD requires (kfd_queue.c): each die's [cwsr_size],
    then a debugger area of 32 bytes per wave rounded up to 64, the whole rounded
    up to a page. Its waves are 32 per compute unit of a die from GFX 10.1;
@@ -386,4 +420,6 @@ let names =
     ]
 
 let () =
-  exit (run "rig_amd_amdgpu" [ numbering; facts; save_area; processors; names ])
+  exit
+    (run "rig_amd_amdgpu"
+       [ numbering; facts; held; save_area; processors; names ])
