@@ -30,7 +30,7 @@ let busy_connection () =
   let t = { Rig_remote_abi.src = 0; dst = 0; length = 1 lsl 16 } in
   let rail = require_ok (r.rail None ~send:[||] ~receive:[| t |]) in
   let e = require_some rail.local in
-  set64 e.counts 0 1_000_000_000L;
+  e.ready 1_000_000_000;
   Polled.fault p "the controller's device faulted";
   (try ignore (Rig.Buffer.create d 16) with Rig.Lost _ -> ());
   until ~what:"the job's failure" (fun () -> Rig_remote.failure j <> None);

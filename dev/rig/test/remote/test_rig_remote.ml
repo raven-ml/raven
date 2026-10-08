@@ -483,7 +483,7 @@ let with_here () =
     [ 0; 128; 256 ];
   String.iteri (fun i c -> e.outbound.{300 + i} <- c) "hello";
   Atomic.incr fence;
-  set64 e.counts 0 1L;
+  e.ready 1;
   until ~what:"sent" (fun () -> get64 e.counts 128 >= 1L);
   rail.release ()
 
