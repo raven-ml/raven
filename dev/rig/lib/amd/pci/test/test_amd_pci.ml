@@ -515,9 +515,49 @@ let gfx9_layout () =
 
 (* v12_structs.h and v9_structs.h give each field's word; gc_12_0_0_sh_mask.h
    each register field's first bit. *)
+(* The block versions of other GPUs, over the R9700's table: GC, NBIO, MMHUB,
+   OSSSYS, HDP, SDMA, MP0 and MP1. *)
+let blocks gc nbio mmhub osssys hdp sdma mp =
+  [
+    (11, gc);
+    (108, nbio);
+    (34, mmhub);
+    (40, osssys);
+    (41, hdp);
+    (42, sdma);
+    (255, mp);
+    (1, mp);
+  ]
+
+let navi31 =
+  blocks (11, 0, 0) (4, 3, 0) (3, 0, 0) (6, 0, 0) (6, 0, 0) (6, 0, 0) (13, 0, 0)
+
+let mi300_blocks =
+  blocks (9, 4, 3) (7, 9, 0) (1, 8, 0) (4, 4, 2) (4, 4, 2) (4, 4, 2) (13, 0, 6)
+
 let queues =
   group ~timeout:10. "compute queues"
     [
+      cases ~name:fst
+        "a shader array selection and a broadcast hold the bits GRBM_GFX_INDEX \
+         states"
+        (* The SE index at bit 16, the SH (GC 9) or SA index at bit 8, and the
+           SH or SA, instance and SE broadcasts at bits 29, 30 and 31
+           (gc_9_4_3_sh_mask.h, gc_11_0_0_sh_mask.h, gc_12_0_0_sh_mask.h). *)
+        [ ("GC 12.0.1", []); ("GC 11.0.0", navi31); ("GC 9.4.3", mi300_blocks) ]
+        (fun (_, blocks) ->
+          let l =
+            layout
+              (List.fold_left
+                 (fun d (b, v) -> with_version d b v)
+                 (table "r9700.bin") blocks)
+          in
+          equal int
+            ((2 lsl 16) lor (1 lsl 8) lor (1 lsl 30))
+            (Gfx.index l (`Array (2, 1)));
+          equal int
+            ((1 lsl 29) lor (1 lsl 30) lor (1 lsl 31))
+            (Gfx.index l `All));
       test "a GC 12 queue's descriptor holds its ring, pointers and doorbell"
         (fun () ->
           let d =

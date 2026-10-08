@@ -426,6 +426,23 @@ let gate g =
 
 (* Processors *)
 
+(* GC 10 renamed the shader array fields, SH to SA. *)
+let index l sel =
+  let reg = Regs.register l "regGRBM_GFX_INDEX" in
+  let sa = if (Regs.gpu l).gc < (10, 0, 0) then "sh" else "sa" in
+  Rig_amd_abi.Register.encode reg
+    (match sel with
+    | `Array (se, a) ->
+        [
+          ("se_index", se); (sa ^ "_index", a); ("instance_broadcast_writes", 1);
+        ]
+    | `All ->
+        [
+          ("se_broadcast_writes", 1);
+          (sa ^ "_broadcast_writes", 1);
+          ("instance_broadcast_writes", 1);
+        ])
+
 let wgps g =
   let r = g.r in
   let l = Regs.layout_of r in
@@ -435,16 +452,15 @@ let wgps g =
      from GC 10. *)
   let per_array = if g.gc < (10, 0, 0) then d.gc.units else d.gc.units / 2 in
   let all = (1 lsl per_array) - 1 in
-  let select ~inst se sh =
-    Regs.write ~inst r "regGRBM_GFX_INDEX"
-      [ ("se_index", se); ("sh_index", sh); ("instance_broadcast_writes", 1) ]
+  let select ~inst sel =
+    Regs.write ~inst ~value:(index l sel) r "regGRBM_GFX_INDEX" []
   in
   let rows =
     List.concat_map
       (fun inst ->
         List.init d.gc.engines (fun se ->
             Array.init d.gc.arrays (fun sh ->
-                select ~inst se sh;
+                select ~inst (`Array (se, sh));
                 let off =
                   Regs.field ~inst r "regCC_GC_SHADER_ARRAY_CONFIG" field
                   lor Regs.field ~inst r "regGC_USER_SHADER_ARRAY_CONFIG" field
@@ -452,13 +468,7 @@ let wgps g =
                 all land lnot off)))
       g.xccs
   in
-  each_xcc g (fun inst ->
-      Regs.write ~inst r "regGRBM_GFX_INDEX"
-        [
-          ("se_broadcast_writes", 1);
-          ("sh_broadcast_writes", 1);
-          ("instance_broadcast_writes", 1);
-        ]);
+  each_xcc g (fun inst -> select ~inst `All);
   Array.of_list rows
 
 (* A virtual function's TLBs *)

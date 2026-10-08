@@ -83,6 +83,11 @@ val halt : t -> unit
 val gate : t -> unit
 (** [gate g] enables the GC's clock gating, under the RLC's safe mode. *)
 
+val index : Regs.layout -> [ `Array of int * int | `All ] -> int
+(** [index l sel] is the value of [l]'s GPU's GRBM_GFX_INDEX that directs
+    register accesses to shader array [a] of shader engine [e] on every instance
+    ([`Array (e, a)]), or broadcasts them to all ([`All]). Pure. *)
+
 val wgps : t -> int array array
 (** [wgps g] is the processors that run work, as [Rig_amd.path]'s [wgps]: per
     shader engine, engines numbered across dies, and shader array, a bit per
