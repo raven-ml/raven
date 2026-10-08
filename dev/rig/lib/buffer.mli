@@ -9,16 +9,17 @@ open Def
 
 type t = buffer
 type memory = Device | Pinned | Mapped
-type access = Read | Read_write
+type access = Def.access = Read | Read_write
 
 val is_live : t -> bool
 val dead : t -> string option
+val access : t -> access
 val check_live : string -> t -> unit
 (* [check_live fn b] raises [Invalid_argument] naming [fn] if [b] is dead. *)
 
 val of_memory : Def.memory -> int -> t
 val create : ?memory:memory -> device -> int -> t
-val of_io : device -> 'r Type.Id.t -> 'r -> int -> t
+val of_io : device -> 'r Type.Id.t -> 'r -> access:access -> int -> t
 val io : t -> 'r Type.Id.t -> 'r option
 val of_bigarray : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> t
 val borrow : device -> t -> t option

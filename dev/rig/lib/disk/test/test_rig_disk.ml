@@ -481,11 +481,16 @@ let test_cold_read () =
   | code -> failf "drop_pages: errno %d" code
 
 let test_copy_into_opened () =
-  let path = make_file "x" in
-  removing [ path ] @@ fun () ->
+  let path = make_file "x" and empty = make_file "" and made = new_path () in
+  removing [ path; empty; made ] @@ fun () ->
   let dst = of_file path in
+  equal ~msg:"opened, created" (pair bool bool) (true, false)
+    (B.access dst = B.Read, B.access (create made 1) = B.Read);
   raises_match (Exn.invalid_arg ~substring:"Rig.Buffer.copy: ") (fun () ->
       B.copy ~src:(host_of_string "y") ~dst);
+  raises_match ~msg:"an empty file"
+    (Exn.invalid_arg ~substring:"Rig.Buffer.copy: ") (fun () ->
+      B.copy ~src:(host_of_string "") ~dst:(of_file empty));
   equal octets ~msg:"the file" "x" (contents path)
 
 (* 20,000 copies of 64 bytes into a file, each from a fresh host buffer that
@@ -521,7 +526,9 @@ let copies =
       test
         "a copy into a file writes its source's bytes, which nothing else holds"
         test_source_held;
-      test "a copy into a file opened for reading is refused"
+      test
+        "a file opened for reading admits only reads: a copy into it is \
+         refused, empty or not"
         test_copy_into_opened;
     ]
 
@@ -557,22 +564,6 @@ let test_borrow (kind, on_host, range) =
     (Some (String.sub s first length))
     (borrowed d (B.view file ~first ~length))
 
-let test_copy_on_write () =
-  let page = 16384 in
-  let s = pattern 1 (3 * page) in
-  let path = make_file s in
-  removing [ path ] @@ fun () ->
-  let file = of_file path in
-  let window = B.view file ~first:page ~length:page in
-  let on_host = require_some (B.borrow host window) in
-  poke on_host 0 'z';
-  let written = "z" ^ String.sub s (page + 1) (page - 1) in
-  equal octets ~msg:"the host's borrow" written (string_of_host on_host);
-  equal (option octets) ~msg:"a device's borrow" (Some written)
-    (borrowed (Lazy.force memory_device) window);
-  equal octets ~msg:"a copy" (String.sub s page page) (read window);
-  equal octets ~msg:"the file" s (contents path)
-
 let test_two_opens () =
   let s = pattern 2 100 in
   let path = make_file s in
@@ -582,20 +573,7 @@ let test_two_opens () =
     ( B.overlaps one two,
       B.overlaps
         (B.view one ~first:10 ~length:20)
-        (B.view two ~first:0 ~length:50) );
-  poke (require_some (B.borrow host one)) 10 'z';
-  equal (option octets) ~msg:"the other's borrow" (Some s) (borrowed host two)
-
-let test_mapping_kept () =
-  let s = pattern 4 5000 in
-  let path = make_file s in
-  removing [ path ] @@ fun () ->
-  let file = of_file path in
-  poke (require_some (B.borrow host file)) 7 'z';
-  Gc.full_major ();
-  Gc.full_major ();
-  equal (option char) ~msg:"a later borrow" (Some 'z')
-    (Option.map (fun s -> s.[7]) (borrowed host file))
+        (B.view two ~first:0 ~length:50) )
 
 let test_prefetch_unopened () =
   let s = pattern 5 (3 * 16384) in
@@ -640,18 +618,8 @@ let borrows =
          memory, holds what a copy reads"
         Gen.(triple kinds bool (pair bool (pair extent lengths)))
         test_borrow;
-      test
-        "a write through a borrow of an opened file is the process's: borrows \
-         see it, copies and the file do not"
-        test_copy_on_write;
-      test
-        "two opens of one file are two memories: they do not overlap, and a \
-         write through one's borrow is not seen through the other's"
+      test "two opens of one file are two memories, which do not overlap"
         test_two_opens;
-      test
-        "an opened file's pages stay mapped, with the process's writes, while \
-         its buffer is reachable"
-        test_mapping_kept;
       test
         "a device borrows a file whose path names nothing any more, and its \
          bytes are the file's"
@@ -1094,24 +1062,20 @@ let barriers =
 
 (* A model of files *)
 
-(* A file as the model knows it: the bytes its copies read, the bytes its pages
-   show, whether another file replaced its path, and whether more other files
-   than the disk keeps descriptors of were read since it was made. A created
-   file's pages are its bytes. *)
+(* A file as the model knows it: the bytes its copies read and its pages show,
+   whether another file replaced its path, and whether more other files than the
+   disk keeps descriptors of were read since it was made. Only a created file is
+   written. *)
 type model = {
   kind : kind;
   bytes : Bytes.t;
-  pages : Bytes.t;
   mutable replaced : bool;
   mutable after_others : bool;
 }
 
 type file = { path : string; buf : B.t }
 
-let model kind bytes =
-  let pages = match kind with Opened -> Bytes.copy bytes | Created -> bytes in
-  { kind; bytes; pages; replaced = false; after_others = false }
-
+let model kind bytes = { kind; bytes; replaced = false; after_others = false }
 let file = abstract "f" ~release:(fun f -> remove f.path)
 let sizes = Gen.frequency [ (1, ints page_edges); (1, Gen.int_range 0 5000) ]
 let ranges = Gen.pair small_extent small_extent
@@ -1144,8 +1108,6 @@ let model_commands =
         let path = new_path () in
         { path; buf = create path n });
     command "copy into"
-      ~pre:(fun m r _ ->
-        m.kind = Created || snd (clamp (Bytes.length m.bytes) r) > 0)
       (file ^-> ranges @-> letters @-> judges (result unit string))
       (fun m r c outcome ->
         let at, len = clamp (Bytes.length m.bytes) r in
@@ -1173,19 +1135,19 @@ let model_commands =
       (fun m r outcome ->
         let at, len = clamp (Bytes.length m.bytes) r in
         judged m outcome (function
-          | Some s -> equal octets (Bytes.sub_string m.pages at len) s
+          | Some s -> equal octets (Bytes.sub_string m.bytes at len) s
           | None -> fail "the host's borrow of a file is None"))
       (fun f r ->
         let at, len = clamp (B.length f.buf) r in
         sys_result f (fun () ->
             borrowed host (B.view f.buf ~first:at ~length:len)));
     command "write through a borrow"
-      ~pre:(fun m _ _ -> Bytes.length m.bytes > 0)
+      ~pre:(fun m _ _ -> m.kind = Created && Bytes.length m.bytes > 0)
       (file ^-> small_extent @-> letters
       @-> judges (result (option unit) string))
       (fun m a c outcome ->
         judged m outcome (function
-          | Some () -> Bytes.set m.pages (min a (Bytes.length m.pages - 1)) c
+          | Some () -> Bytes.set m.bytes (min a (Bytes.length m.bytes - 1)) c
           | None -> fail "the host's borrow of a file is None"))
       (fun f a c ->
         sys_result f (fun () ->

@@ -287,11 +287,17 @@ module Buffer : sig
       Raises [Invalid_argument] if [n < 0] or [d] is an io device that makes no
       memory of its own; {!Out_of_memory}; and {!Lost} if [d] is lost. *)
 
-  val of_io : device -> 'r Type.Id.t -> 'r -> int -> t
-  (** [of_io d k r n] is a buffer over the [n] bytes of [r], a region of the io
-      device [d] whose library declares [k] ({!Io.region_key}). The memory is
-      never exclusive ({!Claim}), and returns to [d]'s {!Io.free} once
-      unreachable.
+  (** The type for accesses to memory. *)
+  type access =
+    | Read  (** Reading it. *)
+    | Read_write  (** Reading and writing it. *)
+
+  val of_io : device -> 'r Type.Id.t -> 'r -> access:access -> int -> t
+  (** [of_io d k r ~access n] is a buffer over the [n] bytes of [r], a region of
+      the io device [d] whose library declares [k] ({!Io.region_key}), whose
+      memory admits [access] ({!val-access}): [Read] for a region [d] holds for
+      reading, such as a file opened read-only. The memory is never exclusive
+      ({!Claim}), and returns to [d]'s {!Io.free} once unreachable.
 
       Raises [Invalid_argument] if [d] is no io device, its library's key is not
       [k], or [n < 0]. *)
@@ -311,8 +317,7 @@ module Buffer : sig
   (** [borrow d b] is [Some b'], a borrowed buffer on [d] over [b]'s memory,
       without a copy, of [b]'s length, or [None] where [d] cannot map it. It is
       [Some b] for [b] on [d]. [b'] keeps [b] reachable, and its stamps are
-      [b]'s: work through [b'] is work on [b]'s memory, with the one exception
-      {!Io.pages} states for memory an io device holds for reading.
+      [b]'s: work through [b'] is work on [b]'s memory.
 
       [d] maps host memory of its machine that starts on a page, where it maps
       host memory at all ({!Driver.maps_host}), and memory of a device of its
@@ -331,11 +336,6 @@ module Buffer : sig
       [d] or [b]'s device is lost or is lost by the borrow, or [b]'s stamps name
       a lost device; and [Sys_error] where asking an io device for [b]'s pages
       failed and may pass ({!Io.pages}). *)
-
-  (** The type for what an access does with a buffer. *)
-  type access =
-    | Read  (** It reads the buffer. *)
-    | Read_write  (** It reads and writes it. *)
 
   val wait : t -> access -> unit
   (** [wait b access] returns once the work on [b]'s memory that an access of
@@ -369,19 +369,22 @@ module Buffer : sig
       copy has memory the host addresses, which the host copies. An {!Io}
       device's memory, of any machine, is read and written by its {!Io.read} and
       {!Io.write}, through the staging memory when the host does not address the
-      other side. Memory of a driver's device of another machine copies only
-      directly, by [src]'s device, which no staging memory reaches.
+      other side, except a copy into it from memory the host does not address,
+      of a device with a copy queue that maps its pages ({!Io.pages}), which
+      that device runs through them. Memory of a driver's device of another
+      machine copies only directly, by [src]'s device, which no staging memory
+      reaches.
 
       Staging memory that a device lost while it used it is replaced, so a loss
       reaches no other device's copies.
 
       Raises [Invalid_argument] if [src] and [dst] differ in size, overlap
-      ({!overlaps}), or either is dead, or one is memory of a driver's device of
-      another machine and [src]'s device runs no copy or does not reach [dst]'s
-      ({!reaches}); {!Lost} if a device involved is lost or is lost by the copy,
-      or a point it waits for is on a lost device; {!Out_of_memory} if a host
-      cannot allocate its staging memory; and what an {!Io} device's read or
-      write raises. *)
+      ({!overlaps}), or either is dead, [dst]'s memory is [Read]
+      ({!val-access}), or one is memory of a driver's device of another machine
+      and [src]'s device runs no copy or does not reach [dst]'s ({!reaches});
+      {!Lost} if a device involved is lost or is lost by the copy, or a point it
+      waits for is on a lost device; {!Out_of_memory} if a host cannot allocate
+      its staging memory; and what an {!Io} device's read or write raises. *)
 
   val device : t -> device
   (** [device b] is the device [b] is on: [d] for a buffer that {!create},
@@ -400,6 +403,17 @@ module Buffer : sig
       consumed with ({!Claim.consume}), and [None] while [b] lives. A library
       that calls this one on its caller's buffer checks it first, to refuse a
       dead buffer under its own name. *)
+
+  val access : t -> access
+  (** [access b] is the accesses [b]'s memory admits, the same for each of its
+      views and borrows: [Read_write] for memory {!create} and {!of_bigarray}
+      make, and what {!of_io} was given.
+
+      [Read] memory is never written: a {!copy} into it raises, and {!Claim}
+      never holds it exclusive. The host writes it only by breaking this,
+      through {!bigarray}, after which what reads of it see is unspecified. A
+      library that writes its caller's buffer checks this first, to refuse a
+      [Read] buffer under its own name. *)
 
   val view : t -> first:int -> length:int -> t
   (** [view b ~first ~length] is the [length] bytes of [b] from its byte [first]
@@ -422,11 +436,11 @@ module Buffer : sig
     ('a, 'b) Bigarray.kind -> t -> ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t
   (** [bigarray k b] is the bytes of the host buffer [b] read as elements of
       kind [k], without a copy: [length b / Bigarray.kind_size_in_bytes k] of
-      them, in the host's byte order. Writing through it writes [b]. It, and
-      every array made from it, keeps [b]'s memory alive while reachable, memory
-      a borrow on the host maps included: no buffer reuses it and its device
-      does not free it until then. Access through it is the host's: {!wait}
-      orders it after devices' work.
+      them, in the host's byte order. Writing through it writes [b], whose
+      memory must admit it ({!val-access}). It, and every array made from it,
+      keeps [b]'s memory alive while reachable, memory a borrow on the host maps
+      included: no buffer reuses it and its device does not free it until then.
+      Access through it is the host's: {!wait} orders it after devices' work.
 
       Raises [Invalid_argument] if [b] is dead or not on {!host}, or [b]'s bytes
       are not a whole number of elements of [k] starting at a multiple of their
@@ -1113,9 +1127,19 @@ module type Io = sig
     option
   (** [pages d r] is [r]'s bytes as host memory, or [None] if [d] maps none. The
       mapping is [r]'s memory: {!read} and {!write} see writes through it, and
-      it sees theirs. The exception is [r] that [d] holds for reading: writes
-      through the mapping, by the host or by a device that borrowed it, stay the
-      process's own, and {!read} does not see them.
+      it sees theirs. For [r] that [d] holds for reading ({!Buffer.val-access}),
+      no write through the mapping reaches [r].
+
+      A device other than the host maps the pages where its driver maps host
+      memory ({!Driver.map_host}), and on Linux every such driver maps it for
+      writing. NVIDIA's kernel driver, for CUDA and NV, pins the pages for
+      writing for as long as they are mapped (its os-mlock.c), which the kernel
+      refuses for a shared mapping of a file (mm/gup.c,
+      [writable_file_mapping_allowed]): those devices map no file that [d] holds
+      for writing, and its copies go through the staging memory. AMD's KFD
+      faults the pages in for writing, and refuses pages mapped read-only
+      (amdgpu_hmm.c), so a region [d] holds for reading is mapped as the
+      process's own copy, as a private mapping of a file is.
 
       [None] is a fact of [r]: this library asks once per memory, at its first
       borrow that answers, and keeps the answer. A failure that may pass, of the

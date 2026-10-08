@@ -47,6 +47,7 @@ val holds_list : int
 val entry :
   ?region:region ->
   ?io_region:io_region ->
+  ?access:access ->
   device ->
   memory_kind ->
   int ->
@@ -97,9 +98,9 @@ val prefetch : device -> memory -> at:int -> len:int -> unit
 (* [prefetch d m ~at ~len] asks the io device of [m] to read [len] bytes of it
    from [at] ahead, if [d] is no host. *)
 
-val of_io : device -> io_region -> int -> memory
-(* [of_io d r n] is a memory record over [n] bytes of the region [r] an io
-   library gave the io device [d], after draining [d]. *)
+val of_io : device -> io_region -> access:access -> int -> memory
+(* [of_io d r ~access n] is a memory record over [n] bytes of the region [r] an
+   io library gave the io device [d], admitting [access], after draining [d]. *)
 
 (* Allocation and drains *)
 

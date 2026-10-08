@@ -235,9 +235,9 @@ module Io = struct
       sys_error f
         (strf "the file ends at byte %d, before byte %d" (at + k) (at + len))
 
+  (* The core writes no file opened for reading: its memory admits only reads
+     ([Rig.Buffer.access]). *)
   let write () f ~at ~src ~len =
-    if not f.writable then
-      invalid_argf "Rig.Buffer.copy: %s was opened for reading" f.path;
     using f @@ fun fd ->
     let k = pwrite fd at src len in
     if k < 0 then sys_error f (error (-k))
@@ -286,7 +286,9 @@ let open_file path mode n =
       | code, _, _, _ -> Error (strf "%s: %s" path (why code))
     in
     locked opened
-    |> Result.map (fun f -> Rig.Buffer.of_io device Io.region_key f f.size)
+    |> Result.map (fun f ->
+        let access = if f.writable then Rig.Buffer.Read_write else Read in
+        Rig.Buffer.of_io device Io.region_key f ~access f.size)
 
 let of_file path = open_file path read_mode 0
 

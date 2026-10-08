@@ -9,11 +9,12 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
 type t = buffer
 type memory = Device | Pinned | Mapped
-type access = Read | Read_write
+type access = Def.access = Read | Read_write
 
 let generation (c : claim) = Atomic.Loc.get [%atomic.loc c.generation]
 let is_live b = b.generation = generation b.mem.claim
 let dead b = if is_live b then None else Some b.mem.claim.why
+let access b = b.mem.root.entry.access
 
 let refuse_dead fn b =
   invalid_argf "Rig.%s: the buffer is dead: %s" fn b.mem.claim.why
@@ -44,14 +45,14 @@ let create ?(memory = Device) d n =
   in
   of_memory mem n
 
-let of_io (type r) d (k : r Type.Id.t) (r : r) n =
+let of_io (type r) d (k : r Type.Id.t) (r : r) ~access n =
   if n < 0 then invalid_argf "Rig.Buffer.of_io: %d bytes is negative" n;
   match d.kind with
   | Io { m; h } -> (
       let module I = (val m) in
       match Type.Id.provably_equal I.region_key k with
       | Some Type.Equal ->
-          let mem = Memory.of_io d (Io_region { m; h; r }) n in
+          let mem = Memory.of_io d (Io_region { m; h; r }) ~access n in
           (* The io library reaches the memory outside the claims. *)
           mem.claim.count <- 1;
           of_memory mem n

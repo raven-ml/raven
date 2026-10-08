@@ -113,15 +113,15 @@ let test_of_io () =
   let io = open_store "open:of-io" in
   let r = Bigarray.Array1.create Bigarray.char Bigarray.c_layout 16 in
   Bigarray.Array1.fill r 'p';
-  let b = C.Buffer.of_io io Store.region_key r 16 in
+  let b = C.Buffer.of_io io Store.region_key r ~access:Read_write 16 in
   equal ~msg:"the region given" bool true
     (match C.Buffer.io b Store.region_key with
     | Some r' -> r' == r
     | None -> false);
   is_none (C.Buffer.io b Other.region_key);
   raises_match Exn.invalid_arg (fun () ->
-      C.Buffer.of_io io Other.region_key r 16);
-  let dead = C.Buffer.of_io io Store.region_key r 16 in
+      C.Buffer.of_io io Other.region_key r ~access:Read_write 16);
+  let dead = C.Buffer.of_io io Store.region_key r ~access:Read_write 16 in
   C.Claim.with_ ~read:[ dead ] ~donate:[] (fun c ->
       ignore (C.Claim.consume c ~why:"consumed" dead));
   raises_match (Exn.invalid_arg ~substring:"consumed") (fun () ->

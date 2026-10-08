@@ -41,6 +41,9 @@ type completion = Store | Object of int | Host_writes
    library gave. *)
 type memory_kind = Device | Pinned | Mapped | Host_kept | Io_made | Io_given
 
+(* The accesses a memory admits, [Buffer.access]. *)
+type access = Read | Read_write
+
 type keep =
   | Nothing
   | Heap of
@@ -96,6 +99,7 @@ and entry = {
   bytes : int;
   region : region option;
   io_region : io_region option;
+  access : access;
   mutable stamps : int;  (** The C stamps, a hold's once held; 0 none. *)
   mutable own : int;  (** The memory's own stamps. *)
   mutable maps : mapping list;  (** Other devices' mappings of it. *)

@@ -34,10 +34,9 @@
     its storage reads at the storage's pace, borrowed or copied.
 
     The pages of a file {!create_file} made are the file: copies see writes
-    through a borrow, and a borrow sees theirs. The pages of a file {!of_file}
-    opened are copy-on-write: a write through a borrow, by the host or by a
-    device, changes the process's copy of the page, never the file, and copies
-    do not see it.
+    through a borrow, and a borrow sees theirs. A file {!of_file} opened admits
+    only reads ({!Rig.Buffer.access}): no write through its pages reaches the
+    file.
 
     Nothing outside the process may change a file while its pages are borrowed:
     such a change may show through the pages of a file {!of_file} opened that
@@ -91,13 +90,10 @@ val device : Rig.t
 
 val of_file : string -> (Rig.Buffer.t, string) result
 (** [of_file path] is the bytes of the regular file [path] on {!device}, for
-    reading. Its length is the file's size when [of_file] opens it. A copy of
-    one byte or more into it raises [Invalid_argument].
-
+    reading: its {!Rig.Buffer.access} is [Read], and a copy into it raises
+    [Invalid_argument]. Its length is the file's size when [of_file] opens it.
     Each call is a memory of its own: two opens of one file do not overlap
-    ({!Rig.Buffer.overlaps}), a write through a borrow of one is not seen
-    through the other, and a copy between overlapping bytes of the two leaves
-    the overlap unspecified.
+    ({!Rig.Buffer.overlaps}).
 
     [Error why], [why] starting with [path], if [path] cannot be opened for
     reading or names no regular file, such as a directory or a FIFO, which

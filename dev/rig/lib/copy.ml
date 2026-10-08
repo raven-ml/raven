@@ -149,6 +149,8 @@ let rec copy ~src ~dst =
   if n <> Buffer.length dst then
     invalid_argf "Rig.%s: %d bytes into %d" fn n (Buffer.length dst);
   if Buffer.overlaps src dst then invalid_argf "Rig.%s: the buffers overlap" fn;
+  if Buffer.access dst = Read then
+    invalid_argf "Rig.%s: the destination's memory admits only reads" fn;
   let sd = src.mem.dev and dd = dst.mem.dev in
   if Dev.is_lost sd then Dev.raise_lost sd;
   if Dev.is_lost dd then Dev.raise_lost dd;

@@ -124,13 +124,14 @@ let is_io_memory (e : entry) =
   | Io_made | Io_given -> true
   | Device | Pinned | Mapped | Host_kept -> false
 
-let entry ?region ?io_region owner memory bytes stamps =
+let entry ?region ?io_region ?(access = Read_write) owner memory bytes stamps =
   {
     owner;
     memory;
     bytes;
     region;
     io_region;
+    access;
     stamps;
     own = stamps;
     maps = [];
@@ -921,9 +922,9 @@ let prefetch d (m : memory) ~at ~len =
 
 (* A memory record over [n] bytes of the region [r] an io library gave the io
    device [d], which [d]'s free gives back once unreachable. *)
-let of_io d r n =
+let of_io d r ~access n =
   drain d;
-  let e = entry ~io_region:r d Io_given n (stamps_new ()) in
+  let e = entry ~io_region:r ~access d Io_given n (stamps_new ()) in
   let m = make d n e in
   m.token <- token d.release (Memory e) n max_int (-1);
   m
