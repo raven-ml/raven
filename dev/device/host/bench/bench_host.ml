@@ -12,7 +12,7 @@
    and a split by the pool's empty job of the same threads and blocks. Calls
    from linked code are loop.c's: 1,000 through device_host_call, beside 1,000
    direct calls; and 100 splits, beside the pool's job. A compute-bound kernel
-   over 16 Mi floats, split into 4 blocks per worker, is bounded by its serial
+   over 4 Mi floats, split into 4 blocks per worker, is bounded by its serial
    run divided by the workers. *)
 
 module Host = Device_host
@@ -100,7 +100,7 @@ let entry_rows =
     ]
 
 let scale_rows =
-  let n = 16 * 1024 * 1024 in
+  let n = 4 * 1024 * 1024 in
   let p = link ~entry:"scale" (obj "scale") () in
   let x = Bigarray.(Array1.create float32 c_layout n) in
   Bigarray.Array1.fill x 1.;
@@ -112,8 +112,8 @@ let scale_rows =
   in
   Thumper.group "split"
     [
-      Thumper.bench "scale-16Mi" (run ?split [| 0; 0 |]);
-      Thumper.bench "serial-scale-16Mi" (run [| 0; n |]);
+      Thumper.bench "scale-4Mi" (run ?split [| 0; 0 |]);
+      Thumper.bench "serial-scale-4Mi" (run [| 0; n |]);
     ]
 
 let () =
