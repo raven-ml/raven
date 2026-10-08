@@ -21,22 +21,20 @@ alloc-free/visible/4KiB	wall_time	batch=16384	n=20	4.127e-07	4.104e-07 4.108e-07
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
-# forced: blessed under load 19.2 on 10 cores
-# forced: blessed alloc-free/bar/16MiB alloc-free/visible/4KiB under load 18.6 on 10 cores
-# forced: blessed alloc-free/visible/4KiB alloc-free/visible/16MiB under load 12.0 on 10 cores
+# forced: blessed under load 17.6 on 10 cores
 
-alloc-free/bar/16MiB	alloc_words	exact	361
-alloc-free/bar/16MiB	wall_time	batch=8192	n=20	1.252e-06	1.225e-06 1.240e-06 1.240e-06 1.240e-06 1.243e-06 1.246e-06 1.246e-06 1.248e-06 1.251e-06 1.252e-06 1.252e-06 1.252e-06 1.255e-06 1.257e-06 1.258e-06 1.258e-06 1.259e-06 1.268e-06 1.286e-06 1.316e-06
-alloc-free/bar/4KiB	alloc_words	exact	396
-alloc-free/bar/4KiB	wall_time	batch=8192	n=20	9.958e-07	9.886e-07 9.910e-07 9.910e-07 9.914e-07 9.915e-07 9.925e-07 9.930e-07 9.935e-07 9.950e-07 9.954e-07 9.962e-07 9.979e-07 9.980e-07 9.985e-07 1.000e-06 1.004e-06 1.007e-06 1.008e-06 1.026e-06 1.067e-06
-alloc-free/gpu/16MiB	alloc_words	exact	810
-alloc-free/gpu/16MiB	wall_time	batch=2048	n=20	3.172e-06	3.137e-06 3.143e-06 3.157e-06 3.157e-06 3.162e-06 3.163e-06 3.163e-06 3.166e-06 3.169e-06 3.171e-06 3.174e-06 3.219e-06 3.221e-06 3.225e-06 3.232e-06 3.236e-06 3.239e-06 3.285e-06 3.302e-06 3.744e-06
-alloc-free/gpu/4KiB	alloc_words	exact	355
-alloc-free/gpu/4KiB	wall_time	batch=8192	n=20	8.869e-07	8.751e-07 8.757e-07 8.783e-07 8.810e-07 8.820e-07 8.828e-07 8.840e-07 8.844e-07 8.859e-07 8.864e-07 8.874e-07 8.874e-07 8.879e-07 8.888e-07 8.893e-07 8.981e-07 9.045e-07 1.041e-06 1.065e-06 1.114e-06
-alloc-free/visible/16MiB	alloc_words	exact	907
-alloc-free/visible/16MiB	wall_time	batch=32	n=20	1.674e-04	1.630e-04 1.633e-04 1.634e-04 1.634e-04 1.642e-04 1.648e-04 1.649e-04 1.671e-04 1.671e-04 1.673e-04 1.674e-04 1.674e-04 1.677e-04 1.680e-04 1.682e-04 1.692e-04 1.696e-04 1.704e-04 2.001e-04 2.931e-04
-alloc-free/visible/4KiB	alloc_words	exact	292
-alloc-free/visible/4KiB	wall_time	batch=8192	n=20	7.470e-07	7.350e-07 7.390e-07 7.401e-07 7.407e-07 7.414e-07 7.418e-07 7.442e-07 7.458e-07 7.463e-07 7.467e-07 7.472e-07 7.493e-07 7.495e-07 7.498e-07 7.499e-07 7.523e-07 7.531e-07 7.537e-07 7.547e-07 7.549e-07
+alloc-free/bar/16MiB	alloc_words	exact	360
+alloc-free/bar/16MiB	wall_time	batch=8192	n=20	1.103e-06	1.099e-06 1.099e-06 1.100e-06 1.100e-06 1.101e-06 1.101e-06 1.101e-06 1.102e-06 1.102e-06 1.103e-06 1.103e-06 1.104e-06 1.104e-06 1.105e-06 1.108e-06 1.108e-06 1.108e-06 1.109e-06 1.110e-06 1.111e-06
+alloc-free/bar/4KiB	alloc_words	exact	368
+alloc-free/bar/4KiB	wall_time	batch=8192	n=20	9.288e-07	9.211e-07 9.215e-07 9.232e-07 9.239e-07 9.240e-07 9.246e-07 9.249e-07 9.270e-07 9.278e-07 9.284e-07 9.292e-07 9.316e-07 9.320e-07 9.350e-07 9.372e-07 9.373e-07 9.380e-07 9.393e-07 9.397e-07 9.489e-07
+alloc-free/gpu/16MiB	alloc_words	exact	809
+alloc-free/gpu/16MiB	wall_time	batch=2048	n=20	3.103e-06	3.062e-06 3.064e-06 3.065e-06 3.073e-06 3.084e-06 3.088e-06 3.099e-06 3.101e-06 3.101e-06 3.102e-06 3.103e-06 3.107e-06 3.108e-06 3.110e-06 3.112e-06 3.129e-06 3.134e-06 3.141e-06 3.143e-06 3.151e-06
+alloc-free/gpu/4KiB	alloc_words	exact	327
+alloc-free/gpu/4KiB	wall_time	batch=8192	n=20	7.978e-07	7.897e-07 7.903e-07 7.935e-07 7.942e-07 7.946e-07 7.950e-07 7.955e-07 7.960e-07 7.965e-07 7.969e-07 7.987e-07 7.997e-07 8.015e-07 8.021e-07 8.024e-07 8.026e-07 8.046e-07 8.052e-07 8.119e-07 8.289e-07
+alloc-free/visible/16MiB	alloc_words	exact	922
+alloc-free/visible/16MiB	wall_time	batch=32	n=20	1.627e-04	1.588e-04 1.595e-04 1.603e-04 1.611e-04 1.617e-04 1.620e-04 1.622e-04 1.623e-04 1.625e-04 1.627e-04 1.628e-04 1.631e-04 1.633e-04 1.636e-04 1.637e-04 1.640e-04 1.642e-04 1.647e-04 1.652e-04 1.654e-04
+alloc-free/visible/4KiB	alloc_words	exact	264
+alloc-free/visible/4KiB	wall_time	batch=8192	n=20	6.471e-07	6.410e-07 6.432e-07 6.435e-07 6.438e-07 6.453e-07 6.461e-07 6.462e-07 6.465e-07 6.466e-07 6.470e-07 6.472e-07 6.505e-07 6.518e-07 6.521e-07 6.531e-07 6.537e-07 6.546e-07 6.547e-07 6.561e-07 6.568e-07
 
 # machine: baccbeca132e3ae9
 # host: nonnormal · Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz · x86_64 · linux

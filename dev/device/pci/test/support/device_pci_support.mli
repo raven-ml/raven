@@ -119,7 +119,7 @@ module Tables : sig
     entries : (int, int64) Hashtbl.t;  (** Entries by physical address. *)
     mutable zeroed : (int * int) list;  (** [zero] calls, newest first. *)
     mutable unflushed : int;  (** Entries written since the last [flush]. *)
-    mutable touches : int;  (** Entries read and written, zeroes and flushes. *)
+    mutable touches : int;  (** Entries written, zeroes and flushes. *)
   }
   (** The type for a GPU memory that holds page tables. *)
 

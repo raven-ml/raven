@@ -729,6 +729,7 @@ let test_tables_path =
       let t, g = tables () in
       let va = base + gib + offset in
       let path = require_some (Page_table.tables t ~va n) in
+      equal ~msg:"the tables made are flushed" int 0 g.unflushed;
       equal ~msg:"depth" int depth (List.length path);
       equal ~msg:"root first" hex (Page_table.root t) (List.hd path);
       equal ~msg:"the same tables again" (list hex) path
@@ -738,6 +739,247 @@ let test_tables_path =
       equal ~msg:"the tables map uses" (list hex) path (snd (walk g t));
       Page_table.unmap t ~va n;
       equal ~msg:"never freed" (list hex) path (snd (walk g t)))
+
+(* The host copy *)
+
+(* The fake format, each entry it writes also stored through [w] at its physical
+   address, [zero] a fill of [w] and [flush] a flush of [w]: a driver's format
+   over a window on the GPU's memory. *)
+let through g w =
+  let f = format g in
+  let store table i =
+    let a = table + (8 * i) in
+    Window.set64 w a (Option.value ~default:0L (Hashtbl.find_opt g.entries a))
+  in
+  {
+    f with
+    set_table =
+      (fun ~level ~table i ~child ->
+        f.set_table ~level ~table i ~child;
+        store table i);
+    set_page =
+      (fun ~level ~table i ~pa tg ~uncached ~snooped ~fragment ->
+        f.set_page ~level ~table i ~pa tg ~uncached ~snooped ~fragment;
+        store table i);
+    clear =
+      (fun ~level ~table i ->
+        f.clear ~level ~table i;
+        store table i);
+    zero =
+      (fun pa n ->
+        f.zero pa n;
+        Window.fill w pa n '\000');
+    flush =
+      (fun () ->
+        f.flush ();
+        Window.flush w);
+  }
+
+(* A GPU memory of 1 MiB on a far machine, at its addresses from 0: a boot pool
+   of 64 KiB and tables from the rest. A far machine is never freed, so those
+   that tests let go serve again. *)
+let far_memory = mib
+let spare = ref []
+
+let far_machine () =
+  match !spare with
+  | f :: rest ->
+      spare := rest;
+      f
+  | [] -> Device_pci_support.far 0 far_memory
+
+let far_tables ?(f = far_machine ()) () =
+  let g = Tables.memory () in
+  let w = Window.through (Window.unsafe_transport f) 0 far_memory in
+  let t =
+    Page_table.create (through g w)
+      (Space.create ~base (1 lsl 40))
+      ~memory:far_memory ~boot:(64 * kib) ~tables:Main
+      ~pages:[ (page, page) ]
+  in
+  Page_table.booted t;
+  ignore (log f : _ list);
+  (t, g, f)
+
+(* What a call sent the far machine: stores, then one load, the flush's, last;
+   or nothing. *)
+type sent = Nothing | Stores_then_flush | Other of (bool * int * int) list
+
+let sent accesses =
+  let rec stores = function
+    | [ (false, 0, 4) ] -> Stores_then_flush
+    | (true, _, _) :: rest -> stores rest
+    | _ -> Other accesses
+  in
+  if accesses = [] then Nothing else stores accesses
+
+let pp_sent ppf = function
+  | Nothing -> Format.pp_print_string ppf "nothing"
+  | Stores_then_flush -> Format.pp_print_string ppf "stores, then a flush"
+  | Other l ->
+      Format.fprintf ppf "@[%a@]"
+        (Format.pp_print_list ~pp_sep:Format.pp_print_space
+           (fun ppf (w, a, n) ->
+             Format.fprintf ppf "%s 0x%x+%d" (if w then "store" else "load") a n))
+        l
+
+let sent_w = Testable.make ~pp:pp_sent ~equal:( = )
+
+(* The pages the live mappings call for, and the 4 KiB pages unmapped since. *)
+type copy = { mutable live : entry list; mutable gone : int list }
+
+let entry_span e = 1 lsl shifts.(e.level)
+let overlaps lo hi e = e.va < hi && lo < e.va + entry_span e
+
+(* The tables the pages need: the root, and each table on their paths. *)
+let needed live =
+  let path e =
+    List.init e.level (fun d -> (d + 1, (e.va - base) lsr shifts.(d)))
+  in
+  1 + List.length (List.sort_uniq compare (List.concat_map path live))
+
+let copy_map va ranges m =
+  let size = List.fold_left (fun n (_, k) -> n + k) 0 ranges in
+  let refused = List.exists (overlaps va (va + size)) m.live in
+  let region a = a / (2 * mib) in
+  cover "a map over mapped addresses" refused;
+  cover "a map again of pages unmapped beside live ones in their table"
+    (List.exists
+       (fun a ->
+         a >= va
+         && a < va + size
+         && List.exists
+              (fun e -> e.level = leaf && region e.va = region a)
+              m.live)
+       m.gone);
+  if refused then invalid_arg "Page_table.map";
+  m.live <- m.live @ expect ~base ~va ranges;
+  Stores_then_flush
+
+let copy_unmap va n m =
+  let hi = va + n in
+  let mapped a = List.exists (fun e -> e.va <= a && a < e.va + entry_span e) in
+  let rec whole a = a >= hi || (mapped a m.live && whole (a + page)) in
+  let inside e = e.va >= va && e.va + entry_span e <= hi in
+  let hit = List.filter (overlaps va hi) m.live in
+  cover "an unmap of a large page whole"
+    (List.exists (fun e -> e.level < leaf) hit && List.for_all inside hit);
+  let refused = not (whole va && List.for_all inside hit) in
+  cover "an unmap of addresses not mapped" (refused && not (whole va));
+  cover "an unmap of part of a large page" (whole va && refused);
+  if refused then invalid_arg "Page_table.unmap";
+  let gone, live = List.partition (overlaps va hi) m.live in
+  m.gone <-
+    List.filter_map (fun e -> if e.level = leaf then Some e.va else None) gone
+    @ m.gone;
+  m.live <- live;
+  Stores_then_flush
+
+let copies =
+  abstract "t"
+    ~release:(fun (_, _, f) -> spare := f :: !spare)
+    ~invariant:(fun m (t, g, _) ->
+      let by_va = List.sort (fun a b -> compare a.va b.va) in
+      equal ~msg:"the GPU's entries" (list placed) (by_va m.live) (pages g t);
+      equal ~msg:"its tables" int (needed m.live) (List.length (snd (walk g t))))
+
+(* Addresses in the first 256 KiB of the first three 2 MiB pages, or on them, so
+   that calls meet each other's pages and tables, and ranges of a few pages or
+   of a 2 MiB page and more. *)
+let copy_va =
+  Gen.with_pp pp_hex
+    (Gen.map
+       (fun o -> base + o)
+       (Gen.frequency
+          [
+            ( 3,
+              Gen.map
+                (fun (r, k) -> (r * 2 * mib) + (k * page))
+                (Gen.pair (Gen.int_range 0 2) (Gen.int_range 0 63)) );
+            (2, Gen.map (fun k -> k * 2 * mib) (Gen.int_range 0 2));
+          ]))
+
+let copy_size =
+  Gen.frequency
+    [
+      (4, Gen.map (fun k -> k * page) (Gen.int_range 1 4));
+      (1, Gen.of_list ~pp:pp_hex [ 2 * mib; (2 * mib) + page ]);
+    ]
+
+let copy_ranges =
+  let pa =
+    Gen.frequency
+      [
+        (1, Gen.map (fun k -> k * page) (Gen.int_range 0 4095));
+        (1, Gen.map (fun k -> k * 2 * mib) (Gen.int_range 0 7));
+      ]
+  in
+  Gen.with_pp pp_ranges
+    (Gen.list ~size:(Gen.int_range 1 2) (Gen.pair pa copy_size))
+
+(* A 2 MiB page at a 2 MiB address. *)
+let copy_large =
+  Gen.with_pp (fun ppf (va, ranges) ->
+      Format.fprintf ppf "0x%x [%a]" va pp_ranges ranges)
+  @@ Gen.map
+       (fun (k, j) -> (base + (k * 2 * mib), [ (j * 2 * mib, 2 * mib) ]))
+       (Gen.pair (Gen.int_range 0 2) (Gen.int_range 0 7))
+
+let live_range =
+  among (pair hex int) copies (fun m ->
+      List.map (fun e -> (e.va, entry_span e)) m.live)
+
+(* What [call] sent [f]; a refusal that sent anything fails. *)
+let sending f call =
+  match call () with
+  | () -> sent (log f)
+  | exception (Invalid_argument _ as e) ->
+      equal ~msg:"what a refused call sent" sent_w Nothing (sent (log f));
+      raise e
+
+let map_far va ranges (t, _, f) =
+  sending f @@ fun () ->
+  if Option.is_none (Page_table.map t ~va Gpu ranges) then
+    failwith "no room for a table"
+
+let unmap_far va n (t, _, f) = sending f @@ fun () -> Page_table.unmap t ~va n
+
+let copy_commands =
+  [
+    command "create"
+      (Gen.unit @-> makes copies)
+      (fun () -> { live = []; gone = [] })
+      far_tables;
+    command "map"
+      (copy_va @-> copy_ranges @-> copies ^-> returns sent_w)
+      copy_map map_far;
+    command "map"
+      (copy_large @-> copies ^-> returns sent_w)
+      (fun (va, ranges) m -> copy_map va ranges m)
+      (fun (va, ranges) s -> map_far va ranges s);
+    command "unmap"
+      (copy_va @-> copy_size @-> copies ^-> returns sent_w)
+      copy_unmap unmap_far;
+    command "unmap"
+      (copies ^-> live_range ^-> returns sent_w)
+      (fun m (va, n) -> copy_unmap va n m)
+      (fun s (va, n) -> unmap_far va n s);
+  ]
+
+(* Through a machine that failed, stores are dropped and loads give all ones:
+   the host copy, never read from the GPU, still refuses and accepts as
+   before. *)
+let test_failed_machine () =
+  let t, _, f = far_tables ~f:(Device_pci_support.far 0 far_memory) () in
+  break f;
+  let va = base + (2 * mib) in
+  ignore (require_some (Page_table.map t ~va Gpu [ (0, 3 * page) ]));
+  raises_match ~msg:"a map over it" (Exn.invalid_arg ~substring:"") (fun () ->
+      Page_table.map t ~va:(va + page) Gpu [ (0, page) ]);
+  raises_match ~msg:"an unmap past it" (Exn.invalid_arg ~substring:"")
+    (fun () -> Page_table.unmap t ~va (4 * page));
+  Page_table.unmap t ~va (3 * page);
+  is_some ~msg:"mapped again" (Page_table.map t ~va Gpu [ (0, page) ])
 
 (* Real formats *)
 
@@ -778,12 +1020,6 @@ let test_real_formats =
           Page_table.levels;
           bits;
           first;
-          get =
-            (fun ~level ~table i : Page_table.entry ->
-              match Hashtbl.find_opt mem (table + (8 * i)) with
-              | None | Some 0 -> Invalid
-              | Some _ when level = bottom -> Page
-              | Some e -> Table (e land address_mask));
           set_table =
             (fun ~level ~table i ~child -> set ~level ~table i (child lor 1));
           set_page =
@@ -1257,6 +1493,15 @@ let () =
                test_mixed_unmap;
              test "booting takes tables and memory from the boot pool"
                test_booting;
+           ];
+         group ~timeout:patience "host copy"
+           [
+             stateful
+               "the GPU's entries are the live pages', each call stores then \
+                flushes once, and a refused call sends nothing"
+               ~count:200 copy_commands;
+             test "a failed machine leaves the host copy whole"
+               test_failed_machine;
            ];
          group ~timeout:patience "real formats" [ test_real_formats ];
          group ~timeout:patience "physical memory"

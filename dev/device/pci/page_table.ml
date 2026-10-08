@@ -5,14 +5,20 @@
 
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
+(* Errors *)
+
+let[@inline never] err_mapped va =
+  invalid_argf "Page_table.map: 0x%x is mapped already" va
+
+let[@inline never] err_unmapped va =
+  invalid_argf "Page_table.unmap: 0x%x is not mapped" va
+
 type target = Gpu | System | Peer of int
-type entry = Invalid | Page | Table of int
 
 type format = {
   levels : int list;
   bits : int;
   first : int;
-  get : level:int -> table:int -> int -> entry;
   set_table : level:int -> table:int -> int -> child:int -> unit;
   set_page :
     level:int ->
@@ -54,6 +60,19 @@ module Held = Hashtbl.Make (struct
   let hash pa = pa lsr page_bits
 end)
 
+(* The tables as this module wrote them, a tree beside the GPU's that a walk
+   follows: the GPU's copy is never read back, since each read crosses the bus.
+   A table is a directory, whose entries are invalid, map a page or point to a
+   table, or a leaf, which keeps a bit per entry, set where it maps a page. Each
+   is known by its physical address and counts its valid entries, which tells
+   that it is empty at once. *)
+type table = Directory of int * directory | Leaf of int * leaf
+and entry = Invalid | Page | Table of table
+and directory = { mutable valid : int; entries : entry array }
+and leaf = { mutable pages : int; bits : Bytes.t }
+
+let address = function Directory (pa, _) | Leaf (pa, _) -> pa
+
 type t = {
   fmt : format;
   space : Space.t;
@@ -63,10 +82,12 @@ type t = {
   tables : Tlsf.t; (* empty unless the tables have a pool *)
   main : Tlsf.t;
   pages : (int * int) list; (* block sizes and alignments, largest first *)
-  held : int ref Held.t;
-      (* the tables in use, the root among them, and their valid entries *)
+  held : unit Held.t; (* the tables in use, the root among them *)
+  spare : entry array list array;
+      (* by depth, the entries of directories freed, all invalid: a directory's
+         4 KiB is dear to allocate, and tables come and go with mappings *)
   mutable booting : bool;
-  root : int;
+  root : table;
   base : int;
   memory : int;
 }
@@ -134,29 +155,46 @@ let level t d = t.fmt.first + d
 let covers t d = 1 lsl t.shifts.(d)
 let bottom t = Array.length t.shifts - 1
 
-let new_table t =
+(* A table at [pa] of [n] invalid entries. *)
+let empty ~leaf n pa =
+  if leaf then Leaf (pa, { pages = 0; bits = Bytes.make ((n + 7) / 8) '\000' })
+  else Directory (pa, { valid = 0; entries = Array.make n Invalid })
+
+(* The table at [pa], at depth [d], whose entries are invalid. *)
+let hold t d pa =
+  Held.replace t.held pa ();
+  match t.spare.(d) with
+  | entries :: rest ->
+      t.spare.(d) <- rest;
+      Directory (pa, { valid = 0; entries })
+  | [] -> empty ~leaf:(d = bottom t) t.counts.(d) pa
+
+let new_table t d =
   match take t (pool t ~table:true) page with
   | None -> raise No_room
-  | Some pa ->
-      Held.replace t.held pa (ref 0);
-      pa
+  | Some pa -> hold t d pa
 
-(* The number of valid entries of [table]. Kept as entries are written and
-   cleared, it tells that a table is empty without reading its entries, each a
-   read across the bus. *)
-let entries t table = Held.find t.held table
+let is_page l i =
+  Char.code (Bytes.unsafe_get l.bits (i lsr 3)) land (1 lsl (i land 7)) <> 0
 
-(* The table entry [i] of [table], at depth [d], points to, made if missing. *)
-let child t d table i =
-  let level = level t d in
-  match t.fmt.get ~level ~table i with
-  | Table child -> child
-  | Invalid ->
-      let child = new_table t in
-      t.fmt.set_table ~level ~table i ~child;
-      incr (entries t table);
-      child
+let set_bit l i on =
+  let b = Char.code (Bytes.unsafe_get l.bits (i lsr 3))
+  and m = 1 lsl (i land 7) in
+  Bytes.unsafe_set l.bits (i lsr 3)
+    (Char.unsafe_chr (if on then b lor m else b land lnot m))
+
+(* The table entry [i] of the directory [dir] at [pa], at depth [d], points to,
+   made if missing. *)
+let child t d pa dir i =
+  match dir.entries.(i) with
+  | Table c -> c
   | Page -> invalid_arg "Page_table.tables: a larger page maps the address"
+  | Invalid ->
+      let c = new_table t (d + 1) in
+      t.fmt.set_table ~level:(level t d) ~table:pa i ~child:(address c);
+      dir.entries.(i) <- Table c;
+      dir.valid <- dir.valid + 1;
+      c
 
 (* Calls [f i at lo hi] for each entry [i] of a table at depth [d], whose first
    entry maps [at], that overlaps [lo, hi): [at] is the first address the entry
@@ -171,24 +209,36 @@ let each t d ~at lo hi f =
 
 (* Raises if a page maps an address of [lo, hi). *)
 let rec unmapped t d table ~at lo hi =
-  let level = level t d in
-  each t d ~at lo hi @@ fun i at lo hi ->
-  match t.fmt.get ~level ~table i with
-  | Invalid -> ()
-  | Table child -> unmapped t (d + 1) child ~at lo hi
-  | Page -> invalid_argf "Page_table.map: 0x%x is mapped already" (t.base + lo)
+  match table with
+  | Leaf (_, l) ->
+      let c = covers t d in
+      for i = (lo - at) / c to ((hi - at) / c) - 1 do
+        if is_page l i then err_mapped (t.base + at + (i * c))
+      done
+  | Directory (_, dir) -> (
+      each t d ~at lo hi @@ fun i at lo hi ->
+      match dir.entries.(i) with
+      | Invalid -> ()
+      | Table c -> unmapped t (d + 1) c ~at lo hi
+      | Page -> err_mapped (t.base + lo))
 
 (* Raises unless pages map every address of [lo, hi), none past it. *)
 let rec mapped t d table ~at lo hi =
-  let level = level t d and c = covers t d in
-  each t d ~at lo hi @@ fun i at lo hi ->
-  match t.fmt.get ~level ~table i with
-  | Invalid -> invalid_argf "Page_table.unmap: 0x%x is not mapped" (t.base + lo)
-  | Table child -> mapped t (d + 1) child ~at lo hi
-  | Page ->
-      if lo <> at || hi <> at + c then
-        invalid_argf "Page_table.unmap: the page at 0x%x is partly outside"
-          (t.base + at)
+  let c = covers t d in
+  match table with
+  | Leaf (_, l) ->
+      for i = (lo - at) / c to ((hi - at) / c) - 1 do
+        if not (is_page l i) then err_unmapped (t.base + at + (i * c))
+      done
+  | Directory (_, dir) -> (
+      each t d ~at lo hi @@ fun i at lo hi ->
+      match dir.entries.(i) with
+      | Invalid -> err_unmapped (t.base + lo)
+      | Table c -> mapped t (d + 1) c ~at lo hi
+      | Page ->
+          if lo <> at || hi <> at + c then
+            invalid_argf "Page_table.unmap: the page at 0x%x is partly outside"
+              (t.base + at))
 
 (* The fragment of the page at [v] of the run [lo, hi), mapped [delta] bytes
    further: the log2 of the pages of the largest block naturally aligned in both
@@ -257,60 +307,70 @@ let map_page t r d table i v =
 
 (* Maps [lo, hi) to the runs of [r], each page with the largest entry that its
    run holds and both its addresses are aligned to. One walk serves every run:
-   each table is read once. The last level's entries are all whole pages. *)
+   each table is visited once. The last level's entries are all whole pages. *)
 let rec write t d table ~at lo hi r =
   let level = level t d and c = covers t d in
-  if d = bottom t then begin
-    for i = (lo - at) / c to ((hi - at) / c) - 1 do
-      let v = at + (i * c) in
-      seek r v;
-      map_page t r d table i v
-    done;
-    let n = entries t table in
-    n := !n + ((hi - lo) / c)
-  end
-  else
-    each t d ~at lo hi @@ fun i at lo hi ->
-    seek r lo;
-    let whole =
-      lo = at && hi = at + c && hi <= r.hi && aligned (lo + r.delta) c
-    in
-    if whole && t.fmt.large ~level then begin
-      map_page t r d table i lo;
-      incr (entries t table)
-    end
-    else
-      match child t d table i with
-      | child -> write t (d + 1) child ~at lo hi r
-      | exception No_room -> raise (Stopped lo)
+  match table with
+  | Leaf (pa, l) ->
+      for i = (lo - at) / c to ((hi - at) / c) - 1 do
+        let v = at + (i * c) in
+        seek r v;
+        map_page t r d pa i v;
+        set_bit l i true
+      done;
+      l.pages <- l.pages + ((hi - lo) / c)
+  | Directory (pa, dir) -> (
+      each t d ~at lo hi @@ fun i at lo hi ->
+      seek r lo;
+      let whole =
+        lo = at && hi = at + c && hi <= r.hi && aligned (lo + r.delta) c
+      in
+      if whole && t.fmt.large ~level then begin
+        map_page t r d pa i lo;
+        dir.entries.(i) <- Page;
+        dir.valid <- dir.valid + 1
+      end
+      else
+        match child t d pa dir i with
+        | c -> write t (d + 1) c ~at lo hi r
+        | exception No_room -> raise (Stopped lo))
+
+(* Stops keeping [table], at depth [d], and frees it. *)
+let drop t d table =
+  (match table with
+  | Directory (_, dir) -> t.spare.(d) <- dir.entries :: t.spare.(d)
+  | Leaf _ -> ());
+  Held.remove t.held (address table);
+  pfree t (address table)
 
 (* Clears the entries of [lo, hi) and frees the tables it empties: [true] iff
-   [table] is then empty. The last level's entries are cleared unread: each maps
-   a page. *)
+   [table] is then empty. *)
 let rec clear t d table ~at lo hi =
-  let level = level t d and c = covers t d and n = entries t table in
-  if d = bottom t then begin
-    for i = (lo - at) / c to ((hi - at) / c) - 1 do
-      t.fmt.clear ~level ~table i
-    done;
-    n := !n - ((hi - lo) / c)
-  end
-  else begin
-    each t d ~at lo hi @@ fun i at lo hi ->
-    match t.fmt.get ~level ~table i with
-    | Invalid -> ()
-    | Page ->
-        t.fmt.clear ~level ~table i;
-        decr n
-    | Table child ->
-        if clear t (d + 1) child ~at lo hi then begin
-          t.fmt.clear ~level ~table i;
-          decr n;
-          Held.remove t.held child;
-          pfree t child
-        end
-  end;
-  !n = 0
+  let level = level t d and c = covers t d in
+  match table with
+  | Leaf (pa, l) ->
+      for i = (lo - at) / c to ((hi - at) / c) - 1 do
+        t.fmt.clear ~level ~table:pa i;
+        set_bit l i false
+      done;
+      l.pages <- l.pages - ((hi - lo) / c);
+      l.pages = 0
+  | Directory (pa, dir) ->
+      let forget i =
+        t.fmt.clear ~level ~table:pa i;
+        dir.entries.(i) <- Invalid;
+        dir.valid <- dir.valid - 1
+      in
+      ( each t d ~at lo hi @@ fun i at lo hi ->
+        match dir.entries.(i) with
+        | Invalid -> ()
+        | Page -> forget i
+        | Table c ->
+            if clear t (d + 1) c ~at lo hi then begin
+              forget i;
+              drop t (d + 1) c
+            end );
+      dir.valid = 0
 
 (* Page tables *)
 
@@ -356,26 +416,28 @@ let create ?base fmt space ~memory ~boot ~tables ~pages =
   in
   if base < 0 || not (aligned base (largest 0)) then
     invalid_argf "Page_table.create: base 0x%x off a page" base;
+  let counts = Array.mapi (fun d s -> 1 lsl (above d - s)) shifts in
   let held = Held.create 64 in
-  Held.replace held root (ref 0);
+  Held.replace held root ();
   {
     fmt;
     space;
     shifts;
-    counts = Array.mapi (fun d s -> 1 lsl (above d - s)) shifts;
+    counts;
     boot = boot_pool;
     tables = Tlsf.create ~base:boot table_bytes;
     main = Tlsf.create ~base:rest (memory - rest);
     pages;
     held;
+    spare = Array.make (Array.length shifts) [];
     booting = true;
-    root;
+    root = empty ~leaf:(Array.length shifts = 1) counts.(0) root;
     base;
     memory;
   }
 
 let booted t = t.booting <- false
-let root t = t.root
+let root t = address t.root
 let space t = t.space
 let base t = t.base
 let span t = 1 lsl t.fmt.bits
@@ -392,20 +454,31 @@ let check t fn ~va n =
 let tables t ~va n =
   check t "tables" ~va n;
   let v = va - t.base in
-  (* Down to the table where [map] would write the entry of [v]. *)
+  let held = Held.length t.held in
+  (* Down to the table where [map] would write the entry of [v]. The caller may
+     write entries of that table that its count does not see: one more keeps it,
+     and so its path, from being freed. *)
   let rec go d table path =
-    let c = covers t d in
-    let i = (v lsr t.shifts.(d)) land (t.counts.(d) - 1) in
-    if d = bottom t || (t.fmt.large ~level:(level t d) && c <= n && aligned v c)
-    then begin
-      (* The caller may write entries of [table] that its count does not see:
-         one more keeps it, and so its path, from being freed. *)
-      incr (entries t table);
-      List.rev (table :: path)
-    end
-    else go (d + 1) (child t d table i) (table :: path)
+    let path = address table :: path in
+    match table with
+    | Leaf (_, l) ->
+        l.pages <- l.pages + 1;
+        List.rev path
+    | Directory (pa, dir) ->
+        let c = covers t d in
+        if t.fmt.large ~level:(level t d) && c <= n && aligned v c then begin
+          dir.valid <- dir.valid + 1;
+          List.rev path
+        end
+        else
+          let i = (v lsr t.shifts.(d)) land (t.counts.(d) - 1) in
+          go (d + 1) (child t d pa dir i) path
   in
-  match go 0 t.root [] with path -> Some path | exception No_room -> None
+  let path =
+    match go 0 t.root [] with p -> Some p | exception No_room -> None
+  in
+  if Held.length t.held > held then t.fmt.flush ();
+  path
 
 let unmap t ~va n =
   check t "unmap" ~va n;

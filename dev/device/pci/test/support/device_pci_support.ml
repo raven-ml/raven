@@ -132,13 +132,6 @@ module Tables = struct
       Page_table.levels = [ 12; 21; 30; 39 ];
       bits = 48;
       first = 0;
-      get =
-        (fun ~level ~table i : Page_table.entry ->
-          touch ();
-          let e = Int64.to_int (entry_at m table i) in
-          if e land 1 = 0 then Invalid
-          else if level = leaf || e land 2 <> 0 then Page
-          else Table (e land address_mask));
       set_table = (fun ~level:_ ~table i ~child -> set table i (child lor 1));
       set_page =
         (fun ~level:_ ~table i ~pa tg ~uncached ~snooped ~fragment ->
@@ -238,12 +231,6 @@ module Buffer_tables = struct
   let set (b : entries) table i e =
     Bigarray.Array1.set b ((table lsr 3) + i) (Int64.of_int e)
 
-  let get (b : entries) ~level ~table i : Page_table.entry =
-    let e = Int64.to_int (Bigarray.Array1.get b ((table lsr 3) + i)) in
-    if e land 1 = 0 then Invalid
-    else if level = 3 || e land 2 = 0 then Page
-    else Table (e land lnot 0xfff)
-
   (* Memory past the tables holds no entries and is not kept. *)
   let zero (b : entries) pa n =
     if pa < tables_end then
@@ -262,7 +249,6 @@ module Buffer_tables = struct
         Page_table.levels;
         bits;
         first = 0;
-        get = get b;
         set_table =
           (fun ~level:_ ~table i ~child -> set b table i (child lor 3));
         set_page =

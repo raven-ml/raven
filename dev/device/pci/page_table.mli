@@ -34,12 +34,6 @@ type target =
           the number this GPU's links give that GPU. A format whose links
           address peers by physical address alone ignores [i]. *)
 
-(** The type for what a table entry holds. *)
-type entry =
-  | Invalid  (** Nothing: the addresses it covers are not mapped. *)
-  | Page  (** A page. *)
-  | Table of int  (** The table at this physical address. *)
-
 type format = {
   levels : int list;
       (** The bit position of the address each level indexes, from the leaf
@@ -52,9 +46,6 @@ type format = {
           levels of 512 entries; with 49 bits, [[12; 21; 29; 38; 47]] has a root
           of 4 entries and a level of 256. *)
   first : int;  (** The number of the root level. *)
-  get : level:int -> table:int -> int -> entry;
-      (** [get ~level ~table i] is what entry [i] of the table of [level] at
-          physical address [table] holds. *)
   set_table : level:int -> table:int -> int -> child:int -> unit;
       (** [set_table ~level ~table i ~child] points entry [i] of that table to
           the table at physical address [child]. *)
@@ -80,14 +71,13 @@ type format = {
   zero : int -> int -> unit;
       (** [zero pa n] zeroes the [n] bytes of the GPU's memory at [pa]. *)
   flush : unit -> unit;
-      (** [flush ()] makes the GPU see the entries written so far. *)
+      (** [flush ()] makes the GPU walk the entries written and zeroed since the
+          last flush and forget what it cached of those cleared. The setters and
+          [zero] may leave their stores in flight until then. *)
 }
 (** The type for a vendor's page-table format and the access to the GPU's memory
-    that holds the tables. A format's entries obey:
-    - after [set_table ~level ~table i ~child], [get ~level ~table i] is
-      [Table child]; after [set_page], [Page]; after [clear], [Invalid];
-    - an entry in memory that [zero] zeroed is [Invalid];
-    - at the leaf level, [get] is never [Table _].
+    that holds the tables. Page_table keeps what each entry holds and never
+    reads one back. An entry in memory that [zero] zeroed maps nothing.
 
     Page_table calls [set_page] only at the leaf level or where [large] holds,
     and [set_table] only with tables in the GPU's memory. *)
@@ -200,10 +190,11 @@ val map :
 val tables : t -> va:int -> int -> int list option
 (** [tables t ~va n] is the physical addresses of the tables from the root down
     to the one whose entries would map the [n] bytes from [va], root first,
-    creating those that are missing as {!map} would. They are never freed: the
-    caller may write the entries that map those bytes itself, and [t], which
-    knows a table is empty only by the entries it wrote there, cannot see them.
-    [None] if the GPU's memory has no room for one, keeping those it made.
+    creating those that are missing and flushing, as {!map} would. They are
+    never freed: the caller may write the entries that map those bytes itself,
+    and [t], which knows only the entries it wrote, cannot see them: {!map} does
+    not refuse the addresses they map. [None] if the GPU's memory has no room
+    for one, keeping those it made.
 
     Raises [Invalid_argument] if the range is not as {!map} requires, or a page
     larger than [n] bytes maps [va]. *)
