@@ -15,9 +15,10 @@ Run from the worktree root:
 
 The inputs are excerpts in headers/: each is a header's licence notice and
 the definitions this script reads, verbatim and in the header's order, with
-the definitions they depend on; a few small headers are kept whole. They
-come from NVIDIA's open-gpu-kernel-modules at release 570.144, the GSP
-firmware's release, and from Linux's nouveau driver. firmware.json holds the
+the definitions they depend on; a few small headers are kept whole, under
+the repository's MIT notice where they carry none. They come from NVIDIA's
+open-gpu-kernel-modules at release 570.144, the GSP firmware's release, and
+from Linux's nouveau driver. firmware.json holds the
 linux-firmware tree the firmware images come from and the BLAKE2b-256 digest
 of each, which fetch.py downloads and checks. --excerpt makes the excerpts and
 firmware.json from the upstream files, each pinned in pins.json by URL and
@@ -118,6 +119,25 @@ SOURCES = {
 WHOLE = {
     "rpc_global_enums.h": KERNEL + "src/nvidia/inc/kernel/vgpu/rpc_global_enums.h",
 }
+
+MIT = """\
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and associated documentation files (the "Software"),
+to deal in the Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE."""
 
 # The register headers, by excerpt: (directory, header). An addendum adds to
 # the header before it.
@@ -861,6 +881,19 @@ def excerpts(texts):
     return out
 
 
+def whole(url, text):
+    """[text], kept whole, under a notice if it carries none: the repository's
+    COPYING licenses each of its files that notes nothing else under the MIT
+    licence."""
+    if "Permission is hereby granted" in text:
+        return text
+    return (f"/*\n * Copied whole from\n * {url},\n"
+            " * which carries no notice. The repository's COPYING: \"Except where noted\n"
+            " * otherwise, the individual files within this package are licensed as MIT:\"\n *\n"
+            " * Copyright (c) 2021 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\n *\n"
+            + "".join(f" * {l}".rstrip() + "\n" for l in MIT.splitlines()) + " */\n\n" + text)
+
+
 def download(url, cache, pins, pin):
     path = cache / hashlib.sha256(url.encode()).hexdigest()[:16]
     if not path.exists():
@@ -1109,23 +1142,7 @@ def generate():
 def header(texts):
     owners = sorted({m.group(1).strip() for t in texts.values()
                      for m in re.finditer(r"Copyright \(c\) ([^\n]*?NVIDIA[^\n.]*)", t, re.I)})
-    notice = (
-        "   Permission is hereby granted, free of charge, to any person obtaining a\n"
-        "   copy of this software and associated documentation files (the \"Software\"),\n"
-        "   to deal in the Software without restriction, including without limitation\n"
-        "   the rights to use, copy, modify, merge, publish, distribute, sublicense,\n"
-        "   and/or sell copies of the Software, and to permit persons to whom the\n"
-        "   Software is furnished to do so, subject to the following conditions:\n\n"
-        "   The above copyright notice and this permission notice shall be included in\n"
-        "   all copies or substantial portions of the Software.\n\n"
-        "   THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\n"
-        "   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n"
-        "   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL\n"
-        "   THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\n"
-        "   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING\n"
-        "   FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER\n"
-        "   DEALINGS IN THE SOFTWARE."
-    )
+    notice = "\n".join(f"   {l}".rstrip() for l in MIT.splitlines())
     return (
         "(*---------------------------------------------------------------------------\n"
         "  Copyright (c) 2026 The Raven authors. All rights reserved.\n"
@@ -1151,7 +1168,7 @@ def main():
         get = lambda url: download(url, a.cache, pins, a.pin)  # noqa: E731
         texts = {h: get(url).decode("latin-1") for h, url in SOURCES.items()}
         files = {HEADERS / h: t for h, t in excerpts(texts).items()}
-        files.update({HEADERS / h: get(url).decode("latin-1") for h, url in WHOLE.items()})
+        files.update({HEADERS / h: whole(url, get(url).decode("latin-1")) for h, url in WHOLE.items()})
         images = sorted({p for ps in FIRMWARE.values() for p in ps})
         digests = {p: hashlib.blake2b(get(ORIGIN + p), digest_size=32).hexdigest() for p in images}
         files[FIRMWARE_DIGESTS] = json.dumps({"origin": ORIGIN, "images": digests}, indent=1) + "\n"
