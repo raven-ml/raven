@@ -195,18 +195,6 @@ let node bus =
   in
   Option.get (List.find_map read (Array.to_list (Sys.readdir nodes)))
 
-(* A compute queue's context save area as KFD sizes it (kfd_queue.c): each die's
-   area and 32 bytes per wave for the debugger, the waves 32 per compute unit
-   from GFX 10.1, before it 40 per compute unit up to 512 per shader engine. *)
-let save_bytes (g : Abi.Gpu.t) ~cwsr =
-  let round n a = (n + a - 1) / a * a in
-  let waves =
-    if compare g.target (10, 1, 0) < 0 then
-      Int.min (g.compute_units * 40) (g.shader_engines * g.xccs * 512)
-    else g.compute_units * 32
-  in
-  round ((cwsr + round (waves * 32) 64) * g.xccs) 4096
-
 (* The floors' packets, in rig_amd_bench_stubs.c's order, their values the
    arguments 0, 1 and 2 of a use. *)
 let templates gpu ~waits ~interrupt =
@@ -228,14 +216,13 @@ let floor_with ~waits () =
   let gpu = get (P.gpu_at "/" bus) in
   let p = node bus in
   let prop k = List.assoc k p in
-  let cwsr = prop "cwsr_size" in
   start
     [|
       prop "gpu_id";
       prop "drm_render_minor";
-      cwsr;
+      prop "cwsr_size";
       prop "ctl_stack_size";
-      save_bytes gpu ~cwsr;
+      get (P.save_area_at "/" bus);
       Sdma.max_copy gpu;
     |];
   let set i p =
