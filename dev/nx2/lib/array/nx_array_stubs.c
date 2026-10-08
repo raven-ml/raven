@@ -194,9 +194,12 @@ int nx_coalesce(int n, const nx_array *a, nx_loop *l) {
 
 /* Calls [run] on each run of the loop [l] over [n] operands: the positions
    [at] of each operand's first element, and the run's length; the run's
-   steps are the loop's innermost. */
-static void walk(int n, const nx_loop *l, void *ctx,
-                 void (*run)(void *ctx, const int64_t *at, int64_t len)) {
+   steps are the loop's innermost. It is inlined at each call, where [run]
+   is known, so that [run] is inlined into the odometer: clang at -O3
+   otherwise calls it through the pointer, once per run. */
+static inline __attribute__((always_inline)) void walk(
+    int n, const nx_loop *l, void *ctx,
+    void (*run)(void *ctx, const int64_t *at, int64_t len)) {
   int r = l->rank;
   int64_t len = l->extent[r - 1];
   if (len == 0) return;
