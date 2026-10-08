@@ -59,6 +59,10 @@ int main(int argc, char **argv) {
     size_t n;
     nvrtcGetProgramLogSize(p, &n);
     char *log = malloc(n);
+    if (log == NULL) {
+      fprintf(stderr, "nvrtc: no memory for the log\n");
+      return 1;
+    }
     nvrtcGetProgramLog(p, log);
     fprintf(stderr, "%s\n", log);
     return 1;
@@ -66,6 +70,10 @@ int main(int argc, char **argv) {
   size_t n;
   if (check(nvrtcGetCUBINSize(p, &n), "cubin size")) return 1;
   char *cubin = malloc(n);
+  if (cubin == NULL) {
+    fprintf(stderr, "nvrtc: no memory for the cubin\n");
+    return 1;
+  }
   if (check(nvrtcGetCUBIN(p, cubin), "cubin")) return 1;
   FILE *out = fopen(argv[3], "wb");
   if (out == NULL || fwrite(cubin, 1, n, out) != n || fclose(out) != 0) {

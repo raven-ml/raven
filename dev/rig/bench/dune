@@ -20,6 +20,8 @@
  (libraries
   rig
   rig_bench
+  rig_gpu_lock
+  rig_gpu_support
   rig_metal
   rig_cuda
   rig_amd
@@ -39,7 +41,10 @@
  (locks %{workspace_root}/bench)
  (deps
   (glob_files *.thumper)
-  (source_tree fixtures))
+  (source_tree ../test/metal/fixtures)
+  (source_tree ../test/cuda/fixtures)
+  (source_tree ../test/nv/fixtures)
+  (source_tree ../test/amd/fixtures))
  (action
   (progn
    (run %{exe:bench_rig.exe})

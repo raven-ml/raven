@@ -72,15 +72,17 @@ val mismatch : int -> int -> int -> int
 
 (** {1:launches Kernels and launches} *)
 
-val fixture : string -> string
-(** [fixture f] is the contents of the file [f] of ["fixtures"]. *)
+val fixture : ?dir:string -> string -> string
+(** [fixture ~dir f] is the contents of the file [f] of [dir] (defaults to
+    ["fixtures"]). *)
 
 type kernels
 (** The type for a cubin loaded on a device. *)
 
-val kernels : ?file:string -> t -> kernels
-(** [kernels ~file t] is the cubin [file] (defaults to ["kernels_sm89.cubin"])
-    of the fixtures, loaded on [t] by {!Rig.Image.load}.
+val kernels : ?dir:string -> ?file:string -> t -> kernels
+(** [kernels ~dir ~file t] is the cubin [file] (defaults to
+    ["kernels_sm89.cubin"]) of [dir] ({!fixture}), loaded on [t] by
+    {!Rig.Image.load}.
     ["kernels_sm89.cubin"] holds the kernels of ["kernels.cu"]. *)
 
 val image : Rig_nv.t -> string -> Rig_nv.image * Rig_nv.region * string

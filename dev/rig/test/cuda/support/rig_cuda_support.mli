@@ -7,7 +7,7 @@
 
 (** {1:gpu The GPU} *)
 
-include Rig_gpu_support.S with type gpu := Rig_cuda.t
+include Rig_gpu_support.S with type gpu = Rig_cuda.t
 (** GPU [0], its CUDA functions bound ({!bind}). *)
 
 val bind : Rig_cuda.t -> unit

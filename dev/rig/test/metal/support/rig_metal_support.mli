@@ -7,7 +7,7 @@
 
 (** {1:gpu The GPU} *)
 
-include Rig_gpu_support.S with type gpu := Rig_metal.t
+include Rig_gpu_support.S with type gpu = Rig_metal.t
 (** Metal's device [0]. *)
 
 (** {1:ring A device's ring, by hand}

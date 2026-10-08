@@ -99,8 +99,8 @@ let watchdog what f =
 
 (* Kernels *)
 
-let fixture f =
-  In_channel.with_open_bin (Filename.concat "fixtures" f) In_channel.input_all
+let fixture ?(dir = "fixtures") f =
+  In_channel.with_open_bin (Filename.concat dir f) In_channel.input_all
 
 let cubin_of file bin =
   match A.Cubin.of_string bin with
@@ -109,8 +109,8 @@ let cubin_of file bin =
 
 type kernels = { cubin : A.Cubin.t; image : Rig.Image.t }
 
-let kernels ?(file = "kernels_sm89.cubin") t =
-  let bin = fixture file in
+let kernels ?dir ?(file = "kernels_sm89.cubin") t =
+  let bin = fixture ?dir file in
   match Rig.Image.load t.d bin with
   | Ok image -> { cubin = cubin_of file bin; image }
   | Error e -> failf "loading %s: %s" file e

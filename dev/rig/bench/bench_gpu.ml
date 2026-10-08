@@ -184,22 +184,11 @@ let floor_part f (p : Sub.part) =
    rig loaded the kernel. With [graph], the graph rows do the same with the
    part [graph] makes, the launch of a recorded step of 64 such kernels. Each
    case opens its GPU in its own worker, so that no process forks after a vendor
-   library started. *)
+   library started: through rig with [opened], or the driver alone with
+   [open_]. *)
 let gpu_rows (type a) (module D : Rig.Driver with type t = a) ?(sleeps = false)
-    ?(copies = true) ?graph v ~name open_ ~kernel =
+    ?(copies = true) ?graph v ~opened open_ ~kernel =
   let get = function Ok x -> x | Error why -> failwith why in
-  let opened () =
-    let d = ref None in
-    let make () =
-      Result.map
-        (fun x ->
-          d := Some x;
-          x)
-        (open_ ())
-    in
-    let g = get (Rig.open_ (module D) ~name make) in
-    (g, Option.get !d)
-  in
   let rig () =
     let g, _ = opened () in
     (g, Sub.make ~reads:0 ~writes:0 g [||], ref 0)
@@ -412,14 +401,15 @@ let gpu_rows (type a) (module D : Rig.Driver with type t = a) ?(sleeps = false)
 (* Kernels: each vendor's smallest, as one part of the first compute queue, and
    what must stay reachable while it runs. *)
 
-let fixtures = "fixtures"
+(* The fixtures of [vendor]'s suite. *)
+let fixtures vendor = "../test/" ^ vendor ^ "/fixtures"
 let host_of r = Option.get (Rig_metal.host r)
 
 (* [step] over one thread, its argument pointing at a word of its own. *)
 let metal_kernel d _ =
   let module S = Rig_metal_support in
   let image =
-    match Rig_metal.image d (S.fixture ~dir:fixtures "fill") with
+    match Rig_metal.image d (S.fixture ~dir:(fixtures "metal") "fill") with
     | Ok (`Loaded i) -> i
     | Ok (`Place _) -> failwith "Metal asked to place its code"
     | Error why -> failwith why
@@ -428,7 +418,7 @@ let metal_kernel d _ =
   let region n = Option.get (Rig_metal.alloc d `Device n) in
   let args = region 16 in
   let word = Option.get (Rig_metal.address (region 16)) in
-  S.set64 (host_of args) 0 (Int64.of_int word);
+  Rig_gpu_support.Host.set64 (host_of args) word;
   let f = S.dispatch ~pipeline:step args ~groups:1 ~threads:1 in
   (S.part f, fun () -> ignore (Sys.opaque_identity (image, f)))
 
@@ -436,7 +426,7 @@ let metal_kernel d _ =
 let cuda_kernel g _ =
   let module S = Rig_cuda_support in
   S.bind g;
-  let image, kernels = S.kernels ~dir:fixtures g in
+  let image, kernels = S.kernels ~dir:(fixtures "cuda") g in
   let f = S.launch ~count:1 (kernels "empty") ~grid:1 ~block:1 0 0 in
   ( S.part ~queue:"COMPUTE:0" f,
     fun () -> ignore (Sys.opaque_identity (image, f)) )
@@ -446,7 +436,7 @@ let cuda_kernel g _ =
 let cuda_graph g _ =
   let module S = Rig_cuda_support in
   S.bind g;
-  let image, kernels = S.kernels ~dir:fixtures g in
+  let image, kernels = S.kernels ~dir:(fixtures "cuda") g in
   let k = S.kernel (kernels "empty") 0 0 in
   let gr =
     match (Rig_cuda.capability g).graph (Array.make 64 k) with
@@ -460,7 +450,7 @@ let cuda_graph g _ =
 (* [empty] over one block, loaded by rig. *)
 let nv_kernel g d =
   let module S = Rig_nv_support in
-  let k = S.kernels ~file:"kernels_sm89.cubin" { S.d; g } in
+  let k = S.kernels ~dir:(fixtures "nv") { S.d; g } in
   let l = S.launches g in
   ( S.words (S.launch l k "empty" ~blocks:1 []),
     fun () -> ignore (Sys.opaque_identity (k, l)) )
@@ -473,7 +463,7 @@ let amd_kernel g d =
   let get = function Ok x -> x | Error why -> failwith why in
   let binary =
     In_channel.with_open_bin
-      (Filename.concat fixtures "kernels_gfx1201.hsaco")
+      (Filename.concat (fixtures "amd") "kernels_gfx1201.hsaco")
       In_channel.input_all
   in
   let k =
@@ -498,70 +488,52 @@ let amd_kernel g d =
   ( Rig_amd_support.words_part ~queue:"COMPUTE:0" words,
     fun () -> ignore (Sys.opaque_identity p) )
 
+(* A GPU opened through its suite's fixture, as rig's device and the
+   driver's. *)
+let fixture (type a) (module S : Rig_gpu_support.S with type gpu = a) () =
+  let { S.d; g } = S.open_ () in
+  (d, g)
+
 let gpus =
   List.concat
     [
       (if Sys.file_exists "/System/Library/Frameworks/Metal.framework" then
          gpu_rows
            (module Rig_metal)
-           ~sleeps:true ~copies:false "metal" ~name:(Rig_metal.device_name 0)
+           ~sleeps:true ~copies:false "metal"
+           ~opened:(fixture (module Rig_metal_support))
            (fun () -> Rig_metal.open_ 0)
            ~kernel:metal_kernel
        else []);
       (if Sys.file_exists "/dev/nvidiactl" then
          gpu_rows
            (module Rig_cuda)
-           "cuda" ~name:(Rig_cuda.device_name 0)
+           "cuda"
+           ~opened:(fixture (module Rig_cuda_support))
            (fun () -> Rig_cuda.open_ 0)
            ~kernel:cuda_kernel ~graph:cuda_graph
          @ gpu_rows
              (module Rig_nv)
              "nv"
-             ~name:(Rig_nv_nvidia.device_name 0)
+             ~opened:(fixture (module Rig_nv_support))
              (fun () -> Rig_nv_nvidia.open_ 0)
              ~kernel:nv_kernel
        else []);
       (if Rig_amd_amdgpu.count () > 0 then
+         let opened () =
+           let g = Result.get_ok (Rig_amd_amdgpu.open_ 0) in
+           let name = Rig_amd_amdgpu.device_name 0 in
+           let d = Rig.open_ (module Rig_amd) ~name (fun () -> Ok g) in
+           (Result.get_ok d, g)
+         in
          gpu_rows
            (module Rig_amd)
-           "amd"
-           ~name:(Rig_amd_amdgpu.device_name 0)
+           "amd" ~opened
            (fun () -> Rig_amd_amdgpu.open_ 0)
            ~kernel:amd_kernel
        else []);
     ]
 
-(* The machine's GPU lock, which every suite and bench that acts on a GPU of the
-   machine takes before it runs, so that no GPU row runs beside a GPU test. The
-   process holds it until it exits, its forked workers with it. *)
-
-external lock : string -> string -> int = "rig_bench_lock"
-
-let gpu_lock = "/tmp/raven-rig-gpu.lock"
-
-(* The longest wait for the lock, in seconds: the machine's suites, from every
-   checkout and user, take it in turn. *)
-let gpu_wait = 300
-
-let holder () =
-  match In_channel.with_open_bin gpu_lock In_channel.input_all with
-  | note -> String.trim note
-  | exception Sys_error _ -> "a process that left no note"
-
-(* [lock] naps 100 ms each time it is refused. *)
-let rec take refused =
-  match lock gpu_lock Sys.executable_name with
-  | 0 -> ()
-  | -1 when refused < gpu_wait * 10 -> take (refused + 1)
-  | -1 ->
-      failwith
-        (strf "%s: still held after %d s, by %s" gpu_lock gpu_wait (holder ()))
-  | errno -> failwith (strf "%s: errno %d" gpu_lock errno)
-
-(* Whether the process that started this one holds the lock for it, as a timing
-   run takes it before the host's timing locks. *)
-let held_outside () = Sys.getenv_opt "RIG_GPU_LOCK_HELD" <> None
-
 let () =
-  if gpus <> [] && not (held_outside ()) then take 0;
+  if gpus <> [] then Rig_gpu_lock.hold ();
   exit @@ Thumper.run "rig-gpu" (if gpus = [] then [] else host_rows :: gpus)
