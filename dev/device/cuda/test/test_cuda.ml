@@ -9,13 +9,6 @@ module S = Device_cuda_support
 
 let strf = Printf.sprintf
 
-let answer =
-  Testable.make
-    ~pp:(fun ppf -> function
-      | `Ok -> Format.pp_print_string ppf "`Ok"
-      | `Failed why -> Format.fprintf ppf "`Failed %S" why)
-    ~equal:( = )
-
 let stop_answer =
   Testable.make
     ~pp:(fun ppf -> function
@@ -29,14 +22,6 @@ let address r = Option.get (C.address r)
 let host r = Option.get (C.host r)
 let word g = host (C.word g)
 let submit g ~v ?(waits = [||]) ps = C.submit g ~v ~waits ~handles:[||] ps
-
-(* Reads [g]'s word for about [ms] milliseconds of CPU time, failing if it is
-   ever other than [v]. *)
-let still g v ~ms =
-  let t0 = Sys.time () in
-  while Sys.time () -. t0 < Float.of_int ms /. 1000. do
-    equal int ~msg:"the word" v (C.signaled g)
-  done
 
 (* Opening *)
 
@@ -146,7 +131,7 @@ let round_trip (ka, kb, n, (oa, ob)) =
       copy "COPY:0" [| 1 |] (dst, 0) (b, ob);
     |]
   in
-  equal answer `Ok (submit g ~v:1 ps);
+  equal S.answer `Ok (submit g ~v:1 ps);
   S.wait g 1;
   equal string data (S.read (host dst) n);
   List.iter (C.free g) [ src; dst; a; b ]
@@ -173,7 +158,7 @@ let fills_in_a_fresh_domain () =
            let r = submit g ~v:1 [| S.part g ~queue:"COMPUTE:0" f |] in
            (r, S.current ())))
   in
-  equal answer `Ok r;
+  equal S.answer `Ok r;
   equal nativeint ~msg:"the domain's thread has no context after" 0n current;
   not_equal nativeint ~msg:"the fill saw a context" 0n (S.seen f);
   S.wait g 1;
@@ -198,7 +183,7 @@ let failed_fill () =
   starts_with ~affix:"running a fill: CUDA_ERROR_INVALID_VALUE: " why;
   S.wait g 1;
   equal string ~msg:"copied before the word" data (S.read (host dst) 64);
-  equal answer ~msg:"the next submit" (`Failed why) (submit g ~v:2 [||]);
+  equal S.answer ~msg:"the next submit" (`Failed why) (submit g ~v:2 [||]);
   S.wait g 2;
   equal stop_answer `Stopped (S.stop g)
 
@@ -237,7 +222,7 @@ let held g ~kind ~start ~wait ~below ~release =
   Array.iter (fun d -> S.write (host d) zeros) dst;
   let copy q d = C.part g ~queue:q (`Copy ((d, 0), (src, 0), 64)) in
   let held () =
-    still g 0 ~ms:20;
+    S.still ~msg:"the word" int 0 (fun () -> C.signaled g) ~ms:20;
     Array.iter
       (fun d -> equal string ~msg:"held" zeros (S.read (host d) 64))
       dst
@@ -245,7 +230,7 @@ let held g ~kind ~start ~wait ~below ~release =
   S.set64 (host w) start;
   Fun.protect ~finally:(fun () -> S.set64 (host w) release) @@ fun () ->
   let ps = [| copy "COMPUTE:0" dst.(0); copy "COPY:0" dst.(1) |] in
-  equal answer `Ok (submit g ~v:1 ~waits:[| (kind, address w, wait) |] ps);
+  equal S.answer `Ok (submit g ~v:1 ~waits:[| (kind, address w, wait) |] ps);
   held ();
   S.set64 (host w) below;
   held ();
@@ -276,7 +261,7 @@ let waits =
           C.part g ~queue:q ~after (`Copy ((b, 8), (b, 0), 8))
         in
         let ps = [| copy "COPY:0" [||]; copy "COMPUTE:0" [| 0 |] |] in
-        equal answer `Ok (submit g ~v:1 ~waits ps);
+        equal S.answer `Ok (submit g ~v:1 ~waits ps);
         S.wait g 1);
   ]
 
@@ -370,7 +355,7 @@ let images () =
       not_equal string ~msg:"the cubin's GPU" "sm_89" (C.arch g);
       starts_with ~affix:"loading the image: CUDA_ERROR_" e);
   let f = S.launch (Option.get (C.entry m "empty")) ~grid:1 ~block:1 0 0 in
-  equal answer `Ok (submit g ~v:1 [| S.part g ~queue:"COMPUTE:0" f |]);
+  equal S.answer `Ok (submit g ~v:1 [| S.part g ~queue:"COMPUTE:0" f |]);
   S.wait g 1;
   C.unload g m;
   raises_match Exn.invalid_arg (fun () -> C.entry m "empty");
@@ -390,7 +375,7 @@ let spin g flag =
   let f =
     S.launch (kernel "spin") ~grid:1 ~block:1 (address flag) (10 * second)
   in
-  equal answer `Ok (submit g ~v:1 [| S.part g ~queue:"COMPUTE:0" f |]);
+  equal S.answer `Ok (submit g ~v:1 [| S.part g ~queue:"COMPUTE:0" f |]);
   m
 
 let long_work () =
@@ -412,7 +397,7 @@ let stop_idle () =
   let p = S.pages S.page in
   let r = require_some (C.map_host g p 64) in
   equal bool ~msg:"locked" true (S.locked p);
-  equal answer `Ok (submit g ~v:1 [||]);
+  equal S.answer `Ok (submit g ~v:1 [||]);
   S.wait g 1;
   equal stop_answer `Stopped (S.stop g);
   equal int ~msg:"the word" 1 (C.signaled g);
@@ -526,15 +511,13 @@ module Registry = struct
             m.regions <- m.regions @ [ Counted e ];
             true
         | None when List.exists (shares (a, n)) m.entries ->
-            cover "a range overlapping a registered one"
-              (List.exists
-                 (fun e -> a < e.start + e.bytes && e.start < a + n)
-                 m.entries);
-            cover "a range sharing only a page"
-              (not
-                 (List.exists
-                    (fun e -> a < e.start + e.bytes && e.start < a + n)
-                    m.entries));
+            let overlaps =
+              List.exists
+                (fun e -> a < e.start + e.bytes && e.start < a + n)
+                m.entries
+            in
+            cover "a range overlapping a registered one" overlaps;
+            cover "a range sharing only a page" (not overlaps);
             false
         | None ->
             let e = { start = a; bytes = n; maps = 1 } in
@@ -820,7 +803,8 @@ module Order = struct
     let first = !value + 1 in
     let hand ps =
       incr value;
-      equal answer `Ok (submit s.g ~v:!value (Array.of_list (List.map part ps)))
+      equal S.answer `Ok
+        (submit s.g ~v:!value (Array.of_list (List.map part ps)))
     in
     List.iter hand subs;
     let rec watch seen =
@@ -831,7 +815,7 @@ module Order = struct
     in
     watch (first - 1);
     S.wait s.g !value;
-    still s.g !value ~ms:1;
+    S.still ~msg:"the word" int !value (fun () -> C.signaled s.g) ~ms:1;
     (* The fills lived until their submissions returned. *)
     ignore (Sys.opaque_identity !fills)
 

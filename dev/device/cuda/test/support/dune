@@ -1,5 +1,5 @@
-; What the CUDA suite and bench share: the GPU lock, CUDA's view of host
-; memory, fills, and the kernels of fixtures/kernels.ptx.
+; What the CUDA suites and bench share: the GPU lock, checks, CUDA's view of
+; host memory, fills, and the kernels of fixtures/kernels.ptx.
 
 (library
  (name device_cuda_support)

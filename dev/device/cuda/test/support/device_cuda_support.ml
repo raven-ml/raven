@@ -75,6 +75,21 @@ let with_gpu f =
   in
   Fun.protect ~finally:stop_left (fun () -> f g)
 
+(* Checks *)
+
+let answer =
+  Testable.make
+    ~pp:(fun ppf -> function
+      | `Ok -> Format.pp_print_string ppf "`Ok"
+      | `Failed why -> Format.fprintf ppf "`Failed %S" why)
+    ~equal:( = )
+
+let still ?msg w x f ~ms =
+  let t0 = Sys.time () in
+  while Sys.time () -. t0 < Float.of_int ms /. 1000. do
+    equal ?msg w x (f ())
+  done
+
 (* Host memory *)
 
 external page_size : unit -> int = "device_cuda_test_page_size"

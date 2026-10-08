@@ -47,6 +47,16 @@ val wait : Device_cuda.t -> int -> unit
 (** [wait g v] returns once [g]'s word, read as host memory, reaches [v]. It
     fails the test after 10 seconds of CPU time. *)
 
+(** {1:checks Checks} *)
+
+val answer : [ `Ok | `Failed of string ] Windtrap.testable
+(** [answer] prints and compares what {!Device_cuda.submit} answers. *)
+
+val still :
+  ?msg:string -> 'a Windtrap.testable -> 'a -> (unit -> 'a) -> ms:int -> unit
+(** [still w x f ~ms] reads [f ()] for about [ms] milliseconds of CPU time, and
+    fails the test if it is ever other than [x]. *)
+
 (** {1:host Host memory} *)
 
 val page : int

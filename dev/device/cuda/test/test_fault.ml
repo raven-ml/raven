@@ -9,21 +9,6 @@ module S = Device_cuda_support
 
 let host r = Option.get (C.host r)
 
-let answer =
-  Testable.make
-    ~pp:(fun ppf -> function
-      | `Ok -> Format.pp_print_string ppf "`Ok"
-      | `Failed why -> Format.fprintf ppf "`Failed %S" why)
-    ~equal:( = )
-
-(* Reads [f ()] for about [ms] milliseconds of CPU time, failing if it is ever
-   other than [x]. *)
-let still ~msg w x f ~ms =
-  let t0 = Sys.time () in
-  while Sys.time () -. t0 < Float.of_int ms /. 1000. do
-    equal w ~msg x (f ())
-  done
-
 (* Raises the fault [sleep] reports, waiting at most 10 seconds. *)
 let rec fault g t0 =
   if Sys.time () -. t0 > 10. then fail "no fault within 10 s";
@@ -41,7 +26,7 @@ let faults () =
   S.write (host watched) zeros;
   S.write_gpu (C.handle src) (String.make 64 'x');
   let f = S.launch (kernel "fault") ~grid:1 ~block:1 0 0 in
-  equal answer `Ok
+  equal S.answer `Ok
     (C.submit g ~v:1 ~waits:[||] ~handles:[||]
        [| S.part g ~queue:"COMPUTE:0" f |]);
   let copy = C.part g ~queue:"COMPUTE:0" (`Copy ((watched, 0), (src, 0), 64)) in
@@ -59,8 +44,8 @@ let faults () =
   | `Unknown -> fail "stop is Unknown after a fault");
   let w = C.signaled g in
   equal int ~msg:"the word after stop" 2 w;
-  still ~msg:"the word" int w (fun () -> C.signaled g) ~ms:200;
-  still ~msg:"the watched buffer" string zeros
+  S.still ~msg:"the word" int w (fun () -> C.signaled g) ~ms:200;
+  S.still ~msg:"the watched buffer" string zeros
     (fun () -> S.read (host watched) 64)
     ~ms:200;
   let e = require_error (C.open_ 0) in
