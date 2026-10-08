@@ -22,7 +22,7 @@ launch/driver-parameters-into-bytes/ada	wall_time	batch=2097152	n=20	4.190e-09	4
 launch/driver-parameters/ada	alloc_words	exact	46
 launch/driver-parameters/ada	wall_time	batch=524288	n=20	1.176e-08	1.158e-08 1.161e-08 1.163e-08 1.165e-08 1.167e-08 1.168e-08 1.171e-08 1.173e-08 1.174e-08 1.174e-08 1.177e-08 1.177e-08 1.178e-08 1.189e-08 1.191e-08 1.192e-08 1.192e-08 1.197e-08 1.202e-08 1.203e-08
 launch/make/ada	alloc_words	exact	9
-launch/make/ada	wall_time	batch=1048576	n=20	5.493e-09	5.296e-09 5.487e-09 5.488e-09 5.489e-09 5.490e-09 5.490e-09 5.490e-09 5.491e-09 5.491e-09 5.492e-09 5.494e-09 5.495e-09 5.495e-09 5.496e-09 5.497e-09 5.497e-09 5.503e-09 5.503e-09 5.503e-09 5.507e-09
+launch/make/ada	wall_time	batch=1048576	n=20	5.806e-09	5.793e-09 5.796e-09 5.796e-09 5.796e-09 5.799e-09 5.801e-09 5.803e-09 5.804e-09 5.805e-09 5.805e-09 5.806e-09 5.836e-09 5.876e-09 5.877e-09 5.878e-09 5.879e-09 5.880e-09 5.881e-09 5.882e-09 5.888e-09
 method/placement-encode	alloc_words	exact	223
 method/placement-encode	wall_time	batch=65536	n=20	1.253e-07	1.150e-07 1.182e-07 1.190e-07 1.208e-07 1.216e-07 1.225e-07 1.234e-07 1.248e-07 1.248e-07 1.249e-07 1.257e-07 1.259e-07 1.260e-07 1.261e-07 1.266e-07 1.279e-07 1.288e-07 1.302e-07 1.303e-07 1.329e-07
 method/placement-fill-into-bytes	alloc_words	exact	0
@@ -50,6 +50,7 @@ qmd/launch/blackwell	wall_time	batch=16384	n=20	4.901e-07	4.862e-07 4.865e-07 4.
 # forced: blessed qmd/launch/ada qmd/launch/blackwell launch/make/ada cubin/of-string/nv-128-kernels cubin/kernel/last-of-128 under load 9.9 on 10 cores
 # forced: blessed qmd/launch/ada qmd/launch/blackwell under load 16.3 on 10 cores
 # forced: blessed cubin/of-string/nv-128-kernels cubin/elf-of-string/nv-128-kernels under load 14.2 on 10 cores
+# forced: blessed launch/make/ada under load 6.0 on 10 cores
 
 cubin/elf-of-string/nv-128-kernels	alloc_words	exact	29461
 cubin/elf-of-string/nv-128-kernels	wall_time	batch=64	n=20	1.562e-04	1.523e-04 1.527e-04 1.531e-04 1.533e-04 1.539e-04 1.542e-04 1.546e-04 1.549e-04 1.559e-04 1.559e-04 1.565e-04 1.568e-04 1.568e-04 1.569e-04 1.580e-04 1.585e-04 1.585e-04 1.614e-04 1.988e-04 4.058e-04
@@ -68,7 +69,7 @@ launch/driver-parameters-into-bytes/ada	wall_time	batch=524288	n=20	9.576e-09	9.
 launch/driver-parameters/ada	alloc_words	exact	46
 launch/driver-parameters/ada	wall_time	batch=262144	n=20	2.787e-08	2.748e-08 2.762e-08 2.764e-08 2.776e-08 2.779e-08 2.781e-08 2.783e-08 2.784e-08 2.787e-08 2.787e-08 2.788e-08 2.803e-08 2.804e-08 2.805e-08 2.810e-08 2.816e-08 2.816e-08 2.816e-08 2.817e-08 2.853e-08
 launch/make/ada	alloc_words	exact	9
-launch/make/ada	wall_time	batch=524288	n=20	1.048e-08	1.012e-08 1.027e-08 1.028e-08 1.029e-08 1.029e-08 1.030e-08 1.033e-08 1.034e-08 1.041e-08 1.047e-08 1.049e-08 1.050e-08 1.050e-08 1.055e-08 1.056e-08 1.060e-08 1.061e-08 1.061e-08 1.063e-08 1.064e-08
+launch/make/ada	wall_time	batch=524288	n=20	1.073e-08	1.046e-08 1.048e-08 1.060e-08 1.063e-08 1.065e-08 1.067e-08 1.069e-08 1.069e-08 1.071e-08 1.072e-08 1.073e-08 1.075e-08 1.078e-08 1.079e-08 1.083e-08 1.085e-08 1.089e-08 1.091e-08 1.091e-08 1.101e-08
 method/placement-encode	alloc_words	exact	223
 method/placement-encode	wall_time	batch=32768	n=20	2.088e-07	2.063e-07 2.065e-07 2.065e-07 2.065e-07 2.075e-07 2.077e-07 2.084e-07 2.085e-07 2.087e-07 2.088e-07 2.089e-07 2.090e-07 2.090e-07 2.092e-07 2.093e-07 2.093e-07 2.095e-07 2.097e-07 2.097e-07 2.100e-07
 method/placement-fill-into-bytes	alloc_words	exact	0
@@ -109,7 +110,7 @@ launch/driver-parameters-into-bytes/ada	wall_time	batch=1048576	n=20	8.878e-09	8
 launch/driver-parameters/ada	alloc_words	exact	46
 launch/driver-parameters/ada	wall_time	batch=524288	n=20	1.676e-08	1.648e-08 1.648e-08 1.648e-08 1.654e-08 1.666e-08 1.667e-08 1.668e-08 1.673e-08 1.673e-08 1.675e-08 1.678e-08 1.678e-08 1.684e-08 1.685e-08 1.769e-08 1.788e-08 1.790e-08 1.853e-08 1.860e-08 1.890e-08
 launch/make/ada	alloc_words	exact	9
-launch/make/ada	wall_time	batch=1048576	n=20	9.538e-09	9.517e-09 9.520e-09 9.525e-09 9.525e-09 9.526e-09 9.528e-09 9.528e-09 9.533e-09 9.534e-09 9.537e-09 9.538e-09 9.538e-09 9.539e-09 9.540e-09 9.543e-09 9.545e-09 9.547e-09 9.552e-09 9.554e-09 9.589e-09
+launch/make/ada	wall_time	batch=524288	n=20	9.894e-09	9.812e-09 9.828e-09 9.873e-09 9.878e-09 9.881e-09 9.882e-09 9.882e-09 9.883e-09 9.883e-09 9.889e-09 9.900e-09 9.902e-09 9.920e-09 9.939e-09 9.942e-09 9.952e-09 9.953e-09 9.953e-09 9.989e-09 1.003e-08
 method/placement-encode	alloc_words	exact	223
 method/placement-encode	wall_time	batch=32768	n=20	2.080e-07	2.058e-07 2.065e-07 2.065e-07 2.065e-07 2.068e-07 2.068e-07 2.068e-07 2.069e-07 2.074e-07 2.079e-07 2.080e-07 2.082e-07 2.083e-07 2.085e-07 2.087e-07 2.087e-07 2.088e-07 2.093e-07 2.093e-07 2.096e-07
 method/placement-fill-into-bytes	alloc_words	exact	0
