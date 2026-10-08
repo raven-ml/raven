@@ -174,11 +174,11 @@ val map_peer : t -> t -> region -> region option
 
 val map_host : t -> int -> int -> region option
 (** [map_host g a n] is [Some r] with [r] the [n] bytes of host memory at [a],
-    which [g]'s work addresses at [a]. The path maps the pages that hold them,
-    which must stay mapped in the process until [r] is freed. It is [None] if
-    the path refuses them, such as read-only pages, or pages that a region
-    {!map_host} gave a device of the same GPU maps: a GPU maps a page at most
-    once.
+    which [g]'s work addresses at {!address}[ r]. The path maps the pages that
+    hold them, which must stay mapped in the process until [r] is freed. It is
+    [None] if the path refuses them, such as read-only pages. The kernel
+    driver's path also refuses pages that a region {!map_host} gave a device of
+    the same GPU maps, as it maps a page at most once per GPU.
 
     Raises [Invalid_argument] if [n < 1]. *)
 
@@ -357,9 +357,9 @@ type 'm path = {
           of [k] is exhausted, or [`Bar] memory does not exist. *)
   map_host : int -> int -> 'm memory option;
       (** [map_host a n] maps for the GPU the pages that hold the [n] bytes of
-          host memory at [a], at their host address: the result's [address] is
-          [a]. It is [None] where the path refuses the pages, such as read-only
-          ones. *)
+          host memory at [a]: the result's [address] is where the GPU reaches
+          the byte at [a], and its [host] is [Some a]. It is [None] where the
+          path refuses the pages, such as read-only ones. *)
   reaches : int -> bool;
       (** [reaches j] is [true] iff [map_peer] maps the GPU memory the path
           gives a device of GPU [j], numbered as [index]: this GPU, or one it
