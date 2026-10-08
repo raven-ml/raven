@@ -213,9 +213,14 @@ val await : string -> (unit -> bool) -> unit
 (** [await what f] returns once [f ()] holds, yielding to other threads between
     checks. It raises [Failure] naming [what] after 10 s. *)
 
+val io : string -> Rig.t
+(** [io name] is the io device named [name], whose memory holds nothing, opened
+    unless it is open. *)
+
 val machine : string -> Rig.t
-(** [machine m] is the host of the machine named [m], an io device whose memory
-    holds nothing, opened unless it is open: devices of [m] open once it is. *)
+(** [machine m] is the host of the machine named [m], a {!Polled} device whose
+    memory this process does not address and that maps no other memory, opened
+    unless it is open: devices of [m] open once it is. *)
 
 (** The C readers of [rig.h], called from C. *)
 module Reader : sig

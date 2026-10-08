@@ -119,7 +119,7 @@ val name : t -> string
 
 val host_of : t -> t
 (** [host_of d] is the host of [d]'s machine: {!host} for this machine's
-    devices, the device {!open_io} opened with [~host:true] for another
+    devices, the device {!open_} opened with [~host:true] for another
     machine's. A host is its own. *)
 
 val arch : t -> string
@@ -222,7 +222,9 @@ val close : t -> unit
     ({!failure}).
 
     On a lost or closed [d] it only waits for [d]'s stop. An {!Io} device ends
-    at once: its work is the caller's. A close a [Sys.Break] interrupted is
+    at once: its work is the caller's. Another machine's host is closed after
+    every device of its machine open when the close starts, each as [close]
+    says. A close a [Sys.Break] interrupted is
     finished by calling [close] again.
 
     Raises [Invalid_argument] if [d] is {!host}. *)
@@ -715,7 +717,7 @@ module Submission : sig
       memory of a {!Hold}: every submit of the submission raises the hold's
       stamp of [d], and the parts may name the hold's memory.
 
-      Raises [Invalid_argument] if [d] is a host or an {!Io} device, which run
+      Raises [Invalid_argument] if [d] is {!host} or an {!Io} device, which run
       no submitted work, [reads] or [writes] is negative, an index of a part's
       [after] is negative or not below its own, a queue is not one of [d]'s, a
       part's buffer is dead, a {!Words} or {!Fill} buffer is not host memory, a
@@ -794,7 +796,7 @@ module Image : sig
       [Error why] if [d]'s driver rejects [binary], with its reason, which
       starts with [d]'s {!name}. [d] stays usable.
 
-      Raises [Invalid_argument] if [d] loads no code (a host or an {!Io}
+      Raises [Invalid_argument] if [d] loads no code ({!host} or an {!Io}
       device), {!Out_of_memory}, and {!Lost} if [d] is lost or is lost by the
       load. *)
 
@@ -1165,9 +1167,8 @@ end
 
 (** Devices of memory reached by reading and writing.
 
-    An io device holds memory the host does not address and no queue runs:
-    files, or another machine's host. Its reads and writes are synchronous, in
-    the caller. *)
+    An io device holds memory the host does not address and no queue runs,
+    such as files. Its reads and writes are synchronous, in the caller. *)
 module type Io = sig
   type t
   (** The type for open io devices. *)
@@ -1248,42 +1249,44 @@ end
 val open_ :
   (module Driver with type t = 'a) ->
   ?machine:string ->
+  ?host:bool ->
   name:string ->
   (unit -> ('a, string) result) ->
   (t, string) result
-(** [open_ (module D) ~machine ~name make] is the open device named [name] on
-    [machine] (defaults to this one), the machine whose hardware [make] opens. A
-    machine's name names one machine for the life of the process: a library that
-    reaches machines gives each one it makes a name of its own, so a second
-    connection to one address is another machine, with devices of its own. If no
-    device of that name is open there, [make ()] opens it, under the name's
-    lock, so one name on one machine has one live device; its [Error] is the
-    result, and an exception it raises is raised again, the name left unopened.
-    Opens of other names go on meanwhile. A closed or lost device's name opens
-    again once its driver's {!Driver.stop} returned.
+(** [open_ (module D) ~machine ~host ~name make] is the open device named
+    [name] on [machine] (defaults to this one), the machine whose hardware
+    [make] opens. A machine's name names one machine for the life of the
+    process: a library that reaches machines gives each one it makes a name of
+    its own, so a second connection to one address is another machine, with
+    devices of its own. If no device of that name is open there, [make ()]
+    opens it, under the name's lock, so one name on one machine has one live
+    device; its [Error] is the result, and an exception it raises is raised
+    again, the name left unopened. Opens of other names go on meanwhile. A
+    closed or lost device's name opens again once its driver's {!Driver.stop}
+    returned.
+
+    With [host] (defaults to [false]), the device is [machine]'s host
+    ({!host_of}): it runs the submissions and loads the code its driver
+    takes, and the devices of [machine] open once it is open.
 
     The result is [Error why] if the name's device is lost and its stop has not
     returned, if the process failed ({!fail}), or if the process opened 65,535
     devices already: device indices are never reused.
 
     Raises [Invalid_argument] if the open device of that name is another
-    driver's, or [machine] names another machine whose host is not open
-    ({!open_io}). *)
+    driver's; if [host] and [machine] is this one, or [machine] has a host of
+    another name, open and not lost or still opening; or if not [host] and
+    [machine] names another machine whose host is not open. *)
 
 val open_io :
   (module Io with type t = 'a) ->
   ?machine:string ->
-  ?host:bool ->
   name:string ->
   (unit -> ('a, string) result) ->
   (t, string) result
-(** [open_io (module I) ~machine ~host ~name make] is {!open_} for an io device.
-    With [host] (defaults to [false]), the device is [machine]'s host
-    ({!host_of}), and devices of [machine] open once it is.
+(** [open_io (module I) ~machine ~name make] is {!open_} for an io device.
 
-    Raises [Invalid_argument] as {!open_}, or if [host] and [machine] is this
-    one, or [machine] has a host of another name, open and not lost or still
-    opening. *)
+    Raises [Invalid_argument] as {!open_}. *)
 
 val memory_device : string -> (t, string) result
 (** [memory_device name] is {!open_} of the device named [name] whose memory is

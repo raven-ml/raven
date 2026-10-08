@@ -77,9 +77,8 @@ module Profile = Profile
 module type Driver = Sigs.Driver
 module type Io = Sigs.Io
 
-let open_ m ?machine ~name make = Dev.open_driver m ?machine ~name make
+let open_ m ?machine ?host ~name make =
+  Dev.open_driver m ?machine ?host ~name make
 
-let open_io m ?machine ?host ~name make =
-  Dev.open_io m ?machine ?host ~name make
-
+let open_io m ?machine ~name make = Dev.open_io m ?machine ~name make
 let memory_device = Memory_device.open_

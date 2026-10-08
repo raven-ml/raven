@@ -402,8 +402,7 @@ let rec await_stop d =
   run_owed ();
   if not (c_await_stop d.c still_ms) then await_stop d
 
-let close d =
-  if is_host d then invalid_arg "Rig.close: the host is never closed";
+let close_one d =
   (match d.kind with
   | Driver _ when not (is_lost d) -> (
       try wait d (submitted d) with Lost (d', _) when d' == d -> ())
@@ -544,9 +543,10 @@ let driver_device (type a) (module D : Sigs.Driver with type t = a) (h : a)
   d
 
 let open_driver (type a) ?(memory_device = false)
-    (module D : Sigs.Driver with type t = a) ?machine ~name make =
+    (module D : Sigs.Driver with type t = a) ?machine ?(host = false) ~name
+    make =
   let fn = if memory_device then "memory_device" else "open_" in
-  open_named ~fn ~machine ~name ~key:(Type.Id.uid D.key) ~host:false
+  open_named ~fn ~machine ~name ~key:(Type.Id.uid D.key) ~host
   @@ fun ~index ~name:full ->
   match make () with
   | Error e -> Error e
@@ -560,10 +560,10 @@ let open_driver (type a) ?(memory_device = false)
           (try D.stop h with D.Fault _ -> ());
           Error (strf "%s: %s" full why))
 
-let open_io (type a) (module I : Sigs.Io with type t = a) ?machine
-    ?(host = false) ~name make =
+let open_io (type a) (module I : Sigs.Io with type t = a) ?machine ~name make =
   let key = Type.Id.uid I.region_key in
-  open_named ~fn:"open_io" ~machine ~name ~key ~host @@ fun ~index ~name:full ->
+  open_named ~fn:"open_io" ~machine ~name ~key ~host:false
+  @@ fun ~index ~name:full ->
   match make () with
   | Error e -> Error e
   | Ok h -> (
@@ -584,6 +584,36 @@ let open_io (type a) (module I : Sigs.Io with type t = a) ?machine
           in
           publish d;
           Ok d)
+
+(* Closing *)
+
+(* The open devices of machine [m] but [h]. *)
+let devices_of m h =
+  Lock.protect table_lock @@ fun () ->
+  Hashtbl.fold
+    (fun (m', _) slot acc ->
+      match slot with
+      | Open d when m' = Some m && d != h -> d :: acc
+      | _ -> acc)
+    table []
+
+(* Whether [d] is another machine's host. *)
+let is_machine_host d =
+  match d.machine with
+  | None -> false
+  | Some m -> (
+      match Lock.protect table_lock (fun () -> Hashtbl.find_opt machines m) with
+      | Some h -> h == d
+      | None -> false)
+
+(* Another machine's host ends after the machine's other devices, whose calls
+   its driver may carry. *)
+let close d =
+  if is_host d then invalid_arg "Rig.close: the host is never closed";
+  (match d.machine with
+  | Some m when is_machine_host d -> List.iter close_one (devices_of m d)
+  | _ -> ());
+  close_one d
 
 (* Reach *)
 

@@ -383,9 +383,9 @@ let await what f =
     Thread.yield ()
   done
 
-(* Machines *)
+(* Io devices and machines *)
 
-module Far_host = struct
+module Empty = struct
   type t = unit
   type region = unit
 
@@ -402,13 +402,16 @@ module Far_host = struct
   let stop () = ()
 end
 
+let io name =
+  match Rig.open_io (module Empty) ~name (fun () -> Ok ()) with
+  | Ok d -> d
+  | Error e -> failwith e
+
 let machine m =
-  match
-    Rig.open_io
-      (module Far_host)
-      ~machine:m ~host:true ~name:"CPU"
-      (fun () -> Ok ())
-  with
+  let make () =
+    Ok (Polled.make ~host_visible:false ~peers:false ~maps_host:false ())
+  in
+  match Rig.open_ (module Polled) ~machine:m ~host:true ~name:"CPU" make with
   | Ok d -> d
   | Error e -> failwith e
 

@@ -151,7 +151,7 @@ let test_nested_overlap () =
 (* Memories of one device that has no address of them share no byte: two io
    memories are donated together, and views of one that overlap are refused. *)
 let test_io_spans () =
-  let io = Rig_support.machine "claim:io" in
+  let io = Rig_support.io "claim:io" in
   let a = B.create io 64 and b = B.create io 64 in
   Claim.with_ ~read:[] ~donate:[ [ a ]; [ b ] ] (fun cl ->
       equal ~msg:"both" (pair bool bool) (true, true)

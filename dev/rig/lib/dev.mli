@@ -181,19 +181,19 @@ val open_driver :
   ?memory_device:bool ->
   (module Sigs.Driver with type t = 'a) ->
   ?machine:string ->
+  ?host:bool ->
   name:string ->
   (unit -> ('a, string) result) ->
   (device, string) result
-(** [open_driver (module D) ~machine ~name make] is {!Rig.open_}. Concurrent
-    opens of a name wait for the first. A fault while the device's facts are
-    read stops the handle and is [Error]. With [memory_device] (defaults to
-    [false]), {!Rig.runs_on_host} is [true] of the device and misuse raises
-    under {!Rig.memory_device}'s name. *)
+(** [open_driver (module D) ~machine ~host ~name make] is {!Rig.open_}.
+    Concurrent opens of a name wait for the first. A fault while the device's
+    facts are read stops the handle and is [Error]. With [memory_device]
+    (defaults to [false]), {!Rig.runs_on_host} is [true] of the device and
+    misuse raises under {!Rig.memory_device}'s name. *)
 
 val open_io :
   (module Sigs.Io with type t = 'a) ->
   ?machine:string ->
-  ?host:bool ->
   name:string ->
   (unit -> ('a, string) result) ->
   (device, string) result

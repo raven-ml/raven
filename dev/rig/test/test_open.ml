@@ -87,9 +87,13 @@ module Other = struct
   let region_key : region Type.Id.t = Type.Id.make ()
 end
 
-let open_store ?machine ?host name =
+let open_store name =
   require_ok ~pp:Format.pp_print_string
-    (Rig.open_io (module Store) ?machine ?host ~name (fun () -> Ok ()))
+    (Rig.open_io (module Store) ~name (fun () -> Ok ()))
+
+(* Opens [machine]'s host [name], a driver's device. *)
+let open_host ?machine name =
+  Rig.open_ (module P) ?machine ~host:true ~name (fun () -> Ok (P.make ()))
 
 let test_io () =
   let io = open_store "open:io" in
@@ -130,10 +134,12 @@ let test_of_io () =
     (let ba = Rig.Buffer.bigarray Bigarray.char h in
      String.init 16 (Bigarray.Array1.get ba))
 
-(* A device of another machine is named after it, and its host is the io device
-   opened as that machine's. *)
+(* A device of another machine is named after it, and its host is the device
+   opened as that machine's, which runs work and loads code. *)
 let test_machine () =
-  let far = open_store ~machine:"far" ~host:true "HOST" in
+  let far =
+    require_ok ~pp:Format.pp_print_string (open_host ~machine:"far" "HOST")
+  in
   let g =
     require_ok ~pp:Format.pp_print_string
       (Rig.open_
@@ -147,7 +153,9 @@ let test_machine () =
   equal ~msg:"shares this process's host memory" (list bool) [ false; false ]
     [ Rig.shares_host_memory g; Rig.shares_host_memory far ];
   equal (list bool) [ false; false ]
-    [ Rig.reaches g Rig.host; Rig.reaches Rig.host g ]
+    [ Rig.reaches g Rig.host; Rig.reaches Rig.host g ];
+  equal ~msg:"computes" bool true (Rig.computes far);
+  ignore (submit (Rig.Submission.make ~reads:0 ~writes:0 far [||]))
 
 (* A device of another machine opens once that machine's host is open, so every
    device has a host: before, the open raises and leaves the name unopened. *)
@@ -159,16 +167,15 @@ let test_machine_without_host () =
       (fun () -> Ok (P.make ()))
   in
   raises_match Exn.invalid_arg (fun () -> open_gpu ());
-  let far = open_store ~machine:"hostless" ~host:true "HOST" in
+  let far =
+    require_ok ~pp:Format.pp_print_string (open_host ~machine:"hostless" "HOST")
+  in
   let g = require_ok ~pp:Format.pp_print_string (open_gpu ()) in
   equal device far (Rig.host_of g)
 
 (* A machine has one host: [~host] names another machine's, and a second host of
    a machine whose host is open under another name is refused. *)
 let test_one_host () =
-  let open_host ?machine name =
-    Rig.open_io (module Store) ?machine ~host:true ~name (fun () -> Ok ())
-  in
   raises_match ~msg:"this machine's" Exn.invalid_arg (fun () ->
       open_host "open:not-a-host");
   let h =
@@ -178,6 +185,24 @@ let test_one_host () =
       open_host ~machine:"one" "B");
   equal ~msg:"the same name" device h
     (require_ok ~pp:Format.pp_print_string (open_host ~machine:"one" "A"))
+
+(* Closing another machine's host closes every device of its machine too. *)
+let test_close_machine () =
+  let far =
+    require_ok ~pp:Format.pp_print_string (open_host ~machine:"closing" "CPU")
+  in
+  let g =
+    require_ok ~pp:Format.pp_print_string
+      (Rig.open_
+         (module P)
+         ~machine:"closing" ~name:"open:closing-gpu"
+         (fun () -> Ok (P.make ())))
+  in
+  Rig.close far;
+  equal
+    (list (option string))
+    [ Some "closed"; Some "closed" ]
+    [ Rig.lost g; Rig.lost far ]
 
 (* A fault while the device's facts are read is the open's error, and the
    driver's handle is stopped: nothing it opened stays. *)
@@ -280,6 +305,7 @@ let tests =
       test "a device of another machine opens once that machine's host is"
         test_machine_without_host;
       test "a machine has one host" test_one_host;
+      test "closing a machine's host closes its devices" test_close_machine;
       test "a point prints as its device's name and its value" test_point;
       test "an opener's error leaves the name free" test_failed_open;
       test "an opener's exception is raised, the name left free"
