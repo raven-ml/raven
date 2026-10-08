@@ -49,16 +49,13 @@ external failed : int -> int = "caml_device_cuda_failed"
    error to every call, and [refused] raises it. *)
 let refused step self x = match failed self with 0 -> x | e -> fault step e
 
-(* Loads the library and finds its GPUs at the first call that needs them, until
-   they are found: a failed load is tried again by the next call, so a driver
-   installed meanwhile is found. *)
-
-(* A GPU's holder: [unheld]; [opening]; the C state of its open device; or the C
-   state, negated, of a device stopped while its work still ran. *)
+(* A GPU's holder: [unheld]; [taken], while a device of it is open or being
+   opened; or the C state, negated, of a device stopped while its work still
+   ran. *)
 type gpus = { devices : int array; held : int Atomic.t array }
 
 let unheld = 0
-let opening = 1
+let taken = 1
 let lock = Mutex.create ()
 let gpus = ref None
 
@@ -95,6 +92,9 @@ let discover () =
       let devices = Array.of_list (List.map snd (List.sort compare ds)) in
       Ok { devices; held = Array.map (fun _ -> Atomic.make unheld) devices }
 
+(* Loads the library and finds its GPUs at the first call that needs them, until
+   they are found: a failed load is tried again by the next call, so a driver
+   installed meanwhile is found. *)
 let find_gpus () =
   Mutex.protect lock @@ fun () ->
   match !gpus with
@@ -170,7 +170,7 @@ let driver () =
    whose work has since ended, which is then stopped for good. *)
 let claim held =
   let p = Atomic.get held in
-  if p > 0 || not (Atomic.compare_and_set held p opening) then
+  if p > 0 || not (Atomic.compare_and_set held p taken) then
     Error "the GPU has a device open; stop it first"
   else if p = unheld || stop_device (-p) then Ok ()
   else begin
