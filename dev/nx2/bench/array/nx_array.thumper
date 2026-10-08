@@ -7,10 +7,20 @@
 
 access/bigarray-f32-1M	alloc_words	exact	23
 access/bigarray-f32-1M	wall_time	batch=131072	n=20	5.824e-08	5.712e-08 5.742e-08 5.743e-08 5.757e-08 5.762e-08 5.776e-08 5.792e-08 5.794e-08 5.797e-08 5.819e-08 5.829e-08 5.842e-08 5.846e-08 5.846e-08 5.847e-08 5.850e-08 5.853e-08 5.872e-08 5.876e-08 5.891e-08
+access/copy-2x2-windows-32x16x26x26	alloc_words	exact	69
+access/copy-2x2-windows-32x16x26x26	wall_time	batch=64	n=20	1.040e-04	1.036e-04 1.036e-04 1.036e-04 1.037e-04 1.039e-04 1.039e-04 1.039e-04 1.039e-04 1.039e-04 1.039e-04 1.040e-04 1.040e-04 1.040e-04 1.040e-04 1.040e-04 1.041e-04 1.041e-04 1.041e-04 1.044e-04 1.051e-04
+access/copy-bit-transposed-1024x1024	alloc_words	exact	57
+access/copy-bit-transposed-1024x1024	wall_time	batch=8	n=20	8.026e-04	7.963e-04 7.976e-04 7.983e-04 8.001e-04 8.001e-04 8.006e-04 8.009e-04 8.014e-04 8.015e-04 8.026e-04 8.026e-04 8.027e-04 8.028e-04 8.035e-04 8.036e-04 8.036e-04 8.043e-04 8.051e-04 8.055e-04 8.058e-04
 access/copy-f32-1M	alloc_words	exact	54
 access/copy-f32-1M	wall_time	batch=32	n=20	1.987e-04	1.962e-04 1.970e-04 1.972e-04 1.978e-04 1.979e-04 1.980e-04 1.983e-04 1.983e-04 1.985e-04 1.987e-04 1.987e-04 1.991e-04 1.991e-04 1.992e-04 1.993e-04 1.994e-04 1.999e-04 1.999e-04 2.001e-04 2.001e-04
+access/copy-i4-1M	alloc_words	exact	54
+access/copy-i4-1M	wall_time	batch=512	n=20	1.602e-05	1.595e-05 1.596e-05 1.598e-05 1.598e-05 1.599e-05 1.600e-05 1.600e-05 1.601e-05 1.602e-05 1.602e-05 1.603e-05 1.604e-05 1.605e-05 1.606e-05 1.608e-05 1.610e-05 1.617e-05 1.619e-05 1.623e-05 1.624e-05
+access/copy-i4-1M-offset1	alloc_words	exact	54
+access/copy-i4-1M-offset1	wall_time	batch=256	n=20	3.524e-05	3.497e-05 3.500e-05 3.502e-05 3.506e-05 3.507e-05 3.516e-05 3.516e-05 3.518e-05 3.523e-05 3.524e-05 3.524e-05 3.524e-05 3.526e-05 3.527e-05 3.529e-05 3.530e-05 3.533e-05 3.536e-05 3.536e-05 3.539e-05
 access/copy-transposed-512x512	alloc_words	exact	57
 access/copy-transposed-512x512	wall_time	batch=128	n=20	6.975e-05	6.932e-05 6.937e-05 6.956e-05 6.961e-05 6.964e-05 6.965e-05 6.971e-05 6.972e-05 6.973e-05 6.974e-05 6.975e-05 6.977e-05 6.987e-05 6.991e-05 6.993e-05 7.003e-05 7.011e-05 7.019e-05 7.021e-05 7.033e-05
+access/copy-window-3x3-8x3x64x64	alloc_words	exact	69
+access/copy-window-3x3-8x3x64x64	wall_time	batch=64	n=20	1.152e-04	1.149e-04 1.150e-04 1.150e-04 1.150e-04 1.150e-04 1.150e-04 1.150e-04 1.151e-04 1.151e-04 1.151e-04 1.152e-04 1.152e-04 1.153e-04 1.154e-04 1.154e-04 1.154e-04 1.155e-04 1.155e-04 1.160e-04 1.161e-04
 access/create-f32-1M	alloc_words	exact	48
 access/create-f32-1M	wall_time	batch=1024	n=20	9.060e-06	9.027e-06 9.028e-06 9.031e-06 9.032e-06 9.033e-06 9.035e-06 9.047e-06 9.051e-06 9.052e-06 9.055e-06 9.064e-06 9.064e-06 9.066e-06 9.067e-06 9.073e-06 9.079e-06 9.085e-06 9.086e-06 9.089e-06 9.092e-06
 access/floor-bigarray-copy-f32-1M	alloc_words	exact	9
