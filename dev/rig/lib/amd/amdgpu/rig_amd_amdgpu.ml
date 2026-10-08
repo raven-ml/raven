@@ -479,6 +479,7 @@ let path d ~index : mem Amd.path =
     queue = queue d;
     hdp = g.hdp;
     interrupt = d.events.(0);
+    hang_ms = None;
     sleep = sleep d;
     stable_power = stable_power g;
     stop = stop d;

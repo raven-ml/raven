@@ -148,7 +148,7 @@ module Host = struct
     }
 
   let path ?(key = key) ?(reaches = true) ?(gpu = r9700) ?(lds = 65536)
-      ?(refuse = fun _ -> false) ?(stop = fun () -> `Stopped) () =
+      ?(refuse = fun _ -> false) ?(stop = fun () -> `Stopped) ?hang_ms () =
     let h =
       {
         lock = Mutex.create ();
@@ -236,6 +236,7 @@ module Host = struct
         queue;
         hdp = Some h.hdp;
         interrupt = 1;
+        hang_ms;
         sleep;
         stable_power = (fun () -> Ok ());
         stop;
@@ -251,8 +252,8 @@ module Host = struct
     h.held <- [];
     h.closed <- true
 
-  let device ?key ?reaches ?gpu ?lds ?stop () =
-    let h, p = path ?key ?reaches ?gpu ?lds ?stop () in
+  let device ?key ?reaches ?gpu ?lds ?stop ?hang_ms () =
+    let h, p = path ?key ?reaches ?gpu ?lds ?stop ?hang_ms () in
     match A.make p with Ok g -> (h, g) | Error why -> fail why
 
   let with_device ?gpu ?lds f =
@@ -1043,6 +1044,34 @@ let stops () =
   case "the path may run a queue" (fun () -> `Unknown) 0;
   case "the path failed" (fun () -> raise (A.Fault "lost")) 0
 
+(* NOPs
+
+   A PM4 NOP one word long (count 0x3fff), the word Linux's amdgpu driver pads
+   compute rings with (gfx_v12_0.c). SDMA reads a zero word as a NOP, as the
+   writer's own padding does. Fills of 2^i NOPs, one per queue and size up to
+   2^20, move a ring along cheaply: every device's capability has the same C
+   functions. *)
+
+let pm4_nop = 0xffff1000
+let pads = Hashtbl.create 42
+
+let pad g ~compute i =
+  match Hashtbl.find_opt pads (compute, i) with
+  | Some f -> f
+  | None ->
+      let w = if compute then pm4_nop else 0 in
+      let f = S.fill (A.capability g) (Array.make (1 lsl i) w) ~bytes:0 in
+      Hashtbl.add pads (compute, i) f;
+      f
+
+(* The largest 2^i at most [n], up to 2^20. *)
+let log2 n =
+  let i = ref 0 in
+  while !i < 20 && 1 lsl (!i + 1) <= n do
+    incr i
+  done;
+  !i
+
 (* A fill on COPY:0 that places exactly the units it declares, in two calls,
    wherever the copy ring's end falls: [room] words from the fill's start to
    the end, then its two calls of [first] and [second] words. SDMA packets
@@ -1067,12 +1096,16 @@ let fill_at_the_end (room, first, second) =
   let p0 = put () in
   go [| words 1 |];
   let release = put () - p0 - 1 in
-  let chunk = 1 lsl 20 in
   let rec advance () =
-    let left = size - room - put () in
-    if left > chunk + release then (go [| words chunk |]; advance ())
-    else if left >= release + 1 then go [| words (left - release) |]
-    else (go [| words chunk |]; advance ())
+    let n = size - room - put () - release in
+    let pad i =
+      let f, arg = pad g ~compute:false i in
+      go [| A.part g ~queue:"COPY:0" (`Fill (f, arg, 1 lsl i, 0)) |];
+      advance ()
+    in
+    if n > 4096 then pad (log2 (n - 256))
+    else if n >= 1 then go [| words n |]
+    else pad 20
   in
   advance ();
   equal int ~msg:"the fill's start" (size - room) (put () mod size);
@@ -1087,6 +1120,76 @@ let at_the_end =
   Gen.with_pp
     (fun ppf (r, a, b) -> Format.fprintf ppf "%d words left; calls of %d and %d" r a b)
     Gen.(triple (int_range 1 40) (int_range 1 24) (int_range 1 24))
+
+(* Progress bounds
+
+   A path that bounds work's progress ([hang_ms]) makes [sleep] raise once a
+   value is outstanding and the word has not moved for that long. The host
+   path's [sleep] returns at once, so these loops spin; [ms] of CPU time is
+   at most [ms] of the clock. *)
+
+let spin ~ms f =
+  let t0 = Sys.time () in
+  while Sys.time () -. t0 < Float.of_int ms /. 1000. do
+    f ()
+  done
+
+let hangs () =
+  let h, g = Host.device ~hang_ms:50 () in
+  equal answer ~msg:"submit" `Ok (submit g ~v:1 [||]);
+  A.sleep g ~seen:0 ~still_ms:1;
+  (match spin ~ms:2000 (fun () -> A.sleep g ~seen:0 ~still_ms:1) with
+  | () -> fail "no Fault after 2 s of a value making no progress"
+  | exception A.Fault why -> contains ~msg:"the report" ~sub:"50 ms" why);
+  A.stop g;
+  Host.close h
+
+let idle () =
+  let h, g = Host.device ~hang_ms:50 () in
+  spin ~ms:150 (fun () -> A.sleep g ~seen:0 ~still_ms:1);
+  equal answer ~msg:"submit" `Ok (submit g ~v:1 [||]);
+  A.sleep g ~seen:0 ~still_ms:1;
+  A.stop g;
+  Host.close h
+
+let moving () =
+  let h, g = Host.device ~hang_ms:50 () in
+  for v = 1 to 8 do
+    equal answer ~msg:"submit" `Ok (submit g ~v [||])
+  done;
+  for v = 1 to 8 do
+    spin ~ms:20 (fun () -> A.sleep g ~seen:(v - 1) ~still_ms:1);
+    Host.reach g v
+  done;
+  A.stop g;
+  Host.close h
+
+let unbounded () =
+  let h, g = Host.device () in
+  equal answer ~msg:"submit" `Ok (submit g ~v:1 [||]);
+  spin ~ms:150 (fun () -> A.sleep g ~seen:0 ~still_ms:1);
+  A.stop g;
+  Host.close h
+
+let bounds () =
+  List.iter
+    (fun n ->
+      let h, p = Host.path ~hang_ms:n () in
+      raises_match ~msg:(strf "hang_ms %d" n)
+        (Exn.invalid_arg ~substring:"Rig_amd.make")
+        (fun () -> A.make p);
+      Host.close h)
+    [ 0; -1; min_int ]
+
+let progress =
+  group ~timeout:30. "progress"
+    [
+      test "a value that makes no progress for hang_ms is a fault" hangs;
+      test "an idle device never hangs, nor its next value at once" idle;
+      test "values reached more often than hang_ms are no fault" moving;
+      test "without hang_ms a value making no progress is no fault" unbounded;
+      test "make raises on a hang_ms below 1" bounds;
+    ]
 
 let failures =
   group ~timeout:60. "failures"
@@ -1540,10 +1643,6 @@ let code =
    completes in order and writes what it should. *)
 
 module Wrap = struct
-  (* A PM4 NOP one word long (count 0x3fff), the word Linux's amdgpu driver
-     pads compute rings with (gfx_v12_0.c). SDMA reads a zero word as a NOP,
-     as the writer's own padding does. *)
-  let pm4_nop = 0xffff1000
   let slots = 4096
 
   type shape =
@@ -1616,19 +1715,6 @@ module Wrap = struct
   let write k v =
     words (Pm4.write_data (Memory (address k.res + (4 * (v mod slots)))) v)
 
-  (* Fills of 2^i NOPs, one per queue and size: every device's capability
-     has the same C functions. *)
-  let pads = Hashtbl.create 42
-
-  let pad g ~compute i =
-    match Hashtbl.find_opt pads (compute, i) with
-    | Some f -> f
-    | None ->
-        let w = if compute then pm4_nop else 0 in
-        let f = S.fill (A.capability g) (Array.make (1 lsl i) w) ~bytes:0 in
-        Hashtbl.add pads (compute, i) f;
-        f
-
   (* [shape]'s parts as value [v] of [g], and its fill's argument. *)
   let parts g k v shape =
     let compute n =
@@ -1686,12 +1772,6 @@ module Wrap = struct
       (a - base + round64 b) mod segment
     in
     let shift = function Exact -> 0 | Short -> -1 | Over -> 1 in
-    (* The largest 2^i at most [n], up to 2^20. *)
-    let log2 n =
-      let i = ref 0 in
-      while !i < 20 && 1 lsl (!i + 1) <= n do incr i done;
-      !i
-    in
     (* [mk n] places [n >= least] words of its own and [o] more, measured on
        a second one so that its queue released the value before it. Pads of
        NOPs approach the end, each leaving more room than its own release
@@ -1892,7 +1972,7 @@ module Chain = struct
     go r (Array.map (fun b -> copy g (b, 0) (s.garbage, 0) bytes) (Array.append s.bufs [| s.out |]));
     go r [| copy g (s.bufs.(0), 0) (s.input, 0) bytes |];
     if c.after_copy then go r [| copy g (s.out, 0) (s.garbage, 0) 4 |]
-    else go r [| A.part g ~queue:"COMPUTE:0" (`Words [| Wrap.pm4_nop |]) |];
+    else go r [| A.part g ~queue:"COMPUTE:0" (`Words [| pm4_nop |]) |];
     let parts = ref [] in
     let add p =
       parts := p :: !parts;
@@ -2337,6 +2417,7 @@ let () =
          room;
          hdp;
          failures;
+         progress;
          domains;
          work;
          code;

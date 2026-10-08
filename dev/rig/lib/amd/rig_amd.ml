@@ -40,6 +40,7 @@ type 'm path = {
     (int, string) result;
   hdp : int option;
   interrupt : int;
+  hang_ms : int option;
   sleep : ms:int -> unit;
   stable_power : unit -> (unit, string) result;
   stop : unit -> [ `Stopped | `Unknown ];
@@ -120,6 +121,7 @@ external scratch_taken : int -> int = "caml_rig_amd_scratch_taken"
 [@@noalloc]
 
 external signaled_word : int -> int = "caml_rig_amd_signaled" [@@noalloc]
+external now_ms : unit -> int = "caml_rig_amd_now_ms" [@@noalloc]
 
 (* Opening *)
 
@@ -139,7 +141,13 @@ type t = {
   own : mem list; (* rings, pointers, segment, slots *)
   scratch : scratch;
   traces : traces;
+  hang_ms : int option;
+  progress : progress Atomic.t;
 }
+
+(* The word as [sleep] last saw it, whether the device was idle then, and since
+   when, in milliseconds of the monotonic clock. *)
+and progress = { seen : int; idle : bool; since : int }
 
 (* The device's trace buffers, made at the first trace: the capability's record
    and the memory under it. *)
@@ -376,6 +384,12 @@ let host_of what m =
 let make (type m) (p : m path) =
   if p.interrupt = 0 then
     invalid_arg "Rig_amd.make: the release's interrupt context is 0";
+  Option.iter
+    (fun n ->
+      if n < 1 then
+        invalid_argf
+          "Rig_amd.make: a hang bound of %d ms, expected at least 1" n)
+    p.hang_ms;
   let* () = supported p.gpu in
   let ops = ops p in
   let taken = ref [] and queues = ref false in
@@ -472,6 +486,8 @@ let make (type m) (p : m path) =
         own = [ slot_words; segment; compute; copy; pointers ];
         scratch;
         traces;
+        hang_ms = p.hang_ms;
+        progress = Atomic.make { seen = 0; idle = true; since = 0 };
       }
   in
   match opened with
@@ -775,7 +791,25 @@ external settle : int -> unit = "caml_rig_amd_settle"
 
 let word g = g.word
 let signaled g = signaled_word g.self
-let sleep g ~seen ~still_ms = if signaled g = seen then g.ops.sleep ~ms:still_ms
+
+(* The clock restarts when the word moved or the device was idle at the last
+   look, and runs on while the same value stays outstanding. *)
+let sleep g ~seen ~still_ms =
+  let w = signaled g in
+  if w = seen then
+    match g.hang_ms with
+    | None -> g.ops.sleep ~ms:still_ms
+    | Some hang ->
+        let now = now_ms () and p = Atomic.get g.progress in
+        let idle = last g.self <= w in
+        if idle || p.idle || p.seen <> w then begin
+          Atomic.set g.progress { seen = w; idle; since = now };
+          g.ops.sleep ~ms:(if idle then still_ms else min still_ms hang)
+        end
+        else
+          let left = p.since + hang - now in
+          if left <= 0 then raise (Fault (strf "no progress for %d ms" hang));
+          g.ops.sleep ~ms:(min still_ms left)
 
 (* Loss *)
 

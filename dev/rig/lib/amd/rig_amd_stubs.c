@@ -13,6 +13,11 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <time.h>
+#endif
 
 #define CAML_NAME_SPACE
 #include <caml/alloc.h>
@@ -102,6 +107,18 @@ value caml_rig_amd_template(value v_self, value v_t, value v_words,
     }
   }
   return Val_unit;
+}
+
+/* Milliseconds of the host's monotonic clock. */
+value caml_rig_amd_now_ms(value unit) {
+  (void)unit;
+#if defined(_WIN32)
+  return Val_long((intnat)GetTickCount64());
+#else
+  struct timespec t;
+  clock_gettime(CLOCK_MONOTONIC, &t);
+  return Val_long((intnat)t.tv_sec * 1000 + t.tv_nsec / 1000000);
+#endif
 }
 
 value caml_rig_amd_max_copy(value v_self, value v_n) {

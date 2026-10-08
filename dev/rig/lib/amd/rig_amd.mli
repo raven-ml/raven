@@ -49,9 +49,10 @@
 
     {b Faults.} The path reports a fault of a device's work, such as a page
     fault or a reset of the GPU, at a later {!sleep}. Work that runs long is no
-    fault: only the path's report is. A function that calls the path answers its
-    refusal of the arguments as its result ([None], [Error]) and raises {!Fault}
-    for any other failure. {!signaled}, {!free} and {!stop} never raise it.
+    fault: only the path's report is, or a bound the path states ([hang_ms]). A
+    function that calls the path answers its refusal of the arguments as its
+    result ([None], [Error]) and raises {!Fault} for any other failure.
+    {!signaled}, {!free} and {!stop} never raise it.
 
     {b Domains.} Every value may be called from any domain, at the same time as
     others, with three exceptions. {!room} and {!submit} run one call at a time,
@@ -329,7 +330,13 @@ val sleep : t -> seen:int -> still_ms:int -> unit
     interrupt, which every release raises, and lets other domains run while it
     waits. It may run while {!submit} does.
 
-    Raises {!Fault} with the path's report if [g]'s work met a fault. *)
+    Raises {!Fault} with the path's report if [g]'s work met a fault. Where the
+    path bounds progress ([hang_ms] is [Some n]), it also raises {!Fault} once
+    work is outstanding and the word has not moved for [n] milliseconds. The
+    clock runs only while the last value given is above the word: it starts at
+    the later of the word's last move and the first [sleep] after the device was
+    idle, as [sleep] observes them, so an idle device never hangs and the report
+    may come late but never early. *)
 
 (** {1:loss Loss} *)
 
@@ -419,6 +426,10 @@ type 'm path = {
   interrupt : int;
       (** The context, not [0], that the interrupt of a value's release carries,
           which wakes [sleep]. *)
+  hang_ms : int option;
+      (** [Some n] if work whose word has not moved for [n] milliseconds is a
+          fault ({!val-sleep}), where nothing else bounds the GPU's work; [None]
+          where the path's kernel driver does. [n] is positive. *)
   sleep : ms:int -> unit;
       (** [sleep ~ms] returns once the GPU interrupts, or after [ms]
           milliseconds, and raises {!Fault} with the path's report of a fault of
@@ -428,7 +439,8 @@ type 'm path = {
           tracing needs, for the life of the process. *)
   stop : unit -> [ `Stopped | `Unknown ];
       (** [stop ()] destroys the queues [queue] made: [`Stopped] once none of
-          them runs, [`Unknown] if one may. *)
+          them runs or none can write memory outside the GPU, [`Unknown] if one
+          may. *)
 }
 (** The type for what a path gives a device. A path fills it with functions over
     its own state, which this library never names. Each function answers the
@@ -445,7 +457,8 @@ val make : 'm path -> (t, string) result
     gives back what it took: it frees the memory [p] gave and calls [p.stop] if
     [p] made a queue.
 
-    Raises [Invalid_argument] if [p.interrupt] is [0]. *)
+    Raises [Invalid_argument] if [p.interrupt] is [0] or [p.hang_ms] is [Some n]
+    with [n < 1]. *)
 
 val is_gpu : vendor:int -> class_:int -> bool
 (** [is_gpu ~vendor ~class_] is [true] iff a PCI function of vendor [vendor] and
