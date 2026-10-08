@@ -4,5 +4,6 @@
 (library
  (name device_nv)
  (libraries device_nv_abi device_elf device_edge)
+ (private_modules defs)
  (install_c_headers device_nv)
  (modules_without_implementation device_nv))
