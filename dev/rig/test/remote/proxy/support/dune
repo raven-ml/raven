@@ -1,0 +1,3 @@
+(executable
+ (name link_peer)
+ (libraries rig_remote_proxy unix))
