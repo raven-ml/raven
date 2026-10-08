@@ -30,6 +30,21 @@
     never runs, its word is never read, and its objects are forgotten without
     a call. Its io devices stay as they were.
 
+    A Stopped device's timeline word ends in three steps, each in a drain
+    ([Memory]):
+    + While another device's queue holds a wait on the word that its own word
+      has not passed, the word stays: that queue still reads it.
+    + Then {!move_word} points the C record's readers at a copy of the word's
+      last value in the record. Every later read, a point of the device that a
+      stamp names included, reads the copy, so stamps need not be gone.
+    + The driver gets the word back ({!Rig.Driver.free}) once a minor
+      collection ran since the move, after every other device's mapping of it.
+      The collection is the grace period: it waits for every domain that holds
+      its runtime lock, so a reader that loaded the word's address before the
+      move has finished with it. A reader without the runtime lock reads under
+      the device's mutex, or, as a spin on the word, counts as a call inside
+      the device, which the stop and the move wait for.
+
     The host is never lost. *)
 
 open Def
