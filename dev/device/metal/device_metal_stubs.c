@@ -28,7 +28,17 @@
 #include "device_metal.h"
 
 /* Why open fails, as device_metal.ml reads it from a negative address. */
-enum { not_macos = 1, no_device, before_15, no_family, no_queue, no_memory };
+enum {
+  not_macos = 1,
+  no_device,
+  before_15,
+  no_family,
+  no_queue,
+  no_fence,
+  no_set,
+  no_word,
+  no_memory
+};
 
 /* [None], or [Some why] once a submission failed. */
 static value failure(const char *why) {
@@ -91,10 +101,15 @@ static intnat open_device(void) API_AVAILABLE(macos(15.0)) {
   d->word = [device newBufferWithLength:sizeof(uint64_t)
                                 options:MTLResourceStorageModeShared];
   [desc release];
-  if (!d->queue || !d->fence || !d->set || !d->word) {
+  int missing = !d->queue   ? no_queue
+                : !d->fence ? no_fence
+                : !d->set   ? no_set
+                : !d->word  ? no_word
+                            : 0;
+  if (missing) {
     [d->queue release], [d->fence release], [d->set release];
     [d->word release], [device release], free(d);
-    return -no_queue;
+    return -missing;
   }
   [d->queue addResidencySet:d->set];
   pthread_mutex_init(&d->set_mutex, NULL);
@@ -202,7 +217,8 @@ value caml_device_metal_image(value v_d, value v_b) {
     if (ps == NULL) fs = @[];
     oom = ps == NULL;
     if (library == nil)
-      snprintf(text, sizeof text, "%s", error.localizedDescription.UTF8String);
+      snprintf(text, sizeof text, "loading the image: %s",
+               error.localizedDescription.UTF8String);
     for (NSUInteger i = 0; i < fs.count && text[0] == '\0'; i++) {
       MTLComputePipelineDescriptor *desc =
           [[MTLComputePipelineDescriptor alloc] init];
@@ -213,8 +229,8 @@ value caml_device_metal_image(value v_d, value v_b) {
                                                  reflection:nil
                                                       error:&error];
       if (ps[i] == nil)
-        snprintf(text, sizeof text, "%s: %s", fs[i].UTF8String,
-                 error.localizedDescription.UTF8String);
+        snprintf(text, sizeof text, "building the pipeline of \"%s\": %s",
+                 fs[i].UTF8String, error.localizedDescription.UTF8String);
       [desc release];
     }
     [library release];
@@ -271,12 +287,17 @@ static void check(struct device_metal *d, id<MTLBuffer> args, value v_pipelines,
     if (p.device != d->device)
       snprintf(m, sizeof m, "dispatch %d's pipeline is another GPU's", (int)i);
     else if (offset >= (intnat)args.length)
-      snprintf(m, sizeof m, "dispatch %d's offset %ld is outside %lu bytes",
+      snprintf(m, sizeof m,
+               "dispatch %d's offset %ld lies outside the buffer's %lu bytes",
                (int)i, (long)offset, (unsigned long)args.length);
     else {
       if (why[0] == '\0' && threads > (intnat)p.maxTotalThreadsPerThreadgroup)
-        snprintf(why, n, "dispatch %d asks for %ld threads, above %lu", (int)i,
-                 (long)threads, (unsigned long)p.maxTotalThreadsPerThreadgroup);
+        snprintf(
+            why, n,
+            "dispatch %d asks for %ld threads per threadgroup, expected at "
+            "most %lu",
+            (int)i, (long)threads,
+            (unsigned long)p.maxTotalThreadsPerThreadgroup);
       continue;
     }
     char full[200];
@@ -316,7 +337,8 @@ value caml_device_metal_icb(value v_d, value v_buffer, value v_pipelines,
   }
   if (b == NULL || b->icb == nil) {
     free(b);
-    if (text[0] == '\0') snprintf(text, sizeof text, "Metal made no ICB");
+    if (text[0] == '\0')
+      snprintf(text, sizeof text, "Metal made no indirect command buffer");
     why = caml_copy_string(text);
     CAMLreturn(tuple(2, why, Atom(0), Val_unit));
   }
@@ -401,9 +423,9 @@ value caml_device_metal_open(value unit) {
   return Val_long(-not_macos);
 }
 
-CAMLnoret static void no_metal(void) {
-  caml_invalid_argument("Device_metal: Metal exists on macOS only");
-}
+/* Unreachable: off macOS no device opens, so nothing reaches a stub that
+   serves one. */
+CAMLnoret static void no_metal(void) { abort(); }
 
 #define NO_METAL1(f) \
   value f(value a) { (void)a, no_metal(); }

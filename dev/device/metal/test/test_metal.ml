@@ -325,12 +325,12 @@ let failing_fill () =
   let ok = fill_dispatch t ~args ~at:0 ~out:(gpu out) ~c:2 64 in
   let reached = submit_ok t [| ok |] in
   let failed = submit t [| ok; S.failing 7 |] in
-  equal submitted (`Failed "a fill failed with 7") failed;
+  equal submitted (`Failed "running a fill: it returned 7") failed;
   S.wait t.d reached;
-  raises (Device_metal.Fault "a fill failed with 7") (fun () ->
+  raises (Device_metal.Fault "running a fill: it returned 7") (fun () ->
       Device_metal.sleep t.d ~seen:reached ~still_ms:10);
   equal int reached (Device_metal.signaled t.d);
-  equal submitted (`Failed "a fill failed with 7") (submit t [| ok |]);
+  equal submitted (`Failed "running a fill: it returned 7") (submit t [| ok |]);
   equal int reached (Device_metal.signaled t.d)
 
 let work =

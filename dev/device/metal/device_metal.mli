@@ -347,8 +347,9 @@ val sleep : t -> seen:int -> still_ms:int -> unit
     lock while it waits.
 
     Raises {!Fault} if a submission of [d] failed, with the failure's reason:
-    Metal's for a failed command buffer, such as
-    ["Impacting Interactivity
+    for a command buffer Metal reports failed, its text after
+    ["the GPU's work failed: "], such as
+    ["the GPU's work failed: Impacting Interactivity
      (0000000e:kIOGPUCommandBufferCallbackErrorImpactingInteractivity)"]. *)
 
 (** {1:loss Loss} *)

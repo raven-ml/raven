@@ -60,12 +60,13 @@ static const char *begin(struct device_metal_queue *q) {
   q->buffer = [d->queue commandBuffer];
   if (q->buffer == nil) return fail(q, "Metal made no command buffer");
   [q->buffer addCompletedHandler:^(id<MTLCommandBuffer> b) {
-    const char *why = NULL;
-    if (b.status == MTLCommandBufferStatusError)
-      why = b.error.localizedDescription.UTF8String
-                ?: "Metal reported the command buffer failed";
-    device_metal_ring_complete(&d->ring, slot, why, host_ns(b.GPUStartTime),
-                               host_ns(b.GPUEndTime));
+    int failed = b.status == MTLCommandBufferStatusError;
+    char why[512];
+    if (failed)
+      snprintf(why, sizeof why, "the GPU's work failed: %s",
+               b.error.localizedDescription.UTF8String ?: "no reason given");
+    device_metal_ring_complete(&d->ring, slot, failed ? why : NULL,
+                               host_ns(b.GPUStartTime), host_ns(b.GPUEndTime));
   }];
   return NULL;
 }
@@ -129,12 +130,15 @@ static const char *run(struct device_metal *d, uint64_t v,
         continue;
       }
       char text[64];
-      snprintf(text, sizeof text, "a fill failed with %d", rc);
+      snprintf(text, sizeof text, "running a fill: it returned %d", rc);
       why = fail(&q, text);
     }
     if (why == NULL) commit(&q, v, NULL, NULL);
   } @catch(NSException * e) {
-    why = fail(&q, e.reason.UTF8String ?: "Metal raised an exception");
+    char text[512];
+    snprintf(text, sizeof text, "Metal raised an exception: %s",
+             e.reason.UTF8String ?: "no reason given");
+    why = fail(&q, text);
   }
   return why;
 }

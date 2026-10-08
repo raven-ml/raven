@@ -85,7 +85,7 @@ type t = {
 }
 
 let device_name i =
-  if i < 0 then invalid_argf "Device_metal.device_name: device %d is negative" i;
+  if i < 0 then invalid_argf "Device_metal.device_name: GPU %d is negative" i;
   if i = 0 then "METAL" else strf "METAL:%d" i
 
 let icb self align buffer (ds : Device_metal_abi.dispatch array) =
@@ -93,11 +93,14 @@ let icb self align buffer (ds : Device_metal_abi.dispatch array) =
     let gx, gy, gz = d.groups and tx, ty, tz = d.threads in
     if d.offset < 0 || d.offset mod align <> 0 then
       invalid_argf
-        "Device_metal_abi.icb: dispatch %d's offset %d is no multiple of %d in \
-         the buffer"
+        "Device_metal_abi.icb: dispatch %d's offset %d, expected a \
+         non-negative multiple of %d"
         i d.offset align;
     if List.exists (fun x -> x < 1) [ gx; gy; gz; tx; ty; tz ] then
-      invalid_argf "Device_metal_abi.icb: dispatch %d has a size below 1" i
+      invalid_argf
+        "Device_metal_abi.icb: dispatch %d has groups %dx%dx%d and threads \
+         %dx%dx%d, expected each at least 1"
+        i gx gy gz tx ty tz
   in
   Array.iteri check ds;
   let sizes (d : Device_metal_abi.dispatch) =
@@ -126,24 +129,29 @@ let icb self align buffer (ds : Device_metal_abi.dispatch array) =
 let apple_align = 4
 let mac_align = 256
 
-(* The causes of open's failures, by the stubs' codes, and the code of the
-   host's lack of memory. *)
-let no_memory = 6
+(* The causes of open's failures, by the stubs' codes; the last is the host's
+   lack of memory. *)
+let open_failures =
+  [|
+    "Metal exists on macOS only";
+    "no GPU of this Mac supports Metal";
+    "a device needs macOS 15 or later, for residency sets";
+    "the GPU belongs to no Apple or Mac GPU family";
+    "Metal made no command queue";
+    "Metal made no fence";
+    "Metal made no residency set";
+    "Metal made no buffer for the word";
+  |]
 
-let open_failure = function
-  | 1 -> "Metal exists on macOS only"
-  | 2 -> "no GPU of this Mac supports Metal"
-  | 3 -> "a device needs macOS 15 or later, for residency sets"
-  | 4 -> "the GPU belongs to no Apple or Mac GPU family"
-  | _ -> "Metal made no queue, fence, residency set or word for the GPU"
+let no_memory = Array.length open_failures + 1
 
 let open_ i =
-  if i < 0 then invalid_argf "Device_metal.open_: device %d is negative" i;
-  if i > 0 then Error (strf "no device %d: a Mac has one GPU, device 0" i)
+  if i < 0 then invalid_argf "Device_metal.open_: GPU %d is negative" i;
+  if i > 0 then Error (strf "no such GPU; Metal sees %d" (count ()))
   else
     let self = open_device () in
     if self = -no_memory then raise Out_of_memory
-    else if self < 0 then Error (open_failure (-self))
+    else if self < 0 then Error open_failures.(-self - 1)
     else
       let family, budget, word = facts self in
       let arch = if family > 0 then strf "Apple%d" family else "Mac2" in
@@ -174,7 +182,8 @@ let self d = Nativeint.of_int d.self
 let region_align = 256
 
 let alloc d _ n =
-  if n < 1 then invalid_argf "Device_metal.alloc: %d bytes, below 1" n;
+  if n < 1 then
+    invalid_argf "Device_metal.alloc: %d bytes, expected at least 1" n;
   match alloc_buffer d.self n with
   | None -> None
   | Some ((handle, address, host) as b) ->
@@ -192,17 +201,19 @@ let alloc d _ n =
       end
 
 let map_host d p n =
-  if n < 1 then invalid_argf "Device_metal.map_host: %d bytes, below 1" n;
+  if n < 1 then
+    invalid_argf "Device_metal.map_host: %d bytes, expected at least 1" n;
   Option.map (region d.self Mapped) (map_buffer d.self p n)
 
 let map_peer _ _ _ = None
 
 let give_back fn kind d r =
   if r.owner <> d.self || r.kind <> kind then
-    invalid_argf "Device_metal.%s: the region is none of the device's %s" fn
-      (if kind = Alloc then "allocations" else "mapped ranges");
+    invalid_argf "Device_metal.%s: the region is no %s of the device" fn
+      (if kind = Alloc then "allocation" else "mapping");
   if not (Atomic.compare_and_set r.live true false) then
-    invalid_argf "Device_metal.%s: the region was given back" fn;
+    invalid_argf "Device_metal.%s: the region was %s" fn
+      (if kind = Alloc then "freed" else "unmapped");
   free_buffer d.self r.handle
 
 let free d r = give_back "free" Alloc d r
@@ -246,9 +257,9 @@ let after_at = 9
 
 let part d ~queue ?(after = [||]) w =
   if queue <> "COMPUTE:0" then
-    invalid_argf "Device_metal.part: queue %S is not COMPUTE:0" queue;
+    invalid_argf "Device_metal.part: queue %S, expected COMPUTE:0" queue;
   let negative i =
-    if i < 0 then invalid_argf "Device_metal.part: part index %d is negative" i
+    if i < 0 then invalid_argf "Device_metal.part: after index %d is negative" i
   in
   Array.iter negative after;
   match w with
@@ -258,11 +269,10 @@ let part d ~queue ?(after = [||]) w =
   | `Fill (_, _, units, bytes) ->
       invalid_argf
         "Device_metal.part: a fill declares %d ring units and %d segment \
-         bytes, not none"
+         bytes, expected 0 of each"
         units bytes
   | `Words _ -> invalid_arg "Device_metal.part: the device runs no words"
-  | `Copy _ ->
-      invalid_arg "Device_metal.part: the device runs no copies; the host does"
+  | `Copy _ -> invalid_arg "Device_metal.part: the device runs no copies"
 
 let room _ _ = `Fits
 
@@ -274,13 +284,16 @@ let check_part self i (p : part) =
     invalid_argf "Device_metal.submit: part %d is another device's" i;
   for k = after_at to Array.length p - 1 do
     if p.(k) >= i then
-      invalid_argf "Device_metal.submit: part %d waits for part %d, not earlier"
+      invalid_argf
+        "Device_metal.submit: part %d waits for part %d, expected an earlier \
+         part"
         i p.(k)
   done
 
 let submit d ~v ~waits ~handles:_ ps =
   let next = last d.self + 1 in
-  if v <> next then invalid_argf "Device_metal.submit: value %d, not %d" v next;
+  if v <> next then
+    invalid_argf "Device_metal.submit: value %d, expected %d" v next;
   if Array.length waits > 0 then
     invalid_arg "Device_metal.submit: the device waits on no word";
   Array.iteri (check_part d.self) ps;
