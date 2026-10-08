@@ -31,11 +31,6 @@ external system : unit -> string = "rig_disk_test_system"
 (* ["linux"], ["macos"], ["windows"] or ["other"]. *)
 let system = system ()
 
-(* [xfail_on systems ~reason t] is [t], expected to fail on [systems]: a known
-   bug that shows only where the system's file times or allocator make it. *)
-let xfail_on systems ~reason t =
-  if List.mem system systems then xfail ~reason t else t
-
 let contains s sub =
   let n = String.length s and k = String.length sub in
   let rec from i = i + k <= n && (String.sub s i k = sub || from (i + 1)) in
@@ -171,14 +166,11 @@ let make_file ?(path = new_path ()) s =
   path
 
 let create path n =
-  let b =
-    require_ok ~pp:Format.pp_print_string (Rig_disk.create_file path n)
-  in
+  let b = require_ok ~pp:Format.pp_print_string (Rig_disk.create_file path n) in
   register path;
   b
 
-let of_file path =
-  require_ok ~pp:Format.pp_print_string (Rig_disk.of_file path)
+let of_file path = require_ok ~pp:Format.pp_print_string (Rig_disk.of_file path)
 
 (* [open_where ours] is the number of this process's descriptors whose /dev/fd
    entry [ours] holds. *)
@@ -266,11 +258,8 @@ let use_all_others () =
    renamed over it, or made after its file was removed. *)
 type how = Rename | Recreate
 
-(* The ways [replace] replaces a file. A file recreated at once is read as the
-   new file on Linux, a known bug ("a file recreated at its path after its
-   descriptor closed is never read as the new file"), so the laws there replace
-   by renaming alone. *)
-let hows = if system = "linux" then [ Rename ] else [ Rename; Recreate ]
+(* The ways [replace] replaces a file. *)
+let hows = [ Rename; Recreate ]
 
 let pp_how ppf h =
   Format.pp_print_string ppf
@@ -483,8 +472,8 @@ let test_copy_into_opened n =
   let path = make_file "x" in
   removing [ path ] @@ fun () ->
   let dst = B.view (of_file path) ~first:0 ~length:n in
-  raises_match (Exn.invalid_arg ~substring:"Rig.Buffer.copy: ")
-    (fun () -> B.copy ~src:(host_of_string (String.make n 'y')) ~dst);
+  raises_match (Exn.invalid_arg ~substring:"Rig.Buffer.copy: ") (fun () ->
+      B.copy ~src:(host_of_string (String.make n 'y')) ~dst);
   equal octets ~msg:"the file" "x" (contents path)
 
 let copies =
@@ -724,8 +713,8 @@ let test_create_refused t =
 
 let test_negative_size n =
   let path = new_path () in
-  raises_match (Exn.invalid_arg ~substring:"Rig_disk.create_file: ")
-    (fun () -> Rig_disk.create_file path n);
+  raises_match (Exn.invalid_arg ~substring:"Rig_disk.create_file: ") (fun () ->
+      Rig_disk.create_file path n);
   equal bool ~msg:"a file at the path" false (Sys.file_exists path)
 
 let test_umask mask =
@@ -947,33 +936,18 @@ let descriptors =
         "a created file's own copies keep it its own, through closed \
          descriptors"
         test_own_writes;
-      xfail
-        ~reason:
-          "a write through the shared mapping changes the file's change time, \
-           so a reopen by its path takes the file for another and raises \
-           Sys_error"
-        (test
-           "a created file's writes through its borrow keep it its own, \
-            through closed descriptors"
-           test_borrow_writes);
-      xfail_on [ "macos" ]
-        ~reason:
-          "barrier's sync of the shared mapping changes the file's change \
-           time, so a reopen by its path takes the file for another and raises \
-           Sys_error"
-        (test
-           "a created file whose pages are borrowed keeps it its own across a \
-            barrier, through closed descriptors"
-           test_mapped_barrier);
-      xfail_on [ "linux" ]
-        ~reason:
-          "a new file can take the removed file's inode and, within one tick \
-           of the coarse file clock, its change time, so the reopen by its \
-           path takes it for the removed file and reads its bytes"
-        (test
-           "a file recreated at its path after its descriptor closed is never \
-            read as the new file"
-           test_recreated);
+      test
+        "a created file's writes through its borrow keep it its own, through \
+         closed descriptors"
+        test_borrow_writes;
+      test
+        "a created file whose pages are borrowed keeps it its own across a \
+         barrier, through closed descriptors"
+        test_mapped_barrier;
+      test
+        "a file recreated at its path after its descriptor closed is never \
+         read as the new file"
+        test_recreated;
       test
         "the disk keeps at most 64 descriptors open, and each of 150 files \
          reads its own bytes"
@@ -1000,8 +974,7 @@ let test_barrier_dead () =
   ignore
     (Rig.Claim.with_ ~read:[ file ] ~donate:[] (fun c ->
          Rig.Claim.consume c ~why:"gone" file));
-  raises_match (Exn.invalid_arg ~substring:"") (fun () ->
-      Rig_disk.barrier file)
+  raises_match (Exn.invalid_arg ~substring:"") (fun () -> Rig_disk.barrier file)
 
 let barriers =
   group ~timeout "barriers"
@@ -1228,15 +1201,11 @@ let sub s r =
   let at, len = clamp (String.length s) r in
   String.sub s at len
 
-(* [racing outcome accept] accepts [Ok (Ok v)] as [accept v], and an error
-   naming the file. Copies from two domains into one created file may leave it
-   taken for another file once its descriptor closed, a known bug the suite does
-   not hold: their refreshes of the file's identity after the write can land out
-   of order. *)
+(* [racing outcome accept] accepts [Ok (Ok v)] as [accept v] and fails on any
+   error. *)
 let racing outcome accept =
   match outcome with
   | Ok (Ok v) -> accept v
-  | Ok (Error e) when e = names_file -> ()
   | Ok (Error e) -> fail e
   | Error e -> raise e
 

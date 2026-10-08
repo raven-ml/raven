@@ -17,7 +17,7 @@ external open_path : string -> int -> int -> int * int * int
   = "caml_rig_disk_open"
 
 external close : int -> unit = "caml_rig_disk_close"
-external identity : int -> int * int * int * int = "caml_rig_disk_identity"
+external identity : int -> int * string = "caml_rig_disk_identity"
 external sync : int -> int = "caml_rig_disk_sync"
 external error : int -> string = "caml_rig_disk_error"
 
@@ -48,34 +48,30 @@ let create_mode = 2
 
 (* Files *)
 
-(* A file is named by its path and its identity: its device, its number there
-   and when it last changed, which its own writes advance. *)
-type identity = { dev : int; ino : int; changed : int }
-
+(* A file is named by its path and its identity, bytes that name it exactly and
+   that no other file has, or [""] where the system gives none. A file without
+   an identity keeps its descriptor until it is freed: nothing could tell its
+   path's file apart at a reopen. *)
 type file = {
   path : string;
   writable : bool;
   size : int;
-  mutable identity : identity;
+  identity : string;
   mutable fd : int; (* [-1] while closed *)
   mutable users : int; (* copies using [fd] *)
   mutable used : int; (* when [fd] was last used, by [clock] *)
   mutable pages : pages option; (* a writable file's shared mapping *)
 }
 
-let same i i' = i.dev = i'.dev && i.ino = i'.ino && i.changed = i'.changed
-
 let identify fd =
-  match identity fd with
-  | 0, dev, ino, changed -> Ok { dev; ino; changed }
-  | code, _, _, _ -> Error code
+  match identity fd with 0, id -> Ok id | code, _ -> Error code
 
 let sys_error f why = raise (Sys_error (strf "%s: %s" f.path why))
 
 (* Descriptors *)
 
-(* The table holds the open descriptors: at most [max_open] unpinned, the least
-   recently used closed to open another. *)
+(* The table holds the descriptors of files with an identity: at most [max_open]
+   unpinned, the least recently used closed to open another. *)
 let max_open = 64
 let lock = Mutex.create ()
 let opened : file list ref = ref []
@@ -95,14 +91,16 @@ let close_fd f =
 let unpinned () = List.filter (fun f -> f.users = 0) !opened
 
 let admit f fd =
-  (match unpinned () with
-  | o :: rest when List.length !opened >= max_open ->
-      close_fd
-        (List.fold_left (fun o f -> if f.used < o.used then f else o) o rest)
-  | _ -> ());
   f.fd <- fd;
-  touch f;
-  opened := f :: !opened
+  if f.identity <> "" then begin
+    (match unpinned () with
+    | o :: rest when List.length !opened >= max_open ->
+        close_fd
+          (List.fold_left (fun o f -> if f.used < o.used then f else o) o rest)
+    | _ -> ());
+    touch f;
+    opened := f :: !opened
+  end
 
 (* Opens [path], closing every unpinned descriptor and trying once more if the
    process has too many open. *)
@@ -114,17 +112,17 @@ let open_retrying path mode n =
   | r -> r
 
 (* [f]'s descriptor, opened again by its path if it was closed, which must still
-   name [f]'s file, unchanged. *)
+   name [f]'s file. *)
 let reopen f =
   match
     open_retrying f.path (if f.writable then write_mode else read_mode) 0
   with
   | 0, fd, _ -> (
       match identify fd with
-      | Ok i when same i f.identity -> admit f fd
+      | Ok i when String.equal i f.identity -> admit f fd
       | Ok _ ->
           close fd;
-          sys_error f "the file changed since its buffers opened it"
+          sys_error f "the path names another file since its buffers opened it"
       | Error code ->
           close fd;
           sys_error f (error code))
@@ -175,16 +173,10 @@ module Io = struct
 
   let write () f ~at ~src ~len =
     if not f.writable then
-      invalid_arg
-        (strf "Rig.Buffer.copy: %s was opened for reading" f.path);
+      invalid_arg (strf "Rig.Buffer.copy: %s was opened for reading" f.path);
     using f @@ fun fd ->
     let k = write fd at src len in
-    if k < 0 then sys_error f (error (-k));
-    (* The write changed the file: its reopens must still take it for its
-       own. *)
-    match identify fd with
-    | Ok i -> f.identity <- i
-    | Error _ -> ()
+    if k < 0 then sys_error f (error (-k))
 
   (* A file opened for writing maps shared, so the mapping is the file; one
      opened for reading maps copy-on-write. *)
@@ -251,8 +243,7 @@ let open_file path mode n =
     Error (strf "%S: a path has no NUL byte" path)
   else
     Mutex.protect lock opened
-    |> Result.map (fun f ->
-        Rig.Buffer.of_io device Io.region_key f f.size)
+    |> Result.map (fun f -> Rig.Buffer.of_io device Io.region_key f f.size)
 
 let of_file path = open_file path read_mode 0
 

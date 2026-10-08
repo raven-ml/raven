@@ -7,11 +7,10 @@
 
     The {e disk} is a device ({!device}) whose memory is files. A buffer of the
     disk is the bytes of one file, which {!of_file} opens and {!create_file}
-    creates; its views ({!Rig.Buffer.view}) are ranges of those bytes,
-    at any byte. The disk runs no work and has no timeline: a program reaches
-    its bytes through {!Rig.Buffer.copy} and
-    {!Rig.Buffer.borrow}, in the calling domain, and they wait for
-    nothing.
+    creates; its views ({!Rig.Buffer.view}) are ranges of those bytes, at any
+    byte. The disk runs no work and has no timeline: a program reaches its bytes
+    through {!Rig.Buffer.copy} and {!Rig.Buffer.borrow}, in the calling domain,
+    and they wait for nothing.
 
     {b Copies.} A copy from a disk buffer reads the file and a copy into one
     writes it, with positional reads and writes of the file, straight into or
@@ -46,11 +45,19 @@
     read or makes them raise [Sys_error] naming the file; a copy never reads
     another file's bytes. The disk keeps at most 64 descriptors open, more only
     while copies use them, and reopens a file by its path when it needs it
-    again.
+    again, once the system confirms that the path still names it: by its file
+    handle on Linux, its inode and birth time on macOS, and its file ID on
+    Windows.
 
-    {b Errors.} The disk is never lost ({!Rig.Lost}). A read or write of
-    a file that fails raises [Sys_error] naming the file from the copy that made
-    it, and changes nothing else.
+    A file whose file system gives no such identity, such as a Linux file system
+    without file handles or FAT, keeps its descriptor until its buffers are
+    collected, beyond the 64. Holding many of them can exhaust the process's
+    descriptors, and then {!of_file} and {!create_file} answer [Error] for too
+    many open files.
+
+    {b Errors.} The disk is never lost ({!Rig.Lost}). A read or write of a file
+    that fails raises [Sys_error] naming the file from the copy that made it,
+    and changes nothing else.
 
     {b Domains.} Every function may be called from any domain, at the same time
     as others. Copies of disk buffers from several domains run at once.
@@ -64,10 +71,9 @@
 (** {1:disk The disk} *)
 
 val device : Rig.t
-(** [device] is this machine's disk, named ["DISK"]. Its {!Rig.budget}
-    is [max_int] and its {!Rig.arch} is [""]; it neither computes nor
-    reaches other devices' memory ({!Rig.computes},
-    {!Rig.reaches}). {!Rig.Buffer.create} raises
+(** [device] is this machine's disk, named ["DISK"]. Its {!Rig.budget} is
+    [max_int] and its {!Rig.arch} is [""]; it neither computes nor reaches other
+    devices' memory ({!Rig.computes}, {!Rig.reaches}). {!Rig.Buffer.create} raises
     [Invalid_argument] on it: its buffers are files. *)
 
 (** {1:files Files} *)
@@ -78,9 +84,9 @@ val of_file : string -> (Rig.Buffer.t, string) result
     it raises [Invalid_argument].
 
     Each call is a memory of its own: two opens of one file do not overlap
-    ({!Rig.Buffer.overlaps}), a write through a borrow of one is not
-    seen through the other, and a copy between overlapping bytes of the two
-    leaves the overlap unspecified.
+    ({!Rig.Buffer.overlaps}), a write through a borrow of one is not seen
+    through the other, and a copy between overlapping bytes of the two leaves
+    the overlap unspecified.
 
     [Error why], [why] starting with [path], if [path] cannot be opened for
     reading or names no regular file, such as a directory or a FIFO, which
@@ -110,6 +116,6 @@ val barrier : Rig.Buffer.t -> unit
     {!of_file} opened is never written: [barrier] returns at once.
 
     Raises [Invalid_argument] if [b] is not a buffer of {!device} or is dead
-    ({!Rig.Claim.consume}), and [Sys_error] naming the file if the
-    system cannot order its writes or, as a copy does, if its path no longer
-    names it (Descriptors). *)
+    ({!Rig.Claim.consume}), and [Sys_error] naming the file if the system cannot
+    order its writes or, as a copy does, if its path no longer names it
+    (Descriptors). *)

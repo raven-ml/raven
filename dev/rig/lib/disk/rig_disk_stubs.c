@@ -106,16 +106,16 @@ static int open_file(const char *path, int mode, int64_t size, intnat *handle,
 
 static void close_file(intnat h) { CloseHandle((HANDLE)h); }
 
-static int identify(intnat h, int64_t identity[3]) {
-  BY_HANDLE_FILE_INFORMATION info;
-  FILE_BASIC_INFO basic;
-  if (!GetFileInformationByHandle((HANDLE)h, &info) ||
-      !GetFileInformationByHandleEx((HANDLE)h, FileBasicInfo, &basic,
-                                    sizeof basic))
-    return (int)GetLastError();
-  identity[0] = (int64_t)info.dwVolumeSerialNumber;
-  identity[1] = ((int64_t)info.nFileIndexHigh << 32) | info.nFileIndexLow;
-  identity[2] = basic.ChangeTime.QuadPart * 100;
+/* The volume's serial and the 128-bit file ID: NTFS's IDs carry a sequence
+   number a reused record advances, and ReFS's are never reused. A file
+   system without them, such as FAT, gives no exact identity. */
+static int identify(intnat h, unsigned char *id, size_t *len) {
+  FILE_ID_INFO info;
+  *len = 0;
+  if (GetFileInformationByHandleEx((HANDLE)h, FileIdInfo, &info, sizeof info)) {
+    memcpy(id, &info, sizeof info);
+    *len = sizeof info;
+  }
   return 0;
 }
 
@@ -161,19 +161,61 @@ static int open_file(const char *path, int mode, int64_t size, intnat *handle,
 
 static void close_file(intnat h) { close((int)h); }
 
-static int identify(intnat h, int64_t identity[3]) {
+static void append(unsigned char *id, size_t *len, const void *p, size_t n) {
+  memcpy(id + *len, p, n);
+  *len += n;
+}
+
+#if defined(__linux__)
+
+/* The device and the file's handle (name_to_handle_at(2)), which holds the
+   inode's number and generation on ext4, xfs and btrfs: a reused inode has
+   a new generation, while its number and its coarse-clock times may repeat.
+   A file system that gives no handle gives no exact identity. */
+static int identify(intnat h, unsigned char *id, size_t *len) {
   struct stat st;
+  struct {
+    struct file_handle fh;
+    unsigned char bytes[MAX_HANDLE_SZ];
+  } handle;
+  int mount;
+  *len = 0;
   if (fstat((int)h, &st) != 0) return errno;
-  identity[0] = (int64_t)st.st_dev;
-  identity[1] = (int64_t)st.st_ino;
-#if defined(__APPLE__)
-  identity[2] =
-      (int64_t)st.st_ctimespec.tv_sec * 1000000000 + st.st_ctimespec.tv_nsec;
-#else
-  identity[2] = (int64_t)st.st_ctim.tv_sec * 1000000000 + st.st_ctim.tv_nsec;
-#endif
+  handle.fh.handle_bytes = MAX_HANDLE_SZ;
+  if (name_to_handle_at((int)h, "", &handle.fh, &mount, AT_EMPTY_PATH) != 0)
+    return 0;
+  append(id, len, &st.st_dev, sizeof st.st_dev);
+  append(id, len, &handle.fh.handle_type, sizeof handle.fh.handle_type);
+  append(id, len, handle.fh.f_handle, handle.fh.handle_bytes);
   return 0;
 }
+
+#elif defined(__APPLE__)
+
+/* The device, the inode and its birth time: APFS takes inode numbers from a
+   counter it never winds back, and the birth time tells apart an HFS+ inode
+   number reused after its counter wrapped. */
+static int identify(intnat h, unsigned char *id, size_t *len) {
+  struct stat st;
+  *len = 0;
+  if (fstat((int)h, &st) != 0) return errno;
+  append(id, len, &st.st_dev, sizeof st.st_dev);
+  append(id, len, &st.st_ino, sizeof st.st_ino);
+  append(id, len, &st.st_birthtimespec, sizeof st.st_birthtimespec);
+  return 0;
+}
+
+#else
+
+/* No exact identity known for this system. */
+static int identify(intnat h, unsigned char *id, size_t *len) {
+  (void)h;
+  (void)id;
+  *len = 0;
+  return 0;
+}
+
+#endif
 
 static int fsync_retrying(int fd) {
   int r;
@@ -228,18 +270,22 @@ value caml_rig_disk_close(value v_handle) {
   return Val_unit;
 }
 
-/* [identity h] is [[| code; device; inode; change |]]: the file [h] is the one
-   on [device] numbered [inode], whose data or metadata last changed at
-   [change], in nanoseconds. Keeps the runtime: fstat does not block on a
-   descriptor already open. */
+/* The most bytes of an identity: a device, a handle's type and its bytes. */
+#define IDENTITY_BYTES 160
+
+/* [identity h] is [(code, id)]: [id] names the file [h] exactly, two files
+   never having the same, or is empty where the system gives no exact
+   identity. Keeps the runtime: it reads what the open descriptor holds. */
 value caml_rig_disk_identity(value v_handle) {
   CAMLparam1(v_handle);
-  CAMLlocal1(r);
-  int64_t identity[3] = {0, 0, 0};
-  int code = identify(Long_val(v_handle), identity);
-  r = caml_alloc_tuple(4);
+  CAMLlocal2(r, s);
+  unsigned char id[IDENTITY_BYTES];
+  size_t len = 0;
+  int code = identify(Long_val(v_handle), id, &len);
+  s = caml_alloc_initialized_string(len, (const char *)id);
+  r = caml_alloc_tuple(2);
   Store_field(r, 0, Val_int(code));
-  for (int i = 0; i < 3; i++) Store_field(r, i + 1, Val_long(identity[i]));
+  Store_field(r, 1, s);
   CAMLreturn(r);
 }
 
