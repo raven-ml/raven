@@ -712,12 +712,14 @@ let stop g =
 
 (* Tests *)
 
-external renumber_device : int -> int -> unit = "caml_rig_amd_renumber"
+external renumber_device : int -> int -> int -> unit = "caml_rig_amd_renumber"
 
-let renumber g v =
+let renumber ?(age = 0) g v =
   let last = last g.self in
   if signaled g <> last then
     invalid_arg "Rig_amd.renumber: the device's work runs";
   if v - 1 < last then
     invalid_argf "Rig_amd.renumber: value %d, expected at least %d" v (last + 1);
-  renumber_device g.self v
+  if age < 0 || age > v - 1 then
+    invalid_argf "Rig_amd.renumber: age %d, expected 0 to %d" age (v - 1);
+  renumber_device g.self v age

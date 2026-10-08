@@ -230,14 +230,16 @@ value caml_rig_amd_zero(value v_host, value v_n) {
 
 /* Makes [v] the value after the device's last one; the device is idle. A
    ring that released the last value is taken to have released v - 1, which
-   the word now holds, and each slot gets low32(v - 1), as the writer's
-   refresh keeps every slot within 2^31 values of the last. */
-value caml_rig_amd_renumber(value v_self, value v_v) {
+   the word now holds, and each slot gets low32(v - 1 - age), last written
+   at v - 1 - age: the writer refreshes a slot once it is more than 2^31
+   values old. */
+value caml_rig_amd_renumber(value v_self, value v_v, value v_age) {
   struct rig_amd *d = Device_val(v_self);
   uint64_t prev = (uint64_t)Long_val(v_v) - 1;
+  uint64_t written = prev - (uint64_t)Long_val(v_age);
   for (int i = 0; i < RIG_AMD_SLOTS; i++) {
-    d->slots[2 * i] = (uint32_t)prev;
-    d->slot_last[i] = prev;
+    d->slots[2 * i] = (uint32_t)written;
+    d->slot_last[i] = written;
   }
   for (int q = 0; q < RIG_AMD_QUEUES; q++)
     if (d->rings[q].released == d->last) d->rings[q].released = prev;

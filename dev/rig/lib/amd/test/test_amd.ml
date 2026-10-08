@@ -1163,14 +1163,22 @@ let progress =
       test "make raises on a hang_ms below 1" bounds;
     ]
 
-(* A device waits on other words only where [waits_on] says so: a submission
-   that waits where it cannot fails as a fill's failure does. *)
+(* A device waits on other words only where [waits_on] says so, and on at
+   most 255 per submission: a submission past either fails as a fill's
+   failure does. *)
 let waits_refused () =
-  Host.with_device @@ fun _ g ->
-  equal bool ~msg:"waits on words" false (A.waits_on g `Store);
-  match E.submit g ~v:1 ~waits:[| (host (A.word g), 1) |] [||] with
-  | `Ok -> fail "a submission waiting where the device cannot was handed over"
-  | `Failed why -> equal answer ~msg:"the next submit" (`Failed why) (submit g ~v:2 [||])
+  List.iter
+    (fun n ->
+      Host.with_device @@ fun _ g ->
+      let msg = strf "%d waits" n in
+      equal bool ~msg:"waits on words" false (A.waits_on g `Store);
+      let w = host (A.word g) in
+      match E.submit g ~v:1 ~waits:(Array.make n (w, 1)) [||] with
+      | `Ok -> failf "%s: handed over where the device cannot wait" msg
+      | `Failed why ->
+          equal answer ~msg:(msg ^ ": the next submit") (`Failed why)
+            (submit g ~v:2 [||]))
+    [ 1; 255; 256; 300 ]
 
 let failures =
   group ~timeout:60. "failures"
@@ -2267,9 +2275,67 @@ let order_commands =
       Order.run Order.run_sys;
   ]
 
+(* Slots aged past 2^31
+
+   A slot word holds the low 32 bits of the last value that wrote it, and a
+   wait compares 32 bits: a slot left 2^31 values old is rewritten before a
+   wait could read it as a value to come. The device starts with every slot
+   2^31 - 600 values old; over 1,300 submissions each slot passes 2^31 and is
+   refreshed at its next turn, while chains of parts alternating between the
+   queues signal and wait on the slots: each compute part writes a token, the
+   copy part after it copies the token out. A wait that passed early would
+   copy a cell before its token. *)
+let aged_slots () =
+  S.with_gpu @@ fun g ->
+  let values = 1300 and most = 256 in
+  let bytes = 4 * values * most in
+  let cells = Option.get (A.alloc g `Pinned bytes) in
+  let out = Option.get (A.alloc g `Pinned bytes) in
+  S.write (host cells) (String.make bytes '\000');
+  S.write (host out) (String.make bytes '\000');
+  let token k m = ((k * 1000) + m + 1) land 0xffff_ffff in
+  let at r k m = address r + (4 * ((k * most) + m)) in
+  let pairs k = if k mod 100 = 0 then most else 8 in
+  let base = 1 lsl 31 in
+  A.renumber ~age:(base - 600) g base;
+  let rec room ps =
+    match E.room g ps with
+    | `Fits -> ()
+    | `Never -> fail "Never"
+    | `Later ->
+        S.wait g (A.signaled g + 1);
+        room ps
+  in
+  for k = 0 to values - 1 do
+    let ps =
+      Array.concat
+        (List.init (pairs k) (fun m ->
+             let after = if m = 0 then [||] else [| (2 * m) - 1 |] in
+             [|
+               E.words ~queue:"COMPUTE:0" ~after
+                 (words (Pm4.write_data (Memory (at cells k m)) (token k m)));
+               E.copy ~after:[| 2 * m |] ~dst:(at out k m) ~src:(at cells k m) 4;
+             |]))
+    in
+    room ps;
+    equal answer ~msg:(strf "value %d" (base + k)) `Ok (submit g ~v:(base + k) ps)
+  done;
+  S.wait g (base + values - 1);
+  let got = S.read (host out) bytes in
+  for k = 0 to values - 1 do
+    for m = 0 to pairs k - 1 do
+      let o = 4 * ((k * most) + m) in
+      equal int ~msg:(strf "value %d, pair %d" (base + k) m) (token k m)
+        (Int32.to_int (String.get_int32_le got o) land 0xffff_ffff)
+    done
+  done;
+  A.free g cells;
+  A.free g out
+
 let rings =
   group ~timeout:300. "rings"
     [
+      test "slots aged past 2^31 are refreshed and their waits hold" aged_slots;
       prop ~count:3
         "submissions landing at, short of and past each ring's end complete in \
          order"

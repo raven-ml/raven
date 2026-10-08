@@ -96,8 +96,8 @@ val waits_on : t -> [ `Store | `Object | `Host ] -> bool
     {!path}); it is [false] otherwise, and for [`Object]. *)
 
 val max_waits : t -> int
-(** [max_waits g] is 255: the room a submission's ring space reserves holds
-    that many waits. *)
+(** [max_waits g] is 255: the room a submission's ring space reserves holds that
+    many waits. *)
 
 val blocks : t -> [ `Returns | `May_block ]
 (** [blocks g] is [`Returns]: the C entries write memory and call no system
@@ -433,11 +433,13 @@ val is_gpu : vendor:int -> class_:int -> bool
 
 (**/**)
 
-(* [renumber g v] makes [v] the value after [g]'s last one: the timeline word
-   and the last value given become [v - 1]. [g] is idle: its word holds the last
-   value it was given. Tests reach the values a long run reaches, such as those
-   past 2^31 and 2^32, without making that many submissions.
+(* [renumber ~age g v] makes [v] the value after [g]'s last one: the timeline
+   word and the last value given become [v - 1], and every slot word is as if
+   last written [age] (defaults to [0]) values earlier, at [v - 1 - age]. [g] is
+   idle: its word holds the last value it was given. Tests reach the values a
+   long run reaches, such as those past 2^31 and 2^32, and the slots' refresh
+   past 2^31 values of age, without making that many submissions.
 
-   Raises [Invalid_argument] if [g] is not idle or [v - 1] is below its last
-   value. *)
-val renumber : t -> int -> unit
+   Raises [Invalid_argument] if [g] is not idle, if [v - 1] is below its last
+   value, or if [age] is negative or above [v - 1]. *)
+val renumber : ?age:int -> t -> int -> unit
