@@ -78,7 +78,21 @@ let address r = Option.get (A.address r)
 (* Whether the rows open the GPU with no kernel driver. *)
 let pci = Rig_amd_support.driverless ()
 
-let row name setup f = Thumper.bench_with_setup ~setup name f
+(* The devices this worker opened. A worker ends without the exit's handlers,
+   so each row's teardown stops them: a driver-less GPU left running would go
+   on mastering the bus for the next worker. *)
+let opened = ref []
+
+let opening g =
+  opened := g :: !opened;
+  g
+
+let stop_opened () =
+  List.iter A.stop !opened;
+  opened := []
+
+let row name setup f =
+  Thumper.bench_with_setup ~setup ~teardown:(fun _ -> stop_opened ()) name f
 
 (* A row of KFD's alone: the floors, and the host mappings. *)
 let kfd_row name setup f = if pci then [] else [ row name setup f ]
@@ -101,7 +115,7 @@ let dev () =
       (Rig_amd_support.open_gpu ())
   in
   let d = get (Rig.open_ (module A) ~name:(strf "AMD:bench-%d" !opens) make) in
-  { d; g = Option.get !g; v = 0 }
+  { d; g = opening (Option.get !g); v = 0 }
 
 (* The prepared submission of [parts] on [t]. *)
 let prepare t parts = Rig.Submission.make ~reads:0 ~writes:0 t.d parts
@@ -321,7 +335,7 @@ let wait_rows =
   (* The driver's entries, the device, and the word's host and GPU addresses,
      read once so that a submission allocates nothing. *)
   let raw () =
-    let g = get (Rig_amd_support.open_gpu ()) in
+    let g = opening (get (Rig_amd_support.open_gpu ())) in
     let w = Option.get (A.alloc g `Pinned 8) in
     ([| A.room_entry; A.submit_entry; A.self g |], g, host w, address w, ref 0)
   in
