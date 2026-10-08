@@ -15,7 +15,8 @@ val copy : Gpu.t -> dst:'v -> src:'v -> int -> 'v Packet.t
     from SDMA 4.4.2 below 5 and from 5.2, 4 MiB otherwise. It is [[]] for
     [n = 0].
 
-    Raises [Invalid_argument] if [n < 0]. *)
+    Raises [Invalid_argument] if [n] is not in \[[0];[2{^48}]\], what a GPU's
+    48-bit virtual addresses reach. *)
 
 val poll : 'v -> Packet.comparison -> 'v -> ?mask:int -> unit -> 'v Packet.t
 (** [poll addr cmp v ~mask ()] waits until the 32 bits at [addr], masked by

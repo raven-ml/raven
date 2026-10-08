@@ -24,8 +24,12 @@ let copy_header =
   Defs.sdma_op_copy
   lor field Defs.sdma_pkt_copy_linear_header_sub_op Defs.sdma_subop_copy_linear
 
+(* The longest copy: what a GPU's 48-bit virtual addresses reach. *)
+let max_bytes = 1 lsl 48
+
 let copy g ~dst ~src n =
-  if n < 0 then invalid_argf "Sdma.copy: %d bytes, expected 0 or more" n;
+  if n < 0 || n > max_bytes then
+    invalid_argf "Sdma.copy: %d bytes, expected 0 to 2^48" n;
   let max = max_copy g in
   let piece i =
     let off = i * max in

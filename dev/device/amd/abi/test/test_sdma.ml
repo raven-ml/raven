@@ -94,6 +94,16 @@ let copy =
       test "a negative copy is refused" (fun () ->
           raises_match (Exn.invalid_arg ~substring:"Sdma.copy") (fun () ->
               Sdma.copy (gpu (6, 0, 0)) ~dst:0 ~src:0 (-1)));
+      cases ~name:string_of_int "a copy past 2^48 bytes is refused"
+        [ (1 lsl 48) + 1; max_int - (1 lsl 30) + 2; max_int ]
+        (fun n ->
+          raises_match (Exn.invalid_arg ~substring:"Sdma.copy") (fun () ->
+              Sdma.copy (gpu (6, 0, 0)) ~dst:0 ~src:0 n));
+      (* 2^18 copies of 1 GiB, of 7 words each. *)
+      test "a copy of 2^48 bytes is taken" (fun () ->
+          equal int
+            ((1 lsl 18) * 7)
+            (Packet.size (Sdma.copy (gpu (6, 0, 0)) ~dst:0 ~src:0 (1 lsl 48))));
     ]
 
 let others =
