@@ -14,7 +14,10 @@ val hold_gpu : unit -> unit
     that the wait counts against no test's timeout, and a test calls it again
     before it opens the GPU. A bench calls it before [Thumper.run], so that the
     workers it forks run under the lock: [hold_gpu] starts no vendor library,
-    which a process must not start before it forks.
+    which a process must not start before it forks. It returns at once, taking
+    nothing, if the variable [RIG_GPU_LOCK_HELD] is set: the process that
+    started this one holds the lock for it, as a timing run takes it before
+    the host's timing locks.
 
     Raises [Failure] naming the holder if another process still holds the lock
     after 300 s, or naming the errno if the file cannot be locked. *)
