@@ -373,9 +373,9 @@ let request l q =
       | v -> Ok v
       | exception Malformed ->
           malformed l;
-          Error (Option.value (failure l.job) ~default:""))
-  | 1, a -> Error (text a)
-  | _, a -> Error (text a)
+          Error (`Failed (Option.value (failure l.job) ~default:"")))
+  | 1, a -> Error (`Refused (text a))
+  | _, a -> Error (`Failed (text a))
 
 let drop l id = post l.c k_drop (encoded (fun b -> add_u64 b id))
 

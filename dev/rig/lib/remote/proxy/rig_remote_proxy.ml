@@ -57,10 +57,8 @@ let make l (a : Wire.account) c =
 let request l q =
   match Link.request l q with
   | Ok v -> Ok v
-  | Error why -> (
-      match Link.failure (Link.job_of l) with
-      | Some root -> raise (Fault root)
-      | None -> Error why)
+  | Error (`Failed root) -> raise (Fault root)
+  | Error (`Refused why) -> Error why
 
 (* Facts *)
 
@@ -87,7 +85,7 @@ let alloc d memory bytes =
   | Ok false | Error _ -> None
 
 let free d = function Memory { id } -> Link.drop d.link id | Word _ -> ()
-let address = function Memory _ -> None | Word { id; _ } -> Some (id + 1)
+let address = function Memory _ -> None | Word { id; _ } -> Some id
 let handle = function Memory { id } -> Nativeint.of_int id | Word _ -> 0n
 let host = function Memory _ -> None | Word { at; _ } -> Some at
 let peer d d' = d.link == d'.link && List.mem d'.account.id d.account.reaches

@@ -5,10 +5,8 @@
 
 /* Proxies: the C edge of a device of another machine, whose hand-overs are
    frames on its link (rig_remote_link.c), and its word, a shadow the link's
-   receiving thread advances.
-
-   A wait between proxies of one link reaches the edge with [at] one more
-   than the producer's id on the agent: rig reserves 0. */
+   receiving thread advances. A wait between proxies of one link reaches the
+   edge with [at] the producer's id on the agent. */
 
 #define _GNU_SOURCE
 
@@ -68,7 +66,7 @@ static int followed(struct rig_remote_dev *d, const struct rig_wait *waits,
   struct rig_remote_link *l = d->link;
   if (atomic_load(&d->word) < d->written) return 0;
   for (int i = 0; i < nwaits; i++) {
-    uint64_t id = waits[i].at - 1;
+    uint64_t id = waits[i].at;
     struct rig_remote_dev *p = id < l->ndevs ? l->devs[id] : NULL;
     if (p != NULL && atomic_load(&p->word) < waits[i].value) return 0;
   }
@@ -150,7 +148,7 @@ static int proxy_submit(void *self, uint64_t v, const struct rig_wait *waits,
   unsigned char *b = put_u64(put_u64(buf, d->id), v);
   b = put_u32(b, (uint32_t)nwaits);
   for (int i = 0; i < nwaits; i++)
-    b = put_u64(put_u64(b, waits[i].at - 1), waits[i].value);
+    b = put_u64(put_u64(b, waits[i].at), waits[i].value);
   b = put_u32(b, (uint32_t)nparts);
   for (int i = 0; i < nparts; i++) {
     const struct rig_part *p = &parts[i];

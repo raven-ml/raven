@@ -126,9 +126,9 @@ val free : t -> region -> unit
 
 val address : region -> int option
 (** [address r] is [None] for memory, which the hand-over names by {!handle}.
-    For a word, it is [Some (i + 1)], [i] the id of the word's device on the
-    agent: a wait's [at] carries it, and since rig reserves [0], the hand-over
-    sends [at - 1] as the device to wait on. *)
+    For a word, it is [Some i], [i] the id of the word's device on the agent: a
+    wait's [at] carries it, and the hand-over sends it as the device to wait on.
+*)
 
 val handle : region -> nativeint
 (** [handle r] is the id of [r]'s object on the agent, which the hand-over sends
@@ -218,9 +218,9 @@ val room_entry : nativeint
 val submit_entry : nativeint
 (** [submit_entry] is the address of the proxy's hand-over, in the shape
     [rig_submit_fn] of [rig_edge.h]. It queues the hand-over's frame on the link
-    ({!Wire.handover}): the waits, each as the device [at - 1] and its value,
-    and the parts, copies with their sides' handles and offsets, words with
-    their words. [handles] is ignored.
+    ({!Wire.handover}): the waits, each as the device [at] and its value, and
+    the parts, copies with their sides' handles and offsets, words with their
+    words. [handles] is ignored.
 
     Before a submission with a copy from this process's memory, it waits until
     the work the submission follows is done here: the shadow of each wait's

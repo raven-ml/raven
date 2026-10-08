@@ -244,18 +244,24 @@ let decide d p =
             let at, _, _ = Memory.region_info r in
             if at < 0 then host_wait else at + skip)
 
+(* An undecided pair: no way is negative but [host_wait], and an address or an
+   object fits in 62 bits. *)
+let undecided = min_int
+
 (* [d.pairs] is replaced whole under [d]'s lock and its cells are ints, so a
    read takes no lock: only an undecided pair does. *)
 let pair d p =
   let i = p.index in
   let pairs = d.pairs in
-  let known = if i < Array.length pairs then pairs.(i) else 0 in
-  if known <> 0 then known
+  let known = if i < Array.length pairs then pairs.(i) else undecided in
+  if known <> undecided then known
   else begin
     let way = decide d p in
     Dev.protect d (fun () ->
         if i >= Array.length d.pairs then begin
-          let a = Array.make (Int.max (i + 1) (2 * Array.length d.pairs)) 0 in
+          let a =
+            Array.make (Int.max (i + 1) (2 * Array.length d.pairs)) undecided
+          in
           Array.blit d.pairs 0 a 0 (Array.length d.pairs);
           d.pairs <- a
         end;

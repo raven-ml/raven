@@ -13,6 +13,17 @@ module Wire = Rig_remote_proxy.Wire
 module Link = Rig_remote_proxy.Link
 
 (* Frames' kinds, as wire.mli numbers them. *)
+
+(* A request's error: the agent refused it, or the job failed. *)
+
+(* A request's error as one reason, as the model below states it. *)
+let reason r = Result.map_error (function `Refused w | `Failed w -> w) r
+
+let refused =
+  Testable.structural ~pp:(fun ppf -> function
+    | `Refused why -> Format.fprintf ppf "refused: %S" why
+    | `Failed why -> Format.fprintf ppf "failed: %S" why)
+
 let k_request = 1
 let k_answer = 2
 let k_handover = 3
@@ -446,7 +457,9 @@ let why_layout () =
       in
       let r = Link.request l (Wire.Open "GPU") in
       peer ();
-      equal ~msg:"a refusal read" (result pass string) (Error "no such kind") r);
+      equal ~msg:"a refusal read" (result pass refused)
+        (Error (`Refused "no such kind"))
+        r);
   with_raw (fun j _ p ->
       write p (frame k_abort (u32 100 ^ "why"));
       equal ~msg:"an abort whose reason runs past it" state
@@ -532,7 +545,9 @@ let every_link_aborts () =
 let after_failure () =
   with_raw @@ fun j l p ->
   Link.fail j "gone";
-  equal (result pass string) (Error "gone") (Link.request l (Wire.Open "MEM"));
+  equal (result pass refused)
+    (Error (`Failed "gone"))
+    (Link.request l (Wire.Open "MEM"));
   equal (result pass string) (Error "gone") (Link.next l);
   Link.drop l 3;
   equal string "peer" (Link.name l);
@@ -547,7 +562,7 @@ let failed_meanwhile () =
   in
   let r = Link.request l (Wire.Open "MEM") in
   failer ();
-  equal (result pass string) (Error "failed meanwhile") r
+  equal (result pass refused) (Error (`Failed "failed meanwhile")) r
 
 let make_on_failed () =
   with_job @@ fun j ->
@@ -558,7 +573,8 @@ let make_on_failed () =
     (fun () ->
       let l = Link.make j d ~name:"late" ~peer:(Wire.Agent 1) in
       equal string "late" (Link.name l);
-      equal (result pass string) (Error "gone")
+      equal (result pass refused)
+        (Error (`Failed "gone"))
         (Link.request l (Wire.Open "MEM"));
       ignore (frames p))
 
@@ -809,7 +825,9 @@ let requests_law cases =
   List.iter
     (fun (Case (r, ans, w)) ->
       cover "a refusal" (Result.is_error ans);
-      equal (result w string) ans (Link.request c r))
+      equal (result w refused)
+        (Result.map_error (fun why -> `Refused why) ans)
+        (Link.request c r))
     cases;
   served ();
   equal state Link.Open (Link.wait j ~ms:0)
@@ -844,7 +862,7 @@ let undecodable_answer () =
   let r = Link.request l (Wire.Open "GPU") in
   peer ();
   let why = require_some (Link.failure j) in
-  equal (result pass string) (Error why) r
+  equal (result pass refused) (Error (`Failed why)) r
 
 (* Frames leave in the order they were queued. *)
 let drops_in_order () =
@@ -1043,8 +1061,8 @@ let answer_misuse () =
           Link.answer a o (Ok []));
       Link.answer a e (Ok (Some 4))
   | _ -> fail "the agent read other commands");
-  equal (result (list account) string) (Ok []) (r1 ());
-  equal (result (option int) string) (Ok (Some 4)) (r2 ())
+  equal (result (list account) refused) (Ok []) (r1 ());
+  equal (result (option int) refused) (Ok (Some 4)) (r2 ())
 
 let agents =
   group "agent"
@@ -1320,7 +1338,7 @@ let stopped_peer () =
   equal
     (result (list account) string)
     (echo_open "MEM")
-    (Link.request l (Wire.Open "MEM"));
+    (reason (Link.request l (Wire.Open "MEM")));
   Unix.kill stopped.pid Sys.sigstop;
   let s, took = timed (fun () -> Link.wait j ~ms:15_000) in
   kill stopped;
@@ -1344,7 +1362,7 @@ let fork_reason = "a child of fork does not use its parent's connections"
    whether every answer was the fork's refusal. *)
 let child j l =
   let ok =
-    Link.request l (Wire.Open "child") = Error fork_reason
+    Link.request l (Wire.Open "child") = Error (`Failed fork_reason)
     && Link.failure j = Some fork_reason
     &&
     (Link.drop l 7;
@@ -1359,7 +1377,7 @@ let forked () =
   equal
     (result (list account) string)
     (echo_open "before")
-    (Link.request l (Wire.Open "before"));
+    (reason (Link.request l (Wire.Open "before")));
   (match Unix.fork () with
   | 0 -> child j l
   | pid -> (
@@ -1370,7 +1388,7 @@ let forked () =
   equal
     (result (list account) string)
     (echo_open "after")
-    (Link.request l (Wire.Open "after"));
+    (reason (Link.request l (Wire.Open "after")));
   Link.fail j "the test ends";
   equal ~msg:"what the agent received" (list string)
     [ "failed: the test ends" ]
@@ -1447,17 +1465,19 @@ let parallel_commands =
       (fun k s ->
         Result.map
           (List.map (fun (a : Wire.account) -> a.name))
-          (Link.request s.c (Wire.Open k)));
+          (reason (Link.request s.c (Wire.Open k))));
     command "entry"
       (Gen.nat @-> kind @-> link ^-> returns (result (option int) string))
       (fun image name () -> echo_entry image name)
-      (fun image name s -> Link.request s.c (Wire.Entry { image; name }));
+      (fun image name s ->
+        reason (Link.request s.c (Wire.Entry { image; name })));
     command "alloc"
       (Gen.nat @-> link ^-> returns (result Windtrap.bool string))
       (fun bytes () -> echo_alloc bytes)
       (fun bytes s ->
-        Link.request s.c
-          (Wire.Alloc { id = 1; device = 0; memory = `Device; bytes }));
+        reason
+          (Link.request s.c
+             (Wire.Alloc { id = 1; device = 0; memory = `Device; bytes })));
   ]
 
 (* Ids taken at once on two domains, and one taken before. *)

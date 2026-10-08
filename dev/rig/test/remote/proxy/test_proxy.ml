@@ -103,7 +103,7 @@ let two_links () =
       equal ~msg:"once lost" bool true (Proxy.peer p q');
       equal bool true (Option.is_none (Proxy.map_peer p q (Proxy.word q)));
       match Proxy.map_peer p q' (Proxy.word q') with
-      | Some r -> equal (option int) (Some 3) (Proxy.address r)
+      | Some r -> equal (option int) (Some 2) (Proxy.address r)
       | None -> fail "a proxy of the same link maps the word")
 
 let make_misuse () =
@@ -127,9 +127,7 @@ let facts =
          reach"
         rig_facts;
       test "a device reaches the devices its account lists" reaches;
-      test
-        "proxies of two links never map each other; a word maps at its id plus \
-         one"
+      test "proxies of two links never map each other; a word maps at its id"
         two_links;
       test "make raises for a record of another device" make_misuse;
     ]

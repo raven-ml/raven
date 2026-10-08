@@ -113,11 +113,15 @@ val fresh : unit -> int
 
 (** {1:controller The controller's end} *)
 
-val request : t -> 'a Wire.request -> ('a, string) result
+val request :
+  t ->
+  'a Wire.request ->
+  ('a, [ `Refused of string | `Failed of string ]) result
 (** [request l r] sends [r] after every frame queued before it and is the
-    agent's answer. [Error why] if the agent refused [r], the job going on, or
-    if the job failed, before or meanwhile, [why] its root cause. An answer that
-    does not decode as [r]'s fails the job. *)
+    agent's answer: [Error (`Refused why)] if the agent refused [r], the job
+    going on, and [Error (`Failed why)] if the job failed, before or meanwhile,
+    [why] its root cause. An answer that does not decode as [r]'s fails the job.
+*)
 
 val drop : t -> int -> unit
 (** [drop l id] sends the release of the agent's object [id] after every frame

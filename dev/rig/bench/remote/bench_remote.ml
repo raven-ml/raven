@@ -22,6 +22,7 @@ let ok what = function
   | Ok v -> v
   | Error why -> failwith (strf "%s: %s" what why)
 
+let reason = function `Refused why | `Failed why -> why
 let check what r = if r <> 0 then failwith (strf "%s: %d" what r)
 
 (* The two ends of a new loopback TCP connection, tuned as a link tunes its
@@ -90,8 +91,8 @@ let request_rows =
     [
       Thumper.bench_with_setup "alloc" ~setup:controller ~teardown:ended
         (fun (_, l, _) ->
-          if not (ok "request" (Link.request l alloc)) then
-            failwith "request: refused");
+          if not (ok "request" (Result.map_error reason (Link.request l alloc)))
+          then failwith "request: refused");
       Thumper.bench_with_setup "floor"
         ~setup:(fun () ->
           ( message (),

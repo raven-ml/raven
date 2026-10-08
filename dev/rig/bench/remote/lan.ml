@@ -30,6 +30,7 @@ let ok what = function
   | Ok v -> v
   | Error why -> failwith (strf "%s: %s" what why)
 
+let reason = function `Refused why | `Failed why -> why
 let check what r = if r <> 0 then failwith (strf "%s: %d" what r)
 let buffer n = Bigarray.(Array1.create char c_layout n)
 
@@ -198,8 +199,8 @@ let controller host port key =
   let l = Link.make j fd ~name:host ~peer:(Wire.Agent 1) in
   report "request" 0
     (timed 1000 (fun () ->
-         if not (ok "request" (Link.request l alloc)) then
-           failwith "request: refused"));
+         if not (ok "request" (Result.map_error reason (Link.request l alloc)))
+         then failwith "request: refused"));
   let f, round = floor host port request_bytes answer_bytes in
   report "request-floor" 0 (timed 1000 round);
   Unix.close f;
@@ -210,14 +211,15 @@ let controller host port key =
       let t : Rig_remote_abi.transfer = { src = 0; dst = 0; length = n } in
       let e = Link.rail l ~id ~send:[| t |] ~receive:[| ack |] in
       ok "rail"
-        (Link.request l
-           (Wire.Rail
-              {
-                id;
-                peer = Wire.Controller;
-                send = [| ack |];
-                receive = [| t |];
-              }));
+        (Result.map_error reason
+           (Link.request l
+              (Wire.Rail
+                 {
+                   id;
+                   peer = Wire.Controller;
+                   send = [| ack |];
+                   receive = [| t |];
+                 })));
       let c = ref 0 in
       report name n
         (timed runs (fun () ->
