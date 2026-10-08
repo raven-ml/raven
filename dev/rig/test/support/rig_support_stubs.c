@@ -113,6 +113,8 @@ struct polled {
   struct rig_wait last[LAST];
   int nlast_handles; /* its handles, the first [LAST_HANDLES] of them */
   uint64_t last_handles[LAST_HANDLES];
+  int nsides; /* the copy_local of each copy run, the first [LAST_HANDLES] */
+  int sides[LAST_HANDLES];
   uint64_t received; /* the last value a submit received */
   intnat steps;     /* fallible calls made */
   intnat fail_from; /* the step from which every call fails, or 0 */
@@ -234,6 +236,32 @@ value rig_test_polled_last_handles(value v_p) {
   CAMLreturn(a);
 }
 
+/* The copy_local of each copy part [p] ran, in order. */
+value rig_test_polled_copy_sides(value v_p) {
+  CAMLparam1(v_p);
+  CAMLlocal1(a);
+  struct polled *p = Polled_val(v_p);
+  int s[LAST_HANDLES];
+  lock(&p->mu);
+  int n = p->nsides;
+  memcpy(s, p->sides, sizeof s);
+  unlock(&p->mu);
+  a = caml_alloc_tuple((mlsize_t)n);
+  for (int i = 0; i < n; i++) Store_field(a, i, Val_int(s[i]));
+  CAMLreturn(a);
+}
+
+/* rig_edge.h's RIG_LOCAL_NONE, RIG_LOCAL_SRC and RIG_LOCAL_DST. */
+value rig_test_rig_local(value unit) {
+  CAMLparam1(unit);
+  CAMLlocal1(t);
+  t = caml_alloc_tuple(3);
+  Store_field(t, 0, Val_int(RIG_LOCAL_NONE));
+  Store_field(t, 1, Val_int(RIG_LOCAL_SRC));
+  Store_field(t, 2, Val_int(RIG_LOCAL_DST));
+  CAMLreturn(t);
+}
+
 /* The wait kinds of rig_edge.h. */
 value rig_test_rig_word(value unit) {
   (void)unit;
@@ -269,10 +297,14 @@ static void run_one(struct polled *p, struct queued *s) {
   for (int i = 0; i < s->nparts; i++) {
     struct rig_part *part = &s->parts[i];
     if (part->fill != NULL) part->fill(NULL, part->arg, s->v);
-    else if (part->copy_bytes != 0)
+    else if (part->copy_bytes != 0) {
+      /* A side that copy_local names holds a host address, as Polled's own
+         handles do. */
       memmove((char *)(uintptr_t)part->copy_dst + part->copy_dst_offset,
               (const char *)(uintptr_t)part->copy_src + part->copy_src_offset,
               (size_t)part->copy_bytes);
+      if (p->nsides < LAST_HANDLES) p->sides[p->nsides++] = part->copy_local;
+    }
   }
   p->held -= s->nparts;
   free(s->waits);

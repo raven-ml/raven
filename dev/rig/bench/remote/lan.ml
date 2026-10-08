@@ -186,9 +186,9 @@ let proxy l machine =
     Rig_remote_proxy.make l host_account (Rig_remote_abi.Host { machine; rail })
   in
   ok "open"
-    (Rig.open_
+    (Rig.open_host
        (module Rig_remote_proxy)
-       ~machine ~host:true ~name:"CPU"
+       ~machine ~name:"CPU"
        (fun () -> Ok p))
 
 let controller host port key =

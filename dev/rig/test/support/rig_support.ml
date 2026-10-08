@@ -21,6 +21,10 @@ external polled_last_waits : nativeint -> int array
 external polled_last_handles : nativeint -> int array
   = "rig_test_polled_last_handles"
 
+external polled_copy_sides : nativeint -> int array
+  = "rig_test_polled_copy_sides"
+
+external rig_local : unit -> int * int * int = "rig_test_rig_local"
 external rig_word : unit -> int = "rig_test_rig_word"
 external rig_object : unit -> int = "rig_test_rig_object"
 external polled_room : unit -> nativeint = "rig_test_polled_room"
@@ -355,6 +359,17 @@ module Polled = struct
       (fun i -> (a.(3 * i), a.((3 * i) + 1), a.((3 * i) + 2)))
 
   let last_handles d = Array.to_list (polled_last_handles d.c)
+
+  let copy_sides d =
+    let none, src, dst = rig_local () in
+    let side k =
+      if k = none then `None
+      else if k = src then `Src
+      else if k = dst then `Dst
+      else invalid_arg "Polled.copy_sides: an unknown copy_local"
+    in
+    List.map side (Array.to_list (polled_copy_sides d.c))
+
   let frees d = Mutex.protect d.lock (fun () -> List.rev d.frees)
   let allocs d = Mutex.protect d.lock (fun () -> List.rev d.allocs)
   let host_maps d = Mutex.protect d.lock (fun () -> List.rev d.maps)
@@ -417,7 +432,7 @@ let machine m =
   let make () =
     Ok (Polled.make ~host_visible:false ~peers:false ~maps_host:false ())
   in
-  match Rig.open_ (module Polled) ~machine:m ~host:true ~name:"CPU" make with
+  match Rig.open_host (module Polled) ~machine:m ~name:"CPU" make with
   | Ok d -> d
   | Error e -> failwith e
 

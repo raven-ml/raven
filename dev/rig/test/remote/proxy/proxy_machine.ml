@@ -307,9 +307,9 @@ let with_machine ?(reaches = []) ?(room = max_int) f =
     served ()
   in
   match
-    Rig.open_
+    Rig.open_host
       (module Proxy)
-      ~machine ~host:true ~name:"CPU"
+      ~machine ~name:"CPU"
       (fun () ->
         Ok
           (Proxy.make far host_account

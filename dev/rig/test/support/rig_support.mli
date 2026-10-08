@@ -132,6 +132,10 @@ module Polled : sig
   (** [last_handles d] is the handles [d]'s last submit received, at most 64, in
       the order received. A region's handle is its address. *)
 
+  val copy_sides : t -> [ `None | `Src | `Dst ] list
+  (** [copy_sides d] is the side of this process's memory that each copy [d] ran
+      named ([copy_local] in [rig_edge.h]), the first 64, in the order run. *)
+
   val blocked : t -> int
   (** [blocked d] is the number of submits waiting for room in [d]'s [may_block]
       queue. *)

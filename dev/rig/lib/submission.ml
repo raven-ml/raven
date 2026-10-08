@@ -167,8 +167,12 @@ let build named ~reads ~writes d parts =
   (* The hold keeps its stamps while the submission holds it. *)
   if hold_stamps <> 0 then sub_hold c hold_stamps;
   let at = ref 0 and k = ref 0 in
+  (* Only [d]'s own memory names a handle of its driver ([rig_edge.h]'s
+     [handles]): another's, such as this process's memory a copy on another
+     machine's device names, keeps its stamps alone. *)
   let fixed b write =
-    sub_fixed c !k (entry_of b).stamps b.mem.handle write;
+    let handle = if b.mem.dev == d then b.mem.handle else 0n in
+    sub_fixed c !k (entry_of b).stamps handle write;
     incr k
   in
   Array.iteri

@@ -52,9 +52,10 @@ struct rig_wait {
    - a copy: [copy_bytes] bytes from [copy_src_offset] bytes into the
      memory whose handle is [copy_src] to [copy_dst_offset] bytes into the
      memory whose handle is [copy_dst]. Where [copy_local] is RIG_LOCAL_SRC
-     or RIG_LOCAL_DST, that side is memory of the calling process instead,
-     its field the host address of the memory: only a driver of a device of
-     another machine is handed one.
+     or RIG_LOCAL_DST, that side is memory of the calling process instead:
+     its handle field holds the host address of the memory, and its offset
+     field the offset into it. Only a driver of a device of another machine
+     is handed one.
    The part runs after the parts of the same submission before it on its
    queue, and after the parts whose indices the [nafter] ints at [after]
    list, each below its own: [after] orders parts of different queues. */
@@ -75,8 +76,9 @@ struct rig_part {
 typedef int rig_room_fn(void *self, const struct rig_part *parts, int n);
 
 /* Hands [parts] to the device as the work of [v], the value after the last
-   one it received, which starts after [waits]. [handles] lists the memory
-   the work uses, for a driver whose submissions name it. Answers RIG_OK, or
+   one it received, which starts after [waits]. [handles] lists [self]'s
+   own memory the work uses, for a driver whose submissions name it; a
+   copy's side that [copy_local] names is not in it. Answers RIG_OK, or
    RIG_FAILED with [*failure] set to the driver's message, which lives as
    long as the device. */
 typedef int rig_submit_fn(void *self, uint64_t v, const struct rig_wait *waits,

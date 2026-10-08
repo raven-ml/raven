@@ -92,8 +92,8 @@ let open_store name =
     (Rig.open_io (module Store) ~name (fun () -> Ok ()))
 
 (* Opens [machine]'s host [name], a driver's device. *)
-let open_host ?machine name =
-  Rig.open_ (module P) ?machine ~host:true ~name (fun () -> Ok (P.make ()))
+let open_host machine name =
+  Rig.open_host (module P) ~machine ~name (fun () -> Ok (P.make ()))
 
 let test_io () =
   let io = open_store "open:io" in
@@ -137,9 +137,7 @@ let test_of_io () =
 (* A device of another machine is named after it, and its host is the device
    opened as that machine's, which runs work and loads code. *)
 let test_machine () =
-  let far =
-    require_ok ~pp:Format.pp_print_string (open_host ~machine:"far" "HOST")
-  in
+  let far = require_ok ~pp:Format.pp_print_string (open_host "far" "HOST") in
   let g =
     require_ok ~pp:Format.pp_print_string
       (Rig.open_
@@ -168,7 +166,7 @@ let test_machine_without_host () =
   in
   raises_match Exn.invalid_arg (fun () -> open_gpu ());
   let far =
-    require_ok ~pp:Format.pp_print_string (open_host ~machine:"hostless" "HOST")
+    require_ok ~pp:Format.pp_print_string (open_host "hostless" "HOST")
   in
   let g = require_ok ~pp:Format.pp_print_string (open_gpu ()) in
   equal device far (Rig.host_of g)
@@ -176,21 +174,14 @@ let test_machine_without_host () =
 (* A machine has one host: [~host] names another machine's, and a second host of
    a machine whose host is open under another name is refused. *)
 let test_one_host () =
-  raises_match ~msg:"this machine's" Exn.invalid_arg (fun () ->
-      open_host "open:not-a-host");
-  let h =
-    require_ok ~pp:Format.pp_print_string (open_host ~machine:"one" "A")
-  in
-  raises_match ~msg:"a second" Exn.invalid_arg (fun () ->
-      open_host ~machine:"one" "B");
+  let h = require_ok ~pp:Format.pp_print_string (open_host "one" "A") in
+  raises_match ~msg:"a second" Exn.invalid_arg (fun () -> open_host "one" "B");
   equal ~msg:"the same name" device h
-    (require_ok ~pp:Format.pp_print_string (open_host ~machine:"one" "A"))
+    (require_ok ~pp:Format.pp_print_string (open_host "one" "A"))
 
 (* Closing another machine's host closes every device of its machine too. *)
 let test_close_machine () =
-  let far =
-    require_ok ~pp:Format.pp_print_string (open_host ~machine:"closing" "CPU")
-  in
+  let far = require_ok ~pp:Format.pp_print_string (open_host "closing" "CPU") in
   let g =
     require_ok ~pp:Format.pp_print_string
       (Rig.open_
@@ -203,6 +194,59 @@ let test_close_machine () =
     (list (option string))
     [ Some "closed"; Some "closed" ]
     [ Rig.lost g; Rig.lost far ]
+
+(* Once a machine's host is closed or lost, its devices open no more: the open
+   answers the host's loss. *)
+let test_open_on_ended_host () =
+  let gpu machine =
+    Rig.open_
+      (module P)
+      ~machine ~name:"open:ended-gpu"
+      (fun () -> Ok (P.make ()))
+  in
+  let closed =
+    require_ok ~pp:Format.pp_print_string (open_host "ended-closed" "CPU")
+  in
+  Rig.close closed;
+  let lost = P.make () in
+  let host =
+    require_ok ~pp:Format.pp_print_string
+      (Rig.open_host
+         (module P)
+         ~machine:"ended-lost" ~name:"CPU"
+         (fun () -> Ok lost))
+  in
+  P.fault lost "unplugged";
+  (try ignore (Rig.Buffer.create host 8) with Rig.Lost _ -> ());
+  equal
+    (list (result device string))
+    [
+      Error "CPU@ended-closed lost: closed";
+      Error "CPU@ended-lost lost: unplugged";
+    ]
+    [ gpu "ended-closed"; gpu "ended-lost" ]
+
+(* Closing a lost host closes its machine's devices too. *)
+let test_close_lost_host () =
+  let lost = P.make () in
+  let far =
+    require_ok ~pp:Format.pp_print_string
+      (Rig.open_host
+         (module P)
+         ~machine:"closing-lost" ~name:"CPU"
+         (fun () -> Ok lost))
+  in
+  let g =
+    require_ok ~pp:Format.pp_print_string
+      (Rig.open_
+         (module P)
+         ~machine:"closing-lost" ~name:"open:closing-lost-gpu"
+         (fun () -> Ok (P.make ())))
+  in
+  P.fault lost "unplugged";
+  (try ignore (Rig.Buffer.create far 8) with Rig.Lost _ -> ());
+  Rig.close far;
+  equal (option string) (Some "closed") (Rig.lost g)
 
 (* A fault while the device's facts are read is the open's error, and the
    driver's handle is stopped: nothing it opened stays. *)
@@ -306,6 +350,10 @@ let tests =
         test_machine_without_host;
       test "a machine has one host" test_one_host;
       test "closing a machine's host closes its devices" test_close_machine;
+      test "a machine whose host ended opens no more devices"
+        test_open_on_ended_host;
+      test "closing a lost host closes its machine's devices"
+        test_close_lost_host;
       test "a point prints as its device's name and its value" test_point;
       test "an opener's error leaves the name free" test_failed_open;
       test "an opener's exception is raised, the name left free"

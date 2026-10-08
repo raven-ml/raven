@@ -119,8 +119,8 @@ val name : t -> string
 
 val host_of : t -> t
 (** [host_of d] is the host of [d]'s machine: {!host} for this machine's
-    devices, the device {!open_} opened with [~host:true] for another machine's.
-    A host is its own. *)
+    devices, the device {!open_host} opened for another machine's. A host is its
+    own. A loss of another machine's host loses none of its devices. *)
 
 val arch : t -> string
 (** [arch d] is the architecture of [d]'s processor, as its driver names it,
@@ -150,11 +150,12 @@ val reaches : t -> t -> bool
     ({!Buffer.Device}) once [d] borrows it ({!Buffer.borrow}), as a compiler
     that places copies must know before any buffer exists. A device reaches its
     own memory. Of devices of one machine:
-    - a host reaches the memory of a {!memory_device} and of a driver's device
+    - {!host} reaches the memory of a {!memory_device} and of a driver's device
       whose driver runs no copy ({!Driver.queues}): that memory is the host's;
-    - a driver's device reaches its host's memory where it maps host memory
+    - a driver's device reaches {!host}'s memory where it maps host memory
       ({!Driver.maps_host}), a memory device's, and that of a device of its own
-      driver that it maps ({!Driver.peer}).
+      driver that it maps ({!Driver.peer}). Another machine's host is a driver's
+      device of that machine, and reaches and is reached by this rule.
 
     Otherwise it is [false]: across machines, and between an {!Io} device and
     any other device. *)
@@ -175,7 +176,7 @@ val pp : Format.formatter -> t -> unit
 val budget : t -> int
 (** [budget d] is the most bytes [d] holds at once in the memory that counts in
     its budget ({!Buffer.memory}): live buffers, loaded images' code and its
-    cache. It starts at [max_int] for a host, {!Driver.budget} for a driver's
+    cache. It starts at [max_int] for {!host}, {!Driver.budget} for a driver's
     device and {!Io.budget} for an io device; {!set_budget} changes it. *)
 
 val set_budget : t -> int -> unit
@@ -186,7 +187,7 @@ val set_budget : t -> int -> unit
     Raises [Invalid_argument] if [n < 0]. *)
 
 val free_cache : t -> unit
-(** [free_cache d] returns [d]'s cached memory to its driver; for a host, the
+(** [free_cache d] returns [d]'s cached memory to its driver; for {!host}, the
     memory it keeps of collected buffers for reuse. *)
 
 exception Out_of_memory of t * int
@@ -220,11 +221,12 @@ val close : t -> unit
     Work another domain submits on [d] during the close may be lost. A close is
     no failure of the process ({!failure}).
 
-    On a lost or closed [d] it only waits for [d]'s stop. An {!Io} device ends
-    at once: its work is the caller's. Another machine's host is closed after
-    every device of its machine open when the close starts, each as [close]
-    says. A close a [Sys.Break] interrupted is finished by calling [close]
-    again.
+    On another machine's host ({!host_of}) it first closes each device of that
+    machine, those opening included, whether or not the host is lost; opens of
+    that machine's devices answer [Error] from then on ({!open_}). Otherwise, on
+    a lost or closed [d] it only waits for [d]'s stop. An {!Io} device ends at
+    once: its work is the caller's. A close a [Sys.Break] interrupted is
+    finished by calling [close] again.
 
     Raises [Invalid_argument] if [d] is {!host}. *)
 
@@ -325,7 +327,7 @@ module Buffer : sig
   (** [create d n] is an owned buffer of [n] bytes in [d]'s memory [memory]
       (defaults to [Device]), with unspecified contents. A buffer of no bytes
       allocates nothing. On a device whose memory the host addresses, every
-      [memory] is the device's own. On a host, a buffer of 64 KiB or more (four
+      [memory] is the device's own. On {!host}, a buffer of 64 KiB or more (four
       pages, where pages are larger) starts on a page, so devices can {!borrow}
       it. On an {!Io} device it is memory the device's {!Io.alloc} makes.
 
@@ -376,8 +378,8 @@ module Buffer : sig
       until then is done: a borrow dropped and made again maps nothing. A borrow
       of a borrow maps the memory the first one maps. A {!memory_device} maps
       any host memory. Host memory that does not start on a page, such as a host
-      buffer of fewer than 64 KiB, borrows only on hosts and memory devices. An
-      io device's memory borrows through its pages ({!Io.pages}), as host
+      buffer of fewer than 64 KiB, borrows only on {!host} and memory devices.
+      An io device's memory borrows through its pages ({!Io.pages}), as host
       memory, where its device maps them; a device other than the host asks the
       io device to read the borrowed bytes ahead ({!Io.prefetch}).
 
@@ -433,8 +435,9 @@ module Buffer : sig
       Raises [Invalid_argument] if [src] and [dst] differ in size, overlap
       ({!overlaps}), or either is dead, [dst]'s memory is [Read]
       ({!val-access}), or one is memory of a driver's device of another machine
-      and the device that would copy runs no copy, or the other is memory of a
-      third machine, or of its machine that [src]'s device does not reach
+      and the device that would copy runs no copy, or the other is memory of
+      this machine that this process's host does not address, of a third
+      machine, or of its machine that [src]'s device does not reach
       ({!reaches}); {!Lost} if a device that runs the copy is lost or is lost by
       it, and for [src] and [dst] as {!Lost} states; {!Out_of_memory} if a host
       cannot allocate its staging memory, or a device's driver refuses to map it
@@ -535,9 +538,9 @@ module Buffer : sig
   val address : t -> int
   (** [address b] is the address of [b]'s first byte as [b]'s device's work
       addresses it: its memory's {!Driver.address} plus {!offset} for a driver's
-      memory, the host address for a host's. An empty buffer that {!create} made
-      on a driver's device names no memory: its address is [0], as work of no
-      bytes reads none. An address fits in the 62 bits of an [int]'s
+      memory, the host address for {!host}'s. An empty buffer that {!create}
+      made on a driver's device names no memory: its address is [0], as work of
+      no bytes reads none. An address fits in the 62 bits of an [int]'s
       non-negative range.
 
       Raises [Invalid_argument] if [b] is dead, is an {!Io} device's memory, or
@@ -548,7 +551,7 @@ module Buffer : sig
       which [b] starts {!offset} bytes into, such as an [MTLBuffer]; [0n] for an
       empty buffer that {!create} made on a driver's device.
 
-      Raises [Invalid_argument] if [b] is dead or is a host's or an {!Io}
+      Raises [Invalid_argument] if [b] is dead or is {!host}'s or an {!Io}
       device's memory, which no driver object names. *)
 
   val offset : t -> int
@@ -725,12 +728,12 @@ module Submission : sig
       no submitted work, [reads] or [writes] is negative, an index of a part's
       [after] is negative or not below its own, a queue is not one of [d]'s, a
       part's buffer is dead, a {!Words} or {!Fill} buffer is not host memory, a
-      {!Copy}'s buffers differ in size or are not [d]'s memory, or this
-      process's host memory beside it on another machine's device, or its
-      [dst]'s memory is [Read] ({!Buffer.val-access}), [d]'s driver runs no
-      copies (it lists no copy queue, {!Driver.queues}), or a part names memory
-      of a hold other than [hold]; and {!Lost} if [d] is lost. A part [d]'s
-      driver does not run is refused at {!submit}. *)
+      {!Copy}'s buffers differ in size, are not [d]'s memory (on a driver's
+      device of another machine, one of them may be memory this process's host
+      addresses), or its [dst]'s memory is [Read] ({!Buffer.val-access}), [d]'s
+      driver runs no copies (it lists no copy queue, {!Driver.queues}), or a
+      part names memory of a hold other than [hold]; and {!Lost} if [d] is lost.
+      A part [d]'s driver does not run is refused at {!submit}. *)
 end
 
 val submit :
@@ -1256,33 +1259,41 @@ end
 val open_ :
   (module Driver with type t = 'a) ->
   ?machine:string ->
-  ?host:bool ->
   name:string ->
   (unit -> ('a, string) result) ->
   (t, string) result
-(** [open_ (module D) ~machine ~host ~name make] is the open device named [name]
-    on [machine] (defaults to this one), the machine whose hardware [make]
-    opens. A machine's name names one machine for the life of the process: a
-    library that reaches machines gives each one it makes a name of its own, so
-    a second connection to one address is another machine, with devices of its
-    own. If no device of that name is open there, [make ()] opens it, under the
-    name's lock, so one name on one machine has one live device; its [Error] is
-    the result, and an exception it raises is raised again, the name left
-    unopened. Opens of other names go on meanwhile. A closed or lost device's
-    name opens again once its driver's {!Driver.stop} returned.
-
-    With [host] (defaults to [false]), the device is [machine]'s host
-    ({!host_of}): it runs the submissions and loads the code its driver takes,
-    and the devices of [machine] open once it is open.
+(** [open_ (module D) ~machine ~name make] is the open device named [name] on
+    [machine] (defaults to this one), the machine whose hardware [make] opens. A
+    machine's name names one machine for the life of the process: a library that
+    reaches machines gives each one it makes a name of its own, so a second
+    connection to one address is another machine, with devices of its own. If no
+    device of that name is open there, [make ()] opens it, under the name's
+    lock, so one name on one machine has one live device; its [Error] is the
+    result, and an exception it raises is raised again, the name left unopened.
+    Opens of other names go on meanwhile. A closed or lost device's name opens
+    again once its driver's {!Driver.stop} returned.
 
     The result is [Error why] if the name's device is lost and its stop has not
-    returned, if the process failed ({!fail}), or if the process opened 65,535
-    devices already: device indices are never reused.
+    returned, if the process failed ({!fail}), if [machine] is another machine
+    whose host is lost or closed, [why] as that host's {!Lost} prints, or if the
+    process opened 65,535 devices already: device indices are never reused.
 
     Raises [Invalid_argument] if the open device of that name is another
-    driver's; if [host] and [machine] is this one, or [machine] has a host of
-    another name, open and not lost or still opening; or if not [host] and
-    [machine] names another machine whose host is not open. *)
+    driver's, or [machine] is another machine whose host was never opened
+    ({!open_host}). *)
+
+val open_host :
+  (module Driver with type t = 'a) ->
+  machine:string ->
+  name:string ->
+  (unit -> ('a, string) result) ->
+  (t, string) result
+(** [open_host (module D) ~machine ~name make] is {!open_} of [machine]'s host
+    ({!host_of}): a driver's device of [machine] that runs the submissions and
+    loads the code its driver takes. Devices of [machine] open once it is open.
+
+    Raises [Invalid_argument] as {!open_}, or if [machine] has a host of another
+    name, open and not lost, or still opening. *)
 
 val open_io :
   (module Io with type t = 'a) ->

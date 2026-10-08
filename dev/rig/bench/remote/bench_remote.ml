@@ -176,9 +176,9 @@ let copy n () =
   in
   let h =
     ok "open"
-      (Rig.open_
+      (Rig.open_host
          (module Rig_remote_proxy)
-         ~machine ~host:true ~name:"CPU"
+         ~machine ~name:"CPU"
          (fun () -> Ok proxy))
   in
   { job; near = B.create Rig.host n; far = B.create h n }

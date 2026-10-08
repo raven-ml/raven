@@ -295,7 +295,14 @@ let test_copy_across () =
   equal string "across machines"
     (let ba = B.bigarray Bigarray.char back in
      String.init (B.length back) (Bigarray.Array1.get ba));
-  equal ~msg:"no host maps" (list int) [] (P.host_maps p)
+  let within = B.create g (B.length src) in
+  B.copy ~src:far ~dst:within;
+  equal ~msg:"no host maps" (list int) [] (P.host_maps p);
+  equal ~msg:"local sides"
+    (list (Testable.structural ~pp:(fun ppf s ->
+         Format.pp_print_string ppf
+           (match s with `None -> "none" | `Src -> "src" | `Dst -> "dst"))))
+    [ `Src; `Dst; `None ] (P.copy_sides p)
 
 (* An empty buffer of a driver's device names no memory: its address and its
    handle are 0. *)

@@ -675,9 +675,9 @@ let closing_handover () =
   let machine = fresh_machine () in
   let host =
     ok_or_fail
-      (Rig.open_
+      (Rig.open_host
          (module Proxy)
-         ~machine ~host:true ~name:"CPU"
+         ~machine ~name:"CPU"
          (fun () ->
            Ok
              (Proxy.make far (account 0 ~reaches:[])
