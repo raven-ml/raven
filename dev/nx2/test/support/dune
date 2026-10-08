@@ -1,0 +1,18 @@
+; What nx2's suites share: the C tables, read from the headers, that the
+; suites check the library's OCaml tables against.
+
+(library
+ (name nx_array_support)
+ (modules nx_array_support)
+ (libraries nx_array rig)
+ (foreign_stubs
+  (language c)
+  (include_dirs ../../lib)
+  (names nx_array_support_stubs)))
+
+; Layouts and movements drawn for the suites.
+
+(library
+ (name nx_array_gen)
+ (modules nx_array_gen)
+ (libraries nx_array windtrap))

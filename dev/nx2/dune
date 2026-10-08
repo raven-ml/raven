@@ -1,0 +1,55 @@
+; The flags of every library, test and bench under dev/nx2. A stanza names
+; no flag of its own.
+;
+; Since dune language 3.21 the dev profile compiles with the compiler's
+; default warnings, which leave unused values, opens and fields unreported:
+; keep dune's stricter development set. A C warning is an error in every
+; profile but release: a release build must not break on a warning a future
+; compiler adds.
+;
+; The sanitize profile compiles the C with AddressSanitizer and
+; UndefinedBehaviorSanitizer and links their runtimes and the debug runtime
+; into every executable, with rig's options: a report ends the process, and
+; the collector runs often enough that a value a stub holds unrooted fails at
+; once.
+;
+; Benches are not attached to runtest: run them with `dune build @bench`, or
+; run a built exe from its directory under _build/default. Every bench rule
+; takes the workspace lock %{workspace_root}/bench.
+
+(env
+ (release
+  (c_flags
+   (:standard -std=c11 -Wall -Wextra))
+  (env-vars
+   (WINDTRAP_TIMEOUT 60)))
+ (sanitize
+  (c_flags
+   (:standard
+    -std=c11
+    -Wall
+    -Wextra
+    -Werror
+    -g
+    -fno-omit-frame-pointer
+    -fsanitize=address,undefined))
+  (link_flags
+   (:standard -runtime-variant d -cclib -fsanitize=address,undefined))
+  (env-vars
+   (OCAMLRUNPARAM s=4k,o=20,M=1,m=1,V=1)
+   (ASAN_OPTIONS
+    halt_on_error=1:detect_leaks=0:use_sigaltstack=0:allocator_may_return_null=1)
+   (UBSAN_OPTIONS halt_on_error=1:print_stacktrace=1)
+   (WINDTRAP_TIMEOUT 60)))
+ (dev
+  (flags
+   (:standard %{dune-warnings}))
+  (c_flags
+   (:standard -std=c11 -Wall -Wextra -Werror))
+  (env-vars
+   (WINDTRAP_TIMEOUT 60)))
+ (_
+  (c_flags
+   (:standard -std=c11 -Wall -Wextra -Werror))
+  (env-vars
+   (WINDTRAP_TIMEOUT 60))))
