@@ -76,7 +76,11 @@ static int spawn(void *p) {
   CloseHandle(t);
   return 1;
 }
-static size_t page(void) { return 4096; }
+static size_t page(void) {
+  SYSTEM_INFO info;
+  GetSystemInfo(&info);
+  return info.dwPageSize;
+}
 static void *aligned(size_t align, size_t n) {
   return _aligned_malloc(n, align);
 }
@@ -498,12 +502,21 @@ static int polled_submit(void *self, uint64_t v, const struct rig_wait *waits,
      floors, which carry Polled's own work only. */
   p->nlast_handles = nhandles < LAST_HANDLES ? nhandles : LAST_HANDLES;
   for (int i = 0; i < p->nlast_handles; i++) p->last_handles[i] = handles[i];
+  struct rig_wait *ws = malloc((size_t)(nwaits + 1) * sizeof *waits);
+  struct rig_part *ps = malloc((size_t)(nparts + 1) * sizeof *parts);
+  if (ws == NULL || ps == NULL) {
+    free(ws);
+    free(ps);
+    unlock(&p->mu);
+    *failure = "no memory for the submission";
+    return RIG_FAILED;
+  }
   struct queued *s = &p->q[p->n++];
   s->v = v;
   s->nwaits = nwaits;
   s->nparts = nparts;
-  s->waits = malloc((size_t)(nwaits + 1) * sizeof *waits);
-  s->parts = malloc((size_t)(nparts + 1) * sizeof *parts);
+  s->waits = ws;
+  s->parts = ps;
   if (nwaits > 0) memcpy(s->waits, waits, (size_t)nwaits * sizeof *waits);
   if (nparts > 0) memcpy(s->parts, parts, (size_t)nparts * sizeof *parts);
   p->held += nparts;
