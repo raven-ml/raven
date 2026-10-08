@@ -17,7 +17,16 @@
    [alloc-free/fragmented/bar/16MiB] is [bar] on a GPU whose memory holds 4096
    blocks of 4 KiB, every other one free, below the rest: its BAR reaches all of
    the memory, so the bound the BAR sets excludes nothing and costs what no
-   bound does. *)
+   bound does.
+
+   [alloc-free/huge/two-gpus/64KiB] allocates 64 KiB of system memory for a
+   function taken physically, in a 2 MiB block that holds memory already, and
+   frees it, while a second function of the machine does the same from another
+   domain: the lock that orders every allocation of the process, the zeroing of
+   the reused bytes and the bookkeeping. The functions are a fixture tree's,
+   whose memory lies in this machine's hugetlbfs at [/dev/hugepages]: the row
+   exists where the process may write there and the system has free huge
+   pages. *)
 
 module Machine = Rig_pci.Machine
 module Function = Rig_pci.Function
@@ -136,6 +145,100 @@ let group ?(sizes = sizes) name kind m =
   in
   Thumper.group name (List.map row sizes)
 
+(* Physically taken functions *)
+
+let hugetlbfs = "/dev/hugepages"
+let free_huge = "/sys/kernel/mm/hugepages/hugepages-2048kB/free_hugepages"
+
+let huge_pages () =
+  let mounted () =
+    In_channel.with_open_text "/proc/mounts" In_channel.input_lines
+    |> List.exists (fun l ->
+        match String.split_on_char ' ' l with
+        | _ :: dir :: "hugetlbfs" :: _ -> dir = hugetlbfs
+        | _ -> false)
+  in
+  let free () =
+    In_channel.with_open_text free_huge In_channel.input_all
+    |> String.trim |> int_of_string
+  in
+  try
+    mounted ()
+    && free () >= 2
+    &&
+    (Unix.access hugetlbfs [ W_OK ];
+     true)
+  with Sys_error _ | Failure _ | Unix.Unix_error _ -> false
+
+type pair = {
+  fns : Function.t list;
+  resident : (Function.t * Window.t) list;
+  stop : bool Atomic.t;
+  rival : unit Domain.t;
+}
+
+let small = 64 * kib
+
+(* Two functions of a fixture tree whose memory lies in this machine's huge
+   pages, each holding a page at the start of a 2 MiB block of its own; the
+   second allocates and frees beside it from another domain until [stop]. *)
+let pair () =
+  let buses = [ "0000:03:00.0"; "0000:04:00.0" ] in
+  let root = Tree.make (List.map Tree.gpu buses) in
+  Unix.rmdir (Filename.concat root "dev/hugepages");
+  Tree.link root "dev/hugepages" hugetlbfs;
+  let m = Machine.at root in
+  let page = Machine.page m and blocks = 2 * 2 * mib in
+  Result.get_ok (Machine.reserve m ~base:free_base blocks);
+  Tree.pagemap root ~page free_base
+    (List.init (blocks / page) (fun i -> 0x10_0000 + i));
+  let fns = List.map (fun bus -> Result.get_ok (Function.take m bus)) buses in
+  let take f va n =
+    match Function.alloc_dma ~va f n with
+    | Ok (Some (w, _)) -> w
+    | Ok None -> failwith "huge: no free huge page"
+    | Error why -> failwith ("huge: " ^ why)
+  in
+  let resident =
+    List.mapi (fun i f -> (f, take f (free_base + (i * 2 * mib)) page)) fns
+  in
+  let stop = Atomic.make false and rival = List.nth fns 1 in
+  let va = free_base + (2 * mib) + small in
+  let rival =
+    Domain.spawn (fun () ->
+        while not (Atomic.get stop) do
+          Function.free_dma rival (take rival va small)
+        done)
+  in
+  { fns; resident; stop; rival }
+
+let release p =
+  Atomic.set p.stop true;
+  Domain.join p.rival;
+  List.iter (fun (f, w) -> Function.free_dma f w) p.resident;
+  List.iter Function.release p.fns
+
+let alloc_free_huge p =
+  let f = List.hd p.fns in
+  match Function.alloc_dma ~va:(free_base + small) f small with
+  | Ok (Some (w, _)) -> Function.free_dma f w
+  | Ok None -> failwith "huge: no free huge page"
+  | Error why -> failwith ("huge: " ^ why)
+
+let huge =
+  if not (huge_pages ()) then []
+  else
+    [
+      Thumper.group "huge"
+        [
+          Thumper.group "two-gpus"
+            [
+              Thumper.bench_with_setup ~setup:pair ~teardown:release "64KiB"
+                alloc_free_huge;
+            ];
+        ];
+    ]
+
 let rows =
   List.map
     (fun (name, kind, bar_size) ->
@@ -150,5 +253,6 @@ let rows =
             (lazy (fragmented ()));
         ];
     ]
+  @ huge
 
 let () = exit (Thumper.run "rig_pci_memory" [ Thumper.group "alloc-free" rows ])

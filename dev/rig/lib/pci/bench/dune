@@ -35,7 +35,7 @@
 (executable
  (name bench_memory)
  (modules bench_memory)
- (libraries rig_pci rig_pci_support thumper))
+ (libraries rig_pci rig_pci_support thumper unix))
 
 (rule
  (alias bench)
