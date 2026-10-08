@@ -491,7 +491,14 @@ let misused_regions () =
   Device_metal.unmap t.d m;
   invalid (fun () -> Device_metal.unmap t.d m);
   invalid (fun () -> Device_metal.alloc t.d `Device 0);
-  invalid (fun () -> Device_metal.map_host t.d (S.pages page) 0)
+  invalid (fun () -> Device_metal.map_host t.d (S.pages page) 0);
+  let other = opened () in
+  let o = require_some (Device_metal.alloc other `Device 64) in
+  equal (option pass) None (Device_metal.map_peer t.d other o);
+  invalid (fun () -> Device_metal.map_peer t.d t.d o);
+  invalid (fun () -> Device_metal.map_peer t.d other (alloc t 64));
+  Device_metal.free other o;
+  invalid (fun () -> Device_metal.map_peer t.d other o)
 
 let memory =
   group ~timeout:60. "memory"
@@ -506,7 +513,9 @@ let memory =
         ~examples:[ 1; 2; 255; 256; 257; 4095; 4096; page; page + 1 ]
         (Gen.int_range 1 (64 lsl 20))
         aligned_256;
-      test "free and unmap refuse a region of the wrong kind or given back"
+      test
+        "free, unmap and map_peer refuse a region of the wrong kind or given \
+         back"
         misused_regions;
     ]
 

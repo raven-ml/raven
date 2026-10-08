@@ -208,7 +208,10 @@ val host : region -> nativeint option
 
 val map_peer : t -> t -> region -> region option
 (** [map_peer d d' r] is [None]: a Mac has one GPU, and a region of another
-    device of it is not mapped into [d]. *)
+    device of it is not mapped into [d].
+
+    Raises [Invalid_argument] if [d'] is [d], or if [r] is no region of [d'] or
+    was freed or unmapped. *)
 
 val map_host : t -> nativeint -> int -> region option
 (** [map_host d p n] is a region of [d] over the host memory holding the [n]

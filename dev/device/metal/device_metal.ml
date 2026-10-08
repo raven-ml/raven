@@ -204,7 +204,13 @@ let map_host d p n =
     invalid_argf "Device_metal.map_host: %d bytes, expected at least 1" n;
   Option.map (region d.self Mapped) (map_buffer d.self p n)
 
-let map_peer _ _ _ = None
+let map_peer d d' r =
+  if d.self = d'.self then
+    invalid_arg "Device_metal.map_peer: the two devices are one";
+  if r.owner <> d'.self || not (Atomic.get r.live) then
+    invalid_arg
+      "Device_metal.map_peer: the region is no live region of the second device";
+  None
 
 let give_back fn kind d r =
   if r.owner <> d.self || r.kind <> kind then
