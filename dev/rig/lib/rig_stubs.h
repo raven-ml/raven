@@ -111,6 +111,9 @@ struct rig_seen {
 
 /* The prepared form of a submission on one device. */
 struct rig_sub {
+  /* Held by a submit from its first touch of what follows to its last:
+     two domains' submits take turns. */
+  rig_mutex guard;
   struct rig_device *dev;
   int nparts;
   struct rig_part *parts;
@@ -148,5 +151,9 @@ size_t rig_page_bytes(void);
 
 /* Raises the stamps [s]'s work names to [p]. */
 void rig_sub_raise(struct rig_sub *s, uint64_t p);
+
+/* Makes and unmakes a mutex nothing holds. */
+void rig_mutex_init(rig_mutex *m);
+void rig_mutex_destroy(rig_mutex *m);
 
 #endif

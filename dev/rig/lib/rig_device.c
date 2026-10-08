@@ -100,6 +100,16 @@ static void cv_broadcast(struct rig_device *d) { cond_broadcast(&d->cv); }
 static void mu_lock(struct rig_device *d) { mutex_lock(&d->mu); }
 static void mu_unlock(struct rig_device *d) { mutex_unlock(&d->mu); }
 
+void rig_mutex_init(rig_mutex *m) { mutex_init(m); }
+
+void rig_mutex_destroy(rig_mutex *m) {
+#ifdef _WIN32
+  (void)m;
+#else
+  pthread_mutex_destroy(m);
+#endif
+}
+
 /* Takes the mutex [m] from a stub holding the domain lock: by try-lock,
    and otherwise after releasing the domain lock. Answers whether it
    released it, for [give]. */
@@ -635,6 +645,23 @@ static int admit(struct rig_device *d, struct rig_sub *s) {
   if (r == RIG_OK) return SUBMIT_OK;
   s->why = why != NULL ? why : "the driver's submit failed";
   return SUBMIT_FAILED;
+}
+
+/* Takes and gives the guard of the submission [v_s], which a submit holds
+   throughout: two domains' submits of one submission take turns. A guard
+   is taken before anything else of a submit, and nothing a submit runs
+   holding a device's mutex or turn takes a guard, so a guard never waits
+   on what waits for it. */
+value caml_rig_sub_take(value v_s) {
+  struct rig_sub *s = *(struct rig_sub **)Data_custom_val(v_s);
+  if (take_mutex(&s->guard)) caml_leave_blocking_section();
+  return Val_unit;
+}
+
+value caml_rig_sub_give(value v_s) {
+  struct rig_sub *s = *(struct rig_sub **)Data_custom_val(v_s);
+  mutex_unlock(&s->guard);
+  return Val_unit;
 }
 
 /* Submits [s] on its device: the turn, room, the value, the hand-over and

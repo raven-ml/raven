@@ -57,6 +57,8 @@ external sub_no_room_at : c -> int = "caml_rig_sub_no_room_at" [@@noalloc]
 external sub_producer : c -> int = "caml_rig_sub_producer" [@@noalloc]
 external sub_claims : c -> int array = "caml_rig_sub_claims"
 external c_submit : c -> int = "caml_rig_submit"
+external sub_take : c -> unit = "caml_rig_sub_take"
+external sub_give : c -> unit = "caml_rig_sub_give" [@@noalloc]
 external ensure_record : int -> int -> unit = "caml_rig_ensure_record"
 
 type t = {
@@ -359,16 +361,22 @@ let rec hand_over s nwaits =
   end
   else Dev.raise_lost d
 
+(* A submit holds the submission's guard throughout, so two domains' submits of
+   it take turns. A forked child never waits on a guard its parent's thread may
+   hold: every submission made before the fork is on a device the child
+   inherited, which raises first. *)
 let submit s =
+  if Dev.inherited s.dev then Dev.raise_lost s.dev;
+  sub_take s.c;
   match
     check_slots s;
-    let nwaits = waits s (sub_collect s.c) 0 0 in
-    if nwaits > 0 then ensure_record s.dev.c nwaits;
-    hand_over s nwaits
+    hand_over s (waits s (sub_collect s.c) 0 0)
   with
   | p ->
       clear s;
+      sub_give s.c;
       p
   | exception e ->
       clear s;
+      sub_give s.c;
       raise e

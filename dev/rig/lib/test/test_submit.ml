@@ -386,12 +386,59 @@ let test_allocation () =
   let words = int_of_float (Gc.minor_words () -. before) / 100 in
   equal int 0 words
 
+(* Two domains submitting one submission: the submits take turns, each takes the
+   device's next value, and every fill runs. *)
+type shared = { dev : C.t; arg : B.t; sub : Sub.t }
+type shared_model = { mutable values : int }
+
+let shared_opened = Atomic.make 0
+
+let make_shared () =
+  let n = Atomic.fetch_and_add shared_opened 1 in
+  let d = memory (Printf.sprintf "submit:shared-%d" n) in
+  let arg = B.create C.host 8 in
+  Support.store (B.address arg) 0;
+  {
+    dev = d;
+    arg;
+    sub = Sub.make ~reads:0 ~writes:0 ~waits:0 d [| bump arg; bump arg |];
+  }
+
+(* Every submit ran both its fills. *)
+let release_shared t =
+  equal ~msg:"fills" int (2 * C.submitted t.dev) (word t.arg)
+
+let shared =
+  abstract
+    ~pp:(fun ppf r -> Format.fprintf ppf "values %d" r.values)
+    ~release:release_shared "s"
+
+let judge_submit r = function
+  | Ok v ->
+      equal ~msg:"value" int (r.values + 1) v;
+      r.values <- v
+  | Error e -> raise e
+
+let shared_commands =
+  [
+    command "make"
+      (Gen.unit @-> makes shared)
+      (fun () -> { values = 0 })
+      make_shared;
+    command "submit"
+      (shared ^-> judges int)
+      judge_submit
+      (fun t -> C.Point.value (C.submit t.sub));
+  ]
+
 let tests =
   [
     group ~timeout "values"
       [
         test "values follow one another from 1" test_values;
         test "a submission's fills run with its value" test_fill;
+        stateful ~domains:2 "two domains submit one submission in turn"
+          shared_commands;
         test "a device's work completes once a wait reaches it" test_polled;
         test "a wait slot left unset waits for nothing" test_unset_wait;
         test "a wait names a submitted value" test_wait_beyond;

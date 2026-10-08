@@ -147,10 +147,12 @@ value caml_rig_stamps_absorb(value v_dst, value v_src) {
 
 /* Prepared submissions */
 
-static void *zalloc(size_t n, size_t size) {
+/* [n] zeroed elements of [size] bytes, or none for no element; clears [ok]
+   if memory ran out. */
+static void *zalloc(size_t n, size_t size, int *ok) {
   if (n == 0) return NULL;
   void *p = calloc(n, size);
-  if (p == NULL) caml_raise_out_of_memory();
+  if (p == NULL) *ok = 0;
   return p;
 }
 
@@ -159,7 +161,10 @@ static void *zalloc(size_t n, size_t size) {
    with [v_nreads] read, [v_nwrites] write and [v_nwaits] wait slots. */
 static void sub_free(struct rig_sub *s);
 
-static void sub_finalize(value v) { sub_free(Sub_val(v)); }
+static void sub_finalize(value v) {
+  rig_mutex_destroy(&Sub_val(v)->guard);
+  sub_free(Sub_val(v));
+}
 
 static struct custom_operations sub_ops = {
     "rig.submission",   sub_finalize,
@@ -168,27 +173,35 @@ static struct custom_operations sub_ops = {
     custom_compare_ext_default, custom_fixed_length_default};
 
 value caml_rig_sub_new(value v_d, value v_nparts, value v_nafter,
-                               value v_nfixed, value v_nreads,
-                               value v_nwrites, value v_nwaits) {
-  struct rig_sub *s = zalloc(1, sizeof *s);
+                       value v_nfixed, value v_nreads, value v_nwrites,
+                       value v_nwaits) {
+  struct rig_sub *s = calloc(1, sizeof *s);
+  if (s == NULL) caml_raise_out_of_memory();
   s->dev = (struct rig_device *)Long_val(v_d);
   s->nparts = Int_val(v_nparts);
-  s->parts = zalloc((size_t)s->nparts, sizeof *s->parts);
-  s->after = zalloc((size_t)Int_val(v_nafter), sizeof *s->after);
   s->nfixed = Int_val(v_nfixed);
-  s->fixed = zalloc((size_t)s->nfixed, sizeof *s->fixed);
-  s->fixed_write = zalloc((size_t)s->nfixed, 1);
   s->nreads = Int_val(v_nreads);
   s->nwrites = Int_val(v_nwrites);
-  s->slots = zalloc((size_t)(s->nreads + s->nwrites), sizeof *s->slots);
   s->nwait_slots = Int_val(v_nwaits);
-  s->wait_slots = zalloc((size_t)s->nwait_slots, sizeof *s->wait_slots);
   int nhandles = s->nfixed + s->nreads + s->nwrites;
-  s->handles = zalloc((size_t)nhandles, sizeof *s->handles);
   s->seen_bits = 1;
   while ((1 << s->seen_bits) < 2 * nhandles) s->seen_bits++;
+  /* Every array, then one check: a refusal frees what was made. */
+  int ok = 1;
+  s->parts = zalloc((size_t)s->nparts, sizeof *s->parts, &ok);
+  s->after = zalloc((size_t)Int_val(v_nafter), sizeof *s->after, &ok);
+  s->fixed = zalloc((size_t)s->nfixed, sizeof *s->fixed, &ok);
+  s->fixed_write = zalloc((size_t)s->nfixed, 1, &ok);
+  s->slots = zalloc((size_t)(s->nreads + s->nwrites), sizeof *s->slots, &ok);
+  s->wait_slots = zalloc((size_t)s->nwait_slots, sizeof *s->wait_slots, &ok);
+  s->handles = zalloc((size_t)nhandles, sizeof *s->handles, &ok);
   s->seen = zalloc(nhandles == 0 ? 0 : (size_t)1 << s->seen_bits,
-                   sizeof *s->seen);
+                   sizeof *s->seen, &ok);
+  if (!ok) {
+    sub_free(s);
+    caml_raise_out_of_memory();
+  }
+  rig_mutex_init(&s->guard);
   value v = caml_alloc_custom(&sub_ops, sizeof(struct rig_sub *), 0, 1);
   Sub_val(v) = s;
   return v;
