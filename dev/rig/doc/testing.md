@@ -189,6 +189,33 @@ device once", "a queue waiting on a lost device's value is lost", "a lost
 device answers its facts and values", "a loss leaves other devices and their
 memory working". Polled tests the core; it is never used to test a driver.
 
+**Failure walks.** A failure path is reached by few tests, so a walk reaches
+every one. `lib/test/test_walk.ml` runs each operation of the core over Polled
+once for each fallible call it makes, with that call failing.
+`Polled.fail_at d n` makes the `n`-th of the driver's facts, counted calls and
+hand-overs fault, and every one after it, as a faulted device's do; or refuses
+the `n`-th, or every one from it, where a call can answer `None` or `Error`, as
+a device out of memory does. An operation that gives rig a function (a hold's
+release, a profile's reader, an opener) runs once more with that function
+raising. After each failure the walk checks that:
+
+- the outcome is one the `.mli` states;
+- the driver holds no region of the operation's (`Polled.outstanding`), and a
+  lost device was stopped once;
+- the C heap and the open descriptors are back where they were;
+- the operation runs again, on a new device of the same name if the failure
+  lost the first.
+
+Each failure runs four times, on a device that ran the operation once, which
+made what the device keeps for good. The heap is the allocator's own count
+(`Rig_support.heap_bytes`: the sanitizer's, glibc's `mallinfo2` or the macOS
+malloc zones), the descriptors are `/dev/fd`'s entries, and both are read
+after the collector ran and the devices drained. Four runs make a leak of a
+few dozen bytes per failure stand out beside the one thing a failure may keep:
+a lost device's reason. A library whose driver has a seam of its own, such as a
+path record or a transport, walks it the same way, with a countdown copied
+into its own support.
+
 **Drivers on their hardware.** A driver's fault path is tested on its GPU. A
 test that faults or hangs a GPU joins a suite only after one guarded run: one
 process, nothing else using the GPU, killed after 60 s, and the GPU checked

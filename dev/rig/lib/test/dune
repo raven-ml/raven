@@ -11,7 +11,8 @@
   test_memory
   test_claim
   test_program
-  test_io)
+  test_io
+  test_walk)
  (modules
   test_open
   test_buffer
@@ -24,7 +25,8 @@
   test_memory
   test_claim
   test_program
-  test_io)
+  test_io
+  test_walk)
  (libraries rig rig_support threads.posix unix
   windtrap))
 
