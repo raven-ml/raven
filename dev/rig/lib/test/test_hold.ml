@@ -222,9 +222,11 @@ let holds =
 
 let make_memory () =
   let d = require_ok ~pp:Format.pp_print_string (C.memory_device "hold:m") in
-  (B.create d 64, ref [])
+  (B.create d 64, Atomic.make None)
 
-let take_hold (b, kept) = kept := H.make [ b ] :: !kept
+(* Keeps the hold reachable. Only one hold takes the memory, so one domain sets
+   [kept], but both may reach it. *)
+let take_hold (b, kept) = Atomic.set kept (Some (H.make [ b ]))
 
 let judge_take r = function
   | Ok () ->
