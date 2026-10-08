@@ -10,6 +10,7 @@ module D = Nx_array.Dtype
 module B = Rig.Buffer
 module S = Nx_array_support
 
+let strf = Printf.sprintf
 let layout = Testable.make ~pp:L.pp ~equal:L.equal
 let ints = array int
 let f32 = D.Float32
@@ -675,6 +676,177 @@ let law_copy_bits (Case (a, m)) =
   cover "a strided view" (not (L.is_contiguous (A.layout a)));
   equal (array int) (bytes_of a) (bytes_of (A.copy a))
 
+(* Gathers at tile and block edges
+
+   A gather may work in tiles of 256 bytes a side and 4x4 blocks: views of two
+   or three axes whose extents straddle those sizes, over drawn bytes, checked
+   against the bytes each index's position names. *)
+
+(* The extent, in elements of [dt], of a 256-byte tile side. *)
+let side (D.Any dt) = 256 / max 1 (D.bits dt / 8)
+
+type tiles = Tiles : ('v, 's) A.t * string -> tiles
+
+let pp_tiles ppf (Tiles (a, _)) =
+  Format.fprintf ppf "%a %a" D.pp (A.dtype a) L.pp (A.layout a)
+
+(* [n] bytes from the seed [seed]. *)
+let bytes_of_seed seed n =
+  let x = ref (seed land 0xFFFFFFFFFFFF) in
+  String.init n (fun _ ->
+      x := ((!x * 0x5DEECE66D) + 11) land 0xFFFFFFFFFFFF;
+      Char.chr ((!x lsr 24) land 0xFF))
+
+(* A view of an array of [dt] over drawn bytes: transposed, sliced, a row
+   broadcast, or as it is, with extents about a tile's side. *)
+let tiles =
+  let open Gen in
+  let* (D.Any dt as d) = any_dtype in
+  let t = side d in
+  let extent =
+    frequency
+      [
+        (3, ints_of [ 1; 3; 4; 5; t - 1; t; t + 1 ]);
+        (1, int_range 1 ((2 * t) + 5));
+      ]
+  in
+  let* outer =
+    frequency [ (2, constant []); (1, map (fun k -> [ k ]) (int_range 1 3)) ]
+  in
+  let* rows = extent in
+  let* cols = extent in
+  let s = Array.of_list (outer @ [ rows; cols ]) in
+  let n = Array.fold_left ( * ) 1 s in
+  let* seed = int in
+  let src = bytes_of_seed seed (D.bytes dt n) in
+  let a = A.v dt (L.contiguous s) (B.of_string src) in
+  let r = Array.length s in
+  let reverse = M.Permute (Array.init r (fun i -> r - 1 - i)) in
+  let swap =
+    M.Permute
+      (Array.init r (fun i -> if i >= r - 2 then (2 * r) - 3 - i else i))
+  in
+  let slice =
+    let axis d =
+      frequency
+        [
+          (1, constant { M.start = 0; count = d; step = 1 });
+          (1, constant { M.start = d - 1; count = d; step = -1 });
+          (2, range d);
+        ]
+    in
+    let rec all i =
+      if i = r then constant []
+      else
+        let+ x = axis s.(i) and+ xs = all (i + 1) in
+        x :: xs
+    in
+    let+ rs = all 0 in
+    M.Slice (Array.of_list rs)
+  in
+  let row =
+    M.Slice
+      (Array.init r (fun i ->
+           if i = r - 2 then { M.start = 0; count = 1; step = 1 }
+           else { M.start = 0; count = s.(i); step = 1 }))
+  in
+  let+ moves =
+    one_of
+      [
+        constant [];
+        constant [ swap ];
+        constant [ reverse ];
+        map (fun m -> [ m; swap ]) slice;
+        constant [ row; M.Broadcast s ];
+        constant [ row; M.Broadcast s; swap ];
+      ]
+  in
+  let a =
+    List.fold_left
+      (fun a m -> match A.move m a with Some b -> b | None -> a)
+      a moves
+  in
+  Tiles (a, src)
+
+let tiles = Gen.with_pp pp_tiles tiles
+
+(* The bytes of [a]'s elements in C order of indices, read from [src], the bytes
+   of its buffer, at the positions its layout gives: a contiguous array's bytes,
+   its last byte's bits past its last element zero. *)
+let gathered src bits l =
+  let s = L.shape l in
+  let n = Array.fold_left ( * ) 1 s in
+  let out = Bytes.make (((n * bits) + 7) / 8) '\000' in
+  let r = Array.length s in
+  let idx = Array.make r 0 in
+  for k = 0 to n - 1 do
+    let p = ref (L.offset l) in
+    Array.iteri (fun i j -> p := !p + (j * L.stride l i)) idx;
+    (if bits >= 8 then
+       let w = bits / 8 in
+       Bytes.blit_string src (!p * w) out (k * w) w
+     else
+       let at = !p * bits in
+       let v =
+         (Char.code src.[at / 8] lsr (at mod 8)) land ((1 lsl bits) - 1)
+       in
+       let to_ = k * bits in
+       let byte = Char.code (Bytes.get out (to_ / 8)) in
+       Bytes.set out (to_ / 8) (Char.chr (byte lor (v lsl (to_ mod 8)))));
+    (* The next index in C order. *)
+    let i = ref (r - 1) in
+    while
+      !i >= 0
+      &&
+      (idx.(!i) <- idx.(!i) + 1;
+       idx.(!i) = s.(!i))
+    do
+      idx.(!i) <- 0;
+      decr i
+    done
+  done;
+  Bytes.unsafe_to_string out
+
+let widths = [ 1; 2; 4; 8; 16 ]
+
+(* What a store of the value [x] of [dt] holds: a float format's infinity
+   saturates where the format has no store for it. *)
+let stored : type v s. (v, s) D.t -> v -> v =
+ fun dt x -> match D.kind dt with D.Float -> D.of_float dt x | _ -> x
+
+let law_tiles (Tiles (a, src)) =
+  let dt = A.dtype a in
+  let l = A.layout a in
+  let bits = D.bits dt in
+  let t = side (D.Any dt) in
+  let ds = L.shape l in
+  let at_edge k = Array.exists (fun d -> d = k) ds in
+  cover "an extent of a tile's side less one" (at_edge (t - 1));
+  cover "an extent of a tile's side" (at_edge t);
+  cover "an extent of a tile's side and one" (at_edge (t + 1));
+  cover "an extent past two tiles" (Array.exists (fun d -> d > 2 * t) ds);
+  cover "a partial block" (Array.exists (fun d -> d > 4 && d mod 4 <> 0) ds);
+  cover "a transposed view"
+    (L.rank l >= 2
+    && abs (L.stride l (L.rank l - 2)) = 1
+    && L.dim l (L.rank l - 2) > 1);
+  cover "a broadcast axis"
+    (Array.exists2 (fun d st -> d > 1 && st = 0) ds (L.strides l));
+  cover "a reversed axis" (Array.exists (fun st -> st < 0) (L.strides l));
+  cover "sub-byte elements" (bits < 8);
+  List.iter (fun w -> cover (strf "%d-byte elements" w) (bits = 8 * w)) widths;
+  let want = gathered src bits l in
+  let c = A.copy a in
+  let got = Bytes.create (B.length (A.buffer c)) in
+  B.blit_to_bytes (A.buffer c) 0 got 0 (Bytes.length got);
+  equal ~msg:"copy" string want (Bytes.to_string got);
+  let r = A.v dt (L.contiguous ds) (B.of_string want) in
+  let xs = A.to_array r in
+  equal ~msg:"to_array" (values dt) xs (A.to_array a);
+  equal ~msg:"of_array" (values dt)
+    (Array.map (stored dt) xs)
+    (A.to_array (A.of_array dt ds xs))
+
 let law_to_device (Case (a, m)) =
   let check : type v s. (v, s) A.t -> unit =
    fun a ->
@@ -962,6 +1134,10 @@ let tests =
         test "copy keeps NaN payloads" test_copy_bits;
         prop "copy is contiguous with the same elements" case law_copy;
         prop "copy keeps every byte of every element" raw law_copy_bits;
+        prop ~count:300
+          "copy, to_array and of_array keep every element across tile and \
+           block edges"
+          tiles law_tiles;
         prop "to_device copies and keeps the layout" case law_to_device;
         test "to_device moves sub-byte views through an io device"
           test_to_device_io;
