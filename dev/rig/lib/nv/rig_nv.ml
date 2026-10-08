@@ -195,7 +195,7 @@ type 'm dev = {
   path : 'm path;
   self : int;
   arch : string;
-  release : (module D.RELEASE);
+  error_names : (int * string) list;
   capability : Abi.Gpu.t;
   word : 'm reg;
   owned : 'm memory list;
@@ -549,7 +549,7 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
         path = p;
         self;
         arch = arch_of g.sm_version;
-        release = (module R : D.RELEASE);
+        error_names = R.robust_channel_errors;
         capability =
           {
             Abi.Gpu.compute_class = g.compute_class;
@@ -738,7 +738,6 @@ let fault_name table v =
 (* The errors the RM wrote into the channels' notifiers when it stopped them,
    such as for a fault of a channel's own methods. *)
 let channel_errors d =
-  let (module R : D.RELEASE) = d.release in
   let error q =
     let x = notification d.self q in
     if x = 0 then None
@@ -746,7 +745,7 @@ let channel_errors d =
       let code = x lsr 16 and status = x land 0xffff in
       Some
         (strf "channel error %d (%s), status 0x%x" code
-           (fault_name R.robust_channel_errors code)
+           (fault_name d.error_names code)
            status)
   in
   List.filter_map error [ 0; 1 ]
