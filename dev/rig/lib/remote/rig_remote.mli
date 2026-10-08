@@ -23,8 +23,8 @@
        controller                                   agent of machine B
       ───────────────────────────────────          ─────────────────────────
        hosts j, devices h ─ alloc, free ────────>  Rig.Buffer.create
-                          ── hand-overs ────────>  Rig.submit, copies
-                         <── words, copies' bytes  points reached
+                          ── hand-overs ────────>  Rig.Buffer.copy
+                         <── words, copies' bytes  copies done
     v}
 
     {1:order Order}
@@ -32,15 +32,16 @@
     Every call on a job's device that reaches its agent is a {e frame} on the
     connection, and a device's hand-over of one value is one frame. Frames leave
     in the order their calls made them, from every domain, and the agent applies
-    them in that order through its own rig. So a machine's memory is ordered by
-    its own rig: work the controller hands over follows, on that machine, every
-    use of the memory it names that was handed over before it.
+    them in that order through its own rig, each hand-over's copies to their end
+    before the next frame. So work the controller hands over follows, on that
+    machine, all the work handed over before it, whichever device's it was.
 
     A device's word, the host's included, advances in value order, and only once
     the agent's devices reached the work of the value: for a copy into this
     process's memory, once the copy's bytes are in that memory. Values are
     assigned here, under each device's turn, as for any device. A wait between
-    two devices of one machine is made there, in the agent's queues.
+    two devices of one machine travels in the hand-over, and the agent's order
+    keeps it.
 
     {1:costs Costs}
 
@@ -60,7 +61,9 @@
     - a connection between two of its processes ends without a close;
     - no byte comes on a connection for 10 seconds, though each end sends at
       least once a second;
-    - a frame is malformed or names nothing of the job;
+    - a frame is malformed;
+    - a hand-over names memory the job does not hold on its machine, or carries
+      words, which agents do not run;
     - a device of any of its processes is lost other than by a close, as
       {!Rig.failure} reports it. This process notices its own within a second.
 
@@ -72,12 +75,12 @@
     {!Rig.Lost} with the root cause. The process stays failed: it starts no
     other job ({!connect}).
 
-    A job has no world before it has agents, and a device of a process in no job
-    fails alone, as {!Rig} states.
+    In a process in no job, a lost device fails alone, as {!Rig} states; the
+    loss is still the process's failure, so it starts no job afterwards.
 
     A child of [fork] never uses its parent's connections, whose streams it
-    would interleave with the parent's: there they are failed from the start,
-    the child's devices of the job lost, and the parent's job goes on.
+    would interleave with the parent's: there the job is failed from the start,
+    and the parent's job goes on.
 
     {1:security Security}
 
@@ -85,14 +88,14 @@
     job's key, by HMAC over BLAKE2b-256 of fresh random nonces of both; the key
     never crosses the network. A process that does not hold the key is refused,
     so an agent of another job, or one left from an earlier job, is refused when
-    each job has a key of its own, as [rig run] gives it. Nothing after the
-    proofs is authenticated or encrypted: whoever reads the network reads the
-    bytes of copies and of runs, and whoever writes it can change them. Listen
-    only on a network that only the job's machines read and write, such as the
-    cluster's own. The dialing end proves the key first, so whoever answers in a
-    listener's place learns a proof against which it can test guesses: make the
-    key random, with [head -c 32 /dev/urandom > FILE && chmod 600 FILE], and
-    read it with {!read_key}.
+    each job has a key of its own. Nothing after the proofs is authenticated or
+    encrypted: whoever reads the network reads the bytes of copies and of runs,
+    and whoever writes it can change them. Listen only on a network that only
+    the job's machines read and write, such as the cluster's own. The dialing
+    end proves the key first, so whoever answers in a listener's place learns a
+    proof against which it can test guesses: make the key random, with
+    [head -c 32 /dev/urandom > FILE && chmod 600 FILE], and read it with
+    {!read_key}.
 
     {1:references References}
 
@@ -115,9 +118,10 @@ val connect : key:string -> (string * int) list -> (t, string) result
 (** [connect ~key agents] starts a job with an agent at each host and port of
     [agents]. It connects to each agent, proves [key] to it and checks that it
     proves [key] back, has the agents connect to each other likewise, and opens
-    each machine's host ({!hosts}). It waits at most 10 seconds for each answer.
-    Once it returns, the job's processes watch each other, and the process
-    closes the job at exit ({!close}).
+    each machine's host ({!hosts}). Each connection, and each answer of a
+    handshake, comes within 10 seconds, or the job fails. Once it returns, the
+    job's processes watch each other, and the process closes the job at exit
+    ({!close}).
 
     Each machine's name is ["HOST:PORT"] as [agents] gives them, followed by
     ["#n"] for the process's [n]th connection to that address from the second
@@ -129,7 +133,7 @@ val connect : key:string -> (string * int) list -> (t, string) result
     does not, or if two agents cannot connect to each other, [why] starting with
     ["HOST:PORT: "]; and if the process failed ({!Rig.failure}), [why] its
     failure: a process whose job failed, or that lost a device before, starts no
-    job. Nothing of the job is left: the agents reached are told it failed.
+    job. The agents reached are told the job failed.
 
     Raises [Invalid_argument] if [key] has fewer than 16 or more than 4096
     bytes, [agents] is empty or lists an address twice, or a job of the process
@@ -156,9 +160,8 @@ val devices : Rig.t -> string -> (Rig.t list, string) result
     ["@NAME"], [NAME] the machine's name, as ["CUDA:3@h100-b:7000"]. Its
     {!Rig.arch} and {!Rig.budget} are the agent's device's when it opened, and
     {!Rig.reaches} answers between devices of the machine as the agent's rig
-    does. It loads no code: {!Rig.Image.load} on it is [Error], naming the
-    machine's host. Its capability record is a {!Rig_remote_abi.Device} with the
-    device's id on its machine.
+    does. It loads no code: {!Rig.Image.load} on it is [Error]. Its capability
+    record is a {!Rig_remote_abi.Device} with the device's id on its machine.
 
     A proxy copies between memory of its machine and this process's memory, as
     one {!Rig.Submission.Copy} the agent runs ({!Rig.Buffer.copy}). This process
@@ -168,7 +171,8 @@ val devices : Rig.t -> string -> (Rig.t list, string) result
     [why] starting with the machine's name, or if the job failed or was closed,
     [why] its root cause or that it was closed.
 
-    Raises [Invalid_argument] if [h] is no host {!hosts} gave. *)
+    Raises [Invalid_argument] if [h] is no host that {!hosts} gave for the
+    process's last job. *)
 
 val failure : t -> string option
 (** [failure j] is [Some why] if [j] failed, [why] its root cause, and [None]
@@ -230,10 +234,10 @@ val serve :
 
 val read_key : string -> (string, string) result
 (** [read_key file] is the key in [file]: its bytes, 16 to 4096 of them, read
-    through one open of it. On POSIX systems [file] must be a regular file of
-    this process's user that no other user may read or write, so that only this
-    user knows the key.
+    through one open of it. [file] must be a regular file; on POSIX systems it
+    must also belong to this process's user and grant its group and others no
+    access, so that only this user knows the key.
 
-    [Error why] naming [file] if it cannot be opened, is no regular file,
-    belongs to another user, may be read or written by others, or holds too few
-    or too many bytes. *)
+    [Error why] naming [file] if it cannot be opened or read, is no regular
+    file, belongs to another user, grants its group or others any access, or
+    holds too few or too many bytes. *)
