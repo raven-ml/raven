@@ -73,6 +73,21 @@ let start ?(mode = "") file =
       ignore (Unix.waitpid [] pid);
       fail "the agent did not start"
 
+let controller_exe =
+  Filename.concat
+    (Filename.dirname Sys.executable_name)
+    "support/controller.exe"
+
+(* Starts support/controller.exe in [mode] with [agents], as an agent: its
+   output read by {!finish}. *)
+let start_controller file mode agents =
+  let r, w = Unix.pipe ~cloexec:true () in
+  let ports = List.map (fun a -> string_of_int a.port) agents in
+  let args = Array.of_list (controller_exe :: file :: mode :: ports) in
+  let pid = Unix.create_process controller_exe args Unix.stdin w Unix.stderr in
+  Unix.close w;
+  { pid; port = 0; out = Unix.in_channel_of_descr r; status = None }
+
 (* The agent's exit code and the lines it printed after its port, once it
    exited. *)
 let finish a =

@@ -590,20 +590,14 @@ let keys =
           read_ok (String.init 4096 (fun i -> Char.chr (i land 0xff))));
       cases
         ~name:(Printf.sprintf "a file of mode %o is refused, naming it")
-        "readable by others"
-        [ 0o640; 0o604; 0o620; 0o602; 0o644; 0o666 ]
+        "granting others access"
+        [ 0o640; 0o604; 0o620; 0o602; 0o644; 0o666; 0o710; 0o701; 0o711 ]
         refused_perm;
       test "a file of mode 700 is a key" (fun () ->
           let file = write_file ~perm:0o700 key in
           Fun.protect
             ~finally:(fun () -> Sys.remove file)
             (fun () -> is_ok (Rig_remote.read_key file)));
-      xfail ~reason:"read_key refuses every bit for other users, execute too"
-        (test "a file others may only execute is a key" (fun () ->
-             let file = write_file ~perm:0o711 key in
-             Fun.protect
-               ~finally:(fun () -> Sys.remove file)
-               (fun () -> is_ok (Rig_remote.read_key file))));
       cases
         ~name:(Printf.sprintf "a file of %d bytes is refused, naming it")
         "size" [ 0; 15; 4097 ] refused_size;
@@ -621,11 +615,94 @@ let keys =
         (test "a FIFO is refused without waiting for a writer" fifo);
     ]
 
+(* Processes of a job *)
+
+(* Agents whose controller is support/controller.exe, in [mode]. *)
+let with_controller ?(n = 2) mode f =
+  with_key_file @@ fun file ->
+  let agents = List.init n (fun _ -> start file) in
+  let c = start_controller file mode agents in
+  Fun.protect
+    ~finally:(fun () -> List.iter kill (c :: agents))
+    (fun () -> f c agents)
+
+(* The most an agent may take to end once its controller's process ended. *)
+let end_bound = 5.
+
+let ends_in_bound agents =
+  let t0 = Unix.gettimeofday () in
+  let ends = List.map finish agents in
+  less ~msg:"seconds for the agents to end" float_exact ~than:end_bound
+    (Unix.gettimeofday () -. t0);
+  ends
+
+(* The controller's process exits without a close: it closes its job at exit,
+   and every agent returns from serve with the job closed. *)
+let controller_exits () =
+  with_controller "exit" @@ fun c agents ->
+  equal ~msg:"the controller" exit_w (0, [ "connected" ]) (finish c);
+  equal (list exit_w)
+    [ (0, [ "closed" ]); (0, [ "closed" ]) ]
+    (ends_in_bound agents)
+
+(* The controller's process is killed: its connections end without a close, and
+   every agent returns from serve with the job failed. *)
+let controller_killed () =
+  with_controller "wait" @@ fun c agents ->
+  equal ~msg:"the controller" string "connected" (input_line c.out);
+  kill c;
+  List.iter
+    (function
+      | 2, [ why ] -> ends_with ~affix:"closed its connection" why
+      | code, lines ->
+          failf "an agent exited %d, printing [%s]" code
+            (String.concat "; " lines))
+    (ends_in_bound agents)
+
+(* serve raises once it served, here in an agent that served a job. *)
+let served_twice () =
+  with_agents ~mode:"twice" @@ fun agents ->
+  Rig_remote.close (connect agents);
+  equal exit_w (0, [ "closed"; "serve raised" ]) (finish (List.hd agents))
+
+(* A kind named twice raises before serve waits for a controller; a serve that
+   waited instead fails the test after 2 s. *)
+let kind_twice () =
+  match Rig_remote.listen ~key "127.0.0.1" 0 with
+  | Error why -> fail why
+  | Ok a ->
+      let r = ref None in
+      let kinds = [ ("A", fun () -> Ok []); ("A", fun () -> Ok []) ] in
+      let _ =
+        Thread.create
+          (fun () ->
+            r :=
+              Some
+                (match Rig_remote.serve a kinds with
+                | _ -> "returned"
+                | exception Invalid_argument _ -> "raised"))
+          ()
+      in
+      until ~what:"serve's raise" (fun () -> !r <> None);
+      equal (option string) (Some "raised") !r
+
+let processes =
+  group "process"
+    [
+      test "a controller that exits without close closes its job"
+        controller_exits;
+      test "a controller killed fails its job at every agent" controller_killed;
+      test "serve raises once it served" served_twice;
+      test "serve raises on a kind named twice" kind_twice;
+    ]
+
 let () =
   Watchdog.start ();
   exit
     (run "rig_remote"
        [
          group ~timeout:60. "rig_remote"
-           [ connecting; machines; copies; closes; rails; forks; keys ];
+           [
+             connecting; machines; copies; closes; rails; forks; keys; processes;
+           ];
        ])

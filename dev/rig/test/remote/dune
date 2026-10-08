@@ -4,16 +4,18 @@
   test_rig_remote_lost
   test_rig_remote_own
   test_rig_remote_killed
-  test_rig_remote_abort)
+  test_rig_remote_abort
+  test_rig_remote_join)
  (modules
   test_rig_remote
   test_rig_remote_lost
   test_rig_remote_own
   test_rig_remote_killed
   test_rig_remote_abort
+  test_rig_remote_join
   remote_job
   watchdog)
- (deps support/agent.exe)
+ (deps support/agent.exe support/controller.exe)
  (libraries
   rig
   rig_remote
