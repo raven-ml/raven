@@ -2,7 +2,7 @@
 
 (library
  (name device_pci)
- (private_modules tlsf sysmem address ops sysfs vfio local fail)
+ (private_modules tlsf sysmem bus_address ops sysfs vfio local fail)
  (modules_without_implementation ops)
  (libraries unix)
  (install_c_headers device_pci)

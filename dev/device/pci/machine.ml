@@ -57,8 +57,8 @@ type t = {
   reserved : (int * int) list Atomic.t;
 }
 
-let address = Address.v
-let compare_address = Address.compare
+let address = Bus_address.v
+let compare_address = Bus_address.compare
 let machine name files ops = { name; ops; files; reserved = Atomic.make [] }
 
 let at root =
@@ -73,7 +73,7 @@ let failed m = transport_failed m.ops.transport
 let page m = m.ops.page
 
 let functions m =
-  List.sort (fun a b -> Address.compare a.bus b.bus) (m.ops.functions ())
+  List.sort (fun a b -> Bus_address.compare a.bus b.bus) (m.ops.functions ())
 
 let rec record m range =
   let ranges = Atomic.get m.reserved in

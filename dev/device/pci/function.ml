@@ -27,7 +27,7 @@ let take machine bus =
   let taken =
     match Machine.failed machine with
     | Some why -> Error why
-    | None when Option.is_none (Address.numbers bus) ->
+    | None when Option.is_none (Bus_address.numbers bus) ->
         Error (strf "%S is no PCI bus address" bus)
     | None -> Machine.take machine bus
   in
