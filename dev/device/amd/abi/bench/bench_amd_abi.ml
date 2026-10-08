@@ -14,9 +14,7 @@
    template into bytes allocated beforehand and write its holes, as a driver
    does per launch: the floor of the encoders above them. *)
 
-module Abi = Device_amd_abi
-module Packet = Abi.Packet
-module Pm4 = Abi.Pm4
+open Device_amd_abi
 module S = Device_amd_abi_support
 
 (* An MI300X, a Radeon PRO W7900 and a Radeon AI PRO R9700. *)
@@ -39,12 +37,12 @@ let code_object =
     In_channel.input_all
 
 let of_string obj () =
-  match Abi.Code_object.of_string obj with Ok co -> co | Error e -> failwith e
+  match Code_object.of_string obj with Ok co -> co | Error e -> failwith e
 
 (* The last kernel, behind every other one. *)
 let co = of_string code_object ()
-let name = List.nth (Abi.Code_object.kernels co) 127
-let kernel = Option.get (Abi.Code_object.kernel co name)
+let name = List.nth (Code_object.kernels co) 127
+let kernel = Option.get (Code_object.kernel co name)
 
 (* GFX9's compilers have kernels read their scratch's descriptor. *)
 let kernel_gfx9 = { kernel with private_segment_buffer = true }
@@ -158,7 +156,7 @@ let register =
     Thumper.bench ("find/compute/" ^ label) (fun () ->
         let g = Thumper.black_box g in
         Array.iter
-          (fun n -> ignore (Sys.opaque_identity (Abi.Register.find g n)))
+          (fun n -> ignore (Sys.opaque_identity (Register.find g n)))
           dispatch_registers)
   in
   Thumper.group "register"
@@ -167,7 +165,7 @@ let register =
 (* AQL *)
 
 let aql_dispatch descriptor =
-  Abi.Aql.dispatch kernel ~descriptor ~args:Args ~threads:(256, 1, 1)
+  Aql.dispatch kernel ~descriptor ~args:Args ~threads:(256, 1, 1)
     ~grid:(Groups 0, Groups 1, Groups 2)
 
 let aql =
@@ -189,15 +187,15 @@ let code =
     [
       Thumper.bench "of-string/amd-128-kernels" (of_string code_object);
       Thumper.bench "kernel/last-of-128" (fun () ->
-          Abi.Code_object.kernel (Thumper.black_box co) name);
+          Code_object.kernel (Thumper.black_box co) name);
     ]
 
 let scratch =
   Thumper.group "scratch"
     [
       Thumper.bench "descriptor/gfx12" (fun () ->
-          Abi.Scratch.descriptor (Thumper.black_box gfx12) ~base:scratch
-            (Abi.Scratch.size gfx12 kernel.private_segment));
+          Scratch.descriptor (Thumper.black_box gfx12) ~base:scratch
+            (Scratch.size gfx12 kernel.private_segment));
     ]
 
 let () =
