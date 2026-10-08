@@ -16,32 +16,37 @@
 
 #ifdef _WIN32
 #include <windows.h>
-typedef SRWLOCK dc_mutex;
-typedef CONDITION_VARIABLE dc_cond;
+typedef SRWLOCK rig_mutex;
+typedef CONDITION_VARIABLE rig_cond;
 #else
 #include <pthread.h>
-typedef pthread_mutex_t dc_mutex;
-typedef pthread_cond_t dc_cond;
+typedef pthread_mutex_t rig_mutex;
+typedef pthread_cond_t rig_cond;
 #endif
 
 /* Points: a device's index in bits 47 to 62 and a value in bits 0 to 46,
    the layout of an OCaml int's non-negative range. The word 0 is no point:
    index 0 is the host, whose work is never stamped. */
-#define DC_VALUE_BITS 47
-#define DC_VALUE_MASK ((UINT64_C(1) << DC_VALUE_BITS) - 1)
-#define DC_POINT(index, v) (((uint64_t)(index) << DC_VALUE_BITS) | (v))
-#define DC_INDEX(p) ((int)((p) >> DC_VALUE_BITS))
-#define DC_VALUE(p) ((p) & DC_VALUE_MASK)
+#define RIG_VALUE_BITS 47
+#define RIG_VALUE_MASK ((UINT64_C(1) << RIG_VALUE_BITS) - 1)
+#define RIG_POINT(index, v) (((uint64_t)(index) << RIG_VALUE_BITS) | (v))
+#define RIG_INDEX(p) ((int)((p) >> RIG_VALUE_BITS))
+#define RIG_VALUE(p) ((p) & RIG_VALUE_MASK)
 
-/* Device indices run from 1 to DC_DEVICES - 1 and are never reused. */
-#define DC_DEVICES 65536
+/* Device indices run from 1 to RIG_DEVICES - 1 and are never reused. */
+#define RIG_DEVICES 65536
 
 /* A stop's answer, as the device records it. */
-enum { DC_NONE, DC_STOPPING, DC_STOPPED, DC_UNKNOWN };
+enum {
+  RIG_ANSWER_NONE,
+  RIG_ANSWER_STOPPING,
+  RIG_ANSWER_STOPPED,
+  RIG_ANSWER_UNKNOWN
+};
 
 /* One in-queue wait of a device's unreached work on another device's value:
    the work of the waiter's value [u] waits for the producer's value [w]. */
-struct dc_entry {
+struct rig_entry {
   int producer;
   uint64_t w, u;
 };
@@ -50,9 +55,9 @@ struct dc_entry {
    loss is read for the life of the process. The mutex guards [turn],
    [inside], [owed], [spreading] and the record; [lost], [answer] and
    [submitted] are also read without it. */
-struct dc_device {
-  dc_mutex mu;
-  dc_cond cv;
+struct rig_device {
+  rig_mutex mu;
+  rig_cond cv;
   int index;
   char *name;
   int io;        /* an io device, whose state its library holds */
@@ -70,59 +75,53 @@ struct dc_device {
   int inside;    /* counted calls in flight, the turn holder included */
   int owed;      /* lost, and its stop not yet claimed */
   int spreading; /* lost, and its loser has not finished spreading it */
-  struct dc_entry *record;
+  struct rig_entry *record;
   int nrecord, crecord;
 };
-
-/* The device of index [i], or NULL. */
-struct dc_device *dc_device_of(int i);
-
-/* The last value [d]'s word showed. */
-uint64_t dc_word(struct dc_device *d);
 
 /* A memory's stamps: the point of its last write and, per device, the point
    of its last use. A chunk never moves, so a raise is one store or
    compare-and-set; a submission reserves its device's use word before its
    hand-over, so a raise allocates nothing. [refs] counts the memories and
    holds that share it. */
-#define DC_USES 4
+#define RIG_USES 4
 
-struct dc_stamps {
+struct rig_stamps {
   _Atomic uint64_t write;
-  _Atomic uint64_t use[DC_USES];
-  _Atomic(struct dc_stamps *) next;
+  _Atomic uint64_t use[RIG_USES];
+  _Atomic(struct rig_stamps *) next;
   _Atomic int refs; /* in the first chunk only */
 };
 
 /* A slot of a prepared submission: a memory's stamps, the handle by which
    the device names it, and the device's use word in the stamps, reserved
    at each submit. */
-struct dc_slot {
-  struct dc_stamps *stamps;
+struct rig_slot {
+  struct rig_stamps *stamps;
   uint64_t handle;
   _Atomic uint64_t *use;
 };
 
 /* A handle a collect added, by hash: an entry of an earlier epoch is
    empty. */
-struct dc_seen {
+struct rig_seen {
   uint64_t handle, epoch;
 };
 
 /* The prepared form of a submission on one device. */
-struct dc_sub {
-  struct dc_device *dev;
+struct rig_sub {
+  struct rig_device *dev;
   int nparts;
   struct rig_part *parts;
   int *after; /* every part's [after], one after the other */
   int nfixed; /* the buffers the parts name */
-  struct dc_slot *fixed;
+  struct rig_slot *fixed;
   unsigned char *fixed_write;
   int nreads, nwrites; /* the read slots, then the write slots */
-  struct dc_slot *slots;
+  struct rig_slot *slots;
   int nwait_slots;
   uint64_t *wait_slots;
-  struct dc_stamps *hold;
+  struct rig_stamps *hold;
   _Atomic uint64_t *hold_use;
   /* Built for one submit, cleared after it. */
   int npoints, cpoints;
@@ -133,7 +132,7 @@ struct dc_sub {
   int nhandles; /* at most one per fixed buffer and slot */
   uint64_t *handles;
   int seen_bits; /* [seen] has 2^seen_bits entries, twice the handles */
-  struct dc_seen *seen;
+  struct rig_seen *seen;
   uint64_t epoch; /* the collect's */
   /* What the submit answered. */
   uint64_t no_room_at, v;
@@ -142,5 +141,8 @@ struct dc_sub {
   int nclaims; /* the stops a failed hand-over's spread claimed */
   int *claims;
 };
+
+/* Raises the stamps [s]'s work names to [p]. */
+void rig_sub_raise(struct rig_sub *s, uint64_t p);
 
 #endif

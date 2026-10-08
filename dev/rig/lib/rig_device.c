@@ -37,60 +37,60 @@
 
 /* How long a turn waiter blocks before it returns to OCaml, where pending
    signals run: the still interval of waits. */
-#define DC_STILL_MS 200
+#define STILL_MS 200
 
-/* What a submit answers; DC_STOP_CLAIMED is added when the call claimed
+/* What a submit answers; SUBMIT_STOP_CLAIMED is added when the call claimed
    the device's stop, which its caller then runs. */
 enum {
-  DC_OK,
-  DC_BUSY,
-  DC_NO_ROOM,
-  DC_NEVER,
-  DC_LOST,
-  DC_LOST_AFTER,
-  DC_PRODUCER_LOST,
-  DC_FAILED,
-  DC_NEED_RECORD
+  SUBMIT_OK,
+  SUBMIT_BUSY,
+  SUBMIT_NO_ROOM,
+  SUBMIT_NEVER,
+  SUBMIT_LOST,
+  SUBMIT_LOST_AFTER,
+  SUBMIT_PRODUCER_LOST,
+  SUBMIT_FAILED,
+  SUBMIT_NEED_RECORD
 };
-#define DC_STOP_CLAIMED 16
+#define SUBMIT_STOP_CLAIMED 16
 
 /* Mutexes and conditions */
 
 #ifdef _WIN32
-static void mutex_init(dc_mutex *m) { InitializeSRWLock(m); }
-static int mutex_try(dc_mutex *m) { return TryAcquireSRWLockExclusive(m); }
-static void mutex_lock(dc_mutex *m) { AcquireSRWLockExclusive(m); }
-static void mutex_unlock(dc_mutex *m) { ReleaseSRWLockExclusive(m); }
-static void cond_init(dc_cond *c) { InitializeConditionVariable(c); }
-static void cond_wait(dc_cond *c, dc_mutex *m) {
+static void mutex_init(rig_mutex *m) { InitializeSRWLock(m); }
+static int mutex_try(rig_mutex *m) { return TryAcquireSRWLockExclusive(m); }
+static void mutex_lock(rig_mutex *m) { AcquireSRWLockExclusive(m); }
+static void mutex_unlock(rig_mutex *m) { ReleaseSRWLockExclusive(m); }
+static void cond_init(rig_cond *c) { InitializeConditionVariable(c); }
+static void cond_wait(rig_cond *c, rig_mutex *m) {
   SleepConditionVariableSRW(c, m, INFINITE, 0);
 }
-static void cond_broadcast(dc_cond *c) { WakeAllConditionVariable(c); }
-static void mu_init(struct dc_device *d) {
+static void cond_broadcast(rig_cond *c) { WakeAllConditionVariable(c); }
+static void mu_init(struct rig_device *d) {
   mutex_init(&d->mu);
   InitializeConditionVariable(&d->cv);
 }
-static void cv_wait_ms(struct dc_device *d, int ms) {
+static void cv_wait_ms(struct rig_device *d, int ms) {
   SleepConditionVariableSRW(&d->cv, &d->mu, (DWORD)ms, 0);
 }
-static void cv_broadcast(struct dc_device *d) {
+static void cv_broadcast(struct rig_device *d) {
   WakeAllConditionVariable(&d->cv);
 }
 #else
-static void mutex_init(dc_mutex *m) { pthread_mutex_init(m, NULL); }
-static int mutex_try(dc_mutex *m) { return pthread_mutex_trylock(m) == 0; }
-static void mutex_lock(dc_mutex *m) { pthread_mutex_lock(m); }
-static void mutex_unlock(dc_mutex *m) { pthread_mutex_unlock(m); }
-static void cond_init(dc_cond *c) { pthread_cond_init(c, NULL); }
-static void cond_wait(dc_cond *c, dc_mutex *m) { pthread_cond_wait(c, m); }
-static void cond_broadcast(dc_cond *c) { pthread_cond_broadcast(c); }
-static void mu_init(struct dc_device *d) {
+static void mutex_init(rig_mutex *m) { pthread_mutex_init(m, NULL); }
+static int mutex_try(rig_mutex *m) { return pthread_mutex_trylock(m) == 0; }
+static void mutex_lock(rig_mutex *m) { pthread_mutex_lock(m); }
+static void mutex_unlock(rig_mutex *m) { pthread_mutex_unlock(m); }
+static void cond_init(rig_cond *c) { pthread_cond_init(c, NULL); }
+static void cond_wait(rig_cond *c, rig_mutex *m) { pthread_cond_wait(c, m); }
+static void cond_broadcast(rig_cond *c) { pthread_cond_broadcast(c); }
+static void mu_init(struct rig_device *d) {
   mutex_init(&d->mu);
   pthread_cond_init(&d->cv, NULL);
 }
 /* A clock jump moves one timeout, which only returns a waiter early or late
    to OCaml. */
-static void cv_wait_ms(struct dc_device *d, int ms) {
+static void cv_wait_ms(struct rig_device *d, int ms) {
   struct timespec t;
   clock_gettime(CLOCK_REALTIME, &t);
   t.tv_sec += ms / 1000;
@@ -101,27 +101,27 @@ static void cv_wait_ms(struct dc_device *d, int ms) {
   }
   pthread_cond_timedwait(&d->cv, &d->mu, &t);
 }
-static void cv_broadcast(struct dc_device *d) {
+static void cv_broadcast(struct rig_device *d) {
   pthread_cond_broadcast(&d->cv);
 }
 #endif
 
-static void mu_lock(struct dc_device *d) { mutex_lock(&d->mu); }
-static void mu_unlock(struct dc_device *d) { mutex_unlock(&d->mu); }
+static void mu_lock(struct rig_device *d) { mutex_lock(&d->mu); }
+static void mu_unlock(struct rig_device *d) { mutex_unlock(&d->mu); }
 
 /* Takes the mutex [m] from a stub holding the domain lock: by try-lock,
    and otherwise after releasing the domain lock. Answers whether it
    released it, for [give]. */
-static int take_mutex(dc_mutex *m) {
+static int take_mutex(rig_mutex *m) {
   if (mutex_try(m)) return 0;
   caml_enter_blocking_section_no_pending();
   mutex_lock(m);
   return 1;
 }
 
-static int take(struct dc_device *d) { return take_mutex(&d->mu); }
+static int take(struct rig_device *d) { return take_mutex(&d->mu); }
 
-static void give(struct dc_device *d, int released) {
+static void give(struct rig_device *d, int released) {
   mu_unlock(d);
   if (released) caml_leave_blocking_section();
 }
@@ -146,40 +146,42 @@ static int64_t now_ms(void) {
 
 /* The table of devices */
 
-static _Atomic(struct dc_device *) devices[DC_DEVICES];
+static _Atomic(struct rig_device *) devices[RIG_DEVICES];
 static _Atomic int top;
 
-struct dc_device *dc_device_of(int i) {
-  if (i <= 0 || i >= DC_DEVICES) return NULL;
+/* The device of index [i], or NULL. */
+static struct rig_device *device_of(int i) {
+  if (i <= 0 || i >= RIG_DEVICES) return NULL;
   return atomic_load_explicit(&devices[i], memory_order_acquire);
 }
 
-uint64_t dc_word(struct dc_device *d) {
+/* The last value [d]'s word showed. */
+static uint64_t device_word(struct rig_device *d) {
   if (d->word != NULL)
     return atomic_load_explicit(d->word, memory_order_acquire);
   return atomic_load_explicit(&d->seen, memory_order_acquire);
 }
 
-static int is_lost(struct dc_device *d) {
+static int is_lost(struct rig_device *d) {
   return atomic_load_explicit(&d->lost, memory_order_acquire) != NULL;
 }
 
-#define Device_val(v) ((struct dc_device *)Long_val(v))
+#define Device_val(v) ((struct rig_device *)Long_val(v))
 
 /* Locks */
 
 /* A lock of the core's OCaml state, with a condition. Every lock is on
    one list, so a forked child can make each anew; none is freed, as a
    device and a module live as long as their process. */
-struct dc_lock {
-  dc_mutex mu;
-  dc_cond cv;
-  struct dc_lock *next;
+struct rig_lock {
+  rig_mutex mu;
+  rig_cond cv;
+  struct rig_lock *next;
 };
 
-static _Atomic(struct dc_lock *) locks;
+static _Atomic(struct rig_lock *) locks;
 
-#define Lock_val(v) ((struct dc_lock *)Long_val(v))
+#define Lock_val(v) ((struct rig_lock *)Long_val(v))
 
 /* After fork, the locks are made anew, since a thread of the parent may
    have held them. Each device is made anew and its calls in flight
@@ -191,13 +193,13 @@ static _Atomic(struct dc_lock *) locks;
 #ifndef _WIN32
 static void forked_child(void) {
   static char why[] = "forked";
-  for (struct dc_lock *l = atomic_load(&locks); l != NULL; l = l->next) {
+  for (struct rig_lock *l = atomic_load(&locks); l != NULL; l = l->next) {
     mutex_init(&l->mu);
     cond_init(&l->cv);
   }
   int n = atomic_load(&top);
   for (int i = 1; i <= n; i++) {
-    struct dc_device *d = dc_device_of(i);
+    struct rig_device *d = device_of(i);
     if (d == NULL) continue;
     mu_init(d);
     d->turn = d->inside = d->owed = d->spreading = 0;
@@ -205,7 +207,7 @@ static void forked_child(void) {
     d->inherited = 1;
     char *none = NULL;
     atomic_compare_exchange_strong(&d->lost, &none, why);
-    atomic_store(&d->answer, DC_UNKNOWN);
+    atomic_store(&d->answer, RIG_ANSWER_UNKNOWN);
   }
 }
 
@@ -220,7 +222,7 @@ value caml_rig_lock_new(value unit) {
 #ifndef _WIN32
   pthread_once(&atfork_once, atfork);
 #endif
-  struct dc_lock *l = malloc(sizeof *l);
+  struct rig_lock *l = malloc(sizeof *l);
   if (l == NULL) caml_raise_out_of_memory();
   mutex_init(&l->mu);
   cond_init(&l->cv);
@@ -250,7 +252,7 @@ value caml_rig_lock_give(value v_l) {
    it or a spurious wake-up, then takes it back; without the domain lock
    meanwhile. */
 value caml_rig_lock_wait(value v_l) {
-  struct dc_lock *l = Lock_val(v_l);
+  struct rig_lock *l = Lock_val(v_l);
   caml_enter_blocking_section_no_pending();
   cond_wait(&l->cv, &l->mu);
   caml_leave_blocking_section();
@@ -265,21 +267,21 @@ value caml_rig_lock_broadcast(value v_l) {
 /* Takes, then gives, every lock, in the list's order: what a thread
    inside each lock at once holds, for tests. */
 void rig_locks_take(void) {
-  for (struct dc_lock *l = atomic_load(&locks); l != NULL; l = l->next)
+  for (struct rig_lock *l = atomic_load(&locks); l != NULL; l = l->next)
     mutex_lock(&l->mu);
 }
 
 void rig_locks_give(void) {
-  for (struct dc_lock *l = atomic_load(&locks); l != NULL; l = l->next)
+  for (struct rig_lock *l = atomic_load(&locks); l != NULL; l = l->next)
     mutex_unlock(&l->mu);
 }
 
 /* A device record of index [v_index] named [v_name]. */
-static struct dc_device *record(value v_index, value v_name) {
+static struct rig_device *record(value v_index, value v_name) {
   int index = Int_val(v_index);
-  if (index <= 0 || index >= DC_DEVICES)
+  if (index <= 0 || index >= RIG_DEVICES)
     caml_invalid_argument("device index out of range");
-  struct dc_device *d = calloc(1, sizeof *d);
+  struct rig_device *d = calloc(1, sizeof *d);
   char *name = strdup(String_val(v_name));
   if (d == NULL || name == NULL) {
     free(d);
@@ -292,7 +294,7 @@ static struct dc_device *record(value v_index, value v_name) {
   return d;
 }
 
-static value publish(struct dc_device *d) {
+static value publish(struct rig_device *d) {
   atomic_store_explicit(&devices[d->index], d, memory_order_release);
   int t = atomic_load(&top);
   while (t < d->index && !atomic_compare_exchange_weak(&top, &t, d->index)) {
@@ -306,7 +308,7 @@ value caml_rig_device_new(value v_index, value v_name,
                                   value v_may_block, value v_self,
                                   value v_room, value v_submit,
                                   value v_word) {
-  struct dc_device *d = record(v_index, v_name);
+  struct rig_device *d = record(v_index, v_name);
   d->may_block = Bool_val(v_may_block);
   d->self = (void *)Nativeint_val(v_self);
   d->room = (rig_room_fn *)Nativeint_val(v_room);
@@ -318,7 +320,7 @@ value caml_rig_device_new(value v_index, value v_name,
 /* An io device of index [v_index]: no queue and no word; its state is its
    io library's. */
 value caml_rig_io_new(value v_index, value v_name) {
-  struct dc_device *d = record(v_index, v_name);
+  struct rig_device *d = record(v_index, v_name);
   d->io = 1;
   return publish(d);
 }
@@ -330,12 +332,12 @@ value caml_rig_device_new_byte(value *argv, int argn) {
 }
 
 value caml_rig_word(value v_d) {
-  return Val_long((intnat)dc_word(Device_val(v_d)));
+  return Val_long((intnat)device_word(Device_val(v_d)));
 }
 
 /* Records [v] as read from [d]'s word, for a word behind a transport. */
 value caml_rig_set_seen(value v_d, value v) {
-  struct dc_device *d = Device_val(v_d);
+  struct rig_device *d = Device_val(v_d);
   uint64_t seen = atomic_load(&d->seen), w = (uint64_t)Long_val(v);
   while (seen < w && !atomic_compare_exchange_weak(&d->seen, &seen, w)) {
   }
@@ -343,7 +345,7 @@ value caml_rig_set_seen(value v_d, value v) {
 }
 
 value caml_rig_submitted(value v_d) {
-  struct dc_device *d = Device_val(v_d);
+  struct rig_device *d = Device_val(v_d);
   return Val_long((intnat)atomic_load_explicit(&d->submitted,
                                                memory_order_acquire));
 }
@@ -371,7 +373,7 @@ value caml_rig_inherited(value v_d) {
 /* Loses [d] with the reason [why], which the record keeps: answers 1 if
    this call lost it, 0 if it was lost already. Its stop is claimable once
    its loser finished spreading it ([finish]). The mutex is held. */
-static int lose_locked(struct dc_device *d, char *why) {
+static int lose_locked(struct rig_device *d, char *why) {
   char *none = NULL;
   if (!atomic_compare_exchange_strong_explicit(
           &d->lost, &none, why, memory_order_acq_rel, memory_order_acquire))
@@ -383,10 +385,10 @@ static int lose_locked(struct dc_device *d, char *why) {
 
 /* Claims [d]'s stop if [d] is lost, spread, owed its stop and runs no
    counted call: the claimant runs it. The mutex is held. */
-static int claim_locked(struct dc_device *d) {
+static int claim_locked(struct rig_device *d) {
   if (!is_lost(d) || !d->owed || d->spreading || d->inside != 0) return 0;
   d->owed = 0;
-  atomic_store(&d->answer, DC_STOPPING);
+  atomic_store(&d->answer, RIG_ANSWER_STOPPING);
   return 1;
 }
 
@@ -406,11 +408,11 @@ static void claims_push(struct claims *k, int index) {
   k->index[k->n++] = index;
 }
 
-static void spread(struct dc_device *p, struct claims *k);
+static void spread(struct rig_device *p, struct claims *k);
 
 /* Ends [d]'s spreading: its stop is owed, and claimed here if no call is
    inside. */
-static void finish(struct dc_device *d, struct claims *k) {
+static void finish(struct rig_device *d, struct claims *k) {
   mu_lock(d);
   d->spreading = 0;
   d->owed = 1;
@@ -422,10 +424,10 @@ static void finish(struct dc_device *d, struct claims *k) {
    unreached value of the lost [p], reading both words as they stand, and
    spreads from each. A device is lost once, so each is visited once. The
    domain lock is released and no mutex held. */
-static void spread(struct dc_device *p, struct claims *k) {
+static void spread(struct rig_device *p, struct claims *k) {
   int n = atomic_load(&top);
   for (int i = 1; i <= n; i++) {
-    struct dc_device *c = dc_device_of(i);
+    struct rig_device *c = device_of(i);
     if (c == NULL || c == p || is_lost(c)) continue;
     size_t len = strlen(p->name) + sizeof " lost";
     char *why = malloc(len);
@@ -433,12 +435,12 @@ static void spread(struct dc_device *p, struct claims *k) {
       memcpy(why, p->name, strlen(p->name));
       memcpy(why + strlen(p->name), " lost", sizeof " lost");
     }
-    uint64_t pw = dc_word(p);
+    uint64_t pw = device_word(p);
     int won = 0;
     mu_lock(c);
-    uint64_t cw = dc_word(c);
+    uint64_t cw = device_word(c);
     for (int j = 0; j < c->nrecord && !won; j++) {
-      struct dc_entry *e = &c->record[j];
+      struct rig_entry *e = &c->record[j];
       if (e->producer == p->index && e->w > pw && e->u > cw)
         won = lose_locked(c, why != NULL ? why : p->name);
     }
@@ -464,7 +466,7 @@ static value claims_value(int won, struct claims *k) {
    call lost it, then the indices of the devices whose stops it claimed,
    whose stops the caller runs. */
 value caml_rig_lose(value v_d, value v_why) {
-  struct dc_device *d = Device_val(v_d);
+  struct rig_device *d = Device_val(v_d);
   char *why = strdup(String_val(v_why));
   if (why == NULL) caml_raise_out_of_memory();
   struct claims k = {0, 0, NULL};
@@ -481,7 +483,8 @@ value caml_rig_lose(value v_d, value v_why) {
   return claims_value(won, &k);
 }
 
-/* Records [d]'s stop's answer, [DC_STOPPED] or [DC_UNKNOWN]. */
+/* Records [d]'s stop's answer, [RIG_ANSWER_STOPPED] or
+   [RIG_ANSWER_UNKNOWN]. */
 value caml_rig_set_answer(value v_d, value v_answer) {
   atomic_store(&Device_val(v_d)->answer, Int_val(v_answer));
   return Val_unit;
@@ -493,13 +496,13 @@ value caml_rig_set_answer(value v_d, value v_answer) {
    recorded it. Never for a device a forked child inherited, whose word
    it reads not. */
 value caml_rig_upgrade(value v_d) {
-  struct dc_device *d = Device_val(v_d);
+  struct rig_device *d = Device_val(v_d);
   if (d->inherited) return Val_false;
-  if (atomic_load(&d->answer) != DC_UNKNOWN) return Val_false;
-  if (dc_word(d) < atomic_load(&d->submitted)) return Val_false;
-  int unknown = DC_UNKNOWN;
+  if (atomic_load(&d->answer) != RIG_ANSWER_UNKNOWN) return Val_false;
+  if (device_word(d) < atomic_load(&d->submitted)) return Val_false;
+  int unknown = RIG_ANSWER_UNKNOWN;
   return Val_bool(atomic_compare_exchange_strong(&d->answer, &unknown,
-                                                 DC_STOPPED));
+                                                 RIG_ANSWER_STOPPED));
 }
 
 /* Counted calls */
@@ -507,7 +510,7 @@ value caml_rig_upgrade(value v_d) {
 /* Counts a call on [d]: 0 once it is counted, 1 if [d] is lost, 3 if [d]
    is lost and this call claimed its stop. */
 value caml_rig_enter(value v_d) {
-  struct dc_device *d = Device_val(v_d);
+  struct rig_device *d = Device_val(v_d);
   int released = take(d);
   int r = 0;
   if (is_lost(d)) r = claim_locked(d) ? 3 : 1;
@@ -518,7 +521,7 @@ value caml_rig_enter(value v_d) {
 
 /* Ends a counted call on [d]: answers whether it claimed [d]'s stop. */
 value caml_rig_exit(value v_d) {
-  struct dc_device *d = Device_val(v_d);
+  struct rig_device *d = Device_val(v_d);
   int released = take(d);
   d->inside--;
   int claimed = claim_locked(d);
@@ -530,11 +533,11 @@ value caml_rig_exit(value v_d) {
    released, until it reads [v_target], [d] is lost, or [v_ms] milliseconds
    passed. Answers the last value read. */
 value caml_rig_spin(value v_d, value v_target, value v_ms) {
-  struct dc_device *d = Device_val(v_d);
+  struct rig_device *d = Device_val(v_d);
   uint64_t target = (uint64_t)Long_val(v_target), w;
   int64_t until = now_ms() + Long_val(v_ms);
   caml_enter_blocking_section_no_pending();
-  while ((w = dc_word(d)) < target && !is_lost(d) && now_ms() < until)
+  while ((w = device_word(d)) < target && !is_lost(d) && now_ms() < until)
     relax();
   caml_leave_blocking_section();
   return Val_long((intnat)w);
@@ -545,10 +548,10 @@ value caml_rig_spin(value v_d, value v_target, value v_ms) {
 value caml_rig_producers(value v_d) {
   CAMLparam1(v_d);
   CAMLlocal1(a);
-  struct dc_device *d = Device_val(v_d);
+  struct rig_device *d = Device_val(v_d);
   int released = take(d), n = 0;
   int buf[64];
-  uint64_t w = dc_word(d);
+  uint64_t w = device_word(d);
   for (int j = 0; j < d->nrecord && n < 64; j++)
     if (d->record[j].u > w) buf[n++] = d->record[j].producer;
   give(d, released);
@@ -560,17 +563,17 @@ value caml_rig_producers(value v_d) {
 /* Grows [d]'s record so that [v_n] more entries fit. The array is made
    with no mutex held, which a mutex section never waits for. */
 value caml_rig_ensure_record(value v_d, value v_n) {
-  struct dc_device *d = Device_val(v_d);
+  struct rig_device *d = Device_val(v_d);
   int n = Int_val(v_n);
   int released = take(d);
   int want = d->nrecord + n, have = d->crecord;
   give(d, released);
   if (want <= have) return Val_unit;
   int c = 2 * want < 8 ? 8 : 2 * want;
-  struct dc_entry *grown = malloc((size_t)c * sizeof *grown);
+  struct rig_entry *grown = malloc((size_t)c * sizeof *grown);
   if (grown == NULL) caml_raise_out_of_memory();
   released = take(d);
-  struct dc_entry *old = NULL;
+  struct rig_entry *old = NULL;
   if (d->crecord < c) {
     if (d->nrecord > 0)
       memcpy(grown, d->record, (size_t)d->nrecord * sizeof *grown);
@@ -590,58 +593,57 @@ value caml_rig_ensure_record(value v_d, value v_n) {
 /* Records [s]'s in-queue waits in [d]'s record, for spread, after dropping
    the entries [d]'s word shows reached, and refuses if a producer is lost.
    The mutex is held. */
-static int record_waits(struct dc_device *d, struct dc_sub *s) {
-  uint64_t w = dc_word(d);
+static int record_waits(struct rig_device *d, struct rig_sub *s) {
+  uint64_t w = device_word(d);
   int k = 0;
   for (int j = 0; j < d->nrecord; j++)
     if (d->record[j].u > w) d->record[k++] = d->record[j];
   d->nrecord = k;
-  if (s->nwaits == 0) return DC_OK;
-  if (k + s->nwaits > d->crecord) return DC_NEED_RECORD;
+  if (s->nwaits == 0) return SUBMIT_OK;
+  if (k + s->nwaits > d->crecord) return SUBMIT_NEED_RECORD;
   uint64_t u = atomic_load(&d->submitted) + 1;
   for (int j = 0; j < s->nwaits; j++)
-    d->record[k + j] = (struct dc_entry){s->producers[j], s->waits[j].value, u};
+    d->record[k + j] =
+        (struct rig_entry){s->producers[j], s->waits[j].value, u};
   d->nrecord = k + s->nwaits;
   for (int j = 0; j < s->nwaits; j++) {
-    struct dc_device *p = dc_device_of(s->producers[j]);
+    struct rig_device *p = device_of(s->producers[j]);
     if (p != NULL && is_lost(p)) {
       d->nrecord = k;
       s->producer = s->producers[j];
-      return DC_PRODUCER_LOST;
+      return SUBMIT_PRODUCER_LOST;
     }
   }
-  return DC_OK;
+  return SUBMIT_OK;
 }
-
-void dc_sub_raise(struct dc_sub *s, uint64_t p);
 
 /* Asks [d]'s driver for room for [s]; once the parts fit, assigns the next
    value, stores it as submitted, hands the work over and raises [s]'s
    stamps. Called under [d]'s turn. */
-static int admit(struct dc_device *d, struct dc_sub *s) {
+static int admit(struct rig_device *d, struct rig_sub *s) {
   int room = d->room(d->self, s->parts, s->nparts);
-  if (room == RIG_NEVER) return DC_NEVER;
+  if (room == RIG_NEVER) return SUBMIT_NEVER;
   if (room == RIG_LATER) {
     s->no_room_at = atomic_load(&d->submitted);
-    return DC_NO_ROOM;
+    return SUBMIT_NO_ROOM;
   }
   uint64_t v = atomic_load(&d->submitted) + 1;
   atomic_store_explicit(&d->submitted, v, memory_order_release);
   const char *why = NULL;
   int r = d->submit(d->self, v, s->waits, s->nwaits, s->parts, s->nparts,
                     s->handles, s->nhandles, &why);
-  dc_sub_raise(s, DC_POINT(d->index, v));
+  rig_sub_raise(s, RIG_POINT(d->index, v));
   s->v = v;
-  if (r == RIG_OK) return DC_OK;
+  if (r == RIG_OK) return SUBMIT_OK;
   s->why = why != NULL ? why : "the driver's submit failed";
-  return DC_FAILED;
+  return SUBMIT_FAILED;
 }
 
 /* Submits [s] on its device: the turn, room, the value, the hand-over and
    the stamps, in one call that runs no OCaml. */
 value caml_rig_submit(value v_s) {
-  struct dc_sub *s = *(struct dc_sub **)Data_custom_val(v_s);
-  struct dc_device *d = s->dev;
+  struct rig_sub *s = *(struct rig_sub **)Data_custom_val(v_s);
+  struct rig_device *d = s->dev;
   struct claims k = {0, 0, NULL};
   int released = 0, r;
   s->nclaims = 0;
@@ -649,22 +651,22 @@ value caml_rig_submit(value v_s) {
     caml_enter_blocking_section_no_pending();
     released = 1;
     mu_lock(d);
-    int64_t until = now_ms() + DC_STILL_MS;
+    int64_t until = now_ms() + STILL_MS;
     int64_t left;
     while (d->turn && !is_lost(d) && (left = until - now_ms()) > 0)
       cv_wait_ms(d, (int)left);
     if (d->turn && !is_lost(d)) {
-      r = DC_BUSY;
+      r = SUBMIT_BUSY;
       goto out;
     }
   } else
     released = take(d);
   if (is_lost(d)) {
-    r = DC_LOST;
+    r = SUBMIT_LOST;
     goto out;
   }
   r = record_waits(d, s);
-  if (r != DC_OK) goto out;
+  if (r != SUBMIT_OK) goto out;
   if (!d->may_block) r = admit(d, s);
   else {
     d->turn = 1;
@@ -676,29 +678,29 @@ value caml_rig_submit(value v_s) {
     d->inside--;
     cv_broadcast(d);
   }
-  if (r == DC_NO_ROOM || r == DC_NEVER) d->nrecord -= s->nwaits;
-  if (r == DC_FAILED) {
+  if (r == SUBMIT_NO_ROOM || r == SUBMIT_NEVER) d->nrecord -= s->nwaits;
+  if (r == SUBMIT_FAILED) {
     char *why = strdup(s->why);
     if (!lose_locked(d, why != NULL ? why : d->name)) {
       free(why);
-      r = DC_LOST;
+      r = SUBMIT_LOST;
     }
-  } else if (r == DC_OK && is_lost(d))
-    r = DC_LOST_AFTER;
+  } else if (r == SUBMIT_OK && is_lost(d))
+    r = SUBMIT_LOST_AFTER;
 out:;
   int claimed = claim_locked(d);
   mu_unlock(d);
-  if (r == DC_FAILED) {
+  if (r == SUBMIT_FAILED) {
     if (!released) caml_enter_blocking_section_no_pending();
     released = 1;
     spread(d, &k);
     finish(d, &k);
   }
   if (released) caml_leave_blocking_section();
-  if (k.n > 0 || r == DC_FAILED) {
+  if (k.n > 0 || r == SUBMIT_FAILED) {
     free(s->claims);
     s->claims = k.index;
     s->nclaims = k.n;
   }
-  return Val_int(r | (claimed ? DC_STOP_CLAIMED : 0));
+  return Val_int(r | (claimed ? SUBMIT_STOP_CLAIMED : 0));
 }

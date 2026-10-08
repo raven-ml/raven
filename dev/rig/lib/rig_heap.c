@@ -50,7 +50,7 @@ value caml_rig_page_size(value unit) {
 
 /* The host clock: nanoseconds of the monotonic clock; on macOS, mach time,
    the time base of Metal's command buffer times. */
-uint64_t dc_now_ns(void) {
+static uint64_t now_ns(void) {
 #if defined(_WIN32)
   LARGE_INTEGER count, frequency;
   QueryPerformanceCounter(&count);
@@ -80,13 +80,13 @@ value caml_rig_arch(value unit) {
 
 value caml_rig_now(value unit) {
   (void)unit;
-  return Val_long((intnat)dc_now_ns());
+  return Val_long((intnat)now_ns());
 }
 
 /* Stores the host clock into the word at [word], for a device library's
    completion path: one aligned atomic store, no lock. */
 void rig_timestamp(void *word) {
-  atomic_store_explicit((_Atomic uint64_t *)word, dc_now_ns(),
+  atomic_store_explicit((_Atomic uint64_t *)word, now_ns(),
                         memory_order_release);
 }
 
@@ -657,14 +657,14 @@ value caml_rig_bigarray_view(value v_src, value v_kind,
 
 /* Copies [v_n] bytes between host addresses, releasing the runtime from
    64 KiB on. */
-#define DC_BLOCKING_BYTES (1 << 16)
+#define BLOCKING_BYTES (1 << 16)
 
 value caml_rig_memmove(value v_dst, value v_src, value v_n) {
   void *dst = (void *)Long_val(v_dst);
   const void *src = (const void *)Long_val(v_src);
   size_t n = (size_t)Long_val(v_n);
   if (n == 0) return Val_unit;
-  if (n >= DC_BLOCKING_BYTES) {
+  if (n >= BLOCKING_BYTES) {
     caml_enter_blocking_section_no_pending();
     memmove(dst, src, n);
     caml_leave_blocking_section();
