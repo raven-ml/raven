@@ -209,7 +209,9 @@ static int proxy_submit(void *self, uint64_t v, const struct rig_wait *waits,
   int r = rig_remote_queue(l, K_HANDOVER, buf, n, NULL);
   free(buf);
   if (r == 0) return RIG_OK;
-  *failure = r == -2 ? "out of memory for a hand-over" : why(l);
+  *failure = r == -2   ? "out of memory for a hand-over"
+             : r == -3 ? "the job is closed"
+                       : why(l);
   return RIG_FAILED;
 }
 
@@ -222,7 +224,12 @@ value caml_rig_remote_proxy_make(value link, value id) {
   if (d == NULL) caml_raise_out_of_memory();
   d->link = Link_c(link);
   d->id = (uint64_t)Long_val(id);
-  rig_remote_add_dev(d);
+  int r = rig_remote_add_dev(d);
+  if (r != 0) free(d);
+  if (r == -2) caml_raise_out_of_memory();
+  if (r == -1)
+    caml_invalid_argument(
+        "Rig_remote_proxy.make: the link has a proxy of that device");
   return caml_copy_nativeint((intnat)d);
 }
 

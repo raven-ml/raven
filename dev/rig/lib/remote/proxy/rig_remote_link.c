@@ -545,7 +545,7 @@ static int recv_cmd(struct rig_remote_link *l, int kind, uint64_t n, int64_t *la
 
 /* Proxies */
 
-void rig_remote_add_dev(struct rig_remote_dev *d) {
+int rig_remote_add_dev(struct rig_remote_dev *d) {
   struct rig_remote_link *l = d->link;
   pthread_mutex_lock(&l->mu);
   if (d->id >= l->ndevs) {
@@ -553,14 +553,16 @@ void rig_remote_add_dev(struct rig_remote_dev *d) {
     struct rig_remote_dev **a = realloc(l->devs, n * sizeof *a);
     if (a == NULL) {
       pthread_mutex_unlock(&l->mu);
-      return;
+      return -2;
     }
     memset(a + l->ndevs, 0, (n - l->ndevs) * sizeof *a);
     l->devs = a;
     l->ndevs = n;
   }
-  l->devs[d->id] = d;
+  int taken = l->devs[d->id] != NULL;
+  if (!taken) l->devs[d->id] = d;
   pthread_mutex_unlock(&l->mu);
+  return taken ? -1 : 0;
 }
 
 static struct rig_remote_dev *dev_of(struct rig_remote_link *l, uint64_t id) {
@@ -698,10 +700,11 @@ int rig_remote_queue(struct rig_remote_link *l, int kind,
          l->queued + n > QUEUE_BYTES)
     pthread_cond_wait(&l->cv, &l->mu);
   if (atomic_load(&l->failed) || l->closing) {
+    int r = atomic_load(&l->failed) ? -1 : -3;
     pthread_mutex_unlock(&l->mu);
     free(buf);
     free(e);
-    return -1;
+    return r;
   }
   if (l->tail != NULL)
     l->tail->next = e;

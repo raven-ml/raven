@@ -244,6 +244,7 @@ type machine = {
   ag : agent;
   far : Link.t; (* the controller's end *)
   host : Rig.t;
+  raw : Proxy.t; (* the host's proxy, which [host] drives *)
   devices : Rig.t array; (* MEM:1, MEM:2, … *)
 }
 
@@ -306,14 +307,12 @@ let with_machine ?(reaches = []) ?(room = max_int) f =
     | _ -> ());
     served ()
   in
+  let raw =
+    Proxy.make far host_account
+      (Rig_remote_abi.Host { machine; rail = no_rails })
+  in
   match
-    Rig.open_host
-      (module Proxy)
-      ~machine ~name:"CPU"
-      (fun () ->
-        Ok
-          (Proxy.make far host_account
-             (Rig_remote_abi.Host { machine; rail = no_rails })))
+    Rig.open_host (module Proxy) ~machine ~name:"CPU" (fun () -> Ok raw)
   with
   | Error e ->
       finish None;
@@ -339,7 +338,7 @@ let with_machine ?(reaches = []) ?(room = max_int) f =
                          (Proxy.make far a
                             (Rig_remote_abi.Device { id = a.id })))))
           in
-          let m = { ag; far; host; devices } in
+          let m = { ag; far; host; raw; devices } in
           f m;
           match Mutex.protect ag.lock (fun () -> ag.violations) with
           | [] -> ()

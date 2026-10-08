@@ -581,10 +581,7 @@ let counted =
    as before. *)
 let quiet_after_failure () =
   with_machine @@ fun m ->
-  let p =
-    Proxy.make m.far (account 0 ~reaches:[])
-      (Rig_remote_abi.Host { machine = "direct"; rail = no_rails })
-  in
+  let p = m.raw in
   let r = require_some (Proxy.alloc p `Device 16) in
   let i =
     match Proxy.image p "run" with
@@ -599,10 +596,7 @@ let quiet_after_failure () =
 
 let counted_after_failure (_, call) =
   with_machine @@ fun m ->
-  let p =
-    Proxy.make m.far (account 0 ~reaches:[])
-      (Rig_remote_abi.Host { machine = "direct"; rail = no_rails })
-  in
+  let p = m.raw in
   let r = require_some (Proxy.alloc p `Device 16) in
   let i =
     match Proxy.image p "run" with
@@ -728,12 +722,9 @@ let failures =
         quiet_after_failure;
       test "closing a device ends it alone" close_device;
       test "closing the host waits for its submitted work" close_waits;
-      xfail ~reason:"the hand-over says \"the job failed\" for a closing job"
-        (test "a hand-over on a closing job fails naming the close"
-           closing_handover);
-      xfail ~reason:"make overwrites the first proxy's slot in the link"
-        (test "make refuses a second proxy of an account on the link"
-           second_proxy);
+      test "a hand-over on a closing job fails naming the close"
+        closing_handover;
+      test "make refuses a second proxy of an account on the link" second_proxy;
     ]
 
 let () =

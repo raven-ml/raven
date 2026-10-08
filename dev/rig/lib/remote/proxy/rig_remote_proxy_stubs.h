@@ -189,14 +189,15 @@ struct rig_remote_dev {
 int rig_remote_forked(struct rig_remote_job *j);
 
 /* Queues a frame of [kind] whose payload is the [n] bytes at [p], waiting
-   while the queue is full: [0]; [-1] if the link failed or closes, the frame
-   then dropped; [-2] if memory ran out. Called without the runtime, and
+   while the queue is full: [0]; [-1] if the job failed, or [-3] if the link
+   closes, the frame then dropped; [-2] if memory ran out. Called without the runtime, and
    without the link's lock. */
 int rig_remote_queue(struct rig_remote_link *l, int kind,
                      const unsigned char *p, size_t n, struct pending *q);
 
-/* Adds [d] to its link's proxies. */
-void rig_remote_add_dev(struct rig_remote_dev *d);
+/* Adds [d] to its link's proxies: [0]; [-1] if the link has a proxy of
+   [d]'s id; [-2] if memory ran out. */
+int rig_remote_add_dev(struct rig_remote_dev *d);
 
 #define Link_c(v) ((struct rig_remote_link *)Nativeint_val(Field(v, 0)))
 
