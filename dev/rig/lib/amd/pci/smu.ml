@@ -60,13 +60,17 @@ let debug_port =
 let done_ = 1
 let default_ms = 10_000
 
-(* Sends message [m] with [param] and waits for the answer, as the kernel's
-   smu_cmn_send_smc_msg_with_param does; the argument register then holds the
-   reply. *)
-(* [ask s m param] sends message [m] and is [Ok reply], or [Error answer] for
-   any answer but done. *)
+(* [ask s m param] sends message [m] with [param] and waits for the answer, as
+   the kernel's smu_cmn_send_smc_msg_with_param does: it is [Ok reply], the
+   argument register's, or [Error answer] for any answer but done. On the main
+   port a message is sent only once the last one was answered, which the
+   firmware may still be running. *)
 let ask ?(debug = false) ?(ms = default_ms) s m param =
   let resp, arg, cmd = if debug then debug_port else port in
+  if not debug then
+    Regs.wait ~ms s.r
+      (strf "the power manager's answer to the message before 0x%x" m)
+      (fun () -> Regs.read s.r resp <> 0);
   Regs.write ~value:0 s.r resp [];
   Regs.write ~value:param s.r arg [];
   Regs.write ~value:m s.r cmd [];
@@ -140,13 +144,12 @@ let frequencies s clock =
       Hashtbl.replace s.levels clock l;
       l
 
-(* A power manager may refuse a clock's soft minimum within 20 ms; its maximum
-   then still holds the clock below. GFX9's graphics clock is the firmware's
-   alone: the table has no such clock. *)
-let soft_min_ms = 20
-
 (* A clock whose DPM is off, as before the power manager's features are enabled,
-   runs at its boot frequency, which no request changes. *)
+   runs at its boot frequency, which no request changes. Each clock's soft
+   maximum and minimum are set to the level's frequency, each answer checked, in
+   the order that never asks a minimum above the maximum: the maximum first when
+   raising, as smu_v14_0_set_soft_freq_limited_range, the minimum first when
+   lowering. GFX9's power manager takes no maximum. *)
 let clocks s level =
   let gc = Regs.version (Regs.layout_of s.r) D.gc_hwid in
   let features = features s in
@@ -162,17 +165,20 @@ let clocks s level =
                 | `Lowest -> List.hd l
                 | `Highest -> List.nth l (List.length l - 1)
               in
-              (try
-                 ignore
-                   (send ~ms:soft_min_ms s
-                      (id s "PPSMC_MSG_SetSoftMinByFreq")
-                      (clock_request ~clock v))
-               with Regs.Stuck _ -> ());
-              if gc >= (10, 0, 0) then
-                ignore
-                  (send s
-                     (id s "PPSMC_MSG_SetSoftMaxByFreq")
-                     (clock_request ~clock v)))
+              let set name =
+                ignore (send s (id s name) (clock_request ~clock v))
+              in
+              let min () = set "PPSMC_MSG_SetSoftMinByFreq" in
+              let max () =
+                if gc >= (10, 0, 0) then set "PPSMC_MSG_SetSoftMaxByFreq"
+              in
+              (match level with
+              | `Highest ->
+                  max ();
+                  min ()
+              | `Lowest ->
+                  min ();
+                  max ()))
       | Some _ | None -> ())
     [ "PPCLK_UCLK"; "PPCLK_FCLK"; "PPCLK_SOCCLK"; "PPCLK_GFXCLK" ]
 
