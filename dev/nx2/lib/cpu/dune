@@ -1,0 +1,10 @@
+; Kernels for host memory.
+
+(library
+ (name nx_cpu)
+ (libraries nx_array rig rig.pool)
+ (foreign_stubs
+  (language c)
+  (include_dirs ../array)
+  (extra_deps convert.inc)
+  (names target target_base target_v3 job walk stage copy)))
