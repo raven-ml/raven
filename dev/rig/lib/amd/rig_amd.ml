@@ -85,13 +85,14 @@ let ops (type m) (p : m path) =
 
 type region = {
   owner : int; (* the device's C state *)
-  address : int;
-  host : int option;
   bytes : int;
   mem : mem;
   flush : int option; (* the HDP register this region keeps flushed *)
   live : bool Atomic.t; (* taken once, by the free that ends it *)
 }
+
+let region owner ?flush n m =
+  { owner; bytes = n; mem = m; flush; live = Atomic.make true }
 
 (* C state *)
 
@@ -456,17 +457,7 @@ let make (type m) (p : m path) =
     let grow =
       grow_scratch self ops p.gpu ~desc:(mem_address pointers) scratch
     in
-    let word =
-      {
-        owner = self;
-        address = mem_address word;
-        host = Some word_host;
-        bytes = 8;
-        mem = word;
-        flush = None;
-        live = Atomic.make true;
-      }
-    in
+    let word = region self 8 word in
     Ok
       {
         self;
@@ -527,22 +518,11 @@ let self g = Nativeint.of_int g.self
 let count_hdp g reg delta =
   Mutex.protect g.hdps (fun () -> hdp_count g.self reg delta)
 
-let region g ?flush n m =
-  {
-    owner = g.self;
-    address = mem_address m;
-    host = mem_host m;
-    bytes = n;
-    mem = m;
-    flush;
-    live = Atomic.make true;
-  }
-
 let alloc g kind n =
   if n < 1 then invalid_argf "Rig_amd.alloc: %d bytes, expected at least 1" n;
-  let system () = Option.map (region g n) (g.ops.alloc `System n) in
+  let system () = Option.map (region g.self n) (g.ops.alloc `System n) in
   match kind with
-  | `Device -> Option.map (region g n) (g.ops.alloc `Gpu n)
+  | `Device -> Option.map (region g.self n) (g.ops.alloc `Gpu n)
   | `Pinned -> system ()
   | `Mapped -> (
       match g.hdp with
@@ -552,7 +532,7 @@ let alloc g kind n =
           | None -> system ()
           | Some m ->
               ignore (count_hdp g reg 1);
-              Some (region g ~flush:reg n m)))
+              Some (region g.self ~flush:reg n m)))
 
 (* Gives back [r], whose [live] the caller took. *)
 let release g r =
@@ -567,9 +547,9 @@ let free g r =
     invalid_arg "Rig_amd.free: the region was freed";
   release g r
 
-let address (r : region) = Some r.address
-let handle (r : region) = Nativeint.of_int r.address
-let host (r : region) = r.host
+let address r = Some (mem_address r.mem)
+let handle r = Nativeint.of_int (mem_address r.mem)
+let host r = mem_host r.mem
 let peer g g' = g.self <> g'.self && g.path = g'.path && g.ops.reaches g'.index
 
 let map_peer g g' r =
@@ -579,7 +559,7 @@ let map_peer g g' r =
   match g.ops.map_peer r.mem with
   | None -> None
   | Some m -> (
-      let view flush = Some (region g ?flush r.bytes m) in
+      let view flush = Some (region g.self ?flush r.bytes m) in
       match r.flush with
       | Some reg when count_hdp g reg 1 -> view (Some reg)
       | Some _ ->
@@ -589,7 +569,7 @@ let map_peer g g' r =
 
 let map_host g a n =
   if n < 1 then invalid_argf "Rig_amd.map_host: %d bytes, expected at least 1" n;
-  Option.map (region g n) (g.ops.map_host a n)
+  Option.map (region g.self n) (g.ops.map_host a n)
 
 (* Images *)
 
@@ -637,11 +617,10 @@ let image g bin =
           (strf "kernel %s takes %d bytes of local data share; the GPU has %d"
              name n g.lds)
     | None ->
-        let lay (r : region) =
-          let m =
-            { holder = g.self; co; base = r.address; loaded = Atomic.make true }
-          in
-          (m, image_bytes co)
+        let lay r =
+          let base = mem_address r.mem in
+          ( { holder = g.self; co; base; loaded = Atomic.make true },
+            image_bytes co )
         in
         Ok (`Place (Code_object.size co, lay))
 
