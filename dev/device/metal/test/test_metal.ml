@@ -523,6 +523,17 @@ let entries () =
     [ "fill"; "step"; "spin"; "bump" ];
   equal (option int) None (Device_metal.entry t.fill "absent")
 
+let unloaded_twice () =
+  let t = dev () in
+  let i, _ =
+    require_ok (Device_metal.image t.d (S.fixture ~dir:"fixtures" "fill"))
+  in
+  let other = opened () in
+  raises_match Exn.invalid_arg (fun () -> Device_metal.unload other i);
+  Device_metal.unload t.d i;
+  raises_match Exn.invalid_arg (fun () -> Device_metal.unload t.d i);
+  raises_match Exn.invalid_arg (fun () -> Device_metal.entry i "fill")
+
 let unloaded_releases () =
   let t = dev () in
   let weaks =
@@ -547,6 +558,8 @@ let images =
     [
       test "bytes that are no metallib are an error" not_metallib;
       test "each function of the image has an entry" entries;
+      test "unload and entry refuse an unloaded image or another device's"
+        unloaded_twice;
       test "unloaded images release their pipelines" unloaded_releases;
     ]
 

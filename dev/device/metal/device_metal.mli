@@ -243,13 +243,17 @@ val image : t -> string -> (image * (region * string) option, string) result
 
 val entry : image -> string -> int option
 (** [entry i f] is the address of the [MTLComputePipelineState] of [i]'s
-    function [f], or [None] if [i] has no function [f]. *)
+    function [f], or [None] if [i] has no function [f].
+
+    Raises [Invalid_argument] if [i] was unloaded. *)
 
 val unload : t -> image -> unit
 (** [unload d i] releases [i]'s pipelines. An indirect command buffer made with
     one of them keeps it until its own release ({!Device_metal_abi.icb}). The
     caller unloads once no work that names a pipeline of [i] directly is in
-    flight, and never twice. *)
+    flight.
+
+    Raises [Invalid_argument] if [i] is another device's or was unloaded. *)
 
 (** {1:work Work} *)
 

@@ -210,18 +210,30 @@ let unmap d r = give_back "unmap" Mapped d r
 
 (* Images *)
 
-type image = { names : string array; pipelines : nativeint array }
+type image = {
+  owner : int;
+  names : string array;
+  pipelines : nativeint array;
+  mutable loaded : bool;
+}
 
 let image d b =
   match load d.self b with
-  | "", names, pipelines -> Ok ({ names; pipelines }, None)
+  | "", names, pipelines ->
+      Ok ({ owner = d.self; names; pipelines; loaded = true }, None)
   | why, _, _ -> Error why
 
 let entry i f =
+  if not i.loaded then invalid_arg "Device_metal.entry: the image was unloaded";
   Array.find_index (String.equal f) i.names
   |> Option.map (fun k -> Nativeint.to_int i.pipelines.(k))
 
-let unload _ i = Array.iter release i.pipelines
+let unload d i =
+  if i.owner <> d.self then
+    invalid_arg "Device_metal.unload: the image is another device's";
+  if not i.loaded then invalid_arg "Device_metal.unload: the image was unloaded";
+  i.loaded <- false;
+  Array.iter release i.pipelines
 
 (* Work *)
 
