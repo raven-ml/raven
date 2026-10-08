@@ -296,7 +296,9 @@ let submit d ~v ~waits ~handles:_ ps =
     invalid_argf "Device_metal.submit: value %d, expected %d" v next;
   if Array.length waits > 0 then
     invalid_arg "Device_metal.submit: the device waits on no word";
-  Array.iteri (check_part d.self) ps;
+  for i = 0 to Array.length ps - 1 do
+    check_part d.self i ps.(i)
+  done;
   match submit_parts d.self v ps with None -> `Ok | Some why -> `Failed why
 
 (* Timeline and loss *)
