@@ -143,6 +143,7 @@ type t = {
   hang_ms : int option;
   progress : progress Atomic.t;
   fault : string option Atomic.t; (* the first fault sleep raised *)
+  stopped : bool Atomic.t; (* whether a stop ran: the path stops once *)
 }
 
 (* The word as [sleep] last saw it, whether the device was idle then, and since
@@ -486,6 +487,7 @@ let make (type m) (p : m path) =
         hang_ms = p.hang_ms;
         progress = Atomic.make { seen = 0; idle = true; since = 0 };
         fault = Atomic.make None;
+        stopped = Atomic.make false;
       }
   in
   match open_device () with
@@ -688,16 +690,19 @@ let sleep g ~seen ~still_ms =
 (* A queue the path could not destroy may still run, so its memory stays and its
    own releases raise the word. *)
 let stop g =
-  match g.ops.stop () with
-  | exception Fault _ -> ()
-  | `Unknown -> ()
-  | `Stopped ->
-      settle g.self;
-      let st = g.scratch in
-      let buffers = Option.to_list st.installed @ Option.to_list st.pending in
-      let traces = match g.traces.made with Some (_, ms) -> ms | None -> [] in
-      List.iter (give_back g)
-        (List.map fst (buffers @ st.retired) @ traces @ g.own)
+  if Atomic.compare_and_set g.stopped false true then
+    match g.ops.stop () with
+    | exception Fault _ -> ()
+    | `Unknown -> ()
+    | `Stopped ->
+        settle g.self;
+        let st = g.scratch in
+        let buffers = Option.to_list st.installed @ Option.to_list st.pending in
+        let traces =
+          match g.traces.made with Some (_, ms) -> ms | None -> []
+        in
+        List.iter (give_back g)
+          (List.map fst (buffers @ st.retired) @ traces @ g.own)
 
 (* Tests *)
 

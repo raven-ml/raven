@@ -324,7 +324,8 @@ val stop : t -> unit
     none runs, it writes the last value the submit entry was given into the
     timeline word, with release order, so work of other devices that waits on it
     runs on. If the path could not destroy every queue, the word reaches that
-    value only if the queues still run and complete their work. *)
+    value only if the queues still run and complete their work. A later [stop]
+    does nothing. *)
 
 (** {1:paths Paths}
 

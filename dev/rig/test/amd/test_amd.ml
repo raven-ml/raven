@@ -379,6 +379,19 @@ let stop_gives_back () =
   equal int ~msg:"the memory left: the word" 1 h.live;
   Host.close h
 
+(* A device is stopped for good: a later [stop], as rig's own after a loss and
+   then its caller's, stops nothing and gives nothing back again. *)
+let stop_twice () =
+  let h, g = Host.device () in
+  let live = h.live in
+  A.stop g;
+  let frees = h.frees in
+  A.stop g;
+  equal int ~msg:"stops" 1 h.stops;
+  equal (list int) ~msg:"given back" frees h.frees;
+  less int ~msg:"the memory left" ~than:live h.live;
+  Host.close h
+
 let facts () =
   List.iter
     (fun (g, kind, aql) ->
@@ -448,6 +461,7 @@ let paths =
       test "a failed make gives back what it took" make_gives_back;
       test "stop gives back a device's memory once its queues stopped"
         stop_gives_back;
+      test "a second stop does nothing" stop_twice;
       test "a device states its path's facts" facts;
     ]
 
