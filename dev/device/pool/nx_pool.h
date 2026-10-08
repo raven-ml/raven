@@ -89,20 +89,20 @@ typedef void (*nx_pool_body)(int64_t lo, int64_t hi, int worker, void *ctx);
    claims chunks only after its last call returned, so two calls with the
    same worker never overlap and scratch indexed by worker is never shared.
    An index may run no chunk: per-worker partials start at their identity.
-   Writes the caller made before the call are visible to every body, and
-   the bodies' writes to the caller once it returns.
 
-   Bodies. Calls run in parallel or one after another on one thread, in
-   any interleaving: a body must not wait for another call. A body runs C
-   and must not call the OCaml runtime, since a worker is not an OCaml
-   thread. A body may begin a job of its own (see Scheduling). A body must
-   not fork. On a worker a body has 8 MiB of stack, address space that
-   memory backs as the body touches it; on the calling thread, the
-   caller's. Workers block every signal except those a body raises itself
-   (SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGTRAP, SIGABRT, SIGSYS), so a signal
-   sent to the process reaches one of the program's own threads and a fault
-   in a body is delivered on the thread that runs it. A profiler that
-   samples threads by SIGPROF therefore never samples a worker.
+   Bodies. Calls run in parallel or one after another on one thread, in any
+   interleaving: a body must not wait for another call. Writes the caller
+   made before the call are visible to every body, and the bodies' writes to
+   the caller once it returns. A body runs C and must not call the OCaml
+   runtime, since a worker is not an OCaml thread. A body may begin a job of
+   its own (see Scheduling). A body must not fork. On a worker a body has
+   8 MiB of stack, address space that memory backs as the body touches it; on
+   the calling thread, the caller's. Workers block every signal except those
+   a body raises itself (SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGTRAP, SIGABRT,
+   SIGSYS), so a signal sent to the process reaches one of the program's own
+   threads and a fault in a body is delivered on the thread that runs it. A
+   profiler that samples threads by SIGPROF therefore never samples a
+   worker.
 
    Scheduling. The pool runs one job of more than one thread at a time. A
    job of t = 1, or a job begun from a body of a job of more than one

@@ -23,7 +23,7 @@ val worker_mask : unit -> bool * (string * bool) list
 
 val faults : string list
 (** [faults] are the signals a body may raise itself, in the order of the bits
-    of {!Faults}' answer. *)
+    of {!constructor-Faults}' answer. *)
 
 (** {1:children Children made by fork} *)
 
