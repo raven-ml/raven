@@ -79,10 +79,10 @@ struct dc_device *dc_device_of(int i);
 uint64_t dc_word(struct dc_device *d);
 
 /* A memory's stamps: the point of its last write and, per device, the point
-   of its last use. A chunk never moves, so a raise is one compare-and-set;
-   a submission reserves its device's use word before its hand-over, so a
-   raise allocates nothing. [refs] counts the memories and holds that share
-   it. */
+   of its last use. A chunk never moves, so a raise is one store or
+   compare-and-set; a submission reserves its device's use word before its
+   hand-over, so a raise allocates nothing. [refs] counts the memories and
+   holds that share it. */
 #define DC_USES 4
 
 struct dc_stamps {

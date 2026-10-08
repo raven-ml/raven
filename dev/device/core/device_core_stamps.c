@@ -82,6 +82,13 @@ static _Atomic uint64_t *reserve(struct dc_stamps *s, int index) {
   }
 }
 
+/* Raises a submission's device's use word to its value [p]. Only that
+   device's submissions raise the word, one at a time under its turn, each
+   with a greater value than the last, so the raise is a store. */
+static void raise_own(_Atomic uint64_t *slot, uint64_t p) {
+  atomic_store_explicit(slot, p, memory_order_release);
+}
+
 static void raise_max(_Atomic uint64_t *slot, uint64_t p) {
   uint64_t cur = atomic_load(slot);
   while (cur < p && !atomic_compare_exchange_weak(slot, &cur, p)) {
@@ -384,14 +391,14 @@ value caml_device_core_sub_wait(value v_s, value v_producer, value v_at,
 void dc_sub_raise(struct dc_sub *s, uint64_t p) {
   for (int k = 0; k < s->nfixed; k++) {
     if (s->fixed_write[k]) raise_last_write(s->fixed[k].stamps, p);
-    raise_max(s->fixed[k].use, p);
+    raise_own(s->fixed[k].use, p);
   }
-  for (int k = 0; k < s->nreads; k++) raise_max(s->slots[k].use, p);
+  for (int k = 0; k < s->nreads; k++) raise_own(s->slots[k].use, p);
   for (int k = s->nreads; k < s->nreads + s->nwrites; k++) {
     raise_last_write(s->slots[k].stamps, p);
-    raise_max(s->slots[k].use, p);
+    raise_own(s->slots[k].use, p);
   }
-  if (s->hold != NULL) raise_max(s->hold_use, p);
+  if (s->hold != NULL) raise_own(s->hold_use, p);
 }
 
 /* Unsets [s]'s slots and forgets its waits. */
