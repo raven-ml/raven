@@ -400,15 +400,36 @@ let of_float : type v s. (v, s) t -> float -> v =
 
 (* The shortest decimal that a store into [dt] reads back as [x], so a value
    prints as briefly as its format allows: a float32 [0.1] prints as [0.1],
-   though the double it holds has 17 digits. *)
+   though the double it holds has 17 digits. At each number of digits it tries
+   the decimal nearest to [x] and its two neighbours: at the bottom of a binade
+   the gap below [x] is half the gap above, so the nearest decimal can fall
+   outside [x]'s rounding interval where the next one up lies inside. An integer
+   below 10{^16} prints in full. *)
 let float_text code x =
+  let reads_back s = Float.equal (round code (float_of_string s)) x in
+  let nearest p = Printf.sprintf "%.*g" p x in
+  (* The [p]-digit decimal [k] units in the last place from the nearest one,
+     written as [%g] writes it. *)
+  let beside p k =
+    let e = Printf.sprintf "%.*e" (p - 1) x in
+    let i = String.index e 'e' in
+    let digits =
+      String.concat "" (String.split_on_char '.' (String.sub e 0 i))
+    in
+    let exp = int_of_string (String.sub e (i + 1) (String.length e - i - 1)) in
+    let m = int_of_string digits + if x < 0. then -k else k in
+    let c = float_of_string (Printf.sprintf "%de%d" m (exp - p + 1)) in
+    Printf.sprintf "%.*g" p c
+  in
   if Float.is_nan x then "nan"
   else if Float.is_integer x && Float.abs x < 1e16 then Printf.sprintf "%.0f" x
+  else if Float.abs x = Float.infinity then if x > 0. then "inf" else "-inf"
   else
     let rec shortest p =
-      let s = Printf.sprintf "%.*g" p x in
-      if p >= 17 || Float.equal (round code (float_of_string s)) x then s
-      else shortest (p + 1)
+      let candidates = [ nearest p; beside p 1; beside p (-1) ] in
+      match List.find_opt reads_back candidates with
+      | Some s -> s
+      | None -> if p >= 17 then nearest 17 else shortest (p + 1)
     in
     shortest 1
 

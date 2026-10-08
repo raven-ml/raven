@@ -210,9 +210,15 @@ val max_value : ('v, 's) t -> 'v
     Raises [Invalid_argument] if [dt] is complex. *)
 
 val pp_value : ('v, 's) t -> Format.formatter -> 'v -> unit
-(** [pp_value dt] formats a value of [dt]: a float as the shortest decimal that
-    a store into [dt] reads back as the same value ([nan], [inf] and [-inf] for
-    the others), an unsigned integer unsigned, a complex number as [re+imi]. *)
+(** [pp_value dt] formats a value of [dt]:
+    - a float whose magnitude is an integer below 10{^ 16} in full, as [65504];
+      another finite float as the shortest decimal that a store into [dt] reads
+      back as the same value, as [0.1] for a [Float32] [0.1]; [nan], [inf] and
+      [-inf] for the others;
+    - an integer in decimal, an unsigned one unsigned;
+    - a complex number as its two components, so formatted, in the form
+      [re+imi], or [re-imi] when the imaginary part is negative, as [0.5-2i];
+    - a boolean as [true] or [false]. *)
 
 (** {1:stores Stores} *)
 
