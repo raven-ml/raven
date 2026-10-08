@@ -97,6 +97,11 @@ val power_firmware : t -> Images.t -> unit
     has one, through the running OS: the first load of a full {!start}. Raises
     as {!start} does. *)
 
+val firmware : t -> Images.t -> unit
+(** [firmware p images] loads every image of [images] through the running OS,
+    the power manager's first, and has the RLC load the GC's: the second part of
+    a full {!start}, after {!os}. Raises as {!start} does. *)
+
 val start : t -> Images.t -> partial:bool -> unit
 (** [start p images ~partial] starts the processor and loads [images]: a full
     boot loads the SOS components, makes the ring, sets up the TMR and loads
