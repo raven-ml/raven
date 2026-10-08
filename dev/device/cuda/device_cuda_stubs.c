@@ -139,6 +139,7 @@ enum {
   X(cuDeviceTotalMem_v2, (size_t *, CUdevice))                                 \
   X(cuDeviceCanAccessPeer, (int *, CUdevice, CUdevice))                        \
   X(cuDevicePrimaryCtxRetain, (CUcontext *, CUdevice))                         \
+  X(cuDevicePrimaryCtxRelease_v2, (CUdevice))                                  \
   X(cuCtxPushCurrent_v2, (CUcontext))                                          \
   X(cuCtxPopCurrent_v2, (CUcontext *))                                         \
   X(cuCtxEnablePeerAccess, (CUcontext, unsigned int))                          \
@@ -374,8 +375,9 @@ static CUresult start(struct device *d) {
 }
 
 /* Opens a device on the primary context of the CUdevice [v_device]: its
-   state's address, or CUDA's status negated. Releases the runtime: CUDA
-   may create the context. */
+   state's address, or CUDA's status negated. A device that does not open
+   gives back its retain of the context. Releases the runtime: CUDA may
+   create the context. */
 value caml_device_cuda_open(value v_device) {
   struct device *d = calloc(1, sizeof *d);
   int flush = 0;
@@ -386,7 +388,10 @@ value caml_device_cuda_open(value v_device) {
       &flush, CU_DEVICE_ATTRIBUTE_CAN_FLUSH_REMOTE_WRITES, d->device);
   if (s == CUDA_SUCCESS)
     s = p_cuDevicePrimaryCtxRetain(&d->context, d->device);
-  if (s == CUDA_SUCCESS) IN_CONTEXT(s, d, start(d));
+  if (s == CUDA_SUCCESS) {
+    IN_CONTEXT(s, d, start(d));
+    if (s != CUDA_SUCCESS) p_cuDevicePrimaryCtxRelease_v2(d->device);
+  }
   if (s != CUDA_SUCCESS) free(d);
   caml_leave_blocking_section();
   if (s != CUDA_SUCCESS) return Val_long(-s);
