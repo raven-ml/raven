@@ -55,9 +55,16 @@ let layout d =
       (strf "%s %s is a version this library does not boot" (Discovery.name b)
          (dotted v))
   in
-  (* The power manager is programmed by messages of its version. *)
+  (* The power manager is programmed by messages of its version, among them one
+     that reports its enabled features, which a reset asks before it lowers the
+     clocks. *)
   let* () =
-    if D.smu_messages mp1 = [] then unbooted D.mp1_hwid mp1 else Ok ()
+    let has name = List.mem_assoc name (D.smu_messages mp1) in
+    if
+      has "PPSMC_MSG_GetRunningSmuFeaturesLow"
+      || has "PPSMC_MSG_GetEnabledSmuFeaturesLow"
+    then Ok ()
+    else unbooted D.mp1_hwid mp1
   in
   let table prefix b =
     let* v = block b in

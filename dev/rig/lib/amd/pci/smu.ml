@@ -114,7 +114,8 @@ let features s =
     match List.find_map (message s.mp1) names with
     | Some m -> send s m 0
     | None ->
-        invalid_argf "Rig_amd_pci.open_: the power manager reports no features"
+        (* Regs.layout refuses a power manager that reports no features. *)
+        assert false
   in
   word "Low" lor (word "High" lsl 32)
 
