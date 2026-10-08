@@ -96,13 +96,15 @@ let evicted p =
 
 (* Opens the file [p] and copies it into [dst], as a program loads its weights:
    each call opens the file anew, so a device maps its pages anew. It first
-   collects the last call's opening and drains the disk and [dst]'s device,
-   which releases its mapping; with [cold], it then drops the file's pages from
-   the page cache. *)
+   collects the last call's opening, drains the disk and [dst]'s device, which
+   releases the device's mapping and closes the file, and collects again, which
+   unmaps the file's pages from the process; with [cold], it then drops them
+   from the page cache, which keeps pages a process maps. *)
 let load ~cold (p, dst) =
   Gc.full_major ();
   ignore (B.create Rig_disk.device 0);
   ignore (B.create (B.device dst) 0);
+  Gc.full_major ();
   if cold then evicted p;
   B.copy ~src:(ok (Rig_disk.of_file p)) ~dst
 
