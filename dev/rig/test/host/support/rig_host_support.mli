@@ -27,6 +27,11 @@ val executable : int -> bool
 (** [executable a] is [true] iff the page holding the address [a] is mapped
     executable in the process. *)
 
+val set_address_space : int -> int
+(** [set_address_space n] sets this process's soft limit of its address space to
+    [n] bytes, so that a mapping past it fails: [0], the errno, or [-1] off
+    Linux, where the limit does not bound mappings. *)
+
 val count_job : threads:int -> total:int -> chunks:int -> words -> unit
 (** [count_job ~threads ~total ~chunks counts] runs the pool's job of [total]
     units cut into [chunks] chunks on at most [threads] threads, with the
