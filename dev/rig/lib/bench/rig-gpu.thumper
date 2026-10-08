@@ -6,6 +6,14 @@
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed submit/cuda/empty submit/cuda/cost replay/cuda/params-24 replay/cuda/pipelined-100 replay/cuda/kernel-pipelined-100 under load 3.0 on 4 cores
 
+file/cuda/from-device-256M	alloc_words	exact	1614
+file/cuda/from-device-256M	wall_time	batch=1	n=20	5.274e-02	5.127e-02 5.130e-02 5.135e-02 5.144e-02 5.154e-02 5.155e-02 5.158e-02 5.186e-02 5.205e-02 5.258e-02 5.290e-02 5.331e-02 5.358e-02 5.423e-02 5.430e-02 5.505e-02 5.527e-02 5.533e-02 5.539e-02 5.632e-02
+file/cuda/to-device-256M	alloc_words	exact	1508
+file/cuda/to-device-256M	wall_time	batch=1	n=20	5.156e-02	5.072e-02 5.082e-02 5.097e-02 5.101e-02 5.120e-02 5.121e-02 5.126e-02 5.141e-02 5.145e-02 5.148e-02 5.163e-02 5.166e-02 5.169e-02 5.173e-02 5.178e-02 5.190e-02 5.195e-02 5.204e-02 5.209e-02 5.353e-02
+file/nv/from-device-256M	alloc_words	exact	1685
+file/nv/from-device-256M	wall_time	batch=1	n=20	4.500e-02	4.466e-02 4.468e-02 4.470e-02 4.472e-02 4.478e-02 4.489e-02 4.490e-02 4.494e-02 4.496e-02 4.498e-02 4.501e-02 4.502e-02 4.507e-02 4.508e-02 4.520e-02 4.522e-02 4.530e-02 4.546e-02 4.546e-02 4.561e-02
+file/nv/to-device-256M	alloc_words	exact	1508
+file/nv/to-device-256M	wall_time	batch=1	n=20	5.120e-02	5.003e-02 5.036e-02 5.048e-02 5.059e-02 5.073e-02 5.075e-02 5.078e-02 5.083e-02 5.111e-02 5.117e-02 5.122e-02 5.123e-02 5.132e-02 5.133e-02 5.137e-02 5.142e-02 5.171e-02 5.249e-02 5.365e-02 5.440e-02
 floor/cuda/cost	alloc_words	exact	0
 floor/cuda/cost	wall_time	batch=4096	n=20	1.763e-06	1.756e-06 1.762e-06 1.762e-06 1.762e-06 1.762e-06 1.763e-06 1.763e-06 1.763e-06 1.763e-06 1.763e-06 1.763e-06 1.763e-06 1.764e-06 1.764e-06 1.764e-06 1.764e-06 1.764e-06 1.764e-06 1.765e-06 1.766e-06
 floor/cuda/kernel-pipelined-100	alloc_words	exact	6
