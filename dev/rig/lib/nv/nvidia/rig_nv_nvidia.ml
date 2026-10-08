@@ -490,7 +490,7 @@ let free g (m : mem Rig_nv.memory) =
   | Own space ->
       free_object g m.handle;
       fault (uvm_free g.c m.va m.size);
-      Option.iter (fun a -> Rm.release a m.size) m.host;
+      (match m.host with Some a -> Rm.release a m.size | None -> ());
       Va.free space m.va m.size
 
 (* Channels *)
