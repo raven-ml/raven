@@ -99,6 +99,19 @@ let test_set_budget () =
   equal ~msg:"live memory stays" bool false (freed p (B.address live));
   raises_match Exn.invalid_arg (fun () -> C.set_budget d (-1))
 
+(* Memory collected while its device holds more than its budget returns to
+   the driver: an allocation the budget refuses finds none of it to reuse, and
+   the live buffers stay within the budget. *)
+let test_over_budget_cache () =
+  let d, _ = P.open_ "memory:over-budget-cache" in
+  ignore (dropped d (4 * kib));
+  let live = B.create d 1 in
+  C.set_budget d (4 * kib);
+  raises_match
+    (out_of_memory d (4 * kib))
+    (fun () -> B.create d (4 * kib));
+  ignore (Sys.opaque_identity live)
+
 let test_free_cache () =
   let d, p = P.open_ "memory:free-cache" in
   let at = dropped d (4 * kib) in
@@ -510,6 +523,8 @@ let tests =
           "two domains' allocations stay within the budget" budget_commands;
         test "an allocation the driver refuses releases the cache, then raises"
           test_refused;
+        test "memory collected over the budget is not reused past it"
+          test_over_budget_cache;
         test "an allocation the driver refuses collects unreachable buffers"
           test_collects;
         test "set_budget returns cached memory, never live memory"

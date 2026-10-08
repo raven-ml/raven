@@ -446,13 +446,19 @@ let to_cache d e = Dev.protect d (fun () -> cache d e)
    device borrowed, which returns to its keeper once its uses are reached. *)
 let uncached (e : entry) = e.held || e.memory = Host_kept || is_io_memory e
 
+(* Whether [d] holds more than its budget in the memory that [e]'s counts in:
+   [e] then returns to the driver, so a later allocation the budget refuses
+   cannot reuse it. *)
+let over_budget d (e : entry) = owns d e.memory && d.used > d.budget
+
 let route d = function
   | Memory e ->
       let cached =
         (not (Dev.is_lost d))
         && (not (uncached e))
         && reached ~except:d.index e.stamps
-        && not (viewed e)
+        && (not (viewed e))
+        && not (over_budget d e)
       in
       Dev.hold d;
       if cached then cache d e else d.retiring <- e :: d.retiring;
@@ -470,7 +476,8 @@ let fate d ~lost ~free_lost (e : entry) =
   if viewed e then Stays
   else if lost then if free_lost && reached e.stamps then Freed else Stays
   else if uncached e then if reached e.stamps then Freed else Stays
-  else if reached ~except:d.index e.stamps then Cached
+  else if reached ~except:d.index e.stamps then
+    if over_budget d e then Freed else Cached
   else Stays
 
 (* Judges each retiring entry of [l] with no lock held, puts back those that
@@ -536,7 +543,7 @@ let run_pending d = function
   | Unload (image, code) -> (
       unload d image;
       match code with
-      | Some e when Dev.is_lost d -> free_entry e
+      | Some e when Dev.is_lost d || over_budget d e -> free_entry e
       | Some e -> to_cache d e
       | None -> ())
 
