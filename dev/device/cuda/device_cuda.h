@@ -15,8 +15,8 @@
    Queue 0 is the stream "COMPUTE:0", queue 1 the stream "COPY:0". A part is
    a fill, called with the queue's CUstream and the device's context
    current (device_cuda_abi.mli), or a copy between handles; it has no
-   words, ring units or segment bytes. A wait is NX_WORD or NX_EQUAL on a
-   64-bit word the device maps. [handles] is ignored: CUDA's work names its
+   words, ring units or segment bytes. A wait is NX_WORD on a 64-bit word
+   the device maps. [handles] is ignored: CUDA's work names its
    memory by address. */
 
 #ifndef DEVICE_CUDA_H

@@ -122,9 +122,6 @@ val key : t Type.Id.t
 val arch : t -> string
 (** [arch g] is the GPU's compute capability, as ["sm_89"]. *)
 
-val machine : t -> string option
-(** [machine g] is [None]: a CUDA GPU is on this machine. *)
-
 val budget : t -> int
 (** [budget g] is the GPU's memory, in bytes. *)
 
@@ -195,6 +192,13 @@ val host : region -> nativeint option
 (** [host r] is [Some a], [a] the host address of [r]'s first byte, if [r] is
     host memory, and [None] for GPU memory. *)
 
+val peer : t -> t -> bool
+(** [peer g g'] is [true] iff CUDA gives [g]'s GPU access to the GPU memory of
+    [g']'s, which [peer] then enables for the pair: always for two devices of
+    one GPU. It is {!map_peer}'s answer for GPU memory.
+
+    Raises [Invalid_argument] if [g'] is [g]. *)
+
 val map_peer : t -> t -> region -> region option
 (** [map_peer g g' r] is [Some r'] with [r'] a new region of [g] over the memory
     of [g']'s region [r], if [g]'s work can address it: always for host memory;
@@ -242,13 +246,17 @@ val unmap : t -> region -> unit
 type image
 (** The type for CUDA modules a device loaded. *)
 
-val image : t -> string -> (image * (region * string) option, string) result
-(** [image g bin] is [Ok (m, None)] with [m] the module of [bin], a cubin, a
-    fatbin or PTX text, which CUDA compiles for the GPU. CUDA holds the code, so
-    the device has none to upload: the option is [None]. CUDA may wait for all
-    of the GPU's work before it loads [bin], and [image] lets other domains run
-    meanwhile. The result is [Error msg] with CUDA's error if CUDA refuses
-    [bin], for instance a cubin for another GPU. *)
+val image :
+  t ->
+  string ->
+  ( [ `Loaded of image | `Place of int * (region -> image * string) ],
+    string )
+  result
+(** [image g bin] is [Ok (`Loaded m)] with [m] the module of [bin], a cubin, a
+    fatbin or PTX text, which CUDA compiles for the GPU. CUDA holds the code
+    itself. CUDA may wait for all of the GPU's work before it loads [bin], and
+    [image] lets other domains run meanwhile. The result is [Error msg] with
+    CUDA's error if CUDA refuses [bin], for instance a cubin for another GPU. *)
 
 val entry : image -> string -> int option
 (** [entry m f] is [Some h], [h] the [CUfunction] of the kernel [f] of [m],
@@ -322,14 +330,14 @@ val submit :
   part array ->
   [ `Ok | `Failed of string ]
 (** [submit g ~v ~waits ~handles ps] hands over [ps] as [g]'s value [v], the
-    value after the last one [g] was given. Each wait [(k, a, w)] holds the work
-    back until the aligned 64-bit word at address [a], which [g]'s work
-    addresses, holds [w] ([`Equal]) or at least [w] ([`Word]), compared
-    circularly: [x] is at least [w] if [x - w], as a signed 64-bit integer, is
-    not negative. The work runs after every earlier value of [g] and after the
-    waits; once it completed, the timeline word holds [v]. A submission of no
-    parts writes [v] after its waits and after every earlier value. [handles] is
-    ignored: CUDA's work names its memory by address.
+    value after the last one [g] was given. Each wait [(`Word, a, w)] holds the
+    work back until the aligned 64-bit word at address [a], which [g]'s work
+    addresses, holds at least [w], compared circularly: [x] is at least [w] if
+    [x - w], as a signed 64-bit integer, is not negative. The work runs after
+    every earlier value of [g] and after the waits; once it completed, the
+    timeline word holds [v]. A submission of no parts writes [v] after its waits
+    and after every earlier value. [handles] is ignored: CUDA's work names its
+    memory by address.
 
     The result is [`Ok] once every part is enqueued, or [`Failed why] with the
     step and the error of the first CUDA call that failed, a fill's included, as
@@ -350,8 +358,8 @@ val submit :
 
     Raises [Invalid_argument] if [v] is not the value after the last one, if a
     part is another device's, if a part's [after] names a part at or after its
-    own index, or if a wait is [`Object]: the device waits on no driver object.
-*)
+    own index, or if a wait is [`Equal] or [`Object]: the device waits only for
+    words to reach a value. *)
 
 val room_entry : nativeint
 (** [room_entry] is the address of the C function [device_cuda_room], {!room}

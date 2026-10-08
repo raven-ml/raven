@@ -224,7 +224,6 @@ let open_ i =
 
 let key = Type.Id.make ()
 let arch g = g.arch
-let machine _ = None
 let budget g = g.budget
 let queues _ = [ "COMPUTE:0"; "COPY:0" ]
 let completion _ = `Store
@@ -251,7 +250,7 @@ external free_memory : int -> bool -> int -> int = "caml_device_cuda_free"
 external mapped : int -> int -> int = "caml_device_cuda_mapped"
 external allocation : int -> int -> int = "caml_device_cuda_allocation"
 external lock : int -> bool -> int -> int -> int = "caml_device_cuda_lock"
-external peer : int -> int -> int = "caml_device_cuda_peer"
+external enable_peer : int -> int -> int = "caml_device_cuda_peer"
 
 let alloc g kind n =
   if n < 1 then
@@ -278,6 +277,20 @@ let address r = Some r.address
 let handle r = Nativeint.of_int r.handle
 let host r = if on_host r.kind then Some (Nativeint.of_int r.handle) else None
 
+(* Whether [self]'s GPU addresses the GPU memory of [home]'s, enabling the
+   access. *)
+let reaches self home =
+  match enable_peer self home with
+  | 1 -> true
+  | 0 -> false
+  | s when -s = cuda_error_peer_access_already_enabled -> true
+  | _ -> refused "enabling peer access" self false
+
+let peer g g' =
+  if g.self = g'.self then
+    invalid_arg "Device_cuda.peer: the two devices are one";
+  reaches g.self g'.self
+
 let map_peer g g' r =
   if g.self = g'.self then
     invalid_arg "Device_cuda.map_peer: the two devices are one";
@@ -285,16 +298,7 @@ let map_peer g g' r =
     invalid_arg
       "Device_cuda.map_peer: the region is no live region of the second device";
   let kind = match r.kind with Peer k -> k | k -> k in
-  let reach =
-    on_host kind
-    ||
-    match peer g.self r.home with
-    | 1 -> true
-    | 0 -> false
-    | s when -s = cuda_error_peer_access_already_enabled -> true
-    | _ -> refused "enabling peer access" g.self false
-  in
-  if not reach then None
+  if not (on_host kind || reaches g.self r.home) then None
   else Some { r with owner = g.self; kind = Peer kind; live = Atomic.make true }
 
 let registry : registration list ref = ref []
@@ -371,7 +375,8 @@ external unload_module : int -> int -> int = "caml_device_cuda_unload"
 
 let image g bin =
   match load_module g.self bin with
-  | m when m >= 0 -> Ok ({ owner = g.self; m; loaded = Atomic.make true }, None)
+  | m when m >= 0 ->
+      Ok (`Loaded { owner = g.self; m; loaded = Atomic.make true })
   | s ->
       let step = "loading the image" in
       refused step g.self (Error (strf "%s: %s" step (error (-s))))
@@ -405,7 +410,6 @@ let after_at = 10
 (* nx_edge.h's codes *)
 
 let nx_word = 0
-let nx_equal = 1
 let nx_ok = 0
 
 external last : int -> int = "caml_device_cuda_last" [@@noalloc]
@@ -473,9 +477,9 @@ let check_part self i p =
 
 let wait_kind = function
   | `Word -> nx_word
-  | `Equal -> nx_equal
-  | `Object ->
-      invalid_arg "Device_cuda.submit: a CUDA device waits on no driver object"
+  | `Equal | `Object ->
+      invalid_arg
+        "Device_cuda.submit: the device waits only for words to reach a value"
 
 (* Allocates nothing for a submission without waits. *)
 let submit g ~v ~waits ~handles:_ parts =

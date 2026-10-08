@@ -123,7 +123,6 @@ enum {
   CU_MEMHOST_PORTABLE_DEVICEMAP = 0x3,
   CU_STREAM_MEM_OP_WAIT_VALUE_64 = 4,
   CU_STREAM_WAIT_VALUE_GEQ = 0x0,
-  CU_STREAM_WAIT_VALUE_EQ = 0x1,
   CU_STREAM_WAIT_VALUE_FLUSH = 1 << 30,
 };
 
@@ -571,8 +570,7 @@ static CUresult wait_words(struct device *d, CUstream q,
       ops[j].wait.operation = CU_STREAM_MEM_OP_WAIT_VALUE_64;
       ops[j].wait.address = w[i + j].at;
       ops[j].wait.value = w[i + j].value;
-      ops[j].wait.flags = w[i + j].kind == NX_EQUAL ? CU_STREAM_WAIT_VALUE_EQ
-                                                    : CU_STREAM_WAIT_VALUE_GEQ;
+      ops[j].wait.flags = CU_STREAM_WAIT_VALUE_GEQ;
     }
     if (d->flush && i + k == n)
       ops[k - 1].wait.flags |= CU_STREAM_WAIT_VALUE_FLUSH;

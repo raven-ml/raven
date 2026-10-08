@@ -59,7 +59,6 @@ let facts () =
   equal int ~msg:"length of the arch" 5 (String.length arch);
   starts_with ~affix:"sm_" arch;
   greater int ~than:0 (C.budget g);
-  equal (option string) None (C.machine g);
   equal (list string) [ "COMPUTE:0"; "COPY:0" ] (C.queues g);
   equal bool ~msg:"completion is the store" true (C.completion g = `Store);
   equal (list bool) [ true; false; true ]
@@ -238,7 +237,7 @@ let failed_behind_work () =
 
 (* A wait on a host word holds a submission's work on both queues until the host
    writes the word: each queue copies GPU memory to a host buffer. *)
-let held g ~kind ~start ~wait ~below ~release =
+let held g ~start ~wait ~below ~release =
   let w = require_some (C.alloc g `Pinned 8) in
   let src = require_some (C.alloc g `Device 64) in
   let dst = Array.init 2 (fun _ -> require_some (C.alloc g `Pinned 64)) in
@@ -255,7 +254,7 @@ let held g ~kind ~start ~wait ~below ~release =
   S.set64 (host w) start;
   Fun.protect ~finally:(fun () -> S.set64 (host w) release) @@ fun () ->
   let ps = [| copy "COMPUTE:0" dst.(0); copy "COPY:0" dst.(1) |] in
-  equal S.answer `Ok (submit g ~v:1 ~waits:[| (kind, address w, wait) |] ps);
+  equal S.answer `Ok (submit g ~v:1 ~waits:[| (`Word, address w, wait) |] ps);
   held ();
   S.set64 (host w) below;
   held ();
@@ -266,15 +265,14 @@ let held g ~kind ~start ~wait ~below ~release =
 let waits =
   [
     test "a Word wait holds the work across the 64-bit wrap (sampled)"
-      (fun () ->
-        S.with_gpu (held ~kind:`Word ~start:(-3) ~wait:2 ~below:1 ~release:2));
-    test "an Equal wait holds the work until the word equals (sampled)"
-      (fun () ->
-        S.with_gpu (held ~kind:`Equal ~start:4 ~wait:5 ~below:6 ~release:5));
-    test "an Object wait raises" (fun () ->
+      (fun () -> S.with_gpu (held ~start:(-3) ~wait:2 ~below:1 ~release:2));
+    test "an Equal or an Object wait raises" (fun () ->
         S.with_gpu @@ fun g ->
-        raises_match Exn.invalid_arg (fun () ->
-            submit g ~v:1 ~waits:[| (`Object, 0, 1) |] [||]));
+        List.iter
+          (fun k ->
+            raises_match Exn.invalid_arg (fun () ->
+                submit g ~v:1 ~waits:[| (k, 0, 1) |] [||]))
+          [ `Equal; `Object ]);
     cases ~name:(strf "%d satisfied waits complete on both queues")
       "batches" [ 255; 256 ] (fun n ->
         S.with_gpu @@ fun g ->
@@ -309,6 +307,7 @@ let misuse () =
   raises "a value other than the next" (fun () -> submit g ~v:2 [||]);
   raises "alloc of 0 bytes" (fun () -> C.alloc g `Device 0);
   raises "map_host of 0 bytes" (fun () -> C.map_host g (word g) 0);
+  raises "peer of one device" (fun () -> C.peer g g);
   raises "map_peer of one device" (fun () -> C.map_peer g g r);
   raises "unmap of an allocation" (fun () -> C.unmap g r);
   raises "free of the word" (fun () -> C.free g (C.word g));
@@ -367,17 +366,16 @@ let work =
 
 let images () =
   S.with_gpu @@ fun g ->
-  let m, upload = require_ok (C.image g (S.fixture "kernels.ptx")) in
-  equal bool ~msg:"no upload" true (upload = None);
+  let m = S.loaded (require_ok (C.image g (S.fixture "kernels.ptx"))) in
   equal bool ~msg:"double_index" true
     (Option.is_some (C.entry m "double_index"));
   equal (option int) ~msg:"a missing kernel" None (C.entry m "missing");
   let e = require_error (C.image g "not a module") in
   starts_with ~affix:"loading the image: CUDA_ERROR_" e;
   (match C.image g (S.fixture "kernels.cubin") with
-  | Ok (m', _) ->
+  | Ok i ->
       equal string ~msg:"the cubin's GPU" "sm_89" (C.arch g);
-      C.unload g m'
+      C.unload g (S.loaded i)
   | Error e ->
       not_equal string ~msg:"the cubin's GPU" "sm_89" (C.arch g);
       starts_with ~affix:"loading the image: CUDA_ERROR_" e);
@@ -516,7 +514,9 @@ let two_gpus () =
   let d = require_some (C.alloc b `Device 64) in
   let ph = require_some (C.map_peer a b h) in
   equal (option nativeint) ~msg:"host memory maps" (C.host h) (C.host ph);
-  (match C.map_peer a b d with
+  let pd = C.map_peer a b d in
+  equal bool ~msg:"peer is map_peer's answer" (C.peer a b) (Option.is_some pd);
+  (match pd with
   | Some pd ->
       raises_match Exn.invalid_arg (fun () -> C.free a pd);
       C.unmap a pd

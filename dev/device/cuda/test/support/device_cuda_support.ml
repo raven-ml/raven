@@ -171,6 +171,12 @@ let room g ~queue ~words ~units ~bytes ~after =
 let fixture ?(dir = "fixtures") f =
   In_channel.with_open_bin (Filename.concat dir f) In_channel.input_all
 
+let loaded = function
+  | `Loaded m -> m
+  | `Place _ -> failwith "a CUDA device asked to place its code"
+
 let kernels ?dir g =
-  let m, _ = Result.get_ok (Device_cuda.image g (fixture ?dir "kernels.ptx")) in
+  let m =
+    loaded (Result.get_ok (Device_cuda.image g (fixture ?dir "kernels.ptx")))
+  in
   (m, fun name -> Option.get (Device_cuda.entry m name))

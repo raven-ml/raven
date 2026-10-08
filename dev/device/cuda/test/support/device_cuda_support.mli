@@ -150,6 +150,14 @@ val fixture : ?dir:string -> string -> string
     (stores to address [0]), each of two 64-bit parameters; ["kernels.cubin"] is
     them compiled for [sm_89]. *)
 
+val loaded :
+  [ `Loaded of Device_cuda.image
+  | `Place of int * (Device_cuda.region -> Device_cuda.image * string) ] ->
+  Device_cuda.image
+(** [loaded i] is the image of {!Device_cuda.image}'s answer [i].
+
+    Raises [Failure] if [i] is [`Place _]. *)
+
 val kernels :
   ?dir:string -> Device_cuda.t -> Device_cuda.image * (string -> int)
 (** [kernels ~dir g] is ["kernels.ptx"] of [dir] loaded on [g], and its kernels
