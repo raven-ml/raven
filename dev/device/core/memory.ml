@@ -515,10 +515,12 @@ let rec alloc_entry d kind n round =
             Mutex.protect d.lock (fun () -> d.used <- d.used + n);
           note d;
           entry ~region:r d kind n (stamps_new ())
+      (* Mapped memory the window or the budget cannot hold is pinned memory,
+         which keeps its promises, and the cache stays. *)
+      | None when kind = mapped_kind -> alloc_entry d pinned_kind n round
       | None when round < rounds ->
           reclaim d round;
           alloc_entry d kind n (round + 1)
-      | None when kind = mapped_kind -> alloc_entry d pinned_kind n 1
       | None -> raise (Dev.Out_of_memory (d, n)))
 
 let alloc d kind n =
