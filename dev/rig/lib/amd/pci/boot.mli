@@ -155,8 +155,8 @@ val stop : t -> [ `Clean | `Lost | `Unknown ]
     own but over a fabric:
     - [`Clean] if every queue left and no fault was reported: the mark is clean,
       and the next open boots partially;
-    - [`Lost] if a fault was reported or a queue did not leave: the mark is
-      dirty, and only a reset recovers it;
+    - [`Lost] if a fault was reported, a queue did not leave, or a step of the
+      stop failed: the mark is dirty, and only a reset recovers it;
     - [`Unknown] if its machine failed, or a queue of a GPU in a fabric did not
       leave, whose writes to its peers bus mastering does not stop.
 

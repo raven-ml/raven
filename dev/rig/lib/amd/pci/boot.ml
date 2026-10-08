@@ -268,8 +268,6 @@ let give_back_access g =
     g.lease <- 0
   end
 
-let quietly f = try f () with Regs.Stuck _ -> ()
-
 let stop_locked g =
   if Machine.failed (Function.machine g.f) <> None then `Unknown
   else begin
@@ -285,16 +283,19 @@ let stop_locked g =
       | left -> left
       | exception Regs.Stuck _ -> false
     in
-    if not g.vf then quietly (fun () -> Smu.clocks g.smu `Lowest);
-    quietly (fun () -> ignore (Ih.read g.ih));
-    let lost = g.fault <> None || not left in
-    quietly (fun () -> mark g ~dirty:lost);
-    give_back_access g;
-    List.iter (Memory.free g.memory) g.eops;
-    g.eops <- [];
     (* The GPU reaches no memory outside its own once it masters the bus no
-       more, but over a fabric; its hubs' fault page can then go. *)
+       more, but over a fabric: from here nothing it may still write goes back
+       before. A step that fails loses the GPU. *)
     set_bus_master g.f false;
+    let failed = ref false in
+    let step f = try f () with Regs.Stuck _ -> failed := true in
+    if not g.vf then step (fun () -> Smu.clocks g.smu `Lowest);
+    step (fun () -> ignore (Ih.read g.ih));
+    step (fun () -> List.iter (Memory.free g.memory) g.eops);
+    g.eops <- [];
+    step (fun () -> mark g ~dirty:(g.fault <> None || (not left) || !failed));
+    let lost = g.fault <> None || (not left) || !failed in
+    give_back_access g;
     Function.free_dma g.f g.fault_page;
     if not lost then `Clean
     else if Gmc.hive g.gmc && not left then `Unknown
