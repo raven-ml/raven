@@ -45,7 +45,8 @@ module Polled : sig
   (** [fail d] makes [d]'s next submit fail. *)
 
   val fault : t -> string -> unit
-  (** [fault d why] makes [d]'s next sleep raise [Fault why]. *)
+  (** [fault d why] makes [d]'s sleeps raise [Fault why] from now on, as a
+      faulted device's do. *)
 
   val set_word : t -> int -> unit
   (** [set_word d v] writes [v] into [d]'s word. *)
@@ -53,12 +54,51 @@ module Polled : sig
   val log : t -> string list
   (** [log d] is [d]'s driver calls, oldest first: ["alloc"], ["free"],
       ["map_host"], ["unmap"], ["sleep"], ["stop"], ["image"], ["unload"]. *)
+
+  val frees : t -> (int * int) list
+  (** [frees d] is the address of each region [d] freed, oldest first, with
+      [d]'s word when it was freed. *)
+
+  val blocked : t -> int
+  (** [blocked d] is the number of submits waiting for room in [d]'s [may_block]
+      queue. *)
+
+  (** {1:sleeps Sleeps}
+
+      Seams that hold a wait at a known point: each acts on the sleeps that
+      follow, in the order a sleep checks them: the gate, a fault, an
+      interruption, a stall. *)
+
+  val gate : t -> unit
+  (** [gate d] makes [d]'s sleeps block until {!open_gate}. *)
+
+  val open_gate : t -> unit
+  (** [open_gate d] lets [d]'s blocked sleeps go on. *)
+
+  val sleepers : t -> int
+  (** [sleepers d] is the number of [d]'s sleeps blocked at its gate. *)
+
+  val interrupt : t -> unit
+  (** [interrupt d] makes [d]'s next sleep raise SIGINT in its thread and return
+      without running the queue. *)
+
+  val stall : t -> int -> unit
+  (** [stall d n] makes [d]'s next [n] sleeps return after their still interval
+      without running the queue, as over work that runs long. *)
 end
 
 val bump : nativeint
 (** [bump] is a fill adding 1 to the 64-bit word its argument points at. *)
 
+val poke : nativeint
+(** [poke] is a fill storing the second 64-bit word of its argument at the
+    address its first holds. *)
+
 val load : int -> int
 (** [load a] reads the 64-bit word at the host address [a]. *)
 
 val store : int -> int -> unit
+
+val await : string -> (unit -> bool) -> unit
+(** [await what f] returns once [f ()] holds, yielding to other threads between
+    checks. It raises [Failure] naming [what] after 10 s. *)

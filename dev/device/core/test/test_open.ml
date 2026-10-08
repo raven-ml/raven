@@ -6,6 +6,7 @@
 open Windtrap
 module C = Device_core
 module P = Device_core_support.Polled
+module Support = Device_core_support
 
 let timeout = 60.
 let device = Testable.make ~pp:C.pp ~equal:C.equal
@@ -43,6 +44,32 @@ let test_reopen () =
   not_equal device d d';
   equal (option string) None (C.lost d')
 
+(* An open whose opener blocks holds back only opens of its own name. *)
+let test_blocked_opener () =
+  let lock = Mutex.create () and cond = Condition.create () in
+  let inside = ref false and go = ref false in
+  let make () =
+    Mutex.protect lock (fun () ->
+        inside := true;
+        while not !go do
+          Condition.wait cond lock
+        done);
+    Ok (P.make ())
+  in
+  let slow =
+    Thread.create
+      (fun () -> ignore (C.open_ (module P) ~name:"open:slow" make))
+      ()
+  in
+  Support.await "a running opener" (fun () ->
+      Mutex.protect lock (fun () -> !inside));
+  let d, _ = P.open_ "open:fast" in
+  equal string "open:fast" (C.name d);
+  Mutex.protect lock (fun () ->
+      go := true;
+      Condition.signal cond);
+  Thread.join slow
+
 let tests =
   group ~timeout "opening"
     [
@@ -50,6 +77,7 @@ let tests =
       test "a name open as another driver's device raises" test_other_driver;
       test "a device states its facts" test_facts;
       test "a lost device's name opens anew once its stop answered" test_reopen;
+      test "a blocked opener holds back no other name" test_blocked_opener;
     ]
 
 let () = exit (run "device_core.open" [ tests ])

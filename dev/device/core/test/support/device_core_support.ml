@@ -8,6 +8,7 @@ external polled_fail : nativeint -> unit = "device_core_test_polled_fail"
 external polled_run : nativeint -> int = "device_core_test_polled_run"
 external polled_queued : nativeint -> int = "device_core_test_polled_queued"
 external polled_submits : nativeint -> int = "device_core_test_polled_submits"
+external polled_blocked : nativeint -> int = "device_core_test_polled_blocked"
 external polled_room : unit -> nativeint = "device_core_test_polled_room"
 external polled_submit : unit -> nativeint = "device_core_test_polled_submit"
 external polled_word : nativeint -> int = "device_core_test_polled_word"
@@ -18,10 +19,13 @@ external polled_set_word : nativeint -> int -> unit
 external host_alloc : int -> int = "device_core_test_alloc"
 external host_free : int -> unit = "device_core_test_free"
 external bump : unit -> nativeint = "device_core_test_bump"
+external poke : unit -> nativeint = "device_core_test_poke"
+external interrupt : unit -> unit = "device_core_test_interrupt"
 external load : int -> int = "device_core_test_load"
 external store : int -> int -> unit = "device_core_test_store"
 
 let bump = bump ()
+let poke = poke ()
 
 module Driver = struct
   type t = {
@@ -31,8 +35,14 @@ module Driver = struct
     waits_host : bool;
     answer : [ `Stopped | `Unknown ];
     lock : Mutex.t;
+    opened : Condition.t;
     mutable calls : string list;
-    mutable fault_next : string option;
+    mutable frees : (int * int) list;
+    mutable fault : string option;
+    mutable interrupt_next : bool;
+    mutable stalls : int;
+    mutable gated : bool;
+    mutable sleepers : int;
   }
 
   type region = { at : int; owned : bool }
@@ -56,6 +66,8 @@ module Driver = struct
 
   let free d r =
     note d "free";
+    let w = polled_word d.c in
+    Mutex.protect d.lock (fun () -> d.frees <- (r.at, w) :: d.frees);
     if r.owned then host_free r.at
 
   let address r = Some r.at
@@ -86,16 +98,32 @@ module Driver = struct
   let word d = { at = Nativeint.to_int d.c; owned = false }
   let signaled d = polled_word d.c
 
-  let sleep d ~seen:_ ~still_ms:_ =
+  (* What a sleep does once its gate opens. *)
+  let next d =
+    if d.gated then begin
+      d.sleepers <- d.sleepers + 1;
+      while d.gated do
+        Condition.wait d.opened d.lock
+      done;
+      d.sleepers <- d.sleepers - 1
+    end;
+    match d.fault with
+    | Some why -> `Fault why
+    | None when d.interrupt_next ->
+        d.interrupt_next <- false;
+        `Interrupt
+    | None when d.stalls > 0 ->
+        d.stalls <- d.stalls - 1;
+        `Stall
+    | None -> `Run
+
+  let sleep d ~seen:_ ~still_ms =
     note d "sleep";
-    match
-      Mutex.protect d.lock (fun () ->
-          let f = d.fault_next in
-          d.fault_next <- None;
-          f)
-    with
-    | Some why -> raise (Fault why)
-    | None -> ignore (polled_run d.c)
+    match Mutex.protect d.lock (fun () -> next d) with
+    | `Fault why -> raise (Fault why)
+    | `Interrupt -> interrupt ()
+    | `Stall -> Thread.delay (float still_ms /. 1000.)
+    | `Run -> ignore (polled_run d.c)
 
   let completion _ = `Host
   let waits_on d c = d.waits_host && c = `Host
@@ -130,8 +158,14 @@ module Polled = struct
       waits_host;
       answer;
       lock = Mutex.create ();
+      opened = Condition.create ();
       calls = [];
-      fault_next = None;
+      frees = [];
+      fault = None;
+      interrupt_next = false;
+      stalls = 0;
+      gated = false;
+      sleepers = 0;
     }
 
   let open_ ?capacity ?copies ?may_block ?waits_host ?answer name =
@@ -144,6 +178,29 @@ module Polled = struct
   let queued d = polled_queued d.c
   let submits d = polled_submits d.c
   let fail d = polled_fail d.c
-  let fault d why = Mutex.protect d.lock (fun () -> d.fault_next <- Some why)
+  let fault d why = Mutex.protect d.lock (fun () -> d.fault <- Some why)
   let set_word d v = polled_set_word d.c v
+  let blocked d = polled_blocked d.c
+  let frees d = Mutex.protect d.lock (fun () -> List.rev d.frees)
+  let interrupt d = Mutex.protect d.lock (fun () -> d.interrupt_next <- true)
+  let stall d n = Mutex.protect d.lock (fun () -> d.stalls <- n)
+  let gate d = Mutex.protect d.lock (fun () -> d.gated <- true)
+  let sleepers d = Mutex.protect d.lock (fun () -> d.sleepers)
+
+  let open_gate d =
+    Mutex.protect d.lock (fun () ->
+        d.gated <- false;
+        Condition.broadcast d.opened)
 end
+
+(* Waiting for a signal *)
+
+let watchdog_s = 10.
+
+let await what f =
+  let until = Unix.gettimeofday () +. watchdog_s in
+  while not (f ()) do
+    if Unix.gettimeofday () > until then
+      failwith (Printf.sprintf "await: no %s after %.0f s" what watchdog_s);
+    Thread.yield ()
+  done

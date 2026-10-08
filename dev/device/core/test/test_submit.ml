@@ -60,6 +60,15 @@ let test_polled () =
   equal int 0 (P.queued p);
   equal bool true (C.Point.value a < C.Point.value b)
 
+(* Work that runs long is waited for: only a driver declares a hang. *)
+let test_still () =
+  let d, p = P.open_ "submit:still" in
+  let v = C.Point.value (C.submit (empty d)) in
+  P.stall p 3;
+  C.wait d v;
+  equal (option string) None (C.lost d);
+  equal int 4 (List.length (List.filter (( = ) "sleep") (P.log p)))
+
 let test_refusals () =
   let d = memory "submit:refusals" in
   let arg = B.create C.host S.UInt64 1 in
@@ -100,6 +109,28 @@ let test_read_waits () =
   ignore (C.submit r);
   equal int 0 (P.queued pp)
 
+(* A part's buffers are ordered as slots are: a copy waits for another device's
+   write of its source and for another device's read of its destination. *)
+let test_part_points () =
+  let d, _ = P.open_ "submit:parts" in
+  let e, pe = P.open_ "submit:parts-other" in
+  let src = B.create d S.UInt8 64 and dst = B.create d S.UInt8 64 in
+  let copy =
+    { Sub.queue = "COPY:0"; after = [||]; work = Sub.Copy { src; dst } }
+  in
+  let s = Sub.make ~reads:0 ~writes:0 ~waits:0 d [| copy |] in
+  let on_e ~reads ~writes b =
+    let w = Sub.make ~reads ~writes ~waits:0 e [||] in
+    if reads = 1 then Sub.read w 0 b else Sub.write w 0 b;
+    ignore (C.submit w)
+  in
+  on_e ~reads:0 ~writes:1 src;
+  ignore (C.submit s);
+  equal ~msg:"after a write of the source" int 0 (P.queued pe);
+  on_e ~reads:1 ~writes:0 dst;
+  ignore (C.submit s);
+  equal ~msg:"after a read of the destination" int 0 (P.queued pe)
+
 (* A Polled device that waits on host-written words waits for a producer in its
    queue: the submit hands it over without waiting. *)
 let test_in_queue () =
@@ -137,24 +168,124 @@ let test_copy_refused () =
   raises_match Exn.invalid_arg (fun () ->
       Sub.make ~reads:0 ~writes:0 ~waits:0 d [| copy |])
 
-let test_never () =
-  let d, _ = P.open_ ~capacity:1 "submit:never" in
-  let arg = B.create C.host S.UInt64 1 in
-  let s = Sub.make ~reads:0 ~writes:0 ~waits:0 d [| bump arg; bump arg |] in
-  raises_match Exn.invalid_arg (fun () -> C.submit s)
+(* Lifetime against the driver's frees *)
 
-(* A submission keeps its parts' memory while it is reachable. *)
-let test_parts_held () =
-  let d, p = P.open_ "submit:held" in
-  let s =
-    let src = B.create d S.UInt8 64 and dst = B.create d S.UInt8 64 in
-    Sub.make ~reads:0 ~writes:0 ~waits:0 d
-      [| { Sub.queue = "COPY:0"; after = [||]; work = Sub.Copy { src; dst } } |]
+(* Each submission copies between two fresh buffers that only it holds, and each
+   submit writes a fresh slot buffer the caller drops at once. Polled logs every
+   free with its word: no free may name a part's memory while its submission is
+   reachable, nor memory a submit used before the device's word reached that
+   submit's value. *)
+type watched = {
+  addresses : int list;
+  since : int;  (** Frees logged before the memory was made. *)
+  mutable dropped : int option;  (** Frees logged before it was dropped. *)
+  mutable last : int;  (** The last value that used it. *)
+}
+
+type device = { d : C.t; p : P.t; mutable watched : watched list }
+type submission = { dev : device; mutable s : Sub.t option; parts : watched }
+type device_model = { mutable value : int }
+type submission_model = { model : device_model; mutable live : bool }
+
+let devices = Atomic.make 0
+
+let open_device () =
+  let n = Atomic.fetch_and_add devices 1 in
+  let d, p = P.open_ (Printf.sprintf "submit:lifetime-%d" n) in
+  { d; p; watched = [] }
+
+let frees t = List.length (P.frees t.p)
+
+let watch t ?dropped ~last addresses =
+  let w = { addresses; since = frees t; dropped; last } in
+  t.watched <- w :: t.watched;
+  w
+
+let check_frees _ t =
+  cover "memory a submission named is freed"
+    (List.exists
+       (fun (at, _) -> List.exists (fun w -> List.mem at w.addresses) t.watched)
+       (P.frees t.p));
+  List.iteri
+    (fun i (at, word) ->
+      List.iter
+        (fun w ->
+          if i >= w.since && List.mem at w.addresses then
+            match w.dropped with
+            | Some j when j <= i ->
+                at_least
+                  ~msg:(Printf.sprintf "the word when %#x was freed" at)
+                  int ~than:w.last word
+            | _ -> failf "%#x was freed while a submission held it" at)
+        t.watched)
+    (P.frees t.p)
+
+let make t =
+  let src = B.create t.d S.UInt8 256 and dst = B.create t.d S.UInt8 256 in
+  let parts = watch t ~last:0 [ B.address src; B.address dst ] in
+  let copy =
+    { Sub.queue = "COPY:0"; after = [||]; work = Sub.Copy { src; dst } }
   in
+  let s = Sub.make ~reads:0 ~writes:1 ~waits:0 t.d [| copy |] in
+  { dev = t; s = Some s; parts }
+
+let submit sub =
+  let t = sub.dev in
+  let s = Option.get sub.s in
+  let slot = B.create t.d S.UInt8 256 in
+  let at = B.address slot in
+  Sub.write s 0 slot;
+  let v = C.Point.value (C.submit s) in
+  sub.parts.last <- v;
+  ignore (watch t ~dropped:(frees t) ~last:v [ at ]);
+  v
+
+let drop sub =
+  sub.s <- None;
+  sub.parts.dropped <- Some (frees sub.dev);
+  Gc.full_major ()
+
+let drain t =
   Gc.full_major ();
-  ignore (B.create d S.UInt8 64);
-  equal int 0 (List.length (List.filter (( = ) "free") (P.log p)));
-  C.wait d (C.Point.value (C.submit s))
+  ignore (B.create t.d S.UInt8 64);
+  C.free_cache t.d
+
+let device = abstract ~invariant:check_frees "d"
+let submission = abstract "s"
+let nothing _ = ()
+
+let lifetime =
+  [
+    command "open"
+      (Gen.unit @-> makes device)
+      (fun () -> { value = 0 })
+      open_device;
+    command "make"
+      (device ^-> makes submission)
+      (fun model -> { model; live = true })
+      make;
+    command "submit"
+      ~pre:(fun r -> r.live)
+      (submission ^-> returns int)
+      (fun r ->
+        r.model.value <- r.model.value + 1;
+        r.model.value)
+      submit;
+    command "drop"
+      ~pre:(fun r -> r.live)
+      (submission ^-> returns unit)
+      (fun r -> r.live <- false)
+      drop;
+    command "drain" (device ^-> returns unit) nothing drain;
+    command "device runs"
+      (device ^-> returns unit)
+      nothing
+      (fun t -> ignore (P.run t.p));
+    command "wait"
+      (device ^-> returns unit)
+      nothing
+      (fun t -> C.wait t.d (C.submitted t.d));
+  ]
 
 let test_allocation () =
   let d = memory "submit:words" in
@@ -178,26 +309,28 @@ let tests =
         test "a device's work completes once a wait reaches it" test_polled;
         test "a wait slot left unset waits for nothing" test_unset_wait;
         test "a wait names a submitted value" test_wait_beyond;
+        test "a word still for three intervals loses nothing" test_still;
       ];
     group ~timeout "refusals"
       [
         test "a submission refuses what it cannot run" test_refusals;
-        test "parts that never fit are refused" test_never;
         test "a copy on a device that runs no copies is refused"
           test_copy_refused;
       ];
     group ~timeout "order"
       [
         test "a read waits for another device's write" test_read_waits;
+        test "a part's buffers wait as slots do" test_part_points;
         test "a queue that waits on host words waits in the queue" test_in_queue;
         test "a full queue's submit waits for room" test_room;
-        test "a submission keeps its parts' memory" test_parts_held;
+      ];
+    group ~timeout "lifetime"
+      [
+        stateful "memory a submission names returns after its last submit"
+          lifetime;
       ];
     group ~timeout "cost"
-      [
-        test "a submit that does not wait allocates at most 32 words"
-          test_allocation;
-      ];
+      [ test "a submit that does not wait allocates nothing" test_allocation ];
   ]
 
 let () = exit (run "device_core.submit" tests)

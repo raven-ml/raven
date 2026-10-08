@@ -1,3 +1,12 @@
 (tests
- (names test_open test_buffer test_submit test_loss)
- (libraries device_core device_dtype device_core_support windtrap))
+ (names
+  test_open
+  test_buffer
+  test_submit
+  test_loss
+  test_turn
+  test_fork
+  test_hold
+  test_stamps)
+ (libraries device_core device_dtype device_core_support threads.posix unix
+  windtrap))

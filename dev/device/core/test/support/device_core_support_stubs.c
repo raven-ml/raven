@@ -11,6 +11,7 @@
 
 #define _GNU_SOURCE
 
+#include <signal.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,6 +50,7 @@ struct polled {
   int n, c;
   struct queued *q;
   _Atomic int submits;
+  int blocked; /* submits waiting for room */
 };
 
 static size_t page(void) {
@@ -87,6 +89,14 @@ value device_core_test_polled_fail(value v_p) {
 
 value device_core_test_polled_submits(value v_p) {
   return Val_int(atomic_load(&Polled_val(v_p)->submits));
+}
+
+value device_core_test_polled_blocked(value v_p) {
+  struct polled *p = Polled_val(v_p);
+  pthread_mutex_lock(&p->mu);
+  int n = p->blocked;
+  pthread_mutex_unlock(&p->mu);
+  return Val_int(n);
 }
 
 value device_core_test_polled_queued(value v_p) {
@@ -166,8 +176,11 @@ static int polled_submit(void *self, uint64_t v, const struct nx_wait *waits,
     *failure = "the submission failed";
     return NX_FAILED;
   }
-  while (p->may_block && p->held + nparts > p->capacity)
+  while (p->may_block && p->held + nparts > p->capacity) {
+    p->blocked++;
     pthread_cond_wait(&p->cv, &p->mu);
+    p->blocked--;
+  }
   if (p->n == p->c) {
     int c = p->c == 0 ? 8 : 2 * p->c;
     struct queued *q = realloc(p->q, (size_t)c * sizeof *q);
@@ -236,6 +249,30 @@ static int bump(void *queue, void *arg, uint64_t v) {
 value device_core_test_bump(value unit) {
   (void)unit;
   return caml_copy_nativeint((intnat)&bump);
+}
+
+/* A fill that stores the second 64-bit word of its argument at the address
+   the first holds. */
+static int poke(void *queue, void *arg, uint64_t v) {
+  (void)queue;
+  (void)v;
+  _Atomic uint64_t *a = arg;
+  _Atomic uint64_t *at = (_Atomic uint64_t *)(uintptr_t)atomic_load(&a[0]);
+  atomic_store(at, atomic_load(&a[1]));
+  return 0;
+}
+
+value device_core_test_poke(value unit) {
+  (void)unit;
+  return caml_copy_nativeint((intnat)&poke);
+}
+
+/* Raises SIGINT in the calling thread: the runtime records it, and the
+   thread's next poll point runs its handler. */
+value device_core_test_interrupt(value unit) {
+  (void)unit;
+  raise(SIGINT);
+  return Val_unit;
 }
 
 value device_core_test_load(value v_addr) {

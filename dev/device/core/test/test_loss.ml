@@ -8,6 +8,7 @@ module C = Device_core
 module B = Device_core.Buffer
 module Sub = Device_core.Submission
 module P = Device_core_support.Polled
+module Support = Device_core_support
 module S = Device_dtype.Scalar
 
 let timeout = 60.
@@ -92,6 +93,35 @@ let test_unknown () =
   ignore (B.create C.host S.UInt8 8);
   equal int 1 (count "free" p)
 
+(* A wait checks the loss after its value: a reached value of a lost device
+   raises. *)
+let test_reached () =
+  let d, p = P.open_ "loss:reached" in
+  let v = C.Point.value (C.submit (empty d)) in
+  C.wait d v;
+  P.fail p;
+  raises_match (lost d) (fun () -> C.submit (empty d));
+  raises_match (lost d) (fun () -> C.wait d v)
+
+(* Two domains sleep on a device that faults: each raises its Lost, and the
+   device is lost and stopped once. *)
+let test_two_sleeps () =
+  let d, p = P.open_ "loss:two-sleeps" in
+  let v = C.Point.value (C.submit (empty d)) in
+  P.gate p;
+  let wait () =
+    match C.wait d v with () -> "returned" | exception C.Lost (_, why) -> why
+  in
+  let waiters = List.init 2 (fun _ -> Domain.spawn wait) in
+  Support.await "two sleeps at the gate" (fun () -> P.sleepers p = 2);
+  P.fault p "the engine hung";
+  P.open_gate p;
+  equal (list string)
+    [ "the engine hung"; "the engine hung" ]
+    (List.map Domain.join waiters);
+  equal (option string) (Some "the engine hung") (C.lost d);
+  equal int 1 (count "stop" p)
+
 let tests =
   [
     group ~timeout "loss"
@@ -102,6 +132,10 @@ let tests =
         test "a queue waiting on a lost device's value is lost" test_spread;
         test "a queue whose wait was reached stays" test_no_spread;
         test "an Unknown answer keeps memory until the word drains" test_unknown;
+        test "a wait on a lost device raises once its value is reached"
+          test_reached;
+        test "a fault two domains' sleeps find loses the device once"
+          test_two_sleeps;
       ];
   ]
 

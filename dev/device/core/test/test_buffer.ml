@@ -187,6 +187,41 @@ let test_lost_memory () =
   raises_match lost (fun () -> C.Claim.read on);
   raises_match lost (fun () -> B.wait on B.Read)
 
+(* Words *)
+
+(* The fewest minor and major words of ten calls of [f], after a warm-up call,
+   so that a finaliser running inside one call cannot inflate the count. *)
+let words f =
+  ignore (Sys.opaque_identity (f ()));
+  let minor = ref max_int and major = ref max_int in
+  for _ = 1 to 10 do
+    let m0, _, j0 = Gc.counters () in
+    ignore (Sys.opaque_identity (f ()));
+    let m1, _, j1 = Gc.counters () in
+    minor := Int.min !minor (int_of_float (m1 -. m0));
+    major := Int.min !major (int_of_float (j1 -. j0))
+  done;
+  (!minor, !major)
+
+(* Host buffers cost at most these words, [(minor, major)]: programs pin their
+   own allocation counts on them. *)
+let at_most_words (minor, major) f =
+  let m, j = words f in
+  at_most ~msg:"minor words" int ~than:minor m;
+  at_most ~msg:"major words" int ~than:major j
+
+let f32 = Bigarray.Array1.create Bigarray.float32 Bigarray.c_layout 16
+let b16 = B.create C.host S.Float32 16
+
+let test_create_words () =
+  at_most_words (61, 0) (fun () -> B.create C.host S.Float32 16)
+
+let test_create_large_words () =
+  at_most_words (54, 7) (fun () -> B.create C.host S.UInt8 (1 lsl 20))
+
+let test_create_empty_words () =
+  at_most_words (32, 0) (fun () -> B.create C.host S.Float32 0)
+
 let tests =
   [
     group ~timeout "host buffers"
@@ -227,4 +262,20 @@ let tests =
       ];
   ]
 
-let () = exit (run "device_core.buffer" tests)
+let words =
+  group ~timeout "words"
+    [
+      test "a host buffer of 16 floats costs at most 61 words" test_create_words;
+      test "a host buffer of 1 MiB costs at most 54 and 7 major words"
+        test_create_large_words;
+      test "a host buffer of no bytes costs at most 32 words"
+        test_create_empty_words;
+      test "a bigarray's buffer costs at most 54 words" (fun () ->
+          at_most_words (54, 0) (fun () -> B.of_bigarray f32));
+      test "a view costs at most 19 words" (fun () ->
+          at_most_words (19, 0) (fun () -> B.view b16 ~offset:16 S.Float32 4));
+      test "a buffer's bigarray costs at most 27 words" (fun () ->
+          at_most_words (27, 0) (fun () -> B.bigarray Bigarray.float32 b16));
+    ]
+
+let () = exit (run "device_core.buffer" (tests @ [ words ]))
