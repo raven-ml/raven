@@ -1,0 +1,7 @@
+; The Mac's GPU, driven through Metal.
+
+(library
+ (name device_metal)
+ (libraries device_edge device_metal_abi)
+ (install_c_headers device_metal)
+ (modules_without_implementation device_metal))
