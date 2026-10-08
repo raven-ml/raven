@@ -3,9 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The representations one module builds and another reads, which their
-   interfaces export private: Qmd builds structures, and reads the launches
-   Launch builds. *)
+(** The shared representation behind {!Launch.t} and {!Structure.t}, which
+    {!Qmd} reads and builds. *)
 
 type 'v hole = { at : int; bits : int; value : 'v Packet.term }
 type 'v structure = { bytes : string; holes : 'v hole list }
