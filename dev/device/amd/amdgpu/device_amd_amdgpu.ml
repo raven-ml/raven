@@ -133,25 +133,28 @@ let alloc_kind = function `Gpu -> 0 | `Bar -> 1 | `System -> 2
 (* [n] bytes of [kind] at addresses reserved in the process, mapped for the GPU,
    and for the host unless they are [`Gpu]. *)
 let alloc fd g kind n : mem Amd.memory option =
-  let n = round_up n page in
-  let at = reserve n in
-  check "reserving GPU addresses" at;
-  let b = Bytes.create 16 in
-  match kfd_alloc fd g.node.gpu_id at n (alloc_kind kind) b with
-  | e when e = enomem || (e = einval && kind = `Bar) ->
-      unmap_mem at n;
-      None
-  | e when e < 0 ->
-      unmap_mem at n;
-      fault (strf "allocating %d bytes of GPU memory" n) e
-  | _ ->
-      let handle = get64 b 0 in
-      if kind <> `Gpu then
-        check "mapping GPU memory" (map_file g.drm at n (offset b));
-      check "mapping memory for the GPU" (map_gpu fd handle g.node.gpu_id true);
-      let host = if kind = `Gpu then None else Some (Nativeint.of_int at) in
-      let data = { handle; bytes = n; at; kind = Own; owner = g } in
-      Some { Amd.address = at; host; data }
+  if kind = `Bar && g.node.visible = 0 then None
+  else
+    let n = round_up n page in
+    let at = reserve n in
+    check "reserving GPU addresses" at;
+    let b = Bytes.create 16 in
+    match kfd_alloc fd g.node.gpu_id at n (alloc_kind kind) b with
+    | e when e = enomem || (e = einval && kind = `Bar) ->
+        unmap_mem at n;
+        None
+    | e when e < 0 ->
+        unmap_mem at n;
+        fault (strf "allocating %d bytes of GPU memory" n) e
+    | _ ->
+        let handle = get64 b 0 in
+        if kind <> `Gpu then
+          check "mapping GPU memory" (map_file g.drm at n (offset b));
+        check "mapping memory for the GPU"
+          (map_gpu fd handle g.node.gpu_id true);
+        let host = if kind = `Gpu then None else Some (Nativeint.of_int at) in
+        let data = { handle; bytes = n; at; kind = Own; owner = g } in
+        Some { Amd.address = at; host; data }
 
 (* The kernel driver lets go of memory before the process unmaps it: unmapping
    host memory the driver still maps makes it evict every queue of the process

@@ -15,6 +15,7 @@ type node = {
   lds : int;
   mec : int;
   budget : int;
+  visible : int;
   waves_per_cu : int;
   arrays : int;
   cwsr : int;
@@ -114,11 +115,12 @@ let version root ~render ~bus hwid name =
   | _ ->
       Error (strf "%s: the amdgpu driver lists no %s version (%s)" bus name dir)
 
-let budget dir =
+(* The bytes of the node's memory banks of the heap types [heaps]. *)
+let banks dir heaps =
   let bank b =
     let p = properties (dir // "mem_banks" // b // "properties") in
     match (List.assoc_opt "heap_type" p, List.assoc_opt "size_in_bytes" p) with
-    | Some h, Some n when h = heap_public || h = heap_private -> n
+    | Some h, Some n when List.mem h heaps -> n
     | _ -> 0
   in
   List.fold_left (fun n b -> n + bank b) 0 (entries (dir // "mem_banks"))
@@ -127,6 +129,7 @@ let node root bus =
   match find root bus with
   | None -> Error (strf "%s is not held by the amdgpu driver" bus)
   | Some (index, gpu_id, p) ->
+      let dir = nodes root // string_of_int index in
       let prop k =
         match List.assoc_opt k p with
         | Some v -> Ok v
@@ -166,7 +169,8 @@ let node root bus =
           gpu;
           lds = lds_kib * 1024;
           mec;
-          budget = budget (nodes root // string_of_int index);
+          budget = banks dir [ heap_public; heap_private ];
+          visible = banks dir [ heap_public ];
           waves_per_cu = waves_per_simd * simd_per_cu;
           arrays = arrays_per_engine;
           cwsr;
