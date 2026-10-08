@@ -1,0 +1,8 @@
+; NVIDIA GPUs, driven through their resource manager whichever path opened
+; them.
+
+(library
+ (name device_nv)
+ (libraries device_nv_abi device_elf device_edge)
+ (install_c_headers device_nv)
+ (modules_without_implementation device_nv))

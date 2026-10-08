@@ -1,0 +1,6 @@
+; NVIDIA GPUs of this machine, opened through NVIDIA's kernel driver.
+
+(library
+ (name device_nv_nvidia)
+ (libraries device_nv)
+ (modules_without_implementation device_nv_nvidia))
