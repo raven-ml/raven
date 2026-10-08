@@ -92,6 +92,11 @@ val os : t -> Images.t -> unit
     contents: the first part of a full {!start}, before any firmware is loaded.
     Raises as {!start} does. *)
 
+val power_firmware : t -> Images.t -> unit
+(** [power_firmware p images] loads the power manager's image of [images], if it
+    has one, through the running OS: the first load of a full {!start}. Raises
+    as {!start} does. *)
+
 val start : t -> Images.t -> partial:bool -> unit
 (** [start p images ~partial] starts the processor and loads [images]: a full
     boot loads the SOS components, makes the ring, sets up the TMR and loads

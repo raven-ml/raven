@@ -293,8 +293,10 @@ let os p images =
   ring_create p;
   tmr_init p images ~partial:false
 
+let power_firmware p images = Option.iter (load p) images.Images.smu
+
 let firmware p images =
-  Option.iter (load p) images.Images.smu;
+  power_firmware p images;
   if (not (boot_time_tmr p)) || not (autoload_tmr p) then tmr_load p;
   List.iter (load p) images.pieces;
   let gc = Regs.version (Regs.layout_of p.r) D.gc_hwid in
