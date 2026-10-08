@@ -148,24 +148,21 @@ let included =
 let cp_me_mc_raddr = 2
 
 (* The tokens an engine excludes: those of instruction timing where it traces
-   none, and on GFX11 the performance counters', which Mesa calls deprecated.
-   GFX12's field takes GFX11's bits. *)
-let excluded g e =
-  let timing =
-    if itraced e then 0
-    else
-      bits
-        Defs.
-          [
-            sq_tt_token_exclude_vmemexec_shift;
-            sq_tt_token_exclude_aluexec_shift;
-            sq_tt_token_exclude_valuinst_shift;
-            sq_tt_token_exclude_immediate_shift;
-            sq_tt_token_exclude_inst_shift;
-          ]
-  in
-  if major g >= 12 then timing
-  else timing lor (1 lsl Defs.sq_tt_token_exclude_perf_shift)
+   none. GFX12's field takes GFX11's bits. Mesa's GFX11 program also names the
+   performance counters' bit, 11 (soc21_enum.h), which GFX11's 11-bit field does
+   not hold (gc_11_0_0_sh_mask.h): neither generation excludes them. *)
+let excluded e =
+  if itraced e then 0
+  else
+    bits
+      Defs.
+        [
+          sq_tt_token_exclude_vmemexec_shift;
+          sq_tt_token_exclude_aluexec_shift;
+          sq_tt_token_exclude_valuinst_shift;
+          sq_tt_token_exclude_immediate_shift;
+          sq_tt_token_exclude_inst_shift;
+        ]
 
 let start_gfx11 g ~size buffer =
   let base e shift = Shift (Value (buffer e), shift) in
@@ -195,7 +192,7 @@ let start_gfx11 g ~size buffer =
       @ set g "SQ_THREAD_TRACE_TOKEN_MASK"
           ([
              ("reg_include", included);
-             ("token_exclude", excluded g e);
+             ("token_exclude", excluded e);
              ("bop_events_token_include", 1);
            ]
           @

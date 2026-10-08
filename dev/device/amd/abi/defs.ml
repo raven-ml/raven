@@ -3681,7 +3681,6 @@ let sq_tt_token_exclude_aluexec_shift = 1
 let sq_tt_token_exclude_valuinst_shift = 2
 let sq_tt_token_exclude_immediate_shift = 5
 let sq_tt_token_exclude_inst_shift = 8
-let sq_tt_token_exclude_perf_shift = 0xb
 
 (* GFX9's thread trace tokens, from vega10_enum.h and gc_9_4_3_sh_mask.h:
    each type, and its 16-bit words. *)
