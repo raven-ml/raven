@@ -256,12 +256,18 @@ What each ring suite holds:
 Drivers are tested on their GPUs. There are no mock drivers: a mock confirms
 the words a driver writes, while the bugs are in what the hardware does with
 them (ordering, visibility, completion). A test that acts on a GPU takes only
-the class of device its library drives, holds the machine's GPU lock and skips
-without it. The lock file is named by `DEVICE_<LIB>_TEST_GPU_LOCK`
-(`DEVICE_CUDA_TEST_GPU_LOCK`, `DEVICE_NV_TEST_GPU_LOCK`,
-`DEVICE_AMD_TEST_GPU_LOCK`, `DEVICE_PCI_TEST_GPU_LOCK`); a run that does not
-set it skips every GPU test, naming the variable. No test sweeps every device
-of the host.
+the class of device its library drives, and skips only when the machine has
+none (or no vendor library to reach it), so a suite that passes on a machine
+with the GPU has run its GPU tests. No test sweeps every device of the host.
+
+Suites take turns on a machine's GPUs through one lock: `flock` on
+`/tmp/raven-device-gpu.lock`, shared by every checkout and user of the
+machine, and separate from the benches' timing locks. A suite that finds its
+GPU calls its support's `hold_gpu` before `Windtrap.run`, so the wait counts
+against no test's timeout, and holds the lock until it exits; the holder
+writes its executable and process id into the file. A suite still waiting
+after 300 s fails, naming the holder. Under `dune runtest` the GPU suites of
+a machine therefore run one after another.
 
 | Host | Hardware | What only it runs |
 |---|---|---|
