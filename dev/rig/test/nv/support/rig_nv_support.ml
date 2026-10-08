@@ -249,12 +249,12 @@ let cubin_of file bin =
   | Ok c -> c
   | Error e -> failf "%s: %s" file e
 
-type kernels = { cubin : A.Cubin.t; program : Rig.Program.t }
+type kernels = { cubin : A.Cubin.t; image : Rig.Image.t }
 
 let kernels ?(file = "kernels_sm89.cubin") t =
   let bin = fixture file in
-  match Rig.Program.load t.d bin with
-  | Ok program -> { cubin = cubin_of file bin; program }
+  match Rig.Image.load t.d bin with
+  | Ok image -> { cubin = cubin_of file bin; image }
   | Error e -> failf "loading %s: %s" file e
 
 let image g bin =
@@ -357,7 +357,7 @@ let launch_kernel l cubin name entry ~blocks args =
 
 let launch l k f ~blocks args =
   let entry =
-    match Rig.Program.entry k.program f with
+    match Rig.Image.entry k.image f with
     | Some e -> e
     | None -> failf "no kernel %s" f
   in

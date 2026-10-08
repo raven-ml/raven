@@ -3,9 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Programs: the implementation of {!Rig.Program}. *)
+(** Images: the implementation of {!Rig.Image}. *)
 
-type t = Def.program
+type t = Def.image
 
 val load : Def.device -> string -> (t, string) result
 val device : t -> Def.device

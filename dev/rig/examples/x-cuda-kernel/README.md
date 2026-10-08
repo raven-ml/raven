@@ -18,7 +18,7 @@ dune exec ./main.exe
 ## What You'll Learn
 
 - Loading PTX text, which CUDA compiles for the GPU it loads on:
-  `Program.load`, `Program.entry`
+  `Image.load`, `Image.entry`
 - What compiled code finds in a CUDA device's capability:
   `Rig.capability g Rig_cuda_abi.key`, its `symbol`
 - A fill's argument in pinned host memory: `Buffer.create ~memory:Pinned`
@@ -28,7 +28,7 @@ dune exec ./main.exe
 
 | Function                          | Purpose                                    |
 | --------------------------------- | ------------------------------------------ |
-| `Program.load g ptx`              | The module of `ptx` on `g`                 |
+| `Image.load g ptx`                | The module of `ptx` on `g`                 |
 | `cap.symbol "cuLaunchKernel"`     | A CUDA function's address                  |
 | `Submission.Fill { fill; arg; _ }`| The launch, as C work on the stream        |
 

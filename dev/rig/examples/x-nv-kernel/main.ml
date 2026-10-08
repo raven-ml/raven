@@ -58,8 +58,8 @@ let run g (gpu : Abi.Gpu.t) =
 
   (* The device places the image; its entry is the kernel's first
      instruction. *)
-  let p = Result.get_ok (Program.load g bin) in
-  let entry = Option.get (Program.entry p "simple_add") in
+  let p = Result.get_ok (Image.load g bin) in
+  let entry = Option.get (Image.entry p "simple_add") in
   let base = entry - k.code in
 
   (* The channels' local memory serves the kernel's threads. *)
@@ -112,7 +112,7 @@ let run g (gpu : Abi.Gpu.t) =
   let words = Buffer.create host (String.length entry_words) in
   write words ~at:0 entry_words;
 
-  (* The step: the launch's memory held with the program; the arrays passed to
+  (* The step: the launch's memory held with the image; the arrays passed to
      each submit. *)
   let hold =
     Hold.make ~release:(fun () -> ignore (Sys.opaque_identity p)) [ mem ]

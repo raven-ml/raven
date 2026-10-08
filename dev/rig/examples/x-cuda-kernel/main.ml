@@ -10,7 +10,7 @@
 
    Compiled code runs a kernel through a fill ([run.c]) that calls
    [cuLaunchKernel] on the stream the device hands it. It finds that function
-   through the device's capability, so it links no CUDA library. The program is
+   through the device's capability, so it links no CUDA library. The code is
    PTX text ([add.ptx]), which CUDA compiles for the GPU it loads on. *)
 
 open Rig
@@ -47,17 +47,17 @@ let () =
     let cap = Option.get (capability g Rig_cuda_abi.key) in
     let launch = Option.get (cap.symbol "cuLaunchKernel") in
 
-    (* The program, compiled by CUDA as it loads, and its kernel. *)
+    (* The image, compiled by CUDA as it loads, and its kernel. *)
     let ptx = In_channel.with_open_bin "add.ptx" In_channel.input_all in
-    let p = Result.get_ok (Program.load g ptx) in
-    let add = Option.get (Program.entry p "add") in
+    let p = Result.get_ok (Image.load g ptx) in
+    let add = Option.get (Image.entry p "add") in
 
     (* The arrays, in the GPU's memory. *)
     let a = floats g float_of_int and b = floats g (fun _ -> 0.5) in
     let out = Buffer.create g (4 * n) in
 
     (* The fill's argument, in pinned host memory that the fill reads on the
-       host. It is fixed memory of the step: a hold keeps it, and the program
+       host. It is fixed memory of the step: a hold keeps it, and the image
        until the work is done. *)
     let arg = Buffer.create ~memory:Pinned g 64 in
     words arg

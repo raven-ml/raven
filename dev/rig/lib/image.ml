@@ -8,7 +8,7 @@ open Def
 let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
-type t = program
+type t = image
 
 (* Places [code] at the start of [d]'s code memory [e]: by a copy on [d]'s copy
    queue from pinned memory, or by the host where [d] runs no copy, after [d]'s
@@ -28,20 +28,20 @@ let place d (e : entry) code =
       Copy.queued d queue ~src ~dst
   | None ->
       if host < 0 then
-        invalid_argf "Rig.Program.load: %s's code memory has no host address"
+        invalid_argf "Rig.Image.load: %s's code memory has no host address"
           d.name;
       Dev.wait d (Dev.submitted d);
       Buffer.blit_string code 0 host n
 
-(* The image of [binary] on [d], and the memory its code lies in where [d]'s
-   memory holds it. *)
-let image d binary =
+(* The driver's image of [binary] on [d], and the memory its code lies in where
+   [d]'s memory holds it. *)
+let loaded d binary =
   match d.kind with
   | Driver { m; h; rid } -> (
       let module D = (val m) in
       match Dev.counted d (fun () -> D.image h binary) with
       | Error why -> Error (strf "%s: %s" d.name why)
-      | Ok (`Loaded i) -> Ok (Image { m; h; i }, None)
+      | Ok (`Loaded i) -> Ok (Loaded { m; h; i }, None)
       | Ok (`Place (n, lay)) -> (
           let e = Memory.alloc_entry d Device n in
           (* [d]'s regions are of [d]'s region type. *)
@@ -56,38 +56,36 @@ let image d binary =
                     let i, code = lay r in
                     (try place d e code
                      with x ->
-                       (try Memory.unload d (Image { m; h; i })
+                       (try Memory.unload d (Loaded { m; h; i })
                         with Dev.Lost _ -> ());
                        raise x);
                     i
                   with
-                  | i -> Ok (Image { m; h; i }, Some e)
+                  | i -> Ok (Loaded { m; h; i }, Some e)
                   | exception x ->
                       Memory.retire d e;
                       raise x)
               | None -> assert false)
           | None -> assert false))
-  | _ -> invalid_argf "Rig.Program.load: %s loads no code" d.name
+  | _ -> invalid_argf "Rig.Image.load: %s loads no code" d.name
 
 let load d binary =
   if Dev.is_lost d then Dev.raise_lost d;
-  match image d binary with
+  match loaded d binary with
   | Error _ as e -> e
-  | Ok (image, code) ->
+  | Ok (loaded, code) ->
       let bytes = match code with Some e -> e.bytes | None -> 0 in
-      let ptoken =
-        Memory.token d.release
-          (Program (image, code))
-          bytes (Memory.room d) (-1)
+      let itoken =
+        Memory.token d.release (Image (loaded, code)) bytes (Memory.room d) (-1)
       in
-      let p = { pdev = d; image; ptoken } in
+      let image = { idev = d; loaded; itoken } in
       if Prof.enabled () then
-        Prof.record (Load { program = p; binary; time = Prof.now () });
-      Ok p
+        Prof.record (Load { image; binary; time = Prof.now () });
+      Ok image
 
-let device p = p.pdev
+let device image = image.idev
 
-let entry p f =
-  let (Image { m; i; _ }) = p.image in
+let entry image f =
+  let (Loaded { m; i; _ }) = image.loaded in
   let module D = (val m) in
-  Dev.counted p.pdev (fun () -> D.entry i f)
+  Dev.counted image.idev (fun () -> D.entry i f)

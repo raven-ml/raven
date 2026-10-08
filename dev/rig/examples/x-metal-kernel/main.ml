@@ -7,7 +7,7 @@
 
    Needs a Mac whose GPU supports Metal, on macOS 15 or later.
 
-   Compiled code runs a kernel through a fill ([run.c]). The program is loaded
+   Compiled code runs a kernel through a fill ([run.c]). The image is loaded
    on the device, its function named by its pipeline, and the dispatch recorded
    once in an indirect command buffer, which the device's capability makes. Each
    submission's fill executes that buffer. The kernel's arguments, the GPU
@@ -46,10 +46,10 @@ let () =
     in
     let cap = Option.get (capability g Rig_metal_abi.key) in
 
-    (* The program and its kernel's pipeline. *)
+    (* The image and its kernel's pipeline. *)
     let lib = In_channel.with_open_bin "add.metallib" In_channel.input_all in
-    let p = Result.get_ok (Program.load g lib) in
-    let pipeline = Option.get (Program.entry p "add") in
+    let p = Result.get_ok (Image.load g lib) in
+    let pipeline = Option.get (Image.entry p "add") in
 
     (* The arrays, and the argument buffer that names them by GPU address. *)
     let a = floats g float_of_int and b = floats g (fun _ -> 0.5) in
@@ -69,7 +69,7 @@ let () =
     let icb = Result.get_ok (cap.icb (Buffer.handle args) [| dispatch |]) in
 
     (* The step: its fixed memory in a hold whose release ends the indirect
-       command buffer and keeps the program until then; its arrays passed to
+       command buffer and keeps the image until then; its arrays passed to
        each submit. *)
     let fill_arg = Buffer.create g 16 in
     words fill_arg [ Nativeint.to_int icb.handle; 1 ];

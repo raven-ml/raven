@@ -337,8 +337,8 @@ let test_untaken () =
 let test_chrome () =
   let d = memory "profile:chrome" in
   let polled, _ = P.open_ "profile:chrome-code" in
-  let program =
-    require_ok ~pp:Format.pp_print_string (Rig.Program.load polled "code:8")
+  let image =
+    require_ok ~pp:Format.pp_print_string (Rig.Image.load polled "code:8")
   in
   let events =
     [
@@ -350,7 +350,7 @@ let test_chrome () =
           start = 1_500;
           stop = 1_600;
         };
-      Prof.Load { program; binary = "code:8"; time = 1_200 };
+      Prof.Load { image; binary = "code:8"; time = 1_200 };
       Prof.Counters
         {
           device = d;

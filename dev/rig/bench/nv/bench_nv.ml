@@ -84,14 +84,14 @@ let encode = Abi.Structure.encode Int64.of_int
 (* [count] launches of the kernel [empty] over one thread, their descriptors and
    constant bank 0 in [`Mapped] memory, as compiled code places them:
    [`Chained], descriptors chained from one segment that schedules the first;
-   [`Apart], a segment scheduling each. The result is the loaded program, which
+   [`Apart], a segment scheduling each. The result is the loaded image, which
    stays loaded while reachable, and the segments' ring entries, two words
    each. *)
 let launches t count how =
   let c = get (Abi.Cubin.of_string (Lazy.force cubin)) in
   let k = Option.get (Abi.Cubin.kernel c "empty") in
-  let p = get (Rig.Program.load t.d (Lazy.force cubin)) in
-  let entry = Option.get (Rig.Program.entry p "empty") in
+  let p = get (Rig.Image.load t.d (Lazy.force cubin)) in
+  let entry = Option.get (Rig.Image.entry p "empty") in
   let cap = N.capability t.g in
   let l = get (Abi.Launch.make cap k) in
   get (cap.local (Abi.Launch.local_bytes l));

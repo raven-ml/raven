@@ -142,9 +142,9 @@ and pending =
   | Unmap of region * entry option
       (** A mapping, and the dead memory it maps, given back after its last
           unmap. *)
-  | Unload of image * entry option
+  | Unload of loaded * entry option
 
-and image = Image : { m : ('a, 'r, 'i) dm; h : 'a; i : 'i } -> image
+and loaded = Loaded : { m : ('a, 'r, 'i) dm; h : 'a; i : 'i } -> loaded
 
 type claim = {
   mutable count : int; [@atomic]  (** The claim word, laid out in {!Memory}. *)
@@ -172,7 +172,7 @@ type memory = {
 type buffer = { mem : memory; offset : int; length : int; generation : int }
 (** {!Rig.Buffer.t}: live while [generation] is its claim's. *)
 
-type program = { pdev : device; image : image; ptoken : token }
+type image = { idev : device; loaded : loaded; itoken : token }
 type hold = { hstamps : int; members : buffer list; htoken : token }
 
 (** {!Rig.Profile.event}. *)
@@ -185,7 +185,7 @@ type event =
       stop : int;
     }
   | Allocation of { device : device; time : int; allocated : int }
-  | Load of { program : program; binary : string; time : int }
+  | Load of { image : image; binary : string; time : int }
   | Counters of {
       device : device;
       name : string;
@@ -207,5 +207,5 @@ type event =
 (** The type for what a release list holds. *)
 type released =
   | Memory of entry
-  | Program of image * entry option  (** The image and its code's memory. *)
+  | Image of loaded * entry option  (** The image and its code's memory. *)
   | Release of { stamps : int; release : unit -> unit }  (** A hold's. *)

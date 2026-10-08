@@ -9,7 +9,7 @@
 open Windtrap
 module B = Rig.Buffer
 module Sub = Rig.Submission
-module Program = Rig.Program
+module Image = Rig.Image
 module Prof = Rig.Profile
 module P = Rig_support.Polled
 module Support = Rig_support
@@ -21,39 +21,39 @@ let timeout = 60.
 let count call p = List.length (List.filter (( = ) call) (P.log p))
 
 let load d binary =
-  require_ok ~pp:Format.pp_print_string (Program.load d binary)
+  require_ok ~pp:Format.pp_print_string (Image.load d binary)
 
 let lost d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
 
 let test_load () =
-  let d, _ = P.open_ "program:load" in
+  let d, _ = P.open_ "image:load" in
   let p = load d "code:64" in
-  equal bool true (Rig.equal d (Program.device p));
-  equal (option int) None (Program.entry p "other");
-  let main = require_some (Program.entry p "main") in
+  equal bool true (Rig.equal d (Image.device p));
+  equal (option int) None (Image.entry p "other");
+  let main = require_some (Image.entry p "main") in
   equal ~msg:"the code placed" int 0x6363636363636363 (Support.load main)
 
 let test_refused () =
-  let d, _ = P.open_ "program:refused" in
-  match Program.load d "not code" with
+  let d, _ = P.open_ "image:refused" in
+  match Image.load d "not code" with
   | Ok _ -> failf "a refused binary loaded"
   | Error why ->
-      equal bool true (String.starts_with ~prefix:"program:refused" why);
+      equal bool true (String.starts_with ~prefix:"image:refused" why);
       equal int 1
         (Rig.Point.value (submit (Sub.make ~reads:0 ~writes:0 d [||])))
 
 let test_no_code () =
-  raises_match Exn.invalid_arg (fun () -> Program.load Rig.host "code:64")
+  raises_match Exn.invalid_arg (fun () -> Image.load Rig.host "code:64")
 
-(* An unreachable program is unloaded once the work its device was handed until
+(* An unreachable image is unloaded once the work its device was handed until
    then is done, and its code's memory then returns to its device. *)
 let test_unload () =
-  let d, pd = P.open_ "program:unload" in
+  let d, pd = P.open_ "image:unload" in
   let code =
     (fun () ->
       let p = load d "code:64" in
       ignore (submit (Sub.make ~reads:0 ~writes:0 d [||]));
-      require_some (Program.entry p "main"))
+      require_some (Image.entry p "main"))
       ()
   in
   let drain () =
@@ -71,32 +71,32 @@ let test_unload () =
     (List.exists (fun (a, _) -> a = code) (P.frees pd))
 
 let test_entry_lost () =
-  let d, p = P.open_ "program:entry-lost" in
-  let prog = load d "code:64" in
+  let d, p = P.open_ "image:entry-lost" in
+  let i = load d "code:64" in
   P.fail p;
   raises_match (lost d) (fun () -> submit (Sub.make ~reads:0 ~writes:0 d [||]));
-  raises_match (lost d) (fun () -> Program.entry prog "main")
+  raises_match (lost d) (fun () -> Image.entry i "main")
 
 let test_budget () =
-  let d, _ = P.open_ "program:budget" in
+  let d, _ = P.open_ "image:budget" in
   Rig.set_budget d 4096;
   raises_match
     (function
       | Rig.Out_of_memory (d', n) -> Rig.equal d d' && n >= 8192 | _ -> false)
-    (fun () -> Program.load d "code:8192")
+    (fun () -> Image.load d "code:8192")
 
 (* A load whose upload fails loses the device. *)
 let test_upload_fails () =
-  let d, p = P.open_ "program:upload" in
+  let d, p = P.open_ "image:upload" in
   P.fail p;
-  raises_match (lost d) (fun () -> Program.load d "code:64")
+  raises_match (lost d) (fun () -> Image.load d "code:64")
 
 (* A load whose upload loses the device gives its code memory back only once the
    device counts as stopped: its work may still run until then. *)
 let test_upload_frees_after_stop () =
-  let d, p = P.open_ ~answer:`Unknown "program:upload-unknown" in
+  let d, p = P.open_ ~answer:`Unknown "image:upload-unknown" in
   P.fail p;
-  raises_match (lost d) (fun () -> Program.load d "code:64");
+  raises_match (lost d) (fun () -> Image.load d "code:64");
   let frees () = List.length (P.frees p) in
   ignore (B.create Rig.host 8);
   equal ~msg:"before the word drained" int 0 (frees ());
@@ -105,25 +105,25 @@ let test_upload_frees_after_stop () =
   equal ~msg:"once it did" int 1 (frees ())
 
 let test_profiled () =
-  let d, _ = P.open_ "program:profiled" in
+  let d, _ = P.open_ "image:profiled" in
   let p, events = Prof.take (fun () -> load d "code:64") in
   let loads =
     List.filter_map
-      (function Prof.Load l -> Some (l.program == p, l.binary) | _ -> None)
+      (function Prof.Load l -> Some (l.image == p, l.binary) | _ -> None)
       events
   in
   equal (list (pair bool string)) [ (true, "code:64") ] loads
 
 let tests =
   [
-    group ~timeout "programs"
+    group ~timeout "images"
       [
-        test "a program is loaded on its device with its functions" test_load;
-        test "a lost device's program names no function" test_entry_lost;
+        test "an image is loaded on its device with its functions" test_load;
+        test "a lost device's image names no function" test_entry_lost;
         test "a binary its driver refuses is an error naming the device"
           test_refused;
         test "a device that loads no code refuses a binary" test_no_code;
-        test "an unreachable program unloads once its device's work is done"
+        test "an unreachable image unloads once its device's work is done"
           test_unload;
         test "code counts in its device's budget" test_budget;
         test "a load whose upload fails loses the device" test_upload_fails;
@@ -133,4 +133,4 @@ let tests =
       ];
   ]
 
-let () = exit (run "rig.program" tests)
+let () = exit (run "rig.image" tests)

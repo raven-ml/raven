@@ -167,7 +167,7 @@ type kernels
 
 val kernels : ?file:string -> dev -> kernels
 (** [kernels ~file t] is the cubin [file] (defaults to ["kernels_sm89.cubin"])
-    of the fixtures, loaded on [t] by {!Rig.Program.load}.
+    of the fixtures, loaded on [t] by {!Rig.Image.load}.
     ["kernels_sm89.cubin"] holds the kernels of ["kernels.cu"]. *)
 
 val image : Rig_nv.t -> string -> Rig_nv.image * Rig_nv.region * string

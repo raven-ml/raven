@@ -66,7 +66,7 @@ module Submission = Submission
 
 let submit = Submission.submit
 
-module Program = Program
+module Image = Image
 module Profile = Profile
 
 (* Drivers *)

@@ -54,8 +54,8 @@ let run g (cap : Abi.Capability.t) =
 
   (* The device places the image; the kernel's descriptor names where its code
      starts. *)
-  let p = Result.get_ok (Program.load g bin) in
-  let base = Option.get (Program.entry p "add") - k.descriptor in
+  let p = Result.get_ok (Image.load g bin) in
+  let base = Option.get (Image.entry p "add") - k.descriptor in
 
   (* The arrays, and the kernel's arguments in pinned memory. *)
   let a = floats g float_of_int and b = floats g (fun _ -> 0.5) in
@@ -80,7 +80,7 @@ let run g (cap : Abi.Capability.t) =
   in
   Printf.printf "the dispatch is %d words of PM4\n" (Buffer.length words / 4);
 
-  (* The step: the arguments held with the program; the arrays passed to each
+  (* The step: the arguments held with the image; the arrays passed to each
      submit. *)
   let hold =
     Hold.make ~release:(fun () -> ignore (Sys.opaque_identity p)) [ args ]

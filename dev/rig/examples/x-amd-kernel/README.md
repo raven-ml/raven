@@ -18,7 +18,7 @@ dune exec ./main.exe
 
 - Reading a code object: `Rig_amd_abi.Code_object.of_string`, `kernel`
 - Loading it: the device places its image in the GPU's memory, and
-  `Program.entry` names the kernel's descriptor
+  `Image.entry` names the kernel's descriptor
 - What compiled code finds in an AMD device's capability:
   `Rig.capability g Rig_amd_abi.Capability.key`, its `gpu` and `compute`
 - Writing a dispatch: `Pm4.dispatch` inside `Pm4.run`, encoded by

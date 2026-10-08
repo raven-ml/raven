@@ -17,7 +17,7 @@ type event = Def.event =
       stop : int;
     }
   | Allocation of { device : device; time : int; allocated : int }
-  | Load of { program : program; binary : string; time : int }
+  | Load of { image : image; binary : string; time : int }
   | Counters of {
       device : device;
       name : string;

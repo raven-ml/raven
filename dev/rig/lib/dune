@@ -12,13 +12,13 @@
   def
   dev
   hold
+  image
   lock
   memory
   memory_device
   point
   prof
   profile
-  program
   sigs
   submission)
  (install_c_headers rig)

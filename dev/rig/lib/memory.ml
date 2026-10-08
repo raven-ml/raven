@@ -275,7 +275,7 @@ let free_io d (Io_region { m; h; r }) =
   let module I = (val m) in
   call d (fun () -> I.free h r)
 
-let unload d (Image { m; h; i }) =
+let unload d (Loaded { m; h; i }) =
   let module D = (val m) in
   if not (Dev.is_lost d) then Dev.counted d (fun () -> D.unload h i)
 
@@ -493,7 +493,7 @@ let route d = function
       Dev.hold d;
       if cached then cache d e else d.retiring <- e :: d.retiring;
       Dev.release d
-  | Program (image, code) -> defer d (Unload (image, code))
+  | Image (loaded, code) -> defer d (Unload (loaded, code))
   | Release { stamps; release } ->
       Lock.protect holds_lock (fun () -> holds := (stamps, release) :: !holds)
 
@@ -572,8 +572,8 @@ let run_pending d = function
   | Unmap (r, after) ->
       free_region d r;
       Option.iter unmapped after
-  | Unload (image, code) -> (
-      unload d image;
+  | Unload (loaded, code) -> (
+      unload d loaded;
       match code with
       | Some e when Dev.is_lost d || over_budget d e -> free_entry e
       | Some e -> to_cache d e

@@ -162,8 +162,8 @@ let dispatch gpu (k : Abi.Code_object.kernel) ~base ~args ~threads =
 
 (* The code object loaded on [t], and the address of its image. *)
 let load t =
-  let p = get (Rig.Program.load t.d (Lazy.force binary)) in
-  (p, Option.get (Rig.Program.entry p "empty") - (kernel "empty").descriptor)
+  let p = get (Rig.Image.load t.d (Lazy.force binary)) in
+  (p, Option.get (Rig.Image.entry p "empty") - (kernel "empty").descriptor)
 
 (* The floors *)
 

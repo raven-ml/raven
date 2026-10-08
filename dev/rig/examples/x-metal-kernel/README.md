@@ -15,7 +15,7 @@ dune exec ./main.exe
 
 ## What You'll Learn
 
-- Loading code on a device: `Program.load`, `Program.entry`
+- Loading code on a device: `Image.load`, `Image.entry`
 - What compiled code finds in a Metal device's capability:
   `Rig.capability g Rig_metal_abi.key`, its `icb` and `align`
 - An argument buffer of GPU addresses: `Buffer.address`, `Buffer.offset`,
@@ -27,8 +27,8 @@ dune exec ./main.exe
 
 | Function                           | Purpose                                     |
 | ---------------------------------- | ------------------------------------------- |
-| `Program.load g metallib`          | The program on `g`                          |
-| `Program.entry p "add"`            | Its kernel's pipeline                       |
+| `Image.load g metallib`            | The image on `g`                            |
+| `Image.entry p "add"`              | Its kernel's pipeline                       |
 | `cap.icb buffer dispatches`        | Record dispatches once                      |
 | `Hold.make ~release bs`            | Keep the step's memory and objects          |
 

@@ -189,9 +189,9 @@ let copy direction =
 
 let load =
   op "load" (fun d failure ->
-      match Rig.Program.load d "code:64" with
+      match Rig.Image.load d "code:64" with
       | Ok p -> (
-          match Rig.Program.entry p "main" with
+          match Rig.Image.entry p "main" with
           | Some _ -> ()
           | None -> equal ~msg:"entry refused" bool true (refusing failure))
       | Error _ -> equal ~msg:"load refused" bool true (refusing failure))

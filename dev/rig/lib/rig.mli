@@ -171,7 +171,7 @@ val pp : Format.formatter -> t -> unit
 
 val budget : t -> int
 (** [budget d] is the most bytes [d] holds at once in the memory that counts in
-    its budget ({!Buffer.memory}): live buffers, loaded programs' code and its
+    its budget ({!Buffer.memory}): live buffers, loaded images' code and its
     cache. It starts at [max_int] for a host, {!Driver.budget} for a driver's
     device and {!Io.budget} for an io device; {!set_budget} changes it. *)
 
@@ -227,7 +227,7 @@ end
 
 val submitted : t -> int
 (** [submitted d] is the last value assigned on [d]'s timeline, [0] before any:
-    by {!submit}, or by a {!Buffer.copy} or {!Program.load} that [d] runs. It
+    by {!submit}, or by a {!Buffer.copy} or {!Image.load} that [d] runs. It
     never decreases. *)
 
 val signaled : t -> int
@@ -589,7 +589,7 @@ end
 
 (** Memory kept across many submissions.
 
-    A linked program keeps its fixed memory in one hold, and its programs and
+    A linked program keeps its fixed memory in one hold, and its images and
     the driver objects its work uses reachable through the hold's release. A
     hold has one stamp per device, raised to the point of each submission that
     names it. Its memory is named by submissions only with the hold, and returns
@@ -732,10 +732,10 @@ val submit :
     lost before the hand-over. A device lost after [v] was handed over raises
     {!Lost}, with [v]'s stamps naming it. *)
 
-(** {1:programs Programs} *)
+(** {1:images Images} *)
 
 (** Code loaded on a device. *)
-module Program : sig
+module Image : sig
   type device := t
 
   type t
@@ -760,16 +760,16 @@ module Program : sig
       load. *)
 
   val device : t -> device
-  (** [device p] is the device [p] is loaded on. *)
+  (** [device i] is the device [i] is loaded on. *)
 
   val entry : t -> string -> int option
-  (** [entry p f] is the driver's name for [p]'s function [f] ({!Driver.entry}),
+  (** [entry i f] is the driver's name for [i]'s function [f] ({!Driver.entry}),
       such as a kernel descriptor's address, a [CUfunction] or an
-      [MTLComputePipelineState], or [None] if [p] has no function [f]. Work that
-      runs [f] keeps [p] reachable until it is done, such as a {!Hold}'s release
+      [MTLComputePipelineState], or [None] if [i] has no function [f]. Work that
+      runs [f] keeps [i] reachable until it is done, such as a {!Hold}'s release
       that holds it.
 
-      Raises {!Lost} if [p]'s device is lost. *)
+      Raises {!Lost} if [i]'s device is lost. *)
 end
 
 (** {1:profiles Profiles} *)
@@ -796,7 +796,7 @@ module Profile : sig
             domains, ["domain 0"], ["domain 1"], …. *)
     | Allocation of { device : device; time : int; allocated : int }
         (** The bytes of memory [device] allocated from [time] on. *)
-    | Load of { program : Program.t; binary : string; time : int }
+    | Load of { image : Image.t; binary : string; time : int }
         (** An image loaded. *)
     | Counters of {
         device : device;

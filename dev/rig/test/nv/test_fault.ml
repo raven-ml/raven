@@ -119,9 +119,9 @@ let fault () =
   let later =
     [
       ("Buffer.create", outcome d (fun () -> Rig.Buffer.create d 64));
-      ( "Program.load",
+      ( "Image.load",
         outcome d (fun () ->
-            Rig.Program.load d (S.fixture "kernels_sm89.cubin")) );
+            Rig.Image.load d (S.fixture "kernels_sm89.cubin")) );
       ( "Submission.make",
         outcome d (fun () -> Rig.Submission.make ~reads:0 ~writes:0 d [||]) );
       ("wait", outcome d (fun () -> Rig.wait d (Rig.submitted d)));

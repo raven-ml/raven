@@ -46,7 +46,7 @@ let copy ~dst src =
 let dispatch g co p name =
   let gpu = (A.capability g).gpu in
   let k = Option.get (Abi.Code_object.kernel co name) in
-  let base = Option.get (Rig.Program.entry p name) - k.descriptor in
+  let base = Option.get (Rig.Image.entry p name) - k.descriptor in
   S.words_part ~queue:"COMPUTE:0"
     (words
        (Pm4.run gpu
@@ -129,7 +129,7 @@ let unread () =
   let bin = read_fixture "kernels_gfx1201.hsaco" in
   let co = Result.get_ok (Abi.Code_object.of_string bin) in
   let p =
-    match Rig.Program.load c bin with
+    match Rig.Image.load c bin with
     | Ok p -> p
     | Error why ->
         prerr_endline why;
@@ -163,7 +163,7 @@ let faults () =
   let bin = read_fixture "kernels_gfx1201.hsaco" in
   let co = Result.get_ok (Abi.Code_object.of_string bin) in
   let p =
-    match Rig.Program.load d bin with Ok p -> p | Error why -> fail why
+    match Rig.Image.load d bin with Ok p -> p | Error why -> fail why
   in
   let zeros = String.make 64 '\000' in
   (* The watched bytes are the host's, on a page of their own the device maps,

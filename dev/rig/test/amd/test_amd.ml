@@ -1584,8 +1584,8 @@ let dispatch ?(of_ = kernels) gpu entry name ~args ~groups =
        (Pm4.dispatch gpu k ~program:(base + k.entry) ~scratch:0 ~args ~packet:0
           ~threads:(64, 1, 1) ~groups:(groups, 1, 1) ()))
 
-let program ?(of_ = kernels) g =
-  match Rig.Program.load (S.rig g) (Lazy.force of_).binary with
+let image ?(of_ = kernels) g =
+  match Rig.Image.load (S.rig g) (Lazy.force of_).binary with
   | Ok p -> p
   | Error why -> fail why
 
@@ -1595,7 +1595,7 @@ let kernel_words ?of_ g p name ~groups args =
   let a = buffer ~memory:Pinned g 4096 in
   put a args;
   live := a :: !live;
-  let entry f = Option.get (Rig.Program.entry p f) in
+  let entry f = Option.get (Rig.Image.entry p f) in
   dispatch ?of_ (A.capability g).gpu entry name ~args:(addr a) ~groups
 
 let kernel ?of_ ?after g p name ~groups args =
@@ -1730,15 +1730,15 @@ let memory =
 
 let spin g p flag n = kernel g p "spin" ~groups:1 (le64 (addr flag) ^ le64 n)
 
-(* Code placed where other code ran runs as placed: each program is unloaded
+(* Code placed where other code ran runs as placed: each image is unloaded
    once unreachable and its work done, and the next load reuses the memory. *)
 let stale_code () =
   S.with_gpu @@ fun g ->
   let out = buffer ~memory:Pinned g (4 * 64) in
   let load of_ =
-    let p = program ~of_ g in
+    let p = image ~of_ g in
     run g [| kernel ~of_ g p "double_index" ~groups:1 (le64 (addr out)) |];
-    let at = Option.get (Rig.Program.entry p "double_index") in
+    let at = Option.get (Rig.Image.entry p "double_index") in
     (at, get out)
   in
   let first, doubled_out = load kernels in
@@ -1761,14 +1761,14 @@ let code =
     [
       test "a kernel loaded from its image computes" (fun () ->
           S.with_gpu @@ fun g ->
-          let p = program g in
+          let p = image g in
           let out = buffer ~memory:Pinned g (4 * 256) in
           run g [| kernel g p "double_index" ~groups:4 (le64 (addr out)) |];
           equal string ~msg:"out" (doubled 256) (get out));
       test "code placed where other code ran runs as placed" stale_code;
       test "parts on two queues run in their after order" (fun () ->
           S.with_gpu @@ fun g ->
-          let p = program g in
+          let p = image g in
           let out = buffer g (4 * 256)
           and back = buffer ~memory:Pinned g (4 * 256) in
           run g
@@ -1791,14 +1791,14 @@ let code =
           equal string ~msg:"word" (le64 0xc0ffee) (get word));
       test "long work is no fault" (fun () ->
           S.with_gpu @@ fun g ->
-          let p = program g in
+          let p = image g in
           let flag = buffer ~memory:Pinned g 8 in
           put flag (le64 0);
           run g [| spin g p flag 150_000 |];
           equal string ~msg:"flag" (le32s [ 1 ]) (String.sub (get flag) 0 4));
       test "a device stopped while its work runs stops it" (fun () ->
           let g = S.gpu () in
-          let p = program g in
+          let p = image g in
           let flag = buffer ~memory:Pinned g 8 in
           put flag (le64 0);
           let v = S.submit g [| spin g p flag 1_500_000 |] in
@@ -1817,11 +1817,11 @@ let code =
    it, the host, a copy or a kernel, reads that write, round after round over
    the same memory. *)
 
-(* The shared device's program of fixtures/work.cl, loaded once. *)
-let work_program = lazy (program ~of_:work_code (shared ()))
+(* The shared device's image of fixtures/work.cl, loaded once. *)
+let work_image = lazy (image ~of_:work_code (shared ()))
 
 let work_words g name ~groups args =
-  kernel_words ~of_:work_code g (Lazy.force work_program) name ~groups args
+  kernel_words ~of_:work_code g (Lazy.force work_image) name ~groups args
 
 module Chain = struct
   (* A submission of [incs] compute parts, each adding 1 to the words its
@@ -2718,8 +2718,8 @@ let in_queue () =
   in
   let pg = Option.get !made in
   Fun.protect ~finally:(fun () -> A.stop pg) @@ fun () ->
-  let prog =
-    match Rig.Program.load pd (Lazy.force kernels).binary with
+  let image =
+    match Rig.Image.load pd (Lazy.force kernels).binary with
     | Ok p -> p
     | Error why -> fail why
   in
@@ -2730,7 +2730,7 @@ let in_queue () =
   put flag (le64 0);
   put fresh (String.make 64 'n');
   put args (le64 (addr flag) ^ le64 300_000);
-  let entry f = Option.get (Rig.Program.entry prog f) in
+  let entry f = Option.get (Rig.Image.entry image f) in
   let spin =
     S.words_part ~queue:"COMPUTE:0"
       (dispatch (A.capability pg).gpu entry "spin" ~args:(addr args) ~groups:1)

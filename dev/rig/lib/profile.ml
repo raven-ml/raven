@@ -17,7 +17,7 @@ type event = Def.event =
       stop : int;
     }
   | Allocation of { device : device; time : int; allocated : int }
-  | Load of { program : program; binary : string; time : int }
+  | Load of { image : image; binary : string; time : int }
   | Counters of {
       device : device;
       name : string;
@@ -183,7 +183,7 @@ let micros oc ns =
 let device_of = function
   | Span s -> s.device
   | Allocation a -> a.device
-  | Load l -> l.program.pdev
+  | Load l -> l.image.idev
   | Counters c -> c.device
   | Trace t -> t.device
   | Overwritten o -> o.device

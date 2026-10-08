@@ -361,7 +361,7 @@ let test_io_refusals () =
   let m = B.create io 8 in
   raises_match Exn.invalid_arg (fun () -> B.address m);
   raises_match Exn.invalid_arg (fun () -> B.handle m);
-  raises_match Exn.invalid_arg (fun () -> Rig.Program.load io "code:8")
+  raises_match Exn.invalid_arg (fun () -> Rig.Image.load io "code:8")
 
 let pp_access ppf a =
   Format.pp_print_string ppf

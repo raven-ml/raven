@@ -480,8 +480,8 @@ let amd_kernel g d =
     Option.get
       (Abi.Code_object.kernel (get (Abi.Code_object.of_string binary)) "empty")
   in
-  let p = get (Rig.Program.load d binary) in
-  let base = Option.get (Rig.Program.entry p "empty") - k.descriptor in
+  let p = get (Rig.Image.load d binary) in
+  let base = Option.get (Rig.Image.entry p "empty") - k.descriptor in
   let gpu = (Rig_amd.capability g).gpu in
   let packets =
     Abi.Packet.encode Int64.of_int
