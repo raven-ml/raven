@@ -125,9 +125,9 @@ val alloc_entry : device -> memory_kind -> int -> entry
    [Out_of_memory]. *)
 
 val alloc : device -> memory_kind -> int -> memory
-
 (* [alloc d kind n] is a memory record over [alloc_entry d kind n], with its
    token. *)
+
 val host_memory : int -> memory
 val set_budget : device -> int -> unit
 val free_cache : device -> unit

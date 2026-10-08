@@ -15,8 +15,7 @@ external stamps_unref : int -> unit = "caml_rig_stamps_unref" [@@noalloc]
 external stamps_get : int -> int -> int = "caml_rig_stamps_get" [@@noalloc]
 external stamps_absorb : int -> int -> unit = "caml_rig_stamps_absorb"
 
-(* [f] over the points of the stamps [st], the last write first; [write] only
-   that one. *)
+(* [f] over the points of the stamps [st] from the [k]th on. *)
 let rec iter_from f st k =
   let p = stamps_get st k in
   if p <> -1 then begin
