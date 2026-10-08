@@ -15,6 +15,8 @@ floor/polled/release	alloc_words	exact	0
 floor/polled/release	wall_time	batch=262144	n=20	2.364e-08	2.353e-08 2.353e-08 2.353e-08 2.353e-08 2.353e-08 2.354e-08 2.356e-08 2.356e-08 2.357e-08 2.361e-08 2.367e-08 2.369e-08 2.374e-08 2.396e-08 2.403e-08 2.407e-08 2.429e-08 2.430e-08 2.430e-08 2.443e-08
 floor/polled/run	alloc_words	exact	0
 floor/polled/run	wall_time	batch=262144	n=20	3.239e-08	3.225e-08 3.227e-08 3.227e-08 3.230e-08 3.233e-08 3.234e-08 3.235e-08 3.236e-08 3.237e-08 3.239e-08 3.240e-08 3.246e-08 3.246e-08 3.255e-08 3.260e-08 3.279e-08 3.284e-08 3.306e-08 3.319e-08 3.324e-08
+floor/polled/two-domains	alloc_words	exact	0
+floor/polled/two-domains	wall_time	batch=16384	n=20	3.801e-07	3.616e-07 3.694e-07 3.705e-07 3.716e-07 3.719e-07 3.731e-07 3.753e-07 3.758e-07 3.794e-07 3.798e-07 3.805e-07 3.814e-07 3.819e-07 3.822e-07 3.825e-07 3.825e-07 3.850e-07 3.859e-07 3.876e-07 3.918e-07
 replay/polled/params-24	alloc_words	exact	0
 replay/polled/params-24	wall_time	batch=16384	n=20	5.642e-07	5.606e-07 5.609e-07 5.615e-07 5.619e-07 5.620e-07 5.620e-07 5.629e-07 5.633e-07 5.634e-07 5.636e-07 5.648e-07 5.649e-07 5.654e-07 5.655e-07 5.658e-07 5.661e-07 5.667e-07 5.677e-07 5.718e-07 5.790e-07
 replay/polled/pipelined-100	alloc_words	exact	0
@@ -76,6 +78,8 @@ floor/polled/release	alloc_words	exact	0
 floor/polled/release	wall_time	batch=131072	n=20	4.234e-08	4.231e-08 4.231e-08 4.231e-08 4.231e-08 4.232e-08 4.232e-08 4.232e-08 4.232e-08 4.233e-08 4.234e-08 4.234e-08 4.235e-08 4.242e-08 4.242e-08 4.243e-08 4.244e-08 4.244e-08 4.245e-08 4.245e-08 4.322e-08
 floor/polled/run	alloc_words	exact	0
 floor/polled/run	wall_time	batch=131072	n=20	5.227e-08	5.225e-08 5.225e-08 5.225e-08 5.225e-08 5.226e-08 5.226e-08 5.226e-08 5.226e-08 5.227e-08 5.227e-08 5.227e-08 5.228e-08 5.228e-08 5.228e-08 5.228e-08 5.228e-08 5.230e-08 5.230e-08 5.232e-08 5.250e-08
+floor/polled/two-domains	alloc_words	exact	0
+floor/polled/two-domains	wall_time	batch=16384	n=20	4.458e-07	4.119e-07 4.213e-07 4.262e-07 4.325e-07 4.355e-07 4.387e-07 4.398e-07 4.447e-07 4.452e-07 4.454e-07 4.462e-07 4.462e-07 4.490e-07 4.492e-07 4.516e-07 4.526e-07 4.535e-07 4.592e-07 4.628e-07 4.721e-07
 replay/polled/params-24	alloc_words	exact	0
 replay/polled/params-24	wall_time	batch=8192	n=20	9.865e-07	9.832e-07 9.844e-07 9.853e-07 9.854e-07 9.856e-07 9.859e-07 9.860e-07 9.861e-07 9.861e-07 9.863e-07 9.866e-07 9.868e-07 9.868e-07 9.869e-07 9.870e-07 9.873e-07 9.882e-07 9.882e-07 9.921e-07 1.053e-06
 replay/polled/pipelined-100	alloc_words	exact	0
