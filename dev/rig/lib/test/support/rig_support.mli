@@ -73,8 +73,8 @@ module Polled : sig
   (** [fail d] makes [d]'s next submit fail. *)
 
   val fault : t -> string -> unit
-  (** [fault d why] makes [d]'s sleeps, allocations, mappings and loads raise
-      [Fault why] from now on, as a faulted device's do. *)
+  (** [fault d why] makes [d]'s sleeps, allocations, mappings, loads and reads
+      of its budget raise [Fault why] from now on, as a faulted device's do. *)
 
   val fault_word : t -> string -> unit
   (** [fault_word d why] makes [d]'s reads of its word ([signaled]) raise

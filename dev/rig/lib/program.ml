@@ -51,12 +51,21 @@ let image d binary =
           | Some (Region { r; rid = rid'; _ }) -> (
               match Type.Id.provably_equal rid rid' with
               | Some Type.Equal -> (
-                  let i, code = lay r in
-                  match place d e code with
-                  | () -> Ok (Image { m; h; i }, Some e)
+                  (* A failure gives the code memory back once [d]'s work that
+                     may use it is done, or, lost, once [d] counts as stopped,
+                     and raises its own exception. *)
+                  match
+                    let i, code = lay r in
+                    (try place d e code
+                     with x ->
+                       (try Memory.unload d (Image { m; h; i })
+                        with Dev.Lost _ -> ());
+                       raise x);
+                    i
+                  with
+                  | i -> Ok (Image { m; h; i }, Some e)
                   | exception x ->
-                      Dev.counted d (fun () -> D.unload h i);
-                      Memory.free_entry e;
+                      Memory.retire d e;
                       raise x)
               | None -> assert false)
           | None -> assert false))

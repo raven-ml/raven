@@ -82,6 +82,19 @@ let test_upload_fails () =
   P.fail p;
   raises_match (lost d) (fun () -> Program.load d "code:64")
 
+(* A load whose upload loses the device gives its code memory back only once the
+   device counts as stopped: its work may still run until then. *)
+let test_upload_frees_after_stop () =
+  let d, p = P.open_ ~answer:`Unknown "program:upload-unknown" in
+  P.fail p;
+  raises_match (lost d) (fun () -> Program.load d "code:64");
+  let frees () = List.length (P.frees p) in
+  ignore (B.create C.host 8);
+  equal ~msg:"before the word drained" int 0 (frees ());
+  P.set_word p (C.submitted d);
+  ignore (B.create C.host 8);
+  equal ~msg:"once it did" int 1 (frees ())
+
 let test_profiled () =
   let d, _ = P.open_ "program:profiled" in
   let p, events = Prof.take (fun () -> load d "code:64") in
@@ -104,6 +117,8 @@ let tests =
           test_unload;
         test "code counts in its device's budget" test_budget;
         test "a load whose upload fails loses the device" test_upload_fails;
+        test "a failed upload frees its code once the device counts as stopped"
+          test_upload_frees_after_stop;
         test "a load is an event of the profiles taken" test_profiled;
       ];
   ]

@@ -157,6 +157,15 @@ let test_machine_without_host () =
   raises_match Exn.invalid_arg (fun () -> C.host_of g);
   equal bool false (C.shares_host_memory g)
 
+(* A fault while the device's facts are read is the open's error, and the
+   driver's handle is stopped: nothing it opened stays. *)
+let test_fault_at_open () =
+  let p = P.make () in
+  P.fault p "no device";
+  equal (result device string) (Error "open:faulted: no device")
+    (C.open_ (module P) ~name:"open:faulted" (fun () -> Ok p));
+  equal (list string) [ "stop" ] (P.log p)
+
 let test_point () =
   let d = memory "open:point" in
   let p = C.submit (C.Submission.make ~reads:0 ~writes:0 ~waits:0 d [||]) in
@@ -223,6 +232,8 @@ let tests =
         test_machine_without_host;
       test "a point prints as its device's name and its value" test_point;
       test "an opener's error leaves the name free" test_failed_open;
+      test "a fault reading a device's facts stops its handle"
+        test_fault_at_open;
       test "a lost device's name opens anew once its stop answered" test_reopen;
       test "a blocked opener holds back no other name" test_blocked_opener;
     ]

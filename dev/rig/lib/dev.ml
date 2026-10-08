@@ -390,32 +390,33 @@ let completion_of = function
   | `Object o -> Object (Nativeint.to_int o)
   | `Host -> Host_writes
 
+(* The device of the driver's handle [h]. Every fact is read before the C record
+   is published, which spreads and the fork handler walk for good: a fault
+   reading one leaves nothing made. *)
 let driver_device (type a) (module D : Sigs.Driver with type t = a) (h : a)
     ~index ~name ~machine ~memory_device =
   let m : (a, D.region, D.image) dm = (module D) in
   let rid : D.region Type.Id.t = Type.Id.make () in
   let word_region = D.word h in
-  let word =
-    match D.host word_region with Some p -> Nativeint.of_int p | None -> 0n
-  in
+  let word = Option.value ~default:0 (D.host word_region) in
+  let arch = D.arch h and queues = Array.of_list (D.queues h) in
+  let completion = completion_of (D.completion h) in
+  let waits = (D.waits_on h `Store, D.waits_on h `Object, D.waits_on h `Host) in
+  let max_waits = D.max_waits h and budget = D.budget h in
+  let blocks = D.blocks h = `May_block in
+  let capability = Capability (D.capability_key, D.capability h) in
   let c =
-    c_new index name
-      (D.blocks h = `May_block)
-      (D.self h) D.room_entry D.submit_entry word
+    c_new index name blocks (D.self h) D.room_entry D.submit_entry
+      (Nativeint.of_int word)
   in
   let d =
     make_device ~index ~name ~machine
       ~kind:(Driver { m; h; rid })
-      ~c ~arch:(D.arch h)
-      ~queues:(Array.of_list (D.queues h))
-      ~completion:(completion_of (D.completion h))
-      ~waits:(D.waits_on h `Store, D.waits_on h `Object, D.waits_on h `Host)
-      ~max_waits:(D.max_waits h) ~word:(Nativeint.to_int word)
+      ~c ~arch ~queues ~completion ~waits ~max_waits ~word
       ~word_region:(Some (Region { m; h; r = word_region; rid }))
       ~key:(Type.Id.uid D.key) ~memory_device
       ~fault:(function D.Fault why -> Some why | _ -> None)
-      ~capability:(Some (Capability (D.capability_key, D.capability h)))
-      ~budget:(D.budget h)
+      ~capability:(Some capability) ~budget
   in
   register d;
   d
@@ -431,7 +432,10 @@ let open_driver (type a) ?(memory_device = false)
         driver_device (module D) h ~index ~name:full ~machine ~memory_device
       with
       | d -> Ok d
-      | exception D.Fault why -> Error (strf "%s: %s" full why))
+      | exception D.Fault why ->
+          (* A fault at open is a loss: the handle is stopped. *)
+          (try D.stop h with D.Fault _ -> ());
+          Error (strf "%s: %s" full why))
 
 let open_io (type a) (module I : Sigs.Io with type t = a) ?machine
     ?(host = false) ~name make =
@@ -439,19 +443,24 @@ let open_io (type a) (module I : Sigs.Io with type t = a) ?machine
   open_named ~machine ~name ~key ~host @@ fun ~index ~name:full ->
   match make () with
   | Error e -> Error e
-  | Ok h ->
-      let c = c_io_new index full in
-      let d =
-        make_device ~index ~name:full ~machine
-          ~kind:(Io { m = (module I); h })
-          ~c ~arch:"" ~queues:[||] ~completion:Host_writes
-          ~waits:(false, false, false) ~max_waits:0 ~word:0 ~word_region:None
-          ~key ~memory_device:false
-          ~fault:(function I.Fault why -> Some why | _ -> None)
-          ~capability:None ~budget:(I.budget h)
-      in
-      register d;
-      Ok d
+  | Ok h -> (
+      match I.budget h with
+      | exception I.Fault why ->
+          (try I.stop h with I.Fault _ -> ());
+          Error (strf "%s: %s" full why)
+      | budget ->
+          let c = c_io_new index full in
+          let d =
+            make_device ~index ~name:full ~machine
+              ~kind:(Io { m = (module I); h })
+              ~c ~arch:"" ~queues:[||] ~completion:Host_writes
+              ~waits:(false, false, false) ~max_waits:0 ~word:0
+              ~word_region:None ~key ~memory_device:false
+              ~fault:(function I.Fault why -> Some why | _ -> None)
+              ~capability:None ~budget
+          in
+          register d;
+          Ok d)
 
 (* Reach *)
 

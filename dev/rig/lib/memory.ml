@@ -295,6 +295,10 @@ let defer d p =
   let v = Dev.submitted d in
   Dev.protect d (fun () -> d.pending <- (v, p) :: d.pending)
 
+(* Frees [e] once [d] reached the value it has submitted now, or, lost, once it
+   counts as stopped. *)
+let retire d e = defer d (Free e)
+
 (* Unmaps the other devices' mappings of [e]'s memory, each once its mapper's
    work submitted until now is done. *)
 let unmap_all (e : entry) =

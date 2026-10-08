@@ -91,7 +91,12 @@ module Driver = struct
   let log d = Mutex.protect d.lock (fun () -> List.rev d.calls)
   let key : t Type.Id.t = Type.Id.make ()
   let arch _ = "polled"
-  let budget d = d.budget
+
+  let budget d =
+    match Mutex.protect d.lock (fun () -> d.fault) with
+    | Some why -> raise (Fault why)
+    | None -> d.budget
+
   let queues d = if d.copies then [ "COMPUTE:0"; "COPY:0" ] else [ "COMPUTE:0" ]
 
   (* A counted call of a faulted device raises its fault. *)
