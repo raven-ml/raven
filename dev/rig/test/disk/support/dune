@@ -1,0 +1,8 @@
+; What the disk's suites share: limits of the process, cached pages, and a
+; census of the C heap and the descriptors.
+
+(library
+ (name rig_disk_support)
+ (foreign_stubs
+  (language c)
+  (names rig_disk_support_stubs)))

@@ -3,15 +3,33 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* What the disk's suite asks of the system that OCaml's Unix does not give:
-   limits on this process's open files and file sizes, and dropping a file's
-   cached pages. */
+/* What the disk's suites ask of the system that OCaml's Unix does not give:
+   limits on this process's open files and file sizes, dropping a file's
+   cached pages, and the bytes the C heap holds. */
 
 #define _GNU_SOURCE
 
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 #include <errno.h>
+#include <stddef.h>
+
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define RIG_DISK_TEST_ASAN
+#endif
+#endif
+#if defined(__SANITIZE_ADDRESS__)
+#define RIG_DISK_TEST_ASAN
+#endif
+
+#if defined(RIG_DISK_TEST_ASAN)
+#include <sanitizer/allocator_interface.h>
+#elif defined(__APPLE__)
+#include <malloc/malloc.h>
+#elif defined(__GLIBC__)
+#include <malloc.h>
+#endif
 
 #ifndef _WIN32
 #include <fcntl.h>
@@ -32,6 +50,19 @@ value rig_disk_test_set_open_files(value v_n) {
   if (getrlimit(RLIMIT_NOFILE, &l) != 0) return Val_int(errno);
   l.rlim_cur = (rlim_t)Long_val(v_n);
   return Val_int(setrlimit(RLIMIT_NOFILE, &l) == 0 ? 0 : errno);
+#endif
+}
+
+/* [open_files ()] is this process's soft limit of open files, at most
+   [max_int], or -1 on Windows. Keeps the runtime: getrlimit does not block. */
+value rig_disk_test_open_files(value unit) {
+  (void)unit;
+#ifdef _WIN32
+  return Val_long(-1);
+#else
+  struct rlimit l;
+  if (getrlimit(RLIMIT_NOFILE, &l) != 0) return Val_long(-1);
+  return Val_long(l.rlim_cur > (rlim_t)Max_long ? Max_long : (intnat)l.rlim_cur);
 #endif
 }
 
@@ -67,5 +98,23 @@ value rig_disk_test_drop_pages(value v_path) {
 #else
   (void)v_path;
   return Val_int(-1);
+#endif
+}
+
+/* [heap_bytes ()] is the bytes the C heap holds allocated, or -1 where its
+   allocator does not say. Keeps the runtime. */
+value rig_disk_test_heap_bytes(value unit) {
+  (void)unit;
+#if defined(RIG_DISK_TEST_ASAN)
+  return Val_long((intnat)__sanitizer_get_current_allocated_bytes());
+#elif defined(__APPLE__)
+  malloc_statistics_t s;
+  malloc_zone_statistics(NULL, &s);
+  return Val_long((intnat)s.size_in_use);
+#elif defined(__GLIBC__)
+  struct mallinfo2 m = mallinfo2();
+  return Val_long((intnat)(m.uordblks + m.hblkhd));
+#else
+  return Val_long(-1);
 #endif
 }

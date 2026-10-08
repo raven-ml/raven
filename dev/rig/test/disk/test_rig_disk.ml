@@ -10,6 +10,7 @@
 
 open Windtrap
 module B = Rig.Buffer
+module Support = Rig_disk_support
 
 let strf = Printf.sprintf
 let timeout = 60.
@@ -22,10 +23,6 @@ let max_descriptors = 64
 (* The bytes of one of the disk's io_uring requests on Linux, whose edges large
    copies cross. *)
 let segment = 2 lsl 20
-
-external set_open_files : int -> int = "rig_disk_test_set_open_files"
-external set_file_size : int -> int = "rig_disk_test_set_file_size"
-external drop_pages : string -> int = "rig_disk_test_drop_pages"
 
 let contains s sub =
   let n = String.length s and k = String.length sub in
@@ -472,7 +469,7 @@ let test_cold_read () =
   let s = pattern 6 ((3 * segment) + 5) in
   let path = make_file s in
   removing [ path ] @@ fun () ->
-  match drop_pages path with
+  match Support.drop_pages path with
   | -1 -> skip ~reason:"only Linux drops a file's pages without privileges" ()
   | 0 ->
       let b = of_file path in
@@ -1308,7 +1305,7 @@ let open_files_child () =
       (fun m fd -> Option.fold ~none:m ~some:(max m) (int_of_string_opt fd))
       0 (Sys.readdir "/dev/fd")
   in
-  (match set_open_files (highest + 1 + 16) with
+  (match Support.set_open_files (highest + 1 + 16) with
   | 0 -> ()
   | e -> failwith (strf "setrlimit: errno %d" e));
   let rec take acc =
@@ -1351,7 +1348,7 @@ let fork_child path out =
    1 MiB, and prints whether the creation was refused, naming its path, and
    whether the path names anything after. *)
 let unsized_child path =
-  (match set_file_size 4096 with
+  (match Support.set_file_size 4096 with
   | 0 -> ()
   | e -> failwith (strf "setrlimit: errno %d" e));
   let refused =
