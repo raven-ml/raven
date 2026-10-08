@@ -373,16 +373,21 @@ value caml_device_cuda_open(value v_device) {
 
 /* Whether [v_self]'s GPU addresses the memory of [v_home]'s GPU: [1], after
    enabling the access; [0] if CUDA says it cannot; or CUDA's status
-   negated. */
+   negated. Releases the runtime: enabling maps the peer's allocations,
+   which may take long (unmeasured: kimchi has one GPU). */
 value caml_device_cuda_peer(value v_self, value v_home) {
   struct device *d = Device_val(v_self), *h = Device_val(v_home);
   int can = 0;
   if (d->device == h->device) return Val_long(1);
+  caml_enter_blocking_section_no_pending();
   CUresult s = p_cuDeviceCanAccessPeer(&can, d->device, h->device);
-  if (s == CUDA_SUCCESS && can == 0) return Val_long(0);
-  if (s == CUDA_SUCCESS) s = push(d->context);
-  if (s == CUDA_SUCCESS) s = pop(p_cuCtxEnablePeerAccess(h->context, 0));
-  return Val_long(s == CUDA_SUCCESS ? 1 : -s);
+  if (s == CUDA_SUCCESS && can != 0) {
+    s = push(d->context);
+    if (s == CUDA_SUCCESS) s = pop(p_cuCtxEnablePeerAccess(h->context, 0));
+  }
+  caml_leave_blocking_section();
+  if (s == CUDA_SUCCESS) return Val_long(can != 0);
+  return Val_long(-s);
 }
 
 /* Memory */
