@@ -151,7 +151,9 @@ let vf_request mmio f ?(ready = true) req =
   Ok (req + 1)
 
 (* The discovery table, read through the memory BAR, or a word at a time through
-   the memory index window when the BAR is smaller than the GPU's memory. *)
+   the memory index window when the BAR is smaller than the GPU's memory: the
+   index's low 31 bits with bit 31 set, then its high bits, as the kernel's
+   amdgpu_device_mm_access writes them. *)
 let read_table ~vram ~mmio ~memory =
   let at = memory - Discovery.offset in
   if Window.length vram >= memory then Window.read vram at Discovery.bytes
@@ -159,8 +161,8 @@ let read_table ~vram ~mmio ~memory =
     let b = Bytes.create Discovery.bytes in
     for i = 0 to (Discovery.bytes / 4) - 1 do
       let w = at + (4 * i) in
-      Window.set32 mmio (D.mmmm_index_hi * 4) (w lsr 31);
       Window.set32 mmio (D.mmmm_index * 4) (w land 0x7fff_ffff lor 0x8000_0000);
+      Window.set32 mmio (D.mmmm_index_hi * 4) (w lsr 31);
       Bytes.set_int32_le b (4 * i)
         (Int32.of_int (Window.get32 mmio (D.mmmm_data * 4)))
     done;
