@@ -286,9 +286,10 @@ let round_up n a =
   else if n > max_int - a then too_long ()
   else n + a - (n mod a)
 
-(* The lowest address of a held section and the largest alignment among them,
-   [1] at least. *)
-let extent held hs =
+(* The address of image offset 0 when sections go at their addresses: the lowest
+   held section's, rounded down to their largest alignment, so that each keeps
+   its alignment in the image. *)
+let start held hs =
   let low = ref max_int and align = ref 1 in
   Array.iteri
     (fun i h ->
@@ -297,25 +298,24 @@ let extent held hs =
         align := Int.max !align h.sh_addralign
       end)
     hs;
-  (!low, !align)
+  !low - (!low land (!align - 1))
 
 (* Whether the sections go at their addresses, the address the image starts at,
    the image's alignment, each held section's image offset, and the image's
    length. Sections go at their addresses if one has an address, else follow
-   each other. The image starts at the lowest held section's address rounded
-   down to the image's alignment, so that each keeps its alignment there. *)
+   each other. *)
 let layout ~align held hs =
   let addressed =
     Array.exists2 (fun held h -> held && h.sh_addr <> 0) held hs
   in
-  let low, largest = extent held hs in
-  let address = if addressed then low - (low land (largest - 1)) else 0 in
-  let image_align = if addressed then largest else Int.max align largest in
+  let address = if addressed then start held hs else 0 in
   let offsets = Array.make (Array.length hs) None in
   let size = ref 0 and spans = ref [] in
+  let largest = ref (if addressed then 1 else align) in
   Array.iteri
     (fun i h ->
       if held.(i) then begin
+        largest := Int.max !largest h.sh_addralign;
         let off =
           if addressed then h.sh_addr - address
           else round_up !size (Int.max align h.sh_addralign)
@@ -330,7 +330,7 @@ let layout ~align held hs =
       end)
     hs;
   disjoint ~where:"the image" (Array.of_list (List.rev !spans));
-  (addressed, address, image_align, offsets, !size)
+  (addressed, address, !largest, offsets, !size)
 
 (* [at + n], or [max_int] past it: the end of an address range. *)
 let end_of at n = if at > max_int - n then max_int else at + n
