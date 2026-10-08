@@ -176,6 +176,10 @@ let bounds =
     refused "a reshape whose elements overflow"
       (M.Reshape [| (max_int / 2) + 1; 2 |])
       [| 4 |];
+    refused "a reshape of no element to some" (M.Reshape [| 3 |]) [| 0 |];
+    refused "a reshape to negative extents whose product matches"
+      (M.Reshape [| -2; -3 |])
+      [| 6 |];
     ok "a reshape to no element takes any other extent"
       (M.Reshape [| max_int; 2; 0 |])
       [| 0 |] [| max_int; 2; 0 |];

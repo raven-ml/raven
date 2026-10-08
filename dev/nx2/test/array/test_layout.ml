@@ -245,6 +245,13 @@ let test_no_element () =
   equal ints s (L.shape (L.contiguous s));
   equal ints s (L.shape (L.v ~strides:[| 0; 0; 0 |] s))
 
+let test_broadcast_scalar () =
+  let one = L.contiguous [||] in
+  let l = Option.get (L.move (M.Broadcast [| 2 |]) one) in
+  equal bool false (L.is_contiguous l);
+  equal bool false (L.is_distinct l);
+  equal bool true (L.is_contiguous (L.contiguous [| 0; 3 |]))
+
 let test_axis_refuses () =
   let l = L.contiguous [| 2; 3 |] in
   List.iter
@@ -516,6 +523,10 @@ let tests =
         cases ~name:fst "refuses" refusals test_refuses;
         test "a shape with no element takes any other extent" test_no_element;
         test "dim and stride refuse an axis out of range" test_axis_refuses;
+        test
+          "a scalar broadcast to two elements is neither contiguous nor \
+           distinct"
+          test_broadcast_scalar;
         test "no array v takes is kept, none returned is held" test_ownership;
         test "queries, flags, equal and hash allocate nothing"
           test_no_allocation;

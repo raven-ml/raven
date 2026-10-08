@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Windtrap
+module A = Nx_array
 module D = Nx_array.Dtype
 
 let strf = Printf.sprintf
@@ -320,8 +321,12 @@ let test_float_format (F (dt, f) as fd) =
    dtype, an input and the value the store holds. *)
 type store = Store : ('v, 's) D.t * float * 'v -> store
 
-let store_name (Store (dt, x, _)) = strf "%s %h" (D.name dt) x
+let store_name (Store (dt, x, _)) =
+  if Float.is_nan x then strf "%s nan %Lx" (D.name dt) (Int64.bits_of_float x)
+  else strf "%s %h" (D.name dt) x
+
 let test_store (Store (dt, x, v)) = equal (value dt) v (D.of_float dt x)
+let snan = Int64.float_of_bits 0x7FF0000000000001L
 
 let conversion_table =
   [
@@ -334,6 +339,13 @@ let conversion_table =
     Store (D.Float8_e4m3fn, nan, nan);
     Store (D.Float4_e2m1fn, nan, 0.);
     Store (D.Float4_e2m1fn, -.nan, 0.);
+    (* A signalling NaN, whose top bits alone read as an infinity. *)
+    Store (D.Float32, snan, nan);
+    Store (D.Float16, snan, nan);
+    Store (D.Bfloat16, snan, nan);
+    Store (D.Float8_e5m2, snan, nan);
+    Store (D.Float8_e4m3fn, snan, nan);
+    Store (D.Float4_e2m1fn, snan, 0.);
     (* Infinities *)
     Store (D.Float64, inf, inf);
     Store (D.Float32, -.inf, -.inf);
@@ -435,6 +447,46 @@ let test_every_tie (F (dt, f)) =
   let n = List.length !wrong in
   equal ~msg:(strf "%d wrong stores" n) (list string) []
     (List.filteri (fun i _ -> i < 8) !wrong)
+
+(* A NaN keeps its sign through a store, into an element and back. *)
+let test_nan_sign (F (dt, _)) =
+  List.iter
+    (fun x ->
+      let msg = if Float.sign_bit x then "-nan" else "nan" in
+      equal ~msg bool (Float.sign_bit x) (Float.sign_bit (D.of_float dt x));
+      let a = A.of_array dt [| 1 |] [| x |] in
+      equal ~msg bool (Float.sign_bit x) (Float.sign_bit (A.get a [| 0 |])))
+    [ nan; -.nan ]
+
+(* Floats compared bit for bit, NaNs by their sign. *)
+let signed_float =
+  Testable.make ~pp:pp_hex ~equal:(fun a b ->
+      if Float.is_nan a || Float.is_nan b then
+        Float.is_nan a && Float.is_nan b && Float.sign_bit a = Float.sign_bit b
+      else Testable.equal float_exact a b)
+
+(* Every code of a format of 16 bits or less reads as its definition's value,
+   one element at a time and as a run. *)
+let test_every_code (F (dt, f)) =
+  let width = 1 + f.exp + f.frac in
+  let n = 1 lsl width in
+  let codes = Array.init n Fun.id in
+  let patterns =
+    match width with
+    | 4 -> A.Any (A.of_array D.Uint4 [| n |] codes)
+    | 8 -> A.Any (A.of_array D.Uint8 [| n |] codes)
+    | _ -> A.Any (A.of_array D.Uint16 [| n |] codes)
+  in
+  let (A.Any p) = patterns in
+  let a = Option.get (A.bitcast dt p) in
+  let value c =
+    let v = decode f (c land ((n / 2) - 1)) in
+    if c >= n / 2 then -.v else v
+  in
+  let expected = Array.map value codes in
+  equal ~msg:"run" (array signed_float) expected (A.to_array a);
+  equal ~msg:"elements" (array signed_float) expected
+    (Array.map (fun c -> A.get a [| c |]) codes)
 
 (* Wider formats: ties around codes drawn across the range. *)
 let law_ties (F (dt, f)) =
@@ -587,6 +639,8 @@ let printed =
     Printed (D.Float16, inf, "inf");
     Printed (D.Float8_e5m2, -.inf, "-inf");
     Printed (D.Complex64, { Complex.re = 1.; im = 2. }, "1+2i");
+    Printed (D.Complex128, { Complex.re = 1.; im = -2. }, "1-2i");
+    Printed (D.Float32, -.nan, "nan");
   ]
 
 let law_text gen (text : 'v -> string) dt =
@@ -675,8 +729,20 @@ let check_printed dt v =
   | None when not (reads_back s) -> Some (strf "%h printed %s" v s)
   | None -> (
       match List.filter reads_back (shorter s) with
-      | [] -> None
-      | t :: _ -> Some (strf "%h printed %s, but %s reads back" v s t))
+      | t :: _ -> Some (strf "%h printed %s, but %s reads back" v s t)
+      | [] ->
+          (* Of the decimals of as many digits that read back, the nearest:
+             printf rounds [v] to them correctly, ties to even. *)
+          let digits =
+            Option.fold ~none:1
+              ~some:(fun (d, _) -> String.length d)
+              (significand s)
+          in
+          let nearest = strf "%.*e" (digits - 1) v in
+          if reads_back nearest && significand nearest <> significand s then
+            Some
+              (strf "%h printed %s, but the nearer %s reads back" v s nearest)
+          else None)
 
 (* Every value of a format of 16 bits or less. *)
 let test_every_value_printed (F (dt, f)) =
@@ -695,8 +761,13 @@ let test_every_value_printed (F (dt, f)) =
     (list string) []
     (List.filteri (fun i _ -> i < 8) !wrong)
 
-let law_printed (F (dt, _)) =
-  prop (D.name dt) (Gen.with_pp pp_hex Gen.any_float) (fun x ->
+let law_printed (F (dt, f)) =
+  let emin = 2 - (1 lsl (f.exp - 1)) - f.frac
+  and emax = (1 lsl (f.exp - 1)) - 1 in
+  let powers =
+    List.init (emax - emin + 1) (fun e -> Float.ldexp 1. (emin + e))
+  in
+  prop (D.name dt) ~examples:powers (Gen.with_pp pp_hex Gen.any_float) (fun x ->
       equal (option string) None (check_printed dt (D.of_float dt x)))
 
 (* The suite *)
@@ -743,6 +814,11 @@ let tests =
           "every value, tie and neighbour rounds once to even" narrow
           test_every_tie;
         group "ties round once to even" (List.map law_ties wide);
+        cases ~name:format_name "a NaN keeps its sign"
+          (List.filter (fun (F (_, f)) -> f.top <> Finite) formats)
+          test_nan_sign;
+        cases ~name:format_name "every code reads as its definition's value"
+          narrow test_every_code;
         law_float64;
         group "integers truncate toward zero and saturate" integer_laws;
         group "complex numbers store a real part in their component's format"
