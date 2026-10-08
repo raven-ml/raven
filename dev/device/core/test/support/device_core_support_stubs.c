@@ -272,10 +272,10 @@ static int polled_submit(void *self, uint64_t v, const struct nx_wait *waits,
   }
   p->nlast = nwaits < LAST ? nwaits : LAST;
   if (p->nlast > 0) memcpy(p->last, waits, (size_t)p->nlast * sizeof *waits);
+  /* A loop: on x86_64 Linux, a memcpy call here added 15 ns to the bench's
+     floors, which carry Polled's own work only. */
   p->nlast_handles = nhandles < LAST_HANDLES ? nhandles : LAST_HANDLES;
-  if (p->nlast_handles > 0)
-    memcpy(p->last_handles, handles,
-           (size_t)p->nlast_handles * sizeof *handles);
+  for (int i = 0; i < p->nlast_handles; i++) p->last_handles[i] = handles[i];
   struct queued *s = &p->q[p->n++];
   s->v = v;
   s->nwaits = nwaits;
