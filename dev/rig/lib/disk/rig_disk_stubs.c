@@ -387,11 +387,11 @@ static intnat transfer_calls(int write, intnat h, int64_t pos, char *buf,
 
 #ifdef RIG_DISK_IO_URING
 
-/* Linux's io_uring: a transfer is cut into requests of [SEGMENT] bytes,
-   [DEPTH] of them in flight. The ring is made by the first transfer that
-   takes it, if the kernel allows it and its probe reports the read and write
-   operations. One transfer at a time holds it; a transfer that finds it held
-   moves its bytes with system calls. */
+/* Linux's io_uring, for long reads: a read is cut into requests of [SEGMENT]
+   bytes, [DEPTH] of them in flight. The ring is made by the first read that
+   takes it, if the kernel allows it and its probe reports the read
+   operation. One read at a time holds it; a read that finds it held moves its
+   bytes with system calls. */
 
 #define DEPTH 16
 #define SEGMENT ((intnat)2 << 20)
@@ -425,7 +425,7 @@ static int ring_setup(void) {
   int ok = probe != NULL &&
            syscall(__NR_io_uring_register, fd, IORING_REGISTER_PROBE, probe,
                    256) == 0 &&
-           supports(probe, IORING_OP_READ) && supports(probe, IORING_OP_WRITE);
+           supports(probe, IORING_OP_READ);
   free(probe);
   size_t sq_size = p.sq_off.array + p.sq_entries * sizeof(unsigned);
   size_t cq_size = p.cq_off.cqes + p.cq_entries * sizeof(struct io_uring_cqe);
@@ -470,8 +470,7 @@ struct request {
   int queued;
 };
 
-static intnat transfer_ring(int write, intnat h, int64_t pos, char *buf,
-                            intnat n) {
+static intnat read_ring(intnat h, int64_t pos, char *buf, intnat n) {
   struct request req[DEPTH];
   memset(req, 0, sizeof req);
   intnat next = 0; /* the first byte no request covers */
@@ -490,7 +489,7 @@ static intnat transfer_ring(int write, intnat h, int64_t pos, char *buf,
       }
       struct io_uring_sqe *sqe = &ring.sqes[tail & mask];
       memset(sqe, 0, sizeof *sqe);
-      sqe->opcode = write ? IORING_OP_WRITE : IORING_OP_READ;
+      sqe->opcode = IORING_OP_READ;
       sqe->fd = (int)h;
       sqe->off = (uint64_t)(pos + req[s].off);
       sqe->addr = (uint64_t)(uintptr_t)(buf + req[s].off);
@@ -520,8 +519,8 @@ static intnat transfer_ring(int write, intnat h, int64_t pos, char *buf,
       r->queued = 0;
       inflight--;
       if (res == -EINTR || res == -EAGAIN) continue;
-      if (res < 0 || (res == 0 && write)) {
-        if (error == 0) error = res < 0 ? -res : EIO;
+      if (res < 0) {
+        if (error == 0) error = -res;
         r->len = 0;
       } else if (res == 0) {
         if (r->off < end) end = r->off;
@@ -537,12 +536,15 @@ static intnat transfer_ring(int write, intnat h, int64_t pos, char *buf,
   return error != 0 ? -(intnat)error : end;
 }
 
+/* Only a read of more than one segment takes the ring: a shorter read, and
+   any write, is faster as system calls. */
 static intnat transfer(int write, intnat h, int64_t pos, char *buf,
                        intnat n) {
-  if (__atomic_exchange_n(&ring_held, 1, __ATOMIC_ACQUIRE) == 0) {
+  if (!write && n > SEGMENT &&
+      __atomic_exchange_n(&ring_held, 1, __ATOMIC_ACQUIRE) == 0) {
     if (ring_state == 0) ring_state = ring_setup() ? 1 : -1;
-    intnat r = ring_state == 1 ? transfer_ring(write, h, pos, buf, n)
-                               : transfer_calls(write, h, pos, buf, n);
+    intnat r = ring_state == 1 ? read_ring(h, pos, buf, n)
+                               : transfer_calls(0, h, pos, buf, n);
     __atomic_store_n(&ring_held, 0, __ATOMIC_RELEASE);
     return r;
   }
