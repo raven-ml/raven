@@ -99,6 +99,14 @@ let with_file g ~system f =
       let* () = if system then Ok () else Rm.register fd ~ctl:g.c.ctl in
       f fd)
 
+(* Whether the status [s] of [what] is NV_OK: [Ok false] for
+   NV_ERR_NO_MEMORY. *)
+let fits g what s =
+  if s = D.nv_err_no_memory then Ok false
+  else
+    let* () = Rm.check g.c what s in
+    Ok true
+
 (* Maps the memory object [h] of [size] bytes into the process at [va]: [Ok
    false] if the GPU's window onto its memory (BAR1) has no room. *)
 let map_to_cpu g h size va ~caching ~system =
@@ -115,19 +123,10 @@ let map_to_cpu g h size va ~caching ~system =
   set w (at M.flags) (bits D.nvos33_flags_caching_type caching);
   let what = "mapping GPU memory into the process" in
   let* () = Rm.escape g.c.ctl D.nv_esc_rm_map_memory w what in
-  let s = get w (at M.status) in
-  if s = D.nv_err_no_memory then Ok false
+  let* ok = fits g what (get w (at M.status)) in
+  if not ok then Ok false
   else
-    let* () = Rm.check g.c what s in
     let* () = Rm.map fd va size in
-    Ok true
-
-(* Whether the status [s] of [what] is NV_OK: [Ok false] for
-   NV_ERR_NO_MEMORY. *)
-let fits g what s =
-  if s = D.nv_err_no_memory then Ok false
-  else
-    let* () = Rm.check g.c what s in
     Ok true
 
 (* Maps the memory object [h] at [va] of [g]'s virtual memory: [Ok false] if [g]
