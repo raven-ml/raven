@@ -366,6 +366,12 @@ let start g m ~partial =
         Regs.write ~inst
           ~value:((0x100 * inst) + 0xf8)
           r "regCP_MEC_DOORBELL_RANGE_UPPER" []);
+    (* The doorbells of the MEC's queues, routed to the GC; NBIO 7.9 routes them
+       itself. *)
+    if not (Soc.nbio79 r) then begin
+      Soc.route r ~port:0 ~awid:0x3 ~awaddr:0x3;
+      Soc.route r ~port:3 ~awid:0x6 ~awaddr:0x3
+    end;
     enable_mec g;
     if Regs.vf r then start_kiq g m
   end
