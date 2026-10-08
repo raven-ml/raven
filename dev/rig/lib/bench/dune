@@ -31,6 +31,7 @@
   rig_nv_support
   rig_amd_support
   rig_amd_abi
+  rig_disk
   thumper))
 
 (rule

@@ -38,6 +38,45 @@ let runs = 100
 let still_ms = 200
 let row name setup f = Thumper.bench_with_setup ~setup name f
 
+(* Files: a file's bytes copied into a GPU's memory and back, through
+   Buffer.copy, as a program loads weights. Thumper measures each row in a child
+   that leaves without running [at_exit], so only the bench's own process
+   removes the files. *)
+
+let file_bytes = 256 lsl 20
+let dir = "files"
+let path name = Filename.concat dir name
+
+let clear () =
+  if Sys.file_exists dir then
+    Array.iter (fun f -> Sys.remove (Filename.concat dir f)) (Sys.readdir dir)
+
+let () =
+  clear ();
+  if not (Sys.file_exists dir) then Sys.mkdir dir 0o755;
+  at_exit (fun () ->
+      clear ();
+      Sys.rmdir dir)
+
+(* The file [name] of [n] bytes, none zero, written once. *)
+let data name n =
+  let p = path name in
+  if not (Sys.file_exists p) then begin
+    let mib = 1 lsl 20 in
+    let chunk = String.init mib (fun i -> Char.chr (1 + (i mod 255))) in
+    Out_channel.with_open_bin (p ^ ".part") (fun oc ->
+        let left = ref n in
+        while !left > 0 do
+          let k = Int.min !left mib in
+          Out_channel.output_substring oc chunk 0 k;
+          left := !left - k
+        done);
+    Sys.rename (p ^ ".part") p
+  end;
+  p
+
+let ok = function Ok v -> v | Error why -> failwith why
+
 type gpu_copy = { gs : Sub.t; gargs : B.t; gout : B.t }
 
 type gpu_replay = {
@@ -196,7 +235,22 @@ let gpu_rows (type a) (module D : C.Driver with type t = a) ?(sleeps = false) v
     wait a !(a.sent);
     a.hold ()
   in
+  let to_device () =
+    let g, _ = opened () in
+    (ok (Rig_disk.of_file (data "file" file_bytes)), B.create g file_bytes)
+  in
+  let from_device () =
+    let g, _ = opened () in
+    let p = path (strf "out-%s" v) in
+    if Sys.file_exists p then Sys.remove p;
+    (B.create g file_bytes, ok (Rig_disk.create_file p file_bytes))
+  in
   [
+    Thumper.group (strf "file/%s" v)
+      [
+        row "to-device-256M" to_device (fun (src, dst) -> B.copy ~src ~dst);
+        row "from-device-256M" from_device (fun (src, dst) -> B.copy ~src ~dst);
+      ];
     Thumper.group (strf "submit/%s" v)
       [
         row "empty" core (fun (g, s, _) ->

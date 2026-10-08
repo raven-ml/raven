@@ -50,6 +50,10 @@ submit/nv/empty	wall_time	batch=2048	n=20	3.498e-06	3.493e-06 3.493e-06 3.495e-0
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
 
+file/metal/from-device-256M	alloc_words	exact	37
+file/metal/from-device-256M	wall_time	batch=1	n=20	3.453e-02	3.444e-02 3.444e-02 3.445e-02 3.446e-02 3.446e-02 3.447e-02 3.448e-02 3.449e-02 3.450e-02 3.453e-02 3.453e-02 3.454e-02 3.455e-02 3.456e-02 3.459e-02 3.459e-02 3.461e-02 3.468e-02 3.472e-02 3.479e-02
+file/metal/to-device-256M	alloc_words	exact	37
+file/metal/to-device-256M	wall_time	batch=1	n=20	3.879e-02	3.654e-02 3.670e-02 3.716e-02 3.716e-02 3.733e-02 3.750e-02 3.840e-02 3.870e-02 3.877e-02 3.878e-02 3.881e-02 3.884e-02 3.885e-02 3.895e-02 3.907e-02 3.909e-02 3.921e-02 3.930e-02 3.937e-02 4.008e-02
 floor/metal/cost	alloc_words	exact	0
 floor/metal/cost	wall_time	batch=4096	n=20	3.206e-06	2.585e-06 2.758e-06 2.954e-06 2.967e-06 2.974e-06 3.082e-06 3.153e-06 3.173e-06 3.193e-06 3.198e-06 3.214e-06 3.235e-06 3.241e-06 3.249e-06 3.265e-06 3.372e-06 3.417e-06 3.432e-06 3.505e-06 3.522e-06
 floor/metal/kernel-pipelined-100	alloc_words	exact	6
