@@ -99,7 +99,7 @@ let t_setup = 5
 let t_setup_copy = 6
 let t_invalidate = 7
 let template_words = 16
-let template_holes = 4
+let template_holes = 6
 let hole_ops = 3
 
 (* A pending local memory is one word: its address, below 2^40, and its bytes

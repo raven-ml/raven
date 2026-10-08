@@ -253,13 +253,14 @@ let make_client () =
       uvm_call c D.uvm_initialize (params I.sizeof) I.rm_status
         "initializing NVIDIA's unified memory"
     in
-    (* The memory manager's registration is made once per process; a second one,
-       such as CUDA's in the same process, is refused, and the first serves: its
-       answer is dropped. *)
+    (* The memory manager ties unified memory to the process's address space,
+       through a second file kept open for the process. Its registration is
+       made once per process; a second one, such as CUDA's in the same
+       process, is refused, and the first serves: its answer is dropped. *)
     let module M = D.Uvm_mm_initialize in
     let m = params M.sizeof in
     set m M.uvm_fd uvm_fd;
-    ignore (uvm c D.uvm_mm_initialize m M.rm_status "" : (int, string) result);
+    ignore (ioctl mm D.uvm_mm_initialize m : int);
     Ok c
   in
   (match opened_client with

@@ -41,7 +41,7 @@ enum {
 };
 
 #define TEMPLATE_WORDS 16
-#define TEMPLATE_HOLES 4
+#define TEMPLATE_HOLES 6
 #define HOLE_OPS 3
 #define COPY_MAX (UINT64_C(1) << 31)
 
