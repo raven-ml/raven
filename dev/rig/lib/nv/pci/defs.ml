@@ -42,6 +42,7 @@
    Copyright (c) 2021-2024 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES
+   Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES
 
@@ -155,6 +156,7 @@ let nv_vaspace_allocation_flags_enable_page_faulting = 0x40
 let nv_vaspace_allocation_flags_is_externally_owned = 8
 let mctp_msg_header_type_vendor_pci = 0x7e
 let mctp_msg_header_vendor_id_nv = 0x10de
+let nv2080_engine_type_graphics = 1
 
 (* Bit fields of 32-bit words: (lowest bit, bits). *)
 let nv_bit_falcon_ucode_desc_header_vdesc_version = (8, 8)

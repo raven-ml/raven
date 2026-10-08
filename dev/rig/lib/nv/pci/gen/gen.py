@@ -95,6 +95,7 @@ SOURCES = {
     "cl0000.h": KERNEL + SDK + "class/cl0000.h",
     "cl0080.h": KERNEL + SDK + "class/cl0080.h",
     "cl2080.h": KERNEL + SDK + "class/cl2080.h",
+    "cl2080_notification.h": KERNEL + SDK + "class/cl2080_notification.h",
     "ctrl0080fifo.h": KERNEL + SDK + "ctrl/ctrl0080/ctrl0080fifo.h",
     "ctrl2080fifo.h": KERNEL + SDK + "ctrl/ctrl2080/ctrl2080fifo.h",
     "ctrl2080gpu.h": KERNEL + SDK + "ctrl/ctrl2080/ctrl2080gpu.h",
@@ -257,7 +258,7 @@ CONSTANTS += [
     "NV2080_CTRL_GR_INFO_INDEX_LITTER_NUM_SM_PER_TPC", "NV2080_CTRL_GR_INFO_INDEX_MAX_WARPS_PER_SM",
     "NV2080_CTRL_GR_INFO_INDEX_SM_VERSION", "NV_DEVICE_ALLOCATION_VAMODE_OPTIONAL_MULTIPLE_VASPACES",
     "NV_VASPACE_ALLOCATION_FLAGS_ENABLE_PAGE_FAULTING", "NV_VASPACE_ALLOCATION_FLAGS_IS_EXTERNALLY_OWNED",
-    "MCTP_MSG_HEADER_TYPE_VENDOR_PCI", "MCTP_MSG_HEADER_VENDOR_ID_NV",
+    "MCTP_MSG_HEADER_TYPE_VENDOR_PCI", "MCTP_MSG_HEADER_VENDOR_ID_NV", "NV2080_ENGINE_TYPE_GRAPHICS",
 ]
 
 # Bit fields of 32-bit words, "hi:lo": (lowest bit, bits).

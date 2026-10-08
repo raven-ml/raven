@@ -195,6 +195,7 @@ val reset : ?machine:Rig_pci.Machine.t -> int -> (unit, string) result
    of the pinned firmware and on the layouts NVIDIA's sources state. *)
 module Chip = Chip
 module Falcon = Falcon
+module Gsp = Gsp
 module Held = Held
 module Images = Images
 module Layout = Layout

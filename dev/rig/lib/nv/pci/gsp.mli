@@ -6,14 +6,60 @@
 (** The GSP: the GPU's system processor, which runs NVIDIA's resource manager
     (private).
 
-    The process boots it and then plays the part of the kernel's half of the RM:
-    it describes the system and the GPU's memory to the GSP, runs the register
-    sequences the GSP asks of the CPU, hands the GSP the memory of the objects
-    it allocates (a channel's instance and method buffer, a compute engine's
-    context buffers, a virtual address space's page directory), and reads the
-    GSP's events. Every call goes through {!Msgq}.
+    The process boots it and then plays the part of the kernel's half of the RM
+    (CPU-RM): it describes the system and the GPU's memory to the GSP, runs the
+    register sequences the GSP asks of the CPU, hands the GSP the memory of the
+    objects it allocates (a channel's instance and method buffer, a compute
+    engine's context buffers, a virtual address space's page directory), and
+    reads the GSP's events. Every call goes through {!Msgq}.
+
+    The encodings below are pure; the rest acts on a GPU. The memory the boot
+    gives the GSP is system memory, as the RM places it, but for what the GPU's
+    falcons and the GSP's objects read from the GPU's memory. The structures are
+    release 570.144's. A boot runs on Ada only so far; nothing here has run on
+    hardware in this library (no host gives root).
 
     Calls are serialized by a lock of the GSP's; any domain may make them. *)
+
+(** {1:encodings Encodings} *)
+
+val rm_alloc :
+  client:int -> parent:int -> obj:int -> cls:int -> string -> string
+(** [rm_alloc ~client ~parent ~obj ~cls p] is the body of the RPC [GSP_RM_ALLOC]
+    that makes the object [obj] of class [cls] under [parent] of [client] with
+    the parameters [p]. *)
+
+val rm_control : client:int -> obj:int -> cmd:int -> string -> string
+(** [rm_control ~client ~obj ~cmd p] is the body of the RPC [GSP_RM_CONTROL]
+    that runs the command [cmd] on [obj] of [client] with the parameters [p]. *)
+
+val rm_answer : [ `Alloc | `Control ] -> string -> (int * string, string) result
+(** [rm_answer k body] is the RM's status and the parameters it wrote back in
+    the GSP's answer [body] to an RPC of kind [k], or [Error] if [body] is
+    shorter than its header says. *)
+
+val page_directory :
+  client:int -> device:int -> vaspace:int -> root:int -> entries:int -> string
+(** [page_directory ~client ~device ~vaspace ~root ~entries] is the body of
+    [SET_PAGE_DIRECTORY], which points the virtual address space [vaspace] to
+    the root table at the physical address [root] of the GPU's memory, of
+    [entries] entries. *)
+
+val unloading : string
+(** [unloading] is the body of [UNLOADING_GUEST_DRIVER], unloading to level 6:
+    the GSP stops every channel and stays idle for the next boot. *)
+
+val registry : (string * int) list -> string
+(** [registry keys] is the RM's registry the GSP reads at boot
+    ([PACKED_REGISTRY_TABLE]): each key with its 32-bit value. *)
+
+val sequence : libos:int -> string -> (Falcon.op list, string) result
+(** [sequence ~libos body] is the register sequence a [GSP_RUN_CPU_SEQUENCER]
+    event's [body] asks of the CPU ([rmgspseq.h]): writes, modifications, polls
+    and delays, and the resets, starts, halts and resumption of the GSP's falcon
+    they name, resumption giving the GSP its libos arguments at the bus address
+    [libos] again. [Error] names an opcode it does not know or a sequence that
+    ends inside a command. *)
 
 (** {1:boot Booting} *)
 
@@ -22,9 +68,9 @@ type t
 
 type placement = {
   chip : Chip.t;
+  fn : Rig_pci.Function.t;  (** The GPU's function. *)
   tables : Rig_pci.Page_table.t;
-      (** The GPU's page tables, booting: the GSP's memory comes from its boot
-          pool. *)
+      (** The GPU's page tables: the GSP's objects' memory comes from them. *)
   bar : Rig_pci.Window.t;  (** The GPU's memory BAR. *)
   space : Rig_pci.Space.t;
       (** Where the system memory the GSP is given lies, reserved on the GPU's
@@ -33,13 +79,14 @@ type placement = {
 (** The type for where a boot places the GSP's memory. *)
 
 val boot : placement -> Images.t -> (t, string) result
-(** [boot m fw] boots the GSP of [m.chip] with the firmware [fw]: it writes the
+(** [boot p fw] boots the GSP of [p.chip] with the firmware [fw]: it writes the
     images, the radix-3 table, the queues, the libos arguments, the WPR
     metadata, the system's description and the registry into memory the GPU
-    reads, starts the GSP ({!Falcon.boot}), waits for its [GSP_INIT_DONE], and
-    sets up its golden context: a channel of the GSP's own client whose context
-    buffers later channels' contexts copy. The memory it takes stays the GSP's
-    for the process. [Error] names the step that failed. *)
+    reads, starts the GSP ({!Falcon.legacy} or {!Falcon.cot}), waits for its
+    [GSP_INIT_DONE], and sets up its golden context: a channel of the GSP's own
+    client whose context buffers later channels' contexts copy. The memory it
+    takes stays the GSP's for the process. [Error] names the step that failed.
+*)
 
 (** {1:rm The resource manager} *)
 
