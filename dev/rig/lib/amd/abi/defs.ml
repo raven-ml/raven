@@ -3651,7 +3651,8 @@ let gc_base major segment =
    PM4's register space; RESOURCE_LIMITS.WAVES_PER_SH as (lowest bit,
    highest bit); and DISPATCH_INITIATOR's word for waves of 32 and of 64
    lanes, with COMPUTE_SHADER_EN and FORCE_START_AT_000 set, and CS_W32_EN
-   for 32 lanes where the GC has it. *)
+   for 32 lanes where the GC has it; and COMPUTE_TMPRING_SIZE, whose
+   fields a dispatch's scratch sets. *)
 type dispatch = {
   pgm_lo : int;
   pgm_rsrc1 : int;
@@ -3665,13 +3666,14 @@ type dispatch = {
   waves_per_sh : int * int;
   initiator_wave32 : int;
   initiator_wave64 : int;
+  tmpring : register;
 }
 
-let gc_9_4_3_dispatch = { pgm_lo = 0x2e0c; pgm_rsrc1 = 0x2e12; pgm_rsrc3 = 0x2e2d; tmpring_size = 0x2e18; scratch_base_lo = 0x2e10; restart_x = 0x2e1b; user_data_0 = 0x2e40; resource_limits = 0x2e15; start_x = 0x2e04; waves_per_sh = (0, 9); initiator_wave32 = 5; initiator_wave64 = 5 }
-let gc_11_0_0_dispatch = { pgm_lo = 0x2e0c; pgm_rsrc1 = 0x2e12; pgm_rsrc3 = 0x2e28; tmpring_size = 0x2e18; scratch_base_lo = 0x2e10; restart_x = 0x2e1b; user_data_0 = 0x2e40; resource_limits = 0x2e15; start_x = 0x2e04; waves_per_sh = (0, 9); initiator_wave32 = 0x8005; initiator_wave64 = 5 }
-let gc_11_0_3_dispatch = { pgm_lo = 0x2e0c; pgm_rsrc1 = 0x2e12; pgm_rsrc3 = 0x2e28; tmpring_size = 0x2e18; scratch_base_lo = 0x2e10; restart_x = 0x2e1b; user_data_0 = 0x2e40; resource_limits = 0x2e15; start_x = 0x2e04; waves_per_sh = (0, 9); initiator_wave32 = 0x8005; initiator_wave64 = 5 }
-let gc_11_5_0_dispatch = { pgm_lo = 0x2e0c; pgm_rsrc1 = 0x2e12; pgm_rsrc3 = 0x2e28; tmpring_size = 0x2e18; scratch_base_lo = 0x2e10; restart_x = 0x2e1b; user_data_0 = 0x2e40; resource_limits = 0x2e15; start_x = 0x2e04; waves_per_sh = (0, 9); initiator_wave32 = 0x8005; initiator_wave64 = 5 }
-let gc_12_0_0_dispatch = { pgm_lo = 0x2e0c; pgm_rsrc1 = 0x2e12; pgm_rsrc3 = 0x2e28; tmpring_size = 0x2e18; scratch_base_lo = 0x2e10; restart_x = 0x2e1b; user_data_0 = 0x2e40; resource_limits = 0x2e15; start_x = 0x2e04; waves_per_sh = (0, 9); initiator_wave32 = 0x8005; initiator_wave64 = 5 }
+let gc_9_4_3_dispatch = { pgm_lo = 0x2e0c; pgm_rsrc1 = 0x2e12; pgm_rsrc3 = 0x2e2d; tmpring_size = 0x2e18; scratch_base_lo = 0x2e10; restart_x = 0x2e1b; user_data_0 = 0x2e40; resource_limits = 0x2e15; start_x = 0x2e04; waves_per_sh = (0, 9); initiator_wave32 = 5; initiator_wave64 = 5; tmpring = gc_9_4_3_regCOMPUTE_TMPRING_SIZE }
+let gc_11_0_0_dispatch = { pgm_lo = 0x2e0c; pgm_rsrc1 = 0x2e12; pgm_rsrc3 = 0x2e28; tmpring_size = 0x2e18; scratch_base_lo = 0x2e10; restart_x = 0x2e1b; user_data_0 = 0x2e40; resource_limits = 0x2e15; start_x = 0x2e04; waves_per_sh = (0, 9); initiator_wave32 = 0x8005; initiator_wave64 = 5; tmpring = gc_11_0_0_regCOMPUTE_TMPRING_SIZE }
+let gc_11_0_3_dispatch = { pgm_lo = 0x2e0c; pgm_rsrc1 = 0x2e12; pgm_rsrc3 = 0x2e28; tmpring_size = 0x2e18; scratch_base_lo = 0x2e10; restart_x = 0x2e1b; user_data_0 = 0x2e40; resource_limits = 0x2e15; start_x = 0x2e04; waves_per_sh = (0, 9); initiator_wave32 = 0x8005; initiator_wave64 = 5; tmpring = gc_11_0_3_regCOMPUTE_TMPRING_SIZE }
+let gc_11_5_0_dispatch = { pgm_lo = 0x2e0c; pgm_rsrc1 = 0x2e12; pgm_rsrc3 = 0x2e28; tmpring_size = 0x2e18; scratch_base_lo = 0x2e10; restart_x = 0x2e1b; user_data_0 = 0x2e40; resource_limits = 0x2e15; start_x = 0x2e04; waves_per_sh = (0, 9); initiator_wave32 = 0x8005; initiator_wave64 = 5; tmpring = gc_11_5_0_regCOMPUTE_TMPRING_SIZE }
+let gc_12_0_0_dispatch = { pgm_lo = 0x2e0c; pgm_rsrc1 = 0x2e12; pgm_rsrc3 = 0x2e28; tmpring_size = 0x2e18; scratch_base_lo = 0x2e10; restart_x = 0x2e1b; user_data_0 = 0x2e40; resource_limits = 0x2e15; start_x = 0x2e04; waves_per_sh = (0, 9); initiator_wave32 = 0x8005; initiator_wave64 = 5; tmpring = gc_12_0_0_regCOMPUTE_TMPRING_SIZE }
 
 (* The registers a dispatch sets on a GC version, if it has them all. *)
 let dispatch = function

@@ -31,22 +31,28 @@ let per_die (g : Gpu.t) n =
 
 let size (g : Gpu.t) n = per_die g n * g.xccs
 
-(* The bits of COMPUTE_TMPRING_SIZE's WAVESIZE field, found with String.equal:
-   polymorphic equality cost every dispatch about 12 ns. *)
-let rec wavesize = function
-  | (name, bits) :: fields ->
-      if String.equal name "wavesize" then bits else wavesize fields
-  | [] -> invalid_arg "Scratch.tmpring: COMPUTE_TMPRING_SIZE has no WAVESIZE"
+(* The lowest and highest bits of COMPUTE_TMPRING_SIZE's field [f], found with
+   String.equal: polymorphic equality cost every dispatch about 12 ns. *)
+let rec bits f = function
+  | (name, b) :: fields -> if String.equal name f then b else bits f fields
+  | [] -> invalid_argf "Scratch.tmpring: COMPUTE_TMPRING_SIZE has no %s" f
 
+(* [v] in [r]'s field [f], cut to its width. *)
+let field (r : Defs.register) f v =
+  let lo, hi = bits f r.fields in
+  (v land ((1 lsl (hi - lo + 1)) - 1)) lsl lo
+
+(* The register comes with the GC's dispatch registers, which a dispatch reads
+   anyway: no lookup by name. *)
 let tmpring (g : Gpu.t) n =
   let r =
-    match Register.find g "regCOMPUTE_TMPRING_SIZE" with
-    | Some r -> r
+    match Defs.dispatch (Defs.gc g.gc) with
+    | Some d -> d.tmpring
     | None ->
         invalid_argf "Scratch.tmpring: %s has no COMPUTE_TMPRING_SIZE"
           (gc_name g)
   in
-  let lo, hi = wavesize r.fields in
+  let lo, hi = bits "wavesize" r.fields in
   let most = ((1 lsl (hi - lo + 1)) - 1) * granule g / lanes in
   if n > most then
     invalid_argf "Scratch.tmpring: %d bytes per lane, expected at most %d on %s"
@@ -56,10 +62,8 @@ let tmpring (g : Gpu.t) n =
      units. *)
   let wave = lanes * per_lane g n / granule g in
   let engines = if major g = 9 then 1 else g.shader_engines in
-  Register.encode r
-    [
-      ("waves", g.scratch_slots * g.compute_units / engines); ("wavesize", wave);
-    ]
+  field r "waves" (g.scratch_slots * g.compute_units / engines)
+  lor field r "wavesize" wave
 
 (* The descriptor's fields as ROCR-Runtime sets them for a queue's scratch
    (amd_aql_queue.cpp, rocm-systems cccc350d): elements of 4 bytes and an index

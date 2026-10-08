@@ -127,7 +127,10 @@ let laws =
               (g.compute_units * g.scratch_slots)
           in
           equal (pair int int) (size, waves)
-            (field "wavesize" w, field "waves" w));
+            (field "wavesize" w, field "waves" w);
+          equal int ~msg:"the whole word, the register named"
+            (Register.encode r [ ("waves", waves); ("wavesize", size) ])
+            w);
     ]
 
 (* The most scratch a lane of a 64-lane wave takes, by generation: what

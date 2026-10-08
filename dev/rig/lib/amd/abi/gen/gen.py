@@ -933,10 +933,12 @@ def generate(h):
             "   PM4's register space; RESOURCE_LIMITS.WAVES_PER_SH as (lowest bit,",
             "   highest bit); and DISPATCH_INITIATOR's word for waves of 32 and of 64",
             "   lanes, with COMPUTE_SHADER_EN and FORCE_START_AT_000 set, and CS_W32_EN",
-            "   for 32 lanes where the GC has it. *)",
+            "   for 32 lanes where the GC has it; and COMPUTE_TMPRING_SIZE, whose",
+            "   fields a dispatch's scratch sets. *)",
             "type dispatch = {"]
     out += [f"  {f} : int;" for f, _ in DISPATCH_REGISTERS]
-    out += ["  waves_per_sh : int * int;", "  initiator_wave32 : int;", "  initiator_wave64 : int;", "}", ""]
+    out += ["  waves_per_sh : int * int;", "  initiator_wave32 : int;", "  initiator_wave64 : int;",
+            "  tmpring : register;", "}", ""]
 
     def base(major, segment):
         b = [bs for m, _, bs in sorted(gens) if m <= major]
@@ -960,7 +962,7 @@ def generate(h):
         on = [("force_start_at_000", 1), ("compute_shader_en", 1)]
         w32 = on + ([("cs_w32_en", 1)] if any(n == "cs_w32_en" for n, _, _ in init) else [])
         fs += [f"waves_per_sh = ({limits[0]}, {limits[1]})", f"initiator_wave32 = {ml_int(word(init, w32))}",
-               f"initiator_wave64 = {ml_int(word(init, on))}"]
+               f"initiator_wave64 = {ml_int(word(init, on))}", f"tmpring = gc_{v}_regCOMPUTE_TMPRING_SIZE"]
         out.append(f"let gc_{v}_dispatch = {{ " + "; ".join(fs) + " }")
         dispatches[ver] = v
     out += ["", "(* The registers a dispatch sets on a GC version, if it has them all. *)",
