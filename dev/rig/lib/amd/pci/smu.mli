@@ -44,6 +44,10 @@ val alive : t -> bool
 val start : t -> unit
 (** [start s] gives the firmware its driver table and enables its features. *)
 
+val features : t -> int
+(** [features s] is the power manager's enabled features, a bit each, as it
+    reports them. *)
+
 val clocks : t -> [ `Lowest | `Highest ] -> unit
 (** [clocks s level] holds the memory, fabric and SoC clocks, and the graphics
     clock where the power manager lets the driver set it, at their lowest or
