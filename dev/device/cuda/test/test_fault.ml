@@ -53,9 +53,7 @@ let faults () =
   | `Failed why -> contains ~msg:"submit" ~sub:"CUDA_ERROR_ILLEGAL_ADDRESS" why
   | `Ok -> fail "a submit after the fault is Ok");
   equal int ~msg:"the word after the fault" 0 (S.get64 (host (C.word g)));
-  (match S.stop g with
-  | `Stopped -> ()
-  | `Unknown -> fail "stop is Unknown after a fault");
+  S.stop g;
   let w = C.signaled g in
   equal int ~msg:"the word after stop" 3 w;
   S.still ~msg:"the word" int w (fun () -> C.signaled g) ~ms:200;

@@ -10,10 +10,10 @@ open Windtrap
 external bind_symbols : nativeint array -> unit = "device_cuda_test_bind"
 external lock : string -> bool = "device_cuda_test_lock"
 external current : unit -> nativeint = "device_cuda_test_current"
-external locked : nativeint -> bool = "device_cuda_test_locked"
+external locked : int -> bool = "device_cuda_test_locked"
 external attribute : int -> int = "device_cuda_test_attribute"
-external register : nativeint -> int -> unit = "device_cuda_test_register"
-external unregister : nativeint -> unit = "device_cuda_test_unregister"
+external register : int -> int -> unit = "device_cuda_test_register"
+external unregister : int -> unit = "device_cuda_test_unregister"
 
 (* The GPU *)
 
@@ -66,7 +66,7 @@ let gpu () =
   if Device_cuda.count () = 0 then skip ~reason:"CUDA sees no GPU" ();
   if not (take_lock ()) then
     skip ~reason:"another process holds the GPU lock" ();
-  Option.iter (fun g -> ignore (stop g)) !opened;
+  Option.iter stop !opened;
   let g = Result.get_ok (Device_cuda.open_ 0) in
   opened := Some g;
   bind g;
@@ -75,7 +75,7 @@ let gpu () =
 let with_gpu f =
   let g = gpu () in
   let stop_left () =
-    match !opened with Some o when o == g -> ignore (stop g) | _ -> ()
+    match !opened with Some o when o == g -> stop g | _ -> ()
   in
   Fun.protect ~finally:stop_left (fun () -> f g)
 
@@ -97,23 +97,19 @@ let still ?msg w x f ~ms =
 (* Host memory *)
 
 external page_size : unit -> int = "device_cuda_test_page_size"
-external pages : int -> bool -> nativeint = "device_cuda_test_pages"
-external free_pages : nativeint -> int -> unit = "device_cuda_test_free_pages"
-external get64 : nativeint -> int = "device_cuda_test_get64"
-external set64 : nativeint -> int -> unit = "device_cuda_test_set64"
-external read : nativeint -> int -> string = "device_cuda_test_read"
-external write : nativeint -> string -> unit = "device_cuda_test_write"
+external pages : int -> bool -> int = "device_cuda_test_pages"
+external free_pages : int -> int -> unit = "device_cuda_test_free_pages"
+external get64 : int -> int = "device_cuda_test_get64"
+external set64 : int -> int -> unit = "device_cuda_test_set64"
+external read : int -> int -> string = "device_cuda_test_read"
+external write : int -> string -> unit = "device_cuda_test_write"
 external read_gpu : nativeint -> int -> string = "device_cuda_test_read_gpu"
 external write_gpu : nativeint -> string -> unit = "device_cuda_test_write_gpu"
 
 let page = page_size ()
 
 let get32 a i =
-  Int32.to_int
-    (String.get_int32_le
-       (read (Nativeint.add a (Nativeint.of_int (4 * i))) 4)
-       0)
-  land 0xffff_ffff
+  Int32.to_int (String.get_int32_le (read (a + (4 * i)) 4) 0) land 0xffff_ffff
 
 let pages ?(read_only = false) n = pages n read_only
 

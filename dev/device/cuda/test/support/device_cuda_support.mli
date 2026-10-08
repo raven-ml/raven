@@ -18,7 +18,7 @@ val gpu : unit -> Device_cuda.t
     process holds the lock, which this process keeps until it exits once it took
     it. *)
 
-val stop : Device_cuda.t -> [ `Stopped | `Unknown ]
+val stop : Device_cuda.t -> unit
 (** [stop g] is [Device_cuda.stop g]. Tests stop the devices {!gpu} opened
     through it. *)
 
@@ -39,15 +39,15 @@ val current : unit -> nativeint
 (** [current ()] is the calling thread's current CUDA context, [0n] for none,
     after a {!with_gpu}. *)
 
-val locked : nativeint -> bool
+val locked : int -> bool
 (** [locked a] is [true] iff CUDA holds the host memory at [a] page-locked and
     mapped for its devices, after a {!with_gpu}. *)
 
-val register : nativeint -> int -> unit
+val register : int -> int -> unit
 (** [register a n] page-locks the [n] bytes of host memory at [a] for every CUDA
     device and maps them, as another library would, after a {!with_gpu}. *)
 
-val unregister : nativeint -> unit
+val unregister : int -> unit
 (** [unregister a] ends what {!register} page-locked at [a]. *)
 
 val wait : Device_cuda.t -> int -> unit
@@ -69,26 +69,26 @@ val still :
 val page : int
 (** [page] is the host's page size, in bytes. *)
 
-val pages : ?read_only:bool -> int -> nativeint
+val pages : ?read_only:bool -> int -> int
 (** [pages n] is the address of [n] zeroed bytes from a page boundary, read-only
     iff [read_only] (defaults to [false]). *)
 
-val free_pages : nativeint -> int -> unit
+val free_pages : int -> int -> unit
 (** [free_pages a n] returns the [n] bytes {!pages} gave at [a]. *)
 
-val get64 : nativeint -> int
+val get64 : int -> int
 (** [get64 a] is the 64-bit word at [a], read with acquire order. *)
 
-val set64 : nativeint -> int -> unit
+val set64 : int -> int -> unit
 (** [set64 a x] stores [x] in the 64-bit word at [a] with release order. *)
 
-val read : nativeint -> int -> string
+val read : int -> int -> string
 (** [read a n] is the [n] bytes at [a]. *)
 
-val write : nativeint -> string -> unit
+val write : int -> string -> unit
 (** [write a s] stores [s] at [a]. *)
 
-val get32 : nativeint -> int -> int
+val get32 : int -> int -> int
 (** [get32 a i] is the unsigned 32-bit word [i] at [a]. *)
 
 val read_gpu : nativeint -> int -> string

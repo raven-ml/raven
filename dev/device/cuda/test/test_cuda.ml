@@ -8,14 +8,6 @@ module C = Device_cuda
 module S = Device_cuda_support
 
 let strf = Printf.sprintf
-
-let stop_answer =
-  Testable.make
-    ~pp:(fun ppf -> function
-      | `Stopped -> Format.pp_print_string ppf "`Stopped"
-      | `Unknown -> Format.pp_print_string ppf "`Unknown")
-    ~equal:( = )
-
 let watchdog = 17 (* CU_DEVICE_ATTRIBUTE_KERNEL_EXEC_TIMEOUT *)
 let second = 1_000_000_000
 let address r = Option.get (C.address r)
@@ -29,9 +21,9 @@ let gpu_once () =
   let g = S.gpu () in
   let e = require_error (C.open_ 0) in
   contains ~sub:"open" e;
-  equal stop_answer `Stopped (S.stop g);
+  S.stop g;
   let g' = require_ok (C.open_ 0) in
-  equal stop_answer `Stopped (S.stop g')
+  S.stop g'
 
 let opening =
   group ~timeout:60. "opening"
@@ -64,7 +56,8 @@ let facts () =
   equal (list bool) [ true; false; true ]
     (List.map (C.waits_on g) [ `Store; `Object; `Host ]);
   equal bool ~msg:"submit may block" true (C.blocks g = `May_block);
-  equal nativeint ~msg:"the word's handle is its host address" (word g)
+  equal nativeint ~msg:"the word's handle is its host address"
+    (Nativeint.of_int (word g))
     (C.handle (C.word g));
   equal int ~msg:"the word starts at 0" 0 (C.signaled g)
 
@@ -179,7 +172,7 @@ let kernel_through_map_host () =
   let n = 1000 in
   let p = S.pages (2 * S.page) in
   let whole = require_some (C.map_host g p (2 * S.page)) in
-  let at = Nativeint.add p (Nativeint.of_int (S.page + 64)) in
+  let at = p + S.page + 64 in
   let inside = require_some (C.map_host g at (4 * n)) in
   let f =
     S.launch (kernel "double_index") ~grid:4 ~block:256 (address inside) n
@@ -187,8 +180,8 @@ let kernel_through_map_host () =
   equal S.answer `Ok (submit g ~v:1 [| S.part g ~queue:"COMPUTE:0" f |]);
   S.wait g 1;
   equal (list int) (List.init n (fun i -> 2 * i)) (List.init n (S.get32 at));
-  C.unmap g inside;
-  C.unmap g whole;
+  C.free g inside;
+  C.free g whole;
   C.unload g m;
   S.free_pages p (2 * S.page)
 
@@ -209,7 +202,7 @@ let failed_fill () =
   equal string ~msg:"copied before the word" data (S.read (host dst) 64);
   equal S.answer ~msg:"the next submit" (`Failed why) (submit g ~v:2 [||]);
   S.wait g 2;
-  equal stop_answer `Stopped (S.stop g)
+  S.stop g
 
 (* A fill that fails behind a 100 ms kernel: stop finds the kernel running, and
    the word still reaches the failed value once it ends. *)
@@ -232,7 +225,7 @@ let failed_behind_work () =
   in
   let r = submit g ~v:1 parts in
   ignore (require_match (function `Failed w -> Some w | `Ok -> None) r);
-  equal stop_answer `Unknown (S.stop g);
+  S.stop g;
   S.wait g 1
 
 (* A wait on a host word holds a submission's work on both queues until the host
@@ -266,13 +259,10 @@ let waits =
   [
     test "a Word wait holds the work across the 64-bit wrap (sampled)"
       (fun () -> S.with_gpu (held ~start:(-3) ~wait:2 ~below:1 ~release:2));
-    test "an Equal or an Object wait raises" (fun () ->
+    test "an Object wait raises" (fun () ->
         S.with_gpu @@ fun g ->
-        List.iter
-          (fun k ->
-            raises_match Exn.invalid_arg (fun () ->
-                submit g ~v:1 ~waits:[| (k, 0, 1) |] [||]))
-          [ `Equal; `Object ]);
+        raises_match Exn.invalid_arg (fun () ->
+            submit g ~v:1 ~waits:[| (`Object, 0, 1) |] [||]));
     cases ~name:(strf "%d satisfied waits complete on both queues")
       "batches" [ 255; 256 ] (fun n ->
         S.with_gpu @@ fun g ->
@@ -309,7 +299,6 @@ let misuse () =
   raises "map_host of 0 bytes" (fun () -> C.map_host g (word g) 0);
   raises "peer of one device" (fun () -> C.peer g g);
   raises "map_peer of one device" (fun () -> C.map_peer g g r);
-  raises "unmap of an allocation" (fun () -> C.unmap g r);
   raises "free of the word" (fun () -> C.free g (C.word g));
   C.free g r;
   raises "free twice" (fun () -> C.free g r);
@@ -317,14 +306,14 @@ let misuse () =
       part (`Copy ((r, 0), (r, 32), 8)));
   let p = S.pages S.page in
   let m = require_some (C.map_host g p 64) in
-  C.unmap g m;
-  raises "unmap twice" (fun () -> C.unmap g m);
+  C.free g m;
+  raises "free of a mapping twice" (fun () -> C.free g m);
   S.free_pages p S.page
 
 let another_device () =
   let a = S.gpu () in
   let r = require_some (C.alloc a `Pinned 64) in
-  equal stop_answer `Stopped (S.stop a);
+  S.stop a;
   S.with_gpu @@ fun b ->
   raises_match Exn.invalid_arg (fun () ->
       C.part b ~queue:"COPY:0" (`Copy ((r, 0), (r, 32), 8)));
@@ -454,10 +443,10 @@ let stop_idle () =
   equal bool ~msg:"locked" true (S.locked p);
   equal S.answer `Ok (submit g ~v:1 [||]);
   S.wait g 1;
-  equal stop_answer `Stopped (S.stop g);
+  S.stop g;
   equal int ~msg:"the word" 1 (C.signaled g);
-  C.unmap g r;
-  equal bool ~msg:"locked after unmap" false (S.locked p);
+  C.free g r;
+  equal bool ~msg:"locked after free" false (S.locked p);
   S.free_pages p S.page
 
 let stop_running () =
@@ -467,26 +456,26 @@ let stop_running () =
   let flag = require_some (C.alloc g `Pinned 8) in
   Fun.protect ~finally:(fun () -> S.set64 (host flag) 1) @@ fun () ->
   ignore (spin g flag);
-  equal stop_answer `Unknown (S.stop g);
+  S.stop g;
   let e = require_error (C.open_ 0) in
   contains ~sub:"still runs" e;
   S.set64 (host flag) 1;
   S.wait g 1;
   let g' = require_ok (C.open_ 0) in
-  equal stop_answer `Stopped (S.stop g')
+  S.stop g'
 
 let registry_is_the_process () =
   let p = S.pages S.page in
   let a = S.gpu () in
   let ra = require_some (C.map_host a p 256) in
-  equal stop_answer `Stopped (S.stop a);
+  S.stop a;
   let b = S.gpu () in
-  let rb = require_some (C.map_host b (Nativeint.add p 64n) 64) in
-  C.unmap a ra;
-  equal bool ~msg:"locked after the first unmap" true (S.locked p);
-  C.unmap b rb;
-  equal bool ~msg:"locked after the last unmap" false (S.locked p);
-  equal stop_answer `Stopped (S.stop b);
+  let rb = require_some (C.map_host b (p + 64) 64) in
+  C.free a ra;
+  equal bool ~msg:"locked after the first free" true (S.locked p);
+  C.free b rb;
+  equal bool ~msg:"locked after the last free" false (S.locked p);
+  S.stop b;
   S.free_pages p S.page
 
 let timeline =
@@ -497,7 +486,7 @@ let timeline =
         "unload lets other domains run while CUDA waits for the GPU (sampled)"
         unload_aside;
       test "stop of an idle device leaves the word at the last value" stop_idle;
-      test "stop of a running device is Unknown until its work ends"
+      test "stop of a running device leaves the GPU closed until its work ends"
         stop_running;
       test "page-locking is the process's" registry_is_the_process;
     ]
@@ -507,21 +496,17 @@ let timeline =
 let two_gpus () =
   if C.count () < 2 then skip ~reason:"CUDA sees fewer than two GPUs" ();
   let a = S.gpu () in
-  Fun.protect ~finally:(fun () -> ignore (S.stop a)) @@ fun () ->
+  Fun.protect ~finally:(fun () -> S.stop a) @@ fun () ->
   let b = require_ok (C.open_ 1) in
-  Fun.protect ~finally:(fun () -> ignore (S.stop b)) @@ fun () ->
+  Fun.protect ~finally:(fun () -> S.stop b) @@ fun () ->
   let h = require_some (C.alloc b `Pinned 64) in
   let d = require_some (C.alloc b `Device 64) in
   let ph = require_some (C.map_peer a b h) in
-  equal (option nativeint) ~msg:"host memory maps" (C.host h) (C.host ph);
+  equal (option int) ~msg:"host memory maps" (C.host h) (C.host ph);
   let pd = C.map_peer a b d in
   equal bool ~msg:"peer is map_peer's answer" (C.peer a b) (Option.is_some pd);
-  (match pd with
-  | Some pd ->
-      raises_match Exn.invalid_arg (fun () -> C.free a pd);
-      C.unmap a pd
-  | None -> ());
-  C.unmap a ph;
+  (match pd with Some pd -> C.free a pd | None -> ());
+  C.free a ph;
   C.free b h;
   C.free b d
 
@@ -531,7 +516,7 @@ let two =
 (* The shared device: the stateful tests' programs use one device, opened by the
    first and stopped when the run ends. *)
 
-let shared = fixture ~teardown:(fun g -> ignore (S.stop g)) S.gpu
+let shared = fixture ~teardown:S.stop S.gpu
 
 (* map_host: the registry *)
 
@@ -593,7 +578,7 @@ module Registry = struct
             m.regions <- m.regions @ [ Counted e ];
             true)
 
-  let unmap m i =
+  let free m i =
     let r = List.nth m.regions i in
     m.regions <- List.filteri (fun j _ -> j <> i) m.regions;
     match r with
@@ -601,7 +586,7 @@ module Registry = struct
     | Counted e ->
         e.maps <- e.maps - 1;
         if e.maps = 0 then begin
-          cover "the last unmap of a registration" true;
+          cover "the last free of a registration" true;
           m.entries <- List.filter (fun e' -> e' != e) m.entries
         end
 
@@ -609,22 +594,22 @@ module Registry = struct
 
   type sys = {
     g : C.t;
-    base : nativeint;
+    base : int;
     foreign : C.region;
-    split : nativeint; (* pages 0 and 2 page-locked by another owner *)
-    read_only : nativeint;
+    split : int; (* pages 0 and 2 page-locked by another owner *)
+    read_only : int;
     lock : Mutex.t;
     mutable live : C.region list;
   }
 
-  let at s a = Nativeint.add s.base (Nativeint.of_int a)
+  let at s a = s.base + a
 
   let start () =
     let g = shared () in
     let foreign = Option.get (C.alloc g `Pinned (2 * S.page)) in
     let split = S.pages (3 * S.page) in
     S.register split S.page;
-    S.register (Nativeint.add split (Nativeint.of_int (2 * S.page))) S.page;
+    S.register (split + (2 * S.page)) S.page;
     {
       g;
       base = S.pages (arena * S.page);
@@ -636,10 +621,10 @@ module Registry = struct
     }
 
   let release s =
-    List.iter (C.unmap s.g) s.live;
+    List.iter (C.free s.g) s.live;
     C.free s.g s.foreign;
     S.unregister s.split;
-    S.unregister (Nativeint.add s.split (Nativeint.of_int (2 * S.page)));
+    S.unregister (s.split + (2 * S.page));
     S.free_pages s.split (3 * S.page);
     S.free_pages s.base (arena * S.page);
     S.free_pages s.read_only S.page
@@ -648,9 +633,9 @@ module Registry = struct
     let a =
       match area with
       | Arena -> at s a
-      | Foreign -> Nativeint.add (host s.foreign) (Nativeint.of_int a)
-      | Split -> Nativeint.add s.split (Nativeint.of_int a)
-      | Read_only -> Nativeint.add s.read_only (Nativeint.of_int a)
+      | Foreign -> host s.foreign + a
+      | Split -> s.split + a
+      | Read_only -> s.read_only + a
     in
     match C.map_host s.g a n with
     | Some r ->
@@ -658,8 +643,8 @@ module Registry = struct
         true
     | None -> false
 
-  let unmap_sys s i =
-    C.unmap s.g (List.nth s.live i);
+  let free_sys s i =
+    C.free s.g (List.nth s.live i);
     Mutex.protect s.lock (fun () ->
         s.live <- List.filteri (fun j _ -> j <> i) s.live)
 
@@ -740,9 +725,9 @@ let registry_commands ~cover =
     command "map_host"
       (registry ^-> Registry.range @-> returns bool)
       (Registry.map ~cover) Registry.map_sys;
-    command "unmap"
+    command "free"
       (registry ^-> mapped ^-> returns unit)
-      Registry.unmap Registry.unmap_sys;
+      Registry.free Registry.free_sys;
   ]
 
 (* Submissions: the order of values *)
@@ -954,9 +939,9 @@ let order_commands =
       Order.run Order.run_sys;
   ]
 
-(* Ending from two domains: whatever the order, an allocation's first [free], a
-   mapping's first [unmap] and an image's first [unload] return, and every later
-   one raises. *)
+(* Ending from two domains: whatever the order, an allocation's or a mapping's
+   first [free] and an image's first [unload] return, and every later one
+   raises. *)
 
 type ended = { mutable live : bool }
 
@@ -990,11 +975,11 @@ let mapping_commands =
     ~make:(fun () ->
       let g = shared () and p = S.pages S.page in
       (g, p, Option.get (C.map_host g p 64)))
-    ~finish:(fun (g, _, r) -> C.unmap g r)
+    ~finish:(fun (g, _, r) -> C.free g r)
     ~release:(fun (g, p, r) ->
       Fun.protect
         ~finally:(fun () -> S.free_pages p S.page)
-        (fun () -> C.unmap g r))
+        (fun () -> C.free g r))
 
 let image_commands =
   ends_once "i"
@@ -1018,7 +1003,7 @@ let stateful =
       stateful ~count:30 ~domains:2
         "an allocation freed from two domains is freed once" allocation_commands;
       stateful ~count:30 ~domains:2
-        "a mapping unmapped from two domains is unmapped once" mapping_commands;
+        "a mapping freed from two domains is freed once" mapping_commands;
       stateful ~count:30 ~domains:2
         "an image unloaded from two domains is unloaded once" image_commands;
     ]

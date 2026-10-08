@@ -106,7 +106,7 @@ let find_gpus () =
       r
 
 (* Memory. Page-locking is the process's: a registration serves every device,
-   and ends at the last unmap of a region over it, from any device. *)
+   and ends at the last free of a region over it, from any device. *)
 
 type registration = {
   start : int;
@@ -130,7 +130,7 @@ type region = {
   handle : int;
   bytes : int;
   home : int; (* the device whose GPU holds GPU memory *)
-  live : bool Atomic.t; (* taken once by free or unmap *)
+  live : bool Atomic.t; (* taken once by free *)
 }
 
 let region owner kind ~address ~handle bytes =
@@ -262,20 +262,9 @@ let alloc g kind n =
         (region g.self (if host then Host else Device) ~address:a ~handle:a n)
   | _ -> refused (strf "allocating %d bytes" n) g.self None
 
-let free g r =
-  match r.kind with
-  | (Device | Host) when r.owner = g.self ->
-      if not (Atomic.compare_and_set r.live true false) then
-        invalid_arg "Device_cuda.free: the region was freed";
-      (* CUDA's answer is dropped: after a fault the memory stays with the
-         context, which the process keeps. *)
-      ignore (free_memory g.self (r.kind = Host) r.address)
-  | _ ->
-      invalid_arg "Device_cuda.free: the region is no allocation of the device"
-
 let address r = Some r.address
 let handle r = Nativeint.of_int r.handle
-let host r = if on_host r.kind then Some (Nativeint.of_int r.handle) else None
+let host r = if on_host r.kind then Some r.handle else None
 
 (* Whether [self]'s GPU addresses the GPU memory of [home]'s, enabling the
    access. *)
@@ -331,7 +320,6 @@ let page_lock g a n =
 let map_host g a n =
   if n < 1 then
     invalid_argf "Device_cuda.map_host: %d bytes, expected at least 1" n;
-  let a = Nativeint.to_int a in
   let lo, hi = pages a n in
   let inside e = e.start <= a && a + n <= e.start + e.bytes in
   let shares e =
@@ -346,13 +334,19 @@ let map_host g a n =
       Some (locked g (Some e) a n (e.address + (a - e.start)))
   | None -> if List.exists shares !registry then None else page_lock g a n
 
-let unmap g r =
+let free g r =
   (match r.kind with
-  | (Locked _ | Peer _) when r.owner = g.self -> ()
-  | _ -> invalid_arg "Device_cuda.unmap: the region is no mapping of the device");
+  | Word -> invalid_arg "Device_cuda.free: the region is a timeline word"
+  | _ when r.owner <> g.self ->
+      invalid_arg "Device_cuda.free: the region is another device's"
+  | _ -> ());
   if not (Atomic.compare_and_set r.live true false) then
-    invalid_arg "Device_cuda.unmap: the region was unmapped";
+    invalid_arg "Device_cuda.free: the region was freed";
   match r.kind with
+  | Device | Host ->
+      (* CUDA's answer is dropped: after a fault the memory stays with the
+         context, which the process keeps. *)
+      ignore (free_memory g.self (r.kind = Host) r.address)
   | Locked (Some e) ->
       Mutex.protect registry_lock @@ fun () ->
       e.maps <- e.maps - 1;
@@ -360,7 +354,7 @@ let unmap g r =
         if lock g.self false e.start 0 = 0 then
           registry := List.filter (fun e' -> e' != e) !registry
         else e.stuck <- true
-  | _ -> ()
+  | Locked None | Peer _ | Word -> ()
 
 (* Images *)
 
@@ -477,7 +471,7 @@ let check_part self i p =
 
 let wait_kind = function
   | `Word -> nx_word
-  | `Equal | `Object ->
+  | `Object ->
       invalid_arg
         "Device_cuda.submit: the device waits only for words to reach a value"
 
@@ -519,5 +513,4 @@ let sleep g ~seen ~still_ms =
 
 let stop g =
   let stopped = stop_device g.self in
-  Atomic.set g.held (if stopped then unheld else -g.self);
-  if stopped then `Stopped else `Unknown
+  Atomic.set g.held (if stopped then unheld else -g.self)

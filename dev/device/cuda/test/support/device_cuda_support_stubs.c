@@ -36,6 +36,7 @@
 #include "device_cuda.h"
 
 #define Ptr_val(v) ((void *)Nativeint_val(v))
+#define Addr_val(v) ((void *)Long_val(v))
 
 typedef int CUresult;
 typedef void *CUcontext;
@@ -100,7 +101,7 @@ value device_cuda_test_locked(value v_p) {
   CUcontext popped;
   uint64_t d = 0;
   push_primary();
-  CUresult s = device_pointer(&d, Ptr_val(v_p), 0);
+  CUresult s = device_pointer(&d, Addr_val(v_p), 0);
   pop(&popped);
   return Val_bool(s == 0);
 }
@@ -111,7 +112,7 @@ value device_cuda_test_locked(value v_p) {
 value device_cuda_test_register(value v_p, value v_n) {
   CUcontext popped;
   push_primary();
-  CUresult s = host_register(Ptr_val(v_p), Long_val(v_n), 0x3);
+  CUresult s = host_register(Addr_val(v_p), Long_val(v_n), 0x3);
   pop(&popped);
   if (s != 0) caml_failwith("cuMemHostRegister");
   return Val_unit;
@@ -120,7 +121,7 @@ value device_cuda_test_register(value v_p, value v_n) {
 value device_cuda_test_unregister(value v_p) {
   CUcontext popped;
   push_primary();
-  CUresult s = host_unregister(Ptr_val(v_p));
+  CUresult s = host_unregister(Addr_val(v_p));
   pop(&popped);
   if (s != 0) caml_failwith("cuMemHostUnregister");
   return Val_unit;
@@ -208,26 +209,26 @@ value device_cuda_test_pages(value v_n, value v_read_only) {
   void *p = mmap(NULL, n, prot, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   if (p == MAP_FAILED) caml_raise_out_of_memory();
 #endif
-  return caml_copy_nativeint((intnat)p);
+  return Val_long((intnat)p);
 }
 
 value device_cuda_test_free_pages(value v_p, value v_n) {
 #if defined(_WIN32)
   (void)v_n;
-  VirtualFree(Ptr_val(v_p), 0, MEM_RELEASE);
+  VirtualFree(Addr_val(v_p), 0, MEM_RELEASE);
 #else
-  munmap(Ptr_val(v_p), Long_val(v_n));
+  munmap(Addr_val(v_p), Long_val(v_n));
 #endif
   return Val_unit;
 }
 
 value device_cuda_test_get64(value v_p) {
-  _Atomic uint64_t *p = Ptr_val(v_p);
+  _Atomic uint64_t *p = Addr_val(v_p);
   return Val_long((intnat)atomic_load_explicit(p, memory_order_acquire));
 }
 
 value device_cuda_test_set64(value v_p, value v_x) {
-  _Atomic uint64_t *p = Ptr_val(v_p);
+  _Atomic uint64_t *p = Addr_val(v_p);
   atomic_store_explicit(p, (uint64_t)Long_val(v_x), memory_order_release);
   return Val_unit;
 }
@@ -236,12 +237,12 @@ value device_cuda_test_read(value v_p, value v_n) {
   CAMLparam2(v_p, v_n);
   CAMLlocal1(s);
   s = caml_alloc_string(Long_val(v_n));
-  memcpy(Bytes_val(s), Ptr_val(v_p), Long_val(v_n));
+  memcpy(Bytes_val(s), Addr_val(v_p), Long_val(v_n));
   CAMLreturn(s);
 }
 
 value device_cuda_test_write(value v_p, value v_s) {
-  memcpy(Ptr_val(v_p), String_val(v_s), caml_string_length(v_s));
+  memcpy(Addr_val(v_p), String_val(v_s), caml_string_length(v_s));
   return Val_unit;
 }
 

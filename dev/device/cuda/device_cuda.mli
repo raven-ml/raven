@@ -69,9 +69,9 @@
     {b Domains.} Every value may be called from any domain, at the same time as
     others, with three exceptions. {!room} and {!submit}, and their C forms, run
     one call at a time, in value order: their caller serialises them. {!stop} is
-    called once, after every other call returned; after it only {!free},
-    {!unmap} and the [symbol] function of {!val-capability} are called. {!sleep}
-    may run while another domain submits.
+    called once, after every other call returned; after it only {!free} and the
+    [symbol] function of {!val-capability} are called. {!sleep} may run while
+    another domain submits.
 
     {b References.}
     - {{:https://docs.nvidia.com/cuda/cuda-driver-api/}CUDA Driver API}: Primary
@@ -175,10 +175,15 @@ val alloc : t -> [ `Device | `Pinned | `Mapped ] -> int -> region option
     Raises [Invalid_argument] if [n < 1]. *)
 
 val free : t -> region -> unit
-(** [free g r] frees the allocation [r]. The caller frees it once no work that
-    uses it runs. CUDA may wait for all of the GPU's work before it returns.
+(** [free g r] gives back [r]: it frees an allocation, and ends a region that
+    {!map_peer} or {!map_host} gave. The caller frees it once no work that uses
+    it runs. CUDA may wait for all of the GPU's work before it frees an
+    allocation. A {!map_host} region whose unregistration CUDA refuses, because
+    [g]'s context failed, keeps the pages locked, and every later {!map_host}
+    that overlaps them is [None].
 
-    Raises [Invalid_argument] if [r] is no allocation of [g], or was freed. *)
+    Raises [Invalid_argument] if [r] is another device's or {!word}, or was
+    freed. *)
 
 val address : region -> int option
 (** [address r] is [Some a], [a] the address of [r]'s first byte in the
@@ -188,7 +193,7 @@ val handle : region -> nativeint
 (** [handle r] is the address by which CUDA names [r]'s allocation: its device
     address for GPU memory, its host address for host memory. *)
 
-val host : region -> nativeint option
+val host : region -> int option
 (** [host r] is [Some a], [a] the host address of [r]'s first byte, if [r] is
     host memory, and [None] for GPU memory. *)
 
@@ -203,43 +208,33 @@ val map_peer : t -> t -> region -> region option
 (** [map_peer g g' r] is [Some r'] with [r'] a new region of [g] over the memory
     of [g']'s region [r], if [g]'s work can address it: always for host memory;
     for GPU memory if CUDA gives [g]'s GPU access to [g']'s, which [map_peer]
-    then enables for the pair. It is [None] otherwise. {!unmap} of [r'] ends
-    only [r'], and {!free} refuses it. [r'] is [r]'s memory: the caller unmaps
-    [r'] before it frees or unmaps [r].
+    then enables for the pair. It is [None] otherwise. {!free} of [r'] ends only
+    [r']. [r'] is [r]'s memory: the caller frees [r'] before it frees [r].
 
     Raises [Invalid_argument] if [g'] is [g], or if [r] is no region of [g'] or
-    was freed or unmapped. *)
+    was freed. *)
 
-val map_host : t -> nativeint -> int -> region option
+val map_host : t -> int -> int -> region option
 (** [map_host g a n] is [Some r] with [r] the [n] bytes of host memory at [a],
     page-locked for every CUDA device and mapped, unless CUDA refuses to
     page-lock them. CUDA refuses read-only memory and memory whose pages another
     page-locked range shares. The host memory must stay mapped until [r] is
-    unmapped.
+    freed.
 
     Page-locking is the process's. A range inside one that {!map_host}
     page-locked counts against it: the pages stay locked until every region
-    {!map_host} gave over them, on any device, is unmapped. A range that shares
-    a page with one without lying inside it is [None]. Memory that CUDA
+    {!map_host} gave over them, on any device, is freed. A range that shares a
+    page with one without lying inside it is [None]. Memory that CUDA
     page-locked for another owner, such as an allocation of {!alloc} or of
     another library, is mapped as it is, uncounted, if the range lies inside one
     of its allocations ([None] otherwise), and must stay page-locked until [r]
-    is unmapped.
+    is freed.
 
     [r]'s {!address} is the one CUDA gives for the memory
     ([cuMemHostGetDevicePointer]), which every device's work uses under unified
     addressing.
 
     Raises [Invalid_argument] if [n < 1]. *)
-
-val unmap : t -> region -> unit
-(** [unmap g r] ends the region [r] that {!map_peer} or {!map_host} gave. The
-    caller unmaps it once no work that uses it runs. An unmap whose
-    unregistration CUDA refuses, because [g]'s context failed, keeps the pages
-    locked, and every later {!map_host} that overlaps them is [None].
-
-    Raises [Invalid_argument] if [r] is an allocation, a region of another
-    device, or was unmapped. *)
 
 (** {1:images Images} *)
 
@@ -309,11 +304,10 @@ val part :
     Raises [Invalid_argument] if [queue] is not a queue of [g], if [w] is
     [`Words _], which names ring words a CUDA device has not, if [units] or
     [bytes] is not [0], if a copy's range lies outside its region, if a region
-    is of another device or was freed or unmapped, or if an index of [after] is
-    negative.
+    is of another device or was freed, or if an index of [after] is negative.
 
-    A part names its regions until it is submitted: the caller frees or unmaps
-    none of them before. *)
+    A part names its regions until it is submitted: the caller frees none of
+    them before. *)
 
 val room : t -> part array -> [ `Fits | `Later | `Never ]
 (** [room g ps] is [`Fits]: CUDA's streams take any amount of work, and a call
@@ -325,7 +319,7 @@ val room : t -> part array -> [ `Fits | `Later | `Never ]
 val submit :
   t ->
   v:int ->
-  waits:([ `Word | `Equal | `Object ] * int * int) array ->
+  waits:([ `Word | `Object ] * int * int) array ->
   handles:nativeint array ->
   part array ->
   [ `Ok | `Failed of string ]
@@ -358,8 +352,8 @@ val submit :
 
     Raises [Invalid_argument] if [v] is not the value after the last one, if a
     part is another device's, if a part's [after] names a part at or after its
-    own index, or if a wait is [`Equal] or [`Object]: the device waits only for
-    words to reach a value. *)
+    own index, or if a wait is [`Object]: the device waits only for words to
+    reach a value. *)
 
 val room_entry : nativeint
 (** [room_entry] is the address of the C function [device_cuda_room], {!room}
@@ -401,14 +395,14 @@ val sleep : t -> seen:int -> still_ms:int -> unit
 exception Fault of string
 (** The exception for a fault of a device's work, with CUDA's error. *)
 
-val stop : t -> [ `Stopped | `Unknown ]
-(** [stop g] stops [g] for good. It is [`Stopped] if [g]'s work no longer writes
-    memory: the work of every value it was given completed, its streams are
-    idle, or a fault ended the context's work. The timeline word then holds at
-    least the last value {!submit} was given, so work of other devices that
-    waits on it runs on, and [g]'s streams are destroyed. It is [`Unknown] if
-    work still runs. The timeline word then reaches the last value {!submit} was
-    given once that work ends, unless it waits on a word of another device that
-    never reaches its value; the GPU opens again once that work ends. It never
-    waits. After [stop], only {!free}, {!unmap} and the [symbol] function of
-    {!val-capability} may be called on [g]; none raises {!exception-Fault}. *)
+val stop : t -> unit
+(** [stop g] stops [g] for good, without waiting. If [g]'s work no longer writes
+    memory (the work of every value it was given completed, its streams are
+    idle, or a fault ended the context's work), the timeline word holds at least
+    the last value {!submit} was given when [stop] returns, so work of other
+    devices that waits on it runs on, and [g]'s streams are destroyed. Otherwise
+    the timeline word reaches the last value {!submit} was given once that work
+    ends, unless it waits on a word of another device that never reaches its
+    value; the GPU opens again once that work ends. After [stop], only {!free}
+    and the [symbol] function of {!val-capability} may be called on [g]; neither
+    raises {!exception-Fault}. *)

@@ -160,7 +160,7 @@ value device_cuda_bench_waits(value v_at, value v_n) {
   memset(ops, 0, sizeof ops);
   for (int i = 0; i < n; i++) {
     ops[i].wait.operation = 4; /* CU_STREAM_MEM_OP_WAIT_VALUE_64 */
-    ops[i].wait.address = (CUdeviceptr)Nativeint_val(v_at);
+    ops[i].wait.address = (CUdeviceptr)Long_val(v_at);
     ops[i].wait.value = 1;
   }
   CHECK(p_cuStreamBatchMemOp_v2(streams[0], (unsigned int)n, ops, 0));
@@ -213,7 +213,7 @@ value device_cuda_bench_alloc(value v_n) {
 }
 
 value device_cuda_bench_map_host(value v_p, value v_n) {
-  void *p = (void *)Nativeint_val(v_p);
+  void *p = (void *)Long_val(v_p);
   CHECK(p_cuMemHostRegister_v2(p, Long_val(v_n), 3));
   CHECK(p_cuMemHostUnregister(p));
   return Val_unit;

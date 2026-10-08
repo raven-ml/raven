@@ -19,7 +19,7 @@ external bind : nativeint array -> unit = "device_cuda_bench_bind"
 external start : unit -> unit = "device_cuda_bench_start"
 external floor_release : int -> unit = "device_cuda_bench_release"
 external floor_switch : unit -> unit = "device_cuda_bench_switch"
-external floor_waits : nativeint -> int -> unit = "device_cuda_bench_waits"
+external floor_waits : int -> int -> unit = "device_cuda_bench_waits"
 external floor_launch : nativeint -> int -> unit = "device_cuda_bench_launch"
 external buffer : bool -> int -> nativeint = "device_cuda_bench_buffer"
 
@@ -27,9 +27,7 @@ external floor_copy : nativeint -> nativeint -> int -> unit
   = "device_cuda_bench_copy"
 
 external floor_alloc : int -> unit = "device_cuda_bench_alloc"
-
-external floor_map_host : nativeint -> int -> unit
-  = "device_cuda_bench_map_host"
+external floor_map_host : int -> int -> unit = "device_cuda_bench_map_host"
 
 let fixtures = "../test/fixtures"
 let kib = 1024
@@ -164,7 +162,7 @@ let map_host_rows =
     [
       row "256MiB"
         (fun () -> (dev (), S.pages n))
-        (fun (t, p) -> C.unmap t.g (Option.get (C.map_host t.g p n)));
+        (fun (t, p) -> C.free t.g (Option.get (C.map_host t.g p n)));
       row "floor-256MiB"
         (fun () -> (floor (), S.pages n))
         (fun (_, p) -> floor_map_host p n);
