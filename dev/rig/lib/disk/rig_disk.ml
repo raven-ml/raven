@@ -35,7 +35,10 @@ external write :
   (int[@untagged]) = "caml_rig_disk_write_byte" "caml_rig_disk_write"
 
 external map : int -> int -> bool -> int * pages option = "caml_rig_disk_map"
-external advise : int -> int -> int -> unit = "caml_rig_disk_advise"
+
+external advise : int -> pages option -> int -> int -> unit
+  = "caml_rig_disk_advise"
+
 external msync : pages -> int = "caml_rig_disk_msync"
 
 (* The codes [open_path] answers besides the system's, and its modes. *)
@@ -67,7 +70,7 @@ type file = {
   mutable users : int; (* copies using [fd] *)
   mutable newer : file; (* links in the idle ring, [f] itself out of it *)
   mutable older : file;
-  mutable pages : pages option; (* a writable file's shared mapping *)
+  mutable pages : pages option; (* its mapping, once a borrow made it *)
 }
 
 (* A file not yet open, out of the idle ring. *)
@@ -228,7 +231,7 @@ module Io = struct
   let pages () f =
     match using f (fun fd -> map fd f.size f.writable) with
     | 0, pages ->
-        if f.writable then f.pages <- pages;
+        f.pages <- pages;
         pages
     | code, _ when code = unmappable -> None
     | code, _ -> sys_error f (error code)
@@ -236,9 +239,7 @@ module Io = struct
   (* A file that cannot be reopened gets no advice; its pages, mapped already,
      stay valid. *)
   let prefetch () f ~at ~len =
-    match using f (fun fd -> advise fd at len) with
-    | () -> ()
-    | exception Sys_error _ -> ()
+    try using f (fun fd -> advise fd f.pages at len) with Sys_error _ -> ()
 
   let stop () = ()
 end

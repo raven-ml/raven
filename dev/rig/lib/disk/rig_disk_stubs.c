@@ -692,32 +692,46 @@ value caml_rig_disk_map(value v_handle, value v_n, value v_shared) {
   CAMLreturn(r);
 }
 
-/* [advise h pos n] asks the system to read the [n] bytes of the file [h] from
-   byte [pos] into its cache, without waiting for them. Advice on the
-   descriptor, not the mapping: the pages read belong to the cache, which
-   macOS does not count in the process's footprint. A hint: failures are
-   ignored. Keeps the runtime: the call only queues the reads. */
-value caml_rig_disk_advise(value v_handle, value v_pos, value v_n) {
+/* [advise h pages pos n] asks the system to read the [n] bytes of the file
+   [h] from byte [pos] ahead of their use, without waiting for them. Linux and
+   macOS take advice on the descriptor, so the pages read belong to the cache,
+   which macOS does not count in the process's footprint; Windows takes it on
+   the file's mapping [pages]. A hint: failures are ignored. Releases the
+   runtime, with [pages] rooted: Linux allocates the range's pages and submits
+   their reads in the caller. */
+
+static void advise_file(intnat h, char *pages, int64_t pos, int64_t n) {
 #if defined(__APPLE__)
-  int fd = (int)Long_val(v_handle);
-  int64_t pos = Long_val(v_pos), n = Long_val(v_n);
+  (void)pages;
   while (n > 0) {
     int count = n > (1 << 30) ? (1 << 30) : (int)n;
     struct radvisory ra = {.ra_offset = (off_t)pos, .ra_count = count};
-    if (fcntl(fd, F_RDADVISE, &ra) != 0) break;
+    if (fcntl((int)h, F_RDADVISE, &ra) != 0) break;
     pos += count;
     n -= count;
   }
 #elif defined(_WIN32)
-  (void)v_handle;
-  (void)v_pos;
-  (void)v_n;
+  (void)h;
+  if (pages == NULL || n <= 0) return;
+  WIN32_MEMORY_RANGE_ENTRY range = {pages + pos, (SIZE_T)n};
+  PrefetchVirtualMemory(GetCurrentProcess(), 1, &range, 0);
 #else
-  if (Long_val(v_n) > 0)
-    posix_fadvise((int)Long_val(v_handle), (off_t)Long_val(v_pos),
-                  (off_t)Long_val(v_n), POSIX_FADV_WILLNEED);
+  (void)pages;
+  if (n > 0) posix_fadvise((int)h, (off_t)pos, (off_t)n, POSIX_FADV_WILLNEED);
 #endif
-  return Val_unit;
+}
+
+value caml_rig_disk_advise(value v_handle, value v_pages, value v_pos,
+                           value v_n) {
+  CAMLparam4(v_handle, v_pages, v_pos, v_n);
+  char *pages =
+      Is_some(v_pages) ? (char *)Caml_ba_data_val(Some_val(v_pages)) : NULL;
+  intnat h = Long_val(v_handle);
+  int64_t pos = Long_val(v_pos), n = Long_val(v_n);
+  caml_release_runtime_system();
+  advise_file(h, pages, pos, n);
+  caml_acquire_runtime_system();
+  CAMLreturn(Val_unit);
 }
 
 /* [msync pages] is 0 once the writes through the shared mapping [pages] are

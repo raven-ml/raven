@@ -27,11 +27,11 @@
     that borrow and every later one of the same memory, if the file system can
     never map the file.
 
-    The system reads a page when the host first touches it; on Linux and macOS,
-    for a device other than the host, the disk asks the system to read the
-    borrowed bytes ahead. A borrow reads in place only the pages a program
-    touches, and is the faster read of a file the system holds in memory. A copy
-    is the faster read of a file the system must read from its storage.
+    The system reads a page when the host first touches it; for a device other
+    than the host, the disk asks the system to read the borrowed bytes ahead. A
+    borrow reads in place only the pages a program touches, and is the faster
+    read of a file the system holds in memory. A copy is the faster read of a
+    file the system must read from its storage.
 
     The pages of a file {!create_file} made are the file: copies see writes
     through a borrow, and a borrow sees theirs. The pages of a file {!of_file}
