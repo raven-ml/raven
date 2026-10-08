@@ -411,6 +411,18 @@ let released_twice () =
   raises_match Exn.invalid_arg b.release;
   Device_metal.free t.d args
 
+let released_objects () =
+  let t = dev () in
+  let args = alloc t args_bytes in
+  let step = pipeline t "step" in
+  let b = require_ok (icb t args [| dispatch step; dispatch step |]) in
+  let weaks = Array.map S.weak (Array.append [| b.handle |] b.commands) in
+  b.release ();
+  Array.iteri
+    (fun k w -> equal bool ~msg:(strf "object %d" k) false (S.alive w))
+    weaks;
+  Device_metal.free t.d args
+
 let after_unload () =
   let t = dev () in
   let out = alloc t 256 and args = alloc t args_bytes in
@@ -435,6 +447,7 @@ let icbs =
         "chain" [ 0; 1; 2; 17; 64 ] chain;
       test "a command runs with the sizes set before its run" resized;
       test "refuses what it cannot record" icb_refusals;
+      test "release frees the buffer and its commands" released_objects;
       test "release raises when called twice" released_twice;
       test "runs after its image is unloaded" after_unload;
     ]

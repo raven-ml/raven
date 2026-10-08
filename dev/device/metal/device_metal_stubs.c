@@ -333,26 +333,32 @@ value caml_device_metal_icb(value v_d, value v_buffer, value v_pipelines,
     CAMLreturn(tuple(2, why, Atom(0), Val_unit));
   }
   b->n = n;
+  /* Metal returns each command autoreleased: without a pool of its own,
+     the calling thread's would keep it until the thread ends. */
+  @autoreleasepool {
+    for (int i = 0; i < n; i++) {
+      id<MTLIndirectComputeCommand> c =
+          [[b->icb indirectComputeCommandAtIndex:(NSUInteger)i] retain];
+      id<MTLComputePipelineState> p =
+          [(id)Long_val(Field(v_pipelines, i)) retain];
+      intnat w[7];
+      for (int k = 0; k < 7; k++) w[k] = Long_val(Field(v_sizes, 7 * i + k));
+      [c setComputePipelineState:p];
+      [c setKernelBuffer:args offset:(NSUInteger)w[0] atIndex:0];
+      [c setBarrier];
+      [c concurrentDispatchThreadgroups:MTLSizeMake(w[1], w[2], w[3])
+                  threadsPerThreadgroup:MTLSizeMake(w[4], w[5], w[6])];
+      b->commands[2 * i] = c;
+      b->commands[2 * i + 1] = p;
+    }
+  }
   objects = caml_alloc_tuple(2 + (mlsize_t)n);
   v = caml_copy_nativeint((intnat)b);
   Store_field(objects, 0, v);
   v = object(b->icb);
   Store_field(objects, 1, v);
   for (int i = 0; i < n; i++) {
-    id<MTLIndirectComputeCommand> c =
-        [[b->icb indirectComputeCommandAtIndex:(NSUInteger)i] retain];
-    id<MTLComputePipelineState> p =
-        [(id)Long_val(Field(v_pipelines, i)) retain];
-    intnat w[7];
-    for (int k = 0; k < 7; k++) w[k] = Long_val(Field(v_sizes, 7 * i + k));
-    [c setComputePipelineState:p];
-    [c setKernelBuffer:args offset:(NSUInteger)w[0] atIndex:0];
-    [c setBarrier];
-    [c concurrentDispatchThreadgroups:MTLSizeMake(w[1], w[2], w[3])
-                threadsPerThreadgroup:MTLSizeMake(w[4], w[5], w[6])];
-    b->commands[2 * i] = c;
-    b->commands[2 * i + 1] = p;
-    v = object(c);
+    v = object(b->commands[2 * i]);
     Store_field(objects, 2 + i, v);
   }
   why = caml_copy_string("");
