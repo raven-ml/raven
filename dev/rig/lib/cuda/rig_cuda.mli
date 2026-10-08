@@ -155,12 +155,6 @@ val capability : t -> capability
 val capability_key : capability Type.Id.t
 (** [capability_key] is {!Rig_cuda_abi.key}. *)
 
-val self : t -> nativeint
-(** [self g] is the address of [g]'s state, the first argument of
-    [rig_cuda_room] and [rig_cuda_submit]. It is valid while the process runs: a
-    device's C state holds its {!word}, which other devices may read after [g]
-    is gone, so neither is ever freed. *)
-
 (** {1:memory Memory} *)
 
 type region
@@ -273,6 +267,32 @@ val unload : t -> image -> unit
 
     Raises [Invalid_argument] if [m] is another device's or was unloaded. *)
 
+(** {1:timeline Timeline} *)
+
+val word : t -> region
+(** [word g] is [g]'s timeline word: eight bytes of page-locked host memory
+    holding, as an unsigned 64-bit integer in the host's byte order, the last
+    value [v] such that the work of every value up to [v] completed. [g]'s
+    streams write it after a fence that makes the work's writes visible
+    ([cuStreamWriteValue64] with [CU_STREAM_WRITE_VALUE_DEFAULT], a system-wide
+    memory fence before the write); it never decreases. Other devices may map it
+    and wait on it. It is never freed: another device's work may still read it
+    after [g] is stopped or collected. *)
+
+val signaled : t -> int
+(** [signaled g] is the value in {!word}, read with acquire order: the work of
+    every value up to it completed, and its writes are visible to the reader. *)
+
+val sleep : t -> seen:int -> still_ms:int -> unit
+(** [sleep g ~seen ~still_ms] returns once [g]'s timeline word differs from
+    [seen], at once if it does already, or after [still_ms] milliseconds;
+    [still_ms] is not negative. It asks CUDA each millisecond whether [g]'s
+    streams met an error ([cuStreamQuery]), so it finds a fault at most a
+    millisecond after CUDA reports it. It lets other domains run while it waits,
+    and may run while the submit does.
+
+    Raises {!exception-Fault} with CUDA's error if [g]'s work met one. *)
+
 (** {1:work Work} *)
 
 val room_entry : nativeint
@@ -327,31 +347,11 @@ val submit_entry : nativeint
     It may block while a stream is full, until the device's earlier work
     completes. *)
 
-(** {1:timeline Timeline} *)
-
-val word : t -> region
-(** [word g] is [g]'s timeline word: eight bytes of page-locked host memory
-    holding, as an unsigned 64-bit integer in the host's byte order, the last
-    value [v] such that the work of every value up to [v] completed. [g]'s
-    streams write it after a fence that makes the work's writes visible
-    ([cuStreamWriteValue64] with [CU_STREAM_WRITE_VALUE_DEFAULT], a system-wide
-    memory fence before the write); it never decreases. Other devices may map it
-    and wait on it. It is never freed: another device's work may still read it
-    after [g] is stopped or collected. *)
-
-val signaled : t -> int
-(** [signaled g] is the value in {!word}, read with acquire order: the work of
-    every value up to it completed, and its writes are visible to the reader. *)
-
-val sleep : t -> seen:int -> still_ms:int -> unit
-(** [sleep g ~seen ~still_ms] returns once [g]'s timeline word differs from
-    [seen], at once if it does already, or after [still_ms] milliseconds;
-    [still_ms] is not negative. It asks CUDA each millisecond whether [g]'s
-    streams met an error ([cuStreamQuery]), so it finds a fault at most a
-    millisecond after CUDA reports it. It lets other domains run while it waits,
-    and may run while the submit does.
-
-    Raises {!exception-Fault} with CUDA's error if [g]'s work met one. *)
+val self : t -> nativeint
+(** [self g] is the address of [g]'s state, the first argument of
+    [rig_cuda_room] and [rig_cuda_submit]. It is valid while the process runs: a
+    device's C state holds its {!word}, which other devices may read after [g]
+    is gone, so neither is ever freed. *)
 
 (** {1:loss Loss} *)
 
