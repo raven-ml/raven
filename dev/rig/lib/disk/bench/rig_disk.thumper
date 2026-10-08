@@ -6,6 +6,7 @@
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed under load 7.1 on 6 cores
 # forced: blessed write/64M write/floor-64M write/1G write/floor-1G borrow/first-64M borrow/first-read-64M borrow/floor-first-64M borrow/floor-first-read-64M borrow/cold-read-64M borrow/floor-cold-read-64M under load 6.1 on 6 cores
+# forced: blessed borrow/first-64M borrow/first-read-64M under load 6.5 on 6 cores
 
 barrier/1M	alloc_words	exact	72
 barrier/1M	wall_time	batch=8	n=20	6.404e-04	6.363e-04 6.366e-04 6.367e-04 6.368e-04 6.376e-04 6.379e-04 6.381e-04 6.387e-04 6.395e-04 6.400e-04 6.407e-04 6.407e-04 6.415e-04 6.444e-04 6.683e-04 6.703e-04 6.717e-04 6.731e-04 6.745e-04 6.749e-04
@@ -13,10 +14,10 @@ barrier/floor-1M	alloc_words	exact	0
 barrier/floor-1M	wall_time	batch=8	n=20	6.397e-04	6.353e-04 6.363e-04 6.372e-04 6.377e-04 6.381e-04 6.383e-04 6.387e-04 6.387e-04 6.389e-04 6.396e-04 6.397e-04 6.398e-04 6.721e-04 6.733e-04 6.753e-04 6.763e-04 6.807e-04 7.178e-04 7.232e-04 1.449e-03
 borrow/cold-read-64M	alloc_words	exact	260
 borrow/cold-read-64M	wall_time	batch=1	n=20	1.983e-02	1.661e-02 1.665e-02 1.703e-02 1.709e-02 1.712e-02 1.724e-02 1.837e-02 1.925e-02 1.946e-02 1.981e-02 1.985e-02 1.997e-02 2.000e-02 2.001e-02 2.006e-02 2.011e-02 2.013e-02 2.014e-02 2.040e-02 2.053e-02
-borrow/first-64M	alloc_words	exact	242
-borrow/first-64M	wall_time	batch=256	n=20	3.459e-05	3.368e-05 3.385e-05 3.421e-05 3.429e-05 3.431e-05 3.440e-05 3.444e-05 3.448e-05 3.448e-05 3.451e-05 3.467e-05 3.477e-05 3.492e-05 3.495e-05 3.500e-05 3.523e-05 3.537e-05 3.541e-05 3.556e-05 3.558e-05
-borrow/first-read-64M	alloc_words	exact	260
-borrow/first-read-64M	wall_time	batch=1	n=20	5.221e-03	4.318e-03 4.902e-03 4.909e-03 4.918e-03 4.945e-03 5.012e-03 5.016e-03 5.030e-03 5.054e-03 5.158e-03 5.283e-03 5.324e-03 5.326e-03 5.358e-03 5.388e-03 5.410e-03 5.448e-03 5.467e-03 5.471e-03 5.487e-03
+borrow/first-64M	alloc_words	exact	185
+borrow/first-64M	wall_time	batch=256	n=20	3.533e-05	3.442e-05 3.461e-05 3.466e-05 3.471e-05 3.477e-05 3.480e-05 3.495e-05 3.513e-05 3.514e-05 3.528e-05 3.538e-05 3.542e-05 3.548e-05 3.552e-05 3.555e-05 3.591e-05 3.609e-05 3.617e-05 3.620e-05 3.632e-05
+borrow/first-read-64M	alloc_words	exact	203
+borrow/first-read-64M	wall_time	batch=1	n=20	6.209e-03	4.904e-03 6.039e-03 6.062e-03 6.085e-03 6.085e-03 6.089e-03 6.120e-03 6.139e-03 6.165e-03 6.195e-03 6.222e-03 6.249e-03 6.262e-03 6.355e-03 6.356e-03 6.362e-03 6.368e-03 6.373e-03 6.403e-03 6.503e-03
 borrow/floor-cold-read-64M	alloc_words	exact	0
 borrow/floor-cold-read-64M	wall_time	batch=1	n=20	1.954e-02	1.625e-02 1.630e-02 1.632e-02 1.640e-02 1.643e-02 1.705e-02 1.728e-02 1.937e-02 1.952e-02 1.954e-02 1.955e-02 1.955e-02 1.958e-02 1.971e-02 1.983e-02 1.993e-02 2.060e-02 2.060e-02 2.065e-02 2.105e-02
 borrow/floor-first-64M	alloc_words	exact	0
@@ -90,10 +91,10 @@ barrier/1M	alloc_words	exact	72
 barrier/1M	wall_time	batch=1	n=20	9.958e-04	7.755e-04 8.419e-04 8.674e-04 8.692e-04 9.039e-04 9.222e-04 9.638e-04 9.813e-04 9.858e-04 9.953e-04 9.964e-04 1.005e-03 1.018e-03 1.030e-03 1.032e-03 1.037e-03 1.040e-03 1.070e-03 1.078e-03 1.151e-03
 barrier/floor-1M	alloc_words	exact	0
 barrier/floor-1M	wall_time	batch=8	n=20	9.438e-04	7.349e-04 7.460e-04 7.530e-04 7.643e-04 7.667e-04 8.879e-04 8.970e-04 9.199e-04 9.238e-04 9.430e-04 9.446e-04 9.621e-04 9.677e-04 1.028e-03 1.069e-03 1.246e-03 1.285e-03 1.302e-03 1.337e-03 1.384e-03
-borrow/first-64M	alloc_words	exact	243
-borrow/first-64M	wall_time	batch=8	n=20	8.946e-04	7.968e-04 8.033e-04 8.070e-04 8.217e-04 8.247e-04 8.581e-04 8.598e-04 8.763e-04 8.876e-04 8.925e-04 8.967e-04 8.968e-04 8.980e-04 8.997e-04 9.145e-04 9.184e-04 9.492e-04 9.747e-04 9.803e-04 9.956e-04
-borrow/first-read-64M	alloc_words	exact	261
-borrow/first-read-64M	wall_time	batch=1	n=20	7.758e-03	6.745e-03 6.751e-03 6.828e-03 6.892e-03 6.960e-03 7.050e-03 7.638e-03 7.645e-03 7.665e-03 7.727e-03 7.789e-03 7.929e-03 8.038e-03 8.173e-03 8.219e-03 8.272e-03 8.331e-03 8.459e-03 8.475e-03 9.252e-03
+borrow/first-64M	alloc_words	exact	186
+borrow/first-64M	wall_time	batch=8	n=20	7.975e-04	6.708e-04 6.846e-04 7.478e-04 7.491e-04 7.618e-04 7.618e-04 7.722e-04 7.747e-04 7.936e-04 7.954e-04 7.995e-04 8.389e-04 8.394e-04 8.406e-04 8.460e-04 9.356e-04 1.029e-03 1.050e-03 1.722e-03 3.104e-03
+borrow/first-read-64M	alloc_words	exact	204
+borrow/first-read-64M	wall_time	batch=1	n=20	7.086e-03	6.714e-03 6.794e-03 6.938e-03 6.940e-03 6.950e-03 6.967e-03 6.998e-03 7.016e-03 7.040e-03 7.079e-03 7.094e-03 7.178e-03 7.232e-03 7.298e-03 7.436e-03 7.587e-03 8.042e-03 8.490e-03 8.553e-03 8.824e-03
 borrow/floor-first-64M	alloc_words	exact	0
 borrow/floor-first-64M	wall_time	batch=8	n=20	7.730e-04	6.003e-04 6.745e-04 6.830e-04 7.092e-04 7.163e-04 7.285e-04 7.426e-04 7.439e-04 7.623e-04 7.652e-04 7.808e-04 8.134e-04 8.135e-04 8.483e-04 8.753e-04 9.387e-04 9.525e-04 9.811e-04 9.829e-04 1.006e-03
 borrow/floor-first-read-64M	alloc_words	exact	0
