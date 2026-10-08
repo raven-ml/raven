@@ -271,6 +271,8 @@
 #define regCP_PFP_PRGRM_CNTR_START_BASE_IDX                                                             0
 #define regCP_ME_PRGRM_CNTR_START                                                                       0x10a5
 #define regCP_ME_PRGRM_CNTR_START_BASE_IDX                                                              0
+#define regCP_PQ_STATUS                                                                                 0x10b8
+#define regCP_PQ_STATUS_BASE_IDX                                                                        0
 #define regSPI_COMPUTE_QUEUE_RESET                                                                      0x11db
 #define regSPI_COMPUTE_QUEUE_RESET_BASE_IDX                                                             0
 #define regCP_MQD_BASE_ADDR                                                                             0x1245

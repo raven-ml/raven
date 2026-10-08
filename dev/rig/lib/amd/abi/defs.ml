@@ -224,6 +224,7 @@ let gc_9_4_3_regCP_MEC_DOORBELL_RANGE_LOWER = { name = "regCP_MEC_DOORBELL_RANGE
 let gc_9_4_3_regCP_MEC_DOORBELL_RANGE_UPPER = { name = "regCP_MEC_DOORBELL_RANGE_UPPER"; offset = 0x105d; segment = 0; fields = [ ("doorbell_range_upper", (2, 27)) ] }
 let gc_9_4_3_regCP_PFP_PRGRM_CNTR_START = { name = "regCP_PFP_PRGRM_CNTR_START"; offset = 0x10a4; segment = 0; fields = [ ("ip_start", (0, 12)) ] }
 let gc_9_4_3_regCP_ME_PRGRM_CNTR_START = { name = "regCP_ME_PRGRM_CNTR_START"; offset = 0x10a5; segment = 0; fields = [ ("ip_start", (0, 11)) ] }
+let gc_9_4_3_regCP_PQ_STATUS = { name = "regCP_PQ_STATUS"; offset = 0x10b8; segment = 0; fields = [ ("doorbell_updated", (0, 0)); ("doorbell_enable", (1, 1)); ("doorbell_updated_en", (2, 2)) ] }
 let gc_9_4_3_regSPI_COMPUTE_QUEUE_RESET = { name = "regSPI_COMPUTE_QUEUE_RESET"; offset = 0x11db; segment = 0; fields = [ ("reset", (0, 0)) ] }
 let gc_9_4_3_regCP_MQD_BASE_ADDR = { name = "regCP_MQD_BASE_ADDR"; offset = 0x1245; segment = 0; fields = [ ("base_addr", (2, 31)) ] }
 let gc_9_4_3_regCP_HQD_ACTIVE = { name = "regCP_HQD_ACTIVE"; offset = 0x1247; segment = 0; fields = [ ("active", (0, 0)); ("busy_gate", (1, 1)) ] }
@@ -466,6 +467,7 @@ let gc_9_4_3_registers = [
   gc_9_4_3_regCP_MEC_DOORBELL_RANGE_UPPER;
   gc_9_4_3_regCP_PFP_PRGRM_CNTR_START;
   gc_9_4_3_regCP_ME_PRGRM_CNTR_START;
+  gc_9_4_3_regCP_PQ_STATUS;
   gc_9_4_3_regSPI_COMPUTE_QUEUE_RESET;
   gc_9_4_3_regCP_MQD_BASE_ADDR;
   gc_9_4_3_regCP_HQD_ACTIVE;
@@ -709,6 +711,7 @@ let gc_9_4_3_find = function
   | "regCP_MEC_DOORBELL_RANGE_UPPER" -> Some gc_9_4_3_regCP_MEC_DOORBELL_RANGE_UPPER
   | "regCP_PFP_PRGRM_CNTR_START" -> Some gc_9_4_3_regCP_PFP_PRGRM_CNTR_START
   | "regCP_ME_PRGRM_CNTR_START" -> Some gc_9_4_3_regCP_ME_PRGRM_CNTR_START
+  | "regCP_PQ_STATUS" -> Some gc_9_4_3_regCP_PQ_STATUS
   | "regSPI_COMPUTE_QUEUE_RESET" -> Some gc_9_4_3_regSPI_COMPUTE_QUEUE_RESET
   | "regCP_MQD_BASE_ADDR" -> Some gc_9_4_3_regCP_MQD_BASE_ADDR
   | "regCP_HQD_ACTIVE" -> Some gc_9_4_3_regCP_HQD_ACTIVE
@@ -948,6 +951,7 @@ let gc_11_0_0_regCP_MEC_DOORBELL_RANGE_LOWER = { name = "regCP_MEC_DOORBELL_RANG
 let gc_11_0_0_regCP_MEC_DOORBELL_RANGE_UPPER = { name = "regCP_MEC_DOORBELL_RANGE_UPPER"; offset = 0x1dfd; segment = 0; fields = [ ("doorbell_range_upper", (2, 11)) ] }
 let gc_11_0_0_regCP_PFP_PRGRM_CNTR_START = { name = "regCP_PFP_PRGRM_CNTR_START"; offset = 0x1e44; segment = 0; fields = [ ("ip_start", (0, 31)) ] }
 let gc_11_0_0_regCP_ME_PRGRM_CNTR_START = { name = "regCP_ME_PRGRM_CNTR_START"; offset = 0x1e45; segment = 0; fields = [ ("ip_start", (0, 31)) ] }
+let gc_11_0_0_regCP_PQ_STATUS = { name = "regCP_PQ_STATUS"; offset = 0x1e58; segment = 0; fields = [ ("doorbell_updated", (0, 0)); ("doorbell_enable", (1, 1)); ("doorbell_updated_en", (2, 2)); ("doorbell_updated_mode", (3, 3)) ] }
 let gc_11_0_0_regCP_PFP_PRGRM_CNTR_START_HI = { name = "regCP_PFP_PRGRM_CNTR_START_HI"; offset = 0x1e59; segment = 0; fields = [ ("ip_start", (0, 29)) ] }
 let gc_11_0_0_regCP_ME_PRGRM_CNTR_START_HI = { name = "regCP_ME_PRGRM_CNTR_START_HI"; offset = 0x1e79; segment = 0; fields = [ ("ip_start", (0, 29)) ] }
 let gc_11_0_0_regSPI_COMPUTE_QUEUE_RESET = { name = "regSPI_COMPUTE_QUEUE_RESET"; offset = 0x1f73; segment = 0; fields = [ ("reset", (0, 0)) ] }
@@ -1176,6 +1180,7 @@ let gc_11_0_0_registers = [
   gc_11_0_0_regCP_MEC_DOORBELL_RANGE_UPPER;
   gc_11_0_0_regCP_PFP_PRGRM_CNTR_START;
   gc_11_0_0_regCP_ME_PRGRM_CNTR_START;
+  gc_11_0_0_regCP_PQ_STATUS;
   gc_11_0_0_regCP_PFP_PRGRM_CNTR_START_HI;
   gc_11_0_0_regCP_ME_PRGRM_CNTR_START_HI;
   gc_11_0_0_regSPI_COMPUTE_QUEUE_RESET;
@@ -1405,6 +1410,7 @@ let gc_11_0_0_find = function
   | "regCP_MEC_DOORBELL_RANGE_UPPER" -> Some gc_11_0_0_regCP_MEC_DOORBELL_RANGE_UPPER
   | "regCP_PFP_PRGRM_CNTR_START" -> Some gc_11_0_0_regCP_PFP_PRGRM_CNTR_START
   | "regCP_ME_PRGRM_CNTR_START" -> Some gc_11_0_0_regCP_ME_PRGRM_CNTR_START
+  | "regCP_PQ_STATUS" -> Some gc_11_0_0_regCP_PQ_STATUS
   | "regCP_PFP_PRGRM_CNTR_START_HI" -> Some gc_11_0_0_regCP_PFP_PRGRM_CNTR_START_HI
   | "regCP_ME_PRGRM_CNTR_START_HI" -> Some gc_11_0_0_regCP_ME_PRGRM_CNTR_START_HI
   | "regSPI_COMPUTE_QUEUE_RESET" -> Some gc_11_0_0_regSPI_COMPUTE_QUEUE_RESET
@@ -1635,6 +1641,7 @@ let gc_11_0_3_regCP_MEC_DOORBELL_RANGE_LOWER = { name = "regCP_MEC_DOORBELL_RANG
 let gc_11_0_3_regCP_MEC_DOORBELL_RANGE_UPPER = { name = "regCP_MEC_DOORBELL_RANGE_UPPER"; offset = 0x1dfd; segment = 0; fields = [ ("doorbell_range_upper", (2, 11)) ] }
 let gc_11_0_3_regCP_PFP_PRGRM_CNTR_START = { name = "regCP_PFP_PRGRM_CNTR_START"; offset = 0x1e44; segment = 0; fields = [ ("ip_start", (0, 31)) ] }
 let gc_11_0_3_regCP_ME_PRGRM_CNTR_START = { name = "regCP_ME_PRGRM_CNTR_START"; offset = 0x1e45; segment = 0; fields = [ ("ip_start", (0, 31)) ] }
+let gc_11_0_3_regCP_PQ_STATUS = { name = "regCP_PQ_STATUS"; offset = 0x1e58; segment = 0; fields = [ ("doorbell_updated", (0, 0)); ("doorbell_enable", (1, 1)); ("doorbell_updated_en", (2, 2)); ("doorbell_updated_mode", (3, 3)) ] }
 let gc_11_0_3_regCP_PFP_PRGRM_CNTR_START_HI = { name = "regCP_PFP_PRGRM_CNTR_START_HI"; offset = 0x1e59; segment = 0; fields = [ ("ip_start", (0, 29)) ] }
 let gc_11_0_3_regCP_ME_PRGRM_CNTR_START_HI = { name = "regCP_ME_PRGRM_CNTR_START_HI"; offset = 0x1e79; segment = 0; fields = [ ("ip_start", (0, 29)) ] }
 let gc_11_0_3_regSPI_COMPUTE_QUEUE_RESET = { name = "regSPI_COMPUTE_QUEUE_RESET"; offset = 0x1f73; segment = 0; fields = [ ("reset", (0, 0)) ] }
@@ -1863,6 +1870,7 @@ let gc_11_0_3_registers = [
   gc_11_0_3_regCP_MEC_DOORBELL_RANGE_UPPER;
   gc_11_0_3_regCP_PFP_PRGRM_CNTR_START;
   gc_11_0_3_regCP_ME_PRGRM_CNTR_START;
+  gc_11_0_3_regCP_PQ_STATUS;
   gc_11_0_3_regCP_PFP_PRGRM_CNTR_START_HI;
   gc_11_0_3_regCP_ME_PRGRM_CNTR_START_HI;
   gc_11_0_3_regSPI_COMPUTE_QUEUE_RESET;
@@ -2092,6 +2100,7 @@ let gc_11_0_3_find = function
   | "regCP_MEC_DOORBELL_RANGE_UPPER" -> Some gc_11_0_3_regCP_MEC_DOORBELL_RANGE_UPPER
   | "regCP_PFP_PRGRM_CNTR_START" -> Some gc_11_0_3_regCP_PFP_PRGRM_CNTR_START
   | "regCP_ME_PRGRM_CNTR_START" -> Some gc_11_0_3_regCP_ME_PRGRM_CNTR_START
+  | "regCP_PQ_STATUS" -> Some gc_11_0_3_regCP_PQ_STATUS
   | "regCP_PFP_PRGRM_CNTR_START_HI" -> Some gc_11_0_3_regCP_PFP_PRGRM_CNTR_START_HI
   | "regCP_ME_PRGRM_CNTR_START_HI" -> Some gc_11_0_3_regCP_ME_PRGRM_CNTR_START_HI
   | "regSPI_COMPUTE_QUEUE_RESET" -> Some gc_11_0_3_regSPI_COMPUTE_QUEUE_RESET
@@ -2321,6 +2330,7 @@ let gc_11_5_0_regCP_MEC_DOORBELL_RANGE_LOWER = { name = "regCP_MEC_DOORBELL_RANG
 let gc_11_5_0_regCP_MEC_DOORBELL_RANGE_UPPER = { name = "regCP_MEC_DOORBELL_RANGE_UPPER"; offset = 0x1dfd; segment = 0; fields = [ ("doorbell_range_upper", (2, 11)) ] }
 let gc_11_5_0_regCP_PFP_PRGRM_CNTR_START = { name = "regCP_PFP_PRGRM_CNTR_START"; offset = 0x1e44; segment = 0; fields = [ ("ip_start", (0, 31)) ] }
 let gc_11_5_0_regCP_ME_PRGRM_CNTR_START = { name = "regCP_ME_PRGRM_CNTR_START"; offset = 0x1e45; segment = 0; fields = [ ("ip_start", (0, 31)) ] }
+let gc_11_5_0_regCP_PQ_STATUS = { name = "regCP_PQ_STATUS"; offset = 0x1e58; segment = 0; fields = [ ("doorbell_updated", (0, 0)); ("doorbell_enable", (1, 1)); ("doorbell_updated_en", (2, 2)); ("doorbell_updated_mode", (3, 3)) ] }
 let gc_11_5_0_regCP_PFP_PRGRM_CNTR_START_HI = { name = "regCP_PFP_PRGRM_CNTR_START_HI"; offset = 0x1e59; segment = 0; fields = [ ("ip_start", (0, 29)) ] }
 let gc_11_5_0_regCP_ME_PRGRM_CNTR_START_HI = { name = "regCP_ME_PRGRM_CNTR_START_HI"; offset = 0x1e79; segment = 0; fields = [ ("ip_start", (0, 29)) ] }
 let gc_11_5_0_regSPI_COMPUTE_QUEUE_RESET = { name = "regSPI_COMPUTE_QUEUE_RESET"; offset = 0x1f73; segment = 0; fields = [ ("reset", (0, 0)) ] }
@@ -2547,6 +2557,7 @@ let gc_11_5_0_registers = [
   gc_11_5_0_regCP_MEC_DOORBELL_RANGE_UPPER;
   gc_11_5_0_regCP_PFP_PRGRM_CNTR_START;
   gc_11_5_0_regCP_ME_PRGRM_CNTR_START;
+  gc_11_5_0_regCP_PQ_STATUS;
   gc_11_5_0_regCP_PFP_PRGRM_CNTR_START_HI;
   gc_11_5_0_regCP_ME_PRGRM_CNTR_START_HI;
   gc_11_5_0_regSPI_COMPUTE_QUEUE_RESET;
@@ -2774,6 +2785,7 @@ let gc_11_5_0_find = function
   | "regCP_MEC_DOORBELL_RANGE_UPPER" -> Some gc_11_5_0_regCP_MEC_DOORBELL_RANGE_UPPER
   | "regCP_PFP_PRGRM_CNTR_START" -> Some gc_11_5_0_regCP_PFP_PRGRM_CNTR_START
   | "regCP_ME_PRGRM_CNTR_START" -> Some gc_11_5_0_regCP_ME_PRGRM_CNTR_START
+  | "regCP_PQ_STATUS" -> Some gc_11_5_0_regCP_PQ_STATUS
   | "regCP_PFP_PRGRM_CNTR_START_HI" -> Some gc_11_5_0_regCP_PFP_PRGRM_CNTR_START_HI
   | "regCP_ME_PRGRM_CNTR_START_HI" -> Some gc_11_5_0_regCP_ME_PRGRM_CNTR_START_HI
   | "regSPI_COMPUTE_QUEUE_RESET" -> Some gc_11_5_0_regSPI_COMPUTE_QUEUE_RESET
@@ -3002,6 +3014,7 @@ let gc_12_0_0_regCP_MEC_DOORBELL_RANGE_LOWER = { name = "regCP_MEC_DOORBELL_RANG
 let gc_12_0_0_regCP_MEC_DOORBELL_RANGE_UPPER = { name = "regCP_MEC_DOORBELL_RANGE_UPPER"; offset = 0x1dfd; segment = 0; fields = [ ("doorbell_range_upper", (2, 11)) ] }
 let gc_12_0_0_regCP_PFP_PRGRM_CNTR_START = { name = "regCP_PFP_PRGRM_CNTR_START"; offset = 0x1e44; segment = 0; fields = [ ("ip_start", (0, 31)) ] }
 let gc_12_0_0_regCP_ME_PRGRM_CNTR_START = { name = "regCP_ME_PRGRM_CNTR_START"; offset = 0x1e45; segment = 0; fields = [ ("ip_start", (0, 31)) ] }
+let gc_12_0_0_regCP_PQ_STATUS = { name = "regCP_PQ_STATUS"; offset = 0x1e58; segment = 0; fields = [ ("doorbell_updated", (0, 0)); ("doorbell_enable", (1, 1)); ("doorbell_updated_en", (2, 2)); ("doorbell_updated_mode", (3, 3)) ] }
 let gc_12_0_0_regCP_PFP_PRGRM_CNTR_START_HI = { name = "regCP_PFP_PRGRM_CNTR_START_HI"; offset = 0x1e59; segment = 0; fields = [ ("ip_start", (0, 29)) ] }
 let gc_12_0_0_regCP_ME_PRGRM_CNTR_START_HI = { name = "regCP_ME_PRGRM_CNTR_START_HI"; offset = 0x1e79; segment = 0; fields = [ ("ip_start", (0, 29)) ] }
 let gc_12_0_0_regCP_MQD_BASE_ADDR = { name = "regCP_MQD_BASE_ADDR"; offset = 0x1fa9; segment = 0; fields = [ ("base_addr", (2, 31)) ] }
@@ -3236,6 +3249,7 @@ let gc_12_0_0_registers = [
   gc_12_0_0_regCP_MEC_DOORBELL_RANGE_UPPER;
   gc_12_0_0_regCP_PFP_PRGRM_CNTR_START;
   gc_12_0_0_regCP_ME_PRGRM_CNTR_START;
+  gc_12_0_0_regCP_PQ_STATUS;
   gc_12_0_0_regCP_PFP_PRGRM_CNTR_START_HI;
   gc_12_0_0_regCP_ME_PRGRM_CNTR_START_HI;
   gc_12_0_0_regCP_MQD_BASE_ADDR;
@@ -3471,6 +3485,7 @@ let gc_12_0_0_find = function
   | "regCP_MEC_DOORBELL_RANGE_UPPER" -> Some gc_12_0_0_regCP_MEC_DOORBELL_RANGE_UPPER
   | "regCP_PFP_PRGRM_CNTR_START" -> Some gc_12_0_0_regCP_PFP_PRGRM_CNTR_START
   | "regCP_ME_PRGRM_CNTR_START" -> Some gc_12_0_0_regCP_ME_PRGRM_CNTR_START
+  | "regCP_PQ_STATUS" -> Some gc_12_0_0_regCP_PQ_STATUS
   | "regCP_PFP_PRGRM_CNTR_START_HI" -> Some gc_12_0_0_regCP_PFP_PRGRM_CNTR_START_HI
   | "regCP_ME_PRGRM_CNTR_START_HI" -> Some gc_12_0_0_regCP_ME_PRGRM_CNTR_START_HI
   | "regCP_MQD_BASE_ADDR" -> Some gc_12_0_0_regCP_MQD_BASE_ADDR

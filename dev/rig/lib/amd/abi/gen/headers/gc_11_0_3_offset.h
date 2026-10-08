@@ -261,6 +261,8 @@
 #define regCP_PFP_PRGRM_CNTR_START_BASE_IDX                                                             0
 #define regCP_ME_PRGRM_CNTR_START                                                                       0x1e45
 #define regCP_ME_PRGRM_CNTR_START_BASE_IDX                                                              0
+#define regCP_PQ_STATUS                                                                                 0x1e58
+#define regCP_PQ_STATUS_BASE_IDX                                                                        0
 #define regCP_PFP_PRGRM_CNTR_START_HI                                                                   0x1e59
 #define regCP_PFP_PRGRM_CNTR_START_HI_BASE_IDX                                                          0
 #define regCP_ME_PRGRM_CNTR_START_HI                                                                    0x1e79

@@ -473,6 +473,9 @@
 #define CP_MEC_DOORBELL_RANGE_UPPER__DOORBELL_RANGE_UPPER_MASK                                                0x0FFFFFFCL
 #define CP_PFP_PRGRM_CNTR_START__IP_START_MASK                                                                0x00001FFFL
 #define CP_ME_PRGRM_CNTR_START__IP_START_MASK                                                                 0x00000FFFL
+#define CP_PQ_STATUS__DOORBELL_UPDATED_MASK                                                                   0x00000001L
+#define CP_PQ_STATUS__DOORBELL_ENABLE_MASK                                                                    0x00000002L
+#define CP_PQ_STATUS__DOORBELL_UPDATED_EN_MASK                                                                0x00000004L
 #define SPI_COMPUTE_QUEUE_RESET__RESET_MASK                                                                   0x01L
 #define CP_MQD_BASE_ADDR__BASE_ADDR_MASK                                                                      0xFFFFFFFCL
 #define CP_HQD_ACTIVE__ACTIVE_MASK                                                                            0x00000001L

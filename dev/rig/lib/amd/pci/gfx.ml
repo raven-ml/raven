@@ -267,6 +267,10 @@ let program g ~me ~pipe ~queue ~insts ~mqd:at ~kiq ~aql q =
       done;
       Gmc.flush_hdp g.gmc;
       Regs.write ~inst:xcc ~value:1 g.r "regCP_HQD_ACTIVE" [];
+      (* The CP takes the queue's doorbell once told to, as the kernel tells
+         it after activating a queue it programs itself
+         (gfx_v12_0_kiq_init_register and its siblings). *)
+      Regs.update ~inst:xcc g.r "regCP_PQ_STATUS" [ ("doorbell_enable", 1) ];
       grbm_select g ~inst:xcc)
     insts
 
