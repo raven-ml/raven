@@ -26,13 +26,23 @@ external floor_new :
   nativeint -> nativeint -> nativeint -> nativeint -> nativeint
   = "rig_bench_floor_new"
 
-external floor_submit : nativeint -> int -> unit
-  = "rig_bench_floor_submit"
+external floor_submit : nativeint -> int -> unit = "rig_bench_floor_submit"
 [@@noalloc]
+
+external floor_turn_submit : nativeint -> int -> unit
+  = "rig_bench_floor_turn_submit"
+
+external floor_share : nativeint -> nativeint -> unit = "rig_bench_floor_share"
+
+external floor_handles : nativeint -> nativeint array -> unit
+  = "rig_bench_floor_handles"
 
 let drain = 64
 let slots = 24
 let runs = 100
+
+(* The core's still interval: a wait returns to OCaml at least this often. *)
+let still_ms = 200
 
 type dev = { d : C.t; p : P.t; mutable n : int }
 
@@ -325,8 +335,10 @@ let floor_run t =
   floor_submit t.f 1
 
 (* Another domain calling the same device's entries until the row ends, with a
-   floor of its own: the driver alone serializes the two. *)
-let floor_contended () =
+   floor of its own: the driver alone serializes the two. With [share], each
+   submit also takes one turn the two share, as the core takes a device's: by
+   try-lock, and otherwise with the runtime released. *)
+let floor_contended ~share () =
   let t = floor () in
   let stop = Atomic.make false in
   let other =
@@ -336,10 +348,12 @@ let floor_contended () =
       k = 0;
     }
   in
+  if share then floor_share t.f other.f;
+  let submit = if share then floor_turn_submit else floor_submit in
   let rival =
     Domain.spawn (fun () ->
         while not (Atomic.get stop) do
-          floor_submit other.f 1;
+          submit other.f 1;
           floor_drained other
         done)
   in
@@ -356,13 +370,23 @@ let floor_rows =
        row "polled/cost" (fun t ->
            floor_submit t.f 1;
            floor_drained t);
-       Thumper.bench_with_setup ~setup:floor_contended
+       Thumper.bench_with_setup
+         ~setup:(floor_contended ~share:false)
          ~teardown:(fun (_, stop, rival) ->
            Atomic.set stop true;
            Domain.join rival)
          "polled/two-domains"
          (fun (t, _, _) ->
            floor_submit t.f 1;
+           floor_drained t);
+       Thumper.bench_with_setup
+         ~setup:(floor_contended ~share:true)
+         ~teardown:(fun (_, stop, rival) ->
+           Atomic.set stop true;
+           Domain.join rival)
+         "polled/two-domains-turn"
+         (fun (t, _, _) ->
+           floor_turn_submit t.f 1;
            floor_drained t);
        row "polled/run" floor_run;
        row "polled/pipelined-100" (fun t ->
@@ -379,28 +403,84 @@ let floor_rows =
 
 (* GPUs *)
 
+type gpu_copy = { gs : Sub.t; gargs : B.t; gout : B.t }
+type gpu_replay = { g : C.t; gparams : B.t array; gcopies : gpu_copy array }
+
 (* A GPU's submits of no work through the core, beside the same submits through
-   its driver's C entries alone, which spin on the word: [empty] waits for each,
-   [cost] waits every [drain] submits. Each case opens its GPU in its own
-   worker, so that no process forks after a vendor library started. *)
-let gpu_rows (type a) (module D : C.Driver with type t = a) v ~name open_ =
+   its driver's C entries alone. [empty] waits for each submit, [cost] waits
+   every [drain] submits, and the replay rows run two copies of a step over
+   [slots] parameters, each run waiting for its copy's run before last, as the
+   Polled rows do, with no part. A floor spins on the word; [release-sleep], for
+   a driver whose host writes the word ([sleeps]), and the replay floors wait as
+   the core waits for that driver: in its [sleep] from the first read, or
+   spinning. Each case opens its GPU in its own worker, so that no process forks
+   after a vendor library started. *)
+let gpu_rows (type a) (module D : C.Driver with type t = a) ?(sleeps = false) v
+    ~name open_ =
   let get = function Ok x -> x | Error why -> failwith why in
+  let opened () = get (C.open_ (module D) ~name open_) in
   let core () =
-    let g = get (C.open_ (module D) ~name open_) in
+    let g = opened () in
     (g, Sub.make ~reads:0 ~writes:0 ~waits:0 g [||], ref 0)
+  in
+  let replaying () =
+    let g = opened () in
+    let copy () =
+      {
+        gs = Sub.make ~reads:(slots + 1) ~writes:1 ~waits:0 g [||];
+        gargs = B.create g 8;
+        gout = B.create g 8;
+      }
+    in
+    ( {
+        g;
+        gparams = Array.init slots (fun _ -> B.create g 8);
+        gcopies = [| copy (); copy () |];
+      },
+      ref 0 )
+  in
+  let run (r, n) =
+    let c = r.gcopies.(!n land 1) in
+    incr n;
+    B.wait c.gargs B.Read_write;
+    for i = 0 to slots - 1 do
+      Sub.read c.gs i (Array.unsafe_get r.gparams i)
+    done;
+    Sub.read c.gs slots c.gargs;
+    Sub.write c.gs 0 c.gout;
+    ignore (C.submit c.gs)
   in
   let alone () =
     let d = get (open_ ()) in
     (d, floor_new (D.self d) D.room_entry D.submit_entry 0n, ref 0)
   in
+  (* The driver alone naming as many regions as a replay run names. *)
+  let alone_replaying () =
+    let ((d, f, _) as x) = alone () in
+    let region () = Option.get (D.alloc d `Device 8) in
+    floor_handles f (Array.init (slots + 2) (fun _ -> D.handle (region ())));
+    x
+  in
   let release (_, f, v) =
     incr v;
     floor_submit f 0
   in
-  let spin (d, _, v) =
-    while D.signaled d < !v do
+  let spin (d, _, _) v =
+    while D.signaled d < v do
       Domain.cpu_relax ()
     done
+  in
+  let rec sleep ((d, _, _) as x) v =
+    let seen = D.signaled d in
+    if seen < v then begin
+      D.sleep d ~seen ~still_ms;
+      sleep x v
+    end
+  in
+  let wait = if sleeps then sleep else spin in
+  let floor_run ((_, _, v) as x) =
+    wait x (!v - 1);
+    release x
   in
   [
     Thumper.group (strf "submit/%s" v)
@@ -412,15 +492,38 @@ let gpu_rows (type a) (module D : C.Driver with type t = a) v ~name open_ =
             incr n;
             if !n mod drain = 0 then C.wait g (C.Point.value p));
       ];
-    Thumper.group (strf "floor/%s" v)
+    Thumper.group (strf "replay/%s" v)
       [
-        row "release" alone (fun x ->
-            release x;
-            spin x);
-        row "cost" alone (fun ((_, _, v) as x) ->
-            release x;
-            if !v mod drain = 0 then spin x);
+        row "params-24" replaying run;
+        row "pipelined-100" replaying (fun ((r, _) as x) ->
+            for _ = 1 to runs do
+              run x
+            done;
+            C.wait r.g (C.submitted r.g));
       ];
+    Thumper.group (strf "floor/%s" v)
+      ([
+         row "release" alone (fun ((_, _, v) as x) ->
+             release x;
+             spin x !v);
+         row "cost" alone (fun ((_, _, v) as x) ->
+             release x;
+             if !v mod drain = 0 then spin x !v);
+         row "run" alone_replaying floor_run;
+         row "pipelined-100" alone_replaying (fun ((_, _, v) as x) ->
+             for _ = 1 to runs do
+               floor_run x
+             done;
+             wait x !v);
+       ]
+      @
+      if sleeps then
+        [
+          row "release-sleep" alone (fun ((_, _, v) as x) ->
+              release x;
+              sleep x !v);
+        ]
+      else []);
   ]
 
 let gpus =
@@ -429,15 +532,13 @@ let gpus =
       (if Sys.file_exists "/System/Library/Frameworks/Metal.framework" then
          gpu_rows
            (module Rig_metal)
-           "metal"
-           ~name:(Rig_metal.device_name 0)
+           ~sleeps:true "metal" ~name:(Rig_metal.device_name 0)
            (fun () -> Rig_metal.open_ 0)
        else []);
       (if Sys.file_exists "/dev/nvidiactl" then
          gpu_rows
            (module Rig_cuda)
-           "cuda"
-           ~name:(Rig_cuda.device_name 0)
+           "cuda" ~name:(Rig_cuda.device_name 0)
            (fun () -> Rig_cuda.open_ 0)
          @ gpu_rows
              (module Rig_nv)
