@@ -26,6 +26,7 @@ let bump = bump ()
 module Driver = struct
   type t = {
     c : nativeint;
+    copies : bool;
     may_block : bool;
     waits_host : bool;
     answer : [ `Stopped | `Unknown ];
@@ -46,7 +47,7 @@ module Driver = struct
   let key : t Type.Id.t = Type.Id.make ()
   let arch _ = "polled"
   let budget _ = 1 lsl 30
-  let queues _ = [ "COMPUTE:0"; "COPY:0" ]
+  let queues d = if d.copies then [ "COMPUTE:0"; "COPY:0" ] else [ "COMPUTE:0" ]
 
   let alloc d _ n =
     note d "alloc";
@@ -120,10 +121,11 @@ end
 module Polled = struct
   include Driver
 
-  let make ?(capacity = 1024) ?(may_block = false) ?(waits_host = false)
-      ?(answer = `Stopped) () =
+  let make ?(capacity = 1024) ?(copies = true) ?(may_block = false)
+      ?(waits_host = false) ?(answer = `Stopped) () =
     {
       c = polled_new capacity may_block;
+      copies;
       may_block;
       waits_host;
       answer;
@@ -132,8 +134,8 @@ module Polled = struct
       fault_next = None;
     }
 
-  let open_ ?capacity ?may_block ?waits_host ?answer name =
-    let p = make ?capacity ?may_block ?waits_host ?answer () in
+  let open_ ?capacity ?copies ?may_block ?waits_host ?answer name =
+    let p = make ?capacity ?copies ?may_block ?waits_host ?answer () in
     match Device_core.open_ (module Driver) ~name (fun () -> Ok p) with
     | Ok d -> (d, p)
     | Error e -> failwith e

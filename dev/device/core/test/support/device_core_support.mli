@@ -13,6 +13,7 @@ module Polled : sig
 
   val make :
     ?capacity:int ->
+    ?copies:bool ->
     ?may_block:bool ->
     ?waits_host:bool ->
     ?answer:[ `Stopped | `Unknown ] ->
@@ -20,11 +21,13 @@ module Polled : sig
     t
   (** [make ()] is a device whose queue holds [capacity] parts (defaults to
       1024): beyond it [room] answers [`Later], or, with [may_block], submit
-      waits for room. With [waits_host] its queue waits for host-written words.
-      Its stop answers [answer] (defaults to [`Stopped]). *)
+      waits for room. Without [copies] (defaults to [true]) it lists no copy
+      queue. With [waits_host] its queue waits for host-written words. Its stop
+      answers [answer] (defaults to [`Stopped]). *)
 
   val open_ :
     ?capacity:int ->
+    ?copies:bool ->
     ?may_block:bool ->
     ?waits_host:bool ->
     ?answer:[ `Stopped | `Unknown ] ->

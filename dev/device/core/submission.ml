@@ -161,6 +161,9 @@ let make ?hold ~reads ~writes ~waits d parts =
                  f.segment_bytes ));
           incr nfixed
       | Copy { src; dst } ->
+          (* A driver that lists no copy queue runs no copy. *)
+          if not (Dev.copies d) then
+            invalid_argf "Device_core.%s: %s runs no copies" fn d.name;
           check_buffer src;
           check_buffer dst;
           if Buffer.nbytes src <> Buffer.nbytes dst then

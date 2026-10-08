@@ -126,6 +126,17 @@ let test_room () =
   equal int 1 (P.queued p);
   equal int 1 (C.signaled d)
 
+(* A copy on a device that runs no copies is refused where the caller can act:
+   when the submission is made. *)
+let test_copy_refused () =
+  let d, _ = P.open_ ~copies:false "submit:no-copies" in
+  let src = B.create d S.UInt8 8 and dst = B.create d S.UInt8 8 in
+  let copy =
+    { Sub.queue = "COMPUTE:0"; after = [||]; work = Sub.Copy { src; dst } }
+  in
+  raises_match Exn.invalid_arg (fun () ->
+      Sub.make ~reads:0 ~writes:0 ~waits:0 d [| copy |])
+
 let test_never () =
   let d, _ = P.open_ ~capacity:1 "submit:never" in
   let arg = B.create C.host S.UInt64 1 in
@@ -172,6 +183,8 @@ let tests =
       [
         test "a submission refuses what it cannot run" test_refusals;
         test "parts that never fit are refused" test_never;
+        test "a copy on a device that runs no copies is refused"
+          test_copy_refused;
       ];
     group ~timeout "order"
       [

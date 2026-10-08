@@ -589,9 +589,10 @@ module Submission : sig
 
       Raises [Invalid_argument] if a count is negative, an index of a part's
       [after] is not below its own, a queue is not one of [d]'s, a part's buffer
-      is dead, a {!Copy}'s buffers differ in size, a part names memory of a hold
-      other than [hold], or [d]'s driver refuses a part ({!Driver.part}); and
-      {!Lost} if [d] is lost. *)
+      is dead, a {!Copy}'s buffers differ in size or are not [d]'s memory, [d]'s
+      driver runs no copies (it lists no copy queue, {!Driver.queues}), a part
+      names memory of a hold other than [hold], or [d]'s driver refuses a part's
+      words or fill ({!Driver.part}); and {!Lost} if [d] is lost. *)
 
   val read : t -> int -> Buffer.t -> unit
   (** [read s i b] sets read slot [i] to [b]: the next submit waits for the last
