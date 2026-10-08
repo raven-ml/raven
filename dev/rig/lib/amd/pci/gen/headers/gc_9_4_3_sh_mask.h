@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Advanced Micro Devices, Inc.
+ * Copyright 2022 Advanced Micro Devices, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -21,6 +21,6 @@
  *
  */
 
-MTYPE_UC                                 = 0x00000003,
-SH_MEM_ADDRESS_MODE_64                   = 0x00000000,
-SH_MEM_ALIGNMENT_MODE_UNALIGNED          = 0x00000003,
+#define CC_GC_SHADER_ARRAY_CONFIG__WRITE_DIS_MASK                                                             0x00000001L
+#define CC_GC_SHADER_ARRAY_CONFIG__INACTIVE_CUS_MASK                                                          0xFFFF0000L
+#define GC_USER_SHADER_ARRAY_CONFIG__INACTIVE_CUS_MASK                                                        0xFFFF0000L

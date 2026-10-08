@@ -3,32 +3,67 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The GPU's GC: its compute micro-engines (MEC) and their hardware queue
-   descriptors (MQD), the doorbells that wake them, the KIQ through which a
-   virtual function asks for what the host keeps, clock gating, and which
-   work-group processors run work.
+(** The GPU's GC: its compute micro-engines (MEC) and the memory queue
+    descriptors (MQD) their hardware queues load, the doorbells that wake them,
+    the KIQ through which a virtual function asks for what its host keeps, clock
+    gating, and which work-group processors run work.
 
-   The GPU's owner serializes calls. *)
+    The GPU's owner serializes calls. *)
+
+(** {1:mqd Queue descriptors} *)
+
+type queue = {
+  ring : int;  (** The ring's GPU address, on 256 bytes. *)
+  ring_bytes : int;  (** Its size, a power of two. *)
+  read : int;  (** Where the queue writes its read position. *)
+  write : int;  (** Where it polls its write position. *)
+  eop : int;  (** Its end-of-pipe buffer's GPU address, on 256 bytes. *)
+  eop_bytes : int;  (** Its size, a power of two. *)
+  doorbell : int;  (** Its doorbell index. *)
+}
+(** The type for what a compute queue is made of. *)
+
+val mqd :
+  Regs.layout ->
+  queue ->
+  base:int ->
+  kiq:bool ->
+  aql:bool ->
+  xcc:int ->
+  xccs:int ->
+  string
+(** [mqd l q ~base ~kiq ~aql ~xcc ~xccs] is the descriptor of queue [q] on die
+    [xcc] of [xccs], as the kernel's MQD structs of [l]'s GC lay it out
+    ([v9_structs.h], [v11_structs.h], [v12_structs.h]), which the hardware reads
+    at the address the memory controller gives [base]: privileged and of the
+    kernel driver's kind if [kiq], an AQL queue if [aql], whose work a GPU of
+    several dies spreads across them. Pure. *)
+
+(** {1:gc The GC} *)
 
 type t
+(** The type for a GPU's GC. *)
 
-(* [make r gmc vram images ~mqds] is the GC, whose queue descriptors are at the
-   physical addresses [mqds] of the GPU's memory, one page per die each: the
-   compute queue's, the KIQ's on a virtual function. *)
 val make :
-  Regs.t -> Gmc.t -> Rig_pci.Window.t -> Images.t -> mqds:int array -> t
+  Regs.t ->
+  Gmc.t ->
+  Rig_pci.Window.t ->
+  Rig_pci.Window.t ->
+  Images.t ->
+  mqds:int array ->
+  t
+(** [make r gmc vram doorbells images ~mqds] is the GC, whose queue descriptors
+    are at the physical addresses [mqds] of the GPU's memory, one page per die
+    each: the compute queue's, and the KIQ's on a virtual function, whose
+    doorbell it rings through [doorbells]. *)
 
-(* [start g tables ~partial] waits for the RLC's firmware, programs the GC's hub
-   over [tables] and starts the micro-engines: a full boot configures them and
-   their doorbell ranges, and a virtual function its KIQ; a partial boot
-   dequeues the queues the last boot left and resets the engines. *)
-val start : t -> Rig_pci.Page_table.t -> partial:bool -> unit
+val start : t -> Rig_pci.Memory.t -> partial:bool -> unit
+(** [start g m ~partial] waits for the RLC to have loaded the GC's firmware and
+    starts the micro-engines: a full boot configures them and their doorbell
+    ranges, and a virtual function its KIQ, in system memory of [m]; a partial
+    boot dequeues the queues the last boot left and resets the engines. The GC's
+    hub is started before ({!Gmc.start_hub}). *)
 
-(* [queue g kind ~ring ~bytes ~read ~write ~eop] programs compute queue 0 of
-   [kind]: on every die for AQL, on the first for PM4. Its ring is the [bytes]
-   bytes at the GPU address [ring], its read position written to [read], its
-   write position polled at [write], its end-of-pipe buffer at [eop]. It is the
-   queue's doorbell index. *)
 val queue :
   t ->
   [ `Pm4 | `Aql ] ->
@@ -38,23 +73,27 @@ val queue :
   write:int ->
   eop:int ->
   int
+(** [queue g kind ~ring ~bytes ~read ~write ~eop] programs compute queue 0 of
+    [kind], on every die for AQL, on the first for PM4, from an end-of-pipe
+    buffer of 4 KiB at [eop]. It is the queue's doorbell index. *)
 
-(* [dequeue g ~wait] removes every queue it programmed. With [wait], it waits
-   for each to leave, and is [false] if one did not: a wave the reset could not
-   stop holds it. *)
 val dequeue : t -> wait:bool -> bool
+(** [dequeue g ~wait] removes every queue it programmed. With [wait], it waits
+    for each to leave, and is [false] if one did not: a wave the reset could not
+    stop holds it. *)
 
-(* [halt g] halts the micro-engines. *)
 val halt : t -> unit
+(** [halt g] halts the micro-engines. *)
 
-(* [gate g] enables the GC's clock gating, under the RLC's safe mode. *)
 val gate : t -> unit
+(** [gate g] enables the GC's clock gating, under the RLC's safe mode. *)
 
-(* [wgps g] is the work-group processors that run work, as Rig_amd.path's
-   [wgps]: those the GPU's configuration does not mark inactive, read per shader
-   engine and array. *)
 val wgps : t -> int array array
+(** [wgps g] is the processors that run work, as [Rig_amd.path]'s [wgps]: per
+    shader engine, engines numbered across dies, and shader array, a bit per
+    work-group processor (GC 10 on) or compute unit (GC 9) that neither the
+    GPU's fuses nor its configuration mark inactive. *)
 
-(* [invalidate g] asks the KIQ of each die to invalidate both hubs' TLBs. On a
-   virtual function only. *)
 val invalidate : t -> unit
+(** [invalidate g] asks the KIQ of each die to invalidate both hubs' TLBs. On a
+    virtual function only. *)

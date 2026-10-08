@@ -467,6 +467,113 @@ let security =
             (Psp.status b, Psp.tmr_bytes b));
     ]
 
+(* Compute queues *)
+
+module Gfx = Rig_amd_pci.Gfx
+
+let gfx12_queue =
+  {
+    Gfx.ring = 0x1_0000_0000;
+    ring_bytes = 16 lsl 20;
+    read = 0x3_0000;
+    write = 0x3_0008;
+    eop = 0x2000_0000;
+    eop_bytes = 0x1000;
+    doorbell = 3;
+  }
+
+(* A synthetic GPU of GC 9.4.3, for the fields of its descriptor. *)
+let gfx9_layout () =
+  let d = table "r9700.bin" in
+  let d = with_version (with_version d 11 (9, 4, 3)) 42 (4, 4, 2) in
+  let d = with_version (with_version d 255 (13, 0, 6)) 1 (13, 0, 6) in
+  let d = with_version (with_version d 34 (1, 8, 0)) 40 (4, 4, 2) in
+  let d = with_version (with_version d 41 (4, 4, 2)) 108 (7, 9, 0) in
+  layout d
+
+(* v12_structs.h and v9_structs.h give each field's word; gc_12_0_0_sh_mask.h
+   each register field's first bit. *)
+let queues =
+  group ~timeout:10. "compute queues"
+    [
+      test "a GC 12 queue's descriptor holds its ring, pointers and doorbell"
+        (fun () ->
+          let d =
+            Gfx.mqd
+              (layout (table "r9700.bin"))
+              gfx12_queue ~base:0x8_0000_1000 ~kiq:false ~aql:false ~xcc:0
+              ~xccs:1
+          in
+          equal int 2048 (String.length d);
+          equal (list int)
+            [
+              0xc031_0800;
+              0xffff_ffff;
+              0x1000;
+              8;
+              0x5501;
+              0x100_0000;
+              0;
+              0x3_0000;
+              0x3_0008;
+              0x4000_0018;
+              0x515;
+              0x30_0000;
+              0x100;
+              0x20_0000;
+              9;
+              0;
+            ]
+            (words d
+               (List.map
+                  (fun w -> 4 * w)
+                  [
+                    0;
+                    23;
+                    128;
+                    129;
+                    132;
+                    136;
+                    137;
+                    139;
+                    141;
+                    143;
+                    145;
+                    149;
+                    162;
+                    165;
+                    167;
+                    181;
+                  ])));
+      test "a KIQ's descriptor is privileged and the kernel driver's" (fun () ->
+          let d =
+            Gfx.mqd
+              (layout (table "r9700.bin"))
+              gfx12_queue ~base:0 ~kiq:true ~aql:false ~xcc:0 ~xccs:1
+          in
+          equal int 0x3 (u32 d (4 * 145) lsr 30));
+      test
+        "an AQL queue across dies holds its die and chunk over the thread masks"
+        (fun () ->
+          let d =
+            Gfx.mqd (gfx9_layout ()) gfx12_queue ~base:0 ~kiq:false ~aql:true
+              ~xcc:2 ~xccs:8
+          in
+          equal (list int)
+            [
+              0xffff_ffff;
+              0xffff_ffff;
+              0xffff_ffff;
+              0xffff_ffff;
+              2;
+              1;
+              0x1000;
+              1;
+            ]
+            (words d
+               (List.map (fun w -> 4 * w) [ 23; 24; 26; 27; 39; 41; 226; 181 ])));
+    ]
+
 (* Interrupts *)
 
 module Ih = Rig_amd_pci.Ih
@@ -870,6 +977,7 @@ let () =
          page_tables;
          power;
          security;
+         queues;
          interrupts;
          firmware;
        ])

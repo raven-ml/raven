@@ -78,6 +78,7 @@ let make r vram =
 let mc g pa = g.mc_base + pa
 let fabric g pa = g.fabric_base + pa
 let hive g = g.hive
+let instances g = function `Gc -> g.xccs | `Mm -> g.mm
 
 (* Entries *)
 
@@ -175,7 +176,6 @@ let format g ~flush =
 (* Hubs *)
 
 let hub_prefix = function `Gc -> "GC" | `Mm -> "MM"
-let instances g = function `Gc -> g.xccs | `Mm -> g.mm
 
 (* The hubs translate up to the canonical end of a 48-bit address space. *)
 let vm_last = 0x7fff_ffff_ffff

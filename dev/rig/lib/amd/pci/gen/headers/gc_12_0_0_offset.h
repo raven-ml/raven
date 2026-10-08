@@ -21,6 +21,7 @@
  *
  */
 
-MTYPE_UC                                 = 0x00000003,
-SH_MEM_ADDRESS_MODE_64                   = 0x00000000,
-SH_MEM_ALIGNMENT_MODE_UNALIGNED          = 0x00000003,
+#define regCC_GC_SHADER_ARRAY_CONFIG                                                                    0x100f
+#define regCC_GC_SHADER_ARRAY_CONFIG_BASE_IDX                                                           0
+#define regGC_USER_SHADER_ARRAY_CONFIG                                                                  0x5b90
+#define regGC_USER_SHADER_ARRAY_CONFIG_BASE_IDX                                                         1

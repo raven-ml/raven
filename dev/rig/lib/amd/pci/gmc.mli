@@ -27,6 +27,10 @@ val fabric : t -> int -> int
 (* [hive g] is [true] iff the GPU is one of several joined by a fabric. *)
 val hive : t -> bool
 
+(* [instances g hub] is the instances of [hub]: GC's dies, or MM's hubs (the
+   live accelerator dies on a GPU of several). *)
+val instances : t -> [ `Gc | `Mm ] -> int list
+
 (* [entry ~gc ~level ~pa target ~uncached ~snooped ~fragment] is the page-table
    entry a GPU of GC [gc] reads at [level] (0, the root, to 3, the leaf) for the
    table at [pa] ([`Table]) or the page there ([`Page]): GPU memory, this GPU's
@@ -59,12 +63,7 @@ val format : t -> flush:(unit -> unit) -> Rig_pci.Page_table.format
    reported and redirected to the page [dummy]; [scratch] answers accesses
    outside the apertures. *)
 val start_hub :
-  t ->
-  [ `Gc | `Mm ] ->
-  Rig_pci.Page_table.t ->
-  scratch:int ->
-  dummy:int ->
-  unit
+  t -> [ `Gc | `Mm ] -> Rig_pci.Page_table.t -> scratch:int -> dummy:int -> unit
 
 (* [flush_hdp g] writes the HDP flush register and reads it back, so that the
    host's writes through the memory BAR before it are in the GPU's memory. *)

@@ -221,8 +221,116 @@ let amdgpu_vm_pdb1 = 1
 let amdgpu_vm_pdb0 = 2
 let amdgpu_vm_ptb = 3
 let soc15_mtype_uc = 3
+let soc15_sh_mem_address_mode_64 = 0
+let soc15_sh_mem_alignment_mode_unaligned = 3
 let soc21_mtype_uc = 3
+let soc21_sh_mem_address_mode_64 = 0
+let soc21_sh_mem_alignment_mode_unaligned = 3
 let soc24_mtype_uc = 3
+let soc24_sh_mem_address_mode_64 = 0
+let soc24_sh_mem_alignment_mode_unaligned = 3
+
+(* Compute queues *)
+
+let amdgpu_navi10_doorbell_kiq = 0
+let amdgpu_navi10_doorbell_mec_ring0 = 3
+let amdgpu_navi10_doorbell_sdma_engine0 = 0x100
+
+(* The memory queue descriptor of GFX9, v9_mqd *)
+module Mqd_v9 = struct
+  let sizeof = 2048
+  let header = (0, 4)
+  let cp_mqd_base_addr_lo = (512, 4)
+  let cp_mqd_base_addr_hi = (516, 4)
+  let cp_hqd_pipe_priority = (532, 4)
+  let cp_hqd_queue_priority = (536, 4)
+  let cp_hqd_quantum = (540, 4)
+  let cp_hqd_persistent_state = (528, 4)
+  let cp_hqd_pq_base_lo = (544, 4)
+  let cp_hqd_pq_base_hi = (548, 4)
+  let cp_hqd_pq_rptr_report_addr_lo = (556, 4)
+  let cp_hqd_pq_rptr_report_addr_hi = (560, 4)
+  let cp_hqd_pq_wptr_poll_addr_lo = (564, 4)
+  let cp_hqd_pq_wptr_poll_addr_hi = (568, 4)
+  let cp_hqd_pq_doorbell_control = (572, 4)
+  let cp_hqd_pq_control = (580, 4)
+  let cp_hqd_ib_control = (596, 4)
+  let cp_hqd_hq_status0 = (640, 4)
+  let cp_mqd_control = (648, 4)
+  let cp_hqd_vmid = (524, 4)
+  let cp_hqd_aql_control = (724, 4)
+  let cp_hqd_eop_base_addr_lo = (660, 4)
+  let cp_hqd_eop_base_addr_hi = (664, 4)
+  let cp_hqd_eop_control = (668, 4)
+  let compute_tg_chunk_size = Some (164, 4)
+  let compute_current_logic_xcc_id = Some (156, 4)
+  let cp_mqd_stride_size = Some (904, 4)
+  let compute_static_thread_mgmt = [ (92, 4); (96, 4); (104, 4); (108, 4); (156, 4); (160, 4); (164, 4); (168, 4) ]
+end
+
+(* The memory queue descriptor of GFX11, v11_compute_mqd *)
+module Mqd_v11 = struct
+  let sizeof = 2048
+  let header = (0, 4)
+  let cp_mqd_base_addr_lo = (512, 4)
+  let cp_mqd_base_addr_hi = (516, 4)
+  let cp_hqd_pipe_priority = (532, 4)
+  let cp_hqd_queue_priority = (536, 4)
+  let cp_hqd_quantum = (540, 4)
+  let cp_hqd_persistent_state = (528, 4)
+  let cp_hqd_pq_base_lo = (544, 4)
+  let cp_hqd_pq_base_hi = (548, 4)
+  let cp_hqd_pq_rptr_report_addr_lo = (556, 4)
+  let cp_hqd_pq_rptr_report_addr_hi = (560, 4)
+  let cp_hqd_pq_wptr_poll_addr_lo = (564, 4)
+  let cp_hqd_pq_wptr_poll_addr_hi = (568, 4)
+  let cp_hqd_pq_doorbell_control = (572, 4)
+  let cp_hqd_pq_control = (580, 4)
+  let cp_hqd_ib_control = (596, 4)
+  let cp_hqd_hq_status0 = (640, 4)
+  let cp_mqd_control = (648, 4)
+  let cp_hqd_vmid = (524, 4)
+  let cp_hqd_aql_control = (724, 4)
+  let cp_hqd_eop_base_addr_lo = (660, 4)
+  let cp_hqd_eop_base_addr_hi = (664, 4)
+  let cp_hqd_eop_control = (668, 4)
+  let compute_tg_chunk_size = None
+  let compute_current_logic_xcc_id = None
+  let cp_mqd_stride_size = None
+  let compute_static_thread_mgmt = [ (92, 4); (96, 4); (104, 4); (108, 4); (176, 4); (180, 4); (184, 4); (188, 4) ]
+end
+
+(* The memory queue descriptor of GFX12, v12_compute_mqd *)
+module Mqd_v12 = struct
+  let sizeof = 2048
+  let header = (0, 4)
+  let cp_mqd_base_addr_lo = (512, 4)
+  let cp_mqd_base_addr_hi = (516, 4)
+  let cp_hqd_pipe_priority = (532, 4)
+  let cp_hqd_queue_priority = (536, 4)
+  let cp_hqd_quantum = (540, 4)
+  let cp_hqd_persistent_state = (528, 4)
+  let cp_hqd_pq_base_lo = (544, 4)
+  let cp_hqd_pq_base_hi = (548, 4)
+  let cp_hqd_pq_rptr_report_addr_lo = (556, 4)
+  let cp_hqd_pq_rptr_report_addr_hi = (560, 4)
+  let cp_hqd_pq_wptr_poll_addr_lo = (564, 4)
+  let cp_hqd_pq_wptr_poll_addr_hi = (568, 4)
+  let cp_hqd_pq_doorbell_control = (572, 4)
+  let cp_hqd_pq_control = (580, 4)
+  let cp_hqd_ib_control = (596, 4)
+  let cp_hqd_hq_status0 = (640, 4)
+  let cp_mqd_control = (648, 4)
+  let cp_hqd_vmid = (524, 4)
+  let cp_hqd_aql_control = (724, 4)
+  let cp_hqd_eop_base_addr_lo = (660, 4)
+  let cp_hqd_eop_base_addr_hi = (664, 4)
+  let cp_hqd_eop_control = (668, 4)
+  let compute_tg_chunk_size = None
+  let compute_current_logic_xcc_id = None
+  let cp_mqd_stride_size = None
+  let compute_static_thread_mgmt = [ (92, 4); (96, 4); (104, 4); (108, 4); (176, 4); (180, 4); (184, 4); (188, 4); (236, 4) ]
+end
 
 (* The security processor *)
 
@@ -1341,6 +1449,26 @@ let registers = [
       { Rig_amd_abi.Register.name = "regSDMA_GFX_RB_WPTR_HI"; offset = 0x86; segment = 0; fields = [ ("offset", (0, 31)) ] };
       { Rig_amd_abi.Register.name = "regSDMA_GFX_RB_WPTR_POLL_ADDR_HI"; offset = 0xb2; segment = 0; fields = [ ("addr", (0, 31)) ] };
       { Rig_amd_abi.Register.name = "regSDMA_GFX_RB_WPTR_POLL_ADDR_LO"; offset = 0xb3; segment = 0; fields = [ ("addr", (2, 31)) ] };
+    ] );
+  ( "gc", (9, 4, 3), [
+      { Rig_amd_abi.Register.name = "regCC_GC_SHADER_ARRAY_CONFIG"; offset = 0x26f; segment = 0; fields = [ ("write_dis", (0, 0)); ("inactive_cus", (16, 31)) ] };
+      { Rig_amd_abi.Register.name = "regGC_USER_SHADER_ARRAY_CONFIG"; offset = 0x270; segment = 0; fields = [ ("inactive_cus", (16, 31)) ] };
+    ] );
+  ( "gc", (11, 0, 0), [
+      { Rig_amd_abi.Register.name = "regCC_GC_SHADER_ARRAY_CONFIG"; offset = 0x100f; segment = 0; fields = [ ("inactive_wgps", (16, 31)) ] };
+      { Rig_amd_abi.Register.name = "regGC_USER_SHADER_ARRAY_CONFIG"; offset = 0x5b90; segment = 1; fields = [ ("inactive_wgps", (16, 31)) ] };
+    ] );
+  ( "gc", (11, 0, 3), [
+      { Rig_amd_abi.Register.name = "regCC_GC_SHADER_ARRAY_CONFIG"; offset = 0x100f; segment = 0; fields = [ ("write_dis", (0, 0)); ("inactive_wgps", (16, 31)) ] };
+      { Rig_amd_abi.Register.name = "regGC_USER_SHADER_ARRAY_CONFIG"; offset = 0x5b90; segment = 1; fields = [ ("inactive_wgps", (16, 31)) ] };
+    ] );
+  ( "gc", (11, 5, 0), [
+      { Rig_amd_abi.Register.name = "regCC_GC_SHADER_ARRAY_CONFIG"; offset = 0x100f; segment = 0; fields = [ ("inactive_wgps", (16, 31)) ] };
+      { Rig_amd_abi.Register.name = "regGC_USER_SHADER_ARRAY_CONFIG"; offset = 0x5b90; segment = 1; fields = [ ("inactive_wgps", (16, 31)) ] };
+    ] );
+  ( "gc", (12, 0, 0), [
+      { Rig_amd_abi.Register.name = "regCC_GC_SHADER_ARRAY_CONFIG"; offset = 0x100f; segment = 0; fields = [ ("inactive_wgps", (16, 31)) ] };
+      { Rig_amd_abi.Register.name = "regGC_USER_SHADER_ARRAY_CONFIG"; offset = 0x5b90; segment = 1; fields = [ ("inactive_wgps", (16, 31)) ] };
     ] );
 ]
 

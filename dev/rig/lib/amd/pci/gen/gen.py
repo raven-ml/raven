@@ -56,6 +56,10 @@ SOURCES = {
     "psp_gfx_if.h": KERNEL + "amdgpu/psp_gfx_if.h",  # the types the PSP loads images as
     "amdgpu_vm.h": KERNEL + "amdgpu/amdgpu_vm.h",  # page-table entries
     "amdgpu_psp.h": KERNEL + "amdgpu/amdgpu_psp.h",  # the security processor's bootloader and ring
+    "amdgpu_doorbell.h": KERNEL + "amdgpu/amdgpu_doorbell.h",  # doorbell indices
+    "v9_structs.h": KERNEL + "include/v9_structs.h",  # GFX9's queue descriptors
+    "v11_structs.h": KERNEL + "include/v11_structs.h",  # GFX11's
+    "v12_structs.h": KERNEL + "include/v12_structs.h",  # GFX12's
     "vega10_enum.h": KERNEL + "include/vega10_enum.h",  # memory types, GFX9
     "soc21_enum.h": KERNEL + "include/soc21_enum.h",  # GFX11
     "soc24_enum.h": KERNEL + "include/soc24_enum.h",  # GFX12
@@ -114,6 +118,7 @@ REG_FILES = {
     "hdp": [(4, 4, 2), (6, 0, 0), (7, 0, 0)],
     "osssys": [(4, 4, 2), (6, 0, 0), (7, 0, 0)],
     "sdma": [(4, 4, 2)],
+    "gc": [(9, 4, 3), (11, 0, 0), (11, 0, 3), (11, 5, 0), (12, 0, 0)],
 }
 REG_DIRS = {"osssys": "oss"}
 
@@ -161,6 +166,24 @@ REG_INVENTORY = {
              r"RB_WPTR_POLL_ADDR_(LO|HI)|DOORBELL|DOORBELL_OFFSET|MINOR_PTR_UPDATE|IB_CNTL)", r"regSDMA_CNTL"],
 }
 REG_INVENTORY["nbif"] = REG_INVENTORY["nbio"]
+# GC's registers are device_amd_abi's, but for those that say which compute
+# units or work-group processors a shader array has fused off.
+REG_INVENTORY["gc"] = [r"reg(CC_GC|GC_USER)_SHADER_ARRAY_CONFIG"]
+
+# Compute queues: the doorbells of the KIQ and the first MEC and SDMA rings,
+# the memory queue descriptors (MQD) of each GC generation, and the shader
+# memory modes of each SOC.
+DOORBELLS = ["AMDGPU_NAVI10_DOORBELL_KIQ", "AMDGPU_NAVI10_DOORBELL_MEC_RING0", "AMDGPU_NAVI10_DOORBELL_sDMA_ENGINE0"]
+MQDS = {"v9_structs.h": ("v9_mqd", 9), "v11_structs.h": ("v11_compute_mqd", 11),
+        "v12_structs.h": ("v12_compute_mqd", 12)}
+MQD_FIELDS = ["header", "cp_mqd_base_addr_lo", "cp_mqd_base_addr_hi", "cp_hqd_pipe_priority", "cp_hqd_queue_priority",
+              "cp_hqd_quantum", "cp_hqd_persistent_state", "cp_hqd_pq_base_lo", "cp_hqd_pq_base_hi",
+              "cp_hqd_pq_rptr_report_addr_lo", "cp_hqd_pq_rptr_report_addr_hi", "cp_hqd_pq_wptr_poll_addr_lo",
+              "cp_hqd_pq_wptr_poll_addr_hi", "cp_hqd_pq_doorbell_control", "cp_hqd_pq_control", "cp_hqd_ib_control",
+              "cp_hqd_hq_status0", "cp_mqd_control", "cp_hqd_vmid", "cp_hqd_aql_control", "cp_hqd_eop_base_addr_lo",
+              "cp_hqd_eop_base_addr_hi", "cp_hqd_eop_control"]
+MQD_OPTIONAL = ["compute_tg_chunk_size", "compute_current_logic_xcc_id", "cp_mqd_stride_size"]
+SH_MEM = ["SH_MEM_ADDRESS_MODE_64", "SH_MEM_ALIGNMENT_MODE_UNALIGNED"]
 
 FIRMWARE_COMMIT = "0a6871b19abf5d6e024b5d208b101ae53e7fa0de"
 FIRMWARE_URL = f"https://gitlab.com/kernel-firmware/linux-firmware/-/raw/{FIRMWARE_COMMIT}/"
@@ -618,7 +641,12 @@ def excerpt(name, text):
     elif name in IH_SOURCES:
         keep |= {i for i, l in enumerate(lines) if SRCID.match(l)}
     elif name in MTYPES:
-        keep |= {i for i, l in enumerate(lines) if re.match(r"\s*MTYPE_UC\s*=", l)}
+        keep |= {i for i, l in enumerate(lines) if re.match(r"\s*(MTYPE_UC|SH_MEM_ADDRESS_MODE_64|"
+                                                              r"SH_MEM_ALIGNMENT_MODE_UNALIGNED)\s*=", l)}
+    elif name == "amdgpu_doorbell.h":
+        keep |= enum_blocks(text, ["AMDGPU_NAVI10_DOORBELL_ASSIGNMENT"])
+    elif name in MQDS:
+        keep |= blocks(text, {MQDS[name][0]})
     elif name == "psp_gfx_if.h":
         keep |= enum_blocks(text, ENUMS[name]) | blocks(text, set(PSP_STRUCTS) | {"psp_gfx_cmd_resp"})
     elif name == "amdgpu_psp.h":
@@ -736,11 +764,33 @@ def generate(h):
     for n, v in enum_values(vm, VM_LEVELS).items():
         out.append(f"let {n.lower()} = {v}")
     for hdr, gen_name in MTYPES.items():
-        m = re.search(r"MTYPE_UC\s*=\s*(0x[0-9a-fA-F]+|\d+)", h[hdr])
-        if m is None:
-            sys.exit(f"{hdr}: no MTYPE_UC")
-        out.append(f"let {gen_name}_mtype_uc = {int(m.group(1), 0)}")
+        for n in ["MTYPE_UC"] + SH_MEM:
+            m = re.search(rf"\b{n}\s*=\s*(0x[0-9a-fA-F]+|\d+)", h[hdr])
+            if m is None:
+                sys.exit(f"{hdr}: no {n}")
+            out.append(f"let {gen_name}_{n.lower()} = {int(m.group(1), 0)}")
     out.append("")
+
+    # Compute queues
+    out += ["(* Compute queues *)", ""]
+    for n, v in enum_values(h["amdgpu_doorbell.h"], DOORBELLS).items():
+        out.append(f"let {n.lower()} = {ml_int(v)}")
+    out.append("")
+    for hdr, (st, major) in MQDS.items():
+        size, fields = packed_layout(h[hdr], st)
+        out.append(f"(* The memory queue descriptor of GFX{major}, {st} *)")
+        out.append(f"module Mqd_v{major} = struct")
+        out.append(f"  let sizeof = {size}")
+        for f in MQD_FIELDS:
+            if f not in fields:
+                sys.exit(f"{st} has no field {f}")
+            out.append(f"  let {f} = {ml_field(fields[f])}")
+        for f in MQD_OPTIONAL:
+            out.append(f"  let {f} = " + (f"Some {ml_field(fields[f])}" if f in fields else "None"))
+        mgmt = sorted((f for f in fields if f.startswith("compute_static_thread_mgmt_se")),
+                      key=lambda f: int(f[len("compute_static_thread_mgmt_se"):]))
+        out.append("  let compute_static_thread_mgmt = [ " + "; ".join(ml_field(fields[f]) for f in mgmt) + " ]")
+        out += ["end", ""]
 
     # Security processor
     g, ps = h["psp_gfx_if.h"], h["amdgpu_psp.h"]
