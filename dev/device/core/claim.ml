@@ -59,15 +59,24 @@ let refuse_overlaps read donate =
     |> List.filter (fun ((_, _, n), _) -> n > 0)
     |> List.sort compare
   in
-  let rec sweep = function
-    | ((s, a, n), d) :: (((s', a', _), d') :: _ as rest) ->
-        if s = s' && a' < a + n && (d || d') then
+  (* In each space, a buffer overlaps an earlier one iff it starts before the
+     furthest end of those: [ends] is that end over every earlier buffer,
+     [donated] over the donated ones. *)
+  let rec sweep space ends donated = function
+    | [] -> ()
+    | ((s, a, n), d) :: rest ->
+        let ends, donated =
+          if s = space then (ends, donated) else (min_int, min_int)
+        in
+        if a < donated || (d && a < ends) then
           invalid_arg
-            "Device_core.Claim.with_: a donated buffer overlaps another"
-        else sweep rest
-    | _ -> ()
+            "Device_core.Claim.with_: a donated buffer overlaps another";
+        sweep s
+          (Int.max ends (a + n))
+          (if d then Int.max donated (a + n) else donated)
+          rest
   in
-  sweep all
+  sweep (-1) min_int min_int all
 
 let with_ ~read ~donate f =
   List.iter (Buffer.check_live "Claim.with_") read;
