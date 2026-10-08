@@ -411,7 +411,11 @@ let refused =
       "affine",
       read (strf "fixtures/affine_%s.o" other),
       strf "the object is for %s, expected %s" other_machine host_name );
-    ("writable data", "writable", obj "writable", "section .bss is writable");
+    ( "writable data",
+      "writable",
+      obj "writable",
+      "section \".bss\" is writable and not empty; pass variables through the \
+       buffers" );
     ( "an undefined symbol",
       "undefined",
       obj "undefined",

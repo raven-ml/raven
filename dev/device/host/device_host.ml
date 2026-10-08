@@ -6,6 +6,18 @@
 let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
+(* Refusals: a link raises [Refused] where it finds the object unfit, and
+   returns it as its [Error]. *)
+
+exception Refused of string
+
+let refusef fmt = Printf.ksprintf (fun m -> raise (Refused m)) fmt
+
+(* Errors *)
+
+let err_unsupported k at =
+  refusef "relocation of type %d at 0x%x is unsupported" k at
+
 (* The host *)
 
 external host_machine : unit -> int = "caml_device_host_machine"
@@ -70,13 +82,6 @@ let set_bits b at ~lo ~width x =
   let mask = ((1 lsl width) - 1) lsl lo in
   set32 b at (insn land lnot mask lor ((x lsl lo) land mask))
 
-(* Refusals: a link raises [Refused] where it finds the object unfit, and
-   returns it as its [Error]. *)
-
-exception Refused of string
-
-let refusef fmt = Printf.ksprintf (fun m -> raise (Refused m)) fmt
-
 (* Slots
 
    A slot follows the image for each symbol the object refers to and does not
@@ -118,7 +123,9 @@ let write_slot b ~at a =
 let checked ~at bits x ~target =
   if fits bits x then x
   else
-    refusef "relocation at 0x%x reaches 0x%x, beyond its %d bits" at target bits
+    refusef
+      "relocation at 0x%x reaches 0x%x, which does not fit its %d-bit field" at
+      target bits
 
 (* A branch lands at [S + A] on arm64 and at [S + A + 4] on x86_64, whose
    displacement counts from the field's end. Out of reach, it goes to [stub], if
@@ -149,7 +156,7 @@ let relocate b ~base ~stub ~at ~k ~a s =
     if k = r_x86_64_pc32 then
       set32 b at (checked ~at 32 (s + a - p) ~target:(s + a))
     else if k = r_x86_64_plt32 then set32 b at (branch ~at ~p ~stub 32 s a)
-    else refusef "relocation of type %d at 0x%x is unsupported" k at
+    else err_unsupported k at
   else if k = r_aarch64_call26 || k = r_aarch64_jump26 then
     set_bits b at ~lo:0 ~width:26 (branch ~at ~p ~stub 28 s a asr 2)
   else if k = r_aarch64_adr_prel_pg_hi21 then
@@ -160,7 +167,7 @@ let relocate b ~base ~stub ~at ~k ~a s =
   else if k = r_aarch64_ldst32_abs_lo12_nc then lo12 b ~at (s + a) 2
   else if k = r_aarch64_ldst64_abs_lo12_nc then lo12 b ~at (s + a) 3
   else if k = r_aarch64_ldst128_abs_lo12_nc then lo12 b ~at (s + a) 4
-  else refusef "relocation of type %d at 0x%x is unsupported" k at
+  else err_unsupported k at
 
 (* Linking *)
 
@@ -179,9 +186,9 @@ let check (o : Device_elf.t) =
   in
   if host <> em_x86_64 && host <> em_aarch64 then
     refusef "the host's machine is neither x86_64 nor arm64";
-  if o.bits <> 64 then refusef "the object is 32-bit";
+  if o.bits <> 64 then refusef "the object is 32-bit, expected 64-bit";
   if o.kind <> et_rel then
-    refusef "the object is of type %d, not relocatable" o.kind;
+    refusef "the object is of type %d, expected ET_REL (1)" o.kind;
   if o.machine <> host then
     refusef "the object is for %s, expected %s" (machine o.machine)
       (machine_name host);
@@ -189,7 +196,11 @@ let check (o : Device_elf.t) =
     refusef "a section asks for an alignment of %d bytes, expected at most %d"
       o.align max_align;
   match Iarray.find_opt writable o.sections with
-  | Some s -> refusef "section %s is writable" s.name
+  | Some s ->
+      refusef
+        "section %S is writable and not empty; pass variables through the \
+         buffers"
+        s.name
   | None -> ()
 
 let entry_offset (o : Device_elf.t) entry =
@@ -255,7 +266,7 @@ let link_exn ~entry obj =
   let externals = externals o in
   let n = Hashtbl.length externals in
   if o.size > max_int - (slot_bytes * (n + 1)) then
-    refusef "the image's %d bytes and %d slots pass max_int" o.size n;
+    refusef "the image's %d bytes and %d stubs exceed max_int" o.size n;
   let slots_at = (o.size + slot_bytes - 1) / slot_bytes * slot_bytes in
   let size = Int.max 1 (slots_at + (slot_bytes * n)) in
   let mapping = map size in
