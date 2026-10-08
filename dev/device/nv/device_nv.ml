@@ -780,22 +780,22 @@ let part (T d) ~queue ?(after = [||]) w =
       let dst = side "destination" dst o and src = side "source" src o' in
       part [| dst; o; src; o'; n |] [||]
 
+(* Loops, so that a submission allocates nothing on the OCaml heap. *)
 let check_parts name d ps =
   if Array.length ps > max_parts then
     invalid_argf "Device_nv.%s: %d parts, expected at most %d" name
       (Array.length ps) max_parts;
-  let check i p =
+  for i = 0 to Array.length ps - 1 do
+    let p = ps.(i) in
     if p.owner <> d.self then
       invalid_argf "Device_nv.%s: part %d is another device's" name i;
-    let after = fields + p.ints.(words_at) in
-    for k = after to Array.length p.ints - 1 do
+    for k = fields + p.ints.(words_at) to Array.length p.ints - 1 do
       if p.ints.(k) >= i then
         invalid_argf
           "Device_nv.%s: part %d runs after part %d, expected an earlier part"
           name i p.ints.(k)
     done
-  in
-  Array.iteri check ps
+  done
 
 external room_parts : int -> part array -> int = "caml_device_nv_room"
 
@@ -820,14 +820,14 @@ let submit (T d) ~v ~waits ~handles:_ ps =
       (Array.length waits) max_waits;
   check_parts "submit" d ps;
   let w = Array.make (2 * Array.length waits) 0 in
-  let wait i = function
+  for i = 0 to Array.length waits - 1 do
+    match waits.(i) with
     | `Word, at, value ->
         w.(2 * i) <- at;
         w.((2 * i) + 1) <- value
     | (`Equal | `Object), _, _ ->
         invalid_arg "Device_nv.submit: the device waits only with `Word"
-  in
-  Array.iteri wait waits;
+  done;
   if room_parts d.self ps <> fits then
     invalid_arg "Device_nv.submit: the parts do not fit the rings now";
   ignore (submit_parts d.self v w ps : int);
