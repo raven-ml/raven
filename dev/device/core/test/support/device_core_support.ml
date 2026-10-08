@@ -204,3 +204,15 @@ let await what f =
       failwith (Printf.sprintf "await: no %s after %.0f s" what watchdog_s);
     Thread.yield ()
   done
+
+(* Readers *)
+
+module Reader = struct
+  external host : Device_core.Buffer.t -> int = "device_core_test_reader_host"
+
+  external length : Device_core.Buffer.t -> int
+    = "device_core_test_reader_length"
+
+  external why : Device_core.Buffer.t -> string option
+    = "device_core_test_reader_why"
+end

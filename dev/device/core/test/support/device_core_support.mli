@@ -102,3 +102,15 @@ val store : int -> int -> unit
 val await : string -> (unit -> bool) -> unit
 (** [await what f] returns once [f ()] holds, yielding to other threads between
     checks. It raises [Failure] naming [what] after 10 s. *)
+
+(** The C readers of [device_core.h], called from C. *)
+module Reader : sig
+  val host : Device_core.Buffer.t -> int
+  (** [host b] is [device_core_buffer_host b] as an integer, [0] for [NULL]. *)
+
+  val length : Device_core.Buffer.t -> int
+  (** [length b] is [device_core_buffer_length b]. *)
+
+  val why : Device_core.Buffer.t -> string option
+  (** [why b] is [device_core_buffer_why b], [None] for [NULL]. *)
+end

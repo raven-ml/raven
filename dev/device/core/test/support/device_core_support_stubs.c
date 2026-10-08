@@ -30,6 +30,7 @@
 #include <unistd.h>
 #endif
 
+#include "device_core.h"
 #include "nx_edge.h"
 
 struct queued {
@@ -282,4 +283,19 @@ value device_core_test_load(value v_addr) {
 value device_core_test_store(value v_addr, value v) {
   atomic_store((_Atomic uint64_t *)Long_val(v_addr), (uint64_t)Long_val(v));
   return Val_unit;
+}
+
+/* The C readers of device_core.h, as a caller in C sees a buffer. */
+value device_core_test_reader_host(value v_b) {
+  return Val_long((intnat)device_core_buffer_host(v_b));
+}
+
+value device_core_test_reader_length(value v_b) {
+  return Val_long((intnat)device_core_buffer_length(v_b));
+}
+
+value device_core_test_reader_why(value v_b) {
+  CAMLparam1(v_b);
+  const char *why = device_core_buffer_why(v_b);
+  CAMLreturn(why == NULL ? Val_none : caml_alloc_some(caml_copy_string(why)));
 }
