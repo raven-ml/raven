@@ -282,10 +282,10 @@ val submit :
     Each wait [(`Word, a, w)] holds the work back until the aligned 64-bit word
     at address [a] below [2{^40}], which [g]'s work addresses, holds at least
     [w], compared circularly: [x] is at least [w] if [x - w], as a signed 64-bit
-    integer, is not negative. The work runs after every earlier value of [g] and after the
-    waits; once it completed, the timeline word holds [v]. A submission of no
-    parts writes [v] after its waits and after every earlier value. [handles] is
-    ignored: the device's work names its memory by address.
+    integer, is not negative. The work runs after every earlier value of [g] and
+    after the waits; once it completed, the timeline word holds [v]. A
+    submission of no parts writes [v] after its waits and after every earlier
+    value. [handles] is ignored: the device's work names its memory by address.
 
     The result is [`Ok] once every part is in its channel's ring and the
     channels were woken: stores to this machine's memory cannot fail.
