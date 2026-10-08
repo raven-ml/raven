@@ -215,8 +215,8 @@ let started c fn ~index =
   if Chip.booted c then
     Error
       (strf
-         "%s was booted before, by its kernel driver or another process, or \
-          lost; Rig_nv_pci.reset %d resets it"
+         "%s was booted before, by its kernel driver or another process; \
+          Rig_nv_pci.reset %d resets it"
          (Function.bus fn) index)
   else Ok ()
 
@@ -253,16 +253,10 @@ let device g ~gsp ~hold ~tables (c : Chip.t) =
       stop = stop g gsp hold;
     }
 
-(* [boot] runs in {!Gpus.open_}'s bracket, which releases the function on
-   [Error], turning its bus mastering off. A GPU that started stays booted, and
-   opens again only after a reset. *)
-let boot ~firmware ~index machine hold fn =
-  let* c = Chip.of_function fn in
-  let* () = started c fn ~index in
-  let* fw = Images.read c.family firmware in
-  let* () =
-    Machine.reserve machine ~base:(Space.base space) (Space.length space)
-  in
+(* [start] writes to the GPU: from its first write, the GPU is in a state only a
+   reset clears, so a failure loses it. A failure after the GSP started unloads
+   it first. *)
+let start ~index machine hold fn (c : Chip.t) (fw : Images.t) =
   Chip.bus_master c true;
   let* () = Falcon.run c (Falcon.wait_reset c.family) in
   let* bar = Function.map ~combine:false fn memory_bar in
@@ -300,6 +294,22 @@ let boot ~firmware ~index machine hold fn =
       ignore (Gsp.unload gsp);
       Error why
 
+let boot ~firmware ~index machine hold fn =
+  let* c = Chip.of_function fn in
+  let* () = started c fn ~index in
+  let* fw = Images.read c.family firmware in
+  let* () =
+    Machine.reserve machine ~base:(Space.base space) (Space.length space)
+  in
+  let lose why =
+    Gpus.lose hold;
+    Error why
+  in
+  match start ~index machine hold fn c fw with
+  | Ok _ as r -> r
+  | Error why -> lose why
+  | exception Rig_nv.Fault why -> lose why
+
 let open_ ?(machine = Machine.this) ~firmware i =
   if i < 0 then invalid_argf "Rig_nv_pci.open_: index %d < 0" i;
   named i
@@ -310,14 +320,12 @@ let open_ ?(machine = Machine.this) ~firmware i =
         "the GPU's machine is reached through a transport, through which \
          Rig_nv makes no submissions"
   | Some _ ->
-      let start hold fn =
-        match boot ~firmware ~index:i machine hold fn with
-        | r -> r
-        | exception Rig_nv.Fault why -> Error why
-      in
       Gpus.open_ gpus machine i
         ~at_exit:(fun (_, gsp) -> ignore (Gsp.unload gsp))
-        start
+        (fun hold fn ->
+          match boot ~firmware ~index:i machine hold fn with
+          | r -> r
+          | exception Rig_nv.Fault why -> Error why)
       |> Result.map fst
 
 (* Changes to the machine *)
