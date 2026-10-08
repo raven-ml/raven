@@ -376,6 +376,12 @@ value device_core_test_interrupt(value unit) {
   return Val_unit;
 }
 
+value device_core_test_move(value v_dst, value v_src, value v_len) {
+  memmove((void *)Long_val(v_dst), (const void *)Long_val(v_src),
+          (size_t)Long_val(v_len));
+  return Val_unit;
+}
+
 value device_core_test_load(value v_addr) {
   return Val_long((intnat)atomic_load((_Atomic uint64_t *)Long_val(v_addr)));
 }

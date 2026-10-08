@@ -10,7 +10,8 @@
   test_stamps
   test_memory
   test_claim
-  test_program)
+  test_program
+  test_io)
  (modules
   test_open
   test_buffer
@@ -22,7 +23,8 @@
   test_stamps
   test_memory
   test_claim
-  test_program)
+  test_program
+  test_io)
  (libraries device_core device_core_support threads.posix unix
   windtrap))
 

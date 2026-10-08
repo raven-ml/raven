@@ -150,6 +150,10 @@ val load : int -> int
 
 val store : int -> int -> unit
 
+val move : dst:int -> src:int -> int -> unit
+(** [move ~dst ~src n] copies the [n] bytes at host address [src] to host
+    address [dst]. *)
+
 val await : string -> (unit -> bool) -> unit
 (** [await what f] returns once [f ()] holds, yielding to other threads between
     checks. It raises [Failure] naming [what] after 10 s. *)

@@ -33,6 +33,7 @@ external poke : unit -> nativeint = "device_core_test_poke"
 external interrupt : unit -> unit = "device_core_test_interrupt"
 external load : int -> int = "device_core_test_load"
 external store : int -> int -> unit = "device_core_test_store"
+external move : dst:int -> src:int -> int -> unit = "device_core_test_move"
 
 let bump = bump ()
 let nx_word = nx_word ()
