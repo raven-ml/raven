@@ -12,6 +12,9 @@ dune exec dev/rig/examples/12-pool/main.exe
 ## What You'll Learn
 
 - The pool's C interface, `rig_pool.h`, reached through `(libraries rig.pool)`
+  from a library of the stub's own: GNU ld resolves a call only from the
+  archives listed after it, and an executable's own stubs come after its
+  libraries
 - A job: a range of units in chunks, claimed in order by the pool's threads
 - Partials indexed by worker number, which no two calls share
 - Releasing the OCaml runtime around a job of several threads

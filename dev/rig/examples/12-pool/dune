@@ -1,9 +1,15 @@
-(executable
- (name main)
+(library
+ (name rig_examples_pool_sum)
+ (modules)
  (libraries rig.pool)
  (foreign_stubs
   (language c)
   (names sum)))
+
+(executable
+ (name main)
+ (modules main)
+ (libraries rig_examples_pool_sum))
 
 (rule
  (with-stdout-to
