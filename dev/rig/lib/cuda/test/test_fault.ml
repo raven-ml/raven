@@ -10,9 +10,12 @@ module B = Rig.Buffer
 
 let host r = Option.get (C.host r)
 
-(* Raises the fault [sleep] reports, waiting at most 10 seconds. *)
+(* Raises the fault [sleep] reports, waiting at most 10 seconds of the host's
+   monotonic clock, which a blocked or descheduled process does not slow. *)
+let patience_ns = 10_000_000_000
+
 let rec fault g t0 =
-  if Sys.time () -. t0 > 10. then fail "no fault within 10 s";
+  if Rig.Profile.now () - t0 > patience_ns then fail "no fault within 10 s";
   C.sleep g ~seen:(C.signaled g) ~still_ms:100;
   fault g t0
 
@@ -44,7 +47,7 @@ let faults () =
           String.starts_with
             ~prefix:"the GPU's work failed: CUDA_ERROR_ILLEGAL_ADDRESS" why
       | _ -> false)
-    (fun () -> fault g (Sys.time ()));
+    (fun () -> fault g (Rig.Profile.now ()));
   sticky "alloc" (fun () -> ignore (C.alloc g `Device 64));
   sticky "image" (fun () -> ignore (C.image g (S.fixture "kernels.ptx")));
   equal int ~msg:"the word after the fault" 0 (S.get64 (host (C.word g)));
