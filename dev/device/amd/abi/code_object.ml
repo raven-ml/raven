@@ -52,9 +52,14 @@ let processor (o : Device_elf.t) =
   | None -> Error (strf "EF_AMDGPU_MACH 0x%x names no processor" mach)
   | Some name when not (List.mem_assoc name Defs.generic) -> Ok name
   | Some name when o.abi_version < Defs.elfabiversion_amdgpu_hsa_v6 ->
-      Error (strf "a %s code object before code object version 6" name)
+      Error
+        (strf
+           "%s code object has ABI version %d, expected %d (code object \
+            version 6) or later"
+           name o.abi_version Defs.elfabiversion_amdgpu_hsa_v6)
   | Some name when version = 0 ->
-      Error (strf "a %s code object of generic version 0" name)
+      Error
+        (strf "%s code object has generic version 0, expected 1 or more" name)
   | Some name -> Ok name
 
 (* The patch of [r]: its target's offset from the field, which REL64 writes. *)
@@ -120,12 +125,12 @@ let kd_suffix = ".kd"
 let kernel_of o ~size ps name kd =
   if kd + K.sizeof > size then
     Error
-      (strf "kernel %s's descriptor at %d lies past the image's end" name kd)
+      (strf "kernel %S's descriptor at %d lies past the image's end" name kd)
   else
     let d = read o ps kd K.sizeof in
     let entry = kd + field d K.kernel_code_entry_byte_offset in
     if entry < 0 || entry >= size then
-      Error (strf "kernel %s's code at %d lies outside the image" name entry)
+      Error (strf "kernel %S's code at %d lies outside the image" name entry)
     else
       let has flag = field d K.kernel_code_properties land flag <> 0 in
       Ok
@@ -182,7 +187,7 @@ let of_string obj =
   let* target = processor o in
   let* () =
     if o.size <= max_size then Ok ()
-    else Error (strf "the image is %d bytes, longer than 2^48" o.size)
+    else Error (strf "the image is %d bytes, expected at most 2^48" o.size)
   in
   let size = (o.size + 3) / 4 * 4 in
   let* ps = patches ~size 0 [] o.relocations in

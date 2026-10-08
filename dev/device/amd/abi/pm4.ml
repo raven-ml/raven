@@ -249,7 +249,7 @@ let max_predicated = 0x3fff
 
 let pred_exec ~xcc_mask p =
   if xcc_mask < 0 || xcc_mask > max_xcc_mask then
-    invalid_argf "Pm4.pred_exec: xcc_mask 0x%x, expected 0 to 0xff" xcc_mask;
+    invalid_argf "Pm4.pred_exec: xcc_mask %d, expected 0 to 255" xcc_mask;
   let n = size p in
   if n > max_predicated then
     invalid_argf "Pm4.pred_exec: %d words, expected at most 16383" n;
@@ -306,8 +306,7 @@ let dispatch (g : Gpu.t) (k : Code_object.kernel) ~program ~scratch ~args
     match Defs.dispatch (Defs.gc g.gc) with
     | Some d -> d
     | None ->
-        invalid_argf "Pm4.dispatch: %s has no register of a dispatch"
-          (gc_name g)
+        invalid_argf "Pm4.dispatch: %s has no dispatch registers" (gc_name g)
   in
   let limits =
     match waves_per_array with

@@ -65,8 +65,9 @@ let descriptor (g : Gpu.t) ~base n =
   let share = n / g.xccs in
   if n < 0 || share > max_records then
     invalid_argf
-      "Scratch.descriptor: %d bytes, %d a die, expected 0 to 4294967295 a die" n
-      share;
+      "Scratch.descriptor: %d bytes is %d per die, expected 0 to 4294967295 \
+       per die"
+      n share;
   let no_layout () =
     invalid_argf "Scratch.descriptor: %s has no buffer descriptor layout"
       (gc_name g)
