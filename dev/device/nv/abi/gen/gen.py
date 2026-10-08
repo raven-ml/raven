@@ -318,14 +318,16 @@ def fetch(url, cache, pins, pin):
     path = cache / hashlib.sha256(url.encode()).hexdigest()[:16]
     if not path.exists():
         cache.mkdir(parents=True, exist_ok=True)
-        with urllib.request.urlopen(url) as r:
+        with urllib.request.urlopen(url, timeout=120) as r:
             path.write_bytes(r.read())
     data = path.read_bytes()
     digest = hashlib.sha256(data).hexdigest()
-    if pin and url not in pins:
+    if url not in pins:
+        if not pin:
+            sys.exit(f"{url} is not pinned; run with --pin to record {digest}")
         pins[url] = digest
-    if pins.get(url) != digest:
-        sys.exit(f"{url}: SHA-256 {digest}, pinned {pins.get(url)}")
+    if pins[url] != digest:
+        sys.exit(f"{url}: SHA-256 {digest}, pinned {pins[url]}")
     return data.decode()
 
 
