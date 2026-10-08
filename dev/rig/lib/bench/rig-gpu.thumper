@@ -32,10 +32,18 @@ copy/nv/to-device-off-page-256M	alloc_words	exact	1271
 copy/nv/to-device-off-page-256M	wall_time	batch=1	n=20	1.401e-02	1.398e-02 1.399e-02 1.399e-02 1.400e-02 1.400e-02 1.400e-02 1.400e-02 1.400e-02 1.401e-02 1.401e-02 1.401e-02 1.402e-02 1.402e-02 1.403e-02 1.403e-02 1.403e-02 1.405e-02 1.406e-02 1.411e-02 1.428e-02
 file/cuda/from-device-256M	alloc_words	exact	1614
 file/cuda/from-device-256M	wall_time	batch=1	n=20	5.781e-02	5.756e-02 5.758e-02 5.766e-02 5.768e-02 5.769e-02 5.772e-02 5.773e-02 5.774e-02 5.776e-02 5.776e-02 5.787e-02 5.795e-02 5.797e-02 5.800e-02 5.801e-02 5.804e-02 5.807e-02 5.809e-02 5.836e-02 5.914e-02
+file/cuda/load-256M	alloc_words	exact	1824
+file/cuda/load-256M	wall_time	batch=1	n=20	2.846e-02	2.806e-02 2.811e-02 2.821e-02 2.822e-02 2.823e-02 2.826e-02 2.828e-02 2.835e-02 2.836e-02 2.846e-02 2.847e-02 2.854e-02 2.855e-02 2.857e-02 2.871e-02 2.875e-02 2.877e-02 2.891e-02 2.947e-02 2.977e-02
+file/cuda/load-cold-256M	alloc_words	exact	1824
+file/cuda/load-cold-256M	wall_time	batch=1	n=20	9.498e-02	9.110e-02 9.160e-02 9.183e-02 9.246e-02 9.269e-02 9.355e-02 9.410e-02 9.420e-02 9.420e-02 9.470e-02 9.525e-02 9.884e-02 1.004e-01 1.004e-01 1.007e-01 1.019e-01 1.030e-01 1.044e-01 1.050e-01 1.057e-01
 file/cuda/to-device-256M	alloc_words	exact	1508
 file/cuda/to-device-256M	wall_time	batch=1	n=20	4.304e-02	4.281e-02 4.285e-02 4.287e-02 4.288e-02 4.293e-02 4.296e-02 4.298e-02 4.299e-02 4.301e-02 4.303e-02 4.304e-02 4.305e-02 4.313e-02 4.331e-02 4.343e-02 4.346e-02 4.351e-02 4.381e-02 4.393e-02 4.741e-02
 file/nv/from-device-256M	alloc_words	exact	1685
 file/nv/from-device-256M	wall_time	batch=1	n=20	5.496e-02	5.480e-02 5.483e-02 5.485e-02 5.486e-02 5.487e-02 5.487e-02 5.491e-02 5.491e-02 5.493e-02 5.495e-02 5.497e-02 5.504e-02 5.504e-02 5.506e-02 5.506e-02 5.514e-02 5.516e-02 5.522e-02 5.537e-02 5.616e-02
+file/nv/load-256M	alloc_words	exact	1824
+file/nv/load-256M	wall_time	batch=1	n=20	3.327e-02	3.206e-02 3.225e-02 3.255e-02 3.263e-02 3.278e-02 3.282e-02 3.292e-02 3.304e-02 3.308e-02 3.323e-02 3.331e-02 3.360e-02 3.370e-02 3.375e-02 3.402e-02 3.404e-02 3.406e-02 3.430e-02 3.449e-02 3.490e-02
+file/nv/load-cold-256M	alloc_words	exact	1824
+file/nv/load-cold-256M	wall_time	batch=1	n=20	9.569e-02	9.011e-02 9.044e-02 9.247e-02 9.275e-02 9.398e-02 9.402e-02 9.428e-02 9.490e-02 9.528e-02 9.552e-02 9.586e-02 9.605e-02 9.709e-02 9.737e-02 9.885e-02 9.934e-02 9.968e-02 9.989e-02 1.015e-01 1.046e-01
 file/nv/to-device-256M	alloc_words	exact	1508
 file/nv/to-device-256M	wall_time	batch=1	n=20	4.288e-02	4.247e-02 4.252e-02 4.257e-02 4.279e-02 4.279e-02 4.280e-02 4.281e-02 4.283e-02 4.286e-02 4.287e-02 4.289e-02 4.299e-02 4.307e-02 4.308e-02 4.310e-02 4.310e-02 4.321e-02 4.325e-02 4.338e-02 4.342e-02
 floor/cuda/copy-from-device-256M	alloc_words	exact	0
@@ -54,6 +62,10 @@ floor/cuda/release	alloc_words	exact	0
 floor/cuda/release	wall_time	batch=2048	n=20	3.626e-06	3.619e-06 3.621e-06 3.621e-06 3.621e-06 3.623e-06 3.623e-06 3.625e-06 3.625e-06 3.625e-06 3.625e-06 3.626e-06 3.626e-06 3.626e-06 3.626e-06 3.627e-06 3.627e-06 3.629e-06 3.629e-06 3.630e-06 3.634e-06
 floor/cuda/run	alloc_words	exact	0
 floor/cuda/run	wall_time	batch=4096	n=20	1.721e-06	1.720e-06 1.720e-06 1.720e-06 1.720e-06 1.720e-06 1.720e-06 1.720e-06 1.720e-06 1.720e-06 1.721e-06 1.721e-06 1.721e-06 1.721e-06 1.721e-06 1.721e-06 1.721e-06 1.721e-06 1.721e-06 1.721e-06 1.723e-06
+floor/host/load-256M	alloc_words	exact	198
+floor/host/load-256M	wall_time	batch=1	n=20	2.737e-02	2.712e-02 2.716e-02 2.718e-02 2.728e-02 2.729e-02 2.730e-02 2.731e-02 2.734e-02 2.735e-02 2.735e-02 2.738e-02 2.738e-02 2.739e-02 2.741e-02 2.743e-02 2.746e-02 2.747e-02 2.750e-02 2.750e-02 2.768e-02
+floor/host/load-cold-256M	alloc_words	exact	198
+floor/host/load-cold-256M	wall_time	batch=1	n=20	8.231e-02	7.367e-02 7.373e-02 7.375e-02 7.381e-02 7.398e-02 7.507e-02 7.578e-02 7.695e-02 7.760e-02 7.967e-02 8.494e-02 8.497e-02 8.501e-02 8.518e-02 8.521e-02 8.601e-02 8.667e-02 8.723e-02 8.790e-02 8.874e-02
 floor/host/memcpy-256M	alloc_words	exact	0
 floor/host/memcpy-256M	wall_time	batch=1	n=20	9.343e-03	9.318e-03 9.327e-03 9.330e-03 9.331e-03 9.336e-03 9.336e-03 9.338e-03 9.340e-03 9.342e-03 9.343e-03 9.343e-03 9.345e-03 9.345e-03 9.346e-03 9.347e-03 9.352e-03 9.352e-03 9.358e-03 9.360e-03 9.481e-03
 floor/nv/copy-from-device-256M	alloc_words	exact	0
@@ -98,6 +110,7 @@ submit/nv/empty	wall_time	batch=2048	n=20	3.493e-06	3.487e-06 3.488e-06 3.488e-0
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed copy/metal/host-to-borrow-256M copy/metal/borrow-to-host-256M under load 9.8 on 10 cores
 # forced: blessed copy/metal/host-to-borrow-256M copy/metal/borrow-to-host-256M under load 5.8 on 10 cores
+# forced: blessed floor/host/load-256M floor/host/load-cold-256M file/metal/load-256M file/metal/load-cold-256M under load 9.3 on 10 cores
 
 copy/metal/borrow-to-host-256M	alloc_words	exact	0
 copy/metal/borrow-to-host-256M	wall_time	batch=1	n=20	6.114e-03	5.779e-03 5.799e-03 5.900e-03 5.906e-03 5.935e-03 5.973e-03 5.980e-03 6.047e-03 6.069e-03 6.106e-03 6.121e-03 6.171e-03 6.191e-03 6.249e-03 6.334e-03 6.386e-03 6.388e-03 6.482e-03 6.533e-03 6.614e-03
@@ -113,8 +126,16 @@ copy/metal/to-device-off-page-256M	alloc_words	exact	0
 copy/metal/to-device-off-page-256M	wall_time	batch=1	n=20	5.777e-03	5.638e-03 5.651e-03 5.659e-03 5.659e-03 5.685e-03 5.687e-03 5.737e-03 5.758e-03 5.766e-03 5.774e-03 5.779e-03 5.783e-03 5.790e-03 5.825e-03 5.856e-03 5.874e-03 5.986e-03 6.004e-03 6.244e-03 6.405e-03
 file/metal/from-device-256M	alloc_words	exact	37
 file/metal/from-device-256M	wall_time	batch=1	n=20	3.453e-02	3.444e-02 3.444e-02 3.445e-02 3.446e-02 3.446e-02 3.447e-02 3.448e-02 3.449e-02 3.450e-02 3.453e-02 3.453e-02 3.454e-02 3.455e-02 3.456e-02 3.459e-02 3.459e-02 3.461e-02 3.468e-02 3.472e-02 3.479e-02
+file/metal/load-256M	alloc_words	exact	199
+file/metal/load-256M	wall_time	batch=1	n=20	3.423e-02	2.787e-02 2.870e-02 2.927e-02 2.931e-02 3.090e-02 3.116e-02 3.143e-02 3.309e-02 3.341e-02 3.364e-02 3.481e-02 3.548e-02 3.615e-02 3.651e-02 3.655e-02 3.660e-02 3.681e-02 3.698e-02 3.740e-02 3.931e-02
+file/metal/load-cold-256M	alloc_words	exact	199
+file/metal/load-cold-256M	wall_time	batch=1	n=20	5.187e-02	4.815e-02 4.861e-02 4.915e-02 4.937e-02 4.955e-02 4.990e-02 5.009e-02 5.043e-02 5.070e-02 5.173e-02 5.202e-02 5.275e-02 5.322e-02 5.358e-02 5.393e-02 5.428e-02 5.430e-02 5.499e-02 5.674e-02 5.884e-02
 file/metal/to-device-256M	alloc_words	exact	37
 file/metal/to-device-256M	wall_time	batch=1	n=20	3.879e-02	3.654e-02 3.670e-02 3.716e-02 3.716e-02 3.733e-02 3.750e-02 3.840e-02 3.870e-02 3.877e-02 3.878e-02 3.881e-02 3.884e-02 3.885e-02 3.895e-02 3.907e-02 3.909e-02 3.921e-02 3.930e-02 3.937e-02 4.008e-02
+floor/host/load-256M	alloc_words	exact	199
+floor/host/load-256M	wall_time	batch=1	n=20	3.277e-02	2.646e-02 2.695e-02 2.846e-02 2.890e-02 2.948e-02 3.096e-02 3.124e-02 3.190e-02 3.200e-02 3.237e-02 3.317e-02 3.379e-02 3.461e-02 3.494e-02 3.502e-02 3.540e-02 3.541e-02 3.606e-02 3.668e-02 3.733e-02
+floor/host/load-cold-256M	alloc_words	exact	199
+floor/host/load-cold-256M	wall_time	batch=1	n=20	5.396e-02	4.875e-02 5.078e-02 5.164e-02 5.183e-02 5.287e-02 5.313e-02 5.347e-02 5.377e-02 5.383e-02 5.389e-02 5.402e-02 5.415e-02 5.481e-02 5.487e-02 5.506e-02 5.518e-02 5.561e-02 5.591e-02 7.208e-02 7.460e-02
 floor/host/memcpy-256M	alloc_words	exact	0
 floor/host/memcpy-256M	wall_time	batch=1	n=20	5.593e-03	5.546e-03 5.550e-03 5.553e-03 5.560e-03 5.560e-03 5.574e-03 5.580e-03 5.586e-03 5.590e-03 5.591e-03 5.594e-03 5.607e-03 5.617e-03 5.638e-03 5.650e-03 5.656e-03 5.672e-03 5.679e-03 5.710e-03 5.815e-03
 floor/metal/cost	alloc_words	exact	0
@@ -154,6 +175,10 @@ copy/amd/to-device-off-page-256M	alloc_words	exact	1271
 copy/amd/to-device-off-page-256M	wall_time	batch=1	n=20	2.440e-02	2.433e-02 2.434e-02 2.435e-02 2.436e-02 2.436e-02 2.437e-02 2.438e-02 2.438e-02 2.439e-02 2.439e-02 2.440e-02 2.441e-02 2.441e-02 2.442e-02 2.443e-02 2.453e-02 2.455e-02 2.459e-02 2.460e-02 2.464e-02
 file/amd/from-device-256M	alloc_words	exact	123
 file/amd/from-device-256M	wall_time	batch=1	n=20	1.917e-02	1.914e-02 1.914e-02 1.914e-02 1.915e-02 1.915e-02 1.915e-02 1.916e-02 1.916e-02 1.916e-02 1.917e-02 1.918e-02 1.918e-02 1.918e-02 1.918e-02 1.921e-02 1.921e-02 1.921e-02 1.921e-02 1.922e-02 1.924e-02
+file/amd/load-256M	alloc_words	exact	1824
+file/amd/load-256M	wall_time	batch=1	n=20	3.371e-02	3.364e-02 3.366e-02 3.367e-02 3.367e-02 3.368e-02 3.368e-02 3.368e-02 3.370e-02 3.371e-02 3.371e-02 3.372e-02 3.373e-02 3.379e-02 3.380e-02 3.381e-02 3.383e-02 3.384e-02 3.385e-02 3.386e-02 3.399e-02
+file/amd/load-cold-256M	alloc_words	exact	1824
+file/amd/load-cold-256M	wall_time	batch=1	n=20	1.005e-01	9.925e-02 9.961e-02 9.994e-02 1.001e-01 1.003e-01 1.003e-01 1.004e-01 1.004e-01 1.004e-01 1.005e-01 1.005e-01 1.005e-01 1.006e-01 1.007e-01 1.008e-01 1.010e-01 1.014e-01 1.016e-01 1.018e-01 1.033e-01
 file/amd/to-device-256M	alloc_words	exact	1565
 file/amd/to-device-256M	wall_time	batch=1	n=20	3.003e-02	3.001e-02 3.001e-02 3.001e-02 3.001e-02 3.001e-02 3.003e-02 3.003e-02 3.003e-02 3.003e-02 3.003e-02 3.004e-02 3.004e-02 3.004e-02 3.004e-02 3.004e-02 3.005e-02 3.005e-02 3.007e-02 3.007e-02 3.020e-02
 floor/amd/copy-from-device-256M	alloc_words	exact	0
@@ -170,6 +195,10 @@ floor/amd/release	alloc_words	exact	0
 floor/amd/release	wall_time	batch=512	n=20	1.458e-05	1.433e-05 1.436e-05 1.440e-05 1.440e-05 1.441e-05 1.442e-05 1.442e-05 1.444e-05 1.453e-05 1.453e-05 1.462e-05 1.469e-05 1.474e-05 1.480e-05 1.481e-05 1.483e-05 1.483e-05 1.484e-05 1.485e-05 1.489e-05
 floor/amd/run	alloc_words	exact	0
 floor/amd/run	wall_time	batch=1024	n=20	7.634e-06	7.487e-06 7.493e-06 7.533e-06 7.576e-06 7.584e-06 7.608e-06 7.611e-06 7.618e-06 7.620e-06 7.632e-06 7.635e-06 7.638e-06 7.646e-06 7.654e-06 7.658e-06 7.682e-06 7.691e-06 7.692e-06 7.757e-06 7.848e-06
+floor/host/load-256M	alloc_words	exact	198
+floor/host/load-256M	wall_time	batch=1	n=20	2.841e-02	2.832e-02 2.833e-02 2.833e-02 2.833e-02 2.833e-02 2.834e-02 2.834e-02 2.834e-02 2.835e-02 2.836e-02 2.846e-02 2.846e-02 2.848e-02 2.848e-02 2.849e-02 2.849e-02 2.849e-02 2.851e-02 2.853e-02 2.858e-02
+floor/host/load-cold-256M	alloc_words	exact	198
+floor/host/load-cold-256M	wall_time	batch=1	n=20	9.555e-02	9.292e-02 9.313e-02 9.330e-02 9.349e-02 9.390e-02 9.412e-02 9.443e-02 9.514e-02 9.533e-02 9.544e-02 9.566e-02 9.581e-02 9.622e-02 9.640e-02 9.640e-02 9.696e-02 9.731e-02 9.757e-02 9.808e-02 9.822e-02
 floor/host/memcpy-256M	alloc_words	exact	0
 floor/host/memcpy-256M	wall_time	batch=1	n=20	1.578e-02	1.577e-02 1.577e-02 1.577e-02 1.578e-02 1.578e-02 1.578e-02 1.578e-02 1.578e-02 1.578e-02 1.578e-02 1.578e-02 1.579e-02 1.579e-02 1.579e-02 1.579e-02 1.579e-02 1.579e-02 1.580e-02 1.581e-02 1.610e-02
 replay/amd/kernel-pipelined-100	alloc_words	exact	0

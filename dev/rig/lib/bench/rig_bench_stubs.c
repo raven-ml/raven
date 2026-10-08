@@ -47,6 +47,7 @@ static void turn_unlock(turn *t) { pthread_mutex_unlock(t); }
 #if !defined(_WIN32)
 #include <fcntl.h>
 #include <sys/file.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
@@ -234,5 +235,37 @@ value rig_bench_lock(value v_path, value v_holder) {
   }
   held = fd;
   return Val_int(0);
+#endif
+}
+
+/* Drops the file [v_path]'s pages from the page cache, so that its next
+   read comes from its medium: writes back its dirty pages, then asks the
+   kernel to drop them (Linux's posix_fadvise DONTNEED; macOS's msync
+   MS_INVALIDATE over a mapping of the file). Answers [0], or the errno of a
+   failing call. Holds the runtime: it serves bench setup only. */
+value rig_bench_evict(value v_path) {
+#if defined(_WIN32)
+  (void)v_path;
+  return Val_int(ENOSYS);
+#else
+  int fd = open(String_val(v_path), O_RDONLY | O_CLOEXEC);
+  if (fd < 0) return Val_int(errno);
+  int e = 0;
+  struct stat st;
+  if (fsync(fd) != 0 || fstat(fd, &st) != 0) e = errno;
+#if defined(__APPLE__)
+  if (e == 0 && st.st_size > 0) {
+    void *p = mmap(NULL, (size_t)st.st_size, PROT_READ, MAP_SHARED, fd, 0);
+    if (p == MAP_FAILED) e = errno;
+    else {
+      if (msync(p, (size_t)st.st_size, MS_INVALIDATE) != 0) e = errno;
+      munmap(p, (size_t)st.st_size);
+    }
+  }
+#else
+  if (e == 0) e = posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED);
+#endif
+  close(fd);
+  return Val_int(e);
 #endif
 }

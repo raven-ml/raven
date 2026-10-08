@@ -33,6 +33,8 @@ external floor_at : nativeint -> int -> unit = "rig_bench_floor_at"
 external floor_copy : nativeint -> int -> nativeint -> nativeint -> int -> unit
   = "rig_bench_floor_copy"
 
+external evict : string -> int = "rig_bench_evict"
+
 let drain = 64
 let slots = 24
 let runs = 100
@@ -80,6 +82,24 @@ let data name n =
 
 let ok = function Ok v -> v | Error why -> failwith why
 
+(* Drops the file [p]'s pages from the page cache: its next read comes from the
+   disk. *)
+let evicted p =
+  let e = evict p in
+  if e <> 0 then failwith (strf "evicting %s: errno %d" p e)
+
+(* Opens the file [p] and copies it into [dst], as a program loads its weights:
+   each call opens the file anew, so a device maps its pages anew. It first
+   collects the last call's opening and drains the disk and [dst]'s device,
+   which releases its mapping; with [cold], it then drops the file's pages from
+   the page cache. *)
+let load ~cold (p, dst) =
+  Gc.full_major ();
+  ignore (B.create Rig_disk.device 0);
+  ignore (B.create (B.device dst) 0);
+  if cold then evicted p;
+  B.copy ~src:(ok (Rig_disk.of_file p)) ~dst
+
 (* Copies: 256 MiB between a GPU's memory and the host's, both ways. Host memory
    that starts on a page is memory the GPU maps; memory 16 bytes past a page,
    such as a C library's large allocation, the GPU maps none of, and the bytes
@@ -103,8 +123,13 @@ let host_rows =
     let b () = B.bigarray Bigarray.char (written copy_bytes) in
     (b (), b ())
   in
+  let file () = (data "file" file_bytes, written file_bytes) in
   Thumper.group "floor/host"
-    [ row "memcpy-256M" chars (fun (a, b) -> Bigarray.Array1.blit a b) ]
+    [
+      row "memcpy-256M" chars (fun (a, b) -> Bigarray.Array1.blit a b);
+      row "load-256M" file (load ~cold:false);
+      row "load-cold-256M" file (load ~cold:true);
+    ]
 
 type gpu_copy = { gs : Sub.t; gargs : B.t; gout : B.t }
 
@@ -269,6 +294,10 @@ let gpu_rows (type a) (module D : C.Driver with type t = a) ?(sleeps = false)
     let g, _ = opened () in
     (ok (Rig_disk.of_file (data "file" file_bytes)), B.create g file_bytes)
   in
+  let loading () =
+    let g, _ = opened () in
+    (data "file" file_bytes, B.create g file_bytes)
+  in
   let from_device () =
     let g, _ = opened () in
     let p = path (strf "out-%s" v) in
@@ -319,6 +348,8 @@ let gpu_rows (type a) (module D : C.Driver with type t = a) ?(sleeps = false)
       [
         row "to-device-256M" to_device (fun (src, dst) -> B.copy ~src ~dst);
         row "from-device-256M" from_device (fun (src, dst) -> B.copy ~src ~dst);
+        row "load-256M" loading (load ~cold:false);
+        row "load-cold-256M" loading (load ~cold:true);
       ];
     Thumper.group (strf "copy/%s" v)
       [
