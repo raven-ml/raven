@@ -174,49 +174,67 @@ let rail_rows =
        sizes)
 
 (* Copies: [n] bytes between this process's memory and memory of another
-   machine's host, each way, the job's agent agent.exe in another process over
+   machine's host, each way, the job's agent [rig agent] in other processes over
    loopback. Their floors are the rails': the same bytes one way over a
    socket. *)
 
-(* agent.exe, built beside this bench, serving at a port it chooses: its process
-   and port. *)
+(* [rig agent], the binary built in dev/rig/bin, serving at a port it chooses:
+   its process, its standard input, which ends it once closed, and its port. *)
 let agent () =
   let exe =
-    Filename.concat (Filename.dirname Sys.executable_name) "agent.exe"
+    Filename.concat (Filename.dirname Sys.executable_name) "../../bin/main.exe"
   in
   let key_r, key_w = Unix.pipe ~cloexec:true () in
-  let port_r, port_w = Unix.pipe ~cloexec:true () in
+  let out_r, out_w = Unix.pipe ~cloexec:true () in
   let pid =
-    Unix.create_process exe [| exe; "127.0.0.1"; "0" |] key_r port_w Unix.stderr
+    Unix.create_process exe
+      [| exe; "agent"; "127.0.0.1:0" |]
+      key_r out_w Unix.stderr
   in
   Unix.close key_r;
-  Unix.close port_w;
-  ignore (Unix.write_substring key_w key 0 (String.length key));
-  Unix.close key_w;
-  let ic = Unix.in_channel_of_descr port_r in
-  let port = In_channel.input_line ic in
+  Unix.close out_w;
+  let line = key ^ "\n" in
+  ignore (Unix.write_substring key_w line 0 (String.length line));
+  let ic = Unix.in_channel_of_descr out_r in
+  let rec port () =
+    match In_channel.input_line ic with
+    | None -> None
+    | Some l when String.starts_with ~prefix:"listening " l ->
+        let i = String.rindex l ':' in
+        int_of_string_opt (String.sub l (i + 1) (String.length l - i - 1))
+    | Some _ -> port ()
+  in
+  let port = port () in
   close_in ic;
-  match Option.bind port int_of_string_opt with
-  | Some port -> (pid, port)
+  match port with
+  | Some port -> (pid, key_w, port)
   | None ->
+      Unix.close key_w;
       reap pid;
-      failwith "agent.exe: no port"
+      failwith "rig agent: no port"
 
-type copy = { job : Rig_remote.t; pid : int; near : B.t; far : B.t }
+type copy = {
+  job : Rig_remote.t;
+  pid : int;
+  input : Unix.file_descr;
+  near : B.t;
+  far : B.t;
+}
 
 let copy n () =
-  let pid, port = agent () in
+  let pid, input, port = agent () in
   match Rig_remote.connect ~key [ ("127.0.0.1", port) ] with
   | Error why ->
-      Unix.kill pid Sys.sigkill;
+      Unix.close input;
       reap pid;
       failwith why
   | Ok job ->
       let h = List.hd (Rig_remote.hosts job) in
-      { job; pid; near = B.create Rig.host n; far = B.create h n }
+      { job; pid; input; near = B.create Rig.host n; far = B.create h n }
 
 let finished c =
   Rig_remote.close c.job;
+  Unix.close c.input;
   reap c.pid
 
 let copy_rows =
@@ -234,8 +252,4 @@ let copy_rows =
          ])
        sizes)
 
-(* Windows has no fork for the request's agent. *)
-let () =
-  exit
-  @@ Thumper.run "rig_remote"
-       ((if Sys.win32 then [] else [ request_rows ]) @ [ copy_rows; rail_rows ])
+let () = exit @@ Thumper.run "rig_remote" [ request_rows; copy_rows; rail_rows ]

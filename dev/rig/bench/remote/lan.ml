@@ -7,7 +7,7 @@
    over loopback, over a real network. It lives outside the bench suite because
    a suite runs on one machine, and this needs two. lan.sh runs it.
 
-   On one machine, agent.exe serves the job at PORT and [lan.exe floors PORT +
+   On one machine, rig agent serves the job at PORT and [lan.exe floors PORT +
    1] echoes the floors' bytes. On the other, [lan.exe controller HOST PORT]
    connects to the agent at HOST and PORT and times an allocation of 4 KiB of
    the agent's host, a round trip, and copies of 4 KiB and 1 MiB between this
