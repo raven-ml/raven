@@ -416,7 +416,10 @@ module Buffer : sig
       only [src] is host-addressable, [src]'s otherwise, directly between memory
       it addresses or maps, and through the host's {e staging memory} otherwise:
       two slots of 64 MiB of host memory, made at the first copy that needs them
-      and kept for the life of the process ({!domains}). A device that runs no
+      and kept for the life of the process ({!domains}). A device of this
+      machine that maps no host memory ({!Driver.maps_host}) stages through two
+      slots of its own [Pinned] memory instead, made at its first copy that
+      needs them and kept until it is lost. A device that runs no
       copy has memory the host addresses, which the host copies; a borrow on it
       of another device's memory copies by that device. An {!Io} device's
       memory, of any machine, is read and written by its {!Io.read} and
@@ -438,11 +441,14 @@ module Buffer : sig
       and the device that would copy runs no copy, or the other is memory of
       this machine that this process's host does not address, of a third
       machine, or of its machine that [src]'s device does not reach
-      ({!reaches}); {!Lost} if a device that runs the copy is lost or is lost by
-      it, and for [src] and [dst] as {!Lost} states; {!Out_of_memory} if a host
-      cannot allocate its staging memory, or a device's driver refuses to map it
-      after the rounds of {{!reclaim}reclamation}; and what an {!Io} device's
-      read or write raises. *)
+      ({!reaches}), or the copy would stage through the [Pinned] memory of a
+      device that maps no host memory and the other side's device maps neither
+      it nor host memory; {!Lost} if a device that runs the copy is lost or is
+      lost by it, and for [src] and [dst] as {!Lost} states; {!Out_of_memory} if
+      a host or a device cannot allocate its staging memory, or a device's
+      driver refuses to map the host's after the rounds of
+      {{!reclaim}reclamation}; and what an {!Io} device's read or write raises.
+      *)
 
   val device : t -> device
   (** [device b] is the device [b] is on: [d] for a buffer that {!create},

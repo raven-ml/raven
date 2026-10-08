@@ -323,6 +323,23 @@ let test_maps_no_host () =
   equal ~msg:"borrow" bool true (Option.is_none (B.borrow d h));
   equal ~msg:"maps" (list int) [] (P.host_maps p)
 
+(* A device that maps no host memory copies host bytes into its own memory and
+   back, its own [Pinned] memory standing in for the host's staging, and maps
+   no host memory for it. *)
+let test_staged_no_host () =
+  let d, p =
+    P.open_ ~maps_host:false ~host_visible:false "buffer:staged-no-host"
+  in
+  let m = B.create d 64 in
+  let into = B.create Rig.host 64 and back = B.create Rig.host 64 in
+  Bigarray.Array1.fill (B.bigarray Bigarray.char into) 's';
+  B.copy ~src:into ~dst:m;
+  B.copy ~src:m ~dst:back;
+  equal ~msg:"the bytes back" string (String.make 64 's')
+    (let ba = B.bigarray Bigarray.char back in
+     String.init 64 (Bigarray.Array1.get ba));
+  equal ~msg:"host maps" (list int) [] (P.host_maps p)
+
 (* Empty host memory that starts on a page borrows on a driver's device with no
    mapping: the borrow names no memory. *)
 let test_empty_borrow () =
@@ -347,6 +364,20 @@ let test_copyless_borrow () =
   equal string (String.make 64 'c')
     (let ba = B.bigarray Bigarray.char back in
      String.init 64 (Bigarray.Array1.get ba))
+
+(* A borrow, on a device that maps no host memory, of a peer's memory the host
+   does not address copies in and out, staged through the borrowing device's
+   own memory. *)
+let test_mapless_borrow () =
+  let owner, _ = P.open_ ~host_visible:false "buffer:mapless-owner" in
+  let mapless, _ = P.open_ ~maps_host:false "buffer:mapless" in
+  let m = B.create owner 1 in
+  let on_mapless = require_some (B.borrow mapless m) in
+  let into = B.create Rig.host 1 and back = B.create Rig.host 1 in
+  Bigarray.Array1.fill (B.bigarray Bigarray.char into) 'c';
+  B.copy ~src:into ~dst:on_mapless;
+  B.copy ~src:on_mapless ~dst:back;
+  equal char 'c' (Bigarray.Array1.get (B.bigarray Bigarray.char back) 0)
 
 (* A borrow of a lost device's buffer raises its loss, empty or not. *)
 let test_borrow_lost () =
@@ -929,6 +960,14 @@ let tests =
         test "empty host memory borrows on a device with no mapping"
           test_empty_borrow;
         test "a device that maps no host memory borrows none" test_maps_no_host;
+        test
+          "a device that maps no host memory copies to and from the host \
+           through its own memory"
+          test_staged_no_host;
+        test
+          "a borrow of a peer's hidden memory on a device that maps no host \
+           memory copies in and out"
+          test_mapless_borrow;
         test "a borrow on its own device is the buffer" test_borrow_own;
         test "a mapping is released once its memory died and its work ran"
           test_mapping_released;
