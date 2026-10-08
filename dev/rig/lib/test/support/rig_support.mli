@@ -83,13 +83,30 @@ module Polled : sig
   (** [fault_word d why] makes [d]'s reads of its word ([signaled]) raise
       [Fault why] from now on, as a transport's that lost its link. *)
 
+  val fail_at : t -> int -> [ `Fault of string | `Refuse of int ] -> unit
+  (** [fail_at d n how] fails [d]'s fallible calls from the [n]-th from now on,
+      counting from [1]: its facts, its counted calls and its hand-over. With
+      [`Fault why] that call and every later one raises [Fault why], and a
+      hand-over among them fails with [why] (at most 63 bytes of it), as on a
+      device that faulted. With [`Refuse k] that call and the [k - 1] after it
+      refuse where they can, as on a device short of memory: [alloc], [map_peer]
+      and [map_host] answer [None], [image] [Error] and [entry] [None]; other
+      calls go on. [`Refuse 0] ends an earlier refusal. *)
+
+  val steps : t -> int
+  (** [steps d] is the number of fallible calls [d] received. *)
+
+  val outstanding : t -> int list
+  (** [outstanding d] is the bytes of each region [d] allocated or mapped and
+      has not freed. *)
+
   val set_word : t -> int -> unit
   (** [set_word d v] writes [v] into [d]'s word. *)
 
   val log : t -> string list
   (** [log d] is [d]'s driver calls, oldest first: ["alloc"], ["free"],
-      ["map_host"], ["unmap"] (a mapping's free), ["sleep"], ["stop"],
-      ["image"], ["unload"]. *)
+      ["map_host"], ["map_peer"], ["unmap"] (a mapping's free), ["sleep"],
+      ["stop"], ["image"], ["entry"], ["unload"]. *)
 
   val frees : t -> (int * int) list
   (** [frees d] is the address of each region [d] freed, oldest first, with
@@ -155,6 +172,10 @@ val poke : nativeint
 (** [poke] is a fill storing the second 64-bit word of its argument at the
     address its first holds. *)
 
+val countdown : nativeint
+(** [countdown] is a fill taking one from the 64-bit word its argument points
+    at, which fails if that makes the word zero. *)
+
 val load : int -> int
 (** [load a] reads the 64-bit word at the host address [a]. *)
 
@@ -181,6 +202,14 @@ val waiting : unit -> int
 (** [waiting ()] is how many threads wait inside a lock of rig's core for
     another to change what it guards, such as a copy waiting for a staging slot.
 *)
+
+val heap_bytes : unit -> int option
+(** [heap_bytes ()] is the bytes the C heap holds allocated, as its allocator
+    counts them, or [None] where it does not say. *)
+
+val descriptors : unit -> int option
+(** [descriptors ()] is the number of file descriptors the process holds open,
+    or [None] on Windows. *)
 
 val shares : ('a, 'b, 'c) Bigarray.Array1.t -> int
 (** [shares ba] is how many holders share [ba]'s storage, as the runtime counts

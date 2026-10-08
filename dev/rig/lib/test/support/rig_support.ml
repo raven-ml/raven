@@ -9,6 +9,11 @@ external polled_run : nativeint -> int = "rig_test_polled_run"
 external polled_queued : nativeint -> int = "rig_test_polled_queued"
 external polled_submits : nativeint -> int = "rig_test_polled_submits"
 external polled_blocked : nativeint -> int = "rig_test_polled_blocked"
+external polled_step : nativeint -> int = "rig_test_polled_step" [@@noalloc]
+external polled_steps : nativeint -> int = "rig_test_polled_steps"
+
+external polled_fail_at : nativeint -> int -> int -> string -> unit
+  = "rig_test_polled_fail_at"
 
 external polled_last_waits : nativeint -> int array
   = "rig_test_polled_last_waits"
@@ -27,6 +32,7 @@ external host_alloc : int -> int = "rig_test_alloc"
 external host_free : int -> unit = "rig_test_free"
 external bump : unit -> nativeint = "rig_test_bump"
 external poke : unit -> nativeint = "rig_test_poke"
+external countdown : unit -> nativeint = "rig_test_countdown"
 external interrupt : unit -> unit = "rig_test_interrupt"
 
 external shares : ('a, 'b, 'c) Bigarray.Array1.t -> int = "rig_test_shares"
@@ -34,6 +40,7 @@ external shares : ('a, 'b, 'c) Bigarray.Array1.t -> int = "rig_test_shares"
 
 external host_kept : unit -> int = "rig_test_host_kept"
 external host_held : unit -> int = "rig_test_host_held"
+external heap_bytes : unit -> int = "rig_test_heap_bytes"
 external waiting : unit -> int = "rig_test_locks_waiting"
 external locks_take : unit -> unit = "rig_test_locks_take"
 external locks_give : unit -> unit = "rig_test_locks_give" [@@noalloc]
@@ -50,6 +57,7 @@ let bump = bump ()
 let rig_word = rig_word ()
 let rig_object = rig_object ()
 let poke = poke ()
+let countdown = countdown ()
 
 module Driver = struct
   type kind = [ `Device | `Pinned | `Mapped ]
@@ -75,6 +83,8 @@ module Driver = struct
     mutable allocs : (kind * int * bool) list;
     mutable maps : int list;
     mutable held : (kind * int) list;
+    mutable mapped : int list;
+    mutable failure : string;
     mutable fault : string option;
     mutable word_fault : string option;
     mutable interrupt_next : bool;
@@ -85,7 +95,7 @@ module Driver = struct
 
   (* A region the driver allocated has a kind; a mapping has none. *)
   type region = { at : int; kind : kind option; bytes : int; visible : bool }
-  type image = region
+  type image = { code : region; owner : t }
   type capability = unit
 
   exception Fault of string
@@ -93,30 +103,43 @@ module Driver = struct
   let note d call = Mutex.protect d.lock (fun () -> d.calls <- call :: d.calls)
   let log d = Mutex.protect d.lock (fun () -> List.rev d.calls)
   let key : t Type.Id.t = Type.Id.make ()
-  let arch _ = "polled"
 
-  let budget d =
+  (* Counts a fallible call: the call [fail_at] fails raises, and the one it
+     refuses answers [true]. [d]'s lock is not held. *)
+  let countdown d =
+    match polled_step d.c with
+    | 2 -> raise (Fault (Mutex.protect d.lock (fun () -> d.failure)))
+    | s -> s = 1
+
+  (* A counted call or a fact: a faulted device's raises its fault. *)
+  let step d =
     match Mutex.protect d.lock (fun () -> d.fault) with
     | Some why -> raise (Fault why)
-    | None -> d.budget
+    | None -> countdown d
 
-  let queues d = if d.copies then [ "COMPUTE:0"; "COPY:0" ] else [ "COMPUTE:0" ]
+  (* A fact goes on whether or not it refuses. *)
+  let fact d v =
+    ignore (step d : bool);
+    v
 
-  (* A counted call of a faulted device raises its fault. *)
+  let arch d = fact d "polled"
+  let budget d = fact d d.budget
+
+  let queues d =
+    fact d (if d.copies then [ "COMPUTE:0"; "COPY:0" ] else [ "COMPUTE:0" ])
+
   let counted d call =
     note d call;
-    match Mutex.protect d.lock (fun () -> d.fault) with
-    | Some why -> raise (Fault why)
-    | None -> ()
+    step d
 
   let holding d kind =
     List.fold_left (fun n (k, b) -> if k = kind then n + b else n) 0 d.held
 
   let alloc d kind n =
-    counted d "alloc";
+    let refused = counted d "alloc" in
     let fits =
       Mutex.protect d.lock (fun () ->
-          let fits = holding d kind + n <= d.limits kind in
+          let fits = (not refused) && holding d kind + n <= d.limits kind in
           d.allocs <- (kind, n, fits) :: d.allocs;
           if fits then d.held <- (kind, n) :: d.held;
           fits)
@@ -139,34 +162,43 @@ module Driver = struct
         d.frees <- (r.at, w) :: d.frees;
         match r.kind with
         | Some k -> d.held <- remove (k, r.bytes) d.held
-        | None -> ());
+        | None -> d.mapped <- remove r.bytes d.mapped);
     if r.kind <> None then host_free r.at
 
   let address r = Some r.at
   let handle r = Nativeint.of_int r.at
   let host r = if r.visible then Some r.at else None
   let peer d _ = d.peers
-  let maps_host d = d.maps_host
+  let maps_host d = fact d d.maps_host
+
+  let mapping d m =
+    Mutex.protect d.lock (fun () -> d.mapped <- m.bytes :: d.mapped);
+    Some m
 
   let map_peer d _ r =
-    counted d "map_peer";
-    if d.peers then Some { r with kind = None } else None
+    if counted d "map_peer" || not d.peers then None
+    else mapping d { r with kind = None }
 
   let map_host d p n =
-    counted d "map_host";
-    Mutex.protect d.lock (fun () -> d.maps <- n :: d.maps);
-    Some { at = p; kind = None; bytes = n; visible = true }
+    if counted d "map_host" then None
+    else begin
+      Mutex.protect d.lock (fun () -> d.maps <- n :: d.maps);
+      mapping d { at = p; kind = None; bytes = n; visible = true }
+    end
 
   let image d b =
-    counted d "image";
-    match String.split_on_char ':' b with
-    | [ "code"; n ] ->
-        let n = int_of_string n in
-        Ok (`Place (n, fun r -> (r, String.make n 'c')))
-    | _ -> Error "not a polled binary"
+    if counted d "image" then Error "refused"
+    else
+      match String.split_on_char ':' b with
+      | [ "code"; n ] ->
+          let n = int_of_string n in
+          Ok (`Place (n, fun r -> ({ code = r; owner = d }, String.make n 'c')))
+      | _ -> Error "not a polled binary"
 
-  let entry r f = if f = "main" then Some r.at else None
-  let unload d _ = note d "unload"
+  let entry i f =
+    if counted i.owner "entry" || f <> "main" then None else Some i.code.at
+
+  let unload d _ = ignore (counted d "unload" : bool)
 
   let word d =
     {
@@ -182,7 +214,11 @@ module Driver = struct
     Mutex.lock d.lock;
     let fault = d.word_fault in
     Mutex.unlock d.lock;
-    match fault with Some why -> raise (Fault why) | None -> polled_word d.c
+    match fault with
+    | Some why -> raise (Fault why)
+    | None ->
+        ignore (countdown d : bool);
+        polled_word d.c
 
   (* What a sleep does once its gate opens. *)
   (* Blocks at [d]'s gate while it is shut. [d]'s lock is held. *)
@@ -199,6 +235,7 @@ module Driver = struct
     at_gate d;
     match d.fault with
     | Some why -> `Fault why
+    | None when polled_step d.c = 2 -> `Fault d.failure
     | None when d.interrupt_next ->
         d.interrupt_next <- false;
         `Interrupt
@@ -215,14 +252,14 @@ module Driver = struct
     | `Stall -> Thread.delay (float still_ms /. 1000.)
     | `Run -> ignore (polled_run d.c)
 
-  let completion d = if d.objects then `Object d.c else `Host
-  let waits_on d c = List.mem c d.waits
-  let max_waits d = d.max_waits
-  let blocks d = if d.may_block then `May_block else `Returns
+  let completion d = fact d (if d.objects then `Object d.c else `Host)
+  let waits_on d c = fact d (List.mem c d.waits)
+  let max_waits d = fact d d.max_waits
+  let blocks d = fact d (if d.may_block then `May_block else `Returns)
   let room_entry = polled_room ()
   let submit_entry = polled_submit ()
   let self d = d.c
-  let capability _ = ()
+  let capability d = fact d ()
   let capability_key : capability Type.Id.t = Type.Id.make ()
 
   let stop d =
@@ -265,6 +302,8 @@ module Polled = struct
       allocs = [];
       maps = [];
       held = [];
+      mapped = [];
+      failure = "";
       fault = None;
       word_fault = None;
       interrupt_next = false;
@@ -288,6 +327,20 @@ module Polled = struct
   let submits d = polled_submits d.c
   let fail d = polled_fail d.c
   let fault d why = Mutex.protect d.lock (fun () -> d.fault <- Some why)
+
+  let fail_at d n how =
+    match how with
+    | `Fault why ->
+        Mutex.protect d.lock (fun () -> d.failure <- why);
+        polled_fail_at d.c n (-1) why
+    | `Refuse k ->
+        if k < 0 then invalid_arg "Polled.fail_at: negative count";
+        polled_fail_at d.c n k ""
+
+  let steps d = polled_steps d.c
+
+  let outstanding d =
+    Mutex.protect d.lock (fun () -> List.map snd d.held @ d.mapped)
 
   let fault_word d why =
     Mutex.protect d.lock (fun () -> d.word_fault <- Some why)
@@ -316,6 +369,13 @@ module Polled = struct
         d.gated <- false;
         Condition.broadcast d.opened)
 end
+
+(* Census *)
+
+let heap_bytes () = match heap_bytes () with -1 -> None | n -> Some n
+
+let descriptors () =
+  if Sys.win32 then None else Some (Array.length (Sys.readdir "/dev/fd"))
 
 (* Waiting for a signal *)
 

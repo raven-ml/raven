@@ -32,6 +32,23 @@
 #include <unistd.h>
 #endif
 
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define RIG_TEST_ASAN
+#endif
+#endif
+#if defined(__SANITIZE_ADDRESS__)
+#define RIG_TEST_ASAN
+#endif
+
+#if defined(RIG_TEST_ASAN)
+#include <sanitizer/allocator_interface.h>
+#elif defined(__APPLE__)
+#include <malloc/malloc.h>
+#elif defined(__GLIBC__)
+#include <malloc.h>
+#endif
+
 #include "rig.h"
 #include "rig_edge.h"
 
@@ -97,6 +114,10 @@ struct polled {
   int nlast_handles; /* its handles, the first [LAST_HANDLES] of them */
   uint64_t last_handles[LAST_HANDLES];
   uint64_t received; /* the last value a submit received */
+  intnat steps;     /* fallible calls made */
+  intnat fail_from; /* the step from which every call fails, or 0 */
+  intnat refuse_from, refuse_to; /* the steps from one below the other refuse */
+  char why[64]; /* what a hand-over failing from [fail_from] reports */
 };
 
 #define Polled_val(v) ((struct polled *)Nativeint_val(v))
@@ -116,6 +137,53 @@ value rig_test_polled_fail(value v_p) {
   struct polled *p = Polled_val(v_p);
   lock(&p->mu);
   p->fail = 1;
+  unlock(&p->mu);
+  return Val_unit;
+}
+
+/* Counts a fallible call: whether it fails (STEP_FAIL), refuses
+   (STEP_REFUSE) or goes on (0), as [rig_test_polled_fail_at] set. [p]'s
+   lock is held. */
+#define STEP_REFUSE 1
+#define STEP_FAIL 2
+
+static int step(struct polled *p) {
+  intnat n = ++p->steps;
+  if (p->fail_from > 0 && n >= p->fail_from) return STEP_FAIL;
+  return n >= p->refuse_from && n < p->refuse_to ? STEP_REFUSE : 0;
+}
+
+value rig_test_polled_step(value v_p) {
+  struct polled *p = Polled_val(v_p);
+  lock(&p->mu);
+  int s = step(p);
+  unlock(&p->mu);
+  return Val_int(s);
+}
+
+value rig_test_polled_steps(value v_p) {
+  struct polled *p = Polled_val(v_p);
+  lock(&p->mu);
+  intnat n = p->steps;
+  unlock(&p->mu);
+  return Val_long(n);
+}
+
+/* Makes the [v_n]-th fallible call from now on, and every later one, fail
+   with [v_why] if [v_k] is negative, and [v_k] calls from the [v_n]-th
+   refuse otherwise. */
+value rig_test_polled_fail_at(value v_p, value v_n, value v_k, value v_why) {
+  struct polled *p = Polled_val(v_p);
+  intnat k = Long_val(v_k);
+  lock(&p->mu);
+  intnat n = p->steps + Long_val(v_n);
+  if (k < 0) {
+    strncpy(p->why, String_val(v_why), sizeof p->why - 1);
+    p->fail_from = n;
+  } else {
+    p->refuse_from = n;
+    p->refuse_to = k > Max_long - n ? Max_long : n + k;
+  }
   unlock(&p->mu);
   return Val_unit;
 }
@@ -249,6 +317,11 @@ static int polled_submit(void *self, uint64_t v, const struct rig_wait *waits,
   atomic_fetch_add(&p->submits, 1);
   lock(&p->mu);
   p->received = v;
+  if (step(p) == STEP_FAIL) {
+    unlock(&p->mu);
+    *failure = p->why;
+    return RIG_FAILED;
+  }
   if (p->fail) {
     p->fail = 0;
     unlock(&p->mu);
@@ -369,6 +442,19 @@ value rig_test_poke(value unit) {
   return caml_copy_nativeint((intnat)&poke);
 }
 
+/* A fill that takes one from the 64-bit word its argument points at, and
+   fails if that makes it zero. */
+static int countdown(void *queue, void *arg, uint64_t v) {
+  (void)queue;
+  (void)v;
+  return atomic_fetch_sub((_Atomic uint64_t *)arg, 1) == 1;
+}
+
+value rig_test_countdown(value unit) {
+  (void)unit;
+  return caml_copy_nativeint((intnat)&countdown);
+}
+
 /* Raises SIGINT in the calling thread: the runtime records it, and the
    thread's next poll point runs its handler. */
 value rig_test_interrupt(value unit) {
@@ -461,4 +547,22 @@ value rig_test_host_held(value unit) {
 value rig_test_host_kept(value unit) {
   (void)unit;
   return Val_long(rig_heap_kept());
+}
+
+/* The bytes the C heap holds allocated, or -1 where its allocator does not
+   say. */
+value rig_test_heap_bytes(value unit) {
+  (void)unit;
+#if defined(RIG_TEST_ASAN)
+  return Val_long((intnat)__sanitizer_get_current_allocated_bytes());
+#elif defined(__APPLE__)
+  malloc_statistics_t s;
+  malloc_zone_statistics(NULL, &s);
+  return Val_long((intnat)s.size_in_use);
+#elif defined(__GLIBC__)
+  struct mallinfo2 m = mallinfo2();
+  return Val_long((intnat)(m.uordblks + m.hblkhd));
+#else
+  return Val_long(-1);
+#endif
 }
