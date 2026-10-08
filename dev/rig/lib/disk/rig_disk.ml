@@ -63,6 +63,23 @@ type file = {
   mutable pages : pages option; (* a writable file's shared mapping *)
 }
 
+(* A file not yet open, out of the idle ring. *)
+let file ~path ~writable ~size ~identity =
+  let rec f =
+    {
+      path;
+      writable;
+      size;
+      identity;
+      fd = -1;
+      users = 0;
+      newer = f;
+      older = f;
+      pages = None;
+    }
+  in
+  f
+
 let sys_error f why = raise (Sys_error (strf "%s: %s" f.path why))
 
 (* Descriptors *)
@@ -78,18 +95,7 @@ let lock = Mutex.create ()
 let in_table = ref 0
 
 (* The ring's ends: a file of no path, never open. *)
-let rec idle =
-  {
-    path = "";
-    writable = false;
-    size = 0;
-    identity = "";
-    fd = -1;
-    users = 0;
-    newer = idle;
-    older = idle;
-    pages = None;
-  }
+let idle = file ~path:"" ~writable:false ~size:0 ~identity:""
 
 let unlink f =
   f.older.newer <- f.newer;
@@ -236,19 +242,7 @@ let open_file path mode n =
   let opened () =
     match open_retrying path mode n with
     | 0, fd, size, identity ->
-        let rec f =
-          {
-            path;
-            writable;
-            size;
-            identity;
-            fd = -1;
-            users = 0;
-            newer = f;
-            older = f;
-            pages = None;
-          }
-        in
+        let f = file ~path ~writable ~size ~identity in
         admit f fd;
         rest f;
         Ok f
