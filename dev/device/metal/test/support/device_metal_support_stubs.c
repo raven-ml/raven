@@ -24,33 +24,34 @@
 #include <caml/mlvalues.h>
 
 #define Ptr_val(v) ((void *)Nativeint_val(v))
+#define Addr_val(v) ((void *)Long_val(v))
 
 /* Host memory */
 
 value device_metal_test_get64(value v_p, value v_i) {
-  return caml_copy_int64(((int64_t *)Ptr_val(v_p))[Long_val(v_i)]);
+  return caml_copy_int64(((int64_t *)Addr_val(v_p))[Long_val(v_i)]);
 }
 
 value device_metal_test_set64(value v_p, value v_i, value v_x) {
-  ((int64_t *)Ptr_val(v_p))[Long_val(v_i)] = Int64_val(v_x);
+  ((int64_t *)Addr_val(v_p))[Long_val(v_i)] = Int64_val(v_x);
   return Val_unit;
 }
 
 value device_metal_test_get8(value v_p, value v_i) {
-  return Val_int(((uint8_t *)Ptr_val(v_p))[Long_val(v_i)]);
+  return Val_int(((uint8_t *)Addr_val(v_p))[Long_val(v_i)]);
 }
 
 value device_metal_test_set8(value v_p, value v_i, value v_x) {
-  ((uint8_t *)Ptr_val(v_p))[Long_val(v_i)] = (uint8_t)Int_val(v_x);
+  ((uint8_t *)Addr_val(v_p))[Long_val(v_i)] = (uint8_t)Int_val(v_x);
   return Val_unit;
 }
 
 value device_metal_test_get32(value v_p, value v_i) {
-  return Val_long(((uint32_t *)Ptr_val(v_p))[Long_val(v_i)]);
+  return Val_long(((uint32_t *)Addr_val(v_p))[Long_val(v_i)]);
 }
 
 value device_metal_test_set32(value v_p, value v_i, value v_x) {
-  ((uint32_t *)Ptr_val(v_p))[Long_val(v_i)] = (uint32_t)Long_val(v_x);
+  ((uint32_t *)Addr_val(v_p))[Long_val(v_i)] = (uint32_t)Long_val(v_x);
   return Val_unit;
 }
 
@@ -126,7 +127,7 @@ value device_metal_test_pages(value v_n) {
   void *p = aligned_alloc(page, n);
   if (p == NULL) caml_raise_out_of_memory();
   memset(p, 0, n);
-  return caml_copy_nativeint((intnat)p);
+  return Val_long((intnat)p);
 }
 
 /* A dispatch of [pipeline] over [groups] threadgroups of [threads] threads,
@@ -182,7 +183,7 @@ value device_metal_test_split(value v_arg, value v_split, value v_k,
   struct dispatch *a = Arg_val(v_arg);
   a->split = Ptr_val(v_split);
   a->splits = (uint64_t)Long_val(v_k);
-  a->times = Ptr_val(v_times);
+  a->times = Addr_val(v_times);
   return Val_unit;
 }
 

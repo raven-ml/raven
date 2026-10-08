@@ -47,25 +47,25 @@ val stop : ring -> bool
 
 (** {1:memory Host memory} *)
 
-val get8 : nativeint -> int -> int
+val get8 : int -> int -> int
 (** [get8 p i] is the byte [i] at [p]. *)
 
-val set8 : nativeint -> int -> int -> unit
+val set8 : int -> int -> int -> unit
 (** [set8 p i x] stores [x] as the byte [i] at [p]. *)
 
-val get32 : nativeint -> int -> int
+val get32 : int -> int -> int
 (** [get32 p i] is the unsigned 32-bit word [i] at [p]. *)
 
-val set32 : nativeint -> int -> int -> unit
+val set32 : int -> int -> int -> unit
 (** [set32 p i x] stores [x] as the unsigned 32-bit word [i] at [p]. *)
 
-val get64 : nativeint -> int -> int64
+val get64 : int -> int -> int64
 (** [get64 p i] is the 64-bit word [i] at [p]. *)
 
-val set64 : nativeint -> int -> int64 -> unit
+val set64 : int -> int -> int64 -> unit
 (** [set64 p i x] stores [x] as the 64-bit word [i] at [p]. *)
 
-val pages : int -> nativeint
+val pages : int -> int
 (** [pages n] is the address of [n] zeroed bytes of host memory, starting at a
     page, never freed. *)
 
@@ -92,10 +92,10 @@ val dispatch :
     over [groups] threadgroups of [threads] threads, with [args] at [offset]
     (defaults to [0]) as its kernel buffer [0]. *)
 
-val split : fill -> Device_metal.t -> int -> times:nativeint -> unit
+val split : fill -> Device_metal.t -> int -> times:int -> unit
 (** [split f d k ~times] makes the dispatch [f] split [k] times through [d]'s
     [split], dispatching again after each, and write the times of split [i] at
-    the 64-bit words [2i] and [2i + 1] at [times], unless [times] is [0n]. *)
+    the 64-bit words [2i] and [2i + 1] at [times], unless [times] is [0]. *)
 
 val execute : Device_metal_abi.icb -> pipelines:int array -> fill
 (** [execute b ~pipelines] runs every command of [b] after setting each of

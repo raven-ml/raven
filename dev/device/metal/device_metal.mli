@@ -63,11 +63,11 @@
     with three exceptions. {!room} and {!submit} are called one at a time: the
     caller holds the device's {e turn} from {!room} to the end of {!submit}.
     {!stop} is called once, after every other call returned. After {!stop} only
-    {!free}, {!unmap} and the release of an indirect command buffer are called.
-    These rules are the caller's; the device does not check them. {!sleep} may
-    run while another domain submits. A region or an image is given back once:
-    of two {!free}s, {!unmap}s or {!unload}s of one value, from any domains, one
-    gives it back and the other raises [Invalid_argument].
+    {!free} and the release of an indirect command buffer are called. These
+    rules are the caller's; the device does not check them. {!sleep} may run
+    while another domain submits. A region or an image is given back once: of
+    two {!free}s or {!unload}s of one value, from any domains, one gives it back
+    and the other raises [Invalid_argument].
 
     {b Platforms.} A device opens on macOS 15 and later: its queue keeps every
     region resident through a residency set, which Metal has from macOS 15
@@ -203,21 +203,21 @@ val alloc : t -> [ `Device | `Pinned | `Mapped ] -> int -> region option
     Raises [Invalid_argument] if [n < 1]. *)
 
 val free : t -> region -> unit
-(** [free d r] gives [r] back to Metal. The caller frees a region once no work
-    of [d] that uses it is in flight.
+(** [free d r] gives back [r], an allocation or a {!map_host} region of [d]. The
+    caller frees a region once no work of [d] that uses it is in flight.
 
-    Raises [Invalid_argument] if [r] is no allocation of [d] (another device's,
-    a {!map_host} region or {!word}), or was freed. *)
+    Raises [Invalid_argument] if [r] is another device's or {!word}, or was
+    freed. *)
 
 val address : region -> int option
 (** [address r] is [Some a] with [a] the GPU address of [r]'s first byte
     ([gpuAddress]), the address kernels read and write. *)
 
 val handle : region -> nativeint
-(** [handle r] is [r]'s [MTLBuffer]. It lives until {!free} or {!unmap}, and for
-    {!word} while the process runs. *)
+(** [handle r] is [r]'s [MTLBuffer]. It lives until {!free}, and for {!word}
+    while the process runs. *)
 
-val host : region -> nativeint option
+val host : region -> int option
 (** [host r] is [Some p] with [p] the host address of [r]'s first byte. *)
 
 val peer : t -> t -> bool
@@ -229,24 +229,17 @@ val map_peer : t -> t -> region -> region option
     device of it is not mapped into [d].
 
     Raises [Invalid_argument] if [d'] is [d], or if [r] is no region of [d'] or
-    was freed or unmapped. *)
+    was freed. *)
 
-val map_host : t -> nativeint -> int -> region option
+val map_host : t -> int -> int -> region option
 (** [map_host d p n] is a region of [d] over the host memory holding the [n]
     bytes at [p], shared without a copy, or [None] if Metal cannot wrap it.
     Metal wraps memory that starts at a page, so the region covers the pages
     holding the [n] bytes: {!host} of it is the page holding [p], and [p] lies
-    [p - host r] bytes in. The memory stays mapped until {!unmap}. The region is
+    [p - host r] bytes in. The memory stays mapped until {!free}. The region is
     resident as {!alloc}'s.
 
     Raises [Invalid_argument] if [n < 1]. *)
-
-val unmap : t -> region -> unit
-(** [unmap d r] ends the mapping {!map_host} made. The caller unmaps once no
-    work of [d] that uses [r] is in flight.
-
-    Raises [Invalid_argument] if [r] is no {!map_host} region of [d], or was
-    unmapped. *)
 
 (** {1:images Images} *)
 
@@ -319,7 +312,7 @@ val room : t -> part array -> [ `Fits | `Later | `Never ]
 val submit :
   t ->
   v:int ->
-  waits:([ `Word | `Equal | `Object ] * int * int) array ->
+  waits:([ `Word | `Object ] * int * int) array ->
   handles:nativeint array ->
   part array ->
   [ `Ok | `Failed of string ]
@@ -384,17 +377,17 @@ exception Fault of string
     {!alloc} when Metal places an allocation off the 256-byte alignment {!alloc}
     promises. *)
 
-val stop : t -> [ `Stopped | `Unknown ]
+val stop : t -> unit
 (** [stop d] stops [d] without waiting.
 
-    It answers [`Stopped] if every command buffer [d] committed completed. It
-    then writes the last value {!submit} received into {!word} and releases
-    [d]'s queue; no work of [d] writes memory again.
+    If every command buffer [d] committed completed, it writes the last value
+    {!submit} received into {!word} and releases [d]'s queue; no work of [d]
+    writes memory again.
 
-    It answers [`Unknown] if work is still in flight. That work may write memory
-    as long as it runs, and [d] keeps its queue. Metal calls a handler for every
-    committed command buffer once it completed, failed ones included; once the
-    last command buffer [d] committed completed, its handler writes the last
-    value {!submit} received into {!word}, whatever that work did.
+    Otherwise the work still in flight may write memory as long as it runs, and
+    [d] keeps its queue. Metal calls a handler for every committed command
+    buffer once it completed, failed ones included; once the last command buffer
+    [d] committed completed, its handler writes the last value {!submit}
+    received into {!word}, whatever that work did.
 
-    Regions end at {!free} and {!unmap}, which may follow. *)
+    Regions end at {!free}, which may follow. *)

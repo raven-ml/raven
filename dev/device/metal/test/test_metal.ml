@@ -168,11 +168,6 @@ let room =
     (function `Fits -> "`Fits" | `Later -> "`Later" | `Never -> "`Never")
     string
 
-let stopped =
-  Testable.contramap
-    (function `Stopped -> "`Stopped" | `Unknown -> "`Unknown")
-    string
-
 (* Submits [fills] as [t]'s next value; the fills live until it returned. *)
 let submit t fills =
   let ps = Array.map (S.part t.d) fills in
@@ -229,7 +224,7 @@ let prefix_completion parts =
         let at = ((4 * s) + p) * args_bytes in
         let out = gpu out + (((4 * s) + p) * chunk * 4) in
         let f = fill_dispatch t ~args ~at ~out ~c:(c s p) chunk in
-        S.split f t.d k ~times:0n;
+        S.split f t.d k ~times:0;
         f)
       ps
     |> Array.of_list
@@ -292,7 +287,7 @@ let many_splits () =
   let t = dev () in
   let out = alloc t 256 and args = alloc t args_bytes in
   let f = fill_dispatch t ~args ~at:0 ~out:(gpu out) ~c:5 64 in
-  S.split f t.d 1100 ~times:0n;
+  S.split f t.d 1100 ~times:0;
   S.wait t.d (submit_ok t [| f |]);
   equal bool true (filled out ~c:5 64);
   List.iter (Device_metal.free t.d) [ out; args ]
@@ -475,18 +470,14 @@ let page = 16384
 let shared_both_ways (offset, pages) =
   let t = dev () in
   let n = (pages * page) - offset in
-  let p =
-    Nativeint.add (S.pages ((pages + 1) * page)) (Nativeint.of_int offset)
-  in
+  let p = S.pages ((pages + 1) * page) + offset in
   for i = 0 to n - 1 do
     S.set8 p i (i mod 251)
   done;
   let r = require_some (Device_metal.map_host t.d p n) in
-  equal nativeint
-    (Nativeint.logand p (Nativeint.of_int (lnot (page - 1))))
-    (host r);
+  equal int (p land lnot (page - 1)) (host r);
   let args = alloc t args_bytes in
-  let into = Nativeint.to_int (Nativeint.sub p (host r)) in
+  let into = p - host r in
   set_args args ~at:0 ~out:(gpu r + into) ~c:n;
   let bump = pipeline t "bump" in
   let f =
@@ -497,13 +488,13 @@ let shared_both_ways (offset, pages) =
     if S.get8 p i <> (i mod 251) + 1 then
       failf "byte %d reads %d, not %d" i (S.get8 p i) ((i mod 251) + 1)
   done;
-  Device_metal.unmap t.d r;
+  Device_metal.free t.d r;
   Device_metal.free t.d args
 
 let aligned_256 n =
   let t = dev () in
   let r = alloc t n in
-  equal int 0 (Nativeint.to_int (host r) mod 256);
+  equal int 0 (host r mod 256);
   equal int 0 (gpu r mod 256);
   Device_metal.free t.d r
 
@@ -512,17 +503,16 @@ let misused_regions () =
   let invalid f = raises_match Exn.invalid_arg f in
   let r = alloc t 64 in
   let m = require_some (Device_metal.map_host t.d (S.pages page) page) in
-  invalid (fun () -> Device_metal.free t.d m);
   invalid (fun () -> Device_metal.free t.d (Device_metal.word t.d));
-  invalid (fun () -> Device_metal.unmap t.d r);
   Device_metal.free t.d r;
   invalid (fun () -> Device_metal.free t.d r);
-  Device_metal.unmap t.d m;
-  invalid (fun () -> Device_metal.unmap t.d m);
+  Device_metal.free t.d m;
+  invalid (fun () -> Device_metal.free t.d m);
   invalid (fun () -> Device_metal.alloc t.d `Device 0);
   invalid (fun () -> Device_metal.map_host t.d (S.pages page) 0);
   let other = opened () in
   let o = require_some (Device_metal.alloc other `Device 64) in
+  invalid (fun () -> Device_metal.free t.d o);
   equal bool false (Device_metal.peer t.d other);
   equal (option pass) None (Device_metal.map_peer t.d other o);
   invalid (fun () -> Device_metal.map_peer t.d t.d o);
@@ -538,9 +528,9 @@ let given_back () =
   and wm = S.weak (Device_metal.handle m) in
   S.wait t.d (submit_ok t [||]);
   Device_metal.free t.d r;
-  Device_metal.unmap t.d m;
-  equal bool ~msg:"freed" false (S.alive wr);
-  equal bool ~msg:"unmapped" false (S.alive wm)
+  Device_metal.free t.d m;
+  equal bool ~msg:"allocation" false (S.alive wr);
+  equal bool ~msg:"mapping" false (S.alive wm)
 
 let memory =
   group ~timeout:60. "memory"
@@ -556,10 +546,10 @@ let memory =
         (Gen.int_range 1 (64 lsl 20))
         aligned_256;
       test
-        "free, unmap and map_peer refuse a region of the wrong kind or given \
-         back"
+        "free and map_peer refuse the word, another device's region or one \
+         given back"
         misused_regions;
-      test "free and unmap release the region's buffer" given_back;
+      test "free releases an allocation's or a mapping's buffer" given_back;
     ]
 
 (* Images *)
@@ -657,7 +647,7 @@ let stopped_idle () =
   let t = dev_of (opened ()) in
   let v = submit_ok t [||] in
   S.wait t.d v;
-  equal stopped `Stopped (Device_metal.stop t.d);
+  Device_metal.stop t.d;
   equal int v (Device_metal.signaled t.d)
 
 let stopped_running () =
@@ -668,7 +658,7 @@ let stopped_running () =
   let b = require_ok (icb t args [| dispatch spin |]) in
   let w = S.weak b.handle in
   let v = submit_ok t [| S.execute b ~pipelines:[| spin |] |] in
-  equal stopped `Unknown (Device_metal.stop t.d);
+  Device_metal.stop t.d;
   S.wait t.d v;
   equal bool true (S.get32 (host out) 0 <> 0);
   b.release ();
@@ -678,10 +668,11 @@ let timeline =
   group ~timeout:60. "timeline"
     [
       test "sleep returns at once when the word differs from seen" sleep_seen;
-      test "stop answers Stopped once the work completed" stopped_idle;
+      test "stop of an idle device leaves the word at the last value"
+        stopped_idle;
       test
-        "stop answers Unknown while work runs, the word reaches the last value \
-         once it ends, and its indirect command buffer is released after"
+        "stop while work runs: the word reaches the last value once it ends, \
+         and its indirect command buffer is released after"
         stopped_running;
     ]
 

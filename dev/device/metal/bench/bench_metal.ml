@@ -26,7 +26,7 @@ external floor_execute : nativeint -> nativeint -> int -> unit
 external floor_buffers : nativeint -> int -> unit = "device_metal_bench_buffers"
 external floor_alloc : nativeint -> int -> unit = "device_metal_bench_alloc"
 
-external floor_map_host : nativeint -> nativeint -> int -> unit
+external floor_map_host : nativeint -> int -> int -> unit
   = "device_metal_bench_map_host"
 
 external floor_image : nativeint -> unit = "device_metal_bench_image"
@@ -179,7 +179,7 @@ let map_host_rows =
   Thumper.group "map-host"
     [
       row "64MiB" pages (fun (t, p) ->
-          M.unmap t.d (Option.get (M.map_host t.d p n)));
+          M.free t.d (Option.get (M.map_host t.d p n)));
       row "floor-64MiB" floor_pages (fun (f, p) -> floor_map_host f p n);
     ]
 

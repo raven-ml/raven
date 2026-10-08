@@ -120,10 +120,10 @@ value caml_device_metal_open(value unit) {
 /* [(b, b's GPU address, b's host address)]. */
 static value buffer(id<MTLBuffer> b) {
   CAMLparam0();
-  CAMLlocal2(handle, host);
+  CAMLlocal1(handle);
   handle = object(b);
-  host = caml_copy_nativeint((intnat)b.contents);
-  CAMLreturn(tuple(3, handle, Val_long((intnat)b.gpuAddress), host));
+  CAMLreturn(tuple(3, handle, Val_long((intnat)b.gpuAddress),
+                   Val_long((intnat)b.contents)));
 }
 
 /* The device's family, budget and word. */
@@ -159,7 +159,7 @@ value caml_device_metal_alloc(value v_d, value v_n) {
 /* The pages holding the [v_n] bytes at [v_p], wrapped without a copy. */
 value caml_device_metal_map_host(value v_d, value v_p, value v_n) {
   struct device_metal *d = Device_val(v_d);
-  uintptr_t page = (uintptr_t)getpagesize(), p = (uintptr_t)Nativeint_val(v_p);
+  uintptr_t page = (uintptr_t)getpagesize(), p = (uintptr_t)Long_val(v_p);
   uintptr_t first = p & ~(page - 1);
   uintptr_t last = (p + (uintptr_t)Long_val(v_n) + page - 1) & ~(page - 1);
   return resident(
@@ -415,7 +415,7 @@ value caml_device_metal_stop(value v_d) {
     d->queue = nil;
     d->fence = nil;
   }
-  return Val_bool(idle);
+  return Val_unit;
 }
 
 static int (*const split)(void *, uint64_t *, uint64_t *) = device_metal_split;

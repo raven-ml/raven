@@ -10,14 +10,14 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
    is a retained pointer, a pipeline's as an int; a buffer is the triple of its
    object, GPU address and host address. *)
 
-type buffer = nativeint * int * nativeint
+type buffer = nativeint * int * int
 
 external count : unit -> int = "caml_device_metal_count"
 external open_device : unit -> int = "caml_device_metal_open"
 external facts : int -> int * int * buffer = "caml_device_metal_facts"
 external alloc_buffer : int -> int -> buffer option = "caml_device_metal_alloc"
 
-external map_buffer : int -> nativeint -> int -> buffer option
+external map_buffer : int -> int -> int -> buffer option
   = "caml_device_metal_map_host"
 
 external free_buffer : int -> nativeint -> unit = "caml_device_metal_free"
@@ -42,7 +42,7 @@ external last : (int[@untagged]) -> (int[@untagged])
 
 external sleep_word : int -> int -> int -> int = "caml_device_metal_sleep"
 external failure : int -> string = "caml_device_metal_failure"
-external stop_ring : int -> bool = "caml_device_metal_stop"
+external stop_ring : int -> unit = "caml_device_metal_stop"
 
 external entries : unit -> nativeint * nativeint * nativeint
   = "caml_device_metal_entries"
@@ -53,19 +53,16 @@ exception Fault of string
 
 (* Memory *)
 
-type kind = Alloc | Mapped | Word
-
 type region = {
   owner : int;
-  kind : kind;
   handle : nativeint;
   address : int;
-  host : nativeint;
+  host : int;
   live : bool Atomic.t;
 }
 
-let region owner kind (handle, address, host) =
-  { owner; kind; handle; address; host; live = Atomic.make true }
+let region owner (handle, address, host) =
+  { owner; handle; address; host; live = Atomic.make true }
 
 let address r = Some r.address
 let handle r = r.handle
@@ -153,7 +150,7 @@ let open_ i =
       let arch = if family > 0 then strf "Apple%d" family else "Mac2" in
       let align = if family > 0 then apple_align else mac_align in
       let icb = icb self align in
-      let word = region self Word word in
+      let word = region self word in
       Ok { self; arch; budget; word; cap = { align; icb; split } }
 
 (* Facts *)
@@ -182,9 +179,8 @@ let alloc d _ n =
   match alloc_buffer d.self n with
   | None -> None
   | Some ((handle, address, host) as b) ->
-      let host = Nativeint.to_int host in
       if address mod region_align = 0 && host mod region_align = 0 then
-        Some (region d.self Alloc b)
+        Some (region d.self b)
       else begin
         free_buffer d.self handle;
         raise
@@ -198,7 +194,7 @@ let alloc d _ n =
 let map_host d p n =
   if n < 1 then
     invalid_argf "Device_metal.map_host: %d bytes, expected at least 1" n;
-  Option.map (region d.self Mapped) (map_buffer d.self p n)
+  Option.map (region d.self) (map_buffer d.self p n)
 
 let peer _ _ = false
 
@@ -210,17 +206,13 @@ let map_peer d d' r =
       "Device_metal.map_peer: the region is no live region of the second device";
   None
 
-let give_back fn kind d r =
-  if r.owner <> d.self || r.kind <> kind then
-    invalid_argf "Device_metal.%s: the region is no %s of the device" fn
-      (if kind = Alloc then "allocation" else "mapping");
+let free d r =
+  if r.owner <> d.self || r == d.word then
+    invalid_arg
+      "Device_metal.free: the region is no allocation or mapping of the device";
   if not (Atomic.compare_and_set r.live true false) then
-    invalid_argf "Device_metal.%s: the region was %s" fn
-      (if kind = Alloc then "freed" else "unmapped");
+    invalid_arg "Device_metal.free: the region was freed";
   free_buffer d.self r.handle
-
-let free d r = give_back "free" Alloc d r
-let unmap d r = give_back "unmap" Mapped d r
 
 (* Images *)
 
@@ -319,4 +311,4 @@ let signaled d = signaled_word d.self
 let sleep d ~seen ~still_ms =
   if sleep_word d.self seen still_ms <> 0 then raise (Fault (failure d.self))
 
-let stop d = if stop_ring d.self then `Stopped else `Unknown
+let stop d = stop_ring d.self

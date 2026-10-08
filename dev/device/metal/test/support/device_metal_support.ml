@@ -21,13 +21,13 @@ external stop : ring -> bool = "device_metal_test_stop"
 
 (* Host memory *)
 
-external get8 : nativeint -> int -> int = "device_metal_test_get8"
-external set8 : nativeint -> int -> int -> unit = "device_metal_test_set8"
-external get32 : nativeint -> int -> int = "device_metal_test_get32"
-external set32 : nativeint -> int -> int -> unit = "device_metal_test_set32"
-external get64 : nativeint -> int -> int64 = "device_metal_test_get64"
-external set64 : nativeint -> int -> int64 -> unit = "device_metal_test_set64"
-external pages : int -> nativeint = "device_metal_test_pages"
+external get8 : int -> int -> int = "device_metal_test_get8"
+external set8 : int -> int -> int -> unit = "device_metal_test_set8"
+external get32 : int -> int -> int = "device_metal_test_get32"
+external set32 : int -> int -> int -> unit = "device_metal_test_set32"
+external get64 : int -> int -> int64 = "device_metal_test_get64"
+external set64 : int -> int -> int64 -> unit = "device_metal_test_set64"
+external pages : int -> int = "device_metal_test_pages"
 
 (* Fills *)
 
@@ -40,7 +40,7 @@ external failing_fill : unit -> nativeint = "device_metal_test_failing_fill"
 external dispatch_arg : nativeint -> nativeint -> int -> int -> int -> arg
   = "device_metal_test_dispatch"
 
-external split_arg : arg -> nativeint -> int -> nativeint -> unit
+external split_arg : arg -> nativeint -> int -> int -> unit
   = "device_metal_test_split"
 
 external dispatch_fill : unit -> nativeint = "device_metal_test_dispatch_fill"

@@ -198,7 +198,7 @@ value device_metal_bench_alloc(value v_f, value v_n) {
 /* The [v_n] bytes at [v_p], page-aligned, wrapped and released. */
 value device_metal_bench_map_host(value v_f, value v_p, value v_n) {
   struct floor *f = Floor_val(v_f);
-  [[f->device newBufferWithBytesNoCopy:(void *)Nativeint_val(v_p)
+  [[f->device newBufferWithBytesNoCopy:(void *)Long_val(v_p)
                                 length:(NSUInteger)Long_val(v_n)
                                options:MTLResourceStorageModeShared
                            deallocator:nil] release];
