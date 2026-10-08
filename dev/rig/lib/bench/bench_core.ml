@@ -555,7 +555,35 @@ let gpus =
        else []);
     ]
 
+(* The machine's GPU lock, which every suite and bench that acts on a GPU of
+   the machine takes before it runs, so that no GPU row runs beside a GPU test.
+   The process holds it until it exits, its forked workers with it. *)
+
+external lock : string -> string -> int = "rig_bench_lock"
+
+let gpu_lock = "/tmp/raven-rig-gpu.lock"
+
+(* The longest wait for the lock, in seconds: the machine's suites, from every
+   checkout and user, take it in turn. *)
+let gpu_wait = 300
+
+let holder () =
+  match In_channel.with_open_bin gpu_lock In_channel.input_all with
+  | note -> String.trim note
+  | exception Sys_error _ -> "a process that left no note"
+
+(* [lock] naps 100 ms each time it is refused. *)
+let rec take refused =
+  match lock gpu_lock Sys.executable_name with
+  | 0 -> ()
+  | -1 when refused < gpu_wait * 10 -> take (refused + 1)
+  | -1 ->
+      failwith
+        (strf "%s: still held after %d s, by %s" gpu_lock gpu_wait (holder ()))
+  | errno -> failwith (strf "%s: errno %d" gpu_lock errno)
+
 let () =
+  if gpus <> [] then take 0;
   exit
   @@ Thumper.run "rig"
        ([

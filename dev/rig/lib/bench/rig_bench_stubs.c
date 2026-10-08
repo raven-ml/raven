@@ -6,15 +6,18 @@
 /* The driver alone: a device's room and submit entries called directly, with
    a fill that adds 1 to a word of its own, as the core calls them for a
    submission of no part or of that fill, naming the fill's word or the
-   handles it was given. A submit holds the runtime, even for a driver whose
-   submit may block, except a turn's: it takes the floor's mutex as the core
-   takes a device's turn, by try-lock and otherwise with the runtime
-   released. */
+   handles it was given, and the machine's GPU lock. A submit holds the
+   runtime, even for a driver whose submit may block, except a turn's: it
+   takes the floor's mutex as the core takes a device's turn, by try-lock and
+   otherwise with the runtime released. The lock releases it for its nap. */
 
 #define _GNU_SOURCE
 
+#include <errno.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define CAML_NAME_SPACE
 #include <caml/alloc.h>
@@ -40,6 +43,14 @@ static void turn_unlock(turn *t) { pthread_mutex_unlock(t); }
 #endif
 
 #include "rig_edge.h"
+
+#if !defined(_WIN32)
+#include <fcntl.h>
+#include <sys/file.h>
+#include <sys/stat.h>
+#include <time.h>
+#include <unistd.h>
+#endif
 
 struct floor {
   void *self;
@@ -122,4 +133,60 @@ value rig_bench_floor_turn_submit(value v_f, value v_parts) {
   turn_unlock(f->turn);
   if (released) caml_leave_blocking_section();
   return Val_unit;
+}
+
+/* The machine's GPU lock */
+
+/* One try at the exclusive lock of the file [v_path], which the process
+   then holds until it exits. A missing file is made writable by every user
+   of the machine. Once taken, the file names [v_holder] and the process's
+   id, for the processes that wait. Answers [0] once the process holds the
+   lock, [-1] after a nap of 100 ms if another process holds it, or the
+   errno of a failing call. Releases the runtime for the nap. */
+value rig_bench_lock(value v_path, value v_holder) {
+#if defined(_WIN32)
+  (void)v_path;
+  (void)v_holder;
+  return Val_int(ENOSYS);
+#else
+  /* The descriptor that holds the lock once taken. The suites take it from
+     one domain. */
+  static int held = -1;
+  if (held >= 0) return Val_int(0);
+  const char *path = String_val(v_path);
+  int fd = open(path, O_RDWR | O_CLOEXEC);
+  /* O_EXCL: Linux refuses O_CREAT on another user's file in /tmp
+     (fs.protected_regular). */
+  if (fd < 0 && errno == ENOENT) {
+    fd = open(path, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0666);
+    if (fd < 0 && errno == EEXIST) fd = open(path, O_RDWR | O_CLOEXEC);
+    else if (fd >= 0 && fchmod(fd, 0666) != 0) {
+      int e = errno;
+      close(fd);
+      return Val_int(e);
+    }
+  }
+  if (fd < 0) return Val_int(errno);
+  if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
+    int e = errno;
+    close(fd);
+    if (e != EWOULDBLOCK) return Val_int(e);
+    struct timespec nap = {0, 100 * 1000 * 1000};
+    caml_release_runtime_system();
+    nanosleep(&nap, NULL);
+    caml_acquire_runtime_system();
+    return Val_int(-1);
+  }
+  char note[1024] = "";
+  snprintf(note, sizeof note, "%s, pid %ld\n", String_val(v_holder),
+           (long)getpid());
+  size_t len = strlen(note);
+  if (ftruncate(fd, 0) != 0 || pwrite(fd, note, len, 0) != (ssize_t)len) {
+    int e = errno;
+    close(fd);
+    return Val_int(e);
+  }
+  held = fd;
+  return Val_int(0);
+#endif
 }
