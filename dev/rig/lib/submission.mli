@@ -3,7 +3,12 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Prepared submissions and submit, documented in rig.mli. *)
+(** Prepared submissions and {!Rig.submit}: the implementation of
+    {!Rig.Submission}, with points as the ints of {!Point}.
+
+    A submission's prepared form is C memory that a custom block owns and frees
+    once collected. A submit holds the submission's guard throughout, so two
+    domains' submits of one submission take turns. *)
 
 open Def
 
@@ -28,7 +33,9 @@ val submit :
 
 val copy :
   hold_stamps:int -> device -> string -> src:buffer -> dst:buffer -> int
-(* [copy ~hold_stamps d queue ~src ~dst] submits a copy of [src] into [dst],
-   memory of [d], on [d]'s copy queue [queue]: its point. [hold_stamps] are the
-   stamps of the hold their memory is in, [0] for none: the copy raises the
-   hold's stamp of [d], as a submission made with the hold does. *)
+(** [copy ~hold_stamps d queue ~src ~dst] submits a copy of [src] into [dst],
+    memory of [d], on [d]'s copy queue [queue], and is its point. [hold_stamps]
+    are the stamps of the hold their memory is in, [0] for none: the copy raises
+    the hold's stamp of [d], as a submission made with the hold does. It raises
+    as {!Rig.Submission.make} and {!Rig.submit}, and [Invalid_argument] if a
+    buffer is in another hold. *)

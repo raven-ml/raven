@@ -386,10 +386,9 @@ let rec run s held reads writes waits k =
     ignore (Sys.opaque_identity b3);
     p
 
-(* A submit holds the submission's guard throughout, so two domains' submits of
-   it take turns. A forked child never waits on a guard its parent's thread may
-   hold: every submission made before the fork is on a device the child
-   inherited, which raises first. *)
+(* A forked child never waits on a guard its parent's thread may hold: every
+   submission made before the fork is on a device the child inherited, which
+   raises first. *)
 let submit s ~reads ~writes ~waits =
   if Dev.inherited s.dev then Dev.raise_lost s.dev;
   check_counts s reads writes;
