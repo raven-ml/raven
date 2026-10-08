@@ -41,8 +41,8 @@ external c_producers : int -> int array = "caml_rig_producers"
 external release_list : unit -> int = "caml_rig_release_list"
 external host_arch : unit -> string = "caml_rig_arch"
 
-(* A stop's answers, as the C record holds them. *)
-let answer_stopping = 1
+(* A stop's answers, as the C record holds them, after none (0) and stopping
+   (1). *)
 let answer_stopped = 2
 let answer_unknown = 3
 
@@ -138,7 +138,6 @@ let is_lost d = d.c <> 0 && c_is_lost d.c
 let lost d = if is_lost d then Some (c_why d.c) else None
 let raise_lost d = raise (Lost (d, c_why d.c))
 let submitted d = if d.c = 0 then 0 else c_submitted d.c
-let answer d = if d.c = 0 then 0 else c_answer d.c
 let copies d = Array.exists (String.starts_with ~prefix:"COPY:") d.queues
 let machines : (string, device) Hashtbl.t = Hashtbl.create 4
 let table_lock = Lock.create ()
@@ -172,6 +171,14 @@ let upgrade d =
     refresh d;
     c_upgrade d.c
   end
+
+let stop_returned d =
+  d.c <> 0
+  &&
+  let a = c_answer d.c in
+  a = answer_stopped || a = answer_unknown
+
+let stopped d = is_lost d && (c_answer d.c = answer_stopped || upgrade d)
 
 let stop d =
   (match d.kind with
@@ -232,8 +239,6 @@ let word d =
         c_set_seen d.c w;
         w
     | _ -> c_word d.c
-
-let signaled d = if d.c = 0 then 0 else word d
 
 let sleep d ~seen ~still_ms =
   match d.kind with
@@ -332,10 +337,8 @@ let open_named ~machine ~name ~key ~host make =
           invalid_argf "Rig.open_: %s is open as another driver's device" full;
         `Open d
     | Some (Open d) ->
-        let a = c_answer d.c in
-        if a = 0 || a = answer_stopping then
-          `Error (strf "%s is lost and its stop has not answered" full)
-        else `Make
+        if stop_returned d then `Make
+        else `Error (strf "%s is lost and its stop has not answered" full)
     | None -> `Make
   in
   let found =

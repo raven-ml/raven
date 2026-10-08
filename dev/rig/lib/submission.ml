@@ -329,7 +329,7 @@ let rec hand_over s nwaits =
   else if r = busy then hand_over s nwaits
   else if r = no_room then begin
     let at = sub_no_room_at s.c in
-    let w = Dev.signaled d in
+    let w = Dev.word d in
     if w < at then Dev.wait d (w + 1);
     hand_over s nwaits
   end

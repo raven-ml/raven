@@ -21,29 +21,26 @@ val busy : device -> bool
 
 val of_index : int -> device
 val all : unit -> device array
-
 (* [all ()] is the devices by index; an index whose open failed holds the
    host. *)
+
 val is_host : device -> bool
 val is_io : device -> bool
 val is_lost : device -> bool
 val lost : device -> string option
 val raise_lost : device -> 'a
 val submitted : device -> int
-val answer : device -> int
-(* [answer d] is [d]'s stop's answer: 0 none, then [answer_stopping],
-   [answer_stopped] or [answer_unknown]. *)
+val stop_returned : device -> bool
+(* [stop_returned d] is [true] iff the lost [d]'s stop returned. *)
 
-val answer_stopping : int
-val answer_stopped : int
-val answer_unknown : int
+val stopped : device -> bool
+(* [stopped d] is [true] iff [d] is lost and counts as stopped: its stop
+   returned and its word reads its last submitted value, so no work of [d] runs
+   and its memory may be freed. *)
+
 val inherited : device -> bool
 (* [inherited d] is [true] iff [d] is a driver's device this process inherited
    from the parent it was forked from. *)
-
-val upgrade : device -> bool
-(* [upgrade d] records [Stopped] in place of [Unknown] once [d]'s word reads its
-   submitted value, and is [true] if this call recorded it. *)
 
 val copies : device -> bool
 val host_of : device -> device
@@ -62,13 +59,10 @@ val stop : device -> unit
 val lose : device -> string -> 'a
 val counted : device -> (unit -> 'a) -> 'a
 val word : device -> int
-val signaled : device -> int
 val wait : device -> int -> unit
 val after : device -> int -> (unit -> unit) -> unit
 val point_reached : int -> bool
-val still_ms : int
 val release_list : unit -> int
-val now_ms : unit -> int
 
 val open_driver :
   ?memory_device:bool ->

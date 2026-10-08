@@ -300,11 +300,6 @@ let key n kind =
 
 let cache_key (e : entry) = key e.bytes e.memory
 
-(* Whether the lost [d] counts as stopped: its stop returned and its word reads
-   its last submitted value, so its memory may be freed. *)
-let answered d =
-  Dev.is_lost d && (Dev.answer d = Dev.answer_stopped || Dev.upgrade d)
-
 (* Holds whose release is still to run: their stamps and release. *)
 let holds_lock = Lock.create ()
 let holds : (int * (unit -> unit)) list ref = ref []
@@ -315,9 +310,7 @@ let hold_due (st, _) =
   for_all_points
     (fun p ->
       let d = Dev.of_index (Point.index p) in
-      Dev.point_reached p
-      && ((not (Dev.is_lost d))
-         || (Dev.answer d <> 0 && Dev.answer d <> Dev.answer_stopping)))
+      Dev.point_reached p && ((not (Dev.is_lost d)) || Dev.stop_returned d))
     st
 
 (* Runs [release] as a call in flight on each device of [st] that is not
@@ -409,7 +402,7 @@ let route d = function
    stopped; pending releases whose value [d] reached. *)
 let due d =
   let lost = Dev.is_lost d in
-  let free_lost = lost && answered d in
+  let free_lost = lost && Dev.stopped d in
   let w = if lost && not free_lost then -1 else Dev.word d in
   Dev.protect d (fun () ->
       let frees = ref [] in
@@ -560,7 +553,7 @@ let take_cache ?upto d =
    is deferred until it is. A lost device's cache waits for it to count as
    stopped. *)
 let release_cache ?upto ~wait d =
-  if (not (Dev.is_lost d)) || answered d then begin
+  if (not (Dev.is_lost d)) || Dev.stopped d then begin
     let taken = take_cache ?upto d in
     let v = Dev.submitted d in
     if wait && not (Dev.is_lost d) then Dev.wait d v;

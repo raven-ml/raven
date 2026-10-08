@@ -47,7 +47,7 @@ module Point = struct
 end
 
 let submitted = Dev.submitted
-let signaled = Dev.signaled
+let signaled = Dev.word
 let wait = Dev.wait
 
 exception Lost = Dev.Lost
