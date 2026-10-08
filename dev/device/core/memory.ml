@@ -477,19 +477,25 @@ let take_cached d kind n =
           Some e
       | _ -> None)
 
-(* Takes cached memory out of [d]'s cache until [d] holds at most [upto] bytes
-   or the cache is empty, in no particular order. *)
-let take_cache ~upto d =
+(* Takes cached memory out of [d]'s cache: all of it, or with [upto] only memory
+   that counts in [d]'s budget, until [d] holds at most [upto] bytes, in no
+   particular order. *)
+let take_cache ?upto d =
   Mutex.protect d.lock (fun () ->
       let taken = ref [] and held = ref d.used in
+      let take (e : entry) =
+        match upto with
+        | None -> true
+        | Some upto -> owns e.memory && !held > upto
+      in
       Hashtbl.filter_map_inplace
         (fun _ l ->
           let l =
             List.filter
               (fun (e : entry) ->
-                if !held > upto then begin
+                if take e then begin
                   taken := e :: !taken;
-                  held := !held - e.bytes;
+                  if owns e.memory then held := !held - e.bytes;
                   d.cached <- d.cached - e.bytes;
                   false
                 end
@@ -500,13 +506,13 @@ let take_cache ~upto d =
         d.cache;
       !taken)
 
-(* Frees [d]'s cache down to [upto] bytes once the work [d] was handed until now
-   is done: at once if it is, after waiting for it when [wait], and otherwise
-   each free is deferred until it is. A lost device's cache waits for its stop's
-   answer. *)
-let release_cache ?(upto = 0) ~wait d =
+(* Frees what [take_cache] takes once the work [d] was handed until now is done:
+   at once if it is, after waiting for it when [wait], and otherwise each free
+   is deferred until it is. A lost device's cache waits for it to count as
+   stopped. *)
+let release_cache ?upto ~wait d =
   if (not (Dev.is_lost d)) || answered d then begin
-    let taken = take_cache ~upto d in
+    let taken = take_cache ?upto d in
     let v = Dev.submitted d in
     if wait && not (Dev.is_lost d) then Dev.wait d v;
     if Dev.is_lost d || Dev.word d >= v then List.iter free_entry taken
