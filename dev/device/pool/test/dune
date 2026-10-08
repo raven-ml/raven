@@ -3,7 +3,10 @@
 ; which both suites share, and nx_pool_thread_probe. test_pool runs on every
 ; system.
 ; test_threads forks and reads signal masks and thread states, so it runs
-; where POSIX does.
+; where POSIX does. test_interleavings holds interleavings of the protocol
+; in a second copy of the pool, compiled with its hook points defined
+; (nx_pool_hooked_probe); it forks and tells workers apart by pthread_t, so
+; it runs where POSIX does too, natively: what it holds is C.
 
 (library
  (name nx_pool_thread_probe)
@@ -15,11 +18,29 @@
   (language c)
   (names nx_pool_thread_probe_stubs)))
 
+(library
+ (name nx_pool_hooked_probe)
+ (modules nx_pool_hooked_probe)
+ (enabled_if
+  (<> %{os_type} Win32))
+ (libraries nx_pool_probe)
+ (foreign_stubs
+  (language c)
+  (names nx_pool_hooked_probe_stubs)
+  (extra_deps ../nx_pool.c ../nx_pool.h ../nx_pool_cgroup.h)))
+
 (executable
  (name test_pool)
  (modules test_pool)
  (modes native byte)
  (libraries nx_pool_probe unix windtrap))
+
+(executable
+ (name test_interleavings)
+ (modules test_interleavings)
+ (enabled_if
+  (<> %{os_type} Win32))
+ (libraries nx_pool_hooked_probe nx_pool_probe windtrap))
 
 (executable
  (name test_threads)
@@ -40,6 +61,13 @@
   (<> %{os_type} Win32))
  (action
   (run %{dep:test_threads.exe})))
+
+(rule
+ (alias runtest)
+ (enabled_if
+  (<> %{os_type} Win32))
+ (action
+  (run %{dep:test_interleavings.exe})))
 
 ; ocamlrun loads each library's stubs as a shared library of its own, found
 ; on CAML_LD_LIBRARY_PATH; the pool's symbols resolve at load. windtrap's
