@@ -748,6 +748,19 @@ let charged pool d (e : entry) =
   | Host_budget -> Dev.is_host pool
   | No_budget -> false
 
+(* Whether [d] holds memory that counts in [pool]'s budget back from its return
+   until work is done: collected memory outside the cache, and returns deferred
+   until [d]'s handed work is done. Only the entries' plain fields are read: a
+   drain may free them meanwhile. *)
+let holds_back pool d =
+  List.exists (charged pool d) d.retiring
+  || List.exists
+       (function
+         | _, Free e | _, Unmap (_, Some e) | _, Unload (_, Some e) ->
+             charged pool e.owner e
+         | _, (Unmap (_, None) | Unload (_, None)) -> false)
+       d.pending
+
 (* Drains every device, the host included, skipping one whose lock another call
    holds. *)
 let drain_all () =
@@ -756,15 +769,19 @@ let drain_all () =
 
 (* A round of the ladder for [pool]'s budget: every cached memory on any device
    that counts in it returns once its device's handed work is done, waited for;
-   for the host, its kept buffers too. Then every device drains, which returns
-   collected memory and runs the unmaps that hold it; from the second round a
-   collection finds the memory unreachable since, and every device drains
-   again. *)
+   for the host, its kept buffers too. A device whose handed work holds back the
+   return of memory that counts in it is waited for too, so that memory returns
+   and a loss shows as one. Then every device drains, which returns collected
+   memory and runs the unmaps that hold it; from the second round a collection
+   finds the memory unreachable since, and every device drains again. *)
 let reclaim_round pool round =
   if Dev.is_host pool then heap_drop ();
   Dev.iter (fun d ->
-      if not (Dev.busy d) then
-        release_taken ~wait:true d (fun d -> take_cache_if d (charged pool d)));
+      if not (Dev.busy d) then begin
+        if holds_back pool d && not (Dev.is_lost d) then
+          Dev.wait d (Dev.submitted d);
+        release_taken ~wait:true d (fun d -> take_cache_if d (charged pool d))
+      end);
   drain_all ();
   if round >= 2 then begin
     Gc.full_major ();

@@ -80,10 +80,12 @@
     counts, the host's, and tries again after each, four tries in all, before it
     raises {!Out_of_memory}. A round returns every cached memory, on any device,
     that counts in that budget, once its device's submitted work is done, and
-    for the host its kept buffers; drains every device, the host included; and
-    from the second round collects unreachable buffers and drains every device
-    again. A copy whose device's driver refuses to map the staging memory runs
-    the same rounds for that device.
+    for the host its kept buffers; waits for the submitted work of every device
+    whose work holds back the return of other such memory, such as memory
+    collected over the budget, so a device's loss raises {!Lost}; drains every
+    device, the host included; and from the second round collects unreachable
+    buffers and drains every device again. A copy whose device's driver refuses
+    to map the staging memory runs the same rounds for that device.
 
     The host keeps the memory of collected buffers of 64 KiB or more in a cache
     for the next buffers of their sizes. It returns what the cache holds beyond

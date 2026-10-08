@@ -132,6 +132,38 @@ let test_over_budget_queued () =
   drain ();
   equal ~msg:"once it ran" bool true (freed p at)
 
+(* Memory collected over the budget while queued work reads it, its return to
+   the driver waiting for that work. *)
+let queued_over_budget name =
+  let d, p = P.open_ name in
+  let reads = Sub.make ~reads:1 ~writes:0 d [||] in
+  let[@inline never] queued () =
+    let b = B.create d (64 * kib) in
+    ignore (submit reads ~reads:[| b |]);
+    B.address b
+  in
+  let at = queued () in
+  Rig.set_budget d (32 * kib);
+  Gc.full_major ();
+  Gc.full_major ();
+  ignore (B.create d 0);
+  (d, p, at)
+
+(* An allocation the budget refuses waits for the work that holds back collected
+   memory's return, then reuses its room. *)
+let test_refused_waits () =
+  let d, p, at = queued_over_budget "memory:refused-waits" in
+  equal int (32 * kib) (B.length (B.create d (32 * kib)));
+  equal ~msg:"the queued memory" bool true (freed p at)
+
+(* The wait finds the loss of a device that faulted with that work queued. *)
+let test_refused_lost () =
+  let d, p, _ = queued_over_budget "memory:refused-lost" in
+  P.fault p "the engine hung";
+  raises_match
+    (function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false)
+    (fun () -> B.create d (32 * kib))
+
 let test_free_cache () =
   let d, p = P.open_ "memory:free-cache" in
   let at = dropped d (4 * kib) in
@@ -605,6 +637,12 @@ let tests =
           test_over_budget_cache;
         test "memory queued work reads is freed over the budget once it ran"
           test_over_budget_queued;
+        test
+          "an allocation the budget refuses waits for the work collected \
+           memory waits for"
+          test_refused_waits;
+        test "an allocation the budget refuses raises the loss of that work"
+          test_refused_lost;
         test "an allocation the driver refuses collects unreachable buffers"
           test_collects;
         test "set_budget returns cached memory, never live memory"
