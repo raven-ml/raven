@@ -164,7 +164,8 @@ value rig_bench_floor_submit(value v_f, value v_parts) {
 }
 
 /* As [rig_bench_floor_submit], under the floor's turn. It releases the
-   runtime while it waits for the turn. */
+   runtime while it waits for the turn: [f] is malloc'd memory, which no
+   collection frees, read before. */
 value rig_bench_floor_turn_submit(value v_f, value v_parts) {
   struct floor *f = Floor_val(v_f);
   int released = 0;
@@ -186,7 +187,8 @@ value rig_bench_floor_turn_submit(value v_f, value v_parts) {
    of the machine. Once taken, the file names [v_holder] and the process's
    id, for the processes that wait. Answers [0] once the process holds the
    lock, [-1] after a nap of 100 ms if another process holds it, or the
-   errno of a failing call. Releases the runtime for the nap. */
+   errno of a failing call. Releases the runtime for the nap, after which
+   it reads no argument. */
 value rig_bench_lock(value v_path, value v_holder) {
 #if defined(_WIN32)
   (void)v_path;

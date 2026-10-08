@@ -488,7 +488,8 @@ static value claims_value(int won, struct claims *k) {
 
 /* Loses [d] for the reason [v_why]. The result's first element is 1 if this
    call lost it, then the indices of the devices whose stops it claimed,
-   whose stops the caller runs. */
+   whose stops the caller runs. [v_why] is copied before the runtime is
+   released; [v_d] is an immediate. */
 value caml_rig_lose(value v_d, value v_why) {
   struct rig_device *d = Device_val(v_d);
   char *why = strdup(String_val(v_why));
@@ -686,7 +687,9 @@ static int guard_try(struct rig_sub *s) {
 /* A waiter counts itself under the mutex before it tries, and a giver
    frees the guard before it reads the count: either the try sees the
    guard free, or the giver sees the waiter and wakes it under the mutex,
-   which the waiter holds until it waits. */
+   which the waiter holds until it waits. [s] is read with the runtime
+   released: [Submission.submit] uses the submission after the call, which
+   keeps its custom block, whose finaliser frees [s], reachable. */
 value caml_rig_sub_take(value v_s) {
   struct rig_sub *s = *(struct rig_sub **)Data_custom_val(v_s);
   if (guard_try(s)) return Val_unit;
