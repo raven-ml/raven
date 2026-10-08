@@ -362,12 +362,14 @@ static inline uint64_t nx_double_to_u64(double x) {
   return (uint64_t)x;
 }
 
-/* Saturates [x] to [[lo, hi]], a range of at most 32 bits. */
+/* Saturates [x] to [[lo, hi]], a range of at most 32 bits; NaN gives 0. The
+   bounds are selected before the truncation, with no branch, so a loop over
+   values vectorises. */
 static inline int64_t nx_double_to_int(double x, int64_t lo, int64_t hi) {
-  if (x != x) return 0;
-  if (x <= (double)lo) return lo;
-  if (x >= (double)hi) return hi;
-  return (int64_t)x;
+  double y = x == x ? x : 0.0;
+  y = y < (double)lo ? (double)lo : y;
+  y = y > (double)hi ? (double)hi : y;
+  return (int64_t)y;
 }
 
 /* The bits a store of [x] writes into an element of the integer, boolean or
