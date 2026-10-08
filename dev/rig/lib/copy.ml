@@ -111,6 +111,22 @@ let io_write src dst n =
           I.write h r ~at:dst.offset ~src:(host_address src) ~len:n)
   | None -> invalid_argf "Rig.%s: the destination is no io memory" fn
 
+(* How the host moves bytes: between memory it addresses, or by an io device's
+   read or write. A constant, so a host copy allocates nothing. *)
+type transfer = Move | Io_read | Io_write
+
+(* The host's copy of [n] bytes from [src] to [dst], after their devices' work,
+   asked at [start]. *)
+let on_host transfer src dst n start =
+  Buffer.wait src Buffer.Read;
+  Buffer.wait dst Buffer.Read_write;
+  (match transfer with
+  | Move -> memmove (host_address dst) (host_address src) n
+  | Io_read -> io_read src dst n
+  | Io_write -> io_write src dst n);
+  record src.mem.dev dst.mem.dev n start;
+  true
+
 (* Copies [n] bytes from [src] to [dst] in one transfer, where one runs it: the
    host between memory it addresses or with an io device's, or a device's copy
    queue between memory it maps. A copy on a queue returns at once unless
@@ -119,19 +135,9 @@ let io_write src dst n =
 let direct ~wait src dst n =
   let sd = src.mem.dev and dd = dst.mem.dev in
   let start = Prof.now () in
-  let on_host transfer =
-    Buffer.wait src Buffer.Read;
-    Buffer.wait dst Buffer.Read_write;
-    transfer ();
-    record sd dd n start;
-    true
-  in
-  if local src.mem && local dst.mem then
-    on_host (fun () -> memmove (host_address dst) (host_address src) n)
-  else if Dev.is_io sd && local dst.mem then
-    on_host (fun () -> io_read src dst n)
-  else if Dev.is_io dd && local src.mem then
-    on_host (fun () -> io_write src dst n)
+  if local src.mem && local dst.mem then on_host Move src dst n start
+  else if Dev.is_io sd && local dst.mem then on_host Io_read src dst n start
+  else if Dev.is_io dd && local src.mem then on_host Io_write src dst n start
   else
     let runner = if local src.mem then dd else sd in
     (not (Dev.is_io runner)) && on_queue ~wait runner src dst n start
