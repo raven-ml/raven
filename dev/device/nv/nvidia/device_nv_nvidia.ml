@@ -836,9 +836,18 @@ let gpu c bus =
       Atomic.set opened ((bus, g) :: Atomic.get opened);
       Ok g
 
+(* Whether [g] reaches the GPU memory of the GPU [p'] reaches, by the RM device
+   each holds, unique in the process's client. *)
+let reaches g (p' : mem Device_nv.path) =
+  match
+    List.find_opt (fun (_, g') -> g'.device = p'.device) (Atomic.get opened)
+  with
+  | Some (_, g') -> not (List.mem g'.uuid g.refused)
+  | None -> false
+
 let path g =
   {
-    Device_nv.key = key;
+    Device_nv.key;
     rm = Rm.rm g.c;
     device = g.device;
     subdevice = g.subdevice;
@@ -848,6 +857,7 @@ let path g =
     doorbell = Nativeint.of_int (g.doorbell + doorbell_at);
     alloc = alloc g;
     map_host = map_host g;
+    reaches = reaches g;
     map_peer = map_peer g;
     free = free g;
     register = register g;

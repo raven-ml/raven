@@ -92,9 +92,6 @@ val key : t Type.Id.t
 val arch : t -> string
 (** [arch g] is the architecture of the GPU's multiprocessors, as ["sm_89"]. *)
 
-val machine : t -> string option
-(** [machine g] is [None]: the GPU is on this machine. *)
-
 val budget : t -> int
 (** [budget g] is the GPU's memory that its work may allocate, in bytes, as its
     path reports it. *)
@@ -159,7 +156,7 @@ val free : t -> region -> unit
     uses it runs.
 
     Raises [Invalid_argument] if [r] is not an allocation of [g], is the
-    timeline word or an image's code region, or was freed. *)
+    timeline word, or was freed. *)
 
 val address : region -> int option
 (** [address r] is [Some a], [a] the address of [r]'s first byte in the GPU's
@@ -172,6 +169,11 @@ val handle : region -> nativeint
 val host : region -> nativeint option
 (** [host r] is [Some a], [a] the host address of [r]'s first byte, if the host
     addresses [r], and [None] for [`Device] memory. *)
+
+val peer : t -> t -> bool
+(** [peer g g'] is [true] iff {!map_peer}[ g g'] maps [`Device] memory of [g']:
+    if the same path opened both devices and it reaches [g']'s GPU memory from
+    [g]'s GPU, as the path of two GPUs with peer access does. *)
 
 val map_peer : t -> t -> region -> region option
 (** [map_peer g g' r] is [Some r'] with [r'] a new region of [g] over the memory
@@ -203,17 +205,27 @@ val unmap : t -> region -> unit
 type image
 (** The type for cubins a device loaded. *)
 
-val image : t -> string -> (image * (region * string) option, string) result
-(** [image g bin] is [Ok (c, Some (r, b))] with [c] the cubin [bin], [r] a new
-    region of GPU memory for its code, and [b] the bytes of its image
-    ({!Device_nv_abi.Cubin.size} of them), relocated for [r]'s address. [r] is
-    [c]'s: {!unload} frees it. The caller writes [b] to [r], such as with a
-    [`Copy] part, before work runs [c]'s kernels. The device invalidates its
-    compute engine's instruction cache at its next submission that uses
-    ["COMPUTE:0"], before its parts: a cubin may load where another one's code
-    was. The result is [Error msg] if [bin] is no cubin
-    ({!Device_nv_abi.Cubin.of_string}) or if [g] has not the memory for its
-    code. *)
+val image :
+  t ->
+  string ->
+  ( [ `Loaded of image | `Place of int * (region -> image * string) ],
+    string )
+  result
+(** [image g bin] is [Ok (`Place (n, lay))] for the cubin [bin], whose image is
+    [n] bytes ({!Device_nv_abi.Cubin.size}). The caller allocates a region [r]
+    of [`Device] memory of [g] of at least [n] bytes; [lay r] is the loaded
+    cubin over [r] and the [n] bytes of its image, relocated for [r]'s address,
+    which the caller writes to [r]'s start, such as with a [`Copy] part, before
+    work runs its kernels. [image] makes nothing on [g], and [lay] calls no
+    driver function and raises nothing. [r] stays the caller's: it frees [r]
+    after {!unload}.
+
+    The device invalidates its compute engine's instruction cache at its next
+    submission that uses ["COMPUTE:0"] after [lay], before its parts: a cubin
+    may load where another one's code was.
+
+    The result is [Error msg] if [bin] is no cubin
+    ({!Device_nv_abi.Cubin.of_string}). *)
 
 val entry : image -> string -> int option
 (** [entry c f] is [Some a], [a] the address of the first instruction of the
@@ -224,8 +236,8 @@ val entry : image -> string -> int option
     Raises [Invalid_argument] if [c] was unloaded. *)
 
 val unload : t -> image -> unit
-(** [unload g c] frees [c]'s code region. The caller unloads it once no work
-    that runs its kernels runs.
+(** [unload g c] ends [c]: its code region goes back to the caller, who frees
+    it. The caller unloads it once no work that runs its kernels runs.
 
     Raises [Invalid_argument] if [c] is another device's or was unloaded. *)
 
@@ -425,6 +437,9 @@ type 'm path = {
           GPU, or [None] if the path refuses them. The path maps whole pages,
           once per process for the pages of one range, and keeps them mapped
           until every memory it gave over them is freed. *)
+  reaches : 'm path -> bool;
+      (** [reaches p'] is [true] iff this GPU's work addresses the GPU memory of
+          the GPU [p'] reaches, another of this path. *)
   map_peer : 'm memory -> 'm memory option;
       (** [map_peer m] is the memory [m] of another GPU of this path, mapped for
           this one, or [None] if this GPU cannot address it. *)

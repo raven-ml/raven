@@ -62,6 +62,7 @@ type 'm path = {
   doorbell : nativeint;
   alloc : [ `Gpu | `Bar | `System ] -> int -> 'm memory option;
   map_host : nativeint -> int -> 'm memory option;
+  reaches : 'm path -> bool;
   map_peer : 'm memory -> 'm memory option;
   free : 'm memory -> unit;
   register : int -> (unit, string) result;
@@ -180,7 +181,7 @@ let bits (lo, n) v = (v land ((1 lsl n) - 1)) lsl lo
 
 (* Devices *)
 
-type kind = Allocation | Bar | Mapping | Word | Code
+type kind = Allocation | Bar | Mapping | Word
 
 type 'm dev = {
   path : 'm path;
@@ -238,7 +239,6 @@ let arch_of v =
       (if minor > 0xf then minor lsr 4 else minor)
 
 let arch (T d) = d.arch
-let machine (T _) = None
 let budget (T d) = d.path.budget
 let queues (T _) = [ "COMPUTE:0"; "COPY:0" ]
 let completion (T _) = `Store
@@ -626,7 +626,6 @@ let free (T d) r =
   | Some r -> (
       match r.kind with
       | Word -> invalid_arg "Device_nv.free: the timeline word is never freed"
-      | Code -> invalid_arg "Device_nv.free: an image's code is freed by unload"
       | Mapping -> invalid_arg "Device_nv.free: a mapping is ended by unmap"
       | Allocation | Bar ->
           if not (Atomic.compare_and_set r.live true false) then
@@ -637,6 +636,13 @@ let free (T d) r =
 let address (R r) = Some r.mem.address
 let handle (R r) = Nativeint.of_int r.mem.address
 let host (R r) = r.mem.host
+
+let peer (T d) (T d') =
+  d.self <> d'.self
+  &&
+  match Type.Id.provably_equal d.path.key d'.path.key with
+  | Some Type.Equal -> d.path.reaches d'.path
+  | None -> false
 
 let map_peer (T d) (T d') r =
   if d.self = d'.self then
@@ -669,8 +675,14 @@ let unmap (T d) r =
 
 (* Images *)
 
-type image = I : 'm img -> image
-and 'm img = { code : 'm reg; cubin : Cubin.t }
+(* An image is a cubin laid over a region of its device: the address of the
+   region's first byte. *)
+type image = {
+  owner : int;
+  base : int;
+  cubin : Cubin.t;
+  loaded : bool Atomic.t;
+}
 
 (* The image of [c] for an upload at [base]: its object's image, zeros up to its
    size, and its relocations' patches. *)
@@ -687,37 +699,31 @@ let image_bytes c ~base =
   List.iter patch (Cubin.patches c ~base);
   Bytes.unsafe_to_string b
 
-(* The image of the cubin [c] laid over [m], its code region, and the bytes that
-   go there. A cubin may load where another one's code was, so the compute
-   channel owes an instruction cache invalidation. *)
-let lay d c m =
-  let code = reg d Code (Cubin.size c) m in
+(* The cubin [c] laid over the region [r] of [d]. A cubin may load where another
+   one's code was, so the compute channel owes an instruction cache
+   invalidation. *)
+let lay d c (R r) =
+  let base = r.mem.address in
   owe_invalidate d.self;
-  (I { code; cubin = c }, R code, image_bytes c ~base:m.address)
+  ( { owner = d.self; base; cubin = c; loaded = Atomic.make true },
+    image_bytes c ~base )
 
 let image (T d) bin =
   let* c = Cubin.of_string bin in
-  let size = Cubin.size c in
-  match d.path.alloc `Gpu size with
-  | None -> Error (strf "no GPU memory for %d bytes of code" size)
-  | Some m ->
-      let img, code, bytes = lay d c m in
-      Ok (img, Some (code, bytes))
+  Ok (`Place (Cubin.size c, lay d c))
 
-let entry (I c) name =
-  if not (Atomic.get c.code.live) then
+let entry c name =
+  if not (Atomic.get c.loaded) then
     invalid_arg "Device_nv.entry: the image was unloaded";
   Option.map
-    (fun (k : Cubin.kernel) -> c.code.mem.address + k.code)
+    (fun (k : Cubin.kernel) -> c.base + k.code)
     (Cubin.kernel c.cubin name)
 
-let unload (T d) (I c) =
-  match mine d (R c.code) with
-  | None -> invalid_arg "Device_nv.unload: the image is another device's"
-  | Some r ->
-      if not (Atomic.compare_and_set r.live true false) then
-        invalid_arg "Device_nv.unload: the image was unloaded";
-      d.path.free r.mem
+let unload (T d) c =
+  if c.owner <> d.self then
+    invalid_arg "Device_nv.unload: the image is another device's";
+  if not (Atomic.compare_and_set c.loaded true false) then
+    invalid_arg "Device_nv.unload: the image was unloaded"
 
 (* Work *)
 

@@ -39,6 +39,7 @@ let path release : unit Device_nv.path =
     doorbell = 0n;
     alloc = (fun _ _ -> called "alloc");
     map_host = (fun _ _ -> called "map_host");
+    reaches = (fun _ -> called "reaches");
     map_peer = (fun _ -> called "map_peer");
     free = (fun _ -> called "free");
     register = (fun _ -> called "register");
@@ -84,7 +85,11 @@ let once_commands =
       (Gen.unit @-> makes image)
       (fun () -> { live = true })
       (fun () ->
-        fst (require_ok (Device_nv.image (Lazy.force gpu) (Lazy.force cubin))));
+        let g = Lazy.force gpu in
+        match require_ok (Device_nv.image g (Lazy.force cubin)) with
+        | `Place (n, lay) ->
+            fst (lay (require_some (Device_nv.alloc g `Device n)))
+        | `Loaded i -> i);
     command "unload" (image ^-> returns unit) once unload_system;
   ]
 
