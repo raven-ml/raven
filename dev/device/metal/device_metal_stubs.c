@@ -361,8 +361,8 @@ value caml_device_metal_icb_release(value v_d, value v_icb) {
 /* The timeline */
 
 intnat caml_device_metal_signaled(intnat d) {
-  return (intnat)__atomic_load_n(
-      (uint64_t *)((struct device_metal *)d)->word.contents, __ATOMIC_ACQUIRE);
+  return (intnat)__atomic_load_n(((struct device_metal *)d)->ring.word,
+                                 __ATOMIC_ACQUIRE);
 }
 
 intnat caml_device_metal_last(intnat d) {
