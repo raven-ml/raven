@@ -10,6 +10,7 @@
 
 #define _GNU_SOURCE
 
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -77,6 +78,31 @@ value caml_device_host_error_message(value v_error) {
   CAMLreturn(caml_copy_string(msg));
 #else
   CAMLreturn(caml_copy_string(strerror((int)Long_val(v_error))));
+#endif
+}
+
+/* Instruction streams
+
+   A core that runs code another core wrote must synchronize its instruction
+   stream with it: the writer's cache maintenance reaches every core, but
+   only a context synchronization (isb) makes a core refetch, and a pool
+   worker takes none between jobs. [installed] counts the installs of code;
+   before each call of linked code a thread synchronizes if code was
+   installed since it last did, which costs a load when none was. The
+   writer's cache maintenance completes before its count is published. x86
+   keeps its instruction stream coherent with stores. */
+
+#if defined(__aarch64__)
+static _Atomic uint64_t installed;
+static _Thread_local uint64_t synchronized;
+#endif
+
+static inline void synchronize(void) {
+#if defined(__aarch64__)
+  uint64_t n = atomic_load_explicit(&installed, memory_order_acquire);
+  if (n == synchronized) return;
+  __asm__ volatile("isb" ::: "memory");
+  synchronized = n;
 #endif
 }
 
@@ -172,6 +198,9 @@ value caml_device_host_install(value v_mapping, value v_bytes) {
 #endif
   __builtin___clear_cache(m->base, m->base + n);
 #endif
+#if defined(__aarch64__)
+  atomic_fetch_add_explicit(&installed, 1, memory_order_release);
+#endif
   return Val_long(0);
 }
 
@@ -192,16 +221,6 @@ value caml_device_host_install(value v_mapping, value v_bytes) {
 #endif
 
 typedef void(SYSV *program)(void **, const int64_t *);
-
-/* Synchronizes the calling thread's instruction stream with code another
-   core wrote. The writer's cache maintenance reaches every core, but only a
-   context synchronization makes a core refetch, and a pool worker takes none
-   between jobs. x86 keeps its instruction stream coherent with stores. */
-static inline void synchronize(void) {
-#if defined(__aarch64__)
-  __asm__ volatile("isb" ::: "memory");
-#endif
-}
 
 /* The copies of the values that a split's calls take, on the stack when they
    fit. Each worker's copy takes whole cache lines, of 128 bytes on the hosts
