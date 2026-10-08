@@ -61,6 +61,11 @@ static void mutex_init(dc_mutex *m) { InitializeSRWLock(m); }
 static int mutex_try(dc_mutex *m) { return TryAcquireSRWLockExclusive(m); }
 static void mutex_lock(dc_mutex *m) { AcquireSRWLockExclusive(m); }
 static void mutex_unlock(dc_mutex *m) { ReleaseSRWLockExclusive(m); }
+static void cond_init(dc_cond *c) { InitializeConditionVariable(c); }
+static void cond_wait(dc_cond *c, dc_mutex *m) {
+  SleepConditionVariableSRW(c, m, INFINITE, 0);
+}
+static void cond_broadcast(dc_cond *c) { WakeAllConditionVariable(c); }
 static void mu_init(struct dc_device *d) {
   mutex_init(&d->mu);
   InitializeConditionVariable(&d->cv);
@@ -76,6 +81,9 @@ static void mutex_init(dc_mutex *m) { pthread_mutex_init(m, NULL); }
 static int mutex_try(dc_mutex *m) { return pthread_mutex_trylock(m) == 0; }
 static void mutex_lock(dc_mutex *m) { pthread_mutex_lock(m); }
 static void mutex_unlock(dc_mutex *m) { pthread_mutex_unlock(m); }
+static void cond_init(dc_cond *c) { pthread_cond_init(c, NULL); }
+static void cond_wait(dc_cond *c, dc_mutex *m) { pthread_cond_wait(c, m); }
+static void cond_broadcast(dc_cond *c) { pthread_cond_broadcast(c); }
 static void mu_init(struct dc_device *d) {
   mutex_init(&d->mu);
   pthread_cond_init(&d->cv, NULL);
@@ -160,11 +168,12 @@ static int is_lost(struct dc_device *d) {
 
 /* Locks */
 
-/* A device's lock, which guards its OCaml state. Every lock is on one
-   list, so a forked child can make each anew; none is freed, as a device
-   lives as long as its process. */
+/* A lock of the core's OCaml state, with a condition. Every lock is on
+   one list, so a forked child can make each anew; none is freed, as a
+   device and a module live as long as their process. */
 struct dc_lock {
   dc_mutex mu;
+  dc_cond cv;
   struct dc_lock *next;
 };
 
@@ -182,8 +191,10 @@ static _Atomic(struct dc_lock *) locks;
 #ifndef _WIN32
 static void forked_child(void) {
   static char why[] = "forked";
-  for (struct dc_lock *l = atomic_load(&locks); l != NULL; l = l->next)
+  for (struct dc_lock *l = atomic_load(&locks); l != NULL; l = l->next) {
     mutex_init(&l->mu);
+    cond_init(&l->cv);
+  }
   int n = atomic_load(&top);
   for (int i = 1; i <= n; i++) {
     struct dc_device *d = dc_device_of(i);
@@ -202,7 +213,7 @@ static pthread_once_t atfork_once = PTHREAD_ONCE_INIT;
 static void atfork(void) { pthread_atfork(NULL, NULL, forked_child); }
 #endif
 
-/* A new lock. The host's is made as the library starts, so the fork
+/* A new lock. The first is made as the library starts, so the fork
    handler is in place before any thread can hold a lock. */
 value caml_rig_lock_new(value unit) {
   (void)unit;
@@ -212,6 +223,7 @@ value caml_rig_lock_new(value unit) {
   struct dc_lock *l = malloc(sizeof *l);
   if (l == NULL) caml_raise_out_of_memory();
   mutex_init(&l->mu);
+  cond_init(&l->cv);
   l->next = atomic_load(&locks);
   while (!atomic_compare_exchange_weak(&locks, &l->next, l)) {
   }
@@ -232,6 +244,34 @@ value caml_rig_lock_take(value v_l) {
 value caml_rig_lock_give(value v_l) {
   mutex_unlock(&Lock_val(v_l)->mu);
   return Val_unit;
+}
+
+/* Gives up the lock [v_l], which the caller holds, until a broadcast on
+   it or a spurious wake-up, then takes it back; without the domain lock
+   meanwhile. */
+value caml_rig_lock_wait(value v_l) {
+  struct dc_lock *l = Lock_val(v_l);
+  caml_enter_blocking_section_no_pending();
+  cond_wait(&l->cv, &l->mu);
+  caml_leave_blocking_section();
+  return Val_unit;
+}
+
+value caml_rig_lock_broadcast(value v_l) {
+  cond_broadcast(&Lock_val(v_l)->cv);
+  return Val_unit;
+}
+
+/* Takes, then gives, every lock, in the list's order: what a thread
+   inside each lock at once holds, for tests. */
+void rig_locks_take(void) {
+  for (struct dc_lock *l = atomic_load(&locks); l != NULL; l = l->next)
+    mutex_lock(&l->mu);
+}
+
+void rig_locks_give(void) {
+  for (struct dc_lock *l = atomic_load(&locks); l != NULL; l = l->next)
+    mutex_unlock(&l->mu);
 }
 
 /* A device record of index [v_index] named [v_name]. */

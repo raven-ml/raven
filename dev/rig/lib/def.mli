@@ -55,7 +55,7 @@ type device = {
   fault : exn -> string option;  (** The driver's faults. *)
   capability : capability option;
   release : int;  (** The C release list. *)
-  lock : int;  (** The C lock that guards everything mutable below. *)
+  lock : Lock.t;  (** Guards everything mutable below. *)
   mutable budget : int;
   mutable used : int;  (** Own bytes in live buffers, code and cache. *)
   mutable cached : int;

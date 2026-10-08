@@ -6,7 +6,7 @@
 type t = {
   counters : string list;
   trace : bool;
-  lock : Mutex.t;
+  lock : Lock.t;
   mutable events : (int * Def.event) list;
 }
 
@@ -22,7 +22,7 @@ let rec change f =
   if not (Atomic.compare_and_set profiles ps (f ps)) then change f
 
 let start ~counters ~trace =
-  let p = { counters; trace; lock = Mutex.create (); events = [] } in
+  let p = { counters; trace; lock = Lock.create (); events = [] } in
   change (fun ps -> ps @ [ p ]);
   p
 
@@ -31,7 +31,7 @@ let stop p = change (List.filter (fun p' -> p' != p))
 let add ps e =
   let n = Atomic.fetch_and_add numbers 1 in
   List.iter
-    (fun p -> Mutex.protect p.lock (fun () -> p.events <- (n, e) :: p.events))
+    (fun p -> Lock.protect p.lock (fun () -> p.events <- (n, e) :: p.events))
     ps
 
 let record e = match active () with [] -> () | ps -> add ps e

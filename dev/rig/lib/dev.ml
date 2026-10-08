@@ -24,10 +24,6 @@ external c_new :
   int = "caml_rig_device_new_byte" "caml_rig_device_new"
 
 external c_io_new : int -> string -> int = "caml_rig_io_new"
-external lock_new : unit -> int = "caml_rig_lock_new"
-external lock_try : int -> bool = "caml_rig_lock_try" [@@noalloc]
-external lock_take : int -> unit = "caml_rig_lock_take"
-external lock_give : int -> unit = "caml_rig_lock_give" [@@noalloc]
 external c_word : int -> int = "caml_rig_word" [@@noalloc]
 external c_set_seen : int -> int -> unit = "caml_rig_set_seen" [@@noalloc]
 external c_submitted : int -> int = "caml_rig_submitted" [@@noalloc]
@@ -96,7 +92,7 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~completion ~waits
     fault;
     capability;
     release = release_list ();
-    lock = lock_new ();
+    lock = Lock.create ();
     budget;
     used = 0;
     cached = 0;
@@ -128,23 +124,8 @@ let () =
 
 (* Locks *)
 
-let protect d f =
-  if not (lock_try d.lock) then lock_take d.lock;
-  match f () with
-  | v ->
-      lock_give d.lock;
-      v
-  | exception e ->
-      let bt = Printexc.get_raw_backtrace () in
-      lock_give d.lock;
-      Printexc.raise_with_backtrace e bt
-
-let busy d =
-  if lock_try d.lock then begin
-    lock_give d.lock;
-    false
-  end
-  else true
+let protect d f = Lock.protect d.lock f
+let busy d = Lock.busy d.lock
 
 (* Facts *)
 
@@ -158,15 +139,13 @@ let submitted d = if d.c = 0 then 0 else c_submitted d.c
 let answer d = if d.c = 0 then 0 else c_answer d.c
 let copies d = Array.exists (String.starts_with ~prefix:"COPY:") d.queues
 let machines : (string, device) Hashtbl.t = Hashtbl.create 4
-let table_lock = Mutex.create ()
+let table_lock = Lock.create ()
 
 let host_of d =
   match d.machine with
   | None -> host
   | Some m -> (
-      match
-        Mutex.protect table_lock (fun () -> Hashtbl.find_opt machines m)
-      with
+      match Lock.protect table_lock (fun () -> Hashtbl.find_opt machines m) with
       | Some h -> h
       | None -> d)
 
@@ -334,7 +313,6 @@ let point_reached p =
 type slot = Opening | Open of device
 
 let table : (string option * string, slot) Hashtbl.t = Hashtbl.create 16
-let opened = Condition.create ()
 let next_index = Atomic.make 1
 
 (* Opens the device [name] on [machine] with [make], which builds it from its
@@ -345,7 +323,7 @@ let open_named ~machine ~name ~key ~host make =
   let rec find () =
     match Hashtbl.find_opt table k with
     | Some Opening ->
-        Condition.wait opened table_lock;
+        Lock.wait table_lock;
         find ()
     | Some (Open d) when not (is_lost d) ->
         if d.key <> key then
@@ -359,7 +337,7 @@ let open_named ~machine ~name ~key ~host make =
     | None -> `Make
   in
   let found =
-    Mutex.protect table_lock (fun () ->
+    Lock.protect table_lock (fun () ->
         match find () with
         | `Make ->
             Hashtbl.replace table k Opening;
@@ -371,14 +349,14 @@ let open_named ~machine ~name ~key ~host make =
   | `Error e -> Error e
   | `Make -> (
       let finish r =
-        Mutex.protect table_lock (fun () ->
+        Lock.protect table_lock (fun () ->
             (match r with
             | Ok d ->
                 Hashtbl.replace table k (Open d);
                 if host then
                   Option.iter (fun m -> Hashtbl.replace machines m d) machine
             | Error _ -> Hashtbl.remove table k);
-            Condition.broadcast opened);
+            Lock.broadcast table_lock);
         r
       in
       let index = Atomic.fetch_and_add next_index 1 in

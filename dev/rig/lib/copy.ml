@@ -25,8 +25,7 @@ let record src dst bytes start =
    device is replaced, so a loss reaches no other copy. *)
 let slot_bytes = 64 * 1024 * 1024
 let slots = [| None; None |]
-let slots_lock = Mutex.create ()
-let slot_free = Condition.create ()
+let slots_lock = Lock.create ()
 let in_use = [| false; false |]
 
 let names_lost b =
@@ -37,12 +36,12 @@ let names_lost b =
   !lost
 
 let take_slot () =
-  Mutex.protect slots_lock (fun () ->
+  Lock.protect slots_lock (fun () ->
       let rec free () =
         if not in_use.(0) then 0
         else if not in_use.(1) then 1
         else (
-          Condition.wait slot_free slots_lock;
+          Lock.wait slots_lock;
           free ())
       in
       let i = free () in
@@ -50,9 +49,9 @@ let take_slot () =
       i)
 
 let give_slot i =
-  Mutex.protect slots_lock (fun () ->
+  Lock.protect slots_lock (fun () ->
       in_use.(i) <- false;
-      Condition.signal slot_free)
+      Lock.broadcast slots_lock)
 
 let slot i =
   match slots.(i) with

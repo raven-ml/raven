@@ -8,7 +8,7 @@
 type t = {
   counters : string list;
   trace : bool;
-  lock : Mutex.t;
+  lock : Lock.t;
   mutable events : (int * Def.event) list;  (** Numbered, newest first. *)
 }
 

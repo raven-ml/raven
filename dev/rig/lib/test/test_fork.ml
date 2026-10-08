@@ -11,6 +11,7 @@ module C = Rig
 module B = Rig.Buffer
 module Sub = Rig.Submission
 module P = Rig_support.Polled
+module Support = Rig_support
 
 let timeout = 60.
 let empty d = Sub.make ~reads:0 ~writes:0 ~waits:0 d [||]
@@ -199,32 +200,24 @@ let test_own_device () =
   equal string "exited 0" (status ended);
   equal (list string) [ "not lost"; "reused: true"; "forked" ] lines
 
-(* The core's record of the device [d], which only the core reaches. *)
-let record d =
-  let name = C.name d in
-  let all = Rig__Dev.all () in
-  Option.get (Array.find_opt (fun r -> r.Rig__Def.name = name) all)
-
-(* A thread of the parent inside an io device's lock at the fork leaves the
-   child the device: the child makes the lock anew. A child that still waits for
-   it is killed by its alarm. *)
-let test_io_lock () =
+(* A thread of the parent inside every lock of the core at the fork, with a
+   profile being taken, leaves the child a working core: the child makes each
+   lock anew. A child that still waits for one is killed by its alarm. *)
+let test_locks () =
   if Sys.win32 then skip ~reason:"Windows has no fork" ();
   let io = open_store "fork:io-locked" in
   let lock = Mutex.create () and cond = Condition.create () in
   let inside = ref false and leave = ref false in
-  let holder =
-    Thread.create
-      (fun () ->
-        Rig__Dev.protect (record io) (fun () ->
-            Mutex.protect lock (fun () ->
-                inside := true;
-                Condition.broadcast cond;
-                while not !leave do
-                  Condition.wait cond lock
-                done)))
-      ()
+  let hold () =
+    Support.locked (fun () ->
+        Mutex.protect lock (fun () ->
+            inside := true;
+            Condition.broadcast cond;
+            while not !leave do
+              Condition.wait cond lock
+            done))
   in
+  let holder = Thread.create (fun () -> ignore (C.Profile.take hold)) () in
   Mutex.protect lock (fun () ->
       while not !inside do
         Condition.wait cond lock
@@ -233,14 +226,21 @@ let test_io_lock () =
     in_child (fun () ->
         Sys.set_signal Sys.sigalrm Sys.Signal_default;
         ignore (Unix.alarm 5);
-        [ Printf.sprintf "bytes made: %d" (B.length (B.create io 8)) ])
+        let made = B.length (B.create io 8) in
+        let d, _ = P.open_ "fork:opened-in-child" in
+        C.Profile.span "child" (fun () -> ());
+        [
+          Printf.sprintf "bytes made: %d" made;
+          Option.value ~default:"opened" (C.lost d);
+          "span recorded";
+        ])
   in
   Mutex.protect lock (fun () ->
       leave := true;
       Condition.broadcast cond);
   Thread.join holder;
   equal string "exited 0" (status ended);
-  equal (list string) [ "bytes made: 8" ] lines
+  equal (list string) [ "bytes made: 8"; "opened"; "span recorded" ] lines
 
 let tests =
   [
@@ -253,8 +253,8 @@ let tests =
           test_io_used;
         test "a device a forked child opens drains as in any process"
           test_own_device;
-        test "a forked child uses an io device a parent's thread had locked"
-          test_io_lock;
+        test "a forked child uses the core a parent's thread had locked"
+          test_locks;
       ];
   ]
 

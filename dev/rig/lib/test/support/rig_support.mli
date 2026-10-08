@@ -154,6 +154,11 @@ val move : dst:int -> src:int -> int -> unit
 (** [move ~dst ~src n] copies the [n] bytes at host address [src] to host
     address [dst]. *)
 
+val locked : (unit -> 'a) -> 'a
+(** [locked f] is [f ()] run holding every lock of rig's core at once, as
+    threads inside each would: what a fork during [f] leaves the child. [f] must
+    not call rig, whose calls would wait for those locks. *)
+
 val shares : ('a, 'b, 'c) Bigarray.Array1.t -> int
 (** [shares ba] is how many holders share [ba]'s storage, as the runtime counts
     them on the proxy its arrays share: [0] if they share none. *)

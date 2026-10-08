@@ -298,7 +298,7 @@ let answered d =
   Dev.is_lost d && (Dev.answer d = Dev.answer_stopped || Dev.upgrade d)
 
 (* Holds whose release is still to run: their stamps and release. *)
-let holds_lock = Mutex.create ()
+let holds_lock = Lock.create ()
 let holds : (int * (unit -> unit)) list ref = ref []
 
 (* A hold's release is due once each of its points is reached and each of its
@@ -331,7 +331,7 @@ let run_release (st, release) =
 let drain_holds () =
   if !holds <> [] then begin
     let due =
-      Mutex.protect holds_lock (fun () ->
+      Lock.protect holds_lock (fun () ->
           let due, later = List.partition hold_due !holds in
           holds := later;
           due)
@@ -394,7 +394,7 @@ let route d = function
           if cached then cache d e else d.retiring <- e :: d.retiring)
   | Program (image, code) -> defer d (Unload (image, code))
   | Release { stamps; release } ->
-      Mutex.protect holds_lock (fun () -> holds := (stamps, release) :: !holds)
+      Lock.protect holds_lock (fun () -> holds := (stamps, release) :: !holds)
 
 (* Takes what became due: retiring memory no bigarray reads and whose foreign
    uses are reached enters the cache, or is freed if [d] is lost and counts as

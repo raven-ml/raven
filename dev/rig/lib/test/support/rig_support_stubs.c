@@ -412,3 +412,21 @@ value rig_test_shares(value v_ba) {
   struct caml_ba_proxy *p = Caml_ba_array_val(v_ba)->proxy;
   return Val_long(p == NULL ? 0 : (intnat)atomic_load(&p->refcount));
 }
+
+/* The core's own: every lock it has, in one order. */
+extern void rig_locks_take(void);
+extern void rig_locks_give(void);
+
+value rig_test_locks_take(value unit) {
+  (void)unit;
+  caml_enter_blocking_section();
+  rig_locks_take();
+  caml_leave_blocking_section();
+  return Val_unit;
+}
+
+value rig_test_locks_give(value unit) {
+  (void)unit;
+  rig_locks_give();
+  return Val_unit;
+}
