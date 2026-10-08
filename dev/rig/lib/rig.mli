@@ -349,8 +349,8 @@ module Buffer : sig
 
       It waits for one device after another and holds no lock. Once every point
       is reached it reads one word per device and allocates nothing. Work
-      submitted after it returns is the caller's to exclude, by a claim or a
-      lock of its own.
+      submitted after it returns is the caller's to exclude, by a claim taken
+      before the wait ({!Claim}) or a lock of its own.
 
       Raises [Invalid_argument] if [b] is dead, and {!Lost} if a point it waits
       for is on a lost device. *)
@@ -485,7 +485,9 @@ end
     claims the memory while the host reads it, and a compiled call that writes
     over memory it was handed holds it exclusive, so that no reader sees the
     write. Claims never wait: a claim that cannot be had raises, or for an
-    exclusive one, is refused.
+    exclusive one, is refused. A host reader claims, then waits
+    ({!Buffer.wait}): a wait before the claim does not cover a write in place
+    that a donation on another domain makes between them.
 
     A claimed memory may be {e consumed}: every buffer over it made before
     becomes {e dead}, and reaching a dead buffer's bytes raises

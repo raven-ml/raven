@@ -16,13 +16,6 @@ let rec read_claim fn c =
   if n < 0 then invalid_argf "Rig.%s: the memory is held exclusive" fn
   else if not (swap c n (n + 1)) then read_claim fn c
 
-let take fn b =
-  Buffer.check_live fn b;
-  Memory.check_points (Memory.stamps b.mem);
-  read_claim fn b.mem.claim
-
-let read b = take "Claim.read" b
-
 (* The readers of [m]'s memory outside the claims: whoever holds the bigarray or
    the io library's region it is, counted in when the memory was made. *)
 let kept (m : memory) =
@@ -40,6 +33,23 @@ let rec release_above kept c =
   else if not (swap c n (n - 1)) then release_above kept c
 
 let release_claim c = release_above 0 c
+
+(* Claims, then checks [b] under the claim. A donation on another domain that
+   consumed the memory before this claim released its claims first, and the
+   compare-and-set reads the count after that release, so the check sees the
+   consumption. A check before the claim can pass while such a donation runs. *)
+let take fn b =
+  read_claim fn b.mem.claim;
+  match
+    Buffer.check_live fn b;
+    Memory.check_points (Memory.stamps b.mem)
+  with
+  | () -> ()
+  | exception e ->
+      release_claim b.mem.claim;
+      raise e
+
+let read b = take "Claim.read" b
 let release b = release_above (kept b.mem.root) b.mem.claim
 
 type t = { reads : claim list; mutable exclusive : claim list }

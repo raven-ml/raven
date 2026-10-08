@@ -294,6 +294,50 @@ let group_commands =
     command "read" (two ^-> judges unit) judge_any read_group;
   ]
 
+(* Two domains: reads against a donation that consumes the memory when it holds
+   it exclusive. A read before the donation keeps it a read; a read after a
+   consumption finds the buffer dead. A donation may also stay a read while
+   another domain's claims hold the memory. *)
+type memory = { mutable dead : bool; mutable reads : int }
+
+let memory =
+  abstract
+    ~pp:(fun ppf r -> Format.fprintf ppf "dead %b, reads %d" r.dead r.reads)
+    "m"
+
+let judge_read r = function
+  | Ok () ->
+      equal ~msg:"dead" bool false r.dead;
+      r.reads <- r.reads + 1
+  | Error (Invalid_argument _) -> equal ~msg:"dead" bool true r.dead
+  | Error e -> raise e
+
+let judge_donate r = function
+  | Ok consumed ->
+      equal ~msg:"dead" bool false r.dead;
+      if consumed then equal ~msg:"reads" int 0 r.reads;
+      r.dead <- consumed
+  | Error (Invalid_argument _) -> equal ~msg:"dead" bool true r.dead
+  | Error e -> raise e
+
+let donate b =
+  Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
+      Claim.exclusive c b
+      && begin
+        ignore (Claim.consume c ~why:"donated" b);
+        true
+      end)
+
+let donation_commands =
+  [
+    command "make"
+      (Gen.unit @-> makes memory)
+      (fun () -> { dead = false; reads = 0 })
+      (fun () -> B.create C.host 64);
+    command "read" (memory ^-> judges unit) judge_read Claim.read;
+    command "donate" (memory ^-> judges bool) judge_donate donate;
+  ]
+
 (* Claims on memory whose stamps name a lost device raise Lost, and with_
    releases what it took first. *)
 let test_lost_claims () =
@@ -373,6 +417,9 @@ let tests =
         stateful ~domains:2
           "with_ of a group and reads of its memory leave no claim behind"
           group_commands;
+        stateful ~domains:2
+          "a read beside a consuming donation is ordered before or after it"
+          donation_commands;
       ];
   ]
 
