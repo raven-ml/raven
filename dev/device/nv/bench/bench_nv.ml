@@ -3,13 +3,19 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* GPU 0 through the driver, opened through NVIDIA's kernel driver, each row
-   beside its floor: the same submissions through device_nv_room and
-   device_nv_submit, called from C in a loop on the device the row opened. A row
-   waits by spinning on the timeline word. Each case opens its device in its own
-   worker. Without an NVIDIA GPU the suite has no rows. *)
+(* GPU 0, opened through NVIDIA's kernel driver and Device_core, each row beside
+   its floor: the same submissions through device_nv_room and device_nv_submit,
+   called from C in a loop on the device the row opened, then a spin on the
+   timeline word. A row submits through Device_core.submit and waits with
+   Device_core.wait, as a program does, so its distance to the floor is the
+   core's share and the OCaml side of the driver. Memory rows call the driver.
+   Each case opens its device in its own worker. Without an NVIDIA GPU the suite
+   has no rows. *)
 
 module N = Device_nv
+module C = Device_core
+module B = Device_core.Buffer
+module Sub = Device_core.Submission
 module Abi = Device_nv_abi
 
 external start : nativeint -> int -> int -> unit = "device_nv_bench_start"
@@ -30,44 +36,40 @@ let address r = Option.get (N.address r)
 let at r off = host r + off
 let row name setup f = Thumper.bench_with_setup ~setup name f
 
-(* The driver *)
+(* The device: [d] the core's, [g] its driver's. *)
 
-type dev = { g : N.t; mutable v : int }
+type dev = { d : C.t; g : N.t }
 
-let dev () = { g = get (Device_nv_nvidia.open_ 0); v = 0 }
+let dev () =
+  let g = ref None in
+  let make () =
+    let r = Device_nv_nvidia.open_ 0 in
+    Result.iter (fun x -> g := Some x) r;
+    r
+  in
+  let d = get (C.open_ (module N) ~name:"NV" make) in
+  { d; g = Option.get !g }
+
 let alloc t kind n = Option.get (N.alloc t.g kind n)
+let submission t ps = Sub.make ~reads:0 ~writes:0 ~waits:0 t.d ps
 
-let submit ?(waits = [||]) t ps =
-  t.v <- t.v + 1;
-  (match N.room t.g ps with
-  | `Fits -> ()
-  | `Later | `Never -> failwith "the parts do not fit");
-  match N.submit t.g ~v:t.v ~waits ~handles:[||] ps with
-  | `Ok -> ()
-  | `Failed why -> failwith why
-
-let wait t =
-  while N.signaled t.g < t.v do
-    Domain.cpu_relax ()
-  done
-
-let run ?waits t ps =
-  submit ?waits t ps;
-  wait t
+let run t s =
+  let p = C.submit s in
+  C.wait t.d (C.Point.value p)
 
 (* The floor of [t]: its later values are given from C. *)
 let floor t =
-  start (N.self t.g) (host (N.word t.g)) t.v;
+  start (N.self t.g) (host (N.word t.g)) (C.submitted t.d);
   t
 
-(* A device with a live allocation of [kind], which keeps its page tables, as in
-   a program's steady state. *)
-let live kind () =
-  let t = dev () in
-  ignore (alloc t kind 4096);
-  t
+let part queue work = { Sub.queue; after = [||]; work }
 
-let copy_part t dst src n = N.part t.g ~queue:"COPY:0" (`Copy (dst, src, n))
+(* A host buffer of the ring entry [e], two words. *)
+let entry_words e =
+  let b = B.create C.host 8 in
+  let ba = B.bigarray Bigarray.int32 b in
+  Array.iteri (fun i w -> Bigarray.Array1.set ba i (Int32.of_int w)) e;
+  b
 
 (* Launches *)
 
@@ -83,28 +85,16 @@ let words s =
 
 let encode = Abi.Structure.encode Int64.of_int
 
-(* The cubin loaded on [t]'s GPU, its image copied by a copy from [staging] into
-   a new code region; the image and the region. *)
-let upload t staging =
-  match N.image t.g (Lazy.force cubin) with
-  | Ok (`Place (n, lay)) ->
-      let code = alloc t `Device n in
-      let m, bytes = lay code in
-      write (host staging) bytes;
-      run t [| copy_part t (code, 0) (staging, 0) n |];
-      (m, code)
-  | Ok (`Loaded _) -> failwith "an image without code"
-  | Error why -> failwith why
-
 (* [count] launches of the kernel [empty] over one thread: descriptors chained
    in [`Mapped] memory, constant bank 0 there too, and one segment that
-   schedules the first, as compiled code places them. The result is the
-   segment's ring entry, as two words. *)
+   schedules the first, as compiled code places them. The result is the loaded
+   program, which stays loaded while reachable, and the segment's ring entry, as
+   two words. *)
 let launches t count =
   let c = get (Abi.Cubin.of_string (Lazy.force cubin)) in
   let k = Option.get (Abi.Cubin.kernel c "empty") in
-  let image, _ = upload t (alloc t `Pinned (Abi.Cubin.size c)) in
-  let entry = Option.get (N.entry image "empty") in
+  let p = get (C.Program.load t.d (Lazy.force cubin)) in
+  let entry = Option.get (C.Program.entry p "empty") in
   let cap = N.capability t.g in
   let l = get (Abi.Launch.make cap k) in
   get (cap.local (Abi.Launch.local_bytes l));
@@ -138,61 +128,60 @@ let launches t count =
   let e =
     Abi.Gpfifo.entry (address segment) ~offset:0 ~words:(String.length ws / 4)
   in
-  words (Abi.Packet.encode Int64.of_int e)
+  (p, words (Abi.Packet.encode Int64.of_int e))
 
 (* Rows *)
 
 let release_rows =
-  let switching () =
+  let empty () =
     let t = dev () in
-    (t, [| N.part t.g ~queue:"COPY:0" (`Words [||]) |])
+    (t, submission t [||])
   in
   let mapped () =
-    let t = dev () in
-    ignore (alloc t `Mapped 4096);
-    t
+    let t, s = empty () in
+    (t, s, B.create ~memory:Mapped t.d 4096)
   in
+  let switching () =
+    let t, none = empty () in
+    let copy = submission t [| part "COPY:0" (Words (B.create C.host 0)) |] in
+    (t, copy, none)
+  in
+  let floor_of setup () = floor (fst (setup ())) in
   Thumper.group "release"
     [
-      row "driver" dev (fun t -> run t [||]);
-      row "floor" (fun () -> floor (dev ())) (fun _ -> floor_release 1);
-      row "mapped" mapped (fun t -> run t [||]);
+      row "driver" empty (fun (t, s) -> run t s);
+      row "floor" (floor_of empty) (fun _ -> floor_release 1);
+      row "mapped" mapped (fun (t, s, _) -> run t s);
       row "floor-mapped"
-        (fun () -> floor (mapped ()))
+        (fun () ->
+          let t, _, m = mapped () in
+          (floor t, m))
         (fun _ -> floor_release 1);
-      row "switch" switching (fun (t, copy) ->
-          run t (if t.v land 1 = 0 then copy else [||]));
-      row "floor-switch" (fun () -> floor (dev ())) (fun _ -> floor_switch ());
-      row "no-wait-100" dev (fun t ->
-          for _ = 1 to 100 do
-            submit t [||]
+      row "switch" switching (fun (t, copy, none) ->
+          run t (if C.submitted t.d land 1 = 0 then copy else none));
+      row "floor-switch" (floor_of empty) (fun _ -> floor_switch ());
+      row "no-wait-100" empty (fun (t, s) ->
+          for _ = 1 to 99 do
+            ignore (C.submit s)
           done;
-          wait t);
-      row "floor-no-wait-100"
-        (fun () -> floor (dev ()))
-        (fun _ -> floor_release 100);
+          run t s);
+      row "floor-no-wait-100" (floor_of empty) (fun _ -> floor_release 100);
     ]
 
+(* The core passes a driver only the waits not yet reached, so four satisfied
+   waits are timed from C alone: the waits the driver encodes and the
+   release. *)
 let wait_rows =
-  let waiting () =
-    let t = dev () in
-    let w = alloc t `Pinned 8 in
-    set64 (host w) 1;
-    (t, w)
-  in
   Thumper.group "waits"
     [
-      row "4"
-        (fun () ->
-          let t, w = waiting () in
-          (t, Array.make 4 (`Word, address w, 1)))
-        (fun (t, waits) -> run ~waits t [||]);
       row "floor-4"
         (fun () ->
-          let t, w = waiting () in
+          let t = dev () in
+          let w = alloc t `Pinned 8 in
+          set64 (host w) 1;
           ignore (floor t);
-          address w)
-        (fun at -> floor_waits at 4);
+          (t, address w))
+        (fun (_, at) -> floor_waits at 4);
     ]
 
 (* A run of 64 launches follows the GPU's SM clock, which moves by up to a tenth
@@ -200,43 +189,49 @@ let wait_rows =
 let launch_rows =
   let launching count () =
     let t = dev () in
-    let e = launches t count in
-    (t, e, [| N.part t.g ~queue:"COMPUTE:0" (`Words e) |])
+    let p, e = launches t count in
+    (t, p, e, submission t [| part "COMPUTE:0" (Words (entry_words e)) |])
   in
   let floor_launching count () =
-    let t, e, _ = launching count () in
-    ignore (floor t);
-    e
+    let t, p, e, _ = launching count () in
+    (floor t, p, e)
   in
+  let floor_run (_, _, e) = floor_entry e.(0) e.(1) in
   Thumper.group "launch"
     [
-      row "1" (launching 1) (fun (t, _, ps) -> run t ps);
-      row "floor-1" (floor_launching 1) (fun e -> floor_entry e.(0) e.(1));
-      row "64" (launching 64) (fun (t, _, ps) -> run t ps);
-      row "floor-64" (floor_launching 64) (fun e -> floor_entry e.(0) e.(1));
+      row "1" (launching 1) (fun (t, _, _, s) -> run t s);
+      row "floor-1" (floor_launching 1) floor_run;
+      row "64" (launching 64) (fun (t, _, _, s) -> run t s);
+      row "floor-64" (floor_launching 64) floor_run;
     ]
 
 let copy_rows =
   let copying n (dst, src) () =
     let t = dev () in
-    let dst = alloc t dst n and src = alloc t src n in
-    (t, dst, src, [| copy_part t (dst, 0) (src, 0) n |])
+    let dst = B.create ~memory:dst t.d n and src = B.create ~memory:src t.d n in
+    (t, dst, src, submission t [| part "COPY:0" (Copy { src; dst }) |])
   in
   let copy name n kinds =
     [
-      row name (copying n kinds) (fun (t, _, _, ps) -> run t ps);
+      row name (copying n kinds) (fun (t, _, _, s) -> run t s);
       row ("floor-" ^ name)
         (fun () ->
           let t, dst, src, _ = copying n kinds () in
-          ignore (floor t);
-          (address dst, address src))
-        (fun (dst, src) -> floor_copy dst src n);
+          (floor t, dst, src))
+        (fun (_, dst, src) -> floor_copy (B.address dst) (B.address src) n);
     ]
   in
   let big = 256 * mib in
   Thumper.group "copy"
-    (copy "h2d-256MiB" big (`Device, `Pinned)
-    @ copy "d2h-256MiB" big (`Pinned, `Device))
+    (copy "h2d-256MiB" big (B.Device, B.Pinned)
+    @ copy "d2h-256MiB" big (B.Pinned, B.Device))
+
+(* A device with a live allocation of [kind], which keeps its page tables, as in
+   a program's steady state. *)
+let live kind () =
+  let t = dev () in
+  ignore (alloc t kind 4096);
+  t
 
 let alloc_rows =
   let alloc name kind n =
@@ -259,20 +254,20 @@ let map_host_rows =
         (fun (t, p) -> N.free t.g (Option.get (N.map_host t.g p n)));
     ]
 
-(* A cubin loaded, its code region allocated and its image copied there, then
-   unloaded and the region freed. *)
+(* A cubin loaded by the driver over a new code region, then unloaded and the
+   region freed. *)
 let image_rows =
   Thumper.group "image"
     [
-      row "kernels"
-        (fun () ->
-          let t = live `Device () in
-          let c = get (Abi.Cubin.of_string (Lazy.force cubin)) in
-          (t, alloc t `Pinned (Abi.Cubin.size c)))
-        (fun (t, staging) ->
-          let m, code = upload t staging in
-          N.unload t.g m;
-          N.free t.g code);
+      row "kernels" (live `Device) (fun t ->
+          match N.image t.g (Lazy.force cubin) with
+          | Ok (`Place (n, lay)) ->
+              let code = alloc t `Device n in
+              let m, _ = lay code in
+              N.unload t.g m;
+              N.free t.g code
+          | Ok (`Loaded _) -> failwith "an image without code"
+          | Error why -> failwith why);
     ]
 
 let () =

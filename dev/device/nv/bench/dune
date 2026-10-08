@@ -10,6 +10,7 @@
  (name bench_nv)
  (modules bench_nv)
  (libraries
+  device_core
   device_nv
   device_nv_abi
   device_nv_bench
