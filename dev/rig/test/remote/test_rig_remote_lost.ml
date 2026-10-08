@@ -47,7 +47,7 @@ let agent_device_lost () =
   let failed = require_some (Rig.failure ()) in
   with_agents @@ fun fresh ->
   equal (result pass string) (Error failed)
-    (Rig_remote.connect ~key (List.map address fresh))
+    (Rig_remote.connect ~key:(as_key key) (List.map address fresh))
 
 let () =
   Watchdog.start ();

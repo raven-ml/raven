@@ -4,8 +4,8 @@
   ---------------------------------------------------------------------------*)
 
 (** Agents ({!Rig_remote.listen}, {!Rig_remote.serve}), and what the
-    controller's side shares with them: the job's watcher, connecting with a
-    bound, and the key's bounds.
+    controller's side shares with them: the job's watcher, and connecting with a
+    bound.
 
     An agent's listener accepts on a thread of its own and runs each handshake
     on another, at most 64 at once. [serve] applies the controller's commands
@@ -68,7 +68,3 @@ val dial_tcp : s:float -> string -> int -> (Unix.file_descr, string) result
 val join_s : float
 (** [join_s] is the most seconds a connection, or the job's other agents'
     connections, take: 10. *)
-
-val check_key : string -> string -> unit
-(** [check_key fn key] raises [Invalid_argument] under [Rig_remote.fn] if [key]
-    has fewer than 16 or more than 4096 bytes. *)

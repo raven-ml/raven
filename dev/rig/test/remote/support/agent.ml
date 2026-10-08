@@ -103,7 +103,8 @@ let () =
     | Error why -> fail why
   in
   let mode = if Array.length Sys.argv > 2 then Sys.argv.(2) else "" in
-  if mode = "deaf" then deaf key
+  if mode = "deaf" then
+    deaf (In_channel.with_open_bin Sys.argv.(1) In_channel.input_all)
   else begin
     let a = listen key 0 in
     serve a;

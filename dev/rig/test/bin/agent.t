@@ -103,6 +103,24 @@ listens.
   rig-agent VERSION
   failed no key on standard input
 
+A line longer than any key is refused once it is, its length given, and
+read no further: here the rest of its standard input is left for cat.
+
+  $ head -c 4097 /dev/zero | tr '\0' k >long
+  $ echo >>long
+  $ rig agent 127.0.0.1:0 <long >out-long
+  [123]
+  $ show out-long
+  rig-agent VERSION
+  failed the key has 4097 bytes, outside 16 to 4096
+
+  $ head -c 10000 /dev/zero | tr '\0' k >longer
+  $ (rig agent 127.0.0.1:0 >out-longer; cat | wc -c | tr -d ' ') <longer
+  5903
+  $ show out-longer
+  rig-agent VERSION
+  failed the key has 4097 bytes, outside 16 to 4096
+
 An address that does not resolve fails the agent.
 
   $ mkfifo in5

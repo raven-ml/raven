@@ -320,7 +320,6 @@ let start ~fn ~key ~report agents =
               Ok j))
 
 let connect ~key agents =
-  Agent.check_key "connect" key;
   check_agents agents;
   let named = List.map (fun (h, p) -> (strf "%s:%d" h p, h, p)) agents in
   start ~fn:"connect" ~key ~report:None named
@@ -415,6 +414,15 @@ let port = Agent.port
 let serve = Agent.serve
 
 (* Keys *)
+
+type key = string
+
+let key s =
+  let n = String.length s in
+  if n >= Wire.min_key && n <= Wire.max_key then Ok s
+  else
+    Error
+      (strf "the key has %d bytes, outside %d to %d" n Wire.min_key Wire.max_key)
 
 let read_key file =
   let err why = Error (strf "%s: %s" file why) in

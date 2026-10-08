@@ -26,7 +26,10 @@ let unjoined () =
       let t =
         Thread.create
           (fun () ->
-            r := Some (Rig_remote.connect ~key [ address a1; address a2 ]))
+            r :=
+              Some
+                (Rig_remote.connect ~key:(as_key key)
+                   [ address a1; address a2 ]))
           ()
       in
       while !r = None && Unix.gettimeofday () -. t0 < answer_bound +. 1. do

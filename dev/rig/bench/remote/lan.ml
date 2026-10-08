@@ -167,6 +167,7 @@ let floored name bytes host port there back runs =
   Unix.close f
 
 let controller host port key =
+  let key = ok "key" (Rig_remote.key key) in
   let j = ok "connect" (Rig_remote.connect ~key [ (host, port) ]) in
   let h = List.hd (Rig_remote.hosts j) in
   report "alloc-4K" 0 (timed 1000 (fun () -> ignore (B.create h (4 * kib))));

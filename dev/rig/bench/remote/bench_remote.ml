@@ -223,7 +223,11 @@ type copy = {
 
 let copy n () =
   let pid, input, port = agent () in
-  match Rig_remote.connect ~key [ ("127.0.0.1", port) ] with
+  match
+    Rig_remote.connect
+      ~key:(Result.get_ok (Rig_remote.key key))
+      [ ("127.0.0.1", port) ]
+  with
   | Error why ->
       Unix.close input;
       reap pid;

@@ -3,8 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-module Wire = Rig_remote_proxy.Wire
-
 let strf = Printf.sprintf
 
 (* The directories driver-less paths read GPU firmware from. *)
@@ -12,31 +10,25 @@ let firmware = [ "/lib/firmware" ]
 let say l = Proc.write Unix.stdout (Line.to_string l)
 
 (* The job's key: the first line of [fd], read a byte at a time so that nothing
-   after it is taken. *)
+   after it is taken, once [Rig_remote.key] accepts it. A line that grows from a
+   key into none is longer than any key: it is refused there, read no
+   further. *)
 let read_key fd =
   let b = Buffer.create 64 and c = Bytes.create 1 in
-  let check () =
-    let n = Buffer.length b in
-    if n < Wire.min_key || n > Wire.max_key then
-      Error
-        (strf "the key has %d bytes, outside %d to %d" n Wire.min_key
-           Wire.max_key)
-    else Ok (Buffer.contents b)
+  let key () = Rig_remote.key (Buffer.contents b) in
+  let rec go was_key =
+    match Unix.read fd c 0 1 with
+    | 0 when Buffer.length b = 0 -> Error "no key on standard input"
+    | n when n = 0 || Bytes.get c 0 = '\n' ->
+        Result.map (fun _ -> Buffer.contents b) (key ())
+    | _ -> (
+        Buffer.add_char b (Bytes.get c 0);
+        match key () with
+        | Error _ as e when was_key -> e
+        | k -> go (Result.is_ok k))
+    | exception Unix.Unix_error (Unix.EINTR, _, _) -> go was_key
   in
-  let rec go () =
-    if Buffer.length b > Wire.max_key then
-      Error (strf "the key has more than %d bytes" Wire.max_key)
-    else
-      match Unix.read fd c 0 1 with
-      | 0 when Buffer.length b = 0 -> Error "no key on standard input"
-      | 0 -> check ()
-      | _ when Bytes.get c 0 = '\n' -> check ()
-      | _ ->
-          Buffer.add_char b (Bytes.get c 0);
-          go ()
-      | exception Unix.Unix_error (Unix.EINTR, _, _) -> go ()
-  in
-  go ()
+  go false
 
 let fail why =
   say (Line.Failed why);
@@ -172,7 +164,9 @@ let kinds =
 
 let agent host port =
   let key =
-    match read_key Unix.stdin with Ok k -> k | Error why -> fail why
+    match Result.bind (read_key Unix.stdin) Rig_remote.key with
+    | Ok k -> k
+    | Error why -> fail why
   in
   (match lock () with Ok () -> () | Error why -> fail why);
   let a =

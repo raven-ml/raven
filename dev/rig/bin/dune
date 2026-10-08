@@ -7,7 +7,6 @@
  (libraries
   rig
   rig.remote
-  rig.remote.proxy
   rig.metal
   rig.cuda
   rig.nv

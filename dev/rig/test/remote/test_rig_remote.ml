@@ -36,7 +36,9 @@ let two_agents () =
 let wrong_key () =
   with_agents @@ fun agents ->
   let a = List.hd agents in
-  (match Rig_remote.connect ~key:(String.make 32 'x') [ address a ] with
+  (match
+     Rig_remote.connect ~key:(as_key (String.make 32 'x')) [ address a ]
+   with
   | Ok j ->
       Rig_remote.close j;
       fail "a job with another key"
@@ -55,7 +57,7 @@ let unreachable () =
     | Unix.ADDR_UNIX _ -> assert false
   in
   Unix.close s;
-  match Rig_remote.connect ~key [ ("127.0.0.1", port) ] with
+  match Rig_remote.connect ~key:(as_key key) [ ("127.0.0.1", port) ] with
   | Ok j ->
       Rig_remote.close j;
       fail "a job with no agent"
@@ -81,11 +83,8 @@ let connect_misuse () =
   with_job @@ fun _ agents ->
   let a = List.hd agents in
   let raises msg f = raises_match ~msg Exn.invalid_arg f in
+  let key = as_key key in
   raises "a job is open" (fun () -> Rig_remote.connect ~key [ address a ]);
-  raises "a key of 15 bytes" (fun () ->
-      Rig_remote.connect ~key:(String.make 15 'k') [ address a ]);
-  raises "a key of 4097 bytes" (fun () ->
-      Rig_remote.connect ~key:(String.make 4097 'k') [ address a ]);
   raises "no agents" (fun () -> Rig_remote.connect ~key []);
   raises "an address twice" (fun () ->
       Rig_remote.connect ~key [ address a; address a ])
@@ -115,18 +114,14 @@ let listens_no_more () =
   with_agents ~mode:"linger" @@ fun agents ->
   let a = List.hd agents in
   Rig_remote.close (connect agents);
-  match Rig_remote.connect ~key [ address a ] with
+  match Rig_remote.connect ~key:(as_key key) [ address a ] with
   | Ok j ->
       Rig_remote.close j;
       fail "a second job at an agent of one"
   | Error why -> not_contains ~sub:"another job" why
 
-let listen_misuse () =
-  is_error (Rig_remote.listen ~key "no-such-host.invalid" 0);
-  raises_match ~msg:"a key of 15 bytes" Exn.invalid_arg (fun () ->
-      Rig_remote.listen ~key:(String.make 15 'k') "127.0.0.1" 0);
-  raises_match ~msg:"a key of 4097 bytes" Exn.invalid_arg (fun () ->
-      Rig_remote.listen ~key:(String.make 4097 'k') "127.0.0.1" 0)
+let listen_unresolved () =
+  is_error (Rig_remote.listen ~key:(as_key key) "no-such-host.invalid" 0)
 
 let connecting =
   group "connect"
@@ -138,13 +133,10 @@ let connecting =
       test "an address nothing listens at is an Error naming it" unreachable;
       test "an agent in a job tells a second controller it serves another"
         second_controller;
-      test
-        "connect raises on a bad key, no agent, an address twice, an open job"
+      test "connect raises on no agent, an address twice, an open job"
         connect_misuse;
-      test
-        "listen answers Error for a host that does not resolve, raises on a \
-         bad key"
-        listen_misuse;
+      test "listen answers Error for a host that does not resolve"
+        listen_unresolved;
       test "a second job at one address is another machine, named #2"
         second_connection;
       test "once close returned, no agent listens" listens_no_more;
@@ -689,7 +681,7 @@ let execs () =
    end there before support/agent.exe prints its own. *)
 let serve_closed () =
   with_hex_agents ~vars:[ ("RIG_REMOTE_REPORT", "1") ] @@ fun agents ->
-  (match Rig_remote.connect ~key:hex_key (List.map address agents) with
+  (match Rig_remote.connect ~key:(as_key hex_key) (List.map address agents) with
   | Ok j -> Rig_remote.close j
   | Error why -> fail why);
   equal exit_w (0, [ "closed"; "closed" ]) (finish (List.hd agents))
@@ -734,12 +726,17 @@ let launching =
 
 (* Keys *)
 
+(* A key's bytes are never in its error: a key of [n] 'k's has none of four. *)
+let key_refused n =
+  let why = require_error (Rig_remote.key (String.make n 'k')) in
+  contains ~msg:"gives its length" ~sub:(Printf.sprintf "%d bytes" n) why;
+  not_contains ~msg:"never its bytes" ~sub:"kkkk" why
+
 let read_ok contents =
   let file = write_file contents in
   Fun.protect
     ~finally:(fun () -> Sys.remove file)
-    (fun () ->
-      equal (result string string) (Ok contents) (Rig_remote.read_key file))
+    (fun () -> is_ok (Rig_remote.read_key file))
 
 let refused file =
   let why = require_error (Rig_remote.read_key file) in
@@ -785,8 +782,16 @@ let fifo () =
       refused file)
 
 let keys =
-  group "read_key"
+  group "keys"
     [
+      test "16 bytes and 4096 bytes are keys" (fun () ->
+          is_ok (Rig_remote.key (String.make 16 'k'));
+          is_ok
+            (Rig_remote.key
+               (String.init 4096 (fun i -> Char.chr (i land 0xff)))));
+      cases
+        ~name:(Printf.sprintf "%d bytes are no key, said by length")
+        "key length" [ 0; 15; 4097; 65536 ] key_refused;
       test "a file of 16 bytes and one of 4096, of this user alone, are keys"
         (fun () ->
           read_ok (String.make 16 'a');
@@ -869,7 +874,7 @@ let served_twice () =
 (* A kind named twice raises before serve waits for a controller; a serve that
    waited instead fails the test after 5 s. *)
 let kind_twice () =
-  match Rig_remote.listen ~key "127.0.0.1" 0 with
+  match Rig_remote.listen ~key:(as_key key) "127.0.0.1" 0 with
   | Error why -> fail why
   | Ok a ->
       let r = ref None in

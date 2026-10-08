@@ -23,6 +23,9 @@ let until ~what cond =
 (* Keys *)
 
 let key = String.init 32 (fun i -> Char.chr (65 + i))
+
+(* [k] as a job's key. *)
+let as_key k = Result.get_ok (Rig_remote.key k)
 let files = Atomic.make 0
 
 (* A file of this user holding [contents], with permissions [perm]. *)
@@ -136,7 +139,7 @@ let with_agents ?(n = 1) ?mode f =
   Fun.protect ~finally:(fun () -> List.iter kill agents) (fun () -> f agents)
 
 let connect agents =
-  match Rig_remote.connect ~key (List.map address agents) with
+  match Rig_remote.connect ~key:(as_key key) (List.map address agents) with
   | Ok j -> j
   | Error why -> failf "connect: %s" why
 

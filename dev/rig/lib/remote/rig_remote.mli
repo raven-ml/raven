@@ -112,13 +112,33 @@
       {e The BLAKE2 Cryptographic Hash and Message Authentication Code}:
       BLAKE2b, its block and digest sizes. *)
 
+(** {1:keys Keys} *)
+
+type key
+(** The type for a job's keys: 16 to 4096 bytes. *)
+
+val key : string -> (key, string) result
+(** [key s] is [s] as a job's key, or [Error why] if it has fewer than 16 or
+    more than 4096 bytes; [why] gives its length, never its bytes. *)
+
+val read_key : string -> (key, string) result
+(** [read_key file] is the key in [file]: its bytes, 16 to 4096 of them, read
+    through one open of it. [file] must be a regular file; on POSIX systems it
+    must also belong to this process's user and grant its group and others no
+    access, so that only this user knows the key.
+
+    [Error why] naming [file] if it cannot be opened or read, is no regular file
+    (a FIFO is refused without waiting for a writer), belongs to another user,
+    grants its group or others any access, or holds too few or too many bytes.
+*)
+
 (** {1:jobs Jobs} *)
 
 type t
 (** The type for jobs, seen from their controller. Every function may be called
     from any domain at once. *)
 
-val connect : key:string -> (string * int) list -> (t, string) result
+val connect : key:key -> (string * int) list -> (t, string) result
 (** [connect ~key agents] starts a job with an agent at each host and port of
     [agents]. It connects to each agent, proves [key] to it and checks that it
     proves [key] back, has the agents connect to each other likewise, and opens
@@ -140,9 +160,8 @@ val connect : key:string -> (string * int) list -> (t, string) result
     process whose job failed, or that lost a device before, starts no job. The
     agents reached are told the job failed.
 
-    Raises [Invalid_argument] if [key] has fewer than 16 or more than 4096
-    bytes, [agents] is empty or lists an address twice, or a job of the process
-    is open. *)
+    Raises [Invalid_argument] if [agents] is empty or lists an address twice, or
+    if a job of the process is open. *)
 
 val launched : unit -> (t, string) result option
 (** [launched ()] starts the job that a launcher, such as [rig run], set up for
@@ -232,7 +251,7 @@ val close : t -> unit
 type agent
 (** The type for agents of this machine. *)
 
-val listen : key:string -> string -> int -> (agent, string) result
+val listen : key:key -> string -> int -> (agent, string) result
 (** [listen ~key host port] listens at [host] and [port] for the processes of
     one job that prove [key]. Port [0] lets the system choose ({!port}). It
     holds nothing until a controller proves [key]; connections beyond 64 waiting
@@ -240,9 +259,7 @@ val listen : key:string -> string -> int -> (agent, string) result
     nothing within 10 seconds is dropped.
 
     [Error why] if [host] does not resolve or the process cannot listen there.
-
-    Raises [Invalid_argument] if [key] has fewer than 16 or more than 4096
-    bytes. *)
+*)
 
 val port : agent -> int
 (** [port a] is the port [a] listens at: the one {!listen} was given, or the one
@@ -279,16 +296,3 @@ val serve :
 
     Raises [Invalid_argument] if [a] served already, or [kinds] names a kind
     twice. *)
-
-(** {1:keys Keys} *)
-
-val read_key : string -> (string, string) result
-(** [read_key file] is the key in [file]: its bytes, 16 to 4096 of them, read
-    through one open of it. [file] must be a regular file; on POSIX systems it
-    must also belong to this process's user and grant its group and others no
-    access, so that only this user knows the key.
-
-    [Error why] naming [file] if it cannot be opened or read, is no regular file
-    (a FIFO is refused without waiting for a writer), belongs to another user,
-    grants its group or others any access, or holds too few or too many bytes.
-*)

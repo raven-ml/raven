@@ -8,12 +8,6 @@ module Link = Rig_remote_proxy.Link
 
 let strf = Printf.sprintf
 
-(* Errors *)
-
-let err_key fn n =
-  strf "Rig_remote.%s: a key of %d bytes is outside %d to %d" fn n Wire.min_key
-    Wire.max_key
-
 (* The connections waiting for their handshakes beyond which the listener
    refuses more. *)
 let max_pending = 64
@@ -21,10 +15,6 @@ let max_pending = 64
 (* How long a connection and the job's other agents' connections take at
    most. *)
 let join_s = 10.
-
-let check_key fn key =
-  let n = String.length key in
-  if n < Wire.min_key || n > Wire.max_key then invalid_arg (err_key fn n)
 
 (* Reports to a launcher *)
 
@@ -173,7 +163,6 @@ type t = {
 }
 
 let listen ~key host port =
-  check_key "listen" key;
   match resolve host port with
   | Error _ as e -> e
   | Ok addr -> (
