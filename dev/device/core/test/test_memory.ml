@@ -238,12 +238,8 @@ let tests =
           test_collects;
         test "set_budget returns cached memory, never live memory"
           test_set_budget;
-        xfail
-          ~reason:
-            "free_cache defers each free to the next drain, even with no work \
-             in flight"
-          (test "free_cache with no work in flight returns the cache at once"
-             test_free_cache);
+        test "free_cache with no work in flight returns the cache at once"
+          test_free_cache;
         test "the host's budget is max_int" test_host_budget;
       ];
     group ~timeout "kinds"

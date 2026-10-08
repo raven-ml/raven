@@ -503,14 +503,17 @@ let take_cache ~upto d =
       !taken)
 
 (* Frees [d]'s cache down to [upto] bytes once the work [d] was handed until now
-   is done: waiting for it when [wait], deferring each free otherwise. *)
+   is done: at once if it is, after waiting for it when [wait], and otherwise
+   each free is deferred until it is. A lost device's cache waits for its stop's
+   answer. *)
 let release_cache ?(upto = 0) ~wait d =
-  let taken = take_cache ~upto d in
-  if wait then begin
-    if not (Dev.is_lost d) then Dev.wait d (Dev.submitted d);
-    List.iter free_entry taken
+  if (not (Dev.is_lost d)) || answered d then begin
+    let taken = take_cache ~upto d in
+    let v = Dev.submitted d in
+    if wait && not (Dev.is_lost d) then Dev.wait d v;
+    if Dev.is_lost d || Dev.word d >= v then List.iter free_entry taken
+    else List.iter (fun e -> defer d (Free e)) taken
   end
-  else List.iter (fun e -> defer d (Free e)) taken
 
 (* Allocation *)
 
