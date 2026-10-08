@@ -88,6 +88,23 @@ let once () =
   let g' = require_ok ~msg:"an open after stop" (N.open_ 0) in
   Rig_nv.stop g'
 
+(* Opening and stopping a GPU again and again leaves the process's mappings as
+   one open and stop left them. *)
+let mappings () =
+  In_channel.with_open_text "/proc/self/maps" In_channel.input_lines
+  |> List.length
+
+let reopen () =
+  if N.count () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
+  S.hold_gpu ();
+  let cycle () = Rig_nv.stop (require_ok (N.open_ 0)) in
+  cycle ();
+  let before = mappings () in
+  for _ = 1 to 16 do
+    cycle ()
+  done;
+  equal int ~msg:"the process's mappings" before (mappings ())
+
 let () =
   S.hold_gpu ();
   exit
@@ -107,7 +124,7 @@ let () =
            ];
          group ~timeout:60. "opening"
            [
-             test "count never raises" (fun () ->
+             test "count answers on a machine whose /sys reads" (fun () ->
                  at_least int ~than:0 (N.count ()));
              test "a negative GPU raises" (fun () ->
                  raises_match Exn.invalid_arg (fun () -> N.open_ (-1));
@@ -117,5 +134,11 @@ let () =
                  let e = require_error (N.open_ n) in
                  contains ~sub:(Printf.sprintf "has %d NVIDIA GPUs" n) e);
              test "a GPU has one device until it is stopped" once;
+             xfail
+               ~reason:
+                 "every stop keeps its device's timeline word, a page that \
+                  nothing frees"
+               (test "opening and stopping a GPU leaves no mapping behind"
+                  reopen);
            ];
        ]

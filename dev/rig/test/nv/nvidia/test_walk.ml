@@ -245,18 +245,10 @@ let () =
                  too_large;
              ]);
          group ~timeout "a process out of files"
-           (xfail
-              ~reason:
-                "the open says the machine has 0 NVIDIA GPUs: the count of \
-                 GPUs is 0 when /sys cannot be read"
-              (test "fails an open naming the cause, not the machine's GPUs"
-                 open_starved)
+           (test "fails an open naming the cause, not the machine's GPUs"
+              open_starved
            :: List.map
                 (fun op ->
-                  xfail
-                    ~reason:
-                      "the path raises Fault, which loses the device, for a \
-                       file the process cannot open"
-                    (test (op_name op ^ " answers None") (alloc_starved op)))
+                  test (op_name op ^ " answers None") (alloc_starved op))
                 [ Alloc `Pinned; Alloc `Mapped; Map_host ]);
        ])

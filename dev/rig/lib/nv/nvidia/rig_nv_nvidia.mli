@@ -43,7 +43,10 @@
 
 val count : unit -> int
 (** [count ()] is the number of NVIDIA GPUs of this machine: [0] where the
-    machine has no [/sys/bus/pci], such as off Linux. *)
+    machine has no [/sys/bus/pci], such as off Linux.
+
+    Raises [Failure] with the system's error if the machine's PCI functions
+    cannot be read, such as when the process has no file left. *)
 
 val device_name : int -> string
 (** [device_name i] is the name of GPU [i]: ["NV"] for [0], ["NV:i"] otherwise.
@@ -55,11 +58,15 @@ val open_ : int -> (Rig_nv.t, string) result
     on the machine but the kernel driver's state for this process.
 
     The result is [Error msg] if [i >= count ()], saying how many GPUs there
-    are, if the kernel driver does not hold GPU [i] or cannot be opened, if its
+    are, if the machine's PCI functions cannot be read, saying why, if the
+    kernel driver does not hold GPU [i] or cannot be opened, if its
     release is not one this library opens, while a device of GPU [i] is open and
     not stopped, or with the kernel driver's refusal. A GPU has one device at a
     time: the unified memory driver registers a GPU once per process. A failed
-    open gives back what it took.
+    open gives back what it took for GPU [i]. The process's client of the
+    kernel driver, made at its first open that reaches it, stays for its later
+    opens, failed or not: three files and its reservation of the GPU's
+    addresses.
 
     Raises [Invalid_argument] if [i < 0]. *)
 

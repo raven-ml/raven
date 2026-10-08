@@ -14,6 +14,11 @@
 val open_file : string -> (int, string) result
 (** [open_file path] is the descriptor of the device file [path]. *)
 
+val open_spare : string -> (int option, string) result
+(** [open_spare path] is {!open_file}[ path], or [Ok None] if the process or the
+    system has no file left ([EMFILE], [ENFILE]): for a file opened for one
+    call, whose lack refuses the call. *)
+
 val close : int -> unit
 (** [close fd] closes [fd], ignoring a failure. *)
 

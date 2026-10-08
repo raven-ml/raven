@@ -90,15 +90,19 @@ and range = {
 let key : mem Type.Id.t = Type.Id.make ()
 let gpus_lock = Mutex.create ()
 
-(* A file of [g]'s the RM maps memory through: each mapping has its own, as the
-   driver keeps one mapping context per file. *)
+(* [f] over a file of [g]'s the RM maps memory through: each mapping has its
+   own, as the driver keeps one mapping context per file. [Ok None] if the
+   process or the system has no file left, a refusal of the memory. *)
 let with_file g f =
-  let* fd = Rm.open_file (strf "/dev/nvidia%d" g.minor) in
-  Fun.protect
-    ~finally:(fun () -> Rm.close fd)
-    (fun () ->
-      let* () = Rm.register fd ~ctl:g.c.ctl in
-      f fd)
+  match Rm.open_spare (strf "/dev/nvidia%d" g.minor) with
+  | Ok None -> Ok None
+  | Error _ as e -> e
+  | Ok (Some fd) ->
+      Fun.protect
+        ~finally:(fun () -> Rm.close fd)
+        (fun () ->
+          let* () = Rm.register fd ~ctl:g.c.ctl in
+          Result.map Option.some (f fd))
 
 (* Whether the status [s] of [what] is NV_OK: [Ok false] for
    NV_ERR_NO_MEMORY. *)
@@ -109,10 +113,11 @@ let fits g what s =
     Ok true
 
 (* Maps the memory object [h] of [size] bytes into the process at [va],
-   uncached: [Ok false] if the GPU's window onto its memory (BAR1) has no
-   room. *)
+   uncached: [Ok false] if the GPU's window onto its memory (BAR1) has no room
+   or the process no file left. *)
 let map_to_cpu g h size va =
-  with_file g @@ fun fd ->
+  Result.map (Option.value ~default:false) @@ with_file g
+  @@ fun fd ->
   let module W = D.Nvos33_with_fd in
   let module M = D.Nvos33 in
   let w = params W.sizeof in
@@ -245,11 +250,11 @@ let describe g va size =
     lor bits D.nvos02_flags_coherency D.nvos02_flags_coherency_cached
     lor bits D.nvos02_flags_mapping D.nvos02_flags_mapping_no_map);
   let what = "describing host memory to the GPU" in
-  let* () =
+  let* described =
     with_file g (fun fd -> Rm.escape fd D.nv_esc_rm_alloc_memory w what)
   in
   let s = get w (at O.status) in
-  if List.mem s refusals then Ok None
+  if described = None || List.mem s refusals then Ok None
   else
     let* () = Rm.check g.c what s in
     Ok (Some h)
@@ -512,7 +517,8 @@ let register g ch =
       Va.free g.c.low base channel_range;
       e
   | Ok () ->
-      Mutex.protect gpus_lock (fun () -> g.channels <- (ch, base) :: g.channels);
+      Mutex.protect gpus_lock (fun () ->
+          g.channels <- (ch, base) :: g.channels);
       Ok ()
 
 let unregister g ch =
@@ -871,7 +877,11 @@ let device_name i =
 
 let open_ i =
   if i < 0 then invalid_argf "Rig_nv_nvidia.open_: GPU %d < 0" i;
-  let buses = Sysfs.gpus sysfs in
+  let* buses =
+    match Sysfs.gpus sysfs with
+    | exception Failure why -> Error ("reading the machine's GPUs: " ^ why)
+    | buses -> Ok buses
+  in
   match List.nth_opt buses i with
   | None ->
       Error

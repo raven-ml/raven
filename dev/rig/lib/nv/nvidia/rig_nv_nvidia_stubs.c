@@ -25,6 +25,16 @@
 
 #define PTR(v) ((void *)Long_val(v))
 
+/* Whether [v_errno] says the process or the system has no file left. */
+value caml_rig_nv_nvidia_no_file(value v_errno) {
+#if defined(EMFILE) && defined(ENFILE)
+  return Val_bool(Int_val(v_errno) == EMFILE || Int_val(v_errno) == ENFILE);
+#else
+  (void)v_errno;
+  return Val_false;
+#endif
+}
+
 value caml_rig_nv_nvidia_strerror(value v_errno) {
   return caml_copy_string(strerror(Int_val(v_errno)));
 }

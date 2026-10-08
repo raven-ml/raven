@@ -9,6 +9,7 @@ let strf = Printf.sprintf
 let ( let* ) = Result.bind
 
 external open_raw : string -> int = "caml_rig_nv_nvidia_open"
+external no_file : int -> bool = "caml_rig_nv_nvidia_no_file" [@@noalloc]
 external close : int -> unit = "caml_rig_nv_nvidia_close"
 
 external ioctl : int -> int -> Rig_nv.params -> int
@@ -62,6 +63,11 @@ let set p (at, n) v =
 (* Files and mappings *)
 
 let open_file path = result path (open_raw path)
+
+let open_spare path =
+  let r = open_raw path in
+  if r < 0 && no_file (-r) then Ok None
+  else Result.map Option.some (result path r)
 
 let map fd at n =
   Result.map ignore (result "mapping memory for the GPU" (map_raw fd at n))
