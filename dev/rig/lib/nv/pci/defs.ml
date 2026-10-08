@@ -12,19 +12,37 @@
    Copyright (c) 1993-2021 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 1993-2024 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 1993-2024, NVIDIA CORPORATION
+   Copyright (c) 1993-2025 NVIDIA CORPORATION & AFFILIATES
+   Copyright (c) 2001-2022 NVIDIA CORPORATION & AFFILIATES
+   Copyright (c) 2001-2024 NVIDIA CORPORATION & AFFILIATES
+   Copyright (c) 2002-2022 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2003-2016 NVIDIA Corporation
    Copyright (c) 2003-2021 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2003-2022 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2003-2023 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2003-2024 NVIDIA CORPORATION & AFFILIATES
+   Copyright (c) 2004-2024 NVIDIA CORPORATION & AFFILIATES
+   Copyright (c) 2005-2024 NVIDIA CORPORATION & AFFILIATES
+   Copyright (c) 2006-2022 NVIDIA CORPORATION & AFFILIATES
+   Copyright (c) 2006-2024 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2008-2025 NVIDIA CORPORATION & AFFILIATES
+   Copyright (c) 2014-2023 NVIDIA CORPORATION & AFFILIATES
+   Copyright (c) 2015-2023 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2017-2024 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2018-2019 NVIDIA CORPORATION & AFFILIATES
+   Copyright (c) 2018-2022 NVIDIA CORPORATION & AFFILIATES
+   Copyright (c) 2019-2020 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2019-2022 NVIDIA CORPORATION & AFFILIATES
+   Copyright (c) 2019-2025 NVIDIA CORPORATION & AFFILIATES
+   Copyright (c) 2020-2024 NVIDIA CORPORATION & AFFILIATES
+   Copyright (c) 2020-2025 NVIDIA CORPORATION & AFFILIATES
+   Copyright (c) 2021-2021 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2021-2022 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2021-2023 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2021-2024 NVIDIA CORPORATION & AFFILIATES
+   Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES
+   Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES
 
    Permission is hereby granted, free of charge, to any person obtaining a
@@ -91,12 +109,63 @@ let offsetof_pci_data_ext_struct_len = 6
 let offsetof_pci_data_ext_struct_rev = 4
 let offsetof_pci_data_ext_struct_subimage_len = 8
 let offsetof_pci_data_ext_struct_last_image = 0xa
+let libos_memory_region_contiguous = 1
+let libos_memory_region_loc_sysmem = 1
+let libos_memory_region_radix_page_log2 = 0xc
+let gsp_dma_target_coherent_system = 1
+let nvdm_type_cot = 0x14
+let registry_table_entry_type_dword = 1
+let addr_sysmem = 1
+let addr_fbmem = 2
+let gsp_seq_buf_opcode_reg_write = 0
+let gsp_seq_buf_opcode_reg_modify = 1
+let gsp_seq_buf_opcode_reg_poll = 2
+let gsp_seq_buf_opcode_delay_us = 3
+let gsp_seq_buf_opcode_reg_store = 4
+let gsp_seq_buf_opcode_core_reset = 5
+let gsp_seq_buf_opcode_core_start = 6
+let gsp_seq_buf_opcode_core_wait_for_halt = 7
+let gsp_seq_buf_opcode_core_resume = 8
+let nv01_root = 0
+let nv01_device_0 = 0x80
+let nv20_subdevice_0 = 0x2080
+let fermi_vaspace_a = 0x90f1
+let ampere_channel_gpfifo_a = 0xc56f
+let blackwell_channel_gpfifo_a = 0xc96f
+let ampere_compute_b = 0xc7c0
+let ada_compute_a = 0xc9c0
+let blackwell_compute_b = 0xcec0
+let ampere_dma_copy_b = 0xc7b5
+let blackwell_dma_copy_b = 0xcab5
+let nvc36f_ctrl_cmd_gpfifo_get_work_submit_token = 0xc36f0108
+let nv2080_ctrl_cmd_internal_static_kgr_get_info = 0x20800a2a
+let nv2080_ctrl_cmd_internal_static_kgr_get_context_buffers_info = 0x20800a32
+let nv2080_ctrl_cmd_gpu_promote_ctx = 0x2080012b
+let nv2080_ctrl_cmd_fifo_get_device_info_table = 0x20801112
+let nv90f1_ctrl_cmd_vaspace_copy_server_reserved_pdes = 0x90f10106
+let nv0080_ctrl_fifo_get_engine_context_properties_engine_id_graphics = 0
+let nv0080_ctrl_fifo_get_engine_context_properties_engine_id_graphics_patch = 0x10
+let nv2080_ctrl_gr_info_index_litter_num_gpcs = 0x14
+let nv2080_ctrl_gr_info_index_litter_num_tpc_per_gpc = 0x17
+let nv2080_ctrl_gr_info_index_litter_num_sm_per_tpc = 0x20
+let nv2080_ctrl_gr_info_index_max_warps_per_sm = 0xd
+let nv2080_ctrl_gr_info_index_sm_version = 0xc
+let nv_device_allocation_vamode_optional_multiple_vaspaces = 0
+let nv_vaspace_allocation_flags_enable_page_faulting = 0x40
+let nv_vaspace_allocation_flags_is_externally_owned = 8
+let mctp_msg_header_type_vendor_pci = 0x7e
+let mctp_msg_header_vendor_id_nv = 0x10de
 
 (* Bit fields of 32-bit words: (lowest bit, bits). *)
 let nv_bit_falcon_ucode_desc_header_vdesc_version = (8, 8)
 let nv_bit_falcon_ucode_desc_header_vdesc_size = (0x10, 0x10)
 let nv_vgpu_msg_header_version_major = (0x18, 8)
 let nv_vgpu_msg_header_version_minor = (0x10, 8)
+let mctp_header_som = (0x1f, 1)
+let mctp_header_eom = (0x1e, 1)
+let mctp_msg_header_type = (0, 7)
+let mctp_msg_header_vendor_id = (8, 0x10)
+let mctp_msg_header_nvdm_type = (0x18, 8)
 
 (* The GSP's functions and events (rpc_global_enums.h). *)
 let nv_vgpu_msg_function_continuation_record = 0x47
@@ -106,6 +175,7 @@ let nv_vgpu_msg_function_set_page_directory = 0x36
 let nv_vgpu_msg_function_gsp_set_system_info = 0x48
 let nv_vgpu_msg_function_set_registry = 0x49
 let nv_vgpu_msg_function_unloading_guest_driver = 0x2f
+let nv_vgpu_msg_function_free = 0xa
 let nv_vgpu_msg_event_gsp_init_done = 0x1001
 let nv_vgpu_msg_event_gsp_run_cpu_sequencer = 0x1002
 let nv_vgpu_msg_event_rc_triggered = 0x1004
@@ -239,6 +309,283 @@ module Frts_cmd = struct
   let frts_region_desc_frts_region_media_type = (0x28, 4)
 end
 
+module Rpc_rm_alloc = struct
+  let sizeof = 32
+  let h_client = (0, 4)
+  let h_parent = (4, 4)
+  let h_object = (8, 4)
+  let h_class = (0xc, 4)
+  let status = (0x10, 4)
+  let params_size = (0x14, 4)
+  let flags = (0x18, 4)
+  let params = (0x20, 1, 0)
+end
+
+module Rpc_rm_control = struct
+  let sizeof = 24
+  let h_client = (0, 4)
+  let h_object = (4, 4)
+  let cmd = (8, 4)
+  let status = (0xc, 4)
+  let params_size = (0x10, 4)
+  let flags = (0x14, 4)
+  let params = (0x18, 1, 0)
+end
+
+module Rpc_set_page_directory = struct
+  let sizeof = 48
+  let h_client = (0, 4)
+  let h_device = (4, 4)
+  let pasid = (8, 4)
+  let params = (0x10, 0x20)
+end
+
+module Set_page_directory = struct
+  let sizeof = 32
+  let phys_address = (0, 8)
+  let num_entries = (8, 4)
+  let flags = (0xc, 4)
+  let h_va_space = (0x10, 4)
+  let ch_id = (0x14, 4)
+  let sub_device_id = (0x18, 4)
+  let pasid = (0x1c, 4)
+end
+
+module Rpc_unloading = struct
+  let sizeof = 8
+  let b_in_pm_transition = (0, 1)
+  let b_gc6_entering = (1, 1)
+  let new_level = (4, 4)
+end
+
+module Rpc_cpu_sequencer = struct
+  let sizeof = 40
+  let buffer_size_d_word = (0, 4)
+  let cmd_index = (4, 4)
+  let reg_save_area = (8, 4, 8)
+  let command_buffer = (0x28, 4, 0)
+end
+
+module Gsp_arguments = struct
+  let sizeof = 72
+  let message_queue_init_arguments = (0, 0x20)
+  let b_dmem_stack = (0x30, 1)
+end
+
+module Queue_init_args = struct
+  let sizeof = 32
+  let shared_mem_phys_addr = (0, 8)
+  let page_table_entry_count = (8, 4)
+  let cmd_queue_offset = (0x10, 8)
+  let stat_queue_offset = (0x18, 8)
+end
+
+module Libos_region = struct
+  let sizeof = 32
+  let id8 = (0, 8)
+  let pa = (8, 8)
+  let size = (0x10, 8)
+  let kind = (0x18, 1)
+  let loc = (0x19, 1)
+end
+
+module System_info = struct
+  let sizeof = 928
+  let gpu_phys_addr = (0, 8)
+  let gpu_phys_fb_addr = (8, 8)
+  let gpu_phys_inst_addr = (0x10, 8)
+  let nv_domain_bus_device_func = (0x20, 8)
+  let max_user_va = (0x48, 8)
+  let pci_config_mirror_base = (0x50, 4)
+  let pci_config_mirror_size = (0x54, 4)
+  let pci_device_id = (0x58, 4)
+  let pci_sub_device_id = (0x5c, 4)
+  let pci_revision_id = (0x60, 4)
+  let b_is_passthru = (0x348, 1)
+end
+
+module Registry_entry = struct
+  let sizeof = 16
+  let name_offset = (0, 4)
+  let type_ = (4, 1)
+  let data = (8, 4)
+  let length = (0xc, 4)
+end
+
+module Registry_table = struct
+  let sizeof = 8
+  let size = (0, 4)
+  let num_entries = (4, 4)
+  let entries = (8, 0x10, 0)
+end
+
+module Fmc_boot_params = struct
+  let sizeof = 80
+  let boot_gsp_rm_params = (8, 0x20)
+  let gsp_rm_params = (0x28, 0x10)
+end
+
+module Acr_boot_params = struct
+  let sizeof = 32
+  let target = (0, 4)
+  let gsp_rm_desc_size = (4, 4)
+  let gsp_rm_desc_offset = (8, 8)
+  let b_is_gsp_rm_boot = (0x1c, 1)
+end
+
+module Rm_params = struct
+  let sizeof = 16
+  let target = (0, 4)
+  let boot_args_offset = (8, 8)
+end
+
+module Cot_payload = struct
+  let sizeof = 860
+  let version = (0, 2)
+  let size = (2, 2)
+  let gsp_fmc_sysmem_offset = (4, 8)
+  let frts_vidmem_offset = (0x18, 8)
+  let frts_vidmem_size = (0x20, 4)
+  let hash384 = (0x24, 4, 0xc)
+  let public_key = (0x54, 4, 0x60)
+  let signature = (0x1d4, 4, 0x60)
+  let gsp_boot_args_sysmem_offset = (0x354, 8)
+end
+
+module Nv0000_alloc = struct
+  let sizeof = 120
+  let h_client = (0, 4)
+end
+
+module Nv0080_alloc = struct
+  let sizeof = 56
+  let device_id = (0, 4)
+  let h_client_share = (4, 4)
+  let va_mode = (0x30, 4)
+end
+
+module Nv2080_alloc = struct
+  let sizeof = 4
+  let sub_device_id = (0, 4)
+end
+
+module Vaspace_alloc = struct
+  let sizeof = 48
+  let index = (0, 4)
+  let flags = (4, 4)
+  let va_size = (8, 8)
+  let va_base = (0x28, 8)
+end
+
+module Memory_desc = struct
+  let sizeof = 24
+  let base = (0, 8)
+  let size = (8, 8)
+  let address_space = (0x10, 4)
+  let cache_attrib = (0x14, 4)
+end
+
+module Gpfifo_alloc = struct
+  let sizeof = 368
+  let gp_fifo_offset = (8, 8)
+  let gp_fifo_entries = (0x10, 4)
+  let flags = (0x14, 4)
+  let h_context_share = (0x18, 4)
+  let h_va_space = (0x1c, 4)
+  let h_userd_memory = (0x20, 4, 8)
+  let userd_offset = (0x40, 8, 8)
+  let engine_type = (0x80, 4)
+  let cid = (0x84, 4)
+  let h_object_error = (0, 4)
+  let h_object_buffer = (4, 4)
+  let instance_mem = (0x90, 0x18)
+  let userd_mem = (0xa8, 0x18)
+  let ramfc_mem = (0xc0, 0x18)
+  let mthdbuf_mem = (0xd8, 0x18)
+  let error_notifier_mem = (0xf8, 0x18)
+  let internal_flags = (0xf4, 4)
+end
+
+module Work_submit_token = struct
+  let sizeof = 4
+  let work_submit_token = (0, 4)
+end
+
+module Device_info_table = struct
+  let sizeof = 3212
+  let num_entries = (4, 4)
+  let entries = (0xc, 0x64, 0x20)
+end
+
+module Device_entry = struct
+  let sizeof = 100
+  let engine_data = (0, 4, 0x10)
+end
+
+module Static_gr_info = struct
+  let sizeof = 3712
+  let engine_info = (0, 0x1d0, 8)
+end
+
+module Gr_info_list = struct
+  let sizeof = 464
+  let info_list = (0, 8, 0x3a)
+end
+
+module Internal_gr_info = struct
+  let sizeof = 8
+  let data = (4, 4)
+end
+
+module Context_buffers_info = struct
+  let sizeof = 1664
+  let engine_context_buffers_info = (0, 0xd0, 8)
+end
+
+module Context_buffers = struct
+  let sizeof = 208
+  let engine = (0, 8, 0x1a)
+end
+
+module Context_buffer = struct
+  let sizeof = 8
+  let size = (0, 4)
+  let alignment = (4, 4)
+end
+
+module Promote_ctx = struct
+  let sizeof = 560
+  let engine_type = (0, 4)
+  let h_chan_client = (0xc, 4)
+  let h_object = (0x10, 4)
+  let entry_count = (0x28, 4)
+  let promote_entry = (0x30, 0x20, 0x10)
+end
+
+module Promote_entry = struct
+  let sizeof = 32
+  let gpu_phys_addr = (0, 8)
+  let gpu_virt_addr = (8, 8)
+  let size = (0x10, 8)
+  let phys_attr = (0x18, 4)
+  let buffer_id = (0x1c, 2)
+  let b_initialize = (0x1e, 1)
+  let b_nonmapped = (0x1f, 1)
+end
+
+module Reserved_pdes = struct
+  let sizeof = 184
+  let page_size = (8, 8)
+  let virt_addr_lo = (0x10, 8)
+  let virt_addr_hi = (0x18, 8)
+  let num_levels_to_copy = (0x20, 4)
+  let levels = (0x28, 0x18, 6)
+  let levels_phys_address = (0, 8)
+  let levels_size = (8, 8)
+  let levels_aperture = (0x10, 4)
+  let levels_page_shift = (0x14, 1)
+end
+
 module Bin_header = struct
   let sizeof = 24
   let bin_magic = (0, 4)
@@ -253,6 +600,7 @@ module Hs_header = struct
   let sig_prod_size = (4, 4)
   let patch_loc = (8, 4)
   let patch_sig = (0xc, 4)
+  let meta_data_offset = (0x10, 4)
   let num_sig = (0x18, 4)
   let header_offset = (0x1c, 4)
 end
@@ -551,6 +899,16 @@ let nv_pmc_boot_42_architecture_gb200 = 0x1b
 let nv_pfalcon_falcon_dmatrfcmd_size_256b = 6
 let nv_pfalcon_fbif_transcfg_mem_type_physical = 1
 let nv_pfalcon2_falcon_mod_sel_algo_rsa3k = 1
+let nv_pgc6_aon_secure_scratch_group_05_priv_level_mask_read_protection_level0_enable = 1
+let nv_pgc6_aon_secure_scratch_group_05_0_gfw_boot_progress_completed = 0xff
+let nv_pgc6_bsi_secure_scratch_14_boot_stage_3_handoff_value_done = 1
+let nv_pfalcon_falcon_hwcfg2_mem_scrubbing_done = 0
+let nv_priscv_riscv_cpuctl_active_stat_active = 1
+let nv_priscv_riscv_bcr_ctrl_valid_true = 1
+let nv_priscv_riscv_bcr_ctrl_core_select_riscv = 1
+let nv_therm_i2cs_scratch_fsp_boot_complete_status_success = 0xff
+let nv_pgsp = 0x110000
+let nv_psec = 0x840000
 
 module type FAMILY = sig
   val nv_pfalcon_falcon_hwcfg2 : int
@@ -662,6 +1020,7 @@ module Blackwell = struct
   let nv_pfalcon_falcon_hwcfg2_vhr = (7, 1)
   let nv_therm_i2cs_scratch = 0xad00bc
   let nv_therm_i2cs_scratch_data = (0, 0x20)
+  let nv_therm_i2cs_scratch_fsp_boot_complete_status = (0, 0x20)
   let nv_pfsp_ememc i = 0x8f2ac0 + (i * 8)
   let nv_pfsp_ememc_aincr = (0x19, 1)
   let nv_pfsp_ememc_aincw = (0x18, 1)

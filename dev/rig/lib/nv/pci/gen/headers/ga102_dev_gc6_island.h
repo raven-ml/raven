@@ -27,6 +27,8 @@
 
 #define NV_PGC6_AON_SECURE_SCRATCH_GROUP_05_PRIV_LEVEL_MASK_READ_PROTECTION_LEVEL0                     0:0 /*       */
 
+#define NV_PGC6_AON_SECURE_SCRATCH_GROUP_05_PRIV_LEVEL_MASK_READ_PROTECTION_LEVEL0_ENABLE       0x00000001 /*       */
+
 #define NV_PGC6_AON_SECURE_SCRATCH_GROUP_05(i)                                          (0x00118234+(i)*4) /* RW-4A */
 
 #define NV_PGC6_AON_SECURE_SCRATCH_GROUP_42                                                     0x001183a4 /* RW-4R */

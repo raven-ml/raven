@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2003-2022 NVIDIA CORPORATION & AFFILIATES
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2020 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -21,8 +21,15 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#define NV_PSEC                                0x843fff:0x840000 /* RW--D */
-
-#define NV_PSEC_FALCON_ENGINE                                                                            0x008403c0     /* RW-4R */
-
-#define NV_PSEC_FALCON_ENGINE_RESET                                                                      0:0            /* RWIVF */
+typedef enum GSP_SEQ_BUF_OPCODE
+{
+    GSP_SEQ_BUF_OPCODE_REG_WRITE = 0,
+    GSP_SEQ_BUF_OPCODE_REG_MODIFY,
+    GSP_SEQ_BUF_OPCODE_REG_POLL,
+    GSP_SEQ_BUF_OPCODE_DELAY_US,
+    GSP_SEQ_BUF_OPCODE_REG_STORE,
+    GSP_SEQ_BUF_OPCODE_CORE_RESET,
+    GSP_SEQ_BUF_OPCODE_CORE_START,
+    GSP_SEQ_BUF_OPCODE_CORE_WAIT_FOR_HALT,
+    GSP_SEQ_BUF_OPCODE_CORE_RESUME,
+} GSP_SEQ_BUF_OPCODE;

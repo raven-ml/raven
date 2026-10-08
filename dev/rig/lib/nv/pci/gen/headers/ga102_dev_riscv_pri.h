@@ -25,12 +25,18 @@
 
 #define NV_PRISCV_RISCV_CPUCTL_ACTIVE_STAT                                                             7:7            /* R-IVF */
 
+#define NV_PRISCV_RISCV_CPUCTL_ACTIVE_STAT_ACTIVE                                                      0x00000001     /* R---V */
+
 #define NV_PRISCV_RISCV_CPUCTL_HALTED                                                                  4:4            /* R-IVF */
 
 #define NV_PRISCV_RISCV_BCR_CTRL                                                                       0x00000668     /* RWI4R */
 
 #define NV_PRISCV_RISCV_BCR_CTRL_VALID                                                                 0:0            /* R-IVF */
 
+#define NV_PRISCV_RISCV_BCR_CTRL_VALID_TRUE                                                            0x00000001     /* R---V */
+
 #define NV_PRISCV_RISCV_BCR_CTRL_CORE_SELECT                                                           4:4            /* RWIVF */
+
+#define NV_PRISCV_RISCV_BCR_CTRL_CORE_SELECT_RISCV                                                     0x00000001     /* RW--V */
 
 #define NV_PRISCV_RISCV_BCR_CTRL_BRFETCH                                                               8:8            /* RWIVF */

@@ -49,6 +49,8 @@
 
 #define NV_PFALCON_FALCON_HWCFG2_MEM_SCRUBBING                                                         12:12          /* R--VF */
 
+#define NV_PFALCON_FALCON_HWCFG2_MEM_SCRUBBING_DONE                                                    0x00000000     /* R---V */
+
 #define NV_PFALCON_FALCON_HWCFG2_RISCV_BR_PRIV_LOCKDOWN                                                13:13          /* R--VF */
 
 #define NV_PFALCON_FALCON_HWCFG2_BOOT_FROM_HS                                                          14:14          /* R--VF */

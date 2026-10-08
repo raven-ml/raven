@@ -1,5 +1,20 @@
+
+#ifndef _G_MEM_DESC_NVOC_H_
+#define _G_MEM_DESC_NVOC_H_
+#include "nvoc/runtime.h"
+
+// Version of generated metadata structures
+#ifdef NVOC_METADATA_VERSION
+#undef NVOC_METADATA_VERSION
+#endif
+#define NVOC_METADATA_VERSION 1
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2003-2022 NVIDIA CORPORATION & AFFILIATES
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -21,8 +36,6 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#define NV_PSEC                                0x843fff:0x840000 /* RW--D */
+#define ADDR_SYSMEM     1         // System memory (PCI)
 
-#define NV_PSEC_FALCON_ENGINE                                                                            0x008403c0     /* RW-4R */
-
-#define NV_PSEC_FALCON_ENGINE_RESET                                                                      0:0            /* RWIVF */
+#define ADDR_FBMEM      2         // Frame buffer memory space

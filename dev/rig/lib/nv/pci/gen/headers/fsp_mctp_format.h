@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2003-2022 NVIDIA CORPORATION & AFFILIATES
+ * SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -21,8 +21,16 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#define NV_PSEC                                0x843fff:0x840000 /* RW--D */
+#define MCTP_HEADER_EOM             30:30
 
-#define NV_PSEC_FALCON_ENGINE                                                                            0x008403c0     /* RW-4R */
+#define MCTP_HEADER_SOM             31:31
 
-#define NV_PSEC_FALCON_ENGINE_RESET                                                                      0:0            /* RWIVF */
+#define MCTP_MSG_HEADER_TYPE         6:0
+
+#define MCTP_MSG_HEADER_VENDOR_ID   23:8
+
+#define MCTP_MSG_HEADER_NVDM_TYPE   31:24
+
+#define MCTP_MSG_HEADER_TYPE_VENDOR_PCI 0x7e
+
+#define MCTP_MSG_HEADER_VENDOR_ID_NV    0x10de

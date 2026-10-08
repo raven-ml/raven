@@ -75,6 +75,8 @@
 
 #define NV_PFALCON_FALCON_HWCFG2_MEM_SCRUBBING                                                         12:12          /* R--VF */
 
+#define NV_PFALCON_FALCON_HWCFG2_MEM_SCRUBBING_DONE                                                    0x00000000     /* R---V */
+
 #define NV_PFALCON_FALCON_OS                                                                           0x00000080     /* RW-4R */
 
 #define NV_PFALCON_FALCON_RM                                                                           0x00000084     /* RW-4R */

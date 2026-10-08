@@ -21,6 +21,53 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
+typedef struct rpc_unloading_guest_driver_v1F_07
+{
+    NvBool     bInPMTransition;
+    NvBool     bGc6Entering;
+    NvU32      newLevel;
+} rpc_unloading_guest_driver_v1F_07;
+
+typedef struct rpc_set_page_directory_v1E_05
+{
+    NvHandle   hClient;
+    NvHandle   hDevice;
+    NvU32      pasid;
+    NV0080_CTRL_DMA_SET_PAGE_DIRECTORY_PARAMS_v1E_05 params;
+} rpc_set_page_directory_v1E_05;
+
+typedef struct rpc_gsp_rm_alloc_v03_00
+{
+    NvHandle   hClient;
+    NvHandle   hParent;
+    NvHandle   hObject;
+    NvU32      hClass;
+    NvU32      status;
+    NvU32      paramsSize;
+    NvU32      flags;
+    NvU8       reserved[4];
+    NvU8       params[];
+} rpc_gsp_rm_alloc_v03_00;
+
+typedef struct rpc_gsp_rm_control_v03_00
+{
+    NvHandle   hClient;
+    NvHandle   hObject;
+    NvU32      cmd;
+    NvU32      status;
+    NvU32      paramsSize;
+    NvU32      flags;
+    NvU8       params[];
+} rpc_gsp_rm_control_v03_00;
+
+typedef struct rpc_run_cpu_sequencer_v17_00
+{
+    NvU32      bufferSizeDWord;
+    NvU32      cmdIndex;
+    NvU32      regSaveArea[8];
+    NvU32      commandBuffer[];
+} rpc_run_cpu_sequencer_v17_00;
+
 typedef struct rpc_rc_triggered_v17_02
 {
     NvU32      nv2080EngineType;

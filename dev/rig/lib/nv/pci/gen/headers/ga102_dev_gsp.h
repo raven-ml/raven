@@ -21,6 +21,8 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
+#define NV_PGSP                                0x113fff:0x110000 /* RW--D */
+
 #define NV_PGSP_FALCON_MAILBOX0                                                                          0x110040       /* RW-4R */
 
 #define NV_PGSP_FALCON_MAILBOX0_DATA                                                                     31:0           /* RWIVF */

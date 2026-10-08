@@ -23,6 +23,14 @@
 
 #define OFFSETOF_PCI_EXP_ROM_PCI_DATA_STRUCT_PTR    0x18
 
+#pragma pack(1)
+
+#pragma pack()
+
+#pragma pack(1)
+
+#pragma pack()
+
 #define PCI_DATA_STRUCT_SIGNATURE     0x52494350 // "PCIR" in dword format
 
 #define PCI_DATA_STRUCT_SIGNATURE_NV  0x5344504E // "NPDS" in dword format
@@ -39,6 +47,10 @@
 
 #define OFFSETOF_PCI_DATA_STRUCT_LAST_IMAGE 0x15
 
+#pragma pack(1)
+
+#pragma pack()
+
 #define NV_PCI_DATA_EXT_SIG 0x4544504E // "NPDE" in dword format
 
 #define NV_PCI_DATA_EXT_REV_10 0x100      // 1.0
@@ -54,3 +66,7 @@
 #define OFFSETOF_PCI_DATA_EXT_STRUCT_SUBIMAGE_LEN   0x8
 
 #define OFFSETOF_PCI_DATA_EXT_STRUCT_LAST_IMAGE     0xa
+
+#pragma pack(1)
+
+#pragma pack()

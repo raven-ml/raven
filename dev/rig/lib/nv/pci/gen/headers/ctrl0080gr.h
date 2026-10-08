@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2003-2022 NVIDIA CORPORATION & AFFILIATES
+ * SPDX-FileCopyrightText: Copyright (c) 2004-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -21,8 +21,14 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#define NV_PSEC                                0x843fff:0x840000 /* RW--D */
+#define NV0080_CTRL_GR_INFO_INDEX_SM_VERSION                            (0x0000000C)
 
-#define NV_PSEC_FALCON_ENGINE                                                                            0x008403c0     /* RW-4R */
+#define NV0080_CTRL_GR_INFO_INDEX_MAX_WARPS_PER_SM                      (0x0000000D)
 
-#define NV_PSEC_FALCON_ENGINE_RESET                                                                      0:0            /* RWIVF */
+#define NV0080_CTRL_GR_INFO_INDEX_LITTER_NUM_GPCS                       (0x00000014)
+
+#define NV0080_CTRL_GR_INFO_INDEX_LITTER_NUM_TPC_PER_GPC                (0x00000017)
+
+#define NV0080_CTRL_GR_INFO_INDEX_LITTER_NUM_SM_PER_TPC                 (0x00000020)
+
+#define NV0080_CTRL_GR_INFO_MAX_SIZE                                    (0x3a) /* finn: Evaluated from "(NV0080_CTRL_GR_INFO_INDEX_MAX + 1)" */

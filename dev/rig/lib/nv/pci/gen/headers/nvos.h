@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2003-2022 NVIDIA CORPORATION & AFFILIATES
+ * SPDX-FileCopyrightText: Copyright (c) 1993-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -21,8 +21,19 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#define NV_PSEC                                0x843fff:0x840000 /* RW--D */
+#define NV_DEVICE_ALLOCATION_VAMODE_OPTIONAL_MULTIPLE_VASPACES     (0x00000000)
 
-#define NV_PSEC_FALCON_ENGINE                                                                            0x008403c0     /* RW-4R */
+typedef struct
+{
+    NvU32   index;
+    NvV32   flags;
+    NvU64   vaSize NV_ALIGN_BYTES(8);
+    NvU64   vaStartInternal NV_ALIGN_BYTES(8);
+    NvU64   vaLimitInternal NV_ALIGN_BYTES(8);
+    NvU32   bigPageSize;
+    NvU64   vaBase NV_ALIGN_BYTES(8);
+} NV_VASPACE_ALLOCATION_PARAMETERS;
 
-#define NV_PSEC_FALCON_ENGINE_RESET                                                                      0:0            /* RWIVF */
+#define NV_VASPACE_ALLOCATION_FLAGS_IS_EXTERNALLY_OWNED                   BIT(3)
+
+#define NV_VASPACE_ALLOCATION_FLAGS_ENABLE_PAGE_FAULTING                  BIT(6)

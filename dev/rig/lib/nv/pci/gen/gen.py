@@ -55,6 +55,7 @@ FIRMWARE_COMMIT = "0a6871b19abf5d6e024b5d208b101ae53e7fa0de"
 ORIGIN = f"https://gitlab.com/kernel-firmware/linux-firmware/-/raw/{FIRMWARE_COMMIT}/"
 
 GSP_INC = "src/nvidia/arch/nvalloc/common/inc/"
+SDK = "src/common/sdk/nvidia/inc/"
 SWREF = "src/common/inc/swref/published/"
 HWREF = "kernel-open/nvidia-uvm/hwref/"
 
@@ -65,6 +66,7 @@ SOURCES = {
     "message_queue_priv.h": KERNEL + "src/nvidia/inc/kernel/gpu/gsp/message_queue_priv.h",
     "g_rpc-message-header.h": KERNEL + "src/nvidia/generated/g_rpc-message-header.h",
     "g_rpc-structures.h": KERNEL + "src/nvidia/generated/g_rpc-structures.h",
+    "g_sdk-structures.h": KERNEL + "src/nvidia/generated/g_sdk-structures.h",
     "rpc_headers.h": KERNEL + "src/nvidia/inc/kernel/vgpu/rpc_headers.h",
     "gsp_fw_wpr_meta.h": KERNEL + GSP_INC + "gsp/gsp_fw_wpr_meta.h",
     "rmRiscvUcode.h": KERNEL + GSP_INC + "rmRiscvUcode.h",
@@ -75,6 +77,35 @@ SOURCES = {
     "kernel_gsp_vbios_tu102.c": KERNEL + "src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_vbios_tu102.c",
     "tu102_dev_mmu.h": KERNEL + HWREF + "turing/tu102/dev_mmu.h",
     "gh100_dev_mmu.h": KERNEL + HWREF + "hopper/gh100/dev_mmu.h",
+    "gsp_init_args.h": KERNEL + "src/nvidia/inc/kernel/gpu/gsp/gsp_init_args.h",
+    "gsp_static_config.h": KERNEL + "src/nvidia/inc/kernel/gpu/gsp/gsp_static_config.h",
+    "gspifpub.h": KERNEL + GSP_INC + "gsp/gspifpub.h",
+    "libos_init_args.h": KERNEL + "src/common/uproc/os/common/include/libos_init_args.h",
+    "rmgspseq.h": KERNEL + GSP_INC + "rmgspseq.h",
+    "fsp_nvdm_format.h": KERNEL + GSP_INC + "fsp/fsp_nvdm_format.h",
+    "fsp_mctp_format.h": KERNEL + GSP_INC + "fsp/fsp_mctp_format.h",
+    "kern_fsp_cot_payload.h": KERNEL + "src/nvidia/inc/kernel/gpu/fsp/kern_fsp_cot_payload.h",
+    "g_os_nvoc.h": KERNEL + "src/nvidia/generated/g_os_nvoc.h",
+    "g_mem_desc_nvoc.h": KERNEL + "src/nvidia/generated/g_mem_desc_nvoc.h",
+    "g_allclasses.h": KERNEL + "src/nvidia/generated/g_allclasses.h",
+    "nvlimits.h": KERNEL + SDK + "nvlimits.h",
+    "nvmisc.h": KERNEL + "kernel-open/common/inc/nvmisc.h",
+    "nvos.h": KERNEL + SDK + "nvos.h",
+    "alloc_channel.h": KERNEL + SDK + "alloc/alloc_channel.h",
+    "cl0000.h": KERNEL + SDK + "class/cl0000.h",
+    "cl0080.h": KERNEL + SDK + "class/cl0080.h",
+    "cl2080.h": KERNEL + SDK + "class/cl2080.h",
+    "ctrl0080fifo.h": KERNEL + SDK + "ctrl/ctrl0080/ctrl0080fifo.h",
+    "ctrl2080fifo.h": KERNEL + SDK + "ctrl/ctrl2080/ctrl2080fifo.h",
+    "ctrl2080gpu.h": KERNEL + SDK + "ctrl/ctrl2080/ctrl2080gpu.h",
+    "ctrl0080gr.h": KERNEL + SDK + "ctrl/ctrl0080/ctrl0080gr.h",
+    "ctrl2080gr.h": KERNEL + SDK + "ctrl/ctrl2080/ctrl2080gr.h",
+    "ctrl2080internal.h": KERNEL + SDK + "ctrl/ctrl2080/ctrl2080internal.h",
+    "ctrl90f1.h": KERNEL + SDK + "ctrl/ctrl90f1.h",
+    "ctrlc36f.h": KERNEL + SDK + "ctrl/ctrlc36f.h",
+    "g_chipset_nvoc.h": KERNEL + "src/nvidia/generated/g_chipset_nvoc.h",
+    "gpu_acpi_data.h": KERNEL + "src/nvidia/inc/kernel/gpu/gpu_acpi_data.h",
+    "ctrl0073system.h": KERNEL + "src/common/sdk/nvidia/inc/ctrl/ctrl0073/ctrl0073system.h",
     "fw.h": LINUX.format("drivers/gpu/drm/nouveau/include/nvfw/fw.h"),
     "hs.h": LINUX.format("drivers/gpu/drm/nouveau/include/nvfw/hs.h"),
 }
@@ -105,6 +136,7 @@ REGISTER_SOURCES = {
     "gh100_dev_vm.h": "hopper/gh100/dev_vm.h",
     "gh100_dev_fsp_pri.h": "hopper/gh100/dev_fsp_pri.h",
     "gb202_dev_therm.h": "blackwell/gb202/dev_therm.h",
+    "gb202_dev_therm_addendum.h": "blackwell/gb202/dev_therm_addendum.h",
     "tu102_dev_ext_devices.h": "turing/tu102/dev_ext_devices.h",
 }
 SOURCES.update({k: KERNEL + SWREF + v for k, v in REGISTER_SOURCES.items()})
@@ -118,7 +150,8 @@ FAMILIES = {
                "ga102_dev_sec_pri.h", "tu102_dev_bus.h", "tu102_dev_ext_devices.h"],
     "Blackwell": ["nv_ref.h", "tu102_dev_fb.h", "ga102_dev_gc6_island.h", "ga102_dev_gc6_island_addendum.h",
                   "gh100_dev_vm.h", "tu102_dev_vm.h", "ga102_dev_gsp.h", "gh100_dev_falcon_v4.h",
-                  "gh100_dev_fsp_pri.h", "tu102_dev_bus.h", "gb202_dev_therm.h"],
+                  "gh100_dev_fsp_pri.h", "tu102_dev_bus.h", "gb202_dev_therm.h",
+                  "gb202_dev_therm_addendum.h"],
 }
 
 # The units whose headers give offsets within the unit: a falcon's units, at
@@ -159,7 +192,15 @@ REGISTER_VALUES = [
     "NV_PMC_BOOT_42_ARCHITECTURE_GA100", "NV_PMC_BOOT_42_ARCHITECTURE_AD100", "NV_PMC_BOOT_42_ARCHITECTURE_GB200",
     "NV_PFALCON_FALCON_DMATRFCMD_SIZE_256B", "NV_PFALCON_FBIF_TRANSCFG_MEM_TYPE_PHYSICAL",
     "NV_PFALCON2_FALCON_MOD_SEL_ALGO_RSA3K",
+    "NV_PGC6_AON_SECURE_SCRATCH_GROUP_05_PRIV_LEVEL_MASK_READ_PROTECTION_LEVEL0_ENABLE",
+    "NV_PGC6_AON_SECURE_SCRATCH_GROUP_05_0_GFW_BOOT_PROGRESS_COMPLETED",
+    "NV_PGC6_BSI_SECURE_SCRATCH_14_BOOT_STAGE_3_HANDOFF_VALUE_DONE", "NV_PFALCON_FALCON_HWCFG2_MEM_SCRUBBING_DONE",
+    "NV_PRISCV_RISCV_CPUCTL_ACTIVE_STAT_ACTIVE", "NV_PRISCV_RISCV_BCR_CTRL_VALID_TRUE",
+    "NV_PRISCV_RISCV_BCR_CTRL_CORE_SELECT_RISCV", "NV_THERM_I2CS_SCRATCH_FSP_BOOT_COMPLETE_STATUS_SUCCESS",
 ]
+
+# The falcons' register ranges, whose first address is a falcon's base.
+UNITS = ["NV_PGSP", "NV_PSEC"]
 
 # Page-table entries, versions 2 and 3: every field of each entry and the
 # values named below.
@@ -197,13 +238,36 @@ CONSTANTS = [
     "OFFSETOF_PCI_DATA_EXT_STRUCT_SUBIMAGE_LEN", "OFFSETOF_PCI_DATA_EXT_STRUCT_LAST_IMAGE",
 ]
 
+# The GSP's boot and the resource manager it runs, from release 570.144.
+CONSTANTS += [
+    "LIBOS_MEMORY_REGION_CONTIGUOUS", "LIBOS_MEMORY_REGION_LOC_SYSMEM", "LIBOS_MEMORY_REGION_RADIX_PAGE_LOG2",
+    "GSP_DMA_TARGET_COHERENT_SYSTEM", "NVDM_TYPE_COT", "REGISTRY_TABLE_ENTRY_TYPE_DWORD", "ADDR_SYSMEM",
+    "ADDR_FBMEM", "GSP_SEQ_BUF_OPCODE_REG_WRITE", "GSP_SEQ_BUF_OPCODE_REG_MODIFY", "GSP_SEQ_BUF_OPCODE_REG_POLL",
+    "GSP_SEQ_BUF_OPCODE_DELAY_US", "GSP_SEQ_BUF_OPCODE_REG_STORE", "GSP_SEQ_BUF_OPCODE_CORE_RESET",
+    "GSP_SEQ_BUF_OPCODE_CORE_START", "GSP_SEQ_BUF_OPCODE_CORE_WAIT_FOR_HALT", "GSP_SEQ_BUF_OPCODE_CORE_RESUME",
+    "NV01_ROOT", "NV01_DEVICE_0", "NV20_SUBDEVICE_0", "FERMI_VASPACE_A", "AMPERE_CHANNEL_GPFIFO_A",
+    "BLACKWELL_CHANNEL_GPFIFO_A", "AMPERE_COMPUTE_B", "ADA_COMPUTE_A", "BLACKWELL_COMPUTE_B", "AMPERE_DMA_COPY_B",
+    "BLACKWELL_DMA_COPY_B", "NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN",
+    "NV2080_CTRL_CMD_INTERNAL_STATIC_KGR_GET_INFO", "NV2080_CTRL_CMD_INTERNAL_STATIC_KGR_GET_CONTEXT_BUFFERS_INFO",
+    "NV2080_CTRL_CMD_GPU_PROMOTE_CTX", "NV2080_CTRL_CMD_FIFO_GET_DEVICE_INFO_TABLE",
+    "NV90F1_CTRL_CMD_VASPACE_COPY_SERVER_RESERVED_PDES",
+    "NV0080_CTRL_FIFO_GET_ENGINE_CONTEXT_PROPERTIES_ENGINE_ID_GRAPHICS",
+    "NV0080_CTRL_FIFO_GET_ENGINE_CONTEXT_PROPERTIES_ENGINE_ID_GRAPHICS_PATCH",
+    "NV2080_CTRL_GR_INFO_INDEX_LITTER_NUM_GPCS", "NV2080_CTRL_GR_INFO_INDEX_LITTER_NUM_TPC_PER_GPC",
+    "NV2080_CTRL_GR_INFO_INDEX_LITTER_NUM_SM_PER_TPC", "NV2080_CTRL_GR_INFO_INDEX_MAX_WARPS_PER_SM",
+    "NV2080_CTRL_GR_INFO_INDEX_SM_VERSION", "NV_DEVICE_ALLOCATION_VAMODE_OPTIONAL_MULTIPLE_VASPACES",
+    "NV_VASPACE_ALLOCATION_FLAGS_ENABLE_PAGE_FAULTING", "NV_VASPACE_ALLOCATION_FLAGS_IS_EXTERNALLY_OWNED",
+    "MCTP_MSG_HEADER_TYPE_VENDOR_PCI", "MCTP_MSG_HEADER_VENDOR_ID_NV",
+]
+
 # Bit fields of 32-bit words, "hi:lo": (lowest bit, bits).
 FIELDS = ["NV_BIT_FALCON_UCODE_DESC_HEADER_VDESC_VERSION", "NV_BIT_FALCON_UCODE_DESC_HEADER_VDESC_SIZE",
-          "NV_VGPU_MSG_HEADER_VERSION_MAJOR", "NV_VGPU_MSG_HEADER_VERSION_MINOR"]
+          "NV_VGPU_MSG_HEADER_VERSION_MAJOR", "NV_VGPU_MSG_HEADER_VERSION_MINOR", "MCTP_HEADER_SOM",
+          "MCTP_HEADER_EOM", "MCTP_MSG_HEADER_TYPE", "MCTP_MSG_HEADER_VENDOR_ID", "MCTP_MSG_HEADER_NVDM_TYPE"]
 
 # The function and event numbers read, from rpc_global_enums.h.
 FUNCTIONS = ["CONTINUATION_RECORD", "GSP_RM_ALLOC", "GSP_RM_CONTROL", "SET_PAGE_DIRECTORY",
-             "GSP_SET_SYSTEM_INFO", "SET_REGISTRY", "UNLOADING_GUEST_DRIVER"]
+             "GSP_SET_SYSTEM_INFO", "SET_REGISTRY", "UNLOADING_GUEST_DRIVER", "FREE"]
 EVENTS = ["GSP_INIT_DONE", "GSP_RUN_CPU_SEQUENCER", "RC_TRIGGERED", "MMU_FAULT_QUEUED", "OS_ERROR_LOG",
           "UCODE_LIBOS_PRINT"]
 
@@ -236,9 +300,62 @@ STRUCTS = {
         "readVbiosDesc__gfwImageSize", "readVbiosDesc__flags", "frtsRegionDesc__version",
         "frtsRegionDesc__size", "frtsRegionDesc__frtsRegionOffset4K", "frtsRegionDesc__frtsRegionSize",
         "frtsRegionDesc__frtsRegionMediaType"]),
+    "rpc_gsp_rm_alloc_v03_00": ("Rpc_rm_alloc", ["hClient", "hParent", "hObject", "hClass", "status",
+                                                 "paramsSize", "flags", "params"]),
+    "rpc_gsp_rm_control_v03_00": ("Rpc_rm_control", ["hClient", "hObject", "cmd", "status", "paramsSize",
+                                                     "flags", "params"]),
+    "rpc_set_page_directory_v1E_05": ("Rpc_set_page_directory", ["hClient", "hDevice", "pasid", "params"]),
+    "NV0080_CTRL_DMA_SET_PAGE_DIRECTORY_PARAMS_v1E_05": ("Set_page_directory", [
+        "physAddress", "numEntries", "flags", "hVASpace", "chId", "subDeviceId", "pasid"]),
+    "rpc_unloading_guest_driver_v1F_07": ("Rpc_unloading", ["bInPMTransition", "bGc6Entering", "newLevel"]),
+    "rpc_run_cpu_sequencer_v17_00": ("Rpc_cpu_sequencer", ["bufferSizeDWord", "cmdIndex", "regSaveArea",
+                                                           "commandBuffer"]),
+    "GSP_ARGUMENTS_CACHED": ("Gsp_arguments", ["messageQueueInitArguments", "bDmemStack"]),
+    "MESSAGE_QUEUE_INIT_ARGUMENTS": ("Queue_init_args", ["sharedMemPhysAddr", "pageTableEntryCount",
+                                                         "cmdQueueOffset", "statQueueOffset"]),
+    "LibosMemoryRegionInitArgument": ("Libos_region", ["id8", "pa", "size", "kind", "loc"]),
+    "GspSystemInfo": ("System_info", ["gpuPhysAddr", "gpuPhysFbAddr", "gpuPhysInstAddr",
+                                      "nvDomainBusDeviceFunc", "maxUserVa", "pciConfigMirrorBase",
+                                      "pciConfigMirrorSize", "PCIDeviceID", "PCISubDeviceID", "PCIRevisionID",
+                                      "bIsPassthru"]),
+    "PACKED_REGISTRY_ENTRY": ("Registry_entry", ["nameOffset", "type", "data", "length"]),
+    "PACKED_REGISTRY_TABLE": ("Registry_table", ["size", "numEntries", "entries"]),
+    "GSP_FMC_BOOT_PARAMS": ("Fmc_boot_params", ["bootGspRmParams", "gspRmParams"]),
+    "GSP_ACR_BOOT_GSP_RM_PARAMS": ("Acr_boot_params", ["target", "gspRmDescSize", "gspRmDescOffset",
+                                                       "bIsGspRmBoot"]),
+    "GSP_RM_PARAMS": ("Rm_params", ["target", "bootArgsOffset"]),
+    "NVDM_PAYLOAD_COT": ("Cot_payload", ["version", "size", "gspFmcSysmemOffset", "frtsVidmemOffset",
+                                         "frtsVidmemSize", "hash384", "publicKey", "signature",
+                                         "gspBootArgsSysmemOffset"]),
+    "NV0000_ALLOC_PARAMETERS": ("Nv0000_alloc", ["hClient"]),
+    "NV0080_ALLOC_PARAMETERS": ("Nv0080_alloc", ["deviceId", "hClientShare", "vaMode"]),
+    "NV2080_ALLOC_PARAMETERS": ("Nv2080_alloc", ["subDeviceId"]),
+    "NV_VASPACE_ALLOCATION_PARAMETERS": ("Vaspace_alloc", ["index", "flags", "vaSize", "vaBase"]),
+    "NV_MEMORY_DESC_PARAMS": ("Memory_desc", ["base", "size", "addressSpace", "cacheAttrib"]),
+    "NV_CHANNELGPFIFO_ALLOCATION_PARAMETERS": ("Gpfifo_alloc", [
+        "gpFifoOffset", "gpFifoEntries", "flags", "hContextShare", "hVASpace", "hUserdMemory", "userdOffset",
+        "engineType", "cid", "hObjectError", "hObjectBuffer", "instanceMem", "userdMem", "ramfcMem",
+        "mthdbufMem", "errorNotifierMem", "internalFlags"]),
+    "NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN_PARAMS": ("Work_submit_token", ["workSubmitToken"]),
+    "NV2080_CTRL_FIFO_GET_DEVICE_INFO_TABLE_PARAMS": ("Device_info_table", ["numEntries", "entries"]),
+    "NV2080_CTRL_FIFO_DEVICE_ENTRY": ("Device_entry", ["engineData"]),
+    "NV2080_CTRL_INTERNAL_STATIC_GR_GET_INFO_PARAMS": ("Static_gr_info", ["engineInfo"]),
+    "NV2080_CTRL_INTERNAL_STATIC_GR_INFO": ("Gr_info_list", ["infoList"]),
+    "NV2080_CTRL_INTERNAL_GR_INFO": ("Internal_gr_info", ["data"]),
+    "NV2080_CTRL_INTERNAL_STATIC_KGR_GET_CONTEXT_BUFFERS_INFO_PARAMS": ("Context_buffers_info", [
+        "engineContextBuffersInfo"]),
+    "NV2080_CTRL_INTERNAL_STATIC_GR_CONTEXT_BUFFERS_INFO": ("Context_buffers", ["engine"]),
+    "NV2080_CTRL_INTERNAL_ENGINE_CONTEXT_BUFFER_INFO": ("Context_buffer", ["size", "alignment"]),
+    "NV2080_CTRL_GPU_PROMOTE_CTX_PARAMS": ("Promote_ctx", ["engineType", "hChanClient", "hObject",
+                                                         "entryCount", "promoteEntry"]),
+    "NV2080_CTRL_GPU_PROMOTE_CTX_BUFFER_ENTRY": ("Promote_entry", [
+        "gpuPhysAddr", "gpuVirtAddr", "size", "physAttr", "bufferId", "bInitialize", "bNonmapped"]),
+    "NV90F1_CTRL_VASPACE_COPY_SERVER_RESERVED_PDES_PARAMS": ("Reserved_pdes", [
+        "pageSize", "virtAddrLo", "virtAddrHi", "numLevelsToCopy", "levels", "levels__physAddress",
+        "levels__size", "levels__aperture", "levels__pageShift"]),
     "nvfw_bin_hdr": ("Bin_header", ["bin_magic", "header_offset", "data_offset", "data_size"]),
     "nvfw_hs_header_v2": ("Hs_header", ["sig_prod_offset", "sig_prod_size", "patch_loc", "patch_sig",
-                                        "num_sig", "header_offset"]),
+                                        "meta_data_offset", "num_sig", "header_offset"]),
     "nvfw_hs_load_header_v2": ("Hs_load_header", ["os_data_offset", "os_data_size", "num_apps", "app"]),
 }
 
@@ -287,12 +404,13 @@ DEFINE = re.compile(r"^[ \t]*#[ \t]*define[ \t]+(\w+)(\([\w\s,]*\))?((?:[^\n]*\\
 TYPEDEF = re.compile(r"^[ \t]*typedef\b", re.M)
 TAGGED = re.compile(r"^[ \t]*(struct|union|enum)[ \t]+(\w+)\s*\{", re.M)
 IDENT = re.compile(r"\b[A-Za-z_]\w*\b")
+PRAGMA = re.compile(r"^[ \t]*#[ \t]*pragma[ \t]+pack[ \t]*\(([^)]*)\)[^\n]*$", re.M)
 DIRECTIVE = re.compile(r"^[ \t]*#[ \t]*(if|ifdef|ifndef|elif|else|endif|define|undef)\b(.*)$")
 
 # The macros a 64-bit Linux build defines that the headers' conditionals
 # test, and those that make the RPC headers define their structures; every
 # other name a conditional tests is undefined.
-PLATFORM = {"__linux__", "__LP64__", "RPC_MESSAGE_STRUCTURES", "RPC_STRUCTURES"}
+PLATFORM = {"__linux__", "__LP64__", "RPC_MESSAGE_STRUCTURES", "RPC_STRUCTURES", "SDK_STRUCTURES"}
 
 # The scalar types, (bytes, alignment), in the 64-bit Linux ABIs.
 SCALARS = {
@@ -417,6 +535,8 @@ def items(text):
             out.append(it)
             if it.kind == "enum":
                 out += constants(it)
+    for m in PRAGMA.finditer(b):
+        out.append(Item("pragma", [], m.start(), m.end(), packed=m.group(1).strip() == "1"))
     return [it for it in out if lines[b.count("\n", 0, it.start)]]
 
 
@@ -432,10 +552,13 @@ class Model:
     that defines each."""
 
     def __init__(self, texts):
-        self.texts, self.where, self.layouts = texts, {}, {}
+        self.texts, self.where, self.layouts, self.pragmas = texts, {}, {}, {}
         for h, text in texts.items():
             for it in items(text):
                 it.header = h
+                if it.kind == "pragma":
+                    self.pragmas.setdefault(h, []).append(it)
+                    continue
                 for n in it.names:
                     if n in self.where and self.where[n].header == h:
                         old = self.where[n]
@@ -527,7 +650,7 @@ class Model:
         elif it.kind == "enum":
             r = (4, 4, {})
         else:
-            r = self.aggregate(it.kind, it.body, name)
+            r = self.aggregate(it.kind, it.body, name, packed=self.packed(it))
         self.layouts[name] = r
         return r
 
@@ -580,18 +703,24 @@ class Model:
             sys.exit(f"{where}: not a count: {expr}")
         return eval(e.replace("/", "//"), {"__builtins__": {}})
 
-    def aggregate(self, kind, body, where):
+    def packed(self, it):
+        """Whether [it] lies under a [#pragma pack(1)] of its header, which
+        lays its members out without padding."""
+        before = [p for p in self.pragmas.get(it.header, []) if p.start < it.start]
+        return bool(before) and before[-1].packed
+
+    def aggregate(self, kind, body, where, packed=False):
         offset, align, fields = 0, 1, {}
         for name, ty, counts, falign in self.members(body, where):
             if isinstance(ty, tuple):
-                size, a, sub = self.aggregate(ty[0], ty[1], where)
+                size, a, sub = self.aggregate(ty[0], ty[1], where, packed)
             elif ty in FLEXIBLE and counts == [0]:
                 if offset % 8:
                     sys.exit(f"{where}: {name} is not at a multiple of 8")
                 size, a, sub = 0, 1, {}
             else:
                 size, a, sub = self.scalar_or_type(ty)
-            a = max(a, falign)
+            a = 1 if packed else max(a, falign)
             n = 1
             for c in counts:
                 n *= c
@@ -685,6 +814,7 @@ def family_wanted(family):
     """The names read from the register headers of [family]."""
     def names(model):
         out = register_names(model, REGISTERS[family]) | {"NV_VIRTUAL_FUNCTION_FULL_PHYS_OFFSET"}
+        out |= {u for u in UNITS if u in model.where}
         return out | {v for v in REGISTER_VALUES if v in model.where}
     return names
 
@@ -708,6 +838,7 @@ def excerpts(texts):
         model = Model({h: texts[h] for h in hs})
         for h, its in model.closure(want(model)).items():
             keep.setdefault(h, {}).update(its)
+            keep[h].update({p.start: p for p in model.pragmas.get(h, [])})
     out = {}
     for h in SOURCES:
         if h not in keep:
@@ -934,9 +1065,11 @@ def generate():
     seen = set()
     for r in common:
         emit_register(out, r, legacy[r], seen)
+    both = Model({h: texts[h] for h in dict.fromkeys(FAMILIES["Legacy"] + FAMILIES["Blackwell"])})
     for v in REGISTER_VALUES:
-        hs = FAMILIES["Legacy"] + FAMILIES["Blackwell"]
-        out.append(f"let {snake(v)} = {ml_int(Model({h: texts[h] for h in dict.fromkeys(hs)}).value(v))}")
+        out.append(f"let {snake(v)} = {ml_int(both.value(v))}")
+    for u in UNITS:
+        out.append(f"let {snake(u)} = {ml_int(int(both.item(u).body.split(':')[1].split()[0], 16))}")
     out.append("")
     out.append("module type FAMILY = sig")
     for r in differ:

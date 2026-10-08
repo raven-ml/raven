@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2003-2022 NVIDIA CORPORATION & AFFILIATES
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -21,8 +21,29 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#define NV_PSEC                                0x843fff:0x840000 /* RW--D */
+typedef struct {
+    NvU64 sharedMemPhysAddr;
+    NvU32 pageTableEntryCount;
+    NvLength cmdQueueOffset;
+    NvLength statQueueOffset;
+} MESSAGE_QUEUE_INIT_ARGUMENTS;
 
-#define NV_PSEC_FALCON_ENGINE                                                                            0x008403c0     /* RW-4R */
+typedef struct {
+    NvU32 oldLevel;
+    NvU32 flags;
+    NvBool bInPMTransition;
+} GSP_SR_INIT_ARGUMENTS;
 
-#define NV_PSEC_FALCON_ENGINE_RESET                                                                      0:0            /* RWIVF */
+typedef struct
+{
+    MESSAGE_QUEUE_INIT_ARGUMENTS      messageQueueInitArguments;
+    GSP_SR_INIT_ARGUMENTS             srInitArguments;
+    NvU32                             gpuInstance;
+    NvBool                            bDmemStack;
+
+    struct
+    {
+        NvU64                         pa;
+        NvU64                         size;
+    } profilerArgs;
+} GSP_ARGUMENTS_CACHED;

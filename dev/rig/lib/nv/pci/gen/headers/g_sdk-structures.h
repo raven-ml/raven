@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2003-2022 NVIDIA CORPORATION & AFFILIATES
+ * SPDX-FileCopyrightText: Copyright (c) 2008-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -21,8 +21,13 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#define NV_PSEC                                0x843fff:0x840000 /* RW--D */
-
-#define NV_PSEC_FALCON_ENGINE                                                                            0x008403c0     /* RW-4R */
-
-#define NV_PSEC_FALCON_ENGINE_RESET                                                                      0:0            /* RWIVF */
+typedef struct NV0080_CTRL_DMA_SET_PAGE_DIRECTORY_PARAMS_v1E_05
+{
+    NvU64      physAddress NV_ALIGN_BYTES(8);
+    NvU32      numEntries;
+    NvU32      flags;
+    NvHandle   hVASpace;
+    NvU32      chId;
+    NvU32      subDeviceId;
+    NvU32      pasid;
+} NV0080_CTRL_DMA_SET_PAGE_DIRECTORY_PARAMS_v1E_05;

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2003-2022 NVIDIA CORPORATION & AFFILIATES
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -21,8 +21,28 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#define NV_PSEC                                0x843fff:0x840000 /* RW--D */
+#pragma pack(1)
 
-#define NV_PSEC_FALCON_ENGINE                                                                            0x008403c0     /* RW-4R */
+#pragma pack(1)
 
-#define NV_PSEC_FALCON_ENGINE_RESET                                                                      0:0            /* RWIVF */
+typedef struct
+{
+    NvU16 version;
+    NvU16 size;
+    NvU64 gspFmcSysmemOffset;
+    NvU64 frtsSysmemOffset;
+    NvU32 frtsSysmemSize;
+
+    // Note this is an offset from the end of FB
+    NvU64 frtsVidmemOffset;
+    NvU32 frtsVidmemSize;
+
+    // Authentication related fields
+    NvU32 hash384[12];
+    NvU32 publicKey[96];
+    NvU32 signature[96];
+
+    NvU64 gspBootArgsSysmemOffset;
+} NVDM_PAYLOAD_COT;
+
+#pragma pack()

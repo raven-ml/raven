@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2003-2022 NVIDIA CORPORATION & AFFILIATES
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: MIT
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -21,8 +21,27 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#define NV_PSEC                                0x843fff:0x840000 /* RW--D */
+typedef NvU64 LibosAddress;
 
-#define NV_PSEC_FALCON_ENGINE                                                                            0x008403c0     /* RW-4R */
+typedef enum {
+    LIBOS_MEMORY_REGION_NONE,
+    LIBOS_MEMORY_REGION_CONTIGUOUS,
+    LIBOS_MEMORY_REGION_RADIX3
+} LibosMemoryRegionKind;
 
-#define NV_PSEC_FALCON_ENGINE_RESET                                                                      0:0            /* RWIVF */
+typedef enum {
+    LIBOS_MEMORY_REGION_LOC_NONE,
+    LIBOS_MEMORY_REGION_LOC_SYSMEM,
+    LIBOS_MEMORY_REGION_LOC_FB
+} LibosMemoryRegionLoc;
+
+#define LIBOS_MEMORY_REGION_RADIX_PAGE_LOG2 12
+
+typedef struct
+{
+    LibosAddress          id8;  // Id tag.
+    LibosAddress          pa;   // Physical address.
+    LibosAddress          size; // Size of memory area.
+    NvU8                  kind; // See LibosMemoryRegionKind above.
+    NvU8                  loc;  // See LibosMemoryRegionLoc above.
+} LibosMemoryRegionInitArgument;
