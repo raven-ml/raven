@@ -29,6 +29,8 @@
     - a link's stream breaks or ends without a close:
       ["NAME: closed its connection"], or the system's error after ["NAME: "];
     - no byte comes on a link for 10 seconds: ["NAME: silent for 10 s"];
+    - a send on a link makes no progress for 10 seconds: the system's error
+      after ["NAME: "];
     - a frame is malformed: ["NAME: a malformed frame"];
     - a frame is larger than this process can hold:
       ["NAME: a frame larger than this process can hold"];
@@ -38,13 +40,13 @@
     [NAME] is the link's {!name}. A reason is any bytes, at most 4096 of them: a
     longer one is cut there, here and in an agent's refusal ({!answer}).
 
-    Then every link of the job sends its peer an abort with the root cause if
-    its stream takes it at once, and shuts its socket down, so that no thread
-    waits on it. Its queue drops what it is given, {!request} and {!next} answer
-    [Error], the proxies' sleeps return, and every count of every rail of the
-    job reads [Int64.max_int]. Nothing raises from a C thread, and nothing calls
-    OCaml: the process learns of the failure from {!failure}, {!wait} or a
-    function's [Error].
+    Then every link of the job that sent no close sends its peer an abort with
+    the root cause, after the frame it is sending if any, and shuts its socket
+    down, so that no thread waits on it. Its queue drops what it is given,
+    {!request} and {!next} answer [Error], the proxies' sleeps return, and every
+    count of every rail of the job reads [Int64.max_int]. Nothing raises from a
+    C thread, and nothing calls OCaml: the process learns of the failure from
+    {!failure}, {!wait} or a function's [Error].
 
     A child of [fork] never uses its parent's links, whose streams it would
     interleave with the parent's: every function compares the process id with
