@@ -41,7 +41,7 @@ let half address =
   let key =
     match read_key Unix.stdin with Ok k -> k | Error why -> fail why
   in
-  Proc.signals [ Sys.sigchld; Sys.sigpipe ];
+  Proc.signals [];
   let key_r, key_w = Proc.pipe () and out_r, out_w = Proc.pipe () in
   let env = Array.append (Unix.environment ()) [| "RIG_REMOTE_REPORT=1" |] in
   let exe = Sys.executable_name in
@@ -66,14 +66,13 @@ let half address =
   in
   let rec loop () =
     Proc.wait [ lines; input ];
-    ignore (Proc.caught ());
+    if !status = None then status := Proc.reap pid;
     ignore (Line.read input);
-    if Line.ended input && not !killed then begin
+    if Line.ended input && !status = None && not !killed then begin
       killed := true;
       Proc.kill pid
     end;
     List.iter relay (Line.read lines);
-    if !status = None then status := Proc.reap pid;
     if !status = None || not (Line.ended lines) then loop ()
   in
   loop ();

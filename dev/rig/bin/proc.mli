@@ -37,10 +37,12 @@ val reap : int -> Unix.process_status option
 (** [reap pid] is how [pid] ended, if it has, without waiting. *)
 
 val kill : int -> unit
-(** [kill pid] kills [pid] (SIGKILL), unless it has ended. *)
+(** [kill pid] kills [pid] (SIGKILL). [pid] must not have been reaped: a reaped
+    pid may name another process. *)
 
 val cause : Unix.process_status -> string
-(** [cause st] is ["exited with status N"] or ["killed by SIGNAME"]. *)
+(** [cause st] is ["exited with status N"], or ["killed by SIGNAME"], SIGNAME a
+    POSIX signal's name or ["signal N"]. *)
 
 val status : Unix.process_status -> int
 (** [status st] is the exit status a shell shows for [st]: its own, or 128 + N
@@ -49,17 +51,19 @@ val status : Unix.process_status -> int
 (** {1:signals Signals} *)
 
 val signals : int list -> unit
-(** [signals sigs] handles each signal of [sigs] by noting it and waking
-    {!wait}. SIGPIPE, if in [sigs], is noted and does nothing more: a write to a
-    pipe that has no reader fails instead. A signal ignored when the process
-    started stays ignored. *)
+(** [signals interrupts] handles SIGCHLD, SIGPIPE and each signal of
+    [interrupts]: each wakes {!wait}, and the first interrupt is noted. A write
+    to a pipe that has no reader fails instead of ending the process. A signal
+    ignored when the process started stays ignored, except SIGCHLD: a launcher
+    must see its children end. *)
 
 val wait : ?until:float -> Line.reader list -> unit
 (** [wait ~until rs] returns once a reader of [rs] has bytes or its end, a
     signal of {!signals} came, or the time is [until] (defaults to never). *)
 
-val caught : unit -> int list
-(** [caught ()] is the signals noted since the last call, oldest first. *)
+val interrupted : unit -> int option
+(** [interrupted ()] is the first interrupt the process got, at the first call
+    after it came, and [None] at every other call. *)
 
 val die_by : int -> 'a
 (** [die_by s] restores [s]'s default action and sends it to this process. *)

@@ -13,4 +13,5 @@
   support/await
   support/gone
   support/ctl.exe
-  support/defaults.exe))
+  support/defaults.exe
+  support/ignore.exe))

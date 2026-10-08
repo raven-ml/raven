@@ -27,10 +27,13 @@ let rec reap pid =
 
 let kill pid = try Unix.kill pid Sys.sigkill with Unix.Unix_error _ -> ()
 
+(* OCaml names the POSIX signals and gives others as their own number. *)
+let name s =
+  if s >= 0 then Printf.sprintf "signal %d" s else Sys.signal_to_string s
+
 let cause = function
   | Unix.WEXITED n -> Printf.sprintf "exited with status %d" n
-  | Unix.WSIGNALED s | Unix.WSTOPPED s ->
-      Printf.sprintf "killed by %s" (Sys.signal_to_string s)
+  | Unix.WSIGNALED s | Unix.WSTOPPED s -> Printf.sprintf "killed by %s" (name s)
 
 let status = function
   | Unix.WEXITED n -> n
@@ -38,26 +41,28 @@ let status = function
 
 (* Signals *)
 
-(* Each handler notes its signal and writes a byte on [wake], which [wait]
-   watches: a signal that comes just before [wait] blocks still wakes it. *)
-let noted = ref []
+(* The first interrupt, set once; [taken] once [interrupted] gave it. Each
+   handler also writes a byte on [wake], which [wait] watches: a signal that
+   comes just before [wait] blocks still wakes it. *)
+let interrupt = ref None
+let taken = ref false
 let wake = pipe ()
 
-let signals sigs =
+let signals interrupts =
   let r, w = wake in
   Unix.set_nonblock r;
   Unix.set_nonblock w;
   let note s =
-    noted := s :: !noted;
+    if !interrupt = None && List.mem s interrupts then interrupt := Some s;
     try ignore (Unix.write_substring w "s" 0 1) with Unix.Unix_error _ -> ()
   in
   let handle s =
     match Sys.signal s (Sys.Signal_handle note) with
-    | Sys.Signal_ignore when s <> Sys.sigpipe ->
+    | Sys.Signal_ignore when s <> Sys.sigchld ->
         Sys.set_signal s Sys.Signal_ignore
     | _ -> ()
   in
-  List.iter handle sigs
+  List.iter handle (Sys.sigchld :: Sys.sigpipe :: interrupts)
 
 let rec drain fd =
   match Unix.read fd (Bytes.create 64) 0 64 with
@@ -80,10 +85,12 @@ let wait ?until rs =
    with Unix.Unix_error (Unix.EINTR, _, _) -> ());
   drain (fst wake)
 
-let caught () =
-  let l = List.rev !noted in
-  noted := [];
-  l
+let interrupted () =
+  match !interrupt with
+  | Some _ as s when not !taken ->
+      taken := true;
+      s
+  | _ -> None
 
 let die_by s =
   Sys.set_signal s Sys.Signal_default;

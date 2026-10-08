@@ -9,7 +9,7 @@
 #define _GNU_SOURCE
 #include <caml/mlvalues.h>
 
-value caml_rig_bin_fd_number(value fd)
+CAMLprim value caml_rig_bin_fd_number(value fd)
 {
   return fd;
 }

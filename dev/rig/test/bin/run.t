@@ -89,3 +89,11 @@ variables.
   0
   copied 2
   $ gone
+
+A parent that ignores SIGCHLD, as some supervisors do, does not keep rig
+run from seeing its children end.
+
+  $ fresh
+  $ ./support/ignore.exe CHLD rig run --on a,b -- ./support/ctl.exe copy
+  attempt 1
+  copied 1

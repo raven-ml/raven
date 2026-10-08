@@ -8,7 +8,7 @@
 let strf = Printf.sprintf
 
 let misuse cmd why =
-  prerr_string (strf "rig: %s\nTry '%s --help'.\n" why cmd);
+  Proc.write Unix.stderr (strf "rig: %s\nTry '%s --help'.\n" why cmd);
   exit 124
 
 let page p =
@@ -96,5 +96,5 @@ let main () =
 let () =
   try main ()
   with e ->
-    prerr_endline ("rig: a bug in rig: " ^ Printexc.to_string e);
+    Proc.write Unix.stderr ("rig: a bug in rig: " ^ Printexc.to_string e ^ "\n");
     exit 125

@@ -5,12 +5,10 @@
 
 let strf = Printf.sprintf
 
+(* Each line in one write, so that it never splits around the program's output,
+   and whatever stderr has become. *)
 let sayf fmt =
-  Printf.ksprintf
-    (fun s ->
-      prerr_string ("rig: " ^ s ^ "\n");
-      flush stderr)
-    fmt
+  Printf.ksprintf (fun s -> Proc.write Unix.stderr ("rig: " ^ s ^ "\n")) fmt
 
 (* The failures in a row with one cause after which rig run gives up. *)
 let restarts = 3
@@ -63,11 +61,16 @@ let addresses host =
   | l -> List.map (fun a -> a.Unix.ai_addr) l
   | exception Not_found -> []
 
-(* Whether [a] is an address of this machine: whether a socket binds to it. *)
+(* Whether [a] is an address of this machine: whether a socket binds to it. A
+   system without the address's family has none. *)
 let binds a =
-  let fd = Unix.socket (Unix.domain_of_sockaddr a) Unix.SOCK_STREAM 0 in
-  Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
-  match Unix.bind fd a with () -> true | exception Unix.Unix_error _ -> false
+  match Unix.socket (Unix.domain_of_sockaddr a) Unix.SOCK_STREAM 0 with
+  | exception Unix.Unix_error _ -> false
+  | fd -> (
+      Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+      match Unix.bind fd a with
+      | () -> true
+      | exception Unix.Unix_error _ -> false)
 
 let machines ~misuse names =
   let found name =
@@ -182,21 +185,22 @@ let on_line s l =
   | Some ((Line.Closed | Line.Failed _ | Line.Died _) as f) -> s.final <- Some f
   | Some (Line.Agent _ | Line.Started) | None -> broke (strf "wrote %S" l)
 
+(* Reaps, then reads: once ssh has exited, every byte it wrote is in its
+   pipes. *)
 let poll_session s =
+  let exit = if s.status = None then Proc.reap s.ssh else None in
   List.iter (on_line s) (Line.read s.out);
   List.iter
-    (fun l -> if not s.quiet then prerr_endline (s.m.name ^ ": " ^ l))
+    (fun l ->
+      if not s.quiet then Proc.write Unix.stderr (strf "%s: %s\n" s.m.name l))
     (Line.read s.err);
-  if s.status = None then
-    match Proc.reap s.ssh with
-    | None -> ()
-    | Some st ->
-        s.status <- Some st;
-        List.iter (on_line s) (Line.read s.out);
-        s.lost <-
-          s.lost || (s.input <> None && s.final = None && s.broken = None);
-        Option.iter Unix.close s.input;
-        s.input <- None
+  Option.iter
+    (fun st ->
+      s.status <- Some st;
+      s.lost <- s.lost || (s.input <> None && s.final = None && s.broken = None);
+      Option.iter Unix.close s.input;
+      s.input <- None)
+    exit
 
 (* The program *)
 
@@ -249,19 +253,16 @@ let program ss key prog args =
       Unix.close w;
       Error (strf "%s: %s" prog (Unix.error_message e))
 
+let on_report p l =
+  match Line.of_string l with
+  | Some Line.Started -> p.started <- true
+  | Some ((Line.Closed | Line.Failed _) as e) when p.end_ = None ->
+      p.end_ <- Some e
+  | _ -> ()
+
 let poll_program p =
-  let on_report l =
-    match Line.of_string l with
-    | Some Line.Started -> p.started <- true
-    | Some ((Line.Closed | Line.Failed _) as e) when p.end_ = None ->
-        p.end_ <- Some e
-    | _ -> ()
-  in
-  List.iter on_report (Line.read p.report);
-  if p.status = None then begin
-    p.status <- Proc.reap p.pid;
-    if p.status <> None then List.iter on_report (Line.read p.report)
-  end
+  if p.status = None then p.status <- Proc.reap p.pid;
+  List.iter (on_report p) (Line.read p.report)
 
 (* An attempt: its sessions and, once they listen, its program. *)
 
@@ -272,21 +273,18 @@ let ended a =
   && List.for_all (fun (s : session) -> s.status <> None) a.sessions
 
 (* Takes in what came, after waiting for anything, until [until] at most. An
-   interrupt ends the job and rig run with it. *)
+   interrupt ends the job and rig run with it. It is taken after the polls:
+   [waitpid] runs pending handlers, so a death the interrupt caused is seen with
+   it. *)
 let rec step ?until a =
   let readers =
     Option.fold ~none:[] ~some:(fun p -> [ p.report ]) a.program
     @ List.concat_map (fun s -> [ s.out; s.err ]) a.sessions
   in
   Proc.wait ?until readers;
-  let interrupt =
-    List.find_opt
-      (fun s -> s <> Sys.sigchld && s <> Sys.sigpipe)
-      (Proc.caught ())
-  in
   Option.iter poll_program a.program;
   List.iter poll_session a.sessions;
-  Option.iter (interrupted a) interrupt
+  Option.iter (interrupted a) (Proc.interrupted ())
 
 (* Steps until [f a], or until [until]. *)
 and wait ?until a f =
@@ -510,8 +508,10 @@ let attempt ~first ~count ~waited machines prog args =
               | _ -> f)))
 
 let run ~misuse names prog args =
+  (* Before ssh -G runs: an ignored SIGCHLD would have it reaped by the
+     kernel. *)
+  Proc.signals [ Sys.sigint; Sys.sigterm; Sys.sighup ];
   let machines = machines ~misuse names in
-  Proc.signals [ Sys.sigchld; Sys.sigint; Sys.sigterm; Sys.sighup; Sys.sigpipe ];
   let rec loop ~count ~last ~waited =
     let cause, down =
       attempt ~first:(last = None) ~count ~waited machines prog args
