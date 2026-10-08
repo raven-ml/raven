@@ -30,6 +30,9 @@ external floor_fill : nativeint -> nativeint -> int -> int -> int -> unit
 external floor_words : nativeint -> int -> int -> unit = "rig_bench_floor_words"
 external floor_at : nativeint -> int -> unit = "rig_bench_floor_at"
 
+external floor_copy : nativeint -> int -> nativeint -> nativeint -> int -> unit
+  = "rig_bench_floor_copy"
+
 let drain = 64
 let slots = 24
 let runs = 100
@@ -77,6 +80,32 @@ let data name n =
 
 let ok = function Ok v -> v | Error why -> failwith why
 
+(* Copies: 256 MiB between a GPU's memory and the host's, both ways. Host memory
+   that starts on a page is memory the GPU maps; memory 16 bytes past a page,
+   such as a C library's large allocation, the GPU maps none of, and the bytes
+   go through the host's staging memory, one host copy per byte beside the
+   GPU's. Host memory is written first: pages never written read as one page of
+   zeros, which no copy of real data reads as fast. *)
+
+let copy_bytes = 256 lsl 20
+
+(* [n] bytes of host memory written, from 16 bytes past a page if [off]. *)
+let written ?(off = false) n =
+  let at = if off then 16 else 0 in
+  let b = B.create C.host (n + at) in
+  let ba = Bigarray.Array1.sub (B.bigarray Bigarray.char b) at n in
+  Bigarray.Array1.fill ba 'w';
+  if off then B.of_bigarray ba else b
+
+(* The host's copy of as many bytes, which bounds a staged copy. *)
+let host_rows =
+  let chars () =
+    let b () = B.bigarray Bigarray.char (written copy_bytes) in
+    (b (), b ())
+  in
+  Thumper.group "floor/host"
+    [ row "memcpy-256M" chars (fun (a, b) -> Bigarray.Array1.blit a b) ]
+
 type gpu_copy = { gs : Sub.t; gargs : B.t; gout : B.t }
 
 type gpu_replay = {
@@ -117,8 +146,8 @@ let floor_part f (p : Sub.part) =
    driver's entries alone, after the core loaded the kernel. Each case opens its
    GPU in its own worker, so that no process forks after a vendor library
    started. *)
-let gpu_rows (type a) (module D : C.Driver with type t = a) ?(sleeps = false) v
-    ~name open_ ~kernel =
+let gpu_rows (type a) (module D : C.Driver with type t = a) ?(sleeps = false)
+    ?(copies = true) v ~name open_ ~kernel =
   let get = function Ok x -> x | Error why -> failwith why in
   let opened () =
     let d = ref None in
@@ -252,6 +281,39 @@ let gpu_rows (type a) (module D : C.Driver with type t = a) ?(sleeps = false) v
     ( B.create C.host file_bytes,
       Option.get (B.borrow g (B.create C.host file_bytes)) )
   in
+  let copying host ~to_device () =
+    let g, _ = opened () in
+    let h = host () and d = B.create g copy_bytes in
+    if to_device then (h, d) else (d, h)
+  in
+  let paged () = written copy_bytes
+  and off_page () = written ~off:true copy_bytes in
+  let copy (src, dst) = B.copy ~src ~dst in
+  (* The driver alone copying between its pinned memory and its own on its first
+     copy queue, into its own memory [to_device] or out of it. *)
+  let copy_alone ~to_device () =
+    let a = alone () in
+    let queues = D.queues a.drv in
+    let q = List.find_index (String.starts_with ~prefix:"COPY:") queues in
+    let region k = D.handle (Option.get (D.alloc a.drv k copy_bytes)) in
+    let pinned = region `Pinned and device = region `Device in
+    let dst, src = if to_device then (device, pinned) else (pinned, device) in
+    floor_copy a.entries (Option.get q) dst src copy_bytes;
+    floor_handles a.entries [| dst; src |];
+    { a with parts = 1 }
+  in
+  let copy_once a =
+    release a;
+    spin a !(a.sent)
+  in
+  let copy_floors =
+    if not copies then []
+    else
+      [
+        row "copy-to-device-256M" (copy_alone ~to_device:true) copy_once;
+        row "copy-from-device-256M" (copy_alone ~to_device:false) copy_once;
+      ]
+  in
   [
     Thumper.group (strf "file/%s" v)
       [
@@ -262,6 +324,10 @@ let gpu_rows (type a) (module D : C.Driver with type t = a) ?(sleeps = false) v
       [
         row "host-to-borrow-256M" borrowed (fun (h, b) -> B.copy ~src:h ~dst:b);
         row "borrow-to-host-256M" borrowed (fun (h, b) -> B.copy ~src:b ~dst:h);
+        row "to-device-256M" (copying paged ~to_device:true) copy;
+        row "from-device-256M" (copying paged ~to_device:false) copy;
+        row "to-device-off-page-256M" (copying off_page ~to_device:true) copy;
+        row "from-device-off-page-256M" (copying off_page ~to_device:false) copy;
       ];
     Thumper.group (strf "submit/%s" v)
       [
@@ -290,6 +356,7 @@ let gpu_rows (type a) (module D : C.Driver with type t = a) ?(sleeps = false) v
          row "pipelined-100" (fun () -> named (alone ())) floor_pipelined;
          row "kernel-pipelined-100" kernel_alone floor_pipelined;
        ]
+      @ copy_floors
       @
       if sleeps then
         [
@@ -379,7 +446,7 @@ let gpus =
       (if Sys.file_exists "/System/Library/Frameworks/Metal.framework" then
          gpu_rows
            (module Rig_metal)
-           ~sleeps:true "metal" ~name:(Rig_metal.device_name 0)
+           ~sleeps:true ~copies:false "metal" ~name:(Rig_metal.device_name 0)
            (fun () -> Rig_metal.open_ 0)
            ~kernel:metal_kernel
        else []);
@@ -435,4 +502,4 @@ let rec take refused =
 
 let () =
   if gpus <> [] then take 0;
-  exit @@ Thumper.run "rig-gpu" gpus
+  exit @@ Thumper.run "rig-gpu" (if gpus = [] then [] else host_rows :: gpus)

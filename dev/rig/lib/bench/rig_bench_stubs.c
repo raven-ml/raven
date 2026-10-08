@@ -107,6 +107,20 @@ value rig_bench_floor_words(value v_f, value v_words, value v_n) {
   return Val_unit;
 }
 
+/* Makes the floor's part a copy, on the queue at index [v_queue], of the
+   [v_n] bytes of the memory whose handle is [v_src] into the memory whose
+   handle is [v_dst]. */
+value rig_bench_floor_copy(value v_f, value v_queue, value v_dst, value v_src,
+                           value v_n) {
+  struct floor *f = Floor_val(v_f);
+  f->fill = (struct rig_part){0};
+  f->fill.queue = Int_val(v_queue);
+  f->fill.copy_dst = (uint64_t)Nativeint_val(v_dst);
+  f->fill.copy_src = (uint64_t)Nativeint_val(v_src);
+  f->fill.copy_bytes = (uint64_t)Long_val(v_n);
+  return Val_unit;
+}
+
 /* Makes [v_v] the value the floor's device received last. */
 value rig_bench_floor_at(value v_f, value v_v) {
   Floor_val(v_f)->v = (uint64_t)Long_val(v_v);
