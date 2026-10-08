@@ -47,15 +47,18 @@ val sub : t -> int -> int -> t
 
     {!get32}, {!set32}, {!get64} and {!set64} are register accesses: one access
     of exactly that width, on this machine and through a transport, so a
-    register is read and written once each and in program order. {!read},
-    {!blit_string}, {!write} and {!fill} copy memory, at widths they choose;
-    touch registers only with the accesses above. They are for device memory and
-    windows through a transport. On a mapped window they go a 32-bit word at a
-    time, which memory behind a BAR accepts, and a long one lets the domain's
-    other threads and other domains' collections run meanwhile; a long read or
-    write pays for that with a copy through a buffer. Bulk copies of this
-    process's memory go through {!bigarray}. {!barrier} orders accesses for the
-    processor and the bus.
+    register is read and written once each and in program order. Through a
+    window {!Function.map} made with [~combine:true], where the machine allows
+    it, they are memory accesses: a store may merge with others and reach the
+    function in another order until a {!barrier}. {!read}, {!blit_string},
+    {!write} and {!fill} copy memory, at widths they choose; touch registers
+    only with the accesses above. They are for device memory and windows through
+    a transport. On a mapped window they go a 32-bit word at a time, which
+    memory behind any BAR accepts, or 16 bytes at a time through a window that
+    combines. A long one lets the domain's other threads and other domains'
+    collections run meanwhile; a long read or write pays for that with a copy
+    through a buffer. Bulk copies of this process's memory go through
+    {!bigarray}. {!barrier} orders accesses for the processor and the bus.
 
     Each raises [Invalid_argument] if the bytes it accesses do not lie in the
     window, a count below zero included, or if a 32- or 64-bit access is at an
@@ -141,6 +144,7 @@ val through : transport -> int -> int -> t
 
 (**/**)
 
-val v : int -> int -> t
+val v : ?combines:bool -> int -> int -> t
 (* [v a n] is the [n] bytes mapped at [a] in the process, for the library's own
-   mappings. Raises [Invalid_argument] if [n < 0]. *)
+   mappings, which combine if [combines] (defaults to [false]). Raises
+   [Invalid_argument] if [n < 0]. *)

@@ -22,6 +22,7 @@ external c_load64 : Window.t -> int -> int64 = "device_pci_test_load64"
 external c_write : Window.t -> int -> string -> unit = "device_pci_test_write"
 external c_failed : Window.t -> string option = "device_pci_test_failed"
 external c_flush : Window.t -> unit = "device_pci_test_flush"
+external c_combines : Window.t -> bool = "device_pci_test_combines"
 
 (* Far machines put their bytes at [base], away from 0 so that an access sent to
    its offset in place of its address misses them. *)
@@ -30,6 +31,10 @@ let base = 0x4000_0000
 (* [mapped skew n] and [through skew n] are [n] fresh zero bytes whose address
    is [skew] modulo 8. A far machine holds exactly the window's bytes. *)
 let mapped skew n = Window.v (memory (n + 8) + skew) n
+
+(* [combining skew n] is [mapped skew n] on a window that combines, whose copies
+   go 16 bytes at a time. *)
+let combining skew n = Window.v ~combines:true (memory (n + 8) + skew) n
 
 let through skew n =
   let a = base + skew in
@@ -205,6 +210,8 @@ let same_bytes =
     [
       stateful ~count:300 "a mapped window behaves as its bytes"
         (commands ~is_mapped:true mapped);
+      stateful ~count:300 "a combining window behaves as its bytes"
+        (commands ~is_mapped:true combining);
       stateful ~count:300 "a window through a transport behaves as its bytes"
         (commands ~is_mapped:false through);
       test "a mapped word is aligned by its address" (address_alignment mapped);
@@ -253,11 +260,25 @@ let sub_address make (s, len, off, n) =
   equal ~msg:"address" int (Window.address w + off) (Window.address x);
   equal ~msg:"length" int n (Window.length x)
 
+(* A window combines as it was made, as device_pci.h sees it; a sub-window as
+   its parent; one through a transport never. *)
+let test_combines () =
+  let a = memory 64 in
+  List.iter
+    (fun (msg, w, want) -> equal ~msg bool want (c_combines w))
+    [
+      ("mapped", Window.v a 64, false);
+      ("mapped, combining", Window.v ~combines:true a 64, true);
+      ("a sub-window", Window.sub (Window.v ~combines:true a 64) 8 16, true);
+      ("through", through 0 16, false);
+    ]
+
 let windows =
   group ~timeout:patience "windows"
     [
       test "v is the bytes at the address it is given" test_v;
       test "through is the bytes at the address it is given" test_through;
+      test "a window combines as made, a sub-window as its parent" test_combines;
       test "v and through refuse a negative length, and through no transport"
         test_negative;
       prop "a mapped sub-window starts its offset past its parent" place
@@ -321,8 +342,8 @@ let compacting f =
     f;
   compactions () > before
 
-let long_copies (skew, n, off) =
-  let w = mapped skew n and k = n - off in
+let long_copies make (skew, n, off) =
+  let w = make skew n and k = n - off in
   let s = String.init k (fun i -> Char.chr (((i * 7) + skew) land 0xff)) in
   let t =
     "ab" ^ String.map (fun c -> Char.chr ((Char.code c + 1) land 0xff)) s ^ "cd"
@@ -350,7 +371,11 @@ let long =
       prop
         "read, write, blit_string and fill agree with the bytes while the heap \
          moves"
-        long_place long_copies;
+        long_place (long_copies mapped);
+      prop
+        "on a combining window, read, write, blit_string and fill agree with \
+         the bytes while the heap moves"
+        long_place (long_copies combining);
     ]
 
 (* Transports *)

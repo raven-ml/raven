@@ -14,7 +14,9 @@
    remote or USB machine adds above its wire.
 
    The copy rows move 4 KiB and 64 KiB, below and above the size from which a
-   copy releases the runtime, a piece at a time. *)
+   copy releases the runtime, a piece at a time. [combining] copies 64 KiB
+   through a window that combines, 16 bytes at a time: on process memory it
+   times the processor's side of a copy to write-combined memory. *)
 
 module Window = Device_pci.Window
 
@@ -83,6 +85,7 @@ let flush w () =
 
 let mapped = Window.v (buffer span) span
 let wide = Window.v (buffer wide_span) wide_span
+let combining = Window.v ~combines:true (buffer wide_span) wide_span
 let through = Window.through (Window.unsafe_transport (far ())) 0 span
 let bench = Thumper.bench
 
@@ -106,6 +109,13 @@ let () =
              bench "write-64KiB" (fun () -> Window.write wide 0 wide_page);
              bench "read-64KiB" (fun () -> Window.read wide 0 wide_span);
              bench "fill-64KiB" (fun () -> Window.fill wide 0 wide_span 'x');
+           ];
+         Thumper.group "combining"
+           [
+             bench "write-64KiB" (fun () -> Window.write combining 0 wide_page);
+             bench "read-64KiB" (fun () -> Window.read combining 0 wide_span);
+             bench "fill-64KiB" (fun () ->
+                 Window.fill combining 0 wide_span 'x');
            ];
          Thumper.group "c"
            [

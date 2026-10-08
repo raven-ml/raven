@@ -16,8 +16,8 @@ type transport = int
 
 (* device_pci_window_of reads these fields through enum window_field
    (device_pci_window.c): keep the two in sync. A mapped window has no
-   transport. *)
-type t = { address : int; length : int; transport : transport }
+   transport; one through a transport never combines. *)
+type t = { address : int; length : int; transport : transport; combines : bool }
 
 (* Mapped windows: one volatile access of the width, at a base address and an
    offset from it. *)
@@ -49,14 +49,16 @@ external set64_at :
   = "caml_device_pci_set64_byte" "caml_device_pci_set64"
 [@@noalloc]
 
-external read_at : int -> int -> string = "caml_device_pci_read"
+(* [read_at], [write_at] and [fill_at] take whether the window combines, which
+   lets them access 16 bytes at a time. *)
+external read_at : int -> int -> bool -> string = "caml_device_pci_read"
 
 (* [write_at] and [fill_at] release the runtime from 8 KiB on
    (device_pci_window.c), so neither is [@@noalloc]. *)
-external write_at : int -> string -> int -> int -> unit
+external write_at : int -> string -> int -> int -> bool -> unit
   = "caml_device_pci_write_at"
 
-external fill_at : int -> int -> int -> unit = "caml_device_pci_fill"
+external fill_at : int -> int -> int -> bool -> unit = "caml_device_pci_fill"
 external barrier : unit -> unit = "caml_device_pci_barrier" [@@noalloc]
 
 external bigarray_at :
@@ -89,11 +91,11 @@ external transport_write : transport -> int -> string -> int -> int -> unit
 
 (* Windows *)
 
-let make fn transport address length =
+let make fn ?(combines = false) transport address length =
   if length < 0 then invalid_argf "Window.%s: length %d is negative" fn length;
-  { address; length; transport }
+  { address; length; transport; combines }
 
-let v address length = make "v" 0 address length
+let v ?combines address length = make "v" ?combines 0 address length
 let unsafe_transport p = p
 
 let through tr address length =
@@ -161,14 +163,14 @@ let flush w =
 
 let read w off n =
   check "read" w off n;
-  if mapped w then read_at (w.address + off) n
+  if mapped w then read_at (w.address + off) n w.combines
   else transport_read w.transport (w.address + off) n
 
 let blit_string s soff w off n =
   if soff < 0 || n < 0 || soff > String.length s - n then
     err_range "blit_string" n soff (String.length s);
   check "blit_string" w off n;
-  if mapped w then write_at (w.address + off) s soff n
+  if mapped w then write_at (w.address + off) s soff n w.combines
   else transport_write w.transport (w.address + off) s soff n
 
 let write w off s = blit_string s 0 w off (String.length s)
@@ -178,7 +180,7 @@ let fill_piece = 1 lsl 20
 
 let fill w off n c =
   check "fill" w off n;
-  if mapped w then fill_at (w.address + off) n (Char.code c)
+  if mapped w then fill_at (w.address + off) n (Char.code c) w.combines
   else
     let piece = String.make (Int.min n fill_piece) c in
     let rec go at left =
