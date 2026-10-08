@@ -35,8 +35,9 @@ value caml_rig_remote_unsetenv(value name) {
   return Val_unit;
 }
 
-/* Keeps descriptor [n] from the programs the process runs: [false] if [n]
-   is no open descriptor. Holds the runtime. */
+/* Keeps descriptor [n] from the programs the process runs, and a write on
+   it from raising SIGPIPE where the system can say so: [false] if [n] is no
+   open descriptor. Holds the runtime. */
 value caml_rig_remote_report_open(value vn) {
   int n = Int_val(vn);
 #ifdef _WIN32
@@ -46,14 +47,20 @@ value caml_rig_remote_report_open(value vn) {
 #else
   int flags = fcntl(n, F_GETFD);
   if (flags < 0) return Val_false;
+#ifdef F_SETNOSIGPIPE
+  /* macOS raises a pipe's SIGPIPE on the process, where any thread that
+     does not block it takes it: the descriptor itself raises none. */
+  (void)fcntl(n, F_SETNOSIGPIPE, 1);
+#endif
   return Val_bool(fcntl(n, F_SETFD, flags | FD_CLOEXEC) == 0);
 #endif
 }
 
 /* Writes [s] on descriptor [n], ignoring every error. A pipe whose reader
-   is gone raises SIGPIPE, which would end the process: the signal is
-   blocked in this thread while it writes, and the one the write raised is
-   taken before it is unblocked. Releases the runtime: a full pipe blocks. */
+   is gone raises SIGPIPE on the writing thread, which would end the
+   process: the signal is blocked in this thread while it writes, and the
+   one the write raised is taken before it is unblocked. Releases the
+   runtime: a full pipe blocks. */
 value caml_rig_remote_report_write(value vn, value s) {
   int n = Int_val(vn);
   size_t len = caml_string_length(s);
