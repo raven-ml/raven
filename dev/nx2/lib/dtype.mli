@@ -19,7 +19,9 @@
 (** {1:elt Storage formats}
 
     The second parameter of a dtype. Bigarray's element types name the formats
-    Bigarray has; the others are nx's own and have no values. *)
+    Bigarray has; the others are nx's own and have no values. A dtype's name
+    counts the bits of a whole element, Bigarray's element types one
+    component's: [Complex64]'s elements are [complex32_elt]. *)
 
 type float64_elt = Bigarray.float64_elt
 (** IEEE 754 binary64. *)
@@ -33,17 +35,19 @@ type float16_elt = Bigarray.float16_elt
 (** bfloat16: binary32's sign, 8 exponent bits and the top 7 fraction bits. *)
 type bfloat16_elt = |
 
-(** OCP float8 E4M3: 4 exponent bits, 3 fraction bits, exponent bias 7, no
-    infinity; [S.1111.111] is NaN. *)
-type float8_e4m3_elt = |
+(** OCP float8 E4M3, the format interchange formats name [float8_e4m3fn]: 4
+    exponent bits, 3 fraction bits, exponent bias 7, no infinity; [S.1111.111]
+    is NaN. *)
+type float8_e4m3fn_elt = |
 
 (** OCP float8 E5M2: 5 exponent bits, 2 fraction bits, exponent bias 15, with
     infinities and NaNs as in IEEE 754. *)
 type float8_e5m2_elt = |
 
-(** OCP float4 E2M1: 2 exponent bits, 1 fraction bit, exponent bias 1, no
-    infinity and no NaN. Its values are ±\{0, 0.5, 1, 1.5, 2, 3, 4, 6\}. *)
-type float4_e2m1_elt = |
+(** OCP float4 E2M1, named [float4_e2m1fn] as in interchange formats: 2 exponent
+    bits, 1 fraction bit, exponent bias 1, no infinity and no NaN. Its values
+    are ±\{0, 0.5, 1, 1.5, 2, 3, 4, 6\}. *)
+type float4_e2m1fn_elt = |
 
 type int64_elt = Bigarray.int64_elt
 (** Signed 64-bit integers. *)
@@ -105,9 +109,9 @@ type ('v, 's) t =
   | Float32 : (float, float32_elt) t
   | Float16 : (float, float16_elt) t
   | Bfloat16 : (float, bfloat16_elt) t
-  | Float8_e4m3 : (float, float8_e4m3_elt) t
+  | Float8_e4m3fn : (float, float8_e4m3fn_elt) t
   | Float8_e5m2 : (float, float8_e5m2_elt) t
-  | Float4_e2m1 : (float, float4_e2m1_elt) t
+  | Float4_e2m1fn : (float, float4_e2m1fn_elt) t
   | Int64 : (int64, int64_elt) t
   | Uint64 : (int64, uint64_elt) t
   | Int32 : (int32, int32_elt) t
@@ -149,7 +153,7 @@ val bytes : ('v, 's) t -> int -> int
 
 val name : ('v, 's) t -> string
 (** [name dt] is [dt]'s constructor name in lower case, as ["float32"] or
-    ["float4_e2m1"]. *)
+    ["float4_e2m1fn"]. *)
 
 val of_name : string -> any option
 (** [of_name s] is the dtype whose {!name} is [s], if any. *)
@@ -191,15 +195,18 @@ val equal_witness :
     {b Stores.} Every store of a [float] into a dtype follows one rule,
     [of_float]'s here and every kernel's:
 
-    - A finite value in range rounds once to the format's nearest value, ties to
-      even. Below the least value it is a subnormal or a zero of its sign.
-    - Past the largest finite value it is the infinity of its sign in [Float64],
-      [Float32], [Float16] and [Bfloat16], and saturates to ±57344 in
-      [Float8_e5m2], ±448 in [Float8_e4m3] and ±6 in [Float4_e2m1].
-    - An infinity stays one where the format has one, is NaN in [Float8_e4m3]
-      and saturates to ±6 in [Float4_e2m1].
-    - NaN is NaN, except in [Float4_e2m1], which has none: it stores [+0.], as
-      integers do.
+    - A finite value rounds once to the format's nearest value, ties to even, as
+      if the exponent were unbounded. A result below the least normal magnitude
+      is a subnormal or a zero of its sign.
+    - A result whose magnitude exceeds the largest finite value is the infinity
+      of its sign in [Float64], [Float32], [Float16] and [Bfloat16]: [65519.]
+      stores in [Float16] as [65504.] and [65520.] as infinity. The formats of a
+      byte or less keep a finite value finite: it saturates to ±57344 in
+      [Float8_e5m2], ±448 in [Float8_e4m3fn] and ±6 in [Float4_e2m1fn].
+    - An infinity stays non-finite where the format can say so: it is the
+      infinity of its sign in every format with infinities and NaN in
+      [Float8_e4m3fn]. [Float4_e2m1fn] has neither: an infinity saturates to ±6.
+    - NaN is NaN, except in [Float4_e2m1fn]: it stores [+0.], as integers do.
     - Integers truncate toward zero, saturate to their range and store NaN as
       [0], signed and unsigned alike.
     - Complex numbers store the value as their real part, rounded to their
@@ -214,17 +221,17 @@ val one : ('v, 's) t -> 'v
 
 val min_value : ('v, 's) t -> 'v
 (** [min_value dt] is [dt]'s least value: [neg_infinity] for a float format with
-    infinities, [-448.] for [Float8_e4m3] and [-6.] for [Float4_e2m1], and
+    infinities, [-448.] for [Float8_e4m3fn] and [-6.] for [Float4_e2m1fn], and
     [false] for booleans.
 
     Raises [Invalid_argument] if [dt] is complex. *)
 
 val max_value : ('v, 's) t -> 'v
 (** [max_value dt] is [dt]'s greatest value: [infinity] for a float format with
-    infinities, [448.] for [Float8_e4m3] and [6.] for [Float4_e2m1], and [true]
-    for booleans. An unsigned format read as [int] gives its value, as [15],
-    [255] and [65535]; [Uint32] and [Uint64] give the value with every bit set,
-    [-1l] and [-1L].
+    infinities, [448.] for [Float8_e4m3fn] and [6.] for [Float4_e2m1fn], and
+    [true] for booleans. An unsigned format read as [int] gives its value, as
+    [15], [255] and [65535]; [Uint32] and [Uint64] give the value with every bit
+    set, [-1l] and [-1L].
 
     Raises [Invalid_argument] if [dt] is complex. *)
 

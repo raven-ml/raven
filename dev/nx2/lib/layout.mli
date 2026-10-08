@@ -8,8 +8,8 @@
     A layout maps an index [(i{_0}, …, i{_k-1})], [0 <= i{_j} < d{_j}], to the
     element position [offset + Σ i{_j}·s{_j}], counted in elements from a
     buffer's first byte: [d{_j}] are its extents, its {e shape}, and [s{_j}] its
-    strides. An element at position [p] of a dtype of [b] bits occupies bits
-    [p·b] to [p·b + b - 1] of the buffer.
+    strides. Positions are non-negative. An element at position [p] of a dtype
+    of [b] bits occupies bits [p·b] to [p·b + b - 1] of the buffer.
 
     A layout is immutable and in one {e canonical form}: an axis of extent 1 has
     stride 0, and a layout with no element has offset 0 and every stride 0. Two
@@ -37,8 +37,8 @@ val v : ?offset:int -> strides:int array -> int array -> t
     [offset] (defaults to [0]), in canonical form.
 
     Raises [Invalid_argument] as {!contiguous} does, if [strides] does not have
-    [s]'s length, if [d·|s|] does not fit in an [int] for an axis of extent [d]
-    and stride [s], or if a position overflows. *)
+    [s]'s length, if [d·|t|] does not fit in an [int] for an axis of extent [d]
+    and stride [t], or if a position is negative or does not fit in an [int]. *)
 
 (** {1:queries Queries} *)
 
@@ -69,8 +69,8 @@ val strides : t -> int array
 (** [strides l] is [l]'s strides. *)
 
 val span : t -> int * int
-(** [span l] is [(lo, hi)]: every position [l] reaches lies in [\[lo, hi)], and
-    [(0, 0)] if [l] has no element. *)
+(** [span l] is [(lo, hi)]: every position [l] reaches lies in [\[lo, hi)], with
+    [0 <= lo], and [(0, 0)] if [l] has no element. *)
 
 val is_contiguous : t -> bool
 (** [is_contiguous l] is [true] iff element [k] of [l] in C order is at position
@@ -100,16 +100,19 @@ val coalesce : t array -> t array
     adjacent axes merged where every layout lays them out as one run. Each has
     at least one axis.
 
-    Raises [Invalid_argument] unless [ls] has 1 to 4 layouts, all of one shape.
-*)
+    Raises [Invalid_argument] unless [ls] has 1 to 4 layouts, the most operands
+    a kernel of this library takes, all of one shape. *)
 
 (** {1:eq Equality} *)
 
 val equal : t -> t -> bool
 (** [equal l l'] is [true] iff [l] and [l'] have the same shape, strides and
     offset: by the canonical form, iff they have one shape and map every index
-    to the same position. It compares [8·(5 + 2·rank)] bytes and allocates
-    nothing. *)
+    to the same position. It allocates nothing. *)
+
+val hash : t -> int
+(** [hash l] is a hash of [l] such that [equal l l'] implies [hash l = hash l'].
+    It allocates nothing. *)
 
 val pp : Format.formatter -> t -> unit
 (** [pp] formats a layout's shape, strides and offset. *)

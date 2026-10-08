@@ -65,12 +65,25 @@ let extent = Gen.frequency [ (1, Gen.int_range 0 0); (6, Gen.int_range 1 4) ]
 let shape = Gen.array ~size:(Gen.int_range 0 4) extent
 
 (* Layouts over arbitrary strides and offsets. *)
-let strided =
+(* [o] raised by the reach of [s]'s negative strides, so that [o] is the least
+   position: positions are non-negative. *)
+let lift s strides o =
+  let o = ref o in
+  Array.iteri
+    (fun i d ->
+      if d > 1 && strides.(i) < 0 then o := !o - ((d - 1) * strides.(i)))
+    s;
+  !o
+
+(* Layouts over arbitrary strides, their least position at an arbitrary
+   offset. *)
+let strided_of s =
   let open Gen in
-  let* s = shape in
   let+ strides = array ~size:(const (Array.length s)) (int_range (-5) 5)
-  and+ offset = int_range 0 40 in
-  L.v ~offset ~strides s
+  and+ least = int_range 0 40 in
+  L.v ~offset:(lift s strides least) ~strides s
+
+let strided = Gen.bind shape strided_of
 
 let range d =
   let open Gen in

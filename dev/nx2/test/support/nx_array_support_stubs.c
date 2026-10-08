@@ -12,6 +12,7 @@
 #include <caml/mlvalues.h>
 
 #include "nx_array.h"
+#include "nx_layout.h"
 
 /* The row of the dtype [code] in nx_dtype.h, as (name, bits, kind), or
    None past the last code. */

@@ -51,6 +51,7 @@ let strides l = Array.init (rank l) (unsafe_stride l)
 let is_contiguous l = flags l land contiguous_flag <> 0
 let is_distinct l = flags l land distinct_flag <> 0
 let equal = String.equal
+let hash l = Hashtbl.hash l
 
 (* Building *)
 
@@ -97,6 +98,10 @@ let finish fn b =
       if st <> if d = 1 then 0 else !run then contiguous := false;
       run := !run * d
     done;
+    (* A position counts elements from a buffer's first byte: a negative one
+       lies outside every buffer. With [0 <= lo] and [hi] fitting, every reach
+       below sums to at most [hi - 1 - lo]: no sum overflows. *)
+    if !lo < 0 then invalid_argf "%s: the layout reaches a negative position" fn;
     (* Distinct: each axis of extent above 1 has a stride above the reach of the
        axes of smaller stride, ties broken by axis. *)
     let distinct = ref true in

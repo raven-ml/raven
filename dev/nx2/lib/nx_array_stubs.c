@@ -10,6 +10,7 @@
 #include <caml/mlvalues.h>
 
 #include "nx_array.h"
+#include "nx_layout.h"
 #include "rig.h"
 
 #ifndef FLAT_FLOAT_ARRAY
@@ -239,9 +240,9 @@ static double load_float(const uint8_t *base, int dt, int64_t p, int part) {
       memcpy(&c, base + 2 * p, 2);
       return nx_bits_to_float(dt, c);
     }
-    case NX_FLOAT8_E4M3:
+    case NX_FLOAT8_E4M3FN:
     case NX_FLOAT8_E5M2: return nx_bits_to_float(dt, base[p]);
-    case NX_FLOAT4_E2M1: return nx_bits_to_float(dt, nx_sub_load(base, 4, p));
+    case NX_FLOAT4_E2M1FN: return nx_bits_to_float(dt, nx_sub_load(base, 4, p));
     case NX_COMPLEX128: return load_float(base, NX_FLOAT64, 2 * p + part, 0);
     default: return load_float(base, NX_FLOAT32, 2 * p + part, 0);
   }
@@ -299,9 +300,9 @@ static void store_float(uint8_t *base, int dt, int64_t p, int part,
       memcpy(base + 2 * p, &c, 2);
       return;
     }
-    case NX_FLOAT8_E4M3:
+    case NX_FLOAT8_E4M3FN:
     case NX_FLOAT8_E5M2: base[p] = (uint8_t)nx_double_to_bits(dt, x); return;
-    case NX_FLOAT4_E2M1:
+    case NX_FLOAT4_E2M1FN:
       nx_sub_store(base, 4, p, (uint32_t)nx_double_to_bits(dt, x));
       return;
     case NX_COMPLEX128: store_float(base, NX_FLOAT64, 2 * p + part, 0, x); return;

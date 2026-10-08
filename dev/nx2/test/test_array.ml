@@ -78,7 +78,6 @@ let test_bounds () =
   ignore (A.v f32 (L.v ~offset:3 ~strides:[| -1 |] [| 4 |]) b);
   fails (L.contiguous [| 5 |]);
   fails (L.v ~offset:1 ~strides:[| 1 |] [| 4 |]);
-  fails (L.v ~strides:[| -1 |] [| 2 |]);
   ignore (A.v D.Int4 (L.contiguous [| 32 |]) b);
   ignore (A.v D.Bit (L.contiguous [| 128 |]) b);
   raises_match Exn.invalid_arg (fun () -> A.v D.Int4 (L.contiguous [| 33 |]) b);
@@ -121,7 +120,7 @@ let test_tail () =
   in
   tail D.Int4 3 0xF0;
   tail D.Uint4 1 0xF0;
-  tail D.Float4_e2m1 5 0xF0;
+  tail D.Float4_e2m1fn 5 0xF0;
   tail D.Bit 5 0xE0;
   tail D.Bit 1 0xFE
 
@@ -226,16 +225,19 @@ let test_expect () =
   raises_match (Exn.invalid_arg ~substring:"float32") (fun () ->
       A.expect D.Float64 (A.Any a))
 
-let test_refused () =
+let test_settle () =
   let a = floats32 [| 2; 3 |] (Array.make 6 0.) in
   let b = A.create Rig.host D.Int8 [| 4 |] in
-  match A.refused "add" 1 [ A.Any a; A.Any b ] with
-  | () -> fail "refused returned"
+  (match A.settle "add" 1 [ A.Any a; A.Any b ] with
+  | () -> fail "settle returned on a refusal"
   | exception Invalid_argument m ->
       starts_with ~affix:"add: " m;
       contains ~sub:"dtype" m;
       contains ~sub:"float32 [2; 3]" m;
-      contains ~sub:"int8 [4]" m
+      contains ~sub:"int8 [4]" m);
+  A.settle "add" 4 [ A.Any a; A.Any b ];
+  raises_match (Exn.invalid_arg ~substring:"shapes") (fun () ->
+      A.settle "add" 10 [ A.Any a ])
 
 (* Elements *)
 
@@ -349,9 +351,9 @@ let test_decode_patterns () =
   let u8 = A.of_array D.Uint8 [| 256 |] (Array.init 256 Fun.id) in
   all D.Float16 u16;
   all D.Bfloat16 u16;
-  all D.Float8_e4m3 u8;
+  all D.Float8_e4m3fn u8;
   all D.Float8_e5m2 u8;
-  all D.Float4_e2m1 u8
+  all D.Float4_e2m1fn u8
 
 (* And every store of a run ([of_array]) is the scalar store ([of_float]). *)
 let law_encode (D.Any dt) =
@@ -465,14 +467,12 @@ let test_of_bigarray () =
     Bigarray.Genarray.create Bigarray.int16_signed Bigarray.c_layout [| 2; 2 |]
   in
   Bigarray.Genarray.fill g 3;
-  let a = A.of_bigarray g in
+  let a = A.of_bigarray D.Int16 g in
   equal bool true (D.equal D.Int16 (A.dtype a));
   Bigarray.Genarray.set g [| 1; 0 |] (-7);
   equal (array int) [| 3; 3; -7; 3 |] (A.to_array a);
   A.set a [| 0; 1 |] 11;
-  equal int 11 (Bigarray.Genarray.get g [| 0; 1 |]);
-  let c = Bigarray.Genarray.create Bigarray.char Bigarray.c_layout [| 2 |] in
-  raises_match Exn.invalid_arg (fun () -> A.of_bigarray c)
+  equal int 11 (Bigarray.Genarray.get g [| 0; 1 |])
 
 (* The door *)
 
@@ -590,7 +590,8 @@ let tests =
         prop "a narrowing then its widening is the identity" case
           law_bitcast_round_trip;
         test "expect recovers the dtype or names both" test_expect;
-        test "refused names the kernel, reason and operands" test_refused;
+        test "settle returns on pending work and names every refusal"
+          test_settle;
       ];
     group "elements"
       [

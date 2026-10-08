@@ -59,9 +59,9 @@ let test_bits () =
       ("float32", 32);
       ("float16", 16);
       ("bfloat16", 16);
-      ("float8_e4m3", 8);
+      ("float8_e4m3fn", 8);
       ("float8_e5m2", 8);
-      ("float4_e2m1", 4);
+      ("float4_e2m1fn", 4);
       ("int64", 64);
       ("uint64", 64);
       ("int32", 32);
@@ -86,7 +86,7 @@ let test_bytes () =
   equal int 2 (D.bytes D.Bit 9);
   equal int 2 (D.bytes D.Int4 3);
   equal int 2 (D.bytes D.Uint4 4);
-  equal int 3 (D.bytes D.Float4_e2m1 5);
+  equal int 3 (D.bytes D.Float4_e2m1fn 5);
   equal int ((max_int / 8) + 1) (D.bytes D.Bit max_int);
   equal int ((max_int / 2) + 1) (D.bytes D.Int4 max_int);
   equal int 48 (D.bytes D.Complex128 3);
@@ -127,9 +127,9 @@ let test_kinds () =
       "float32";
       "float16";
       "bfloat16";
-      "float8_e4m3";
+      "float8_e4m3fn";
       "float8_e5m2";
-      "float4_e2m1";
+      "float4_e2m1fn";
     ]
     (kinds D.Float);
   equal (list string) [ "complex128"; "complex64" ] (kinds D.Complex);
@@ -163,9 +163,9 @@ let test_formats () =
       ("float32", (8, 23, true, true), (0x1p-23, 0x1p-126, 0x1.fffffep127));
       ("float16", (5, 10, true, true), (0x1p-10, 0x1p-14, 65504.));
       ("bfloat16", (8, 7, true, true), (0x1p-7, 0x1p-126, 0x1.fep127));
-      ("float8_e4m3", (4, 3, false, true), (0x1p-3, 0x1p-6, 448.));
+      ("float8_e4m3fn", (4, 3, false, true), (0x1p-3, 0x1p-6, 448.));
       ("float8_e5m2", (5, 2, true, true), (0x1p-2, 0x1p-14, 57344.));
-      ("float4_e2m1", (2, 1, false, false), (0x1p-1, 1., 6.));
+      ("float4_e2m1fn", (2, 1, false, false), (0x1p-1, 1., 6.));
     ]
     (List.filter_map format_row D.all)
 
@@ -187,8 +187,8 @@ let test_limits () =
   D.Float64 => (Float.neg_infinity, Float.infinity);
   D.Float16 => (Float.neg_infinity, Float.infinity);
   D.Float8_e5m2 => (Float.neg_infinity, Float.infinity);
-  D.Float8_e4m3 => (-448., 448.);
-  D.Float4_e2m1 => (-6., 6.);
+  D.Float8_e4m3fn => (-448., 448.);
+  D.Float4_e2m1fn => (-6., 6.);
   D.Int64 => (Int64.min_int, Int64.max_int);
   D.Uint64 => (0L, -1L);
   D.Int32 => (Int32.min_int, Int32.max_int);
@@ -239,14 +239,14 @@ let specials =
     Store (D.Float8_e5m2, -0., -0.);
     Store (D.Float8_e5m2, inf, inf);
     Store (D.Float8_e5m2, -.inf, -.inf);
-    Store (D.Float8_e4m3, nan, nan);
-    Store (D.Float8_e4m3, -0., -0.);
-    Store (D.Float8_e4m3, inf, nan);
-    Store (D.Float8_e4m3, -.inf, nan);
-    Store (D.Float4_e2m1, nan, 0.);
-    Store (D.Float4_e2m1, -0., -0.);
-    Store (D.Float4_e2m1, inf, 6.);
-    Store (D.Float4_e2m1, -.inf, -6.);
+    Store (D.Float8_e4m3fn, nan, nan);
+    Store (D.Float8_e4m3fn, -0., -0.);
+    Store (D.Float8_e4m3fn, inf, nan);
+    Store (D.Float8_e4m3fn, -.inf, nan);
+    Store (D.Float4_e2m1fn, nan, 0.);
+    Store (D.Float4_e2m1fn, -0., -0.);
+    Store (D.Float4_e2m1fn, inf, 6.);
+    Store (D.Float4_e2m1fn, -.inf, -6.);
   ]
 
 (* Past the largest finite value, and its neighbours. *)
@@ -265,13 +265,13 @@ let overflows =
     Store (D.Float8_e5m2, 57344., 57344.);
     Store (D.Float8_e5m2, 61440., 57344.);
     Store (D.Float8_e5m2, -1e300, -57344.);
-    Store (D.Float8_e4m3, 448., 448.);
-    Store (D.Float8_e4m3, 464., 448.);
-    Store (D.Float8_e4m3, 1e300, 448.);
-    Store (D.Float8_e4m3, -500., -448.);
-    Store (D.Float4_e2m1, 6., 6.);
-    Store (D.Float4_e2m1, 7., 6.);
-    Store (D.Float4_e2m1, -1e300, -6.);
+    Store (D.Float8_e4m3fn, 448., 448.);
+    Store (D.Float8_e4m3fn, 464., 448.);
+    Store (D.Float8_e4m3fn, 1e300, 448.);
+    Store (D.Float8_e4m3fn, -500., -448.);
+    Store (D.Float4_e2m1fn, 6., 6.);
+    Store (D.Float4_e2m1fn, 7., 6.);
+    Store (D.Float4_e2m1fn, -1e300, -6.);
   ]
 
 (* Ties round to even, once from the double: a value just past a tie rounds away
@@ -288,18 +288,18 @@ let ties =
     Store (D.Float16, 1. +. 0x1p-11 -. 0x1p-40, 1.);
     Store (D.Bfloat16, 1. +. 0x1p-8, 1.);
     Store (D.Bfloat16, 1. +. 0x1p-8 +. 0x1p-40, 1. +. 0x1p-7);
-    Store (D.Float8_e4m3, 1. +. 0x1p-4, 1.);
-    Store (D.Float8_e4m3, 1. +. 0x3p-4, 1.25);
-    Store (D.Float8_e4m3, 1. +. 0x1p-4 +. 0x1p-40, 1.125);
+    Store (D.Float8_e4m3fn, 1. +. 0x1p-4, 1.);
+    Store (D.Float8_e4m3fn, 1. +. 0x3p-4, 1.25);
+    Store (D.Float8_e4m3fn, 1. +. 0x1p-4 +. 0x1p-40, 1.125);
     Store (D.Float8_e5m2, 1. +. 0x1p-3, 1.);
     Store (D.Float8_e5m2, 1. +. 0x1p-3 +. 0x1p-40, 1.25);
-    Store (D.Float4_e2m1, 1.25, 1.);
-    Store (D.Float4_e2m1, 1.75, 2.);
-    Store (D.Float4_e2m1, 2.5, 2.);
-    Store (D.Float4_e2m1, 3.5, 4.);
-    Store (D.Float4_e2m1, 5., 4.);
-    Store (D.Float4_e2m1, 5. +. 0x1p-40, 6.);
-    Store (D.Float4_e2m1, -0.75, -1.);
+    Store (D.Float4_e2m1fn, 1.25, 1.);
+    Store (D.Float4_e2m1fn, 1.75, 2.);
+    Store (D.Float4_e2m1fn, 2.5, 2.);
+    Store (D.Float4_e2m1fn, 3.5, 4.);
+    Store (D.Float4_e2m1fn, 5., 4.);
+    Store (D.Float4_e2m1fn, 5. +. 0x1p-40, 6.);
+    Store (D.Float4_e2m1fn, -0.75, -1.);
     Store (D.Float16, 0.1, 0x1.998p-4);
     Store (D.Float32, 0.1, 0x1.99999ap-4);
   ]
@@ -319,17 +319,17 @@ let underflows =
     Store (D.Bfloat16, 0x1p-133, 0x1p-133);
     Store (D.Bfloat16, 0x1p-134, 0.);
     Store (D.Bfloat16, 1e-300, 0.);
-    Store (D.Float8_e4m3, 0x1p-9, 0x1p-9);
-    Store (D.Float8_e4m3, 0x1p-10, 0.);
-    Store (D.Float8_e4m3, 0x3p-10, 0x1p-8);
+    Store (D.Float8_e4m3fn, 0x1p-9, 0x1p-9);
+    Store (D.Float8_e4m3fn, 0x1p-10, 0.);
+    Store (D.Float8_e4m3fn, 0x3p-10, 0x1p-8);
     Store (D.Float8_e5m2, 0x1p-16, 0x1p-16);
     Store (D.Float8_e5m2, 0x1p-17, 0.);
     Store (D.Float8_e5m2, -0x1p-17, -0.);
-    Store (D.Float4_e2m1, 0.5, 0.5);
-    Store (D.Float4_e2m1, 0.25, 0.);
-    Store (D.Float4_e2m1, 0.25 +. 0x1p-40, 0.5);
-    Store (D.Float4_e2m1, 0.75, 1.);
-    Store (D.Float4_e2m1, -0.1, -0.);
+    Store (D.Float4_e2m1fn, 0.5, 0.5);
+    Store (D.Float4_e2m1fn, 0.25, 0.);
+    Store (D.Float4_e2m1fn, 0.25 +. 0x1p-40, 0.5);
+    Store (D.Float4_e2m1fn, 0.75, 1.);
+    Store (D.Float4_e2m1fn, -0.1, -0.);
   ]
 
 (* Integers truncate toward zero, saturate and store NaN as 0. *)
@@ -518,8 +518,8 @@ let test_printer () =
   equal string "-0" (text D.Float64 (-0.));
   equal string "nan" (text D.Float32 Float.nan);
   equal string "-inf" (text D.Float16 Float.neg_infinity);
-  equal string "448" (text D.Float8_e4m3 448.);
-  equal string "1.5" (text D.Float4_e2m1 1.5);
+  equal string "448" (text D.Float8_e4m3fn 448.);
+  equal string "1.5" (text D.Float4_e2m1fn 1.5);
   equal string "1+2i" (text D.Complex64 { Complex.re = 1.; im = 2. });
   equal string "0.1-0.5i" (text D.Complex128 { Complex.re = 0.1; im = -0.5 });
   equal string "true" (text D.Bit true)

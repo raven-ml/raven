@@ -9,7 +9,8 @@
     result's element at an index is the argument's element at the mapped index.
     Movements are data, so code that records or lowers them shares one
     vocabulary, and structural equality of movements is equality of their maps.
-*)
+    A movement holds the arrays it is given: code that keeps a movement keeps
+    its own copy. *)
 
 type range = { start : int; count : int; step : int }
 (** The type for the elements [start + j·step], [j < count], of an axis. *)

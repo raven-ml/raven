@@ -17,14 +17,25 @@
     checks that its layout reaches only bits of its buffer, which every movement
     keeps; {!create} and {!of_array} make fresh ones.
 
-    Kernels are C. They read arrays only through [nx_array.h]'s door, [nx_read],
-    which takes every operand of a call with the dtype the kernel's loads
-    assume, checks and claims them all, and fills descriptors that hold no
+    Host kernels are C. They read arrays only through [nx_array.h]'s door,
+    [nx_read], which takes every operand of a call with the dtype the kernel's
+    loads assume, checks and claims them all, and fills descriptors that hold no
     pointer into the OCaml heap; [nx_done] ends the claims, and [nx_coalesce]
-    turns operands of one shape into a loop. A kernel's OCaml wrapper raises the
-    code [nx_read] answers with {!refused}. [nx_dtype.h] holds the dtypes'
-    codes, their facts and every conversion into them, with no OCaml header, so
-    GPU kernel sources compile it too. *)
+    turns operands of one shape into a loop. A kernel answers a code, and its
+    OCaml wrapper hands any code but [NX_OK] to {!settle}, which waits for
+    unfinished device work so the wrapper calls the kernel again, or raises:
+    {[
+    let rec add z x y =
+      let e = add_kernel z x y in
+      if e <> 0 then begin
+        Nx_array.settle "Nx.add" e [ Any z; Any x; Any y ];
+        add z x y
+      end
+    ]}
+    GPU kernel libraries bind arrays in OCaml, through their typed signatures or
+    {!expect}. [nx_dtype.h] holds the dtypes' codes, their facts and every
+    conversion into them, with no OCaml header, so GPU kernel sources compile it
+    too. *)
 
 (** {1:dtypes Dtypes} *)
 
@@ -54,10 +65,10 @@ type any = Any : ('v, 's) t -> any
 val v : ('v, 's) Dtype.t -> Layout.t -> Rig.Buffer.t -> ('v, 's) t
 (** [v dt l b] is the array of [dt] elements laid out by [l] over [b]'s bytes.
 
-    Raises [Invalid_argument] if [b] is dead, [l] reaches a negative position or
-    a bit past [b]'s bytes, or [l] has an element and its first element's byte
-    offset into [b]'s memory, or for host memory its address, is not a multiple
-    of [dt]'s alignment. *)
+    Raises [Invalid_argument] if [b] is dead, [l] reaches a bit past [b]'s
+    bytes, or [l] has an element and its first element's byte offset into [b]'s
+    memory, or for host memory its address, is not a multiple of [dt]'s
+    alignment. *)
 
 val create :
   ?memory:Rig.Buffer.memory ->
@@ -88,8 +99,8 @@ val device : ('v, 's) t -> Rig.t
 (** {1:moving Moving} *)
 
 val move : Move.t -> ('v, 's) t -> ('v, 's) t option
-(** [move m a] is [a]'s elements moved by [m], over [a]'s buffer, or [None]
-    where {!Layout.move} is [None].
+(** [move m a] is the array over [a]'s buffer laid out by
+    [Layout.move m (layout a)], or [None] where that is [None].
 
     Raises [Invalid_argument] as {!Move.shape} does. *)
 
@@ -115,10 +126,16 @@ val expect : ('w, 'r) Dtype.t -> any -> ('w, 'r) t
 
     Raises [Invalid_argument] naming both dtypes otherwise. *)
 
-val refused : string -> int -> any list -> 'a
-(** [refused name code operands] raises [Invalid_argument] naming the kernel
-    [name], the reason the code of [nx_array.h] that [nx_read] or [nx_coalesce]
-    answered gives, and every operand's dtype and shape. *)
+val settle : string -> int -> any list -> unit
+(** [settle name code operands] handles a code other than [NX_OK] that a kernel
+    answered for [operands], the codes of [nx_array.h]. For [NX_PENDING] it
+    waits for every use of each operand's memory ({!Rig.Buffer.wait} with
+    [Read_write]) and returns, and the caller calls the kernel again. For every
+    other code it raises [Invalid_argument] naming [name], the reason the code
+    gives, and each operand's dtype and shape. [name] is the function the user
+    called, as ["Nx.add"].
+
+    Raises {!Rig.Lost} as {!Rig.Buffer.wait} does. *)
 
 (** {1:elements Elements}
 
@@ -131,8 +148,8 @@ val refused : string -> int -> any list -> 'a
 val get : ('v, 's) t -> int array -> 'v
 (** [get a i] is [a]'s element at index [i].
 
-    Raises [Invalid_argument] unless [i] has [rank] entries, each in
-    [\[0, dim)]. *)
+    Raises [Invalid_argument] unless [i] has [Layout.rank (layout a)] entries,
+    each in [\[0, Layout.dim (layout a) j)] for entry [j]. *)
 
 val set : ('v, 's) t -> int array -> 'v -> unit
 (** [set a i x] stores [x] at [a]'s index [i]. A sub-byte element is written
@@ -164,9 +181,11 @@ val to_device : Rig.t -> ('v, 's) t -> ('v, 's) t
 (** [to_device d a] is [a] over a fresh buffer on [d], made by
     {!Rig.Buffer.copy} of the bytes [a]'s layout reaches between its first and
     last position; its layout is [a]'s, shifted to the copy. It copies on [a]'s
-    own device too, runs no kernel and keeps strided and broadcast layouts.
+    own device too, runs no kernel and keeps strided and broadcast layouts. For
+    a sub-byte array, the copy's first and last bytes keep the bits of the
+    source's neighbouring elements.
 
-    Raises what {!Rig.Buffer.copy} raises. *)
+    Raises what {!Rig.Buffer.create} and {!Rig.Buffer.copy} raise. *)
 
 (** {1:bigarrays Bigarrays}
 
@@ -178,18 +197,28 @@ val bigarray :
   ('v, 's) t ->
   ('v, 's, Bigarray.c_layout) Bigarray.Genarray.t option
 (** [bigarray k a] is [Some] bigarray over [a]'s own bytes iff [a] is on
-    {!Rig.host}, C-contiguous ({!Layout.is_contiguous}) and of rank at most 16:
-    writes through it write [a]. From then on [a]'s memory is never held
+    {!Rig.host}, C-contiguous ({!Layout.is_contiguous}) and of rank at most 16.
+    Writes through it write [a], and are allowed only if [a]'s memory admits
+    them ({!Rig.Buffer.access}). From then on [a]'s memory is never held
     exclusive again ({!Rig.Buffer.bigarray}). It waits for nothing: access
     through the bigarray follows device work only after {!Rig.Buffer.wait}. A
     format Bigarray lacks is bitcast first to one of its width ({!bitcast}).
 
+    Reads and writes through the bigarray are Bigarray's: an [int] out of range
+    keeps its low bits, and a [float] stored into a [Float16] bigarray is
+    rounded through binary32 first, so it can differ from {!Dtype.of_float} by
+    one unit in the last place.
+
     Raises [Invalid_argument] if [a]'s buffer is dead, or its memory is held
     exclusive by claims that have not consumed it. *)
 
-val of_bigarray : ('v, 's, Bigarray.c_layout) Bigarray.Genarray.t -> ('v, 's) t
-(** [of_bigarray b] is the C-contiguous array over [b]'s bytes, of [b]'s shape
-    and the dtype of [b]'s kind.
+val of_bigarray :
+  ('v, 's) Dtype.t ->
+  ('v, 's, Bigarray.c_layout) Bigarray.Genarray.t ->
+  ('v, 's) t
+(** [of_bigarray dt b] is the C-contiguous array of [dt] elements over [b]'s
+    bytes, of [b]'s shape. The types tie [dt] to [b]'s kind: a kind no dtype
+    stores, as [Char], [Int] or [Nativeint], is a type error.
 
-    Raises [Invalid_argument] if [b]'s kind is [Char], [Int] or [Nativeint], and
-    as {!v} does if [b]'s data is not aligned for its elements. *)
+    Raises [Invalid_argument] as {!v} does if [b]'s data is not aligned for its
+    elements. *)

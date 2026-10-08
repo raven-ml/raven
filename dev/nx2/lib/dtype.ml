@@ -7,9 +7,9 @@ type float64_elt = Bigarray.float64_elt
 type float32_elt = Bigarray.float32_elt
 type float16_elt = Bigarray.float16_elt
 type bfloat16_elt = |
-type float8_e4m3_elt = |
+type float8_e4m3fn_elt = |
 type float8_e5m2_elt = |
-type float4_e2m1_elt = |
+type float4_e2m1fn_elt = |
 type int64_elt = Bigarray.int64_elt
 type uint64_elt = |
 type int32_elt = Bigarray.int32_elt
@@ -33,9 +33,9 @@ type ('v, 's) t =
   | Float32 : (float, float32_elt) t
   | Float16 : (float, float16_elt) t
   | Bfloat16 : (float, bfloat16_elt) t
-  | Float8_e4m3 : (float, float8_e4m3_elt) t
+  | Float8_e4m3fn : (float, float8_e4m3fn_elt) t
   | Float8_e5m2 : (float, float8_e5m2_elt) t
-  | Float4_e2m1 : (float, float4_e2m1_elt) t
+  | Float4_e2m1fn : (float, float4_e2m1fn_elt) t
   | Int64 : (int64, int64_elt) t
   | Uint64 : (int64, uint64_elt) t
   | Int32 : (int32, int32_elt) t
@@ -59,9 +59,9 @@ let all =
     Any Float32;
     Any Float16;
     Any Bfloat16;
-    Any Float8_e4m3;
+    Any Float8_e4m3fn;
     Any Float8_e5m2;
-    Any Float4_e2m1;
+    Any Float4_e2m1fn;
     Any Int64;
     Any Uint64;
     Any Int32;
@@ -83,9 +83,9 @@ let code : type v s. (v, s) t -> int = function
   | Float32 -> 1
   | Float16 -> 2
   | Bfloat16 -> 3
-  | Float8_e4m3 -> 4
+  | Float8_e4m3fn -> 4
   | Float8_e5m2 -> 5
-  | Float4_e2m1 -> 6
+  | Float4_e2m1fn -> 6
   | Int64 -> 7
   | Uint64 -> 8
   | Int32 -> 9
@@ -129,8 +129,8 @@ let ieee e m =
       max_finite;
     }
 
-(* The OCP minifloats e4m3 and e2m1 spend the top exponent on finite values:
-   e4m3 keeps one NaN code per sign, e2m1 none. *)
+(* The OCP minifloats e4m3fn and e2m1fn spend the top exponent on finite values:
+   e4m3fn keeps one NaN code per sign, e2m1fn none. *)
 let ocp e m ~nans ~max_finite =
   let bias = (1 lsl (e - 1)) - 1 in
   Some
@@ -152,9 +152,9 @@ let rows =
     row "float32" 32 (ieee 8 23);
     row "float16" 16 (ieee 5 10);
     row "bfloat16" 16 (ieee 8 7);
-    row "float8_e4m3" 8 (ocp 4 3 ~nans:true ~max_finite:448.);
+    row "float8_e4m3fn" 8 (ocp 4 3 ~nans:true ~max_finite:448.);
     row "float8_e5m2" 8 (ieee 5 2);
-    row "float4_e2m1" 4 (ocp 2 1 ~nans:false ~max_finite:6.);
+    row "float4_e2m1fn" 4 (ocp 2 1 ~nans:false ~max_finite:6.);
     row "int64" 64 None;
     row "uint64" 64 None;
     row "int32" 32 None;
@@ -207,9 +207,9 @@ let kind : type v s. (v, s) t -> v kind = function
   | Float32 -> Float
   | Float16 -> Float
   | Bfloat16 -> Float
-  | Float8_e4m3 -> Float
+  | Float8_e4m3fn -> Float
   | Float8_e5m2 -> Float
-  | Float4_e2m1 -> Float
+  | Float4_e2m1fn -> Float
   | Int64 | Int32 | Int16 | Int8 | Int4 -> Signed
   | Uint64 | Uint32 | Uint16 | Uint8 | Uint4 -> Unsigned
   | Complex128 -> Complex
@@ -238,9 +238,9 @@ let equal_witness : type v s w r.
   | Float32, Float32 -> Some Equal
   | Float16, Float16 -> Some Equal
   | Bfloat16, Bfloat16 -> Some Equal
-  | Float8_e4m3, Float8_e4m3 -> Some Equal
+  | Float8_e4m3fn, Float8_e4m3fn -> Some Equal
   | Float8_e5m2, Float8_e5m2 -> Some Equal
-  | Float4_e2m1, Float4_e2m1 -> Some Equal
+  | Float4_e2m1fn, Float4_e2m1fn -> Some Equal
   | Int64, Int64 -> Some Equal
   | Uint64, Uint64 -> Some Equal
   | Int32, Int32 -> Some Equal
@@ -264,9 +264,9 @@ let zero : type v s. (v, s) t -> v = function
   | Float32 -> 0.
   | Float16 -> 0.
   | Bfloat16 -> 0.
-  | Float8_e4m3 -> 0.
+  | Float8_e4m3fn -> 0.
   | Float8_e5m2 -> 0.
-  | Float4_e2m1 -> 0.
+  | Float4_e2m1fn -> 0.
   | Int64 -> 0L
   | Uint64 -> 0L
   | Int32 -> 0l
@@ -287,9 +287,9 @@ let one : type v s. (v, s) t -> v = function
   | Float32 -> 1.
   | Float16 -> 1.
   | Bfloat16 -> 1.
-  | Float8_e4m3 -> 1.
+  | Float8_e4m3fn -> 1.
   | Float8_e5m2 -> 1.
-  | Float4_e2m1 -> 1.
+  | Float4_e2m1fn -> 1.
   | Int64 -> 1L
   | Uint64 -> 1L
   | Int32 -> 1l
@@ -314,9 +314,9 @@ let min_value : type v s. (v, s) t -> v = function
   | Float32 -> Float.neg_infinity
   | Float16 -> Float.neg_infinity
   | Bfloat16 -> Float.neg_infinity
-  | Float8_e4m3 -> -448.
+  | Float8_e4m3fn -> -448.
   | Float8_e5m2 -> Float.neg_infinity
-  | Float4_e2m1 -> -6.
+  | Float4_e2m1fn -> -6.
   | Int64 -> Int64.min_int
   | Uint64 -> 0L
   | Int32 -> Int32.min_int
@@ -337,9 +337,9 @@ let max_value : type v s. (v, s) t -> v = function
   | Float32 -> Float.infinity
   | Float16 -> Float.infinity
   | Bfloat16 -> Float.infinity
-  | Float8_e4m3 -> 448.
+  | Float8_e4m3fn -> 448.
   | Float8_e5m2 -> Float.infinity
-  | Float4_e2m1 -> 6.
+  | Float4_e2m1fn -> 6.
   | Int64 -> Int64.max_int
   | Uint64 -> -1L
   | Int32 -> Int32.max_int
@@ -378,9 +378,9 @@ let of_float : type v s. (v, s) t -> float -> v =
   | Float32 -> round (code dt) x
   | Float16 -> round (code dt) x
   | Bfloat16 -> round (code dt) x
-  | Float8_e4m3 -> round (code dt) x
+  | Float8_e4m3fn -> round (code dt) x
   | Float8_e5m2 -> round (code dt) x
-  | Float4_e2m1 -> round (code dt) x
+  | Float4_e2m1fn -> round (code dt) x
   | Int64 -> store (code dt) x
   | Uint64 -> store (code dt) x
   | Int32 -> word dt x
@@ -427,9 +427,9 @@ let pp_value : type v s. (v, s) t -> Format.formatter -> v -> unit =
   | Float32 -> pp_float dt ppf v
   | Float16 -> pp_float dt ppf v
   | Bfloat16 -> pp_float dt ppf v
-  | Float8_e4m3 -> pp_float dt ppf v
+  | Float8_e4m3fn -> pp_float dt ppf v
   | Float8_e5m2 -> pp_float dt ppf v
-  | Float4_e2m1 -> pp_float dt ppf v
+  | Float4_e2m1fn -> pp_float dt ppf v
   | Int64 -> Format.fprintf ppf "%Ld" v
   | Uint64 -> Format.fprintf ppf "%Lu" v
   | Int32 -> Format.fprintf ppf "%ld" v

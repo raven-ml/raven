@@ -177,6 +177,17 @@ let test_v_refuses () =
   fails (fun () -> L.dim (L.contiguous [| 2 |]) 1);
   fails (fun () -> L.stride (L.contiguous [| 2 |]) (-1))
 
+(* A position counts elements from a buffer's first byte: none is negative. *)
+let test_negative () =
+  let fails f = raises_match (Exn.invalid_arg ~substring:"negative") f in
+  fails (fun () -> L.v ~offset:(-1) ~strides:[| 1 |] [| 2 |]);
+  fails (fun () -> L.v ~strides:[| -1 |] [| 2 |]);
+  fails (fun () -> L.v ~offset:2 ~strides:[| 1; -1 |] [| 2; 4 |]);
+  equal (pair int int) (0, 4) (L.span (L.v ~offset:3 ~strides:[| -1 |] [| 4 |]));
+  equal (pair int int) (0, 0)
+    (L.span (L.v ~offset:(-5) ~strides:[| 1 |] [| 0 |]));
+  equal int 3 (L.offset (L.v ~offset:3 ~strides:[| 7 |] [| 1 |]))
+
 let test_v_ownership () =
   let s = [| 2; 3 |] and strides = [| 3; 1 |] in
   let l = L.v ~strides s in
@@ -212,8 +223,8 @@ let similar =
      let r = const (Array.length s) in
      let layout =
        let+ strides = array ~size:r (int_range (-1) 1)
-       and+ offset = int_range 2 3 in
-       L.v ~offset ~strides s
+       and+ least = int_range 2 3 in
+       L.v ~offset:(lift s strides least) ~strides s
      in
      pair layout layout)
 
@@ -251,6 +262,19 @@ let law_span l =
         (fun p -> if p < lo || p >= hi then failf "%d outside [%d, %d)" p lo hi)
         ps
 
+let law_span_non_negative l =
+  let lo, _ = L.span l in
+  at_least int ~than:0 lo
+
+(* Equal layouts hash alike: [v] respells a layout's extent-1 strides. *)
+let law_hash l =
+  let s = L.shape l in
+  let strides =
+    Array.mapi (fun i st -> if s.(i) = 1 then 7 else st) (L.strides l)
+  in
+  let l' = L.v ~offset:(L.offset l) ~strides s in
+  equal int (L.hash l) (L.hash l')
+
 let law_header l =
   let flag b f = if b then f else 0 in
   let lo, hi = L.span l in
@@ -273,16 +297,7 @@ let same_shape =
     (fun ppf ls -> Format.pp_print_list L.pp ppf ls)
     (let* l = one_of [ strided; reached ~apart:false ] in
      let s = L.shape l in
-     let other =
-       one_of
-         [
-           (let+ strides =
-              array ~size:(const (Array.length s)) (int_range (-5) 5)
-            and+ offset = int_range 0 40 in
-            L.v ~offset ~strides s);
-           constant (L.contiguous s);
-         ]
-     in
+     let other = one_of [ strided_of s; constant (L.contiguous s) ] in
      let+ others = list ~size:(int_range 0 3) other in
      l :: others)
 
@@ -331,6 +346,7 @@ let tests =
     group "construction"
       [
         test "v and contiguous refuse what does not fit" test_v_refuses;
+        test "v refuses a negative position" test_negative;
         test "no array v takes is kept, none returned is held" test_v_ownership;
         test "extent-1 axes and empty layouts are canonical"
           test_canonical_cases;
@@ -347,6 +363,9 @@ let tests =
           (Gen.with_pp L.pp (reached ~apart:true))
           law_distinct_exact;
         prop "span holds every position" any_layout law_span;
+        prop "no layout reaches a negative position" any_layout
+          law_span_non_negative;
+        prop "equal layouts hash alike" any_layout law_hash;
         prop "nx_array.h reads the fields the accessors give" any_layout
           law_header;
       ];

@@ -9,26 +9,50 @@
    NX_DTYPES. The OCaml library's Dtype.code gives the same codes and its
    rows the same facts.
 
-   Every store of a double into a dtype follows one rule:
+   Every store of a value into a dtype follows one rule. A finite value
+   rounds once to the format's nearest value, ties to even, as if the
+   exponent were unbounded; the result then stores as:
 
-     x                        f64 f32 f16 bf16   e5m2     e4m3   e2m1
-     finite, in range         nearest, ties to even, rounded once
-     finite, past the largest  ±inf               ±57344   ±448   ±6
-     below the least          subnormal or ±0
-     ±inf                     ±inf               ±inf     NaN    ±6
-     NaN                      NaN                NaN      NaN    +0
+     x, after rounding        f64 f32 f16 bf16   e5m2     e4m3fn  e2m1fn
+     finite, in range         x
+     past the largest finite  ±inf               ±57344   ±448    ±6
+     below the least normal   a subnormal or ±0
+     ±inf                     ±inf               ±inf     NaN     ±6
+     NaN                      NaN                NaN      NaN     +0
 
-   Integers truncate toward zero, saturate to their range and take NaN to 0.
+   In the formats of a byte or less a finite value stays finite: past the
+   largest finite value it saturates. An infinity stays non-finite where the
+   format can say so, as its infinity or else its NaN; e2m1fn has neither,
+   so an infinity saturates and NaN stores as +0, as in integers. Integers
+   truncate toward zero, saturate to their range and take NaN to 0.
    Booleans are x != 0.
 
-   This header needs no OCaml header, so GPU kernel sources compile it. */
+   C, CUDA and HIP sources compile this header with no OCaml header. Metal
+   sources compile it too, without the row table and the functions of
+   doubles, which Metal lacks. */
 
 #ifndef NX_DTYPE_H
 #define NX_DTYPE_H
 
+#ifdef __METAL_VERSION__
+#include <metal_stdlib>
+#define nx_ldexpf metal::ldexp
+#define nx_copysignf metal::copysign
+#define nx_signbit metal::signbit
+#define nx_isfinite metal::isfinite
+#define nx_isnan metal::isnan
+#define nx_isinf metal::isinf
+#else
 #include <math.h>
 #include <stdint.h>
 #include <string.h>
+#define nx_ldexpf ldexpf
+#define nx_copysignf copysignf
+#define nx_signbit signbit
+#define nx_isfinite isfinite
+#define nx_isnan isnan
+#define nx_isinf isinf
+#endif
 
 /* Codes and facts */
 
@@ -46,9 +70,9 @@ enum nx_kind {
   X(FLOAT32, "float32", 32, NX_KIND_FLOAT)             \
   X(FLOAT16, "float16", 16, NX_KIND_FLOAT)             \
   X(BFLOAT16, "bfloat16", 16, NX_KIND_FLOAT)           \
-  X(FLOAT8_E4M3, "float8_e4m3", 8, NX_KIND_FLOAT)      \
+  X(FLOAT8_E4M3FN, "float8_e4m3fn", 8, NX_KIND_FLOAT)      \
   X(FLOAT8_E5M2, "float8_e5m2", 8, NX_KIND_FLOAT)      \
-  X(FLOAT4_E2M1, "float4_e2m1", 4, NX_KIND_FLOAT)      \
+  X(FLOAT4_E2M1FN, "float4_e2m1fn", 4, NX_KIND_FLOAT)      \
   X(INT64, "int64", 64, NX_KIND_SIGNED)                \
   X(UINT64, "uint64", 64, NX_KIND_UNSIGNED)            \
   X(INT32, "int32", 32, NX_KIND_SIGNED)                \
@@ -68,6 +92,7 @@ enum nx_kind {
 enum nx_dtype { NX_DTYPES(NX_CODE) NX_DTYPE_COUNT };
 #undef NX_CODE
 
+#ifndef __METAL_VERSION__
 typedef struct {
   const char *name;
   int bits;
@@ -81,60 +106,45 @@ static inline nx_dtype_row nx_dtype_row_of(int dt) {
 #undef NX_ROW
   return rows[dt];
 }
+#endif
 
-/* Narrowing a double
+/* A binary32's bits, and back. */
 
-   A double narrows to binary32 by rounding to odd: truncating, then setting
-   the last bit if a discarded bit was set. Binary32's grid is at least four
-   times finer than float16's, bfloat16's or float8's at every magnitude, so
-   the odd last bit stands for the discarded bits without creating or
-   breaking a tie, and the binary32 encoders below then round the double
-   once. Rounding to nearest twice would move a value next to a tie onto
-   it. */
-
-static inline float nx_float_odd(double x) {
-  union {
-    float f;
-    uint32_t i;
-  } u = {.f = (float)x};
-  /* Stepping back from a result that rounded away from zero truncates,
-     which also brings an overflow to inf back to FLT_MAX. NaN is neither. */
-  uint32_t away = fabs((double)u.f) > fabs(x);
-  uint32_t inexact = ((double)u.f != x) & (x == x);
-  u.i = (u.i - away) | inexact;
-  return u.f;
+#ifdef __METAL_VERSION__
+static inline uint32_t nx_float_bits(float f) { return as_type<uint32_t>(f); }
+static inline float nx_bits_float(uint32_t i) { return as_type<float>(i); }
+#else
+static inline uint32_t nx_float_bits(float f) {
+  uint32_t i;
+  memcpy(&i, &f, 4);
+  return i;
 }
+
+static inline float nx_bits_float(uint32_t i) {
+  float f;
+  memcpy(&f, &i, 4);
+  return f;
+}
+#endif
 
 /* bfloat16: binary32's top half */
 
 static inline uint16_t nx_float_to_bf16(float f) {
-  union {
-    float f;
-    uint32_t i;
-  } u = {.f = f};
+  uint32_t i = nx_float_bits(f);
   /* NaN first: the rounding bias could carry a small NaN significand into
      the exponent and turn it into inf. */
-  if ((u.i & 0x7FFFFFFFu) > 0x7F800000u)
-    return (uint16_t)((u.i >> 16) | 0x0040u);
-  return (uint16_t)((u.i + 0x7FFFu + ((u.i >> 16) & 1)) >> 16);
+  if ((i & 0x7FFFFFFFu) > 0x7F800000u) return (uint16_t)((i >> 16) | 0x0040u);
+  return (uint16_t)((i + 0x7FFFu + ((i >> 16) & 1)) >> 16);
 }
 
 static inline float nx_bf16_to_float(uint16_t c) {
-  union {
-    float f;
-    uint32_t i;
-  } u = {.i = (uint32_t)c << 16};
-  return u.f;
+  return nx_bits_float((uint32_t)c << 16);
 }
 
 /* float16: IEEE 754 binary16 */
 
 static inline uint16_t nx_float_to_f16(float f) {
-  union {
-    float f;
-    uint32_t i;
-  } u = {.f = f};
-  uint32_t bits = u.i;
+  uint32_t bits = nx_float_bits(f);
   uint16_t sign = (uint16_t)((bits & 0x80000000u) >> 16);
   uint32_t exp = bits & 0x7F800000u;
   uint32_t sig = bits & 0x007FFFFFu;
@@ -188,14 +198,10 @@ static inline float nx_f16_to_float(uint16_t c) {
     exp = (exp + 112) << 23;
     mant <<= 13;
   }
-  union {
-    float f;
-    uint32_t i;
-  } u = {.i = sign | exp | mant};
-  return u.f;
+  return nx_bits_float(sign | exp | mant);
 }
 
-/* Minifloats: float8 e4m3, e5m2 and float4 e2m1
+/* Minifloats: float8 e4m3fn, e5m2 and float4 e2m1fn
 
    A format of [m] fraction bits and exponent bias [bias] has its least normal
    exponent at 1 - bias. A code's low bits below the sign are its magnitude,
@@ -204,12 +210,9 @@ static inline float nx_f16_to_float(uint16_t c) {
 /* The magnitude code of the finite binary32 [f], rounded to nearest, ties to
    even; a code past the format's largest finite one means [f] overflows. */
 static inline uint32_t nx_mini_round(float f, int m, int bias) {
-  union {
-    float f;
-    uint32_t i;
-  } u = {.f = f};
-  int exp = (int)((u.i >> 23) & 0xFF) - 127;
-  uint32_t sig = u.i & 0x7FFFFF;
+  uint32_t i = nx_float_bits(f);
+  int exp = (int)((i >> 23) & 0xFF) - 127;
+  uint32_t sig = i & 0x7FFFFF;
   uint32_t base = 0;
   int shift = 23 - m;
   if (exp >= 1 - bias) {
@@ -223,8 +226,8 @@ static inline uint32_t nx_mini_round(float f, int m, int bias) {
   }
   uint32_t q = sig >> shift;
   uint32_t rem = sig & ((1u << shift) - 1);
-  uint32_t half = 1u << (shift - 1);
-  if (rem > half || (rem == half && (q & 1))) q++;
+  uint32_t tie = 1u << (shift - 1);
+  if (rem > tie || (rem == tie && (q & 1))) q++;
   /* A carry runs into the exponent, and a subnormal that rounds up to 2^m is
      the least normal: the codes line up. */
   return base + q;
@@ -233,8 +236,8 @@ static inline uint32_t nx_mini_round(float f, int m, int bias) {
 static inline float nx_mini_value(uint32_t q, int m, int bias) {
   uint32_t exp = q >> m;
   uint32_t frac = q & ((1u << m) - 1);
-  if (exp == 0) return ldexpf((float)frac, 1 - bias - m);
-  return ldexpf((float)(frac | (1u << m)), (int)exp - bias - m);
+  if (exp == 0) return nx_ldexpf((float)frac, 1 - bias - m);
+  return nx_ldexpf((float)(frac | (1u << m)), (int)exp - bias - m);
 }
 
 static inline uint32_t nx_mini_saturate(float f, int m, int bias,
@@ -243,50 +246,83 @@ static inline uint32_t nx_mini_saturate(float f, int m, int bias,
   return q > max ? max : q;
 }
 
-/* e4m3 (OCP "fn"): no infinity; S.1111.111 is NaN; largest finite 448. */
+/* e4m3fn (OCP E4M3): no infinity; S.1111.111 is NaN; largest finite 448. */
 
-static inline uint8_t nx_float_to_e4m3(float f) {
-  uint8_t sign = signbit(f) ? 0x80 : 0;
-  if (!isfinite(f)) return sign | 0x7F;
+static inline uint8_t nx_float_to_e4m3fn(float f) {
+  uint8_t sign = nx_signbit(f) ? 0x80 : 0;
+  if (!nx_isfinite(f)) return sign | 0x7F;
   return sign | (uint8_t)nx_mini_saturate(f, 3, 7, 0x7E);
 }
 
-static inline float nx_e4m3_to_float(uint8_t c) {
+static inline float nx_e4m3fn_to_float(uint8_t c) {
   float s = (c & 0x80) ? -1.f : 1.f;
-  if ((c & 0x7F) == 0x7F) return copysignf(NAN, s);
+  if ((c & 0x7F) == 0x7F) return nx_copysignf(NAN, s);
   return s * nx_mini_value(c & 0x7F, 3, 7);
 }
 
 /* e5m2: IEEE-like, with infinities; largest finite 57344. */
 
 static inline uint8_t nx_float_to_e5m2(float f) {
-  uint8_t sign = signbit(f) ? 0x80 : 0;
-  if (isnan(f)) return sign | 0x7F;
-  if (isinf(f)) return sign | 0x7C;
+  uint8_t sign = nx_signbit(f) ? 0x80 : 0;
+  if (nx_isnan(f)) return sign | 0x7F;
+  if (nx_isinf(f)) return sign | 0x7C;
   return sign | (uint8_t)nx_mini_saturate(f, 2, 15, 0x7B);
 }
 
 static inline float nx_e5m2_to_float(uint8_t c) {
   float s = (c & 0x80) ? -1.f : 1.f;
   uint32_t q = c & 0x7F;
-  if (q > 0x7C) return copysignf(NAN, s);
+  if (q > 0x7C) return nx_copysignf(NAN, s);
   return s * (q == 0x7C ? INFINITY : nx_mini_value(q, 2, 15));
 }
 
-/* e2m1 (OCP FP4): no infinity and no NaN, values ±{0, 0.5, 1, 1.5, 2, 3, 4,
-   6}. NaN stores as +0, as it does in integers, and an infinity
+/* e2m1fn (OCP FP4 E2M1): no infinity and no NaN, values ±{0, 0.5, 1, 1.5,
+   2, 3, 4, 6}. NaN stores as +0, as it does in integers, and an infinity
    saturates. A code is the low four bits of its byte. */
 
-static inline uint8_t nx_float_to_e2m1(float f) {
-  if (isnan(f)) return 0;
-  uint8_t sign = signbit(f) ? 0x8 : 0;
-  if (isinf(f)) return sign | 0x7;
+static inline uint8_t nx_float_to_e2m1fn(float f) {
+  if (nx_isnan(f)) return 0;
+  uint8_t sign = nx_signbit(f) ? 0x8 : 0;
+  if (nx_isinf(f)) return sign | 0x7;
   return sign | (uint8_t)nx_mini_saturate(f, 1, 1, 0x7);
 }
 
-static inline float nx_e2m1_to_float(uint8_t c) {
+static inline float nx_e2m1fn_to_float(uint8_t c) {
   float v = nx_mini_value(c & 0x7, 1, 1);
   return (c & 0x8) ? -v : v;
+}
+
+/* The value of the bits [c] of an element of the narrow float dtype [dt]. */
+static inline float nx_bits_to_float(int dt, uint32_t c) {
+  switch (dt) {
+    case NX_FLOAT16: return nx_f16_to_float((uint16_t)c);
+    case NX_BFLOAT16: return nx_bf16_to_float((uint16_t)c);
+    case NX_FLOAT8_E4M3FN: return nx_e4m3fn_to_float((uint8_t)c);
+    case NX_FLOAT8_E5M2: return nx_e5m2_to_float((uint8_t)c);
+    default: return nx_e2m1fn_to_float((uint8_t)c);
+  }
+}
+
+/* Doubles
+
+   A double narrows to binary32 by rounding to odd: truncating, then setting
+   the last bit if a discarded bit was set. Binary32's grid is at least four
+   times finer than float16's, bfloat16's or float8's at every magnitude, so
+   the odd last bit stands for the discarded bits without creating or
+   breaking a tie, and the binary32 encoders above then round the double
+   once. Rounding to nearest twice would move a value next to a tie onto
+   it. */
+
+#ifndef __METAL_VERSION__
+
+static inline float nx_float_odd(double x) {
+  float f = (float)x;
+  uint32_t i = nx_float_bits(f);
+  /* Stepping back from a result that rounded away from zero truncates,
+     which also brings an overflow to inf back to FLT_MAX. NaN is neither. */
+  uint32_t away = fabs((double)f) > fabs(x);
+  uint32_t inexact = ((double)f != x) & (x == x);
+  return nx_bits_float((i - away) | inexact);
 }
 
 /* From a double, rounded once */
@@ -299,16 +335,16 @@ static inline uint16_t nx_double_to_bf16(double x) {
   return nx_float_to_bf16(nx_float_odd(x));
 }
 
-static inline uint8_t nx_double_to_e4m3(double x) {
-  return nx_float_to_e4m3(nx_float_odd(x));
+static inline uint8_t nx_double_to_e4m3fn(double x) {
+  return nx_float_to_e4m3fn(nx_float_odd(x));
 }
 
 static inline uint8_t nx_double_to_e5m2(double x) {
   return nx_float_to_e5m2(nx_float_odd(x));
 }
 
-static inline uint8_t nx_double_to_e2m1(double x) {
-  return nx_float_to_e2m1(nx_float_odd(x));
+static inline uint8_t nx_double_to_e2m1fn(double x) {
+  return nx_float_to_e2m1fn(nx_float_odd(x));
 }
 
 /* Integers
@@ -347,9 +383,9 @@ static inline int64_t nx_double_to_bits(int dt, double x) {
   switch (dt) {
     case NX_FLOAT16: return nx_double_to_f16(x);
     case NX_BFLOAT16: return nx_double_to_bf16(x);
-    case NX_FLOAT8_E4M3: return nx_double_to_e4m3(x);
+    case NX_FLOAT8_E4M3FN: return nx_double_to_e4m3fn(x);
     case NX_FLOAT8_E5M2: return nx_double_to_e5m2(x);
-    case NX_FLOAT4_E2M1: return nx_double_to_e2m1(x);
+    case NX_FLOAT4_E2M1FN: return nx_double_to_e2m1fn(x);
     case NX_INT64: return nx_double_to_i64(x);
     case NX_UINT64: return (int64_t)nx_double_to_u64(x);
     case NX_INT32: return nx_double_to_int(x, INT32_MIN, INT32_MAX);
@@ -361,17 +397,6 @@ static inline int64_t nx_double_to_bits(int dt, double x) {
     case NX_INT4: return nx_double_to_int(x, -8, 7);
     case NX_UINT4: return nx_double_to_int(x, 0, 15);
     default: return x != 0.0; /* bool, bit */
-  }
-}
-
-/* The value of the bits [c] of an element of the narrow float dtype [dt]. */
-static inline float nx_bits_to_float(int dt, uint32_t c) {
-  switch (dt) {
-    case NX_FLOAT16: return nx_f16_to_float((uint16_t)c);
-    case NX_BFLOAT16: return nx_bf16_to_float((uint16_t)c);
-    case NX_FLOAT8_E4M3: return nx_e4m3_to_float((uint8_t)c);
-    case NX_FLOAT8_E5M2: return nx_e5m2_to_float((uint8_t)c);
-    default: return nx_e2m1_to_float((uint8_t)c);
   }
 }
 
@@ -412,5 +437,7 @@ static inline void nx_double_to_bf16_run(const double *src, uint16_t *dst,
                                          size_t n) {
   for (size_t i = 0; i < n; i++) dst[i] = nx_double_to_bf16(src[i]);
 }
+
+#endif /* __METAL_VERSION__ */
 
 #endif /* NX_DTYPE_H */

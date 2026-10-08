@@ -20,6 +20,10 @@
      nx_done(3, a);
      return e;
 
+   A kernel answers the code to its OCaml wrapper, which calls the kernel
+   again after Nx_array.settle returns, for NX_PENDING, and raises through it
+   otherwise.
+
    A descriptor holds no pointer into the OCaml heap: it stays valid after the
    kernel allocates or releases the domain lock, and nx_read keeps each
    operand's buffer reachable until nx_done. nx_read and nx_done run with the
@@ -55,16 +59,6 @@ enum {
   NX_EMPTY = 4       /* no element */
 };
 
-/* A layout, as the bytes of an OCaml Layout.t. A layout is in canonical
-   form: an axis of extent 1 has stride 0, and a layout with no element has
-   offset 0 and every stride 0. */
-typedef struct {
-  int64_t rank, flags;
-  int64_t offset; /* elements */
-  int64_t lo, hi; /* every position lies in [lo, hi); (0, 0) if none */
-  int64_t dim[];  /* rank extents, then rank strides */
-} nx_layout;
-
 /* Codes */
 
 enum {
@@ -93,11 +87,13 @@ typedef struct {
   int written;
 } nx_operand;
 
-/* An operand, read. Its memory is claimed until nx_done; [base] is NULL for an
-   operand with no element, which the coalescer forms no address from. Its
-   buffer is a local root of the domain from nx_read to nx_done, so the
-   descriptors live in the kernel's frame and nx_done runs on every path
-   before the kernel returns. */
+/* An operand, read. Its memory is claimed and its buffer is a local root of
+   the domain from nx_read to nx_done: a kernel needs no CAMLparam to keep
+   its operands reachable. Descriptors stay where nx_read filled them, in the
+   frame of the C function that called it, and are passed by pointer, never
+   copied or moved, until nx_done; nx_done runs once per successful nx_read,
+   never after a refusal, before that function returns or raises. [base] is
+   NULL for an operand with no element. */
 typedef struct {
   uint8_t *base; /* host address of the buffer's first byte */
   int dtype, bits, rank, flags;
@@ -146,11 +142,13 @@ int nx_coalesce(int n, const nx_array *a, nx_loop *l);
 /* Sub-byte elements
 
    Element p of a dtype of [bits] bits (1 or 4) is bits p·bits to p·bits +
-   bits - 1 of the bytes from [base], LSB first. */
+   bits - 1 of the bytes from [base], LSB first. Loads and stores are atomic
+   on their byte, so threads may store other elements of a byte at once. */
 
 static inline uint32_t nx_sub_load(const uint8_t *base, int bits, int64_t p) {
   uint64_t bit = (uint64_t)p * (uint64_t)bits;
-  return (base[bit >> 3] >> (bit & 7)) & ((1u << bits) - 1);
+  uint8_t byte = __atomic_load_n(base + (bit >> 3), __ATOMIC_RELAXED);
+  return (byte >> (bit & 7)) & ((1u << bits) - 1);
 }
 
 /* Stores the low [bits] of [v] at element [p] with one atomic

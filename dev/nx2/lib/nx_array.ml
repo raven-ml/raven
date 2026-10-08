@@ -46,23 +46,15 @@ let reason = function
 let pp_operand ppf (Any a) =
   Format.fprintf ppf "%a %a" Dtype.pp a.dtype pp_ints (Layout.shape a.layout)
 
-let refused name code operands =
-  invalid_argf "%s: %s (%a)" name (reason code)
-    (Format.pp_print_list
-       ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ")
-       pp_operand)
-    operands
-
-(* Runs [call], a C function over [operands] through nx_read, until no operand's
-   device work is pending: each wait follows the access the call claims. Raises
-   what [call] refuses. *)
-let rec through name operands call =
-  let e = call () in
-  if e = pending then begin
-    List.iter (fun (Any a, access) -> Buffer.wait a.buffer access) operands;
-    through name operands call
-  end
-  else if e <> 0 then refused name e (List.map fst operands)
+let settle name code operands =
+  if code = pending then
+    List.iter (fun (Any a) -> Buffer.wait a.buffer Buffer.Read_write) operands
+  else
+    invalid_argf "%s: %s (%a)" name (reason code)
+      (Format.pp_print_list
+         ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ")
+         pp_operand)
+      operands
 
 (* Making arrays *)
 
@@ -83,7 +75,7 @@ let check fn dt l b =
   | Some why -> invalid_argf "%s: the buffer is dead: %s" fn why
   | None -> ());
   if Layout.numel l > 0 then begin
-    let lo, hi = Layout.span l in
+    let hi = snd (Layout.span l) in
     let bits = Dtype.bits dt and length = Buffer.length b in
     let fits =
       if bits >= 8 then hi <= length / (bits / 8)
@@ -91,7 +83,7 @@ let check fn dt l b =
         let k = 8 / bits in
         ((hi / k) + if hi mod k = 0 then 0 else 1) <= length
     in
-    if lo < 0 || not fits then
+    if not fits then
       invalid_argf "%s: %a reaches past %d bytes of %a" fn Layout.pp l length
         Dtype.pp dt;
     let first = if bits >= 8 then Layout.offset l * (bits / 8) else 0 in
@@ -258,9 +250,9 @@ let load : type v s. (v, s) Dtype.t -> Buffer.t -> int -> v =
   | Float32 -> get_float b c p 0
   | Float16 -> get_float b c p 0
   | Bfloat16 -> get_float b c p 0
-  | Float8_e4m3 -> get_float b c p 0
+  | Float8_e4m3fn -> get_float b c p 0
   | Float8_e5m2 -> get_float b c p 0
-  | Float4_e2m1 -> get_float b c p 0
+  | Float4_e2m1fn -> get_float b c p 0
   | Int64 -> get_int b c p
   | Uint64 -> get_int b c p
   | Int32 -> Int64.to_int32 (get_int b c p)
@@ -293,8 +285,8 @@ let checked : type v s. string -> (v, s) Dtype.t -> v -> unit =
   | Uint8 -> check_int fn dt x
   | Int4 -> check_int fn dt x
   | Uint4 -> check_int fn dt x
-  | Float64 | Float32 | Float16 | Bfloat16 | Float8_e4m3 | Float8_e5m2
-  | Float4_e2m1 | Int64 | Uint64 | Int32 | Uint32 | Complex128 | Complex64
+  | Float64 | Float32 | Float16 | Bfloat16 | Float8_e4m3fn | Float8_e5m2
+  | Float4_e2m1fn | Int64 | Uint64 | Int32 | Uint32 | Complex128 | Complex64
   | Bool | Bit ->
       ()
 
@@ -311,9 +303,9 @@ let store : type v s. (v, s) Dtype.t -> Buffer.t -> int -> v -> unit =
   | Float32 -> set_float b c p 0 x
   | Float16 -> set_float b c p 0 x
   | Bfloat16 -> set_float b c p 0 x
-  | Float8_e4m3 -> set_float b c p 0 x
+  | Float8_e4m3fn -> set_float b c p 0 x
   | Float8_e5m2 -> set_float b c p 0 x
-  | Float4_e2m1 -> set_float b c p 0 x
+  | Float4_e2m1fn -> set_float b c p 0 x
   | Int64 -> set_int b c p x
   | Uint64 -> set_int b c p x
   | Int32 -> set_int b c p (Int64.of_int32 x)
@@ -368,9 +360,14 @@ let to_array (type v s) (a : (v, s) t) : v array =
       | Complex | Signed | Unsigned | Boolean ->
           Array.make n (Dtype.zero a.dtype)
     in
-    through "Nx_array.to_array"
-      [ (Any a, Buffer.Read) ]
-      (fun () -> to_array_into a out);
+    let rec read () =
+      let e = to_array_into a out in
+      if e <> 0 then begin
+        settle "Nx_array.to_array" e [ Any a ];
+        read ()
+      end
+    in
+    read ();
     out
 
 let of_array dt s values =
@@ -379,14 +376,26 @@ let of_array dt s values =
     invalid_argf "%s: %d values for shape %a" fn (Array.length values) pp_ints s;
   Array.iter (checked fn dt) values;
   let a = create Rig.host dt s in
-  through fn [ (Any a, Buffer.Read_write) ] (fun () -> of_array_from a values);
+  let rec write () =
+    let e = of_array_from a values in
+    if e <> 0 then begin
+      settle fn e [ Any a ];
+      write ()
+    end
+  in
+  write ();
   a
 
 let copy a =
   let dst = create (device a) a.dtype (Layout.shape a.layout) in
-  through "Nx_array.copy"
-    [ (Any dst, Buffer.Read_write); (Any a, Buffer.Read) ]
-    (fun () -> copy_into dst a);
+  let rec gather () =
+    let e = copy_into dst a in
+    if e <> 0 then begin
+      settle "Nx_array.copy" e [ Any dst; Any a ];
+      gather ()
+    end
+  in
+  gather ();
   dst
 
 let to_device d a =
@@ -423,23 +432,7 @@ let bigarray (type v s) (k : (v, s) Bigarray.kind) (a : (v, s) t) :
     let flat = Buffer.bigarray k view in
     Some (Bigarray.reshape (Bigarray.genarray_of_array1 flat) (Layout.shape l))
 
-let dtype_of_kind : type v s. (v, s) Bigarray.kind -> (v, s) Dtype.t = function
-  | Bigarray.Float64 -> Float64
-  | Bigarray.Float32 -> Float32
-  | Bigarray.Float16 -> Float16
-  | Bigarray.Int64 -> Int64
-  | Bigarray.Int32 -> Int32
-  | Bigarray.Int16_signed -> Int16
-  | Bigarray.Int16_unsigned -> Uint16
-  | Bigarray.Int8_signed -> Int8
-  | Bigarray.Int8_unsigned -> Uint8
-  | Bigarray.Complex64 -> Complex128
-  | Bigarray.Complex32 -> Complex64
-  | Bigarray.Char | Bigarray.Int | Bigarray.Nativeint ->
-      invalid_arg "Nx_array.of_bigarray: no dtype has this kind's elements"
-
-let of_bigarray g =
-  let dt = dtype_of_kind (Bigarray.Genarray.kind g) in
+let of_bigarray dt g =
   let dims = Bigarray.Genarray.dims g in
   let n = Array.fold_left ( * ) 1 dims in
   let flat = Bigarray.reshape_1 g n in
