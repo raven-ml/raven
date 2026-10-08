@@ -154,12 +154,13 @@ let waits =
     ]
 
 (* nvd.h's RELEASE_MEM: CACHE_FLUSH_AND_INV_TS_EVENT at the end of the pipe, and
-   the GCR bits of every cache. *)
+   the GCR bits of amdgpu's GFX11 fence (gfx_v11_0.c): GLM_WB, GLM_INV, GL2_WB,
+   SEQ. *)
 let release_event = 0x14 lor (5 lsl 8)
+let release_gcr = 0x1000 lor 0x2000 lor 0x20_0000 lor 0x40_0000
 
-let release_gcr =
-  0x4000 lor 0x8000 lor 0x10_0000 lor 0x1000 lor 0x2000 lor 0x20_0000
-  lor 0x40_0000
+(* GLV_INV, GL1_INV and GL2_INV in a release's GCR bits (nvd.h). *)
+let release_invalidates = 0x4000 lor 0x8000 lor 0x10_0000
 
 (* The caches an acquire's control word names: scalar, vector, L1, instruction,
    L2 invalidated, L2 written back. GFX9's CP_COHER_CNTL (soc15d.h):
@@ -205,16 +206,7 @@ let caches =
                   (Data_64 9))));
       test "a release without an interrupt" (fun () ->
           equal (list int)
-            [
-              packet3 0x49 6;
-              release_event lor release_gcr;
-              1 lsl 29;
-              0x40;
-              0;
-              9;
-              0;
-              0;
-            ]
+            [ packet3 0x49 6; release_event; 1 lsl 29; 0x40; 0; 9; 0; 0 ]
             (words (Pm4.release_mem gfx11 Agent 0x40 (Low_32 9))));
       test "a GFX9 release writes the L2 back" (fun () ->
           equal int
@@ -247,6 +239,22 @@ let caches =
           in
           let wb = match g.gc with 9, _, _ -> 1 lsl 15 | _ -> 1 lsl 21 in
           equal int wb (control land wb));
+      cases ~name "a GFX10-on release invalidates no cache"
+        [ gfx11; gpu (12, 0, 0) ]
+        (fun g ->
+          let control s =
+            List.nth (words (Pm4.release_mem g s 0 (Low_32 0))) 1
+          in
+          equal (pair int int) (0, 0)
+            ( control System land release_invalidates,
+              control Agent land release_invalidates ));
+      test "a GFX12 system release writes the L2 back and nothing more"
+        (fun () ->
+          equal int
+            (release_event lor 0x20_0000 lor 0x40_0000)
+            (List.nth
+               (words (Pm4.release_mem (gpu (12, 0, 0)) System 0 (Low_32 0)))
+               1));
       cases ~name "an interrupt carries its id's low 32 bits" generations
         (fun g ->
           let ws =

@@ -184,19 +184,23 @@ let acquire_mem g scope =
 
 type 'v data = Low_32 of 'v | Data_64 of 'v
 
-(* Both scopes write the L2 back and invalidate every cache: [System]'s promise,
-   and more than [Agent] needs, which wants no L2 operation. *)
-let release_caches g = function
-  | Agent | System ->
-      if major g = 9 then Defs.eop_tc_wb_action_en lor Defs.eop_tc_nc_action_en
-      else
-        Defs.packet3_release_mem_gcr_glv_inv
-        lor Defs.packet3_release_mem_gcr_gl1_inv
-        lor Defs.packet3_release_mem_gcr_gl2_inv
-        lor Defs.packet3_release_mem_gcr_glm_wb
-        lor Defs.packet3_release_mem_gcr_glm_inv
-        lor Defs.packet3_release_mem_gcr_gl2_wb
-        lor Defs.packet3_release_mem_gcr_seq
+(* A release writes back what its readers would otherwise miss; a reader's
+   acquire invalidates what it reads. At [System], the L2, as Linux's amdgpu
+   fences do (gfx_v10_0.c, gfx_v11_0.c, gfx_v12_0.c: GL2_WB and SEQ; before
+   GFX12 with GLM_WB, which GLM_INV must accompany). At [Agent], nothing from
+   GFX10 on, where one L2 keeps memory coherent for the GPU's work. GFX9 writes
+   the L2 back at both scopes: a GPU of several dies has an L2 per die. *)
+let release_caches g scope =
+  match (major g, scope) with
+  | 9, (Agent | System) -> Defs.eop_tc_wb_action_en lor Defs.eop_tc_nc_action_en
+  | _, Agent -> 0
+  | (10 | 11), System ->
+      Defs.packet3_release_mem_gcr_glm_wb
+      lor Defs.packet3_release_mem_gcr_glm_inv
+      lor Defs.packet3_release_mem_gcr_gl2_wb
+      lor Defs.packet3_release_mem_gcr_seq
+  | _, System ->
+      Defs.packet3_release_mem_gcr_gl2_wb lor Defs.packet3_release_mem_gcr_seq
 
 (* The release's destination, DST_SEL, is 0: memory. *)
 let release_mem g scope ?interrupt addr d =
