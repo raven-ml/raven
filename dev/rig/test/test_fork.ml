@@ -243,6 +243,24 @@ let test_locks () =
   equal string "exited 0" (status ended);
   equal (list string) [ "bytes made: 8"; "opened"; "span recorded" ] lines
 
+(* A host borrow of a lost device's memory raises its loss in a forked child:
+   a driver's memory need not be mapped in the child, as Metal's buffers are
+   not on macOS. *)
+let test_child_borrow () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  let d, _ = P.open_ ~copies:false "fork:borrowed" in
+  let h = require_some (B.borrow Rig.host (B.create d 64)) in
+  let lines, ended =
+    in_child (fun () ->
+        [
+          (match B.bigarray Bigarray.char h with
+          | _ -> "read"
+          | exception Rig.Lost _ -> "lost");
+        ])
+  in
+  equal string "exited 0" (status ended);
+  equal (list string) [ "lost" ] lines
+
 let tests =
   [
     group ~timeout "fork"
@@ -256,6 +274,12 @@ let tests =
           test_own_device;
         test "a forked child uses rig while a parent's thread held its locks"
           test_locks;
+        xfail
+          ~reason:
+            "a forked child reads a host borrow of its lost device's memory, \
+             which on macOS kills it for Metal's"
+          (test "a forked child's host borrow of a lost device's memory is lost"
+             test_child_borrow);
       ];
   ]
 
