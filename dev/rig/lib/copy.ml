@@ -33,11 +33,14 @@ let slots_lock = Lock.create ()
 let in_use = [| false; false |]
 
 let names_lost b =
-  let lost = ref false in
-  Memory.iter_points
-    (fun p -> if Dev.is_lost (Dev.of_index (Point.index p)) then lost := true)
-    (Memory.stamps b.mem);
-  !lost
+  match
+    Memory.iter_points
+      (fun p ->
+        if Dev.is_lost (Dev.of_index (Point.index p)) then raise_notrace Exit)
+      (Memory.stamps b.mem)
+  with
+  | () -> false
+  | exception Exit -> true
 
 let take_slot () =
   Lock.protect slots_lock (fun () ->
@@ -102,12 +105,12 @@ let on_queue ~wait d src dst n start =
           (Submission.copy ~hold_stamps d queue ~src:{ src with mem = s }
              ~dst:{ dst with mem = t })
       in
-      let recorded () = record src.mem.dev dst.mem.dev n start in
       if wait then begin
         Dev.wait d v;
-        recorded ()
+        record src.mem.dev dst.mem.dev n start
       end
-      else if Prof.enabled () then Dev.after d v recorded;
+      else if Prof.enabled () then
+        Dev.after d v (fun () -> record src.mem.dev dst.mem.dev n start);
       true
   | _ -> false
 
@@ -200,8 +203,10 @@ and staged src dst n =
   let i = take_slot () in
   let pieces = (n + half_bytes - 1) / half_bytes in
   let len k = Int.min half_bytes (n - (k * half_bytes)) in
-  let run halves =
-    let half k = Buffer.view halves.(k land 1) ~first:0 ~length:(len k) in
+  let run h0 h1 =
+    let half k =
+      Buffer.view (if k land 1 = 0 then h0 else h1) ~first:0 ~length:(len k)
+    in
     let into k =
       leg
         ~src:(Buffer.view src ~first:(k * half_bytes) ~length:(len k))
@@ -222,15 +227,19 @@ and staged src dst n =
   (* No leg outlives the copy: the slot is given back unused, also when making
      its memory raised. *)
   let settle () =
-    Array.iter
-      (Option.iter (fun b -> Buffer.wait b Buffer.Read_write))
-      slots.(i)
+    for h = 0 to 1 do
+      match slots.(i).(h) with
+      | Some b -> ( try Buffer.wait b Buffer.Read_write with Dev.Lost _ -> ())
+      | None -> ()
+    done;
+    give_slot i
   in
-  Fun.protect
-    ~finally:(fun () ->
-      (try settle () with Dev.Lost _ -> ());
-      give_slot i)
-    (fun () -> run (Array.init 2 (half i)))
+  match run (half i 0) (half i 1) with
+  | () -> settle ()
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      settle ();
+      Printexc.raise_with_backtrace e bt
 
 (* One leg of a staged copy, which a device's queue runs without the host
    waiting. *)
