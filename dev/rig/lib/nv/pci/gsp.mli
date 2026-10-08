@@ -94,8 +94,9 @@ val boot : placement -> Images.t -> (t, string) result
     [GSP_INIT_DONE], and sets up its golden context: a channel of the GSP's own
     client whose context buffers later channels' contexts copy. Its system
     memory stays the GSP's until {!free}; its GPU memory, as long as the page
-    tables. [Error] names the step that failed, the GPU's bus mastering turned
-    off and the system memory given back; so if it raises. *)
+    tables. [Error] names the step that failed, the GSP unloaded if it ran, the
+    GPU's bus mastering turned off and the system memory given back; so if it
+    raises. *)
 
 (** {1:rm The resource manager} *)
 

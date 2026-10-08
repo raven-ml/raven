@@ -1045,8 +1045,16 @@ let start p (fw : Images.t) ~taken =
   if c.family = Blackwell then
     Chip.set c Defs.Blackwell.nv_virtual_function_priv_func_bar1_block_low_addr
       0;
-  let* () = golden g in
-  Ok g
+  (* The GSP runs from here: a failure unloads it, so it stops what it began. *)
+  match golden g with
+  | Ok () -> Ok g
+  | Error _ as e ->
+      ignore (unload g);
+      e
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      ignore (unload g);
+      Printexc.raise_with_backtrace e bt
 
 (* A failed boot gives back the system memory it took once the GPU masters the
    bus no more: the GSP or a falcon may still be reading it. *)
