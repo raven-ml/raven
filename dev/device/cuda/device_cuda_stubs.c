@@ -713,12 +713,26 @@ value caml_device_cuda_submit_entry(value unit) {
   return Val_long((intnat)submit_entry);
 }
 
+/* The ints of an OCaml part, the shape every driver's OCaml submit hands
+   its C side: the device, nx_part's queue, fill, arg and copy fields, then
+   the [after] indices. */
+enum {
+  PART_SELF,
+  PART_QUEUE,
+  PART_FILL,
+  PART_ARG,
+  PART_COPY_DST,
+  PART_COPY_DST_OFFSET,
+  PART_COPY_SRC,
+  PART_COPY_SRC_OFFSET,
+  PART_COPY_BYTES,
+  PART_AFTER
+};
+
 /* Device_cuda.submit's C side. [v_waits] holds a kind, an address and a
-   value per wait. A part holds ints: its device, nx_part's queue, fill, arg
-   and copy fields in order, then its [after] indices. Both are copied out
-   of the OCaml heap, then submitted without the runtime, which runs nothing
-   before the answer, NX_OK or NX_FAILED, reaches the caller. */
-#define AFTER 9
+   value per wait. Waits and parts are copied out of the OCaml heap, then
+   submitted without the runtime, which runs nothing before the answer,
+   NX_OK or NX_FAILED, reaches the caller. */
 
 value caml_device_cuda_submit(value v_self, value v_v, value v_waits,
                               value v_parts) {
@@ -727,7 +741,7 @@ value caml_device_cuda_submit(value v_self, value v_v, value v_waits,
   int nparts = (int)Wosize_val(v_parts);
   size_t nafter = 0;
   for (int i = 0; i < nparts; i++)
-    nafter += Wosize_val(Field(v_parts, i)) - AFTER;
+    nafter += Wosize_val(Field(v_parts, i)) - PART_AFTER;
   size_t size = nwaits * sizeof(struct nx_wait) +
                 nparts * sizeof(struct nx_part) + nafter * sizeof(int);
   char *mem = size == 0 ? NULL : malloc(size);
@@ -743,18 +757,19 @@ value caml_device_cuda_submit(value v_self, value v_v, value v_waits,
   for (int i = 0; i < nparts; i++) {
     value k = Field(v_parts, i);
     memset(&p[i], 0, sizeof p[i]);
-    p[i].queue = (int)Long_val(Field(k, 1));
-    p[i].fill = (int (*)(void *, void *, uint64_t))Long_val(Field(k, 2));
-    p[i].arg = (void *)Long_val(Field(k, 3));
-    p[i].copy_dst = (uint64_t)Long_val(Field(k, 4));
-    p[i].copy_dst_offset = (uint64_t)Long_val(Field(k, 5));
-    p[i].copy_src = (uint64_t)Long_val(Field(k, 6));
-    p[i].copy_src_offset = (uint64_t)Long_val(Field(k, 7));
-    p[i].copy_bytes = (uint64_t)Long_val(Field(k, 8));
-    p[i].nafter = (int)(Wosize_val(k) - AFTER);
+    p[i].queue = (int)Long_val(Field(k, PART_QUEUE));
+    p[i].fill =
+        (int (*)(void *, void *, uint64_t))Long_val(Field(k, PART_FILL));
+    p[i].arg = (void *)Long_val(Field(k, PART_ARG));
+    p[i].copy_dst = (uint64_t)Long_val(Field(k, PART_COPY_DST));
+    p[i].copy_dst_offset = (uint64_t)Long_val(Field(k, PART_COPY_DST_OFFSET));
+    p[i].copy_src = (uint64_t)Long_val(Field(k, PART_COPY_SRC));
+    p[i].copy_src_offset = (uint64_t)Long_val(Field(k, PART_COPY_SRC_OFFSET));
+    p[i].copy_bytes = (uint64_t)Long_val(Field(k, PART_COPY_BYTES));
+    p[i].nafter = (int)(Wosize_val(k) - PART_AFTER);
     p[i].after = after;
     for (int j = 0; j < p[i].nafter; j++)
-      *after++ = (int)Long_val(Field(k, AFTER + j));
+      *after++ = (int)Long_val(Field(k, PART_AFTER + j));
   }
   const char *failure = NULL;
   caml_enter_blocking_section_no_pending();

@@ -387,9 +387,10 @@ let unload g (m : image) =
   | 0 -> ()
   | s -> fault "unloading the image" s
 
-(* Work. A part is the ints the C submit reads: the device's C state, then
-   nx_part's queue, fill, arg, copy_dst, copy_dst_offset, copy_src,
-   copy_src_offset and copy_bytes, then the [after] indices. *)
+(* Work. A part is the ints the C submit reads, the shape every driver's submit
+   hands its C side: the device's C state, then nx_part's queue, fill, arg,
+   copy_dst, copy_dst_offset, copy_src, copy_src_offset and copy_bytes, then the
+   [after] indices, from [after_at]. *)
 
 type part = int array
 
