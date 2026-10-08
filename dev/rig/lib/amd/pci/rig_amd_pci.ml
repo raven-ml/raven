@@ -76,6 +76,10 @@ let memory (r : Memory.region) data =
 let opened : (int, Boot.t) Hashtbl.t = Hashtbl.create 4
 let opened_lock = Mutex.create ()
 
+(* A path function raises Rig_amd.Fault for any failure of the GPU but its
+   refusal: a register sequence that does not complete is one. *)
+let guard f = try f () with Regs.Stuck why -> raise (Amd.Fault why)
+
 let alloc g kind n =
   let kind =
     match kind with
@@ -177,16 +181,18 @@ let path g ~index ~finish : mem Amd.path =
     mec = Boot.mec g;
     wgps = Boot.wgps g;
     budget = Boot.budget g;
-    alloc = alloc g;
-    map_host = map_host g;
+    alloc = (fun kind n -> guard (fun () -> alloc g kind n));
+    map_host = (fun a n -> guard (fun () -> map_host g a n));
     reaches = reaches g ~index;
-    map_peer = map_peer g;
-    free = free g;
-    queue = Boot.queue g;
+    map_peer = (fun m -> guard (fun () -> map_peer g m));
+    free = (fun m -> guard (fun () -> free g m));
+    queue =
+      (fun kind ~ring ~bytes ~read ~write ->
+        guard (fun () -> Boot.queue g kind ~ring ~bytes ~read ~write));
     hdp = Boot.hdp g;
     interrupt;
     hang_ms = Some hang_ms;
-    sleep = Boot.sleep g;
+    sleep = (fun ~ms -> guard (fun () -> Boot.sleep g ~ms));
     stable_power = (fun () -> Ok ());
     stop;
   }
@@ -218,7 +224,7 @@ let start ~firmware ~index h fn =
              so it goes back. *)
           Boot.give_back g;
           Ok (d, g)
-      | Error why ->
+      | Error why | (exception (Amd.Fault why | Regs.Stuck why)) ->
           ignore (finish ());
           Error why
       | exception e ->
