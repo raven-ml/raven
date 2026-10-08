@@ -3032,8 +3032,10 @@ let traces =
               S.write t.ends_host (String.make (4 * t.slots * t.engines) 'x');
               equal string ~msg:"the ends, host memory" (String.make 4 'x')
                 (S.read t.ends_host 4);
-              equal (option string) ~msg:"the GPU's clocks"
-                (Some "profile_standard") (level ())
+              (* The level is amdgpu's file; a driver-less GPU has none. *)
+              if not (S.driverless ()) then
+                equal (option string) ~msg:"the GPU's clocks"
+                  (Some "profile_standard") (level ())
           | Error why, _ | _, Error why -> fail why);
     ]
 
