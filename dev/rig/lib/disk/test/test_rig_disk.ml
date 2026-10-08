@@ -292,11 +292,19 @@ let extent =
       (3, Gen.int_range 0 70_000);
     ]
 
-(* A length: an extent, or no bytes or one byte, drawn often enough (about one
-   case in six each) that the 100 cases of a property reach both whatever its
-   seed. An extent alone draws each one case in 24, which 100 cases miss once in
-   about 70 seeds. *)
-let lengths = Gen.frequency [ (1, ints [ 0; 1 ]); (3, extent) ]
+(* A length: no bytes, one byte, a request's bytes or more, or an extent. Each
+   of the first three is drawn in about one case in five, so the 100 cases of a
+   property cover each whatever its seed (a miss once in ten million seeds); an
+   extent alone draws them one case in 24 or 12, which 100 cases miss about once
+   in 70 seeds. *)
+let lengths =
+  Gen.frequency
+    [
+      (1, ints [ 0 ]);
+      (1, ints [ 1 ]);
+      (1, ints [ segment; segment + 1 ]);
+      (3, extent);
+    ]
 
 (* [clamp size (a, l)] is the range of [l] bytes from byte [a] that fits a file
    of [size] bytes, [max_int] reaching its end. *)
