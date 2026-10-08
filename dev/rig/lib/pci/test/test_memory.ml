@@ -895,6 +895,18 @@ let test_peer_refused () =
     (Memory.map_peer x.memory ~owner:owner.memory mem);
   release_all [ owner; x ]
 
+(* A peer's memory maps at its owner's address, which means that memory only in
+   the space both GPUs share. *)
+let test_peer_spaces () =
+  let m = machine () in
+  let owner = gpu ~machine:m ~memory:(512 * mib) () in
+  let x = gpu ~machine:m () in
+  let mem = alloc owner Gpu (64 * kib) in
+  let why = require_error (Memory.map_peer x.memory ~owner:owner.memory mem) in
+  contains ~msg:"names the mapper" ~sub:(Function.bus x.fn) why;
+  contains ~msg:"names the owner" ~sub:(Function.bus owner.fn) why;
+  release_all [ owner; x ]
+
 let test_peer_no_tables () =
   let m = machine () in
   let space = Space.create ~base:space_base space_length in
@@ -1167,6 +1179,7 @@ let () =
              test_peer;
              test "a link maps through the owner's peer function" test_peer_link;
              test "refusals" test_peer_refused;
+             test "GPUs of two spaces are refused, naming both" test_peer_spaces;
              test "no room for a table is refused" test_peer_no_tables;
              test
                "memory the owner did not allocate, or mapped already, is \

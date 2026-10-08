@@ -124,9 +124,11 @@ val map_peer : t -> owner:t -> region -> (region, string) result
 (** [map_peer m ~owner mem] maps [mem], which {!alloc} allocated on the GPU of
     [owner], for the GPU of [m], at its address on [owner]: the GPU's memory
     through [owner]'s memory BAR or link, and system memory at its pages, which
-    stay [owner]'s. [Error why] if the GPUs are on different machines, if either
-    is behind an IOMMU ({!Machine.Iommu}), if [mem] is in the GPU's memory and
-    [owner]'s BAR is {!small_bar}, or if a page table has no room.
+    stay [owner]'s. [Error why] if the GPUs are on different machines, if their
+    page tables take addresses from different spaces ({!Page_table.space}),
+    naming both, if either is behind an IOMMU ({!Machine.Iommu}), if [mem] is in
+    the GPU's memory and [owner]'s BAR is {!small_bar}, or if a page table has
+    no room.
 
     Raises [Invalid_argument] if [mem] is not {!Allocated} by [owner], or if the
     GPU of [m] maps its addresses already. *)

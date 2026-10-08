@@ -228,6 +228,12 @@ let map_peer m ~owner mem =
   let iommu f = Function.addressing f = Machine.Iommu in
   if Function.machine m.fn != Function.machine owner.fn then
     Error "the GPUs are on different machines"
+  else if Page_table.space m.tables != Page_table.space owner.tables then
+    Error
+      (strf
+         "%s and %s address different spaces: a peer's memory maps at its \
+          owner's address, which is that memory only in a space both share"
+         (Function.bus m.fn) (Function.bus owner.fn))
   else if iommu m.fn || iommu owner.fn then
     Error
       "a GPU behind an IOMMU reaches only its own memory and the memory the \
