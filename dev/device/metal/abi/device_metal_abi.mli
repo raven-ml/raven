@@ -69,9 +69,9 @@
 (** {1:icbs Indirect command buffers} *)
 
 type dispatch = {
-  pipeline : nativeint;
-      (** Its [MTLComputePipelineState]: an entry of an image the device loaded.
-      *)
+  pipeline : int;
+      (** Its [MTLComputePipelineState]: the address an entry of an image the
+          device loaded gives. *)
   offset : int;
       (** Where its arguments start in the argument buffer, which it binds as
           its kernel buffer [0]: bytes from the buffer's first byte, a multiple

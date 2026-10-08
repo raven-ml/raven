@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 type dispatch = {
-  pipeline : nativeint;
+  pipeline : int;
   offset : int;
   groups : int * int * int;
   threads : int * int * int;
