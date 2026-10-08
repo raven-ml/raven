@@ -57,6 +57,10 @@ typedef WSAPOLLFD rig_remote_pollfd;
 #define SHUT_SEND SD_SEND
 #else
 #include <fcntl.h>
+#ifdef __linux__
+#include <linux/sockios.h>
+#include <sys/ioctl.h>
+#endif
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
@@ -71,7 +75,7 @@ typedef struct pollfd rig_remote_pollfd;
 #define BEAT_NS 1000000000LL
 #define SILENCE_MS 10000
 
-/* The seconds a send may wait for its peer to take a byte. */
+/* The seconds a send may wait for its peer to acknowledge a byte. */
 #define SEND_S 10
 
 /* The bytes a link's queue holds before its writers wait. One frame larger
@@ -181,30 +185,56 @@ static int again(int e) {
 #endif
 }
 
+/* The bytes [l]'s socket holds that its peer has not acknowledged, or -1
+   where the system does not say. */
+static int64_t unacked(struct rig_remote_link *l) {
+  int q = -1;
+#if defined(__linux__)
+  if (ioctl(l->fd, SIOCOUTQ, &q) != 0) return -1;
+#elif defined(__APPLE__)
+  socklen_t n = sizeof q;
+  if (getsockopt(l->fd, SOL_SOCKET, SO_NWRITE, &q, &n) != 0) return -1;
+#else
+  (void)l;
+#endif
+  return q;
+}
+
 /* Sends the [n] bytes at [p] on [l]'s socket: 0, a socket error, or
-   [STALLED] once its peer took no byte for [SEND_S] seconds. Calls nothing
-   of the runtime. */
+   [STALLED] once its peer acknowledged no byte for [SEND_S] seconds. A send
+   that waits checks for acknowledgements at least once a second: a system
+   may take bytes from a peer that reads nothing, so the bytes it takes are
+   the measure only where it does not say what it holds unacknowledged.
+   Calls nothing of the runtime. */
 static int send_all(struct rig_remote_link *l, const void *p, size_t n) {
   const char *c = p;
-  int64_t stuck = 0; /* when the peer last took a byte, once a send waits */
+  int64_t taken = 0; /* the bytes the system took from this call */
+  int64_t stuck = 0; /* when the peer last acknowledged, once a send waits */
+  int64_t seen = 0;  /* [got] then */
   while (n > 0) {
     int chunk = n > (1u << 30) ? (1 << 30) : (int)n;
     long k = (long)send(l->fd, c, chunk, RIG_REMOTE_NOSIGNAL);
     if (k > 0) {
       c += k;
       n -= (size_t)k;
-      stuck = 0;
+      taken += k;
       continue;
     }
     int e = k < 0 ? rig_remote_sock_error() : 0;
     if (k < 0 && !again(e)) return e;
-    if (stuck == 0) stuck = now_ns();
+    /* Grows by each byte the peer acknowledges, whatever the system takes. */
+    int64_t q = unacked(l);
+    int64_t got = q < 0 ? taken : taken - q;
+    if (stuck == 0 || got > seen) {
+      stuck = now_ns();
+      seen = got;
+    }
     int64_t left = SEND_S * 1000LL - (now_ns() - stuck) / 1000000;
     if (left <= 0) return STALLED;
     rig_remote_pollfd pf = {0};
     pf.fd = l->fd;
     pf.events = POLLOUT;
-    if (poll(&pf, 1, (int)left) < 0) {
+    if (poll(&pf, 1, left < 1000 ? (int)left : 1000) < 0) {
       e = rig_remote_sock_error();
       if (!again(e)) return e;
     }
