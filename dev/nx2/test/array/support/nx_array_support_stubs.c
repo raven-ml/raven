@@ -75,15 +75,14 @@ static void add_loop(const nx_array *a, const nx_loop *l) {
 }
 
 value nx_array_support_add(value z, value x, value y) {
-  CAMLparam3(z, x, y);
   nx_operand in[3] = {{z, NX_FLOAT32, 1}, {x, NX_FLOAT32, 0}, {y, NX_FLOAT32, 0}};
   nx_array a[3];
   nx_loop l;
   int e = nx_read(3, in, a);
-  if (e) CAMLreturn(Val_int(e));
+  if (e) return Val_int(e);
   if (!(e = nx_coalesce(3, a, &l))) add_loop(a, &l);
   nx_done(3, a);
-  CAMLreturn(Val_int(e));
+  return Val_int(e);
 }
 
 /* Reads [v] through the door, then empties the minor heap and compacts the

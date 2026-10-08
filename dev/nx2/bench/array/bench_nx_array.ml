@@ -251,12 +251,12 @@ let array_rows =
         (fun () -> (one (), one ()))
         (fun (x, y) ->
           let z = A.create Rig.host f32 [| 1 |] in
-          ok "add-1" (Nx_array_support.add_noalloc z x y));
+          ok "add-1" (Nx_array_support.add z x y));
       row "add-1-layout-shared"
         (fun () -> (one (), one ()))
         (fun (x, y) ->
           let z = A.v f32 (A.layout x) (B.create Rig.host 4) in
-          ok "add-1-layout-shared" (Nx_array_support.add_noalloc z x y));
+          ok "add-1-layout-shared" (Nx_array_support.add z x y));
       Thumper.bench "create-1" (fun () -> A.create Rig.host f32 [| 1 |]);
       Thumper.bench "floor-host-create-16" (fun () -> B.create Rig.host 16);
       Thumper.bench "move-permute-4"

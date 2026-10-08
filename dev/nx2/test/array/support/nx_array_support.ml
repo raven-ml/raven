@@ -5,11 +5,7 @@
 
 external row : int -> (string * int * int) option = "nx_array_support_row"
 external layout : Nx_array.Layout.t -> int array = "nx_array_support_layout"
-external add : 'z -> 'x -> 'y -> int = "nx_array_support_add"
-
-external add_noalloc : 'z -> 'x -> 'y -> int = "nx_array_support_add"
-[@@noalloc]
-
+external add : 'z -> 'x -> 'y -> int = "nx_array_support_add" [@@noalloc]
 external collect : ('v, 's) Nx_array.t -> int = "nx_array_support_collect"
 
 (* An io device over bigarrays *)

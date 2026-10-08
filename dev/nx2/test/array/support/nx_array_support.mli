@@ -17,10 +17,8 @@ val layout : Nx_array.Layout.t -> int array
 val add : 'z -> 'x -> 'y -> int
 (** [add z x y] is a float32 kernel through [nx_read] and [nx_coalesce]: it
     stores [x + y] into [z] and answers [nx_array.h]'s code. Its operands are
-    untyped, as an array built from parts can be. *)
-
-val add_noalloc : 'z -> 'x -> 'y -> int
-(** [add_noalloc] is {!add} as a [[@@noalloc]] external. *)
+    untyped, as an array built from parts can be. It is a [[@@noalloc]]
+    external, as a kernel that keeps the domain lock is. *)
 
 val collect : ('v, 's) Nx_array.t -> int
 (** [collect a] reads [a] through [nx_read], empties the minor heap and compacts
