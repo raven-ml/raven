@@ -8,12 +8,14 @@
    runtime or blocks.
 
    A submission of value v places, on each queue it uses: its own prefix (a
-   wait for v-1 on the timeline word, or a partial flush where this queue
-   released v-1), the compute queue's cache acquire and foreign waits, the
-   parts in array order, the slot signals and waits that order parts of two
-   queues, and on the last queue the release of v into the word. It then
-   flushes the host data path if the host wrote GPU memory through the BAR,
-   and rings the doorbells. */
+   wait for v-1 on the timeline word where the other queue released v-1), the
+   compute queue's foreign waits, the parts in array order, the slot signals
+   and waits that order parts of two queues, and on the last queue the
+   release of v into the word. Each compute part follows a partial flush of
+   the dispatches before it; the first, and any after a slot wait, also
+   follows a cache acquire. A submission without compute parts invalidates
+   no cache: none of its work reads. It then flushes the host data path if
+   the host wrote GPU memory through the BAR, and rings the doorbells. */
 
 #define _GNU_SOURCE
 
@@ -154,11 +156,11 @@ static uint64_t copies(const struct device_amd *d, uint64_t bytes) {
 static void need(const struct device_amd *d, const struct nx_part *p, int n,
                  uint64_t *words, uint64_t *bytes) {
   int c = DEVICE_AMD_COMPUTE, s = DEVICE_AMD_COPY;
-  uint64_t slot_wait_c = words_of(d, T_WAIT) + words_of(d, T_ACQUIRE);
-  uint64_t pm4 = words_of(d, T_WAIT) + words_of(d, T_ACQUIRE) +
+  uint64_t pm4 = words_of(d, T_WAIT) +
                  DEVICE_AMD_SCRATCH_WRITES * words_of(d, T_WRITE) +
                  DEVICE_AMD_WAITS * words_of(d, T_WAIT64) +
-                 words_of(d, T_SIGNAL) + slot_wait_c + words_of(d, T_RELEASE);
+                 words_of(d, T_SIGNAL) + words_of(d, T_WAIT) +
+                 words_of(d, T_RELEASE);
   uint64_t parts = 0, flushes = 2;
   words[s] = 3 * words_of(d, S_POLL) + words_of(d, S_FENCE) +
              words_of(d, S_TRAP);
@@ -169,8 +171,9 @@ static void need(const struct device_amd *d, const struct nx_part *p, int n,
                              : copies(d, p[i].copy_bytes) * words_of(d, S_COPY);
     if (p[i].queue == c) {
       parts += w;
-      pm4 += words_of(d, T_FLUSH) + words_of(d, T_SIGNAL) +
-             (uint64_t)p[i].nafter * slot_wait_c;
+      pm4 += words_of(d, T_FLUSH) + words_of(d, T_ACQUIRE) +
+             words_of(d, T_SIGNAL) +
+             (uint64_t)p[i].nafter * words_of(d, T_WAIT);
       flushes++;
     } else
       words[s] += w + words_of(d, S_FENCE) +
@@ -281,8 +284,8 @@ static void scratch(struct submission *s, struct device_amd_ring *r) {
   atomic_store_explicit(&d->scratch_lock, 0, memory_order_release);
 }
 
-/* Places the queue's prefix once per submission: its own wait for v-1 or
-   a partial flush, and on compute the cache acquire and the waits. */
+/* Places the queue's prefix once per submission: its own wait for v-1
+   where the other queue released it, and on compute the waits. */
 static void enter(struct submission *s, int q, const struct nx_wait *waits,
                   int nwaits, int copy_parts) {
   struct device_amd *d = s->d;
@@ -290,9 +293,7 @@ static void enter(struct submission *s, int q, const struct nx_wait *waits,
   if (s->used[q]) return;
   s->used[q] = 1;
   if (q == DEVICE_AMD_COMPUTE) {
-    if (r->released == s->v - 1) emit(d, r, T_FLUSH, 0, 0, 0);
-    else emit(d, r, T_WAIT, d->word_gpu, s->v - 1, 0);
-    emit(d, r, T_ACQUIRE, 0, 0, 0);
+    if (r->released != s->v - 1) emit(d, r, T_WAIT, d->word_gpu, s->v - 1, 0);
     scratch(s, r);
     for (int i = 0; i < nwaits; i++)
       emit(d, r, T_WAIT64, waits[i].at, waits[i].value, 0);
@@ -308,12 +309,30 @@ static void enter(struct submission *s, int q, const struct nx_wait *waits,
 
 static void wait_slot(struct submission *s, int q, int j) {
   struct device_amd *d = s->d;
+  emit(d, &d->rings[q], q == DEVICE_AMD_COMPUTE ? T_WAIT : S_POLL,
+       slot_gpu(d, j), s->v, 0);
+}
+
+/* Orders part [i] after what it follows on its queue: on compute, a partial
+   flush of the dispatches before it (for the first part, those of v-1 where
+   this queue released v-1; the own wait covers the other case), then its
+   slot waits, then, for the first part or after a slot wait, the cache
+   acquire, so that it reads what the host, the copy queue and other devices
+   wrote. */
+static void prepare(struct submission *s, const struct nx_part *parts, int i,
+                    int first) {
+  struct device_amd *d = s->d;
+  int q = parts[i].queue;
   struct device_amd_ring *r = &d->rings[q];
-  if (q == DEVICE_AMD_COMPUTE) {
-    emit(d, r, T_WAIT, slot_gpu(d, j), s->v, 0);
-    emit(d, r, T_ACQUIRE, 0, 0, 0);
-  } else
-    emit(d, r, S_POLL, slot_gpu(d, j), s->v, 0);
+  int compute = q == DEVICE_AMD_COMPUTE, acquire = first;
+  if (compute && (!first || r->released == s->v - 1))
+    emit(d, r, T_FLUSH, 0, 0, 0);
+  for (int j = 0; j < parts[i].nafter; j++)
+    if (parts[parts[i].after[j]].queue != q) {
+      wait_slot(s, q, parts[i].after[j]);
+      acquire = 1;
+    }
+  if (compute && acquire) emit(d, r, T_ACQUIRE, 0, 0, 0);
 }
 
 static void signal_slot(struct submission *s, int q, int i) {
@@ -449,16 +468,13 @@ int device_amd_submit(void *self, uint64_t v, const struct nx_wait *waits,
 
   struct device_amd_ring *compute = &d->rings[DEVICE_AMD_COMPUTE];
   if (nwaits > 0) enter(&s, DEVICE_AMD_COMPUTE, waits, nwaits, copy_parts);
-  int placed_compute = 0;
+  int placed[DEVICE_AMD_QUEUES] = {0};
   for (int i = 0; i < nparts; i++) {
     const struct nx_part *p = &parts[i];
     int q = p->queue;
     struct device_amd_ring *ring = &d->rings[q];
     enter(&s, q, waits, nwaits, copy_parts);
-    if (q == DEVICE_AMD_COMPUTE && placed_compute++)
-      emit(d, ring, T_FLUSH, 0, 0, 0);
-    for (int j = 0; j < p->nafter; j++)
-      if (parts[p->after[j]].queue != q) wait_slot(&s, q, p->after[j]);
+    prepare(&s, parts, i, !placed[q]++);
     flush(d, ring);
     if (p->words) put_words(ring, p->words, p->n);
     else if (p->fill) {
