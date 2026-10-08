@@ -98,14 +98,18 @@ int nx_read(int n, const nx_operand *in, nx_array *out) {
   }
   /* Each buffer becomes a local root, so that a kernel that allocates or
      releases the domain lock keeps it reachable and finds it again in
-     nx_done. */
+     nx_done. They are chained here and linked at once: where the runtime
+     has no thread-local variables to share (macOS), each access to the
+     domain's state is a function call. */
+  struct caml__roots_block *top = CAML_LOCAL_ROOTS;
   for (int k = 0; k < n; k++) {
-    out[k].roots.next = CAML_LOCAL_ROOTS;
+    out[k].roots.next = top;
     out[k].roots.ntables = 1;
     out[k].roots.nitems = 1;
     out[k].roots.tables[0] = &out[k].buffer;
-    CAML_LOCAL_ROOTS = &out[k].roots;
+    top = &out[k].roots;
   }
+  CAML_LOCAL_ROOTS = top;
   return NX_OK;
 }
 
