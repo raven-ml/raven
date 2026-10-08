@@ -42,7 +42,8 @@ val start : t -> unit
 val clocks : t -> [ `Lowest | `Highest ] -> unit
 (** [clocks s level] holds the memory, fabric and SoC clocks, and the graphics
     clock where the power manager lets the driver set it, at their lowest or
-    highest level. *)
+    highest level. A clock whose levels the power manager refuses to count, as
+    before its features are enabled, keeps its boot frequency. *)
 
 val reset : t -> unit
 (** [reset s] resets the GPU whole (mode 1) and waits for its function to answer

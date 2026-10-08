@@ -55,17 +55,25 @@ let default_ms = 10_000
 (* Sends message [m] with [param] and waits for the answer, as the kernel's
    smu_cmn_send_smc_msg_with_param does; the argument register then holds the
    reply. *)
-let send ?(debug = false) ?(ms = default_ms) s m param =
+(* [ask s m param] sends message [m] and is [Ok reply], or [Error answer] for
+   any answer but done. *)
+let ask ?(debug = false) ?(ms = default_ms) s m param =
   let resp, arg, cmd = if debug then debug_port else port in
   Regs.write ~value:0 s.r resp [];
   Regs.write ~value:param s.r arg [];
   Regs.write ~value:m s.r cmd [];
-  let what = strf "the power manager's message 0x%x" m in
-  Regs.wait ~ms s.r what (fun () -> Regs.read s.r resp <> 0);
+  Regs.wait ~ms s.r (strf "the power manager's message 0x%x" m) (fun () ->
+      Regs.read s.r resp <> 0);
   let answer = Regs.read s.r resp in
-  if answer <> done_ then
-    raise (Regs.Stuck (strf "%s answered 0x%x" what answer));
-  Regs.read s.r arg
+  if answer = done_ then Ok (Regs.read s.r arg) else Error answer
+
+let send ?debug ?ms s m param =
+  match ask ?debug ?ms s m param with
+  | Ok reply -> reply
+  | Error answer ->
+      raise
+        (Regs.Stuck
+           (strf "the power manager's message 0x%x answered 0x%x" m answer))
 
 let lo32 v = v land 0xffff_ffff
 let hi32 v = (v lsr 32) land 0xffff_ffff
@@ -95,7 +103,13 @@ let frequencies s clock =
   | None ->
       let by_index = id s "PPSMC_MSG_GetDpmFreqByIndex" in
       let q i = send s by_index (clock_request ~clock i) land 0x7fff_ffff in
-      let n = q 0xff in
+      (* A power manager whose features are off refuses the count: the clock
+         then keeps its boot frequency, and has no levels to set. *)
+      let n =
+        match ask s by_index (clock_request ~clock 0xff) with
+        | Ok n -> n land 0x7fff_ffff
+        | Error _ -> 0
+      in
       if n > max_levels then
         raise
           (Regs.Stuck
