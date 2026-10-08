@@ -92,11 +92,21 @@ let starts =
       @ m.freed
       @ [ m.base - 1; m.base + m.length ])
 
+(* The sizes right at the fit bound of a free range of [g] addresses: [n] that
+   fits with its alignment [a] where [n + 1] would not, [n = g / 2 - a]. *)
+let at_bound g =
+  List.filter_map
+    (fun k ->
+      let a = 4096 lsl k in
+      let n = (g / 2) - a in
+      if n >= 1 && alignment n = a then Some n else None)
+    (List.init 40 Fun.id)
+
 (* Sizes at the bound the largest free range sets, and at the space's length. *)
 let edges =
   among int space (fun m ->
       let g = largest_gap m in
-      [ g / 4; (g / 4) + 1; g / 2; m.length; m.length + 1 ])
+      [ g / 4; (g / 4) + 1; g / 2; m.length; m.length + 1 ] @ at_bound g)
 
 let bases =
   Gen.of_list ~pp:pp_hex
