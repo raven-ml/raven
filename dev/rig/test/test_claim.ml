@@ -445,43 +445,54 @@ let write d m =
 let read d m =
   ignore (submit (Rig.Submission.make ~reads:1 ~writes:0 d [||]) ~reads:[| m |])
 
-(* A claim waits for nothing: it is Pending while a point the access must follow
-   is unreached, the last write for reading and every use for writing, and
-   leaves no claim then; Claimed once the word shows the point. *)
-let test_c_pending () =
-  let d, p = P.open_ "claim:c-pending" in
+(* Whether a claim holds [m]'s memory: a donation of it stays a read. *)
+let claimed m =
+  Claim.with_ ~read:[] ~donate:[ [ m ] ] (fun c -> not (Claim.exclusive c m))
+
+(* A claim waits for nothing: it answers Wait while a point the access must
+   follow is unreached, the last write for reading and every use for writing,
+   and holds the claim then; Claimed once the word shows the point. A wait
+   under the claim returns once the points are reached. *)
+let test_c_wait () =
+  let d, p = P.open_ "claim:c-wait" in
   let m = B.create d 64 in
   write d m;
-  equal ~msg:"an unreached write" answer R.Pending (R.claim m B.Read);
-  ignore (P.run p);
+  equal ~msg:"an unreached write" answer R.Wait (R.claim m B.Read);
+  equal ~msg:"claimed while it waits" bool true (claimed m);
+  R.wait m B.Read;
+  equal ~msg:"the wait ran the write" int 0 (P.queued p);
+  R.release m;
   equal ~msg:"the write reached" answer R.Claimed (R.claim m B.Read);
   R.release m;
   read d m;
   equal ~msg:"an unreached read, for reading" answer R.Claimed
     (R.claim m B.Read);
   R.release m;
-  equal ~msg:"an unreached read, for writing" answer R.Pending
+  equal ~msg:"an unreached read, for writing" answer R.Wait
     (R.claim m B.Read_write);
-  B.wait m B.Read_write;
+  R.wait m B.Read_write;
+  R.release m;
   equal ~msg:"after a wait" answer R.Claimed (R.claim m B.Read_write);
   R.release m;
-  Claim.with_ ~read:[] ~donate:[ [ m ] ] (fun c ->
-      equal ~msg:"no claim left" bool true (Claim.exclusive c m))
+  equal ~msg:"no claim left" bool false (claimed m)
 
 (* Behind a transport a claim reads the value the host last read: work that ran
-   is Pending until a wait reads the word, and Claimed after it. *)
+   answers Wait until a wait reads the word, and Claimed after it. *)
 let test_c_transport () =
   let d, p = P.open_ ~transport:true "claim:c-transport" in
   let m = B.create d 64 in
   write d m;
   ignore (P.run p);
-  equal ~msg:"ran, unread" answer R.Pending (R.claim m B.Read);
-  B.wait m B.Read;
+  equal ~msg:"ran, unread" answer R.Wait (R.claim m B.Read);
+  R.wait m B.Read;
+  R.release m;
   equal ~msg:"after a wait" answer R.Claimed (R.claim m B.Read);
   R.release m
 
-(* A lost device's memory is Pending even once its work on it was reached: the
-   wait the caller then makes raises Lost. *)
+let lost = function Rig.Lost _ -> true | _ -> false
+
+(* A lost device's memory answers Wait even once its work on it was reached:
+   the wait under the claim raises Lost and leaves the claim held. *)
 let test_c_lost () =
   let d, p = P.open_ "claim:c-lost" in
   let m = B.create d 64 in
@@ -490,13 +501,29 @@ let test_c_lost () =
   P.fail p;
   (try ignore (submit (Rig.Submission.make ~reads:0 ~writes:0 d [||]))
    with Rig.Lost _ -> ());
-  equal ~msg:"reached, lost" answer R.Pending (R.claim m B.Read);
-  raises_match
-    (function Rig.Lost _ -> true | _ -> false)
-    (fun () -> B.wait m B.Read)
+  equal ~msg:"reached, lost" answer R.Wait (R.claim m B.Read);
+  raises_match lost (fun () -> R.wait m B.Read);
+  Claim.release m;
+  raises_match ~msg:"the one claim released"
+    (Exn.invalid_arg ~substring:"no read claim")
+    (fun () -> Claim.release m)
 
-(* Other memory is Pending for a point a lost device did not reach, and Claimed
-   for one it reached: its stop's last value in the word reaches nothing. *)
+(* A device lost during the wait: the wait raises Lost, the claim held. *)
+let test_c_lost_waiting () =
+  let d, p = P.open_ "claim:c-lost-waiting" in
+  let m = B.create d 64 in
+  write d m;
+  equal ~msg:"unreached" answer R.Wait (R.claim m B.Read);
+  P.fault p "gone";
+  raises_match lost (fun () -> R.wait m B.Read);
+  Claim.release m;
+  raises_match ~msg:"the one claim released"
+    (Exn.invalid_arg ~substring:"no read claim")
+    (fun () -> Claim.release m)
+
+(* Other memory answers Wait for a point a lost device did not reach, and
+   Claimed for one it reached: its stop's last value in the word reaches
+   nothing. *)
 let test_c_lost_points () =
   let d, p = P.open_ "claim:c-lost-points" in
   let reached = B.create Rig.host (1 lsl 16) in
@@ -509,7 +536,8 @@ let test_c_lost_points () =
    with Rig.Lost _ -> ());
   equal ~msg:"reached" answer R.Claimed (R.claim reached B.Read_write);
   R.release reached;
-  equal ~msg:"unreached" answer R.Pending (R.claim unreached B.Read)
+  equal ~msg:"unreached" answer R.Wait (R.claim unreached B.Read);
+  R.release unreached
 
 (* Held memory follows every point of its hold, whatever the access. *)
 let test_c_held () =
@@ -517,7 +545,8 @@ let test_c_held () =
   let m = B.create d 64 in
   let h = Rig.Hold.make [ m ] in
   ignore (submit (Rig.Submission.make ~hold:h ~reads:0 ~writes:0 d [||]));
-  equal ~msg:"an unreached use of the hold" answer R.Pending (R.claim m B.Read);
+  equal ~msg:"an unreached use of the hold" answer R.Wait (R.claim m B.Read);
+  R.release m;
   ignore (P.run p);
   equal ~msg:"reached" answer R.Claimed (R.claim m B.Read);
   R.release m;
@@ -533,7 +562,6 @@ let test_lost_claims () =
   P.fail p;
   (try ignore (submit (Rig.Submission.make ~reads:0 ~writes:0 d [||]))
    with Rig.Lost _ -> ());
-  let lost = function Rig.Lost _ -> true | _ -> false in
   raises_match lost (fun () -> Claim.read m);
   let h = B.create Rig.host 64 in
   raises_match lost (fun () -> Claim.with_ ~read:[ h; m ] ~donate:[] ignore);
@@ -602,12 +630,17 @@ let tests =
     group ~timeout "claims from C"
       [
         test "a claim from C is a read claim" test_c_claims;
-        test "a claim from C is pending until the word shows its points"
-          test_c_pending;
+        test
+          "a claim from C holds the memory and waits until the word shows \
+           its points"
+          test_c_wait;
         test "behind a transport a claim reads the word a wait read"
           test_c_transport;
-        test "a claim on a lost device's memory is pending" test_c_lost;
-        test "a claim on memory a lost device did not reach is pending"
+        test "a wait on a lost device's memory raises Lost under the claim"
+          test_c_lost;
+        test "a device lost during a wait from C raises Lost under the claim"
+          test_c_lost_waiting;
+        test "a claim on memory a lost device did not reach waits"
           test_c_lost_points;
         test "a claim on held memory follows every point of the hold"
           test_c_held;

@@ -7,8 +7,8 @@
 
    A host kernel reads arrays only through the door: nx_read checks every
    operand of a call and claims every operand's memory, or refuses and claims
-   none; the kernel runs over the descriptors nx_read filled, and nx_done
-   ends the claims:
+   none, then waits under the claims for the device work on them; the kernel
+   runs over the descriptors nx_read filled, and nx_done ends the claims:
 
      nx_operand in[3] = { { vz, dt, 1 }, { vx, dt, 0 }, { vy, dt, 0 } };
      nx_array a[3];
@@ -20,9 +20,8 @@
      return e;
 
    The kernel answers its code to its OCaml wrapper, which hands any code but
-   NX_OK to Nx_array.settle. For NX_PENDING settle waits for the device work
-   and returns, and the wrapper calls the kernel again; for every other code
-   it raises.
+   NX_OK to Nx_array.refused, which raises: every code but NX_OK is a
+   refusal.
 
    A descriptor's element at index (i0, …, ik-1), 0 <= ij < dim[j], lies at
    position offset + Σ ij·dim[rank + j], counted in elements from base, as
@@ -55,7 +54,6 @@ enum {
   NX_DTYPE,        /* an operand's dtype is not the one named */
   NX_DEAD,         /* an operand's buffer is dead */
   NX_NOT_HOST,     /* the host does not address an operand's memory */
-  NX_PENDING,      /* device work on an operand is unfinished: wait, retry */
   NX_EXCLUSIVE,    /* an operand's memory is held exclusive */
   NX_READ_ONLY,    /* a written operand's memory is Read */
   NX_NOT_DISTINCT, /* a written operand reaches a position twice */
@@ -73,12 +71,19 @@ enum {
    it stays valid when the kernel allocates or releases the domain lock. In
    return the kernel keeps these rules:
 
+   - nx_read may wait for device work, which runs OCaml code: the collector,
+     signal handlers, other threads, the device's driver. A kernel that calls
+     it is an external that is not [@@noalloc], and keeps as a root
+     registered with CAMLparam every OCaml value other than its operands that
+     it uses after nx_read. nx_read raises what Rig.Buffer.wait raises,
+     holding no claim: the kernel acquires nothing before it that must be
+     undone.
    - nx_read and nx_done run on one thread, with the domain lock held.
    - Descriptors stay where nx_read filled them, in the frame of the C
      function that called it, and are passed by pointer, never copied or
      moved, until nx_done.
-   - nx_done runs once per successful nx_read, never after a refusal, before
-     that function returns or raises.
+   - nx_done runs once per successful nx_read, never after a refusal or a
+     raise, before that function returns or raises.
    - nx_read and nx_done nest with root frames as CAMLparam and CAMLreturn
      do: a frame registered before nx_read is popped after nx_done, and one
      registered after nx_read is popped before nx_done. A kernel registers
@@ -102,8 +107,10 @@ typedef struct {
   int dtype, bits, rank, flags;
   int64_t offset;               /* elements from base */
   int64_t dim[2 * NX_MAX_RANK]; /* rank extents, then rank strides */
-  /* Private: the claimed buffer, a local root until nx_done. */
+  /* Private: the claimed buffer, a local root until nx_done, and whether
+     nx_read waits for device work on it. */
   value buffer;
+  int wait;
   struct caml__roots_block roots;
 } nx_array;
 
@@ -115,11 +122,13 @@ int nx_array_dtype(value v);
    it checks the dtype, the layout, that the buffer lives and, unless the
    operand has no element, that the host addresses it; per written operand,
    that it is NX_DISTINCT and shares no byte with another operand. It then
-   claims each operand's memory, for writing if written: NX_PENDING while
-   device work the access must follow is unfinished, NX_EXCLUSIVE if the
+   claims each operand's memory, for writing if written: NX_EXCLUSIVE if the
    memory is held exclusive, NX_READ_ONLY if a written operand's memory is
-   Read. It allocates nothing and raises nothing. With no operand it answers
-   NX_OK. */
+   Read. Under the claims it waits for the device work each operand's access
+   must follow, as Rig.Buffer.wait does; this alone runs OCaml code, and only
+   while such work is unfinished. If the wait raises, as Rig.Lost does for a
+   lost device, nx_read releases every claim and raises it. With no operand
+   it answers NX_OK. */
 int nx_read(int n, const nx_operand *in, nx_array *out);
 
 /* Releases the claims of the [n] operands a successful nx_read filled and

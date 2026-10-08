@@ -360,28 +360,27 @@ let test_expect () =
   raises_match (Exn.invalid_arg ~substring:"float32") (fun () ->
       A.expect D.Float64 (A.Any a))
 
-let test_settle () =
+let test_refused () =
   let a = floats32 [| 2; 3 |] (Array.make 6 0.) in
   let b = A.create Rig.host D.Int8 [| 4 |] in
-  (match A.settle "add" 1 [ A.Any a; A.Any b ] with
-  | () -> fail "settle returned on a refusal"
+  (match A.refused "add" 1 [ A.Any a; A.Any b ] with
+  | () -> fail "refused returned"
   | exception Invalid_argument m ->
       starts_with ~affix:"add: " m;
       contains ~sub:"dtype" m;
       contains ~sub:"float32 [2; 3]" m;
       contains ~sub:"int8 [4]" m);
-  A.settle "add" 4 [ A.Any a; A.Any b ];
   raises_match (Exn.invalid_arg ~substring:"shapes") (fun () ->
-      A.settle "add" 10 [ A.Any a ])
+      A.refused "add" 9 [ A.Any a ])
 
 (* Every refusal code raises, naming the function and each operand, with a
    reason of its own. *)
-let test_settle_codes () =
+let test_refused_codes () =
   let a = floats32 [| 2; 3 |] (Array.make 6 0.) in
-  let refusals = [ 1; 2; 3; 5; 6; 7; 8; 9; 10; 11 ] in
+  let refusals = [ 1; 2; 3; 4; 5; 6; 7; 8; 9; 10 ] in
   let reason code =
-    match A.settle "Nx.f" code [ A.Any a ] with
-    | () -> failf "settle returned on code %d" code
+    match A.refused "Nx.f" code [ A.Any a ] with
+    | () -> failf "refused returned on code %d" code
     | exception Invalid_argument m ->
         starts_with ~msg:(string_of_int code) ~affix:"Nx.f: " m;
         contains ~msg:(string_of_int code) ~sub:"float32 [2; 3]" m;
@@ -1057,11 +1056,11 @@ let ok = 0
 and dtype_code = 1
 and dead = 2
 and not_host = 3
-and exclusive = 5
+and exclusive = 4
 
-let not_distinct = 7
-and overlap = 8
-and shape_code = 10
+let not_distinct = 6
+and overlap = 7
+and shape_code = 9
 
 let test_door_add () =
   let x = floats32 [| 2; 3 |] [| 0.; 1.; 2.; 3.; 4.; 5. |] in
@@ -1132,8 +1131,8 @@ let test_door_buffers () =
 let test_door_reasons () =
   let x = floats32 [| 2 |] [| 1.; 2. |] in
   let reason ~sub e =
-    match A.settle "k" e [ A.Any x ] with
-    | () -> failf "settle returned on code %d" e
+    match A.refused "k" e [ A.Any x ] with
+    | () -> failf "refused returned on code %d" e
     | exception Invalid_argument m -> contains ~msg:sub ~sub m
   in
   let wrong = A.of_array D.Float64 [| 2 |] [| 1.; 2. |] in
@@ -1174,6 +1173,159 @@ let test_door_moving_gc () =
   equal bool true (unclaimed (A.buffer x));
   equal (values f32) [| 1.; 2.; 3.; 4. |] (A.to_array x)
 
+(* Device work: operands on a Late device, whose work runs only once a wait
+   sleeps on it. A kernel waits for the work its operands' accesses follow and
+   then runs: a store that ran after the kernel would show in its result. *)
+
+let lates = Atomic.make 0
+
+let late () =
+  S.Late.open_ (strf "nx2-test-late:%d" (Atomic.fetch_and_add lates 1))
+
+let f32_bytes xs =
+  let b = Bytes.create (4 * Array.length xs) in
+  Array.iteri
+    (fun i x -> Bytes.set_int32_le b (4 * i) (Int32.bits_of_float x))
+    xs;
+  Bytes.to_string b
+
+(* Work on [a]'s device that stores [xs] into [a], unreached. *)
+let pending a xs = S.write (A.buffer a) (f32_bytes xs)
+
+(* An array of [xs] on the Late device [d], its work reached. *)
+let on_late d xs =
+  let a = A.create d f32 [| Array.length xs |] in
+  pending a xs;
+  B.wait (A.buffer a) B.Read_write;
+  a
+
+(* Whether no claim holds [a]'s memory: a release finds none. *)
+let no_claim a =
+  raises_match (Exn.invalid_arg ~substring:"no read claim") (fun () ->
+      Rig.Claim.release (A.buffer a))
+
+let lost = function Rig.Lost _ -> true | _ -> false
+
+let test_wait_add () =
+  let d, _ = late () in
+  let sums = [| [| 11.; 22. |]; [| 110.; 220. |]; [| 101.; 202. |] |] in
+  for k = 0 to 2 do
+    let z = on_late d [| 0.; 0. |] and x = on_late d [| 1.; 2. |] in
+    let y = on_late d [| 10.; 20. |] in
+    pending [| z; x; y |].(k) [| 100.; 200. |];
+    let msg = strf "work on operand %d" k in
+    equal ~msg int ok (S.add z x y);
+    equal ~msg (values f32) sums.(k) (A.to_array z)
+  done
+
+let test_wait_to_array () =
+  let d, _ = late () in
+  let a = on_late d [| 0.; 0. |] in
+  pending a [| 3.; 4. |];
+  equal ~msg:"float32" (values f32) [| 3.; 4. |] (A.to_array a);
+  let b = A.create d D.Int32 [| 2 |] in
+  pending b [| Int32.float_of_bits 5l; Int32.float_of_bits 6l |];
+  equal ~msg:"int32" (values D.Int32) [| 5l; 6l |] (A.to_array b)
+
+let test_wait_of_array () =
+  let d, _ = late () in
+  let a = on_late d [| 0.; 0. |] in
+  pending a [| 3.; 4. |];
+  equal int ok (S.of_array_into a [| 7.; 8. |]);
+  equal (values f32) [| 7.; 8. |] (A.to_array a)
+
+let test_wait_copy () =
+  let d, _ = late () in
+  let a = on_late d [| 0.; 0. |] in
+  pending a [| 3.; 4. |];
+  equal ~msg:"copy" (values f32) [| 3.; 4. |] (A.to_array (A.copy a));
+  let dst = on_late d [| 0.; 0. |] in
+  pending dst [| 5.; 6. |];
+  equal ~msg:"into written work" int ok (S.copy_into dst a);
+  equal ~msg:"into written work" (values f32) [| 3.; 4. |] (A.to_array dst)
+
+(* A device lost while a kernel waits for its work raises Lost, and the kernel
+   leaves no claim behind. *)
+let test_wait_lost () =
+  let d, l = late () in
+  let x = on_late d [| 1.; 2. |] in
+  let z = zeros [| 2 |] and y = floats32 [| 2 |] [| 1.; 2. |] in
+  pending x [| 3.; 4. |];
+  S.Late.fault l "gone";
+  raises_match ~msg:"the kernel" lost (fun () -> S.add z x y);
+  List.iter no_claim [ z; x; y ];
+  raises_match ~msg:"to_array" lost (fun () -> A.to_array x);
+  no_claim x
+
+(* Two domains: kernels that read an array on a Late device, against submits
+   that write it and donations that consume it. Every submit stores ones, so a
+   kernel that ran reads ones. A kernel refuses the array as dead, or as held
+   exclusive by a donation that then consumes it, and for no other reason. *)
+type shared = { mutable dead : bool }
+
+let shared =
+  abstract ~pp:(fun ppf r -> Format.fprintf ppf "dead %b" r.dead) "m"
+
+let ones = Array.make 4 1.
+let shared_device = lazy (fst (late ()))
+
+let judge_kernel r = function
+  | Ok (e, z) when e = ok ->
+      equal ~msg:"dead" bool false r.dead;
+      equal ~msg:"x + x" (values f32) (Array.make 4 2.) z
+  | Ok (e, _) when e = dead || e = exclusive ->
+      equal ~msg:"dead" bool true r.dead
+  | Ok (e, _) -> failf "the kernel answered %d" e
+  | Error e -> raise e
+
+let judge_live r = function
+  | Ok () -> equal ~msg:"dead" bool false r.dead
+  | Error (Invalid_argument _) -> equal ~msg:"dead" bool true r.dead
+  | Error e -> raise e
+
+let judge_donate r = function
+  | Ok consumed ->
+      equal ~msg:"dead" bool false r.dead;
+      r.dead <- consumed
+  | Error (Invalid_argument _) -> equal ~msg:"dead" bool true r.dead
+  | Error e -> raise e
+
+let kernel x =
+  let z = zeros [| 4 |] in
+  let e = S.add z x x in
+  (e, if e = ok then A.to_array z else [||])
+
+let to_array x = equal (values f32) ones (A.to_array x)
+
+let submit x =
+  Rig.Claim.read (A.buffer x);
+  Fun.protect
+    ~finally:(fun () -> Rig.Claim.release (A.buffer x))
+    (fun () -> pending x ones)
+
+let donate x =
+  let b = A.buffer x in
+  Rig.Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
+      Rig.Claim.exclusive c b
+      && begin
+        ignore (Rig.Claim.consume c ~why:"donated" b);
+        true
+      end)
+
+let door_commands =
+  [
+    command "make"
+      (Gen.unit @-> makes shared)
+      (fun () -> { dead = false })
+      (fun () -> on_late (Lazy.force shared_device) ones);
+    command "kernel"
+      (shared ^-> judges (pair int (values f32)))
+      judge_kernel kernel;
+    command "to_array" (shared ^-> judges unit) judge_live to_array;
+    command "submit" (shared ^-> judges unit) judge_live submit;
+    command "donate" (shared ^-> judges bool) judge_donate donate;
+  ]
+
 let float_dtypes = List.filter (fun (D.Any dt) -> D.is D.Float dt) D.all
 
 let tests =
@@ -1208,9 +1360,9 @@ let tests =
         prop ~count:1000 "bitcast follows its rule over any layout" bitcast_case
           law_bitcast;
         test "expect recovers the dtype or names both" test_expect;
-        test "settle returns on pending work and names every refusal"
-          test_settle;
-        test "settle gives each refusal its own reason" test_settle_codes;
+        test "refused names the function, the reason and every operand"
+          test_refused;
+        test "refused gives each refusal its own reason" test_refused_codes;
       ];
     group "elements"
       [
@@ -1275,12 +1427,26 @@ let tests =
           test_door_positions;
         test "a written operand must be distinct and alone" test_door_written;
         test "dead, foreign and exclusive buffers are refused" test_door_buffers;
-        test "settle names the reason of each refusal the door answers"
+        test "refused names the reason of each refusal the door answers"
           test_door_reasons;
         test "an operand with no element passes the door, on the host or off it"
           test_door_empty;
         test "a read releases its claims" test_door_releases;
         test "a read survives a moving collection" test_door_moving_gc;
+      ];
+    group "device work"
+      [
+        test "a kernel runs after the work on each operand" test_wait_add;
+        test "to_array reads after the work on its array" test_wait_to_array;
+        test "of_array's store runs after the work on its array"
+          test_wait_of_array;
+        test "a copy reads and writes after the work on its arrays"
+          test_wait_copy;
+        test "a device lost during the wait raises Lost and leaves no claim"
+          test_wait_lost;
+        stateful ~domains:2
+          "kernels against submits and donations on another domain"
+          door_commands;
       ];
   ]
 

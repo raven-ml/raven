@@ -6,8 +6,7 @@
   (language c)
   (include_dirs
    ../../lib/array
-   (lib rig)
-   (lib rig.edge))
+   (lib rig))
   (names nx_array_bench_stubs)))
 
 (executable

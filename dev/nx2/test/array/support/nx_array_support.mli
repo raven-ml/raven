@@ -29,13 +29,17 @@ val layout : Nx_array.Layout.t -> int array
 val add : 'z -> 'x -> 'y -> int
 (** [add z x y] is a float32 kernel through [nx_read] and [nx_coalesce]: it
     stores [x + y] into [z] and answers [nx_array.h]'s code. Its operands are
-    untyped, as an array built from parts can be. It is a [[@@noalloc]]
-    external, as a kernel that keeps the domain lock is. *)
+    untyped, as an array built from parts can be. *)
 
 val copy_into : ('v, 's) Nx_array.t -> ('v, 's) Nx_array.t -> int
 (** [copy_into dst src] is the gather {!Nx_array.copy} runs, into [dst], any
     written operand of [src]'s dtype and shape: it copies [src]'s elements into
     [dst] through [nx_read] and answers [nx_array.h]'s code. *)
+
+val of_array_into : ('v, 's) Nx_array.t -> 'v array -> int
+(** [of_array_into a xs] is the store {!Nx_array.of_array} runs, into [a], any
+    array of [Array.length xs] elements: it writes [xs] in C order of indices
+    through [nx_read] and answers [nx_array.h]'s code. *)
 
 val collect : ('v, 's) Nx_array.t -> int
 (** [collect a] reads [a] through [nx_read], empties the minor heap and compacts
@@ -56,3 +60,25 @@ val io_device : unit -> Rig.t
 val io_allocations : unit -> int
 (** [io_allocations ()] is the number of allocations {!io_device}'s memory has
     made so far. *)
+
+(** A device over host memory whose work runs only when a wait sleeps on it, as
+    a device still running work does until the host waits for it. A submit
+    queues its fills; its driver's sleep, or its stop, runs every queued fill in
+    order and then shows the last value in its word. The host addresses its
+    memory. *)
+module Late : sig
+  type t
+  (** The type for a Late device's driver state. *)
+
+  val open_ : string -> Rig.t * t
+  (** [open_ name] opens a fresh Late device named [name]. *)
+
+  val fault : t -> string -> unit
+  (** [fault d why] makes [d]'s sleeps raise its driver's [Fault why] from now
+      on, which loses the device in the wait that sleeps. *)
+end
+
+val write : Rig.Buffer.t -> string -> unit
+(** [write b s] submits, on [b]'s device, work that writes [b] and stores the
+    bytes of [s] at [b]'s first byte, a Late device's fill. On a Late device the
+    bytes are there once a wait for [b] slept. *)

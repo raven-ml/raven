@@ -660,9 +660,15 @@ value rig_test_reader_why(value v_b) {
 }
 
 /* rig_buffer_claim, whose answer is the constructor of Reader.answer of
-   the same rank, and rig_buffer_release. */
+   the same rank, rig_buffer_wait, which raises what the wait raised, and
+   rig_buffer_release. */
 value rig_test_reader_claim(value v_b, value v_access) {
   return Val_int(rig_buffer_claim(
+      v_b, Int_val(v_access) == 0 ? RIG_READ : RIG_READ_WRITE));
+}
+
+value rig_test_reader_wait(value v_b, value v_access) {
+  return caml_get_value_or_raise(rig_buffer_wait(
       v_b, Int_val(v_access) == 0 ? RIG_READ : RIG_READ_WRITE));
 }
 

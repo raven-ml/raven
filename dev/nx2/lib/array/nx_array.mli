@@ -18,21 +18,18 @@
     keeps; {!create} and {!of_array} make fresh ones.
 
     Host kernels are C and read arrays only through the door of [nx_array.h],
-    which claims every operand of a call or none and answers a code. A kernel's
-    OCaml wrapper hands any code but [NX_OK] to {!settle}, which waits for
-    unfinished device work and returns, so the wrapper calls the kernel again,
-    or raises:
+    which claims every operand of a call or none, waits under the claims for
+    unfinished device work on them, and answers a code. A kernel's OCaml wrapper
+    hands any code but [NX_OK] to {!refused}, which raises. The door may run
+    OCaml code while it waits, so a kernel's external is never [[@@noalloc]]:
     {[
     external add_kernel :
       ('v, 's) Nx_array.t -> ('v, 's) Nx_array.t -> ('v, 's) Nx_array.t -> int
       = "nx_cpu_add"
 
-    let rec add z x y =
+    let add z x y =
       let e = add_kernel z x y in
-      if e <> 0 then begin
-        Nx_array.settle "Nx.add" e [ Any z; Any x; Any y ];
-        add z x y
-      end
+      if e <> 0 then Nx_array.refused "Nx.add" e [ Any z; Any x; Any y ]
     ]}
     GPU kernel libraries bind arrays in OCaml, through their typed signatures or
     {!expect}. [nx_dtype.h] holds the dtypes' codes, their facts and every
@@ -221,13 +218,8 @@ val of_bigarray :
 
 (** {1:kernels Kernels} *)
 
-val settle : string -> int -> any list -> unit
-(** [settle name code operands] handles [code], a code of [nx_array.h] other
-    than [NX_OK] that a kernel answered for [operands]. For [NX_PENDING] it
-    waits for every use of each operand's memory ({!Rig.Buffer.wait} with
-    [Read_write]) and returns, and the caller calls the kernel again. For every
-    other code it raises [Invalid_argument] naming [name], the reason the code
-    gives, and each operand's dtype and shape. [name] is the function the user
-    called, as ["Nx.add"].
-
-    Raises {!Rig.Lost} as {!Rig.Buffer.wait} does. *)
+val refused : string -> int -> any list -> 'a
+(** [refused name code operands] raises [Invalid_argument] for [code], a code
+    of [nx_array.h] other than [NX_OK] that a kernel answered for [operands],
+    naming [name], the reason the code gives, and each operand's dtype and
+    shape. [name] is the function the user called, as ["Nx.add"]. *)

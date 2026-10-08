@@ -3,16 +3,20 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
+#include <stdatomic.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <caml/alloc.h>
 #include <caml/bigarray.h>
+#include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/minor_gc.h>
 #include <caml/mlvalues.h>
 
 #include "nx_array.h"
 #include "nx_layout.h"
+#include "rig_edge.h"
 
 /* The row of the dtype [code] in nx_dtype.h, as (name, bits, kind), or
    None past the last code. */
@@ -145,4 +149,151 @@ value nx_array_support_blit_out(value ba, value at, value dst, value len) {
   memcpy((void *)Long_val(dst),
          (const uint8_t *)Caml_ba_data_val(ba) + Long_val(at), Long_val(len));
   return Val_unit;
+}
+
+/* Late: a device over host memory whose work runs only when a wait sleeps
+   on it. A submit queues its fills and records its value; the next sleep,
+   or the stop, runs the queued fills in order and makes the last value the
+   word's. Sleeps on two domains run the queue one at a time. A submit of no
+   fill, and a sleep with none queued, take no lock: a submit raises
+   [queued] before [last], so a sleep that reads a value then finds its
+   fills queued. */
+
+#define LATE_QUEUE 256
+
+struct late_fill {
+  int (*fill)(void *queue, void *arg, uint64_t v);
+  void *arg;
+  uint64_t v;
+};
+
+struct late {
+  _Atomic uint64_t word;
+  _Atomic uint64_t last;
+  _Atomic int queued;
+  atomic_flag busy;
+  struct late_fill queue[LATE_QUEUE];
+};
+
+static void late_lock(struct late *l) {
+  while (atomic_flag_test_and_set_explicit(&l->busy, memory_order_acquire))
+    ;
+}
+
+static void late_unlock(struct late *l) {
+  atomic_flag_clear_explicit(&l->busy, memory_order_release);
+}
+
+/* Makes [v] the word's unless it already shows a later value. */
+static void late_show(struct late *l, uint64_t v) {
+  uint64_t w = atomic_load_explicit(&l->word, memory_order_relaxed);
+  while (w < v && !atomic_compare_exchange_weak_explicit(
+                      &l->word, &w, v, memory_order_release,
+                      memory_order_relaxed))
+    ;
+}
+
+value nx_array_support_late_new(value unit) {
+  (void)unit;
+  struct late *l = calloc(1, sizeof *l);
+  if (l == NULL) caml_raise_out_of_memory();
+  atomic_flag_clear(&l->busy);
+  return caml_copy_nativeint((intnat)l);
+}
+
+value nx_array_support_late_publish(value self) {
+  struct late *l = (struct late *)Nativeint_val(self);
+  uint64_t v = atomic_load_explicit(&l->last, memory_order_acquire);
+  if (atomic_load_explicit(&l->queued, memory_order_acquire) == 0) {
+    late_show(l, v);
+    return Val_unit;
+  }
+  late_lock(l);
+  int n = atomic_load_explicit(&l->queued, memory_order_relaxed);
+  for (int i = 0; i < n; i++)
+    l->queue[i].fill(NULL, l->queue[i].arg, l->queue[i].v);
+  atomic_store_explicit(&l->queued, 0, memory_order_relaxed);
+  late_show(l, atomic_load_explicit(&l->last, memory_order_acquire));
+  late_unlock(l);
+  return Val_unit;
+}
+
+value nx_array_support_late_signaled(value self) {
+  struct late *l = (struct late *)Nativeint_val(self);
+  return Val_long((intnat)atomic_load_explicit(&l->word, memory_order_acquire));
+}
+
+/* Late runs fills only, as many as its queue holds. */
+static int late_room(void *self, const struct rig_part *parts, int n) {
+  struct late *l = self;
+  for (int i = 0; i < n; i++)
+    if (parts[i].fill == NULL || parts[i].words != NULL ||
+        parts[i].ring_units != 0 || parts[i].segment_bytes != 0)
+      return RIG_NEVER;
+  if (n > LATE_QUEUE) return RIG_NEVER;
+  int q = atomic_load_explicit(&l->queued, memory_order_acquire);
+  return q + n <= LATE_QUEUE ? RIG_FITS : RIG_LATER;
+}
+
+/* Submits run one at a time: rig hands a device one submission at once. */
+static int late_submit(void *self, uint64_t v, const struct rig_wait *waits,
+                       int nwaits, const struct rig_part *parts, int nparts,
+                       const uint64_t *handles, int nhandles,
+                       const char **failure) {
+  struct late *l = self;
+  (void)waits;
+  (void)nwaits;
+  (void)handles;
+  (void)nhandles;
+  (void)failure;
+  if (nparts == 0) {
+    atomic_store_explicit(&l->last, v, memory_order_release);
+    return RIG_OK;
+  }
+  late_lock(l);
+  int q = atomic_load_explicit(&l->queued, memory_order_relaxed);
+  for (int i = 0; i < nparts; i++)
+    l->queue[q++] = (struct late_fill){parts[i].fill, parts[i].arg, v};
+  atomic_store_explicit(&l->queued, q, memory_order_release);
+  atomic_store_explicit(&l->last, v, memory_order_release);
+  late_unlock(l);
+  return RIG_OK;
+}
+
+value nx_array_support_late_room(value unit) {
+  (void)unit;
+  return caml_copy_nativeint((intnat)&late_room);
+}
+
+value nx_array_support_late_submit(value unit) {
+  (void)unit;
+  return caml_copy_nativeint((intnat)&late_submit);
+}
+
+/* [v_n] bytes and 64 more, so the region can start on a multiple of 64; 0
+   if malloc fails. */
+value nx_array_support_malloc(value v_n) {
+  return Val_long((intnat)malloc((size_t)Long_val(v_n) + 64));
+}
+
+value nx_array_support_free(value v_p) {
+  free((void *)Long_val(v_p));
+  return Val_unit;
+}
+
+/* A fill storing bytes: its argument is the destination's host address and
+   the number of bytes, two 64-bit words, then the bytes. */
+static int store(void *queue, void *arg, uint64_t v) {
+  (void)queue;
+  (void)v;
+  uint64_t dst, n;
+  memcpy(&dst, arg, 8);
+  memcpy(&n, (uint8_t *)arg + 8, 8);
+  memcpy((void *)(uintptr_t)dst, (uint8_t *)arg + 16, (size_t)n);
+  return 0;
+}
+
+value nx_array_support_store(value unit) {
+  (void)unit;
+  return caml_copy_nativeint((intnat)&store);
 }

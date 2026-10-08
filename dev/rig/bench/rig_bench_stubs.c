@@ -272,14 +272,17 @@ value rig_bench_evict(value v_path) {
 #endif
 }
 
+/* Whether a claim answer holds the claim. */
+static int held(enum rig_claim c) { return c == RIG_CLAIMED || c == RIG_WAIT; }
+
 /* Claims the memory of three buffers for reading, then releases each, as a
    host kernel with three operands does around its loop. */
 value rig_bench_claim_3(value a, value b, value c) {
   enum rig_claim ca = rig_buffer_claim(a, RIG_READ);
   enum rig_claim cb = rig_buffer_claim(b, RIG_READ);
   enum rig_claim cc = rig_buffer_claim(c, RIG_READ);
-  if (ca == RIG_CLAIMED) rig_buffer_release(a);
-  if (cb == RIG_CLAIMED) rig_buffer_release(b);
-  if (cc == RIG_CLAIMED) rig_buffer_release(c);
+  if (held(ca)) rig_buffer_release(a);
+  if (held(cb)) rig_buffer_release(b);
+  if (held(cc)) rig_buffer_release(c);
   return Val_unit;
 }

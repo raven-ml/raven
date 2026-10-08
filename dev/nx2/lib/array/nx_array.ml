@@ -27,34 +27,29 @@ let device a = Buffer.device a.buffer
 (* Refusals. The codes are nx_array.h's, named in this library only here. *)
 
 let not_host = 3
-let pending = 4
 
 let reason = function
   | 1 -> "an operand's dtype is not the one the kernel loads"
   | 2 -> "an operand's buffer is dead"
   | 3 -> "the host does not address an operand's memory"
-  | 4 -> "device work on an operand is unfinished"
-  | 5 -> "an operand's memory is held exclusive"
-  | 6 -> "a written operand's memory is read-only"
-  | 7 -> "a written operand reaches an element twice"
-  | 8 -> "a written operand shares bytes with another operand"
-  | 9 -> "an operand's layout is not a layout"
-  | 10 -> "the operands' shapes differ"
-  | 11 -> "too many operands"
+  | 4 -> "an operand's memory is held exclusive"
+  | 5 -> "a written operand's memory is read-only"
+  | 6 -> "a written operand reaches an element twice"
+  | 7 -> "a written operand shares bytes with another operand"
+  | 8 -> "an operand's layout is not a layout"
+  | 9 -> "the operands' shapes differ"
+  | 10 -> "too many operands"
   | c -> Printf.sprintf "code %d" c
 
 let pp_operand ppf (Any a) =
   Format.fprintf ppf "%a %a" Dtype.pp a.dtype Shape.pp (Layout.shape a.layout)
 
-let settle name code operands =
-  if code = pending then
-    List.iter (fun (Any a) -> Buffer.wait a.buffer Buffer.Read_write) operands
-  else
-    invalid_argf "%s: %s (%a)" name (reason code)
-      (Format.pp_print_list
-         ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ")
-         pp_operand)
-      operands
+let refused name code operands =
+  invalid_argf "%s: %s (%a)" name (reason code)
+    (Format.pp_print_list
+       ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ")
+       pp_operand)
+    operands
 
 (* Making arrays *)
 
@@ -358,32 +353,21 @@ let set a idx x =
 (* Bulk access *)
 
 external to_array_into : ('v, 's) t -> 'v array -> int = "nx_array_to_array"
-[@@noalloc]
 
 external to_bigarray :
   ('v, 's) t -> ('v, 'b, Bigarray.c_layout) Bigarray.Array1.t -> int
   = "nx_array_to_bigarray"
-[@@noalloc]
 
 external of_array_from : ('v, 's) t -> 'v array -> int = "nx_array_of_array"
-[@@noalloc]
-
 external copy_into : ('v, 's) t -> ('v, 's) t -> int = "nx_array_copy"
-[@@noalloc]
 
 (* Elements that box are copied unboxed into a bigarray of their width under the
    claim and boxed after it, so that an allocation that raises holds no claim.
    Each kind has its own loop, where the bigarray access is inlined. *)
 let unboxed fn a k n =
   let b = Bigarray.Array1.create k Bigarray.c_layout n in
-  let rec read () =
-    let e = to_bigarray a b in
-    if e <> 0 then begin
-      settle fn e [ Any a ];
-      read ()
-    end
-  in
-  read ();
+  let e = to_bigarray a b in
+  if e <> 0 then refused fn e [ Any a ];
   b
 
 let int32s fn a n =
@@ -406,14 +390,8 @@ let to_array (type v s) (a : (v, s) t) : v array =
   let fn = "Nx_array.to_array" in
   let n = Layout.numel a.layout in
   let into (out : v array) =
-    let rec read () =
-      let e = to_array_into a out in
-      if e <> 0 then begin
-        settle fn e [ Any a ];
-        read ()
-      end
-    in
-    read ();
+    let e = to_array_into a out in
+    if e <> 0 then refused fn e [ Any a ];
     out
   in
   match a.dtype with
@@ -453,14 +431,8 @@ let of_array (type v s) (dt : (v, s) Dtype.t) s (values : v array) =
   | Float | Complex | Boolean -> ()
   | Signed | Unsigned -> Array.iter (checked fn dt) values);
   let a = alloc Rig.host dt layout in
-  let rec write () =
-    let e = of_array_from a values in
-    if e <> 0 then begin
-      settle fn e [ Any a ];
-      write ()
-    end
-  in
-  write ();
+  let e = of_array_from a values in
+  if e <> 0 then refused fn e [ Any a ];
   a
 
 (* The host gathers, so memory it does not address is refused before the copy is
@@ -469,16 +441,10 @@ let copy a =
   let fn = "Nx_array.copy" in
   live fn a.buffer;
   if Layout.numel a.layout > 0 && host_address a.buffer < 0 then
-    settle fn not_host [ Any a ];
+    refused fn not_host [ Any a ];
   let dst = create (device a) a.dtype (Layout.shape a.layout) in
-  let rec gather () =
-    let e = copy_into dst a in
-    if e <> 0 then begin
-      settle fn e [ Any dst; Any a ];
-      gather ()
-    end
-  in
-  gather ();
+  let e = copy_into dst a in
+  if e <> 0 then refused fn e [ Any dst; Any a ];
   dst
 
 external load_byte : Buffer.t -> (int[@untagged]) -> (int[@untagged])

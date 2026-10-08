@@ -18,11 +18,9 @@ module A1 = Bigarray.Array1
 
 external read_3 : ('v, 's) A.t -> ('v, 's) A.t -> ('v, 's) A.t -> int
   = "nx_array_bench_read_3"
-[@@noalloc]
 
 external loop_3 : ('v, 's) A.t -> ('v, 's) A.t -> ('v, 's) A.t -> int
   = "nx_array_bench_loop_3"
-[@@noalloc]
 
 external claim_3 : B.t -> B.t -> B.t -> unit = "nx_array_bench_claim_3"
 [@@noalloc]
@@ -267,14 +265,10 @@ let transpose a =
   let r = L.rank (A.layout a) in
   Option.get (A.move (M.Permute (Array.init r (fun i -> r - 1 - i))) a)
 
-(* A kernel's OCaml wrapper: a code other than [NX_OK] goes to [settle], which
-   waits for pending work, and the kernel runs again. *)
-let rec add z x y =
+(* A kernel's OCaml wrapper: a code other than [NX_OK] is a refusal. *)
+let add z x y =
   let e = Nx_array_support.add z x y in
-  if e <> 0 then begin
-    A.settle "add" e [ A.Any z; A.Any x; A.Any y ];
-    add z x y
-  end
+  if e <> 0 then A.refused "add" e [ A.Any z; A.Any x; A.Any y ]
 
 (* A kernel of one element: the result made, three operands read through the
    door and coalesced, one add. Its floor is rig's buffer. The views and
@@ -455,78 +449,15 @@ let placement_rows =
         (A.to_device Rig.host);
     ]
 
-(* Late, a device over host memory whose work completes only when a wait sleeps
-   on it: its submit records the value, its sleep and its stop publish it. *)
-
-external late_new : unit -> nativeint = "nx_array_bench_late_new"
-external late_publish : nativeint -> unit = "nx_array_bench_late_publish"
-external late_signaled : nativeint -> int = "nx_array_bench_late_signaled"
-external late_room : unit -> nativeint = "nx_array_bench_late_room"
-external late_submit : unit -> nativeint = "nx_array_bench_late_submit"
-external malloc : int -> int = "nx_array_bench_malloc"
-external free : int -> unit = "nx_array_bench_free"
-
-module Late = struct
-  type t = { self : nativeint }
-
-  (* [raw] is what [malloc] gave, [0] for the word. *)
-  type region = { at : int; raw : int }
-  type image = unit
-  type capability = unit
-
-  exception Fault of string
-
-  let key : t Type.Id.t = Type.Id.make ()
-  let arch _ = "late"
-  let budget _ = max_int
-  let queues _ = [ "COMPUTE:0" ]
-  let completion _ = `Host
-  let waits_on _ _ = false
-  let max_waits _ = 0
-  let blocks _ = `Returns
-  let maps_host _ = false
-  let capability _ = ()
-  let capability_key : capability Type.Id.t = Type.Id.make ()
-
-  let alloc _ _ n =
-    let raw = malloc n in
-    if raw = 0 then None else Some { at = (raw + 63) land lnot 63; raw }
-
-  let free _ r = if r.raw <> 0 then free r.raw
-  let address r = Some r.at
-  let handle r = Nativeint.of_int r.at
-  let host r = Some r.at
-  let peer _ _ = false
-  let map_peer _ _ _ = None
-  let map_host _ _ _ = None
-  let image _ _ = Error "late loads no code"
-  let entry () _ = None
-  let unload _ () = ()
-  let word d = { at = Nativeint.to_int d.self; raw = 0 }
-  let signaled d = late_signaled d.self
-  let sleep d ~seen:_ ~still_ms:_ = late_publish d.self
-  let room_entry = late_room ()
-  let submit_entry = late_submit ()
-  let self d = d.self
-  let stop d = late_publish d.self
-end
-
-(* A kernel after device work: a submit on Late writes [z], the door answers
-   [NX_PENDING], [settle] waits, and the kernel runs again. Beside it, the
-   submit and the wait alone, and the kernel over the same operands with nothing
-   pending. *)
+(* A kernel after device work: a submit on Late writes [z], and the door waits
+   for it under its claims before the kernel runs. Beside it, the submit and the
+   wait alone, and the kernel over the same operands with nothing pending. *)
 let kernel_rows =
   let opened = ref 0 in
   let late () =
     incr opened;
     let name = Printf.sprintf "nx2-bench-late:%d" !opened in
-    let d =
-      match
-        Rig.open_ (module Late) ~name (fun () -> Ok { Late.self = late_new () })
-      with
-      | Ok d -> d
-      | Error e -> failwith e
-    in
+    let d, _ = Nx_array_support.Late.open_ name in
     let z = A.create d f32 [| 1 |] and x = A.create d f32 [| 1 |] in
     let y = A.create d f32 [| 1 |] in
     (Rig.Submission.make ~reads:0 ~writes:1 d [||], z, x, y)
@@ -537,8 +468,6 @@ let kernel_rows =
   let pending () =
     let ((s, z, x, y) as env) = late () in
     writes s (A.buffer z);
-    if Nx_array_support.add z x y <> 4 then
-      failwith "add-1-pending: the door did not answer pending";
     add z x y;
     env
   in

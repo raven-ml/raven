@@ -7,6 +7,7 @@
 
 #include <caml/alloc.h>
 #include <caml/bigarray.h>
+#include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 
@@ -49,8 +50,8 @@ int nx_array_dtype(value v) { return (int)Long_val(Field(v, ARRAY_DTYPE)); }
 
 static int claim_code(enum rig_claim c) {
   switch (c) {
-    case RIG_CLAIMED: return NX_OK;
-    case RIG_PENDING: return NX_PENDING;
+    case RIG_CLAIMED:
+    case RIG_WAIT: return NX_OK;
     case RIG_DEAD: return NX_DEAD;
     case RIG_EXCLUSIVE: return NX_EXCLUSIVE;
     case RIG_READ_ONLY: return NX_READ_ONLY;
@@ -100,13 +101,20 @@ int nx_read(int n, const nx_operand *in, nx_array *out) {
       if (first_j < last && first < last_j) return NX_OVERLAP;
     }
   }
+  /* Every operand is claimed before any wait: a refusal of a later operand
+     spends no wait, and a wait runs under every claim, so no donation on
+     another domain consumes an operand while the call waits. */
+  int waits = 0;
   for (int k = 0; k < n; k++) {
     enum rig_claim c = rig_buffer_claim(
         out[k].buffer, in[k].written ? RIG_READ_WRITE : RIG_READ);
-    if (c != RIG_CLAIMED) {
+    int e = claim_code(c);
+    if (e) {
       while (k-- > 0) rig_buffer_release(out[k].buffer);
-      return claim_code(c);
+      return e;
     }
+    out[k].wait = c == RIG_WAIT;
+    waits |= out[k].wait;
   }
   /* Each buffer becomes a local root, so that a kernel that allocates or
      releases the domain lock keeps it reachable and finds it again in
@@ -122,6 +130,18 @@ int nx_read(int n, const nx_operand *in, nx_array *out) {
     top = &out[k].roots;
   }
   *roots = top;
+  if (!waits) return NX_OK;
+  /* The wait runs OCaml code, which may move each buffer: it is read from
+     its root. */
+  for (int k = 0; k < n; k++) {
+    if (!out[k].wait) continue;
+    caml_result r = rig_buffer_wait(
+        out[k].buffer, in[k].written ? RIG_READ_WRITE : RIG_READ);
+    if (caml_result_is_exception(r)) {
+      nx_done(n, out);
+      (void)caml_get_value_or_raise(r);
+    }
+  }
   return NX_OK;
 }
 
@@ -495,20 +515,22 @@ static void to_run(void *ctx, const int64_t *at, int64_t len) {
 
 /* to_array: reads [v]'s elements, in C order of indices, into [out], an
    OCaml array of their number, flat floats or immediates. It allocates
-   nothing; elements that box go through nx_array_to_bigarray. */
+   nothing past the door's wait; elements that box go through
+   nx_array_to_bigarray. */
 value nx_array_to_array(value v, value out) {
+  CAMLparam1(out);
   nx_operand in = {v, nx_array_dtype(v), 0};
   nx_array a;
   nx_loop l;
-  if (representation(in.dtype) == TO_BOXED) return Val_int(NX_DTYPE);
+  if (representation(in.dtype) == TO_BOXED) CAMLreturn(Val_int(NX_DTYPE));
   int e = nx_read(1, &in, &a);
-  if (e) return Val_int(e);
+  if (e) CAMLreturn(Val_int(e));
   if (!(e = nx_coalesce(1, &a, &l))) {
     to_ctx c = {&a, &l, out, 0};
     walk(1, &l, &c, to_run);
   }
   nx_done(1, &a);
-  return Val_int(e);
+  CAMLreturn(Val_int(e));
 }
 
 typedef struct {
@@ -573,19 +595,20 @@ static void of_run(void *ctx, const int64_t *at, int64_t len) {
 }
 
 /* of_array: writes [values], an OCaml array of [v]'s number of elements, in
-   C order of indices. It allocates nothing. */
+   C order of indices. It allocates nothing past the door's wait. */
 value nx_array_of_array(value v, value values) {
+  CAMLparam1(values);
   nx_operand in = {v, nx_array_dtype(v), 1};
   nx_array a;
   nx_loop l;
   int e = nx_read(1, &in, &a);
-  if (e) return Val_int(e);
+  if (e) CAMLreturn(Val_int(e));
   if (!(e = nx_coalesce(1, &a, &l))) {
     of_ctx c = {&a, &l, values, 0};
     walk(1, &l, &c, of_run);
   }
   nx_done(1, &a);
-  return Val_int(e);
+  CAMLreturn(Val_int(e));
 }
 
 /* copy: gathers [src]'s elements into [dst], a fresh contiguous array of
@@ -881,10 +904,11 @@ value nx_array_copy(value dst, value src) {
    from there once the claim is released, so that an allocation that raises
    holds no claim. */
 value nx_array_to_bigarray(value v, value out) {
+  CAMLparam1(out);
   nx_operand in = {v, nx_array_dtype(v), 0};
   nx_array a[2];
   int e = nx_read(1, &in, &a[1]);
-  if (e) return Val_int(e);
+  if (e) CAMLreturn(Val_int(e));
   /* [out] as a C-contiguous array of [v]'s dtype and shape. */
   nx_array *d = &a[0];
   int r = a[1].rank;
@@ -902,5 +926,5 @@ value nx_array_to_bigarray(value v, value out) {
   }
   e = gather(a);
   nx_done(1, &a[1]);
-  return Val_int(e);
+  CAMLreturn(Val_int(e));
 }

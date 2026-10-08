@@ -540,8 +540,10 @@ module Buffer : sig
 
       For the libraries that submit work. C code reads a buffer's host address,
       its length and the reason it is dead with [rig_buffer_host],
-      [rig_buffer_bytes] and [rig_buffer_why], and claims its memory with
-      [rig_buffer_claim] and [rig_buffer_release], declared in [rig.h]. *)
+      [rig_buffer_bytes] and [rig_buffer_why], claims its memory with
+      [rig_buffer_claim] and [rig_buffer_release], and waits under the claim
+      with [rig_buffer_wait], which runs {!wait}; all are declared in
+      [rig.h]. *)
 
   val address : t -> int
   (** [address b] is the address of [b]'s first byte as [b]'s device's work

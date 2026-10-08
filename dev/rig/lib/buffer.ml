@@ -129,6 +129,10 @@ let wait b access =
   Memory.check_owner b.mem;
   wait_points b access
 
+(* rig_buffer_wait in rig.h calls it with RIG_READ or RIG_READ_WRITE, the
+   constructors of [access] in order. *)
+let () = Callback.register "rig.buffer.wait" wait
+
 (* Bigarrays *)
 
 external bigarray_view :

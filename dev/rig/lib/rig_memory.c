@@ -4,8 +4,8 @@
   ---------------------------------------------------------------------------*/
 
 /* Memory devices, whose memory is the host's and whose work runs in the
-   submitting thread, and the readers of buffers rig.h declares.
-   Nothing here blocks. */
+   submitting thread, and the readers of buffers rig.h declares. Nothing
+   here blocks but rig_buffer_wait, which runs Rig.Buffer.wait. */
 
 #define _GNU_SOURCE
 
@@ -14,6 +14,7 @@
 
 #define CAML_NAME_SPACE
 #include <caml/alloc.h>
+#include <caml/callback.h>
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
@@ -214,7 +215,9 @@ static int stamps_done(struct rig_stamps *s, int every) {
 
 /* Claims first, then checks [b] under the claim: the compare-and-set
    follows the release of any donation that consumed the memory, so the
-   checks see its consumption and its stamps. */
+   checks see its consumption and its stamps. Work that is not done keeps
+   the claim: the caller waits under it, so no donation consumes the memory
+   between the wait and the access. */
 enum rig_claim rig_buffer_claim(value b, enum rig_access access) {
   value mem = Field(b, BUFFER_MEM);
   value claim = Field(mem, MEMORY_CLAIM);
@@ -237,11 +240,23 @@ enum rig_claim rig_buffer_claim(value b, enum rig_access access) {
   if (dev_lost(mem) || (root != mem && dev_lost(root)) ||
       (s != NULL &&
        !stamps_done(s, access == RIG_READ_WRITE ||
-                           Bool_val(load_field(entry, ENTRY_HELD))))) {
-    rig_buffer_release(b);
-    return RIG_PENDING;
-  }
+                           Bool_val(load_field(entry, ENTRY_HELD)))))
+    return RIG_WAIT;
   return RIG_CLAIMED;
+}
+
+/* Rig.Buffer.wait, which buffer.ml registers, found once. */
+static _Atomic(const value *) buffer_wait;
+
+caml_result rig_buffer_wait(value b, enum rig_access access) {
+  const value *f = atomic_load_explicit(&buffer_wait, memory_order_acquire);
+  if (f == NULL) {
+    f = caml_named_value("rig.buffer.wait");
+    if (f == NULL)
+      caml_fatal_error("rig_buffer_wait: Rig.Buffer.wait is not registered");
+    atomic_store_explicit(&buffer_wait, f, memory_order_release);
+  }
+  return caml_callback2_res(*f, b, Val_int(access));
 }
 
 /* A claim keeps the word at CLAIM_ONE or more, so ending it is one
