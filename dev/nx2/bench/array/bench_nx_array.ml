@@ -79,6 +79,9 @@ external f64_to_f16 : f64 -> u16 -> unit = "nx_array_bench_f64_to_f16"
 external f64_to_i32 : f64 -> i32 -> unit = "nx_array_bench_f64_to_i32"
 [@@noalloc]
 
+external f64_to_e4m3fn : f64 -> u8 -> unit = "nx_array_bench_f64_to_e4m3fn"
+[@@noalloc]
+
 external f64_to_f16_run : f64 -> u16 -> unit = "nx_array_bench_f64_to_f16_run"
 [@@noalloc]
 
@@ -175,6 +178,7 @@ let dtype_rows =
       convert "f64-to-f16-1M" float64 u16 f64_to_f16;
       convert "f64-to-f16-run-1M" float64 u16 f64_to_f16_run;
       convert "f64-to-bf16-run-1M" float64 u16 f64_to_bf16_run;
+      convert "f64-to-e4m3fn-1M" float64 u8 f64_to_e4m3fn;
       convert "floor-f64-to-u16-1M" float64 u16 floor_f64_to_u16;
       decode "f16-to-f64-run-1M" u16 ~codes:f32_to_f16 float64 f16_to_f64_run;
       decode "bf16-to-f64-run-1M" u16 ~codes:f32_to_bf16 float64 bf16_to_f64_run;
@@ -201,6 +205,16 @@ let layout_rows =
   let l = L.contiguous rank4 in
   let t = Option.get (L.move (M.Permute [| 3; 1; 2; 0 |]) l) in
   let c = L.contiguous (L.shape t) in
+  (* Four layouts for the contiguity test: [l]; its second block along axis 0,
+     contiguous at an offset; [t]; and a broadcast. *)
+  let four =
+    let all n = { M.start = 0; count = n; step = 1 } in
+    let block =
+      M.Slice [| { start = 1; count = 1; step = 1 }; all 3; all 4; all 5 |]
+    in
+    let b = Option.get (L.move (M.Broadcast [| 7; 2; 3; 4; 5 |]) l) in
+    [| l; Option.get (L.move block l); t; b |]
+  in
   let move name m =
     Thumper.bench name (fun () -> L.move m (Thumper.black_box l))
   in
@@ -225,6 +239,13 @@ let layout_rows =
       Thumper.bench ~budgets:no_alloc "dim-4" (fun () ->
           let l = Thumper.black_box l in
           L.dim l 0 + L.dim l 1 + L.dim l 2 + L.dim l 3 + L.rank l);
+      Thumper.bench ~budgets:no_alloc "is_contiguous-4x4" (fun () ->
+          let ls = Thumper.black_box four in
+          let n = ref 0 in
+          for i = 0 to 3 do
+            if L.is_contiguous (Array.unsafe_get ls i) then incr n
+          done;
+          !n);
       Thumper.bench "coalesce-3" (fun () ->
           L.coalesce (Thumper.black_box [| l; l; l |]));
       Thumper.bench "coalesce-3-transposed" (fun () ->
@@ -242,9 +263,23 @@ let transpose a =
   let r = L.rank (A.layout a) in
   Option.get (A.move (M.Permute (Array.init r (fun i -> r - 1 - i))) a)
 
+(* A kernel's OCaml wrapper: a code other than [NX_OK] goes to [settle], which
+   waits for pending work, and the kernel runs again. *)
+let rec add z x y =
+  let e = Nx_array_support.add z x y in
+  if e <> 0 then begin
+    A.settle "add" e [ A.Any z; A.Any x; A.Any y ];
+    add z x y
+  end
+
 (* A kernel of one element: the result made, three operands read through the
-   door and coalesced, one add. Its floor is rig's buffer. *)
+   door and coalesced, one add. Its floor is rig's buffer. The views and
+   [expect] are what a kernel library calls around its kernels. *)
 let array_rows =
+  let narrowed () = Option.get (A.bitcast D.Uint8 (operand ())) in
+  (* One element broadcast to [4; 8]: zero strides, which a reshape reads axis
+     by axis. *)
+  let broadcast () = Option.get (A.move (M.Broadcast [| 4; 8 |]) (one ())) in
   Thumper.group "array"
     [
       row "add-1"
@@ -262,6 +297,11 @@ let array_rows =
       Thumper.bench "move-permute-4"
         (let a = operand () in
          fun () -> A.move (M.Permute [| 3; 1; 2; 0 |]) (Thumper.black_box a));
+      row "move-reshape-broadcast" broadcast (A.move (M.Reshape [| 2; 16 |]));
+      row "bitcast-f32-i32-4" (fun () -> operand ()) (A.bitcast D.Int32);
+      row "bitcast-f32-u8-4" (fun () -> operand ()) (A.bitcast D.Uint8);
+      row "bitcast-u8-f32-4" narrowed (A.bitcast f32);
+      row "expect-4" (fun () -> A.Any (operand ())) (A.expect f32);
     ]
 
 let door_rows =
@@ -270,6 +310,14 @@ let door_rows =
     [
       row "read-3" three (fun (z, x, y) -> ok "read-3" (read_3 z x y));
       row "loop-3" three (fun (z, x, y) -> loop_3 z x y);
+      row "loop-3-scalar"
+        (fun () ->
+          let s = A.create Rig.host f32 [||] in
+          let s = Option.get (A.move (M.Broadcast rank4) s) in
+          let z, x, _ = three () in
+          if loop_3 z x s <> 1 then failwith "loop-3-scalar: not one run";
+          (z, x, s))
+        (fun (z, x, s) -> loop_3 z x s);
       row "loop-3-transposed"
         (fun () ->
           let shape = [| 5; 4; 3; 2 |] in
@@ -283,10 +331,15 @@ let door_rows =
     ]
 
 (* Element and bulk access over 1 Mi float32 elements, each beside the
-   allocation it fills or the copy that bounds it. *)
+   allocation it fills or the copy that bounds it. Narrow floats store and load
+   1 Mi values drawn as the dtype rows draw them. *)
 let access_rows =
   let n = mib in
   let host x = A.of_array f32 [| n |] (Array.make n x) in
+  let drawn () =
+    let st = Random.State.make [| 32 |] in
+    Array.init n (fun _ -> Random.State.float st 200. -. 100.)
+  in
   let i4 = [| 1; 2; 3; 4 |] in
   let int4 () = A.of_array D.Int4 rank4 (Array.make 120 3) in
   let square = [| 512; 512 |] in
@@ -303,9 +356,18 @@ let access_rows =
       row "to_array-i32-1M"
         (fun () -> A.of_array D.Int32 [| n |] (Array.make n 7l))
         A.to_array;
+      row "to_array-e4m3fn-1M"
+        (fun () -> A.of_array D.Float8_e4m3fn [| n |] (drawn ()))
+        A.to_array;
+      row "to_array-transposed-512x512"
+        (fun () ->
+          transpose (A.of_array f32 square (Array.make (512 * 512) 1.5)))
+        A.to_array;
       row "of_array-f32-1M"
         (fun () -> Array.make n 1.5)
         (A.of_array f32 [| n |]);
+      row "of_array-bf16-1M" drawn (A.of_array D.Bfloat16 [| n |]);
+      row "of_array-e4m3fn-1M" drawn (A.of_array D.Float8_e4m3fn [| n |]);
       Thumper.bench "create-f32-1M" (fun () -> A.create Rig.host f32 [| n |]);
       row "copy-f32-1M" (fun () -> host 1.5) A.copy;
       row "copy-transposed-512x512"
@@ -333,9 +395,130 @@ let access_rows =
           y);
     ]
 
+(* Copies to a device, here the host: the bytes a layout reaches, between its
+   first and last position, with no kernel. *)
+let placement_rows =
+  let n = mib in
+  Thumper.group "placement"
+    [
+      row "to_device-f32-1" one (A.to_device Rig.host);
+      row "to_device-f32-1M"
+        (fun () -> A.of_array f32 [| n |] (Array.make n 1.5))
+        (A.to_device Rig.host);
+      row "to_device-transposed-512x512"
+        (fun () ->
+          transpose (A.of_array f32 [| 512; 512 |] (Array.make (512 * 512) 1.5)))
+        (A.to_device Rig.host);
+    ]
+
+(* Late, a device over host memory whose work completes only when a wait sleeps
+   on it: its submit records the value, its sleep and its stop publish it. *)
+
+external late_new : unit -> nativeint = "nx_array_bench_late_new"
+external late_publish : nativeint -> unit = "nx_array_bench_late_publish"
+external late_signaled : nativeint -> int = "nx_array_bench_late_signaled"
+external late_room : unit -> nativeint = "nx_array_bench_late_room"
+external late_submit : unit -> nativeint = "nx_array_bench_late_submit"
+external malloc : int -> int = "nx_array_bench_malloc"
+external free : int -> unit = "nx_array_bench_free"
+
+module Late = struct
+  type t = { self : nativeint }
+
+  (* [raw] is what [malloc] gave, [0] for the word. *)
+  type region = { at : int; raw : int }
+  type image = unit
+  type capability = unit
+
+  exception Fault of string
+
+  let key : t Type.Id.t = Type.Id.make ()
+  let arch _ = "late"
+  let budget _ = max_int
+  let queues _ = [ "COMPUTE:0" ]
+  let completion _ = `Host
+  let waits_on _ _ = false
+  let max_waits _ = 0
+  let blocks _ = `Returns
+  let maps_host _ = false
+  let capability _ = ()
+  let capability_key : capability Type.Id.t = Type.Id.make ()
+
+  let alloc _ _ n =
+    let raw = malloc n in
+    if raw = 0 then None else Some { at = (raw + 63) land lnot 63; raw }
+
+  let free _ r = if r.raw <> 0 then free r.raw
+  let address r = Some r.at
+  let handle r = Nativeint.of_int r.at
+  let host r = Some r.at
+  let peer _ _ = false
+  let map_peer _ _ _ = None
+  let map_host _ _ _ = None
+  let image _ _ = Error "late loads no code"
+  let entry () _ = None
+  let unload _ () = ()
+  let word d = { at = Nativeint.to_int d.self; raw = 0 }
+  let signaled d = late_signaled d.self
+  let sleep d ~seen:_ ~still_ms:_ = late_publish d.self
+  let room_entry = late_room ()
+  let submit_entry = late_submit ()
+  let self d = d.self
+  let stop d = late_publish d.self
+end
+
+(* A kernel after device work: a submit on Late writes [z], the door answers
+   [NX_PENDING], [settle] waits, and the kernel runs again. Beside it, the
+   submit and the wait alone, and the kernel over the same operands with nothing
+   pending. *)
+let kernel_rows =
+  let opened = ref 0 in
+  let late () =
+    incr opened;
+    let name = Printf.sprintf "nx2-bench-late:%d" !opened in
+    let d =
+      match
+        Rig.open_ (module Late) ~name (fun () -> Ok { Late.self = late_new () })
+      with
+      | Ok d -> d
+      | Error e -> failwith e
+    in
+    let z = A.create d f32 [| 1 |] and x = A.create d f32 [| 1 |] in
+    let y = A.create d f32 [| 1 |] in
+    (Rig.Submission.make ~reads:0 ~writes:1 d [||], z, x, y)
+  in
+  let writes s b =
+    ignore (Rig.submit s ~reads:[||] ~writes:[| b |] ~waits:[||])
+  in
+  let pending () =
+    let ((s, z, x, y) as env) = late () in
+    writes s (A.buffer z);
+    if Nx_array_support.add z x y <> 4 then
+      failwith "add-1-pending: the door did not answer pending";
+    add z x y;
+    env
+  in
+  Thumper.group "kernel"
+    [
+      row "add-1-pending" pending (fun (s, z, x, y) ->
+          writes s (A.buffer z);
+          add z x y);
+      row "floor-submit-wait-1" late (fun (s, z, _, _) ->
+          writes s (A.buffer z);
+          B.wait (A.buffer z) B.Read_write);
+      row "add-1-reached" late (fun (_, z, x, y) -> add z x y);
+    ]
+
 let () =
   exit
   @@ Thumper.run "nx_array"
        [
-         dtype_rows; move_rows; layout_rows; array_rows; door_rows; access_rows;
+         dtype_rows;
+         move_rows;
+         layout_rows;
+         array_rows;
+         door_rows;
+         access_rows;
+         placement_rows;
+         kernel_rows;
        ]

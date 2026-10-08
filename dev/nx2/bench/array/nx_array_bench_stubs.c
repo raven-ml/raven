@@ -3,11 +3,17 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
+#include <stdatomic.h>
+#include <stdlib.h>
+
+#include <caml/alloc.h>
 #include <caml/bigarray.h>
+#include <caml/fail.h>
 #include <caml/mlvalues.h>
 
 #include "nx_array.h"
 #include "rig.h"
+#include "rig_edge.h"
 
 /* The door alone: three operands read and released, with no kernel. */
 
@@ -87,6 +93,7 @@ BENCH_EACH(f32_to_e2m1fn, float, uint8_t, nx_float_to_e2m1fn)
 BENCH_EACH(e2m1fn_to_f32, uint8_t, float, nx_e2m1fn_to_float)
 BENCH_EACH(f64_to_f16, double, uint16_t, nx_double_to_f16)
 BENCH_EACH(f64_to_i32, double, int32_t, to_i32)
+BENCH_EACH(f64_to_e4m3fn, double, uint8_t, nx_double_to_e4m3fn)
 BENCH_RUN(f64_to_f16_run, double, uint16_t, nx_double_to_f16_run)
 BENCH_RUN(f16_to_f64_run, uint16_t, double, nx_f16_to_double_run)
 BENCH_RUN(f64_to_bf16_run, double, uint16_t, nx_double_to_bf16_run)
@@ -108,3 +115,75 @@ BENCH_EACH(floor_u16_to_f32, uint16_t, float, of_u16)
 BENCH_EACH(floor_u8_to_f32, uint8_t, float, of_u8)
 BENCH_EACH(floor_f64_to_u16, double, uint16_t, top16_f64)
 BENCH_EACH(floor_f64_to_i32, double, int32_t, cast_i32)
+
+/* Late: a device over host memory whose work completes only when a wait
+   sleeps on it. A submit records its value; the next sleep, or the stop,
+   makes it the word's. It stands for a device still running the work a
+   kernel's operand waits for. */
+
+struct late {
+  _Atomic uint64_t word;
+  _Atomic uint64_t last;
+};
+
+value nx_array_bench_late_new(value unit) {
+  (void)unit;
+  struct late *l = calloc(1, sizeof *l);
+  if (l == NULL) caml_raise_out_of_memory();
+  return caml_copy_nativeint((intnat)l);
+}
+
+value nx_array_bench_late_publish(value self) {
+  struct late *l = (struct late *)Nativeint_val(self);
+  uint64_t v = atomic_load_explicit(&l->last, memory_order_acquire);
+  atomic_store_explicit(&l->word, v, memory_order_release);
+  return Val_unit;
+}
+
+value nx_array_bench_late_signaled(value self) {
+  struct late *l = (struct late *)Nativeint_val(self);
+  return Val_long((intnat)atomic_load_explicit(&l->word, memory_order_acquire));
+}
+
+/* Late runs no part: a submission of none fits. */
+static int late_room(void *self, const struct rig_part *parts, int n) {
+  (void)self;
+  (void)parts;
+  return n == 0 ? RIG_FITS : RIG_NEVER;
+}
+
+static int late_submit(void *self, uint64_t v, const struct rig_wait *waits,
+                       int nwaits, const struct rig_part *parts, int nparts,
+                       const uint64_t *handles, int nhandles,
+                       const char **failure) {
+  (void)waits;
+  (void)nwaits;
+  (void)parts;
+  (void)nparts;
+  (void)handles;
+  (void)nhandles;
+  (void)failure;
+  atomic_store_explicit(&((struct late *)self)->last, v, memory_order_release);
+  return RIG_OK;
+}
+
+value nx_array_bench_late_room(value unit) {
+  (void)unit;
+  return caml_copy_nativeint((intnat)&late_room);
+}
+
+value nx_array_bench_late_submit(value unit) {
+  (void)unit;
+  return caml_copy_nativeint((intnat)&late_submit);
+}
+
+/* [v_n] bytes and 64 more, so the region can start on a multiple of 64; 0
+   if malloc fails. */
+value nx_array_bench_malloc(value v_n) {
+  return Val_long((intnat)malloc((size_t)Long_val(v_n) + 64));
+}
+
+value nx_array_bench_free(value v_p) {
+  free((void *)Long_val(v_p));
+  return Val_unit;
+}
