@@ -5,7 +5,7 @@
  (foreign_stubs
   (language c)
   (include_dirs
-   ../lib
+   ../../lib/array
    (lib rig))
   (names nx_array_bench_stubs)))
 

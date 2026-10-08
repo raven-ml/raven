@@ -7,7 +7,7 @@
  (libraries nx_array rig)
  (foreign_stubs
   (language c)
-  (include_dirs ../../lib)
+  (include_dirs ../../../lib/array)
   (names nx_array_support_stubs)))
 
 ; Layouts and movements drawn for the suites.
