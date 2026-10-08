@@ -477,6 +477,35 @@ let test_nan_payloads () =
   List.iteri (fun i x -> A.set one [| i |] x) xs;
   equal ~msg:"set" (array int) (Array.of_list want) (bits one)
 
+(* A decoder in C gives a NaN code a quiet binary32 NaN of its sign; float16 and
+   bfloat16 keep the code's payload in binary32's top fraction bits. OCaml
+   cannot see a signalling NaN, which a widening to double quiets, so the bits
+   come from the C decoder. *)
+let test_decoded_nans (F (dt, f)) =
+  let w = 1 + f.exp + f.frac in
+  let nans =
+    List.filter
+      (fun c -> Float.is_nan (decode f (c land ((1 lsl (w - 1)) - 1))))
+      (List.init (1 lsl w) Fun.id)
+  in
+  let quiet = 0x7FC00000 in
+  let want c =
+    let sign = ((c lsr (w - 1)) land 1) lsl 31 in
+    let payload =
+      if w = 16 then (c land ((1 lsl f.frac) - 1)) lsl (23 - f.frac) else 0
+    in
+    sign lor quiet lor payload
+  in
+  let wrong =
+    List.filter_map
+      (fun c ->
+        let got = Nx_array_support.decode (D.code dt) c in
+        if got = want c then None
+        else Some (strf "%#x read %#x, expected %#x" c got (want c)))
+      nans
+  in
+  equal (list string) [] (List.filteri (fun i _ -> i < 8) wrong)
+
 (* Floats compared bit for bit, NaNs by their sign. *)
 let signed_float =
   Testable.make ~pp:pp_hex ~equal:(fun a b ->
@@ -1012,6 +1041,11 @@ let tests =
           "a float16 NaN is quieted, keeping its sign and the top of its \
            payload"
           test_nan_payloads;
+        cases ~name:format_name
+          "a decoder quiets a NaN and keeps its sign, and float16's and \
+           bfloat16's payload"
+          (List.filter (fun (F (_, f)) -> f.top <> Finite) narrow)
+          test_decoded_nans;
         cases ~name:format_name "every code reads as its definition's value"
           narrow test_every_code;
         law_float64;

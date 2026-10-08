@@ -10,6 +10,10 @@ val row : int -> (string * int * int) option
     and kind (the index of the kind in [enum nx_kind]), or [None] if no dtype
     has the code. *)
 
+val decode : int -> int -> int
+(** [decode code c] is the binary32 bits of the code [c] of the narrow float
+    dtype [code], read by [nx_dtype.h]'s decoder, which kernels call. *)
+
 val of_int64 : int -> int64 -> int
 (** [of_int64 code v] is the bits a store of [v] writes into an element of the
     narrow float dtype [code], through [nx_dtype.h]'s conversions from 64-bit

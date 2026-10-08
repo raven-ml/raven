@@ -117,8 +117,15 @@ static inline uint16_t nx_float_to_bf16(float f) {
   return (uint16_t)((i + 0x7FFFu + ((i >> 16) & 1)) >> 16);
 }
 
+/* A NaN is quieted, as every decoder here does: a signalling bfloat16 NaN
+   keeps its payload and gains binary32's quiet bit, bit 6 of the code. A
+   magnitude [m] past the infinity's makes [0x7F80 - m] wrap in 16 bits,
+   setting its top bit, which the shift moves to bit 6: 16-bit lanes, so a
+   loop of decodes vectorises nearly as the plain shift does. */
 static inline float nx_bf16_to_float(uint16_t c) {
-  return nx_bits_float((uint32_t)c << 16);
+  uint16_t past = (uint16_t)(0x7F80u - (c & 0x7FFFu));
+  uint16_t q = (uint16_t)(c | ((past >> 9) & 0x40u));
+  return nx_bits_float((uint32_t)q << 16);
 }
 
 /* float16: IEEE 754 binary16 */

@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 external row : int -> (string * int * int) option = "nx_array_support_row"
+external decode : int -> int -> int = "nx_array_support_decode"
 external of_int64 : int -> int64 -> int = "nx_array_support_of_i64"
 external of_uint64 : int -> int64 -> int = "nx_array_support_of_u64"
 external layout : Nx_array.Layout.t -> int array = "nx_array_support_layout"

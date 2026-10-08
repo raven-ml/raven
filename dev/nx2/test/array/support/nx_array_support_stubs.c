@@ -49,6 +49,15 @@ value nx_array_support_layout(value l) {
   CAMLreturn(out);
 }
 
+/* The binary32 bits of the code [c] of the narrow float dtype [dt], as the
+   decoder kernels call reads it. */
+value nx_array_support_decode(value dt, value c) {
+  float f = nx_bits_to_float((int)Long_val(dt), (uint32_t)Long_val(c));
+  uint32_t i;
+  memcpy(&i, &f, 4);
+  return Val_long(i);
+}
+
 /* The bits a store of the int64 [v], or of the uint64 whose bits [v] holds,
    writes into an element of the narrow float [dt], rounded once. */
 value nx_array_support_of_i64(value dt, value v) {
