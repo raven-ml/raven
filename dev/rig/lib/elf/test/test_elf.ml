@@ -1005,23 +1005,34 @@ let test_many_sections () =
     [ null_symbol; sym_entry "far" (Image { section = at; offset = 1 }) ]
     (syms o)
 
-(* The least CPU time of three reads of [obj]. *)
-let read_time obj =
-  let once () =
+(* The least CPU times of five reads each of [small] and [large], taken in turn
+   so that load on the machine slows both alike. *)
+let read_times small large =
+  let once obj =
     let start = Sys.time () in
     ignore (Sys.opaque_identity (Elf.of_string obj));
     Sys.time () -. start
   in
-  Float.min (once ()) (Float.min (once ()) (once ()))
+  let s = ref infinity and l = ref infinity in
+  for _ = 1 to 5 do
+    s := Float.min !s (once small);
+    l := Float.min !l (once large)
+  done;
+  (!s, !l)
 
-(* Reading [make n] takes less than 8 times as long as reading [make (n / 4)]:
-   about 4 if reading is linear, 16 if it is quadratic. A ratio holds on a slow
-   or instrumented build where a bound in seconds would not. *)
+(* Reading [make n] takes less than 64 times as long as reading [make (n / 16)]:
+   16 times if reading is linear, a little more with its sorts, and 256 if it is
+   quadratic. The bound is their geometric mean, so each side has a margin of 4.
+   Slower memory for the larger object, or a loaded machine moving reads to
+   slower cores, stays under it. A time [a n + b n^2] passes it only while
+   [b n^2 < 4 a n]: at the counts below, a step repeated for each pair of
+   sections takes longer than that. A ratio holds on a slow or instrumented
+   build where a bound in seconds would not. *)
 let linear_time make n =
-  let small = read_time (make (n / 4)) and large = read_time (make n) in
+  let small, large = read_times (make (n / 16)) (make n) in
   less
-    ~msg:(strf "CPU time of %gs at n over %gs at n / 4" large small)
-    float_exact ~than:8. (large /. small)
+    ~msg:(strf "CPU time of %gs at n over %gs at n / 16" large small)
+    float_exact ~than:64. (large /. small)
 
 (* [count] sections, each with a symbol of its own at an extended index. *)
 let many_symbols count =
@@ -1069,7 +1080,7 @@ let many_relocation_sections count =
 
 (* Reading takes time linear in the relocation sections. *)
 let test_many_relocation_sections () =
-  let count = 10_000 in
+  let count = 40_000 in
   let o = read (many_relocation_sections count) in
   equal ~msg:"every relocation" int count (List.length o.relocations);
   linear_time many_relocation_sections count
@@ -2113,7 +2124,7 @@ let () =
              test "an object of more than 65,279 sections" test_many_sections;
              test "70,000 symbols at extended indexes, in linear time"
                test_many_symbols;
-             test "10,000 relocation sections, in linear time"
+             test "40,000 relocation sections, in linear time"
                test_many_relocation_sections;
            ];
          prop ~timeout ~count:300 "an object reads back as written" gen_case
