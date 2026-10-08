@@ -40,8 +40,8 @@ val v : ?offset:int -> strides:int array -> int array -> t
 
     Raises [Invalid_argument] as {!contiguous} does, if [strides] does not have
     [s]'s length, if [(d - 1)·|t|] does not fit in an [int] for an axis of
-    extent [d] and stride [t], or if a position is negative or does not fit in
-    an [int]. *)
+    extent [d] and stride [t], if a position is negative or does not fit in an
+    [int], or if the end of its span ({!span}) does not fit in an [int]. *)
 
 (** {1:queries Queries}
 
@@ -82,11 +82,11 @@ val is_contiguous : t -> bool
     [offset l + k]. *)
 
 val is_distinct : t -> bool
-(** [is_distinct l] is [true] iff, with [l]'s axes of extent above 1 ordered by
-    [|stride|], ties by axis, each stride exceeds the reach
-    [Σ (d{_j} - 1)·|s{_j}|] of the axes before it. Then no two indices of [l]
-    reach one position. It is [true] of every layout {!contiguous} reaches by
-    [Permute], [Slice] and windows whose step is at least their extent
+(** [is_distinct l] is [true] iff [l] has no element or, with [l]'s axes of
+    extent above 1 ordered by [|stride|], ties by axis, each stride exceeds the
+    reach [Σ (d{_j} - 1)·|s{_j}|] of the axes before it. Then no two indices of
+    [l] reach one position. It is [true] of every layout {!contiguous} reaches
+    by [Permute], [Slice] and windows whose step is at least their extent
     [dilation·(size - 1) + 1], and [false] of every broadcast and overlapping
     window. *)
 
