@@ -5,8 +5,6 @@
 
 open Packet
 
-let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
-
 type 'v hole = 'v Repr.hole = private {
   at : int;
   bits : int;
@@ -15,14 +13,12 @@ type 'v hole = 'v Repr.hole = private {
 
 type 'v t = 'v Repr.structure = private { bytes : string; holes : 'v hole list }
 
+(* Every shift is in [0;63]: the structure comes from Qmd, whose terms shift by
+   their fields' constants. *)
 let rec eval value = function
   | Value v -> value v
   | Add (t, n) -> Int64.add (eval value t) n
-  | Shift (t, n) ->
-      let v = eval value t in
-      if n < 0 || n > 63 then
-        invalid_argf "Structure.encode: shift by %d, expected 0 to 63" n;
-      Int64.shift_right_logical v n
+  | Shift (t, n) -> Int64.shift_right_logical (eval value t) n
 
 (* A hole's word: the narrowest of 1, 2, 4 and 8 bytes that holds [bits]. *)
 let word_bytes bits =
