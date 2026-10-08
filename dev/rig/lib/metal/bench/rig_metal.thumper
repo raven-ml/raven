@@ -6,6 +6,7 @@
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed under load 6.3 on 10 cores
 # forced: blessed image/fill under load 5.6 on 10 cores
+# forced: blessed image/fill image/floor under load 10.0 on 10 cores
 
 alloc/64KiB	alloc_words	exact	19
 alloc/64KiB	wall_time	batch=2048	n=20	4.379e-06	4.109e-06 4.198e-06 4.200e-06 4.261e-06 4.263e-06 4.264e-06 4.281e-06 4.313e-06 4.333e-06 4.374e-06 4.383e-06 4.394e-06 4.402e-06 4.406e-06 4.415e-06 4.428e-06 4.438e-06 4.448e-06 4.509e-06 4.628e-06
@@ -19,10 +20,10 @@ alloc/floor-64MiB	alloc_words	exact	0
 alloc/floor-64MiB	wall_time	batch=1024	n=20	9.623e-06	8.972e-06 9.000e-06 9.073e-06 9.147e-06 9.172e-06 9.280e-06 9.460e-06 9.468e-06 9.551e-06 9.619e-06 9.627e-06 9.679e-06 9.683e-06 9.722e-06 9.763e-06 9.775e-06 9.936e-06 1.010e-05 1.010e-05 1.013e-05
 icb/64	alloc_words	exact	1450
 icb/64	wall_time	batch=256	n=20	2.145e-05	2.110e-05 2.110e-05 2.111e-05 2.124e-05 2.134e-05 2.139e-05 2.140e-05 2.142e-05 2.144e-05 2.144e-05 2.145e-05 2.150e-05 2.151e-05 2.151e-05 2.152e-05 2.153e-05 2.154e-05 2.176e-05 2.181e-05 2.206e-05
-image/fill	alloc_words	exact	36
-image/fill	wall_time	batch=128	n=20	6.966e-05	6.886e-05 6.890e-05 6.933e-05 6.941e-05 6.952e-05 6.952e-05 6.960e-05 6.961e-05 6.964e-05 6.964e-05 6.967e-05 6.967e-05 6.971e-05 6.977e-05 6.979e-05 6.979e-05 6.991e-05 7.015e-05 7.032e-05 7.036e-05
+image/fill	alloc_words	exact	56
+image/fill	wall_time	batch=64	n=20	8.146e-05	7.528e-05 7.545e-05 7.698e-05 7.786e-05 7.803e-05 7.890e-05 8.039e-05 8.061e-05 8.067e-05 8.095e-05 8.197e-05 8.221e-05 8.254e-05 8.265e-05 8.324e-05 8.405e-05 8.599e-05 8.678e-05 9.553e-05 1.153e-04
 image/floor	alloc_words	exact	0
-image/floor	wall_time	batch=128	n=20	7.566e-05	7.158e-05 7.328e-05 7.333e-05 7.342e-05 7.368e-05 7.379e-05 7.391e-05 7.404e-05 7.488e-05 7.521e-05 7.611e-05 7.707e-05 7.755e-05 7.788e-05 7.856e-05 7.932e-05 7.990e-05 8.058e-05 8.062e-05 8.494e-05
+image/floor	wall_time	batch=128	n=20	7.612e-05	7.323e-05 7.367e-05 7.412e-05 7.452e-05 7.460e-05 7.482e-05 7.486e-05 7.501e-05 7.506e-05 7.591e-05 7.634e-05 7.672e-05 7.681e-05 7.687e-05 7.693e-05 7.813e-05 7.818e-05 7.839e-05 7.963e-05 8.031e-05
 launch/1	alloc_words	exact	0
 launch/1	wall_time	batch=1	n=20	2.240e-04	2.123e-04 2.175e-04 2.179e-04 2.192e-04 2.207e-04 2.210e-04 2.215e-04 2.215e-04 2.235e-04 2.238e-04 2.243e-04 2.252e-04 2.253e-04 2.269e-04 2.273e-04 2.274e-04 2.278e-04 2.321e-04 2.488e-04 3.233e-04
 launch/1-live-4096	alloc_words	exact	0

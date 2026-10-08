@@ -30,12 +30,12 @@
     {!submit_entry}, over [rig_edge.h]'s structures. A submission is a list of
     {e parts} for the device's one queue, ["COMPUTE:0"], possibly empty. A part
     is a {e fill}, a C function that encodes Metal work into a compute command
-    encoder the device gives it ({!Rig_metal_abi}); it declares no ring units
-    or segment bytes. The device runs no words and no copies, and waits on no
-    other device's word. The submit runs the fills in order, each in an encoder
-    that waits for the encoders before it, commits the submission's command
-    buffers and returns. It does not wait for the work. Metal calls a handler of
-    the device on one of its own threads once each command buffer completed,
+    encoder the device gives it ({!Rig_metal_abi}); it declares no ring units or
+    segment bytes. The device runs no words and no copies, and waits on no other
+    device's word. The submit runs the fills in order, each in an encoder that
+    waits for the encoders before it, commits the submission's command buffers
+    and returns. It does not wait for the work. Metal calls a handler of the
+    device on one of its own threads once each command buffer completed,
     successfully or not ([addCompletedHandler:]). The handlers write [v] into
     the word once every command buffer of the submissions up to [v] completed
     without failure, whatever order they complete in. Only the handlers and
@@ -53,9 +53,9 @@
     failure: a wait lasts until the work completes or Metal reports it failed.
 
     {b Compiled code.} Code compiled for the device reaches it through its
-    {!val-capability}, the record {!Rig_metal_abi.t}: indirect command
-    buffers, the [split] a fill calls to start a new command buffer, and the
-    argument alignment. The fill's calling convention is stated there.
+    {!val-capability}, the record {!Rig_metal_abi.t}: indirect command buffers,
+    the [split] a fill calls to start a new command buffer, and the argument
+    alignment. The fill's calling convention is stated there.
 
     {b Domains.} Any domain may call any function, at the same time as others,
     with three exceptions. The C room and submit are called one at a time: the
@@ -267,27 +267,26 @@ val entry : image -> string -> int option
 
 val unload : t -> image -> unit
 (** [unload d i] releases [i]'s pipelines. An indirect command buffer made with
-    one of them keeps it until its own release
-    ({!Rig_metal_abi.field-release}). The caller unloads once no work that
-    names a pipeline of [i] directly is in flight.
+    one of them keeps it until its own release ({!Rig_metal_abi.field-release}).
+    The caller unloads once no work that names a pipeline of [i] directly is in
+    flight.
 
     Raises [Invalid_argument] if [i] is another device's or was unloaded. *)
 
 (** {1:work Work} *)
 
 val room_entry : nativeint
-(** [room_entry] is the address of [rig_metal_room], in the shape
-    [rig_room_fn] of [rig_edge.h]. It answers [RIG_NEVER] for a part that is no
-    fill on queue [0] or declares ring units or segment bytes, and [RIG_FITS]
-    otherwise: the submit waits inside for command buffers when the queue is
-    full. *)
+(** [room_entry] is the address of [rig_metal_room], in the shape [rig_room_fn]
+    of [rig_edge.h]. It answers [RIG_NEVER] for a part that is no fill on queue
+    [0] or declares ring units or segment bytes, and [RIG_FITS] otherwise: the
+    submit waits inside for command buffers when the queue is full. *)
 
 val submit_entry : nativeint
 (** [submit_entry] is the address of [rig_metal_submit], in the shape
     [rig_submit_fn] of [rig_edge.h]: it runs the parts as the work of [v], the
-    value after the last one it received, and answers [RIG_OK] once every command
-    buffer of [v] is committed; [v] is observable in {!word} once they all
-    completed. With no part, [v] is observable once the work before it
+    value after the last one it received, and answers [RIG_OK] once every
+    command buffer of [v] is committed; [v] is observable in {!word} once they
+    all completed. With no part, [v] is observable once the work before it
     completed. Its waits are none and its handles are ignored: every region of
     the device is resident. [RIG_FAILED] if the submission failed at once, or if
     the device recorded a failure before; then the parts did not run (Failures,
@@ -342,4 +341,7 @@ val stop : t -> unit
     [d] committed completed, its handler writes the last value the submit
     received into {!word}, whatever that work did.
 
-    Regions end at {!free}, which may follow. *)
+    Either way it releases the pipelines of every image not unloaded, as
+    {!unload} would: the command buffers in flight and the indirect command
+    buffers that use one keep it until they end. {!unload} is not called after
+    [stop]. Regions end at {!free}, which may follow. *)

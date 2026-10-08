@@ -136,10 +136,10 @@ let ring_tests =
 
 (* Devices
 
-   Work reaches a device through rig, which opens it: [c] is the device
-   there, [d] the driver's. One device serves the tests that leave it healthy; a
-   test that fails a submission or stops a device opens its own, under a name of
-   its own. *)
+   Work reaches a device through rig, which opens it: [c] is the device there,
+   [d] the driver's. One device serves the tests that leave it healthy; a test
+   that fails a submission or stops a device opens its own, under a name of its
+   own. *)
 
 type dev = { c : Rig.t; d : Rig_metal.t; fill : Rig_metal.image }
 
@@ -162,9 +162,7 @@ let opened () =
 
 (* The image of the fixture [fill], which Metal places itself. *)
 let load d =
-  match
-    require_ok (Rig_metal.image d (S.fixture ~dir:"fixtures" "fill"))
-  with
+  match require_ok (Rig_metal.image d (S.fixture ~dir:"fixtures" "fill")) with
   | `Loaded i -> i
   | `Place (n, _) -> failf "the device asked to place %d bytes of code" n
 
@@ -368,8 +366,7 @@ let work =
 let dispatch ?(offset = 0) ?(groups = (1, 1, 1)) ?(threads = (1, 1, 1)) p =
   { Rig_metal_abi.pipeline = p; offset; groups; threads }
 
-let icb t args ds =
-  (Rig_metal.capability t.d).icb (Rig_metal.handle args) ds
+let icb t args ds = (Rig_metal.capability t.d).icb (Rig_metal.handle args) ds
 
 let run_icb t (b : Rig_metal_abi.icb) pipelines =
   S.wait t.d (submit t [| S.execute b ~pipelines |])
@@ -524,8 +521,7 @@ let given_back () =
   let t = dev () in
   let r = alloc t 64 in
   let m = require_some (Rig_metal.map_host t.d (S.pages page) page) in
-  let wr = S.weak (Rig_metal.handle r)
-  and wm = S.weak (Rig_metal.handle m) in
+  let wr = S.weak (Rig_metal.handle r) and wm = S.weak (Rig_metal.handle m) in
   S.wait t.d (submit t [||]);
   Rig_metal.free t.d r;
   Rig_metal.free t.d m;
@@ -664,6 +660,19 @@ let stopped_running () =
   b.release ();
   equal bool false (S.alive w)
 
+(* Images still loaded when the device stops are released with it: unload is
+   never called after stop. *)
+let stop_releases_images () =
+  let t = dev_of (opened ()) in
+  let i = load t.d in
+  let weak f = S.weak (Nativeint.of_int (require_some (Rig_metal.entry i f))) in
+  let weaks = [ weak "fill"; weak "step"; weak "bump" ] in
+  S.wait t.d (submit t [||]);
+  Rig_metal.stop t.d;
+  List.iteri
+    (fun k w -> equal bool ~msg:(strf "pipeline %d" k) false (S.alive w))
+    weaks
+
 let timeline =
   group ~timeout:60. "timeline"
     [
@@ -674,6 +683,7 @@ let timeline =
         "stop while work runs: the word reaches the last value once it ends, \
          and its indirect command buffer is released after"
         stopped_running;
+      test "stop releases the images still loaded" stop_releases_images;
     ]
 
 (* Opening and misuse *)
@@ -694,17 +704,14 @@ let apple_align () =
 let refused_work () =
   let t = dev () in
   let refused work =
-    let part =
-      { Rig.Submission.queue = "COMPUTE:0"; after = [||]; work }
-    in
+    let part = { Rig.Submission.queue = "COMPUTE:0"; after = [||]; work } in
     raises_match Exn.invalid_arg (fun () -> submit_parts t [| part |])
   in
   let fill = (S.part (S.failing 0)).work in
   let declaring ~units ~bytes =
     match fill with
     | Fill f ->
-        Rig.Submission.Fill
-          { f with ring_units = units; segment_bytes = bytes }
+        Rig.Submission.Fill { f with ring_units = units; segment_bytes = bytes }
     | w -> w
   in
   refused (Words (Rig.Buffer.create Rig.host 4));

@@ -68,12 +68,20 @@ let host r = Some r.host
 
 type capability = Rig_metal_abi.t
 
+type image = {
+  owner : int;
+  names : string array;
+  pipelines : int array;
+  loaded : bool Atomic.t;
+}
+
 type t = {
   self : int;
   arch : string;
   budget : int;
   word : region;
   cap : capability;
+  images : image list Atomic.t; (* loaded, for stop to release *)
 }
 
 let device_name i =
@@ -86,8 +94,8 @@ let icb self align buffer (ds : Rig_metal_abi.dispatch array) =
     let gx, gy, gz = d.groups and tx, ty, tz = d.threads in
     if d.offset < 0 || d.offset mod align <> 0 then
       invalid_argf
-        "Rig_metal_abi.icb: dispatch %d's offset %d, expected a \
-         non-negative multiple of %d"
+        "Rig_metal_abi.icb: dispatch %d's offset %d, expected a non-negative \
+         multiple of %d"
         i d.offset align;
     if gx < 1 || gy < 1 || gz < 1 || tx < 1 || ty < 1 || tz < 1 then
       invalid_argf
@@ -147,7 +155,8 @@ let open_ i =
       let align = if family > 0 then apple_align else mac_align in
       let icb = icb self align in
       let word = region self word in
-      Ok { self; arch; budget; word; cap = { align; icb; split } }
+      let cap = { Rig_metal_abi.align; icb; split } in
+      Ok { self; arch; budget; word; cap; images = Atomic.make [] }
 
 (* Facts *)
 
@@ -170,8 +179,7 @@ let self d = Nativeint.of_int d.self
 let region_align = 256
 
 let alloc d _ n =
-  if n < 1 then
-    invalid_argf "Rig_metal.alloc: %d bytes, expected at least 1" n;
+  if n < 1 then invalid_argf "Rig_metal.alloc: %d bytes, expected at least 1" n;
   match alloc_buffer d.self n with
   | None -> None
   | Some ((handle, address, host) as b) ->
@@ -194,7 +202,7 @@ let map_host d p n =
 
 let peer _ _ = false
 
-let map_peer d d' r =
+let map_peer d d' (r : region) =
   if d.self = d'.self then
     invalid_arg "Rig_metal.map_peer: the two devices are one";
   if r.owner <> d'.self || not (Atomic.get r.live) then
@@ -202,7 +210,7 @@ let map_peer d d' r =
       "Rig_metal.map_peer: the region is no live region of the second device";
   None
 
-let free d r =
+let free d (r : region) =
   if r.owner <> d.self || r == d.word then
     invalid_arg
       "Rig_metal.free: the region is no allocation or mapping of the device";
@@ -212,18 +220,16 @@ let free d r =
 
 (* Images *)
 
-type image = {
-  owner : int;
-  names : string array;
-  pipelines : int array;
-  loaded : bool Atomic.t;
-}
+let rec update a f =
+  let x = Atomic.get a in
+  if not (Atomic.compare_and_set a x (f x)) then update a f
 
 let image d b =
   match load d.self b with
   | "", names, pipelines ->
-      Ok
-        (`Loaded { owner = d.self; names; pipelines; loaded = Atomic.make true })
+      let i = { owner = d.self; names; pipelines; loaded = Atomic.make true } in
+      update d.images (List.cons i);
+      Ok (`Loaded i)
   | why, _, _ -> Error why
 
 let entry i f =
@@ -237,6 +243,7 @@ let unload d i =
     invalid_arg "Rig_metal.unload: the image is another device's";
   if not (Atomic.compare_and_set i.loaded true false) then
     invalid_arg "Rig_metal.unload: the image was unloaded";
+  update d.images (List.filter (fun i' -> i' != i));
   Array.iter release i.pipelines
 
 (* Timeline and loss *)
@@ -247,4 +254,10 @@ let signaled d = signaled_word d.self
 let sleep d ~seen ~still_ms =
   if sleep_word d.self seen still_ms <> 0 then raise (Fault (failure d.self))
 
-let stop d = stop_ring d.self
+let stop d =
+  stop_ring d.self;
+  let release_loaded i =
+    if Atomic.compare_and_set i.loaded true false then
+      Array.iter release i.pipelines
+  in
+  List.iter release_loaded (Atomic.exchange d.images [])
