@@ -8,25 +8,10 @@
    from C with nothing else. A row's distance to its floor is the link's: its
    frames, threads, queues and the OCaml of its calls. *)
 
+open Rig_remote_bench
 module Wire = Rig_remote_proxy.Wire
 module Link = Rig_remote_proxy.Link
-
-external tune : Unix.file_descr -> unit = "rig_remote_bench_tune"
-
-external ask : Unix.file_descr -> Rig_remote_abi.area -> int -> int -> int
-  = "rig_remote_bench_ask"
-
-external echo : Unix.file_descr -> Rig_remote_abi.area -> int -> int -> int
-  = "rig_remote_bench_echo"
-
-external stream_open : Unix.file_descr -> Unix.file_descr -> int -> nativeint
-  = "rig_remote_bench_stream_open"
-
-external stream_run : nativeint -> int = "rig_remote_bench_stream_run"
-external stream_close : nativeint -> unit = "rig_remote_bench_stream_close"
-
-external rail_run : Rig_remote_abi.area -> Rig_remote_abi.area -> int -> int
-  = "rig_remote_bench_rail_run"
+module B = Rig.Buffer
 
 let strf = Printf.sprintf
 let kib = 1024
@@ -78,50 +63,32 @@ let reap pid = ignore (Unix.waitpid [] pid)
    loopback, and the same bytes there and back. *)
 
 let key = String.make 32 'k'
-let alloc = Wire.Alloc { id = 1; device = 0; memory = `Device; bytes = 4096 }
-
-(* Its frame: a header of 9 bytes, the kind, id, device, memory and bytes; the
-   answer's: the header, 0 and the [bool]. *)
-let request_bytes = 9 + 1 + 8 + 8 + 1 + 8
-let answer_bytes = 9 + 1 + 1
 
 (* Room for either frame. *)
 let message () = Bigarray.(Array1.create char c_layout request_bytes)
 
-let reply : type r. r Wire.request -> (r, string) result = function
-  | Wire.Alloc _ -> Ok true
-  | _ -> Error "the bench asks only for allocations"
-
-(* An agent answering every request until its job fails. *)
-let agent fd =
+(* The agent's process: its end of a job with this one. *)
+let far fd =
   let j = Link.job () in
   ignore (ok "accept" (Wire.accept fd ~key ~admit:(fun _ -> Ok ())));
-  let l = Link.make j fd ~name:"controller" ~peer:Wire.Controller in
-  let rec serve () =
-    match Link.next l with
-    | Ok (Wire.Request r) ->
-        Link.answer l r (reply r);
-        serve ()
-    | Ok _ -> serve ()
-    | Error _ -> ()
-  in
-  serve ()
+  agent (Link.make j fd ~name:"controller" ~peer:Wire.Controller)
 
 (* The controller's end of a job with one agent. The bench ends the job by
    failing it: the agent sees the failure and leaves. *)
 let controller () =
-  let fd, pid = forked agent in
+  let fd, pid = forked far in
   let j = Link.job () in
   ok "dial" (Wire.dial fd ~key ~self:Wire.Controller ~peer:(Wire.Agent 1));
   (j, Link.make j fd ~name:"agent" ~peer:(Wire.Agent 1), pid)
 
+let ended (j, _, pid) =
+  Link.fail j "the bench ended";
+  reap pid
+
 let request_rows =
   Thumper.group "request"
     [
-      Thumper.bench_with_setup "alloc" ~setup:controller
-        ~teardown:(fun (j, _, pid) ->
-          Link.fail j "the bench ended";
-          reap pid)
+      Thumper.bench_with_setup "alloc" ~setup:controller ~teardown:ended
         (fun (_, l, _) ->
           if not (ok "request" (Link.request l alloc)) then
             failwith "request: refused");
@@ -191,8 +158,50 @@ let rail_rows =
          ])
        sizes)
 
+(* Copies: [n] bytes between this process's memory and memory of another
+   machine's host, whose agent runs in another process over loopback, each way.
+   Their floors are the rails': the same bytes one way over a socket. *)
+
+let host_account : Wire.account =
+  { id = 0; name = "CPU"; arch = "bench"; budget = 1 lsl 30; reaches = [] }
+
+type copy = { job : Link.job * Link.t * int; near : B.t; far : B.t }
+
+let copy n () =
+  let ((_, l, _) as job) = controller () in
+  let machine = "agent" in
+  let rail _ ~send:_ ~receive:_ = Error "the bench makes no rails" in
+  let proxy =
+    Rig_remote_proxy.make l host_account (Rig_remote_abi.Host { machine; rail })
+  in
+  let h =
+    ok "open"
+      (Rig.open_
+         (module Rig_remote_proxy)
+         ~machine ~host:true ~name:"CPU"
+         (fun () -> Ok proxy))
+  in
+  { job; near = B.create Rig.host n; far = B.create h n }
+
+let copy_rows =
+  Thumper.group "copy"
+    (List.concat_map
+       (fun n ->
+         let row name f =
+           Thumper.bench_with_setup
+             (strf "%s-%s" name (size n))
+             ~setup:(copy n)
+             ~teardown:(fun c -> ended c.job)
+             f
+         in
+         [
+           row "to" (fun c -> B.copy ~src:c.near ~dst:c.far);
+           row "from" (fun c -> B.copy ~src:c.far ~dst:c.near);
+         ])
+       sizes)
+
 (* Windows has no fork for the agent's process. *)
 let () =
   exit
   @@ Thumper.run "rig_remote"
-       ((if Sys.win32 then [] else [ request_rows ]) @ [ rail_rows ])
+       ((if Sys.win32 then [] else [ request_rows; copy_rows ]) @ [ rail_rows ])

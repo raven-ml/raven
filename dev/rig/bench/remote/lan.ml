@@ -17,22 +17,10 @@
    its job fails, which the controller does when it is done, or when no
    controller comes for [idle] seconds. *)
 
+open Rig_remote_bench
 module Wire = Rig_remote_proxy.Wire
 module Link = Rig_remote_proxy.Link
-
-external tune : Unix.file_descr -> unit = "rig_remote_bench_tune"
-
-external ask : Unix.file_descr -> Rig_remote_abi.area -> int -> int -> int
-  = "rig_remote_bench_ask"
-
-external echo : Unix.file_descr -> Rig_remote_abi.area -> int -> int -> int
-  = "rig_remote_bench_echo"
-
-external rail_run : Rig_remote_abi.area -> Rig_remote_abi.area -> int -> int
-  = "rig_remote_bench_rail_run"
-
-external rail_answer : Rig_remote_abi.area -> Rig_remote_abi.area -> int -> int
-  = "rig_remote_bench_rail_answer"
+module B = Rig.Buffer
 
 let strf = Printf.sprintf
 let kib = 1024
@@ -47,11 +35,6 @@ let buffer n = Bigarray.(Array1.create char c_layout n)
 
 (* Seconds an agent waits for a connection before it leaves. *)
 let idle = 60.
-
-(* The request, its frame's bytes and its answer's, as in bench_remote.ml. *)
-let alloc = Wire.Alloc { id = 1; device = 0; memory = `Device; bytes = 4096 }
-let request_bytes = 9 + 1 + 8 + 8 + 1 + 8
-let answer_bytes = 9 + 1 + 1
 
 (* A rail's answer: one transfer of 8 bytes back. *)
 let ack : Rig_remote_abi.transfer = { src = 0; dst = 0; length = 8 }
@@ -108,20 +91,7 @@ let floors l =
   in
   serve ()
 
-let reply : type r. Link.t -> r Wire.request -> (r, string) result =
- fun l -> function
-  | Wire.Alloc _ -> Ok true
-  | Wire.Rail { id; send; receive; _ } ->
-      let e = Link.rail l ~id ~send ~receive in
-      let answer () =
-        let rec go c = if rail_answer e.counts e.counts c = 0 then go (c + 1) in
-        go 1
-      in
-      ignore (Thread.create answer ());
-      Ok ()
-  | _ -> Error "lan.exe answers only allocations and rails"
-
-let agent port key =
+let serve port key =
   let floor = listening (port + 1) and link = listening port in
   ignore (Thread.create floors floor);
   match accepted link with
@@ -131,16 +101,9 @@ let agent port key =
   | Some fd ->
       let j = Link.job () in
       ignore (ok "accept" (Wire.accept fd ~key ~admit:(fun _ -> Ok ())));
-      let l = Link.make j fd ~name:"controller" ~peer:Wire.Controller in
-      let rec serve () =
-        match Link.next l with
-        | Ok (Wire.Request r) ->
-            Link.answer l r (reply l r);
-            serve ()
-        | Ok _ -> serve ()
-        | Error why -> prerr_endline ("lan.exe: the job ended: " ^ why)
-      in
-      serve ();
+      agent (Link.make j fd ~name:"controller" ~peer:Wire.Controller);
+      let why = Option.value (Link.failure j) ~default:"closed" in
+      prerr_endline ("lan.exe: the job ended: " ^ why);
       Unix._exit 0
 
 (* The controller *)
@@ -209,8 +172,24 @@ let floor host port there back =
   let b = buffer (max there back) in
   (fd, fun () -> check "ask" (ask fd b there back))
 
-(* Rails' sizes and the runs timed at each, about 3 s at 100 Mb/s. *)
-let rails = [ ("rail-4K", 4 * kib, 500); ("rail-1M", mib, 30) ]
+(* The sizes of rails' transfers and copies, and the runs timed at each, about 3
+   s at 100 Mb/s. *)
+let sizes = [ ("4K", 4 * kib, 500); ("1M", mib, 30) ]
+
+let host_account : Wire.account =
+  { id = 0; name = "CPU"; arch = "bench"; budget = 1 lsl 30; reaches = [] }
+
+(* The proxy of the agent's machine's host, opened on rig. *)
+let proxy l machine =
+  let rail _ ~send:_ ~receive:_ = Error "lan.exe makes no rails here" in
+  let p =
+    Rig_remote_proxy.make l host_account (Rig_remote_abi.Host { machine; rail })
+  in
+  ok "open"
+    (Rig.open_
+       (module Rig_remote_proxy)
+       ~machine ~host:true ~name:"CPU"
+       (fun () -> Ok p))
 
 let controller host port key =
   let fd = connect host port in
@@ -225,7 +204,8 @@ let controller host port key =
   report "request-floor" 0 (timed 1000 round);
   Unix.close f;
   List.iteri
-    (fun i (name, n, runs) ->
+    (fun i (size, n, runs) ->
+      let name = "rail-" ^ size in
       let id = i + 1 in
       let t : Rig_remote_abi.transfer = { src = 0; dst = 0; length = n } in
       let e = Link.rail l ~id ~send:[| t |] ~receive:[| ack |] in
@@ -246,13 +226,22 @@ let controller host port key =
       let f, round = floor host port n ack.length in
       report (name ^ "-floor") n (timed runs round);
       Unix.close f)
-    rails;
+    sizes;
+  let h = proxy l host in
+  List.iter
+    (fun (size, n, runs) ->
+      let near = B.create Rig.host n and far = B.create h n in
+      report ("copy-to-" ^ size) n
+        (timed runs (fun () -> B.copy ~src:near ~dst:far));
+      report ("copy-from-" ^ size) n
+        (timed runs (fun () -> B.copy ~src:far ~dst:near)))
+    sizes;
   Link.fail j "the measurement ended"
 
 let () =
   let key = In_channel.input_all stdin |> String.trim in
   match Array.to_list Sys.argv |> List.tl with
-  | [ "agent"; port ] -> agent (int_of_string port) key
+  | [ "agent"; port ] -> serve (int_of_string port) key
   | [ "controller"; host; port ] -> controller host (int_of_string port) key
   | _ ->
       prerr_endline "usage: lan.exe agent PORT | lan.exe controller HOST PORT";

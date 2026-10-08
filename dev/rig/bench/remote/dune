@@ -1,6 +1,7 @@
 (library
  (name rig_remote_bench)
- (modules)
+ (modules rig_remote_bench)
+ (libraries rig_remote_abi rig_remote_proxy unix threads.posix)
  (foreign_stubs
   (language c)
   (names rig_remote_bench_stubs)))
@@ -9,6 +10,7 @@
  (name bench_remote)
  (modules bench_remote)
  (libraries
+  rig
   rig_remote_abi
   rig_remote_proxy
   rig_remote_bench
@@ -27,6 +29,7 @@
  (name lan)
  (modules lan)
  (libraries
+  rig
   rig_remote_abi
   rig_remote_proxy
   rig_remote_bench
