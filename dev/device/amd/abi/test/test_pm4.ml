@@ -22,15 +22,14 @@ let name (g : Gpu.t) = S.version g.gc
 (* PACKET3(op, n): type 3, n + 1 words after the header. *)
 let packet3 op n = (3 lsl 30) lor (n lsl 16) lor (op lsl 8)
 
-(* SET_SH_REG's registers and SET_UCONFIG_REG's, whose offset holds less than
-   0xffff, as the .mli states them. *)
-let ranges = [ (0x76, (0x2c00, 0x3000)); (0x79, (0xc000, 0xc000 + 0xffff)) ]
+(* SET_SH_REG's registers and SET_UCONFIG_REG's, as the .mli states them. *)
+let ranges = [ (0x76, (0x2c00, 0x3000)); (0x79, (0xc000, 0x10000)) ]
 
 (* A first register around a range's ends, and up to 4 words; one run in four
    ends exactly at a range's end. *)
 let runs_of_regs =
   let open Gen in
-  let edges = [ 0x2c00; 0x3000; 0xc000; 0xc000 + 0xffff ] in
+  let edges = [ 0x2c00; 0x3000; 0xc000; 0x10000; 0xc000 + 0xffff ] in
   let word =
     frequency
       [

@@ -29,8 +29,10 @@ let packet op body =
 
 type 'v location = Register of int | Memory of 'v
 
-(* A register's words are at most a 16-bit offset past UCONFIG's start. *)
-let uconfig_extent = 0xffff
+(* UCONFIG's registers end at 0xffff (PAL's UCONFIG_SPACE_END,
+   gfx9_plus_merged_enum.h at c5e80007). SET_UCONFIG_REG's 16-bit offset reaches
+   past them, where no space has registers. *)
+let uconfig_end = 0x10000
 
 let set_reg reg ws =
   let op, start, stop =
@@ -39,22 +41,19 @@ let set_reg reg ws =
       ( Defs.packet3_set_sh_reg,
         Defs.packet3_set_sh_reg_start,
         Defs.packet3_set_sh_reg_end )
-    else if
-      Defs.packet3_set_uconfig_reg_start <= reg
-      && reg < Defs.packet3_set_uconfig_reg_start + uconfig_extent
-    then
+    else if Defs.packet3_set_uconfig_reg_start <= reg && reg < uconfig_end then
       ( Defs.packet3_set_uconfig_reg,
         Defs.packet3_set_uconfig_reg_start,
-        Defs.packet3_set_uconfig_reg_start + uconfig_extent )
+        uconfig_end )
     else
       invalid_argf
-        "Pm4.set_reg: register 0x%x is in neither the SH nor the UCONFIG range"
+        "Pm4.set_reg: register 0x%x is in neither the SH nor the UCONFIG space"
         reg
   in
   let n = size ws in
   if reg + n > stop then
     invalid_argf
-      "Pm4.set_reg: %d words from register 0x%x pass its range's end 0x%x" n reg
+      "Pm4.set_reg: %d words from register 0x%x pass its space's end 0x%x" n reg
       stop;
   packet op (Dword (reg - start) :: ws)
 
