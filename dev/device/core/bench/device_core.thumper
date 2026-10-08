@@ -1,0 +1,32 @@
+# thumper baseline v1
+# suite: device_core
+
+# machine: 943935ae6b4f79ac
+# host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
+# ocaml: 5.5.1 · 64-bit · release
+# forced: blessed under load 5.4 on 10 cores
+
+floor/mutex-section	alloc_words	exact	0
+floor/mutex-section	wall_time	batch=524288	n=20	1.588e-08	1.579e-08 1.580e-08 1.580e-08 1.582e-08 1.583e-08 1.583e-08 1.584e-08 1.585e-08 1.585e-08 1.587e-08 1.589e-08 1.593e-08 1.596e-08 1.597e-08 1.599e-08 1.602e-08 1.608e-08 1.612e-08 1.628e-08 1.654e-08
+floor/polled/cost	alloc_words	exact	0
+floor/polled/cost	wall_time	batch=131072	n=20	5.034e-08	4.943e-08 4.960e-08 4.960e-08 4.963e-08 4.986e-08 5.000e-08 5.002e-08 5.016e-08 5.023e-08 5.029e-08 5.038e-08 5.038e-08 5.039e-08 5.041e-08 5.051e-08 5.052e-08 5.057e-08 5.117e-08 5.129e-08 5.202e-08
+floor/polled/pipelined-100	alloc_words	exact	0
+floor/polled/pipelined-100	wall_time	batch=1024	n=20	6.469e-06	6.448e-06 6.452e-06 6.453e-06 6.454e-06 6.455e-06 6.456e-06 6.457e-06 6.464e-06 6.464e-06 6.468e-06 6.471e-06 6.471e-06 6.473e-06 6.481e-06 6.489e-06 6.491e-06 6.504e-06 6.510e-06 6.511e-06 6.527e-06
+floor/polled/release	alloc_words	exact	0
+floor/polled/release	wall_time	batch=131072	n=20	5.879e-08	5.844e-08 5.846e-08 5.848e-08 5.851e-08 5.856e-08 5.868e-08 5.871e-08 5.872e-08 5.878e-08 5.879e-08 5.879e-08 5.890e-08 5.950e-08 5.953e-08 5.971e-08 5.976e-08 5.983e-08 5.984e-08 5.995e-08 6.115e-08
+floor/polled/run	alloc_words	exact	0
+floor/polled/run	wall_time	batch=131072	n=20	6.458e-08	6.325e-08 6.422e-08 6.423e-08 6.425e-08 6.434e-08 6.444e-08 6.450e-08 6.454e-08 6.456e-08 6.458e-08 6.458e-08 6.460e-08 6.465e-08 6.467e-08 6.472e-08 6.486e-08 6.530e-08 6.538e-08 6.563e-08 7.330e-08
+replay/polled/params-24	alloc_words	exact	0
+replay/polled/params-24	wall_time	batch=8192	n=20	8.310e-07	8.196e-07 8.202e-07 8.205e-07 8.220e-07 8.238e-07 8.256e-07 8.266e-07 8.284e-07 8.285e-07 8.287e-07 8.332e-07 8.333e-07 8.354e-07 8.391e-07 8.392e-07 8.403e-07 8.412e-07 8.414e-07 8.447e-07 8.468e-07
+replay/polled/pipelined-100	alloc_words	exact	0
+replay/polled/pipelined-100	wall_time	batch=64	n=20	8.297e-05	8.063e-05 8.156e-05 8.194e-05 8.256e-05 8.267e-05 8.269e-05 8.286e-05 8.288e-05 8.291e-05 8.297e-05 8.298e-05 8.324e-05 8.372e-05 8.378e-05 8.388e-05 8.389e-05 8.395e-05 8.418e-05 8.440e-05 8.478e-05
+submit/polled/cost	alloc_words	exact	0
+submit/polled/cost	wall_time	batch=65536	n=20	8.957e-08	8.949e-08 8.949e-08 8.949e-08 8.950e-08 8.952e-08 8.953e-08 8.954e-08 8.956e-08 8.957e-08 8.957e-08 8.957e-08 8.962e-08 8.964e-08 8.969e-08 8.972e-08 8.973e-08 8.974e-08 8.975e-08 8.975e-08 9.055e-08
+submit/polled/empty	alloc_words	exact	0
+submit/polled/empty	wall_time	batch=65536	n=20	1.013e-07	1.006e-07 1.008e-07 1.011e-07 1.011e-07 1.012e-07 1.012e-07 1.013e-07 1.013e-07 1.013e-07 1.013e-07 1.013e-07 1.014e-07 1.015e-07 1.015e-07 1.016e-07 1.017e-07 1.020e-07 1.020e-07 1.020e-07 1.026e-07
+submit/polled/foreign-24	alloc_words	exact	0
+submit/polled/foreign-24	wall_time	batch=8192	n=20	7.781e-07	7.622e-07 7.636e-07 7.766e-07 7.770e-07 7.774e-07 7.775e-07 7.777e-07 7.777e-07 7.780e-07 7.781e-07 7.781e-07 7.783e-07 7.783e-07 7.783e-07 7.783e-07 7.793e-07 7.806e-07 7.863e-07 7.893e-07 7.973e-07
+submit/polled/slots-24	alloc_words	exact	0
+submit/polled/slots-24	wall_time	batch=8192	n=20	7.516e-07	7.457e-07 7.484e-07 7.498e-07 7.499e-07 7.502e-07 7.502e-07 7.506e-07 7.511e-07 7.512e-07 7.515e-07 7.517e-07 7.519e-07 7.520e-07 7.520e-07 7.521e-07 7.523e-07 7.526e-07 7.527e-07 7.545e-07 7.551e-07
+submit/polled/two-domains	alloc_words	exact	0
+submit/polled/two-domains	wall_time	batch=32768	n=20	2.641e-07	2.352e-07 2.360e-07 2.425e-07 2.462e-07 2.508e-07 2.545e-07 2.545e-07 2.593e-07 2.627e-07 2.629e-07 2.652e-07 2.653e-07 2.659e-07 2.670e-07 2.671e-07 2.738e-07 2.747e-07 2.766e-07 2.807e-07 2.813e-07
