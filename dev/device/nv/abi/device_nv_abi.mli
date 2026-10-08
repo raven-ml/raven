@@ -23,8 +23,8 @@
     - A {e GPU} ({!Gpu.t}) is what the formats depend on: its classes, its
       geometry and the windows its driver chose, declared by the driver under
       {!Gpu.key}. A cubin's kernel ({!Cubin}) set up for launch on a GPU is a
-      {!Launch.t}, from which its descriptor is built; {!Local} sizes the local
-      memory its threads take.
+      {!Launch.t}, from which its descriptor is built; {!Local_memory} sizes the
+      local memory its threads take.
 
     {v
     cubin bytes --Cubin.of_string--> Cubin.t --kernel--> Cubin.kernel
@@ -81,7 +81,7 @@ module Gpfifo = Gpfifo
 module Gpu = Gpu
 (** NVIDIA GPUs, as their formats depend on them. *)
 
-module Local = Local
+module Local_memory = Local_memory
 (** Kernels' local memory. *)
 
 (** {1:launches Launches} *)

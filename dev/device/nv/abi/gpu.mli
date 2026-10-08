@@ -56,9 +56,9 @@ type t = {
           driver's ({!Method.local_memory}). [local n] makes it serve kernels
           whose threads need up to [n] bytes each ({!Launch.local_bytes}): it
           does nothing if the memory already does, else replaces it with a
-          larger one ({!Local.make}) and keeps the old one until the work placed
-          before the call completes. The result is [Error msg] if the device
-          cannot allocate it. Any domain may call it. *)
+          larger one ({!Local_memory.make}) and keeps the old one until the work
+          placed before the call completes. The result is [Error msg] if the
+          device cannot allocate it. Any domain may call it. *)
 }
 (** The type for GPUs. Every count is positive. *)
 

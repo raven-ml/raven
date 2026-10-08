@@ -33,7 +33,7 @@ let need =
 
 let local =
   Testable.make
-    ~pp:(fun ppf (l : Local.t) ->
+    ~pp:(fun ppf (l : Local_memory.t) ->
       Format.fprintf ppf "{ per_thread = %d; per_tpc = %d; bytes = %d }"
         l.per_thread l.per_tpc l.bytes)
     ~equal:( = )
@@ -44,13 +44,13 @@ let tests =
       test "no local memory is none" (fun () ->
           equal local
             { per_thread = 0; per_tpc = 0; bytes = 0 }
-            (Local.make (S.gpu ()) 0));
+            (Local_memory.make (S.gpu ()) 0));
       test "596 bytes a thread on an RTX 5000 Ada" (fun () ->
           (* 608 bytes a thread, 19456 a warp, 96 warps a TPC: 57 * 32 KiB; 66
              TPCs: 123273216 bytes, rounded up to 941 * 128 KiB. *)
           equal local
             { per_thread = 608; per_tpc = 57 * 0x8000; bytes = 941 * 0x20000 }
-            (Local.make (S.gpu ()) 596));
+            (Local_memory.make (S.gpu ()) 596));
       prop "local memory is the least multiples that hold every thread"
         (Gen.pair (Gen.with_pp pp_gpu geometry) need)
         (fun (g, n) ->
@@ -59,26 +59,26 @@ let tests =
             S.round_up (per_thread * 32 * g.warps_per_sm * g.sms_per_tpc) 0x8000
           in
           let bytes = S.round_up (per_tpc * g.tpcs_per_gpc * g.gpcs) 0x20000 in
-          equal local { per_thread; per_tpc; bytes } (Local.make g n));
+          equal local { per_thread; per_tpc; bytes } (Local_memory.make g n));
       test "2^40 bytes a thread on an RTX 5000 Ada" (fun () ->
           (* 2^45 bytes a warp, 96 warps a TPC, 66 TPCs: no step wraps. *)
           let per_thread = 1 lsl 40 in
           let per_tpc = per_thread * 32 * 96 in
           equal local
             { per_thread; per_tpc; bytes = per_tpc * 66 }
-            (Local.make (S.gpu ()) per_thread));
+            (Local_memory.make (S.gpu ()) per_thread));
       cases ~name:string_of_int
         "a need whose allocation would pass max_int is refused"
         (* Each step wraps first for one of them: the thread's rounding, the
            warp's share, the TPC's, the allocation. *)
         [ max_int; max_int - 30; (max_int / 32) + 1; 1 lsl 52; 1 lsl 45 ]
         (fun n ->
-          raises_match (Exn.invalid_arg ~substring:"Local.make") (fun () ->
-              Local.make (S.gpu ()) n));
+          raises_match (Exn.invalid_arg ~substring:"Local_memory.make")
+            (fun () -> Local_memory.make (S.gpu ()) n));
       cases ~name:string_of_int "a negative need is refused" [ min_int; -1 ]
         (fun n ->
-          raises_match (Exn.invalid_arg ~substring:"Local.make") (fun () ->
-              Local.make (S.gpu ()) n));
+          raises_match (Exn.invalid_arg ~substring:"Local_memory.make")
+            (fun () -> Local_memory.make (S.gpu ()) n));
     ]
 
-let () = exit (run "device_nv_abi.local" [ tests ])
+let () = exit (run "device_nv_abi.local_memory" [ tests ])

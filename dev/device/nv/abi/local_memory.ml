@@ -10,7 +10,8 @@ type t = { per_thread : int; per_tpc : int; bytes : int }
 (* Rounding up and products of non-negative ints for the need [n], which raise
    where they would wrap past max_int. *)
 let too_large n =
-  invalid_argf "Local.make: %d bytes a thread need an allocation past max_int" n
+  invalid_argf
+    "Local_memory.make: %d bytes a thread need an allocation past max_int" n
 
 let round_up n x a =
   if x > max_int - (a - 1) then too_large n else (x + a - 1) / a * a
@@ -27,7 +28,7 @@ let bytes_align = 0x20000
 let warp = 32
 
 let make (g : Gpu.t) n =
-  if n < 0 then invalid_argf "Local.make: %d bytes, expected 0 or more" n;
+  if n < 0 then invalid_argf "Local_memory.make: %d bytes, expected 0 or more" n;
   let per_thread = round_up n n thread_align in
   let per_warp = mul n per_thread warp in
   let per_sm = mul n per_warp g.warps_per_sm in

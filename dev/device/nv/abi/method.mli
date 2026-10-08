@@ -73,9 +73,9 @@ val local_memory_window : 'v -> 'v Packet.t
 val local_memory : 'v -> per_tpc:'v -> 'v Packet.t
 (** [local_memory addr ~per_tpc] gives kernels the local memory at [addr],
     [per_tpc] bytes for each texture processing cluster
-    ({!Local.field-per_tpc}), and lets every streaming multiprocessor use it.
-    Launches scheduled after it use it. A launch scheduled before it must have
-    completed: a {!release} separates them, and the caller keeps the memory
+    ({!Local_memory.field-per_tpc}), and lets every streaming multiprocessor use
+    it. Launches scheduled after it use it. A launch scheduled before it must
+    have completed: a {!release} separates them, and the caller keeps the memory
     until the launches that use it complete. *)
 
 val invalidate_caches : Packet.scope -> 'v Packet.t

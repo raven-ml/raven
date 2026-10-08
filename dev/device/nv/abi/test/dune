@@ -5,7 +5,7 @@
   test_gpfifo
   test_cubin
   test_launch
-  test_local
+  test_local_memory
   test_qmd
   test_structure)
  (modules
@@ -14,7 +14,7 @@
   test_gpfifo
   test_cubin
   test_launch
-  test_local
+  test_local_memory
   test_qmd
   test_structure)
  (libraries device_nv_abi device_nv_abi_support device_elf windtrap)

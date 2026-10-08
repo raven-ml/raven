@@ -69,8 +69,8 @@ val set_bank : int -> 'v -> 'v t -> 'v t
 val set_local_memory : 'v -> 'v t -> 'v t
 (** [set_local_memory bytes q] is [q] whose threads each take [bytes] of the
     local memory {!Method.local_memory} gives: a multiple of 16, at least the
-    launch's {!Launch.local_bytes}, such as the {!Local.field-per_thread} the
-    memory was sized with. *)
+    launch's {!Launch.local_bytes}, such as the {!Local_memory.field-per_thread}
+    the memory was sized with. *)
 
 (** {1:completion Completion} *)
 
