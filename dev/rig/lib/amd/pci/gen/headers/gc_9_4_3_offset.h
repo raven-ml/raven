@@ -25,3 +25,5 @@
 #define regCC_GC_SHADER_ARRAY_CONFIG_BASE_IDX                                                           0
 #define regGC_USER_SHADER_ARRAY_CONFIG                                                                  0x0270
 #define regGC_USER_SHADER_ARRAY_CONFIG_BASE_IDX                                                         0
+#define regMC_VM_FB_OFFSET                                                                              0x0947
+#define regMC_VM_FB_OFFSET_BASE_IDX                                                                     0

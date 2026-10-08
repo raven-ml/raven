@@ -108,9 +108,12 @@ val open_ :
     reason, if one of its blocks has a version this library does not boot,
     naming the block and the version, if an image is missing, with
     {!Rig_pci.Firmware.find}'s reason, or if firmware this library did not start
-    runs on it, which a {!reset} stops. It is also [Error msg] if a block does
-    not answer during the boot, naming the step, or with {!Rig_amd.make}'s
-    message; the GPU then opens again only after a reset.
+    runs on it, which a {!reset} stops, or if the memory controller does not
+    place all of the GPU's memory. It is also [Error msg] if a block does not
+    answer during the boot, naming the step, or with {!Rig_amd.make}'s message;
+    the GPU is then stopped, and opens again only after a reset. An exception
+    raised after the boot's first write stops the GPU the same way and passes
+    through.
 
     Raises [Invalid_argument] if [i < 0]. *)
 
@@ -160,14 +163,17 @@ val attach : int -> (unit, string) result
 val reset : ?machine:Rig_pci.Machine.t -> int -> (unit, string) result
 (** [reset ~machine i] stops whatever runs on GPU [i] of [machine] (defaults to
     {!Rig_pci.Machine.this}) and resets it with the GPU's whole reset (mode 1),
-    which clears what any driver left. A GPU no firmware runs on is left as it
-    is. A virtual function gives back its access instead, and its physical
-    function resets it. Afterwards the GPU opens with a full boot.
+    which clears what any driver left. Its engines are stopped and its clocks
+    lowered first, and its bus mastering turned off. A GPU no firmware runs on
+    is left as it is, but for its interrupt rings, which it turns off. A virtual
+    function gives back its access instead, and its physical function resets it.
+    Afterwards the GPU opens with a full boot.
 
     The result is [Error msg] if [i] is no GPU, if this process holds it, if its
     function cannot be taken, if it is one of several GPUs joined by a fabric
     (XGMI), which reset together outside the process, or if it does not answer
-    after the reset, in which case only a power cycle recovers it.
+    after the reset, in which case only a power cycle recovers it, or if its
+    security processor or interrupt rings still run after it.
 
     Raises [Invalid_argument] if [i < 0]. *)
 

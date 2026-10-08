@@ -21,6 +21,8 @@
  *
  */
 
+#define regMMMC_VM_FB_OFFSET                                                                            0x04c7
+#define regMMMC_VM_FB_OFFSET_BASE_IDX                                                                   0
 #define regMMMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB                                                     0x04c8
 #define regMMMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB_BASE_IDX                                            0
 #define regMMMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB                                                     0x04c9

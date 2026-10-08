@@ -202,7 +202,12 @@ let start t =
            ("mc_vmid", 0);
          ]
         @
-        if ring.first then [ ("wptr_overflow_enable", 1); ("rptr_rearm", 1) ]
+        if ring.first then
+          [
+            ("wptr_overflow_enable", 1);
+            ("rptr_rearm", 1);
+            ("wptr_writeback_enable", 1);
+          ]
         else [ ("rb_full_drain_enable", 1) ]);
       if ring.first then
         Regs.write64 r "regIH_RB_WPTR_ADDR" ~lo:"_LO" ~hi:"_HI"
@@ -217,13 +222,22 @@ let start t =
     Regs.update r "regIH_INT_FLOOD_CNTL" [ ("flood_cntl_enable", 1) ];
     Regs.update r "regIH_MSI_STORM_CTRL" [ ("delay", 3) ]
   end;
+  (* The rings fill without signalling interrupts: this library polls the first
+     ring's write-pointer copy, and a function with no handler must not raise a
+     line interrupt, which bus mastering does not hold back. *)
   List.iter
     (fun ring ->
-      Regs.update r
-        ("regIH_RB_CNTL" ^ ring.suffix)
-        (("rb_enable", 1) :: (if ring.first then [ ("enable_intr", 1) ] else [])))
+      Regs.update r ("regIH_RB_CNTL" ^ ring.suffix) [ ("rb_enable", 1) ])
     t.rings;
   t.rptr <- 0
+
+let ring_controls = [ "regIH_RB_CNTL"; "regIH_RB_CNTL_RING1" ]
+
+let running r =
+  List.exists (fun c -> Regs.field r c "rb_enable" = 1) ring_controls
+
+let halt r =
+  List.iter (fun c -> Regs.update r c [ ("rb_enable", 0) ]) ring_controls
 
 let offset w = w land (bytes - 1) land lnot (entry_bytes - 1)
 

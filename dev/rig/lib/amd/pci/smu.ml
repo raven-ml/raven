@@ -143,7 +143,11 @@ let clocks s level =
 (* The debug port's mode 1 reset, of the power managers of GPUs whose MP0 is
    13.0.0, 13.0.7, 13.0.10 or 14 and later. *)
 let debug_mode1 = 2
-let after_reset_ms = 500
+
+(* The GPU answers no register access while it resets: 1 s on SMU 14, 500 ms on
+   earlier ones (smu_v14_0_2_mode1_reset, SMU13_MODE1_RESET_WAIT_TIME_IN_MS of
+   smu_v13_0.h). *)
+let after_reset_ms s = if s.mp1 >= (14, 0, 0) then 1_000 else 500
 let answer_ms = 2_000
 let amd = 0x1002
 
@@ -164,7 +168,7 @@ let reset s =
   Regs.write ~value:param s.r arg [];
   Regs.write ~value:m s.r cmd [];
   if not (Gmc.hive s.gmc) then begin
-    Regs.pause s.r after_reset_ms;
+    Regs.pause s.r (after_reset_ms s);
     (* Configuration reads fail fast on a GPU still in reset, where register
        reads would stall the bus. *)
     let fn = Regs.fn s.r in

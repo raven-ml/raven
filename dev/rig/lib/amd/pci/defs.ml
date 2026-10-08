@@ -221,12 +221,15 @@ let amdgpu_vm_pdb1 = 1
 let amdgpu_vm_pdb0 = 2
 let amdgpu_vm_ptb = 3
 let soc15_mtype_uc = 3
+let soc15_mtype_nc = 0
 let soc15_sh_mem_address_mode_64 = 0
 let soc15_sh_mem_alignment_mode_unaligned = 3
 let soc21_mtype_uc = 3
+let soc21_mtype_nc = 0
 let soc21_sh_mem_address_mode_64 = 0
 let soc21_sh_mem_alignment_mode_unaligned = 3
 let soc24_mtype_uc = 3
+let soc24_mtype_nc = 0
 let soc24_sh_mem_address_mode_64 = 0
 let soc24_sh_mem_alignment_mode_unaligned = 3
 
@@ -719,6 +722,7 @@ let registers = [
       { Rig_amd_abi.Register.name = "regMMMC_VM_AGP_TOP"; offset = 0xc9e; segment = 0; fields = [ ("agp_top", (0, 23)) ] };
       { Rig_amd_abi.Register.name = "regMMMC_VM_FB_LOCATION_BASE"; offset = 0xc9c; segment = 0; fields = [ ("fb_base", (0, 23)) ] };
       { Rig_amd_abi.Register.name = "regMMMC_VM_FB_LOCATION_TOP"; offset = 0xc9d; segment = 0; fields = [ ("fb_top", (0, 23)) ] };
+      { Rig_amd_abi.Register.name = "regMMMC_VM_FB_OFFSET"; offset = 0xc87; segment = 0; fields = [ ("fb_offset", (0, 23)) ] };
       { Rig_amd_abi.Register.name = "regMMMC_VM_MX_L1_TLB_CNTL"; offset = 0xca3; segment = 0; fields = [ ("enable_l1_tlb", (0, 0)); ("system_access_mode", (3, 4)); ("system_aperture_unmapped_access", (5, 5)); ("enable_advanced_driver_model", (6, 6)); ("eco_bits", (7, 10)); ("mtype", (11, 12)); ("atc_en", (13, 13)) ] };
       { Rig_amd_abi.Register.name = "regMMMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB"; offset = 0xc88; segment = 0; fields = [ ("physical_page_number_lsb", (0, 31)) ] };
       { Rig_amd_abi.Register.name = "regMMMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB"; offset = 0xc89; segment = 0; fields = [ ("physical_page_number_msb", (0, 3)) ] };
@@ -798,6 +802,7 @@ let registers = [
       { Rig_amd_abi.Register.name = "regMMMC_VM_AGP_TOP"; offset = 0x8ee; segment = 0; fields = [ ("agp_top", (0, 23)) ] };
       { Rig_amd_abi.Register.name = "regMMMC_VM_FB_LOCATION_BASE"; offset = 0x8ec; segment = 0; fields = [ ("fb_base", (0, 23)) ] };
       { Rig_amd_abi.Register.name = "regMMMC_VM_FB_LOCATION_TOP"; offset = 0x8ed; segment = 0; fields = [ ("fb_top", (0, 23)) ] };
+      { Rig_amd_abi.Register.name = "regMMMC_VM_FB_OFFSET"; offset = 0x8d7; segment = 0; fields = [ ("fb_offset", (0, 23)) ] };
       { Rig_amd_abi.Register.name = "regMMMC_VM_MX_L1_TLB_CNTL"; offset = 0x8f3; segment = 0; fields = [ ("enable_l1_tlb", (0, 0)); ("system_access_mode", (3, 4)); ("system_aperture_unmapped_access", (5, 5)); ("enable_advanced_driver_model", (6, 6)); ("eco_bits", (7, 10)); ("mtype", (11, 13)) ] };
       { Rig_amd_abi.Register.name = "regMMMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB"; offset = 0x8d8; segment = 0; fields = [ ("physical_page_number_lsb", (0, 31)) ] };
       { Rig_amd_abi.Register.name = "regMMMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB"; offset = 0x8d9; segment = 0; fields = [ ("physical_page_number_msb", (0, 3)) ] };
@@ -876,6 +881,7 @@ let registers = [
       { Rig_amd_abi.Register.name = "regMMMC_VM_AGP_TOP"; offset = 0x8ee; segment = 1; fields = [ ("agp_top", (0, 23)) ] };
       { Rig_amd_abi.Register.name = "regMMMC_VM_FB_LOCATION_BASE"; offset = 0x8ec; segment = 1; fields = [ ("fb_base", (0, 23)) ] };
       { Rig_amd_abi.Register.name = "regMMMC_VM_FB_LOCATION_TOP"; offset = 0x8ed; segment = 1; fields = [ ("fb_top", (0, 23)) ] };
+      { Rig_amd_abi.Register.name = "regMMMC_VM_FB_OFFSET"; offset = 0x8d7; segment = 1; fields = [ ("fb_offset", (0, 23)) ] };
       { Rig_amd_abi.Register.name = "regMMMC_VM_MX_L1_TLB_CNTL"; offset = 0x8f3; segment = 1; fields = [ ("enable_l1_tlb", (0, 0)); ("system_access_mode", (3, 4)); ("system_aperture_unmapped_access", (5, 5)); ("enable_advanced_driver_model", (6, 6)); ("eco_bits", (7, 10)); ("mtype", (11, 13)) ] };
       { Rig_amd_abi.Register.name = "regMMMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB"; offset = 0x8d8; segment = 1; fields = [ ("physical_page_number_lsb", (0, 31)) ] };
       { Rig_amd_abi.Register.name = "regMMMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB"; offset = 0x8d9; segment = 1; fields = [ ("physical_page_number_msb", (0, 3)) ] };
@@ -954,6 +960,7 @@ let registers = [
       { Rig_amd_abi.Register.name = "regMMMC_VM_AGP_TOP"; offset = 0x86e; segment = 0; fields = [ ("agp_top", (0, 23)) ] };
       { Rig_amd_abi.Register.name = "regMMMC_VM_FB_LOCATION_BASE"; offset = 0x86c; segment = 0; fields = [ ("fb_base", (0, 23)) ] };
       { Rig_amd_abi.Register.name = "regMMMC_VM_FB_LOCATION_TOP"; offset = 0x86d; segment = 0; fields = [ ("fb_top", (0, 23)) ] };
+      { Rig_amd_abi.Register.name = "regMMMC_VM_FB_OFFSET"; offset = 0x857; segment = 0; fields = [ ("fb_offset", (0, 23)) ] };
       { Rig_amd_abi.Register.name = "regMMMC_VM_MX_L1_TLB_CNTL"; offset = 0x873; segment = 0; fields = [ ("enable_l1_tlb", (0, 0)); ("system_access_mode", (3, 4)); ("system_aperture_unmapped_access", (5, 5)); ("enable_advanced_driver_model", (6, 6)); ("eco_bits", (7, 10)); ("mtype", (11, 13)) ] };
       { Rig_amd_abi.Register.name = "regMMMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB"; offset = 0x858; segment = 0; fields = [ ("physical_page_number_lsb", (0, 31)) ] };
       { Rig_amd_abi.Register.name = "regMMMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB"; offset = 0x859; segment = 0; fields = [ ("physical_page_number_msb", (0, 3)) ] };
@@ -1031,6 +1038,7 @@ let registers = [
       { Rig_amd_abi.Register.name = "regMMMC_VM_AGP_TOP"; offset = 0x556; segment = 0; fields = [ ("agp_top", (0, 23)) ] };
       { Rig_amd_abi.Register.name = "regMMMC_VM_FB_LOCATION_BASE"; offset = 0x554; segment = 0; fields = [ ("fb_base", (0, 23)) ] };
       { Rig_amd_abi.Register.name = "regMMMC_VM_FB_LOCATION_TOP"; offset = 0x555; segment = 0; fields = [ ("fb_top", (0, 23)) ] };
+      { Rig_amd_abi.Register.name = "regMMMC_VM_FB_OFFSET"; offset = 0x4c7; segment = 0; fields = [ ("fb_offset", (0, 23)) ] };
       { Rig_amd_abi.Register.name = "regMMMC_VM_MX_L1_TLB_CNTL"; offset = 0x55b; segment = 0; fields = [ ("enable_l1_tlb", (0, 0)); ("system_access_mode", (3, 4)); ("system_aperture_unmapped_access", (5, 5)); ("enable_advanced_driver_model", (6, 6)); ("eco_bits", (7, 10)); ("mtype", (11, 12)) ] };
       { Rig_amd_abi.Register.name = "regMMMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB"; offset = 0x4c8; segment = 0; fields = [ ("physical_page_number_lsb", (0, 31)) ] };
       { Rig_amd_abi.Register.name = "regMMMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB"; offset = 0x4c9; segment = 0; fields = [ ("physical_page_number_msb", (0, 3)) ] };
@@ -1104,10 +1112,13 @@ let registers = [
     ] );
   ( "nbio", (4, 3, 0), [
       { Rig_amd_abi.Register.name = "regBIF_BX0_BIF_DOORBELL_INT_CNTL"; offset = 0xfe; segment = 2; fields = [ ("doorbell_interrupt_status", (0, 0)); ("ras_cntlr_interrupt_status", (1, 1)); ("ras_athub_err_event_interrupt_status", (2, 2)); ("doorbell_interrupt_clear", (16, 16)); ("ras_cntlr_interrupt_clear", (17, 17)); ("ras_athub_err_event_interrupt_clear", (18, 18)); ("ras_cntlr_err_event_interrupt_enable", (23, 23)); ("doorbell_interrupt_disable", (24, 24)); ("ras_cntlr_interrupt_disable", (25, 25)); ("ras_athub_err_event_interrupt_disable", (26, 26)); ("set_db_intr_status_when_rb_enable", (28, 28)); ("set_ioh_ras_intr_status_when_rb_enable", (29, 29)); ("set_ath_ras_intr_status_when_rb_enable", (30, 30)); ("timeout_err_event_interrupt_enable", (31, 31)) ] };
+      { Rig_amd_abi.Register.name = "regBIF_BX0_INTERRUPT_CNTL"; offset = 0xf1; segment = 2; fields = [ ("ih_dummy_rd_override", (0, 0)); ("ih_dummy_rd_en", (1, 1)); ("ih_req_nonsnoop_en", (3, 3)); ("ih_intr_dly_cntr", (4, 7)); ("gen_ih_int_en", (8, 8)); ("bif_rb_req_nonsnoop_en", (15, 15)); ("dummyrd_bypass_in_msi_en", (16, 16)); ("always_send_intpkt_after_dummyrd_dis", (17, 17)); ("bif_rb_req_relax_order_en", (18, 18)) ] };
+      { Rig_amd_abi.Register.name = "regBIF_BX0_INTERRUPT_CNTL2"; offset = 0xf2; segment = 2; fields = [ ("ih_dummy_rd_addr", (0, 31)) ] };
       { Rig_amd_abi.Register.name = "regBIF_BX0_PCIE_DATA2"; offset = 0xf; segment = 0; fields = [ ("pcie_data2", (0, 31)) ] };
       { Rig_amd_abi.Register.name = "regBIF_BX0_PCIE_INDEX2"; offset = 0xe; segment = 0; fields = [ ("pcie_index2", (0, 31)) ] };
       { Rig_amd_abi.Register.name = "regBIF_BX0_PCIE_INDEX2_HI"; offset = 0x11; segment = 0; fields = [ ("pcie_index2_hi", (0, 7)) ] };
       { Rig_amd_abi.Register.name = "regBIF_BX0_REMAP_HDP_MEM_FLUSH_CNTL"; offset = 0x12d; segment = 2; fields = [ ("address", (2, 18)) ] };
+      { Rig_amd_abi.Register.name = "regBIF_BX0_REMAP_HDP_REG_FLUSH_CNTL"; offset = 0x12e; segment = 2; fields = [ ("address", (2, 18)) ] };
       { Rig_amd_abi.Register.name = "regBIF_BX_DEV0_EPF0_VF0_HDP_MEM_COHERENCY_FLUSH_CNTL"; offset = 0xf7; segment = 2; fields = [ ("hdp_mem_flush_addr", (0, 0)) ] };
       { Rig_amd_abi.Register.name = "regBIF_BX_PF0_RSMU_DATA"; offset = 1; segment = 1; fields = [  ] };
       { Rig_amd_abi.Register.name = "regBIF_BX_PF0_RSMU_INDEX"; offset = 0; segment = 1; fields = [  ] };
@@ -1132,18 +1143,24 @@ let registers = [
     ] );
   ( "nbio", (7, 2, 0), [
       { Rig_amd_abi.Register.name = "regBIF_BX0_BIF_DOORBELL_INT_CNTL"; offset = 0xfd; segment = 2; fields = [ ("doorbell_interrupt_status", (0, 0)); ("ras_cntlr_interrupt_status", (1, 1)); ("ras_athub_err_event_interrupt_status", (2, 2)); ("doorbell_interrupt_clear", (16, 16)); ("ras_cntlr_interrupt_clear", (17, 17)); ("ras_athub_err_event_interrupt_clear", (18, 18)); ("doorbell_interrupt_disable", (24, 24)); ("ras_cntlr_interrupt_disable", (25, 25)); ("ras_athub_err_event_interrupt_disable", (26, 26)); ("set_db_intr_status_when_rb_enable", (28, 28)); ("set_ioh_ras_intr_status_when_rb_enable", (29, 29)); ("set_ath_ras_intr_status_when_rb_enable", (30, 30)) ] };
+      { Rig_amd_abi.Register.name = "regBIF_BX0_INTERRUPT_CNTL"; offset = 0xf1; segment = 2; fields = [ ("ih_dummy_rd_override", (0, 0)); ("ih_dummy_rd_en", (1, 1)); ("ih_req_nonsnoop_en", (3, 3)); ("ih_intr_dly_cntr", (4, 7)); ("bif_rb_req_nonsnoop_en", (15, 15)); ("dummyrd_bypass_in_msi_en", (16, 16)); ("always_send_intpkt_after_dummyrd_dis", (17, 17)); ("bif_rb_req_relax_order_en", (18, 18)) ] };
+      { Rig_amd_abi.Register.name = "regBIF_BX0_INTERRUPT_CNTL2"; offset = 0xf2; segment = 2; fields = [ ("ih_dummy_rd_addr", (0, 31)) ] };
       { Rig_amd_abi.Register.name = "regBIF_BX0_PCIE_DATA2"; offset = 0xf; segment = 0; fields = [ ("pcie_data2", (0, 31)) ] };
       { Rig_amd_abi.Register.name = "regBIF_BX0_PCIE_INDEX2"; offset = 0xe; segment = 0; fields = [ ("pcie_index2", (0, 31)) ] };
       { Rig_amd_abi.Register.name = "regBIF_BX0_REMAP_HDP_MEM_FLUSH_CNTL"; offset = 0x12d; segment = 2; fields = [ ("address", (2, 18)) ] };
+      { Rig_amd_abi.Register.name = "regBIF_BX0_REMAP_HDP_REG_FLUSH_CNTL"; offset = 0x12e; segment = 2; fields = [ ("address", (2, 18)) ] };
       { Rig_amd_abi.Register.name = "regBIF_BX_PF0_RSMU_DATA"; offset = 1; segment = 1; fields = [ ("rsmu_data", (0, 31)) ] };
       { Rig_amd_abi.Register.name = "regBIF_BX_PF0_RSMU_INDEX"; offset = 0; segment = 1; fields = [ ("rsmu_index", (0, 31)) ] };
       { Rig_amd_abi.Register.name = "regRCC_DEV0_EPF2_STRAP2"; offset = 0xd102; segment = 5; fields = [ ("strap_no_soft_reset_dev0_f2", (7, 7)); ("strap_resize_bar_en_dev0_f2", (8, 8)); ("strap_max_pasid_width_dev0_f2", (9, 13)); ("strap_msi_pervector_mask_cap_dev0_f2", (14, 14)); ("strap_aer_en_dev0_f2", (16, 16)); ("strap_acs_en_dev0_f2", (17, 17)); ("strap_cpl_abort_err_en_dev0_f2", (20, 20)); ("strap_dpa_en_dev0_f2", (21, 21)); ("strap_vc_en_dev0_f2", (23, 23)); ("strap_msi_multi_cap_dev0_f2", (24, 26)); ("strap_pasid_en_dev0_f2", (28, 28)); ("strap_pasid_exe_permission_supported_dev0_f2", (29, 29)); ("strap_pasid_global_invalidate_supported_dev0_f2", (30, 30)); ("strap_pasid_priv_mode_supported_dev0_f2", (31, 31)) ] };
     ] );
   ( "nbio", (7, 7, 0), [
       { Rig_amd_abi.Register.name = "regBIF_BX0_BIF_DOORBELL_INT_CNTL"; offset = 0xfe; segment = 2; fields = [ ("doorbell_interrupt_status", (0, 0)); ("ras_cntlr_interrupt_status", (1, 1)); ("ras_athub_err_event_interrupt_status", (2, 2)); ("doorbell_interrupt_clear", (16, 16)); ("ras_cntlr_interrupt_clear", (17, 17)); ("ras_athub_err_event_interrupt_clear", (18, 18)); ("doorbell_interrupt_disable", (24, 24)); ("ras_cntlr_interrupt_disable", (25, 25)); ("ras_athub_err_event_interrupt_disable", (26, 26)); ("set_db_intr_status_when_rb_enable", (28, 28)); ("set_ioh_ras_intr_status_when_rb_enable", (29, 29)); ("set_ath_ras_intr_status_when_rb_enable", (30, 30)); ("timeout_err_event_interrupt_enable", (31, 31)) ] };
+      { Rig_amd_abi.Register.name = "regBIF_BX0_INTERRUPT_CNTL"; offset = 0xf1; segment = 2; fields = [ ("ih_dummy_rd_override", (0, 0)); ("ih_dummy_rd_en", (1, 1)); ("ih_req_nonsnoop_en", (3, 3)); ("ih_intr_dly_cntr", (4, 7)); ("gen_ih_int_en", (8, 8)); ("bif_rb_req_nonsnoop_en", (15, 15)); ("dummyrd_bypass_in_msi_en", (16, 16)); ("always_send_intpkt_after_dummyrd_dis", (17, 17)); ("bif_rb_req_relax_order_en", (18, 18)) ] };
+      { Rig_amd_abi.Register.name = "regBIF_BX0_INTERRUPT_CNTL2"; offset = 0xf2; segment = 2; fields = [ ("ih_dummy_rd_addr", (0, 31)) ] };
       { Rig_amd_abi.Register.name = "regBIF_BX0_PCIE_DATA2"; offset = 0xf; segment = 0; fields = [ ("pcie_data2", (0, 31)) ] };
       { Rig_amd_abi.Register.name = "regBIF_BX0_PCIE_INDEX2"; offset = 0xe; segment = 0; fields = [ ("pcie_index2", (0, 31)) ] };
       { Rig_amd_abi.Register.name = "regBIF_BX0_REMAP_HDP_MEM_FLUSH_CNTL"; offset = 0x12d; segment = 2; fields = [ ("address", (2, 18)) ] };
+      { Rig_amd_abi.Register.name = "regBIF_BX0_REMAP_HDP_REG_FLUSH_CNTL"; offset = 0x12e; segment = 2; fields = [ ("address", (2, 18)) ] };
       { Rig_amd_abi.Register.name = "regBIF_BX_PF0_RSMU_DATA"; offset = 1; segment = 1; fields = [ ("rsmu_data", (0, 31)) ] };
       { Rig_amd_abi.Register.name = "regBIF_BX_PF0_RSMU_INDEX"; offset = 0; segment = 1; fields = [ ("rsmu_index", (0, 31)) ] };
       { Rig_amd_abi.Register.name = "regRCC_DEV0_EPF2_STRAP2"; offset = 0xd102; segment = 5; fields = [ ("strap_no_soft_reset_dev0_f2", (7, 7)); ("strap_resize_bar_en_dev0_f2", (8, 8)); ("strap_max_pasid_width_dev0_f2", (9, 13)); ("strap_msi_pervector_mask_cap_dev0_f2", (14, 14)); ("strap_aer_en_dev0_f2", (16, 16)); ("strap_acs_en_dev0_f2", (17, 17)); ("strap_cpl_abort_err_en_dev0_f2", (20, 20)); ("strap_dpa_en_dev0_f2", (21, 21)); ("strap_vc_en_dev0_f2", (23, 23)); ("strap_msi_multi_cap_dev0_f2", (24, 26)); ("strap_pasid_en_dev0_f2", (28, 28)); ("strap_pasid_exe_permission_supported_dev0_f2", (29, 29)); ("strap_pasid_global_invalidate_supported_dev0_f2", (30, 30)); ("strap_pasid_priv_mode_supported_dev0_f2", (31, 31)) ] };
@@ -1152,10 +1169,13 @@ let registers = [
       { Rig_amd_abi.Register.name = "regBIFC_DOORBELL_ACCESS_EN_PF"; offset = 0xcf6e; segment = 8; fields = [ ("bifc_doorbell_access_en_pf", (0, 19)) ] };
       { Rig_amd_abi.Register.name = "regBIFC_GFX_INT_MONITOR_MASK"; offset = 0xe8ad; segment = 8; fields = [  ] };
       { Rig_amd_abi.Register.name = "regBIF_BX0_BIF_DOORBELL_INT_CNTL"; offset = 0xfe; segment = 2; fields = [ ("doorbell_interrupt_status", (0, 0)); ("ras_cntlr_interrupt_status", (1, 1)); ("ras_athub_err_event_interrupt_status", (2, 2)); ("doorbell_interrupt_clear", (16, 16)); ("ras_cntlr_interrupt_clear", (17, 17)); ("ras_athub_err_event_interrupt_clear", (18, 18)); ("ras_cntlr_err_event_interrupt_enable", (23, 23)); ("doorbell_interrupt_disable", (24, 24)); ("ras_cntlr_interrupt_disable", (25, 25)); ("ras_athub_err_event_interrupt_disable", (26, 26)); ("set_db_intr_status_when_rb_enable", (28, 28)); ("set_ioh_ras_intr_status_when_rb_enable", (29, 29)); ("set_ath_ras_intr_status_when_rb_enable", (30, 30)); ("timeout_err_event_interrupt_enable", (31, 31)) ] };
+      { Rig_amd_abi.Register.name = "regBIF_BX0_INTERRUPT_CNTL"; offset = 0xf1; segment = 2; fields = [ ("ih_dummy_rd_override", (0, 0)); ("ih_dummy_rd_en", (1, 1)); ("ih_req_nonsnoop_en", (3, 3)); ("ih_intr_dly_cntr", (4, 7)); ("gen_ih_int_en", (8, 8)); ("bif_rb_req_nonsnoop_en", (15, 15)); ("dummyrd_bypass_in_msi_en", (16, 16)); ("always_send_intpkt_after_dummyrd_dis", (17, 17)); ("bif_rb_req_relax_order_en", (18, 18)) ] };
+      { Rig_amd_abi.Register.name = "regBIF_BX0_INTERRUPT_CNTL2"; offset = 0xf2; segment = 2; fields = [ ("ih_dummy_rd_addr", (0, 31)) ] };
       { Rig_amd_abi.Register.name = "regBIF_BX0_PCIE_DATA2"; offset = 0xf; segment = 0; fields = [ ("pcie_data2", (0, 31)) ] };
       { Rig_amd_abi.Register.name = "regBIF_BX0_PCIE_INDEX2"; offset = 0xe; segment = 0; fields = [ ("pcie_index2", (0, 31)) ] };
       { Rig_amd_abi.Register.name = "regBIF_BX0_PCIE_INDEX2_HI"; offset = 0x11; segment = 0; fields = [ ("pcie_index2_hi", (0, 7)) ] };
       { Rig_amd_abi.Register.name = "regBIF_BX0_REMAP_HDP_MEM_FLUSH_CNTL"; offset = 0x12d; segment = 2; fields = [ ("address", (2, 18)) ] };
+      { Rig_amd_abi.Register.name = "regBIF_BX0_REMAP_HDP_REG_FLUSH_CNTL"; offset = 0x12e; segment = 2; fields = [ ("address", (2, 18)) ] };
       { Rig_amd_abi.Register.name = "regBIF_BX_DEV0_EPF0_VF0_HDP_MEM_COHERENCY_FLUSH_CNTL"; offset = 0xf7; segment = 2; fields = [ ("hdp_mem_flush_addr", (0, 0)) ] };
       { Rig_amd_abi.Register.name = "regBIF_BX_PF0_RSMU_DATA"; offset = 1; segment = 1; fields = [ ("rsmu_data", (0, 31)) ] };
       { Rig_amd_abi.Register.name = "regBIF_BX_PF0_RSMU_INDEX"; offset = 0; segment = 1; fields = [ ("rsmu_index", (0, 31)) ] };
@@ -1202,10 +1222,13 @@ let registers = [
     ] );
   ( "nbif", (6, 3, 1), [
       { Rig_amd_abi.Register.name = "regBIF_BX0_BIF_DOORBELL_INT_CNTL"; offset = 0xfe; segment = 2; fields = [ ("doorbell_interrupt_status", (0, 0)); ("ras_cntlr_interrupt_status", (1, 1)); ("ras_athub_err_event_interrupt_status", (2, 2)); ("doorbell_interrupt_clear", (16, 16)); ("ras_cntlr_interrupt_clear", (17, 17)); ("ras_athub_err_event_interrupt_clear", (18, 18)); ("ras_cntlr_err_event_interrupt_enable", (23, 23)); ("doorbell_interrupt_disable", (24, 24)); ("ras_cntlr_interrupt_disable", (25, 25)); ("ras_athub_err_event_interrupt_disable", (26, 26)); ("set_db_intr_status_when_rb_enable", (28, 28)); ("set_ioh_ras_intr_status_when_rb_enable", (29, 29)); ("set_ath_ras_intr_status_when_rb_enable", (30, 30)); ("timeout_err_event_interrupt_enable", (31, 31)) ] };
+      { Rig_amd_abi.Register.name = "regBIF_BX0_INTERRUPT_CNTL"; offset = 0xf1; segment = 2; fields = [ ("ih_dummy_rd_override", (0, 0)); ("ih_dummy_rd_en", (1, 1)); ("ih_req_nonsnoop_en", (3, 3)); ("ih_intr_dly_cntr", (4, 7)); ("gen_ih_int_en", (8, 8)); ("bif_rb_req_nonsnoop_en", (15, 15)); ("dummyrd_bypass_in_msi_en", (16, 16)); ("always_send_intpkt_after_dummyrd_dis", (17, 17)); ("bif_rb_req_relax_order_en", (18, 18)) ] };
+      { Rig_amd_abi.Register.name = "regBIF_BX0_INTERRUPT_CNTL2"; offset = 0xf2; segment = 2; fields = [ ("ih_dummy_rd_addr", (0, 31)) ] };
       { Rig_amd_abi.Register.name = "regBIF_BX0_PCIE_DATA2"; offset = 0xf; segment = 0; fields = [ ("pcie_data2", (0, 31)) ] };
       { Rig_amd_abi.Register.name = "regBIF_BX0_PCIE_INDEX2"; offset = 0xe; segment = 0; fields = [ ("pcie_index2", (0, 31)) ] };
       { Rig_amd_abi.Register.name = "regBIF_BX0_PCIE_INDEX2_HI"; offset = 0x11; segment = 0; fields = [ ("pcie_index2_hi", (0, 7)) ] };
       { Rig_amd_abi.Register.name = "regBIF_BX0_REMAP_HDP_MEM_FLUSH_CNTL"; offset = 0x12d; segment = 2; fields = [ ("address", (2, 18)) ] };
+      { Rig_amd_abi.Register.name = "regBIF_BX0_REMAP_HDP_REG_FLUSH_CNTL"; offset = 0x12e; segment = 2; fields = [ ("address", (2, 18)) ] };
       { Rig_amd_abi.Register.name = "regBIF_BX_DEV0_EPF0_VF0_HDP_MEM_COHERENCY_FLUSH_CNTL"; offset = 0xf7; segment = 2; fields = [ ("hdp_mem_flush_addr", (0, 0)) ] };
       { Rig_amd_abi.Register.name = "regBIF_BX_PF0_RSMU_DATA"; offset = 1; segment = 1; fields = [ ("rsmu_data", (0, 31)) ] };
       { Rig_amd_abi.Register.name = "regBIF_BX_PF0_RSMU_INDEX"; offset = 0; segment = 1; fields = [ ("rsmu_index", (0, 31)) ] };
@@ -1509,6 +1532,7 @@ let registers = [
   ( "gc", (9, 4, 3), [
       { Rig_amd_abi.Register.name = "regCC_GC_SHADER_ARRAY_CONFIG"; offset = 0x26f; segment = 0; fields = [ ("write_dis", (0, 0)); ("inactive_cus", (16, 31)) ] };
       { Rig_amd_abi.Register.name = "regGC_USER_SHADER_ARRAY_CONFIG"; offset = 0x270; segment = 0; fields = [ ("inactive_cus", (16, 31)) ] };
+      { Rig_amd_abi.Register.name = "regMC_VM_FB_OFFSET"; offset = 0x947; segment = 0; fields = [ ("fb_offset", (0, 23)) ] };
     ] );
   ( "gc", (11, 0, 0), [
       { Rig_amd_abi.Register.name = "regCC_GC_SHADER_ARRAY_CONFIG"; offset = 0x100f; segment = 0; fields = [ ("inactive_wgps", (16, 31)) ] };

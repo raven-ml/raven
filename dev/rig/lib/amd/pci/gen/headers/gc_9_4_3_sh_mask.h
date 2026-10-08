@@ -24,3 +24,4 @@
 #define CC_GC_SHADER_ARRAY_CONFIG__WRITE_DIS_MASK                                                             0x00000001L
 #define CC_GC_SHADER_ARRAY_CONFIG__INACTIVE_CUS_MASK                                                          0xFFFF0000L
 #define GC_USER_SHADER_ARRAY_CONFIG__INACTIVE_CUS_MASK                                                        0xFFFF0000L
+#define MC_VM_FB_OFFSET__FB_OFFSET_MASK                                                                       0x00FFFFFFL

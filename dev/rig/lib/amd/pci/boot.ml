@@ -15,7 +15,9 @@ let ( let* ) = Result.bind
 
 (* Sessions *)
 
-let session = 0x5241_0001
+(* The mark names the boot pool's layout: a GPU left by a boot of another layout
+   carries another mark, and is not booted partially. *)
+let session = 0x5241_0002
 
 let plan ~mark ~dirty ~fault ~gc ~alive =
   let marked = mark = session in
@@ -39,6 +41,8 @@ type t = {
   gfx : Gfx.t;
   sdma : Sdma.t;
   images : Images.t;
+  fault_page : Window.t; (* the system memory page the hubs' faults reach *)
+  fault_bus : int; (* its bus address *)
   vf : bool;
   mutable lease : int; (* a VF's access to give back, 0 if none *)
   mutable fault : string option;
@@ -190,7 +194,8 @@ let survey f =
     else
       wait_raw f ~ms:firmware_ms "the GPU's firmware laying out its memory"
         (fun () ->
-          Window.get32 mmio (D.mmmp0_smn_c2pmsg_33 * 4) land ready <> 0)
+          let v = Window.get32 mmio (D.mmmp0_smn_c2pmsg_33 * 4) in
+          v <> 0xffff_ffff && v land ready <> 0)
   in
   let size = Window.get32 mmio (D.mmrcc_config_memsize * 4) in
   let* memory =
@@ -198,9 +203,7 @@ let survey f =
     else Ok (size lsl 20)
   in
   let* d = Discovery.of_string (read_table ~vram ~mmio ~memory) in
-  let* l = Regs.layout d in
-  let r = Regs.make f mmio l ~vf in
-  Ok (vram, doorbells, mmio, vf, lease, memory, r)
+  Ok (vram, doorbells, mmio, vf, lease, memory, d)
 
 let stuck f =
   match f () with v -> Ok v | exception Regs.Stuck why -> Error why
@@ -211,7 +214,6 @@ let stuck f =
    the same in every session. *)
 type pool = {
   scratch : int;
-  dummy : int;
   ih_rings : int * int;
   ih_wptr : int;
   psp : Psp.memory;
@@ -231,7 +233,6 @@ let lay_out tables ~vf ~xccs =
     | None -> raise (Regs.Stuck "the GPU's boot memory is full")
   in
   let scratch = alloc page in
-  let dummy = alloc page in
   let ring0 = alloc Ih.bytes in
   let wptr = alloc ih_wptr_bytes in
   let ring1 = alloc Ih.bytes in
@@ -244,7 +245,6 @@ let lay_out tables ~vf ~xccs =
   let mqds = Array.init (if vf then 2 else 1) (fun _ -> alloc (page * xccs)) in
   {
     scratch;
-    dummy;
     ih_rings = (ring0, ring1);
     ih_wptr = wptr;
     psp = { Psp.message; command; fence; ring };
@@ -288,13 +288,13 @@ let stop_locked g =
     give_back_access g;
     List.iter (Memory.free g.memory) g.eops;
     g.eops <- [];
+    (* The GPU reaches no memory outside its own once it masters the bus no
+       more, but over a fabric; its hubs' fault page can then go. *)
+    set_bus_master g.f false;
+    Function.free_dma g.f g.fault_page;
     if not lost then `Clean
-    else begin
-      (* The GPU reaches no memory outside its own once it masters the bus no
-         more, but over a fabric. *)
-      set_bus_master g.f false;
-      if Gmc.hive g.gmc && not left then `Unknown else `Lost
-    end
+    else if Gmc.hive g.gmc && not left then `Unknown
+    else `Lost
   end
 
 let stop g =
@@ -313,22 +313,29 @@ let boot g ~partial ~pool ~kiq =
   let fabric pa = Gmc.fabric g.gmc pa in
   if partial then mark g ~dirty:true;
   disable_aspm g.f;
-  (* A partial boot finds the GPU as the last one left it, but for its bus
-     mastering, which a server that stopped its client's DMA turned off. *)
-  set_bus_master g.f true;
+  (* The GPU masters the bus only once booted: until then it reaches its own
+     memory alone, so that no address a step gets wrong reaches the host's. A
+     virtual function's KIQ, in system memory, needs it earlier. *)
+  set_bus_master g.f false;
+  (* Both hubs before the interrupt handler and the firmware, as the kernel's
+     GMC starts them, so that the RLC's autoload never fetches through a hub
+     being programmed. The hubs' fault page and the handler's dummy read are
+     this session's page. *)
   if not partial then begin
     Soc.start r;
     Gmc.start_hub g.gmc `Mm g.tables ~scratch:(fabric pool.scratch)
-      ~dummy:(fabric pool.dummy)
   end;
+  Gmc.start_hub g.gmc `Gc g.tables ~scratch:(fabric pool.scratch);
+  Gmc.fault_page g.gmc `Mm g.fault_bus;
+  Gmc.fault_page g.gmc `Gc g.fault_bus;
+  Soc.interrupts r ~dummy:g.fault_bus;
   Ih.start g.ih;
   if not g.vf then begin
     Psp.start g.psp g.images ~partial;
     if not partial then Smu.start g.smu
   end;
   Page_table.booted g.tables;
-  Gmc.start_hub g.gmc `Gc g.tables ~scratch:(fabric pool.scratch)
-    ~dummy:(fabric pool.dummy);
+  if g.vf then set_bus_master g.f true;
   Gfx.start g.gfx g.memory g.images ~partial;
   if g.vf then kiq := Some g.gfx;
   let xccs = (Regs.gpu (Regs.layout_of r)).xccs in
@@ -342,20 +349,32 @@ let boot g ~partial ~pool ~kiq =
     Regs.write ~value:(Psp.tmr g.psp) r "regSCRATCH_REG5" [];
     Regs.write ~value:session r "regSCRATCH_REG7" [];
     mark g ~dirty:true
-  end
+  end;
+  set_bus_master g.f true
 
 let fault_status l =
   if Regs.has l "regGCVM_L2_PROTECTION_FAULT_STATUS_LO32" then
     "regGCVM_L2_PROTECTION_FAULT_STATUS_LO32"
   else "regGCVM_L2_PROTECTION_FAULT_STATUS"
 
+(* The hubs' fault page: one page of system memory, as the kernel's dummy
+   page. *)
+let alloc_fault_page f =
+  match Function.alloc_dma f (Machine.page (Function.machine f)) with
+  | Ok (w, (bus, _) :: _) -> Ok (w, bus)
+  | Ok (_, []) -> Error "the hubs' fault page has no bus address"
+  | Error why -> Error (strf "the hubs' fault page: %s" why)
+
 let start f find =
-  let* vram, doorbells, mmio, vf, lease, memory, r = survey f in
-  let l = Regs.layout_of r in
-  let* images = Images.load find (Regs.discovery l) in
+  let refused r = Result.map_error (fun why -> `Refused why) r in
+  let* vram, doorbells, mmio, vf, lease, memory, d = refused (survey f) in
+  let* l = refused (Regs.layout d) in
+  let r = Regs.make f mmio l ~vf in
+  let* images = refused (Images.load find (Regs.discovery l)) in
   let gc = Regs.version l D.gc_hwid in
   let* gmc, p =
-    stuck (fun () ->
+    refused
+    @@ stuck (fun () ->
         let gmc = Gmc.make r vram in
         let alive =
           (not vf) && Psp.running r && Smu.alive (Smu.make r gmc ~table:0)
@@ -367,6 +386,8 @@ let start f find =
             ~gc ~alive ))
   in
   let* () =
+    refused
+    @@
     match p with
     | `Booted when Gmc.hive gmc ->
         Error
@@ -376,9 +397,8 @@ let start f find =
         Error
           "firmware this library did not start runs on the GPU; a reset stops \
            it"
-    | `Partial | `Full -> Ok ()
+    | `Partial | `Full -> Gmc.covers gmc ~memory
   in
-  (* From here the GPU is written: a failure stops it as lost. *)
   let kiq = ref None in
   let flush () =
     Window.flush vram;
@@ -388,7 +408,8 @@ let start f find =
     | None -> Gmc.invalidate gmc
   in
   let* tables, pool =
-    stuck (fun () ->
+    refused
+    @@ stuck (fun () ->
         let tables =
           Page_table.create (Gmc.format gmc ~flush) space
             ~memory:(memory - reserved gc)
@@ -408,6 +429,7 @@ let start f find =
           ( List.map (fun (pa, n) -> (Gmc.fabric gmc pa, n)) ranges,
             Page_table.Peer 0 ))
   in
+  let* fault_page, fault_bus = refused (alloc_fault_page f) in
   let g =
     {
       f;
@@ -423,6 +445,8 @@ let start f find =
       gfx = Gfx.make r gmc vram doorbells ~mqds:pool.mqds;
       sdma = Sdma.make r;
       images;
+      fault_page;
+      fault_bus;
       vf;
       lease;
       fault = None;
@@ -431,12 +455,18 @@ let start f find =
       hw = Mutex.create ();
     }
   in
+  (* From here the GPU's registers are written: a failure stops it as lost. *)
   match boot g ~partial:(p = `Partial) ~pool ~kiq with
   | () -> Ok g
   | exception Regs.Stuck why ->
       g.fault <- Some why;
       ignore (stop g);
-      Error why
+      Error (`Lost why)
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      g.fault <- Some (Printexc.to_string e);
+      ignore (stop g);
+      Printexc.raise_with_backtrace e bt
 
 (* Facts *)
 
@@ -545,32 +575,97 @@ let sleep g ~ms =
 
 let quiesce_ms = 100
 
+(* The configuration a mode 1 reset clears, which the kernel restores after it
+   (amdgpu_device_load_pci_state): the cache line size, the BARs, the expansion
+   ROM BAR, the interrupt line, each resizable BAR's control (extended
+   capability 0x15, PCI Express Base Specification 7.8.6), then the command
+   register. *)
+let header = [ 0x0c; 0x10; 0x14; 0x18; 0x1c; 0x20; 0x24; 0x30; 0x3c ]
+let extended = 0x100
+let rebar_id = 0x15
+
+let rebar_controls f =
+  let rec walk at seen =
+    if at < extended || List.mem at seen then []
+    else
+      let v = Function.config32 f at in
+      if v = 0 || v = 0xffff_ffff then []
+      else if v land 0xffff = rebar_id then
+        let bars = (Function.config32 f (at + 8) lsr 5) land 0x7 in
+        List.init bars (fun i -> at + 8 + (8 * i))
+      else walk ((v lsr 20) land 0xffc) (at :: seen)
+  in
+  walk extended []
+
+let save f =
+  let regs = header @ rebar_controls f in
+  ( Function.config16 f command,
+    List.map (fun o -> (o, Function.config32 f o)) regs )
+
+let restore f (cmd, regs) =
+  List.iter (fun (o, v) -> Function.set_config32 f o v) regs;
+  Function.set_config16 f command cmd;
+  match List.find_opt (fun (o, v) -> Function.config32 f o <> v) regs with
+  | None -> Ok ()
+  | Some (o, v) ->
+      Error
+        (strf
+           "the GPU's configuration at 0x%x reads 0x%x after its reset, not \
+            0x%x"
+           o (Function.config32 f o) v)
+
 let reset f =
-  let* vram, doorbells, mmio, vf, lease, _, r = survey f in
+  let* vram, doorbells, mmio, vf, lease, _, d = survey f in
   if vf then
     (* A VF's physical function resets it: it gives back its access. *)
     Result.map ignore (vf_request mmio f ~ready:false lease)
   else
-    stuck (fun () ->
-        let gmc = Gmc.make r vram in
-        let smu = Smu.make r gmc ~table:0 in
-        if Psp.running r && Smu.alive smu then begin
-          if Gmc.hive gmc then
-            raise
-              (Regs.Stuck
-                 "the GPU is in a fabric, whose GPUs reset together outside \
-                  this process");
-          set_bus_master f false;
-          Regs.write ~value:0 r "regSCRATCH_REG7" [];
-          (* A mode 1 reset over engines running at full clocks can stall the
-             GPU until it is power cycled: they are stopped first. *)
-          let gfx = Gfx.make r gmc vram doorbells ~mqds:[||] in
-          ignore (Gfx.dequeue gfx ~wait:true);
-          Smu.clocks smu `Lowest;
-          Gfx.halt gfx;
-          Sdma.halt (Sdma.make r);
-          Regs.pause r quiesce_ms;
-          Smu.reset smu
-        end)
+    match Regs.layout d with
+    | Error _ ->
+        (* A GPU of blocks this library does not boot is one it never wrote to:
+           it goes back as it is. *)
+        Ok ()
+    | Ok l ->
+        let r = Regs.make f mmio l ~vf in
+        stuck (fun () ->
+            let gmc = Gmc.make r vram in
+            let smu = Smu.make r gmc ~table:0 in
+            if Psp.running r && Smu.alive smu then begin
+              if Gmc.hive gmc then
+                raise
+                  (Regs.Stuck
+                     "the GPU is in a fabric, whose GPUs reset together \
+                      outside this process");
+              set_bus_master f false;
+              Regs.write ~value:0 r "regSCRATCH_REG7" [];
+              (* A mode 1 reset over engines running at full clocks can stall
+                 the GPU until it is power cycled: they are stopped first. *)
+              let gfx = Gfx.make r gmc vram doorbells ~mqds:[||] in
+              ignore (Gfx.dequeue gfx ~wait:true);
+              Smu.clocks smu `Lowest;
+              Gfx.halt gfx;
+              Sdma.halt (Sdma.make r);
+              Regs.pause r quiesce_ms;
+              let config = save f in
+              Smu.reset smu;
+              (match restore f config with
+              | Ok () -> ()
+              | Error why -> raise (Regs.Stuck why));
+              (* As the kernel waits after a mode 1 reset: the security
+                 processor's bootloader ready, the memory size readable. *)
+              Regs.wait r "the PSP's bootloader after the reset" (fun () ->
+                  Psp.bootloader r);
+              Regs.wait r "the GPU's memory size after the reset" (fun () ->
+                  Window.get32 mmio (D.mmrcc_config_memsize * 4) <> 0xffff_ffff)
+            end;
+            (* A boot that failed before its firmware ran may have left the
+               interrupt rings on. A GPU goes back to its kernel driver with
+               neither firmware nor rings running. *)
+            if Ih.running r then Ih.halt r;
+            if Psp.running r || Ih.running r then
+              raise
+                (Regs.Stuck
+                   "the GPU still runs its security processor or interrupt \
+                    rings after its reset"))
 
 let give_back g = Mutex.protect g.hw (fun () -> give_back_access g)

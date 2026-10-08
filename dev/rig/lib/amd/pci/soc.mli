@@ -17,7 +17,18 @@ val nbio79 : Regs.t -> bool
 val start : Regs.t -> unit
 (** [start r] enables the doorbell aperture: on NBIO 7.9, the doorbell fence of
     the dies fused off and the doorbell access of the physical function; on
-    others, the soft reset of the third function's strap cleared. *)
+    others, the soft reset of the third function's strap cleared. A physical
+    function's HDP flush registers are remapped to {!hdp_flush}. *)
+
+val hdp_flush : Regs.t -> int
+(** [hdp_flush r] is the byte offset in the register BAR of the register whose
+    store flushes the HDP, once {!start} remapped it: the register hole's first
+    word (the kernel's MMIO_REG_HOLE_OFFSET). *)
+
+val interrupts : Regs.t -> dummy:int -> unit
+(** [interrupts r ~dummy] makes the page of system memory at bus address [dummy]
+    the one the interrupt handler reads before each interrupt it signals without
+    MSI, as the kernel's [ih_control]. *)
 
 val route :
   ?aid:int ->

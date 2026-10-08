@@ -211,6 +211,7 @@
 #define MMVM_CONTEXT0_PAGE_TABLE_START_ADDR_HI32__LOGICAL_PAGE_NUMBER_HI4_MASK                                0x0000000FL
 #define MMVM_CONTEXT0_PAGE_TABLE_END_ADDR_LO32__LOGICAL_PAGE_NUMBER_LO32_MASK                                 0xFFFFFFFFL
 #define MMVM_CONTEXT0_PAGE_TABLE_END_ADDR_HI32__LOGICAL_PAGE_NUMBER_HI4_MASK                                  0x0000000FL
+#define MMMC_VM_FB_OFFSET__FB_OFFSET_MASK                                                                     0x00FFFFFFL
 #define MMMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB__PHYSICAL_PAGE_NUMBER_LSB_MASK                               0xFFFFFFFFL
 #define MMMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB__PHYSICAL_PAGE_NUMBER_MSB_MASK                               0x0000000FL
 #define MMMC_VM_FB_LOCATION_BASE__FB_BASE_MASK                                                                0x00FFFFFFL

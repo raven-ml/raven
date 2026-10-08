@@ -140,20 +140,28 @@ let simds_per_cu (gpu : Rig_amd_abi.Gpu.t) =
    interrupt ring, so any context but 0 serves. *)
 let interrupt = 1
 
-(* [hold] is the GPU's hold once the open returned; until then the bracket gives
-   the function back. *)
-let path g ~index ~hold : mem Amd.path =
+(* [finish ()] stops the GPU [g] once and gives its hold [h] back: released if
+   it stopped clean after the device was made, lost otherwise, so that a GPU a
+   failed open wrote to opens again only after a reset. *)
+let finisher g h ~index ~made =
+  let answer = ref None and lock = Mutex.create () in
+  fun () ->
+    Mutex.protect lock @@ fun () ->
+    match !answer with
+    | Some s -> s
+    | None ->
+        let s = Boot.stop g in
+        answer := Some s;
+        Mutex.protect opened_lock (fun () -> Hashtbl.remove opened index);
+        (match s with
+        | `Clean when Atomic.get made -> Gpus.release h
+        | `Clean | `Lost | `Unknown -> Gpus.lose h);
+        s
+
+let path g ~index ~finish : mem Amd.path =
   let gc = Boot.gc g and gpu = Boot.gpu g in
   let stop () =
-    let s = Boot.stop g in
-    Mutex.protect opened_lock (fun () -> Hashtbl.remove opened index);
-    Option.iter
-      (fun h ->
-        match s with
-        | `Clean -> Gpus.release h
-        | `Lost | `Unknown -> Gpus.lose h)
-      !hold;
-    match s with `Clean | `Lost -> `Stopped | `Unknown -> `Unknown
+    match finish () with `Clean | `Lost -> `Stopped | `Unknown -> `Unknown
   in
   {
     key;
@@ -179,28 +187,40 @@ let path g ~index ~hold : mem Amd.path =
     stop;
   }
 
-let start ~firmware ~index ~hold fn =
+let start ~firmware ~index h fn =
   let* () =
     Machine.reserve
       (Rig_pci.Function.machine fn)
       ~base:(Rig_pci.Space.base Boot.space)
       (Rig_pci.Space.length Boot.space)
   in
-  let* g = Boot.start fn (Rig_pci.Firmware.find firmware) in
-  Mutex.protect opened_lock (fun () -> Hashtbl.replace opened index g);
-  let failed why =
-    ignore (Boot.stop g);
-    Mutex.protect opened_lock (fun () -> Hashtbl.remove opened index);
-    Error why
-  in
-  match Amd.make (path g ~index ~hold) with
-  | Error why -> failed why
-  | exception Amd.Fault why -> failed why
-  | Ok d ->
-      (* A host resets a VF that holds its access long: every queue is made, so
-         it goes back. *)
-      Boot.give_back g;
-      Ok (d, g)
+  match Boot.start fn (Rig_pci.Firmware.find firmware) with
+  | Error (`Refused why) -> Error why
+  | Error (`Lost why) ->
+      Gpus.lose h;
+      Error why
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      Gpus.lose h;
+      Printexc.raise_with_backtrace e bt
+  | Ok g -> (
+      Mutex.protect opened_lock (fun () -> Hashtbl.replace opened index g);
+      let made = Atomic.make false in
+      let finish = finisher g h ~index ~made in
+      match Amd.make (path g ~index ~finish) with
+      | Ok d ->
+          Atomic.set made true;
+          (* A host resets a VF that holds its access long: every queue is made,
+             so it goes back. *)
+          Boot.give_back g;
+          Ok (d, g)
+      | Error why ->
+          ignore (finish ());
+          Error why
+      | exception e ->
+          let bt = Printexc.get_raw_backtrace () in
+          ignore (finish ());
+          Printexc.raise_with_backtrace e bt)
 
 (* The GPU's name in front of a refusal's message. *)
 let named i r =
@@ -215,16 +235,10 @@ let open_ ?(machine = Machine.this) ~firmware i =
     | Some _ -> Ok ()
     | None -> Error "its machine is reached through a transport"
   in
-  let hold = ref None in
-  let opened =
-    Gpus.open_ gpus machine i
-      ~at_exit:(fun (_, g) -> ignore (Boot.stop g))
-      (fun h fn ->
-        let* d, g = start ~firmware ~index:i ~hold fn in
-        hold := Some h;
-        Ok (d, g))
-  in
-  Result.map fst opened
+  Gpus.open_ gpus machine i
+    ~at_exit:(fun (_, g) -> ignore (Boot.stop g))
+    (start ~firmware ~index:i)
+  |> Result.map fst
 
 (* Changes to the machine *)
 

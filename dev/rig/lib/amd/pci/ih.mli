@@ -28,7 +28,16 @@ val make :
     to the physical address [wptr]. *)
 
 val start : t -> unit
-(** [start ih] programs and enables both rings, empty. *)
+(** [start ih] programs and enables both rings, empty, the first writing its
+    write pointer back to memory. Neither signals an interrupt: a caller polls
+    ({!pending}). *)
+
+val running : Regs.t -> bool
+(** [running r] is [true] iff either of the interrupt rings of [r]'s GPU is
+    enabled. *)
+
+val halt : Regs.t -> unit
+(** [halt r] disables both interrupt rings of [r]'s GPU. *)
 
 val pending : t -> bool
 (** [pending ih] is [true] iff the GPU wrote entries the process has not read:

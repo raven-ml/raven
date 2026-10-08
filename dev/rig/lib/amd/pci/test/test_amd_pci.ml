@@ -251,7 +251,9 @@ let entries =
       false,
       0,
       0x8000_0000_0000_1071L );
-    ( "GFX12 2 MiB system page",
+    (* GFX12 maps system memory MTYPE_NC however uncached it is asked to be:
+       the kernel's gmc_v12_0_get_vm_pte works around a hardware bug so. *)
+    ( "GFX12 2 MiB uncached system page",
       gfx12,
       2,
       0x20_0000,
@@ -259,7 +261,7 @@ let entries =
       true,
       true,
       9,
-      0x80c0_0000_0020_04f7L );
+      0x8000_0000_0020_04f7L );
     ("GFX12 root table", gfx12, 0, 0x5000, `Table, false, false, 0, 0x5001L);
     ( "GFX11 uncached leaf",
       gfx11,
@@ -325,6 +327,32 @@ let entries =
       0,
       0x0600_0000_0000_1071L );
   ]
+
+(* The memory controller's window on the GPU's memory, in 16 MiB units: a GPU of
+   2039 units, the R9700's 32624 MiB. *)
+let unit_bytes = 16 lsl 20
+let units = 2039
+
+let apertures =
+  group ~timeout:10. "apertures"
+    [
+      cases ~name:fst "a window holds the GPU's memory, or is refused"
+        [
+          ("exactly", ((0x8000, 0x8000 + units - 1, 0), true));
+          ("one unit short", ((0x8000, 0x8000 + units - 2, 0), false));
+          ("registers a reset cleared", ((0, 0, 0), false));
+          ("a top below its base", ((0x8000, 0x7fff, 0), false));
+          ( "a die's memory one segment in",
+            ((0x8000, 0x8000 + (2 * units) - 1, units * unit_bytes), true) );
+          ( "a die's memory past the window",
+            ((0x8000, 0x8000 + (2 * units) - 1, 2 * units * unit_bytes), false)
+          );
+        ]
+        (fun (_, ((base, top, fabric), holds)) ->
+          equal bool holds
+            (Result.is_ok
+               (Gmc.window ~base ~top ~fabric ~memory:(units * unit_bytes))));
+    ]
 
 let page_tables =
   group ~timeout:10. "page tables"
@@ -1117,6 +1145,7 @@ let () =
          damaged;
          dies;
          registers;
+         apertures;
          page_tables;
          power;
          security;

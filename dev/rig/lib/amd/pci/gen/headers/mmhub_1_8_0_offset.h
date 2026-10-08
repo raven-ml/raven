@@ -151,6 +151,8 @@
 #define regVM_CONTEXT0_PAGE_TABLE_END_ADDR_LO32_BASE_IDX                                                0
 #define regVM_CONTEXT0_PAGE_TABLE_END_ADDR_HI32                                                         0x0c4c
 #define regVM_CONTEXT0_PAGE_TABLE_END_ADDR_HI32_BASE_IDX                                                0
+#define regMC_VM_FB_OFFSET                                                                              0x0c87
+#define regMC_VM_FB_OFFSET_BASE_IDX                                                                     0
 #define regMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB                                                       0x0c88
 #define regMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB_BASE_IDX                                              0
 #define regMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB                                                       0x0c89

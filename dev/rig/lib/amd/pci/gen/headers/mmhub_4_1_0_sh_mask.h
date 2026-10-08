@@ -21,6 +21,7 @@
  *
  */
 
+#define MMMC_VM_FB_OFFSET__FB_OFFSET_MASK                                                                     0x00FFFFFFL
 #define MMMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB__PHYSICAL_PAGE_NUMBER_LSB_MASK                               0xFFFFFFFFL
 #define MMMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB__PHYSICAL_PAGE_NUMBER_MSB_MASK                               0x0000000FL
 #define MMVM_L2_CNTL__ENABLE_L2_CACHE_MASK                                                                    0x00000001L

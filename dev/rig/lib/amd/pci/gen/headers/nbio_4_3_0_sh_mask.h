@@ -24,6 +24,16 @@
 #define BIF_BX0_PCIE_INDEX2__PCIE_INDEX2_MASK                                                                 0xFFFFFFFFL
 #define BIF_BX0_PCIE_DATA2__PCIE_DATA2_MASK                                                                   0xFFFFFFFFL
 #define BIF_BX0_PCIE_INDEX2_HI__PCIE_INDEX2_HI_MASK                                                           0x000000FFL
+#define BIF_BX0_INTERRUPT_CNTL__IH_DUMMY_RD_OVERRIDE_MASK                                                     0x00000001L
+#define BIF_BX0_INTERRUPT_CNTL__IH_DUMMY_RD_EN_MASK                                                           0x00000002L
+#define BIF_BX0_INTERRUPT_CNTL__IH_REQ_NONSNOOP_EN_MASK                                                       0x00000008L
+#define BIF_BX0_INTERRUPT_CNTL__IH_INTR_DLY_CNTR_MASK                                                         0x000000F0L
+#define BIF_BX0_INTERRUPT_CNTL__GEN_IH_INT_EN_MASK                                                            0x00000100L
+#define BIF_BX0_INTERRUPT_CNTL__BIF_RB_REQ_NONSNOOP_EN_MASK                                                   0x00008000L
+#define BIF_BX0_INTERRUPT_CNTL__DUMMYRD_BYPASS_IN_MSI_EN_MASK                                                 0x00010000L
+#define BIF_BX0_INTERRUPT_CNTL__ALWAYS_SEND_INTPKT_AFTER_DUMMYRD_DIS_MASK                                     0x00020000L
+#define BIF_BX0_INTERRUPT_CNTL__BIF_RB_REQ_RELAX_ORDER_EN_MASK                                                0x00040000L
+#define BIF_BX0_INTERRUPT_CNTL2__IH_DUMMY_RD_ADDR_MASK                                                        0xFFFFFFFFL
 #define BIF_BX0_BIF_DOORBELL_INT_CNTL__DOORBELL_INTERRUPT_STATUS_MASK                                         0x00000001L
 #define BIF_BX0_BIF_DOORBELL_INT_CNTL__RAS_CNTLR_INTERRUPT_STATUS_MASK                                        0x00000002L
 #define BIF_BX0_BIF_DOORBELL_INT_CNTL__RAS_ATHUB_ERR_EVENT_INTERRUPT_STATUS_MASK                              0x00000004L
@@ -39,6 +49,7 @@
 #define BIF_BX0_BIF_DOORBELL_INT_CNTL__SET_ATH_RAS_INTR_STATUS_WHEN_RB_ENABLE_MASK                            0x40000000L
 #define BIF_BX0_BIF_DOORBELL_INT_CNTL__TIMEOUT_ERR_EVENT_INTERRUPT_ENABLE_MASK                                0x80000000L
 #define BIF_BX0_REMAP_HDP_MEM_FLUSH_CNTL__ADDRESS_MASK                                                        0x0007FFFCL
+#define BIF_BX0_REMAP_HDP_REG_FLUSH_CNTL__ADDRESS_MASK                                                        0x0007FFFCL
 #define RCC_DEV0_EPF0_RCC_DOORBELL_APER_EN__BIF_DOORBELL_APER_EN_MASK                                         0x00000001L
 #define BIF_BX_DEV0_EPF0_VF0_HDP_MEM_COHERENCY_FLUSH_CNTL__HDP_MEM_FLUSH_ADDR_MASK                            0x00000001L
 #define RCC_DEV0_EPF2_STRAP2__STRAP_NO_SOFT_RESET_DEV0_F2_MASK                                                0x00000080L

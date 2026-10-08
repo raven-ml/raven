@@ -27,9 +27,15 @@
 #define regBIF_BX0_PCIE_INDEX2_BASE_IDX                                                                 0
 #define regBIF_BX0_PCIE_DATA2                                                                           0x000f
 #define regBIF_BX0_PCIE_DATA2_BASE_IDX                                                                  0
+#define regBIF_BX0_INTERRUPT_CNTL                                                                       0x00f1
+#define regBIF_BX0_INTERRUPT_CNTL_BASE_IDX                                                              2
+#define regBIF_BX0_INTERRUPT_CNTL2                                                                      0x00f2
+#define regBIF_BX0_INTERRUPT_CNTL2_BASE_IDX                                                             2
 #define regBIF_BX0_BIF_DOORBELL_INT_CNTL                                                                0x00fd
 #define regBIF_BX0_BIF_DOORBELL_INT_CNTL_BASE_IDX                                                       2
 #define regBIF_BX0_REMAP_HDP_MEM_FLUSH_CNTL                                                             0x012d
 #define regBIF_BX0_REMAP_HDP_MEM_FLUSH_CNTL_BASE_IDX                                                    2
+#define regBIF_BX0_REMAP_HDP_REG_FLUSH_CNTL                                                             0x012e
+#define regBIF_BX0_REMAP_HDP_REG_FLUSH_CNTL_BASE_IDX                                                    2
 #define regRCC_DEV0_EPF2_STRAP2                                                                         0xd102
 #define regRCC_DEV0_EPF2_STRAP2_BASE_IDX                                                                5

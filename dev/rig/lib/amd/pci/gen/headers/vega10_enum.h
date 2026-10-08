@@ -19,6 +19,7 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+MTYPE_NC                                 = 0x00000000,
 MTYPE_UC                                 = 0x00000003,
 SH_MEM_ADDRESS_MODE_64                   = 0x00000000,
 SH_MEM_ALIGNMENT_MODE_UNALIGNED          = 0x00000003,

@@ -148,12 +148,12 @@ REG_INVENTORY = {
         r"CONTEXT1_IDENTITY_APERTURE_(LOW|HIGH)_ADDR_(LO32|HI32)|CONTEXT_IDENTITY_PHYSICAL_OFFSET_(LO32|HI32)|"
         r"BANK_SELECT_RESERVED_CID2)",
         VM + r"MC_VM_(AGP_(BASE|BOT|TOP)|SYSTEM_APERTURE_(LOW|HIGH)_ADDR|SYSTEM_APERTURE_DEFAULT_ADDR_(LSB|MSB)|"
-        r"MX_L1_TLB_CNTL|FB_LOCATION_(BASE|TOP)|XGMI_LFB_(CNTL|SIZE))",
+        r"MX_L1_TLB_CNTL|FB_LOCATION_(BASE|TOP)|FB_OFFSET|XGMI_LFB_(CNTL|SIZE))",
         r"regMM_ATC_L2_MISC_CG",
     ],
     "nbio": [
         r"regBIF_BX_PF0_RSMU_(INDEX|DATA)",
-        r"regBIF_BX0_(PCIE_INDEX2(_HI)?|PCIE_DATA2|REMAP_HDP_MEM_FLUSH_CNTL|BIF_DOORBELL_INT_CNTL)",
+        r"regBIF_BX0_(PCIE_INDEX2(_HI)?|PCIE_DATA2|REMAP_HDP_(MEM|REG)_FLUSH_CNTL|BIF_DOORBELL_INT_CNTL|INTERRUPT_CNTL2?)",
         r"regBIF_BX_DEV0_EPF0_VF0_HDP_MEM_COHERENCY_FLUSH_CNTL",
         r"regBIFC_(GFX_INT_MONITOR_MASK|DOORBELL_ACCESS_EN_PF)", r"regXCC_DOORBELL_FENCE",
         r"regDOORBELL0_CTRL_ENTRY_\d+", r"reg(GDC_S2A0_S2A|S2A)_DOORBELL_ENTRY_\d+_CTRL",
@@ -170,8 +170,9 @@ REG_INVENTORY = {
 }
 REG_INVENTORY["nbif"] = REG_INVENTORY["nbio"]
 # GC's registers are device_amd_abi's, but for those that say which compute
-# units or work-group processors a shader array has fused off.
-REG_INVENTORY["gc"] = [r"reg(CC_GC|GC_USER)_SHADER_ARRAY_CONFIG"]
+# units or work-group processors a shader array has fused off, and the memory
+# controller's offset GC 9 keeps (MMHUB's from GC 10).
+REG_INVENTORY["gc"] = [r"reg(CC_GC|GC_USER)_SHADER_ARRAY_CONFIG", r"regMC_VM_FB_OFFSET"]
 
 # Compute queues: the doorbells of the KIQ and the first MEC and SDMA rings,
 # the memory queue descriptors (MQD) of each GC generation, and the shader
@@ -656,7 +657,7 @@ def excerpt(name, text):
     elif name in IH_SOURCES:
         keep |= {i for i, l in enumerate(lines) if SRCID.match(l)}
     elif name in MTYPES:
-        keep |= {i for i, l in enumerate(lines) if re.match(r"\s*(MTYPE_UC|SH_MEM_ADDRESS_MODE_64|"
+        keep |= {i for i, l in enumerate(lines) if re.match(r"\s*(MTYPE_UC|MTYPE_NC|SH_MEM_ADDRESS_MODE_64|"
                                                               r"SH_MEM_ALIGNMENT_MODE_UNALIGNED)\s*=", l)}
     elif name == "amdgpu_discovery.c":
         keep |= {i for i, l in enumerate(lines) if DEFINE.match(l) and DEFINE.match(l).group(1) in EARLY}
@@ -786,7 +787,7 @@ def generate(h):
     for n, v in enum_values(vm, VM_LEVELS).items():
         out.append(f"let {n.lower()} = {v}")
     for hdr, gen_name in MTYPES.items():
-        for n in ["MTYPE_UC"] + SH_MEM:
+        for n in ["MTYPE_UC", "MTYPE_NC"] + SH_MEM:
             m = re.search(rf"\b{n}\s*=\s*(0x[0-9a-fA-F]+|\d+)", h[hdr])
             if m is None:
                 sys.exit(f"{hdr}: no {n}")

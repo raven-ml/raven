@@ -31,10 +31,16 @@
 #define regBIF_BX_PF0_RSMU_INDEX_BASE_IDX                                                               1
 #define regBIF_BX_PF0_RSMU_DATA                                                                         0x0001
 #define regBIF_BX_PF0_RSMU_DATA_BASE_IDX                                                                1
+#define regBIF_BX0_INTERRUPT_CNTL                                                                       0x00f1
+#define regBIF_BX0_INTERRUPT_CNTL_BASE_IDX                                                              2
+#define regBIF_BX0_INTERRUPT_CNTL2                                                                      0x00f2
+#define regBIF_BX0_INTERRUPT_CNTL2_BASE_IDX                                                             2
 #define regBIF_BX0_BIF_DOORBELL_INT_CNTL                                                                0x00fe
 #define regBIF_BX0_BIF_DOORBELL_INT_CNTL_BASE_IDX                                                       2
 #define regBIF_BX0_REMAP_HDP_MEM_FLUSH_CNTL                                                             0x012d
 #define regBIF_BX0_REMAP_HDP_MEM_FLUSH_CNTL_BASE_IDX                                                    2
+#define regBIF_BX0_REMAP_HDP_REG_FLUSH_CNTL                                                             0x012e
+#define regBIF_BX0_REMAP_HDP_REG_FLUSH_CNTL_BASE_IDX                                                    2
 #define regRCC_DEV0_EPF0_RCC_DOORBELL_APER_EN                                                           0x00c0
 #define regRCC_DEV0_EPF0_RCC_DOORBELL_APER_EN_BASE_IDX                                                  2
 #define regBIF_BX_DEV0_EPF0_VF0_HDP_MEM_COHERENCY_FLUSH_CNTL                                            0x00f7

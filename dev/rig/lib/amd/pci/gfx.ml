@@ -265,8 +265,8 @@ let program g ~me ~pipe ~queue ~insts ~mqd:at ~kiq ~aql q =
           (Int32.to_int (String.get_int32_le d (4 * (0x80 + i)))
           land 0xffff_ffff)
       done;
-      Regs.write ~inst:xcc ~value:1 g.r "regCP_HQD_ACTIVE" [];
       Gmc.flush_hdp g.gmc;
+      Regs.write ~inst:xcc ~value:1 g.r "regCP_HQD_ACTIVE" [];
       grbm_select g ~inst:xcc)
     insts
 

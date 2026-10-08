@@ -59,18 +59,31 @@ val space : Rig_pci.Space.t
 val start :
   Rig_pci.Function.t ->
   (string -> digest:string -> (string, string) result) ->
-  (t, string) result
+  (t, [ `Refused of string | `Lost of string ]) result
 (** [start f find] boots the GPU of [f], whose function the caller took and
     whose machine has {!space} reserved, its firmware read with [find]: a
-    partial or full boot as {!plan} says. [Error msg], the GPU left as it was,
-    if a BAR cannot be mapped, if its discovery table is refused, if a block has
-    a version this library does not boot, if firmware is missing, if it is
-    [`Booted], saying that a reset stops it, or if it is in a fabric left
-    running. [Error msg] after its first write if a block does not answer,
-    naming the step; the GPU is then stopped as lost. *)
+    partial or full boot as {!plan} says. The GPU masters the bus only once
+    booted, its hubs' faults reaching a page of system memory the boot owns.
+
+    [Error (`Refused msg)], no register written, if a BAR cannot be mapped, if
+    its discovery table is refused, if a block has a version this library does
+    not boot, if firmware is missing, if it is [`Booted], saying that a reset
+    stops it, if it is in a fabric left running, if its memory controller's
+    window does not hold its memory ({!Gmc.window}), or if the machine has no
+    memory for its page tables or fault page. [Error (`Lost msg)] if a block
+    does not answer, naming the step: the GPU is then stopped ({!stop}). An
+    exception raised during the boot stops it too, and passes through. *)
 
 val reset : Rig_pci.Function.t -> (unit, string) result
-(** [reset f] resets the GPU of [f] as [Rig_amd_pci.reset] states. *)
+(** [reset f] resets the GPU of [f] as [Rig_amd_pci.reset] states, its bus
+    mastering off: if its security processor and power manager run, it stops the
+    compute queues, lowers the clocks, halts the engines and resets the GPU
+    whole (mode 1), waiting until the function answers again. It then turns the
+    interrupt rings off. [Ok ()] means neither firmware nor an interrupt ring
+    runs: a GPU nothing ran on, or one of blocks this library does not boot,
+    which it never wrote to, is left as it is. [Error msg] if the GPU does not
+    answer, if it is in a fabric, or if its security processor's OS or a ring
+    still runs after the reset, as when its power manager is hung. *)
 
 val gpu : t -> Rig_amd_abi.Gpu.t
 val gc : t -> Discovery.gc
@@ -127,11 +140,11 @@ val give_back : t -> unit
 
 val stop : t -> [ `Clean | `Lost | `Unknown ]
 (** [stop g] stops the GPU's queues and leaves it for the next open, clocks
-    lowered:
+    lowered and its bus mastering off, so that it reaches no memory outside its
+    own but over a fabric:
     - [`Clean] if every queue left and no fault was reported: the mark is clean,
       and the next open boots partially;
-    - [`Lost] if a fault was reported or a queue did not leave, whose GPU then
-      loses its bus mastering and reaches no memory outside its own: the mark is
+    - [`Lost] if a fault was reported or a queue did not leave: the mark is
       dirty, and only a reset recovers it;
     - [`Unknown] if its machine failed, or a queue of a GPU in a fabric did not
       leave, whose writes to its peers bus mastering does not stop.

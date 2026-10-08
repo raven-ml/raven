@@ -31,10 +31,16 @@
 #define regBIF_BX0_PCIE_DATA2_BASE_IDX                                                                  0
 #define regBIF_BX0_PCIE_INDEX2_HI                                                                       0x0011
 #define regBIF_BX0_PCIE_INDEX2_HI_BASE_IDX                                                              0
+#define regBIF_BX0_INTERRUPT_CNTL                                                                       0x00f1
+#define regBIF_BX0_INTERRUPT_CNTL_BASE_IDX                                                              2
+#define regBIF_BX0_INTERRUPT_CNTL2                                                                      0x00f2
+#define regBIF_BX0_INTERRUPT_CNTL2_BASE_IDX                                                             2
 #define regBIF_BX0_BIF_DOORBELL_INT_CNTL                                                                0x00fe
 #define regBIF_BX0_BIF_DOORBELL_INT_CNTL_BASE_IDX                                                       2
 #define regBIF_BX0_REMAP_HDP_MEM_FLUSH_CNTL                                                             0x012d
 #define regBIF_BX0_REMAP_HDP_MEM_FLUSH_CNTL_BASE_IDX                                                    2
+#define regBIF_BX0_REMAP_HDP_REG_FLUSH_CNTL                                                             0x012e
+#define regBIF_BX0_REMAP_HDP_REG_FLUSH_CNTL_BASE_IDX                                                    2
 #define regRCC_DEV0_EPF0_RCC_DOORBELL_APER_EN                                                           0x00c0
 #define regRCC_DEV0_EPF0_RCC_DOORBELL_APER_EN_BASE_IDX                                                  2
 #define regGDC_S2A0_S2A_DOORBELL_ENTRY_0_CTRL                                                           0x01cb

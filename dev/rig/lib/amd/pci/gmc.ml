@@ -16,10 +16,11 @@ type t = {
   gc : Discovery.version;
   xccs : int list; (* the GC hub's instances *)
   mm : int list; (* the MM hub's instances *)
-  fabric_base : int; (* where the GPU's memory starts in the fabric *)
+  node : int; (* where the GPU's memory starts in the fabric's window *)
+  fabric_base : int; (* where its page tables name it *)
   mc_base : int; (* where it starts for the memory controller *)
-  fb_base : int;
-  fb_end : int;
+  base : int; (* the FB location registers *)
+  top : int;
   hive : bool;
   address_mask : int; (* the physical addresses the GPU's entries hold *)
   mutable gc_started : bool; (* whether the GC hub walks tables yet *)
@@ -32,8 +33,10 @@ type t = {
 let aperture_unit = 24
 let aperture_mask = 0xff_ffff
 
-let read_aperture r name =
-  (Regs.read r name land aperture_mask) lsl aperture_unit
+(* The memory controller's window on the GPU's memory: its first byte, and its
+   last, the end of its top unit. *)
+let first base = (base land aperture_mask) lsl aperture_unit
+let last top = (((top land aperture_mask) + 1) lsl aperture_unit) - 1
 
 (* GC 9.4 and 9.5 address 48 bits of physical memory; the others 44. *)
 let address_bits = function 9, (4 | 5), _ -> 48 | _ -> 44
@@ -54,8 +57,17 @@ let make r vram =
     | Some (7, 9, (0 | 1)) -> true
     | _ -> false
   in
-  let fabric_base = region * segment in
-  let fb_base = read_aperture r "regMMMC_VM_FB_LOCATION_BASE" in
+  (* The GPU's memory starts at its node's segment in the fabric's window, and
+     its page tables name it past the memory controller's offset, which a
+     virtual function's tables leave out (the kernel's vram_base_offset). *)
+  let node = region * segment in
+  let offset =
+    let name =
+      if gc < (10, 0, 0) then "regMC_VM_FB_OFFSET" else "regMMMC_VM_FB_OFFSET"
+    in
+    if Regs.vf r then 0 else Regs.read r name lsl aperture_unit
+  in
+  let base = Regs.read r "regMMMC_VM_FB_LOCATION_BASE" in
   {
     r;
     vram;
@@ -64,10 +76,11 @@ let make r vram =
     mm =
       (if nbio79 then Discovery.aids d
        else List.map fst (Discovery.live d D.mmhub_hwid));
-    fabric_base;
-    mc_base = fb_base + fabric_base;
-    fb_base;
-    fb_end = read_aperture r "regMMMC_VM_FB_LOCATION_TOP";
+    node;
+    fabric_base = offset + node;
+    mc_base = first base + node;
+    base;
+    top = Regs.read r "regMMMC_VM_FB_LOCATION_TOP";
     (* A segment size alone describes an address window; a fabric of GPUs also
        has regions. *)
     hive = segment > 0 && regions > 0;
@@ -75,6 +88,18 @@ let make r vram =
     gc_started = false;
   }
 
+let window ~base ~top ~fabric ~memory =
+  let lo = first base and hi = last top in
+  let at = lo + fabric in
+  if hi >= lo && at + memory - 1 <= hi then Ok ()
+  else
+    Error
+      (strf
+         "the memory controller's window [0x%x, 0x%x] does not hold the GPU's \
+          %d MiB at 0x%x"
+         lo hi (memory lsr 20) at)
+
+let covers g ~memory = window ~base:g.base ~top:g.top ~fabric:g.node ~memory
 let mc g pa = g.mc_base + pa
 let fabric g pa = g.fabric_base + pa
 let hive g = g.hive
@@ -97,7 +122,13 @@ let entry ~gc ~level ~pa target ~uncached ~snooped ~fragment =
   let table = target = `Table in
   let system = target = `Page `System in
   let shift v s = Int64.shift_left (Int64.of_int v) s in
-  let mtype = if uncached then mtype_uc gc else 0 in
+  (* GFX12 reaches system memory MTYPE_NC whatever the mapping asks, as the
+     kernel's gmc_v12_0_get_vm_pte does to avoid a hardware bug. *)
+  let mtype =
+    match gc with
+    | (12 | 13), _, _ when system -> D.soc24_mtype_nc
+    | _ -> if uncached then mtype_uc gc else 0
+  in
   let base =
     D.amdgpu_pte_valid
     |: flag system D.amdgpu_pte_system
@@ -189,11 +220,7 @@ let further g = g.gc < (10, 0, 0)
 let faults =
   [ "pde0"; "dummy_page"; "range"; "valid"; "read"; "write"; "execute" ]
 
-(* The control value of a context: its depth and block size, set below, over
-   amdgpu's default of retrying no fault. *)
-let context_cntl = 0x180_0000
-
-let start_hub g hub tables ~scratch ~dummy =
+let start_hub g hub tables ~scratch =
   let r = g.r and ip = hub_prefix hub in
   let reg s = strf "reg%s%s" ip s in
   let ctx s = strf "reg%sVM_CONTEXT0_%s" ip s in
@@ -205,14 +232,11 @@ let start_hub g hub tables ~scratch ~dummy =
       w ~value:0 (reg "MC_VM_AGP_BASE") [];
       w ~value:(0xffff_ffff_ffff lsr aperture_unit) (reg "MC_VM_AGP_BOT") [];
       w ~value:0 (reg "MC_VM_AGP_TOP") [];
-      w ~value:(g.fb_base lsr 18) (reg "MC_VM_SYSTEM_APERTURE_LOW_ADDR") [];
-      w ~value:(g.fb_end lsr 18) (reg "MC_VM_SYSTEM_APERTURE_HIGH_ADDR") [];
+      w ~value:(first g.base lsr 18) (reg "MC_VM_SYSTEM_APERTURE_LOW_ADDR") [];
+      w ~value:(last g.top lsr 18) (reg "MC_VM_SYSTEM_APERTURE_HIGH_ADDR") [];
       w64
         (reg "MC_VM_SYSTEM_APERTURE_DEFAULT_ADDR")
         ~lo:"_LSB" ~hi:"_MSB" (scratch lsr 12);
-      w64
-        (reg "VM_L2_PROTECTION_FAULT_DEFAULT_ADDR")
-        ~lo:"_LO32" ~hi:"_HI32" (dummy lsr 12);
       Regs.update ~inst r
         (reg "VM_L2_PROTECTION_FAULT_CNTL2")
         [ ("active_page_migration_pte_read_retry", 1) ];
@@ -256,7 +280,7 @@ let start_hub g hub tables ~scratch ~dummy =
         (ctx "PAGE_TABLE_BASE_ADDR")
         ~lo:"_LO32" ~hi:"_HI32"
         (fabric g (Page_table.root tables) lor 1);
-      w ~value:context_cntl (ctx "CNTL")
+      w (ctx "CNTL")
         (List.map
            (fun f -> (f ^ "_protection_fault_enable_interrupt", 1))
            faults
@@ -283,6 +307,12 @@ let start_hub g hub tables ~scratch ~dummy =
     (instances g hub);
   if hub = `Gc then g.gc_started <- true
 
+let fault_page g hub a =
+  let name = strf "reg%sVM_L2_PROTECTION_FAULT_DEFAULT_ADDR" (hub_prefix hub) in
+  List.iter
+    (fun inst -> Regs.write64 ~inst g.r name ~lo:"_LO32" ~hi:"_HI32" (a lsr 12))
+    (instances g hub)
+
 (* Flushes *)
 
 let hdp g =
@@ -290,7 +320,7 @@ let hdp g =
     4
     * Regs.address (Regs.layout_of g.r)
         "regBIF_BX_DEV0_EPF0_VF0_HDP_MEM_COHERENCY_FLUSH_CNTL"
-  else Regs.read g.r "regBIF_BX0_REMAP_HDP_MEM_FLUSH_CNTL"
+  else Soc.hdp_flush g.r
 
 (* A store to the HDP flush register flushes, and its read back returns once the
    flush is done, as amdgpu_hdp_generic_flush does. *)

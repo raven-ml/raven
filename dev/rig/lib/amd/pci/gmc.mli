@@ -16,12 +16,25 @@ type t
    the memory controller and, in a fabric of GPUs (XGMI), for its peers. *)
 val make : Regs.t -> Rig_pci.Window.t -> t
 
+(* [window ~base ~top ~fabric ~memory] checks that the memory controller's
+   window on the GPU's memory, from the FB location registers' [base] and [top]
+   (its first and last 16 MiB unit), holds the [memory] bytes of the GPU's own
+   memory at [fabric] bytes past its start. [Error msg] says where the window
+   is: an address outside it is system memory to the GPU, which a write then
+   reaches. Pure. *)
+val window :
+  base:int -> top:int -> fabric:int -> memory:int -> (unit, string) result
+
+(* [covers g ~memory] is {!window} of [g]'s registers. *)
+val covers : t -> memory:int -> (unit, string) result
+
 (* [mc g pa] is the address the memory controller gives the GPU's physical
    address [pa]. *)
 val mc : t -> int -> int
 
-(* [fabric g pa] is the address the GPU's own memory at [pa] has in the fabric,
-   which its page tables name it by; [pa] itself outside a fabric. *)
+(* [fabric g pa] is the address its page tables and hubs name the GPU's own
+   memory at [pa] by: past the memory controller's offset (MC_VM_FB_OFFSET, none
+   on a virtual function) and, in a fabric, its node's segment. *)
 val fabric : t -> int -> int
 
 (* [hive g] is [true] iff the GPU is one of several joined by a fabric. *)
@@ -36,8 +49,9 @@ val instances : t -> [ `Gc | `Mm ] -> int list
    table at [pa] ([`Table]) or the page there ([`Page]): GPU memory, this GPU's
    or a peer's over the fabric, at the address the GPU's memory controller gives
    it, or system memory at its bus address; [uncached], [snooped] and [fragment]
-   (the log2 of the run, in 4 KiB pages) as Rig_pci.Page_table.format states.
-   Pure.
+   (the log2 of the run, in 4 KiB pages) as Rig_pci.Page_table.format states,
+   but that GC 12 reaches system memory non-coherently cached (MTYPE_NC) even
+   when [uncached], working around a hardware bug as the kernel does. Pure.
 
    Raises [Invalid_argument] if [pa] is not on 4 KiB or has bits above the 48
    the entry holds. *)
@@ -58,12 +72,18 @@ val entry :
    (Gfx). *)
 val format : t -> flush:(unit -> unit) -> Rig_pci.Page_table.format
 
-(* [start_hub g hub tables ~scratch ~dummy] programs [hub] on every instance:
-   its apertures, its L2 cache, and its context 0 over [tables], with faults
-   reported and redirected to the page [dummy]; [scratch] answers accesses
-   outside the apertures. *)
+(* [start_hub g hub tables ~scratch] programs [hub] on every instance: its
+   apertures, its L2 cache, and its context 0 over [tables], with faults
+   reported and redirected to the system memory page {!fault_page} names;
+   [scratch] answers accesses outside the apertures. *)
 val start_hub :
-  t -> [ `Gc | `Mm ] -> Rig_pci.Page_table.t -> scratch:int -> dummy:int -> unit
+  t -> [ `Gc | `Mm ] -> Rig_pci.Page_table.t -> scratch:int -> unit
+
+(* [fault_page g hub a] makes the page of system memory at bus address [a] the
+   one [hub]'s faulting accesses reach on every instance, as the kernel's dummy
+   page. A hub keeps it across sessions, so each session names its own page
+   before the GPU masters the bus. *)
+val fault_page : t -> [ `Gc | `Mm ] -> int -> unit
 
 (* [flush_hdp g] writes the HDP flush register and reads it back, so that the
    host's writes through the memory BAR before it are in the GPU's memory. *)
