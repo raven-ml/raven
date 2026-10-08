@@ -3,16 +3,17 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Whether this process holds a GPU's kernel-driver file open (private).
+(** The device file NVIDIA's kernel driver serves a GPU through (private).
 
     NVIDIA's kernel driver gives each GPU a file [/dev/nvidiaN], [N] the GPU's
     minor, which [/proc/driver/nvidia/gpus/<bus>/information] states on its line
     [Device Minor:]. While a process holds that file open, unbinding the driver
-    from the GPU waits for the process to close it. The files are read under a
-    root directory: [/] for this machine, a fixture's directory in tests. *)
+    from the GPU waits for the process to close it, so a detach refuses a GPU
+    whose file this process holds ({!Rig_pci.Gpus.make}'s [nodes]). *)
 
-val nvidia : root:string -> string -> (bool, string) result
-(** [nvidia ~root bus] is [true] iff a link under [root/proc/self/fd] names
-    [/dev/nvidiaN], [N] the minor of the GPU at [bus]. It is [false] if the
-    driver states no minor for [bus], as when it does not hold the GPU, and
-    [Error] naming the file if a file the driver states cannot be read. *)
+val nodes : read:(string -> string option) -> string -> string list
+(** [nodes ~read bus] is [["dev/nvidiaN"]], the device file of the GPU at [bus]
+    as a path from the machine's root, [N] the minor that
+    [read ("proc/driver/nvidia/gpus/" ^ bus ^ "/information")] states. It is
+    [[]] if [read] gives [None], as when the kernel driver does not serve the
+    GPU, or if the file states no minor. *)

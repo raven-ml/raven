@@ -8,5 +8,4 @@
  (modules_without_implementation
   rig_nv_pci
   falcon
-  gsp
-  held))
+  gsp))
