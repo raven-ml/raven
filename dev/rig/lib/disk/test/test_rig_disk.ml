@@ -992,15 +992,14 @@ let barriers =
 (* A model of files *)
 
 (* A file as the model knows it: the bytes its copies read, the bytes its pages
-   show, whether another file replaced its path, whether the host borrowed it,
-   and whether more other files than the disk keeps descriptors of were read
-   since it was made. A created file's pages are its bytes. *)
+   show, whether another file replaced its path, and whether more other files
+   than the disk keeps descriptors of were read since it was made. A created
+   file's pages are its bytes. *)
 type model = {
   kind : kind;
   bytes : Bytes.t;
   pages : Bytes.t;
   mutable replaced : bool;
-  mutable borrowed : bool;
   mutable after_others : bool;
 }
 
@@ -1008,14 +1007,7 @@ type file = { path : string; buf : B.t }
 
 let model kind bytes =
   let pages = match kind with Opened -> Bytes.copy bytes | Created -> bytes in
-  {
-    kind;
-    bytes;
-    pages;
-    replaced = false;
-    borrowed = false;
-    after_others = false;
-  }
+  { kind; bytes; pages; replaced = false; after_others = false }
 
 let file = abstract "f" ~release:(fun f -> remove f.path)
 let sizes = Gen.frequency [ (1, ints page_edges); (1, Gen.int_range 0 5000) ]
@@ -1028,11 +1020,6 @@ let judged m outcome accept =
   match outcome with
   | Ok (Ok v) -> accept v
   | Ok (Error e) when m.replaced && e = names_file -> ()
-  (* Known bugs: a created file whose pages the host borrowed may be taken for
-     another file once its descriptor closed ("a created file's writes through
-     its borrow keep it its own", "a created file whose pages are borrowed keeps
-     it its own across a barrier"). *)
-  | Ok (Error e) when m.kind = Created && m.borrowed && e = names_file -> ()
   | Ok (Error e) -> fail e
   | Error e -> raise e
 
@@ -1082,7 +1069,6 @@ let model_commands =
       (file ^-> ranges @-> judges (option octets))
       (fun m r outcome ->
         let at, len = clamp (Bytes.length m.bytes) r in
-        m.borrowed <- true;
         match outcome with
         | Ok (Some s) -> equal octets (Bytes.sub_string m.pages at len) s
         | Ok None when m.replaced -> ()
@@ -1096,9 +1082,7 @@ let model_commands =
       (file ^-> small_extent @-> letters @-> judges (option unit))
       (fun m a c outcome ->
         match outcome with
-        | Ok (Some ()) ->
-            Bytes.set m.pages (min a (Bytes.length m.pages - 1)) c;
-            m.borrowed <- true
+        | Ok (Some ()) -> Bytes.set m.pages (min a (Bytes.length m.pages - 1)) c
         | Ok None when m.replaced -> ()
         | Ok None -> fail "the host's borrow of a file is None"
         | Error e -> raise e)
