@@ -759,13 +759,15 @@ let firmware =
           with
           | Ok _ -> failf "%s was read" path
           | Error why -> starts_with ~affix:(path ^ ": ") why);
-      test "every pinned image has a BLAKE2b-256 digest and its URL" (fun () ->
+      test "every pinned image has a BLAKE2b-256 digest, under one tree"
+        (fun () ->
           List.iter
-            (fun (path, digest, url) ->
+            (fun (path, digest) ->
               equal ~msg:path int 64 (String.length digest);
-              ends_with ~msg:path ~affix:("/" ^ path) url)
+              starts_with ~msg:path ~affix:"amdgpu/" path)
             Images.pinned;
-          let paths = List.map (fun (p, _, _) -> p) Images.pinned in
+          ends_with ~affix:"/" Images.origin;
+          let paths = List.map fst Images.pinned in
           equal int (List.length paths)
             (List.length (List.sort_uniq compare paths)));
     ]

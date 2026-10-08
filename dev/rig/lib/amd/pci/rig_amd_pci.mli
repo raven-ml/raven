@@ -6,14 +6,12 @@
 (** AMD GPUs booted over PCI, with no kernel driver.
 
     This library does the kernel driver's work from the process. It takes the
-    GPU's PCI function ({!Rig_pci.Function}), loads the GPU's firmware,
-    brings up its blocks, writes its page tables and reads its interrupts, then
-    gives the GPU's memory, queues and interrupts to {!Rig_amd}, which drives
-    it ({!Rig_amd.make}):
+    GPU's PCI function ({!Rig_pci.Function}), loads the GPU's firmware, brings
+    up its blocks, writes its page tables and reads its interrupts, then gives
+    the GPU's memory, queues and interrupts to {!Rig_amd}, which drives it
+    ({!Rig_amd.make}):
     {[
-    let g =
-      Result.get_ok (Rig_amd_pci.open_ ~firmware:[ "/lib/firmware" ] 0)
-    in
+    let g = Result.get_ok (Rig_amd_pci.open_ ~firmware:[ "/lib/firmware" ] 0) in
     Rig_amd.arch g (* "gfx1201" *)
     ]}
 
@@ -99,31 +97,33 @@ val open_ :
     {!Rig_pci.Machine.this}) and opens it, each firmware image read from the
     first of the directories [firmware] that holds it with its pinned digest.
 
-    The process holds the GPU until the device is stopped ({!Rig_amd.stop});
-    a device stopped after a fault or a hang leaves the GPU lost, to be {!reset}
+    The process holds the GPU until the device is stopped ({!Rig_amd.stop}); a
+    device stopped after a fault or a hang leaves the GPU lost, to be {!reset}
     before it opens again.
 
     The result is [Error msg], the GPU left as it was, if [machine] is reached
     through a transport, if [i >= count ~machine ()], saying how many GPUs there
     are, if the process holds the GPU, if this process lost it and did not reset
-    it since, if its function cannot be taken, with
-    {!Rig_pci.Function.take}'s reason, if one of its blocks has a version
-    this library does not boot, naming the block and the version, if an image is
-    missing, with {!Rig_pci.Firmware.find}'s reason, or if firmware this
-    library did not start runs on it, which a {!reset} stops. It is also
-    [Error msg] if a block does not answer during the boot, naming the step, or
-    with {!Rig_amd.make}'s message; the GPU then opens again only after a
-    reset.
+    it since, if its function cannot be taken, with {!Rig_pci.Function.take}'s
+    reason, if one of its blocks has a version this library does not boot,
+    naming the block and the version, if an image is missing, with
+    {!Rig_pci.Firmware.find}'s reason, or if firmware this library did not start
+    runs on it, which a {!reset} stops. It is also [Error msg] if a block does
+    not answer during the boot, naming the step, or with {!Rig_amd.make}'s
+    message; the GPU then opens again only after a reset.
 
     Raises [Invalid_argument] if [i < 0]. *)
 
 (** {1:firmware Firmware} *)
 
-val pinned : (string * string * string) list
+val pinned : (string * string) list
 (** [pinned] is every firmware image an open may read: its path under a firmware
-    directory, such as ["amdgpu/psp_13_0_0_sos.bin"], its lowercase hexadecimal
-    BLAKE2b-256 digest ({!Rig_pci.Firmware.digest}), and the URL of
-    linux-firmware's file at the pinned commit, which holds those bytes. *)
+    directory, such as ["amdgpu/psp_13_0_0_sos.bin"], and its lowercase
+    hexadecimal BLAKE2b-256 digest ({!Rig_pci.Firmware.digest}). *)
+
+val origin : string
+(** [origin] is the URL of linux-firmware's tree at the pinned commit:
+    [origin ^ path] downloads the image at [path] of {!pinned}. *)
 
 (** {1:changes Changes to the machine}
 
@@ -159,9 +159,9 @@ val attach : int -> (unit, string) result
 
 val reset : ?machine:Rig_pci.Machine.t -> int -> (unit, string) result
 (** [reset ~machine i] stops whatever runs on GPU [i] of [machine] (defaults to
-    {!Rig_pci.Machine.this}) and resets it with the GPU's whole reset (mode
-    1), which clears what any driver left. A GPU no firmware runs on is left as
-    it is. A virtual function gives back its access instead, and its physical
+    {!Rig_pci.Machine.this}) and resets it with the GPU's whole reset (mode 1),
+    which clears what any driver left. A GPU no firmware runs on is left as it
+    is. A virtual function gives back its access instead, and its physical
     function resets it. Afterwards the GPU opens with a full boot.
 
     The result is [Error msg] if [i] is no GPU, if this process holds it, if its

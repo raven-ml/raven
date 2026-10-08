@@ -737,14 +737,17 @@ def generate(h):
     for n, v in enum_values(h["psp_gfx_if.h"], GFX_FW_TYPES).items():
         out.append(f"let {n.lower()} = {v}")
     out.append("")
-    out.append(f"(* The pinned images of linux-firmware at {FIRMWARE_COMMIT[:12]}: path, BLAKE2b-256")
-    out.append("   digest and URL. *)")
+    out.append(f"(* The pinned images of linux-firmware at {FIRMWARE_COMMIT[:12]}: each image's path,")
+    out.append("   and its BLAKE2b-256 digest; [origin ^ path] is its URL. *)")
+    out.append(f"let origin = {json.dumps(FIRMWARE_URL)}")
     out.append("let pinned = [")
     for row in h[FIRMWARE].splitlines():
         if row.startswith("#"):
             continue
         path, digest, url = row.split("\t")
-        out.append(f"  ({json.dumps(path)}, {json.dumps(digest)}, {json.dumps(url)});")
+        if url != FIRMWARE_URL + path:
+            sys.exit(f"{path}: URL {url} is not in the pinned tree")
+        out.append(f"  ({json.dumps(path)}, {json.dumps(digest)});")
     out.append("]")
     return "\n".join(out) + "\n"
 

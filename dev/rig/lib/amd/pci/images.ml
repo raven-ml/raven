@@ -17,6 +17,7 @@ type t = {
 }
 
 let pinned = D.pinned
+let origin = D.origin
 
 (* A defect of an image, named by the caller. *)
 exception Bad of string
@@ -103,8 +104,7 @@ let wanted d =
          [ gc_image Rlc "rlc" ];
        ])
 
-let digest path =
-  List.find_map (fun (p, d, _) -> if p = path then Some d else None) pinned
+let digest path = List.assoc_opt path pinned
 
 let names d =
   let* images = wanted d in

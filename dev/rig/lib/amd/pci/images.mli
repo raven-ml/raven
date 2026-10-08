@@ -27,10 +27,11 @@ type t = {
 }
 (** The type for a GPU's firmware. *)
 
-val pinned : (string * string * string) list
-(** [pinned] is every image an open may read, as [Rig_amd_pci.pinned] states:
-    its path, BLAKE2b-256 digest and URL in linux-firmware at the pinned commit.
-*)
+val pinned : (string * string) list
+(** [pinned] is [Rig_amd_pci.pinned]. *)
+
+val origin : string
+(** [origin] is [Rig_amd_pci.origin]. *)
 
 val names : Discovery.t -> (string list, string) result
 (** [names d] is the paths of the images the blocks of [d] name, in the order
