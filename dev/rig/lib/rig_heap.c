@@ -492,18 +492,17 @@ value caml_rig_heap_drop(value unit) {
    to itself. A buffer's bigarray is made here with [caml_alloc_custom],
    which takes the memory a cycle is due after, and the runtime's operations
    with one change, a finaliser that keeps the memory where the runtime's
-   frees it. A sub of it shares a proxy with it, and whichever is collected
-   last releases the memory: the block keeps it, a sub frees it. */
+   frees it. Every array over a buffer, its subs, slices and views, shares
+   the proxy made with it, which holds the buffer's bytes: the runtime
+   reads a proxy's size only for mapped files. */
 extern const struct custom_operations caml_ba_ops;
 
+/* The last array over a heap buffer, whichever it is, keeps its bytes. */
 static void heap_finalize(value v) {
-  struct caml_ba_array *b = Caml_ba_array_val(v);
-  size_t n = (size_t)b->dim[0];
-  if (b->proxy == NULL) heap_keep(b->data, n);
-  else if (atomic_fetch_sub(&b->proxy->refcount, 1) == 1) {
-    heap_keep(b->proxy->data, n);
-    free(b->proxy);
-  }
+  struct caml_ba_proxy *p = Caml_ba_array_val(v)->proxy;
+  if (atomic_fetch_sub(&p->refcount, 1) != 1) return;
+  heap_keep(p->data, p->size);
+  free(p);
 }
 
 static struct custom_operations heap_ops;
@@ -520,13 +519,21 @@ value caml_rig_heap_init(value unit) {
 }
 
 static value heap_bigarray(void *data, size_t n) {
+  struct caml_ba_proxy *p = malloc(sizeof *p);
+  if (p == NULL) {
+    free(data);
+    caml_raise_out_of_memory();
+  }
+  atomic_store_explicit(&p->refcount, 1, memory_order_relaxed);
+  p->data = data;
+  p->size = n; /* the bytes [heap_finalize] keeps */
   value ba = caml_alloc_custom(&heap_ops, SIZEOF_BA_ARRAY + sizeof(intnat),
                                n, heap_cycle_bytes());
   struct caml_ba_array *b = Caml_ba_array_val(ba);
   b->data = data;
   b->num_dims = 1;
   b->flags = CAML_BA_CHAR | CAML_BA_C_LAYOUT | CAML_BA_MANAGED;
-  b->proxy = NULL;
+  b->proxy = p;
   b->dim[0] = (intnat)n;
   return ba;
 }

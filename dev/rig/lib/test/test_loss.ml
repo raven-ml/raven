@@ -50,6 +50,41 @@ let test_after_stop () =
   in
   List.iter (fun call -> mem string call [ "free"; "unmap" ]) (after (P.log p))
 
+(* A submit refused because its device is lost runs no work on its buffers'
+   memory, which does not raise Lost for that device. *)
+let test_unrun_names () =
+  let d, p = P.open_ "loss:unrun" in
+  let h = B.create C.host (1 lsl 16) in
+  let s = Sub.make ~reads:1 ~writes:0 ~waits:0 d [||] in
+  Sub.read s 0 (require_some (B.borrow d h));
+  P.fail p;
+  raises_match (lost d) (fun () -> C.submit (empty d));
+  raises_match (lost d) (fun () -> C.submit s);
+  equal int (1 lsl 16) (Bigarray.Array1.dim (B.bigarray Bigarray.char h))
+
+(* A wait looks at every producer its device's queue waits on, however many
+   waits name one: a queue of 64 waits on a stalled producer and one on a
+   faulted producer surfaces the fault, and the wait raises Lost. *)
+let test_many_waits () =
+  let a, pa = P.open_ "loss:many-a" in
+  let b, pb = P.open_ "loss:many-b" in
+  let c, _ =
+    P.open_ ~completion:`Object ~waits_on:[ `Host ] "loss:many-consumer"
+  in
+  let waiting_on producer =
+    let s = empty ~waits:1 c in
+    Sub.wait_for s 0 (C.submit (empty producer));
+    C.submit s
+  in
+  for _ = 1 to 64 do
+    ignore (waiting_on a)
+  done;
+  let last = waiting_on b in
+  P.stall pa max_int;
+  P.fault pb "the engine hung";
+  raises_match (lost c) (fun () -> C.wait c (C.Point.value last));
+  equal (option string) (Some "the engine hung") (C.lost b)
+
 (* Loses [d] through a failed hand-over, then drains as an allocation does:
    [d]'s stop has answered and nothing of it is left to drain. *)
 let lose d p =
@@ -235,6 +270,10 @@ let tests =
         test "a failed hand-over loses the device once" test_failed_submit;
         test "a fault a wait finds loses the device" test_fault;
         test "a stopped device is only freed and unmapped" test_after_stop;
+        test "memory a refused submit named does not raise Lost"
+          test_unrun_names;
+        test ~timeout:10. "a wait finds a fault past 64 waits on one producer"
+          test_many_waits;
         test "a stopped device frees memory dropped after its stop"
           test_free_after_stop;
         test "a stopped device unmaps host memory dropped after its stop"

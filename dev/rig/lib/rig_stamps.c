@@ -82,6 +82,13 @@ static _Atomic uint64_t *reserve(struct rig_stamps *s, int index) {
   }
 }
 
+/* The point the use word [w] holds: none while it holds the (index, 0) its
+   reservation stored, before the first raise. */
+static uint64_t use_point(_Atomic uint64_t *w) {
+  uint64_t p = atomic_load(w);
+  return RIG_VALUE(p) == 0 ? 0 : p;
+}
+
 /* Raises a submission's device's use word to its value [p]. Only that
    device's submissions raise the word, one at a time under its turn, each
    with a greater value than the last, so the raise is a store. */
@@ -114,7 +121,7 @@ value caml_rig_stamps_get(value v_s, value v_k) {
   if (k == 0) return Val_long((intnat)atomic_load(&s->write));
   k -= 1;
   for (; s != NULL; s = atomic_load(&s->next)) {
-    if (k < RIG_USES) return Val_long((intnat)atomic_load(&s->use[k]));
+    if (k < RIG_USES) return Val_long((intnat)use_point(&s->use[k]));
     k -= RIG_USES;
   }
   return Val_long(-1);
@@ -127,7 +134,7 @@ value caml_rig_stamps_absorb(value v_dst, value v_src) {
   uint64_t w = atomic_load(&src->write);
   for (; src != NULL; src = atomic_load(&src->next))
     for (int i = 0; i < RIG_USES; i++) {
-      uint64_t p = atomic_load(&src->use[i]);
+      uint64_t p = use_point(&src->use[i]);
       if (p == 0) continue;
       raise_max(reserve(dst, RIG_INDEX(p)), p);
     }
@@ -336,7 +343,7 @@ static void add_slot(struct rig_sub *s, int own, struct rig_slot *sl,
   if (write)
     for (; st != NULL; st = atomic_load(&st->next))
       for (int i = 0; i < RIG_USES; i++)
-        add_point(s, own, atomic_load(&st->use[i]));
+        add_point(s, own, use_point(&st->use[i]));
   add_handle(s, sl->handle);
 }
 

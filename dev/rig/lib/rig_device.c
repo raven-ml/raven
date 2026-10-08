@@ -534,21 +534,28 @@ value caml_rig_spin(value v_d, value v_target, value v_ms) {
   return Val_long((intnat)w);
 }
 
-/* The producers [d]'s unreached work waits on in its queue, for a wait that
-   looks for their unseen faults. */
+/* The producers [d]'s unreached work waits on in its queue, each once, for
+   a wait that looks for their unseen faults. */
 value caml_rig_producers(value v_d) {
-  CAMLparam1(v_d);
-  CAMLlocal1(a);
   struct rig_device *d = Device_val(v_d);
   int released = take(d), n = 0;
-  int buf[64];
-  uint64_t w = device_word(d);
-  for (int j = 0; j < d->nrecord && n < 64; j++)
-    if (d->record[j].u > w) buf[n++] = d->record[j].producer;
+  int *seen = malloc((size_t)(d->nrecord > 0 ? d->nrecord : 1) * sizeof *seen);
+  if (seen != NULL) {
+    uint64_t w = device_word(d);
+    for (int j = 0; j < d->nrecord; j++) {
+      struct rig_entry *e = &d->record[j];
+      if (e->u <= w) continue;
+      int k = 0;
+      while (k < n && seen[k] != e->producer) k++;
+      if (k == n) seen[n++] = e->producer;
+    }
+  }
   give(d, released);
-  a = caml_alloc_tuple((mlsize_t)n);
-  for (int i = 0; i < n; i++) Store_field(a, (mlsize_t)i, Val_int(buf[i]));
-  CAMLreturn(a);
+  if (seen == NULL) caml_raise_out_of_memory();
+  value a = caml_alloc_tuple((mlsize_t)n);
+  for (int i = 0; i < n; i++) Store_field(a, (mlsize_t)i, Val_int(seen[i]));
+  free(seen);
+  return a;
 }
 
 /* Grows [d]'s record so that [v_n] more entries fit. The array is made

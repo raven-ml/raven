@@ -234,6 +234,26 @@ let test_host_free_cache () =
   C.free_cache C.host;
   equal ~msg:"after free_cache" int 0 (Support.host_kept ())
 
+(* The host keeps a collected buffer's bytes, all of them, whichever array over
+   it is collected last: a float32 view that outlives its buffer keeps its
+   buffer's size. *)
+let test_host_keeps_size () =
+  let n = 1 lsl 20 in
+  Gc.full_major ();
+  Gc.full_major ();
+  C.free_cache C.host;
+  let view =
+    ref (Some ((fun () -> B.bigarray Bigarray.float32 (B.create C.host n)) ()))
+  in
+  Gc.full_major ();
+  Gc.full_major ();
+  equal ~msg:"while the view lives" int 0 (Support.host_kept ());
+  ignore (Sys.opaque_identity !view);
+  view := None;
+  Gc.full_major ();
+  Gc.full_major ();
+  equal ~msg:"once it is collected" int n (Support.host_kept ())
+
 (* The host keeps a collected buffer of 64 KiB or more for the next buffer of
    its size, unless a bigarray of it lives, which keeps its bytes. *)
 let test_host_cache () =
@@ -295,6 +315,8 @@ let tests =
         test "the host keeps a collected buffer's memory for its size"
           test_host_cache;
         test "free_cache on the host returns what it keeps" test_host_free_cache;
+        test "the host keeps a buffer's bytes when a view outlives it"
+          test_host_keeps_size;
       ];
   ]
 
