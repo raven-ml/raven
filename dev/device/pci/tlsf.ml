@@ -18,6 +18,9 @@ let classes = 1 lsl second_bits
 let levels = Sys.int_size
 let none = -1
 
+(* The smallest block handed out: a smaller tail stays with its block. *)
+let min_block = 16
+
 type block = {
   mutable size : int;
   mutable prev : int; (* the block before it *)
@@ -29,7 +32,6 @@ type block = {
 type t = {
   base : int;
   length : int;
-  block : int;
   blocks : (int, block) Hashtbl.t;
   heads : int array; (* the first free block of each class *)
   seconds : int array;
@@ -148,14 +150,12 @@ let absorb t start b next =
 
 (* Allocators *)
 
-let create ?(block = 16) ~base length =
+let create ~base length =
   if length < 0 then invalid_argf "Tlsf.create: %d" length;
-  if block <= 0 then invalid_argf "Tlsf.create: block %d" block;
   let t =
     {
       base;
       length;
-      block;
       blocks = Hashtbl.create 64;
       heads = Array.make (levels * classes) none;
       seconds = Array.make levels 0;
@@ -184,7 +184,7 @@ let round_up n a = (n + a - 1) / a * a
 let alloc ?(align = 1) t n =
   if n < 0 then invalid_argf "Tlsf.alloc: %d bytes" n;
   if align <= 0 then invalid_argf "Tlsf.alloc: align %d" align;
-  let req = Int.max t.block n in
+  let req = Int.max min_block n in
   (* A block of [req + align - 1] bytes holds the request wherever it starts.
      None is larger than the range, and the sum could wrap past [max_int]. *)
   if req > t.length - align + 1 then None
@@ -209,7 +209,7 @@ let alloc ?(align = 1) t n =
               (a, ab)
           in
           (* The tail above the request is free, unless smaller than a block. *)
-          if b.size - req >= t.block then begin
+          if b.size - req >= min_block then begin
             let r, rb = carve t start b req in
             insert t r rb
           end;

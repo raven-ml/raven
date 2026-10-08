@@ -27,11 +27,11 @@
 type t
 (** The type for allocators. *)
 
-val create : ?block:int -> base:int -> int -> t
+val create : base:int -> int -> t
 (** [create ~base n] is an allocator of the [n] addresses from [base] on, all
-    free. [block] (defaults to [16]) is the smallest block it hands out.
+    free. The smallest block it hands out is 16 bytes.
 
-    Raises [Invalid_argument] if [n < 0] or [block <= 0]. *)
+    Raises [Invalid_argument] if [n < 0]. *)
 
 val base : t -> int
 (** [base a] is the first address [a] manages. *)
