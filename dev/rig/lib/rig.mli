@@ -423,8 +423,11 @@ module Buffer : sig
       other side, except a copy into it from memory the host does not address,
       of a device with a copy queue that maps its pages ({!Io.pages}), which
       that device runs through them. Memory of a driver's device of another
-      machine copies only directly, by [src]'s device, which no staging memory
-      reaches.
+      machine copies only directly, as one copy on a device of that machine:
+      with memory of its machine, by [src]'s device; with memory this
+      process's host addresses, by the other machine's side's device, whose
+      driver carries the bytes ({!Submission.Copy}). No staging memory
+      reaches another machine.
 
       Staging memory that a device lost while it used it is replaced, so a loss
       reaches no other device's copies.
@@ -432,7 +435,9 @@ module Buffer : sig
       Raises [Invalid_argument] if [src] and [dst] differ in size, overlap
       ({!overlaps}), or either is dead, [dst]'s memory is [Read]
       ({!val-access}), or one is memory of a driver's device of another machine
-      and [src]'s device runs no copy or does not reach [dst]'s ({!reaches});
+      and the device that would copy runs no copy, or the other is memory of
+      a third machine, or of its machine that [src]'s device does not reach
+      ({!reaches});
       {!Lost} if a device that runs the copy is lost or is lost by it, and for
       [src] and [dst] as {!Lost} states; {!Out_of_memory} if a host cannot
       allocate its staging memory, or a device's driver refuses to map it after
@@ -701,7 +706,10 @@ module Submission : sig
             [ring_units] entries and [segment_bytes] bytes of argument segment;
             a library driver's declares [0] of each. *)
     | Copy of { src : Buffer.t; dst : Buffer.t }
-        (** A copy of [src]'s bytes into [dst], on a copy queue. *)
+        (** A copy of [src]'s bytes into [dst], on a copy queue. On a driver's
+            device of another machine, one of them may be memory this
+            process's host addresses, whose bytes the device's driver
+            carries. *)
 
   type part = { queue : string; after : int array; work : work }
   (** The type for parts: [work] on [queue], one of the device's
@@ -721,11 +729,12 @@ module Submission : sig
       no submitted work, [reads] or [writes] is negative, an index of a part's
       [after] is negative or not below its own, a queue is not one of [d]'s, a
       part's buffer is dead, a {!Words} or {!Fill} buffer is not host memory, a
-      {!Copy}'s buffers differ in size or are not [d]'s memory or its [dst]'s
-      memory is [Read] ({!Buffer.val-access}), [d]'s driver runs no copies (it
-      lists no copy queue, {!Driver.queues}), or a part names memory of a hold
-      other than [hold]; and {!Lost} if [d] is lost. A part [d]'s driver does
-      not run is refused at {!submit}. *)
+      {!Copy}'s buffers differ in size or are not [d]'s memory, or this
+      process's host memory beside it on another machine's device, or its
+      [dst]'s memory is [Read] ({!Buffer.val-access}), [d]'s driver runs no
+      copies (it lists no copy queue, {!Driver.queues}), or a part names memory
+      of a hold other than [hold]; and {!Lost} if [d] is lost. A part [d]'s
+      driver does not run is refused at {!submit}. *)
 end
 
 val submit :

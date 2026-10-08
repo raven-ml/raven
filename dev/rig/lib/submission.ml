@@ -35,7 +35,8 @@ external sub_words : c -> int -> int -> int -> unit = "caml_rig_sub_words"
 external sub_fill : c -> int -> nativeint -> int -> int -> int -> unit
   = "caml_rig_sub_fill_byte" "caml_rig_sub_fill"
 
-external sub_copy : c -> int -> nativeint * int * nativeint * int * int -> unit
+external sub_copy :
+  c -> int -> nativeint * int * nativeint * int * int * int -> unit
   = "caml_rig_sub_copy"
 
 external sub_fixed : c -> int -> int -> nativeint -> bool -> unit
@@ -96,6 +97,23 @@ let host_address fn b =
   if b.mem.host < 0 then invalid_argf "Rig.%s: the buffer is not host memory" fn;
   b.mem.host + b.offset
 
+(* Memory this process's host addresses, which a copy on a device of another
+   machine names by its host address ([rig_edge.h]'s [copy_local]). *)
+let local b = Option.is_none b.mem.dev.machine && b.mem.host >= 0
+
+let local_none = 0
+let local_src = 1
+let local_dst = 2
+
+(* Which side of a copy on [d] is this process's memory: on a device of
+   another machine, one side may be. *)
+let copy_local d src dst =
+  let far = Option.is_some d.machine in
+  if src.mem.dev == d && dst.mem.dev == d then Some local_none
+  else if far && local src && dst.mem.dev == d then Some local_src
+  else if far && src.mem.dev == d && local dst then Some local_dst
+  else None
+
 (* Refuses a part's buffer that is dead or in a hold other than the one whose
    stamps are [hold_stamps]: held memory's stamps are its hold's. *)
 let check_buffer fn hold_stamps b =
@@ -139,7 +157,7 @@ let build named ~reads ~writes d parts =
           check_buffer dst;
           if Buffer.length src <> Buffer.length dst then
             invalid_argf "Rig.%s: a copy's buffers differ in size" fn;
-          if src.mem.dev != d || dst.mem.dev != d then
+          if copy_local d src dst = None then
             invalid_argf "Rig.%s: a copy's buffers are not %s's memory" fn
               d.name;
           if Buffer.access dst = Read then
@@ -167,12 +185,17 @@ let build named ~reads ~writes d parts =
             f.segment_bytes;
           fixed f.arg false
       | Copy { src; dst } ->
+          let side = Option.get (copy_local d src dst) in
+          let handle b k =
+            if side = k then Nativeint.of_int b.mem.host else b.mem.handle
+          in
           sub_copy c i
-            ( dst.mem.handle,
+            ( handle dst local_dst,
               dst.offset,
-              src.mem.handle,
+              handle src local_src,
               src.offset,
-              Buffer.length src );
+              Buffer.length src,
+              side );
           fixed src false;
           fixed dst true)
     parts;

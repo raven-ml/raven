@@ -16,6 +16,9 @@ let fn = "Buffer.copy"
 let local m = Option.is_none m.dev.machine && m.host >= 0
 let host_address b = b.mem.host + b.offset
 
+(* A driver's device of another machine, which no staging memory reaches. *)
+let far d = Option.is_some d.machine && not (Dev.is_io d)
+
 (* Records the transfer of [bytes] from [src]'s memory to [dst]'s asked at
    [start], which the host sees done now. *)
 let record src dst bytes start =
@@ -97,15 +100,14 @@ let hold_stamps src dst =
   | false, false -> Some 0
 
 (* A copy of [n] bytes on [d]'s copy queue between buffers [d] maps, asked at
-   [start] and waited for when [wait]. Unwaited, it is recorded once a wait sees
-   it done. *)
+   [start] and waited for when [wait]. A device of another machine takes this
+   process's memory as it is: its driver carries the bytes. Unwaited, it is
+   recorded once a wait sees it done. *)
 let on_queue ~wait d src dst n start =
-  match
-    ( d.copy_queue,
-      hold_stamps src dst,
-      Memory.borrow d src.mem,
-      Memory.borrow d dst.mem )
-  with
+  let mine m =
+    if Option.is_some d.machine && local m then Some m else Memory.borrow d m
+  in
+  match (d.copy_queue, hold_stamps src dst, mine src.mem, mine dst.mem) with
   | Some queue, Some hold_stamps, Some s, Some t ->
       let v =
         Point.value
@@ -203,7 +205,7 @@ let rec copy ~src ~dst =
 and route ~wait src dst n =
   let sd = src.mem.dev and dd = dst.mem.dev in
   if direct ~wait src dst n then ()
-  else if is_slot src.mem || is_slot dst.mem then
+  else if is_slot src.mem || is_slot dst.mem || far sd || far dd then
     invalid_argf "Rig.%s: no device copies between %s and %s" fn sd.name dd.name
   else staged src dst n
 

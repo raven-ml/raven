@@ -35,6 +35,9 @@ enum { RIG_OK, RIG_FAILED };
    least [value]; [at] is an object of the driver that reaches [value]. */
 enum { RIG_WORD, RIG_OBJECT };
 
+/* Which side of a copy is memory of the calling process, if any. */
+enum { RIG_LOCAL_NONE, RIG_LOCAL_SRC, RIG_LOCAL_DST };
+
 struct rig_wait {
   uint64_t at, value;
   int kind;
@@ -48,7 +51,10 @@ struct rig_wait {
      writes, for a driver whose queue is a ring;
    - a copy: [copy_bytes] bytes from [copy_src_offset] bytes into the
      memory whose handle is [copy_src] to [copy_dst_offset] bytes into the
-     memory whose handle is [copy_dst].
+     memory whose handle is [copy_dst]. Where [copy_local] is RIG_LOCAL_SRC
+     or RIG_LOCAL_DST, that side is memory of the calling process instead,
+     its field the host address of the memory: only a driver of a device of
+     another machine is handed one.
    The part runs after the parts of the same submission before it on its
    queue, and after the parts whose indices the [nafter] ints at [after]
    list, each below its own: [after] orders parts of different queues. */
@@ -60,6 +66,7 @@ struct rig_part {
   void *arg;
   size_t ring_units, segment_bytes;
   uint64_t copy_dst, copy_dst_offset, copy_src, copy_src_offset, copy_bytes;
+  int copy_local;
   const int *after;
   int nafter;
 };

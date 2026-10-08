@@ -249,10 +249,10 @@ let test_create_empty_words () =
 
 (* Borrows of memory that dies *)
 
-(* Memory of another machine's driver device copies only directly, by the
-   source's device: with this machine's memory, its own machine's io memory, a
-   device the source does not map, or on a device that runs no copy, the copy
-   raises. *)
+(* Memory of another machine's driver device copies only directly: with this
+   process's memory by its own device, with its machine's memory by the
+   source's device. Into a device the source does not map, or on a device that
+   runs no copy, the copy raises. *)
 let test_copy_machines () =
   let far = Support.machine "elsewhere" in
   let gpu ?copies name =
@@ -268,12 +268,34 @@ let test_copy_machines () =
     (fun (msg, src, dst) ->
       raises_match ~msg Exn.invalid_arg (fun () -> B.copy ~src ~dst))
     [
-      ("from this machine's host", B.create Rig.host 64, B.create g 64);
       ("into its machine's host", B.create g 64, B.create far 64);
       ("from its machine's host", B.create far 64, B.create g 64);
       ("into a device it does not map", B.create g 64, B.create g' 64);
       ("within a device that runs no copy", B.create still 64, B.create still 64);
+      ("from this process's memory on a device that runs no copy",
+        B.create Rig.host 64, B.create still 64);
     ]
+
+(* A device of another machine copies this process's memory as it is, in one
+   copy each way. *)
+let test_copy_across () =
+  ignore (Support.machine "across");
+  let g, p =
+    let p = P.make ~host_visible:false ~peers:false () in
+    ( require_ok ~pp:Format.pp_print_string
+        (Rig.open_ (module P) ~machine:"across" ~name:"buffer:across"
+           (fun () -> Ok p)),
+      p )
+  in
+  let src = B.of_string "across machines" in
+  let far = B.create g (B.length src) in
+  let back = B.create Rig.host (B.length src) in
+  B.copy ~src ~dst:far;
+  B.copy ~src:far ~dst:back;
+  equal string "across machines"
+    (let ba = B.bigarray Bigarray.char back in
+     String.init (B.length back) (Bigarray.Array1.get ba));
+  equal ~msg:"no host maps" (list int) [] (P.host_maps p)
 
 (* An empty buffer of a driver's device names no memory: its address and its
    handle are 0. *)
@@ -887,6 +909,8 @@ let tests =
           test_borrow_small;
         test "a copy between machines with no device to copy raises"
           test_copy_machines;
+        test "another machine's device copies this process's memory as it is"
+          test_copy_across;
         test "an empty buffer of a driver's device has address and handle 0"
           test_empty_address;
         test "a borrow of a peer's memory on a device that runs no copy copies"
