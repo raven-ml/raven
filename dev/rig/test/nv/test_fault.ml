@@ -141,14 +141,35 @@ let need_gpu () =
   if P.count () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
   S.hold_gpu ()
 
-(* The device is lost with the RM's report, which every later use raises again.
-   The files the device took come back; its timeline word stays mapped, as it is
-   never freed. *)
+(* The lines of a report that start with [prefix]. *)
+let starting prefix why =
+  String.split_on_char '\n' why |> List.filter (String.starts_with ~prefix)
+
+(* A channel error's line up to its name: "channel error 31 (NAME)". *)
+let named l =
+  match String.index_opt l ')' with Some i -> String.sub l 0 (i + 1) | None -> l
+
+(* An MMU fault's line as its address and its access, the first and last of its
+   fields. *)
+let address_access l =
+  match String.split_on_char '|' l |> List.map String.trim with
+  | first :: (_ :: _ as rest) -> (first, List.nth rest (List.length rest - 1))
+  | _ -> (l, "")
+
+(* The device is lost with the RM's report, which every later use raises again:
+   the channel group's error once, by number and name, then the MMU's fault at
+   address 0 on a write. The files the device took come back; its timeline word
+   stays mapped, as it is never freed. *)
 let test_fault () =
   need_gpu ();
   let r = require_ok (in_child fault) in
   let why = require_some ~msg:("lost, after the run " ^ r.run) r.lost in
-  not_equal ~msg:"the report" string "" why;
+  equal ~msg:"the report's channel errors" (list string)
+    [ "channel error 31 (FIFO_ERROR_MMU_ERR_FLT)" ]
+    (List.map named (starting "channel error " why));
+  equal ~msg:"the report's MMU faults" (list (pair string string))
+    [ ("MMU fault: 0x0", "VIRT_WRITE") ]
+    (List.map address_access (starting "MMU fault: " why));
   equal ~msg:"the run" string ("Lost: " ^ why) r.run;
   List.iter
     (fun (use, got) ->
