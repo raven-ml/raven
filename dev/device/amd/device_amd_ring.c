@@ -184,9 +184,15 @@ static void need(const struct device_amd *d, const struct nx_part *p, int n,
   }
 }
 
-/* Whether a part is one the device runs. */
+/* Whether a part is one the device runs. A part's own declaration past its
+   ring or the segment never fits, which also keeps a submission's sum of
+   them far from wrapping. */
 static int runs(const struct device_amd *d, const struct nx_part *p, int i) {
   if (p->queue != DEVICE_AMD_COMPUTE && p->queue != DEVICE_AMD_COPY) return 0;
+  uint64_t size = d->rings[p->queue].size;
+  if (p->n >= size || p->ring_units >= size ||
+      p->segment_bytes >= d->segment.size)
+    return 0;
   if (is_copy(p) && p->queue != DEVICE_AMD_COPY) return 0;
   if (p->words && p->fill) return 0;
   if (p->words && d->rings[p->queue].kind == RING_AQL && p->n % AQL_WORDS)

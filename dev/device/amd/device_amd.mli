@@ -165,9 +165,10 @@ val map_peer : t -> t -> region -> region option
 (** [map_peer g g' r] is [Some r'] with [r'] a new region of [g] over the memory
     of [g']'s region [r], at the same address, if the path that opened both maps
     it and [g]'s GPU reaches [g']'s memory: over a link between them, or through
-    a memory BAR as large as [g']'s memory. It is [None] otherwise, and for
-    devices two paths opened. {!unmap} of [r'] ends only [r'], and {!free}
-    refuses it.
+    a memory BAR as large as [g']'s memory. It is [None] otherwise, for devices
+    two paths opened, and for [`Mapped] memory of [g'] when [g] already flushes
+    the host data path of seven other GPUs, the most it keeps. {!unmap} of [r']
+    ends only [r'], and {!free} refuses it.
 
     Raises [Invalid_argument] if [g'] is [g], or if [r] is no region of [g'] or
     was freed or unmapped. *)
