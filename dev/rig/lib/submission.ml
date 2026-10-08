@@ -143,6 +143,8 @@ let build named ~reads ~writes d parts =
           if src.mem.dev != d || dst.mem.dev != d then
             invalid_argf "Rig.%s: a copy's buffers are not %s's memory" fn
               d.name;
+          if Buffer.access dst = Read then
+            invalid_argf "Rig.%s: a copy's dst admits only reads" fn;
           nfixed := !nfixed + 2)
     parts;
   let c = sub_new d.c (Array.length parts) !nafter !nfixed reads writes in
@@ -278,10 +280,12 @@ let check_counts s reads writes =
       (counted nr "read") (counted nw "write") (counted s.nreads "read")
       (counted s.nwrites "write")
 
-(* Refuses [b], element [i] of the run's array [what], unless it is live, on
-   [s]'s device and, once a hold exists, in no hold; and hands its stamps and
-   handle to the C slot [k]. *)
-let name_one s held what i k b =
+(* Refuses [b], element [i] of the run's array of [access] ([reads] or
+   [writes]), unless it is live, on [s]'s device, once a hold exists in no hold,
+   and, written, of memory that admits writes; and hands its stamps and handle
+   to the C slot [k]. *)
+let name_one s held (access : access) i k b =
+  let what = match access with Read -> "reads" | Read_write -> "writes" in
   if not (Buffer.is_live b) then
     invalid_argf "Rig.%s: %s.(%d) is dead: %s" fn what i b.mem.claim.why;
   (* A queue reaches other memory only through a borrow on its device. *)
@@ -291,6 +295,8 @@ let name_one s held what i k b =
   let e = entry_of b in
   if held && e.held then
     invalid_argf "Rig.%s: %s.(%d)'s memory is in a hold" fn what i;
+  if access = Read_write && e.access = Read then
+    invalid_argf "Rig.%s: %s.(%d)'s memory admits only reads" fn what i;
   sub_slot s.c k e.stamps b.mem.handle
 
 (* Waits on the host for the foreign points [s]'s device cannot wait for in its
@@ -357,12 +363,12 @@ let name s held reads writes k =
   let nr = s.nreads in
   if k < nr then begin
     let b = Array.unsafe_get reads k in
-    name_one s held "reads" k k b;
+    name_one s held Read k k b;
     b
   end
   else begin
     let b = Array.unsafe_get writes (k - nr) in
-    name_one s held "writes" (k - nr) k b;
+    name_one s held Read_write (k - nr) k b;
     b
   end
 

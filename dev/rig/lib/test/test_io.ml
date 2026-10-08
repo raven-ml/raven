@@ -370,6 +370,25 @@ let pp_access ppf a =
 
 let access = Testable.make ~pp:pp_access ~equal:( = )
 
+(* A device's work never writes memory that admits only reads: a run that writes
+   it and a copy part into it are refused, and reading it is not. *)
+let test_read_runs () =
+  let io, t = open_pages () in
+  let d, _ = P.open_ ~host_visible:false "io:read-runs" in
+  let r = Option.get (Pages.alloc t page_bytes) in
+  let m = B.of_io io Pages.region_key r ~access:Read page_bytes in
+  let on_d = require_some (B.borrow d m) and own = B.create d page_bytes in
+  let s = Sub.make ~reads:1 ~writes:1 d [||] in
+  ignore (submit s ~reads:[| on_d |] ~writes:[| own |]);
+  raises_match ~msg:"a run's write" Exn.invalid_arg (fun () ->
+      ignore (submit s ~reads:[| own |] ~writes:[| on_d |]));
+  let copy src dst =
+    { Sub.queue = "COPY:0"; after = [||]; work = Sub.Copy { src; dst } }
+  in
+  ignore (Sub.make ~reads:0 ~writes:0 d [| copy on_d own |]);
+  raises_match ~msg:"a copy part's destination" Exn.invalid_arg (fun () ->
+      ignore (Sub.make ~reads:0 ~writes:0 d [| copy own on_d |]))
+
 (* Memory admits the accesses it was made with, through its views and borrows,
    and a copy into memory that admits only reads raises, even of no bytes: it
    neither reads its source nor writes the region. *)
@@ -437,6 +456,8 @@ let tests =
           test_write_keeps;
         test "a copy from io memory keeps its buffers until read"
           test_read_keeps;
+        test "a device's work never writes memory that admits only reads"
+          test_read_runs;
         test
           "memory admits its accesses through views and borrows, and a copy \
            into read memory raises"

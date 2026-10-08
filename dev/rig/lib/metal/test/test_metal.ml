@@ -738,7 +738,9 @@ let gen_file_range =
   in
   Gen.triple lengths (Gen.int_range 0 (2 * page)) (Gen.int_range 0 256)
 
-(* The pages of a file [of_file] opened are copy-on-write. *)
+(* A file [of_file] opened admits only reads: the device borrows its pages, and
+   work that writes them is refused, so the file and its copies stay its own
+   bytes. *)
 let opened_file_borrow () =
   let t = dev () in
   with_path @@ fun path ->
@@ -750,10 +752,8 @@ let opened_file_borrow () =
   equal (pair bool string)
     (true, Rig.name t.c)
     (B.is_borrowed b, Rig.name (B.device b));
-  bump t b;
+  raises_match Exn.invalid_arg (fun () -> bump t b);
   let s' = String.sub s at (n - at) in
-  let pages = require_some (B.borrow Rig.host file) in
-  equal octets ~msg:"the process's pages" (bumped s') (contents pages);
   equal octets ~msg:"a copy of the file" s' (contents file);
   equal octets ~msg:"the file" s (read_file path)
 
@@ -779,8 +779,8 @@ let file_tests =
          on its timeline"
         gen_file_range file_round_trip;
       test
-        "a borrow of an opened file is its pages: the device reads them, and \
-         its writes stay the process's"
+        "a borrow of an opened file is its pages, which the device's work \
+         never writes"
         opened_file_borrow;
       test
         "a borrow of a created file is its pages: the device reads a copy's \

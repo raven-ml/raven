@@ -409,7 +409,8 @@ module Buffer : sig
       views and borrows: [Read_write] for memory {!create} and {!of_bigarray}
       make, and what {!of_io} was given.
 
-      [Read] memory is never written: a {!copy} into it raises, and {!Claim}
+      [Read] memory is never written: a {!copy} into it raises, and so does a
+      submission that writes it ({!Submission.make}, {!submit}), and {!Claim}
       never holds it exclusive. The host writes it only by breaking this,
       through {!bigarray}, after which what reads of it see is unspecified. A
       library that writes its caller's buffer checks this first, to refuse a
@@ -636,10 +637,11 @@ module Submission : sig
       no submitted work, [reads] or [writes] is negative, an index of a part's
       [after] is negative or not below its own, a queue is not one of [d]'s, a
       part's buffer is dead, a {!Words} or {!Fill} buffer is not host memory, a
-      {!Copy}'s buffers differ in size or are not [d]'s memory, [d]'s driver
-      runs no copies (it lists no copy queue, {!Driver.queues}), or a part names
-      memory of a hold other than [hold]; and {!Lost} if [d] is lost. A part
-      [d]'s driver does not run is refused at {!submit}. *)
+      {!Copy}'s buffers differ in size or are not [d]'s memory or its [dst]'s
+      memory is [Read] ({!Buffer.val-access}), [d]'s driver runs no copies (it
+      lists no copy queue, {!Driver.queues}), or a part names memory of a hold
+      other than [hold]; and {!Lost} if [d] is lost. A part [d]'s driver does
+      not run is refused at {!submit}. *)
 end
 
 val submit :
@@ -679,12 +681,13 @@ val submit :
     Raises [Invalid_argument] if [reads] or [writes] holds another number of
     buffers than {!Submission.make} declared, a buffer of [reads], [writes] or a
     part is dead, a buffer of [reads] or [writes] is not on [d] or its memory is
-    in a hold, a part names memory of a hold other than the submission's, or the
-    parts never fit [d]'s empty queues or name one its driver does not run; and
-    {!Lost} if [d] is lost, [d]'s hand-over fails, a point [s] follows is on a
-    lost device, or a producer [d]'s queue waits on is lost before the
-    hand-over. A device lost after [v] was handed over raises {!Lost}, with
-    [v]'s stamps naming it. *)
+    in a hold, the memory of a buffer of [writes] is [Read]
+    ({!Buffer.val-access}), a part names memory of a hold other than the
+    submission's, or the parts never fit [d]'s empty queues or name one its
+    driver does not run; and {!Lost} if [d] is lost, [d]'s hand-over fails, a
+    point [s] follows is on a lost device, or a producer [d]'s queue waits on is
+    lost before the hand-over. A device lost after [v] was handed over raises
+    {!Lost}, with [v]'s stamps naming it. *)
 
 (** {1:programs Programs} *)
 
