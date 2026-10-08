@@ -380,11 +380,15 @@ let to_array (type v s) (a : (v, s) t) : v array =
     read ();
     out
 
-let of_array dt s values =
+let of_array (type v s) (dt : (v, s) Dtype.t) s (values : v array) =
   let fn = "Nx_array.of_array" in
   if Array.length values <> Layout.numel (Layout.contiguous s) then
     invalid_argf "%s: %d values for shape %a" fn (Array.length values) pp_ints s;
-  Array.iter (checked fn dt) values;
+  (* Only integers can fall outside their dtype's range. Iterating over a float
+     array would box every element. *)
+  (match Dtype.kind dt with
+  | Float | Complex | Boolean -> ()
+  | Signed | Unsigned -> Array.iter (checked fn dt) values);
   let a = create Rig.host dt s in
   let rec write () =
     let e = of_array_from a values in
