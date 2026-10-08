@@ -192,7 +192,8 @@ end
     prefetchable, an empty [remove], and the links [driver] and [iommu_group]
     when it has them. A driver's directory holds empty [bind] and [unbind], the
     bus directory empty [rescan] and [drivers_probe], and an IOMMU group's
-    directory its [type] and its functions. The machine takes what a change
+    directory its [type] and its functions. The process's [proc/self/fd] is an
+    empty directory, to which a test adds links. The machine takes what a change
     writes as plain files and acts on none of it. Names hold [:], so trees are
     written only where the file system allows it: {!make} skips the test on
     Windows. *)
@@ -233,4 +234,17 @@ module Tree : sig
       given is ["DMA"]), [noiommu] the groups VFIO's no-IOMMU mode holds, and
       [lockdown] the kernel's lockdown file (defaults to
       ["[none] integrity confidentiality"]). *)
+
+  val device_number : string -> string
+  (** [device_number file] is the number of the character device at [file], as a
+      [dev] file under [/sys] spells it: ["MAJOR:MINOR"], such as ["1:3"] for
+      Linux's [/dev/null]. Raises [Unix.Unix_error] if [file] cannot be read. *)
+
+  val add : string -> string -> string -> unit
+  (** [add root file s] writes [s] to [file], a path from the tree [root],
+      making its directories. *)
+
+  val link : string -> string -> string -> unit
+  (** [link root file target] makes [file], a path from the tree [root], a link
+      to [target], making its directories. *)
 end

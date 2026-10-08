@@ -98,7 +98,11 @@ let id ?(vendor = vendor) ?(class_ = 0x030000) bus =
   { Machine.bus; vendor; device = 0x73bf; class_ }
 
 let is_gpu (id : Machine.id) = id.vendor = vendor && id.class_ lsr 16 = 0x03
-let gpus () = Gpus.make ~memory_bar:0 is_gpu
+
+(* Its kernel driver serves a GPU through character devices that [/sys/bus/pci]
+   lists. *)
+let no_nodes ~read:_ _ = []
+let gpus () = Gpus.make ~memory_bar:0 ~nodes:no_nodes is_gpu
 let gpu_buses = [ "0000:03:00.0"; "0000:43:00.0"; "0000:c3:00.0" ]
 
 let functions =
@@ -452,7 +456,7 @@ let resets =
 (* This machine *)
 
 let test_this_none () =
-  let g = Gpus.make ~memory_bar:0 (fun _ -> false) in
+  let g = Gpus.make ~memory_bar:0 ~nodes:no_nodes (fun _ -> false) in
   let this = Machine.this in
   equal (list string) [] (Gpus.buses g this);
   has_none (unopened (open_ g this 0));
@@ -813,6 +817,86 @@ let test_change_transport () =
         (require_error (change (gpus ()) m 0)))
     [ ("detach", Gpus.detach); ("attach", Gpus.attach) ]
 
+(* Open devices
+
+   Unbinding a kernel driver waits until no process holds one of its devices
+   open. The fixture's descriptors are links in its [proc/self/fd], to this
+   machine's [/dev/null] and [/dev/zero]; a GPU's devices are its [dev] files,
+   holding [/dev/null]'s number or another, and the vendor's nodes. *)
+
+(* The vendor's nodes as NVIDIA's driver gives them: the GPU's minor in [/proc],
+   its node [/dev/nvidiaN]. *)
+let nvidia_nodes ~read bus =
+  match read (strf "proc/driver/nvidia/gpus/%s/information" bus) with
+  | None -> []
+  | Some info ->
+      List.filter_map
+        (fun line ->
+          match String.split_on_char ':' line with
+          | [ "Device Minor"; n ] -> Some ("dev/nvidia" ^ String.trim n)
+          | _ -> None)
+        (String.split_on_char '\n' info)
+
+let render = devices gpu_bus "drm/renderD128/dev"
+let sys file = "sys/bus/pci/" ^ file
+
+let open_devices =
+  let null root = Tree.add root (sys render) (Tree.device_number "/dev/null") in
+  let fd n target root = Tree.link root ("proc/self/fd/" ^ n) target in
+  let nvidia root =
+    Tree.add root
+      (strf "proc/driver/nvidia/gpus/%s/information" gpu_bus)
+      "Model: a GPU\nDevice Minor: \t 0\n";
+    Tree.link root "dev/nvidia0" "/dev/null"
+  in
+  let all fs root = List.iter (fun f -> f root) fs in
+  [
+    ( "a DRM node under the GPU's directory is refused",
+      all [ null; fd "7" "/dev/null" ],
+      no_nodes,
+      `Refused "/dev/null" );
+    ( "a node the vendor names is refused",
+      all [ nvidia; fd "9" "/dev/null" ],
+      nvidia_nodes,
+      `Refused "/dev/null" );
+    ( "other devices and files open are no hold",
+      all
+        [
+          null;
+          nvidia;
+          fd "3" "/dev/zero";
+          fd "4" "../../../sys/bus/pci/rescan";
+          fd "5" "../../../closed";
+        ],
+      no_nodes,
+      `Detached );
+    ( "a node the vendor names that is absent is no hold",
+      fd "9" "/dev/null",
+      nvidia_nodes,
+      `Detached );
+    ( "an unreadable proc/self/fd is an Error",
+      (fun root -> Unix.rmdir (Filename.concat root "proc/self/fd")),
+      no_nodes,
+      `Error "proc/self/fd" );
+    ( "a dev file that holds no number is an Error",
+      (fun root -> Tree.add root (sys render) "renderD128\n"),
+      no_nodes,
+      `Error "is no device number" );
+  ]
+
+let test_open_device (_, setup, nodes, want) =
+  needs_flock ();
+  let root = Tree.make [ Tree.gpu gpu_bus ] in
+  setup root;
+  let g = Gpus.make ~memory_bar:0 ~nodes is_gpu in
+  match (want, Gpus.detach g (Machine.at root) 0) with
+  | `Detached, r -> require_ok r
+  | `Refused file, r ->
+      let why = require_error r in
+      contains ~sub:"0000:03:00.0 is open in this process" why;
+      contains ~msg:"names the device" ~sub:file why
+  | `Error sub, r -> contains ~sub (require_error r)
+
 let tree_changes =
   group ~timeout:patience "changes on a machine's files"
     [
@@ -820,6 +904,9 @@ let tree_changes =
         ~name:(fun (n, _, _, _, _) -> n)
         changes test_change;
       test "a GPU the process holds is refused" test_change_held;
+      cases "detach refuses a GPU whose device this process holds open"
+        ~name:(fun (n, _, _, _) -> n)
+        open_devices test_open_device;
       test "a file the process may not write is refused, naming it"
         test_change_unwritable;
       test "another machine reached through a transport is refused"

@@ -5,7 +5,8 @@
 
 /* What the suites need from C: process memory to map, a far machine reached
    through a transport, the accesses of rig_pci.h, the monotonic clock,
-   and the machine's GPU lock, which suites take in turn.
+   the numbers of devices, and the machine's GPU lock, which suites take in
+   turn.
 
    A far machine holds [size] bytes at addresses [base, base + size) and
    nothing else. Its transport logs every access, fails on request, and
@@ -38,7 +39,11 @@
 #include <stdio.h>
 #include <sys/file.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
+#ifdef __linux__
+#include <sys/sysmacros.h>
+#endif
 #endif
 
 value rig_pci_test_memory(value n) {
@@ -262,6 +267,25 @@ value rig_pci_test_now_ns(value unit) {
   struct timespec t;
   clock_gettime(CLOCK_MONOTONIC, &t);
   return Val_long((intnat)t.tv_sec * 1000000000 + t.tv_nsec);
+}
+
+/* Device numbers */
+
+/* The number of the character device at [v_path], as "MAJOR:MINOR". Raises
+   Unix_error if it cannot be read. Holds the runtime. */
+value rig_pci_test_device_number(value v_path) {
+#ifdef _WIN32
+  (void)v_path;
+  caml_failwith("rig_pci_test_device_number: Windows numbers no device");
+#else
+  CAMLparam1(v_path);
+  struct stat st;
+  if (stat(String_val(v_path), &st) != 0) caml_uerror("stat", v_path);
+  char s[32];
+  snprintf(s, sizeof s, "%u:%u", (unsigned)major(st.st_rdev),
+           (unsigned)minor(st.st_rdev));
+  CAMLreturn(caml_copy_string(s));
+#endif
 }
 
 /* The GPU lock */

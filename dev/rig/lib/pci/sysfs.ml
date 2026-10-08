@@ -5,8 +5,13 @@
 
 let strf = Printf.sprintf
 
+external makedev : (int[@untagged]) -> (int[@untagged]) -> (int[@untagged])
+  = "caml_rig_pci_makedev_byte" "caml_rig_pci_makedev"
+[@@noalloc]
+
 (* A machine's files, under its root directory: "/" for this machine. *)
 type t = {
+  root : string;
   devices : string;
   groups : string;
   lockdown : string;
@@ -17,6 +22,7 @@ type t = {
 let v root =
   let ( / ) = Filename.concat in
   {
+    root;
     devices = root / "sys/bus/pci/devices";
     groups = root / "sys/kernel/iommu_groups";
     lockdown = root / "sys/kernel/security/lockdown";
@@ -317,3 +323,72 @@ let resize m bus i =
           | exception Unix.Unix_error _ -> ()
     in
     try_from largest
+
+(* Open devices *)
+
+let contents m file =
+  match
+    In_channel.with_open_bin (Filename.concat m.root file) In_channel.input_all
+  with
+  | s -> Some s
+  | exception Sys_error _ -> None
+
+(* A [dev] file holds a device's number as "MAJOR:MINOR". *)
+let dev_number file =
+  let s = read file in
+  match List.map int_of_string_opt (String.split_on_char ':' s) with
+  | [ Some major; Some minor ] -> makedev major minor
+  | _ -> Fail.fail "reading %s: %S is no device number" file s
+
+let entries dir =
+  match Sys.readdir dir with
+  | names -> Array.to_list names
+  | exception Sys_error why -> Fail.fail "reading %s" why
+
+(* The numbers of the devices under the directory [dir], from their [dev] files.
+   Links are not followed: sysfs links reach the whole tree. *)
+let rec numbers dir =
+  List.concat_map
+    (fun name ->
+      let file = Filename.concat dir name in
+      match Unix.lstat file with
+      | { st_kind = S_DIR; _ } -> numbers file
+      | { st_kind = S_REG; _ } when name = "dev" -> [ dev_number file ]
+      | _ -> []
+      | exception Unix.Unix_error (e, _, _) ->
+          Fail.fail "reading %s: %s" file (Unix.error_message e))
+    (entries dir)
+
+(* The number of the character device at [file], if there is one. *)
+let device file =
+  match Unix.stat file with
+  | { st_kind = S_CHR; st_rdev; _ } -> Some st_rdev
+  | _ -> None
+  | exception Unix.Unix_error (ENOENT, _, _) -> None
+  | exception Unix.Unix_error (e, _, _) ->
+      Fail.fail "reading %s: %s" file (Unix.error_message e)
+
+(* The character devices the process holds open, by number, each with the file
+   its descriptor names. A descriptor closed since the listing is left out. *)
+let opened m =
+  let fds = Filename.concat m.root "proc/self/fd" in
+  List.filter_map
+    (fun fd ->
+      let link = Filename.concat fds fd in
+      Option.map
+        (fun n ->
+          ( n,
+            match Unix.readlink link with
+            | f -> f
+            | exception Unix.Unix_error _ -> link ))
+        (device link))
+    (entries fds)
+
+let held m bus nodes =
+  let gpu =
+    numbers (Filename.concat m.devices bus)
+    @ List.filter_map (fun f -> device (Filename.concat m.root f)) nodes
+  in
+  List.find_map
+    (fun (n, file) -> if List.mem n gpu then Some file else None)
+    (opened m)

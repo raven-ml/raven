@@ -279,6 +279,8 @@ end
 
 (* Machines in a fixture tree *)
 
+external device_number : string -> string = "rig_pci_test_device_number"
+
 module Tree = struct
   type bar = Mem32 of int * int | Mem64 of int * int | Io of int * int
 
@@ -440,5 +442,13 @@ module Tree = struct
           fn.group)
       fns;
     List.iter (fun g -> write (root / "dev/vfio" / ("noiommu-" ^ g)) "") noiommu;
+    mkdir_p (root / "proc/self/fd");
     root
+
+  let device_number = device_number
+  let add root file s = write (root / file) s
+
+  let link root file target =
+    mkdir_p (Filename.dirname (root / file));
+    Unix.symlink target (root / file)
 end

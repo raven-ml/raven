@@ -16,6 +16,7 @@ let ( let* ) = Result.bind
    bus address. *)
 type t = {
   memory_bar : int;
+  nodes : read:(string -> string option) -> string -> string list;
   is_gpu : Machine.id -> bool;
   mutex : Mutex.t;
   mutable exits : bool;
@@ -34,9 +35,10 @@ and hold = {
   pid : int;
 }
 
-let make ~memory_bar is_gpu =
+let make ~memory_bar ~nodes is_gpu =
   {
     memory_bar;
+    nodes;
     is_gpu;
     mutex = Mutex.create ();
     exits = false;
@@ -156,8 +158,14 @@ let change g fn m i f =
       let* bus = gpu g m i in
       Local.locked files bus (fun () -> Fail.result (fun () -> f files bus))
 
+(* Unbinding a driver waits until no process holds its devices open: this
+   process would wait for itself. *)
 let detach g m i =
   change g "detach" m i (fun files bus ->
+      let nodes = g.nodes ~read:(Sysfs.contents files) bus in
+      Option.iter
+        (Fail.fail "%s is open in this process, through %s" bus)
+        (Sysfs.held files bus nodes);
       Sysfs.detach files bus;
       Sysfs.resize files bus g.memory_bar)
 

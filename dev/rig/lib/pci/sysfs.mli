@@ -78,3 +78,17 @@ val resize : t -> string -> int -> unit
     supports that its bridge takes. A bound function keeps its size, and so does
     one whose resize the kernel refuses for another reason than room: its BAR
     may stay small. *)
+
+(** {1:open Open devices} *)
+
+val contents : t -> string -> string option
+(** [contents m file] is the contents of [file], a path from [m]'s root such as
+    ["proc/driver/nvidia/gpus/0000:03:00.0/information"], if it can be read. *)
+
+val held : t -> string -> string list -> string option
+(** [held m bus nodes] is the file of a character device this process holds open
+    that serves the function at [bus]: one whose number a [dev] file under the
+    function's directory gives, such as a DRM node's, or the number of a file of
+    [nodes], paths from [m]'s root. Descriptors are read from [m]'s
+    [proc/self/fd]. Raises {!Fail.Failed} if a directory or a [dev] file cannot
+    be read. *)

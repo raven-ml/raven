@@ -24,10 +24,18 @@
 type t
 (** The type for a vendor's GPUs. *)
 
-val make : memory_bar:int -> (Machine.id -> bool) -> t
-(** [make ~memory_bar is_gpu] is the GPUs of a vendor: the functions [f] with
-    [is_gpu f]. [memory_bar] is the BAR through which the process reaches their
-    memory, which {!detach} enlarges. *)
+val make :
+  memory_bar:int ->
+  nodes:(read:(string -> string option) -> string -> string list) ->
+  (Machine.id -> bool) ->
+  t
+(** [make ~memory_bar ~nodes is_gpu] is the GPUs of a vendor: the functions [f]
+    with [is_gpu f]. [memory_bar] is the BAR through which the process reaches
+    their memory, which {!detach} enlarges. [nodes ~read bus] is the character
+    devices through which the kernel driver serves the GPU at [bus] without a
+    [dev] file under the GPU's directory in [/sys/bus/pci], by path from the
+    machine's root, such as [["dev/nvidia0"]]; [read file] is the contents of
+    [file], a path from the machine's root, if it can be read. *)
 
 val buses : t -> Machine.t -> string list
 (** [buses g m] is the bus addresses of [g]'s GPUs on [m], in bus order: GPU [i]
@@ -103,10 +111,19 @@ val detach : t -> Machine.t -> int -> (unit, string) result
     users, a display among them, lose the GPU until {!attach} or a reboot.
 
     [Error why] if [m] is reached through a transport, if [i] is no GPU, if the
-    process holds it, if the process may not write a file, or if the GPU is
-    still not detached, saying why, such as when an IOMMU translates its
+    process holds it, through this library or through a character device of its
+    kernel driver it has open, if the process may not write a file, or if the
+    GPU is still not detached, saying why, such as when an IOMMU translates its
     addresses and it is not bound to [vfio-pci]. A memory BAR left small is no
-    error: on [vfio-pci], or where the kernel refuses every larger size. *)
+    error: on [vfio-pci], or where the kernel refuses every larger size.
+
+    The GPU's character devices are those with a [dev] file under its directory
+    in [/sys/bus/pci], such as its DRM nodes, and those [nodes] names ({!make}).
+    Unbinding the driver waits until no process holds one open, so [detach]
+    would wait for its own process: it compares them with the devices
+    [/proc/self/fd] lists, and is an [Error] if it cannot read that directory.
+    An open that completes while [detach] runs is not refused; the unbind then
+    waits for its file to close. *)
 
 val attach : t -> Machine.t -> int -> (unit, string) result
 (** [attach g m i] gives GPU [i] of [m] back to its kernel driver: Linux rescans
