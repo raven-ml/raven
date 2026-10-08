@@ -63,10 +63,10 @@
     GPU it holds at exit, leaving it marked clean: the next open, by this
     process or another, boots only the GPU's compute and copy blocks, from the
     state the last one left, which takes milliseconds where a full boot takes a
-    second. A child of [fork] stops nothing at its exit. A GPU that runs
-    firmware without this mark, booted by its kernel driver or left by a process
-    that died, opens only after a {!reset}. So does a GPU this process lost, to
-    a fault or a hang, since its state is then unknown.
+    second. A child of [fork] stops nothing at its exit. A GPU a process that
+    died left running is reset by the open, as {!reset} does. One booted by its
+    kernel driver opens only after a {!reset}. So does a GPU this process lost,
+    to a fault or a hang, since its state is then unknown.
 
     {b Faults and hangs.} The GPU reports faults on its interrupt ring: page
     faults with their address, shader errors, and fatal hardware errors with its

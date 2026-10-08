@@ -81,7 +81,8 @@ submissions are the same calls on every path.
 The process owns the GPU until it stops the device. An AMD GPU stopped
 cleanly opens again with a partial boot of its compute and copy blocks. One
 a dead process left running is reset by the next open. One booted by its
-kernel driver opens after `Rig_amd_pci.reset i`. An NVIDIA GPU opens again after `Rig_nv_pci.reset i`.
+kernel driver opens after `Rig_amd_pci.reset i`. An NVIDIA GPU opens again
+after `Rig_nv_pci.reset i`.
 
 ### What has run on hardware
 
@@ -111,75 +112,66 @@ NVIDIA paths still need no user-space library from the vendor.
 
 ## Measured
 
-Each table times the same work on one machine through rig and through the
-vendor's runtime and the frameworks installed there. Kernels are the smallest
-each runtime launches, one thread adding one element or doing nothing; every
-row ends by waiting for the work.
+### Against the vendor's own calls
 
-### NVIDIA RTX 5000 Ada
+Each row times what a program calls, beside a floor measured on the same
+machine: the vendor's own call made from C, or the same work handed to the
+driver with rig's core left out. Kernels are empty and run on one thread;
+every row waits for its work.
 
-Intel Core Ultra 5 235, driver 615.71.09; PyTorch 2.14.1+cu130, JAX 0.11.2.
-"CUDA from C" is the CUDA driver API called from C.
+| Work | rig | Floor | Machine |
+|---|---|---|---|
+| One kernel, launch and wait, CUDA | 5.00 µs | `cuLaunchKernel`: 4.77 µs | RTX 5000 Ada |
+| One kernel, launch and wait, `rig.nv.nvidia` | 4.75 µs | `cuLaunchKernel`: 4.77 µs | RTX 5000 Ada |
+| A CUDA graph of 64 kernels, launch and wait | 35.7 µs | `cuGraphLaunch`: 35.6 µs | RTX 5000 Ada |
+| One kernel, launch and wait, `rig.amd.amdgpu` | 15.8 µs | the same packets on a KFD queue: 15.5 µs | R9700 |
+| 100 one-kernel steps, three in flight, per step: CUDA / NV / AMD | 2.92 / 1.71 / 2.15 µs | the driver's C entries alone: 2.80 / 1.72 / 2.19 µs | both |
+| 256 MiB host to GPU / back | 25.1 / 19.0 GB/s | `cuMemcpy` from pinned memory: 25.2 / 18.9 GB/s | RTX 5000 Ada |
+| 256 MiB host to GPU / back | 13.9 / 14.0 GB/s | the driver's DMA from pinned memory: 13.9 / 14.0 GB/s | R9700 |
+| A 256 MiB file into GPU memory, page cache warm | 33.3 ms (NV), 33.2 ms (AMD) | the file read into host memory: 32.8, 28.8 ms | both |
+| Open and stop a GPU through its kernel driver | 12.1 ms (NV), 18.1 ms (AMD) | | both |
+| One kernel, launch and wait, Metal | 254 µs | Metal's own indirect command buffer: 275 µs | M1 Max |
 
-| Work | rig CUDA | rig NV | CUDA from C | PyTorch | JAX |
+The RTX 5000 Ada sits in an Intel Core Ultra 5 235 with driver 615.71.09; the
+R9700 in an Intel i9-9900K on PCIe 3.0 x16; the Mac is an M1 Max, measured
+under load, where the GPU's wake-up takes most of a launch.
+
+### Against PyTorch and JAX
+
+The same work through rig and through the frameworks, on the same machines,
+one session per machine. PyTorch 2.14.1 (cu130, rocm7.2, MPS), JAX 0.11.2 on
+CUDA, and JAX 0.4.34 with jax-metal 0.1.1 on the Mac, the newest pair that
+runs together. JAX's ROCm plugin did not load. HIP is called from C through
+the `libamdhip64` of PyTorch's ROCm wheel. Kernels are the smallest each
+runtime launches.
+
+| Work | rig | HIP | PyTorch | JAX | Machine |
 |---|---|---|---|---|---|
-| One kernel, launch and wait | 4.89 µs | 4.77 µs | 4.77 µs | 5.62 µs | 16.3 µs |
-| A step of 64 dependent kernels, replay and wait | 82.7 µs; 35.7 µs as a CUDA graph | 42.9 µs | 35.6 µs (`cuGraphLaunch`) | 53.1 µs (CUDA graph) | 72.4 µs (jit) |
-| Each further kernel in a step | 1.24 µs | 0.61 µs | | 0.57-0.77 µs (CUDA graph) | 0.77-0.91 µs |
-| A one-kernel step, 100 in flight, per step | 3.01 µs (a) | 2.54 µs (a) | | 1.97 µs (CUDA graph) | |
-| 256 MiB host to GPU / back, pinned | 25.3 / 19.1 GB/s | 25.2 / 19.0 GB/s | | 25.2 / 19.0 GB/s | 22.4 / 17.2 GB/s |
-| 256 MiB host to GPU / back, pageable | 19.1 / 15.5 GB/s | 18.8 / 15.4 GB/s | | 18.4 / 12.7 GB/s | 11.8 GB/s / no API |
-| 256 MiB GPU to GPU | 1.11 ms | 4.37 ms (copy engine) | | 1.11 ms | 1.71 ms |
-| Allocate and free 64 KiB / 64 MiB | 57.9 µs / 1.14 ms | 45.6 µs / 1.25 ms | | 1.03 µs (cached) / 1.13 ms | |
+| One kernel, launch and wait | CUDA 4.89 µs, NV 4.77 µs | | 5.62 µs | 16.3 µs | RTX 5000 Ada |
+| A step of 64 dependent kernels, replay and wait | CUDA 82.7 µs, NV 42.9 µs | | 53.1 µs (CUDA graph) | 72.4 µs (jit) | RTX 5000 Ada |
+| A one-kernel step, 100 in flight, per step (a) | CUDA 3.01 µs, NV 2.54 µs | | 1.97 µs (CUDA graph) | | RTX 5000 Ada |
+| 256 MiB host to GPU / back, pageable memory (b) | CUDA 19.3 / 15.5 GB/s, NV 19.6 / 15.4 GB/s | | 18.4 / 12.7 GB/s | 11.8 GB/s / no API | RTX 5000 Ada |
+| 256 MiB GPU to GPU | CUDA 1.11 ms, NV 4.37 ms (copy engine) | | 1.11 ms | 1.71 ms | RTX 5000 Ada |
+| Allocate and free 64 KiB / 64 MiB | CUDA 57.9 µs / 1.14 ms, NV 45.6 µs / 1.25 ms | | 1.03 µs (cached) / 1.13 ms | | RTX 5000 Ada |
+| One kernel, launch and wait | 16.1 µs | 30.0 µs | 42.2 µs | | R9700 |
+| Each further dependent kernel | 0.52 µs | 2.57 µs (graph) | 3.17 µs (graph) | | R9700 |
+| A step of 64 dependent kernels, replay and wait | 48.6 µs | 191 µs (graph) | 245 µs (graph) | | R9700 |
+| A one-kernel step, 100 in flight, per step (a) | 15.1 µs | 11.3 µs (graph) | 11.9 µs (graph) | | R9700 |
+| 256 MiB GPU to GPU | 2.70 ms (copy engine) | 0.94 ms | 0.95 ms | | R9700 |
+| Allocate and free 64 KiB / 64 MiB | 413 / 373 µs | 0.94 µs (cached) / 505 µs | 2.1 µs (cached) / 497 µs | | R9700 |
+| One kernel, launch and wait (b) | 254 µs | | 225 µs (MPS) | 267 µs | M1 Max |
 
-(a) Each step waited for the step before last. With three steps in flight,
-rig's bench reads 2.92 µs (CUDA) and 1.71 µs (NV) a step; PyTorch was not
-measured that way.
+(a) Each step waited for the step before last. rig's own bench, with three
+steps in flight, reads 2.92 µs (CUDA), 1.71 µs (NV) and 2.15 µs (AMD) a step;
+the others were not measured that way.
+(b) rig's figure is its recorded baseline on the same machine; the
+frameworks' come from the comparison session.
 
-### AMD Radeon AI PRO R9700
-
-Intel i9-9900K, PCIe 3.0 x16; rig through `amdgpu`; PyTorch 2.14.1+rocm7.2,
-and HIP called from C through that wheel's `libamdhip64`. JAX's ROCm plugin
-did not load, so it has no column.
-
-| Work | rig AMD | HIP | PyTorch |
-|---|---|---|---|
-| One kernel, launch and wait | 16.1 µs | 30.0 µs | 42.2 µs |
-| A step of 64 dependent kernels, replay and wait | 48.6 µs | 191 µs (graph) | 245 µs (graph) |
-| Each further kernel in a step | 0.52 µs | 2.57 µs (graph) | 3.17 µs (graph) |
-| A one-kernel step, 100 in flight, per step | 15.1 µs (a) | 11.3 µs (graph) | 11.9 µs (graph) |
-| 256 MiB host to GPU / back, pinned | 13.7 / 13.9 GB/s | 13.9 / 14.0 GB/s | 13.8 / 13.9 GB/s |
-| 256 MiB host to GPU / back, pageable | 11.0 / 11.1 GB/s | 9.9 / 8.6 GB/s | 10.6 / 10.1 GB/s |
-| 256 MiB GPU to GPU | 2.70 ms (copy engine) | 0.94 ms | 0.95 ms |
-| Allocate and free 64 KiB / 64 MiB | 413 / 373 µs | 0.94 (cached) / 505 µs | 2.1 µs (cached) / 497 µs |
-
-(a) Each step waited for the step before last, which lets this GPU's queue
-run dry and pay its wake-up on every step. With three steps in flight, rig's
-bench reads 2.15 µs a step; HIP and PyTorch were not measured that way.
-
-### Apple M1 Max
-
-PyTorch 2.14.1 on MPS; JAX 0.4.34 with jax-metal 0.1.1, the newest pair
-that runs together. Measured under load; the GPU's wake-up takes most of a launch and wait.
-
-| Work | rig Metal | PyTorch | JAX |
-|---|---|---|---|
-| One kernel, launch and wait | 224 µs | 225 µs | 267 µs |
-| A step of 64 kernels, replay and wait | 607 µs | | 595 µs |
-| Each further kernel in a step | 6.1 µs | | 4.7 µs |
-| One-kernel submissions in flight, per submission | 98 µs | | |
-| 100 kernels launched one by one, per kernel | | 6.9 µs | 54 µs |
-| Allocate and free 64 KiB / 64 MiB | 4.4 / 9.7 µs | 1.2 / 40 µs | |
-
-rig is slower where these tables show it: copies between two buffers of one
+rig is slower where these rows show it: copies between two buffers of one
 GPU run on its copy engines; every allocation goes to the driver, with no
 cache in front; with two steps in flight, a one-kernel step costs more than a
-recorded graph's replay; and Metal pays about 100 µs for each submission in flight.
-
-Two measurements without another runtime beside them: a 256 MiB file loads
-into GPU memory in 33.3 ms on the RTX 5000 Ada and 33.2 ms on the R9700, about
-the time to read it into host memory (32.8 and 28.8 ms); opening and stopping
-a GPU through its kernel driver takes 12.1 ms (NV) and 18.1 ms (AMD).
+recorded graph's replay; and Metal pays about 100 µs for each submission in
+flight.
 
 None of these ran on a driver-less path. That path writes the same rings and
 packets as its vendor's kernel-driver path, so per-kernel costs should carry
