@@ -391,10 +391,10 @@ module Buffer : sig
   (** [bigarray k b] is the bytes of the host buffer [b] read as elements of
       kind [k], without a copy: [length b / Bigarray.kind_size_in_bytes k] of
       them, in the host's byte order. Writing through it writes [b]. It, and
-      every array made from it, keeps [b]'s memory alive while reachable,
-      memory a borrow on the host maps included: no buffer reuses it and its
-      device does not free it until then. Access through it is the host's:
-      {!wait} orders it after devices' work.
+      every array made from it, keeps [b]'s memory alive while reachable, memory
+      a borrow on the host maps included: no buffer reuses it and its device
+      does not free it until then. Access through it is the host's: {!wait}
+      orders it after devices' work.
 
       Raises [Invalid_argument] if [b] is not on {!host}, or [b]'s bytes are not
       a whole number of elements of [k] starting at a multiple of their size (of
@@ -571,8 +571,9 @@ module Submission : sig
 
   type part = { queue : string; after : int array; work : work }
   (** The type for parts: [work] on [queue], one of the device's
-      ({!Driver.queues}), after the earlier parts of its submission whose
-      indices [after] lists. *)
+      ({!Driver.queues}). A part runs after the parts of its submission before
+      it on its queue, and after those whose indices [after] lists: [after]
+      orders parts of different queues. *)
 
   val make :
     ?hold:Hold.t ->
@@ -584,10 +585,10 @@ module Submission : sig
     t
   (** [make ~hold ~reads ~writes ~waits d parts] is a submission of [parts] on
       [d], with [reads] read slots, [writes] write slots and [waits] wait slots,
-      all unset. [d]'s driver places the parts in array order, each after those
-      its [after] lists. [hold] names the memory of a {!Hold}: every submit of
-      the submission raises the hold's stamp of [d], and the parts may name the
-      hold's memory.
+      all unset. [d]'s driver runs the parts of a queue in array order, each
+      also after those its [after] lists ({!part}). [hold] names the memory of a
+      {!Hold}: every submit of the submission raises the hold's stamp of [d],
+      and the parts may name the hold's memory.
 
       Raises [Invalid_argument] if a count is negative, an index of a part's
       [after] is not below its own, a queue is not one of [d]'s, a part's buffer
@@ -935,7 +936,8 @@ module type Driver = sig
   val unload : t -> image -> unit
   (** [unload d i] releases what {!image} made for [i], once no work of [d] that
       runs it can run. The region of a [`Place] is not [i]'s: this library frees
-      it after. Counted. *)
+      it after. This library never calls it after {!stop}, which releases what
+      it would. Counted. *)
 
   val word : t -> region
   (** [word d] is [d]'s timeline word, never freed: other devices may map it,
@@ -970,10 +972,10 @@ module type Driver = sig
       transfers or on its library's back-pressure. Read at open. *)
 
   val room_entry : nativeint
-  (** [room_entry] is the address of [d]'s room check, in the shape [rig_room_fn]
-      of [rig_edge.h]: whether parts fit [d]'s queues now, once one of [d]'s
-      values is reached, or never, for parts that exceed [d]'s empty queues or
-      name work [d] does not run. *)
+  (** [room_entry] is the address of [d]'s room check, in the shape
+      [rig_room_fn] of [rig_edge.h]: whether parts fit [d]'s queues now, once
+      one of [d]'s values is reached, or never, for parts that exceed [d]'s
+      empty queues or name work [d] does not run. *)
 
   val submit_entry : nativeint
   (** [submit_entry] is the address of [d]'s hand-over, in the shape
@@ -998,7 +1000,13 @@ module type Driver = sig
   (** [stop d] stops [d] once it is lost, never waiting. The driver writes the
       last value its hand-over received into the word, with release order, once
       no work of [d] runs: before [stop] returns if none does. This library
-      counts [d] as stopped once the word reads that value. *)
+      counts [d] as stopped once the word reads that value.
+
+      [stop] also releases what {!image} made for each image not yet
+      {!unload}ed: before it returns if no work of [d] runs, and otherwise once
+      that work has ended, which may be at the device's next open. This library
+      calls no {!unload} after [stop], and frees the region of a [`Place] itself
+      ({!free}). *)
 end
 
 (** Devices of memory reached by reading and writing.
