@@ -25,8 +25,11 @@ let per_lane g n =
   let unit = granule g / lanes in
   (Int.max n min_per_lane + unit - 1) / unit * unit
 
-let size (g : Gpu.t) n =
-  per_lane g n * lanes * g.scratch_slots * g.compute_units * g.xccs
+(* The bytes of one die's share of the buffer. *)
+let per_die (g : Gpu.t) n =
+  per_lane g n * lanes * g.scratch_slots * g.compute_units
+
+let size (g : Gpu.t) n = per_die g n * g.xccs
 
 let tmpring (g : Gpu.t) n =
   let r =
@@ -37,10 +40,9 @@ let tmpring (g : Gpu.t) n =
           (gc_name g)
   in
   let granule = granule g in
-  let per_die = per_lane g n * lanes * g.scratch_slots * g.compute_units in
   let wave = ((lanes * per_lane g n) + granule - 1) / granule in
   let engines = if major g = 9 then 1 else g.shader_engines in
-  let waves = per_die / (wave * granule) / engines in
+  let waves = per_die g n / (wave * granule) / engines in
   Register.encode r
     [
       ("waves", Int.min waves (g.compute_units * g.scratch_slots * g.xccs));
