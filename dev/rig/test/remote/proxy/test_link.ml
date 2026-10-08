@@ -652,10 +652,8 @@ let closes =
       test "close returns Failed when the peer ends without its close"
         close_peer_ends;
       test "a job closed at both ends of its links is closed" close_pair;
-      xfail ~reason:"the receiving thread keeps a close from next"
-        (test
-           "an agent's process sees the drops queued before the close, then it"
-           close_helper);
+      test "an agent's process sees the drops queued before the close, then it"
+        close_helper;
     ]
 
 (* Requests
@@ -1061,9 +1059,8 @@ let agents =
         handovers_law;
       test "next gives the controller's commands in the order they came"
         commands_in_order;
-      xfail ~reason:"the receiving thread keeps a close from next"
-        (test "next gives the controller's close after the frames before it"
-           close_command);
+      test "next gives the controller's close after the frames before it"
+        close_command;
       test "answer raises unless given the oldest request next gave"
         answer_misuse;
     ]

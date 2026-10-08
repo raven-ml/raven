@@ -986,33 +986,40 @@ value caml_rig_remote_link_request(value vl, value head) {
   CAMLreturn(r);
 }
 
-/* The next command of the controller: (kind, payload), or (0, root cause)
-   once the job failed. Releases the runtime. */
+/* The next command of the controller: (kind, payload); (K_CLOSE, "") once
+   it closed and every earlier command was read; or (0, root cause) once the
+   job failed. Releases the runtime. */
 value caml_rig_remote_link_next(value vl) {
   CAMLparam1(vl);
   CAMLlocal2(r, a);
   struct rig_remote_link *l = Link_val(vl);
   struct cmd *c = NULL;
+  int closed = 0;
   if (!rig_remote_forked(l->job)) {
     caml_release_runtime_system();
     pthread_mutex_lock(&l->mu);
-    while (l->cmds == NULL && !atomic_load(&l->failed))
+    while (l->cmds == NULL && !l->got_close && !atomic_load(&l->failed))
       pthread_cond_wait(&l->cv, &l->mu);
-    if (!atomic_load(&l->failed)) {
+    if (!atomic_load(&l->failed) && l->cmds != NULL) {
       c = l->cmds;
       l->cmds = c->next;
       if (l->cmds == NULL) l->cmds_last = NULL;
-    }
+    } else if (!atomic_load(&l->failed))
+      closed = 1;
     pthread_mutex_unlock(&l->mu);
     caml_acquire_runtime_system();
   }
-  if (c == NULL) {
+  int kind = c != NULL ? c->kind : closed ? K_CLOSE : 0;
+  if (c != NULL)
+    a = area_of(c->p, c->n);
+  else if (closed)
+    a = area_of_string("");
+  else {
     const char *w = atomic_load(&l->job->why);
     a = area_of_string(w != NULL ? w : "");
-  } else
-    a = area_of(c->p, c->n);
+  }
   r = caml_alloc_tuple(2);
-  Store_field(r, 0, Val_int(c == NULL ? 0 : c->kind));
+  Store_field(r, 0, Val_int(kind));
   Store_field(r, 1, a);
   free(c);
   CAMLreturn(r);

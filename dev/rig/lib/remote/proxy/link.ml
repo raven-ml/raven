@@ -19,6 +19,7 @@ let k_handover = 3
 let k_drop = 4
 let k_word = 5
 let k_bytes = 6
+let k_close = 10
 
 (* Encoding: integers little-endian, a string as its length (u32) and its
    bytes. *)
@@ -390,6 +391,7 @@ let next l =
     end
     else if k = k_handover then Ok (decode_handover r)
     else if k = k_drop then Ok (Wire.Drop (finished r (u64 r)))
+    else if k = k_close then Ok Wire.Close
     else raise Malformed
   with
   | v -> v
