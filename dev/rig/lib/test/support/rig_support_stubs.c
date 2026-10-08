@@ -218,7 +218,7 @@ static int run(struct polled *p) {
   lock(&p->mu);
   int k = 0;
   while (k < p->n && waits_hold(&p->q[k])) run_one(p, &p->q[k++]);
-  memmove(p->q, p->q + k, (size_t)(p->n - k) * sizeof *p->q);
+  if (k > 0) memmove(p->q, p->q + k, (size_t)(p->n - k) * sizeof *p->q);
   p->n -= k;
   cond_broadcast(&p->cv);
   unlock(&p->mu);
