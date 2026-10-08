@@ -279,7 +279,9 @@ module Buffer : sig
 
   val io : t -> 'r Type.Id.t -> 'r option
   (** [io b k] is the region [b]'s memory lies in, if it is io memory of a
-      library whose key is [k], and [None] otherwise. *)
+      library whose key is [k], and [None] otherwise.
+
+      Raises [Invalid_argument] if [b] is dead ({!Claim.consume}). *)
 
   val of_bigarray : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> t
   (** [of_bigarray ba] is a borrowed buffer on {!host} over [ba]'s bytes,

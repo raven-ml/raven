@@ -58,6 +58,7 @@ let of_io (type r) d (k : r Type.Id.t) (r : r) n =
   | _ -> invalid_argf "Device_core.Buffer.of_io: %s is no io device" d.name
 
 let io (type r) b (k : r Type.Id.t) : r option =
+  check_live "Buffer.io" b;
   match b.mem.root.entry.io_region with
   | Some (Io_region { m; r; _ }) -> (
       let module I = (val m) in

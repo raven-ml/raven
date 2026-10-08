@@ -118,6 +118,11 @@ let test_of_io () =
   is_none (C.Buffer.io b Other.region_key);
   raises_match Exn.invalid_arg (fun () ->
       C.Buffer.of_io io Other.region_key r 16);
+  let dead = C.Buffer.of_io io Store.region_key r 16 in
+  C.Claim.with_ ~read:[ dead ] ~donate:[] (fun c ->
+      ignore (C.Claim.consume c ~why:"consumed" dead));
+  raises_match (Exn.invalid_arg ~substring:"consumed") (fun () ->
+      C.Buffer.io dead Store.region_key);
   let h = require_some (C.Buffer.borrow C.host b) in
   equal string (String.make 16 'p')
     (let ba = C.Buffer.bigarray Bigarray.char h in
