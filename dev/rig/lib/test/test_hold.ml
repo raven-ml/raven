@@ -200,7 +200,8 @@ let test_release_transport_fault () =
    submit, by a part or by a slot: work on held memory raises the hold's stamps,
    which only a submission made with the hold does. *)
 (* Held memory a device's queue copies copies in and out: the copy's stamps are
-   the hold's, so the hold's release waits for it. *)
+   the hold's, so the hold's release waits for it. Between memory of two holds,
+   which no one submission names, the copy stages. *)
 let test_copy_held () =
   let d, _ = P.open_ ~host_visible:false "hold:copy" in
   let m = B.create d 64 in
@@ -209,10 +210,17 @@ let test_copy_held () =
   Bigarray.Array1.fill (B.bigarray Bigarray.char into) 'h';
   B.copy ~src:into ~dst:m;
   B.copy ~src:m ~dst:back;
-  equal string (String.make 64 'h')
-    (let ba = B.bigarray Bigarray.char back in
-     String.init 64 (Bigarray.Array1.get ba));
-  ignore (Sys.opaque_identity h)
+  let contents b =
+    let ba = B.bigarray Bigarray.char b in
+    String.init 64 (Bigarray.Array1.get ba)
+  in
+  equal ~msg:"in and out" string (String.make 64 'h') (contents back);
+  let m' = B.create d 64 in
+  let h' = H.make [ m' ] in
+  B.copy ~src:m ~dst:m';
+  B.copy ~src:m' ~dst:back;
+  equal ~msg:"between two holds" string (String.make 64 'h') (contents back);
+  ignore (Sys.opaque_identity (h, h'))
 
 let test_held_after () =
   let d, _ = P.open_ "hold:after" in

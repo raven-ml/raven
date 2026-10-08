@@ -73,17 +73,33 @@ let is_slot m =
     slots
 
 let queued d queue ~src ~dst =
-  Dev.wait d (Point.value (Submission.copy d queue ~src ~dst))
+  Dev.wait d (Point.value (Submission.copy ~hold_stamps:0 d queue ~src ~dst))
+
+(* The stamps of the hold a copy between [src] and [dst] names, [0] for none:
+   held memory's stamps are its hold's. [None] for memory of two holds, which no
+   one submission names: the copy stages, each leg naming one hold's memory. *)
+let hold_stamps src dst =
+  let e = src.mem.root.entry and e' = dst.mem.root.entry in
+  match (e.held, e'.held) with
+  | true, true when e.stamps <> e'.stamps -> None
+  | true, _ -> Some e.stamps
+  | false, true -> Some e'.stamps
+  | false, false -> Some 0
 
 (* A copy of [n] bytes on [d]'s copy queue between buffers [d] maps, asked at
    [start] and waited for when [wait]. Unwaited, it is recorded once a wait sees
    it done. *)
 let on_queue ~wait d src dst n start =
-  match (d.copy_queue, Memory.borrow d src.mem, Memory.borrow d dst.mem) with
-  | Some queue, Some s, Some t ->
+  match
+    ( d.copy_queue,
+      hold_stamps src dst,
+      Memory.borrow d src.mem,
+      Memory.borrow d dst.mem )
+  with
+  | Some queue, Some hold_stamps, Some s, Some t ->
       let v =
         Point.value
-          (Submission.copy d queue ~src:{ src with mem = s }
+          (Submission.copy ~hold_stamps d queue ~src:{ src with mem = s }
              ~dst:{ dst with mem = t })
       in
       let recorded () = record src.mem.dev dst.mem.dev n start in

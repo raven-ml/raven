@@ -58,17 +58,24 @@ external sub_take : c -> unit = "caml_rig_sub_take"
 external sub_give : c -> unit = "caml_rig_sub_give" [@@noalloc]
 external ensure_record : int -> int -> unit = "caml_rig_ensure_record"
 
+(* The hold whose memory a submission's parts may name, and whose stamps it
+   raises: a {!Hold.t}, which the submission keeps reachable, as its release
+   frees what the parts run; or, for the library's own copy, the stamps of the
+   hold its memory is in, as the copy runs none of the hold's work. *)
+type named = No_hold | Hold of hold | Stamps of int
+
+let named_stamps = function
+  | No_hold -> 0
+  | Hold h -> h.hstamps
+  | Stamps st -> st
+
 type t = {
   dev : device;
   c : c;
   parts : part array;  (** Its buffers are checked live at each submit. *)
   nreads : int;  (** The buffers each run reads. *)
   nwrites : int;  (** The buffers each run writes. *)
-  hold : hold option;
-  any_hold : bool;
-      (** Its parts may name memory of any hold: it is made and submitted at
-          once, so it raises each memory's stamps as they are, a hold's for held
-          memory. *)
+  named : named;  (** The hold whose memory its parts may name. *)
 }
 
 let queue_index d fn q =
@@ -90,26 +97,22 @@ let host_address fn b =
   if b.mem.host < 0 then invalid_argf "Rig.%s: the buffer is not host memory" fn;
   b.mem.host + b.offset
 
-let hold_stamps = function Some h -> h.hstamps | None -> 0
-
-(* Refuses a part's buffer that is dead or in a hold other than the
-   submission's, whose stamps are [hold_stamps]. *)
+(* Refuses a part's buffer that is dead or in a hold other than the one whose
+   stamps are [hold_stamps]: held memory's stamps are its hold's. *)
 let check_buffer fn hold_stamps b =
   Buffer.check_live fn b;
   let e = b.mem.root.entry in
   if e.held && e.stamps <> hold_stamps then
     invalid_argf "Rig.%s: a part names memory of another hold" fn
 
-let build ~any_hold ?hold ~reads ~writes d parts =
+let build named ~reads ~writes d parts =
   let fn = "Submission.make" in
   if reads < 0 || writes < 0 then invalid_argf "Rig.%s: a count is negative" fn;
   if Dev.is_lost d then Dev.raise_lost d;
   if Dev.is_host d || Dev.is_io d then
     invalid_argf "Rig.%s: %s runs no submitted work" fn d.name;
-  let hold_stamps = hold_stamps hold in
-  let check_buffer =
-    if any_hold then Buffer.check_live fn else check_buffer fn hold_stamps
-  in
+  let hold_stamps = named_stamps named in
+  let check_buffer = check_buffer fn hold_stamps in
   let nafter = ref 0 and nfixed = ref 0 in
   Array.iteri
     (fun i p ->
@@ -144,7 +147,7 @@ let build ~any_hold ?hold ~reads ~writes d parts =
     parts;
   let c = sub_new d.c (Array.length parts) !nafter !nfixed reads writes in
   (* The hold keeps its stamps while the submission holds it. *)
-  Option.iter (fun h -> sub_hold c h.hstamps) hold;
+  if hold_stamps <> 0 then sub_hold c hold_stamps;
   let at = ref 0 and k = ref 0 in
   let fixed b write =
     sub_fixed c !k (entry_of b).stamps b.mem.handle write;
@@ -172,10 +175,11 @@ let build ~any_hold ?hold ~reads ~writes d parts =
           fixed src false;
           fixed dst true)
     parts;
-  { dev = d; c; parts; nreads = reads; nwrites = writes; hold; any_hold }
+  { dev = d; c; parts; nreads = reads; nwrites = writes; named }
 
 let make ?hold ~reads ~writes d parts =
-  build ~any_hold:false ?hold ~reads ~writes d parts
+  let named = match hold with Some h -> Hold h | None -> No_hold in
+  build named ~reads ~writes d parts
 
 (* In-queue waits *)
 
@@ -261,9 +265,8 @@ let check_part held st p =
    the hold. A process that never made a hold holds no memory, and checks
    liveness only. *)
 let check_parts s held =
-  let st = hold_stamps s.hold in
   for k = 0 to Array.length s.parts - 1 do
-    check_part held st s.parts.(k)
+    check_part held (named_stamps s.named) s.parts.(k)
   done
 
 let counted n what = Printf.sprintf "%d %s%s" n what (if n = 1 then "" else "s")
@@ -392,7 +395,7 @@ let submit s ~reads ~writes ~waits =
   check_counts s reads writes;
   sub_take s.c;
   match
-    let held = Atomic.get Memory.any_held && not s.any_hold in
+    let held = Atomic.get Memory.any_held in
     check_parts s held;
     run s held reads writes waits 0
   with
@@ -405,8 +408,8 @@ let submit s ~reads ~writes ~waits =
       sub_give s.c;
       raise e
 
-let copy d queue ~src ~dst =
+let copy ~hold_stamps d queue ~src ~dst =
   let part = { queue; after = [||]; work = Copy { src; dst } } in
   submit
-    (build ~any_hold:true ~reads:0 ~writes:0 d [| part |])
+    (build (Stamps hold_stamps) ~reads:0 ~writes:0 d [| part |])
     ~reads:[||] ~writes:[||] ~waits:[||]

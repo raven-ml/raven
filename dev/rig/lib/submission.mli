@@ -26,7 +26,9 @@ val make : ?hold:hold -> reads:int -> writes:int -> device -> part array -> t
 val submit :
   t -> reads:buffer array -> writes:buffer array -> waits:int array -> int
 
-val copy : device -> string -> src:buffer -> dst:buffer -> int
-(* [copy d queue ~src ~dst] submits a copy of [src] into [dst], memory of [d],
-   on [d]'s copy queue [queue], made and submitted at once: its point. The
-   buffers may be held, by any hold. *)
+val copy :
+  hold_stamps:int -> device -> string -> src:buffer -> dst:buffer -> int
+(* [copy ~hold_stamps d queue ~src ~dst] submits a copy of [src] into [dst],
+   memory of [d], on [d]'s copy queue [queue]: its point. [hold_stamps] are the
+   stamps of the hold their memory is in, [0] for none: the copy raises the
+   hold's stamp of [d], as a submission made with the hold does. *)
