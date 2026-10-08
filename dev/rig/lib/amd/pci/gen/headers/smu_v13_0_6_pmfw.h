@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 Advanced Micro Devices, Inc.
+ * Copyright 2021 Advanced Micro Devices, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -21,23 +21,7 @@
  *
  */
 
-#define FEATURE_DPM_GFXCLK_BIT                1
-#define FEATURE_DPM_UCLK_BIT                  3
-#define FEATURE_DPM_FCLK_BIT                  4
-#define FEATURE_DPM_SOCCLK_BIT                5
-typedef enum {
-  PPCLK_GFXCLK = 0,
-  PPCLK_SOCCLK,
-  PPCLK_UCLK,
-  PPCLK_FCLK,
-  PPCLK_DCLK_0,
-  PPCLK_VCLK_0,
-  PPCLK_DCLK_1,
-  PPCLK_VCLK_1,
-  PPCLK_DISPCLK,
-  PPCLK_DPPCLK,
-  PPCLK_DPREFCLK,
-  PPCLK_DCFCLK,
-  PPCLK_DTBCLK,
-  PPCLK_COUNT,
-} PPCLK_e;
+/*2*/   FEATURE_DPM_FCLK                    = 2,
+/*3*/   FEATURE_DPM_GFXCLK                  = 3,
+/*5*/   FEATURE_DPM_SOCCLK                  = 5,
+/*6*/   FEATURE_DPM_UCLK                    = 6,

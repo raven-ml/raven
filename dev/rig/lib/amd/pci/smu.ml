@@ -12,6 +12,14 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
 let message mp1 name = List.assoc_opt name (D.smu_messages mp1)
 let clock_request ~clock v = (clock lsl 16) lor v
+
+(* A clock's DPM feature is FEATURE_DPM_ and the clock's name past PPCLK_. *)
+let dpm mp1 ~features clock =
+  let name = "FEATURE_DPM_" ^ String.sub clock 6 (String.length clock - 6) in
+  match message mp1 name with
+  | Some bit -> (features lsr bit) land 1 = 1
+  | None -> false
+
 let dotted (a, b, c) = strf "%d.%d.%d" a b c
 
 type t = {
@@ -92,6 +100,24 @@ let alive s =
   | _ -> true
   | exception Regs.Stuck _ -> false
 
+(* The enabled features, as the low and high words the power manager reports:
+   GetRunningSmuFeatures on SMU 13.0.0, 13.0.7 and 14, GetEnabledSmuFeatures on
+   13.0.6 and 13.0.12 (smu_cmn_get_enabled_mask). *)
+let features s =
+  let word half =
+    let names =
+      [
+        "PPSMC_MSG_GetRunningSmuFeatures" ^ half;
+        "PPSMC_MSG_GetEnabledSmuFeatures" ^ half;
+      ]
+    in
+    match List.find_map (message s.mp1) names with
+    | Some m -> send s m 0
+    | None ->
+        invalid_argf "Rig_amd_pci.open_: the power manager reports no features"
+  in
+  word "Low" lor (word "High" lsl 32)
+
 (* A clock's frequencies, from the count its last index answers: at most 16, the
    most levels of a clock SMU 11, 13 and 14 hold (MAX_DPM_LEVELS of smu_v11_0.h,
    smu_v13_0.h and smu_v14_0.h). *)
@@ -103,13 +129,7 @@ let frequencies s clock =
   | None ->
       let by_index = id s "PPSMC_MSG_GetDpmFreqByIndex" in
       let q i = send s by_index (clock_request ~clock i) land 0x7fff_ffff in
-      (* A power manager whose features are off refuses the count: the clock
-         then keeps its boot frequency, and has no levels to set. *)
-      let n =
-        match ask s by_index (clock_request ~clock 0xff) with
-        | Ok n -> n land 0x7fff_ffff
-        | Error _ -> 0
-      in
+      let n = q 0xff in
       if n > max_levels then
         raise
           (Regs.Stuck
@@ -124,13 +144,15 @@ let frequencies s clock =
    alone: the table has no such clock. *)
 let soft_min_ms = 20
 
+(* A clock whose DPM is off, as before the power manager's features are enabled,
+   runs at its boot frequency, which no request changes. *)
 let clocks s level =
   let gc = Regs.version (Regs.layout_of s.r) D.gc_hwid in
+  let features = features s in
   List.iter
     (fun name ->
       match message s.mp1 name with
-      | None -> ()
-      | Some clock -> (
+      | Some clock when dpm s.mp1 ~features name -> (
           match frequencies s clock with
           | [] -> ()
           | l ->
@@ -149,7 +171,8 @@ let clocks s level =
                 ignore
                   (send s
                      (id s "PPSMC_MSG_SetSoftMaxByFreq")
-                     (clock_request ~clock v))))
+                     (clock_request ~clock v)))
+      | Some _ | None -> ())
     [ "PPCLK_UCLK"; "PPCLK_FCLK"; "PPCLK_SOCCLK"; "PPCLK_GFXCLK" ]
 
 (* Reset *)

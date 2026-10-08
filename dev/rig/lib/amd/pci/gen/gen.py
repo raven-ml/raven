@@ -76,20 +76,25 @@ SOURCES = {
 # with each message header (amdgpu_smu.c's smu_set_funcs): the header of the
 # messages, and the header of the clocks.
 SMU_TABLES = [
-    ([(13, 0, 0), (13, 0, 10)], "smu_v13_0_0_ppsmc.h", "smu13_driver_if_v13_0_0.h"),
-    ([(13, 0, 7)], "smu_v13_0_7_ppsmc.h", "smu13_driver_if_v13_0_7.h"),
-    ([(13, 0, 6), (13, 0, 14)], "smu_v13_0_6_ppsmc.h", "smu13_driver_if_v13_0_6.h"),
-    ([(13, 0, 12)], "smu_v13_0_12_ppsmc.h", "smu13_driver_if_v13_0_6.h"),
-    ([(14, 0, 2), (14, 0, 3)], "smu_v14_0_2_ppsmc.h", "smu14_driver_if_v14_0.h"),
+    ([(13, 0, 0), (13, 0, 10)], "smu_v13_0_0_ppsmc.h", "smu13_driver_if_v13_0_0.h", "smu13_driver_if_v13_0_0.h"),
+    ([(13, 0, 7)], "smu_v13_0_7_ppsmc.h", "smu13_driver_if_v13_0_7.h", "smu13_driver_if_v13_0_7.h"),
+    ([(13, 0, 6), (13, 0, 14)], "smu_v13_0_6_ppsmc.h", "smu13_driver_if_v13_0_6.h", "smu_v13_0_6_pmfw.h"),
+    ([(13, 0, 12)], "smu_v13_0_12_ppsmc.h", "smu13_driver_if_v13_0_6.h", "smu_v13_0_12_pmfw.h"),
+    ([(14, 0, 2), (14, 0, 3)], "smu_v14_0_2_ppsmc.h", "smu14_driver_if_v14_0.h", "smu14_driver_if_v14_0.h"),
 ]
 SMU_MESSAGES = ["PPSMC_MSG_" + m for m in (
     "SetDriverDramAddrHigh", "SetDriverDramAddrLow", "EnableAllSmuFeatures", "GetSmuVersion", "GfxDriverReset",
     "Mode1Reset", "GetDpmFreqByIndex", "SetSoftMinByFreq", "SetSoftMaxByFreq", "QueryValidMcaCount",
-    "McaBankDumpDW", "QueryValidMcaCeCount", "McaBankCeDumpDW")]
+    "McaBankDumpDW", "QueryValidMcaCeCount", "McaBankCeDumpDW", "GetRunningSmuFeaturesLow",
+    "GetRunningSmuFeaturesHigh", "GetEnabledSmuFeaturesLow", "GetEnabledSmuFeaturesHigh")]
 SMU_CLOCKS = ["PPCLK_UCLK", "PPCLK_FCLK", "PPCLK_SOCCLK", "PPCLK_GFXCLK"]
-for _, _m, _c in SMU_TABLES:
-    SOURCES[_m] = KERNEL + "pm/swsmu/inc/pmfw_if/" + _m
-    SOURCES[_c] = KERNEL + "pm/swsmu/inc/pmfw_if/" + _c
+# The feature bit of each clock's DPM, a define (FEATURE_DPM_X_BIT) or an
+# enumerator (FEATURE_DPM_X), named FEATURE_DPM_X.
+SMU_FEATURES = ["FEATURE_DPM_UCLK", "FEATURE_DPM_FCLK", "FEATURE_DPM_SOCCLK", "FEATURE_DPM_GFXCLK"]
+SMU_FEATURE = re.compile(r"\b(FEATURE_DPM_(?:UCLK|FCLK|SOCCLK|GFXCLK))(?:_BIT)?\b\s*=?\s*(0x[0-9a-fA-F]+|\d+)")
+for _, _m, _c, _f in SMU_TABLES:
+    for _h in (_m, _c, _f):
+        SOURCES[_h] = KERNEL + "pm/swsmu/inc/pmfw_if/" + _h
 
 # Interrupts: the clients' enumerations, and the source headers of the blocks
 # whose interrupts the library reads.
@@ -648,10 +653,12 @@ def excerpt(name, text):
     elif name == "amdgpu_vm.h":
         keep |= enum_blocks(text, ["amdgpu_vm_level"])
         keep |= {i for i, l in enumerate(lines) if DEFINE.match(l) and DEFINE.match(l).group(1) in PTE_BITS + PTE_SHIFTS}
-    elif any(name == m for _, m, _ in SMU_TABLES):
+    elif any(name == m for _, m, _, _ in SMU_TABLES):
         keep |= {i for i, l in enumerate(lines) if DEFINE.match(l) and DEFINE.match(l).group(1) in SMU_MESSAGES}
-    elif any(name == c for _, _, c in SMU_TABLES):
-        keep |= enum_with(text, "PPCLK_UCLK")
+    elif any(name in (c, f) for _, _, c, f in SMU_TABLES):
+        if any(name == c for _, _, c, _ in SMU_TABLES):
+            keep |= enum_with(text, "PPCLK_UCLK")
+        keep |= {i for i, l in enumerate(lines) if SMU_FEATURE.search(l)}
     elif name == "soc15_ih_clientid.h":
         keep |= enum_blocks(text, IH_ENUMS)
     elif name in IH_SOURCES:
@@ -859,13 +866,16 @@ def generate(h):
         out += ["end", ""]
 
     # Power manager
-    out += ["(* The power manager's messages and clocks, by MP1 version, as (name, value). *)",
+    out += ["(* The power manager's messages, clocks and the feature bits of their DPM, by MP1",
+            "   version, as (name, value). *)",
             "let smu_messages = function"]
-    for versions, m, c in SMU_TABLES:
+    for versions, m, c, f in SMU_TABLES:
         msgs = {n: v for n, v in ((n, b) for n, b in defines(h[m]).items()) if n in SMU_MESSAGES}
         vals = [(n, evaluate(msgs[n], {})) for n in SMU_MESSAGES if n in msgs]
         clocks = enum_values(h[c], [n for n in SMU_CLOCKS if re.search(rf"\b{n}\b", h[c])])
         vals += list(clocks.items())
+        features = dict((n, int(v, 0)) for n, v in SMU_FEATURE.findall(h[f]))
+        vals += [(n, features[n]) for n in SMU_FEATURES if n in features]
         pats = " | ".join(f"({a}, {b}, {cc})" for a, b, cc in versions)
         out.append(f"  | {pats} ->")
         out.append("      [ " + "; ".join(f"({json.dumps(n)}, {ml_int(v)})" for n, v in vals) + " ]")

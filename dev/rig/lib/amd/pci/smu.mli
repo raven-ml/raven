@@ -18,6 +18,11 @@ val message : Discovery.version -> string -> int option
     ["PPSMC_MSG_SetSoftMinByFreq"] or ["PPCLK_UCLK"], for a power manager of
     version [mp1], if it has one. Pure. *)
 
+val dpm : Discovery.version -> features:int -> string -> bool
+(** [dpm mp1 ~features clock] is [true] iff the DPM of [clock], a [PPCLK_] name,
+    is among the enabled [features] the power manager of MP1 [mp1] reports:
+    [false] for a clock it has no DPM feature for. Pure. *)
+
 val clock_request : clock:int -> int -> int
 (** [clock_request ~clock v] is the argument of a message about clock [clock]
     and value [v], below 2{^ 16}: the clock in bits 16-31, the value below.
@@ -42,8 +47,10 @@ val start : t -> unit
 val clocks : t -> [ `Lowest | `Highest ] -> unit
 (** [clocks s level] holds the memory, fabric and SoC clocks, and the graphics
     clock where the power manager lets the driver set it, at their lowest or
-    highest level. A clock whose levels the power manager refuses to count, as
-    before its features are enabled, keeps its boot frequency. *)
+    highest level, each whose DPM the power manager reports enabled: a clock
+    whose DPM is off, as before the power manager's features are enabled, keeps
+    its boot frequency. A refused request of a clock whose DPM runs raises
+    {!Regs.Stuck}. *)
 
 val reset : t -> unit
 (** [reset s] resets the GPU whole (mode 1) and waits for its function to answer

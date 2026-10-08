@@ -21,6 +21,10 @@
  *
  */
 
+#define FEATURE_DPM_GFXCLK_BIT                1
+#define FEATURE_DPM_UCLK_BIT                  3
+#define FEATURE_DPM_FCLK_BIT                  4
+#define FEATURE_DPM_SOCCLK_BIT                5
 typedef enum {
   PPCLK_GFXCLK = 0,
   PPCLK_SOCCLK,

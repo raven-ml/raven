@@ -23,6 +23,8 @@
 
 #define PPSMC_MSG_GetSmuVersion                  0x2
 #define PPSMC_MSG_EnableAllSmuFeatures           0x6
+#define PPSMC_MSG_GetRunningSmuFeaturesLow       0xC
+#define PPSMC_MSG_GetRunningSmuFeaturesHigh      0xD
 #define PPSMC_MSG_SetDriverDramAddrHigh          0xE
 #define PPSMC_MSG_SetDriverDramAddrLow           0xF
 #define PPSMC_MSG_SetSoftMinByFreq               0x19
