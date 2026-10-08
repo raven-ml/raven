@@ -28,6 +28,18 @@ val stop : Device_cuda.t -> unit
 (** [stop g] is [Device_cuda.stop g]. Tests stop the devices {!gpu} opened
     through it. *)
 
+val core : Device_cuda.t -> Device_core.t
+(** [core g] is nx.device's device over [g], which {!gpu} opened under a name of
+    its own.
+
+    Raises [Invalid_argument] if [g] was stopped, lost or opened otherwise. *)
+
+val submit : Device_cuda.t -> Device_core.Submission.part array -> int
+(** [submit g ps] submits [ps] through nx.device on [g] and is their value.
+    Raises what {!Device_core.submit} raises; once it raised
+    {!Device_core.Lost}, nx.device stopped [g], and {!with_gpu} does not stop it
+    again. *)
+
 val bind : Device_cuda.t -> unit
 (** [bind g] makes the CUDA functions of [g]'s capability those {!attribute},
     {!current}, {!locked}, {!register}, {!unregister}, {!read_gpu},
@@ -111,9 +123,17 @@ type fill
 (** The type for fills and their arguments. *)
 
 val part :
-  Device_cuda.t -> queue:string -> ?after:int array -> fill -> Device_cuda.part
-(** [part g ~queue ~after f] is [f] as a part of [g]'s [queue]. The caller keeps
-    [f] until the part's submission returned. *)
+  queue:string -> ?after:int array -> fill -> Device_core.Submission.part
+(** [part ~queue ~after f] is [f] as a part on [queue] after the parts [after]
+    (defaults to [[||]]), its argument a host buffer. *)
+
+val copy :
+  queue:string ->
+  ?after:int array ->
+  dst:Device_core.Buffer.t ->
+  Device_core.Buffer.t ->
+  Device_core.Submission.part
+(** [copy ~queue ~after ~dst src] is a copy of [src] into [dst] on [queue]. *)
 
 val failing : int -> fill
 (** [failing code] returns [code] and enqueues nothing. *)
@@ -145,6 +165,26 @@ val room :
     answers for one fill on the queue at index [queue], with one ring word iff
     [words], [units] ring units, [bytes] segment bytes, and [after]: [0] for
     NX_FITS, [2] for NX_NEVER. *)
+
+type copy_c = {
+  queue : int;
+  dst : int;
+  src : int;
+  bytes : int;
+  after : int array;
+}
+(** The type for copies handed to the C submit: [bytes] bytes from the address
+    [src] to [dst], on the queue at index [queue], after the parts [after]. *)
+
+val copies :
+  Device_cuda.t ->
+  v:int ->
+  waits:(int * int) array ->
+  copy_c array ->
+  [ `Ok | `Failed of string ]
+(** [copies g ~v ~waits cs] is what [device_cuda_submit] answers for [cs] as
+    [g]'s value [v], after each wait [(a, w)]: the 64-bit word at [a] holds at
+    least [w]. It reaches the waits nx.device cannot make, on any word. *)
 
 (** {1:kernels Kernels} *)
 

@@ -6,6 +6,7 @@
 open Windtrap
 module C = Device_cuda
 module S = Device_cuda_support
+module B = Device_core.Buffer
 
 let host r = Option.get (C.host r)
 
@@ -24,22 +25,19 @@ let sticky name f =
       contains ~msg:name ~sub:"CUDA_ERROR_ILLEGAL_ADDRESS" why
 
 (* Value 1 stores to address 0; value 2, queued behind it, would copy into a
-   watched host buffer and write the word. Value 3 is submitted after the
-   fault. *)
+   watched host buffer and write the word. Value 3 is submitted after the fault,
+   through nx.device, which loses the device and stops it. *)
 let faults () =
   let g = S.gpu () in
+  let c = S.core g in
   let _, kernel = S.kernels g in
-  let watched = require_some (C.alloc g `Pinned 64) in
-  let src = require_some (C.alloc g `Device 64) in
+  let watched = B.create ~memory:Pinned c 64 and src = B.create c 64 in
   let zeros = String.make 64 '\000' in
-  S.write (host watched) zeros;
-  S.write_gpu (C.handle src) (String.make 64 'x');
+  S.write (B.address watched) zeros;
+  S.write_gpu (Nativeint.of_int (B.address src)) (String.make 64 'x');
   let f = S.launch (kernel "fault") ~grid:1 ~block:1 0 0 in
-  equal S.answer `Ok
-    (C.submit g ~v:1 ~waits:[||] ~handles:[||]
-       [| S.part g ~queue:"COMPUTE:0" f |]);
-  let copy = C.part g ~queue:"COMPUTE:0" (`Copy ((watched, 0), (src, 0), 64)) in
-  ignore (C.submit g ~v:2 ~waits:[||] ~handles:[||] [| copy |]);
+  equal int ~msg:"value 1" 1 (S.submit g [| S.part ~queue:"COMPUTE:0" f |]);
+  ignore (S.submit g [| S.copy ~queue:"COMPUTE:0" ~dst:watched src |]);
   raises_match
     (function
       | C.Fault why ->
@@ -49,16 +47,16 @@ let faults () =
     (fun () -> fault g (Sys.time ()));
   sticky "alloc" (fun () -> ignore (C.alloc g `Device 64));
   sticky "image" (fun () -> ignore (C.image g (S.fixture "kernels.ptx")));
-  (match C.submit g ~v:3 ~waits:[||] ~handles:[||] [||] with
-  | `Failed why -> contains ~msg:"submit" ~sub:"CUDA_ERROR_ILLEGAL_ADDRESS" why
-  | `Ok -> fail "a submit after the fault is Ok");
   equal int ~msg:"the word after the fault" 0 (S.get64 (host (C.word g)));
-  S.stop g;
+  (match S.submit g [||] with
+  | _ -> fail "a submit after the fault is no loss"
+  | exception Device_core.Lost (_, why) ->
+      contains ~msg:"submit" ~sub:"CUDA_ERROR_ILLEGAL_ADDRESS" why);
   let w = C.signaled g in
   equal int ~msg:"the word after stop" 3 w;
   S.still ~msg:"the word" int w (fun () -> C.signaled g) ~ms:200;
   S.still ~msg:"the watched buffer" string zeros
-    (fun () -> S.read (host watched) 64)
+    (fun () -> S.read (B.address watched) 64)
     ~ms:200;
   let e = require_error (C.open_ 0) in
   contains ~sub:"CUDA_ERROR_ILLEGAL_ADDRESS" e

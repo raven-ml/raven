@@ -5,12 +5,11 @@
 
 /* Submitting to a CUDA device from C.
 
-   Device_cuda.room and Device_cuda.submit, for a caller that holds its
-   submissions in C, over the structures and codes of nx_edge.h. [self] is
+   The device's room check and submit, over the structures and codes of
+   nx_edge.h: the only way work reaches the device. [self] is
    Device_cuda.self. Both are called without the OCaml runtime: they call no
    function of it and read no OCaml value. They run one call at a time, in
-   value order, with Device_cuda.room and Device_cuda.submit among them;
-   Device_cuda.sleep may run meanwhile.
+   value order; Device_cuda.sleep may run meanwhile.
 
    Queue 0 is the stream "COMPUTE:0", queue 1 the stream "COPY:0". A part is
    a fill, called with the queue's CUstream and the device's context

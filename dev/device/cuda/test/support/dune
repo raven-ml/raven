@@ -3,7 +3,7 @@
 
 (library
  (name device_cuda_support)
- (libraries device_cuda device_cuda_abi device_edge windtrap)
+ (libraries device_core device_cuda device_cuda_abi device_edge windtrap)
  (foreign_stubs
   (language c)
   (names device_cuda_support_stubs)))

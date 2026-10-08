@@ -5,8 +5,8 @@
 
 /* Fills, as compiled code would write them, CUDA's own view of host
    memory, the machine's GPU lock and host memory. CUDA's functions are
-   those the device's capability finds, bound once. A fill's argument is C
-   memory that its custom block frees. Every stub but the lock's holds the
+   those the device's capability finds, bound once. A fill's argument is a
+   bigarray's C memory. Every stub but the lock's and the submit's holds the
    runtime: none blocks. */
 
 #define _GNU_SOURCE
@@ -20,7 +20,7 @@
 
 #define CAML_NAME_SPACE
 #include <caml/alloc.h>
-#include <caml/custom.h>
+#include <caml/bigarray.h>
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
@@ -293,28 +293,15 @@ value device_cuda_test_write(value v_p, value v_s) {
 
 /* Fills */
 
-#define Arg_val(v) (*(void **)Data_custom_val(v))
+#define Arg_val(v) Caml_ba_data_val(v)
 
-static void finalize_arg(value v) { free(Arg_val(v)); }
-
-static struct custom_operations arg_ops = {
-    "device_cuda_test.arg",     finalize_arg,
-    custom_compare_default,     custom_hash_default,
-    custom_serialize_default,   custom_deserialize_default,
-    custom_compare_ext_default, custom_fixed_length_default,
-};
-
-/* A block owning [n] zeroed bytes of C memory, the argument of a fill. */
+/* [n] zeroed bytes of C memory as a bigarray, the argument of a fill: the
+   suite hands it to nx.device as a host buffer. */
 static value arg(size_t n) {
-  void *p = calloc(1, n);
-  if (p == NULL) caml_raise_out_of_memory();
-  value v = caml_alloc_custom(&arg_ops, sizeof(void *), 0, 1);
-  Arg_val(v) = p;
+  value v = caml_ba_alloc_dims(CAML_BA_UINT8 | CAML_BA_C_LAYOUT, 1, NULL,
+                               (intnat)n);
+  memset(Caml_ba_data_val(v), 0, n);
   return v;
-}
-
-value device_cuda_test_arg_address(value v_arg) {
-  return caml_copy_nativeint((intnat)Arg_val(v_arg));
 }
 
 /* A fill that returns [code]. */
@@ -416,6 +403,52 @@ value device_cuda_test_room_byte(value *argv, int argn) {
   (void)argn;
   return device_cuda_test_room(argv[0], argv[1], argv[2], argv[3], argv[4],
                                argv[5]);
+}
+
+/* What device_cuda_submit answers for the copies [v_copies] as the value
+   [v_v], after the waits [v_waits], an address and a value each: [None] for
+   NX_OK, [Some why] for NX_FAILED. A copy is the ints queue, dst, src and
+   bytes, then its [after] indices. Releases the runtime: the submit may
+   block. */
+value device_cuda_test_copies(value v_self, value v_v, value v_waits,
+                              value v_copies) {
+  CAMLparam4(v_self, v_v, v_waits, v_copies);
+  CAMLlocal1(why);
+  int nw = (int)(Wosize_val(v_waits) / 2), np = (int)Wosize_val(v_copies);
+  size_t nafter = 0;
+  for (int i = 0; i < np; i++) nafter += Wosize_val(Field(v_copies, i)) - 4;
+  size_t size = nw * sizeof(struct nx_wait) + np * sizeof(struct nx_part) +
+                nafter * sizeof(int);
+  char *mem = calloc(1, size + 1);
+  if (mem == NULL) caml_raise_out_of_memory();
+  struct nx_wait *w = (struct nx_wait *)mem;
+  struct nx_part *p = (struct nx_part *)(w + nw);
+  int *after = (int *)(p + np);
+  for (int i = 0; i < nw; i++) {
+    w[i].kind = NX_WORD;
+    w[i].at = (uint64_t)Long_val(Field(v_waits, 2 * i));
+    w[i].value = (uint64_t)Long_val(Field(v_waits, 2 * i + 1));
+  }
+  for (int i = 0; i < np; i++) {
+    value c = Field(v_copies, i);
+    p[i].queue = Int_val(Field(c, 0));
+    p[i].copy_dst = (uint64_t)Long_val(Field(c, 1));
+    p[i].copy_src = (uint64_t)Long_val(Field(c, 2));
+    p[i].copy_bytes = (uint64_t)Long_val(Field(c, 3));
+    p[i].after = after;
+    p[i].nafter = (int)Wosize_val(c) - 4;
+    for (int j = 0; j < p[i].nafter; j++) *after++ = Int_val(Field(c, 4 + j));
+  }
+  void *self = Ptr_val(v_self);
+  uint64_t v = (uint64_t)Long_val(v_v);
+  const char *failure = NULL;
+  caml_release_runtime_system();
+  int rc = device_cuda_submit(self, v, w, nw, p, np, NULL, 0, &failure);
+  caml_acquire_runtime_system();
+  free(mem);
+  if (rc == NX_OK) CAMLreturn(Val_none);
+  why = caml_copy_string(failure);
+  CAMLreturn(caml_alloc_some(why));
 }
 
 /* A fill that runs the kernel [spin] for [ns] nanoseconds, then copies [n]

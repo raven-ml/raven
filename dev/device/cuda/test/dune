@@ -3,6 +3,6 @@
 
 (tests
  (names test_cuda test_fault)
- (libraries device_cuda device_cuda_abi device_cuda_support windtrap)
+ (libraries device_core device_cuda device_cuda_abi device_cuda_support windtrap)
  (deps
   (glob_files fixtures/*)))

@@ -13,7 +13,14 @@ let second = 1_000_000_000
 let address r = Option.get (C.address r)
 let host r = Option.get (C.host r)
 let word g = host (C.word g)
-let submit g ~v ?(waits = [||]) ps = C.submit g ~v ~waits ~handles:[||] ps
+
+module B = Device_core.Buffer
+
+(* The reason of the loss [f ()] raises. *)
+let lost f =
+  match f () with
+  | _ -> failf "no loss"
+  | exception Device_core.Lost (_, why) -> why
 
 (* Opening *)
 
@@ -105,28 +112,35 @@ let offset = Gen.of_list ~pp:Format.pp_print_int [ 0; 1; 4095 ]
 let pattern n seed =
   String.init n (fun i -> Char.chr (((i * 7) + seed) land 255))
 
-(* host -> a -> b -> host through Copy parts, on both queues. *)
+let memory_of = function
+  | `Device -> B.Device
+  | `Pinned -> B.Pinned
+  | `Mapped -> B.Mapped
+
+(* host -> a -> b -> host through copies, on both queues. *)
 let round_trip (ka, kb, n, (oa, ob)) =
   S.with_gpu @@ fun g ->
-  let src = require_some (C.alloc g `Pinned n) in
-  let dst = require_some (C.alloc g `Pinned n) in
-  let a = require_some (C.alloc g ka (n + oa)) in
-  let b = require_some (C.alloc g kb (n + ob)) in
-  equal bool ~msg:"host of a" (ka <> `Device) (Option.is_some (C.host a));
-  let data = pattern n (n + oa) in
-  S.write (host src) data;
-  let copy q after d s = C.part g ~queue:q ~after (`Copy (d, s, n)) in
-  let ps =
-    [|
-      copy "COPY:0" [||] (a, oa) (src, 0);
-      copy "COMPUTE:0" [| 0 |] (b, ob) (a, oa);
-      copy "COPY:0" [| 1 |] (dst, 0) (b, ob);
-    |]
+  let r = require_some (C.alloc g ka 1) in
+  equal bool ~msg:"host of a" (ka <> `Device) (Option.is_some (C.host r));
+  C.free g r;
+  let c = S.core g in
+  let at k o =
+    B.view (B.create ~memory:(memory_of k) c (n + o)) ~first:o ~length:n
   in
-  equal S.answer `Ok (submit g ~v:1 ps);
-  S.wait g 1;
-  equal string data (S.read (host dst) n);
-  List.iter (C.free g) [ src; dst; a; b ]
+  let src = at `Pinned 0 and dst = at `Pinned 0 in
+  let a = at ka oa and b = at kb ob in
+  let data = pattern n (n + oa) in
+  S.write (B.address src) data;
+  let v =
+    S.submit g
+      [|
+        S.copy ~queue:"COPY:0" ~dst:a src;
+        S.copy ~queue:"COMPUTE:0" ~after:[| 0 |] ~dst:b a;
+        S.copy ~queue:"COPY:0" ~after:[| 1 |] ~dst b;
+      |]
+  in
+  S.wait g v;
+  equal string data (S.read (B.address dst) n)
 
 let past_memory () =
   S.with_gpu @@ fun g -> is_none (C.alloc g `Device (2 * C.budget g))
@@ -151,10 +165,10 @@ let fills_in_a_fresh_domain () =
   let r, current =
     Domain.join
       (Domain.spawn (fun () ->
-           let r = submit g ~v:1 [| S.part g ~queue:"COMPUTE:0" f |] in
-           (r, S.current ())))
+           let v = S.submit g [| S.part ~queue:"COMPUTE:0" f |] in
+           (v, S.current ())))
   in
-  equal S.answer `Ok r;
+  equal int ~msg:"the value" 1 r;
   equal nativeint ~msg:"the domain's thread has no context after" 0n current;
   not_equal nativeint ~msg:"the fill saw a context" 0n (S.seen f);
   S.wait g 1;
@@ -177,8 +191,7 @@ let kernel_through_map_host () =
   let f =
     S.launch (kernel "double_index") ~grid:4 ~block:256 (address inside) n
   in
-  equal S.answer `Ok (submit g ~v:1 [| S.part g ~queue:"COMPUTE:0" f |]);
-  S.wait g 1;
+  S.wait g (S.submit g [| S.part ~queue:"COMPUTE:0" f |]);
   equal (list int) (List.init n (fun i -> 2 * i)) (List.init n (S.get32 at));
   C.free g inside;
   C.free g whole;
@@ -186,23 +199,22 @@ let kernel_through_map_host () =
   S.free_pages p (2 * S.page)
 
 (* A copy on COPY:0, then a fill on COMPUTE:0 that fails: the failed value is
-   still written after the copy, and so is the next one. *)
+   still written after the copy. *)
 let failed_fill () =
   let g = S.gpu () in
-  let src = require_some (C.alloc g `Device 64) in
-  let dst = require_some (C.alloc g `Pinned 64) in
+  let c = S.core g in
+  let src = B.create c 64 and dst = B.create ~memory:Pinned c 64 in
   let data = pattern 64 3 in
-  S.write_gpu (C.handle src) data;
-  let copy = C.part g ~queue:"COPY:0" (`Copy ((dst, 0), (src, 0), 64)) in
-  let fails = S.part g ~queue:"COMPUTE:0" (S.failing 1) in
-  let r = submit g ~v:1 [| copy; fails |] in
-  let why = require_match (function `Failed w -> Some w | `Ok -> None) r in
+  S.write_gpu (Nativeint.of_int (B.address src)) data;
+  let parts =
+    [|
+      S.copy ~queue:"COPY:0" ~dst src; S.part ~queue:"COMPUTE:0" (S.failing 1);
+    |]
+  in
+  let why = lost (fun () -> S.submit g parts) in
   starts_with ~affix:"running a fill: CUDA_ERROR_INVALID_VALUE: " why;
   S.wait g 1;
-  equal string ~msg:"copied before the word" data (S.read (host dst) 64);
-  equal S.answer ~msg:"the next submit" (`Failed why) (submit g ~v:2 [||]);
-  S.wait g 2;
-  S.stop g
+  equal string ~msg:"copied before the word" data (S.read (B.address dst) 64)
 
 (* A fill that fails behind a 100 ms kernel: stop finds the kernel running, and
    the word still reaches the failed value once it ends. *)
@@ -219,13 +231,10 @@ let failed_behind_work () =
   in
   let parts =
     [|
-      S.part g ~queue:"COMPUTE:0" spin;
-      S.part g ~queue:"COMPUTE:0" (S.failing 1);
+      S.part ~queue:"COMPUTE:0" spin; S.part ~queue:"COMPUTE:0" (S.failing 1);
     |]
   in
-  let r = submit g ~v:1 parts in
-  ignore (require_match (function `Failed w -> Some w | `Ok -> None) r);
-  S.stop g;
+  ignore (lost (fun () -> S.submit g parts));
   S.wait g 1
 
 (* A wait on a host word holds a submission's work on both queues until the host
@@ -237,7 +246,9 @@ let held g ~start ~wait ~below ~release =
   let zeros = String.make 64 '\000' and data = pattern 64 1 in
   S.write_gpu (C.handle src) data;
   Array.iter (fun d -> S.write (host d) zeros) dst;
-  let copy q d = C.part g ~queue:q (`Copy ((d, 0), (src, 0), 64)) in
+  let copy queue d =
+    { S.queue; dst = address d; src = address src; bytes = 64; after = [||] }
+  in
   let held () =
     S.still ~msg:"the word" int 0 (fun () -> C.signaled g) ~ms:20;
     Array.iter
@@ -246,8 +257,8 @@ let held g ~start ~wait ~below ~release =
   in
   S.set64 (host w) start;
   Fun.protect ~finally:(fun () -> S.set64 (host w) release) @@ fun () ->
-  let ps = [| copy "COMPUTE:0" dst.(0); copy "COPY:0" dst.(1) |] in
-  equal S.answer `Ok (submit g ~v:1 ~waits:[| (`Word, address w, wait) |] ps);
+  let cs = [| copy 0 dst.(0); copy 1 dst.(1) |] in
+  equal S.answer `Ok (S.copies g ~v:1 ~waits:[| (address w, wait) |] cs);
   held ();
   S.set64 (host w) below;
   held ();
@@ -259,42 +270,25 @@ let waits =
   [
     test "a Word wait holds the work across the 64-bit wrap (sampled)"
       (fun () -> S.with_gpu (held ~start:(-3) ~wait:2 ~below:1 ~release:2));
-    test "an Object wait raises" (fun () ->
-        S.with_gpu @@ fun g ->
-        raises_match Exn.invalid_arg (fun () ->
-            submit g ~v:1 ~waits:[| (`Object, 0, 1) |] [||]));
     cases ~name:(strf "%d satisfied waits complete on both queues")
       "batches" [ 255; 256 ] (fun n ->
         S.with_gpu @@ fun g ->
         let w = require_some (C.alloc g `Pinned 8) in
         let b = require_some (C.alloc g `Pinned 16) in
         S.set64 (host w) 1;
-        let waits = Array.make n (`Word, address w, 1) in
-        let copy q after =
-          C.part g ~queue:q ~after (`Copy ((b, 8), (b, 0), 8))
+        let waits = Array.make n (address w, 1) in
+        let copy queue after =
+          { S.queue; dst = address b + 8; src = address b; bytes = 8; after }
         in
-        let ps = [| copy "COPY:0" [||]; copy "COMPUTE:0" [| 0 |] |] in
-        equal S.answer `Ok (submit g ~v:1 ~waits ps);
+        let cs = [| copy 1 [||]; copy 0 [| 0 |] |] in
+        equal S.answer `Ok (S.copies g ~v:1 ~waits cs);
         S.wait g 1);
   ]
 
 let misuse () =
   S.with_gpu @@ fun g ->
   let r = require_some (C.alloc g `Device 64) in
-  let fill = (0n, 0n, 0, 0) in
-  let part w = ignore (C.part g ~queue:"COMPUTE:0" w) in
   let raises name f = raises_match ~msg:name Exn.invalid_arg f in
-  raises "words" (fun () -> part (`Words [| 0 |]));
-  raises "ring units" (fun () -> part (`Fill (0n, 0n, 1, 0)));
-  raises "segment bytes" (fun () -> part (`Fill (0n, 0n, 0, 1)));
-  raises "no such queue" (fun () -> C.part g ~queue:"COPY:1" (`Fill fill));
-  raises "a copy past its region" (fun () -> part (`Copy ((r, 0), (r, 40), 32)));
-  raises "a negative offset" (fun () -> part (`Copy ((r, -1), (r, 32), 8)));
-  raises "a negative after" (fun () ->
-      C.part g ~queue:"COMPUTE:0" ~after:[| -1 |] (`Fill fill));
-  let p = C.part g ~queue:"COMPUTE:0" ~after:[| 0 |] (`Fill fill) in
-  raises "an after at its own index" (fun () -> submit g ~v:1 [| p |]);
-  raises "a value other than the next" (fun () -> submit g ~v:2 [||]);
   raises "alloc of 0 bytes" (fun () -> C.alloc g `Device 0);
   raises "map_host of 0 bytes" (fun () -> C.map_host g (word g) 0);
   raises "peer of one device" (fun () -> C.peer g g);
@@ -302,8 +296,6 @@ let misuse () =
   raises "free of the word" (fun () -> C.free g (C.word g));
   C.free g r;
   raises "free twice" (fun () -> C.free g r);
-  raises "a copy of a freed region" (fun () ->
-      part (`Copy ((r, 0), (r, 32), 8)));
   let p = S.pages S.page in
   let m = require_some (C.map_host g p 64) in
   C.free g m;
@@ -315,8 +307,6 @@ let another_device () =
   let r = require_some (C.alloc a `Pinned 64) in
   S.stop a;
   S.with_gpu @@ fun b ->
-  raises_match Exn.invalid_arg (fun () ->
-      C.part b ~queue:"COPY:0" (`Copy ((r, 0), (r, 32), 8)));
   raises_match Exn.invalid_arg (fun () -> C.free b r);
   C.free a r
 
@@ -342,12 +332,13 @@ let work =
          fills_in_a_fresh_domain;
        test "a kernel addresses host memory where map_host says"
          kernel_through_map_host;
-       test "a failed fill is Failed and its value still drains" failed_fill;
+       test "a failed fill loses the device, and its value still drains"
+         failed_fill;
        test "a value failed behind running work drains once it ends"
          failed_behind_work;
        test "misuse raises" misuse;
        test "a region of another device raises" another_device;
-       test "the C room refuses what part refuses" room;
+       test "the C room refuses words, room and unknown queues" room;
      ]
     @ waits)
 
@@ -369,8 +360,7 @@ let images () =
       not_equal string ~msg:"the cubin's GPU" "sm_89" (C.arch g);
       starts_with ~affix:"loading the image: CUDA_ERROR_" e);
   let f = S.launch (Option.get (C.entry m "empty")) ~grid:1 ~block:1 0 0 in
-  equal S.answer `Ok (submit g ~v:1 [| S.part g ~queue:"COMPUTE:0" f |]);
-  S.wait g 1;
+  S.wait g (S.submit g [| S.part ~queue:"COMPUTE:0" f |]);
   C.unload g m;
   raises_match Exn.invalid_arg (fun () -> C.entry m "empty");
   raises_match Exn.invalid_arg (fun () -> C.unload g m)
@@ -389,7 +379,7 @@ let spin g flag =
   let f =
     S.launch (kernel "spin") ~grid:1 ~block:1 (address flag) (10 * second)
   in
-  equal S.answer `Ok (submit g ~v:1 [| S.part g ~queue:"COMPUTE:0" f |]);
+  equal int ~msg:"the value" 1 (S.submit g [| S.part ~queue:"COMPUTE:0" f |]);
   m
 
 let long_work () =
@@ -441,8 +431,7 @@ let stop_idle () =
   let p = S.pages S.page in
   let r = require_some (C.map_host g p 64) in
   equal bool ~msg:"locked" true (S.locked p);
-  equal S.answer `Ok (submit g ~v:1 [||]);
-  S.wait g 1;
+  S.wait g (S.submit g [||]);
   S.stop g;
   equal int ~msg:"the word" 1 (C.signaled g);
   C.free g r;
@@ -832,78 +821,65 @@ module Order = struct
 
   type sys = {
     g : C.t;
-    regions : C.region array;
+    buffers : B.t array;
     flag : C.region;
     image : C.image;
     spin : int;
   }
 
-  let value = ref 0
-
   let start () =
     let g = shared () in
-    let regions =
+    let buffers =
       Array.init buffers (fun b ->
-          let r = Option.get (C.alloc g `Device size) in
-          S.write_gpu (C.handle r) (Bytes.to_string (initial b));
+          let r = B.create (S.core g) size in
+          S.write_gpu
+            (Nativeint.of_int (B.address r))
+            (Bytes.to_string (initial b));
           r)
     in
     let flag = Option.get (C.alloc g `Pinned 8) in
     S.set64 (host flag) 0;
     let image, kernel = S.kernels g in
-    { g; regions; flag; image; spin = kernel "spin" }
+    { g; buffers; flag; image; spin = kernel "spin" }
 
   let release s =
-    Array.iter (C.free s.g) s.regions;
     C.free s.g s.flag;
     C.unload s.g s.image
 
   (* Submits [subs] back to back, then reads the word until it holds the last
      value: each read is at least the one before. *)
   let run_sys s subs =
-    let fills = ref [] in
     let part p =
       let queue = if p.copy then "COPY:0" else "COMPUTE:0" in
       let after = Array.of_list p.after in
-      let dst = s.regions.(p.dst) and src = s.regions.(p.src) in
-      if p.delay = 0 then
-        C.part s.g ~queue ~after (`Copy ((dst, p.do_), (src, p.so), p.n))
+      let dst = B.view s.buffers.(p.dst) ~first:p.do_ ~length:p.n
+      and src = B.view s.buffers.(p.src) ~first:p.so ~length:p.n in
+      if p.delay = 0 then S.copy ~queue ~after ~dst src
       else
-        let f =
-          S.delayed ~spin:s.spin ~flag:(address s.flag) ~ns:p.delay
-            ~dst:(address dst + p.do_)
-            ~src:(address src + p.so)
-            p.n
-        in
-        fills := f :: !fills;
-        S.part s.g ~queue ~after f
+        S.part ~queue ~after
+          (S.delayed ~spin:s.spin ~flag:(address s.flag) ~ns:p.delay
+             ~dst:(B.address dst) ~src:(B.address src) p.n)
     in
-    let first = !value + 1 in
-    let hand ps =
-      incr value;
-      equal S.answer `Ok
-        (submit s.g ~v:!value (Array.of_list (List.map part ps)))
-    in
-    List.iter hand subs;
+    let first = Device_core.submitted (S.core s.g) + 1 in
+    let hand ps = S.submit s.g (Array.of_list (List.map part ps)) in
+    let last = List.fold_left (fun _ ps -> hand ps) (first - 1) subs in
     let rec watch seen =
       let w = C.signaled s.g in
       at_least int ~msg:"the word" ~than:seen w;
-      at_most int ~msg:"the word" ~than:!value w;
-      if w < !value then watch w
+      at_most int ~msg:"the word" ~than:last w;
+      if w < last then watch w
     in
     watch (first - 1);
-    S.wait s.g !value;
-    S.still ~msg:"the word" int !value (fun () -> C.signaled s.g) ~ms:1;
-    (* The fills lived until their submissions returned. *)
-    ignore (Sys.opaque_identity !fills)
+    S.wait s.g last;
+    S.still ~msg:"the word" int last (fun () -> C.signaled s.g) ~ms:1
 
   let invariant m s =
     Array.iteri
       (fun b r ->
         equal string ~msg:(strf "buffer %d" b)
           (Bytes.to_string m.bufs.(b))
-          (S.read_gpu (C.handle r) size))
-      s.regions
+          (S.read_gpu (Nativeint.of_int (B.address r)) size))
+      s.buffers
 
   let parts =
     let open Gen in

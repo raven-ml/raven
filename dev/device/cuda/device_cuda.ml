@@ -128,13 +128,12 @@ type region = {
   kind : kind;
   address : int;
   handle : int;
-  bytes : int;
   home : int; (* the device whose GPU holds GPU memory *)
   live : bool Atomic.t; (* taken once by free *)
 }
 
-let region owner kind ~address ~handle bytes =
-  { owner; kind; address; handle; bytes; home = owner; live = Atomic.make true }
+let region owner kind ~address ~handle =
+  { owner; kind; address; handle; home = owner; live = Atomic.make true }
 
 let rec on_host = function
   | Device -> false
@@ -216,7 +215,7 @@ let open_ i =
         end
         else begin
           let w = word_address self in
-          let word = region self Word ~address:w ~handle:w 8 in
+          let word = region self Word ~address:w ~handle:w in
           Ok { self; arch = strf "sm_%d%d" major minor; budget; word; held }
         end
 
@@ -258,8 +257,7 @@ let alloc g kind n =
   let host = match kind with `Device -> false | `Pinned | `Mapped -> true in
   match alloc_memory g.self host n with
   | a when a >= 0 ->
-      Some
-        (region g.self (if host then Host else Device) ~address:a ~handle:a n)
+      Some (region g.self (if host then Host else Device) ~address:a ~handle:a)
   | _ -> refused (strf "allocating %d bytes" n) g.self None
 
 let address r = Some r.address
@@ -294,7 +292,7 @@ let registry : registration list ref = ref []
 let registry_lock = Mutex.create ()
 let page = page_size ()
 let pages a n = (a / page * page, (a + n + page - 1) / page * page)
-let locked g e a n address = region g.self (Locked e) ~address ~handle:a n
+let locked g e a address = region g.self (Locked e) ~address ~handle:a
 let page_locking n a = strf "page-locking %d bytes at 0x%x" n a
 
 (* A range CUDA did not page-lock is registered. One it did, for another owner,
@@ -305,7 +303,7 @@ let page_lock g a n =
   if first >= 0 && last >= 0 then
     let start = allocation g.self a in
     if start >= 0 && start = allocation g.self (a + n - 1) then
-      Some (locked g None a n first)
+      Some (locked g None a first)
     else None
   else if first >= 0 || last >= 0 then None
   else if lock g.self true a n <> 0 then refused (page_locking n a) g.self None
@@ -315,7 +313,7 @@ let page_lock g a n =
     | address ->
         let e = { start = a; bytes = n; address; maps = 1; stuck = false } in
         registry := e :: !registry;
-        Some (locked g (Some e) a n address)
+        Some (locked g (Some e) a address)
 
 let map_host g a n =
   if n < 1 then
@@ -331,7 +329,7 @@ let map_host g a n =
   | Some e when e.stuck -> None
   | Some e ->
       e.maps <- e.maps + 1;
-      Some (locked g (Some e) a n (e.address + (a - e.start)))
+      Some (locked g (Some e) a (e.address + (a - e.start)))
   | None -> if List.exists shares !registry then None else page_lock g a n
 
 let free g r =
@@ -393,105 +391,10 @@ let unload g (m : image) =
   | 0 -> ()
   | s -> fault "unloading the image" s
 
-(* Work. A part is its device and the ints the C submit reads: nx_part's int
-   fields in its order (queue, fill, arg, ring_units, segment_bytes, copy_dst,
-   copy_dst_offset, copy_src, copy_src_offset, copy_bytes), then the [after]
-   indices. *)
-type part = { owner : int; ints : int array }
+(* Work *)
 
-let after_at = 10
-
-(* nx_edge.h's codes *)
-
-let nx_word = 0
-let nx_ok = 0
-
-external last : int -> int = "caml_device_cuda_last" [@@noalloc]
-
-external submit_parts : int -> int -> int array -> part array -> int
-  = "caml_device_cuda_submit"
-
-external failure : int -> string = "caml_device_cuda_failure"
 external room_entry : unit -> int = "caml_device_cuda_room_entry"
 external submit_entry : unit -> int = "caml_device_cuda_submit_entry"
-
-let part g ~queue ?(after = [||]) w =
-  let queue =
-    match queue with
-    | "COMPUTE:0" -> 0
-    | "COPY:0" -> 1
-    | q ->
-        invalid_argf "Device_cuda.part: queue %S, expected COMPUTE:0 or COPY:0"
-          q
-  in
-  Array.iter
-    (fun j ->
-      if j < 0 then
-        invalid_argf "Device_cuda.part: after index %d is negative" j)
-    after;
-  let part ints = { owner = g.self; ints = Array.append ints after } in
-  match w with
-  | `Words _ -> invalid_arg "Device_cuda.part: the device runs no words"
-  | `Fill (f, arg, units, bytes) ->
-      if units <> 0 || bytes <> 0 then
-        invalid_argf
-          "Device_cuda.part: the fill declares %d ring units and %d segment \
-           bytes, expected 0"
-          units bytes;
-      let fill = Nativeint.to_int f and arg = Nativeint.to_int arg in
-      part [| queue; fill; arg; 0; 0; 0; 0; 0; 0; 0 |]
-  | `Copy ((dst, o), (src, o'), n) ->
-      let check what (r : region) o =
-        if r.owner <> g.self || not (Atomic.get r.live) then
-          invalid_argf
-            "Device_cuda.part: the copy's %s is no live region of the device"
-            what;
-        if o < 0 || n < 0 || o + n > r.bytes then
-          invalid_argf
-            "Device_cuda.part: the copy's %s range [%d, %d) lies outside its \
-             %d bytes"
-            what o (o + n) r.bytes
-      in
-      check "destination" dst o;
-      check "source" src o';
-      part [| queue; 0; 0; 0; 0; dst.handle; o; src.handle; o'; n |]
-
-let room _ _ = `Fits
-
-let check_part self i p =
-  if p.owner <> self then
-    invalid_argf "Device_cuda.submit: part %d is another device's" i;
-  for k = after_at to Array.length p.ints - 1 do
-    if p.ints.(k) >= i then
-      invalid_argf
-        "Device_cuda.submit: part %d waits for part %d, expected an earlier \
-         part"
-        i p.ints.(k)
-  done
-
-let wait_kind = function
-  | `Word -> nx_word
-  | `Object ->
-      invalid_arg
-        "Device_cuda.submit: the device waits only for words to reach a value"
-
-(* Allocates nothing for a submission without waits. *)
-let submit g ~v ~waits ~handles:_ parts =
-  let next = last g.self + 1 in
-  if v <> next then
-    invalid_argf "Device_cuda.submit: value %d, expected %d" v next;
-  for i = 0 to Array.length parts - 1 do
-    check_part g.self i parts.(i)
-  done;
-  let words = Array.make (3 * Array.length waits) 0 in
-  for k = 0 to Array.length waits - 1 do
-    let kind, at, w = waits.(k) in
-    words.(3 * k) <- wait_kind kind;
-    words.((3 * k) + 1) <- at;
-    words.((3 * k) + 2) <- w
-  done;
-  if submit_parts g.self v words parts = nx_ok then `Ok
-  else `Failed (failure g.self)
 
 let room_entry = Nativeint.of_int (room_entry ())
 let submit_entry = Nativeint.of_int (submit_entry ())

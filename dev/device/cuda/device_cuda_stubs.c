@@ -734,87 +734,11 @@ value caml_device_cuda_submit_entry(value unit) {
   return Val_long((intnat)submit_entry);
 }
 
-/* Device_cuda.submit's C side. [v_waits] holds a kind, an address and a
-   value per wait. A part is a record whose second field holds ints:
-   nx_part's int fields in the order below, then its [after] indices. Waits
-   and parts are copied out of the OCaml heap, then submitted without the
-   runtime, which runs nothing before the answer, NX_OK or NX_FAILED,
-   reaches the caller. */
-enum {
-  part_queue,
-  part_fill,
-  part_arg,
-  part_ring_units,
-  part_segment_bytes,
-  part_copy_dst,
-  part_copy_dst_offset,
-  part_copy_src,
-  part_copy_src_offset,
-  part_copy_bytes,
-  part_after
-};
-
-static intnat at(value ints, int f) { return Long_val(Field(ints, f)); }
-
-value caml_device_cuda_submit(value v_self, value v_v, value v_waits,
-                              value v_parts) {
-  struct device *d = Device_val(v_self);
-  int nwaits = (int)(Wosize_val(v_waits) / 3);
-  int nparts = (int)Wosize_val(v_parts);
-  size_t nafter = 0;
-  for (int i = 0; i < nparts; i++)
-    nafter += Wosize_val(Field(Field(v_parts, i), 1)) - part_after;
-  size_t size = nwaits * sizeof(struct nx_wait) +
-                nparts * sizeof(struct nx_part) + nafter * sizeof(int);
-  char *mem = size == 0 ? NULL : malloc(size);
-  if (size != 0 && mem == NULL) caml_raise_out_of_memory();
-  struct nx_wait *w = (struct nx_wait *)mem;
-  struct nx_part *p = (struct nx_part *)(w + nwaits);
-  int *after = (int *)(p + nparts);
-  for (int i = 0; i < nwaits; i++) {
-    w[i].kind = (int)at(v_waits, 3 * i);
-    w[i].at = (uint64_t)at(v_waits, 3 * i + 1);
-    w[i].value = (uint64_t)at(v_waits, 3 * i + 2);
-  }
-  for (int i = 0; i < nparts; i++) {
-    value k = Field(Field(v_parts, i), 1);
-    p[i] = (struct nx_part){
-        .queue = (int)at(k, part_queue),
-        .fill = (int (*)(void *, void *, uint64_t))at(k, part_fill),
-        .arg = (void *)at(k, part_arg),
-        .ring_units = (size_t)at(k, part_ring_units),
-        .segment_bytes = (size_t)at(k, part_segment_bytes),
-        .copy_dst = (uint64_t)at(k, part_copy_dst),
-        .copy_dst_offset = (uint64_t)at(k, part_copy_dst_offset),
-        .copy_src = (uint64_t)at(k, part_copy_src),
-        .copy_src_offset = (uint64_t)at(k, part_copy_src_offset),
-        .copy_bytes = (uint64_t)at(k, part_copy_bytes),
-        .after = after,
-        .nafter = (int)(Wosize_val(k) - part_after)};
-    for (int j = 0; j < p[i].nafter; j++) *after++ = (int)at(k, part_after + j);
-  }
-  const char *failure = NULL;
-  caml_enter_blocking_section_no_pending();
-  int r = device_cuda_submit(d, (uint64_t)Long_val(v_v), w, nwaits, p, nparts,
-                             NULL, 0, &failure);
-  free(mem);
-  caml_leave_blocking_section();
-  return Val_int(r);
-}
-
-value caml_device_cuda_failure(value v_self) {
-  return caml_copy_string(Device_val(v_self)->failure);
-}
-
 /* Timeline */
 
 value caml_device_cuda_signaled(value v_self) {
   struct device *d = Device_val(v_self);
   return Val_long(atomic_load_explicit(d->word, memory_order_acquire));
-}
-
-value caml_device_cuda_last(value v_self) {
-  return Val_long(Device_val(v_self)->last);
 }
 
 value caml_device_cuda_word(value v_self) {

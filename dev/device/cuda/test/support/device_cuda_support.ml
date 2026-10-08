@@ -65,27 +65,56 @@ let bind g =
          "cuMemHostUnregister";
        |])
 
-(* The device gpu opened, until a test stops it: one a failed test left open is
-   stopped by the next gpu. *)
+(* The device gpu opened and nx.device's device over it, until a test stops it
+   or nx.device loses it: one a failed test left open is stopped by the next
+   gpu. Each open has a name of its own, since nx.device keeps a name's device
+   after the driver's stop. *)
 let opened = ref None
+let opens = ref 0
 
 let stop g =
-  (match !opened with Some o when o == g -> opened := None | _ -> ());
+  (match !opened with Some (o, _) when o == g -> opened := None | _ -> ());
   Device_cuda.stop g
 
 let gpu () =
   if Device_cuda.count () = 0 then skip ~reason:"CUDA sees no GPU" ();
   hold_gpu ();
-  Option.iter stop !opened;
-  let g = Result.get_ok (Device_cuda.open_ 0) in
-  opened := Some g;
+  Option.iter (fun (o, _) -> stop o) !opened;
+  incr opens;
+  let g = ref None in
+  let make () =
+    Result.map
+      (fun x ->
+        g := Some x;
+        x)
+      (Device_cuda.open_ 0)
+  in
+  let name = strf "CUDA:test-%d" !opens in
+  let c = Result.get_ok (Device_core.open_ (module Device_cuda) ~name make) in
+  let g = Option.get !g in
+  opened := Some (g, c);
   bind g;
   g
+
+let core g =
+  match !opened with
+  | Some (o, c) when o == g -> c
+  | _ -> invalid_arg "Device_cuda_support.core: the device is not open"
+
+let submit g parts =
+  let s =
+    Device_core.Submission.make ~reads:0 ~writes:0 ~waits:0 (core g) parts
+  in
+  match Device_core.submit s with
+  | p -> Device_core.Point.value p
+  | exception (Device_core.Lost _ as e) ->
+      opened := None;
+      raise e
 
 let with_gpu f =
   let g = gpu () in
   let stop_left () =
-    match !opened with Some o when o == g -> stop g | _ -> ()
+    match !opened with Some (o, _) when o == g -> stop g | _ -> ()
   in
   Fun.protect ~finally:stop_left (fun () -> f g)
 
@@ -134,9 +163,9 @@ let wait g v =
 
 (* Fills *)
 
-type arg
+type arg =
+  (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
 
-external arg_address : arg -> nativeint = "device_cuda_test_arg_address"
 external failing_arg : int -> arg = "device_cuda_test_failing"
 external failing_fill : unit -> nativeint = "device_cuda_test_failing_fill"
 
@@ -148,8 +177,16 @@ external seen_arg : arg -> nativeint = "device_cuda_test_seen"
 
 type fill = { fn : nativeint; arg : arg }
 
-let part g ~queue ?after f =
-  Device_cuda.part g ~queue ?after (`Fill (f.fn, arg_address f.arg, 0, 0))
+let part ~queue ?(after = [||]) f =
+  let arg = Device_core.Buffer.of_bigarray f.arg in
+  {
+    Device_core.Submission.queue;
+    after;
+    work = Fill { fill = f.fn; arg; ring_units = 0; segment_bytes = 0 };
+  }
+
+let copy ~queue ?(after = [||]) ~dst src =
+  { Device_core.Submission.queue; after; work = Copy { src; dst } }
 
 let failing code = { fn = failing_fill (); arg = failing_arg code }
 
@@ -171,6 +208,27 @@ external room : nativeint -> int -> bool -> int -> int -> int array -> int
 
 let room g ~queue ~words ~units ~bytes ~after =
   room (Device_cuda.self g) queue words units bytes after
+
+external copies :
+  nativeint -> int -> int array -> int array array -> string option
+  = "device_cuda_test_copies"
+
+type copy_c = {
+  queue : int;
+  dst : int;
+  src : int;
+  bytes : int;
+  after : int array;
+}
+
+let copies g ~v ~waits cs =
+  let waits =
+    Array.concat (Array.to_list (Array.map (fun (a, w) -> [| a; w |]) waits))
+  in
+  let ints c = Array.append [| c.queue; c.dst; c.src; c.bytes |] c.after in
+  match copies (Device_cuda.self g) v waits (Array.map ints cs) with
+  | None -> `Ok
+  | Some why -> `Failed why
 
 (* Kernels *)
 

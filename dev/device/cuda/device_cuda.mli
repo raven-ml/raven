@@ -13,24 +13,28 @@
     is value [1], each next one the value after it, and value [v] runs after
     every value below it, whichever queue each ran on.
 
-    A program that uses a GPU alone opens it, allocates and submits, then waits
-    for the word:
+    A program opens a GPU through nx.device, which hands it work:
     {[
-    let g = Result.get_ok (Device_cuda.open_ 0) in
-    let src = Option.get (Device_cuda.alloc g `Pinned 4096) in
-    let dst = Option.get (Device_cuda.alloc g `Device 4096) in
-    let copy = `Copy ((dst, 0), (src, 0), 4096) in
-    let p = Device_cuda.part g ~queue:"COPY:0" copy in
-    match Device_cuda.submit g ~v:1 ~waits:[||] ~handles:[||] [| p |] with
-    | `Ok ->
-        let rec wait () =
-          let seen = Device_cuda.signaled g in
-          if seen < 1 then (
-            Device_cuda.sleep g ~seen ~still_ms:200;
-            wait ())
-        in
-        wait ()
-    | `Failed why -> prerr_endline why
+    let g =
+      Device_core.open_
+        (module Device_cuda)
+        ~name:(Device_cuda.device_name 0)
+        (fun () -> Device_cuda.open_ 0)
+      |> Result.get_ok
+    in
+    let src = Device_core.Buffer.create ~memory:Pinned g 4096 in
+    let dst = Device_core.Buffer.create g 4096 in
+    let copy =
+      {
+        Device_core.Submission.queue = "COPY:0";
+        after = [||];
+        work = Copy { src; dst };
+      }
+    in
+    let s =
+      Device_core.Submission.make ~reads:0 ~writes:0 ~waits:0 g [| copy |]
+    in
+    Device_core.wait g (Device_core.Point.value (Device_core.submit s))
     ]}
 
     {b The CUDA library} ([libcuda]) is loaded at the first call of {!count} or
@@ -62,16 +66,16 @@
     ([None], [Error]) while [g]'s context is sound, and raises
     {!exception-Fault} with the context's error once a fault left one there. The
     functions that raise it are {!alloc}, {!map_peer}, {!map_host},
-    {!val-image}, {!entry}, {!unload} and {!sleep}; {!submit} answers [`Failed]
-    instead. Misuse, such as a region of another device or a value out of order,
-    raises [Invalid_argument].
+    {!val-image}, {!entry}, {!unload} and {!sleep}; the submit answers
+    [NX_FAILED] instead. Misuse, such as a region of another device, raises
+    [Invalid_argument].
 
     {b Domains.} Every value may be called from any domain, at the same time as
-    others, with three exceptions. {!room} and {!submit}, and their C forms, run
-    one call at a time, in value order: their caller serialises them. {!stop} is
-    called once, after every other call returned; after it only {!free} and the
-    [symbol] function of {!val-capability} are called. {!sleep} may run while
-    another domain submits.
+    others, with three exceptions. The C room and submit run one call at a time,
+    in value order: their caller serialises them. {!stop} is called once, after
+    every other call returned; after it only {!free} and the [symbol] function
+    of {!val-capability} are called. {!sleep} may run while another domain
+    submits.
 
     {b References.}
     - {{:https://docs.nvidia.com/cuda/cuda-driver-api/}CUDA Driver API}: Primary
@@ -137,7 +141,7 @@ val waits_on : t -> [ `Store | `Object | `Host ] -> bool
 *)
 
 val blocks : t -> [ `Returns | `May_block ]
-(** [blocks g] is [`May_block]: {!submit} calls CUDA, which may block. *)
+(** [blocks g] is [`May_block]: the submit calls CUDA, which may block. *)
 
 type capability = Device_cuda_abi.t
 (** The type for what compiled code needs from a device. *)
@@ -269,100 +273,57 @@ val unload : t -> image -> unit
 
 (** {1:work Work} *)
 
-type part
-(** The type for work for one queue of a device. *)
+val room_entry : nativeint
+(** [room_entry] is the address of the C function [device_cuda_room], in the
+    shape [nx_room_fn] of [nx_edge.h], which [device_cuda.h] declares. It
+    answers [NX_NEVER] for a part with words, ring units or segment bytes, or on
+    no queue of the device, and [NX_FITS] otherwise: CUDA's streams take any
+    amount of work, and a submit that finds a stream full waits for earlier work
+    to free it. *)
 
-val part :
-  t ->
-  queue:string ->
-  ?after:int array ->
-  [ `Words of int array
-  | `Fill of nativeint * nativeint * int * int
-  | `Copy of (region * int) * (region * int) * int ] ->
-  part
-(** [part g ~queue ~after w] is the work [w] for [g]'s queue [queue], one of
-    {!queues}. [after] (defaults to [[||]]) holds the indices, in the array
-    given to {!submit}, of the parts of its submission that it runs after, each
-    smaller than its own. Parts on one queue run in array order; parts on two
-    queues that [after] does not order may run at once. [w] is:
-    - [`Fill (f, arg, units, bytes)], a C function [f] that enqueues its work on
-      the queue's stream. {!submit} calls it as [f stream arg v], with [g]'s
-      context current on the calling thread and [v] the submission's value, as
-      {!Device_cuda_abi} states. Nothing bounds what a fill enqueues, so it
-      declares no room: [units] and [bytes] are [0], and {!val-part} refuses any
-      other;
-    - [`Copy ((dst, o), (src, o'), n)], a copy of the [n] bytes of [src] at
-      offset [o'] to [dst] at offset [o], any two regions of [g]. The caller
-      keeps the two ranges apart: a copy between overlapping ranges writes
-      undefined bytes.
+val submit_entry : nativeint
+(** [submit_entry] is the address of the C function [device_cuda_submit], in the
+    shape [nx_submit_fn] of [nx_edge.h], which [device_cuda.h] declares. It is
+    called without the domain lock, and calls no function of the OCaml runtime.
+    It hands over the parts as the value [v] after the last one the device was
+    given:
+    - A part on queue [0] runs on the stream ["COMPUTE:0"], on queue [1] on
+      ["COPY:0"]. Parts on one queue run in array order; parts on two queues
+      that [after] does not order may run at once.
+    - A fill [f] enqueues its work on its queue's stream: the submit calls it as
+      [f stream arg v], with the device's context current on the calling thread,
+      as {!Device_cuda_abi} states. Nothing bounds what a fill enqueues, so it
+      declares no room.
+    - A copy moves [copy_bytes] bytes between the handles of two regions of the
+      device ({!handle}) at their offsets. The ranges are apart: a copy between
+      overlapping ranges writes undefined bytes.
+    - Each wait holds the work back until the aligned 64-bit word at [at], which
+      the device's work addresses, holds at least [value], compared circularly:
+      [x] is at least [w] if [x - w], as a signed 64-bit integer, is not
+      negative. Its kind is [NX_WORD].
+    - [handles] is ignored: CUDA's work names its memory by address.
 
-    No part writes a timeline word, [g]'s or another device's: only the devices'
-    streams write their words, and a word the work wrote could move backwards or
-    claim work that has not completed. Nothing checks it, since a fill can store
-    anywhere.
+    The work runs after every earlier value of the device and after the waits;
+    once it completed, the timeline word holds [v]. A submission of no parts
+    writes [v] after its waits and after every earlier value. No part writes a
+    timeline word, the device's or another's: only the devices' streams write
+    their words, and a word the work wrote could move backwards or claim work
+    that has not completed.
 
-    Raises [Invalid_argument] if [queue] is not a queue of [g], if [w] is
-    [`Words _], which names ring words a CUDA device has not, if [units] or
-    [bytes] is not [0], if a copy's range lies outside its region, if a region
-    is of another device or was freed, or if an index of [after] is negative.
-
-    A part names its regions until it is submitted: the caller frees none of
-    them before. *)
-
-val room : t -> part array -> [ `Fits | `Later | `Never ]
-(** [room g ps] is [`Fits]: CUDA's streams take any amount of work, and a call
-    of {!submit} that finds a stream full waits for earlier work to free it. Its
-    C form, [device_cuda_room], answers [NX_NEVER] for a part {!val-part}
-    refuses: one with words, ring units or segment bytes, or on no queue of the
-    device. *)
-
-val submit :
-  t ->
-  v:int ->
-  waits:([ `Word | `Object ] * int * int) array ->
-  handles:nativeint array ->
-  part array ->
-  [ `Ok | `Failed of string ]
-(** [submit g ~v ~waits ~handles ps] hands over [ps] as [g]'s value [v], the
-    value after the last one [g] was given. Each wait [(`Word, a, w)] holds the
-    work back until the aligned 64-bit word at address [a], which [g]'s work
-    addresses, holds at least [w], compared circularly: [x] is at least [w] if
-    [x - w], as a signed 64-bit integer, is not negative. The work runs after
-    every earlier value of [g] and after the waits; once it completed, the
-    timeline word holds [v]. A submission of no parts writes [v] after its waits
-    and after every earlier value. [handles] is ignored: CUDA's work names its
-    memory by address.
-
-    The result is [`Ok] once every part is enqueued, or [`Failed why] with the
-    step and the error of the first CUDA call that failed, a fill's included, as
+    It answers [NX_OK] once every part is enqueued, or [NX_FAILED] with the step
+    and the error of the first CUDA call that failed, a fill's included, as
     ["running a fill: CUDA_ERROR_ILLEGAL_ADDRESS: an illegal memory access was
      encountered"]. The parts enqueued before the failure may run; the others
     never do. A failed device stays failed, since CUDA may keep the context's
-    error for the process: every later [submit] enqueues none of its parts and
-    answers the same [`Failed].
+    error for the process: every later submit enqueues none of its parts and
+    answers the same failure. The timeline word still reaches every value, so
+    that work waiting on it elsewhere runs on: a failed submit, and every later
+    one, writes [v] after its waits, every earlier value and the work enqueued
+    for [v]. It writes nothing once the context failed, whose work no longer
+    runs, or if CUDA refuses a call that orders the write.
 
-    The timeline word still reaches every value, so that work waiting on it
-    elsewhere runs on: a failed [submit], and every later one, writes [v] after
-    its waits, every earlier value and the work enqueued for [v]. It writes
-    nothing once the context failed, whose work no longer runs, or if CUDA
-    refuses a call that orders the write.
-
-    [submit] may block while a stream is full, until the device's earlier work
-    completes, and lets other domains run meanwhile.
-
-    Raises [Invalid_argument] if [v] is not the value after the last one, if a
-    part is another device's, if a part's [after] names a part at or after its
-    own index, or if a wait is [`Object]: the device waits only for words to
-    reach a value. *)
-
-val room_entry : nativeint
-(** [room_entry] is the address of the C function [device_cuda_room], {!room}
-    for C, which [device_cuda.h] declares. *)
-
-val submit_entry : nativeint
-(** [submit_entry] is the address of the C function [device_cuda_submit],
-    {!submit} for C, which [device_cuda.h] declares. It is called without the
-    domain lock, and calls no function of the OCaml runtime. *)
+    It may block while a stream is full, until the device's earlier work
+    completes. *)
 
 (** {1:timeline Timeline} *)
 
@@ -386,7 +347,7 @@ val sleep : t -> seen:int -> still_ms:int -> unit
     [still_ms] is not negative. It asks CUDA each millisecond whether [g]'s
     streams met an error ([cuStreamQuery]), so it finds a fault at most a
     millisecond after CUDA reports it. It lets other domains run while it waits,
-    and may run while {!submit} does.
+    and may run while the submit does.
 
     Raises {!exception-Fault} with CUDA's error if [g]'s work met one. *)
 
@@ -399,9 +360,9 @@ val stop : t -> unit
 (** [stop g] stops [g] for good, without waiting. If [g]'s work no longer writes
     memory (the work of every value it was given completed, its streams are
     idle, or a fault ended the context's work), the timeline word holds at least
-    the last value {!submit} was given when [stop] returns, so work of other
+    the last value the submit was given when [stop] returns, so work of other
     devices that waits on it runs on, and [g]'s streams are destroyed. Otherwise
-    the timeline word reaches the last value {!submit} was given once that work
+    the timeline word reaches the last value the submit was given once that work
     ends, unless it waits on a word of another device that never reaches its
     value; the GPU opens again once that work ends. After [stop], only {!free}
     and the [symbol] function of {!val-capability} may be called on [g]; neither

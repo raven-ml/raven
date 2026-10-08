@@ -8,7 +8,9 @@
    current on the calling thread. Each round trip writes the next value into
    a word of page-locked host memory and spins until it reads it. CUDA's
    functions are those a device's capability finds. A failing call raises
-   Failure with its line and status. Every stub holds the runtime. */
+   Failure with its line and status. One more stub calls the driver's own C
+   submit, for the waits nx.device cannot make. Every stub holds the
+   runtime. */
 
 #define _GNU_SOURCE
 
@@ -23,6 +25,8 @@
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
+
+#include "device_cuda.h"
 
 #if defined(_WIN32)
 #define CUDAAPI __stdcall
@@ -166,6 +170,22 @@ value device_cuda_bench_waits(value v_at, value v_n) {
   CHECK(p_cuStreamBatchMemOp_v2(streams[0], (unsigned int)n, ops, 0));
   release(0);
   spin();
+  return Val_unit;
+}
+
+/* The driver's submit of value [v_v] on the device [v_self], with no part
+   and [v_n] satisfied waits on the 64-bit word at [v_at]. */
+value device_cuda_bench_entry_waits(value v_self, value v_v, value v_at,
+                                    value v_n) {
+  struct nx_wait w[16];
+  int n = Int_val(v_n);
+  for (int i = 0; i < n; i++)
+    w[i] = (struct nx_wait){.at = (uint64_t)Long_val(v_at), .value = 1,
+                            .kind = NX_WORD};
+  const char *why = NULL;
+  if (device_cuda_submit((void *)Nativeint_val(v_self), (uint64_t)Long_val(v_v),
+                         w, n, NULL, 0, NULL, 0, &why) != NX_OK)
+    caml_failwith(why);
   return Val_unit;
 }
 
