@@ -9,29 +9,26 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 let count (c : claim) = Atomic.Loc.get [%atomic.loc c.count]
 let swap (c : claim) a b = Atomic.Loc.compare_and_set [%atomic.loc c.count] a b
 
+(* Adds a read claim to [c]; the loop retries only a compare-and-set another
+   domain's claim beat. *)
+let rec read_claim fn c =
+  let n = count c in
+  if n < 0 then invalid_argf "Rig.%s: the memory is held exclusive" fn
+  else if not (swap c n (n + 1)) then read_claim fn c
+
 let take fn b =
   Buffer.check_live fn b;
   Memory.check_points (Memory.stamps b.mem);
-  let c = b.mem.claim in
-  let rec go () =
-    let n = count c in
-    if n < 0 then invalid_argf "Rig.%s: the memory is held exclusive" fn
-    else if not (swap c n (n + 1)) then go ()
-  in
-  go ()
+  read_claim fn b.mem.claim
 
 let read b = take "Claim.read" b
 
-let release_claim c =
-  let rec go () =
-    let n = count c in
-    if n = 0 then
-      invalid_arg "Rig.Claim.release: the memory has no read claim"
-    else if n < 0 then
-      invalid_arg "Rig.Claim.release: the memory is held exclusive"
-    else if not (swap c n (n - 1)) then go ()
-  in
-  go ()
+let rec release_claim c =
+  let n = count c in
+  if n = 0 then invalid_arg "Rig.Claim.release: the memory has no read claim"
+  else if n < 0 then
+    invalid_arg "Rig.Claim.release: the memory is held exclusive"
+  else if not (swap c n (n - 1)) then release_claim c
 
 let release b = release_claim b.mem.claim
 
@@ -69,8 +66,7 @@ let refuse_overlaps read donate =
           if s = space then (ends, donated) else (min_int, min_int)
         in
         if a < donated || (d && a < ends) then
-          invalid_arg
-            "Rig.Claim.with_: a donated buffer overlaps another";
+          invalid_arg "Rig.Claim.with_: a donated buffer overlaps another";
         sweep s
           (Int.max ends (a + n))
           (if d then Int.max donated (a + n) else donated)
