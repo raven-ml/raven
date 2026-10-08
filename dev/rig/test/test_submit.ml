@@ -291,6 +291,14 @@ let test_unmapped_wait () =
 let test_in_queue () = in_queue ~completion:`Host
 let test_in_queue_object () = in_queue ~completion:`Object
 
+(* A Polled device that runs itself completes its work though no wait sleeps
+   on it. *)
+let test_runs_itself () =
+  let d, p = P.open_ ~runs:`Itself "submit:itself" in
+  let a = submit (empty d) in
+  Support.await "the device's own run" (fun () -> P.queued p = 0);
+  equal int (Rig.Point.value a) (Rig.signaled d)
+
 (* A wait on a device whose queue waits for a producer's work returns though
    nothing else runs the producer: a device runs its own work while the host
    sleeps on another. *)
@@ -635,6 +643,8 @@ let tests =
         test "a queue that waits on host words waits in the queue" test_in_queue;
         test "a wait on a queue waiting for a producer runs the producer"
           test_wait_in_queue;
+        test "a Polled device that runs itself runs its work unasked"
+          test_runs_itself;
         test "a producer whose word the device cannot map is waited on the host"
           test_unmapped_wait;
         test "waits beyond the queue's bound are waited for on the host"

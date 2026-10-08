@@ -7,6 +7,7 @@ external polled_new : int -> bool -> nativeint = "rig_test_polled_new"
 external polled_fail : nativeint -> unit = "rig_test_polled_fail"
 external polled_run : nativeint -> int = "rig_test_polled_run"
 external polled_drive : nativeint -> int = "rig_test_polled_drive"
+external polled_start : nativeint -> unit = "rig_test_polled_start"
 external polled_queued : nativeint -> int = "rig_test_polled_queued"
 external polled_submits : nativeint -> int = "rig_test_polled_submits"
 external polled_blocked : nativeint -> int = "rig_test_polled_blocked"
@@ -280,48 +281,54 @@ module Polled = struct
       ?(transport = false) ?(peers = true) ?(maps_host = true)
       ?(budget = 1 lsl 30) ?(memory = max_int) ?(window = max_int)
       ?(may_block = false) ?(completion = `Host) ?(waits_on = [])
-      ?(max_waits = max_int) ?(answer = `Stopped) () =
+      ?(max_waits = max_int) ?(answer = `Stopped) ?(runs = `When_slept) () =
     let limits = function
       | `Device -> memory
       | `Mapped -> window
       | `Pinned -> max_int
     in
-    {
-      c = polled_new capacity may_block;
-      copies;
-      host_visible;
-      transport;
-      peers;
-      maps_host;
-      budget;
-      limits;
-      may_block;
-      objects = completion = `Object;
-      waits = waits_on;
-      max_waits;
-      answer;
-      lock = Mutex.create ();
-      opened = Condition.create ();
-      calls = [];
-      frees = [];
-      allocs = [];
-      maps = [];
-      held = [];
-      mapped = [];
-      failure = "";
-      fault = None;
-      word_fault = None;
-      interrupt_next = false;
-      stalls = 0;
-      gated = false;
-      sleepers = 0;
-    }
+    let d =
+      {
+        c = polled_new capacity may_block;
+        copies;
+        host_visible;
+        transport;
+        peers;
+        maps_host;
+        budget;
+        limits;
+        may_block;
+        objects = completion = `Object;
+        waits = waits_on;
+        max_waits;
+        answer;
+        lock = Mutex.create ();
+        opened = Condition.create ();
+        calls = [];
+        frees = [];
+        allocs = [];
+        maps = [];
+        held = [];
+        mapped = [];
+        failure = "";
+        fault = None;
+        word_fault = None;
+        interrupt_next = false;
+        stalls = 0;
+        gated = false;
+        sleepers = 0;
+      }
+    in
+    if runs = `Itself then polled_start d.c;
+    d
 
   let open_ ?capacity ?copies ?host_visible ?transport ?peers ?maps_host ?budget
-      ?memory ?window ?may_block ?completion ?waits_on ?max_waits ?answer name =
+      ?memory ?window ?may_block ?completion ?waits_on ?max_waits ?answer ?runs
+      name =
     let p =
       make ?capacity ?copies ?host_visible ?transport ?peers ?maps_host ?budget
-        ?memory ?window ?may_block ?completion ?waits_on ?max_waits ?answer ()
+        ?memory ?window ?may_block ?completion ?waits_on ?max_waits ?answer ?runs
+        ()
     in
     match Rig.open_ (module Driver) ~name (fun () -> Ok p) with
     | Ok d -> (d, p)

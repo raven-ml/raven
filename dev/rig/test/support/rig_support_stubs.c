@@ -30,6 +30,7 @@
 #include <windows.h>
 #else
 #include <pthread.h>
+#include <time.h>
 #include <unistd.h>
 #endif
 
@@ -67,6 +68,14 @@ static void cond_wait(cond_t *c, lock_t *l) {
   SleepConditionVariableSRW(c, l, INFINITE, 0);
 }
 static void cond_broadcast(cond_t *c) { WakeAllConditionVariable(c); }
+static void nap(void) { Sleep(1); }
+static DWORD WINAPI engine_main(void *p);
+static int spawn(void *p) {
+  HANDLE t = CreateThread(NULL, 0, engine_main, p, 0, NULL);
+  if (t == NULL) return 0;
+  CloseHandle(t);
+  return 1;
+}
 static size_t page(void) { return 4096; }
 static void *aligned(size_t align, size_t n) {
   return _aligned_malloc(n, align);
@@ -82,6 +91,17 @@ static void unlock(lock_t *l) { pthread_mutex_unlock(l); }
 static void cond_init(cond_t *c) { pthread_cond_init(c, NULL); }
 static void cond_wait(cond_t *c, lock_t *l) { pthread_cond_wait(c, l); }
 static void cond_broadcast(cond_t *c) { pthread_cond_broadcast(c); }
+static void nap(void) {
+  struct timespec t = {0, 100000};
+  nanosleep(&t, NULL);
+}
+static void *engine_main(void *p);
+static int spawn(void *p) {
+  pthread_t t;
+  if (pthread_create(&t, NULL, engine_main, p) != 0) return 0;
+  pthread_detach(t);
+  return 1;
+}
 static size_t page(void) { return (size_t)sysconf(_SC_PAGESIZE); }
 static void *aligned(size_t align, size_t n) {
   void *p = NULL;
@@ -104,6 +124,8 @@ struct polled {
   _Atomic uint64_t word; /* first, alone in its page */
   lock_t mu;
   cond_t cv;
+  cond_t work;       /* signalled by a submit to a device that runs itself */
+  int itself;        /* a thread of the driver runs the queue */
   int capacity;      /* parts the queue holds */
   int may_block;     /* a full queue's submit waits instead of [room] */
   int fail;          /* the next submit fails */
@@ -163,6 +185,7 @@ value rig_test_polled_new(value v_capacity, value v_may_block) {
   memset(p, 0, sizeof *p);
   lock_init(&p->mu);
   cond_init(&p->cv);
+  cond_init(&p->work);
   p->capacity = Int_val(v_capacity);
   p->may_block = Bool_val(v_may_block);
   enrol(p);
@@ -389,6 +412,39 @@ value rig_test_polled_drive(value v_p) {
   return Val_int(drive(Polled_val(v_p), DRIVE_DEPTH));
 }
 
+/* A device that runs itself: its thread runs the queue as work arrives and,
+   while the first submission waits on a word that has not moved, again after
+   a nap, as a device runs its own work. */
+static void engine(struct polled *p) {
+  for (;;) {
+    lock(&p->mu);
+    while (p->n == 0) cond_wait(&p->work, &p->mu);
+    unlock(&p->mu);
+    if (run(p) == 0) nap();
+  }
+}
+
+#ifdef _WIN32
+static DWORD WINAPI engine_main(void *p) {
+  engine(p);
+  return 0;
+}
+#else
+static void *engine_main(void *p) {
+  engine(p);
+  return NULL;
+}
+#endif
+
+value rig_test_polled_start(value v_p) {
+  struct polled *p = Polled_val(v_p);
+  lock(&p->mu);
+  p->itself = 1;
+  unlock(&p->mu);
+  if (!spawn(p)) caml_failwith("Polled: cannot start the driver's thread");
+  return Val_unit;
+}
+
 static int polled_room(void *self, const struct rig_part *parts, int n) {
   struct polled *p = self;
   for (int i = 0; i < n; i++)
@@ -451,6 +507,7 @@ static int polled_submit(void *self, uint64_t v, const struct rig_wait *waits,
   if (nwaits > 0) memcpy(s->waits, waits, (size_t)nwaits * sizeof *waits);
   if (nparts > 0) memcpy(s->parts, parts, (size_t)nparts * sizeof *parts);
   p->held += nparts;
+  if (p->itself) cond_broadcast(&p->work);
   unlock(&p->mu);
   return RIG_OK;
 }

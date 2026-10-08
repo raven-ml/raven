@@ -28,6 +28,7 @@ module Polled : sig
     ?waits_on:[ `Store | `Object | `Host ] list ->
     ?max_waits:int ->
     ?answer:[ `Stopped | `Unknown ] ->
+    ?runs:[ `When_slept | `Itself ] ->
     unit ->
     t
   (** [make ()] is a device whose queue holds [capacity] parts (defaults to
@@ -47,7 +48,10 @@ module Polled : sig
       [max_waits] of them per submission (defaults to [max_int]). With [answer]
       [`Stopped] (the default) its stop drops its queued work and writes the
       last value it received into its word; with [`Unknown] it leaves both, as a
-      driver whose work may still run. *)
+      driver whose work may still run. With [runs] [`Itself] (the default is
+      [`When_slept]) a thread of the driver also runs its queue as work arrives,
+      as a device runs its own work: its work is done at no point a test
+      chooses. *)
 
   val open_ :
     ?capacity:int ->
@@ -64,6 +68,7 @@ module Polled : sig
     ?waits_on:[ `Store | `Object | `Host ] list ->
     ?max_waits:int ->
     ?answer:[ `Stopped | `Unknown ] ->
+    ?runs:[ `When_slept | `Itself ] ->
     string ->
     Rig.t * t
   (** [open_ name] opens a fresh device named [name]. *)
