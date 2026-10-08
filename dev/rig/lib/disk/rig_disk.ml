@@ -307,7 +307,9 @@ let barrier b =
       (* A buffer of no bytes, which no file holds. *)
       ()
   | None -> invalid_arg "Rig_disk.barrier: the buffer is not on DISK"
-  | Some f when not f.writable -> ()
+  | Some f when (not f.writable) || f.size = 0 ->
+      (* Nothing writes a file opened for reading or a file of no bytes. *)
+      ()
   | Some f ->
       (* A device's work writing through a borrow writes the file once done: the
          barrier orders after it, as a copy reading [b] would. *)

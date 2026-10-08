@@ -124,9 +124,10 @@ val barrier : Rig.Buffer.t -> unit
 
     On a file system that offers no barrier and no flush of the drive's cache to
     its medium, such as some network file systems on macOS, [barrier] is the
-    system's [fsync] and the ordering is the file system's own. A buffer
-    {!of_file} opened is never written, nor is a buffer of no bytes: [barrier]
-    returns at once on either.
+    system's [fsync] and the ordering is the file system's own. [barrier]
+    returns at once where nothing is written: on a buffer of a file {!of_file}
+    opened, of a file of no bytes, or of no file ({!Rig.Buffer.create} of no
+    bytes).
 
     [b] may be a borrow of a buffer of {!device} on another device: its memory
     is the file's.

@@ -1045,19 +1045,15 @@ let barriers =
       test "barrier refuses a dead buffer" test_barrier_dead;
       test "barrier returns on an empty buffer of the disk" (fun () ->
           Rig_disk.barrier (B.create disk 0));
-      xfail
-        ~reason:
-          "barrier waits on an empty file it may write, and raises the loss \
-           of a lost device's borrow of it"
-        (test "barrier returns on a lost device's borrow of an empty file"
-           (fun () ->
-             let path = new_path () in
-             removing [ path ] @@ fun () ->
-             let file = create path 0 in
-             let d = require_ok (Rig.memory_device "DISK-TEST-CLOSED") in
-             let on_device = require_some (B.borrow d file) in
-             Rig.close d;
-             Rig_disk.barrier on_device));
+      test "barrier returns on a lost device's borrow of an empty file"
+        (fun () ->
+          let path = new_path () in
+          removing [ path ] @@ fun () ->
+          let file = create path 0 in
+          let d = require_ok (Rig.memory_device "DISK-TEST-CLOSED") in
+          let on_device = require_some (B.borrow d file) in
+          Rig.close d;
+          Rig_disk.barrier on_device);
       test "barrier orders a created file through a borrow of it" (fun () ->
           let path = new_path () in
           removing [ path ] @@ fun () ->

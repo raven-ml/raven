@@ -1809,12 +1809,10 @@ let barrier_ref last c outcome =
   with_buf c outcome @@ fun b ->
   let vd = verdict () in
   invalid_if vd (dead b || b.mem.owner.kind <> Disk);
-  (* A barrier returns at once on a file opened for reading (rig_disk.mli). On
-     an empty file it may write it waits as on any other, which test_rig_disk.ml
-     holds as an expected failure. *)
-  if not (read_only b.mem) then begin
-    if b.length > 0 then owned vd b
-    else uses ~maybe:true vd [ b.on; b.mem.owner ];
+  (* A barrier returns at once on a file opened for reading or of no bytes
+     (rig_disk.mli). *)
+  if not (read_only b.mem || Bytes.length b.mem.data = 0) then begin
+    owned vd b;
     reads vd b.mem
   end;
   judge c.w vd outcome Fun.id;
