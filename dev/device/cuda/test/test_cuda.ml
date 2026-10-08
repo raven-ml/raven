@@ -181,12 +181,23 @@ let fills_in_a_fresh_domain () =
   C.unload g m;
   C.free g out
 
+(* A copy on COPY:0, then a fill on COMPUTE:0 that fails: the failed value is
+   still written after the copy, the next one never is. *)
 let failed_fill () =
   let g = S.gpu () in
-  let r = submit g ~v:1 [| S.part g ~queue:"COMPUTE:0" (S.failing 1) |] in
+  let src = require_some (C.alloc g `Device 64) in
+  let dst = require_some (C.alloc g `Pinned 64) in
+  let data = pattern 64 3 in
+  S.write_gpu (C.handle src) data;
+  let copy = C.part g ~queue:"COPY:0" (`Copy ((dst, 0), (src, 0), 64)) in
+  let fails = S.part g ~queue:"COMPUTE:0" (S.failing 1) in
+  let r = submit g ~v:1 [| copy; fails |] in
   let why = require_match (function `Failed w -> Some w | `Ok -> None) r in
   starts_with ~affix:"running a fill: CUDA_ERROR_INVALID_VALUE: " why;
+  S.wait g 1;
+  equal string ~msg:"copied before the word" data (S.read (host dst) 64);
   equal answer ~msg:"the next submit" (`Failed why) (submit g ~v:2 [||]);
+  still g 1 ~ms:20;
   equal stop_answer `Stopped (C.stop g);
   equal int ~msg:"the word holds the last value" 2 (C.signaled g)
 
@@ -308,7 +319,7 @@ let work =
     ([
        test "a fill runs with the context current from a fresh domain"
          fills_in_a_fresh_domain;
-       test "a failed fill is Failed, and every later submit" failed_fill;
+       test "a failed fill is Failed and its value still drains" failed_fill;
        test "misuse raises" misuse;
        test "a region of another device raises" another_device;
        test "the C room refuses what part refuses" room;
@@ -395,8 +406,12 @@ let stop_running () =
   Fun.protect ~finally:(fun () -> S.set64 (host flag) 1) @@ fun () ->
   ignore (spin g flag);
   equal stop_answer `Unknown (C.stop g);
+  let e = require_error (C.open_ 0) in
+  contains ~sub:"still runs" e;
   S.set64 (host flag) 1;
-  S.wait g 1
+  S.wait g 1;
+  let g' = require_ok (C.open_ 0) in
+  equal stop_answer `Stopped (C.stop g')
 
 let registry_is_the_process () =
   let p = S.pages S.page in
@@ -417,7 +432,8 @@ let timeline =
     [
       test "long work is no fault, and a stale seen returns at once" long_work;
       test "stop of an idle device leaves the word at the last value" stop_idle;
-      test "stop of a running device is Unknown" stop_running;
+      test "stop of a running device is Unknown until its work ends"
+        stop_running;
       test "page-locking is the process's" registry_is_the_process;
     ]
 

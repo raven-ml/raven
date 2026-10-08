@@ -28,9 +28,11 @@ int device_cuda_room(void *self, const struct nx_part *parts, int n);
 
 /* Runs [parts], which device_cuda_room answered NX_FITS for, as the work
    of [v], the value after the last one it received: NX_OK, or NX_FAILED with
-   [*failure] set to CUDA's error. After a failure every call answers
-   NX_FAILED with the first failure's message, which lives as long as the
-   process. It may block while a stream is full. */
+   [*failure] set to the failing step and CUDA's error. A failed call still
+   writes [v] after the work it queued, when CUDA takes the calls that order
+   the write so. After a failure every call answers NX_FAILED with the first
+   failure's message, which lives as long as the process, and writes
+   nothing. It may block while a stream is full. */
 int device_cuda_submit(void *self, uint64_t v, const struct nx_wait *waits,
                        int nwaits, const struct nx_part *parts, int nparts,
                        const uint64_t *handles, int nhandles,

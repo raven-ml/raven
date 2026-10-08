@@ -62,8 +62,8 @@
     {b Domains.} Every value may be called from any domain, at the same time as
     others, with three exceptions. {!room} and {!submit} run one call at a time,
     in value order: their caller serialises them. {!stop} is called once, after
-    every other call returned; after it only {!free} and {!unmap} are called.
-    {!sleep} may run while another domain submits.
+    every other call returned; after it only {!free}, {!unmap} and the functions
+    of {!capability} are called. {!sleep} may run while another domain submits.
 
     {b References.}
     - {{:https://docs.nvidia.com/cuda/cuda-driver-api/}CUDA Driver API}: Primary
@@ -98,11 +98,11 @@ val open_ : int -> (t, string) result
 
     The result is [Error msg] if the CUDA library cannot be loaded or
     initialised, if [i >= count ()], if the GPU lacks 64-bit stream memory
-    operations or unified addressing, while a device of GPU [i] is open and not
-    stopped, or with CUDA's error, such as the error a fault left in the GPU's
-    context. A GPU has one device at a time: two would wait on each other's
-    words through the context's shared hardware queues, ordering CUDA does not
-    see.
+    operations or unified addressing, while a device of GPU [i] is open or was
+    stopped while its work still ran and that work runs on, or with CUDA's
+    error, such as the error a fault left in the GPU's context. A GPU has one
+    device at a time: two would wait on each other's words through the context's
+    shared hardware queues, ordering CUDA does not see.
 
     Raises [Invalid_argument] if [i < 0]. *)
 
@@ -306,8 +306,11 @@ val submit :
     The result is [`Ok] once every part is enqueued, or [`Failed why] with the
     step and the error of the first CUDA call that failed, a fill's included, as
     ["running a fill: CUDA_ERROR_ILLEGAL_ADDRESS: an illegal memory access was
-     encountered"]. Enqueued work may have run. Every later [submit] answers the
-    same [`Failed]: the context may hold an error for the process.
+     encountered"]. Enqueued work may have run. The word still reaches [v] once
+    the work [submit] enqueued for [v] completes, on either stream, if CUDA took
+    the calls that order the write of [v] after it; otherwise [v] is never
+    written. Every later [submit] answers the same [`Failed] and writes nothing:
+    the context may hold an error for the process.
 
     [submit] may block while a stream is full, until the device's earlier work
     completes, and lets other domains run meanwhile.
@@ -362,5 +365,6 @@ val stop : t -> [ `Stopped | `Unknown ]
     idle, or an error ended the context's work. The timeline word then holds at
     least the last value {!submit} was given, so work of other devices that
     waits on it runs on, and [g]'s streams are destroyed. It is [`Unknown] if
-    work still runs. After [stop], only {!free} and {!unmap} may be called on
-    [g]; neither raises {!Fault}. *)
+    work still runs; the GPU then opens again once that work ends. After [stop],
+    only {!free}, {!unmap} and the functions of {!capability} may be called on
+    [g]; none raises {!Fault}. *)

@@ -53,8 +53,12 @@ let refused step self x = match failed self with 0 -> x | e -> fault step e
    they are found: a failed load is tried again by the next call, so a driver
    installed meanwhile is found. *)
 
-type gpus = { devices : int array; busy : bool Atomic.t array }
+(* A GPU's holder: [unheld]; [opening]; the C state of its open device; or the C
+   state, negated, of a device stopped while its work still ran. *)
+type gpus = { devices : int array; held : int Atomic.t array }
 
+let unheld = 0
+let opening = 1
 let lock = Mutex.create ()
 let gpus = ref None
 
@@ -89,7 +93,7 @@ let discover () =
   | exception Fault why -> Error why
   | ds ->
       let devices = Array.of_list (List.map snd (List.sort compare ds)) in
-      Ok { devices; busy = Array.map (fun _ -> Atomic.make false) devices }
+      Ok { devices; held = Array.map (fun _ -> Atomic.make unheld) devices }
 
 let find_gpus () =
   Mutex.protect lock @@ fun () ->
@@ -143,10 +147,11 @@ type t = {
   arch : string;
   budget : int;
   word : region;
-  busy : bool Atomic.t;
+  held : int Atomic.t;
 }
 
 external open_device : int -> int = "caml_device_cuda_open"
+external stop_device : int -> bool = "caml_device_cuda_stop"
 external word_address : int -> int = "caml_device_cuda_word" [@@noalloc]
 
 let count () =
@@ -160,6 +165,18 @@ let driver () =
   match driver_version () with
   | v when v < 0 -> "a CUDA driver of unknown version"
   | v -> strf "the CUDA %d.%d driver" (v / 1000) (v mod 1000 / 10)
+
+(* Takes a GPU's [held] for a new device: unheld, or held by a stopped device
+   whose work has since ended, which is then stopped for good. *)
+let claim held =
+  let p = Atomic.get held in
+  if p > 0 || not (Atomic.compare_and_set held p opening) then
+    Error "the GPU has a device open; stop it first"
+  else if p = unheld || stop_device (-p) then Ok ()
+  else begin
+    Atomic.set held p;
+    Error "the GPU still runs the work of a stopped device"
+  end
 
 let open_ i =
   if i < 0 then invalid_argf "Device_cuda.open_: GPU %d is negative" i;
@@ -188,26 +205,19 @@ let open_ i =
     | _, 0, _, _, _ ->
         Error (strf "the GPU lacks unified addressing under %s" (driver ()))
     | _, _, major, minor, budget ->
-        if not (Atomic.compare_and_set g.busy.(i) false true) then
-          Error "the GPU has a device open; stop it first"
-        else
-          let self = open_device d in
-          if self < 0 then begin
-            Atomic.set g.busy.(i) false;
-            Error
-              ("opening the GPU's primary context and streams: " ^ error (-self))
-          end
-          else
-            let w = word_address self in
-            let word = region self Word ~address:w ~handle:w 8 in
-            Ok
-              {
-                self;
-                arch = strf "sm_%d%d" major minor;
-                budget;
-                word;
-                busy = g.busy.(i);
-              }
+        let held = g.held.(i) in
+        let* () = claim held in
+        let self = open_device d in
+        if self < 0 then begin
+          Atomic.set held unheld;
+          Error
+            ("opening the GPU's primary context and streams: " ^ error (-self))
+        end
+        else begin
+          let w = word_address self in
+          let word = region self Word ~address:w ~handle:w 8 in
+          Ok { self; arch = strf "sm_%d%d" major minor; budget; word; held }
+        end
 
 (* Facts *)
 
@@ -481,7 +491,6 @@ let submit_entry = Nativeint.of_int (submit_entry ())
 
 external signaled : int -> int = "caml_device_cuda_signaled" [@@noalloc]
 external sleep : int -> int -> int -> int = "caml_device_cuda_sleep"
-external stop : int -> bool = "caml_device_cuda_stop"
 
 let word g = g.word
 let signaled g = signaled g.self
@@ -496,6 +505,6 @@ let sleep g ~seen ~still_ms =
 (* Loss *)
 
 let stop g =
-  let stopped = stop g.self in
-  Atomic.set g.busy false;
+  let stopped = stop_device g.self in
+  Atomic.set g.held (if stopped then unheld else -g.self);
   if stopped then `Stopped else `Unknown

@@ -555,9 +555,10 @@ static CUresult enter(struct submission *s, int q) {
   CUstream stream = d->streams[q];
   CUresult r = CUDA_SUCCESS;
   if (s->entered[q]) return r;
-  s->entered[q] = 1;
   if (d->released_on != q) r = p_cuStreamWaitEvent(stream, d->released, 0);
-  if (r != CUDA_SUCCESS || s->nwaits == 0) return r;
+  if (r != CUDA_SUCCESS) return r;
+  s->entered[q] = 1;
+  if (s->nwaits == 0) return r;
   if (s->waited) return p_cuStreamWaitEvent(stream, d->waited, 0);
   s->waited = 1;
   r = at(s, waiting, wait_words(d, stream, s->waits, s->nwaits));
@@ -631,6 +632,26 @@ static void fail(struct device *d, const struct submission *s, CUresult e) {
              s->step != NULL ? s->step : "ordering the streams", cause);
 }
 
+/* After a failure, releases [v] after the work [s] queued, if CUDA takes
+   every call that orders the release so: on COMPUTE:0 after COPY:0's work,
+   or on the one stream entered. Otherwise it writes nothing, and the word
+   stays below [v]. */
+static void drain(struct submission *s, uint64_t v) {
+  struct device *d = s->d;
+  int r = s->entered[1] && !s->entered[0];
+  CUresult e = CUDA_SUCCESS;
+  if (s->entered[0] && s->entered[1]) {
+    e = p_cuEventRecord(d->done[1], d->streams[1]);
+    if (e == CUDA_SUCCESS) e = p_cuStreamWaitEvent(d->streams[0], d->done[1], 0);
+  }
+  if (e == CUDA_SUCCESS) e = enter(s, r);
+  if (e == CUDA_SUCCESS)
+    e = p_cuStreamWriteValue64_v2(d->streams[r],
+                                  (CUdeviceptr)(uintptr_t)d->word, v, 0);
+  if (e == CUDA_SUCCESS) e = p_cuEventRecord(d->released, d->streams[r]);
+  if (e == CUDA_SUCCESS) d->released_on = r;
+}
+
 int device_cuda_room(void *self, const struct nx_part *p, int n) {
   (void)self;
   for (int i = 0; i < n; i++) {
@@ -652,7 +673,11 @@ int device_cuda_submit(void *self, uint64_t v, const struct nx_wait *waits,
   d->last = v;
   if (!d->failed) {
     CUresult e = push(d->context);
-    if (e == CUDA_SUCCESS) e = pop(run(&s, v, parts, nparts));
+    if (e == CUDA_SUCCESS) {
+      e = run(&s, v, parts, nparts);
+      if (e != CUDA_SUCCESS) drain(&s, v);
+      e = pop(e);
+    }
     if (e != CUDA_SUCCESS) {
       fail(d, &s, e);
       d->failed = 1;
