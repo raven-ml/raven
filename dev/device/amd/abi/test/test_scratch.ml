@@ -13,28 +13,10 @@ open Device_amd_abi
 module S = Device_amd_abi_support
 
 let timeout = S.timeout
-
-let gfx11 =
-  {
-    Gpu.target = (11, 0, 0);
-    gc = (11, 0, 0);
-    sdma = (6, 0, 0);
-    xccs = 1;
-    shader_engines = 6;
-    compute_units = 48;
-    scratch_slots = 32;
-  }
+let gfx11 = S.gpu ~shader_engines:6 ~compute_units:48 (11, 0, 0)
 
 let gfx9 =
-  {
-    Gpu.target = (9, 4, 2);
-    gc = (9, 4, 3);
-    sdma = (4, 4, 2);
-    xccs = 8;
-    shader_engines = 4;
-    compute_units = 38;
-    scratch_slots = 32;
-  }
+  S.gpu ~target:(9, 4, 2) ~sdma:(4, 4, 2) ~xccs:8 ~compute_units:38 (9, 4, 3)
 
 let words = S.words
 

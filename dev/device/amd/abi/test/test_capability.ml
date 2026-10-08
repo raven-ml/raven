@@ -8,8 +8,9 @@
 
 open Windtrap
 open Device_amd_abi
+module S = Device_amd_abi_support
 
-let timeout = Device_amd_abi_support.timeout
+let timeout = S.timeout
 
 type binding = B : 'a Type.Id.t * 'a -> binding
 
@@ -22,16 +23,7 @@ let find : type a. a Type.Id.t -> binding list -> a option =
   in
   List.find_map found bindings
 
-let gpu =
-  {
-    Gpu.target = (12, 0, 1);
-    gc = (12, 0, 1);
-    sdma = (7, 0, 0);
-    xccs = 1;
-    shader_engines = 4;
-    compute_units = 64;
-    scratch_slots = 32;
-  }
+let gpu = S.gpu ~sdma:(7, 0, 0) ~compute_units:64 (12, 0, 1)
 
 let record =
   {
