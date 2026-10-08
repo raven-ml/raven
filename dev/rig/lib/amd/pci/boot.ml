@@ -665,7 +665,15 @@ let reset f =
               Regs.write ~value:0 r "regSCRATCH_REG7" [];
               let gfx = Gfx.make r gmc vram doorbells ~mqds:[||] in
               ignore (Gfx.dequeue gfx ~wait:true);
-              Smu.clocks smu `Lowest;
+              (* Lowering the clocks is a precaution the kernel does not take
+                 before its own mode 1: a power manager that refuses it, as one
+                 whose DPM runs without the GC's firmware may, does not stop the
+                 reset. The refusal is printed on standard error. *)
+              (try Smu.clocks smu `Lowest
+               with Regs.Stuck why ->
+                 prerr_endline
+                   (strf "rig.amd.pci: lowering the clocks before a reset: %s"
+                      why));
               Gfx.halt gfx;
               Sdma.halt (Sdma.make r);
               Regs.pause r quiesce_ms;

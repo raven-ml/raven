@@ -86,12 +86,13 @@ val reset : Rig_pci.Function.t -> (unit, string) result
 (** [reset f] resets the GPU of [f] as [Rig_amd_pci.reset] states, its bus
     mastering off. If its security processor's OS and power manager run, as the
     kernel's init resets a GPU, it stops the compute queues, lowers the clocks
-    and halts the engines, since a mode 1 reset over engines at full clocks can
-    stall the GPU, then resets it whole (mode 1), its configuration restored as
-    the kernel restores it, and waits until its bootloader and memory answer. A
-    GPU of a fabric (XGMI) is only stopped: its GPUs reset together, as their
-    kernel driver does when it takes them back. It then turns the interrupt
-    rings off.
+    where the power manager lets it (a refusal is printed on standard error and
+    does not stop the reset, as the kernel lowers none) and halts the engines,
+    since a mode 1 reset over engines at full clocks can stall the GPU, then
+    resets it whole (mode 1), its configuration restored as the kernel restores
+    it, and waits until its bootloader and memory answer. A GPU of a fabric
+    (XGMI) is only stopped: its GPUs reset together, as their kernel driver does
+    when it takes them back. It then turns the interrupt rings off.
 
     [Ok ()] means no engine or interrupt ring runs, nor firmware but on a
     fabric's GPU, and the bootloader is ready for the kernel's first command. A
