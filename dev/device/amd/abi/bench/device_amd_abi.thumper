@@ -13,8 +13,8 @@ aql/fill-into-bytes	alloc_words	exact	0
 aql/fill-into-bytes	wall_time	batch=1048576	n=20	7.839e-09	7.823e-09 7.827e-09 7.827e-09 7.829e-09 7.830e-09 7.834e-09 7.835e-09 7.838e-09 7.838e-09 7.839e-09 7.839e-09 7.842e-09 7.842e-09 7.846e-09 7.847e-09 7.851e-09 7.851e-09 7.859e-09 7.864e-09 7.983e-09
 code-object/kernel/last-of-128	alloc_words	exact	2
 code-object/kernel/last-of-128	wall_time	batch=8192	n=20	7.644e-07	7.632e-07 7.634e-07 7.636e-07 7.636e-07 7.637e-07 7.637e-07 7.639e-07 7.641e-07 7.641e-07 7.643e-07 7.644e-07 7.644e-07 7.649e-07 7.657e-07 7.660e-07 7.662e-07 7.668e-07 7.675e-07 7.703e-07 7.716e-07
-code-object/of-string/amd-128-kernels	alloc_words	exact	21201
-code-object/of-string/amd-128-kernels	wall_time	batch=256	n=20	3.394e-05	3.352e-05 3.366e-05 3.373e-05 3.379e-05 3.380e-05 3.386e-05 3.386e-05 3.387e-05 3.387e-05 3.389e-05 3.399e-05 3.400e-05 3.401e-05 3.404e-05 3.407e-05 3.415e-05 3.418e-05 3.423e-05 3.435e-05 3.467e-05
+code-object/of-string/amd-128-kernels	alloc_words	exact	20946
+code-object/of-string/amd-128-kernels	wall_time	batch=256	n=20	3.274e-05	3.242e-05 3.250e-05 3.252e-05 3.253e-05 3.258e-05 3.259e-05 3.266e-05 3.268e-05 3.273e-05 3.274e-05 3.275e-05 3.278e-05 3.281e-05 3.285e-05 3.287e-05 3.291e-05 3.296e-05 3.305e-05 3.346e-05 3.414e-05
 pm4/dispatch/gfx11	alloc_words	exact	547
 pm4/dispatch/gfx11	wall_time	batch=32768	n=20	2.590e-07	2.568e-07 2.579e-07 2.582e-07 2.582e-07 2.582e-07 2.585e-07 2.585e-07 2.586e-07 2.587e-07 2.589e-07 2.591e-07 2.591e-07 2.592e-07 2.592e-07 2.596e-07 2.596e-07 2.604e-07 2.604e-07 2.610e-07 2.614e-07
 pm4/dispatch/gfx12	alloc_words	exact	547
@@ -55,8 +55,8 @@ aql/fill-into-bytes	alloc_words	exact	0
 aql/fill-into-bytes	wall_time	batch=524288	n=20	1.337e-08	1.296e-08 1.310e-08 1.319e-08 1.326e-08 1.327e-08 1.330e-08 1.331e-08 1.333e-08 1.335e-08 1.335e-08 1.338e-08 1.340e-08 1.341e-08 1.341e-08 1.342e-08 1.344e-08 1.348e-08 1.353e-08 1.354e-08 1.357e-08
 code-object/kernel/last-of-128	alloc_words	exact	2
 code-object/kernel/last-of-128	wall_time	batch=4096	n=20	1.260e-06	1.233e-06 1.245e-06 1.246e-06 1.247e-06 1.248e-06 1.251e-06 1.254e-06 1.258e-06 1.259e-06 1.259e-06 1.261e-06 1.261e-06 1.261e-06 1.265e-06 1.266e-06 1.267e-06 1.269e-06 1.270e-06 1.274e-06 1.274e-06
-code-object/of-string/amd-128-kernels	alloc_words	exact	21201
-code-object/of-string/amd-128-kernels	wall_time	batch=128	n=20	6.040e-05	5.921e-05 5.926e-05 5.941e-05 5.947e-05 5.969e-05 5.984e-05 5.998e-05 6.010e-05 6.017e-05 6.037e-05 6.042e-05 6.066e-05 6.082e-05 6.114e-05 6.148e-05 6.178e-05 6.199e-05 6.206e-05 6.243e-05 6.309e-05
+code-object/of-string/amd-128-kernels	alloc_words	exact	20946
+code-object/of-string/amd-128-kernels	wall_time	batch=128	n=20	5.754e-05	5.549e-05 5.582e-05 5.586e-05 5.625e-05 5.633e-05 5.637e-05 5.680e-05 5.708e-05 5.732e-05 5.736e-05 5.772e-05 5.794e-05 5.918e-05 5.930e-05 5.942e-05 6.002e-05 6.083e-05 6.105e-05 6.141e-05 6.188e-05
 pm4/dispatch/gfx11	alloc_words	exact	547
 pm4/dispatch/gfx11	wall_time	batch=16384	n=20	3.910e-07	3.757e-07 3.773e-07 3.786e-07 3.805e-07 3.849e-07 3.852e-07 3.852e-07 3.870e-07 3.875e-07 3.909e-07 3.912e-07 3.925e-07 3.925e-07 3.933e-07 3.942e-07 3.956e-07 3.970e-07 3.992e-07 4.043e-07 4.203e-07
 pm4/dispatch/gfx12	alloc_words	exact	547
@@ -94,8 +94,8 @@ aql/fill-into-bytes	alloc_words	exact	0
 aql/fill-into-bytes	wall_time	batch=524288	n=20	1.381e-08	1.381e-08 1.381e-08 1.381e-08 1.381e-08 1.381e-08 1.381e-08 1.381e-08 1.381e-08 1.381e-08 1.381e-08 1.382e-08 1.382e-08 1.382e-08 1.382e-08 1.382e-08 1.382e-08 1.385e-08 1.386e-08 1.388e-08 1.389e-08
 code-object/kernel/last-of-128	alloc_words	exact	2
 code-object/kernel/last-of-128	wall_time	batch=4096	n=20	1.203e-06	1.189e-06 1.189e-06 1.189e-06 1.190e-06 1.191e-06 1.196e-06 1.197e-06 1.201e-06 1.203e-06 1.203e-06 1.203e-06 1.207e-06 1.208e-06 1.210e-06 1.210e-06 1.211e-06 1.212e-06 1.219e-06 1.224e-06 1.237e-06
-code-object/of-string/amd-128-kernels	alloc_words	exact	21201
-code-object/of-string/amd-128-kernels	wall_time	batch=128	n=20	6.105e-05	6.083e-05 6.087e-05 6.088e-05 6.089e-05 6.089e-05 6.092e-05 6.097e-05 6.097e-05 6.099e-05 6.101e-05 6.110e-05 6.111e-05 6.117e-05 6.124e-05 6.160e-05 6.168e-05 6.169e-05 6.172e-05 6.180e-05 6.186e-05
+code-object/of-string/amd-128-kernels	alloc_words	exact	20946
+code-object/of-string/amd-128-kernels	wall_time	batch=128	n=20	5.852e-05	5.750e-05 5.755e-05 5.757e-05 5.757e-05 5.759e-05 5.761e-05 5.765e-05 5.817e-05 5.840e-05 5.841e-05 5.863e-05 5.870e-05 5.872e-05 5.874e-05 5.875e-05 5.877e-05 5.891e-05 5.923e-05 5.951e-05 5.955e-05
 pm4/dispatch/gfx11	alloc_words	exact	547
 pm4/dispatch/gfx11	wall_time	batch=16384	n=20	4.974e-07	4.930e-07 4.932e-07 4.932e-07 4.933e-07 4.934e-07 4.935e-07 4.940e-07 4.951e-07 4.956e-07 4.958e-07 4.990e-07 5.061e-07 5.069e-07 5.076e-07 5.076e-07 5.118e-07 5.119e-07 5.119e-07 5.120e-07 5.133e-07
 pm4/dispatch/gfx12	alloc_words	exact	547

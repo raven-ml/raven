@@ -5,12 +5,12 @@
 # host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.1 · 64-bit · release
 
-cubin/elf-of-string/nv-128-kernels	alloc_words	exact	29862
-cubin/elf-of-string/nv-128-kernels	wall_time	batch=64	n=20	8.806e-05	8.502e-05 8.595e-05 8.641e-05 8.668e-05 8.692e-05 8.712e-05 8.737e-05 8.757e-05 8.787e-05 8.805e-05 8.808e-05 8.823e-05 8.824e-05 8.888e-05 8.944e-05 8.949e-05 8.991e-05 9.001e-05 9.008e-05 9.212e-05
+cubin/elf-of-string/nv-128-kernels	alloc_words	exact	22774
+cubin/elf-of-string/nv-128-kernels	wall_time	batch=64	n=20	7.910e-05	7.726e-05 7.738e-05 7.747e-05 7.794e-05 7.824e-05 7.830e-05 7.854e-05 7.856e-05 7.893e-05 7.900e-05 7.921e-05 7.922e-05 7.928e-05 7.948e-05 7.962e-05 7.973e-05 7.978e-05 7.980e-05 7.999e-05 8.145e-05
 cubin/kernel/last-of-128	alloc_words	exact	0
 cubin/kernel/last-of-128	wall_time	batch=524288	n=20	1.065e-08	1.062e-08 1.063e-08 1.063e-08 1.064e-08 1.064e-08 1.064e-08 1.064e-08 1.064e-08 1.064e-08 1.064e-08 1.065e-08 1.065e-08 1.065e-08 1.066e-08 1.066e-08 1.066e-08 1.067e-08 1.068e-08 1.071e-08 1.078e-08
-cubin/of-string/nv-128-kernels	alloc_words	exact	57181
-cubin/of-string/nv-128-kernels	wall_time	batch=64	n=20	1.295e-04	1.272e-04 1.286e-04 1.287e-04 1.287e-04 1.288e-04 1.289e-04 1.291e-04 1.292e-04 1.293e-04 1.293e-04 1.296e-04 1.296e-04 1.298e-04 1.298e-04 1.299e-04 1.302e-04 1.307e-04 1.308e-04 1.309e-04 1.327e-04
+cubin/of-string/nv-128-kernels	alloc_words	exact	50491
+cubin/of-string/nv-128-kernels	wall_time	batch=64	n=20	1.184e-04	1.157e-04 1.165e-04 1.166e-04 1.170e-04 1.171e-04 1.172e-04 1.177e-04 1.182e-04 1.183e-04 1.184e-04 1.184e-04 1.187e-04 1.187e-04 1.191e-04 1.192e-04 1.193e-04 1.194e-04 1.198e-04 1.202e-04 1.202e-04
 cubin/patches/128-relocations	alloc_words	exact	1156
 cubin/patches/128-relocations	wall_time	batch=8192	n=20	7.240e-07	6.549e-07 6.574e-07 6.632e-07 6.633e-07 6.740e-07 6.824e-07 6.859e-07 6.887e-07 7.113e-07 7.148e-07 7.331e-07 7.416e-07 7.473e-07 7.591e-07 7.800e-07 7.854e-07 7.877e-07 8.228e-07 8.306e-07 8.671e-07
 gpfifo/entry-encode	alloc_words	exact	30
@@ -51,12 +51,12 @@ qmd/launch/blackwell	wall_time	batch=16384	n=20	4.901e-07	4.862e-07 4.865e-07 4.
 # forced: blessed qmd/launch/ada qmd/launch/blackwell under load 16.3 on 10 cores
 # forced: blessed launch/make/ada under load 6.0 on 10 cores
 
-cubin/elf-of-string/nv-128-kernels	alloc_words	exact	29862
-cubin/elf-of-string/nv-128-kernels	wall_time	batch=32	n=20	1.569e-04	1.471e-04 1.514e-04 1.531e-04 1.546e-04 1.555e-04 1.558e-04 1.560e-04 1.561e-04 1.564e-04 1.568e-04 1.570e-04 1.585e-04 1.586e-04 1.592e-04 1.596e-04 1.604e-04 1.616e-04 1.620e-04 1.668e-04 1.685e-04
+cubin/elf-of-string/nv-128-kernels	alloc_words	exact	22774
+cubin/elf-of-string/nv-128-kernels	wall_time	batch=64	n=20	1.299e-04	1.244e-04 1.248e-04 1.252e-04 1.263e-04 1.266e-04 1.276e-04 1.291e-04 1.295e-04 1.296e-04 1.299e-04 1.299e-04 1.303e-04 1.311e-04 1.312e-04 1.313e-04 1.313e-04 1.314e-04 1.323e-04 1.328e-04 1.330e-04
 cubin/kernel/last-of-128	alloc_words	exact	0
 cubin/kernel/last-of-128	wall_time	batch=262144	n=20	2.154e-08	2.137e-08 2.139e-08 2.140e-08 2.142e-08 2.145e-08 2.151e-08 2.152e-08 2.152e-08 2.153e-08 2.154e-08 2.155e-08 2.156e-08 2.156e-08 2.158e-08 2.159e-08 2.160e-08 2.161e-08 2.164e-08 2.184e-08 2.207e-08
-cubin/of-string/nv-128-kernels	alloc_words	exact	57181
-cubin/of-string/nv-128-kernels	wall_time	batch=32	n=20	2.506e-04	2.361e-04 2.391e-04 2.401e-04 2.414e-04 2.471e-04 2.474e-04 2.479e-04 2.496e-04 2.500e-04 2.500e-04 2.512e-04 2.519e-04 2.524e-04 2.537e-04 2.541e-04 2.543e-04 2.568e-04 2.569e-04 2.577e-04 2.613e-04
+cubin/of-string/nv-128-kernels	alloc_words	exact	50491
+cubin/of-string/nv-128-kernels	wall_time	batch=32	n=20	2.171e-04	2.014e-04 2.063e-04 2.083e-04 2.085e-04 2.130e-04 2.140e-04 2.143e-04 2.157e-04 2.166e-04 2.168e-04 2.174e-04 2.179e-04 2.181e-04 2.200e-04 2.217e-04 2.221e-04 2.232e-04 2.235e-04 2.236e-04 2.296e-04
 cubin/patches/128-relocations	alloc_words	exact	1156
 cubin/patches/128-relocations	wall_time	batch=4096	n=20	1.713e-06	1.672e-06 1.674e-06 1.679e-06 1.690e-06 1.695e-06 1.701e-06 1.703e-06 1.708e-06 1.709e-06 1.712e-06 1.713e-06 1.713e-06 1.718e-06 1.719e-06 1.720e-06 1.724e-06 1.729e-06 1.745e-06 1.747e-06 1.751e-06
 gpfifo/entry-encode	alloc_words	exact	30
@@ -92,12 +92,12 @@ qmd/launch/blackwell	wall_time	batch=8192	n=20	8.338e-07	8.160e-07 8.201e-07 8.2
 # host: nonnormal · Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz · x86_64 · linux
 # ocaml: 5.5.1 · 64-bit · release
 
-cubin/elf-of-string/nv-128-kernels	alloc_words	exact	29862
-cubin/elf-of-string/nv-128-kernels	wall_time	batch=32	n=20	1.621e-04	1.602e-04 1.608e-04 1.613e-04 1.614e-04 1.616e-04 1.617e-04 1.619e-04 1.619e-04 1.620e-04 1.621e-04 1.621e-04 1.624e-04 1.628e-04 1.629e-04 1.636e-04 1.638e-04 1.641e-04 1.643e-04 1.645e-04 1.648e-04
+cubin/elf-of-string/nv-128-kernels	alloc_words	exact	22774
+cubin/elf-of-string/nv-128-kernels	wall_time	batch=64	n=20	1.492e-04	1.477e-04 1.479e-04 1.483e-04 1.484e-04 1.486e-04 1.486e-04 1.488e-04 1.491e-04 1.492e-04 1.492e-04 1.492e-04 1.493e-04 1.495e-04 1.495e-04 1.496e-04 1.497e-04 1.497e-04 1.498e-04 1.499e-04 1.501e-04
 cubin/kernel/last-of-128	alloc_words	exact	0
 cubin/kernel/last-of-128	wall_time	batch=262144	n=20	2.054e-08	2.038e-08 2.044e-08 2.044e-08 2.045e-08 2.045e-08 2.045e-08 2.045e-08 2.047e-08 2.054e-08 2.054e-08 2.054e-08 2.054e-08 2.055e-08 2.056e-08 2.056e-08 2.058e-08 2.058e-08 2.059e-08 2.061e-08 2.061e-08
-cubin/of-string/nv-128-kernels	alloc_words	exact	57181
-cubin/of-string/nv-128-kernels	wall_time	batch=32	n=20	2.486e-04	2.461e-04 2.482e-04 2.483e-04 2.483e-04 2.484e-04 2.484e-04 2.484e-04 2.485e-04 2.486e-04 2.486e-04 2.487e-04 2.487e-04 2.488e-04 2.489e-04 2.489e-04 2.493e-04 2.496e-04 2.504e-04 2.509e-04 2.509e-04
+cubin/of-string/nv-128-kernels	alloc_words	exact	50491
+cubin/of-string/nv-128-kernels	wall_time	batch=32	n=20	2.212e-04	2.175e-04 2.184e-04 2.187e-04 2.194e-04 2.196e-04 2.197e-04 2.198e-04 2.210e-04 2.210e-04 2.212e-04 2.212e-04 2.213e-04 2.213e-04 2.213e-04 2.215e-04 2.215e-04 2.216e-04 2.219e-04 2.221e-04 2.221e-04
 cubin/patches/128-relocations	alloc_words	exact	1156
 cubin/patches/128-relocations	wall_time	batch=4096	n=20	1.321e-06	1.302e-06 1.303e-06 1.304e-06 1.304e-06 1.306e-06 1.307e-06 1.311e-06 1.316e-06 1.320e-06 1.320e-06 1.322e-06 1.323e-06 1.324e-06 1.326e-06 1.330e-06 1.333e-06 1.341e-06 1.345e-06 1.355e-06 1.379e-06
 gpfifo/entry-encode	alloc_words	exact	30
