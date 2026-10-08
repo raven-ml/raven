@@ -16,8 +16,7 @@
     The encodings below are pure; the rest acts on a GPU. The memory the boot
     gives the GSP is system memory, as the RM places it, but for what the GPU's
     falcons and the GSP's objects read from the GPU's memory. The structures are
-    release 570.144's. A boot runs on Ada only so far; nothing here has run on
-    hardware in this library (no host gives root).
+    release 570.144's.
 
     Calls are serialized by a lock of the GSP's; any domain may make them. *)
 

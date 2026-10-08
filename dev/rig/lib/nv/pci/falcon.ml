@@ -107,8 +107,7 @@ let wait_reset : Chip.family -> op list = function
           );
       ]
 
-(* How long a falcon's reset is held: 100 ms, as the PCI path's boot holds it on
-   Ada. *)
+(* How long a falcon's reset is held. *)
 let reset_us = 100_000
 
 let reset base core =

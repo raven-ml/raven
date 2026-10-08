@@ -552,9 +552,8 @@ let channel_memory g ~client ~locate p =
   memdesc p G.mthdbuf_mem ~base:mthd ~size:method_buffer_size ~space:fb;
   if client = priv_root || pget p G.h_object_error = 0 then Ok ()
   else begin
-    (* The error notifier stays in no memory the GSP writes, as the PCI path's
-       boot has run it: the GSP reports a channel's error as an event
-       (RC_TRIGGERED). *)
+    (* The error notifier is described in no memory: the GSP reports a channel's
+       error as an event (RC_TRIGGERED), which the path reads instead. *)
     memdesc p G.error_notifier_mem ~base:0 ~size:notifier_size ~space:0;
     let h = pget p (fst3 G.h_userd_memory, 4) in
     let off = pget p (fst3 G.userd_offset, 8) in

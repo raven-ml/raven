@@ -18,8 +18,7 @@
     falcon's boot ROM against its signature.
 
     Addresses are of the GPU's registers (BAR 0), the falcons' within their unit
-    ({!gsp}, {!sec2}). The sequences are those of the PCI path's boot on Ada,
-    from NVIDIA's register headers; unverified on Ampere and Blackwell. *)
+    ({!gsp}, {!sec2}), from NVIDIA's register headers. *)
 
 (** {1:ops Register sequences} *)
 
