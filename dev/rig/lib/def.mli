@@ -41,6 +41,13 @@ type completion = Store | Object of int | Host_writes
    library gave. *)
 type memory_kind = Device | Pinned | Mapped | Host_kept | Io_made | Io_given
 
+type keep =
+  | Nothing
+  | Heap of
+      (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+      * token
+  | Bigarray : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> keep
+
 type device = {
   index : int;
   name : string;
@@ -90,6 +97,9 @@ and entry = {
       (** An io memory's pages, asked at its first borrow. *)
   mutable proxy : int;
       (** The C proxy of the bigarrays over the memory, 0 before the first. *)
+  mutable kept : keep;
+      (** Host memory a device borrowed: its bytes, held until its uses are
+          reached. *)
 }
 
 and pages =
@@ -110,13 +120,6 @@ type claim = {
   mutable generation : int; [@atomic]
   mutable why : string;  (** The last consumption's reason. *)
 }
-
-type keep =
-  | Nothing
-  | Heap of
-      (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
-      * token
-  | Bigarray : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> keep
 
 (* A memory: owned, or a borrow of [root]'s on [dev]. *)
 type memory = {

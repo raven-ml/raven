@@ -225,6 +225,33 @@ let test_foreign_use () =
   collect a;
   equal ~msg:"once it is reached" bool true (freed pa at)
 
+(* Host memory a device borrowed returns only once that device's work on it is
+   done: until then no host buffer reuses it. *)
+let test_borrowed_host () =
+  let d, p = P.open_ "memory:borrowed-host" in
+  let n = 1 lsl 16 in
+  let[@inline never] written () =
+    let h = B.create C.host n in
+    let src = B.create d n in
+    let dst = require_some (B.borrow d h) in
+    let part =
+      { Sub.queue = "COPY:0"; after = [||]; work = Sub.Copy { src; dst } }
+    in
+    ignore (C.submit (Sub.make ~reads:0 ~writes:0 ~waits:0 d [| part |]));
+    B.address h
+  in
+  let at = written () in
+  Gc.full_major ();
+  Gc.full_major ();
+  let other = B.create C.host n in
+  equal ~msg:"while the work is queued" bool false (B.address other = at);
+  ignore (P.run p);
+  ignore (B.create C.host 0);
+  Gc.full_major ();
+  Gc.full_major ();
+  equal ~msg:"once it ran" int at (B.address (B.create C.host n));
+  ignore (Sys.opaque_identity other)
+
 (* free_cache on the host returns what the host keeps for reuse. *)
 let test_host_free_cache () =
   ignore (dropped C.host ((64 * kib) + 4093));
@@ -315,6 +342,8 @@ let tests =
         test "the host keeps a collected buffer's memory for its size"
           test_host_cache;
         test "free_cache on the host returns what it keeps" test_host_free_cache;
+        test "host memory a device borrowed returns once its work ran"
+          test_borrowed_host;
         test "the host keeps a buffer's bytes when a view outlives it"
           test_host_keeps_size;
       ];

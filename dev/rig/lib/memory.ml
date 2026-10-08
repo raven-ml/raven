@@ -135,6 +135,7 @@ let entry ?region ?io_region owner memory bytes stamps =
     held = false;
     pages = Unasked;
     proxy = 0;
+    kept = Nothing;
   }
 
 (* The entry of host memory no device borrowed: no stamps, no mapping. *)
@@ -405,15 +406,15 @@ let cache d e =
 let to_cache d e = Dev.protect d (fun () -> cache d e)
 
 (* Routes a record [d]'s release list gave. *)
+(* Memory the cache never takes: held memory, io memory, and host memory a
+   device borrowed, which returns to its keeper once its uses are reached. *)
+let uncached (e : entry) = e.held || e.memory = Host_kept || is_io_memory e
+
 let route d = function
-  | Memory ({ memory = Host_kept; _ } as e) ->
-      unmap_all e;
-      drop_stamps e
   | Memory e ->
       let cached =
         (not (Dev.is_lost d))
-        && (not e.held)
-        && (not (is_io_memory e))
+        && (not (uncached e))
         && reached ~except:d.index e.stamps
         && not (viewed e)
       in
@@ -431,8 +432,7 @@ type fate = Stays | Cached | Freed
 let fate d ~lost ~free_lost (e : entry) =
   if viewed e then Stays
   else if lost then if free_lost && reached e.stamps then Freed else Stays
-  else if e.held || is_io_memory e then
-    if reached e.stamps then Freed else Stays
+  else if uncached e then if reached e.stamps then Freed else Stays
   else if reached ~except:d.index e.stamps then Cached
   else Stays
 
@@ -697,6 +697,7 @@ let ensure_entry m =
   Dev.protect d (fun () ->
       if m.entry == no_entry then begin
         let e = entry d Host_kept m.bytes (stamps_new ()) in
+        e.kept <- m.keep;
         m.entry <- e;
         m.token <- token d.release (Memory e) 0 max_int (-1)
       end)
