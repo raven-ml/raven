@@ -45,26 +45,31 @@ val link : entry:string -> string -> (t, string) result
     {{!linking}Linking} for the objects it links.
 
     The result is [Error msg], [msg] saying which, if:
-    - [obj] is not a well-formed ELF object, or is not relocatable, or is for
-      another machine than the host's;
+    - [obj] is not a well-formed ELF object, or is not 64-bit, relocatable and
+      for the host's machine;
     - an allocated section of [obj] is writable and not empty, such as a [.data]
       or [.bss] in use;
     - a section of [obj] asks for an alignment above 4096 bytes, the least page
       of every supported host;
-    - [obj] has relocations without addends ([SHT_REL]) that patch an allocated
-      section, or one of a type {{!relocations}Linking} does not list, or one
-      whose value does not fit its field;
     - [entry] names no symbol of an executable section of [obj];
+    - a relocation of [obj] keeps its addend in its field ([SHT_REL]), is of a
+      type not listed under {!relocations}, uses a symbol defined outside the
+      image, such as a common or thread-local variable, patches past the image's
+      end, or has a value that does not fit its field;
     - [obj] refers to a symbol that neither [obj], this library nor the process
-      defines ({{!symbols}Symbols});
-    - the process cannot map executable memory, with the system's reason;
+      defines ({!symbols});
+    - the process cannot map executable memory, with the system's reason
+      ({!platforms});
     - the host's machine is neither x86_64 nor arm64. *)
 
 val address : t -> int
-(** [address p] is the address of [p]'s entry, which linked code calls through
-    [device_host_call] ({!linking}). It is valid while [p] is alive: code that
-    holds it must run only while a value it can reach, such as the record that
-    also holds the calling program, holds [p]. *)
+(** [address p] is the address of [p]'s entry, for linked code to call through
+    {{!device_host_call}[device_host_call]}.
+
+    It is valid while [p] is reachable: once [p] is not, the collector may unmap
+    its code. {!call} keeps only its own program reachable, so the caller of a
+    program whose code calls [address p] keeps [p] reachable until that call
+    returns, for instance in the record that holds both programs. *)
 
 (** {1:calling Calling} *)
 
@@ -95,10 +100,10 @@ val call : ?split:split -> t -> int array -> int array -> unit
     [values.(split.lo)] the range's first iteration, [values.(split.hi)] the one
     after its last, and the other values as given. Each call has its own copy of
     the values. The calls run in any order and at once on at most {!workers}
-    threads, so a call must not read what another writes. On one thread, one
-    call covers every iteration; a split of no iteration calls [p] never. A
-    split call waits while another domain's split call, or another job of the
-    host's pool, runs.
+    threads, so a call must not read what another writes. A split that runs on
+    one thread calls [p] once, over every iteration; a split of no iteration
+    calls [p] never. A split call waits while another domain's split call, or
+    another job of the host's pool, runs.
 
     Raises [Invalid_argument] if [split.extent < 0], [split.blocks < 1],
     [split.lo] or [split.hi] is not an index of [values], or
@@ -118,9 +123,14 @@ val workers : unit -> int
     never writable and executable at once: on arm64 macOS it is mapped with
     [MAP_JIT], whose write protection only the linking thread lifts while it
     writes; elsewhere it is mapped writable and made executable and read-only
-    once written. The instruction caches are synchronized with the written code
-    before [link] returns, and each thread synchronizes its instruction stream
-    before it enters linked code.
+    once written.
+
+    An arm64 core may run instructions it fetched before the code was written,
+    such as those of a collected program that was mapped at the same address.
+    [link] removes such instructions from every core's caches before it returns,
+    and a thread discards those it fetched ahead before it enters linked code
+    through {!call} or [device_host_call]. x86_64 keeps its instruction caches
+    coherent with writes to code.
 
     The object is 64-bit and little-endian, relocatable ([ET_REL]), for the
     host's machine ([EM_X86_64] or [EM_AARCH64]). It has no writable data: code
@@ -173,28 +183,37 @@ val workers : unit -> int
     [n] values [values], as {!call} does: unsplit for a [NULL] [split], and
     otherwise split by the four values at [split], [extent], [blocks], [lo] and
     [hi], in the order of {!type-split}'s fields. It returns once every call of
-    [f] has. It assumes what {!call} checks: [0 <= extent], [1 <= blocks], and
-    [lo] and [hi] are distinct indices below [n], and [n <= 1024]. It is called
-    from code that {!call} runs, or from a block of it, with the OCaml runtime
-    released; called from a block of a split, it runs on that block's thread
-    alone.
+    [f] has. It is called from code that {!call} runs, or from a block of it,
+    with the OCaml runtime released; called from a block of a split, it runs on
+    that block's thread alone.
+
+    It checks nothing: a split must have [0 <= extent], [1 <= blocks], [lo] and
+    [hi] distinct indices below [n], as {!call} checks, and [n <= 1024]. A void
+    function cannot report that it found no memory, so a split always has room
+    for one copy of the values: for [n <= 1024] there is, and without memory for
+    a copy per thread the split runs on fewer threads.
 
     {2:abi Calling conventions}
 
-    Linked code follows its object's convention: System V AMD64 on x86_64,
-    Windows included, and AAPCS64 on arm64. [call] calls the entry, and
-    [device_host_call] is called, that way. A function of the process's
-    libraries follows the platform's convention, so on x86_64 Windows linked
-    code declares those it calls [__attribute__((ms_abi))]. Code for an ELF
-    target has no stack probes: on Windows, which commits a thread's stack one
-    guard page at a time, a frame above 4 KiB may fault.
+    Linked code follows its object's convention: a compiler that targets ELF
+    without an operating system uses System V AMD64 on x86_64, and AAPCS64 on
+    arm64. x86_64 Windows passes arguments in other registers and preserves
+    others, so there too [call] calls the entry, and [device_host_call] is
+    called, by System V. A function of the process's libraries follows the
+    platform's convention, so on x86_64 Windows linked code declares those it
+    calls [__attribute__((ms_abi))]. Code for an ELF target has no stack probes:
+    on Windows, which commits a thread's stack one guard page at a time, a frame
+    above 4 KiB may fault.
 
     {1:platforms Platform support}
 
     [link] links code on x86_64 and arm64 hosts running Linux, macOS or Windows.
-    On macOS, a program built with the hardened runtime needs the
-    [com.apple.security.cs.allow-jit] entitlement (arm64) or
-    [com.apple.security.cs.allow-unsigned-executable-memory] (x86_64) to map
-    executable memory, and links fail with the
-    [com.apple.security.cs.single-jit] or
-    [com.apple.security.cs.jit-write-allowlist] entitlements. *)
+
+    On macOS, a program built with the hardened runtime maps executable memory
+    only with the [com.apple.security.cs.allow-jit] entitlement (arm64) or
+    [com.apple.security.cs.allow-unsigned-executable-memory] (x86_64); without
+    it [link] is an [Error]. With [com.apple.security.cs.single-jit], a process
+    maps executable memory once, so its links after the first are [Error]s. With
+    [com.apple.security.cs.jit-write-allowlist], the system forbids the
+    per-thread write protection [link] lifts and ends the process at its first
+    link. *)
