@@ -25,7 +25,7 @@ let words s =
     (String.length s / 4)
     (fun i -> Int32.to_int (String.get_int32_le s (4 * i)) land 0xffff_ffff)
 
-let encode p = words (Packet.encode Int64.of_int p)
+let encode p = words (Rig_packet.encode Int64.of_int p)
 
 (* PM4 packets *)
 

@@ -3,11 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The library's initialisation, measured between the initialisers of the probes
-   linked around it (support/dune): it computes no value, and allocates only
-   what its declarations take, Capability.key's type id and the exceptions
-   Packet.Hole and Thread_trace.Missing. Reading the tables builds nothing that
-   outlives the reading. *)
+(* The library's initialisation, with rig_packet's, measured between the
+   initialisers of the probes linked around them (support/dune): it computes no
+   value, and allocates only what its declarations take, Capability.key's type
+   id and the exceptions Thread_trace.Missing and Rig_packet's hole. Reading the
+   tables builds nothing that outlives the reading. *)
 
 open Windtrap
 open Rig_amd_abi

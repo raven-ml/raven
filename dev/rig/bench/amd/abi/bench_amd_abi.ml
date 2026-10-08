@@ -79,12 +79,12 @@ let run g k =
        ~groups:(Groups 0, Groups 1, Groups 2)
        ())
 
-let encode p = Packet.encode value p
+let encode p = Rig_packet.encode value p
 
 (* [p]'s template and its holes' words, as (word index, word) pairs, and a
    function copying the template into [b] and writing the words over it. *)
 let fill_into_bytes p =
-  let t, holes = Packet.template known p in
+  let t, holes = Rig_packet.template known p in
   let words =
     List.concat_map
       (fun (i, w) ->
@@ -123,7 +123,7 @@ let pm4 =
       Thumper.bench "encode/gfx12" (fun () ->
           encode (run (Thumper.black_box gfx12) kernel));
       Thumper.bench "template/gfx12" (fun () ->
-          Packet.template known (run (Thumper.black_box gfx12) kernel));
+          Rig_packet.template known (run (Thumper.black_box gfx12) kernel));
       Thumper.bench "fill-into-bytes/gfx12" (fill_into_bytes (run gfx12 kernel));
       Thumper.bench "release-encode/gfx12" (fun () ->
           encode (release (Thumper.black_box gfx12)));

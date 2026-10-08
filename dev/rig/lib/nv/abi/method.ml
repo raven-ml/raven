@@ -21,7 +21,7 @@ let set (f : D.field) v = v lsl f.lo
 let methods s m ws =
   let header =
     set D.nvc56f_dma_sec_op D.nvc56f_dma_sec_op_inc_method
-    lor set D.nvc56f_dma_method_count (size ws)
+    lor set D.nvc56f_dma_method_count (Rig_packet.size ws)
     lor set D.nvc56f_dma_method_subchannel s
     lor set D.nvc56f_dma_method_address (m lsr 2)
   in

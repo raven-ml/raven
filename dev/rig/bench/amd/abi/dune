@@ -1,6 +1,6 @@
 (executable
  (name bench_amd_abi)
- (libraries rig_amd_abi rig_amd_abi_support thumper))
+ (libraries rig_amd_abi rig_amd_abi_support rig_packet thumper))
 
 (rule
  (alias bench)

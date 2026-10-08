@@ -116,7 +116,8 @@ let copy =
       test "a copy of 2^48 bytes is taken" (fun () ->
           equal int
             ((1 lsl 18) * 7)
-            (Packet.size (Sdma.copy (gpu (6, 0, 0)) ~dst:0 ~src:0 (1 lsl 48))));
+            (Rig_packet.size
+               (Sdma.copy (gpu (6, 0, 0)) ~dst:0 ~src:0 (1 lsl 48))));
     ]
 
 let others =

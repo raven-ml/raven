@@ -1569,7 +1569,7 @@ let other = code_of (lazy (read_fixture "other_gfx1201.hsaco"))
 let work_code = code_of work_bin
 
 let words p =
-  let s = Abi.Packet.encode Int64.of_int p in
+  let s = Rig_packet.encode Int64.of_int p in
   Array.init
     (String.length s / 4)
     (fun i -> Int32.to_int (String.get_int32_le s (4 * i)) land 0xffff_ffff)

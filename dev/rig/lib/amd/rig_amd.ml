@@ -242,7 +242,7 @@ let templates (g : Abi.Gpu.t) ~interrupt ~waits64 ~aql =
 
 let set_templates self g ~interrupt ~waits64 ~aql =
   let set i p =
-    let words, holes = Packet.template (fun _ -> None) p in
+    let words, holes = Rig_packet.template (fun _ -> None) p in
     set_template self i words (Array.of_list (List.concat_map hole holes))
   in
   List.iteri set (templates g ~interrupt ~waits64 ~aql);

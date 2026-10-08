@@ -85,7 +85,7 @@ let engines (g : Gpu.t) f =
 
 (* A packet of known values, as constant words of any packet. *)
 let known (p : int Packet.t) =
-  let s = Packet.encode Int64.of_int p in
+  let s = Rig_packet.encode Int64.of_int p in
   List.init
     (String.length s / 4)
     (fun i ->

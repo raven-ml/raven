@@ -16,6 +16,7 @@
   rig_nv_bench
   rig_nv_nvidia
   rig_nv_support
+  rig_packet
   thumper))
 
 (rule

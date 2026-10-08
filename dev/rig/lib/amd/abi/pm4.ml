@@ -18,7 +18,7 @@ let gc_name (g : Gpu.t) =
 
 (* PACKET3: type 3, the opcode, and the words of the body less one. *)
 let packet op body =
-  let n = size body - 1 in
+  let n = Rig_packet.size body - 1 in
   Dword
     ((Defs.packet_type3 lsl 30)
     lor ((op land 0xff) lsl 8)
@@ -50,7 +50,7 @@ let set_reg reg ws =
         "Pm4.set_reg: register 0x%x is in neither the SH nor the UCONFIG space"
         reg
   in
-  let n = size ws in
+  let n = Rig_packet.size ws in
   if reg + n > stop then
     invalid_argf
       "Pm4.set_reg: %d words from register 0x%x pass its space's end 0x%x" n reg
@@ -258,7 +258,7 @@ let max_predicated = 0x3fff
 let pred_exec ~xcc_mask p =
   if xcc_mask < 0 || xcc_mask > max_xcc_mask then
     invalid_argf "Pm4.pred_exec: xcc_mask %d, expected 0 to 255" xcc_mask;
-  let n = size p in
+  let n = Rig_packet.size p in
   if n > max_predicated then
     invalid_argf "Pm4.pred_exec: %d words, expected at most 16383" n;
   packet Defs.packet3_pred_exec [ Dword ((xcc_mask lsl xcc_select) lor n) ] @ p

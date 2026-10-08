@@ -19,6 +19,7 @@ let rec eval value = function
   | Value v -> value v
   | Add (t, n) -> Int64.add (eval value t) n
   | Shift (t, n) -> Int64.shift_right_logical (eval value t) n
+  | Or (t, n) -> Int64.logor (eval value t) n
 
 (* A hole's word: the narrowest of 1, 2, 4 and 8 bytes that holds [bits]. *)
 let word_bytes bits =

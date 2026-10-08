@@ -511,7 +511,7 @@ let invalidate g =
             let wptr = Int64.to_int (Window.get64 ptrs 8) in
             let fence = va + base + 0x1010 in
             let words =
-              Packet.encode Int64.of_int
+              Rig_packet.encode Int64.of_int
                 (Pm4.write_data (Register req_at) req
                 @ Pm4.wait gpu (Register ack_at) Equal (1 lsl vmid)
                     ~mask:(1 lsl vmid) ~interval:kiq_poll_interval ()

@@ -190,6 +190,7 @@ over; a submission's round trip and allocation could differ.
 | `rig.amd` | AMD GPUs, opened by `rig.amd.amdgpu` or `rig.amd.pci` |
 | `rig.nv` | NVIDIA GPUs, opened by `rig.nv.nvidia` or `rig.nv.pci` |
 | `rig.*.abi` | Each vendor's formats: code objects, packets, launch descriptors |
+| `rig.packet` | A queue's 32-bit words with holes, and the C template a driver fills |
 | `rig.pci` | A machine's PCI functions: taking one, its BARs, DMA memory, page tables |
 | `rig.edge` | The C interface, `rig_edge.h`, through which work reaches a driver |
 | `rig.remote` | Another machine over TCP: interface only, not implemented |

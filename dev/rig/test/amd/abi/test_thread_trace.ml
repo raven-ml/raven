@@ -32,7 +32,7 @@ let rec split n (p : int Packet.t) =
     match p with
     | [] -> ([], [])
     | w :: rest ->
-        let body, rest = split (n - Packet.size [ w ]) rest in
+        let body, rest = split (n - Rig_packet.size [ w ]) rest in
         (w :: body, rest)
 
 (* Walks [p], the words of a program over engine numbers, and gives each use of
@@ -62,7 +62,7 @@ let uses g (p : int Packet.t) =
         let body, rest = split n rest in
         let dies_now = if !predicated > 0 then !dies else None in
         if !predicated > 0 then
-          predicated := !predicated - (Packet.size body + 1);
+          predicated := !predicated - (Rig_packet.size body + 1);
         (match (op, body) with
         | op, [ Dword w ] when op = S.pred_exec ->
             dies := Some (w lsr 24);
@@ -181,7 +181,7 @@ let recording =
         [ 4096; 1 lsl 30 ]
         (fun size ->
           let p = Thread_trace.start (gpu (11, 0, 0)) ~size (fun _ -> 0) in
-          greater int ~than:0 (Packet.size p));
+          greater int ~than:0 (Rig_packet.size p));
       cases
         ~name:(fun (g, size) -> strf "GC %s, %d" (S.version g.Gpu.gc) size)
         "a size past 2^22 - 1 pages is refused"

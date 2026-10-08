@@ -109,11 +109,13 @@ let rec eval value : _ Packet.term -> int64 = function
   | Value v -> value v
   | Add (t, n) -> Int64.add (eval value t) n
   | Shift (t, n) -> Int64.shift_right_logical (eval value t) n
+  | Or (t, n) -> Int64.logor (eval value t) n
 
 let rec pp_term pp_v ppf : _ Packet.term -> unit = function
   | Value v -> pp_v ppf v
   | Add (t, n) -> Format.fprintf ppf "Add (%a, 0x%Lx)" (pp_term pp_v) t n
   | Shift (t, n) -> Format.fprintf ppf "Shift (%a, %d)" (pp_term pp_v) t n
+  | Or (t, n) -> Format.fprintf ppf "Or (%a, 0x%Lx)" (pp_term pp_v) t n
 
 (* An address below 2^bits, a multiple of 2^align. *)
 let address ~bits ~align =

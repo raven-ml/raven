@@ -1,3 +1,3 @@
 (executable
  (name main)
- (libraries rig rig.amd rig.amd.abi rig.amd.amdgpu))
+ (libraries rig rig.amd rig.amd.abi rig.amd.amdgpu rig.packet))

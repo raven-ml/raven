@@ -4,7 +4,7 @@
 (library
  (name rig_nv)
  (public_name rig.nv)
- (libraries rig_nv_abi rig_elf rig_edge)
+ (libraries rig_nv_abi rig_elf rig_edge rig_packet)
  (private_modules defs)
  (install_c_headers rig_nv)
  (foreign_stubs

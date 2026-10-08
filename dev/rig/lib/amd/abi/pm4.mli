@@ -159,7 +159,7 @@ val pred_exec : xcc_mask:int -> 'v Packet.t -> 'v Packet.t
     die [i], of a queue that runs on several.
 
     Raises [Invalid_argument] if [xcc_mask] is not in \[[0];[255]\] or
-    [Packet.size p] exceeds 16383 words. *)
+    [Rig_packet.size p] exceeds 16383 words. *)
 
 val indirect_buffer : 'v -> dwords:'v -> 'v Packet.t
 (** [indirect_buffer addr ~dwords] runs the [dwords] words of PM4 packets at

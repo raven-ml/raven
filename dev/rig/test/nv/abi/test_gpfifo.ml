@@ -13,7 +13,7 @@ let max_offset = (1 lsl 40) - 1
 
 let entry a ~offset ~words =
   String.get_int64_le
-    (Packet.encode Int64.of_int (Gpfifo.entry a ~offset ~words))
+    (Rig_packet.encode Int64.of_int (Gpfifo.entry a ~offset ~words))
     0
 
 (* An entry's fields: its segment's address, from GET and GET_HI, its length and

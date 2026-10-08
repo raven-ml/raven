@@ -6,10 +6,11 @@
 /* A device's state in C, which the writer (rig_nv_ring.c) and the OCaml
    stubs (rig_nv_stubs.c) share.
 
-   The writer knows no method number: the words it writes are templates the
-   OCaml side encodes with the ABI library at open, each a run of words with
-   holes, and a hole is a function of one of the writer's values (an
-   address, a payload, a count) that the writer fills.
+   The writer knows no method number: the words it writes are templates
+   (rig_packet.h) the OCaml side encodes with the ABI library at open, each
+   a run of words with holes, and a hole is a function of one of the
+   writer's values (an address, a payload, a count) that the writer
+   fills.
 
    A channel's ring and its segment ring return what a submission used once
    the device's timeline word reaches the submission's value: each channel
@@ -21,6 +22,8 @@
 #include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
+
+#include <rig_packet.h>
 
 #include "rig_nv.h"
 
@@ -41,27 +44,7 @@ enum {
   TEMPLATES
 };
 
-#define TEMPLATE_WORDS 16
-#define TEMPLATE_HOLES 6
-#define HOLE_OPS 3
 #define COPY_MAX (UINT64_C(1) << 31)
-
-/* A hole: the word at index [at], or the two words from it when [wide],
-   low first, filled with the writer's value number [slot] after [nops]
-   operations in order, each an addition ([shift] 0) of [n] modulo 2^64 or a
-   right shift by [shift]. */
-struct hole {
-  uint16_t at;
-  uint8_t slot, wide, nops;
-  uint8_t shift[HOLE_OPS];
-  uint64_t n[HOLE_OPS];
-};
-
-struct template {
-  uint32_t words[TEMPLATE_WORDS];
-  int nwords, nholes;
-  struct hole holes[TEMPLATE_HOLES];
-};
 
 /* A submission's use of a channel: the value, and the ring's and the
    segment ring's counts once it was written. */
@@ -99,7 +82,7 @@ struct device {
   _Atomic uint64_t last; /* the last value submitted */
   struct channel ch[CHANNELS];
   volatile uint32_t *doorbell;
-  struct template t[TEMPLATES];
+  struct rig_template t[TEMPLATES];
   /* an entry is address + base + words * word */
   uint64_t entry_base, entry_word;
   /* a pending local memory: address | per_tpc / 32 KiB << 40 */

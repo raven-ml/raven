@@ -110,7 +110,7 @@ let rec writes = function
         (List.filteri (fun i _ -> i < n) rest)
       @ writes (List.filteri (fun i _ -> i >= n) rest)
 
-let read p = writes (S.words (Packet.encode Fun.id p))
+let read p = writes (S.words (Rig_packet.encode Fun.id p))
 let lo v = Int64.to_int v land 0xffff_ffff
 let hi v = Int64.to_int (Int64.shift_right_logical v 32) land 0xffff_ffff
 let bits v lo n = (v lsr lo) land ((1 lsl n) - 1)

@@ -84,20 +84,13 @@ static void close_segment(const struct device *d, struct channel *c) {
   c->open_words = 0;
 }
 
-static uint64_t fill(const struct hole *h, const uint64_t *values) {
-  uint64_t x = values[h->slot];
-  for (int i = 0; i < h->nops; i++)
-    x = h->shift[i] ? x >> h->shift[i] : x + h->n[i];
-  return x;
-}
-
 /* Writes template [k] with the values [a], [b], [n] into the open segment
    of [c]. A segment never wraps: one whose words would pass the ring's end,
    including one that ends exactly there, is closed first, and the words go
    at the start of the ring when they do not fit before its end. */
 static void emit(const struct device *d, struct channel *c, int k, uint64_t a,
                  uint64_t b, uint64_t n) {
-  const struct template *t = &d->t[k];
+  const struct rig_template *t = &d->t[k];
   uint64_t bytes = 4 * (uint64_t)t->nwords;
   uint64_t start = c->open & (c->size - 1);
   if (start + 4 * c->open_words + bytes > c->size) {
@@ -107,15 +100,8 @@ static void emit(const struct device *d, struct channel *c, int k, uint64_t a,
     c->open = c->written;
   }
   uint64_t at = c->written & (c->size - 1);
-  uint32_t *w = (uint32_t *)(c->segments + at);
-  memcpy(w, t->words, bytes);
-  const uint64_t values[3] = {a, b, n};
-  for (int i = 0; i < t->nholes; i++) {
-    const struct hole *h = &t->holes[i];
-    uint64_t x = fill(h, values);
-    w[h->at] = (uint32_t)x;
-    if (h->wide) w[h->at + 1] = (uint32_t)(x >> 32);
-  }
+  const uint64_t args[RIG_TEMPLATE_ARGS] = {a, b, n};
+  rig_fill(t, args, (uint32_t *)(c->segments + at));
   c->written += bytes;
   c->open_words += (uint64_t)t->nwords;
 }
@@ -213,7 +199,7 @@ static void need(const struct device *d, const struct rig_part *p, int n,
     entries[q] += 3;
     bytes[q] += (2 + MAX_WAITS) * bytes_of(d, T_ACQUIRE) +
                 bytes_of(d, q == COMPUTE ? T_SETUP : T_SETUP_COPY) +
-                4 * TEMPLATE_WORDS;
+                4 * RIG_TEMPLATE_WORDS;
     if (q == COMPUTE)
       bytes[q] += bytes_of(d, T_LOCAL) + bytes_of(d, T_INVALIDATE);
   }

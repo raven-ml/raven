@@ -1,6 +1,5 @@
 (tests
  (names
-  test_packet
   test_gpu
   test_register
   test_code_object
@@ -12,7 +11,6 @@
   test_capability
   test_counter)
  (modules
-  test_packet
   test_gpu
   test_register
   test_code_object
@@ -23,7 +21,7 @@
   test_thread_trace
   test_capability
   test_counter)
- (libraries rig_amd_abi rig_amd_abi_support rig_elf windtrap)
+ (libraries rig_amd_abi rig_amd_abi_support rig_elf rig_packet windtrap)
  (deps
   (source_tree fixtures)))
 
@@ -45,7 +43,7 @@
 (test
  (name test_trace_program)
  (modules test_trace_program)
- (libraries rig_amd_abi rig_amd_abi_support windtrap)
+ (libraries rig_amd_abi rig_amd_abi_support rig_packet windtrap)
  (action
   (progn
    (run %{test} --corrected)
