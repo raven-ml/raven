@@ -6,7 +6,7 @@ prints a line and exits.
 A kernel reaches a Metal device through a fill, `run.c`, that executes an
 indirect command buffer. This example loads a metallib, records one dispatch of
 its kernel `add` over a million floats, runs it as a step (fixed memory in a
-hold, arrays in slots) and checks the result.
+hold, arrays passed to each submit) and checks the result.
 
 ```bash
 cd dev/rig/examples/x-metal-kernel

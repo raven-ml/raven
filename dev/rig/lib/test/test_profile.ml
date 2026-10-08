@@ -11,9 +11,12 @@ module Prof = Rig.Profile
 module P = Rig_support.Polled
 module Support = Rig_support
 
+let submit ?(reads = [||]) ?(writes = [||]) ?(waits = [||]) s =
+  C.submit s ~reads ~writes ~waits
+
 let timeout = 60.
 let memory name = require_ok ~pp:Format.pp_print_string (C.memory_device name)
-let empty d = Sub.make ~reads:0 ~writes:0 ~waits:0 d [||]
+let empty d = Sub.make ~reads:0 ~writes:0 d [||]
 
 (* The spans of [events], as [(lane, name)]. *)
 let spans events =
@@ -151,9 +154,8 @@ let test_after () =
   in
   let (), events =
     Prof.take (fun () ->
-        let s = Sub.make ~reads:0 ~writes:1 ~waits:0 d [||] in
-        Sub.write s 0 m;
-        let p = C.submit s in
+        let s = Sub.make ~reads:0 ~writes:1 d [||] in
+        let p = submit s ~writes:[| m |] in
         Prof.after p (fun () ->
             read := true;
             [ span "short" 5 6; span "long" 5 9; span "first" 1 2 ]);
@@ -165,7 +167,7 @@ let test_after () =
 
 let test_after_disabled () =
   let d = memory "profile:after-off" in
-  let p = C.submit (empty d) in
+  let p = submit (empty d) in
   Prof.after p (fun () -> failf "read while no profile is taken");
   C.wait d (C.Point.value p)
 
@@ -179,13 +181,13 @@ let test_after_profiles () =
     Prof.take (fun () ->
         let (), inner =
           Prof.take (fun () ->
-              let q = C.submit (Sub.make ~reads:0 ~writes:0 ~waits:0 d [||]) in
+              let q = submit (Sub.make ~reads:0 ~writes:0 d [||]) in
               Prof.after q (fun () -> [ event "both" ]))
         in
         equal ~msg:"inner" (list string) [ "both" ] (named inner))
   in
   equal ~msg:"outer" (list string) [ "both" ] (named outer);
-  let q = C.submit (Sub.make ~reads:0 ~writes:0 ~waits:0 d [||]) in
+  let q = submit (Sub.make ~reads:0 ~writes:0 d [||]) in
   Prof.after q (fun () -> [ event "before" ]);
   let (), later = Prof.take (fun () -> C.wait d (C.Point.value q)) in
   equal ~msg:"a profile taken after" (list string) [] (named later)
@@ -195,14 +197,14 @@ let test_after_lost () =
   let d, p = P.open_ "profile:after-lost" in
   let (), events =
     Prof.take (fun () ->
-        let q = C.submit (Sub.make ~reads:0 ~writes:0 ~waits:0 d [||]) in
+        let q = submit (Sub.make ~reads:0 ~writes:0 d [||]) in
         Prof.after q (fun () ->
             [
               Prof.Span
                 { device = d; lane = "l"; name = "unread"; start = 0; stop = 1 };
             ]);
         P.fail p;
-        try ignore (C.submit (Sub.make ~reads:0 ~writes:0 ~waits:0 d [||]))
+        try ignore (submit (Sub.make ~reads:0 ~writes:0 d [||]))
         with C.Lost _ -> ())
   in
   equal (list string) [] (named events)
@@ -236,7 +238,7 @@ let test_record () =
   List.iteri (fun i w -> words.{i} <- Int64.of_int w) [ 0; 100; 0; 250 ];
   let (), events =
     Prof.take (fun () ->
-        let p = C.submit (empty d) in
+        let p = submit (empty d) in
         Prof.record p ~lane:"COMPUTE:0" ~name:"kernel" stamps)
   in
   match events with
@@ -247,7 +249,7 @@ let test_record () =
 
 let refuses_stamps stamps () =
   let d = memory "profile:record-refusals" in
-  let p = C.submit (empty d) in
+  let p = submit (empty d) in
   raises_match Exn.invalid_arg (fun () ->
       Prof.record p ~lane:"l" ~name:"n" stamps)
 
@@ -313,7 +315,7 @@ let test_after_raises () =
   let d, _ = P.open_ "profile:after-raises" in
   let (), _ =
     Prof.take (fun () ->
-        let p = C.submit (Sub.make ~reads:0 ~writes:0 ~waits:0 d [||]) in
+        let p = submit (Sub.make ~reads:0 ~writes:0 d [||]) in
         Prof.after p (fun () -> raise Exit);
         raises Exit (fun () -> C.wait d (C.Point.value p)))
   in

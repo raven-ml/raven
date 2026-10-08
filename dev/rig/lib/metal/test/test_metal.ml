@@ -174,8 +174,8 @@ let pipeline t f = require_some (Rig_metal.entry t.fill f)
 
 (* Submits [parts] as [t]'s next value, which it is. *)
 let submit_parts t parts =
-  let s = Rig.Submission.make ~reads:0 ~writes:0 ~waits:0 t.c parts in
-  Rig.Point.value (Rig.submit s)
+  let s = Rig.Submission.make ~reads:0 ~writes:0 t.c parts in
+  Rig.Point.value (Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||])
 
 let submit t fills = submit_parts t (Array.map S.part fills)
 let alloc t n = require_some (Rig_metal.alloc t.d `Device n)
@@ -676,8 +676,8 @@ let of_file p = require_ok ~pp:Format.pp_print_string (Rig_disk.of_file p)
 let create_file p n =
   require_ok ~pp:Format.pp_print_string (Rig_disk.create_file p n)
 
-(* Work on [t]'s device that adds 1 to each byte of [b], a buffer on it, in a
-   write slot; it returns once the work is done. *)
+(* Work on [t]'s device that adds 1 to each byte of [b], a buffer on it that the
+   run writes; it returns once the work is done. *)
 let bump t b =
   let n = B.length b and args = alloc t args_bytes in
   set_args args ~at:0 ~out:(B.address b) ~c:n;
@@ -686,9 +686,8 @@ let bump t b =
       ~groups:((n + 255) / 256)
       ~threads:256
   in
-  let s = Rig.Submission.make ~reads:0 ~writes:1 ~waits:0 t.c [| S.part f |] in
-  Rig.Submission.write s 0 b;
-  ignore (Rig.submit s);
+  let s = Rig.Submission.make ~reads:0 ~writes:1 t.c [| S.part f |] in
+  ignore (Rig.submit s ~reads:[||] ~writes:[| b |] ~waits:[||]);
   B.wait b Read;
   Rig_metal.free t.d args
 

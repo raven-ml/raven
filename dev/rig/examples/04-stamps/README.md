@@ -18,7 +18,7 @@ would keep.
 - A device's work addresses its own memory, and another's once it borrows it:
   `reaches`, `Buffer.borrow`
 - A borrow shares the stamps of the memory it maps
-- Ordering by memory, and by a point with a wait slot: `Submission.wait_for`
+- Ordering by memory, and by a point the submit waits for: `submit ~waits`
 - The host's side of the same rule: `Buffer.wait` with `Read` and
   `Read_write`, and `Buffer.copy`
 
@@ -28,7 +28,7 @@ would keep.
 | --------------------------- | ----------------------------------------------- |
 | `reaches d d'`              | Whether `d`'s work can address `d'`'s memory    |
 | `Buffer.borrow d b`         | `b`'s memory as a buffer of `d`, without a copy |
-| `Submission.wait_for s i p` | The next submit of `s` waits for `p`            |
+| `submit s ~waits:[\| p \|]`  | The submit of `s` waits for `p`                 |
 | `Buffer.wait b access`      | Wait before the host reads or writes `b`        |
 
 ## Next Steps

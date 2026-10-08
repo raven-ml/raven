@@ -7,7 +7,7 @@ Elsewhere it prints a line and exits.
 An AMD GPU's queues read packets that compiled code writes. This example loads a
 code object, writes the dispatch of its kernel `add` as PM4 words from the
 kernel's descriptor, places them on the compute queue as a step (arguments in a
-hold, arrays in slots), and checks the result.
+hold, arrays passed to each submit), and checks the result.
 
 ```bash
 cd dev/rig/examples/x-amd-kernel

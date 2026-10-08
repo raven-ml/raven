@@ -14,7 +14,8 @@ module Support = Rig_support
 let timeout = 60.
 let lost d = function C.Lost (d', _) -> C.equal d d' | _ -> false
 let count call p = List.length (List.filter (( = ) call) (P.log p))
-let empty d = Sub.make ~reads:0 ~writes:0 ~waits:0 d [||]
+let empty d = Sub.make ~reads:0 ~writes:0 d [||]
+let submit s = C.submit s ~reads:[||] ~writes:[||] ~waits:[||]
 
 (* A drain on [d]: what {!Buffer.create} does first. *)
 let drain d = ignore (Sys.opaque_identity (B.create d 8))
@@ -30,7 +31,7 @@ let[@inline never] submit_held ?(release = ignore) d m runs =
         release ())
       [ m ]
   in
-  C.Point.value (C.submit (Sub.make ~hold:h ~reads:0 ~writes:0 ~waits:0 d [||]))
+  C.Point.value (submit (Sub.make ~hold:h ~reads:0 ~writes:0 d [||]))
 
 (* Releases *)
 
@@ -40,9 +41,9 @@ let test_two_devices () =
   let m = B.create d 64 and runs = Atomic.make 0 in
   (fun () ->
     let h = H.make ~release:(fun () -> Atomic.incr runs) [ m ] in
-    let on x = Sub.make ~hold:h ~reads:0 ~writes:0 ~waits:0 x [||] in
-    ignore (C.submit (on d));
-    ignore (C.submit (on e)))
+    let on x = Sub.make ~hold:h ~reads:0 ~writes:0 x [||] in
+    ignore (submit (on d));
+    ignore (submit (on e)))
     ();
   Gc.full_major ();
   ignore (P.run pd);
@@ -73,10 +74,7 @@ let test_wait_held () =
   let d, p = P.open_ "hold:wait" in
   let m = B.create d 64 in
   let h = H.make [ m ] in
-  let v =
-    C.Point.value
-      (C.submit (Sub.make ~hold:h ~reads:0 ~writes:0 ~waits:0 d [||]))
-  in
+  let v = C.Point.value (submit (Sub.make ~hold:h ~reads:0 ~writes:0 d [||])) in
   B.wait m B.Read;
   equal int 0 (P.queued p);
   equal int v (C.signaled d)
@@ -89,7 +87,7 @@ let test_release_lost () =
   let m = B.create d 64 and runs = Atomic.make 0 in
   ignore (submit_held d m runs);
   P.fail p;
-  raises_match (lost d) (fun () -> C.submit (empty d));
+  raises_match (lost d) (fun () -> submit (empty d));
   equal int 1 (count "stop" p);
   Gc.full_major ();
   drain C.host;
@@ -129,7 +127,7 @@ let test_release_counted () =
   Support.await "a running release" (fun () ->
       Mutex.protect lock (fun () -> !inside));
   P.fail p;
-  raises_match (lost d) (fun () -> C.submit (empty d));
+  raises_match (lost d) (fun () -> submit (empty d));
   equal ~msg:"while the release runs" int 0 (count "stop" p);
   Mutex.protect lock (fun () ->
       go := true;
@@ -166,15 +164,18 @@ let test_refusals () =
   let h = H.make [ m ] in
   raises_match Exn.invalid_arg (fun () ->
       H.make [ B.view m ~first:8 ~length:8 ]);
-  let s = Sub.make ~hold:h ~reads:1 ~writes:1 ~waits:0 d [||] in
-  raises_match Exn.invalid_arg (fun () -> Sub.read s 0 m);
-  raises_match Exn.invalid_arg (fun () -> Sub.write s 0 m);
+  let s = Sub.make ~hold:h ~reads:1 ~writes:1 d [||] in
+  let other = B.create d 64 in
+  raises_match Exn.invalid_arg (fun () ->
+      C.submit s ~reads:[| m |] ~writes:[| other |] ~waits:[||]);
+  raises_match Exn.invalid_arg (fun () ->
+      C.submit s ~reads:[| other |] ~writes:[| m |] ~waits:[||]);
   let h' = H.make [ m' ] in
   let copy = Sub.Copy { src = m'; dst = B.create d 64 } in
   let part = { Sub.queue = "COPY:0"; after = [||]; work = copy } in
   raises_match Exn.invalid_arg (fun () ->
-      Sub.make ~hold:h ~reads:0 ~writes:0 ~waits:0 d [| part |]);
-  ignore (Sub.make ~hold:h' ~reads:0 ~writes:0 ~waits:0 d [| part |])
+      Sub.make ~hold:h ~reads:0 ~writes:0 d [| part |]);
+  ignore (Sub.make ~hold:h' ~reads:0 ~writes:0 d [| part |])
 
 let test_dead () =
   let b = B.create C.host 8 in
@@ -219,15 +220,10 @@ let test_held_after () =
   let copy =
     { Sub.queue = "COPY:0"; after = [||]; work = Sub.Copy { src; dst } }
   in
-  let s = Sub.make ~reads:0 ~writes:0 ~waits:0 d [| copy |] in
+  let s = Sub.make ~reads:0 ~writes:0 d [| copy |] in
   let h = H.make [ src ] in
-  raises_match Exn.invalid_arg (fun () -> C.submit s);
-  let m = B.create d 64 in
-  let r = Sub.make ~reads:1 ~writes:0 ~waits:0 d [||] in
-  Sub.read r 0 m;
-  let h' = H.make [ m ] in
-  raises_match Exn.invalid_arg (fun () -> C.submit r);
-  ignore (Sys.opaque_identity (h, h'))
+  raises_match Exn.invalid_arg (fun () -> submit s);
+  ignore (Sys.opaque_identity h)
 
 (* Two domains holding one memory: one hold takes it, the other raises. *)
 type held = { mutable taken : bool }
@@ -286,7 +282,7 @@ let tests =
         test "a dead buffer is not held" test_dead;
         test "held memory a device's queue copies copies in and out"
           test_copy_held;
-        test "memory held after a submission named it is refused at submit"
+        test "memory a part names, held after make, is refused at submit"
           test_held_after;
         stateful ~domains:2 "two domains holding one memory: one hold takes it"
           hold_commands;

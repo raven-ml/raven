@@ -48,10 +48,10 @@ let dev () =
   { d; g = Option.get !g }
 
 let alloc t kind n = Option.get (N.alloc t.g kind n)
-let submission t ps = Sub.make ~reads:0 ~writes:0 ~waits:0 t.d ps
+let submission t ps = Sub.make ~reads:0 ~writes:0 t.d ps
 
 let run t s =
-  let p = C.submit s in
+  let p = C.submit s ~reads:[||] ~writes:[||] ~waits:[||] in
   C.wait t.d (C.Point.value p)
 
 (* The floor of [t]: its later values are given from C. *)
@@ -165,7 +165,7 @@ let release_rows =
       row "floor-switch" (floor_of empty) (fun _ -> floor_switch ());
       row "no-wait-100" empty (fun (t, s) ->
           for _ = 1 to 99 do
-            ignore (C.submit s)
+            ignore (C.submit s ~reads:[||] ~writes:[||] ~waits:[||])
           done;
           run t s);
       row "floor-no-wait-100" (floor_of empty) (fun _ -> floor_release 100);

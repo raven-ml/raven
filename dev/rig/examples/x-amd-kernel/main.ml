@@ -80,18 +80,16 @@ let run g (cap : Abi.Capability.t) =
   in
   Printf.printf "the dispatch is %d words of PM4\n" (Buffer.length words / 4);
 
-  (* The step: the arguments held with the program; the arrays in slots. *)
+  (* The step: the arguments held with the program; the arrays passed to each
+     submit. *)
   let hold =
     Hold.make ~release:(fun () -> ignore (Sys.opaque_identity p)) [ args ]
   in
   let part =
     { Submission.queue = "COMPUTE:0"; after = [||]; work = Words words }
   in
-  let s = Submission.make ~hold ~reads:2 ~writes:1 ~waits:0 g [| part |] in
-  Submission.read s 0 a;
-  Submission.read s 1 b;
-  Submission.write s 0 out;
-  let pt = submit s in
+  let s = Submission.make ~hold ~reads:2 ~writes:1 g [| part |] in
+  let pt = submit s ~reads:[| a; b |] ~writes:[| out |] ~waits:[||] in
   Format.printf "%s (%s) ran add on %d floats at %a@." (name g) (arch g) n
     Point.pp pt;
 

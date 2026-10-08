@@ -112,19 +112,16 @@ let run g (gpu : Abi.Gpu.t) =
   let words = Buffer.create host (String.length entry_words) in
   write words ~at:0 entry_words;
 
-  (* The step: the launch's memory held with the program; the arrays in
-     slots. *)
+  (* The step: the launch's memory held with the program; the arrays passed to
+     each submit. *)
   let hold =
     Hold.make ~release:(fun () -> ignore (Sys.opaque_identity p)) [ mem ]
   in
   let part =
     { Submission.queue = "COMPUTE:0"; after = [||]; work = Words words }
   in
-  let s = Submission.make ~hold ~reads:2 ~writes:1 ~waits:0 g [| part |] in
-  Submission.read s 0 a;
-  Submission.read s 1 b;
-  Submission.write s 0 out;
-  let pt = submit s in
+  let s = Submission.make ~hold ~reads:2 ~writes:1 g [| part |] in
+  let pt = submit s ~reads:[| a; b |] ~writes:[| out |] ~waits:[||] in
   Format.printf "%s (%s) ran simple_add on %d ints at %a@." (name g) (arch g) n
     Point.pp pt;
 

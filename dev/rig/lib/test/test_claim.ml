@@ -8,6 +8,9 @@ module C = Rig
 module B = Rig.Buffer
 module Claim = Rig.Claim
 
+let submit ?(reads = [||]) ?(writes = [||]) ?(waits = [||]) s =
+  C.submit s ~reads ~writes ~waits
+
 let timeout = 60.
 
 (* Claims through views of one memory, against a model *)
@@ -297,11 +300,10 @@ let test_lost_claims () =
   let module P = Rig_support.Polled in
   let d, p = P.open_ "claim:lost" in
   let m = B.create d 64 in
-  let w = C.Submission.make ~reads:0 ~writes:1 ~waits:0 d [||] in
-  C.Submission.write w 0 m;
-  ignore (C.submit w);
+  let w = C.Submission.make ~reads:0 ~writes:1 d [||] in
+  ignore (submit w ~writes:[| m |]);
   P.fail p;
-  (try ignore (C.submit (C.Submission.make ~reads:0 ~writes:0 ~waits:0 d [||]))
+  (try ignore (submit (C.Submission.make ~reads:0 ~writes:0 d [||]))
    with C.Lost _ -> ());
   let lost = function C.Lost _ -> true | _ -> false in
   raises_match lost (fun () -> Claim.read m);

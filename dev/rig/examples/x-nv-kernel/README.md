@@ -7,7 +7,7 @@ An NVIDIA GPU's channels run words that compiled code writes. This example loads
 a cubin, builds the launch descriptor of its kernel `simple_add` and its
 constant bank, writes a segment that schedules the descriptor, and places one
 ring entry naming that segment on the compute channel, as a step (the launch's
-memory in a hold, the arrays in slots). It checks the result.
+memory in a hold, the arrays passed to each submit). It checks the result.
 
 ```bash
 cd dev/rig/examples/x-nv-kernel

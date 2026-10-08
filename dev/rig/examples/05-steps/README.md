@@ -2,15 +2,16 @@
 
 Compiled work is prepared once and run many times. This example builds a step
 from a C function, `scale.c`, that a device calls to run its part: the step
-keeps its constants and its argument in a hold, takes its input and output
-through slots, runs twice, and is released once nothing reaches it.
+keeps its constants and its argument in a hold, passes its input and output to
+each submit, runs twice, and is released once nothing reaches it.
 
 ```bash
 dune exec dev/rig/examples/05-steps/main.exe
 ```
 
 A memory device calls the fill in the submitting thread. A GPU's driver calls
-it to encode work into its queue; the argument and slots work the same way.
+it to encode work into its queue; the argument and the run's buffers work the
+same way.
 
 ## What You'll Learn
 
@@ -18,8 +19,8 @@ it to encode work into its queue; the argument and slots work the same way.
   (`Buffer.address`)
 - Holds: fixed memory kept across submissions, with a release that runs once
   the step is unreachable and its work done
-- Slots: the buffers a run reads and writes, set before each submit and
-  cleared by it: `Submission.read`, `Submission.write`
+- A run's buffers: what it reads and writes, passed to each submit:
+  `submit s ~reads ~writes ~waits`
 - The host rewriting the argument only after the work that read it:
   `Buffer.wait arg Read_write`
 
@@ -29,8 +30,8 @@ it to encode work into its queue; the argument and slots work the same way.
 | -------------------------------------------- | --------------------------------------- |
 | `Submission.Fill { fill; arg; _ }`           | Work that is a C function               |
 | `Hold.make ~release bs`                      | Memory kept for a step's life           |
-| `Submission.make ~hold ~reads ~writes ...`   | A step's submission, with its slots     |
-| `Submission.read s i b`, `write s i b`       | Set a slot for the next submit          |
+| `Submission.make ~hold ~reads ~writes ...`   | A step's submission, and its run's arity |
+| `submit s ~reads ~writes ~waits`             | Run it once with these buffers           |
 
 ## Next Steps
 

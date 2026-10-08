@@ -2736,10 +2736,12 @@ let in_queue () =
       (dispatch (A.capability pg).gpu entry "spin" ~args:(addr args) ~groups:1)
   in
   let s =
-    Rig.Submission.make ~reads:0 ~writes:0 ~waits:0 pc
+    Rig.Submission.make ~reads:0 ~writes:0 pc
       [| spin; copy ~after:[| 0 |] ~dst:b fresh |]
   in
-  let vp = Rig.Point.value (Rig.submit s) in
+  let vp =
+    Rig.Point.value (Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||])
+  in
   let out = buffer ~memory:Pinned g 64 in
   put out (String.make 64 '\000');
   let seen = Option.get (Rig.Buffer.borrow c b) in

@@ -78,11 +78,8 @@ let () =
       Submission.Fill { fill = run (); arg; ring_units = 0; segment_bytes = 0 }
     in
     let part = { Submission.queue = "COMPUTE:0"; after = [||]; work = fill } in
-    let s = Submission.make ~hold ~reads:2 ~writes:1 ~waits:0 g [| part |] in
-    Submission.read s 0 a;
-    Submission.read s 1 b;
-    Submission.write s 0 out;
-    let pt = submit s in
+    let s = Submission.make ~hold ~reads:2 ~writes:1 g [| part |] in
+    let pt = submit s ~reads:[| a; b |] ~writes:[| out |] ~waits:[||] in
     Format.printf "%s (%s) ran add on %d floats at %a@." (name g) (arch g) n
       Point.pp pt;
 

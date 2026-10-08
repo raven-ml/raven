@@ -7,7 +7,8 @@ A kernel reaches a CUDA device through a fill, `run.c`, that calls
 `cuLaunchKernel` on the stream the device hands it. The fill finds that function
 through the device's capability, so nothing links a CUDA library or needs its
 headers. This example loads a PTX kernel, adds two arrays of a million floats as
-a step (its argument in a hold, its arrays in slots) and checks the result.
+a step (its argument in a hold, its arrays passed to each submit) and checks the
+result.
 
 ```bash
 cd dev/rig/examples/x-cuda-kernel

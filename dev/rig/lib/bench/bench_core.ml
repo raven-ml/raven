@@ -63,19 +63,18 @@ let bump arg =
   }
 
 let bumping ?(reads = 0) ?(writes = 0) d =
-  Sub.make ~reads ~writes ~waits:0 d [| bump (B.create C.host 8) |]
+  Sub.make ~reads ~writes d [| bump (B.create C.host 8) |]
 
-let submit_read s bs =
-  for i = 0 to Array.length bs - 1 do
-    Sub.read s i (Array.unsafe_get bs i)
-  done;
-  ignore (C.submit s)
+(* A submit of a run that reads nothing, writes nothing and waits for
+   nothing. *)
+let submit s = C.submit s ~reads:[||] ~writes:[||] ~waits:[||]
+let submit_read s bs = ignore (C.submit s ~reads:bs ~writes:[||] ~waits:[||])
 
 (* Submits *)
 
 let empty () =
   let t = dev () in
-  (t, Sub.make ~reads:0 ~writes:0 ~waits:0 t.d [||])
+  (t, Sub.make ~reads:0 ~writes:0 t.d [||])
 
 let costing () =
   let t = dev () in
@@ -89,9 +88,8 @@ let reading () =
 let foreign () =
   let t = dev () and o = dev () in
   let bs = words o.d slots in
-  let w = Sub.make ~reads:0 ~writes:slots ~waits:0 o.d [||] in
-  Array.iteri (fun i b -> Sub.write w i b) bs;
-  let v = C.Point.value (C.submit w) in
+  let w = Sub.make ~reads:0 ~writes:slots o.d [||] in
+  let v = C.Point.value (C.submit w ~reads:[||] ~writes:bs ~waits:[||]) in
   ignore (P.run o.p);
   C.wait o.d v;
   ( t,
@@ -106,7 +104,7 @@ let contended () =
   let rival =
     Domain.spawn (fun () ->
         while not (Atomic.get stop) do
-          ignore (C.submit s');
+          ignore (submit s');
           drained other
         done)
   in
@@ -117,11 +115,11 @@ let submit_rows =
   Thumper.group "submit/polled"
     [
       row "empty" empty (fun (t, s) ->
-          let v = C.Point.value (C.submit s) in
+          let v = C.Point.value (submit s) in
           ignore (P.run t.p);
           C.wait t.d v);
       row "cost" costing (fun (t, s) ->
-          ignore (C.submit s);
+          ignore (submit s);
           drained t);
       row "slots-24" reading (fun (t, s, bs) ->
           submit_read s bs;
@@ -135,13 +133,13 @@ let submit_rows =
           Domain.join rival)
         "two-domains"
         (fun (t, s, _, _) ->
-          ignore (C.submit s);
+          ignore (submit s);
           drained t);
     ]
 
 (* Replays *)
 
-type copy = { s : Sub.t; args : B.t; at : int; out : B.t }
+type copy = { s : Sub.t; args : B.t; at : int; outs : B.t array }
 type replay = { t : dev; params : B.t array; copies : copy array }
 
 (* Two copies of a step over [slots] parameters: each reads them, writes its
@@ -151,8 +149,8 @@ let replaying () =
   let t = dev () in
   let copy () =
     let args = B.create C.host 8 in
-    let s = Sub.make ~reads:slots ~writes:1 ~waits:0 t.d [| bump args |] in
-    { s; args; at = B.address args; out = B.create t.d 8 }
+    let s = Sub.make ~reads:slots ~writes:1 t.d [| bump args |] in
+    { s; args; at = B.address args; outs = [| B.create t.d 8 |] }
   in
   { t; params = words t.d slots; copies = [| copy (); copy () |] }
 
@@ -162,11 +160,7 @@ let run r =
   B.wait c.args B.Read_write;
   ignore (P.run r.t.p);
   Support.store c.at r.t.n;
-  for i = 0 to slots - 1 do
-    Sub.read c.s i (Array.unsafe_get r.params i)
-  done;
-  Sub.write c.s 0 c.out;
-  ignore (C.submit c.s)
+  ignore (C.submit c.s ~reads:r.params ~writes:c.outs ~waits:[||])
 
 let replay_rows =
   Thumper.group "replay/polled"
@@ -197,9 +191,8 @@ let chars n = Bigarray.Array1.create Bigarray.char Bigarray.c_layout n
 (* Buffers of [d] whose last write, a submission of [d], is reached. *)
 let written d n =
   let bs = Array.init n (fun _ -> B.create d 8) in
-  let w = Sub.make ~reads:0 ~writes:n ~waits:0 d [||] in
-  Array.iteri (fun i b -> Sub.write w i b) bs;
-  C.wait d (C.Point.value (C.submit w));
+  let w = Sub.make ~reads:0 ~writes:n d [||] in
+  C.wait d (C.Point.value (C.submit w ~reads:[||] ~writes:bs ~waits:[||]));
   bs
 
 let row name setup f = Thumper.bench_with_setup ~setup name f
@@ -271,9 +264,7 @@ let wait_rows =
       row "reached"
         (fun () ->
           let d = memory () in
-          ( d,
-            C.Point.value
-              (C.submit (Sub.make ~reads:0 ~writes:0 ~waits:0 d [||])) ))
+          (d, C.Point.value (submit (Sub.make ~reads:0 ~writes:0 d [||]))))
         (fun (d, v) -> C.wait d v);
     ]
 

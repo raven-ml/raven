@@ -7,10 +7,9 @@
 
    Compiled work reaches a device as a fill, a C function the device calls with
    an argument buffer ([scale.c]). A step keeps its fixed memory, here constants
-   and the argument, in a hold; it names the buffers that change from run to run
-   in the submission's slots, which a submit orders and clears. Once the step is
-   unreachable and its work done, its memory returns and the hold's release
-   runs. *)
+   and the argument, in a hold; it passes the buffers that change from run to
+   run to each submit, which orders them. Once the step is unreachable and its
+   work done, its memory returns and the hold's release runs. *)
 
 open Rig
 
@@ -32,8 +31,8 @@ let show name b =
   Printf.printf "%-4s [%s]\n" name (String.concat "; " xs)
 
 (* The step: its constants [k] and its argument in one hold, and one fill that
-   reads one slot and writes another. [run] sets the slots and the argument,
-   then submits. *)
+   reads one buffer and writes another. [run] sets the argument, then submits
+   with the run's buffers. *)
 let step d =
   let k = ints d [ 1l; 10l; 100l; 1000l ] in
   let arg = Buffer.create d 32 in
@@ -44,7 +43,7 @@ let step d =
     Submission.Fill { fill = scale (); arg; ring_units = 0; segment_bytes = 0 }
   in
   let part = { Submission.queue = "COMPUTE:0"; after = [||]; work = fill } in
-  let s = Submission.make ~hold ~reads:1 ~writes:1 ~waits:0 d [| part |] in
+  let s = Submission.make ~hold ~reads:1 ~writes:1 d [| part |] in
   let words =
     Buffer.bigarray Bigarray.int64 (Option.get (Buffer.borrow host arg))
   in
@@ -54,9 +53,7 @@ let step d =
     List.iteri
       (fun i a -> words.{i} <- Int64.of_int a)
       [ Buffer.address dst; Buffer.address src; Buffer.address k; n ];
-    Submission.read s 0 src;
-    Submission.write s 0 dst;
-    submit s
+    submit s ~reads:[| src |] ~writes:[| dst |] ~waits:[||]
 
 (* Two runs of one step, each on buffers of its own. *)
 let runs d =

@@ -15,6 +15,9 @@ module Sub = Rig.Submission
 module P = Rig_support.Polled
 module Support = Rig_support
 
+let submit ?(reads = [||]) ?(writes = [||]) ?(waits = [||]) s =
+  C.submit s ~reads ~writes ~waits
+
 let timeout = 120.
 
 let pp_access ppf = function
@@ -90,10 +93,13 @@ let open_system () =
 let submit_system i access t =
   let d = fst t.devices.(i) in
   let reads, writes = if access = B.Read then (1, 0) else (0, 1) in
-  let s = Sub.make ~reads ~writes ~waits:0 d [||] in
+  let s = Sub.make ~reads ~writes d [||] in
   let m = require_some (B.borrow d t.m) in
-  if access = B.Read then Sub.read s 0 m else Sub.write s 0 m;
-  let v = C.Point.value (C.submit s) - t.base.(i) in
+  let p =
+    if access = B.Read then submit s ~reads:[| m |]
+    else submit s ~writes:[| m |]
+  in
+  let v = C.Point.value p - t.base.(i) in
   (v, signaled t (other i))
 
 let submit_model i access r = function
@@ -197,7 +203,7 @@ let open_replay () =
   in
   let d, p = P.open_ name in
   let args = Array.init 2 (fun _ -> B.create ~memory:Mapped d 16) in
-  let copy a = Sub.make ~reads:0 ~writes:1 ~waits:0 d [| poke a |] in
+  let copy a = Sub.make ~reads:0 ~writes:1 d [| poke a |] in
   let subs = Array.map copy args in
   {
     d;
@@ -220,8 +226,7 @@ let run_replay t =
   Support.store (B.address out) (-1);
   Support.store (B.address args) (B.address out);
   Support.store (B.address args + 8) n;
-  Sub.write t.subs.(n mod 2) 0 out;
-  let v = C.Point.value (C.submit t.subs.(n mod 2)) in
+  let v = C.Point.value (submit t.subs.(n mod 2) ~writes:[| out |]) in
   Hashtbl.replace t.outs n out;
   Hashtbl.replace t.points n v;
   t.runs <- n + 1

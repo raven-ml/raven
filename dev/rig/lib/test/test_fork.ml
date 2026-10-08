@@ -13,8 +13,11 @@ module Sub = Rig.Submission
 module P = Rig_support.Polled
 module Support = Rig_support
 
+let submit ?(reads = [||]) ?(writes = [||]) ?(waits = [||]) s =
+  C.submit s ~reads ~writes ~waits
+
 let timeout = 60.
-let empty d = Sub.make ~reads:0 ~writes:0 ~waits:0 d [||]
+let empty d = Sub.make ~reads:0 ~writes:0 d [||]
 let raises_lost f = match f () with _ -> false | exception C.Lost _ -> true
 
 let status = function
@@ -49,12 +52,12 @@ let test_child () =
   if Sys.win32 then skip ~reason:"Windows has no fork" ();
   let d, p = P.open_ "fork:child" in
   let b = ref (Some (B.create d 64)) in
-  let v = C.Point.value (C.submit (empty d)) in
+  let v = C.Point.value (submit (empty d)) in
   let calls = P.log p in
   let lines, ended =
     in_child (fun () ->
         let lost = C.lost d in
-        let submit = raises_lost (fun () -> C.submit (empty d)) in
+        let submit = raises_lost (fun () -> submit (empty d)) in
         let wait = raises_lost (fun () -> C.wait d v) in
         b := None;
         Gc.full_major ();
@@ -158,9 +161,8 @@ let test_io_used () =
   let io = open_store "fork:io-used" in
   let d, p = P.open_ "fork:io-user" in
   let m = ref (Some (B.create io page_bytes)) in
-  let s = Sub.make ~reads:1 ~writes:0 ~waits:0 d [||] in
-  Sub.read s 0 (require_some (B.borrow d (Option.get !m)));
-  ignore (C.submit s);
+  let s = Sub.make ~reads:1 ~writes:0 d [||] in
+  ignore (submit s ~reads:[| require_some (B.borrow d (Option.get !m)) |]);
   let before = Atomic.get Store.held in
   let lines, ended =
     in_child (fun () ->

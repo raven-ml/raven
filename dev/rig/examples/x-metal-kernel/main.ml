@@ -69,7 +69,8 @@ let () =
     let icb = Result.get_ok (cap.icb (Buffer.handle args) [| dispatch |]) in
 
     (* The step: its fixed memory in a hold whose release ends the indirect
-       command buffer and keeps the program until then; its arrays in slots. *)
+       command buffer and keeps the program until then; its arrays passed to
+       each submit. *)
     let fill_arg = Buffer.create g 16 in
     words fill_arg [ Nativeint.to_int icb.handle; 1 ];
     let hold =
@@ -84,11 +85,8 @@ let () =
         { fill = run (); arg = fill_arg; ring_units = 0; segment_bytes = 0 }
     in
     let part = { Submission.queue = "COMPUTE:0"; after = [||]; work = fill } in
-    let s = Submission.make ~hold ~reads:2 ~writes:1 ~waits:0 g [| part |] in
-    Submission.read s 0 a;
-    Submission.read s 1 b;
-    Submission.write s 0 out;
-    let pt = submit s in
+    let s = Submission.make ~hold ~reads:2 ~writes:1 g [| part |] in
+    let pt = submit s ~reads:[| a; b |] ~writes:[| out |] ~waits:[||] in
     Format.printf "%s ran add on %d floats at %a@." (name g) n Point.pp pt;
 
     (* The host reads the result once the GPU wrote it. *)

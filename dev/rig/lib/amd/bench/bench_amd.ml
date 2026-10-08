@@ -91,8 +91,10 @@ let dev () =
   { c; g = Option.get !g; v = 0 }
 
 (* The prepared submission of [parts] on [t]. *)
-let prepare t parts = C.Submission.make ~reads:0 ~writes:0 ~waits:0 t.c parts
-let submit t s = t.v <- C.Point.value (C.submit s)
+let prepare t parts = C.Submission.make ~reads:0 ~writes:0 t.c parts
+
+let submit t s =
+  t.v <- C.Point.value (C.submit s ~reads:[||] ~writes:[||] ~waits:[||])
 
 let wait t =
   while A.signaled t.g < t.v do

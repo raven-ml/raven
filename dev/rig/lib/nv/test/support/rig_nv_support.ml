@@ -150,7 +150,10 @@ let get32 a i =
 (* Work through the core *)
 
 let submit t ps =
-  C.Point.value (C.submit (Sub.make ~reads:0 ~writes:0 ~waits:0 t.d ps))
+  C.Point.value
+    (C.submit
+       (Sub.make ~reads:0 ~writes:0 t.d ps)
+       ~reads:[||] ~writes:[||] ~waits:[||])
 
 let run t ps = C.wait t.d (submit t ps)
 

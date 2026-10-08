@@ -11,24 +11,28 @@ module P = Rig_support.Polled
 module Support = Rig_support
 
 let timeout = 60.
-let empty ?(waits = 0) d = Sub.make ~reads:0 ~writes:0 ~waits d [||]
+let empty d = Sub.make ~reads:0 ~writes:0 d [||]
+
+let submit ?(reads = [||]) ?(writes = [||]) ?(waits = [||]) s =
+  C.submit s ~reads ~writes ~waits
+
 let lost d = function C.Lost (d', _) -> C.equal d d' | _ -> false
 let count call p = List.length (List.filter (( = ) call) (P.log p))
 
 let test_failed_submit () =
   let d, p = P.open_ "loss:failed" in
   let s = empty d in
-  ignore (C.submit s);
+  ignore (submit s);
   P.fail p;
-  raises_match (lost d) (fun () -> C.submit s);
+  raises_match (lost d) (fun () -> submit s);
   equal (option string) (Some "the submission failed") (C.lost d);
-  raises_match (lost d) (fun () -> C.submit s);
+  raises_match (lost d) (fun () -> submit s);
   raises_match (lost d) (fun () -> B.create d 8);
   equal int 1 (count "stop" p)
 
 let test_fault () =
   let d, p = P.open_ "loss:fault" in
-  let v = C.Point.value (C.submit (empty d)) in
+  let v = C.Point.value (submit (empty d)) in
   P.fault p "the engine hung";
   raises_match (lost d) (fun () -> C.wait d v);
   equal (option string) (Some "the engine hung") (C.lost d);
@@ -39,7 +43,7 @@ let test_after_stop () =
   let d, p = P.open_ "loss:after-stop" in
   let b = B.create d 64 in
   P.fail p;
-  (try ignore (C.submit (empty d)) with C.Lost _ -> ());
+  (try ignore (submit (empty d)) with C.Lost _ -> ());
   ignore (Sys.opaque_identity b);
   Gc.full_major ();
   ignore (B.create C.host 8);
@@ -55,11 +59,11 @@ let test_after_stop () =
 let test_unrun_names () =
   let d, p = P.open_ "loss:unrun" in
   let h = B.create C.host (1 lsl 16) in
-  let s = Sub.make ~reads:1 ~writes:0 ~waits:0 d [||] in
-  Sub.read s 0 (require_some (B.borrow d h));
+  let s = Sub.make ~reads:1 ~writes:0 d [||] in
+  let reads = [| require_some (B.borrow d h) |] in
   P.fail p;
-  raises_match (lost d) (fun () -> C.submit (empty d));
-  raises_match (lost d) (fun () -> C.submit s);
+  raises_match (lost d) (fun () -> submit (empty d));
+  raises_match (lost d) (fun () -> submit s ~reads);
   equal int (1 lsl 16) (Bigarray.Array1.dim (B.bigarray Bigarray.char h))
 
 (* A wait looks at every producer its device's queue waits on, however many
@@ -72,9 +76,7 @@ let test_many_waits () =
     P.open_ ~completion:`Object ~waits_on:[ `Host ] "loss:many-consumer"
   in
   let waiting_on producer =
-    let s = empty ~waits:1 c in
-    Sub.wait_for s 0 (C.submit (empty producer));
-    C.submit s
+    submit (empty c) ~waits:[| submit (empty producer) |]
   in
   for _ = 1 to 64 do
     ignore (waiting_on a)
@@ -89,7 +91,7 @@ let test_many_waits () =
    [d]'s stop has answered and nothing of it is left to drain. *)
 let lose d p =
   P.fail p;
-  (try ignore (C.submit (empty d)) with C.Lost _ -> ());
+  (try ignore (submit (empty d)) with C.Lost _ -> ());
   ignore (B.create C.host 8)
 
 (* Collects, then drains as an allocation does. *)
@@ -125,7 +127,7 @@ let test_unmap_after_stop () =
 let test_free_after_unknown () =
   let d, p = P.open_ ~answer:`Unknown "loss:free-after-unknown" in
   let b = ref (Some (B.create d 64)) in
-  ignore (C.submit (empty d));
+  ignore (submit (empty d));
   lose d p;
   P.set_word p (C.submitted d);
   ignore (B.create C.host 8);
@@ -138,25 +140,21 @@ let test_free_after_unknown () =
 let test_spread () =
   let producer, pp = P.open_ "loss:producer" in
   let consumer, _ = P.open_ ~waits_on:[ `Host ] "loss:consumer" in
-  let a = C.submit (empty producer) in
-  let s = empty ~waits:1 consumer in
-  Sub.wait_for s 0 a;
-  ignore (C.submit s);
+  let a = submit (empty producer) in
+  ignore (submit (empty consumer) ~waits:[| a |]);
   P.fail pp;
-  raises_match (lost producer) (fun () -> C.submit (empty producer));
+  raises_match (lost producer) (fun () -> submit (empty producer));
   equal (option string) (Some "loss:producer lost") (C.lost consumer)
 
 (* A consumer whose waited value was reached stays. *)
 let test_no_spread () =
   let producer, pp = P.open_ "loss:producer-2" in
   let consumer, _ = P.open_ ~waits_on:[ `Host ] "loss:consumer-2" in
-  let a = C.submit (empty producer) in
+  let a = submit (empty producer) in
   C.wait producer (C.Point.value a);
-  let s = empty ~waits:1 consumer in
-  Sub.wait_for s 0 a;
-  ignore (C.submit s);
+  ignore (submit (empty consumer) ~waits:[| a |]);
   P.fail pp;
-  raises_match (lost producer) (fun () -> C.submit (empty producer));
+  raises_match (lost producer) (fun () -> submit (empty producer));
   equal (option string) None (C.lost consumer)
 
 (* An Unknown answer keeps the device's memory until its word reads its last
@@ -164,9 +162,9 @@ let test_no_spread () =
 let test_unknown () =
   let d, p = P.open_ ~answer:`Unknown "loss:unknown" in
   let b = B.create d 64 in
-  ignore (C.submit (empty d));
+  ignore (submit (empty d));
   P.fail p;
-  (try ignore (C.submit (empty d)) with C.Lost _ -> ());
+  (try ignore (submit (empty d)) with C.Lost _ -> ());
   ignore (Sys.opaque_identity b);
   Gc.full_major ();
   ignore (B.create C.host 8);
@@ -179,17 +177,17 @@ let test_unknown () =
    raises. *)
 let test_reached () =
   let d, p = P.open_ "loss:reached" in
-  let v = C.Point.value (C.submit (empty d)) in
+  let v = C.Point.value (submit (empty d)) in
   C.wait d v;
   P.fail p;
-  raises_match (lost d) (fun () -> C.submit (empty d));
+  raises_match (lost d) (fun () -> submit (empty d));
   raises_match (lost d) (fun () -> C.wait d v)
 
 (* Two domains sleep on a device that faults: each raises its Lost, and the
    device is lost and stopped once. *)
 let test_two_sleeps () =
   let d, p = P.open_ "loss:two-sleeps" in
-  let v = C.Point.value (C.submit (empty d)) in
+  let v = C.Point.value (submit (empty d)) in
   P.gate p;
   let wait () =
     match C.wait d v with () -> "returned" | exception C.Lost (_, why) -> why
@@ -214,10 +212,10 @@ let test_facts transport () =
       (if transport then "loss:facts-transport" else "loss:facts")
   in
   C.set_budget d 4096;
-  ignore (C.submit (empty d));
-  ignore (C.submit (empty d));
+  ignore (submit (empty d));
+  ignore (submit (empty d));
   ignore (P.run p);
-  ignore (C.submit (empty d));
+  ignore (submit (empty d));
   P.fault p "the engine hung";
   raises_match (lost d) (fun () -> C.wait d 3);
   equal bool true (String.starts_with ~prefix:"loss:facts" (C.name d));
@@ -231,7 +229,7 @@ let test_facts transport () =
 let test_printed () =
   let d, p = P.open_ "loss:printed" in
   P.fail p;
-  match C.submit (empty d) with
+  match submit (empty d) with
   | _ -> failf "the failed submit returned"
   | exception e ->
       equal string "loss:printed lost: the submission failed"
@@ -243,16 +241,15 @@ let test_others_go_on () =
   let d, p = P.open_ "loss:lost" in
   let e, _ = P.open_ "loss:kept" in
   let named = B.create e 64 and kept = B.create e 64 in
-  let s = Sub.make ~reads:1 ~writes:0 ~waits:0 d [||] in
-  Sub.read s 0 (require_some (B.borrow d named));
-  C.wait d (C.Point.value (C.submit s));
+  let s = Sub.make ~reads:1 ~writes:0 d [||] in
+  C.wait d
+    (C.Point.value (submit s ~reads:[| require_some (B.borrow d named) |]));
   P.fail p;
-  raises_match (lost d) (fun () -> C.submit (empty d));
+  raises_match (lost d) (fun () -> submit (empty d));
   raises_match (lost d) (fun () -> B.wait named B.Read_write);
   B.wait kept B.Read_write;
-  let w = Sub.make ~reads:0 ~writes:1 ~waits:0 e [||] in
-  Sub.write w 0 kept;
-  C.wait e (C.Point.value (C.submit w));
+  let w = Sub.make ~reads:0 ~writes:1 e [||] in
+  C.wait e (C.Point.value (submit w ~writes:[| kept |]));
   equal (option string) None (C.lost e)
 
 (* A fault a counted call raises, such as an allocation's, loses the device. *)

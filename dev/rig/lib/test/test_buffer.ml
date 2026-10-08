@@ -10,6 +10,9 @@ module Sub = Rig.Submission
 module P = Rig_support.Polled
 module Support = Rig_support
 
+let submit ?(reads = [||]) ?(writes = [||]) ?(waits = [||]) s =
+  C.submit s ~reads ~writes ~waits
+
 let timeout = 60.
 let memory name = require_ok ~pp:Format.pp_print_string (C.memory_device name)
 let lost = function C.Lost _ -> true | _ -> false
@@ -119,7 +122,7 @@ let test_wait () =
       work = C.Submission.Copy { src = require_some (B.borrow d h); dst = on };
     }
   in
-  ignore (C.submit (C.Submission.make ~reads:0 ~writes:0 ~waits:0 d [| part |]));
+  ignore (submit (C.Submission.make ~reads:0 ~writes:0 d [| part |]));
   equal int 1 (P.queued p);
   B.wait on B.Read;
   equal int 0 (P.queued p)
@@ -189,10 +192,9 @@ let test_borrow_remade () =
 let test_lost_memory () =
   let d, p = P.open_ "buffer:lost" in
   let on = B.create d 8 in
-  let s = C.Submission.make ~reads:0 ~writes:1 ~waits:0 d [||] in
-  C.Submission.write s 0 on;
+  let s = C.Submission.make ~reads:0 ~writes:1 d [||] in
   P.fail p;
-  raises_match lost (fun () -> C.submit s);
+  raises_match lost (fun () -> submit s ~writes:[| on |]);
   raises_match lost (fun () -> C.Claim.read on);
   raises_match lost (fun () -> B.wait on B.Read)
 
@@ -226,9 +228,8 @@ let b16 = B.create C.host 64
 let test_wait_words () =
   let d, _ = P.open_ "buffer:wait-words" in
   let b = B.create d 64 in
-  let s = Sub.make ~reads:0 ~writes:1 ~waits:0 d [||] in
-  Sub.write s 0 b;
-  ignore (C.submit s);
+  let s = Sub.make ~reads:0 ~writes:1 d [||] in
+  ignore (submit s ~writes:[| b |]);
   B.wait b B.Read_write;
   let before = Gc.minor_words () in
   for _ = 1 to 100 do
@@ -314,9 +315,8 @@ let test_mapping_released () =
   let d, p = P.open_ "buffer:released" in
   let read_borrow () =
     let h = B.create C.host (1 lsl 16) in
-    let s = Sub.make ~reads:1 ~writes:0 ~waits:0 d [||] in
-    Sub.read s 0 (require_some (B.borrow d h));
-    ignore (C.submit s)
+    let s = Sub.make ~reads:1 ~writes:0 d [||] in
+    ignore (submit s ~reads:[| require_some (B.borrow d h) |])
   in
   read_borrow ();
   let unmaps () = count "unmap" p in

@@ -24,7 +24,7 @@ type part = { queue : string; after : int array; work : work }
 (* The C form, which a custom block holds and frees once collected. *)
 type c
 
-external sub_new : int -> int -> int -> int -> int -> int -> int -> c
+external sub_new : int -> int -> int -> int -> int -> int -> c
   = "caml_rig_sub_new_byte" "caml_rig_sub_new"
 
 external sub_part : c -> int -> int -> int array -> int -> unit
@@ -44,11 +44,8 @@ external sub_fixed : c -> int -> int -> nativeint -> bool -> unit
 external sub_slot : c -> int -> int -> nativeint -> unit = "caml_rig_sub_slot"
 [@@noalloc]
 
-external sub_wait_slot : c -> int -> int -> unit = "caml_rig_sub_wait_slot"
-[@@noalloc]
-
 external sub_hold : c -> int -> unit = "caml_rig_sub_hold" [@@noalloc]
-external sub_collect : c -> int = "caml_rig_sub_collect"
+external sub_collect : c -> int array -> int = "caml_rig_sub_collect"
 external sub_point : c -> int -> int = "caml_rig_sub_point" [@@noalloc]
 external sub_wait : c -> int -> int -> int -> int -> unit = "caml_rig_sub_wait"
 external sub_clear : c -> unit = "caml_rig_sub_clear" [@@noalloc]
@@ -65,20 +62,14 @@ type t = {
   dev : device;
   c : c;
   parts : part array;  (** Its buffers are checked live at each submit. *)
-  slots : buffer array;  (** The read slots, then the write slots. *)
-  nreads : int;
-  nwaits : int;
+  nreads : int;  (** The buffers each run reads. *)
+  nwrites : int;  (** The buffers each run writes. *)
   hold : hold option;
   any_hold : bool;
       (** Its parts may name memory of any hold: it is made and submitted at
           once, so it raises each memory's stamps as they are, a hold's for held
           memory. *)
 }
-
-(* The slot no submit has set. *)
-let unset =
-  let mem = Memory.make Dev.host 0 Memory.no_entry in
-  { mem; offset = 0; length = 0; generation = -1 }
 
 let queue_index d fn q =
   let rec go i =
@@ -109,10 +100,9 @@ let check_buffer fn hold_stamps b =
   if e.held && e.stamps <> hold_stamps then
     invalid_argf "Rig.%s: a part names memory of another hold" fn
 
-let build ~any_hold ?hold ~reads ~writes ~waits d parts =
+let build ~any_hold ?hold ~reads ~writes d parts =
   let fn = "Submission.make" in
-  if reads < 0 || writes < 0 || waits < 0 then
-    invalid_argf "Rig.%s: a slot count is negative" fn;
+  if reads < 0 || writes < 0 then invalid_argf "Rig.%s: a count is negative" fn;
   if Dev.is_lost d then Dev.raise_lost d;
   if Dev.is_host d || Dev.is_io d then
     invalid_argf "Rig.%s: %s runs no submitted work" fn d.name;
@@ -152,7 +142,7 @@ let build ~any_hold ?hold ~reads ~writes ~waits d parts =
               d.name;
           nfixed := !nfixed + 2)
     parts;
-  let c = sub_new d.c (Array.length parts) !nafter !nfixed reads writes waits in
+  let c = sub_new d.c (Array.length parts) !nafter !nfixed reads writes in
   (* The hold keeps its stamps while the submission holds it. *)
   Option.iter (fun h -> sub_hold c h.hstamps) hold;
   let at = ref 0 and k = ref 0 in
@@ -182,48 +172,10 @@ let build ~any_hold ?hold ~reads ~writes ~waits d parts =
           fixed src false;
           fixed dst true)
     parts;
-  {
-    dev = d;
-    c;
-    parts;
-    slots = Array.make (reads + writes) unset;
-    nreads = reads;
-    nwaits = waits;
-    hold;
-    any_hold;
-  }
+  { dev = d; c; parts; nreads = reads; nwrites = writes; hold; any_hold }
 
-let make ?hold ~reads ~writes ~waits d parts =
-  build ~any_hold:false ?hold ~reads ~writes ~waits d parts
-
-let set fn s k b =
-  (* A queue reaches other memory only through a borrow on its device. *)
-  if b.mem.dev != s.dev then
-    invalid_argf "Rig.%s: the buffer is on %s, not on %s: borrow it" fn
-      b.mem.dev.name s.dev.name;
-  let e = entry_of b in
-  if e.held then invalid_argf "Rig.%s: the buffer's memory is in a hold" fn;
-  sub_slot s.c k e.stamps b.mem.handle;
-  s.slots.(k) <- b
-
-let read s i b =
-  if i < 0 || i >= s.nreads then
-    invalid_argf "Rig.Submission.read: %d is no read slot" i;
-  set "Submission.read" s i b
-
-let write s i b =
-  if i < 0 || i >= Array.length s.slots - s.nreads then
-    invalid_argf "Rig.Submission.write: %d is no write slot" i;
-  set "Submission.write" s (s.nreads + i) b
-
-let wait_for s i p =
-  if i < 0 || i >= s.nwaits then
-    invalid_argf "Rig.Submission.wait_for: %d is no wait slot" i;
-  sub_wait_slot s.c i p
-
-let clear s =
-  sub_clear s.c;
-  Array.fill s.slots 0 (Array.length s.slots) unset
+let make ?hold ~reads ~writes d parts =
+  build ~any_hold:false ?hold ~reads ~writes d parts
 
 (* In-queue waits *)
 
@@ -304,43 +256,57 @@ let check_part held st p =
       check_held held st src;
       check_held held st dst
 
-(* Checks the slots are set and every buffer the work names is live and in no
-   hold but the submission's: memory put in a hold after it was named must be
-   named with the hold. A process that never made a hold holds no memory, and
-   checks liveness only. *)
-let check_slots s =
-  let held = Atomic.get Memory.any_held && not s.any_hold in
+(* Checks the parts' buffers are live and, once a hold exists, in no hold but
+   the submission's: memory put in a hold after it was named must be named with
+   the hold. A process that never made a hold holds no memory, and checks
+   liveness only. *)
+let check_parts s held =
   let st = hold_stamps s.hold in
   for k = 0 to Array.length s.parts - 1 do
     check_part held st s.parts.(k)
-  done;
-  for k = 0 to Array.length s.slots - 1 do
-    let b = s.slots.(k) in
-    if b == unset then invalid_argf "Rig.%s: a read or write slot is unset" fn;
-    Buffer.check_live fn b;
-    if held && b.mem.root.entry.held then
-      invalid_argf "Rig.%s: the buffer's memory is in a hold" fn
   done
+
+let counted n what = Printf.sprintf "%d %s%s" n what (if n = 1 then "" else "s")
+
+let check_counts s reads writes =
+  let nr = Array.length reads and nw = Array.length writes in
+  if nr <> s.nreads || nw <> s.nwrites then
+    invalid_argf "Rig.%s: %s and %s for a submission of %s and %s" fn
+      (counted nr "read") (counted nw "write") (counted s.nreads "read")
+      (counted s.nwrites "write")
+
+(* Refuses [b], element [i] of the run's array [what], unless it is live, on
+   [s]'s device and, once a hold exists, in no hold; and hands its stamps and
+   handle to the C slot [k]. *)
+let name_one s held what i k b =
+  if not (Buffer.is_live b) then
+    invalid_argf "Rig.%s: %s.(%d) is dead: %s" fn what i b.mem.claim.why;
+  (* A queue reaches other memory only through a borrow on its device. *)
+  if b.mem.dev != s.dev then
+    invalid_argf "Rig.%s: %s.(%d) is on %s, not on %s: borrow it" fn what i
+      b.mem.dev.name s.dev.name;
+  let e = entry_of b in
+  if held && e.held then
+    invalid_argf "Rig.%s: %s.(%d)'s memory is in a hold" fn what i;
+  sub_slot s.c k e.stamps b.mem.handle
 
 (* Waits on the host for the foreign points [s]'s device cannot wait for in its
    queue, or that its queue has no room for, adds the others to [s]'s waits, and
    is their number. *)
-let rec waits s n i count =
+let rec wait_points s n i count =
   if i = n then count
   else
     let p = sub_point s.c i in
     let producer = Dev.of_index (Point.index p) and v = Point.value p in
-    if v > Dev.submitted producer then
-      invalid_argf "Rig.%s: %s's value %d is not submitted" fn producer.name v;
     if Dev.is_lost producer then Dev.raise_lost producer;
-    if Dev.point_reached p then waits s n (i + 1) count
+    if Dev.point_reached p then wait_points s n (i + 1) count
     else
       let way =
         if count >= s.dev.max_waits then host_wait else pair s.dev producer
       in
       if way = host_wait then begin
         Dev.wait producer v;
-        waits s n (i + 1) count
+        wait_points s n (i + 1) count
       end
       else begin
         let kind =
@@ -349,7 +315,7 @@ let rec waits s n i count =
           | _ -> rig_word
         in
         sub_wait s.c producer.index way v kind;
-        waits s n (i + 1) (count + 1)
+        wait_points s n (i + 1) (count + 1)
       end
 
 let rec hand_over s nwaits =
@@ -382,26 +348,65 @@ let rec hand_over s nwaits =
   end
   else Dev.raise_lost d
 
+(* Names the run's [k]th buffer, a read below [s.nreads], else a write: the
+   buffer. *)
+let name s held reads writes k =
+  let nr = s.nreads in
+  if k < nr then begin
+    let b = Array.unsafe_get reads k in
+    name_one s held "reads" k k b;
+    b
+  end
+  else begin
+    let b = Array.unsafe_get writes (k - nr) in
+    name_one s held "writes" (k - nr) k b;
+    b
+  end
+
+(* Names the run's buffers from the [k]th on, then hands the work over. Each
+   buffer is read once from its array and stays reachable in a frame until the
+   hand-over returned: the C slots hold its stamps without a reference, and the
+   caller's array may change meanwhile. A frame keeps four buffers, so the
+   rooting costs a call per four. *)
+let rec run s held reads writes waits k =
+  let n = s.nreads + s.nwrites in
+  if k >= n then hand_over s (wait_points s (sub_collect s.c waits) 0 0)
+  else
+    let b0 = name s held reads writes k in
+    let b1 = if k + 1 < n then name s held reads writes (k + 1) else b0 in
+    let b2 = if k + 2 < n then name s held reads writes (k + 2) else b0 in
+    let b3 = if k + 3 < n then name s held reads writes (k + 3) else b0 in
+    let p = run s held reads writes waits (k + 4) in
+    ignore (Sys.opaque_identity b0);
+    ignore (Sys.opaque_identity b1);
+    ignore (Sys.opaque_identity b2);
+    ignore (Sys.opaque_identity b3);
+    p
+
 (* A submit holds the submission's guard throughout, so two domains' submits of
    it take turns. A forked child never waits on a guard its parent's thread may
    hold: every submission made before the fork is on a device the child
    inherited, which raises first. *)
-let submit s =
+let submit s ~reads ~writes ~waits =
   if Dev.inherited s.dev then Dev.raise_lost s.dev;
+  check_counts s reads writes;
   sub_take s.c;
   match
-    check_slots s;
-    hand_over s (waits s (sub_collect s.c) 0 0)
+    let held = Atomic.get Memory.any_held && not s.any_hold in
+    check_parts s held;
+    run s held reads writes waits 0
   with
   | p ->
-      clear s;
+      sub_clear s.c;
       sub_give s.c;
       p
   | exception e ->
-      clear s;
+      sub_clear s.c;
       sub_give s.c;
       raise e
 
 let copy d queue ~src ~dst =
   let part = { queue; after = [||]; work = Copy { src; dst } } in
-  submit (build ~any_hold:true ~reads:0 ~writes:0 ~waits:0 d [| part |])
+  submit
+    (build ~any_hold:true ~reads:0 ~writes:0 d [| part |])
+    ~reads:[||] ~writes:[||] ~waits:[||]

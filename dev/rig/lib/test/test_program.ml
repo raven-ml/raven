@@ -15,6 +15,9 @@ module Prof = Rig.Profile
 module P = Rig_support.Polled
 module Support = Rig_support
 
+let submit ?(reads = [||]) ?(writes = [||]) ?(waits = [||]) s =
+  C.submit s ~reads ~writes ~waits
+
 let timeout = 60.
 let count call p = List.length (List.filter (( = ) call) (P.log p))
 
@@ -37,8 +40,7 @@ let test_refused () =
   | Ok _ -> failf "a refused binary loaded"
   | Error why ->
       equal bool true (String.starts_with ~prefix:"program:refused" why);
-      equal int 1
-        (C.Point.value (C.submit (Sub.make ~reads:0 ~writes:0 ~waits:0 d [||])))
+      equal int 1 (C.Point.value (submit (Sub.make ~reads:0 ~writes:0 d [||])))
 
 let test_no_code () =
   raises_match Exn.invalid_arg (fun () -> Program.load C.host "code:64")
@@ -50,7 +52,7 @@ let test_unload () =
   let code =
     (fun () ->
       let p = load d "code:64" in
-      ignore (C.submit (Sub.make ~reads:0 ~writes:0 ~waits:0 d [||]));
+      ignore (submit (Sub.make ~reads:0 ~writes:0 d [||]));
       require_some (Program.entry p "main"))
       ()
   in
@@ -72,8 +74,7 @@ let test_entry_lost () =
   let d, p = P.open_ "program:entry-lost" in
   let prog = load d "code:64" in
   P.fail p;
-  raises_match (lost d) (fun () ->
-      C.submit (Sub.make ~reads:0 ~writes:0 ~waits:0 d [||]));
+  raises_match (lost d) (fun () -> submit (Sub.make ~reads:0 ~writes:0 d [||]));
   raises_match (lost d) (fun () -> Program.entry prog "main")
 
 let test_budget () =

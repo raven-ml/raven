@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The Mac's GPU through the driver, its work submitted through rig, each
-   row beside the raw Metal calls that bound it, made on a queue of their own: a
+(* The Mac's GPU through the driver, its work submitted through rig, each row
+   beside the raw Metal calls that bound it, made on a queue of their own: a
    release by a commit and a wait; a launch from an indirect command buffer by
    the same indirect command buffer and by the same dispatches encoded directly;
    memory and images by the Metal objects they make. A row waits by spinning on
@@ -39,13 +39,7 @@ let metallib = S.fixture ~dir:"../test/fixtures" "fill"
 let kib = 1024
 let mib = 1024 * kib
 
-type dev = {
-  c : Rig.t;
-  d : M.t;
-  mutable v : int;
-  step : int;
-  args : M.region;
-}
+type dev = { c : Rig.t; d : M.t; mutable v : int; step : int; args : M.region }
 
 let get = function Ok x -> x | Error why -> failwith why
 let alloc t n = Option.get (M.alloc t.d `Device n)
@@ -58,8 +52,8 @@ let load d =
 
 let opens = ref 0
 
-(* A device opened through rig, whose argument buffer points [step] at a
-   word of its own. *)
+(* A device opened through rig, whose argument buffer points [step] at a word of
+   its own. *)
 let dev () =
   incr opens;
   let d = ref None in
@@ -82,10 +76,10 @@ let dev () =
   t
 
 (* The prepared submission of [parts] on [t]. *)
-let prepare t parts =
-  Rig.Submission.make ~reads:0 ~writes:0 ~waits:0 t.c parts
+let prepare t parts = Rig.Submission.make ~reads:0 ~writes:0 t.c parts
 
-let submit t s = t.v <- Rig.Point.value (Rig.submit s)
+let submit t s =
+  t.v <- Rig.Point.value (Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||])
 
 let wait t =
   while M.signaled t.d < t.v do

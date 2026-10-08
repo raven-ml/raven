@@ -45,26 +45,28 @@ let () =
 
   (* A submission is made once and submitted many times. Each submit is the
      point of the value it assigns. *)
-  let s = Submission.make ~reads:0 ~writes:0 ~waits:0 d [| copy src mid |] in
-  let p = submit s in
+  let s = Submission.make ~reads:0 ~writes:0 d [| copy src mid |] in
+  let p = submit s ~reads:[||] ~writes:[||] ~waits:[||] in
   Format.printf "first submit: %a@." Point.pp p;
-  Format.printf "again:        %a@." Point.pp (submit s);
+  Format.printf "again:        %a@." Point.pp
+    (submit s ~reads:[||] ~writes:[||] ~waits:[||]);
   timeline d;
 
   (* Parts of one submission run in order: the second copy runs after the first,
      as its [after] says. *)
   let chain =
-    Submission.make ~reads:0 ~writes:0 ~waits:0 d
+    Submission.make ~reads:0 ~writes:0 d
       [| copy src mid; copy ~after:[| 0 |] mid dst |]
   in
-  let p = submit chain in
+  let p = submit chain ~reads:[||] ~writes:[||] ~waits:[||] in
   wait d (Point.value p);
   Format.printf "chain:        %a@." Point.pp p;
   show "dst" dst;
 
   (* An empty submission takes a value too: a point after all earlier work. *)
-  let empty = Submission.make ~reads:0 ~writes:0 ~waits:0 d [||] in
-  Format.printf "empty:        %a@." Point.pp (submit empty);
+  let empty = Submission.make ~reads:0 ~writes:0 d [||] in
+  Format.printf "empty:        %a@." Point.pp
+    (submit empty ~reads:[||] ~writes:[||] ~waits:[||]);
   timeline d;
 
   (* A value not yet submitted cannot be waited for. *)

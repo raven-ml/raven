@@ -8,6 +8,9 @@ module C = Rig
 module P = Rig_support.Polled
 module Support = Rig_support
 
+let submit ?(reads = [||]) ?(writes = [||]) ?(waits = [||]) s =
+  C.submit s ~reads ~writes ~waits
+
 let timeout = 60.
 let device = Testable.make ~pp:C.pp ~equal:C.equal
 let memory name = require_ok ~pp:Format.pp_print_string (C.memory_device name)
@@ -187,7 +190,7 @@ let test_fault_at_open () =
 
 let test_point () =
   let d = memory "open:point" in
-  let p = C.submit (C.Submission.make ~reads:0 ~writes:0 ~waits:0 d [||]) in
+  let p = submit (C.Submission.make ~reads:0 ~writes:0 d [||]) in
   equal string "open:point:1" (Format.asprintf "%a" C.Point.pp p)
 
 (* An opener's error is the open's, and leaves the name free. *)
@@ -214,9 +217,7 @@ let test_reopen_early () =
   let loser =
     Thread.create
       (fun () ->
-        try
-          ignore
-            (C.submit (C.Submission.make ~reads:0 ~writes:0 ~waits:0 d [||]))
+        try ignore (submit (C.Submission.make ~reads:0 ~writes:0 d [||]))
         with C.Lost _ -> ())
       ()
   in
@@ -229,9 +230,9 @@ let test_reopen_early () =
 
 let test_reopen () =
   let d, p = P.open_ "open:reopen" in
-  let s = C.Submission.make ~reads:0 ~writes:0 ~waits:0 d [||] in
+  let s = C.Submission.make ~reads:0 ~writes:0 d [||] in
   P.fail p;
-  raises_match (function C.Lost _ -> true | _ -> false) (fun () -> C.submit s);
+  raises_match (function C.Lost _ -> true | _ -> false) (fun () -> submit s);
   equal (list string) [ "stop" ] (P.log p);
   let d', _ = P.open_ "open:reopen" in
   not_equal device d d';

@@ -13,6 +13,9 @@ module Sub = Rig.Submission
 module P = Rig_support.Polled
 module Support = Rig_support
 
+let submit ?(reads = [||]) ?(writes = [||]) ?(waits = [||]) s =
+  C.submit s ~reads ~writes ~waits
+
 let timeout = 60.
 let kib = 1024
 
@@ -242,9 +245,8 @@ let test_foreign_use () =
   let at =
     (fun () ->
       let m = B.create a (4 * kib) in
-      let s = Sub.make ~reads:1 ~writes:0 ~waits:0 b [||] in
-      Sub.read s 0 (require_some (B.borrow b m));
-      ignore (C.submit s);
+      let s = Sub.make ~reads:1 ~writes:0 b [||] in
+      ignore (submit s ~reads:[| require_some (B.borrow b m) |]);
       B.address m)
       ()
   in
@@ -270,7 +272,7 @@ let test_borrowed_host () =
     let part =
       { Sub.queue = "COPY:0"; after = [||]; work = Sub.Copy { src; dst } }
     in
-    ignore (C.submit (Sub.make ~reads:0 ~writes:0 ~waits:0 d [| part |]));
+    ignore (submit (Sub.make ~reads:0 ~writes:0 d [| part |]));
     B.address h
   in
   let at = written () in
@@ -299,7 +301,7 @@ let test_borrowed_bigarray () =
     let part =
       { Sub.queue = "COPY:0"; after = [||]; work = Sub.Copy { src; dst } }
     in
-    ignore (C.submit (Sub.make ~reads:0 ~writes:0 ~waits:0 d [| part |]))
+    ignore (submit (Sub.make ~reads:0 ~writes:0 d [| part |]))
   in
   let settle () =
     Gc.full_major ();
@@ -326,7 +328,7 @@ let test_idle_borrower () =
     let part =
       { Sub.queue = "COPY:0"; after = [||]; work = Sub.Copy { src; dst } }
     in
-    ignore (C.submit (Sub.make ~reads:0 ~writes:0 ~waits:0 d [| part |]))
+    ignore (submit (Sub.make ~reads:0 ~writes:0 d [| part |]))
   in
   Gc.full_major ();
   C.free_cache C.host;

@@ -3,15 +3,15 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* GPU 0 through the driver, its work submitted through rig, each row
-   beside the CUDA calls that bound it, made from C on streams of their own: a
-   release by a stream write and a spin on the word; a queue switch by an event
-   wait, the write and an event record; foreign waits, which rig makes
-   only across devices, through the driver's C submit, by one batch of memory
-   operations; launches, copies, allocations and page-locking by the same calls.
-   A row waits by spinning on the word. Each case opens its device in its own
-   worker, so that no process forks after CUDA started. Without an NVIDIA GPU
-   the suite has no rows. *)
+(* GPU 0 through the driver, its work submitted through rig, each row beside the
+   CUDA calls that bound it, made from C on streams of their own: a release by a
+   stream write and a spin on the word; a queue switch by an event wait, the
+   write and an event record; foreign waits, which rig makes only across
+   devices, through the driver's C submit, by one batch of memory operations;
+   launches, copies, allocations and page-locking by the same calls. A row waits
+   by spinning on the word. Each case opens its device in its own worker, so
+   that no process forks after CUDA started. Without an NVIDIA GPU the suite has
+   no rows. *)
 
 module C = Rig_cuda
 module S = Rig_cuda_support
@@ -59,18 +59,16 @@ let dev () =
         x)
       (C.open_ 0)
   in
-  let c =
-    get (Rig.open_ (module C) ~name:(strf "CUDA:bench-%d" !opens) make)
-  in
+  let c = get (Rig.open_ (module C) ~name:(strf "CUDA:bench-%d" !opens) make) in
   let g = Option.get !g in
   S.bind g;
   { c; g; v = 0 }
 
 (* The prepared submission of [parts] on [t]. *)
-let prepare t parts =
-  Rig.Submission.make ~reads:0 ~writes:0 ~waits:0 t.c parts
+let prepare t parts = Rig.Submission.make ~reads:0 ~writes:0 t.c parts
 
-let submit t s = t.v <- Rig.Point.value (Rig.submit s)
+let submit t s =
+  t.v <- Rig.Point.value (Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||])
 
 let wait t =
   while C.signaled t.g < t.v do

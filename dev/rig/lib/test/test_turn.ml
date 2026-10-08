@@ -14,10 +14,13 @@ module Sub = Rig.Submission
 module P = Rig_support.Polled
 module Support = Rig_support
 
+let submit ?(reads = [||]) ?(writes = [||]) ?(waits = [||]) s =
+  C.submit s ~reads ~writes ~waits
+
 let timeout = 60.
 let lost d = function C.Lost (d', _) -> C.equal d d' | _ -> false
 let count call p = List.length (List.filter (( = ) call) (P.log p))
-let empty d = Sub.make ~reads:0 ~writes:0 ~waits:0 d [||]
+let empty d = Sub.make ~reads:0 ~writes:0 d [||]
 
 (* A part that holds one unit of a Polled queue. *)
 let bump () =
@@ -29,8 +32,8 @@ let bump () =
       Sub.Fill { fill = Support.bump; arg; ring_units = 0; segment_bytes = 0 };
   }
 
-let one_part d = Sub.make ~reads:0 ~writes:0 ~waits:0 d [| bump () |]
-let value s = C.Point.value (C.submit s)
+let one_part d = Sub.make ~reads:0 ~writes:0 d [| bump () |]
+let value s = C.Point.value (submit s)
 
 (* A thread running [f], whose outcome [join] gives. *)
 let spawn f =
@@ -77,8 +80,8 @@ let test_fault_waiting () =
 
 let test_never () =
   let d, _ = P.open_ ~capacity:1 "turn:never" in
-  let never = Sub.make ~reads:0 ~writes:0 ~waits:0 d [| bump (); bump () |] in
-  raises_match Exn.invalid_arg (fun () -> C.submit never);
+  let never = Sub.make ~reads:0 ~writes:0 d [| bump (); bump () |] in
+  raises_match Exn.invalid_arg (fun () -> submit never);
   equal int 0 (C.submitted d);
   equal int 1 (value (one_part d))
 
@@ -145,7 +148,7 @@ let still_works d p ~submitted =
   C.wait d submitted;
   equal int (submitted + 1) (value (empty d));
   P.fail p;
-  raises_match (lost d) (fun () -> C.submit (empty d));
+  raises_match (lost d) (fun () -> submit (empty d));
   equal int 1 (count "stop" p)
 
 let test_break_in_wait () =

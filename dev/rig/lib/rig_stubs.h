@@ -126,10 +126,8 @@ struct rig_sub {
   int nfixed; /* the buffers the parts name */
   struct rig_slot *fixed;
   unsigned char *fixed_write;
-  int nreads, nwrites; /* the read slots, then the write slots */
+  int nreads, nwrites; /* a run's buffers: those it reads, then writes */
   struct rig_slot *slots;
-  int nwait_slots;
-  uint64_t *wait_slots;
   struct rig_stamps *hold;
   _Atomic uint64_t *hold_use;
   /* Built for one submit, cleared after it. */

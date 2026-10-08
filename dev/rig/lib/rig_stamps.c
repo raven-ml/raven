@@ -166,7 +166,7 @@ static void *zalloc(size_t n, size_t size, int *ok) {
 
 /* A prepared submission on the device [v_d] of [v_nparts] parts whose
    [after] lists hold [v_nafter] indices in all, naming [v_nfixed] buffers,
-   with [v_nreads] read, [v_nwrites] write and [v_nwaits] wait slots. */
+   whose runs read [v_nreads] buffers and write [v_nwrites]. */
 static void sub_free(struct rig_sub *s);
 
 static void sub_finalize(value v) {
@@ -181,8 +181,7 @@ static struct custom_operations sub_ops = {
     custom_compare_ext_default, custom_fixed_length_default};
 
 value caml_rig_sub_new(value v_d, value v_nparts, value v_nafter,
-                       value v_nfixed, value v_nreads, value v_nwrites,
-                       value v_nwaits) {
+                       value v_nfixed, value v_nreads, value v_nwrites) {
   struct rig_sub *s = calloc(1, sizeof *s);
   if (s == NULL) caml_raise_out_of_memory();
   s->dev = (struct rig_device *)Long_val(v_d);
@@ -190,7 +189,6 @@ value caml_rig_sub_new(value v_d, value v_nparts, value v_nafter,
   s->nfixed = Int_val(v_nfixed);
   s->nreads = Int_val(v_nreads);
   s->nwrites = Int_val(v_nwrites);
-  s->nwait_slots = Int_val(v_nwaits);
   int nhandles = s->nfixed + s->nreads + s->nwrites;
   s->handles_stale = 1;
   s->seen_bits = 1;
@@ -202,7 +200,6 @@ value caml_rig_sub_new(value v_d, value v_nparts, value v_nafter,
   s->fixed = zalloc((size_t)s->nfixed, sizeof *s->fixed, &ok);
   s->fixed_write = zalloc((size_t)s->nfixed, 1, &ok);
   s->slots = zalloc((size_t)(s->nreads + s->nwrites), sizeof *s->slots, &ok);
-  s->wait_slots = zalloc((size_t)s->nwait_slots, sizeof *s->wait_slots, &ok);
   s->handles = zalloc((size_t)nhandles, sizeof *s->handles, &ok);
   s->seen = zalloc(nhandles == 0 ? 0 : (size_t)1 << s->seen_bits,
                    sizeof *s->seen, &ok);
@@ -219,7 +216,7 @@ value caml_rig_sub_new(value v_d, value v_nparts, value v_nafter,
 value caml_rig_sub_new_byte(value *argv, int argn) {
   (void)argn;
   return caml_rig_sub_new(argv[0], argv[1], argv[2], argv[3], argv[4],
-                                  argv[5], argv[6]);
+                                  argv[5]);
 }
 
 static void sub_free(struct rig_sub *s) {
@@ -228,7 +225,6 @@ static void sub_free(struct rig_sub *s) {
   free(s->fixed);
   free(s->fixed_write);
   free(s->slots);
-  free(s->wait_slots);
   free(s->points);
   free(s->waits);
   free(s->producers);
@@ -300,7 +296,7 @@ value caml_rig_sub_fixed(value v_s, value v_k, value v_stamps,
   return Val_unit;
 }
 
-/* Sets read slot [v_k], or write slot [v_k - nreads]. */
+/* Names the run's [v_k]th buffer: a read below [nreads], else a write. */
 value caml_rig_sub_slot(value v_s, value v_k, value v_stamps,
                                 value v_handle) {
   struct rig_sub *s = Sub_val(v_s);
@@ -311,11 +307,6 @@ value caml_rig_sub_slot(value v_s, value v_k, value v_stamps,
     slot->handle = h;
     s->handles_stale = 1;
   }
-  return Val_unit;
-}
-
-value caml_rig_sub_wait_slot(value v_s, value v_k, value v_p) {
-  Sub_val(v_s)->wait_slots[Int_val(v_k)] = (uint64_t)Long_val(v_p);
   return Val_unit;
 }
 
@@ -383,21 +374,19 @@ static void collect_handles(struct rig_sub *s, int nslots) {
 }
 
 /* Collects the points [s]'s work follows, the greatest per other device,
-   and the handles of the memory it names, each once, unless every handle
-   is the last collect's, and reserves the use words its raise stores to.
-   Answers the number of points, or -1 if a read or write slot is unset. */
-value caml_rig_sub_collect(value v_s) {
+   with the points of [v_waits], and the handles of the memory it names,
+   each once, unless every handle is the last collect's, and reserves the
+   use words its raise stores to. Answers the number of points. */
+value caml_rig_sub_collect(value v_s, value v_waits) {
   struct rig_sub *s = Sub_val(v_s);
   int own = s->dev->index, nslots = s->nreads + s->nwrites;
   s->npoints = s->nwaits = 0;
   for (int k = 0; k < s->nfixed; k++)
     add_slot(s, own, &s->fixed[k], s->fixed_write[k]);
-  for (int k = 0; k < nslots; k++) {
-    if (s->slots[k].stamps == NULL) return Val_int(-1);
+  for (int k = 0; k < nslots; k++)
     add_slot(s, own, &s->slots[k], k >= s->nreads);
-  }
-  for (int k = 0; k < s->nwait_slots; k++)
-    add_point(s, own, s->wait_slots[k]);
+  for (mlsize_t k = 0; k < Wosize_val(v_waits); k++)
+    add_point(s, own, (uint64_t)Long_val(Field(v_waits, k)));
   if (s->hold != NULL) s->hold_use = reserve(s->hold, own);
   if (s->handles_stale) collect_handles(s, nslots);
   return Val_int(s->npoints);
@@ -444,12 +433,10 @@ void rig_sub_raise(struct rig_sub *s, uint64_t p) {
   if (s->hold != NULL) raise_own(s->hold_use, p);
 }
 
-/* Unsets [s]'s slots, keeping their handles, and forgets its waits. */
+/* Forgets a run's buffers but their handles, and its waits. */
 value caml_rig_sub_clear(value v_s) {
   struct rig_sub *s = Sub_val(v_s);
   for (int k = 0; k < s->nreads + s->nwrites; k++) s->slots[k].stamps = NULL;
-  if (s->nwait_slots > 0)
-    memset(s->wait_slots, 0, (size_t)s->nwait_slots * sizeof *s->wait_slots);
   s->npoints = s->nwaits = 0;
   return Val_unit;
 }

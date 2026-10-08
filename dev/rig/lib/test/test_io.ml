@@ -13,6 +13,9 @@ module Sub = Rig.Submission
 module P = Rig_support.Polled
 module Support = Rig_support
 
+let submit ?(reads = [||]) ?(writes = [||]) ?(waits = [||]) s =
+  C.submit s ~reads ~writes ~waits
+
 let timeout = 60.
 let page_bytes = 1 lsl 16
 
@@ -118,7 +121,7 @@ let queued_copy d ~src ~dst =
   let part =
     { Sub.queue = "COPY:0"; after = [||]; work = Sub.Copy { src; dst } }
   in
-  ignore (C.submit (Sub.make ~reads:0 ~writes:0 ~waits:0 d [| part |]))
+  ignore (submit (Sub.make ~reads:0 ~writes:0 d [| part |]))
 
 (* A driver's device borrows io memory through its pages, as host memory, mapped
    once whatever its borrows. *)
@@ -210,9 +213,8 @@ let test_free () =
   let d, p = P.open_ "io:user" in
   (fun () ->
     let m = B.create io page_bytes in
-    let s = Sub.make ~reads:1 ~writes:0 ~waits:0 d [||] in
-    Sub.read s 0 (require_some (B.borrow d m));
-    ignore (C.submit s))
+    let s = Sub.make ~reads:1 ~writes:0 d [||] in
+    ignore (submit s ~reads:[| require_some (B.borrow d m) |]))
     ();
   let drain () =
     Gc.full_major ();
@@ -273,18 +275,19 @@ let test_staged_device () =
   done;
   equal ~msg:"bytes that differ" int 0 !wrong
 
-(* No device's work reaches io memory itself, only a borrow of its pages: a slot
+(* No device's work reaches io memory itself, only a borrow of its pages: a run
    refuses an io device's buffer and takes the borrow. *)
-let test_slots () =
+let test_run_borrows () =
   let io, _ = open_pages () in
   let d, _ = P.open_ "io:slots" in
   let m = B.create io page_bytes in
-  let s = Sub.make ~reads:1 ~writes:1 ~waits:0 d [||] in
-  raises_match Exn.invalid_arg (fun () -> Sub.read s 0 m);
-  raises_match Exn.invalid_arg (fun () -> Sub.write s 0 m);
-  Sub.read s 0 (require_some (B.borrow d m));
-  Sub.write s 0 (B.create d 8);
-  ignore (C.submit s)
+  let s = Sub.make ~reads:1 ~writes:1 d [||] in
+  let own = B.create d 8 and borrowed = require_some (B.borrow d m) in
+  raises_match Exn.invalid_arg (fun () ->
+      ignore (submit s ~reads:[| m |] ~writes:[| own |]));
+  raises_match Exn.invalid_arg (fun () ->
+      ignore (submit s ~reads:[| borrowed |] ~writes:[| m |]));
+  ignore (submit s ~reads:[| borrowed |] ~writes:[| own |])
 
 (* The minor words [f ()] allocates. *)
 let minor_words f =
@@ -408,8 +411,8 @@ let tests =
         test "io memory returns once unreachable and its uses reached" test_free;
         test "a collected io memory's release costs few words"
           test_release_words;
-        test "a slot refuses io memory and takes a borrow of its pages"
-          test_slots;
+        test "a run refuses io memory and takes a borrow of its pages"
+          test_run_borrows;
         test "io memory and a device's memory copy through staging, both ways"
           test_staged_device;
         test "a fault of io loses its device, a failure of its memory nothing"

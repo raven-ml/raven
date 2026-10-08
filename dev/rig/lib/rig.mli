@@ -23,18 +23,18 @@
     {v
       Buffer.t ──view, borrow──> memory ──stamps──> points
           │                         ▲                  ▲
-          │ Submission.read/write   │ Hold.make        │ submit
+          │ submit ~reads ~writes   │ Hold.make        │ submit
           ▼                         │                  │
       Submission.t ──────────── one device ── Driver.submit_entry (C)
     v}
 
     A program opens devices ({!open_}), allocates {!Buffer}s, and copies between
     them ({!Buffer.copy}), which waits for the work that touched them. A library
-    that runs compiled work on devices prepares {!Submission}s once, sets their
-    buffers for each run, and submits them ({!submit}); it orders its own host
-    access with {!Buffer.wait}. A vendor library matches {!Driver} without
-    linking this library; a program passes it to {!open_} with the library's
-    function that opens the hardware.
+    that runs compiled work on devices prepares {!Submission}s once and submits
+    each run's buffers with them ({!submit}); it orders its own host access with
+    {!Buffer.wait}. A vendor library matches {!Driver} without linking this
+    library; a program passes it to {!open_} with the library's function that
+    opens the hardware.
 
     {1:domains Domains}
 
@@ -478,8 +478,8 @@ end
     [Invalid_argument] with the consumption's reason. Consuming releases
     nothing: the memory lives while a buffer reaches it.
 
-    Device work takes no claim. A {!submit} requires its caller's claims on its
-    slots ({!Submission.read}, {!Submission.write}) until it returns. *)
+    Device work takes no claim. A {!submit} requires its caller's claims on the
+    buffers it is passed until it returns. *)
 module Claim : sig
   val read : Buffer.t -> unit
   (** [read b] claims [b]'s memory for reading, beside other readers.
@@ -564,23 +564,17 @@ end
 (** Prepared submissions.
 
     A submission is work for one device: its {e parts}, each for one of the
-    device's queues ({!Driver.queues}), the parts each waits for within the
-    submission, and its {e slots}: the buffers its work reads or writes, and the
-    points it waits for, which may change from one submit to the next. It is
-    made once and submitted many times. Its prepared form lives outside the
-    OCaml heap, so a submit allocates nothing.
+    device's queues ({!Driver.queues}), and the parts each waits for within the
+    submission. It is made once and run many times. What changes from one run to
+    the next, the buffers its work reads and writes and the points it waits for,
+    are arguments of {!submit}, which keeps none of them once it returns. Its
+    prepared form lives outside the OCaml heap, so a submit allocates nothing.
 
     A submission keeps every buffer its parts name reachable while it is
     reachable itself, so their memory is never freed between {!make} and a
     submit: a part never hands its driver memory that was given back. Once the
     submission is unreachable, that memory returns by its stamps, after the work
-    of the last submit.
-
-    Slots are valid for one submit: a slot's buffer stays reachable until
-    {!submit} has raised its stamps, and {!submit} clears the slots when it
-    returns or raises, so a submission does not keep a run's inputs alive. A
-    read or write slot left unset raises; a wait slot left unset waits for
-    nothing. *)
+    of the last submit. *)
 module Submission : sig
   type device := t
 
@@ -615,81 +609,66 @@ module Submission : sig
       orders parts of different queues. *)
 
   val make :
-    ?hold:Hold.t ->
-    reads:int ->
-    writes:int ->
-    waits:int ->
-    device ->
-    part array ->
-    t
-  (** [make ~hold ~reads ~writes ~waits d parts] is a submission of [parts] on
-      [d], with [reads] read slots, [writes] write slots and [waits] wait slots,
-      all unset. [hold] names the memory of a {!Hold}: every submit of the
-      submission raises the hold's stamp of [d], and the parts may name the
-      hold's memory.
+    ?hold:Hold.t -> reads:int -> writes:int -> device -> part array -> t
+  (** [make ~hold ~reads ~writes d parts] is a submission of [parts] on [d]
+      whose every run reads [reads] buffers and writes [writes] buffers
+      ({!submit}), a buffer counted as often as it is passed. [hold] names the
+      memory of a {!Hold}: every submit of the submission raises the hold's
+      stamp of [d], and the parts may name the hold's memory.
 
       Raises [Invalid_argument] if [d] is a host or an {!Io} device, which run
-      no submitted work, a count is negative, an index of a part's [after] is
-      negative or not below its own, a queue is not one of [d]'s, a part's
-      buffer is dead, a {!Words} or {!Fill} buffer is not host memory, a
+      no submitted work, [reads] or [writes] is negative, an index of a part's
+      [after] is negative or not below its own, a queue is not one of [d]'s, a
+      part's buffer is dead, a {!Words} or {!Fill} buffer is not host memory, a
       {!Copy}'s buffers differ in size or are not [d]'s memory, [d]'s driver
       runs no copies (it lists no copy queue, {!Driver.queues}), or a part names
       memory of a hold other than [hold]; and {!Lost} if [d] is lost. A part
       [d]'s driver does not run is refused at {!submit}. *)
-
-  val read : t -> int -> Buffer.t -> unit
-  (** [read s i b] sets read slot [i] to [b]: the next submit waits for the last
-      write of [b]'s memory, and stamps its use by [s]'s device.
-
-      Raises [Invalid_argument] if [i] is not a read slot of [s], [b]'s memory
-      is in a hold, or [b] is not on [s]'s device ({!Buffer.device}): a slot
-      takes a {!Buffer.borrow} of other memory, an {!Io} device's through its
-      pages. *)
-
-  val write : t -> int -> Buffer.t -> unit
-  (** [write s i b] sets write slot [i] to [b]: the next submit waits for every
-      use of [b]'s memory by a device other than [s]'s, and stamps the write of
-      [s]'s device.
-
-      Raises [Invalid_argument] as {!read}. *)
-
-  val wait_for : t -> int -> Point.t -> unit
-  (** [wait_for s i p] sets wait slot [i] to [p]: the next submit waits for [p].
-
-      Raises [Invalid_argument] if [i] is not a wait slot of [s]. *)
 end
 
-val submit : Submission.t -> Point.t
-(** [submit s] hands [s]'s work to its device [d] as the value [v] it assigns,
-    and is the point [(d, v)]. The caller holds its claims on [s]'s slots until
-    [submit] returns. It:
-    + Loads the points [s]'s work must follow: the last write of each read slot
-      and of each buffer its parts read, every use by another device of each
-      write slot and of each copy's [dst], and the wait slots. Each foreign
-      point not yet reached is a wait in [d]'s queue if [d]'s driver waits on
-      the producer's completion ({!Driver.waits_on}) and [d] maps the producer's
-      timeline word, decided once per pair of devices, up to {!Driver.max_waits}
-      waits; otherwise [submit] waits for it now, holding no lock.
+val submit :
+  Submission.t ->
+  reads:Buffer.t array ->
+  writes:Buffer.t array ->
+  waits:Point.t array ->
+  Point.t
+(** [submit s ~reads ~writes ~waits] runs [s]'s work once, reading the buffers
+    of [reads] and writing those of [writes] after the points of [waits]. It
+    hands the work to [s]'s device [d] as the value [v] it assigns, and is the
+    point [(d, v)]. A buffer may appear more than once, in either array. The
+    buffers are on [d]: [d]'s work reaches other memory through a
+    {!Buffer.borrow}, an {!Io} device's through its pages. [submit] reads each
+    element of [reads] and [writes] once and keeps the buffer reachable until it
+    has raised its stamps. The caller holds its claims on them until [submit]
+    returns. It:
+    + Loads the points [s]'s work must follow: the last write of each buffer of
+      [reads] and of each buffer its parts read, every use by another device of
+      each buffer of [writes] and of each copy's [dst], and the points of
+      [waits]. Each foreign point not yet reached is a wait in [d]'s queue if
+      [d]'s driver waits on the producer's completion ({!Driver.waits_on}) and
+      [d] maps the producer's timeline word, decided once per pair of devices,
+      up to {!Driver.max_waits} waits; otherwise [submit] waits for it now,
+      holding no lock.
     + Takes [d]'s {e turn}, the right to be [d]'s one submission between its
       room check and its hand-over, and asks [d]'s driver for room
       ({!Driver.room_entry}). Once the parts fit, it assigns [v], one more than
       {!submitted}[ d], hands the work over ({!Driver.submit_entry}), and raises
-      the stamps of the slots, the parts' buffers and the hold to [(d, v)].
-      While they do not fit, it waits for [d]'s next value with the turn
-      released, and tries again. No OCaml code runs between the assignment and
-      the turn's release, so a value is handed over or [d] is lost.
-    + Clears [s]'s slots.
+      the stamps of [reads], [writes], the parts' buffers and the hold to
+      [(d, v)]. While they do not fit, it waits for [d]'s next value with the
+      turn released, and tries again. No OCaml code runs between the assignment
+      and the turn's release, so a value is handed over or [d] is lost.
 
     It allocates nothing unless it waits.
 
-    Raises [Invalid_argument] if a read or write slot is unset, a buffer of a
-    slot or a part is dead, a slot's memory is in a hold, a part names memory of
-    a hold other than the submission's, a wait slot's point is beyond its
-    device's {!submitted} value, or the parts never fit [d]'s empty queues or
-    name one its driver does not run; and {!Lost} if [d] is lost, [d]'s
-    hand-over fails, a point [s] follows is on a lost device, or a producer
-    [d]'s queue waits on is lost before the hand-over. A device lost after [v]
-    was handed over raises {!Lost}, with [v]'s stamps naming it. *)
+    Raises [Invalid_argument] if [reads] or [writes] holds another number of
+    buffers than {!Submission.make} declared, a buffer of [reads], [writes] or a
+    part is dead, a buffer of [reads] or [writes] is not on [d] or its memory is
+    in a hold, a part names memory of a hold other than the submission's, or the
+    parts never fit [d]'s empty queues or name one its driver does not run; and
+    {!Lost} if [d] is lost, [d]'s hand-over fails, a point [s] follows is on a
+    lost device, or a producer [d]'s queue waits on is lost before the
+    hand-over. A device lost after [v] was handed over raises {!Lost}, with
+    [v]'s stamps naming it. *)
 
 (** {1:programs Programs} *)
 

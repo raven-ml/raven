@@ -93,8 +93,8 @@ let core g =
   | _ -> invalid_arg "Rig_amd_support.core: the device is not open"
 
 let submit g parts =
-  let s = Rig.Submission.make ~reads:0 ~writes:0 ~waits:0 (core g) parts in
-  match Rig.submit s with
+  let s = Rig.Submission.make ~reads:0 ~writes:0 (core g) parts in
+  match Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||] with
   | p -> Rig.Point.value p
   | exception (Rig.Lost _ as e) ->
       opened := None;

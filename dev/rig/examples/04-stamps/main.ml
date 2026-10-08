@@ -44,23 +44,26 @@ let () =
 
   (* A's work writes [x]: [x]'s last write is A's point. *)
   let p =
-    submit (Submission.make ~reads:0 ~writes:0 ~waits:0 a [| copy src x |])
+    submit
+      (Submission.make ~reads:0 ~writes:0 a [| copy src x |])
+      ~reads:[||] ~writes:[||] ~waits:[||]
   in
   Format.printf "A wrote x at %a@." Point.pp p;
 
   (* B's work addresses its own memory. [x] is A's, so a part of B that names it
      is refused; B borrows [x], a mapping that shares [x]'s stamps. *)
   let y = Buffer.create b 16 in
-  (match Submission.make ~reads:0 ~writes:0 ~waits:0 b [| copy x y |] with
+  (match Submission.make ~reads:0 ~writes:0 b [| copy x y |] with
   | _ -> ()
   | exception Invalid_argument msg -> print_endline msg);
   let x_on_b = Option.get (Buffer.borrow b x) in
 
-  (* B's copy reads [x], so its submit waits for A's write first. A wait slot
-     orders it after any other point as well, here A's last value. *)
-  let s = Submission.make ~reads:0 ~writes:0 ~waits:1 b [| copy x_on_b y |] in
-  Submission.wait_for s 0 p;
-  Format.printf "B read x at %a@." Point.pp (submit s);
+  (* B's copy reads [x], so its submit waits for A's write first. A point the
+     submit waits for orders it after any other work as well, here A's last
+     value. *)
+  let s = Submission.make ~reads:0 ~writes:0 b [| copy x_on_b y |] in
+  Format.printf "B read x at %a@." Point.pp
+    (submit s ~reads:[||] ~writes:[||] ~waits:[| p |]);
   show "y" y;
 
   (* A host copy orders itself the same way: it waits for [y]'s last write and

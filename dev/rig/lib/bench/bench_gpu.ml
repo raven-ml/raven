@@ -131,11 +131,17 @@ let host_rows =
       row "load-cold-256M" file (load ~cold:true);
     ]
 
-type gpu_copy = { gs : Sub.t; gargs : B.t; gout : B.t }
+(* A copy of the step: its submission, its argument, and the buffers each of its
+   runs reads (the parameters, then the argument) and writes. *)
+type gpu_copy = {
+  gs : Sub.t;
+  gargs : B.t;
+  greads : B.t array;
+  gwrites : B.t array;
+}
 
 type gpu_replay = {
   g : C.t;
-  gparams : B.t array;
   gcopies : gpu_copy array;
   keep : unit -> unit;  (** Holds what the copies' part runs. *)
 }
@@ -189,23 +195,20 @@ let gpu_rows (type a) (module D : C.Driver with type t = a) ?(sleeps = false)
   in
   let core () =
     let g, _ = opened () in
-    (g, Sub.make ~reads:0 ~writes:0 ~waits:0 g [||], ref 0)
+    (g, Sub.make ~reads:0 ~writes:0 g [||], ref 0)
   in
   let replay g parts keep =
+    let gparams = Array.init slots (fun _ -> B.create g 8) in
     let copy () =
+      let gargs = B.create g 8 in
       {
-        gs = Sub.make ~reads:(slots + 1) ~writes:1 ~waits:0 g parts;
-        gargs = B.create g 8;
-        gout = B.create g 8;
+        gs = Sub.make ~reads:(slots + 1) ~writes:1 g parts;
+        gargs;
+        greads = Array.append gparams [| gargs |];
+        gwrites = [| B.create g 8 |];
       }
     in
-    ( {
-        g;
-        gparams = Array.init slots (fun _ -> B.create g 8);
-        gcopies = [| copy (); copy () |];
-        keep;
-      },
-      ref 0 )
+    ({ g; gcopies = [| copy (); copy () |]; keep }, ref 0)
   in
   let replaying () = replay (fst (opened ())) [||] ignore in
   let part_replaying make () =
@@ -217,12 +220,7 @@ let gpu_rows (type a) (module D : C.Driver with type t = a) ?(sleeps = false)
     let c = r.gcopies.(!n land 1) in
     incr n;
     B.wait c.gargs B.Read_write;
-    for i = 0 to slots - 1 do
-      Sub.read c.gs i (Array.unsafe_get r.gparams i)
-    done;
-    Sub.read c.gs slots c.gargs;
-    Sub.write c.gs 0 c.gout;
-    ignore (C.submit c.gs)
+    ignore (C.submit c.gs ~reads:c.greads ~writes:c.gwrites ~waits:[||])
   in
   let pipelined ((r, _) as x) =
     for _ = 1 to runs do
@@ -363,9 +361,10 @@ let gpu_rows (type a) (module D : C.Driver with type t = a) ?(sleeps = false)
     Thumper.group (strf "submit/%s" v)
       [
         row "empty" core (fun (g, s, _) ->
-            C.wait g (C.Point.value (C.submit s)));
+            C.wait g
+              (C.Point.value (C.submit s ~reads:[||] ~writes:[||] ~waits:[||])));
         row "cost" core (fun (g, s, n) ->
-            let p = C.submit s in
+            let p = C.submit s ~reads:[||] ~writes:[||] ~waits:[||] in
             incr n;
             if !n mod drain = 0 then C.wait g (C.Point.value p));
       ];
