@@ -12,6 +12,13 @@ exception Lost of device * string
 exception Out_of_memory of device * int
 
 val host : device
+val protect : device -> (unit -> 'a) -> 'a
+(* [protect d f] is [f ()] run holding [d]'s lock, which guards [d]'s mutable
+   fields. A forked child makes every lock anew. *)
+
+val busy : device -> bool
+(* [busy d] is [true] if a call holds [d]'s lock. *)
+
 val of_index : int -> device
 val all : unit -> device array
 

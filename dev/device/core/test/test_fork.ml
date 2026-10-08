@@ -174,6 +174,49 @@ let test_io_used () =
   ignore (P.run p);
   ignore (Sys.opaque_identity !m)
 
+(* The core's record of the device [d], which only the core reaches. *)
+let record d =
+  let name = C.name d in
+  let all = Device_core__Dev.all () in
+  Option.get (Array.find_opt (fun r -> r.Device_core__Def.name = name) all)
+
+(* A thread of the parent inside an io device's lock at the fork leaves the
+   child the device: the child makes the lock anew. A child that still waits for
+   it is killed by its alarm. *)
+let test_io_lock () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  let io = open_store "fork:io-locked" in
+  let lock = Mutex.create () and cond = Condition.create () in
+  let inside = ref false and leave = ref false in
+  let holder =
+    Thread.create
+      (fun () ->
+        Device_core__Dev.protect (record io) (fun () ->
+            Mutex.protect lock (fun () ->
+                inside := true;
+                Condition.broadcast cond;
+                while not !leave do
+                  Condition.wait cond lock
+                done)))
+      ()
+  in
+  Mutex.protect lock (fun () ->
+      while not !inside do
+        Condition.wait cond lock
+      done);
+  let lines, ended =
+    in_child (fun () ->
+        Sys.set_signal Sys.sigalrm Sys.Signal_default;
+        ignore (Unix.alarm 5);
+        [ Printf.sprintf "bytes made: %d" (B.length (B.create io 8)) ])
+  in
+  Mutex.protect lock (fun () ->
+      leave := true;
+      Condition.broadcast cond);
+  Thread.join holder;
+  equal string "exited 0" (status ended);
+  equal (list string) [ "bytes made: 8" ] lines
+
 let tests =
   [
     group ~timeout "fork"
@@ -183,6 +226,8 @@ let tests =
         test "a forked child frees the io memory it drops" test_io_loop;
         test "a forked child frees io memory a parent's device uses"
           test_io_used;
+        test "a forked child uses an io device a parent's thread had locked"
+          test_io_lock;
       ];
   ]
 

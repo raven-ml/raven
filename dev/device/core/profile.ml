@@ -85,7 +85,7 @@ let read_pending () =
       if i = d.index && d.afters <> [] then
         let v = List.fold_left (fun m (v, _) -> Int.max m v) 0 d.afters in
         try Dev.wait d v
-        with Dev.Lost _ -> Mutex.protect d.lock (fun () -> d.afters <- []))
+        with Dev.Lost _ -> Dev.protect d (fun () -> d.afters <- []))
     (Dev.all ())
 
 let take ?(counters = []) ?(trace = false) f =

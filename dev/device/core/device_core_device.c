@@ -57,16 +57,13 @@ enum {
 /* Mutexes and conditions */
 
 #ifdef _WIN32
+static void mutex_init(dc_mutex *m) { InitializeSRWLock(m); }
+static int mutex_try(dc_mutex *m) { return TryAcquireSRWLockExclusive(m); }
+static void mutex_lock(dc_mutex *m) { AcquireSRWLockExclusive(m); }
+static void mutex_unlock(dc_mutex *m) { ReleaseSRWLockExclusive(m); }
 static void mu_init(struct dc_device *d) {
-  InitializeSRWLock(&d->mu);
+  mutex_init(&d->mu);
   InitializeConditionVariable(&d->cv);
-}
-static int mu_try(struct dc_device *d) {
-  return TryAcquireSRWLockExclusive(&d->mu);
-}
-static void mu_lock(struct dc_device *d) { AcquireSRWLockExclusive(&d->mu); }
-static void mu_unlock(struct dc_device *d) {
-  ReleaseSRWLockExclusive(&d->mu);
 }
 static void cv_wait_ms(struct dc_device *d, int ms) {
   SleepConditionVariableSRW(&d->cv, &d->mu, (DWORD)ms, 0);
@@ -75,15 +72,14 @@ static void cv_broadcast(struct dc_device *d) {
   WakeAllConditionVariable(&d->cv);
 }
 #else
+static void mutex_init(dc_mutex *m) { pthread_mutex_init(m, NULL); }
+static int mutex_try(dc_mutex *m) { return pthread_mutex_trylock(m) == 0; }
+static void mutex_lock(dc_mutex *m) { pthread_mutex_lock(m); }
+static void mutex_unlock(dc_mutex *m) { pthread_mutex_unlock(m); }
 static void mu_init(struct dc_device *d) {
-  pthread_mutex_init(&d->mu, NULL);
+  mutex_init(&d->mu);
   pthread_cond_init(&d->cv, NULL);
 }
-static int mu_try(struct dc_device *d) {
-  return pthread_mutex_trylock(&d->mu) == 0;
-}
-static void mu_lock(struct dc_device *d) { pthread_mutex_lock(&d->mu); }
-static void mu_unlock(struct dc_device *d) { pthread_mutex_unlock(&d->mu); }
 /* A clock jump moves one timeout, which only returns a waiter early or late
    to OCaml. */
 static void cv_wait_ms(struct dc_device *d, int ms) {
@@ -102,15 +98,20 @@ static void cv_broadcast(struct dc_device *d) {
 }
 #endif
 
-/* Takes [d]'s mutex from a stub holding the domain lock: by try-lock, and
-   otherwise after releasing the domain lock. Answers whether it released
-   it, for [give]. */
-static int take(struct dc_device *d) {
-  if (mu_try(d)) return 0;
+static void mu_lock(struct dc_device *d) { mutex_lock(&d->mu); }
+static void mu_unlock(struct dc_device *d) { mutex_unlock(&d->mu); }
+
+/* Takes the mutex [m] from a stub holding the domain lock: by try-lock,
+   and otherwise after releasing the domain lock. Answers whether it
+   released it, for [give]. */
+static int take_mutex(dc_mutex *m) {
+  if (mutex_try(m)) return 0;
   caml_enter_blocking_section_no_pending();
-  mu_lock(d);
+  mutex_lock(m);
   return 1;
 }
+
+static int take(struct dc_device *d) { return take_mutex(&d->mu); }
 
 static void give(struct dc_device *d, int released) {
   mu_unlock(d);
@@ -158,17 +159,36 @@ static int is_lost(struct dc_device *d) {
 
 #define Device_val(v) ((struct dc_device *)Long_val(v))
 
-/* After fork, the child sees every driver's device lost, its stop
-   answered Unknown for good: freeing would call a driver, and a word may be
-   a page the child shares with its parent. An io device's state is its io
-   library's, which decides what a fork does to it: the core leaves it
-   open. The mutexes are made anew and the calls in flight forgotten, since
-   a thread of the parent may have held them. */
+/* Locks */
+
+/* A device's lock, which guards its OCaml state. Every lock is on one
+   list, so a forked child can make each anew; none is freed, as a device
+   lives as long as its process. */
+struct dc_lock {
+  dc_mutex mu;
+  struct dc_lock *next;
+};
+
+static _Atomic(struct dc_lock *) locks;
+
+#define Lock_val(v) ((struct dc_lock *)Long_val(v))
+
+/* After fork, the locks are made anew, since a thread of the parent may
+   have held them. A child of a process that opened devices sees every
+   driver's device lost, its stop answered Unknown for good: freeing would
+   call a driver, and a word may be a page the child shares with its
+   parent. An io device's state is its io library's, which decides what a
+   fork does to it: the core leaves it open. Each device's mutex is made
+   anew and its calls in flight forgotten. A child of a process that opened
+   none is a process like any other. */
 #ifndef _WIN32
 static void forked_child(void) {
   static char why[] = "forked";
-  atomic_store(&forked, 1);
+  for (struct dc_lock *l = atomic_load(&locks); l != NULL; l = l->next)
+    mutex_init(&l->mu);
   int n = atomic_load(&top);
+  if (n == 0) return;
+  atomic_store(&forked, 1);
   for (int i = 1; i <= n; i++) {
     struct dc_device *d = dc_device_of(i);
     if (d == NULL) continue;
@@ -184,6 +204,38 @@ static void forked_child(void) {
 static pthread_once_t atfork_once = PTHREAD_ONCE_INIT;
 static void atfork(void) { pthread_atfork(NULL, NULL, forked_child); }
 #endif
+
+/* A new lock. The host's is made as the library starts, so the fork
+   handler is in place before any thread can hold a lock. */
+value caml_device_core_lock_new(value unit) {
+  (void)unit;
+#ifndef _WIN32
+  pthread_once(&atfork_once, atfork);
+#endif
+  struct dc_lock *l = malloc(sizeof *l);
+  if (l == NULL) caml_raise_out_of_memory();
+  mutex_init(&l->mu);
+  l->next = atomic_load(&locks);
+  while (!atomic_compare_exchange_weak(&locks, &l->next, l)) {
+  }
+  return Val_long((intnat)l);
+}
+
+value caml_device_core_lock_try(value v_l) {
+  return Val_bool(mutex_try(&Lock_val(v_l)->mu));
+}
+
+/* Takes the lock [v_l], which a try found held: waits for it without the
+   domain lock. */
+value caml_device_core_lock_take(value v_l) {
+  if (take_mutex(&Lock_val(v_l)->mu)) caml_leave_blocking_section();
+  return Val_unit;
+}
+
+value caml_device_core_lock_give(value v_l) {
+  mutex_unlock(&Lock_val(v_l)->mu);
+  return Val_unit;
+}
 
 /* A device record of index [v_index] named [v_name]. */
 static struct dc_device *record(value v_index, value v_name) {
@@ -204,9 +256,6 @@ static struct dc_device *record(value v_index, value v_name) {
 }
 
 static value publish(struct dc_device *d) {
-#ifndef _WIN32
-  pthread_once(&atfork_once, atfork);
-#endif
   atomic_store_explicit(&devices[d->index], d, memory_order_release);
   int t = atomic_load(&top);
   while (t < d->index && !atomic_compare_exchange_weak(&top, &t, d->index)) {

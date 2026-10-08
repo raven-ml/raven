@@ -24,6 +24,10 @@ external c_new :
   int = "caml_device_core_device_new_byte" "caml_device_core_device_new"
 
 external c_io_new : int -> string -> int = "caml_device_core_io_new"
+external lock_new : unit -> int = "caml_device_core_lock_new"
+external lock_try : int -> bool = "caml_device_core_lock_try" [@@noalloc]
+external lock_take : int -> unit = "caml_device_core_lock_take"
+external lock_give : int -> unit = "caml_device_core_lock_give" [@@noalloc]
 external c_word : int -> int = "caml_device_core_word" [@@noalloc]
 
 external c_set_seen : int -> int -> unit = "caml_device_core_set_seen"
@@ -98,7 +102,7 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~completion ~waits
     fault;
     capability;
     release = release_list ();
-    lock = Mutex.create ();
+    lock = lock_new ();
     budget;
     used = 0;
     cached = 0;
@@ -127,6 +131,26 @@ let () =
     | Lost (d, why) -> Some (strf "%s lost: %s" d.name why)
     | Out_of_memory (d, n) -> Some (strf "%s cannot allocate %d bytes" d.name n)
     | _ -> None)
+
+(* Locks *)
+
+let protect d f =
+  if not (lock_try d.lock) then lock_take d.lock;
+  match f () with
+  | v ->
+      lock_give d.lock;
+      v
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      lock_give d.lock;
+      Printexc.raise_with_backtrace e bt
+
+let busy d =
+  if lock_try d.lock then begin
+    lock_give d.lock;
+    false
+  end
+  else true
 
 (* Facts *)
 
@@ -248,7 +272,7 @@ let now_ms () = Prof.now () / 1_000_000
    exception one raised once all ran. *)
 let run_afters d w =
   let due =
-    Mutex.protect d.lock (fun () ->
+    protect d (fun () ->
         let due, later = List.partition (fun (v, _) -> v <= w) d.afters in
         d.afters <- later;
         due)
@@ -259,8 +283,7 @@ let run_afters d w =
     (List.rev due);
   Option.iter raise !first
 
-let after d v f =
-  Mutex.protect d.lock (fun () -> d.afters <- (v, f) :: d.afters)
+let after d v f = protect d (fun () -> d.afters <- (v, f) :: d.afters)
 
 (* A device whose unreached work waits in its queue on another's surfaces that
    producer's unseen fault: its sleep raises it. *)

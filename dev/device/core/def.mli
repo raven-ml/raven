@@ -41,7 +41,7 @@ type device = {
   name : string;
   machine : string option;
   kind : kind;
-  c : int;  (** The C record, 0 for a host and an io device. *)
+  c : int;  (** The C record, 0 for the host. *)
   arch : string;
   queues : string array;
   completion : completion;
@@ -55,7 +55,7 @@ type device = {
   fault : exn -> string option;  (** The driver's faults. *)
   capability : capability option;
   release : int;  (** The C release list. *)
-  lock : Mutex.t;  (** Guards everything mutable below. *)
+  lock : int;  (** The C lock that guards everything mutable below. *)
   mutable budget : int;
   mutable used : int;  (** Own bytes in live buffers, code and cache. *)
   mutable cached : int;

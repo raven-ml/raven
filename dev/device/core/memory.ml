@@ -269,7 +269,7 @@ let owns kind = kind = device_kind || kind = mapped_kind || kind = io_kind
    submitted now: the work that may use it without naming it. *)
 let defer d p =
   let v = Dev.submitted d in
-  Mutex.protect d.lock (fun () -> d.pending <- (v, p) :: d.pending)
+  Dev.protect d (fun () -> d.pending <- (v, p) :: d.pending)
 
 (* Unmaps the other devices' mappings of [e]'s memory, each once its mapper's
    work submitted until now is done. *)
@@ -289,7 +289,7 @@ let free_entry (e : entry) =
   Option.iter (free_io d) e.io_region;
   drop_stamps e;
   if owns e.memory then begin
-    Mutex.protect d.lock (fun () -> d.used <- d.used - e.bytes);
+    Dev.protect d (fun () -> d.used <- d.used - e.bytes);
     note d
   end
 
@@ -358,7 +358,7 @@ let cache d e =
   Hashtbl.replace d.cache k (e :: l);
   d.cached <- d.cached + e.bytes
 
-let to_cache d e = Mutex.protect d.lock (fun () -> cache d e)
+let to_cache d e = Dev.protect d (fun () -> cache d e)
 
 (* Routes a record [d]'s release list gave. *)
 let route d = function
@@ -372,7 +372,7 @@ let route d = function
         && (not (is_io_memory e))
         && reached ~except:d.index e.stamps
       in
-      Mutex.protect d.lock (fun () ->
+      Dev.protect d (fun () ->
           if cached then cache d e else d.retiring <- e :: d.retiring)
   | Program (image, code) -> defer d (Unload (image, code))
   | Release { stamps; release } ->
@@ -387,7 +387,7 @@ let due d =
   let lost = Dev.is_lost d in
   let free_lost = lost && answered d in
   let w = if lost && not free_lost then -1 else Dev.word d in
-  Mutex.protect d.lock (fun () ->
+  Dev.protect d (fun () ->
       let frees = ref [] in
       d.retiring <-
         List.filter
@@ -443,7 +443,7 @@ let rec change_lost f =
   if not (Atomic.compare_and_set lost_devices l (f l)) then change_lost f
 
 let empty d =
-  Mutex.protect d.lock (fun () ->
+  Dev.protect d (fun () ->
       d.retiring = [] && d.pending = [] && Hashtbl.length d.cache = 0)
 
 (* Drains [d]'s own list and what became due on it. *)
@@ -490,16 +490,13 @@ let drain_others d =
   Array.iteri
     (fun i e ->
       if i = e.index && e != d && not (Dev.is_host e) then
-        if Mutex.try_lock e.lock then begin
-          Mutex.unlock e.lock;
-          drain e
-        end)
+        if not (Dev.busy e) then drain e)
     (Dev.all ())
 
 (* The cache *)
 
 let take_cached d kind n =
-  Mutex.protect d.lock (fun () ->
+  Dev.protect d (fun () ->
       let k = key n kind in
       match Hashtbl.find_opt d.cache k with
       | Some (e :: rest) ->
@@ -513,7 +510,7 @@ let take_cached d kind n =
    that counts in [d]'s budget, until [d] holds at most [upto] bytes, in no
    particular order. *)
 let take_cache ?upto d =
-  Mutex.protect d.lock (fun () ->
+  Dev.protect d (fun () ->
       let taken = ref [] and held = ref d.used in
       let take (e : entry) =
         match upto with
@@ -580,13 +577,11 @@ let rec alloc_entry d kind n round =
   | Some e -> e
   | None -> (
       let fits =
-        (not (owns kind))
-        || Mutex.protect d.lock (fun () -> d.used + n <= d.budget)
+        (not (owns kind)) || Dev.protect d (fun () -> d.used + n <= d.budget)
       in
       match if fits then new_entry d kind n else None with
       | Some e ->
-          if owns e.memory then
-            Mutex.protect d.lock (fun () -> d.used <- d.used + n);
+          if owns e.memory then Dev.protect d (fun () -> d.used <- d.used + n);
           note d;
           e
       (* Mapped memory the window or the budget cannot hold is pinned memory,
@@ -640,7 +635,7 @@ let host_memory n =
    mappings once it is collected. *)
 let ensure_entry m =
   let d = m.dev in
-  Mutex.protect d.lock (fun () ->
+  Dev.protect d (fun () ->
       if m.entry == no_entry then begin
         let e = entry d heap_kind m.bytes (stamps_new ()) in
         m.entry <- e;
@@ -679,7 +674,7 @@ let map_peer d m =
 (* [d]'s mapping of the memory [m] owns, whose host address is [host] or [-1],
    made at the first borrow and shared by the later ones. *)
 let mapping d m host =
-  let found = Mutex.protect m.dev.lock (fun () -> find_map m.entry d) in
+  let found = Dev.protect m.dev (fun () -> find_map m.entry d) in
   match found with
   | Some mp -> Some mp
   | None -> (
@@ -692,7 +687,7 @@ let mapping d m host =
           let at, by, _ = region_info r in
           let mp = { on = d; map = r; at; by } in
           let raced =
-            Mutex.protect m.dev.lock (fun () ->
+            Dev.protect m.dev (fun () ->
                 match find_map m.entry d with
                 | Some other -> Some other
                 | None ->
@@ -719,8 +714,7 @@ let pages (m : memory) =
             | Some ba -> Pages ba
             | None -> No_pages
           in
-          Mutex.protect m.dev.lock (fun () ->
-              if e.pages = Unasked then e.pages <- got)
+          Dev.protect m.dev (fun () -> if e.pages = Unasked then e.pages <- got)
       | None -> ())
   | Pages _ | No_pages -> ());
   match e.pages with Pages ba -> ba_address ba | Unasked | No_pages -> -1
@@ -773,7 +767,7 @@ let trim d = release_cache ~upto:d.budget ~wait:false d
 let set_budget d n =
   if n < 0 then
     invalid_arg (strf "Device_core.set_budget: budget %d is negative" n);
-  Mutex.protect d.lock (fun () -> d.budget <- n);
+  Dev.protect d (fun () -> d.budget <- n);
   trim d
 
 let free_cache d = release_cache ~wait:false d

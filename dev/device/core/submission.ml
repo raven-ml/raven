@@ -244,20 +244,20 @@ let decide d p =
         match mapped with
         | None -> host_wait
         | Some r ->
-            Mutex.protect d.lock (fun () -> d.pair_maps <- r :: d.pair_maps);
+            Dev.protect d (fun () -> d.pair_maps <- r :: d.pair_maps);
             let at, _, _ = Memory.region_info r in
             if at < 0 then host_wait else at + skip)
 
 let pair d p =
   let i = p.index in
   let known =
-    Mutex.protect d.lock (fun () ->
+    Dev.protect d (fun () ->
         if i < Array.length d.pairs then d.pairs.(i) else 0)
   in
   if known <> 0 then known
   else begin
     let way = decide d p in
-    Mutex.protect d.lock (fun () ->
+    Dev.protect d (fun () ->
         if i >= Array.length d.pairs then begin
           let a = Array.make (Int.max (i + 1) (2 * Array.length d.pairs)) 0 in
           Array.blit d.pairs 0 a 0 (Array.length d.pairs);
