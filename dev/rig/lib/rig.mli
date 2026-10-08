@@ -182,7 +182,8 @@ val free_cache : t -> unit
 
 exception Out_of_memory of t * int
 (** [Out_of_memory (d, n)] is raised when [d] cannot allocate [n] bytes, at once
-    or after the tries {!reclaim} describes. *)
+    or after the tries {!reclaim} describes, [d] being the device asked,
+    whichever budget refused ({!Buffer.Pinned}). *)
 
 (** {2:lost Lost devices} *)
 
@@ -489,7 +490,8 @@ module Claim : sig
       and {!Lost} if [b]'s stamps name a lost device. *)
 
   val release : Buffer.t -> unit
-  (** [release b] ends a {!read} of [b]'s memory. It accepts a dead [b].
+  (** [release b] ends a {!read} of [b]'s memory that the caller made. It
+      accepts a dead [b].
 
       Raises [Invalid_argument] and changes nothing if the memory has no read
       claim of a {!read} or a {!with_}: the reader that holds memory of
