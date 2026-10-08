@@ -19,3 +19,23 @@
  (name nx_array_gen)
  (modules nx_array_gen)
  (libraries nx_array windtrap))
+
+; nx_kinds.h's kinds by name, compiled with every dev/nx2 C library's flags.
+
+(library
+ (name nx_kinds_support)
+ (modules nx_kinds_support)
+ (foreign_stubs
+  (language c)
+  (include_dirs ../../../lib/array)
+  (extra_deps
+   ../../../lib/array/nx_kinds.h
+   ../../../lib/array/nx_kinds_real.h
+   ../../../lib/array/nx_dtype.h
+   nx_kinds_support.h
+   nx_kinds_strata.h
+   nx_kinds_support_loops.inc)
+  (names
+   nx_kinds_support_stubs
+   nx_kinds_support_base
+   nx_kinds_support_v3)))

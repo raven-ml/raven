@@ -1,4 +1,9 @@
 (tests
- (names test_dtype test_move test_layout test_array)
- (modules test_dtype test_move test_layout test_array)
- (libraries nx_array nx_array_support nx_array_gen rig windtrap))
+ (names test_dtype test_move test_layout test_array test_kinds)
+ (modules test_dtype test_move test_layout test_array test_kinds)
+ (libraries nx_array nx_array_support nx_array_gen nx_kinds_support rig windtrap)
+ (deps
+  (glob_files golden/kinds/*.golden)
+  golden/kinds/f32-sweep.txt
+  ../../lib/array/nx_kinds.h
+  ../../lib/array/nx_kinds_real.h))

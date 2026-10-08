@@ -4,7 +4,7 @@
  (name nx_array)
  (libraries rig)
  (private_modules shape)
- (install_c_headers nx_array nx_dtype)
+ (install_c_headers nx_array nx_dtype nx_kinds nx_kinds_real)
  (foreign_stubs
   (language c)
   (include_dirs
