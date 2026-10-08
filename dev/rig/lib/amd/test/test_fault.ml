@@ -94,7 +94,8 @@ let after () =
 (* Value 1 stores to address 0, which no GPU maps; value 2, queued behind it,
    would copy into a watched buffer. The kernel driver reports the fault: the
    device is lost, every wait and use answers at once with the report, nothing
-   the device was given after the fault runs, and a new process runs work on
+   the device was given after the fault runs, an open of the GPU in this
+   process answers Error naming the fault, and a new process runs work on
    the GPU. *)
 let faults () =
   let g = S.gpu () in
@@ -124,6 +125,11 @@ let faults () =
   S.still ~msg:"the watched bytes (sampled)" string zeros
     (fun () -> String.init 64 (fun i -> host.{i}))
     ~ms:200;
+  (match Rig_amd_amdgpu.open_ 0 with
+  | Ok _ -> fail "an open of the GPU in the process its fault lost"
+  | Error why ->
+      contains ~msg:"an open in this process" ~sub:"GPU 0 faulted in this process" why;
+      contains ~msg:"an open in this process, the fault" ~sub:"memory fault at" why);
   equal int ~msg:"a new process's copy"
     0
     (Sys.command (strf "%s=1 %s" after_env (Filename.quote Sys.executable_name)))

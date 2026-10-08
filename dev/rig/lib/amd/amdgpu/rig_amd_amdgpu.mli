@@ -25,9 +25,11 @@
 
     {b The process's GPU.} The kernel driver gives a process one address space
     per GPU, which the first open takes and the process keeps until it exits.
-    Every device of a GPU works in it: an open after a device of the GPU was
-    lost makes new queues there, and a fault of one device's work is reported to
-    every device of the GPU.
+    Every device of a GPU works in it, and a fault of one device's work is
+    reported to every device of the GPU. An open after a device of the GPU was
+    lost makes new queues there, unless the kernel driver reported a fault: it
+    then schedules none of the process's queues on the GPU again, so {!open_}
+    answers [Error] and another process opens the GPU.
 
     {b Faults.} The kernel driver reports a fault of the GPU's work, a page
     fault or a hardware exception such as a reset, with its address or cause;
@@ -61,7 +63,8 @@ val open_ : int -> (Rig_amd.t, string) result
 (** [open_ i] opens GPU [i] through the [amdgpu] driver, with queues of its own.
     The result is [Error msg] if [i >= count ()], saying how many GPUs there
     are, if the [amdgpu] driver does not hold the GPU, if a file cannot be
-    opened, naming it and the reason, or with {!Rig_amd.make}'s message.
+    opened, naming it and the reason, if the GPU faulted in this process, with
+    the fault, or with {!Rig_amd.make}'s message.
 
     Raises [Invalid_argument] if [i < 0]. *)
 

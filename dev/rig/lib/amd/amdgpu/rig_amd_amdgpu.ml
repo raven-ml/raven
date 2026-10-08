@@ -90,6 +90,8 @@ type gpu = {
   mutable doorbells : (int64 * int) option; (* the page: offset, address *)
   mutable events_mapped : bool;
   mutable stable : bool;
+  faulted : string option Atomic.t;
+      (* the first fault the kernel driver reported in the address space *)
 }
 
 let opening = Mutex.create ()
@@ -256,6 +258,7 @@ let acquire fd (node : Topology.node) =
             doorbells = None;
             events_mapped = false;
             stable = false;
+            faulted = Atomic.make None;
           }
         in
         Hashtbl.replace acquired node.gpu_id g;
@@ -399,6 +402,12 @@ let queue d kind ~ring ~bytes ~read ~write =
       d.queues <- (get64 b 0, taken) :: d.queues;
       Ok (Mutex.protect opening (fun () -> doorbell d (Bytes.get_int64_le b 8)))
 
+(* A fault leaves the process's queues on the GPU unscheduled, those made after
+   it too, so the GPU keeps the report for later opens. *)
+let faulted d why =
+  ignore (Atomic.compare_and_set d.gpu.faulted None (Some why));
+  raise (Amd.Fault why)
+
 let sleep d ~ms =
   let r = Array.make 6 0 in
   let e = wait d.fd d.events d.gpu.node.gpu_id ms r in
@@ -406,19 +415,16 @@ let sleep d ~ms =
   match e with
   | 0 -> ()
   | 1 ->
-      raise
-        (Amd.Fault
-           (strf
-              "memory fault at 0x%x (not present %d, read-only %d, no execute \
-               %d, imprecise %d, error type %d)"
-              r.(0) r.(1) r.(2) r.(3) r.(4) r.(5)))
+      faulted d
+        (strf
+           "memory fault at 0x%x (not present %d, read-only %d, no execute %d, \
+            imprecise %d, error type %d)"
+           r.(0) r.(1) r.(2) r.(3) r.(4) r.(5))
   | 2 ->
-      raise
-        (Amd.Fault
-           (strf
-              "hardware exception (reset type %d, reset cause %d, memory lost \
-               %d)"
-              r.(0) r.(1) r.(2)))
+      faulted d
+        (strf
+           "hardware exception (reset type %d, reset cause %d, memory lost %d)"
+           r.(0) r.(1) r.(2))
   | e -> fault "waiting for KFD events" e
 
 let stable_power g () =
@@ -521,9 +527,17 @@ let open_ i =
         Mutex.protect opening (fun () ->
             let* fd = kfd_fd () in
             let* g = acquire fd node in
-            match make_events fd g with
-            | events -> Ok (fd, g, events)
-            | exception Amd.Fault why -> Error why)
+            match Atomic.get g.faulted with
+            | Some why ->
+                Error
+                  (strf
+                     "GPU %d faulted in this process (%s); a new process opens \
+                      it"
+                     i why)
+            | None -> (
+                match make_events fd g with
+                | events -> Ok (fd, g, events)
+                | exception Amd.Fault why -> Error why))
       in
       let d = { fd; gpu = g; events; events_held = true; queues = [] } in
       match Amd.make (path d ~index:i) with
