@@ -1,0 +1,6 @@
+; CUDA GPUs, driven through the CUDA library loaded at run time.
+
+(library
+ (name device_cuda)
+ (libraries device_cuda_abi)
+ (modules_without_implementation device_cuda))
