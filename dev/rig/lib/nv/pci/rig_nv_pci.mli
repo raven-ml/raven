@@ -5,19 +5,19 @@
 
 (** NVIDIA GPUs driven over PCI, through the resource manager in their GSP.
 
-    Opens an NVIDIA GPU that no kernel driver holds as a {!Rig_nv.t}.
-    {!count} and {!reset} also reach the GPUs of another machine through its
-    transport ({!Rig_pci.Machine.t}); {!open_} opens those of a machine the
-    process reaches without one. The process takes the GPU's PCI function, boots
-    the GPU's system processor (GSP) with NVIDIA's signed firmware, and then
-    calls the resource manager (RM) the GSP runs, through two message queues in
-    the machine's memory. The process owns the GPU while it drives it: it writes
-    its page tables, places its memory and answers the GSP's requests, which a
+    Opens an NVIDIA GPU that no kernel driver holds as a {!Rig_nv.t}. {!count}
+    and {!reset} also reach the GPUs of another machine through its transport
+    ({!Rig_pci.Machine.t}); {!open_} opens those of a machine the process
+    reaches without one. The process takes the GPU's PCI function, boots the
+    GPU's system processor (GSP) with NVIDIA's signed firmware, and then calls
+    the resource manager (RM) the GSP runs, through two message queues in the
+    machine's memory. The process owns the GPU while it drives it: it writes its
+    page tables, places its memory and answers the GSP's requests, which a
     kernel driver does otherwise.
 
     {b Numbering.} GPU [i] of a machine is the [i]th of its NVIDIA GPUs
-    ({!Rig_nv.is_gpu}) in bus order, whichever kernel driver holds each: GPU
-    [i] here is GPU [i] of {!Rig_nv_nvidia}.
+    ({!Rig_nv.is_gpu}) in bus order, whichever kernel driver holds each: GPU [i]
+    here is GPU [i] of {!Rig_nv_nvidia}.
 
     {b GPUs.} The chips whose boot this library lays out open: GA102, GA103,
     GA104, GA106 and GA107 (Ampere), AD102, AD103, AD104, AD106 and AD107 (Ada),
@@ -48,13 +48,13 @@
     after {!reset}.
 
     {b Memory.} The memory a device gives the host is the GPU's own, through its
-    memory BAR, while the BAR reaches it ([`Mapped] of {!Rig_nv.alloc}), and
-    the machine's system memory otherwise. GPU addresses and the process's
-    addresses of system memory coincide, from [272 GiB] to [384 GiB], which the
-    process reserves at its first open. System memory counts against the
-    process's limit on locked memory ([RLIMIT_MEMLOCK]): once it is reached,
-    {!Rig_nv.alloc} answers [None], as for memory the GPU lacks, and raising
-    the limit is the cure.
+    memory BAR, while the BAR reaches it ([`Mapped] of {!Rig_nv.alloc}), and the
+    machine's system memory otherwise. GPU addresses and the process's addresses
+    of system memory coincide, from [272 GiB] to [384 GiB], which the process
+    reserves at its first open. System memory counts against the process's limit
+    on locked memory ([RLIMIT_MEMLOCK]): once it is reached, {!Rig_nv.alloc}
+    answers [None], as for memory the GPU lacks, and raising the limit is the
+    cure.
 
     {b Requirements.} Linux. Taking a GPU's function needs either an IOMMU and
     the GPU bound to [vfio-pci] with its group's file granted to the user, or
@@ -91,8 +91,8 @@
 
 val count : ?machine:Rig_pci.Machine.t -> unit -> int
 (** [count ~machine ()] is the number of NVIDIA GPUs of [machine] (defaults to
-    {!Rig_pci.Machine.this}): [0] where the machine has no PCI functions, as
-    off Linux. Counting changes nothing on the machine. *)
+    {!Rig_pci.Machine.this}): [0] where the machine has no PCI functions, as off
+    Linux. Counting changes nothing on the machine. *)
 
 val device_name : int -> string
 (** [device_name i] is the name of GPU [i]: ["NV-PCI"] for [0], ["NV-PCI:i"]
@@ -104,8 +104,13 @@ val pinned : (string * string) list
 (** [pinned] is the firmware images this library boots GPUs with: each file's
     path under a firmware directory, such as
     ["nvidia/ad102/gsp/booter_load-570.144.bin"], with its BLAKE2b-256 digest
-    ({!Rig_pci.Firmware.digest}). A tool that fills a firmware directory
-    fetches these. *)
+    ({!Rig_pci.Firmware.digest}). A tool that fills a firmware directory fetches
+    these. *)
+
+val origin : string
+(** [origin] is the URL prefix of the linux-firmware tree every image of
+    {!pinned} comes from, at the commit pinned: an image's URL is [origin]
+    followed by its path. *)
 
 (** {1:opening Opening} *)
 
@@ -115,22 +120,22 @@ val open_ :
   int ->
   (Rig_nv.t, string) result
 (** [open_ ~machine ~firmware i] boots GPU [i] of [machine] (defaults to
-    {!Rig_pci.Machine.this}) and opens it. A device on a machine reached
-    through a transport would need submissions through it, which {!Rig_nv}
-    does not make. It reads the GPU's firmware from the first of the directories
+    {!Rig_pci.Machine.this}) and opens it. A device on a machine reached through
+    a transport would need submissions through it, which {!Rig_nv} does not
+    make. It reads the GPU's firmware from the first of the directories
     [firmware] that holds each image with its pinned digest
     ({!Rig_pci.Firmware.find}), in order.
 
-    The process holds the GPU until the device is stopped ({!Rig_nv.stop}):
-    no other open of it succeeds, in this process or another, and {!detach},
+    The process holds the GPU until the device is stopped ({!Rig_nv.stop}): no
+    other open of it succeeds, in this process or another, and {!detach},
     {!attach} and {!reset} refuse it.
 
     The result is [Error why], having given back what it took, if [machine] is
     reached through a transport, before anything is taken, if
     [i >= count ~machine ()], saying how many GPUs there are, if a kernel driver
     holds GPU [i] (naming {!detach}), if the process holds it, if its function
-    cannot be taken ({!Rig_pci.Function.take}'s reason), if it is no chip
-    this library boots, if it was booted before or lost (naming {!reset}), if an
+    cannot be taken ({!Rig_pci.Function.take}'s reason), if it is no chip this
+    library boots, if it was booted before or lost (naming {!reset}), if an
     image is missing (naming the directories, and the files found with another
     digest), if the machine refuses the memory or the addresses the GPU needs,
     or if a step of the boot fails, naming it. A boot that failed after it
@@ -173,9 +178,9 @@ val attach : int -> (unit, string) result
 
 val reset : ?machine:Rig_pci.Machine.t -> int -> (unit, string) result
 (** [reset ~machine i] resets GPU [i] of [machine] (defaults to
-    {!Rig_pci.Machine.this}): it takes its function, turns its bus mastering
-    off and resets the function ({!Rig_pci.Function.reset}), which ends what
-    an earlier boot left running. A GPU booted before, or lost by this process,
+    {!Rig_pci.Machine.this}): it takes its function, turns its bus mastering off
+    and resets the function ({!Rig_pci.Function.reset}), which ends what an
+    earlier boot left running. A GPU booted before, or lost by this process,
     opens again after it.
 
     The result is [Error why] if there is no GPU [i], if this process holds it,
