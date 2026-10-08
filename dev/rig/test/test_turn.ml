@@ -8,23 +8,22 @@
    domain lock would stop the test. *)
 
 open Windtrap
-module C = Rig
 module B = Rig.Buffer
 module Sub = Rig.Submission
 module P = Rig_support.Polled
 module Support = Rig_support
 
 let submit ?(reads = [||]) ?(writes = [||]) ?(waits = [||]) s =
-  C.submit s ~reads ~writes ~waits
+  Rig.submit s ~reads ~writes ~waits
 
 let timeout = 60.
-let lost d = function C.Lost (d', _) -> C.equal d d' | _ -> false
+let lost d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
 let count call p = List.length (List.filter (( = ) call) (P.log p))
 let empty d = Sub.make ~reads:0 ~writes:0 d [||]
 
 (* A part that holds one unit of a Polled queue. *)
 let bump () =
-  let arg = B.create C.host 8 in
+  let arg = B.create Rig.host 8 in
   {
     Sub.queue = "COMPUTE:0";
     after = [||];
@@ -33,7 +32,7 @@ let bump () =
   }
 
 let one_part d = Sub.make ~reads:0 ~writes:0 d [| bump () |]
-let value s = C.Point.value (submit s)
+let value s = Rig.Point.value (submit s)
 
 (* A thread running [f], whose outcome [join] gives. *)
 let spawn f =
@@ -76,13 +75,13 @@ let test_fault_waiting () =
   (match waiting () with
   | Error e -> equal bool true (lost d e)
   | Ok v -> failf "the waiting submit returned %d" v);
-  equal int 1 (C.submitted d)
+  equal int 1 (Rig.submitted d)
 
 let test_never () =
   let d, _ = P.open_ ~capacity:1 "turn:never" in
   let never = Sub.make ~reads:0 ~writes:0 d [| bump (); bump () |] in
   raises_match Exn.invalid_arg (fun () -> submit never);
-  equal int 0 (C.submitted d);
+  equal int 0 (Rig.submitted d);
   equal int 1 (value (one_part d))
 
 (* Turns of a driver that blocks *)
@@ -112,7 +111,7 @@ let test_two_threads () =
       P.blocked p = 1 && P.queued p = 1);
   ignore (P.run p);
   equal (slist outcome compare) [ Ok 2; Ok 3 ] [ a (); b () ];
-  equal int 3 (C.submitted d)
+  equal int 3 (Rig.submitted d)
 
 (* A device lost while a submit blocks in its driver is stopped once that submit
    returned, and the submit raises Lost. *)
@@ -122,7 +121,7 @@ let test_loss_while_blocked () =
   let blocked = spawn (fun () -> value (one_part d)) in
   Support.await "a blocked submit" (fun () -> P.blocked p = 1);
   P.fault p "the engine hung";
-  raises_match (lost d) (fun () -> C.wait d 1);
+  raises_match (lost d) (fun () -> Rig.wait d 1);
   equal int 1 (P.blocked p);
   equal int 0 (count "stop" p);
   ignore (P.run p);
@@ -143,9 +142,9 @@ let breaks f =
 (* After [Sys.Break] the device is used as before, and its stop still runs once
    at its loss: the interrupted call left nothing counted in flight. *)
 let still_works d p ~submitted =
-  equal (option string) None (C.lost d);
-  equal int submitted (C.submitted d);
-  C.wait d submitted;
+  equal (option string) None (Rig.lost d);
+  equal int submitted (Rig.submitted d);
+  Rig.wait d submitted;
   equal int (submitted + 1) (value (empty d));
   P.fail p;
   raises_match (lost d) (fun () -> submit (empty d));
@@ -155,7 +154,7 @@ let test_break_in_wait () =
   let d, p = P.open_ "turn:break-wait" in
   equal int 1 (value (empty d));
   P.interrupt p;
-  equal bool true (breaks (fun () -> C.wait d 1));
+  equal bool true (breaks (fun () -> Rig.wait d 1));
   still_works d p ~submitted:1
 
 (* A thread waiting for room is interrupted: nothing is assigned to it. *)

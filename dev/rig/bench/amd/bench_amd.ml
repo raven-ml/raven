@@ -21,7 +21,6 @@
 
 module A = Rig_amd
 module P = Rig_amd_amdgpu
-module C = Rig
 module B = Rig.Buffer
 module Abi = Rig_amd_abi
 module Packet = Abi.Packet
@@ -72,7 +71,7 @@ let row name setup f = Thumper.bench_with_setup ~setup name f
 
 (* The driver *)
 
-type dev = { c : C.t; g : A.t; mutable v : int }
+type dev = { d : Rig.t; g : A.t; mutable v : int }
 
 let opens = ref 0
 
@@ -87,14 +86,14 @@ let dev () =
         x)
       (P.open_ 0)
   in
-  let c = get (C.open_ (module A) ~name:(strf "AMD:bench-%d" !opens) make) in
-  { c; g = Option.get !g; v = 0 }
+  let d = get (Rig.open_ (module A) ~name:(strf "AMD:bench-%d" !opens) make) in
+  { d; g = Option.get !g; v = 0 }
 
 (* The prepared submission of [parts] on [t]. *)
-let prepare t parts = C.Submission.make ~reads:0 ~writes:0 t.c parts
+let prepare t parts = Rig.Submission.make ~reads:0 ~writes:0 t.d parts
 
 let submit t s =
-  t.v <- C.Point.value (C.submit s ~reads:[||] ~writes:[||] ~waits:[||])
+  t.v <- Rig.Point.value (Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||])
 
 let wait t =
   while A.signaled t.g < t.v do
@@ -105,7 +104,7 @@ let run t s =
   submit t s;
   wait t
 
-let part queue work = { C.Submission.queue; after = [||]; work }
+let part queue work = { Rig.Submission.queue; after = [||]; work }
 
 (* A submission whose one part, on the copy queue, places nothing: its value is
    released by the copy queue. *)
@@ -163,8 +162,8 @@ let dispatch gpu (k : Abi.Code_object.kernel) ~base ~args ~threads =
 
 (* The code object loaded on [t], and the address of its image. *)
 let load t =
-  let p = get (C.Program.load t.c (Lazy.force binary)) in
-  (p, Option.get (C.Program.entry p "empty") - (kernel "empty").descriptor)
+  let p = get (Rig.Program.load t.d (Lazy.force binary)) in
+  (p, Option.get (Rig.Program.entry p "empty") - (kernel "empty").descriptor)
 
 (* The floors *)
 
@@ -273,7 +272,7 @@ let release_rows =
   in
   let mapped () =
     let t = dev () in
-    (t, B.create ~memory:Mapped t.c 4096, prepare t [||])
+    (t, B.create ~memory:Mapped t.d 4096, prepare t [||])
   in
   Thumper.group "release"
     [
@@ -417,7 +416,7 @@ let launch_rows =
 let copy_rows =
   let n = 256 * mib in
   let copy t ~dst ~src n =
-    let buffer memory = B.create ~memory t.c n in
+    let buffer memory = B.create ~memory t.d n in
     part "COPY:0" (Copy { src = buffer src; dst = buffer dst })
   in
   let copying n (dst, src) () =

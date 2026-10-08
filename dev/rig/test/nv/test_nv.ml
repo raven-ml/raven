@@ -10,7 +10,6 @@
 open Windtrap
 module N = Rig_nv
 module A = Rig_nv_abi
-module C = Rig
 module B = Rig.Buffer
 module S = Rig_nv_support
 
@@ -960,7 +959,7 @@ let wraps () =
     ignore (S.submit t [||]);
     ignore (S.submit t [| S.copy ~dst:(byte dst i) (byte src i) |])
   done;
-  C.wait t.d (C.submitted t.d);
+  Rig.wait t.d (Rig.submitted t.d);
   equal int ~msg:"the word" (2 * n) (N.signaled t.g);
   equal int ~msg:"the first byte that differs" (-1) (S.mismatch da n 5)
 
@@ -1360,7 +1359,7 @@ let growth () =
         (fun () -> N.signaled t.g)
         ~ms:20;
       S.set64 (host flag) 1;
-      C.wait t.d v);
+      Rig.wait t.d v);
   let want = List.init n stacked in
   equal (list int) ~msg:"the held kernel" want
     (List.init n (S.get32 (host first)));
@@ -1476,7 +1475,7 @@ let long_work () =
         (Sys.time () -. t0);
       S.set64 (host w) 1;
       N.sleep t.g ~seen:(v - 1) ~still_ms:60_000;
-      C.wait t.d v;
+      Rig.wait t.d v;
       N.sleep t.g ~seen:(v - 1) ~still_ms:60_000);
   S.free_launches l;
   N.free t.g w
@@ -1505,7 +1504,7 @@ let stop_idle () =
   let m = require_some (N.map_host t.g a 64) in
   S.run t [||];
   S.stop t.g;
-  equal int ~msg:"the word" (C.submitted t.d) (N.signaled t.g);
+  equal int ~msg:"the word" (Rig.submitted t.d) (N.signaled t.g);
   N.free t.g r;
   N.free t.g m;
   S.free_pages a S.page;
@@ -1907,11 +1906,11 @@ module Order = struct
              ~src:(B.address src + p.so)
              p.n)
     in
-    let first = C.submitted s.t.d + 1 in
+    let first = Rig.submitted s.t.d + 1 in
     List.iter
       (fun ps -> ignore (S.submit s.t (Array.of_list (List.map part ps))))
       subs;
-    let last = C.submitted s.t.d in
+    let last = Rig.submitted s.t.d in
     let rec watch seen =
       let w = N.signaled s.t.g in
       at_least int ~msg:"the word" ~than:seen w;

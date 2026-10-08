@@ -2698,10 +2698,10 @@ let opens = ref 0
 let in_queue () =
   S.with_gpu @@ fun g ->
   waits_on g;
-  let c = S.rig g in
+  let d = S.rig g in
   incr opens;
   let made = ref None in
-  let pc =
+  let pd =
     match
       Rig.open_
         (module A)
@@ -2713,20 +2713,20 @@ let in_queue () =
               x)
             (Rig_amd_amdgpu.open_ 0))
     with
-    | Ok pc -> pc
+    | Ok pd -> pd
     | Error why -> fail why
   in
   let pg = Option.get !made in
   Fun.protect ~finally:(fun () -> A.stop pg) @@ fun () ->
   let prog =
-    match Rig.Program.load pc (Lazy.force kernels).binary with
+    match Rig.Program.load pd (Lazy.force kernels).binary with
     | Ok p -> p
     | Error why -> fail why
   in
-  let flag = Rig.Buffer.create ~memory:Pinned pc 8 in
-  let args = Rig.Buffer.create ~memory:Pinned pc 64 in
-  let fresh = Rig.Buffer.create ~memory:Pinned pc 64
-  and b = Rig.Buffer.create pc 64 in
+  let flag = Rig.Buffer.create ~memory:Pinned pd 8 in
+  let args = Rig.Buffer.create ~memory:Pinned pd 64 in
+  let fresh = Rig.Buffer.create ~memory:Pinned pd 64
+  and b = Rig.Buffer.create pd 64 in
   put flag (le64 0);
   put fresh (String.make 64 'n');
   put args (le64 (addr flag) ^ le64 300_000);
@@ -2736,7 +2736,7 @@ let in_queue () =
       (dispatch (A.capability pg).gpu entry "spin" ~args:(addr args) ~groups:1)
   in
   let s =
-    Rig.Submission.make ~reads:0 ~writes:0 pc
+    Rig.Submission.make ~reads:0 ~writes:0 pd
       [| spin; copy ~after:[| 0 |] ~dst:b fresh |]
   in
   let vp =
@@ -2744,7 +2744,7 @@ let in_queue () =
   in
   let out = buffer ~memory:Pinned g 64 in
   put out (String.make 64 '\000');
-  let seen = Option.get (Rig.Buffer.borrow c b) in
+  let seen = Option.get (Rig.Buffer.borrow d b) in
   let vc = S.submit g [| copy ~dst:out seen |] in
   less int ~msg:"the producer's word, at the consumer's submit" ~than:vp
     (A.signaled pg);
@@ -2753,7 +2753,7 @@ let in_queue () =
   S.still ~msg:"the consumer's copy (sampled)" string (String.make 64 '\000')
     (fun () -> S.read (addr out) 64)
     ~ms:50;
-  Rig.wait c vc;
+  Rig.wait d vc;
   at_least int ~msg:"the producer's word, once the consumer's is reached"
     ~than:vp (A.signaled pg);
   equal string ~msg:"the consumer's copy" (String.make 64 'n') (get out);

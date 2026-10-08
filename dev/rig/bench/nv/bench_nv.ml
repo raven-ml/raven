@@ -12,7 +12,6 @@
    own worker. Without an NVIDIA GPU the suite has no rows. *)
 
 module N = Rig_nv
-module C = Rig
 module B = Rig.Buffer
 module Sub = Rig.Submission
 module Abi = Rig_nv_abi
@@ -35,7 +34,7 @@ let row name setup f = Thumper.bench_with_setup ~setup name f
 
 (* The device: [d] rig's, [g] its driver's. *)
 
-type dev = { d : C.t; g : N.t }
+type dev = { d : Rig.t; g : N.t }
 
 let dev () =
   let g = ref None in
@@ -44,26 +43,26 @@ let dev () =
     Result.iter (fun x -> g := Some x) r;
     r
   in
-  let d = get (C.open_ (module N) ~name:"NV" make) in
+  let d = get (Rig.open_ (module N) ~name:"NV" make) in
   { d; g = Option.get !g }
 
 let alloc t kind n = Option.get (N.alloc t.g kind n)
 let submission t ps = Sub.make ~reads:0 ~writes:0 t.d ps
 
 let run t s =
-  let p = C.submit s ~reads:[||] ~writes:[||] ~waits:[||] in
-  C.wait t.d (C.Point.value p)
+  let p = Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||] in
+  Rig.wait t.d (Rig.Point.value p)
 
 (* The floor of [t]: its later values are given from C. *)
 let floor t =
-  start (N.self t.g) (host (N.word t.g)) (C.submitted t.d);
+  start (N.self t.g) (host (N.word t.g)) (Rig.submitted t.d);
   t
 
 let part queue work = { Sub.queue; after = [||]; work }
 
 (* A host buffer of the ring entry [e], two words. *)
 let entry_words e =
-  let b = B.create C.host 8 in
+  let b = B.create Rig.host 8 in
   let ba = B.bigarray Bigarray.int32 b in
   Array.iteri (fun i w -> Bigarray.Array1.set ba i (Int32.of_int w)) e;
   b
@@ -91,8 +90,8 @@ let encode = Abi.Structure.encode Int64.of_int
 let launches t count how =
   let c = get (Abi.Cubin.of_string (Lazy.force cubin)) in
   let k = Option.get (Abi.Cubin.kernel c "empty") in
-  let p = get (C.Program.load t.d (Lazy.force cubin)) in
-  let entry = Option.get (C.Program.entry p "empty") in
+  let p = get (Rig.Program.load t.d (Lazy.force cubin)) in
+  let entry = Option.get (Rig.Program.entry p "empty") in
   let cap = N.capability t.g in
   let l = get (Abi.Launch.make cap k) in
   get (cap.local (Abi.Launch.local_bytes l));
@@ -146,7 +145,7 @@ let release_rows =
   in
   let switching () =
     let t, none = empty () in
-    let copy = submission t [| part "COPY:0" (Words (B.create C.host 0)) |] in
+    let copy = submission t [| part "COPY:0" (Words (B.create Rig.host 0)) |] in
     (t, copy, none)
   in
   let floor_of setup () = floor (fst (setup ())) in
@@ -161,11 +160,11 @@ let release_rows =
           (floor t, m))
         (fun _ -> floor_release 1);
       row "switch" switching (fun (t, copy, none) ->
-          run t (if C.submitted t.d land 1 = 0 then copy else none));
+          run t (if Rig.submitted t.d land 1 = 0 then copy else none));
       row "floor-switch" (floor_of empty) (fun _ -> floor_switch ());
       row "no-wait-100" empty (fun (t, s) ->
           for _ = 1 to 99 do
-            ignore (C.submit s ~reads:[||] ~writes:[||] ~waits:[||])
+            ignore (Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||])
           done;
           run t s);
       row "floor-no-wait-100" (floor_of empty) (fun _ -> floor_release 100);

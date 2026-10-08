@@ -32,9 +32,9 @@ let sticky name f =
    through rig, which loses the device and stops it. *)
 let faults () =
   let g = S.gpu () in
-  let c = S.rig g in
+  let d = S.rig g in
   let _, kernel = S.kernels g in
-  let watched = B.create ~memory:Pinned c 64 and src = B.create c 64 in
+  let watched = B.create ~memory:Pinned d 64 and src = B.create d 64 in
   let zeros = String.make 64 '\000' in
   S.write (B.address watched) zeros;
   S.write_gpu (Nativeint.of_int (B.address src)) (String.make 64 'x');

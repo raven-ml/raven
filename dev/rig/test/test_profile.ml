@@ -4,7 +4,6 @@
   ---------------------------------------------------------------------------*)
 
 open Windtrap
-module C = Rig
 module B = Rig.Buffer
 module Sub = Rig.Submission
 module Prof = Rig.Profile
@@ -12,10 +11,10 @@ module P = Rig_support.Polled
 module Support = Rig_support
 
 let submit ?(reads = [||]) ?(writes = [||]) ?(waits = [||]) s =
-  C.submit s ~reads ~writes ~waits
+  Rig.submit s ~reads ~writes ~waits
 
 let timeout = 60.
-let memory name = require_ok ~pp:Format.pp_print_string (C.memory_device name)
+let memory name = require_ok ~pp:Format.pp_print_string (Rig.memory_device name)
 let empty d = Sub.make ~reads:0 ~writes:0 d [||]
 
 (* The spans of [events], as [(lane, name)]. *)
@@ -34,7 +33,7 @@ let test_span () =
   equal (list (pair string string)) [ ("domain 0", "work") ] (spans events);
   match events with
   | [ Prof.Span s ] ->
-      equal bool true (C.equal C.host s.device);
+      equal bool true (Rig.equal Rig.host s.device);
       at_most int ~than:s.stop s.start
   | _ -> failf "%d events" (List.length events)
 
@@ -169,7 +168,7 @@ let test_after_disabled () =
   let d = memory "profile:after-off" in
   let p = submit (empty d) in
   Prof.after p (fun () -> failf "read while no profile is taken");
-  C.wait d (C.Point.value p)
+  Rig.wait d (Rig.Point.value p)
 
 (* Events after a point go to the profiles taken when [after] is called. *)
 let test_after_profiles () =
@@ -189,7 +188,7 @@ let test_after_profiles () =
   equal ~msg:"outer" (list string) [ "both" ] (named outer);
   let q = submit (Sub.make ~reads:0 ~writes:0 d [||]) in
   Prof.after q (fun () -> [ event "before" ]);
-  let (), later = Prof.take (fun () -> C.wait d (C.Point.value q)) in
+  let (), later = Prof.take (fun () -> Rig.wait d (Rig.Point.value q)) in
   equal ~msg:"a profile taken after" (list string) [] (named later)
 
 (* A profile leaves out the events of a device lost before they were read. *)
@@ -205,7 +204,7 @@ let test_after_lost () =
             ]);
         P.fail p;
         try ignore (submit (Sub.make ~reads:0 ~writes:0 d [||]))
-        with C.Lost _ -> ())
+        with Rig.Lost _ -> ())
   in
   equal (list string) [] (named events)
 
@@ -223,7 +222,7 @@ let test_allocation () =
   let allocations =
     List.filter_map
       (function
-        | Prof.Allocation a when C.equal a.device d -> Some a.allocated
+        | Prof.Allocation a when Rig.equal a.device d -> Some a.allocated
         | _ -> None)
       events
   in
@@ -233,7 +232,7 @@ let test_allocation () =
 (* [record] reads the second and fourth words of its stamps. *)
 let test_record () =
   let d, _ = P.open_ "profile:record" in
-  let stamps = B.create C.host 32 in
+  let stamps = B.create Rig.host 32 in
   let words = B.bigarray Bigarray.int64 stamps in
   List.iteri (fun i w -> words.{i} <- Int64.of_int w) [ 0; 100; 0; 250 ];
   let (), events =
@@ -258,12 +257,13 @@ let refuses_stamps stamps () =
 let copies events =
   List.filter_map
     (function
-      | Prof.Copy c -> Some (C.name c.src, C.name c.dst, c.bytes) | _ -> None)
+      | Prof.Copy c -> Some (Rig.name c.src, Rig.name c.dst, c.bytes)
+      | _ -> None)
     events
 
 let test_copy () =
   let d = memory "profile:copy" in
-  let src = B.create C.host 100 and dst = B.create d 100 in
+  let src = B.create Rig.host 100 and dst = B.create d 100 in
   let (), events = Prof.take (fun () -> B.copy ~src ~dst) in
   equal
     (list (triple string string int))
@@ -290,7 +290,7 @@ let test_staged_span () =
   let d, pd =
     P.open_ ~host_visible:false ~peers:false "profile:staged-span-src"
   in
-  let src = B.create d 64 and dst = B.create C.host 64 in
+  let src = B.create d 64 and dst = B.create Rig.host 64 in
   P.gate pd;
   let opener =
     Domain.spawn (fun () ->
@@ -304,7 +304,7 @@ let test_staged_span () =
   let opened = Domain.join opener in
   let leg =
     List.find_map
-      (function Prof.Copy c when C.equal c.src d -> Some c.stop | _ -> None)
+      (function Prof.Copy c when Rig.equal c.src d -> Some c.stop | _ -> None)
       events
   in
   at_least ~msg:"the leg's stop" int ~than:opened (require_some leg)
@@ -317,7 +317,7 @@ let test_after_raises () =
     Prof.take (fun () ->
         let p = submit (Sub.make ~reads:0 ~writes:0 d [||]) in
         Prof.after p (fun () -> raise Exit);
-        raises Exit (fun () -> C.wait d (C.Point.value p)))
+        raises Exit (fun () -> Rig.wait d (Rig.Point.value p)))
   in
   ()
 
@@ -344,7 +344,7 @@ let test_chrome () =
     [
       Prof.Span
         {
-          device = C.host;
+          device = Rig.host;
           lane = "domain 1";
           name = "a \"quoted\" \\ name";
           start = 1_500;
@@ -371,7 +371,7 @@ let test_chrome () =
       Prof.Overwritten { device = d; time = 3_600; runs = 2 };
       Prof.Span
         {
-          device = C.host;
+          device = Rig.host;
           lane = "domain 0";
           name = "host";
           start = 1_000;
@@ -387,7 +387,7 @@ let test_chrome () =
         };
       Prof.Allocation { device = d; time = 2_500; allocated = 4096 };
       Prof.Copy
-        { src = C.host; dst = d; bytes = 64; start = 3_000; stop = 3_200 };
+        { src = Rig.host; dst = d; bytes = 64; start = 3_000; stop = 3_200 };
     ]
   in
   let file = "chrome.json" in
@@ -449,9 +449,9 @@ let tests =
         test "a recorded span reads its stamps' second and fourth words"
           test_record;
         test "a recorded span refuses 24 bytes"
-          (refuses_stamps (B.create C.host 24));
+          (refuses_stamps (B.create Rig.host 24));
         test "a recorded span refuses stamps off an 8-byte boundary"
-          (refuses_stamps (B.view (B.create C.host 40) ~first:4 ~length:32));
+          (refuses_stamps (B.view (B.create Rig.host 40) ~first:4 ~length:32));
       ];
     group ~timeout "copies"
       [

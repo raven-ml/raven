@@ -13,7 +13,6 @@
    before its submit: the device completes run N-1 while the host prepares run
    N, and the wait for run N-2 finds it reached. *)
 
-module C = Rig
 module B = Rig.Buffer
 module Sub = Rig.Submission
 module P = Rig_support.Polled
@@ -41,7 +40,7 @@ let drain = 64
 let slots = 24
 let runs = 100
 
-type dev = { d : C.t; p : P.t; mutable n : int }
+type dev = { d : Rig.t; p : P.t; mutable n : int }
 
 let opened = ref 0
 
@@ -66,12 +65,12 @@ let bump arg =
   }
 
 let bumping ?(reads = 0) ?(writes = 0) d =
-  Sub.make ~reads ~writes d [| bump (B.create C.host 8) |]
+  Sub.make ~reads ~writes d [| bump (B.create Rig.host 8) |]
 
 (* A submit of a run that reads nothing, writes nothing and waits for
    nothing. *)
-let submit s = C.submit s ~reads:[||] ~writes:[||] ~waits:[||]
-let submit_read s bs = ignore (C.submit s ~reads:bs ~writes:[||] ~waits:[||])
+let submit s = Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||]
+let submit_read s bs = ignore (Rig.submit s ~reads:bs ~writes:[||] ~waits:[||])
 
 (* Submits *)
 
@@ -92,9 +91,9 @@ let foreign () =
   let t = dev () and o = dev () in
   let bs = words o.d slots in
   let w = Sub.make ~reads:0 ~writes:slots o.d [||] in
-  let v = C.Point.value (C.submit w ~reads:[||] ~writes:bs ~waits:[||]) in
+  let v = Rig.Point.value (Rig.submit w ~reads:[||] ~writes:bs ~waits:[||]) in
   ignore (P.run o.p);
-  C.wait o.d v;
+  Rig.wait o.d v;
   ( t,
     bumping ~reads:slots t.d,
     Array.map (fun b -> Option.get (B.borrow t.d b)) bs )
@@ -118,9 +117,9 @@ let submit_rows =
   Thumper.group "submit/polled"
     [
       row "empty" empty (fun (t, s) ->
-          let v = C.Point.value (submit s) in
+          let v = Rig.Point.value (submit s) in
           ignore (P.run t.p);
-          C.wait t.d v);
+          Rig.wait t.d v);
       row "cost" costing (fun (t, s) ->
           ignore (submit s);
           drained t);
@@ -151,7 +150,7 @@ type replay = { t : dev; params : B.t array; copies : copy array }
 let replaying () =
   let t = dev () in
   let copy () =
-    let args = B.create C.host 8 in
+    let args = B.create Rig.host 8 in
     let s = Sub.make ~reads:slots ~writes:1 t.d [| bump args |] in
     { s; args; at = B.address args; outs = [| B.create t.d 8 |] }
   in
@@ -163,7 +162,7 @@ let run r =
   B.wait c.args B.Read_write;
   ignore (P.run r.t.p);
   Support.store c.at r.t.n;
-  ignore (C.submit c.s ~reads:r.params ~writes:c.outs ~waits:[||])
+  ignore (Rig.submit c.s ~reads:r.params ~writes:c.outs ~waits:[||])
 
 let replay_rows =
   Thumper.group "replay/polled"
@@ -174,7 +173,7 @@ let replay_rows =
             run r
           done;
           ignore (P.run r.t.p);
-          C.wait r.t.d (C.submitted r.t.d));
+          Rig.wait r.t.d (Rig.submitted r.t.d));
     ]
 
 (* Memory *)
@@ -184,18 +183,18 @@ let mib = 1024 * kib
 
 let memory () =
   incr opened;
-  match C.memory_device (strf "memory:%d" !opened) with
+  match Rig.memory_device (strf "memory:%d" !opened) with
   | Ok d -> d
   | Error why -> failwith why
 
-let host n = B.create C.host n
+let host n = B.create Rig.host n
 let chars n = Bigarray.Array1.create Bigarray.char Bigarray.c_layout n
 
 (* Buffers of [d] whose last write, a submission of [d], is reached. *)
 let written d n =
   let bs = Array.init n (fun _ -> B.create d 8) in
   let w = Sub.make ~reads:0 ~writes:n d [||] in
-  C.wait d (C.Point.value (C.submit w ~reads:[||] ~writes:bs ~waits:[||]));
+  Rig.wait d (Rig.Point.value (Rig.submit w ~reads:[||] ~writes:bs ~waits:[||]));
   bs
 
 let row name setup f = Thumper.bench_with_setup ~setup name f
@@ -204,8 +203,8 @@ let create d n () = ignore (B.create d n)
 let buffer_rows =
   Thumper.group "buffer"
     [
-      Thumper.bench "host-create-16" (create C.host 16);
-      Thumper.bench "host-create-1M" (create C.host mib);
+      Thumper.bench "host-create-16" (create Rig.host 16);
+      Thumper.bench "host-create-1M" (create Rig.host mib);
       row "memory-create-cached-4K" memory (fun d -> create d (4 * kib) ());
       row "wait-reached-24"
         (fun () -> written (memory ()) slots)
@@ -218,7 +217,7 @@ let buffer_rows =
       Thumper.bench_with_setup
         ~metrics:Thumper.Metric.[ wall_time; alloc_words; major_collections ]
         ~setup:(fun () ->
-          Option.get (B.borrow C.host (B.create (memory ()) (64 * mib))))
+          Option.get (B.borrow Rig.host (B.create (memory ()) (64 * mib))))
         "bigarray-64M"
         (fun b -> B.bigarray Bigarray.char b);
       row "blit-from-string-4K"
@@ -250,8 +249,8 @@ let copy_rows =
   let copy (src, dst) = B.copy ~src ~dst in
   Thumper.group "copy"
     [
-      row "host-4K" (pair C.host (4 * kib)) copy;
-      row "host-64M" (pair C.host (64 * mib)) copy;
+      row "host-4K" (pair Rig.host (4 * kib)) copy;
+      row "host-64M" (pair Rig.host (64 * mib)) copy;
       row "memory-4K" (fun () -> pair (memory ()) (4 * kib) ()) copy;
     ]
 
@@ -276,8 +275,8 @@ let wait_rows =
       row "reached"
         (fun () ->
           let d = memory () in
-          (d, C.Point.value (submit (Sub.make ~reads:0 ~writes:0 d [||]))))
-        (fun (d, v) -> C.wait d v);
+          (d, Rig.Point.value (submit (Sub.make ~reads:0 ~writes:0 d [||]))))
+        (fun (d, v) -> Rig.wait d v);
     ]
 
 (* A host buffer of 64 MiB collected: the end of the cycle returns it, being
@@ -285,7 +284,7 @@ let wait_rows =
 (* A host buffer of 64 KiB taken and dropped; the minor collection hands its
    memory back to the cache, from which the next take comes. *)
 let take () =
-  create C.host (64 * kib) ();
+  create Rig.host (64 * kib) ();
   Gc.minor ()
 
 (* The host cache holding [others] buffers of other sizes, 68 KiB to 464 KiB, 26
@@ -301,7 +300,7 @@ let heap_rows =
   Thumper.group "heap"
     [
       Thumper.bench "trim-64M" (fun () ->
-          create C.host (64 * mib) ();
+          create Rig.host (64 * mib) ();
           Gc.full_major ());
       Thumper.bench "take-64K" take;
       row "take-64K-cached-100" caching take;
@@ -353,7 +352,7 @@ let floor () =
   let fp = P.make () in
   let f = floor_new (P.self fp) P.room_entry P.submit_entry Support.bump in
   let timeline = Option.get (P.address (P.word fp)) in
-  { f; fp; word = B.address (B.create C.host 8); timeline; k = 0 }
+  { f; fp; word = B.address (B.create Rig.host 8); timeline; k = 0 }
 
 let floor_drained t =
   t.k <- t.k + 1;

@@ -7,7 +7,6 @@
    at their start. *)
 
 open Windtrap
-module C = Rig
 module B = Rig.Buffer
 module Sub = Rig.Submission
 module Program = Rig.Program
@@ -16,7 +15,7 @@ module P = Rig_support.Polled
 module Support = Rig_support
 
 let submit ?(reads = [||]) ?(writes = [||]) ?(waits = [||]) s =
-  C.submit s ~reads ~writes ~waits
+  Rig.submit s ~reads ~writes ~waits
 
 let timeout = 60.
 let count call p = List.length (List.filter (( = ) call) (P.log p))
@@ -24,12 +23,12 @@ let count call p = List.length (List.filter (( = ) call) (P.log p))
 let load d binary =
   require_ok ~pp:Format.pp_print_string (Program.load d binary)
 
-let lost d = function C.Lost (d', _) -> C.equal d d' | _ -> false
+let lost d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
 
 let test_load () =
   let d, _ = P.open_ "program:load" in
   let p = load d "code:64" in
-  equal bool true (C.equal d (Program.device p));
+  equal bool true (Rig.equal d (Program.device p));
   equal (option int) None (Program.entry p "other");
   let main = require_some (Program.entry p "main") in
   equal ~msg:"the code placed" int 0x6363636363636363 (Support.load main)
@@ -40,10 +39,11 @@ let test_refused () =
   | Ok _ -> failf "a refused binary loaded"
   | Error why ->
       equal bool true (String.starts_with ~prefix:"program:refused" why);
-      equal int 1 (C.Point.value (submit (Sub.make ~reads:0 ~writes:0 d [||])))
+      equal int 1
+        (Rig.Point.value (submit (Sub.make ~reads:0 ~writes:0 d [||])))
 
 let test_no_code () =
-  raises_match Exn.invalid_arg (fun () -> Program.load C.host "code:64")
+  raises_match Exn.invalid_arg (fun () -> Program.load Rig.host "code:64")
 
 (* An unreachable program is unloaded once the work its device was handed until
    then is done, and its code's memory then returns to its device. *)
@@ -66,7 +66,7 @@ let test_unload () =
   ignore (P.run pd);
   drain ();
   equal ~msg:"once it ran" int 1 (count "unload" pd);
-  C.free_cache d;
+  Rig.free_cache d;
   equal ~msg:"its code's memory" bool true
     (List.exists (fun (a, _) -> a = code) (P.frees pd))
 
@@ -79,10 +79,10 @@ let test_entry_lost () =
 
 let test_budget () =
   let d, _ = P.open_ "program:budget" in
-  C.set_budget d 4096;
+  Rig.set_budget d 4096;
   raises_match
     (function
-      | C.Out_of_memory (d', n) -> C.equal d d' && n >= 8192 | _ -> false)
+      | Rig.Out_of_memory (d', n) -> Rig.equal d d' && n >= 8192 | _ -> false)
     (fun () -> Program.load d "code:8192")
 
 (* A load whose upload fails loses the device. *)
@@ -98,10 +98,10 @@ let test_upload_frees_after_stop () =
   P.fail p;
   raises_match (lost d) (fun () -> Program.load d "code:64");
   let frees () = List.length (P.frees p) in
-  ignore (B.create C.host 8);
+  ignore (B.create Rig.host 8);
   equal ~msg:"before the word drained" int 0 (frees ());
-  P.set_word p (C.submitted d);
-  ignore (B.create C.host 8);
+  P.set_word p (Rig.submitted d);
+  ignore (B.create Rig.host 8);
   equal ~msg:"once it did" int 1 (frees ())
 
 let test_profiled () =

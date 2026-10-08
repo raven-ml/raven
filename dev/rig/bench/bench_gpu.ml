@@ -8,7 +8,6 @@
    that links the GPU drivers makes every full collection longer, and rig's
    host rows run collections. *)
 
-module C = Rig
 module B = Rig.Buffer
 module Sub = Rig.Submission
 
@@ -120,7 +119,7 @@ let copy_bytes = 256 lsl 20
 (* [n] bytes of host memory written, from 16 bytes past a page if [off]. *)
 let written ?(off = false) n =
   let at = if off then 16 else 0 in
-  let b = B.create C.host (n + at) in
+  let b = B.create Rig.host (n + at) in
   let ba = Bigarray.Array1.sub (B.bigarray Bigarray.char b) at n in
   Bigarray.Array1.fill ba 'w';
   if off then B.of_bigarray ba else b
@@ -149,7 +148,7 @@ type gpu_copy = {
 }
 
 type gpu_replay = {
-  g : C.t;
+  g : Rig.t;
   gcopies : gpu_copy array;
   keep : unit -> unit;  (** Holds what the copies' part runs. *)
 }
@@ -186,7 +185,7 @@ let floor_part f (p : Sub.part) =
    part [graph] makes, the launch of a recorded step of 64 such kernels. Each
    case opens its GPU in its own worker, so that no process forks after a vendor
    library started. *)
-let gpu_rows (type a) (module D : C.Driver with type t = a) ?(sleeps = false)
+let gpu_rows (type a) (module D : Rig.Driver with type t = a) ?(sleeps = false)
     ?(copies = true) ?graph v ~name open_ ~kernel =
   let get = function Ok x -> x | Error why -> failwith why in
   let opened () =
@@ -198,7 +197,7 @@ let gpu_rows (type a) (module D : C.Driver with type t = a) ?(sleeps = false)
           x)
         (open_ ())
     in
-    let g = get (C.open_ (module D) ~name make) in
+    let g = get (Rig.open_ (module D) ~name make) in
     (g, Option.get !d)
   in
   let rig () =
@@ -228,13 +227,13 @@ let gpu_rows (type a) (module D : C.Driver with type t = a) ?(sleeps = false)
     let c = r.gcopies.(!n mod depth) in
     incr n;
     B.wait c.gargs B.Read_write;
-    ignore (C.submit c.gs ~reads:c.greads ~writes:c.gwrites ~waits:[||])
+    ignore (Rig.submit c.gs ~reads:c.greads ~writes:c.gwrites ~waits:[||])
   in
   let pipelined ((r, _) as x) =
     for _ = 1 to runs do
       run x
     done;
-    C.wait r.g (C.submitted r.g);
+    Rig.wait r.g (Rig.submitted r.g);
     r.keep ()
   in
   let entries d = floor_new (D.self d) D.room_entry D.submit_entry 0n in
@@ -256,7 +255,7 @@ let gpu_rows (type a) (module D : C.Driver with type t = a) ?(sleeps = false)
       {
         drv;
         entries = entries drv;
-        sent = ref (C.submitted g);
+        sent = ref (Rig.submitted g);
         parts = 1;
         hold =
           (fun () ->
@@ -369,12 +368,13 @@ let gpu_rows (type a) (module D : C.Driver with type t = a) ?(sleeps = false)
     Thumper.group (strf "submit/%s" v)
       [
         row "empty" rig (fun (g, s, _) ->
-            C.wait g
-              (C.Point.value (C.submit s ~reads:[||] ~writes:[||] ~waits:[||])));
+            Rig.wait g
+              (Rig.Point.value
+                 (Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||])));
         row "cost" rig (fun (g, s, n) ->
-            let p = C.submit s ~reads:[||] ~writes:[||] ~waits:[||] in
+            let p = Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||] in
             incr n;
-            if !n mod drain = 0 then C.wait g (C.Point.value p));
+            if !n mod drain = 0 then Rig.wait g (Rig.Point.value p));
       ];
     Thumper.group (strf "replay/%s" v)
       ([
@@ -458,16 +458,16 @@ let cuda_graph g _ =
     fun () -> ignore (Sys.opaque_identity (image, gr, f)) )
 
 (* [empty] over one block, loaded by rig. *)
-let nv_kernel g c =
+let nv_kernel g d =
   let module S = Rig_nv_support in
-  let k = S.kernels ~file:"kernels_sm89.cubin" { S.d = c; g } in
+  let k = S.kernels ~file:"kernels_sm89.cubin" { S.d; g } in
   let l = S.launches g in
   ( S.words (S.launch l k "empty" ~blocks:1 []),
     fun () -> ignore (Sys.opaque_identity (k, l)) )
 
 (* [empty] over one work-item, loaded by rig, as the packets that dispatch
    it. *)
-let amd_kernel g c =
+let amd_kernel g d =
   let module Abi = Rig_amd_abi in
   let module Pm4 = Abi.Pm4 in
   let get = function Ok x -> x | Error why -> failwith why in
@@ -480,8 +480,8 @@ let amd_kernel g c =
     Option.get
       (Abi.Code_object.kernel (get (Abi.Code_object.of_string binary)) "empty")
   in
-  let p = get (C.Program.load c binary) in
-  let base = Option.get (C.Program.entry p "empty") - k.descriptor in
+  let p = get (Rig.Program.load d binary) in
+  let base = Option.get (Rig.Program.entry p "empty") - k.descriptor in
   let gpu = (Rig_amd.capability g).gpu in
   let packets =
     Abi.Packet.encode Int64.of_int

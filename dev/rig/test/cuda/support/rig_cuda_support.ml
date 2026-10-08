@@ -98,9 +98,9 @@ let gpu () =
       (Rig_cuda.open_ 0)
   in
   let name = strf "CUDA:test-%d" !opens in
-  let c = Result.get_ok (Rig.open_ (module Rig_cuda) ~name make) in
+  let d = Result.get_ok (Rig.open_ (module Rig_cuda) ~name make) in
   let g = Option.get !g in
-  opened := Some (g, c);
+  opened := Some (g, d);
   bind g;
   g
 

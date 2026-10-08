@@ -7,38 +7,37 @@
    library's stubs resolve them at load. *)
 
 open Windtrap
-module C = Rig
 module B = Rig.Buffer
 module R = Rig_support.Reader
 
 let timeout = 60.
 
 let test_live () =
-  let b = B.create C.host 40 in
+  let b = B.create Rig.host 40 in
   equal int (B.address b) (R.host b);
   equal int 40 (R.bytes b);
   equal (option string) None (R.why b)
 
 let test_view () =
-  let b = B.create C.host 64 in
+  let b = B.create Rig.host 64 in
   let v = B.view b ~first:8 ~length:6 in
   equal int (B.address b + 8) (R.host v);
   equal int 6 (R.bytes v)
 
 let test_dead () =
-  let b = B.create C.host 8 in
-  C.Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
-      ignore (C.Claim.consume c ~why:"donated" b));
+  let b = B.create Rig.host 8 in
+  Rig.Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
+      ignore (Rig.Claim.consume c ~why:"donated" b));
   equal (option string) (Some "donated") (R.why b)
 
 (* A claim from C resolves and claims, and its release ends it. *)
 let test_claim () =
-  let b = B.create C.host 8 in
+  let b = B.create Rig.host 8 in
   let answer = Testable.make ~pp:R.pp_answer ~equal:( = ) in
   equal ~msg:"claimed" answer R.Claimed (R.claim b B.Read);
   R.release b;
-  C.Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
-      equal ~msg:"released" bool true (C.Claim.exclusive c b))
+  Rig.Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
+      equal ~msg:"released" bool true (Rig.Claim.exclusive c b))
 
 let tests =
   [

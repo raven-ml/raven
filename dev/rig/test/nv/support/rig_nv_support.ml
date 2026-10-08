@@ -6,7 +6,6 @@
 open Windtrap
 module N = Rig_nv
 module A = Rig_nv_abi
-module C = Rig
 module B = Rig.Buffer
 module Sub = Rig.Submission
 
@@ -45,7 +44,7 @@ let hold_gpu () =
 
 (* The GPU *)
 
-type dev = { d : C.t; g : N.t }
+type dev = { d : Rig.t; g : N.t }
 
 (* The driver device a test opened, with its rig device if it has one, until a
    test stops it: one a failed test left open is stopped by the next. Rig
@@ -64,13 +63,13 @@ let stop g =
 let drain d =
   Gc.full_major ();
   Gc.full_major ();
-  ignore (Sys.opaque_identity (B.create C.host 1));
-  C.wait d (C.submitted d);
+  ignore (Sys.opaque_identity (B.create Rig.host 1));
+  Rig.wait d (Rig.submitted d);
   ignore (Sys.opaque_identity (B.create d 1))
 
 let stop_opened () =
   match !opened with
-  | Some (_, Some d) when Option.is_some (C.lost d) -> opened := None
+  | Some (_, Some d) when Option.is_some (Rig.lost d) -> opened := None
   | Some (g, Some d) ->
       drain d;
       stop g
@@ -98,7 +97,9 @@ let names = ref 0
 let gpu () =
   let g = open_driver () in
   incr names;
-  match C.open_ (module N) ~name:(strf "NV:test%d" !names) (fun () -> Ok g) with
+  match
+    Rig.open_ (module N) ~name:(strf "NV:test%d" !names) (fun () -> Ok g)
+  with
   | Ok d ->
       opened := Some (g, Some d);
       { d; g }
@@ -107,7 +108,7 @@ let gpu () =
       failf "opening GPU 0 in rig: %s" why
 
 let close t =
-  if Option.is_none (C.lost t.d) then begin
+  if Option.is_none (Rig.lost t.d) then begin
     drain t.d;
     stop t.g
   end
@@ -150,15 +151,15 @@ let get32 a i =
 (* Work through rig *)
 
 let submit t ps =
-  C.Point.value
-    (C.submit
+  Rig.Point.value
+    (Rig.submit
        (Sub.make ~reads:0 ~writes:0 t.d ps)
        ~reads:[||] ~writes:[||] ~waits:[||])
 
-let run t ps = C.wait t.d (submit t ps)
+let run t ps = Rig.wait t.d (submit t ps)
 
 let words ?(after = [||]) ws =
-  let b = B.create C.host (4 * Array.length ws) in
+  let b = B.create Rig.host (4 * Array.length ws) in
   let ba = B.bigarray Bigarray.int32 b in
   Array.iteri (fun i w -> Bigarray.Array1.set ba i (Int32.of_int w)) ws;
   { Sub.queue = "COMPUTE:0"; after; work = Words b }
@@ -168,7 +169,7 @@ let copy ?(after = [||]) ~dst src =
 
 (* Host buffers of 64 KiB or more start on a page, which a device borrows. *)
 let shared t n =
-  let h = B.view (B.create C.host (max n 65536)) ~first:0 ~length:n in
+  let h = B.view (B.create Rig.host (max n 65536)) ~first:0 ~length:n in
   match B.borrow t.d h with
   | Some b -> (b, B.address h)
   | None -> fail "the device does not borrow host memory"
@@ -248,11 +249,11 @@ let cubin_of file bin =
   | Ok c -> c
   | Error e -> failf "%s: %s" file e
 
-type kernels = { cubin : A.Cubin.t; program : C.Program.t }
+type kernels = { cubin : A.Cubin.t; program : Rig.Program.t }
 
 let kernels ?(file = "kernels_sm89.cubin") t =
   let bin = fixture file in
-  match C.Program.load t.d bin with
+  match Rig.Program.load t.d bin with
   | Ok program -> { cubin = cubin_of file bin; program }
   | Error e -> failf "loading %s: %s" file e
 
@@ -356,7 +357,7 @@ let launch_kernel l cubin name entry ~blocks args =
 
 let launch l k f ~blocks args =
   let entry =
-    match C.Program.entry k.program f with
+    match Rig.Program.entry k.program f with
     | Some e -> e
     | None -> failf "no kernel %s" f
   in

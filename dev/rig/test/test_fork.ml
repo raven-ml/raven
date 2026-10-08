@@ -7,18 +7,17 @@
    that ran a domain cannot fork. *)
 
 open Windtrap
-module C = Rig
 module B = Rig.Buffer
 module Sub = Rig.Submission
 module P = Rig_support.Polled
 module Support = Rig_support
 
 let submit ?(reads = [||]) ?(writes = [||]) ?(waits = [||]) s =
-  C.submit s ~reads ~writes ~waits
+  Rig.submit s ~reads ~writes ~waits
 
 let timeout = 60.
 let empty d = Sub.make ~reads:0 ~writes:0 d [||]
-let raises_lost f = match f () with _ -> false | exception C.Lost _ -> true
+let raises_lost f = match f () with _ -> false | exception Rig.Lost _ -> true
 
 let status = function
   | Unix.WEXITED n -> Printf.sprintf "exited %d" n
@@ -52,19 +51,19 @@ let test_child () =
   if Sys.win32 then skip ~reason:"Windows has no fork" ();
   let d, p = P.open_ "fork:child" in
   let b = ref (Some (B.create d 64)) in
-  let v = C.Point.value (submit (empty d)) in
+  let v = Rig.Point.value (submit (empty d)) in
   let calls = P.log p in
   let lines, ended =
     in_child (fun () ->
-        let lost = C.lost d in
+        let lost = Rig.lost d in
         let submit = raises_lost (fun () -> submit (empty d)) in
-        let wait = raises_lost (fun () -> C.wait d v) in
+        let wait = raises_lost (fun () -> Rig.wait d v) in
         b := None;
         Gc.full_major ();
-        ignore (B.create C.host 8);
+        ignore (B.create Rig.host 8);
         P.set_word p v;
         Gc.full_major ();
-        ignore (B.create C.host 8);
+        ignore (B.create Rig.host 8);
         [
           Option.value ~default:"not lost" lost;
           Printf.sprintf "submit raises Lost: %b" submit;
@@ -83,8 +82,8 @@ let test_child () =
       "driver calls since the fork: ";
     ]
     lines;
-  equal (option string) None (C.lost d);
-  C.wait d v;
+  equal (option string) None (Rig.lost d);
+  Rig.wait d v;
   ignore (Sys.opaque_identity !b)
 
 let page_bytes = 1 lsl 16
@@ -105,7 +104,7 @@ module Store = struct
 
   let alloc () n =
     Atomic.incr held;
-    Some (B.create C.host (Int.max n page_bytes))
+    Some (B.create Rig.host (Int.max n page_bytes))
 
   let free () _ = Atomic.decr held
   let read () _ ~at:_ ~dst:_ ~len:_ = ()
@@ -117,7 +116,7 @@ end
 
 let open_store name =
   require_ok ~pp:Format.pp_print_string
-    (C.open_io (module Store) ~name (fun () -> Ok ()))
+    (Rig.open_io (module Store) ~name (fun () -> Ok ()))
 
 (* An io device's state is its library's, which decides what a fork does to it:
    rig leaves it usable in the child, where a driver's device is lost. *)
@@ -128,9 +127,9 @@ let test_io_child () =
   let lines, ended =
     in_child (fun () ->
         [
-          Option.value ~default:"not lost" (C.lost io);
+          Option.value ~default:"not lost" (Rig.lost io);
           Printf.sprintf "bytes made: %d" (B.length (B.create io 8));
-          Option.value ~default:"not lost" (C.lost d);
+          Option.value ~default:"not lost" (Rig.lost d);
         ])
   in
   equal string "exited 0" (status ended);
@@ -194,9 +193,9 @@ let test_own_device () =
         Gc.full_major ();
         ignore (B.create ~memory:Pinned d 8);
         [
-          Option.value ~default:"not lost" (C.lost d);
+          Option.value ~default:"not lost" (Rig.lost d);
           Printf.sprintf "reused: %b" (B.address (B.create d 4096) = at);
-          Option.value ~default:"not lost" (C.lost inherited);
+          Option.value ~default:"not lost" (Rig.lost inherited);
         ])
   in
   equal string "exited 0" (status ended);
@@ -219,7 +218,7 @@ let test_locks () =
               Condition.wait cond lock
             done))
   in
-  let holder = Thread.create (fun () -> ignore (C.Profile.take hold)) () in
+  let holder = Thread.create (fun () -> ignore (Rig.Profile.take hold)) () in
   Mutex.protect lock (fun () ->
       while not !inside do
         Condition.wait cond lock
@@ -230,10 +229,10 @@ let test_locks () =
         ignore (Unix.alarm 5);
         let made = B.length (B.create io 8) in
         let d, _ = P.open_ "fork:opened-in-child" in
-        C.Profile.span "child" (fun () -> ());
+        Rig.Profile.span "child" (fun () -> ());
         [
           Printf.sprintf "bytes made: %d" made;
-          Option.value ~default:"opened" (C.lost d);
+          Option.value ~default:"opened" (Rig.lost d);
           "span recorded";
         ])
   in

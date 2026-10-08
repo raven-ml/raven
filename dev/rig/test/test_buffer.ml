@@ -4,18 +4,17 @@
   ---------------------------------------------------------------------------*)
 
 open Windtrap
-module C = Rig
 module B = Rig.Buffer
 module Sub = Rig.Submission
 module P = Rig_support.Polled
 module Support = Rig_support
 
 let submit ?(reads = [||]) ?(writes = [||]) ?(waits = [||]) s =
-  C.submit s ~reads ~writes ~waits
+  Rig.submit s ~reads ~writes ~waits
 
 let timeout = 60.
-let memory name = require_ok ~pp:Format.pp_print_string (C.memory_device name)
-let lost = function C.Lost _ -> true | _ -> false
+let memory name = require_ok ~pp:Format.pp_print_string (Rig.memory_device name)
+let lost = function Rig.Lost _ -> true | _ -> false
 let count call p = List.length (List.filter (( = ) call) (P.log p))
 
 let bytes b =
@@ -23,23 +22,23 @@ let bytes b =
   String.init (Bigarray.Array1.dim ba) (Bigarray.Array1.get ba)
 
 let filled n c =
-  let b = B.create C.host n in
+  let b = B.create Rig.host n in
   Bigarray.Array1.fill (B.bigarray Bigarray.char b) c;
   b
 
 (* Host buffers *)
 
 let test_create () =
-  let b = B.create C.host 40 in
+  let b = B.create Rig.host 40 in
   equal int 40 (B.length b);
   equal bool false (B.is_borrowed b);
   equal bool true (B.spans b);
-  let big = B.create C.host (1 lsl 20) in
+  let big = B.create Rig.host (1 lsl 20) in
   equal int 0 (B.address big mod 4096)
 
 let test_refusals () =
-  raises_match Exn.invalid_arg (fun () -> B.create C.host (-1));
-  let b = B.create C.host 16 in
+  raises_match Exn.invalid_arg (fun () -> B.create Rig.host (-1));
+  let b = B.create Rig.host 16 in
   raises_match Exn.invalid_arg (fun () -> B.view b ~first:12 ~length:8);
   raises_match Exn.invalid_arg (fun () -> B.view b ~first:(-1) ~length:1)
 
@@ -91,13 +90,13 @@ let test_borrow () =
   let b = require_some (B.borrow d h) in
   equal bool true (B.is_borrowed b);
   equal bool true (B.overlaps b h);
-  equal bool true (C.equal d (B.device b));
+  equal bool true (Rig.equal d (B.device b));
   equal int (B.address h) (B.address b)
 
 (* A host buffer a device maps is mapped once, whatever its borrows. *)
 let test_borrow_maps_once () =
   let d, p = P.open_ "buffer:map-once" in
-  let h = B.create C.host (1 lsl 16) in
+  let h = B.create Rig.host (1 lsl 16) in
   for _ = 1 to 3 do
     ignore (Sys.opaque_identity (B.borrow d h))
   done;
@@ -105,7 +104,7 @@ let test_borrow_maps_once () =
 
 let test_borrow_small () =
   let d, _ = P.open_ "buffer:small" in
-  let paged = B.create C.host (1 lsl 16) in
+  let paged = B.create Rig.host (1 lsl 16) in
   let off_page = Bigarray.Array1.sub (B.bigarray Bigarray.char paged) 8 16 in
   is_none (B.borrow d (B.of_bigarray off_page))
 
@@ -117,12 +116,12 @@ let test_wait () =
   let h = filled n 'a' and on = B.create d n in
   let part =
     {
-      C.Submission.queue = "COPY:0";
+      Rig.Submission.queue = "COPY:0";
       after = [||];
-      work = C.Submission.Copy { src = require_some (B.borrow d h); dst = on };
+      work = Rig.Submission.Copy { src = require_some (B.borrow d h); dst = on };
     }
   in
-  ignore (submit (C.Submission.make ~reads:0 ~writes:0 d [| part |]));
+  ignore (submit (Rig.Submission.make ~reads:0 ~writes:0 d [| part |]));
   equal int 1 (P.queued p);
   B.wait on B.Read;
   equal int 0 (P.queued p)
@@ -132,9 +131,9 @@ let cases_of pred l =
   List.iter (fun (name, f) -> raises_match ~msg:name pred f) l
 
 let test_dead () =
-  let b = B.create C.host 8 in
-  C.Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
-      ignore (C.Claim.consume c ~why:"donated" b));
+  let b = B.create Rig.host 8 in
+  Rig.Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
+      ignore (Rig.Claim.consume c ~why:"donated" b));
   raises_match (Exn.invalid_arg ~substring:"donated") (fun () ->
       B.wait b B.Read)
 
@@ -143,14 +142,14 @@ let test_dead () =
 let test_dead_refused () =
   let d, _ = P.open_ "buffer:dead" in
   let consumed b =
-    C.Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
-        ignore (C.Claim.consume c ~why:"donated" b))
+    Rig.Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
+        ignore (Rig.Claim.consume c ~why:"donated" b))
   in
-  let h = B.create C.host (1 lsl 16) and m = B.create d 64 in
+  let h = B.create Rig.host (1 lsl 16) and m = B.create d 64 in
   consumed h;
   consumed m;
   let dead = Exn.invalid_arg ~substring:"donated" in
-  let other = B.create C.host (1 lsl 16) in
+  let other = B.create Rig.host (1 lsl 16) in
   cases_of dead
     [
       ("copy from", fun () -> B.copy ~src:h ~dst:other);
@@ -164,8 +163,8 @@ let test_dead_refused () =
       ("borrow", fun () -> ignore (B.borrow d h));
       ( "consume",
         fun () ->
-          C.Claim.with_ ~read:[ h ] ~donate:[] (fun c ->
-              ignore (C.Claim.consume c ~why:"again" h)) );
+          Rig.Claim.with_ ~read:[ h ] ~donate:[] (fun c ->
+              ignore (Rig.Claim.consume c ~why:"again" h)) );
     ]
 
 (* A view starts its offset into its buffer's memory, at its address plus that
@@ -177,13 +176,13 @@ let test_offset () =
   equal int (B.offset b + 16) (B.offset v);
   equal int (B.address b + 16) (B.address v);
   equal nativeint (B.handle b) (B.handle v);
-  raises_match Exn.invalid_arg (fun () -> B.handle (B.create C.host 8))
+  raises_match Exn.invalid_arg (fun () -> B.handle (B.create Rig.host 8))
 
 (* A borrow collected while its memory lives keeps its mapping: a borrow made
    again maps nothing. *)
 let test_borrow_remade () =
   let d, p = P.open_ "buffer:remade" in
-  let h = B.create C.host (1 lsl 16) in
+  let h = B.create Rig.host (1 lsl 16) in
   ignore (Sys.opaque_identity (B.borrow d h));
   Gc.full_major ();
   Gc.full_major ();
@@ -194,10 +193,10 @@ let test_borrow_remade () =
 let test_lost_memory () =
   let d, p = P.open_ "buffer:lost" in
   let on = B.create d 8 in
-  let s = C.Submission.make ~reads:0 ~writes:1 d [||] in
+  let s = Rig.Submission.make ~reads:0 ~writes:1 d [||] in
   P.fail p;
   raises_match lost (fun () -> submit s ~writes:[| on |]);
-  raises_match lost (fun () -> C.Claim.read on);
+  raises_match lost (fun () -> Rig.Claim.read on);
   raises_match lost (fun () -> B.wait on B.Read)
 
 (* Words *)
@@ -224,7 +223,7 @@ let at_most_words (minor, major) f =
   at_most ~msg:"major words" int ~than:major j
 
 let f32 = Bigarray.Array1.create Bigarray.float32 Bigarray.c_layout 16
-let b16 = B.create C.host 64
+let b16 = B.create Rig.host 64
 
 (* Once every point is reached, a wait allocates nothing. *)
 let test_wait_words () =
@@ -239,13 +238,14 @@ let test_wait_words () =
   done;
   equal int 0 (int_of_float (Gc.minor_words () -. before) / 100)
 
-let test_create_words () = at_most_words (41, 0) (fun () -> B.create C.host 64)
+let test_create_words () =
+  at_most_words (41, 0) (fun () -> B.create Rig.host 64)
 
 let test_create_large_words () =
-  at_most_words (32, 9) (fun () -> B.create C.host (1 lsl 20))
+  at_most_words (32, 9) (fun () -> B.create Rig.host (1 lsl 20))
 
 let test_create_empty_words () =
-  at_most_words (32, 0) (fun () -> B.create C.host 0)
+  at_most_words (32, 0) (fun () -> B.create Rig.host 0)
 
 (* Borrows of memory that dies *)
 
@@ -257,7 +257,7 @@ let test_copy_machines () =
   let far = Support.machine "elsewhere" in
   let gpu ?copies name =
     require_ok ~pp:Format.pp_print_string
-      (C.open_
+      (Rig.open_
          (module P)
          ~machine:"elsewhere" ~name
          (fun () -> Ok (P.make ?copies ~host_visible:false ~peers:false ())))
@@ -268,7 +268,7 @@ let test_copy_machines () =
     (fun (msg, src, dst) ->
       raises_match ~msg Exn.invalid_arg (fun () -> B.copy ~src ~dst))
     [
-      ("from this machine's host", B.create C.host 64, B.create g 64);
+      ("from this machine's host", B.create Rig.host 64, B.create g 64);
       ("into its machine's host", B.create g 64, B.create far 64);
       ("from its machine's host", B.create far 64, B.create g 64);
       ("into a device it does not map", B.create g 64, B.create g' 64);
@@ -288,9 +288,9 @@ let test_empty_address () =
    asked of its driver. *)
 let test_maps_no_host () =
   let d, p = P.open_ ~maps_host:false "buffer:no-host-maps" in
-  let h = B.create C.host (64 * 1024) in
-  equal ~msg:"reaches" bool false (C.reaches d C.host);
-  equal ~msg:"shares" bool false (C.shares_host_memory d);
+  let h = B.create Rig.host (64 * 1024) in
+  equal ~msg:"reaches" bool false (Rig.reaches d Rig.host);
+  equal ~msg:"shares" bool false (Rig.shares_host_memory d);
   equal ~msg:"borrow" bool true (Option.is_none (B.borrow d h));
   equal ~msg:"maps" (list int) [] (P.host_maps p)
 
@@ -298,7 +298,7 @@ let test_maps_no_host () =
    mapping: the borrow names no memory. *)
 let test_empty_borrow () =
   let d, p = P.open_ "buffer:empty-borrow" in
-  let paged = B.bigarray Bigarray.char (B.create C.host (64 * 1024)) in
+  let paged = B.bigarray Bigarray.char (B.create Rig.host (64 * 1024)) in
   let empty = B.of_bigarray (Bigarray.Array1.sub paged 0 0) in
   let b = require_some (B.borrow d empty) in
   equal ~msg:"address" int 0 (B.address b);
@@ -311,7 +311,7 @@ let test_copyless_borrow () =
   let still, _ = P.open_ ~copies:false "buffer:copyless" in
   let m = B.create owner 64 in
   let on_still = require_some (B.borrow still m) in
-  let into = B.create C.host 64 and back = B.create C.host 64 in
+  let into = B.create Rig.host 64 and back = B.create Rig.host 64 in
   Bigarray.Array1.fill (B.bigarray Bigarray.char into) 'c';
   B.copy ~src:into ~dst:on_still;
   B.copy ~src:on_still ~dst:back;
@@ -331,7 +331,7 @@ let test_borrow_own () =
 let test_mapping_released () =
   let d, p = P.open_ "buffer:released" in
   let read_borrow () =
-    let h = B.create C.host (1 lsl 16) in
+    let h = B.create Rig.host (1 lsl 16) in
     let s = Sub.make ~reads:1 ~writes:0 d [||] in
     ignore (submit s ~reads:[| require_some (B.borrow d h) |])
   in
@@ -340,7 +340,7 @@ let test_mapping_released () =
   let drain () =
     Gc.full_major ();
     Gc.full_major ();
-    ignore (B.create C.host 8);
+    ignore (B.create Rig.host 8);
     ignore (B.create ~memory:Pinned d 8)
   in
   drain ();
@@ -356,7 +356,7 @@ let test_bytes_after_unmap () =
   let d, p = P.open_ "buffer:bytes-after-unmap" in
   let collected = ref false in
   (fun () ->
-    let paged = B.bigarray Bigarray.char (B.create C.host (1 lsl 16)) in
+    let paged = B.bigarray Bigarray.char (B.create Rig.host (1 lsl 16)) in
     let ba = Bigarray.Array1.sub paged 0 (1 lsl 16) in
     Gc.finalise (fun _ -> collected := true) ba;
     let h = B.of_bigarray ba in
@@ -368,7 +368,7 @@ let test_bytes_after_unmap () =
   let drain () =
     Gc.full_major ();
     Gc.full_major ();
-    ignore (B.create C.host 8);
+    ignore (B.create Rig.host 8);
     ignore (B.create ~memory:Pinned d 8);
     Gc.full_major ();
     Gc.full_major ()
@@ -386,7 +386,7 @@ let test_bytes_after_unmap () =
 let test_borrow_of_borrow () =
   let d, _ = P.open_ "buffer:first" in
   let e, pe = P.open_ "buffer:second" in
-  let h = B.create C.host (1 lsl 16) in
+  let h = B.create Rig.host (1 lsl 16) in
   let b = require_some (B.borrow e (require_some (B.borrow d h))) in
   equal (list int) [ 1 lsl 16 ] (P.host_maps pe);
   equal int (B.address h) (B.address b);
@@ -398,12 +398,12 @@ let test_borrow_peer () =
   let m = B.create d 64 in
   let b = require_some (B.borrow e m) in
   equal int 1 (count "map_peer" pe);
-  equal bool true (C.equal e (B.device b));
+  equal bool true (Rig.equal e (B.device b));
   equal bool true (B.overlaps b m)
 
 let test_borrow_spans () =
   let d, _ = P.open_ "buffer:spans" in
-  let h = B.create C.host (1 lsl 17) in
+  let h = B.create Rig.host (1 lsl 17) in
   equal bool true (B.spans (require_some (B.borrow d h)));
   let part = B.view h ~first:0 ~length:(1 lsl 16) in
   equal bool false (B.spans (require_some (B.borrow d part)))
@@ -428,7 +428,7 @@ let roundtrip ~src ~dst =
    from a mapping of host memory that starts on a page. *)
 let test_copy_mapped_host () =
   let d, p = P.open_ ~host_visible:false "buffer:direct" in
-  let src = B.create C.host (1 lsl 16) in
+  let src = B.create Rig.host (1 lsl 16) in
   let dst = B.create d (1 lsl 16) in
   roundtrip ~src ~dst;
   equal ~msg:"copies the device ran" int 2 (P.submits p);
@@ -446,7 +446,7 @@ let on d c =
   b
 
 let contents b =
-  let back = B.create C.host (1 lsl 16) in
+  let back = B.create Rig.host (1 lsl 16) in
   let back = B.view back ~first:0 ~length:(B.length b) in
   B.copy ~src:b ~dst:back;
   bytes back
@@ -455,7 +455,7 @@ let contents b =
    of 32 MiB the device maps once. *)
 let test_copy_staged () =
   let d, p = P.open_ ~host_visible:false "buffer:staged" in
-  let paged = B.create C.host (1 lsl 16) in
+  let paged = B.create Rig.host (1 lsl 16) in
   let off_page = Bigarray.Array1.sub (B.bigarray Bigarray.char paged) 8 64 in
   Bigarray.Array1.fill off_page 's';
   let dst = B.create d 64 in
@@ -502,7 +502,7 @@ let test_copy_borrowed_host () =
   let d, _ = P.open_ ~copies:false "buffer:borrowed-host" in
   let h = filled (1 lsl 16) 'h' in
   let b = require_some (B.borrow d h) in
-  let out = B.create C.host (1 lsl 16) in
+  let out = B.create Rig.host (1 lsl 16) in
   B.copy ~src:b ~dst:out;
   equal ~msg:"out of the borrow" string (String.make (1 lsl 16) 'h') (bytes out);
   B.copy ~src:(filled (1 lsl 16) 'i') ~dst:b;
@@ -516,7 +516,7 @@ let test_copy_staged_large () =
   let e, _ = open_ "buffer:staged-large-dst" in
   let n = (2 * staging) + 4096 in
   let byte i = Char.unsafe_chr ((i + ((i lsr 16) * 13)) land 255) in
-  let h = B.create C.host n in
+  let h = B.create Rig.host n in
   let ba = B.bigarray Bigarray.char h in
   for i = 0 to n - 1 do
     Bigarray.Array1.unsafe_set ba i (byte i)
@@ -524,7 +524,7 @@ let test_copy_staged_large () =
   let src = B.create d n and dst = B.create e n in
   B.copy ~src:h ~dst:src;
   B.copy ~src ~dst;
-  let back = B.create C.host n in
+  let back = B.create Rig.host n in
   B.copy ~src:dst ~dst:back;
   let got = B.bigarray Bigarray.char back in
   let at = [ 0; 4095; staging - 1; staging; staging + 1; 2 * staging; n - 1 ] in
@@ -621,13 +621,13 @@ let test_kind (Kind (_, k, v)) =
     [ 0; 1; 17 ]
 
 let test_bigarray_refusals () =
-  let b = B.create C.host 8 in
+  let b = B.create Rig.host 8 in
   raises_match Exn.invalid_arg (fun () ->
       B.bigarray Bigarray.float32 (B.view b ~first:0 ~length:6));
   raises_match Exn.invalid_arg (fun () ->
       B.bigarray Bigarray.float32 (B.view b ~first:2 ~length:4));
   (* A complex element starts at a multiple of one component's size. *)
-  let c = B.create C.host 32 in
+  let c = B.create Rig.host 32 in
   equal int 1
     (Bigarray.Array1.dim
        (B.bigarray Bigarray.complex64 (B.view c ~first:8 ~length:16)));
@@ -769,21 +769,21 @@ let test_bigarray_keeps () =
     (fun n ->
       let view =
         (fun () ->
-          let ba = B.bigarray Bigarray.char (B.create C.host n) in
+          let ba = B.bigarray Bigarray.char (B.create Rig.host n) in
           Bigarray.Array1.fill ba 'v';
           ba)
           ()
       in
       Gc.full_major ();
       Gc.full_major ();
-      Bigarray.Array1.fill (B.bigarray Bigarray.char (B.create C.host n)) 'w';
+      Bigarray.Array1.fill (B.bigarray Bigarray.char (B.create Rig.host n)) 'w';
       equal ~msg:(Printf.sprintf "%d bytes" n) char 'v' view.{n - 1})
     [ 16; 1 lsl 17 ]
 
 (* A pinned buffer on [d] filled with [c], seen through a borrow on the host. *)
 let viewed d n c =
   let m = B.create ~memory:Pinned d n in
-  let view = B.bigarray Bigarray.char (require_some (B.borrow C.host m)) in
+  let view = B.bigarray Bigarray.char (require_some (B.borrow Rig.host m)) in
   Bigarray.Array1.fill view c;
   (B.address m, view)
 
@@ -806,7 +806,7 @@ let test_bigarray_keeps_borrowed () =
   collect d;
   let other = B.create ~memory:Pinned d n in
   Bigarray.Array1.fill
-    (B.bigarray Bigarray.char (require_some (B.borrow C.host other)))
+    (B.bigarray Bigarray.char (require_some (B.borrow Rig.host other)))
     'w';
   equal ~msg:"another buffer's memory" bool false (B.address other = at);
   equal ~msg:"read through the array" char 'v' (Option.get !sub).{7};
@@ -822,7 +822,7 @@ let test_bigarray_keeps_borrowed () =
 let test_bigarray_shares () =
   let d, _ = P.open_ "buffer:shared" in
   let m = B.create ~memory:Pinned d 4096 in
-  let on_host = require_some (B.borrow C.host m) in
+  let on_host = require_some (B.borrow Rig.host m) in
   let collected_shares () =
     Gc.full_major ();
     Gc.full_major ();

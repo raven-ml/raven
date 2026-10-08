@@ -4,7 +4,6 @@
   ---------------------------------------------------------------------------*)
 
 open Windtrap
-module C = Rig
 module B = Rig.Buffer
 module Sub = Rig.Submission
 module H = Rig.Hold
@@ -12,10 +11,10 @@ module P = Rig_support.Polled
 module Support = Rig_support
 
 let timeout = 60.
-let lost d = function C.Lost (d', _) -> C.equal d d' | _ -> false
+let lost d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
 let count call p = List.length (List.filter (( = ) call) (P.log p))
 let empty d = Sub.make ~reads:0 ~writes:0 d [||]
-let submit s = C.submit s ~reads:[||] ~writes:[||] ~waits:[||]
+let submit s = Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||]
 
 (* A drain on [d]: what {!Buffer.create} does first. *)
 let drain d = ignore (Sys.opaque_identity (B.create d 8))
@@ -31,7 +30,7 @@ let[@inline never] submit_held ?(release = ignore) d m runs =
         release ())
       [ m ]
   in
-  C.Point.value (submit (Sub.make ~hold:h ~reads:0 ~writes:0 d [||]))
+  Rig.Point.value (submit (Sub.make ~hold:h ~reads:0 ~writes:0 d [||]))
 
 (* Releases *)
 
@@ -74,10 +73,12 @@ let test_wait_held () =
   let d, p = P.open_ "hold:wait" in
   let m = B.create d 64 in
   let h = H.make [ m ] in
-  let v = C.Point.value (submit (Sub.make ~hold:h ~reads:0 ~writes:0 d [||])) in
+  let v =
+    Rig.Point.value (submit (Sub.make ~hold:h ~reads:0 ~writes:0 d [||]))
+  in
   B.wait m B.Read;
   equal int 0 (P.queued p);
-  equal int v (C.signaled d)
+  equal int v (Rig.signaled d)
 
 (* On a lost device a hold's release waits for the stop's answer and for the
    word to reach the hold's stamp: an Unknown answer with a word short of it
@@ -90,17 +91,17 @@ let test_release_lost () =
   raises_match (lost d) (fun () -> submit (empty d));
   equal int 1 (count "stop" p);
   Gc.full_major ();
-  drain C.host;
+  drain Rig.host;
   equal ~msg:"with the word short" int 0 (Atomic.get runs);
-  P.set_word p (C.submitted d);
-  drain C.host;
+  P.set_word p (Rig.submitted d);
+  drain Rig.host;
   equal ~msg:"once the word drained" int 1 (Atomic.get runs)
 
 let test_release_raises () =
   let d, _ = P.open_ "hold:raises" in
   let m = B.create d 64 and runs = Atomic.make 0 in
   ignore (submit_held ~release:(fun () -> raise Exit) d m runs);
-  C.wait d (C.submitted d);
+  Rig.wait d (Rig.submitted d);
   Gc.full_major ();
   raises Exit (fun () -> drain d);
   drain d;
@@ -121,9 +122,9 @@ let test_release_counted () =
         done)
   in
   ignore (submit_held ~release d m runs);
-  C.wait d (C.submitted d);
+  Rig.wait d (Rig.submitted d);
   Gc.full_major ();
-  let t = Thread.create (fun () -> try drain d with C.Lost _ -> ()) () in
+  let t = Thread.create (fun () -> try drain d with Rig.Lost _ -> ()) () in
   Support.await "a running release" (fun () ->
       Mutex.protect lock (fun () -> !inside));
   P.fail p;
@@ -148,7 +149,7 @@ let test_memory_returns () =
   let freed () =
     Gc.full_major ();
     drain d;
-    C.free_cache d;
+    Rig.free_cache d;
     drain d;
     List.exists (fun (a, _) -> a = at) (P.frees p)
   in
@@ -167,9 +168,9 @@ let test_refusals () =
   let s = Sub.make ~hold:h ~reads:1 ~writes:1 d [||] in
   let other = B.create d 64 in
   raises_match Exn.invalid_arg (fun () ->
-      C.submit s ~reads:[| m |] ~writes:[| other |] ~waits:[||]);
+      Rig.submit s ~reads:[| m |] ~writes:[| other |] ~waits:[||]);
   raises_match Exn.invalid_arg (fun () ->
-      C.submit s ~reads:[| other |] ~writes:[| m |] ~waits:[||]);
+      Rig.submit s ~reads:[| other |] ~writes:[| m |] ~waits:[||]);
   let h' = H.make [ m' ] in
   let copy = Sub.Copy { src = m'; dst = B.create d 64 } in
   let part = { Sub.queue = "COPY:0"; after = [||]; work = copy } in
@@ -178,9 +179,9 @@ let test_refusals () =
   ignore (Sub.make ~hold:h' ~reads:0 ~writes:0 d [| part |])
 
 let test_dead () =
-  let b = B.create C.host 8 in
-  C.Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
-      ignore (C.Claim.consume c ~why:"donated" b));
+  let b = B.create Rig.host 8 in
+  Rig.Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
+      ignore (Rig.Claim.consume c ~why:"donated" b));
   raises_match (Exn.invalid_arg ~substring:"donated") (fun () -> H.make [ b ])
 
 (* A drain that finds a hold's device behind a transport faulted when it reads
@@ -193,8 +194,8 @@ let test_release_transport_fault () =
   Gc.full_major ();
   Gc.full_major ();
   P.fault_word p "the link went down";
-  drain C.host;
-  equal (option string) (Some "the link went down") (C.lost d)
+  drain Rig.host;
+  equal (option string) (Some "the link went down") (Rig.lost d)
 
 (* Memory put in a hold after a submission named it is refused at the next
    submit, by a part or by a slot: work on held memory raises the hold's stamps,
@@ -206,7 +207,7 @@ let test_copy_held () =
   let d, _ = P.open_ ~host_visible:false "hold:copy" in
   let m = B.create d 64 in
   let h = H.make [ m ] in
-  let into = B.create C.host 64 and back = B.create C.host 64 in
+  let into = B.create Rig.host 64 and back = B.create Rig.host 64 in
   Bigarray.Array1.fill (B.bigarray Bigarray.char into) 'h';
   B.copy ~src:into ~dst:m;
   B.copy ~src:m ~dst:back;
@@ -240,7 +241,7 @@ let holds =
   abstract ~pp:(fun ppf r -> Format.fprintf ppf "taken %b" r.taken) "m"
 
 let make_memory () =
-  let d = require_ok ~pp:Format.pp_print_string (C.memory_device "hold:m") in
+  let d = require_ok ~pp:Format.pp_print_string (Rig.memory_device "hold:m") in
   (B.create d 64, Atomic.make None)
 
 (* Keeps the hold reachable. Only one hold takes the memory, so one domain sets

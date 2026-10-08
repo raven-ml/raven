@@ -9,14 +9,13 @@
    runs them, so a wait that returns early leaves its work unrun. *)
 
 open Windtrap
-module C = Rig
 module B = Rig.Buffer
 module Sub = Rig.Submission
 module P = Rig_support.Polled
 module Support = Rig_support
 
 let submit ?(reads = [||]) ?(writes = [||]) ?(waits = [||]) s =
-  C.submit s ~reads ~writes ~waits
+  Rig.submit s ~reads ~writes ~waits
 
 let timeout = 120.
 
@@ -31,7 +30,7 @@ let access = Gen.of_list ~pp:pp_access [ B.Read; B.Read_write ]
 (* Each value of the API is two devices and one memory of the first. Devices go
    back to a pool when their program ends, and the next program counts their
    values from where they stood, once their earlier work ran. *)
-type system = { devices : (C.t * P.t) array; base : int array; m : B.t }
+type system = { devices : (Rig.t * P.t) array; base : int array; m : B.t }
 
 let pool = Mutex.create ()
 let free = ref []
@@ -72,7 +71,7 @@ let pp_model ppf r =
     r.uses.(0) r.uses.(1)
 
 let memory = abstract ~pp:pp_model ~release:give "m"
-let signaled t i = C.signaled (fst t.devices.(i)) - t.base.(i)
+let signaled t i = Rig.signaled (fst t.devices.(i)) - t.base.(i)
 let open_model () = { values = [| 0; 0 |]; write = None; uses = [| 0; 0 |] }
 
 let open_system () =
@@ -80,8 +79,8 @@ let open_system () =
   let base =
     Array.map
       (fun (d, _) ->
-        let v = C.submitted d in
-        C.wait d v;
+        let v = Rig.submitted d in
+        Rig.wait d v;
         v)
       devices
   in
@@ -99,7 +98,7 @@ let submit_system i access t =
     if access = B.Read then submit s ~reads:[| m |]
     else submit s ~writes:[| m |]
   in
-  let v = C.Point.value p - t.base.(i) in
+  let v = Rig.Point.value p - t.base.(i) in
   (v, signaled t (other i))
 
 let submit_model i access r = function
@@ -178,7 +177,7 @@ let commands =
    arguments say, into run [n]'s output. The host goes on to the next run
    without waiting for the output. *)
 type replay = {
-  d : C.t;
+  d : Rig.t;
   p : P.t;
   args : B.t array;
   subs : Sub.t array;
@@ -219,14 +218,14 @@ let run_replay t =
   let n = t.runs in
   let args = t.args.(n mod 2) in
   cover "a copy reused before its last run ran"
-    (n >= 2 && C.signaled t.d < Hashtbl.find t.points (n - 2));
+    (n >= 2 && Rig.signaled t.d < Hashtbl.find t.points (n - 2));
   B.wait args B.Read_write;
   let out = B.create t.d 8 in
   B.wait out B.Read_write;
   Support.store (B.address out) (-1);
   Support.store (B.address args) (B.address out);
   Support.store (B.address args + 8) n;
-  let v = C.Point.value (submit t.subs.(n mod 2) ~writes:[| out |]) in
+  let v = Rig.Point.value (submit t.subs.(n mod 2) ~writes:[| out |]) in
   Hashtbl.replace t.outs n out;
   Hashtbl.replace t.points n v;
   t.runs <- n + 1

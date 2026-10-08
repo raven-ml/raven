@@ -4,14 +4,13 @@
   ---------------------------------------------------------------------------*)
 
 open Windtrap
-module C = Rig
 module B = Rig.Buffer
 module Claim = Rig.Claim
 module P = Rig_support.Polled
 module R = Rig_support.Reader
 
 let submit ?(reads = [||]) ?(writes = [||]) ?(waits = [||]) s =
-  C.submit s ~reads ~writes ~waits
+  Rig.submit s ~reads ~writes ~waits
 
 let timeout = 60.
 let answer = Testable.make ~pp:R.pp_answer ~equal:( = )
@@ -93,7 +92,7 @@ let expected c =
          indexed)
 
 let law c =
-  let b = B.create C.host c.n in
+  let b = B.create Rig.host c.n in
   let views =
     List.filter_map
       (fun (o, l, r) ->
@@ -144,7 +143,7 @@ let law c =
 (* A donation overlapping a read that begins before a shorter read: the overlap
    is not with the read next to it in memory order. *)
 let test_nested_overlap () =
-  let b = B.create C.host 27 in
+  let b = B.create Rig.host 27 in
   let view first length = B.view b ~first ~length in
   raises_match Exn.invalid_arg (fun () ->
       Claim.with_ ~read:[ view 0 20; view 2 1 ] ~donate:[ [ view 19 1 ] ] ignore)
@@ -164,7 +163,7 @@ let test_io_spans () =
         ignore)
 
 let test_claims () =
-  let b = B.create C.host 8 in
+  let b = B.create Rig.host 8 in
   Claim.read b;
   Claim.release b;
   raises_match Exn.invalid_arg (fun () -> Claim.release b);
@@ -177,9 +176,9 @@ let test_claims () =
 (* A borrow and the memory it maps share one count. *)
 let test_borrow_counts () =
   let d =
-    require_ok ~pp:Format.pp_print_string (C.memory_device "claim:borrow")
+    require_ok ~pp:Format.pp_print_string (Rig.memory_device "claim:borrow")
   in
-  let b = B.create C.host (1 lsl 16) in
+  let b = B.create Rig.host (1 lsl 16) in
   let borrowed = require_some (B.borrow d b) in
   Claim.read borrowed;
   Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
@@ -206,9 +205,9 @@ let test_release_kept () =
 (* A value of several buffers is exclusive only if each of them is. *)
 let test_shards () =
   let d =
-    require_ok ~pp:Format.pp_print_string (C.memory_device "claim:shards")
+    require_ok ~pp:Format.pp_print_string (Rig.memory_device "claim:shards")
   in
-  let a = B.create C.host 8 and b = B.create d 8 in
+  let a = B.create Rig.host 8 and b = B.create d 8 in
   Claim.with_ ~read:[]
     ~donate:[ [ a; b ] ]
     (fun c -> equal bool true (Claim.exclusive c a && Claim.exclusive c b));
@@ -227,7 +226,7 @@ let dead why = Exn.invalid_arg ~substring:why
 (* Memory consumed twice lives while the last buffer over it is reachable, and
    every earlier buffer is dead. *)
 let test_consume_twice () =
-  let b = B.create C.host (1 lsl 16) in
+  let b = B.create Rig.host (1 lsl 16) in
   let view = B.view b ~first:0 ~length:8 in
   let b' =
     Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
@@ -243,15 +242,15 @@ let test_consume_twice () =
   Bigarray.Array1.fill (B.bigarray Bigarray.char b'') 'c';
   Gc.full_major ();
   Gc.full_major ();
-  ignore (Sys.opaque_identity (B.create C.host (1 lsl 16)));
+  ignore (Sys.opaque_identity (B.create Rig.host (1 lsl 16)));
   equal char 'c' (B.bigarray Bigarray.char b'').{(1 lsl 16) - 1}
 
 let test_consume_refusals () =
-  let b = B.create C.host 16 in
+  let b = B.create Rig.host 16 in
   let part = B.view b ~first:0 ~length:8 in
   Claim.with_ ~read:[] ~donate:[ [ part ] ] (fun c ->
       raises_match Exn.invalid_arg (fun () -> Claim.consume c ~why:"part" part));
-  let other = B.create C.host 16 in
+  let other = B.create Rig.host 16 in
   Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
       raises_match Exn.invalid_arg (fun () ->
           Claim.consume c ~why:"unclaimed" other))
@@ -259,7 +258,7 @@ let test_consume_refusals () =
 (* A consumed memory's dead buffers refuse claims, and a release accepts
    them. *)
 let test_dead_claims () =
-  let b = B.create C.host 8 in
+  let b = B.create Rig.host 8 in
   Claim.read b;
   let live =
     Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
@@ -283,7 +282,7 @@ let release_group g =
         (Claim.exclusive c g.b1, Claim.exclusive c g.b2))
 
 let two = abstract ~release:release_group "g"
-let make_group () = { b1 = B.create C.host 64; b2 = B.create C.host 64 }
+let make_group () = { b1 = B.create Rig.host 64; b2 = B.create Rig.host 64 }
 
 let with_group g =
   Claim.with_ ~read:[]
@@ -367,7 +366,7 @@ let donation_commands =
     command "make"
       (Gen.unit @-> makes memory)
       (fun () -> { dead = false; reads = 0; out = false })
-      (fun () -> B.create C.host 64);
+      (fun () -> B.create Rig.host 64);
     command "read" (memory ^-> judges unit) judge_read Claim.read;
     command "claim from C"
       (memory ^-> judges answer)
@@ -381,7 +380,7 @@ let donation_commands =
    consumption, made after it, and the memory is outside the claims once they
    are released. *)
 let test_export_exclusive () =
-  let b = B.create C.host 16 in
+  let b = B.create Rig.host 16 in
   let b' =
     Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
         equal ~msg:"exclusive" bool true (Claim.exclusive c b);
@@ -402,7 +401,7 @@ let test_export_exclusive () =
    donation a read until it is released, and is refused under an exclusive claim
    and on a dead buffer, where it leaves no claim behind. *)
 let test_c_claims () =
-  let b = B.create C.host 16 in
+  let b = B.create Rig.host 16 in
   equal ~msg:"for reading" answer R.Claimed (R.claim b B.Read);
   equal ~msg:"for writing" answer R.Claimed (R.claim b B.Read_write);
   Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
@@ -422,10 +421,11 @@ let test_c_claims () =
       equal ~msg:"no claim left" bool true (Claim.exclusive c b'))
 
 let write d m =
-  ignore (submit (C.Submission.make ~reads:0 ~writes:1 d [||]) ~writes:[| m |])
+  ignore
+    (submit (Rig.Submission.make ~reads:0 ~writes:1 d [||]) ~writes:[| m |])
 
 let read d m =
-  ignore (submit (C.Submission.make ~reads:1 ~writes:0 d [||]) ~reads:[| m |])
+  ignore (submit (Rig.Submission.make ~reads:1 ~writes:0 d [||]) ~reads:[| m |])
 
 (* A claim waits for nothing: it is Pending while a point the access must follow
    is unreached, the last write for reading and every use for writing, and
@@ -470,19 +470,19 @@ let test_c_lost () =
   write d m;
   ignore (P.run p);
   P.fail p;
-  (try ignore (submit (C.Submission.make ~reads:0 ~writes:0 d [||]))
-   with C.Lost _ -> ());
+  (try ignore (submit (Rig.Submission.make ~reads:0 ~writes:0 d [||]))
+   with Rig.Lost _ -> ());
   equal ~msg:"reached, lost" answer R.Pending (R.claim m B.Read);
   raises_match
-    (function C.Lost _ -> true | _ -> false)
+    (function Rig.Lost _ -> true | _ -> false)
     (fun () -> B.wait m B.Read)
 
 (* Held memory follows every point of its hold, whatever the access. *)
 let test_c_held () =
   let d, p = P.open_ "claim:c-held" in
   let m = B.create d 64 in
-  let h = C.Hold.make [ m ] in
-  ignore (submit (C.Submission.make ~hold:h ~reads:0 ~writes:0 d [||]));
+  let h = Rig.Hold.make [ m ] in
+  ignore (submit (Rig.Submission.make ~hold:h ~reads:0 ~writes:0 d [||]));
   equal ~msg:"an unreached use of the hold" answer R.Pending (R.claim m B.Read);
   ignore (P.run p);
   equal ~msg:"reached" answer R.Claimed (R.claim m B.Read);
@@ -494,14 +494,14 @@ let test_c_held () =
 let test_lost_claims () =
   let d, p = P.open_ "claim:lost" in
   let m = B.create d 64 in
-  let w = C.Submission.make ~reads:0 ~writes:1 d [||] in
+  let w = Rig.Submission.make ~reads:0 ~writes:1 d [||] in
   ignore (submit w ~writes:[| m |]);
   P.fail p;
-  (try ignore (submit (C.Submission.make ~reads:0 ~writes:0 d [||]))
-   with C.Lost _ -> ());
-  let lost = function C.Lost _ -> true | _ -> false in
+  (try ignore (submit (Rig.Submission.make ~reads:0 ~writes:0 d [||]))
+   with Rig.Lost _ -> ());
+  let lost = function Rig.Lost _ -> true | _ -> false in
   raises_match lost (fun () -> Claim.read m);
-  let h = B.create C.host 64 in
+  let h = B.create Rig.host 64 in
   raises_match lost (fun () -> Claim.with_ ~read:[ h; m ] ~donate:[] ignore);
   Claim.with_ ~read:[] ~donate:[ [ h ] ] (fun c ->
       equal ~msg:"h's claims released" bool true (Claim.exclusive c h))
@@ -510,7 +510,7 @@ let test_lost_claims () =
    consumption's reason once its memory is consumed; the buffer consume gives
    lives. *)
 let test_dead_fact () =
-  let b = B.create C.host 16 in
+  let b = B.create Rig.host 16 in
   equal ~msg:"live" (option string) None (B.dead b);
   let b' =
     Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->

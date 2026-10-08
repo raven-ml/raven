@@ -120,9 +120,9 @@ let round_trip (ka, kb, n, (oa, ob)) =
   let r = require_some (C.alloc g ka 1) in
   equal bool ~msg:"host of a" (ka <> `Device) (Option.is_some (C.host r));
   C.free g r;
-  let c = S.rig g in
+  let d = S.rig g in
   let at k o =
-    B.view (B.create ~memory:(memory_of k) c (n + o)) ~first:o ~length:n
+    B.view (B.create ~memory:(memory_of k) d (n + o)) ~first:o ~length:n
   in
   let src = at `Pinned 0 and dst = at `Pinned 0 in
   let a = at ka oa and b = at kb ob in
@@ -199,8 +199,8 @@ let kernel_through_map_host () =
    still written after the copy. *)
 let failed_fill () =
   let g = S.gpu () in
-  let c = S.rig g in
-  let src = B.create c 64 and dst = B.create ~memory:Pinned c 64 in
+  let d = S.rig g in
+  let src = B.create d 64 and dst = B.create ~memory:Pinned d 64 in
   let data = pattern 64 3 in
   S.write_gpu (Nativeint.of_int (B.address src)) data;
   let parts =

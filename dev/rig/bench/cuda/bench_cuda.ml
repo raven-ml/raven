@@ -41,7 +41,7 @@ let fixtures = "../../test/cuda/fixtures"
 let kib = 1024
 let mib = 1024 * kib
 
-type dev = { c : Rig.t; g : C.t; mutable v : int }
+type dev = { d : Rig.t; g : C.t; mutable v : int }
 
 let strf = Printf.sprintf
 let get = function Ok x -> x | Error why -> failwith why
@@ -59,13 +59,13 @@ let dev () =
         x)
       (C.open_ 0)
   in
-  let c = get (Rig.open_ (module C) ~name:(strf "CUDA:bench-%d" !opens) make) in
+  let d = get (Rig.open_ (module C) ~name:(strf "CUDA:bench-%d" !opens) make) in
   let g = Option.get !g in
   S.bind g;
-  { c; g; v = 0 }
+  { d; g; v = 0 }
 
 (* The prepared submission of [parts] on [t]. *)
-let prepare t parts = Rig.Submission.make ~reads:0 ~writes:0 t.c parts
+let prepare t parts = Rig.Submission.make ~reads:0 ~writes:0 t.d parts
 
 let submit t s =
   t.v <- Rig.Point.value (Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||])
@@ -194,7 +194,7 @@ let copy_rows =
   let n = 256 * mib in
   let copying (dst, src) () =
     let t = dev () in
-    let create m = Rig.Buffer.create ~memory:m t.c n in
+    let create m = Rig.Buffer.create ~memory:m t.d n in
     let dst = create dst and src = create src in
     (t, prepare t [| S.copy ~queue:"COPY:0" ~dst src |])
   in

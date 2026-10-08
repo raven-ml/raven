@@ -7,20 +7,19 @@
    buffers return. Polled logs what its driver allocates and frees. *)
 
 open Windtrap
-module C = Rig
 module B = Rig.Buffer
 module Sub = Rig.Submission
 module P = Rig_support.Polled
 module Support = Rig_support
 
 let submit ?(reads = [||]) ?(writes = [||]) ?(waits = [||]) s =
-  C.submit s ~reads ~writes ~waits
+  Rig.submit s ~reads ~writes ~waits
 
 let timeout = 60.
 let kib = 1024
 
 let out_of_memory d n = function
-  | C.Out_of_memory (d', n') -> C.equal d d' && n = n'
+  | Rig.Out_of_memory (d', n') -> Rig.equal d d' && n = n'
   | _ -> false
 
 (* A buffer of [n] bytes on [d] that is unreachable once this returns: its
@@ -54,7 +53,7 @@ let allocs =
 (* An allocation over the budget raises at once: the cache stays. *)
 let test_over_budget () =
   let d, p = P.open_ "memory:over-budget" in
-  C.set_budget d (8 * kib);
+  Rig.set_budget d (8 * kib);
   let at = dropped d (4 * kib) in
   collect d;
   raises_match
@@ -90,14 +89,14 @@ let test_set_budget () =
   let live = B.create d (8 * kib) in
   List.iter (fun _ -> ignore (dropped d (4 * kib))) [ 1; 2; 3 ];
   collect d;
-  C.set_budget d (12 * kib);
-  equal int (12 * kib) (C.budget d);
+  Rig.set_budget d (12 * kib);
+  equal int (12 * kib) (Rig.budget d);
   collect d;
   at_most ~msg:"held after" int ~than:(12 * kib) (P.allocated p `Device);
-  C.set_budget d 0;
+  Rig.set_budget d 0;
   collect d;
   equal ~msg:"live memory stays" bool false (freed p (B.address live));
-  raises_match Exn.invalid_arg (fun () -> C.set_budget d (-1))
+  raises_match Exn.invalid_arg (fun () -> Rig.set_budget d (-1))
 
 (* Memory collected while its device holds more than its budget returns to the
    driver: an allocation the budget refuses finds none of it to reuse, and the
@@ -106,7 +105,7 @@ let test_over_budget_cache () =
   let d, _ = P.open_ "memory:over-budget-cache" in
   ignore (dropped d (4 * kib));
   let live = B.create d 1 in
-  C.set_budget d (4 * kib);
+  Rig.set_budget d (4 * kib);
   raises_match (out_of_memory d (4 * kib)) (fun () -> B.create d (4 * kib));
   ignore (Sys.opaque_identity live)
 
@@ -115,7 +114,7 @@ let test_free_cache () =
   let at = dropped d (4 * kib) in
   collect d;
   equal ~msg:"cached" bool false (freed p at);
-  C.free_cache d;
+  Rig.free_cache d;
   equal ~msg:"after free_cache" bool true (freed p at)
 
 (* A copy between devices that map none of each other's memory goes through the
@@ -128,38 +127,40 @@ let test_staging_refused () =
   let open_ name = P.open_ ~host_visible:false ~peers:false name in
   let d, _ = open_ "memory:staging-src" and e, _ = open_ "memory:staging-dst" in
   let src = B.create d 64 and dst = B.create e 64 in
-  let budget = C.budget C.host in
-  C.set_budget C.host (64 * kib);
+  let budget = Rig.budget Rig.host in
+  Rig.set_budget Rig.host (64 * kib);
   Fun.protect
-    ~finally:(fun () -> C.set_budget C.host budget)
+    ~finally:(fun () -> Rig.set_budget Rig.host budget)
     (fun () ->
       for _ = 1 to 3 do
         raises_match
-          (out_of_memory C.host (32 * kib * kib))
+          (out_of_memory Rig.host (32 * kib * kib))
           (fun () -> B.copy ~src ~dst)
       done);
   B.copy ~src ~dst
 
-let test_host_budget () = equal int max_int (C.budget C.host)
+let test_host_budget () = equal int max_int (Rig.budget Rig.host)
 
 (* Kinds *)
 
 (* Runs [f] with the host's budget [n], then restores it. *)
 let with_host_budget n f =
-  let before = C.budget C.host in
-  C.set_budget C.host n;
-  Fun.protect ~finally:(fun () -> C.set_budget C.host before) f
+  let before = Rig.budget Rig.host in
+  Rig.set_budget Rig.host n;
+  Fun.protect ~finally:(fun () -> Rig.set_budget Rig.host before) f
 
 (* A host allocation the C library refuses raises Out_of_memory for the host,
    and gives its bytes back to the host's budget: a later buffer under a budget
    below the refused size, beyond what the host holds, is made. *)
 let test_host_refused () =
   let n = 1 lsl 60 in
-  raises_match (out_of_memory C.host n) (fun () -> B.create C.host n);
+  raises_match (out_of_memory Rig.host n) (fun () -> B.create Rig.host n);
   with_host_budget
     (Support.host_held () + (64 * 1024 * kib))
     (fun () ->
-      equal int (32 * 1024 * kib) (B.length (B.create C.host (32 * 1024 * kib))))
+      equal int
+        (32 * 1024 * kib)
+        (B.length (B.create Rig.host (32 * 1024 * kib))))
 
 (* A host buffer holds its bytes in the host's budget until it is collected,
    small ones included. *)
@@ -170,7 +171,7 @@ let test_host_held () =
       let before = Support.host_held () in
       let held =
         (fun () ->
-          let b = B.create C.host n in
+          let b = B.create Rig.host n in
           let held = Support.host_held () in
           ignore (Sys.opaque_identity b);
           held)
@@ -188,7 +189,7 @@ let test_host_held () =
    host's budget, not the device's. *)
 let test_pinned () =
   let d, p = P.open_ "memory:pinned" in
-  C.set_budget d 0;
+  Rig.set_budget d 0;
   equal int (4 * kib) (B.length (B.create ~memory:Pinned d (4 * kib)));
   equal allocs [ (`Pinned, 4 * kib, true) ] (P.allocs p);
   raises_match (out_of_memory d 1) (fun () -> B.create d 1);
@@ -215,7 +216,7 @@ let test_pinned_reclaims () =
    own: it counts in the device's budget. *)
 let test_pinned_own () =
   let d, _ = P.open_ ~copies:false "memory:pinned-own" in
-  C.set_budget d (8 * kib);
+  Rig.set_budget d (8 * kib);
   raises_match
     (out_of_memory d (16 * kib))
     (fun () -> B.create ~memory:Pinned d (16 * kib));
@@ -238,7 +239,7 @@ let test_mapped_window () =
 
 let test_mapped_budget () =
   let d, p = P.open_ "memory:mapped-budget" in
-  C.set_budget d (4 * kib);
+  Rig.set_budget d (4 * kib);
   ignore (B.create ~memory:Mapped d (8 * kib));
   equal allocs [ (`Pinned, 8 * kib, true) ] (P.allocs p)
 
@@ -246,7 +247,7 @@ let test_mapped () =
   let d, p = P.open_ "memory:mapped" in
   let b = B.create ~memory:Mapped d (4 * kib) in
   equal allocs [ (`Mapped, 4 * kib, true) ] (P.allocs p);
-  equal bool true (C.equal d (B.device b))
+  equal bool true (Rig.equal d (B.device b))
 
 (* Reclamation *)
 
@@ -263,7 +264,7 @@ let test_blocked_domain () =
   in
   Support.await "a dropped buffer" (fun () -> Atomic.get at <> 0);
   collect d;
-  C.free_cache d;
+  Rig.free_cache d;
   collect d;
   let returned = freed p (Atomic.get at) in
   Mutex.unlock lock;
@@ -275,7 +276,7 @@ let test_blocked_domain () =
 let test_paced () =
   let budget = 4 * kib * kib in
   let d, _ = P.open_ "memory:paced" in
-  C.set_budget d budget;
+  Rig.set_budget d budget;
   let forced () = (Gc.quick_stat ()).forced_major_collections in
   let before = forced () in
   for _ = 1 to 20 * 16 do
@@ -297,12 +298,12 @@ let test_foreign_use () =
       ()
   in
   collect a;
-  C.free_cache a;
+  Rig.free_cache a;
   collect a;
   equal ~msg:"while the read is unreached" bool false (freed pa at);
   ignore (P.run pb);
   collect a;
-  C.free_cache a;
+  Rig.free_cache a;
   collect a;
   equal ~msg:"once it is reached" bool true (freed pa at)
 
@@ -312,7 +313,7 @@ let test_borrowed_host () =
   let d, p = P.open_ "memory:borrowed-host" in
   let n = 1 lsl 16 in
   let[@inline never] written () =
-    let h = B.create C.host n in
+    let h = B.create Rig.host n in
     let src = B.create d n in
     let dst = require_some (B.borrow d h) in
     let part =
@@ -324,13 +325,13 @@ let test_borrowed_host () =
   let at = written () in
   Gc.full_major ();
   Gc.full_major ();
-  let other = B.create C.host n in
+  let other = B.create Rig.host n in
   equal ~msg:"while the work is queued" bool false (B.address other = at);
   ignore (P.run p);
-  ignore (B.create C.host 0);
+  ignore (B.create Rig.host 0);
   Gc.full_major ();
   Gc.full_major ();
-  equal ~msg:"once it ran" int at (B.address (B.create C.host n));
+  equal ~msg:"once it ran" int at (B.address (B.create Rig.host n));
   ignore (Sys.opaque_identity other)
 
 (* A bigarray a device borrowed through of_bigarray stays reachable until that
@@ -340,7 +341,7 @@ let test_borrowed_bigarray () =
   let n = 1 lsl 16 in
   let collected = Atomic.make false in
   let[@inline never] written () =
-    let ba = B.bigarray Bigarray.char (B.create C.host n) in
+    let ba = B.bigarray Bigarray.char (B.create Rig.host n) in
     Gc.finalise (fun _ -> Atomic.set collected true) ba;
     let src = B.create d n in
     let dst = require_some (B.borrow d (B.of_bigarray ba)) in
@@ -351,7 +352,7 @@ let test_borrowed_bigarray () =
   in
   let settle () =
     Gc.full_major ();
-    ignore (B.create C.host 0);
+    ignore (B.create Rig.host 0);
     Gc.full_major ();
     Gc.full_major ()
   in
@@ -368,7 +369,7 @@ let test_idle_borrower () =
   let d, p = P.open_ "memory:idle-borrower" in
   let n = 1 lsl 20 in
   let[@inline never] written () =
-    let h = B.create C.host n in
+    let h = B.create Rig.host n in
     let src = B.create d n in
     let dst = require_some (B.borrow d h) in
     let part =
@@ -377,11 +378,11 @@ let test_idle_borrower () =
     ignore (submit (Sub.make ~reads:0 ~writes:0 d [| part |]))
   in
   Gc.full_major ();
-  C.free_cache C.host;
+  Rig.free_cache Rig.host;
   written ();
   ignore (P.run p);
   let room = Support.host_held () + (n / 2) in
-  with_host_budget room (fun () -> equal int n (B.length (B.create C.host n)))
+  with_host_budget room (fun () -> equal int n (B.length (B.create Rig.host n)))
 
 (* The host gives back what it keeps beyond a major cycle's share of the
    program's memory, or 32 MiB where that is more, at the end of a cycle: of 64
@@ -391,8 +392,8 @@ let test_idle_borrower () =
 let test_host_trim () =
   let mib = 1 lsl 20 in
   Gc.full_major ();
-  C.free_cache C.host;
-  let live = ref (List.init 256 (fun _ -> B.create C.host mib)) in
+  Rig.free_cache Rig.host;
+  let live = ref (List.init 256 (fun _ -> B.create Rig.host mib)) in
   Gc.full_major ();
   Gc.full_major ();
   live := List.filteri (fun i _ -> i >= 64) !live;
@@ -409,19 +410,19 @@ let test_host_trim () =
 
 (* free_cache on the host returns what the host keeps for reuse. *)
 let test_host_free_cache () =
-  ignore (dropped C.host ((64 * kib) + 4093));
+  ignore (dropped Rig.host ((64 * kib) + 4093));
   Gc.full_major ();
   Gc.full_major ();
   at_least ~msg:"kept" int ~than:1 (Support.host_kept ());
-  C.free_cache C.host;
+  Rig.free_cache Rig.host;
   equal ~msg:"after free_cache" int 0 (Support.host_kept ())
 
 (* set_budget on the host gives back what it keeps, oldest first, until its live
    buffers and what it keeps fit in the new budget. *)
 let test_host_set_budget () =
   let mib = 1 lsl 20 in
-  C.free_cache C.host;
-  let live = ref (List.init 4 (fun _ -> B.create C.host mib)) in
+  Rig.free_cache Rig.host;
+  let live = ref (List.init 4 (fun _ -> B.create Rig.host mib)) in
   ignore (Sys.opaque_identity !live);
   live := [];
   Gc.full_major ();
@@ -442,9 +443,10 @@ let test_host_keeps_size () =
   let n = 1 lsl 20 in
   Gc.full_major ();
   Gc.full_major ();
-  C.free_cache C.host;
+  Rig.free_cache Rig.host;
   let view =
-    ref (Some ((fun () -> B.bigarray Bigarray.float32 (B.create C.host n)) ()))
+    ref
+      (Some ((fun () -> B.bigarray Bigarray.float32 (B.create Rig.host n)) ()))
   in
   Gc.full_major ();
   Gc.full_major ();
@@ -459,13 +461,13 @@ let test_host_keeps_size () =
    its size, unless a bigarray of it lives, which keeps its bytes. *)
 let test_host_cache () =
   let n = (64 * kib) + 4093 in
-  let first = dropped C.host n in
+  let first = dropped Rig.host n in
   Gc.full_major ();
   Gc.full_major ();
-  equal ~msg:"reused" int first (B.address (B.create C.host n));
+  equal ~msg:"reused" int first (B.address (B.create Rig.host n));
   let at, view =
     (fun () ->
-      let b = B.create C.host n in
+      let b = B.create Rig.host n in
       let ba = B.bigarray Bigarray.char b in
       Bigarray.Array1.fill ba 'a';
       (B.address b, ba))
@@ -473,14 +475,14 @@ let test_host_cache () =
   in
   Gc.full_major ();
   Gc.full_major ();
-  let b = B.create C.host n in
+  let b = B.create Rig.host n in
   not_equal ~msg:"the viewed memory" int at (B.address b);
   Bigarray.Array1.fill (B.bigarray Bigarray.char b) 'b';
   equal ~msg:"the view keeps its bytes" char 'a' view.{n - 1}
 
 (* Two domains allocating on one device under a budget of three buffers: the
    live buffers never exceed it. *)
-type budgeted = { d : C.t; live : B.t list ref; lock : Mutex.t }
+type budgeted = { d : Rig.t; live : B.t list ref; lock : Mutex.t }
 type budgeted_model = { mutable held : int }
 
 let per = 4 * kib
@@ -505,7 +507,7 @@ let make_budgeted () =
     | None ->
         let n = Atomic.fetch_and_add budgeted_opened 1 in
         let d, _ = P.open_ (Printf.sprintf "memory:budgeted-%d" n) in
-        C.set_budget d (3 * per);
+        Rig.set_budget d (3 * per);
         d
   in
   { d; live = ref []; lock = Mutex.create () }
@@ -513,7 +515,7 @@ let make_budgeted () =
 let release_budgeted t =
   t.live := [];
   Gc.full_major ();
-  C.free_cache t.d;
+  Rig.free_cache t.d;
   Mutex.protect budgeted_pool (fun () -> budgeted_free := t.d :: !budgeted_free)
 
 let alloc_budgeted t =
@@ -525,7 +527,7 @@ let judge_alloc r = function
       at_most ~msg:"live buffers" int ~than:2 r.held;
       cover "an allocation that fills the budget" (r.held = 2);
       r.held <- r.held + 1
-  | Error (C.Out_of_memory _) ->
+  | Error (Rig.Out_of_memory _) ->
       cover "an allocation the budget refuses" true;
       equal ~msg:"live buffers" int 3 r.held
   | Error e -> raise e

@@ -159,11 +159,11 @@ let unread () =
    new process runs work on the GPU. *)
 let faults () =
   let g = S.gpu () in
-  let c = S.rig g in
+  let d = S.rig g in
   let bin = read_fixture "kernels_gfx1201.hsaco" in
   let co = Result.get_ok (Abi.Code_object.of_string bin) in
   let p =
-    match Rig.Program.load c bin with Ok p -> p | Error why -> fail why
+    match Rig.Program.load d bin with Ok p -> p | Error why -> fail why
   in
   let zeros = String.make 64 '\000' in
   (* The watched bytes are the host's, on a page of their own the device maps,
@@ -174,18 +174,18 @@ let faults () =
   let first = (page - (a land (page - 1))) land (page - 1) in
   let host = Bigarray.Array1.sub whole first 64 in
   let watched =
-    Option.get (Rig.Buffer.borrow c (Rig.Buffer.of_bigarray host))
+    Option.get (Rig.Buffer.borrow d (Rig.Buffer.of_bigarray host))
   in
-  let src = Rig.Buffer.create ~memory:Pinned c 64 in
+  let src = Rig.Buffer.create ~memory:Pinned d 64 in
   Rig.Buffer.copy ~src:(host_buffer (String.make 64 'x')) ~dst:src;
   let v1 = S.submit g [| dispatch g co p "wild" |] in
   let v2 = S.submit g [| copy ~dst:watched src |] in
   let why =
-    lost "the wait for the value after the fault" (fun () -> Rig.wait c v2)
+    lost "the wait for the value after the fault" (fun () -> Rig.wait d v2)
   in
   contains ~msg:"the report" ~sub:"memory fault at" why;
   contains ~msg:"the wait for the fault's own value" ~sub:"memory fault at"
-    (lost "the wait for the fault's value" (fun () -> Rig.wait c v1));
+    (lost "the wait for the fault's value" (fun () -> Rig.wait d v1));
   contains ~msg:"a submit after the fault" ~sub:"memory fault at"
     (lost "a submit after the fault" (fun () -> S.submit g [||]));
   S.still ~msg:"the watched bytes (sampled)" string zeros
