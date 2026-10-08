@@ -33,6 +33,7 @@ external shares : ('a, 'b, 'c) Bigarray.Array1.t -> int = "rig_test_shares"
 [@@noalloc]
 
 external host_kept : unit -> int = "rig_test_host_kept"
+external host_held : unit -> int = "rig_test_host_held"
 external locks_take : unit -> unit = "rig_test_locks_take"
 external locks_give : unit -> unit = "rig_test_locks_give" [@@noalloc]
 

@@ -8,6 +8,7 @@ module C = Rig
 module B = Rig.Buffer
 module Sub = Rig.Submission
 module P = Rig_support.Polled
+module Support = Rig_support
 
 let timeout = 60.
 let memory name = require_ok ~pp:Format.pp_print_string (C.memory_device name)
@@ -123,12 +124,67 @@ let test_wait () =
   B.wait on B.Read;
   equal int 0 (P.queued p)
 
+(* Each [(name, f)] raises an exception [pred] accepts. *)
+let cases_of pred l =
+  List.iter (fun (name, f) -> raises_match ~msg:name pred f) l
+
 let test_dead () =
   let b = B.create C.host 8 in
   C.Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
       ignore (C.Claim.consume c ~why:"donated" b));
   raises_match (Exn.invalid_arg ~substring:"donated") (fun () ->
       B.wait b B.Read)
+
+(* Every function that reaches a dead buffer's bytes refuses it with the
+   consumption's reason; [release] accepts it (claim suite). *)
+let test_dead_refused () =
+  let d, _ = P.open_ "buffer:dead" in
+  let consumed b =
+    C.Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
+        ignore (C.Claim.consume c ~why:"donated" b))
+  in
+  let h = B.create C.host (1 lsl 16) and m = B.create d 64 in
+  consumed h;
+  consumed m;
+  let dead = Exn.invalid_arg ~substring:"donated" in
+  let other = B.create C.host (1 lsl 16) in
+  cases_of dead
+    [
+      ("copy from", fun () -> B.copy ~src:h ~dst:other);
+      ("copy to", fun () -> B.copy ~src:other ~dst:h);
+      ("address", fun () -> ignore (B.address h));
+      ("handle", fun () -> ignore (B.handle m));
+      ("view", fun () -> ignore (B.view h ~first:0 ~length:8));
+      ("bigarray", fun () -> ignore (B.bigarray Bigarray.char h));
+      ("borrow", fun () -> ignore (B.borrow d h));
+      ( "consume",
+        fun () ->
+          C.Claim.with_ ~read:[ h ] ~donate:[] (fun c ->
+              ignore (C.Claim.consume c ~why:"again" h)) );
+    ]
+
+(* A view starts its offset into its buffer's memory, at its address plus that
+   offset, in its driver's object. *)
+let test_offset () =
+  let d, _ = P.open_ "buffer:offset" in
+  let b = B.create d 64 in
+  let v = B.view b ~first:16 ~length:8 in
+  equal int (B.offset b + 16) (B.offset v);
+  equal int (B.address b + 16) (B.address v);
+  equal nativeint (B.handle b) (B.handle v);
+  raises_match Exn.invalid_arg (fun () -> B.handle (B.create C.host 8))
+
+(* A borrow collected while its memory lives keeps its mapping: a borrow made
+   again maps nothing. *)
+let test_borrow_remade () =
+  let d, p = P.open_ "buffer:remade" in
+  let h = B.create C.host (1 lsl 16) in
+  ignore (Sys.opaque_identity (B.borrow d h));
+  Gc.full_major ();
+  Gc.full_major ();
+  ignore (B.create ~memory:Pinned d 8);
+  ignore (require_some (B.borrow d h));
+  equal int 1 (List.length (List.filter (( = ) "map_host") (P.log p)))
 
 let test_lost_memory () =
   let d, p = P.open_ "buffer:lost" in
@@ -165,6 +221,21 @@ let at_most_words (minor, major) f =
 
 let f32 = Bigarray.Array1.create Bigarray.float32 Bigarray.c_layout 16
 let b16 = B.create C.host 64
+
+(* Once every point is reached, a wait allocates nothing. *)
+let test_wait_words () =
+  let d, _ = P.open_ "buffer:wait-words" in
+  let b = B.create d 64 in
+  let s = Sub.make ~reads:0 ~writes:1 ~waits:0 d [||] in
+  Sub.write s 0 b;
+  ignore (C.submit s);
+  B.wait b B.Read_write;
+  let before = Gc.minor_words () in
+  for _ = 1 to 100 do
+    B.wait b B.Read_write
+  done;
+  equal int 0 (int_of_float (Gc.minor_words () -. before) / 100)
+
 let test_create_words () = at_most_words (61, 0) (fun () -> B.create C.host 64)
 
 let test_create_large_words () =
@@ -341,6 +412,58 @@ let test_copy_no_queue () =
 
 (* A device lost while it used the staging memory leaves other devices' copies
    through it working. *)
+(* A copy larger than a staging slot goes through it a slot at a time: every
+   byte lands where it belongs, across the slots' edges. *)
+let test_copy_staged_large () =
+  let open_ name = P.open_ ~host_visible:false ~peers:false name in
+  let d, _ = open_ "buffer:staged-large-src" in
+  let e, _ = open_ "buffer:staged-large-dst" in
+  let n = staging + 4096 in
+  let byte i = Char.unsafe_chr ((i + ((i lsr 16) * 13)) land 255) in
+  let h = B.create C.host n in
+  let ba = B.bigarray Bigarray.char h in
+  for i = 0 to n - 1 do
+    Bigarray.Array1.unsafe_set ba i (byte i)
+  done;
+  let src = B.create d n and dst = B.create e n in
+  B.copy ~src:h ~dst:src;
+  B.copy ~src ~dst;
+  let back = B.create C.host n in
+  B.copy ~src:dst ~dst:back;
+  let got = B.bigarray Bigarray.char back in
+  let at = [ 0; 4095; staging - 1; staging; staging + 1; n - 1 ] in
+  equal (list char) (List.map byte at) (List.map (Bigarray.Array1.get got) at);
+  let wrong = ref 0 in
+  for i = 0 to n - 1 do
+    if Bigarray.Array1.unsafe_get got i <> byte i then incr wrong
+  done;
+  equal ~msg:"bytes that differ" int 0 !wrong
+
+(* The two staging slots are taken in turn: two copies waiting on a device hold
+   both, a third waits for one, and every copy lands once the device runs. *)
+let test_staging_turns () =
+  let open_ name = P.open_ ~host_visible:false ~peers:false name in
+  let d, pd = open_ "buffer:turns-src" in
+  let e, _ = open_ "buffer:turns-dst" in
+  let srcs = List.map (on d) [ 'a'; 'b'; 'c' ] in
+  let dsts = List.map (fun _ -> B.create e 64) srcs in
+  P.gate pd;
+  let copier src dst = Thread.create (fun () -> B.copy ~src ~dst) () in
+  let first =
+    List.map2 copier
+      [ List.nth srcs 0; List.nth srcs 1 ]
+      [ List.nth dsts 0; List.nth dsts 1 ]
+  in
+  Support.await "two copies in the slots" (fun () -> P.sleepers pd = 2);
+  let third = copier (List.nth srcs 2) (List.nth dsts 2) in
+  Thread.delay 0.1;
+  equal ~msg:"copies waiting on the device" int 2 (P.sleepers pd);
+  P.open_gate pd;
+  List.iter Thread.join (third :: first);
+  equal (list string)
+    [ String.make 64 'a'; String.make 64 'b'; String.make 64 'c' ]
+    (List.map contents dsts)
+
 let test_staging_after_loss () =
   let open_ name = P.open_ ~host_visible:false ~peers:false name in
   let d, p = open_ "buffer:staging-lost" in
@@ -512,6 +635,8 @@ let tests =
       [
         test "a borrow is the memory it maps" test_borrow;
         test "a memory a device borrows is mapped once" test_borrow_maps_once;
+        test "a borrow collected and made again maps nothing" test_borrow_remade;
+        test "a view lies its offset into its buffer's memory" test_offset;
         test "host memory off a page does not borrow on a driver's device"
           test_borrow_small;
         test "a copy between machines with no device to copy raises"
@@ -542,6 +667,9 @@ let tests =
         test "the source's device copies to a device of its driver"
           test_copy_peer;
         test "the host copies for a device that runs no copy" test_copy_no_queue;
+        test "a copy larger than a staging slot lands every byte"
+          test_copy_staged_large;
+        test "the staging slots are taken in turn" test_staging_turns;
         test "a loss with the staging memory leaves other copies working"
           test_staging_after_loss;
       ];
@@ -562,6 +690,8 @@ let tests =
       [
         test "a wait returns once the work that wrote the memory ran" test_wait;
         test "a dead buffer's wait raises its reason" test_dead;
+        test "every function reaching a dead buffer's bytes refuses it"
+          test_dead_refused;
         test "memory a lost device wrote raises Lost" test_lost_memory;
       ];
   ]
@@ -570,6 +700,7 @@ let words =
   group ~timeout "words"
     [
       test "a host buffer of 64 bytes costs at most 61 words" test_create_words;
+      test "a wait whose points are reached allocates nothing" test_wait_words;
       test "a host buffer of 1 MiB costs at most 54 and 7 major words"
         test_create_large_words;
       test "a host buffer of no bytes costs at most 32 words"

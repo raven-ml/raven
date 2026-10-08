@@ -193,6 +193,21 @@ let test_max_waits () =
   equal ~msg:"once they hold" int 1 (P.run cp);
   equal int (C.Point.value b) (C.signaled consumer)
 
+(* A producer whose word the device cannot map is waited for on the host: the
+   submit returns with the producer's work done and no wait in the queue. *)
+let test_unmapped_wait () =
+  let producer, pp = P.open_ "submit:unmapped-producer" in
+  let consumer, cp =
+    P.open_ ~peers:false ~waits_on:[ `Host ] "submit:unmapped-consumer"
+  in
+  let a = C.submit (empty producer) in
+  let s = empty ~waits:1 consumer in
+  Sub.wait_for s 0 a;
+  ignore (C.submit s);
+  equal ~msg:"waits in the queue" int 0 (List.length (P.last_waits cp));
+  equal ~msg:"the producer's work" int 0 (P.queued pp);
+  equal int (C.Point.value a) (C.signaled producer)
+
 let test_in_queue () = in_queue ~completion:`Host
 let test_in_queue_object () = in_queue ~completion:`Object
 
@@ -475,6 +490,8 @@ let tests =
         test "a read waits for another device's write" test_read_waits;
         test "a part's buffers wait as slots do" test_part_points;
         test "a queue that waits on host words waits in the queue" test_in_queue;
+        test "a producer whose word the device cannot map is waited on the host"
+          test_unmapped_wait;
         test "waits beyond the queue's bound are waited for on the host"
           test_max_waits;
         test "a queue that waits on objects waits on the producer's object"

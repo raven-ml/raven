@@ -277,6 +277,25 @@ let group_commands =
     command "read" (two ^-> judges unit) judge_any read_group;
   ]
 
+(* Claims on memory whose stamps name a lost device raise Lost, and with_
+   releases what it took first. *)
+let test_lost_claims () =
+  let module P = Rig_support.Polled in
+  let d, p = P.open_ "claim:lost" in
+  let m = B.create d 64 in
+  let w = C.Submission.make ~reads:0 ~writes:1 ~waits:0 d [||] in
+  C.Submission.write w 0 m;
+  ignore (C.submit w);
+  P.fail p;
+  (try ignore (C.submit (C.Submission.make ~reads:0 ~writes:0 ~waits:0 d [||]))
+   with C.Lost _ -> ());
+  let lost = function C.Lost _ -> true | _ -> false in
+  raises_match lost (fun () -> Claim.read m);
+  let h = B.create C.host 64 in
+  raises_match lost (fun () -> Claim.with_ ~read:[ h; m ] ~donate:[] ignore);
+  Claim.with_ ~read:[] ~donate:[ [ h ] ] (fun c ->
+      equal ~msg:"h's claims released" bool true (Claim.exclusive c h))
+
 (* A buffer's death is a fact with its reason: none while it lives, the
    consumption's reason once its memory is consumed; the buffer consume gives
    lives. *)
@@ -329,6 +348,8 @@ let tests =
         test "a dead buffer refuses claims and accepts a release"
           test_dead_claims;
         test "a buffer's death is a fact with its reason" test_dead_fact;
+        test "claims on memory a loss reaches raise and release"
+          test_lost_claims;
       ];
     group ~timeout "domains"
       [

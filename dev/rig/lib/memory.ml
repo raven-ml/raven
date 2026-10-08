@@ -695,11 +695,14 @@ let alloc_entry d kind n =
 let alloc d kind n = of_entry d (alloc_entry d kind n)
 
 (* A round of the host's reclaim: its kept buffers, every other device's drain,
-   and from the second round a collection. *)
+   from the second round a collection, then the host's own drain, which frees
+   the host memory devices borrowed that the collection found unreachable and
+   whose uses are reached: the next round's collection returns its bytes. *)
 let reclaim_host round =
   heap_drop ();
   drain_others Dev.host;
-  if round >= 2 then Gc.full_major ()
+  if round >= 2 then Gc.full_major ();
+  drain Dev.host
 
 let rec heap_reserved n round =
   if heap_reserve n Dev.host.budget then ()

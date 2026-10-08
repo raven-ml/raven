@@ -84,6 +84,45 @@ let test_two_domains () =
     [ ("domain 0", "mine"); ("domain 1", "theirs") ]
     (spans events)
 
+(* Profiles taken at once on two domains overlap: each holds the spans recorded
+   while it was taken, whichever domain recorded them. *)
+let test_overlapping () =
+  let lock = Mutex.create () and cond = Condition.create () in
+  let stage = ref 0 in
+  let at n =
+    Mutex.protect lock (fun () ->
+        while !stage < n do
+          Condition.wait cond lock
+        done)
+  in
+  let next () =
+    Mutex.protect lock (fun () ->
+        incr stage;
+        Condition.broadcast cond)
+  in
+  let other =
+    Domain.spawn (fun () ->
+        at 1;
+        let (), events = Prof.take (fun () -> Prof.span "theirs" ignore) in
+        next ();
+        (Printf.sprintf "domain %d" (Domain.self () :> int), events))
+  in
+  let (), events =
+    Prof.take (fun () ->
+        next ();
+        at 2;
+        Prof.span "mine" ignore)
+  in
+  let lane, theirs = Domain.join other in
+  equal ~msg:"the longer profile"
+    (slist (pair string string) compare)
+    [ ("domain 0", "mine"); (lane, "theirs") ]
+    (spans events);
+  equal ~msg:"the inner one"
+    (slist (pair string string) compare)
+    [ (lane, "theirs") ]
+    (spans theirs)
+
 let test_counters () =
   raises_match Exn.invalid_arg (fun () ->
       Prof.take ~counters:[ "a"; "a" ] ignore);
@@ -246,8 +285,7 @@ let test_chrome () =
   let d = memory "profile:chrome" in
   let polled, _ = P.open_ "profile:chrome-code" in
   let program =
-    require_ok ~pp:Format.pp_print_string
-      (Rig.Program.load polled "code:8")
+    require_ok ~pp:Format.pp_print_string (Rig.Program.load polled "code:8")
   in
   let events =
     [
@@ -335,6 +373,7 @@ let tests =
         test "a span is in the profiles taken when it starts" test_span_starts;
         test "a profile whose function raises raises again" test_raises;
         test "a profile holds another domain's spans" test_two_domains;
+        test "profiles taken on two domains overlap" test_overlapping;
         test "a span records a function that raises" test_span_raises;
         test "an allocation is an event of the profiles taken" test_allocation;
         test "counters and traces are those the profiles taken ask for"

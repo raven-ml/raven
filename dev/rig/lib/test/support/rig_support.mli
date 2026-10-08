@@ -165,6 +165,10 @@ val host_kept : unit -> int
 (** [host_kept ()] is the bytes the host keeps of collected buffers, for the
     next of their sizes. *)
 
+val host_held : unit -> int
+(** [host_held ()] is the bytes that count in the host's budget: host buffers
+    not yet returned, and devices' pinned host memory. *)
+
 val locked : (unit -> 'a) -> 'a
 (** [locked f] is [f ()] run holding every lock of rig's core at once, as
     threads inside each would: what a fork during [f] leaves the child. [f] must

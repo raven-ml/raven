@@ -433,6 +433,12 @@ value rig_test_locks_give(value unit) {
 
 /* The core's own: the bytes its host heap keeps for reuse. */
 extern intnat rig_heap_kept(void);
+extern intnat rig_heap_held(void);
+
+value rig_test_host_held(value unit) {
+  (void)unit;
+  return Val_long(rig_heap_held());
+}
 
 value rig_test_host_kept(value unit) {
   (void)unit;

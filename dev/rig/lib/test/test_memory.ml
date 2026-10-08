@@ -309,6 +309,49 @@ let test_borrowed_bigarray () =
   settle ();
   equal ~msg:"once it ran" bool true (Atomic.get collected)
 
+(* Host memory an idle device borrowed returns to a host allocation that needs
+   its room once the device's work ran, though nothing waited for it. *)
+let test_idle_borrower () =
+  let d, p = P.open_ "memory:idle-borrower" in
+  let n = 1 lsl 20 in
+  let[@inline never] written () =
+    let h = B.create C.host n in
+    let src = B.create d n in
+    let dst = require_some (B.borrow d h) in
+    let part =
+      { Sub.queue = "COPY:0"; after = [||]; work = Sub.Copy { src; dst } }
+    in
+    ignore (C.submit (Sub.make ~reads:0 ~writes:0 ~waits:0 d [| part |]))
+  in
+  Gc.full_major ();
+  C.free_cache C.host;
+  written ();
+  ignore (P.run p);
+  let room = Support.host_held () + (n / 2) in
+  with_host_budget room (fun () -> equal int n (B.length (B.create C.host n)))
+
+(* The host gives back what it keeps beyond a major cycle's share of the
+   program's memory at the end of a cycle: the buffers of a working set it kept
+   go back once a cycle finds the set gone. *)
+let test_host_trim () =
+  let mib = 1 lsl 20 in
+  Gc.full_major ();
+  C.free_cache C.host;
+  let live = ref (List.init 256 (fun _ -> B.create C.host mib)) in
+  Gc.full_major ();
+  Gc.full_major ();
+  live := List.filteri (fun i _ -> i >= 64) !live;
+  Gc.full_major ();
+  at_least ~msg:"kept while the rest lives" int ~than:(48 * mib)
+    (Support.host_kept ());
+  ignore (Sys.opaque_identity !live);
+  live := [];
+  Gc.full_major ();
+  Gc.full_major ();
+  Gc.full_major ();
+  at_most ~msg:"kept once it is gone" int ~than:(32 * mib)
+    (Support.host_kept ())
+
 (* free_cache on the host returns what the host keeps for reuse. *)
 let test_host_free_cache () =
   ignore (dropped C.host ((64 * kib) + 4093));
@@ -472,6 +515,10 @@ let tests =
           test_borrowed_host;
         test "a bigarray a device borrowed lives until its work ran"
           test_borrowed_bigarray;
+        test "host memory an idle device borrowed returns to an allocation"
+          test_idle_borrower;
+        test "the host gives back what it keeps once a cycle finds it unused"
+          test_host_trim;
         test "the host keeps a buffer's bytes when a view outlives it"
           test_host_keeps_size;
       ];
