@@ -227,25 +227,26 @@ type image = {
   owner : int;
   names : string array;
   pipelines : int array;
-  mutable loaded : bool;
+  loaded : bool Atomic.t;
 }
 
 let image d b =
   match load d.self b with
   | "", names, pipelines ->
-      Ok ({ owner = d.self; names; pipelines; loaded = true }, None)
+      Ok ({ owner = d.self; names; pipelines; loaded = Atomic.make true }, None)
   | why, _, _ -> Error why
 
 let entry i f =
-  if not i.loaded then invalid_arg "Device_metal.entry: the image was unloaded";
+  if not (Atomic.get i.loaded) then
+    invalid_arg "Device_metal.entry: the image was unloaded";
   Array.find_index (String.equal f) i.names
   |> Option.map (Array.get i.pipelines)
 
 let unload d i =
   if i.owner <> d.self then
     invalid_arg "Device_metal.unload: the image is another device's";
-  if not i.loaded then invalid_arg "Device_metal.unload: the image was unloaded";
-  i.loaded <- false;
+  if not (Atomic.compare_and_set i.loaded true false) then
+    invalid_arg "Device_metal.unload: the image was unloaded";
   Array.iter release i.pipelines
 
 (* Work *)

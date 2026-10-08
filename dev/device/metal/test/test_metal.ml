@@ -543,6 +543,34 @@ let unloaded_twice () =
   raises_match Exn.invalid_arg (fun () -> Device_metal.unload t.d i);
   raises_match Exn.invalid_arg (fun () -> Device_metal.entry i "fill")
 
+(* Images unloaded from two domains: whatever the order, an image's first
+   [unload] returns and every later one raises. *)
+
+type loaded = { mutable loaded : bool }
+
+let unload_model m =
+  if not m.loaded then invalid_arg "unloaded";
+  m.loaded <- false
+
+let unload_system i = Device_metal.unload (dev ()).d i
+
+let loaded_image =
+  abstract "i" ~release:(fun i ->
+      try unload_system i with Invalid_argument _ -> ())
+
+let unload_commands =
+  [
+    command "image"
+      (Gen.unit @-> makes loaded_image)
+      (fun () -> { loaded = true })
+      (fun () ->
+        let t = dev () in
+        fst
+          (require_ok
+             (Device_metal.image t.d (S.fixture ~dir:"fixtures" "fill"))));
+    command "unload" (loaded_image ^-> returns unit) unload_model unload_system;
+  ]
+
 let unloaded_releases () =
   let t = dev () in
   let weaks =
@@ -569,6 +597,8 @@ let images =
       test "each function of the image has an entry" entries;
       test "unload and entry refuse an unloaded image or another device's"
         unloaded_twice;
+      stateful ~domains:2 ~count:30
+        "an image unloaded from two domains is unloaded once" unload_commands;
       test "unloaded images release their pipelines" unloaded_releases;
     ]
 
