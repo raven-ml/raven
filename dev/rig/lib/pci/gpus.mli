@@ -40,7 +40,13 @@ val buses : t -> Machine.t -> string list
     {!release} or {!lose}; otherwise the open gives back what it took. An
     exception raised by [f] passes through, the GPU given back: a driver reports
     the world's failures as [Error]s, the library's requests returning them and
-    its accesses raising nothing ({{!Rig_pci.errors}errors}). *)
+    its accesses raising nothing ({{!Rig_pci.errors}errors}).
+
+    At its exit the process stops each GPU it still holds, as the open's
+    [at_exit] says, before its functions' bus mastering is turned off and their
+    files closed. A child of [fork] stops none of its parent's GPUs: they are
+    still the parent's. An exception raised by [at_exit] is printed on standard
+    error, and the other GPUs are stopped. *)
 
 type hold
 (** The type for the process's hold on one GPU. *)
@@ -52,10 +58,13 @@ val open_ :
   t ->
   Machine.t ->
   int ->
+  at_exit:('a -> unit) ->
   (hold -> Function.t -> ('a, string) result) ->
   ('a, string) result
-(** [open_ g m i f] is [f h fn], the process holding GPU [i] of [m] by [h] and
-    its function [fn] taken ({!Function.take}). The hold keeps [fn].
+(** [open_ g m i ~at_exit f] is [f h fn], the process holding GPU [i] of [m] by
+    [h] and its function [fn] taken ({!Function.take}). The hold keeps [fn]. If
+    [f h fn] is [Ok v], the process calls [at_exit v] at its exit if it holds
+    the GPU then.
 
     [Error why] without calling [f] if [m] has no GPU [i], saying how many it
     has, if the process holds it already, if it was lost and not {!reset} since,

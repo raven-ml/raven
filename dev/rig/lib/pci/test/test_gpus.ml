@@ -117,10 +117,12 @@ let three () =
 (* Opening with a driver [d] that starts nothing. *)
 
 let ok () = Ok ()
-let open_ g m i d = Gpus.open_ g m i (fun _ _ -> d ())
+let open_ g m i d = Gpus.open_ g m i ~at_exit:ignore (fun _ _ -> d ())
 let reset g m i d = Gpus.reset g m i (fun _ -> d ())
-let hold g m i = require_ok (Gpus.open_ g m i (fun h _ -> Ok h))
-let hold_fn g m i = require_ok (Gpus.open_ g m i (fun h fn -> Ok (h, fn)))
+let hold g m i = require_ok (Gpus.open_ g m i ~at_exit:ignore (fun h _ -> Ok h))
+
+let hold_fn g m i =
+  require_ok (Gpus.open_ g m i ~at_exit:ignore (fun h fn -> Ok (h, fn)))
 
 (* [unopened open_] is the message of [open_ driver], an [Error] that never
    called [driver]. *)
@@ -196,7 +198,7 @@ let test_ith () =
     let msg = strf "GPU %d" i in
     let h =
       require_ok ~msg
-        (Gpus.open_ g m i (fun h fn ->
+        (Gpus.open_ g m i ~at_exit:ignore (fun h fn ->
              equal ~msg string bus (Function.bus fn);
              equal ~msg (option string) (Machine.name m)
                (Machine.name (Function.machine fn));
@@ -273,9 +275,10 @@ let numbering =
 
 let test_result () =
   let g, m, _ = three () in
-  equal (result int string) (Ok 42) (Gpus.open_ g m 0 (fun _ _ -> Ok 42));
+  equal (result int string) (Ok 42)
+    (Gpus.open_ g m 0 ~at_exit:ignore (fun _ _ -> Ok 42));
   equal (result int string) (Error "the GPU did not start")
-    (Gpus.open_ g m 1 (fun _ _ -> Error "the GPU did not start"))
+    (Gpus.open_ g m 1 ~at_exit:ignore (fun _ _ -> Error "the GPU did not start"))
 
 (* [given_back g m fake] asserts that GPU 0 and its function were given back. *)
 let given_back g m fake =
@@ -284,7 +287,8 @@ let given_back g m fake =
 
 let test_error_gives_back () =
   let g, m, fake = three () in
-  ignore (Gpus.open_ g m 0 (fun _ _ -> Error "the GPU did not start"));
+  ignore
+    (Gpus.open_ g m 0 ~at_exit:ignore (fun _ _ -> Error "the GPU did not start"));
   given_back g m fake
 
 let passed =
@@ -300,7 +304,8 @@ let passed =
           ("Unix_error", Unix.Unix_error (ENOENT, "open", "/dev/kfd"));
         ])
     [
-      ("open_", fun g m e -> Gpus.open_ g m 0 (fun _ _ -> raise e));
+      ( "open_",
+        fun g m e -> Gpus.open_ g m 0 ~at_exit:ignore (fun _ _ -> raise e) );
       ("reset", fun g m e -> Gpus.reset g m 0 (fun _ -> raise e));
     ]
 
@@ -496,7 +501,7 @@ let test_one_at_a_time (_, other) =
     Atomic.set inside false;
     Ok d
   in
-  let d = require_ok (Gpus.open_ g m 0 start) in
+  let d = require_ok (Gpus.open_ g m 0 ~at_exit:ignore start) in
   require_ok (Domain.join d);
   equal ~msg:"the other driver ran" bool true (Atomic.get ran);
   equal ~msg:"the other driver ran inside GPU 0's" bool false
@@ -538,7 +543,7 @@ let test_give_back_waits (_, give_back) =
     Atomic.set inside true;
     Ok (poll (fun () -> Atomic.get back))
   in
-  let d = Domain.spawn (fun () -> Gpus.open_ g m 0 start) in
+  let d = Domain.spawn (fun () -> Gpus.open_ g m 0 ~at_exit:ignore start) in
   equal ~msg:"GPU 0's driver started" bool true
     (poll (fun () -> Atomic.get inside));
   give_back h1;
@@ -618,7 +623,7 @@ let open_sys s start i =
     | Fails -> Error "the GPU did not start"
     | Raises_invalid -> invalid_arg err_driver_bug
   in
-  match Gpus.open_ s.g s.m i driver with
+  match Gpus.open_ s.g s.m i ~at_exit:ignore driver with
   | Ok h -> h
   | Error _ -> if !started then raise Driver_failed else raise Refused
 
@@ -821,16 +826,108 @@ let tree_changes =
         test_change_transport;
     ]
 
+(* Exit
+
+   A process that exits holding GPUs stops them. The suite's executable, run
+   with [exit_holding], is such a process; the test reads what it printed. *)
+
+let exit_holding = "--exit-holding"
+
+(* A function's command register, and its bit that lets the function master the
+   bus (PCI Express Base Specification, 7.5.1.1.3). *)
+let command = 0x04
+let bus_master = 0x4
+
+(* Holds GPUs 0 and 1 of a fake machine, whose stops raise and print, holds and
+   gives back GPU 2, and forks a child that exits, before it exits. Given a
+   fixture tree [root], it also holds the tree's GPU with its bus mastering on,
+   and prints at exit whether it still is. *)
+let exit_holding_gpus root =
+  let g, m, _ = three () in
+  let open_ i at_exit =
+    Result.get_ok (Gpus.open_ g m i ~at_exit (fun h _ -> Ok h))
+  in
+  let stopped h = print_endline ("stopped " ^ Gpus.bus h) in
+  ignore (open_ 0 (fun _ -> failwith "a driver bug"));
+  ignore (open_ 1 stopped);
+  Gpus.release (open_ 2 stopped);
+  if root <> "-" then begin
+    let mastering fn =
+      print_endline
+        (if Function.config16 fn command land bus_master <> 0 then "mastering"
+         else "not mastering")
+    in
+    let start _ fn =
+      Function.set_config16 fn command bus_master;
+      Ok fn
+    in
+    let tree = Machine.at root in
+    ignore
+      (Result.get_ok (Gpus.open_ (gpus ()) tree 0 ~at_exit:mastering start))
+  end;
+  (match Unix.fork () with
+  | 0 -> exit 0
+  | child -> ignore (Unix.waitpid [] child));
+  exit 0
+
+(* The lines [exit_holding_gpus root] printed on standard output, and what it
+   printed on standard error. *)
+let exiting root =
+  let exe = Sys.executable_name in
+  let out_r, out_w = Unix.pipe ~cloexec:true () in
+  let err_r, err_w = Unix.pipe ~cloexec:true () in
+  let pid =
+    Unix.create_process exe [| exe; exit_holding; root |] Unix.stdin out_w err_w
+  in
+  Unix.close out_w;
+  Unix.close err_w;
+  let exited () = fst (Unix.waitpid [ WNOHANG ] pid) <> 0 in
+  if not (poll exited) then begin
+    Unix.kill pid Sys.sigkill;
+    failf "the process holding GPUs did not exit"
+  end;
+  let read fd = In_channel.input_all (Unix.in_channel_of_descr fd) in
+  let out = read out_r and err = read err_r in
+  Unix.close out_r;
+  Unix.close err_r;
+  (List.filter (( <> ) "") (String.split_on_char '\n' out), err)
+
+let test_exit () =
+  let out, err = exiting "-" in
+  equal ~msg:"stopped, once" (list string) [ "stopped 0000:43:00.0" ] out;
+  contains ~msg:"the stop that raised"
+    ~sub:"stopping 0000:03:00.0 at exit: Failure(\"a driver bug\")" err
+
+let test_exit_order () =
+  needs_flock ();
+  let out, _ = exiting (Tree.make [ Tree.gpu gpu_bus ]) in
+  equal (slist string compare) [ "mastering"; "stopped 0000:43:00.0" ] out
+
+let exits =
+  group ~timeout:patience "exit"
+    [
+      test
+        "a process that exits stops each GPU it holds once, past a stop that \
+         raises, and its forked child stops none"
+        test_exit;
+      test "a GPU stops at exit before its bus mastering is turned off"
+        test_exit_order;
+    ]
+
 let () =
-  hold_gpu ();
-  exit
-  @@ run "rig_pci.gpus"
-       [
-         numbering;
-         opening;
-         giving_back;
-         resets;
-         tree_changes;
-         this_machine;
-         serialized;
-       ]
+  match Sys.argv with
+  | [| _; arg; root |] when arg = exit_holding -> exit_holding_gpus root
+  | _ ->
+      hold_gpu ();
+      exit
+      @@ run "rig_pci.gpus"
+           [
+             numbering;
+             opening;
+             giving_back;
+             resets;
+             tree_changes;
+             exits;
+             this_machine;
+             serialized;
+           ]
