@@ -18,12 +18,14 @@ let bytes (r : Images.range) = String.sub r.contents r.at r.length
 
 (* As firmware.py lays the booter out: its data, 0x1000 bytes of code then 0x800
    of data, each byte its offset modulo 256; the first application from 0x100;
-   the second of two 384-byte signatures, of 0xa2 bytes, written at 0x1010. *)
+   the second of two 384-byte signatures, of 0xa2 bytes, written at 0x1010,
+   0x10 into the data; engines 0x5 and ucode ID 9. *)
 let test_booter () =
   let b = require_ok (Images.booter (file "booter.bin")) in
   equal int 0x1800 (String.length b.image);
   equal (pair int int) (0x100, 0xf00) b.code;
   equal (pair int int) (0x1000, 0x800) b.data;
+  equal (triple int int int) (0x10, 0x5, 9) (b.pkc, b.engines, b.ucode);
   let patch = 0x1010 in
   String.iteri
     (fun i c ->

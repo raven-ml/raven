@@ -34,8 +34,15 @@ type booter = {
           signature written at the place the container names. *)
   code : int * int;  (** The offset and size of its code in [image]. *)
   data : int * int;  (** The offset and size of its data. *)
+  pkc : int;  (** Where in its data its signature is. *)
+  engines : int;  (** The engines it runs on, as a mask. *)
+  ucode : int;  (** Its ucode ID. *)
 }
-(** The type for the booter, a heavy-secure ucode SEC2 runs. *)
+(** The type for the booter, a heavy-secure ucode SEC2 runs. Its engines and
+    ucode ID come from the container's patch metadata, as NVIDIA's RM reads them
+    (s_allocateUcodeFromBinArchive). The signature patched in is the one the
+    header's patch index names; NVIDIA's RM picks it by SEC2's fuse version
+    instead (s_patchBooterUcodeSignature), which this library does not read. *)
 
 type fmc = {
   fmc : range;  (** The image the FSP starts. *)

@@ -13,7 +13,8 @@ and of RM_RISCV_UCODE_DESC (rmRiscvUcode.h, open-gpu-kernel-modules
   data, each byte its offset modulo 256. It carries two production
   signatures of 384 bytes, of 0xa1 and 0xa2 bytes, the second of which goes
   at 0x1010 of the data. Its patch location, signature index and signature
-  count are words the header points to, as NVIDIA's are.
+  count are words the header points to, as NVIDIA's are; its patch metadata
+  names engines 0x5 and ucode ID 9.
 - bootloader.bin: a container whose data is 0x3000 bytes and whose header
   is an RM_RISCV_UCODE_DESC with its manifest at 0x100, its monitor data at
   0x800 and its monitor code at 0x1000.
@@ -43,17 +44,20 @@ def booter():
     hs = 0x18
     sigs = hs + 0x40
     words = sigs + 2 * 384
-    load = words + 0x10
+    meta = words + 0x10
+    load = meta + 0x10
     # nvfw_hs_header_v2: sig_prod_offset, sig_prod_size, patch_loc, patch_sig,
     # meta_data_offset, meta_data_size, num_sig, header_offset, header_size,
     # every offset from the container's start.
     header = bytearray(load + 0x20 - hs)
-    struct.pack_into("<9I", header, 0, sigs, 2 * 384, words, words + 4, 0, 0, words + 8, load, 0x20)
+    struct.pack_into("<9I", header, 0, sigs, 2 * 384, words, words + 4, meta, 12, words + 8, load, 0x20)
     header[sigs - hs:sigs - hs + 384] = bytes([0xA1]) * 384
     header[sigs - hs + 384:sigs - hs + 768] = bytes([0xA2]) * 384
     # The words: the patch location, the signature to patch (an offset into
     # the signatures), and the number of signatures.
     struct.pack_into("<3I", header, words - hs, code + 0x10, 384, 2)
+    # The patch metadata: fuse version 1, engines 0x5, ucode ID 9.
+    struct.pack_into("<3I", header, meta - hs, 1, 0x5, 9)
     # nvfw_hs_load_header_v2: os_code_offset, os_code_size, os_data_offset,
     # os_data_size, num_apps, then each application's offset and size.
     struct.pack_into("<7I", header, load - hs, 0, 0x100, code, data, 1, 0x100, code - 0x100)

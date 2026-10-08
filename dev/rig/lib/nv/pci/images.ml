@@ -8,7 +8,16 @@ let ( let* ) = Result.bind
 
 type range = { contents : string; at : int; length : int }
 type bootloader = { image : range; code : int; data : int; manifest : int }
-type booter = { image : string; code : int * int; data : int * int }
+
+type booter = {
+  image : string;
+  code : int * int;
+  data : int * int;
+  pkc : int;
+  engines : int;
+  ucode : int;
+}
+
 type fmc = { fmc : range; hash : range; signature : range; public_key : range }
 
 type t = {
@@ -88,10 +97,16 @@ let booter =
   let image = Bytes.of_string (String.sub s data.at data.length) in
   Bytes.blit_string s signature.at image patch length;
   let app, _, _ = L.app in
+  let data_offset = field s load L.os_data_offset in
+  (* The patch metadata: the fuse version, engines and ucode ID, words. *)
+  let meta = field s hs H.meta_data_offset in
   {
     image = Bytes.unsafe_to_string image;
     code = (u32 s (load + app), u32 s (load + app + 4));
-    data = (field s load L.os_data_offset, field s load L.os_data_size);
+    data = (data_offset, field s load L.os_data_size);
+    pkc = patch - data_offset;
+    engines = u32 s (meta + 4);
+    ucode = u32 s (meta + 8);
   }
 
 (* ELF objects *)
