@@ -171,15 +171,13 @@ let gpu_device g =
 
 (* Files *)
 
-(* The model's files, under this test's directory in _build, cleared at the
-   start of a run. *)
+(* The model's files, in a fresh temporary directory removed at exit. A forked
+   child leaves by [Unix._exit], which keeps it. *)
 let files =
-  let dir = Filename.concat (Sys.getcwd ()) "model-files" in
-  if Sys.file_exists dir then
-    Array.iter
-      (fun f -> try Sys.remove (Filename.concat dir f) with Sys_error _ -> ())
-      (Sys.readdir dir)
-  else Sys.mkdir dir 0o755;
+  let dir = Filename.temp_dir "rig-model" "" in
+  at_exit (fun () ->
+      Array.iter (fun f -> Sys.remove (Filename.concat dir f)) (Sys.readdir dir);
+      Sys.rmdir dir);
   dir
 
 let file_count = Atomic.make 0
