@@ -20,9 +20,10 @@
 
 #include <nx_edge.h>
 
-/* NX_NEVER if a part is no fill on queue 0 (it has words, a copy, ring
-   units or segment bytes) or an [after] index is not below its own part's;
-   NX_FITS otherwise. */
+/* NX_NEVER if a part is no fill on queue 0: it has words or a copy, or it
+   declares room. A fill declares no room: its ring units and segment bytes
+   are 0, and the driver refuses work that declares any other. NX_FITS
+   otherwise. */
 int device_metal_room(void *self, const struct nx_part *parts, int n);
 
 /* Runs [parts], which device_metal_room answered NX_FITS for, as the work

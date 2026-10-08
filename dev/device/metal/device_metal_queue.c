@@ -98,8 +98,6 @@ int device_metal_room(void *self, const struct nx_part *parts, int n) {
     if (p->queue != 0 || p->fill == NULL || p->n != 0 || p->ring_units != 0 ||
         p->segment_bytes != 0 || p->copy_bytes != 0)
       return NX_NEVER;
-    for (int j = 0; j < p->nafter; j++)
-      if (p->after[j] < 0 || p->after[j] >= i) return NX_NEVER;
   }
   return NX_FITS;
 }
