@@ -141,7 +141,11 @@ val attach : t -> Machine.t -> int -> (unit, string) result
     [Error why] if [m] is reached through a transport, if [i] is no GPU, if the
     process holds it, if the process may not write a file, if it is bound to
     [vfio-pci], whose [driver_override] must be cleared first, or if no driver
-    takes it, such as when the driver's module is not loaded. *)
+    takes it, such as when the driver's module is not loaded.
+
+    On Linux 6.12, an AMD GPU given back to amdgpu after {!detach} serves its
+    render node, but KFD refuses every process until the amdgpu module reloads:
+    the unbind left KFD locked. *)
 
 val reset :
   t ->
