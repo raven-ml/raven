@@ -304,10 +304,12 @@ let release_rows =
    only, so these rows submit through the driver's C entries, on a device opened
    without it. *)
 let wait_rows =
+  (* The driver's entries, the device, and the word's host and GPU addresses,
+     read once so that a submission allocates nothing. *)
   let raw () =
     let g = get (P.open_ 0) in
     let w = Option.get (A.alloc g `Pinned 8) in
-    ([| A.room_entry; A.submit_entry; A.self g |], g, w, ref 0)
+    ([| A.room_entry; A.submit_entry; A.self g |], g, host w, address w, ref 0)
   in
   let floor_waiting () =
     ignore (floor_with ~waits:true ());
@@ -324,24 +326,24 @@ let wait_rows =
     [
       row "4"
         (fun () ->
-          let ((_, _, w, _) as r) = raw () in
-          set64 (host w) 1;
+          let ((_, _, w, _, _) as r) = raw () in
+          set64 w 1;
           r)
-        (fun (f, g, w, v) ->
+        (fun (f, g, _, at, v) ->
           incr v;
-          raw_submit f !v (address w) 1 4;
+          raw_submit f !v at 1 4;
           spin g !v);
       row "floor-4" floor_waiting (fun at -> floor_waits at 4);
-      row "wait64" raw (fun (f, g, w, v) ->
+      row "wait64" raw (fun (f, g, w, at, v) ->
           incr v;
           let target = !v lsl 32 in
-          set64 (host w) (target - 1);
-          raw_submit f !v (address w) target 1;
+          set64 w (target - 1);
+          raw_submit f !v at target 1;
           for _ = 1 to 10_000 do
             if A.signaled g >= !v then
               failwith "the wait passed before the host's store"
           done;
-          set64 (host w) target;
+          set64 w target;
           spin g !v);
     ]
 
