@@ -5,23 +5,10 @@
 
 (** What the Metal suite and bench share. *)
 
-(** {1:gpu The machine's GPU lock} *)
+(** {1:gpu The GPU} *)
 
-val hold_gpu : unit -> unit
-(** [hold_gpu ()] returns once the process holds the machine's GPU lock, which
-    it keeps until it exits, or at once if the machine has no Metal framework.
-    The lock is [flock] on [/tmp/raven-rig-gpu.lock], the file every suite and
-    bench that acts on a GPU of the machine locks; its holder writes its
-    executable and process id into it. A suite calls [hold_gpu] before
-    [Windtrap.run], so that the wait counts against no test's timeout, and the
-    suite calls it again before each open. A bench calls it before
-    [Thumper.run], so that the workers it forks run under the lock: [hold_gpu]
-    starts no vendor library, which a process must not start before it forks. It returns at once, taking nothing, if the variable
-    [RIG_GPU_LOCK_HELD] is set: the process that started this one holds the
-    lock for it, as a timing run takes it before the host's timing locks.
-
-    Raises [Failure] naming the holder if another process still holds the lock
-    after 300 s, or naming the errno if the file cannot be locked. *)
+include Rig_gpu_support.S with type gpu := Rig_metal.t
+(** Metal's device [0]. *)
 
 (** {1:ring A device's ring, by hand}
 
@@ -62,30 +49,6 @@ val sleep : ring -> string option
 val stop : ring -> bool
 (** [stop r] is [true] after writing the last value taken into the word, iff no
     slot is taken. *)
-
-(** {1:memory Host memory} *)
-
-val get8 : int -> int -> int
-(** [get8 p i] is the byte [i] at [p]. *)
-
-val set8 : int -> int -> int -> unit
-(** [set8 p i x] stores [x] as the byte [i] at [p]. *)
-
-val get32 : int -> int -> int
-(** [get32 p i] is the unsigned 32-bit word [i] at [p]. *)
-
-val set32 : int -> int -> int -> unit
-(** [set32 p i x] stores [x] as the unsigned 32-bit word [i] at [p]. *)
-
-val get64 : int -> int -> int64
-(** [get64 p i] is the 64-bit word [i] at [p]. *)
-
-val set64 : int -> int -> int64 -> unit
-(** [set64 p i x] stores [x] as the 64-bit word [i] at [p]. *)
-
-val pages : int -> int
-(** [pages n] is the address of [n] zeroed bytes of host memory, starting at a
-    page, never freed. *)
 
 (** {1:fills Fills} *)
 
@@ -142,6 +105,3 @@ val alive : nativeint -> bool
 
 val uptime : unit -> int
 (** [uptime ()] is the host clock of Metal's times, in nanoseconds. *)
-
-val wait : Rig_metal.t -> int -> unit
-(** [wait d v] returns once [d]'s word, read as host memory, reaches [v]. *)

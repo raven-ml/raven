@@ -14,6 +14,7 @@
 
 module M = Rig_metal
 module S = Rig_metal_support
+module H = Rig_gpu_support.Host
 
 external floor : string -> nativeint = "rig_metal_bench_floor"
 external floor_release : nativeint -> int -> unit = "rig_metal_bench_release"
@@ -34,15 +35,14 @@ external default_class : unit -> unit = "rig_metal_bench_default_class"
 external load_start : int -> unit = "rig_metal_bench_load_start"
 external load_stop : unit -> unit = "rig_metal_bench_load_stop"
 
-let strf = Printf.sprintf
 let metallib = S.fixture ~dir:"../../test/metal/fixtures" "fill"
 let kib = 1024
 let mib = 1024 * kib
 
-type dev = { c : Rig.t; d : M.t; mutable v : int; step : int; args : M.region }
+type dev = { d : Rig.t; g : M.t; mutable v : int; step : int; args : M.region }
 
 let get = function Ok x -> x | Error why -> failwith why
-let alloc t n = Option.get (M.alloc t.d `Device n)
+let alloc t n = Option.get (M.alloc t.g `Device n)
 let host r = Option.get (M.host r)
 
 let load d =
@@ -50,39 +50,24 @@ let load d =
   | `Loaded i -> i
   | `Place _ -> failwith "Metal asked to place its code"
 
-let opens = ref 0
-
 (* A device opened through rig, whose argument buffer points [step] at a word of
    its own. *)
 let dev () =
-  incr opens;
-  let d = ref None in
-  let make () =
-    Result.map
-      (fun x ->
-        d := Some x;
-        x)
-      (M.open_ 0)
-  in
-  let c =
-    get (Rig.open_ (module M) ~name:(strf "METAL:bench-%d" !opens) make)
-  in
-  let d = Option.get !d in
-  let image = load d in
-  let step = Option.get (M.entry image "step") in
-  let args = Option.get (M.alloc d `Device 16) in
-  let t = { c; d; v = 0; step; args } in
-  S.set64 (host args) 0 (Int64.of_int (Option.get (M.address (alloc t 16))));
+  let { S.d; g } = S.open_ () in
+  let step = Option.get (M.entry (load g) "step") in
+  let args = Option.get (M.alloc g `Device 16) in
+  let t = { d; g; v = 0; step; args } in
+  H.set64 (host args) (Option.get (M.address (alloc t 16)));
   t
 
 (* The prepared submission of [parts] on [t]. *)
-let prepare t parts = Rig.Submission.make ~reads:0 ~writes:0 t.c parts
+let prepare t parts = Rig.Submission.make ~reads:0 ~writes:0 t.d parts
 
 let submit t s =
   t.v <- Rig.Point.value (Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||])
 
 let wait t =
-  while M.signaled t.d < t.v do
+  while M.signaled t.g < t.v do
     Domain.cpu_relax ()
   done
 
@@ -101,7 +86,7 @@ let launch t n =
     }
   in
   let b =
-    get ((M.capability t.d).icb (M.handle t.args) (Array.make n dispatch))
+    get ((M.capability t.g).icb (M.handle t.args) (Array.make n dispatch))
   in
   let f = S.execute b in
   (f, prepare t [| S.part f |])
@@ -134,7 +119,7 @@ let release_rows =
           wait t);
       row "floor-pipelined-256" floor (fun f -> floor_release f 256);
       row "after-idle-20ms" empty (fun (t, s) ->
-          M.sleep t.d ~seen:t.v ~still_ms:20;
+          M.sleep t.g ~seen:t.v ~still_ms:20;
           run t s);
     ]
 
@@ -175,7 +160,7 @@ let split_rows =
   let splitting () =
     let t = dev () in
     let f = S.dispatch ~pipeline:t.step t.args ~groups:1 ~threads:1 in
-    S.split f t.d 64 ~times:(host (alloc t (16 * 64)));
+    S.split f t.g 64 ~times:(host (alloc t (16 * 64)));
     (t, f, prepare t [| S.part f |])
   in
   Thumper.group "split"
@@ -185,7 +170,7 @@ let split_rows =
     ]
 
 let alloc_rows =
-  let n_row name n = row name dev (fun t -> M.free t.d (alloc t n))
+  let n_row name n = row name dev (fun t -> M.free t.g (alloc t n))
   and floor_row name n = row name floor (fun f -> floor_alloc f n) in
   Thumper.group "alloc"
     [
@@ -195,26 +180,34 @@ let alloc_rows =
       floor_row "floor-64MiB" (64 * mib);
       row "first-use-64MiB" stepping (fun (t, (_, s)) ->
           let r = alloc t (64 * mib) in
-          S.set64 (host t.args) 0 (Int64.of_int (Option.get (M.address r)));
+          H.set64 (host t.args) (Option.get (M.address r));
           run t s;
-          M.free t.d r);
+          M.free t.g r);
     ]
 
 let map_host_rows =
   let n = 64 * mib in
-  let pages () = (dev (), S.pages n)
-  and floor_pages () = (floor (), S.pages n) in
+  (* Pages written once, so that no map faults them in. *)
+  let written () =
+    let p = H.pages n in
+    for i = 0 to (n / H.page) - 1 do
+      H.set8 (p + (i * H.page)) 0
+    done;
+    p
+  in
+  let pages () = (dev (), written ())
+  and floor_pages () = (floor (), written ()) in
   Thumper.group "map-host"
     [
       row "64MiB" pages (fun (t, p) ->
-          M.free t.d (Option.get (M.map_host t.d p n)));
+          M.free t.g (Option.get (M.map_host t.g p n)));
       row "floor-64MiB" floor_pages (fun (f, p) -> floor_map_host f p n);
     ]
 
 let image_rows =
   Thumper.group "image"
     [
-      row "fill" dev (fun t -> M.unload t.d (load t.d));
+      row "fill" dev (fun t -> M.unload t.g (load t.g));
       row "floor" floor floor_image;
     ]
 
@@ -228,7 +221,7 @@ let icb_rows =
         threads = (1, 1, 1);
       }
     in
-    (get ((M.capability t.d).icb (M.handle t.args) (Array.make 64 dispatch)))
+    (get ((M.capability t.g).icb (M.handle t.args) (Array.make 64 dispatch)))
       .release ()
   in
   Thumper.group "icb" [ row "64" dev icb ]
@@ -246,9 +239,9 @@ let sleep_rows =
     x
   in
   let rec sleep t =
-    let seen = M.signaled t.d in
+    let seen = M.signaled t.g in
     if seen < t.v then begin
-      M.sleep t.d ~seen ~still_ms:1000;
+      M.sleep t.g ~seen ~still_ms:1000;
       sleep t
     end
   in
@@ -271,14 +264,14 @@ let residency_rows =
   let gib () =
     let t = dev () in
     let r = alloc t (1024 * mib) in
-    S.set64 (host t.args) 0 (Int64.of_int (Option.get (M.address r)));
+    H.set64 (host t.args) (Option.get (M.address r));
     (t, step t)
   in
   Thumper.group "residency"
     [
       row "warm-1GiB" gib (fun (t, (_, s)) -> run t s);
       row "after-idle-3s" gib (fun (t, (_, s)) ->
-          M.sleep t.d ~seen:t.v ~still_ms:3000;
+          M.sleep t.g ~seen:t.v ~still_ms:3000;
           run t s);
     ]
 
@@ -286,7 +279,7 @@ let residency_rows =
 let config = Thumper.Config.(default |> deadline 120.)
 
 let () =
-  S.hold_gpu ();
+  S.hold ();
   exit
   @@ Thumper.run ~config "rig_metal"
        [

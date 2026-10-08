@@ -3,26 +3,14 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* Fills, as compiled code would write them, and probes of Metal objects
-   and host memory. A fill's argument is a bigarray's C memory. Objective-C on macOS; elsewhere no device opens and nothing here
-   is called. Every stub but the GPU lock's holds the runtime: none
-   blocks. */
+/* Fills, as compiled code would write them, and probes of Metal objects.
+   A fill's argument is a bigarray's C memory. Objective-C on macOS;
+   elsewhere no device opens and nothing here is called. Every stub holds
+   the runtime: none blocks. */
 
-#define _GNU_SOURCE
-
-#include <errno.h>
 #include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <unistd.h>
-
-#if !defined(_WIN32)
-#include <fcntl.h>
-#include <sys/file.h>
-#include <sys/stat.h>
-#endif
 
 #define CAML_NAME_SPACE
 #include <caml/alloc.h>
@@ -30,39 +18,9 @@
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
-#include <caml/threads.h>
 
 #define Ptr_val(v) ((void *)Nativeint_val(v))
 #define Addr_val(v) ((void *)Long_val(v))
-
-/* Host memory */
-
-value rig_metal_test_get64(value v_p, value v_i) {
-  return caml_copy_int64(((int64_t *)Addr_val(v_p))[Long_val(v_i)]);
-}
-
-value rig_metal_test_set64(value v_p, value v_i, value v_x) {
-  ((int64_t *)Addr_val(v_p))[Long_val(v_i)] = Int64_val(v_x);
-  return Val_unit;
-}
-
-value rig_metal_test_get8(value v_p, value v_i) {
-  return Val_int(((uint8_t *)Addr_val(v_p))[Long_val(v_i)]);
-}
-
-value rig_metal_test_set8(value v_p, value v_i, value v_x) {
-  ((uint8_t *)Addr_val(v_p))[Long_val(v_i)] = (uint8_t)Int_val(v_x);
-  return Val_unit;
-}
-
-value rig_metal_test_get32(value v_p, value v_i) {
-  return Val_long(((uint32_t *)Addr_val(v_p))[Long_val(v_i)]);
-}
-
-value rig_metal_test_set32(value v_p, value v_i, value v_x) {
-  ((uint32_t *)Addr_val(v_p))[Long_val(v_i)] = (uint32_t)Long_val(v_x);
-  return Val_unit;
-}
 
 value rig_metal_test_macos(value unit) {
   (void)unit;
@@ -115,16 +73,6 @@ value rig_metal_test_failing_fill(value unit) {
 #import <objc/runtime.h>
 
 #define Object_val(v) ((id)(intptr_t)Nativeint_val(v))
-
-/* [v_n] bytes of host memory at a multiple of the page; never freed. */
-value rig_metal_test_pages(value v_n) {
-  size_t page = (size_t)getpagesize();
-  size_t n = ((size_t)Long_val(v_n) + page - 1) / page * page;
-  void *p = aligned_alloc(page, n);
-  if (p == NULL) caml_raise_out_of_memory();
-  memset(p, 0, n);
-  return Val_long((intnat)p);
-}
 
 /* A dispatch of [pipeline] over [groups] threadgroups of [threads] threads,
    with [buffer] at [offset] as kernel buffer 0, then [splits] splits, each
@@ -289,7 +237,6 @@ CAMLnoret static void no_metal(void) {
   caml_invalid_argument("Rig_metal_support: Metal exists on macOS only");
 }
 
-value rig_metal_test_pages(value a) { (void)a, no_metal(); }
 value rig_metal_test_dispatch(value a, value b, value c, value d, value e) {
   (void)a, (void)b, (void)c, (void)d, (void)e, no_metal();
 }
@@ -311,59 +258,3 @@ value rig_metal_test_alive(value a) { (void)a, no_metal(); }
 value rig_metal_test_uptime(value a) { (void)a, no_metal(); }
 
 #endif
-
-/* The machine's GPU lock */
-
-/* One try at the exclusive lock of the file [v_path], which the process
-   then holds until it exits. A missing file is made writable by every user
-   of the machine. Once taken, the file names [v_holder] and the process's
-   id, for the processes that wait. Answers [0] once the process holds the
-   lock, [-1] after a nap of 100 ms if another process holds it, or the
-   errno of a failing call. Releases the runtime for the nap. */
-value rig_metal_test_lock(value v_path, value v_holder) {
-#if defined(_WIN32)
-  (void)v_path;
-  (void)v_holder;
-  return Val_int(ENOSYS);
-#else
-  /* The descriptor that holds the lock once taken. The suites take it from
-     one domain. */
-  static int held = -1;
-  if (held >= 0) return Val_int(0);
-  const char *path = String_val(v_path);
-  int fd = open(path, O_RDWR | O_CLOEXEC);
-  /* O_EXCL: Linux refuses O_CREAT on another user's file in /tmp
-     (fs.protected_regular). */
-  if (fd < 0 && errno == ENOENT) {
-    fd = open(path, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0666);
-    if (fd < 0 && errno == EEXIST) fd = open(path, O_RDWR | O_CLOEXEC);
-    else if (fd >= 0 && fchmod(fd, 0666) != 0) {
-      int e = errno;
-      close(fd);
-      return Val_int(e);
-    }
-  }
-  if (fd < 0) return Val_int(errno);
-  if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
-    int e = errno;
-    close(fd);
-    if (e != EWOULDBLOCK) return Val_int(e);
-    struct timespec nap = {0, 100 * 1000 * 1000};
-    caml_release_runtime_system();
-    nanosleep(&nap, NULL);
-    caml_acquire_runtime_system();
-    return Val_int(-1);
-  }
-  char note[1024] = "";
-  snprintf(note, sizeof note, "%s, pid %ld\n", String_val(v_holder),
-           (long)getpid());
-  size_t len = strlen(note);
-  if (ftruncate(fd, 0) != 0 || pwrite(fd, note, len, 0) != (ssize_t)len) {
-    int e = errno;
-    close(fd);
-    return Val_int(e);
-  }
-  held = fd;
-  return Val_int(0);
-#endif
-}

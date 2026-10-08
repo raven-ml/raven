@@ -5,6 +5,7 @@
 
 open Windtrap
 module S = Rig_metal_support
+module H = Rig_gpu_support.Host
 module B = Rig.Buffer
 
 let strf = Printf.sprintf
@@ -137,55 +138,56 @@ let ring_tests =
 
 (* Devices
 
-   Work reaches a device through rig, which opens it: [c] is the device there,
-   [d] the driver's. One device serves the tests that leave it healthy; a test
-   that fails a submission or stops a device opens its own, under a name of its
-   own. *)
+   Work reaches a device through rig, which opens it: [d] is the device there,
+   [g] the driver's. One device serves the tests that leave it healthy; a test
+   that fails a submission opens its own, which the next shared use replaces.
+   The tests of the driver's own stop open a device that rig never takes. *)
 
-type dev = { c : Rig.t; d : Rig_metal.t; fill : Rig_metal.image }
-
-let names = Atomic.make 0
-
-let opened () =
-  S.hold_gpu ();
-  let name = strf "METAL:test-%d" (Atomic.fetch_and_add names 1) in
-  let d = ref None in
-  let make () =
-    Result.map
-      (fun x ->
-        d := Some x;
-        x)
-      (Rig_metal.open_ 0)
-  in
-  match Rig.open_ (module Rig_metal) ~name make with
-  | Ok c -> (c, Option.get !d)
-  | Error why -> skip ~reason:why ()
+type dev = { d : Rig.t; g : Rig_metal.t; fill : Rig_metal.image }
 
 (* The image of the fixture [fill], which Metal places itself. *)
-let load d =
-  match require_ok (Rig_metal.image d (S.fixture ~dir:"fixtures" "fill")) with
+let load g =
+  match require_ok (Rig_metal.image g (S.fixture ~dir:"fixtures" "fill")) with
   | `Loaded i -> i
   | `Place (n, _) -> failf "the device asked to place %d bytes of code" n
 
-let dev_of (c, d) = { c; d; fill = load d }
-let shared = lazy (dev_of (opened ()))
-let dev () = Lazy.force shared
+let dev_of { S.d; g } = { d; g; fill = load g }
+
+(* The shared device, opened again once a test's own replaced it. *)
+let dev =
+  let lock = Mutex.create () and shared = ref None in
+  fun () ->
+    Mutex.protect lock @@ fun () ->
+    match !shared with
+    | Some t when Option.is_none (Rig.lost t.d) -> t
+    | _ ->
+        let t = dev_of (S.open_ ()) in
+        shared := Some t;
+        t
+
+(* A device of the driver alone, which the test stops. *)
+let driver () =
+  S.hold ();
+  match Rig_metal.open_ 0 with Ok g -> g | Error why -> skip ~reason:why ()
+
 let pipeline t f = require_some (Rig_metal.entry t.fill f)
 
 (* Submits [parts] as [t]'s next value, which it is. *)
 let submit_parts t parts =
-  let s = Rig.Submission.make ~reads:0 ~writes:0 t.c parts in
+  let s = Rig.Submission.make ~reads:0 ~writes:0 t.d parts in
   Rig.Point.value (Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||])
 
 let submit t fills = submit_parts t (Array.map S.part fills)
-let alloc t n = require_some (Rig_metal.alloc t.d `Device n)
+let wait t v = Rig.wait t.d v
+let alloc_on g n = require_some (Rig_metal.alloc g `Device n)
+let alloc t n = alloc_on t.g n
 let host r = require_some (Rig_metal.host r)
 let gpu r = require_some (Rig_metal.address r)
 
 (* The arguments of the fill kernels, [{ out; c }], at byte [at] of [args]. *)
 let set_args args ~at ~out ~c =
-  S.set64 (host args) (at / 8) (Int64.of_int out);
-  S.set32 (host args) ((at / 4) + 2) c
+  H.set64 (host args + at) out;
+  H.set32 (host args + at + 8) c
 
 let args_bytes = 16
 
@@ -196,13 +198,14 @@ let fill_dispatch t ~args ~at ~out ~c n =
   S.dispatch ~pipeline:(pipeline t "fill") ~offset:at args ~groups:1 ~threads:n
 
 let filled out ?(at = 0) ~c n =
-  Array.init n (fun i -> S.get32 (host out) (at + i) = (3 * i) + c)
+  Array.init n (fun i -> H.get32 (host out + (4 * (at + i))) = (3 * i) + c)
   |> Array.for_all Fun.id
 
 let dispatch ?(offset = 0) ?(groups = (1, 1, 1)) ?(threads = (1, 1, 1)) p =
   { Rig_metal_abi.pipeline = p; offset; groups; threads }
 
-let icb t args ds = (Rig_metal.capability t.d).icb (Rig_metal.handle args) ds
+let icb_on g args ds = (Rig_metal.capability g).icb (Rig_metal.handle args) ds
+let icb t args ds = icb_on t.g args ds
 
 (* Work *)
 
@@ -214,7 +217,7 @@ let prefix_completion parts =
   let chunk = 64 in
   let out = alloc t (n * 4 * chunk * 4)
   and args = alloc t (n * 4 * args_bytes) in
-  let first = Rig.submitted t.c + 1 in
+  let first = Rig.submitted t.d + 1 in
   cover "an empty submission" (List.mem [] parts);
   cover "a submission of several fills"
     (List.exists (fun p -> List.length p > 1) parts);
@@ -226,7 +229,7 @@ let prefix_completion parts =
         let at = ((4 * s) + p) * args_bytes in
         let out = gpu out + (((4 * s) + p) * chunk * 4) in
         let f = fill_dispatch t ~args ~at ~out ~c:(c s p) chunk in
-        S.split f t.d k ~times:0;
+        S.split f t.g k ~times:0;
         f)
       ps
     |> Array.of_list
@@ -246,14 +249,14 @@ let prefix_completion parts =
       parts
   in
   let rec poll seen =
-    let w = Rig_metal.signaled t.d in
+    let w = Rig_metal.signaled t.g in
     at_least int ~than:seen w;
     complete w;
-    if w < Rig.submitted t.c then poll w
+    if w < Rig.submitted t.d then poll w
   in
   poll (first - 1);
-  Rig_metal.free t.d out;
-  Rig_metal.free t.d args
+  Rig_metal.free t.g out;
+  Rig_metal.free t.g args
 
 (* Splits [k] times, recording times; [(before, times, after)]: the host clock
    before the submission and after its value was signaled. *)
@@ -263,16 +266,16 @@ let split_times k =
   and args = alloc t args_bytes
   and times = alloc t (16 * k) in
   let f = fill_dispatch t ~args ~at:0 ~out:(gpu out) ~c:1 64 in
-  S.split f t.d k ~times:(host times);
+  S.split f t.g k ~times:(host times);
   let before = S.uptime () in
   let v = submit t [| f |] in
-  S.wait t.d v;
+  wait t v;
   let after = S.uptime () in
-  let at i = Int64.to_int (S.get64 (host times) i) in
+  let at i = H.get64 (host times + (8 * i)) in
   let r =
     (before, Array.init k (fun i -> (at (2 * i), at ((2 * i) + 1))), after)
   in
-  List.iter (Rig_metal.free t.d) [ out; args; times ];
+  List.iter (Rig_metal.free t.g) [ out; args; times ];
   r
 
 let times_between k =
@@ -289,18 +292,18 @@ let many_splits () =
   let t = dev () in
   let out = alloc t 256 and args = alloc t args_bytes in
   let f = fill_dispatch t ~args ~at:0 ~out:(gpu out) ~c:5 64 in
-  S.split f t.d 1100 ~times:0;
-  S.wait t.d (submit t [| f |]);
+  S.split f t.g 1100 ~times:0;
+  wait t (submit t [| f |]);
   equal bool true (filled out ~c:5 64);
-  List.iter (Rig_metal.free t.d) [ out; args ]
+  List.iter (Rig_metal.free t.g) [ out; args ]
 
 let fresh_allocation () =
   let t = dev () in
   let out = alloc t (1 lsl 20) and args = alloc t args_bytes in
   let f = fill_dispatch t ~args ~at:0 ~out:(gpu out) ~c:9 256 in
-  S.wait t.d (submit t [| f |]);
+  wait t (submit t [| f |]);
   equal bool true (filled out ~c:9 256);
-  List.iter (Rig_metal.free t.d) [ out; args ]
+  List.iter (Rig_metal.free t.g) [ out; args ]
 
 let several_fills () =
   let t = dev () in
@@ -309,9 +312,9 @@ let several_fills () =
   let step =
     S.dispatch ~pipeline:(pipeline t "step") ~offset:0 args ~groups:1 ~threads:1
   in
-  S.wait t.d (submit t [| first; step; step; step |]);
-  equal int 4 (S.get32 (host out) 0);
-  List.iter (Rig_metal.free t.d) [ out; args ]
+  wait t (submit t [| first; step; step; step |]);
+  equal int 4 (H.get32 (host out));
+  List.iter (Rig_metal.free t.g) [ out; args ]
 
 (* A submission's fills, after one that writes [3i + c] at each word of a
    region: [`Direct k] bumps every byte of the region and splits [k] times,
@@ -349,7 +352,7 @@ let bumps_counted fills =
           S.dispatch ~pipeline:bump ~offset:args_bytes args
             ~groups:(bytes / 256) ~threads:256
         in
-        S.split f t.d k ~times:0;
+        S.split f t.g k ~times:0;
         f
     | `Icb n ->
         let b = require_ok (icb t args (bumps n)) in
@@ -367,7 +370,7 @@ let bumps_counted fills =
   cover "an icb fill after a direct fill" (follows direct icb_fill);
   cover "a direct fill after an icb fill" (follows icb_fill direct);
   cover "a fill after one that splits" (follows splits (fun _ -> true));
-  S.wait t.d (submit t (Array.of_list (seed :: List.map fill fills)));
+  wait t (submit t (Array.of_list (seed :: List.map fill fills)));
   let k =
     List.fold_left
       (fun k -> function `Direct s -> k + s + 1 | `Icb n -> k + n)
@@ -377,18 +380,18 @@ let bumps_counted fills =
   for i = 0 to words - 1 do
     let w = (3 * i) + c in
     let want = byte w 0 lor byte w 1 lor byte w 2 lor byte w 3 in
-    let got = S.get32 (host out) i in
+    let got = H.get32 (host out + (4 * i)) in
     if got <> want then
       failf "word %d reads %#x, not %#x after %d bumps" i got want k
   done;
   List.iter (fun (b : Rig_metal_abi.icb) -> b.release ()) !icbs;
-  List.iter (Rig_metal.free t.d) [ out; args ]
+  List.iter (Rig_metal.free t.g) [ out; args ]
 
 let empty_submission () =
   let t = dev () in
   let v = submit t [||] in
-  S.wait t.d v;
-  equal int v (Rig_metal.signaled t.d)
+  wait t v;
+  equal int v (Rig_metal.signaled t.g)
 
 (* Metal hands a command buffer to its completion handler before the word moves
    and releases it, with the objects it holds, once the handler returned: no
@@ -402,11 +405,12 @@ let await_release w =
 let released_buffer () =
   let t = dev () in
   let f, w = S.watching () in
-  S.wait t.d (submit t [| f |]);
+  wait t (submit t [| f |]);
   await_release w
 
 let failing_fill () =
-  let t = dev_of (opened ()) in
+  S.with_ @@ fun s ->
+  let t = dev_of s in
   let out = alloc t 256 and args = alloc t args_bytes in
   let ok = fill_dispatch t ~args ~at:0 ~out:(gpu out) ~c:2 64 in
   let reached = submit t [| ok |] in
@@ -415,8 +419,11 @@ let failing_fill () =
     (function Rig.Lost (_, w) -> String.equal w why | _ -> false)
     (fun () -> submit t [| ok; S.failing 7 |]);
   raises (Rig_metal.Fault why) (fun () ->
-      Rig_metal.sleep t.d ~seen:reached ~still_ms:10);
-  S.wait t.d (reached + 1)
+      Rig_metal.sleep t.g ~seen:reached ~still_ms:10);
+  S.close s;
+  while Rig.signaled t.d < reached + 1 do
+    Domain.cpu_relax ()
+  done
 
 let work =
   group ~timeout:60. "work"
@@ -448,7 +455,7 @@ let work =
 
 (* Indirect command buffers *)
 
-let run_icb t b = S.wait t.d (submit t [| S.execute b |])
+let run_icb t b = wait t (submit t [| S.execute b |])
 
 let chain n =
   let t = dev () in
@@ -457,9 +464,9 @@ let chain n =
   let step = pipeline t "step" in
   let b = require_ok (icb t args (Array.make n (dispatch step))) in
   run_icb t b;
-  equal int n (S.get32 (host out) 0);
+  equal int n (H.get32 (host out));
   b.release ();
-  List.iter (Rig_metal.free t.d) [ out; args ]
+  List.iter (Rig_metal.free t.g) [ out; args ]
 
 let resized () =
   let t = dev () in
@@ -469,18 +476,18 @@ let resized () =
   let b = require_ok (icb t args [| dispatch ~threads:(4, 1, 1) fill |]) in
   run_icb t b;
   equal bool true (filled out ~c:4 4);
-  equal int 0 (S.get32 (host out) 4);
+  equal int 0 (H.get32 (host out + (4 * 4)));
   S.resize b.commands.(0) ~groups:2 ~threads:4;
   run_icb t b;
   equal bool true (filled out ~c:4 8);
   b.release ();
-  List.iter (Rig_metal.free t.d) [ out; args ]
+  List.iter (Rig_metal.free t.g) [ out; args ]
 
 let icb_refusals () =
   let t = dev () in
   let args = alloc t args_bytes in
   let fill = pipeline t "fill" in
-  let align = (Rig_metal.capability t.d).align in
+  let align = (Rig_metal.capability t.g).align in
   let invalid ds = raises_match Exn.invalid_arg (fun () -> icb t args ds) in
   is_error (icb t args [| dispatch ~threads:(1025, 1, 1) fill |]);
   is_error
@@ -490,7 +497,7 @@ let icb_refusals () =
   invalid [| dispatch ~groups:(0, 1, 1) fill |];
   invalid [| dispatch ~threads:(1, 1, 0) fill |];
   (require_ok (icb t args [||])).release ();
-  Rig_metal.free t.d args
+  Rig_metal.free t.g args
 
 let released_twice () =
   let t = dev () in
@@ -498,7 +505,7 @@ let released_twice () =
   let b = require_ok (icb t args [| dispatch (pipeline t "step") |]) in
   b.release ();
   raises_match Exn.invalid_arg b.release;
-  Rig_metal.free t.d args
+  Rig_metal.free t.g args
 
 let released_objects () =
   let t = dev () in
@@ -510,33 +517,33 @@ let released_objects () =
   Array.iteri
     (fun k w -> equal bool ~msg:(strf "object %d" k) false (S.alive w))
     weaks;
-  Rig_metal.free t.d args
+  Rig_metal.free t.g args
 
 let after_unload () =
   let t = dev () in
   let out = alloc t 256 and args = alloc t args_bytes in
   set_args args ~at:0 ~out:(gpu out) ~c:0;
-  let i = load t.d in
+  let i = load t.g in
   let step = require_some (Rig_metal.entry i "step") in
   let b = require_ok (icb t args [| dispatch step; dispatch step |]) in
-  Rig_metal.unload t.d i;
+  Rig_metal.unload t.g i;
   Gc.full_major ();
   run_icb t b;
-  equal int 2 (S.get32 (host out) 0);
+  equal int 2 (H.get32 (host out));
   b.release ();
-  List.iter (Rig_metal.free t.d) [ out; args ]
+  List.iter (Rig_metal.free t.g) [ out; args ]
 
 let stopped_icb = "the device was stopped"
 
 (* An icb call after a stop retains no pipeline: it answers the stop. *)
 let after_stop () =
-  let t = dev_of (opened ()) in
-  let args = alloc t args_bytes in
-  let step = pipeline t "step" in
-  Rig_metal.stop t.d;
+  let g = driver () in
+  let args = alloc_on g args_bytes in
+  let step = require_some (Rig_metal.entry (load g) "step") in
+  Rig_metal.stop g;
   equal (result pass string) ~msg:"after the stop" (Error stopped_icb)
-    (Result.map ignore (icb t args [| dispatch step |]));
-  Rig_metal.free t.d args
+    (Result.map ignore (icb_on g args [| dispatch step |]));
+  Rig_metal.free g args
 
 (* An icb call beside a stop: each answers as if made before the stop or after
    it, never with a pipeline released under it. A device of its own per program,
@@ -545,19 +552,19 @@ type stop = { mutable stopped : bool }
 
 let icb_model s = if s.stopped then Error stopped_icb else Ok ()
 
-let icb_sys (t, args, step, _) =
-  match icb t args (Array.make 64 (dispatch step)) with
+let icb_sys (g, args, step, _) =
+  match icb_on g args (Array.make 64 (dispatch step)) with
   | Ok b ->
       b.release ();
       Ok ()
   | Error e -> Error e
 
 (* The device's one stop: a second call returns once the first did. *)
-let stop_once (t, args, _, (lock, stopped)) =
+let stop_once (g, args, _, (lock, stopped)) =
   Mutex.protect lock @@ fun () ->
   if not !stopped then begin
-    Rig_metal.stop t.d;
-    Rig_metal.free t.d args;
+    Rig_metal.stop g;
+    Rig_metal.free g args;
     stopped := true
   end
 
@@ -568,8 +575,9 @@ let stop_commands =
       (Gen.unit @-> makes dev)
       (fun () -> { stopped = false })
       (fun () ->
-        let t = dev_of (opened ()) in
-        (t, alloc t args_bytes, pipeline t "step", (Mutex.create (), ref false)));
+        let g = driver () in
+        let step = require_some (Rig_metal.entry (load g) "step") in
+        (g, alloc_on g args_bytes, step, (Mutex.create (), ref false)));
     command "icb" (dev ^-> returns (result unit string)) icb_model icb_sys;
     command "stop" (dev ^-> returns unit) (fun s -> s.stopped <- true) stop_once;
   ]
@@ -630,11 +638,11 @@ let page = 16384
 let shared_both_ways (offset, pages) =
   let t = dev () in
   let n = (pages * page) - offset in
-  let p = S.pages ((pages + 1) * page) + offset in
+  let p = H.pages ((pages + 1) * page) + offset in
   for i = 0 to n - 1 do
-    S.set8 p i (i mod 251)
+    H.set8 (p + i) (i mod 251)
   done;
-  let r = require_some (Rig_metal.map_host t.d p n) in
+  let r = require_some (Rig_metal.map_host t.g p n) in
   equal int (p land lnot (page - 1)) (host r);
   let args = alloc t args_bytes in
   let into = p - host r in
@@ -643,50 +651,51 @@ let shared_both_ways (offset, pages) =
   let f =
     S.dispatch ~pipeline:bump args ~groups:((n + 255) / 256) ~threads:256
   in
-  S.wait t.d (submit t [| f |]);
+  wait t (submit t [| f |]);
   for i = 0 to n - 1 do
-    if S.get8 p i <> (i mod 251) + 1 then
-      failf "byte %d reads %d, not %d" i (S.get8 p i) ((i mod 251) + 1)
+    if H.get8 (p + i) <> (i mod 251) + 1 then
+      failf "byte %d reads %d, not %d" i (H.get8 (p + i)) ((i mod 251) + 1)
   done;
-  Rig_metal.free t.d r;
-  Rig_metal.free t.d args
+  Rig_metal.free t.g r;
+  Rig_metal.free t.g args
 
 let aligned_256 n =
   let t = dev () in
   let r = alloc t n in
   equal int 0 (host r mod 256);
   equal int 0 (gpu r mod 256);
-  Rig_metal.free t.d r
+  Rig_metal.free t.g r
 
 let misused_regions () =
   let t = dev () in
   let invalid f = raises_match Exn.invalid_arg f in
   let r = alloc t 64 in
-  let m = require_some (Rig_metal.map_host t.d (S.pages page) page) in
-  Rig_metal.free t.d r;
-  invalid (fun () -> Rig_metal.free t.d r);
-  Rig_metal.free t.d m;
-  invalid (fun () -> Rig_metal.free t.d m);
-  invalid (fun () -> Rig_metal.alloc t.d `Device 0);
-  invalid (fun () -> Rig_metal.map_host t.d (S.pages page) 0);
-  let _, other = opened () in
-  let o = require_some (Rig_metal.alloc other `Device 64) in
-  invalid (fun () -> Rig_metal.free t.d o);
-  equal bool false (Rig_metal.peer t.d other);
-  equal (option pass) None (Rig_metal.map_peer t.d other o);
-  invalid (fun () -> Rig_metal.map_peer t.d t.d o);
-  invalid (fun () -> Rig_metal.map_peer t.d other (alloc t 64));
+  let m = require_some (Rig_metal.map_host t.g (H.pages page) page) in
+  Rig_metal.free t.g r;
+  invalid (fun () -> Rig_metal.free t.g r);
+  Rig_metal.free t.g m;
+  invalid (fun () -> Rig_metal.free t.g m);
+  invalid (fun () -> Rig_metal.alloc t.g `Device 0);
+  invalid (fun () -> Rig_metal.map_host t.g (H.pages page) 0);
+  let other = driver () in
+  Fun.protect ~finally:(fun () -> Rig_metal.stop other) @@ fun () ->
+  let o = alloc_on other 64 in
+  invalid (fun () -> Rig_metal.free t.g o);
+  equal bool false (Rig_metal.peer t.g other);
+  equal (option pass) None (Rig_metal.map_peer t.g other o);
+  invalid (fun () -> Rig_metal.map_peer t.g t.g o);
+  invalid (fun () -> Rig_metal.map_peer t.g other (alloc t 64));
   Rig_metal.free other o;
-  invalid (fun () -> Rig_metal.map_peer t.d other o)
+  invalid (fun () -> Rig_metal.map_peer t.g other o)
 
 let given_back () =
   let t = dev () in
   let r = alloc t 64 in
-  let m = require_some (Rig_metal.map_host t.d (S.pages page) page) in
+  let m = require_some (Rig_metal.map_host t.g (H.pages page) page) in
   let wr = S.weak (Rig_metal.handle r) and wm = S.weak (Rig_metal.handle m) in
-  S.wait t.d (submit t [||]);
-  Rig_metal.free t.d r;
-  Rig_metal.free t.d m;
+  wait t (submit t [||]);
+  Rig_metal.free t.g r;
+  Rig_metal.free t.g m;
   equal bool ~msg:"allocation" false (S.alive wr);
   equal bool ~msg:"mapping" false (S.alive wm)
 
@@ -695,7 +704,7 @@ let copied_into_borrow () =
   let t = dev () in
   let n = 4 * page in
   let h = B.create Rig.host n in
-  let b = require_some (B.borrow t.c h) in
+  let b = require_some (B.borrow t.d h) in
   let s = random_bytes ~seed:19 n in
   B.copy ~src:(host_buffer s) ~dst:b;
   equal octets s (contents h)
@@ -762,10 +771,10 @@ let bump t b =
       ~groups:((n + 255) / 256)
       ~threads:256
   in
-  let s = Rig.Submission.make ~reads:0 ~writes:1 t.c [| S.part f |] in
+  let s = Rig.Submission.make ~reads:0 ~writes:1 t.d [| S.part f |] in
   ignore (Rig.submit s ~reads:[||] ~writes:[| b |] ~waits:[||]);
   B.wait b Read;
-  Rig_metal.free t.d args
+  Rig_metal.free t.g args
 
 let buffer =
   let pp ppf b =
@@ -778,7 +787,7 @@ let buffer =
    the copies are the host's, with no value on the device's timeline. *)
 let file_round_trip (n, at_file, at) =
   let t = dev () in
-  let v = Rig.submitted t.c in
+  let v = Rig.submitted t.d in
   cover "no bytes" (n = 0);
   cover "one byte" (n = 1);
   cover "a page or more" (n >= page);
@@ -788,7 +797,7 @@ let file_round_trip (n, at_file, at) =
   let into s =
     write_file src (String.make at_file 'x' ^ s);
     let file = B.view (of_file src) ~first:at_file ~length:n in
-    let mem = B.view (B.create t.c (at + n)) ~first:at ~length:n in
+    let mem = B.view (B.create t.d (at + n)) ~first:at ~length:n in
     B.copy ~src:file ~dst:mem;
     mem
   in
@@ -797,7 +806,7 @@ let file_round_trip (n, at_file, at) =
     read_file dst
   in
   Law.round_trip octets buffer into out (random_bytes ~seed:n n);
-  equal int ~msg:"values submitted" v (Rig.submitted t.c)
+  equal int ~msg:"values submitted" v (Rig.submitted t.d)
 
 (* A length is no bytes, one byte, a page's edges, or up to a MiB. Each of the
    first three is drawn in about one case in five, so a property's 100 cases
@@ -824,9 +833,9 @@ let opened_file_borrow () =
   let s = random_bytes ~seed:13 n in
   write_file path s;
   let file = B.view (of_file path) ~first:at ~length:(n - at) in
-  let b = require_some (B.borrow t.c file) in
+  let b = require_some (B.borrow t.d file) in
   equal (pair bool string)
-    (true, Rig.name t.c)
+    (true, Rig.name t.d)
     (B.is_borrowed b, Rig.name (B.device b));
   raises_match Exn.invalid_arg (fun () -> bump t b);
   let s' = String.sub s at (n - at) in
@@ -840,7 +849,7 @@ let created_file_borrow () =
   let n = (1 lsl 20) + 4099 in
   let s = random_bytes ~seed:17 n in
   let file = create_file path n in
-  let b = require_some (B.borrow t.c file) in
+  let b = require_some (B.borrow t.d file) in
   B.copy ~src:(host_buffer s) ~dst:file;
   bump t b;
   equal octets ~msg:"a copy of the file" (bumped s) (contents file);
@@ -868,11 +877,11 @@ let file_tests =
 
 let not_metallib () =
   let t = dev () in
-  is_error (Rig_metal.image t.d "not a metallib")
+  is_error (Rig_metal.image t.g "not a metallib")
 
 let no_pipeline () =
   let t = dev () in
-  match Rig_metal.image t.d (S.fixture ~dir:"fixtures" "vertex") with
+  match Rig_metal.image t.g (S.fixture ~dir:"fixtures" "vertex") with
   | Ok _ -> failf "a vertex function made a compute pipeline"
   | Error why ->
       starts_with ~affix:"building the pipeline of \"position\": " why
@@ -886,11 +895,12 @@ let entries () =
 
 let unloaded_twice () =
   let t = dev () in
-  let i = load t.d in
-  let _, other = opened () in
+  let i = load t.g in
+  let other = driver () in
+  Fun.protect ~finally:(fun () -> Rig_metal.stop other) @@ fun () ->
   raises_match Exn.invalid_arg (fun () -> Rig_metal.unload other i);
-  Rig_metal.unload t.d i;
-  raises_match Exn.invalid_arg (fun () -> Rig_metal.unload t.d i);
+  Rig_metal.unload t.g i;
+  raises_match Exn.invalid_arg (fun () -> Rig_metal.unload t.g i);
   raises_match Exn.invalid_arg (fun () -> Rig_metal.entry i "fill")
 
 (* Images unloaded from two domains: whatever the order, an image's first
@@ -902,7 +912,7 @@ let unload_model m =
   if not m.loaded then invalid_arg "unloaded";
   m.loaded <- false
 
-let unload_system i = Rig_metal.unload (dev ()).d i
+let unload_system i = Rig_metal.unload (dev ()).g i
 
 let loaded_image =
   abstract "i" ~release:(fun i ->
@@ -913,7 +923,7 @@ let unload_commands =
     command "image"
       (Gen.unit @-> makes loaded_image)
       (fun () -> { loaded = true })
-      (fun () -> load (dev ()).d);
+      (fun () -> load (dev ()).g);
     command "unload" (loaded_image ^-> returns unit) unload_model unload_system;
   ]
 
@@ -921,11 +931,11 @@ let unloaded_releases () =
   let t = dev () in
   let weaks =
     List.init 60 (fun _ ->
-        let i = load t.d in
+        let i = load t.g in
         let w =
           S.weak (Nativeint.of_int (require_some (Rig_metal.entry i "fill")))
         in
-        Rig_metal.unload t.d i;
+        Rig_metal.unload t.g i;
         w)
   in
   Gc.full_major ();
@@ -952,53 +962,57 @@ let images =
 let sleep_seen () =
   let t = dev () in
   let v = submit t [||] in
-  S.wait t.d v;
-  Rig_metal.sleep t.d ~seen:(v - 1) ~still_ms:600_000
+  wait t v;
+  Rig_metal.sleep t.g ~seen:(v - 1) ~still_ms:600_000
 
 let stopped_idle () =
-  let t = dev_of (opened ()) in
-  let v = submit t [||] in
-  S.wait t.d v;
-  Rig_metal.stop t.d;
-  equal int v (Rig_metal.signaled t.d)
+  S.with_ @@ fun t ->
+  let v = S.submit t [||] in
+  S.wait t v;
+  S.close t;
+  equal int v (Rig.signaled t.d)
 
+(* A loss that finds work running stops the device, the work runs to its end,
+   and its indirect command buffer is released after. *)
 let stopped_running () =
-  let t = dev_of (opened ()) in
+  S.with_ @@ fun s ->
+  let t = dev_of s in
   let out = alloc t 256 and args = alloc t args_bytes in
   set_args args ~at:0 ~out:(gpu out) ~c:5_000_000;
   let spin = pipeline t "spin" in
   let b = require_ok (icb t args [| dispatch spin |]) in
   let w = S.weak b.handle in
-  let v = submit t [| S.execute b |] in
-  Rig_metal.stop t.d;
-  S.wait t.d v;
-  equal bool true (S.get32 (host out) 0 <> 0);
+  ignore (submit t [| S.execute b |]);
+  raises_match
+    (function Rig.Lost _ -> true | _ -> false)
+    (fun () -> submit t [| S.failing 7 |]);
+  S.close s;
+  while H.get32 (host out) = 0 do
+    Domain.cpu_relax ()
+  done;
   b.release ();
   await_release w
 
 (* A stopped device's word frees once, after the stop. *)
 let word_after_stop () =
-  let t = dev_of (opened ()) in
-  S.wait t.d (submit t [||]);
-  Rig_metal.stop t.d;
-  Rig_metal.free t.d (Rig_metal.word t.d);
-  raises_match Exn.invalid_arg (fun () ->
-      Rig_metal.free t.d (Rig_metal.word t.d))
+  let g = driver () in
+  Rig_metal.stop g;
+  Rig_metal.free g (Rig_metal.word g);
+  raises_match Exn.invalid_arg (fun () -> Rig_metal.free g (Rig_metal.word g))
 
 (* Images still loaded when the device stops stay loaded: their unload after
    the stop releases them. *)
 let unload_after_stop () =
-  let t = dev_of (opened ()) in
-  let i = load t.d in
+  let g = driver () in
+  let i = load g in
   let weak f = S.weak (Nativeint.of_int (require_some (Rig_metal.entry i f))) in
   let weaks = [ weak "fill"; weak "step"; weak "bump" ] in
-  S.wait t.d (submit t [||]);
-  Rig_metal.stop t.d;
+  Rig_metal.stop g;
   List.iteri
     (fun k w ->
       equal bool ~msg:(strf "pipeline %d after the stop" k) true (S.alive w))
     weaks;
-  Rig_metal.unload t.d i;
+  Rig_metal.unload g i;
   List.iteri
     (fun k w ->
       equal bool ~msg:(strf "pipeline %d after the unload" k) false (S.alive w))
@@ -1008,11 +1022,11 @@ let timeline =
   group ~timeout:60. "timeline"
     [
       test "sleep returns at once when the word differs from seen" sleep_seen;
-      test "stop of an idle device leaves the word at the last value"
+      test "a close of an idle device leaves the word at the last value"
         stopped_idle;
       test
-        "stop while work runs: the word reaches the last value once it ends, \
-         and its indirect command buffer is released after"
+        "a loss while work runs: the work runs to its end, and its indirect \
+         command buffer is released after"
         stopped_running;
       test "an image a stop left loaded is released by its unload"
         unload_after_stop;
@@ -1022,16 +1036,18 @@ let timeline =
 (* Opening and misuse *)
 
 let two_devices () =
-  let a = dev_of (opened ()) and b = dev_of (opened ()) in
-  S.wait a.d (submit a [||]);
-  equal int 1 (Rig_metal.signaled a.d);
-  equal int 0 (Rig_metal.signaled b.d)
+  let b = driver () in
+  Fun.protect ~finally:(fun () -> Rig_metal.stop b) @@ fun () ->
+  S.with_ @@ fun a ->
+  S.wait a (S.submit a [||]);
+  equal int 1 (Rig_metal.signaled a.g);
+  equal int 0 (Rig_metal.signaled b)
 
 let apple_align () =
   let t = dev () in
-  if not (String.starts_with ~prefix:"Apple" (Rig_metal.arch t.d)) then
+  if not (String.starts_with ~prefix:"Apple" (Rig_metal.arch t.g)) then
     skip ~reason:"the GPU is of a Mac family" ();
-  equal int 4 (Rig_metal.capability t.d).align
+  equal int 4 (Rig_metal.capability t.g).align
 
 (* Work the room refuses: words, and a fill that declares room. *)
 let refused_work () =
@@ -1051,8 +1067,8 @@ let refused_work () =
   refused (declaring ~units:1 ~bytes:0);
   refused (declaring ~units:0 ~bytes:64);
   let v = submit t [||] in
-  S.wait t.d v;
-  equal int v (Rig_metal.signaled t.d)
+  wait t v;
+  equal int v (Rig_metal.signaled t.g)
 
 let opening =
   group ~timeout:60. "opening"
@@ -1080,7 +1096,7 @@ let opening =
     ]
 
 let () =
-  S.hold_gpu ();
+  S.hold ();
   clear_files ();
   exit
     (run "rig_metal"

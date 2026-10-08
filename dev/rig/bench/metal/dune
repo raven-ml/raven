@@ -13,7 +13,14 @@
 (executable
  (name bench_metal)
  (modules bench_metal)
- (libraries rig rig_metal rig_metal_abi rig_metal_bench rig_metal_support thumper))
+ (libraries
+  rig
+  rig_gpu_support
+  rig_metal
+  rig_metal_abi
+  rig_metal_bench
+  rig_metal_support
+  thumper))
 
 (rule
  (alias bench)
