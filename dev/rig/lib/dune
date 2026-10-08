@@ -2,6 +2,7 @@
 
 (library
  (name rig)
+ (public_name rig)
  (libraries rig_edge)
  (modules_without_implementation def sigs)
  (install_c_headers rig)

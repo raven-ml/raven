@@ -2,6 +2,7 @@
 
 (library
  (name rig_amd)
+ (public_name rig.amd)
  (libraries rig_amd_abi rig_elf rig_edge)
  (install_c_headers rig_amd)
  (foreign_stubs

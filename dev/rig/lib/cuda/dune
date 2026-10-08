@@ -11,6 +11,7 @@
 
 (library
  (name rig_cuda)
+ (public_name rig.cuda)
  (libraries rig_cuda_abi rig_edge)
  (install_c_headers rig_cuda)
  (foreign_stubs

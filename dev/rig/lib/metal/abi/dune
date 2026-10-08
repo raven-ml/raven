@@ -1,2 +1,3 @@
 (library
- (name rig_metal_abi))
+ (name rig_metal_abi)
+ (public_name rig.metal.abi))

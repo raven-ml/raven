@@ -4,5 +4,6 @@
 
 (library
  (name rig_edge)
+ (public_name rig.edge)
  (modules)
  (install_c_headers rig_edge))

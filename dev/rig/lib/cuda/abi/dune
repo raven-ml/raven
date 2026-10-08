@@ -1,2 +1,3 @@
 (library
- (name rig_cuda_abi))
+ (name rig_cuda_abi)
+ (public_name rig.cuda.abi))

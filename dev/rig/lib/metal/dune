@@ -3,6 +3,7 @@
 
 (library
  (name rig_metal)
+ (public_name rig.metal)
  (libraries rig_edge rig_metal_abi)
  (install_c_headers rig_metal rig_metal_ring)
  (foreign_stubs

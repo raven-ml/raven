@@ -437,6 +437,25 @@
   (repl toplevel notebooks interactive-computing literate-programming)))
 
 (package
+ (name rig)
+ (dir dev/rig)
+ (synopsis "Compute devices for OCaml")
+ (description
+  "Rig drives the host's CPU, Metal, CUDA, AMD and NVIDIA GPUs, files and remote machines as devices: their memory, the order of work across them, and the work itself. AMD and NVIDIA GPUs run through their kernel drivers or directly over PCI.")
+ (depends
+  (ocaml
+   (>= 5.5.0))
+  dune
+  ; tests
+  (windtrap
+   (and
+    :with-test
+    (>= 0.2.0)))
+  (thumper :with-test))
+ (tags
+  (gpu device driver metal cuda amd nvidia)))
+
+(package
  (name raven)
  (allow_empty)
  (dir packages/raven)

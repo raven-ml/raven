@@ -1,2 +1,3 @@
 (library
- (name rig_elf))
+ (name rig_elf)
+ (public_name rig.elf))

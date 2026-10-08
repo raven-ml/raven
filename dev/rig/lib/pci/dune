@@ -2,6 +2,7 @@
 
 (library
  (name rig_pci)
+ (public_name rig.pci)
  (private_modules tlsf sysmem bus_address ops sysfs vfio local fail)
  (modules_without_implementation ops)
  (libraries unix)

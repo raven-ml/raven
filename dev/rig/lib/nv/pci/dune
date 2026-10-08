@@ -2,6 +2,7 @@
 
 (library
  (name rig_nv_pci)
+ (public_name rig.nv.pci)
  (libraries rig_nv rig_pci rig_elf)
  (private_modules defs falcon gsp)
  (modules_without_implementation
