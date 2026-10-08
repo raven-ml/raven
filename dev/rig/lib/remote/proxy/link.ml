@@ -375,7 +375,40 @@ let fresh () = Atomic.fetch_and_add ids 1 + 1
 let malformed l = fail l.job (strf "%s: a malformed frame" l.name)
 let text a = String.init (Array1.dim a) (fun i -> a.{i})
 
+(* The most bytes of a reason: wire.mli's bound. *)
+let max_why = 4096
+
+let cut why =
+  if String.length why > max_why then String.sub why 0 max_why else why
+
+let check_id fn id =
+  if id < 0 then
+    invalid_argf "Rig_remote_proxy.Link.%s: id %d is negative" fn id
+
+let check_ids : type a. a Wire.request -> unit = function
+  | Wire.Alloc { id; device; _ } ->
+      check_id "request" id;
+      check_id "request" device
+  | Wire.Map { id; device; region } ->
+      check_id "request" id;
+      check_id "request" device;
+      check_id "request" region
+  | Wire.Load { id; _ } -> check_id "request" id
+  | Wire.Entry { image; _ } -> check_id "request" image
+  | Wire.Rail { id; _ } -> check_id "request" id
+  | Wire.Join _ | Wire.Open _ -> ()
+
+(* A refusal's reason, a string. *)
+let refusal l a =
+  let r = reader a in
+  match finished r (string r) with
+  | why -> `Refused why
+  | exception Malformed ->
+      malformed l;
+      `Failed (Option.value (failure l.job) ~default:"")
+
 let request l q =
+  check_ids q;
   match request_c l.c (encode_request q) with
   | 0, a -> (
       match decode_answer q (reader a) with
@@ -383,10 +416,12 @@ let request l q =
       | exception Malformed ->
           malformed l;
           Error (`Failed (Option.value (failure l.job) ~default:"")))
-  | 1, a -> Error (`Refused (text a))
+  | 1, a -> Error (refusal l a)
   | _, a -> Error (`Failed (text a))
 
-let drop l id = post l.c k_drop (encoded (fun b -> add_u64 b id))
+let drop l id =
+  check_id "drop" id;
+  post l.c k_drop (encoded (fun b -> add_u64 b id))
 
 let next l =
   let k, a = next_c l.c in
@@ -423,7 +458,10 @@ let answer l q a =
   let payload =
     match a with
     | Ok v -> "\000" ^ encode_answer q v
-    | Error why -> "\001" ^ why
+    | Error why ->
+        encoded (fun b ->
+            add_u8 b 1;
+            add_string b (cut why))
   in
   post l.c k_answer payload
 

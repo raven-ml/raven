@@ -153,11 +153,38 @@ static _Atomic uint64_t *count(struct rail *r, int which) {
 
 /* Reasons */
 
-static char *reason(const char *fmt, const char *name, const char *what) {
-  int n = snprintf(NULL, 0, fmt, name, what);
-  char *s = malloc((size_t)n + 1);
-  if (s != NULL) snprintf(s, (size_t)n + 1, fmt, name, what);
-  return s;
+static struct rig_remote_why failed_why = {14, "the job failed"};
+static struct rig_remote_why forked_why = {
+    53, "a child of fork does not use its parent's connections"};
+
+/* A reason of the [n] bytes at [p], cut to [MAX_WHY]; NULL if memory ran
+   out. */
+static struct rig_remote_why *why_of(const char *p, size_t n) {
+  if (n > MAX_WHY) n = MAX_WHY;
+  struct rig_remote_why *w = malloc(sizeof *w);
+  char *s = w != NULL ? malloc(n + 1) : NULL;
+  if (s == NULL) {
+    free(w);
+    return NULL;
+  }
+  memcpy(s, p, n);
+  s[n] = 0;
+  w->n = n;
+  w->s = s;
+  return w;
+}
+
+static void why_free(struct rig_remote_why *w) {
+  if (w == NULL) return;
+  free((char *)w->s);
+  free(w);
+}
+
+static struct rig_remote_why *reason(const char *fmt, const char *name,
+                                     const char *what) {
+  char buf[MAX_WHY + 1];
+  int n = snprintf(buf, sizeof buf, fmt, name, what);
+  return why_of(buf, n < 0 ? 0 : (size_t)n);
 }
 
 static void error_text(int e, char *buf, size_t n) {
@@ -175,7 +202,8 @@ static void error_text(int e, char *buf, size_t n) {
 
 /* The root cause of a link's failure [code]: a socket error, or one of the
    receive answers. */
-static char *link_reason(struct rig_remote_link *l, int code) {
+static struct rig_remote_why *link_reason(struct rig_remote_link *l,
+                                          int code) {
   char buf[256];
   switch (code) {
   case ENDED:
@@ -218,30 +246,32 @@ static void close_if_idle(struct rig_remote_link *l) {
   }
 }
 
-/* Sends an abort with [why] if the stream takes it at once. */
-static void try_abort(struct rig_remote_link *l, const char *why) {
+/* Sends an abort with [why], a string as wire.mli lays it out, if the
+   stream takes it at once. */
+static void try_abort(struct rig_remote_link *l, const struct rig_remote_why *why) {
 #ifdef _WIN32
   (void)l;
   (void)why;
 #else
-  size_t n = strlen(why);
-  if (n > MAX_WHY) n = MAX_WHY;
-  unsigned char buf[HEADER + MAX_WHY];
-  put_header(buf, n, K_ABORT);
-  memcpy(buf + HEADER, why, n);
-  (void)send(l->fd, buf, HEADER + n, MSG_DONTWAIT | RIG_REMOTE_NOSIGNAL);
+  unsigned char buf[HEADER + 4 + MAX_WHY];
+  put_header(buf, 4 + why->n, K_ABORT);
+  for (int i = 0; i < 4; i++)
+    buf[HEADER + i] = (unsigned char)(why->n >> (8 * i));
+  memcpy(buf + HEADER + 4, why->s, why->n);
+  (void)send(l->fd, buf, HEADER + 4 + why->n,
+             MSG_DONTWAIT | RIG_REMOTE_NOSIGNAL);
 #endif
 }
 
 /* Fails [j] with [why], which it takes, unless it failed or closed. */
-static void fail_job(struct rig_remote_job *j, char *why) {
+static void fail_job(struct rig_remote_job *j, struct rig_remote_why *why) {
   pthread_mutex_lock(&j->mu);
   if (atomic_load(&j->state) != OPEN) {
     pthread_mutex_unlock(&j->mu);
-    free(why);
+    why_free(why);
     return;
   }
-  atomic_store(&j->why, why != NULL ? why : (char *)"the job failed");
+  atomic_store(&j->why, why != NULL ? why : &failed_why);
   atomic_store(&j->state, FAILED);
   for (struct rig_remote_link *l = j->links; l != NULL; l = l->next) {
     pthread_mutex_lock(&l->mu);
@@ -273,8 +303,7 @@ static void link_lost(struct rig_remote_link *l, int code) {
 int rig_remote_forked(struct rig_remote_job *j) {
   if (j->pid == (long)getpid()) return 0;
   if (atomic_load(&j->state) == OPEN) {
-    atomic_store(&j->why,
-                 (char *)"a child of fork does not use its parent's connections");
+    atomic_store(&j->why, &forked_why);
     atomic_store(&j->state, FAILED);
   }
   return 1;
@@ -653,12 +682,19 @@ static int recv_frame(struct rig_remote_link *l, int kind, uint64_t n, int64_t *
     pthread_mutex_unlock(&l->mu);
     return 1;
   case K_ABORT: {
+    /* A string: its length (u32) and its bytes. */
     unsigned char *p;
-    if (n > MAX_WHY) return MALFORMED;
+    if (n < 4 || n > 4 + MAX_WHY) return MALFORMED;
     int r = recv_payload(l, n, &p, last);
     if (r != 0) return r;
-    p[n] = 0;
-    fail_job(l->job, (char *)p);
+    uint64_t len = (uint64_t)p[0] | (uint64_t)p[1] << 8 |
+                   (uint64_t)p[2] << 16 | (uint64_t)p[3] << 24;
+    if (len != n - 4) {
+      free(p);
+      return MALFORMED;
+    }
+    fail_job(l->job, why_of((const char *)p + 4, (size_t)len));
+    free(p);
     return 1;
   }
   case K_ANSWER:
@@ -750,8 +786,9 @@ int rig_remote_queue(struct rig_remote_link *l, int kind,
 /* Stubs: jobs */
 
 static value job_reason(struct rig_remote_job *j) {
-  const char *w = atomic_load(&j->why);
-  return caml_copy_string(w != NULL ? w : "");
+  const struct rig_remote_why *w = atomic_load(&j->why);
+  return w != NULL ? caml_alloc_initialized_string(w->n, w->s)
+                   : caml_copy_string("");
 }
 
 /* A new open job, or 0 if one is open. Does not release the runtime. */
@@ -804,8 +841,7 @@ value caml_rig_remote_link_job_wait(value vj, value vms) {
 value caml_rig_remote_link_job_fail(value vj, value why) {
   struct rig_remote_job *j = Job_val(vj);
   if (rig_remote_forked(j)) return Val_unit;
-  char *w = strdup(String_val(why));
-  fail_job(j, w);
+  fail_job(j, why_of(String_val(why), caml_string_length(why)));
   return Val_unit;
 }
 
@@ -952,8 +988,7 @@ static value area_of(unsigned char *p, size_t n) {
                             1, p, (intnat)n);
 }
 
-static value area_of_string(const char *s) {
-  size_t n = strlen(s);
+static value area_of_bytes(const char *s, size_t n) {
   unsigned char *p = malloc(n + 1);
   if (p == NULL) caml_raise_out_of_memory();
   memcpy(p, s, n);
@@ -996,8 +1031,8 @@ value caml_rig_remote_link_request(value vl, value head) {
     if (k == -2) caml_raise_out_of_memory();
   }
   if (code == 2) {
-    const char *w = atomic_load(&l->job->why);
-    a = area_of_string(w != NULL ? w : "");
+    const struct rig_remote_why *w = atomic_load(&l->job->why);
+    a = w != NULL ? area_of_bytes(w->s, w->n) : area_of_bytes("", 0);
   } else {
     size_t n = q->n - 1;
     unsigned char *p = malloc(n + 1);
@@ -1040,10 +1075,10 @@ value caml_rig_remote_link_next(value vl) {
   if (c != NULL)
     a = area_of(c->p, c->n);
   else if (closed)
-    a = area_of_string("");
+    a = area_of_bytes("", 0);
   else {
-    const char *w = atomic_load(&l->job->why);
-    a = area_of_string(w != NULL ? w : "");
+    const struct rig_remote_why *w = atomic_load(&l->job->why);
+    a = w != NULL ? area_of_bytes(w->s, w->n) : area_of_bytes("", 0);
   }
   r = caml_alloc_tuple(2);
   Store_field(r, 0, Val_int(kind));

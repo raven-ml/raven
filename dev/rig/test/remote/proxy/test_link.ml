@@ -429,12 +429,23 @@ let no_object (_, f) =
 
 (* A root cause crosses to the peer's process and fails its job there,
    unchanged. *)
-let reaches_process why =
+let reaches_process ?cut why =
   with_job @@ fun j ->
   let h, _ = start j "idle" ~name:"agent" in
   guard h @@ fun () ->
   Link.fail j why;
+  let why = match cut with Some n -> String.sub why 0 n | None -> why in
   equal (list string) [ "failed: " ^ why ] (finish h)
+
+(* Ids are non-negative: a request that names a negative one raises before it
+   sends a byte. *)
+let negative_id () =
+  with_raw @@ fun _ l p ->
+  raises_match Exn.invalid_arg (fun () ->
+      Link.request l (Wire.Entry { image = -1; name = "f" }));
+  raises_match Exn.invalid_arg (fun () -> Link.drop l (-1));
+  Link.drop l 7;
+  equal (option frame_w) (Some (k_drop, u64 7)) (next_frame p)
 
 let reasons = [ "the agent lost its GPU"; ""; "\xe2\x9c\x93 \xff" ]
 
@@ -498,17 +509,12 @@ let causes =
           Format.asprintf "a root cause reaches the peer's process as %a"
             pp_bytes s)
         "reason" reasons reaches_process;
-      xfail ~reason:"a reason stops at its first NUL"
-        (test "a root cause with a NUL reaches the peer's process whole"
-           (fun () -> reaches_process "nul\000byte"));
-      xfail ~reason:"a reason is cut to about 4 KiB"
-        (test "a root cause of 70000 bytes reaches the peer's process whole"
-           (fun () -> reaches_process (String.make 70_000 'w')));
-      xfail
-        ~reason:
-          "a frame's why crosses as its bytes alone, without its u32 length"
-        (test "a frame's why is a string, as wire.mli lays strings out"
-           why_layout);
+      test "a root cause with a NUL reaches the peer's process whole" (fun () ->
+          reaches_process "nul\000byte");
+      test "a root cause of 70000 bytes reaches the peer's process cut to 4096"
+        (fun () -> reaches_process ~cut:4096 (String.make 70_000 'w'));
+      test "a frame's why is a string, as wire.mli lays strings out" why_layout;
+      test "a request naming a negative id raises and sends nothing" negative_id;
     ]
 
 (* After a failure *)
@@ -1097,7 +1103,6 @@ let count (e : Rig_remote_abi.end_) at =
   let v = Int64.to_int (get64 e.counts at) in
   Atomic.incr fence;
   v
-
 
 let round256 n = (n + 255) / 256 * 256
 

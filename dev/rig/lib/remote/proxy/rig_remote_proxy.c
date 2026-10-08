@@ -31,8 +31,8 @@ static int is_words(const struct rig_part *p) { return p->words != NULL; }
 static int is_fill(const struct rig_part *p) { return p->fill != NULL; }
 
 static const char *why(struct rig_remote_link *l) {
-  const char *w = atomic_load(&l->job->why);
-  return w != NULL ? w : "the job failed";
+  const struct rig_remote_why *w = atomic_load(&l->job->why);
+  return w != NULL ? w->s : "the job failed";
 }
 
 /* Room: a fill never fits, nor words on a device other than the host, nor

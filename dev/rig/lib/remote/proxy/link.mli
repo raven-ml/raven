@@ -18,6 +18,9 @@
       process's memory, advances the proxies' words and answers {!request}s. It
       queues every other frame for {!next}, a hand-over with its bytes.
 
+    Frames carry no integrity check after the handshake: the network between a
+    job's machines is trusted.
+
     {1:failure Jobs and failure}
 
     The links of a process belong to its {e job} ({!job}), which fails or closes
@@ -29,6 +32,9 @@
     - a frame is malformed: ["NAME: a malformed frame"];
     - a peer aborts: its reason, unchanged;
     - {!fail}.
+
+    A reason is any bytes, at most 4096 of them: a longer one is cut there, here
+    and in an agent's refusal ({!answer}).
 
     [NAME] is the link's {!name}. Then every link of the job sends its peer an
     abort with the root cause if its stream takes it at once, and shuts its
@@ -121,11 +127,15 @@ val request :
     agent's answer: [Error (`Refused why)] if the agent refused [r], the job
     going on, and [Error (`Failed why)] if the job failed, before or meanwhile,
     [why] its root cause. An answer that does not decode as [r]'s fails the job.
-*)
+
+    Raises [Invalid_argument] before sending anything if an id of [r] is
+    negative. *)
 
 val drop : t -> int -> unit
 (** [drop l id] sends the release of the agent's object [id] after every frame
-    queued before it. *)
+    queued before it.
+
+    Raises [Invalid_argument] if [id] is negative. *)
 
 (** {1:agent The agent's end} *)
 

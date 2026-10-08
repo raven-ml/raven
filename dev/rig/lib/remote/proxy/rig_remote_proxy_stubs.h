@@ -121,6 +121,13 @@ enum {
 
 enum { OPEN, CLOSED, FAILED };
 
+/* A reason, any bytes, at most 4096 of them, followed by a NUL for C
+   readers that stop at the first. */
+struct rig_remote_why {
+  size_t n;
+  const char *s;
+};
+
 struct entry;
 struct pending;
 struct cmd;
@@ -131,7 +138,7 @@ struct rig_remote_job {
   pthread_mutex_t mu;
   pthread_cond_t cv; /* the state changed, or a link ended */
   _Atomic int state;
-  _Atomic(char *) why; /* set before the state */
+  _Atomic(struct rig_remote_why *) why; /* set before the state */
   long pid;
   struct rig_remote_link *links;
 };
