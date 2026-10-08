@@ -544,12 +544,41 @@ value nx_array_of_array(value v, value values) {
 }
 
 /* copy: gathers [src]'s elements into [dst], a fresh contiguous array of
-   its dtype and shape, bits for bits. */
+   its dtype and shape, bits for bits.
+
+   Each run of the loop is a row of [dst]. A source that steps through the
+   row with a stride, a transposed one say, reads one cache line per
+   element; the next rows read the same lines. So when an outer axis steps
+   less in [src] than the row does, the copy goes in square tiles over that
+   axis and the row, TILE bytes of elements a side: each tile reads its
+   source lines once. Where the axis steps by one element in [src], a tile
+   moves 4x4 blocks, each four contiguous loads and four contiguous stores.
+   An element of under a byte keeps to rows. */
+
+#define TILE 256
 
 typedef struct {
   const nx_array *a; /* dst, src */
   const nx_loop *l;
 } copy_ctx;
+
+/* Copies [n] elements of [w] bytes, the [k]th from [s + k·bs] to
+   [d + k·bd]. Called with a constant [w], the copies are loads and stores. */
+static inline __attribute__((always_inline)) void strided(
+    uint8_t *d, int64_t bd, const uint8_t *s, int64_t bs, int64_t n,
+    size_t w) {
+  for (int64_t k = 0; k < n; k++, d += bd, s += bs) memcpy(d, s, w);
+}
+
+/* Copies the 4x4 block whose column q is the [4·w] bytes at [s + q·sc]
+   into the rows at [d + p·dr], [4·w] bytes each: a transpose. */
+static inline __attribute__((always_inline)) void block(
+    uint8_t *d, int64_t dr, const uint8_t *s, int64_t sc, size_t w) {
+  uint8_t x[4][4 * 16];
+  for (int q = 0; q < 4; q++) memcpy(x[q], s + q * sc, 4 * w);
+  for (int p = 0; p < 4; p++)
+    for (int q = 0; q < 4; q++) memcpy(d + p * dr + q * w, x[q] + p * w, w);
+}
 
 static void copy_run(void *ctx, const int64_t *at, int64_t len) {
   copy_ctx *c = ctx;
@@ -562,13 +591,81 @@ static void copy_run(void *ctx, const int64_t *at, int64_t len) {
       nx_sub_store(dst->base, bits, pd, nx_sub_load(src->base, bits, ps));
     return;
   }
-  size_t w = (size_t)bits / 8;
+  int64_t w = bits / 8;
+  uint8_t *d = dst->base + pd * w;
+  const uint8_t *s = src->base + ps * w;
   if (sd == 1 && ss == 1) {
-    memcpy(dst->base + pd * w, src->base + ps * w, (size_t)len * w);
+    memcpy(d, s, (size_t)(len * w));
     return;
   }
-  for (int64_t j = 0; j < len; j++, pd += sd, ps += ss)
-    memcpy(dst->base + pd * w, src->base + ps * w, w);
+  switch (w) {
+    case 1: strided(d, sd, s, ss, len, 1); return;
+    case 2: strided(d, 2 * sd, s, 2 * ss, len, 2); return;
+    case 4: strided(d, 4 * sd, s, 4 * ss, len, 4); return;
+    case 8: strided(d, 8 * sd, s, 8 * ss, len, 8); return;
+    default: strided(d, 16 * sd, s, 16 * ss, len, 16); return;
+  }
+}
+
+/* A tiled copy: [rows] rows of [cols] elements of [w] bytes, rows [dr] and
+   [sr] bytes apart in [d] and [s], elements [w] bytes apart in [d] and [sc]
+   in [s]. */
+static inline __attribute__((always_inline)) void tile(
+    uint8_t *d, int64_t dr, const uint8_t *s, int64_t sr, int64_t sc,
+    int64_t rows, int64_t cols, size_t w) {
+  int64_t i = 0;
+  if (sr == (int64_t)w)
+    for (; i + 4 <= rows; i += 4) {
+      int64_t j = 0;
+      for (; j + 4 <= cols; j += 4)
+        block(d + i * dr + j * w, dr, s + i * sr + j * sc, sc, w);
+      for (int p = 0; p < 4; p++)
+        strided(d + (i + p) * dr + j * w, w, s + (i + p) * sr + j * sc, sc,
+                cols - j, w);
+    }
+  for (; i < rows; i++) strided(d + i * dr, w, s + i * sr, sc, cols, w);
+}
+
+/* Copies a plane in tiles: [len] rows along the loop's axis r - 2, each as
+   long as its innermost extent. */
+static void tile_run(void *ctx, const int64_t *at, int64_t len) {
+  copy_ctx *c = ctx;
+  const nx_loop *l = c->l;
+  int r = l->rank;
+  int64_t w = c->a[0].bits / 8, cols = l->extent[r - 1];
+  int64_t dr = l->step[0][r - 2] * w, sr = l->step[1][r - 2] * w;
+  int64_t sc = l->step[1][r - 1] * w, side = TILE / w;
+  for (int64_t i = 0; i < len; i += side)
+    for (int64_t j = 0; j < cols; j += side) {
+      uint8_t *d = c->a[0].base + at[0] * w + i * dr + j * w;
+      const uint8_t *s = c->a[1].base + at[1] * w + i * sr + j * sc;
+      int64_t m = len - i < side ? len - i : side;
+      int64_t n = cols - j < side ? cols - j : side;
+      switch (w) {
+        case 1: tile(d, dr, s, sr, sc, m, n, 1); break;
+        case 2: tile(d, dr, s, sr, sc, m, n, 2); break;
+        case 4: tile(d, dr, s, sr, sc, m, n, 4); break;
+        case 8: tile(d, dr, s, sr, sc, m, n, 8); break;
+        default: tile(d, dr, s, sr, sc, m, n, 16); break;
+      }
+    }
+}
+
+static int64_t magnitude(int64_t x) { return x < 0 ? -x : x; }
+
+/* The outer axis of [l] on which [src] (operand 1) steps least, if it
+   steps less there than on the innermost axis, where [dst] steps by one
+   element; -1 otherwise. */
+static int tile_axis(const nx_loop *l) {
+  int r = l->rank, t = -1;
+  if (l->step[0][r - 1] != 1) return -1;
+  int64_t least = magnitude(l->step[1][r - 1]);
+  for (int i = 0; i < r - 1; i++)
+    if (magnitude(l->step[1][i]) < least) {
+      least = magnitude(l->step[1][i]);
+      t = i;
+    }
+  return t;
 }
 
 value nx_array_copy(value dst, value src) {
@@ -579,8 +676,24 @@ value nx_array_copy(value dst, value src) {
   int e = nx_read(2, in, a);
   if (e) return Val_int(e);
   if (!(e = nx_coalesce(2, a, &l))) {
+    int r = l.rank, t = a[0].bits < 8 ? -1 : tile_axis(&l);
     copy_ctx c = {a, &l};
-    walk(2, &l, &c, copy_run);
+    if (t < 0) walk(2, &l, &c, copy_run);
+    else {
+      /* Axis t becomes the rows, next to the innermost; the walk visits
+         the axes before them, and each call copies the tiles of a plane. */
+      int64_t x = l.extent[t];
+      l.extent[t] = l.extent[r - 2];
+      l.extent[r - 2] = x;
+      for (int k = 0; k < 2; k++) {
+        x = l.step[k][t];
+        l.step[k][t] = l.step[k][r - 2];
+        l.step[k][r - 2] = x;
+      }
+      nx_loop planes = l;
+      planes.rank = r - 1;
+      walk(2, &planes, &c, tile_run);
+    }
   }
   nx_done(2, a);
   return Val_int(e);
