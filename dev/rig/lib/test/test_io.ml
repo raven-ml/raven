@@ -65,9 +65,11 @@ module Pages = struct
     note t "pages";
     match t.mapped with
     | `Pages when t.read_only ->
+        let n = Bigarray.Array1.dim r.bytes in
         let own =
-          Bigarray.Array1.create Bigarray.char Bigarray.c_layout
-            (Bigarray.Array1.dim r.bytes)
+          Bigarray.Array1.sub
+            (B.bigarray Bigarray.char (B.create C.host (Int.max n page_bytes)))
+            0 n
         in
         Bigarray.Array1.blit r.bytes own;
         Some own
