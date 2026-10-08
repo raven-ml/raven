@@ -653,6 +653,8 @@ let file_round_trip (n, at_file, at) =
   let t = dev () in
   let v = Rig.submitted t.c in
   cover "no bytes" (n = 0);
+  cover "one byte" (n = 1);
+  cover "a page or more" (n >= page);
   cover "a file range off a page" (at_file mod page <> 0);
   with_path @@ fun src ->
   with_path @@ fun dst ->
@@ -670,12 +672,20 @@ let file_round_trip (n, at_file, at) =
   Law.round_trip octets buffer into out (random_bytes ~seed:n n);
   equal int ~msg:"values submitted" v (Rig.submitted t.c)
 
+(* A length is no bytes, one byte, a page's edges, or up to a MiB. Each of the
+   first three is drawn in about one case in five, so a property's 100 cases
+   cover each whatever its seed (a miss less than once in a billion seeds). *)
 let gen_file_range =
-  let edges = Gen.of_list [ 0; 1; page - 1; page; page + 1 ] in
-  Gen.triple
-    (Gen.frequency [ (1, edges); (3, Gen.int_range 0 (1 lsl 20)) ])
-    (Gen.int_range 0 (2 * page))
-    (Gen.int_range 0 256)
+  let lengths =
+    Gen.frequency
+      [
+        (1, Gen.of_list [ 0 ]);
+        (1, Gen.of_list [ 1 ]);
+        (1, Gen.of_list [ page - 1; page; page + 1 ]);
+        (2, Gen.int_range 0 (1 lsl 20));
+      ]
+  in
+  Gen.triple lengths (Gen.int_range 0 (2 * page)) (Gen.int_range 0 256)
 
 (* The pages of a file [of_file] opened are copy-on-write. *)
 let opened_file_borrow () =
@@ -712,7 +722,7 @@ let created_file_borrow () =
 let file_tests =
   group ~timeout:60. "files"
     [
-      prop ~count:30
+      prop
         ~examples:[ ((3 lsl 20) + 12345, 5, 16) ]
         "a file's bytes copy into the device's memory and back, with no work \
          on its timeline"
