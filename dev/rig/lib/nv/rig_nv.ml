@@ -104,7 +104,7 @@ let segment_bytes = 1 lsl 20
 let shared_window = 0x7294_0000_0000
 let local_window = 0x7293_0000_0000
 
-(* rig_nv_stubs.h's templates, by index, and their bounds. *)
+(* rig_nv_stubs.h's templates, by index. *)
 let t_acquire = 0
 let t_release = 1
 let t_copy_release = 2
@@ -114,9 +114,6 @@ let t_setup = 5
 let t_setup_copy = 6
 let t_invalidate = 7
 let t_idle = 8
-let template_words = 16
-let template_holes = 6
-let hole_ops = 3
 
 (* A pending local memory is one word: its address, below 2^40, and its bytes
    per cluster in units of 32 KiB above them. *)
@@ -140,9 +137,9 @@ external set_channel : int -> int -> int array -> bool = "caml_rig_nv_channel"
 
 external set_doorbell : int -> int -> unit = "caml_rig_nv_doorbell" [@@noalloc]
 
-external set_template : int -> int -> int array -> int array -> unit
+external set_template :
+  int -> int -> string -> (int * int Packet.word) list -> unit
   = "caml_rig_nv_template"
-[@@noalloc]
 
 external set_entry : int -> int -> int -> unit = "caml_rig_nv_entry" [@@noalloc]
 external set_bar : int -> int -> unit = "caml_rig_nv_bar" [@@noalloc]
@@ -354,47 +351,11 @@ let local d n =
 
 (* Templates *)
 
-(* The ints of a hole as caml_rig_nv_template reads them: its index, slot, width
-   and number of operations, then each operation's shift (an addition if [0])
-   and addend. *)
-let hole_ints (at, (word : int Packet.word)) =
-  let rec ops acc : int Packet.term -> int * (int * int64) list = function
-    | Packet.Value s -> (s, acc)
-    | Packet.Add (t, n) -> ops ((0, n) :: acc) t
-    | Packet.Shift (t, n) -> ops ((n, 0L) :: acc) t
-  in
-  let wide, term =
-    match word with
-    | Packet.W32 t -> (0, t)
-    | Packet.W64 t -> (1, t)
-    | Packet.Dword _ ->
-        invalid_arg "Rig_nv.make: a template hole holds no value"
-  in
-  let slot, l = ops [] term in
-  if List.length l > hole_ops then
-    invalid_arg "Rig_nv.make: a template hole takes too many operations";
-  let op (shift, n) =
-    let x = Int64.to_int n in
-    if Int64.of_int x <> n then
-      invalid_arg "Rig_nv.make: a template's addend exceeds an int";
-    [| shift; x |]
-  in
-  let pad = List.init (hole_ops - List.length l) (fun _ -> (0, 0L)) in
-  Array.concat ([| at; slot; wide; List.length l |] :: List.map op (l @ pad))
-
 (* Sets template [k] of [self] to [p]: the words of [p] with a hole for every
    value [known] does not give. *)
 let template self k ~known p =
-  let bytes, holes = Packet.template known p in
-  let words =
-    Array.init
-      (String.length bytes / 4)
-      (fun i ->
-        Int32.to_int (String.get_int32_le bytes (4 * i)) land 0xffff_ffff)
-  in
-  if Array.length words > template_words || List.length holes > template_holes
-  then invalid_arg "Rig_nv.make: a template exceeds its bounds";
-  set_template self k words (Array.concat (List.map hole_ints holes))
+  let words, holes = Packet.template known p in
+  set_template self k words holes
 
 let unknown _ = None
 let known v = Some (Int64.of_int v)

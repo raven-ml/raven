@@ -84,13 +84,6 @@ static void close_segment(const struct device *d, struct channel *c) {
   c->open_words = 0;
 }
 
-static uint64_t fill(const struct hole *h, const uint64_t *values) {
-  uint64_t x = values[h->slot];
-  for (int i = 0; i < h->nops; i++)
-    x = h->shift[i] ? x >> h->shift[i] : x + h->n[i];
-  return x;
-}
-
 /* Writes template [k] with the values [a], [b], [n] into the open segment
    of [c]. A segment never wraps: one whose words would pass the ring's end,
    including one that ends exactly there, is closed first, and the words go
@@ -107,15 +100,8 @@ static void emit(const struct device *d, struct channel *c, int k, uint64_t a,
     c->open = c->written;
   }
   uint64_t at = c->written & (c->size - 1);
-  uint32_t *w = (uint32_t *)(c->segments + at);
-  memcpy(w, t->words, bytes);
   const uint64_t values[3] = {a, b, n};
-  for (int i = 0; i < t->nholes; i++) {
-    const struct hole *h = &t->holes[i];
-    uint64_t x = fill(h, values);
-    w[h->at] = (uint32_t)x;
-    if (h->wide) w[h->at + 1] = (uint32_t)(x >> 32);
-  }
+  rig_nv_fill(t, values, (uint32_t *)(c->segments + at));
   c->written += bytes;
   c->open_words += (uint64_t)t->nwords;
 }

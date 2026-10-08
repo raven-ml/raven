@@ -21,6 +21,7 @@
 #include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "rig_nv.h"
 
@@ -62,6 +63,22 @@ struct template {
   int nwords, nholes;
   struct hole holes[TEMPLATE_HOLES];
 };
+
+/* Template [t]'s words in [w], its holes filled from [values]: their
+   count. */
+static inline int rig_nv_fill(const struct template *t,
+                              const uint64_t *values, uint32_t *w) {
+  memcpy(w, t->words, 4 * (size_t)t->nwords);
+  for (int i = 0; i < t->nholes; i++) {
+    const struct hole *h = &t->holes[i];
+    uint64_t x = values[h->slot];
+    for (int j = 0; j < h->nops; j++)
+      x = h->shift[j] ? x >> h->shift[j] : x + h->n[j];
+    w[h->at] = (uint32_t)x;
+    if (h->wide) w[h->at + 1] = (uint32_t)(x >> 32);
+  }
+  return t->nwords;
+}
 
 /* A submission's use of a channel: the value, and the ring's and the
    segment ring's counts once it was written. */

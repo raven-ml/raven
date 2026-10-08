@@ -30,3 +30,16 @@
  (libraries rig rig_nv rig_nv_nvidia rig_nv_support unix windtrap)
  (deps
   (glob_files fixtures/*)))
+
+; test_template fills the ring writer's templates with no GPU: its stubs read a
+; device state through the driver's own header.
+
+(test
+ (name test_template)
+ (modules test_template)
+ (libraries rig_nv rig_nv_abi rig_edge windtrap)
+ (foreign_stubs
+  (language c)
+  (include_dirs
+   (lib rig_nv))
+  (names test_template_stubs)))
