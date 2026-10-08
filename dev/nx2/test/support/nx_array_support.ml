@@ -33,8 +33,10 @@ module Io = struct
 
   let region_key : region Type.Id.t = Type.Id.make ()
   let budget () = max_int
+  let allocations = Atomic.make 0
 
   let alloc () n =
+    Atomic.incr allocations;
     Some (Bigarray.Array1.create Bigarray.char Bigarray.c_layout n)
 
   let free () (_ : region) = ()
@@ -52,3 +54,4 @@ let io =
     | Error e -> failwith e)
 
 let io_device () = Lazy.force io
+let io_allocations () = Atomic.get Io.allocations

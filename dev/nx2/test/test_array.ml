@@ -299,6 +299,28 @@ let test_dead_access () =
   fails (fun () -> A.bitcast D.Uint32 a);
   fails (fun () -> A.bitcast D.Uint8 a)
 
+let test_dead_bigarray () =
+  let a = A.to_device (S.io_device ()) (floats32 [| 2 |] [| 1.; 2. |]) in
+  kill (A.buffer a);
+  raises_match (Exn.invalid_arg ~substring:"dead") (fun () ->
+      A.bigarray Bigarray.float32 a)
+
+let test_dead_empty () =
+  let b = B.create Rig.host 16 in
+  let a = A.v f32 (L.contiguous [| 0 |]) b in
+  kill b;
+  raises_match (Exn.invalid_arg ~substring:"dead") (fun () ->
+      A.to_device Rig.host a)
+
+(* A copy the host cannot make is refused before it allocates. *)
+let test_refused_copy () =
+  let d = S.io_device () in
+  let a = A.to_device d (floats32 [| 2 |] [| 1.; 2. |]) in
+  Rig.free_cache d;
+  let before = S.io_allocations () in
+  raises_match (Exn.invalid_arg ~substring:"host") (fun () -> A.copy a);
+  equal int before (S.io_allocations ())
+
 (* Writes to the elements of one byte from two domains keep each other. *)
 let int4s = abstract "a"
 let element = Gen.int_range 0 3
@@ -603,6 +625,9 @@ let tests =
           test_set_refuses;
         test "memory the host does not address is refused" test_io_refuses;
         test "a dead buffer is refused" test_dead_access;
+        test "bigarray refuses a dead buffer off the host" test_dead_bigarray;
+        test "to_device refuses a dead buffer under no element" test_dead_empty;
+        test "a refused copy allocates nothing" test_refused_copy;
         stateful ~domains:2
           "writes to one byte from two domains keep each other" int4_commands;
       ];
