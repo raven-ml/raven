@@ -12,7 +12,6 @@
 
 #include <stdatomic.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -259,7 +258,8 @@ static void run_split(program f, void **buffers, int64_t *copies, int64_t n,
 }
 
 /* The entry of linked code. Its copies come from the stack when they fit,
-   else from malloc, else from the stack for as many threads as fit. */
+   else from malloc, else from the stack for as many threads as fit: at
+   least one, since n <= SMALL_WORDS. */
 SYSV void device_host_call(program f, void **buffers, const int64_t *values,
                            int64_t n, const int64_t *split) {
   if (split == NULL) {
@@ -277,10 +277,6 @@ SYSV void device_host_call(program f, void **buffers, const int64_t *values,
       copies = small;
       threads = (int)(SMALL_WORDS / stride);
     }
-  }
-  if (threads == 0) {
-    fputs("device_host_call: no memory for a copy of the values\n", stderr);
-    abort();
   }
   memcpy(copies, values, (size_t)n * sizeof *copies);
   run_split(f, buffers, copies, n, split, threads);

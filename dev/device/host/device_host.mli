@@ -174,10 +174,10 @@ val workers : unit -> int
     otherwise split by the four values at [split], [extent], [blocks], [lo] and
     [hi], in the order of {!type-split}'s fields. It returns once every call of
     [f] has. It assumes what {!call} checks: [0 <= extent], [1 <= blocks], and
-    [lo] and [hi] are distinct indices below [n]. It is called from code that
-    {!call} runs, or from a block of it, with the OCaml runtime released; called
-    from a block of a split, it runs on that block's thread alone. It aborts the
-    process if it finds no memory for a copy of more than 1024 values.
+    [lo] and [hi] are distinct indices below [n], and [n <= 1024]. It is called
+    from code that {!call} runs, or from a block of it, with the OCaml runtime
+    released; called from a block of a split, it runs on that block's thread
+    alone.
 
     {2:abi Calling conventions}
 
