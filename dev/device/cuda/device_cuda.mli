@@ -51,19 +51,27 @@
 
     {b Faults.} CUDA reports a fault of a device's work, such as an illegal
     address or a kernel ended by a display's watchdog, at a later call. Work
-    that runs long is no fault: only CUDA's report is ({!sleep}). After a fault
-    the context's error lasts for the process, and the GPU no longer opens.
+    that runs long is no fault: only CUDA's report is ({!sleep}). A fault leaves
+    its error in the GPU's context for the process: every later call in the
+    context answers it, and the GPU no longer opens (Error Handling,
+    [CUDA_ERROR_ILLEGAL_ADDRESS]). CUDA then runs none of the context's queued
+    work. The reference does not state this; it is observed with the 615 driver,
+    and {!stop} relies on it.
 
-    A function that calls CUDA answers a failure as its result ([None], [Error])
-    while [g]'s context is sound, and raises {!Fault} with the context's error
-    once a fault left one there. {!signaled}, {!free}, {!unmap} after {!stop},
-    and {!stop} never raise it.
+    {b Errors.} A function that calls CUDA answers CUDA's refusal as its result
+    ([None], [Error]) while [g]'s context is sound, and raises
+    {!exception-Fault} with the context's error once a fault left one there. The
+    functions that raise it are {!alloc}, {!map_peer}, {!map_host},
+    {!val-image}, {!entry}, {!unload} and {!sleep}; {!submit} answers [`Failed]
+    instead. Misuse, such as a region of another device or a value out of order,
+    raises [Invalid_argument].
 
     {b Domains.} Every value may be called from any domain, at the same time as
-    others, with three exceptions. {!room} and {!submit} run one call at a time,
-    in value order: their caller serialises them. {!stop} is called once, after
-    every other call returned; after it only {!free}, {!unmap} and the functions
-    of {!capability} are called. {!sleep} may run while another domain submits.
+    others, with three exceptions. {!room} and {!submit}, and their C forms, run
+    one call at a time, in value order: their caller serialises them. {!stop} is
+    called once, after every other call returned; after it only {!free},
+    {!unmap} and the [symbol] function of {!val-capability} are called. {!sleep}
+    may run while another domain submits.
 
     {b References.}
     - {{:https://docs.nvidia.com/cuda/cuda-driver-api/}CUDA Driver API}: Primary
@@ -160,9 +168,9 @@ val alloc : t -> [ `Device | `Pinned | `Mapped ] -> int -> region option
 (** [alloc g kind n] is [Some r] with [r] [n] new bytes:
     - [`Device], GPU memory, which the host does not address;
     - [`Pinned] and [`Mapped], page-locked host memory that the host and every
-      CUDA device address. It is not write-combined, so the host reads it as
-      fast as other memory. CUDA maps no GPU memory for the host, so [`Mapped]
-      is host memory too.
+      CUDA device address ([cuMemHostAlloc], portable and mapped). It is not
+      write-combined, so the host reads it as fast as other memory. CUDA maps no
+      GPU memory for the host, so [`Mapped] is host memory too.
 
     It is [None] if CUDA refuses the allocation, for lack of memory or
     otherwise.
@@ -192,7 +200,8 @@ val map_peer : t -> t -> region -> region option
     of [g']'s region [r], if [g]'s work can address it: always for host memory;
     for GPU memory if CUDA gives [g]'s GPU access to [g']'s, which [map_peer]
     then enables for the pair. It is [None] otherwise. {!unmap} of [r'] ends
-    only [r'], and {!free} refuses it.
+    only [r'], and {!free} refuses it. [r'] is [r]'s memory: the caller unmaps
+    [r'] before it frees or unmaps [r].
 
     Raises [Invalid_argument] if [g'] is [g], or if [r] is no region of [g'] or
     was freed or unmapped. *)
@@ -206,10 +215,15 @@ val map_host : t -> nativeint -> int -> region option
 
     Page-locking is the process's. A range inside one that {!map_host}
     page-locked counts against it: the pages stay locked until every region
-    {!map_host} gave over them, on any device, is unmapped. A range that
-    overlaps one without lying inside it is [None]. Memory that CUDA page-locked
-    for another owner, such as an allocation of {!alloc} or of another library,
-    is mapped as it is, and must stay page-locked until [r] is unmapped.
+    {!map_host} gave over them, on any device, is unmapped. A range that shares
+    a page with one without lying inside it is [None]. Memory that CUDA
+    page-locked for another owner, such as an allocation of {!alloc} or of
+    another library, is mapped as it is, uncounted, and must stay page-locked
+    until [r] is unmapped.
+
+    [r]'s {!address} is the one CUDA gives for the memory
+    ([cuMemHostGetDevicePointer]), which every device's work uses under unified
+    addressing.
 
     Raises [Invalid_argument] if [n < 1]. *)
 
@@ -266,13 +280,15 @@ val part :
     smaller than its own. Parts on one queue run in array order; parts on two
     queues that [after] does not order may run at once. [w] is:
     - [`Fill (f, arg, units, bytes)], a C function [f] that enqueues its work on
-      the queue's stream, called during {!submit} with [arg] as
+      the queue's stream. {!submit} calls it as [f stream arg v], with [g]'s
+      context current on the calling thread and [v] the submission's value, as
       {!Device_cuda_abi} states. Nothing bounds what a fill enqueues, so it
-      declares no room: [units] and [bytes] are [0], and {!part} refuses any
+      declares no room: [units] and [bytes] are [0], and {!val-part} refuses any
       other;
     - [`Copy ((dst, o), (src, o'), n)], a copy of the [n] bytes of [src] at
-      offset [o'] to [dst] at offset [o], any two regions of [g], whose ranges
-      do not overlap.
+      offset [o'] to [dst] at offset [o], any two regions of [g]. The caller
+      keeps the two ranges apart: a copy between overlapping ranges writes
+      undefined bytes.
 
     Raises [Invalid_argument] if [queue] is not a queue of [g], if [w] is
     [`Words _], which names ring words a CUDA device has not, if [units] or
@@ -286,9 +302,9 @@ val part :
 val room : t -> part array -> [ `Fits | `Later | `Never ]
 (** [room g ps] is [`Fits]: CUDA's streams take any amount of work, and a call
     of {!submit} that finds a stream full waits for earlier work to free it. Its
-    C form, [device_cuda_room], answers [NX_NEVER] for a part {!part} refuses:
-    one with words, ring units or segment bytes, or on no queue of the device.
-*)
+    C form, [device_cuda_room], answers [NX_NEVER] for a part {!val-part}
+    refuses: one with words, ring units or segment bytes, or on no queue of the
+    device. *)
 
 val submit :
   t ->
@@ -310,10 +326,16 @@ val submit :
     The result is [`Ok] once every part is enqueued, or [`Failed why] with the
     step and the error of the first CUDA call that failed, a fill's included, as
     ["running a fill: CUDA_ERROR_ILLEGAL_ADDRESS: an illegal memory access was
-     encountered"]. Enqueued work may have run. Unless the context failed, [v]
-    is still written into the timeline word once the work enqueued for it
-    completed. Every later [submit] answers the same [`Failed]: the context may
-    hold an error for the process.
+     encountered"]. The parts enqueued before the failure may run; the others
+    never do. A failed device stays failed, since CUDA may keep the context's
+    error for the process: every later [submit] enqueues none of its parts and
+    answers the same [`Failed].
+
+    The timeline word still reaches every value, so that work waiting on it
+    elsewhere runs on: a failed [submit], and every later one, writes [v] after
+    its waits, every earlier value and the work enqueued for [v]. It writes
+    nothing once the context failed, whose work no longer runs, or if CUDA
+    refuses a call that orders the write.
 
     [submit] may block while a stream is full, until the device's earlier work
     completes, and lets other domains run meanwhile.
@@ -339,9 +361,10 @@ val word : t -> region
     holding, as an unsigned 64-bit integer in the host's byte order, the last
     value [v] such that the work of every value up to [v] completed. [g]'s
     streams write it after a fence that makes the work's writes visible
-    ([cuStreamWriteValue64]); it never decreases. Other devices may map it and
-    wait on it. It is never freed: another device's work may still read it after
-    [g] is stopped or collected. *)
+    ([cuStreamWriteValue64] with [CU_STREAM_WRITE_VALUE_DEFAULT], a system-wide
+    memory fence before the write); it never decreases. Other devices may map it
+    and wait on it. It is never freed: another device's work may still read it
+    after [g] is stopped or collected. *)
 
 val signaled : t -> int
 (** [signaled g] is the value in {!word}, read with acquire order: the work of
@@ -351,11 +374,11 @@ val sleep : t -> seen:int -> still_ms:int -> unit
 (** [sleep g ~seen ~still_ms] returns once [g]'s timeline word differs from
     [seen], at once if it does already, or after [still_ms] milliseconds;
     [still_ms] is not negative. It asks CUDA each millisecond whether [g]'s
-    streams met an error, so it finds a fault at most a millisecond after CUDA
-    reports it. It lets other domains run while it waits, and may run while
-    {!submit} does.
+    streams met an error ([cuStreamQuery]), so it finds a fault at most a
+    millisecond after CUDA reports it. It lets other domains run while it waits,
+    and may run while {!submit} does.
 
-    Raises {!Fault} with CUDA's error if [g]'s work met one. *)
+    Raises {!exception-Fault} with CUDA's error if [g]'s work met one. *)
 
 (** {1:loss Loss} *)
 
@@ -365,11 +388,11 @@ exception Fault of string
 val stop : t -> [ `Stopped | `Unknown ]
 (** [stop g] stops [g] for good. It is [`Stopped] if [g]'s work no longer writes
     memory: the work of every value it was given completed, its streams are
-    idle, or an error ended the context's work. The timeline word then holds at
+    idle, or a fault ended the context's work. The timeline word then holds at
     least the last value {!submit} was given, so work of other devices that
     waits on it runs on, and [g]'s streams are destroyed. It is [`Unknown] if
     work still runs. The timeline word then reaches the last value {!submit} was
     given once that work ends, unless it waits on a word of another device that
     never reaches its value; the GPU opens again once that work ends. It never
-    waits. After [stop], only {!free}, {!unmap} and the functions of
-    {!capability} may be called on [g]; none raises {!Fault}. *)
+    waits. After [stop], only {!free}, {!unmap} and the [symbol] function of
+    {!val-capability} may be called on [g]; none raises {!exception-Fault}. *)
