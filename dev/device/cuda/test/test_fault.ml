@@ -64,6 +64,7 @@ let faults () =
   contains ~sub:"CUDA_ERROR_ILLEGAL_ADDRESS" e
 
 let () =
+  S.hold_gpu ();
   exit
     (run "device_cuda fault"
        [

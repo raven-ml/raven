@@ -1009,6 +1009,7 @@ let stateful =
     ]
 
 let () =
+  S.hold_gpu ();
   exit
     (run "device_cuda"
        [ opening; facts; memory; work; images; timeline; two; stateful ])

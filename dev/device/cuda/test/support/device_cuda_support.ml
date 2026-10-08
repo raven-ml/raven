@@ -5,34 +5,45 @@
 
 open Windtrap
 
+let strf = Printf.sprintf
+
 (* CUDA, as the capability finds it *)
 
 external bind_symbols : nativeint array -> unit = "device_cuda_test_bind"
-external lock : string -> bool = "device_cuda_test_lock"
 external current : unit -> nativeint = "device_cuda_test_current"
 external locked : int -> bool = "device_cuda_test_locked"
 external attribute : int -> int = "device_cuda_test_attribute"
 external register : int -> int -> unit = "device_cuda_test_register"
 external unregister : int -> unit = "device_cuda_test_unregister"
 
+(* The machine's GPU lock *)
+
+external lock : string -> string -> int = "device_cuda_test_lock"
+
+let gpu_lock = "/tmp/raven-device-gpu.lock"
+
+(* The longest wait for the lock, in seconds: the machine's suites, from every
+   checkout and user, take it in turn. *)
+let gpu_wait = 300
+
+let holder () =
+  match In_channel.with_open_bin gpu_lock In_channel.input_all with
+  | note -> String.trim note
+  | exception Sys_error _ -> "a process that left no note"
+
+(* [lock] naps 100 ms each time it is refused. *)
+let rec take refused =
+  match lock gpu_lock Sys.executable_name with
+  | 0 -> ()
+  | -1 when refused < gpu_wait * 10 -> take (refused + 1)
+  | -1 ->
+      failwith
+        (strf "%s: still held after %d s, by %s" gpu_lock gpu_wait (holder ()))
+  | errno -> failwith (strf "%s: errno %d" gpu_lock errno)
+
+let hold_gpu () = if Device_cuda.count () > 0 then take 0
+
 (* The GPU *)
-
-let gpu_lock = "DEVICE_CUDA_TEST_GPU_LOCK"
-
-(* The lock is taken once and kept: [Some true] once taken. *)
-let held = ref None
-
-let take_lock () =
-  match !held with
-  | Some taken -> taken
-  | None ->
-      let taken =
-        match Sys.getenv_opt gpu_lock with
-        | None | Some "" -> skip ~reason:(gpu_lock ^ " names no lock file") ()
-        | Some file -> lock file
-      in
-      held := Some taken;
-      taken
 
 let bind g =
   let { Device_cuda_abi.symbol } = Device_cuda.capability g in
@@ -64,8 +75,7 @@ let stop g =
 
 let gpu () =
   if Device_cuda.count () = 0 then skip ~reason:"CUDA sees no GPU" ();
-  if not (take_lock ()) then
-    skip ~reason:"another process holds the GPU lock" ();
+  hold_gpu ();
   Option.iter stop !opened;
   let g = Result.get_ok (Device_cuda.open_ 0) in
   opened := Some g;
