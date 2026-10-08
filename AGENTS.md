@@ -139,6 +139,13 @@ answer, decide it and say why; ask only for the maintainer's own calls.
 - Doc comments live in `.mli` only and start `(** [f x] …`. Operations that
   match on dtypes take explicit type annotations, as in
   `let f (type a b) (t : (a, b) t) =`.
+- A private module's `.mli` is its contract with its siblings: a `(**`
+  preamble naming what it holds, then its invariants, concurrency, errors
+  and, for C, ownership, where they exist. A value gets a doc only for what
+  its name, type and the public docs don't say: preconditions, raises,
+  blocking, ownership, units, effects. A module implementing a public one
+  points to it and documents only what differs. The representation of an
+  abstract type is commented at the type in the `.ml`.
 - A block that isn't obvious gets a short comment: what it does and why, with
   an example when it helps. ASCII diagrams for whole systems. Don't narrate
   the code's arrangement. Section headers are plain `(* Name *)`.
