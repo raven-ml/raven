@@ -81,6 +81,53 @@ let test_refusals () =
       Sub.make ~reads:(-1) ~writes:0 ~waits:0 d [||]);
   raises_match Exn.invalid_arg (fun () -> C.submit (empty ~reads:1 d))
 
+(* Each misuse [Submission.make] and the slot setters state raises
+   [Invalid_argument]. *)
+let test_make_refusals () =
+  let d, _ = P.open_ ~host_visible:false "submit:make-refusals" in
+  let arg = B.create C.host 8 in
+  let unseen = B.create d 8 and other = B.create d 16 in
+  let dead = B.create d 8 in
+  C.Claim.with_ ~read:[] ~donate:[ [ dead ] ] (fun c ->
+      ignore (C.Claim.consume c ~why:"donated" dead));
+  let copy src dst =
+    { Sub.queue = "COPY:0"; after = [||]; work = Sub.Copy { src; dst } }
+  in
+  let make d parts = ignore (Sub.make ~reads:0 ~writes:0 ~waits:0 d parts) in
+  let s = Sub.make ~reads:1 ~writes:1 ~waits:1 d [||] in
+  List.iter
+    (fun (msg, f) -> raises_match ~msg Exn.invalid_arg f)
+    [
+      ("on the host", fun () -> make C.host [||]);
+      ( "after a negative index",
+        fun () -> make d [| { (bump arg) with after = [| -1 |] } |] );
+      ( "a fill's argument the host does not address",
+        fun () -> make d [| bump unseen |] );
+      ( "a copy of buffers of two sizes",
+        fun () -> make d [| copy unseen other |] );
+      ( "a copy of another device's memory",
+        fun () -> make d [| copy arg (B.create C.host 8) |] );
+      ("a part's dead buffer", fun () -> make d [| copy dead unseen |]);
+      ("a read slot past the count", fun () -> Sub.read s 1 arg);
+      ("a write slot past the count", fun () -> Sub.write s 1 arg);
+      ( "a negative wait slot",
+        fun () -> Sub.wait_for s (-1) (C.submit (empty d)) );
+    ]
+
+(* A submit that raises clears the slots set for it: the next submit finds its
+   read slot unset. *)
+let test_cleared_on_raise () =
+  let d = memory "submit:cleared" in
+  let producer, pp = P.open_ "submit:cleared-producer" in
+  let point = C.submit (empty producer) in
+  P.fail pp;
+  (try ignore (C.submit (empty producer)) with C.Lost _ -> ());
+  let s = empty ~reads:1 ~waits:1 d in
+  Sub.read s 0 (B.create C.host 8);
+  Sub.wait_for s 0 point;
+  raises_match (function C.Lost _ -> true | _ -> false) (fun () -> C.submit s);
+  raises_match Exn.invalid_arg (fun () -> C.submit s)
+
 (* A slot whose buffer died after it was set refuses the submit. *)
 let test_dead_slot () =
   let d = memory "submit:dead-slot" in
@@ -481,6 +528,9 @@ let tests =
     group ~timeout "refusals"
       [
         test "a submission refuses what it cannot run" test_refusals;
+        test "a submission refuses each misuse its interface states"
+          test_make_refusals;
+        test "a submit that raises clears its slots" test_cleared_on_raise;
         test "a slot whose buffer died refuses the submit" test_dead_slot;
         test "a copy on a device that runs no copies is refused"
           test_copy_refused;

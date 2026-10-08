@@ -253,20 +253,48 @@ let refuses_stamps stamps () =
 
 (* Copies *)
 
+let copies events =
+  List.filter_map
+    (function
+      | Prof.Copy c -> Some (C.name c.src, C.name c.dst, c.bytes) | _ -> None)
+    events
+
 let test_copy () =
   let d = memory "profile:copy" in
   let src = B.create C.host 100 and dst = B.create d 100 in
   let (), events = Prof.take (fun () -> B.copy ~src ~dst) in
-  let copies =
-    List.filter_map
-      (function
-        | Prof.Copy c -> Some (C.name c.src, C.name c.dst, c.bytes) | _ -> None)
-      events
-  in
   equal
     (list (triple string string int))
     [ ("CPU", "profile:copy", 100) ]
-    copies
+    (copies events)
+
+(* A copy through the staging memory also records its copies into and out of it:
+   between devices that map none of each other's memory. *)
+let test_staged_copy () =
+  let open_ name = P.open_ ~host_visible:false ~peers:false name in
+  let d, _ = open_ "profile:staged-src" and e, _ = open_ "profile:staged-dst" in
+  let src = B.create d 64 and dst = B.create e 64 in
+  let (), events = Prof.take (fun () -> B.copy ~src ~dst) in
+  equal
+    (slist (triple string string int) compare)
+    [
+      ("CPU", "profile:staged-dst", 64);
+      ("profile:staged-src", "CPU", 64);
+      ("profile:staged-src", "profile:staged-dst", 64);
+    ]
+    (copies events)
+
+(* An exception [after]'s function raises is raised again by the wait that ran
+   it. *)
+let test_after_raises () =
+  let d, _ = P.open_ "profile:after-raises" in
+  let (), _ =
+    Prof.take (fun () ->
+        let p = C.submit (Sub.make ~reads:0 ~writes:0 ~waits:0 d [||]) in
+        Prof.after p (fun () -> raise Exit);
+        raises Exit (fun () -> C.wait d (C.Point.value p)))
+  in
+  ()
 
 (* Cost *)
 
@@ -387,6 +415,8 @@ let tests =
           test_after;
         test "events after a point are not read while no profile is taken"
           test_after_disabled;
+        test "an exception after's function raises reaches the wait"
+          test_after_raises;
         test "events after a point go to the profiles taken at the call"
           test_after_profiles;
         test "a profile leaves out a lost device's unread events"
@@ -399,7 +429,11 @@ let tests =
           (refuses_stamps (B.view (B.create C.host 40) ~first:4 ~length:32));
       ];
     group ~timeout "copies"
-      [ test "a copy records the bytes it moved" test_copy ];
+      [
+        test "a copy records the bytes it moved" test_copy;
+        test "a staged copy records its copies into and out of staging"
+          test_staged_copy;
+      ];
     group ~timeout "cost"
       [ test "a span while no profile is taken allocates nothing" test_untaken ];
     group ~timeout "chrome" [ test "a trace in Chrome's format" test_chrome ];
