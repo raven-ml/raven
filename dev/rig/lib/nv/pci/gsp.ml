@@ -1033,27 +1033,33 @@ let start p (fw : Images.t) ~taken =
     | _ -> Error "the firmware is of another family than the GPU"
   in
   let* () = Falcon.run c ops in
-  (* The GSP runs: its queue, its first answer, then the golden context. *)
-  let* () =
-    Chip.wait c "the GSP's message queue" ~ms:answer_ms (fun () -> Msgq.ready q)
+  (* The GSP runs: its queue, its first answer, then the golden context. A
+     failure from here unloads it, so it stops what it began, unless it never
+     set its queue up and so runs nothing an unload would stop. *)
+  let running () =
+    let* () =
+      Chip.wait c "the GSP's message queue" ~ms:answer_ms (fun () ->
+          Msgq.ready q)
+    in
+    let* _ =
+      Mutex.protect g.lock (fun () ->
+          wait_for g Defs.nv_vgpu_msg_event_gsp_init_done)
+    in
+    Chip.set c Defs.nv_pbus_bar1_block 0;
+    if c.family = Blackwell then
+      Chip.set c
+        Defs.Blackwell.nv_virtual_function_priv_func_bar1_block_low_addr 0;
+    golden g
   in
-  let* _ =
-    Mutex.protect g.lock (fun () ->
-        wait_for g Defs.nv_vgpu_msg_event_gsp_init_done)
-  in
-  Chip.set c Defs.nv_pbus_bar1_block 0;
-  if c.family = Blackwell then
-    Chip.set c Defs.Blackwell.nv_virtual_function_priv_func_bar1_block_low_addr
-      0;
-  (* The GSP runs from here: a failure unloads it, so it stops what it began. *)
-  match golden g with
+  let stop () = if Msgq.ready q then ignore (unload g) in
+  match running () with
   | Ok () -> Ok g
   | Error _ as e ->
-      ignore (unload g);
+      stop ();
       e
   | exception e ->
       let bt = Printexc.get_raw_backtrace () in
-      ignore (unload g);
+      stop ();
       Printexc.raise_with_backtrace e bt
 
 (* A failed boot gives back the system memory it took once the GPU masters the

@@ -345,9 +345,10 @@ let start fn (c : Chip.t) (fw : Images.t) =
   let* gsp = Gsp.boot { chip = c; memory; fn; tables; bar; space } fw in
   Ok (gsp, tables)
 
-(* A failure from the first write on loses the GPU; one after the GSP started
-   unloads it first, and gives its memory back once the GPU masters the bus no
-   more. *)
+(* A failure from the first write on, an [Error] or any exception, loses the
+   GPU; one after the GSP booted unloads it first, and gives its memory back
+   once the GPU masters the bus no more. A [Fault] is answered as [Error], any
+   other exception passes through. *)
 let boot ~firmware ~index machine hold fn =
   let* c = Chip.of_function fn in
   let* () = started c fn ~index in
@@ -359,7 +360,15 @@ let boot ~firmware ~index machine hold fn =
   | Error why | (exception Rig_nv.Fault why) ->
       Gpus.lose hold;
       Error why
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      Gpus.lose hold;
+      Printexc.raise_with_backtrace e bt
   | Ok (gsp, tables) -> (
+      let give_back () =
+        ignore (give_up hold fn ~unload:(fun () -> ignore (Gsp.unload gsp)));
+        Gsp.free gsp
+      in
       let g =
         {
           index;
@@ -377,9 +386,12 @@ let boot ~firmware ~index machine hold fn =
           Mutex.protect opened_lock (fun () -> opened := g :: !opened);
           Ok (d, gsp)
       | Error why | (exception Rig_nv.Fault why) ->
-          ignore (give_up hold fn ~unload:(fun () -> ignore (Gsp.unload gsp)));
-          Gsp.free gsp;
-          Error why)
+          give_back ();
+          Error why
+      | exception e ->
+          let bt = Printexc.get_raw_backtrace () in
+          give_back ();
+          Printexc.raise_with_backtrace e bt)
 
 let open_ ?(machine = Machine.this) ~firmware i =
   if i < 0 then invalid_argf "Rig_nv_pci.open_: index %d < 0" i;
@@ -393,10 +405,7 @@ let open_ ?(machine = Machine.this) ~firmware i =
   | Some _ ->
       Gpus.open_ gpus machine i
         ~at_exit:(fun (_, gsp) -> ignore (Gsp.unload gsp))
-        (fun hold fn ->
-          match boot ~firmware ~index:i machine hold fn with
-          | r -> r
-          | exception Rig_nv.Fault why -> Error why)
+        (boot ~firmware ~index:i machine)
       |> Result.map fst
 
 (* Changes to the machine *)
