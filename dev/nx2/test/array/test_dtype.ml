@@ -581,8 +581,9 @@ let exact dt f x =
 
 (* Every float32 whose low half is about a float16 or bfloat16 rounding bit
    (every float8 rounding bit lies in the high half), the float64 neighbours of
-   those whose low half is the bit alone, where rounding through float32 first
-   would land on a tie, and the specials. *)
+   every float32 whose low 12 bits are clear, which holds every tie of every
+   narrow format, float16's subnormal ties and 65520 included, where rounding
+   through float32 first would land on a tie, and the specials. *)
 let sweep =
   lazy
     (let of_halves lows =
@@ -600,7 +601,7 @@ let sweep =
          ]
      in
      let near =
-       of_halves [ 0x8000; 0x1000; 0x3000 ]
+       of_halves (List.init 16 (fun k -> k lsl 12))
        |> List.filter Float.is_finite
        |> List.concat_map (fun x -> [ Float.pred x; Float.succ x ])
      in
@@ -714,12 +715,14 @@ let test_integers (F (dt, f)) =
 
 (* Integers *)
 
-(* Doubles across [lo, hi], their neighbours and the extremes. *)
+(* Doubles across [lo, hi], their neighbours, the extremes, NaN and the
+   infinities. *)
 let near lo hi =
   Gen.with_pp pp_hex
     (Gen.frequency
        [
          (4, Gen.float_range ((2. *. lo) -. 2.) ((2. *. hi) +. 2.));
+         (2, Gen.of_list [ nan; -.nan; inf; -.inf ]);
          ( 2,
            Gen.of_list
              [
@@ -737,18 +740,25 @@ let near lo hi =
          (1, Gen.any_float);
        ])
 
+(* Every integer law draws NaN and the infinities. *)
+let specials x =
+  cover "NaN" (Float.is_nan x);
+  cover "an infinity" (Float.abs x = inf)
+
 (* [x] truncated toward zero and clamped to [lo, hi]; NaN is 0. *)
 let clamp lo hi x =
   if Float.is_nan x then 0. else Float.min hi (Float.max lo (Float.trunc x))
 
 let law_small (type s) (dt : (int, s) D.t) lo hi =
   prop (D.name dt) (near lo hi) (fun x ->
+      specials x;
       cover "saturates" (x > hi || x < lo);
       equal (value dt) (Float.to_int (clamp lo hi x)) (D.of_float dt x))
 
 let law_int32 =
   let lo = -0x1p31 and hi = 0x1p31 -. 1. in
   prop "int32" (near lo hi) (fun x ->
+      specials x;
       cover "saturates" (x > hi || x < lo);
       equal (value D.Int32)
         (Int32.of_float (clamp lo hi x))
@@ -757,6 +767,7 @@ let law_int32 =
 let law_uint32 =
   let hi = 0x1p32 -. 1. in
   prop "uint32" (near 0. hi) (fun x ->
+      specials x;
       cover "saturates" (x > hi || x < 0.);
       equal (value D.Uint32)
         (Int64.to_int32 (Int64.of_float (clamp 0. hi x)))
@@ -770,6 +781,7 @@ let law_int64 =
         else if x < -0x1p63 then Int64.min_int
         else Int64.of_float x
       in
+      specials x;
       cover "saturates" (x >= 0x1p63 || x < -0x1p63);
       equal (value D.Int64) expected (D.of_float D.Int64 x))
 
@@ -782,6 +794,7 @@ let law_uint64 =
           Int64.add (Int64.of_float (x -. 0x1p63)) Int64.min_int
         else Int64.of_float x
       in
+      specials x;
       cover "past int64" (x >= 0x1p63 && x < 0x1p64);
       cover "saturates" (x >= 0x1p64 || x <= -1.);
       equal (value D.Uint64) expected (D.of_float D.Uint64 x))
