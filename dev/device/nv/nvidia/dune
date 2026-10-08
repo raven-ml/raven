@@ -3,5 +3,7 @@
 (library
  (name device_nv_nvidia)
  (libraries device_nv)
- (private_modules defs)
- (modules_without_implementation device_nv_nvidia))
+ (private_modules defs rm sysfs va)
+ (foreign_stubs
+  (language c)
+  (names device_nv_nvidia_stubs)))

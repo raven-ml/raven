@@ -1,0 +1,5 @@
+(test
+ (name test_nvidia)
+ (libraries device_nv device_nv_nvidia windtrap)
+ (deps
+  (source_tree fixtures)))
