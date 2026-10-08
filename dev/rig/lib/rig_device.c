@@ -100,13 +100,17 @@ static void cv_broadcast(struct rig_device *d) { cond_broadcast(&d->cv); }
 static void mu_lock(struct rig_device *d) { mutex_lock(&d->mu); }
 static void mu_unlock(struct rig_device *d) { mutex_unlock(&d->mu); }
 
-void rig_mutex_init(rig_mutex *m) { mutex_init(m); }
+void rig_guard_init(struct rig_sub *s) {
+  mutex_init(&s->guard);
+  cond_init(&s->freed);
+}
 
-void rig_mutex_destroy(rig_mutex *m) {
+void rig_guard_destroy(struct rig_sub *s) {
 #ifdef _WIN32
-  (void)m;
+  (void)s;
 #else
-  pthread_mutex_destroy(m);
+  pthread_mutex_destroy(&s->guard);
+  pthread_cond_destroy(&s->freed);
 #endif
 }
 
@@ -658,15 +662,36 @@ static int admit(struct rig_device *d, struct rig_sub *s) {
    is taken before anything else of a submit, and nothing a submit runs
    holding a device's mutex or turn takes a guard, so a guard never waits
    on what waits for it. */
+static int guard_try(struct rig_sub *s) {
+  int free = 0;
+  return atomic_compare_exchange_strong(&s->busy, &free, 1);
+}
+
+/* A waiter counts itself under the mutex before it tries, and a giver
+   frees the guard before it reads the count: either the try sees the
+   guard free, or the giver sees the waiter and wakes it under the mutex,
+   which the waiter holds until it waits. */
 value caml_rig_sub_take(value v_s) {
   struct rig_sub *s = *(struct rig_sub **)Data_custom_val(v_s);
-  if (take_mutex(&s->guard)) caml_leave_blocking_section();
+  if (guard_try(s)) return Val_unit;
+  caml_enter_blocking_section_no_pending();
+  mutex_lock(&s->guard);
+  atomic_fetch_add(&s->waiting, 1);
+  while (!guard_try(s)) cond_wait(&s->freed, &s->guard);
+  atomic_fetch_sub(&s->waiting, 1);
+  mutex_unlock(&s->guard);
+  caml_leave_blocking_section();
   return Val_unit;
 }
 
 value caml_rig_sub_give(value v_s) {
   struct rig_sub *s = *(struct rig_sub **)Data_custom_val(v_s);
-  mutex_unlock(&s->guard);
+  atomic_store(&s->busy, 0);
+  if (atomic_load(&s->waiting) > 0) {
+    mutex_lock(&s->guard);
+    cond_broadcast(&s->freed);
+    mutex_unlock(&s->guard);
+  }
   return Val_unit;
 }
 

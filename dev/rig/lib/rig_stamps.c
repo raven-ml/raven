@@ -162,7 +162,7 @@ static void *zalloc(size_t n, size_t size, int *ok) {
 static void sub_free(struct rig_sub *s);
 
 static void sub_finalize(value v) {
-  rig_mutex_destroy(&Sub_val(v)->guard);
+  rig_guard_destroy(Sub_val(v));
   sub_free(Sub_val(v));
 }
 
@@ -201,7 +201,7 @@ value caml_rig_sub_new(value v_d, value v_nparts, value v_nafter,
     sub_free(s);
     caml_raise_out_of_memory();
   }
-  rig_mutex_init(&s->guard);
+  rig_guard_init(s);
   value v = caml_alloc_custom(&sub_ops, sizeof(struct rig_sub *), 0, 1);
   Sub_val(v) = s;
   return v;
