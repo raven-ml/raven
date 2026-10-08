@@ -6,11 +6,13 @@
 /* Jobs and links: this process's ends of its job's connections.
 
    A link owns its socket and two threads that never hold the OCaml
-   runtime. The sending thread sends the link's queue, the transfers of its
-   rails and a beat after a second without a send; it waits on nothing but
-   its queue and its socket. The receiving thread reads frames, places
-   rail transfers, answers requests, and queues an agent's commands; it
-   measures silence on its own.
+   runtime. A frame goes from its writer's thread, which holds the link's
+   send claim while it sends: frames leave whole, one after another. The
+   sending thread sends the transfers of the link's rails and a beat after
+   a second without a send; it waits on nothing but a writer's send and its
+   socket. The receiving thread reads frames, places rail transfers,
+   answers requests, and queues an agent's commands; it measures silence on
+   its own.
 
    A job fails once. Whoever finds the failure, a thread or a caller, sets
    the root cause under the job's lock, then for each link: marks it
@@ -78,10 +80,6 @@ typedef struct pollfd rig_remote_pollfd;
 
 /* The seconds a send may wait for its peer to acknowledge a byte. */
 #define SEND_S 10
-
-/* The bytes a link's queue holds before its writers wait. One frame larger
-   than this still goes, alone. */
-#define QUEUE_BYTES ((size_t)8 << 20)
 
 /* The most bytes of an abort's reason. */
 #define MAX_WHY 4096
@@ -318,28 +316,6 @@ static struct rig_remote_why *link_reason(struct rig_remote_link *l,
 
 /* Failure */
 
-/* Ends [f], sent or dropped: its spans are no longer read. Holds [l]'s
-   lock. */
-static void frame_done(struct rig_remote_link *l, struct rig_remote_frame *f) {
-  if (f->reader != NULL) {
-    f->reader->reading--;
-    rig_remote_settle(f->reader);
-  }
-  if (f->sent != NULL) *f->sent = 1;
-  pthread_cond_broadcast(&l->cv);
-  free(f);
-}
-
-static void drop_frames(struct rig_remote_link *l) {
-  while (l->head != NULL) {
-    struct rig_remote_frame *f = l->head;
-    l->head = f->next;
-    frame_done(l, f);
-  }
-  l->tail = NULL;
-  l->queued = 0;
-}
-
 /* Closes [l]'s socket once nothing uses it. Holds [l]'s lock. */
 static void close_if_idle(struct rig_remote_link *l) {
   if (l->threads == 0 && !l->sending && !l->fd_closed) {
@@ -391,7 +367,6 @@ static void fail_job(struct rig_remote_job *j, struct rig_remote_why *why) {
   for (struct rig_remote_link *l = j->links; l != NULL; l = l->next) {
     pthread_mutex_lock(&l->mu);
     atomic_store(&l->failed, 1);
-    drop_frames(l);
     for (struct rail *r = l->rails; r != NULL; r = r->next)
       for (int c = 0; c < 3; c++) atomic_store(count(r, c), INT64_MAX);
     l->abort_owed = !l->sent_close;
@@ -402,8 +377,8 @@ static void fail_job(struct rig_remote_job *j, struct rig_remote_why *why) {
   pthread_cond_broadcast(&j->cv);
   pthread_mutex_unlock(&j->mu);
   /* The root cause reaches every peer whatever its link does: an idle link
-     sends it here; a link whose sending thread is mid-frame sends it after
-     that frame, as the thread ends. Links are only ever prepended, so the
+     sends it here; a link mid-frame sends it after that frame, from the
+     thread that sends it. Links are only ever prepended, so the
      list read under the job's lock stays whole. */
   for (struct rig_remote_link *l = links; l != NULL; l = l->next) {
     pthread_mutex_lock(&l->mu);
@@ -520,32 +495,9 @@ static void *sender(void *arg) {
   struct rig_remote_link *l = arg;
   pthread_mutex_lock(&l->mu);
   for (;;) {
-    if (atomic_load(&l->failed)) break;
-    if (l->head != NULL) {
-      struct rig_remote_frame *f = l->head;
-      l->head = f->next;
-      if (l->head == NULL) l->tail = NULL;
-      l->queued -= f->n;
-      l->sending = 1;
-      pthread_cond_broadcast(&l->cv);
-      pthread_mutex_unlock(&l->mu);
-      int err = send_frame(l, f);
-      int closed = f->kind == K_CLOSE;
-      pthread_mutex_lock(&l->mu);
-      frame_done(l, f);
-      l->sending = 0;
-      l->sent_ns = now_ns();
-      if (err != 0) {
-        pthread_mutex_unlock(&l->mu);
-        link_lost(l, err);
-        pthread_mutex_lock(&l->mu);
-        break;
-      }
-      if (closed) {
-        l->sent_close = 1;
-        pthread_cond_broadcast(&l->cv);
-        break;
-      }
+    if (atomic_load(&l->failed) || l->sent_close) break;
+    if (l->sending || l->writers > 0) {
+      pthread_cond_wait(&l->cv, &l->mu);
       continue;
     }
     if (l->rails != NULL) {
@@ -571,13 +523,10 @@ static void *sender(void *arg) {
       }
       continue;
     }
-    /* A rail's ready function, a frame queued and a failure wake it. */
+    /* A rail's ready function, a writer's send and a failure wake it. */
     wait_ns(&l->cv, &l->mu, l->sent_ns + BEAT_NS - now);
   }
-  if (atomic_load(&l->failed)) {
-    drop_frames(l);
-    abort_link(l);
-  }
+  if (atomic_load(&l->failed)) abort_link(l);
   pthread_mutex_unlock(&l->mu);
   thread_ends(l);
   return NULL;
@@ -803,8 +752,7 @@ static int recv_bytes(struct rig_remote_link *l, uint64_t n, int64_t *last) {
 
 void rig_remote_settle(struct rig_remote_dev *d) {
   struct rig_remote_link *l = d->link;
-  if (!d->stopped || (d->locals != NULL && l->receiving) || d->reading > 0)
-    return;
+  if (!d->stopped || (d->locals != NULL && l->receiving)) return;
   if (atomic_load(&d->word) < d->handed)
     atomic_store_explicit(&d->word, d->handed, memory_order_release);
   pthread_cond_broadcast(&l->cv);
@@ -903,7 +851,7 @@ static void *receiver(void *arg) {
   return NULL;
 }
 
-/* Queueing */
+/* Sending */
 
 struct rig_remote_frame *rig_remote_frame(int kind, size_t np, int nspans) {
   size_t spans = (size_t)nspans * sizeof(struct rig_remote_span);
@@ -911,31 +859,30 @@ struct rig_remote_frame *rig_remote_frame(int kind, size_t np, int nspans) {
     return NULL;
   struct rig_remote_frame *f = malloc(sizeof *f + spans + HEADER + np);
   if (f == NULL) return NULL;
-  f->next = NULL;
   f->kind = kind;
   f->buf = (unsigned char *)f->spans + spans;
   f->n = HEADER + np;
-  f->reader = NULL;
-  f->sent = NULL;
   f->nspans = nspans;
   return f;
 }
 
-/* Appends [q], if not NULL, to the pending requests with the frame, and a
+/* Appends [q], if not NULL, to the pending requests as the frame takes the
+   send claim, so that answers find their requests in the order sent; a
    close makes the frame the link's last. */
-int rig_remote_queue(struct rig_remote_link *l, struct rig_remote_frame *f,
-                     struct pending *q) {
+int rig_remote_send(struct rig_remote_link *l, struct rig_remote_frame *f,
+                    struct pending *q) {
   uint64_t np = f->n - HEADER;
   for (int i = 0; i < f->nspans; i++) np += f->spans[i].n;
   put_header(f->buf, np, f->kind);
   pthread_mutex_lock(&l->mu);
-  while (!atomic_load(&l->failed) && !l->closing && l->head != NULL &&
-         l->queued + f->n > QUEUE_BYTES)
+  l->writers++;
+  while (!atomic_load(&l->failed) && !l->closing && l->sending)
     pthread_cond_wait(&l->cv, &l->mu);
+  l->writers--;
   if (atomic_load(&l->failed) || l->closing) {
     int r = atomic_load(&l->failed) ? -1 : -3;
-    frame_done(l, f);
     pthread_mutex_unlock(&l->mu);
+    free(f);
     return r;
   }
   if (q != NULL) {
@@ -945,15 +892,21 @@ int rig_remote_queue(struct rig_remote_link *l, struct rig_remote_frame *f,
       l->pending = q;
     l->pending_last = q;
   }
-  if (l->tail != NULL)
-    l->tail->next = f;
-  else
-    l->head = f;
-  l->tail = f;
-  l->queued += f->n;
   if (f->kind == K_CLOSE) l->closing = 1;
-  pthread_cond_broadcast(&l->cv);
+  l->sending = 1;
   pthread_mutex_unlock(&l->mu);
+  int err = send_frame(l, f);
+  pthread_mutex_lock(&l->mu);
+  l->sending = 0;
+  l->sent_ns = now_ns();
+  if (err == 0 && f->kind == K_CLOSE) l->sent_close = 1;
+  pthread_cond_broadcast(&l->cv);
+  /* A failure meanwhile left the link's abort to this sender. */
+  if (atomic_load(&l->failed)) abort_link(l);
+  pthread_mutex_unlock(&l->mu);
+  free(f);
+  /* Sent or not, the frame was taken: the failure reaches its waiters. */
+  if (err != 0) link_lost(l, err);
   return 0;
 }
 
@@ -1030,7 +983,7 @@ value caml_rig_remote_link_job_close(value vj) {
     for (struct rig_remote_link *l = j->links; l != NULL; l = l->next) {
       pthread_mutex_unlock(&j->mu);
       struct rig_remote_frame *f = rig_remote_frame(K_CLOSE, 0, 0);
-      if (f != NULL) rig_remote_queue(l, f, NULL);
+      if (f != NULL) rig_remote_send(l, f, NULL);
       pthread_mutex_lock(&j->mu);
     }
     for (;;) {
@@ -1125,8 +1078,8 @@ value caml_rig_remote_link_make(value vj, value fd, value name, value peer) {
   return caml_copy_nativeint((intnat)l);
 }
 
-/* Queues the frame of [kind] whose payload is [head]. Releases the runtime
-   while the queue is full. */
+/* Sends the frame of [kind] whose payload is [head]. Releases the
+   runtime. */
 value caml_rig_remote_link_post(value vl, value vkind, value head) {
   CAMLparam3(vl, vkind, head);
   struct rig_remote_link *l = Link_val(vl);
@@ -1136,7 +1089,7 @@ value caml_rig_remote_link_post(value vl, value vkind, value head) {
   if (f == NULL) caml_raise_out_of_memory();
   memcpy(f->buf + HEADER, String_val(head), n);
   caml_release_runtime_system();
-  rig_remote_queue(l, f, NULL);
+  rig_remote_send(l, f, NULL);
   caml_acquire_runtime_system();
   CAMLreturn(Val_unit);
 }
@@ -1155,14 +1108,8 @@ value caml_rig_remote_link_post_area(value vl, value vkind, value head,
   memcpy(f->buf + HEADER, String_val(head), n);
   f->spans[0].p = Caml_ba_data_val(area);
   f->spans[0].n = caml_ba_byte_size(Caml_ba_array_val(area));
-  int sent = 0;
-  f->sent = &sent;
   caml_release_runtime_system();
-  if (rig_remote_queue(l, f, NULL) == 0) {
-    pthread_mutex_lock(&l->mu);
-    while (!sent) pthread_cond_wait(&l->cv, &l->mu);
-    pthread_mutex_unlock(&l->mu);
-  }
+  rig_remote_send(l, f, NULL);
   caml_acquire_runtime_system();
   CAMLreturn(Val_unit);
 }
@@ -1200,7 +1147,7 @@ value caml_rig_remote_link_request(value vl, value head) {
     }
     memcpy(f->buf + HEADER, String_val(head), n);
     caml_release_runtime_system();
-    int k = rig_remote_queue(l, f, q);
+    int k = rig_remote_send(l, f, q);
     if (k == 0) {
       pthread_mutex_lock(&l->mu);
       while (!q->done && !atomic_load(&l->failed))

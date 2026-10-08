@@ -7,12 +7,13 @@
 
     A {e link} is this process's end of its connection to one other process of
     its job, once the handshake admitted it ({!Wire}). It owns the socket and
-    two threads of C, which never hold the OCaml runtime:
-    - the {e sending thread} sends the link's queue in order. Hand-overs from
-      the proxies' C and the frames of this module's functions enter the queue;
-      a full queue makes its writer wait. The thread also sends the transfers of
-      the link's rails ({!rail}), and a beat after a second in which it sent
-      nothing. It waits on nothing but its queue and its socket.
+    two threads of C, which never hold the OCaml runtime. A frame, a hand-over
+    from a proxy's C or one of this module's functions, goes from its writer's
+    thread: the writer waits for the frame being sent, sends its own whole, and
+    returns once it is sent. The socket is the only back-pressure.
+    - the {e sending thread} sends the transfers of the link's rails ({!rail}),
+      and a beat after a second in which nothing was sent, between writers'
+      frames. It waits on nothing but the writers and its socket.
     - the {e receiving thread} reads each frame. It places the transfers of the
       link's rails, and on the controller, writes the bytes of copies into this
       process's memory, advances the proxies' words and delivers the answers to
@@ -44,7 +45,7 @@
     the root cause, after the frame it is sending if any, and ends its stream.
     It reads and discards what the peer still sends until the peer ends its
     stream or is silent for 10 seconds, so the abort reaches a peer still
-    reading earlier frames. Its queue drops what it is given, {!request} and
+    reading earlier frames. It sends no frame it is given, {!request} and
     {!next} answer [Error], the proxies' sleeps return, and every count of every
     rail of the job reads [Int64.max_int]. Nothing raises from a C thread, and
     nothing calls OCaml: the process learns of the failure from {!failure},
@@ -60,8 +61,8 @@
     {1:domains Domains}
 
     Every function may be called from any domain at once. A function that waits,
-    for room in a queue, an answer, a frame or the job, releases the runtime
-    while it waits.
+    for the socket, an answer, a frame or the job, releases the runtime while it
+    waits.
 
     A job and its links are never freed: proxies' C state holds their addresses.
     A link that ended keeps its name and reason. *)
@@ -96,11 +97,11 @@ val fail : job -> string -> unit
 
 val close : job -> unit
 (** [close j] ends [j] in order: each of its links sends a close after the
-    frames queued before, and [close] returns once every peer's close came and
-    the links' threads ended, or once [j] failed. A link's peer sends its close
-    when it ends the job itself, so [close] waits for every peer to end it. Once
-    a link queued its close, it drops every frame it is given. On a job that
-    failed or closed it returns at once. *)
+    frames sent before, and [close] returns once every peer's close came and the
+    links' threads ended, or once [j] failed. A link's peer sends its close when
+    it ends the job itself, so [close] waits for every peer to end it. Once a
+    link took its close, it sends no frame it is given. On a job that failed or
+    closed it returns at once. *)
 
 (** {1:links Links} *)
 
@@ -131,10 +132,10 @@ val request :
   t ->
   'a Wire.request ->
   ('a, [ `Refused of string | `Failed of string ]) result
-(** [request l r] sends [r] after every frame queued before it and is the
-    agent's answer: [Error (`Refused why)] if the agent refused [r], the job
-    going on, and [Error (`Failed why)] if the job failed, before or meanwhile,
-    [why] its root cause, or if its close began ({!close}), [why] being
+(** [request l r] sends [r] after every frame sent before it and is the agent's
+    answer: [Error (`Refused why)] if the agent refused [r], the job going on,
+    and [Error (`Failed why)] if the job failed, before or meanwhile, [why] its
+    root cause, or if its close began ({!close}), [why] being
     ["the job is closed"]. An answer that does not decode as [r]'s fails the
     job.
 
@@ -143,7 +144,7 @@ val request :
 
 val drop : t -> int -> unit
 (** [drop l id] sends the release of the agent's object [id] after every frame
-    queued before it.
+    sent before it, and returns once it is sent.
 
     Raises [Invalid_argument] if [id] is negative. *)
 

@@ -94,9 +94,8 @@ static unsigned char *put_side(unsigned char *b, int local, uint64_t id,
 }
 
 /* The hand-over: the frame wire.mli lays out, then the bytes of its copies
-   from this process's memory, once the work they follow is done. The
-   sending thread reads them in place: the proxy's word stays below [v],
-   and rig keeps the memory, until they are sent. */
+   from this process's memory, read in place once the work they follow is
+   done. It returns once the frame is sent. */
 static int proxy_submit(void *self, uint64_t v, const struct rig_wait *waits,
                         int nwaits, const struct rig_part *parts, int nparts,
                         const uint64_t *handles, int nhandles,
@@ -204,14 +203,10 @@ static int proxy_submit(void *self, uint64_t v, const struct rig_wait *waits,
   d->flying += bytes;
   d->handed = v;
   if (nlocals > 0) d->written = v;
-  if (nreads > 0) {
-    frame->reader = d;
-    d->reading++;
-  }
   pthread_mutex_unlock(&l->mu);
   free(locals);
 
-  int r = rig_remote_queue(l, frame, NULL);
+  int r = rig_remote_send(l, frame, NULL);
   if (r == 0) return RIG_OK;
   *failure = r == -3 ? "the job is closed" : why(l);
   return RIG_FAILED;

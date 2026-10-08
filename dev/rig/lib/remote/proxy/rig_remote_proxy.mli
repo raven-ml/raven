@@ -95,9 +95,11 @@ val max_waits : t -> int
 (** [max_waits d] is [max_int]: the hand-over carries every wait. *)
 
 val blocks : t -> [ `Returns | `May_block ]
-(** [blocks d] is [`May_block]: the hand-over waits while the link's queue is
-    full, and before a copy from this process's memory, for the work it follows
-    ({!submit_entry}). *)
+(** [blocks d] is [`May_block]: the hand-over sends its frame itself and returns
+    once it is sent, so it waits for the frame the link is sending and for the
+    peer to take its bytes. A copy from this process's memory holds the
+    submitting thread while its bytes cross the link. Before such a copy it also
+    waits for the work the copy follows ({!submit_entry}). *)
 
 val maps_host : t -> bool
 (** [maps_host d] is [false]: a copy names this process's memory by its host
@@ -122,9 +124,9 @@ val alloc : t -> [ `Device | `Pinned | `Mapped ] -> int -> region option
     Raises {!Fault} if the job failed. *)
 
 val free : t -> region -> unit
-(** [free d r] sends the release of [r]'s object, after every frame queued
-    before. The agent releases it once the work handed over before no longer
-    needs it. It does nothing for a word. *)
+(** [free d r] sends the release of [r]'s object, after every frame sent before.
+    The agent releases it once the work handed over before no longer needs it.
+    It does nothing for a word. *)
 
 val address : region -> int option
 (** [address r] is [None] for memory, which the hand-over names by {!handle}.
@@ -181,7 +183,7 @@ val entry : image -> string -> int option
     Raises {!Fault} if the job failed. *)
 
 val unload : t -> image -> unit
-(** [unload d i] sends the release of [i], after every frame queued before. The
+(** [unload d i] sends the release of [i], after every frame sent before. The
     agent releases it once the work handed over before no longer needs it. *)
 
 (** {1:timeline Timeline} *)
@@ -219,7 +221,7 @@ val room_entry : nativeint
 
 val submit_entry : nativeint
 (** [submit_entry] is the address of the proxy's hand-over, in the shape
-    [rig_submit_fn] of [rig_edge.h]. It queues the hand-over's frame on the link
+    [rig_submit_fn] of [rig_edge.h]. It sends the hand-over's frame on the link
     ({!Wire.handover}): the waits, each as the device [at] and its value, and
     the parts, copies with their sides' handles and offsets, words with their
     words. [handles] is ignored.
@@ -227,13 +229,13 @@ val submit_entry : nativeint
     Before a submission with a copy from this process's memory, it waits until
     the work the submission follows is done here: the shadow of each wait's
     proxy reaches the wait's value, and [d]'s own shadow the last of [d]'s
-    values with a copy into this process's memory. Then it reads the copies'
-    bytes into the frame, so the bytes they copy are final. It also waits while
-    the link's queue is full.
+    values with a copy into this process's memory. Then it sends the copies'
+    bytes from that memory, in place, so the bytes they copy are final. It sends
+    after the frame the link is sending.
 
-    It answers [RIG_OK] once the frame is queued. It answers [RIG_FAILED] with
-    the job's root cause if the job failed, with ["the job is closed"] if it
-    closes, and with ["out of memory for a hand-over"] if memory ran out. *)
+    It answers [RIG_OK] once the frame is sent. It answers [RIG_FAILED] with the
+    job's root cause if the job failed, with ["the job is closed"] if it closes,
+    and with ["out of memory for a hand-over"] if memory ran out. *)
 
 val self : t -> nativeint
 (** [self d] is the address of [d]'s C state, the [self] argument of the room

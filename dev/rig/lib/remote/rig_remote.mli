@@ -45,14 +45,15 @@
 
     {1:costs Costs}
 
-    A hand-over costs a copy of its parts into the connection's queue, which a
-    thread of the connection sends: it returns once queued. It waits while the
-    queue is full, while its device has more than 64 MiB of work handed over and
-    not done, and, for a copy from this process's memory, until the work that
-    copy follows is done. An allocation, a mapping and opening devices each wait
-    for the agent's answer, a round trip. A copy between this process's memory
-    and a machine's carries its bytes across the connection once; a copy between
-    two devices of one machine never crosses it.
+    A hand-over sends its parts on the connection from the submitting thread,
+    the bytes of a copy from this process's memory read in place, and returns
+    once they are sent. It waits for the frame the connection is sending, for
+    the peer to take its bytes, while its device has more than 64 MiB of work
+    handed over and not done, and, for a copy from this process's memory, until
+    the work that copy follows is done. An allocation, a mapping and opening
+    devices each wait for the agent's answer, a round trip. A copy between this
+    process's memory and a machine's carries its bytes across the connection
+    once; a copy between two devices of one machine never crosses it.
 
     {1:failure Failure}
 
