@@ -113,6 +113,11 @@ value caml_rig_nv_nvidia_reserve(value v_at, value v_n) {
   return Val_long(0);
 }
 
+/* Gives back the reservation of the [v_n] bytes at [v_at]. */
+value caml_rig_nv_nvidia_unreserve(value v_at, value v_n) {
+  return Val_long(munmap(PTR(v_at), (size_t)Long_val(v_n)) == 0 ? 0 : -errno);
+}
+
 /* Returns the [v_n] bytes at [v_at] to the reservation they came from. */
 value caml_rig_nv_nvidia_unmap(value v_at, value v_n) {
   void *p = mmap(PTR(v_at), (size_t)Long_val(v_n), PROT_NONE,
@@ -154,6 +159,12 @@ value caml_rig_nv_nvidia_reserve(value v_at, value v_n) {
 }
 
 value caml_rig_nv_nvidia_unmap(value v_at, value v_n) {
+  (void)v_at;
+  (void)v_n;
+  return Val_long(-ENOSYS);
+}
+
+value caml_rig_nv_nvidia_unreserve(value v_at, value v_n) {
   (void)v_at;
   (void)v_n;
   return Val_long(-ENOSYS);

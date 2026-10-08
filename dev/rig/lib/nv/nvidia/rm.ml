@@ -17,6 +17,7 @@ external ioctl : int -> int -> Rig_nv.params -> int
 external map_raw : int -> int -> int -> int = "caml_rig_nv_nvidia_map"
 external reserve_raw : int -> int -> int = "caml_rig_nv_nvidia_reserve"
 external unmap_raw : int -> int -> int = "caml_rig_nv_nvidia_unmap"
+external unreserve_raw : int -> int -> int = "caml_rig_nv_nvidia_unreserve"
 external strerror : int -> string = "caml_rig_nv_nvidia_strerror"
 external address : Rig_nv.params -> int = "caml_rig_nv_nvidia_address"
 
@@ -71,6 +72,10 @@ let reserve at n =
 (* Returning addresses to the reservation cannot fail but for a bad argument,
    which is this library's: its error is dropped. *)
 let unmap at n = ignore (unmap_raw at n : int)
+
+(* Gives back a reservation, so that a later [reserve] of it succeeds; its error
+   is dropped for the same reason. *)
+let unreserve at n = ignore (unreserve_raw at n : int)
 
 (* The RM *)
 
@@ -241,9 +246,9 @@ let make_client () =
     let* mm = open_file uvm_path in
     taken (fun () -> close mm);
     let* () = reserve low_base (main_base - low_base) in
-    taken (fun () -> unmap low_base (main_base - low_base));
+    taken (fun () -> unreserve low_base (main_base - low_base));
     let* () = reserve main_base (top - main_base) in
-    taken (fun () -> unmap main_base (top - main_base));
+    taken (fun () -> unreserve main_base (top - main_base));
     let c =
       {
         ctl;

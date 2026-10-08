@@ -3,10 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Opens under a limit on the process's files reach a failure after each file an
-   open takes. The limit is set in a forked child alone, so nothing else on the
-   machine runs short of files; the suite forks before any call to NVIDIA's
-   driver. *)
+(* Opens in a fresh process. Under a limit on the process's files they reach a
+   failure after each file an open takes; with an address the path reserves
+   taken, the open fails and gives back what it reserved. Each runs in a forked
+   child alone, so nothing else on the machine runs short of files; the suite
+   forks before any call to NVIDIA's driver. *)
 
 open Windtrap
 module P = Rig_nv_nvidia
@@ -104,6 +105,26 @@ let files () =
     failures;
   equal int ~msg:"files held after the open" fresh opened
 
+(* The last page below 2^40, inside the addresses the path reserves. *)
+let page = 4096
+let taken_page = (1 lsl 40) - page
+
+(* An open with [taken_page] mapped, then one after it is unmapped: their
+   results, as [Ok ()] or the error. *)
+let reserved () =
+  if not (S.occupy taken_page page) then failwith "the page was mapped already";
+  let first = Result.map Rig_nv.stop (open_ ()) in
+  S.vacate taken_page page;
+  let second = Result.map Rig_nv.stop (open_ ()) in
+  (first, second)
+
+let addresses () =
+  if P.count () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
+  S.hold_gpu ();
+  let first, second = require_ok (in_child reserved) in
+  ignore (require_error ~msg:"the open with an address taken" first : string);
+  equal (result unit string) ~msg:"the next open" (Ok ()) second
+
 let () =
   S.hold_gpu ();
   exit
@@ -115,5 +136,8 @@ let () =
                "a failed open under a file limit takes no file, and the open \
                 that succeeds holds what a fresh one does"
                files;
+             test
+               "an open refused its addresses gives them back for the next one"
+               addresses;
            ];
        ])

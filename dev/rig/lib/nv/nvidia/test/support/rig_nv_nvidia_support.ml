@@ -43,3 +43,8 @@ let with_limit n f =
   let soft = limit () in
   set_limit n;
   Fun.protect ~finally:(fun () -> set_limit soft) f
+
+(* The process's addresses *)
+
+external occupy : int -> int -> bool = "rig_nv_nvidia_test_occupy"
+external vacate : int -> int -> unit = "rig_nv_nvidia_test_vacate"

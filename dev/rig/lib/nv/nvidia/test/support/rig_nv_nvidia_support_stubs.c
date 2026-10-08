@@ -10,6 +10,7 @@
 #define _GNU_SOURCE
 
 #include <errno.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -21,6 +22,7 @@
 #if !defined(_WIN32)
 #include <fcntl.h>
 #include <sys/file.h>
+#include <sys/mman.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <time.h>
@@ -137,4 +139,35 @@ value rig_nv_nvidia_test_limit_for(value v_k) {
   (void)k;
 #endif
   return Val_int(fd);
+}
+
+/* Maps [v_n] inaccessible bytes at [v_at], unless something is mapped there:
+   [true] if it did. */
+value rig_nv_nvidia_test_occupy(value v_at, value v_n) {
+#if defined(_WIN32)
+  (void)v_at;
+  (void)v_n;
+  return Val_false;
+#else
+  void *at = (void *)(uintptr_t)Long_val(v_at);
+  void *p = mmap(at, (size_t)Long_val(v_n), PROT_NONE,
+                 MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+  if (p == MAP_FAILED) return Val_false;
+  if (p != at) {
+    munmap(p, (size_t)Long_val(v_n));
+    return Val_false;
+  }
+  return Val_true;
+#endif
+}
+
+/* Unmaps the [v_n] bytes at [v_at]. */
+value rig_nv_nvidia_test_vacate(value v_at, value v_n) {
+#if !defined(_WIN32)
+  munmap((void *)(uintptr_t)Long_val(v_at), (size_t)Long_val(v_n));
+#else
+  (void)v_at;
+  (void)v_n;
+#endif
+  return Val_unit;
 }

@@ -30,3 +30,10 @@ val with_limit : int -> (unit -> 'a) -> 'a
 (** [with_limit n f] is [f ()], run with the process's soft limit on its files
     lowered to [n], and set back after it. Only the calling process is limited.
 *)
+
+val occupy : int -> int -> bool
+(** [occupy at n] maps [n] inaccessible bytes at the address [at] of the
+    process, unless something is mapped there: [true] if it did. *)
+
+val vacate : int -> int -> unit
+(** [vacate at n] unmaps the [n] bytes at [at]. *)
