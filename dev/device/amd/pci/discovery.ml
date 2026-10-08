@@ -282,4 +282,24 @@ let live d b =
     (fun (i, _) -> not (List.mem i fused))
     (Option.value ~default:[] (List.assoc_opt b d.bases))
 
+(* Each die has four SDMA instances; a die is live with all of them, or with its
+   first or last pair, as the kernel driver counts them. *)
+let sdma_per_die = 4
+let live_masks = [ 0xf; 0x3; 0xc ]
+
+let aids d =
+  let sdma = Option.value ~default:[] (List.assoc_opt D.sdma0_hwid d.bases) in
+  let live = List.map fst (live d D.sdma0_hwid) in
+  let dies = List.fold_left (fun m (i, _) -> max m (i / sdma_per_die)) 0 sdma in
+  let mask aid =
+    List.fold_left
+      (fun m i ->
+        if i / sdma_per_die = aid then m lor (1 lsl (i mod sdma_per_die)) else m)
+      0 live
+  in
+  0
+  :: List.filter
+       (fun aid -> List.mem (mask aid) live_masks)
+       (List.init dies (fun i -> i + 1))
+
 let name = D.hwid_name

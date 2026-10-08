@@ -46,6 +46,7 @@
  "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/0a6871b19abf5d6e024b5d208b101ae53e7fa0de/amdgpu/smu_14_0_3.bin": "4e1522d3c96c1028be2961dfcfc5f1ff783fb77724b260a99c4c8b4a901ef3fe",
  "https://raw.githubusercontent.com/ROCm/ROCK-Kernel-Driver/33970e1351f5e511029602454979f3de7e22260f/drivers/gpu/drm/amd/amdgpu/amdgpu_discovery.h": "b4583234ff25eef4e8cd19d322e5cae3315af7348916f63d906930a51b5737f6",
  "https://raw.githubusercontent.com/ROCm/ROCK-Kernel-Driver/33970e1351f5e511029602454979f3de7e22260f/drivers/gpu/drm/amd/amdgpu/amdgpu_ucode.h": "9b717be2e98470203d188c44c6a9468e37efbec397140af9f4106518b6f31e3c",
+ "https://raw.githubusercontent.com/ROCm/ROCK-Kernel-Driver/33970e1351f5e511029602454979f3de7e22260f/drivers/gpu/drm/amd/amdgpu/amdgpu_vm.h": "64b8c0cdb32c28714996de8a721e4b0cad55f9ddaa83e24ba2083098d7c48453",
  "https://raw.githubusercontent.com/ROCm/ROCK-Kernel-Driver/33970e1351f5e511029602454979f3de7e22260f/drivers/gpu/drm/amd/amdgpu/psp_gfx_if.h": "15b8ba212548d5e68852b404edc0476ba20cae4f67449a131958b867b661c7bf",
  "https://raw.githubusercontent.com/ROCm/ROCK-Kernel-Driver/33970e1351f5e511029602454979f3de7e22260f/drivers/gpu/drm/amd/include/asic_reg/hdp/hdp_4_4_2_offset.h": "30fd681586b3b09e10683c72c9a6334d384791cc64c92945555da0afe76dfbbf",
  "https://raw.githubusercontent.com/ROCm/ROCK-Kernel-Driver/33970e1351f5e511029602454979f3de7e22260f/drivers/gpu/drm/amd/include/asic_reg/hdp/hdp_4_4_2_sh_mask.h": "2ae5a0f2f430c03b695500e3437e46378e96c27eec4ef9c516b692ad1bf6c763",
@@ -88,5 +89,8 @@
  "https://raw.githubusercontent.com/ROCm/ROCK-Kernel-Driver/33970e1351f5e511029602454979f3de7e22260f/drivers/gpu/drm/amd/include/asic_reg/sdma/sdma_4_4_2_offset.h": "407529bb901c09c91ba048902b4b830071dd87b5aa2275e9eec5b615d2732d8c",
  "https://raw.githubusercontent.com/ROCm/ROCK-Kernel-Driver/33970e1351f5e511029602454979f3de7e22260f/drivers/gpu/drm/amd/include/asic_reg/sdma/sdma_4_4_2_sh_mask.h": "4b5f41ff64639a5554ce380a40e7a872bab2a67505d8fca442d11ec09f153803",
  "https://raw.githubusercontent.com/ROCm/ROCK-Kernel-Driver/33970e1351f5e511029602454979f3de7e22260f/drivers/gpu/drm/amd/include/discovery.h": "bd64513b3397e3b2633a0a3e45e95a546b26dd5789f30d1a902a8b415528c8d3",
- "https://raw.githubusercontent.com/ROCm/ROCK-Kernel-Driver/33970e1351f5e511029602454979f3de7e22260f/drivers/gpu/drm/amd/include/soc15_hw_ip.h": "34a04ab0e1411f4833f2d2676ffd4c5b4b301b9bdef9d1f242adb89105bc733f"
+ "https://raw.githubusercontent.com/ROCm/ROCK-Kernel-Driver/33970e1351f5e511029602454979f3de7e22260f/drivers/gpu/drm/amd/include/soc15_hw_ip.h": "34a04ab0e1411f4833f2d2676ffd4c5b4b301b9bdef9d1f242adb89105bc733f",
+ "https://raw.githubusercontent.com/ROCm/ROCK-Kernel-Driver/33970e1351f5e511029602454979f3de7e22260f/drivers/gpu/drm/amd/include/soc21_enum.h": "38180a3a0b49d4cb1f3ced4df45e0d2fb1963fb928d8ec6ed5eb4ed9c9c42099",
+ "https://raw.githubusercontent.com/ROCm/ROCK-Kernel-Driver/33970e1351f5e511029602454979f3de7e22260f/drivers/gpu/drm/amd/include/soc24_enum.h": "e917c9330582f43b75e2965f2dc65b183ed01d111f54a07fa9f5fc85af5d890f",
+ "https://raw.githubusercontent.com/ROCm/ROCK-Kernel-Driver/33970e1351f5e511029602454979f3de7e22260f/drivers/gpu/drm/amd/include/vega10_enum.h": "cb4d03b3ee3fa28a240434f8742434facafb9b670f3dec9b49c1295a4d70a83d"
 }

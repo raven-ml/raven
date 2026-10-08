@@ -59,6 +59,12 @@ val live : t -> int -> (int * int array) list
 (** [live d b] is the instances of block [b] not fused off, with their segment
     bases, in instance order. *)
 
+val aids : t -> int list
+(** [aids d] is the live dies of a GPU of several accelerator dies (AIDs), in
+    order: die [0], and each die whose four SDMA instances are all live, or its
+    first two or last two are. A write through the indirect window to a die
+    fused off stalls the GPU's fabric. A GPU of one die has [[0]]. *)
+
 val name : int -> string
 (** [name b] is the kernel's name of block [b], such as ["GC"], or [""] for an
     ID it does not name. *)

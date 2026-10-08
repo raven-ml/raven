@@ -54,7 +54,21 @@ SOURCES = {
     "soc15_hw_ip.h": KERNEL + "include/soc15_hw_ip.h",  # the blocks' hardware IDs
     "amdgpu_ucode.h": KERNEL + "amdgpu/amdgpu_ucode.h",  # firmware images' headers
     "psp_gfx_if.h": KERNEL + "amdgpu/psp_gfx_if.h",  # the types the PSP loads images as
+    "amdgpu_vm.h": KERNEL + "amdgpu/amdgpu_vm.h",  # page-table entries
+    "vega10_enum.h": KERNEL + "include/vega10_enum.h",  # memory types, GFX9
+    "soc21_enum.h": KERNEL + "include/soc21_enum.h",  # GFX11
+    "soc24_enum.h": KERNEL + "include/soc24_enum.h",  # GFX12
 }
+
+# Page-table entries: their bits, the first bit of their fields, the levels
+# of the tables, and the uncached memory type of each generation.
+PTE_BITS = ["AMDGPU_PTE_VALID", "AMDGPU_PTE_SYSTEM", "AMDGPU_PTE_SNOOPED", "AMDGPU_PTE_EXECUTABLE",
+            "AMDGPU_PTE_READABLE", "AMDGPU_PTE_WRITEABLE", "AMDGPU_PTE_TF", "AMDGPU_PDE_PTE", "AMDGPU_PDE_PTE_GFX12",
+            "AMDGPU_PTE_IS_PTE"]
+PTE_SHIFTS = ["AMDGPU_PTE_FRAG", "AMDGPU_PDE_BFS", "AMDGPU_PTE_MTYPE_VG10_SHIFT", "AMDGPU_PTE_MTYPE_NV10_SHIFT",
+              "AMDGPU_PTE_MTYPE_GFX12_SHIFT"]
+VM_LEVELS = ["AMDGPU_VM_PDB2", "AMDGPU_VM_PDB1", "AMDGPU_VM_PDB0", "AMDGPU_VM_PTB"]
+MTYPES = {"vega10_enum.h": "soc15", "soc21_enum.h": "soc21", "soc24_enum.h": "soc24"}
 
 # The register headers of each block but GC, by the stem of their names, at
 # each version with headers the GPUs the library boots program.
@@ -201,6 +215,22 @@ DEFINE = re.compile(r"^[ \t]*#[ \t]*define[ \t]+(\w+)(\([\w, ]*\))?[ \t]*(.*?)[ 
 ENUMERATOR = re.compile(r"^[ \t]*(\w+)[ \t]*(?:=[ \t]*([^,/\n]+?))?[ \t]*,?[ \t]*(?:/\*.*|//.*)?$", re.M)
 
 
+def arg_defines(text):
+    """{name: (parameter, body)} of [text]'s #define lines of one parameter."""
+    return {m.group(1): (m.group(2).strip("() "), m.group(3)) for m in DEFINE.finditer(text)
+            if m.group(2) is not None and "," not in m.group(2)}
+
+
+def shift(text, name):
+    """The first bit [name(1)] sets, for an argument macro [name]."""
+    ds = arg_defines(text)
+    if name not in ds:
+        sys.exit(f"undefined argument macro {name}")
+    param, body = ds[name]
+    body = re.sub(rf"\b{param}\b", "1", body)
+    return (evaluate(body, defines(text)) & 0xffff_ffff_ffff_ffff).bit_length() - 1
+
+
 def defines(text):
     """{name: body} of [text]'s #define lines without parameters."""
     return {m.group(1): m.group(3) for m in DEFINE.finditer(text) if m.group(2) is None}
@@ -209,7 +239,8 @@ def defines(text):
 def evaluate(expr, names):
     """The integer of the C constant expression [expr]: numbers, names of
     [names], and integer operators."""
-    e = re.sub(r"\b(0[xX][0-9a-fA-F]+|\d+)[uUlL]*\b", r"\1", expr)
+    e = re.sub(r"\((unsigned|uint32_t|uint64_t|int)\)", "", expr)
+    e = re.sub(r"\b(0[xX][0-9a-fA-F]+|\d+)[uUlL]*\b", r"\1", e)
 
     def name(m):
         n = m.group(0)
@@ -499,6 +530,11 @@ def excerpt(name, text):
         keep |= {i for i, l in enumerate(lines) if DEFINE.match(l) and DEFINE.match(l).group(1) in DISCOVERY_PLACE}
     elif name == "amdgpu_ucode.h":
         keep |= blocks(text, set(UCODE_STRUCTS) | set(UCODE_NESTED)) | enum_blocks(text, ENUMS[name])
+    elif name == "amdgpu_vm.h":
+        keep |= enum_blocks(text, ["amdgpu_vm_level"])
+        keep |= {i for i, l in enumerate(lines) if DEFINE.match(l) and DEFINE.match(l).group(1) in PTE_BITS + PTE_SHIFTS}
+    elif name in MTYPES:
+        keep |= {i for i, l in enumerate(lines) if re.match(r"\s*MTYPE_UC\s*=", l)}
     elif name == "psp_gfx_if.h":
         keep |= enum_blocks(text, ENUMS[name])
     elif name.endswith(("_offset.h", "_sh_mask.h")):
@@ -601,6 +637,22 @@ def generate(h):
     for v, n in sorted(first.items()):
         out.append(f"  | {v} -> {json.dumps(n)}")
     out.append("  | _ -> \"\"")
+    out.append("")
+
+    # Page tables
+    vm = h["amdgpu_vm.h"]
+    out += ["(* Page-table entries *)", ""]
+    for n, v in constants(vm, PTE_BITS).items():
+        out.append(f"let {n.lower()} = 0x{v:x}L")
+    for n in PTE_SHIFTS:
+        out.append(f"let {n.lower().removesuffix('_shift')}_shift = {shift(vm, n)}")
+    for n, v in enum_values(vm, VM_LEVELS).items():
+        out.append(f"let {n.lower()} = {v}")
+    for hdr, gen_name in MTYPES.items():
+        m = re.search(r"MTYPE_UC\s*=\s*(0x[0-9a-fA-F]+|\d+)", h[hdr])
+        if m is None:
+            sys.exit(f"{hdr}: no MTYPE_UC")
+        out.append(f"let {gen_name}_mtype_uc = {int(m.group(1), 0)}")
     out.append("")
 
     # Registers

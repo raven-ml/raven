@@ -199,6 +199,31 @@ let hwid_name = function
   | 274 -> "DAZ"
   | _ -> ""
 
+(* Page-table entries *)
+
+let amdgpu_pte_valid = 0x1L
+let amdgpu_pte_system = 0x2L
+let amdgpu_pte_snooped = 0x4L
+let amdgpu_pte_executable = 0x10L
+let amdgpu_pte_readable = 0x20L
+let amdgpu_pte_writeable = 0x40L
+let amdgpu_pte_tf = 0x100000000000000L
+let amdgpu_pde_pte = 0x40000000000000L
+let amdgpu_pde_pte_gfx12 = 0x8000000000000000L
+let amdgpu_pte_is_pte = 0x8000000000000000L
+let amdgpu_pte_frag_shift = 7
+let amdgpu_pde_bfs_shift = 59
+let amdgpu_pte_mtype_vg10_shift = 57
+let amdgpu_pte_mtype_nv10_shift = 48
+let amdgpu_pte_mtype_gfx12_shift = 54
+let amdgpu_vm_pdb2 = 0
+let amdgpu_vm_pdb1 = 1
+let amdgpu_vm_pdb0 = 2
+let amdgpu_vm_ptb = 3
+let soc15_mtype_uc = 3
+let soc21_mtype_uc = 3
+let soc24_mtype_uc = 3
+
 (* Registers *)
 
 (* The registers of each block but GC, at each version with headers: each
