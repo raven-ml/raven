@@ -1,3 +1,5 @@
 (test
  (name test_nv)
- (libraries device_nv windtrap))
+ (libraries device_nv device_nv_nvidia windtrap)
+ (deps
+  (glob_files fixtures/*)))

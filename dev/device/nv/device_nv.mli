@@ -254,9 +254,6 @@ val part :
       of [src] at offset [o'] to [dst] at offset [o], any two regions of [g],
       whose ranges do not overlap.
 
-    A part names its regions until it is submitted: the caller frees or unmaps
-    none of them before.
-
     Raises [Invalid_argument] if [queue] is not a queue of [g], if [w] is
     [`Fill _], which the device does not run, if [ws] has an odd length, if a
     copy is on ["COMPUTE:0"] or its range lies outside its region, if a region
@@ -397,12 +394,12 @@ type 'm memory = {
   host : nativeint option;
       (** The host address of its first byte, if the host addresses it. *)
   handle : int;  (** The RM's name for it, which channel allocations take. *)
-  path : 'm;  (** The path's own value for it. *)
+  data : 'm;  (** The path's own data for it. *)
 }
 (** The type for memory a path gives a device. *)
 
 type 'm path = {
-  id : 'm Type.Id.t;
+  key : 'm Type.Id.t;
       (** The path's key. Devices whose paths have one key map each other's
           memory with [map_peer]. *)
   rm : rm;  (** The GPU's RM. *)

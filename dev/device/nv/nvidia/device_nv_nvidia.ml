@@ -83,7 +83,7 @@ and range = {
   mutable users : (gpu * int) list;
 }
 
-let path_id : mem Type.Id.t = Type.Id.make ()
+let key : mem Type.Id.t = Type.Id.make ()
 
 (* A file the RM maps memory through: each mapping has its own, as the driver
    keeps one mapping context per file. *)
@@ -348,7 +348,7 @@ let memory m =
     Device_nv.address = m.va;
     host = (if m.cpu then Some (Nativeint.of_int m.va) else None);
     handle = m.handle;
-    path = m;
+    data = m;
   }
 
 (* A path function's failure that is no refusal is the driver's fault. *)
@@ -449,7 +449,7 @@ let map_host g a n =
 (* Another GPU's video memory needs peer access, which may be refused; host
    memory needs none. *)
 let map_peer g (m : mem Device_nv.memory) =
-  let peer = m.path in
+  let peer = m.data in
   let refused = function Some u -> List.mem u g.refused | None -> false in
   if refused peer.video then None
   else
@@ -471,7 +471,7 @@ let unmap_host g r =
       else fault (uvm_unmap g r.addr r.bytes)
 
 let free g (m : mem Device_nv.memory) =
-  let m = m.path in
+  let m = m.data in
   match m.of_ with
   | Host r -> unmap_host g r
   | Peer -> fault (uvm_unmap g m.va m.size)
@@ -838,7 +838,7 @@ let gpu c bus =
 
 let path g =
   {
-    Device_nv.id = path_id;
+    Device_nv.key = key;
     rm = Rm.rm g.c;
     device = g.device;
     subdevice = g.subdevice;

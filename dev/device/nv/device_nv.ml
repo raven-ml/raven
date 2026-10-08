@@ -48,11 +48,11 @@ type 'm memory = {
   address : int;
   host : nativeint option;
   handle : int;
-  path : 'm;
+  data : 'm;
 }
 
 type 'm path = {
-  id : 'm Type.Id.t;
+  key : 'm Type.Id.t;
   rm : rm;
   device : int;
   subdevice : int;
@@ -208,7 +208,7 @@ and 'm reg = {
   mem : 'm memory;
   bytes : int;
   kind : kind;
-  mutable live : bool;
+  live : bool Atomic.t;
 }
 
 type t = T : 'm dev -> t
@@ -221,7 +221,7 @@ let mine : type m. m dev -> region -> m reg option =
  fun d (R r) ->
   if r.dev.self <> d.self then None
   else
-    match Type.Id.provably_equal d.path.id r.dev.path.id with
+    match Type.Id.provably_equal d.path.key r.dev.path.key with
     | Some Type.Equal -> Some r
     | None -> None
 
@@ -555,7 +555,14 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
             local_window;
             local = (fun n -> local d n);
           };
-        word = { dev = d; mem = words; bytes = 8; kind = Word; live = true };
+        word =
+          {
+            dev = d;
+            mem = words;
+            bytes = 8;
+            kind = Word;
+            live = Atomic.make true;
+          };
         owned = (match bar with Some m -> m :: owned | None -> owned);
         bar = Option.is_some bar;
         group;
@@ -596,7 +603,10 @@ let make p =
 
 (* Memory *)
 
-let region d kind bytes m = R { dev = d; mem = m; bytes; kind; live = true }
+let reg d kind bytes m =
+  { dev = d; mem = m; bytes; kind; live = Atomic.make true }
+
+let region d kind bytes m = R (reg d kind bytes m)
 
 let alloc (T d) kind n =
   if n < 1 then invalid_argf "Device_nv.alloc: %d bytes, expected at least 1" n;
@@ -619,8 +629,8 @@ let free (T d) r =
       | Code -> invalid_arg "Device_nv.free: an image's code is freed by unload"
       | Mapping -> invalid_arg "Device_nv.free: a mapping is ended by unmap"
       | Allocation | Bar ->
-          if not r.live then invalid_arg "Device_nv.free: the region was freed";
-          r.live <- false;
+          if not (Atomic.compare_and_set r.live true false) then
+            invalid_arg "Device_nv.free: the region was freed";
           d.path.free r.mem;
           if r.kind = Bar then bar_live d.self (-1))
 
@@ -634,10 +644,10 @@ let map_peer (T d) (T d') r =
   match mine d' r with
   | None ->
       invalid_arg "Device_nv.map_peer: the region is not the other device's"
-  | Some r when not r.live ->
+  | Some r when not (Atomic.get r.live) ->
       invalid_arg "Device_nv.map_peer: the region was freed or unmapped"
   | Some r -> (
-      match Type.Id.provably_equal d.path.id d'.path.id with
+      match Type.Id.provably_equal d.path.key d'.path.key with
       | None -> None
       | Some Type.Equal ->
           Option.map (region d Mapping r.bytes) (d.path.map_peer r.mem))
@@ -652,10 +662,9 @@ let unmap (T d) r =
   | None -> invalid_arg "Device_nv.unmap: the region is not the device's"
   | Some r when r.kind <> Mapping ->
       invalid_arg "Device_nv.unmap: the region is no mapping"
-  | Some r when not r.live ->
-      invalid_arg "Device_nv.unmap: the region was unmapped"
   | Some r ->
-      r.live <- false;
+      if not (Atomic.compare_and_set r.live true false) then
+        invalid_arg "Device_nv.unmap: the region was unmapped";
       d.path.free r.mem
 
 (* Images *)
@@ -678,18 +687,26 @@ let image_bytes c ~base =
   List.iter patch (Cubin.patches c ~base);
   Bytes.unsafe_to_string b
 
+(* The image of the cubin [c] laid over [m], its code region, and the bytes that
+   go there. A cubin may load where another one's code was, so the compute
+   channel owes an instruction cache invalidation. *)
+let lay d c m =
+  let code = reg d Code (Cubin.size c) m in
+  owe_invalidate d.self;
+  (I { code; cubin = c }, R code, image_bytes c ~base:m.address)
+
 let image (T d) bin =
   let* c = Cubin.of_string bin in
   let size = Cubin.size c in
   match d.path.alloc `Gpu size with
   | None -> Error (strf "no GPU memory for %d bytes of code" size)
   | Some m ->
-      let code = { dev = d; mem = m; bytes = size; kind = Code; live = true } in
-      owe_invalidate d.self;
-      Ok (I { code; cubin = c }, Some (R code, image_bytes c ~base:m.address))
+      let img, code, bytes = lay d c m in
+      Ok (img, Some (code, bytes))
 
 let entry (I c) name =
-  if not c.code.live then invalid_arg "Device_nv.entry: the image was unloaded";
+  if not (Atomic.get c.code.live) then
+    invalid_arg "Device_nv.entry: the image was unloaded";
   Option.map
     (fun (k : Cubin.kernel) -> c.code.mem.address + k.code)
     (Cubin.kernel c.cubin name)
@@ -697,10 +714,9 @@ let entry (I c) name =
 let unload (T d) (I c) =
   match mine d (R c.code) with
   | None -> invalid_arg "Device_nv.unload: the image is another device's"
-  | Some r when not r.live ->
-      invalid_arg "Device_nv.unload: the image was unloaded"
   | Some r ->
-      r.live <- false;
+      if not (Atomic.compare_and_set r.live true false) then
+        invalid_arg "Device_nv.unload: the image was unloaded";
       d.path.free r.mem
 
 (* Work *)
@@ -749,7 +765,7 @@ let part (T d) ~queue ?(after = [||]) w =
       if n < 0 then invalid_argf "Device_nv.part: a copy of %d bytes" n;
       let side what r o =
         match mine d r with
-        | Some r when r.live ->
+        | Some r when Atomic.get r.live ->
             if o < 0 || o + n > r.bytes then
               invalid_argf
                 "Device_nv.part: the copy's %s range [%d, %d) lies outside its \
