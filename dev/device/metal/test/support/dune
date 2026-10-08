@@ -1,0 +1,8 @@
+; What the Metal suite and bench share: a device's ring driven by hand.
+
+(library
+ (name device_metal_support)
+ (libraries device_metal)
+ (foreign_stubs
+  (language c)
+  (names device_metal_support_ring)))
