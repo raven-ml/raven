@@ -6,18 +6,6 @@
 let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
-(* Refusals: a link raises [Refused] where it finds the object unfit, and
-   returns it as its [Error]. *)
-
-exception Refused of string
-
-let refusef fmt = Printf.ksprintf (fun m -> raise (Refused m)) fmt
-
-(* Errors *)
-
-let err_unsupported k at =
-  refusef "relocation of type %d at 0x%x is unsupported" k at
-
 (* The host *)
 
 external host_machine : unit -> int = "caml_device_host_machine"
@@ -32,6 +20,43 @@ let host = host_machine ()
    it. *)
 let max_align = 4096
 let machine_name m = if m = em_x86_64 then "x86_64" else "arm64"
+
+(* Refusals: a link raises [Refused] where it finds the object unfit, and
+   returns it as its [Error]. *)
+
+exception Refused of string
+
+let refusef fmt = Printf.ksprintf (fun m -> raise (Refused m)) fmt
+
+(* Errors *)
+
+let err_unsupported k at =
+  refusef "relocation of type %d at 0x%x is unsupported" k at
+
+(* The errors by which the system refuses the process executable memory, and
+   their remedies. On macOS, mapping MAP_JIT memory fails with EPERM without the
+   entitlement; making memory executable fails with EACCES under a policy such
+   as SELinux's execmem. Windows reports its own codes. *)
+let eperm = 1
+let eacces = 13
+
+let err_map size e =
+  let remedy =
+    if Sys.win32 || e <> eperm then ""
+    else
+      "; sign the program with the com.apple.security.cs.allow-jit entitlement"
+  in
+  refusef "mapping %d bytes of executable memory: %s%s" size (error_message e)
+    remedy
+
+let err_protect size e =
+  let remedy =
+    if Sys.win32 || e <> eacces then ""
+    else
+      "; the system's security policy, such as SELinux's execmem, refuses \
+       executable memory to the process"
+  in
+  refusef "making %d bytes executable: %s%s" size (error_message e) remedy
 
 (* Code memory: a mapping the collector unmaps. [base] is its address, or the
    system's error, negated, if mapping failed; [install] is [0] or that
@@ -271,13 +296,11 @@ let link_exn ~entry obj =
   let size = Int.max 1 (slots_at + (slot_bytes * n)) in
   let mapping = map size in
   let base = base mapping in
-  if base < 0 then
-    refusef "mapping %d bytes of executable memory: %s" size
-      (error_message (-base));
+  if base < 0 then err_map size (-base);
   let b = write o externals ~slots_at ~size ~base in
   match install mapping b with
   | 0 -> { mapping; address = base + start }
-  | e -> refusef "making %d bytes executable: %s" size (error_message (-e))
+  | e -> err_protect size (-e)
 
 let link ~entry obj =
   match link_exn ~entry obj with p -> Ok p | exception Refused e -> Error e
