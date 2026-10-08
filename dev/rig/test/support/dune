@@ -9,6 +9,26 @@
   (language c)
   (names rig_support_stubs)))
 
+; The machine's GPU lock, which suites that link no rig take too.
+
+(library
+ (name rig_gpu_lock)
+ (modules rig_gpu_lock)
+ (foreign_stubs
+  (language c)
+  (names rig_gpu_lock_stubs)))
+
+; What the GPU suites and benches share: host memory, and a GPU of one
+; driver opened through rig.
+
+(library
+ (name rig_gpu_support)
+ (modules rig_gpu_support)
+ (libraries rig rig_gpu_lock windtrap)
+ (foreign_stubs
+  (language c)
+  (names rig_gpu_support_stubs)))
+
 ; The model of rig's API, which the model's suites share. It opens a device
 ; of every driver the machine has.
 
@@ -28,6 +48,7 @@
   rig_amd
   rig_amd_amdgpu
   rig_amd_support
+  rig_gpu_lock
   threads.posix
   unix
   windtrap))

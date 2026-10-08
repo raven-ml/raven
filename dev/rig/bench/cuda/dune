@@ -9,7 +9,14 @@
 (executable
  (name bench_cuda)
  (modules bench_cuda)
- (libraries rig rig_cuda rig_cuda_abi rig_cuda_bench rig_cuda_support thumper))
+ (libraries
+  rig
+  rig_cuda
+  rig_cuda_abi
+  rig_cuda_bench
+  rig_cuda_support
+  rig_gpu_support
+  thumper))
 
 (rule
  (alias bench)

@@ -1,0 +1,111 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+(** What the GPU suites and benches share: host memory by address, and a GPU
+    of one driver opened through rig. *)
+
+(** {1:host Host memory} *)
+
+(** Host memory the suites own, by address. *)
+module Host : sig
+  val page : int
+  (** [page] is the host's page size, in bytes. *)
+
+  val pages : ?read_only:bool -> int -> int
+  (** [pages n] is the address of [n] zeroed bytes from a page boundary,
+      read-only iff [read_only] (defaults to [false]). *)
+
+  val free_pages : int -> int -> unit
+  (** [free_pages a n] gives back the [n] bytes {!pages} gave at [a]. *)
+
+  val get8 : int -> int
+  (** [get8 a] is the byte at [a]. *)
+
+  val set8 : int -> int -> unit
+  (** [set8 a x] stores [x] as the byte at [a]. *)
+
+  val get32 : int -> int
+  (** [get32 a] is the unsigned 32-bit word at [a]. *)
+
+  val set32 : int -> int -> unit
+  (** [set32 a x] stores [x] as the 32-bit word at [a]. *)
+
+  val get64 : int -> int
+  (** [get64 a] is the 64-bit word at [a], read with acquire order. *)
+
+  val set64 : int -> int -> unit
+  (** [set64 a x] stores [x] in the 64-bit word at [a] with release order. *)
+
+  val read : int -> int -> string
+  (** [read a n] is the [n] bytes at [a]. *)
+
+  val write : int -> string -> unit
+  (** [write a s] stores [s] at [a]. *)
+end
+
+val still :
+  ?msg:string -> 'a Windtrap.testable -> 'a -> (unit -> 'a) -> ms:int -> unit
+(** [still w x f ~ms] reads [f ()] for [ms] milliseconds of the monotonic
+    clock ({!Rig.Profile.now}), the clock a device's hang bound counts, and
+    fails the test if a read is ever other than [x] under [w]. *)
+
+(** {1:gpu A GPU} *)
+
+(** The GPU a suite acts on. *)
+module type Gpu = sig
+  module D : Rig.Driver
+
+  val class_ : string
+  (** [class_] names the GPU, as ["CUDA"]: the skip's reason and rig's name of
+      the device. *)
+
+  val present : unit -> bool
+  (** [present ()] is [true] iff the machine has the GPU, from its files alone:
+      it starts no vendor library. *)
+
+  val open_ : unit -> (D.t, string) result
+  (** [open_ ()] opens the driver's device of the GPU. *)
+end
+
+(** A GPU's device, opened through rig. *)
+module type S = sig
+  type gpu
+  (** The type for the driver's devices. *)
+
+  type t = { d : Rig.t; g : gpu }
+  (** The type for an open GPU: [d] as programs reach it, [g] its driver's
+      device, which rig owns. *)
+
+  val hold : unit -> unit
+  (** [hold ()] is {!Rig_gpu_lock.hold} if the machine has the GPU. *)
+
+  val open_ : unit -> t
+  (** [open_ ()] is the GPU opened by its driver and handed to rig under a
+      name of the GPU's, while the process holds the machine's GPU lock. It
+      first closes the device the last [open_] made, as a failed test leaves
+      it. It skips the test if the machine has no such GPU, and fails it if
+      the GPU does not open. *)
+
+  val close : t -> unit
+  (** [close t] is {!Rig.close}[ t.d]. *)
+
+  val release : unit -> unit
+  (** [release ()] closes the device the last {!open_} made, if a failed test
+      left it open. A test that opens the GPU's driver alone calls it first,
+      where the GPU has one device at a time. *)
+
+  val with_ : (t -> 'a) -> 'a
+  (** [with_ f] is [f t], [t] the {!open_}ed GPU, closed after [f] returns or
+      raises. *)
+
+  val submit : t -> Rig.Submission.part array -> int
+  (** [submit t ps] submits [ps] through rig on [t] and is their value. *)
+
+  val wait : t -> int -> unit
+  (** [wait t v] is {!Rig.wait}[ t.d v]. *)
+end
+
+(** [Make (G)] opens [G]'s GPU under the name [G.class_ ^ ":test"]. *)
+module Make (G : Gpu) : S with type gpu = G.D.t

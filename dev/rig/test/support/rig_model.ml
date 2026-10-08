@@ -122,10 +122,7 @@ let gpus =
       (if Rig_amd_support.gpus () > 0 then [ Amd ] else []);
     ]
 
-let hold_gpu () =
-  Rig_metal_support.hold_gpu ();
-  Rig_cuda_support.hold_gpu ();
-  Rig_amd_support.hold_gpu ()
+let hold_gpu () = if gpus <> [] then Rig_gpu_lock.hold ()
 
 let opened_gpu g =
   let get = function Ok d -> d | Error e -> failwith e in

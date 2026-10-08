@@ -15,6 +15,7 @@
 
 module C = Rig_cuda
 module S = Rig_cuda_support
+module H = Rig_gpu_support.Host
 
 external names : unit -> string array = "rig_cuda_bench_names"
 external bind : nativeint array -> unit = "rig_cuda_bench_bind"
@@ -43,25 +44,12 @@ let mib = 1024 * kib
 
 type dev = { d : Rig.t; g : C.t; mutable v : int }
 
-let strf = Printf.sprintf
 let get = function Ok x -> x | Error why -> failwith why
 let host r = Option.get (C.host r)
-let opens = ref 0
 
-(* GPU 0, opened through rig under a name of its own. *)
+(* GPU 0, opened through rig. *)
 let dev () =
-  incr opens;
-  let g = ref None in
-  let make () =
-    Result.map
-      (fun x ->
-        g := Some x;
-        x)
-      (C.open_ 0)
-  in
-  let d = get (Rig.open_ (module C) ~name:(strf "CUDA:bench-%d" !opens) make) in
-  let g = Option.get !g in
-  S.bind g;
+  let { S.d; g } = S.open_ () in
   { d; g; v = 0 }
 
 (* The prepared submission of [parts] on [t]. *)
@@ -117,7 +105,7 @@ let release_rows =
 let wait_rows =
   let word g =
     let w = Option.get (C.alloc g `Pinned 8) in
-    S.set64 (host w) 1;
+    H.set64 (host w) 1;
     w
   in
   let waiting () =
@@ -228,15 +216,15 @@ let map_host_rows =
   Thumper.group "map-host"
     [
       row "256MiB"
-        (fun () -> (dev (), S.pages n))
+        (fun () -> (dev (), H.pages n))
         (fun (t, p) -> C.free t.g (Option.get (C.map_host t.g p n)));
       row "floor-256MiB"
-        (fun () -> (floor (), S.pages n))
+        (fun () -> (floor (), H.pages n))
         (fun (_, p) -> floor_map_host p n);
     ]
 
 let () =
-  S.hold_gpu ();
+  S.hold ();
   if Sys.file_exists "/dev/nvidiactl" then
     exit
     @@ Thumper.run "rig_cuda"

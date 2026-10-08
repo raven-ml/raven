@@ -3,18 +3,12 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* Fills, as compiled code would write them, CUDA's own view of host
-   memory, the machine's GPU lock and host memory. CUDA's functions are
-   those the device's capability finds, bound once. A fill's argument is a
-   bigarray's C memory. Every stub but the lock's and the submit's holds the
+/* Fills, as compiled code would write them, and CUDA's own view of host
+   memory. CUDA's functions are those the device's capability finds, bound
+   once. A fill's argument is a bigarray's C memory. Every stub holds the
    runtime: none blocks. */
 
-#define _GNU_SOURCE
-
-#include <errno.h>
-#include <stdatomic.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -24,22 +18,12 @@
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
-#include <caml/threads.h>
 
 #if defined(_WIN32)
-#include <windows.h>
 #define CUDAAPI __stdcall
 #else
-#include <fcntl.h>
-#include <sys/file.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <time.h>
-#include <unistd.h>
 #define CUDAAPI
 #endif
-
-#include "rig_cuda.h"
 
 #define Ptr_val(v) ((void *)Nativeint_val(v))
 #define Addr_val(v) ((void *)Long_val(v))
@@ -188,125 +172,6 @@ value rig_cuda_test_attribute(value v_a) {
   int a = 0;
   if (get_attribute(&a, Int_val(v_a), 0) != 0) caml_failwith("attribute");
   return Val_int(a);
-}
-
-/* The GPU lock */
-
-/* One try at the exclusive lock of the file [v_path], which the process
-   then holds until it exits. A missing file is made writable by every user
-   of the machine. Once taken, the file names [v_holder] and the process's
-   id, for the processes that wait. Answers [0] once the process holds the
-   lock, [-1] after a nap of 100 ms if another process holds it, or the
-   errno of a failing call. Releases the runtime for the nap. */
-value rig_cuda_test_lock(value v_path, value v_holder) {
-  CAMLparam2(v_path, v_holder);
-#if defined(_WIN32)
-  CAMLreturn(Val_int(ENOSYS));
-#else
-  /* The descriptor that holds the lock once taken. The suites take it from
-     one domain. */
-  static int held = -1;
-  if (held >= 0) CAMLreturn(Val_int(0));
-  const char *path = String_val(v_path);
-  int fd = open(path, O_RDWR | O_CLOEXEC);
-  /* O_EXCL: Linux refuses O_CREAT on another user's file in /tmp
-     (fs.protected_regular). */
-  if (fd < 0 && errno == ENOENT) {
-    fd = open(path, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0666);
-    if (fd < 0 && errno == EEXIST) fd = open(path, O_RDWR | O_CLOEXEC);
-    else if (fd >= 0 && fchmod(fd, 0666) != 0) {
-      int e = errno;
-      close(fd);
-      CAMLreturn(Val_int(e));
-    }
-  }
-  if (fd < 0) CAMLreturn(Val_int(errno));
-  if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
-    int e = errno;
-    close(fd);
-    if (e != EWOULDBLOCK) CAMLreturn(Val_int(e));
-    struct timespec nap = {0, 100 * 1000 * 1000};
-    caml_release_runtime_system();
-    nanosleep(&nap, NULL);
-    caml_acquire_runtime_system();
-    CAMLreturn(Val_int(-1));
-  }
-  char note[1024] = "";
-  snprintf(note, sizeof note, "%s, pid %ld\n", String_val(v_holder),
-           (long)getpid());
-  size_t len = strlen(note);
-  if (ftruncate(fd, 0) != 0 || pwrite(fd, note, len, 0) != (ssize_t)len) {
-    int e = errno;
-    close(fd);
-    CAMLreturn(Val_int(e));
-  }
-  held = fd;
-  CAMLreturn(Val_int(0));
-#endif
-}
-
-/* Host memory */
-
-value rig_cuda_test_page_size(value unit) {
-  (void)unit;
-#if defined(_WIN32)
-  SYSTEM_INFO info;
-  GetSystemInfo(&info);
-  return Val_long(info.dwPageSize);
-#else
-  return Val_long(sysconf(_SC_PAGESIZE));
-#endif
-}
-
-/* [v_n] zeroed bytes from a page, writable, or read-only if
-   [v_read_only]. */
-value rig_cuda_test_pages(value v_n, value v_read_only) {
-  size_t n = Long_val(v_n);
-#if defined(_WIN32)
-  void *p = VirtualAlloc(NULL, n, MEM_COMMIT | MEM_RESERVE,
-                         Bool_val(v_read_only) ? PAGE_READONLY
-                                               : PAGE_READWRITE);
-  if (p == NULL) caml_raise_out_of_memory();
-#else
-  int prot = Bool_val(v_read_only) ? PROT_READ : PROT_READ | PROT_WRITE;
-  void *p = mmap(NULL, n, prot, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-  if (p == MAP_FAILED) caml_raise_out_of_memory();
-#endif
-  return Val_long((intnat)p);
-}
-
-value rig_cuda_test_free_pages(value v_p, value v_n) {
-#if defined(_WIN32)
-  (void)v_n;
-  VirtualFree(Addr_val(v_p), 0, MEM_RELEASE);
-#else
-  munmap(Addr_val(v_p), Long_val(v_n));
-#endif
-  return Val_unit;
-}
-
-value rig_cuda_test_get64(value v_p) {
-  _Atomic uint64_t *p = Addr_val(v_p);
-  return Val_long((intnat)atomic_load_explicit(p, memory_order_acquire));
-}
-
-value rig_cuda_test_set64(value v_p, value v_x) {
-  _Atomic uint64_t *p = Addr_val(v_p);
-  atomic_store_explicit(p, (uint64_t)Long_val(v_x), memory_order_release);
-  return Val_unit;
-}
-
-value rig_cuda_test_read(value v_p, value v_n) {
-  CAMLparam2(v_p, v_n);
-  CAMLlocal1(s);
-  s = caml_alloc_string(Long_val(v_n));
-  memcpy(Bytes_val(s), Addr_val(v_p), Long_val(v_n));
-  CAMLreturn(s);
-}
-
-value rig_cuda_test_write(value v_p, value v_s) {
-  memcpy(Addr_val(v_p), String_val(v_s), caml_string_length(v_s));
-  return Val_unit;
 }
 
 /* Fills */
@@ -468,80 +333,6 @@ value rig_cuda_test_graph(value v_exec, value v_nodes, value v_funcs,
 value rig_cuda_test_graph_fill(value unit) {
   (void)unit;
   return caml_copy_nativeint((intnat)graph_launch);
-}
-
-/* What rig_cuda_room answers for one fill on queue [v_queue], with one
-   ring word iff [v_words], [v_units] ring units, [v_bytes] segment bytes and
-   the indices [v_after]. */
-value rig_cuda_test_room(value v_self, value v_queue, value v_words,
-                            value v_units, value v_bytes, value v_after) {
-  static const uint32_t word = 0;
-  int after[8];
-  struct rig_part p;
-  memset(&p, 0, sizeof p);
-  p.queue = Int_val(v_queue);
-  p.words = Bool_val(v_words) ? &word : NULL;
-  p.n = Bool_val(v_words) ? 1 : 0;
-  p.fill = failing;
-  p.ring_units = Long_val(v_units);
-  p.segment_bytes = Long_val(v_bytes);
-  p.nafter = (int)Wosize_val(v_after);
-  if (p.nafter > 8) caml_invalid_argument("rig_cuda_test_room");
-  for (int i = 0; i < p.nafter; i++) after[i] = Int_val(Field(v_after, i));
-  p.after = after;
-  return Val_int(rig_cuda_room(Ptr_val(v_self), &p, 1));
-}
-
-value rig_cuda_test_room_byte(value *argv, int argn) {
-  (void)argn;
-  return rig_cuda_test_room(argv[0], argv[1], argv[2], argv[3], argv[4],
-                               argv[5]);
-}
-
-/* What rig_cuda_submit answers for the copies [v_copies] as the value
-   [v_v], after the waits [v_waits], an address and a value each: [None] for
-   RIG_OK, [Some why] for RIG_FAILED. A copy is the ints queue, dst, src and
-   bytes, then its [after] indices. Releases the runtime: the submit may
-   block. */
-value rig_cuda_test_copies(value v_self, value v_v, value v_waits,
-                              value v_copies) {
-  CAMLparam4(v_self, v_v, v_waits, v_copies);
-  CAMLlocal1(why);
-  int nw = (int)(Wosize_val(v_waits) / 2), np = (int)Wosize_val(v_copies);
-  size_t nafter = 0;
-  for (int i = 0; i < np; i++) nafter += Wosize_val(Field(v_copies, i)) - 4;
-  size_t size = nw * sizeof(struct rig_wait) + np * sizeof(struct rig_part) +
-                nafter * sizeof(int);
-  char *mem = calloc(1, size + 1);
-  if (mem == NULL) caml_raise_out_of_memory();
-  struct rig_wait *w = (struct rig_wait *)mem;
-  struct rig_part *p = (struct rig_part *)(w + nw);
-  int *after = (int *)(p + np);
-  for (int i = 0; i < nw; i++) {
-    w[i].kind = RIG_WORD;
-    w[i].at = (uint64_t)Long_val(Field(v_waits, 2 * i));
-    w[i].value = (uint64_t)Long_val(Field(v_waits, 2 * i + 1));
-  }
-  for (int i = 0; i < np; i++) {
-    value c = Field(v_copies, i);
-    p[i].queue = Int_val(Field(c, 0));
-    p[i].copy_dst = (uint64_t)Long_val(Field(c, 1));
-    p[i].copy_src = (uint64_t)Long_val(Field(c, 2));
-    p[i].copy_bytes = (uint64_t)Long_val(Field(c, 3));
-    p[i].after = after;
-    p[i].nafter = (int)Wosize_val(c) - 4;
-    for (int j = 0; j < p[i].nafter; j++) *after++ = Int_val(Field(c, 4 + j));
-  }
-  void *self = Ptr_val(v_self);
-  uint64_t v = (uint64_t)Long_val(v_v);
-  const char *failure = NULL;
-  caml_release_runtime_system();
-  int rc = rig_cuda_submit(self, v, w, nw, p, np, NULL, 0, &failure);
-  caml_acquire_runtime_system();
-  free(mem);
-  if (rc == RIG_OK) CAMLreturn(Val_none);
-  why = caml_copy_string(failure);
-  CAMLreturn(caml_alloc_some(why));
 }
 
 /* A fill that runs the kernel [spin] for [ns] nanoseconds, then copies [n]

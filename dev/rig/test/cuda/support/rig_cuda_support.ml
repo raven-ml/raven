@@ -3,10 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Windtrap
-
-let strf = Printf.sprintf
-
 (* CUDA, as the capability finds it *)
 
 external bind_symbols : nativeint array -> unit = "rig_cuda_test_bind"
@@ -16,37 +12,6 @@ external attribute : int -> int = "rig_cuda_test_attribute"
 external register : int -> int -> unit = "rig_cuda_test_register"
 external unregister : int -> unit = "rig_cuda_test_unregister"
 external free_memory : unit -> int = "rig_cuda_test_free_memory"
-
-(* The machine's GPU lock *)
-
-external lock : string -> string -> int = "rig_cuda_test_lock"
-
-let gpu_lock = "/tmp/raven-rig-gpu.lock"
-
-(* The longest wait for the lock, in seconds: the machine's suites, from every
-   checkout and user, take it in turn. *)
-let gpu_wait = 300
-
-let holder () =
-  match In_channel.with_open_bin gpu_lock In_channel.input_all with
-  | note -> String.trim note
-  | exception Sys_error _ -> "a process that left no note"
-
-(* [lock] naps 100 ms each time it is refused. *)
-let rec take refused =
-  match lock gpu_lock Sys.executable_name with
-  | 0 -> ()
-  | -1 when refused < gpu_wait * 10 -> take (refused + 1)
-  | -1 ->
-      failwith
-        (strf "%s: still held after %d s, by %s" gpu_lock gpu_wait (holder ()))
-  | errno -> failwith (strf "%s: errno %d" gpu_lock errno)
-
-(* Whether the process that started this one holds the lock for it. *)
-let held_outside () = Sys.getenv_opt "RIG_GPU_LOCK_HELD" <> None
-
-let hold_gpu () =
-  if (not (held_outside ())) && Sys.file_exists "/dev/nvidiactl" then take 0
 
 (* The GPU *)
 
@@ -73,99 +38,21 @@ let bind g =
          "cuGraphLaunch";
        |])
 
-(* The device gpu opened and rig's device over it, until a test stops it or rig
-   loses it: one a failed test left open is stopped by the next gpu. Each open
-   has a name of its own, since rig keeps a name's device after the driver's
-   stop. *)
-let opened = ref None
-let opens = ref 0
+include Rig_gpu_support.Make (struct
+  module D = Rig_cuda
 
-let stop g =
-  (match !opened with Some (o, _) when o == g -> opened := None | _ -> ());
-  Rig_cuda.stop g
+  let class_ = "CUDA"
+  let present () = Sys.file_exists "/dev/nvidiactl"
+  let open_ () =
+    let g = Rig_cuda.open_ 0 in
+    Result.iter bind g;
+    g
+end)
 
-let gpu () =
-  if Rig_cuda.count () = 0 then skip ~reason:"CUDA sees no GPU" ();
-  hold_gpu ();
-  Option.iter (fun (o, _) -> stop o) !opened;
-  incr opens;
-  let g = ref None in
-  let make () =
-    Result.map
-      (fun x ->
-        g := Some x;
-        x)
-      (Rig_cuda.open_ 0)
-  in
-  let name = strf "CUDA:test-%d" !opens in
-  let d = Result.get_ok (Rig.open_ (module Rig_cuda) ~name make) in
-  let g = Option.get !g in
-  opened := Some (g, d);
-  bind g;
-  g
+(* Memory *)
 
-let rig g =
-  match !opened with
-  | Some (o, c) when o == g -> c
-  | _ -> invalid_arg "Rig_cuda_support.rig: the device is not open"
-
-let submit g parts =
-  let s = Rig.Submission.make ~reads:0 ~writes:0 (rig g) parts in
-  match Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||] with
-  | p -> Rig.Point.value p
-  | exception (Rig.Lost _ as e) ->
-      opened := None;
-      raise e
-
-let with_gpu f =
-  let g = gpu () in
-  let stop_left () =
-    match !opened with Some (o, _) when o == g -> stop g | _ -> ()
-  in
-  Fun.protect ~finally:stop_left (fun () -> f g)
-
-(* Checks *)
-
-let answer =
-  Testable.make
-    ~pp:(fun ppf -> function
-      | `Ok -> Format.pp_print_string ppf "`Ok"
-      | `Failed why -> Format.fprintf ppf "`Failed %S" why)
-    ~equal:( = )
-
-let still ?msg w x f ~ms =
-  let t0 = Rig.Profile.now () in
-  while Rig.Profile.now () - t0 < ms * 1_000_000 do
-    equal ?msg w x (f ())
-  done
-
-(* Host memory *)
-
-external page_size : unit -> int = "rig_cuda_test_page_size"
-external pages : int -> bool -> int = "rig_cuda_test_pages"
-external free_pages : int -> int -> unit = "rig_cuda_test_free_pages"
-external get64 : int -> int = "rig_cuda_test_get64"
-external set64 : int -> int -> unit = "rig_cuda_test_set64"
-external read : int -> int -> string = "rig_cuda_test_read"
-external write : int -> string -> unit = "rig_cuda_test_write"
 external read_gpu : nativeint -> int -> string = "rig_cuda_test_read_gpu"
 external write_gpu : nativeint -> string -> unit = "rig_cuda_test_write_gpu"
-
-let page = page_size ()
-
-let get32 a i =
-  Int32.to_int (String.get_int32_le (read (a + (4 * i)) 4) 0) land 0xffff_ffff
-
-let pages ?(read_only = false) n = pages n read_only
-
-let wait g v =
-  let word = Option.get (Rig_cuda.host (Rig_cuda.word g)) in
-  let t0 = Rig.Profile.now () in
-  while get64 word < v do
-    if Rig.Profile.now () - t0 > 10_000_000_000 then
-      failf "the word stayed at %d below %d for 10 s" (get64 word) v;
-    Domain.cpu_relax ()
-  done
 
 (* Fills *)
 
@@ -241,33 +128,6 @@ let graph_launch (g : Rig_cuda_abi.graph) updates =
       (Array.map args updates)
   in
   { fn = graph_fill (); arg }
-
-external room : nativeint -> int -> bool -> int -> int -> int array -> int
-  = "rig_cuda_test_room_byte" "rig_cuda_test_room"
-
-let room g ~queue ~words ~units ~bytes ~after =
-  room (Rig_cuda.self g) queue words units bytes after
-
-external copies :
-  nativeint -> int -> int array -> int array array -> string option
-  = "rig_cuda_test_copies"
-
-type copy_c = {
-  queue : int;
-  dst : int;
-  src : int;
-  bytes : int;
-  after : int array;
-}
-
-let copies g ~v ~waits cs =
-  let waits =
-    Array.concat (Array.to_list (Array.map (fun (a, w) -> [| a; w |]) waits))
-  in
-  let ints c = Array.append [| c.queue; c.dst; c.src; c.bytes |] c.after in
-  match copies (Rig_cuda.self g) v waits (Array.map ints cs) with
-  | None -> `Ok
-  | Some why -> `Failed why
 
 (* Kernels *)
 
