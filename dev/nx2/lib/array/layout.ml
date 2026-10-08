@@ -254,8 +254,8 @@ let reshape l s' =
   if !runs then Some (moved s' strides (offset l)) else None
 
 (* A movement's arrays are its caller's, read once: [move] copies those it reads
-   after [Move.shape] checks them. Of a [Reshape] or a [Broadcast] it reads
-   only the shape [Move.shape] returns, a copy. *)
+   after [Move.shape] checks them. Of a [Reshape] or a [Broadcast] it reads only
+   the shape [Move.shape] returns, a copy. *)
 let own : Move.t -> Move.t = function
   | (Reshape _ | Broadcast _) as m -> m
   | Permute p -> Permute (Shape.copy p)
@@ -310,17 +310,26 @@ let move m l =
 external coalesce_into : t array -> int array -> int = "nx_array_coalesce"
 [@@noalloc]
 
-let shape_code = 10
-let arity_code = 11
+let same_shape l l' =
+  let r = Array.length l.shape in
+  r = Array.length l'.shape
+  &&
+  let i = ref 0 in
+  while !i < r && Array.unsafe_get l.shape !i = Array.unsafe_get l'.shape !i do
+    incr i
+  done;
+  !i = r
 
+(* The coalescer refuses what is checked here first, so it answers [NX_OK]. *)
 let coalesce ls =
   let n = Array.length ls in
+  if n < 1 || n > 4 then
+    invalid_argf "Layout.coalesce: %d layouts, not 1 to 4" n;
+  if not (Array.for_all (same_shape ls.(0)) ls) then
+    invalid_arg "Layout.coalesce: layouts of different shapes";
   let out = Array.make (1 + max_rank + (n * (1 + max_rank))) 0 in
   let e = coalesce_into ls out in
-  if e = shape_code then
-    invalid_arg "Layout.coalesce: layouts of different shapes";
-  if e = arity_code then
-    invalid_argf "Layout.coalesce: %d layouts, not 1 to 4" n;
+  if e <> 0 then invalid_argf "Layout.coalesce: the coalescer answered %d" e;
   let r = out.(0) in
   let shape = Array.sub out 1 r in
   Array.init n (fun k ->

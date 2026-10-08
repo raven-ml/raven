@@ -52,8 +52,9 @@ static int claim_code(enum rig_claim c) {
     case RIG_PENDING: return NX_PENDING;
     case RIG_DEAD: return NX_DEAD;
     case RIG_EXCLUSIVE: return NX_EXCLUSIVE;
-    default: return NX_READ_ONLY;
+    case RIG_READ_ONLY: return NX_READ_ONLY;
   }
+  caml_fatal_error("nx_read: rig_buffer_claim answered %d", (int)c);
 }
 
 /* The bytes [[first, last)] that the array [v], read into [a], reaches, as

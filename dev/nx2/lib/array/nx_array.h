@@ -85,8 +85,8 @@ enum {
    - While the domain lock is released, the kernel reads no OCaml value. */
 
 /* An operand of a call: an OCaml array, the dtype the kernel's loads assume,
-   and whether the kernel writes it. nx_read reads [array] once; the
-   descriptor it fills is what the kernel uses after. */
+   and whether the kernel writes it. nx_read reads [array] while it runs;
+   the descriptor it fills is what the kernel uses after. */
 typedef struct {
   value array;
   int dtype;

@@ -25,7 +25,7 @@ let layout a = a.layout
 let buffer a = a.buffer
 let device a = Buffer.device a.buffer
 
-(* Refusals. The codes are nx_array.h's. *)
+(* Refusals. The codes are nx_array.h's, named in this library only here. *)
 
 let not_host = 3
 let pending = 4
@@ -91,15 +91,15 @@ let reaches fn dt l b =
         Dtype.pp dt
   end
 
-(* Whether [l]'s first element over [b] lies on a multiple of [dt]'s alignment,
-   in [b]'s memory and, for host memory, as an address. *)
+(* Whether the elements of [dt] over [b] lie on multiples of [dt]'s alignment,
+   in [b]'s memory and, for host memory, as addresses. A position is a whole
+   number of elements and an element's width a multiple of its alignment, so
+   [b]'s first byte decides. An array with no element has none to align. *)
 let aligned dt l b =
-  let bits = Dtype.bits dt in
   Layout.numel l = 0
   ||
-  let first = if bits >= 8 then Layout.offset l * (bits / 8) else 0 in
   let a = alignment dt and host = host_address b in
-  (Buffer.offset b + first) mod a = 0 && (host < 0 || (host + first) mod a = 0)
+  Buffer.offset b mod a = 0 && (host < 0 || host mod a = 0)
 
 let v dtype layout buffer =
   let fn = "Nx_array.v" in
@@ -113,8 +113,7 @@ let v dtype layout buffer =
 (* Zeroes the last byte of [b], whose elements are [bits] wide, if elements do
    not fill it: bits past the last element stay zero. *)
 let zero_tail bits n b =
-  let k = 8 / bits in
-  if bits < 8 && n mod k <> 0 then begin
+  if bits < 8 && n mod (8 / bits) <> 0 then begin
     let last = Buffer.length b - 1 in
     if Rig.equal (Buffer.device b) Rig.host then
       Buffer.blit_from_string "\000" 0 b last 1
@@ -248,9 +247,7 @@ let position fn a idx =
 (* Claims [b]'s memory, waits for the device work [access] follows, and returns
    with the claim held: the caller releases it. *)
 let claim fn b access =
-  (match Buffer.dead b with
-  | Some why -> invalid_argf "%s: the buffer is dead: %s" fn why
-  | None -> ());
+  live fn b;
   if host_address b < 0 then
     invalid_argf "%s: the host does not address the buffer's memory" fn;
   Rig.Claim.read b;

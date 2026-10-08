@@ -1125,6 +1125,30 @@ let test_door_buffers () =
       equal bool true (Rig.Claim.exclusive c (A.buffer held));
       equal ~msg:"exclusive" int exclusive (S.add (zeros [| 2 |]) x held))
 
+(* Each refusal the door answers reaches the user as its own reason. *)
+let test_door_reasons () =
+  let x = floats32 [| 2 |] [| 1.; 2. |] in
+  let reason ~sub e =
+    match A.settle "k" e [ A.Any x ] with
+    | () -> failf "settle returned on code %d" e
+    | exception Invalid_argument m -> contains ~msg:sub ~sub m
+  in
+  let wrong = A.of_array D.Float64 [| 2 |] [| 1.; 2. |] in
+  reason ~sub:"dtype" (S.add (zeros [| 2 |]) x wrong);
+  let d = zeros [| 2 |] in
+  kill (A.buffer d);
+  reason ~sub:"dead" (S.add (zeros [| 2 |]) x d);
+  let io = A.to_device (S.io_device ()) x in
+  reason ~sub:"host does not address" (S.add (zeros [| 2 |]) x io);
+  let held = zeros [| 2 |] in
+  Rig.Claim.with_ ~read:[]
+    ~donate:[ [ A.buffer held ] ]
+    (fun _ -> reason ~sub:"held exclusive" (S.add (zeros [| 2 |]) x held));
+  let r = Option.get (A.move (M.Broadcast [| 2 |]) (zeros [| 1 |])) in
+  reason ~sub:"element twice" (S.add r x x);
+  reason ~sub:"shares bytes" (S.add x x (zeros [| 2 |]));
+  reason ~sub:"shapes differ" (S.add (zeros [| 2 |]) x (zeros [| 3 |]))
+
 (* An operand with no element passes the door wherever its memory lies. *)
 let test_door_empty () =
   let host = zeros [| 0; 2 |] in
@@ -1248,6 +1272,8 @@ let tests =
           test_door_positions;
         test "a written operand must be distinct and alone" test_door_written;
         test "dead, foreign and exclusive buffers are refused" test_door_buffers;
+        test "settle names the reason of each refusal the door answers"
+          test_door_reasons;
         test "an operand with no element passes the door, on the host or off it"
           test_door_empty;
         test "a read releases its claims" test_door_releases;
