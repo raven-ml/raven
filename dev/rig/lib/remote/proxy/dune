@@ -1,0 +1,8 @@
+(library
+ (name rig_remote_proxy)
+ (public_name rig.remote.proxy)
+ (modules_without_implementation rig_remote_proxy link)
+ (libraries rig_remote_abi unix)
+ (foreign_stubs
+  (language c)
+  (names rig_remote_wire)))
