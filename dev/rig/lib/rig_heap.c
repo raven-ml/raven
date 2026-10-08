@@ -366,18 +366,30 @@ static mlsize_t heap_cycle_bytes(void) {
    floating anyway, and at least [HEAP_CACHE_FLOOR]; past it the least
    recently freed go back to the library, and an allocation that fails gives
    them all back before trying again. A kept buffer holds its links in its
-   first bytes; a spin lock guards the list, held for a few pointer writes. */
+   first bytes: in the list of the cache, newest first, and in its size's
+   bucket, so a take walks the buffers of its bucket only. A spin lock
+   guards both, held for a few pointer writes and one bucket's walk. */
 
 #define HEAP_CACHE_FLOOR ((size_t)32 << 20)
+#define HEAP_BUCKETS 256
 
 struct heap_entry {
-  struct heap_entry *newer, *older;
+  struct heap_entry *newer, *older; /* the cache, newest first */
+  struct heap_entry *next, *prev;   /* its size's bucket, newest first */
   size_t n;
 };
 
 static atomic_flag heap_cache_lock = ATOMIC_FLAG_INIT;
 static struct heap_entry *heap_newest, *heap_oldest;
+static struct heap_entry *heap_bucket[HEAP_BUCKETS];
 static _Atomic size_t heap_cached;
+
+/* The bucket of buffers of [n] bytes: a multiplicative hash of their pages
+   (buffers kept are 64 KiB or more). */
+static struct heap_entry **bucket_of(size_t n) {
+  return &heap_bucket[(uint64_t)(n / 4096) * UINT64_C(0x9E3779B97F4A7C15) >>
+                      56];
+}
 
 static void heap_cache_acquire(void) {
   while (atomic_flag_test_and_set_explicit(&heap_cache_lock,
@@ -394,6 +406,9 @@ static void heap_unlink(struct heap_entry *e) {
   else heap_newest = e->older;
   if (e->older) e->older->newer = e->newer;
   else heap_oldest = e->newer;
+  if (e->prev) e->prev->next = e->next;
+  else *bucket_of(e->n) = e->next;
+  if (e->next) e->next->prev = e->prev;
   heap_cached -= e->n;
 }
 
@@ -433,6 +448,11 @@ static void heap_keep(void *data, size_t n) {
   if (heap_newest) heap_newest->newer = e;
   else heap_oldest = e;
   heap_newest = e;
+  struct heap_entry **b = bucket_of(n);
+  e->next = *b;
+  e->prev = NULL;
+  if (*b) (*b)->prev = e;
+  *b = e;
   heap_cached += n;
   struct heap_entry *dropped = heap_over(cap);
   heap_cache_release();
@@ -452,8 +472,8 @@ static void heap_trim(void) {
 
 static void *heap_take(size_t n) {
   heap_cache_acquire();
-  struct heap_entry *e = heap_newest;
-  while (e && e->n != n) e = e->older;
+  struct heap_entry *e = *bucket_of(n);
+  while (e && e->n != n) e = e->next;
   if (e) heap_unlink(e);
   heap_cache_release();
   return e;
@@ -467,6 +487,7 @@ static void heap_drop_all(void) {
   heap_cache_acquire();
   struct heap_entry *e = heap_newest;
   heap_newest = heap_oldest = NULL;
+  memset(heap_bucket, 0, sizeof heap_bucket);
   heap_cached = 0;
   heap_cache_release();
   heap_free_list(e);
