@@ -1,0 +1,26 @@
+(library
+ (name device_nv_bench)
+ (modules)
+ (libraries device_edge device_nv)
+ (foreign_stubs
+  (language c)
+  (names device_nv_bench_stubs)))
+
+(executable
+ (name bench_nv)
+ (modules bench_nv)
+ (libraries
+  device_nv
+  device_nv_abi
+  device_nv_bench
+  device_nv_nvidia
+  thumper))
+
+(rule
+ (alias bench)
+ (locks %{workspace_root}/bench)
+ (deps
+  (glob_files *.thumper)
+  (source_tree ../test/fixtures))
+ (action
+  (run %{exe:bench_nv.exe})))
