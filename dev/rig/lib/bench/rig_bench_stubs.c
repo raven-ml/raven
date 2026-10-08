@@ -83,6 +83,36 @@ value rig_bench_floor_new(value v_self, value v_room, value v_submit,
   return caml_copy_nativeint((intnat)f);
 }
 
+/* Makes the floor's part a fill: the function [v_fill] of the argument at
+   the host address [v_arg], declaring [v_units] ring units and [v_bytes]
+   segment bytes. */
+value rig_bench_floor_fill(value v_f, value v_fill, value v_arg, value v_units,
+                           value v_bytes) {
+  struct floor *f = Floor_val(v_f);
+  f->fill = (struct rig_part){0};
+  f->fill.fill = (int (*)(void *, void *, uint64_t))Nativeint_val(v_fill);
+  f->fill.arg = (void *)Long_val(v_arg);
+  f->fill.ring_units = (size_t)Long_val(v_units);
+  f->fill.segment_bytes = (size_t)Long_val(v_bytes);
+  return Val_unit;
+}
+
+/* Makes the floor's part the [v_n] 32-bit words at the host address
+   [v_words]. */
+value rig_bench_floor_words(value v_f, value v_words, value v_n) {
+  struct floor *f = Floor_val(v_f);
+  f->fill = (struct rig_part){0};
+  f->fill.words = (const uint32_t *)Long_val(v_words);
+  f->fill.n = (size_t)Long_val(v_n);
+  return Val_unit;
+}
+
+/* Makes [v_v] the value the floor's device received last. */
+value rig_bench_floor_at(value v_f, value v_v) {
+  Floor_val(v_f)->v = (uint64_t)Long_val(v_v);
+  return Val_unit;
+}
+
 /* Makes [v_g] take [v_f]'s turn. */
 value rig_bench_floor_share(value v_f, value v_g) {
   Floor_val(v_g)->turn = Floor_val(v_f)->turn;
