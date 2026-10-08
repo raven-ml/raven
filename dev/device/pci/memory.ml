@@ -9,7 +9,7 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 type kind = Gpu | Bar | Host | Visible
 type source = Allocated | Borrowed | Peer
 
-type memory = {
+type region = {
   mapping : Page_table.mapping;
   host : Window.t option;
   source : source;
@@ -23,8 +23,8 @@ type t = {
   bar : int;
   bar_size : int;
   peer : (int * int) list -> (int * int) list * Page_table.target;
-  allocated : (int, memory) Hashtbl.t;
-  mapped : (int, memory) Hashtbl.t;
+  allocated : (int, region) Hashtbl.t;
+  mapped : (int, region) Hashtbl.t;
 }
 
 (* Large allocations round to the GPU's large pages, so their tail maps with

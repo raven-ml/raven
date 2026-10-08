@@ -286,7 +286,7 @@ let pp_source ppf s =
     | Borrowed -> "Borrowed"
     | Peer -> "Peer")
 
-let pp_memory ppf (mem : Memory.memory) =
+let pp_region ppf (mem : Memory.region) =
   Format.fprintf ppf "%d bytes at 0x%x" mem.mapping.size mem.mapping.va
 
 let source = Testable.make ~pp:pp_source ~equal:( = )
@@ -345,7 +345,7 @@ let test_no_bar () =
 type rule = In_gpu | Through_bar | In_host
 
 (* What each rule promises of a fresh allocation [mem] of [x]. *)
-let placed x rule (mem : Memory.memory) =
+let placed x rule (mem : Memory.region) =
   let m = mem.mapping in
   equal ~msg:"allocated" source Allocated mem.source;
   equal ~msg:"the tables map its pages" ranges (merge m.pages)
@@ -495,14 +495,14 @@ let test_uncached =
 let test_out_of_memory () =
   let x = gpu () in
   let before = capacity x in
-  is_none ~msg:"more than the GPU's memory" ~pp:pp_memory
+  is_none ~msg:"more than the GPU's memory" ~pp:pp_region
     (alloc_opt x.memory Gpu (gpu_memory + 4096));
-  is_none ~msg:"a BAR block larger than the memory" ~pp:pp_memory
+  is_none ~msg:"a BAR block larger than the memory" ~pp:pp_region
     (alloc_opt x.memory Bar (gpu_memory + 4096));
   let y = gpu ~memory:(512 * mib) () in
-  is_none ~msg:"more than the space" ~pp:pp_memory
+  is_none ~msg:"more than the space" ~pp:pp_region
     (alloc_opt y.memory Gpu (2 * space_length));
-  is_none ~msg:"system memory larger than the space" ~pp:pp_memory
+  is_none ~msg:"system memory larger than the space" ~pp:pp_region
     (alloc_opt y.memory Host (2 * space_length));
   equal ~msg:"no system memory held" int 0 (List.length y.fake.dma);
   equal ~msg:"nothing held" (pair int int) before (capacity x);
@@ -519,7 +519,7 @@ let test_small_bar_fills () =
   let blocks = fill [] in
   equal ~msg:"no block past the BAR" ranges []
     (List.concat_map
-       (fun (mem : Memory.memory) ->
+       (fun (mem : Memory.region) ->
          List.filter (fun (pa, n) -> pa + n > 256 * mib) mem.mapping.pages)
        blocks);
   not_equal ~msg:"blocks" int 0 (List.length blocks);
@@ -540,7 +540,7 @@ let fill_main x =
 let test_tables_full () =
   let x = gpu ~tables:Main ~memory:(16 * mib) () in
   fill_main x;
-  is_none ~msg:"system memory" ~pp:pp_memory
+  is_none ~msg:"system memory" ~pp:pp_region
     (alloc_opt x.memory Host (64 * mib));
   equal ~msg:"no system memory held" int 0 (List.length x.fake.dma);
   Function.release x.fn

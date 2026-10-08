@@ -12,8 +12,8 @@
     through that GPU's memory BAR or a direct link. Every address is of the
     GPU's machine.
 
-    This module is where a driver places what it allocates. A driver's region of
-    memory is a {!memory}, whichever vendor's the GPU is.
+    This module is where a driver places what it allocates. What a driver
+    allocates or maps is a {!region}, whichever vendor's the GPU is.
 
     {b After the GPU is given back.} Once the GPU's function is released
     ({!Function.release}, {!Gpus.release}, {!Gpus.lose}), {!free} and {!unmap}
@@ -68,14 +68,14 @@ type source =
   | Borrowed  (** Memory of the machine, by {!map_host}. *)
   | Peer  (** Another GPU's memory, by {!map_peer}. *)
 
-type memory = private {
+type region = private {
   mapping : Page_table.mapping;  (** Its virtual range and pages. *)
   host : Window.t option;  (** The process's window on it, if it has one. *)
   source : source;  (** How it came to the GPU. *)
 }
-(** The type for memory the GPU addresses. *)
+(** The type for ranges of memory the GPU addresses. *)
 
-val alloc : ?uncached:bool -> t -> kind -> int -> (memory option, string) result
+val alloc : ?uncached:bool -> t -> kind -> int -> (region option, string) result
 (** [alloc m k n] is [n] new bytes of kind [k]: rounded up to the machine's page
     in system memory, and in the GPU's memory to 4 KiB, or to 2 MiB from 8 MiB
     on so that large ones map with large pages. With [~uncached:true] (defaults
@@ -90,7 +90,7 @@ val alloc : ?uncached:bool -> t -> kind -> int -> (memory option, string) result
     Raises [Invalid_argument] if [n <= 0], or if system memory goes at addresses
     {!Machine.reserve} did not reserve. *)
 
-val free : t -> memory -> unit
+val free : t -> region -> unit
 (** [free m mem] unmaps and frees [mem] and returns its addresses.
 
     Raises [Invalid_argument] if [mem] is not {!Allocated} by [m], or freed
@@ -98,7 +98,7 @@ val free : t -> memory -> unit
 
 (** {1:maps Mapping} *)
 
-val map_host : t -> int -> int -> (memory, string) result
+val map_host : t -> int -> int -> (region, string) result
 (** [map_host m a n] maps the [n] bytes at [a] of the GPU's machine for the GPU,
     at [a]: it {!Function.pin}s them and maps their pages, snooped and uncached.
     [Error why] if [a] is not on a page of the machine ({!Machine.page}), lies
@@ -108,7 +108,7 @@ val map_host : t -> int -> int -> (memory, string) result
     Raises [Invalid_argument] if [n <= 0], or if part of the range is mapped for
     the GPU already, pinning nothing. *)
 
-val map_peer : t -> owner:t -> memory -> (memory, string) result
+val map_peer : t -> owner:t -> region -> (region, string) result
 (** [map_peer m ~owner mem] maps [mem], which {!alloc} allocated on the GPU of
     [owner], for the GPU of [m], at its address on [owner]: the GPU's memory
     through [owner]'s memory BAR or link, and system memory at its pages, which
@@ -119,7 +119,7 @@ val map_peer : t -> owner:t -> memory -> (memory, string) result
     Raises [Invalid_argument] if [mem] is not {!Allocated} by [owner], or if the
     GPU of [m] maps its addresses already. *)
 
-val unmap : t -> memory -> unit
+val unmap : t -> region -> unit
 (** [unmap m mem] unmaps [mem] and unpins the memory {!map_host} pinned.
 
     Raises [Invalid_argument] if [mem] is not {!Borrowed} or {!Peer} memory of

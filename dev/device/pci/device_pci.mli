@@ -32,7 +32,7 @@
     {v
     Machine.t --take--> Function.t --map, alloc_dma--> Window.t <-- device_pci.h
                              |
-    Space.t --> Page_table.t --> Memory.t --alloc--> Memory.memory
+    Space.t --> Page_table.t --> Memory.t --alloc--> Memory.region
     v}
 
     A driver starts at {!Gpus}, which numbers a vendor's GPUs on a machine,
