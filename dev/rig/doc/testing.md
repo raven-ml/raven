@@ -260,14 +260,19 @@ the class of device its library drives, and skips only when the machine has
 none (or no vendor library to reach it), so a suite that passes on a machine
 with the GPU has run its GPU tests. No test sweeps every device of the host.
 
-Suites take turns on a machine's GPUs through one lock: `flock` on
-`/tmp/raven-rig-gpu.lock`, shared by every checkout and user of the
-machine, and separate from the benches' timing locks. A suite that finds its
-GPU calls its support's `hold_gpu` before `Windtrap.run`, so the wait counts
-against no test's timeout, and holds the lock until it exits; the holder
-writes its executable and process id into the file. A suite still waiting
-after 300 s fails, naming the holder. Under `dune runtest` the GPU suites of
-a machine therefore run one after another.
+Suites and benches take turns on a machine's GPUs through one lock: `flock`
+on `/tmp/raven-rig-gpu.lock`, shared by every checkout and user of the
+machine. A suite that finds its GPU calls its support's `hold_gpu` before
+`Windtrap.run`, so the wait counts against no test's timeout; a bench calls
+it before `Thumper.run`, so the workers it forks measure under the lock, and
+no GPU row runs beside a GPU test. `hold_gpu` decides from files alone
+(`/dev/nvidiactl`, the Metal framework, `/sys`) and starts no vendor library,
+which a bench must not start before it forks. The process holds the lock
+until it exits; the holder writes its executable and process id into the
+file. A process still waiting after 300 s fails, naming the holder. Under
+`dune runtest` the GPU suites of a machine therefore run one after another.
+The benches' timing locks on kimchi and nonnormal are separate and taken
+outside, around a bench run.
 
 | Host | Hardware | What only it runs |
 |---|---|---|
