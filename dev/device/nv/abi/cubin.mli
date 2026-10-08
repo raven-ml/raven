@@ -70,7 +70,9 @@ val patches : t -> base:int -> (int * string) list
     its offset; one of type [R_CUDA_ABS32_LO_32] or [R_CUDA_ABS32_HI_32] writes
     the low or high 32 bits of that address in the 4 bytes 4 past its offset. A
     symbol's address is [base] plus its offset, plus the relocation's addend,
-    modulo [2{^64}].
+    modulo [2{^64}]. A relocation whose entry holds no addend ([SHT_REL], as
+    NVIDIA's compilers write) has it in the bytes it patches: their unsigned
+    little-endian value in the image of {!elf}.
 
     Every patch lies in the image of {!elf}:
     [at + String.length b <= (elf c).size]. A later patch overwrites an earlier

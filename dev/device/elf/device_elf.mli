@@ -105,13 +105,17 @@ type section = {
 }
 (** The type for sections. *)
 
+(** The type for a relocation's addend. *)
+type addend =
+  | Explicit of int  (** In the entry, [r_addend], as [SHT_RELA] ones hold. *)
+  | Implicit
+      (** In the field the relocation patches, as [SHT_REL] ones hold: its width
+          and encoding are its type's, which the machine defines. *)
+
 type relocation = {
   offset : int;  (** The offset of the field it patches. *)
   kind : int;  (** Its type, [ELF64_R_TYPE (r_info)]. *)
-  addend : int;
-      (** Its addend, [r_addend]. An entry of an [SHT_REL] section has none and
-          holds [0]: its addend is in the field it patches, encoded as its
-          [kind] says. *)
+  addend : addend;  (** Its addend. *)
   symbol : symbol;
       (** The symbol whose value it uses, from the symbol table its relocation
           section links to. A relocation that names no symbol uses
@@ -120,7 +124,10 @@ type relocation = {
 (** The type for relocations. *)
 
 type t = private {
-  kind : int;  (** The object's type, [e_type]: [1] for a relocatable one. *)
+  bits : int;
+      (** The object's class, [EI_CLASS]: [32] or [64], the width of its
+          addresses. *)
+  kind : int;  (** Its type, [e_type]: [1] for a relocatable one. *)
   machine : int;  (** Its machine, [e_machine]. *)
   os_abi : int;  (** Its operating system's ABI, [EI_OSABI]. *)
   abi_version : int;
@@ -132,6 +139,11 @@ type t = private {
           image holds, rounded down to the largest alignment among them, or [0]
           when its sections follow the image's end. An address [a] of the object
           is the offset [a - o.address]. *)
+  align : int;
+      (** The alignment its image asks of the address a loader writes it at: the
+          largest alignment of a section the image holds, [sh_addralign], and
+          [align] when its sections follow the image's end; [1] at least. A
+          power of two, of which {!field-address} is a multiple. *)
   file : string;  (** The object: [obj] itself, as {!of_string} read it. *)
   size : int;
       (** The length of its image, in bytes, from [0] to [max_int]. A corrupted
@@ -158,9 +170,9 @@ type t = private {
       byte of it.
     - A section [s] with [s.offset = Some off] lies in the image,
       [off + s.size <= o.size], at a multiple of its alignment, [sh_addralign],
-      and has all its bytes in the object, [s.length = s.size], or none,
-      [s.length = 0], such as an [SHT_NOBITS] one. No two such sections share a
-      byte of the image.
+      which divides [o.align], and has all its bytes in the object,
+      [s.length = s.size], or none, [s.length = 0], such as an [SHT_NOBITS] one.
+      No two such sections share a byte of the image.
     - A place [Image { section = i; offset }] names a section [s], index [i] of
       [o.sections], with [s.offset = Some off] and
       [off <= offset <= off + s.size].
@@ -168,13 +180,15 @@ type t = private {
 
 (** {1:reading Reading} *)
 
-val allocated : section -> bool
-(** [allocated s] is [true] iff [s] is code or data a loader's memory holds: an
-    allocated ([SHF_ALLOC]) program section ([SHT_PROGBITS]) or section without
-    bytes ([SHT_NOBITS]), other than a thread-local one without bytes
-    ([SHF_TLS], [.tbss]), a template each thread copies, which takes no memory
-    of its own. Other allocated sections, such as [.dynamic], [.dynsym], notes
-    or [.init_array], hold what a dynamic loader reads to link and start a
+val allocated : machine:int -> section -> bool
+(** [allocated ~machine s] is [true] iff [s], a section of an object for
+    [machine] ([e_machine]), is code or data a loader's memory holds: an
+    allocated ([SHF_ALLOC]) program section ([SHT_PROGBITS]), section without
+    bytes ([SHT_NOBITS]) or, on x86-64 ([EM_X86_64], [62]), unwind table
+    ([SHT_X86_64_UNWIND], [.eh_frame]), other than a thread-local one without
+    bytes ([SHF_TLS], [.tbss]), a template each thread copies, which takes no
+    memory of its own. Other allocated sections, such as [.dynamic], [.dynsym],
+    notes or [.init_array], hold what a dynamic loader reads to link and start a
     program. *)
 
 val of_string :
@@ -182,10 +196,11 @@ val of_string :
 (** [of_string ~align ~held obj] is the object [obj] laid out in its image.
 
     The image holds the sections [s] with [held s]. [held] defaults to
-    {!allocated}; a loader whose memory holds less passes its own, such as one
-    for a format that marks memory of another kind allocated. [held] sees each
-    section before the layout, its [offset] [None]. A section it does not hold
-    stays out of the image, and its symbols are [Outside].
+    {!allocated} for [obj]'s machine; a loader whose memory holds less passes
+    its own, such as one for a format that marks memory of another kind
+    allocated. [held] sees each section before the layout, its [offset] [None].
+    A section it does not hold stays out of the image, and its symbols are
+    [Outside].
 
     When its sections follow the image's end, each goes at the first offset at
     or past it that is a multiple of [align] and of its alignment,

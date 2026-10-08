@@ -13,7 +13,7 @@ type relocation = {
   width : int;
   high : bool;
   offset : int;
-  addend : int;
+  addend : int64;
 }
 
 (* The relocations a cubin holds: R_CUDA_64 writes a symbol's 64-bit address,
@@ -21,6 +21,9 @@ type relocation = {
 let r_cuda_64 = 0x2
 let r_cuda_abs32_lo_32 = 0x38
 let r_cuda_abs32_hi_32 = 0x39
+
+(* NVIDIA's machine, e_machine. *)
+let em_cuda = 190
 
 (* The cubin's sections' alignment in its image. *)
 let section_align = 128
@@ -33,7 +36,72 @@ let max_image = 1 lsl 49
    zeros up to the next 4 KiB, and 4 KiB more. *)
 let page = 0x1000
 
-let relocation ~image i (r : Device_elf.relocation) =
+(* The image's sections with bytes in the object, by image offset. *)
+let with_bytes (o : Device_elf.t) =
+  let offset i = Option.get (Iarray.get o.sections i).offset in
+  let idx = Array.make (Iarray.length o.sections) 0 and n = ref 0 in
+  Iarray.iteri
+    (fun i (s : Device_elf.section) ->
+      if Option.is_some s.offset && s.length > 0 then begin
+        idx.(!n) <- i;
+        incr n
+      end)
+    o.sections;
+  let idx = Array.sub idx 0 !n in
+  (* Sections that follow the image's end come in order. *)
+  let rec sorted k =
+    k >= !n || (offset idx.(k - 1) <= offset idx.(k) && sorted (k + 1))
+  in
+  if not (sorted 1) then
+    Array.sort (fun i j -> Int.compare (offset i) (offset j)) idx;
+  idx
+
+(* The index in [idx] of the last section starting at or before the image offset
+   [x], or [-1]. *)
+let section_at (o : Device_elf.t) idx x =
+  let lo = ref 0 and hi = ref (Array.length idx) in
+  while !lo < !hi do
+    let mid = (!lo + !hi) / 2 in
+    if Option.get (Iarray.get o.sections idx.(mid)).offset <= x then
+      lo := mid + 1
+    else hi := mid
+  done;
+  !lo - 1
+
+(* The byte of [o]'s image at [x]: that of the section holding it, or zero. *)
+let image_byte (o : Device_elf.t) idx x =
+  let k = section_at o idx x in
+  if k < 0 then 0
+  else
+    let s = Iarray.get o.sections idx.(k) in
+    let off = Option.get s.offset in
+    if x < off + s.length then Char.code o.file.[s.at + x - off] else 0
+
+(* An implicit addend: the [width] bytes of [o]'s image at [at], an unsigned
+   little-endian number. They usually lie in one section, read at once. *)
+let implicit (o : Device_elf.t) idx ~at ~width =
+  (* Where the bytes lie in the object if one section holds them all, or
+     [-1]. *)
+  let p =
+    let k = section_at o idx at in
+    if k < 0 then -1
+    else
+      let s = Iarray.get o.sections idx.(k) in
+      let off = Option.get s.offset in
+      if at + width <= off + s.length then s.at + at - off else -1
+  in
+  if p >= 0 && width = 8 then String.get_int64_le o.file p
+  else if p >= 0 then
+    Int64.of_int (Int32.to_int (String.get_int32_le o.file p) land 0xffff_ffff)
+  else begin
+    let v = ref 0L in
+    for b = width - 1 downto 0 do
+      v := Int64.(logor (shift_left !v 8) (of_int (image_byte o idx (at + b))))
+    done;
+    !v
+  end
+
+let relocation (o : Device_elf.t) idx i (r : Device_elf.relocation) =
   let* at, width, high =
     if r.kind = r_cuda_64 then Ok (r.offset, 8, false)
     else if r.kind = r_cuda_abs32_lo_32 then Ok (r.offset + 4, 4, false)
@@ -53,9 +121,15 @@ let relocation ~image i (r : Device_elf.relocation) =
           (strf "relocation %d uses %S, whose bytes the image lacks" i
              r.symbol.name)
   in
-  if at + width > image then
+  if at + width > o.size then
     Error (strf "relocation %d patches bytes past the image's end at %d" i at)
-  else Ok { at; width; high; offset; addend = r.addend }
+  else
+    let addend =
+      match r.addend with
+      | Explicit a -> Int64.of_int a
+      | Implicit -> implicit o (Lazy.force idx) ~at ~width
+    in
+    Ok { at; width; high; offset; addend }
 
 (* Kernels *)
 
@@ -314,7 +388,7 @@ type t = {
 (* The sections the GPU's memory holds: ELF's, but a kernel's shared memory,
    which NVIDIA's compilers mark allocated though it is on chip. *)
 let held (s : Device_elf.section) =
-  Device_elf.allocated s && after ~prefix:shared s.name < 0
+  Device_elf.allocated ~machine:em_cuda s && after ~prefix:shared s.name < 0
 
 let of_string obj =
   let* o = Device_elf.of_string ~align:section_align ~held obj in
@@ -326,10 +400,13 @@ let of_string obj =
         (strf "the image would be longer than 2^49 bytes: its sections take %d"
            o.size)
   in
+  (* NVIDIA's compilers write REL relocations, whose addends lie in the
+     image. *)
+  let idx = lazy (with_bytes o) in
   let rec relocations i acc = function
     | [] -> Ok (List.rev acc)
     | r :: rs ->
-        let* r = relocation ~image:o.size i r in
+        let* r = relocation o idx i r in
         relocations (i + 1) (r :: acc) rs
   in
   let* relocations = relocations 0 [] o.relocations in
@@ -345,9 +422,7 @@ let elf c = c.elf
 let patches c ~base =
   let patch (r : relocation) =
     (* Modulo 2^64: an int would wrap at 2^62. *)
-    let v =
-      Int64.(add (add (of_int base) (of_int r.offset)) (of_int r.addend))
-    in
+    let v = Int64.(add (add (of_int base) (of_int r.offset)) r.addend) in
     let b = Bytes.create r.width in
     if r.width = 8 then Bytes.set_int64_le b 0 v
     else

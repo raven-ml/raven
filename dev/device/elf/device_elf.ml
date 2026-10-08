@@ -23,15 +23,18 @@ type section = {
   length : int;
 }
 
-type relocation = { offset : int; kind : int; addend : int; symbol : symbol }
+type addend = Explicit of int | Implicit
+type relocation = { offset : int; kind : int; addend : addend; symbol : symbol }
 
 type t = {
+  bits : int;
   kind : int;
   machine : int;
   os_abi : int;
   abi_version : int;
   flags : int;
   address : int;
+  align : int;
   file : string;
   size : int;
   sections : section iarray;
@@ -60,6 +63,11 @@ let shn_undef = 0
 let shn_loreserve = 0xff00
 let shn_abs = 0xfff1
 let shn_xindex = 0xffff
+
+(* x86-64's, from its psABI. *)
+
+let em_x86_64 = 62
+let sht_x86_64_unwind = 0x70000001
 
 (* The two classes differ in the width of a {e word}, an address, offset or
    size, and in where the ELF header and a symbol put their fields. A section
@@ -196,10 +204,13 @@ let has_bytes h = h.sh_type <> sht_null && h.sh_type <> sht_nobits
 let takes_memory kind flags =
   flags land shf_alloc <> 0 && not (kind = sht_nobits && flags land shf_tls <> 0)
 
-(* The sections of code and data a loader's memory holds: program sections and
-   sections without bytes that take memory. *)
-let allocated_as kind flags =
-  (kind = sht_progbits || kind = sht_nobits) && takes_memory kind flags
+(* The sections of code and data a loader's memory holds, in an object for
+   [machine]: program sections, sections without bytes that take memory, and
+   x86-64's unwind tables. *)
+let allocated_as machine kind flags =
+  (kind = sht_progbits || kind = sht_nobits
+  || (machine = em_x86_64 && kind = sht_x86_64_unwind))
+  && takes_memory kind flags
 
 let is_pow2 n = n > 0 && n land (n - 1) = 0
 
@@ -275,10 +286,9 @@ let round_up n a =
   else if n > max_int - a then too_long ()
   else n + a - (n mod a)
 
-(* The address of image offset 0 when sections go at their addresses: the lowest
-   held section's, rounded down to their largest alignment, so that each keeps
-   its alignment in the image. *)
-let start held hs =
+(* The lowest address of a held section and the largest alignment among them,
+   [1] at least. *)
+let extent held hs =
   let low = ref max_int and align = ref 1 in
   Array.iteri
     (fun i h ->
@@ -287,16 +297,20 @@ let start held hs =
         align := Int.max !align h.sh_addralign
       end)
     hs;
-  !low - (!low land (!align - 1))
+  (!low, !align)
 
 (* Whether the sections go at their addresses, the address the image starts at,
-   each held section's image offset, and the image's length. Sections go at
-   their addresses if one has an address, else follow each other. *)
+   the image's alignment, each held section's image offset, and the image's
+   length. Sections go at their addresses if one has an address, else follow
+   each other. The image starts at the lowest held section's address rounded
+   down to the image's alignment, so that each keeps its alignment there. *)
 let layout ~align held hs =
   let addressed =
     Array.exists2 (fun held h -> held && h.sh_addr <> 0) held hs
   in
-  let address = if addressed then start held hs else 0 in
+  let low, largest = extent held hs in
+  let address = if addressed then low - (low land (largest - 1)) else 0 in
+  let image_align = if addressed then largest else Int.max align largest in
   let offsets = Array.make (Array.length hs) None in
   let size = ref 0 and spans = ref [] in
   Array.iteri
@@ -316,7 +330,7 @@ let layout ~align held hs =
       end)
     hs;
   disjoint ~where:"the image" (Array.of_list (List.rev !spans));
-  (addressed, address, offsets, !size)
+  (addressed, address, image_align, offsets, !size)
 
 (* [at + n], or [max_int] past it: the end of an address range. *)
 let end_of at n = if at > max_int - n then max_int else at + n
@@ -368,6 +382,7 @@ let read ~align ?held obj =
   if u8 obj 5 <> elfdata2lsb then fail "not a little-endian ELF object";
   if String.length obj < f.ehdr then
     fail "the object is truncated: its ELF header lies past its end";
+  let machine = u16 obj 18 in
   let hs, names_index = headers f obj in
   let count = Array.length hs in
   let section_of i what =
@@ -414,12 +429,13 @@ let read ~align ?held obj =
      offset; its names are read once. *)
   let unplaced, kept =
     match held with
-    | None -> (None, Array.map (fun h -> allocated_as h.sh_type h.sh_flags) hs)
+    | None ->
+        (None, Array.map (fun h -> allocated_as machine h.sh_type h.sh_flags) hs)
     | Some held ->
         let unplaced = Array.map (fun h -> section h None) hs in
         (Some unplaced, Array.map held unplaced)
   in
-  let addressed, address, offsets, size = layout ~align kept hs in
+  let addressed, address, image_align, offsets, size = layout ~align kept hs in
   (* The place of a symbol in section [index] at [value]. *)
   let place index value =
     let h = section_of index "a symbol" in
@@ -511,9 +527,9 @@ let read ~align ?held obj =
       if f.word = 8 then u32 obj (e + 12) else u32 obj (e + 4) lsr 8
     in
     let r_addend e =
-      if not rela then 0
-      else if f.word = 8 then i64 obj (e + 16)
-      else i32 obj (e + 8)
+      if not rela then Implicit
+      else if f.word = 8 then Explicit (i64 obj (e + 16))
+      else Explicit (i32 obj (e + 8))
     in
     List.init
       (length_of h / entsize)
@@ -572,12 +588,14 @@ let read ~align ?held obj =
         unplaced
   in
   {
+    bits = 8 * f.word;
     kind = u16 obj 16;
-    machine = u16 obj 18;
+    machine;
     os_abi = u8 obj 7;
     abi_version = u8 obj 8;
     flags = u32 obj f.e_flags;
     address;
+    align = image_align;
     file = obj;
     size;
     sections = Iarray.of_array sections;
@@ -585,7 +603,7 @@ let read ~align ?held obj =
     relocations = List.concat (List.mapi relocations_of (Array.to_list hs));
   }
 
-let allocated (s : section) = allocated_as s.kind s.flags
+let allocated ~machine (s : section) = allocated_as machine s.kind s.flags
 
 let of_string ?(align = 1) ?held obj =
   if not (is_pow2 align) then

@@ -44,11 +44,12 @@ val of_string : string -> (t, string) result
     The result is [Error msg] if [obj] is not an ELF object for AMD GPUs
     ({!Device_elf.of_string}), if it is compiled for no processor LLVM names, or
     for a generic one in a code object before version 6 or of generic version
-    [0], if one of its relocations is of another kind than [R_AMDGPU_REL64],
-    uses a symbol whose bytes the image does not hold, or patches bytes past the
-    image's end, if a kernel's descriptor or the instruction it points to lies
-    outside the image, or if its image is longer than [2{^48}] bytes, which no
-    GPU's virtual addresses reach. [msg] says which. *)
+    [0], if one of its relocations is of another kind than [R_AMDGPU_REL64], has
+    no addend in its entry ([SHT_REL]), uses a symbol whose bytes the image does
+    not hold, or patches bytes past the image's end, if a kernel's descriptor or
+    the instruction it points to lies outside the image, or if its image is
+    longer than [2{^48}] bytes, which no GPU's virtual addresses reach. [msg]
+    says which. *)
 
 val target : t -> string
 (** [target co] is the processor [co] is compiled for, as LLVM names it: a GPU,

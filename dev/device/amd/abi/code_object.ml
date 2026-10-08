@@ -70,12 +70,18 @@ let patch ~size i (r : Device_elf.relocation) =
           (strf "relocation %d uses %S, whose bytes the image lacks" i
              r.symbol.name)
   in
+  let* addend =
+    match r.addend with
+    | Explicit a -> Ok a
+    | Implicit ->
+        Error (strf "relocation %d has no addend in its entry (SHT_REL)" i)
+  in
   if r.offset + rel64_bytes > size then
     Error
       (strf "relocation %d patches bytes past the image's end at %d" i r.offset)
   else
     let b = Bytes.create rel64_bytes in
-    Bytes.set_int64_le b 0 (Int64.of_int (target + r.addend - r.offset));
+    Bytes.set_int64_le b 0 (Int64.of_int (target + addend - r.offset));
     Ok (r.offset, Bytes.unsafe_to_string b)
 
 let rec patches ~size i acc = function

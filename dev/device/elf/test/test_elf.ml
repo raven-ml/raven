@@ -23,6 +23,8 @@ let sht_dynsym = 11
 let sht_init_array = 14
 let sht_symtab_shndx = 18
 let sht_x86_64_unwind = 0x70000001
+let em_x86_64 = 62
+let em_cuda = 190
 let shf_write = 0x1
 let shf_alloc = 0x2
 let shf_execinstr = 0x4
@@ -285,11 +287,17 @@ let elf_section =
         s.offset s.size s.at s.length)
     ~equal:( = )
 
+let pp_addend ppf : Elf.addend -> unit = function
+  | Explicit a -> Format.fprintf ppf "Explicit %d" a
+  | Implicit -> Format.pp_print_string ppf "Implicit"
+
+let elf_addend = Testable.make ~pp:pp_addend ~equal:( = )
+
 let relocation =
   Testable.make
     ~pp:(fun ppf (r : Elf.relocation) ->
-      Format.fprintf ppf "{ offset = %#x; kind = %d; addend = %d; symbol = %a }"
-        r.offset r.kind r.addend pp_symbol r.symbol)
+      Format.fprintf ppf "{ offset = %#x; kind = %d; addend = %a; symbol = %a }"
+        r.offset r.kind pp_addend r.addend pp_symbol r.symbol)
     ~equal:( = )
 
 let pp_t ppf (o : Elf.t) =
@@ -378,6 +386,11 @@ let invariants (o : Elf.t) =
     o.sections;
   disjoint "the object" !in_file;
   disjoint "the image" !in_image;
+  equal ~msg:"the image's alignment is a power of two" int 0
+    (o.align land (o.align - 1));
+  at_least ~msg:"the image's alignment" int ~than:1 o.align;
+  equal ~msg:"its address is a multiple of its alignment" int 0
+    (o.address land (o.align - 1));
   let place (s : Elf.symbol) =
     match s.place with
     | Image { section; offset } ->
@@ -412,6 +425,7 @@ let test_header () =
     }
   in
   let o = read (write ~header [ section ".text" "ABCD" ]) in
+  equal ~msg:"its class" int 64 o.bits;
   equal ~msg:"its type" int 2 o.kind;
   equal ~msg:"its machine" int 224 o.machine;
   equal ~msg:"its OS ABI" int 64 o.os_abi;
@@ -445,9 +459,12 @@ let test_align () =
     ("ABC" ^ String.make 125 '\000' ^ "DEF")
     (image (read ~align:128 obj));
   let obj = write [ section ".text" "ABC"; section ~align:64 ".data" "DEF" ] in
+  let o = read ~align:2 obj in
   equal ~msg:"the larger of align and the section's alignment" string
     ("ABC" ^ String.make 61 '\000' ^ "DEF")
-    (image (read ~align:2 obj))
+    (image o);
+  equal ~msg:"which the image asks of its address" int 64 o.align;
+  equal ~msg:"or align, if larger" int 128 (read ~align:128 obj).align
 
 let test_no_padding () =
   let o = read ~align:128 (write [ section ".a" "A"; section ".b" "BCD" ]) in
@@ -474,8 +491,11 @@ let test_addressed () =
     (String.make 8 '\000' ^ "ABCD" ^ String.make 4 '\000' ^ "RO"
     ^ String.make (0x50 - 0x12) '\000')
     (image o);
+  equal ~msg:"the image asks for its sections' largest alignment" int 16 o.align;
   equal ~msg:"align has no effect" string (image o)
     (image (read ~align:4096 obj));
+  equal ~msg:"not even on the image's alignment" int 16
+    (read ~align:4096 obj).align;
   let o =
     read
       (write
@@ -532,7 +552,9 @@ let test_held () =
         strtab names;
       ]
   in
-  let held (s : Elf.section) = Elf.allocated s && s.name <> ".shared" in
+  let held (s : Elf.section) =
+    Elf.allocated ~machine:relocatable.machine s && s.name <> ".shared"
+  in
   let o = require_ok ~pp:Format.pp_print_string (Elf.of_string ~held obj) in
   invariants o;
   equal ~msg:"the section the loader does not hold stays out" (option int) None
@@ -550,18 +572,19 @@ let test_held () =
        [ ".shared"; ".global" ])
 
 let test_allocated () =
-  let o =
-    read
-      (write
-         [
-           section ".text" "AB";
-           bss ".bss" 4;
-           tbss ".tbss" 4;
-           note ".note" "N";
-           section ~kind:sht_init_array ~flags:(shf_alloc lor shf_write)
-             ".init_array" (String.make 8 '\000');
-         ])
+  let sections =
+    [
+      section ".text" "AB";
+      bss ".bss" 4;
+      tbss ".tbss" 4;
+      note ".note" "N";
+      section ~kind:sht_init_array ~flags:(shf_alloc lor shf_write)
+        ".init_array" (String.make 8 '\000');
+      section ~kind:sht_x86_64_unwind ".eh_frame" "E";
+    ]
   in
+  let names = List.map (fun (s : sh) -> s.name) sections in
+  let o = read (write sections) in
   equal ~msg:"allocated program sections and ones without bytes, not .tbss"
     (list (pair string bool))
     [
@@ -570,10 +593,18 @@ let test_allocated () =
       (".tbss", false);
       (".note", false);
       (".init_array", false);
+      (".eh_frame", true);
     ]
     (List.map
-       (fun n -> (n, Elf.allocated (section_named o n)))
-       [ ".text"; ".bss"; ".tbss"; ".note"; ".init_array" ])
+       (fun n -> (n, Elf.allocated ~machine:em_x86_64 (section_named o n)))
+       names);
+  equal ~msg:"x86-64's unwind type means another on another machine" bool false
+    (Elf.allocated ~machine:em_cuda (section_named o ".eh_frame"));
+  let o =
+    read (write ~header:{ relocatable with machine = em_cuda } sections)
+  in
+  equal ~msg:"and the image of an object for it lacks the section" (option int)
+    None (section_named o ".eh_frame").offset
 
 let test_sections () =
   let o =
@@ -764,10 +795,25 @@ let test_relocations () =
   equal ~msg:"in the order of their sections, then of their entries"
     (list relocation)
     [
-      { offset = 8; kind = 1; addend = -8; symbol = sym_entry "data" data };
-      { offset = 2; kind = 4; addend = -4; symbol = sym_entry "ext" Undefined };
-      { offset = 5; kind = 8; addend = 7; symbol = no_symbol };
-      { offset = 14; kind = 9; addend = 0; symbol = sym_entry "ext" Undefined };
+      {
+        offset = 8;
+        kind = 1;
+        addend = Explicit (-8);
+        symbol = sym_entry "data" data;
+      };
+      {
+        offset = 2;
+        kind = 4;
+        addend = Explicit (-4);
+        symbol = sym_entry "ext" Undefined;
+      };
+      { offset = 5; kind = 8; addend = Explicit 7; symbol = no_symbol };
+      {
+        offset = 14;
+        kind = 9;
+        addend = Implicit;
+        symbol = sym_entry "ext" Undefined;
+      };
     ]
     o.relocations
 
@@ -1392,6 +1438,14 @@ let offsets c =
            (off + s.size, Some off))
        0 c.parts)
 
+(* The image's alignment: its sections' largest, and align when they follow the
+   image's end. *)
+let model_align c =
+  let held = List.filter in_image c.parts in
+  let largest = List.fold_left (fun m (s : sh) -> max m s.align) 1 held in
+  if List.exists (fun (s : sh) -> s.addr <> 0) held then largest
+  else max c.align largest
+
 let model_image c =
   let placed =
     List.filter_map
@@ -1462,13 +1516,16 @@ let model_relocations c : Elf.relocation list =
   let symbols = Array.of_list (model_symbols c) in
   let offsets = Array.of_list (offsets c) in
   List.concat_map
-    (fun (_, t, es) ->
+    (fun (explicit, t, es) ->
       match offsets.(t - 1) with
       | None -> []
       | Some off ->
           List.map
-            (fun (o, s, kind, addend) : Elf.relocation ->
+            (fun (o, s, kind, a) : Elf.relocation ->
               let symbol = if s = 0 then no_symbol else symbols.(s) in
+              let addend : Elf.addend =
+                if explicit then Explicit a else Implicit
+              in
               { offset = off + o; kind; addend; symbol })
             es)
     c.relocs
@@ -1507,7 +1564,9 @@ let law_image c =
     (List.exists (fun s -> in_image s && s.align > c.align) c.parts);
   cover "a gap" (String.contains (model_image c) '\000');
   cover "an image starting past address 0" ((read_case c).address > 0);
-  equal ~msg:"image" string (model_image c) (image (read_case c))
+  let o = read_case c in
+  equal ~msg:"image" string (model_image c) (image o);
+  equal ~msg:"its alignment" int (model_align c) o.align
 
 let law_lookup c =
   let o = read_case c in
@@ -1721,6 +1780,7 @@ let test_elf32 () =
          ])
   in
   invariants o;
+  equal ~msg:"its class" int 32 o.bits;
   equal ~msg:"its type" int 1 o.kind;
   equal ~msg:"its machine" int 3 o.machine;
   equal ~msg:"text, then data at its alignment" string
@@ -1739,10 +1799,15 @@ let test_elf32 () =
       {
         offset = 0;
         kind = 5;
-        addend = -4;
+        addend = Explicit (-4);
         symbol = sym_entry "d" (Image { section = 2; offset = 12 });
       };
-      { offset = 2; kind = 6; addend = 0; symbol = sym_entry "ext" Undefined };
+      {
+        offset = 2;
+        kind = 6;
+        addend = Implicit;
+        symbol = sym_entry "ext" Undefined;
+      };
     ]
     o.relocations
 
@@ -1818,7 +1883,7 @@ let test_global () =
   let scratch = sym_entry "scratch" (Image { section = 14; offset = 1024 }) in
   equal ~msg:"the global" symbol scratch (symbol_named o "scratch");
   equal ~msg:"the bank's relocation reaches it" (list relocation)
-    [ { offset = 0; kind = 2; addend = 0; symbol = scratch } ]
+    [ { offset = 0; kind = 2; addend = Implicit; symbol = scratch } ]
     o.relocations
 
 (* amd_gfx1100.hsaco: .rodata (64 bytes, aligned to 64) at 0x600 and .text
@@ -1881,7 +1946,7 @@ let test_relocatable_amd () =
     (Elf.symbol o "add.kd");
   let last = sym_entry "last" (Image { section = 7; offset = 0x2c0 }) in
   let r offset kind addend symbol : Elf.relocation =
-    { offset; kind; addend; symbol }
+    { offset; kind; addend = Explicit addend; symbol }
   in
   equal ~msg:"the relocations" (list relocation)
     [
@@ -1926,8 +1991,8 @@ let test_host (target, call, addend, table) =
       o.relocations
   in
   equal ~msg:"the call"
-    (list (pair int int))
-    [ (call, addend) ]
+    (list (pair int elf_addend))
+    [ (call, Explicit addend) ]
     (List.map (fun (r : Elf.relocation) -> (r.kind, r.addend)) calls);
   equal ~msg:"names an undefined symbol" (list symbol)
     [ sym_entry "ext" Undefined ]
@@ -1966,7 +2031,7 @@ let () =
                test_addressed;
              test "a section without bytes is zeros in the image" test_bss;
              test "the image holds what the loader's memory holds" test_held;
-             test "ELF's rule for what a loader's memory holds" test_allocated;
+             test "the code and data a loader's memory holds" test_allocated;
              test "every section by index" test_sections;
              test "an object without section names" test_no_names;
              prop ~count:300
@@ -2040,10 +2105,6 @@ let () =
                "host objects"
                [ ("x86_64", 4, -4, 0x80); ("aarch64", 283, 0, 0) ]
                test_host;
-             xfail
-               ~reason:
-                 "an x86_64 object's .eh_frame (SHT_X86_64_UNWIND) stays out \
-                  of the image"
-               (test "an x86_64 object's unwind tables" test_unwind);
+             test "an x86_64 object's unwind tables" test_unwind;
            ];
        ]

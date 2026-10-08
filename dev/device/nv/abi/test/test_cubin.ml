@@ -22,7 +22,9 @@ let pp_cubin ppf c =
 let read obj = require_ok ~pp:pp_error (Cubin.of_string obj)
 let kernel = Testable.make ~pp:S.pp_kernel ~equal:( = )
 
-(* An ELF writer: a 64-bit little-endian object of EM_CUDA (190) *)
+(* An ELF writer: a 64-bit little-endian object of EM_CUDA *)
+
+let em_cuda = 190
 
 type sh = {
   name : string;
@@ -41,6 +43,7 @@ let progbits = 1
 let symtab_kind = 2
 let strtab_kind = 3
 let rela_kind = 4
+let rel_kind = 9
 let nobits = 8
 let nv_info_kind = 0x7000_0000
 let alloc = 0x2
@@ -94,7 +97,7 @@ let write sections =
   Buffer.add_string b "\x7fELF\002\001\001";
   Buffer.add_string b (String.make 9 '\000');
   Buffer.add_uint16_le b 2;
-  Buffer.add_uint16_le b 190;
+  Buffer.add_uint16_le b em_cuda;
   Buffer.add_int32_le b 1l;
   Buffer.add_int64_le b 0L;
   Buffer.add_int64_le b 0L;
@@ -197,7 +200,7 @@ let nv_info ?(name = ".nv.info") ?(info = 0) contents =
 
 (* The sections the GPU's memory holds, as cubin.mli states them. *)
 let held (s : Device_elf.section) =
-  Device_elf.allocated s
+  Device_elf.allocated ~machine:em_cuda s
   && not (String.starts_with ~prefix:".nv.shared." s.name)
 
 let layout obj =
@@ -252,6 +255,9 @@ let r_cuda_64 = 0x2
 let r_cuda_abs32_lo_32 = 0x38
 let r_cuda_abs32_hi_32 = 0x39
 
+(* The bytes a relocation of [kind] at [offset] patches, as [(at, width)]. *)
+let field kind offset = if kind = r_cuda_64 then (offset, 8) else (offset + 4, 4)
+
 type relocatable = {
   bank : int;  (** bytes of .nv.constant0.k *)
   text : int;  (** bytes of .text.k *)
@@ -259,7 +265,36 @@ type relocatable = {
   in_bank : int;  (** the offset of a symbol in the bank *)
   relocs : (int * int * int * int) list;
       (** offset in the code, symbol, type, addend *)
+  implicit : bool;
+      (** relocations without addends (REL), each addend in the bytes it patches
+      *)
 }
+
+(* A REL section for the section [info]: the relocations of [rela] without their
+   addends. *)
+let rel ~link ~info name relocs =
+  let b = Buffer.create 64 in
+  List.iter
+    (fun (offset, sym, kind, _) ->
+      Buffer.add_int64_le b (Int64.of_int offset);
+      Buffer.add_int64_le b
+        Int64.(logor (shift_left (of_int sym) 32) (of_int kind)))
+    relocs;
+  section ~kind:rel_kind ~flags:0 ~link ~info ~align:8 ~entsize:16 name
+    (Buffer.contents b)
+
+(* The code of [k] of [n] bytes with each relocation's addend in the bytes it
+   patches, little-endian, a later one over an earlier. *)
+let fields n relocs =
+  let b = Bytes.make n '\x5a' in
+  List.iter
+    (fun (offset, _, kind, addend) ->
+      let at, width = field kind offset in
+      if at + width <= n then
+        if width = 8 then Bytes.set_int64_le b at (Int64.of_int addend)
+        else Bytes.set_int32_le b at (Int32.of_int addend))
+    relocs;
+  section ~flags:(alloc lor exec) ~align:128 ".text.k" (Bytes.to_string b)
 
 (* The symbols: k in the code, c in the bank, u undefined, a absolute, s in a
    section the image does not hold. *)
@@ -273,23 +308,30 @@ let relocatable r =
       ("s", 3, 0);
     ]
   in
+  let text, relocations =
+    if r.implicit then
+      (fields r.text r.relocs, rel ~link:4 ~info:2 ".rel.text.k")
+    else (code "k" r.text, rela ~link:4 ~info:2 ".rela.text.k")
+  in
   write
     ([
        section ~align:4 ".nv.constant0.k" (String.make r.bank '\001');
-       code "k" r.text;
+       text;
        section ~kind:nobits ~flags:(alloc lor 1) ~size:16 ".nv.shared.k" "";
      ]
     @ symbols ~index:4 syms
-    @ [ rela ~link:4 ~info:2 ".rela.text.k" r.relocs ])
+    @ [ relocations r.relocs ])
 
 let pp_relocatable ppf r =
   Format.fprintf ppf
-    "{ bank = %d; text = %d; in_text = %d; in_bank = %d; relocs = [%s] }" r.bank
-    r.text r.in_text r.in_bank
+    "{ bank = %d; text = %d; in_text = %d; in_bank = %d; relocs = [%s]; \
+     implicit = %b }"
+    r.bank r.text r.in_text r.in_bank
     (String.concat "; "
        (List.map
           (fun (o, s, k, a) -> strf "(%d, %d, 0x%x, %d)" o s k a)
           r.relocs))
+    r.implicit
 
 (* Relocatable cubins; [valid] ones have relocations of the three types, to
    symbols in the image, whose bytes lie in it. *)
@@ -330,8 +372,8 @@ let relocatable_gen ~valid =
                ]
          and+ addend = addend in
          (offset, sym, kind, addend))
-    in
-    { bank; text; in_text; in_bank; relocs }
+    and+ implicit = bool in
+    { bank; text; in_text; in_bank; relocs; implicit }
   in
   with_pp pp_relocatable gen
 
@@ -349,25 +391,52 @@ let base =
 
 (* What a relocation writes, as cubin.mli states it, over the ELF layout: the
    symbol's address base + offset + addend, modulo 2^64. *)
-let expected_patch ~base (r : Device_elf.relocation) =
+(* The image of [o], as Device_elf.mli lays it out. *)
+let elf_image (o : Device_elf.t) =
+  let b = Bytes.make o.size '\000' in
+  let put (s : Device_elf.section) =
+    match s.offset with
+    | Some off -> Bytes.blit_string o.file s.at b off s.length
+    | None -> ()
+  in
+  Iarray.iter put o.sections;
+  Bytes.to_string b
+
+(* What a relocation writes, as cubin.mli states it, over the ELF layout: the
+   symbol's address base + offset + addend, modulo 2^64. A REL relocation's
+   addend is the unsigned little-endian value of the bytes it patches in
+   [image], the image of the ELF layout. *)
+let expected_patch ~image ~base (r : Device_elf.relocation) =
   match r.symbol.place with
   | Image { offset; _ } ->
-      let address =
-        Int64.(add (add (of_int base) (of_int offset)) (of_int r.addend))
+      let at, width = field r.kind r.offset in
+      let addend =
+        match r.addend with
+        | Explicit a -> Int64.of_int a
+        | Implicit when at + width > String.length image -> 0L
+        | Implicit when width = 8 -> String.get_int64_le image at
+        | Implicit ->
+            Int64.(
+              logand (of_int32 (String.get_int32_le image at)) 0xffff_ffffL)
       in
+      let address = Int64.(add (add (of_int base) (of_int offset)) addend) in
       let w = S.le64 address in
-      if r.kind = r_cuda_64 then Some (r.offset, w)
-      else if r.kind = r_cuda_abs32_lo_32 then
-        Some (r.offset + 4, String.sub w 0 4)
-      else if r.kind = r_cuda_abs32_hi_32 then
-        Some (r.offset + 4, String.sub w 4 4)
+      if r.kind = r_cuda_64 then Some (at, w)
+      else if r.kind = r_cuda_abs32_lo_32 then Some (at, String.sub w 0 4)
+      else if r.kind = r_cuda_abs32_hi_32 then Some (at, String.sub w 4 4)
       else None
   | Undefined | Absolute _ | Outside _ -> None
 
+(* Every patch of [o]'s relocations, in order. *)
+let expected_patches ~base (o : Device_elf.t) =
+  let image = elf_image o in
+  List.filter_map (expected_patch ~image ~base) o.relocations
+
 (* Why a cubin is refused, if it is. *)
 let refusal (o : Device_elf.t) =
+  let image = elf_image o in
   let bad (r : Device_elf.relocation) =
-    match expected_patch ~base:0 r with
+    match expected_patch ~image ~base:0 r with
     | None ->
         if List.mem r.kind [ r_cuda_64; r_cuda_abs32_lo_32; r_cuda_abs32_hi_32 ]
         then Some "a symbol outside the image"
@@ -396,19 +465,23 @@ let relocations =
         (Gen.pair valid_cubin base) (fun (r, base) ->
           let obj = relocatable r in
           let c = read obj and o = layout obj in
+          let image = elf_image o in
           cover "a patch" (o.relocations <> []);
+          cover "an implicit addend"
+            (List.exists
+               (fun (r : Device_elf.relocation) -> r.addend = Implicit)
+               o.relocations);
           cover "an address of 2^63 or more"
             (List.exists
                (fun (r : Device_elf.relocation) ->
-                 match expected_patch ~base r with
+                 match expected_patch ~image ~base r with
                  | Some (_, w) when r.kind = r_cuda_64 ->
                      String.get_int64_le w 0 < 0L
                  | _ -> false)
                o.relocations);
           equal
             (list (pair int string))
-            (List.filter_map (expected_patch ~base) o.relocations)
-            (Cubin.patches c ~base));
+            (expected_patches ~base o) (Cubin.patches c ~base));
       test "a symbol's address past 2^62 is taken modulo 2^64" (fun () ->
           let obj =
             relocatable
@@ -418,12 +491,13 @@ let relocations =
                 in_text = 0;
                 in_bank = 0;
                 relocs = [ (0, 1, r_cuda_64, max_int) ];
+                implicit = false;
               }
           in
           let base = 0x7000_0000_0000 in
           equal
             (list (pair int string))
-            (List.filter_map (expected_patch ~base) (layout obj).relocations)
+            (expected_patches ~base (layout obj))
             (Cubin.patches (read obj) ~base));
       prop ~count:300 "every patch lies in the image of the ELF object"
         (Gen.pair valid_cubin base) (fun (r, base) ->
@@ -458,9 +532,7 @@ let many_sm89 =
       test "its 128 relocations write each global's address" (fun () ->
           let obj = many () in
           let base = 0x7fff_0000_0000 in
-          let expected =
-            List.filter_map (expected_patch ~base) (layout obj).relocations
-          in
+          let expected = expected_patches ~base (layout obj) in
           equal ~msg:"count" int 128 (List.length expected);
           equal
             (list (pair int string))
@@ -496,7 +568,7 @@ let globals_sm89 =
         (fun () ->
           let c = globals () and base = 0x7fff_0000_0000 in
           let o = Cubin.elf c in
-          let expected = List.filter_map (expected_patch ~base) o.relocations in
+          let expected = expected_patches ~base o in
           equal ~msg:"count" int 2 (List.length expected);
           equal (list (pair int string)) expected (Cubin.patches c ~base));
     ]
@@ -529,6 +601,7 @@ let image =
                    in_text = 0;
                    in_bank = 0;
                    relocs = [];
+                   implicit = false;
                  })
           in
           equal (pair int int)
@@ -566,7 +639,14 @@ let image =
       test "reading copies nothing: elf's file is the object" (fun () ->
           let obj =
             relocatable
-              { bank = 4; text = 16; in_text = 0; in_bank = 0; relocs = [] }
+              {
+                bank = 4;
+                text = 16;
+                in_text = 0;
+                in_bank = 0;
+                relocs = [];
+                implicit = false;
+              }
           in
           equal string obj (Cubin.elf (read obj)).file);
     ]

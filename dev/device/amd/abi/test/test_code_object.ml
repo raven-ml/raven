@@ -67,8 +67,9 @@ let section obj name =
 let header obj i = Int64.to_int (String.get_int64_le obj 40) + (64 * i)
 let entry obj table i = (section obj table).at + (24 * i)
 
-(* A section header's sh_addr; a symbol's st_value; a relocation's r_offset and
-   r_info. *)
+(* A section header's sh_type and sh_addr; a symbol's st_value; a relocation's
+   r_offset and r_info. *)
+let sh_type = 4
 let sh_addr = 16
 let st_value = 8
 let r_offset = 0
@@ -82,10 +83,11 @@ let index obj name =
   go 0
 
 (* The fixtures' symbols and relocation types: R_AMDGPU_ABS32_LO and
-   R_AMDGPU_REL64. *)
+   R_AMDGPU_REL64; the type of a relocation section without addends. *)
 let sym_ext = 5
 let abs32_lo = 1
 let rel64 = 5
+let sht_rel = 9
 let info ~sym ~kind = (sym lsl 32) lor kind
 
 (* Reading *)
@@ -158,8 +160,13 @@ let reading =
             match r.symbol.place with
             | Image { offset; _ } ->
                 let b = Bytes.create 8 in
+                let addend =
+                  match r.addend with
+                  | Explicit a -> a
+                  | Implicit -> fail "a fixture's relocation without addend"
+                in
                 Bytes.set_int64_le b 0
-                  (Int64.of_int (offset + r.addend - r.offset));
+                  (Int64.of_int (offset + addend - r.offset));
                 (r.offset, Bytes.to_string b)
             | Undefined | Absolute _ | Outside _ -> fail "a fixture's symbol"
           in
@@ -301,6 +308,12 @@ let refusals =
             (patch obj
                (entry obj ".rela.rodata" 0 + r_info)
                (set_u64 (info ~sym:sym_ext ~kind:rel64))));
+      test "a relocation without an addend in its entry" (fun () ->
+          let obj = relocatable () in
+          refused ~sub:"SHT_REL"
+            (patch obj
+               (header obj (index obj ".rela.rodata") + sh_type)
+               (set_u32 sht_rel)));
       test "a relocation that names no symbol" (fun () ->
           let obj = relocatable () in
           refused
