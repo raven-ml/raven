@@ -33,8 +33,8 @@ let record src dst bytes start =
    other copy.
 
    The host's staging serves every device that maps host memory. A device that
-   maps none stages through slots of its own [Pinned] memory, which the host
-   and the device both address; they go with the device once it is lost. *)
+   maps none stages through slots of its own [Pinned] memory, which the host and
+   the device both address; they go with the device once it is lost. *)
 let half_bytes = 32 * 1024 * 1024
 
 type stage = {
@@ -44,7 +44,11 @@ type stage = {
 }
 
 let stage owner =
-  { owner; halves = [| [| None; None |]; [| None; None |] |]; in_use = [| false; false |] }
+  {
+    owner;
+    halves = [| [| None; None |]; [| None; None |] |];
+    in_use = [| false; false |];
+  }
 
 let host_stage = lazy (stage Dev.host)
 
@@ -292,12 +296,12 @@ and stage_for src dst =
   | false, true -> stage_of (runner dst)
   | false, false -> Lazy.force host_stage
 
-(* Through staging memory: the copy holds a slot, whose two halves
-   take the pieces in turn, so one half fills while the other drains. A leg on a
-   device's queue runs without the host waiting for it: the next leg that reads
-   or writes its half waits for it by the half's stamps. The device's leg into
-   the slot runs one piece ahead of the host's out of it; the host's leg into
-   the slot fills one half while the device drains the other. *)
+(* Through staging memory: the copy holds a slot, whose two halves take the
+   pieces in turn, so one half fills while the other drains. A leg on a device's
+   queue runs without the host waiting for it: the next leg that reads or writes
+   its half waits for it by the half's stamps. The device's leg into the slot
+   runs one piece ahead of the host's out of it; the host's leg into the slot
+   fills one half while the device drains the other. *)
 and staged src dst n =
   let st = stage_for src dst in
   let i = take_slot st in

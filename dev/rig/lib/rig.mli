@@ -419,18 +419,18 @@ module Buffer : sig
       and kept for the life of the process ({!domains}). A device of this
       machine that maps no host memory ({!Driver.maps_host}) stages through two
       slots of its own [Pinned] memory instead, made at its first copy that
-      needs them and kept until it is lost. A device that runs no
-      copy has memory the host addresses, which the host copies; a borrow on it
-      of another device's memory copies by that device. An {!Io} device's
-      memory, of any machine, is read and written by its {!Io.read} and
-      {!Io.write}, through the staging memory when the host does not address the
-      other side, except a copy into it from memory the host does not address,
-      of a device with a copy queue that maps its pages ({!Io.pages}), which
-      that device runs through them. Memory of a driver's device of another
-      machine copies only directly, as one copy on a device of that machine:
-      with memory of its machine, by [src]'s device; with memory this process's
-      host addresses, by the other machine's side's device, whose driver carries
-      the bytes ({!Submission.Copy}). No staging memory reaches another machine.
+      needs them and kept until it is lost. A device that runs no copy has
+      memory the host addresses, which the host copies; a borrow on it of
+      another device's memory copies by that device. An {!Io} device's memory,
+      of any machine, is read and written by its {!Io.read} and {!Io.write},
+      through the staging memory when the host does not address the other side,
+      except a copy into it from memory the host does not address, of a device
+      with a copy queue that maps its pages ({!Io.pages}), which that device
+      runs through them. Memory of a driver's device of another machine copies
+      only directly, as one copy on a device of that machine: with memory of its
+      machine, by [src]'s device; with memory this process's host addresses, by
+      the other machine's side's device, whose driver carries the bytes
+      ({!Submission.Copy}). No staging memory reaches another machine.
 
       Staging memory that a device lost while it used it is replaced, so a loss
       reaches no other device's copies.
@@ -448,7 +448,7 @@ module Buffer : sig
       a host or a device cannot allocate its staging memory, or a device's
       driver refuses to map the host's after the rounds of
       {{!reclaim}reclamation}; and what an {!Io} device's read or write raises.
-      *)
+  *)
 
   val device : t -> device
   (** [device b] is the device [b] is on: [d] for a buffer that {!create},
