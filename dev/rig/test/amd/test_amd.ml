@@ -2899,11 +2899,21 @@ let timeline =
 
 (* Two devices of one GPU *)
 
-let one_gpu () =
-  S.with_gpu @@ fun g ->
-  let g' =
-    match Rig_amd_amdgpu.open_ 0 with Ok g' -> g' | Error why -> fail why
-  in
+(* With no kernel driver, a process takes a GPU once: a second open is
+   refused, naming the GPU taken, and the first device goes on. *)
+let one_gpu_driverless g =
+  (match S.open_gpu () with
+  | Ok g' ->
+      A.stop g';
+      fail "a second open of a GPU the process took"
+  | Error why -> contains ~sub:"is taken already" why);
+  equal int ~msg:"the first device's next value" 1 (S.submit g [||]);
+  S.wait g 1
+
+(* Through amdgpu, a process opens a GPU as often as it likes: the devices
+   share its memory. *)
+let one_gpu_shared g =
+  let g' = match S.open_gpu () with Ok g' -> g' | Error why -> fail why in
   Fun.protect ~finally:(fun () -> A.stop g') @@ fun () ->
   let r = device g and r' = device g' in
   let n = 4096 in
@@ -2949,10 +2959,16 @@ let one_gpu () =
   List.iter (A.free g') [ staging'; theirs; mapped' ];
   A.free g back
 
+let one_gpu () =
+  S.with_gpu @@ fun g ->
+  if S.driverless () then one_gpu_driverless g else one_gpu_shared g
+
 let two =
   group ~timeout:60. "one GPU"
     [
-      test "two devices of one GPU share its memory, mapping each page once"
+      test
+        "two devices of one GPU share its memory, mapping each page once, \
+         where the path allows a second device"
         one_gpu;
     ]
 

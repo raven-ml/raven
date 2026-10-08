@@ -57,6 +57,8 @@ let held_outside () = Sys.getenv_opt "RIG_GPU_LOCK_HELD" <> None
 let pci_firmware =
   Option.map (String.split_on_char ':') (Sys.getenv_opt "RIG_AMD_PCI_FIRMWARE")
 
+let driverless () = Option.is_some pci_firmware
+
 let gpus () =
   match pci_firmware with
   | Some _ -> Rig_amd_pci.count ()

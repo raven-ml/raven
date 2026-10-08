@@ -22,6 +22,10 @@ val hold_gpu : unit -> unit
     Raises [Failure] naming the holder if another process still holds the lock
     after 300 s, or naming the errno if the file cannot be locked. *)
 
+val driverless : unit -> bool
+(** [driverless ()] is [true] iff {!open_gpu} opens the GPU with no kernel
+    driver: the variable [RIG_AMD_PCI_FIRMWARE] is set. *)
+
 val gpus : unit -> int
 (** [gpus ()] is the number of AMD GPUs the suites can open: amdgpu's
     ({!Rig_amd_amdgpu.count}), or, where the variable [RIG_AMD_PCI_FIRMWARE]
