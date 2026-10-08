@@ -99,17 +99,15 @@ let test_set_budget () =
   equal ~msg:"live memory stays" bool false (freed p (B.address live));
   raises_match Exn.invalid_arg (fun () -> C.set_budget d (-1))
 
-(* Memory collected while its device holds more than its budget returns to
-   the driver: an allocation the budget refuses finds none of it to reuse, and
-   the live buffers stay within the budget. *)
+(* Memory collected while its device holds more than its budget returns to the
+   driver: an allocation the budget refuses finds none of it to reuse, and the
+   live buffers stay within the budget. *)
 let test_over_budget_cache () =
   let d, _ = P.open_ "memory:over-budget-cache" in
   ignore (dropped d (4 * kib));
   let live = B.create d 1 in
   C.set_budget d (4 * kib);
-  raises_match
-    (out_of_memory d (4 * kib))
-    (fun () -> B.create d (4 * kib));
+  raises_match (out_of_memory d (4 * kib)) (fun () -> B.create d (4 * kib));
   ignore (Sys.opaque_identity live)
 
 let test_free_cache () =
@@ -162,6 +160,29 @@ let test_host_refused () =
     (Support.host_held () + (64 * 1024 * kib))
     (fun () ->
       equal int (32 * 1024 * kib) (B.length (B.create C.host (32 * 1024 * kib))))
+
+(* A host buffer holds its bytes in the host's budget until it is collected,
+   small ones included. *)
+let test_host_held () =
+  List.iter
+    (fun n ->
+      Gc.full_major ();
+      let before = Support.host_held () in
+      let held =
+        (fun () ->
+          let b = B.create C.host n in
+          let held = Support.host_held () in
+          ignore (Sys.opaque_identity b);
+          held)
+          ()
+      in
+      equal ~msg:(Printf.sprintf "%d bytes, live" n) int (before + n) held;
+      Gc.full_major ();
+      Gc.full_major ();
+      equal
+        ~msg:(Printf.sprintf "%d bytes, collected" n)
+        int before (Support.host_held ()))
+    [ 16; 4 * kib; 128 * kib ]
 
 (* On a device with copies, pinned memory is host memory: it counts in the
    host's budget, not the device's. *)
@@ -532,6 +553,8 @@ let tests =
         test "free_cache with no work in flight returns the cache at once"
           test_free_cache;
         test "the host's budget is max_int" test_host_budget;
+        test "a host buffer holds its bytes in the budget until collected"
+          test_host_held;
         test "a host allocation the C library refuses raises for the host"
           test_host_refused;
       ];

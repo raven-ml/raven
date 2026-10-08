@@ -74,43 +74,32 @@ let page = page_size ()
 
 (* The host's heap *)
 
-external heap_init : unit -> unit = "caml_rig_heap_init"
-external heap_reserve : int -> int -> bool = "caml_rig_heap_reserve"
-external heap_token : int -> token = "caml_rig_heap_token"
+external heap_init : int -> unit = "caml_rig_heap_init"
+external heap_reserve : int -> int -> bool = "caml_rig_heap_reserve" [@@noalloc]
 
 type bytes_ba =
   (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
 
-external heap_alloc : int -> bytes_ba = "caml_rig_heap_alloc"
-external heap_aligned : int -> int -> bytes_ba option = "caml_rig_heap_aligned"
+external heap_bytes : int -> int -> bytes_ba = "caml_rig_heap_bytes"
 external heap_drop : unit -> unit = "caml_rig_heap_drop"
 external heap_trim : int -> unit = "caml_rig_heap_trim"
 external heap_release : int -> unit = "caml_rig_heap_release" [@@noalloc]
 
 external ba_address : ('a, 'b, 'c) Bigarray.Array1.t -> int
   = "caml_rig_bigarray_address"
-
-let () = heap_init ()
+[@@noalloc]
 
 (* Host buffers of at least this many bytes start on a page, so devices can map
    them: a mapping takes whole pages, which another buffer's memory must not
    share. Aligning costs up to a page of slack, at most a quarter of the buffer.
-   Smaller buffers are the runtime's bigarrays, which the minor heap holds and
-   where most die: [caml_alloc_custom] would pace minor collections by the bound
-   it paces major cycles by. *)
+   The heap keeps these for reuse once collected. *)
 let aligned_from = Int.max (64 * 1024) (4 * page)
+let () = heap_init aligned_from
 
 let heap_bytes n =
-  if n < aligned_from then
-    Bigarray.Array1.create Bigarray.char Bigarray.c_layout n
-  else
-    match heap_aligned page n with
-    | Some ba -> ba
-    | None ->
-        if n > max_int - page then raise Stdlib.Out_of_memory;
-        let ba = heap_alloc (n + page - 1) in
-        let skip = (page - (ba_address ba mod page)) mod page in
-        Bigarray.Array1.sub ba skip n
+  if n < aligned_from then heap_bytes 1 n
+  else if n > max_int - page then raise Stdlib.Out_of_memory
+  else heap_bytes page n
 
 (* Memory records *)
 
@@ -817,7 +806,7 @@ let rec host_bytes n round =
 
 (* What every host buffer of no bytes keeps: nothing to free. *)
 let empty = Bigarray.Array1.create Bigarray.char Bigarray.c_layout 0
-let empty_keep = Heap (empty, no_token)
+let empty_keep = Heap empty
 
 let host_memory n =
   drain Dev.host;
@@ -829,9 +818,8 @@ let host_memory n =
     heap_reserved n 1;
     let ba = host_bytes n 1 in
     let addr = ba_address ba in
-    own
-      ~keep:(Heap (ba, heap_token n))
-      ~host:addr ~address:addr ~handle:0n ~token:no_token Dev.host n no_entry
+    own ~keep:(Heap ba) ~host:addr ~address:addr ~handle:0n ~token:no_token
+      Dev.host n no_entry
   end
 
 (* Borrows *)

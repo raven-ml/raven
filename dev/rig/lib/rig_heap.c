@@ -231,8 +231,8 @@ value caml_rig_released_any(value v_list) {
 /* The host's heap
 
    The bytes of the host's heap that live buffers hold. A buffer reserves its
-   bytes against the host's budget and holds a token whose finaliser returns
-   them. */
+   bytes against the host's budget, and the finaliser of its bigarray's block
+   returns them. */
 static _Atomic intnat heap_bytes;
 
 static void heap_drop_all(void);
@@ -256,34 +256,10 @@ value caml_rig_heap_reserve(value v_n, value v_budget) {
 
 /* The bytes the collector has returned, ever, of buffers made before the
    last major cycle ended, and the number of major cycles seen ended (see
-   [slice_end]). A token holds its bytes and the cycles seen ended when it
-   was made: a buffer made and dropped within one cycle was never held
-   live. */
+   [slice_end]). A buffer's block holds the cycles seen ended when it was
+   made: a buffer made and dropped within one cycle was never held live. */
 static _Atomic intnat heap_collected;
 static _Atomic uintnat cycles_seen;
-
-static void heap_token_finalize(value v) {
-  intnat n = ((intnat *)Data_custom_val(v))[0];
-  intnat e = ((intnat *)Data_custom_val(v))[1];
-  atomic_fetch_sub_explicit(&heap_bytes, n, memory_order_relaxed);
-  if ((uintnat)e < atomic_load_explicit(&cycles_seen, memory_order_relaxed))
-    atomic_fetch_add_explicit(&heap_collected, n, memory_order_relaxed);
-}
-
-static struct custom_operations heap_token_ops = {
-    "rig.heap_token",   heap_token_finalize,
-    custom_compare_default,     custom_hash_default,
-    custom_serialize_default,   custom_deserialize_default,
-    custom_compare_ext_default, custom_fixed_length_default};
-
-/* A token that returns [v_n] reserved bytes once it is collected. */
-value caml_rig_heap_token(value v_n) {
-  value v = caml_alloc_custom(&heap_token_ops, 2 * sizeof(intnat), 0, 1);
-  ((intnat *)Data_custom_val(v))[0] = Long_val(v_n);
-  ((intnat *)Data_custom_val(v))[1] =
-      (intnat)atomic_load_explicit(&cycles_seen, memory_order_relaxed);
-  return v;
-}
 
 /* Pacing the collector
 
@@ -524,28 +500,85 @@ value caml_rig_heap_drop(value unit) {
 }
 
 /* The runtime's operations of bigarrays, which it exports but declares only
-   to itself. A buffer's bigarray is made here with [caml_alloc_custom],
-   which takes the memory a cycle is due after, and the runtime's operations
-   with one change, a finaliser that keeps the memory where the runtime's
-   frees it. Every array over a buffer, its subs, slices and views, shares
-   the proxy made with it, which holds the buffer's bytes: the runtime
-   reads a proxy's size only for mapped files. */
+   to itself. A buffer's bigarray is one block made here with the runtime's
+   operations but its finaliser. After the array's one dimension the block
+   holds [struct heap_block]: where the bytes were allocated, which may lie
+   before the array's first byte, and the cycles seen ended when it was
+   made. The runtime gives every array it makes over another, a sub, a
+   slice, a reshape, the other's operations and marks it a subarray. Such
+   arrays share a proxy, made at the first ([ensure_proxy]), that names the
+   allocation. The buffer's own array returns its reservation once
+   collected, and the last array over the allocation, whichever it is, keeps
+   or frees the bytes. */
 extern const struct custom_operations caml_ba_ops;
 
-/* The last array over a heap buffer, whichever it is, keeps its bytes. */
-static void heap_finalize(value v) {
-  struct caml_ba_proxy *p = Caml_ba_array_val(v)->proxy;
-  if (atomic_fetch_sub(&p->refcount, 1) != 1) return;
-  heap_keep(p->data, p->size);
-  free(p);
-}
+struct heap_block {
+  void *base;
+  uintnat cycle;
+};
+
+#define HEAP_BLOCK_BYTES (SIZEOF_BA_ARRAY + sizeof(intnat) + \
+                          sizeof(struct heap_block))
 
 static struct custom_operations heap_ops;
 
+static struct heap_block *heap_block(struct caml_ba_array *b) {
+  return (struct heap_block *)&b->dim[1];
+}
+
+/* Buffers from this size start on a page, and the heap keeps them. */
+static size_t heap_kept_from;
+
+/* The bytes allocated for a buffer of [n] bytes starting on a multiple of
+   [align]: where the C library aligns nothing that [free] releases
+   (Windows), [align - 1] more, to start on one. */
+static size_t heap_size(size_t n, size_t align) {
+#ifdef _WIN32
+  return align <= 16 ? n : n + align - 1;
+#else
+  (void)align;
+  return n;
+#endif
+}
+
+/* The page, which [caml_rig_heap_init] reads once. */
+static size_t heap_page;
+
+/* The bytes allocated for a buffer of [n] bytes made by
+   [caml_rig_heap_bytes]. */
+static size_t heap_allocated(size_t n) {
+  return n >= heap_kept_from ? heap_size(n, heap_page) : n;
+}
+
+static void heap_finalize(value v) {
+  struct caml_ba_array *b = Caml_ba_array_val(v);
+  void *base = NULL;
+  size_t size = 0;
+  if (!(b->flags & CAML_BA_SUBARRAY)) {
+    struct heap_block *h = heap_block(b);
+    intnat n = b->dim[0];
+    atomic_fetch_sub_explicit(&heap_bytes, n, memory_order_relaxed);
+    if (h->cycle < atomic_load_explicit(&cycles_seen, memory_order_relaxed))
+      atomic_fetch_add_explicit(&heap_collected, n, memory_order_relaxed);
+    base = h->base;
+    size = heap_allocated((size_t)n);
+  }
+  struct caml_ba_proxy *p = b->proxy;
+  if (p != NULL) {
+    if (atomic_fetch_sub(&p->refcount, 1) != 1) return;
+    base = p->data;
+    size = p->size;
+    free(p);
+  }
+  if (size >= heap_kept_from) heap_keep(base, size);
+  else free(base);
+}
+
 /* Builds the operations and installs the slice hook, once, as the library
-   initializes. */
-value caml_rig_heap_init(value unit) {
-  (void)unit;
+   initializes, with the size from which buffers start on a page. */
+value caml_rig_heap_init(value v_kept_from) {
+  heap_kept_from = (size_t)Long_val(v_kept_from);
+  heap_page = rig_page_bytes();
   heap_ops = caml_ba_ops;
   heap_ops.finalize = heap_finalize;
   previous_slice_end = atomic_exchange_explicit(
@@ -553,59 +586,65 @@ value caml_rig_heap_init(value unit) {
   return Val_unit;
 }
 
-static value heap_bigarray(void *data, size_t n) {
-  struct caml_ba_proxy *p = malloc(sizeof *p);
-  if (p == NULL) {
-    free(data);
-    caml_raise_out_of_memory();
-  }
-  atomic_store_explicit(&p->refcount, 1, memory_order_relaxed);
-  p->data = data;
-  p->size = n; /* the bytes [heap_finalize] keeps */
-  value ba = caml_alloc_custom(&heap_ops, SIZEOF_BA_ARRAY + sizeof(intnat),
-                               n, heap_cycle_bytes());
+/* Buffers from this size pace major cycles by the program's memory
+   ([heap_cycle_bytes]); smaller ones pace the collector as any bigarray
+   does, so that dead small buffers bring minor collections. */
+#define HEAP_PACED_FROM ((size_t)64 << 10)
+
+/* The [n] bytes at [data], allocated from [base], as a [char] bigarray. */
+static value heap_bigarray(void *base, void *data, size_t n) {
+  value ba = n < HEAP_PACED_FROM
+                 ? caml_alloc_custom_mem(&heap_ops, HEAP_BLOCK_BYTES, n)
+                 : caml_alloc_custom(&heap_ops, HEAP_BLOCK_BYTES, n,
+                                     heap_cycle_bytes());
   struct caml_ba_array *b = Caml_ba_array_val(ba);
   b->data = data;
   b->num_dims = 1;
   b->flags = CAML_BA_CHAR | CAML_BA_C_LAYOUT | CAML_BA_MANAGED;
-  b->proxy = p;
+  b->proxy = NULL;
   b->dim[0] = (intnat)n;
+  struct heap_block *h = heap_block(b);
+  h->base = base;
+  h->cycle = atomic_load_explicit(&cycles_seen, memory_order_relaxed);
   return ba;
 }
 
-/* [v_n] bytes of the heap, as a [char] bigarray that keeps them once
-   collected. */
-value caml_rig_heap_alloc(value v_n) {
-  size_t n = (size_t)Long_val(v_n);
-  void *data = heap_take(n);
-  if (data == NULL) data = malloc(n);
-  if (data == NULL) {
-    heap_drop_all();
-    data = malloc(n);
-  }
-  if (data == NULL) caml_raise_out_of_memory();
-  return heap_bigarray(data, n);
+/* [n] bytes of the C library starting on a multiple of [align], or NULL:
+   [posix_memalign] where it has one, an allocation [align - 1] bytes larger
+   otherwise ([heap_size]); [*base] is what [free] takes. */
+static void *heap_malloc(size_t n, size_t align, void **base) {
+  if (align <= 16) return *base = malloc(n);
+#ifdef _WIN32
+  char *p = malloc(heap_size(n, align));
+  *base = p;
+  if (p == NULL) return NULL;
+  return p + (align - (uintptr_t)p % align) % align;
+#else
+  if (posix_memalign(base, align, n) != 0) return *base = NULL;
+  return *base;
+#endif
 }
 
-/* [v_n] bytes of the heap on a page, or [None] where the C library aligns
-   nothing that [free] releases (Windows). A platform takes its large buffers
-   from this or from [caml_rig_heap_alloc], never both, so a kept
-   buffer has the alignment of the ones it serves. */
-value caml_rig_heap_aligned(value v_page, value v_n) {
-  CAMLparam2(v_page, v_n);
-#ifdef _WIN32
-  (void)v_page;
-  (void)v_n;
-  CAMLreturn(Val_none);
-#else
-  size_t n = (size_t)Long_val(v_n), page = (size_t)Long_val(v_page);
-  void *data = heap_take(n);
-  if (data == NULL && posix_memalign(&data, page, n) != 0) {
-    heap_drop_all();
-    if (posix_memalign(&data, page, n) != 0) caml_raise_out_of_memory();
+/* [v_n] bytes of the heap starting on a multiple of [v_align], as a [char]
+   bigarray whose collection returns their reservation; a kept buffer of
+   the size if there is one. A failed allocation gives the kept buffers back
+   and tries again once, then raises [Out_of_memory]. */
+value caml_rig_heap_bytes(value v_align, value v_n) {
+  size_t n = (size_t)Long_val(v_n), align = (size_t)Long_val(v_align);
+  size_t size = heap_size(n, align);
+  void *base = n >= heap_kept_from ? heap_take(size) : NULL;
+  void *data;
+  if (base != NULL)
+    data = (char *)base + (align - (uintptr_t)base % align) % align;
+  else {
+    data = heap_malloc(n, align, &base);
+    if (data == NULL) {
+      heap_drop_all();
+      data = heap_malloc(n, align, &base);
+    }
+    if (data == NULL) caml_raise_out_of_memory();
   }
-  CAMLreturn(caml_alloc_some(heap_bigarray(data, n)));
-#endif
+  return heap_bigarray(base, data, n);
 }
 
 /* Bigarrays over memory */
@@ -673,10 +712,13 @@ value caml_rig_bigarray_address(value ba) {
 
 extern value caml_ba_sub(value vb, value vofs, value vlen);
 
-/* Gives the managed array [b] the proxy its sub-arrays share, if it has
-   none, at most once whatever the domains that view [b] at once. Its first
-   reference is [b]'s own, as the runtime counts it. */
-static void ensure_proxy(struct caml_ba_array *b) {
+/* Gives the managed array [v] the proxy its sub-arrays share, if it has
+   none, at most once whatever the domains that view [v] at once. Its first
+   reference is [v]'s own, as the runtime counts it. A heap buffer's proxy
+   names its allocation, which the last array over it keeps or frees
+   ([heap_finalize]). */
+static void ensure_proxy(value v) {
+  struct caml_ba_array *b = Caml_ba_array_val(v);
   _Atomic(struct caml_ba_proxy *) *slot =
       (_Atomic(struct caml_ba_proxy *) *)&b->proxy;
   if ((b->flags & CAML_BA_MANAGED_MASK) == CAML_BA_EXTERNAL ||
@@ -685,8 +727,14 @@ static void ensure_proxy(struct caml_ba_array *b) {
   struct caml_ba_proxy *proxy = malloc(sizeof *proxy);
   if (proxy == NULL) caml_raise_out_of_memory();
   atomic_store_explicit(&proxy->refcount, 1, memory_order_relaxed);
-  proxy->data = b->data;
-  proxy->size = b->flags & CAML_BA_MAPPED_FILE ? caml_ba_byte_size(b) : 0;
+  if (Custom_ops_val(v) == &heap_ops && !(b->flags & CAML_BA_SUBARRAY)) {
+    proxy->data = heap_block(b)->base;
+    /* the bytes [heap_finalize] keeps */
+    proxy->size = heap_allocated((size_t)b->dim[0]);
+  } else {
+    proxy->data = b->data;
+    proxy->size = b->flags & CAML_BA_MAPPED_FILE ? caml_ba_byte_size(b) : 0;
+  }
   struct caml_ba_proxy *none = NULL;
   if (!atomic_compare_exchange_strong_explicit(
           slot, &none, proxy, memory_order_acq_rel, memory_order_acquire))
@@ -699,12 +747,13 @@ value caml_rig_bigarray_view(value v_src, value v_kind,
                                      value v_offset, value v_len) {
   CAMLparam2(v_src, v_kind);
   CAMLlocal1(view);
-  ensure_proxy(Caml_ba_array_val(v_src));
+  ensure_proxy(v_src);
   view = caml_ba_sub(v_src, Val_long(0),
                      Val_long(Caml_ba_array_val(v_src)->dim[0]));
   struct caml_ba_array *b = Caml_ba_array_val(view);
   b->data = (char *)b->data + Long_val(v_offset);
-  b->flags = (b->flags & (CAML_BA_LAYOUT_MASK | CAML_BA_MANAGED_MASK)) |
+  b->flags = (b->flags & (CAML_BA_LAYOUT_MASK | CAML_BA_MANAGED_MASK |
+                          CAML_BA_SUBARRAY)) |
              Int_val(v_kind);
   b->dim[0] = Long_val(v_len);
   CAMLreturn(view);

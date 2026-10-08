@@ -190,7 +190,7 @@ let bigarray (type a b) (k : (a, b) Bigarray.kind) b :
   let at = b.mem.host - root.host + b.offset in
   let code = kind_code k and n = bytes / size in
   match root.keep with
-  | Heap (ba, _) -> bigarray_view ba code at n
+  | Heap ba -> bigarray_view ba code at n
   | Bigarray ba -> bigarray_view ba code at n
   | Nothing when root.entry == Memory.no_entry ->
       (* No bytes: nothing to keep. *)

@@ -239,10 +239,10 @@ let test_wait_words () =
   done;
   equal int 0 (int_of_float (Gc.minor_words () -. before) / 100)
 
-let test_create_words () = at_most_words (61, 0) (fun () -> B.create C.host 64)
+let test_create_words () = at_most_words (41, 0) (fun () -> B.create C.host 64)
 
 let test_create_large_words () =
-  at_most_words (54, 7) (fun () -> B.create C.host (1 lsl 20))
+  at_most_words (32, 9) (fun () -> B.create C.host (1 lsl 20))
 
 let test_create_empty_words () =
   at_most_words (32, 0) (fun () -> B.create C.host 0)
@@ -750,18 +750,20 @@ let test_blit_waits () =
 
 (* A bigarray of a buffer keeps its memory once the buffer is collected. *)
 let test_bigarray_keeps () =
-  let n = 1 lsl 17 in
-  let view =
-    (fun () ->
-      let ba = B.bigarray Bigarray.char (B.create C.host n) in
-      Bigarray.Array1.fill ba 'v';
-      ba)
-      ()
-  in
-  Gc.full_major ();
-  Gc.full_major ();
-  Bigarray.Array1.fill (B.bigarray Bigarray.char (B.create C.host n)) 'w';
-  equal char 'v' view.{n - 1}
+  List.iter
+    (fun n ->
+      let view =
+        (fun () ->
+          let ba = B.bigarray Bigarray.char (B.create C.host n) in
+          Bigarray.Array1.fill ba 'v';
+          ba)
+          ()
+      in
+      Gc.full_major ();
+      Gc.full_major ();
+      Bigarray.Array1.fill (B.bigarray Bigarray.char (B.create C.host n)) 'w';
+      equal ~msg:(Printf.sprintf "%d bytes" n) char 'v' view.{n - 1})
+    [ 16; 1 lsl 17 ]
 
 (* A pinned buffer on [d] filled with [c], seen through a borrow on the host. *)
 let viewed d n c =
@@ -927,9 +929,9 @@ let tests =
 let words =
   group ~timeout "words"
     [
-      test "a host buffer of 64 bytes costs at most 61 words" test_create_words;
+      test "a host buffer of 64 bytes costs at most 41 words" test_create_words;
       test "a wait whose points are reached allocates nothing" test_wait_words;
-      test "a host buffer of 1 MiB costs at most 54 and 7 major words"
+      test "a host buffer of 1 MiB costs at most 32 and 9 major words"
         test_create_large_words;
       test "a host buffer of no bytes costs at most 32 words"
         test_create_empty_words;

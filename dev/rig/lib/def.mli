@@ -50,13 +50,12 @@ type memory_kind = Device | Pinned | Mapped | Host_kept | Io_made | Io_given
 type access = Read | Read_write
 
 (** The type for the host memory a memory record keeps reachable: none, a heap
-    bigarray with the token that returns its bytes to the host's budget, or the
+    bigarray, whose collection returns its bytes to the host's budget, or the
     caller's bigarray. *)
 type keep =
   | Nothing
   | Heap of
       (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
-      * token
   | Bigarray : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> keep
 
 type device = {
