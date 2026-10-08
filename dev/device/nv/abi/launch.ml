@@ -101,6 +101,10 @@ let make (g : Gpu.t) (k : Cubin.kernel) =
         g.compute_class Defs.ampere_compute_b Defs.ada_compute_a
         Defs.blackwell_compute_b
   in
+  let max_sass_version = (1 lsl layout.sass_version.bits) - 1 in
+  if g.sass_version < 0 || g.sass_version > max_sass_version then
+    invalid_argf "Launch.make: SASS version 0x%x, expected 0 to 0x%x"
+      g.sass_version max_sass_version;
   match refusal k with
   | Some why -> Error why
   | None ->

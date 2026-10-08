@@ -30,7 +30,8 @@ val make : Gpu.t -> Cubin.kernel -> (t, string) result
       descriptor names, or of more than 64 KiB.
 
     Raises [Invalid_argument] if [g.compute_class] is none of the classes
-    {!Gpu.t} names. *)
+    {!Gpu.t} names, or if [g.sass_version] is outside \[[0];[0xff]\], the
+    versions a launch descriptor holds. *)
 
 val banks : t -> Cubin.bank list
 (** [banks l] is the constant banks a launch addresses: the kernel's

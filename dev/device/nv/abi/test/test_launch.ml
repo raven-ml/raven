@@ -24,6 +24,14 @@ let classes =
         [ 0; -1; 0xc6c0; 0xc8c0; 0xcbc0; 0xcdc0; 0xcfc0; 0xc7b5 ] (fun cls ->
           raises_match (Exn.invalid_arg ~substring:"Launch.make") (fun () ->
               Launch.make (S.gpu ~compute_class:cls ()) (S.kernel ())));
+      cases ~name:string_of_int "a SASS version of a byte takes a launch"
+        [ 0; 0x89; 0xff ] (fun v ->
+          is_ok ~pp:pp_error
+            (Launch.make (S.gpu ~sass_version:v ()) (S.kernel ())));
+      cases ~name:string_of_int "a SASS version past a byte is refused"
+        [ min_int; -1; 0x100; max_int ] (fun v ->
+          raises_match (Exn.invalid_arg ~substring:"Launch.make") (fun () ->
+              Launch.make (S.gpu ~sass_version:v ()) (S.kernel ())));
     ]
 
 (* What a launch can take: 100 KiB of shared memory, the driver's 1 KiB

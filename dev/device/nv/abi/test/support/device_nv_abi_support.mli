@@ -26,7 +26,12 @@ val class_name : int -> string
 (** [class_name c] is ["ampere"], ["ada"], ["blackwell"] or ["0x..."]. *)
 
 val gpu :
-  ?compute_class:int -> ?shared_window:int -> ?local_window:int -> unit -> Gpu.t
+  ?compute_class:int ->
+  ?sass_version:int ->
+  ?shared_window:int ->
+  ?local_window:int ->
+  unit ->
+  Gpu.t
 (** [gpu ()] is an RTX 5000 Ada: class {!ada}, SASS 8.9, 11 GPCs of 6 TPCs of 2
     SMs of 48 warps, windows at [0x7294_0000_0000] and [0x7293_0000_0000], and a
     [local] that does nothing, unless said otherwise. *)

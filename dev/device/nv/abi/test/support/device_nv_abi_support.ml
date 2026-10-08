@@ -21,11 +21,11 @@ let class_name c =
   else if c = blackwell then "blackwell"
   else strf "0x%x" c
 
-let gpu ?(compute_class = ada) ?(shared_window = 0x7294_0000_0000)
-    ?(local_window = 0x7293_0000_0000) () =
+let gpu ?(compute_class = ada) ?(sass_version = 0x89)
+    ?(shared_window = 0x7294_0000_0000) ?(local_window = 0x7293_0000_0000) () =
   {
     Gpu.compute_class;
-    sass_version = 0x89;
+    sass_version;
     gpcs = 11;
     tpcs_per_gpc = 6;
     sms_per_tpc = 2;
