@@ -37,6 +37,40 @@ submit/polled/two-domains	wall_time	batch=16384	n=20	5.886e-07	5.050e-07 5.182e-
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed under load 5.4 on 10 cores
 
+buffer/host-create-16	alloc_words	exact	36
+buffer/host-create-16	wall_time	batch=65536	n=20	8.384e-08	8.231e-08 8.252e-08 8.273e-08 8.307e-08 8.320e-08 8.322e-08 8.331e-08 8.340e-08 8.353e-08 8.356e-08 8.411e-08 8.450e-08 8.477e-08 8.505e-08 8.510e-08 8.548e-08 8.562e-08 8.722e-08 8.822e-08 8.825e-08
+buffer/host-create-1M	alloc_words	exact	36
+buffer/host-create-1M	wall_time	batch=512	n=20	1.027e-05	9.704e-06 9.802e-06 1.004e-05 1.011e-05 1.012e-05 1.015e-05 1.016e-05 1.016e-05 1.022e-05 1.022e-05 1.032e-05 1.032e-05 1.034e-05 1.036e-05 1.039e-05 1.040e-05 1.047e-05 1.049e-05 1.054e-05 1.078e-05
+buffer/memory-create-cached-4K	alloc_words	batch=16384	n=20	7.508e+01	7.441e+01 7.508e+01 7.508e+01 7.508e+01 7.508e+01 7.508e+01 7.508e+01 7.508e+01 7.508e+01 7.508e+01 7.508e+01 7.513e+01 7.518e+01 7.519e+01 7.519e+01 7.519e+01 7.519e+01 7.519e+01 7.519e+01 7.519e+01
+buffer/memory-create-cached-4K	wall_time	batch=16384	n=20	4.127e-07	3.921e-07 4.025e-07 4.047e-07 4.074e-07 4.074e-07 4.081e-07 4.101e-07 4.108e-07 4.114e-07 4.123e-07 4.131e-07 4.148e-07 4.163e-07 4.168e-07 4.168e-07 4.171e-07 4.193e-07 4.194e-07 4.221e-07 4.221e-07
+buffer/wait-reached-24	alloc_words	exact	0
+buffer/wait-reached-24	wall_time	batch=8192	n=20	9.616e-07	9.326e-07 9.399e-07 9.495e-07 9.527e-07 9.570e-07 9.594e-07 9.594e-07 9.597e-07 9.611e-07 9.615e-07 9.617e-07 9.670e-07 9.675e-07 9.698e-07 9.707e-07 9.724e-07 9.763e-07 9.766e-07 9.768e-07 9.826e-07
+claim/read-release	alloc_words	exact	9
+claim/read-release	wall_time	batch=524288	n=20	1.298e-08	1.265e-08 1.273e-08 1.274e-08 1.279e-08 1.280e-08 1.283e-08 1.286e-08 1.289e-08 1.294e-08 1.296e-08 1.300e-08 1.301e-08 1.302e-08 1.310e-08 1.323e-08 1.325e-08 1.339e-08 1.610e-08 1.858e-08 1.867e-08
+claim/with-24	alloc_words	exact	1216
+claim/with-24	wall_time	batch=4096	n=20	2.423e-06	2.386e-06 2.394e-06 2.401e-06 2.404e-06 2.408e-06 2.409e-06 2.410e-06 2.414e-06 2.417e-06 2.422e-06 2.423e-06 2.424e-06 2.428e-06 2.428e-06 2.429e-06 2.435e-06 2.436e-06 2.438e-06 2.444e-06 2.462e-06
+copy/host-4K	alloc_words	exact	0
+copy/host-4K	wall_time	batch=65536	n=20	1.158e-07	1.072e-07 1.094e-07 1.097e-07 1.099e-07 1.099e-07 1.099e-07 1.099e-07 1.100e-07 1.108e-07 1.109e-07 1.206e-07 1.293e-07 1.295e-07 1.340e-07 1.355e-07 1.434e-07 1.541e-07 1.601e-07 1.632e-07 1.674e-07
+copy/host-64M	alloc_words	exact	0
+copy/host-64M	wall_time	batch=1	n=20	1.475e-03	1.432e-03 1.440e-03 1.443e-03 1.452e-03 1.455e-03 1.457e-03 1.457e-03 1.468e-03 1.470e-03 1.470e-03 1.481e-03 1.483e-03 1.487e-03 1.489e-03 1.491e-03 1.493e-03 1.497e-03 1.555e-03 1.555e-03 1.561e-03
+copy/memory-4K	alloc_words	exact	0
+copy/memory-4K	wall_time	batch=32768	n=20	1.321e-07	1.193e-07 1.204e-07 1.207e-07 1.215e-07 1.217e-07 1.233e-07 1.244e-07 1.246e-07 1.260e-07 1.294e-07 1.347e-07 1.449e-07 1.457e-07 1.475e-07 1.552e-07 1.565e-07 1.567e-07 1.671e-07 1.684e-07 1.738e-07
+drain/dropped-1000	alloc_words	exact	75161
+drain/dropped-1000	wall_time	batch=16	n=20	5.688e-04	5.496e-04 5.498e-04 5.574e-04 5.601e-04 5.619e-04 5.634e-04 5.666e-04 5.668e-04 5.675e-04 5.687e-04 5.690e-04 5.703e-04 5.711e-04 5.748e-04 5.751e-04 5.765e-04 5.781e-04 5.791e-04 5.881e-04 5.910e-04
+floor/atomic-cas-2	alloc_words	exact	0
+floor/atomic-cas-2	wall_time	batch=2097152	n=20	4.931e-09	4.775e-09 4.850e-09 4.850e-09 4.856e-09 4.859e-09 4.866e-09 4.878e-09 4.890e-09 4.912e-09 4.918e-09 4.944e-09 4.947e-09 4.948e-09 4.949e-09 4.950e-09 4.951e-09 4.953e-09 4.954e-09 4.954e-09 4.968e-09
+floor/bigarray-collected-64M	alloc_words	exact	9
+floor/bigarray-collected-64M	wall_time	batch=128	n=20	6.592e-05	6.313e-05 6.474e-05 6.498e-05 6.507e-05 6.512e-05 6.516e-05 6.541e-05 6.557e-05 6.581e-05 6.586e-05 6.598e-05 6.613e-05 6.621e-05 6.627e-05 6.635e-05 6.703e-05 6.706e-05 6.759e-05 6.775e-05 6.806e-05
+floor/bigarray-create-16	alloc_words	exact	9
+floor/bigarray-create-16	wall_time	batch=131072	n=20	4.332e-08	4.049e-08 4.115e-08 4.119e-08 4.137e-08 4.145e-08 4.146e-08 4.154e-08 4.170e-08 4.215e-08 4.318e-08 4.346e-08 4.363e-08 4.369e-08 4.378e-08 4.395e-08 4.396e-08 4.458e-08 4.531e-08 5.582e-08 7.814e-08
+floor/bigarray-create-1M	alloc_words	exact	9
+floor/bigarray-create-1M	wall_time	batch=512	n=20	1.158e-05	1.087e-05 1.124e-05 1.131e-05 1.131e-05 1.133e-05 1.146e-05 1.148e-05 1.152e-05 1.154e-05 1.157e-05 1.158e-05 1.158e-05 1.161e-05 1.169e-05 1.169e-05 1.176e-05 1.180e-05 1.180e-05 1.186e-05 1.192e-05
+floor/bigarray-dropped-1000	alloc_words	exact	9009
+floor/bigarray-dropped-1000	wall_time	batch=32	n=20	1.868e-04	1.799e-04 1.803e-04 1.804e-04 1.810e-04 1.818e-04 1.826e-04 1.832e-04 1.862e-04 1.866e-04 1.868e-04 1.869e-04 1.875e-04 1.878e-04 1.879e-04 1.881e-04 1.898e-04 1.903e-04 1.917e-04 1.942e-04 1.946e-04
+floor/memcpy-4K	alloc_words	exact	0
+floor/memcpy-4K	wall_time	batch=131072	n=20	5.916e-08	5.808e-08 5.825e-08 5.834e-08 5.836e-08 5.849e-08 5.851e-08 5.863e-08 5.879e-08 5.902e-08 5.910e-08 5.922e-08 5.927e-08 5.939e-08 5.952e-08 5.974e-08 6.085e-08 6.681e-08 6.872e-08 7.210e-08 7.566e-08
+floor/memcpy-64M	alloc_words	exact	0
+floor/memcpy-64M	wall_time	batch=1	n=20	1.417e-03	1.383e-03 1.393e-03 1.397e-03 1.401e-03 1.404e-03 1.404e-03 1.407e-03 1.407e-03 1.409e-03 1.414e-03 1.420e-03 1.420e-03 1.426e-03 1.426e-03 1.426e-03 1.446e-03 1.456e-03 1.488e-03 1.560e-03 1.575e-03
 floor/mutex-section	alloc_words	exact	0
 floor/mutex-section	wall_time	batch=524288	n=20	1.588e-08	1.579e-08 1.580e-08 1.580e-08 1.582e-08 1.583e-08 1.583e-08 1.584e-08 1.585e-08 1.585e-08 1.587e-08 1.589e-08 1.593e-08 1.596e-08 1.597e-08 1.599e-08 1.602e-08 1.608e-08 1.612e-08 1.628e-08 1.654e-08
 floor/polled/cost	alloc_words	exact	0
@@ -49,6 +83,12 @@ floor/polled/run	alloc_words	exact	0
 floor/polled/run	wall_time	batch=131072	n=20	6.458e-08	6.325e-08 6.422e-08 6.423e-08 6.425e-08 6.434e-08 6.444e-08 6.450e-08 6.454e-08 6.456e-08 6.458e-08 6.458e-08 6.460e-08 6.465e-08 6.467e-08 6.472e-08 6.486e-08 6.530e-08 6.538e-08 6.563e-08 7.330e-08
 floor/polled/two-domains	alloc_words	exact	0
 floor/polled/two-domains	wall_time	batch=65536	n=20	1.144e-07	1.043e-07 1.058e-07 1.061e-07 1.071e-07 1.071e-07 1.128e-07 1.130e-07 1.137e-07 1.139e-07 1.142e-07 1.147e-07 1.148e-07 1.148e-07 1.149e-07 1.159e-07 1.170e-07 1.177e-07 1.183e-07 1.196e-07 1.196e-07
+floor/word-load	alloc_words	exact	0
+floor/word-load	wall_time	batch=2097152	n=20	3.377e-09	3.297e-09 3.298e-09 3.300e-09 3.309e-09 3.310e-09 3.316e-09 3.341e-09 3.342e-09 3.357e-09 3.375e-09 3.380e-09 3.380e-09 3.380e-09 3.381e-09 3.382e-09 3.388e-09 3.399e-09 3.401e-09 3.419e-09 3.427e-09
+floor/word-load-24	alloc_words	exact	0
+floor/word-load-24	wall_time	batch=65536	n=20	9.218e-08	8.917e-08 9.019e-08 9.106e-08 9.144e-08 9.148e-08 9.163e-08 9.186e-08 9.190e-08 9.217e-08 9.218e-08 9.218e-08 9.235e-08 9.250e-08 9.275e-08 9.280e-08 9.289e-08 9.304e-08 9.308e-08 9.310e-08 9.323e-08
+heap/trim-64M	alloc_words	exact	36
+heap/trim-64M	wall_time	batch=128	n=20	6.598e-05	6.380e-05 6.403e-05 6.465e-05 6.479e-05 6.484e-05 6.529e-05 6.547e-05 6.554e-05 6.575e-05 6.576e-05 6.621e-05 6.623e-05 6.628e-05 6.643e-05 6.663e-05 6.736e-05 6.753e-05 6.789e-05 6.795e-05 6.915e-05
 replay/polled/params-24	alloc_words	exact	0
 replay/polled/params-24	wall_time	batch=8192	n=20	8.310e-07	8.196e-07 8.202e-07 8.205e-07 8.220e-07 8.238e-07 8.256e-07 8.266e-07 8.284e-07 8.285e-07 8.287e-07 8.332e-07 8.333e-07 8.354e-07 8.391e-07 8.392e-07 8.403e-07 8.412e-07 8.414e-07 8.447e-07 8.468e-07
 replay/polled/pipelined-100	alloc_words	exact	0
@@ -63,6 +103,8 @@ submit/polled/slots-24	alloc_words	exact	0
 submit/polled/slots-24	wall_time	batch=8192	n=20	7.516e-07	7.457e-07 7.484e-07 7.498e-07 7.499e-07 7.502e-07 7.502e-07 7.506e-07 7.511e-07 7.512e-07 7.515e-07 7.517e-07 7.519e-07 7.520e-07 7.520e-07 7.521e-07 7.523e-07 7.526e-07 7.527e-07 7.545e-07 7.551e-07
 submit/polled/two-domains	alloc_words	exact	0
 submit/polled/two-domains	wall_time	batch=32768	n=20	2.641e-07	2.352e-07 2.360e-07 2.425e-07 2.462e-07 2.508e-07 2.545e-07 2.545e-07 2.593e-07 2.627e-07 2.629e-07 2.652e-07 2.653e-07 2.659e-07 2.670e-07 2.671e-07 2.738e-07 2.747e-07 2.766e-07 2.807e-07 2.813e-07
+wait/memory/reached	alloc_words	exact	0
+wait/memory/reached	wall_time	batch=1048576	n=20	8.079e-09	7.924e-09 7.981e-09 8.005e-09 8.026e-09 8.028e-09 8.029e-09 8.051e-09 8.056e-09 8.062e-09 8.066e-09 8.093e-09 8.094e-09 8.121e-09 8.131e-09 8.135e-09 8.157e-09 8.165e-09 8.165e-09 8.213e-09 8.226e-09
 
 # machine: baccbeca132e3ae9
 # host: nonnormal · Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz · x86_64 · linux

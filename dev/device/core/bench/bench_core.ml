@@ -18,6 +18,7 @@ module B = Device_core.Buffer
 module Sub = Device_core.Submission
 module P = Device_core_support.Polled
 module Support = Device_core_support
+module Claim = Device_core.Claim
 
 let strf = Printf.sprintf
 
@@ -175,6 +176,135 @@ let replay_rows =
           C.wait r.t.d (C.submitted r.t.d));
     ]
 
+(* Memory *)
+
+let kib = 1024
+let mib = 1024 * kib
+
+let memory () =
+  incr opened;
+  match C.memory_device (strf "memory:%d" !opened) with
+  | Ok d -> d
+  | Error why -> failwith why
+
+let host n = B.create C.host n
+let chars n = Bigarray.Array1.create Bigarray.char Bigarray.c_layout n
+
+(* Buffers of [d] whose last write, a submission of [d], is reached. *)
+let written d n =
+  let bs = Array.init n (fun _ -> B.create d 8) in
+  let w = Sub.make ~reads:0 ~writes:n ~waits:0 d [||] in
+  Array.iteri (fun i b -> Sub.write w i b) bs;
+  C.wait d (C.Point.value (C.submit w));
+  bs
+
+let row name setup f = Thumper.bench_with_setup ~setup name f
+let create d n () = ignore (B.create d n)
+
+let buffer_rows =
+  Thumper.group "buffer"
+    [
+      Thumper.bench "host-create-16" (create C.host 16);
+      Thumper.bench "host-create-1M" (create C.host mib);
+      row "memory-create-cached-4K" memory (fun d -> create d (4 * kib) ());
+      row "wait-reached-24"
+        (fun () -> written (memory ()) slots)
+        (fun bs ->
+          for i = 0 to slots - 1 do
+            B.wait (Array.unsafe_get bs i) B.Read_write
+          done);
+    ]
+
+let claim_rows =
+  Thumper.group "claim"
+    [
+      row "read-release"
+        (fun () -> host 16)
+        (fun b ->
+          Claim.read b;
+          Claim.release b);
+      row "with-24"
+        (fun () -> (List.init slots (fun _ -> host 16), [ [ host 16 ] ]))
+        (fun (read, donate) -> Claim.with_ ~read ~donate ignore);
+    ]
+
+let copy_rows =
+  let pair d n () = (B.create d n, B.create d n) in
+  let copy (src, dst) = B.copy ~src ~dst in
+  Thumper.group "copy"
+    [
+      row "host-4K" (pair C.host (4 * kib)) copy;
+      row "host-64M" (pair C.host (64 * mib)) copy;
+      row "memory-4K" (fun () -> pair (memory ()) (4 * kib) ()) copy;
+    ]
+
+(* A collection hands the memory of 1,000 dropped buffers back, and the next
+   create drains it into the device's cache. *)
+let dropped = 1000
+
+let drain_rows =
+  Thumper.group "drain"
+    [
+      row "dropped-1000" memory (fun d ->
+          for _ = 1 to dropped do
+            create d (4 * kib) ()
+          done;
+          Gc.full_major ();
+          create d (4 * kib) ());
+    ]
+
+let wait_rows =
+  Thumper.group "wait/memory"
+    [
+      row "reached"
+        (fun () ->
+          let d = memory () in
+          ( d,
+            C.Point.value
+              (C.submit (Sub.make ~reads:0 ~writes:0 ~waits:0 d [||])) ))
+        (fun (d, v) -> C.wait d v);
+    ]
+
+(* A host buffer of 64 MiB collected: the end of the cycle returns it, being
+   more than the cache keeps. *)
+let heap_rows =
+  Thumper.group "heap"
+    [
+      Thumper.bench "trim-64M" (fun () ->
+          create C.host (64 * mib) ();
+          Gc.full_major ());
+    ]
+
+let memory_floor_rows =
+  let word () = B.address (host 8) in
+  let blit (src, dst) = Bigarray.Array1.blit src dst in
+  let chars2 n () = (chars n, chars n) in
+  [
+    Thumper.bench "bigarray-create-16" (fun () -> chars 16);
+    Thumper.bench "bigarray-create-1M" (fun () -> chars mib);
+    row "word-load" word Support.load;
+    row "word-load-24" word (fun a ->
+        for _ = 1 to slots do
+          ignore (Support.load a)
+        done);
+    row "atomic-cas-2"
+      (fun () -> Atomic.make 0)
+      (fun a ->
+        ignore (Atomic.compare_and_set a 0 1);
+        ignore (Atomic.compare_and_set a 1 0));
+    row "memcpy-4K" (chars2 (4 * kib)) blit;
+    row "memcpy-64M" (chars2 (64 * mib)) blit;
+    Thumper.bench "bigarray-dropped-1000" (fun () ->
+        for _ = 1 to dropped do
+          ignore (chars (4 * kib))
+        done;
+        Gc.full_major ();
+        chars (4 * kib));
+    Thumper.bench "bigarray-collected-64M" (fun () ->
+        ignore (chars (64 * mib));
+        Gc.full_major ());
+  ]
+
 (* Floors *)
 
 type floor = { f : nativeint; fp : P.t; word : int; mutable k : int }
@@ -218,33 +348,46 @@ let floor_contended () =
 let floor_rows =
   let row name f = Thumper.bench_with_setup ~setup:floor name f in
   Thumper.group "floor"
-    [
-      row "polled/release" (fun t ->
-          floor_submit t.f 0;
-          ignore (P.run t.fp);
-          ignore (P.signaled t.fp));
-      row "polled/cost" (fun t ->
-          floor_submit t.f 1;
-          floor_drained t);
-      Thumper.bench_with_setup ~setup:floor_contended
-        ~teardown:(fun (_, stop, rival) ->
-          Atomic.set stop true;
-          Domain.join rival)
-        "polled/two-domains"
-        (fun (t, _, _) ->
-          floor_submit t.f 1;
-          floor_drained t);
-      row "polled/run" floor_run;
-      row "polled/pipelined-100" (fun t ->
-          for _ = 1 to runs do
-            floor_run t
-          done;
-          ignore (P.run t.fp);
-          ignore (P.signaled t.fp));
-      Thumper.bench_with_setup ~setup:Mutex.create "mutex-section" (fun m ->
-          Mutex.lock m;
-          Mutex.unlock m);
-    ]
+    ([
+       row "polled/release" (fun t ->
+           floor_submit t.f 0;
+           ignore (P.run t.fp);
+           ignore (P.signaled t.fp));
+       row "polled/cost" (fun t ->
+           floor_submit t.f 1;
+           floor_drained t);
+       Thumper.bench_with_setup ~setup:floor_contended
+         ~teardown:(fun (_, stop, rival) ->
+           Atomic.set stop true;
+           Domain.join rival)
+         "polled/two-domains"
+         (fun (t, _, _) ->
+           floor_submit t.f 1;
+           floor_drained t);
+       row "polled/run" floor_run;
+       row "polled/pipelined-100" (fun t ->
+           for _ = 1 to runs do
+             floor_run t
+           done;
+           ignore (P.run t.fp);
+           ignore (P.signaled t.fp));
+       Thumper.bench_with_setup ~setup:Mutex.create "mutex-section" (fun m ->
+           Mutex.lock m;
+           Mutex.unlock m);
+     ]
+    @ memory_floor_rows)
 
 let () =
-  exit @@ Thumper.run "device_core" [ submit_rows; replay_rows; floor_rows ]
+  exit
+  @@ Thumper.run "device_core"
+       [
+         submit_rows;
+         replay_rows;
+         buffer_rows;
+         claim_rows;
+         copy_rows;
+         drain_rows;
+         wait_rows;
+         heap_rows;
+         floor_rows;
+       ]
