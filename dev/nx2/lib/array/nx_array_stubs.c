@@ -713,33 +713,43 @@ static int tile_axis(const nx_loop *l) {
   return t;
 }
 
+/* The gather: copies the elements of a[1] into a[0], operands of one dtype
+   read through the door, tiling where a[0] steps by one element and a[1]
+   steps less across rows than along them. Answers NX_SHAPE if their shapes
+   differ. It is the layer's one tiled walk. */
+static int gather(nx_array a[2]) {
+  nx_loop l;
+  int e = nx_coalesce(2, a, &l);
+  if (e) return e;
+  int r = l.rank, t = a[0].bits < 8 ? -1 : tile_axis(&l);
+  copy_ctx c = {a, &l};
+  if (t < 0) {
+    walk(2, &l, &c, copy_run);
+    return NX_OK;
+  }
+  /* Axis t becomes the rows, next to the innermost; the walk visits the
+     axes before them, and each call copies the tiles of a plane. */
+  int64_t x = l.extent[t];
+  l.extent[t] = l.extent[r - 2];
+  l.extent[r - 2] = x;
+  for (int k = 0; k < 2; k++) {
+    x = l.step[k][t];
+    l.step[k][t] = l.step[k][r - 2];
+    l.step[k][r - 2] = x;
+  }
+  nx_loop planes = l;
+  planes.rank = r - 1;
+  walk(2, &planes, &c, tile_run);
+  return NX_OK;
+}
+
 value nx_array_copy(value dst, value src) {
   int dt = nx_array_dtype(src);
   nx_operand in[2] = {{dst, dt, 1}, {src, dt, 0}};
   nx_array a[2];
-  nx_loop l;
   int e = nx_read(2, in, a);
   if (e) return Val_int(e);
-  if (!(e = nx_coalesce(2, a, &l))) {
-    int r = l.rank, t = a[0].bits < 8 ? -1 : tile_axis(&l);
-    copy_ctx c = {a, &l};
-    if (t < 0) walk(2, &l, &c, copy_run);
-    else {
-      /* Axis t becomes the rows, next to the innermost; the walk visits
-         the axes before them, and each call copies the tiles of a plane. */
-      int64_t x = l.extent[t];
-      l.extent[t] = l.extent[r - 2];
-      l.extent[r - 2] = x;
-      for (int k = 0; k < 2; k++) {
-        x = l.step[k][t];
-        l.step[k][t] = l.step[k][r - 2];
-        l.step[k][r - 2] = x;
-      }
-      nx_loop planes = l;
-      planes.rank = r - 1;
-      walk(2, &planes, &c, tile_run);
-    }
-  }
+  e = gather(a);
   nx_done(2, a);
   return Val_int(e);
 }
