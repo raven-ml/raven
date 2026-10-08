@@ -43,7 +43,9 @@
     killed while its GPU runs, until the GPU's next successful {!reset}. The
     kernel may still move them to allocate a contiguous area or to take memory
     offline, which only an IOMMU prevents ({!Rig_pci.Function.alloc_dma}). Such
-    a GPU maps no other host memory: {!Rig_amd.map_host} answers [None].
+    a GPU maps no other host memory: {!Rig_amd.maps_host} is [false] for its
+    device, as the process's pages would go back to the system at its death with
+    the GPU still writing them.
 
     {b Firmware.} An open reads the GPU's firmware images from the directories
     its caller names. Each image has the BLAKE2b-256 digest this library pins

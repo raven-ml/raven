@@ -168,7 +168,7 @@ let finisher g h ~index ~made =
         | `Clean | `Lost | `Unknown -> Gpus.lose h);
         s
 
-let path g ~index ~finish : mem Amd.path =
+let path g fn ~index ~finish : mem Amd.path =
   let gc = Boot.gc g and gpu = Boot.gpu g in
   let stop () =
     match finish () with `Clean | `Lost -> `Stopped | `Unknown -> `Unknown
@@ -184,7 +184,12 @@ let path g ~index ~finish : mem Amd.path =
     wgps = Boot.wgps g;
     budget = Boot.budget g;
     alloc = (fun kind n -> guard (fun () -> alloc g kind n));
-    map_host = Some (fun a n -> guard (fun () -> map_host g a n));
+    (* A GPU taken physically would keep writing the process's pages after its
+       death: it maps no host memory. *)
+    map_host =
+      (match Rig_pci.Function.addressing fn with
+      | Machine.Physical -> None
+      | Iommu -> Some (fun a n -> guard (fun () -> map_host g a n)));
     reaches = reaches g ~index;
     map_peer = (fun m -> guard (fun () -> map_peer g m));
     free = (fun m -> guard (fun () -> free g m));
@@ -219,7 +224,7 @@ let start ~firmware ~index h fn =
       Mutex.protect opened_lock (fun () -> Hashtbl.replace opened index g);
       let made = Atomic.make false in
       let finish = finisher g h ~index ~made in
-      match Amd.make (path g ~index ~finish) with
+      match Amd.make (path g fn ~index ~finish) with
       | Ok d ->
           Atomic.set made true;
           (* A host resets a VF that holds its access long: every queue is made,

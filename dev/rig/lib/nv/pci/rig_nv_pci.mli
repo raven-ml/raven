@@ -60,7 +60,8 @@
     holds some ({!Rig_pci.Function.alloc_dma}): once no huge page is free,
     {!Rig_nv.alloc} answers [None], and reserving more ([vm.nr_hugepages]) or
     freeing memory is the cure. Such a GPU maps no host memory:
-    {!Rig_nv.map_host} answers [None] for it.
+    {!Rig_nv.maps_host} is [false] for its device, as the process's pages would
+    go back to the system at its death with the GPU still writing them.
 
     {b Requirements.} Linux. Taking a GPU's function needs either an IOMMU and
     the GPU bound to [vfio-pci] with its group's file granted to the user, or

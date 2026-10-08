@@ -261,7 +261,12 @@ let device g ~gsp ~hold ~tables (c : Chip.t) =
       budget = Page_table.main_pool tables;
       doorbell = Window.address c.regs + doorbell_at;
       alloc = alloc g;
-      map_host = Some (map_host g);
+      (* A GPU taken physically would keep writing the process's pages after its
+         death: it maps no host memory. *)
+      map_host =
+        (match Function.addressing g.fn with
+        | Machine.Physical -> None
+        | Iommu -> Some (map_host g));
       reaches = reaches g;
       map_peer = map_peer g;
       free = free g;
