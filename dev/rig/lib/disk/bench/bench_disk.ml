@@ -220,16 +220,54 @@ let borrow_rows =
     moved "map" 0 (map h borrowed dst);
     close h
   in
+  (* Cold, on Linux: each run drops its file's pages first, so every page the
+     read touches faults in from the storage device, beside [read/cold-64M], a
+     copy of the same bytes. A page another mapping holds stays cached, so each
+     run maps a file no earlier run's mapping holds, as above. *)
+  let cold () =
+    let t = turn () in
+    let drop =
+      Array.map
+        (fun p ->
+          let h = opened p ~writable:true in
+          moved "sync" 0 (sync h);
+          h)
+        t.files
+    in
+    (t, drop)
+  in
+  let dropped (t, drop) =
+    let p = next t in
+    moved "evict" 0 (evict drop.(t.k));
+    p
+  in
   Thumper.group "borrow"
-    [
-      row "first-64M" turn pages;
-      row "first-read-64M" into (fun (t, dst) ->
-          Bigarray.Array1.blit (B.bigarray Bigarray.char (pages t)) dst);
-      row "floor-first-64M" turn (floor 0);
-      row "floor-first-read-64M"
-        (fun () -> (turn (), memory borrowed))
-        (fun (t, (_, a)) -> floor a t);
-    ]
+    ([
+       row "first-64M" turn pages;
+       row "first-read-64M" into (fun (t, dst) ->
+           Bigarray.Array1.blit (B.bigarray Bigarray.char (pages t)) dst);
+       row "floor-first-64M" turn (floor 0);
+       row "floor-first-read-64M"
+         (fun () -> (turn (), memory borrowed))
+         (fun (t, (_, a)) -> floor a t);
+     ]
+    @
+    if not (evicts ()) then []
+    else
+      [
+        row "cold-read-64M"
+          (fun () -> (cold (), B.bigarray Bigarray.char (host borrowed)))
+          (fun (c, dst) ->
+            let file = ok (Rig_disk.of_file (dropped c)) in
+            let pages = Option.get (B.borrow Rig.host file) in
+            Bigarray.Array1.blit (B.bigarray Bigarray.char pages) dst);
+        row "floor-cold-read-64M"
+          (fun () -> (cold (), memory borrowed))
+          (fun (c, (_, a)) ->
+            let h = opened (dropped c) ~writable:false in
+            moved "map" 0 (map h borrowed a);
+            close h);
+      ])
 
 (* Opens: one file, and more files than the disk keeps descriptors for, each
    open evicting the least recently used. *)
