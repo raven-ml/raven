@@ -280,8 +280,6 @@ void rig_locks_give(void) {
 /* A device record of index [v_index] named [v_name]. */
 static struct rig_device *record(value v_index, value v_name) {
   int index = Int_val(v_index);
-  if (index <= 0 || index >= RIG_DEVICES)
-    caml_invalid_argument("device index out of range");
   struct rig_device *d = calloc(1, sizeof *d);
   char *name = strdup(String_val(v_name));
   if (d == NULL || name == NULL) {
@@ -398,27 +396,40 @@ struct claims {
   int *index;
 };
 
-static void claims_push(struct claims *k, int index) {
-  if (k->n == k->c) {
-    int c = k->c == 0 ? 8 : 2 * k->c;
-    int *index = realloc(k->index, (size_t)c * sizeof *index);
-    if (index == NULL) return; /* the next caller claims it */
-    k->index = index;
-    k->c = c;
-  }
-  k->index[k->n++] = index;
+/* Makes room for one more index; false if memory ran out. */
+static int claims_room(struct claims *k) {
+  if (k->n < k->c) return 1;
+  int c = k->c == 0 ? 8 : 2 * k->c;
+  int *index = realloc(k->index, (size_t)c * sizeof *index);
+  if (index == NULL) return 0;
+  k->index = index;
+  k->c = c;
+  return 1;
 }
 
 static void spread(struct rig_device *p, struct claims *k);
 
 /* Ends [d]'s spreading: its stop is owed, and claimed here if no call is
-   inside. */
+   inside and the claim can be recorded; otherwise the next counted call's
+   end claims it. */
 static void finish(struct rig_device *d, struct claims *k) {
+  int room = claims_room(k);
   mu_lock(d);
   d->spreading = 0;
   d->owed = 1;
-  if (claim_locked(d)) claims_push(k, d->index);
+  if (room && claim_locked(d)) k->index[k->n++] = d->index;
   mu_unlock(d);
+}
+
+/* The reason a device lost by [p]'s loss keeps: "[p's name] lost". */
+static char *lost_with(struct rig_device *p) {
+  size_t n = strlen(p->name);
+  char *why = malloc(n + sizeof " lost");
+  if (why != NULL) {
+    memcpy(why, p->name, n);
+    memcpy(why + n, " lost", sizeof " lost");
+  }
+  return why;
 }
 
 /* Loses every device whose unreached work waits in its queue on an
@@ -427,15 +438,11 @@ static void finish(struct rig_device *d, struct claims *k) {
    domain lock is released and no mutex held. */
 static void spread(struct rig_device *p, struct claims *k) {
   int n = atomic_load(&top);
+  char *why = NULL;
   for (int i = 1; i <= n; i++) {
     struct rig_device *c = device_of(i);
     if (c == NULL || c == p || is_lost(c)) continue;
-    size_t len = strlen(p->name) + sizeof " lost";
-    char *why = malloc(len);
-    if (why != NULL) {
-      memcpy(why, p->name, strlen(p->name));
-      memcpy(why + strlen(p->name), " lost", sizeof " lost");
-    }
+    if (why == NULL) why = lost_with(p);
     uint64_t pw = device_word(p);
     int won = 0;
     mu_lock(c);
@@ -446,13 +453,12 @@ static void spread(struct rig_device *p, struct claims *k) {
         won = lose_locked(c, why != NULL ? why : p->name);
     }
     mu_unlock(c);
-    if (!won) {
-      free(why);
-      continue;
-    }
+    if (!won) continue;
+    why = NULL; /* [c] keeps it */
     spread(c, k);
     finish(c, k);
   }
+  free(why);
 }
 
 static value claims_value(int won, struct claims *k) {
@@ -665,7 +671,9 @@ value caml_rig_sub_give(value v_s) {
 }
 
 /* Submits [s] on its device: the turn, room, the value, the hand-over and
-   the stamps, in one call that runs no OCaml. */
+   the stamps, in one call that runs no OCaml. [s] is read with the runtime
+   released: [Submission.submit] uses it after the call, which keeps its
+   custom block reachable until then. */
 value caml_rig_submit(value v_s) {
   struct rig_sub *s = *(struct rig_sub **)Data_custom_val(v_s);
   struct rig_device *d = s->dev;
@@ -722,7 +730,7 @@ out:;
     finish(d, &k);
   }
   if (released) caml_leave_blocking_section();
-  if (k.n > 0 || r == SUBMIT_FAILED) {
+  if (r == SUBMIT_FAILED) {
     free(s->claims);
     s->claims = k.index;
     s->nclaims = k.n;

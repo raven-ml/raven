@@ -607,7 +607,10 @@ value caml_rig_proxy_new(value unit) {
 value caml_rig_proxy_bytes(value v_p, value v_addr, value v_n) {
   struct caml_ba_proxy *p = (struct caml_ba_proxy *)Long_val(v_p);
   intnat dim = Long_val(v_n);
-  value ba = caml_ba_alloc(CAML_BA_CHAR | CAML_BA_C_LAYOUT | CAML_BA_MANAGED,
+  /* [CAML_BA_SUBARRAY]: the bytes are another owner's, so the array
+     paces no collection as memory of the heap. */
+  value ba = caml_ba_alloc(CAML_BA_CHAR | CAML_BA_C_LAYOUT | CAML_BA_MANAGED |
+                               CAML_BA_SUBARRAY,
                            1, (void *)Long_val(v_addr), &dim);
   atomic_fetch_add_explicit(&p->refcount, 1, memory_order_relaxed);
   Caml_ba_array_val(ba)->proxy = p;
