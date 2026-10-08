@@ -17,6 +17,7 @@ external fill_arg :
   = "device_amd_test_fill_arg_byte" "device_amd_test_fill_arg"
 
 external fill_entry : unit -> nativeint = "device_amd_test_fill_entry"
+external fill_address : nativeint -> int = "device_amd_test_fill_address"
 
 (* The machine's GPU lock *)
 

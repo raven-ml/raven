@@ -130,11 +130,12 @@ value device_amd_test_write(value v_a, value v_s) {
 
 /* A fill: words to place, in two calls if [split] is inside them, and
    segment bytes to take, through the capability's functions, then its own
-   answer. */
+   answer. [address] is where its last call took the bytes. */
 struct fill {
   int (*place)(void *queue, const uint32_t *words, size_t n);
   int (*segment)(void *queue, size_t n, void **host, uint64_t *address);
   size_t n, split, bytes;
+  uint64_t address;
   int code;
   uint32_t words[];
 };
@@ -149,8 +150,7 @@ static int fill(void *queue, void *arg, uint64_t v) {
   if (e) return e;
   if (f->bytes > 0) {
     void *host;
-    uint64_t address;
-    e = f->segment(queue, f->bytes, &host, &address);
+    e = f->segment(queue, f->bytes, &host, &f->address);
     if (e) return e;
   }
   return f->code;
@@ -171,10 +171,15 @@ value device_amd_test_fill_arg(value v_place, value v_segment, value v_ws,
       (int (*)(void *, size_t, void **, uint64_t *))Nativeint_val(v_segment);
   f->n = n;
   f->split = (size_t)Long_val(v_split);
+  f->address = 0;
   f->bytes = (size_t)Long_val(v_bytes);
   f->code = Int_val(v_code);
   for (size_t i = 0; i < n; i++) f->words[i] = (uint32_t)Long_val(Field(v_ws, i));
   return caml_copy_nativeint((intnat)f);
+}
+
+value device_amd_test_fill_address(value v_arg) {
+  return Val_long((intnat)((struct fill *)Nativeint_val(v_arg))->address);
 }
 
 value device_amd_test_fill_arg_byte(value *argv, int argn) {

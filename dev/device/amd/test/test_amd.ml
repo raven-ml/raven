@@ -1535,44 +1535,266 @@ let code =
             ~ms:100);
     ]
 
-(* Rings wrap: streams of submissions longer than each ring complete, the last
-   copies having moved their bytes. *)
-let wrap () =
-  S.with_gpu @@ fun g ->
-  let r = device g in
-  let n = 350_000 in
-  let room ps =
-    let rec loop () =
+(* Rings wrap
+
+   Drawn submissions wrap each ring and the argument segment several times,
+   landing a submission exactly at the end, one unit short of it or one unit
+   past it (a word of a ring, 64 bytes of the segment). Where each ring stands
+   is planned on the host-memory path, whose writer places the same words for
+   the same submissions; the plan then runs on the GPU, where every value
+   completes in order and writes what it should. *)
+
+module Wrap = struct
+  (* A PM4 NOP one word long (count 0x3fff), the word Linux's amdgpu driver
+     pads compute rings with (gfx_v12_0.c). SDMA reads a zero word as a NOP,
+     as the writer's own padding does. *)
+  let pm4_nop = 0xffff1000
+  let slots = 4096
+
+  type shape =
+    | Pad of bool * int (* 2^i NOPs on COMPUTE:0 (true) or COPY:0, by a fill *)
+    | Nops of int (* COMPUTE:0: NOP words, then the value's write *)
+    | Fill of int (* COMPUTE:0: a fill writing the value, taking these bytes *)
+    | Zeros of int (* COPY:0: zero words, then the value's copy *)
+    | Both of int * int (* Nops and Zeros in one submission *)
+
+  type target = Compute | Copy | Segment
+  type fit = Exact | Short | Over
+
+  let pp_shape ppf = function
+    | Pad (c, i) ->
+        Format.fprintf ppf "pad %s %d" (if c then "COMPUTE" else "COPY") (1 lsl i)
+    | Nops n -> Format.fprintf ppf "nops %d" n
+    | Fill b -> Format.fprintf ppf "fill %d" b
+    | Zeros n -> Format.fprintf ppf "zeros %d" n
+    | Both (n, z) -> Format.fprintf ppf "nops %d + zeros %d" n z
+
+  let target_name = function
+    | Compute -> "compute ring"
+    | Copy -> "copy ring"
+    | Segment -> "segment"
+
+  let fit_name = function Exact -> "exactly at" | Short -> "short of" | Over -> "past"
+
+  let pp_goal ppf (t, f, mix) =
+    Format.fprintf ppf "{%s the %s's end, after [%a]}" (fit_name f) (target_name t)
+      (Format.pp_print_list ~pp_sep:(fun ppf () -> Format.fprintf ppf "; ") pp_shape)
+      mix
+
+  let goals =
+    let open Gen in
+    let shape =
+      one_of
+        [
+          map (fun n -> Nops n) (of_list [ 0; 1; 7; 4096; 1 lsl 16 ]);
+          map (fun b -> Fill b) (of_list [ 64; 4096; 1 lsl 16 ]);
+          map (fun n -> Zeros n) (of_list [ 0; 1; 5; 4096; 1 lsl 16 ]);
+          map (fun (c, i) -> Pad (c, i)) (pair bool (of_list [ 0; 10; 20 ]));
+          map (fun (n, z) -> Both (n, z)) (pair (of_list [ 0; 13 ]) (of_list [ 0; 3 ]));
+        ]
+    in
+    (* Every landing, in a drawn order, each after drawn submissions. *)
+    let landings =
+      List.concat_map
+        (fun t -> List.map (fun f -> (t, f)) [ Exact; Short; Over ])
+        [ Compute; Copy; Segment ]
+    in
+    with_pp
+      (Format.pp_print_list ~pp_sep:Format.pp_print_space pp_goal)
+      (let* order = permutation landings in
+       let+ mixes = list ~size:(constant 9) (list ~size:(int_range 0 3) shape) in
+       List.map2 (fun (t, f) mix -> (t, f, mix)) order mixes)
+
+  (* The memory shapes write: a slot per value for compute's writes, and the
+     slots copies move. *)
+  type sink = { res : A.region; src : A.region; dst : A.region }
+
+  let sink g =
+    let res = Option.get (A.alloc g `Pinned (4 * slots)) in
+    let src = Option.get (A.alloc g `Pinned (8 * slots)) in
+    let dst = Option.get (A.alloc g `Pinned (8 * slots)) in
+    S.write (host res) (String.make (4 * slots) '\000');
+    S.write (host src) (String.concat "" (List.init slots (fun i -> le64 (i + 1))));
+    S.write (host dst) (String.make (8 * slots) '\000');
+    { res; src; dst }
+
+  let write k v =
+    words (Pm4.write_data (Memory (address k.res + (4 * (v mod slots)))) v)
+
+  (* Fills of 2^i NOPs, one per queue and size: every device's capability
+     has the same C functions. *)
+  let pads = Hashtbl.create 42
+
+  let pad g ~compute i =
+    match Hashtbl.find_opt pads (compute, i) with
+    | Some f -> f
+    | None ->
+        let w = if compute then pm4_nop else 0 in
+        let f = S.fill (A.capability g) (Array.make (1 lsl i) w) ~bytes:0 in
+        Hashtbl.add pads (compute, i) f;
+        f
+
+  (* [shape]'s parts as value [v] of [g], and its fill's argument. *)
+  let parts g k v shape =
+    let compute n =
+      A.part g ~queue:"COMPUTE:0"
+        (`Words (Array.append (Array.make n pm4_nop) (write k v)))
+    in
+    let copy n =
+      let o = 8 * (v mod slots) in
+      (if n = 0 then [] else [ A.part g ~queue:"COPY:0" (`Words (Array.make n 0)) ])
+      @ [ A.part g ~queue:"COPY:0" (`Copy ((k.dst, o), (k.src, o), 8)) ]
+    in
+    match shape with
+    | Pad (c, i) ->
+        let f, arg = pad g ~compute:c i in
+        let queue = if c then "COMPUTE:0" else "COPY:0" in
+        ([| A.part g ~queue (`Fill (f, arg, 1 lsl i, 0)) |], None)
+    | Nops n -> ([| compute n |], None)
+    | Zeros n -> (Array.of_list (copy n), None)
+    | Both (n, z) -> (Array.of_list (compute n :: copy z), None)
+    | Fill b ->
+        let ws = write k v in
+        let f, arg = S.fill (A.capability g) ws ~bytes:b in
+        ([| A.part g ~queue:"COMPUTE:0" (`Fill (f, arg, Array.length ws, b)) |], Some arg)
+
+  let segment = 1 lsl 20
+  let quarter = segment / 4
+  let round64 n = (n + 63) / 64 * 64
+
+  (* The shapes, in value order, that reach [goals] on a fresh device of
+     [gpu], planned on the host-memory path. The writer takes a submission's
+     segment bytes in one run of 64 bytes and its fills' bytes rounded to 64,
+     from the segment's start when they do not fit before its end. *)
+  let plan gpu goals =
+    Host.with_device ~gpu @@ fun h g ->
+    let k = sink g in
+    let shapes = ref [] and v = ref 0 and taken = ref (0, 0) in
+    let go shape =
+      incr v;
+      let ps, arg = parts g k !v shape in
+      equal room_answer ~msg:"room" `Fits (A.room g ps);
+      equal answer ~msg:"submit" `Ok (submit g ~v:!v ps);
+      Host.reach g !v;
+      (match (shape, arg) with
+      | Fill b, Some arg -> taken := (S.fill_address arg, b)
+      | _ -> ());
+      shapes := shape :: !shapes
+    in
+    let ring = (Host.compute h).bytes / 4 in
+    let compute () = Host.position (Host.compute h) in
+    let copy () = Host.position (Host.copy h) / 4 in
+    go (Fill 64);
+    let base = fst !taken in
+    let segment_at () =
+      let a, b = !taken in
+      (a - base + round64 b) mod segment
+    in
+    let shift = function Exact -> 0 | Short -> -1 | Over -> 1 in
+    (* The largest 2^i at most [n], up to 2^20. *)
+    let log2 n =
+      let i = ref 0 in
+      while !i < 20 && 1 lsl (!i + 1) <= n do incr i done;
+      !i
+    in
+    (* [mk n] places [n >= least] words of its own and [o] more, measured on
+       a second one so that its queue released the value before it. Pads of
+       NOPs approach the end, each leaving more room than its own release
+       takes. *)
+    let land_ring name ~compute:c mk ~least at f =
+      go (mk 64);
+      let p = at () in
+      go (mk 64);
+      let o = at () - p - 64 in
+      let rec landing () =
+        let p = at () in
+        let stop = (((p / ring) + 1) * ring) + shift f in
+        let n = stop - p - o in
+        if n > 4096 then (go (Pad (c, log2 (n - 256))); landing ())
+        else if n < least then (go (Pad (c, 20)); landing ())
+        else begin
+          go (mk n);
+          (* SDMA packets never wrap: past the end, the last one goes after
+             it. *)
+          if not (name = "copy ring" && f = Over) then
+            equal int ~msg:(strf "where the %s's landing ends" name) stop (at ())
+        end
+      in
+      landing ()
+    in
+    let land_segment f =
+      let rec landing () =
+        let at = segment_at () in
+        let b = segment - at - 64 + (64 * shift f) in
+        if b > quarter || b < 64 then (go (Fill quarter); landing ())
+        else begin
+          go (Fill b);
+          equal int ~msg:"where the segment's landing takes its bytes"
+            (if f = Over then base else base + at)
+            (fst !taken)
+        end
+      in
+      landing ()
+    in
+    let wd = Array.length (write k 0) in
+    List.iter
+      (fun (t, f, mix) ->
+        List.iter go mix;
+        match t with
+        | Compute ->
+            land_ring "compute ring" ~compute:true (fun n -> Nops (n - wd)) ~least:wd
+              compute f
+        | Copy -> land_ring "copy ring" ~compute:false (fun n -> Zeros n) ~least:1 copy f
+        | Segment -> land_segment f)
+      goals;
+    cover "the compute ring wrapped twice" (compute () > 2 * ring);
+    cover "the copy ring wrapped twice" (copy () > 2 * ring);
+    List.rev !shapes
+
+  (* Runs [shapes] on a fresh device of the GPU: the word never moves back,
+     every value is reached, and the slots hold what the last value that
+     wrote each wrote. *)
+  let run g shapes =
+    let k = sink g in
+    let rec room ps =
       match A.room g ps with
       | `Fits -> ()
       | `Never -> fail "Never"
       | `Later ->
           S.wait g (A.signaled g + 1);
-          loop ()
+          room ps
     in
-    loop ()
-  in
-  let hand ps =
-    room ps;
-    r.v <- r.v + 1;
-    equal answer ~msg:"submit" `Ok (submit g ~v:r.v ps)
-  in
-  for _ = 1 to n do
-    hand [||]
-  done;
-  S.wait g r.v;
-  let slots = 1024 in
-  let src = Option.get (A.alloc g `Pinned (8 * slots)) in
-  let dst = Option.get (A.alloc g `Pinned (8 * slots)) in
-  S.write (host src) (String.concat "" (List.init slots (fun i -> le64 (i + 1))));
-  S.write (host dst) (String.make (8 * slots) '\000');
-  for k = 1 to n do
-    let o = 8 * (k mod slots) in
-    hand [| A.part g ~queue:"COPY:0" (`Copy ((dst, o), (src, o), 8)) |]
-  done;
-  S.wait g r.v;
-  equal string ~msg:"the copies" (S.read (host src) (8 * slots))
-    (S.read (host dst) (8 * slots))
+    let seen = ref 0 in
+    List.iteri
+      (fun i shape ->
+        let ps, _ = parts g k (i + 1) shape in
+        room ps;
+        equal answer ~msg:"submit" `Ok (submit g ~v:(i + 1) ps);
+        let w = A.signaled g in
+        at_least int ~msg:"the word" ~than:!seen w;
+        seen := w)
+      shapes;
+    let last = List.length shapes in
+    S.wait g last;
+    let res = Bytes.make (4 * slots) '\000' and dst = Bytes.make (8 * slots) '\000' in
+    List.iteri
+      (fun i shape ->
+        let v = i + 1 and o = (i + 1) mod slots in
+        let compute () = Bytes.set_int32_le res (4 * o) (Int32.of_int v) in
+        let copy () = Bytes.set_int64_le dst (8 * o) (Int64.of_int (o + 1)) in
+        match shape with
+        | Pad _ -> ()
+        | Nops _ | Fill _ -> compute ()
+        | Zeros _ -> copy ()
+        | Both _ -> compute (); copy ())
+      shapes;
+    equal string ~msg:"the compute writes" (Bytes.to_string res)
+      (S.read (host k.res) (4 * slots));
+    equal string ~msg:"the copies" (Bytes.to_string dst) (S.read (host k.dst) (8 * slots))
+
+  let law goals =
+    S.with_gpu @@ fun g -> run g (plan (A.capability g).gpu goals)
+end
 
 (* Values complete in order *)
 
@@ -1796,8 +2018,13 @@ let order_commands =
   ]
 
 let rings =
-  group ~timeout:120. "rings"
-    [ test "streams longer than the rings complete" wrap ]
+  group ~timeout:300. "rings"
+    [
+      prop ~count:3
+        "submissions landing at, short of and past each ring's end complete in \
+         order"
+        Wrap.goals Wrap.law;
+    ]
 
 let timeline =
   group ~timeout:300. "timeline"

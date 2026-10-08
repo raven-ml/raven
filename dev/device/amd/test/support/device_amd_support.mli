@@ -65,6 +65,10 @@ val fill :
     [c]'s [segment] if [bytes > 0], and returns the first failure of these,
     else [code] (defaults to [0]). The argument lives as long as the process. *)
 
+val fill_address : nativeint -> int
+(** [fill_address arg] is the GPU address of the segment bytes the fill whose
+    argument is [arg] took at its last call, or [0] if it took none. *)
+
 val room :
   ?words:int ->
   ?fill:bool ->
