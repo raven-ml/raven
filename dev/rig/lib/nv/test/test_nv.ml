@@ -117,6 +117,7 @@ module Fake = struct
     mutable next : int;
     mutable at : int option; (* the address of the path's next memory *)
     mutable frees : bool; (* whether the RM frees objects *)
+    mutable faults : bool; (* whether the RM's and the path's frees raise *)
     mutable report : string option; (* a fault the path reports *)
     mutable hang_ms : int option;
     mutable stops : [ `Stopped | `Unknown ]; (* what the path's stop answers *)
@@ -156,6 +157,7 @@ module Fake = struct
       control = (fun _ _ _ -> if refused f then Error "refused" else Ok ());
       free =
         (fun ~parent:_ h ->
+          if f.faults then raise (N.Fault "the GPU fell off the bus");
           if not f.frees then Error "refused"
           else begin
             if not (List.mem_assoc h f.objects) then
@@ -178,15 +180,19 @@ module Fake = struct
       Some { N.address; host; handle = fresh f; data = () }
 
   let free f (m : unit N.memory) =
+    if f.faults then raise (N.Fault "the GPU fell off the bus");
     match List.find_opt (fun (a, _, _) -> a = m.address) f.memory with
     | None -> f.wrong <- Printf.sprintf "freed memory 0x%x" m.address :: f.wrong
     | Some ((_, host, bytes) as x) ->
         f.memory <- List.filter (fun y -> y != x) f.memory;
         Option.iter (fun a -> S.free_pages a bytes) host
 
+  (* One key, so that fake devices map each other's memory. *)
+  let key : unit Type.Id.t = Type.Id.make ()
+
   let path f : unit N.path =
     {
-      N.key = Type.Id.make ();
+      N.key;
       index = 0;
       rm = rm f;
       device;
@@ -208,7 +214,7 @@ module Fake = struct
       alloc = alloc f;
       map_host = (fun _ n -> alloc f `System n);
       reaches = (fun _ -> false);
-      map_peer = (fun _ -> None);
+      map_peer = (fun _ -> alloc f `Gpu S.page);
       free = free f;
       register =
         (fun c ->
@@ -238,6 +244,7 @@ module Fake = struct
       next = 16;
       at = None;
       frees = true;
+      faults = false;
       report = None;
       hang_ms = None;
       stops = `Unknown;
@@ -312,34 +319,53 @@ let stop_with_image () =
    semaphore takes, up to its last byte; memory past it goes back to the path,
    and the call raises. *)
 let address_limit () =
-  let f = Fake.make 0 in
+  let f = Fake.make 0 and f' = Fake.make 0 in
   let g = require_ok (N.make (Fake.path f)) in
-  let held = List.length f.memory in
+  let g' = require_ok (N.make (Fake.path f')) in
   let limit = 1 lsl 40 and n = 2 * S.page in
+  let r' = require_some (N.alloc g' `Device n) in
+  let held = List.length f.memory in
   let calls =
     [
-      ("`Device", fun () -> N.alloc g `Device n);
-      ("`Pinned", fun () -> N.alloc g `Pinned n);
-      ("`Mapped", fun () -> N.alloc g `Mapped n);
-      ("map_host", fun () -> N.map_host g 0 n);
+      ("`Device", "Rig_nv.alloc", fun () -> N.alloc g `Device n);
+      ("`Pinned", "Rig_nv.alloc", fun () -> N.alloc g `Pinned n);
+      ("`Mapped", "Rig_nv.alloc", fun () -> N.alloc g `Mapped n);
+      ("map_host", "Rig_nv.map_host", fun () -> N.map_host g 0 n);
+      ("map_peer", "Rig_nv.map_peer", fun () -> N.map_peer g g' r');
     ]
   in
-  let below (what, call) =
+  let below (what, _, call) =
     f.at <- Some (limit - n);
     let r = require_some ~msg:(what ^ " ending at 2^40") (call ()) in
     equal int ~msg:(what ^ ": its address") (limit - n) (address r);
     N.free g r
   in
-  let past (what, call) =
+  let past (what, fn, call) =
     f.at <- Some (limit - S.page);
-    raises_match ~msg:(what ^ " ending past 2^40") Exn.invalid_arg (fun () ->
-        ignore (call ()));
+    raises_match ~msg:(what ^ " ending past 2^40")
+      (Exn.invalid_arg ~substring:(fn ^ ":"))
+      (fun () -> ignore (call ()));
     equal int ~msg:(what ^ ": the path's memory") held (List.length f.memory)
   in
   List.iter below calls;
   List.iter past calls;
   f.at <- None;
   equal (list string) ~msg:"given back wrongly" [] f.wrong;
+  N.free g' r';
+  N.stop g;
+  N.stop g'
+
+(* A path whose frees raise Fault, as one whose GPU is lost: free and stop
+   still return, as the core calls them after a loss. *)
+let failing_frees () =
+  let f = Fake.make 0 in
+  let g = require_ok (N.make (Fake.path f)) in
+  let r = require_some (N.alloc g `Pinned 64) in
+  f.faults <- true;
+  N.free g r;
+  raises_match ~msg:"a second free"
+    (Exn.invalid_arg ~substring:"was freed")
+    (fun () -> N.free g r);
   N.stop g
 
 (* A device whose channels the RM keeps at stop: the path's [`Stopped] says
@@ -400,6 +426,8 @@ let paths =
       test "image and lay ask the path for nothing" image_asks_nothing;
       test "stop gives back what the path says no work can use" path_stops;
       test "sleep raises the fault the path reports" path_check;
+      test "free and stop raise no Fault when the path's frees do"
+        failing_frees;
       test
         "a device stopped with an image keeps only its word once its code is \
          freed"

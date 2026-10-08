@@ -71,18 +71,19 @@ type 'm path = {
 
 let is_gpu ~vendor ~class_ = vendor = 0x10de && class_ lsr 16 = 0x03
 
-(* The memory [m] of [n] bytes a path answered, below [address_limit] as the
-   path's interface promises: a path that breaks it is given [m] back. *)
+(* The memory [m] of [n] bytes a path answered to the function [fn], below
+   [address_limit] as the path's interface promises: a path that breaks it is
+   given [m] back. *)
 let address_limit = 1 lsl 40
 
-let below (p : _ path) n = function
+let below (p : _ path) fn n = function
   | Some (m : _ memory) when m.address + n > address_limit ->
       p.free m;
-      invalid_argf "Rig_nv: the path answered memory at 0x%x, past 2^40"
+      invalid_argf "%s: the path answered memory at 0x%x, past 2^40" fn
         m.address
   | m -> m
 
-let path_alloc p kind n = below p n (p.alloc kind n)
+let path_alloc p fn kind n = below p fn n (p.alloc kind n)
 
 (* Constants *)
 
@@ -315,7 +316,7 @@ let local d n =
     let l = Abi.Local_memory.make d.capability n in
     if l.per_thread <= d.per_thread then Ok ()
     else
-      match path_alloc d.path `Gpu l.bytes with
+      match path_alloc d.path "Rig_nv.capability" `Gpu l.bytes with
       | None ->
           Error (strf "no GPU memory for %d bytes of local memory" l.bytes)
       | Some m ->
@@ -419,7 +420,7 @@ let host what (m : _ memory) =
 let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
   let rm = p.rm in
   let alloc kind bytes what =
-    match path_alloc p kind bytes with
+    match path_alloc p "Rig_nv.make" kind bytes with
     | None -> Error (strf "no memory for the %s" what)
     | Some m ->
         taken (fun () -> p.free m);
@@ -445,7 +446,7 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
   in
   let* compute_notifier = notifier 0 in
   let* copy_notifier = notifier 1 in
-  let bar = path_alloc p `Bar page in
+  let bar = path_alloc p "Rig_nv.make" `Bar page in
   Option.iter (fun m -> taken (fun () -> p.free m)) bar;
   let* group =
     new_object ~parent:p.device D.kepler_channel_group_a "the channel group"
@@ -633,15 +634,16 @@ let region d kind bytes m =
 
 let alloc (T d) kind n =
   if n < 1 then invalid_argf "Rig_nv.alloc: %d bytes, expected at least 1" n;
+  let p = d.path and fn = "Rig_nv.alloc" in
   match kind with
-  | `Device -> Option.map (region d Path n) (path_alloc d.path `Gpu n)
-  | `Pinned -> Option.map (region d Path n) (path_alloc d.path `System n)
+  | `Device -> Option.map (region d Path n) (path_alloc p fn `Gpu n)
+  | `Pinned -> Option.map (region d Path n) (path_alloc p fn `System n)
   | `Mapped -> (
-      match if d.bar then path_alloc d.path `Bar n else None with
+      match if d.bar then path_alloc p fn `Bar n else None with
       | Some m ->
           bar_live d.self 1;
           Some (region d Bar n m)
-      | None -> Option.map (region d Path n) (path_alloc d.path `System n))
+      | None -> Option.map (region d Path n) (path_alloc p fn `System n))
 
 let free (T d) r =
   match mine d r with
@@ -652,7 +654,8 @@ let free (T d) r =
       | Path | Bar ->
           if not (Atomic.compare_and_set r.live true false) then
             invalid_arg "Rig_nv.free: the region was freed";
-          d.path.free r.mem;
+          (* A path that cannot give the memory back has lost it. *)
+          (try d.path.free r.mem with Fault _ -> ());
           if r.kind = Bar then bar_live d.self (-1))
 
 let address (R r) = Some r.mem.address
@@ -678,12 +681,15 @@ let map_peer (T d) (T d') r =
       match Type.Id.provably_equal d.path.key d'.path.key with
       | None -> None
       | Some Type.Equal ->
-          Option.map (region d Path r.bytes) (d.path.map_peer r.mem))
+          let m = d.path.map_peer r.mem in
+          Option.map (region d Path r.bytes)
+            (below d.path "Rig_nv.map_peer" r.bytes m))
 
 let map_host (T d) a n =
   if n < 1 then
     invalid_argf "Rig_nv.map_host: %d bytes, expected at least 1" n;
-  Option.map (region d Path n) (below d.path n (d.path.map_host a n))
+  let m = below d.path "Rig_nv.map_host" n (d.path.map_host a n) in
+  Option.map (region d Path n) m
 
 (* Images *)
 
@@ -845,17 +851,17 @@ let sleep (T d) ~seen ~still_ms =
 
 let stop (T d) =
   Mutex.protect d.local_lock (fun () -> d.stopped <- true);
-  let ok = function Ok () -> true | Error _ -> false in
+  let ok f =
+    match f () with Ok () -> true | Error _ | (exception Fault _) -> false
+  in
   let rm = d.path.rm in
   let unregistered =
     List.for_all Fun.id
-      (List.map
-         (fun ch -> try ok (d.path.unregister ch) with Fault _ -> false)
-         d.channels)
+      (List.map (fun ch -> ok (fun () -> d.path.unregister ch)) d.channels)
   in
   let freed =
-    ok (rm.free ~parent:d.path.device d.debugger)
-    && ok (rm.free ~parent:d.path.device d.group)
+    ok (fun () -> rm.free ~parent:d.path.device d.debugger)
+    && ok (fun () -> rm.free ~parent:d.path.device d.group)
   in
   let path = try d.path.stop () with Fault _ -> `Unknown in
   if (unregistered && freed) || path = `Stopped then begin

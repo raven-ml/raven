@@ -7,7 +7,7 @@
 
     A device of this library is one NVIDIA GPU, which a {e path} opened: a
     library that reaches the GPU's resource manager (RM) one way, such as
-    {!Rig_nv_nvidia} through NVIDIA's kernel driver, and fills a {!path} record.
+    [Rig_nv_nvidia] through NVIDIA's kernel driver, and fills a {!path} record.
     The device itself is the same whichever path opened it.
 
     A device runs work on two {e channels}, the GPU's hardware queues: its
