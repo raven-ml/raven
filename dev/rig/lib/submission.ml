@@ -246,12 +246,12 @@ let decide d p =
             let at, _, _ = Memory.region_info r in
             if at < 0 then host_wait else at + skip)
 
+(* [d.pairs] is replaced whole under [d]'s lock and its cells are ints, so a
+   read takes no lock: only an undecided pair does. *)
 let pair d p =
   let i = p.index in
-  let known =
-    Dev.protect d (fun () ->
-        if i < Array.length d.pairs then d.pairs.(i) else 0)
-  in
+  let pairs = d.pairs in
+  let known = if i < Array.length pairs then pairs.(i) else 0 in
   if known <> 0 then known
   else begin
     let way = decide d p in

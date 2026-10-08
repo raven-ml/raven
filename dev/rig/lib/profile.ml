@@ -5,6 +5,7 @@
 
 open Def
 
+let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
 type event = Def.event =
@@ -110,7 +111,7 @@ let span name f =
   match Prof.active () with
   | [] -> f ()
   | ps ->
-      let lane = Printf.sprintf "domain %d" (Domain.self () :> int) in
+      let lane = strf "domain %d" (Domain.self () :> int) in
       let start = now () in
       let finish () =
         Prof.add ps

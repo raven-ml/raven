@@ -170,7 +170,9 @@ let refresh d =
   match d.kind with
   | Driver { m; h; _ } when d.word = 0 -> (
       let module D = (val m) in
-      match D.signaled h with w -> c_set_seen d.c w | exception _ -> ())
+      match D.signaled h with
+      | w -> c_set_seen d.c w
+      | exception D.Fault _ -> ())
   | _ -> ()
 
 let upgrade d =
@@ -188,19 +190,25 @@ let stop_returned d =
 
 let stopped d = is_lost d && (c_answer d.c = answer_stopped || upgrade d)
 
+(* Records the stop's answer even when the driver's stop raises other than its
+   fault, which it then raises again: the device must count as stopped or not,
+   whatever the stop did. *)
 let stop d =
-  (match d.kind with
-  | Driver { m; h; _ } -> (
-      let module D = (val m) in
-      try D.stop h with _ -> ())
-  | Io { m; h } -> (
-      let module I = (val m) in
-      try I.stop h with _ -> ())
-  | Host -> ());
-  c_set_answer d.c answer_unknown;
-  (match d.kind with
-  | Driver _ -> ignore (upgrade d)
-  | _ -> c_set_answer d.c answer_stopped);
+  let answer () =
+    c_set_answer d.c answer_unknown;
+    match d.kind with
+    | Driver _ -> ignore (upgrade d)
+    | _ -> c_set_answer d.c answer_stopped
+  in
+  Fun.protect ~finally:answer (fun () ->
+      match d.kind with
+      | Driver { m; h; _ } -> (
+          let module D = (val m) in
+          try D.stop h with D.Fault _ -> ())
+      | Io { m; h } -> (
+          let module I = (val m) in
+          try I.stop h with I.Fault _ -> ())
+      | Host -> ());
   !answered d
 
 let stop_claimed indices =
@@ -225,8 +233,11 @@ let counted d f =
             leave d;
             r
         | exception e -> (
+            let bt = Printexc.get_raw_backtrace () in
             leave d;
-            match d.fault e with Some why -> lose d why | None -> raise e))
+            match d.fault e with
+            | Some why -> lose d why
+            | None -> Printexc.raise_with_backtrace e bt))
     | 3 ->
         stop d;
         raise_lost d
@@ -382,8 +393,9 @@ let open_named ~machine ~name ~key ~host make =
         match make ~index ~name:full with
         | r -> finish r
         | exception e ->
+            let bt = Printexc.get_raw_backtrace () in
             ignore (finish (Error ""));
-            raise e)
+            Printexc.raise_with_backtrace e bt)
 
 let completion_of = function
   | `Store -> Store

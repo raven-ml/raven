@@ -5,7 +5,7 @@
 
 open Def
 
-let strf = Printf.sprintf
+let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
 (* Stamps *)
 
@@ -240,9 +240,15 @@ let new_entry d kind n =
   | Host -> None
 
 (* After [d]'s loss, its memory and mappings are freed only once its stop
-   returned, and uncounted. *)
+   returned, and uncounted: a failure of the lost device's free, its fault or
+   its memory's, frees nothing more. *)
 let call d f =
-  if Dev.is_lost d then try f () with _ -> () else Dev.counted d f
+  if not (Dev.is_lost d) then Dev.counted d f
+  else
+    match f () with
+    | () -> ()
+    | exception Sys_error _ -> ()
+    | exception e when Option.is_some (d.fault e) -> ()
 
 (* Gives back a region [d] allocated or mapped. *)
 let free_region d (Region { m; h; r; _ }) =
@@ -800,7 +806,10 @@ let pages (m : memory) =
             | Some ba -> Pages ba
             | None -> No_pages
           in
-          Dev.protect m.dev (fun () -> if e.pages = Unasked then e.pages <- got)
+          Dev.protect m.dev (fun () ->
+              match e.pages with
+              | Unasked -> e.pages <- got
+              | Pages _ | No_pages -> ())
       | None -> ())
   | Pages _ | No_pages -> ());
   match e.pages with Pages ba -> ba_address ba | Unasked | No_pages -> -1
@@ -835,7 +844,7 @@ let prefetch d (m : memory) ~at ~len =
   match m.root.entry.io_region with
   | Some (Io_region { m = im; h; r }) when not (Dev.is_host d) -> (
       let module I = (val im) in
-      try I.prefetch h r ~at ~len with _ -> ())
+      try I.prefetch h r ~at ~len with I.Fault _ | Sys_error _ -> ())
   | _ -> ()
 
 (* A memory record over [n] bytes of the region [r] an io library gave the io
@@ -851,7 +860,7 @@ let of_io d r n =
 let trim d = release_cache ~upto:d.budget ~wait:false d
 
 let set_budget d n =
-  if n < 0 then invalid_arg (strf "Rig.set_budget: budget %d is negative" n);
+  if n < 0 then invalid_argf "Rig.set_budget: budget %d is negative" n;
   Dev.protect d (fun () -> d.budget <- n);
   trim d
 
