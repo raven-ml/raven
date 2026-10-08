@@ -36,6 +36,12 @@ external floor_copy : nativeint -> int -> nativeint -> nativeint -> int -> unit
 external evict : string -> int = "rig_bench_evict"
 
 let drain = 64
+
+(* The runs a replay keeps in flight: each waits for the run [depth] back. At
+   two, an R9700 flips between a fast and a slow mode within one process: a few
+   hundred nanoseconds more host time a run let its queue drain, and each run
+   then pays the GPU's wake. Three keeps the next run queued. *)
+let depth = 3
 let slots = 24
 let runs = 100
 
@@ -167,17 +173,17 @@ let floor_part f (p : Sub.part) =
 
 (* A GPU's submits through the core, beside the same submits through its
    driver's C entries alone. [empty] and [cost] submit no work and wait for each
-   submit or every [drain]. The replay rows run two copies of a step over
-   [slots] parameters, each run waiting for its copy's run before last, as the
-   Polled rows do: with no part, and with the part [kernel] makes, a launch of
-   the vendor's smallest kernel. A floor spins on the word; [release-sleep], for
-   a driver whose host writes the word ([sleeps]), and the replay floors wait as
-   the core waits for that driver: in its [sleep] from the first read, or
-   spinning. The kernel floor drives the device the core opened, through its
-   driver's entries alone, after the core loaded the kernel. With [graph], the
-   graph rows do the same with the part [graph] makes, the launch of a recorded
-   step of 64 such kernels. Each case opens its GPU in its own worker, so that
-   no process forks after a vendor library started. *)
+   submit or every [drain]. The replay rows run [depth] copies of a step over
+   [slots] parameters, each run waiting for its copy's last run: with no part,
+   and with the part [kernel] makes, a launch of the vendor's smallest kernel. A
+   floor spins on the word; [release-sleep], for a driver whose host writes the
+   word ([sleeps]), and the replay floors wait as the core waits for that
+   driver: in its [sleep] from the first read, or spinning. The kernel floor
+   drives the device the core opened, through its driver's entries alone, after
+   the core loaded the kernel. With [graph], the graph rows do the same with the
+   part [graph] makes, the launch of a recorded step of 64 such kernels. Each
+   case opens its GPU in its own worker, so that no process forks after a vendor
+   library started. *)
 let gpu_rows (type a) (module D : C.Driver with type t = a) ?(sleeps = false)
     ?(copies = true) ?graph v ~name open_ ~kernel =
   let get = function Ok x -> x | Error why -> failwith why in
@@ -208,7 +214,7 @@ let gpu_rows (type a) (module D : C.Driver with type t = a) ?(sleeps = false)
         gwrites = [| B.create g 8 |];
       }
     in
-    ({ g; gcopies = [| copy (); copy () |]; keep }, ref 0)
+    ({ g; gcopies = Array.init depth (fun _ -> copy ()); keep }, ref 0)
   in
   let replaying () = replay (fst (opened ())) [||] ignore in
   let part_replaying make () =
@@ -217,7 +223,7 @@ let gpu_rows (type a) (module D : C.Driver with type t = a) ?(sleeps = false)
     replay g [| p |] keep
   in
   let run (r, n) =
-    let c = r.gcopies.(!n land 1) in
+    let c = r.gcopies.(!n mod depth) in
     incr n;
     B.wait c.gargs B.Read_write;
     ignore (C.submit c.gs ~reads:c.greads ~writes:c.gwrites ~waits:[||])
@@ -278,7 +284,7 @@ let gpu_rows (type a) (module D : C.Driver with type t = a) ?(sleeps = false)
   in
   let wait = if sleeps then sleep else spin in
   let floor_run a =
-    wait a (!(a.sent) - 1);
+    wait a (!(a.sent) + 1 - depth);
     release a
   in
   let floor_pipelined a =
