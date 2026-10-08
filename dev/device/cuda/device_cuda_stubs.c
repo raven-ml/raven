@@ -230,6 +230,11 @@ value caml_device_cuda_error(value v_status) {
   CAMLreturn(caml_copy_string(buf));
 }
 
+/* A numeric result [x], or CUDA's status [s] negated. */
+static value answer(CUresult s, intnat x) {
+  return Val_long(s == CUDA_SUCCESS ? x : -(intnat)s);
+}
+
 /* The library */
 
 /* The address of the library's function [v_name], or [0]. */
@@ -247,34 +252,34 @@ value caml_device_cuda_driver_version(value unit) {
   int version = 0;
   CUresult s = p_cuDriverGetVersion(&version);
   (void)unit;
-  return Val_long(s == CUDA_SUCCESS ? version : -s);
+  return answer(s, version);
 }
 
 value caml_device_cuda_count(value unit) {
   int count = 0;
   CUresult s = p_cuDeviceGetCount(&count);
   (void)unit;
-  return Val_long(s == CUDA_SUCCESS ? count : -s);
+  return answer(s, count);
 }
 
 /* The CUdevice of ordinal [v_ordinal]. */
 value caml_device_cuda_device(value v_ordinal) {
   CUdevice device = 0;
   CUresult s = p_cuDeviceGet(&device, Int_val(v_ordinal));
-  return Val_long(s == CUDA_SUCCESS ? device : -s);
+  return answer(s, device);
 }
 
 value caml_device_cuda_attribute(value v_device, value v_attribute) {
   int a = 0;
   CUresult s = p_cuDeviceGetAttribute(&a, Int_val(v_attribute),
                                       Int_val(v_device));
-  return Val_long(s == CUDA_SUCCESS ? a : -s);
+  return answer(s, a);
 }
 
 value caml_device_cuda_total_memory(value v_device) {
   size_t total = 0;
   CUresult s = p_cuDeviceTotalMem_v2(&total, Int_val(v_device));
-  return Val_long(s == CUDA_SUCCESS ? (intnat)total : -s);
+  return answer(s, (intnat)total);
 }
 
 /* Contexts. [push c] makes [c] current on the calling thread above the
@@ -288,6 +293,23 @@ static CUresult pop(CUresult status) {
   CUresult popped = p_cuCtxPopCurrent_v2(&c);
   return status != CUDA_SUCCESS ? status : popped;
 }
+
+/* Sets [s] to the status of [call], made with [d]'s context current, or to
+   the push's if the context cannot be made current, and [call] is not
+   made. */
+#define IN_CONTEXT(s, d, call)                                                 \
+  do {                                                                         \
+    (s) = push((d)->context);                                                  \
+    if ((s) == CUDA_SUCCESS) (s) = pop(call);                                  \
+  } while (0)
+
+/* Runs [stmt] with the runtime released, running no pending action. */
+#define RELEASED(stmt)                                                         \
+  do {                                                                         \
+    caml_enter_blocking_section_no_pending();                                  \
+    stmt;                                                                      \
+    caml_leave_blocking_section();                                             \
+  } while (0)
 
 /* Devices */
 
@@ -362,8 +384,7 @@ value caml_device_cuda_open(value v_device) {
       &flush, CU_DEVICE_ATTRIBUTE_CAN_FLUSH_REMOTE_WRITES, d->device);
   if (s == CUDA_SUCCESS)
     s = p_cuDevicePrimaryCtxRetain(&d->context, d->device);
-  if (s == CUDA_SUCCESS) s = push(d->context);
-  if (s == CUDA_SUCCESS) s = pop(start(d));
+  if (s == CUDA_SUCCESS) IN_CONTEXT(s, d, start(d));
   if (s != CUDA_SUCCESS) free(d);
   caml_leave_blocking_section();
   if (s != CUDA_SUCCESS) return Val_long(-s);
@@ -379,15 +400,13 @@ value caml_device_cuda_peer(value v_self, value v_home) {
   struct device *d = Device_val(v_self), *h = Device_val(v_home);
   int can = 0;
   if (d->device == h->device) return Val_long(1);
+  CUresult s;
   caml_enter_blocking_section_no_pending();
-  CUresult s = p_cuDeviceCanAccessPeer(&can, d->device, h->device);
-  if (s == CUDA_SUCCESS && can != 0) {
-    s = push(d->context);
-    if (s == CUDA_SUCCESS) s = pop(p_cuCtxEnablePeerAccess(h->context, 0));
-  }
+  s = p_cuDeviceCanAccessPeer(&can, d->device, h->device);
+  if (s == CUDA_SUCCESS && can != 0)
+    IN_CONTEXT(s, d, p_cuCtxEnablePeerAccess(h->context, 0));
   caml_leave_blocking_section();
-  if (s == CUDA_SUCCESS) return Val_long(can != 0);
-  return Val_long(-s);
+  return answer(s, can != 0);
 }
 
 /* Memory */
@@ -398,71 +417,56 @@ value caml_device_cuda_peer(value v_self, value v_home) {
 value caml_device_cuda_alloc(value v_self, value v_host, value v_n) {
   struct device *d = Device_val(v_self);
   size_t n = Long_val(v_n);
-  int host = Bool_val(v_host);
   CUdeviceptr a = 0;
   void *p = NULL;
-  caml_enter_blocking_section_no_pending();
-  CUresult s = push(d->context);
-  if (s == CUDA_SUCCESS && host)
-    s = pop(p_cuMemHostAlloc(&p, n, CU_MEMHOST_PORTABLE_DEVICEMAP));
-  else if (s == CUDA_SUCCESS)
-    s = pop(p_cuMemAlloc_v2(&a, n));
-  caml_leave_blocking_section();
-  if (s != CUDA_SUCCESS) return Val_long(-s);
-  return Val_long(host ? (intnat)p : (intnat)a);
+  CUresult s;
+  if (Bool_val(v_host))
+    RELEASED(IN_CONTEXT(
+        s, d, p_cuMemHostAlloc(&p, n, CU_MEMHOST_PORTABLE_DEVICEMAP)));
+  else
+    RELEASED(IN_CONTEXT(s, d, p_cuMemAlloc_v2(&a, n)));
+  return answer(s, Bool_val(v_host) ? (intnat)p : (intnat)a);
 }
 
-/* Frees what caml_device_cuda_alloc gave. CUDA's answer is dropped: after
-   a fault the memory stays with the context, which the process keeps.
-   Releases the runtime: cuMemFree may wait for the GPU. */
+/* Frees what caml_device_cuda_alloc gave: CUDA's status. Releases the
+   runtime: cuMemFree may wait for the GPU. */
 value caml_device_cuda_free(value v_self, value v_host, value v_address) {
   struct device *d = Device_val(v_self);
-  int host = Bool_val(v_host);
   intnat a = Long_val(v_address);
-  caml_enter_blocking_section_no_pending();
-  if (push(d->context) == CUDA_SUCCESS) {
-    if (host) pop(p_cuMemFreeHost((void *)a));
-    else pop(p_cuMemFree_v2((CUdeviceptr)a));
-  }
-  caml_leave_blocking_section();
-  return Val_unit;
+  CUresult s;
+  if (Bool_val(v_host))
+    RELEASED(IN_CONTEXT(s, d, p_cuMemFreeHost((void *)a)));
+  else
+    RELEASED(IN_CONTEXT(s, d, p_cuMemFree_v2((CUdeviceptr)a)));
+  return Val_int(s);
 }
 
 /* The address by which CUDA's work reaches the page-locked host memory at
    [v_address], or CUDA's status negated: CUDA_ERROR_INVALID_VALUE if the
    memory is not page-locked. */
 value caml_device_cuda_mapped(value v_self, value v_address) {
-  struct device *d = Device_val(v_self);
   CUdeviceptr a = 0;
-  CUresult s = push(d->context);
-  if (s == CUDA_SUCCESS)
-    s = pop(p_cuMemHostGetDevicePointer_v2(&a, (void *)Long_val(v_address),
-                                           0));
-  return Val_long(s == CUDA_SUCCESS ? (intnat)a : -s);
+  CUresult s;
+  IN_CONTEXT(s, Device_val(v_self),
+             p_cuMemHostGetDevicePointer_v2(&a, (void *)Long_val(v_address),
+                                            0));
+  return answer(s, (intnat)a);
 }
 
-/* Page-locks [v_n] bytes of host memory at [v_address] for every device.
-   Releases the runtime: CUDA locks every page. */
-value caml_device_cuda_register(value v_self, value v_address, value v_n) {
+/* Page-locks the [v_n] bytes of host memory at [v_address] for every
+   device if [v_lock], or unlocks the range that starts there: CUDA's
+   status. Releases the runtime: CUDA locks or unlocks every page. */
+value caml_device_cuda_lock(value v_self, value v_lock, value v_address,
+                            value v_n) {
   struct device *d = Device_val(v_self);
   void *p = (void *)Long_val(v_address);
   size_t n = Long_val(v_n);
-  caml_enter_blocking_section_no_pending();
-  CUresult s = push(d->context);
-  if (s == CUDA_SUCCESS)
-    s = pop(p_cuMemHostRegister_v2(p, n, CU_MEMHOST_PORTABLE_DEVICEMAP));
-  caml_leave_blocking_section();
-  return Val_int(s);
-}
-
-/* Releases the runtime. */
-value caml_device_cuda_unregister(value v_self, value v_address) {
-  struct device *d = Device_val(v_self);
-  void *p = (void *)Long_val(v_address);
-  caml_enter_blocking_section_no_pending();
-  CUresult s = push(d->context);
-  if (s == CUDA_SUCCESS) s = pop(p_cuMemHostUnregister(p));
-  caml_leave_blocking_section();
+  CUresult s;
+  if (Bool_val(v_lock))
+    RELEASED(IN_CONTEXT(
+        s, d, p_cuMemHostRegister_v2(p, n, CU_MEMHOST_PORTABLE_DEVICEMAP)));
+  else
+    RELEASED(IN_CONTEXT(s, d, p_cuMemHostUnregister(p)));
   return Val_int(s);
 }
 
@@ -476,31 +480,28 @@ value caml_device_cuda_load_module(value v_self, value v_image) {
   size_t n = caml_string_length(v_image);
   char *image = malloc(n + 1);
   CUmodule m = NULL;
+  CUresult s;
   if (image == NULL) caml_raise_out_of_memory();
   memcpy(image, String_val(v_image), n);
   image[n] = '\0';
-  caml_enter_blocking_section_no_pending();
-  CUresult s = push(d->context);
-  if (s == CUDA_SUCCESS) s = pop(p_cuModuleLoadData(&m, image));
+  RELEASED(IN_CONTEXT(s, d, p_cuModuleLoadData(&m, image)));
   free(image);
-  caml_leave_blocking_section();
-  return Val_long(s == CUDA_SUCCESS ? (intnat)m : -s);
+  return answer(s, (intnat)m);
 }
 
 value caml_device_cuda_function(value v_self, value v_module, value v_name) {
-  struct device *d = Device_val(v_self);
   CUfunction f = NULL;
-  CUresult s = push(d->context);
-  if (s == CUDA_SUCCESS)
-    s = pop(p_cuModuleGetFunction(&f, (CUmodule)Long_val(v_module),
-                                  String_val(v_name)));
-  return Val_long(s == CUDA_SUCCESS ? (intnat)f : -s);
+  CUresult s;
+  IN_CONTEXT(s, Device_val(v_self),
+             p_cuModuleGetFunction(&f, (CUmodule)Long_val(v_module),
+                                   String_val(v_name)));
+  return answer(s, (intnat)f);
 }
 
 value caml_device_cuda_unload(value v_self, value v_module) {
-  struct device *d = Device_val(v_self);
-  CUresult s = push(d->context);
-  if (s == CUDA_SUCCESS) s = pop(p_cuModuleUnload((CUmodule)Long_val(v_module)));
+  CUresult s;
+  IN_CONTEXT(s, Device_val(v_self),
+             p_cuModuleUnload((CUmodule)Long_val(v_module)));
   return Val_int(s);
 }
 
@@ -787,34 +788,34 @@ value caml_device_cuda_word(value v_self) {
    on its streams, or [0]. */
 value caml_device_cuda_failed(value v_self) {
   struct device *d = Device_val(v_self);
-  CUresult s = push(d->context);
-  if (s == CUDA_SUCCESS) s = pop(query(d->streams[0]));
+  CUresult s;
+  IN_CONTEXT(s, d, query(d->streams[0]));
   return Val_int(s);
 }
 
-/* Waits until the word differs from [v_seen], for at most [v_ms]
-   milliseconds, asking each millisecond whether a stream met an error:
-   [0], or that error. Releases the runtime. */
+/* Waits until the word differs from [seen], for at most [ms] milliseconds,
+   asking each POLL_MS whether a stream met an error: success, or that
+   error. */
+static CUresult watch(struct device *d, uint64_t seen, int64_t ms) {
+  int64_t start = now_ms();
+  CUresult fault = CUDA_SUCCESS;
+  while (atomic_load_explicit(d->word, memory_order_acquire) == seen) {
+    fault = query(d->streams[0]);
+    if (fault == CUDA_SUCCESS) fault = query(d->streams[1]);
+    if (fault != CUDA_SUCCESS || now_ms() - start >= ms) break;
+    poll_pause();
+  }
+  return fault;
+}
+
+/* [watch] unless the word already differs from [v_seen]: [0], or a stream's
+   error. Releases the runtime. */
 value caml_device_cuda_sleep(value v_self, value v_seen, value v_ms) {
   struct device *d = Device_val(v_self);
   uint64_t seen = (uint64_t)Long_val(v_seen);
-  int64_t ms = Long_val(v_ms);
-  CUresult fault = CUDA_SUCCESS;
-  if (atomic_load_explicit(d->word, memory_order_acquire) != seen)
-    return Val_int(0);
-  caml_enter_blocking_section_no_pending();
-  CUresult s = push(d->context);
-  if (s == CUDA_SUCCESS) {
-    int64_t start = now_ms();
-    while (atomic_load_explicit(d->word, memory_order_acquire) == seen) {
-      fault = query(d->streams[0]);
-      if (fault == CUDA_SUCCESS) fault = query(d->streams[1]);
-      if (fault != CUDA_SUCCESS || now_ms() - start >= ms) break;
-      poll_pause();
-    }
-    s = pop(fault);
-  }
-  caml_leave_blocking_section();
+  CUresult s = CUDA_SUCCESS;
+  if (atomic_load_explicit(d->word, memory_order_acquire) == seen)
+    RELEASED(IN_CONTEXT(s, d, watch(d, seen, Long_val(v_ms))));
   return Val_int(s);
 }
 

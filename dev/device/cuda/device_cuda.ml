@@ -246,10 +246,9 @@ let self g = Nativeint.of_int g.self
 (* Memory *)
 
 external alloc_memory : int -> bool -> int -> int = "caml_device_cuda_alloc"
-external free_memory : int -> bool -> int -> unit = "caml_device_cuda_free"
+external free_memory : int -> bool -> int -> int = "caml_device_cuda_free"
 external mapped : int -> int -> int = "caml_device_cuda_mapped"
-external register : int -> int -> int -> int = "caml_device_cuda_register"
-external unregister : int -> int -> int = "caml_device_cuda_unregister"
+external lock : int -> bool -> int -> int -> int = "caml_device_cuda_lock"
 external peer : int -> int -> int = "caml_device_cuda_peer"
 
 let alloc g kind n =
@@ -267,7 +266,9 @@ let free g r =
   | (Device | Host) when r.owner = g.self ->
       if not r.live then invalid_arg "Device_cuda.free: the region was freed";
       r.live <- false;
-      free_memory g.self (r.kind = Host) r.address
+      (* CUDA's answer is dropped: after a fault the memory stays with the
+         context, which the process keeps. *)
+      ignore (free_memory g.self (r.kind = Host) r.address)
   | _ ->
       invalid_arg "Device_cuda.free: the region is no allocation of the device"
 
@@ -308,7 +309,7 @@ let page_lock g a n =
   let first = mapped g.self a and last = mapped g.self (a + n - 1) in
   if first >= 0 && last >= 0 then Some (locked g None a n first)
   else if first >= 0 || last >= 0 then None
-  else if register g.self a n <> 0 then refused (page_locking n a) g.self None
+  else if lock g.self true a n <> 0 then refused (page_locking n a) g.self None
   else
     match mapped g.self a with
     | address when address < 0 -> fault (page_locking n a) (-address)
@@ -347,7 +348,7 @@ let unmap g r =
       Mutex.protect registry_lock @@ fun () ->
       e.maps <- e.maps - 1;
       if e.maps = 0 && not e.stuck then
-        if unregister g.self e.start = 0 then Hashtbl.remove registry e.start
+        if lock g.self false e.start 0 = 0 then Hashtbl.remove registry e.start
         else e.stuck <- true
   | _ -> ()
 
