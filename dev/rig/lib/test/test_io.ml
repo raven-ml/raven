@@ -233,6 +233,33 @@ let collecting t io collected seen =
           Printf.sprintf "frees: %d" (count "free" t);
         ])
 
+(* Between io memory that maps no pages and a device's memory the host does not
+   address, the bytes go through the staging memory, a piece at a time, both
+   ways: every byte lands, across the pieces' edges. *)
+let test_staged_device () =
+  let io, t = open_pages () in
+  t.mapped <- `None;
+  let d, _ = P.open_ ~host_visible:false "io:staged-device" in
+  let n = (100 lsl 20) + 4096 in
+  let byte i = Char.unsafe_chr ((i + ((i lsr 16) * 13)) land 255) in
+  let h = B.create C.host n in
+  let ba = B.bigarray Bigarray.char h in
+  for i = 0 to n - 1 do
+    Bigarray.Array1.unsafe_set ba i (byte i)
+  done;
+  let m = B.create io n and dev = B.create d n and back = B.create io n in
+  B.copy ~src:h ~dst:m;
+  B.copy ~src:m ~dst:dev;
+  B.copy ~src:dev ~dst:back;
+  let out = B.create C.host n in
+  B.copy ~src:back ~dst:out;
+  let got = B.bigarray Bigarray.char out in
+  let wrong = ref 0 in
+  for i = 0 to n - 1 do
+    if Bigarray.Array1.unsafe_get got i <> byte i then incr wrong
+  done;
+  equal ~msg:"bytes that differ" int 0 !wrong
+
 (* No device's work reaches io memory itself, only a borrow of its pages: a slot
    refuses an io device's buffer and takes the borrow. *)
 let test_slots () =
@@ -351,6 +378,8 @@ let tests =
           test_release_words;
         test "a slot refuses io memory and takes a borrow of its pages"
           test_slots;
+        test "io memory and a device's memory copy through staging, both ways"
+          test_staged_device;
         test "a fault of io loses its device, a failure of its memory nothing"
           test_faults;
         test "a region an io library made is a buffer of its device alone"

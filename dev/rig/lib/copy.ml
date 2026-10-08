@@ -66,18 +66,25 @@ let slot i =
 let is_slot m =
   Array.exists (function Some b -> b.mem.root == m.root | None -> false) slots
 
-let queued d queue ~src ~dst =
+(* A copy on [d]'s copy queue, its point. *)
+let submit_copy d queue ~src ~dst =
   let part =
     { Submission.queue; after = [||]; work = Submission.Copy { src; dst } }
   in
   let s = Submission.make ~reads:0 ~writes:0 ~waits:0 d [| part |] in
-  Dev.wait d (Point.value (Submission.submit s))
+  Submission.submit s
 
-(* A copy on [d]'s copy queue between buffers [d] maps, waited for. *)
-let on_queue d src dst =
+let queued d queue ~src ~dst =
+  Dev.wait d (Point.value (submit_copy d queue ~src ~dst))
+
+(* A copy on [d]'s copy queue between buffers [d] maps, waited for when
+   [wait]. *)
+let on_queue ~wait d src dst =
   match (d.copy_queue, Memory.borrow d src.mem, Memory.borrow d dst.mem) with
   | Some queue, Some s, Some t ->
-      queued d queue ~src:{ src with mem = s } ~dst:{ dst with mem = t };
+      let src = { src with mem = s } and dst = { dst with mem = t } in
+      if wait then queued d queue ~src ~dst
+      else ignore (submit_copy d queue ~src ~dst);
       true
   | _ -> false
 
@@ -111,7 +118,7 @@ let rec copy ~src ~dst =
   if dd != sd then Memory.drain dd;
   if n > 0 then begin
     let start = Prof.now () in
-    route src dst n;
+    route ~wait:true src dst n;
     (* A read, a write or a move hands over addresses only: the buffers stay
        reachable until it returned, or a collection could free their memory
        under it. *)
@@ -120,7 +127,10 @@ let rec copy ~src ~dst =
     record sd dd n start
   end
 
-and route src dst n =
+(* Copies [n] bytes from [src] to [dst]. A copy on a device's queue returns at
+   once unless [wait]: what reads or writes its buffers later waits for it by
+   their stamps. *)
+and route ~wait src dst n =
   let sd = src.mem.dev and dd = dst.mem.dev in
   if local src.mem && local dst.mem then begin
     Buffer.wait src Buffer.Read;
@@ -139,27 +149,53 @@ and route src dst n =
   end
   else
     let runner = if local src.mem then dd else sd in
-    let copied = (not (Dev.is_io runner)) && on_queue runner src dst in
+    let copied = (not (Dev.is_io runner)) && on_queue ~wait runner src dst in
     if copied then ()
     else if is_slot src.mem || is_slot dst.mem then
       invalid_argf "Rig.%s: no device copies between %s and %s" fn sd.name
         dd.name
     else staged src dst n
 
-(* Through the host's staging memory, a slot at a time. *)
+(* Through the host's staging memory: the copy holds a slot, whose two halves
+   take the pieces in turn, so one half fills while the other drains. A leg on a
+   device's queue runs without the host waiting for it: the next leg that reads
+   or writes its half waits for it by the half's stamps. The device's leg into
+   the slot runs one piece ahead of the host's out of it; the host's leg into
+   the slot fills one half while the device drains the other. *)
 and staged src dst n =
   let i = take_slot () in
+  let slot = slot i in
+  let half = slot_bytes / 2 in
+  let pieces = (n + half - 1) / half in
+  let len k = Int.min half (n - (k * half)) in
+  let into k =
+    leg
+      ~src:(Buffer.view src ~first:(k * half) ~length:(len k))
+      ~dst:(Buffer.view slot ~first:(k land 1 * half) ~length:(len k))
+  in
+  let out_of k =
+    leg
+      ~src:(Buffer.view slot ~first:(k land 1 * half) ~length:(len k))
+      ~dst:(Buffer.view dst ~first:(k * half) ~length:(len k))
+  in
+  let ahead = not (local src.mem || Dev.is_io src.mem.dev) in
   Fun.protect
-    ~finally:(fun () -> give_slot i)
+    ~finally:(fun () ->
+      (* No leg outlives the copy: the slot is given back unused. *)
+      (try Buffer.wait slot Buffer.Read_write with Dev.Lost _ -> ());
+      give_slot i)
     (fun () ->
-      let rec go at =
-        if at < n then begin
-          let len = Int.min slot_bytes (n - at) in
-          let s = Buffer.view (slot i) ~first:0 ~length:len in
-          let piece b = Buffer.view b ~first:at ~length:len in
-          copy ~src:(piece src) ~dst:s;
-          copy ~src:s ~dst:(piece dst);
-          go (at + len)
-        end
-      in
-      go 0)
+      if ahead then into 0;
+      for k = 0 to pieces - 1 do
+        if ahead then (if k + 1 < pieces then into (k + 1)) else into k;
+        out_of k
+      done;
+      Buffer.wait dst Buffer.Read_write)
+
+(* One leg of a staged copy, which a device's queue runs without the host
+   waiting. *)
+and leg ~src ~dst =
+  let n = Buffer.length src in
+  let start = Prof.now () in
+  route ~wait:false src dst n;
+  record src.mem.dev dst.mem.dev n start

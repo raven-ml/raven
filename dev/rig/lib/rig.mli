@@ -365,13 +365,14 @@ module Buffer : sig
       it addresses or maps, and through the host's {e staging memory} otherwise:
       two slots of 64 MiB of host memory, made at the first copy that needs them
       and kept for the life of the process. A copy holds a slot until it
-      returns, and a copy that finds both held waits for one. A device that runs
-      no copy has memory the host addresses, which the host copies. An {!Io}
-      device's memory is read and written by its {!Io.read} and {!Io.write},
-      through the staging memory when the host does not address the other side.
-      Between machines, only memory of an {!Io} device copies, by its reads and
-      writes, with memory this process's host addresses; no device copies other
-      memory between machines.
+      returns, and a copy that finds both held waits for one. It moves the bytes
+      through its slot's two halves in turn, so one half fills while the other
+      drains. A device that runs no copy has memory the host addresses, which
+      the host copies. An {!Io} device's memory is read and written by its
+      {!Io.read} and {!Io.write}, through the staging memory when the host does
+      not address the other side. Between machines, only memory of an {!Io}
+      device copies, by its reads and writes, with memory this process's host
+      addresses; no device copies other memory between machines.
 
       [copy] first drains the devices of [src] and [dst] ({!create}). Staging
       memory that a device lost while it used it is replaced, so a loss reaches
