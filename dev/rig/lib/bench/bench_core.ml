@@ -221,6 +221,12 @@ let buffer_rows =
           Option.get (B.borrow C.host (B.create (memory ()) (64 * mib))))
         "bigarray-64M"
         (fun b -> B.bigarray Bigarray.char b);
+      row "blit-from-string-4K"
+        (fun () -> (String.make (4 * kib) 's', host (4 * kib)))
+        (fun (s, b) -> B.blit_from_string s 0 b 0 (4 * kib));
+      row "blit-to-bytes-64M"
+        (fun () -> (host (64 * mib), Bytes.create (64 * mib)))
+        (fun (b, s) -> B.blit_to_bytes b 0 s 0 (64 * mib));
     ]
 
 let claim_rows =

@@ -249,9 +249,10 @@ val wait : t -> int -> unit
     bytes mean, elements of some type, is the caller's: this library moves,
     orders and returns bytes.
 
-    A buffer is {e owned} when {!create} made it, and {e borrowed} when it is
-    over memory something else holds: a bigarray ({!of_bigarray}) or another
-    device's memory ({!borrow}). A {!view} is as the buffer it views. *)
+    A buffer is {e owned} when {!create} or {!of_string} made it, and
+    {e borrowed} when it is over memory something else holds: a bigarray
+    ({!of_bigarray}) or another device's memory ({!borrow}). A {!view} is as the
+    buffer it views. *)
 module Buffer : sig
   type device := t
 
@@ -312,6 +313,10 @@ module Buffer : sig
   (** [of_bigarray ba] is a borrowed buffer on {!host} over [ba]'s bytes,
       without a copy. It keeps [ba] reachable. The memory is outside the claims
       ({!Claim}). *)
+
+  val of_string : string -> t
+  (** [of_string s] is an owned buffer on {!host} holding [s]'s bytes, placed as
+      {!create} places a host buffer. *)
 
   val borrow : device -> t -> t option
   (** [borrow d b] is [Some b'], a borrowed buffer on [d] over [b]'s memory,
@@ -388,9 +393,9 @@ module Buffer : sig
 
   val device : t -> device
   (** [device b] is the device [b] is on: [d] for a buffer that {!create},
-      {!of_io} or {!borrow} made on [d], {!host} for one {!of_bigarray} made,
-      and its buffer's device for a {!view} and for {!Claim.consume}'s result.
-  *)
+      {!of_io} or {!borrow} made on [d], {!host} for one {!of_string} or
+      {!of_bigarray} made, and its buffer's device for a {!view} and for
+      {!Claim.consume}'s result. *)
 
   val length : t -> int
   (** [length b] is the number of [b]'s bytes. *)
@@ -406,8 +411,8 @@ module Buffer : sig
 
   val access : t -> access
   (** [access b] is the accesses [b]'s memory admits, the same for each of its
-      views and borrows: [Read_write] for memory {!create} and {!of_bigarray}
-      make, and what {!of_io} was given.
+      views and borrows: [Read_write] for memory {!create}, {!of_string} and
+      {!of_bigarray} make, and what {!of_io} was given.
 
       [Read] memory is never written: a {!copy} into it raises, and so do a
       submission that writes it ({!Submission.make}, {!submit}) and a host claim
@@ -426,8 +431,9 @@ module Buffer : sig
 
   val spans : t -> bool
   (** [spans b] is [true] iff [b]'s bytes are all of the memory it lies in,
-      below its borrows: those of a buffer {!create} or {!of_bigarray} made, and
-      of a borrow of one, and not those of a {!view} of part of it. *)
+      below its borrows: those of a buffer {!create}, {!of_string} or
+      {!of_bigarray} made, and of a borrow of one, and not those of a {!view} of
+      part of it. *)
 
   val overlaps : t -> t -> bool
   (** [overlaps b b'] is [true] iff [b] and [b'] share a byte of memory: through
@@ -451,6 +457,24 @@ module Buffer : sig
       size (of one component's for complex kinds), or [b]'s memory is held
       exclusive by claims that have not consumed it ({!Claim.consume}), and
       {!Lost} if [b]'s stamps name a lost device. *)
+
+  val blit_from_string : string -> int -> t -> int -> int -> unit
+  (** [blit_from_string s i b j n] copies the [n] bytes of [s] from [i] into the
+      host buffer [b] from its byte [j], and returns once they are there. It
+      waits as a {!wait} with [Read_write] does. It takes no claim: claims are
+      the caller's, as for {!copy}.
+
+      Raises [Invalid_argument] if the ranges are not valid, [b] is dead or not
+      on {!host}, or its memory is [Read] ({!val-access}), and {!Lost} if a
+      point it waits for is on a lost device. *)
+
+  val blit_to_bytes : t -> int -> bytes -> int -> int -> unit
+  (** [blit_to_bytes b i s j n] copies the [n] bytes of the host buffer [b] from
+      its byte [i] into [s] from [j]. It waits as a {!wait} with [Read] does.
+
+      Raises [Invalid_argument] if the ranges are not valid, or [b] is dead or
+      not on {!host}, and {!Lost} if a point it waits for is on a lost device.
+  *)
 
   (** {1:low Low level}
 

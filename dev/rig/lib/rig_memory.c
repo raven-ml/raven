@@ -120,10 +120,22 @@ value caml_rig_load64(value v_addr) {
       (_Atomic uint64_t *)Long_val(v_addr), memory_order_acquire));
 }
 
-/* Copies the string [v_s] to the host address [v_dst]. */
-value caml_rig_blit_string(value v_s, value v_dst) {
-  size_t n = caml_string_length(v_s);
-  if (n > 0) memcpy((void *)Long_val(v_dst), String_val(v_s), n);
+/* Copies the [v_n] bytes of the string [v_s] from [v_i] to the host
+   address [v_dst]. With the runtime held: the string is in the OCaml
+   heap. */
+value caml_rig_blit_string(value v_s, value v_i, value v_dst, value v_n) {
+  size_t n = (size_t)Long_val(v_n);
+  if (n > 0)
+    memcpy((void *)Long_val(v_dst), String_val(v_s) + Long_val(v_i), n);
+  return Val_unit;
+}
+
+/* Copies [v_n] bytes from the host address [v_src] into the bytes [v_b]
+   from [v_j]. With the runtime held: the bytes are in the OCaml heap. */
+value caml_rig_blit_bytes(value v_src, value v_b, value v_j, value v_n) {
+  size_t n = (size_t)Long_val(v_n);
+  if (n > 0)
+    memcpy(Bytes_val(v_b) + Long_val(v_j), (void *)Long_val(v_src), n);
   return Val_unit;
 }
 

@@ -40,6 +40,14 @@ val overlaps : t -> t -> bool
 val bigarray :
   ('a, 'b) Bigarray.kind -> t -> ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t
 
+val of_string : string -> t
+val blit_from_string : string -> int -> t -> int -> int -> unit
+val blit_to_bytes : t -> int -> bytes -> int -> int -> unit
+
+val blit_string : string -> int -> int -> int -> unit
+(** [blit_string s i a n] copies the [n] bytes of [s] from [i] to the host
+    address [a]. Unchecked. *)
+
 val address : t -> int
 val handle : t -> nativeint
 val offset : t -> int

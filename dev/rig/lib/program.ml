@@ -8,8 +8,6 @@ open Def
 let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
-external blit_string : string -> int -> unit = "caml_rig_blit_string"
-
 type t = program
 
 (* Places [code] at the start of [d]'s code memory [e]: by a copy on [d]'s copy
@@ -26,14 +24,14 @@ let place d (e : entry) code =
         Buffer.of_memory (Memory.make ~host ~address ~handle d e.bytes e) n
       in
       let src = Buffer.create ~memory:Buffer.Pinned d n in
-      blit_string code src.mem.host;
+      Buffer.blit_string code 0 src.mem.host n;
       Copy.queued d queue ~src ~dst
   | None ->
       if host < 0 then
         invalid_argf "Rig.Program.load: %s's code memory has no host address"
           d.name;
       Dev.wait d (Dev.submitted d);
-      blit_string code host
+      Buffer.blit_string code 0 host n
 
 (* The image of [binary] on [d], and the memory its code lies in where [d]'s
    memory holds it. *)

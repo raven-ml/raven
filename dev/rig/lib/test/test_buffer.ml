@@ -159,6 +159,8 @@ let test_dead_refused () =
       ("handle", fun () -> ignore (B.handle m));
       ("view", fun () -> ignore (B.view h ~first:0 ~length:8));
       ("bigarray", fun () -> ignore (B.bigarray Bigarray.char h));
+      ("blit_from_string", fun () -> B.blit_from_string "s" 0 h 0 1);
+      ("blit_to_bytes", fun () -> B.blit_to_bytes h 0 (Bytes.create 1) 0 1);
       ("borrow", fun () -> ignore (B.borrow d h));
       ( "consume",
         fun () ->
@@ -620,6 +622,132 @@ let test_bigarray_refusals () =
   raises_match Exn.invalid_arg (fun () ->
       B.bigarray Bigarray.char (B.create d 8))
 
+(* Strings *)
+
+(* A blit: the bytes of the buffer under it, those of a view [first] bytes into
+   it, its source or destination, and its ranges, valid or not. *)
+type blit = {
+  size : int;
+  first : int;
+  length : int;
+  outside : string;
+  at : int;
+  inside : int;
+  n : int;
+}
+
+let pp_blit ppf c =
+  Format.fprintf ppf
+    "a view [%d,+%d] of %d bytes, %S, %d bytes from %d to byte %d of the view"
+    c.first c.length c.size c.outside c.n c.at c.inside
+
+(* A valid range, often moved by a byte or two past either end. *)
+let blit =
+  let open Gen in
+  let nudge =
+    bind bool (fun out ->
+        if out then int_range (-2) 2 else constant ~pp:Format.pp_print_int 0)
+  in
+  let ranges outside length =
+    bind
+      (int_range 0 (Int.min (String.length outside) length))
+      (fun n ->
+        map
+          (fun ((at, inside), (dat, din, dn)) ->
+            (at + dat, inside + din, n + dn))
+          (pair
+             (pair
+                (int_range 0 (String.length outside - n))
+                (int_range 0 (length - n)))
+             (triple nudge nudge nudge)))
+  in
+  with_pp pp_blit
+    (bind (int_range 0 40) (fun size ->
+         bind (int_range 0 size) (fun first ->
+             bind
+               (int_range 0 (size - first))
+               (fun length ->
+                 bind
+                   (string_of ~size:(int_range 0 24) char)
+                   (fun outside ->
+                     map
+                       (fun (at, inside, n) ->
+                         { size; first; length; outside; at; inside; n })
+                       (ranges outside length))))))
+
+let valid c =
+  c.at >= 0 && c.n >= 0
+  && c.at + c.n <= String.length c.outside
+  && c.inside >= 0
+  && c.inside + c.n <= c.length
+
+let cover_blit c =
+  cover "a blit of bytes" (valid c && c.n > 0);
+  cover "a blit of no bytes" (valid c && c.n = 0);
+  cover "a range outside" (not (valid c));
+  cover "a view into its buffer" (c.first > 0 && valid c && c.n > 0)
+
+(* [blit_from_string] writes the view's bytes the string gives and no other, and
+   raises, changing nothing, on a range outside either. *)
+let law_from_string c =
+  cover_blit c;
+  let model = Bytes.init c.size (fun i -> Char.chr (97 + (i mod 26))) in
+  let b = B.of_string (Bytes.to_string model) in
+  let v = B.view b ~first:c.first ~length:c.length in
+  (match B.blit_from_string c.outside c.at v c.inside c.n with
+  | () ->
+      equal ~msg:"valid" bool true (valid c);
+      Bytes.blit_string c.outside c.at model (c.first + c.inside) c.n
+  | exception Invalid_argument _ -> equal ~msg:"valid" bool false (valid c));
+  let back = Bytes.create c.size in
+  B.blit_to_bytes b 0 back 0 c.size;
+  equal string (Bytes.to_string model) (Bytes.to_string back)
+
+(* [blit_to_bytes] reads the view's bytes into the bytes' range and writes no
+   other, and raises, changing nothing, on a range outside either. *)
+let law_to_bytes c =
+  cover_blit c;
+  let whole = String.init c.size (fun i -> Char.chr (97 + (i mod 26))) in
+  let v = B.view (B.of_string whole) ~first:c.first ~length:c.length in
+  let model = Bytes.of_string c.outside and got = Bytes.of_string c.outside in
+  let valid =
+    c.inside >= 0 && c.n >= 0
+    && c.inside + c.n <= c.length
+    && c.at >= 0
+    && c.at + c.n <= Bytes.length got
+  in
+  (match B.blit_to_bytes v c.inside got c.at c.n with
+  | () ->
+      equal ~msg:"valid" bool true valid;
+      Bytes.blit_string whole (c.first + c.inside) model c.at c.n
+  | exception Invalid_argument _ -> equal ~msg:"valid" bool false valid);
+  equal string (Bytes.to_string model) (Bytes.to_string got)
+
+let test_blit_refusals () =
+  let d, _ = P.open_ "buffer:blit-not-host" in
+  let m = B.create d 8 in
+  raises_match ~msg:"into a device's memory" Exn.invalid_arg (fun () ->
+      B.blit_from_string "s" 0 m 0 1);
+  raises_match ~msg:"from a device's memory" Exn.invalid_arg (fun () ->
+      B.blit_to_bytes m 0 (Bytes.create 1) 0 1)
+
+(* A blit from a string waits for every use of the buffer, its own device's
+   included; a blit to bytes for its last write only. *)
+let test_blit_waits () =
+  let d, p = P.open_ "buffer:blit-waits" in
+  let h = B.of_string (String.make (1 lsl 16) 'a') in
+  let on_d = require_some (B.borrow d h) in
+  ignore (submit (Sub.make ~reads:1 ~writes:0 d [||]) ~reads:[| on_d |]);
+  let got = Bytes.create 4 in
+  B.blit_to_bytes h 0 got 0 4;
+  equal ~msg:"a read left queued" int 1 (P.queued p);
+  equal ~msg:"bytes" string "aaaa" (Bytes.to_string got);
+  B.blit_from_string "bbbb" 0 h 0 4;
+  equal ~msg:"the read ran first" int 0 (P.queued p);
+  ignore (submit (Sub.make ~reads:0 ~writes:1 d [||]) ~writes:[| on_d |]);
+  B.blit_to_bytes h 0 got 0 4;
+  equal ~msg:"the write ran first" int 0 (P.queued p)
+
 (* A bigarray of a buffer keeps its memory once the buffer is collected. *)
 let test_bigarray_keeps () =
   let n = 1 lsl 17 in
@@ -766,6 +894,16 @@ let tests =
     cases ~timeout
       ~name:(fun (Kind (n, _, _)) -> n)
       "a bigarray's buffer is its bytes" kinds test_kind;
+    group ~timeout "strings"
+      [
+        prop "a blit from a string writes its range of the buffer and no other"
+          blit law_from_string;
+        prop "a blit to bytes reads its range of the buffer into its range" blit
+          law_to_bytes;
+        test "a blit refuses a device's memory the host does not reach"
+          test_blit_refusals;
+        test "a blit waits as a host access of its kind does" test_blit_waits;
+      ];
     group ~timeout "bigarrays"
       [
         test "a bigarray refuses kinds, sizes and alignments it cannot read"

@@ -199,6 +199,52 @@ let bigarray (type a b) (k : (a, b) Bigarray.kind) b :
       let p = Memory.proxy root.entry in
       bigarray_view (proxy_bytes p b.mem.host b.mem.bytes) code b.offset n
 
+(* Strings *)
+
+external blit_string : string -> int -> int -> int -> unit
+  = "caml_rig_blit_string"
+[@@noalloc]
+
+external blit_bytes : int -> bytes -> int -> int -> unit = "caml_rig_blit_bytes"
+[@@noalloc]
+
+let check_range fn what size at n =
+  if at < 0 || n < 0 || at > size - n then
+    invalid_argf "Rig.%s: %d bytes from byte %d lie outside the %s's %d" fn n at
+      what size
+
+(* The host address of [b]'s first byte. *)
+let host_address fn b =
+  check_live fn b;
+  if not (Dev.is_host b.mem.dev) then
+    invalid_argf "Rig.%s: the buffer is on %s, not a host" fn b.mem.dev.name;
+  b.mem.host + b.offset
+
+let of_string s =
+  let n = String.length s in
+  let b = create Dev.host n in
+  blit_string s 0 b.mem.host n;
+  b
+
+let blit_from_string s i b j n =
+  let fn = "Buffer.blit_from_string" in
+  check_range fn "string" (String.length s) i n;
+  check_range fn "buffer" b.length j n;
+  let at = host_address fn b in
+  if access b = Read then
+    invalid_arg
+      "Rig.Buffer.blit_from_string: the buffer's memory admits only reads";
+  wait b Read_write;
+  blit_string s i (at + j) n
+
+let blit_to_bytes b i s j n =
+  let fn = "Buffer.blit_to_bytes" in
+  check_range fn "buffer" b.length i n;
+  check_range fn "bytes" (Bytes.length s) j n;
+  let at = host_address fn b in
+  wait b Read;
+  blit_bytes (at + i) s j n
+
 (* Low level *)
 
 let address b =

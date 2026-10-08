@@ -89,10 +89,15 @@ wait/memory/reached	wall_time	batch=1048576	n=20	4.814e-09	4.811e-09 4.811e-09 4
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed under load 7.8 on 10 cores
 # forced: blessed claim/c-read-release-3 under load 13.2 on 10 cores
+# forced: blessed buffer/blit-from-string-4K buffer/blit-to-bytes-64M under load 6.2 on 10 cores
 
 buffer/bigarray-64M	alloc_words	exact	18
 buffer/bigarray-64M	major_collections	exact	0
 buffer/bigarray-64M	wall_time	batch=65536	n=20	9.724e-08	9.418e-08 9.453e-08 9.468e-08 9.486e-08 9.657e-08 9.672e-08 9.687e-08 9.715e-08 9.718e-08 9.719e-08 9.729e-08 9.902e-08 9.966e-08 9.969e-08 1.002e-07 1.003e-07 1.005e-07 1.007e-07 1.013e-07 1.027e-07
+buffer/blit-from-string-4K	alloc_words	exact	0
+buffer/blit-from-string-4K	wall_time	batch=131072	n=20	6.708e-08	6.554e-08 6.561e-08 6.570e-08 6.572e-08 6.584e-08 6.586e-08 6.631e-08 6.651e-08 6.670e-08 6.696e-08 6.720e-08 6.753e-08 6.813e-08 6.956e-08 7.119e-08 7.802e-08 7.815e-08 8.179e-08 8.527e-08 8.942e-08
+buffer/blit-to-bytes-64M	alloc_words	exact	0
+buffer/blit-to-bytes-64M	wall_time	batch=1	n=20	1.599e-03	1.503e-03 1.527e-03 1.536e-03 1.536e-03 1.540e-03 1.547e-03 1.551e-03 1.572e-03 1.576e-03 1.577e-03 1.620e-03 1.635e-03 1.639e-03 1.659e-03 1.662e-03 1.670e-03 1.693e-03 1.707e-03 1.733e-03 1.803e-03
 buffer/host-create-16	alloc_words	exact	36
 buffer/host-create-16	wall_time	batch=65536	n=20	8.316e-08	8.146e-08 8.149e-08 8.165e-08 8.196e-08 8.210e-08 8.234e-08 8.263e-08 8.271e-08 8.284e-08 8.300e-08 8.331e-08 8.429e-08 8.530e-08 8.562e-08 8.568e-08 8.606e-08 8.624e-08 8.692e-08 8.733e-08 8.813e-08
 buffer/host-create-1M	alloc_words	exact	36

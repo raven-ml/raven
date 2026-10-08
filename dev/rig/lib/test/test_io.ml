@@ -401,6 +401,19 @@ let test_read_claims () =
   equal ~msg:"for reading" answer R.Claimed (R.claim m Read);
   R.release m
 
+(* A blit from a string refuses memory that admits only reads; a blit to bytes
+   reads it. *)
+let test_read_blits () =
+  let io, t = open_pages () in
+  let r = Option.get (Pages.alloc t page_bytes) in
+  Bigarray.Array1.fill r.bytes 'r';
+  let m = B.of_io io Pages.region_key r ~access:Read page_bytes in
+  let on_host = require_some (B.borrow C.host m) in
+  raises_match Exn.invalid_arg (fun () -> B.blit_from_string "w" 0 on_host 0 1);
+  let got = Bytes.create 2 in
+  B.blit_to_bytes on_host 0 got 0 2;
+  equal string "rr" (Bytes.to_string got)
+
 (* Memory admits the accesses it was made with, through its views and borrows,
    and a copy into memory that admits only reads raises, even of no bytes: it
    neither reads its source nor writes the region. *)
@@ -476,6 +489,8 @@ let tests =
           test_read_memory;
         test "a host claim for writing refuses memory that admits only reads"
           test_read_claims;
+        test "a blit from a string refuses memory that admits only reads"
+          test_read_blits;
       ];
   ]
 
