@@ -659,6 +659,52 @@ R9700: `Gpus.detach`, run as root, was refused every size from 32 GiB down to
 where amdgpu had left 256 MiB. The kernel moves the device's other BARs as it
 resizes: the doorbell BAR went from `0xa0000000` to `0xb0000000`.
 
+### A GPU without an IOMMU outlives its process
+
+A GPU that masters the bus without an IOMMU writes physical pages, and keeps
+writing after its process dies: SIGKILL, the OOM killer and a crash run no
+exit function, so nothing turns bus mastering off, and Linux gives the
+process's pages to others at once. The PCI library keeps a physical take's
+memory in huge pages of a file under `/dev/hugepages`, which keep their pages
+allocated until each GPU that reached them is reset (`Gpus.reset`, which attach
+runs), and refuses the process's own memory to such a GPU (`Function.pin`). A
+kernel booted by kexec skips the platform's reset and inherits a GPU still
+writing.
+
+Allocated is not in place: the kernel moves pages, freeing the old frame, and
+a GPU without an IOMMU keeps writing the old frame. Read in Linux 6.12:
+
+- Only an extra reference stops a move: migration freezes the page's count at
+  what its mappings explain and gives up otherwise (`__folio_migrate_mapping`,
+  `migrate_huge_page_move_mapping` in `mm/migrate.c`). Any
+  `get_user_pages`/`pin_user_pages` reference does; `FOLL_LONGTERM` moves the
+  page out of `ZONE_MOVABLE` and CMA first (`mm/gup.c`). VFIO pins so behind an
+  IOMMU; its no-IOMMU mode has no DMA mapping call and pins nothing
+  (`vfio_noiommu_ioctl`, `drivers/vfio/container.c`). No pin a process holds
+  outlives it: io_uring's registered buffers go with the ring's file.
+- tmpfs pages are movable (`GFP_HIGHUSER_MOVABLE`, `inode_init_always`).
+  While the process lives, `mlock` keeps them off the evictable list, which
+  compaction skips only with `vm.compact_unevictable_allowed = 0`
+  (`isolate_migratepages_block`, `mm/compaction.c`); `alloc_contig_range`
+  (CMA, virtio-mem), memory offlining and soft offlining move them whatever
+  the setting. At the process's death the unmapping munlocks them
+  (`__folio_remove_rmap`, `__munlock_folio`), and ordinary compaction,
+  kcompactd and proactive compaction included, moves them.
+- hugetlbfs pages are skipped by compaction (`PageHuge` without
+  `cc->alloc_contig`) and never swapped, but `alloc_contig_range` migrates
+  them (`isolate_or_dissolve_huge_page`, `mm/hugetlb.c`), as do memory
+  offlining and soft offlining; the pool is allocated movable
+  (`htlb_alloc_mask`). 2 MiB pages migrate on x86_64 and arm64
+  (`ARCH_ENABLE_HUGEPAGE_MIGRATION`).
+
+So without an IOMMU nothing keeps a page in place once its process died: a
+physical take's memory stays exposed to migration. Small pages would be moved
+by routine compaction, which is why the library gives such a GPU huge pages
+only, sharing each among the allocations of its 2 MiB block of addresses. That
+narrows the exposure to CMA allocations, virtio-mem, and memory going offline
+or a failing page taken out of service, which an administrator or a driver
+starts. An IOMMU is the only complete answer.
+
 ### Unbinding amdgpu leaves KFD refusing every process
 
 On Linux 6.12, after amdgpu is unbound from a GPU and bound again, amdgpu
