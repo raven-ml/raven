@@ -12,25 +12,11 @@
     dispatch reads: where the kernel's code starts, the memory it takes, and the
     registers it sets up for its waves.
 
-    The image is {!size} bytes: the image of {!elf} ({!Rig_elf}), zeros up to
-    {!size}, then each of {!patches} written over them, in order. It starts at
-    the object's lowest section the image holds ([(elf co).address]), so the
-    headers and tables a linker puts before its code are not loaded. A loader
-    writes it into its destination. Into [bytes], for instance:
-    {[
-    let image co =
-      let o = Code_object.elf co in
-      let b = Bytes.make (Code_object.size co) '\000' in
-      let put (s : Rig_elf.section) =
-        match s.offset with
-        | Some off -> Bytes.blit_string o.file s.at b off s.length
-        | None -> ()
-      in
-      Iarray.iter put o.sections;
-      let patch (off, p) = Bytes.blit_string p 0 b off (String.length p) in
-      List.iter patch (Code_object.patches co);
-      b
-    ]}
+    The image ({!image}) is {!size} bytes: the image of {!elf} ({!Rig_elf}),
+    zeros up to {!size}, then each of {!patches} written over them, in order. It
+    starts at the object's lowest section the image holds ([(elf co).address]),
+    so the headers and tables a linker puts before its code are not loaded. A
+    loader writes it into its destination.
 
     Offsets are offsets in the image, in bytes. *)
 
@@ -80,6 +66,10 @@ val patches : t -> (int * string) list
     little-endian bytes of an [R_AMDGPU_REL64] word, [S + A - P]: its target's
     offset plus the relocation's addend, less the word's own offset. A patch
     holds wherever the image is loaded. *)
+
+val image : t -> string
+(** [image co] is [co]'s image: {!size} bytes, laid out as the module's preamble
+    says. *)
 
 val kernels : t -> string list
 (** [kernels co] is the names of [co]'s kernels, in increasing order: each

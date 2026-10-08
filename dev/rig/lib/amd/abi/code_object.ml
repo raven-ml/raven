@@ -235,6 +235,19 @@ let target co = co.target
 let size co = co.size
 let elf co = co.elf
 let patches co = co.patches
+
+let image co =
+  let b = Bytes.make co.size '\000' in
+  let put (s : Rig_elf.section) =
+    match s.offset with
+    | Some off -> Bytes.blit_string co.elf.file s.at b off s.length
+    | None -> ()
+  in
+  Iarray.iter put co.elf.sections;
+  let patch (off, p) = Bytes.blit_string p 0 b off (String.length p) in
+  List.iter patch co.patches;
+  Bytes.unsafe_to_string b
+
 let kernels co = List.map fst co.kernels
 let kernel co name = List.assoc_opt name co.kernels
 

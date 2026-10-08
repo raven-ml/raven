@@ -24,20 +24,6 @@ let linked () = fixture "kernels_gfx1030.hsaco"
 let pp_error ppf e = Format.pp_print_string ppf e
 let read obj = require_ok ~pp:pp_error (Code_object.of_string obj)
 
-(* The image of [co], as the module's preamble writes it. *)
-let image co =
-  let o = Code_object.elf co in
-  let b = Bytes.make (Code_object.size co) '\000' in
-  let put (s : Rig_elf.section) =
-    match s.offset with
-    | Some off -> Bytes.blit_string o.file s.at b off s.length
-    | None -> ()
-  in
-  Iarray.iter put o.sections;
-  let patch (off, p) = Bytes.blit_string p 0 b off (String.length p) in
-  List.iter patch (Code_object.patches co);
-  Bytes.to_string b
-
 (* Changing an object *)
 
 let patch obj at set =
@@ -153,6 +139,36 @@ let reading =
               at_least int ~than:0 off;
               at_most int ~than:(Code_object.size co) (off + String.length p))
             (Code_object.patches co));
+      cases ~name:fst
+        "each image byte is its last patch's, else its section's, else 0" both
+        (fun (_, obj) ->
+          let co = read (obj ()) in
+          let o = Code_object.elf co in
+          let last_some f l =
+            List.fold_left
+              (fun r x -> Option.fold ~none:r ~some:Option.some (f x))
+              None l
+          in
+          let byte i =
+            let patched (off, p) =
+              if off <= i && i < off + String.length p then Some p.[i - off]
+              else None
+            in
+            let loaded (s : Rig_elf.section) =
+              match s.offset with
+              | Some off when off <= i && i < off + s.length ->
+                  Some o.file.[s.at + i - off]
+              | _ -> None
+            in
+            match last_some patched (Code_object.patches co) with
+            | Some c -> c
+            | None ->
+                Option.value ~default:'\000'
+                  (last_some loaded (Iarray.to_list o.sections))
+          in
+          equal string
+            (String.init (Code_object.size co) byte)
+            (Code_object.image co));
       test "a REL64 patch is its target's offset from the word, plus the addend"
         (fun () ->
           let co = read (relocatable ()) in
@@ -186,7 +202,7 @@ let reading =
       cases ~name:fst "a kernel is its descriptor in the image" both
         (fun (_, obj) ->
           let co = read (obj ()) in
-          let img = image co in
+          let img = Code_object.image co in
           List.iter
             (fun name ->
               let k = require_some (Code_object.kernel co name) in
@@ -424,5 +440,4 @@ let refusals =
           else equal int (1 lsl 48) (Code_object.size (read obj)));
     ]
 
-let () =
-  exit (run "rig_amd_abi.code_object" [ reading; processors; refusals ])
+let () = exit (run "rig_amd_abi.code_object" [ reading; processors; refusals ])

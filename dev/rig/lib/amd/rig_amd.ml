@@ -614,20 +614,6 @@ type image = {
   loaded : bool Atomic.t; (* taken once, by the unload *)
 }
 
-(* The image's bytes, as the code object lays them out. *)
-let image_bytes co =
-  let o = Code_object.elf co in
-  let b = Bytes.make (Code_object.size co) '\000' in
-  let put (s : Rig_elf.section) =
-    match s.offset with
-    | Some off -> Bytes.blit_string o.file s.at b off s.length
-    | None -> ()
-  in
-  Iarray.iter put o.sections;
-  let patch (off, p) = Bytes.blit_string p 0 b off (String.length p) in
-  List.iter patch (Code_object.patches co);
-  Bytes.unsafe_to_string b
-
 let too_large g co =
   let large name =
     match Code_object.kernel co name with
@@ -652,7 +638,7 @@ let image g bin =
         let lay r =
           let base = mem_address r.mem in
           ( { holder = g.self; co; base; loaded = Atomic.make true },
-            image_bytes co )
+            Code_object.image co )
         in
         Ok (`Place (Code_object.size co, lay))
 
