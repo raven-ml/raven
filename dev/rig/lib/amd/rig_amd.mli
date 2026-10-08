@@ -100,6 +100,10 @@ val waits_on : t -> [ `Store | `Object | `Host ] -> bool
     from a version this library knows for the GPU's GC (the [mec] of its
     {!path}); it is [false] otherwise, and for [`Object]. *)
 
+val max_waits : t -> int
+(** [max_waits g] is 255: the room a submission's ring space reserves holds
+    that many waits. *)
+
 val blocks : t -> [ `Returns | `May_block ]
 (** [blocks g] is [`Returns]: {!submit} writes memory and calls no system
     function. *)

@@ -511,6 +511,9 @@ let budget g = g.budget
 let queues _ = [ "COMPUTE:0"; "COPY:0" ]
 let completion _ = `Store
 let waits_on g = function `Store | `Host -> g.waits64 | `Object -> false
+
+(* RIG_AMD_WAITS, the waits a submission's reserved room holds *)
+let max_waits _ = 255
 let blocks _ = `Returns
 
 type capability = Abi.Capability.t
