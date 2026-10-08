@@ -3,13 +3,14 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* The floors of the remote bench, and the caller's half of a rail's run.
+/* The floors of the remote bench, and the two machines' halves of a rail's
+   run.
 
-   A floor moves the bytes a row moves over a loopback socket set up as a
-   link sets up its own, with plain blocking sends and receives and nothing
-   else: no frames, no queue, no threads but the one that receives. A rail's
-   run stores [ready] and waits for [arrived], as work on either machine
-   does. Every call that waits releases the runtime. A failure crosses as a
+   A floor moves the bytes a row moves over a socket set up as a link sets
+   up its own, with plain blocking sends and receives and nothing else: no
+   frames, no queue, no threads but the one that receives. A rail's run
+   stores [ready] and waits for [arrived], or the other way round, as work
+   on either machine does. Every call that waits releases the runtime. A failure crosses as a
    negated code: errno, or WSAGetLastError on Windows. */
 
 #define _GNU_SOURCE
@@ -113,38 +114,34 @@ value rig_remote_bench_tune(value fd) {
   return Val_unit;
 }
 
-/* Round trips: a request's bytes out and its answer's back, at most 64 each
-   way. */
+/* Round trips: a request's bytes out and its answer's back, through the
+   bytes of [buf], at least as many as either. */
 
-#define MAX_MESSAGE 64
-
-/* [ask fd out back] sends [out] bytes on [fd] and receives [back]: 0, [1] if
-   the stream ended, or a negated code. Releases the runtime. */
-value rig_remote_bench_ask(value fd, value vout, value vback) {
+/* [ask fd buf out back] sends [out] bytes on [fd] and receives [back]: 0, [1]
+   if the stream ended, or a negated code. Releases the runtime. */
+value rig_remote_bench_ask(value fd, value buf, value vout, value vback) {
   sock s = sock_val(fd);
+  char *p = Caml_ba_data_val(buf);
   size_t out = (size_t)Long_val(vout), back = (size_t)Long_val(vback);
-  char buf[MAX_MESSAGE] = {0};
-  if (out > MAX_MESSAGE || back > MAX_MESSAGE) return Val_long(-1);
   caml_release_runtime_system();
-  intnat r = send_all(s, buf, out);
-  if (r == 0) r = recv_all(s, buf, back);
+  intnat r = send_all(s, p, out);
+  if (r == 0) r = recv_all(s, p, back);
   caml_acquire_runtime_system();
   return Val_long(r);
 }
 
-/* [echo fd in out] answers each [in] bytes received on [fd] with [out]
+/* [echo fd buf in out] answers each [in] bytes received on [fd] with [out]
    bytes, until the stream ends: [1] then, or a negated code. Releases the
    runtime. */
-value rig_remote_bench_echo(value fd, value vin, value vout) {
+value rig_remote_bench_echo(value fd, value buf, value vin, value vout) {
   sock s = sock_val(fd);
+  char *p = Caml_ba_data_val(buf);
   size_t in = (size_t)Long_val(vin), out = (size_t)Long_val(vout);
-  char buf[MAX_MESSAGE] = {0};
-  if (in > MAX_MESSAGE || out > MAX_MESSAGE) return Val_long(-1);
   caml_release_runtime_system();
   intnat r = 0;
   while (r == 0) {
-    r = recv_all(s, buf, in);
-    if (r == 0) r = send_all(s, buf, out);
+    r = recv_all(s, p, in);
+    if (r == 0) r = send_all(s, p, out);
   }
   caml_acquire_runtime_system();
   return Val_long(r);
@@ -247,4 +244,22 @@ value rig_remote_bench_rail_run(value vsender, value vreceiver, value vc) {
   await(arrived, c);
   caml_acquire_runtime_system();
   return Val_long(atomic_load(arrived) == (uint64_t)INT64_MAX ? 1 : 0);
+}
+
+/* [rail_answer receiver sender c] waits until the receiving end's [arrived]
+   reaches [c], then stores [ready := c] in the sending end's counts with
+   release order: the other machine's half of a run whose answer is a
+   transfer back. 0, or [1] if the job failed. Releases the runtime. */
+value rig_remote_bench_rail_answer(value vreceiver, value vsender, value vc) {
+  unsigned char *r = Caml_ba_data_val(vreceiver);
+  unsigned char *s = Caml_ba_data_val(vsender);
+  uint64_t c = (uint64_t)Long_val(vc);
+  _Atomic uint64_t *ready = (_Atomic uint64_t *)(s + READY);
+  _Atomic uint64_t *arrived = (_Atomic uint64_t *)(r + ARRIVED);
+  caml_release_runtime_system();
+  await(arrived, c);
+  int failed = atomic_load(arrived) == (uint64_t)INT64_MAX;
+  if (!failed) atomic_store_explicit(ready, c, memory_order_release);
+  caml_acquire_runtime_system();
+  return Val_long(failed);
 }

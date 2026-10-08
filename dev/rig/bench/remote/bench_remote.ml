@@ -12,8 +12,12 @@ module Wire = Rig_remote_proxy.Wire
 module Link = Rig_remote_proxy.Link
 
 external tune : Unix.file_descr -> unit = "rig_remote_bench_tune"
-external ask : Unix.file_descr -> int -> int -> int = "rig_remote_bench_ask"
-external echo : Unix.file_descr -> int -> int -> int = "rig_remote_bench_echo"
+
+external ask : Unix.file_descr -> Rig_remote_abi.area -> int -> int -> int
+  = "rig_remote_bench_ask"
+
+external echo : Unix.file_descr -> Rig_remote_abi.area -> int -> int -> int
+  = "rig_remote_bench_echo"
 
 external stream_open : Unix.file_descr -> Unix.file_descr -> int -> nativeint
   = "rig_remote_bench_stream_open"
@@ -81,6 +85,9 @@ let alloc = Wire.Alloc { id = 1; device = 0; memory = `Device; bytes = 4096 }
 let request_bytes = 9 + 1 + 8 + 8 + 1 + 8
 let answer_bytes = 9 + 1 + 1
 
+(* Room for either frame. *)
+let message () = Bigarray.(Array1.create char c_layout request_bytes)
+
 let reply : type r. r Wire.request -> (r, string) result = function
   | Wire.Alloc _ -> Ok true
   | _ -> Error "the bench asks only for allocations"
@@ -120,11 +127,14 @@ let request_rows =
             failwith "request: refused");
       Thumper.bench_with_setup "floor"
         ~setup:(fun () ->
-          forked (fun a -> ignore (echo a request_bytes answer_bytes)))
-        ~teardown:(fun (fd, pid) ->
+          ( message (),
+            forked (fun a ->
+                ignore (echo a (message ()) request_bytes answer_bytes)) ))
+        ~teardown:(fun (_, (fd, pid)) ->
           Unix.close fd;
           reap pid)
-        (fun (fd, _) -> check "ask" (ask fd request_bytes answer_bytes));
+        (fun (buf, (fd, _)) ->
+          check "ask" (ask fd buf request_bytes answer_bytes));
     ]
 
 (* Rails: one transfer of [n] bytes each run, from the controller's end of a

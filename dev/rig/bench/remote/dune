@@ -22,3 +22,13 @@
   (glob_files *.thumper))
  (action
   (run %{exe:bench_remote.exe})))
+
+(executable
+ (name lan)
+ (modules lan)
+ (libraries
+  rig_remote_abi
+  rig_remote_proxy
+  rig_remote_bench
+  unix
+  threads.posix))
