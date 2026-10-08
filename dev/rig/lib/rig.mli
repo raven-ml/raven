@@ -72,11 +72,15 @@
     that became due ({!Hold}). {!Buffer.create}, {!Buffer.of_io} and
     {!Buffer.copy} drain the devices they use first. An allocation of more than
     the device's {!budget} raises {!Out_of_memory} at once and keeps the cache.
-    Another that the budget or the driver refuses waits for the device's
-    submitted work, releases its cache, and for memory the host's budget counts
-    every device's cached memory it counts, drains every other device, collects
-    unreachable buffers from its second try on, and tries again, four tries in
-    all, before it raises {!Out_of_memory}.
+    Another that the budget or the driver refuses runs rounds of reclamation for
+    the budget that refused, the device's or, for memory the host's budget
+    counts, the host's, and tries again after each, four tries in all, before it
+    raises {!Out_of_memory}. A round returns every cached memory, on any device,
+    that counts in that budget, once its device's submitted work is done, and
+    for the host its kept buffers; drains every device, the host included; and
+    from the second round collects unreachable buffers and drains every device
+    again. A copy whose device's driver refuses to map the staging memory runs
+    the same rounds for that device.
 
     The host keeps the memory of collected buffers of 64 KiB or more in a cache
     for the next buffers of their sizes. It returns what the cache holds beyond
@@ -391,7 +395,9 @@ module Buffer : sig
       and [src]'s device runs no copy or does not reach [dst]'s ({!reaches});
       {!Lost} if a device involved is lost or is lost by the copy, or a point it
       waits for is on a lost device; {!Out_of_memory} if a host cannot allocate
-      its staging memory; and what an {!Io} device's read or write raises. *)
+      its staging memory, or a device's driver refuses to map it after the
+      rounds of {{!reclaim}reclamation}; and what an {!Io} device's read or
+      write raises. *)
 
   val device : t -> device
   (** [device b] is the device [b] is on: [d] for a buffer that {!create},

@@ -212,6 +212,19 @@ let test_pinned_reclaims () =
   with_host_budget (Support.host_held ()) (fun () ->
       equal int n (B.length (B.create ~memory:Pinned a n)))
 
+(* A host buffer a device borrowed, dropped, returns its bytes when a pinned
+   allocation the host's budget refuses reclaims: the reclaim drains the host,
+   whose list holds the buffer, and the allocation is made. *)
+let test_borrowed_reclaimed () =
+  let d, _ = P.open_ "memory:borrowed-reclaim" in
+  let n = 64 * kib in
+  let[@inline never] borrowed () =
+    ignore (Sys.opaque_identity (B.borrow d (B.create Rig.host n)))
+  in
+  borrowed ();
+  with_host_budget (Support.host_held ()) (fun () ->
+      equal int n (B.length (B.create ~memory:Pinned d n)))
+
 (* On a device whose memory the host addresses, pinned memory is the device's
    own: it counts in the device's budget. *)
 let test_pinned_own () =
@@ -584,6 +597,10 @@ let tests =
         test "mapped memory is the device's" test_mapped;
         test "pinned memory another device keeps returns to a refused one"
           test_pinned_reclaims;
+        test
+          "a dropped host buffer a device borrowed returns to a pinned \
+           allocation"
+          test_borrowed_reclaimed;
       ];
     group ~timeout "reclamation"
       [

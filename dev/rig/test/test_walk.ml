@@ -439,13 +439,9 @@ let staged = [ copy `Into; copy `Out_of ]
 (* On a device that never mapped the staging memory, every mapping refused. *)
 let exhausted op =
   let op = { op with opener = P.open_ ~host_visible:false } in
-  xfail
-    ~reason:
-      "Buffer.copy raises Invalid_argument where the device's driver refuses \
-       to map the staging memory, a failure of the world"
-    (test
-       (op.name ^ ", every mapping refused")
-       (walk ~kinds:[ (fun n -> Exhaust n) ] op))
+  test
+    (op.name ^ ", every mapping refused")
+    (walk ~kinds:[ (fun n -> Exhaust n) ] op)
 
 let () =
   exit

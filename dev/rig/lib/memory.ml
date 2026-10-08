@@ -641,11 +641,6 @@ let () =
       add_lost d;
       drain d
 
-(* Drains every other device, skipping one whose lock another call holds, and
-   reads the word of each lost device that answered [Unknown]. *)
-let drain_others d =
-  Dev.iter (fun e -> if e != d && not (Dev.busy e) then drain e)
-
 (* The cache *)
 
 let take_cached d kind n =
@@ -704,34 +699,60 @@ let take_cache ?upto d =
    is deferred until it is. A lost device's cache waits for it to count as
    stopped. *)
 let release_taken ~wait d take =
-  if (not (Dev.is_lost d)) || Dev.stopped d then begin
-    let taken = take d in
-    let v = Dev.submitted d in
-    if wait && not (Dev.is_lost d) then Dev.wait d v;
-    if Dev.is_lost d || Dev.word d >= v then List.iter free_entry taken
-    else List.iter (fun e -> defer d (Free e)) taken
-  end
+  if (not (Dev.is_lost d)) || Dev.stopped d then
+    match take d with
+    | [] -> ()
+    | taken ->
+        let v = Dev.submitted d in
+        if wait && not (Dev.is_lost d) then Dev.wait d v;
+        if Dev.is_lost d || Dev.word d >= v then List.iter free_entry taken
+        else List.iter (fun e -> defer d (Free e)) taken
 
 let release_cache ?upto ~wait d = release_taken ~wait d (take_cache ?upto)
 
-(* Frees every device's cached memory that counts in the host's budget, the
-   pinned memory of devices whose memory the host does not address, once the
-   work each device was handed is done. *)
-let release_host_charged () =
-  Dev.iter (fun d ->
-      if not (Dev.busy d) then
-        release_taken ~wait:false d (fun d ->
-            take_cache_if d (fun e -> budget_of d e.memory = Host_budget)))
-
-(* Allocation *)
+(* The out-of-memory ladder *)
 
 let rounds = 4
 
-let reclaim d round =
-  release_cache ~wait:true d;
-  drain_others d;
-  if round >= 2 then Gc.full_major ();
-  drain d
+(* Whether [d]'s memory [e] counts in the budget of [pool], the host or a
+   device. *)
+let charged pool d (e : entry) =
+  match budget_of d e.memory with
+  | Device_budget -> d == pool
+  | Host_budget -> Dev.is_host pool
+  | No_budget -> false
+
+(* Drains every device, the host included, skipping one whose lock another call
+   holds. *)
+let drain_all () =
+  drain Dev.host;
+  Dev.iter (fun d -> if not (Dev.busy d) then drain d)
+
+(* A round of the ladder for [pool]'s budget: every cached memory on any device
+   that counts in it returns once its device's handed work is done, waited for;
+   for the host, its kept buffers too. Then every device drains, which returns
+   collected memory and runs the unmaps that hold it; from the second round a
+   collection finds the memory unreachable since, and every device drains
+   again. *)
+let reclaim_round pool round =
+  if Dev.is_host pool then heap_drop ();
+  Dev.iter (fun d ->
+      if not (Dev.busy d) then
+        release_taken ~wait:true d (fun d -> take_cache_if d (charged pool d)));
+  drain_all ();
+  if round >= 2 then begin
+    Gc.full_major ();
+    drain_all ()
+  end
+
+let rec reclaim_from d pool n f round =
+  if round >= rounds then raise (Dev.Out_of_memory (d, n));
+  reclaim_round pool round;
+  match f () with Some x -> x | None -> reclaim_from d pool n f (round + 1)
+
+let reclaiming d ~pool n f = reclaim_from d pool n f 1
+
+(* Allocation *)
 
 let room d = Int.max 0 (d.budget - d.used)
 
@@ -761,23 +782,26 @@ let new_counted d kind n =
         give_room d budget n;
         raise x
 
-let rec alloc_entry d kind n round =
+(* One try at [n] bytes of [d]'s memory of [kind]: from its cache, else from its
+   driver within the budget. *)
+let try_entry d kind n () =
   match take_cached d kind n with
-  | Some e -> e
+  | Some _ as e -> e
   | None -> (
       match new_counted d kind n with
-      | Some e ->
+      | Some _ as e ->
           note d;
           e
-      (* Mapped memory the window or the budget cannot hold is pinned memory,
-         which keeps its promises, and the cache stays. *)
-      | None when kind = Mapped -> alloc_entry d Pinned n round
-      | None when round < rounds ->
-          (* The host's budget counts other devices' cached pinned memory. *)
-          if budget_of d kind = Host_budget then release_host_charged ();
-          reclaim d round;
-          alloc_entry d kind n (round + 1)
-      | None -> raise (Dev.Out_of_memory (d, n)))
+      | None -> None)
+
+(* [n] bytes of [d]'s memory of [kind], through the ladder of the budget it
+   counts in once refused. *)
+let laddered d kind n =
+  match try_entry d kind n () with
+  | Some e -> e
+  | None ->
+      let pool = if budget_of d kind = Host_budget then Dev.host else d in
+      reclaiming d ~pool n (try_entry d kind n)
 
 let alloc_entry d kind n =
   let kind = if kind = Mapped && n > d.budget then Pinned else kind in
@@ -789,42 +813,38 @@ let alloc_entry d kind n =
   in
   if n > limit then raise (Dev.Out_of_memory (d, n));
   drain d;
-  alloc_entry d kind n 1
+  if kind <> Mapped then laddered d kind n
+  else
+    (* Mapped memory the window or the budget cannot hold is pinned memory,
+       which keeps its promises, and the cache stays. *)
+    match try_entry d Mapped n () with
+    | Some e -> e
+    | None -> laddered d Pinned n
 
 let alloc d kind n = of_entry d (alloc_entry d kind n)
+let reserve n () = if heap_reserve n Dev.host.budget then Some () else None
 
-(* A round of the host's reclaim: its kept buffers, the devices' cached memory
-   its budget counts, every other device's drain, from the second round a
-   collection, then the host's own drain, which frees the host memory devices
-   borrowed that the collection found unreachable and whose uses are reached:
-   the next round's collection returns its bytes. *)
-let reclaim_host round =
-  heap_drop ();
-  release_host_charged ();
-  drain_others Dev.host;
-  if round >= 2 then Gc.full_major ();
-  drain Dev.host
+let heap_reserved n =
+  match reserve n () with
+  | Some () -> ()
+  | None -> reclaiming Dev.host ~pool:Dev.host n (reserve n)
 
-let rec heap_reserved n round =
-  if heap_reserve n Dev.host.budget then ()
-  else if round < rounds then begin
-    reclaim_host round;
-    heap_reserved n (round + 1)
-  end
-  else raise (Dev.Out_of_memory (Dev.host, n))
+(* [n] reserved bytes of the heap. A refusal of the C library runs the ladder,
+   and after its rounds gives the reservation back. *)
+let bytes n () =
+  match heap_bytes n with
+  | ba -> Some ba
+  | exception Stdlib.Out_of_memory -> None
 
-(* [n] reserved bytes of the heap. A refusal of the C library runs the host's
-   reclaim, and after its rounds gives the reservation back and raises the
-   host's [Out_of_memory]. *)
-let rec host_bytes n round =
+let host_bytes n =
   match heap_bytes n with
   | ba -> ba
-  | exception Stdlib.Out_of_memory when round < rounds ->
-      reclaim_host round;
-      host_bytes n (round + 1)
-  | exception Stdlib.Out_of_memory ->
-      heap_release n;
-      raise (Dev.Out_of_memory (Dev.host, n))
+  | exception Stdlib.Out_of_memory -> (
+      match reclaiming Dev.host ~pool:Dev.host n (bytes n) with
+      | ba -> ba
+      | exception (Dev.Out_of_memory _ as x) ->
+          heap_release n;
+          raise x)
 
 (* What every host buffer of no bytes keeps: nothing to free. *)
 let empty = Bigarray.Array1.create Bigarray.char Bigarray.c_layout 0
@@ -837,8 +857,8 @@ let host_memory n =
     own ~keep:empty_keep ~host:addr ~address:addr ~handle:0n ~token:no_token
       Dev.host 0 no_entry
   else begin
-    heap_reserved n 1;
-    let ba = host_bytes n 1 in
+    heap_reserved n;
+    let ba = host_bytes n in
     let addr = ba_address ba in
     own ~keep:(Heap ba) ~host:addr ~address:addr ~handle:0n ~token:no_token
       Dev.host n no_entry

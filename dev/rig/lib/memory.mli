@@ -178,13 +178,18 @@ val drain : device -> unit
     device a forked child inherited, whose frees would call its parent's driver.
 *)
 
-val rounds : int
-(** [rounds] is the tries of an allocation the budget or driver refuses. *)
-
-val reclaim : device -> int -> unit
-(** [reclaim d round] releases [d]'s cache once its submitted work is done,
-    drains every other device whose lock is free, from round [2] on runs a full
-    major collection, then drains [d]. *)
+val reclaiming : device -> pool:device -> int -> (unit -> 'a option) -> 'a
+(** [reclaiming d ~pool n f] is the out-of-memory ladder for [n] bytes of [d]
+    once [f], a try at them, answered [None]: [pool] is whose budget refused,
+    the host for memory the host's budget counts, [d] otherwise. It runs a
+    round, then [f], whose first [Some] answer is the result, up to three
+    rounds. A round: every cached memory that counts in [pool]'s budget, on any
+    device, returns once its device's handed work is done, and for the host its
+    kept buffers too; every device drains, the host included; from the second
+    round a full major collection runs and every device drains again. Raises
+    {!Dev.Out_of_memory}[ (d, n)] when [f] answers [None] after the last round.
+    A caller tries first and enters the ladder on a refusal, so a try that
+    succeeds builds no closure. *)
 
 val room : device -> int
 (** [room d] is the bytes left in [d]'s budget, [0] if it holds more. *)

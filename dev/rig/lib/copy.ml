@@ -68,6 +68,17 @@ let half i h =
       slots.(i).(h) <- Some b;
       b
 
+(* Maps the staging half [h] on [d], which runs legs through it. A map [d]'s
+   driver refuses is memory [d] cannot give: the out-of-memory ladder reclaims
+   for it, then raises [Out_of_memory]. *)
+let map_half d h =
+  match Memory.borrow d h.mem with
+  | Some _ -> ()
+  | None ->
+      ignore
+        (Memory.reclaiming d ~pool:d half_bytes (fun () ->
+             Memory.borrow d h.mem))
+
 (* Whether [m] is a staging slot's memory: a copy through it that no device runs
    goes no further. *)
 let is_slot m =
@@ -223,7 +234,18 @@ and staged src dst n =
       leg ~src:(half k)
         ~dst:(Buffer.view dst ~first:(k * half_bytes) ~length:(len k))
     in
-    let ahead = not (local src.mem || Dev.is_io src.mem.dev) in
+    (* A device of this machine that runs legs maps the halves they use first;
+       another machine's reaches no staging memory. *)
+    let runs b = not (local b.mem || Dev.is_io b.mem.dev) in
+    let maps b =
+      if runs b && Option.is_none b.mem.dev.machine then begin
+        map_half b.mem.dev h0;
+        if pieces > 1 then map_half b.mem.dev h1
+      end
+    in
+    maps src;
+    maps dst;
+    let ahead = runs src in
     if ahead then into 0;
     for k = 0 to pieces - 1 do
       if ahead then (if k + 1 < pieces then into (k + 1)) else into k;
