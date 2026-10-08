@@ -83,10 +83,56 @@ let test_child () =
   C.wait d v;
   ignore (Sys.opaque_identity !b)
 
+(* An io device whose memory is host bytes, whose state its library holds. *)
+module Store = struct
+  type t = unit
+
+  type region =
+    (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+
+  exception Fault of string
+
+  let region_key : region Type.Id.t = Type.Id.make ()
+  let budget () = max_int
+
+  let alloc () n =
+    Some (Bigarray.Array1.create Bigarray.char Bigarray.c_layout n)
+
+  let free () _ = ()
+  let read () _ ~at:_ ~dst:_ ~len:_ = ()
+  let write () _ ~at:_ ~src:_ ~len:_ = ()
+  let pages () r = Some r
+  let prefetch () _ ~at:_ ~len:_ = ()
+  let stop () = ()
+end
+
+(* An io device's state is its library's, which decides what a fork does to it:
+   the core leaves it usable in the child, where a driver's device is lost. *)
+let test_io_child () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  let io =
+    require_ok ~pp:Format.pp_print_string
+      (C.open_io (module Store) ~name:"fork:io" (fun () -> Ok ()))
+  in
+  let d, _ = P.open_ "fork:beside-io" in
+  let lines, ended =
+    in_child (fun () ->
+        [
+          Option.value ~default:"not lost" (C.lost io);
+          Printf.sprintf "bytes made: %d" (B.length (B.create io 8));
+          Option.value ~default:"not lost" (C.lost d);
+        ])
+  in
+  equal string "exited 0" (status ended);
+  equal (list string) [ "not lost"; "bytes made: 8"; "forked" ] lines
+
 let tests =
   [
     group ~timeout "fork"
-      [ test "a forked child's devices are lost for good" test_child ];
+      [
+        test "a forked child's devices are lost for good" test_child;
+        test "a forked child's io devices stay its library's" test_io_child;
+      ];
   ]
 
 let () = exit (run "device_core.fork" tests)

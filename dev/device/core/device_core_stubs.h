@@ -55,6 +55,7 @@ struct dc_device {
   dc_cond cv;
   int index;
   char *name;
+  int io; /* an io device, whose state its library holds */
   int may_block;
   void *self;
   nx_room_fn *room;

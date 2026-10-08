@@ -158,10 +158,12 @@ static int is_lost(struct dc_device *d) {
 
 #define Device_val(v) ((struct dc_device *)Long_val(v))
 
-/* After fork, the child sees every device lost, its stop answered
-   Unknown for good: freeing would call a driver, and a word may be a page
-   the child shares with its parent. The mutexes are made anew, since a
-   thread of the parent may have held one. */
+/* After fork, the child sees every driver's device lost, its stop
+   answered Unknown for good: freeing would call a driver, and a word may be
+   a page the child shares with its parent. An io device's state is its io
+   library's, which decides what a fork does to it: the core leaves it
+   open. The mutexes are made anew and the calls in flight forgotten, since
+   a thread of the parent may have held them. */
 #ifndef _WIN32
 static void forked_child(void) {
   static char why[] = "forked";
@@ -171,10 +173,11 @@ static void forked_child(void) {
     struct dc_device *d = dc_device_of(i);
     if (d == NULL) continue;
     mu_init(d);
+    d->turn = d->inside = d->owed = d->spreading = 0;
+    if (d->io) continue;
     char *none = NULL;
     atomic_compare_exchange_strong(&d->lost, &none, why);
     atomic_store(&d->answer, DC_UNKNOWN);
-    d->turn = d->inside = d->owed = d->spreading = 0;
   }
 }
 
@@ -182,12 +185,8 @@ static pthread_once_t atfork_once = PTHREAD_ONCE_INIT;
 static void atfork(void) { pthread_atfork(NULL, NULL, forked_child); }
 #endif
 
-/* A device of index [v_index] whose driver blocks ([v_may_block]), with its
-   C entries and its word's host address (0 behind a transport). */
-value caml_device_core_device_new(value v_index, value v_name,
-                                  value v_may_block, value v_self,
-                                  value v_room, value v_submit,
-                                  value v_word) {
+/* A device record of index [v_index] named [v_name]. */
+static struct dc_device *record(value v_index, value v_name) {
   int index = Int_val(v_index);
   if (index <= 0 || index >= DC_DEVICES)
     caml_invalid_argument("device index out of range");
@@ -201,19 +200,41 @@ value caml_device_core_device_new(value v_index, value v_name,
   mu_init(d);
   d->index = index;
   d->name = name;
+  return d;
+}
+
+static value publish(struct dc_device *d) {
+#ifndef _WIN32
+  pthread_once(&atfork_once, atfork);
+#endif
+  atomic_store_explicit(&devices[d->index], d, memory_order_release);
+  int t = atomic_load(&top);
+  while (t < d->index && !atomic_compare_exchange_weak(&top, &t, d->index)) {
+  }
+  return Val_long((intnat)d);
+}
+
+/* A driver's device of index [v_index] whose driver blocks ([v_may_block]),
+   with its C entries and its word's host address (0 behind a transport). */
+value caml_device_core_device_new(value v_index, value v_name,
+                                  value v_may_block, value v_self,
+                                  value v_room, value v_submit,
+                                  value v_word) {
+  struct dc_device *d = record(v_index, v_name);
   d->may_block = Bool_val(v_may_block);
   d->self = (void *)Nativeint_val(v_self);
   d->room = (nx_room_fn *)Nativeint_val(v_room);
   d->submit = (nx_submit_fn *)Nativeint_val(v_submit);
   d->word = (_Atomic uint64_t *)Nativeint_val(v_word);
-#ifndef _WIN32
-  pthread_once(&atfork_once, atfork);
-#endif
-  atomic_store_explicit(&devices[index], d, memory_order_release);
-  int t = atomic_load(&top);
-  while (t < index && !atomic_compare_exchange_weak(&top, &t, index)) {
-  }
-  return Val_long((intnat)d);
+  return publish(d);
+}
+
+/* An io device of index [v_index]: no queue and no word; its state is its
+   io library's. */
+value caml_device_core_io_new(value v_index, value v_name) {
+  struct dc_device *d = record(v_index, v_name);
+  d->io = 1;
+  return publish(d);
 }
 
 value caml_device_core_device_new_byte(value *argv, int argn) {

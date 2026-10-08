@@ -23,6 +23,7 @@ external c_new :
   nativeint ->
   int = "caml_device_core_device_new_byte" "caml_device_core_device_new"
 
+external c_io_new : int -> string -> int = "caml_device_core_io_new"
 external c_word : int -> int = "caml_device_core_word" [@@noalloc]
 
 external c_set_seen : int -> int -> unit = "caml_device_core_set_seen"
@@ -431,7 +432,7 @@ let open_io (type a) (module I : Sigs.Io with type t = a) ?machine
   match make () with
   | Error e -> Error e
   | Ok h ->
-      let c = c_new index full false 0n 0n 0n 0n in
+      let c = c_io_new index full in
       let d =
         make_device ~index ~name:full ~machine
           ~kind:(Io { m = (module I); h })
