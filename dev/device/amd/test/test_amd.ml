@@ -1796,6 +1796,212 @@ module Wrap = struct
     S.with_gpu @@ fun g -> run g (plan (A.capability g).gpu goals)
 end
 
+(* Work in order on one queue, and its writes for every reader
+
+   Parts on one queue run in array order: a compute part after another sees
+   its writes, whatever the sizes and whether a copy part sits between them.
+   And whatever wrote memory last, a copy, a kernel or the host, the next
+   reader of it, the host, a copy or a kernel, reads that write, round after
+   round over the same memory. *)
+
+(* The device's image of fixtures/work.cl, loaded once. *)
+let work_images = Hashtbl.create 1
+
+let work_image r =
+  match Hashtbl.find_opt work_images (A.self r.g) with
+  | Some m -> m
+  | None ->
+      let m, upload = image ~of_:work_code r in
+      go r [| upload |];
+      Hashtbl.add work_images (A.self r.g) m;
+      m
+
+(* The words of a dispatch of [name] of the work fixture over [groups]
+   workgroups, its arguments [args] written into [block] of [r]'s argument
+   blocks. *)
+let blocks = Hashtbl.create 1
+
+let dispatch_work r name ~block args ~groups =
+  let region =
+    match Hashtbl.find_opt blocks (A.self r.g) with
+    | Some a -> a
+    | None ->
+        let a = Option.get (A.alloc r.g `Pinned 4096) in
+        Hashtbl.add blocks (A.self r.g) a;
+        a
+  in
+  let a = host region + (64 * block) in
+  S.write a args;
+  dispatch ~of_:work_code r (work_image r) name ~args:a ~groups
+
+module Chain = struct
+  (* A submission of [incs] compute parts, each adding 1 to the words its
+     predecessor wrote: by words or by a fill, with a copy part between two
+     of them where [via] says, after a submission released on COMPUTE:0 or
+     on COPY:0. *)
+  type t = { words : int; incs : (bool * bool) list; after_copy : bool }
+
+  let pp ppf c =
+    Format.fprintf ppf "{%d words; %s; after a %s release}" c.words
+      (String.concat ", "
+         (List.map
+            (fun (fill, via) ->
+              (if fill then "fill" else "words") ^ if via then " then copy" else "")
+            c.incs))
+      (if c.after_copy then "COPY:0" else "COMPUTE:0")
+
+  let most = 1 lsl 20
+  let buffers = 8
+
+  let gen =
+    let open Gen in
+    let+ words = of_list [ 64; 1000; 65536; most ]
+    and+ incs = list ~size:(int_range 2 4) (pair bool bool)
+    and+ after_copy = bool in
+    { words; incs; after_copy }
+
+  type sys = { input : A.region; garbage : A.region; out : A.region; bufs : A.region array }
+
+  let memory = Hashtbl.create 1
+
+  let sys r =
+    match Hashtbl.find_opt memory (A.self r.g) with
+    | Some s -> s
+    | None ->
+        let g = r.g in
+        let pinned () = Option.get (A.alloc g `Pinned (4 * most)) in
+        let input = pinned () and garbage = pinned () and out = pinned () in
+        S.write (host input) (le32s (List.init most (fun i -> (i * 2654435761) land 0xffff_ffff)));
+        S.write (host garbage) (String.make (4 * most) '\xee');
+        let bufs = Array.init buffers (fun _ -> Option.get (A.alloc g `Device (4 * most))) in
+        let s = { input; garbage; out; bufs } in
+        Hashtbl.add memory (A.self g) s;
+        s
+
+  let copy g (d, o) (s, o') n = A.part g ~queue:"COPY:0" (`Copy ((d, o), (s, o'), n))
+
+  let law c =
+    let r = run_of (shared ()) in
+    let g = r.g in
+    let s = sys r in
+    let n = c.words and bytes = 4 * c.words in
+    let k = List.length c.incs in
+    let between = List.filteri (fun i _ -> i < k - 1) c.incs in
+    cover "parts back to back" (List.exists (fun (_, via) -> not via) between);
+    cover "a copy part between two compute parts" (List.exists snd between);
+    cover "a submission whose compute queue released the value before"
+      (not c.after_copy);
+    cover "a submission whose copy queue released the value before" c.after_copy;
+    cover "every compute unit busy" (n >= 65536);
+    (* Garbage in every buffer, then the input in the first. *)
+    go r (Array.map (fun b -> copy g (b, 0) (s.garbage, 0) bytes) (Array.append s.bufs [| s.out |]));
+    go r [| copy g (s.bufs.(0), 0) (s.input, 0) bytes |];
+    if c.after_copy then go r [| copy g (s.out, 0) (s.garbage, 0) 4 |]
+    else go r [| A.part g ~queue:"COMPUTE:0" (`Words [| Wrap.pm4_nop |]) |];
+    let parts = ref [] in
+    let add p =
+      parts := p :: !parts;
+      List.length !parts - 1
+    in
+    let src = ref s.bufs.(0) and next = ref 1 and copied = ref None in
+    List.iteri
+      (fun i (fill, via) ->
+        let out = s.bufs.(!next) in
+        incr next;
+        let ws =
+          dispatch_work r "inc" ~block:i
+            (le64 (address out) ^ le64 (address !src) ^ le32s [ n ])
+            ~groups:((n + 63) / 64)
+        in
+        let w =
+          if fill then
+            let f, arg = S.fill (A.capability g) ws ~bytes:0 in
+            `Fill (f, arg, Array.length ws, 0)
+          else `Words ws
+        in
+        let after = Option.fold ~none:[||] ~some:(fun j -> [| j |]) !copied in
+        let me = add (A.part g ~queue:"COMPUTE:0" ~after w) in
+        copied := None;
+        src := out;
+        if via && i < k - 1 then begin
+          let mid = s.bufs.(!next) in
+          incr next;
+          copied := Some (add (A.part g ~queue:"COPY:0" ~after:[| me |] (`Copy ((mid, 0), (out, 0), bytes))));
+          src := mid
+        end)
+      c.incs;
+    let last = List.length !parts - 1 in
+    ignore (add (A.part g ~queue:"COPY:0" ~after:[| last |] (`Copy ((s.out, 0), (!src, 0), bytes))));
+    go r (Array.of_list (List.rev !parts));
+    let input = S.read (host s.input) bytes in
+    let expected = Bytes.create bytes in
+    for i = 0 to n - 1 do
+      Bytes.set_int32_le expected (4 * i)
+        (Int32.add (String.get_int32_le input (4 * i)) (Int32.of_int k))
+    done;
+    equal string ~msg:"the last part's words" (Bytes.to_string expected)
+      (S.read (host s.out) bytes)
+end
+
+(* Each reader reads the last write, round after round over the same memory:
+   the host a kernel's writes to Pinned and Mapped memory, a copy a kernel's
+   writes to Device memory, and a kernel a copy's, in one submission and in
+   the next. *)
+let readers () =
+  let r = run_of (shared ()) in
+  let g = r.g in
+  let n = 4096 in
+  let bytes = 4 * n in
+  let alloc kind = Option.get (A.alloc g kind bytes) in
+  let src = alloc `Pinned and pinned = alloc `Pinned and mapped = alloc `Mapped in
+  let vram = alloc `Device and back = alloc `Pinned in
+  let kernel ?after ~block dst src =
+    let ws =
+      dispatch_work r "copy" ~block
+        (le64 (address dst) ^ le64 (address src) ^ le32s [ n; 0 ])
+        ~groups:1
+    in
+    A.part g ~queue:"COMPUTE:0" ?after (`Words ws)
+  in
+  let copy ?after d s = A.part g ~queue:"COPY:0" ?after (`Copy ((d, 0), (s, 0), bytes)) in
+  let read m = S.read (host m) bytes in
+  let fresh round k =
+    let p = pattern bytes ((8 * round) + k) in
+    S.write (host src) p;
+    p
+  in
+  for round = 1 to 8 do
+    let msg what = strf "round %d: %s" round what in
+    let p = fresh round 0 in
+    go r [| kernel ~block:0 pinned src; kernel ~block:1 mapped src |];
+    equal string ~msg:(msg "the host reads a kernel's Pinned writes") p (read pinned);
+    equal string ~msg:(msg "the host reads a kernel's Mapped writes") p (read mapped);
+    let p = fresh round 1 in
+    go r [| kernel ~block:0 vram src; copy ~after:[| 0 |] back vram |];
+    equal string ~msg:(msg "a copy reads a kernel's writes, after it") p (read back);
+    let p = fresh round 2 in
+    go r [| kernel ~block:0 vram src |];
+    go r [| copy back vram |];
+    equal string ~msg:(msg "a copy reads a kernel's writes, a value later") p (read back);
+    let p = fresh round 3 in
+    go r [| copy vram src; kernel ~after:[| 0 |] ~block:0 back vram |];
+    equal string ~msg:(msg "a kernel reads a copy's writes, after it") p (read back);
+    let p = fresh round 4 in
+    go r [| copy vram src |];
+    go r [| kernel ~block:0 back vram |];
+    equal string ~msg:(msg "a kernel reads a copy's writes, a value later") p (read back)
+  done;
+  List.iter (A.free g) [ src; pinned; mapped; vram; back ]
+
+let queue_order =
+  group ~timeout:120. "in order"
+    [
+      prop ~count:24
+        "compute parts run in array order, each reading its predecessor's writes"
+        (Gen.with_pp Chain.pp Chain.gen) Chain.law;
+      test "every reader reads the last write, round after round" readers;
+    ]
+
 (* Values complete in order *)
 
 module Order = struct
@@ -2143,5 +2349,6 @@ let () =
          traces;
          rings;
          memory;
+         queue_order;
          timeline;
        ])

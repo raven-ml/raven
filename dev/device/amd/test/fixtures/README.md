@@ -17,5 +17,6 @@ Made in this directory from `other.cl` with the same tools:
 Made in this directory from `work.cl` with the same tools:
 
 - `work_gfx1201.hsaco`, the kernels `copy`, which copies words after a
-  delay, and `shared`, which takes 256 bytes of local data share:
+  delay, `shared`, which takes 256 bytes of local data share, and `inc`,
+  which adds 1 to each word:
   `clang -c -x cl -cl-std=CL2.0 -target amdgcn-amd-amdhsa -mcpu=gfx1201 -mcode-object-version=5 -nogpulib -O2 work.cl -o work.o && ld.lld -shared work.o -o work_gfx1201.hsaco && rm work.o`
