@@ -31,6 +31,13 @@ let per_die (g : Gpu.t) n =
 
 let size (g : Gpu.t) n = per_die g n * g.xccs
 
+(* The bits of COMPUTE_TMPRING_SIZE's WAVESIZE field, found with String.equal:
+   polymorphic equality cost every dispatch about 12 ns. *)
+let rec wavesize = function
+  | (name, bits) :: fields ->
+      if String.equal name "wavesize" then bits else wavesize fields
+  | [] -> invalid_arg "Scratch.tmpring: COMPUTE_TMPRING_SIZE has no WAVESIZE"
+
 let tmpring (g : Gpu.t) n =
   let r =
     match Register.find g "regCOMPUTE_TMPRING_SIZE" with
@@ -39,7 +46,7 @@ let tmpring (g : Gpu.t) n =
         invalid_argf "Scratch.tmpring: %s has no COMPUTE_TMPRING_SIZE"
           (gc_name g)
   in
-  let lo, hi = List.assoc "wavesize" r.fields in
+  let lo, hi = wavesize r.fields in
   let most = ((1 lsl (hi - lo + 1)) - 1) * granule g / lanes in
   if n > most then
     invalid_argf "Scratch.tmpring: %d bytes per lane, expected at most %d on %s"
