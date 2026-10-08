@@ -135,6 +135,18 @@ let test_copy_order () =
     (String.make page_bytes 'w')
     (bytes back)
 
+(* A host access of io memory waits for the work of a device that borrowed its
+   pages. *)
+let test_wait () =
+  let io, _ = open_pages () in
+  let d, p = P.open_ "io:waiter" in
+  let m = B.create io page_bytes in
+  let staged = B.create d page_bytes in
+  queued_copy d ~src:staged ~dst:(require_some (B.borrow d m));
+  equal ~msg:"queued" int 1 (P.queued p);
+  B.wait m B.Read;
+  equal ~msg:"after the wait" int 0 (P.queued p)
+
 (* Io memory returns to its library once unreachable and its uses reached. *)
 let test_free () =
   let io, t = open_pages () in
@@ -167,6 +179,7 @@ let tests =
           test_prefetch;
         test "copies of io memory follow devices' work through its pages"
           test_copy_order;
+        test "a host access of io memory waits for a borrower's work" test_wait;
         test "io memory returns once unreachable and its uses reached" test_free;
       ];
   ]
