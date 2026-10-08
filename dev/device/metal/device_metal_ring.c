@@ -16,11 +16,44 @@
 
 enum { taken, done, failed };
 
+static const uint64_t ns_per_s = 1000000000;
+
+static uint64_t monotonic_ns(void) {
+  struct timespec t;
+  clock_gettime(CLOCK_MONOTONIC, &t);
+  return (uint64_t)t.tv_sec * ns_per_s + (uint64_t)t.tv_nsec;
+}
+
+/* Waits on [r]'s condition until [until], monotonic nanoseconds, so a step
+   of the wall clock neither lengthens nor cuts the wait. macOS has no clock
+   attribute for conditions and waits for the time left; elsewhere the
+   condition waits on CLOCK_MONOTONIC. */
+static int wait_until(struct device_metal_ring *r, uint64_t until) {
+  uint64_t now = monotonic_ns();
+  if (now >= until) return ETIMEDOUT;
+#ifdef __APPLE__
+  uint64_t left = until - now;
+  struct timespec t = {(time_t)(left / ns_per_s), (long)(left % ns_per_s)};
+  return pthread_cond_timedwait_relative_np(&r->changed, &r->mutex, &t);
+#else
+  struct timespec t = {(time_t)(until / ns_per_s), (long)(until % ns_per_s)};
+  return pthread_cond_timedwait(&r->changed, &r->mutex, &t);
+#endif
+}
+
 void device_metal_ring_init(struct device_metal_ring *r,
                             struct device_metal_slot *slots, int n,
                             uint64_t *word) {
   pthread_mutex_init(&r->mutex, NULL);
+#ifdef __APPLE__
   pthread_cond_init(&r->changed, NULL);
+#else
+  pthread_condattr_t monotonic;
+  pthread_condattr_init(&monotonic);
+  pthread_condattr_setclock(&monotonic, CLOCK_MONOTONIC);
+  pthread_cond_init(&r->changed, &monotonic);
+  pthread_condattr_destroy(&monotonic);
+#endif
   r->slots = slots;
   r->nslots = (uint64_t)n;
   r->head = r->tail = 0;
@@ -94,18 +127,10 @@ const char *device_metal_ring_failure(struct device_metal_ring *r) {
 
 const char *device_metal_ring_sleep(struct device_metal_ring *r, uint64_t seen,
                                     int ms) {
-  struct timespec until;
-  clock_gettime(CLOCK_REALTIME, &until);
-  until.tv_sec += ms / 1000;
-  until.tv_nsec += (long)(ms % 1000) * 1000000;
-  if (until.tv_nsec >= 1000000000) {
-    until.tv_sec++;
-    until.tv_nsec -= 1000000000;
-  }
+  uint64_t until = monotonic_ns() + (uint64_t)ms * 1000000;
   pthread_mutex_lock(&r->mutex);
   while (*r->word == seen && r->failure[0] == '\0')
-    if (pthread_cond_timedwait(&r->changed, &r->mutex, &until) == ETIMEDOUT)
-      break;
+    if (wait_until(r, until) == ETIMEDOUT) break;
   const char *failure = r->failure[0] ? r->failure : NULL;
   pthread_mutex_unlock(&r->mutex);
   return failure;
