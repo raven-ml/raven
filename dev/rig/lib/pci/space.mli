@@ -6,9 +6,10 @@
 (** Virtual address spaces of GPUs.
 
     The GPUs of one vendor share a range of virtual addresses, so that an
-    address means the same memory on each of them and, for system memory, in the
-    process. A space hands out parts of that range; {!Page_table} maps them. A
-    space is synchronized: any domain may call it. *)
+    address means the same memory on each GPU that maps it and, for system
+    memory a GPU allocates, in the process. A space hands out parts of that
+    range; {!Page_table} maps them. A space is synchronized: any domain may call
+    it. *)
 
 type t
 (** The type for virtual address spaces. *)

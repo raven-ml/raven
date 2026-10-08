@@ -287,7 +287,7 @@ let pp_source ppf s =
   Format.pp_print_string ppf
     (match s with
     | Memory.Allocated -> "Allocated"
-    | Borrowed -> "Borrowed"
+    | Borrowed a -> Printf.sprintf "Borrowed 0x%x" a
     | Peer -> "Peer")
 
 let pp_region ppf (mem : Memory.region) =
@@ -666,39 +666,53 @@ let test_free_refused () =
 
 (* Borrowing *)
 
-let test_map_host () =
+(* Memory of the machine anywhere, inside the GPU's addresses or above them, as
+   a process's heap and stacks are. *)
+let host_addresses =
+  [
+    ("inside the GPU's addresses", tables_base + (4 * mib));
+    ("above the GPU's addresses", 0x7f00_0000_0000);
+    ("below the GPU's space", 4 * mib);
+  ]
+
+let test_map_host (_, a) =
   let x = gpu () in
-  let a = tables_base + (4 * mib) and n = 3 * page in
+  let n = 3 * page in
+  let before = capacity x in
   let mem =
     match Memory.map_host x.memory a n with
     | Ok mem -> mem
     | Error why -> fail why
   in
   let m = mem.mapping in
-  equal ~msg:"borrowed" source Borrowed mem.source;
-  equal ~msg:"at its address" hex a m.va;
+  equal ~msg:"borrowed at its address" source (Borrowed a) mem.source;
+  satisfies ~msg:"at addresses of the GPU's space"
+    ~claim:
+      (strf "in [0x%x, 0x%x), on a page" space_base (space_base + space_length))
+    hex
+    (fun va ->
+      va mod page = 0 && va >= space_base && va + n <= space_base + space_length)
+    m.va;
   equal ~msg:"its bytes" hex n m.size;
   equal ~msg:"system memory" target System m.target;
   equal ~msg:"uncached" bool true m.uncached;
   equal ~msg:"snooped" bool true m.snooped;
   equal ~msg:"pinned" ranges [ (a, n) ] x.fake.pins;
   equal ~msg:"the tables map its pages" ranges (merge m.pages)
-    (mapped x.g x.tables ~va:a n);
+    (mapped x.g x.tables ~va:m.va n);
   Memory.unmap x.memory mem;
-  equal ~msg:"unmapped" ranges [] (mapped x.g x.tables ~va:a n);
+  equal ~msg:"unmapped" ranges [] (mapped x.g x.tables ~va:m.va n);
   equal ~msg:"unpinned" ranges [] x.fake.pins;
+  equal ~msg:"its addresses returned" (pair int int) before (capacity x);
   Function.release x.fn
 
 let test_map_host_refused =
-  let span_end = tables_base + (1 lsl 48) in
   cases "map_host refuses"
     ~name:(fun (name, _, _) -> name)
     [
       ("an address off a page", tables_base + 1, page);
       ("an address on 4 KiB off the machine's page", tables_base + 4096, page);
-      ("an address below the GPU's", tables_base - page, page);
-      ("an address past the GPU's", span_end, page);
-      ("bytes across the end of the GPU's addresses", span_end - page, 2 * page);
+      ("more bytes than the GPU's space holds", tables_base, 2 * space_length);
     ]
     (fun (_, a, n) ->
       let x = gpu () in
@@ -717,22 +731,33 @@ let test_map_host_unpinnable () =
 let test_map_host_no_tables () =
   let x = gpu ~tables:Main ~memory:(16 * mib) () in
   fill_main x;
+  let before = capacity x in
   is_error ~msg:"refused"
-    (Memory.map_host x.memory (tables_base + (1 lsl 45)) page);
+    (Memory.map_host x.memory (tables_base + (1 lsl 45)) (4 * mib));
   equal ~msg:"no pin held" ranges [] x.fake.pins;
+  equal ~msg:"its addresses returned" (pair int int) before (capacity x);
   Function.release x.fn
 
+(* Memory mapped already, by an allocation or a borrow, maps again at other
+   addresses, pinned once per map. *)
 let test_map_host_mapped () =
   let x = gpu () in
   let host = alloc x Host page in
-  raises_match (Exn.invalid_arg ~substring:"") (fun () ->
-      Memory.map_host x.memory host.mapping.va page);
+  let again = Result.get_ok (Memory.map_host x.memory host.mapping.va page) in
   let a = tables_base + (4 * mib) in
-  let borrowed = Result.get_ok (Memory.map_host x.memory a (2 * page)) in
-  raises_match (Exn.invalid_arg ~substring:"") (fun () ->
-      Memory.map_host x.memory (a + page) (2 * page));
-  equal ~msg:"only the first pin held" ranges [ (a, 2 * page) ] x.fake.pins;
-  Memory.unmap x.memory borrowed;
+  let first = Result.get_ok (Memory.map_host x.memory a (2 * page)) in
+  let second = Result.get_ok (Memory.map_host x.memory (a + page) (2 * page)) in
+  let vas = List.map (fun (m : Memory.region) -> m.mapping.va) in
+  equal ~msg:"four addresses" int 4
+    (List.length
+       (List.sort_uniq compare
+          (host.mapping.va :: vas [ again; first; second ])));
+  equal ~msg:"pinned once per map" ranges
+    (List.sort compare
+       [ (host.mapping.va, page); (a, 2 * page); (a + page, 2 * page) ])
+    (List.sort compare x.fake.pins);
+  List.iter (Memory.unmap x.memory) [ again; first; second ];
+  equal ~msg:"unpinned" ranges [] x.fake.pins;
   Memory.free x.memory host;
   Function.release x.fn
 
@@ -927,9 +952,11 @@ module Model = struct
     mutable allocated : int;
   }
 
+  type source = Allocated | Borrowed
+
   type mem = {
     owner : gpu;
-    source : Memory.source;
+    source : source;
     host : bool;
     slot : int;
     mutable held : bool;
@@ -954,7 +981,7 @@ module Model = struct
     cover "given back after the release" g.released;
     cover "given back before the release" (not g.released);
     if m.host then g.dma <- g.dma - 1;
-    if source = Borrowed then g.pins <- List.filter (( <> ) m.slot) g.pins
+    if source = Borrowed then g.pins <- remove m.slot g.pins
     else g.allocated <- g.allocated - 1;
     not g.released
 
@@ -1017,7 +1044,7 @@ let test_released =
         Model.alloc
         (fun kind n x -> alloc x kind n);
       command "map_host"
-        ~pre:(fun s g -> live g && not (List.mem s g.pins))
+        ~pre:(fun _ g -> live g)
         (slots @-> gpus ^-> makes mems)
         Model.map_host
         (fun s x ->
@@ -1088,12 +1115,15 @@ let () =
            ];
          group ~timeout:patience "borrowing"
            [
-             test "map_host maps and pins, unmap unpins" test_map_host;
+             cases
+               "map_host maps memory anywhere at addresses of the GPU's space, \
+                pinned; unmap gives both back"
+               ~name:fst host_addresses test_map_host;
              test_map_host_refused;
              test "an unpinnable range is refused with the pin's reason"
                test_map_host_unpinnable;
              test "no room for a table is refused" test_map_host_no_tables;
-             test "memory the GPU maps already is refused, holding no pin"
+             test "memory the GPU maps already maps again elsewhere"
                test_map_host_mapped;
              test "memory not borrowed by the GPU, or unmapped, is refused"
                test_unmap_refused;

@@ -61,9 +61,12 @@ let origin_of = function
   | Own (o, r) | View (o, r) -> (o, r)
   | Peer { owner; region; _ } -> (owner, region)
 
+(* Borrowed memory lies at its own address for the process, apart from where the
+   GPU reaches it. *)
 let host (r : Memory.region) =
-  match r.host with
-  | Some w when Window.mapped w -> Some (Window.address w)
+  match (r.source, r.host) with
+  | Borrowed a, _ -> Some a
+  | _, Some w when Window.mapped w -> Some (Window.address w)
   | _ -> None
 
 let memory (r : Memory.region) data =
@@ -118,7 +121,7 @@ let free g (m : mem Amd.memory) =
       let m = Boot.memory g in
       match r.source with
       | Memory.Allocated -> Boot.protect g (fun () -> Memory.free m r)
-      | Borrowed | Peer -> Boot.protect g (fun () -> Memory.unmap m r))
+      | Borrowed _ | Peer -> Boot.protect g (fun () -> Memory.unmap m r))
 
 (* Opening *)
 

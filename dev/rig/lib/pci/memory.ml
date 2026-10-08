@@ -7,7 +7,7 @@ let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
 type kind = Gpu | Bar | Host | Visible
-type source = Allocated | Borrowed | Peer
+type source = Allocated | Borrowed of int | Peer
 
 type region = {
   mapping : Page_table.mapping;
@@ -171,38 +171,47 @@ let free m mem =
 (* Mapping *)
 
 let no_room = "no GPU memory left for a page table"
+let no_addresses n = strf "no GPU addresses left for %d bytes" n
 
+(* Borrowed memory goes at addresses of the GPU's space, wherever it lies for
+   the process: a process's heap and stacks lie far above the addresses a GPU's
+   rings take. *)
 let map_host m a n =
   live "map_host" m;
   positive "map_host" n;
   let page = Machine.page (Function.machine m.fn) in
   let n = round_up n page in
-  let base = Page_table.base m.tables in
+  let space = Page_table.space m.tables in
   if a mod page <> 0 then
     Error (strf "the memory at 0x%x does not start on a %d-byte page" a page)
-  else if a < base || a + n > base + Page_table.span m.tables then
-    Error
-      (strf "the memory at 0x%x is outside the GPU's addresses [0x%x, 0x%x)" a
-         base
-         (base + Page_table.span m.tables))
   else
-    match Function.pin m.fn a n with
-    | Error _ as e -> e
-    | Ok runs -> (
-        match
-          Page_table.map ~snooped:true ~uncached:true m.tables ~va:a System runs
-        with
-        | exception e ->
-            let bt = Printexc.get_raw_backtrace () in
-            Function.unpin m.fn a n;
-            Printexc.raise_with_backtrace e bt
-        | Some mapping ->
-            let mem = { mapping; host = None; source = Borrowed } in
-            Hashtbl.replace m.mapped a mem;
-            Ok mem
-        | None ->
-            Function.unpin m.fn a n;
-            Error no_room)
+    match Space.alloc ~align:page space n with
+    | None -> Error (no_addresses n)
+    | Some va -> (
+        let give_back () =
+          Function.unpin m.fn a n;
+          Space.free space va
+        in
+        match Function.pin m.fn a n with
+        | Error _ as e ->
+            Space.free space va;
+            e
+        | Ok runs -> (
+            match
+              Page_table.map ~snooped:true ~uncached:true m.tables ~va System
+                runs
+            with
+            | exception e ->
+                let bt = Printexc.get_raw_backtrace () in
+                give_back ();
+                Printexc.raise_with_backtrace e bt
+            | Some mapping ->
+                let mem = { mapping; host = None; source = Borrowed a } in
+                Hashtbl.replace m.mapped va mem;
+                Ok mem
+            | None ->
+                give_back ();
+                Error no_room))
 
 let map_peer m ~owner mem =
   live "map_peer" m;
@@ -245,4 +254,8 @@ let unmap m mem =
   let map = mem.mapping in
   if not (Function.released m.fn) then
     Page_table.unmap m.tables ~va:map.va map.size;
-  if mem.source = Borrowed then Function.unpin m.fn map.va map.size
+  match mem.source with
+  | Borrowed a ->
+      Function.unpin m.fn a map.size;
+      Space.free (Page_table.space m.tables) map.va
+  | Allocated | Peer -> ()

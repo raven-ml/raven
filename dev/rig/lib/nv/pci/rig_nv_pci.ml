@@ -233,7 +233,7 @@ let free g (m : mem Rig_nv.memory) =
   | Own (_, r) -> (
       match r.source with
       | Memory.Allocated -> Memory.free g.memory r
-      | Borrowed | Peer -> Memory.unmap g.memory r)
+      | Borrowed _ | Peer -> Memory.unmap g.memory r)
 
 (* Faults, hangs and stops *)
 

@@ -8,9 +8,9 @@
     A GPU's work addresses memory through the GPU's page tables ({!Page_table}):
     the GPU's own memory, which the process reaches through the memory BAR;
     system memory of the GPU's machine, at the same address for the process and
-    the GPU; memory of that machine the GPU borrows; and another GPU's memory,
-    through that GPU's memory BAR or a direct link. Every address is of the
-    GPU's machine.
+    the GPU; memory of that machine the GPU borrows, at addresses its space
+    gives it; and another GPU's memory, through that GPU's memory BAR or a
+    direct link. Every address is of the GPU's machine.
 
     This module is where a driver places what it allocates. What a driver
     allocates or maps is a {!region}, whichever vendor's the GPU is.
@@ -71,7 +71,9 @@ type kind =
 (** The type for how memory came to the GPU. *)
 type source =
   | Allocated  (** By {!alloc}. *)
-  | Borrowed  (** Memory of the machine, by {!map_host}. *)
+  | Borrowed of int
+      (** Memory of the machine at this address of the process, by {!map_host}.
+      *)
   | Peer  (** Another GPU's memory, by {!map_peer}. *)
 
 type region = private {
@@ -105,14 +107,16 @@ val free : t -> region -> unit
 (** {1:maps Mapping} *)
 
 val map_host : t -> int -> int -> (region, string) result
-(** [map_host m a n] maps the [n] bytes at [a] of the GPU's machine for the GPU,
-    at [a]: it {!Function.pin}s them and maps their pages, snooped and uncached.
-    [Error why] if [a] is not on a page of the machine ({!Machine.page}), lies
-    outside the GPU's virtual addresses, or cannot be pinned, [why] being
-    {!Function.pin}'s reason, or if a page table has no room.
+(** [map_host m a n] maps the [n] bytes at [a] of the GPU's machine for the GPU:
+    it {!Function.pin}s them and maps their pages, snooped and uncached, at
+    addresses it takes from the GPU's space ({!Page_table.space}), whatever [a].
+    The region's [mapping.va] is the first, and its source is [Borrowed a]. Each
+    call maps anew: memory mapped already, borrowed or allocated, maps again at
+    other addresses, pinned once more. [Error why] if [a] is not on a page of
+    the machine ({!Machine.page}), if the space or a page table has no room, or
+    if the memory cannot be pinned, [why] being {!Function.pin}'s reason.
 
-    Raises [Invalid_argument] if [n <= 0], or if part of the range is mapped for
-    the GPU already, pinning nothing. *)
+    Raises [Invalid_argument] if [n <= 0]. *)
 
 val map_peer : t -> owner:t -> region -> (region, string) result
 (** [map_peer m ~owner mem] maps [mem], which {!alloc} allocated on the GPU of
@@ -126,7 +130,8 @@ val map_peer : t -> owner:t -> region -> (region, string) result
     GPU of [m] maps its addresses already. *)
 
 val unmap : t -> region -> unit
-(** [unmap m mem] unmaps [mem] and unpins the memory {!map_host} pinned.
+(** [unmap m mem] unmaps [mem]. For {!Borrowed} memory it also unpins it and
+    gives its addresses back to the GPU's space.
 
     Raises [Invalid_argument] if [mem] is not {!Borrowed} or {!Peer} memory of
     [m], or unmapped already. *)
