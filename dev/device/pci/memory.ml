@@ -134,20 +134,20 @@ let forget table fn mem =
         mem.mapping.va
 
 (* Once the function is released the GPU may be another instance's: only system
-   memory, pins and addresses are given back, and no entry is written. *)
+   memory, pins and addresses are given back, and no entry is written. The
+   addresses go back last: the vendor's GPUs share the space, and another GPU's
+   system memory there would be mapped over this one's. *)
 let free m mem =
   forget m.allocated "free" mem;
-  let map = mem.mapping in
-  if Function.released m.fn then begin
-    Space.free (Page_table.space m.tables) map.va;
-    if map.target = Gpu then
-      List.iter (fun (pa, _) -> Page_table.pfree m.tables pa) map.pages
-  end
-  else Page_table.free m.tables map;
-  match (map.target, mem.host) with
+  let map = mem.mapping and live = not (Function.released m.fn) in
+  if live then Page_table.unmap m.tables ~va:map.va map.size;
+  (match (map.target, mem.host) with
   | System, Some view -> Function.free_dma m.fn view
-  | _, Some view when not (Function.released m.fn) -> Function.unmap m.fn view
-  | _ -> ()
+  | _, Some view when live -> Function.unmap m.fn view
+  | _ -> ());
+  if map.target = Gpu then
+    List.iter (fun (pa, _) -> Page_table.pfree m.tables pa) map.pages;
+  Space.free (Page_table.space m.tables) map.va
 
 (* Mapping *)
 

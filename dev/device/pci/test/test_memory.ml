@@ -43,6 +43,7 @@ type fake = {
   mutable refuse : string option;
       (** [alloc_dma], [pin] and [map] fail with it. *)
   mutable combined : bool list;  (** Each [map]'s [combine], newest first. *)
+  mutable freeing : unit -> unit;  (** Called as [free_dma] starts. *)
 }
 
 (* Physical pages with gaps between them, so no two runs merge. *)
@@ -101,6 +102,7 @@ let ops k =
         (Window.through (Lazy.force system) va n, r));
     free_dma =
       (fun w ->
+        k.freeing ();
         k.dma <- List.filter (fun (a, _) -> a <> Window.address w) k.dma);
     pin =
       (fun a n ->
@@ -133,6 +135,7 @@ let machine () =
         pins = [];
         refuse = None;
         combined = [];
+        freeing = ignore;
       }
     in
     Hashtbl.replace fakes bus k;
@@ -576,6 +579,29 @@ let test_free =
       equal ~msg:"its system memory" int 0 (List.length x.fake.dma);
       Function.release x.fn)
 
+(* The vendor's GPUs share the space: another GPU's system memory at addresses
+   handed out again would be mapped over memory still being freed. *)
+let test_free_order =
+  cases "system memory is freed before its addresses are handed out again"
+    ~name:(fun released -> if released then "released" else "live")
+    [ false; true ]
+    (fun released ->
+      let x = gpu () in
+      let s = Page_table.space x.tables in
+      let mem = alloc x Host page in
+      let meanwhile = ref None in
+      x.fake.freeing <-
+        (fun () ->
+          meanwhile := Space.alloc ~align:page s page;
+          Option.iter (Space.free s) !meanwhile);
+      if released then Function.release x.fn;
+      Memory.free x.memory mem;
+      satisfies ~msg:"addresses handed out while it is freed"
+        ~claim:"not the memory's" (option hex)
+        (fun a -> a <> Some mem.mapping.va)
+        !meanwhile;
+      if not released then Function.release x.fn)
+
 let test_free_refused () =
   let x = gpu () and y = gpu () in
   let mem = alloc x Gpu (64 * kib) in
@@ -975,6 +1001,7 @@ let () =
          group ~timeout:patience "freeing"
            [
              test_free;
+             test_free_order;
              test "memory not allocated by the GPU, or freed, is refused"
                test_free_refused;
            ];
