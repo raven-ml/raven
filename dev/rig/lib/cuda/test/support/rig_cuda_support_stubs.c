@@ -65,11 +65,13 @@ static CUresult(CUDAAPI *memcpy_dtoh)(void *, uint64_t, size_t);
 static CUresult(CUDAAPI *memcpy_htod)(uint64_t, const void *, size_t);
 static CUresult(CUDAAPI *host_register)(void *, size_t, unsigned int);
 static CUresult(CUDAAPI *host_unregister)(void *);
+static CUresult(CUDAAPI *mem_get_info)(size_t *, size_t *);
 
 /* Binds cuLaunchKernel, cuCtxGetCurrent, cuDevicePrimaryCtxRetain,
    cuCtxPushCurrent_v2, cuCtxPopCurrent_v2, cuMemHostGetDevicePointer_v2,
    cuDeviceGetAttribute, cuMemcpyAsync, cuMemcpyDtoH_v2, cuMemcpyHtoD_v2,
-   cuMemHostRegister_v2 and cuMemHostUnregister, in this order. */
+   cuMemHostRegister_v2, cuMemHostUnregister and cuMemGetInfo_v2, in this
+   order. */
 value rig_cuda_test_bind(value v_f) {
   launch_kernel = Ptr_val(Field(v_f, 0));
   get_current = Ptr_val(Field(v_f, 1));
@@ -83,6 +85,7 @@ value rig_cuda_test_bind(value v_f) {
   memcpy_htod = Ptr_val(Field(v_f, 9));
   host_register = Ptr_val(Field(v_f, 10));
   host_unregister = Ptr_val(Field(v_f, 11));
+  mem_get_info = Ptr_val(Field(v_f, 12));
   return Val_unit;
 }
 
@@ -122,6 +125,18 @@ value rig_cuda_test_register(value v_p, value v_n) {
   pop(&popped);
   if (s != 0) caml_failwith("cuMemHostRegister");
   return Val_unit;
+}
+
+/* The bytes of GPU 0's memory CUDA reports free. */
+value rig_cuda_test_free_memory(value unit) {
+  CUcontext popped;
+  size_t free = 0, total = 0;
+  (void)unit;
+  push_primary();
+  CUresult s = mem_get_info(&free, &total);
+  pop(&popped);
+  if (s != 0) caml_failwith("cuMemGetInfo");
+  return Val_long((intnat)free);
 }
 
 value rig_cuda_test_unregister(value v_p) {

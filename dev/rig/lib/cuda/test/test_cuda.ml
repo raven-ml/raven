@@ -18,9 +18,7 @@ module B = Rig.Buffer
 
 (* The reason of the loss [f ()] raises. *)
 let lost f =
-  match f () with
-  | _ -> failf "no loss"
-  | exception Rig.Lost (_, why) -> why
+  match f () with _ -> failf "no loss" | exception Rig.Lost (_, why) -> why
 
 (* Opening *)
 
@@ -84,8 +82,7 @@ let symbols () =
          "cuLaunchKernel\000";
        ]);
   equal bool ~msg:"the key is the ABI's" true
-    (Option.is_some
-       (Type.Id.provably_equal C.capability_key Rig_cuda_abi.key))
+    (Option.is_some (Type.Id.provably_equal C.capability_key Rig_cuda_abi.key))
 
 let facts =
   group ~timeout:60. "facts"
@@ -426,6 +423,51 @@ let unload_aside () =
   S.wait g 1;
   C.unload g m
 
+(* The 256 MiB global of fixtures/global.ptx, loaded on [g] and touched by a run
+   of its kernel, as the value after [g]'s last. *)
+let global = 256 * 1024 * 1024
+
+let load_global g =
+  let m = S.loaded (require_ok (C.image g (S.fixture "global.ptx"))) in
+  let touch = S.launch (Option.get (C.entry m "touch")) ~grid:1 ~block:1 0 0 in
+  S.wait g (S.submit g [| S.part ~queue:"COMPUTE:0" touch |])
+
+(* An image still loaded when an idle device stops is unloaded by the stop: the
+   global's memory returns. *)
+let stop_unloads () =
+  let g = S.gpu () in
+  let before = S.free_memory () in
+  load_global g;
+  at_most int ~msg:"loaded" ~than:(before - (global / 2)) (S.free_memory ());
+  S.stop g;
+  at_least int ~msg:"stopped" ~than:(before - (global / 2)) (S.free_memory ())
+
+(* A stop that finds work running leaves the images loaded for the work; the
+   GPU's next open, once the work ended, unloads them. *)
+let reopen_unloads () =
+  let g = S.gpu () in
+  if S.attribute watchdog <> 0 then
+    skip ~reason:"a display watchdog ends long kernels" ();
+  let flag = require_some (C.alloc g `Pinned 8) in
+  S.set64 (host flag) 0;
+  Fun.protect ~finally:(fun () -> S.set64 (host flag) 1) @@ fun () ->
+  let before = S.free_memory () in
+  load_global g;
+  let _, kernel = S.kernels g in
+  let spin =
+    S.launch (kernel "spin") ~grid:1 ~block:1 (address flag) (10 * second)
+  in
+  let v = S.submit g [| S.part ~queue:"COMPUTE:0" spin |] in
+  S.stop g;
+  at_most int ~msg:"stopped while running"
+    ~than:(before - (global / 2))
+    (S.free_memory ());
+  S.set64 (host flag) 1;
+  S.wait g v;
+  let g' = S.gpu () in
+  at_least int ~msg:"reopened" ~than:(before - (global / 2)) (S.free_memory ());
+  S.stop g'
+
 let stop_idle () =
   let g = S.gpu () in
   let p = S.pages S.page in
@@ -478,6 +520,9 @@ let timeline =
       test "stop of a running device leaves the GPU closed until its work ends"
         stop_running;
       test "page-locking is the process's" registry_is_the_process;
+      test "stop of an idle device unloads its images" stop_unloads;
+      test "the next open unloads what a stop left to running work"
+        reopen_unloads;
     ]
 
 (* Two GPUs *)

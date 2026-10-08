@@ -10,9 +10,9 @@
 val hold_gpu : unit -> unit
 (** [hold_gpu ()] returns once the process holds the machine's GPU lock, which
     it keeps until it exits, or at once if CUDA sees no GPU. The lock is [flock]
-    on [/tmp/raven-rig-gpu.lock], the file every suite that acts on a GPU of
-    the machine locks; its holder writes its executable and process id into it.
-    A suite calls [hold_gpu] before [Windtrap.run], so that the wait counts
+    on [/tmp/raven-rig-gpu.lock], the file every suite that acts on a GPU of the
+    machine locks; its holder writes its executable and process id into it. A
+    suite calls [hold_gpu] before [Windtrap.run], so that the wait counts
     against no test's timeout; {!gpu} calls it again.
 
     Raises [Failure] naming the holder if another process still holds the lock
@@ -25,25 +25,25 @@ val gpu : unit -> Rig_cuda.t
     CUDA sees no GPU. *)
 
 val stop : Rig_cuda.t -> unit
-(** [stop g] is [Rig_cuda.stop g]. Tests stop the devices {!gpu} opened
-    through it. *)
+(** [stop g] is [Rig_cuda.stop g]. Tests stop the devices {!gpu} opened through
+    it. *)
 
 val core : Rig_cuda.t -> Rig.t
-(** [core g] is rig's device over [g], which {!gpu} opened under a name of
-    its own.
+(** [core g] is rig's device over [g], which {!gpu} opened under a name of its
+    own.
 
     Raises [Invalid_argument] if [g] was stopped, lost or opened otherwise. *)
 
 val submit : Rig_cuda.t -> Rig.Submission.part array -> int
-(** [submit g ps] submits [ps] through rig on [g] and is their value.
-    Raises what {!Rig.submit} raises; once it raised
-    {!Rig.Lost}, rig stopped [g], and {!with_gpu} does not stop it
-    again. *)
+(** [submit g ps] submits [ps] through rig on [g] and is their value. Raises
+    what {!Rig.submit} raises; once it raised {!Rig.Lost}, rig stopped [g], and
+    {!with_gpu} does not stop it again. *)
 
 val bind : Rig_cuda.t -> unit
 (** [bind g] makes the CUDA functions of [g]'s capability those {!attribute},
     {!current}, {!locked}, {!register}, {!unregister}, {!read_gpu},
-    {!write_gpu}, {!launch} and {!delayed} call. {!gpu} binds them. *)
+    {!write_gpu}, {!free_memory}, {!launch} and {!delayed} call. {!gpu} binds
+    them. *)
 
 val with_gpu : (Rig_cuda.t -> 'a) -> 'a
 (** [with_gpu f] is [f g], [g] the {!gpu} opened for [f] and stopped after it,
@@ -67,6 +67,10 @@ val register : int -> int -> unit
 
 val unregister : int -> unit
 (** [unregister a] ends what {!register} page-locked at [a]. *)
+
+val free_memory : unit -> int
+(** [free_memory ()] is the bytes of GPU [0]'s memory CUDA reports free
+    ([cuMemGetInfo]), after a {!with_gpu}. *)
 
 val wait : Rig_cuda.t -> int -> unit
 (** [wait g v] returns once [g]'s word, read as host memory, reaches [v]. It
@@ -122,8 +126,7 @@ val write_gpu : nativeint -> string -> unit
 type fill
 (** The type for fills and their arguments. *)
 
-val part :
-  queue:string -> ?after:int array -> fill -> Rig.Submission.part
+val part : queue:string -> ?after:int array -> fill -> Rig.Submission.part
 (** [part ~queue ~after f] is [f] as a part on [queue] after the parts [after]
     (defaults to [[||]]), its argument a host buffer. *)
 
@@ -161,10 +164,10 @@ val room :
   bytes:int ->
   after:int array ->
   int
-(** [room g ~queue ~words ~units ~bytes ~after] is what [rig_cuda_room]
-    answers for one fill on the queue at index [queue], with one ring word iff
-    [words], [units] ring units, [bytes] segment bytes, and [after]: [0] for
-    RIG_FITS, [2] for RIG_NEVER. *)
+(** [room g ~queue ~words ~units ~bytes ~after] is what [rig_cuda_room] answers
+    for one fill on the queue at index [queue], with one ring word iff [words],
+    [units] ring units, [bytes] segment bytes, and [after]: [0] for RIG_FITS,
+    [2] for RIG_NEVER. *)
 
 type copy_c = {
   queue : int;
@@ -182,9 +185,9 @@ val copies :
   waits:(int * int) array ->
   copy_c array ->
   [ `Ok | `Failed of string ]
-(** [copies g ~v ~waits cs] is what [rig_cuda_submit] answers for [cs] as
-    [g]'s value [v], after each wait [(a, w)]: the 64-bit word at [a] holds at
-    least [w]. It reaches the waits rig cannot make, on any word. *)
+(** [copies g ~v ~waits cs] is what [rig_cuda_submit] answers for [cs] as [g]'s
+    value [v], after each wait [(a, w)]: the 64-bit word at [a] holds at least
+    [w]. It reaches the waits rig cannot make, on any word. *)
 
 (** {1:kernels Kernels} *)
 
@@ -194,7 +197,8 @@ val fixture : ?dir:string -> string -> string
     word [i] at [out] is [2i] for [i < n]), [spin flag ns] (runs until the
     32-bit word at [flag] is not [0] or for [ns] nanoseconds) and [fault]
     (stores to address [0]), each of two 64-bit parameters; ["kernels.cubin"] is
-    them compiled for [sm_89]. *)
+    them compiled for [sm_89]; ["global.ptx"] holds [touch], of the same
+    parameters, which stores to a global of 256 MiB. *)
 
 val loaded :
   [ `Loaded of Rig_cuda.image
@@ -204,7 +208,6 @@ val loaded :
 
     Raises [Failure] if [i] is [`Place _]. *)
 
-val kernels :
-  ?dir:string -> Rig_cuda.t -> Rig_cuda.image * (string -> int)
+val kernels : ?dir:string -> Rig_cuda.t -> Rig_cuda.image * (string -> int)
 (** [kernels ~dir g] is ["kernels.ptx"] of [dir] loaded on [g], and its kernels
     by name. *)

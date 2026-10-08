@@ -31,9 +31,7 @@
         work = Copy { src; dst };
       }
     in
-    let s =
-      Rig.Submission.make ~reads:0 ~writes:0 ~waits:0 g [| copy |]
-    in
+    let s = Rig.Submission.make ~reads:0 ~writes:0 ~waits:0 g [| copy |] in
     Rig.wait g (Rig.Point.value (Rig.submit s))
     ]}
 
@@ -155,9 +153,9 @@ val capability_key : capability Type.Id.t
 
 val self : t -> nativeint
 (** [self g] is the address of [g]'s state, the first argument of
-    [rig_cuda_room] and [rig_cuda_submit]. It is valid while the process
-    runs: a device's C state holds its {!word}, which other devices may read
-    after [g] is gone, so neither is ever freed. *)
+    [rig_cuda_room] and [rig_cuda_submit]. It is valid while the process runs: a
+    device's C state holds its {!word}, which other devices may read after [g]
+    is gone, so neither is ever freed. *)
 
 (** {1:memory Memory} *)
 
@@ -274,10 +272,10 @@ val unload : t -> image -> unit
 (** {1:work Work} *)
 
 val room_entry : nativeint
-(** [room_entry] is the address of the C function [rig_cuda_room], in the
-    shape [rig_room_fn] of [rig_edge.h], which [rig_cuda.h] declares. It
-    answers [RIG_NEVER] for a part with words, ring units or segment bytes, or on
-    no queue of the device, and [RIG_FITS] otherwise: CUDA's streams take any
+(** [room_entry] is the address of the C function [rig_cuda_room], in the shape
+    [rig_room_fn] of [rig_edge.h], which [rig_cuda.h] declares. It answers
+    [RIG_NEVER] for a part with words, ring units or segment bytes, or on no
+    queue of the device, and [RIG_FITS] otherwise: CUDA's streams take any
     amount of work, and a submit that finds a stream full waits for earlier work
     to free it. *)
 
@@ -310,8 +308,8 @@ val submit_entry : nativeint
     their words, and a word the work wrote could move backwards or claim work
     that has not completed.
 
-    It answers [RIG_OK] once every part is enqueued, or [RIG_FAILED] with the step
-    and the error of the first CUDA call that failed, a fill's included, as
+    It answers [RIG_OK] once every part is enqueued, or [RIG_FAILED] with the
+    step and the error of the first CUDA call that failed, a fill's included, as
     ["running a fill: CUDA_ERROR_ILLEGAL_ADDRESS: an illegal memory access was
      encountered"]. The parts enqueued before the failure may run; the others
     never do. A failed device stays failed, since CUDA may keep the context's
@@ -361,9 +359,10 @@ val stop : t -> unit
     memory (the work of every value it was given completed, its streams are
     idle, or a fault ended the context's work), the timeline word holds at least
     the last value the submit was given when [stop] returns, so work of other
-    devices that waits on it runs on, and [g]'s streams are destroyed. Otherwise
-    the timeline word reaches the last value the submit was given once that work
-    ends, unless it waits on a word of another device that never reaches its
-    value; the GPU opens again once that work ends. After [stop], only {!free}
-    and the [symbol] function of {!val-capability} may be called on [g]; neither
-    raises {!exception-Fault}. *)
+    devices that waits on it runs on, [g]'s streams are destroyed and every
+    image not unloaded is unloaded. Otherwise the timeline word reaches the last
+    value the submit was given once that work ends, unless it waits on a word of
+    another device that never reaches its value; the GPU opens again once that
+    work ends, and that open unloads the images the work kept. After [stop],
+    only {!free} and the [symbol] function of {!val-capability} may be called on
+    [g], neither raising {!exception-Fault}, and {!unload} is not called. *)

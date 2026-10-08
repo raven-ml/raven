@@ -52,8 +52,12 @@ let refused step self x = match failed self with 0 -> x | e -> fault step e
 
 (* A GPU's holder: [unheld]; [taken], while a device of it is open or being
    opened; or the C state, negated, of a device stopped while its work still
-   ran. *)
-type gpus = { devices : int array; held : int Atomic.t array }
+   ran, whose modules [left] holds until that work ends. *)
+type gpus = {
+  devices : int array;
+  held : int Atomic.t array;
+  left : int list Atomic.t array;
+}
 
 let unheld = 0
 let taken = 1
@@ -91,7 +95,8 @@ let discover () =
   | exception Fault why -> Error why
   | ds ->
       let devices = Array.of_list (List.map snd (List.sort compare ds)) in
-      Ok { devices; held = Array.map (fun _ -> Atomic.make unheld) devices }
+      let each x = Array.map (fun _ -> Atomic.make x) devices in
+      Ok { devices; held = each unheld; left = each [] }
 
 (* Loads the library and finds its GPUs at the first call that needs them, until
    they are found: a failed load is tried again by the next call, so a driver
@@ -142,16 +147,21 @@ let rec on_host = function
 
 (* Opening *)
 
+type image = { owner : int; m : int; loaded : bool Atomic.t }
+
 type t = {
   self : int;
   arch : string;
   budget : int;
   word : region;
   held : int Atomic.t;
+  left : int list Atomic.t;
+  images : image list Atomic.t; (* loaded, for stop to unload *)
 }
 
 external open_device : int -> int = "caml_rig_cuda_open"
 external stop_device : int -> bool = "caml_rig_cuda_stop"
+external unload_module : int -> int -> int = "caml_rig_cuda_unload"
 external word_address : int -> int = "caml_rig_cuda_word" [@@noalloc]
 
 let count () =
@@ -166,13 +176,19 @@ let driver () =
   | v when v < 0 -> "a CUDA driver of unknown version"
   | v -> strf "the CUDA %d.%d driver" (v / 1000) (v mod 1000 / 10)
 
+(* Unloads the modules [ms] of the device [self]. CUDA's answers are dropped:
+   after a fault the modules stay with the context, which the process keeps. *)
+let unload_all self ms = List.iter (fun m -> ignore (unload_module self m)) ms
+
 (* Takes a GPU's [held] for a new device: unheld, or held by a stopped device
-   whose work has since ended, which is then stopped for good. *)
-let claim held =
+   whose work has since ended, which is then stopped for good and its [left]
+   modules unloaded. *)
+let claim held left =
   let p = Atomic.get held in
   if p > 0 || not (Atomic.compare_and_set held p taken) then
     Error "the GPU has a device open; stop it first"
-  else if p = unheld || stop_device (-p) then Ok ()
+  else if p = unheld then Ok ()
+  else if stop_device (-p) then Ok (unload_all (-p) (Atomic.exchange left []))
   else begin
     Atomic.set held p;
     Error "the GPU still runs the work of a stopped device"
@@ -205,8 +221,8 @@ let open_ i =
     | _, 0, _, _, _ ->
         Error (strf "the GPU lacks unified addressing under %s" (driver ()))
     | _, _, major, minor, budget ->
-        let held = g.held.(i) in
-        let* () = claim held in
+        let held = g.held.(i) and left = g.left.(i) in
+        let* () = claim held left in
         let self = open_device d in
         if self < 0 then begin
           Atomic.set held unheld;
@@ -216,7 +232,9 @@ let open_ i =
         else begin
           let w = word_address self in
           let word = region self Word ~address:w ~handle:w in
-          Ok { self; arch = strf "sm_%d%d" major minor; budget; word; held }
+          let arch = strf "sm_%d%d" major minor in
+          let images = Atomic.make [] in
+          Ok { self; arch; budget; word; held; left; images }
         end
 
 (* Facts *)
@@ -252,8 +270,7 @@ external lock : int -> bool -> int -> int -> int = "caml_rig_cuda_lock"
 external enable_peer : int -> int -> int = "caml_rig_cuda_peer"
 
 let alloc g kind n =
-  if n < 1 then
-    invalid_argf "Rig_cuda.alloc: %d bytes, expected at least 1" n;
+  if n < 1 then invalid_argf "Rig_cuda.alloc: %d bytes, expected at least 1" n;
   let host = match kind with `Device -> false | `Pinned | `Mapped -> true in
   match alloc_memory g.self host n with
   | a when a >= 0 ->
@@ -274,11 +291,10 @@ let reaches self home =
   | _ -> refused "enabling peer access" self false
 
 let peer g g' =
-  if g.self = g'.self then
-    invalid_arg "Rig_cuda.peer: the two devices are one";
+  if g.self = g'.self then invalid_arg "Rig_cuda.peer: the two devices are one";
   reaches g.self g'.self
 
-let map_peer g g' r =
+let map_peer g g' (r : region) =
   if g.self = g'.self then
     invalid_arg "Rig_cuda.map_peer: the two devices are one";
   if r.owner <> g'.self || not (Atomic.get r.live) then
@@ -332,7 +348,7 @@ let map_host g a n =
       Some (locked g (Some e) a (e.address + (a - e.start)))
   | None -> if List.exists shares !registry then None else page_lock g a n
 
-let free g r =
+let free g (r : region) =
   (match r.kind with
   | Word -> invalid_arg "Rig_cuda.free: the region is a timeline word"
   | _ when r.owner <> g.self ->
@@ -356,19 +372,19 @@ let free g r =
 
 (* Images *)
 
-type image = { owner : int; m : int; loaded : bool Atomic.t }
-
 external load_module : int -> string -> int = "caml_rig_cuda_load_module"
+external get_function : int -> int -> string -> int = "caml_rig_cuda_function"
 
-external get_function : int -> int -> string -> int
-  = "caml_rig_cuda_function"
-
-external unload_module : int -> int -> int = "caml_rig_cuda_unload"
+let rec update a f =
+  let x = Atomic.get a in
+  if not (Atomic.compare_and_set a x (f x)) then update a f
 
 let image g bin =
   match load_module g.self bin with
   | m when m >= 0 ->
-      Ok (`Loaded { owner = g.self; m; loaded = Atomic.make true })
+      let i = { owner = g.self; m; loaded = Atomic.make true } in
+      update g.images (List.cons i);
+      Ok (`Loaded i)
   | s ->
       let step = "loading the image" in
       refused step g.self (Error (strf "%s: %s" step (error (-s))))
@@ -387,6 +403,7 @@ let unload g (m : image) =
     invalid_arg "Rig_cuda.unload: the image is another device's";
   if not (Atomic.compare_and_set m.loaded true false) then
     invalid_arg "Rig_cuda.unload: the image was unloaded";
+  update g.images (List.filter (fun i -> i != m));
   match unload_module g.self m.m with
   | 0 -> ()
   | s -> fault "unloading the image" s
@@ -416,4 +433,9 @@ let sleep g ~seen ~still_ms =
 
 let stop g =
   let stopped = stop_device g.self in
+  let loaded (i : image) =
+    if Atomic.compare_and_set i.loaded true false then Some i.m else None
+  in
+  let ms = List.filter_map loaded (Atomic.exchange g.images []) in
+  if stopped then unload_all g.self ms else Atomic.set g.left ms;
   Atomic.set g.held (if stopped then unheld else -g.self)

@@ -15,6 +15,7 @@ external locked : int -> bool = "rig_cuda_test_locked"
 external attribute : int -> int = "rig_cuda_test_attribute"
 external register : int -> int -> unit = "rig_cuda_test_register"
 external unregister : int -> unit = "rig_cuda_test_unregister"
+external free_memory : unit -> int = "rig_cuda_test_free_memory"
 
 (* The machine's GPU lock *)
 
@@ -63,12 +64,13 @@ let bind g =
          "cuMemcpyHtoD_v2";
          "cuMemHostRegister_v2";
          "cuMemHostUnregister";
+         "cuMemGetInfo_v2";
        |])
 
-(* The device gpu opened and rig's device over it, until a test stops it
-   or rig loses it: one a failed test left open is stopped by the next
-   gpu. Each open has a name of its own, since rig keeps a name's device
-   after the driver's stop. *)
+(* The device gpu opened and rig's device over it, until a test stops it or rig
+   loses it: one a failed test left open is stopped by the next gpu. Each open
+   has a name of its own, since rig keeps a name's device after the driver's
+   stop. *)
 let opened = ref None
 let opens = ref 0
 
@@ -102,9 +104,7 @@ let core g =
   | _ -> invalid_arg "Rig_cuda_support.core: the device is not open"
 
 let submit g parts =
-  let s =
-    Rig.Submission.make ~reads:0 ~writes:0 ~waits:0 (core g) parts
-  in
+  let s = Rig.Submission.make ~reads:0 ~writes:0 ~waits:0 (core g) parts in
   match Rig.submit s with
   | p -> Rig.Point.value p
   | exception (Rig.Lost _ as e) ->
