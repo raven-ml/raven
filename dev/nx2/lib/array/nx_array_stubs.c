@@ -24,18 +24,16 @@ enum { ARRAY_DTYPE, ARRAY_LAYOUT, ARRAY_BUFFER };
 
 /* Layouts */
 
-/* Copies the layout [v] into [a]'s rank, flags, offset and dims, and its
-   span into [lo] and [hi]: the record lives in the OCaml heap, which moves.
-   Answers NX_LAYOUT if its arrays do not make a layout. */
-static int read_layout(value v, nx_array *a, int64_t *lo, int64_t *hi) {
+/* Copies the layout [v] into [a]'s rank, flags, offset and dims: the record
+   lives in the OCaml heap, which moves. Answers NX_LAYOUT if its arrays do
+   not make a layout. */
+static int read_layout(value v, nx_array *a) {
   value shape = Field(v, NX_LAYOUT_SHAPE), strides = Field(v, NX_LAYOUT_STRIDES);
   mlsize_t r = Wosize_val(shape);
   if (r > NX_MAX_RANK || Wosize_val(strides) != r) return NX_LAYOUT;
   a->rank = (int)r;
   a->offset = Long_val(Field(v, NX_LAYOUT_OFFSET));
   a->flags = (int)Long_val(Field(v, NX_LAYOUT_FLAGS));
-  *lo = Long_val(Field(v, NX_LAYOUT_LO));
-  *hi = Long_val(Field(v, NX_LAYOUT_HI));
   for (mlsize_t i = 0; i < r; i++) {
     a->dim[i] = Long_val(Field(shape, i));
     a->dim[r + i] = Long_val(Field(strides, i));
@@ -57,36 +55,47 @@ static int claim_code(enum rig_claim c) {
   }
 }
 
+/* The bytes [[first, last)] that the array [v], read into [a], reaches, as
+   host addresses; none for an array with no element. */
+static void reach(value v, const nx_array *a, int64_t *first, int64_t *last) {
+  if (a->base == NULL) {
+    *first = *last = 0;
+    return;
+  }
+  value l = Field(v, ARRAY_LAYOUT);
+  int64_t base = (int64_t)(intptr_t)a->base;
+  *first = base + Long_val(Field(l, NX_LAYOUT_LO)) * a->bits / 8;
+  *last = base + (Long_val(Field(l, NX_LAYOUT_HI)) * a->bits + 7) / 8;
+}
+
 int nx_read(int n, const nx_operand *in, nx_array *out) {
   if (n <= 0) return NX_OK;
-  int64_t first[n], last[n]; /* each operand's bytes, as host addresses */
   for (int k = 0; k < n; k++) {
     value v = in[k].array;
     nx_array *a = &out[k];
-    int64_t lo, hi;
     a->dtype = nx_array_dtype(v);
     if (a->dtype != in[k].dtype) return NX_DTYPE;
     a->bits = nx_dtype_row_of(a->dtype).bits;
-    int e = read_layout(Field(v, ARRAY_LAYOUT), a, &lo, &hi);
+    int e = read_layout(Field(v, ARRAY_LAYOUT), a);
     if (e) return e;
     a->buffer = Field(v, ARRAY_BUFFER);
     if (rig_buffer_why(a->buffer) != NULL) return NX_DEAD;
-    if (a->flags & NX_EMPTY) {
+    if (a->flags & NX_EMPTY)
       a->base = NULL;
-      first[k] = last[k] = 0;
-    } else {
-      a->base = rig_buffer_host(a->buffer);
-      if (a->base == NULL) return NX_NOT_HOST;
-      first[k] = (int64_t)(intptr_t)a->base + lo * a->bits / 8;
-      last[k] = (int64_t)(intptr_t)a->base + (hi * a->bits + 7) / 8;
-    }
+    else if ((a->base = rig_buffer_host(a->buffer)) == NULL)
+      return NX_NOT_HOST;
     if (in[k].written && !(a->flags & NX_DISTINCT)) return NX_NOT_DISTINCT;
   }
   for (int k = 0; k < n; k++) {
-    if (!in[k].written || first[k] == last[k]) continue;
-    for (int j = 0; j < n; j++)
-      if (j != k && first[j] < last[k] && first[k] < last[j])
-        return NX_OVERLAP;
+    int64_t first, last, first_j, last_j;
+    if (!in[k].written) continue;
+    reach(in[k].array, &out[k], &first, &last);
+    if (first == last) continue;
+    for (int j = 0; j < n; j++) {
+      if (j == k) continue;
+      reach(in[j].array, &out[j], &first_j, &last_j);
+      if (first_j < last && first < last_j) return NX_OVERLAP;
+    }
   }
   for (int k = 0; k < n; k++) {
     enum rig_claim c = rig_buffer_claim(
@@ -101,7 +110,7 @@ int nx_read(int n, const nx_operand *in, nx_array *out) {
      nx_done. They are chained here and linked at once: where the runtime
      has no thread-local variables to share (macOS), each access to the
      domain's state is a function call. */
-  struct caml__roots_block *top = CAML_LOCAL_ROOTS;
+  struct caml__roots_block **roots = &CAML_LOCAL_ROOTS, *top = *roots;
   for (int k = 0; k < n; k++) {
     out[k].roots.next = top;
     out[k].roots.ntables = 1;
@@ -109,7 +118,7 @@ int nx_read(int n, const nx_operand *in, nx_array *out) {
     out[k].roots.tables[0] = &out[k].buffer;
     top = &out[k].roots;
   }
-  CAML_LOCAL_ROOTS = top;
+  *roots = top;
   return NX_OK;
 }
 
@@ -203,10 +212,9 @@ value nx_array_coalesce(value ls, value out) {
   int n = (int)Wosize_val(ls);
   nx_array a[NX_MAX_OPERANDS];
   nx_loop l;
-  int64_t lo, hi;
   if (n < 1 || n > NX_MAX_OPERANDS) return Val_int(NX_ARITY);
   for (int k = 0; k < n; k++) {
-    int e = read_layout(Field(ls, k), &a[k], &lo, &hi);
+    int e = read_layout(Field(ls, k), &a[k]);
     if (e) return Val_int(e);
   }
   int e = nx_coalesce(n, a, &l);
