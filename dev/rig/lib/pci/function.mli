@@ -267,6 +267,9 @@ val pin : t -> int -> int -> ((int * int) list, string) result
     stays locked until each pin is {!unpin}ned, and behind an IOMMU [(a, n)]
     stays mapped for [f] as long.
 
+    Behind an IOMMU the pinned pages stay the process's across a fork: the child
+    gets copies of them.
+
     [Error why] as {!alloc_dma}, if the pages cannot be locked or their
     addresses read, or if [f] is taken physically: the pages are the process's
     and go back to the system when it dies, with [f] still writing them. Memory
