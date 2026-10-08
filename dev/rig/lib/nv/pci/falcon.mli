@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** The GPU's security processors, which start its GSP (private).
+(** The GPU's security processors, which start its GSP.
 
     On Ampere and Ada the GSP's falcon runs FWSEC from the VBIOS, which sets up
     the protected region of memory (WPR2); SEC2 then runs the booter, which

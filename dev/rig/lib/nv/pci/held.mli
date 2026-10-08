@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** The device file NVIDIA's kernel driver serves a GPU through (private).
+(** The device file NVIDIA's kernel driver serves a GPU through.
 
     NVIDIA's kernel driver gives each GPU a file [/dev/nvidiaN], [N] the GPU's
     minor, which [/proc/driver/nvidia/gpus/<bus>/information] states on its line

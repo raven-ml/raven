@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** The firmware a GPU boots with, read from its files (private).
+(** The firmware a GPU boots with, read from its files.
 
     Three images per family, each a file of linux-firmware's [nvidia/] pinned by
     digest: the GSP's firmware, an ELF object whose sections hold its image and

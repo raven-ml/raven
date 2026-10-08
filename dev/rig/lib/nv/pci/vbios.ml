@@ -3,8 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The size of the PROM window the VBIOS is read through, the most the RM reads
-   (s_getBaseBiosMaxSize_TU102). *)
 let window = 0x100000
 
 let read (c : Chip.t) =

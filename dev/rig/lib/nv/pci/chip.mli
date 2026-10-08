@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** A GPU's registers and identity, through its register BAR (private).
+(** A GPU's registers and identity, through its register BAR.
 
     Registers and their fields are the constants of [Defs], generated from
     NVIDIA's published register headers, per family where they differ, so a

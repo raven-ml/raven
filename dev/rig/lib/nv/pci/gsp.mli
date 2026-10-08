@@ -3,8 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** The GSP: the GPU's system processor, which runs NVIDIA's resource manager
-    (private).
+(** The GSP: the GPU's system processor, which runs NVIDIA's resource manager.
 
     The process boots it and then plays the part of the kernel's half of the RM
     (CPU-RM): it describes the system and the GPU's memory to the GSP, runs the

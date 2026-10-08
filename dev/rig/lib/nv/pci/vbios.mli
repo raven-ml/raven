@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 (** FWSEC, the ucode of an Ampere or Ada GPU's VBIOS that sets up its protected
-    memory (private).
+    memory.
 
     The VBIOS is a chain of PCI expansion ROM images. Its BIT table points to
     the falcon data, whose ucode table names the FWSEC image by its application

@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** The GSP's message queues (private).
+(** The GSP's message queues.
 
     Two rings of 4 KiB elements in system memory: the command queue, which the
     process writes and the GSP reads, and the status queue back. A queue's

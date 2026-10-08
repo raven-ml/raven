@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Where the GSP's firmware goes in memory (private).
+(** Where the GSP's firmware goes in memory.
 
     The GSP reserves the top of the GPU's memory for itself: the VGA workspace,
     the FRTS region, its boot binary, its image, its heap and its metadata, and

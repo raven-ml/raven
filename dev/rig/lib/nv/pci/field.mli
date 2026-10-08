@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Fields of NVIDIA's structures and registers, as [Defs] gives them (private).
+(** Fields of NVIDIA's structures and registers, as [Defs] gives them.
 
     A structure's field is its (offset, bytes), little-endian; a register's
     field is its (lowest bit, bits). *)

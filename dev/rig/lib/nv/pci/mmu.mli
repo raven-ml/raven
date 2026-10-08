@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** NVIDIA's page-table entries (private).
+(** NVIDIA's page-table entries.
 
     Two versions: version 2 (Pascal to Ada) translates 49-bit addresses through
     five levels, its root of 4 entries; version 3 (Hopper on) 57-bit addresses
