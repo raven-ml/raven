@@ -192,6 +192,7 @@ module Regs = Regs
 module Images = Images
 module Gmc = Gmc
 module Soc = Soc
+module Sdma = Sdma
 module Smu = Smu
 module Psp = Psp
 module Gfx = Gfx
