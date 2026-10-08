@@ -1,11 +1,12 @@
 # Metal fixtures
 
-`fill.metallib` holds the kernels of `fill.metal`, whose source says what
-each does. Made in this directory on macOS 26.3.1 with Xcode 26.3's Metal
-toolchain (`metal` 32023.864):
+`fill.metallib` holds the kernels of `fill.metal`, and `vertex.metallib`
+the vertex function of `vertex.metal`; each source says what its
+functions do. Made in this directory on macOS 26.3.1 with Xcode 26.3's
+Metal toolchain (`metal` 32023.864), for each `<name>`:
 
 ```
-xcrun -sdk macosx metal -c fill.metal -o fill.air
-xcrun -sdk macosx metallib fill.air -o fill.metallib
-rm fill.air
+xcrun -sdk macosx metal -c <name>.metal -o <name>.air
+xcrun -sdk macosx metallib <name>.air -o <name>.metallib
+rm <name>.air
 ```

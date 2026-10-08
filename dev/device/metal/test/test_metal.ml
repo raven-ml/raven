@@ -566,6 +566,13 @@ let not_metallib () =
   let t = dev () in
   is_error (Device_metal.image t.d "not a metallib")
 
+let no_pipeline () =
+  let t = dev () in
+  match Device_metal.image t.d (S.fixture ~dir:"fixtures" "vertex") with
+  | Ok _ -> failf "a vertex function made a compute pipeline"
+  | Error why ->
+      starts_with ~affix:"building the pipeline of \"position\": " why
+
 let entries () =
   let t = dev () in
   List.iter
@@ -635,6 +642,7 @@ let images =
   group ~timeout:60. "images"
     [
       test "bytes that are no metallib are an error" not_metallib;
+      test "a function no compute pipeline runs is an error" no_pipeline;
       test "each function of the image has an entry" entries;
       test "unload and entry refuse an unloaded image or another device's"
         unloaded_twice;
