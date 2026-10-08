@@ -62,6 +62,7 @@ module Driver = struct
     may_block : bool;
     objects : bool;
     waits : [ `Store | `Object | `Host ] list;
+    max_waits : int;
     answer : [ `Stopped | `Unknown ];
     lock : Mutex.t;
     opened : Condition.t;
@@ -195,6 +196,7 @@ module Driver = struct
 
   let completion d = if d.objects then `Object d.c else `Host
   let waits_on d c = List.mem c d.waits
+  let max_waits d = d.max_waits
   let blocks d = if d.may_block then `May_block else `Returns
   let room_entry = polled_room ()
   let submit_entry = polled_submit ()
@@ -213,7 +215,8 @@ module Polled = struct
   let make ?(capacity = 1024) ?(copies = true) ?(host_visible = true)
       ?(transport = false) ?(peers = true) ?(budget = 1 lsl 30)
       ?(memory = max_int) ?(window = max_int) ?(may_block = false)
-      ?(completion = `Host) ?(waits_on = []) ?(answer = `Stopped) () =
+      ?(completion = `Host) ?(waits_on = []) ?(max_waits = max_int)
+      ?(answer = `Stopped) () =
     let limits = function
       | `Device -> memory
       | `Mapped -> window
@@ -230,6 +233,7 @@ module Polled = struct
       may_block;
       objects = completion = `Object;
       waits = waits_on;
+      max_waits;
       answer;
       lock = Mutex.create ();
       opened = Condition.create ();
@@ -246,10 +250,10 @@ module Polled = struct
     }
 
   let open_ ?capacity ?copies ?host_visible ?transport ?peers ?budget ?memory
-      ?window ?may_block ?completion ?waits_on ?answer name =
+      ?window ?may_block ?completion ?waits_on ?max_waits ?answer name =
     let p =
       make ?capacity ?copies ?host_visible ?transport ?peers ?budget ?memory
-        ?window ?may_block ?completion ?waits_on ?answer ()
+        ?window ?may_block ?completion ?waits_on ?max_waits ?answer ()
     in
     match Rig.open_ (module Driver) ~name (fun () -> Ok p) with
     | Ok d -> (d, p)

@@ -48,6 +48,7 @@ type device = {
   waits_store : bool;
   waits_object : bool;
   waits_host : bool;
+  max_waits : int;  (** The waits in its queue one submission carries. *)
   word : int;  (** The word's host address, 0 behind a transport. *)
   word_region : region option;
   key : int;  (** The driver's key's uid, [-1] for a host or io device. *)

@@ -625,8 +625,8 @@ val submit : Submission.t -> Point.t
       write slot and of each copy's [dst], and the wait slots. Each foreign
       point not yet reached is a wait in [d]'s queue if [d]'s driver waits on
       the producer's completion ({!Driver.waits_on}) and [d] maps the producer's
-      timeline word, decided once per pair of devices; otherwise [submit] waits
-      for it now, holding no lock.
+      timeline word, decided once per pair of devices, up to {!Driver.max_waits}
+      waits; otherwise [submit] waits for it now, holding no lock.
     + Takes [d]'s {e turn}, the right to be [d]'s one submission between its
       room check and its hand-over, and asks [d]'s driver for room
       ({!Driver.room_entry}). Once the parts fit, it assigns [v], one more than
@@ -838,13 +838,13 @@ end
     OCaml forms of them, for a driver used alone, are no part of this signature.
 
     {b Calls.} The facts ({!arch}, {!budget}, {!queues}, {!completion},
-    {!waits_on}, {!blocks}) and {!capability} are read once, when the device
-    opens: a {!Fault} there is the open's [Error]. Every other call this library
-    makes on a device that is not lost is {e counted}: {!stop} waits for none of
-    them. {!stop} runs once, with no counted call inside, and after it only
-    {!free}, {!signaled} and holds' releases follow. A {!Fault} from a counted
-    call, and a failed hand-over, lose the device. {!address}, {!handle} and
-    {!host} read a region and call no library function. *)
+    {!waits_on}, {!max_waits}, {!blocks}) and {!capability} are read once, when
+    the device opens: a {!Fault} there is the open's [Error]. Every other call
+    this library makes on a device that is not lost is {e counted}: {!stop}
+    waits for none of them. {!stop} runs once, with no counted call inside, and
+    after it only {!free}, {!signaled} and holds' releases follow. A {!Fault}
+    from a counted call, and a failed hand-over, lose the device. {!address},
+    {!handle} and {!host} read a region and call no library function. *)
 module type Driver = sig
   type t
   (** The type for open devices of the driver. *)
@@ -965,6 +965,11 @@ module type Driver = sig
   val waits_on : t -> [ `Store | `Object | `Host ] -> bool
   (** [waits_on d c] is [true] iff [d]'s queues wait for a producer of
       completion [c] in the queue. Read at open. *)
+
+  val max_waits : t -> int
+  (** [max_waits d] is the most waits in [d]'s queue ({!waits_on}) one
+      submission carries, [0] or more: this library waits on the host for the
+      others, before the hand-over. Read at open. *)
 
   val blocks : t -> [ `Returns | `May_block ]
   (** [blocks d] is [`Returns] if the C room check and hand-over never block,

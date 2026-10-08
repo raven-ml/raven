@@ -48,6 +48,7 @@ module D = struct
   let sleep _ ~seen:_ ~still_ms:_ = ()
   let completion _ = `Host
   let waits_on _ _ = false
+  let max_waits _ = 0
   let blocks _ = `Returns
   let room_entry = room_entry ()
   let submit_entry = submit_entry ()

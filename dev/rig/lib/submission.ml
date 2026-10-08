@@ -30,8 +30,7 @@ external sub_new : int -> int -> int -> int -> int -> int -> int -> c
 external sub_part : c -> int -> int -> int array -> int -> unit
   = "caml_rig_sub_part"
 
-external sub_words : c -> int -> int -> int -> unit
-  = "caml_rig_sub_words"
+external sub_words : c -> int -> int -> int -> unit = "caml_rig_sub_words"
 
 external sub_fill : c -> int -> nativeint -> int -> int -> int -> unit
   = "caml_rig_sub_fill_byte" "caml_rig_sub_fill"
@@ -42,27 +41,19 @@ external sub_copy : c -> int -> nativeint * int * nativeint * int * int -> unit
 external sub_fixed : c -> int -> int -> nativeint -> bool -> unit
   = "caml_rig_sub_fixed"
 
-external sub_slot : c -> int -> int -> nativeint -> unit
-  = "caml_rig_sub_slot"
+external sub_slot : c -> int -> int -> nativeint -> unit = "caml_rig_sub_slot"
 [@@noalloc]
 
-external sub_wait_slot : c -> int -> int -> unit
-  = "caml_rig_sub_wait_slot"
+external sub_wait_slot : c -> int -> int -> unit = "caml_rig_sub_wait_slot"
 [@@noalloc]
 
 external sub_hold : c -> int -> unit = "caml_rig_sub_hold" [@@noalloc]
 external sub_collect : c -> int = "caml_rig_sub_collect"
 external sub_point : c -> int -> int = "caml_rig_sub_point" [@@noalloc]
-
-external sub_wait : c -> int -> int -> int -> int -> unit
-  = "caml_rig_sub_wait"
-
+external sub_wait : c -> int -> int -> int -> int -> unit = "caml_rig_sub_wait"
 external sub_clear : c -> unit = "caml_rig_sub_clear" [@@noalloc]
 external sub_value : c -> int = "caml_rig_sub_value" [@@noalloc]
-
-external sub_no_room_at : c -> int = "caml_rig_sub_no_room_at"
-[@@noalloc]
-
+external sub_no_room_at : c -> int = "caml_rig_sub_no_room_at" [@@noalloc]
 external sub_producer : c -> int = "caml_rig_sub_producer" [@@noalloc]
 external sub_claims : c -> int array = "caml_rig_sub_claims"
 external c_submit : c -> int = "caml_rig_submit"
@@ -99,8 +90,7 @@ let entry_of b =
   m.entry
 
 let host_address fn b =
-  if b.mem.host < 0 then
-    invalid_argf "Rig.%s: the buffer is not host memory" fn;
+  if b.mem.host < 0 then invalid_argf "Rig.%s: the buffer is not host memory" fn;
   b.mem.host + b.offset
 
 let make ?hold ~reads ~writes ~waits d parts =
@@ -145,8 +135,8 @@ let make ?hold ~reads ~writes ~waits d parts =
           if Buffer.length src <> Buffer.length dst then
             invalid_argf "Rig.%s: a copy's buffers differ in size" fn;
           if src.mem.dev != d || dst.mem.dev != d then
-            invalid_argf "Rig.%s: a copy's buffers are not %s's memory"
-              fn d.name;
+            invalid_argf "Rig.%s: a copy's buffers are not %s's memory" fn
+              d.name;
           nfixed := !nfixed + 2)
     parts;
   let c = sub_new d.c (Array.length parts) !nafter !nfixed reads writes waits in
@@ -189,8 +179,7 @@ let make ?hold ~reads ~writes ~waits d parts =
 
 let set fn s k b =
   let e = entry_of b in
-  if e.held then
-    invalid_argf "Rig.%s: the buffer's memory is in a hold" fn;
+  if e.held then invalid_argf "Rig.%s: the buffer's memory is in a hold" fn;
   sub_slot s.c k e.stamps b.mem.handle;
   s.slots.(k) <- b
 
@@ -297,32 +286,35 @@ let check_slots s =
   (match s.hold with Some h -> sub_hold s.c h.hstamps | None -> ());
   for k = 0 to Array.length s.slots - 1 do
     let b = s.slots.(k) in
-    if b == unset then
-      invalid_argf "Rig.%s: a read or write slot is unset" fn;
+    if b == unset then invalid_argf "Rig.%s: a read or write slot is unset" fn;
     Buffer.check_live fn b
   done
 
 (* Waits on the host for the foreign points [s]'s device cannot wait for in its
-   queue, adds the others to [s]'s waits, and is their number. *)
+   queue, or that its queue has no room for, adds the others to [s]'s waits, and
+   is their number. *)
 let rec waits s n i count =
   if i = n then count
   else
     let p = sub_point s.c i in
     let producer = Dev.of_index (Point.index p) and v = Point.value p in
     if v > Dev.submitted producer then
-      invalid_argf "Rig.%s: %s's value %d is not submitted" fn
-        producer.name v;
+      invalid_argf "Rig.%s: %s's value %d is not submitted" fn producer.name v;
     if Dev.is_lost producer then Dev.raise_lost producer;
     if Dev.point_reached p then waits s n (i + 1) count
     else
-      let way = pair s.dev producer in
+      let way =
+        if count = s.dev.max_waits then host_wait else pair s.dev producer
+      in
       if way = host_wait then begin
         Dev.wait producer v;
         waits s n (i + 1) count
       end
       else begin
         let kind =
-          match producer.completion with Object _ -> rig_object | _ -> rig_word
+          match producer.completion with
+          | Object _ -> rig_object
+          | _ -> rig_word
         in
         sub_wait s.c producer.index way v kind;
         waits s n (i + 1) (count + 1)
@@ -347,8 +339,8 @@ let rec hand_over s nwaits =
   end
   else if r = never then
     invalid_argf
-      "Rig.%s: the parts never fit %s's queues, or name work its \
-       driver does not run"
+      "Rig.%s: the parts never fit %s's queues, or name work its driver does \
+       not run"
       fn d.name
   else if r = producer_lost then
     Dev.raise_lost (Dev.of_index (sub_producer s.c))

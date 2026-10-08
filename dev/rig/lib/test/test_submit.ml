@@ -173,6 +173,26 @@ let in_queue ~completion =
   equal int 1 (P.run cp);
   equal int (C.Point.value b) (C.signaled consumer)
 
+(* A submission with more unreached producers than its device's queue waits on
+   in one submission waits on the host for the others: its queue gets
+   [max_waits] waits, and it completes once those are reached. *)
+let test_max_waits () =
+  let producers =
+    List.init 3 (fun i -> P.open_ (Printf.sprintf "submit:bound-producer-%d" i))
+  in
+  let consumer, cp = P.open_ ~waits_on:[ `Host ] ~max_waits:2 "submit:bound" in
+  let points = List.map (fun (d, _) -> C.submit (empty d)) producers in
+  let s = empty ~waits:3 consumer in
+  List.iteri (Sub.wait_for s) points;
+  let b = C.submit s in
+  let reached = List.filter (fun (_, p) -> P.queued p = 0) producers in
+  equal ~msg:"waits in the queue" int 2 (List.length (P.last_waits cp));
+  equal ~msg:"producers reached on the host" int 1 (List.length reached);
+  equal ~msg:"before its waits hold" int 0 (P.run cp);
+  List.iter (fun (_, p) -> ignore (P.run p)) producers;
+  equal ~msg:"once they hold" int 1 (P.run cp);
+  equal int (C.Point.value b) (C.signaled consumer)
+
 let test_in_queue () = in_queue ~completion:`Host
 let test_in_queue_object () = in_queue ~completion:`Object
 
@@ -389,6 +409,8 @@ let tests =
         test "a read waits for another device's write" test_read_waits;
         test "a part's buffers wait as slots do" test_part_points;
         test "a queue that waits on host words waits in the queue" test_in_queue;
+        test "waits beyond the queue's bound are waited for on the host"
+          test_max_waits;
         test "a queue that waits on objects waits on the producer's object"
           test_in_queue_object;
         test "a full queue's submit waits for room" test_room;

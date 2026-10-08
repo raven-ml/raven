@@ -40,6 +40,7 @@ module type Driver = sig
   val sleep : t -> seen:int -> still_ms:int -> unit
   val completion : t -> [ `Store | `Object of nativeint | `Host ]
   val waits_on : t -> [ `Store | `Object | `Host ] -> bool
+  val max_waits : t -> int
   val blocks : t -> [ `Returns | `May_block ]
   val room_entry : nativeint
   val submit_entry : nativeint
