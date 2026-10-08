@@ -5,6 +5,7 @@
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed under load 6.3 on 10 cores
+# forced: blessed image/fill under load 5.6 on 10 cores
 
 alloc/64KiB	alloc_words	exact	23
 alloc/64KiB	wall_time	batch=2048	n=20	4.569e-06	4.277e-06 4.388e-06 4.441e-06 4.529e-06 4.536e-06 4.539e-06 4.554e-06 4.555e-06 4.557e-06 4.561e-06 4.576e-06 4.596e-06 4.604e-06 4.617e-06 4.630e-06 4.639e-06 4.645e-06 4.652e-06 4.702e-06 4.706e-06
@@ -18,8 +19,8 @@ alloc/floor-64MiB	alloc_words	exact	0
 alloc/floor-64MiB	wall_time	batch=512	n=20	1.341e-05	1.279e-05 1.288e-05 1.288e-05 1.304e-05 1.306e-05 1.309e-05 1.326e-05 1.336e-05 1.341e-05 1.341e-05 1.341e-05 1.341e-05 1.369e-05 1.381e-05 1.398e-05 1.412e-05 1.444e-05 1.460e-05 1.495e-05 1.550e-05
 icb/64	alloc_words	exact	1450
 icb/64	wall_time	batch=256	n=20	2.145e-05	2.110e-05 2.110e-05 2.111e-05 2.124e-05 2.134e-05 2.139e-05 2.140e-05 2.142e-05 2.144e-05 2.144e-05 2.145e-05 2.150e-05 2.151e-05 2.151e-05 2.152e-05 2.153e-05 2.154e-05 2.176e-05 2.181e-05 2.206e-05
-image/fill	alloc_words	exact	46
-image/fill	wall_time	batch=64	n=20	7.511e-05	7.238e-05 7.288e-05 7.328e-05 7.391e-05 7.418e-05 7.452e-05 7.454e-05 7.487e-05 7.496e-05 7.506e-05 7.516e-05 7.560e-05 7.589e-05 7.606e-05 7.614e-05 7.644e-05 7.660e-05 7.721e-05 7.810e-05 7.818e-05
+image/fill	alloc_words	exact	34
+image/fill	wall_time	batch=128	n=20	7.252e-05	6.946e-05 7.048e-05 7.088e-05 7.139e-05 7.140e-05 7.143e-05 7.150e-05 7.163e-05 7.204e-05 7.235e-05 7.269e-05 7.275e-05 7.281e-05 7.334e-05 7.440e-05 7.505e-05 7.755e-05 7.987e-05 8.264e-05 8.533e-05
 image/floor	alloc_words	exact	0
 image/floor	wall_time	batch=128	n=20	7.566e-05	7.158e-05 7.328e-05 7.333e-05 7.342e-05 7.368e-05 7.379e-05 7.391e-05 7.404e-05 7.488e-05 7.521e-05 7.611e-05 7.707e-05 7.755e-05 7.788e-05 7.856e-05 7.932e-05 7.990e-05 8.058e-05 8.062e-05 8.494e-05
 launch/1	alloc_words	exact	0

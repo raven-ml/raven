@@ -7,8 +7,8 @@ let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
 (* The C side. A device is the address of its C state, as an int; a Metal object
-   is a retained pointer; a buffer is the triple of its object, GPU address and
-   host address. *)
+   is a retained pointer, a pipeline's as an int; a buffer is the triple of its
+   object, GPU address and host address. *)
 
 type buffer = nativeint * int * nativeint
 
@@ -21,9 +21,9 @@ external map_buffer : int -> nativeint -> int -> buffer option
   = "caml_device_metal_map_host"
 
 external free_buffer : int -> nativeint -> unit = "caml_device_metal_free"
-external release : nativeint -> unit = "caml_device_metal_release"
+external release : int -> unit = "caml_device_metal_release"
 
-external load : int -> string -> string * string array * nativeint array
+external load : int -> string -> string * string array * int array
   = "caml_device_metal_image"
 
 external make_icb :
@@ -226,7 +226,7 @@ let unmap d r = give_back "unmap" Mapped d r
 type image = {
   owner : int;
   names : string array;
-  pipelines : nativeint array;
+  pipelines : int array;
   mutable loaded : bool;
 }
 
@@ -239,7 +239,7 @@ let image d b =
 let entry i f =
   if not i.loaded then invalid_arg "Device_metal.entry: the image was unloaded";
   Array.find_index (String.equal f) i.names
-  |> Option.map (fun k -> Nativeint.to_int i.pipelines.(k))
+  |> Option.map (Array.get i.pipelines)
 
 let unload d i =
   if i.owner <> d.self then

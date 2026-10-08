@@ -5,10 +5,10 @@
 
 /* Opening, memory, images, indirect command buffers and the OCaml side of
    the timeline. Objective-C objects cross to OCaml as retained pointers in
-   nativeints. A stub that waits or compiles releases the runtime without
-   running pending signals, which run at the caller's next poll point; the
-   others hold it, since none blocks. Off macOS no device opens, and the
-   stubs that serve an open device are never called. */
+   nativeints, pipelines in ints. A stub that waits or compiles releases the
+   runtime without running pending signals, which run at the caller's next
+   poll point; the others hold it, since none blocks. Off macOS no device
+   opens, and the stubs that serve an open device are never called. */
 
 #define _GNU_SOURCE
 
@@ -181,11 +181,6 @@ value caml_device_metal_free(value v_d, value v_buffer) {
   return Val_unit;
 }
 
-value caml_device_metal_release(value v_object) {
-  [Object_val(v_object) release];
-  return Val_unit;
-}
-
 /* Images */
 
 /* The metallib [v_b] with a pipeline for each of its functions:
@@ -236,8 +231,7 @@ value caml_device_metal_image(value v_d, value v_b) {
       }
       v = caml_copy_string(fs[i].UTF8String);
       Store_field(names, i, v);
-      v = object(ps[i]);
-      Store_field(pipelines, i, v);
+      Store_field(pipelines, i, Val_long((intnat)ps[i]));
     }
     free(ps);
   }
@@ -245,6 +239,11 @@ value caml_device_metal_image(value v_d, value v_b) {
   if (oom) caml_raise_out_of_memory();
   why = caml_copy_string(text);
   CAMLreturn(tuple(3, why, names, pipelines));
+}
+
+value caml_device_metal_release(value v_pipeline) {
+  [(id)Long_val(v_pipeline) release];
+  return Val_unit;
 }
 
 /* Indirect command buffers */
