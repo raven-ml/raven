@@ -128,8 +128,8 @@ let answer =
     ~equal:( = )
 
 let still ?msg w x f ~ms =
-  let t0 = Sys.time () in
-  while Sys.time () -. t0 < Float.of_int ms /. 1000. do
+  let t0 = Rig.Profile.now () in
+  while Rig.Profile.now () - t0 < ms * 1_000_000 do
     equal ?msg w x (f ())
   done
 
@@ -154,9 +154,9 @@ let pages ?(read_only = false) n = pages n read_only
 
 let wait g v =
   let word = Option.get (Rig_cuda.host (Rig_cuda.word g)) in
-  let t0 = Sys.time () in
+  let t0 = Rig.Profile.now () in
   while get64 word < v do
-    if Sys.time () -. t0 > 10. then
+    if Rig.Profile.now () - t0 > 10_000_000_000 then
       failf "the word stayed at %d below %d for 10 s" (get64 word) v;
     Domain.cpu_relax ()
   done

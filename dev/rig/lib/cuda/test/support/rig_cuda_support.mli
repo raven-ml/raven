@@ -77,7 +77,7 @@ val free_memory : unit -> int
 
 val wait : Rig_cuda.t -> int -> unit
 (** [wait g v] returns once [g]'s word, read as host memory, reaches [v]. It
-    fails the test after 10 seconds of CPU time. *)
+    fails the test after 10 seconds of the host's monotonic clock. *)
 
 (** {1:checks Checks} *)
 
@@ -86,8 +86,8 @@ val answer : [ `Ok | `Failed of string ] Windtrap.testable
 
 val still :
   ?msg:string -> 'a Windtrap.testable -> 'a -> (unit -> 'a) -> ms:int -> unit
-(** [still w x f ~ms] reads [f ()] for about [ms] milliseconds of CPU time, and
-    fails the test if it is ever other than [x]. *)
+(** [still w x f ~ms] reads [f ()] for about [ms] milliseconds of the host's
+    monotonic clock, and fails the test if it is ever other than [x]. *)
 
 (** {1:host Host memory} *)
 
