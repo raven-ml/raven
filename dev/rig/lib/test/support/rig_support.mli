@@ -76,6 +76,10 @@ module Polled : sig
   (** [fault d why] makes [d]'s sleeps, allocations, mappings and loads raise
       [Fault why] from now on, as a faulted device's do. *)
 
+  val fault_word : t -> string -> unit
+  (** [fault_word d why] makes [d]'s reads of its word ([signaled]) raise
+      [Fault why] from now on, as a transport's that lost its link. *)
+
   val set_word : t -> int -> unit
   (** [set_word d v] writes [v] into [d]'s word. *)
 

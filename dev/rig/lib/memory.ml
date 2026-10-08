@@ -46,6 +46,11 @@ let check_points st =
       if Dev.is_lost d then Dev.raise_lost d)
     st
 
+(* Whether [p] is reached, as a release judges it: a device lost by the read of
+   its word has not reached it, and its memory waits for its stop. *)
+let settled p =
+  match Dev.point_reached p with r -> r | exception Dev.Lost _ -> false
+
 (* Whether every point of [st] other than [except]'s is reached. A point of a
    device a forked child inherited names its parent's work, on its parent's copy
    of the memory: it holds back nothing in the child. *)
@@ -53,7 +58,7 @@ let reached ?(except = -1) st =
   for_all_points
     (fun p ->
       let i = Point.index p in
-      i = except || Dev.inherited (Dev.of_index i) || Dev.point_reached p)
+      i = except || Dev.inherited (Dev.of_index i) || settled p)
     st
 
 (* Tokens and release lists *)
@@ -318,7 +323,7 @@ let hold_due (st, _) =
   for_all_points
     (fun p ->
       let d = Dev.of_index (Point.index p) in
-      Dev.point_reached p && ((not (Dev.is_lost d)) || Dev.stop_returned d))
+      settled p && ((not (Dev.is_lost d)) || Dev.stop_returned d))
     st
 
 (* Runs [release] as a call in flight on each device of [st] that is not
@@ -337,19 +342,32 @@ let run_release (st, release) =
   in
   Fun.protect ~finally:(fun () -> stamps_unref st) (fun () -> go !devices)
 
+(* Takes the holds whose release is due. Their points are read with no lock
+   held: a word behind a transport is read through its driver, whose fault stops
+   its device, and a stop drains. *)
+let take_due_holds () =
+  let all =
+    Lock.protect holds_lock (fun () ->
+        let l = !holds in
+        holds := [];
+        l)
+  in
+  let put_back l = Lock.protect holds_lock (fun () -> holds := l @ !holds) in
+  match List.partition hold_due all with
+  | due, later ->
+      put_back later;
+      due
+  | exception e ->
+      put_back all;
+      raise e
+
 let drain_holds () =
   if !holds <> [] then begin
-    let due =
-      Lock.protect holds_lock (fun () ->
-          let due, later = List.partition hold_due !holds in
-          holds := later;
-          due)
-    in
     let first = ref None in
     List.iter
       (fun h ->
         try run_release h with e -> if !first = None then first := Some e)
-      due;
+      (take_due_holds ());
     Option.iter raise !first
   end
 
@@ -405,6 +423,19 @@ let route d = function
   | Release { stamps; release } ->
       Lock.protect holds_lock (fun () -> holds := (stamps, release) :: !holds)
 
+type fate = Stays | Cached | Freed
+
+(* What becomes of the retiring [e] of [d]. It reads words, so no lock is held:
+   a word behind a transport is read through its driver, whose fault stops its
+   device, and a stop drains. A taken entry is the one drain's that took it. *)
+let fate d ~lost ~free_lost (e : entry) =
+  if viewed e then Stays
+  else if lost then if free_lost && reached e.stamps then Freed else Stays
+  else if e.held || is_io_memory e then
+    if reached e.stamps then Freed else Stays
+  else if reached ~except:d.index e.stamps then Cached
+  else Stays
+
 (* Takes what became due: retiring memory no bigarray reads and whose foreign
    uses are reached enters the cache, or is freed if [d] is lost and counts as
    stopped; pending releases whose value [d] reached. *)
@@ -412,30 +443,28 @@ let due d =
   let lost = Dev.is_lost d in
   let free_lost = lost && Dev.stopped d in
   let w = if lost && not free_lost then -1 else Dev.word d in
+  let retiring =
+    Dev.protect d (fun () ->
+        let l = d.retiring in
+        d.retiring <- [];
+        l)
+  in
+  let fates =
+    match List.map (fun e -> (e, fate d ~lost ~free_lost e)) retiring with
+    | fates -> fates
+    | exception x ->
+        Dev.protect d (fun () -> d.retiring <- retiring @ d.retiring);
+        raise x
+  in
   Dev.protect d (fun () ->
       let frees = ref [] in
-      d.retiring <-
-        List.filter
-          (fun e ->
-            if viewed e then true
-            else if lost then
-              if free_lost && reached e.stamps then (
-                frees := e :: !frees;
-                false)
-              else true
-            else if
-              (not e.held)
-              && (not (is_io_memory e))
-              && reached ~except:d.index e.stamps
-            then begin
-              cache d e;
-              false
-            end
-            else if (e.held || is_io_memory e) && reached e.stamps then (
-              frees := e :: !frees;
-              false)
-            else true)
-          d.retiring;
+      List.iter
+        (fun (e, f) ->
+          match f with
+          | Stays -> d.retiring <- e :: d.retiring
+          | Cached -> cache d e
+          | Freed -> frees := e :: !frees)
+        fates;
       if free_lost then begin
         Hashtbl.iter (fun _ l -> frees := l @ !frees) d.cache;
         Hashtbl.reset d.cache;

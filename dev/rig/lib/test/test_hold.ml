@@ -163,6 +163,19 @@ let test_dead () =
       ignore (C.Claim.consume c ~why:"donated" b));
   raises_match (Exn.invalid_arg ~substring:"donated") (fun () -> H.make [ b ])
 
+(* A drain that finds a hold's device behind a transport faulted when it reads
+   its word loses the device and returns: the stop the loss runs drains too, and
+   no lock of the first drain is held across the read. *)
+let test_release_transport_fault () =
+  let d, p = P.open_ ~transport:true "hold:transport" in
+  let runs = Atomic.make 0 in
+  ignore (submit_held d (B.create d 64) runs);
+  Gc.full_major ();
+  Gc.full_major ();
+  P.fault_word p "the link went down";
+  drain C.host;
+  equal (option string) (Some "the link went down") (C.lost d)
+
 (* Memory put in a hold after a submission named it is refused at the next
    submit, by a part or by a slot: work on held memory raises the hold's stamps,
    which only a submission made with the hold does. *)
@@ -222,6 +235,8 @@ let tests =
           test_release_raises;
         test "a loss during a release stops the device after it"
           test_release_counted;
+        test ~timeout:10. "a drain that finds a transport's fault returns"
+          test_release_transport_fault;
       ];
     group ~timeout "memory"
       [

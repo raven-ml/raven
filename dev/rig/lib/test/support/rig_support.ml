@@ -73,6 +73,7 @@ module Driver = struct
     mutable maps : int list;
     mutable held : (kind * int) list;
     mutable fault : string option;
+    mutable word_fault : string option;
     mutable interrupt_next : bool;
     mutable stalls : int;
     mutable gated : bool;
@@ -166,7 +167,10 @@ module Driver = struct
       visible = not d.transport;
     }
 
-  let signaled d = polled_word d.c
+  let signaled d =
+    match Mutex.protect d.lock (fun () -> d.word_fault) with
+    | Some why -> raise (Fault why)
+    | None -> polled_word d.c
 
   (* What a sleep does once its gate opens. *)
   let next d =
@@ -244,6 +248,7 @@ module Polled = struct
       maps = [];
       held = [];
       fault = None;
+      word_fault = None;
       interrupt_next = false;
       stalls = 0;
       gated = false;
@@ -265,6 +270,10 @@ module Polled = struct
   let submits d = polled_submits d.c
   let fail d = polled_fail d.c
   let fault d why = Mutex.protect d.lock (fun () -> d.fault <- Some why)
+
+  let fault_word d why =
+    Mutex.protect d.lock (fun () -> d.word_fault <- Some why)
+
   let set_word d v = polled_set_word d.c v
   let blocked d = polled_blocked d.c
 
