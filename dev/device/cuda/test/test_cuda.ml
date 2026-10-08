@@ -136,12 +136,16 @@ let round_trip (ka, kb, n, (oa, ob)) =
   equal string data (S.read (host dst) n);
   List.iter (C.free g) [ src; dst; a; b ]
 
+let past_memory () =
+  S.with_gpu @@ fun g -> is_none (C.alloc g `Device (2 * C.budget g))
+
 let memory =
   group ~timeout:120. "memory"
     [
       prop ~count:30 "copies through any two kinds of memory are the identity"
         (Gen.quad kind kind size (Gen.pair offset offset))
         round_trip;
+      test "an allocation past the GPU's memory is None" past_memory;
     ]
 
 (* Work *)
@@ -167,6 +171,27 @@ let fills_in_a_fresh_domain () =
   done;
   C.unload g m;
   C.free g out
+
+(* A kernel writes host memory through the address map_host gives for a range
+   inside a registered one, away from its start. *)
+let kernel_through_map_host () =
+  S.with_gpu @@ fun g ->
+  let m, kernel = S.kernels g in
+  let n = 1000 in
+  let p = S.pages (2 * S.page) in
+  let whole = require_some (C.map_host g p (2 * S.page)) in
+  let at = Nativeint.add p (Nativeint.of_int (S.page + 64)) in
+  let inside = require_some (C.map_host g at (4 * n)) in
+  let f =
+    S.launch (kernel "double_index") ~grid:4 ~block:256 (address inside) n
+  in
+  equal S.answer `Ok (submit g ~v:1 [| S.part g ~queue:"COMPUTE:0" f |]);
+  S.wait g 1;
+  equal (list int) (List.init n (fun i -> 2 * i)) (List.init n (S.get32 at));
+  C.unmap g inside;
+  C.unmap g whole;
+  C.unload g m;
+  S.free_pages p (2 * S.page)
 
 (* A copy on COPY:0, then a fill on COMPUTE:0 that fails: the failed value is
    still written after the copy, and so is the next one. *)
@@ -327,6 +352,8 @@ let work =
     ([
        test "a fill runs with the context current from a fresh domain"
          fills_in_a_fresh_domain;
+       test "a kernel addresses host memory where map_host says"
+         kernel_through_map_host;
        test "a failed fill is Failed and its value still drains" failed_fill;
        test "a value failed behind running work drains once it ends"
          failed_behind_work;
@@ -523,7 +550,7 @@ module Registry = struct
 
   let make () = { entries = []; regions = [] }
 
-  let map m (area, a, n) =
+  let map ?(cover = cover) m (area, a, n) =
     match area with
     | Split ->
         let inside lo = lo <= a && a + n <= lo + S.page in
@@ -586,6 +613,7 @@ module Registry = struct
     foreign : C.region;
     split : nativeint; (* pages 0 and 2 page-locked by another owner *)
     read_only : nativeint;
+    lock : Mutex.t;
     mutable live : C.region list;
   }
 
@@ -603,6 +631,7 @@ module Registry = struct
       foreign;
       split;
       read_only = S.pages ~read_only:true S.page;
+      lock = Mutex.create ();
       live = [];
     }
 
@@ -625,13 +654,14 @@ module Registry = struct
     in
     match C.map_host s.g a n with
     | Some r ->
-        s.live <- s.live @ [ r ];
+        Mutex.protect s.lock (fun () -> s.live <- s.live @ [ r ]);
         true
     | None -> false
 
   let unmap_sys s i =
     C.unmap s.g (List.nth s.live i);
-    s.live <- List.filteri (fun j _ -> j <> i) s.live
+    Mutex.protect s.lock (fun () ->
+        s.live <- List.filteri (fun j _ -> j <> i) s.live)
 
   (* CUDA holds every registered range locked, and no arena page that no
      registration shares. *)
@@ -702,12 +732,14 @@ let mapped =
   among int registry (fun m ->
       List.init (List.length m.Registry.regions) Fun.id)
 
-let registry_commands =
+(* On two domains which ranges a call finds registered depends on the order the
+   calls ran in, so the model labels nothing there. *)
+let registry_commands ~cover =
   [
     command "start" (Gen.unit @-> makes registry) Registry.make Registry.start;
     command "map_host"
       (registry ^-> Registry.range @-> returns bool)
-      Registry.map Registry.map_sys;
+      (Registry.map ~cover) Registry.map_sys;
     command "unmap"
       (registry ^-> mapped ^-> returns unit)
       Registry.unmap Registry.unmap_sys;
@@ -926,7 +958,10 @@ let stateful =
   group ~timeout:300. "stateful"
     [
       stateful ~count:100 ~steps:20 "map_host shares a host range both ways"
-        registry_commands;
+        (registry_commands ~cover);
+      stateful ~count:20 ~domains:2
+        "map_host from two domains shares a host range both ways"
+        (registry_commands ~cover:(fun _ _ -> ()));
       stateful ~count:100 ~steps:20
         "values complete in order and the word never moves backwards (sampled)"
         order_commands;
