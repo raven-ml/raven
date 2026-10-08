@@ -185,8 +185,6 @@ let wave_of reg w =
 (* The layouts a header names. *)
 let rdna4_layout = 4
 
-(* The reader holds the next 16 nibbles in [reg], the current packet's from bit
-   0, and shifts in as many as the packet before it took. *)
 (* The nibble [i] of [data], least significant first, [0] past its end. *)
 let nibble data i =
   if i lsr 1 >= String.length data then 0
