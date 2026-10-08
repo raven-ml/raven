@@ -36,10 +36,6 @@ external signaled_word : (int[@untagged]) -> (int[@untagged])
   = "caml_device_metal_signaled_byte" "caml_device_metal_signaled"
 [@@noalloc]
 
-external last : (int[@untagged]) -> (int[@untagged])
-  = "caml_device_metal_last_byte" "caml_device_metal_last"
-[@@noalloc]
-
 external sleep_word : int -> int -> int -> int = "caml_device_metal_sleep"
 external failure : int -> string = "caml_device_metal_failure"
 external stop_ring : int -> unit = "caml_device_metal_stop"
@@ -242,66 +238,6 @@ let unload d i =
   if not (Atomic.compare_and_set i.loaded true false) then
     invalid_arg "Device_metal.unload: the image was unloaded";
   Array.iter release i.pipelines
-
-(* Work *)
-
-(* A part is its device and the ints the C submit reads: nx_part's int fields in
-   its order (queue, fill, arg, ring_units, segment_bytes, copy_dst,
-   copy_dst_offset, copy_src, copy_src_offset, copy_bytes), then the [after]
-   indices. *)
-type part = { owner : int; ints : int array }
-
-let after_at = 10
-
-(* nx_edge.h's answer for a submission handed over. *)
-let nx_ok = 0
-
-let part d ~queue ?(after = [||]) w =
-  if queue <> "COMPUTE:0" then
-    invalid_argf "Device_metal.part: queue %S, expected COMPUTE:0" queue;
-  let negative i =
-    if i < 0 then invalid_argf "Device_metal.part: after index %d is negative" i
-  in
-  Array.iter negative after;
-  match w with
-  | `Fill (fill, arg, 0, 0) ->
-      let fill = Nativeint.to_int fill and arg = Nativeint.to_int arg in
-      let ints = [| 0; fill; arg; 0; 0; 0; 0; 0; 0; 0 |] in
-      { owner = d.self; ints = Array.append ints after }
-  | `Fill (_, _, units, bytes) ->
-      invalid_argf
-        "Device_metal.part: a fill declares %d ring units and %d segment \
-         bytes, expected 0 of each"
-        units bytes
-  | `Words _ -> invalid_arg "Device_metal.part: the device runs no words"
-  | `Copy _ -> invalid_arg "Device_metal.part: the device runs no copies"
-
-let room _ _ = `Fits
-
-external submit_parts : int -> int -> part array -> int
-  = "caml_device_metal_submit"
-
-let check_part self i p =
-  if p.owner <> self then
-    invalid_argf "Device_metal.submit: part %d is another device's" i;
-  for k = after_at to Array.length p.ints - 1 do
-    if p.ints.(k) >= i then
-      invalid_argf
-        "Device_metal.submit: part %d waits for part %d, expected an earlier \
-         part"
-        i p.ints.(k)
-  done
-
-let submit d ~v ~waits ~handles:_ ps =
-  let next = last d.self + 1 in
-  if v <> next then
-    invalid_argf "Device_metal.submit: value %d, expected %d" v next;
-  if Array.length waits > 0 then
-    invalid_arg "Device_metal.submit: the device waits on no word";
-  for i = 0 to Array.length ps - 1 do
-    check_part d.self i ps.(i)
-  done;
-  if submit_parts d.self v ps = nx_ok then `Ok else `Failed (failure d.self)
 
 (* Timeline and loss *)
 

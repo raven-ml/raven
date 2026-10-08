@@ -13,7 +13,7 @@
 (executable
  (name bench_metal)
  (modules bench_metal)
- (libraries device_metal device_metal_abi device_metal_bench device_metal_support thumper))
+ (libraries device_core device_metal device_metal_abi device_metal_bench device_metal_support thumper))
 
 (rule
  (alias bench)

@@ -5,10 +5,10 @@
 
 /* Submitting to a Metal device from C.
 
-   Device_metal.room and Device_metal.submit, for a caller that holds its
-   submissions in C, over the structures and codes of nx_edge.h. [self] is
-   Device_metal.self. Both are called without the OCaml runtime: they call no
-   function of it and read no OCaml value.
+   The device's room check and submit, over the structures and codes of
+   nx_edge.h: the only way work reaches the device. [self] is
+   Device_metal.self. Both are called without the OCaml runtime: they call
+   no function of it and read no OCaml value.
 
    The device runs fills only: a part with a [fill] and its [arg], on queue
    0, with no words, copy, ring units or segment bytes; a fill may start any

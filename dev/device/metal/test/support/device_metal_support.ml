@@ -31,9 +31,9 @@ external pages : int -> int = "device_metal_test_pages"
 
 (* Fills *)
 
-type arg
+type arg =
+  (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
 
-external arg_address : arg -> nativeint = "device_metal_test_arg_address"
 external failing_arg : int -> arg = "device_metal_test_failing"
 external failing_fill : unit -> nativeint = "device_metal_test_failing_fill"
 
@@ -52,8 +52,13 @@ external execute_fill : unit -> nativeint = "device_metal_test_execute_fill"
 
 type fill = { fn : nativeint; arg : arg }
 
-let part d f =
-  Device_metal.part d ~queue:"COMPUTE:0" (`Fill (f.fn, arg_address f.arg, 0, 0))
+let part f =
+  let arg = Device_core.Buffer.of_bigarray f.arg in
+  {
+    Device_core.Submission.queue = "COMPUTE:0";
+    after = [||];
+    work = Fill { fill = f.fn; arg; ring_units = 0; segment_bytes = 0 };
+  }
 
 let failing code = { fn = failing_fill (); arg = failing_arg code }
 

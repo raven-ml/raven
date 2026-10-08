@@ -136,14 +136,28 @@ let ring_tests =
 
 (* Devices
 
-   One device serves the tests that leave it healthy; a test that fails a
-   submission or stops a device opens its own. [v] is the last value
-   submitted. *)
+   Work reaches a device through nx.device, which opens it: [c] is the device
+   there, [d] the driver's. One device serves the tests that leave it healthy; a
+   test that fails a submission or stops a device opens its own, under a name of
+   its own. *)
 
-type dev = { d : Device_metal.t; mutable v : int; fill : Device_metal.image }
+type dev = { c : Device_core.t; d : Device_metal.t; fill : Device_metal.image }
+
+let names = Atomic.make 0
 
 let opened () =
-  match Device_metal.open_ 0 with Ok d -> d | Error why -> skip ~reason:why ()
+  let name = strf "METAL:test-%d" (Atomic.fetch_and_add names 1) in
+  let d = ref None in
+  let make () =
+    Result.map
+      (fun x ->
+        d := Some x;
+        x)
+      (Device_metal.open_ 0)
+  in
+  match Device_core.open_ (module Device_metal) ~name make with
+  | Ok c -> (c, Option.get !d)
+  | Error why -> skip ~reason:why ()
 
 (* The image of the fixture [fill], which Metal places itself. *)
 let load d =
@@ -153,34 +167,17 @@ let load d =
   | `Loaded i -> i
   | `Place (n, _) -> failf "the device asked to place %d bytes of code" n
 
-let dev_of d = { d; v = 0; fill = load d }
+let dev_of (c, d) = { c; d; fill = load d }
 let shared = lazy (dev_of (opened ()))
 let dev () = Lazy.force shared
 let pipeline t f = require_some (Device_metal.entry t.fill f)
 
-let submitted =
-  Testable.contramap
-    (function `Ok -> "`Ok" | `Failed why -> "`Failed " ^ why)
-    string
+(* Submits [parts] as [t]'s next value, which it is. *)
+let submit_parts t parts =
+  let s = Device_core.Submission.make ~reads:0 ~writes:0 ~waits:0 t.c parts in
+  Device_core.Point.value (Device_core.submit s)
 
-let room =
-  Testable.contramap
-    (function `Fits -> "`Fits" | `Later -> "`Later" | `Never -> "`Never")
-    string
-
-(* Submits [fills] as [t]'s next value; the fills live until it returned. *)
-let submit t fills =
-  let ps = Array.map (S.part t.d) fills in
-  equal room `Fits (Device_metal.room t.d ps);
-  t.v <- t.v + 1;
-  let r = Device_metal.submit t.d ~v:t.v ~waits:[||] ~handles:[||] ps in
-  ignore (Sys.opaque_identity fills);
-  r
-
-let submit_ok t fills =
-  equal submitted `Ok (submit t fills);
-  t.v
-
+let submit t fills = submit_parts t (Array.map S.part fills)
 let alloc t n = require_some (Device_metal.alloc t.d `Device n)
 let host r = require_some (Device_metal.host r)
 let gpu r = require_some (Device_metal.address r)
@@ -212,7 +209,7 @@ let prefix_completion parts =
   let chunk = 64 in
   let out = alloc t (n * 4 * chunk * 4)
   and args = alloc t (n * 4 * args_bytes) in
-  let first = t.v + 1 in
+  let first = Device_core.submitted t.c + 1 in
   cover "an empty submission" (List.mem [] parts);
   cover "a submission of several fills"
     (List.exists (fun p -> List.length p > 1) parts);
@@ -229,7 +226,7 @@ let prefix_completion parts =
       ps
     |> Array.of_list
   in
-  List.iteri (fun s ps -> ignore (submit_ok t (fills s ps))) parts;
+  List.iteri (fun s ps -> ignore (submit t (fills s ps))) parts;
   let complete w =
     List.iteri
       (fun s ps ->
@@ -247,7 +244,7 @@ let prefix_completion parts =
     let w = Device_metal.signaled t.d in
     at_least int ~than:seen w;
     complete w;
-    if w < t.v then poll w
+    if w < Device_core.submitted t.c then poll w
   in
   poll (first - 1);
   Device_metal.free t.d out;
@@ -263,7 +260,7 @@ let split_times k =
   let f = fill_dispatch t ~args ~at:0 ~out:(gpu out) ~c:1 64 in
   S.split f t.d k ~times:(host times);
   let before = S.uptime () in
-  let v = submit_ok t [| f |] in
+  let v = submit t [| f |] in
   S.wait t.d v;
   let after = S.uptime () in
   let at i = Int64.to_int (S.get64 (host times) i) in
@@ -288,7 +285,7 @@ let many_splits () =
   let out = alloc t 256 and args = alloc t args_bytes in
   let f = fill_dispatch t ~args ~at:0 ~out:(gpu out) ~c:5 64 in
   S.split f t.d 1100 ~times:0;
-  S.wait t.d (submit_ok t [| f |]);
+  S.wait t.d (submit t [| f |]);
   equal bool true (filled out ~c:5 64);
   List.iter (Device_metal.free t.d) [ out; args ]
 
@@ -296,7 +293,7 @@ let fresh_allocation () =
   let t = dev () in
   let out = alloc t (1 lsl 20) and args = alloc t args_bytes in
   let f = fill_dispatch t ~args ~at:0 ~out:(gpu out) ~c:9 256 in
-  S.wait t.d (submit_ok t [| f |]);
+  S.wait t.d (submit t [| f |]);
   equal bool true (filled out ~c:9 256);
   List.iter (Device_metal.free t.d) [ out; args ]
 
@@ -307,13 +304,13 @@ let several_fills () =
   let step =
     S.dispatch ~pipeline:(pipeline t "step") ~offset:0 args ~groups:1 ~threads:1
   in
-  S.wait t.d (submit_ok t [| first; step; step; step |]);
+  S.wait t.d (submit t [| first; step; step; step |]);
   equal int 4 (S.get32 (host out) 0);
   List.iter (Device_metal.free t.d) [ out; args ]
 
 let empty_submission () =
   let t = dev () in
-  let v = submit_ok t [||] in
+  let v = submit t [||] in
   S.wait t.d v;
   equal int v (Device_metal.signaled t.d)
 
@@ -323,7 +320,7 @@ let empty_submission () =
 let released_buffer () =
   let t = dev () in
   let f, w = S.watching () in
-  S.wait t.d (submit_ok t [| f |]);
+  S.wait t.d (submit t [| f |]);
   while S.alive w do
     Domain.cpu_relax ()
   done
@@ -332,15 +329,14 @@ let failing_fill () =
   let t = dev_of (opened ()) in
   let out = alloc t 256 and args = alloc t args_bytes in
   let ok = fill_dispatch t ~args ~at:0 ~out:(gpu out) ~c:2 64 in
-  let reached = submit_ok t [| ok |] in
-  let failed = submit t [| ok; S.failing 7 |] in
-  equal submitted (`Failed "running a fill: it returned 7") failed;
-  S.wait t.d reached;
-  raises (Device_metal.Fault "running a fill: it returned 7") (fun () ->
+  let reached = submit t [| ok |] in
+  let why = "running a fill: it returned 7" in
+  raises_match
+    (function Device_core.Lost (_, w) -> String.equal w why | _ -> false)
+    (fun () -> submit t [| ok; S.failing 7 |]);
+  raises (Device_metal.Fault why) (fun () ->
       Device_metal.sleep t.d ~seen:reached ~still_ms:10);
-  equal int reached (Device_metal.signaled t.d);
-  equal submitted (`Failed "running a fill: it returned 7") (submit t [| ok |]);
-  equal int reached (Device_metal.signaled t.d)
+  S.wait t.d (reached + 1)
 
 let work =
   group ~timeout:60. "work"
@@ -360,7 +356,10 @@ let work =
         many_splits;
       test "a submission's command buffer is released once it completed"
         released_buffer;
-      test "a failed fill stops the word before its value" failing_fill;
+      test
+        "a failed fill loses the device with its reason, and stop brings the \
+         word to its value"
+        failing_fill;
     ]
 
 (* Indirect command buffers *)
@@ -372,7 +371,7 @@ let icb t args ds =
   (Device_metal.capability t.d).icb (Device_metal.handle args) ds
 
 let run_icb t (b : Device_metal_abi.icb) pipelines =
-  S.wait t.d (submit_ok t [| S.execute b ~pipelines |])
+  S.wait t.d (submit t [| S.execute b ~pipelines |])
 
 let chain n =
   let t = dev () in
@@ -483,7 +482,7 @@ let shared_both_ways (offset, pages) =
   let f =
     S.dispatch ~pipeline:bump args ~groups:((n + 255) / 256) ~threads:256
   in
-  S.wait t.d (submit_ok t [| f |]);
+  S.wait t.d (submit t [| f |]);
   for i = 0 to n - 1 do
     if S.get8 p i <> (i mod 251) + 1 then
       failf "byte %d reads %d, not %d" i (S.get8 p i) ((i mod 251) + 1)
@@ -510,7 +509,7 @@ let misused_regions () =
   invalid (fun () -> Device_metal.free t.d m);
   invalid (fun () -> Device_metal.alloc t.d `Device 0);
   invalid (fun () -> Device_metal.map_host t.d (S.pages page) 0);
-  let other = opened () in
+  let _, other = opened () in
   let o = require_some (Device_metal.alloc other `Device 64) in
   invalid (fun () -> Device_metal.free t.d o);
   equal bool false (Device_metal.peer t.d other);
@@ -526,7 +525,7 @@ let given_back () =
   let m = require_some (Device_metal.map_host t.d (S.pages page) page) in
   let wr = S.weak (Device_metal.handle r)
   and wm = S.weak (Device_metal.handle m) in
-  S.wait t.d (submit_ok t [||]);
+  S.wait t.d (submit t [||]);
   Device_metal.free t.d r;
   Device_metal.free t.d m;
   equal bool ~msg:"allocation" false (S.alive wr);
@@ -575,7 +574,7 @@ let entries () =
 let unloaded_twice () =
   let t = dev () in
   let i = load t.d in
-  let other = opened () in
+  let _, other = opened () in
   raises_match Exn.invalid_arg (fun () -> Device_metal.unload other i);
   Device_metal.unload t.d i;
   raises_match Exn.invalid_arg (fun () -> Device_metal.unload t.d i);
@@ -639,13 +638,13 @@ let images =
 
 let sleep_seen () =
   let t = dev () in
-  let v = submit_ok t [||] in
+  let v = submit t [||] in
   S.wait t.d v;
   Device_metal.sleep t.d ~seen:(v - 1) ~still_ms:600_000
 
 let stopped_idle () =
   let t = dev_of (opened ()) in
-  let v = submit_ok t [||] in
+  let v = submit t [||] in
   S.wait t.d v;
   Device_metal.stop t.d;
   equal int v (Device_metal.signaled t.d)
@@ -657,7 +656,7 @@ let stopped_running () =
   let spin = pipeline t "spin" in
   let b = require_ok (icb t args [| dispatch spin |]) in
   let w = S.weak b.handle in
-  let v = submit_ok t [| S.execute b ~pipelines:[| spin |] |] in
+  let v = submit t [| S.execute b ~pipelines:[| spin |] |] in
   Device_metal.stop t.d;
   S.wait t.d v;
   equal bool true (S.get32 (host out) 0 <> 0);
@@ -680,7 +679,7 @@ let timeline =
 
 let two_devices () =
   let a = dev_of (opened ()) and b = dev_of (opened ()) in
-  S.wait a.d (submit_ok a [||]);
+  S.wait a.d (submit a [||]);
   equal int 1 (Device_metal.signaled a.d);
   equal int 0 (Device_metal.signaled b.d)
 
@@ -690,38 +689,29 @@ let apple_align () =
     skip ~reason:"the GPU is of a Mac family" ();
   equal int 4 (Device_metal.capability t.d).align
 
-let misused_work () =
+(* Work the room refuses: words, and a fill that declares room. *)
+let refused_work () =
   let t = dev () in
-  let invalid f = raises_match Exn.invalid_arg f in
-  let part w = Device_metal.part t.d ~queue:"COMPUTE:0" w in
-  let r = alloc t 64 in
-  invalid (fun () -> part (`Words [| 0 |]));
-  invalid (fun () -> part (`Copy ((r, 0), (r, 8), 8)));
-  invalid (fun () -> part (`Fill (0n, 0n, 1, 0)));
-  invalid (fun () -> part (`Fill (0n, 0n, 0, 64)));
-  invalid (fun () ->
-      Device_metal.part t.d ~queue:"COPY:0" (`Fill (0n, 0n, 0, 0)));
-  invalid (fun () ->
-      Device_metal.part t.d ~queue:"COMPUTE:0" ~after:[| -1 |]
-        (`Fill (0n, 0n, 0, 0)));
-  let v = t.v + 1 in
-  let submit ?(waits = [||]) ~v ps =
-    Device_metal.submit t.d ~v ~waits ~handles:[||] ps
+  let refused work =
+    let part =
+      { Device_core.Submission.queue = "COMPUTE:0"; after = [||]; work }
+    in
+    raises_match Exn.invalid_arg (fun () -> submit_parts t [| part |])
   in
-  invalid (fun () -> submit ~v:(v + 1) [||]);
-  invalid (fun () -> submit ~v:0 [||]);
-  invalid (fun () -> submit ~v ~waits:[| (`Word, 0, 1) |] [||]);
-  let forward =
-    Device_metal.part t.d ~queue:"COMPUTE:0" ~after:[| 0 |]
-      (`Fill (0n, 0n, 0, 0))
+  let fill = (S.part (S.failing 0)).work in
+  let declaring ~units ~bytes =
+    match fill with
+    | Fill f ->
+        Device_core.Submission.Fill
+          { f with ring_units = units; segment_bytes = bytes }
+    | w -> w
   in
-  invalid (fun () -> submit ~v [| forward |]);
-  let other = opened () in
-  let fill =
-    Device_metal.part other ~queue:"COMPUTE:0" (`Fill (0n, 0n, 0, 0))
-  in
-  invalid (fun () -> submit ~v [| fill |]);
-  Device_metal.free t.d r
+  refused (Words (Device_core.Buffer.create Device_core.host 4));
+  refused (declaring ~units:1 ~bytes:0);
+  refused (declaring ~units:0 ~bytes:64);
+  let v = submit t [||] in
+  S.wait t.d v;
+  equal int v (Device_metal.signaled t.d)
 
 let opening =
   group ~timeout:60. "opening"
@@ -737,8 +727,10 @@ let opening =
             (List.map Device_metal.device_name [ 0; 1; 7 ]));
       test "two opens are two devices, each with its own word" two_devices;
       test "an Apple GPU aligns arguments to 4 bytes" apple_align;
-      test "parts and submissions refuse what the device does not run"
-        misused_work;
+      test
+        "the room refuses words and fills that declare room, and the device \
+         runs on"
+        refused_work;
       test "off macOS no device opens" (fun () ->
           if S.macos then skip ~reason:"macOS" ();
           equal int 0 (Device_metal.count ());

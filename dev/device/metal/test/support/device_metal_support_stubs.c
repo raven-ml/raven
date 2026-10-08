@@ -4,8 +4,7 @@
   ---------------------------------------------------------------------------*/
 
 /* Fills, as compiled code would write them, and probes of Metal objects
-   and host memory. A fill's argument is C memory that its custom block
-   frees. Objective-C on macOS; elsewhere no device opens and nothing here
+   and host memory. A fill's argument is a bigarray's C memory. Objective-C on macOS; elsewhere no device opens and nothing here
    is called. Every stub holds the runtime: none blocks. */
 
 #define _GNU_SOURCE
@@ -18,7 +17,7 @@
 
 #define CAML_NAME_SPACE
 #include <caml/alloc.h>
-#include <caml/custom.h>
+#include <caml/bigarray.h>
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
@@ -66,28 +65,15 @@ value device_metal_test_macos(value unit) {
 
 /* Fills */
 
-#define Arg_val(v) (*(void **)Data_custom_val(v))
+#define Arg_val(v) Caml_ba_data_val(v)
 
-static void finalize_arg(value v) { free(Arg_val(v)); }
-
-static struct custom_operations arg_ops = {
-    "device_metal_test.arg",    finalize_arg,
-    custom_compare_default,     custom_hash_default,
-    custom_serialize_default,   custom_deserialize_default,
-    custom_compare_ext_default, custom_fixed_length_default,
-};
-
-/* A block owning [n] zeroed bytes of C memory, the argument of a fill. */
+/* [n] zeroed bytes of C memory as a bigarray, the argument of a fill: the
+   suite hands it to nx.device as a host buffer. */
 static value arg(size_t n) {
-  value v = caml_alloc_custom(&arg_ops, sizeof(void *), 0, 1);
-  void *p = calloc(1, n);
-  if (p == NULL) caml_raise_out_of_memory();
-  Arg_val(v) = p;
+  value v = caml_ba_alloc_dims(CAML_BA_UINT8 | CAML_BA_C_LAYOUT, 1, NULL,
+                               (intnat)n);
+  memset(Caml_ba_data_val(v), 0, n);
   return v;
-}
-
-value device_metal_test_arg_address(value v_arg) {
-  return caml_copy_nativeint((intnat)Arg_val(v_arg));
 }
 
 /* A fill that returns [code]. */

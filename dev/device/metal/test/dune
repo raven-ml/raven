@@ -1,5 +1,5 @@
 (test
  (name test_metal)
- (libraries device_metal device_metal_abi device_metal_support windtrap)
+ (libraries device_core device_metal device_metal_abi device_metal_support windtrap)
  (deps
   (source_tree fixtures)))

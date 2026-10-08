@@ -74,9 +74,9 @@ val pages : int -> int
 type fill
 (** The type for fills and their arguments, which live as long as the value. *)
 
-val part : Device_metal.t -> fill -> Device_metal.part
-(** [part d f] is [f] as a part of [d]'s queue. The caller keeps [f] until the
-    part's submission returned. *)
+val part : fill -> Device_core.Submission.part
+(** [part f] is [f] as a part of a Metal device's queue, its argument a host
+    buffer. *)
 
 val failing : int -> fill
 (** [failing code] returns [code] and encodes nothing. *)

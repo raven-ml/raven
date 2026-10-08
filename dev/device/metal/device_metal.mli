@@ -13,46 +13,44 @@
     every region the device allocates is the host's memory too, at the same
     bytes.
 
-    A device used alone, waiting for an empty submission:
+    A device opened through nx.device, running an empty submission:
     {[
-    let d = Result.get_ok (Device_metal.open_ 0) in
-    match Device_metal.room d [||] with
-    | `Fits -> (
-        match Device_metal.submit d ~v:1 ~waits:[||] ~handles:[||] [||] with
-        | `Ok ->
-            let rec wait () =
-              let seen = Device_metal.signaled d in
-              if seen < 1 then (
-                Device_metal.sleep d ~seen ~still_ms:200;
-                wait ())
-            in
-            wait ()
-        | `Failed why -> prerr_endline why)
-    | `Later | `Never -> prerr_endline "no room"
+    let d =
+      Device_core.open_
+        (module Device_metal)
+        ~name:(Device_metal.device_name 0)
+        (fun () -> Device_metal.open_ 0)
+      |> Result.get_ok
+    in
+    let s = Device_core.Submission.make ~reads:0 ~writes:0 ~waits:0 d [||] in
+    Device_core.wait d (Device_core.Point.value (Device_core.submit s))
     ]}
 
-    {b Submissions.} A submission is a list of {e parts} for the device's one
-    queue, ["COMPUTE:0"] ({!val-part}), possibly empty. A part is a {e fill}, a
-    C function that encodes Metal work into a compute command encoder the device
-    gives it. {!submit} runs the fills in order, each in an encoder that waits
-    for the encoders before it, commits the submission's command buffers and
-    returns. It does not wait for the work. Metal calls a handler of the device
-    on one of its own threads once each command buffer completed, successfully
-    or not ([addCompletedHandler:]). The handlers write [v] into the word once
-    every command buffer of the submissions up to [v] completed without failure,
-    whatever order they complete in. Only the handlers and {!stop} write the
-    word.
+    {b Submissions.} Work reaches the device in C, through {!room_entry} and
+    {!submit_entry}, over [nx_edge.h]'s structures. A submission is a list of
+    {e parts} for the device's one queue, ["COMPUTE:0"], possibly empty. A part
+    is a {e fill}, a C function that encodes Metal work into a compute command
+    encoder the device gives it ({!Device_metal_abi}); it declares no ring units
+    or segment bytes. The device runs no words and no copies, and waits on no
+    other device's word. The submit runs the fills in order, each in an encoder
+    that waits for the encoders before it, commits the submission's command
+    buffers and returns. It does not wait for the work. Metal calls a handler of
+    the device on one of its own threads once each command buffer completed,
+    successfully or not ([addCompletedHandler:]). The handlers write [v] into
+    the word once every command buffer of the submissions up to [v] completed
+    without failure, whatever order they complete in. Only the handlers and
+    {!stop} write the word.
 
     {b Failures.} A submission fails at once if a fill returns a failure, if
     Metal makes no command buffer or no encoder, or if Metal raises an
-    exception; {!submit} then answers [`Failed]. It fails later if Metal reports
-    one of its command buffers failed, such as one Metal aborts because it ran
-    too long ([MTLCommandBufferErrorTimeout]) or kept the GPU from the display.
-    Either way the word stops: it never reaches the failed submission's value,
-    nor any later one, until {!stop}. Once the device recorded a failure,
-    {!sleep} raises {!exception-Fault} with its reason and every {!submit}
-    answers it and runs nothing. A long command buffer is no failure: a wait
-    lasts until the work completes or Metal reports it failed.
+    exception; the submit then answers [NX_FAILED] with the reason. It fails
+    later if Metal reports one of its command buffers failed, such as one Metal
+    aborts because it ran too long ([MTLCommandBufferErrorTimeout]) or kept the
+    GPU from the display. Either way the word stops: it never reaches the failed
+    submission's value, nor any later one, until {!stop}. Once the device
+    recorded a failure, {!sleep} raises {!exception-Fault} with its reason and
+    every submit answers it and runs nothing. A long command buffer is no
+    failure: a wait lasts until the work completes or Metal reports it failed.
 
     {b Compiled code.} Code compiled for the device reaches it through its
     {!val-capability}, the record {!Device_metal_abi.t}: indirect command
@@ -60,14 +58,14 @@
     argument alignment. The fill's calling convention is stated there.
 
     {b Domains.} Any domain may call any function, at the same time as others,
-    with three exceptions. {!room} and {!submit} are called one at a time: the
-    caller holds the device's {e turn} from {!room} to the end of {!submit}.
-    {!stop} is called once, after every other call returned. After {!stop} only
-    {!free} and the release of an indirect command buffer are called. These
-    rules are the caller's; the device does not check them. {!sleep} may run
-    while another domain submits. A region or an image is given back once: of
-    two {!free}s or {!unload}s of one value, from any domains, one gives it back
-    and the other raises [Invalid_argument].
+    with three exceptions. The C room and submit are called one at a time: the
+    caller holds the device's {e turn} from a room check to the end of the
+    submit it precedes. {!stop} is called once, after every other call returned.
+    After {!stop} only {!free} and the release of an indirect command buffer are
+    called. These rules are the caller's; the device does not check them.
+    {!sleep} may run while another domain submits. A region or an image is given
+    back once: of two {!free}s or {!unload}s of one value, from any domains, one
+    gives it back and the other raises [Invalid_argument].
 
     {b Platforms.} A device opens on macOS 15 and later: its queue keeps every
     region resident through a residency set, which Metal has from macOS 15
@@ -154,7 +152,7 @@ val waits_on : t -> [ `Store | `Object | `Host ] -> bool
     the host. *)
 
 val blocks : t -> [ `Returns | `May_block ]
-(** [blocks d] is [`May_block]: {!submit} calls Metal, and waits for [d]'s
+(** [blocks d] is [`May_block]: the submit calls Metal, and waits for [d]'s
     oldest command buffer to complete when 1,024 of them are uncommitted or
     uncompleted, as many as [d]'s queue holds. *)
 
@@ -192,8 +190,7 @@ type region
 val alloc : t -> [ `Device | `Pinned | `Mapped ] -> int -> region option
 (** [alloc d kind n] is a region of [n] bytes of [d], or [None] if Metal has no
     memory for it. Every kind is the same shared memory. The region is resident
-    for the work of every submission whose {!submit} starts after [alloc]
-    returned.
+    for the work of every submission whose submit starts after [alloc] returned.
 
     The region's GPU and host addresses are multiples of 256 bytes. Apple
     documents no alignment for a buffer's first byte, so the device checks the
@@ -278,69 +275,24 @@ val unload : t -> image -> unit
 
 (** {1:work Work} *)
 
-type part
-(** The type for work on the device's queue. *)
-
-val part :
-  t ->
-  queue:string ->
-  ?after:int array ->
-  [ `Words of int array
-  | `Fill of nativeint * nativeint * int * int
-  | `Copy of (region * int) * (region * int) * int ] ->
-  part
-(** [part d ~queue ~after w] is the work [w] on [queue]. The device runs one
-    kind: [`Fill (f, arg, 0, 0)], the fill at address [f], called with [arg]
-    ({!Device_metal_abi}). A fill declares no room: its ring units and segment
-    bytes are [0].
-
-    [after] (defaults to [[||]]) lists the earlier parts of the submission this
-    part waits for. The device runs a submission's parts in order, each after
-    the one before, so [after] adds nothing to that order.
-
-    Raises [Invalid_argument] if [queue] is not ["COMPUTE:0"], if [w] is
-    [`Words] or [`Copy], which the device does not run (its memory is the
-    host's, which copies it), if a fill declares ring units or segment bytes, or
-    if an index of [after] is negative. *)
-
-val room : t -> part array -> [ `Fits | `Later | `Never ]
-(** [room d ps] is [`Fits]: {!submit} takes any parts {!val-part} makes, waiting
-    inside for command buffers when the queue is full. The C form answers
-    [NX_NEVER] for a part that is no fill or declares room, which {!val-part}
-    never makes. *)
-
-val submit :
-  t ->
-  v:int ->
-  waits:([ `Word | `Object ] * int * int) array ->
-  handles:nativeint array ->
-  part array ->
-  [ `Ok | `Failed of string ]
-(** [submit d ~v ~waits ~handles ps] runs [ps] in order as the work of value
-    [v], after [d]'s earlier work: each fill in a compute encoder of its own,
-    which runs after the encoders before it. It returns once every command
-    buffer of [v] is committed, and [v] is observable in {!word} once they all
-    completed. With no part, [v] is observable once the work before it
-    completed. [handles] is ignored: every region of [d] is resident.
-
-    The caller holds [d]'s turn (Domains, above) and calls {!room} before.
-
-    The result is [`Failed why] if the submission failed at once, or if [d]
-    recorded a failure before; then [ps] did not run (Failures, above).
-
-    Raises [Invalid_argument] if [v] is not the value after the last one
-    [submit] received ([1] first), if [waits] is not empty, or if an [after]
-    index of a part is not below its own. It releases the domain lock while it
-    runs. *)
-
 val room_entry : nativeint
-(** [room_entry] is the address of [device_metal_room], {!room} for C, with the
-    prototype [device_metal.h] states. *)
+(** [room_entry] is the address of [device_metal_room], in the shape
+    [nx_room_fn] of [nx_edge.h]. It answers [NX_NEVER] for a part that is no
+    fill on queue [0] or declares ring units or segment bytes, and [NX_FITS]
+    otherwise: the submit waits inside for command buffers when the queue is
+    full. *)
 
 val submit_entry : nativeint
-(** [submit_entry] is the address of [device_metal_submit], {!submit} for C,
-    with the prototype [device_metal.h] states. It calls no function of the
-    OCaml runtime: its caller releases the domain lock. *)
+(** [submit_entry] is the address of [device_metal_submit], in the shape
+    [nx_submit_fn] of [nx_edge.h]: it runs the parts as the work of [v], the
+    value after the last one it received, and answers [NX_OK] once every command
+    buffer of [v] is committed; [v] is observable in {!word} once they all
+    completed. With no part, [v] is observable once the work before it
+    completed. Its waits are none and its handles are ignored: every region of
+    the device is resident. [NX_FAILED] if the submission failed at once, or if
+    the device recorded a failure before; then the parts did not run (Failures,
+    above). It calls no function of the OCaml runtime: its caller releases the
+    domain lock. *)
 
 (** {1:timeline Timeline} *)
 
@@ -349,7 +301,7 @@ val word : t -> region
     unsigned 64-bit integer in the host's byte order, the last value [v] such
     that every submission up to [v] completed without failure. The device's
     handlers write it with release order, and never lower it. Once {!stop} was
-    called and no work of [d] is in flight, it holds the last value {!submit}
+    called and no work of [d] is in flight, it holds the last value the submit
     received, whatever that work did. It lives while the process runs. *)
 
 val signaled : t -> int
@@ -381,13 +333,13 @@ val stop : t -> unit
 (** [stop d] stops [d] without waiting.
 
     If every command buffer [d] committed completed, it writes the last value
-    {!submit} received into {!word} and releases [d]'s queue; no work of [d]
+    the submit received into {!word} and releases [d]'s queue; no work of [d]
     writes memory again.
 
     Otherwise the work still in flight may write memory as long as it runs, and
     [d] keeps its queue. Metal calls a handler for every committed command
     buffer once it completed, failed ones included; once the last command buffer
-    [d] committed completed, its handler writes the last value {!submit}
+    [d] committed completed, its handler writes the last value the submit
     received into {!word}, whatever that work did.
 
     Regions end at {!free}, which may follow. *)

@@ -3,14 +3,14 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The Mac's GPU through the driver, each row beside the raw Metal calls that
-   bound it, made on a queue of their own: a release by a commit and a wait; a
-   launch from an indirect command buffer by the same indirect command buffer
-   and by the same dispatches encoded directly; memory and images by the Metal
-   objects they make. A row waits by spinning on the word, except the rows of
-   [sleep], which block in the driver's [sleep] while spinning threads hold
-   every core. Each case opens its device in its own worker, so that no process
-   forks after Metal started. *)
+(* The Mac's GPU through the driver, its work submitted through nx.device, each
+   row beside the raw Metal calls that bound it, made on a queue of their own: a
+   release by a commit and a wait; a launch from an indirect command buffer by
+   the same indirect command buffer and by the same dispatches encoded directly;
+   memory and images by the Metal objects they make. A row waits by spinning on
+   the word, except the rows of [sleep], which block in the driver's [sleep]
+   while spinning threads hold every core. Each case opens its device in its own
+   worker, so that no process forks after Metal started. *)
 
 module M = Device_metal
 module S = Device_metal_support
@@ -34,11 +34,18 @@ external default_class : unit -> unit = "device_metal_bench_default_class"
 external load_start : int -> unit = "device_metal_bench_load_start"
 external load_stop : unit -> unit = "device_metal_bench_load_stop"
 
+let strf = Printf.sprintf
 let metallib = S.fixture ~dir:"../test/fixtures" "fill"
 let kib = 1024
 let mib = 1024 * kib
 
-type dev = { d : M.t; mutable v : int; step : int; args : M.region }
+type dev = {
+  c : Device_core.t;
+  d : M.t;
+  mutable v : int;
+  step : int;
+  args : M.region;
+}
 
 let get = function Ok x -> x | Error why -> failwith why
 let alloc t n = Option.get (M.alloc t.d `Device n)
@@ -49,29 +56,44 @@ let load d =
   | `Loaded i -> i
   | `Place _ -> failwith "Metal asked to place its code"
 
-(* A device whose argument buffer points [step] at a word of its own. *)
+let opens = ref 0
+
+(* A device opened through nx.device, whose argument buffer points [step] at a
+   word of its own. *)
 let dev () =
-  let d = get (M.open_ 0) in
+  incr opens;
+  let d = ref None in
+  let make () =
+    Result.map
+      (fun x ->
+        d := Some x;
+        x)
+      (M.open_ 0)
+  in
+  let c =
+    get (Device_core.open_ (module M) ~name:(strf "METAL:bench-%d" !opens) make)
+  in
+  let d = Option.get !d in
   let image = load d in
   let step = Option.get (M.entry image "step") in
   let args = Option.get (M.alloc d `Device 16) in
-  let t = { d; v = 0; step; args } in
+  let t = { c; d; v = 0; step; args } in
   S.set64 (host args) 0 (Int64.of_int (Option.get (M.address (alloc t 16))));
   t
 
-let submit t ps =
-  t.v <- t.v + 1;
-  match M.submit t.d ~v:t.v ~waits:[||] ~handles:[||] ps with
-  | `Ok -> ()
-  | `Failed why -> failwith why
+(* The prepared submission of [parts] on [t]. *)
+let prepare t parts =
+  Device_core.Submission.make ~reads:0 ~writes:0 ~waits:0 t.c parts
+
+let submit t s = t.v <- Device_core.Point.value (Device_core.submit s)
 
 let wait t =
   while M.signaled t.d < t.v do
     Domain.cpu_relax ()
   done
 
-let run t ps =
-  submit t ps;
+let run t s =
+  submit t s;
   wait t
 
 (* A part running an indirect command buffer of [n] dispatches of [step]. *)
@@ -88,12 +110,12 @@ let launch t n =
     get ((M.capability t.d).icb (M.handle t.args) (Array.make n dispatch))
   in
   let f = S.execute b ~pipelines:[| t.step |] in
-  (f, [| S.part t.d f |])
+  (f, prepare t [| S.part f |])
 
 (* A part dispatching [step] once, directly. *)
 let step t =
   let f = S.dispatch ~pipeline:t.step t.args ~groups:1 ~threads:1 in
-  (f, [| S.part t.d f |])
+  (f, prepare t [| S.part f |])
 
 let stepping () =
   let t = dev () in
@@ -103,19 +125,23 @@ let row name setup f = Thumper.bench_with_setup ~setup name f
 let floor () = floor metallib
 
 let release_rows =
+  let empty () =
+    let t = dev () in
+    (t, prepare t [||])
+  in
   Thumper.group "release"
     [
-      row "driver" dev (fun t -> run t [||]);
+      row "driver" empty (fun (t, s) -> run t s);
       row "floor" floor (fun f -> floor_release f 1);
-      row "pipelined-256" dev (fun t ->
+      row "pipelined-256" empty (fun (t, s) ->
           for _ = 1 to 256 do
-            submit t [||]
+            submit t s
           done;
           wait t);
       row "floor-pipelined-256" floor (fun f -> floor_release f 256);
-      row "after-idle-20ms" dev (fun t ->
+      row "after-idle-20ms" empty (fun (t, s) ->
           M.sleep t.d ~seen:t.v ~still_ms:20;
-          run t [||]);
+          run t s);
     ]
 
 let launch_rows =
@@ -134,13 +160,13 @@ let launch_rows =
   in
   Thumper.group "launch"
     [
-      row "1" (launched 1) (fun (t, (_, ps)) -> run t ps);
-      row "64" (launched 64) (fun (t, (_, ps)) -> run t ps);
+      row "1" (launched 1) (fun (t, (_, s)) -> run t s);
+      row "64" (launched 64) (fun (t, (_, s)) -> run t s);
       row "floor-icb-1" (indirect 1) (fun (f, b) -> floor_execute f b 1);
       row "floor-icb-64" (indirect 64) (fun (f, b) -> floor_execute f b 64);
       row "floor-1" floor (fun f -> floor_launch f 1);
       row "floor-64" floor (fun f -> floor_launch f 64);
-      row "1-live-4096" live (fun (t, (_, ps), _) -> run t ps);
+      row "1-live-4096" live (fun (t, (_, s), _) -> run t s);
     ]
 
 let split_rows =
@@ -148,11 +174,11 @@ let split_rows =
     let t = dev () in
     let f = S.dispatch ~pipeline:t.step t.args ~groups:1 ~threads:1 in
     S.split f t.d 64 ~times:(host (alloc t (16 * 64)));
-    (t, f, [| S.part t.d f |])
+    (t, f, prepare t [| S.part f |])
   in
   Thumper.group "split"
     [
-      row "64" splitting (fun (t, _, ps) -> run t ps);
+      row "64" splitting (fun (t, _, s) -> run t s);
       row "floor-64" floor (fun f -> floor_buffers f 65);
     ]
 
@@ -165,10 +191,10 @@ let alloc_rows =
       n_row "64MiB" (64 * mib);
       floor_row "floor-64KiB" (64 * kib);
       floor_row "floor-64MiB" (64 * mib);
-      row "first-use-64MiB" stepping (fun (t, (_, ps)) ->
+      row "first-use-64MiB" stepping (fun (t, (_, s)) ->
           let r = alloc t (64 * mib) in
           S.set64 (host t.args) 0 (Int64.of_int (Option.get (M.address r)));
-          run t ps;
+          run t s;
           M.free t.d r);
     ]
 
@@ -228,8 +254,8 @@ let sleep_rows =
   Thumper.group "sleep"
     [
       Thumper.bench_with_setup ~setup:(loaded stepping) ~teardown "under-load"
-        (fun (t, (_, ps)) ->
-          submit t ps;
+        (fun (t, (_, s)) ->
+          submit t s;
           sleep t);
       Thumper.bench_with_setup ~setup:(loaded floor) ~teardown
         "floor-under-load" (fun f -> floor_launch f 1);
@@ -248,10 +274,10 @@ let residency_rows =
   in
   Thumper.group "residency"
     [
-      row "warm-1GiB" gib (fun (t, (_, ps)) -> run t ps);
-      row "after-idle-3s" gib (fun (t, (_, ps)) ->
+      row "warm-1GiB" gib (fun (t, (_, s)) -> run t s);
+      row "after-idle-3s" gib (fun (t, (_, s)) ->
           M.sleep t.d ~seen:t.v ~still_ms:3000;
-          run t ps);
+          run t s);
     ]
 
 (* The idle row takes about 3 s a call. *)
