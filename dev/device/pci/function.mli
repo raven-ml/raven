@@ -29,8 +29,8 @@
 
     One owner calls a function's operations at a time, except that {!pin},
     {!unpin}, {!alloc_dma} and {!free_dma} may be called from any domain. After
-    {!release}, every operation but {!free_dma}, {!unpin} and the observers
-    raises [Invalid_argument].
+    {!release}, every operation but {!free_dma}, {!unpin}, {!machine}, {!bus},
+    {!addressing} and {!released} raises [Invalid_argument].
 
     Windows are values: a window equal to a live one that {!map} or {!alloc_dma}
     gave names it, and a window of another function or machine is never equal to
@@ -147,11 +147,11 @@ val map :
     [f]'s BAR [i] from byte [off] (defaults to [0]), until {!unmap} or
     {!release}. Child processes do not inherit it.
 
-    With [~combine:true] (defaults to [false]) stores through the window may
-    merge and reach the function in another order until a {!Window.barrier},
-    where the machine allows it: a prefetchable BAR of a function taken
-    physically. Behind an IOMMU, or on a BAR that is not prefetchable, it is the
-    window [map] makes without it. Map registers and doorbells without it.
+    With [~combine:true] (defaults to [false]) the window combines
+    ({!Window.accesses}) where the machine allows it: a prefetchable BAR of a
+    function taken physically. Behind an IOMMU, or on a BAR that is not
+    prefetchable, it is the window [map] makes without it. Map registers and
+    doorbells without it; {!Memory} maps its memory BAR with it.
 
     [Error why] if VFIO or the kernel does not let the process map them.
 

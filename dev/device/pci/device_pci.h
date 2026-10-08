@@ -15,7 +15,9 @@
    An access reports nothing. Once the transport failed, a read gives all
    ones and a write is dropped, as for a function that left the bus. A
    submission asks device_pci_failed once, after its last access: NULL
-   there means every access before it reached the machine.
+   there means the transport had not failed by then. A store may return
+   before it reaches the machine, so only a NULL after a load, such as
+   device_pci_flush's, also means the stores before the load reached it.
    Values are little-endian; so is every host this library builds for. */
 
 #ifndef DEVICE_PCI_H
@@ -32,11 +34,12 @@
 /* The accesses to another machine's addresses, which the library that
    reaches it implements. [read] and [write] move [n] bytes at [address] of
    the machine, as one access where [n] is 4 or 8 and [address] is aligned
-   to it, and return 0, or -1 once the transport failed. They may block, and
-   may be called from several threads at once, never holding the OCaml
-   runtime; the accesses one thread makes complete in the order it makes
-   them. [failed] is the reason the transport failed, or NULL; once it is not
-   NULL it stays. */
+   to it, and return 0, or -1 once the transport failed. A write may return
+   before it reaches the machine; its failure then shows at a later access.
+   They may block, and may be called from several threads at once, never
+   holding the OCaml runtime; the accesses one thread makes complete in the
+   order it makes them. [failed] is the reason the transport failed, or
+   NULL; once it is not NULL it stays. */
 struct device_pci_transport {
   void *ctx;
   int (*read)(void *ctx, uint64_t address, void *dst, size_t n);

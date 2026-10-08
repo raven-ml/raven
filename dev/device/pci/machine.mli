@@ -69,13 +69,13 @@ val reserve : t -> base:int -> int -> (unit, string) result
     Linux. *)
 
 val wait : t -> ms:int -> (unit -> bool) -> bool
-(** [wait m ~ms f] calls [f], at least once, until it is [true] or at least [ms]
-    milliseconds passed on a monotonic clock, or [m] failed, and is [true] iff
-    [f] became [true] while [m] had not failed: [m]'s state is read after each
-    call of [f], so an answer computed from the all ones of a failed machine is
-    not trusted. For its first millisecond it calls [f] back to back, relaxing
-    the processor; then it sleeps 0.1 ms between calls, so that a long wait
-    holds no core. It is the loop in which drivers wait for their devices. *)
+(** [wait m ~ms f] calls [f], at least once, until it is [true], [m] failed, or
+    at least [ms] milliseconds passed on a monotonic clock. It is [true] iff [f]
+    became [true] while [m] had not failed: [m]'s state is read after each call
+    of [f], so an answer computed from the all ones of a failed machine is not
+    trusted. For its first millisecond it calls [f] back to back, relaxing the
+    processor; then it sleeps 0.1 ms between calls, so that a long wait holds no
+    core. Drivers wait for their devices in it. *)
 
 (** {1:transports Transports}
 

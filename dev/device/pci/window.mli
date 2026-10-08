@@ -47,18 +47,24 @@ val sub : t -> int -> int -> t
 
     {!get32}, {!set32}, {!get64} and {!set64} are register accesses: one access
     of exactly that width, on this machine and through a transport, so a
-    register is read and written once each and in program order. Through a
-    window {!Function.map} made with [~combine:true], where the machine allows
-    it, they are memory accesses: a store may merge with others and reach the
-    function in another order until a {!barrier}. {!read}, {!blit_string},
-    {!write} and {!fill} copy memory, at widths they choose; touch registers
-    only with the accesses above. They are for device memory and windows through
-    a transport. On a mapped window they go a 32-bit word at a time, which
-    memory behind any BAR accepts, or 16 bytes at a time through a window that
-    combines. A long one lets the domain's other threads and other domains'
+    register is read and written once each and in program order.
+
+    A window {e combines} if {!Function.map} made it with [~combine:true] where
+    the machine allows it. Through such a window the accesses above are memory
+    accesses: stores may merge and reach the function in another order, and
+    loads may be served early; a {!barrier} orders them. A driver puts a barrier
+    between a load of a word the function wrote and the loads that word guards,
+    and flushes the window ({!flush}) before the store that has the function
+    read what it wrote.
+
+    {!read}, {!blit_string}, {!write} and {!fill} copy memory, at widths they
+    choose: on a mapped window a 32-bit word at a time, which memory behind any
+    BAR accepts, or 16 bytes at a time through a window that combines. Touch
+    registers only with the accesses above. They are for device memory and
+    windows through a transport; bulk copies of this process's memory go through
+    {!bigarray}. A long one lets the domain's other threads and other domains'
     collections run meanwhile; a long read or write pays for that with a copy
-    through a buffer. Bulk copies of this process's memory go through
-    {!bigarray}. {!barrier} orders accesses for the processor and the bus.
+    through a buffer. {!barrier} orders accesses for the processor and the bus.
 
     Each raises [Invalid_argument] if the bytes it accesses do not lie in the
     window, a count below zero included, or if a 32- or 64-bit access is at an
