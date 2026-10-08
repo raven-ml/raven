@@ -114,7 +114,9 @@ type memory = {
   mutable entry : entry;
   mutable token : token;
   keep : keep;
-  root : memory;
+  mutable root : memory;
+      (** The memory a borrow maps; the record itself otherwise, set once made.
+      *)
 }
 
 type buffer = {

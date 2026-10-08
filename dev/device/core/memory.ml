@@ -143,9 +143,26 @@ let entry ?region ?io_region owner memory bytes stamps =
 (* The entry of host memory no device borrowed: no stamps, no mapping. *)
 let no_entry = entry Dev.host heap_kind 0 0
 
-let make ?(keep = Nothing) ?(host = -1) ?(address = -1) ?(handle = 0n)
-    ?(token = no_token) dev bytes entry =
-  let rec m =
+(* The root a record holds until it is set to the record itself: a record made
+   recursively would be made twice. *)
+let rec unrooted =
+  {
+    dev = Dev.host;
+    bytes = 0;
+    host = -1;
+    address = -1;
+    handle = 0n;
+    claim = new_claim ();
+    entry = no_entry;
+    token = no_token;
+    keep = Nothing;
+    root = unrooted;
+  }
+
+(* An owned memory. Every argument is given, so a host buffer's record allocates
+   nothing beside it. *)
+let own ~keep ~host ~address ~handle ~token dev bytes entry =
+  let m =
     {
       dev;
       bytes;
@@ -156,10 +173,15 @@ let make ?(keep = Nothing) ?(host = -1) ?(address = -1) ?(handle = 0n)
       entry;
       token;
       keep;
-      root = m;
+      root = unrooted;
     }
   in
+  m.root <- m;
   m
+
+let make ?(keep = Nothing) ?(host = -1) ?(address = -1) ?(handle = 0n)
+    ?(token = no_token) dev bytes entry =
+  own ~keep ~host ~address ~handle ~token dev bytes entry
 
 let borrow_of (root : memory) dev ~host ~address ~handle =
   {
@@ -404,19 +426,26 @@ let drain_own d =
   List.iter (run_pending d) pending
 
 (* Drains [d], then the lost devices that hold memory, then the holds. *)
+(* Whether [d] has nothing to drain: no collected memory, nothing waiting
+   for a value. A drain of an idle device allocates nothing. *)
+let idle d = d.retiring == [] && d.pending == [] && not (released_any d.release)
+
+let drain_lost d =
+  List.iter
+    (fun e ->
+      if e != d then begin
+        drain_own e;
+        if Dev.answer e = Dev.answer_stopped && empty e then
+          change_lost (List.filter (fun e' -> e' != e))
+      end)
+    (Atomic.get lost_devices)
+
 let drain d =
   if not (Dev.forked ()) then begin
-    drain_own d;
-    List.iter
-      (fun e ->
-        if e != d then begin
-          drain_own e;
-          if Dev.answer e = Dev.answer_stopped && empty e then
-            change_lost (List.filter (fun e' -> e' != e))
-        end)
-      (Atomic.get lost_devices);
+    if not (idle d) then drain_own d;
+    if Atomic.get lost_devices != [] then drain_lost d;
     if released_any holds_list then List.iter (route d) (released holds_list);
-    drain_holds ()
+    if !holds != [] then drain_holds ()
   end
 
 let () =
@@ -548,14 +577,24 @@ let rec heap_reserved n round =
   end
   else raise (Dev.Out_of_memory (Dev.host, n))
 
+(* What every host buffer of no bytes keeps: nothing to free. *)
+let empty = Bigarray.Array1.create Bigarray.char Bigarray.c_layout 0
+let empty_keep = Heap (empty, no_token)
+
 let host_memory n =
-  drain Dev.host;
-  heap_reserved n 1;
-  let ba = heap_bytes n in
-  let addr = ba_address ba in
-  make
-    ~keep:(Heap (ba, heap_token n))
-    ~host:addr ~address:addr Dev.host n no_entry
+  if n = 0 then
+    let addr = ba_address empty in
+    own ~keep:empty_keep ~host:addr ~address:addr ~handle:0n ~token:no_token
+      Dev.host 0 no_entry
+  else begin
+    drain Dev.host;
+    heap_reserved n 1;
+    let ba = heap_bytes n in
+    let addr = ba_address ba in
+    own
+      ~keep:(Heap (ba, heap_token n))
+      ~host:addr ~address:addr ~handle:0n ~token:no_token Dev.host n no_entry
+  end
 
 (* Borrows *)
 
