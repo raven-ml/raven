@@ -628,12 +628,111 @@ static inline __attribute__((always_inline)) void block(
     for (int q = 0; q < 4; q++) memcpy(d + p * dr + q * w, x[q] + p * w, w);
 }
 
+/* Sub-byte runs
+
+   A run of sub-byte elements written one after another covers whole bytes,
+   except at most one partial byte at each end, which it shares with
+   elements outside it. The whole bytes are plain stores: no other write
+   reaches them. The partial ones are one compare-and-swap each, which keeps
+   the other elements' bits against stores from other threads. */
+
+/* Stores [x]'s bits under [mask] into [*b], keeping its other bits. */
+static inline void put_bits(uint8_t *b, uint8_t mask, uint8_t x) {
+  uint8_t old = __atomic_load_n(b, __ATOMIC_RELAXED);
+  while (!__atomic_compare_exchange_n(b, &old, (uint8_t)((old & ~mask) | x), 1,
+                                      __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+    ;
+}
+
+/* The [k] elements of [bits] bits from position [p] of [s], [step] apart,
+   packed LSB first. */
+static inline uint8_t pack(const uint8_t *s, int bits, int64_t p, int64_t step,
+                           int k) {
+  uint8_t x = 0;
+  for (int j = 0; j < k; j++, p += step)
+    x |= (uint8_t)(nx_sub_load(s, bits, p) << (j * bits));
+  return x;
+}
+
+/* Copies [len] elements of [bits] bits from position [ps] of [s], [ss]
+   apart, to positions [pd], [pd + 1], … of [d]. The whole bytes of [d] come
+   from [memcpy] when both runs start at the same bit of a byte, from two
+   bytes of [s] shifted when they start at different bits, and packed from
+   loads otherwise. It stays out of line so that copy_run, inlined into the
+   walk, stays small. */
+static __attribute__((noinline)) void sub_run(uint8_t *d, int64_t pd,
+                                              const uint8_t *s, int64_t ps,
+                                              int64_t ss, int64_t len,
+                                              int bits) {
+  int per = 8 / bits;
+  int head = (int)((per - pd % per) % per);
+  if (head > len) head = (int)len;
+  if (head > 0) {
+    int at = (int)(pd % per) * bits;
+    uint8_t mask = (uint8_t)(((1u << (head * bits)) - 1) << at);
+    put_bits(d + pd / per, mask, (uint8_t)(pack(s, bits, ps, ss, head) << at));
+    pd += head;
+    ps += head * ss;
+    len -= head;
+  }
+  int64_t whole = len / per;
+  uint8_t *db = d + pd / per;
+  if (whole > 0 && ss == 1) {
+    int64_t bit = ps * bits;
+    int sh = (int)(bit & 7);
+    const uint8_t *sb = s + (bit >> 3);
+    if (sh == 0)
+      memcpy(db, sb, (size_t)whole);
+    else {
+      /* Byte i takes the top of sb[i] and the bottom of sb[i + 1]. sb[0]
+         and sb[whole] hold elements outside the run, which other threads
+         may store: they are loaded atomically. */
+      uint8_t first = __atomic_load_n(sb, __ATOMIC_RELAXED);
+      uint8_t last = __atomic_load_n(sb + whole, __ATOMIC_RELAXED);
+      if (whole == 1)
+        db[0] = (uint8_t)((first >> sh) | (last << (8 - sh)));
+      else {
+        db[0] = (uint8_t)((first >> sh) | (sb[1] << (8 - sh)));
+        int64_t i = 1;
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+        /* Eight bytes at a time: the word at sb + i, shifted, and the
+           bottom of the word after it. */
+        if (i + 17 < whole) {
+          uint64_t lo, hi;
+          memcpy(&lo, sb + i, 8);
+          for (; i + 17 < whole; i += 8, lo = hi) {
+            memcpy(&hi, sb + i + 8, 8);
+            uint64_t w = (lo >> sh) | (hi << (64 - sh));
+            memcpy(db + i, &w, 8);
+          }
+        }
+#endif
+        for (; i < whole - 1; i++)
+          db[i] = (uint8_t)((sb[i] >> sh) | (sb[i + 1] << (8 - sh)));
+        db[whole - 1] = (uint8_t)((sb[whole - 1] >> sh) | (last << (8 - sh)));
+      }
+    }
+  } else
+    for (int64_t i = 0; i < whole; i++)
+      db[i] = pack(s, bits, ps + i * per * ss, ss, per);
+  pd += whole * per;
+  ps += whole * per * ss;
+  len -= whole * per;
+  if (len > 0)
+    put_bits(d + pd / per, (uint8_t)((1u << (len * bits)) - 1),
+             pack(s, bits, ps, ss, (int)len));
+}
+
 static void copy_run(void *ctx, const int64_t *at, int64_t len) {
   copy_ctx *c = ctx;
   const nx_array *dst = &c->a[0], *src = &c->a[1];
   int bits = dst->bits, r = c->l->rank;
   int64_t sd = c->l->step[0][r - 1], ss = c->l->step[1][r - 1];
   int64_t pd = at[0], ps = at[1];
+  if (bits < 8 && sd == 1) {
+    sub_run(dst->base, pd, src->base, ps, ss, len, bits);
+    return;
+  }
   if (bits < 8) {
     for (int64_t j = 0; j < len; j++, pd += sd, ps += ss)
       nx_sub_store(dst->base, bits, pd, nx_sub_load(src->base, bits, ps));
@@ -716,30 +815,53 @@ static int tile_axis(const nx_loop *l) {
   return t;
 }
 
+/* Swaps the axes [i] and [j] of the loop [l] over two operands. */
+static void swap_axes(nx_loop *l, int i, int j) {
+  int64_t x = l->extent[i];
+  l->extent[i] = l->extent[j];
+  l->extent[j] = x;
+  for (int k = 0; k < 2; k++) {
+    x = l->step[k][i];
+    l->step[k][i] = l->step[k][j];
+    l->step[k][j] = x;
+  }
+}
+
+/* The fewest elements a run of the gather takes when an axis has as many. */
+#define SHORT 8
+
 /* The gather: copies the elements of a[1] into a[0], operands of one dtype
-   read through the door, tiling where a[0] steps by one element and a[1]
-   steps less across rows than along them. Answers NX_SHAPE if their shapes
-   differ. It is the layer's one tiled walk. */
+   read through the door. Answers NX_SHAPE if their shapes differ. It is the
+   layer's one tiled walk.
+
+   Elements are independent, so the order of the walk decides no bit. An
+   innermost axis of fewer than SHORT elements, as a small window's, would
+   cost a run per few elements: the nearest outer axis of at least SHORT
+   becomes the innermost. Then where a[0] steps by one element along the
+   innermost axis and a[1] steps less across rows than along them, the copy
+   goes in tiles. */
 static int gather(nx_array a[2]) {
   nx_loop l;
   int e = nx_coalesce(2, a, &l);
   if (e) return e;
-  int r = l.rank, t = a[0].bits < 8 ? -1 : tile_axis(&l);
+  int r = l.rank, t = -1;
   copy_ctx c = {a, &l};
+  if (a[0].bits >= 8) {
+    if (l.extent[r - 1] < SHORT)
+      for (int i = r - 2; i >= 0; i--)
+        if (l.extent[i] >= SHORT) {
+          swap_axes(&l, i, r - 1);
+          break;
+        }
+    t = tile_axis(&l);
+  }
   if (t < 0) {
     walk(2, &l, &c, copy_run);
     return NX_OK;
   }
   /* Axis t becomes the rows, next to the innermost; the walk visits the
      axes before them, and each call copies the tiles of a plane. */
-  int64_t x = l.extent[t];
-  l.extent[t] = l.extent[r - 2];
-  l.extent[r - 2] = x;
-  for (int k = 0; k < 2; k++) {
-    x = l.step[k][t];
-    l.step[k][t] = l.step[k][r - 2];
-    l.step[k][r - 2] = x;
-  }
+  swap_axes(&l, t, r - 2);
   nx_loop planes = l;
   planes.rank = r - 1;
   walk(2, &planes, &c, tile_run);

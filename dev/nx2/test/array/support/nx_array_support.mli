@@ -20,6 +20,11 @@ val add : 'z -> 'x -> 'y -> int
     untyped, as an array built from parts can be. It is a [[@@noalloc]]
     external, as a kernel that keeps the domain lock is. *)
 
+val copy_into : ('v, 's) Nx_array.t -> ('v, 's) Nx_array.t -> int
+(** [copy_into dst src] is the gather {!Nx_array.copy} runs, into [dst], any
+    written operand of [src]'s dtype and shape: it copies [src]'s elements into
+    [dst] through [nx_read] and answers [nx_array.h]'s code. *)
+
 val collect : ('v, 's) Nx_array.t -> int
 (** [collect a] reads [a] through [nx_read], empties the minor heap and compacts
     the major one while it holds the read, then calls [nx_done]. *)

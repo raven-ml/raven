@@ -183,13 +183,24 @@ placement/to_device-transposed-512x512	wall_time	batch=256	n=20	3.714e-05	3.693e
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed under load 18.8 on 10 cores
 # forced: blessed dtype/of_float-f32 dtype/of_float-f16 dtype/of_float-bf16 dtype/of_float-e4m3fn dtype/of_float-i32 dtype/of_float-u8 dtype/f32-to-f16-1M dtype/f32-to-bf16-1M dtype/floor-f32-to-u16-1M dtype/f16-to-f32-1M dtype/bf16-to-f32-1M dtype/floor-u16-to-f32-1M dtype/f32-to-e4m3fn-1M dtype/f32-to-e5m2-1M dtype/f32-to-e2m1fn-1M dtype/floor-f32-to-u8-1M dtype/e4m3fn-to-f32-1M dtype/e5m2-to-f32-1M dtype/e2m1fn-to-f32-1M dtype/floor-u8-to-f32-1M dtype/f64-to-f16-1M dtype/f64-to-f16-run-1M dtype/f64-to-bf16-run-1M dtype/f64-to-e4m3fn-1M dtype/floor-f64-to-u16-1M dtype/f16-to-f64-run-1M dtype/bf16-to-f64-run-1M dtype/f64-to-i32-1M dtype/floor-f64-to-i32-1M dtype/floor-copy-f32-1M access/floor-bigarray-copy-f32-1M under load 18.2 on 10 cores
+# forced: blessed access/copy-i4-1M access/copy-i4-1M-offset1 access/copy-bit-transposed-1024x1024 access/copy-2x2-windows-32x16x26x26 access/copy-window-3x3-8x3x64x64 under load 10.1 on 10 cores
 
 access/bigarray-f32-1M	alloc_words	exact	23
 access/bigarray-f32-1M	wall_time	batch=65536	n=20	9.191e-08	8.921e-08 8.928e-08 9.041e-08 9.058e-08 9.065e-08 9.091e-08 9.174e-08 9.178e-08 9.189e-08 9.189e-08 9.192e-08 9.205e-08 9.208e-08 9.236e-08 9.251e-08 9.254e-08 9.271e-08 9.282e-08 9.287e-08 9.328e-08
+access/copy-2x2-windows-32x16x26x26	alloc_words	exact	69
+access/copy-2x2-windows-32x16x26x26	wall_time	batch=32	n=20	1.680e-04	1.641e-04 1.646e-04 1.665e-04 1.665e-04 1.668e-04 1.672e-04 1.676e-04 1.676e-04 1.680e-04 1.680e-04 1.681e-04 1.685e-04 1.688e-04 1.691e-04 1.694e-04 1.695e-04 1.707e-04 1.711e-04 1.724e-04 1.804e-04
+access/copy-bit-transposed-1024x1024	alloc_words	exact	57
+access/copy-bit-transposed-1024x1024	wall_time	batch=8	n=20	7.625e-04	7.396e-04 7.499e-04 7.517e-04 7.582e-04 7.587e-04 7.597e-04 7.602e-04 7.612e-04 7.619e-04 7.622e-04 7.627e-04 7.635e-04 7.643e-04 7.645e-04 7.655e-04 7.674e-04 7.683e-04 7.690e-04 7.749e-04 9.169e-04
 access/copy-f32-1M	alloc_words	exact	54
 access/copy-f32-1M	wall_time	batch=64	n=20	1.242e-04	1.132e-04 1.140e-04 1.141e-04 1.142e-04 1.153e-04 1.154e-04 1.159e-04 1.164e-04 1.207e-04 1.231e-04 1.252e-04 1.262e-04 1.267e-04 1.313e-04 1.319e-04 1.322e-04 1.356e-04 1.423e-04 1.478e-04 1.544e-04
+access/copy-i4-1M	alloc_words	exact	54
+access/copy-i4-1M	wall_time	batch=256	n=20	2.549e-05	2.519e-05 2.519e-05 2.524e-05 2.529e-05 2.534e-05 2.540e-05 2.540e-05 2.548e-05 2.548e-05 2.548e-05 2.551e-05 2.551e-05 2.552e-05 2.554e-05 2.555e-05 2.561e-05 2.582e-05 2.588e-05 2.609e-05 2.619e-05
+access/copy-i4-1M-offset1	alloc_words	exact	54
+access/copy-i4-1M-offset1	wall_time	batch=128	n=20	5.298e-05	5.117e-05 5.145e-05 5.195e-05 5.209e-05 5.244e-05 5.246e-05 5.249e-05 5.259e-05 5.260e-05 5.288e-05 5.307e-05 5.337e-05 5.348e-05 5.381e-05 5.387e-05 5.424e-05 5.457e-05 5.471e-05 5.474e-05 5.508e-05
 access/copy-transposed-512x512	alloc_words	exact	57
 access/copy-transposed-512x512	wall_time	batch=64	n=20	7.989e-05	7.138e-05 7.214e-05 7.256e-05 7.324e-05 7.860e-05 7.906e-05 7.943e-05 7.949e-05 7.956e-05 7.978e-05 8.000e-05 8.007e-05 8.020e-05 8.025e-05 8.045e-05 8.059e-05 8.092e-05 8.105e-05 8.131e-05 8.265e-05
+access/copy-window-3x3-8x3x64x64	alloc_words	exact	69
+access/copy-window-3x3-8x3x64x64	wall_time	batch=64	n=20	1.292e-04	1.252e-04 1.262e-04 1.271e-04 1.273e-04 1.282e-04 1.282e-04 1.283e-04 1.284e-04 1.291e-04 1.292e-04 1.293e-04 1.302e-04 1.303e-04 1.308e-04 1.312e-04 1.313e-04 1.322e-04 1.327e-04 1.338e-04 1.362e-04
 access/create-f32-1M	alloc_words	exact	48
 access/create-f32-1M	wall_time	batch=256	n=20	2.004e-05	1.961e-05 1.974e-05 1.982e-05 1.984e-05 1.985e-05 1.987e-05 1.993e-05 1.996e-05 2.002e-05 2.003e-05 2.005e-05 2.014e-05 2.015e-05 2.021e-05 2.023e-05 2.024e-05 2.031e-05 2.034e-05 2.051e-05 2.081e-05
 access/floor-bigarray-copy-f32-1M	alloc_words	exact	9

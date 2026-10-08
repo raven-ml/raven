@@ -557,6 +557,42 @@ let int4_commands =
       (fun i a -> A.get a [| i |]);
   ]
 
+(* A gather into elements 1 to 4 of six int4s writes their bytes, the first and
+   last shared with elements 0 and 5: stores to those from another domain are
+   kept. The source starts on a byte or inside one. Gathers from two domains
+   race on elements 1 to 4, so only elements 0 and 5 are read. *)
+let gather_into phase xs a =
+  let all =
+    A.of_array D.Int4 [| phase + 4 |] (Array.append (Array.make phase 0) xs)
+  in
+  let range start = M.Slice [| { M.start; count = 4; step = 1 } |] in
+  let src = Option.get (A.move (range phase) all) in
+  S.copy_into (Option.get (A.move (range 1) a)) src
+
+let gather_commands =
+  let nibbles = Gen.array ~size:(const 4) nibble in
+  let neighbour = Gen.map (fun last -> if last then 5 else 0) Gen.bool in
+  [
+    command "create"
+      (Gen.unit @-> makes int4s)
+      (fun () -> Array.make 6 0)
+      (fun () -> A.of_array D.Int4 [| 6 |] (Array.make 6 0));
+    command "copy"
+      (Gen.int_range 0 1 @-> nibbles @-> int4s ^-> returns int)
+      (fun _ xs m ->
+        Array.blit xs 0 m 1 4;
+        0)
+      gather_into;
+    command "set"
+      (neighbour @-> nibble @-> int4s ^-> returns unit)
+      (fun i x m -> m.(i) <- x)
+      (fun i x a -> A.set a [| i |] x);
+    command "get"
+      (neighbour @-> int4s ^-> returns int)
+      (fun i m -> m.(i))
+      (fun i a -> A.get a [| i |]);
+  ]
+
 (* Bulk access *)
 
 let law_round_trip (Case (a, _)) =
@@ -834,6 +870,10 @@ let law_tiles (Tiles (a, src)) =
     (Array.exists2 (fun d st -> d > 1 && st = 0) ds (L.strides l));
   cover "a reversed axis" (Array.exists (fun st -> st < 0) (L.strides l));
   cover "sub-byte elements" (bits < 8);
+  cover "a sub-byte view starting inside a byte"
+    (bits < 8 && L.offset l * bits mod 8 <> 0);
+  cover "sub-byte rows ending inside a byte"
+    (bits < 8 && L.dim l (L.rank l - 1) * bits mod 8 <> 0);
   List.iter (fun w -> cover (strf "%d-byte elements" w) (bits = 8 * w)) widths;
   let want = gathered src bits l in
   let c = A.copy a in
@@ -1121,6 +1161,10 @@ let tests =
         test "a refused copy allocates nothing" test_refused_copy;
         stateful ~domains:2
           "writes to one byte from two domains keep each other" int4_commands;
+        stateful ~domains:2
+          "a gather keeps the other elements of its end bytes, written from \
+           another domain"
+          gather_commands;
       ];
     group "bulk"
       [

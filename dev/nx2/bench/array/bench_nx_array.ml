@@ -336,7 +336,8 @@ let door_rows =
 
 (* Element and bulk access over 1 Mi float32 elements, each beside the
    allocation it fills or the copy that bounds it. Narrow floats store and load
-   1 Mi values drawn as the dtype rows draw them. *)
+   1 Mi values drawn as the dtype rows draw them. Copies of sub-byte views and
+   of windows take the shapes their names give. *)
 let access_rows =
   let n = mib in
   let host x = A.of_array f32 [| n |] (Array.make n x) in
@@ -346,6 +347,12 @@ let access_rows =
   in
   let i4 = [| 1; 2; 3; 4 |] in
   let int4 () = A.of_array D.Int4 rank4 (Array.make 120 3) in
+  let int4s k =
+    A.of_array D.Int4 [| k |] (Array.init k (fun i -> (i land 15) - 8))
+  in
+  let filled s =
+    A.of_array f32 s (Array.make (Array.fold_left ( * ) 1 s) 1.5)
+  in
   let square = [| 512; 512 |] in
   Thumper.group "access"
     [
@@ -377,6 +384,39 @@ let access_rows =
       row "copy-transposed-512x512"
         (fun () ->
           transpose (A.of_array f32 square (Array.make (512 * 512) 1.5)))
+        A.copy;
+      row "copy-i4-1M" (fun () -> int4s n) A.copy;
+      (* The source starts inside a byte, the copy on one. *)
+      row "copy-i4-1M-offset1"
+        (fun () ->
+          let all = int4s (n + 1) in
+          Option.get
+            (A.move (M.Slice [| { start = 1; count = n; step = 1 } |]) all))
+        A.copy;
+      row "copy-bit-transposed-1024x1024"
+        (fun () ->
+          let k = 1024 * 1024 in
+          transpose
+            (A.of_array D.Bit [| 1024; 1024 |]
+               (Array.init k (fun i -> i mod 3 = 0))))
+        A.copy;
+      (* The 2x2 windows of a pooling layer, the column window's axis before
+         the row window's. *)
+      row "copy-2x2-windows-32x16x26x26"
+        (fun () ->
+          let a = filled [| 32; 16; 26; 26 |] in
+          let w axis = { M.axis; size = 2; step = 2; dilation = 1 } in
+          let v = Option.get (A.move (M.Window [| w 2; w 3 |]) a) in
+          Option.get (A.move (M.Permute [| 0; 1; 2; 3; 5; 4 |]) v))
+        A.copy;
+      (* The 3x3 patches of a convolution in im2col order: batch, channel, the
+         kernel's rows and columns, then the windows. *)
+      row "copy-window-3x3-8x3x64x64"
+        (fun () ->
+          let a = filled [| 8; 3; 64; 64 |] in
+          let w axis = { M.axis; size = 3; step = 1; dilation = 1 } in
+          let v = Option.get (A.move (M.Window [| w 2; w 3 |]) a) in
+          Option.get (A.move (M.Permute [| 0; 1; 4; 5; 2; 3 |]) v))
         A.copy;
       row "bigarray-f32-1M" (fun () -> host 1.5) (A.bigarray Bigarray.float32);
       row "of_bigarray-f32-1M"
