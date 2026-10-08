@@ -1,0 +1,16 @@
+; The cubins of nx.cuda's kernels and of the CUDA suite's harness, which
+; gen.py compiles ahead of time on a machine with the pinned CUDA toolkit.
+; Their digests are checked here on every machine.
+
+(rule
+ (alias runtest)
+ (deps
+  (:pins pins.json)
+  gen.py
+  ../../array/nx_dtype.h
+  ../../../test/cuda/support/harness.h
+  (glob_files ../../../test/cuda/support/*.cu)
+  (glob_files ../../../test/cuda/support/*.cuh)
+  (glob_files ../../../test/cuda/support/*.cubin))
+ (action
+  (run %{exe:../../../tools/pins/pins.exe} %{pins} lib/cuda/kernels %{deps})))

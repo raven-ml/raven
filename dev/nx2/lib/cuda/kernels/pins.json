@@ -1,0 +1,34 @@
+{
+ "toolchain": {
+  "nvcc": "Build cuda_13.4.r13.4/compiler.38855100_0",
+  "gcc": "14.2.0",
+  "programs": {
+   "nvcc": "cd12fb4a9f07c07020cb5d1119f5d4ebe0e36c00f43ca94123c308135cae1d10",
+   "cudafe++": "474f2c4344c5de7454bd32e9937297becf2621f5e31c782d5dcbac6e2bdc426a",
+   "cicc": "c8c724a2bcce2b1b72536dc572a8944fc438e25fe3f2a95c83f20012efb34ddb",
+   "ptxas": "2ac6effcd4cf3ced2a37648e17d5c839dd247f059a687d6dc3696ac48adb7dcf",
+   "gcc": "612ee569eae2c3e994b5b106b29889c6214572af107ce1a74a799d4c5d94917a",
+   "cc1plus": "cfc15b7489889057405464b209518a9153fbb38b3a8305482b69e19ff84856e9"
+  }
+ },
+ "options": [
+  "-cubin",
+  "-std=c++17",
+  "-O3",
+  "--fmad=false",
+  "-prec-div=true",
+  "-prec-sqrt=true",
+  "-ftz=false",
+  "-Werror",
+  "all-warnings"
+ ],
+ "inputs": {
+  "lib/array/nx_dtype.h": "46eb4e478df49f3b5b11e43a1d5b756bdc2f7eb79636f686106284bd044f8ecb",
+  "lib/cuda/kernels/gen.py": "ad287e64b9ac926fba0166c208d0c547235b5071c889eb17e09bdfc789065707",
+  "test/cuda/support/harness.cu": "881b34f04c0268c4692412e6a826c103d58d11e51733e3464122c0629bed3e12",
+  "test/cuda/support/harness.h": "180960c7e4b0e3836c5058097a915b994c26551306028a2bfb2ecf716583903e"
+ },
+ "outputs": {
+  "test/cuda/support/sm_89.cubin": "25f9442c006d0210929ce478b4aa07d1f7f49e133bbf41c286af2d9d6d387dac"
+ }
+}
