@@ -130,7 +130,9 @@ val request :
 (** [request l r] sends [r] after every frame queued before it and is the
     agent's answer: [Error (`Refused why)] if the agent refused [r], the job
     going on, and [Error (`Failed why)] if the job failed, before or meanwhile,
-    [why] its root cause. An answer that does not decode as [r]'s fails the job.
+    [why] its root cause, or if its close began ({!close}), [why] being
+    ["the job is closed"]. An answer that does not decode as [r]'s fails the
+    job.
 
     Raises [Invalid_argument] before sending anything if an id of [r] is
     negative. *)

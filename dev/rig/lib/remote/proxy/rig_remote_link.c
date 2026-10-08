@@ -157,6 +157,7 @@ static _Atomic uint64_t *count(struct rail *r, int which) {
 /* Reasons */
 
 static struct rig_remote_why failed_why = {14, "the job failed"};
+static struct rig_remote_why closed_why = {17, "the job is closed"};
 static struct rig_remote_why forked_why = {
     53, "a child of fork does not use its parent's connections"};
 
@@ -1028,13 +1029,14 @@ static value area_of_bytes(const char *s, size_t n) {
 }
 
 /* Sends a request with the payload [head] and waits for its answer: (0,
-   answer), (1, why) if the agent refused, or (2, root cause) if the job
-   failed. Releases the runtime. */
+   answer), (1, why) if the agent refused, or (2, why) if the job's close
+   began, why saying so, or if the job failed, why its root cause. Releases
+   the runtime. */
 value caml_rig_remote_link_request(value vl, value head) {
   CAMLparam2(vl, head);
   CAMLlocal2(r, a);
   struct rig_remote_link *l = Link_val(vl);
-  int code = 2;
+  int code = 2, closing = 0;
   struct pending *q = NULL;
   if (!rig_remote_forked(l->job)) {
     size_t n = caml_string_length(head);
@@ -1061,8 +1063,11 @@ value caml_rig_remote_link_request(value vl, value head) {
        failed unanswered, the receiving thread may still hold it. */
     if (k != 0) free(q);
     if (k == -2) caml_raise_out_of_memory();
+    closing = k == -3;
   }
-  if (code == 2) {
+  if (closing)
+    a = area_of_bytes(closed_why.s, closed_why.n);
+  else if (code == 2) {
     const struct rig_remote_why *w = atomic_load(&l->job->why);
     a = w != NULL ? area_of_bytes(w->s, w->n) : area_of_bytes("", 0);
   } else {

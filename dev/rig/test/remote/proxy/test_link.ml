@@ -559,6 +559,18 @@ let after_failure () =
   equal string "peer" (Link.name l);
   equal (list int) [ k_abort ] (kinds p)
 
+(* A request once the job's close began answers that the job is closed, as a
+   hand-over does. *)
+let during_close () =
+  with_raw @@ fun j l p ->
+  let closed = spawn (fun () -> Link.close j) in
+  equal ~msg:"the close sent" (option int) (Some k_close)
+    (Option.map fst (next_frame p));
+  let r = Link.request l (Wire.Open "MEM") in
+  Link.fail j "the test ends";
+  ignore (closed ());
+  equal (result pass refused) (Error (`Failed "the job is closed")) r
+
 let failed_meanwhile () =
   with_raw @@ fun j l p ->
   let failer =
@@ -606,6 +618,8 @@ let failures =
       test "a job that fails on one link aborts every other" every_link_aborts;
       test "a failed job's requests and next answer its root cause"
         after_failure;
+      test "a request during the close answers that the job is closed"
+        during_close;
       test "a request waiting when the job fails answers its root cause"
         failed_meanwhile;
       test "a link made on a failed job is failed, and its socket ends"
