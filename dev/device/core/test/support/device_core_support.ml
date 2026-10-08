@@ -9,6 +9,12 @@ external polled_run : nativeint -> int = "device_core_test_polled_run"
 external polled_queued : nativeint -> int = "device_core_test_polled_queued"
 external polled_submits : nativeint -> int = "device_core_test_polled_submits"
 external polled_blocked : nativeint -> int = "device_core_test_polled_blocked"
+
+external polled_last_waits : nativeint -> int array
+  = "device_core_test_polled_last_waits"
+
+external nx_word : unit -> int = "device_core_test_nx_word"
+external nx_object : unit -> int = "device_core_test_nx_object"
 external polled_room : unit -> nativeint = "device_core_test_polled_room"
 external polled_submit : unit -> nativeint = "device_core_test_polled_submit"
 external polled_word : nativeint -> int = "device_core_test_polled_word"
@@ -25,6 +31,8 @@ external load : int -> int = "device_core_test_load"
 external store : int -> int -> unit = "device_core_test_store"
 
 let bump = bump ()
+let nx_word = nx_word ()
+let nx_object = nx_object ()
 let poke = poke ()
 
 module Driver = struct
@@ -39,7 +47,8 @@ module Driver = struct
     budget : int;
     limits : kind -> int;
     may_block : bool;
-    waits_host : bool;
+    objects : bool;
+    waits : [ `Store | `Object | `Host ] list;
     answer : [ `Stopped | `Unknown ];
     lock : Mutex.t;
     opened : Condition.t;
@@ -173,8 +182,8 @@ module Driver = struct
     | `Stall -> Thread.delay (float still_ms /. 1000.)
     | `Run -> ignore (polled_run d.c)
 
-  let completion _ = `Host
-  let waits_on d c = d.waits_host && c = `Host
+  let completion d = if d.objects then `Object d.c else `Host
+  let waits_on d c = List.mem c d.waits
   let blocks d = if d.may_block then `May_block else `Returns
 
   let part _ ~queue:_ ?after:_ = function
@@ -200,7 +209,7 @@ module Polled = struct
   let make ?(capacity = 1024) ?(copies = true) ?(host_visible = true)
       ?(transport = false) ?(peers = true) ?(budget = 1 lsl 30)
       ?(memory = max_int) ?(window = max_int) ?(may_block = false)
-      ?(waits_host = false) ?(answer = `Stopped) () =
+      ?(completion = `Host) ?(waits_on = []) ?(answer = `Stopped) () =
     let limits = function
       | `Device -> memory
       | `Mapped -> window
@@ -215,7 +224,8 @@ module Polled = struct
       budget;
       limits;
       may_block;
-      waits_host;
+      objects = completion = `Object;
+      waits = waits_on;
       answer;
       lock = Mutex.create ();
       opened = Condition.create ();
@@ -232,10 +242,10 @@ module Polled = struct
     }
 
   let open_ ?capacity ?copies ?host_visible ?transport ?peers ?budget ?memory
-      ?window ?may_block ?waits_host ?answer name =
+      ?window ?may_block ?completion ?waits_on ?answer name =
     let p =
       make ?capacity ?copies ?host_visible ?transport ?peers ?budget ?memory
-        ?window ?may_block ?waits_host ?answer ()
+        ?window ?may_block ?completion ?waits_on ?answer ()
     in
     match Device_core.open_ (module Driver) ~name (fun () -> Ok p) with
     | Ok d -> (d, p)
@@ -248,6 +258,13 @@ module Polled = struct
   let fault d why = Mutex.protect d.lock (fun () -> d.fault <- Some why)
   let set_word d v = polled_set_word d.c v
   let blocked d = polled_blocked d.c
+
+  let last_waits d =
+    let a = polled_last_waits d.c in
+    List.init
+      (Array.length a / 3)
+      (fun i -> (a.(3 * i), a.((3 * i) + 1), a.((3 * i) + 2)))
+
   let frees d = Mutex.protect d.lock (fun () -> List.rev d.frees)
   let allocs d = Mutex.protect d.lock (fun () -> List.rev d.allocs)
   let host_maps d = Mutex.protect d.lock (fun () -> List.rev d.maps)

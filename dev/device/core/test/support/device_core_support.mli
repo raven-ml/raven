@@ -21,7 +21,8 @@ module Polled : sig
     ?memory:int ->
     ?window:int ->
     ?may_block:bool ->
-    ?waits_host:bool ->
+    ?completion:[ `Host | `Object ] ->
+    ?waits_on:[ `Store | `Object | `Host ] list ->
     ?answer:[ `Stopped | `Unknown ] ->
     unit ->
     t
@@ -35,8 +36,10 @@ module Polled : sig
       memory of another device. Its budget is [budget] (defaults to 1 GiB); it
       holds at most [memory] bytes of [`Device] memory and [window] bytes of
       [`Mapped] memory (default to [max_int]); [`Pinned] memory is unbounded.
-      With [waits_host] its queue waits for host-written words. Its stop answers
-      [answer] (defaults to [`Stopped]). *)
+      Its word advances as [completion] says (defaults to [`Host]): with
+      [`Object], it is the driver's object, its handle the word's address. Its
+      queue waits for producers of the completions [waits_on] lists (defaults to
+      none). Its stop answers [answer] (defaults to [`Stopped]). *)
 
   val open_ :
     ?capacity:int ->
@@ -48,7 +51,8 @@ module Polled : sig
     ?memory:int ->
     ?window:int ->
     ?may_block:bool ->
-    ?waits_host:bool ->
+    ?completion:[ `Host | `Object ] ->
+    ?waits_on:[ `Store | `Object | `Host ] list ->
     ?answer:[ `Stopped | `Unknown ] ->
     string ->
     Device_core.t * t
@@ -89,6 +93,10 @@ module Polled : sig
   val allocated : t -> [ `Device | `Pinned | `Mapped ] -> int
   (** [allocated d kind] is the bytes of [kind] [d] holds allocated. *)
 
+  val last_waits : t -> (int * int * int) list
+  (** [last_waits d] is the waits [d]'s last submit received, at most 8, as
+      [(kind, at, value)], [kind] one of {!nx_word} and {!nx_object}. *)
+
   val blocked : t -> int
   (** [blocked d] is the number of submits waiting for room in [d]'s [may_block]
       queue. *)
@@ -116,6 +124,12 @@ module Polled : sig
   (** [stall d n] makes [d]'s next [n] sleeps return after their still interval
       without running the queue, as over work that runs long. *)
 end
+
+val nx_word : int
+(** [nx_word] is [nx_edge.h]'s [NX_WORD]. *)
+
+val nx_object : int
+(** [nx_object] is [nx_edge.h]'s [NX_OBJECT]. *)
 
 val bump : nativeint
 (** [bump] is a fill adding 1 to the 64-bit word its argument points at. *)

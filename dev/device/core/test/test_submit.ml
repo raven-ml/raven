@@ -143,19 +143,38 @@ let test_part_points () =
 
 (* A Polled device that waits on host-written words waits for a producer in its
    queue: the submit hands it over without waiting. *)
-let test_in_queue () =
-  let producer, pp = P.open_ "submit:iq-producer" in
-  let consumer, cp = P.open_ ~waits_host:true "submit:iq-consumer" in
+let in_queue ~completion =
+  let name = match completion with `Host -> "host" | `Object -> "object" in
+  let producer, pp = P.open_ ~completion ("submit:iq-producer-" ^ name) in
+  let consumer, cp =
+    P.open_
+      ~waits_on:[ (completion :> [ `Store | `Host | `Object ]) ]
+      ("submit:iq-consumer-" ^ name)
+  in
   let a = C.submit (empty producer) in
   let s = empty ~waits:1 consumer in
   Sub.wait_for s 0 a;
   let b = C.submit s in
+  (* The wait names the producer's word, or its object, by nx_edge.h's kinds:
+     Polled's word and object are both at its [self]. *)
+  let kind =
+    match completion with
+    | `Host -> Support.nx_word
+    | `Object -> Support.nx_object
+  in
+  equal
+    (list (triple int int int))
+    [ (kind, Nativeint.to_int (P.self pp), 1) ]
+    (P.last_waits cp);
   equal int 1 (P.queued pp);
   equal int 1 (P.queued cp);
   equal int 0 (P.run cp);
   C.wait producer (C.Point.value a);
   equal int 1 (P.run cp);
   equal int (C.Point.value b) (C.signaled consumer)
+
+let test_in_queue () = in_queue ~completion:`Host
+let test_in_queue_object () = in_queue ~completion:`Object
 
 (* A full queue answers Later: the submit waits for one more value. *)
 let test_room () =
@@ -333,6 +352,8 @@ let tests =
         test "a read waits for another device's write" test_read_waits;
         test "a part's buffers wait as slots do" test_part_points;
         test "a queue that waits on host words waits in the queue" test_in_queue;
+        test "a queue that waits on objects waits on the producer's object"
+          test_in_queue_object;
         test "a full queue's submit waits for room" test_room;
       ];
     group ~timeout "lifetime"

@@ -54,7 +54,7 @@ let test_after_stop () =
    it. *)
 let test_spread () =
   let producer, pp = P.open_ "loss:producer" in
-  let consumer, _ = P.open_ ~waits_host:true "loss:consumer" in
+  let consumer, _ = P.open_ ~waits_on:[ `Host ] "loss:consumer" in
   let a = C.submit (empty producer) in
   let s = empty ~waits:1 consumer in
   Sub.wait_for s 0 a;
@@ -66,7 +66,7 @@ let test_spread () =
 (* A consumer whose waited value was reached stays. *)
 let test_no_spread () =
   let producer, pp = P.open_ "loss:producer-2" in
-  let consumer, _ = P.open_ ~waits_host:true "loss:consumer-2" in
+  let consumer, _ = P.open_ ~waits_on:[ `Host ] "loss:consumer-2" in
   let a = C.submit (empty producer) in
   C.wait producer (C.Point.value a);
   let s = empty ~waits:1 consumer in

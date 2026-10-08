@@ -76,6 +76,8 @@ struct queued {
   struct nx_part *parts;
 };
 
+#define LAST 8
+
 struct polled {
   _Atomic uint64_t word; /* first, alone in its page */
   lock_t mu;
@@ -88,6 +90,8 @@ struct polled {
   struct queued *q;
   _Atomic int submits;
   int blocked; /* submits waiting for room */
+  int nlast;   /* the waits of the last submit, the first [LAST] of them */
+  struct nx_wait last[LAST];
 };
 
 #define Polled_val(v) ((struct polled *)Nativeint_val(v))
@@ -123,6 +127,36 @@ value device_core_test_polled_blocked(value v_p) {
   return Val_int(n);
 }
 
+/* The waits of the last submit, as [| kind; at; value; … |]. */
+value device_core_test_polled_last_waits(value v_p) {
+  CAMLparam1(v_p);
+  CAMLlocal1(a);
+  struct polled *p = Polled_val(v_p);
+  struct nx_wait w[LAST];
+  lock(&p->mu);
+  int n = p->nlast;
+  memcpy(w, p->last, sizeof w);
+  unlock(&p->mu);
+  a = caml_alloc_tuple(3 * (mlsize_t)n);
+  for (int i = 0; i < n; i++) {
+    Store_field(a, 3 * i, Val_int(w[i].kind));
+    Store_field(a, 3 * i + 1, Val_long((intnat)w[i].at));
+    Store_field(a, 3 * i + 2, Val_long((intnat)w[i].value));
+  }
+  CAMLreturn(a);
+}
+
+/* The wait kinds of nx_edge.h. */
+value device_core_test_nx_word(value unit) {
+  (void)unit;
+  return Val_int(NX_WORD);
+}
+
+value device_core_test_nx_object(value unit) {
+  (void)unit;
+  return Val_int(NX_OBJECT);
+}
+
 value device_core_test_polled_queued(value v_p) {
   struct polled *p = Polled_val(v_p);
   lock(&p->mu);
@@ -133,9 +167,11 @@ value device_core_test_polled_queued(value v_p) {
 
 static int waits_hold(struct queued *s) {
   for (int i = 0; i < s->nwaits; i++) {
+    /* An object is a 64-bit counter at its handle, as Polled's word. */
+    int kind = s->waits[i].kind;
     uint64_t w = atomic_load((_Atomic uint64_t *)(uintptr_t)s->waits[i].at);
-    if (s->waits[i].kind == NX_EQUAL ? w != s->waits[i].value
-                                     : w < s->waits[i].value)
+    if (kind == NX_WORD || kind == NX_OBJECT ? w < s->waits[i].value
+                                             : w != s->waits[i].value)
       return 0;
   }
   return 1;
@@ -216,6 +252,8 @@ static int polled_submit(void *self, uint64_t v, const struct nx_wait *waits,
     p->q = q;
     p->c = c;
   }
+  p->nlast = nwaits < LAST ? nwaits : LAST;
+  if (p->nlast > 0) memcpy(p->last, waits, (size_t)p->nlast * sizeof *waits);
   struct queued *s = &p->q[p->n++];
   s->v = v;
   s->nwaits = nwaits;
