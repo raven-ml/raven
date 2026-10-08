@@ -53,7 +53,7 @@ static value tuple(int n, value a, value b, value c) {
 
 #include "device_metal_stubs.h"
 
-#define Device_val(v) ((struct device_metal *)Nativeint_val(v))
+#define Device_val(v) ((struct device_metal *)Long_val(v))
 #define Object_val(v) ((id)(intptr_t)Nativeint_val(v))
 
 static value object(id o) { return caml_copy_nativeint((intnat)o); }
@@ -111,7 +111,7 @@ value caml_device_metal_open(value unit) {
   @autoreleasepool {
     if (@available(macOS 15, *)) d = open_device();
   }
-  return caml_copy_nativeint(d);
+  return Val_long(d);
 }
 
 /* [(b, b's GPU address, b's host address)]. */
@@ -360,13 +360,13 @@ value caml_device_metal_icb_release(value v_d, value v_icb) {
 
 /* The timeline */
 
-intnat caml_device_metal_signaled(value v_d) {
-  return (intnat)__atomic_load_n((uint64_t *)Device_val(v_d)->word.contents,
-                                 __ATOMIC_ACQUIRE);
+intnat caml_device_metal_signaled(intnat d) {
+  return (intnat)__atomic_load_n(
+      (uint64_t *)((struct device_metal *)d)->word.contents, __ATOMIC_ACQUIRE);
 }
 
-intnat caml_device_metal_last(value v_d) {
-  return (intnat)Device_val(v_d)->last;
+intnat caml_device_metal_last(intnat d) {
+  return (intnat)((struct device_metal *)d)->last;
 }
 
 value caml_device_metal_sleep(value v_d, value v_seen, value v_ms) {
@@ -395,7 +395,7 @@ value caml_device_metal_count(value unit) {
 
 value caml_device_metal_open(value unit) {
   (void)unit;
-  return caml_copy_nativeint(-not_macos);
+  return Val_long(-not_macos);
 }
 
 CAMLnoret static void no_metal(void) {
@@ -423,19 +423,19 @@ value caml_device_metal_icb(value a, value b, value c, value d) {
   (void)a, (void)b, (void)c, (void)d, no_metal();
 }
 
-intnat caml_device_metal_signaled(value a) { (void)a, no_metal(); }
-intnat caml_device_metal_last(value a) { (void)a, no_metal(); }
+intnat caml_device_metal_signaled(intnat a) { (void)a, no_metal(); }
+intnat caml_device_metal_last(intnat a) { (void)a, no_metal(); }
 
 static int (*const split)(void *, uint64_t *, uint64_t *) = NULL;
 
 #endif
 
 value caml_device_metal_signaled_byte(value v_d) {
-  return Val_long(caml_device_metal_signaled(v_d));
+  return Val_long(caml_device_metal_signaled(Long_val(v_d)));
 }
 
 value caml_device_metal_last_byte(value v_d) {
-  return Val_long(caml_device_metal_last(v_d));
+  return Val_long(caml_device_metal_last(Long_val(v_d)));
 }
 
 /* The C entries room, submit and split, the first two typed as the edge
@@ -465,7 +465,7 @@ value caml_device_metal_submit(value v_d, value v_v, value v_parts) {
         (int (*)(void *, void *, uint64_t))Nativeint_val(Field(p, 0));
     parts[i].arg = (void *)Nativeint_val(Field(p, 1));
   }
-  void *self = (void *)Nativeint_val(v_d);
+  void *self = (void *)Long_val(v_d);
   uint64_t v = (uint64_t)Long_val(v_v);
   const char *why = NULL;
   caml_enter_blocking_section_no_pending();

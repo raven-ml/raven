@@ -6,47 +6,45 @@
 let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
-(* The C side. A device is the address of its C state; a Metal object is a
-   retained pointer; a buffer is the triple of its object, GPU address and host
-   address. *)
+(* The C side. A device is the address of its C state, as an int; a Metal object
+   is a retained pointer; a buffer is the triple of its object, GPU address and
+   host address. *)
 
 type buffer = nativeint * int * nativeint
 
 external count : unit -> int = "caml_device_metal_count"
-external open_device : unit -> nativeint = "caml_device_metal_open"
-external facts : nativeint -> string * int * buffer = "caml_device_metal_facts"
+external open_device : unit -> int = "caml_device_metal_open"
+external facts : int -> string * int * buffer = "caml_device_metal_facts"
+external alloc_buffer : int -> int -> buffer option = "caml_device_metal_alloc"
 
-external alloc_buffer : nativeint -> int -> buffer option
-  = "caml_device_metal_alloc"
-
-external map_buffer : nativeint -> nativeint -> int -> buffer option
+external map_buffer : int -> nativeint -> int -> buffer option
   = "caml_device_metal_map_host"
 
-external free_buffer : nativeint -> nativeint -> unit = "caml_device_metal_free"
+external free_buffer : int -> nativeint -> unit = "caml_device_metal_free"
 external release : nativeint -> unit = "caml_device_metal_release"
 
-external load : nativeint -> string -> string * string array * nativeint array
+external load : int -> string -> string * string array * nativeint array
   = "caml_device_metal_image"
 
 external make_icb :
-  nativeint -> nativeint -> int array -> int array -> string * nativeint array
+  int -> nativeint -> int array -> int array -> string * nativeint array
   = "caml_device_metal_icb"
 
-external release_icb : nativeint -> nativeint -> unit
+external release_icb : int -> nativeint -> unit
   = "caml_device_metal_icb_release"
 
-external signaled_word : nativeint -> (int[@untagged])
+external signaled_word : (int[@untagged]) -> (int[@untagged])
   = "caml_device_metal_signaled_byte" "caml_device_metal_signaled"
 [@@noalloc]
 
-external last : nativeint -> (int[@untagged])
+external last : (int[@untagged]) -> (int[@untagged])
   = "caml_device_metal_last_byte" "caml_device_metal_last"
 [@@noalloc]
 
-external sleep_word : nativeint -> int -> int -> string option
+external sleep_word : int -> int -> int -> string option
   = "caml_device_metal_sleep"
 
-external stop_ring : nativeint -> bool = "caml_device_metal_stop"
+external stop_ring : int -> bool = "caml_device_metal_stop"
 
 external entries : unit -> nativeint * nativeint * nativeint
   = "caml_device_metal_entries"
@@ -58,7 +56,7 @@ let room_entry, submit_entry, split = entries ()
 type kind = Alloc | Mapped | Word
 
 type region = {
-  owner : nativeint;
+  owner : int;
   kind : kind;
   handle : nativeint;
   address : int;
@@ -78,7 +76,7 @@ let host r = Some r.host
 type capability = Device_metal_abi.t
 
 type t = {
-  self : nativeint;
+  self : int;
   arch : string;
   budget : int;
   word : region;
@@ -134,7 +132,7 @@ let open_ i =
   if i > 0 then Error (strf "no device %d: a Mac has one GPU, device 0" i)
   else
     let self = open_device () in
-    if self < 0n then Error (open_failure (-Nativeint.to_int self))
+    if self < 0 then Error (open_failure (-self))
     else
       let arch, budget, word = facts self in
       let align = if String.starts_with ~prefix:"Apple" arch then 4 else 256 in
@@ -154,7 +152,7 @@ let waits_on _ _ = false
 let blocks _ = `May_block
 let capability d = d.cap
 let capability_key = Device_metal_abi.key
-let self d = d.self
+let self d = Nativeint.of_int d.self
 
 (* Memory *)
 
@@ -220,7 +218,7 @@ let part _ ~queue ?(after = [||]) w =
 
 let room _ _ = `Fits
 
-external submit_parts : nativeint -> int -> part array -> string option
+external submit_parts : int -> int -> part array -> string option
   = "caml_device_metal_submit"
 
 let submit d ~v ~waits ~handles:_ ps =
