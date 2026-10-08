@@ -50,6 +50,54 @@ let test_after_stop () =
   in
   List.iter (fun call -> mem string call [ "free"; "unmap" ]) (after (P.log p))
 
+(* Loses [d] through a failed hand-over, then drains as an allocation does:
+   [d]'s stop has answered and nothing of it is left to drain. *)
+let lose d p =
+  P.fail p;
+  (try ignore (C.submit (empty d)) with C.Lost _ -> ());
+  ignore (B.create C.host 8)
+
+(* Collects, then drains as an allocation does. *)
+let collect () =
+  Gc.full_major ();
+  Gc.full_major ();
+  ignore (B.create C.host 8)
+
+(* Memory of a stopped device dropped once its stop answered is still freed
+   through its driver. *)
+let test_free_after_stop () =
+  let d, p = P.open_ "loss:free-after-stop" in
+  let b = ref (Some (B.create d 64)) in
+  lose d p;
+  b := None;
+  collect ();
+  equal int 1 (count "free" p)
+
+(* A stopped device's mapping of host memory dropped once its stop answered is
+   still unmapped through its driver. *)
+let test_unmap_after_stop () =
+  let d, p = P.open_ "loss:unmap-after-stop" in
+  let h = ref (Some (B.create C.host (1 lsl 16))) in
+  ignore (require_some (B.borrow d (Option.get !h)));
+  equal ~msg:"mapped" (list int) [ 1 lsl 16 ] (P.host_maps p);
+  lose d p;
+  h := None;
+  collect ();
+  equal int 1 (count "unmap" p)
+
+(* A device whose stop answered Unknown frees memory dropped after its word read
+   its last value. *)
+let test_free_after_unknown () =
+  let d, p = P.open_ ~answer:`Unknown "loss:free-after-unknown" in
+  let b = ref (Some (B.create d 64)) in
+  ignore (C.submit (empty d));
+  lose d p;
+  P.set_word p (C.submitted d);
+  ignore (B.create C.host 8);
+  b := None;
+  collect ();
+  equal int 1 (count "free" p)
+
 (* A device whose queue waits on a lost device's unreached value is lost with
    it. *)
 let test_spread () =
@@ -187,6 +235,12 @@ let tests =
         test "a failed hand-over loses the device once" test_failed_submit;
         test "a fault a wait finds loses the device" test_fault;
         test "a stopped device is only freed and unmapped" test_after_stop;
+        test "a stopped device frees memory dropped after its stop"
+          test_free_after_stop;
+        test "a stopped device unmaps host memory dropped after its stop"
+          test_unmap_after_stop;
+        test "an Unknown answer frees memory dropped after the word drained"
+          test_free_after_unknown;
         test "a queue waiting on a lost device's value is lost" test_spread;
         test "a queue whose wait was reached stays" test_no_spread;
         test "an Unknown answer keeps memory until the word drains" test_unknown;

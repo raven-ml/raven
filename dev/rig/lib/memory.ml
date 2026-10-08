@@ -447,17 +447,16 @@ let run_pending d = function
       | Some e -> to_cache d e
       | None -> ())
 
-(* Lost devices whose stop returned and that still hold memory: every drain
-   drains them, and reads the word of those whose work may still run. *)
+(* Lost devices whose stop returned: every drain drains those that hold memory
+   or have a release waiting, and reads the word of those whose work may still
+   run. A device stays for good, since its memory and its mappings of host
+   memory may be dropped long after its stop: their frees and unmaps still go to
+   its driver. *)
 let lost_devices : device list Atomic.t = Atomic.make []
 
-let rec change_lost f =
+let rec add_lost d =
   let l = Atomic.get lost_devices in
-  if not (Atomic.compare_and_set lost_devices l (f l)) then change_lost f
-
-let empty d =
-  Dev.protect d (fun () ->
-      d.retiring = [] && d.pending = [] && Hashtbl.length d.cache = 0)
+  if not (Atomic.compare_and_set lost_devices l (d :: l)) then add_lost d
 
 (* Drains [d]'s own list and what became due on it. *)
 let drain_own d =
@@ -470,22 +469,20 @@ let drain_own d =
    value. A drain of an idle device allocates nothing. *)
 let idle d = d.retiring == [] && d.pending == [] && not (released_any d.release)
 
-let drain_lost d =
-  List.iter
-    (fun e ->
-      if e != d then begin
-        drain_own e;
-        if Dev.answer e = Dev.answer_stopped && empty e then
-          change_lost (List.filter (fun e' -> e' != e))
-      end)
-    (Atomic.get lost_devices)
+(* Drains the lost devices of [l] other than [d]. It allocates nothing for an
+   idle one, as every drain walks them all. *)
+let rec drain_lost d = function
+  | [] -> ()
+  | e :: l ->
+      if e != d && not (idle e && e.cached = 0) then drain_own e;
+      drain_lost d l
 
 (* Drains [d], then the lost devices that hold memory, then the holds. A forked
    child drains only io devices, whose memory frees without a driver call. *)
 let drain d =
   if not (Dev.forked ()) then begin
     if not (idle d) then drain_own d;
-    if Atomic.get lost_devices != [] then drain_lost d;
+    drain_lost d (Atomic.get lost_devices);
     if released_any holds_list then List.iter (route d) (released holds_list);
     if !holds != [] then drain_holds ()
   end
@@ -494,7 +491,7 @@ let drain d =
 let () =
   Dev.answered :=
     fun d ->
-      change_lost (fun l -> d :: l);
+      add_lost d;
       drain d
 
 (* Drains every other device, skipping one whose lock another call holds, and
