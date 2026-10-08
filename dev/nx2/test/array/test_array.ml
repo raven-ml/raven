@@ -874,8 +874,12 @@ let test_door_buffers () =
 
 (* An operand with no element passes the door wherever its memory lies. *)
 let test_door_empty () =
-  let io = A.to_device (S.io_device ()) (zeros [| 0; 2 |]) in
-  equal int ok (S.add (zeros [| 0; 2 |]) io io)
+  let host = zeros [| 0; 2 |] in
+  let off = Option.get (A.move (M.Permute [| 1; 0 |]) (zeros [| 2; 0 |])) in
+  let io = A.to_device (S.io_device ()) host in
+  equal ~msg:"host" int ok (S.add (zeros [| 0; 2 |]) host host);
+  equal ~msg:"a view" int ok (S.add (zeros [| 0; 2 |]) off host);
+  equal ~msg:"off the host" int ok (S.add (zeros [| 0; 2 |]) io io)
 
 let test_door_releases () =
   let z = zeros [| 2 |] and x = floats32 [| 2 |] [| 1.; 2. |] in
@@ -976,7 +980,8 @@ let tests =
           test_door_positions;
         test "a written operand must be distinct and alone" test_door_written;
         test "dead, foreign and exclusive buffers are refused" test_door_buffers;
-        test "an operand with no element passes off the host" test_door_empty;
+        test "an operand with no element passes the door, on the host or off it"
+          test_door_empty;
         test "a read releases its claims" test_door_releases;
         test "a read survives a moving collection" test_door_moving_gc;
       ];

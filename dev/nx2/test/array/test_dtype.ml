@@ -506,6 +506,78 @@ let law_ties (F (dt, f)) =
       equal (list string) []
         (misstores dt (around f ~overflow:(overflow dt f) c @ extremes dt f)))
 
+(* The exact reference: [x] rounded to nearest, ties to even, at [f]'s precision
+   with no upper exponent bound, then the store rule's overflow, infinities and
+   NaN. Scaling by a power of two is exact, and so are the floor and the
+   difference. *)
+let nearest f x =
+  if x = 0. || not (Float.is_finite x) then x
+  else
+    let _, e = Float.frexp x in
+    let q = Int.max (e - 1) (1 - f.bias) - f.frac in
+    let s = Float.ldexp x (-q) in
+    let fl = Float.floor s in
+    let d = s -. fl in
+    let r =
+      if d > 0.5 || (d = 0.5 && Float.rem fl 2. <> 0.) then fl +. 1. else fl
+    in
+    Float.copy_sign (Float.ldexp r q) x
+
+let exact dt f x =
+  let max = decode f (last f) and saturates = D.bits dt <= 8 in
+  if Float.is_nan x then if f.top = Finite then 0. else nan
+  else
+    let r = nearest f x in
+    if Float.abs r > max then Float.copy_sign (if saturates then max else inf) x
+    else r
+
+(* Every float32 whose low half is about a float16 or bfloat16 rounding bit
+   (every float8 rounding bit lies in the high half), the float64 neighbours of
+   those whose low half is the bit alone, where rounding through float32 first
+   would land on a tie, and the specials. *)
+let sweep =
+  lazy
+    (let of_halves lows =
+       List.concat_map
+         (fun hi ->
+           List.map
+             (fun lo -> Int32.float_of_bits (Int32.of_int ((hi lsl 16) lor lo)))
+             lows)
+         (List.init 0x10000 Fun.id)
+     in
+     let f32 =
+       of_halves
+         [
+           0; 1; 0x7FFF; 0x8000; 0x8001; 0xFFFF; 0x0FFF; 0x1000; 0x1001; 0x3000;
+         ]
+     in
+     let near =
+       of_halves [ 0x8000; 0x1000; 0x3000 ]
+       |> List.filter Float.is_finite
+       |> List.concat_map (fun x -> [ Float.pred x; Float.succ x ])
+     in
+     Array.of_list
+       ([ snan; nan; -.nan; inf; -.inf; 0.; -0.; 1e39; -1e300; 5e-324 ]
+       @ f32 @ near))
+
+(* One store and a run of stores of every sweep value agree with the exact
+   reference. *)
+let test_sweep (F (dt, f)) =
+  let xs = Lazy.force sweep in
+  let want = Array.map (exact dt f) xs in
+  let wrong got =
+    let bad = ref [] in
+    Array.iteri
+      (fun i x ->
+        if not (Testable.equal float_exact want.(i) got.(i)) then
+          bad := strf "%h stored %h, expected %h" x got.(i) want.(i) :: !bad)
+      xs;
+    List.filteri (fun i _ -> i < 8) (List.rev !bad)
+  in
+  equal ~msg:"of_float" (list string) [] (wrong (Array.map (D.of_float dt) xs));
+  equal ~msg:"of_array" (list string) []
+    (wrong (A.to_array (A.of_array dt [| Array.length xs |] xs)))
+
 let law_float64 =
   prop "float64 stores the double" (Gen.with_pp pp_hex Gen.any_float) (fun x ->
       equal float_exact x (D.of_float D.Float64 x))
@@ -827,6 +899,11 @@ let tests =
           "every value, tie and neighbour rounds once to even" narrow
           test_every_tie;
         group "ties round once to even" (List.map law_ties wide);
+        cases ~name:format_name
+          "every float32 about a rounding bit and its float64 neighbours store \
+           as the exact reference says"
+          (List.filter (fun (F (dt, _)) -> D.bits dt < 64) formats)
+          test_sweep;
         cases ~name:format_name "a NaN keeps its sign"
           (List.filter (fun (F (_, f)) -> f.top <> Finite) formats)
           test_nan_sign;
