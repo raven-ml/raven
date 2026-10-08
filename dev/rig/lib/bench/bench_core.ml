@@ -531,7 +531,7 @@ let gpu_rows (type a) (module D : C.Driver with type t = a) ?(sleeps = false) v
         parts = 1;
         hold =
           (fun () ->
-            ignore (Sys.opaque_identity g);
+            ignore (Sys.opaque_identity (g, p));
             hold ());
       }
     in
