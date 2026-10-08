@@ -961,7 +961,7 @@ let test_refused_here () =
 let test_changes_nothing () =
   if not on_linux then skip ~reason:"this machine has no /sys/bus/pci" ();
   with_gpu_lock @@ fun () ->
-  let buses = List.map (fun (d : Machine.id) -> d.bus) (host_gpus ()) in
+  let buses = List.map (fun (d : Machine.id) -> d.bus) (this_gpus ()) in
   let before = List.map state buses in
   List.iter
     (fun bus ->
@@ -976,7 +976,7 @@ let test_changes_nothing () =
     (List.combine buses (List.map state buses))
 
 let takeable () =
-  host_gpus ()
+  this_gpus ()
   |> List.find_map (fun (d : Machine.id) ->
       match Function.take Machine.this d.bus with
       | Ok f ->
@@ -1001,7 +1001,7 @@ let test_held_here () =
 
 let vfio_function () =
   if not (Sys.file_exists "/dev/vfio") then skip ~reason:"no /dev/vfio" ();
-  host_gpus ()
+  this_gpus ()
   |> List.find_map (fun (d : Machine.id) ->
       match Function.take Machine.this d.bus with
       | Ok f when Function.addressing f = Iommu -> Some (d, f)
@@ -1150,63 +1150,63 @@ let failures =
       test "a function whose vendor ID reads 0xffff left the bus" test_left_bus;
     ]
 
-(* A host's files *)
+(* A machine's files *)
 
-(* [take_on fns bus] takes [bus] on a host whose functions are [fns]. *)
+(* [take_on fns bus] takes [bus] on a machine whose functions are [fns]. *)
 let take_on ?lockdown ?groups ?noiommu fns bus =
-  Function.take (Machine.at (Host.make ?lockdown ?groups ?noiommu fns)) bus
+  Function.take (Machine.at (Tree.make ?lockdown ?groups ?noiommu fns)) bus
 
 let audio bus =
-  { (Host.gpu ~driver:"snd_hda_intel" bus) with class_ = 0x04; bars = [] }
+  { (Tree.gpu ~driver:"snd_hda_intel" bus) with class_ = 0x04; bars = [] }
 
 (* Each refusal names the function and its cause, and what cures it where a
    detach does. *)
 let refusals =
   [
-    ( "a bus the host lacks",
-      [ Host.gpu "0000:03:00.0" ],
+    ( "a bus the machine lacks",
+      [ Tree.gpu "0000:03:00.0" ],
       "0000:04:00.0",
       [],
       [ "0000:04:00.0 is no PCI function" ] );
     ( "a driver other than vfio-pci, without an IOMMU",
-      [ Host.gpu ~driver:"amdgpu" "0000:03:00.0" ],
+      [ Tree.gpu ~driver:"amdgpu" "0000:03:00.0" ],
       "0000:03:00.0",
       [],
       [ "0000:03:00.0 is bound to the driver amdgpu"; "detach the GPU" ] );
     ( "a driver other than vfio-pci, behind an IOMMU",
-      [ Host.gpu ~driver:"amdgpu" ~group:"12" "0000:03:00.0" ],
+      [ Tree.gpu ~driver:"amdgpu" ~group:"12" "0000:03:00.0" ],
       "0000:03:00.0",
       [],
       [ "bound to the driver amdgpu"; "vfio-pci" ] );
     ( "no driver behind a translating IOMMU",
-      [ Host.gpu ~group:"12" "0000:03:00.0" ],
+      [ Tree.gpu ~group:"12" "0000:03:00.0" ],
       "0000:03:00.0",
       [],
       [ "the IOMMU translates the addresses 0000:03:00.0 reaches"; "iommu=pt" ]
     );
     ( "a device shared with another function",
-      [ Host.gpu "0000:03:00.0"; audio "0000:03:00.1" ],
+      [ Tree.gpu "0000:03:00.0"; audio "0000:03:00.1" ],
       "0000:03:00.0",
       [],
       [ "0000:03:00.0 shares its device with 0000:03:00.1"; "detach the GPU" ]
     );
     ( "a device shared with another function, bound to vfio-pci without an IOMMU",
-      [ Host.gpu ~driver:"vfio-pci" "0000:03:00.0"; audio "0000:03:00.1" ],
+      [ Tree.gpu ~driver:"vfio-pci" "0000:03:00.0"; audio "0000:03:00.1" ],
       "0000:03:00.0",
       [],
       [ "0000:03:00.0 shares its device with 0000:03:00.1" ] );
     ( "a disabled function",
-      [ Host.gpu ~enabled:false "0000:03:00.0" ],
+      [ Tree.gpu ~enabled:false "0000:03:00.0" ],
       "0000:03:00.0",
       [],
       [ "0000:03:00.0 is disabled"; "detach the GPU" ] );
     ( "a configuration file the process may not write",
-      [ Host.gpu "0000:03:00.0" ],
+      [ Tree.gpu "0000:03:00.0" ],
       "0000:03:00.0",
       [ "read-only" ],
       [ "taking 0000:03:00.0 needs write access"; "run as root" ] );
     ( "a locked-down kernel",
-      [ Host.gpu "0000:03:00.0" ],
+      [ Tree.gpu "0000:03:00.0" ],
       "0000:03:00.0",
       [ "lockdown" ],
       [ "the kernel is locked down"; "0000:03:00.0" ] );
@@ -1217,7 +1217,7 @@ let test_refusal (_, fns, bus, opts, subs) =
     if List.mem "lockdown" opts then Some "none [integrity] confidentiality"
     else None
   in
-  let root = Host.make ?lockdown fns in
+  let root = Tree.make ?lockdown fns in
   if List.mem "read-only" opts then begin
     if Unix.geteuid () = 0 then
       skip ~reason:"root opens a file whatever its mode" ();
@@ -1235,8 +1235,8 @@ let test_physical () =
   if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
   List.iter
     (fun (msg, groups, noiommu, group) ->
-      let fn = Host.gpu ?group "0000:03:00.0" in
-      let m = Machine.at (Host.make ~groups ~noiommu [ fn ]) in
+      let fn = Tree.gpu ?group "0000:03:00.0" in
+      let m = Machine.at (Tree.make ~groups ~noiommu [ fn ]) in
       let f = require_ok ~msg (Function.take m fn.bus) in
       equal ~msg addressing Physical (Function.addressing f);
       equal ~msg:"vendor" int 0x1002 (Function.config16 f 0);
@@ -1271,7 +1271,7 @@ let test_physical () =
 
 (* Bound to vfio-pci, a function is taken through VFIO, which takes its IOMMU
    group whole: neither what shares its device nor whether it is enabled refuses
-   it. The host has none of VFIO's files, so the take is refused naming the
+   it. The machine has none of VFIO's files, so the take is refused naming the
    first one it opens. In VFIO's no-IOMMU mode the take locks the function's
    file first. *)
 let through_vfio =
@@ -1285,7 +1285,7 @@ let through_vfio =
 let test_through_vfio (_, groups, noiommu, beside, enabled) =
   if noiommu <> [] && not on_linux then
     skip ~reason:"flock on a function's file needs Linux" ();
-  let fn = Host.gpu ~driver:"vfio-pci" ~group:"12" ~enabled "0000:03:00.0" in
+  let fn = Tree.gpu ~driver:"vfio-pci" ~group:"12" ~enabled "0000:03:00.0" in
   let fns = if beside then [ fn; audio "0000:03:00.1" ] else [ fn ] in
   contains ~sub:"dev/vfio/vfio does not exist"
     (require_error (take_on ~groups ~noiommu fns fn.bus))
@@ -1305,8 +1305,8 @@ let take_mastering m bus =
 
 let test_release_stops_dma () =
   if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
-  let fn = Host.gpu "0000:03:00.0" in
-  let m = Machine.at (Host.make [ fn ]) in
+  let fn = Tree.gpu "0000:03:00.0" in
+  let m = Machine.at (Tree.make [ fn ]) in
   Function.release (take_mastering m fn.bus);
   let f = require_ok (Function.take m fn.bus) in
   equal hex memory_space (Function.config16 f command);
@@ -1315,7 +1315,7 @@ let test_release_stops_dma () =
 (* The test's executable, run with [exiting], is [exit_mastering]'s process. *)
 let exiting = "--exit-mastering"
 
-(* Takes [bus] of the host at [root] with its bus mastering on, forks a child
+(* Takes [bus] of the machine at [root] with its bus mastering on, forks a child
    that exits, and exits, with 0 iff the child's exit left the bus mastering
    on. *)
 let exit_mastering root bus =
@@ -1327,8 +1327,8 @@ let exit_mastering root bus =
 
 let test_exit_stops_dma () =
   if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
-  let fn = Host.gpu "0000:03:00.0" in
-  let root = Host.make [ fn ] in
+  let fn = Tree.gpu "0000:03:00.0" in
+  let root = Tree.make [ fn ] in
   let exe = Sys.executable_name in
   let pid =
     Unix.create_process exe
@@ -1358,8 +1358,8 @@ let test_exit_stops_dma () =
    the fixture's GPU is prefetchable, BAR 5 is not. *)
 let test_combining () =
   if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
-  let fn = Host.gpu "0000:03:00.0" in
-  let f = require_ok (Function.take (Machine.at (Host.make [ fn ])) fn.bus) in
+  let fn = Tree.gpu "0000:03:00.0" in
+  let f = require_ok (Function.take (Machine.at (Tree.make [ fn ])) fn.bus) in
   Fun.protect ~finally:(fun () -> Function.release f) @@ fun () ->
   let combines ?combine i =
     let w = map ?combine ~length:4096 f i in
@@ -1377,8 +1377,8 @@ let test_combining () =
   let _, c = combines ~combine:true 5 in
   equal ~msg:"a BAR that is not prefetchable, asked" bool false c
 
-let host_files =
-  group ~timeout:patience "a host's files"
+let tree_files =
+  group ~timeout:patience "a machine's files"
     [
       cases "a take is refused, naming the function and the cause"
         ~name:(fun (n, _, _, _, _) -> n)
@@ -1407,17 +1407,17 @@ let host_files =
 
 (* Locked system memory
 
-   Functions of a host in a fixture tree, taken physically, reach this process's
-   memory as GPUs of this machine do. Locking memory and reading its physical
-   addresses need privileges: a test the machine refuses them skips with the
-   reason. *)
+   Functions of a machine in a fixture tree, taken physically, reach this
+   process's memory as GPUs of this machine do. Locking memory and reading its
+   physical addresses need privileges: a test the machine refuses them skips
+   with the reason. *)
 
-(* [with_fixtures n f] is [f fns], [fns] the [n] functions of a fixture host,
+(* [with_fixtures n f] is [f fns], [fns] the [n] functions of a fixture machine,
    taken. *)
 let with_fixtures n f =
   if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
   let buses = List.init n (fun i -> strf "0000:%02x:00.0" (3 + i)) in
-  let m = Machine.at (Host.make (List.map Host.gpu buses)) in
+  let m = Machine.at (Tree.make (List.map Tree.gpu buses)) in
   let fns = List.map (fun bus -> require_ok (Function.take m bus)) buses in
   Fun.protect
     ~finally:(fun () -> List.iter Function.release fns)
@@ -1518,7 +1518,7 @@ let () =
              misuse_refused;
              model;
              failures;
-             host_files;
+             tree_files;
              system_memory;
              this_machine;
            ]

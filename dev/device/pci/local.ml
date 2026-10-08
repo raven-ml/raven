@@ -22,35 +22,35 @@ let reserve = Sysmem.reserve
 (* A function taken physically is locked by flock on its configuration space
    file: the lock is the file's, which every process that opens it shares.
    Behind VFIO the group's file admits one process at a time itself. *)
-let lock h bus fd =
-  let file = Sysfs.path h bus "config" in
+let lock files bus fd =
+  let file = Sysfs.path files bus "config" in
   try flock fd with
   | Unix.Unix_error ((EAGAIN | EWOULDBLOCK), _, _) ->
       Fail.fail "%s is taken already; find who holds it: lsof %s" bus file
   | Unix.Unix_error (e, _, _) ->
       Fail.fail "locking %s with %s: %s" bus file (Unix.error_message e)
 
-let locked h bus f =
-  let file = Sysfs.path h bus "config" in
+let locked files bus f =
+  let file = Sysfs.path files bus "config" in
   match Unix.openfile file [ O_RDONLY; O_CLOEXEC ] 0 with
   | exception Unix.Unix_error (e, _, _) ->
       Error (strf "opening %s: %s" file (Unix.error_message e))
   | fd -> (
       Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
-      match lock h bus fd with
+      match lock files bus fd with
       | () -> f ()
       | exception Fail.Failed why -> Error why)
 
 (* Taking *)
 
 type taken = {
-  host : Sysfs.t;
+  files : Sysfs.t;
   bus : string;
   config : Unix.file_descr * int; (* where configuration space starts in it *)
   seek : Mutex.t; (* a seek and its read or write, one at a time *)
   interrupts : Unix.file_descr option; (* the eventfd VFIO signals *)
   container : Vfio.t option; (* behind an IOMMU *)
-  files : Unix.file_descr list; (* every descriptor the take opened *)
+  fds : Unix.file_descr list; (* every descriptor the take opened *)
 }
 
 (* Moves the [n] bytes of configuration space at [off] with [io]: the bytes
@@ -126,7 +126,7 @@ let pages off n =
    offers a prefetchable BAR's addresses write-combined through [resourceN_wc];
    VFIO maps BARs uncached. *)
 let map t ~combine i off n =
-  if n = 0 then Window.v (fst (Option.get (Sysfs.bar t.host t.bus i)) + off) 0
+  if n = 0 then Window.v (fst (Option.get (Sysfs.bar t.files t.bus i)) + off) 0
   else
     let first, len = pages off n in
     let window ?combines fd base =
@@ -140,10 +140,11 @@ let map t ~combine i off n =
     | Some c ->
         window (Vfio.device c) (Vfio.bar_offset t.bus (Vfio.device c) i off n)
     | None ->
-        let wc = Sysfs.path t.host t.bus (strf "resource%d_wc" i) in
+        let wc = Sysfs.path t.files t.bus (strf "resource%d_wc" i) in
         let combines = combine && Sys.file_exists wc in
         let file =
-          if combines then wc else Sysfs.path t.host t.bus (strf "resource%d" i)
+          if combines then wc
+          else Sysfs.path t.files t.bus (strf "resource%d" i)
         in
         let fd =
           Fail.step ("opening " ^ file) (fun () ->
@@ -165,7 +166,7 @@ let reset t =
   match t.container with
   | Some c ->
       Fail.step ("resetting " ^ t.bus) (fun () -> Vfio.reset (Vfio.device c))
-  | None -> Sysfs.reset t.host t.bus
+  | None -> Sysfs.reset t.files t.bus
 
 (* Physical addresses as runs: one per page, or one for contiguous memory. *)
 let runs ~contiguous n = function
@@ -210,7 +211,7 @@ let release t =
   | None ->
       stop_dma t;
       forget t);
-  List.iter Unix.close t.files
+  List.iter Unix.close t.fds
 
 let fn t =
   {
@@ -224,7 +225,7 @@ let fn t =
     set_config32 = (fun off x -> set_config t off 4 x);
     bar =
       (fun i ->
-        match Sysfs.bar t.host t.bus i with
+        match Sysfs.bar t.files t.bus i with
         | bar -> bar
         | exception Fail.Failed _ -> None);
     map =
@@ -241,22 +242,22 @@ let fn t =
     release = (fun () -> release t);
   }
 
-let take_iommu host files bus =
-  let c, efd = Vfio.open_ host files bus in
+let take_iommu files fds bus =
+  let c, efd = Vfio.open_ files fds bus in
   {
-    host;
+    files;
     bus;
     config = (Vfio.device c, Vfio.config_offset bus (Vfio.device c));
     seek = Mutex.create ();
     interrupts = Some efd;
     container = Some c;
-    files = !files;
+    fds = !fds;
   }
 
 (* Bound to vfio-pci, a function taken physically has its interrupts through
    VFIO's no-IOMMU mode. *)
-let take_physical host files bus =
-  let file = Sysfs.path host bus "config" in
+let take_physical files fds bus =
+  let file = Sysfs.path files bus "config" in
   let config =
     try Unix.openfile file [ O_RDWR; O_SYNC; O_CLOEXEC ] 0 with
     | Unix.Unix_error (((EACCES | EPERM) as e), _, _) ->
@@ -267,56 +268,56 @@ let take_physical host files bus =
     | Unix.Unix_error (e, _, _) ->
         Fail.fail "opening %s: %s" file (Unix.error_message e)
   in
-  files := config :: !files;
-  lock host bus config;
+  fds := config :: !fds;
+  lock files bus config;
   let interrupts =
-    if Sysfs.driver host bus = Some "vfio-pci" then
-      let _, _, efd = Vfio.open_function host files bus Vfio.No_iommu in
+    if Sysfs.driver files bus = Some "vfio-pci" then
+      let _, _, efd = Vfio.open_function files fds bus Vfio.No_iommu in
       Some efd
     else None
   in
   let t =
     {
-      host;
+      files;
       bus;
       config = (config, 0);
       seek = Mutex.create ();
       interrupts;
       container = None;
-      files = !files;
+      fds = !fds;
     }
   in
   hold t;
   t
 
 (* A failure gives back every descriptor taken. *)
-let take host bus =
-  if not (Sysfs.exists host bus) then
+let take files bus =
+  if not (Sysfs.exists files bus) then
     Error (strf "%s is no PCI function of this machine" bus)
   else
-    let files = ref [] in
+    let fds = ref [] in
     let refused why =
-      List.iter Unix.close !files;
+      List.iter Unix.close !fds;
       Error why
     in
     match
-      let* addressing = Sysfs.access host bus in
+      let* addressing = Sysfs.access files bus in
       let by =
         match addressing with
         | Ops.Iommu -> take_iommu
         | Physical -> take_physical
       in
-      Ok (fn (by host files bus))
+      Ok (fn (by files fds bus))
     with
     | Ok _ as fn -> fn
     | Error why -> refused why
     | exception Fail.Failed why -> refused why
 
-let ops host =
+let ops files =
   {
     Ops.transport = Window.unsafe_transport 0;
     page;
-    functions = (fun () -> Sysfs.functions host);
-    take = take host;
+    functions = (fun () -> Sysfs.functions files);
+    take = take files;
     reserve = (fun ~base n -> Fail.result (fun () -> reserve ~base n));
   }

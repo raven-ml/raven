@@ -168,15 +168,15 @@ let test_no_sysfs () =
   if on_linux then skip ~reason:"this machine has /sys/bus/pci" ();
   equal (list id) [] (Machine.functions Machine.this)
 
-(* A host's functions, from their files: identity in hexadecimal, the class
+(* A machine's functions, from their files: identity in hexadecimal, the class
    file's top byte the base class. *)
-let test_host () =
-  let gpu = Host.gpu "0000:c3:00.0" in
+let test_tree () =
+  let gpu = Tree.gpu "0000:c3:00.0" in
   let nv =
-    { (Host.gpu "10000:21:00.0") with vendor = 0x10de; device = 0x2684 }
+    { (Tree.gpu "10000:21:00.0") with vendor = 0x10de; device = 0x2684 }
   in
-  let audio = { (Host.gpu "0000:03:00.1") with class_ = 0x04; bars = [] } in
-  let m = Machine.at (Host.make [ gpu; nv; audio ]) in
+  let audio = { (Tree.gpu "0000:03:00.1") with class_ = 0x04; bars = [] } in
+  let m = Machine.at (Tree.make [ gpu; nv; audio ]) in
   equal (list id)
     [
       { bus = "0000:03:00.1"; vendor = 0x1002; device = 0x744c; class_ = 0x04 };
@@ -187,8 +187,8 @@ let test_host () =
 
 (* A function whose files cannot be read, as while the kernel removes it, is
    left out. *)
-let test_host_unreadable () =
-  let root = Host.make [ Host.gpu "0000:03:00.0"; Host.gpu "0000:43:00.0" ] in
+let test_tree_unreadable () =
+  let root = Tree.make [ Tree.gpu "0000:03:00.0"; Tree.gpu "0000:43:00.0" ] in
   let vendor = "sys/bus/pci/devices/0000:43:00.0/vendor" in
   Out_channel.with_open_bin (Filename.concat root vendor) (fun oc ->
       output_string oc "zz\n");
@@ -197,8 +197,8 @@ let test_host_unreadable () =
        (fun (d : Machine.id) -> d.bus)
        (Machine.functions (Machine.at root)))
 
-let test_host_empty () =
-  equal (list id) [] (Machine.functions (Machine.at (Host.make [])))
+let test_tree_empty () =
+  equal (list id) [] (Machine.functions (Machine.at (Tree.make [])))
 
 (* Read only: this machine lists the functions its kernel shows. *)
 let test_sysfs () =
@@ -215,10 +215,10 @@ let functions =
       test "listing a machine's functions asks it nothing else"
         test_listing_asks;
       test "this machine without /sys/bus/pci has none" test_no_sysfs;
-      test "a host's functions are its files', in bus order" test_host;
+      test "a machine's functions are its files', in bus order" test_tree;
       test "a function whose files cannot be read is left out"
-        test_host_unreadable;
-      test "a host without functions lists none" test_host_empty;
+        test_tree_unreadable;
+      test "a machine without functions lists none" test_tree_empty;
       test "this machine's are those of /sys/bus/pci, in bus order" test_sysfs;
     ]
 

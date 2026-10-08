@@ -22,10 +22,10 @@ val open_function :
   string ->
   model ->
   Unix.file_descr * Unix.file_descr * Unix.file_descr
-(** [open_function h files bus m] opens [bus]'s group, on the host [h], in a
-    container of its own with model [m], then the function, whose first MSI
-    vector goes to an eventfd: the container, the function's descriptor and the
-    eventfd. Each goes on [files] once open. *)
+(** [open_function files fds bus m] opens [bus]'s group, on the machine whose
+    files are [files], in a container of its own with model [m], then the
+    function, whose first MSI vector goes to an eventfd: the container, the
+    function's descriptor and the eventfd. Each goes on [fds] once open. *)
 
 val bar_offset : string -> Unix.file_descr -> int -> int -> int -> int
 (** [bar_offset bus fd i off n] is the offset of BAR [i] in the function's
@@ -47,8 +47,8 @@ type t
 (** The type for a function's container behind an IOMMU. *)
 
 val open_ : Sysfs.t -> Unix.file_descr list ref -> string -> t * Unix.file_descr
-(** [open_ h files bus] is the container of [bus] and the eventfd its interrupts
-    signal, their descriptors on [files]. *)
+(** [open_ files fds bus] is the container of [bus] and the eventfd its
+    interrupts signal, their descriptors on [fds]. *)
 
 val device : t -> Unix.file_descr
 (** [device c] is the descriptor of [c]'s function. *)

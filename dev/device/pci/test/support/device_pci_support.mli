@@ -53,14 +53,14 @@ val poll : (unit -> bool) -> bool
 val now_ns : unit -> int
 (** [now_ns ()] is the monotonic clock in nanoseconds. *)
 
-(** {1:host This machine's GPUs}
+(** {1:this This machine's GPUs}
 
     Taking a GPU of this machine is a hardware opt-in. A test that takes a
     function of this machine takes only GPUs, and only while it holds the
     machine's GPU lock, so that it never holds another user's device. *)
 
-val host_gpus : unit -> Device_pci.Machine.id list
-(** [host_gpus ()] is this machine's display controllers, class [0x03]. *)
+val this_gpus : unit -> Device_pci.Machine.id list
+(** [this_gpus ()] is this machine's display controllers, class [0x03]. *)
 
 val with_gpu_lock : (unit -> 'a) -> 'a
 (** [with_gpu_lock f] is [f ()] while the process holds this machine's GPU lock:
@@ -174,10 +174,10 @@ module Buffer_tables : sig
   (** [create s] is booted page tables whose virtual addresses come from [s]. *)
 end
 
-(** {1:hosts Hosts in a fixture tree} *)
+(** {1:trees Machines in a fixture tree} *)
 
-(** A host's files as Linux shows them, written under the test's own directory,
-    for {!Device_pci.Machine.at}.
+(** A machine's files as Linux shows them, written under the test's own
+    directory, for {!Device_pci.Machine.at}.
 
     A function's directory holds [vendor], [device] and [class] in hexadecimal,
     [enable], [resource] (one line per BAR: start, end and flags), the first 64
@@ -186,10 +186,11 @@ end
     prefetchable, an empty [remove], and the links [driver] and [iommu_group]
     when it has them. A driver's directory holds empty [bind] and [unbind], the
     bus directory empty [rescan] and [drivers_probe], and an IOMMU group's
-    directory its [type] and its functions. The host takes what a change writes
-    as plain files and acts on none of it. Names hold [:], so trees are written
-    only where the file system allows it: {!make} skips the test on Windows. *)
-module Host : sig
+    directory its [type] and its functions. The machine takes what a change
+    writes as plain files and acts on none of it. Names hold [:], so trees are
+    written only where the file system allows it: {!make} skips the test on
+    Windows. *)
+module Tree : sig
   (** The type for a BAR, in BAR order from BAR 0. *)
   type bar =
     | Mem32 of int * int  (** A 32-bit memory BAR: bus address, bytes. *)
@@ -207,7 +208,7 @@ module Host : sig
     enabled : bool;
     bars : bar list;
   }
-  (** The type for a function of a host. *)
+  (** The type for a function of a machine. *)
 
   val gpu : ?driver:string -> ?group:string -> ?enabled:bool -> string -> fn
   (** [gpu bus] is an AMD display controller at [bus], enabled and bound to no
@@ -221,7 +222,7 @@ module Host : sig
     ?noiommu:string list ->
     fn list ->
     string
-  (** [make fns] is the root of a new host whose functions are [fns]. [groups]
+  (** [make fns] is the root of a new tree whose functions are [fns]. [groups]
       gives each IOMMU group's type (defaults to [[]], a group whose type is not
       given is ["DMA"]), [noiommu] the groups VFIO's no-IOMMU mode holds, and
       [lockdown] the kernel's lockdown file (defaults to

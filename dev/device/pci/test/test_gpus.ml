@@ -766,10 +766,10 @@ let serialized =
         test_give_back_waits;
     ]
 
-(* Changes on a host's files
+(* Changes on a machine's files
 
-   A host in a fixture tree keeps what a change writes as plain files and acts
-   on none of it: an unbound driver stays linked, a removed function stays
+   A machine in a fixture tree keeps what a change writes as plain files and
+   acts on none of it: an unbound driver stays linked, a removed function stays
    listed. Each case states what a change writes there and how it answers for
    the state that remains. Changes lock the function's file, which needs
    Linux. *)
@@ -777,12 +777,12 @@ let serialized =
 let gpu_bus = "0000:03:00.0"
 
 let audio bus =
-  { (Host.gpu ~driver:"snd_hda_intel" bus) with class_ = 0x04; bars = [] }
+  { (Tree.gpu ~driver:"snd_hda_intel" bus) with class_ = 0x04; bars = [] }
 
 let needs_flock () =
   if not on_linux then skip ~reason:"flock on a function's file needs Linux" ()
 
-(* The trimmed contents of [file] under the host's [sys/bus/pci]. *)
+(* The trimmed contents of [file] under the machine's [sys/bus/pci]. *)
 let pci_file root file =
   Filename.concat root ("sys/bus/pci/" ^ file)
   |> (fun f -> In_channel.with_open_bin f In_channel.input_all)
@@ -791,7 +791,7 @@ let pci_file root file =
 let devices bus file = strf "devices/%s/%s" bus file
 
 let changes =
-  let gpu = Host.gpu gpu_bus in
+  let gpu = Tree.gpu gpu_bus in
   [
     ( "detach leaves a GPU a process can take as it is",
       [ gpu ],
@@ -799,12 +799,12 @@ let changes =
       None,
       [ (devices gpu_bus "enable", "1"); (devices gpu_bus "remove", "") ] );
     ( "detach enables a disabled GPU",
-      [ Host.gpu ~enabled:false gpu_bus ],
+      [ Tree.gpu ~enabled:false gpu_bus ],
       `Detach,
       None,
       [ (devices gpu_bus "enable", "1") ] );
     ( "detach unbinds the kernel driver, refused while it stays bound",
-      [ Host.gpu ~driver:"amdgpu" gpu_bus ],
+      [ Tree.gpu ~driver:"amdgpu" gpu_bus ],
       `Detach,
       Some "the driver amdgpu stays bound to 0000:03:00.0",
       [ ("drivers/amdgpu/unbind", gpu_bus) ] );
@@ -815,12 +815,12 @@ let changes =
       Some "0000:03:00.0 still shares its device with 0000:03:00.1",
       [ (devices "0000:03:00.1" "remove", "1") ] );
     ( "detach leaves a GPU bound to vfio-pci behind an IOMMU",
-      [ Host.gpu ~driver:"vfio-pci" ~group:"12" gpu_bus ],
+      [ Tree.gpu ~driver:"vfio-pci" ~group:"12" gpu_bus ],
       `Detach,
       None,
       [ ("drivers/vfio-pci/unbind", "") ] );
     ( "detach refuses a GPU whose addresses an IOMMU translates",
-      [ Host.gpu ~group:"12" gpu_bus ],
+      [ Tree.gpu ~group:"12" gpu_bus ],
       `Detach,
       Some "the IOMMU translates the addresses 0000:03:00.0 reaches",
       [] );
@@ -834,13 +834,13 @@ let changes =
         ("drivers_probe", gpu_bus);
       ] );
     ( "attach leaves a GPU bound to its kernel driver",
-      [ Host.gpu ~driver:"amdgpu" gpu_bus ],
+      [ Tree.gpu ~driver:"amdgpu" gpu_bus ],
       `Attach,
       None,
       [ ("rescan", ""); ("drivers_probe", "") ] );
     ( "attach refuses a GPU bound to vfio-pci, naming the command that unbinds \
        it",
-      [ Host.gpu ~driver:"vfio-pci" gpu_bus ],
+      [ Tree.gpu ~driver:"vfio-pci" gpu_bus ],
       `Attach,
       Some "sudo driverctl unset-override 0000:03:00.0",
       [ ("rescan", "") ] );
@@ -848,7 +848,7 @@ let changes =
 
 let test_change (_, fns, change, refusal, files) =
   needs_flock ();
-  let root = Host.make fns in
+  let root = Tree.make fns in
   let m = Machine.at root in
   let change =
     match change with `Detach -> Gpus.detach | `Attach -> Gpus.attach
@@ -862,7 +862,7 @@ let test_change (_, fns, change, refusal, files) =
 
 let test_change_held () =
   needs_flock ();
-  let g = gpus () and m = Machine.at (Host.make [ Host.gpu gpu_bus ]) in
+  let g = gpus () and m = Machine.at (Tree.make [ Tree.gpu gpu_bus ]) in
   let h = hold g m 0 in
   contains ~msg:"detach" ~sub:"0000:03:00.0 is open in this process"
     (require_error (Gpus.detach g m 0));
@@ -874,7 +874,7 @@ let test_change_unwritable () =
   needs_flock ();
   if Unix.geteuid () = 0 then
     skip ~reason:"root writes a file whatever its mode" ();
-  let root = Host.make [ Host.gpu ~enabled:false gpu_bus ] in
+  let root = Tree.make [ Tree.gpu ~enabled:false gpu_bus ] in
   let enable =
     Filename.concat root ("sys/bus/pci/" ^ devices gpu_bus "enable")
   in
@@ -891,8 +891,8 @@ let test_change_transport () =
         (require_error (change (gpus ()) m 0)))
     [ ("detach", Gpus.detach); ("attach", Gpus.attach) ]
 
-let host_changes =
-  group ~timeout:patience "changes on a host's files"
+let tree_changes =
+  group ~timeout:patience "changes on a machine's files"
     [
       cases "each change writes what it says and answers for what remains"
         ~name:(fun (n, _, _, _, _) -> n)
@@ -912,7 +912,7 @@ let () =
          opening;
          giving_back;
          resets;
-         host_changes;
+         tree_changes;
          this_machine;
          serialized;
        ]

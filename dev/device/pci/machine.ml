@@ -45,7 +45,7 @@ external now_ns : unit -> (int[@untagged])
   = "caml_device_pci_now_ns_byte" "caml_device_pci_now_ns"
 [@@noalloc]
 
-(* This machine has no transport: nothing fails it. [host] is the files of a
+(* This machine has no transport: nothing fails it. [files] is the files of a
    machine this process reaches without a transport. [reserved] is the ranges
    [reserve] gave, which [Function] checks addresses against before a transport
    is asked: every allocation at an address reads it, so it is read without a
@@ -53,21 +53,21 @@ external now_ns : unit -> (int[@untagged])
 type t = {
   name : string option;
   ops : ops;
-  host : Sysfs.t option;
+  files : Sysfs.t option;
   reserved : (int * int) list Atomic.t;
 }
 
 let address = Address.v
 let compare_address = Address.compare
-let machine name host ops = { name; ops; host; reserved = Atomic.make [] }
+let machine name files ops = { name; ops; files; reserved = Atomic.make [] }
 
 let at root =
-  let host = Sysfs.v root in
-  machine None (Some host) (Local.ops host)
+  let files = Sysfs.v root in
+  machine None (Some files) (Local.ops files)
 
 let this = at "/"
 let make ~name ops = machine (Some name) None ops
-let host m = m.host
+let files m = m.files
 let name m = m.name
 let failed m = transport_failed m.ops.transport
 let page m = m.ops.page

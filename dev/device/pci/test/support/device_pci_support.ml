@@ -61,7 +61,7 @@ external flock : Unix.file_descr -> bool = "device_pci_test_flock"
 
 let gpu_lock = "DEVICE_PCI_TEST_GPU_LOCK"
 
-let host_gpus () =
+let this_gpus () =
   List.filter
     (fun (id : Device_pci.Machine.id) -> id.class_ = 0x03)
     (Device_pci.Machine.functions Device_pci.Machine.this)
@@ -265,9 +265,9 @@ module Buffer_tables = struct
     t
 end
 
-(* Hosts in a fixture tree *)
+(* Machines in a fixture tree *)
 
-module Host = struct
+module Tree = struct
   type bar = Mem32 of int * int | Mem64 of int * int | Io of int * int
 
   type fn = {
@@ -319,15 +319,15 @@ module Host = struct
     mkdir_p (Filename.dirname file);
     Out_channel.with_open_bin file (fun oc -> output_string oc s)
 
-  (* The suite's hosts are under one directory beside it in _build, named for
+  (* The suite's trees are under one directory beside it in _build, named for
      the executable so that suites running at once keep apart, and cleared at
-     its first host, since a killed run leaves it. *)
-  let hosts =
+     its first tree, since a killed run leaves it. *)
+  let trees =
     lazy
       (let d =
          Sys.getcwd ()
          / (Filename.remove_extension (Filename.basename Sys.executable_name)
-           ^ ".hosts")
+           ^ ".trees")
        in
        remove d;
        mkdir_p d;
@@ -376,7 +376,7 @@ module Host = struct
       ?(noiommu = []) fns =
     if Sys.win32 then skip ~reason:"Windows names no file with a colon" ();
     let root =
-      Lazy.force hosts / string_of_int (Atomic.fetch_and_add count 1)
+      Lazy.force trees / string_of_int (Atomic.fetch_and_add count 1)
     in
     let sys = root / "sys" in
     let devices = sys / "bus/pci/devices" in
