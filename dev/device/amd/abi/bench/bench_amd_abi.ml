@@ -17,30 +17,20 @@
 module Abi = Device_amd_abi
 module Packet = Abi.Packet
 module Pm4 = Abi.Pm4
-
-let gpu ~target ~gc ~sdma ~xccs ~shader_engines ~compute_units =
-  {
-    Abi.Gpu.target;
-    gc;
-    sdma;
-    xccs;
-    shader_engines;
-    compute_units;
-    scratch_slots = 32;
-  }
+module S = Device_amd_abi_support
 
 (* An MI300X, a Radeon PRO W7900 and a Radeon AI PRO R9700. *)
 let gfx9 =
-  gpu ~target:(9, 4, 2) ~gc:(9, 4, 3) ~sdma:(4, 4, 2) ~xccs:8 ~shader_engines:4
-    ~compute_units:38
+  S.gpu ~target:(9, 4, 2) ~sdma:(4, 4, 2) ~xccs:8 ~shader_engines:4
+    ~compute_units:38 (9, 4, 3)
 
 let gfx11 =
-  gpu ~target:(11, 0, 0) ~gc:(11, 0, 0) ~sdma:(6, 0, 0) ~xccs:1
-    ~shader_engines:6 ~compute_units:96
+  S.gpu ~target:(11, 0, 0) ~sdma:(6, 0, 0) ~xccs:1 ~shader_engines:6
+    ~compute_units:96 (11, 0, 0)
 
 let gfx12 =
-  gpu ~target:(12, 0, 1) ~gc:(12, 0, 1) ~sdma:(7, 0, 1) ~xccs:1
-    ~shader_engines:4 ~compute_units:64
+  S.gpu ~target:(12, 0, 1) ~sdma:(7, 0, 1) ~xccs:1 ~shader_engines:4
+    ~compute_units:64 (12, 0, 1)
 
 (* The suite's fixture. ../test/fixtures/README.md says how it is made. *)
 

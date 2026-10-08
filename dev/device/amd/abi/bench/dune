@@ -1,6 +1,6 @@
 (executable
  (name bench_amd_abi)
- (libraries device_amd_abi thumper))
+ (libraries device_amd_abi device_amd_abi_support thumper))
 
 (rule
  (alias bench)
