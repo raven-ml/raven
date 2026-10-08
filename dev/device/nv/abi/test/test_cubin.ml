@@ -413,9 +413,9 @@ let expected_patch ~image ~base (r : Device_elf.relocation) =
       let addend =
         match r.addend with
         | Explicit a -> Int64.of_int a
-        | Implicit when at + width > String.length image -> 0L
-        | Implicit when width = 8 -> String.get_int64_le image at
-        | Implicit ->
+        | Implicit _ when at + width > String.length image -> 0L
+        | Implicit _ when width = 8 -> String.get_int64_le image at
+        | Implicit _ ->
             Int64.(
               logand (of_int32 (String.get_int32_le image at)) 0xffff_ffffL)
       in
@@ -441,9 +441,14 @@ let refusal (o : Device_elf.t) =
         if List.mem r.kind [ r_cuda_64; r_cuda_abs32_lo_32; r_cuda_abs32_hi_32 ]
         then Some "a symbol outside the image"
         else Some "a relocation type"
-    | Some (at, w) ->
+    | Some (at, w) -> (
         if at + String.length w > o.size then Some "bytes past the image"
-        else None
+        else
+          match r.addend with
+          | Implicit { length; _ } when at - r.offset + String.length w > length
+            ->
+              Some "bytes past their section"
+          | Implicit _ | Explicit _ -> None)
   in
   List.find_map bad o.relocations
 
@@ -469,7 +474,8 @@ let relocations =
           cover "a patch" (o.relocations <> []);
           cover "an implicit addend"
             (List.exists
-               (fun (r : Device_elf.relocation) -> r.addend = Implicit)
+               (fun (r : Device_elf.relocation) ->
+                 match r.addend with Implicit _ -> true | Explicit _ -> false)
                o.relocations);
           cover "an address of 2^63 or more"
             (List.exists
@@ -634,6 +640,29 @@ let image =
             ((1 lsl 49) - page + 1)
             (layout obj).size;
           ignore (require_error ~pp:pp_cubin (Cubin.of_string obj)));
+      test "a field past the end of its section is refused" (fun () ->
+          let obj =
+            write
+              ([
+                 section ~align:4 ".nv.constant0.k" (String.make 4 '\001');
+                 code "k" 16;
+                 section ".nv.global.init" "GLOBALS!";
+               ]
+              @ symbols ~index:4 [ ("c", 1, 0) ]
+              @ [ rel ~link:4 ~info:2 ".rel.text.k" [ (12, 1, r_cuda_64, 0) ] ]
+              )
+          in
+          let o = layout obj in
+          let code =
+            require_some
+              (Iarray.find_map
+                 (fun (s : Device_elf.section) ->
+                   if s.name = ".text.k" then s.offset else None)
+                 o.sections)
+          in
+          at_least ~msg:"the image holds the field" int ~than:(code + 20) o.size;
+          contains ~sub:"past the end of its section"
+            (require_error ~pp:pp_cubin (Cubin.of_string obj)));
       test "an object that is not ELF is refused" (fun () ->
           ignore (require_error ~pp:pp_cubin (Cubin.of_string "\x7fELF")));
       test "reading copies nothing: elf's file is the object" (fun () ->

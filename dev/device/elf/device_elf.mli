@@ -108,9 +108,12 @@ type section = {
 (** The type for a relocation's addend. *)
 type addend =
   | Explicit of int  (** In the entry, [r_addend], as [SHT_RELA] ones hold. *)
-  | Implicit
+  | Implicit of { at : int; length : int }
       (** In the field the relocation patches, as [SHT_REL] ones hold: its width
-          and encoding are its type's, which the machine defines. *)
+          and encoding are its type's, which the machine defines. The field
+          starts at [at] in {!field-file}, and the section it patches has
+          [length] bytes there from [at] on: a field of [w] bytes lies in it iff
+          [w <= length]. *)
 
 type relocation = {
   offset : int;  (** The offset of the field it patches. *)
@@ -176,7 +179,9 @@ type t = private {
     - A place [Image { section = i; offset }] names a section [s], index [i] of
       [o.sections], with [s.offset = Some off] and
       [off <= offset <= off + s.size].
-    - A relocation's [offset] is less than [o.size]. *)
+    - A relocation's [offset] is less than [o.size]. One whose addend is
+      [Implicit { at; length }] has [1 <= length] and
+      [at + length <= String.length o.file]. *)
 
 (** {1:reading Reading} *)
 
@@ -225,7 +230,10 @@ val of_string :
     - a relocation's offset lies outside the section it patches, or a relocation
       patches allocated memory the image does not hold: a section the image
       lacks, other than a thread-local one without bytes, which takes no memory,
-      or an address before its start or past its end.
+      or an address before its start or past its end;
+    - a relocation without an addend in its entry ([SHT_REL]) patches bytes the
+      object does not have: those of a section without bytes, or between
+      sections.
 
     Any other object is [Ok]. Reading takes memory linear in [obj]'s length, and
     time linear in it up to sorting its sections, whatever {!field-size} is.

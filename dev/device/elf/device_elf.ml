@@ -23,7 +23,7 @@ type section = {
   length : int;
 }
 
-type addend = Explicit of int | Implicit
+type addend = Explicit of int | Implicit of { at : int; length : int }
 type relocation = { offset : int; kind : int; addend : addend; symbol : symbol }
 
 type t = {
@@ -366,6 +366,36 @@ let holds ranges a =
   in
   search 0 (Array.length ranges)
 
+(* The held sections with bytes in the object, by image offset: their indexes,
+   in which [holding] finds the section of an image offset. *)
+let with_bytes offsets hs =
+  let idx = ref [] in
+  for i = Array.length hs - 1 downto 0 do
+    if Option.is_some offsets.(i) && length_of hs.(i) > 0 then idx := i :: !idx
+  done;
+  let idx = Array.of_list !idx in
+  let off i = Option.get offsets.(i) in
+  Array.stable_sort (fun i j -> Int.compare (off i) (off j)) idx;
+  idx
+
+(* The section of [idx] whose bytes hold image offset [x], or [-1]. *)
+let holding offsets hs idx x =
+  let lo = ref 0 and hi = ref (Array.length idx) in
+  while !lo < !hi do
+    let mid = (!lo + !hi) / 2 in
+    if Option.get offsets.(idx.(mid)) <= x then lo := mid + 1 else hi := mid
+  done;
+  if !lo = 0 then -1
+  else
+    let i = idx.(!lo - 1) in
+    if x < Option.get offsets.(i) + length_of hs.(i) then i else -1
+
+(* The implicit addend of a field at image offset [x] of section [h], placed at
+   [off], which has bytes there. *)
+let implicit h off x =
+  let o = x - off in
+  Implicit { at = h.sh_offset + o; length = h.sh_size - o }
+
 (* Reading *)
 
 let read ~align ?held obj =
@@ -500,7 +530,7 @@ let read ~align ?held obj =
     | None, None -> Iarray.of_list []
   in
   (* The relocations of section [r], which patch the image at [at]'s results. *)
-  let entries r at =
+  let entries r at field =
     let h = hs.(r) in
     let rela = h.sh_type = sht_rela in
     let entsize = Int.max ((if rela then 3 else 2) * f.word) h.sh_entsize in
@@ -526,8 +556,8 @@ let read ~align ?held obj =
     let r_sym e =
       if f.word = 8 then u32 obj (e + 12) else u32 obj (e + 4) lsr 8
     in
-    let r_addend e =
-      if not rela then Implicit
+    let r_addend e offset =
+      if not rela then field offset
       else if f.word = 8 then Explicit (i64 obj (e + 16))
       else Explicit (i32 obj (e + 8))
     in
@@ -535,27 +565,40 @@ let read ~align ?held obj =
       (length_of h / entsize)
       (fun k ->
         let e = at_of h + (k * entsize) in
+        let offset = at (word f obj e) in
         {
-          offset = at (word f obj e);
+          offset;
           kind = r_type e;
-          addend = r_addend e;
+          addend = r_addend e offset;
           symbol = symbol (r_sym e);
         })
   in
   (* The allocated memory the image lacks, as addresses, which mean something in
      an object whose sections have addresses. *)
   let lacks = lazy (if addressed then lacking kept hs else [||]) in
+  (* The held sections with bytes, in which a dynamic relocation without an
+     addend finds its field by address. *)
+  let by_offset = lazy (with_bytes offsets hs) in
   (* A dynamic relocation's offset is an address; any other's lies in the
      section it patches. *)
   let relocations_of r h =
     if h.sh_type <> sht_rel && h.sh_type <> sht_rela then []
     else if h.sh_info = 0 then
       let lacks = Lazy.force lacks in
-      entries r (fun a ->
+      entries r
+        (fun a ->
           if a < address || a - address >= size || holds lacks a then
             fail
               "a relocation patches address %d, which the image does not hold" a;
           a - address)
+        (fun x ->
+          let i = holding offsets hs (Lazy.force by_offset) x in
+          if i < 0 then
+            fail
+              "a relocation without an addend patches address %d, where the \
+               object has no bytes"
+              (x + address);
+          implicit hs.(i) (Option.get offsets.(i)) x)
     else
       let target = section_of h.sh_info "a relocation section" in
       if target.sh_flags land shf_alloc = 0 then []
@@ -566,12 +609,20 @@ let read ~align ?held obj =
               "a relocation patches section %d, which the image does not hold"
               h.sh_info
         | Some off ->
-            entries r (fun a ->
+            entries r
+              (fun a ->
                 let o = a - target.sh_addr in
                 if o < 0 || o >= target.sh_size then
                   fail "a relocation's offset %d lies outside section %d" a
                     h.sh_info;
                 off + o)
+              (fun x ->
+                if not (has_bytes target) then
+                  fail
+                    "a relocation without an addend patches section %d, which \
+                     has no bytes"
+                    h.sh_info;
+                implicit target off x)
   in
   let sections =
     match unplaced with

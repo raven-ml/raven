@@ -163,7 +163,7 @@ let reading =
                 let addend =
                   match r.addend with
                   | Explicit a -> a
-                  | Implicit -> fail "a fixture's relocation without addend"
+                  | Implicit _ -> fail "a fixture's relocation without addend"
                 in
                 Bytes.set_int64_le b 0
                   (Int64.of_int (offset + addend - r.offset));

@@ -76,7 +76,7 @@ let patch ~size i (r : Device_elf.relocation) =
   let* addend =
     match r.addend with
     | Explicit a -> Ok a
-    | Implicit ->
+    | Implicit _ ->
         Error (strf "relocation %d has no addend in its entry (SHT_REL)" i)
   in
   if r.offset + rel64_bytes > size then

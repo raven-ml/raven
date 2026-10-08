@@ -53,7 +53,8 @@ val of_string : string -> (t, string) result
       address ([R_CUDA_64], [0x2]), its low 32 bits ([R_CUDA_ABS32_LO_32],
       [0x38]) and its high 32 bits ([R_CUDA_ABS32_HI_32], [0x39]);
     - a relocation's symbol is not in the image, or the bytes it patches
-      ({!patches}) lie past the end of the image of {!elf}. *)
+      ({!patches}) lie past the end of the image of {!elf}, or, for one without
+      an addend in its entry, past the end of their section. *)
 
 val size : t -> int
 (** [size c] is the length of [c]'s image: the image of {!elf}, then zeros up to

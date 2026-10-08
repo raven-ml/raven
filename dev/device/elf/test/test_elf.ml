@@ -289,7 +289,8 @@ let elf_section =
 
 let pp_addend ppf : Elf.addend -> unit = function
   | Explicit a -> Format.fprintf ppf "Explicit %d" a
-  | Implicit -> Format.pp_print_string ppf "Implicit"
+  | Implicit { at; length } ->
+      Format.fprintf ppf "Implicit { at = %d; length = %d }" at length
 
 let elf_addend = Testable.make ~pp:pp_addend ~equal:( = )
 
@@ -792,6 +793,7 @@ let test_relocations () =
          ])
   in
   let data = Elf.Image { section = 2; offset = 12 } in
+  let data_at = (section_named o ".data").at in
   equal ~msg:"in the order of their sections, then of their entries"
     (list relocation)
     [
@@ -811,7 +813,7 @@ let test_relocations () =
       {
         offset = 14;
         kind = 9;
-        addend = Implicit;
+        addend = Implicit { at = data_at + 6; length = 2 };
         symbol = sym_entry "ext" Undefined;
       };
     ]
@@ -882,6 +884,34 @@ let test_dynamic_relocations () =
   equal ~msg:"and its last" (list int) [ 0x103 ] (offsets 0x203);
   ignore (refused (obj ~at:0xff));
   ignore (refused (obj ~at:0x204))
+
+(* A relocation without an addend has it in the field it patches: the object's
+   bytes there, which a section without bytes and a gap between sections
+   lack. *)
+let test_implicit () =
+  let dynamic ~at =
+    write
+      [
+        section ~addr:0x100 ".text" "ABCD";
+        section ~addr:0x200 ".data" "EFGH";
+        bss ~addr:0x300 ".bss" 8;
+        rel_section ~name:".rel.dyn" ~link:0 ~info:0 [ (at, 0, 8) ];
+      ]
+  in
+  let o = read (dynamic ~at:0x201) in
+  equal ~msg:"a dynamic one's field, found by its address" (list elf_addend)
+    [ Implicit { at = (section_named o ".data").at + 1; length = 3 } ]
+    (List.map (fun (r : Elf.relocation) -> r.addend) o.relocations);
+  ignore (refused (dynamic ~at:0x180));
+  ignore (refused (dynamic ~at:0x304));
+  ignore
+    (refused
+       (write
+          [
+            section ".text" "ABCD";
+            bss ".bss" 8;
+            rel_section ~link:0 ~info:2 [ (0, 0, 8) ];
+          ]))
 
 (* A thread-local section without bytes takes no memory, so the section after it
    may start at its address, as a linker lays out [.tbss] and [.init_array]. *)
@@ -1023,8 +1053,8 @@ let test_many_symbols () =
     (Iarray.get o.symbols count);
   linear_time many_symbols count
 
-(* [count] dynamic relocation sections, each with its own symbol table, among
-   [count] allocated sections the image lacks. *)
+(* [count] dynamic relocation sections without addends, each with its own symbol
+   table, among [count] allocated sections the image lacks. *)
 let many_relocation_sections count =
   let entries, names = symbols [ defined "f" 1 0x100 ] in
   let symtab_at = count + 2 and strtab_at = (3 * count) + 2 in
@@ -1034,7 +1064,7 @@ let many_relocation_sections count =
          section ~kind:sht_init_array ~addr:(0x1000 + (2 * i)) ".init_array" "x")
     @ List.init count (fun _ -> symtab ~link:strtab_at entries)
     @ List.init count (fun i ->
-        rela_section ~link:(symtab_at + i) ~info:0 [ (0x102, 1, 1, 0) ])
+        rel_section ~link:(symtab_at + i) ~info:0 [ (0x102, 1, 1) ])
     @ [ strtab names ])
 
 (* Reading takes time linear in the relocation sections. *)
@@ -1524,7 +1554,10 @@ let model_relocations c : Elf.relocation list =
             (fun (o, s, kind, a) : Elf.relocation ->
               let symbol = if s = 0 then no_symbol else symbols.(s) in
               let addend : Elf.addend =
-                if explicit then Explicit a else Implicit
+                if explicit then Explicit a
+                else
+                  let sec = List.nth (model_sections c) t in
+                  Implicit { at = sec.at + o; length = sec.length - o }
               in
               { offset = off + o; kind; addend; symbol })
             es)
@@ -1805,7 +1838,7 @@ let test_elf32 () =
       {
         offset = 2;
         kind = 6;
-        addend = Implicit;
+        addend = Implicit { at = (section_named o ".text").at + 2; length = 2 };
         symbol = sym_entry "ext" Undefined;
       };
     ]
@@ -1883,7 +1916,15 @@ let test_global () =
   let scratch = sym_entry "scratch" (Image { section = 14; offset = 1024 }) in
   equal ~msg:"the global" symbol scratch (symbol_named o "scratch");
   equal ~msg:"the bank's relocation reaches it" (list relocation)
-    [ { offset = 0; kind = 2; addend = Implicit; symbol = scratch } ]
+    [
+      {
+        offset = 0;
+        kind = 2;
+        addend =
+          Implicit { at = (section_named o ".nv.constant4").at; length = 8 };
+        symbol = scratch;
+      };
+    ]
     o.relocations
 
 (* amd_gfx1100.hsaco: .rodata (64 bytes, aligned to 64) at 0x600 and .text
@@ -2060,6 +2101,8 @@ let () =
                test_unloaded_relocations;
              test "a dynamic relocation patches an address in the image"
                test_dynamic_relocations;
+             test "one without an addend has it in the object's bytes"
+               test_implicit;
              test "one at a thread-local section's addresses"
                test_tbss_addresses;
            ];

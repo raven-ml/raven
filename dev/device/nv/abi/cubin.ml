@@ -36,72 +36,12 @@ let max_image = 1 lsl 49
    zeros up to the next 4 KiB, and 4 KiB more. *)
 let page = 0x1000
 
-(* The image's sections with bytes in the object, by image offset. *)
-let with_bytes (o : Device_elf.t) =
-  let offset i = Option.get (Iarray.get o.sections i).offset in
-  let idx = Array.make (Iarray.length o.sections) 0 and n = ref 0 in
-  Iarray.iteri
-    (fun i (s : Device_elf.section) ->
-      if Option.is_some s.offset && s.length > 0 then begin
-        idx.(!n) <- i;
-        incr n
-      end)
-    o.sections;
-  let idx = Array.sub idx 0 !n in
-  (* Sections that follow the image's end come in order. *)
-  let rec sorted k =
-    k >= !n || (offset idx.(k - 1) <= offset idx.(k) && sorted (k + 1))
-  in
-  if not (sorted 1) then
-    Array.sort (fun i j -> Int.compare (offset i) (offset j)) idx;
-  idx
+(* The [width] bytes of [file] at [p], an unsigned little-endian number. *)
+let field file p width =
+  if width = 8 then String.get_int64_le file p
+  else Int64.of_int (Int32.to_int (String.get_int32_le file p) land 0xffff_ffff)
 
-(* The index in [idx] of the last section starting at or before the image offset
-   [x], or [-1]. *)
-let section_at (o : Device_elf.t) idx x =
-  let lo = ref 0 and hi = ref (Array.length idx) in
-  while !lo < !hi do
-    let mid = (!lo + !hi) / 2 in
-    if Option.get (Iarray.get o.sections idx.(mid)).offset <= x then
-      lo := mid + 1
-    else hi := mid
-  done;
-  !lo - 1
-
-(* The byte of [o]'s image at [x]: that of the section holding it, or zero. *)
-let image_byte (o : Device_elf.t) idx x =
-  let k = section_at o idx x in
-  if k < 0 then 0
-  else
-    let s = Iarray.get o.sections idx.(k) in
-    let off = Option.get s.offset in
-    if x < off + s.length then Char.code o.file.[s.at + x - off] else 0
-
-(* An implicit addend: the [width] bytes of [o]'s image at [at], an unsigned
-   little-endian number. They usually lie in one section, read at once. *)
-let implicit (o : Device_elf.t) idx ~at ~width =
-  (* Where the bytes lie in the object if one section holds them all, or
-     [-1]. *)
-  let p =
-    let k = section_at o idx at in
-    if k < 0 then -1
-    else
-      let s = Iarray.get o.sections idx.(k) in
-      let off = Option.get s.offset in
-      if at + width <= off + s.length then s.at + at - off else -1
-  in
-  if p >= 0 && width = 8 then String.get_int64_le o.file p
-  else if p >= 0 then
-    Int64.of_int (Int32.to_int (String.get_int32_le o.file p) land 0xffff_ffff)
-  else begin
-    let v = ref 0L in
-    for b = width - 1 downto 0 do
-      v := Int64.(logor (shift_left !v 8) (of_int (image_byte o idx (at + b))))
-    done;
-    !v
-  end
-
-let relocation (o : Device_elf.t) idx i (r : Device_elf.relocation) =
+let relocation (o : Device_elf.t) i (r : Device_elf.relocation) =
   let* at, width, high =
     if r.kind = r_cuda_64 then Ok (r.offset, 8, false)
     else if r.kind = r_cuda_abs32_lo_32 then Ok (r.offset + 4, 4, false)
@@ -124,10 +64,16 @@ let relocation (o : Device_elf.t) idx i (r : Device_elf.relocation) =
   if at + width > o.size then
     Error (strf "relocation %d patches bytes past the image's end at %d" i at)
   else
-    let addend =
+    (* A 32-bit field lies past the relocation's offset. *)
+    let skip = at - r.offset in
+    let* addend =
       match r.addend with
-      | Explicit a -> Int64.of_int a
-      | Implicit -> implicit o (Lazy.force idx) ~at ~width
+      | Explicit a -> Ok (Int64.of_int a)
+      | Implicit { at = p; length } when skip + width <= length ->
+          Ok (field o.file (p + skip) width)
+      | Implicit _ ->
+          Error
+            (strf "relocation %d patches bytes past the end of its section" i)
     in
     Ok { at; width; high; offset; addend }
 
@@ -402,13 +348,10 @@ let of_string obj =
         (strf "the image would be longer than 2^49 bytes: its sections take %d"
            o.size)
   in
-  (* NVIDIA's compilers write REL relocations, whose addends lie in the
-     image. *)
-  let idx = lazy (with_bytes o) in
   let rec relocations i acc = function
     | [] -> Ok (List.rev acc)
     | r :: rs ->
-        let* r = relocation o idx i r in
+        let* r = relocation o i r in
         relocations (i + 1) (r :: acc) rs
   in
   let* relocations = relocations 0 [] o.relocations in
