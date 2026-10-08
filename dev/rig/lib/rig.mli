@@ -315,8 +315,9 @@ module Buffer : sig
       than the host asks the io device to read the borrowed bytes ahead
       ({!Io.prefetch}).
 
-      Raises [Invalid_argument] if [b] is dead ({!Claim.consume}), and {!Lost}
-      if [d] is lost or [b]'s stamps name a lost device. *)
+      Raises [Invalid_argument] if [b] is dead ({!Claim.consume}), {!Lost} if
+      [d] is lost or [b]'s stamps name a lost device, and [Sys_error] where
+      asking an io device for [b]'s pages failed ({!Io.pages}). *)
 
   (** The type for what an access does with a buffer. *)
   type access =
@@ -1097,8 +1098,13 @@ module type Io = sig
       mapping is [r]'s memory: {!read} and {!write} see writes through it, and
       it sees theirs. The exception is [r] that [d] holds for reading: writes
       through the mapping, by the host or by a device that borrowed it, stay the
-      process's own, and {!read} does not see them. This library asks once per
-      memory, at its first borrow. *)
+      process's own, and {!read} does not see them.
+
+      [None] is a fact of [r]: this library asks once per memory, at its first
+      borrow that answers, and keeps the answer. A failure that may pass, of the
+      memory alone, such as too many open files, raises [Sys_error], which loses
+      nothing: the borrow raises it, and the next asks again. {!Fault} loses
+      [d]. *)
 
   val prefetch : t -> region -> at:int -> len:int -> unit
   (** [prefetch d r ~at ~len] asks [d] to read the [len] bytes at [at] in [r]

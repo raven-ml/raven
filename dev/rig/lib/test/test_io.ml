@@ -17,11 +17,13 @@ let timeout = 60.
 let page_bytes = 1 lsl 16
 
 module Pages = struct
-  (* [during] runs as a read or a write starts. *)
+  (* [during] runs as a read or a write starts; [mapped] is how [pages]
+     answers. *)
   type t = {
     lock : Mutex.t;
     mutable calls : string list;
     mutable during : unit -> unit;
+    mutable mapped : [ `Pages | `None | `Fails ];
   }
 
   (* Its bytes, and the host buffer that holds them on a page. *)
@@ -58,7 +60,10 @@ module Pages = struct
 
   let pages t r =
     note t "pages";
-    Some r.bytes
+    match t.mapped with
+    | `Pages -> Some r.bytes
+    | `None -> None
+    | `Fails -> raise (Sys_error "too many open files")
 
   let prefetch t _ ~at:_ ~len:_ = note t "prefetch"
   let stop _ = ()
@@ -68,7 +73,12 @@ let opened = Atomic.make 0
 
 let open_pages () =
   let t =
-    { Pages.lock = Mutex.create (); calls = []; during = (fun () -> ()) }
+    {
+      Pages.lock = Mutex.create ();
+      calls = [];
+      during = (fun () -> ());
+      mapped = `Pages;
+    }
   in
   let name = Printf.sprintf "io:pages-%d" (Atomic.fetch_and_add opened 1) in
   let io =
@@ -108,6 +118,31 @@ let test_borrow () =
   done;
   equal ~msg:"host mappings" (list int) [ page_bytes ] (P.host_maps p);
   equal ~msg:"pages asked" int 1 (count "pages" t)
+
+(* Memory whose io device maps no pages borrows nowhere, and is asked once. *)
+let test_no_pages () =
+  let io, t = open_pages () in
+  t.mapped <- `None;
+  let d, _ = P.open_ "io:pageless" in
+  let m = B.create io page_bytes in
+  equal ~msg:"a first borrow" bool true (Option.is_none (B.borrow d m));
+  equal ~msg:"a second borrow" bool true (Option.is_none (B.borrow d m));
+  equal ~msg:"pages asked" int 1 (count "pages" t)
+
+(* A failure of the memory alone when its pages are asked raises from the borrow
+   and loses nothing: a later borrow asks again. *)
+let test_pages_fail () =
+  let io, t = open_pages () in
+  t.mapped <- `Fails;
+  let d, _ = P.open_ "io:pages-fail" in
+  let m = B.create io page_bytes in
+  raises_match
+    (function Sys_error _ -> true | _ -> false)
+    (fun () -> B.borrow d m);
+  equal ~msg:"the io device" (option string) None (C.lost io);
+  t.mapped <- `Pages;
+  ignore (require_some (B.borrow d m));
+  equal ~msg:"pages asked" int 2 (count "pages" t)
 
 (* A borrow by a device other than the host asks the io device to read ahead;
    the host's does not. *)
@@ -224,6 +259,10 @@ let tests =
       [
         test "a device borrows io memory through its pages, mapped once"
           test_borrow;
+        test "memory whose device maps no pages borrows nowhere, asked once"
+          test_no_pages;
+        test "a failure asking for pages raises and is asked again"
+          test_pages_fail;
         test "a device's borrow of io memory reads ahead, the host's does not"
           test_prefetch;
         test "copies of io memory follow devices' work through its pages"

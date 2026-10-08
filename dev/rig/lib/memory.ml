@@ -708,8 +708,9 @@ let mapping d m host =
               defer d (Unmap r);
               Some other))
 
-(* The host address of the io memory [m]'s pages, asked of its device at the
-   first borrow, or [-1] if it maps none. *)
+(* The host address of the io memory [m]'s pages, or [-1] if it maps none: the
+   first answer of its device, kept. A call that raises leaves it to ask
+   again. *)
 let pages (m : memory) =
   let e = m.entry in
   (match e.pages with
