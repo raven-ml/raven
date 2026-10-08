@@ -187,10 +187,11 @@ val reset : t -> (unit, string) result
     A function reaches system memory of its machine at addresses given as
     (address, bytes) {e runs}, in order.
     - Behind an IOMMU they are device addresses the process maps for the
-      function alone, as one run. The memory counts against the process's
-      locked-memory limit ([ulimit -l]), and the function's VFIO container holds
-      at most [dma_entry_limit] mappings (a parameter of [vfio_iommu_type1],
-      65,535 by default).
+      function alone, as one run, from 4 GiB up to 1 TiB, which every GPU
+      reaches and no device address truncated to 32 bits does. The memory counts
+      against the process's locked-memory limit ([memlock]), and the function's
+      VFIO container holds at most [dma_entry_limit] mappings (a parameter of
+      [vfio_iommu_type1], 65,535 by default).
     - Taken {!Machine.Physical}ly, they are physical addresses, one run per page
       unless contiguous. Reading them needs the privileges for
       [/proc/self/pagemap] and [mlock], and the kernel setting

@@ -92,8 +92,9 @@ type t = {
   memory : int;
 }
 
-(* A table pool per GPU memory of this many bytes, rounded up to
-   [table_round]. *)
+(* A table pool holds a 4 KiB leaf table for every 2 MiB of the GPU's memory,
+   [memory / table_share] bytes, enough to map all of it in 4 KiB pages once,
+   rounded up to [table_round]. *)
 let table_share = 512
 let table_round = 1 lsl 20
 let round_up n a = (n + a - 1) / a * a

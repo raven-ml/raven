@@ -153,7 +153,10 @@ let interrupt f ms =
   if ms < 0 then invalid_argf "Function.interrupt: %d ms is negative" ms;
   f.fn.interrupt ms
 
-(* A function answers again once its vendor ID reads other than all ones. *)
+(* A function answers again once its vendor ID reads other than all ones, within
+   1 s of its reset: software waits 100 ms, and the function may have
+   configuration requests retried until 1 s has passed (PCI Express Base
+   Specification, 6.6.1). *)
 let absent = 0xffff
 let reset_ms = 1000
 
@@ -178,8 +181,8 @@ let reset f =
 
 (* System memory *)
 
-(* Contiguous memory is at most a huge page, of 2 MiB. *)
-let huge = 2 lsl 20
+(* Contiguous memory is at most a huge page. *)
+let huge = Sysmem.huge
 
 let on_page f fn a =
   if a mod Machine.page f.machine <> 0 then

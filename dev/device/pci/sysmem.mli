@@ -13,6 +13,10 @@
 val page : int
 (** [page] is the system's page size in bytes. *)
 
+val huge : int
+(** [huge] is the huge page of 2 MiB that contiguous memory larger than a page
+    is. *)
+
 val reserve : base:int -> int -> unit
 (** [reserve ~base n] reserves [n] addresses from [base] once per range, for
     {!alloc} and {!map} only. *)

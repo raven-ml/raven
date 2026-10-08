@@ -27,11 +27,14 @@ type t = {
   mapped : (int, region) Hashtbl.t;
 }
 
-(* Large allocations round to the GPU's large pages, so their tail maps with
-   them. Small ones round to the GPU's page. *)
-let large = 8 lsl 20
-let large_page = 2 lsl 20
+(* The GPU's page is 4 KiB, the page every format's leaf level maps
+   (Page_table.format). Its large page is 2 MiB, what the level above maps: a
+   leaf table is a 4 KiB page of 512 8-byte entries. Allocations of [large]
+   bytes or more round to large pages, so that their tail maps with them; the
+   rounding then costs at most a quarter of the allocation. *)
 let page = 0x1000
+let large_page = 2 lsl 20
+let large = 4 * large_page
 let round_up n a = (n + a - 1) / a * a
 
 let create ?peer fn tables ~bar =

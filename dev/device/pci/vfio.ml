@@ -178,10 +178,11 @@ let config_offset bus device =
 
 (* Containers *)
 
-(* Device addresses behind an IOMMU are taken from 4 GiB up to 1 TiB: every GPU
-   reaches 40 bits, and an address a device truncates to 32 bits falls below 4
-   GiB, where nothing is mapped, and faults. The window is the largest part of
-   that range the IOMMU maps. *)
+(* Device addresses behind an IOMMU are taken from 4 GiB up to 1 TiB. 40 bits is
+   the narrowest DMA mask Linux's amdgpu gives a GPU (gmc_v7 and gmc_v8; gfx9
+   and later take 44, NVIDIA's parts more), and an address a device truncates to
+   32 bits falls below 4 GiB, where nothing is mapped, and faults. The window is
+   the largest part of that range the IOMMU maps. *)
 let iova_low = 1 lsl 32
 let iova_high = 1 lsl 40
 

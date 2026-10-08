@@ -19,8 +19,10 @@ external unlock_at : int -> int -> unit = "caml_device_pci_sysmem_unlock"
 let page = page_size ()
 let round_page n = (n + page - 1) / page * page
 
-(* The huge page of x86-64 and arm64 with 4 KiB pages, which contiguous memory
-   larger than a page is. *)
+(* The huge page of x86-64 and of arm64 with 4 KiB pages, which contiguous
+   memory larger than a page is: one entry of the second-level page table maps
+   512 pages of 4 KiB. arm64 with 16 or 64 KiB pages has larger huge pages,
+   which this library does not use. *)
 let huge = 2 lsl 20
 
 (* The ranges [reserve] reserved, and pins, counted per page across the process:
