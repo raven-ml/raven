@@ -121,6 +121,7 @@ module Fake = struct
     mutable report : string option; (* a fault the path reports *)
     mutable hang_ms : int option;
     mutable stops : [ `Stopped | `Unknown ]; (* what the path's stop answers *)
+    mutable on_free : unit N.memory -> unit; (* runs before each free *)
   }
 
   (* The path's own objects. *)
@@ -181,6 +182,7 @@ module Fake = struct
 
   let free f (m : unit N.memory) =
     if f.faults then raise (N.Fault "the GPU fell off the bus");
+    f.on_free m;
     match List.find_opt (fun (a, _, _) -> a = m.address) f.memory with
     | None -> f.wrong <- Printf.sprintf "freed memory 0x%x" m.address :: f.wrong
     | Some ((_, host, bytes) as x) ->
@@ -248,6 +250,7 @@ module Fake = struct
       report = None;
       hang_ms = None;
       stops = `Unknown;
+      on_free = ignore;
     }
 end
 
@@ -1866,6 +1869,113 @@ let image_commands =
     ~release:(fun (g, i, r) ->
       Fun.protect ~finally:(fun () -> N.free g r) (fun () -> N.unload g i))
 
+(* Local memory handed over from two domains: one grows the kernels' local
+   memory while the other submits, and the word moves on by small steps. A
+   local memory the device replaced goes back to the path only once the word
+   reached every value that could run on it: those handed before its
+   successor's [local] returned. *)
+module Handover = struct
+  type t = {
+    g : N.t;
+    f : Fake.t;
+    turn : Mutex.t; (* rig_nv_submit runs one call at a time *)
+    grows : Mutex.t; (* one growth and its record at a time *)
+    lock : Mutex.t; (* the word's steps and the memories' last users *)
+    handed : int Atomic.t;
+    mutable newest : int option; (* the newest local memory *)
+    users : (int, int) Hashtbl.t; (* a replaced memory's last possible user *)
+    mutable early : string option; (* a memory freed before its users ran *)
+    mutable returned : int; (* replaced memories gone back *)
+    mutable kib : int; (* the local memory a thread has, in KiB *)
+  }
+
+  let word h = host (N.word h.g)
+
+  let start () =
+    let f = Fake.make 0 in
+    let g = require_ok (N.make (Fake.path f)) in
+    let h =
+      {
+        g;
+        f;
+        turn = Mutex.create ();
+        grows = Mutex.create ();
+        lock = Mutex.create ();
+        handed = Atomic.make 0;
+        newest = None;
+        users = Hashtbl.create 8;
+        early = None;
+        returned = 0;
+        kib = 0;
+      }
+    in
+    let held = List.map (fun (a, _, _) -> a) f.memory in
+    f.on_free <-
+      (fun m ->
+        Mutex.protect h.lock @@ fun () ->
+        if not (List.mem m.address held) then
+          match Hashtbl.find_opt h.users m.address with
+          | Some v when S.get64 (word h) < v ->
+              h.early <-
+                Some
+                  (strf "0x%x freed at word %d, used up to %d" m.address
+                     (S.get64 (word h)) v)
+          | Some _ -> h.returned <- h.returned + 1
+          | None -> ());
+    h
+
+  (* Grows local memory by 1 KiB a thread, which replaces it. *)
+  let grow h =
+    Mutex.protect h.grows @@ fun () ->
+    h.kib <- h.kib + 1;
+    match (N.capability h.g).local (h.kib * 1024) with
+    | Error e -> failf "local: %s" e
+    | Ok () -> (
+        let newest =
+          List.find_map
+            (fun (a, host, _) -> if host = None then Some a else None)
+            h.f.memory
+        in
+        Mutex.protect h.lock @@ fun () ->
+        match (h.newest, newest) with
+        | Some old, Some m when old <> m ->
+            Hashtbl.replace h.users old (Atomic.get h.handed);
+            h.newest <- Some m
+        | None, m -> h.newest <- m
+        | Some _, _ -> ())
+
+  (* Hands one empty submission, which takes a pending local memory, then
+     moves the word on by [k] values, up to the last handed. *)
+  let submit k h =
+    Mutex.protect h.turn (fun () ->
+        if S.edge_room h.g [||] = 0 then begin
+          let v = Atomic.get h.handed + 1 in
+          Atomic.set h.handed v;
+          S.edge_submit h.g ~v ~waits:[||] [||]
+        end);
+    Mutex.protect h.lock @@ fun () ->
+    let w = S.get64 (word h) in
+    S.set64 (word h) (min (Atomic.get h.handed) (w + k))
+
+  let invariant _ h =
+    cover "a replaced local memory went back" (h.returned > 0);
+    equal (option string) ~msg:"a local memory freed early" None h.early
+
+  let release h = N.stop h.g
+end
+
+let handover = abstract "h" ~invariant:Handover.invariant ~release:Handover.release
+
+let handover_commands =
+  [
+    command "start" (Gen.unit @-> makes handover) ignore Handover.start;
+    command "grow" (handover ^-> returns unit) ignore Handover.grow;
+    command "submit"
+      (Gen.int_range 0 2 @-> handover ^-> returns unit)
+      (fun _ () -> ())
+      Handover.submit;
+  ]
+
 let stateful =
   group ~timeout:300. "stateful"
     [
@@ -1880,6 +1990,9 @@ let stateful =
         "a mapping freed from two domains is freed once" mapping_commands;
       stateful ~count:30 ~domains:2
         "an image unloaded from two domains is unloaded once" image_commands;
+      stateful ~count:100 ~steps:40 ~domains:2
+        "local memory goes back only once the values that could use it ran"
+        handover_commands;
     ]
 
 (* Progress bounds

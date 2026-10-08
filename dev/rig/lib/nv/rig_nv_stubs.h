@@ -92,13 +92,12 @@ struct channel {
 struct device {
   _Atomic uint64_t *word; /* the timeline word, then the two join words */
   uint64_t word_gpu;
-  uint64_t last; /* the last value submitted */
+  _Atomic uint64_t last; /* the last value submitted */
   struct channel ch[CHANNELS];
   volatile uint32_t *doorbell;
   struct template t[TEMPLATES];
   uint64_t entry_base, entry_word; /* an entry is address + base + words * word */
   _Atomic uint64_t local;          /* a pending local memory: address | per_tpc / 32 KiB << 40 */
-  _Atomic uint64_t local_placed;   /* the value of the submission that placed it */
   _Atomic int invalidate;          /* whether the compute caches are owed an invalidation */
   _Atomic long bar_live;           /* live regions the host writes through the BAR */
   volatile const uint32_t *bar;    /* a word of the BAR, read to flush its writes */

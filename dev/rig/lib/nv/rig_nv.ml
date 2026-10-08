@@ -143,7 +143,6 @@ external zero : int -> int -> unit = "caml_rig_nv_zero"
 external offer_local : int -> int -> int -> bool = "caml_rig_nv_offer_local"
 external set_local : int -> int -> unit = "caml_rig_nv_set_local"
 external pending_local : int -> int = "caml_rig_nv_pending_local"
-external local_placed : int -> int = "caml_rig_nv_local_placed"
 external owe_invalidate : int -> unit = "caml_rig_nv_owe_invalidate"
 external read_word : int -> int = "caml_rig_nv_signaled" [@@noalloc]
 external notification : int -> int -> int = "caml_rig_nv_notification"
@@ -275,14 +274,15 @@ let self (T d) = Nativeint.of_int d.self
 
 (* Local memory *)
 
-(* Moves the pending local memory to current once a submission took it, retiring
-   the current one from the value that placed its successor. *)
+(* Moves the pending local memory to current once a submission took it. The
+   current one serves the values before that submission, all at most the last
+   value submitted once the taking is seen: it retires with that value. *)
 let settle d =
   match d.local_pending with
   | Some (m, packed) when pending_local d.self <> packed ->
-      let placed = local_placed d.self in
+      let reached = last d.self in
       Option.iter
-        (fun c -> d.local_retired <- (c, placed) :: d.local_retired)
+        (fun c -> d.local_retired <- (c, reached) :: d.local_retired)
         d.local_current;
       d.local_current <- Some m;
       d.local_pending <- None

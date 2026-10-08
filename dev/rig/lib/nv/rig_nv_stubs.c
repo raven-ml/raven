@@ -198,12 +198,6 @@ value caml_rig_nv_set_local(value v_self, value v_packed) {
   return Val_unit;
 }
 
-value caml_rig_nv_local_placed(value v_self) {
-  return Val_long(
-      atomic_load_explicit(&Device_val(v_self)->local_placed,
-                           memory_order_acquire));
-}
-
 value caml_rig_nv_owe_invalidate(value v_self) {
   atomic_store(&Device_val(v_self)->invalidate, 1);
   return Val_unit;
@@ -249,7 +243,8 @@ value caml_rig_nv_watch(value v_self, value v_seen, value v_ms) {
 }
 
 value caml_rig_nv_last(value v_self) {
-  return Val_long(Device_val(v_self)->last);
+  return Val_long(atomic_load_explicit(&Device_val(v_self)->last,
+                                       memory_order_acquire));
 }
 
 /* The monotonic clock, in milliseconds. */
@@ -262,9 +257,10 @@ value caml_rig_nv_now_ms(value unit) {
    never moves backwards. */
 value caml_rig_nv_raise(value v_self) {
   struct device *d = Device_val(v_self);
+  uint64_t last = atomic_load_explicit(&d->last, memory_order_relaxed);
   uint64_t w = atomic_load_explicit(d->word, memory_order_acquire);
-  while ((int64_t)(w - d->last) < 0 &&
-         !atomic_compare_exchange_weak(d->word, &w, d->last)) {
+  while ((int64_t)(w - last) < 0 &&
+         !atomic_compare_exchange_weak(d->word, &w, last)) {
   }
   return Val_unit;
 }

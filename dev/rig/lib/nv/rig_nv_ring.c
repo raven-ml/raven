@@ -253,7 +253,6 @@ static void enter(struct device *d, int q, uint64_t v, int *used,
     uint64_t address = local & ((UINT64_C(1) << LOCAL_ADDRESS_BITS) - 1);
     uint64_t per_tpc = (local >> LOCAL_ADDRESS_BITS) << LOCAL_UNIT_SHIFT;
     emit(d, c, T_LOCAL, address, per_tpc, 0);
-    atomic_store_explicit(&d->local_placed, v, memory_order_release);
   }
   if (atomic_exchange(&d->invalidate, 0))
     emit(d, c, T_INVALIDATE, 0, 0, 0);
@@ -332,6 +331,6 @@ int rig_nv_submit(void *self, uint64_t v, const struct rig_wait *waits,
     store_fence();
   for (int q = 0; q < CHANNELS; q++)
     if (used[q]) *d->doorbell = d->ch[q].token;
-  d->last = v;
+  atomic_store_explicit(&d->last, v, memory_order_release);
   return RIG_OK;
 }
