@@ -230,6 +230,12 @@ value device_pci_test_write(value w, value off, value s) {
   return Val_unit;
 }
 
+value device_pci_test_flush(value w) {
+  struct device_pci_window v = window(w);
+  device_pci_flush(&v);
+  return Val_unit;
+}
+
 value device_pci_test_failed(value w) {
   CAMLparam1(w);
   struct device_pci_window v = window(w);

@@ -111,6 +111,17 @@ static inline uint64_t device_pci_load64(const struct device_pci_window *w,
   return x;
 }
 
+/* Makes the stores made through [w] before it reach the function before
+   any access after it, through any window: a barrier, then a load of [w]'s
+   first word, which the bus answers only after them. A driver flushes the
+   window it wrote before the store that has the function read what it
+   wrote, such as a doorbell. [w] holds at least 4 bytes from a 4-byte
+   boundary. */
+static inline void device_pci_flush(const struct device_pci_window *w) {
+  device_pci_barrier();
+  (void)device_pci_load32(w, 0);
+}
+
 /* Copies the [n] bytes at [src] to byte [off] of [w], at widths it chooses:
    memory, never registers. */
 void device_pci_write(const struct device_pci_window *w, size_t off,

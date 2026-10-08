@@ -70,6 +70,17 @@ let set64 w () =
     Window.set64 w (i * 8 mod span) x64
   done
 
+(* A flush is a barrier, its floor, and a load. *)
+let barrier () =
+  for _ = 1 to accesses do
+    Window.barrier ()
+  done
+
+let flush w () =
+  for _ = 1 to accesses do
+    Window.flush w
+  done
+
 let mapped = Window.v (buffer span) span
 let wide = Window.v (buffer wide_span) wide_span
 let through = Window.through (Window.unsafe_transport (far ())) 0 span
@@ -87,6 +98,8 @@ let () =
              bench "set32" (set32 mapped);
              bench "get64" (get64 mapped);
              bench "set64" (set64 mapped);
+             bench "barrier" barrier;
+             bench "flush" (flush mapped);
              bench "write-4KiB" (fun () -> Window.write mapped 0 page);
              bench "read-4KiB" (fun () -> Window.read mapped 0 span);
              bench "fill-4KiB" (fun () -> Window.fill mapped 0 span 'x');

@@ -154,6 +154,11 @@ let[@inline] set64 w off x =
   if mapped w then set64_at w.address off x
   else transport_set w.transport (w.address + off) 8 x
 
+let flush w =
+  if not (usable w 0 4) then misuse "flush" w 0 4;
+  barrier ();
+  ignore (get32 w 0 : int)
+
 let read w off n =
   check "read" w off n;
   if mapped w then read_at (w.address + off) n

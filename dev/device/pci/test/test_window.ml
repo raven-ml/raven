@@ -21,6 +21,7 @@ external c_load32 : Window.t -> int -> int = "device_pci_test_load32"
 external c_load64 : Window.t -> int -> int64 = "device_pci_test_load64"
 external c_write : Window.t -> int -> string -> unit = "device_pci_test_write"
 external c_failed : Window.t -> string option = "device_pci_test_failed"
+external c_flush : Window.t -> unit = "device_pci_test_flush"
 
 (* Far machines put their bytes at [base], away from 0 so that an access sent to
    its offset in place of its address misses them. *)
@@ -102,6 +103,8 @@ module Model = struct
   let fill r o n c =
     check r o n;
     Bytes.fill r.bytes (r.off + o) n c
+
+  let flush r = check_word r 0 4
 end
 
 (* Offsets and counts around every window's bounds, and the extremes. *)
@@ -159,6 +162,7 @@ let commands ~is_mapped make =
     command "fill"
       (win ^-> index @-> index @-> Gen.char @-> returns unit)
       Model.fill Window.fill;
+    command "flush" (win ^-> returns unit) Model.flush Window.flush;
     command "device_pci_store32"
       ~pre:(fun r o _ -> word 4 r o)
       (win ^-> inner @-> Gen.int @-> returns unit)
@@ -179,6 +183,10 @@ let commands ~is_mapped make =
       ~pre:(fun r o s -> inside r o (String.length s))
       (win ^-> inner @-> bytes @-> returns unit)
       Model.write c_write;
+    command "device_pci_flush"
+      ~pre:(fun r -> word 4 r 0)
+      (win ^-> returns unit)
+      Model.flush c_flush;
   ]
 
 (* A window one byte past an aligned address: its words at offsets 3 and 7 are
@@ -362,7 +370,29 @@ let test_one_access () =
   once "device_pci_load32" false 4 4 (fun () -> ignore (c_load32 w 4));
   once "device_pci_store32" true 28 4 (fun () -> c_store32 w 28 1);
   once "device_pci_load64" false 8 8 (fun () -> ignore (c_load64 w 8));
-  once "device_pci_store64" true 24 8 (fun () -> c_store64 w 24 1L)
+  once "device_pci_store64" true 24 8 (fun () -> c_store64 w 24 1L);
+  once "flush" false 0 4 (fun () -> Window.flush w);
+  once "device_pci_flush" false 0 4 (fun () -> c_flush w)
+
+(* Stores through a far sub-window [4 * off] bytes into its machine's, then a
+   flush: the machine sees the stores in their order, then the flush's one load
+   of the sub-window's first word. *)
+let flushes =
+  let stores = Gen.list ~size:(Gen.int_range 0 6) (Gen.int_range 0 7) in
+  Gen.pair (Gen.pair (Gen.int_range 0 7) stores) Gen.bool
+
+let test_flush_order ((off, words), in_c) =
+  let f = far base 64 in
+  let w =
+    Window.sub (Window.through (Window.unsafe_transport f) base 64) (4 * off) 32
+  in
+  List.iter (fun i -> Window.set32 w (4 * i) i) words;
+  if in_c then c_flush w else Window.flush w;
+  cover "stores before the flush" (words <> []);
+  let a = base + (4 * off) in
+  equal (list access)
+    (List.map (fun i -> (true, a + (4 * i), 4)) words @ [ (false, a, 4) ])
+    (log f)
 
 (* A store of [n] bytes at [off] of a far window reaches no other byte of the
    machine: a neighbouring register keeps its value and its side effects. *)
@@ -467,6 +497,8 @@ let transports =
          test_order;
        test "a domain whose transport access blocks holds no other"
          test_blocking;
+       prop "a flush loads its window's first word after the stores before it"
+         flushes test_flush_order;
        cases ~name:fst "a read through a failed transport gives all ones"
          failed_reads (fun (_, read) ->
            let got, want = read (snd (broken ())) in
@@ -475,6 +507,12 @@ let transports =
          failed_writes (fun (_, write) ->
            let f, w = broken () in
            write w;
+           equal (list access) [] (log f));
+       cases ~name:fst "a flush through a failed transport reaches nothing"
+         [ ("flush", Window.flush); ("device_pci_flush", c_flush) ]
+         (fun (_, flush) ->
+           let f, w = broken () in
+           flush w;
            equal (list access) [] (log f));
      ]
     @ bulk)

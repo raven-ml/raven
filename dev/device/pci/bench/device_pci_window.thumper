@@ -56,6 +56,7 @@ through/set64	wall_time	batch=512	n=20	1.365e-05	1.365e-05 1.365e-05 1.365e-05 1
 # forced: blessed mapped/fill-64KiB under load 13.8 on 10 cores
 # forced: blessed mapped/read-4KiB mapped/read-64KiB under load 5.7 on 10 cores
 # forced: blessed mapped/get8 mapped/set8 mapped/get32 mapped/set32 mapped/get64 mapped/set64 through/get32 through/set32 through/get64 through/set64 under load 7.5 on 10 cores
+# forced: blessed mapped/barrier mapped/flush under load 9.6 on 10 cores
 
 c/store32	alloc_words	exact	0
 c/store32	wall_time	batch=16384	n=20	4.688e-07	4.565e-07 4.585e-07 4.600e-07 4.604e-07 4.658e-07 4.679e-07 4.683e-07 4.684e-07 4.685e-07 4.688e-07 4.688e-07 4.689e-07 4.691e-07 4.691e-07 4.704e-07 4.704e-07 4.704e-07 4.710e-07 4.733e-07 4.748e-07
@@ -67,10 +68,14 @@ c/through-store32	alloc_words	exact	0
 c/through-store32	wall_time	batch=2048	n=20	4.701e-06	4.574e-06 4.608e-06 4.629e-06 4.644e-06 4.645e-06 4.650e-06 4.690e-06 4.692e-06 4.698e-06 4.700e-06 4.701e-06 4.709e-06 4.715e-06 4.716e-06 4.722e-06 4.728e-06 4.748e-06 4.754e-06 4.773e-06 4.820e-06
 c/write-4KiB	alloc_words	exact	0
 c/write-4KiB	wall_time	batch=16384	n=20	3.496e-07	3.384e-07 3.444e-07 3.483e-07 3.484e-07 3.485e-07 3.488e-07 3.491e-07 3.492e-07 3.493e-07 3.493e-07 3.498e-07 3.500e-07 3.507e-07 3.522e-07 3.540e-07 3.549e-07 3.563e-07 3.606e-07 3.755e-07 3.830e-07
+mapped/barrier	alloc_words	exact	0
+mapped/barrier	wall_time	batch=1024	n=20	5.780e-06	5.739e-06 5.750e-06 5.757e-06 5.758e-06 5.760e-06 5.763e-06 5.771e-06 5.773e-06 5.777e-06 5.780e-06 5.781e-06 5.783e-06 5.788e-06 5.796e-06 5.799e-06 5.845e-06 5.845e-06 5.853e-06 5.920e-06 6.044e-06
 mapped/fill-4KiB	alloc_words	exact	0
 mapped/fill-4KiB	wall_time	batch=16384	n=20	3.575e-07	3.534e-07 3.541e-07 3.543e-07 3.545e-07 3.546e-07 3.546e-07 3.553e-07 3.564e-07 3.564e-07 3.573e-07 3.577e-07 3.587e-07 3.587e-07 3.605e-07 3.605e-07 3.646e-07 3.729e-07 3.803e-07 3.965e-07 4.003e-07
 mapped/fill-64KiB	alloc_words	exact	0
 mapped/fill-64KiB	wall_time	batch=1024	n=20	5.467e-06	5.295e-06 5.344e-06 5.347e-06 5.358e-06 5.360e-06 5.363e-06 5.383e-06 5.450e-06 5.455e-06 5.465e-06 5.469e-06 5.473e-06 5.475e-06 5.499e-06 5.509e-06 5.535e-06 5.549e-06 5.562e-06 5.666e-06 5.708e-06
+mapped/flush	alloc_words	exact	0
+mapped/flush	wall_time	batch=1024	n=20	6.444e-06	6.407e-06 6.410e-06 6.410e-06 6.414e-06 6.422e-06 6.422e-06 6.430e-06 6.436e-06 6.437e-06 6.443e-06 6.446e-06 6.446e-06 6.455e-06 6.463e-06 6.467e-06 6.481e-06 6.500e-06 6.504e-06 6.504e-06 6.505e-06
 mapped/get32	alloc_words	exact	0
 mapped/get32	wall_time	batch=2048	n=20	3.668e-06	3.641e-06 3.645e-06 3.647e-06 3.652e-06 3.655e-06 3.655e-06 3.659e-06 3.662e-06 3.663e-06 3.667e-06 3.668e-06 3.670e-06 3.675e-06 3.680e-06 3.682e-06 3.685e-06 3.686e-06 3.686e-06 3.693e-06 3.700e-06
 mapped/get64	alloc_words	exact	3072

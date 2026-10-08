@@ -99,6 +99,18 @@ val barrier : unit -> unit
     devices see them as well as other processors. On arm64 this is the
     full-system barrier, which stores to a BAR need. *)
 
+val flush : t -> unit
+(** [flush w] makes the stores made through [w] before it reach the function
+    before any access made after it, through any window: a {!barrier}, then a
+    32-bit load of [w]'s first word, which the bus answers only after the stores
+    before it. A driver flushes the window it wrote before the store that has
+    the function read what it wrote, such as a doorbell or a TLB invalidation.
+    Through a transport the load waits for the machine, so {!Machine.failed}
+    read after it covers the stores before it.
+
+    Raises [Invalid_argument] if [w] is shorter than 4 bytes or its first byte
+    is not on a 4-byte boundary. *)
+
 val bigarray :
   t -> (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
 (** [bigarray w] is [w]'s bytes as a bigarray, without a copy. The caller keeps
