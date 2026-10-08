@@ -10,6 +10,16 @@ module Page_table = Rig_pci.Page_table
 let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
+(* A hub's invalidation engine 17 on one instance, its registers resolved: the
+   request, the acknowledgement, and on the MM hub the semaphore and, from GC
+   11, the L2's private cache invalidation bit. *)
+type engine = {
+  req : int;
+  ack : int;
+  sem : int option;
+  cid2 : (int * int) option; (* the register and its bit *)
+}
+
 type t = {
   r : Regs.t;
   vram : Window.t;
@@ -24,7 +34,11 @@ type t = {
   hive : bool;
   address_mask : int; (* the physical addresses the GPU's entries hold *)
   mutable gc_started : bool; (* whether the GC hub walks tables yet *)
+  engines : ([ `Gc | `Mm ] * (int * engine list)) list;
+      (* each hub's request value and engines *)
 }
+
+let hub_prefix = function `Gc -> "GC" | `Mm -> "MM"
 
 (* Apertures *)
 
@@ -68,14 +82,55 @@ let make r vram =
     if Regs.vf r then 0 else Regs.read r name lsl aperture_unit
   in
   let base = Regs.read r "regMMMC_VM_FB_LOCATION_BASE" in
+  let xccs = List.init (Regs.gpu l).xccs Fun.id in
+  let mm =
+    if nbio79 then Discovery.aids d
+    else List.map fst (Discovery.live d D.mmhub_hwid)
+  in
+  let engines hub insts =
+    let name s = strf "reg%sVM_INVALIDATE_ENG17_%s" (hub_prefix hub) s in
+    let req =
+      Rig_amd_abi.Register.encode
+        (Regs.register l (name "REQ"))
+        [
+          ("flush_type", 0);
+          ("per_vmid_invalidate_req", 1);
+          ("invalidate_l2_ptes", 1);
+          ("invalidate_l2_pde0", 1);
+          ("invalidate_l2_pde1", 1);
+          ("invalidate_l2_pde2", 1);
+          ("invalidate_l1_ptes", 1);
+          ("clear_protection_fault_status_addr", 0);
+        ]
+    in
+    (* From GC 11, the L2's private cache is invalidated through a bit of its
+       own. *)
+    let cid2 inst =
+      let name = "regMMVM_L2_BANK_SELECT_RESERVED_CID2" in
+      let bit =
+        Rig_amd_abi.Register.encode (Regs.register l name)
+          [ ("reserved_cache_private_invalidation", 1) ]
+      in
+      (Regs.address ~inst l name, bit)
+    in
+    let engine inst =
+      let at = Regs.address ~inst l in
+      let mm = hub = `Mm in
+      {
+        req = at (name "REQ");
+        ack = at (name "ACK");
+        sem = (if mm then Some (at (name "SEM")) else None);
+        cid2 = (if mm && gc >= (11, 0, 0) then Some (cid2 inst) else None);
+      }
+    in
+    (hub, (req, List.map engine insts))
+  in
   {
     r;
     vram;
     gc;
-    xccs = List.init (Regs.gpu l).xccs Fun.id;
-    mm =
-      (if nbio79 then Discovery.aids d
-       else List.map fst (Discovery.live d D.mmhub_hwid));
+    xccs;
+    mm;
     node;
     fabric_base = offset + node;
     mc_base = first base + node;
@@ -86,6 +141,7 @@ let make r vram =
     hive = segment > 0 && regions > 0;
     address_mask = (1 lsl address_bits gc) - 1;
     gc_started = false;
+    engines = [ engines `Gc xccs; engines `Mm mm ];
   }
 
 let window ~base ~top ~fabric ~memory =
@@ -205,8 +261,6 @@ let format g ~flush =
   }
 
 (* Hubs *)
-
-let hub_prefix = function `Gc -> "GC" | `Mm -> "MM"
 
 (* The hubs translate up to the canonical end of a 48-bit address space. *)
 let vm_last = 0x7fff_ffff_ffff
@@ -332,40 +386,25 @@ let flush_hdp g =
 let invalidate g =
   let r = g.r in
   let invalidate hub =
-    let ip = hub_prefix hub in
-    let name s = strf "reg%sVM_INVALIDATE_ENG17_%s" ip s in
-    let req =
-      Rig_amd_abi.Register.encode
-        (Regs.register (Regs.layout_of r) (name "REQ"))
-        [
-          ("flush_type", 0);
-          ("per_vmid_invalidate_req", 1);
-          ("invalidate_l2_ptes", 1);
-          ("invalidate_l2_pde0", 1);
-          ("invalidate_l2_pde1", 1);
-          ("invalidate_l2_pde2", 1);
-          ("invalidate_l1_ptes", 1);
-          ("clear_protection_fault_status_addr", 0);
-        ]
-    in
+    let req, engines = List.assoc hub g.engines in
     List.iter
-      (fun inst ->
-        let sem = hub = `Mm in
-        if sem then
-          Regs.wait r "the MM hub's invalidation semaphore" (fun () ->
-              Regs.read ~inst r "regMMVM_INVALIDATE_ENG17_SEM" land 1 = 1);
-        Regs.write ~inst ~value:req r (name "REQ") [];
-        Regs.wait r (strf "the %s hub's invalidation" ip) (fun () ->
-            Regs.read ~inst r (name "ACK") land 1 = 1);
-        if sem then begin
-          Regs.write ~inst ~value:0 r "regMMVM_INVALIDATE_ENG17_SEM" [];
-          if g.gc >= (11, 0, 0) then begin
-            Regs.update ~inst r "regMMVM_L2_BANK_SELECT_RESERVED_CID2"
-              [ ("reserved_cache_private_invalidation", 1) ];
-            ignore (Regs.read ~inst r "regMMVM_L2_BANK_SELECT_RESERVED_CID2")
-          end
-        end)
-      (instances g hub)
+      (fun e ->
+        Option.iter
+          (fun sem ->
+            Regs.wait r "the MM hub's invalidation semaphore" (fun () ->
+                Regs.get r sem land 1 = 1))
+          e.sem;
+        Regs.set r e.req req;
+        Regs.wait r
+          (strf "the %s hub's invalidation" (hub_prefix hub))
+          (fun () -> Regs.get r e.ack land 1 = 1);
+        Option.iter (fun sem -> Regs.set r sem 0) e.sem;
+        Option.iter
+          (fun (cid2, bit) ->
+            Regs.set r cid2 (Regs.get r cid2 lor bit);
+            ignore (Regs.get r cid2))
+          e.cid2)
+      engines
   in
   if g.gc_started then invalidate `Gc;
   invalidate `Mm
