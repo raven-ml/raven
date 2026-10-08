@@ -10,12 +10,9 @@
     process reaches it through its kernel driver or over PCI, and whichever
     driver holds it.
 
-    The process reaches a vendor's GPUs of {!Machine.this} through one
-    interface, the kernel driver or PCI, fixed by its first successful open;
-    another machine's GPUs only over PCI. While a driver holds a GPU, the
-    process holds it ({!hold}): no other open of it succeeds, and no change to
-    the machine touches it. A GPU lost while driven over PCI opens again only
-    after a {!reset}.
+    While a driver holds a GPU, the process holds it ({!hold}): no other open of
+    it succeeds, and no change to the machine touches it. A GPU lost opens again
+    only after a {!reset}.
 
     These facts belong to a value of {!t}: a process makes one per vendor.
     Opening and changing GPUs of one vendor are serialized, the driver's start
@@ -51,46 +48,30 @@ type hold
 val bus : hold -> string
 (** [bus h] is the bus address of the GPU [h] holds. *)
 
-val open_kernel :
-  t -> Machine.t -> int -> (hold -> ('a, string) result) -> ('a, string) result
-(** [open_kernel g m i f] is [f h], the process holding GPU [i] of [m] by [h]
-    for its kernel driver to drive. If [f h] is [Ok _], the process reaches
-    [g]'s GPUs through their kernel driver from then on.
-
-    [Error why] without calling [f] if [m] is not {!Machine.this}, if the
-    process reaches [g]'s GPUs over PCI, if [m] has no GPU [i], saying how many
-    it has, or if the process holds it already. *)
-
-val open_pci :
+val open_ :
   t ->
   Machine.t ->
   int ->
   (hold -> Function.t -> ('a, string) result) ->
   ('a, string) result
-(** [open_pci g m i f] is [f h fn], the process holding GPU [i] of [m] by [h]
-    and its function [fn] taken ({!Function.take}). The hold keeps [fn]. If
-    [f h fn] is [Ok _] and [m] is {!Machine.this}, the process reaches [g]'s
-    GPUs of this machine over PCI from then on.
+(** [open_ g m i f] is [f h fn], the process holding GPU [i] of [m] by [h] and
+    its function [fn] taken ({!Function.take}). The hold keeps [fn].
 
-    [Error why] without calling [f] if the process reaches [g]'s GPUs of
-    {!Machine.this} through their kernel driver, if [m] has no GPU [i], saying
-    how many it has, if the process holds it already, if it was lost over PCI
-    and not {!reset} since, or if its function cannot be taken, [why] being
-    {!Function.take}'s. *)
+    [Error why] without calling [f] if [m] has no GPU [i], saying how many it
+    has, if the process holds it already, if it was lost and not {!reset} since,
+    or if its function cannot be taken, [why] being {!Function.take}'s. *)
 
 val release : hold -> unit
-(** [release h] gives the GPU [h] holds back: it releases its function if
-    {!open_pci} took it, and the GPU may be opened again. The driver stops its
-    use of the GPU first.
+(** [release h] gives the GPU [h] holds back: it releases its function, and the
+    GPU may be opened again. The driver stops its use of the GPU first.
 
     Raises [Invalid_argument] if [h] was given back already. *)
 
 val lose : hold -> unit
-(** [lose h] is {!release}, for a GPU the driver lost. A GPU {!open_pci} took
-    then opens again only after a {!reset}: the driver lost it in a state it
-    cannot know, perhaps still running and reaching memory, which only the
-    vendor's reset clears, since the function's own reset does not reset every
-    GPU.
+(** [lose h] is {!release}, for a GPU the driver lost. The GPU then opens again
+    only after a {!reset}: the driver lost it in a state it cannot know, perhaps
+    still running and reaching memory, which only the vendor's reset clears,
+    since the function's own reset does not reset every GPU.
 
     Raises [Invalid_argument] if [h] was given back already. *)
 
@@ -137,7 +118,7 @@ val reset :
   (unit, string) result
 (** [reset g m i f] takes the function of GPU [i] of [m], calls [f] on it to
     reset the GPU as its vendor does, and releases it, whatever [f] returns or
-    raises. A GPU lost over PCI opens again after a reset whose [f] is [Ok ()].
+    raises. A GPU lost opens again after a reset whose [f] is [Ok ()].
     Exceptions raised by [f] pass through, as in {{!holds}an open}.
 
     [Error why] if [i] is no GPU, if the process holds it, if its function

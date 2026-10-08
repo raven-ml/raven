@@ -7,38 +7,27 @@ let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 let ( let* ) = Result.bind
 
-type interface = Kernel | Pci
-
 (* A vendor's GPUs. [mutex] serializes opens, resets and changes, drivers
-   included, and guards [interface], how this machine's GPUs are reached, fixed
-   by the first successful open. Only opens add holds and only resets clear lost
-   GPUs, so what they check stays true while they run. [holds] guards the GPUs
-   held and those lost over PCI, which open again only after a reset; it is held
-   briefly, so that giving a GPU back waits for no driver. A GPU is named by its
-   machine and bus address. *)
+   included. Only opens add holds and only resets clear lost GPUs, so what they
+   check stays true while they run. [holds] guards the GPUs held and those lost,
+   which open again only after a reset; it is held briefly, so that giving a GPU
+   back waits for no driver. A GPU is named by its machine and bus address. *)
 type t = {
   memory_bar : int;
   is_gpu : Machine.id -> bool;
   mutex : Mutex.t;
-  mutable interface : interface option;
   holds : Mutex.t;
   mutable held : hold list;
   mutable spent : (Machine.t * string) list;
 }
 
-and hold = {
-  gpus : t;
-  machine : Machine.t;
-  bus : string;
-  fn : Function.t option;
-}
+and hold = { gpus : t; machine : Machine.t; bus : string; fn : Function.t }
 
 let make ~memory_bar is_gpu =
   {
     memory_bar;
     is_gpu;
     mutex = Mutex.create ();
-    interface = None;
     holds = Mutex.create ();
     held = [];
     spent = [];
@@ -67,20 +56,6 @@ let gpu g m i =
       Error (bus ^ " is open in this process")
   | Some bus -> Ok bus
 
-let interface_name = function
-  | Kernel -> "through their kernel driver"
-  | Pci -> "over PCI"
-
-let refuse_interface g wanted =
-  match g.interface with
-  | Some c when c <> wanted ->
-      Error
-        (strf
-           "this process reaches these GPUs %s; open this one that way, or \
-            from another process"
-           (interface_name c))
-  | _ -> Ok ()
-
 (* Opening *)
 
 let hold g m bus fn = { gpus = g; machine = m; bus; fn }
@@ -89,38 +64,21 @@ let lost g m bus =
   Mutex.protect g.holds (fun () ->
       List.exists (fun (m', b) -> m' == m && b = bus) g.spent)
 
-let keep g m interface h =
-  if m == Machine.this then g.interface <- Some interface;
-  Mutex.protect g.holds (fun () -> g.held <- h :: g.held)
+let keep g h = Mutex.protect g.holds (fun () -> g.held <- h :: g.held)
 
-let open_kernel g m i f =
-  index "open_kernel" i;
+let open_ g m i f =
+  index "open_" i;
   Mutex.protect g.mutex @@ fun () ->
-  let* () =
-    if m == Machine.this then Ok ()
-    else Error "another machine's GPUs are reached over PCI only"
-  in
-  let* () = refuse_interface g Kernel in
-  let* bus = gpu g m i in
-  let h = hold g m bus None in
-  let* v = f h in
-  keep g m Kernel h;
-  Ok v
-
-let open_pci g m i f =
-  index "open_pci" i;
-  Mutex.protect g.mutex @@ fun () ->
-  let* () = if m == Machine.this then refuse_interface g Pci else Ok () in
   let* bus = gpu g m i in
   let* () =
     if lost g m bus then Error (bus ^ " was lost; reset the GPU first")
     else Ok ()
   in
   let* fn = Function.take m bus in
-  let h = hold g m bus (Some fn) in
+  let h = hold g m bus fn in
   match f h fn with
   | Ok v ->
-      keep g m Pci h;
+      keep g h;
       Ok v
   | Error _ as e ->
       Function.release fn;
@@ -141,9 +99,8 @@ let give_back ending h =
       (match ending with Released -> "release" | Lost -> "lose")
       h.bus;
   g.held <- List.filter (fun h' -> h' != h) g.held;
-  if ending = Lost && Option.is_some h.fn then
-    g.spent <- (h.machine, h.bus) :: g.spent;
-  Option.iter Function.release h.fn
+  if ending = Lost then g.spent <- (h.machine, h.bus) :: g.spent;
+  Function.release h.fn
 
 let release h = give_back Released h
 let lose h = give_back Lost h

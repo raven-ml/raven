@@ -117,11 +117,10 @@ let three () =
 (* Opening with a driver [d] that starts nothing. *)
 
 let ok () = Ok ()
-let pci g m i d = Gpus.open_pci g m i (fun _ _ -> d ())
-let kernel g m i d = Gpus.open_kernel g m i (fun _ -> d ())
+let open_ g m i d = Gpus.open_ g m i (fun _ _ -> d ())
 let reset g m i d = Gpus.reset g m i (fun _ -> d ())
-let hold g m i = require_ok (Gpus.open_pci g m i (fun h _ -> Ok h))
-let hold_fn g m i = require_ok (Gpus.open_pci g m i (fun h fn -> Ok (h, fn)))
+let hold g m i = require_ok (Gpus.open_ g m i (fun h _ -> Ok h))
+let hold_fn g m i = require_ok (Gpus.open_ g m i (fun h fn -> Ok (h, fn)))
 
 (* [unopened open_] is the message of [open_ driver], an [Error] that never
    called [driver]. *)
@@ -193,11 +192,11 @@ let test_any_order (ids, listed) =
 
 let test_ith () =
   let g, m, _ = three () in
-  let open_ i bus =
+  let open_ith i bus =
     let msg = strf "GPU %d" i in
     let h =
       require_ok ~msg
-        (Gpus.open_pci g m i (fun h fn ->
+        (Gpus.open_ g m i (fun h fn ->
              equal ~msg string bus (Function.bus fn);
              equal ~msg (option string) (Machine.name m)
                (Machine.name (Function.machine fn));
@@ -205,7 +204,7 @@ let test_ith () =
     in
     equal ~msg string bus (Gpus.bus h)
   in
-  List.iteri open_ gpu_buses
+  List.iteri open_ith gpu_buses
 
 let test_reset_ith () =
   let g, m, _ = three () in
@@ -222,7 +221,7 @@ let test_reset_ith () =
 let no_gpu =
   List.concat_map
     (fun (name, f) -> List.map (fun i -> (name, f, i)) [ 3; 4; 7; max_int ])
-    [ ("open_pci", pci); ("reset", reset) ]
+    [ ("open_", open_); ("reset", reset) ]
 
 let test_no_gpu (_, f, i) =
   let g, m, _ = three () in
@@ -232,7 +231,7 @@ let test_none () =
   let m, _ = machine [ id ~class_:0x040300 "0000:03:00.1" ] in
   let g = gpus () in
   equal (list string) [] (Gpus.buses g m);
-  has_none (unopened (pci g m 0));
+  has_none (unopened (open_ g m 0));
   has_none (unopened (reset g m 0))
 
 let negative =
@@ -240,11 +239,7 @@ let negative =
   List.concat_map
     (fun (name, f) -> List.map (fun i -> (name, f, i)) [ -1; min_int ])
     [
-      ("open_pci", fun i -> ignore (pci (gpus ()) (far ()) i ok));
-      ( "open_kernel of another machine",
-        fun i -> ignore (kernel (gpus ()) (far ()) i ok) );
-      ( "open_kernel of this machine",
-        fun i -> ignore (kernel (gpus ()) Machine.this i ok) );
+      ("open_", fun i -> ignore (open_ (gpus ()) (far ()) i ok));
       ("reset", fun i -> ignore (reset (gpus ()) (far ()) i ok));
       ("detach", fun i -> ignore (Gpus.detach (gpus ()) Machine.this i));
       ("attach", fun i -> ignore (Gpus.attach (gpus ()) Machine.this i));
@@ -274,13 +269,13 @@ let numbering =
           raises_match (Exn.invalid_arg ?substring:None) (fun () -> f i));
     ]
 
-(* Opening over PCI *)
+(* Opening *)
 
 let test_result () =
   let g, m, _ = three () in
-  equal (result int string) (Ok 42) (Gpus.open_pci g m 0 (fun _ _ -> Ok 42));
+  equal (result int string) (Ok 42) (Gpus.open_ g m 0 (fun _ _ -> Ok 42));
   equal (result int string) (Error "the GPU did not start")
-    (Gpus.open_pci g m 1 (fun _ _ -> Error "the GPU did not start"))
+    (Gpus.open_ g m 1 (fun _ _ -> Error "the GPU did not start"))
 
 (* [given_back g m fake] asserts that GPU 0 and its function were given back. *)
 let given_back g m fake =
@@ -289,7 +284,7 @@ let given_back g m fake =
 
 let test_error_gives_back () =
   let g, m, fake = three () in
-  ignore (Gpus.open_pci g m 0 (fun _ _ -> Error "the GPU did not start"));
+  ignore (Gpus.open_ g m 0 (fun _ _ -> Error "the GPU did not start"));
   given_back g m fake
 
 let passed =
@@ -305,7 +300,7 @@ let passed =
           ("Unix_error", Unix.Unix_error (ENOENT, "open", "/dev/kfd"));
         ])
     [
-      ("open_pci", fun g m e -> Gpus.open_pci g m 0 (fun _ _ -> raise e));
+      ("open_", fun g m e -> Gpus.open_ g m 0 (fun _ _ -> raise e));
       ("reset", fun g m e -> Gpus.reset g m 0 (fun _ -> raise e));
     ]
 
@@ -317,12 +312,12 @@ let test_passed (_, run, e) =
 let test_held () =
   let g, m, _ = three () in
   ignore (hold g m 0);
-  ignore (unopened (pci g m 0))
+  ignore (unopened (open_ g m 0))
 
 let test_take_refused () =
   let g, m, fake = three () in
   fake.refusal <- Some "0000:03:00.0 is held by process 4242";
-  equal string "0000:03:00.0 is held by process 4242" (unopened (pci g m 0))
+  equal string "0000:03:00.0 is held by process 4242" (unopened (open_ g m 0))
 
 let test_per_machine () =
   let g = gpus () in
@@ -333,14 +328,10 @@ let test_per_machine () =
   Gpus.lose h1;
   Gpus.release h2;
   ignore (hold g m2 0);
-  ignore (unopened (pci g m1 0))
-
-let test_kernel_elsewhere () =
-  let g, m, _ = three () in
-  ignore (unopened (kernel g m 0))
+  ignore (unopened (open_ g m1 0))
 
 let opening =
-  group ~timeout:patience "opening over PCI"
+  group ~timeout:patience "opening"
     [
       test "an open is the driver's result" test_result;
       test "an open the driver refuses gives the GPU and its function back"
@@ -353,8 +344,6 @@ let opening =
       test "a function that cannot be taken is refused with the take's reason"
         test_take_refused;
       test "the same bus on two machines is two GPUs" test_per_machine;
-      test "another machine's GPUs are refused to the kernel driver"
-        test_kernel_elsewhere;
     ]
 
 (* Giving back *)
@@ -373,7 +362,7 @@ let test_lose () =
   Gpus.lose h;
   equal ~msg:"released" bool true (Function.released fn);
   equal ~msg:"functions taken" taken_w [ "0000:43:00.0" ] (taken fake);
-  ignore (unopened (pci g m 0));
+  ignore (unopened (open_ g m 0));
   ignore (hold g m 2);
   require_ok (reset g m 0 ok);
   ignore (hold g m 0)
@@ -400,7 +389,7 @@ let giving_back =
     [
       test "release gives the function back and the GPU opens again"
         test_release;
-      test "a GPU lost over PCI opens again only after a reset" test_lose;
+      test "a lost GPU opens again only after a reset" test_lose;
       cases
         "a hold given back twice raises Invalid_argument and changes nothing"
         ~name:(fun (a, _, b, _) -> a ^ " then " ^ b)
@@ -461,90 +450,16 @@ let test_this_none () =
   let g = Gpus.make ~memory_bar:0 (fun _ -> false) in
   let this = Machine.this in
   equal (list string) [] (Gpus.buses g this);
-  has_none (unopened (kernel g this 0));
-  has_none (unopened (pci g this 0));
+  has_none (unopened (open_ g this 0));
   has_none (unopened (reset g this 0));
   ignore (require_error (Gpus.detach g this 0));
   ignore (require_error (Gpus.attach g this 0))
-
-(* This machine's display controllers: the kernel driver opens nothing, so
-   holding one through it changes nothing. *)
-let this_gpus () =
-  let g = Gpus.make ~memory_bar:0 (fun id -> id.class_ lsr 16 = 0x03) in
-  if Gpus.buses g Machine.this = [] then
-    skip ~reason:"this machine lists no GPU" ();
-  g
-
-let kernel_hold g = require_ok (Gpus.open_kernel g Machine.this 0 Result.ok)
-
-let test_kernel_fixes () =
-  let g = this_gpus () in
-  Gpus.release (kernel_hold g);
-  ignore (unopened (pci g Machine.this 0))
-
-let test_kernel_held () =
-  let g = this_gpus () in
-  let h = kernel_hold g in
-  ignore (unopened (kernel g Machine.this 0));
-  ignore (unopened (reset g Machine.this 0));
-  Gpus.release h;
-  Gpus.release (kernel_hold g)
-
-let test_kernel_lost () =
-  let g = this_gpus () in
-  Gpus.lose (kernel_hold g);
-  Gpus.release (kernel_hold g)
-
-let test_kernel_far () =
-  let g = this_gpus () in
-  Gpus.release (kernel_hold g);
-  let m, _ = machine functions in
-  Gpus.release (hold g m 0)
-
-let test_far_leaves () =
-  let g = this_gpus () in
-  let m, _ = machine functions in
-  Gpus.release (hold g m 0);
-  Gpus.release (kernel_hold g)
-
-(* A GPU this machine lets the process take: one bound to vfio-pci or to no
-   driver. Taking it changes nothing. *)
-let test_pci_fixes () =
-  let g = this_gpus () in
-  hold_gpu ();
-  let n = List.length (Gpus.buses g Machine.this) in
-  let rec first i =
-    if i = n then skip ~reason:"this machine has no function to take" ();
-    match Gpus.open_pci g Machine.this i (fun h _ -> Ok h) with
-    | Ok h -> (i, h)
-    | Error _ -> first (i + 1)
-  in
-  let i, h = first 0 in
-  Gpus.release h;
-  ignore (unopened (kernel g Machine.this i))
 
 let this_machine =
   group ~timeout:patience "this machine"
     [
       test "this machine without the vendor's GPUs has none to open or change"
         test_this_none;
-      test
-        "a first open through the kernel driver refuses PCI opens of this \
-         machine from then on"
-        test_kernel_fixes;
-      test "a GPU the kernel driver holds is refused to opens and resets"
-        test_kernel_held;
-      test "a GPU lost through its kernel driver opens again without a reset"
-        test_kernel_lost;
-      test "the kernel driver leaves other machines' GPUs open over PCI"
-        test_kernel_far;
-      test
-        "an open of another machine's GPU leaves this machine's interface open"
-        test_far_leaves;
-      test
-        "a first open over PCI refuses the kernel driver this machine's GPUs \
-         from then on"
-        test_pci_fixes;
     ]
 
 (* Serialized opens and changes *)
@@ -581,13 +496,13 @@ let test_one_at_a_time (_, other) =
     Atomic.set inside false;
     Ok d
   in
-  let d = require_ok (Gpus.open_pci g m 0 start) in
+  let d = require_ok (Gpus.open_ g m 0 start) in
   require_ok (Domain.join d);
   equal ~msg:"the other driver ran" bool true (Atomic.get ran);
   equal ~msg:"the other driver ran inside GPU 0's" bool false
     (Atomic.get overlapped)
 
-let others = [ ("an open", pci); ("a reset", reset) ]
+let others = [ ("an open", open_); ("a reset", reset) ]
 
 (* While [lose] gives GPU 0's function back, another domain opens GPU 0: the
    release waits until the opener is about to call Gpus, then samples a window
@@ -597,14 +512,14 @@ let test_lose_race () =
   let h = hold g m 0 in
   let opener = ref None in
   let about = Atomic.make false in
-  let open_ () =
+  let try_open () =
     Atomic.set about true;
-    pci g m 0 ok
+    open_ g m 0 ok
   in
   fake.released <-
     (fun _ ->
       fake.released <- ignore;
-      opener := Some (Domain.spawn open_);
+      opener := Some (Domain.spawn try_open);
       equal ~msg:"the opener reached Gpus" bool true
         (poll (fun () -> Atomic.get about));
       sample ());
@@ -623,7 +538,7 @@ let test_give_back_waits (_, give_back) =
     Atomic.set inside true;
     Ok (poll (fun () -> Atomic.get back))
   in
-  let d = Domain.spawn (fun () -> Gpus.open_pci g m 0 start) in
+  let d = Domain.spawn (fun () -> Gpus.open_ g m 0 start) in
   equal ~msg:"GPU 0's driver started" bool true
     (poll (fun () -> Atomic.get inside));
   give_back h1;
@@ -703,7 +618,7 @@ let open_sys s start i =
     | Fails -> Error "the GPU did not start"
     | Raises_invalid -> invalid_arg err_driver_bug
   in
-  match Gpus.open_pci s.g s.m i driver with
+  match Gpus.open_ s.g s.m i driver with
   | Ok h -> h
   | Error _ -> if !started then raise Driver_failed else raise Refused
 
@@ -714,7 +629,7 @@ let try_open_ref v i =
   if free then v.states.(i) <- Held;
   free
 
-let try_open_sys s i = Result.is_ok (pci s.g s.m i ok)
+let try_open_sys s i = Result.is_ok (open_ s.g s.m i ok)
 
 let give_back_ref state h =
   if h.back then invalid_arg "given back already";
@@ -739,10 +654,10 @@ let reset_sys s i =
 let commands index =
   [
     command "vendor" (Gen.unit @-> makes vendor_t) vendor_ref vendor_sys;
-    command "open_pci"
+    command "open_"
       (vendor_t ^-> starts @-> index @-> makes hold_t)
       open_ref open_sys;
-    command "open_pci, kept"
+    command "open_, kept"
       (vendor_t ^-> index @-> returns bool)
       try_open_ref try_open_sys;
     command "release"
