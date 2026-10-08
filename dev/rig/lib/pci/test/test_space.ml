@@ -28,8 +28,11 @@ let largest_gap m = largest_gap m.base (m.base + m.length) m.live
 
 (* An allocation is aligned, inside the space and apart from every live range.
    [None] is accepted only where the fit bound does not promise a range: no free
-   range of [2 * (max n 16 + a)] addresses. *)
-let alloc_judge align n m got =
+   range of [2 * (max n 16 + a)] addresses. [covered] registers the outcomes the
+   generator reaches: on one domain only, since on two the scheduler decides
+   which interleaving, and so which outcome, a case meets. *)
+let alloc_judge ~covered align n m got =
+  let cover name b = if covered then cover name b in
   let refused =
     n <= 0 || match align with Some a -> not (is_pow2 a) | None -> false
   in
@@ -177,7 +180,8 @@ let aligns =
 
 let alloc align n s = Space.alloc ?align s n
 
-let commands =
+let commands ~covered =
+  let alloc_judge = alloc_judge ~covered in
   [
     command "create"
       (Gen.pair bases lengths @-> makes space)
@@ -228,9 +232,9 @@ let () =
          group ~timeout:patience "ranges"
            [
              stateful "allocations stay apart and within the fit bound"
-               ~count:300 commands;
+               ~count:300 (commands ~covered:true);
              stateful "two domains allocate at once" ~domains:2 ~count:50
-               commands;
+               (commands ~covered:false);
              test "creating a space allocates nothing but its handle" test_lazy;
              test "freeing every range makes the space whole" test_whole;
            ];
