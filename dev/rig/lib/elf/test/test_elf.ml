@@ -1020,19 +1020,20 @@ let read_times small large =
   done;
   (!s, !l)
 
-(* Reading [make n] takes less than 64 times as long as reading [make (n / 16)]:
-   16 times if reading is linear, a little more with its sorts, and 256 if it is
-   quadratic. The bound is their geometric mean, so each side has a margin of 4.
-   Slower memory for the larger object, or a loaded machine moving reads to
-   slower cores, stays under it. A time [a n + b n^2] passes it only while
-   [b n^2 < 4 a n]: at the counts below, a step repeated for each pair of
-   sections takes longer than that. A ratio holds on a slow or instrumented
+(* Reading [make n] takes less than 128 times as long as reading
+   [make (n / 16)]: 16 times if reading is linear, about 22 with its sorts, and
+   256 if it is quadratic. Load raises the ratio: other processes evict the
+   larger object from caches the smaller one stays in, which slowed each entry
+   of the larger 2.5 times with a copy of this test on every core of an 8-core
+   machine. The bound leaves twice that. A time [a n + b n^2] passes it only
+   while [b n^2 < 14 a n]: at the counts below, a step repeated for each pair
+   of sections takes longer than that. A ratio holds on a slow or instrumented
    build where a bound in seconds would not. *)
 let linear_time make n =
   let small, large = read_times (make (n / 16)) (make n) in
   less
     ~msg:(strf "CPU time of %gs at n over %gs at n / 16" large small)
-    float_exact ~than:64. (large /. small)
+    float_exact ~than:128. (large /. small)
 
 (* [count] sections, each with a symbol of its own at an extended index. *)
 let many_symbols count =
