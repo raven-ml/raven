@@ -412,6 +412,18 @@ let test_copy_no_queue () =
 
 (* A device lost while it used the staging memory leaves other devices' copies
    through it working. *)
+(* A driver's device's borrow of host memory is host memory: the host copies
+   into and out of it, on a device that runs no copy too. *)
+let test_copy_borrowed_host () =
+  let d, _ = P.open_ ~copies:false "buffer:borrowed-host" in
+  let h = filled (1 lsl 16) 'h' in
+  let b = require_some (B.borrow d h) in
+  let out = B.create C.host (1 lsl 16) in
+  B.copy ~src:b ~dst:out;
+  equal ~msg:"out of the borrow" string (String.make (1 lsl 16) 'h') (bytes out);
+  B.copy ~src:(filled (1 lsl 16) 'i') ~dst:b;
+  equal ~msg:"into the borrow" string (String.make (1 lsl 16) 'i') (bytes h)
+
 (* A copy larger than a staging slot goes through it a slot at a time: every
    byte lands where it belongs, across the slots' edges. *)
 let test_copy_staged_large () =
@@ -667,6 +679,8 @@ let tests =
         test "the source's device copies to a device of its driver"
           test_copy_peer;
         test "the host copies for a device that runs no copy" test_copy_no_queue;
+        test "the host copies into and out of a device's borrow of host memory"
+          test_copy_borrowed_host;
         test "a copy larger than a staging slot lands every byte"
           test_copy_staged_large;
         test "the staging slots are taken in turn" test_staging_turns;

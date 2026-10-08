@@ -590,12 +590,7 @@ let memory =
          given back"
         misused_regions;
       test "free releases an allocation's or a mapping's buffer" given_back;
-      xfail
-        ~reason:
-          "Rig.Buffer.copy raises Invalid_argument (no device copies between \
-           the device and CPU): a driver's borrow of host memory has no host \
-           address in rig, and Metal runs no copy"
-        (test "the host copies into a borrow of host memory" copied_into_borrow);
+      test "the host copies into a borrow of host memory" copied_into_borrow;
     ]
 
 (* Files

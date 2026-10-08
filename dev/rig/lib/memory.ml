@@ -858,9 +858,11 @@ let borrow d m =
     else if host >= 0 && m.entry.region = None && host mod page <> 0 then None
     else begin
       if m.entry == no_entry then ensure_entry m;
+      (* A borrow of host memory keeps its host address: it is host memory,
+         which the host copies. *)
       match mapping d m host with
       | None -> None
-      | Some mp -> Some (borrow_of m d ~host:(-1) ~address:mp.at ~handle:mp.by)
+      | Some mp -> Some (borrow_of m d ~host ~address:mp.at ~handle:mp.by)
     end
 
 (* Asks the io device of [m] to read the bytes of [m] from [at] ahead, for a
