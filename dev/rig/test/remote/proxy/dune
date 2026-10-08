@@ -1,5 +1,5 @@
 (tests
  (names test_wire test_link test_proxy)
- (modules test_wire test_link test_proxy)
+ (modules test_wire test_link test_proxy watchdog)
  (deps support/link_peer.exe)
  (libraries rig rig_remote_proxy rig_remote_abi unix threads.posix windtrap))

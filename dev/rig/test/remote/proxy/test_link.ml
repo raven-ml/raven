@@ -1481,6 +1481,7 @@ let domains =
 (* The fork test runs before the domains are spawned: after them, fork
    raises. *)
 let () =
+  Watchdog.start ();
   exit
     (run "rig_remote_proxy.link"
        [

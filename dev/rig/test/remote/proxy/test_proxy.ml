@@ -1035,6 +1035,7 @@ let failures =
     ]
 
 let () =
+  Watchdog.start ();
   exit
     (run "rig_remote_proxy.proxy"
        [
