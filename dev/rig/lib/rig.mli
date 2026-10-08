@@ -372,8 +372,9 @@ module Buffer : sig
       it addresses or maps, and through the host's {e staging memory} otherwise:
       two slots of 64 MiB of host memory, made at the first copy that needs them
       and kept for the life of the process ({!domains}). A device that runs no
-      copy has memory the host addresses, which the host copies. An {!Io}
-      device's memory, of any machine, is read and written by its {!Io.read} and
+      copy has memory the host addresses, which the host copies; a borrow on it
+      of another device's memory copies by that device. An {!Io} device's
+      memory, of any machine, is read and written by its {!Io.read} and
       {!Io.write}, through the staging memory when the host does not address the
       other side, except a copy into it from memory the host does not address,
       of a device with a copy queue that maps its pages ({!Io.pages}), which

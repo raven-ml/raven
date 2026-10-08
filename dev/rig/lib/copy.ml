@@ -158,7 +158,14 @@ let direct ~wait src dst n =
   else if Dev.is_io sd && local dst.mem then on_host Io_read src dst n start
   else if Dev.is_io dd && local src.mem then on_host Io_write src dst n start
   else
-    let runner = if local src.mem then dd else sd in
+    let side = if local src.mem then dst else src in
+    (* A borrow on a device that runs no copy copies by its memory's own
+       device. *)
+    let runner =
+      match side.mem.dev.copy_queue with
+      | Some _ -> side.mem.dev
+      | None -> side.mem.root.dev
+    in
     (not (Dev.is_io runner)) && on_queue ~wait runner src dst n start
 
 let rec copy ~src ~dst =

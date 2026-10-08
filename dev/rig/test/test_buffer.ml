@@ -304,6 +304,21 @@ let test_empty_borrow () =
   equal ~msg:"address" int 0 (B.address b);
   equal ~msg:"maps" (list int) [] (P.host_maps p)
 
+(* A borrow, on a device that runs no copy, of a peer's memory the host does not
+   address copies by the memory's own device: in and out. *)
+let test_copyless_borrow () =
+  let owner, _ = P.open_ ~host_visible:false "buffer:copyless-owner" in
+  let still, _ = P.open_ ~copies:false "buffer:copyless" in
+  let m = B.create owner 64 in
+  let on_still = require_some (B.borrow still m) in
+  let into = B.create C.host 64 and back = B.create C.host 64 in
+  Bigarray.Array1.fill (B.bigarray Bigarray.char into) 'c';
+  B.copy ~src:into ~dst:on_still;
+  B.copy ~src:on_still ~dst:back;
+  equal string (String.make 64 'c')
+    (let ba = B.bigarray Bigarray.char back in
+     String.init 64 (Bigarray.Array1.get ba))
+
 let test_borrow_own () =
   let d, _ = P.open_ "buffer:own" in
   let b = B.create d 64 in
@@ -854,6 +869,8 @@ let tests =
           test_copy_machines;
         test "an empty buffer of a driver's device has address and handle 0"
           test_empty_address;
+        test "a borrow of a peer's memory on a device that runs no copy copies"
+          test_copyless_borrow;
         test "empty host memory borrows on a device with no mapping"
           test_empty_borrow;
         test "a device that maps no host memory borrows none" test_maps_no_host;
