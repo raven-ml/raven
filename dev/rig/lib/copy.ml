@@ -99,15 +99,17 @@ let hold_stamps src dst =
   | false, true -> Some e'.stamps
   | false, false -> Some 0
 
+(* [m] as [d]'s copy queue takes it: a device of another machine takes this
+   process's memory as it is, its driver carrying the bytes; another device
+   maps it. A function of its own, so a copy builds no closure. *)
+let mine d m =
+  if Option.is_some d.machine && local m then Some m else Memory.borrow d m
+
 (* A copy of [n] bytes on [d]'s copy queue between buffers [d] maps, asked at
-   [start] and waited for when [wait]. A device of another machine takes this
-   process's memory as it is: its driver carries the bytes. Unwaited, it is
-   recorded once a wait sees it done. *)
+   [start] and waited for when [wait]. Unwaited, it is recorded once a wait
+   sees it done. *)
 let on_queue ~wait d src dst n start =
-  let mine m =
-    if Option.is_some d.machine && local m then Some m else Memory.borrow d m
-  in
-  match (d.copy_queue, hold_stamps src dst, mine src.mem, mine dst.mem) with
+  match (d.copy_queue, hold_stamps src dst, mine d src.mem, mine d dst.mem) with
   | Some queue, Some hold_stamps, Some s, Some t ->
       let v =
         Point.value

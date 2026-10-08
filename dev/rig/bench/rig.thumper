@@ -98,6 +98,7 @@ wait/memory/reached	wall_time	batch=2097152	n=20	3.840e-09	3.816e-09 3.819e-09 3
 # forced: blessed buffer/blit-from-string-4K buffer/blit-to-bytes-64M under load 6.2 on 10 cores
 # forced: blessed buffer/host-create-16 buffer/host-create-1M heap/trim-64M heap/take-64K heap/take-64K-cached-100 under load 7.2 on 10 cores
 # forced: blessed submit/polled/foreign-24 buffer/wait-reached-24 buffer/bigarray-64M wait/memory/reached under load 10.4 on 10 cores
+# forced: blessed copy/queue-64K under load 8.0 on 10 cores
 
 buffer/bigarray-64M	alloc_words	exact	18
 buffer/bigarray-64M	major_collections	exact	0
@@ -126,6 +127,8 @@ copy/host-64M	alloc_words	exact	0
 copy/host-64M	wall_time	batch=1	n=20	1.632e-03	1.475e-03 1.493e-03 1.501e-03 1.553e-03 1.564e-03 1.571e-03 1.599e-03 1.601e-03 1.624e-03 1.624e-03 1.639e-03 1.654e-03 1.681e-03 1.705e-03 1.710e-03 1.735e-03 1.736e-03 1.750e-03 1.767e-03 1.794e-03
 copy/memory-4K	alloc_words	exact	0
 copy/memory-4K	wall_time	batch=65536	n=20	1.476e-07	1.171e-07 1.196e-07 1.218e-07 1.235e-07 1.335e-07 1.366e-07 1.373e-07 1.407e-07 1.415e-07 1.467e-07 1.485e-07 1.547e-07 1.572e-07 1.611e-07 1.632e-07 1.634e-07 1.669e-07 1.762e-07 1.974e-07 8.624e-07
+copy/queue-64K	alloc_words	exact	140
+copy/queue-64K	wall_time	batch=4096	n=20	1.709e-06	1.691e-06 1.692e-06 1.692e-06 1.695e-06 1.698e-06 1.698e-06 1.701e-06 1.702e-06 1.706e-06 1.706e-06 1.711e-06 1.713e-06 1.716e-06 1.721e-06 1.732e-06 1.732e-06 1.734e-06 1.757e-06 1.850e-06 1.998e-06
 drain/dropped-1000	alloc_words	exact	66068
 drain/dropped-1000	wall_time	batch=16	n=20	6.098e-04	5.696e-04 5.785e-04 5.790e-04 5.805e-04 5.814e-04 5.814e-04 5.822e-04 5.908e-04 5.974e-04 6.035e-04 6.160e-04 6.162e-04 6.381e-04 6.403e-04 6.503e-04 6.602e-04 7.099e-04 7.115e-04 7.619e-04 7.992e-04
 floor/atomic-cas-2	alloc_words	exact	0

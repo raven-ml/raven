@@ -297,7 +297,13 @@ value caml_rig_sub_copy(value v_s, value v_i, value v_args) {
   p->copy_src = (uint64_t)Nativeint_val(Field(v_args, 2));
   p->copy_src_offset = (uint64_t)Long_val(Field(v_args, 3));
   p->copy_bytes = (uint64_t)Long_val(Field(v_args, 4));
-  p->copy_local = Int_val(Field(v_args, 5));
+  return Val_unit;
+}
+
+/* The side of part [v_i]'s copy that is memory of this process
+   ([copy_local]). */
+value caml_rig_sub_copy_local(value v_s, value v_i, value v_side) {
+  Sub_val(v_s)->parts[Int_val(v_i)].copy_local = Int_val(v_side);
   return Val_unit;
 }
 

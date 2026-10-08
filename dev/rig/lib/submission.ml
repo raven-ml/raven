@@ -35,9 +35,11 @@ external sub_words : c -> int -> int -> int -> unit = "caml_rig_sub_words"
 external sub_fill : c -> int -> nativeint -> int -> int -> int -> unit
   = "caml_rig_sub_fill_byte" "caml_rig_sub_fill"
 
-external sub_copy :
-  c -> int -> nativeint * int * nativeint * int * int * int -> unit
+external sub_copy : c -> int -> nativeint * int * nativeint * int * int -> unit
   = "caml_rig_sub_copy"
+
+external sub_copy_local : c -> int -> int -> unit = "caml_rig_sub_copy_local"
+[@@noalloc]
 
 external sub_fixed : c -> int -> int -> nativeint -> bool -> unit
   = "caml_rig_sub_fixed"
@@ -104,14 +106,20 @@ let local_none = 0
 let local_src = 1
 let local_dst = 2
 
-(* Which side of a copy on [d] is this process's memory: on a device of another
-   machine, one side may be. *)
+(* Which side of a copy on [d] is this process's memory, [-1] for a copy [d]
+   cannot run: on a device of another machine, one side may be. An int, so a
+   local copy allocates nothing for it. *)
 let copy_local d src dst =
   let far = Option.is_some d.machine in
-  if src.mem.dev == d && dst.mem.dev == d then Some local_none
-  else if far && local src && dst.mem.dev == d then Some local_src
-  else if far && src.mem.dev == d && local dst then Some local_dst
-  else None
+  if src.mem.dev == d && dst.mem.dev == d then local_none
+  else if far && local src && dst.mem.dev == d then local_src
+  else if far && src.mem.dev == d && local dst then local_dst
+  else -1
+
+(* The handle a copy's side passes: the host address of the memory on the side
+   [copy_local] names. *)
+let copy_handle side k b =
+  if side = k then Nativeint.of_int b.mem.host else b.mem.handle
 
 (* Refuses a part's buffer that is dead or in a hold other than the one whose
    stamps are [hold_stamps]: held memory's stamps are its hold's. *)
@@ -156,7 +164,7 @@ let build named ~reads ~writes d parts =
           check_buffer dst;
           if Buffer.length src <> Buffer.length dst then
             invalid_argf "Rig.%s: a copy's buffers differ in size" fn;
-          if copy_local d src dst = None then
+          if copy_local d src dst < 0 then
             invalid_argf "Rig.%s: a copy's buffers are not %s's memory" fn
               d.name;
           if Buffer.access dst = Read then
@@ -188,17 +196,14 @@ let build named ~reads ~writes d parts =
             f.segment_bytes;
           fixed f.arg false
       | Copy { src; dst } ->
-          let side = Option.get (copy_local d src dst) in
-          let handle b k =
-            if side = k then Nativeint.of_int b.mem.host else b.mem.handle
-          in
+          let side = copy_local d src dst in
           sub_copy c i
-            ( handle dst local_dst,
+            ( copy_handle side local_dst dst,
               dst.offset,
-              handle src local_src,
+              copy_handle side local_src src,
               src.offset,
-              Buffer.length src,
-              side );
+              Buffer.length src );
+          if side <> local_none then sub_copy_local c i side;
           fixed src false;
           fixed dst true)
     parts;

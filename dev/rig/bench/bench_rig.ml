@@ -252,6 +252,12 @@ let copy_rows =
       row "host-4K" (pair Rig.host (4 * kib)) copy;
       row "host-64M" (pair Rig.host (64 * mib)) copy;
       row "memory-4K" (fun () -> pair (memory ()) (4 * kib) ()) copy;
+      row "queue-64K"
+        (fun () ->
+          incr opened;
+          let d, _ = P.open_ ~host_visible:false (strf "bench:%d" !opened) in
+          (B.create Rig.host (64 * kib), B.create d (64 * kib)))
+        copy;
     ]
 
 (* A collection hands the memory of 1,000 dropped buffers back, and the next
