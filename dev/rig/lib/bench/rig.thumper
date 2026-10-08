@@ -230,8 +230,12 @@ drain/dropped-1000	alloc_words	exact	75161
 drain/dropped-1000	wall_time	batch=16	n=20	6.166e-04	6.121e-04 6.123e-04 6.131e-04 6.134e-04 6.135e-04 6.138e-04 6.143e-04 6.155e-04 6.159e-04 6.165e-04 6.167e-04 6.200e-04 6.211e-04 6.214e-04 6.222e-04 6.237e-04 6.363e-04 6.608e-04 6.724e-04 6.768e-04
 floor/amd/cost	alloc_words	exact	0
 floor/amd/cost	wall_time	batch=4096	n=20	1.405e-06	1.374e-06 1.381e-06 1.381e-06 1.382e-06 1.383e-06 1.389e-06 1.395e-06 1.395e-06 1.402e-06 1.405e-06 1.406e-06 1.408e-06 1.411e-06 1.421e-06 1.423e-06 1.432e-06 1.437e-06 1.441e-06 1.479e-06 1.481e-06
+floor/amd/pipelined-100	alloc_words	exact	0
+floor/amd/pipelined-100	wall_time	batch=8	n=20	8.161e-04	7.624e-04 7.645e-04 7.677e-04 7.684e-04 7.699e-04 7.710e-04 7.723e-04 8.107e-04 8.110e-04 8.127e-04 8.196e-04 8.228e-04 8.257e-04 8.301e-04 8.307e-04 8.334e-04 8.339e-04 8.373e-04 8.382e-04 8.473e-04
 floor/amd/release	alloc_words	exact	0
 floor/amd/release	wall_time	batch=512	n=20	1.458e-05	1.433e-05 1.436e-05 1.440e-05 1.440e-05 1.441e-05 1.442e-05 1.442e-05 1.444e-05 1.453e-05 1.453e-05 1.462e-05 1.469e-05 1.474e-05 1.480e-05 1.481e-05 1.483e-05 1.483e-05 1.484e-05 1.485e-05 1.489e-05
+floor/amd/run	alloc_words	exact	0
+floor/amd/run	wall_time	batch=1024	n=20	7.634e-06	7.487e-06 7.493e-06 7.533e-06 7.576e-06 7.584e-06 7.608e-06 7.611e-06 7.618e-06 7.620e-06 7.632e-06 7.635e-06 7.638e-06 7.646e-06 7.654e-06 7.658e-06 7.682e-06 7.691e-06 7.692e-06 7.757e-06 7.848e-06
 floor/atomic-cas-2	alloc_words	exact	0
 floor/atomic-cas-2	wall_time	batch=2097152	n=20	4.602e-09	4.601e-09 4.601e-09 4.601e-09 4.601e-09 4.601e-09 4.601e-09 4.602e-09 4.602e-09 4.602e-09 4.602e-09 4.603e-09 4.603e-09 4.604e-09 4.604e-09 4.605e-09 4.606e-09 4.608e-09 4.614e-09 4.616e-09 4.625e-09
 floor/bigarray-collected-64M	alloc_words	exact	9
@@ -266,6 +270,10 @@ floor/word-load-24	alloc_words	exact	0
 floor/word-load-24	wall_time	batch=65536	n=20	7.687e-08	7.639e-08 7.639e-08 7.639e-08 7.641e-08 7.642e-08 7.642e-08 7.643e-08 7.669e-08 7.672e-08 7.680e-08 7.694e-08 7.694e-08 7.704e-08 7.705e-08 7.705e-08 7.719e-08 7.723e-08 7.734e-08 7.758e-08 7.761e-08
 heap/trim-64M	alloc_words	exact	36
 heap/trim-64M	wall_time	batch=128	n=20	7.486e-05	7.123e-05 7.146e-05 7.407e-05 7.409e-05 7.414e-05 7.431e-05 7.446e-05 7.471e-05 7.476e-05 7.481e-05 7.490e-05 7.505e-05 7.510e-05 7.514e-05 7.514e-05 7.546e-05 7.550e-05 7.599e-05 7.607e-05 7.714e-05
+replay/amd/params-24	alloc_words	exact	0
+replay/amd/params-24	wall_time	batch=1024	n=20	9.161e-06	9.014e-06 9.076e-06 9.079e-06 9.101e-06 9.108e-06 9.113e-06 9.116e-06 9.141e-06 9.148e-06 9.160e-06 9.162e-06 9.225e-06 9.233e-06 9.236e-06 9.238e-06 9.267e-06 9.273e-06 9.304e-06 9.452e-06 9.478e-06
+replay/amd/pipelined-100	alloc_words	exact	0
+replay/amd/pipelined-100	wall_time	batch=8	n=20	7.886e-04	7.826e-04 7.831e-04 7.836e-04 7.842e-04 7.849e-04 7.860e-04 7.871e-04 7.874e-04 7.882e-04 7.885e-04 7.886e-04 7.888e-04 7.893e-04 7.896e-04 7.915e-04 7.931e-04 7.941e-04 7.950e-04 8.006e-04 8.020e-04
 replay/polled/params-24	alloc_words	exact	0
 replay/polled/params-24	wall_time	batch=8192	n=20	6.477e-07	6.460e-07 6.461e-07 6.461e-07 6.462e-07 6.462e-07 6.469e-07 6.476e-07 6.476e-07 6.477e-07 6.477e-07 6.477e-07 6.478e-07 6.478e-07 6.478e-07 6.479e-07 6.479e-07 6.480e-07 6.483e-07 6.485e-07 6.490e-07
 replay/polled/pipelined-100	alloc_words	exact	0
