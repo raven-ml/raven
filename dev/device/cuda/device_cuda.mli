@@ -354,8 +354,7 @@ val sleep : t -> seen:int -> still_ms:int -> unit
     fault at most a millisecond after CUDA reports it. It lets other domains run
     while it waits, and may run while {!submit} does.
 
-    Raises {!Fault} with CUDA's error if [g]'s work met one, and
-    [Invalid_argument] if [still_ms < 0]. *)
+    Raises {!Fault} with CUDA's error if [g]'s work met one. *)
 
 (** {1:loss Loss} *)
 

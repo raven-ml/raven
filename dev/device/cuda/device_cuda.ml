@@ -498,8 +498,6 @@ let word g = g.word
 let signaled g = signaled g.self
 
 let sleep g ~seen ~still_ms =
-  if still_ms < 0 then
-    invalid_argf "Device_cuda.sleep: still_ms %d is negative" still_ms;
   match sleep g.self seen still_ms with
   | 0 -> ()
   | s -> fault "the GPU's work failed" s

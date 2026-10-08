@@ -297,7 +297,6 @@ let misuse () =
   let p = C.part g ~queue:"COMPUTE:0" ~after:[| 0 |] (`Fill fill) in
   raises "an after at its own index" (fun () -> submit g ~v:1 [| p |]);
   raises "a value other than the next" (fun () -> submit g ~v:2 [||]);
-  raises "a negative still_ms" (fun () -> C.sleep g ~seen:1 ~still_ms:(-1));
   raises "alloc of 0 bytes" (fun () -> C.alloc g `Device 0);
   raises "map_host of 0 bytes" (fun () -> C.map_host g (word g) 0);
   raises "map_peer of one device" (fun () -> C.map_peer g g r);
