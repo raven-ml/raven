@@ -328,7 +328,7 @@ external post_area : nativeint -> int -> string -> area -> unit
 external request_c : nativeint -> string -> int * area
   = "caml_rig_remote_link_request"
 
-external next_c : nativeint -> int * area = "caml_rig_remote_link_next"
+external next_c : nativeint -> int * area * int = "caml_rig_remote_link_next"
 external area : int -> area * int = "caml_rig_remote_link_area"
 
 external rail_c :
@@ -426,8 +426,8 @@ let drop l id =
   post l.c k_drop (encoded (fun b -> add_u64 b id))
 
 let next l =
-  let k, a = next_c l.c in
-  let r = reader a in
+  let k, a, n = next_c l.c in
+  let r = reader (if Array1.dim a = n then a else Array1.sub a 0 n) in
   match
     if k = 0 then Error (text a)
     else if k = k_request then begin

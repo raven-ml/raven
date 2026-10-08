@@ -1167,6 +1167,33 @@ let bytes_in_place () =
   equal ~msg:"returned while its peer read nothing" bool false early;
   equal (option frame_w) (Some (k_bytes, u64 3 ^ u64 7 ^ of_area a)) f
 
+(* A hand-over's areas hold its bytes until the next call of next: from then on,
+   a later hand-over whose bytes fit lands in their memory. *)
+let areas_until_next () =
+  with_raw ~peer:Wire.Controller @@ fun j l p ->
+  let n = 4096 in
+  let handover v c =
+    frame k_handover
+      (encode_handover
+         (1, v, [], [ Copy (Local, Region (5, 0), n) ], [ String.make n c ]))
+  in
+  let area () =
+    match within j ~what:"next" (fun () -> Link.next l) with
+    | Ok (Wire.Handover (_, [| a |])) -> a
+    | _ -> fail "next gave no hand-over of one area"
+  in
+  write p (handover 1 'a' ^ handover 2 'b');
+  let first = area () in
+  equal ~msg:"the first hand-over's bytes" string (String.make n 'a')
+    (of_area first);
+  ignore (area ());
+  write p (handover 3 'c');
+  let third = area () in
+  equal ~msg:"the third hand-over's bytes" string (String.make n 'c')
+    (of_area third);
+  equal ~msg:"the first area, two calls later" string (String.make n 'c')
+    (of_area first)
+
 let agents =
   group "agent"
     [
@@ -1186,6 +1213,8 @@ let agents =
         answer_misuse;
       test "bytes returns once its peer took the area's bytes (sampled)"
         bytes_in_place;
+      test "a hand-over's areas hold its bytes until the next call of next"
+        areas_until_next;
     ]
 
 (* Rails *)

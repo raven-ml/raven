@@ -81,6 +81,9 @@ typedef struct pollfd rig_remote_pollfd;
 /* The seconds a send may wait for its peer to acknowledge a byte. */
 #define SEND_S 10
 
+/* The most bytes of a command's memory a link keeps for later commands. */
+#define KEPT_BYTES ((size_t)128 << 20)
+
 /* The most bytes of an abort's reason. */
 #define MAX_WHY 4096
 
@@ -114,6 +117,7 @@ struct cmd {
   int kind;
   unsigned char *p;
   size_t n;
+  int kept; /* [p] is the link's kept memory */
 };
 
 struct rail {
@@ -636,19 +640,30 @@ static int recv_answer(struct rig_remote_link *l, uint64_t n, int64_t *last) {
   return 0;
 }
 
-/* Queues a command of the controller for [next]. */
+/* Queues a command of the controller for [next], received into the link's
+   kept memory when it is free and large enough, else into new memory. */
 static int recv_cmd(struct rig_remote_link *l, int kind, uint64_t n, int64_t *last) {
-  unsigned char *p;
-  int r = recv_payload(l, n, &p, last);
-  if (r != 0) return r;
   struct cmd *c = malloc(sizeof *c);
-  if (c == NULL) {
-    free(p);
-    return TOO_LARGE;
+  if (c == NULL) return TOO_LARGE;
+  pthread_mutex_lock(&l->mu);
+  c->kept = l->kept_free && n <= l->kept_n;
+  if (c->kept) l->kept_free = 0;
+  pthread_mutex_unlock(&l->mu);
+  int r;
+  if (c->kept) {
+    c->p = l->kept_p;
+    r = recv_all(l, c->p, n, last);
+  } else
+    r = recv_payload(l, n, &c->p, last);
+  if (r != 0) {
+    pthread_mutex_lock(&l->mu);
+    if (c->kept) l->kept_free = 1;
+    pthread_mutex_unlock(&l->mu);
+    free(c);
+    return r;
   }
   c->next = NULL;
   c->kind = kind;
-  c->p = p;
   c->n = (size_t)n;
   pthread_mutex_lock(&l->mu);
   if (l->cmds_last != NULL)
@@ -1026,6 +1041,9 @@ value caml_rig_remote_link_make(value vj, value fd, value name, value peer) {
   l->peer = Int_val(peer);
   pthread_mutex_init(&l->mu, NULL);
   pthread_cond_init(&l->cv, NULL);
+  l->kept = l->gave = Val_unit;
+  caml_register_generational_global_root(&l->kept);
+  caml_register_generational_global_root(&l->gave);
   l->sent_ns = now_ns();
   rig_remote_quiet(l->fd);
   int one = 1;
@@ -1048,6 +1066,8 @@ value caml_rig_remote_link_make(value vj, value fd, value name, value peer) {
     pthread_mutex_unlock(&j->mu);
     pthread_mutex_destroy(&l->mu);
     pthread_cond_destroy(&l->cv);
+    caml_remove_generational_global_root(&l->kept);
+    caml_remove_generational_global_root(&l->gave);
     free(nm);
     free(l);
     return caml_copy_nativeint(0);
@@ -1181,9 +1201,31 @@ value caml_rig_remote_link_request(value vl, value head) {
   CAMLreturn(r);
 }
 
-/* The next command of the controller: (kind, payload); (K_CLOSE, "") once
-   it closed and every earlier command was read; or (0, root cause) once the
-   job failed. Releases the runtime. */
+/* Lends later commands the memory of the area [next] gave last: the kept
+   memory once more, or that area's if the kept memory is free and smaller
+   and the area holds at most [KEPT_BYTES]. Holds the link's lock and the
+   runtime. */
+static void lend_back(struct rig_remote_link *l) {
+  if (l->gave_kept)
+    l->kept_free = 1;
+  else if (l->gave != Val_unit && (l->kept == Val_unit || l->kept_free)) {
+    size_t n = caml_ba_byte_size(Caml_ba_array_val(l->gave));
+    if (n > l->kept_n && n <= KEPT_BYTES) {
+      caml_modify_generational_global_root(&l->kept, l->gave);
+      l->kept_p = Caml_ba_data_val(l->kept);
+      l->kept_n = n;
+      l->kept_free = 1;
+    }
+  }
+  caml_modify_generational_global_root(&l->gave, Val_unit);
+  l->gave_kept = 0;
+}
+
+/* The next command of the controller: (kind, payload, its bytes), the
+   payload's first bytes being the command's; (K_CLOSE, "", 0) once it
+   closed and every earlier command was read; or (0, root cause, its bytes)
+   once the job failed. The payload of the command before is lent to later
+   commands. Releases the runtime. */
 value caml_rig_remote_link_next(value vl) {
   CAMLparam1(vl);
   CAMLlocal2(r, a);
@@ -1191,6 +1233,9 @@ value caml_rig_remote_link_next(value vl) {
   struct cmd *c = NULL;
   int closed = 0;
   if (!rig_remote_forked(l->job)) {
+    pthread_mutex_lock(&l->mu);
+    lend_back(l);
+    pthread_mutex_unlock(&l->mu);
     caml_release_runtime_system();
     pthread_mutex_lock(&l->mu);
     while (l->cmds == NULL && !l->got_close && !atomic_load(&l->failed))
@@ -1205,17 +1250,25 @@ value caml_rig_remote_link_next(value vl) {
     caml_acquire_runtime_system();
   }
   int kind = c != NULL ? c->kind : closed ? K_CLOSE : 0;
-  if (c != NULL)
-    a = area_of(c->p, c->n);
-  else if (closed)
+  size_t n = 0;
+  if (c != NULL) {
+    a = c->kept ? l->kept : area_of(c->p, c->n);
+    n = c->n;
+    pthread_mutex_lock(&l->mu);
+    caml_modify_generational_global_root(&l->gave, a);
+    l->gave_kept = c->kept;
+    pthread_mutex_unlock(&l->mu);
+  } else if (closed)
     a = area_of_bytes("", 0);
   else {
     const struct rig_remote_why *w = atomic_load(&l->job->why);
     a = w != NULL ? area_of_bytes(w->s, w->n) : area_of_bytes("", 0);
+    n = w != NULL ? w->n : 0;
   }
-  r = caml_alloc_tuple(2);
+  r = caml_alloc_tuple(3);
   Store_field(r, 0, Val_int(kind));
   Store_field(r, 1, a);
+  Store_field(r, 2, Val_long(n));
   free(c);
   CAMLreturn(r);
 }

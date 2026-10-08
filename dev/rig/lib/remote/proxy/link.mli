@@ -153,7 +153,12 @@ val drop : t -> int -> unit
 val next : t -> (Wire.command, string) result
 (** [next l] is the next command [l]'s peer sent, waiting for it. [Error why]
     once the job failed, [why] its root cause. A frame that does not decode as a
-    command fails the job. *)
+    command fails the job.
+
+    A hand-over's areas hold its bytes until the next call of [next] on [l].
+    From then on the link reuses their memory: a later hand-over whose bytes fit
+    lands in it. The link keeps one such memory, of at most 128 MiB, so a stream
+    of large hand-overs lands in memory already mapped. *)
 
 val answer : t -> 'a Wire.request -> ('a, string) result -> unit
 (** [answer l r a] sends [a] as the answer to [r]. [Error why] refuses [r] with

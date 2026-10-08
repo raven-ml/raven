@@ -159,6 +159,12 @@ struct rig_remote_link {
   _Atomic int failed;
   struct pending *pending, *pending_last;
   struct cmd *cmds, *cmds_last;
+  value kept; /* a root: memory [next] lends commands, or unit */
+  unsigned char *kept_p;
+  size_t kept_n;
+  int kept_free; /* the receiving thread may receive into [kept] */
+  value gave;    /* a root: the area [next] gave last, or unit */
+  int gave_kept; /* it lies in [kept] */
   struct rail *rails;
   struct rig_remote_dev **devs; /* the proxies, by their agent's id */
   size_t ndevs;
