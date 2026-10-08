@@ -308,12 +308,9 @@ let reset m bus = write (path m bus "reset") "1"
    on the bus already, so its driver is probed for it. *)
 let attach m bus =
   match driver m bus with
-  | Some d when d = vfio_pci ->
-      Fail.fail
-        "%s is bound to vfio-pci; clear its driver_override and unbind it first"
-        bus
-  | Some _ -> ()
-  | None ->
+  | Some d when d <> vfio_pci -> ()
+  | bound ->
+      if bound = Some vfio_pci then write (path m bus "driver/unbind") bus;
       if enabled m bus then write (path m bus "enable") "0";
       write (Filename.concat m.bus_files "rescan") "1";
       write (override m bus) "\n";

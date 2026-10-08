@@ -102,7 +102,17 @@ let is_gpu (id : Machine.id) = id.vendor = vendor && id.class_ lsr 16 = 0x03
 (* Its kernel driver serves a GPU through character devices that [/sys/bus/pci]
    lists. *)
 let no_nodes ~read:_ _ = []
-let gpus () = Gpus.make ~memory_bar:0 ~nodes:no_nodes is_gpu
+
+(* The resets the vendor ran, unless a test gives its own reset. *)
+let vendor_resets = Atomic.make 0
+
+let counted _ =
+  Atomic.incr vendor_resets;
+  Ok ()
+
+let gpus ?(reset = counted) ?(nodes = no_nodes) () =
+  Gpus.make ~memory_bar:0 ~nodes ~reset is_gpu
+
 let gpu_buses = [ "0000:03:00.0"; "0000:43:00.0"; "0000:c3:00.0" ]
 
 let functions =
@@ -122,7 +132,16 @@ let three () =
 
 let ok () = Ok ()
 let open_ g m i d = Gpus.open_ g m i ~at_exit:ignore (fun _ _ -> d ())
-let reset g m i d = Gpus.reset g m i (fun _ -> d ())
+
+(* [reset g m i d] resets GPU [i], calling [d] once per reset the vendor ran. *)
+let reset g m i d =
+  let before = Atomic.get vendor_resets in
+  let r = Gpus.reset g m i in
+  for _ = before + 1 to Atomic.get vendor_resets do
+    ignore (d ())
+  done;
+  r
+
 let hold g m i = require_ok (Gpus.open_ g m i ~at_exit:ignore (fun h _ -> Ok h))
 
 let hold_fn g m i =
@@ -213,13 +232,18 @@ let test_ith () =
   List.iteri open_ith gpu_buses
 
 let test_reset_ith () =
-  let g, m, _ = three () in
+  let m, _ = machine functions in
+  let seen = ref [] in
+  let g =
+    gpus
+      ~reset:(fun fn ->
+        seen := Function.bus fn :: !seen;
+        Ok ())
+      ()
+  in
   let reset i bus =
-    let seen = ref [] in
-    require_ok
-      (Gpus.reset g m i (fun fn ->
-           seen := Function.bus fn :: !seen;
-           Ok ()));
+    seen := [];
+    require_ok (Gpus.reset g m i);
     equal ~msg:(strf "GPU %d" i) (list string) [ bus ] !seen
   in
   List.iteri reset gpu_buses
@@ -310,11 +334,12 @@ let passed =
     [
       ( "open_",
         fun g m e -> Gpus.open_ g m 0 ~at_exit:ignore (fun _ _ -> raise e) );
-      ("reset", fun g m e -> Gpus.reset g m 0 (fun _ -> raise e));
+      ("reset", fun g m _ -> Gpus.reset g m 0);
     ]
 
 let test_passed (_, run, e) =
-  let g, m, fake = three () in
+  let m, fake = machine functions in
+  let g = gpus ~reset:(fun _ -> raise e) () in
   raises e (fun () -> run g m e);
   given_back g m fake
 
@@ -408,7 +433,7 @@ let giving_back =
 (* Resets *)
 
 let test_reset () =
-  let g, m, fake = three () in
+  let m, fake = machine functions in
   let seen = ref [] in
   let reset_gpu fn =
     equal ~msg:"taken during the reset" taken_w [ "0000:43:00.0" ] (taken fake);
@@ -416,7 +441,7 @@ let test_reset () =
     seen := fn :: !seen;
     Ok ()
   in
-  require_ok (Gpus.reset g m 1 reset_gpu);
+  require_ok (Gpus.reset (gpus ~reset:reset_gpu ()) m 1);
   let fn = require_some (List.nth_opt !seen 0) in
   equal ~msg:"calls" int 1 (List.length !seen);
   equal ~msg:"released" bool true (Function.released fn);
@@ -428,11 +453,9 @@ let test_reset_held () =
   ignore (unopened (reset g m 0))
 
 let test_reset_failure () =
-  let g, m, fake = three () in
-  let why =
-    require_error
-      (Gpus.reset g m 0 (fun _ -> Error "the GPU did not come back"))
-  in
+  let m, fake = machine functions in
+  let g = gpus ~reset:(fun _ -> Error "the GPU did not come back") () in
+  let why = require_error (Gpus.reset g m 0) in
   contains ~sub:"the GPU did not come back" why;
   equal ~msg:"functions taken" taken_w [] (taken fake)
 
@@ -456,7 +479,9 @@ let resets =
 (* This machine *)
 
 let test_this_none () =
-  let g = Gpus.make ~memory_bar:0 ~nodes:no_nodes (fun _ -> false) in
+  let g =
+    Gpus.make ~memory_bar:0 ~nodes:no_nodes ~reset:counted (fun _ -> false)
+  in
   let this = Machine.this in
   equal (list string) [] (Gpus.buses g this);
   has_none (unopened (open_ g this 0));
@@ -695,12 +720,7 @@ let reset_ref v i =
   if free then v.states.(i) <- Free;
   free
 
-let reset_sys s i =
-  let reset fn =
-    equal ~msg:"GPU i" string two_buses.(i) (Function.bus fn);
-    Ok ()
-  in
-  Result.is_ok (Gpus.reset s.g s.m i reset)
+let reset_sys s i = Result.is_ok (Gpus.reset s.g s.m i)
 
 (* Two domains contend for GPU 0 alone, so that they meet. *)
 let commands index =
@@ -759,6 +779,15 @@ let pci_file root file =
   |> String.trim
 
 let devices bus file = strf "devices/%s/%s" bus file
+let sys file = "sys/bus/pci/" ^ file
+
+(* A function's command register, its bit that lets the function reach memory
+   and its bit that lets it master the bus (PCI Express Base Specification,
+   7.5.1.1.3). *)
+let command = 0x04
+let memory_space = 0x2
+let bus_master = 0x4
+let intx_disable = 0x400
 
 let changes =
   let gpu = Tree.gpu gpu_bus in
@@ -840,11 +869,16 @@ let changes =
         ("drivers_probe", "");
         (devices gpu_bus "driver_override", "(null)");
       ] );
-    ( "attach refuses a GPU bound to vfio-pci, naming its driver_override",
+    ( "attach leaves a GPU on vfio-pci whose function cannot be taken as it was",
       [ Tree.gpu ~driver:"vfio-pci" gpu_bus ],
       `Attach,
-      Some "0000:03:00.0 is bound to vfio-pci; clear its driver_override",
-      [ ("rescan", "") ] );
+      Some "0000:03:00.0",
+      [
+        ("drivers/vfio-pci/unbind", "");
+        (devices gpu_bus "driver_override", "(null)");
+        ("rescan", "");
+        ("drivers_probe", "");
+      ] );
   ]
 
 let test_change (_, fns, change, refusal, files) =
@@ -867,6 +901,84 @@ let test_change (_, fns, change, refusal, files) =
   List.iter
     (fun (file, want) -> equal ~msg:file string want (pci_file root file))
     files
+
+(* Turns the fixture GPU's bus mastering on, as a driver that wrote to it may
+   leave it. *)
+let mastering root =
+  let config =
+    Filename.concat root ("sys/bus/pci/" ^ devices gpu_bus "config")
+  in
+  let fd = Unix.openfile config [ O_WRONLY ] 0 in
+  Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+  ignore (Unix.lseek fd command SEEK_SET);
+  let b = Bytes.create 2 in
+  Bytes.set_uint16_le b 0 (memory_space lor bus_master);
+  ignore (Unix.write fd b 0 2)
+
+(* The vendor's reset sees the GPU taken, its bus mastering off, before the bus
+   is rescanned and its drivers probed; the GPU is free after. *)
+let test_attach_resets () =
+  needs_flock ();
+  let root = Tree.make [ Tree.gpu gpu_bus ] in
+  mastering root;
+  Tree.add root (sys (devices gpu_bus "driver_override")) "none\n";
+  let seen = ref [] in
+  let reset fn =
+    seen :=
+      ( Function.config16 fn command land lnot intx_disable,
+        pci_file root (devices gpu_bus "driver_override"),
+        pci_file root "rescan" ^ pci_file root "drivers_probe" )
+      :: !seen;
+    Ok ()
+  in
+  let m = Machine.at root in
+  contains ~sub:"no kernel driver took 0000:03:00.0"
+    (require_error (Gpus.attach (gpus ~reset ()) m 0));
+  equal ~msg:"what the reset saw"
+    (list (triple hex string string))
+    [ (memory_space, "none", "") ]
+    !seen;
+  equal ~msg:"no driver kept off after" string ""
+    (pci_file root (devices gpu_bus "driver_override"));
+  equal ~msg:"drivers probed after" string gpu_bus
+    (pci_file root "drivers_probe");
+  Tree.add root (sys (devices gpu_bus "enable")) "1\n";
+  Function.release (require_ok (Function.take m gpu_bus))
+
+let test_attach_refused () =
+  needs_flock ();
+  let root = Tree.make [ Tree.gpu gpu_bus ] in
+  Tree.add root (sys (devices gpu_bus "driver_override")) "none\n";
+  let reset _ = Error "the GPU did not come back" in
+  contains ~sub:"the GPU did not come back"
+    (require_error (Gpus.attach (gpus ~reset ()) (Machine.at root) 0));
+  List.iter
+    (fun (file, want) -> equal ~msg:file string want (pci_file root file))
+    [
+      (devices gpu_bus "enable", "1");
+      (devices gpu_bus "driver_override", "none");
+      ("rescan", "");
+      ("drivers_probe", "");
+    ]
+
+let test_attach_bound () =
+  needs_flock ();
+  let root = Tree.make [ Tree.gpu ~driver:"amdgpu" gpu_bus ] in
+  let before = Atomic.get vendor_resets in
+  require_ok (Gpus.attach (gpus ()) (Machine.at root) 0);
+  equal ~msg:"resets" int 0 (Atomic.get vendor_resets - before)
+
+(* A GPU this process lost opens again once attach has reset it. *)
+let test_attach_lost () =
+  needs_flock ();
+  let root = Tree.make [ Tree.gpu gpu_bus ] in
+  let g = gpus () and m = Machine.at root in
+  Gpus.lose (hold g m 0);
+  ignore (unopened (open_ g m 0));
+  contains ~sub:"no kernel driver took 0000:03:00.0"
+    (require_error (Gpus.attach g m 0));
+  Tree.add root (sys (devices gpu_bus "enable")) "1\n";
+  Gpus.release (hold g m 0)
 
 let test_change_held () =
   needs_flock ();
@@ -920,7 +1032,6 @@ let nvidia_nodes ~read bus =
         (String.split_on_char '\n' info)
 
 let render = devices gpu_bus "drm/renderD128/dev"
-let sys file = "sys/bus/pci/" ^ file
 
 let open_devices =
   let null root = Tree.add root (sys render) (Tree.device_number "/dev/null") in
@@ -970,7 +1081,7 @@ let test_open_device (_, setup, nodes, want) =
   needs_flock ();
   let root = Tree.make [ Tree.gpu gpu_bus ] in
   setup root;
-  let g = Gpus.make ~memory_bar:0 ~nodes is_gpu in
+  let g = gpus ~nodes () in
   match (want, Gpus.detach g (Machine.at root) 0) with
   | `Detached, r -> require_ok r
   | `Refused file, r ->
@@ -986,6 +1097,15 @@ let tree_changes =
         ~name:(fun (n, _, _, _, _) -> n)
         changes test_change;
       test "a GPU the process holds is refused" test_change_held;
+      test
+        "attach resets the GPU, its bus mastering off, before the bus is \
+         rescanned"
+        test_attach_resets;
+      test "attach leaves the GPU detached when its reset fails"
+        test_attach_refused;
+      test "attach leaves a GPU bound to its kernel driver unreset"
+        test_attach_bound;
+      test "a GPU lost opens again after attach reset it" test_attach_lost;
       cases "detach refuses a GPU whose device this process holds open"
         ~name:(fun (n, _, _, _) -> n)
         open_devices test_open_device;
@@ -1001,11 +1121,6 @@ let tree_changes =
    with [exit_holding], is such a process; the test reads what it printed. *)
 
 let exit_holding = "--exit-holding"
-
-(* A function's command register, and its bit that lets the function master the
-   bus (PCI Express Base Specification, 7.5.1.1.3). *)
-let command = 0x04
-let bus_master = 0x4
 
 (* Holds GPUs 0 and 1 of a fake machine, whose stops raise and print, holds and
    gives back GPU 2, and forks a child that exits, before it exits. Given a

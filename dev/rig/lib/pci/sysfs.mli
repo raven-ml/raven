@@ -23,6 +23,9 @@ val exists : t -> string -> bool
 val functions : t -> Ops.id list
 (** [functions m] is [m]'s functions, [[]] without [sys/bus/pci]. *)
 
+val vfio_pci : string
+(** [vfio_pci] is VFIO's driver, ["vfio-pci"]. *)
+
 val driver : t -> string -> string option
 (** [driver m bus] is the kernel driver bound to the function at [bus]. *)
 
@@ -69,9 +72,9 @@ val detach : t -> string -> unit
     unbound, alone and enabled, and if it is still not takeable after. *)
 
 val attach : t -> string -> unit
-(** [attach m bus] gives [bus] back to its kernel driver, clearing its
-    [driver_override]. Raises {!Fail.Failed} if it is bound to [vfio-pci] or no
-    driver takes it. *)
+(** [attach m bus] gives [bus] back to its kernel driver, unbinding [vfio-pci]
+    and clearing its [driver_override]. A function bound to another driver is
+    left as it is. Raises {!Fail.Failed} if no driver takes it. *)
 
 val reset : t -> string -> unit
 (** [reset m bus] resets [bus] with the reset Linux has for it. *)

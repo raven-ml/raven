@@ -152,11 +152,12 @@ val detach : int -> (unit, string) result
     Raises [Invalid_argument] if [i < 0]. *)
 
 val attach : int -> (unit, string) result
-(** [attach i] gives GPU [i] of this machine back to its kernel driver.
+(** [attach i] gives GPU [i] of this machine back to its kernel driver,
+    resetting it first as {!reset} does if no kernel driver has it.
 
-    The result is [Error msg] if [i] is no GPU, if this process holds it, if a
-    file cannot be written, if it is bound to [vfio-pci] by its
-    [driver_override], or if no driver takes it.
+    The result is [Error msg] if [i] is no GPU, if this process holds it, if its
+    reset fails, the GPU then left detached, if a file cannot be written, or if
+    no driver takes it.
 
     Raises [Invalid_argument] if [i < 0]. *)
 

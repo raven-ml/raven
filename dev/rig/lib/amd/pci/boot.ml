@@ -576,13 +576,31 @@ let sleep g ~ms =
 let quiesce_ms = 100
 
 (* The configuration a mode 1 reset clears, which the kernel restores after it
-   (amdgpu_device_load_pci_state): the cache line size, the BARs, the expansion
-   ROM BAR, the interrupt line, each resizable BAR's control (extended
-   capability 0x15, PCI Express Base Specification 7.8.6), then the command
-   register. *)
-let header = [ 0x0c; 0x10; 0x14; 0x18; 0x1c; 0x20; 0x24; 0x30; 0x3c ]
+   (amdgpu_device_load_pci_state, pci_restore_state), in its order: the PCI
+   Express capability's controls, each resizable BAR's control (extended
+   capability 0x15, PCI Express Base Specification 7.8.6), which clears its
+   BAR's address when written, then the header's last dwords, the BARs and
+   the cache line size, and the command register last. *)
+let pcie_controls = [ 0x08; 0x10; 0x28; 0x30 ]
+let header = [ 0x3c; 0x30; 0x10; 0x14; 0x18; 0x1c; 0x20; 0x24; 0x0c ]
 let extended = 0x100
 let rebar_id = 0x15
+
+let writes ~pcie ~rebars =
+  let at16 o = (o, 2) and at32 o = (o, 4) in
+  (match pcie with
+  | Some cap -> List.map (fun o -> at16 (cap + o)) pcie_controls
+  | None -> [])
+  @ List.map at32 rebars @ List.map at32 header
+  @ [ at16 command ]
+
+let pcie_at f =
+  let rec walk cap seen =
+    if cap = 0 || List.mem cap seen then None
+    else if Function.config8 f cap = pcie_capability then Some cap
+    else walk (Function.config8 f (cap + 1) land 0xfc) (cap :: seen)
+  in
+  walk (Function.config8 f capabilities land 0xfc) []
 
 let rebar_controls f =
   let rec walk at seen =
@@ -597,22 +615,31 @@ let rebar_controls f =
   in
   walk extended []
 
-let save f =
-  let regs = header @ rebar_controls f in
-  ( Function.config16 f command,
-    List.map (fun o -> (o, Function.config32 f o)) regs )
+let read f (o, n) =
+  if n = 2 then Function.config16 f o else Function.config32 f o
 
-let restore f (cmd, regs) =
-  List.iter (fun (o, v) -> Function.set_config32 f o v) regs;
-  Function.set_config16 f command cmd;
-  match List.find_opt (fun (o, v) -> Function.config32 f o <> v) regs with
+let save f =
+  List.map
+    (fun w -> (w, read f w))
+    (writes ~pcie:(pcie_at f) ~rebars:(rebar_controls f))
+
+let restore f saved =
+  List.iter
+    (fun ((o, n), v) ->
+      if n = 2 then Function.set_config16 f o v else Function.set_config32 f o v)
+    saved;
+  match
+    List.find_opt
+      (fun (((o, _) as w), v) -> o <> command && read f w <> v)
+      saved
+  with
   | None -> Ok ()
-  | Some (o, v) ->
+  | Some (((o, _) as w), v) ->
       Error
         (strf
            "the GPU's configuration at 0x%x reads 0x%x after its reset, not \
             0x%x"
-           o (Function.config32 f o) v)
+           o (read f w) v)
 
 let reset f =
   let* vram, doorbells, mmio, vf, lease, _, d = survey f in
@@ -634,7 +661,6 @@ let reset f =
                it takes them back: a GPU of a fabric is only stopped. *)
             let hive = Gmc.hive gmc in
             if Psp.running r && Smu.alive smu then begin
-              set_bus_master f false;
               Regs.write ~value:0 r "regSCRATCH_REG7" [];
               (* A mode 1 reset over engines running at full clocks can stall
                  the GPU until it is power cycled: they are stopped first. *)

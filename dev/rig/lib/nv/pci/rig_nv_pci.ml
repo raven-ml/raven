@@ -27,8 +27,8 @@ module Vbios = Vbios
 let memory_bar = 1
 
 let gpus =
-  Gpus.make ~memory_bar ~nodes:Held.nodes (fun (id : Machine.id) ->
-      Rig_nv.is_gpu ~vendor:id.vendor ~class_:id.class_)
+  Gpus.make ~memory_bar ~nodes:Held.nodes ~reset:Function.reset
+    (fun (id : Machine.id) -> Rig_nv.is_gpu ~vendor:id.vendor ~class_:id.class_)
 
 let count ?(machine = Machine.this) () = List.length (Gpus.buses gpus machine)
 
@@ -418,12 +418,6 @@ let attach i =
   if i < 0 then invalid_argf "Rig_nv_pci.attach: index %d < 0" i;
   named i (Gpus.attach gpus Machine.this i)
 
-(* Bus mastering goes off before the reset: Linux restores the function's
-   configuration as it was before a reset, its command register included, and
-   the GPU must not master the bus after it, whatever ran on it. *)
 let reset ?(machine = Machine.this) i =
   if i < 0 then invalid_argf "Rig_nv_pci.reset: index %d < 0" i;
-  named i
-  @@ Gpus.reset gpus machine i (fun fn ->
-      Chip.bus_master fn false;
-      Function.reset fn)
+  named i (Gpus.reset gpus machine i)

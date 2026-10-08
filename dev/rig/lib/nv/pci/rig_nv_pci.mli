@@ -174,7 +174,8 @@ val detach : int -> (unit, string) result
     Raises [Invalid_argument] if [i < 0]. *)
 
 val attach : int -> (unit, string) result
-(** [attach i] gives GPU [i] of this machine back to its kernel driver
+(** [attach i] gives GPU [i] of this machine back to its kernel driver,
+    resetting it first as {!reset} does if no kernel driver has it
     ({!Rig_pci.Gpus.attach}).
 
     The result is [Error why] if there is no GPU [i], if this process holds it,

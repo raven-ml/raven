@@ -29,6 +29,7 @@ let ( let* ) = Result.bind
 let gpus =
   Gpus.make ~memory_bar:0
     ~nodes:(fun ~read:_ _ -> [])
+    ~reset:Boot.reset
     (fun (id : Machine.id) -> Amd.is_gpu ~vendor:id.vendor ~class_:id.class_)
 
 let gpus_at root = Gpus.buses gpus (Machine.at root)
@@ -252,4 +253,4 @@ let attach i =
 
 let reset ?(machine = Machine.this) i =
   index "reset" i;
-  named i (Gpus.reset gpus machine i Boot.reset)
+  named i (Gpus.reset gpus machine i)

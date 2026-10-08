@@ -30,6 +30,17 @@ let lock files bus fd =
   | Unix.Unix_error (e, _, _) ->
       Fail.fail "locking %s with %s: %s" bus file (Unix.error_message e)
 
+let rec update a f =
+  let v = Atomic.get a in
+  if not (Atomic.compare_and_set a v (f v)) then update a f
+
+(* The configuration files this process locks for a change, each with the domain
+   making it. A take inside a change, by that domain, shares the change's lock:
+   the change holds the function for it. Two descriptors of one process exclude
+   each other, so the take could not lock the file itself. *)
+let changing = Atomic.make []
+let in_change file = List.mem (file, Domain.self ()) (Atomic.get changing)
+
 let locked files bus f =
   let file = Sysfs.path files bus "config" in
   match Unix.openfile file [ O_RDONLY; O_CLOEXEC ] 0 with
@@ -38,8 +49,13 @@ let locked files bus f =
   | fd -> (
       Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
       match lock files bus fd with
-      | () -> f ()
-      | exception Fail.Failed why -> Error why)
+      | exception Fail.Failed why -> Error why
+      | () ->
+          let key = (file, Domain.self ()) in
+          update changing (List.cons key);
+          Fun.protect ~finally:(fun () ->
+              update changing (List.filter (fun k -> k <> key)))
+          @@ f)
 
 (* Taking *)
 
@@ -108,16 +124,8 @@ let intx_off t =
    runs after theirs: a driver stops its GPU while it still reaches memory. It
    is a list in an atomic, so that a child of fork meets no held lock. *)
 let physical = Atomic.make []
-
-let rec hold t =
-  let held = Atomic.get physical in
-  if not (Atomic.compare_and_set physical held ((Unix.getpid (), t) :: held))
-  then hold t
-
-let rec forget t =
-  let held = Atomic.get physical in
-  let rest = List.filter (fun (_, t') -> t' != t) held in
-  if not (Atomic.compare_and_set physical held rest) then forget t
+let hold t = update physical (List.cons (Unix.getpid (), t))
+let forget t = update physical (List.filter (fun (_, t') -> t' != t))
 
 let () =
   at_exit (fun () ->
@@ -286,7 +294,7 @@ let take_physical files fds bus bars =
         Fail.fail "opening %s: %s" file (Unix.error_message e)
   in
   fds := config :: !fds;
-  lock files bus config;
+  if not (in_change file) then lock files bus config;
   let interrupts =
     if Sysfs.driver files bus = Some "vfio-pci" then
       let _, _, efd = Vfio.open_function files fds bus Vfio.No_iommu in

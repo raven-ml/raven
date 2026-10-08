@@ -17,6 +17,7 @@ let ( let* ) = Result.bind
 type t = {
   memory_bar : int;
   nodes : read:(string -> string option) -> string -> string list;
+  reset : Function.t -> (unit, string) result;
   is_gpu : Machine.id -> bool;
   mutex : Mutex.t;
   mutable exits : bool;
@@ -37,10 +38,11 @@ and hold = {
   mutable stop : unit -> unit;
 }
 
-let make ~memory_bar ~nodes is_gpu =
+let make ~memory_bar ~nodes ~reset is_gpu =
   {
     memory_bar;
     nodes;
+    reset;
     is_gpu;
     mutex = Mutex.create ();
     exits = false;
@@ -186,17 +188,38 @@ let detach g m i =
       Sysfs.detach files bus;
       Sysfs.resize files bus g.memory_bar)
 
-let attach g m i = change g "attach" m i Sysfs.attach
+(* Resets *)
 
-let reset g m i f =
-  index "reset" i;
-  Mutex.protect g.mutex @@ fun () ->
-  let* bus = gpu g m i in
+(* Takes the function of the GPU at [bus] on [m], turns its bus mastering off
+   and resets it as its vendor does, releasing it whatever the reset answers. A
+   GPU lost and reset opens again. *)
+let reset_gpu g m bus =
   let* fn = Function.take m bus in
   let r =
-    Fun.protect ~finally:(fun () -> Function.release fn) (fun () -> f fn)
+    Fun.protect ~finally:(fun () -> Function.release fn) @@ fun () ->
+    let c = Function.config16 fn Local.command in
+    Function.set_config16 fn Local.command (c land lnot Local.bus_master);
+    g.reset fn
   in
   if Result.is_ok r then
     Mutex.protect g.holds (fun () ->
         g.spent <- List.filter (fun (m', b) -> not (m' == m && b = bus)) g.spent);
   r
+
+let reset g m i =
+  index "reset" i;
+  Mutex.protect g.mutex @@ fun () ->
+  let* bus = gpu g m i in
+  reset_gpu g m bus
+
+(* A kernel driver's probe expects the GPU as its vendor's reset leaves it,
+   whatever ran on it before, in this process or another: a GPU on no kernel
+   driver, or on vfio-pci, is reset first, through a take, while the process can
+   take it. The take shares the change's lock, so no other comes between. *)
+let attach g m i =
+  change g "attach" m i (fun files bus ->
+      match Sysfs.driver files bus with
+      | Some d when d <> Sysfs.vfio_pci -> ()
+      | _ ->
+          Result.iter_error (Fail.fail "%s") (reset_gpu g m bus);
+          Sysfs.attach files bus)

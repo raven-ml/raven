@@ -64,6 +64,7 @@ let opening =
 let gpus () =
   Rig_pci.Gpus.make ~memory_bar:1
     ~nodes:(fun ~read:_ _ -> [])
+    ~reset:Rig_pci.Function.reset
     (fun (id : Rig_pci.Machine.id) ->
       Rig_nv.is_gpu ~vendor:id.vendor ~class_:id.class_)
 

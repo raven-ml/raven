@@ -12,7 +12,7 @@
 
     While a driver holds a GPU, the process holds it ({!hold}): no other open of
     it succeeds, and no change to the machine touches it. A GPU lost opens again
-    only after a {!reset}.
+    only after a {!reset}, which {!attach} runs too.
 
     These facts belong to a value of {!t}: a process makes one per vendor.
     Opening and changing GPUs of one vendor are serialized, the driver's start
@@ -27,15 +27,23 @@ type t
 val make :
   memory_bar:int ->
   nodes:(read:(string -> string option) -> string -> string list) ->
+  reset:(Function.t -> (unit, string) result) ->
   (Machine.id -> bool) ->
   t
-(** [make ~memory_bar ~nodes is_gpu] is the GPUs of a vendor: the functions [f]
-    with [is_gpu f]. [memory_bar] is the BAR through which the process reaches
-    their memory, which {!detach} enlarges. [nodes ~read bus] is the character
-    devices through which the kernel driver serves the GPU at [bus] without a
-    [dev] file under the GPU's directory in [/sys/bus/pci], by path from the
-    machine's root, such as [["dev/nvidia0"]]; [read file] is the contents of
-    [file], a path from the machine's root, if it can be read. *)
+(** [make ~memory_bar ~nodes ~reset is_gpu] is the GPUs of a vendor: the
+    functions [f] with [is_gpu f].
+    - [memory_bar] is the BAR through which the process reaches their memory,
+      which {!detach} enlarges.
+    - [nodes ~read bus] is the character devices through which the kernel driver
+      serves the GPU at [bus] without a [dev] file under the GPU's directory in
+      [/sys/bus/pci], by path from the machine's root, such as
+      [["dev/nvidia0"]]; [read file] is the contents of [file], a path from the
+      machine's root, if it can be read.
+    - [reset fn] stops whatever runs on the GPU of the taken function [fn],
+      whatever ran on it before, its kernel driver included, and resets it as
+      its vendor does, returning [Ok ()] once the GPU answers again with nothing
+      running on it, or [Error why]. Its bus mastering is off when [reset] is
+      called. *)
 
 val buses : t -> Machine.t -> string list
 (** [buses g m] is the bus addresses of [g]'s GPUs on [m], in bus order: GPU [i]
@@ -102,12 +110,12 @@ val lose : hold -> unit
 (** {1:changes Changes to the machine}
 
     These change the machine and persist after the process. Each refuses a GPU
-    the process holds. Changes run under the lock a physical take holds; they
-    leave a function bound to [vfio-pci] as it is. {!detach} and {!attach} write
-    the machine's [/sys/bus/pci], so they act on a machine the process reaches
-    without a transport, such as {!Machine.this}, and need [CAP_SYS_ADMIN] and
-    write access to the files they write, which root has. An [Error] for a file
-    the process may not write names it. *)
+    the process holds. Changes run under the lock a physical take holds;
+    {!detach} leaves a function bound to [vfio-pci] as it is. {!detach} and
+    {!attach} write the machine's [/sys/bus/pci], so they act on a machine the
+    process reaches without a transport, such as {!Machine.this}, and need
+    [CAP_SYS_ADMIN] and write access to the files they write, which root has. An
+    [Error] for a file the process may not write names it. *)
 
 val detach : t -> Machine.t -> int -> (unit, string) result
 (** [detach g m i] detaches GPU [i] of [m] from its kernel driver, so that a
@@ -138,31 +146,36 @@ val detach : t -> Machine.t -> int -> (unit, string) result
     waits for its file to close. *)
 
 val attach : t -> Machine.t -> int -> (unit, string) result
-(** [attach g m i] gives GPU [i] of [m] back to its kernel driver: Linux rescans
-    the bus, which brings back the functions {!detach} removed, and binds the
-    GPU's driver, once [attach] cleared the function's [driver_override], just
-    before the drivers are probed. It writes [/sys/bus/pci/rescan], the
-    [driver_override] and [/sys/bus/pci/drivers_probe].
+(** [attach g m i] gives GPU [i] of [m] back to its kernel driver. A GPU bound
+    to no kernel driver, or to [vfio-pci], is first reset as {!reset} does:
+    whatever ran on it, in this process or another, its kernel driver expects it
+    as its vendor's reset leaves it. [attach] then clears a [vfio-pci] binding
+    and its [driver_override], and Linux rescans the bus, which brings back the
+    functions {!detach} removed, and binds the GPU's driver. It writes
+    [/sys/bus/pci/rescan], the function's [driver_override],
+    [/sys/bus/pci/drivers_probe] and, for [vfio-pci], the driver's [unbind]. A
+    GPU bound to its kernel driver is left as it is.
 
-    [Error why] if [m] is reached through a transport, if [i] is no GPU, if the
-    process holds it, if the process may not write a file, if it is bound to
-    [vfio-pci], whose [driver_override] must be cleared first, or if no driver
-    takes it, such as when the driver's module is not loaded.
+    [Error why] if [m] is reached through a transport, if [i] is no GPU, if a
+    process holds it, if the process may not write a file, or if no driver takes
+    it, such as when the driver's module is not loaded. If its function cannot
+    be taken, such as an unbound GPU behind an IOMMU, or its reset fails, the
+    GPU is left as it was and [why] says how to proceed (bind it to [vfio-pci],
+    power cycle).
+
+    Exceptions raised by the vendor's reset pass through, the GPU left as it
+    was.
 
     On Linux 6.12, an AMD GPU given back to amdgpu after {!detach} serves its
     render node, but KFD refuses every process until the amdgpu module reloads:
     the unbind left KFD locked. *)
 
-val reset :
-  t ->
-  Machine.t ->
-  int ->
-  (Function.t -> (unit, string) result) ->
-  (unit, string) result
-(** [reset g m i f] takes the function of GPU [i] of [m], calls [f] on it to
-    reset the GPU as its vendor does, and releases it, whatever [f] returns or
-    raises. A GPU lost opens again after a reset whose [f] is [Ok ()].
-    Exceptions raised by [f] pass through, as in {{!holds}an open}.
+val reset : t -> Machine.t -> int -> (unit, string) result
+(** [reset g m i] takes the function of GPU [i] of [m], turns its bus mastering
+    off, resets the GPU as its vendor does ({!make}) and releases it, whatever
+    the vendor's reset returns or raises. A GPU lost opens again after a reset
+    that is [Ok ()]. Exceptions raised by the vendor's reset pass through, as in
+    {{!holds}an open}.
 
     [Error why] if [i] is no GPU, if the process holds it, if its function
-    cannot be taken, or [f]'s. *)
+    cannot be taken, or the vendor's reset's. *)
