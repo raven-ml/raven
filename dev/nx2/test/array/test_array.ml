@@ -904,6 +904,9 @@ let law_to_device (Case (a, m)) =
     let c = A.to_device Rig.host a in
     let bits = D.bits (A.dtype a) in
     let lo, hi = L.span (A.layout a) in
+    cover "a sub-byte span sharing an end byte"
+      (L.numel (A.layout a) > 0
+      && (lo * bits mod 8 <> 0 || hi * bits mod 8 <> 0));
     let first = lo * bits / 8 in
     equal ~msg:"bytes" int (reach_bytes bits hi - first) (B.length (A.buffer c));
     equal ~msg:"offset" int

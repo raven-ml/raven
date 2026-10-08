@@ -481,6 +481,34 @@ let copy a =
   gather ();
   dst
 
+external load_byte : Buffer.t -> (int[@untagged]) -> (int[@untagged])
+  = "nx_array_load_byte_byte" "nx_array_load_byte"
+[@@noalloc]
+
+(* Copies [src] to [dst], of one length, the bytes of a sub-byte array's span
+   that [head] and [tail] say it shares at its ends with elements outside it.
+   Another domain may store those elements while the copy runs: on memory the
+   host addresses, each shared byte is loaded atomically and copied on its own,
+   as a kernel's stores to it are atomic. *)
+let copy_span ~head ~tail src dst =
+  let n = Buffer.length src in
+  if (not (head || tail)) || host_address src < 0 then Buffer.copy ~src ~dst
+  else begin
+    Buffer.wait src Buffer.Read;
+    let i = if head then 1 else 0 and j = if tail then n - 1 else n in
+    if j > i then
+      Buffer.copy
+        ~src:(Buffer.view src ~first:i ~length:(j - i))
+        ~dst:(Buffer.view dst ~first:i ~length:(j - i));
+    let edge k =
+      let byte = String.make 1 (Char.chr (load_byte src k)) in
+      Buffer.copy ~src:(Buffer.of_string byte)
+        ~dst:(Buffer.view dst ~first:k ~length:1)
+    in
+    if head then edge 0;
+    if tail && (n > 1 || not head) then edge (n - 1)
+  end
+
 let to_device d a =
   live "Nx_array.to_device" a.buffer;
   let l = a.layout and bits = Dtype.bits a.dtype in
@@ -489,10 +517,11 @@ let to_device d a =
   let buffer = Buffer.create d (last - first) in
   if last > first then begin
     let src = Buffer.view a.buffer ~first ~length:(last - first) in
+    let head = lo * bits mod 8 <> 0 and tail = hi * bits mod 8 <> 0 in
     Rig.Claim.read src;
     Fun.protect
       ~finally:(fun () -> Rig.Claim.release src)
-      (fun () -> Buffer.copy ~src ~dst:buffer)
+      (fun () -> copy_span ~head ~tail src buffer)
   end;
   let offset = Layout.offset l - (8 * first / bits) in
   let layout = Layout.v ~offset ~strides:(Layout.strides l) (Layout.shape l) in

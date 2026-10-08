@@ -401,6 +401,17 @@ value nx_array_set_int(value b, intnat dt, intnat p, int64_t x) {
 
 value nx_array_host_byte(value b) { return Val_long(nx_array_host(b)); }
 
+/* The byte [i] of the host buffer [b], loaded atomically: other threads may
+   store elements of a sub-byte array in it. */
+intnat nx_array_load_byte(value b, intnat i) {
+  const uint8_t *p = rig_buffer_host(b);
+  return __atomic_load_n(p + i, __ATOMIC_RELAXED);
+}
+
+value nx_array_load_byte_byte(value b, value i) {
+  return Val_long(nx_array_load_byte(b, Long_val(i)));
+}
+
 value nx_array_get_float_byte(value b, value dt, value p, value part) {
   return caml_copy_double(
       nx_array_get_float(b, Long_val(dt), Long_val(p), Long_val(part)));

@@ -177,7 +177,8 @@ val to_device : Rig.t -> ('v, 's) t -> ('v, 's) t
     last position; its layout is [a]'s, shifted to the copy. It copies on [a]'s
     own device too, runs no kernel and keeps strided and broadcast layouts. For
     a sub-byte array, the copy's first and last bytes keep the bits of the
-    source's neighbouring elements.
+    source's neighbouring elements, as found before or after a store another
+    domain makes to them while it copies.
 
     Raises [Invalid_argument] if [a]'s buffer is dead or its memory is held
     exclusive, and what {!Rig.Buffer.create} and {!Rig.Buffer.copy} raise. *)
