@@ -293,10 +293,11 @@ let release_rows =
     ]
 
 (* Waits on a word the host set, and a wait across 2^32: the host sets the word
-   to 2^32 k - 1, the queue waits for 2^32 k, and the host stores it once a
-   short spin saw the release held back. rig waits on other devices' values
-   only, so these rows submit through the driver's C entries, on a device opened
-   without it. *)
+   to 2^32 k - 1, the queue waits for 2^32 k, and the host stores it after the
+   submission. The row times the submission, the store and the release; that
+   the wait holds its work back until the store is test_amd's to show. rig
+   waits on other devices' values only, so these rows submit through the
+   driver's C entries, on a device opened without it. *)
 let wait_rows =
   (* The driver's entries, the device, and the word's host and GPU addresses,
      read once so that a submission allocates nothing. *)
@@ -333,10 +334,6 @@ let wait_rows =
           let target = !v lsl 32 in
           set64 w (target - 1);
           raw_submit f !v at target 1;
-          for _ = 1 to 10_000 do
-            if A.signaled g >= !v then
-              failwith "the wait passed before the host's store"
-          done;
           set64 w target;
           spin g !v);
     ]
