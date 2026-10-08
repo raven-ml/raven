@@ -1,0 +1,37 @@
+# thumper baseline v1
+# suite: rig_remote
+
+# machine: 6e4c99d648da0929
+# host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.1 · 64-bit · release
+
+rail/4K	alloc_words	exact	0
+rail/4K	wall_time	batch=64	n=20	1.104e-04	1.078e-04 1.080e-04 1.080e-04 1.081e-04 1.088e-04 1.090e-04 1.096e-04 1.096e-04 1.102e-04 1.104e-04 1.104e-04 1.105e-04 1.108e-04 1.117e-04 1.131e-04 1.132e-04 1.145e-04 1.146e-04 1.190e-04 1.257e-04
+rail/64M	alloc_words	exact	0
+rail/64M	wall_time	batch=1	n=20	5.824e-03	5.736e-03 5.741e-03 5.753e-03 5.788e-03 5.791e-03 5.793e-03 5.799e-03 5.803e-03 5.815e-03 5.819e-03 5.828e-03 5.833e-03 5.840e-03 5.855e-03 5.861e-03 5.907e-03 5.970e-03 6.127e-03 6.169e-03 6.213e-03
+rail/floor-4K	alloc_words	exact	0
+rail/floor-4K	wall_time	batch=2048	n=20	3.906e-06	3.900e-06 3.901e-06 3.902e-06 3.905e-06 3.905e-06 3.905e-06 3.906e-06 3.906e-06 3.906e-06 3.906e-06 3.906e-06 3.908e-06 3.908e-06 3.908e-06 3.909e-06 3.910e-06 3.910e-06 3.911e-06 3.916e-06 3.948e-06
+rail/floor-64M	alloc_words	exact	0
+rail/floor-64M	wall_time	batch=1	n=20	5.805e-03	5.690e-03 5.708e-03 5.723e-03 5.727e-03 5.744e-03 5.766e-03 5.768e-03 5.779e-03 5.783e-03 5.802e-03 5.808e-03 5.852e-03 5.874e-03 5.917e-03 5.948e-03 5.996e-03 6.130e-03 6.205e-03 6.376e-03 6.617e-03
+request/alloc	alloc_words	exact	41
+request/alloc	wall_time	batch=512	n=20	1.635e-05	1.521e-05 1.523e-05 1.524e-05 1.531e-05 1.585e-05 1.594e-05 1.624e-05 1.628e-05 1.630e-05 1.633e-05 1.636e-05 1.638e-05 1.638e-05 1.675e-05 1.691e-05 1.742e-05 1.756e-05 1.777e-05 1.804e-05 2.479e-05
+request/floor	alloc_words	exact	0
+request/floor	wall_time	batch=1024	n=20	5.562e-06	5.533e-06 5.533e-06 5.540e-06 5.540e-06 5.542e-06 5.544e-06 5.545e-06 5.545e-06 5.561e-06 5.562e-06 5.562e-06 5.563e-06 5.578e-06 5.579e-06 5.588e-06 5.596e-06 5.743e-06 5.758e-06 6.104e-06 6.529e-06
+
+# machine: 943935ae6b4f79ac
+# host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
+# ocaml: 5.5.1 · 64-bit · release
+# forced: blessed under load 10.0 on 10 cores
+
+rail/4K	alloc_words	exact	0
+rail/4K	wall_time	batch=64	n=20	8.165e-05	7.691e-05 7.879e-05 7.945e-05 7.975e-05 7.993e-05 8.046e-05 8.049e-05 8.053e-05 8.136e-05 8.150e-05 8.180e-05 8.232e-05 8.250e-05 8.277e-05 8.280e-05 8.602e-05 8.692e-05 8.795e-05 8.815e-05 9.679e-05
+rail/64M	alloc_words	exact	0
+rail/64M	wall_time	batch=1	n=20	1.144e-02	9.895e-03 1.112e-02 1.121e-02 1.123e-02 1.127e-02 1.130e-02 1.130e-02 1.135e-02 1.141e-02 1.143e-02 1.144e-02 1.145e-02 1.152e-02 1.156e-02 1.159e-02 1.163e-02 1.172e-02 1.175e-02 1.179e-02 1.228e-02
+rail/floor-4K	alloc_words	exact	0
+rail/floor-4K	wall_time	batch=256	n=20	2.744e-05	1.628e-05 1.786e-05 1.849e-05 1.872e-05 2.002e-05 2.107e-05 2.224e-05 2.485e-05 2.563e-05 2.704e-05 2.785e-05 2.796e-05 2.848e-05 2.916e-05 2.930e-05 2.954e-05 2.991e-05 3.042e-05 3.066e-05 3.072e-05
+rail/floor-64M	alloc_words	exact	0
+rail/floor-64M	wall_time	batch=1	n=20	1.197e-02	9.152e-03 9.671e-03 9.873e-03 9.934e-03 1.017e-02 1.123e-02 1.128e-02 1.141e-02 1.161e-02 1.196e-02 1.198e-02 1.204e-02 1.206e-02 1.213e-02 1.229e-02 1.237e-02 1.248e-02 1.253e-02 1.258e-02 1.258e-02
+request/alloc	alloc_words	exact	41
+request/alloc	wall_time	batch=16	n=20	6.562e-05	5.402e-05 5.490e-05 5.793e-05 5.950e-05 6.052e-05 6.285e-05 6.349e-05 6.358e-05 6.504e-05 6.532e-05 6.591e-05 6.618e-05 6.653e-05 6.793e-05 6.912e-05 6.953e-05 7.723e-05 8.047e-05 8.704e-05 9.896e-05
+request/floor	alloc_words	exact	0
+request/floor	wall_time	batch=512	n=20	3.151e-05	1.740e-05 1.752e-05 1.795e-05 2.264e-05 2.564e-05 2.796e-05 2.913e-05 3.028e-05 3.064e-05 3.117e-05 3.186e-05 3.209e-05 3.242e-05 3.253e-05 3.309e-05 3.330e-05 3.377e-05 3.676e-05 3.830e-05 8.669e-05
