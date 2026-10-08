@@ -5,40 +5,39 @@
 # host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.1 · 64-bit · release
 
-of-string/amd-128-kernels	alloc_words	exact	5691
-of-string/amd-128-kernels	wall_time	batch=256	n=20	2.282e-05	2.204e-05 2.206e-05 2.233e-05 2.244e-05 2.245e-05 2.250e-05 2.264e-05 2.272e-05 2.276e-05 2.278e-05 2.286e-05 2.287e-05 2.297e-05 2.305e-05 2.312e-05 2.317e-05 2.317e-05 2.325e-05 2.366e-05 2.382e-05
-of-string/amd-16-kernels	alloc_words	exact	1547
-of-string/amd-16-kernels	wall_time	batch=4096	n=20	2.096e-06	2.080e-06 2.081e-06 2.082e-06 2.083e-06 2.087e-06 2.092e-06 2.093e-06 2.095e-06 2.096e-06 2.096e-06 2.096e-06 2.096e-06 2.104e-06 2.108e-06 2.113e-06 2.114e-06 2.118e-06 2.123e-06 2.130e-06 2.133e-06
-of-string/cubin-sm89	alloc_words	exact	909
-of-string/cubin-sm89	wall_time	batch=8192	n=20	1.025e-06	1.012e-06 1.013e-06 1.014e-06 1.015e-06 1.016e-06 1.019e-06 1.022e-06 1.023e-06 1.023e-06 1.024e-06 1.025e-06 1.025e-06 1.026e-06 1.028e-06 1.032e-06 1.034e-06 1.034e-06 1.036e-06 1.038e-06 1.044e-06
+of-string/amd-128-kernels	alloc_words	exact	5700
+of-string/amd-128-kernels	wall_time	batch=256	n=20	2.286e-05	2.238e-05 2.241e-05 2.244e-05 2.245e-05 2.246e-05 2.253e-05 2.262e-05 2.267e-05 2.268e-05 2.285e-05 2.287e-05 2.297e-05 2.298e-05 2.303e-05 2.310e-05 2.311e-05 2.317e-05 2.323e-05 2.333e-05 2.338e-05
+of-string/amd-16-kernels	alloc_words	exact	1556
+of-string/amd-16-kernels	wall_time	batch=4096	n=20	2.108e-06	2.087e-06 2.090e-06 2.098e-06 2.100e-06 2.102e-06 2.103e-06 2.103e-06 2.104e-06 2.105e-06 2.106e-06 2.110e-06 2.114e-06 2.116e-06 2.117e-06 2.120e-06 2.123e-06 2.124e-06 2.129e-06 2.137e-06 2.140e-06
+of-string/cubin-sm89	alloc_words	exact	918
+of-string/cubin-sm89	wall_time	batch=8192	n=20	1.020e-06	1.006e-06 1.007e-06 1.010e-06 1.011e-06 1.011e-06 1.012e-06 1.013e-06 1.013e-06 1.019e-06 1.020e-06 1.020e-06 1.021e-06 1.022e-06 1.025e-06 1.027e-06 1.027e-06 1.028e-06 1.028e-06 1.029e-06 1.029e-06
 of-string/floor-bytes-amd-128-kernels	alloc_words	exact	5
-of-string/floor-bytes-amd-128-kernels	wall_time	batch=2048	n=20	3.497e-06	3.378e-06 3.395e-06 3.407e-06 3.408e-06 3.428e-06 3.433e-06 3.438e-06 3.447e-06 3.463e-06 3.491e-06 3.504e-06 3.564e-06 3.593e-06 3.609e-06 3.613e-06 3.616e-06 3.632e-06 3.633e-06 3.635e-06 3.646e-06
+of-string/floor-bytes-amd-128-kernels	wall_time	batch=2048	n=20	3.439e-06	3.400e-06 3.401e-06 3.410e-06 3.412e-06 3.414e-06 3.416e-06 3.427e-06 3.432e-06 3.433e-06 3.436e-06 3.441e-06 3.453e-06 3.456e-06 3.471e-06 3.593e-06 3.613e-06 3.646e-06 3.651e-06 3.652e-06 3.658e-06
 of-string/floor-symbols-amd-128-kernels	alloc_words	exact	3983
-of-string/floor-symbols-amd-128-kernels	wall_time	batch=512	n=20	1.462e-05	1.400e-05 1.414e-05 1.428e-05 1.430e-05 1.443e-05 1.443e-05 1.446e-05 1.450e-05 1.461e-05 1.462e-05 1.463e-05 1.464e-05 1.464e-05 1.466e-05 1.471e-05 1.473e-05 1.475e-05 1.497e-05 1.509e-05 1.522e-05
-of-string/host-aarch64	alloc_words	exact	1248
-of-string/host-aarch64	wall_time	batch=4096	n=20	1.406e-06	1.386e-06 1.389e-06 1.390e-06 1.392e-06 1.393e-06 1.397e-06 1.399e-06 1.403e-06 1.403e-06 1.405e-06 1.407e-06 1.408e-06 1.409e-06 1.413e-06 1.413e-06 1.416e-06 1.423e-06 1.428e-06 1.430e-06 1.456e-06
+of-string/floor-symbols-amd-128-kernels	wall_time	batch=512	n=20	1.504e-05	1.454e-05 1.470e-05 1.472e-05 1.474e-05 1.476e-05 1.489e-05 1.494e-05 1.500e-05 1.503e-05 1.503e-05 1.505e-05 1.509e-05 1.509e-05 1.515e-05 1.520e-05 1.521e-05 1.522e-05 1.528e-05 1.532e-05 1.543e-05
+of-string/host-aarch64	alloc_words	exact	1265
+of-string/host-aarch64	wall_time	batch=4096	n=20	1.424e-06	1.400e-06 1.401e-06 1.405e-06 1.407e-06 1.410e-06 1.413e-06 1.414e-06 1.417e-06 1.420e-06 1.423e-06 1.425e-06 1.428e-06 1.430e-06 1.431e-06 1.434e-06 1.438e-06 1.442e-06 1.449e-06 1.453e-06 1.473e-06
 symbol/amd-128-kernels-last-kernel	alloc_words	exact	8
-symbol/amd-128-kernels-last-kernel	wall_time	batch=8192	n=20	5.602e-07	5.593e-07 5.599e-07 5.599e-07 5.600e-07 5.600e-07 5.600e-07 5.601e-07 5.601e-07 5.601e-07 5.602e-07 5.603e-07 5.605e-07 5.608e-07 5.610e-07 5.611e-07 5.613e-07 5.614e-07 5.640e-07 5.657e-07 5.665e-07
+symbol/amd-128-kernels-last-kernel	wall_time	batch=8192	n=20	5.552e-07	5.540e-07 5.547e-07 5.548e-07 5.549e-07 5.549e-07 5.550e-07 5.551e-07 5.551e-07 5.551e-07 5.552e-07 5.552e-07 5.553e-07 5.559e-07 5.560e-07 5.579e-07 5.607e-07 5.631e-07 5.640e-07 5.655e-07 5.665e-07
 
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed under load 10.2 on 10 cores
 # forced: blessed of-string/amd-16-kernels of-string/amd-128-kernels of-string/cubin-sm89 of-string/host-aarch64 under load 11.0 on 10 cores
-# forced: blessed of-string/amd-16-kernels of-string/amd-128-kernels of-string/cubin-sm89 of-string/host-aarch64 under load 14.2 on 10 cores
 
-of-string/amd-128-kernels	alloc_words	exact	5691
-of-string/amd-128-kernels	wall_time	batch=128	n=20	3.948e-05	3.873e-05 3.889e-05 3.893e-05 3.895e-05 3.895e-05 3.914e-05 3.930e-05 3.942e-05 3.942e-05 3.944e-05 3.952e-05 3.953e-05 3.953e-05 3.957e-05 3.971e-05 3.976e-05 3.981e-05 3.995e-05 3.997e-05 4.040e-05
-of-string/amd-16-kernels	alloc_words	exact	1547
-of-string/amd-16-kernels	wall_time	batch=2048	n=20	4.365e-06	4.332e-06 4.340e-06 4.350e-06 4.352e-06 4.356e-06 4.356e-06 4.358e-06 4.359e-06 4.361e-06 4.361e-06 4.368e-06 4.372e-06 4.372e-06 4.374e-06 4.382e-06 4.386e-06 4.387e-06 4.395e-06 4.411e-06 4.441e-06
-of-string/cubin-sm89	alloc_words	exact	909
-of-string/cubin-sm89	wall_time	batch=4096	n=20	1.861e-06	1.847e-06 1.854e-06 1.856e-06 1.856e-06 1.857e-06 1.858e-06 1.858e-06 1.859e-06 1.859e-06 1.861e-06 1.861e-06 1.861e-06 1.867e-06 1.868e-06 1.872e-06 1.873e-06 1.873e-06 1.876e-06 1.877e-06 1.880e-06
+of-string/amd-128-kernels	alloc_words	exact	5700
+of-string/amd-128-kernels	wall_time	batch=128	n=20	4.283e-05	4.041e-05 4.045e-05 4.091e-05 4.123e-05 4.203e-05 4.209e-05 4.217e-05 4.250e-05 4.266e-05 4.282e-05 4.284e-05 4.307e-05 4.313e-05 4.331e-05 4.358e-05 4.401e-05 4.411e-05 4.424e-05 4.465e-05 4.488e-05
+of-string/amd-16-kernels	alloc_words	exact	1556
+of-string/amd-16-kernels	wall_time	batch=2048	n=20	4.681e-06	4.393e-06 4.484e-06 4.634e-06 4.657e-06 4.657e-06 4.658e-06 4.659e-06 4.669e-06 4.673e-06 4.680e-06 4.683e-06 4.684e-06 4.687e-06 4.691e-06 4.692e-06 4.693e-06 4.695e-06 4.700e-06 4.703e-06 4.725e-06
+of-string/cubin-sm89	alloc_words	exact	918
+of-string/cubin-sm89	wall_time	batch=4096	n=20	1.867e-06	1.737e-06 1.770e-06 1.830e-06 1.841e-06 1.845e-06 1.854e-06 1.855e-06 1.860e-06 1.863e-06 1.867e-06 1.868e-06 1.870e-06 1.873e-06 1.874e-06 1.879e-06 1.882e-06 1.889e-06 1.889e-06 1.896e-06 1.918e-06
 of-string/floor-bytes-amd-128-kernels	alloc_words	exact	5
 of-string/floor-bytes-amd-128-kernels	wall_time	batch=1024	n=20	6.575e-06	6.435e-06 6.457e-06 6.468e-06 6.480e-06 6.500e-06 6.512e-06 6.528e-06 6.530e-06 6.556e-06 6.566e-06 6.584e-06 6.592e-06 6.599e-06 6.611e-06 6.629e-06 6.640e-06 6.642e-06 6.653e-06 6.672e-06 6.689e-06
 of-string/floor-symbols-amd-128-kernels	alloc_words	exact	3983
 of-string/floor-symbols-amd-128-kernels	wall_time	batch=256	n=20	2.905e-05	2.834e-05 2.835e-05 2.854e-05 2.867e-05 2.870e-05 2.890e-05 2.890e-05 2.891e-05 2.898e-05 2.903e-05 2.908e-05 2.910e-05 2.918e-05 2.929e-05 2.932e-05 2.950e-05 2.951e-05 2.953e-05 2.977e-05 2.999e-05
-of-string/host-aarch64	alloc_words	exact	1248
-of-string/host-aarch64	wall_time	batch=2048	n=20	2.801e-06	2.773e-06 2.779e-06 2.788e-06 2.788e-06 2.788e-06 2.789e-06 2.790e-06 2.790e-06 2.794e-06 2.801e-06 2.801e-06 2.805e-06 2.808e-06 2.808e-06 2.816e-06 2.821e-06 2.821e-06 2.822e-06 2.831e-06 2.833e-06
+of-string/host-aarch64	alloc_words	exact	1265
+of-string/host-aarch64	wall_time	batch=2048	n=20	2.871e-06	2.717e-06 2.783e-06 2.808e-06 2.814e-06 2.819e-06 2.839e-06 2.842e-06 2.854e-06 2.865e-06 2.871e-06 2.871e-06 2.872e-06 2.887e-06 2.892e-06 2.897e-06 2.905e-06 2.923e-06 2.950e-06 2.951e-06 2.968e-06
 symbol/amd-128-kernels-last-kernel	alloc_words	exact	8
 symbol/amd-128-kernels-last-kernel	wall_time	batch=8192	n=20	1.157e-06	1.111e-06 1.120e-06 1.125e-06 1.128e-06 1.131e-06 1.135e-06 1.138e-06 1.145e-06 1.152e-06 1.153e-06 1.162e-06 1.165e-06 1.167e-06 1.168e-06 1.175e-06 1.175e-06 1.391e-06 1.443e-06 1.971e-06 3.065e-06
 
@@ -46,17 +45,17 @@ symbol/amd-128-kernels-last-kernel	wall_time	batch=8192	n=20	1.157e-06	1.111e-06
 # host: nonnormal · Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz · x86_64 · linux
 # ocaml: 5.5.1 · 64-bit · release
 
-of-string/amd-128-kernels	alloc_words	exact	5691
-of-string/amd-128-kernels	wall_time	batch=256	n=20	3.755e-05	3.748e-05 3.749e-05 3.749e-05 3.750e-05 3.750e-05 3.751e-05 3.753e-05 3.753e-05 3.754e-05 3.754e-05 3.755e-05 3.756e-05 3.759e-05 3.759e-05 3.763e-05 3.765e-05 3.769e-05 3.772e-05 3.784e-05 3.784e-05
-of-string/amd-16-kernels	alloc_words	exact	1547
-of-string/amd-16-kernels	wall_time	batch=2048	n=20	3.941e-06	3.924e-06 3.932e-06 3.932e-06 3.932e-06 3.933e-06 3.934e-06 3.935e-06 3.939e-06 3.940e-06 3.941e-06 3.942e-06 3.944e-06 3.946e-06 3.957e-06 3.959e-06 3.963e-06 3.965e-06 3.967e-06 3.969e-06 3.973e-06
-of-string/cubin-sm89	alloc_words	exact	909
-of-string/cubin-sm89	wall_time	batch=4096	n=20	1.915e-06	1.909e-06 1.910e-06 1.912e-06 1.912e-06 1.913e-06 1.913e-06 1.914e-06 1.914e-06 1.914e-06 1.915e-06 1.915e-06 1.915e-06 1.915e-06 1.915e-06 1.916e-06 1.916e-06 1.917e-06 1.918e-06 1.918e-06 1.919e-06
+of-string/amd-128-kernels	alloc_words	exact	5700
+of-string/amd-128-kernels	wall_time	batch=128	n=20	3.880e-05	3.815e-05 3.876e-05 3.876e-05 3.877e-05 3.877e-05 3.878e-05 3.878e-05 3.878e-05 3.879e-05 3.880e-05 3.880e-05 3.881e-05 3.881e-05 3.881e-05 3.882e-05 3.884e-05 3.887e-05 3.888e-05 3.895e-05 3.931e-05
+of-string/amd-16-kernels	alloc_words	exact	1556
+of-string/amd-16-kernels	wall_time	batch=2048	n=20	4.058e-06	4.016e-06 4.026e-06 4.028e-06 4.030e-06 4.043e-06 4.045e-06 4.046e-06 4.048e-06 4.054e-06 4.056e-06 4.060e-06 4.065e-06 4.065e-06 4.071e-06 4.074e-06 4.077e-06 4.079e-06 4.080e-06 4.104e-06 4.178e-06
+of-string/cubin-sm89	alloc_words	exact	918
+of-string/cubin-sm89	wall_time	batch=4096	n=20	1.887e-06	1.886e-06 1.886e-06 1.886e-06 1.886e-06 1.887e-06 1.887e-06 1.887e-06 1.887e-06 1.887e-06 1.887e-06 1.887e-06 1.887e-06 1.887e-06 1.888e-06 1.889e-06 1.892e-06 1.897e-06 1.899e-06 1.900e-06 1.902e-06
 of-string/floor-bytes-amd-128-kernels	alloc_words	exact	5
-of-string/floor-bytes-amd-128-kernels	wall_time	batch=1024	n=20	5.175e-06	5.138e-06 5.148e-06 5.148e-06 5.150e-06 5.157e-06 5.158e-06 5.168e-06 5.168e-06 5.170e-06 5.170e-06 5.181e-06 5.183e-06 5.186e-06 5.187e-06 5.187e-06 5.191e-06 5.226e-06 5.235e-06 5.258e-06 5.483e-06
+of-string/floor-bytes-amd-128-kernels	wall_time	batch=1024	n=20	5.203e-06	5.152e-06 5.154e-06 5.161e-06 5.167e-06 5.180e-06 5.180e-06 5.190e-06 5.193e-06 5.194e-06 5.195e-06 5.211e-06 5.216e-06 5.225e-06 5.233e-06 5.239e-06 5.242e-06 5.250e-06 5.271e-06 5.274e-06 5.276e-06
 of-string/floor-symbols-amd-128-kernels	alloc_words	exact	3983
-of-string/floor-symbols-amd-128-kernels	wall_time	batch=256	n=20	2.532e-05	2.521e-05 2.526e-05 2.527e-05 2.527e-05 2.527e-05 2.528e-05 2.529e-05 2.529e-05 2.530e-05 2.532e-05 2.532e-05 2.533e-05 2.534e-05 2.535e-05 2.535e-05 2.536e-05 2.537e-05 2.537e-05 2.550e-05 2.565e-05
-of-string/host-aarch64	alloc_words	exact	1248
-of-string/host-aarch64	wall_time	batch=2048	n=20	2.801e-06	2.788e-06 2.789e-06 2.790e-06 2.791e-06 2.794e-06 2.795e-06 2.796e-06 2.798e-06 2.800e-06 2.801e-06 2.801e-06 2.802e-06 2.805e-06 2.806e-06 2.809e-06 2.812e-06 2.826e-06 2.828e-06 2.828e-06 2.835e-06
+of-string/floor-symbols-amd-128-kernels	wall_time	batch=256	n=20	2.555e-05	2.542e-05 2.548e-05 2.548e-05 2.549e-05 2.551e-05 2.551e-05 2.552e-05 2.553e-05 2.554e-05 2.554e-05 2.556e-05 2.557e-05 2.558e-05 2.558e-05 2.558e-05 2.559e-05 2.561e-05 2.565e-05 2.586e-05 2.586e-05
+of-string/host-aarch64	alloc_words	exact	1265
+of-string/host-aarch64	wall_time	batch=2048	n=20	2.802e-06	2.793e-06 2.797e-06 2.798e-06 2.800e-06 2.800e-06 2.801e-06 2.801e-06 2.802e-06 2.802e-06 2.802e-06 2.803e-06 2.803e-06 2.804e-06 2.804e-06 2.807e-06 2.820e-06 2.826e-06 2.833e-06 2.835e-06 2.839e-06
 symbol/amd-128-kernels-last-kernel	alloc_words	exact	8
-symbol/amd-128-kernels-last-kernel	wall_time	batch=8192	n=20	1.025e-06	1.016e-06 1.018e-06 1.019e-06 1.021e-06 1.022e-06 1.022e-06 1.022e-06 1.023e-06 1.024e-06 1.025e-06 1.025e-06 1.025e-06 1.025e-06 1.027e-06 1.027e-06 1.028e-06 1.030e-06 1.033e-06 1.046e-06 1.046e-06
+symbol/amd-128-kernels-last-kernel	wall_time	batch=4096	n=20	1.403e-06	1.387e-06 1.390e-06 1.393e-06 1.395e-06 1.395e-06 1.398e-06 1.398e-06 1.400e-06 1.401e-06 1.402e-06 1.403e-06 1.403e-06 1.405e-06 1.406e-06 1.407e-06 1.407e-06 1.414e-06 1.415e-06 1.417e-06 1.432e-06
