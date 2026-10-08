@@ -236,6 +236,11 @@ value device_pci_test_flush(value w) {
   return Val_unit;
 }
 
+value device_pci_test_combines(value w) {
+  struct device_pci_window v = window(w);
+  return Val_bool(v.combines);
+}
+
 value device_pci_test_failed(value w) {
   CAMLparam1(w);
   struct device_pci_window v = window(w);

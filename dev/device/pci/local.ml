@@ -122,28 +122,36 @@ let pages off n =
   let first = off / page * page in
   (first, round_page (off + n) - first)
 
-(* An empty window maps nothing: it is the BAR's bus address at [off]. *)
-let map t i off n =
+(* An empty window maps nothing: it is the BAR's bus address at [off]. Linux
+   offers a prefetchable BAR's addresses write-combined through [resourceN_wc];
+   VFIO maps BARs uncached. *)
+let map t ~combine i off n =
   if n = 0 then Window.v (fst (Option.get (Sysfs.bar t.host t.bus i)) + off) 0
   else
     let first, len = pages off n in
-    let window fd base =
+    let window ?combines fd base =
       let a =
         Fail.step (strf "mapping BAR %d of %s" i t.bus) (fun () ->
             file_map fd (base + first) len)
       in
-      Window.v (a + off - first) n
+      Window.v ?combines (a + off - first) n
     in
     match t.container with
     | Some c ->
         window (Vfio.device c) (Vfio.bar_offset t.bus (Vfio.device c) i off n)
     | None ->
-        let file = Sysfs.path t.host t.bus (strf "resource%d" i) in
+        let wc = Sysfs.path t.host t.bus (strf "resource%d_wc" i) in
+        let combines = combine && Sys.file_exists wc in
+        let file =
+          if combines then wc else Sysfs.path t.host t.bus (strf "resource%d" i)
+        in
         let fd =
           Fail.step ("opening " ^ file) (fun () ->
               Unix.openfile file [ O_RDWR; O_SYNC; O_CLOEXEC ] 0)
         in
-        Fun.protect ~finally:(fun () -> Unix.close fd) (fun () -> window fd 0)
+        Fun.protect
+          ~finally:(fun () -> Unix.close fd)
+          (fun () -> window ~combines fd 0)
 
 let unmap w =
   if Window.length w > 0 then
@@ -219,7 +227,8 @@ let fn t =
         match Sysfs.bar t.host t.bus i with
         | bar -> bar
         | exception Fail.Failed _ -> None);
-    map = (fun i off n -> Fail.result (fun () -> map t i off n));
+    map =
+      (fun ~combine i off n -> Fail.result (fun () -> map t ~combine i off n));
     unmap;
     interrupt = interrupt t;
     reset = (fun () -> Fail.result (fun () -> reset t));

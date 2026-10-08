@@ -52,7 +52,7 @@ let fn ~bar_size =
     set_config16 = (fun _ _ -> ());
     set_config32 = (fun _ _ -> ());
     bar = (fun i -> if i = 0 then Some (bar_base, bar_size) else None);
-    map = (fun _ off n -> Ok (Window.v (bar_base + off) n));
+    map = (fun ~combine:_ _ off n -> Ok (Window.v (bar_base + off) n));
     unmap = ignore;
     interrupt = (fun _ -> false);
     reset = (fun () -> Ok ());

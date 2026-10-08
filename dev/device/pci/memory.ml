@@ -99,7 +99,9 @@ let gpu m ~uncached ~bar n =
         Ok None
       end
       else
-        match Function.map ~off:pa ~length:mapping.size m.fn m.bar with
+        match
+          Function.map ~combine:true ~off:pa ~length:mapping.size m.fn m.bar
+        with
         | Ok host -> Ok (Some { mapping; host = Some host; source = Allocated })
         | Error why ->
             Page_table.free m.tables mapping;

@@ -392,6 +392,21 @@ module Host = struct
         write (d / "enable") (if fn.enabled then "1\n" else "0\n");
         write (d / "resource") (resource fn.bars);
         write (d / "config") (config fn);
+        List.iteri
+          (fun i r ->
+            let file = d / strf "resource%d" i in
+            match r with
+            | `Mem -> write file (String.make 4096 '\000')
+            | `Prefetchable ->
+                write file (String.make 4096 '\000');
+                write (file ^ "_wc") (String.make 4096 '\000')
+            | `None -> ())
+          (List.concat_map
+             (function
+               | Mem32 _ -> [ `Mem ]
+               | Mem64 _ -> [ `Prefetchable; `None ]
+               | Io _ -> [ `None ])
+             fn.bars);
         write (d / "remove") "";
         Option.iter
           (fun drv ->

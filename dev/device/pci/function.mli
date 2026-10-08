@@ -136,14 +136,28 @@ val bar : t -> int -> (int * int) option
 
     Raises [Invalid_argument] if [i < 0]. *)
 
-val map : ?off:int -> ?length:int -> t -> int -> (Window.t, string) result
+val map :
+  ?combine:bool ->
+  ?off:int ->
+  ?length:int ->
+  t ->
+  int ->
+  (Window.t, string) result
 (** [map f i] is a window on [length] bytes (defaults to the rest of the BAR) of
     [f]'s BAR [i] from byte [off] (defaults to [0]), until {!unmap} or
     {!release}. Child processes do not inherit it.
 
+    With [~combine:true] (defaults to [false]) stores through the window may
+    merge and reach the function in another order until a {!Window.barrier},
+    where the machine allows it: a prefetchable BAR of a function taken
+    physically. Behind an IOMMU, or on a BAR that is not prefetchable, it is the
+    window [map] makes without it. Map registers and doorbells without it.
+
     [Error why] if VFIO or the kernel does not let the process map them.
 
-    Raises [Invalid_argument] if [i < 0] or the bytes do not lie in the BAR. *)
+    Raises [Invalid_argument] if [i < 0], the bytes do not lie in the BAR, or a
+    live window of [f] maps BAR [i] with the other [combine]: the processor maps
+    the same addresses one way at a time. *)
 
 val unmap : t -> Window.t -> unit
 (** [unmap f w] unmaps [w].

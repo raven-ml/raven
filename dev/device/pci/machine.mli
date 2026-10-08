@@ -109,8 +109,8 @@ type fn = Ops.fn = {
   set_config16 : int -> int -> unit;  (** {!Function.set_config16}. *)
   set_config32 : int -> int -> unit;  (** {!Function.set_config32}. *)
   bar : int -> (int * int) option;  (** {!Function.bar}. *)
-  map : int -> int -> int -> (Window.t, string) result;
-      (** [map i off n] is {!Function.map} of BAR [i]. *)
+  map : combine:bool -> int -> int -> int -> (Window.t, string) result;
+      (** [map ~combine i off n] is {!Function.map} of BAR [i]. *)
   unmap : Window.t -> unit;  (** {!Function.unmap}. *)
   interrupt : int -> bool;  (** {!Function.interrupt}. *)
   reset : unit -> (unit, string) result;

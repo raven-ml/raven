@@ -45,7 +45,7 @@ let fake_fn fake tr bus =
     set_config16 = (fun _ _ -> ());
     set_config32 = (fun _ _ -> ());
     bar = (fun i -> if i = 0 then Some (0, 4096) else None);
-    map = (fun _ off n -> Ok (Window.through tr off n));
+    map = (fun ~combine:_ _ off n -> Ok (Window.through tr off n));
     unmap = (fun _ -> ());
     interrupt = (fun _ -> false);
     reset = (fun () -> Ok ());

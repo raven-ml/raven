@@ -17,7 +17,7 @@ type t = {
   fn : Machine.fn;
   mutable released : bool;
   lock : Mutex.t;
-  maps : (Window.t, unit) Hashtbl.t;
+  maps : (Window.t, int * bool) Hashtbl.t; (* to its BAR and [combine] *)
   dmas : (Window.t, unit) Hashtbl.t;
   pins : (int * int, unit) Hashtbl.t; (* (address, bytes) *)
 }
@@ -110,7 +110,7 @@ let bar f i =
   index f "bar" i;
   f.fn.bar i
 
-let map ?(off = 0) ?length f i =
+let map ?(combine = false) ?(off = 0) ?length f i =
   index f "map" i;
   let size =
     match f.fn.bar i with
@@ -121,8 +121,18 @@ let map ?(off = 0) ?length f i =
   if off < 0 || length < 0 || off > size - length then
     invalid_argf "Function.map: %d bytes at %d outside BAR %d of %d bytes"
       length off i size;
-  let* w = f.fn.map i off length in
-  Mutex.protect f.lock (fun () -> Hashtbl.add f.maps w ());
+  (* The processor maps a BAR's addresses one way at a time: x86's PAT refuses a
+     second mapping of another type, or makes both uncached. Only the owner
+     changes [maps], so it reads them without the lock. *)
+  Hashtbl.iter
+    (fun _ (j, c) ->
+      if j = i && c <> combine then
+        invalid_argf
+          "Function.map: a live window maps BAR %d of %s with combine:%b" i
+          f.bus c)
+    f.maps;
+  let* w = f.fn.map ~combine i off length in
+  Mutex.protect f.lock (fun () -> Hashtbl.add f.maps w (i, combine));
   Ok w
 
 (* Removes one binding of the live window [w] from [table], or refuses [w]. *)

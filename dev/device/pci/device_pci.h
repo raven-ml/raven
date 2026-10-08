@@ -49,6 +49,7 @@ struct device_pci_window {
   size_t length;                                /* its bytes */
   volatile uint8_t *mapped;                     /* in this process, or NULL */
   const struct device_pci_transport *transport; /* when not mapped */
+  int combines;                                 /* stores may merge until a barrier */
 };
 
 /* Reads the window [w], a Window.t, into [out]. It reads the OCaml heap, so

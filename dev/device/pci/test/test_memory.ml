@@ -42,6 +42,7 @@ type fake = {
   mutable pins : (int * int) list;  (** Pins held. *)
   mutable refuse : string option;
       (** [alloc_dma], [pin] and [map] fail with it. *)
+  mutable combined : bool list;  (** Each [map]'s [combine], newest first. *)
 }
 
 (* Physical pages with gaps between them, so no two runs merge. *)
@@ -78,7 +79,8 @@ let ops k =
     set_config32 = (fun _ _ -> ());
     bar = (fun i -> if i = 0 then Some k.bar else None);
     map =
-      (fun _ off n ->
+      (fun ~combine _ off n ->
+        k.combined <- combine :: k.combined;
         unless_refused k @@ fun () ->
         Window.through (Lazy.force bars) (fst k.bar + off) n);
     unmap = ignore;
@@ -130,6 +132,7 @@ let machine () =
         dma = [];
         pins = [];
         refuse = None;
+        combined = [];
       }
     in
     Hashtbl.replace fakes bus k;
@@ -374,7 +377,9 @@ let placed x rule (mem : Memory.memory) =
       equal ~msg:"the window is the BAR's bytes at the block" hex
         (fst x.fake.bar + pa)
         (Window.address w);
-      equal ~msg:"as long as the memory" int m.size (Window.length w)
+      equal ~msg:"as long as the memory" int m.size (Window.length w);
+      equal ~msg:"its window asked to combine" (option bool) (Some true)
+        (List.nth_opt x.fake.combined 0)
   | In_host ->
       equal ~msg:"system memory" target System m.target;
       equal ~msg:"uncached" bool true m.uncached;

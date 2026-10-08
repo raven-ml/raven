@@ -53,7 +53,8 @@ type kind =
   | Gpu  (** The GPU's memory, which the process does not reach. *)
   | Bar
       (** The GPU's memory, one block the process reaches through the memory
-          BAR, for structures the GPU requires in its own memory. *)
+          BAR, for structures the GPU requires in its own memory. Its window is
+          mapped with [~combine:true] ({!Function.map}). *)
   | Host
       (** System memory of the GPU's machine, which the GPU reaches snooped and
           uncached. *)

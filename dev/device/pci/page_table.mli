@@ -77,7 +77,8 @@ type format = {
 }
 (** The type for a vendor's page-table format and the access to the GPU's memory
     that holds the tables. Page_table keeps what each entry holds and never
-    reads one back. An entry in memory that [zero] zeroed maps nothing.
+    reads one back, so a format may write through a window {!Function.map} made
+    with [~combine:true]. An entry in memory that [zero] zeroed maps nothing.
 
     Page_table calls [set_page] only at the leaf level or where [large] holds,
     and [set_table] only with tables in the GPU's memory. *)
