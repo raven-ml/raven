@@ -606,8 +606,6 @@ int device_cuda_room(void *self, const struct nx_part *p, int n) {
     if (p[i].queue < 0 || p[i].queue > 1 || p[i].words != NULL ||
         p[i].n != 0 || p[i].ring_units != 0 || p[i].segment_bytes != 0)
       return NX_NEVER;
-    for (int k = 0; k < p[i].nafter; k++)
-      if (p[i].after[k] < 0 || p[i].after[k] >= i) return NX_NEVER;
   }
   return NX_FITS;
 }

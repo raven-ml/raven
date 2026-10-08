@@ -292,7 +292,7 @@ let room () =
   let room ?(queue = 0) ?(words = false) ?(units = 0) ?(bytes = 0) after =
     S.room g ~queue ~words ~units ~bytes ~after
   in
-  equal (list int) [ 0; 0; 2; 2; 2; 2; 2; 2 ]
+  equal (list int) [ 0; 0; 2; 2; 2; 2 ]
     [
       room [||];
       room ~queue:1 [||];
@@ -300,8 +300,6 @@ let room () =
       room ~units:1 [||];
       room ~bytes:1 [||];
       room ~queue:2 [||];
-      room [| 0 |];
-      room [| -1 |];
     ]
 
 let work =

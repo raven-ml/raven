@@ -283,8 +283,8 @@ val room : t -> part array -> [ `Fits | `Later | `Never ]
 (** [room g ps] is [`Fits]: CUDA's streams take any amount of work, and a call
     of {!submit} that finds a stream full waits for earlier work to free it. Its
     C form, [device_cuda_room], answers [NX_NEVER] for a part {!part} refuses:
-    one with words, ring units or segment bytes, on no queue of the device, or
-    with an [after] index not below its own. *)
+    one with words, ring units or segment bytes, or on no queue of the device.
+*)
 
 val submit :
   t ->

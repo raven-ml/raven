@@ -22,9 +22,8 @@
 
 #include <nx_edge.h>
 
-/* NX_NEVER if a part has words, ring units or segment bytes, is on no
-   queue of the device, or has an [after] index not below its own part's;
-   NX_FITS otherwise. */
+/* NX_NEVER if a part has words, ring units or segment bytes, or is on no
+   queue of the device; NX_FITS otherwise. */
 int device_cuda_room(void *self, const struct nx_part *parts, int n);
 
 /* Runs [parts], which device_cuda_room answered NX_FITS for, as the work
