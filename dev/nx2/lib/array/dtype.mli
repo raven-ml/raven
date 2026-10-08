@@ -15,7 +15,11 @@
     A dtype's facts (its {!name}, {!bits}, {!kind} and {!float_format}) are rows
     of one table indexed by its {!code}, which the C header [nx_dtype.h] holds
     too. Every store of a [float] into a dtype follows one rule, stated with
-    {!of_float}. *)
+    {!of_float}.
+
+    An element wider than a byte is stored little-endian, the byte order of
+    every host and device this library runs on: its low byte comes first, and a
+    narrowing bitcast reads an element's low bits first. *)
 
 (** {1:elt Storage formats}
 
@@ -250,9 +254,12 @@ val of_float : ('v, 's) t -> float -> 'v
     store makes [Float8_e5m2]'s infinities, which come only from bytes already
     in a buffer.
 
-    The rule holds while the process rounds to nearest, the floating-point
-    environment's default: a [Float32] store is the C cast from [double], which
-    follows the current rounding mode. *)
+    The rule holds in the floating-point environment's default: rounding to
+    nearest, with subnormals kept. A [Float32] store is the C cast from
+    [double], which follows the current environment: under another rounding
+    mode it rounds that way, and under flush-to-zero [Float32] and [Bfloat16]
+    stores of subnormal magnitudes give zero. Stores into [Float16] and the
+    formats of a byte or less give the same bits under flush-to-zero. *)
 
 (** {1:floats Float formats} *)
 

@@ -79,9 +79,11 @@ enum {
      moved, until nx_done.
    - nx_done runs once per successful nx_read, never after a refusal, before
      that function returns or raises.
-   - Between nx_read and nx_done, no CAMLreturn or CAMLdrop pops a root frame
-     registered before nx_read. nx_done ends the process if it finds the
-     descriptors' roots popped.
+   - nx_read and nx_done nest with root frames as CAMLparam and CAMLreturn
+     do: a frame registered before nx_read is popped after nx_done, and one
+     registered after nx_read is popped before nx_done. A kernel registers
+     its roots with CAMLparam before it calls nx_read. nx_done ends the
+     process if it finds the descriptors' roots popped.
    - While the domain lock is released, the kernel reads no OCaml value. */
 
 /* An operand of a call: an OCaml array, the dtype the kernel's loads assume,

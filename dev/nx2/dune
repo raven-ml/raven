@@ -8,9 +8,10 @@
 ; compiler adds.
 ;
 ; Release compiles the C at -O3: gcc vectorises loops only from there, clang
-; from -O2. Every profile passes -ffp-contract=off: the codecs' exact
-; identities need each product rounded on its own, and compilers otherwise
-; may fuse a multiply and an add.
+; from -O2. Every profile passes -ffp-contract=off, so that a compiler never
+; fuses a multiply and an add. No codec has a product that feeds a sum:
+; nx_mini_value's products are exact scalings by powers of two. The flag
+; keeps an exact identity that needs one from being fused.
 ;
 ; The sanitize profile compiles the C with AddressSanitizer and
 ; UndefinedBehaviorSanitizer and links their runtimes and the debug runtime

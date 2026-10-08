@@ -10,8 +10,12 @@
    rows the same facts.
 
    The encoders below implement the store rule that Dtype.of_float states
-   (dtype.mli). A kernel stores into their formats through them, or through
-   a conversion that gives the same bits.
+   (dtype.mli), in the floating-point environment's default: rounding to
+   nearest, subnormals kept. A kernel stores into their formats through
+   them, or through a conversion that gives the same bits. The float16 and
+   minifloat codecs give the same bits under flush-to-zero; a conversion
+   through C's double-to-float cast, as bfloat16's from a double, does
+   not.
 
    C, CUDA and HIP sources compile this header with no OCaml header. Metal
    sources compile it too, without the row table and the functions of
