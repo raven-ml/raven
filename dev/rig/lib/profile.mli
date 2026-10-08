@@ -3,7 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Profiles, documented in rig.mli. *)
+(** Profiles: the implementation of {!Rig.Profile}, with points as the ints of
+    {!Point}. *)
 
 open Def
 

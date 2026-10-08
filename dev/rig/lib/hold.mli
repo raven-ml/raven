@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Holds, documented in rig.mli. *)
+(** Holds: the implementation of {!Rig.Hold}. *)
 
 type t = Def.hold
 

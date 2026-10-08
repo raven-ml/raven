@@ -73,7 +73,6 @@ let register d =
   in
   go ()
 
-(* Whether [d] and [d'] are of one machine. *)
 let same_machine d d' = Option.equal String.equal d.machine d'.machine
 
 module Cache = Hashtbl.Make (Int)
@@ -165,8 +164,6 @@ let host_of d =
 
 (* Loss and stops *)
 
-(* Records what the driver's stop of the claimed [d] answers, then frees what
-   [d]'s answer makes due ([answered], set by the memory module). *)
 let answered : (device -> unit) ref = ref ignore
 
 (* Reads a lost device's word behind a transport through its driver, which may
@@ -195,9 +192,8 @@ let stop_returned d =
 
 let stopped d = is_lost d && (c_answer d.c = answer_stopped || upgrade d)
 
-(* Records the stop's answer even when the driver's stop raises other than its
-   fault, which it then raises again: the device must count as stopped or not,
-   whatever the stop did. *)
+(* The answer is recorded whatever the driver's stop did: the device must count
+   as stopped or not. *)
 let stop d =
   let answer () =
     c_set_answer d.c answer_unknown;
@@ -227,7 +223,6 @@ let lose d why =
 
 let leave d = if c_exit d.c then stop d
 
-(* [f ()] as a counted call on [d]: a fault it raises loses [d]. *)
 let counted d f =
   if d.c = 0 then f ()
   else
@@ -250,8 +245,6 @@ let counted d f =
 
 (* The timeline *)
 
-(* The last value [d]'s word showed: read at its host address, or through the
-   driver behind a transport, whose last answer a lost device keeps. *)
 let word d =
   if d.c = 0 then 0
   else if d.word <> 0 || c_is_lost d.c then c_word d.c
@@ -331,8 +324,6 @@ let wait d v =
   let w = word d in
   if w >= v then reached d w else wait_from d v w (now_ms ())
 
-(* Whether [p] is reached: its device's word reads it. A forked child reads no
-   word of a device it inherited. *)
 let point_reached p =
   let d = of_index (Point.index p) in
   if d.c = 0 then true

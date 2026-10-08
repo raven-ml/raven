@@ -3,8 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The signatures of drivers and io devices, documented in rig.mli. *)
+(** The signatures of drivers and io devices. *)
 
+(** {!Rig.Driver}. *)
 module type Driver = sig
   type t
   type region
@@ -51,6 +52,7 @@ module type Driver = sig
   val stop : t -> unit
 end
 
+(** {!Rig.Io}. *)
 module type Io = sig
   type t
   type region

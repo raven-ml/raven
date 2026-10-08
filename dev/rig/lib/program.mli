@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Programs, documented in rig.mli. *)
+(** Programs: the implementation of {!Rig.Program}. *)
 
 type t = Def.program
 

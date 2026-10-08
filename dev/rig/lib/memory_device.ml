@@ -3,9 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* A driver whose memory is the host's and whose work runs in the submitting
-   thread: the copies and fills of a submission, then the word. *)
-
 external state : unit -> nativeint = "caml_rig_memory_new"
 external malloc : int -> int = "caml_rig_memory_alloc"
 external free : int -> unit = "caml_rig_memory_free"

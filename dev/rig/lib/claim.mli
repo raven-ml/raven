@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Claims, documented in rig.mli. *)
+(** Claims: the implementation of {!Rig.Claim}. *)
 
 val read : Def.buffer -> unit
 val release : Def.buffer -> unit
