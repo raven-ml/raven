@@ -133,6 +133,20 @@ let test_nested_overlap () =
   raises_match Exn.invalid_arg (fun () ->
       Claim.with_ ~read:[ view 0 20; view 2 1 ] ~donate:[ [ view 19 1 ] ] ignore)
 
+(* Memories of one device that has no address of them share no byte: two io
+   memories are donated together, and views of one that overlap are refused. *)
+let test_io_spans () =
+  let io = Rig_support.machine "claim:io" in
+  let a = B.create io 64 and b = B.create io 64 in
+  Claim.with_ ~read:[] ~donate:[ [ a ]; [ b ] ] (fun cl ->
+      equal ~msg:"both" (pair bool bool) (true, true)
+        (Claim.exclusive cl a, Claim.exclusive cl b));
+  raises_match ~msg:"views of one" Exn.invalid_arg (fun () ->
+      Claim.with_
+        ~read:[ B.view a ~first:0 ~length:32 ]
+        ~donate:[ [ B.view a ~first:16 ~length:32 ] ]
+        ignore)
+
 let test_claims () =
   let b = B.create C.host 8 in
   Claim.read b;
@@ -329,6 +343,7 @@ let tests =
         test
           "a donation inside a long read with a short read between is refused"
           test_nested_overlap;
+        test "memories with no address are claimed apart" test_io_spans;
         test "readers share a memory, an exclusive claim excludes them"
           test_claims;
         test "a borrow and the memory it maps share one count"

@@ -896,6 +896,9 @@ let borrow d m =
       else None
     else if d.memory_device && host >= 0 then
       Some (borrow_of m d ~host ~address:host ~handle:(Nativeint.of_int host))
+    else if m.bytes = 0 then
+      (* No bytes to map: the borrow names no memory. *)
+      Some (borrow_of m d ~host ~address:0 ~handle:0n)
     else if host >= 0 && m.entry.region = None && host mod page <> 0 then None
     else begin
       if m.entry == no_entry then ensure_entry m;

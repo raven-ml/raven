@@ -44,18 +44,17 @@ let release b = release_above (kept b.mem.root) b.mem.claim
 
 type t = { reads : claim list; mutable exclusive : claim list }
 
-(* Where a buffer's bytes lie, for the overlap check: a space (0 for this
-   process's host memory, else 1 + its memory's device index) and the first and
-   last bytes. Memory with no address is placed by its handle. *)
+(* Where a buffer's bytes lie, for the overlap check, as [Buffer.overlaps]
+   places them: a space and the first byte and length within it. This process's
+   host memory is space 0, at its host addresses. Other memory is a space of its
+   own, at its offsets: minus its stamps' address, which no other memory shares.
+   A device's addresses or handles would not do: memories of a handle-named
+   device lie at handles a few bytes apart. *)
 let span b =
   let m = b.mem.root in
   let n = Buffer.length b in
   if m.host >= 0 && Option.is_none m.dev.machine then (0, m.host + b.offset, n)
-  else
-    let base =
-      if m.address >= 0 then m.address else Nativeint.to_int m.handle
-    in
-    (1 + m.dev.index, base + b.offset, n)
+  else (-m.entry.own, b.offset, n)
 
 (* Orders spans by space, then first byte; the polymorphic compare took 40% of
    [with_]. *)

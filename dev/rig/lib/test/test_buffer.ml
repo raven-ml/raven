@@ -280,6 +280,16 @@ let test_empty_address () =
   equal ~msg:"address" int 0 (B.address b);
   equal ~msg:"handle" nativeint 0n (B.handle b)
 
+(* Empty host memory that starts on a page borrows on a driver's device with no
+   mapping: the borrow names no memory. *)
+let test_empty_borrow () =
+  let d, p = P.open_ "buffer:empty-borrow" in
+  let paged = B.bigarray Bigarray.char (B.create C.host (64 * 1024)) in
+  let empty = B.of_bigarray (Bigarray.Array1.sub paged 0 0) in
+  let b = require_some (B.borrow d empty) in
+  equal ~msg:"address" int 0 (B.address b);
+  equal ~msg:"maps" (list int) [] (P.host_maps p)
+
 let test_borrow_own () =
   let d, _ = P.open_ "buffer:own" in
   let b = B.create d 64 in
@@ -670,6 +680,8 @@ let tests =
           test_copy_machines;
         test "an empty buffer of a driver's device has address and handle 0"
           test_empty_address;
+        test "empty host memory borrows on a device with no mapping"
+          test_empty_borrow;
         test "a borrow on its own device is the buffer" test_borrow_own;
         test "a mapping is released once its memory died and its work ran"
           test_mapping_released;
