@@ -610,9 +610,7 @@ let keys =
                "rig-remote-no-such.key");
           refused (Filename.get_temp_dir_name ());
           refused "/dev/null");
-      xfail
-        ~reason:"read_key opens a FIFO for reading, which waits for a writer"
-        (test "a FIFO is refused without waiting for a writer" fifo);
+      test "a FIFO is refused without waiting for a writer" fifo;
     ]
 
 (* Processes of a job *)

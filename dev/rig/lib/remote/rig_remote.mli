@@ -239,6 +239,7 @@ val read_key : string -> (string, string) result
     must also belong to this process's user and grant its group and others no
     access, so that only this user knows the key.
 
-    [Error why] naming [file] if it cannot be opened or read, is no regular
-    file, belongs to another user, grants its group or others any access, or
-    holds too few or too many bytes. *)
+    [Error why] naming [file] if it cannot be opened or read, is no regular file
+    (a FIFO is refused without waiting for a writer), belongs to another user,
+    grants its group or others any access, or holds too few or too many bytes.
+*)

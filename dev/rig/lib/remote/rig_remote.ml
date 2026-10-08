@@ -290,7 +290,10 @@ let serve = Agent.serve
 
 let read_key file =
   let err why = Error (strf "%s: %s" file why) in
-  match Unix.openfile file [ Unix.O_RDONLY; Unix.O_CLOEXEC ] 0 with
+  (* Without [O_NONBLOCK] an open of a FIFO would wait for a writer before the
+     kind is known; a regular file's reads ignore it. *)
+  let flags = Unix.[ O_RDONLY; O_NONBLOCK; O_NOCTTY; O_CLOEXEC ] in
+  match Unix.openfile file flags 0 with
   | exception Unix.Unix_error (e, _, _) -> err (Unix.error_message e)
   | fd -> (
       Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
