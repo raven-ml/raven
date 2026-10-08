@@ -124,6 +124,14 @@ static inline float nx_bf16_to_float(uint16_t c) {
 /* float16: IEEE 754 binary16 */
 
 static inline uint16_t nx_float_to_f16(float f) {
+#if defined(__aarch64__) && !defined(__METAL_VERSION__)
+  /* FCVT, from s to h, rounds and keeps NaN payloads as the code below
+     does. */
+  __fp16 h = (__fp16)f;
+  uint16_t c;
+  memcpy(&c, &h, 2);
+  return c;
+#else
   uint32_t bits = nx_float_bits(f);
   uint16_t sign = (uint16_t)((bits & 0x80000000u) >> 16);
   uint32_t exp = bits & 0x7F800000u;
@@ -154,9 +162,17 @@ static inline uint16_t nx_float_to_f16(float f) {
   if ((sig & 0x00003FFFu) != 0x00001000u) sig += 0x00001000u;
   /* A carry may raise the exponent to 31: inf, as it should. */
   return sign + hexp + (uint16_t)(sig >> 13);
+#endif
 }
 
 static inline float nx_f16_to_float(uint16_t c) {
+#if defined(__aarch64__) && !defined(__METAL_VERSION__)
+  /* FCVT, from h to s, is exact and keeps NaN payloads as the code below
+     does. */
+  __fp16 h;
+  memcpy(&h, &c, 2);
+  return (float)h;
+#else
   uint32_t sign = ((uint32_t)(c & 0x8000u)) << 16;
   uint32_t exp = (c & 0x7C00u) >> 10;
   uint32_t mant = c & 0x3FFu;
@@ -179,6 +195,7 @@ static inline float nx_f16_to_float(uint16_t c) {
     mant <<= 13;
   }
   return nx_bits_float(sign | exp | mant);
+#endif
 }
 
 /* Minifloats: float8 e4m3fn, e5m2 and float4 e2m1fn
