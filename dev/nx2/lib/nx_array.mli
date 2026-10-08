@@ -231,9 +231,10 @@ module Dtype : sig
 
   val max_value : ('v, 's) t -> 'v
   (** [max_value dt] is [dt]'s greatest value: [infinity] for a float format
-      with infinities, [448.] for [Float8_e4m3] and [6.] for [Float4_e2m1], the
-      value with every bit set for unsigned formats ([-1l] for [Uint32], [-1L]
-      for [Uint64]), and [true] for booleans.
+      with infinities, [448.] for [Float8_e4m3] and [6.] for [Float4_e2m1], and
+      [true] for booleans. An unsigned format read as [int] gives its value, as
+      [15], [255] and [65535]; [Uint32] and [Uint64] give the value with every
+      bit set, [-1l] and [-1L].
 
       Raises [Invalid_argument] if [dt] is complex. *)
 
@@ -252,12 +253,12 @@ module Dtype : sig
 
   type float_format = {
     exponent_bits : int;  (** The width of the exponent field. *)
-    mantissa_bits : int;
+    fraction_bits : int;
         (** The width of the fraction field, without the implicit bit. *)
     infinities : bool;  (** Whether the format has infinities. *)
     nans : bool;  (** Whether the format has NaNs. *)
     epsilon : float;
-        (** The gap between [1.] and the next value, [2{^-mantissa_bits}]. *)
+        (** The gap between [1.] and the next value, [2{^-fraction_bits}]. *)
     min_normal : float;  (** The least positive normal value. *)
     max_finite : float;  (** The largest finite value. *)
   }

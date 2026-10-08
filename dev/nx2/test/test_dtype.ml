@@ -149,7 +149,7 @@ let format_row (D.Any dt) =
       let f = D.float_format dt in
       Some
         ( D.name dt,
-          (f.exponent_bits, f.mantissa_bits, f.infinities, f.nans),
+          (f.exponent_bits, f.fraction_bits, f.infinities, f.nans),
           (f.epsilon, f.min_normal, f.max_finite) )
   | _ -> None
 
@@ -397,7 +397,7 @@ let others =
    its binade, round half to even, then overflow by the format's rule: the
    formats of a byte or less saturate. *)
 let reference (f : D.float_format) x =
-  let saturates = f.exponent_bits + f.mantissa_bits < 8 in
+  let saturates = f.exponent_bits + f.fraction_bits < 8 in
   if Float.is_nan x then if f.nans then Float.nan else 0.
   else if Float.abs x = Float.infinity then
     if f.infinities then x
@@ -407,7 +407,7 @@ let reference (f : D.float_format) x =
     let a = Float.abs x in
     let binade v = snd (Float.frexp v) - 1 in
     let e = binade (Float.max a f.min_normal) in
-    let q = Float.ldexp 1. (e - f.mantissa_bits) in
+    let q = Float.ldexp 1. (e - f.fraction_bits) in
     let r = a /. q in
     let n = Float.floor r in
     let d = r -. n in
@@ -429,7 +429,7 @@ let near_grid (f : D.float_format) =
   let open Gen in
   let binade v = snd (Float.frexp v) - 1 in
   let emin = binade f.min_normal and emax = binade f.max_finite in
-  let lo = emin - f.mantissa_bits - 2 and hi = emax + 1 in
+  let lo = emin - f.fraction_bits - 2 and hi = emax + 1 in
   (* Wide formats span hundreds of binades: draw the ends often. *)
   let+ e =
     frequency
@@ -438,12 +438,12 @@ let near_grid (f : D.float_format) =
         (1, int_range lo (emin + 1));
         (1, int_range (emax - 1) hi);
       ]
-  and+ k = int_range 0 (1 lsl (f.mantissa_bits + 2))
+  and+ k = int_range 0 (1 lsl (f.fraction_bits + 2))
   and+ half = bool
   and+ nudge = int_range (-2) 2
   and+ neg = bool in
   let x = Float.of_int ((2 * k) + Bool.to_int half) in
-  let x = Float.ldexp x (e - f.mantissa_bits - 1) in
+  let x = Float.ldexp x (e - f.fraction_bits - 1) in
   let x = x +. Float.ldexp (Float.of_int nudge) (binade x - 52) in
   ((if neg then -.x else x), half && nudge = 0)
 

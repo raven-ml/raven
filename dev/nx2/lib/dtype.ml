@@ -105,7 +105,7 @@ let code : type v s. (v, s) t -> int = function
 
 type float_format = {
   exponent_bits : int;
-  mantissa_bits : int;
+  fraction_bits : int;
   infinities : bool;
   nans : bool;
   epsilon : float;
@@ -121,7 +121,7 @@ let ieee e m =
   Some
     {
       exponent_bits = e;
-      mantissa_bits = m;
+      fraction_bits = m;
       infinities = true;
       nans = true;
       epsilon = Float.ldexp 1. (-m);
@@ -136,7 +136,7 @@ let ocp e m ~nans ~max_finite =
   Some
     {
       exponent_bits = e;
-      mantissa_bits = m;
+      fraction_bits = m;
       infinities = false;
       nans;
       epsilon = Float.ldexp 1. (-m);
