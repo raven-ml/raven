@@ -801,11 +801,12 @@ let pp_access ppf = function
 let access = Gen.of_list ~pp:pp_access [ B.Read; B.Read_write ]
 
 (* Polled runs its work only when the host sleeps on it, where rig.mli has a
-   [`Host] completion's word written as the work completes. CUDA's queue waits
-   on such words and its hand-over may block on that work, so a hand-over
-   behind Polled work would wait forever: with CUDA, Polled devices run their
-   own work. *)
-let polled_itself = List.mem Cuda gpus
+   [`Host] completion's word written as the work completes. A GPU whose queue
+   waits on such words then waits until rig's still interval, 200 ms, ends and
+   rig sleeps on the producer, and CUDA's hand-over, which may block on that
+   work, waits forever: with such a GPU, Polled devices run their own work. *)
+let polled_itself =
+  List.exists (function Cuda | Nv | Amd -> true | Metal -> false) gpus
 
 (* Polled configurations that run their own work. *)
 let itself configs =
