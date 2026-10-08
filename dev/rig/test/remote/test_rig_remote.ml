@@ -125,6 +125,13 @@ let listens_no_more () =
       fail "a second job at an agent of one"
   | Error why -> not_contains ~sub:"another job" why
 
+let listen_misuse () =
+  is_error (Rig_remote.listen ~key "no-such-host.invalid" 0);
+  raises_match ~msg:"a key of 15 bytes" Exn.invalid_arg (fun () ->
+      Rig_remote.listen ~key:(String.make 15 'k') "127.0.0.1" 0);
+  raises_match ~msg:"a key of 4097 bytes" Exn.invalid_arg (fun () ->
+      Rig_remote.listen ~key:(String.make 4097 'k') "127.0.0.1" 0)
+
 let connecting =
   group "connect"
     [
@@ -138,6 +145,10 @@ let connecting =
       test
         "connect raises on a bad key, no agent, an address twice, an open job"
         connect_misuse;
+      test
+        "listen answers Error for a host that does not resolve, raises on a \
+         bad key"
+        listen_misuse;
       test "a second job at one address is another machine, named #2"
         second_connection;
       xfail ~reason:"close returns before the agents return from serve"
