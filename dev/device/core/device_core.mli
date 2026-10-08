@@ -322,8 +322,9 @@ module Buffer : sig
       [Read_write], the work of every use, its own device's included. It waits
       for the work on all of [b]'s memory, through any view, for the work on the
       memory a borrow maps, and, for memory in a {!Hold}, for every point of the
-      hold, whatever [access]. Host memory no device borrowed, and an {!Io}
-      device's memory, have no work to wait for.
+      hold, whatever [access]. Host memory and an {!Io} device's memory have
+      work to wait for only where a device borrowed them: an io device's memory,
+      through its pages ({!Io.pages}).
 
       It waits for one device after another and holds no lock. Once every point
       is reached it reads one word per device and allocates nothing. Work
