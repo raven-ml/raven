@@ -178,8 +178,6 @@ copy/memory-4K	alloc_words	exact	0
 copy/memory-4K	wall_time	batch=65536	n=20	9.198e-08	9.113e-08 9.119e-08 9.125e-08 9.155e-08 9.185e-08 9.191e-08 9.192e-08 9.193e-08 9.197e-08 9.197e-08 9.198e-08 9.199e-08 9.200e-08 9.202e-08 9.204e-08 9.204e-08 9.206e-08 9.206e-08 9.276e-08 9.515e-08
 drain/dropped-1000	alloc_words	exact	75161
 drain/dropped-1000	wall_time	batch=16	n=20	6.166e-04	6.121e-04 6.123e-04 6.131e-04 6.134e-04 6.135e-04 6.138e-04 6.143e-04 6.155e-04 6.159e-04 6.165e-04 6.167e-04 6.200e-04 6.211e-04 6.214e-04 6.222e-04 6.237e-04 6.363e-04 6.608e-04 6.724e-04 6.768e-04
-floor/amd/kernel-pipelined-100	alloc_words	exact	3
-floor/amd/kernel-pipelined-100	wall_time	batch=16	n=20	2.892e-04	2.785e-04 2.814e-04 2.828e-04 2.829e-04 2.836e-04 2.847e-04 2.862e-04 2.862e-04 2.882e-04 2.883e-04 2.901e-04 2.917e-04 2.920e-04 2.924e-04 2.927e-04 2.940e-04 2.995e-04 2.997e-04 3.109e-04 3.135e-04
 floor/atomic-cas-2	alloc_words	exact	0
 floor/atomic-cas-2	wall_time	batch=2097152	n=20	4.602e-09	4.601e-09 4.601e-09 4.601e-09 4.601e-09 4.601e-09 4.601e-09 4.602e-09 4.602e-09 4.602e-09 4.602e-09 4.603e-09 4.603e-09 4.604e-09 4.604e-09 4.605e-09 4.606e-09 4.608e-09 4.614e-09 4.616e-09 4.625e-09
 floor/bigarray-collected-64M	alloc_words	exact	9
@@ -214,8 +212,6 @@ floor/word-load-24	alloc_words	exact	0
 floor/word-load-24	wall_time	batch=65536	n=20	7.687e-08	7.639e-08 7.639e-08 7.639e-08 7.641e-08 7.642e-08 7.642e-08 7.643e-08 7.669e-08 7.672e-08 7.680e-08 7.694e-08 7.694e-08 7.704e-08 7.705e-08 7.705e-08 7.719e-08 7.723e-08 7.734e-08 7.758e-08 7.761e-08
 heap/trim-64M	alloc_words	exact	36
 heap/trim-64M	wall_time	batch=128	n=20	7.486e-05	7.123e-05 7.146e-05 7.407e-05 7.409e-05 7.414e-05 7.431e-05 7.446e-05 7.471e-05 7.476e-05 7.481e-05 7.490e-05 7.505e-05 7.510e-05 7.514e-05 7.514e-05 7.546e-05 7.550e-05 7.599e-05 7.607e-05 7.714e-05
-replay/amd/kernel-pipelined-100	alloc_words	exact	0
-replay/amd/kernel-pipelined-100	wall_time	batch=4	n=20	1.512e-03	1.400e-03 1.475e-03 1.476e-03 1.483e-03 1.484e-03 1.490e-03 1.494e-03 1.504e-03 1.506e-03 1.508e-03 1.517e-03 1.519e-03 1.519e-03 1.523e-03 1.526e-03 1.534e-03 1.536e-03 1.542e-03 1.542e-03 1.549e-03
 replay/polled/params-24	alloc_words	exact	0
 replay/polled/params-24	wall_time	batch=8192	n=20	6.477e-07	6.460e-07 6.461e-07 6.461e-07 6.462e-07 6.462e-07 6.469e-07 6.476e-07 6.476e-07 6.477e-07 6.477e-07 6.477e-07 6.478e-07 6.478e-07 6.478e-07 6.479e-07 6.479e-07 6.480e-07 6.483e-07 6.485e-07 6.490e-07
 replay/polled/pipelined-100	alloc_words	exact	0
