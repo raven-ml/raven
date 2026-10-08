@@ -38,12 +38,10 @@
     buffer it calls {!field-split}. It stops at the first [split] that fails and
     returns its failure, and returns [0] otherwise.
 
-    The work declares how many command buffers it may make, its [r] ring units,
-    so the fill splits at most [r - 1] times. After the fill returns, the driver
-    ends the open encoder and commits the last command buffer. [v] is reached
-    once every command buffer of the work completed. The driver loses the device
-    if the fill returns a failure, or, with Metal's reason, if a command buffer
-    of the work fails.
+    After the fill returns, the driver ends the open encoder and commits the
+    last command buffer. [v] is reached once every command buffer of the work
+    completed. The driver loses the device if the fill returns a failure, or,
+    with Metal's reason, if a command buffer of the work fails.
 
     {b References.}
     - Apple's Metal framework headers (macOS 26 SDK):
@@ -91,12 +89,15 @@ type icb = {
           runs [handle] is in flight: for instance its threadgroups per grid,
           with [concurrentDispatchThreadgroups:threadsPerThreadgroup:]. *)
   release : unit -> unit;
-      (** [release ()] releases [handle], [commands] and the pipelines they
-          hold. The owner of the linked step that made them calls it once, after
-          the last work that ran [handle] completed, or at once when the device
-          is lost. Until then they live, whatever happens to their pipelines'
-          image. Raises [Invalid_argument] if called twice. Any domain may call
-          it. *)
+      (** [release ()] releases [handle], [commands] and the pipelines they hold
+          once the last command buffer the driver committed before the call
+          completed, at once if it already has. The owner of the linked step
+          that made them calls it once, after the last work that ran [handle]
+          completed or once the driver stopped the device, whether or not that
+          work drained: a command buffer still running [handle] keeps them
+          alive. Until they are released they live, whatever happens to their
+          pipelines' image. Raises [Invalid_argument] if called twice. Any
+          domain may call it. *)
 }
 (** The type for indirect command buffers. *)
 
@@ -129,9 +130,9 @@ type t = {
           calls to end the open command buffer and start a new one. It ends the
           open encoder, commits its command buffer, and stores at [queue] the
           encoder of a new command buffer, which runs as the first did. When the
-          queue holds as many command buffers as it can, [split] waits until an
-          earlier command buffer of the work completes, so one work may make
-          more command buffers than the queue holds.
+          queue holds as many command buffers as it can, [split] waits until one
+          of them completes, so one work may make more command buffers than the
+          queue holds.
 
           Unless [start] is [NULL], [split] writes at [start] the time the
           committed command buffer started on the GPU; unless [end] is [NULL],
@@ -142,8 +143,6 @@ type t = {
 
           [split] returns [0], or a nonzero failure that the fill returns as its
           own. It fails if:
-          - the fill already made as many command buffers as its work declared
-            ring units;
           - Metal makes no new command buffer ([commandBuffer] returns [nil]);
           - Metal makes no encoder for it
             ([computeCommandEncoderWithDispatchType:] returns [nil]).
