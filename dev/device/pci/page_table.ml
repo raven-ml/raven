@@ -306,8 +306,9 @@ let map_page t r d table i v =
     ~uncached:r.uncached ~snooped:r.snooped ~fragment:r.frag
 
 (* Maps [lo, hi) to the runs of [r], each page with the largest entry that its
-   run holds and both its addresses are aligned to. One walk serves every run:
-   each table is visited once. The last level's entries are all whole pages. *)
+   run holds and both its addresses are aligned to, unless a table is there
+   already, as [tables] may keep one. One walk serves every run: each table is
+   visited once. The last level's entries are all whole pages. *)
 let rec write t d table ~at lo hi r =
   let level = level t d and c = covers t d in
   match table with
@@ -325,15 +326,15 @@ let rec write t d table ~at lo hi r =
       let whole =
         lo = at && hi = at + c && hi <= r.hi && aligned (lo + r.delta) c
       in
-      if whole && t.fmt.large ~level then begin
-        map_page t r d pa i lo;
-        dir.entries.(i) <- Page;
-        dir.valid <- dir.valid + 1
-      end
-      else
-        match child t d pa dir i with
-        | c -> write t (d + 1) c ~at lo hi r
-        | exception No_room -> raise (Stopped lo))
+      match dir.entries.(i) with
+      | Invalid when whole && t.fmt.large ~level ->
+          map_page t r d pa i lo;
+          dir.entries.(i) <- Page;
+          dir.valid <- dir.valid + 1
+      | _ -> (
+          match child t d pa dir i with
+          | c -> write t (d + 1) c ~at lo hi r
+          | exception No_room -> raise (Stopped lo)))
 
 (* Stops keeping [table], at depth [d], and frees it. *)
 let drop t d table =

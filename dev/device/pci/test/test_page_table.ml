@@ -740,6 +740,18 @@ let test_tables_path =
       Page_table.unmap t ~va n;
       equal ~msg:"never freed" (list hex) path (snd (walk g t)))
 
+(* A page larger than the range [tables] kept a table for maps into that table,
+   which stays reachable from the root. *)
+let test_tables_under_page () =
+  let t, g = tables () in
+  let va = base + gib + (2 * mib) in
+  let path = require_some (Page_table.tables t ~va page) in
+  ignore (require_some (Page_table.map t ~va System [ (2 * mib, 2 * mib) ]));
+  equal ~msg:"the kept tables map it" (list hex) path (snd (walk g t));
+  equal ~msg:"in 4 KiB pages" int 512 (List.length (pages g t));
+  Page_table.unmap t ~va (2 * mib);
+  equal ~msg:"never freed" (list hex) path (snd (walk g t))
+
 (* The host copy *)
 
 (* The fake format, each entry it writes also stored through [w] at its physical
@@ -1480,6 +1492,7 @@ let () =
                test_fragments_from_base;
              test_map_refusals;
              test_tables_path;
+             test "a page over a kept table maps into it" test_tables_under_page;
            ];
          group ~timeout:patience "table memory"
            [
