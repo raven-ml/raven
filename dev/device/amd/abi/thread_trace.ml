@@ -42,29 +42,32 @@ let interval = 4
 (* The engines that trace instructions. *)
 let itraced e = e < 2
 
-let register fn g name =
+(* A register [g]'s GC lacks, named without its "reg" prefix. [start] and [stop]
+   raise it as their own misuse. *)
+exception Missing of string
+
+let register g name =
   match Register.find g ("reg" ^ name) with
   | Some r -> r
-  | None -> invalid_argf "%s: %s has no reg%s" fn (gc_name g) name
+  | None -> raise (Missing name)
 
 (* The words of a register program: [set] writes fields, [write] words. *)
-let set fn g name fields =
-  let r = register fn g name in
+let set g name fields =
+  let r = register g name in
   Pm4.set_reg (Register.address g r) [ Dword (Register.encode r fields) ]
 
-let write fn g name ws =
-  Pm4.set_reg (Register.address g (register fn g name)) ws
+let write g name ws = Pm4.set_reg (Register.address g (register g name)) ws
 
 (* Selects engine [se] and its shader array 0 for the register writes after it,
    or every engine and array; every instance either way. *)
-let grbm fn g ?se () =
+let grbm g ?se () =
   let array = if major g = 9 then "sh" else "sa" in
   let fields =
     match se with
     | Some se -> [ ("se_index", se); (array ^ "_index", 0) ]
     | None -> [ ("se_broadcast_writes", 1); (array ^ "_broadcast_writes", 1) ]
   in
-  set fn g "GRBM_GFX_INDEX" (("instance_broadcast_writes", 1) :: fields)
+  set g "GRBM_GFX_INDEX" (("instance_broadcast_writes", 1) :: fields)
 
 (* Words for the dies of [xcc_mask], on a GPU of several. *)
 let on_dies (g : Gpu.t) xcc_mask p =
@@ -93,12 +96,12 @@ let gpr_write_priority = 0x2c688
 let exp_priority_order = 3
 let ps_pkr_priority_cntl = 3
 
-let sqg_events fn g ~on =
+let sqg_events g ~on =
   let t = Bool.to_int on in
   let events = [ ("enable_sqg_top_events", t); ("enable_sqg_bop_events", t) ] in
-  if major g >= 12 then set fn g "SPI_SQG_EVENT_CTL" events
+  if major g >= 12 then set g "SPI_SQG_EVENT_CTL" events
   else
-    set fn g "SPI_CONFIG_CNTL"
+    set g "SPI_CONFIG_CNTL"
       ([
          ("gpr_write_priority", gpr_write_priority);
          ("exp_priority_order", exp_priority_order);
@@ -113,8 +116,8 @@ let hiwater = 5
 let reg_at_hwm = 2
 let lowater_offset = 4
 
-let ctrl fn g ~on =
-  set fn g "SQ_THREAD_TRACE_CTRL"
+let ctrl g ~on =
+  set g "SQ_THREAD_TRACE_CTRL"
     ([
        ("mode", Bool.to_int on);
        ("hiwater", hiwater);
@@ -164,33 +167,32 @@ let excluded g e =
   if major g >= 12 then timing
   else timing lor (1 lsl Defs.sq_tt_token_exclude_perf_shift)
 
-let start_gfx11 fn g ~size buffer =
+let start_gfx11 g ~size buffer =
   let base e shift = Shift (Value (buffer e), shift) in
   let gfx12 = major g >= 12 in
   (* BUF0_SIZE before the base: "order seems important". *)
   let buffer_words e =
     if gfx12 then
-      set fn g "SQ_THREAD_TRACE_BUF0_SIZE" [ ("size", size / page) ]
-      @ write fn g "SQ_THREAD_TRACE_BUF0_BASE_LO" [ W32 (base e page_shift) ]
-      @ write fn g "SQ_THREAD_TRACE_BUF0_BASE_HI" [ W32 (base e high_shift) ]
-      @ write fn g "SQ_THREAD_TRACE_WPTR" [ Dword 0 ]
+      set g "SQ_THREAD_TRACE_BUF0_SIZE" [ ("size", size / page) ]
+      @ write g "SQ_THREAD_TRACE_BUF0_BASE_LO" [ W32 (base e page_shift) ]
+      @ write g "SQ_THREAD_TRACE_BUF0_BASE_HI" [ W32 (base e high_shift) ]
+      @ write g "SQ_THREAD_TRACE_WPTR" [ Dword 0 ]
     else
-      let r = register fn g "SQ_THREAD_TRACE_BUF0_SIZE" in
+      let r = register g "SQ_THREAD_TRACE_BUF0_SIZE" in
       let size = Int64.of_int (Register.encode r [ ("size", size / page) ]) in
-      write fn g "SQ_THREAD_TRACE_BUF0_SIZE"
-        [ W32 (Or (base e high_shift, size)) ]
-      @ write fn g "SQ_THREAD_TRACE_BUF0_BASE" [ W32 (base e page_shift) ]
+      write g "SQ_THREAD_TRACE_BUF0_SIZE" [ W32 (Or (base e high_shift, size)) ]
+      @ write g "SQ_THREAD_TRACE_BUF0_BASE" [ W32 (base e page_shift) ]
   in
   engines g (fun e se ->
-      grbm fn g ~se () @ buffer_words e
-      @ set fn g "SQ_THREAD_TRACE_MASK"
+      grbm g ~se () @ buffer_words e
+      @ set g "SQ_THREAD_TRACE_MASK"
           [
             ("wtype_include", stages);
             ("sa_sel", 0);
             ("wgp_sel", 0);
             ("simd_sel", 0);
           ]
-      @ set fn g "SQ_THREAD_TRACE_TOKEN_MASK"
+      @ set g "SQ_THREAD_TRACE_TOKEN_MASK"
           ([
              ("reg_include", included);
              ("token_exclude", excluded g e);
@@ -201,7 +203,7 @@ let start_gfx11 fn g ~size buffer =
             [ ("exclude_barrier_wait", 1); ("reg_exclude", cp_me_mc_raddr) ]
           else [])
       (* Last: it enables the trace. *)
-      @ ctrl fn g ~on:true)
+      @ ctrl g ~on:true)
 
 (* GFX9's tokens, by SQ_THREAD_TRACE_TOKEN_* type (vega10_enum.h): every one but
    PERF (14), as Mesa's 0xbfff; on an engine that traces no instructions,
@@ -227,7 +229,7 @@ let gfx9_mode ~on =
     ("tc_perf_en", 1);
   ]
 
-let start_gfx9 fn g ~size buffer =
+let start_gfx9 g ~size buffer =
   let base e shift = W32 (Shift (Value (buffer e), shift)) in
   engines g (fun e se ->
       let tokens =
@@ -235,12 +237,12 @@ let start_gfx9 fn g ~size buffer =
         else gfx9_tokens land lnot gfx9_instruction_tokens
       in
       (* BASE2, BASE, SIZE and CTRL in this order: "order seems important". *)
-      grbm fn g ~se ()
-      @ write fn g "SQ_THREAD_TRACE_BASE2" [ base e high_shift ]
-      @ write fn g "SQ_THREAD_TRACE_BASE" [ base e page_shift ]
-      @ set fn g "SQ_THREAD_TRACE_SIZE" [ ("size", size / page) ]
-      @ set fn g "SQ_THREAD_TRACE_CTRL" [ ("reset_buffer", 1) ]
-      @ set fn g "SQ_THREAD_TRACE_MASK"
+      grbm g ~se ()
+      @ write g "SQ_THREAD_TRACE_BASE2" [ base e high_shift ]
+      @ write g "SQ_THREAD_TRACE_BASE" [ base e page_shift ]
+      @ set g "SQ_THREAD_TRACE_SIZE" [ ("size", size / page) ]
+      @ set g "SQ_THREAD_TRACE_CTRL" [ ("reset_buffer", 1) ]
+      @ set g "SQ_THREAD_TRACE_MASK"
           [
             ("cu_sel", 0);
             ("sh_sel", 0);
@@ -250,33 +252,37 @@ let start_gfx9 fn g ~size buffer =
             ("spi_stall_en", 1);
             ("sq_stall_en", 1);
           ]
-      @ set fn g "SQ_THREAD_TRACE_TOKEN_MASK"
+      @ set g "SQ_THREAD_TRACE_TOKEN_MASK"
           [
             ("token_mask", tokens); ("reg_mask", 0xff); ("reg_drop_on_stall", 0);
           ]
-      @ set fn g "SQ_THREAD_TRACE_PERF_MASK"
+      @ set g "SQ_THREAD_TRACE_PERF_MASK"
           [ ("sh0_mask", 0xffff); ("sh1_mask", 0xffff) ]
-      @ write fn g "SQ_THREAD_TRACE_TOKEN_MASK2" [ Dword 0xffff_ffff ]
-      @ set fn g "SQ_THREAD_TRACE_HIWATER" [ ("hiwater", gfx9_hiwater) ]
-      @ set fn g "SQ_THREAD_TRACE_STATUS" [ ("utc_error", 0) ]
-      @ set fn g "SQ_THREAD_TRACE_MODE" (gfx9_mode ~on:true))
+      @ write g "SQ_THREAD_TRACE_TOKEN_MASK2" [ Dword 0xffff_ffff ]
+      @ set g "SQ_THREAD_TRACE_HIWATER" [ ("hiwater", gfx9_hiwater) ]
+      @ set g "SQ_THREAD_TRACE_STATUS" [ ("utc_error", 0) ]
+      @ set g "SQ_THREAD_TRACE_MODE" (gfx9_mode ~on:true))
 
-let start (g : Gpu.t) ~size buffer =
-  let fn = "Thread_trace.start" in
-  if size <= 0 || size mod page <> 0 then
-    invalid_argf "%s: size %d, expected a positive multiple of 4096" fn size;
+let start_program g ~size buffer =
   let program =
-    if major g = 9 then start_gfx9 fn g ~size buffer
-    else start_gfx11 fn g ~size buffer
+    if major g = 9 then start_gfx9 g ~size buffer
+    else start_gfx11 g ~size buffer
   in
-  Pm4.acquire_mem g System @ sqg_events fn g ~on:true @ program @ grbm fn g ()
-  @ set fn g "COMPUTE_THREAD_TRACE_ENABLE" [ ("thread_trace_enable", 1) ]
+  Pm4.acquire_mem g System @ sqg_events g ~on:true @ program @ grbm g ()
+  @ set g "COMPUTE_THREAD_TRACE_ENABLE" [ ("thread_trace_enable", 1) ]
   @ Pm4.acquire_mem g System
 
-let stop (g : Gpu.t) ends =
-  let fn = "Thread_trace.stop" in
-  let status = register fn g "SQ_THREAD_TRACE_STATUS" in
-  let wptr = Register.address g (register fn g "SQ_THREAD_TRACE_WPTR") in
+let start (g : Gpu.t) ~size buffer =
+  if size <= 0 || size mod page <> 0 then
+    invalid_argf
+      "Thread_trace.start: size %d, expected a positive multiple of 4096" size;
+  try start_program g ~size buffer
+  with Missing r ->
+    invalid_argf "Thread_trace.start: %s has no reg%s" (gc_name g) r
+
+let stop_program g ends =
+  let status = register g "SQ_THREAD_TRACE_STATUS" in
+  let wptr = Register.address g (register g "SQ_THREAD_TRACE_WPTR") in
   (* Until the status's [field] compares to [v] as [cmp] says. *)
   let await field cmp v =
     let mask = Register.encode status [ (field, -1) ] in
@@ -287,19 +293,23 @@ let stop (g : Gpu.t) ends =
   in
   let finished =
     if major g = 9 then
-      set fn g "SQ_THREAD_TRACE_MODE" [ ("mode", 0) ] @ await "busy" Equal 0
+      set g "SQ_THREAD_TRACE_MODE" [ ("mode", 0) ] @ await "busy" Equal 0
     else
       (* FINISH_DONE set: Mesa waits for it to differ from 0. *)
       await "finish_done" Greater_equal 1
-      @ ctrl fn g ~on:false @ await "busy" Equal 0
+      @ ctrl g ~on:false @ await "busy" Equal 0
   in
   Pm4.acquire_mem g System
-  @ set fn g "COMPUTE_THREAD_TRACE_ENABLE" [ ("thread_trace_enable", 0) ]
+  @ set g "COMPUTE_THREAD_TRACE_ENABLE" [ ("thread_trace_enable", 0) ]
   @ Pm4.event_write Thread_trace_finish
   @ engines g (fun e se ->
-      grbm fn g ~se () @ finished
-      @ Pm4.copy_data Confirmed (Counter wptr) (ends e))
-  @ grbm fn g () @ sqg_events fn g ~on:false @ Pm4.acquire_mem g System
+      grbm g ~se () @ finished @ Pm4.copy_data Confirmed (Counter wptr) (ends e))
+  @ grbm g () @ sqg_events g ~on:false @ Pm4.acquire_mem g System
+
+let stop g ends =
+  try stop_program g ends
+  with Missing r ->
+    invalid_argf "Thread_trace.stop: %s has no reg%s" (gc_name g) r
 
 (* An engine's write pointer counts 32-byte units in 29 bits from the trace's
    start, or from address 0 on GFX 11.0 (ac_sqtt_copy_info_regs). *)

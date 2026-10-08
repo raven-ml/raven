@@ -5,8 +5,9 @@
 
 (* The library's initialisation, measured between the initialisers of the probes
    linked around it (support/dune): it computes no value, and allocates only
-   what its declarations take, Capability.key's type id and Packet's exception
-   Hole. Reading the tables builds nothing that outlives the reading. *)
+   what its declarations take, Capability.key's type id and the exceptions
+   Packet.Hole and Thread_trace.Missing. Reading the tables builds nothing that
+   outlives the reading. *)
 
 open Windtrap
 open Device_amd_abi
@@ -28,13 +29,14 @@ let words f =
   let c = B.allocated () in
   c -. b -. (b -. a)
 
-(* What the library's declarations take: one type id and one exception. *)
+(* What the library's declarations take: one type id and two exceptions. *)
 let declared () =
   words (fun () ->
       ignore (Sys.opaque_identity (Type.Id.make () : int Type.Id.t)))
-  +. words (fun () ->
-      let exception E in
-      ignore (Sys.opaque_identity E))
+  +. 2.
+     *. words (fun () ->
+         let exception E in
+         ignore (Sys.opaque_identity E))
 
 (* Every reader of a table, on each generation. *)
 let read_tables () =
