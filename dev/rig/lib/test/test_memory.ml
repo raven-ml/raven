@@ -104,6 +104,23 @@ let test_free_cache () =
   C.free_cache d;
   equal ~msg:"after free_cache" bool true (freed p at)
 
+(* A copy between devices that map none of each other's memory goes through the
+   host's staging memory: a host whose budget cannot hold it refuses at once.
+   The staging memory is made at the first copy that needs it, and no earlier
+   test of this suite copies through it. *)
+let test_staging_refused () =
+  let open_ name = P.open_ ~host_visible:false ~peers:false name in
+  let d, _ = open_ "memory:staging-src" and e, _ = open_ "memory:staging-dst" in
+  let src = B.create d 64 and dst = B.create e 64 in
+  let budget = C.budget C.host in
+  C.set_budget C.host (64 * kib);
+  Fun.protect
+    ~finally:(fun () -> C.set_budget C.host budget)
+    (fun () ->
+      raises_match
+        (out_of_memory C.host (64 * kib * kib))
+        (fun () -> B.copy ~src ~dst))
+
 let test_host_budget () = equal int max_int (C.budget C.host)
 
 (* Kinds *)
@@ -413,6 +430,8 @@ let tests =
       [
         test "an allocation over the budget raises at once and keeps the cache"
           test_over_budget;
+        test "a copy whose staging memory the host cannot hold raises"
+          test_staging_refused;
         stateful ~count:15 ~domains:2
           "two domains' allocations stay within the budget" budget_commands;
         test "an allocation the driver refuses releases the cache, then raises"
