@@ -11,7 +11,6 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 external host_machine : unit -> int = "caml_device_host_machine"
 external page_size : unit -> int = "caml_device_host_page_size"
 external error_message : int -> string = "caml_device_host_error_message"
-
 external workers : unit -> int = "caml_device_host_workers"
 
 let em_x86_64 = 62
@@ -42,13 +41,6 @@ let shf_execinstr = 0x4
 
 let r_x86_64_pc32 = 2
 let r_x86_64_plt32 = 4
-let r_x86_64_gotpcrel = 9
-let r_x86_64_pc64 = 24
-let r_x86_64_gotpcrelx = 41
-let r_x86_64_rex_gotpcrelx = 42
-let r_aarch64_prel64 = 260
-let r_aarch64_prel32 = 261
-let r_aarch64_prel16 = 262
 let r_aarch64_adr_prel_pg_hi21 = 275
 let r_aarch64_add_abs_lo12_nc = 277
 let r_aarch64_ldst8_abs_lo12_nc = 278
@@ -58,27 +50,16 @@ let r_aarch64_ldst16_abs_lo12_nc = 284
 let r_aarch64_ldst32_abs_lo12_nc = 285
 let r_aarch64_ldst64_abs_lo12_nc = 286
 let r_aarch64_ldst128_abs_lo12_nc = 299
-let r_aarch64_adr_got_page = 311
-let r_aarch64_ld64_got_lo12_nc = 312
 
-let is_branch k =
-  k = r_x86_64_plt32 || k = r_aarch64_call26 || k = r_aarch64_jump26
-
-let is_got k =
-  k = r_x86_64_gotpcrel || k = r_x86_64_gotpcrelx || k = r_x86_64_rex_gotpcrelx
-  || k = r_aarch64_adr_got_page
-  || k = r_aarch64_ld64_got_lo12_nc
+(* Every relocation patches 4 bytes: an x86_64 displacement or an arm64
+   instruction. *)
+let field_bytes = 4
 
 (* Fields *)
 
 let fits bits x = -(1 lsl (bits - 1)) <= x && x < 1 lsl (bits - 1)
-
-(* aaelf64 checks a 16- or 32-bit place-relative datum as signed or unsigned. *)
-let fits_either bits x = -(1 lsl (bits - 1)) <= x && x < 1 lsl bits
 let page_of a = a land lnot 0xfff
-let set16 b at x = Bytes.set_int16_le b at x
 let set32 b at x = Bytes.set_int32_le b at (Int32.of_int x)
-let set64 b at x = Bytes.set_int64_le b at (Int64.of_int x)
 
 (* Replaces the [width] bits from [lo] of the instruction at [at] by [x]'s low
    bits. *)
@@ -94,79 +75,30 @@ exception Refused of string
 
 let refusef fmt = Printf.ksprintf (fun m -> raise (Refused m)) fmt
 
-(* Symbols *)
-
-(* Where a symbol is: at an offset of the image, or at an address. *)
-type value = Offset of int | Address of int
-
-let absolute ~base = function Offset o -> base + o | Address a -> a
-
-(* The value of the symbol [s] of [o]. [externals] holds the values of the
-   undefined symbols already looked up. *)
-let value (o : Device_elf.t) externals (s : Device_elf.symbol) =
-  match s.place with
-  | Image { offset; _ } -> Offset offset
-  | Absolute a -> Address a
-  | Outside _ -> refusef "symbol %S lies outside the image" s.name
-  | Undefined -> (
-      match Hashtbl.find_opt externals s.name with
-      | Some v -> v
-      | None ->
-          let v =
-            match Device_elf.symbol o s.name with
-            | Some offset -> Offset offset
-            | None -> (
-                match process_symbol s.name with
-                | 0 ->
-                    refusef "symbol %S is defined by no library of the process"
-                      s.name
-                | a -> Address a)
-          in
-          Hashtbl.add externals s.name v;
-          v)
-
-let addend (r : Device_elf.relocation) =
-  match r.addend with
-  | Explicit a -> a
-  | Implicit _ ->
-      refusef "relocation at 0x%x has its addend in its field (SHT_REL)"
-        r.offset
-
 (* Slots
 
-   A slot follows the image for each address that a GOT reference, or a branch
-   to a symbol outside the image, names: a stub at its start that jumps to the
-   word at its end, which holds the address. On x86_64 the stub is [jmp [rip +
-   2]], whose 6 bytes end 2 before the word; on arm64 [ldr x17, #8; br x17]. A
-   branch goes through the stub when the symbol is out of its reach; a GOT
-   reference takes the word. *)
+   A slot follows the image for each symbol the object refers to and does not
+   define: a stub at its start that jumps to the word at its end, which holds
+   the symbol's address. On x86_64 the stub is [jmp [rip + 2]], whose 6 bytes
+   end 2 before the word; on arm64 [ldr x17, #8; br x17]. A branch goes through
+   the stub when the symbol is out of its reach. *)
 
 let slot_bytes = 16
-let word_at = 8
 
-(* The value a GOT reference's word holds: [S], or [S + A] on arm64, which adds
-   the addend to the word, [GDAT(S + A)]. *)
-let word a v =
-  if host = em_x86_64 then v
-  else match v with Offset o -> Offset (o + a) | Address s -> Address (s + a)
-
-(* The slots of [o]'s relocations, numbered from 0 by the value of their
-   word. *)
-let slots (o : Device_elf.t) externals =
-  let slots = Hashtbl.create 8 in
-  let add (r : Device_elf.relocation) =
-    let a = addend r and v = value o externals r.symbol in
-    let w =
-      if is_got r.kind then Some (word a v)
-      else match v with Address _ when is_branch r.kind -> Some v | _ -> None
-    in
-    match w with
-    | Some w when not (Hashtbl.mem slots w) ->
-        Hashtbl.add slots w (Hashtbl.length slots)
+(* The symbols [o] refers to and does not define, by name: each one's address in
+   the process and its slot's index. *)
+let externals (o : Device_elf.t) =
+  let externals = Hashtbl.create 8 in
+  let add ({ symbol = { name; place }; _ } : Device_elf.relocation) =
+    match place with
+    | Undefined when not (Hashtbl.mem externals name) -> (
+        match process_symbol name with
+        | 0 -> refusef "symbol %S is defined by no library of the process" name
+        | a -> Hashtbl.add externals name (a, Hashtbl.length externals))
     | _ -> ()
   in
   List.iter add o.relocations;
-  slots
+  externals
 
 let write_slot b ~at a =
   if host = em_x86_64 then begin
@@ -177,23 +109,14 @@ let write_slot b ~at a =
     set32 b at 0x58000051;
     set32 b (at + 4) 0xd61f0220
   end;
-  set64 b (at + word_at) a
+  Bytes.set_int64_le b (at + 8) (Int64.of_int a)
 
 (* Relocating *)
 
-let field_bytes k =
-  if k = r_x86_64_pc64 || k = r_aarch64_prel64 then 8
-  else if k = r_aarch64_prel16 then 2
-  else 4
-
-let refuse_reach ~at bits ~target =
-  refusef "relocation at 0x%x reaches 0x%x, beyond its %d bits" at target bits
-
 let checked ~at bits x ~target =
-  if fits bits x then x else refuse_reach ~at bits ~target
-
-let checked_either ~at bits x ~target =
-  if fits_either bits x then x else refuse_reach ~at bits ~target
+  if fits bits x then x
+  else
+    refusef "relocation at 0x%x reaches 0x%x, beyond its %d bits" at target bits
 
 (* A branch lands at [S + A] on arm64 and at [S + A + 4] on x86_64, whose
    displacement counts from the field's end. Out of reach, it goes to [stub], if
@@ -217,28 +140,18 @@ let lo12 b ~at x shift =
   set_bits b at ~lo:10 ~width:12 ((x land 0xfff) lsr shift)
 
 (* Patches the field at [at] of the relocation of type [k] and addend [a] in
-   [b], the image at [base]. [s] is the address its formula takes: its symbol's,
-   or for a GOT reference its word's, [G]. *)
+   [b], the image at [base], for the symbol at [s]. *)
 let relocate b ~base ~stub ~at ~k ~a s =
   let p = base + at in
   if host = em_x86_64 then
-    if k = r_x86_64_pc32 || is_got k then
+    if k = r_x86_64_pc32 then
       set32 b at (checked ~at 32 (s + a - p) ~target:(s + a))
-    else if k = r_x86_64_pc64 then set64 b at (s + a - p)
     else if k = r_x86_64_plt32 then set32 b at (branch ~at ~p ~stub 32 s a)
     else refusef "relocation of type %d at 0x%x is unsupported" k at
-  else if k = r_aarch64_prel64 then set64 b at (s + a - p)
-  else if k = r_aarch64_prel32 then
-    set32 b at (checked_either ~at 32 (s + a - p) ~target:(s + a))
-  else if k = r_aarch64_prel16 then
-    set16 b at (checked_either ~at 16 (s + a - p) ~target:(s + a))
   else if k = r_aarch64_call26 || k = r_aarch64_jump26 then
     set_bits b at ~lo:0 ~width:26 (branch ~at ~p ~stub 28 s a asr 2)
   else if k = r_aarch64_adr_prel_pg_hi21 then
     adrp b ~at (page_of (s + a) - page_of p) ~target:(s + a)
-  else if k = r_aarch64_adr_got_page then
-    adrp b ~at (page_of s - page_of p) ~target:s
-  else if k = r_aarch64_ld64_got_lo12_nc then lo12 b ~at s 3
   else if k = r_aarch64_add_abs_lo12_nc || k = r_aarch64_ldst8_abs_lo12_nc then
     lo12 b ~at (s + a) 0
   else if k = r_aarch64_ldst16_abs_lo12_nc then lo12 b ~at (s + a) 1
@@ -299,27 +212,32 @@ let image (o : Device_elf.t) size =
   Iarray.iter put o.sections;
   b
 
-(* [o] linked into [mapping] at [base]: its image, then its slots from
-   [slots_at], then its relocations applied. *)
-let write (o : Device_elf.t) externals ~slots ~slots_at ~size ~base =
+(* [o] linked at [base]: its image, then its slots from [slots_at], then its
+   relocations applied. *)
+let write (o : Device_elf.t) externals ~slots_at ~size ~base =
   let b = image o size in
-  let slot w = base + slots_at + (slot_bytes * Hashtbl.find slots w) in
-  let write_word w i =
-    write_slot b ~at:(slots_at + (slot_bytes * i)) (absolute ~base w)
-  in
-  Hashtbl.iter write_word slots;
+  let slot i = slots_at + (slot_bytes * i) in
+  Hashtbl.iter (fun _ (a, i) -> write_slot b ~at:(slot i) a) externals;
   let patch (r : Device_elf.relocation) =
-    let at = r.offset and k = r.kind and a = addend r in
-    let v = value o externals r.symbol in
-    if at + field_bytes k > o.size then
+    let at = r.offset in
+    if at + field_bytes > o.size then
       refusef "relocation at 0x%x patches past the image's end" at;
-    if is_got k then
-      relocate b ~base ~stub:None ~at ~k ~a (slot (word a v) + word_at)
-    else
-      let stub =
-        match v with Address _ when is_branch k -> Some (slot v) | _ -> None
-      in
-      relocate b ~base ~stub ~at ~k ~a (absolute ~base v)
+    let a =
+      match r.addend with
+      | Explicit a -> a
+      | Implicit _ ->
+          refusef "relocation at 0x%x has its addend in its field (SHT_REL)" at
+    in
+    let s, stub =
+      match r.symbol.place with
+      | Image { offset; _ } -> (base + offset, None)
+      | Absolute v -> (v, None)
+      | Undefined ->
+          let v, i = Hashtbl.find externals r.symbol.name in
+          (v, Some (base + slot i))
+      | Outside _ -> refusef "symbol %S lies outside the image" r.symbol.name
+    in
+    relocate b ~base ~stub ~at ~k:r.kind ~a s
   in
   List.iter patch o.relocations;
   b
@@ -332,9 +250,8 @@ let link_exn ~entry obj =
   in
   check o;
   let start = entry_offset o entry in
-  let externals = Hashtbl.create 8 in
-  let slots = slots o externals in
-  let n = Hashtbl.length slots in
+  let externals = externals o in
+  let n = Hashtbl.length externals in
   if o.size > max_int - (slot_bytes * (n + 1)) then
     refusef "the image's %d bytes and %d slots pass max_int" o.size n;
   let slots_at = (o.size + slot_bytes - 1) / slot_bytes * slot_bytes in
@@ -344,7 +261,7 @@ let link_exn ~entry obj =
   if base < 0 then
     refusef "mapping %d bytes of executable memory: %s" size
       (error_message (-base));
-  let b = write o externals ~slots ~slots_at ~size ~base in
+  let b = write o externals ~slots_at ~size ~base in
   match install mapping b with
   | 0 -> { mapping; address = base + start }
   | e -> refusef "making %d bytes executable: %s" size (error_message (-e))

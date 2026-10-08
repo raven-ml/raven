@@ -74,14 +74,6 @@ let test_linked () =
   equal ~msg:"table.(2)" float_exact 3.125 out.{1};
   equal ~msg:"twice 1.25" float_exact 2.5 out.{2}
 
-let test_got () =
-  let p = link "got" in
-  let out = Bigarray.(Array1.create float64 c_layout 1)
-  and inb = Bigarray.(Array1.of_array float64 c_layout [| -8. |]) in
-  Host.call p [| S.address out; S.address inb |] [||];
-  ignore (Sys.opaque_identity inb);
-  equal ~msg:"cbrt (-8)" float_exact (Float.cbrt (-8.)) out.{0}
-
 let program_tests =
   group ~timeout "programs"
     [
@@ -89,10 +81,8 @@ let program_tests =
         test_affine;
       test
         "a program calls the process's cbrt and its own function, and reads \
-         its constants, with unwind tables"
+         its constants"
         test_linked;
-      test "a program calls a function whose address it reads from a word"
-        test_got;
     ]
 
 (* Splits *)
@@ -454,12 +444,12 @@ let sht_rela = 4
 let sht_rel = 9
 let set64 b at x = Bytes.set_int64_le b at (Int64.of_int x)
 
-(* got's first relocation section as an SHT_REL one of its first entry: an ELF64
-   Rel entry is a Rela entry without its addend, 16 bytes. *)
+(* linked's first relocation section as an SHT_REL one of its first entry: an
+   ELF64 Rel entry is a Rela entry without its addend, 16 bytes. *)
 let test_rel () =
   let at = ref 0 in
   let o =
-    patch_section (obj "got") ~kind:sht_rela (fun b h ->
+    patch_section (obj "linked") ~kind:sht_rela (fun b h ->
         at :=
           Int64.to_int
             (Bytes.get_int64_le b
@@ -470,7 +460,15 @@ let test_rel () =
   in
   equal string
     (strf "relocation at 0x%x has its addend in its field (SHT_REL)" !at)
-    (require_error (Host.link ~entry:"got" o))
+    (require_error (Host.link ~entry:"linked" o))
+
+(* got's first relocation reads cbrt's address from a word of a global offset
+   table: R_X86_64_REX_GOTPCRELX (42) or R_AARCH64_ADR_GOT_PAGE (311). *)
+let test_got () =
+  let kind = if S.machine = "x86_64" then 42 else 311 in
+  starts_with
+    ~affix:(strf "relocation of type %d at 0x" kind)
+    (require_error (Host.link ~entry:"got" (obj "got")))
 
 (* affine's code, aligned to 1 MiB, above any system's page. *)
 let test_aligned () =
@@ -495,6 +493,8 @@ let refusal_tests =
         "a link is refused for" refused test_refusal;
       test "a link of relocations whose addends are in their fields is refused"
         test_rel;
+      test "a link of a relocation through a global offset table is refused"
+        test_got;
       test "a link of code aligned above the page is refused" test_aligned;
     ]
 

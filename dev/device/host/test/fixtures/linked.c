@@ -4,9 +4,9 @@
   ---------------------------------------------------------------------------*/
 
 /* A function that needs linking: a constant of .rodata, a call of a
-   function of its own, and of cbrt, which the process defines. Built with
-   unwind tables, whose .eh_frame relocates to the code. With buffers out
-   and in, and value i: out = {cbrt in[0], table[i], twice in[1]}. */
+   function of its own, and of cbrt, which the process defines. With
+   buffers out and in, and value i: out = {cbrt in[0], table[i], twice
+   in[1]}. */
 
 #include <stdint.h>
 

@@ -128,26 +128,22 @@ val workers : unit -> int
     {2:relocations Relocations}
 
     The relocations are those a compiler emits for position-independent code of
-    the small code model, with [-fPIC]. For a relocation at the place [P] of the
-    image, of the symbol whose address is [S], with the addend [A]:
+    the small code model, with [-fPIC], that calls functions and reads its own
+    data. For a relocation at the place [P] of the image, of the symbol whose
+    address is [S], with the addend [A]:
 
-    - x86_64: [R_X86_64_PC32] and [R_X86_64_PC64], [S + A - P];
-      [R_X86_64_PLT32], [S + A - P], a call or jump that goes through a stub
-      when [S] is out of its reach; [R_X86_64_GOTPCREL], [R_X86_64_GOTPCRELX]
-      and [R_X86_64_REX_GOTPCRELX], [G + A - P] for the address [G] of a word
-      that holds [S].
-    - arm64: [R_AARCH64_PREL64], [R_AARCH64_PREL32] and [R_AARCH64_PREL16],
-      [S + A - P]; [R_AARCH64_ADR_PREL_PG_HI21], [Page(S + A) - Page(P)];
+    - x86_64: [R_X86_64_PC32], [S + A - P]; [R_X86_64_PLT32], [S + A - P], a
+      call or jump that goes through a stub when [S] is out of its reach.
+    - arm64: [R_AARCH64_ADR_PREL_PG_HI21], [Page(S + A) - Page(P)];
       [R_AARCH64_ADD_ABS_LO12_NC], and [R_AARCH64_LDST8_ABS_LO12_NC] to
       [R_AARCH64_LDST128_ABS_LO12_NC] for loads and stores of 8 to 128 bits, the
       low 12 bits of [S + A]; [R_AARCH64_CALL26] and [R_AARCH64_JUMP26],
-      [S + A - P], through a stub when out of reach; [R_AARCH64_ADR_GOT_PAGE],
-      [Page(G) - Page(P)], and [R_AARCH64_LD64_GOT_LO12_NC], the low 12 bits of
-      [G].
+      [S + A - P], through a stub when out of reach.
 
-    A stub and a word that holds an address lie after the image, one of each per
-    symbol that needs one. An x86_64 stub jumps through the word with no
-    register; an arm64 stub loads it into [x17], which a veneer may use.
+    A stub lies after the image for each symbol the object refers to and does
+    not define, with a word that holds the symbol's address. An x86_64 stub
+    jumps through the word with no register; an arm64 stub loads it into [x17],
+    which a veneer may use.
 
     {2:symbols Symbols}
 

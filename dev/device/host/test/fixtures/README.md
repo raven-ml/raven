@@ -12,15 +12,14 @@ bench's programs, whose sources say what they do:
 - `<f>_x86_64.o`: `clang $H $X <f>.c -o <f>_x86_64.o`
 - `<f>_aarch64.o`: `clang $H $A <f>.c -o <f>_aarch64.o`
 
-`linked`, with unwind tables, and `got`, whose call of an external function
-goes through a word on x86_64 too:
+`linked` and `got`, whose call of an external function goes through a word
+on x86_64 too:
 
-- `linked_x86_64.o`: `clang $H -funwind-tables $X linked.c -o linked_x86_64.o`
-- `linked_aarch64.o`: `clang $H -funwind-tables $A linked.c -o linked_aarch64.o`
+- `linked_x86_64.o`: `clang $H $X linked.c -o linked_x86_64.o`
+- `linked_aarch64.o`: `clang $H $A linked.c -o linked_aarch64.o`
 - `got_x86_64.o`: `clang $H -fno-plt $X got.c -o got_x86_64.o`
 - `got_aarch64.o`: `clang $H $A got.c -o got_aarch64.o`
 
 For x86_64 Windows, whose process functions follow its own convention:
 
-- `linked_x86_64_windows.o`: `clang $H -funwind-tables -DWINDOWS $X linked.c -o linked_x86_64_windows.o`
-- `got_x86_64_windows.o`: `clang $H -fno-plt -DWINDOWS $X got.c -o got_x86_64_windows.o`
+- `linked_x86_64_windows.o`: `clang $H -DWINDOWS $X linked.c -o linked_x86_64_windows.o`
