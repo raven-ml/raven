@@ -141,20 +141,25 @@ under load, where the GPU's wake-up takes most of a launch.
 ### Driver-less against `amdgpu` on one GPU
 
 The same rows on the R9700, through `rig.amd.amdgpu` and through `rig.amd.pci`
-on the same machine. The driver-less boot holds every clock at its highest,
-where `amdgpu` lets its power management move them: the latency rows compare
-each path as it runs, and do not isolate the queues.
+on the same machine. The driver-less boot holds every clock at its highest;
+`amdgpu` lets its power management move them, so its rows are given both as it
+runs and with its clocks held at their peak (`profile_peak`).
 
-| Work | through `amdgpu` | driver-less |
-|---|---|---|
-| An empty submission, submit to signal | 15.5 µs | 3.5 µs |
-| One kernel, launch and wait | 16.3 µs | 4.0 µs |
-| 64 kernels in one submission, launch and wait | 49.3 µs | 24.3 µs |
-| A sleep woken by a release | 48.5 µs | 22.9 µs |
-| 256 MiB host to GPU / back | 19.3 / 19.2 ms | 19.3 / 19.2 ms |
-| 256 MiB GPU to GPU | 3.63 ms | 2.46 ms |
-| Allocate and free 64 KiB / 64 MiB | 653 / 557 µs | 34 / 36 µs |
-| Open and stop | 22.8 ms | 105 ms (over a clean stop), 1.46 s (after a reset) |
+| Work | `amdgpu` | `amdgpu`, peak clocks | driver-less |
+|---|---|---|---|
+| An empty submission, submit to signal | 15.5 µs | 14.8 µs | 3.5 µs |
+| One kernel, launch and wait | 16.3 µs | 15.7 µs | 4.0 µs |
+| 64 kernels in one submission, launch and wait | 49.3 µs | 42.0 µs | 24.3 µs |
+| A sleep woken by a release | 48.5 µs | 19.1 µs | 22.9 µs |
+| 256 MiB host to GPU / back | 19.3 / 19.2 ms | | 19.3 / 19.2 ms |
+| 256 MiB GPU to GPU | 3.63 ms | 3.64 ms | 2.46 ms |
+| Allocate and free 64 KiB / 64 MiB | 653 / 557 µs | | 34 / 36 µs |
+| Open and stop | 22.8 ms | | 105 ms (over a clean stop), 1.46 s (after a reset) |
+
+At equal clocks the compute queue's gap stays: rig's own packets on a KFD
+queue, with rig's core left out, take 14.8 µs a submission too, so the time
+lies in the kernel driver's queue. The peak clocks account for most of the
+wake's gap.
 
 ### Against PyTorch and JAX
 
