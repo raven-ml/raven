@@ -1,4 +1,0 @@
-; The storage formats of buffer elements.
-
-(library
- (name device_dtype))

@@ -5,8 +5,6 @@
 
 (* The records the core's modules share. *)
 
-module Scalar = Device_dtype.Scalar
-
 type ('a, 'r, 'i) dm =
   (module Sigs.Driver with type t = 'a and type region = 'r and type image = 'i)
 
@@ -119,14 +117,7 @@ type memory = {
       *)
 }
 
-type buffer = {
-  mem : memory;
-  offset : int;
-  dtype : Scalar.t;
-  length : int;
-  generation : int;
-}
-
+type buffer = { mem : memory; offset : int; length : int; generation : int }
 type program = { pdev : device; image : image; ptoken : token }
 type hold = { hstamps : int; members : buffer list; htoken : token }
 

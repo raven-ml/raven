@@ -14,7 +14,6 @@ module Program = Device_core.Program
 module Prof = Device_core.Profile
 module P = Device_core_support.Polled
 module Support = Device_core_support
-module S = Device_dtype.Scalar
 
 let timeout = 60.
 let count call p = List.length (List.filter (( = ) call) (P.log p))
@@ -58,7 +57,7 @@ let test_unload () =
   let drain () =
     Gc.full_major ();
     Gc.full_major ();
-    ignore (B.create ~memory:Pinned d S.UInt8 8)
+    ignore (B.create ~memory:Pinned d 8)
   in
   drain ();
   equal ~msg:"while its work is unrun" int 0 (count "unload" pd);

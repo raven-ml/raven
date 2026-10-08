@@ -58,7 +58,7 @@ let slot i =
   match slots.(i) with
   | Some b when not (names_lost b) -> b
   | _ ->
-      let b = Buffer.create Dev.host Scalar.UInt8 slot_bytes in
+      let b = Buffer.create Dev.host slot_bytes in
       slots.(i) <- Some b;
       b
 
@@ -66,8 +66,6 @@ let slot i =
    goes no further. *)
 let is_slot m =
   Array.exists (function Some b -> b.mem.root == m.root | None -> false) slots
-
-let as_bytes b = Buffer.view b ~offset:0 Scalar.UInt8 (Buffer.nbytes b)
 
 (* A copy on [d]'s copy queue between buffers [d] maps, waited for. *)
 let on_queue d src dst =
@@ -103,9 +101,9 @@ let io_write src dst n =
 let rec copy ~src ~dst =
   Buffer.check_live fn src;
   Buffer.check_live fn dst;
-  let n = Buffer.nbytes src in
-  if n <> Buffer.nbytes dst then
-    invalid_argf "Device_core.%s: %d bytes into %d" fn n (Buffer.nbytes dst);
+  let n = Buffer.length src in
+  if n <> Buffer.length dst then
+    invalid_argf "Device_core.%s: %d bytes into %d" fn n (Buffer.length dst);
   if Buffer.overlaps src dst then
     invalid_argf "Device_core.%s: the buffers overlap" fn;
   let sd = src.mem.dev and dd = dst.mem.dev in
@@ -152,8 +150,8 @@ and staged src dst n =
       let rec go at =
         if at < n then begin
           let len = Int.min slot_bytes (n - at) in
-          let s = Buffer.view (slot i) ~offset:0 Scalar.UInt8 len in
-          let piece b = Buffer.view (as_bytes b) ~offset:at Scalar.UInt8 len in
+          let s = Buffer.view (slot i) ~first:0 ~length:len in
+          let piece b = Buffer.view b ~first:at ~length:len in
           copy ~src:(piece src) ~dst:s;
           copy ~src:s ~dst:(piece dst);
           go (at + len)

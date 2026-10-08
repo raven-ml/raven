@@ -138,8 +138,8 @@ module Reader : sig
   val host : Device_core.Buffer.t -> int
   (** [host b] is [device_core_buffer_host b] as an integer, [0] for [NULL]. *)
 
-  val length : Device_core.Buffer.t -> int
-  (** [length b] is [device_core_buffer_length b]. *)
+  val bytes : Device_core.Buffer.t -> int
+  (** [bytes b] is [device_core_buffer_bytes b]. *)
 
   val why : Device_core.Buffer.t -> string option
   (** [why b] is [device_core_buffer_why b], [None] for [NULL]. *)

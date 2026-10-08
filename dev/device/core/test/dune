@@ -23,13 +23,13 @@
   test_memory
   test_claim
   test_program)
- (libraries device_core device_dtype device_core_support threads.posix unix
+ (libraries device_core device_core_support threads.posix unix
   windtrap))
 
 (test
  (name test_profile)
  (modules test_profile)
- (libraries device_core device_dtype device_core_support windtrap)
+ (libraries device_core device_core_support windtrap)
  (action
   (progn
    (run %{test} --corrected)
@@ -39,7 +39,7 @@
  (name test_readers)
  (modules test_readers)
  (modes native byte)
- (libraries device_core device_dtype device_core_support windtrap))
+ (libraries device_core device_core_support windtrap))
 
 (rule
  (alias runtest)

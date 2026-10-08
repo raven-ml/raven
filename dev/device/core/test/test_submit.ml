@@ -9,7 +9,6 @@ module B = Device_core.Buffer
 module Sub = Device_core.Submission
 module P = Device_core_support.Polled
 module Support = Device_core_support
-module S = Device_dtype.Scalar
 
 let timeout = 60.
 let memory name = require_ok ~pp:Format.pp_print_string (C.memory_device name)
@@ -41,7 +40,7 @@ let test_values () =
 
 let test_fill () =
   let d = memory "submit:fill" in
-  let arg = B.create C.host S.UInt64 1 in
+  let arg = B.create C.host 8 in
   Support.store (B.address arg) 0;
   let s = Sub.make ~reads:0 ~writes:0 ~waits:0 d [| bump arg; bump arg |] in
   ignore (C.submit s);
@@ -71,7 +70,7 @@ let test_still () =
 
 let test_refusals () =
   let d = memory "submit:refusals" in
-  let arg = B.create C.host S.UInt64 1 in
+  let arg = B.create C.host 8 in
   raises_match Exn.invalid_arg (fun () ->
       Sub.make ~reads:0 ~writes:0 ~waits:0 d
         [| { (bump arg) with after = [| 0 |] } |]);
@@ -85,7 +84,7 @@ let test_refusals () =
 (* A slot whose buffer died after it was set refuses the submit. *)
 let test_dead_slot () =
   let d = memory "submit:dead-slot" in
-  let b = B.create C.host S.UInt8 8 in
+  let b = B.create C.host 8 in
   let s = empty ~reads:1 d in
   Sub.read s 0 b;
   C.Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
@@ -110,7 +109,7 @@ let test_wait_beyond () =
 let test_read_waits () =
   let producer, pp = P.open_ "submit:producer" in
   let consumer = memory "submit:consumer" in
-  let on = B.create producer S.UInt8 page_bytes in
+  let on = B.create producer page_bytes in
   let w = Sub.make ~reads:0 ~writes:1 ~waits:0 producer [||] in
   Sub.write w 0 on;
   ignore (C.submit w);
@@ -125,7 +124,7 @@ let test_read_waits () =
 let test_part_points () =
   let d, _ = P.open_ "submit:parts" in
   let e, pe = P.open_ "submit:parts-other" in
-  let src = B.create d S.UInt8 64 and dst = B.create d S.UInt8 64 in
+  let src = B.create d 64 and dst = B.create d 64 in
   let copy =
     { Sub.queue = "COPY:0"; after = [||]; work = Sub.Copy { src; dst } }
   in
@@ -161,7 +160,7 @@ let test_in_queue () =
 (* A full queue answers Later: the submit waits for one more value. *)
 let test_room () =
   let d, p = P.open_ ~capacity:1 "submit:room" in
-  let arg = B.create C.host S.UInt64 1 in
+  let arg = B.create C.host 8 in
   let s = Sub.make ~reads:0 ~writes:0 ~waits:0 d [| bump arg |] in
   ignore (C.submit s);
   ignore (C.submit s);
@@ -172,7 +171,7 @@ let test_room () =
    when the submission is made. *)
 let test_copy_refused () =
   let d, _ = P.open_ ~copies:false "submit:no-copies" in
-  let src = B.create d S.UInt8 8 and dst = B.create d S.UInt8 8 in
+  let src = B.create d 8 and dst = B.create d 8 in
   let copy =
     { Sub.queue = "COMPUTE:0"; after = [||]; work = Sub.Copy { src; dst } }
   in
@@ -232,7 +231,7 @@ let check_frees _ t =
     (P.frees t.p)
 
 let make t =
-  let src = B.create t.d S.UInt8 256 and dst = B.create t.d S.UInt8 256 in
+  let src = B.create t.d 256 and dst = B.create t.d 256 in
   let parts = watch t ~last:0 [ B.address src; B.address dst ] in
   let copy =
     { Sub.queue = "COPY:0"; after = [||]; work = Sub.Copy { src; dst } }
@@ -243,7 +242,7 @@ let make t =
 let submit sub =
   let t = sub.dev in
   let s = Option.get sub.s in
-  let slot = B.create t.d S.UInt8 256 in
+  let slot = B.create t.d 256 in
   let at = B.address slot in
   Sub.write s 0 slot;
   let v = C.Point.value (C.submit s) in
@@ -258,7 +257,7 @@ let drop sub =
 
 let drain t =
   Gc.full_major ();
-  ignore (B.create t.d S.UInt8 64);
+  ignore (B.create t.d 64);
   C.free_cache t.d
 
 let device = abstract ~invariant:check_frees "d"
@@ -300,7 +299,7 @@ let lifetime =
 
 let test_allocation () =
   let d = memory "submit:words" in
-  let s = empty ~reads:1 d and b = B.create C.host S.UInt8 8 in
+  let s = empty ~reads:1 d and b = B.create C.host 8 in
   Sub.read s 0 b;
   ignore (C.submit s);
   let before = Gc.minor_words () in

@@ -8,7 +8,6 @@ module C = Device_core
 module B = Device_core.Buffer
 module Sub = Device_core.Submission
 module P = Device_core_support.Polled
-module S = Device_dtype.Scalar
 
 let timeout = 60.
 let memory name = require_ok ~pp:Format.pp_print_string (C.memory_device name)
@@ -20,42 +19,34 @@ let bytes b =
   String.init (Bigarray.Array1.dim ba) (Bigarray.Array1.get ba)
 
 let filled n c =
-  let b = B.create C.host S.UInt8 n in
+  let b = B.create C.host n in
   Bigarray.Array1.fill (B.bigarray Bigarray.char b) c;
   b
 
 (* Host buffers *)
 
 let test_create () =
-  let b = B.create C.host S.Float32 10 in
-  equal int 40 (B.nbytes b);
-  equal int 10 (B.length b);
+  let b = B.create C.host 40 in
+  equal int 40 (B.length b);
   equal bool false (B.is_borrowed b);
   equal bool true (B.spans b);
-  let big = B.create C.host S.UInt8 (1 lsl 20) in
+  let big = B.create C.host (1 lsl 20) in
   equal int 0 (B.address big mod 4096)
 
-let test_bit_sizes () =
-  equal int 2 (B.nbytes (B.create C.host S.Int4 3));
-  equal int 2 (B.nbytes (B.create C.host S.Bit 9));
-  equal int 0 (B.nbytes (B.create C.host S.Bit 0))
-
 let test_refusals () =
-  raises_match Exn.invalid_arg (fun () -> B.create C.host S.UInt8 (-1));
-  raises_match Exn.invalid_arg (fun () -> B.create C.host S.Float64 max_int);
-  let b = B.create C.host S.UInt8 16 in
-  raises_match Exn.invalid_arg (fun () -> B.view b ~offset:12 S.Float32 2);
-  raises_match Exn.invalid_arg (fun () -> B.view b ~offset:2 S.Float32 1);
-  raises_match Exn.invalid_arg (fun () -> B.view b ~offset:(-1) S.UInt8 1)
+  raises_match Exn.invalid_arg (fun () -> B.create C.host (-1));
+  let b = B.create C.host 16 in
+  raises_match Exn.invalid_arg (fun () -> B.view b ~first:12 ~length:8);
+  raises_match Exn.invalid_arg (fun () -> B.view b ~first:(-1) ~length:1)
 
 let test_views () =
   let b = filled 8 'a' in
-  let v = B.view b ~offset:4 S.UInt8 4 in
+  let v = B.view b ~first:4 ~length:4 in
   Bigarray.Array1.fill (B.bigarray Bigarray.char v) 'b';
   equal string "aaaabbbb" (bytes b);
   equal bool false (B.spans v);
   equal bool true (B.overlaps b v);
-  equal bool false (B.overlaps (B.view b ~offset:0 S.UInt8 4) v)
+  equal bool false (B.overlaps (B.view b ~first:0 ~length:4) v)
 
 (* Copies *)
 
@@ -66,12 +57,12 @@ let test_copy_host () =
   raises_match Exn.invalid_arg (fun () -> B.copy ~src ~dst:(filled 99 'y'));
   raises_match Exn.invalid_arg (fun () ->
       B.copy
-        ~src:(B.view src ~offset:0 S.UInt8 50)
-        ~dst:(B.view src ~offset:10 S.UInt8 50))
+        ~src:(B.view src ~first:0 ~length:50)
+        ~dst:(B.view src ~first:10 ~length:50))
 
 let test_copy_device () =
   let d = memory "buffer:copy" in
-  let on = B.create d S.UInt8 64 in
+  let on = B.create d 64 in
   B.copy ~src:(filled 64 'q') ~dst:on;
   let back = filled 64 'z' in
   B.copy ~src:on ~dst:back;
@@ -81,7 +72,7 @@ let test_copy_device () =
    own wait for its point. *)
 let test_copy_waits () =
   let d, p = P.open_ "buffer:copy-polled" in
-  let on = B.create d S.UInt8 4096 in
+  let on = B.create d 4096 in
   B.copy ~src:(filled 4096 'w') ~dst:on;
   let back = filled 4096 '0' in
   B.copy ~src:on ~dst:back;
@@ -102,7 +93,7 @@ let test_borrow () =
 (* A host buffer a device maps is mapped once, whatever its borrows. *)
 let test_borrow_maps_once () =
   let d, p = P.open_ "buffer:map-once" in
-  let h = B.create C.host S.UInt8 (1 lsl 16) in
+  let h = B.create C.host (1 lsl 16) in
   for _ = 1 to 3 do
     ignore (Sys.opaque_identity (B.borrow d h))
   done;
@@ -110,7 +101,7 @@ let test_borrow_maps_once () =
 
 let test_borrow_small () =
   let d, _ = P.open_ "buffer:small" in
-  let paged = B.create C.host S.UInt8 (1 lsl 16) in
+  let paged = B.create C.host (1 lsl 16) in
   let off_page = Bigarray.Array1.sub (B.bigarray Bigarray.char paged) 8 16 in
   is_none (B.borrow d (B.of_bigarray off_page))
 
@@ -119,7 +110,7 @@ let test_borrow_small () =
 let test_wait () =
   let d, p = P.open_ "buffer:wait" in
   let n = 1 lsl 16 in
-  let h = filled n 'a' and on = B.create d S.UInt8 n in
+  let h = filled n 'a' and on = B.create d n in
   let part =
     {
       C.Submission.queue = "COPY:0";
@@ -133,7 +124,7 @@ let test_wait () =
   equal int 0 (P.queued p)
 
 let test_dead () =
-  let b = B.create C.host S.UInt8 8 in
+  let b = B.create C.host 8 in
   C.Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
       ignore (C.Claim.consume c ~why:"donated" b));
   raises_match (Exn.invalid_arg ~substring:"donated") (fun () ->
@@ -141,7 +132,7 @@ let test_dead () =
 
 let test_lost_memory () =
   let d, p = P.open_ "buffer:lost" in
-  let on = B.create d S.UInt8 8 in
+  let on = B.create d 8 in
   let s = C.Submission.make ~reads:0 ~writes:1 ~waits:0 d [||] in
   C.Submission.write s 0 on;
   P.fail p;
@@ -173,22 +164,20 @@ let at_most_words (minor, major) f =
   at_most ~msg:"major words" int ~than:major j
 
 let f32 = Bigarray.Array1.create Bigarray.float32 Bigarray.c_layout 16
-let b16 = B.create C.host S.Float32 16
-
-let test_create_words () =
-  at_most_words (61, 0) (fun () -> B.create C.host S.Float32 16)
+let b16 = B.create C.host 64
+let test_create_words () = at_most_words (61, 0) (fun () -> B.create C.host 64)
 
 let test_create_large_words () =
-  at_most_words (54, 7) (fun () -> B.create C.host S.UInt8 (1 lsl 20))
+  at_most_words (54, 7) (fun () -> B.create C.host (1 lsl 20))
 
 let test_create_empty_words () =
-  at_most_words (32, 0) (fun () -> B.create C.host S.Float32 0)
+  at_most_words (32, 0) (fun () -> B.create C.host 0)
 
 (* Borrows of memory that dies *)
 
 let test_borrow_own () =
   let d, _ = P.open_ "buffer:own" in
-  let b = B.create d S.UInt8 64 in
+  let b = B.create d 64 in
   match B.borrow d b with
   | Some b' -> equal bool true (b == b')
   | None -> failf "no borrow of its own memory"
@@ -198,7 +187,7 @@ let test_borrow_own () =
 let test_mapping_released () =
   let d, p = P.open_ "buffer:released" in
   let read_borrow () =
-    let h = B.create C.host S.UInt8 (1 lsl 16) in
+    let h = B.create C.host (1 lsl 16) in
     let s = Sub.make ~reads:1 ~writes:0 ~waits:0 d [||] in
     Sub.read s 0 (require_some (B.borrow d h));
     ignore (C.submit s)
@@ -208,8 +197,8 @@ let test_mapping_released () =
   let drain () =
     Gc.full_major ();
     Gc.full_major ();
-    ignore (B.create C.host S.UInt8 8);
-    ignore (B.create ~memory:Pinned d S.UInt8 8)
+    ignore (B.create C.host 8);
+    ignore (B.create ~memory:Pinned d 8)
   in
   drain ();
   equal ~msg:"while its work is unrun" int 0 (unmaps ());
@@ -221,7 +210,7 @@ let test_mapping_released () =
 let test_borrow_of_borrow () =
   let d, _ = P.open_ "buffer:first" in
   let e, pe = P.open_ "buffer:second" in
-  let h = B.create C.host S.UInt8 (1 lsl 16) in
+  let h = B.create C.host (1 lsl 16) in
   let b = require_some (B.borrow e (require_some (B.borrow d h))) in
   equal (list int) [ 1 lsl 16 ] (P.host_maps pe);
   equal int (B.address h) (B.address b);
@@ -230,7 +219,7 @@ let test_borrow_of_borrow () =
 let test_borrow_peer () =
   let d, _ = P.open_ ~host_visible:false "buffer:owner" in
   let e, pe = P.open_ ~host_visible:false "buffer:peer" in
-  let m = B.create d S.UInt8 64 in
+  let m = B.create d 64 in
   let b = require_some (B.borrow e m) in
   equal int 1 (count "map_peer" pe);
   equal bool true (C.equal e (B.device b));
@@ -238,9 +227,9 @@ let test_borrow_peer () =
 
 let test_borrow_spans () =
   let d, _ = P.open_ "buffer:spans" in
-  let h = B.create C.host S.UInt8 (1 lsl 17) in
+  let h = B.create C.host (1 lsl 17) in
   equal bool true (B.spans (require_some (B.borrow d h)));
-  let part = B.view h ~offset:0 S.UInt8 (1 lsl 16) in
+  let part = B.view h ~first:0 ~length:(1 lsl 16) in
   equal bool false (B.spans (require_some (B.borrow d part)))
 
 let test_overlaps () =
@@ -248,23 +237,23 @@ let test_overlaps () =
   let whole = B.of_bigarray ba in
   let part = B.of_bigarray (Bigarray.Array1.sub ba 8 8) in
   equal bool true (B.overlaps whole part);
-  equal bool false (B.overlaps whole (B.view whole ~offset:4 S.UInt8 0))
+  equal bool false (B.overlaps whole (B.view whole ~first:4 ~length:0))
 
 (* Routes of copies *)
 
 let roundtrip ~src ~dst =
   Bigarray.Array1.fill (B.bigarray Bigarray.char src) 'r';
   B.copy ~src ~dst;
-  let back = filled (B.nbytes src) '0' in
+  let back = filled (B.length src) '0' in
   B.copy ~src:dst ~dst:back;
-  equal string (String.make (B.nbytes src) 'r') (bytes back)
+  equal string (String.make (B.length src) 'r') (bytes back)
 
 (* Between host memory and memory the host does not address, the device copies:
    from a mapping of host memory that starts on a page. *)
 let test_copy_mapped_host () =
   let d, p = P.open_ ~host_visible:false "buffer:direct" in
-  let src = B.create C.host S.UInt8 (1 lsl 16) in
-  let dst = B.create d S.UInt8 (1 lsl 16) in
+  let src = B.create C.host (1 lsl 16) in
+  let dst = B.create d (1 lsl 16) in
   roundtrip ~src ~dst;
   equal ~msg:"copies the device ran" int 2 (P.submits p);
   equal ~msg:"host memory mapped" (list int)
@@ -276,13 +265,13 @@ let staging = 64 lsl 20
 (* Host memory and a device's memory that the host does not address, filled from
    host memory the device maps. *)
 let on d c =
-  let b = B.create d S.UInt8 64 in
-  B.copy ~src:(B.view (filled (1 lsl 16) c) ~offset:0 S.UInt8 64) ~dst:b;
+  let b = B.create d 64 in
+  B.copy ~src:(B.view (filled (1 lsl 16) c) ~first:0 ~length:64) ~dst:b;
   b
 
 let contents b =
-  let back = B.create C.host S.UInt8 (1 lsl 16) in
-  let back = B.view back ~offset:0 S.UInt8 (B.nbytes b) in
+  let back = B.create C.host (1 lsl 16) in
+  let back = B.view back ~first:0 ~length:(B.length b) in
   B.copy ~src:b ~dst:back;
   bytes back
 
@@ -290,10 +279,10 @@ let contents b =
    64 MiB the device maps once. *)
 let test_copy_staged () =
   let d, p = P.open_ ~host_visible:false "buffer:staged" in
-  let paged = B.create C.host S.UInt8 (1 lsl 16) in
+  let paged = B.create C.host (1 lsl 16) in
   let off_page = Bigarray.Array1.sub (B.bigarray Bigarray.char paged) 8 64 in
   Bigarray.Array1.fill off_page 's';
-  let dst = B.create d S.UInt8 64 in
+  let dst = B.create d 64 in
   B.copy ~src:(B.of_bigarray off_page) ~dst;
   equal string (String.make 64 's') (contents dst);
   equal ~msg:"staging slots mapped" int 1
@@ -304,7 +293,7 @@ let test_copy_staged () =
 let test_copy_unmapped () =
   let d, pd = P.open_ ~host_visible:false ~peers:false "buffer:unmapped-src" in
   let e, pe = P.open_ ~host_visible:false ~peers:false "buffer:unmapped-dst" in
-  let src = on d 'u' and dst = B.create e S.UInt8 64 in
+  let src = on d 'u' and dst = B.create e 64 in
   B.copy ~src ~dst;
   equal string (String.make 64 'u') (contents dst);
   let slots p = List.length (List.filter (( = ) staging) (P.host_maps p)) in
@@ -316,7 +305,7 @@ let test_copy_unmapped () =
 let test_copy_peer () =
   let d, pd = P.open_ ~host_visible:false "buffer:peer-src" in
   let e, pe = P.open_ ~host_visible:false "buffer:peer-dst" in
-  let src = on d 'p' and dst = B.create e S.UInt8 64 in
+  let src = on d 'p' and dst = B.create e 64 in
   let before = (P.submits pd, P.submits pe) in
   B.copy ~src ~dst;
   equal (pair int int) (fst before + 1, snd before) (P.submits pd, P.submits pe);
@@ -326,7 +315,7 @@ let test_copy_peer () =
 (* A device that runs no copy has memory the host addresses: the host copies. *)
 let test_copy_no_queue () =
   let d, p = P.open_ ~copies:false "buffer:no-queue" in
-  roundtrip ~src:(filled 64 'x') ~dst:(B.create d S.UInt8 64);
+  roundtrip ~src:(filled 64 'x') ~dst:(B.create d 64);
   equal int 0 (P.submits p)
 
 (* A device lost while it used the staging memory leaves other devices' copies
@@ -336,7 +325,7 @@ let test_staging_after_loss () =
   let d, p = open_ "buffer:staging-lost" in
   let e, _ = open_ "buffer:staging-dst" in
   let f, _ = open_ "buffer:staging-src" in
-  let src = on d 'l' and dst = B.create e S.UInt8 64 in
+  let src = on d 'l' and dst = B.create e 64 in
   P.fail p;
   raises_match lost (fun () -> B.copy ~src ~dst);
   B.copy ~src:(on f 'k') ~dst;
@@ -344,49 +333,40 @@ let test_staging_after_loss () =
 
 (* Bigarrays *)
 
-type kind = Kind : string * ('a, 'b) Bigarray.kind * S.t * (int -> 'a) -> kind
+type kind = Kind : string * ('a, 'b) Bigarray.kind * (int -> 'a) -> kind
 
 let kinds =
   Bigarray.
     [
-      Kind ("float16", float16, S.Float16, float_of_int);
-      Kind ("float32", float32, S.Float32, float_of_int);
-      Kind ("float64", float64, S.Float64, float_of_int);
-      Kind ("int8_signed", int8_signed, S.Int8, Fun.id);
-      Kind ("int8_unsigned", int8_unsigned, S.UInt8, Fun.id);
-      Kind ("char", char, S.UInt8, Char.chr);
-      Kind ("int16_signed", int16_signed, S.Int16, Fun.id);
-      Kind ("int16_unsigned", int16_unsigned, S.UInt16, Fun.id);
-      Kind ("int32", int32, S.Int32, Int32.of_int);
-      Kind ("int64", int64, S.Int64, Int64.of_int);
+      Kind ("float16", float16, float_of_int);
+      Kind ("float32", float32, float_of_int);
+      Kind ("float64", float64, float_of_int);
+      Kind ("int8_signed", int8_signed, Fun.id);
+      Kind ("int8_unsigned", int8_unsigned, Fun.id);
+      Kind ("char", char, Char.chr);
+      Kind ("int16_signed", int16_signed, Fun.id);
+      Kind ("int16_unsigned", int16_unsigned, Fun.id);
+      Kind ("int32", int32, Int32.of_int);
+      Kind ("int64", int64, Int64.of_int);
       Kind
         ( "complex32",
           complex32,
-          S.Complex64,
           fun i -> { Complex.re = float_of_int i; im = 0. } );
       Kind
         ( "complex64",
           complex64,
-          S.Complex128,
           fun i -> { Complex.re = float_of_int i; im = 0. } );
     ]
 
-let scalar =
-  Testable.make
-    ~pp:(fun ppf s -> Format.pp_print_string ppf (S.to_string s))
-    ~equal:S.equal
-
-(* A bigarray's buffer is its elements in its kind's format, and [bigarray]
-   reads them back over the same memory. *)
-let test_kind (Kind (_, k, s, v)) =
+(* A bigarray's buffer is its bytes, and [bigarray] reads them back over the
+   same memory. *)
+let test_kind (Kind (_, k, v)) =
   List.iter
     (fun n ->
       let ba = Bigarray.Array1.create k Bigarray.c_layout n in
       let b = B.of_bigarray ba in
       equal ~msg:"borrowed" bool true (B.is_borrowed b);
-      equal ~msg:"format" scalar s (B.dtype b);
-      equal ~msg:"length" int n (B.length b);
-      equal ~msg:"bytes" int (n * Bigarray.kind_size_in_bytes k) (B.nbytes b);
+      equal ~msg:"bytes" int (n * Bigarray.kind_size_in_bytes k) (B.length b);
       let back = B.bigarray k b in
       for i = 0 to n - 1 do
         ba.{i} <- v i
@@ -397,37 +377,28 @@ let test_kind (Kind (_, k, s, v)) =
     [ 0; 1; 17 ]
 
 let test_bigarray_refusals () =
-  let b = B.create C.host S.UInt8 8 in
+  let b = B.create C.host 8 in
   raises_match Exn.invalid_arg (fun () ->
-      B.of_bigarray (Bigarray.Array1.create Bigarray.int Bigarray.c_layout 1));
+      B.bigarray Bigarray.float32 (B.view b ~first:0 ~length:6));
   raises_match Exn.invalid_arg (fun () ->
-      B.of_bigarray
-        (Bigarray.Array1.create Bigarray.nativeint Bigarray.c_layout 1));
-  raises_match Exn.invalid_arg (fun () -> B.bigarray Bigarray.int b);
-  raises_match Exn.invalid_arg (fun () -> B.bigarray Bigarray.nativeint b);
-  raises_match Exn.invalid_arg (fun () ->
-      B.bigarray Bigarray.float32 (B.view b ~offset:0 S.UInt8 6));
-  raises_match Exn.invalid_arg (fun () ->
-      B.bigarray Bigarray.float32 (B.view b ~offset:2 S.UInt8 4));
+      B.bigarray Bigarray.float32 (B.view b ~first:2 ~length:4));
   let d, _ = P.open_ "buffer:not-host" in
   raises_match Exn.invalid_arg (fun () ->
-      B.bigarray Bigarray.char (B.create d S.UInt8 8))
+      B.bigarray Bigarray.char (B.create d 8))
 
 (* A bigarray of a buffer keeps its memory once the buffer is collected. *)
 let test_bigarray_keeps () =
   let n = 1 lsl 17 in
   let view =
     (fun () ->
-      let ba = B.bigarray Bigarray.char (B.create C.host S.UInt8 n) in
+      let ba = B.bigarray Bigarray.char (B.create C.host n) in
       Bigarray.Array1.fill ba 'v';
       ba)
       ()
   in
   Gc.full_major ();
   Gc.full_major ();
-  Bigarray.Array1.fill
-    (B.bigarray Bigarray.char (B.create C.host S.UInt8 n))
-    'w';
+  Bigarray.Array1.fill (B.bigarray Bigarray.char (B.create C.host n)) 'w';
   equal char 'v' view.{n - 1}
 
 let tests =
@@ -435,7 +406,6 @@ let tests =
     group ~timeout "host buffers"
       [
         test "a buffer holds its elements' bytes" test_create;
-        test "sub-byte formats pack their elements" test_bit_sizes;
         test "a buffer refuses bounds it cannot hold" test_refusals;
         test "a view shares its buffer's memory" test_views;
       ];
@@ -480,7 +450,7 @@ let tests =
           test_staging_after_loss;
       ];
     cases ~timeout
-      ~name:(fun (Kind (n, _, _, _)) -> n)
+      ~name:(fun (Kind (n, _, _)) -> n)
       "a bigarray's buffer is its elements" kinds test_kind;
     group ~timeout "bigarrays"
       [
@@ -508,7 +478,7 @@ let words =
       test "a bigarray's buffer costs at most 54 words" (fun () ->
           at_most_words (54, 0) (fun () -> B.of_bigarray f32));
       test "a view costs at most 19 words" (fun () ->
-          at_most_words (19, 0) (fun () -> B.view b16 ~offset:16 S.Float32 4));
+          at_most_words (19, 0) (fun () -> B.view b16 ~first:16 ~length:16));
       test "a buffer's bigarray costs at most 27 words" (fun () ->
           at_most_words (27, 0) (fun () -> B.bigarray Bigarray.float32 b16));
     ]

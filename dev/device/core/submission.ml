@@ -81,7 +81,7 @@ type t = {
 (* The slot no submit has set. *)
 let unset =
   let mem = Memory.make Dev.host 0 Memory.no_entry in
-  { mem; offset = 0; dtype = Scalar.UInt8; length = 0; generation = -1 }
+  { mem; offset = 0; length = 0; generation = -1 }
 
 let queue_index d fn q =
   let rec go i =
@@ -166,7 +166,7 @@ let make ?hold ~reads ~writes ~waits d parts =
             invalid_argf "Device_core.%s: %s runs no copies" fn d.name;
           check_buffer src;
           check_buffer dst;
-          if Buffer.nbytes src <> Buffer.nbytes dst then
+          if Buffer.length src <> Buffer.length dst then
             invalid_argf "Device_core.%s: a copy's buffers differ in size" fn;
           if src.mem.dev != d || dst.mem.dev != d then
             invalid_argf "Device_core.%s: a copy's buffers are not %s's memory"
@@ -185,7 +185,7 @@ let make ?hold ~reads ~writes ~waits d parts =
       at := !at + Array.length p.after;
       match p.work with
       | Words w ->
-          sub_words c i (host_address fn w) (Buffer.nbytes w / 4);
+          sub_words c i (host_address fn w) (Buffer.length w / 4);
           fixed w false
       | Fill f ->
           sub_fill c i f.fill (host_address fn f.arg) f.ring_units
@@ -197,7 +197,7 @@ let make ?hold ~reads ~writes ~waits d parts =
               dst.offset,
               src.mem.handle,
               src.offset,
-              Buffer.nbytes src );
+              Buffer.length src );
           fixed src false;
           fixed dst true)
     parts;

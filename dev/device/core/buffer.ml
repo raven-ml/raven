@@ -18,77 +18,41 @@ let check_live fn b =
   if not (is_live b) then
     invalid_argf "Device_core.%s: the buffer is dead: %s" fn b.mem.claim.why
 
-(* The bytes [n] elements of [s] take, or [-1] past [max_int]. *)
-let bytes_of s n =
-  let bits = Scalar.bitsize s in
-  if n > (max_int - 7) / bits then -1 else ((n * bits) + 7) / 8
-
-let nbytes b = bytes_of b.dtype b.length
-
-let of_memory mem dtype length =
-  { mem; offset = 0; dtype; length; generation = generation mem.claim }
-
-let checked_bytes fn s n =
-  if n < 0 then invalid_argf "Device_core.%s: %d elements is negative" fn n;
-  let bytes = bytes_of s n in
-  if bytes < 0 then
-    invalid_argf "Device_core.%s: %d %s elements take more than max_int bytes"
-      fn n (Scalar.to_string s);
-  bytes
+let of_memory mem length =
+  { mem; offset = 0; length; generation = generation mem.claim }
 
 let kind_of = function
   | Device -> Memory.device_kind
   | Pinned -> Memory.pinned_kind
   | Mapped -> Memory.mapped_kind
 
-let create ?(memory = Device) d s n =
+let create ?(memory = Device) d n =
   if Dev.is_io d then
     invalid_argf "Device_core.Buffer.create: %s is an io device" d.name;
-  let bytes = checked_bytes "Buffer.create" s n in
+  if n < 0 then invalid_argf "Device_core.Buffer.create: %d bytes is negative" n;
   if Dev.is_lost d then Dev.raise_lost d;
   let mem =
-    if Dev.is_host d then Memory.host_memory bytes
-    else if bytes = 0 then begin
+    if Dev.is_host d then Memory.host_memory n
+    else if n = 0 then begin
       Memory.drain d;
       Memory.make d 0 Memory.no_entry
     end
-    else Memory.alloc d (kind_of memory) bytes
+    else Memory.alloc d (kind_of memory) n
   in
-  of_memory mem s n
+  of_memory mem n
 
-let of_bigarray (type a b) (ba : (a, b, Bigarray.c_layout) Bigarray.Array1.t) =
-  let k = Bigarray.Array1.kind ba in
-  let s =
-    match Scalar.of_bigarray_kind k with
-    | Some s -> s
-    | None ->
-        invalid_arg
-          "Device_core.Buffer.of_bigarray: Int and Nativeint bigarrays hold no \
-           storage format"
-  in
-  let size = Bigarray.kind_size_in_bytes k in
-  let unit =
-    match k with
-    | Bigarray.Complex32 | Bigarray.Complex64 -> size / 2
-    | _ -> size
-  in
+let of_bigarray ba =
+  let n = Bigarray.Array1.size_in_bytes ba in
   let addr = Memory.ba_address ba in
-  if addr mod unit <> 0 then
-    invalid_argf
-      "Device_core.Buffer.of_bigarray: the first element at %#x is not aligned \
-       to %d bytes"
-      addr unit;
-  let n = Bigarray.Array1.dim ba in
   let mem =
-    Memory.make ~keep:(Bigarray ba) ~host:addr ~address:addr Dev.host (n * size)
+    Memory.make ~keep:(Bigarray ba) ~host:addr ~address:addr Dev.host n
       Memory.no_entry
   in
   (* Whoever holds [ba] reaches the memory outside the claims. *)
   mem.claim.count <- 1;
-  of_memory mem s n
+  of_memory mem n
 
 let device b = b.mem.dev
-let dtype b = b.dtype
 let length b = b.length
 let offset b = b.offset
 
@@ -96,29 +60,22 @@ let is_borrowed b =
   b.mem.root != b.mem
   || match b.mem.root.keep with Bigarray _ -> true | _ -> false
 
-let view b ~offset s n =
+let view b ~first ~length =
   check_live "Buffer.view" b;
-  if offset < 0 then
-    invalid_argf "Device_core.Buffer.view: offset %d is negative" offset;
-  let bytes = checked_bytes "Buffer.view" s n in
-  let size = nbytes b in
-  if offset > size || bytes > size - offset then
+  if first < 0 || length < 0 || first > b.length || length > b.length - first
+  then
     invalid_argf
-      "Device_core.Buffer.view: bytes %d to %d lie outside the buffer's %d"
-      offset (offset + bytes) size;
-  let align = Int.max 1 (Scalar.bitsize s / 8) in
-  if (b.offset + offset) mod align <> 0 then
-    invalid_argf
-      "Device_core.Buffer.view: byte %d is not aligned to %d-byte elements"
-      (b.offset + offset) align;
-  { b with offset = b.offset + offset; dtype = s; length = n }
+      "Device_core.Buffer.view: %d bytes from byte %d lie outside the buffer's \
+       %d"
+      length first b.length;
+  { b with offset = b.offset + first; length }
 
-let spans b = b.offset = 0 && nbytes b = b.mem.root.bytes
+let spans b = b.offset = 0 && b.length = b.mem.root.bytes
 
 (* Where [b]'s bytes lie: in this process's host memory by address, or in one
    memory by its identity. *)
 let overlaps b b' =
-  let n = nbytes b and n' = nbytes b' in
+  let n = b.length and n' = b'.length in
   n > 0 && n' > 0
   &&
   let m = b.mem.root and m' = b'.mem.root in
@@ -182,11 +139,6 @@ let bigarray (type a b) (k : (a, b) Bigarray.kind) b :
   if not (Dev.is_host b.mem.dev) then
     invalid_argf "Device_core.Buffer.bigarray: the buffer is on %s, not a host"
       b.mem.dev.name;
-  (match k with
-  | Bigarray.Int | Bigarray.Nativeint ->
-      invalid_arg
-        "Device_core.Buffer.bigarray: Int and Nativeint hold no storage format"
-  | _ -> ());
   Memory.check_points (Memory.stamps b.mem);
   let size = Bigarray.kind_size_in_bytes k in
   let unit =
@@ -194,7 +146,7 @@ let bigarray (type a b) (k : (a, b) Bigarray.kind) b :
     | Bigarray.Complex32 | Bigarray.Complex64 -> size / 2
     | _ -> size
   in
-  let bytes = nbytes b in
+  let bytes = b.length in
   if bytes mod size <> 0 || (b.mem.host + b.offset) mod unit <> 0 then
     invalid_argf
       "Device_core.Buffer.bigarray: %d bytes at offset %d are no whole number \

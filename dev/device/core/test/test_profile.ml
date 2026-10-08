@@ -10,7 +10,6 @@ module Sub = Device_core.Submission
 module Prof = Device_core.Profile
 module P = Device_core_support.Polled
 module Support = Device_core_support
-module S = Device_dtype.Scalar
 
 let timeout = 60.
 let memory name = require_ok ~pp:Format.pp_print_string (C.memory_device name)
@@ -106,7 +105,7 @@ let test_counters () =
    before it returns, and ordered by time, longest first. *)
 let test_after () =
   let d, _ = P.open_ "profile:after" in
-  let m = B.create d S.UInt8 64 in
+  let m = B.create d 64 in
   let read = ref false in
   let span name start stop =
     Prof.Span { device = d; lane = "COMPUTE:0"; name; start; stop }
@@ -179,7 +178,7 @@ let test_span_raises () =
 
 let test_allocation () =
   let d, _ = P.open_ "profile:allocation" in
-  let b, events = Prof.take (fun () -> B.create d S.UInt8 4096) in
+  let b, events = Prof.take (fun () -> B.create d 4096) in
   let allocations =
     List.filter_map
       (function
@@ -193,7 +192,7 @@ let test_allocation () =
 (* [record] reads the second and fourth words of its stamps. *)
 let test_record () =
   let d, _ = P.open_ "profile:record" in
-  let stamps = B.create C.host S.UInt64 4 in
+  let stamps = B.create C.host 32 in
   let words = B.bigarray Bigarray.int64 stamps in
   List.iteri (fun i w -> words.{i} <- Int64.of_int w) [ 0; 100; 0; 250 ];
   let (), events =
@@ -217,7 +216,7 @@ let refuses_stamps stamps () =
 
 let test_copy () =
   let d = memory "profile:copy" in
-  let src = B.create C.host S.UInt8 100 and dst = B.create d S.UInt8 100 in
+  let src = B.create C.host 100 and dst = B.create d 100 in
   let (), events = Prof.take (fun () -> B.copy ~src ~dst) in
   let copies =
     List.filter_map
@@ -355,10 +354,10 @@ let tests =
           test_after_lost;
         test "a recorded span reads its stamps' second and fourth words"
           test_record;
-        test "a recorded span refuses three words"
-          (refuses_stamps (B.create C.host S.UInt64 3));
-        test "a recorded span refuses words of another format"
-          (refuses_stamps (B.create C.host S.UInt32 8));
+        test "a recorded span refuses 24 bytes"
+          (refuses_stamps (B.create C.host 24));
+        test "a recorded span refuses stamps off an 8-byte boundary"
+          (refuses_stamps (B.view (B.create C.host 40) ~first:4 ~length:32));
       ];
     group ~timeout "copies"
       [ test "a copy records the bytes it moved" test_copy ];

@@ -80,8 +80,7 @@ let test_io () =
   equal bool false (C.computes io);
   equal (list bool) [ false; false ]
     [ C.reaches io C.host; C.reaches C.host io ];
-  raises_match Exn.invalid_arg (fun () ->
-      Device_core.Buffer.create io Device_dtype.Scalar.UInt8 8)
+  raises_match Exn.invalid_arg (fun () -> Device_core.Buffer.create io 8)
 
 (* A device of another machine is named after it, and its host is the io device
    opened as that machine's. *)

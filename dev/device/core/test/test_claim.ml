@@ -7,7 +7,6 @@ open Windtrap
 module C = Device_core
 module B = Device_core.Buffer
 module Claim = Device_core.Claim
-module S = Device_dtype.Scalar
 
 let timeout = 60.
 
@@ -82,11 +81,11 @@ let expected c =
          indexed)
 
 let law c =
-  let b = B.create C.host S.UInt8 c.n in
+  let b = B.create C.host c.n in
   let views =
     List.filter_map
       (fun (o, l, r) ->
-        if r = Skip then None else Some (B.view b ~offset:o S.UInt8 l, r))
+        if r = Skip then None else Some (B.view b ~first:o ~length:l, r))
       c.views
   in
   let read =
@@ -127,7 +126,7 @@ let law c =
 (* Cases *)
 
 let test_claims () =
-  let b = B.create C.host S.UInt8 8 in
+  let b = B.create C.host 8 in
   Claim.read b;
   Claim.release b;
   raises_match Exn.invalid_arg (fun () -> Claim.release b);
@@ -142,7 +141,7 @@ let test_borrow_counts () =
   let d =
     require_ok ~pp:Format.pp_print_string (C.memory_device "claim:borrow")
   in
-  let b = B.create C.host S.UInt8 (1 lsl 16) in
+  let b = B.create C.host (1 lsl 16) in
   let borrowed = require_some (B.borrow d b) in
   Claim.read borrowed;
   Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
@@ -161,7 +160,7 @@ let test_shards () =
   let d =
     require_ok ~pp:Format.pp_print_string (C.memory_device "claim:shards")
   in
-  let a = B.create C.host S.UInt8 8 and b = B.create d S.UInt8 8 in
+  let a = B.create C.host 8 and b = B.create d 8 in
   Claim.with_ ~read:[]
     ~donate:[ [ a; b ] ]
     (fun c -> equal bool true (Claim.exclusive c a && Claim.exclusive c b));
@@ -180,8 +179,8 @@ let dead why = Exn.invalid_arg ~substring:why
 (* Memory consumed twice lives while the last buffer over it is reachable, and
    every earlier buffer is dead. *)
 let test_consume_twice () =
-  let b = B.create C.host S.UInt8 (1 lsl 16) in
-  let view = B.view b ~offset:0 S.UInt8 8 in
+  let b = B.create C.host (1 lsl 16) in
+  let view = B.view b ~first:0 ~length:8 in
   let b' =
     Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
         Claim.consume c ~why:"first" b)
@@ -196,15 +195,15 @@ let test_consume_twice () =
   Bigarray.Array1.fill (B.bigarray Bigarray.char b'') 'c';
   Gc.full_major ();
   Gc.full_major ();
-  ignore (Sys.opaque_identity (B.create C.host S.UInt8 (1 lsl 16)));
+  ignore (Sys.opaque_identity (B.create C.host (1 lsl 16)));
   equal char 'c' (B.bigarray Bigarray.char b'').{(1 lsl 16) - 1}
 
 let test_consume_refusals () =
-  let b = B.create C.host S.UInt8 16 in
-  let part = B.view b ~offset:0 S.UInt8 8 in
+  let b = B.create C.host 16 in
+  let part = B.view b ~first:0 ~length:8 in
   Claim.with_ ~read:[] ~donate:[ [ part ] ] (fun c ->
       raises_match Exn.invalid_arg (fun () -> Claim.consume c ~why:"part" part));
-  let other = B.create C.host S.UInt8 16 in
+  let other = B.create C.host 16 in
   Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
       raises_match Exn.invalid_arg (fun () ->
           Claim.consume c ~why:"unclaimed" other))
@@ -212,7 +211,7 @@ let test_consume_refusals () =
 (* A consumed memory's dead buffers refuse claims, and a release accepts
    them. *)
 let test_dead_claims () =
-  let b = B.create C.host S.UInt8 8 in
+  let b = B.create C.host 8 in
   Claim.read b;
   let live =
     Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->

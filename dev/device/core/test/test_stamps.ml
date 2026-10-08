@@ -14,7 +14,6 @@ module B = Device_core.Buffer
 module Sub = Device_core.Submission
 module P = Device_core_support.Polled
 module Support = Device_core_support
-module S = Device_dtype.Scalar
 
 let timeout = 120.
 
@@ -83,7 +82,7 @@ let open_system () =
         v)
       devices
   in
-  { devices; base; m = B.create (fst devices.(0)) S.UInt8 64 }
+  { devices; base; m = B.create (fst devices.(0)) 64 }
 
 (* A submit on device [i] that reads or writes the memory: its value, and the
    other device's word once the submit returned. Writing waits for the other
@@ -133,7 +132,7 @@ let wait_model access r = function
 (* A copy of the memory into a fresh buffer of device [i] reads it: it waits for
    the memory's last write. *)
 let copy_system i t =
-  let dst = B.create (fst t.devices.(i)) S.UInt8 64 in
+  let dst = B.create (fst t.devices.(i)) 64 in
   B.copy ~src:t.m ~dst;
   (signaled t 0, signaled t 1)
 
@@ -196,7 +195,7 @@ let open_replay () =
     Printf.sprintf "stamps:replay-%d" (Atomic.fetch_and_add replays 1)
   in
   let d, p = P.open_ name in
-  let args = Array.init 2 (fun _ -> B.create ~memory:Mapped d S.UInt64 2) in
+  let args = Array.init 2 (fun _ -> B.create ~memory:Mapped d 16) in
   let copy a = Sub.make ~reads:0 ~writes:1 ~waits:0 d [| poke a |] in
   let subs = Array.map copy args in
   {
@@ -215,7 +214,7 @@ let run_replay t =
   cover "a copy reused before its last run ran"
     (n >= 2 && C.signaled t.d < Hashtbl.find t.points (n - 2));
   B.wait args B.Read_write;
-  let out = B.create t.d S.UInt64 1 in
+  let out = B.create t.d 8 in
   B.wait out B.Read_write;
   Support.store (B.address out) (-1);
   Support.store (B.address args) (B.address out);

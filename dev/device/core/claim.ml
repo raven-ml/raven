@@ -42,7 +42,7 @@ type t = { reads : claim list; mutable exclusive : claim list }
    last bytes. Memory with no address is placed by its handle. *)
 let span b =
   let m = b.mem.root in
-  let n = Buffer.nbytes b in
+  let n = Buffer.length b in
   if m.host >= 0 && m.dev.machine = None then (0, m.host + b.offset, n)
   else
     let base =

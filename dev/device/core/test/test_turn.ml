@@ -13,7 +13,6 @@ module B = Device_core.Buffer
 module Sub = Device_core.Submission
 module P = Device_core_support.Polled
 module Support = Device_core_support
-module S = Device_dtype.Scalar
 
 let timeout = 60.
 let lost d = function C.Lost (d', _) -> C.equal d d' | _ -> false
@@ -22,7 +21,7 @@ let empty d = Sub.make ~reads:0 ~writes:0 ~waits:0 d [||]
 
 (* A part that holds one unit of a Polled queue. *)
 let bump () =
-  let arg = B.create C.host S.UInt64 1 in
+  let arg = B.create C.host 8 in
   {
     Sub.queue = "COMPUTE:0";
     after = [||];

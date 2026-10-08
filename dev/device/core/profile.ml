@@ -129,13 +129,12 @@ let after p f =
 
 let record p ~lane ~name stamps =
   if
-    stamps.dtype <> Scalar.UInt64
-    || stamps.length <> 4 || stamps.mem.host < 0
+    stamps.length <> 32 || stamps.mem.host < 0
     || (stamps.mem.host + stamps.offset) mod 8 <> 0
   then
     invalid_arg
-      "Device_core.Profile.record: the stamps are not four UInt64 of host \
-       memory";
+      "Device_core.Profile.record: the stamps are not 32 bytes of host memory \
+       aligned to 8";
   let device = Dev.of_index (Point.index p) in
   let at = stamps.mem.host + stamps.offset in
   after p (fun () ->

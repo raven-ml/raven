@@ -22,11 +22,9 @@ let place d (e : entry) code =
   in
   if Dev.copies d then begin
     let dst =
-      Buffer.of_memory
-        (Memory.make ~host ~address ~handle d e.bytes e)
-        Scalar.UInt8 n
+      Buffer.of_memory (Memory.make ~host ~address ~handle d e.bytes e) n
     in
-    let src = Buffer.create ~memory:Buffer.Pinned d Scalar.UInt8 n in
+    let src = Buffer.create ~memory:Buffer.Pinned d n in
     blit_string code src.mem.host;
     let queue =
       Array.to_list d.queues |> List.find (String.starts_with ~prefix:"COPY:")

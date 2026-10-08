@@ -9,7 +9,6 @@ module B = Device_core.Buffer
 module Sub = Device_core.Submission
 module P = Device_core_support.Polled
 module Support = Device_core_support
-module S = Device_dtype.Scalar
 
 let timeout = 60.
 let empty ?(waits = 0) d = Sub.make ~reads:0 ~writes:0 ~waits d [||]
@@ -24,7 +23,7 @@ let test_failed_submit () =
   raises_match (lost d) (fun () -> C.submit s);
   equal (option string) (Some "the submission failed") (C.lost d);
   raises_match (lost d) (fun () -> C.submit s);
-  raises_match (lost d) (fun () -> B.create d S.UInt8 8);
+  raises_match (lost d) (fun () -> B.create d 8);
   equal int 1 (count "stop" p)
 
 let test_fault () =
@@ -38,12 +37,12 @@ let test_fault () =
 (* After the stop answered, only free and unmap reach the driver. *)
 let test_after_stop () =
   let d, p = P.open_ "loss:after-stop" in
-  let b = B.create d S.UInt8 64 in
+  let b = B.create d 64 in
   P.fail p;
   (try ignore (C.submit (empty d)) with C.Lost _ -> ());
   ignore (Sys.opaque_identity b);
   Gc.full_major ();
-  ignore (B.create C.host S.UInt8 8);
+  ignore (B.create C.host 8);
   let rec after = function
     | "stop" :: rest -> rest
     | _ :: rest -> after rest
@@ -81,16 +80,16 @@ let test_no_spread () =
    value. *)
 let test_unknown () =
   let d, p = P.open_ ~answer:`Unknown "loss:unknown" in
-  let b = B.create d S.UInt8 64 in
+  let b = B.create d 64 in
   ignore (C.submit (empty d));
   P.fail p;
   (try ignore (C.submit (empty d)) with C.Lost _ -> ());
   ignore (Sys.opaque_identity b);
   Gc.full_major ();
-  ignore (B.create C.host S.UInt8 8);
+  ignore (B.create C.host 8);
   equal int 0 (count "free" p);
   P.set_word p (C.submitted d);
-  ignore (B.create C.host S.UInt8 8);
+  ignore (B.create C.host 8);
   equal int 1 (count "free" p)
 
 (* A wait checks the loss after its value: a reached value of a lost device
@@ -159,7 +158,7 @@ let test_printed () =
 let test_others_go_on () =
   let d, p = P.open_ "loss:lost" in
   let e, _ = P.open_ "loss:kept" in
-  let named = B.create e S.UInt8 64 and kept = B.create e S.UInt8 64 in
+  let named = B.create e 64 and kept = B.create e 64 in
   let s = Sub.make ~reads:1 ~writes:0 ~waits:0 d [||] in
   Sub.read s 0 named;
   C.wait d (C.Point.value (C.submit s));
@@ -176,7 +175,7 @@ let test_others_go_on () =
 let test_alloc_fault () =
   let d, p = P.open_ "loss:alloc" in
   P.fault p "the device fell off the bus";
-  raises_match (lost d) (fun () -> B.create d S.UInt8 64);
+  raises_match (lost d) (fun () -> B.create d 64);
   equal (option string) (Some "the device fell off the bus") (C.lost d);
   equal int 1 (count "stop" p)
 

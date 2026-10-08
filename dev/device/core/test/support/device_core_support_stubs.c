@@ -313,8 +313,8 @@ value device_core_test_reader_host(value v_b) {
   return Val_long((intnat)device_core_buffer_host(v_b));
 }
 
-value device_core_test_reader_length(value v_b) {
-  return Val_long((intnat)device_core_buffer_length(v_b));
+value device_core_test_reader_bytes(value v_b) {
+  return Val_long((intnat)device_core_buffer_bytes(v_b));
 }
 
 value device_core_test_reader_why(value v_b) {

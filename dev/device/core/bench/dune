@@ -9,7 +9,7 @@
 (executable
  (name bench_core)
  (modules bench_core)
- (libraries device_core device_dtype device_core_bench device_core_support thumper))
+ (libraries device_core device_core_bench device_core_support thumper))
 
 (rule
  (alias bench)

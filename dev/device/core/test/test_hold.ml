@@ -10,7 +10,6 @@ module Sub = Device_core.Submission
 module H = Device_core.Hold
 module P = Device_core_support.Polled
 module Support = Device_core_support
-module S = Device_dtype.Scalar
 
 let timeout = 60.
 let lost d = function C.Lost (d', _) -> C.equal d d' | _ -> false
@@ -18,7 +17,7 @@ let count call p = List.length (List.filter (( = ) call) (P.log p))
 let empty d = Sub.make ~reads:0 ~writes:0 ~waits:0 d [||]
 
 (* A drain on [d]: what {!Buffer.create} does first. *)
-let drain d = ignore (Sys.opaque_identity (B.create d S.UInt8 8))
+let drain d = ignore (Sys.opaque_identity (B.create d 8))
 
 (* Submits once on [d] a submission naming a hold of [m] whose release counts
    its runs in [runs], and drops both: the hold is unreachable once this
@@ -37,7 +36,7 @@ let[@inline never] submit_held ?(release = ignore) d m runs =
 
 let test_release () =
   let d, p = P.open_ "hold:release" in
-  let m = B.create d S.UInt8 64 and runs = Atomic.make 0 in
+  let m = B.create d 64 and runs = Atomic.make 0 in
   ignore (submit_held d m runs);
   Gc.full_major ();
   equal ~msg:"after a collection" int 0 (Atomic.get runs);
@@ -53,7 +52,7 @@ let test_release () =
    wrote nothing. *)
 let test_wait_held () =
   let d, p = P.open_ "hold:wait" in
-  let m = B.create d S.UInt8 64 in
+  let m = B.create d 64 in
   let h = H.make [ m ] in
   let v =
     C.Point.value
@@ -68,7 +67,7 @@ let test_wait_held () =
    keeps the release. *)
 let test_release_lost () =
   let d, p = P.open_ ~answer:`Unknown "hold:lost" in
-  let m = B.create d S.UInt8 64 and runs = Atomic.make 0 in
+  let m = B.create d 64 and runs = Atomic.make 0 in
   ignore (submit_held d m runs);
   P.fail p;
   raises_match (lost d) (fun () -> C.submit (empty d));
@@ -82,7 +81,7 @@ let test_release_lost () =
 
 let test_release_raises () =
   let d, _ = P.open_ "hold:raises" in
-  let m = B.create d S.UInt8 64 and runs = Atomic.make 0 in
+  let m = B.create d 64 and runs = Atomic.make 0 in
   ignore (submit_held ~release:(fun () -> raise Exit) d m runs);
   C.wait d (C.submitted d);
   Gc.full_major ();
@@ -94,7 +93,7 @@ let test_release_raises () =
    the device once the release returned. *)
 let test_release_counted () =
   let d, p = P.open_ "hold:counted" in
-  let m = B.create d S.UInt8 64 and runs = Atomic.make 0 in
+  let m = B.create d 64 and runs = Atomic.make 0 in
   let lock = Mutex.create () and cond = Condition.create () in
   let inside = ref false and go = ref false in
   let release () =
@@ -124,7 +123,7 @@ let test_memory_returns () =
   let d, p = P.open_ "hold:memory" in
   let at =
     (fun () ->
-      let m = B.create d S.UInt8 64 in
+      let m = B.create d 64 in
       ignore (submit_held d m (Atomic.make 0));
       B.address m)
       ()
@@ -144,22 +143,22 @@ let test_memory_returns () =
 
 let test_refusals () =
   let d, _ = P.open_ "hold:refusals" in
-  let m = B.create d S.UInt8 64 and m' = B.create d S.UInt8 64 in
+  let m = B.create d 64 and m' = B.create d 64 in
   let h = H.make [ m ] in
   raises_match Exn.invalid_arg (fun () ->
-      H.make [ B.view m ~offset:8 S.UInt8 8 ]);
+      H.make [ B.view m ~first:8 ~length:8 ]);
   let s = Sub.make ~hold:h ~reads:1 ~writes:1 ~waits:0 d [||] in
   raises_match Exn.invalid_arg (fun () -> Sub.read s 0 m);
   raises_match Exn.invalid_arg (fun () -> Sub.write s 0 m);
   let h' = H.make [ m' ] in
-  let copy = Sub.Copy { src = m'; dst = B.create d S.UInt8 64 } in
+  let copy = Sub.Copy { src = m'; dst = B.create d 64 } in
   let part = { Sub.queue = "COPY:0"; after = [||]; work = copy } in
   raises_match Exn.invalid_arg (fun () ->
       Sub.make ~hold:h ~reads:0 ~writes:0 ~waits:0 d [| part |]);
   ignore (Sub.make ~hold:h' ~reads:0 ~writes:0 ~waits:0 d [| part |])
 
 let test_dead () =
-  let b = B.create C.host S.UInt8 8 in
+  let b = B.create C.host 8 in
   C.Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
       ignore (C.Claim.consume c ~why:"donated" b));
   raises_match (Exn.invalid_arg ~substring:"donated") (fun () -> H.make [ b ])

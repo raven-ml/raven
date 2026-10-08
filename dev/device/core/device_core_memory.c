@@ -154,11 +154,11 @@ value caml_device_core_blit_string(value v_s, value v_dst) {
 
 /* Reading buffers
 
-   A buffer is the record { mem; offset; dtype; length; generation }, its
+   A buffer is the record { mem; offset; length; generation }, its
    memory { dev; bytes; host; address; handle; claim; ... } and its claim
    { count; generation; why }, as the core's Def module lays them out. */
 
-enum { BUFFER_MEM, BUFFER_OFFSET, BUFFER_DTYPE, BUFFER_LENGTH, BUFFER_GEN };
+enum { BUFFER_MEM, BUFFER_OFFSET, BUFFER_LENGTH, BUFFER_GEN };
 enum { MEMORY_DEV, MEMORY_BYTES, MEMORY_HOST, MEMORY_ADDRESS, MEMORY_HANDLE,
        MEMORY_CLAIM };
 enum { CLAIM_COUNT, CLAIM_GEN, CLAIM_WHY };
@@ -170,7 +170,7 @@ void *device_core_buffer_host(value b) {
   return (char *)host + Long_val(Field(b, BUFFER_OFFSET));
 }
 
-size_t device_core_buffer_length(value b) {
+size_t device_core_buffer_bytes(value b) {
   return (size_t)Long_val(Field(b, BUFFER_LENGTH));
 }
 

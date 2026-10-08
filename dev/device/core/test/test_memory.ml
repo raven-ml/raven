@@ -12,7 +12,6 @@ module B = Device_core.Buffer
 module Sub = Device_core.Submission
 module P = Device_core_support.Polled
 module Support = Device_core_support
-module S = Device_dtype.Scalar
 
 let timeout = 60.
 let kib = 1024
@@ -23,15 +22,14 @@ let out_of_memory d n = function
 
 (* A buffer of [n] bytes on [d] that is unreachable once this returns: its
    address. *)
-let[@inline never] dropped ?memory d n =
-  B.address (B.create ?memory d S.UInt8 n)
+let[@inline never] dropped ?memory d n = B.address (B.create ?memory d n)
 
 (* Collects, then drains [d], as an allocation on it does first: of pinned
    memory, which no budget refuses. *)
 let collect d =
   Gc.full_major ();
   Gc.full_major ();
-  ignore (Sys.opaque_identity (B.create ~memory:Pinned d S.UInt8 8))
+  ignore (Sys.opaque_identity (B.create ~memory:Pinned d 8))
 
 let last n l = List.filteri (fun i _ -> i >= List.length l - n) l
 let freed p at = List.exists (fun (a, _) -> a = at) (P.frees p)
@@ -58,19 +56,17 @@ let test_over_budget () =
   collect d;
   raises_match
     (out_of_memory d ((8 * kib) + 1))
-    (fun () -> B.create d S.UInt8 ((8 * kib) + 1));
+    (fun () -> B.create d ((8 * kib) + 1));
   equal ~msg:"the cached memory" bool false (freed p at);
   at_least int ~than:(4 * kib) (P.allocated p `Device)
 
 (* An allocation the driver refuses releases the cache, then raises. *)
 let test_refused () =
   let d, p = P.open_ ~memory:(8 * kib) "memory:refused" in
-  let live = B.create d S.UInt8 (4 * kib) in
+  let live = B.create d (4 * kib) in
   let at = dropped d (4 * kib) in
   collect d;
-  raises_match
-    (out_of_memory d (8 * kib))
-    (fun () -> B.create d S.UInt8 (8 * kib));
+  raises_match (out_of_memory d (8 * kib)) (fun () -> B.create d (8 * kib));
   equal ~msg:"the cached memory" bool true (freed p at);
   equal ~msg:"the live memory" bool false (freed p (B.address live))
 
@@ -79,16 +75,16 @@ let test_refused () =
 let test_collects () =
   let d, _ = P.open_ ~memory:(4 * kib) "memory:collects" in
   (fun () ->
-    let b = B.create d S.UInt8 (4 * kib) in
+    let b = B.create d (4 * kib) in
     let inner = ref 0 and outer = ref 0 in
     Gc.finalise (fun _ -> ignore (Sys.opaque_identity b)) inner;
     Gc.finalise (fun _ -> ignore (Sys.opaque_identity inner)) outer)
     ();
-  equal int (4 * kib) (B.nbytes (B.create d S.UInt8 (4 * kib)))
+  equal int (4 * kib) (B.length (B.create d (4 * kib)))
 
 let test_set_budget () =
   let d, p = P.open_ "memory:set-budget" in
-  let live = B.create d S.UInt8 (8 * kib) in
+  let live = B.create d (8 * kib) in
   List.iter (fun _ -> ignore (dropped d (4 * kib))) [ 1; 2; 3 ];
   collect d;
   C.set_budget d (12 * kib);
@@ -115,9 +111,9 @@ let test_host_budget () = equal int max_int (C.budget C.host)
 let test_pinned () =
   let d, p = P.open_ "memory:pinned" in
   C.set_budget d 0;
-  equal int (4 * kib) (B.nbytes (B.create ~memory:Pinned d S.UInt8 (4 * kib)));
+  equal int (4 * kib) (B.length (B.create ~memory:Pinned d (4 * kib)));
   equal allocs [ (`Pinned, 4 * kib, true) ] (P.allocs p);
-  raises_match (out_of_memory d 1) (fun () -> B.create d S.UInt8 1)
+  raises_match (out_of_memory d 1) (fun () -> B.create d 1)
 
 (* Mapped memory the window cannot hold is pinned memory, and the cache
    stays. *)
@@ -125,7 +121,7 @@ let test_mapped_window () =
   let d, p = P.open_ ~window:(4 * kib) "memory:window" in
   let at = dropped d (4 * kib) in
   collect d;
-  let b = B.create ~memory:Mapped d S.UInt8 (8 * kib) in
+  let b = B.create ~memory:Mapped d (8 * kib) in
   equal ~msg:"the cached memory" bool false (freed p at);
   equal allocs
     [ (`Mapped, 8 * kib, false); (`Pinned, 8 * kib, true) ]
@@ -135,12 +131,12 @@ let test_mapped_window () =
 let test_mapped_budget () =
   let d, p = P.open_ "memory:mapped-budget" in
   C.set_budget d (4 * kib);
-  ignore (B.create ~memory:Mapped d S.UInt8 (8 * kib));
+  ignore (B.create ~memory:Mapped d (8 * kib));
   equal allocs [ (`Pinned, 8 * kib, true) ] (P.allocs p)
 
 let test_mapped () =
   let d, p = P.open_ "memory:mapped" in
-  let b = B.create ~memory:Mapped d S.UInt8 (4 * kib) in
+  let b = B.create ~memory:Mapped d (4 * kib) in
   equal allocs [ (`Mapped, 4 * kib, true) ] (P.allocs p);
   equal bool true (C.equal d (B.device b))
 
@@ -175,7 +171,7 @@ let test_paced () =
   let forced () = (Gc.quick_stat ()).forced_major_collections in
   let before = forced () in
   for _ = 1 to 20 * 16 do
-    ignore (Sys.opaque_identity (B.create d S.UInt8 (budget / 16)))
+    ignore (Sys.opaque_identity (B.create d (budget / 16)))
   done;
   equal int 0 (forced () - before)
 
@@ -186,7 +182,7 @@ let test_foreign_use () =
   let b, pb = P.open_ "memory:reader" in
   let at =
     (fun () ->
-      let m = B.create a S.UInt8 (4 * kib) in
+      let m = B.create a (4 * kib) in
       let s = Sub.make ~reads:1 ~writes:0 ~waits:0 b [||] in
       Sub.read s 0 m;
       ignore (C.submit s);
@@ -210,10 +206,10 @@ let test_host_cache () =
   let first = dropped C.host n in
   Gc.full_major ();
   Gc.full_major ();
-  equal ~msg:"reused" int first (B.address (B.create C.host S.UInt8 n));
+  equal ~msg:"reused" int first (B.address (B.create C.host n));
   let at, view =
     (fun () ->
-      let b = B.create C.host S.UInt8 n in
+      let b = B.create C.host n in
       let ba = B.bigarray Bigarray.char b in
       Bigarray.Array1.fill ba 'a';
       (B.address b, ba))
@@ -221,7 +217,7 @@ let test_host_cache () =
   in
   Gc.full_major ();
   Gc.full_major ();
-  let b = B.create C.host S.UInt8 n in
+  let b = B.create C.host n in
   not_equal ~msg:"the viewed memory" int at (B.address b);
   Bigarray.Array1.fill (B.bigarray Bigarray.char b) 'b';
   equal ~msg:"the view keeps its bytes" char 'a' view.{n - 1}

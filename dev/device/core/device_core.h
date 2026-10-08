@@ -21,8 +21,8 @@
    address [b]'s memory. */
 void *device_core_buffer_host(value b);
 
-/* The number of [b]'s elements. */
-size_t device_core_buffer_length(value b);
+/* The number of [b]'s bytes. */
+size_t device_core_buffer_bytes(value b);
 
 /* The reason the consumption of [b] gave if [b] is dead, as a C string that
    lives while [b] is reachable; NULL if [b] is live. */

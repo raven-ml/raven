@@ -18,7 +18,6 @@ module B = Device_core.Buffer
 module Sub = Device_core.Submission
 module P = Device_core_support.Polled
 module Support = Device_core_support
-module S = Device_dtype.Scalar
 
 let strf = Printf.sprintf
 
@@ -47,7 +46,7 @@ let drained t =
   t.n <- t.n + 1;
   if t.n mod drain = 0 then ignore (P.run t.p)
 
-let words d n = Array.init n (fun _ -> B.create d S.UInt64 1)
+let words d n = Array.init n (fun _ -> B.create d 8)
 
 (* A part that adds 1 to the word [arg] holds. *)
 let bump arg =
@@ -59,7 +58,7 @@ let bump arg =
   }
 
 let bumping ?(reads = 0) ?(writes = 0) d =
-  Sub.make ~reads ~writes ~waits:0 d [| bump (B.create C.host S.UInt64 1) |]
+  Sub.make ~reads ~writes ~waits:0 d [| bump (B.create C.host 8) |]
 
 let submit_read s bs =
   for i = 0 to Array.length bs - 1 do
@@ -146,9 +145,9 @@ type replay = { t : dev; params : B.t array; copies : copy array }
 let replaying () =
   let t = dev () in
   let copy () =
-    let args = B.create C.host S.UInt64 1 in
+    let args = B.create C.host 8 in
     let s = Sub.make ~reads:slots ~writes:1 ~waits:0 t.d [| bump args |] in
-    { s; args; at = B.address args; out = B.create t.d S.UInt64 1 }
+    { s; args; at = B.address args; out = B.create t.d 8 }
   in
   { t; params = words t.d slots; copies = [| copy (); copy () |] }
 
@@ -183,7 +182,7 @@ type floor = { f : nativeint; fp : P.t; word : int; mutable k : int }
 let floor () =
   let fp = P.make () in
   let f = floor_new (P.self fp) P.room_entry P.submit_entry Support.bump in
-  { f; fp; word = B.address (B.create C.host S.UInt64 1); k = 0 }
+  { f; fp; word = B.address (B.create C.host 8); k = 0 }
 
 let floor_drained t =
   t.k <- t.k + 1;

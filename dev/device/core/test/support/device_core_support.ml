@@ -279,9 +279,7 @@ let await what f =
 
 module Reader = struct
   external host : Device_core.Buffer.t -> int = "device_core_test_reader_host"
-
-  external length : Device_core.Buffer.t -> int
-    = "device_core_test_reader_length"
+  external bytes : Device_core.Buffer.t -> int = "device_core_test_reader_bytes"
 
   external why : Device_core.Buffer.t -> string option
     = "device_core_test_reader_why"

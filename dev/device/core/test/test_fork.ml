@@ -11,7 +11,6 @@ module C = Device_core
 module B = Device_core.Buffer
 module Sub = Device_core.Submission
 module P = Device_core_support.Polled
-module S = Device_dtype.Scalar
 
 let timeout = 60.
 let empty d = Sub.make ~reads:0 ~writes:0 ~waits:0 d [||]
@@ -48,7 +47,7 @@ let in_child child =
 let test_child () =
   if Sys.win32 then skip ~reason:"Windows has no fork" ();
   let d, p = P.open_ "fork:child" in
-  let b = ref (Some (B.create d S.UInt8 64)) in
+  let b = ref (Some (B.create d 64)) in
   let v = C.Point.value (C.submit (empty d)) in
   let calls = P.log p in
   let lines, ended =
@@ -58,10 +57,10 @@ let test_child () =
         let wait = raises_lost (fun () -> C.wait d v) in
         b := None;
         Gc.full_major ();
-        ignore (B.create C.host S.UInt8 8);
+        ignore (B.create C.host 8);
         P.set_word p v;
         Gc.full_major ();
-        ignore (B.create C.host S.UInt8 8);
+        ignore (B.create C.host 8);
         [
           Option.value ~default:"not lost" lost;
           Printf.sprintf "submit raises Lost: %b" submit;

@@ -226,12 +226,9 @@ exception Out_of_memory of t * int
 
 (** Buffers of device memory.
 
-    A buffer is {!length} elements of one storage format in a range of one
-    device's memory. Its bytes are the elements in their storage representation,
-    in order: [Device_dtype.Scalar.bitsize s / 8] bytes each, two per byte for
-    [Int4] and [UInt4], the first in the low nibble, and eight per byte for
-    [Bit], the first in the lowest bit: [n] elements of [b] bits take
-    [(n * b + 7) / 8] bytes. Multi-byte elements are little-endian.
+    A buffer is {!length} bytes in a range of one device's memory. What the
+    bytes mean, elements of some type, is the caller's: this library moves,
+    orders and returns bytes.
 
     A buffer is {e owned} when {!create} made it, and {e borrowed} when it is
     over memory something else holds: a bigarray ({!of_bigarray}) or another
@@ -257,37 +254,30 @@ module Buffer : sig
             released, it is [Pinned] memory, which keeps these promises, and the
             cache stays. *)
 
-  val create : ?memory:memory -> device -> Device_dtype.Scalar.t -> int -> t
-  (** [create d s n] is an owned buffer of [n] elements of [s] in [d]'s memory
-      [memory] (defaults to [Device]), with unspecified contents. A buffer of no
-      bytes allocates nothing. On a device whose memory the host addresses,
-      every [memory] is the device's own. On a host, a buffer of 64 KiB or more
-      (four pages, where pages are larger) starts on a page, so devices can
-      {!borrow} it.
+  val create : ?memory:memory -> device -> int -> t
+  (** [create d n] is an owned buffer of [n] bytes in [d]'s memory [memory]
+      (defaults to [Device]), with unspecified contents. A buffer of no bytes
+      allocates nothing. On a device whose memory the host addresses, every
+      [memory] is the device's own. On a host, a buffer of 64 KiB or more (four
+      pages, where pages are larger) starts on a page, so devices can {!borrow}
+      it.
 
       [create] first drains what [d] holds for reuse: memory of buffers
       collected since, and the releases of holds that became due ({!Hold}).
 
-      Raises [Invalid_argument] if [d] is an {!Io} device, [n < 0], or [n]
-      elements of [s] take more than [max_int] bytes; {!Out_of_memory}; and
-      {!Lost} if [d] is lost. *)
+      Raises [Invalid_argument] if [d] is an {!Io} device or [n < 0];
+      {!Out_of_memory}; and {!Lost} if [d] is lost. *)
 
   val of_bigarray : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> t
-  (** [of_bigarray ba] is a borrowed buffer on {!host} over [ba]'s elements,
-      without a copy, of the format of [ba]'s kind: [Float16], [Float32],
-      [Float64], [Int8], [UInt8] for [Int8_unsigned] and [Char], [Int16],
-      [UInt16], [Int32], [Int64], [Complex64] for [Complex32] and [Complex128]
-      for [Complex64]. It keeps [ba] reachable. Whoever holds [ba] reaches the
-      memory outside the claims, so it is never exclusive ({!Claim}).
-
-      Raises [Invalid_argument] if [ba]'s kind is [Int] or [Nativeint], or if
-      its first element does not lie at a multiple of its size. *)
+  (** [of_bigarray ba] is a borrowed buffer on {!host} over [ba]'s bytes,
+      without a copy. It keeps [ba] reachable. Whoever holds [ba] reaches the
+      memory outside the claims, so it is never exclusive ({!Claim}). *)
 
   val borrow : device -> t -> t option
   (** [borrow d b] is [Some b'], a borrowed buffer on [d] over [b]'s memory,
-      without a copy, of [b]'s format and length, or [None] where [d] cannot map
-      it. It is [Some b] for [b] on [d]. [b'] keeps [b] reachable, and its
-      stamps are [b]'s: work through [b'] is work on [b]'s memory.
+      without a copy, of [b]'s length, or [None] where [d] cannot map it. It is
+      [Some b] for [b] on [d]. [b'] keeps [b] reachable, and its stamps are
+      [b]'s: work through [b'] is work on [b]'s memory.
 
       [d] maps host memory of its machine that starts on a page, and memory of a
       device of its own driver that its driver maps ({!Driver.map_peer}). Every
@@ -353,26 +343,18 @@ module Buffer : sig
   val device : t -> device
   (** [device b] is the device whose memory [b] is. *)
 
-  val dtype : t -> Device_dtype.Scalar.t
-  (** [dtype b] is the format of [b]'s elements. *)
-
   val length : t -> int
-  (** [length b] is the number of [b]'s elements. *)
-
-  val nbytes : t -> int
-  (** [nbytes b] is [b]'s size in bytes. *)
+  (** [length b] is the number of [b]'s bytes. *)
 
   val is_borrowed : t -> bool
   (** [is_borrowed b] is [true] iff [b] is borrowed. *)
 
-  val view : t -> offset:int -> Device_dtype.Scalar.t -> int -> t
-  (** [view b ~offset s n] is the [n] elements of [s] from byte [offset] of [b]
+  val view : t -> first:int -> length:int -> t
+  (** [view b ~first ~length] is the [length] bytes of [b] from its byte [first]
       on, over [b]'s memory.
 
-      Raises [Invalid_argument] if [offset] or [n] is negative, [n] elements of
-      [s] take more than [max_int] bytes, the view's bytes do not lie inside
-      [b]'s, or its first byte is not aligned to the size of one element of [s]
-      (one byte for [Int4], [UInt4] and [Bit]). *)
+      Raises [Invalid_argument] if [first] or [length] is negative or the bytes
+      do not lie inside [b]'s. *)
 
   val spans : t -> bool
   (** [spans b] is [true] iff [b]'s bytes are all of the memory it lies in,
@@ -387,20 +369,17 @@ module Buffer : sig
   val bigarray :
     ('a, 'b) Bigarray.kind -> t -> ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t
   (** [bigarray k b] is the bytes of the host buffer [b] read as elements of
-      kind [k], without a copy: [nbytes b / Bigarray.kind_size_in_bytes k] of
-      them. Writing through it writes [b]. It keeps [b]'s memory alive while it
-      is reachable, except memory {!of_bigarray}'s caller keeps alive and memory
-      a borrow on the host maps, which that borrow keeps. Access through it is
-      the host's: {!wait} orders it after devices' work.
+      kind [k], without a copy: [length b / Bigarray.kind_size_in_bytes k] of
+      them, in the host's byte order. Writing through it writes [b]. It keeps
+      [b]'s memory alive while it is reachable, except memory {!of_bigarray}'s
+      caller keeps alive and memory a borrow on the host maps, which that borrow
+      keeps. Access through it is the host's: {!wait} orders it after devices'
+      work.
 
-      Formats with no kind of their own are read as their storage kind:
-      [BFloat16] as [Int16_unsigned], the float8 formats as [Int8_unsigned],
-      [Int4] and [UInt4] as [Int8_unsigned] holding two per byte, [Bit] as
-      [Int8_unsigned] holding eight.
-
-      Raises [Invalid_argument] if [b] is not on {!host}, [k] is [Int] or
-      [Nativeint], or [b]'s bytes are not a whole number of aligned elements of
-      [k], and {!Lost} if [b]'s stamps name a lost device. *)
+      Raises [Invalid_argument] if [b] is not on {!host}, or [b]'s bytes are not
+      a whole number of elements of [k] starting at a multiple of their size (of
+      one component's for complex kinds), and {!Lost} if [b]'s stamps name a
+      lost device. *)
 
   (** {1:low Low level}
 
@@ -788,12 +767,13 @@ module Profile : sig
 
   val record : Point.t -> lane:string -> name:string -> Buffer.t -> unit
   (** [record p ~lane ~name stamps] is [after p] of a {!Span} of [p]'s device
-      named [name] on [lane], whose start and stop are the second and fourth
-      [UInt64] of the host memory [stamps], on the host clock: [p]'s work, or
-      its driver, writes them, as {!timestamp} does.
+      named [name] on [lane], whose start and stop are the unsigned 64-bit words
+      at bytes 8 and 24 of the host memory [stamps], in the host's byte order
+      and on the host clock: [p]'s work, or its driver, writes them, as
+      {!timestamp} does.
 
-      Raises [Invalid_argument] if [stamps] is not four [UInt64] of host memory.
-  *)
+      Raises [Invalid_argument] if [stamps] is not 32 bytes of host memory
+      starting at a multiple of 8. *)
 
   val timestamp : nativeint
   (** [timestamp] is the address of the C function
