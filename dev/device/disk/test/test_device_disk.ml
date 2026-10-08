@@ -25,6 +25,7 @@ let segment = 2 lsl 20
 
 external set_open_files : int -> int = "device_disk_test_set_open_files"
 external drop_pages : string -> int = "device_disk_test_drop_pages"
+external sanitized : unit -> bool = "device_disk_test_sanitized"
 
 let contains s sub =
   let n = String.length s and k = String.length sub in
@@ -1202,6 +1203,8 @@ let domain_commands =
 (* One domain copies 4 KiB from fresh host buffers into a file, 4096 times,
    while another collects and fills host buffers of that size. *)
 let test_source_kept () =
+  if sanitized () then
+    skip ~reason:"its use of freed memory ends a sanitized process" ();
   let k = 4096 and count = 4096 in
   let s = pattern 7 (k * count) in
   let path = new_path () in

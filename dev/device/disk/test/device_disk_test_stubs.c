@@ -4,7 +4,8 @@
   ---------------------------------------------------------------------------*/
 
 /* What the disk's suite asks of the system that OCaml's Unix does not give: a
-   limit on this process's open files, and dropping a file's cached pages. */
+   limit on this process's open files, dropping a file's cached pages, and
+   whether AddressSanitizer watches this process. */
 
 #define _GNU_SOURCE
 
@@ -48,5 +49,23 @@ value device_disk_test_drop_pages(value v_path) {
 #else
   (void)v_path;
   return Val_int(-1);
+#endif
+}
+
+/* [sanitized ()] is whether this executable was compiled with
+   AddressSanitizer, which ends the process at a use of freed memory. Keeps
+   the runtime. */
+value device_disk_test_sanitized(value v_unit) {
+  (void)v_unit;
+#if defined(__SANITIZE_ADDRESS__)
+  return Val_true;
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+  return Val_true;
+#else
+  return Val_false;
+#endif
+#else
+  return Val_false;
 #endif
 }
