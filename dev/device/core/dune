@@ -1,0 +1,7 @@
+; Devices, their memory, and the order of work across them.
+
+(library
+ (name device_core)
+ (libraries device_dtype device_edge)
+ (modules_without_implementation device_core)
+ (install_c_headers device_core))
