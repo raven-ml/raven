@@ -119,7 +119,9 @@ exception Malformed of string
 let fail fmt = Printf.ksprintf (fun m -> raise (Malformed m)) fmt
 
 (* Little-endian reads of [s] at [off], refused past its end. They run for every
-   field of the object and are inlined, which saves a call per field. *)
+   field of the object and are inlined, which saves a call per field. A [get_]
+   one reads a field already known to lie in [s], which the standard library
+   still checks. *)
 
 let[@inline] check s off n =
   if off < 0 || off > String.length s - n then
@@ -133,18 +135,18 @@ let[@inline] u16 s off =
   check s off 2;
   String.get_uint16_le s off
 
-let[@inline] u32 s off =
-  check s off 4;
+let[@inline] get_u32 s off =
   Int32.to_int (String.get_int32_le s off) land 0xffff_ffff
 
-let[@inline] i32 s off =
+let[@inline] u32 s off =
   check s off 4;
-  Int32.to_int (String.get_int32_le s off)
+  get_u32 s off
+
+let[@inline] get_i32 s off = Int32.to_int (String.get_int32_le s off)
 
 (* A 64-bit field that does not fit an [int] is refused. A signed one is an
    addend or a symbol's value. *)
-let[@inline] i64 s off =
-  check s off 8;
+let[@inline] get_i64 s off =
   let v = String.get_int64_le s off in
   let n = Int64.to_int v in
   if Int64.of_int n <> v then
@@ -152,14 +154,21 @@ let[@inline] i64 s off =
   n
 
 (* An unsigned one is an offset, size, address or flags. *)
+let[@inline] get_u64 s off =
+  let v = String.get_int64_le s off in
+  let n = Int64.to_int v in
+  if n < 0 || Int64.of_int n <> v then
+    fail "the 64-bit field %Lu at %d is out of range" v off;
+  n
+
 let[@inline] u64 s off =
   check s off 8;
-  let v = String.get_int64_le s off in
-  if Int64.compare v 0L < 0 || Int64.compare v (Int64.of_int max_int) > 0 then
-    fail "the 64-bit field %Lu at %d is out of range" v off;
-  Int64.to_int v
+  get_u64 s off
 
 (* An unsigned word of the form [f]. *)
+let[@inline] get_word f s off =
+  if f.word = 8 then get_u64 s off else get_u32 s off
+
 let[@inline] word f s off = if f.word = 8 then u64 s off else u32 s off
 
 (* Section headers *)
@@ -179,20 +188,22 @@ type header = {
 }
 
 (* Past [sh_name] and [sh_type], a header holds four words, [sh_link] and
-   [sh_info], then two words. *)
+   [sh_info], then two words. Its bytes are checked once, which saves a check
+   per field. *)
 let header f obj off =
-  let w k = off + 8 + (k * f.word) in
+  check obj off f.shdr;
+  let w = f.word in
   {
-    sh_name = u32 obj off;
-    sh_type = u32 obj (off + 4);
-    sh_flags = word f obj (w 0);
-    sh_addr = word f obj (w 1);
-    sh_offset = word f obj (w 2);
-    sh_size = word f obj (w 3);
-    sh_link = u32 obj (w 4);
-    sh_info = u32 obj (w 4 + 4);
-    sh_addralign = word f obj (w 4 + 8);
-    sh_entsize = word f obj (w 5 + 8);
+    sh_name = get_u32 obj off;
+    sh_type = get_u32 obj (off + 4);
+    sh_flags = get_word f obj (off + 8);
+    sh_addr = get_word f obj (off + 8 + w);
+    sh_offset = get_word f obj (off + 8 + (2 * w));
+    sh_size = get_word f obj (off + 8 + (3 * w));
+    sh_link = get_u32 obj (off + 8 + (4 * w));
+    sh_info = get_u32 obj (off + 12 + (4 * w));
+    sh_addralign = get_word f obj (off + 16 + (4 * w));
+    sh_entsize = get_word f obj (off + 16 + (5 * w));
   }
 
 (* The null section's size is the section count when [e_shnum] is 0, so it has
@@ -264,23 +275,21 @@ let string_at obj named tab off =
 
 let by_start (a, _) (b, _) = Int.compare a b
 
-(* Sorted by start, each span [(at, n)] with [n > 0] starts at or past the end
-   of the one before it. Spans usually come sorted, and are sorted otherwise
-   with a merge sort, whose memory is linear. *)
+(* Sorted by start, each span [(at, n)] starts at or past the end of the one
+   before it. Spans usually come sorted, and are sorted otherwise with a merge
+   sort, whose memory is linear. *)
 let disjoint ~where spans =
   let rec sorted i =
     i >= Array.length spans
     || (fst spans.(i - 1) <= fst spans.(i) && sorted (i + 1))
   in
   if not (sorted 1) then Array.stable_sort by_start spans;
-  ignore
-    (Array.fold_left
-       (fun last (at, n) ->
-         if n = 0 then last
-         else if at < last then
-           fail "two sections share bytes at %d of %s" at where
-         else at + n)
-       0 spans)
+  let last = ref 0 in
+  for i = 0 to Array.length spans - 1 do
+    let at, n = spans.(i) in
+    if at < !last then fail "two sections share bytes at %d of %s" at where;
+    last := at + n
+  done
 
 (* Layout *)
 
@@ -295,48 +304,47 @@ let round_up n a =
 (* The address of image offset 0 when sections go at their addresses: the lowest
    held section's, rounded down to their largest alignment, so that each keeps
    its alignment in the image. *)
-let start held hs =
-  let low = ref max_int and align = ref 1 in
-  Array.iteri
-    (fun i h ->
-      if held.(i) then begin
-        low := Int.min !low h.sh_addr;
-        align := Int.max !align h.sh_addralign
-      end)
-    hs;
-  !low - (!low land (!align - 1))
+let start low align = low - (low land (align - 1))
 
 (* Whether the sections go at their addresses, the address the image starts at,
    the image's alignment, each held section's image offset, and the image's
    length. Sections go at their addresses if one has an address, else follow
-   each other. *)
+   each other, so that no two share a byte of the image. *)
 let layout ~align held hs =
-  let addressed =
-    Array.exists2 (fun held h -> held && h.sh_addr <> 0) held hs
-  in
-  let address = if addressed then start held hs else 0 in
-  let offsets = Array.make (Array.length hs) None in
+  let count = Array.length hs in
+  let addressed = ref false and low = ref max_int and largest = ref 1 in
+  for i = 0 to count - 1 do
+    if held.(i) then begin
+      let h = hs.(i) in
+      if h.sh_addr <> 0 then addressed := true;
+      low := Int.min !low h.sh_addr;
+      largest := Int.max !largest h.sh_addralign
+    end
+  done;
+  let addressed = !addressed in
+  let address = if addressed then start !low !largest else 0 in
+  let offsets = Array.make count None in
   let size = ref 0 and spans = ref [] in
-  let largest = ref (if addressed then 1 else align) in
-  Array.iteri
-    (fun i h ->
-      if held.(i) then begin
-        largest := Int.max !largest h.sh_addralign;
-        let off =
-          if addressed then h.sh_addr - address
-          else round_up !size (Int.max align h.sh_addralign)
-        in
-        if off > max_int - h.sh_size then too_long ();
-        if h.sh_addralign > 1 && off mod h.sh_addralign <> 0 then
-          fail "section %d at %d is not a multiple of its alignment %d" i off
-            h.sh_addralign;
-        offsets.(i) <- Some off;
-        size := Int.max !size (off + h.sh_size);
-        if h.sh_size > 0 then spans := (off, h.sh_size) :: !spans
-      end)
-    hs;
-  disjoint ~where:"the image" (Array.of_list (List.rev !spans));
-  (addressed, address, !largest, offsets, !size)
+  for i = 0 to count - 1 do
+    if held.(i) then begin
+      let h = hs.(i) in
+      let off =
+        if addressed then h.sh_addr - address
+        else round_up !size (Int.max align h.sh_addralign)
+      in
+      if off > max_int - h.sh_size then too_long ();
+      if h.sh_addralign > 1 && off mod h.sh_addralign <> 0 then
+        fail "section %d at %d is not a multiple of its alignment %d" i off
+          h.sh_addralign;
+      offsets.(i) <- Some off;
+      size := Int.max !size (off + h.sh_size);
+      if addressed && h.sh_size > 0 then spans := (off, h.sh_size) :: !spans
+    end
+  done;
+  if addressed then
+    disjoint ~where:"the image" (Array.of_list (List.rev !spans));
+  let image_align = if addressed then !largest else Int.max align !largest in
+  (addressed, address, image_align, offsets, !size)
 
 (* [at + n], or [max_int] past it: the end of an address range. *)
 let end_of at n = if at > max_int - n then max_int else at + n
@@ -426,16 +434,21 @@ let read ~align ?held obj =
       fail "%s refers to section %d, which the object does not have" what i;
     hs.(i)
   in
-  Array.iter
-    (fun h ->
-      if h.sh_addralign <> 0 && not (is_pow2 h.sh_addralign) then
-        fail "a section's alignment of %d is not a power of two" h.sh_addralign;
-      if has_bytes h then check obj h.sh_offset h.sh_size)
-    hs;
   (* The gABI puts no byte of the object in two sections. Holding to it keeps
      the entries of tables that would share bytes from being decoded twice. *)
-  disjoint ~where:"the object"
-    (Array.map (fun h -> (h.sh_offset, length_of h)) hs);
+  let spans = ref [] and symtab = ref (-1) and dynsym = ref (-1) in
+  for i = count - 1 downto 0 do
+    let h = hs.(i) in
+    if h.sh_addralign <> 0 && not (is_pow2 h.sh_addralign) then
+      fail "a section's alignment of %d is not a power of two" h.sh_addralign;
+    if has_bytes h then begin
+      check obj h.sh_offset h.sh_size;
+      if h.sh_size > 0 then spans := (h.sh_offset, h.sh_size) :: !spans
+    end;
+    if h.sh_type = sht_symtab then symtab := i
+    else if h.sh_type = sht_dynsym then dynsym := i
+  done;
+  disjoint ~where:"the object" (Array.of_list !spans);
   let named = ref 0 in
   let strings i what =
     let h = section_of i what in
@@ -480,36 +493,33 @@ let read ~align ?held obj =
         Image { section = index; offset = off + value - h.sh_addr }
     | _ -> Outside index
   in
-  (* Each symbol table's [SHT_SYMTAB_SHNDX] section, the first linked to it. *)
-  let shndx = Array.make count None in
-  Array.iter
-    (fun h ->
-      if
-        h.sh_type = sht_symtab_shndx
-        && h.sh_link < count
-        && Option.is_none shndx.(h.sh_link)
-      then shndx.(h.sh_link) <- Some h)
-    hs;
   (* The symbol table of section [i], with the extended indexes of its symbols
-     at [SHN_XINDEX]. *)
+     at [SHN_XINDEX], in the first [SHT_SYMTAB_SHNDX] section linked to it. *)
   let read_table i =
     let h = hs.(i) in
     let names = strings h.sh_link "a symbol table" in
     let entsize = Int.max f.sym h.sh_entsize in
+    let shndx =
+      lazy
+        (Array.find_opt
+           (fun x -> x.sh_type = sht_symtab_shndx && x.sh_link = i)
+           hs)
+    in
     let extended k =
-      match shndx.(i) with
+      match Lazy.force shndx with
       | Some x when 4 * (k + 1) <= length_of x -> u32 obj (at_of x + (4 * k))
       | _ -> fail "symbol %d has an extended section index the object lacks" k
     in
+    let first = at_of h in
     Iarray.init
       (length_of h / entsize)
       (fun k ->
-        let e = at_of h + (k * entsize) in
-        let name = string_at obj named names (u32 obj e) in
-        let index = u16 obj (e + f.st_shndx) in
+        let e = first + (k * entsize) in
+        let name = string_at obj named names (get_u32 obj e) in
+        let index = String.get_uint16_le obj (e + f.st_shndx) in
         let value =
-          if f.word = 8 then i64 obj (e + f.st_value)
-          else u32 obj (e + f.st_value)
+          if f.word = 8 then get_i64 obj (e + f.st_value)
+          else get_u32 obj (e + f.st_value)
         in
         let place =
           if index = shn_undef then Undefined
@@ -530,54 +540,62 @@ let read ~align ?held obj =
         t
   in
   let symbols =
-    let find kind = Array.find_index (fun h -> h.sh_type = kind) hs in
-    match (find sht_symtab, find sht_dynsym) with
-    | Some i, _ | None, Some i -> table i
-    | None, None -> Iarray.of_list []
+    if !symtab >= 0 then table !symtab
+    else if !dynsym >= 0 then table !dynsym
+    else Iarray.of_list []
   in
-  (* The relocations of section [r], which patch the image at [at]'s results. *)
-  let entries r at field =
+  (* The relocations of section [r], which patch the image at [at]'s results,
+     prepended to [acc]. Its symbol table is read at the first relocation that
+     names a symbol. *)
+  let entries r at field acc =
     let h = hs.(r) in
     let rela = h.sh_type = sht_rela in
     let entsize = Int.max ((if rela then 3 else 2) * f.word) h.sh_entsize in
-    let symbol sym =
-      if sym = 0 then { name = ""; place = Absolute 0 }
-      else begin
-        let link = section_of h.sh_link "a relocation section" in
-        if link.sh_type <> sht_symtab && link.sh_type <> sht_dynsym then
-          fail
-            "a relocation section links to section %d, which is no symbol table"
-            h.sh_link;
-        let syms = table h.sh_link in
-        if sym >= Iarray.length syms then
-          fail "a relocation refers to symbol %d, which its table lacks" sym;
-        Iarray.get syms sym
-      end
+    let read_syms () =
+      let link = section_of h.sh_link "a relocation section" in
+      if link.sh_type <> sht_symtab && link.sh_type <> sht_dynsym then
+        fail
+          "a relocation section links to section %d, which is no symbol table"
+          h.sh_link;
+      table h.sh_link
     in
-    (* [r_info] holds the type in its low 32 bits and the symbol in its high
-       ones, or in 32 bits the type in its low 8 bits and the symbol above. *)
-    let r_type e =
-      if f.word = 8 then u32 obj (e + 8) else u32 obj (e + 4) land 0xff
-    in
-    let r_sym e =
-      if f.word = 8 then u32 obj (e + 12) else u32 obj (e + 4) lsr 8
-    in
-    let r_addend e offset =
-      if not rela then field offset
-      else if f.word = 8 then Explicit (i64 obj (e + 16))
-      else Explicit (i32 obj (e + 8))
-    in
-    List.init
-      (length_of h / entsize)
-      (fun k ->
-        let e = at_of h + (k * entsize) in
-        let offset = at (word f obj e) in
-        {
-          offset;
-          kind = r_type e;
-          addend = r_addend e offset;
-          symbol = symbol (r_sym e);
-        })
+    let syms = ref None and first = at_of h and acc = ref acc in
+    for k = (length_of h / entsize) - 1 downto 0 do
+      let e = first + (k * entsize) in
+      let offset = at (get_word f obj e) in
+      (* [r_info] holds the type in its low 32 bits and the symbol in its high
+         ones, or in 32 bits the type in its low 8 bits and the symbol above. *)
+      let kind =
+        if f.word = 8 then get_u32 obj (e + 8)
+        else get_u32 obj (e + 4) land 0xff
+      in
+      let sym =
+        if f.word = 8 then get_u32 obj (e + 12) else get_u32 obj (e + 4) lsr 8
+      in
+      let addend =
+        if not rela then field offset
+        else if f.word = 8 then Explicit (get_i64 obj (e + 16))
+        else Explicit (get_i32 obj (e + 8))
+      in
+      let symbol =
+        if sym = 0 then { name = ""; place = Absolute 0 }
+        else begin
+          let syms =
+            match !syms with
+            | Some t -> t
+            | None ->
+                let t = read_syms () in
+                syms := Some t;
+                t
+          in
+          if sym >= Iarray.length syms then
+            fail "a relocation refers to symbol %d, which its table lacks" sym;
+          Iarray.unsafe_get syms sym
+        end
+      in
+      acc := { offset; kind; addend; symbol } :: !acc
+    done;
+    !acc
   in
   (* The allocated memory the image lacks, as addresses, which mean something in
      an object whose sections have addresses. *)
@@ -587,8 +605,8 @@ let read ~align ?held obj =
   let by_offset = lazy (with_bytes offsets hs) in
   (* A dynamic relocation's offset is an address; any other's lies in the
      section it patches. *)
-  let relocations_of r h =
-    if h.sh_type <> sht_rel && h.sh_type <> sht_rela then []
+  let relocations_of r h acc =
+    if h.sh_type <> sht_rel && h.sh_type <> sht_rela then acc
     else if h.sh_info = 0 then
       let lacks = Lazy.force lacks in
       entries r
@@ -606,9 +624,10 @@ let read ~align ?held obj =
                object has no bytes"
               (x + address);
           implicit hs.(i) (Option.get offsets.(i)) x)
+        acc
     else
       let target = section_of h.sh_info "a relocation section" in
-      if target.sh_flags land shf_alloc = 0 then []
+      if target.sh_flags land shf_alloc = 0 then acc
       else
         match offsets.(h.sh_info) with
         | None ->
@@ -630,20 +649,23 @@ let read ~align ?held obj =
                      has no bytes"
                     h.sh_info;
                 implicit target off x)
+              acc
   in
+  (* Built from the last section's last entry, so the list is made once. *)
+  let relocations = ref [] in
+  for r = count - 1 downto 0 do
+    relocations := relocations_of r hs.(r) !relocations
+  done;
+  let relocations = !relocations in
   let sections =
     match unplaced with
-    | None -> Array.mapi (fun i h -> section h offsets.(i)) hs
+    | None -> Iarray.init count (fun i -> section hs.(i) offsets.(i))
     | Some unplaced ->
-        (* Placed in place: a section the image does not hold keeps its
-           record. *)
-        Array.iteri
-          (fun i (s : section) ->
+        (* A section the image does not hold keeps its record. *)
+        Iarray.init count (fun i ->
             match offsets.(i) with
-            | None -> ()
-            | offset -> unplaced.(i) <- { s with offset })
-          unplaced;
-        unplaced
+            | None -> unplaced.(i)
+            | offset -> { (unplaced.(i) : section) with offset })
   in
   {
     bits = 8 * f.word;
@@ -656,9 +678,9 @@ let read ~align ?held obj =
     align = image_align;
     file = obj;
     size;
-    sections = Iarray.of_array sections;
+    sections;
     symbols;
-    relocations = List.concat (List.mapi relocations_of (Array.to_list hs));
+    relocations;
   }
 
 let allocated ~machine (s : section) = allocated_as machine s.kind s.flags
