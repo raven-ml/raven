@@ -292,6 +292,12 @@ let extent =
       (3, Gen.int_range 0 70_000);
     ]
 
+(* A length: an extent, or no bytes or one byte, drawn often enough (about one
+   case in six each) that the 100 cases of a property reach both whatever its
+   seed. An extent alone draws each one case in 24, which 100 cases miss once in
+   about 70 seeds. *)
+let lengths = Gen.frequency [ (1, ints [ 0; 1 ]); (3, extent) ]
+
 (* [clamp size (a, l)] is the range of [l] bytes from byte [a] that fits a file
    of [size] bytes, [max_int] reaching its end. *)
 let clamp size (a, l) =
@@ -344,7 +350,7 @@ let sources =
 (* A copy into the [len] bytes at [at] of a new file of [at + len + tail]. *)
 let copy_in =
   Gen.(
-    quad nat (pair extent extent) (ints [ 0; 1; 3; 4096 ]) sources
+    quad nat (pair extent lengths) (ints [ 0; 1; 3; 4096 ]) sources
     |> with_pp (fun ppf (seed, (at, len), tail, src) ->
         Format.fprintf ppf "seed %d, %d bytes at %d, %d after, from %a" seed len
           at tail pp_source src))
@@ -400,7 +406,7 @@ let pp_into ppf = function
    bytes before and after it in the view it is a view of. *)
 let views =
   Gen.(
-    quad bool (pair extent extent)
+    quad bool (pair extent lengths)
       (pair (ints [ 0; 1; 4096 ]) (ints [ 0; 1; 4096 ]))
       (Gen.of_list ~pp:pp_into [ To_host 0; To_host 3; To_device ]))
 
@@ -598,7 +604,7 @@ let borrows =
       prop
         "a borrow of a file's bytes, by the host or a device that maps host \
          memory, holds what a copy reads"
-        Gen.(triple kinds bool (pair bool (pair extent extent)))
+        Gen.(triple kinds bool (pair bool (pair extent lengths)))
         test_borrow;
       test
         "a write through a borrow of an opened file is the process's: borrows \
