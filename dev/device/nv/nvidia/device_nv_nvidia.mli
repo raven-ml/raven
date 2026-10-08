@@ -20,9 +20,10 @@
     of another release answers [Error] naming them.
 
     {b Memory.} The process's GPU memory lies at addresses below [2{^40}] that
-    this library reserves in the process at its first open, from [384 GiB] up:
-    memory the host addresses lies at the same address for the host and the GPU.
-    The memory [`Mapped] gives the host through the GPU's BAR1, which the kernel
+    this library reserves in the process at its first open, from [384 GiB] up.
+    Memory the library allocates for the host lies at the same address for the
+    host and the GPU; host memory [Device_nv.map_host] maps lies at its own GPU
+    address, as the host's may lie higher. The memory [`Mapped] gives the host through the GPU's BAR1, which the kernel
     driver sizes, often at 256 MiB.
 
     {b Domains.} Any domain may call any function, at the same time as others.

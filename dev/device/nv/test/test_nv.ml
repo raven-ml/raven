@@ -474,8 +474,34 @@ let pp_queues ppf qs =
     (String.concat " and "
        (List.map (function `Compute -> "COMPUTE:0" | `Copy -> "COPY:0") qs))
 
+(* A Word wait on a word of host memory wherever the process placed it, such as
+   above 2^40, the widest address a channel's semaphore names. *)
+let high_word () =
+  S.with_gpu @@ fun g ->
+  let p = S.pages S.page in
+  at_least int ~msg:"the word's host address" ~than:(1 lsl 40) p;
+  S.set64 p 0;
+  let w = require_some (N.map_host g p 8) in
+  let b = require_some (N.alloc g `Pinned 16) in
+  S.set64 (host b) 0;
+  let l = S.launches g in
+  S.watchdog "a wait on a high host word" (fun () ->
+      let v =
+        S.submit g
+          ~waits:[| (`Word, address w, 1) |]
+          [| compute g (S.release l (address b) 9) |]
+      in
+      S.still ~msg:"the word" int (v - 1) (fun () -> N.signaled g) ~ms:20;
+      S.set64 p 1;
+      S.wait g v);
+  equal int ~msg:"released" 9 (S.get64 (host b));
+  S.free_launches g l;
+  List.iter (N.free g) [ w; b ];
+  S.free_pages p S.page
+
 let waits =
   [
+    test "a Word wait holds work on a host word above 2^40" high_word;
     cases
       ~name:
         (Format.asprintf

@@ -62,7 +62,7 @@ type mem = {
   va : int;
   size : int;
   handle : int;
-  cpu : bool; (* whether the process maps it at [va] *)
+  host : int option; (* the process's address of it, if it maps it *)
   video : int option; (* the GPU whose memory it is, by number *)
   of_ : owner;
 }
@@ -75,10 +75,12 @@ and owner =
 (* Host memory mapped for the GPUs: described to the RM once, under the first
    GPU that maps it, and mapped for each GPU that maps it, counted. The last
    unmapping frees the range and its description. A range covers whole pages,
-   which unified memory requires of its bounds. *)
+   which unified memory requires of its bounds. The GPUs address it from the low
+   range: the host's own address may lie above the 40 bits a semaphore takes. *)
 and range = {
   addr : int;
   bytes : int;
+  gpu_addr : int; (* the GPUs' address of [addr] *)
   descriptor : int;
   parent : gpu;
   mutable users : (gpu * int) list;
@@ -347,7 +349,7 @@ let alloc_video g ~cpu size =
 let memory m =
   {
     Device_nv.address = m.va;
-    host = (if m.cpu then Some m.va else None);
+    host = m.host;
     handle = m.handle;
     data = m;
   }
@@ -370,7 +372,7 @@ let alloc g kind n =
                  va;
                  size;
                  handle = h;
-                 cpu = true;
+                 host = Some va;
                  video = None;
                  of_ = Own g.c.low;
                })
@@ -385,7 +387,7 @@ let alloc g kind n =
                  va;
                  size;
                  handle = h;
-                 cpu = k = `Bar;
+                 host = (if k = `Bar then Some va else None);
                  video = Some g.index;
                  of_ = Own space;
                })
@@ -400,10 +402,10 @@ let map_host g a n =
   let mem r =
     memory
       {
-        va = a;
+        va = r.gpu_addr + (a - r.addr);
         size = n;
         handle = r.descriptor;
-        cpu = true;
+        host = Some a;
         video = None;
         of_ = Host r;
       }
@@ -418,7 +420,9 @@ let map_host g a n =
           r.users <- (g, k + 1) :: List.remove_assq g r.users;
           Some (mem r)
       | None -> (
-          match fault (uvm_map g ~create:false r.addr r.bytes r.descriptor) with
+          match
+            fault (uvm_map g ~create:false r.gpu_addr r.bytes r.descriptor)
+          with
           | false -> None
           | true ->
               r.users <- (g, 1) :: r.users;
@@ -427,12 +431,18 @@ let map_host g a n =
   | None -> (
       let size = a1 - a0 in
       let h = fault (describe g a0 size) in
-      match uvm_map g ~create:true a0 size h with
-      | Ok true ->
+      let placed =
+        with_addresses g.c.low ~align:page size @@ fun va ->
+        let* ok = uvm_map g ~create:true va size h in
+        Ok (if ok then Some va else None)
+      in
+      match placed with
+      | Ok (Some gpu_addr) ->
           let r =
             {
               addr = a0;
               bytes = size;
+              gpu_addr;
               descriptor = h;
               parent = g;
               users = [ (g, 1) ];
@@ -440,7 +450,7 @@ let map_host g a n =
           in
           ranges := r :: !ranges;
           Some (mem r)
-      | Ok false ->
+      | Ok None ->
           free_object g h;
           None
       | Error e ->
@@ -466,10 +476,11 @@ let unmap_host g r =
       r.users <- List.remove_assq g r.users;
       if r.users = [] then begin
         ranges := List.filter (fun r' -> r' != r) !ranges;
-        fault (uvm_free g.c r.addr r.bytes);
+        fault (uvm_free g.c r.gpu_addr r.bytes);
+        Va.free g.c.low r.gpu_addr r.bytes;
         free_object r.parent r.descriptor
       end
-      else fault (uvm_unmap g r.addr r.bytes)
+      else fault (uvm_unmap g r.gpu_addr r.bytes)
 
 let free g (m : mem Device_nv.memory) =
   let m = m.data in
@@ -479,7 +490,7 @@ let free g (m : mem Device_nv.memory) =
   | Own space ->
       free_object g m.handle;
       fault (uvm_free g.c m.va m.size);
-      if m.cpu then Rm.release m.va m.size;
+      Option.iter (fun a -> Rm.release a m.size) m.host;
       Va.free space m.va m.size
 
 (* Channels *)

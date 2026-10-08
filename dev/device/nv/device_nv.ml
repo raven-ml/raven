@@ -67,6 +67,19 @@ type 'm path = {
 
 let is_gpu ~vendor ~class_ = vendor = 0x10de && class_ lsr 16 = 0x03
 
+(* The memory [m] of [n] bytes a path answered, below [address_limit] as the
+   path's interface promises: a path that breaks it is given [m] back. *)
+let address_limit = 1 lsl 40
+
+let below (p : _ path) n = function
+  | Some (m : _ memory) when m.address + n > address_limit ->
+      p.free m;
+      invalid_argf "Device_nv: the path answered memory at 0x%x, past 2^40"
+        m.address
+  | m -> m
+
+let path_alloc p kind n = below p n (p.alloc kind n)
+
 (* Constants *)
 
 let page = 4096
@@ -290,7 +303,7 @@ let local d n =
     let l = Abi.Local_memory.make d.capability n in
     if l.per_thread <= d.per_thread then Ok ()
     else
-      match d.path.alloc `Gpu l.bytes with
+      match path_alloc d.path `Gpu l.bytes with
       | None ->
           Error (strf "no GPU memory for %d bytes of local memory" l.bytes)
       | Some m ->
@@ -397,7 +410,7 @@ let host what (m : _ memory) =
 let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
   let rm = p.rm in
   let alloc kind bytes what =
-    match p.alloc kind bytes with
+    match path_alloc p kind bytes with
     | None -> Error (strf "no memory for the %s" what)
     | Some m ->
         taken (fun () -> p.free m);
@@ -423,7 +436,7 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
   in
   let* compute_notifier = notifier 0 in
   let* copy_notifier = notifier 1 in
-  let bar = p.alloc `Bar page in
+  let bar = path_alloc p `Bar page in
   Option.iter (fun m -> taken (fun () -> p.free m)) bar;
   let* group =
     new_object ~parent:p.device D.kepler_channel_group_a "the channel group"
@@ -607,14 +620,15 @@ let region d kind bytes m = R (reg d kind bytes m)
 let alloc (T d) kind n =
   if n < 1 then invalid_argf "Device_nv.alloc: %d bytes, expected at least 1" n;
   match kind with
-  | `Device -> Option.map (region d Allocation n) (d.path.alloc `Gpu n)
-  | `Pinned -> Option.map (region d Allocation n) (d.path.alloc `System n)
+  | `Device -> Option.map (region d Allocation n) (path_alloc d.path `Gpu n)
+  | `Pinned -> Option.map (region d Allocation n) (path_alloc d.path `System n)
   | `Mapped -> (
-      match if d.bar then d.path.alloc `Bar n else None with
+      match if d.bar then path_alloc d.path `Bar n else None with
       | Some m ->
           bar_live d.self 1;
           Some (region d Bar n m)
-      | None -> Option.map (region d Allocation n) (d.path.alloc `System n))
+      | None ->
+          Option.map (region d Allocation n) (path_alloc d.path `System n))
 
 let free (T d) r =
   match mine d r with
@@ -656,7 +670,7 @@ let map_peer (T d) (T d') r =
 let map_host (T d) a n =
   if n < 1 then
     invalid_argf "Device_nv.map_host: %d bytes, expected at least 1" n;
-  Option.map (region d Mapping n) (d.path.map_host a n)
+  Option.map (region d Mapping n) (below d.path n (d.path.map_host a n))
 
 (* Images *)
 

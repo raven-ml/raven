@@ -280,9 +280,9 @@ val submit :
 (** [submit g ~v ~waits ~handles ps] hands over [ps], which {!room} answered
     [`Fits] for, as [g]'s value [v], the value after the last one [g] was given.
     Each wait [(`Word, a, w)] holds the work back until the aligned 64-bit word
-    at address [a], which [g]'s work addresses, holds at least [w], compared
-    circularly: [x] is at least [w] if [x - w], as a signed 64-bit integer, is
-    not negative. The work runs after every earlier value of [g] and after the
+    at address [a] below [2{^40}], which [g]'s work addresses, holds at least
+    [w], compared circularly: [x] is at least [w] if [x - w], as a signed 64-bit
+    integer, is not negative. The work runs after every earlier value of [g] and after the
     waits; once it completed, the timeline word holds [v]. A submission of no
     parts writes [v] after its waits and after every earlier value. [handles] is
     ignored: the device's work names its memory by address.
@@ -391,7 +391,15 @@ type gpu = {
     {!Device_nv_abi.Gpu.t}. *)
 
 type 'm memory = {
-  address : int;  (** The GPU address of its first byte, below [2{^40}]. *)
+  address : int;
+      (** The GPU address of its first byte, below [2{^40}] with its last
+          byte. [`Bar] and [`System] memory and [map_host]'s are there because
+          they hold rings and timeline words, whose addresses rings and
+          semaphores take in 40 bits, so a path maps host memory at a GPU
+          address of its own if the host's is higher. [`Gpu] memory is there
+          because the device packs its local memory's address in 40 bits and
+          keeps kernels' windows onto shared and local memory above. A device
+          raises [Invalid_argument] for memory a path answers above. *)
   host : int option;
       (** The host address of its first byte, if the host addresses it. *)
   handle : int;  (** The RM's name for it, which channel allocations take. *)
