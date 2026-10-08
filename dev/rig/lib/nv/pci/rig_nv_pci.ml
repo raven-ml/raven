@@ -183,17 +183,21 @@ let check g gsp () =
   in
   Option.iter (fun why -> raise (Rig_nv.Fault why)) why
 
-(* The GSP stops every channel; then the hold is lost, which turns the GPU's bus
-   mastering off, so it reaches system memory no more whatever its channels do.
-   The GPU opens again after a reset: the GSP runs on. *)
+(* The GSP stops every channel, unless the GPU cannot be reached, which an
+   unload would wait for in vain; then the hold is lost, which turns the GPU's
+   bus mastering off, so it reaches system memory no more whatever its channels
+   do. Whether that write reached the GPU is known only if the GPU answered
+   before it. The GPU opens again after a reset: the GSP runs on. *)
+let give_up hold fn ~unload =
+  let failed = Function.failed fn in
+  if failed = None then unload ();
+  Gpus.lose hold;
+  match failed with None -> `Stopped | Some _ -> `Unknown
+
 let stop g gsp hold () =
-  ignore (Gsp.unload gsp);
   Mutex.protect opened_lock (fun () ->
       opened := List.filter (fun o -> o != g) !opened);
-  Gpus.lose hold;
-  match (Machine.failed g.machine, Function.failed g.fn) with
-  | None, None -> `Stopped
-  | _ -> `Unknown
+  give_up hold g.fn ~unload:(fun () -> ignore (Gsp.unload gsp))
 
 (* Opening *)
 

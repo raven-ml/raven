@@ -191,6 +191,16 @@ val reset : ?machine:Rig_pci.Machine.t -> int -> (unit, string) result
 
 (**/**)
 
+(* [give_up h fn ~unload] ends a device's use of the GPU [h] holds, whose
+   function is [fn]: [unload] stops the GPU's work if it can still be reached,
+   then the GPU is lost. It is [`Stopped] if the GPU no longer masters the bus,
+   [`Unknown] if it cannot tell. *)
+val give_up :
+  Rig_pci.Gpus.hold ->
+  Rig_pci.Function.t ->
+  unload:(unit -> unit) ->
+  [ `Stopped | `Unknown ]
+
 (* The parts of a boot that read files and lay out bytes, for tests on fixtures
    of the pinned firmware and on the layouts NVIDIA's sources state. *)
 module Chip = Chip
