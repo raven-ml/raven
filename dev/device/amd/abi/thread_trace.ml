@@ -32,6 +32,10 @@ let gc_name (g : Gpu.t) =
 let page = 4096
 let page_shift = 12
 
+(* A buffer's pages, in 22 bits: SQ_THREAD_TRACE_SIZE.SIZE (GFX9) and
+   SQ_THREAD_TRACE_BUF0_SIZE.SIZE (GFX11, GFX12). *)
+let max_size = ((1 lsl 22) - 1) * page
+
 (* The address's bits from 44, in BASE2 (GFX9), BUF0_SIZE (GFX11) or
    BUF0_BASE_HI (GFX12). *)
 let high_shift = 44
@@ -270,9 +274,10 @@ let start_program g ~size buffer =
   @ Pm4.acquire_mem g System
 
 let start (g : Gpu.t) ~size buffer =
-  if size <= 0 || size mod page <> 0 then
+  if size <= 0 || size mod page <> 0 || size > max_size then
     invalid_argf
-      "Thread_trace.start: size %d, expected a positive multiple of 4096" size;
+      "Thread_trace.start: size %d, expected a multiple of 4096 from 4096 to %d"
+      size max_size;
   try start_program g ~size buffer
   with Missing r ->
     invalid_argf "Thread_trace.start: %s has no reg%s" (gc_name g) r

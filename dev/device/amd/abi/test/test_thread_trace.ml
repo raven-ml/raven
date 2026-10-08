@@ -128,6 +128,27 @@ let engine_law name program =
         (engines g);
       List.iter (fun u -> less int ~than:(List.length (engines g)) u.engine) us)
 
+(* The GC versions whose trace programs differ in their size register: GFX9's
+   SQ_THREAD_TRACE_SIZE, GFX11's BUF0_SIZE beside the address's top bits,
+   GFX12's BUF0_SIZE alone. Each field is 22 bits of 4096-byte pages. *)
+let trace_families = [ (9, 4, 3); (11, 0, 0); (12, 0, 0) ]
+
+(* The largest multiple of 4096 an int holds. *)
+let max_pages = max_int land lnot 4095
+
+(* The pages the size register of [g]'s start program holds, for [size]. *)
+let size_field (g : Gpu.t) size =
+  let name =
+    match g.gc with
+    | 9, _, _ -> "regSQ_THREAD_TRACE_SIZE"
+    | _ -> "regSQ_THREAD_TRACE_BUF0_SIZE"
+  in
+  let r = Option.get (Register.find g name) in
+  let lo, hi = List.assoc "size" r.fields in
+  let ws = S.encode (Thread_trace.start g ~size (fun _ -> 0)) in
+  let v = List.assoc (Register.address g r) (S.writes ws) in
+  (v lsr lo) land ((1 lsl (hi - lo + 1)) - 1)
+
 let recording =
   group ~timeout "recording"
     [
@@ -161,6 +182,23 @@ let recording =
         (fun size ->
           let p = Thread_trace.start (gpu (11, 0, 0)) ~size (fun _ -> 0) in
           greater int ~than:0 (Packet.size p));
+      cases
+        ~name:(fun (g, size) -> strf "GC %s, %d" (S.version g.Gpu.gc) size)
+        "a size past 2^22 - 1 pages is refused"
+        (List.concat_map
+           (fun gc -> List.map (fun s -> (gpu gc, s)) [ 1 lsl 34; max_pages ])
+           trace_families)
+        (fun (g, size) ->
+          raises_match (Exn.invalid_arg ~substring:"Thread_trace.start")
+            (fun () -> Thread_trace.start g ~size (fun _ -> 0)));
+      cases
+        ~name:(fun (g, size) -> strf "GC %s, %d" (S.version g.Gpu.gc) size)
+        "a size up to 2^22 - 1 pages is the size field's pages"
+        (List.concat_map
+           (fun gc ->
+             List.map (fun s -> (gpu gc, s)) [ 4096; (1 lsl 34) - 4096 ])
+           trace_families)
+        (fun (g, size) -> equal int (size / 4096) (size_field g size));
       test "a GFX 11.0 write pointer counts from address 0" (fun () ->
           equal int 0x100
             (Thread_trace.length

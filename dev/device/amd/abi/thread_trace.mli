@@ -28,7 +28,8 @@ val start : Gpu.t -> size:int -> (int -> 'v) -> 'v Packet.t
     instructions the waves issue. It makes the caches coherent before and after.
 
     [size] and every [buffer e] are multiples of 4096. Raises [Invalid_argument]
-    if [size] is not a positive multiple of 4096. *)
+    if [size] is not a multiple of 4096 from 4096 to 2{^ 22} - 1 pages of 4096
+    bytes, the most an engine's 22-bit size field holds. *)
 
 val stop : Gpu.t -> (int -> 'v) -> 'v Packet.t
 (** [stop g ends] stops tracing on every shader engine of [g], waits until each
