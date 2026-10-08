@@ -359,6 +359,9 @@ let make job fd ~name ~peer =
   }
 
 let name l = l.name
+let job_of l = l.job
+let ids = Atomic.make 0
+let fresh () = Atomic.fetch_and_add ids 1 + 1
 let malformed l = fail l.job (strf "%s: a malformed frame" l.name)
 let text a = String.init (Array1.dim a) (fun i -> a.{i})
 

@@ -104,6 +104,13 @@ val make : job -> Unix.file_descr -> name:string -> peer:Wire.process -> t
 val name : t -> string
 (** [name l] is [l]'s name. *)
 
+val job_of : t -> job
+(** [job_of l] is [l]'s job. *)
+
+val fresh : unit -> int
+(** [fresh ()] is an id the process gave no object before: the controller names
+    each object it makes on an agent by one ({!Wire.request}). *)
+
 (** {1:controller The controller's end} *)
 
 val request : t -> 'a Wire.request -> ('a, string) result

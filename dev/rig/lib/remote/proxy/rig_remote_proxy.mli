@@ -88,8 +88,9 @@ val make : Link.t -> Wire.account -> capability -> t
     The values of [Rig.Driver]. A {!region} of memory has no address and no host
     address: {!handle} is its id. A {!word} is the shadow: its host address is
     this process's. {!map_peer} of a word, for a proxy of the same link, is a
-    region whose {!address} is the producer's id on the agent: rig carries it in
-    a wait's [at], and the hand-over sends it as the wait's device. *)
+    region whose {!address} is one more than the producer's id on the agent,
+    since rig reserves [0]: rig carries it in a wait's [at], and the hand-over
+    sends the producer's id as the wait's device. *)
 
 val key : t Type.Id.t
 val arch : t -> string

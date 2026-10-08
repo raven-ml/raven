@@ -61,23 +61,6 @@ typedef struct pollfd rig_remote_pollfd;
 #define SHUT_BOTH SHUT_RDWR
 #endif
 
-/* Frames: their kinds, as wire.mli lists them, and the header before each
-   payload: its length (u64) and its kind (u8). */
-enum {
-  K_REQUEST = 1,
-  K_ANSWER,
-  K_HANDOVER,
-  K_DROP,
-  K_WORD,
-  K_BYTES,
-  K_RAIL,
-  K_BEAT,
-  K_ABORT,
-  K_CLOSE
-};
-
-#define HEADER 9
-
 /* A beat after a second without a send; a failure after ten without a
    byte. */
 #define BEAT_NS 1000000000LL
@@ -99,7 +82,6 @@ enum {
 #define ARRIVED 2
 #define COUNT_STRIDE 128
 
-enum { OPEN, CLOSED, FAILED };
 
 /* What a receive answers besides 0 and a socket error. */
 enum { ENDED = -1, SILENT = -2, MALFORMED = -3, TOO_LARGE = -4 };
@@ -138,41 +120,11 @@ struct rail {
   int users;       /* threads using it outside the link's lock */
 };
 
-struct job;
-
-struct link {
-  struct job *job;
-  struct link *next;
-  rig_remote_sock fd;
-  char *name;
-  int peer; /* 0 for the controller, i for agent i */
-  pthread_mutex_t mu;
-  pthread_cond_t cv;
-  struct entry *head, *tail;
-  size_t queued;
-  int sending; /* a frame is being sent, by the thread or an abort */
-  int closing, sent_close, got_close, threads, fd_closed;
-  _Atomic int failed;
-  struct pending *pending, *pending_last;
-  struct cmd *cmds, *cmds_last;
-  struct rail *rails;
-  int64_t sent_ns;
-};
-
-struct job {
-  pthread_mutex_t mu;
-  pthread_cond_t cv; /* the state changed, or a link ended */
-  _Atomic int state;
-  _Atomic(char *) why; /* set before the state */
-  long pid;
-  struct link *links;
-};
-
 static pthread_mutex_t jobs_mu = PTHREAD_MUTEX_INITIALIZER;
-static struct job *last_job;
+static struct rig_remote_job *last_job;
 
-#define Job_val(v) ((struct job *)Nativeint_val(v))
-#define Link_val(v) ((struct link *)Nativeint_val(v))
+#define Job_val(v) ((struct rig_remote_job *)Nativeint_val(v))
+#define Link_val(v) ((struct rig_remote_link *)Nativeint_val(v))
 
 /* Time */
 
@@ -192,20 +144,8 @@ static void wait_ns(pthread_cond_t *cv, pthread_mutex_t *mu, int64_t ns) {
   pthread_cond_timedwait(cv, mu, &t);
 }
 
-/* Little-endian integers */
-
-static uint64_t get_u64(const unsigned char *p) {
-  uint64_t v = 0;
-  for (int i = 7; i >= 0; i--) v = (v << 8) | p[i];
-  return v;
-}
-
-static void put_u64(unsigned char *p, uint64_t v) {
-  for (int i = 0; i < 8; i++) p[i] = (unsigned char)(v >> (8 * i));
-}
-
 static void put_header(unsigned char *p, uint64_t n, int kind) {
-  put_u64(p, n);
+  rig_remote_put_u64(p, n);
   p[8] = (unsigned char)kind;
 }
 
@@ -237,7 +177,7 @@ static void error_text(int e, char *buf, size_t n) {
 
 /* The root cause of a link's failure [code]: a socket error, or one of the
    receive answers. */
-static char *link_reason(struct link *l, int code) {
+static char *link_reason(struct rig_remote_link *l, int code) {
   char buf[256];
   switch (code) {
   case ENDED:
@@ -261,7 +201,7 @@ static char *link_reason(struct link *l, int code) {
 
 /* Failure */
 
-static void free_entries(struct link *l) {
+static void free_entries(struct rig_remote_link *l) {
   while (l->head != NULL) {
     struct entry *e = l->head;
     l->head = e->next;
@@ -273,7 +213,7 @@ static void free_entries(struct link *l) {
 }
 
 /* Closes [l]'s socket once nothing uses it. Holds [l]'s lock. */
-static void close_if_idle(struct link *l) {
+static void close_if_idle(struct rig_remote_link *l) {
   if (l->threads == 0 && !l->sending && !l->fd_closed) {
     l->fd_closed = 1;
     close_sock(l->fd);
@@ -281,7 +221,7 @@ static void close_if_idle(struct link *l) {
 }
 
 /* Sends an abort with [why] if the stream takes it at once. */
-static void try_abort(struct link *l, const char *why) {
+static void try_abort(struct rig_remote_link *l, const char *why) {
 #ifdef _WIN32
   (void)l;
   (void)why;
@@ -296,7 +236,7 @@ static void try_abort(struct link *l, const char *why) {
 }
 
 /* Fails [j] with [why], which it takes, unless it failed or closed. */
-static void fail_job(struct job *j, char *why) {
+static void fail_job(struct rig_remote_job *j, char *why) {
   pthread_mutex_lock(&j->mu);
   if (atomic_load(&j->state) != OPEN) {
     pthread_mutex_unlock(&j->mu);
@@ -305,7 +245,7 @@ static void fail_job(struct job *j, char *why) {
   }
   atomic_store(&j->why, why != NULL ? why : (char *)"the job failed");
   atomic_store(&j->state, FAILED);
-  for (struct link *l = j->links; l != NULL; l = l->next) {
+  for (struct rig_remote_link *l = j->links; l != NULL; l = l->next) {
     pthread_mutex_lock(&l->mu);
     atomic_store(&l->failed, 1);
     free_entries(l);
@@ -327,14 +267,12 @@ static void fail_job(struct job *j, char *why) {
 }
 
 /* Fails [l]'s job with the reason of [code], unless the job failed. */
-static void link_lost(struct link *l, int code) {
+static void link_lost(struct rig_remote_link *l, int code) {
   if (atomic_load(&l->failed)) return;
   fail_job(l->job, link_reason(l, code));
 }
 
-/* [1] if this process is a child of the one that made [j], whose job it
-   then fails in its own copy, taking no lock. */
-static int forked(struct job *j) {
+int rig_remote_forked(struct rig_remote_job *j) {
   if (j->pid == (long)getpid()) return 0;
   if (atomic_load(&j->state) == OPEN) {
     atomic_store(&j->why,
@@ -346,8 +284,8 @@ static int forked(struct job *j) {
 
 /* Thread ends */
 
-static void thread_ends(struct link *l) {
-  struct job *j = l->job;
+static void thread_ends(struct rig_remote_link *l) {
+  struct rig_remote_job *j = l->job;
   pthread_mutex_lock(&j->mu);
   pthread_mutex_lock(&l->mu);
   l->threads--;
@@ -363,7 +301,7 @@ static void thread_ends(struct link *l) {
 /* Sends the transfers of [l]'s rails whose [ready] advanced. Holds [l]'s
    lock, and releases it while it sends. [1] if it sent, [0] if not, and
    [-1] if the link failed. */
-static int send_rails(struct link *l) {
+static int send_rails(struct rig_remote_link *l) {
   int sent = 0;
   for (struct rail *r = l->rails; r != NULL; r = r->next) {
     if (r->nsend == 0) continue;
@@ -379,8 +317,8 @@ static int send_rails(struct link *l) {
       uint64_t *t = r->send + 3 * j;
       unsigned char h[HEADER + 16];
       put_header(h, 16 + t[2], K_RAIL);
-      put_u64(h + HEADER, r->id);
-      put_u64(h + HEADER + 8, c);
+      rig_remote_put_u64(h + HEADER, r->id);
+      rig_remote_put_u64(h + HEADER + 8, c);
       err = rig_remote_send_all(l->fd, h, sizeof h);
       if (err == 0)
         err = rig_remote_send_all(l->fd, r->out + k * r->out_stride + t[0],
@@ -407,7 +345,7 @@ static int send_rails(struct link *l) {
 }
 
 static void *sender(void *arg) {
-  struct link *l = arg;
+  struct rig_remote_link *l = arg;
   pthread_mutex_lock(&l->mu);
   for (;;) {
     if (atomic_load(&l->failed)) break;
@@ -476,7 +414,7 @@ static void *sender(void *arg) {
 
 /* Receives [n] bytes into [p]: 0, a socket error, [ENDED] or [SILENT].
    [last] is when the link's last byte came. */
-static int recv_all(struct link *l, unsigned char *p, uint64_t n,
+static int recv_all(struct rig_remote_link *l, unsigned char *p, uint64_t n,
                     int64_t *last) {
   while (n > 0) {
     int64_t left = SILENCE_MS - (now_ns() - *last) / 1000000;
@@ -511,7 +449,7 @@ static int recv_all(struct link *l, unsigned char *p, uint64_t n,
 }
 
 /* Receives a payload of [n] bytes into new memory. */
-static int recv_payload(struct link *l, uint64_t n, unsigned char **p,
+static int recv_payload(struct rig_remote_link *l, uint64_t n, unsigned char **p,
                         int64_t *last) {
   if (n > SIZE_MAX - 1) return TOO_LARGE;
   *p = malloc((size_t)n + 1);
@@ -525,12 +463,12 @@ static int recv_payload(struct link *l, uint64_t n, unsigned char **p,
 }
 
 /* Places a rail transfer of [n] bytes, its rail and count first. */
-static int recv_rail(struct link *l, uint64_t n, int64_t *last) {
+static int recv_rail(struct rig_remote_link *l, uint64_t n, int64_t *last) {
   unsigned char h[16];
   if (n < 16) return MALFORMED;
   int r = recv_all(l, h, 16, last);
   if (r != 0) return r;
-  uint64_t id = get_u64(h), c = get_u64(h + 8);
+  uint64_t id = rig_remote_get_u64(h), c = rig_remote_get_u64(h + 8);
   pthread_mutex_lock(&l->mu);
   struct rail *rl = l->rails;
   while (rl != NULL && rl->id != id) rl = rl->next;
@@ -557,7 +495,7 @@ static int recv_rail(struct link *l, uint64_t n, int64_t *last) {
 }
 
 /* Takes the answer to the oldest pending request. */
-static int recv_answer(struct link *l, uint64_t n, int64_t *last) {
+static int recv_answer(struct rig_remote_link *l, uint64_t n, int64_t *last) {
   unsigned char *p;
   if (n < 1) return MALFORMED;
   int r = recv_payload(l, n, &p, last);
@@ -581,7 +519,7 @@ static int recv_answer(struct link *l, uint64_t n, int64_t *last) {
 }
 
 /* Queues a command of the controller for [next]. */
-static int recv_cmd(struct link *l, int kind, uint64_t n, int64_t *last) {
+static int recv_cmd(struct rig_remote_link *l, int kind, uint64_t n, int64_t *last) {
   unsigned char *p;
   int r = recv_payload(l, n, &p, last);
   if (r != 0) return r;
@@ -605,8 +543,84 @@ static int recv_cmd(struct link *l, int kind, uint64_t n, int64_t *last) {
   return 0;
 }
 
+/* Proxies */
+
+void rig_remote_add_dev(struct rig_remote_dev *d) {
+  struct rig_remote_link *l = d->link;
+  pthread_mutex_lock(&l->mu);
+  if (d->id >= l->ndevs) {
+    size_t n = d->id + 1 > 2 * l->ndevs ? d->id + 1 : 2 * l->ndevs;
+    struct rig_remote_dev **a = realloc(l->devs, n * sizeof *a);
+    if (a == NULL) {
+      pthread_mutex_unlock(&l->mu);
+      return;
+    }
+    memset(a + l->ndevs, 0, (n - l->ndevs) * sizeof *a);
+    l->devs = a;
+    l->ndevs = n;
+  }
+  l->devs[d->id] = d;
+  pthread_mutex_unlock(&l->mu);
+}
+
+static struct rig_remote_dev *dev_of(struct rig_remote_link *l, uint64_t id) {
+  return id < l->ndevs ? l->devs[id] : NULL;
+}
+
+/* Advances a proxy's word: once every copy into this process's memory of
+   the values it covers has its bytes, and never past the last value
+   handed over. */
+static int recv_word(struct rig_remote_link *l, uint64_t n, int64_t *last) {
+  unsigned char h[16];
+  if (n != 16) return MALFORMED;
+  int r = recv_all(l, h, 16, last);
+  if (r != 0) return r;
+  uint64_t id = rig_remote_get_u64(h), v = rig_remote_get_u64(h + 8);
+  pthread_mutex_lock(&l->mu);
+  struct rig_remote_dev *d = dev_of(l, id);
+  if (d == NULL || v <= atomic_load(&d->word) || v > d->handed ||
+      (d->locals != NULL && d->locals->value <= v)) {
+    pthread_mutex_unlock(&l->mu);
+    return MALFORMED;
+  }
+  while (d->flights != NULL && d->flights->value <= v) {
+    struct rig_remote_flight *f = d->flights;
+    d->flights = f->next;
+    d->flying -= f->bytes;
+    free(f);
+  }
+  if (d->flights == NULL) d->flights_last = NULL;
+  atomic_store_explicit(&d->word, v, memory_order_release);
+  pthread_cond_broadcast(&l->cv);
+  pthread_mutex_unlock(&l->mu);
+  return 0;
+}
+
+/* Writes a copy's bytes where the oldest copy into this process's memory of
+   its proxy named. */
+static int recv_bytes(struct rig_remote_link *l, uint64_t n, int64_t *last) {
+  unsigned char h[16];
+  if (n < 16) return MALFORMED;
+  int r = recv_all(l, h, 16, last);
+  if (r != 0) return r;
+  uint64_t id = rig_remote_get_u64(h), v = rig_remote_get_u64(h + 8);
+  pthread_mutex_lock(&l->mu);
+  struct rig_remote_dev *d = dev_of(l, id);
+  struct rig_remote_local *c = d != NULL ? d->locals : NULL;
+  if (c == NULL || c->value != v || c->bytes != n - 16) {
+    pthread_mutex_unlock(&l->mu);
+    return MALFORMED;
+  }
+  d->locals = c->next;
+  if (d->locals == NULL) d->locals_last = NULL;
+  pthread_mutex_unlock(&l->mu);
+  r = recv_all(l, c->at, c->bytes, last);
+  free(c);
+  return r;
+}
+
 /* Handles one frame: 0 to read on, 1 once the peer closed, or a code. */
-static int recv_frame(struct link *l, int kind, uint64_t n, int64_t *last) {
+static int recv_frame(struct rig_remote_link *l, int kind, uint64_t n, int64_t *last) {
   int from_controller = l->peer == 0;
   switch (kind) {
   case K_RAIL:
@@ -631,6 +645,10 @@ static int recv_frame(struct link *l, int kind, uint64_t n, int64_t *last) {
   }
   case K_ANSWER:
     return from_controller ? MALFORMED : recv_answer(l, n, last);
+  case K_WORD:
+    return from_controller ? MALFORMED : recv_word(l, n, last);
+  case K_BYTES:
+    return from_controller ? MALFORMED : recv_bytes(l, n, last);
   case K_REQUEST:
   case K_HANDOVER:
   case K_DROP:
@@ -641,12 +659,12 @@ static int recv_frame(struct link *l, int kind, uint64_t n, int64_t *last) {
 }
 
 static void *receiver(void *arg) {
-  struct link *l = arg;
+  struct rig_remote_link *l = arg;
   int64_t last = now_ns();
   for (;;) {
     unsigned char h[HEADER];
     int r = recv_all(l, h, HEADER, &last);
-    if (r == 0) r = recv_frame(l, h[8], get_u64(h), &last);
+    if (r == 0) r = recv_frame(l, h[8], rig_remote_get_u64(h), &last);
     if (r == 1) break;
     if (r != 0) {
       link_lost(l, r);
@@ -659,13 +677,10 @@ static void *receiver(void *arg) {
 
 /* Queueing */
 
-/* Queues the frame of [kind] whose payload is the [n] bytes at [p], waiting
-   while the queue is full, and appends [q] to the pending requests if it is
-   not NULL. [0]; [-1] if the link failed or closes, the frame then dropped;
-   [-2] if memory ran out. A close is the link's last frame. Called without
-   the runtime. */
-static int queue(struct link *l, int kind, const unsigned char *p, size_t np,
-                 struct pending *q) {
+/* Appends [q], if not NULL, to the pending requests with the frame, and a
+   close makes the frame the link's last. */
+int rig_remote_queue(struct rig_remote_link *l, int kind,
+                     const unsigned char *p, size_t np, struct pending *q) {
   struct entry *e = malloc(sizeof *e);
   size_t n = HEADER + np;
   unsigned char *buf = e != NULL ? malloc(n) : NULL;
@@ -709,7 +724,7 @@ static int queue(struct link *l, int kind, const unsigned char *p, size_t np,
 
 /* Stubs: jobs */
 
-static value job_reason(struct job *j) {
+static value job_reason(struct rig_remote_job *j) {
   const char *w = atomic_load(&j->why);
   return caml_copy_string(w != NULL ? w : "");
 }
@@ -718,12 +733,12 @@ static value job_reason(struct job *j) {
 value caml_rig_remote_link_job(value unit) {
   (void)unit;
   pthread_mutex_lock(&jobs_mu);
-  if (last_job != NULL && !forked(last_job) &&
+  if (last_job != NULL && !rig_remote_forked(last_job) &&
       atomic_load(&last_job->state) == OPEN) {
     pthread_mutex_unlock(&jobs_mu);
     return caml_copy_nativeint(0);
   }
-  struct job *j = calloc(1, sizeof *j);
+  struct rig_remote_job *j = calloc(1, sizeof *j);
   if (j == NULL) {
     pthread_mutex_unlock(&jobs_mu);
     caml_raise_out_of_memory();
@@ -742,9 +757,9 @@ value caml_rig_remote_link_job(value unit) {
 value caml_rig_remote_link_job_wait(value vj, value vms) {
   CAMLparam2(vj, vms);
   CAMLlocal1(r);
-  struct job *j = Job_val(vj);
+  struct rig_remote_job *j = Job_val(vj);
   int64_t ms = Long_val(vms);
-  if (!forked(j) && atomic_load(&j->state) == OPEN && ms > 0) {
+  if (!rig_remote_forked(j) && atomic_load(&j->state) == OPEN && ms > 0) {
     caml_release_runtime_system();
     pthread_mutex_lock(&j->mu);
     int64_t until = now_ns() + ms * 1000000LL;
@@ -762,8 +777,8 @@ value caml_rig_remote_link_job_wait(value vj, value vms) {
 
 /* Fails the job. Does not release the runtime: it waits on no peer. */
 value caml_rig_remote_link_job_fail(value vj, value why) {
-  struct job *j = Job_val(vj);
-  if (forked(j)) return Val_unit;
+  struct rig_remote_job *j = Job_val(vj);
+  if (rig_remote_forked(j)) return Val_unit;
   char *w = strdup(String_val(why));
   fail_job(j, w);
   return Val_unit;
@@ -772,20 +787,20 @@ value caml_rig_remote_link_job_fail(value vj, value why) {
 /* Ends the job in order. Releases the runtime. */
 value caml_rig_remote_link_job_close(value vj) {
   CAMLparam1(vj);
-  struct job *j = Job_val(vj);
-  if (forked(j)) CAMLreturn(Val_unit);
+  struct rig_remote_job *j = Job_val(vj);
+  if (rig_remote_forked(j)) CAMLreturn(Val_unit);
   caml_release_runtime_system();
   pthread_mutex_lock(&j->mu);
   if (atomic_load(&j->state) == OPEN) {
-    for (struct link *l = j->links; l != NULL; l = l->next) {
+    for (struct rig_remote_link *l = j->links; l != NULL; l = l->next) {
       pthread_mutex_unlock(&j->mu);
-      queue(l, K_CLOSE, NULL, 0, NULL);
+      rig_remote_queue(l, K_CLOSE, NULL, 0, NULL);
       pthread_mutex_lock(&j->mu);
     }
     for (;;) {
       if (atomic_load(&j->state) != OPEN) break;
       int ended = 1;
-      for (struct link *l = j->links; l != NULL; l = l->next) {
+      for (struct rig_remote_link *l = j->links; l != NULL; l = l->next) {
         pthread_mutex_lock(&l->mu);
         if (l->threads > 0) ended = 0;
         pthread_mutex_unlock(&l->mu);
@@ -808,8 +823,8 @@ value caml_rig_remote_link_job_close(value vj) {
 /* A link of the job over [fd] to process [peer], or 0 if the job is
    closed. Does not release the runtime. */
 value caml_rig_remote_link_make(value vj, value fd, value name, value peer) {
-  struct job *j = Job_val(vj);
-  struct link *l = calloc(1, sizeof *l);
+  struct rig_remote_job *j = Job_val(vj);
+  struct rig_remote_link *l = calloc(1, sizeof *l);
   char *nm = strdup(String_val(name));
   if (l == NULL || nm == NULL) {
     free(l);
@@ -827,7 +842,7 @@ value caml_rig_remote_link_make(value vj, value fd, value name, value peer) {
   int one = 1;
   (void)setsockopt(l->fd, IPPROTO_TCP, TCP_NODELAY, (const char *)&one,
                    sizeof one);
-  if (forked(j)) {
+  if (rig_remote_forked(j)) {
     atomic_store(&l->failed, 1);
     l->fd_closed = 1;
     close_sock(l->fd);
@@ -870,14 +885,14 @@ value caml_rig_remote_link_make(value vj, value fd, value name, value peer) {
    while the queue is full. */
 value caml_rig_remote_link_post(value vl, value vkind, value head) {
   CAMLparam3(vl, vkind, head);
-  struct link *l = Link_val(vl);
-  if (forked(l->job)) CAMLreturn(Val_unit);
+  struct rig_remote_link *l = Link_val(vl);
+  if (rig_remote_forked(l->job)) CAMLreturn(Val_unit);
   size_t n = caml_string_length(head);
   unsigned char *b = malloc(n + 1);
   if (b == NULL) caml_raise_out_of_memory();
   memcpy(b, String_val(head), n);
   caml_release_runtime_system();
-  int r = queue(l, Int_val(vkind), b, n, NULL);
+  int r = rig_remote_queue(l, Int_val(vkind), b, n, NULL);
   caml_acquire_runtime_system();
   free(b);
   if (r == -2) caml_raise_out_of_memory();
@@ -889,8 +904,8 @@ value caml_rig_remote_link_post(value vl, value vkind, value head) {
 value caml_rig_remote_link_post_area(value vl, value vkind, value head,
                                      value area) {
   CAMLparam4(vl, vkind, head, area);
-  struct link *l = Link_val(vl);
-  if (forked(l->job)) CAMLreturn(Val_unit);
+  struct rig_remote_link *l = Link_val(vl);
+  if (rig_remote_forked(l->job)) CAMLreturn(Val_unit);
   size_t nh = caml_string_length(head);
   size_t nb = caml_ba_byte_size(Caml_ba_array_val(area));
   unsigned char *b = malloc(nh + nb + 1);
@@ -898,7 +913,7 @@ value caml_rig_remote_link_post_area(value vl, value vkind, value head,
   memcpy(b, String_val(head), nh);
   memcpy(b + nh, Caml_ba_data_val(area), nb);
   caml_release_runtime_system();
-  int r = queue(l, Int_val(vkind), b, nh + nb, NULL);
+  int r = rig_remote_queue(l, Int_val(vkind), b, nh + nb, NULL);
   caml_acquire_runtime_system();
   free(b);
   if (r == -2) caml_raise_out_of_memory();
@@ -924,10 +939,10 @@ static value area_of_string(const char *s) {
 value caml_rig_remote_link_request(value vl, value head) {
   CAMLparam2(vl, head);
   CAMLlocal2(r, a);
-  struct link *l = Link_val(vl);
+  struct rig_remote_link *l = Link_val(vl);
   int code = 2;
   struct pending *q = NULL;
-  if (!forked(l->job)) {
+  if (!rig_remote_forked(l->job)) {
     size_t n = caml_string_length(head);
     unsigned char *b = malloc(n + 1);
     q = calloc(1, sizeof *q);
@@ -938,7 +953,7 @@ value caml_rig_remote_link_request(value vl, value head) {
     }
     memcpy(b, String_val(head), n);
     caml_release_runtime_system();
-    int k = queue(l, K_REQUEST, b, n, q);
+    int k = rig_remote_queue(l, K_REQUEST, b, n, q);
     free(b);
     if (k == 0) {
       pthread_mutex_lock(&l->mu);
@@ -976,9 +991,9 @@ value caml_rig_remote_link_request(value vl, value head) {
 value caml_rig_remote_link_next(value vl) {
   CAMLparam1(vl);
   CAMLlocal2(r, a);
-  struct link *l = Link_val(vl);
+  struct rig_remote_link *l = Link_val(vl);
   struct cmd *c = NULL;
-  if (!forked(l->job)) {
+  if (!rig_remote_forked(l->job)) {
     caml_release_runtime_system();
     pthread_mutex_lock(&l->mu);
     while (l->cmds == NULL && !atomic_load(&l->failed))
@@ -1042,7 +1057,7 @@ value caml_rig_remote_link_rail(value vl, value id, value send, value receive,
                                 value out, value in, value counts) {
   CAMLparam5(vl, id, send, receive, out);
   CAMLxparam2(in, counts);
-  struct link *l = Link_val(vl);
+  struct rig_remote_link *l = Link_val(vl);
   struct rail *r = calloc(1, sizeof *r);
   if (r == NULL) caml_raise_out_of_memory();
   r->id = (uint64_t)Long_val(id);
@@ -1055,7 +1070,7 @@ value caml_rig_remote_link_rail(value vl, value id, value send, value receive,
   r->counts = Caml_ba_data_val(counts);
   r->out_stride = caml_ba_byte_size(Caml_ba_array_val(out)) / 2;
   r->in_stride = caml_ba_byte_size(Caml_ba_array_val(in)) / 2;
-  if (forked(l->job)) {
+  if (rig_remote_forked(l->job)) {
     for (int c = 0; c < 3; c++) atomic_store(count(r, c), INT64_MAX);
     free(r->send);
     free(r->receive);
@@ -1082,8 +1097,8 @@ value caml_rig_remote_link_rail_bc(value *argv, int argc) {
    runtime while it waits. */
 value caml_rig_remote_link_release_rail(value vl, value id) {
   CAMLparam2(vl, id);
-  struct link *l = Link_val(vl);
-  if (forked(l->job)) CAMLreturn(Val_unit);
+  struct rig_remote_link *l = Link_val(vl);
+  if (rig_remote_forked(l->job)) CAMLreturn(Val_unit);
   uint64_t k = (uint64_t)Long_val(id);
   caml_release_runtime_system();
   pthread_mutex_lock(&l->mu);
