@@ -721,22 +721,27 @@ let pages (m : memory) =
 
 let borrow d m =
   let m = m.root in
-  let host = if is_io_memory m.entry then pages m else m.host in
-  if m.dev == d then Some m
-  else if Dev.is_io d || (Dev.is_io m.dev && host < 0) then None
-  else if m.dev.machine <> d.machine && not (Dev.is_io m.dev) then None
-  else if Dev.is_host d then
-    if host >= 0 then Some (borrow_of m d ~host ~address:host ~handle:0n)
-    else None
-  else if d.memory_device && host >= 0 then
-    Some (borrow_of m d ~host ~address:host ~handle:(Nativeint.of_int host))
-  else if host >= 0 && m.entry.region = None && host mod page <> 0 then None
-  else begin
-    if m.entry == no_entry then ensure_entry m;
-    match mapping d m host with
-    | None -> None
-    | Some mp -> Some (borrow_of m d ~host:(-1) ~address:mp.at ~handle:mp.by)
-  end
+  if is_io_memory m.entry && m.bytes = 0 && m.dev != d then
+    (* No bytes to map: the borrow is over no pages. *)
+    let at = ba_address empty in
+    Some (borrow_of m d ~host:at ~address:at ~handle:0n)
+  else
+    let host = if is_io_memory m.entry then pages m else m.host in
+    if m.dev == d then Some m
+    else if Dev.is_io d || (Dev.is_io m.dev && host < 0) then None
+    else if m.dev.machine <> d.machine && not (Dev.is_io m.dev) then None
+    else if Dev.is_host d then
+      if host >= 0 then Some (borrow_of m d ~host ~address:host ~handle:0n)
+      else None
+    else if d.memory_device && host >= 0 then
+      Some (borrow_of m d ~host ~address:host ~handle:(Nativeint.of_int host))
+    else if host >= 0 && m.entry.region = None && host mod page <> 0 then None
+    else begin
+      if m.entry == no_entry then ensure_entry m;
+      match mapping d m host with
+      | None -> None
+      | Some mp -> Some (borrow_of m d ~host:(-1) ~address:mp.at ~handle:mp.by)
+    end
 
 (* Asks the io device of [m] to read the bytes of [m] from [at] ahead, for a
    device other than the host that borrowed them. A hint: it raises nothing. *)
