@@ -169,10 +169,12 @@ let uvm_call c cmd p status what =
 (* The client *)
 
 (* The GPU addresses the process allocates, reserved in the process so that
-   nothing else maps there: memory the host maps too from 64 GiB, the rest from
-   128 GiB, all below 2^40, the widest address of a channel's segments. *)
-let low_base = 0x10_0000_0000
-let main_base = 0x20_0000_0000
+   nothing else maps there: memory the host maps too from 384 GiB, the rest from
+   448 GiB, all below 2^40, the widest address of a channel's segments. They
+   start above 258 GiB, where AddressSanitizer on x86_64 maps the shadow of its
+   shadow gap when the gap is unprotected ([protect_shadow_gap=0]). *)
+let low_base = 0x60_0000_0000
+let main_base = 0x70_0000_0000
 let top = 1 lsl 40
 let ctl_path = "/dev/nvidiactl"
 let uvm_path = "/dev/nvidia-uvm"
@@ -254,9 +256,9 @@ let make_client () =
         "initializing NVIDIA's unified memory"
     in
     (* The memory manager ties unified memory to the process's address space,
-       through a second file kept open for the process. Its registration is
-       made once per process; a second one, such as CUDA's in the same
-       process, is refused, and the first serves: its answer is dropped. *)
+       through a second file kept open for the process. Its registration is made
+       once per process; a second one, such as CUDA's in the same process, is
+       refused, and the first serves: its answer is dropped. *)
     let module M = D.Uvm_mm_initialize in
     let m = params M.sizeof in
     set m M.uvm_fd uvm_fd;

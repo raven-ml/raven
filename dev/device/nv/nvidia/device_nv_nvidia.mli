@@ -20,7 +20,7 @@
     of another release answers [Error] naming them.
 
     {b Memory.} The process's GPU memory lies at addresses below [2{^40}] that
-    this library reserves in the process at its first open, from [64 GiB] up:
+    this library reserves in the process at its first open, from [384 GiB] up:
     memory the host addresses lies at the same address for the host and the GPU.
     The memory [`Mapped] gives the host through the GPU's BAR1, which the kernel
     driver sizes, often at 256 MiB.
