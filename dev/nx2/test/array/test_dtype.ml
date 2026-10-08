@@ -177,23 +177,19 @@ let bytes_reference b n =
   let tail = ((r * b) + 7) / 8 in
   if q > (max_int - tail) / b then None else Some ((q * b) + tail)
 
-let counts =
-  let edges =
-    List.concat_map
-      (fun k -> [ (max_int / k) - 1; max_int / k; (max_int / k) + 1 ])
-      [ 1; 2; 4; 8; 16 ]
-  in
+(* Counts about [dt]'s bounds: small ones, the greatest count whose bytes fit
+   and its neighbours, and the extremes. *)
+let counts (D.Any dt) =
+  let last = max_int / max 1 (D.bits dt / 8) in
   Gen.frequency
     [
-      (6, Gen.int_range (-2) 40);
-      ( 2,
-        Gen.of_list ~pp:Format.pp_print_int (List.filter (fun n -> n > 0) edges)
-      );
-      (1, Gen.of_list ~pp:Format.pp_print_int [ min_int; min_int + 1; -1 ]);
+      (4, Gen.int_range (-2) 40);
+      (3, Gen.of_list ~pp:Format.pp_print_int [ last - 1; last; last + 1 ]);
+      (1, Gen.of_list ~pp:Format.pp_print_int [ max_int; min_int; -1 ]);
     ]
 
 let law_bytes (D.Any dt) =
-  prop (D.name dt) counts (fun n ->
+  prop (D.name dt) (counts (D.Any dt)) (fun n ->
       let b = D.bits dt in
       cover "a negative count" (n < 0);
       if b < 8 then cover "rounds a partial byte up" (n > 0 && n * b mod 8 <> 0);
