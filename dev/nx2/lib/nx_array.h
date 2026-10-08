@@ -79,13 +79,14 @@ enum {
   NX_OVERLAP,      /* a written operand shares a byte with another */
   NX_LAYOUT,       /* an operand's layout is not one */
   NX_SHAPE,        /* operands of one loop have different shapes */
-  NX_ARITY         /* more operands than NX_MAX_OPERANDS */
+  NX_ARITY         /* no operand, or more than NX_MAX_OPERANDS, to a loop */
 };
 
 /* The door */
 
 /* An operand of a call: an OCaml array, the dtype the kernel's loads assume,
-   and whether the kernel writes it. */
+   and whether the kernel writes it. nx_read reads [array] once; the
+   descriptor it fills is what the kernel uses after. */
 typedef struct {
   value array;
   int dtype;
@@ -93,7 +94,10 @@ typedef struct {
 } nx_operand;
 
 /* An operand, read. Its memory is claimed until nx_done; [base] is NULL for an
-   operand with no element, which the coalescer forms no address from. */
+   operand with no element, which the coalescer forms no address from. Its
+   buffer is a local root of the domain from nx_read to nx_done, so the
+   descriptors live in the kernel's frame and nx_done runs on every path
+   before the kernel returns. */
 typedef struct {
   uint8_t *base; /* host address of the buffer's first byte */
   int dtype, bits, rank, flags;
@@ -114,7 +118,8 @@ int nx_array_dtype(value v);
    It then claims each operand's memory, for writing if written: NX_PENDING
    while earlier device work on it is unfinished (wait on the buffer with
    Rig.Buffer.wait and read again), NX_EXCLUSIVE if it is held exclusive,
-   NX_READ_ONLY if a written operand's memory is Read. */
+   NX_READ_ONLY if a written operand's memory is Read. It allocates nothing
+   and raises nothing. With no operand it answers NX_OK. */
 int nx_read(int n, const nx_operand *in, nx_array *out);
 
 /* Releases the claims of the [n] operands a successful nx_read filled. */

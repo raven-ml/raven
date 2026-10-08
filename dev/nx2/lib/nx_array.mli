@@ -5,10 +5,26 @@
 
 (** Dtypes, layouts and arrays over device buffers.
 
-    A {e dtype} ({!Dtype}) is what one element is: its storage format and the
-    OCaml type its values read as. A {e layout} ({!Layout}) is where elements
-    lie: a map from an index to an element position. A {e movement} ({!Move}) is
-    a change of layout that moves no element. *)
+    An array is three facts over a {!Rig.Buffer.t}, whose bytes it reads:
+    - a {e dtype} ({!Dtype}), what one element is: its storage format and the
+      OCaml type its values read as;
+    - a {e layout} ({!Layout}), where elements lie: a map from an index to an
+      element position in the buffer;
+    - the buffer, which places the array on a device ({!device}).
+
+    A {e movement} ({!Move}) changes a layout without moving an element, and
+    {!move} applies one to an array. {!v} makes an array from its parts and
+    checks that its layout reaches only bits of its buffer, which every movement
+    keeps; {!create} and {!of_array} make fresh ones.
+
+    Kernels are C. They read arrays only through [nx_array.h]'s door, [nx_read],
+    which takes every operand of a call with the dtype the kernel's loads
+    assume, checks and claims them all, and fills descriptors that hold no
+    pointer into the OCaml heap; [nx_done] ends the claims, and [nx_coalesce]
+    turns operands of one shape into a loop. A kernel's OCaml wrapper raises the
+    code [nx_read] answers with {!refused}. [nx_dtype.h] holds the dtypes'
+    codes, their facts and every conversion into them, with no OCaml header, so
+    GPU kernel sources compile it too. *)
 
 (** {1:dtypes Dtypes} *)
 
@@ -367,7 +383,8 @@ module Layout : sig
   (** {1:queries Queries} *)
 
   val rank : t -> int
-  (** [rank l] is [l]'s number of axes. *)
+  (** [rank l] is [l]'s number of axes. {!rank}, {!dim}, {!stride}, {!offset}
+      and the flags allocate nothing. *)
 
   val dim : t -> int -> int
   (** [dim l i] is the extent of [l]'s axis [i].
@@ -430,7 +447,9 @@ module Layout : sig
 
   val equal : t -> t -> bool
   (** [equal l l'] is [true] iff [l] and [l'] have the same shape, strides and
-      offset. *)
+      offset: by the canonical form, iff they have one shape and map every index
+      to the same position. It compares [8·(5 + 2·rank)] bytes and allocates
+      nothing. *)
 
   val pp : Format.formatter -> t -> unit
   (** [pp] formats a layout's shape, strides and offset. *)
@@ -522,8 +541,8 @@ val refused : string -> int -> any list -> 'a
     A function that reads or writes bytes on the host claims the buffer's
     memory, waits for the device work the access must follow
     ({!Rig.Buffer.wait}), and holds the claim while it runs. It raises
-    [Invalid_argument] if the buffer is dead or the host does not address its
-    memory. *)
+    [Invalid_argument] if the buffer is dead, its memory is held exclusive, or
+    the host does not address its memory. *)
 
 val get : ('v, 's) t -> int array -> 'v
 (** [get a i] is [a]'s element at index [i].
@@ -538,7 +557,7 @@ val set : ('v, 's) t -> int array -> 'v -> unit
 
     Raises [Invalid_argument] as {!get} does, if [a] reaches an element twice
     ({!Layout.is_distinct}), if [a]'s memory is [Read], and if [x] is an [int]
-    outside [[Dtype.min_value dt, Dtype.max_value dt]]. *)
+    below {!Dtype.min_value} or above {!Dtype.max_value} of [a]'s dtype. *)
 
 val to_array : ('v, 's) t -> 'v array
 (** [to_array a] is [a]'s elements in C order of indices, read by one C loop.
@@ -577,8 +596,9 @@ val bigarray :
 (** [bigarray k a] is [Some] bigarray over [a]'s own bytes iff [a] is on
     {!Rig.host}, C-contiguous ({!Layout.is_contiguous}) and of rank at most 16:
     writes through it write [a]. From then on [a]'s memory is never held
-    exclusive again ({!Rig.Buffer.bigarray}). A format Bigarray lacks is bitcast
-    first to one of its width.
+    exclusive again ({!Rig.Buffer.bigarray}). It waits for nothing: access
+    through the bigarray follows device work only after {!Rig.Buffer.wait}. A
+    format Bigarray lacks is bitcast first to one of its width ({!bitcast}).
 
     Raises [Invalid_argument] if [a]'s buffer is dead, or its memory is held
     exclusive by claims that have not consumed it. *)

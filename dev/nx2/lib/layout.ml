@@ -25,7 +25,7 @@ let offset l = word l 2
 let span l = (word l 3, word l 4)
 let unsafe_dim l i = word l (header + i)
 let unsafe_stride l i = word l (header + rank l + i)
-let invalid_argf = Move.invalid_argf
+let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 
 let dim l i =
   if i < 0 || i >= rank l then
