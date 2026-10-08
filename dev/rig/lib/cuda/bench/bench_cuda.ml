@@ -23,6 +23,9 @@ external floor_release : int -> unit = "rig_cuda_bench_release"
 external floor_switch : unit -> unit = "rig_cuda_bench_switch"
 external floor_waits : int -> int -> unit = "rig_cuda_bench_waits"
 external floor_launch : nativeint -> int -> unit = "rig_cuda_bench_launch"
+external floor_graph : nativeint -> int -> unit = "rig_cuda_bench_graph"
+
+external floor_graph_launch : bool -> unit = "rig_cuda_bench_graph_launch"
 external buffer : bool -> int -> nativeint = "rig_cuda_bench_buffer"
 
 external floor_copy : nativeint -> nativeint -> int -> unit
@@ -133,6 +136,23 @@ let wait_rows =
       row "floor-4" floor_waiting (fun at -> floor_waits at 4);
     ]
 
+let kernels f n = Array.make n (S.kernel f 0 0)
+
+(* A graph of [n] empty kernels, made through the capability, launched by a fill
+   that updates no node or, [updated], every node's first argument to the run's
+   parity: two prepared submissions, one per parity, alternate. *)
+let graphing ?(updated = false) n () =
+  let t = dev () in
+  let f = empty t.g in
+  let gr = get ((C.capability t.g).graph (kernels f n)) in
+  let updates a =
+    if updated then Array.init n (fun j -> (j, S.kernel f a 0)) else [||]
+  in
+  let prepared a =
+    prepare t [| S.part ~queue:"COMPUTE:0" (S.graph_launch gr (updates a)) |]
+  in
+  (t, prepared 0, prepared 1)
+
 let launch_rows =
   let launching count () =
     let t = dev () in
@@ -140,13 +160,37 @@ let launch_rows =
     (t, prepare t [| S.part ~queue:"COMPUTE:0" f |])
   in
   let floor_launching () = Nativeint.of_int (empty (floor ())) in
+  let graph_launching (t, even, odd) =
+    run t (if t.v land 1 = 0 then even else odd)
+  in
+  let floor_graphing n () =
+    floor_graph (Nativeint.of_int (empty (floor ()))) n
+  in
   Thumper.group "launch"
     [
       row "1" (launching 1) (fun (t, s) -> run t s);
       row "64" (launching 64) (fun (t, s) -> run t s);
       row "floor-1" floor_launching (fun f -> floor_launch f 1);
       row "floor-64" floor_launching (fun f -> floor_launch f 64);
+      row "graph-1" (graphing 1) graph_launching;
+      row "graph-64" (graphing 64) graph_launching;
+      row "graph-64-updated" (graphing ~updated:true 64) graph_launching;
+      row "floor-graph-1" (floor_graphing 1) (fun () ->
+          floor_graph_launch false);
+      row "floor-graph-64" (floor_graphing 64) (fun () ->
+          floor_graph_launch false);
+      row "floor-graph-64-updated" (floor_graphing 64) (fun () ->
+          floor_graph_launch true);
     ]
+
+(* The maker of a graph of 64 empty kernels and its release: link-time work. *)
+let graph_rows =
+  let making () =
+    let t = dev () in
+    ((C.capability t.g).graph, kernels (empty t.g) 64)
+  in
+  Thumper.group "graph"
+    [ row "make-64" making (fun (graph, ks) -> (get (graph ks)).release ()) ]
 
 let copy_rows =
   let n = 256 * mib in
@@ -202,6 +246,7 @@ let () =
            release_rows;
            wait_rows;
            launch_rows;
+           graph_rows;
            copy_rows;
            alloc_rows;
            map_host_rows;

@@ -39,6 +39,18 @@ typedef uint64_t CUdeviceptr;
 typedef void *CUcontext;
 typedef void *CUstream;
 typedef void *CUevent;
+typedef void *CUgraph;
+typedef void *CUgraphNode;
+typedef void *CUgraphExec;
+
+/* cuda.h's CUDA_KERNEL_NODE_PARAMS_v2. */
+typedef struct {
+  void *func;
+  unsigned int grid[3], block[3], shared;
+  void **params, **extra;
+  void *kern;
+  CUcontext context;
+} kernel_node;
 
 /* cuda.h's CUstreamBatchMemOpParams, as rig_cuda_stubs.c declares it. */
 typedef union {
@@ -69,7 +81,14 @@ typedef union {
   X(cuMemcpyAsync, (CUdeviceptr, CUdeviceptr, size_t, CUstream))               \
   X(cuLaunchKernel, (void *, unsigned int, unsigned int, unsigned int,         \
                      unsigned int, unsigned int, unsigned int, unsigned int,   \
-                     CUstream, void **, void **))
+                     CUstream, void **, void **))                              \
+  X(cuGraphCreate, (CUgraph *, unsigned int))                                  \
+  X(cuGraphAddKernelNode_v2, (CUgraphNode *, CUgraph, const CUgraphNode *,     \
+                              size_t, const kernel_node *))                    \
+  X(cuGraphInstantiateWithFlags, (CUgraphExec *, CUgraph, unsigned long long)) \
+  X(cuGraphExecKernelNodeSetParams_v2, (CUgraphExec, CUgraphNode,              \
+                                        const kernel_node *))                  \
+  X(cuGraphLaunch, (CUgraphExec, CUstream))
 
 #define DECLARE(name, args) static CUresult(CUDAAPI *p_##name) args;
 CUDA(DECLARE)
@@ -197,6 +216,64 @@ value rig_cuda_bench_launch(value v_f, value v_k) {
   for (long i = 0; i < Long_val(v_k); i++)
     CHECK(p_cuLaunchKernel((void *)Nativeint_val(v_f), 1, 1, 1, 1, 1, 1, 0,
                            streams[0], params, NULL));
+  release(0);
+  spin();
+  return Val_unit;
+}
+
+/* The floor's graph: [nodes] kernels of the function [func], each after the
+   one before, with the two 64-bit parameters [args], as the driver makes
+   them. */
+#define NODES_MAX 64
+static CUgraphExec exec;
+static CUgraphNode nodes[NODES_MAX];
+static int count;
+static void *func;
+static uint64_t args[2];
+
+/* The parameters of a node: [func] over one thread, its arguments [args]
+   passed as a buffer, the form compiled code uses. */
+static void node_params(kernel_node *p, void **extra, size_t *size) {
+  *size = sizeof args;
+  extra[0] = (void *)1; /* CU_LAUNCH_PARAM_BUFFER_POINTER */
+  extra[1] = args;
+  extra[2] = (void *)2; /* CU_LAUNCH_PARAM_BUFFER_SIZE */
+  extra[3] = size;
+  extra[4] = NULL; /* CU_LAUNCH_PARAM_END */
+  *p = (kernel_node){func, {1, 1, 1}, {1, 1, 1}, 0, NULL, extra, NULL, NULL};
+}
+
+/* Makes the floor's graph of [v_n] kernels [v_f]. */
+value rig_cuda_bench_graph(value v_f, value v_n) {
+  CUgraph g;
+  kernel_node p;
+  void *extra[5];
+  size_t size;
+  func = (void *)Nativeint_val(v_f);
+  count = Int_val(v_n);
+  if (count > NODES_MAX) caml_invalid_argument("rig_cuda_bench_graph");
+  node_params(&p, extra, &size);
+  CHECK(p_cuGraphCreate(&g, 0));
+  for (int i = 0; i < count; i++)
+    CHECK(p_cuGraphAddKernelNode_v2(&nodes[i], g, i > 0 ? &nodes[i - 1] : NULL,
+                                    i > 0, &p));
+  CHECK(p_cuGraphInstantiateWithFlags(&exec, g, 0));
+  return Val_unit;
+}
+
+/* The floor's graph launched, after updating every node's first argument to
+   the run's parity if [v_updated], then a release. */
+value rig_cuda_bench_graph_launch(value v_updated) {
+  if (Bool_val(v_updated)) {
+    kernel_node p;
+    void *extra[5];
+    size_t size;
+    args[0] = last & 1;
+    node_params(&p, extra, &size);
+    for (int i = 0; i < count; i++)
+      CHECK(p_cuGraphExecKernelNodeSetParams_v2(exec, nodes[i], &p));
+  }
+  CHECK(p_cuGraphLaunch(exec, streams[0]));
   release(0);
   spin();
   return Val_unit;
