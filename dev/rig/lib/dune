@@ -5,6 +5,22 @@
  (public_name rig)
  (libraries rig_edge)
  (modules_without_implementation def sigs)
+ (private_modules
+  buffer
+  claim
+  copy
+  def
+  dev
+  hold
+  lock
+  memory
+  memory_device
+  point
+  prof
+  profile
+  program
+  sigs
+  submission)
  (install_c_headers rig)
  (foreign_stubs
   (language c)
