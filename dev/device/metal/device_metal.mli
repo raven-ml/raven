@@ -32,55 +32,68 @@
     ]}
 
     {b Submissions.} A submission is a list of {e parts} for the device's one
-    queue, ["COMPUTE:0"] ({!part}), possibly empty. A part is a {e fill}, a C
-    function that encodes Metal work into a compute command encoder the device
+    queue, ["COMPUTE:0"] ({!val-part}), possibly empty. A part is a {e fill}, a
+    C function that encodes Metal work into a compute command encoder the device
     gives it. {!submit} runs the fills in order, each in an encoder that waits
     for the encoders before it, commits the submission's command buffers and
-    returns. It does not wait for the work. When a command buffer of value [v]
-    completes, Metal calls the device's handler on one of its threads, which
-    writes [v] into the word once every earlier command buffer completed without
-    failure. Only the handler and {!stop} write the word.
+    returns. It does not wait for the work. Metal calls a handler of the device
+    on one of its own threads once each command buffer completed, successfully
+    or not ([addCompletedHandler:]). The handlers write [v] into the word once
+    every command buffer of the submissions up to [v] completed without failure,
+    whatever order they complete in. Only the handlers and {!stop} write the
+    word.
 
-    {b Failures.} A fill that returns a failure, or a command buffer Metal could
-    not make, fails {!submit}. A command buffer that Metal reports failed, such
-    as one macOS ends because it kept the GPU from the display, stops the word:
-    it never passes the value before the failed one, and {!sleep} raises
-    {!Fault} with Metal's reason. A long command buffer is no failure: a wait
-    lasts until the work completes or Metal reports it failed. After a failure
-    every {!submit} answers the first failure and runs nothing.
+    {b Failures.} A submission fails at once if a fill returns a failure, if
+    Metal makes no command buffer or no encoder, or if Metal raises an
+    exception; {!submit} then answers [`Failed]. It fails later if Metal reports
+    one of its command buffers failed, such as one Metal aborts because it ran
+    too long ([MTLCommandBufferErrorTimeout]) or kept the GPU from the display.
+    Either way the word stops: it never reaches the failed submission's value,
+    nor any later one, until {!stop}. Once the device recorded a failure,
+    {!sleep} raises {!exception-Fault} with its reason and every {!submit}
+    answers it and runs nothing. A long command buffer is no failure: a wait
+    lasts until the work completes or Metal reports it failed.
 
     {b Compiled code.} Code compiled for the device reaches it through its
-    {!capability}, the record {!Device_metal_abi.t}: indirect command buffers,
-    the [split] a fill calls to start a new command buffer, and the argument
-    alignment. The fill's calling convention is stated there.
+    {!val-capability}, the record {!Device_metal_abi.t}: indirect command
+    buffers, the [split] a fill calls to start a new command buffer, and the
+    argument alignment. The fill's calling convention is stated there.
 
     {b Domains.} Any domain may call any function, at the same time as others,
     with three exceptions. {!room} and {!submit} are called one at a time: the
     caller holds the device's {e turn} from {!room} to the end of {!submit}.
     {!stop} is called once, after every other call returned. After {!stop} only
     {!free}, {!unmap} and the release of an indirect command buffer are called.
-    {!sleep} may run while another domain submits.
+    These rules are the caller's; the device does not check them. {!sleep} may
+    run while another domain submits. A region or an image is given back once:
+    of two {!free}s, {!unmap}s or {!unload}s of one value, from any domains, one
+    gives it back and the other raises [Invalid_argument].
 
-    {b Platforms.} A device opens on macOS 15 and later, whose command queues
-    take residency sets. Elsewhere the library builds, {!count} is [0] off
+    {b Platforms.} A device opens on macOS 15 and later: its queue keeps every
+    region resident through a residency set, which Metal has from macOS 15
+    ([MTLResidencySet.h]). Elsewhere the library builds, {!count} is [0] off
     macOS, and {!open_} answers [Error].
 
     {b References.}
     - Apple's Metal framework headers (macOS 26 SDK): [MTLCommandQueue.h]
       ([newCommandQueueWithMaxCommandBufferCount:], [addResidencySet:]),
       [MTLCommandBuffer.h] ([addCompletedHandler:], [status], [error],
-      [GPUStartTime], [GPUEndTime], [computeCommandEncoderWithDispatchType:]),
-      [MTLFence.h], [MTLResidencySet.h] ([addAllocation:], [commit]),
-      [MTLDevice.h] ([newBufferWithLength:options:],
+      [MTLCommandBufferErrorTimeout], [GPUStartTime], [GPUEndTime],
+      [computeCommandEncoderWithDispatchType:]), [MTLFence.h],
+      [MTLResidencySet.h] ([addAllocation:], [commit]), [MTLDevice.h]
+      ([newBufferWithLength:options:],
       [newBufferWithBytesNoCopy:length:options:deallocator:],
-      [recommendedMaxWorkingSetSize], [supportsFamily:]), [MTLLibrary.h]
-      ([newLibraryWithData:error:], [functionNames]), [MTLComputePipeline.h]
-      ([supportIndirectCommandBuffers], [maxTotalThreadsPerThreadgroup]),
-      [MTLIndirectCommandBuffer.h].
+      [recommendedMaxWorkingSetSize], [supportsFamily:]), [MTLBuffer.h]
+      ([gpuAddress], [contents]), [MTLLibrary.h] ([newLibraryWithData:error:],
+      [functionNames]), [MTLComputePipeline.h] ([supportIndirectCommandBuffers],
+      [maxTotalThreadsPerThreadgroup]), [MTLIndirectCommandBuffer.h].
     - {{:https://developer.apple.com/documentation/metal/simplifying-gpu-resource-management-with-residency-sets}
        Simplifying GPU resource management with residency sets}: a set added to
       a queue keeps its committed allocations resident for every command buffer
       of the queue.
+    - {{:https://developer.apple.com/documentation/metal/mtldevice/makebuffer(bytesnocopy:length:options:deallocator:)}
+       makeBuffer(bytesNoCopy:length:options:deallocator:)}: the wrapped memory
+      starts at a page.
     - {{:https://developer.apple.com/metal/Metal-Feature-Set-Tables.pdf}Metal
        feature set tables} (May 21, 2026): GPU families, minimum constant buffer
       offset alignment. *)
@@ -102,12 +115,12 @@ val device_name : int -> string
 
 val open_ : int -> (t, string) result
 (** [open_ i] opens device [i]: a queue of its own over the Mac's GPU, a fresh
-    timeline at [0] and a fresh {!capability}. Each call makes a new device,
+    timeline at [0] and a fresh {!val-capability}. Each call makes a new device,
     whatever devices are open or lost.
 
     The result is [Error msg] if [i >= count ()], off macOS, on macOS before 15,
-    if the GPU belongs to no Apple or Mac GPU family, or if Metal makes no queue
-    for it.
+    if the GPU belongs to no Apple or Mac GPU family, or if Metal makes no
+    queue, fence, residency set or word buffer for it.
 
     Raises [Invalid_argument] if [i < 0]. *)
 
@@ -135,7 +148,7 @@ val queues : t -> string list
     it. *)
 
 val completion : t -> [ `Store | `Object of nativeint | `Host ]
-(** [completion d] is [`Host]: the device's handler writes {!word} from the
+(** [completion d] is [`Host]: the device's handlers write {!word} from the
     host. *)
 
 val waits_on : t -> [ `Store | `Object | `Host ] -> bool
@@ -152,15 +165,17 @@ type capability = Device_metal_abi.t
 (** The type for what compiled code needs from the device. *)
 
 val capability : t -> capability
-(** [capability d] is [d]'s record. Its [align] is [4] on Apple GPU families,
-    the feature set tables' minimum constant buffer offset alignment, and [256]
-    on Mac families, which the tables do not list: a conservative value, since
-    an offset that is a multiple of [256] meets any smaller power-of-two
-    alignment and costs only padding. A dispatch's offset is also a multiple of
-    its kernel arguments' own alignment, an argument structure's largest
-    member's, such as [8] for a structure that holds device pointers. Its
-    indirect command buffers retain their pipelines, so an {!unload} cannot end
-    one. *)
+(** [capability d] is [d]'s record.
+
+    Its [align] is [4] on Apple GPU families, the feature set tables' minimum
+    constant buffer offset alignment. The tables list none for Mac families,
+    where it is [256]: an offset that is a multiple of [256] meets every smaller
+    power-of-two alignment and costs only padding. A dispatch's offset is also a
+    multiple of its kernel arguments' own alignment, that of their structure's
+    largest member, such as [8] for a structure that holds device pointers.
+
+    Its indirect command buffers retain their pipelines, so an {!unload} cannot
+    end one. *)
 
 val capability_key : capability Type.Id.t
 (** [capability_key] is {!Device_metal_abi.key}. *)
@@ -180,12 +195,13 @@ type region
 val alloc : t -> [ `Device | `Pinned | `Mapped ] -> int -> region option
 (** [alloc d kind n] is a region of [n] bytes of [d], or [None] if Metal has no
     memory for it. Every kind is the same shared memory. The region is resident
-    for the work of every submission that starts after the call returns.
+    for the work of every submission whose {!submit} starts after [alloc]
+    returned.
 
     The region's GPU and host addresses are multiples of 256 bytes. Apple
-    documents no alignment for a buffer's first byte, so the driver checks the
+    documents no alignment for a buffer's first byte, so the device checks the
     one Metal gives: an allocation that breaks it is given back and raises
-    {!Fault}.
+    {!exception-Fault}.
 
     Raises [Invalid_argument] if [n < 1]. *)
 
@@ -201,7 +217,8 @@ val address : region -> int option
     ([gpuAddress]), the address kernels read and write. *)
 
 val handle : region -> nativeint
-(** [handle r] is [r]'s [MTLBuffer]. It lives until {!free} or {!unmap}. *)
+(** [handle r] is [r]'s [MTLBuffer]. It lives until {!free} or {!unmap}, and for
+    {!word} while the process runs. *)
 
 val host : region -> nativeint option
 (** [host r] is [Some p] with [p] the host address of [r]'s first byte. *)
@@ -216,9 +233,10 @@ val map_peer : t -> t -> region -> region option
 val map_host : t -> nativeint -> int -> region option
 (** [map_host d p n] is a region of [d] over the host memory holding the [n]
     bytes at [p], shared without a copy, or [None] if Metal cannot wrap it.
-    Metal wraps whole pages: the region starts at the page holding [p], so
-    {!host} of it is that page and [p] lies [p - host r] bytes in. The memory
-    must stay mapped until {!unmap}. The region is resident as {!alloc}'s.
+    Metal wraps memory that starts at a page, so the region covers the pages
+    holding the [n] bytes: {!host} of it is the page holding [p], and [p] lies
+    [p - host r] bytes in. The memory stays mapped until {!unmap}. The region is
+    resident as {!alloc}'s.
 
     Raises [Invalid_argument] if [n < 1]. *)
 
@@ -246,15 +264,16 @@ val image : t -> string -> (image * (region * string) option, string) result
 
 val entry : image -> string -> int option
 (** [entry i f] is the address of the [MTLComputePipelineState] of [i]'s
-    function [f], or [None] if [i] has no function [f].
+    function [f], or [None] if [i] has no function [f]. The address is valid
+    until {!unload}.
 
     Raises [Invalid_argument] if [i] was unloaded. *)
 
 val unload : t -> image -> unit
 (** [unload d i] releases [i]'s pipelines. An indirect command buffer made with
-    one of them keeps it until its own release ({!Device_metal_abi.icb}). The
-    caller unloads once no work that names a pipeline of [i] directly is in
-    flight.
+    one of them keeps it until its own release
+    ({!Device_metal_abi.field-release}). The caller unloads once no work that
+    names a pipeline of [i] directly is in flight.
 
     Raises [Invalid_argument] if [i] is another device's or was unloaded. *)
 
@@ -274,7 +293,7 @@ val part :
 (** [part d ~queue ~after w] is the work [w] on [queue]. The device runs one
     kind: [`Fill (f, arg, 0, 0)], the fill at address [f], called with [arg]
     ({!Device_metal_abi}). A fill declares no room: its ring units and segment
-    bytes are [0], and the driver refuses work that declares any other.
+    bytes are [0].
 
     [after] (defaults to [[||]]) lists the earlier parts of the submission this
     part waits for. The device runs a submission's parts in order, each after
@@ -286,10 +305,10 @@ val part :
     if an index of [after] is negative. *)
 
 val room : t -> part array -> [ `Fits | `Later | `Never ]
-(** [room d ps] is [`Fits]: {!submit} takes any parts {!part} makes, waiting
+(** [room d ps] is [`Fits]: {!submit} takes any parts {!val-part} makes, waiting
     inside for command buffers when the queue is full. The C form answers
-    [NX_NEVER] for a part that is no fill or declares room, which {!part} never
-    makes. *)
+    [NX_NEVER] for a part that is no fill or declares room, which {!val-part}
+    never makes. *)
 
 val submit :
   t ->
@@ -300,17 +319,15 @@ val submit :
   [ `Ok | `Failed of string ]
 (** [submit d ~v ~waits ~handles ps] runs [ps] in order as the work of value
     [v], after [d]'s earlier work: each fill in a compute encoder of its own,
-    which runs after the encoders before it, and returns once every command
-    buffer of [v] is committed. [v] is observable in {!word} once they all
+    which runs after the encoders before it. It returns once every command
+    buffer of [v] is committed, and [v] is observable in {!word} once they all
     completed. With no part, [v] is observable once the work before it
     completed. [handles] is ignored: every region of [d] is resident.
 
     The caller holds [d]'s turn (Domains, above) and calls {!room} before.
 
-    The result is [`Failed why] if a fill returned a failure, or Metal made no
-    command buffer or no encoder. Then [v] is never observable, {!sleep} raises
-    {!Fault}, and every later [submit] answers the same [`Failed why] and runs
-    nothing.
+    The result is [`Failed why] if the submission failed at once, or if [d]
+    recorded a failure before; then [ps] did not run (Failures, above).
 
     Raises [Invalid_argument] if [v] is not the value after the last one
     [submit] received ([1] first), if [waits] is not empty, or if an [after]
@@ -331,10 +348,10 @@ val submit_entry : nativeint
 val word : t -> region
 (** [word d] is [d]'s timeline word: eight bytes of host memory holding, as an
     unsigned 64-bit integer in the host's byte order, the last value [v] such
-    that every submission up to [v] completed. The device's completion handler
-    writes it with release order, and never lowers it. Once {!stop} was called
-    and no work of [d] is in flight, it holds the last value {!submit} received,
-    whatever that work did. It lives while the process runs. *)
+    that every submission up to [v] completed without failure. The device's
+    handlers write it with release order, and never lower it. Once {!stop} was
+    called and no work of [d] is in flight, it holds the last value {!submit}
+    received, whatever that work did. It lives while the process runs. *)
 
 val signaled : t -> int
 (** [signaled d] is the value in {!word}, read with acquire order: every
@@ -343,31 +360,35 @@ val signaled : t -> int
 
 val sleep : t -> seen:int -> still_ms:int -> unit
 (** [sleep d ~seen ~still_ms] returns once {!word} holds a value other than
-    [seen], at once if it already does, or after [still_ms] milliseconds,
-    whichever comes first; [still_ms] is not negative. It blocks on a condition
-    the completion handler signals, using no processor time while it waits. It
-    may raise the calling thread's scheduling class for the wait, and it
-    restores the thread's own class before it returns. It releases the domain
-    lock while it waits.
+    [seen], at once if it already does, or after [still_ms] milliseconds of the
+    monotonic clock, whichever comes first; [still_ms] is not negative. It
+    blocks on a condition the handlers signal, using no processor time while it
+    waits, and releases the domain lock.
 
-    Raises {!Fault} if a submission of [d] failed, with the failure's reason:
-    for a command buffer Metal reports failed, its text after
-    ["the GPU's work failed: "], such as
+    Raises {!exception-Fault} if [d] recorded a failure, with its reason: for a
+    command buffer Metal reports failed, ["the GPU's work failed: "] followed by
+    Metal's description of its error, such as
     ["the GPU's work failed: Impacting Interactivity
      (0000000e:kIOGPUCommandBufferCallbackErrorImpactingInteractivity)"]. *)
 
 (** {1:loss Loss} *)
 
 exception Fault of string
-(** [Fault why] is raised by {!sleep} once a submission failed, and by {!alloc}
-    when Metal breaks the alignment it states. *)
+(** [Fault why] is raised by {!sleep} once its device recorded a failure, and by
+    {!alloc} when Metal places an allocation off the 256-byte alignment {!alloc}
+    promises. *)
 
 val stop : t -> [ `Stopped | `Unknown ]
-(** [stop d] answers [`Stopped] if every command buffer [d] committed has
-    completed: it then writes the last value {!submit} received into {!word},
-    releases [d]'s queue, and no work of [d] writes memory again. It answers
-    [`Unknown] if work is still in flight, which may write memory for as long as
-    it runs, and keeps the queue; once the last command buffer [d] committed
-    completes, the completion handler writes the last value {!submit} received
-    into {!word}. It never waits. Regions end at {!free} and {!unmap}, which may
-    follow. *)
+(** [stop d] stops [d] without waiting.
+
+    It answers [`Stopped] if every command buffer [d] committed completed. It
+    then writes the last value {!submit} received into {!word} and releases
+    [d]'s queue; no work of [d] writes memory again.
+
+    It answers [`Unknown] if work is still in flight. That work may write memory
+    as long as it runs, and [d] keeps its queue. Metal calls a handler for every
+    committed command buffer once it completed, failed ones included; once the
+    last command buffer [d] committed completed, its handler writes the last
+    value {!submit} received into {!word}, whatever that work did.
+
+    Regions end at {!free} and {!unmap}, which may follow. *)

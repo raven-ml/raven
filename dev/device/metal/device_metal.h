@@ -20,17 +20,16 @@
 
 #include <nx_edge.h>
 
-/* NX_NEVER if a part is no fill on queue 0: it has words or a copy, or it
-   declares room. A fill declares no room: its ring units and segment bytes
-   are 0, and the driver refuses work that declares any other. NX_FITS
-   otherwise. */
+/* NX_NEVER if a part is no fill on queue 0: it has words, a copy, no fill,
+   or ring units or segment bytes other than 0. NX_FITS otherwise. */
 int device_metal_room(void *self, const struct nx_part *parts, int n);
 
 /* Runs [parts], which device_metal_room answered NX_FITS for, as the work
    of [v], the value after the last one it received: NX_OK, or NX_FAILED with
-   [*failure] set to the device's message. After a failure every call answers
-   NX_FAILED with the first failure's message, which lives as long as the
-   device. */
+   [*failure] set to the device's message. Once the device recorded a
+   failure every call answers NX_FAILED with the first failure's message,
+   which lives while the process runs, and runs nothing. One call at a time;
+   it waits while the device's 1,024 command buffers are in flight. */
 int device_metal_submit(void *self, uint64_t v, const struct nx_wait *waits,
                         int nwaits, const struct nx_part *parts, int nparts,
                         const uint64_t *handles, int nhandles,
