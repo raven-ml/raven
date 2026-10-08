@@ -147,7 +147,7 @@ and pending =
 and image = Image : { m : ('a, 'r, 'i) dm; h : 'a; i : 'i } -> image
 
 type claim = {
-  mutable count : int; [@atomic]  (** Readers, or [-1] when exclusive. *)
+  mutable count : int; [@atomic]  (** The claim word, laid out in {!Memory}. *)
   mutable generation : int; [@atomic]
       (** Raised by each consumption: a buffer of an older one is dead. *)
   mutable why : string;  (** The last consumption's reason. *)

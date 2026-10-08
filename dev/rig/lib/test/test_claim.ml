@@ -18,18 +18,20 @@ let timeout = 60.
 type role = Read | Donate | Skip
 
 (* A case: the memory's bytes, its views with what [with_] does with each,
-   whether a reader claims the memory first, and whether [f] raises. *)
+   whether a reader claims the memory first, whether an array exported it first,
+   and whether [f] raises. *)
 type case = {
   n : int;
   views : (int * int * role) list;
   claimed : bool;
+  exported : bool;
   raises : bool;
 }
 
 let pp_case ppf c =
   let role = function Read -> "read" | Donate -> "donate" | Skip -> "-" in
-  Format.fprintf ppf "%d bytes, claimed %b, raises %b, views %s" c.n c.claimed
-    c.raises
+  Format.fprintf ppf "%d bytes, claimed %b, exported %b, raises %b, views %s"
+    c.n c.claimed c.exported c.raises
     (String.concat " "
        (List.map
           (fun (o, l, r) -> Printf.sprintf "[%d,+%d %s]" o l (role r))
@@ -56,14 +58,15 @@ let case =
   with_pp pp_case
     (bind (int_range 1 32) (fun n ->
          map
-           (fun (views, claimed, raises) -> { n; views; claimed; raises })
-           (triple (views n) bool bool)))
+           (fun (views, (claimed, exported), raises) ->
+             { n; views; claimed; exported; raises })
+           (triple (views n) (pair bool bool) bool)))
 
 let overlap (o, l, _) (o', l', _) = l > 0 && l' > 0 && o < o' + l' && o' < o + l
 
 (* What [with_] must do: refuse when a donated view overlaps another claimed
-   one; otherwise hold a donated view exclusive iff it spans the memory and
-   nothing else claims it. *)
+   one; otherwise hold a donated view exclusive iff it spans the memory, nothing
+   else claims it and no array exported it. *)
 let expected c =
   let claimed = List.filter (fun (_, _, r) -> r <> Skip) c.views in
   let indexed = List.mapi (fun i v -> (i, v)) claimed in
@@ -80,7 +83,10 @@ let expected c =
       (List.filter_map
          (fun (i, (o, l, r)) ->
            if r <> Donate then None
-           else Some (o = 0 && l = c.n && (not c.claimed) && others i = []))
+           else
+             Some
+               (o = 0 && l = c.n && (not c.claimed) && (not c.exported)
+               && others i = []))
          indexed)
 
 let law c =
@@ -98,6 +104,7 @@ let law c =
     List.filter_map (fun (v, r) -> if r = Donate then Some v else None) views
   in
   if c.claimed then Claim.read b;
+  if c.exported then ignore (B.bigarray Bigarray.char b);
   let seen = ref [] in
   let got =
     match
@@ -119,12 +126,15 @@ let law c =
     && Option.fold ~none:false ~some:(fun ex -> not (List.mem true ex)) e);
   cover "a claim of no bytes"
     (List.exists (fun (_, l, r) -> l = 0 && r <> Skip) c.views);
+  cover "an exported memory alone"
+    (c.exported && (not c.claimed)
+    && List.exists (fun (o, l, r) -> r = Donate && o = 0 && l = c.n) c.views);
   equal (option (list bool)) e got;
   (* Every claim [with_] took is released: only the first reader is left. *)
   if c.claimed then Claim.release b;
   raises_match Exn.invalid_arg (fun () -> Claim.release b);
   Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun cl ->
-      equal ~msg:"alone again" bool true (Claim.exclusive cl b))
+      equal ~msg:"alone again" bool (not c.exported) (Claim.exclusive cl b))
 
 (* Cases *)
 
@@ -294,15 +304,17 @@ let group_commands =
     command "read" (two ^-> judges unit) judge_any read_group;
   ]
 
-(* Two domains: reads against a donation that consumes the memory when it holds
-   it exclusive. A read before the donation keeps it a read; a read after a
-   consumption finds the buffer dead. A donation may also stay a read while
-   another domain's claims hold the memory. *)
-type memory = { mutable dead : bool; mutable reads : int }
+(* Two domains: reads and exports against a donation that consumes the memory
+   when it holds it exclusive, and writes it in place through the buffer the
+   consumption gives. A read or an export before the donation keeps it a read;
+   one after a consumption finds the buffer dead. A donation may also stay a
+   read while another domain's claims hold the memory. *)
+type memory = { mutable dead : bool; mutable reads : int; mutable out : bool }
 
 let memory =
   abstract
-    ~pp:(fun ppf r -> Format.fprintf ppf "dead %b, reads %d" r.dead r.reads)
+    ~pp:(fun ppf r ->
+      Format.fprintf ppf "dead %b, reads %d, outside %b" r.dead r.reads r.out)
     "m"
 
 let judge_read r = function
@@ -312,19 +324,30 @@ let judge_read r = function
   | Error (Invalid_argument _) -> equal ~msg:"dead" bool true r.dead
   | Error e -> raise e
 
+let judge_export r = function
+  | Ok () ->
+      equal ~msg:"dead" bool false r.dead;
+      r.out <- true
+  | Error (Invalid_argument _) -> equal ~msg:"dead" bool true r.dead
+  | Error e -> raise e
+
 let judge_donate r = function
   | Ok consumed ->
       equal ~msg:"dead" bool false r.dead;
-      if consumed then equal ~msg:"reads" int 0 r.reads;
+      if consumed then
+        equal ~msg:"reads, outside" (pair int bool) (0, false) (r.reads, r.out);
       r.dead <- consumed
   | Error (Invalid_argument _) -> equal ~msg:"dead" bool true r.dead
   | Error e -> raise e
+
+let export b = ignore (B.bigarray Bigarray.char b)
 
 let donate b =
   Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
       Claim.exclusive c b
       && begin
-        ignore (Claim.consume c ~why:"donated" b);
+        let b' = Claim.consume c ~why:"donated" b in
+        Bigarray.Array1.fill (B.bigarray Bigarray.char b') 'd';
         true
       end)
 
@@ -332,11 +355,31 @@ let donation_commands =
   [
     command "make"
       (Gen.unit @-> makes memory)
-      (fun () -> { dead = false; reads = 0 })
+      (fun () -> { dead = false; reads = 0; out = false })
       (fun () -> B.create C.host 64);
     command "read" (memory ^-> judges unit) judge_read Claim.read;
+    command "export" (memory ^-> judges unit) judge_export export;
     command "donate" (memory ^-> judges bool) judge_donate donate;
   ]
+
+(* An export under an exclusive claim is the consumer's: refused before the
+   consumption, made after it, and the memory is outside the claims once they
+   are released. *)
+let test_export_exclusive () =
+  let b = B.create C.host 16 in
+  let b' =
+    Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
+        equal ~msg:"exclusive" bool true (Claim.exclusive c b);
+        raises_match ~msg:"before the consumption" Exn.invalid_arg (fun () ->
+            B.bigarray Bigarray.char b);
+        let b' = Claim.consume c ~why:"donated" b in
+        Bigarray.Array1.fill (B.bigarray Bigarray.char b') 'x';
+        b')
+  in
+  Claim.with_ ~read:[] ~donate:[ [ b' ] ] (fun c ->
+      equal ~msg:"after the release" bool false (Claim.exclusive c b'));
+  raises_match ~msg:"no read claim left" Exn.invalid_arg (fun () ->
+      Claim.release b')
 
 (* Claims on memory whose stamps name a lost device raise Lost, and with_
    releases what it took first. *)
@@ -381,6 +424,7 @@ let tests =
                 views =
                   [ (0, 0, Read); (19, 1, Donate); (2, 1, Read); (0, 20, Read) ];
                 claimed = false;
+                exported = false;
                 raises = false;
               };
             ]
@@ -399,6 +443,8 @@ let tests =
           test_release_kept;
         test "a value of several buffers is exclusive only if each is"
           test_shards;
+        test "an export under an exclusive claim waits for the consumption"
+          test_export_exclusive;
       ];
     group ~timeout "consumption"
       [
@@ -418,7 +464,7 @@ let tests =
           "with_ of a group and reads of its memory leave no claim behind"
           group_commands;
         stateful ~domains:2
-          "a read beside a consuming donation is ordered before or after it"
+          "reads and exports beside a consuming donation are ordered with it"
           donation_commands;
       ];
   ]

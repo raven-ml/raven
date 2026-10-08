@@ -114,8 +114,6 @@ let heap_bytes n =
 
 (* Memory records *)
 
-let new_claim () = { count = 0; generation = 0; why = "" }
-
 let is_io_memory (e : entry) =
   match e.memory with
   | Io_made | Io_given -> true
@@ -141,6 +139,35 @@ let entry ?region ?io_region ?(access = Read_write) owner memory bytes stamps =
 
 let no_entry = entry Dev.host Host_kept 0 0
 
+(* Claim words *)
+
+let outside = 1
+let read_only = 2
+let one_claim = 4
+let exclusive = -1
+let consumed = -2
+let exported = -3
+
+let new_claim keep (e : entry) =
+  let reached =
+    match keep with
+    | Bigarray _ -> true
+    | Nothing | Heap _ -> e.memory = Io_given
+  in
+  let word =
+    (if reached then outside else 0)
+    lor if e.access = Read then read_only else 0
+  in
+  { count = word; generation = 0; why = "" }
+
+let rec export (c : claim) =
+  let w = Atomic.Loc.get [%atomic.loc c.count] in
+  if w = exclusive then false
+  else if w = exported || (w >= 0 && w land outside <> 0) then true
+  else
+    let w' = if w = consumed then exported else w lor outside in
+    Atomic.Loc.compare_and_set [%atomic.loc c.count] w w' || export c
+
 (* The root a record holds until it is set to the record itself: a record made
    recursively would be made twice. *)
 let rec unrooted =
@@ -150,7 +177,7 @@ let rec unrooted =
     host = -1;
     address = -1;
     handle = 0n;
-    claim = new_claim ();
+    claim = new_claim Nothing no_entry;
     entry = no_entry;
     token = no_token;
     keep = Nothing;
@@ -167,7 +194,7 @@ let own ~keep ~host ~address ~handle ~token dev bytes entry =
       host;
       address;
       handle;
-      claim = new_claim ();
+      claim = new_claim keep entry;
       entry;
       token;
       keep;

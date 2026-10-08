@@ -16,9 +16,10 @@ dune exec dev/rig/examples/07-claims/main.exe
 - Donation: `Claim.with_ ~read ~donate`, and `Claim.exclusive` for the donated
   buffers nothing else claims
 - Consuming: `Claim.consume` makes every older buffer over the memory dead, so a
-  stale name raises `Invalid_argument` with the reason
-- Buffers that are never exclusive: views of part of a memory, and bigarrays
-  the program holds
+  stale name raises `Invalid_argument` with the reason; the write in place goes
+  through the buffer it gives
+- Buffers that are never exclusive: views of part of a memory, bigarrays the
+  program holds, and memory `Buffer.bigarray` was called on
 
 ## Key Functions
 

@@ -296,8 +296,8 @@ module Buffer : sig
   (** [of_io d k r ~access n] is a buffer over the [n] bytes of [r], a region of
       the io device [d] whose library declares [k] ({!Io.region_key}), whose
       memory admits [access] ({!val-access}): [Read] for a region [d] holds for
-      reading, such as a file opened read-only. The memory is never exclusive
-      ({!Claim}), and returns to [d]'s {!Io.free} once unreachable.
+      reading, such as a file opened read-only. It returns to [d]'s {!Io.free}
+      once unreachable. The memory is outside the claims ({!Claim}).
 
       Raises [Invalid_argument] if [d] is no io device, its library's key is not
       [k], or [n < 0]. *)
@@ -310,8 +310,8 @@ module Buffer : sig
 
   val of_bigarray : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> t
   (** [of_bigarray ba] is a borrowed buffer on {!host} over [ba]'s bytes,
-      without a copy. It keeps [ba] reachable. Whoever holds [ba] reaches the
-      memory outside the claims, so it is never exclusive ({!Claim}). *)
+      without a copy. It keeps [ba] reachable. The memory is outside the claims
+      ({!Claim}). *)
 
   val borrow : device -> t -> t option
   (** [borrow d b] is [Some b'], a borrowed buffer on [d] over [b]'s memory,
@@ -410,11 +410,11 @@ module Buffer : sig
       make, and what {!of_io} was given.
 
       [Read] memory is never written: a {!copy} into it raises, and so does a
-      submission that writes it ({!Submission.make}, {!submit}), and {!Claim}
-      never holds it exclusive. The host writes it only by breaking this,
-      through {!bigarray}, after which what reads of it see is unspecified. A
-      library that writes its caller's buffer checks this first, to refuse a
-      [Read] buffer under its own name. *)
+      submission that writes it ({!Submission.make}, {!submit}), and it is never
+      exclusive ({!Claim}). The host writes it only by breaking this, through
+      {!bigarray}, after which what reads of it see is unspecified. A library
+      that writes its caller's buffer checks this first, to refuse a [Read]
+      buffer under its own name. *)
 
   val view : t -> first:int -> length:int -> t
   (** [view b ~first ~length] is the [length] bytes of [b] from its byte [first]
@@ -442,11 +442,14 @@ module Buffer : sig
       keeps [b]'s memory alive while reachable, memory a borrow on the host maps
       included: no buffer reuses it and its device does not free it until then.
       Access through it is the host's: {!wait} orders it after devices' work.
+      From then on the memory is outside the claims for good, and is never
+      exclusive again ({!Claim}).
 
-      Raises [Invalid_argument] if [b] is dead or not on {!host}, or [b]'s bytes
+      Raises [Invalid_argument] if [b] is dead or not on {!host}, [b]'s bytes
       are not a whole number of elements of [k] starting at a multiple of their
-      size (of one component's for complex kinds), and {!Lost} if [b]'s stamps
-      name a lost device. *)
+      size (of one component's for complex kinds), or [b]'s memory is held
+      exclusive by claims that have not consumed it ({!Claim.consume}), and
+      {!Lost} if [b]'s stamps name a lost device. *)
 
   (** {1:low Low level}
 
@@ -490,6 +493,11 @@ end
     ({!Buffer.wait}): a wait before the claim does not cover a write in place
     that a donation on another domain makes between them.
 
+    Memory that something outside this library reaches is {e outside the claims}
+    and never exclusive: memory {!Buffer.of_bigarray} and {!Buffer.of_io} make,
+    and memory {!Buffer.bigarray} exported. [Read] memory ({!Buffer.val-access})
+    is never exclusive either.
+
     A claimed memory may be {e consumed}: every buffer over it made before
     becomes {e dead}, and reaching a dead buffer's bytes raises
     [Invalid_argument] with the consumption's reason. Consuming releases
@@ -509,8 +517,8 @@ module Claim : sig
       accepts a dead [b].
 
       Raises [Invalid_argument] and changes nothing if the memory has no read
-      claim of a {!read} or a {!with_}: the reader that holds memory of
-      {!Buffer.of_bigarray} or {!Buffer.of_io} outside the claims is not one. *)
+      claim of a {!read} or a {!with_}: a reader outside the claims is not one.
+  *)
 
   type t
   (** The type for the claims of a {!with_}. *)
@@ -530,7 +538,8 @@ module Claim : sig
 
   val exclusive : t -> Buffer.t -> bool
   (** [exclusive c b] is [true] iff [c] holds [b]'s memory exclusive: the caller
-      may write it in place. *)
+      may write it in place, through the buffer {!consume} returns, and no
+      reader sees the write. *)
 
   val consume : t -> why:string -> Buffer.t -> Buffer.t
   (** [consume c ~why b] consumes [b]'s memory with the reason [why]: [b] and

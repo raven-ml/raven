@@ -14,25 +14,15 @@ let swap (c : claim) a b = Atomic.Loc.compare_and_set [%atomic.loc c.count] a b
 let rec read_claim fn c =
   let n = count c in
   if n < 0 then invalid_argf "Rig.%s: the memory is held exclusive" fn
-  else if not (swap c n (n + 1)) then read_claim fn c
+  else if not (swap c n (n + Memory.one_claim)) then read_claim fn c
 
-(* The readers of [m]'s memory outside the claims: whoever holds the bigarray or
-   the io library's region it is, counted in when the memory was made. *)
-let kept (m : memory) =
-  match m.keep with
-  | Bigarray _ -> 1
-  | Nothing | Heap _ -> if m.entry.memory = Io_given then 1 else 0
-
-(* Takes a read claim off [c], of which [kept] are outside the claims. *)
-let rec release_above kept c =
+(* Takes a read claim off [c]. *)
+let rec release_claim c =
   let n = count c in
-  if n >= 0 && n <= kept then
+  if n < 0 then invalid_arg "Rig.Claim.release: the memory is held exclusive"
+  else if n < Memory.one_claim then
     invalid_arg "Rig.Claim.release: the memory has no read claim"
-  else if n < 0 then
-    invalid_arg "Rig.Claim.release: the memory is held exclusive"
-  else if not (swap c n (n - 1)) then release_above kept c
-
-let release_claim c = release_above 0 c
+  else if not (swap c n (n - Memory.one_claim)) then release_claim c
 
 (* Claims, then checks [b] under the claim. A donation on another domain that
    consumed the memory before this claim released its claims first, and the
@@ -50,7 +40,7 @@ let take fn b =
       raise e
 
 let read b = take "Claim.read" b
-let release b = release_above (kept b.mem.root) b.mem.claim
+let release b = release_claim b.mem.claim
 
 type t = { reads : claim list; mutable exclusive : claim list }
 
@@ -103,12 +93,23 @@ let refuse_overlaps read donate =
 let rec exclusive_all = function
   | [] -> true
   | cl :: rest ->
-      swap cl 1 (-1)
+      swap cl Memory.one_claim Memory.exclusive
       && (exclusive_all rest
          || begin
-           ignore (swap cl (-1) 1);
+           ignore (swap cl Memory.exclusive Memory.one_claim);
            false
          end)
+
+(* Ends an exclusive claim, back to one read claim: outside the claims if the
+   consumer exported the memory. Only an export of the consumer's buffer races
+   it. *)
+let rec unhold cl =
+  let w = count cl in
+  let back =
+    if w = Memory.exported then Memory.one_claim lor Memory.outside
+    else Memory.one_claim
+  in
+  if not (swap cl w back) then unhold cl
 
 let with_ ~read ~donate f =
   List.iter (Buffer.check_live "Claim.with_") read;
@@ -133,7 +134,7 @@ let with_ ~read ~donate f =
         c.exclusive <- claims @ c.exclusive)
     donate;
   let finish () =
-    List.iter (fun cl -> ignore (swap cl (-1) 1)) c.exclusive;
+    List.iter unhold c.exclusive;
     List.iter release_claim c.reads
   in
   Fun.protect ~finally:finish (fun () -> f c)
@@ -149,4 +150,8 @@ let consume c ~why b =
   let cl = b.mem.claim in
   cl.why <- why;
   let g = Atomic.Loc.fetch_and_add [%atomic.loc cl.generation] 1 + 1 in
+  (* After the generation: an export that finds the word consumed then finds
+     every earlier buffer dead. *)
+  if List.memq cl c.exclusive then
+    ignore (swap cl Memory.exclusive Memory.consumed);
   { b with generation = g }

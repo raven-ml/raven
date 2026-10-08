@@ -52,10 +52,7 @@ let of_io (type r) d (k : r Type.Id.t) (r : r) ~access n =
       let module I = (val m) in
       match Type.Id.provably_equal I.region_key k with
       | Some Type.Equal ->
-          let mem = Memory.of_io d (Io_region { m; h; r }) ~access n in
-          (* The io library reaches the memory outside the claims. *)
-          mem.claim.count <- 1;
-          of_memory mem n
+          of_memory (Memory.of_io d (Io_region { m; h; r }) ~access n) n
       | None ->
           invalid_argf "Rig.Buffer.of_io: %s is another io library's device"
             d.name)
@@ -74,13 +71,10 @@ let io (type r) b (k : r Type.Id.t) : r option =
 let of_bigarray ba =
   let n = Bigarray.Array1.size_in_bytes ba in
   let addr = Memory.ba_address ba in
-  let mem =
-    Memory.make ~keep:(Bigarray ba) ~host:addr ~address:addr Dev.host n
-      Memory.no_entry
-  in
-  (* Whoever holds [ba] reaches the memory outside the claims. *)
-  mem.claim.count <- 1;
-  of_memory mem n
+  of_memory
+    (Memory.make ~keep:(Bigarray ba) ~host:addr ~address:addr Dev.host n
+       Memory.no_entry)
+    n
 
 let device b = b.mem.dev
 let length b = b.length
@@ -185,6 +179,13 @@ let bigarray (type a b) (k : (a, b) Bigarray.kind) b :
       "Rig.Buffer.bigarray: %d bytes at offset %d are no whole number of \
        aligned %d-byte elements"
       bytes b.offset size;
+  if not (Memory.export b.mem.claim) then
+    invalid_arg
+      "Rig.Buffer.bigarray: the memory is held exclusive by claims that have \
+       not consumed it";
+  (* A consumption between the first check and the export killed [b]: the memory
+     stays marked, which costs only its donations. *)
+  check_live "Buffer.bigarray" b;
   let root = b.mem.root in
   let at = b.mem.host - root.host + b.offset in
   let code = kind_code k and n = bytes / size in

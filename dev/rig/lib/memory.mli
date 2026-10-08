@@ -87,6 +87,30 @@ val no_entry : entry
 (** [no_entry] is the entry of host memory no device borrowed: no stamps, no
     mapping. It is shared: nothing writes it. *)
 
+(** {1:claims Claim words}
+
+    A claim's [count] is one word, so that a claim, a donation and an export are
+    each one compare-and-set with one winner. From zero up, bit 0 ({!outside})
+    is set once something outside the claims reaches the memory: the bigarray
+    [Buffer.of_bigarray] was given, an io library's region, an array
+    [Buffer.bigarray] made. Bit 1 ({!read_only}) is set for [Read] memory. The
+    read claims count in steps of {!one_claim}. Only the word {!one_claim}, one
+    claim and no bit, becomes {!exclusive}, then {!consumed} once the claims
+    consumed the memory, then {!exported} once the consumer exported it. {!make}
+    sets the bits. *)
+
+val outside : int
+val read_only : int
+val one_claim : int
+val exclusive : int
+val consumed : int
+val exported : int
+
+val export : claim -> bool
+(** [export c] marks [c]'s memory outside the claims for good, and is [false],
+    changing nothing, while claims that have not consumed it hold it exclusive.
+*)
+
 val make :
   ?keep:keep ->
   ?host:int ->

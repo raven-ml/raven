@@ -10,7 +10,9 @@
    claims its inputs, offers the ones the caller gave up ([donate]), and gets
    each exclusive only when it spans its memory and nothing else claims it.
    Consuming a buffer kills every older name of its memory, so a stale one
-   cannot see the write. *)
+   cannot see the write, and the write goes through the name it gives. Memory an
+   array was taken over is reached outside the claims: it is never exclusive
+   again. *)
 
 open Rig
 
@@ -33,9 +35,12 @@ let add ~x ~y =
   done;
   (how, out)
 
+(* A host buffer holding [xs], filled by a copy: an array over the buffer would
+   keep it from every donation. *)
 let ints xs =
+  let a = Bigarray.(Array1.of_array int32 c_layout (Array.of_list xs)) in
   let b = Buffer.create host (4 * List.length xs) in
-  List.iteri (fun i x -> (int32s b).{i} <- x) xs;
+  Buffer.copy ~src:(Buffer.of_bigarray a) ~dst:b;
   b
 
 let show name b =
@@ -70,4 +75,10 @@ let () =
   let whole = ints [ 0l; 10l; 20l; 30l ] in
   show_add ~x ~y:(Buffer.view whole ~first:4 ~length:12);
   let ba = Bigarray.(Array1.init int32 c_layout 3 (fun i -> Int32.of_int i)) in
-  show_add ~x ~y:(Buffer.of_bigarray ba)
+  show_add ~x ~y:(Buffer.of_bigarray ba);
+
+  (* Nor is a buffer an array was taken over: whoever holds the array reaches
+     its memory outside the claims, for good. *)
+  let y = ints [ 10l; 20l; 30l ] in
+  show "exported" y;
+  show_add ~x ~y
