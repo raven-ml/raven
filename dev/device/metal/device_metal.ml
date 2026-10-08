@@ -248,12 +248,13 @@ let unload d i =
 
 (* Work *)
 
-(* A part is the ints the C submit reads: the device's C state, then nx_part's
-   queue, fill, arg, copy_dst, copy_dst_offset, copy_src, copy_src_offset and
-   copy_bytes, then the [after] indices. *)
-type part = int array
+(* A part is its device and the ints the C submit reads: nx_part's int fields in
+   its order (queue, fill, arg, ring_units, segment_bytes, copy_dst,
+   copy_dst_offset, copy_src, copy_src_offset, copy_bytes), then the [after]
+   indices. *)
+type part = { owner : int; ints : int array }
 
-let after_at = 9
+let after_at = 10
 
 let part d ~queue ?(after = [||]) w =
   if queue <> "COMPUTE:0" then
@@ -265,7 +266,8 @@ let part d ~queue ?(after = [||]) w =
   match w with
   | `Fill (fill, arg, 0, 0) ->
       let fill = Nativeint.to_int fill and arg = Nativeint.to_int arg in
-      Array.append [| d.self; 0; fill; arg; 0; 0; 0; 0; 0 |] after
+      let ints = [| 0; fill; arg; 0; 0; 0; 0; 0; 0; 0 |] in
+      { owner = d.self; ints = Array.append ints after }
   | `Fill (_, _, units, bytes) ->
       invalid_argf
         "Device_metal.part: a fill declares %d ring units and %d segment \
@@ -279,15 +281,15 @@ let room _ _ = `Fits
 external submit_parts : int -> int -> part array -> string option
   = "caml_device_metal_submit"
 
-let check_part self i (p : part) =
-  if p.(0) <> self then
+let check_part self i p =
+  if p.owner <> self then
     invalid_argf "Device_metal.submit: part %d is another device's" i;
-  for k = after_at to Array.length p - 1 do
-    if p.(k) >= i then
+  for k = after_at to Array.length p.ints - 1 do
+    if p.ints.(k) >= i then
       invalid_argf
         "Device_metal.submit: part %d waits for part %d, expected an earlier \
          part"
-        i p.(k)
+        i p.ints.(k)
   done
 
 let submit d ~v ~waits ~handles:_ ps =

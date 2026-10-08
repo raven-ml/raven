@@ -476,31 +476,52 @@ value caml_device_metal_entries(value unit) {
   CAMLreturn(tuple(3, room, submit, v_split));
 }
 
-/* Device_metal.submit's C side. A part holds ints: its device, nx_part's
-   queue, fill, arg and copy fields in order, then its [after] indices. The
-   parts are copied out of the OCaml heap, then submitted without the
-   runtime: [None], or [Some why] if the submission failed. */
-#define AFTER 9
+/* Device_metal.submit's C side. A part is a record whose second field
+   holds ints: nx_part's int fields in the order below, then its [after]
+   indices. The parts are copied out of the OCaml heap, then submitted
+   without the runtime: [None], or [Some why] if the submission failed. */
+enum {
+  part_queue,
+  part_fill,
+  part_arg,
+  part_ring_units,
+  part_segment_bytes,
+  part_copy_dst,
+  part_copy_dst_offset,
+  part_copy_src,
+  part_copy_src_offset,
+  part_copy_bytes,
+  part_after
+};
+
+static intnat at(value ints, int f) { return Long_val(Field(ints, f)); }
 
 value caml_device_metal_submit(value v_d, value v_v, value v_parts) {
   CAMLparam3(v_d, v_v, v_parts);
   int n = (int)Wosize_val(v_parts);
   size_t nafter = 0;
-  for (int i = 0; i < n; i++) nafter += Wosize_val(Field(v_parts, i)) - AFTER;
+  for (int i = 0; i < n; i++)
+    nafter += Wosize_val(Field(Field(v_parts, i), 1)) - part_after;
   size_t size = n * sizeof(struct nx_part) + nafter * sizeof(int);
   struct nx_part *p = size == 0 ? NULL : malloc(size);
   if (size != 0 && p == NULL) caml_raise_out_of_memory();
   int *after = p ? (int *)(p + n) : NULL;
   for (int i = 0; i < n; i++) {
-    value k = Field(v_parts, i);
-    memset(&p[i], 0, sizeof p[i]);
-    p[i].queue = (int)Long_val(Field(k, 1));
-    p[i].fill = (int (*)(void *, void *, uint64_t))Long_val(Field(k, 2));
-    p[i].arg = (void *)Long_val(Field(k, 3));
-    p[i].nafter = (int)(Wosize_val(k) - AFTER);
-    p[i].after = after;
-    for (int j = 0; j < p[i].nafter; j++)
-      *after++ = (int)Long_val(Field(k, AFTER + j));
+    value k = Field(Field(v_parts, i), 1);
+    p[i] = (struct nx_part){
+        .queue = (int)at(k, part_queue),
+        .fill = (int (*)(void *, void *, uint64_t))at(k, part_fill),
+        .arg = (void *)at(k, part_arg),
+        .ring_units = (size_t)at(k, part_ring_units),
+        .segment_bytes = (size_t)at(k, part_segment_bytes),
+        .copy_dst = (uint64_t)at(k, part_copy_dst),
+        .copy_dst_offset = (uint64_t)at(k, part_copy_dst_offset),
+        .copy_src = (uint64_t)at(k, part_copy_src),
+        .copy_src_offset = (uint64_t)at(k, part_copy_src_offset),
+        .copy_bytes = (uint64_t)at(k, part_copy_bytes),
+        .after = after,
+        .nafter = (int)(Wosize_val(k) - part_after)};
+    for (int j = 0; j < p[i].nafter; j++) *after++ = (int)at(k, part_after + j);
   }
   void *self = (void *)Long_val(v_d);
   uint64_t v = (uint64_t)Long_val(v_v);
