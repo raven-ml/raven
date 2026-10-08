@@ -1,0 +1,6 @@
+(library
+ (name device_nv_pci_support)
+ (libraries device_pci)
+ (foreign_stubs
+  (language c)
+  (names device_nv_pci_support_stubs)))

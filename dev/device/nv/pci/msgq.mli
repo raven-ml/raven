@@ -68,8 +68,9 @@ val send : t -> int -> string -> bool
     doorbell after each, or is [false], writing nothing, if the command queue
     has no room for them. *)
 
-val receive : t -> message option
+val receive : t -> (message, string) result option
 (** [receive q] is the next message of the status queue, if the GSP wrote one,
-    which it consumes.
+    which it consumes: [Error] if its elements are not a GSP message
+    ({!message}).
 
     Raises [Invalid_argument] if [q] is not {!ready}. *)
