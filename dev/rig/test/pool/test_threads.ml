@@ -100,9 +100,11 @@ let test_parks () =
 
 (* A burst of jobs of two threads takes the caller and one worker. The other
    workers, which the job before the burst kept spinning and which take part in
-   none of its jobs, park while it runs: once at most two threads run beside
-   this one, the count read every millisecond stays there. A worker that a
-   wakeup reaches runs for a moment, so the median is what counts. *)
+   none of its jobs, park while it runs: once the burst runs its jobs, the count
+   read every millisecond stays at two beside this one. A worker that a wakeup
+   reaches, or a thread the system has yet to take off its core, runs for a
+   moment, so the median is what counts. test_interleavings holds the parking
+   itself. *)
 let test_narrow_burst () =
   needs_thread_states ();
   if cores < 3 then skip ~reason:"every worker takes part" ();
@@ -114,7 +116,8 @@ let test_narrow_burst () =
         T.burst_stop ();
         Domain.join burst)
       (fun () ->
-        ignore (settle_to 2);
+        P.within 10. "the burst ran no job of two threads" (fun () ->
+            T.burst_jobs () > 0);
         List.init 51 (fun _ ->
             Unix.sleepf 0.001;
             T.running_threads ()))
@@ -183,7 +186,7 @@ let thread_tests =
          live until the process exits"
         test_made_once;
       test "the pool's threads park when idle, and a job wakes them" test_parks;
-      test "a worker that a burst of narrow jobs leaves out parks"
+      test "a worker that a burst of narrow jobs leaves out parks (sampled)"
         test_narrow_burst;
       test
         "a child made by fork runs its jobs on workers of its own, and the \

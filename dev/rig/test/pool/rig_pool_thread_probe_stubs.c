@@ -52,20 +52,29 @@ static void nothing(int64_t lo, int64_t hi, int worker, void *ctx) {
 /* A burst of jobs */
 
 static _Atomic int burst_stop;
+static _Atomic long burst_jobs;
 
 /* [rig_pool_test_burst ()] runs a job on every core, then jobs of two chunks
    on two threads back to back until [rig_pool_test_burst_stop], whose request
-   it then clears. */
+   it then clears, counting them from 0. */
 value rig_pool_test_burst(value unit) {
   (void)unit;
   int cores = rig_pool_cores();
+  atomic_store(&burst_jobs, 0);
   caml_enter_blocking_section();
   rig_pool_run(cores, cores, cores, nothing, NULL);
-  while (!atomic_load(&burst_stop))
+  while (!atomic_load(&burst_stop)) {
     rig_pool_run(2, 2, 2, nothing, NULL);
+    atomic_fetch_add(&burst_jobs, 1);
+  }
   atomic_store(&burst_stop, 0);
   caml_leave_blocking_section();
   return Val_unit;
+}
+
+value rig_pool_test_burst_jobs(value unit) {
+  (void)unit;
+  return Val_long(atomic_load(&burst_jobs));
 }
 
 value rig_pool_test_burst_stop(value unit) {

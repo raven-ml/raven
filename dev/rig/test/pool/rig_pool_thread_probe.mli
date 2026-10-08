@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Probes of [rig_pool.h]'s threads (rig_pool_thread_probe_stubs.c): what a body
-    sees on a worker, and the workers' life. POSIX only. *)
+(** Probes of [rig_pool.h]'s threads (rig_pool_thread_probe_stubs.c): what a
+    body sees on a worker, and the workers' life. POSIX only. *)
 
 (** {1:burst A burst of jobs} *)
 
@@ -14,6 +14,9 @@ val burst : unit -> unit
 
 val burst_stop : unit -> unit
 (** [burst_stop ()] ends {!burst}. *)
+
+val burst_jobs : unit -> int
+(** [burst_jobs ()] is the jobs of two threads the running {!burst} ran. *)
 
 (** {1:bodies Bodies on a worker} *)
 

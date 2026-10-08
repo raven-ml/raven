@@ -7,6 +7,7 @@
 
 external burst : unit -> unit = "rig_pool_test_burst"
 external burst_stop : unit -> unit = "rig_pool_test_burst_stop"
+external burst_jobs : unit -> int = "rig_pool_test_burst_jobs"
 
 (* Bodies on a worker *)
 
