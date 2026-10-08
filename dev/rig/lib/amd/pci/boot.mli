@@ -161,6 +161,12 @@ val faulted : t -> string -> unit
     unless a fault was recorded already: {!stop} then answers [`Lost], and
     {!sleep} raises the first fault. *)
 
+val stable_power : t -> (unit, string) result
+(** [stable_power g] is [Rig_amd.path]'s [stable_power]: the boot holds the
+    GPU's clocks at their highest, and this turns the GC's clock gating off for
+    the rest of the session. [Error msg] on a virtual function, whose host holds
+    its clocks. Raises {!Regs.Stuck} if the RLC does not answer. *)
+
 val give_back : t -> unit
 (** [give_back g] gives back the access a virtual function asked its host for,
     once the device's queues are made: a host resets a VF that holds access

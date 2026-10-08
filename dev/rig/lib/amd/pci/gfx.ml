@@ -465,6 +465,42 @@ let gate g =
             ("gfxip_cgcg_override", 0);
           ]))
 
+(* The gating [gate] enables, off again: coarse grain off, medium and fine
+   grain overridden, the perfmon clock held, the gating interrupts off, as the
+   kernel's gfx_v12_0_update_gfx_clock_gating with enable false. *)
+let ungate g =
+  let r = g.r in
+  let major, _, _ = g.gc in
+  each_xcc g (fun inst ->
+      safe_mode g ~inst @@ fun () ->
+      Regs.update ~inst r "regRLC_CGCG_CGLS_CTRL"
+        [ ("cgcg_en", 0); ("cgls_en", 0) ];
+      Regs.update ~inst r "regCP_INT_CNTL"
+        [
+          ("cntx_busy_int_enable", 0);
+          ("cntx_empty_int_enable", 0);
+          ("cmp_busy_int_enable", 0);
+        ];
+      if major >= 10 then begin
+        Regs.update ~inst r "regSDMA0_RLC_CGCG_CTRL" [ ("cgcg_int_enable", 0) ];
+        Regs.update ~inst r "regSDMA1_RLC_CGCG_CTRL" [ ("cgcg_int_enable", 0) ]
+      end;
+      Regs.update ~inst r "regRLC_CGTT_MGCG_OVERRIDE"
+        ((if major = 9 then
+            [ ("gfxip_mgls_override", 1); ("gfxip_rep_fgcg_override", 1) ]
+          else [])
+        @ (if major >= 11 then
+             [ ("perfmon_clock_state", 1); ("gfxip_repeater_fgcg_override", 1) ]
+           else [])
+        @ [
+            ("gfxip_fgcg_override", 1);
+            ("grbm_cgtt_sclk_override", 1);
+            ("rlc_cgtt_sclk_override", 1);
+            ("gfxip_mgcg_override", 1);
+            ("gfxip_cgls_override", 1);
+            ("gfxip_cgcg_override", 1);
+          ]))
+
 (* Processors *)
 
 (* GC 10 renamed the shader array fields, SH to SA. *)

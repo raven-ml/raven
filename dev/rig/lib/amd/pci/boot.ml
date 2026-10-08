@@ -775,3 +775,10 @@ let reset f =
                     rings after its reset"))
 
 let give_back g = Mutex.protect g.hw (fun () -> give_back_access g)
+
+(* The boot holds the clocks at their highest; the GC's gating then is all that
+   moves them, which the profile modes of the kernel turn off as this does
+   (amdgpu_dpm.c). *)
+let stable_power g =
+  if g.vf then Error "a virtual function's host holds its clocks"
+  else Ok (Mutex.protect g.hw (fun () -> Gfx.ungate g.gfx))

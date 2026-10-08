@@ -251,7 +251,7 @@ let path g fn ~index ~finish : mem Amd.path =
     interrupt;
     hang_ms = Some hang_ms;
     sleep = (fun ~ms -> guard (fun () -> Boot.sleep g ~ms));
-    stable_power = (fun () -> Ok ());
+    stable_power = (fun () -> guard (fun () -> Boot.stable_power g));
     stop;
   }
 

@@ -88,6 +88,10 @@ val halt : t -> unit
 val gate : t -> unit
 (** [gate g] enables the GC's clock gating, under the RLC's safe mode. *)
 
+val ungate : t -> unit
+(** [ungate g] disables the clock gating {!gate} enables, under the RLC's safe
+    mode, so that the GC's clocks run steadily. *)
+
 val index : Regs.layout -> [ `Array of int * int | `All ] -> int
 (** [index l sel] is the value of [l]'s GPU's GRBM_GFX_INDEX that directs
     register accesses to shader array [a] of shader engine [e] on every instance
