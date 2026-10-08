@@ -1,0 +1,75 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+(* The library's initialisation, measured between the initialisers of the probes
+   linked around it (support/dune): it computes no value, and allocates only
+   what its declarations take, Capability.key's type id and the exceptions
+   Packet.Hole and Thread_trace.Missing. Reading the tables builds nothing that
+   outlives the reading. *)
+
+open Windtrap
+open Rig_amd_abi
+module B = Rig_amd_abi_before
+module S = Rig_amd_abi_support
+
+let timeout = S.timeout
+
+(* The words a reading of B.allocated costs, and what initialising
+   rig_amd_abi allocated besides. *)
+let reading = B.before -. B.start
+let init = Rig_amd_abi_after.after -. B.before -. reading
+
+(* The words [f] allocates, less a reading's. *)
+let words f =
+  let a = B.allocated () in
+  let b = B.allocated () in
+  f ();
+  let c = B.allocated () in
+  c -. b -. (b -. a)
+
+(* What the library's declarations take: one type id and two exceptions. *)
+let declared () =
+  words (fun () ->
+      ignore (Sys.opaque_identity (Type.Id.make () : int Type.Id.t)))
+  +. 2.
+     *. words (fun () ->
+         let exception E in
+         ignore (Sys.opaque_identity E))
+
+(* Every reader of a table, on each generation. *)
+let read_tables () =
+  ignore (Sys.opaque_identity (Code_object.of_string ""));
+  List.iter
+    (fun gc ->
+      let g = S.gpu gc in
+      ignore (Sys.opaque_identity (Gpu.processor g));
+      ignore (Sys.opaque_identity (Register.registers g));
+      ignore (Sys.opaque_identity (Scratch.tmpring g 0));
+      ignore (Sys.opaque_identity (Scratch.descriptor g ~base:0 0));
+      ignore (Sys.opaque_identity (Pm4.run g []));
+      ignore (Sys.opaque_identity (Sdma.copy g ~dst:0 ~src:0 1));
+      ignore (Sys.opaque_identity (Thread_trace.start g ~size:4096 Fun.id));
+      ignore (Sys.opaque_identity (Thread_trace.stop g Fun.id));
+      ignore
+        (Sys.opaque_identity (Thread_trace.waves g (String.make 64 '\001'))))
+    S.families
+
+let live () =
+  Gc.full_major ();
+  (Gc.stat ()).live_words
+
+let tests =
+  group ~timeout "initialisation"
+    [
+      test "initialising the library allocates only its declarations" (fun () ->
+          equal float_exact (declared ()) init);
+      test "reading every table keeps no word live" (fun () ->
+          read_tables ();
+          let l0 = live () in
+          read_tables ();
+          equal int l0 (live ()));
+    ]
+
+let () = exit (run "rig_amd_abi.init" [ tests ])

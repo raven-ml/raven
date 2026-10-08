@@ -1,5 +1,0 @@
-(library
- (name device_nv_abi)
- (libraries device_elf)
- (private_modules defs repr)
- (modules_without_implementation repr))

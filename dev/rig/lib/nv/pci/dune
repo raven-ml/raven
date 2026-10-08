@@ -1,0 +1,12 @@
+; NVIDIA GPUs driven over PCI, through the resource manager in their GSP.
+
+(library
+ (name rig_nv_pci)
+ (libraries rig_nv rig_pci rig_elf)
+ (private_modules defs falcon gsp)
+ (modules_without_implementation
+  rig_nv_pci
+  falcon
+  gsp
+  held
+  images))

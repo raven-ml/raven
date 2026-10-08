@@ -1,0 +1,15 @@
+; What the pool's suites share: rig_pool_probe, the probes of rig_pool.h whose
+; bodies record what the pool did, and the suites' waits; rig_pool_probe.h, the
+; clock and patience its stubs and rig_pool_thread_probe's share. The stubs also
+; include the pool's private rig_pool_cgroup.h, copied here.
+
+(library
+ (name rig_pool_probe)
+ (libraries rig_pool unix windtrap)
+ (install_c_headers rig_pool_probe)
+ (foreign_stubs
+  (language c)
+  (names rig_pool_probe_stubs)))
+
+(copy_files
+ (files ../../rig_pool_cgroup.h))

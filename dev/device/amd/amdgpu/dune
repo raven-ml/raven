@@ -1,9 +1,0 @@
-; AMD GPUs of this machine, opened through Linux's amdgpu driver.
-
-(library
- (name device_amd_amdgpu)
- (libraries device_amd device_amd_abi)
- (private_modules topology)
- (foreign_stubs
-  (language c)
-  (names device_amd_amdgpu_stubs)))

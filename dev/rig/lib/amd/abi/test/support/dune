@@ -1,0 +1,18 @@
+(library
+ (name rig_amd_abi_support)
+ (modules rig_amd_abi_support)
+ (libraries rig_amd_abi))
+
+; The words allocated before and after rig_amd_abi initialises: an
+; executable that links rig_amd_abi_before, rig_amd_abi and
+; rig_amd_abi_after in this order runs their initialisers in it.
+
+(library
+ (name rig_amd_abi_before)
+ (modules rig_amd_abi_before)
+ (libraries rig_elf))
+
+(library
+ (name rig_amd_abi_after)
+ (modules rig_amd_abi_after)
+ (libraries rig_amd_abi_before rig_amd_abi))

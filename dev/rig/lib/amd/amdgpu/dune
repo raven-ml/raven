@@ -1,0 +1,9 @@
+; AMD GPUs of this machine, opened through Linux's amdgpu driver.
+
+(library
+ (name rig_amd_amdgpu)
+ (libraries rig_amd rig_amd_abi)
+ (private_modules topology)
+ (foreign_stubs
+  (language c)
+  (names rig_amd_amdgpu_stubs)))

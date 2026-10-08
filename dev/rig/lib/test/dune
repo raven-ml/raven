@@ -1,0 +1,67 @@
+(tests
+ (names
+  test_open
+  test_buffer
+  test_submit
+  test_loss
+  test_turn
+  test_fork
+  test_hold
+  test_stamps
+  test_memory
+  test_claim
+  test_program
+  test_io)
+ (modules
+  test_open
+  test_buffer
+  test_submit
+  test_loss
+  test_turn
+  test_fork
+  test_hold
+  test_stamps
+  test_memory
+  test_claim
+  test_program
+  test_io)
+ (libraries rig rig_support threads.posix unix
+  windtrap))
+
+(test
+ (name test_profile)
+ (modules test_profile)
+ (libraries rig rig_support windtrap)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_profile.ml test_profile.ml.corrected))))
+
+(executable
+ (name test_readers)
+ (modules test_readers)
+ (modes native byte)
+ (libraries rig rig_support windtrap))
+
+(rule
+ (alias runtest)
+ (action
+  (run %{dep:test_readers.exe})))
+
+; ocamlrun loads each library's stubs as a shared library of its own, found
+; on CAML_LD_LIBRARY_PATH; the core's readers resolve at load. Under the
+; sanitize profile the stubs need the sanitizer runtime, which ocamlrun
+; lacks, so the bytecode run is skipped.
+
+(rule
+ (alias runtest)
+ (enabled_if
+  (and
+   (<> %{os_type} Win32)
+   (<> %{profile} sanitize)))
+ (deps ../dllrig_stubs.so support/dllrig_support_stubs.so)
+ (action
+  (setenv
+   CAML_LD_LIBRARY_PATH
+   "..:support:%{lib:windtrap:../stublibs}"
+   (run %{dep:test_readers.bc}))))

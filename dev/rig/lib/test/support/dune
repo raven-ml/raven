@@ -1,0 +1,9 @@
+; What the core's suites and benches share: Polled, a host-memory driver
+; whose queue runs only when its sleep runs it.
+
+(library
+ (name rig_support)
+ (libraries rig rig_edge threads.posix unix)
+ (foreign_stubs
+  (language c)
+  (names rig_support_stubs)))

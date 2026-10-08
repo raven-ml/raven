@@ -1,0 +1,8 @@
+; The C structures and codes by which a caller hands work to a driver. A
+; header only: its interface is rig_edge.h, which the stubs of a library
+; that depends on it include.
+
+(library
+ (name rig_edge)
+ (modules)
+ (install_c_headers rig_edge))

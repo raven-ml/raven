@@ -1,3 +1,0 @@
-(test
- (name test_cuda_abi)
- (libraries device_cuda_abi windtrap))

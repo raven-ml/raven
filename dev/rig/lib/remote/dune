@@ -1,0 +1,7 @@
+; Another machine over a socket: client and server.
+
+(library
+ (name rig_remote)
+ (private_modules wire link server)
+ (modules_without_implementation rig_remote wire link server)
+ (libraries rig rig_pci unix))

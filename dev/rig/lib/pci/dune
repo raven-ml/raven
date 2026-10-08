@@ -1,0 +1,15 @@
+; GPUs driven through their PCI function.
+
+(library
+ (name rig_pci)
+ (private_modules tlsf sysmem bus_address ops sysfs vfio local fail)
+ (modules_without_implementation ops)
+ (libraries unix)
+ (install_c_headers rig_pci)
+ (foreign_stubs
+  (language c)
+  (names
+   rig_pci_window
+   rig_pci_sysmem
+   rig_pci_vfio
+   rig_pci_machine)))

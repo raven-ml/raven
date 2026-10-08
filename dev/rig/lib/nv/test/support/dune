@@ -1,0 +1,16 @@
+; What the NV suites share: the GPU lock, devices through the core, host
+; memory, the C edge, and launches of the fixtures' kernels.
+
+(library
+ (name rig_nv_support)
+ (libraries
+  rig
+  rig_edge
+  rig_nv
+  rig_nv_abi
+  rig_nv_nvidia
+  unix
+  windtrap)
+ (foreign_stubs
+  (language c)
+  (names rig_nv_support_stubs)))

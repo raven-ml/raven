@@ -1,0 +1,11 @@
+(tests
+ (names
+  test_window
+  test_memory
+  test_machine
+  test_function
+  test_gpus
+  test_space
+  test_page_table
+  test_firmware)
+ (libraries rig_pci rig_pci_support unix windtrap))

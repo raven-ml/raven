@@ -1,9 +1,0 @@
-; What the AMD suites and bench share: the GPU lock, the GPU opened through
-; the amdgpu path, host memory, fills and the C room.
-
-(library
- (name device_amd_support)
- (libraries device_amd device_amd_amdgpu device_edge windtrap)
- (foreign_stubs
-  (language c)
-  (names device_amd_support_stubs)))

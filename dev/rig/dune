@@ -1,0 +1,53 @@
+; The C flags of every library, test and bench under dev/rig. A stanza
+; names no C flag of its own.
+;
+; A C warning is an error in every profile but release, as in nx: a release
+; build must not break on a warning a future compiler adds.
+;
+; The sanitize profile compiles the C with AddressSanitizer and
+; UndefinedBehaviorSanitizer and links the sanitizer runtimes into every
+; executable, whose link_flags keep :standard to carry them. Its options are
+; CI's, so a local run fails where CI does: a report ends the process, leaks
+; are not errors, and a domain's thread exits on the signal stack the OCaml
+; runtime allocated, which AddressSanitizer would unmap as its own.
+;
+; Benches are not attached to runtest: run them with `dune build @bench`, or
+; run a built exe from its directory under _build/default. Every bench rule
+; takes the workspace lock %{workspace_root}/bench, because suites running at
+; once contend for cores and distort each other's numbers.
+;
+; A bench's C that calls a library's C sits in a library of its own: a static
+; link lists a library's archives after the executable's objects, dependents
+; before dependencies, so GNU ld finds the symbols in the library's archive;
+; stubs of the executable itself would come after it, too late for GNU ld.
+;
+; WINDTRAP_TIMEOUT bounds each test that sets no ~timeout of its own: the
+; watch server is shared, and a test that never ends blocks every build.
+
+(env
+ (release
+  (c_flags
+   (:standard -std=c11 -Wall -Wextra))
+  (env-vars
+   (WINDTRAP_TIMEOUT 60)))
+ (sanitize
+  (c_flags
+   (:standard
+    -std=c11
+    -Wall
+    -Wextra
+    -Werror
+    -g
+    -fno-omit-frame-pointer
+    -fsanitize=address,undefined))
+  (link_flags
+   (:standard -cclib -fsanitize=address,undefined))
+  (env-vars
+   (ASAN_OPTIONS halt_on_error=1:detect_leaks=0:use_sigaltstack=0)
+   (UBSAN_OPTIONS halt_on_error=1:print_stacktrace=1)
+   (WINDTRAP_TIMEOUT 60)))
+ (_
+  (c_flags
+   (:standard -std=c11 -Wall -Wextra -Werror))
+  (env-vars
+   (WINDTRAP_TIMEOUT 60))))

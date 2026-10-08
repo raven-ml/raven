@@ -1,0 +1,10 @@
+; The host's worker threads. A C library: its interface is rig_pool.h, which
+; the stubs of a library that depends on it include.
+
+(library
+ (name rig_pool)
+ (modules)
+ (install_c_headers rig_pool)
+ (foreign_stubs
+  (language c)
+  (names rig_pool)))

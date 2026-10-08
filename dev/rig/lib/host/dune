@@ -1,0 +1,8 @@
+; Host programs: ELF objects linked into executable memory and called.
+
+(library
+ (name rig_host)
+ (libraries rig_elf rig_pool)
+ (foreign_stubs
+  (language c)
+  (names rig_host_stubs)))

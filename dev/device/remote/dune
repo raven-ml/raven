@@ -1,7 +1,0 @@
-; Another machine over a socket: client and server.
-
-(library
- (name device_remote)
- (private_modules wire link server)
- (modules_without_implementation device_remote wire link server)
- (libraries device_core device_pci unix))

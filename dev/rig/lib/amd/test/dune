@@ -1,0 +1,5 @@
+(tests
+ (names test_amd)
+ (libraries rig_amd rig_amd_abi rig_amd_amdgpu rig_amd_support windtrap)
+ (deps
+  (glob_files fixtures/*)))

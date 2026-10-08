@@ -1,0 +1,9 @@
+; What the CUDA suites and bench share: the GPU lock, checks, CUDA's view of
+; host memory, fills, and the kernels of fixtures/kernels.ptx.
+
+(library
+ (name rig_cuda_support)
+ (libraries rig rig_cuda rig_cuda_abi rig_edge windtrap)
+ (foreign_stubs
+  (language c)
+  (names rig_cuda_support_stubs)))

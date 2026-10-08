@@ -1,0 +1,21 @@
+; The channels take GPU addresses below 2^40, which on x86_64 lie in
+; AddressSanitizer's shadow gap: the kernel path's reservation there needs the
+; gap unprotected. CI's other options stay as dev/rig/dune sets them.
+
+(env
+ (sanitize
+  (env-vars
+   (ASAN_OPTIONS
+    halt_on_error=1:detect_leaks=0:use_sigaltstack=0:protect_shadow_gap=0))))
+
+(test
+ (name test_nv)
+ (libraries
+  rig
+  rig_nv
+  rig_nv_abi
+  rig_nv_nvidia
+  rig_nv_support
+  windtrap)
+ (deps
+  (glob_files fixtures/*)))

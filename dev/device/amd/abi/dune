@@ -1,4 +1,0 @@
-(library
- (name device_amd_abi)
- (libraries device_elf)
- (private_modules defs rdna_trace))

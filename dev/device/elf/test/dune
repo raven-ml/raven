@@ -1,5 +1,0 @@
-(test
- (name test_elf)
- (libraries device_elf windtrap)
- (deps
-  (source_tree fixtures)))

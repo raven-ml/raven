@@ -1,0 +1,18 @@
+; CUDA GPUs, driven through the CUDA library loaded at run time.
+
+; cuInit maps memory over AddressSanitizer's shadow gap, so under the
+; sanitize profile the gap stays unprotected here, and only here.
+
+(env
+ (sanitize
+  (env-vars
+   (ASAN_OPTIONS
+    halt_on_error=1:detect_leaks=0:use_sigaltstack=0:protect_shadow_gap=0))))
+
+(library
+ (name rig_cuda)
+ (libraries rig_cuda_abi rig_edge)
+ (install_c_headers rig_cuda)
+ (foreign_stubs
+  (language c)
+  (names rig_cuda_stubs)))

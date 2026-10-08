@@ -1,0 +1,4 @@
+(library
+ (name rig_amd_abi)
+ (libraries rig_elf)
+ (private_modules defs rdna_trace))

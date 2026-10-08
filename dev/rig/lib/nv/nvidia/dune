@@ -1,0 +1,9 @@
+; NVIDIA GPUs of this machine, opened through NVIDIA's kernel driver.
+
+(library
+ (name rig_nv_nvidia)
+ (libraries rig_nv)
+ (private_modules defs rm sysfs va)
+ (foreign_stubs
+  (language c)
+  (names rig_nv_nvidia_stubs)))

@@ -1,0 +1,5 @@
+(tests
+ (names test_chip test_mmu test_layout test_vbios test_msgq)
+ (libraries rig_nv_pci rig_nv_pci_support rig_pci windtrap)
+ (deps
+  (source_tree fixtures)))

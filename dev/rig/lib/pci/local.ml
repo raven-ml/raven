@@ -1,0 +1,324 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+(* This machine's operations: functions taken through VFIO behind an IOMMU, or
+   physically through /sys/bus/pci. *)
+
+let strf = Printf.sprintf
+let ( let* ) = Result.bind
+
+external flock : Unix.file_descr -> unit = "caml_rig_pci_flock"
+external file_map : Unix.file_descr -> int -> int -> int = "caml_rig_pci_map"
+external file_unmap : int -> int -> unit = "caml_rig_pci_unmap"
+
+let page = Sysmem.page
+let round_page n = (n + page - 1) / page * page
+let reserve = Sysmem.reserve
+
+(* Locks *)
+
+(* A function taken physically is locked by flock on its configuration space
+   file: the lock is the file's, which every process that opens it shares.
+   Behind VFIO the group's file admits one process at a time itself. *)
+let lock files bus fd =
+  let file = Sysfs.path files bus "config" in
+  try flock fd with
+  | Unix.Unix_error ((EAGAIN | EWOULDBLOCK), _, _) ->
+      Fail.fail "%s is taken already; find who holds it: lsof %s" bus file
+  | Unix.Unix_error (e, _, _) ->
+      Fail.fail "locking %s with %s: %s" bus file (Unix.error_message e)
+
+let locked files bus f =
+  let file = Sysfs.path files bus "config" in
+  match Unix.openfile file [ O_RDONLY; O_CLOEXEC ] 0 with
+  | exception Unix.Unix_error (e, _, _) ->
+      Error (strf "opening %s: %s" file (Unix.error_message e))
+  | fd -> (
+      Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+      match lock files bus fd with
+      | () -> f ()
+      | exception Fail.Failed why -> Error why)
+
+(* Taking *)
+
+type taken = {
+  files : Sysfs.t;
+  bus : string;
+  config : Unix.file_descr * int; (* where configuration space starts in it *)
+  bars : (int * int) option array; (* read once: a held function keeps them *)
+  seek : Mutex.t; (* a seek and its read or write, one at a time *)
+  interrupts : Unix.file_descr option; (* the eventfd VFIO signals *)
+  container : Vfio.t option; (* behind an IOMMU *)
+  fds : Unix.file_descr list; (* every descriptor the take opened *)
+}
+
+(* Moves the [n] bytes of configuration space at [off] with [io]: the bytes
+   moved, none if the system refused. *)
+let config_io t io off b n =
+  let fd, at = t.config in
+  Mutex.protect t.seek @@ fun () ->
+  match
+    ignore (Unix.lseek fd (at + off) SEEK_SET);
+    io fd b 0 n
+  with
+  | moved -> moved
+  | exception Unix.Unix_error _ -> 0
+
+(* Bytes the system does not give, as past the first 64 without CAP_SYS_ADMIN or
+   of a function that left the bus, read as all ones, as the bus answers. *)
+let config t off n =
+  let b = Bytes.make n '\xff' in
+  ignore (config_io t Unix.read off b n : int);
+  let v = ref 0 in
+  for i = n - 1 downto 0 do
+    v := (!v lsl 8) lor Bytes.get_uint8 b i
+  done;
+  !v
+
+(* A write the system refuses is dropped, as the bus drops one. *)
+let set_config t off n x =
+  let b = Bytes.init n (fun i -> Char.chr ((x lsr (8 * i)) land 0xff)) in
+  ignore (config_io t Unix.single_write off b n : int);
+  ignore (config t off n : int)
+
+(* A function's command register, and its bit that lets the function master the
+   bus, reaching system memory by DMA (PCI Express Base Specification,
+   7.5.1.1.3). *)
+let command = 0x04
+let bus_master = 0x4
+let stop_dma t = set_config t command 2 (config t command 2 land lnot bus_master)
+
+(* The functions processes hold physically, with the process that took each.
+   VFIO stops a function's DMA when its files close, at release or at exit;
+   closing a physical take's files stops nothing, so this library does, before
+   the memory the function reaches goes back to the system. A child of fork
+   inherits the list, and acts on none of it. The exit handler is registered
+   when the library loads, before a driver above it registers its own, so it
+   runs after theirs: a driver stops its GPU while it still reaches memory. It
+   is a list in an atomic, so that a child of fork meets no held lock. *)
+let physical = Atomic.make []
+
+let rec hold t =
+  let held = Atomic.get physical in
+  if not (Atomic.compare_and_set physical held ((Unix.getpid (), t) :: held))
+  then hold t
+
+let rec forget t =
+  let held = Atomic.get physical in
+  let rest = List.filter (fun (_, t') -> t' != t) held in
+  if not (Atomic.compare_and_set physical held rest) then forget t
+
+let () =
+  at_exit (fun () ->
+      let pid = Unix.getpid () in
+      List.iter
+        (fun (owner, t) -> if owner = pid then stop_dma t)
+        (Atomic.get physical))
+
+(* mmap maps whole pages from an offset on a page: the pages that hold the [n]
+   bytes at [off]. *)
+let pages off n =
+  let first = off / page * page in
+  (first, round_page (off + n) - first)
+
+(* An empty window maps nothing: it is the BAR's bus address at [off]. Linux
+   offers a prefetchable BAR's addresses write-combined through [resourceN_wc];
+   VFIO maps BARs uncached. *)
+let map t ~combine i off n =
+  if n = 0 then Window.v (fst (Option.get t.bars.(i)) + off) 0
+  else
+    let first, len = pages off n in
+    let window ?combines fd base =
+      let a =
+        Fail.step (strf "mapping BAR %d of %s" i t.bus) (fun () ->
+            file_map fd (base + first) len)
+      in
+      Window.v ?combines (a + off - first) n
+    in
+    match t.container with
+    | Some c ->
+        window (Vfio.device c) (Vfio.bar_offset t.bus (Vfio.device c) i off n)
+    | None ->
+        let wc = Sysfs.path t.files t.bus (strf "resource%d_wc" i) in
+        let combines = combine && Sys.file_exists wc in
+        let file =
+          if combines then wc
+          else Sysfs.path t.files t.bus (strf "resource%d" i)
+        in
+        let fd =
+          Fail.step ("opening " ^ file) (fun () ->
+              Unix.openfile file [ O_RDWR; O_SYNC; O_CLOEXEC ] 0)
+        in
+        Fun.protect
+          ~finally:(fun () -> Unix.close fd)
+          (fun () -> window ~combines fd 0)
+
+let unmap w =
+  if Window.length w > 0 then
+    let a, n = pages (Window.address w) (Window.length w) in
+    Fail.bug (strf "unmapping %d bytes of a BAR at 0x%x" n a) (fun () ->
+        file_unmap a n)
+
+let interrupt t ms =
+  match t.interrupts with Some fd -> Vfio.wait fd ms | None -> false
+
+let reset t =
+  match t.container with
+  | Some c ->
+      Fail.step ("resetting " ^ t.bus) (fun () -> Vfio.reset (Vfio.device c))
+  | None -> Sysfs.reset t.files t.bus
+
+(* Physical addresses as runs: one per page, or one for contiguous memory. *)
+let runs ~contiguous n = function
+  | first :: _ when contiguous -> [ (first, n) ]
+  | pages -> List.map (fun p -> (p, page)) pages
+
+let alloc_dma t ~contiguous ~va n =
+  match t.container with
+  | None ->
+      let w, pages = Sysmem.alloc ~contiguous ?va n in
+      (w, runs ~contiguous (Window.length w) pages)
+  | Some c -> (
+      let w = Sysmem.map ?va n in
+      let n = Window.length w in
+      match Vfio.map_dma "alloc_dma" t.bus c (Window.address w) n with
+      | iova -> (w, [ (iova, n) ])
+      | exception e ->
+          Sysmem.free w;
+          raise e)
+
+let free_dma t w =
+  Option.iter
+    (fun c -> Vfio.unmap_dma t.bus c (Window.address w) (Window.length w))
+    t.container;
+  Sysmem.free w
+
+let pin t a n =
+  match t.container with
+  | None -> runs ~contiguous:false n (Sysmem.pin a n)
+  | Some c ->
+      let n = round_page n in
+      [ (Vfio.map_dma "pin" t.bus c a n, n) ]
+
+let unpin t a n =
+  match t.container with
+  | None -> Sysmem.unpin a n
+  | Some c -> Vfio.unmap_dma t.bus c a (round_page n)
+
+let release t =
+  (match t.container with
+  | Some c -> Vfio.close c
+  | None ->
+      stop_dma t;
+      forget t);
+  List.iter Unix.close t.fds
+
+let fn t =
+  {
+    Ops.addressing =
+      (match t.container with None -> Physical | Some _ -> Iommu);
+    config8 = (fun off -> config t off 1);
+    config16 = (fun off -> config t off 2);
+    config32 = (fun off -> config t off 4);
+    set_config8 = (fun off x -> set_config t off 1 x);
+    set_config16 = (fun off x -> set_config t off 2 x);
+    set_config32 = (fun off x -> set_config t off 4 x);
+    bar = (fun i -> if i < Array.length t.bars then t.bars.(i) else None);
+    map =
+      (fun ~combine i off n -> Fail.result (fun () -> map t ~combine i off n));
+    unmap;
+    interrupt = interrupt t;
+    reset = (fun () -> Fail.result (fun () -> reset t));
+    alloc_dma =
+      (fun ~contiguous ~va n ->
+        Fail.result (fun () -> alloc_dma t ~contiguous ~va n));
+    free_dma = free_dma t;
+    pin = (fun a n -> Fail.result (fun () -> pin t a n));
+    unpin = unpin t;
+    release = (fun () -> release t);
+  }
+
+let take_iommu files fds bus bars =
+  let c, efd = Vfio.open_ files fds bus in
+  {
+    files;
+    bus;
+    config = (Vfio.device c, Vfio.config_offset bus (Vfio.device c));
+    bars;
+    seek = Mutex.create ();
+    interrupts = Some efd;
+    container = Some c;
+    fds = !fds;
+  }
+
+(* Bound to vfio-pci, a function taken physically has its interrupts through
+   VFIO's no-IOMMU mode. *)
+let take_physical files fds bus bars =
+  let file = Sysfs.path files bus "config" in
+  let config =
+    try Unix.openfile file [ O_RDWR; O_SYNC; O_CLOEXEC ] 0 with
+    | Unix.Unix_error (((EACCES | EPERM) as e), _, _) ->
+        Fail.fail
+          "opening %s: %s; taking %s needs write access to its files under \
+           /sys/bus/pci: run as root"
+          file (Unix.error_message e) bus
+    | Unix.Unix_error (e, _, _) ->
+        Fail.fail "opening %s: %s" file (Unix.error_message e)
+  in
+  fds := config :: !fds;
+  lock files bus config;
+  let interrupts =
+    if Sysfs.driver files bus = Some "vfio-pci" then
+      let _, _, efd = Vfio.open_function files fds bus Vfio.No_iommu in
+      Some efd
+    else None
+  in
+  let t =
+    {
+      files;
+      bus;
+      config = (config, 0);
+      bars;
+      seek = Mutex.create ();
+      interrupts;
+      container = None;
+      fds = !fds;
+    }
+  in
+  hold t;
+  t
+
+(* A failure gives back every descriptor taken. *)
+let take files bus =
+  if not (Sysfs.exists files bus) then
+    Error (strf "%s is no PCI function of this machine" bus)
+  else
+    let fds = ref [] in
+    let refused why =
+      List.iter Unix.close !fds;
+      Error why
+    in
+    match
+      let* addressing = Sysfs.access files bus in
+      let bars = Sysfs.bars files bus in
+      let by =
+        match addressing with
+        | Ops.Iommu -> take_iommu
+        | Physical -> take_physical
+      in
+      Ok (fn (by files fds bus bars))
+    with
+    | Ok _ as fn -> fn
+    | Error why -> refused why
+    | exception Fail.Failed why -> refused why
+
+let ops files =
+  {
+    Ops.transport = Window.unsafe_transport 0;
+    page;
+    functions = (fun () -> Sysfs.functions files);
+    take = take files;
+    reserve = (fun ~base n -> Fail.result (fun () -> reserve ~base n));
+  }

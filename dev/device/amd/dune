@@ -1,9 +1,0 @@
-; AMD GPUs, driven once a path opened them.
-
-(library
- (name device_amd)
- (libraries device_amd_abi device_elf device_edge)
- (install_c_headers device_amd)
- (foreign_stubs
-  (language c)
-  (names device_amd_ring device_amd_stubs)))

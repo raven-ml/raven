@@ -1,0 +1,21 @@
+(library
+ (name rig_cuda_bench)
+ (modules)
+ (libraries rig_cuda rig_edge)
+ (foreign_stubs
+  (language c)
+  (names rig_cuda_bench_stubs)))
+
+(executable
+ (name bench_cuda)
+ (modules bench_cuda)
+ (libraries rig rig_cuda rig_cuda_abi rig_cuda_bench rig_cuda_support thumper))
+
+(rule
+ (alias bench)
+ (locks %{workspace_root}/bench)
+ (deps
+  (glob_files *.thumper)
+  (source_tree ../test/fixtures))
+ (action
+  (run %{exe:bench_cuda.exe})))

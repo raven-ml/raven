@@ -1,0 +1,5 @@
+(library
+ (name rig_nv_abi)
+ (libraries rig_elf)
+ (private_modules defs repr)
+ (modules_without_implementation repr))

@@ -1,0 +1,6 @@
+(test
+ (name test_rig_disk)
+ (libraries rig_disk rig unix windtrap)
+ (foreign_stubs
+  (language c)
+  (names rig_disk_test_stubs)))

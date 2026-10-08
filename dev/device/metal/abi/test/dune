@@ -1,3 +1,0 @@
-(test
- (name test_metal_abi)
- (libraries device_metal_abi windtrap))

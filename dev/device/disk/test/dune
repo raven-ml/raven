@@ -1,6 +1,0 @@
-(test
- (name test_device_disk)
- (libraries device_disk device_core unix windtrap)
- (foreign_stubs
-  (language c)
-  (names device_disk_test_stubs)))

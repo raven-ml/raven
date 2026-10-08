@@ -1,0 +1,52 @@
+(tests
+ (names
+  test_packet
+  test_gpu
+  test_register
+  test_code_object
+  test_scratch
+  test_pm4
+  test_aql
+  test_sdma
+  test_thread_trace
+  test_capability
+  test_counter)
+ (modules
+  test_packet
+  test_gpu
+  test_register
+  test_code_object
+  test_scratch
+  test_pm4
+  test_aql
+  test_sdma
+  test_thread_trace
+  test_capability
+  test_counter)
+ (libraries rig_amd_abi rig_amd_abi_support rig_elf windtrap)
+ (deps
+  (source_tree fixtures)))
+
+; -linkall links every module of the library, so each one's initialiser
+; runs between the probes'.
+
+(test
+ (name test_init)
+ (modules test_init)
+ (link_flags
+  (:standard -linkall))
+ (libraries
+  rig_amd_abi_before
+  rig_amd_abi
+  rig_amd_abi_after
+  rig_amd_abi_support
+  windtrap))
+
+(test
+ (name test_trace_program)
+ (modules test_trace_program)
+ (libraries rig_amd_abi rig_amd_abi_support windtrap)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_trace_program.ml test_trace_program.ml.corrected))))
