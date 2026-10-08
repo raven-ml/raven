@@ -474,7 +474,7 @@ value caml_device_cuda_lock(value v_self, value v_lock, value v_address,
 
 /* The module of [v_image], or CUDA's status negated. PTX is text, which
    CUDA reads up to a NUL: the image is copied with one. Releases the
-   runtime: CUDA may compile it. */
+   runtime: CUDA may compile it, and waits for the GPU's running work. */
 value caml_device_cuda_load_module(value v_self, value v_image) {
   struct device *d = Device_val(v_self);
   size_t n = caml_string_length(v_image);
@@ -498,10 +498,13 @@ value caml_device_cuda_function(value v_self, value v_module, value v_name) {
   return answer(s, (intnat)f);
 }
 
+/* Unloads [v_module]: CUDA's status. Releases the runtime: CUDA waits for
+   the GPU's running work, whichever module it runs. */
 value caml_device_cuda_unload(value v_self, value v_module) {
+  struct device *d = Device_val(v_self);
+  CUmodule m = (CUmodule)Long_val(v_module);
   CUresult s;
-  IN_CONTEXT(s, Device_val(v_self),
-             p_cuModuleUnload((CUmodule)Long_val(v_module)));
+  RELEASED(IN_CONTEXT(s, d, p_cuModuleUnload(m)));
   return Val_int(s);
 }
 

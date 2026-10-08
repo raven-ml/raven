@@ -244,9 +244,10 @@ type image
 val image : t -> string -> (image * (region * string) option, string) result
 (** [image g bin] is [Ok (m, None)] with [m] the module of [bin], a cubin, a
     fatbin or PTX text, which CUDA compiles for the GPU. CUDA holds the code, so
-    the device has none to upload: the option is [None]. The result is
-    [Error msg] with CUDA's error if CUDA refuses [bin], for instance a cubin
-    for another GPU. *)
+    the device has none to upload: the option is [None]. CUDA may wait for all
+    of the GPU's work before it loads [bin], and [image] lets other domains run
+    meanwhile. The result is [Error msg] with CUDA's error if CUDA refuses
+    [bin], for instance a cubin for another GPU. *)
 
 val entry : image -> string -> int option
 (** [entry m f] is [Some h], [h] the [CUfunction] of the kernel [f] of [m],
@@ -257,7 +258,8 @@ val entry : image -> string -> int option
 
 val unload : t -> image -> unit
 (** [unload g m] unloads [m]. The caller unloads it once no work that runs its
-    kernels runs.
+    kernels runs. CUDA may wait for all of the GPU's work before it returns, and
+    [unload] lets other domains run meanwhile.
 
     Raises [Invalid_argument] if [m] is another device's or was unloaded. *)
 

@@ -392,6 +392,36 @@ let long_work () =
   C.sleep g ~seen:0 ~still_ms:60_000;
   C.unload g m
 
+(* A collection needs every domain at a safe point, so it waits for a domain
+   whose C call holds the runtime: here, an unload that CUDA holds until the
+   GPU's running work ends. *)
+let unload_aside () =
+  S.with_gpu @@ fun g ->
+  if S.attribute watchdog <> 0 then
+    skip ~reason:"a display watchdog ends long kernels" ();
+  let flag = require_some (C.alloc g `Pinned 8) in
+  Fun.protect ~finally:(fun () -> S.set64 (host flag) 1) @@ fun () ->
+  let other, _ = S.kernels g in
+  let m = spin g flag in
+  let unloading = Atomic.make false in
+  let d =
+    Domain.spawn (fun () ->
+        Atomic.set unloading true;
+        C.unload g other)
+  in
+  while not (Atomic.get unloading) do
+    Domain.cpu_relax ()
+  done;
+  S.still ~msg:"the work while unload waits" int 0
+    (fun () -> C.signaled g)
+    ~ms:50;
+  Gc.full_major ();
+  equal int ~msg:"the work after a collection" 0 (C.signaled g);
+  S.set64 (host flag) 1;
+  Domain.join d;
+  S.wait g 1;
+  C.unload g m
+
 let stop_idle () =
   let g = S.gpu () in
   let p = S.pages S.page in
@@ -438,6 +468,9 @@ let timeline =
   group ~timeout:60. "timeline"
     [
       test "long work is no fault, and a stale seen returns at once" long_work;
+      test
+        "unload lets other domains run while CUDA waits for the GPU (sampled)"
+        unload_aside;
       test "stop of an idle device leaves the word at the last value" stop_idle;
       test "stop of a running device is Unknown until its work ends"
         stop_running;
