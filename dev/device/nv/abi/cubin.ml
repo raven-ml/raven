@@ -383,6 +383,8 @@ type t = {
   names : string array; (* every kernel's name, by hash, then bytes *)
   hashes : int array;
   records : kernel option array;
+      (* each kernel's record, in the order of [names], all [Some]: [kernel]
+         returns one without allocating *)
 }
 
 (* The sections the GPU's memory holds: ELF's, but a kernel's shared memory,
