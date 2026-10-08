@@ -84,6 +84,8 @@ SOURCES = {
     "AMDHSAKernelDescriptor.h": LLVM + "include/llvm/Support/AMDHSAKernelDescriptor.h",
     "ELF.h": LLVM + "include/llvm/BinaryFormat/ELF.h",
     "AMDGPUUsage.rst": LLVM + "docs/AMDGPUUsage.rst",  # processors
+    # performance counters
+    "counter_defs.yaml": ROCM + "rocprofiler-compute/src/rocprof_compute_soc/profile_configs/counter_defs.yaml",
     "gfx9_plus_merged_f32_mec_pm4_packets.h": PAL + "gfx9/chip/gfx9_plus_merged_f32_mec_pm4_packets.h",
     "gfx12_merged_f32_mec_pm4_packets.h": PAL + "gfx12/chip/gfx12_merged_f32_mec_pm4_packets.h",
 }
@@ -247,6 +249,12 @@ KD_PROPERTIES = ["ENABLE_SGPR_PRIVATE_SEGMENT_BUFFER", "ENABLE_SGPR_DISPATCH_PTR
 ELF_CONSTANTS = ["EM_AMDGPU", "ELFABIVERSION_AMDGPU_HSA_V6", "EF_AMDGPU_MACH",
                  "EF_AMDGPU_GENERIC_VERSION", "EF_AMDGPU_GENERIC_VERSION_OFFSET"]
 RST_TABLES = ["amdgpu-ef-amdgpu-mach-table", "amdgpu-generic-processor-table"]
+
+# The performance counters of the blocks a profile counts, for the processors
+# the library knows, as rocprofiler's table defines them: each counter's name,
+# block and event, which differ between processors of one GC major.
+COUNTER_BLOCKS = ["GRBM", "GL2C", "TCC", "SQ"]
+COUNTER_PROCESSORS = ["gfx942", "gfx950", "gfx11", "gfx12"]
 
 # The configuration the headers are read under: a little-endian processor, a
 # 64-bit HSA model.
@@ -598,9 +606,41 @@ def wanted():
     return w
 
 
+def counter_defs(text):
+    """The (name, block, event, processors) of counter_defs.yaml's counters
+    of COUNTER_BLOCKS: a list of counters, each "- name:", whose definitions
+    each list "- architectures:", then "block:" and "event:", indented one
+    way or another."""
+    out, name, procs, block, lines = [], None, [], None, {}
+    for i, l in enumerate(text.splitlines()):
+        m = re.match(r"  - name: (\S+)$", l)
+        if m:
+            name, procs, block = m.group(1), [], None
+            continue
+        if re.match(r"\s*- architectures:$", l):
+            procs, block, first = [], None, i
+            continue
+        m = re.match(r"\s*- (gfx\w+)$", l)
+        if m:
+            procs.append(m.group(1))
+            continue
+        m = re.match(r"\s*block: (\w+)$", l)
+        if m:
+            block = m.group(1)
+            continue
+        m = re.match(r"\s*event: (\d+)$", l)
+        if m and block in COUNTER_BLOCKS:
+            out.append((name, block, int(m.group(1)), procs))
+            lines[(name, block, m.group(1))] = (first, i)
+    return out, lines
+
+
 def licence(name, text):
     """The header's leading comments, its licence notice; for a document, a
     comment that names its source and licence."""
+    if name.endswith(".yaml"):
+        return (f"# Excerpt of {SOURCES[name]}.\n"
+                "# rocm-systems is under the MIT licence.\n")
     if name.endswith(".rst"):
         return (f".. Excerpt of {SOURCES[name]}.\n"
                 ".. LLVM is under the Apache License v2.0 with LLVM Exceptions (SPDX:\n"
@@ -639,6 +679,15 @@ def excerpt(name, text):
     if name.endswith(".rst"):
         lines = text.splitlines()
         return licence(name, text) + "\n" + "\n\n".join("\n".join(rst_table_lines(lines, t)) for t in RST_TABLES) + "\n"
+    if name.endswith(".yaml"):
+        lines = text.splitlines()
+        keep = set()
+        _, spans = counter_defs(text)
+        for (n, _, _), (first, last) in spans.items():
+            keep.add(next(i for i in range(first, -1, -1) if lines[i] == f"  - name: {n}"))
+            keep.add(next(i for i in range(first, -1, -1) if lines[i].strip() == "definitions:"))
+            keep |= set(range(first, last + 1))
+        return licence(name, text) + "\n".join(lines[i] for i in sorted(keep)) + "\n"
     w = wanted()[name]
     lines = text.splitlines()
     keep = set(blocks(text, w["structs"])) if w["structs"] else set()
@@ -875,6 +924,19 @@ def generate(h):
     out += ["(* Events and thread trace values, the same in each SOC enumeration that",
             "   defines them *)", ""]
     out += [f"let {ml_name(n)} = {ml_int(soc_enum(n))}" for n in SOC_EVENTS + SOC_TRACE]
+    out.append("")
+
+    # Performance counters
+    counters, _ = counter_defs(h["counter_defs.yaml"])
+    out += ["(* The performance counters of each processor, by name: (name, block,",
+            "   event). *)", "", "let counters = function"]
+    for proc in COUNTER_PROCESSORS:
+        cs = sorted({(n, b, e) for n, b, e, ps in counters if proc in ps})
+        out.append(f"  | {json.dumps(proc)} ->")
+        out.append("      [|")
+        out += [f"        ({json.dumps(n)}, {json.dumps(b)}, {e});" for n, b, e in cs]
+        out.append("      |]")
+    out.append("  | _ -> [||]")
     out.append("")
 
     # GFX9's thread trace tokens

@@ -9,7 +9,8 @@
   test_aql
   test_sdma
   test_thread_trace
-  test_capability)
+  test_capability
+  test_counter)
  (modules
   test_packet
   test_gpu
@@ -20,7 +21,8 @@
   test_aql
   test_sdma
   test_thread_trace
-  test_capability)
+  test_capability
+  test_counter)
  (libraries device_amd_abi device_amd_abi_support device_elf windtrap)
  (deps
   (source_tree fixtures)))

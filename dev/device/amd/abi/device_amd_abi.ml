@@ -12,4 +12,5 @@ module Pm4 = Pm4
 module Aql = Aql
 module Sdma = Sdma
 module Thread_trace = Thread_trace
+module Counter = Counter
 module Capability = Capability

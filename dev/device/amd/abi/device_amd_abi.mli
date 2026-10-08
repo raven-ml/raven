@@ -105,6 +105,10 @@ module Sdma = Sdma
 module Thread_trace = Thread_trace
 (** Thread traces: what a GPU's shader engines record while they run waves. *)
 
+module Counter = Counter
+(** Performance counters: what a kernel's run counts, and where its values lie.
+*)
+
 (** {1:devices Devices} *)
 
 module Capability = Capability

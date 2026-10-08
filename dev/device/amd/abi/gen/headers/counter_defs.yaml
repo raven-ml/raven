@@ -1,0 +1,3807 @@
+# Excerpt of https://raw.githubusercontent.com/ROCm/rocm-systems/cccc350dc620e61ae2554978b62ab3532dc10bd9/projects/rocprofiler-compute/src/rocprof_compute_soc/profile_configs/counter_defs.yaml.
+# rocm-systems is under the MIT licence.
+  - name: GL2C_EA_RDREQ
+    definitions:
+    - architectures:
+      - gfx12
+      - gfx1200
+      - gfx1201
+      block: GL2C
+      event: 140
+  - name: GL2C_EA_RDREQ_128B
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      block: GL2C
+      event: 102
+    - architectures:
+      - gfx12
+      - gfx1200
+      - gfx1201
+      block: GL2C
+      event: 148
+  - name: GL2C_EA_RDREQ_32B
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      block: GL2C
+      event: 99
+    - architectures:
+      - gfx12
+      - gfx1200
+      - gfx1201
+      block: GL2C
+      event: 146
+  - name: GL2C_EA_RDREQ_64B
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      block: GL2C
+      event: 100
+    - architectures:
+      - gfx12
+      - gfx1200
+      - gfx1201
+      block: GL2C
+      event: 147
+  - name: GL2C_EA_RDREQ_96B
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      block: GL2C
+      event: 101
+  - name: GL2C_EA_WRREQ
+    definitions:
+    - architectures:
+      - gfx12
+      - gfx1200
+      - gfx1201
+      block: GL2C
+      event: 108
+  - name: GL2C_EA_WRREQ_STALL
+    definitions:
+    - architectures:
+      - gfx12
+      - gfx1200
+      - gfx1201
+      block: GL2C
+      event: 122
+  - name: GL2C_EA_WRREQ_64B
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      block: GL2C
+      event: 85
+    - architectures:
+      - gfx12
+      - gfx1200
+      - gfx1201
+      block: GL2C
+      event: 114
+  - name: GL2C_HIT
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      block: GL2C
+      event: 42
+    - architectures:
+      - gfx12
+      - gfx1200
+      - gfx1201
+      block: GL2C
+      event: 41
+  - name: GL2C_MC_RDREQ
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      block: GL2C
+      event: 96
+  - name: GL2C_MC_WRREQ
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      block: GL2C
+      event: 83
+  - name: GL2C_MC_WRREQ_STALL
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      block: GL2C
+      event: 88
+  - name: GL2C_MISS
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      block: GL2C
+      event: 43
+    - architectures:
+      - gfx12
+      - gfx1200
+      - gfx1201
+      block: GL2C
+      event: 42
+  - name: GRBM_COUNT
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      - gfx12
+      - gfx1200
+      - gfx1201
+      - gfx9
+      - gfx900
+      - gfx906
+      - gfx908
+      - gfx90a
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: GRBM
+      event: 0
+  - name: GRBM_CPC_BUSY
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: GRBM
+      event: 30
+  - name: GRBM_CPF_BUSY
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: GRBM
+      event: 31
+  - name: GRBM_CP_BUSY
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: GRBM
+      event: 3
+  - name: GRBM_EA_BUSY
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: GRBM
+      event: 35
+  - name: GRBM_GDS_BUSY
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      block: GRBM
+      event: 25
+  - name: GRBM_GL2CC_BUSY
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      block: GRBM
+      event: 40
+  - name: GRBM_GUI_ACTIVE
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      - gfx12
+      - gfx1200
+      - gfx1201
+      - gfx9
+      - gfx900
+      - gfx906
+      - gfx908
+      - gfx90a
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: GRBM
+      event: 2
+  - name: GRBM_SPI_BUSY
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: GRBM
+      event: 11
+  - name: GRBM_TA_BUSY
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: GRBM
+      event: 13
+  - name: GRBM_TC_BUSY
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: GRBM
+      event: 28
+  - name: GRBM_UTCL2_BUSY
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: GRBM
+      event: 34
+  - name: SQC_DCACHE_ATOMIC
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 298
+  - name: SQC_DCACHE_BUSY_CYCLES
+    definitions:
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 289
+  - name: SQC_DCACHE_HITS
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 291
+  - name: SQC_DCACHE_INPUT_VALID_READYB
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 260
+  - name: SQC_DCACHE_MISSES
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 292
+  - name: SQC_DCACHE_MISSES_DUPLICATE
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 293
+  - name: SQC_DCACHE_REQ
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 290
+  - name: SQC_DCACHE_REQ_READ_1
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 323
+  - name: SQC_DCACHE_REQ_READ_16
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 327
+  - name: SQC_DCACHE_REQ_READ_2
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 324
+  - name: SQC_DCACHE_REQ_READ_4
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 325
+  - name: SQC_DCACHE_REQ_READ_8
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 326
+  - name: SQC_ICACHE_BUSY_CYCLES
+    definitions:
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 269
+  - name: SQC_ICACHE_HITS
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 271
+    - architectures:
+      - gfx12
+      - gfx1200
+      - gfx1201
+      block: SQ
+      event: 302
+  - name: SQC_ICACHE_INPUT_VALID_READYB
+    definitions:
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 257
+  - name: SQC_ICACHE_MISSES
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 272
+    - architectures:
+      - gfx12
+      - gfx1200
+      - gfx1201
+      block: SQ
+      event: 303
+  - name: SQC_ICACHE_MISSES_DUPLICATE
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 273
+  - name: SQC_ICACHE_REQ
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 270
+    - architectures:
+      - gfx12
+      - gfx1200
+      - gfx1201
+      block: SQ
+      event: 301
+  - name: SQC_LDS_BANK_CONFLICT
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      block: SQ
+      event: 285
+    - architectures:
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      block: SQ
+      event: 256
+    - architectures:
+      - gfx12
+      - gfx1200
+      - gfx1201
+      block: SQ
+      event: 288
+  - name: SQC_LDS_IDX_ACTIVE
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      block: SQ
+      event: 290
+    - architectures:
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      block: SQ
+      event: 261
+    - architectures:
+      - gfx12
+      - gfx1200
+      - gfx1201
+      block: SQ
+      event: 293
+  - name: SQC_TC_DATA_ATOMIC_REQ
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 266
+  - name: SQC_TC_DATA_READ_REQ
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 264
+  - name: SQC_TC_DATA_WRITE_REQ
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 265
+  - name: SQC_TC_INST_REQ
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 263
+  - name: SQC_TC_REQ
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 262
+  - name: SQC_TC_STALL
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 267
+  - name: SQ_ACCUM_PREV
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      - gfx12
+      - gfx1200
+      - gfx1201
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 1
+  - name: SQ_ACCUM_PREV_HIRES
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 185
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 158
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 184
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 200
+  - name: SQ_ACTIVE_INST_ANY
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 96
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 69
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 101
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 117
+  - name: SQ_ACTIVE_INST_EXP_GDS
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 101
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 74
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 106
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 122
+  - name: SQ_ACTIVE_INST_FLAT
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 103
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 76
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 108
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 124
+  - name: SQ_ACTIVE_INST_LDS
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 98
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 71
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 103
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 119
+  - name: SQ_ACTIVE_INST_MISC
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 102
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 75
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 107
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 123
+  - name: SQ_ACTIVE_INST_SCA
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 100
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 73
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 105
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 121
+  - name: SQ_ACTIVE_INST_VALU
+    definitions:
+    - architectures:
+      - gfx9
+      - gfx900
+      - gfx906
+      block: SQ
+      event: 71
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 72
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 99
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 104
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 120
+  - name: SQ_ACTIVE_INST_VMEM
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 97
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 70
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 102
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 118
+  - name: SQ_BUSY_CU_CYCLES
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 13
+  - name: SQ_BUSY_CYCLES
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      - gfx12
+      - gfx1200
+      - gfx1201
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 3
+  - name: SQ_CYCLES
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 2
+  - name: SQ_IFETCH
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 115
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 88
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 120
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 136
+  - name: SQ_IFETCH_LEVEL
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 116
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 89
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 121
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 137
+  - name: SQ_INSTS
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 25
+  - name: SQ_INSTS_BRANCH
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 64
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 39
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 69
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 71
+  - name: SQ_INSTS_EXP_GDS
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 63
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 38
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 68
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 70
+  - name: SQ_INSTS_FLAT
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      block: SQ
+      event: 57
+    - architectures:
+      - gfx9
+      - gfx900
+      - gfx906
+      block: SQ
+      event: 32
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 33
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 58
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 62
+    - architectures:
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      block: SQ
+      event: 56
+    - architectures:
+      - gfx12
+      - gfx1200
+      - gfx1201
+      block: SQ
+      event: 44
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 64
+  - name: SQ_INSTS_FLAT_LDS_ONLY
+    definitions:
+    - architectures:
+      - gfx9
+      - gfx900
+      - gfx906
+      block: SQ
+      event: 33
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 34
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 59
+  - name: SQ_INSTS_GDS
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      block: SQ
+      event: 55
+    - architectures:
+      - gfx9
+      - gfx900
+      - gfx906
+      block: SQ
+      event: 35
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 36
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 61
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 66
+    - architectures:
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      block: SQ
+      event: 54
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 68
+  - name: SQ_INSTS_LDS
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      block: SQ
+      event: 59
+    - architectures:
+      - gfx9
+      - gfx900
+      - gfx906
+      block: SQ
+      event: 34
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 35
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 60
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 65
+    - architectures:
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      block: SQ
+      event: 57
+    - architectures:
+      - gfx12
+      - gfx1200
+      - gfx1201
+      block: SQ
+      event: 45
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 67
+  - name: SQ_INSTS_MFMA
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 52
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 27
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 56
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 58
+  - name: SQ_INSTS_SALU
+    definitions:
+    - architectures:
+      - gfx9
+      - gfx900
+      - gfx906
+      block: SQ
+      event: 30
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 31
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 56
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 60
+    - architectures:
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      block: SQ
+      event: 58
+    - architectures:
+      - gfx12
+      - gfx1200
+      - gfx1201
+      block: SQ
+      event: 46
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 62
+  - name: SQ_INSTS_SENDMSG
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 65
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 40
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 70
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 72
+  - name: SQ_INSTS_SMEM
+    definitions:
+    - architectures:
+      - gfx9
+      - gfx900
+      - gfx906
+      block: SQ
+      event: 31
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 32
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 57
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 61
+    - architectures:
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      block: SQ
+      event: 59
+    - architectures:
+      - gfx12
+      - gfx1200
+      - gfx1201
+      block: SQ
+      event: 47
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 63
+  - name: SQ_INSTS_SMEM_NORM
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 188
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 161
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 187
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 203
+  - name: SQ_INSTS_TEX_LOAD
+    definitions:
+    - architectures:
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      block: SQ
+      event: 66
+    - architectures:
+      - gfx12
+      - gfx1200
+      - gfx1201
+      block: SQ
+      event: 54
+  - name: SQ_INSTS_TEX_STORE
+    definitions:
+    - architectures:
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      block: SQ
+      event: 67
+    - architectures:
+      - gfx12
+      - gfx1200
+      - gfx1201
+      block: SQ
+      event: 55
+  - name: SQ_INSTS_VALU
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      block: SQ
+      event: 64
+    - architectures:
+      - gfx9
+      - gfx900
+      - gfx906
+      - gfx908
+      - gfx90a
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 26
+    - architectures:
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      block: SQ
+      event: 62
+    - architectures:
+      - gfx12
+      - gfx1200
+      - gfx1201
+      block: SQ
+      event: 50
+  - name: SQ_INSTS_VALU_ADD_F16
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 27
+  - name: SQ_INSTS_VALU_ADD_F32
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 31
+  - name: SQ_INSTS_VALU_ADD_F64
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 35
+  - name: SQ_INSTS_VALU_CVT
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 41
+  - name: SQ_INSTS_VALU_FMA_F16
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 29
+  - name: SQ_INSTS_VALU_FMA_F32
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 33
+  - name: SQ_INSTS_VALU_FMA_F64
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 37
+  - name: SQ_INSTS_VALU_INT32
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 39
+  - name: SQ_INSTS_VALU_INT64
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 40
+  - name: SQ_INSTS_VALU_MFMA_BF16
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 44
+  - name: SQ_INSTS_VALU_MFMA_F16
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 43
+  - name: SQ_INSTS_VALU_MFMA_F32
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 45
+  - name: SQ_INSTS_VALU_MFMA_F64
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 46
+  - name: SQ_INSTS_VALU_MFMA_I8
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 42
+  - name: SQ_INSTS_VALU_MFMA_F8
+    definitions:
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 48
+  - name: SQ_INSTS_VALU_MFMA_XF32
+    definitions:
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 47
+  - name: SQ_INSTS_VALU_MFMA_MOPS_BF16
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 49
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 51
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 52
+  - name: SQ_INSTS_VALU_MFMA_MOPS_F16
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 48
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 50
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 51
+  - name: SQ_INSTS_VALU_MFMA_MOPS_F32
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 50
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 52
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 53
+  - name: SQ_INSTS_VALU_MFMA_MOPS_F64
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 51
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 53
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 54
+  - name: SQ_INSTS_VALU_MFMA_MOPS_I8
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 47
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 49
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 50
+  - name: SQ_INSTS_VALU_MFMA_MOPS_F8
+    definitions:
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 55
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 56
+  - name: SQ_INSTS_VALU_MFMA_MOPS_XF32
+    definitions:
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 55
+  - name: SQ_VALU_MFMA_COEXEC_CYCLES
+    definitions:
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 94
+  - name: SQ_INSTS_VALU_MUL_F16
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 28
+  - name: SQ_INSTS_VALU_MUL_F32
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 32
+  - name: SQ_INSTS_VALU_MUL_F64
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 36
+  - name: SQ_INSTS_VALU_TRANS_F16
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 30
+  - name: SQ_INSTS_VALU_TRANS_F32
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 34
+  - name: SQ_INSTS_VALU_TRANS_F64
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 38
+  - name: SQ_INSTS_VMEM
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 55
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 30
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 59
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 61
+  - name: SQ_INSTS_VMEM_RD
+    definitions:
+    - architectures:
+      - gfx9
+      - gfx900
+      - gfx906
+      block: SQ
+      event: 28
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 29
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 54
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 58
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 60
+  - name: SQ_INSTS_VMEM_WR
+    definitions:
+    - architectures:
+      - gfx9
+      - gfx900
+      - gfx906
+      block: SQ
+      event: 27
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 28
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 53
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 57
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 59
+  - name: SQ_INSTS_VSKIPPED
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 66
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 41
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 71
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 73
+  - name: SQ_INSTS_WAVE32
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      block: SQ
+      event: 71
+    - architectures:
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      block: SQ
+      event: 70
+    - architectures:
+      - gfx12
+      - gfx1200
+      - gfx1201
+      block: SQ
+      event: 58
+  - name: SQ_INSTS_WAVE32_LDS
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      block: SQ
+      event: 74
+    - architectures:
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      block: SQ
+      event: 72
+    - architectures:
+      - gfx12
+      - gfx1200
+      - gfx1201
+      block: SQ
+      event: 60
+  - name: SQ_INSTS_WAVE32_VALU
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      block: SQ
+      event: 75
+    - architectures:
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      block: SQ
+      event: 73
+    - architectures:
+      - gfx12
+      - gfx1200
+      - gfx1201
+      block: SQ
+      event: 61
+  - name: SQ_INST_CYCLES_VALU
+    definitions:
+      - architectures:
+        - gfx12
+        - gfx1200
+        - gfx1201
+        block: SQ
+        event: 99
+  - name: SQ_INST_CYCLES_SALU
+    definitions:
+    - architectures:
+      - gfx9
+      - gfx900
+      - gfx906
+      block: SQ
+      event: 84
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 85
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 112
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 117
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 133
+  - name: SQ_INST_CYCLES_SMEM
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 111
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 84
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 116
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 132
+  - name: SQ_INST_CYCLES_VMEM
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      block: SQ
+      event: 120
+    - architectures:
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      block: SQ
+      event: 106
+    - architectures:
+      - gfx12
+      - gfx1200
+      - gfx1201
+      block: SQ
+      event: 102
+  - name: SQ_INST_CYCLES_VMEM_RD
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 105
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 78
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 110
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 126
+  - name: SQ_INST_CYCLES_VMEM_WR
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 104
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 77
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 109
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 125
+  - name: SQ_INST_LEVEL_GDS
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      block: SQ
+      event: 98
+    - architectures:
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      block: SQ
+      event: 87
+  - name: SQ_INST_LEVEL_LDS
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      block: SQ
+      event: 99
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 69
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 44
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 74
+    - architectures:
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      block: SQ
+      event: 88
+    - architectures:
+      - gfx12
+      - gfx1200
+      - gfx1201
+      block: SQ
+      event: 75
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 90
+  - name: SQ_INST_LEVEL_SMEM
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 68
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 43
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 73
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 89
+  - name: SQ_INST_LEVEL_VMEM
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 67
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 42
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 72
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 88
+  - name: SQ_ITEMS
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 14
+  - name: SQ_LDS_ADDR_CONFLICT
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 122
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 95
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 127
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 143
+  - name: SQ_LDS_ATOMIC_RETURN
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 125
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 98
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 130
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 146
+  - name: SQ_LDS_BANK_CONFLICT
+    definitions:
+    - architectures:
+      - gfx9
+      - gfx900
+      - gfx906
+      block: SQ
+      event: 93
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 94
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 121
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 126
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 142
+  - name: SQ_LDS_IDX_ACTIVE
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 126
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 99
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 131
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 147
+  - name: SQ_LDS_MEM_VIOLATIONS
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 124
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 97
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 129
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 145
+  - name: SQ_LDS_UNALIGNED_STALL
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 123
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 96
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 128
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 144
+  - name: SQ_LEVEL_WAVES
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      block: SQ
+      event: 7
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 5
+  - name: SQ_THREAD_CYCLES_VALU
+    definitions:
+    - architectures:
+      - gfx9
+      - gfx900
+      - gfx906
+      block: SQ
+      event: 85
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 86
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 113
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 118
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 134
+  - name: SQ_VALU_MFMA_BUSY_CYCLES
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 72
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 77
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 93
+  - name: SQ_WAIT_ANY
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      block: SQ
+      event: 37
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 85
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 58
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 90
+    - architectures:
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      block: SQ
+      event: 35
+    - architectures:
+      - gfx12
+      - gfx1200
+      - gfx1201
+      block: SQ
+      event: 27
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 106
+  - name: SQ_WAIT_INST_ANY
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      block: SQ
+      event: 28
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 88
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 61
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 93
+    - architectures:
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      - gfx12
+      - gfx1200
+      - gfx1201
+      block: SQ
+      event: 26
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 109
+  - name: SQ_WAIT_INST_LDS
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      block: SQ
+      event: 31
+    - architectures:
+      - gfx9
+      - gfx900
+      - gfx906
+      block: SQ
+      event: 63
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 64
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 91
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 96
+    - architectures:
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      block: SQ
+      event: 29
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 112
+  - name: SQ_WAVE32_INSTS
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      block: SQ
+      event: 84
+    - architectures:
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      block: SQ
+      event: 82
+    - architectures:
+      - gfx12
+      - gfx1200
+      - gfx1201
+      block: SQ
+      event: 70
+  - name: SQ_WAVE64_INSTS
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      block: SQ
+      event: 85
+    - architectures:
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      block: SQ
+      event: 83
+    - architectures:
+      - gfx12
+      - gfx1200
+      - gfx1201
+      block: SQ
+      event: 71
+  - name: SQ_WAVES
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      - gfx12
+      - gfx1200
+      - gfx1201
+      - gfx9
+      - gfx900
+      - gfx906
+      - gfx908
+      - gfx90a
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 4
+  - name: SQ_WAVES_EQ_64
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 6
+  - name: SQ_WAVES_LT_16
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 10
+  - name: SQ_WAVES_LT_32
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 9
+  - name: SQ_WAVES_LT_48
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 8
+  - name: SQ_WAVES_LT_64
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 7
+  - name: SQ_WAVES_RESTORED
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 186
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 159
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 185
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 201
+  - name: SQ_WAVES_SAVED
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 187
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 160
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 186
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 202
+  - name: SQ_WAVE_CYCLES
+    definitions:
+    - architectures:
+      - gfx10
+      - gfx1010
+      - gfx1030
+      - gfx1031
+      - gfx1032
+      block: SQ
+      event: 26
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 74
+    - architectures:
+      - gfx908
+      block: SQ
+      event: 47
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: SQ
+      event: 79
+    - architectures:
+      - gfx11
+      - gfx1100
+      - gfx1101
+      - gfx1102
+      - gfx12
+      - gfx1200
+      - gfx1201
+      block: SQ
+      event: 24
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 95
+  - name: SQ_INSTS_VEC32_LEVEL_LDS
+    definitions:
+      - architectures:
+        - gfx12
+        - gfx1200
+        - gfx1201
+        block: SQ
+        event: 250
+  - name: SQ_INSTS_VALU_FLOPS_FP16
+    definitions:
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 81
+  - name: SQ_INSTS_VALU_FLOPS_FP32
+    definitions:
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 82
+  - name: SQ_INSTS_VALU_FLOPS_FP64
+    definitions:
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 83
+  - name: SQ_INSTS_VALU_FLOPS_FP16_TRANS
+    definitions:
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 84
+  - name: SQ_INSTS_VALU_FLOPS_FP32_TRANS
+    definitions:
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 85
+  - name: SQ_INSTS_VALU_FLOPS_FP64_TRANS
+    definitions:
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 86
+  - name: SQ_INSTS_VALU_MFMA_F6F4
+    definitions:
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 49
+  - name: SQ_INSTS_VALU_MFMA_MOPS_F6F4
+    definitions:
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 57
+  - name: SQ_ACTIVE_INST_VALU2
+    definitions:
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 74
+  - name: SQ_INSTS_LDS_LOAD
+    definitions:
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 75
+  - name: SQ_INSTS_LDS_STORE
+    definitions:
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 76
+  - name: SQ_INSTS_LDS_ATOMIC
+    definitions:
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 77
+  - name: SQ_INSTS_LDS_LOAD_BANDWIDTH
+    definitions:
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 78
+  - name: SQ_INSTS_LDS_STORE_BANDWIDTH
+    definitions:
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 79
+  - name: SQ_INSTS_LDS_ATOMIC_BANDWIDTH
+    definitions:
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 80
+  - name: SQ_INSTS_VALU_IOPS
+    definitions:
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 87
+  - name: SQ_LDS_DATA_FIFO_FULL
+    definitions:
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 152
+  - name: SQ_LDS_CMD_FIFO_FULL
+    definitions:
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 153
+  - name: SQ_VMEM_TA_ADDR_FIFO_FULL
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 133
+    - architectures:
+      - gfx942
+      block: SQ
+      event: 138
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 154
+  - name: SQ_VMEM_TA_CMD_FIFO_FULL
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 134
+    - architectures:
+      - gfx942
+      block: SQ
+      event: 139
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 155
+  - name: SQ_VMEM_WR_TA_DATA_FIFO_FULL
+    definitions:
+    - architectures:
+      - gfx90a
+      block: SQ
+      event: 136
+    - architectures:
+      - gfx942
+      block: SQ
+      event: 141
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 157
+  - name: SQ_INSTS_FLAT_FLATSEG
+    definitions:
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 65
+  - name: SQ_INSTS_FLAT_NO_LDS
+    definitions:
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 66
+  - name: SQ_INSTS_EXP
+    definitions:
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 69
+  - name: SQ_EVENTS
+    definitions:
+    - architectures:
+      - gfx950
+      block: SQ
+      event: 16
+  - name: TCC_ALL_TC_OP_INV_EVICT
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 80
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 86
+  - name: TCC_ALL_TC_OP_WB_WRITEBACK
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 73
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 79
+  - name: TCC_ATOMIC
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 14
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 18
+  - name: TCC_BUSY
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: TCC
+      event: 2
+  - name: TCC_CC_REQ
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 7
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 11
+  - name: TCC_CYCLE
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: TCC
+      event: 1
+  - name: TCC_EA0_ATOMIC
+    definitions:
+    - architectures:
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 36
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 40
+  - name: TCC_EA0_ATOMIC_LEVEL
+    definitions:
+    - architectures:
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 37
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 41
+  - name: TCC_EA0_RDREQ
+    definitions:
+    - architectures:
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 38
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 42
+  - name: TCC_EA0_RDREQ_32B
+    definitions:
+    - architectures:
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 39
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 43
+  - name: TCC_EA0_RDREQ_DRAM
+    definitions:
+    - architectures:
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 102
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 108
+  - name: TCC_EA0_RDREQ_DRAM_CREDIT_STALL
+    definitions:
+    - architectures:
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 43
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 49
+  - name: TCC_EA0_RDREQ_GMI_CREDIT_STALL
+    definitions:
+    - architectures:
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 42
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 48
+  - name: TCC_EA0_RDREQ_IO_CREDIT_STALL
+    definitions:
+    - architectures:
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 41
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 47
+  - name: TCC_EA0_RDREQ_LEVEL
+    definitions:
+    - architectures:
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 44
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 50
+  - name: TCC_EA0_RD_UNCACHED_32B
+    definitions:
+    - architectures:
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 40
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 46
+  - name: TCC_EA0_WRREQ
+    definitions:
+    - architectures:
+      - gfx908
+      - gfx90a
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 26
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 30
+  - name: TCC_EA0_WRREQ_64B
+    definitions:
+    - architectures:
+      - gfx908
+      - gfx90a
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 27
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 31
+  - name: TCC_EA0_WRREQ_DRAM
+    definitions:
+    - architectures:
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 103
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 109
+  - name: TCC_EA0_WRREQ_DRAM_CREDIT_STALL
+    definitions:
+    - architectures:
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 33
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 37
+  - name: TCC_EA0_WRREQ_GMI_CREDIT_STALL
+    definitions:
+    - architectures:
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 32
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 36
+  - name: TCC_EA0_WRREQ_IO_CREDIT_STALL
+    definitions:
+    - architectures:
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 31
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 35
+  - name: TCC_EA0_WRREQ_LEVEL
+    definitions:
+    - architectures:
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 35
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 39
+  - name: TCC_EA0_WRREQ_PROBE_COMMAND
+    definitions:
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 28
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 32
+  - name: TCC_EA0_WRREQ_STALL
+    definitions:
+    - architectures:
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 30
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 34
+  - name: TCC_EA0_WR_UNCACHED_32B
+    definitions:
+    - architectures:
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 29
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 33
+  - name: TCC_EA1_RDREQ
+    definitions:
+    - architectures:
+      - gfx906
+      block: TCC
+      event: 267
+  - name: TCC_EA1_RDREQ_32B
+    definitions:
+    - architectures:
+      - gfx906
+      block: TCC
+      event: 268
+  - name: TCC_EA1_WRREQ
+    definitions:
+    - architectures:
+      - gfx906
+      block: TCC
+      event: 256
+  - name: TCC_EA1_WRREQ_64B
+    definitions:
+    - architectures:
+      - gfx906
+      block: TCC
+      event: 257
+  - name: TCC_EA1_WRREQ_STALL
+    definitions:
+    - architectures:
+      - gfx906
+      block: TCC
+      event: 260
+  - name: TCC_EA_ATOMIC
+    definitions:
+    - architectures:
+      - gfx90a
+      block: TCC
+      event: 36
+  - name: TCC_EA_ATOMIC_LEVEL
+    definitions:
+    - architectures:
+      - gfx90a
+      block: TCC
+      event: 37
+  - name: TCC_EA_RDREQ
+    definitions:
+    - architectures:
+      - gfx9
+      - gfx900
+      - gfx906
+      block: TCC
+      event: 41
+    - architectures:
+      - gfx908
+      - gfx90a
+      block: TCC
+      event: 38
+  - name: TCC_EA_RDREQ_32B
+    definitions:
+    - architectures:
+      - gfx9
+      - gfx900
+      - gfx906
+      block: TCC
+      event: 42
+    - architectures:
+      - gfx908
+      - gfx90a
+      block: TCC
+      event: 39
+  - name: TCC_EA_RDREQ_DRAM
+    definitions:
+    - architectures:
+      - gfx90a
+      block: TCC
+      event: 102
+  - name: TCC_EA_RDREQ_DRAM_CREDIT_STALL
+    definitions:
+    - architectures:
+      - gfx90a
+      block: TCC
+      event: 43
+  - name: TCC_EA_RDREQ_GMI_CREDIT_STALL
+    definitions:
+    - architectures:
+      - gfx90a
+      block: TCC
+      event: 42
+  - name: TCC_EA_RDREQ_IO_CREDIT_STALL
+    definitions:
+    - architectures:
+      - gfx90a
+      block: TCC
+      event: 41
+  - name: TCC_EA_RDREQ_LEVEL
+    definitions:
+    - architectures:
+      - gfx90a
+      block: TCC
+      event: 44
+  - name: TCC_EA_RD_UNCACHED_32B
+    definitions:
+    - architectures:
+      - gfx90a
+      block: TCC
+      event: 40
+  - name: TCC_EA_WRREQ
+    definitions:
+    - architectures:
+      - gfx9
+      - gfx900
+      - gfx906
+      block: TCC
+      event: 29
+    - architectures:
+      - gfx908
+      - gfx90a
+      block: TCC
+      event: 26
+  - name: TCC_EA_WRREQ_64B
+    definitions:
+    - architectures:
+      - gfx9
+      - gfx900
+      - gfx906
+      block: TCC
+      event: 30
+    - architectures:
+      - gfx908
+      - gfx90a
+      block: TCC
+      event: 27
+  - name: TCC_EA_WRREQ_DRAM
+    definitions:
+    - architectures:
+      - gfx90a
+      block: TCC
+      event: 103
+  - name: TCC_EA_WRREQ_DRAM_CREDIT_STALL
+    definitions:
+    - architectures:
+      - gfx90a
+      block: TCC
+      event: 33
+  - name: TCC_EA_WRREQ_GMI_CREDIT_STALL
+    definitions:
+    - architectures:
+      - gfx90a
+      block: TCC
+      event: 32
+  - name: TCC_EA_WRREQ_IO_CREDIT_STALL
+    definitions:
+    - architectures:
+      - gfx90a
+      block: TCC
+      event: 31
+  - name: TCC_EA_WRREQ_LEVEL
+    definitions:
+    - architectures:
+      - gfx90a
+      block: TCC
+      event: 35
+  - name: TCC_EA_WRREQ_STALL
+    definitions:
+    - architectures:
+      - gfx9
+      - gfx900
+      - gfx906
+      block: TCC
+      event: 33
+    - architectures:
+      - gfx908
+      - gfx90a
+      block: TCC
+      event: 30
+  - name: TCC_EA_WR_UNCACHED_32B
+    definitions:
+    - architectures:
+      - gfx90a
+      block: TCC
+      event: 29
+  - name: TCC_HIT
+    definitions:
+    - architectures:
+      - gfx9
+      - gfx900
+      - gfx906
+      block: TCC
+      event: 20
+    - architectures:
+      - gfx908
+      - gfx90a
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 17
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 21
+  - name: TCC_INTERNAL_PROBE
+    definitions:
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 11
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 15
+  - name: TCC_MISS
+    definitions:
+    - architectures:
+      - gfx9
+      - gfx900
+      - gfx906
+      block: TCC
+      event: 22
+    - architectures:
+      - gfx908
+      - gfx90a
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 19
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 23
+  - name: TCC_NC_REQ
+    definitions:
+    - architectures:
+      - gfx908
+      - gfx90a
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 5
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 9
+  - name: TCC_NORMAL_EVICT
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 74
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 80
+  - name: TCC_NORMAL_WRITEBACK
+    definitions:
+    - architectures:
+      - gfx908
+      - gfx90a
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 68
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 74
+  - name: TCC_PROBE
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 9
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 13
+  - name: TCC_PROBE_ALL
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 10
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 14
+  - name: TCC_PROBE_EVICT
+    definitions:
+    - architectures:
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 81
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 87
+  - name: TCC_READ
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 12
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 16
+  - name: TCC_REQ
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 3
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 6
+  - name: TCC_RW_REQ
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 8
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 12
+  - name: TCC_STREAMING_REQ
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 4
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 7
+  - name: TCC_TAG_STALL
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 45
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 51
+  - name: TCC_TOO_MANY_EA_WRREQS_STALL
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 34
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 38
+  - name: TCC_UC_REQ
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 6
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 10
+  - name: TCC_WRITE
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 13
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 17
+  - name: TCC_WRITEBACK
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 22
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 26
+  - name: TCC_BUBBLE
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      block: TCC
+      event: 56
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 62
+  - name: TCC_EA0_RDREQ_DRAM_32B
+    definitions:
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 112
+  - name: TCC_EA0_RDREQ_GMI_32B
+    definitions:
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 113
+  - name: TCC_EA0_RDREQ_IO_32B
+    definitions:
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 114
+  - name: TCC_EA0_WRREQ_WRITE_DRAM_32B
+    definitions:
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 115
+  - name: TCC_EA0_WRREQ_WRITE_ATOMIC_32B
+    definitions:
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 116
+  - name: TCC_EA0_WRREQ_WRITE_GMI_32B
+    definitions:
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 117
+  - name: TCC_EA0_WRREQ_ATOMIC_GMI_32B
+    definitions:
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 118
+  - name: TCC_EA0_WRREQ_WRITE_IO_32B
+    definitions:
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 119
+  - name: TCC_EA0_WRREQ_ATOMIC_IO_32B
+    definitions:
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 120
+  - name: TCC_READ_SECTORS
+    definitions:
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 3
+  - name: TCC_WRITE_SECTORS
+    definitions:
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 4
+  - name: TCC_ATOMIC_SECTORS
+    definitions:
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 5
+  - name: TCC_BYPASS_REQ
+    definitions:
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 8
+  - name: TCC_LATENCY_FIFO_FULL
+    definitions:
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 27
+  - name: TCC_SRC_FIFO_FULL
+    definitions:
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 28
+  - name: TCC_EA0_RDREQ_64B
+    definitions:
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 44
+  - name: TCC_EA0_RDREQ_128B
+    definitions:
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 45
+  - name: TCC_IB_REQ
+    definitions:
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 67
+  - name: TCC_IB_STALL
+    definitions:
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 68
+  - name: TCC_EA0_WRREQ_ATOMIC_DRAM
+    definitions:
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 111
+  - name: TCC_EA0_WRREQ_WRITE_DRAM
+    definitions:
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 110
+  - name: TCC_EA0_WRREQ_ATOMIC_DRAM_32B
+    definitions:
+    - architectures:
+      - gfx950
+      block: TCC
+      event: 116
+  - name: TCC_CLIENT184_REQ
+    definitions:
+    - architectures:
+      - gfx908
+      block: TCC
+      event: 312
+  - name: TCC_CLIENT185_REQ
+    definitions:
+    - architectures:
+      - gfx908
+      block: TCC
+      event: 313
+  - name: TCC_CLIENT186_REQ
+    definitions:
+    - architectures:
+      - gfx908
+      block: TCC
+      event: 314
+  - name: TCC_CLIENT187_REQ
+    definitions:
+    - architectures:
+      - gfx908
+      block: TCC
+      event: 315
+  - name: TCC_CLIENT188_REQ
+    definitions:
+    - architectures:
+      - gfx908
+      block: TCC
+      event: 316
+  - name: TCC_CLIENT189_REQ
+    definitions:
+    - architectures:
+      - gfx908
+      block: TCC
+      event: 317
+  - name: TCC_CLIENT190_REQ
+    definitions:
+    - architectures:
+      - gfx908
+      block: TCC
+      event: 318
+  - name: TCC_CLIENT191_REQ
+    definitions:
+    - architectures:
+      - gfx908
+      block: TCC
+      event: 319
+  - name: SQC_DCACHE_INFLIGHT_LEVEL
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 337
+  - name: SQC_ICACHE_INFLIGHT_LEVEL
+    definitions:
+    - architectures:
+      - gfx90a
+      - gfx908
+      - gfx940
+      - gfx941
+      - gfx942
+      - gfx950
+      block: SQ
+      event: 336
