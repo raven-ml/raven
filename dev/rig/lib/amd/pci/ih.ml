@@ -187,6 +187,11 @@ let storm_control = (4, 4, 2)
 
 let start t =
   let r = t.r in
+  (* The write pointer's copy starts at zero, as the ring is empty: the memory
+     holds whatever the last user left. *)
+  Window.set32 t.wptr 0 0;
+  Window.flush t.wptr;
+  Gmc.flush_hdp t.gmc;
   List.iter
     (fun ring ->
       let reg s = s ^ ring.suffix in
