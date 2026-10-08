@@ -5,8 +5,9 @@
 
 (* Any domain may call any function, as the interface states. The loader, the
    table of GPUs and the page-lock registry are the process's, each behind a
-   mutex of its own; a device's C state is written only by [submit] and [stop],
-   which their caller serialises. *)
+   mutex of its own; a region or an image ends once, by compare-and-set; a
+   device's C state is written only by [submit] and [stop], which their caller
+   serialises. *)
 
 let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
@@ -129,11 +130,11 @@ type region = {
   handle : int;
   bytes : int;
   home : int; (* the device whose GPU holds GPU memory *)
-  mutable live : bool;
+  live : bool Atomic.t; (* taken once by free or unmap *)
 }
 
 let region owner kind ~address ~handle bytes =
-  { owner; kind; address; handle; bytes; home = owner; live = true }
+  { owner; kind; address; handle; bytes; home = owner; live = Atomic.make true }
 
 let rec on_host = function
   | Device -> false
@@ -265,8 +266,8 @@ let alloc g kind n =
 let free g r =
   match r.kind with
   | (Device | Host) when r.owner = g.self ->
-      if not r.live then invalid_arg "Device_cuda.free: the region was freed";
-      r.live <- false;
+      if not (Atomic.compare_and_set r.live true false) then
+        invalid_arg "Device_cuda.free: the region was freed";
       (* CUDA's answer is dropped: after a fault the memory stays with the
          context, which the process keeps. *)
       ignore (free_memory g.self (r.kind = Host) r.address)
@@ -280,7 +281,7 @@ let host r = if on_host r.kind then Some (Nativeint.of_int r.handle) else None
 let map_peer g g' r =
   if g.self = g'.self then
     invalid_arg "Device_cuda.map_peer: the two devices are one";
-  if r.owner <> g'.self || not r.live then
+  if r.owner <> g'.self || not (Atomic.get r.live) then
     invalid_arg
       "Device_cuda.map_peer: the region is no live region of the second device";
   let kind = match r.kind with Peer k -> k | k -> k in
@@ -294,7 +295,7 @@ let map_peer g g' r =
     | _ -> refused "enabling peer access" g.self false
   in
   if not reach then None
-  else Some { r with owner = g.self; kind = Peer kind; live = true }
+  else Some { r with owner = g.self; kind = Peer kind; live = Atomic.make true }
 
 let registry : registration list ref = ref []
 let registry_lock = Mutex.create ()
@@ -345,8 +346,8 @@ let unmap g r =
   (match r.kind with
   | (Locked _ | Peer _) when r.owner = g.self -> ()
   | _ -> invalid_arg "Device_cuda.unmap: the region is no mapping of the device");
-  if not r.live then invalid_arg "Device_cuda.unmap: the region was unmapped";
-  r.live <- false;
+  if not (Atomic.compare_and_set r.live true false) then
+    invalid_arg "Device_cuda.unmap: the region was unmapped";
   match r.kind with
   | Locked (Some e) ->
       Mutex.protect registry_lock @@ fun () ->
@@ -359,7 +360,7 @@ let unmap g r =
 
 (* Images *)
 
-type image = { owner : int; m : int; mutable loaded : bool }
+type image = { owner : int; m : int; loaded : bool Atomic.t }
 
 external load_module : int -> string -> int = "caml_device_cuda_load_module"
 
@@ -370,13 +371,14 @@ external unload_module : int -> int -> int = "caml_device_cuda_unload"
 
 let image g bin =
   match load_module g.self bin with
-  | m when m >= 0 -> Ok ({ owner = g.self; m; loaded = true }, None)
+  | m when m >= 0 -> Ok ({ owner = g.self; m; loaded = Atomic.make true }, None)
   | s ->
       let step = "loading the image" in
       refused step g.self (Error (strf "%s: %s" step (error (-s))))
 
 let entry (m : image) f =
-  if not m.loaded then invalid_arg "Device_cuda.entry: the image was unloaded";
+  if not (Atomic.get m.loaded) then
+    invalid_arg "Device_cuda.entry: the image was unloaded";
   if String.contains f '\000' then None
   else
     match get_function m.owner m.m f with
@@ -386,8 +388,8 @@ let entry (m : image) f =
 let unload g (m : image) =
   if m.owner <> g.self then
     invalid_arg "Device_cuda.unload: the image is another device's";
-  if not m.loaded then invalid_arg "Device_cuda.unload: the image was unloaded";
-  m.loaded <- false;
+  if not (Atomic.compare_and_set m.loaded true false) then
+    invalid_arg "Device_cuda.unload: the image was unloaded";
   match unload_module g.self m.m with
   | 0 -> ()
   | s -> fault "unloading the image" s
@@ -442,7 +444,7 @@ let part g ~queue ?(after = [||]) w =
       part [| queue; fill; arg; 0; 0; 0; 0; 0; 0; 0 |]
   | `Copy ((dst, o), (src, o'), n) ->
       let check what (r : region) o =
-        if r.owner <> g.self || not r.live then
+        if r.owner <> g.self || not (Atomic.get r.live) then
           invalid_argf
             "Device_cuda.part: the copy's %s is no live region of the device"
             what;

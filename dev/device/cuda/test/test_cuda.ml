@@ -954,6 +954,56 @@ let order_commands =
       Order.run Order.run_sys;
   ]
 
+(* Ending from two domains: whatever the order, an allocation's first [free], a
+   mapping's first [unmap] and an image's first [unload] return, and every later
+   one raises. *)
+
+type ended = { mutable live : bool }
+
+let end_model m =
+  if not m.live then invalid_arg "ended";
+  m.live <- false
+
+let ends_once ~make ~finish ~release name =
+  let v =
+    abstract name ~release:(fun x ->
+        try release x with Invalid_argument _ -> ())
+  in
+  [
+    command "make" (Gen.unit @-> makes v) (fun () -> { live = true }) make;
+    command "end" (v ^-> returns unit) end_model finish;
+  ]
+
+(* Each value carries the shared device: the fixture is read on the test's
+   domain only. *)
+let allocation_commands =
+  ends_once "a"
+    ~make:(fun () ->
+      let g = shared () in
+      (g, Option.get (C.alloc g `Device 64)))
+    ~finish:(fun (g, r) -> C.free g r)
+    ~release:(fun (g, r) -> C.free g r)
+
+(* A mapping of its own page, freed once the run ends. *)
+let mapping_commands =
+  ends_once "m"
+    ~make:(fun () ->
+      let g = shared () and p = S.pages S.page in
+      (g, p, Option.get (C.map_host g p 64)))
+    ~finish:(fun (g, _, r) -> C.unmap g r)
+    ~release:(fun (g, p, r) ->
+      Fun.protect
+        ~finally:(fun () -> S.free_pages p S.page)
+        (fun () -> C.unmap g r))
+
+let image_commands =
+  ends_once "i"
+    ~make:(fun () ->
+      let g = shared () in
+      (g, fst (S.kernels g)))
+    ~finish:(fun (g, m) -> C.unload g m)
+    ~release:(fun (g, m) -> C.unload g m)
+
 let stateful =
   group ~timeout:300. "stateful"
     [
@@ -965,6 +1015,12 @@ let stateful =
       stateful ~count:100 ~steps:20
         "values complete in order and the word never moves backwards (sampled)"
         order_commands;
+      stateful ~count:30 ~domains:2
+        "an allocation freed from two domains is freed once" allocation_commands;
+      stateful ~count:30 ~domains:2
+        "a mapping unmapped from two domains is unmapped once" mapping_commands;
+      stateful ~count:30 ~domains:2
+        "an image unloaded from two domains is unloaded once" image_commands;
     ]
 
 let () =
