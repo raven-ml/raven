@@ -154,6 +154,23 @@ typedef struct {
    and merged, never reordered. */
 int nx_coalesce(int n, const nx_array *a, nx_loop *l);
 
+/* Block copies */
+
+/* Copies [rows] rows of [cols] elements of [bits] bits, bits for bits:
+   element j of row i from position [ps + i·src_row + j·src_col] of [src]
+   to position [pd + i·dst_row + j·dst_col] of [dst]. Positions are at
+   least 0 and steps of either sign, both counted in elements. The
+   destination's elements are distinct and share no byte with the
+   source's. Bytes that hold only copied elements take plain stores; a
+   byte shared with other elements takes a compare-and-swap, as
+   nx_sub_store does. Rows of adjacent elements are memcpy; where the
+   source steps one element across rows and the destination one along
+   them, as for a transposed source, it moves 4x4 blocks, four contiguous
+   loads and four contiguous stores each. */
+void nx_copy_block(uint8_t *dst, int64_t pd, int64_t dst_row, int64_t dst_col,
+                   const uint8_t *src, int64_t ps, int64_t src_row,
+                   int64_t src_col, int64_t rows, int64_t cols, int bits);
+
 /* Sub-byte elements
 
    Element p of a dtype of [bits] bits (1 or 4) is bits p·bits to p·bits +
@@ -168,18 +185,95 @@ static inline uint32_t nx_sub_load(const uint8_t *base, int bits, int64_t p) {
   return (byte >> (bit & 7)) & ((1u << bits) - 1);
 }
 
+/* Stores the bits of [set] under [mask] into [*byte], keeping its other
+   bits, with one compare-and-swap. */
+static inline void nx_sub_put(uint8_t *byte, uint8_t mask, uint8_t set) {
+  uint8_t old = __atomic_load_n(byte, __ATOMIC_RELAXED);
+  set &= mask;
+  while (!__atomic_compare_exchange_n(byte, &old,
+                                      (uint8_t)((old & ~mask) | set), 1,
+                                      __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+    ;
+}
+
 /* Stores the low [bits] of [v] at element [p]. */
 static inline void nx_sub_store(uint8_t *base, int bits, int64_t p,
                                 uint32_t v) {
   uint64_t bit = (uint64_t)p * (uint64_t)bits;
   uint8_t mask = (uint8_t)(((1u << bits) - 1) << (bit & 7));
-  uint8_t set = (uint8_t)((v << (bit & 7)) & mask);
-  uint8_t *byte = base + (bit >> 3);
-  uint8_t old = __atomic_load_n(byte, __ATOMIC_RELAXED);
-  uint8_t next;
-  do next = (uint8_t)((old & ~mask) | set);
-  while (!__atomic_compare_exchange_n(byte, &old, next, 1, __ATOMIC_RELAXED,
-                                      __ATOMIC_RELAXED));
+  nx_sub_put(base + (bit >> 3), mask, (uint8_t)((v << (bit & 7)) & mask));
+}
+
+/* Runs of sub-byte elements
+
+   The [n] elements from element [p], one per byte; [p] is at least 0, and
+   a run of no element touches no byte. A run's whole bytes hold only its
+   elements and are plain loads and stores; a byte it shares with other
+   elements, at either end, is one atomic load or one compare-and-swap. */
+
+/* Reads the elements of [dt], a sub-byte dtype, into [dst]: int4's
+   sign-extended, the others' zero-extended. Both runs are always inlined,
+   so that a caller that passes a constant [dt] or [bits] gets a loop over
+   whole bytes the compiler vectorises. */
+static inline __attribute__((always_inline)) void nx_sub_unpack_run(
+    const uint8_t *base, int dt, int64_t p, uint8_t *dst, int64_t n) {
+  int bits = dt == NX_BIT ? 1 : 4, per = 8 / bits;
+  uint32_t mask = (1u << bits) - 1, half = dt == NX_INT4 ? 8 : 0;
+  int64_t i = 0;
+#define NX_EXTEND(v) ((uint8_t)((((v) & mask) ^ half) - half))
+  for (; i < n && (p + i) % per != 0; i++)
+    dst[i] = NX_EXTEND(nx_sub_load(base, bits, p + i));
+  const uint8_t *b = base + (p + i) / per;
+  int64_t whole = (n - i) / per;
+  if (bits == 4)
+    for (int64_t k = 0; k < whole; k++, i += 2) {
+      dst[i] = NX_EXTEND(b[k]);
+      dst[i + 1] = NX_EXTEND(b[k] >> 4);
+    }
+  else
+    for (int64_t k = 0; k < whole; k++, i += 8)
+      for (int j = 0; j < 8; j++) dst[i + j] = NX_EXTEND(b[k] >> j);
+  for (; i < n; i++) dst[i] = NX_EXTEND(nx_sub_load(base, bits, p + i));
+#undef NX_EXTEND
+}
+
+/* Writes the low [bits] of each byte of [src] to the elements. */
+static inline __attribute__((always_inline)) void nx_sub_pack_run(
+    uint8_t *base, int bits, int64_t p, const uint8_t *src, int64_t n) {
+  if (n <= 0) return;
+  int per = 8 / bits;
+  uint32_t mask = (1u << bits) - 1;
+  int64_t i = 0;
+  /* The elements of the first byte, if the run starts inside it. */
+  if (p % per != 0) {
+    int at = (int)(p % per) * bits;
+    uint8_t m = 0, set = 0;
+    for (; i < n && (p + i) % per != 0; i++, at += bits) {
+      m |= (uint8_t)(mask << at);
+      set |= (uint8_t)((src[i] & mask) << at);
+    }
+    nx_sub_put(base + p / per, m, set);
+  }
+  uint8_t *b = base + (p + i) / per;
+  int64_t whole = (n - i) / per;
+  if (bits == 4)
+    for (int64_t k = 0; k < whole; k++, i += 2)
+      b[k] = (uint8_t)((src[i] & 15) | (src[i + 1] << 4));
+  else
+    for (int64_t k = 0; k < whole; k++, i += 8) {
+      uint8_t x = 0;
+      for (int j = 0; j < 8; j++) x |= (uint8_t)((src[i + j] & 1) << j);
+      b[k] = x;
+    }
+  /* The elements of the last byte, if the run ends inside it. */
+  if (i < n) {
+    uint8_t m = 0, set = 0;
+    for (int at = 0; i < n; i++, at += bits) {
+      m |= (uint8_t)(mask << at);
+      set |= (uint8_t)((src[i] & mask) << at);
+    }
+    nx_sub_put(b + whole, m, set);
+  }
 }
 
 #endif /* NX_ARRAY_H */

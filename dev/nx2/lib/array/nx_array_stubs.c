@@ -656,14 +656,6 @@ static inline __attribute__((always_inline)) void block(
    reaches them. The partial ones are one compare-and-swap each, which keeps
    the other elements' bits against stores from other threads. */
 
-/* Stores [x]'s bits under [mask] into [*b], keeping its other bits. */
-static inline void put_bits(uint8_t *b, uint8_t mask, uint8_t x) {
-  uint8_t old = __atomic_load_n(b, __ATOMIC_RELAXED);
-  while (!__atomic_compare_exchange_n(b, &old, (uint8_t)((old & ~mask) | x), 1,
-                                      __ATOMIC_RELAXED, __ATOMIC_RELAXED))
-    ;
-}
-
 /* The [k] elements of [bits] bits from position [p] of [s], [step] apart,
    packed LSB first. */
 static inline uint8_t pack(const uint8_t *s, int bits, int64_t p, int64_t step,
@@ -674,12 +666,12 @@ static inline uint8_t pack(const uint8_t *s, int bits, int64_t p, int64_t step,
   return x;
 }
 
-/* Copies [len] elements of [bits] bits from position [ps] of [s], [ss]
-   apart, to positions [pd], [pd + 1], … of [d]. The whole bytes of [d] come
+/* Copies [len] elements of [bits] bits from positions [ps], [ps + ss], …
+   of [s] to positions [pd], [pd + 1], … of [d]. The whole bytes of [d] come
    from [memcpy] when both runs start at the same bit of a byte, from two
    bytes of [s] shifted when they start at different bits, and packed from
-   loads otherwise. It stays out of line so that copy_run, inlined into the
-   walk, stays small. */
+   loads otherwise. Out of line, the gather's runs, inlined into its walk,
+   stay small. */
 static __attribute__((noinline)) void sub_run(uint8_t *d, int64_t pd,
                                               const uint8_t *s, int64_t ps,
                                               int64_t ss, int64_t len,
@@ -690,7 +682,8 @@ static __attribute__((noinline)) void sub_run(uint8_t *d, int64_t pd,
   if (head > 0) {
     int at = (int)(pd % per) * bits;
     uint8_t mask = (uint8_t)(((1u << (head * bits)) - 1) << at);
-    put_bits(d + pd / per, mask, (uint8_t)(pack(s, bits, ps, ss, head) << at));
+    nx_sub_put(d + pd / per, mask,
+               (uint8_t)(pack(s, bits, ps, ss, head) << at));
     pd += head;
     ps += head * ss;
     len -= head;
@@ -739,58 +732,80 @@ static __attribute__((noinline)) void sub_run(uint8_t *d, int64_t pd,
   ps += whole * per * ss;
   len -= whole * per;
   if (len > 0)
-    put_bits(d + pd / per, (uint8_t)((1u << (len * bits)) - 1),
+    nx_sub_put(d + pd / per, (uint8_t)((1u << (len * bits)) - 1),
              pack(s, bits, ps, ss, (int)len));
+}
+
+/* A block of elements of [w] bytes, steps in bytes: rows of adjacent
+   elements are memcpy, a source that steps one element across rows into
+   adjacent elements moves in 4x4 blocks, other steps element by element. */
+static inline __attribute__((always_inline)) void bytes(
+    uint8_t *d, int64_t dr, int64_t dc, const uint8_t *s, int64_t sr,
+    int64_t sc, int64_t rows, int64_t cols, size_t w) {
+  int64_t i = 0, sw = (int64_t)w;
+  if (dc == sw && sr == sw)
+    for (; i + 4 <= rows; i += 4) {
+      int64_t j = 0;
+      for (; j + 4 <= cols; j += 4)
+        block(d + i * dr + j * sw, dr, s + i * sr + j * sc, sc, w);
+      for (int p = 0; p < 4; p++)
+        strided(d + (i + p) * dr + j * sw, sw, s + (i + p) * sr + j * sc, sc,
+                cols - j, w);
+    }
+  for (; i < rows; i++)
+    if (dc == sw && sc == sw)
+      memcpy(d + i * dr, s + i * sr, (size_t)(cols * sw));
+    else
+      strided(d + i * dr, dc, s + i * sr, sc, cols, w);
+}
+
+/* nx_copy_block, inlined into the gather's runs, where [rows] is 1. */
+static inline __attribute__((always_inline)) void copy_block(
+    uint8_t *dst, int64_t pd, int64_t dst_row, int64_t dst_col,
+    const uint8_t *src, int64_t ps, int64_t src_row, int64_t src_col,
+    int64_t rows, int64_t cols, int bits) {
+  if (bits < 8) {
+    for (int64_t i = 0; i < rows; i++) {
+      int64_t d = pd + i * dst_row, s = ps + i * src_row;
+      if (dst_col == 1) {
+        sub_run(dst, d, src, s, src_col, cols, bits);
+        continue;
+      }
+      for (int64_t j = 0; j < cols; j++, d += dst_col, s += src_col)
+        nx_sub_store(dst, bits, d, nx_sub_load(src, bits, s));
+    }
+    return;
+  }
+  int64_t w = bits / 8;
+  uint8_t *d = dst + pd * w;
+  const uint8_t *s = src + ps * w;
+  if (dst_col == 1 && src_col == 1 && dst_row == cols && src_row == cols) {
+    memcpy(d, s, (size_t)(rows * cols * w));
+    return;
+  }
+  int64_t dr = dst_row * w, dc = dst_col * w;
+  int64_t sr = src_row * w, sc = src_col * w;
+  switch (w) {
+    case 1: bytes(d, dr, dc, s, sr, sc, rows, cols, 1); return;
+    case 2: bytes(d, dr, dc, s, sr, sc, rows, cols, 2); return;
+    case 4: bytes(d, dr, dc, s, sr, sc, rows, cols, 4); return;
+    case 8: bytes(d, dr, dc, s, sr, sc, rows, cols, 8); return;
+    default: bytes(d, dr, dc, s, sr, sc, rows, cols, 16); return;
+  }
+}
+
+void nx_copy_block(uint8_t *dst, int64_t pd, int64_t dst_row, int64_t dst_col,
+                   const uint8_t *src, int64_t ps, int64_t src_row,
+                   int64_t src_col, int64_t rows, int64_t cols, int bits) {
+  copy_block(dst, pd, dst_row, dst_col, src, ps, src_row, src_col, rows, cols,
+             bits);
 }
 
 static void copy_run(void *ctx, const int64_t *at, int64_t len) {
   copy_ctx *c = ctx;
-  const nx_array *dst = &c->a[0], *src = &c->a[1];
-  int bits = dst->bits, r = c->l->rank;
-  int64_t sd = c->l->step[0][r - 1], ss = c->l->step[1][r - 1];
-  int64_t pd = at[0], ps = at[1];
-  if (bits < 8 && sd == 1) {
-    sub_run(dst->base, pd, src->base, ps, ss, len, bits);
-    return;
-  }
-  if (bits < 8) {
-    for (int64_t j = 0; j < len; j++, pd += sd, ps += ss)
-      nx_sub_store(dst->base, bits, pd, nx_sub_load(src->base, bits, ps));
-    return;
-  }
-  int64_t w = bits / 8;
-  uint8_t *d = dst->base + pd * w;
-  const uint8_t *s = src->base + ps * w;
-  if (sd == 1 && ss == 1) {
-    memcpy(d, s, (size_t)(len * w));
-    return;
-  }
-  switch (w) {
-    case 1: strided(d, sd, s, ss, len, 1); return;
-    case 2: strided(d, 2 * sd, s, 2 * ss, len, 2); return;
-    case 4: strided(d, 4 * sd, s, 4 * ss, len, 4); return;
-    case 8: strided(d, 8 * sd, s, 8 * ss, len, 8); return;
-    default: strided(d, 16 * sd, s, 16 * ss, len, 16); return;
-  }
-}
-
-/* A tiled copy: [rows] rows of [cols] elements of [w] bytes, rows [dr] and
-   [sr] bytes apart in [d] and [s], elements [w] bytes apart in [d] and [sc]
-   in [s]. */
-static inline __attribute__((always_inline)) void tile(
-    uint8_t *d, int64_t dr, const uint8_t *s, int64_t sr, int64_t sc,
-    int64_t rows, int64_t cols, size_t w) {
-  int64_t i = 0;
-  if (sr == (int64_t)w)
-    for (; i + 4 <= rows; i += 4) {
-      int64_t j = 0;
-      for (; j + 4 <= cols; j += 4)
-        block(d + i * dr + j * w, dr, s + i * sr + j * sc, sc, w);
-      for (int p = 0; p < 4; p++)
-        strided(d + (i + p) * dr + j * w, w, s + (i + p) * sr + j * sc, sc,
-                cols - j, w);
-    }
-  for (; i < rows; i++) strided(d + i * dr, w, s + i * sr, sc, cols, w);
+  int r = c->l->rank;
+  copy_block(c->a[0].base, at[0], 0, c->l->step[0][r - 1], c->a[1].base,
+             at[1], 0, c->l->step[1][r - 1], 1, len, c->a[0].bits);
 }
 
 /* Copies a plane in tiles: [len] rows along the loop's axis r - 2, each as
@@ -798,23 +813,16 @@ static inline __attribute__((always_inline)) void tile(
 static void tile_run(void *ctx, const int64_t *at, int64_t len) {
   copy_ctx *c = ctx;
   const nx_loop *l = c->l;
-  int r = l->rank;
-  int64_t w = c->a[0].bits / 8, cols = l->extent[r - 1];
-  int64_t dr = l->step[0][r - 2] * w, sr = l->step[1][r - 2] * w;
-  int64_t sc = l->step[1][r - 1] * w, side = TILE / w;
+  int r = l->rank, bits = c->a[0].bits;
+  int64_t cols = l->extent[r - 1], side = TILE / (bits / 8);
+  int64_t dr = l->step[0][r - 2], sr = l->step[1][r - 2];
+  int64_t sc = l->step[1][r - 1];
   for (int64_t i = 0; i < len; i += side)
     for (int64_t j = 0; j < cols; j += side) {
-      uint8_t *d = c->a[0].base + at[0] * w + i * dr + j * w;
-      const uint8_t *s = c->a[1].base + at[1] * w + i * sr + j * sc;
       int64_t m = len - i < side ? len - i : side;
       int64_t n = cols - j < side ? cols - j : side;
-      switch (w) {
-        case 1: tile(d, dr, s, sr, sc, m, n, 1); break;
-        case 2: tile(d, dr, s, sr, sc, m, n, 2); break;
-        case 4: tile(d, dr, s, sr, sc, m, n, 4); break;
-        case 8: tile(d, dr, s, sr, sc, m, n, 8); break;
-        default: tile(d, dr, s, sr, sc, m, n, 16); break;
-      }
+      nx_copy_block(c->a[0].base, at[0] + i * dr + j, dr, 1, c->a[1].base,
+                    at[1] + i * sr + j * sc, sr, sc, m, n, bits);
     }
 }
 
