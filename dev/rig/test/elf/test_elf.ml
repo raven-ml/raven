@@ -117,13 +117,13 @@ let write ?(header = relocatable) ?(extended = false) sections =
   in
   let names = section_names @ [ shstrtab_name ] in
   let body = Buffer.create 4096 in
-  let offsets =
-    List.map
-      (fun (s : sh) ->
+  let headers =
+    List.map2
+      (fun (s : sh) name ->
         let at = ehdr_size + Buffer.length body in
         if s.kind <> sht_nobits then Buffer.add_string body s.contents;
-        at)
-      sections
+        (s, name, at))
+      sections names
   in
   let count = List.length sections + 1 in
   let shstrndx = count - 1 in
@@ -157,10 +157,9 @@ let write ?(header = relocatable) ?(extended = false) sections =
       "" ""
   in
   add_section_header b ~name:0 null ~offset:0;
-  List.iter2
-    (fun (s : sh) (name, offset) -> add_section_header b ~name s ~offset)
-    sections
-    (List.combine names offsets);
+  List.iter
+    (fun (s, name, offset) -> add_section_header b ~name s ~offset)
+    headers;
   Buffer.contents b
 
 (* Symbols *)
