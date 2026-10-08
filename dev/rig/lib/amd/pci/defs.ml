@@ -230,6 +230,27 @@ let soc24_mtype_uc = 3
 let soc24_sh_mem_address_mode_64 = 0
 let soc24_sh_mem_alignment_mode_unaligned = 3
 
+(* Before the discovery table *)
+
+let mmrcc_config_memsize = 0xde3
+let mmmp0_smn_c2pmsg_33 = 0x16061
+let mmmm_index = 0
+let mmmm_index_hi = 6
+let mmmm_data = 1
+
+(* Virtual functions and their mailbox *)
+
+let mmrcc_iov_func_identifier = 0xde5
+let nv_mailbox_poll_ack_timedout = 0x1f4
+let nv_mailbox_poll_msg_timedout = 0x3a98
+let mmmailbox_control = 0xe5e
+let nv_maibox_control_trn_offset_byte = 0x3978
+let mmmailbox_msgbuf_trn_dw0 = 0xe56
+let mmmailbox_msgbuf_rcv_dw0 = 0xe5a
+let idh_req_gpu_init_access = 1
+let idh_req_gpu_fini_access = 3
+let idh_ready_to_access_gpu = 1
+
 (* Compute queues *)
 
 let amdgpu_navi10_doorbell_kiq = 0

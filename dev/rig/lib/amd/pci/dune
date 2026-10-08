@@ -4,7 +4,5 @@
  (name rig_amd_pci)
  (public_name rig.amd.pci)
  (libraries rig_amd rig_amd_abi rig_pci)
- (private_modules soc sdma boot)
- (modules_without_implementation
-  rig_amd_pci
-  boot))
+ (private_modules soc sdma)
+ (modules_without_implementation rig_amd_pci))

@@ -45,21 +45,16 @@ type t
 (** The type for a GPU's GC. *)
 
 val make :
-  Regs.t ->
-  Gmc.t ->
-  Rig_pci.Window.t ->
-  Rig_pci.Window.t ->
-  Images.t ->
-  mqds:int array ->
-  t
-(** [make r gmc vram doorbells images ~mqds] is the GC, whose queue descriptors
-    are at the physical addresses [mqds] of the GPU's memory, one page per die
-    each: the compute queue's, and the KIQ's on a virtual function, whose
-    doorbell it rings through [doorbells]. *)
+  Regs.t -> Gmc.t -> Rig_pci.Window.t -> Rig_pci.Window.t -> mqds:int array -> t
+(** [make r gmc vram doorbells ~mqds] is the GC, whose queue descriptors are at
+    the physical addresses [mqds] of the GPU's memory, one page per die each:
+    the compute queue's, and the KIQ's on a virtual function, whose doorbell it
+    rings through [doorbells]. *)
 
-val start : t -> Rig_pci.Memory.t -> partial:bool -> unit
-(** [start g m ~partial] waits for the RLC to have loaded the GC's firmware and
-    starts the micro-engines: a full boot configures them and their doorbell
+val start : t -> Rig_pci.Memory.t -> Images.t -> partial:bool -> unit
+(** [start g m images ~partial] waits for the RLC to have loaded the GC's
+    firmware and starts the micro-engines, the RS64 ones from the start
+    addresses of [images]: a full boot configures them and their doorbell
     ranges, and a virtual function its KIQ, in system memory of [m]; a partial
     boot dequeues the queues the last boot left and resets the engines. The GC's
     hub is started before ({!Gmc.start_hub}). *)

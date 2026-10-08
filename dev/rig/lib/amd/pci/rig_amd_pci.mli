@@ -182,6 +182,7 @@ module Gmc = Gmc
 module Smu = Smu
 module Psp = Psp
 module Gfx = Gfx
+module Boot = Boot
 module Ih = Ih
 
 (* [gpus_at root] is the bus addresses of the AMD GPUs of the machine whose

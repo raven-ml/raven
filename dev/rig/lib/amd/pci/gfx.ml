@@ -115,21 +115,21 @@ type t = {
   gmc : Gmc.t;
   vram : Window.t;
   doorbells : Window.t;
-  images : Images.t;
+  mutable starts : (string * int) list; (* the RS64 engines' start addresses *)
   mqds : int array; (* the compute queue's descriptors, the KIQ's *)
   gc : Discovery.version;
   xccs : int list;
   mutable kiq : (Window.t * int) option; (* a VF's KIQ memory and its address *)
 }
 
-let make r gmc vram doorbells images ~mqds =
+let make r gmc vram doorbells ~mqds =
   let l = Regs.layout_of r in
   {
     r;
     gmc;
     vram;
     doorbells;
-    images;
+    starts = [];
     mqds;
     gc = Regs.version l D.gc_hwid;
     xccs = List.init (Regs.gpu l).xccs Fun.id;
@@ -165,7 +165,7 @@ let halt g =
 
 (* RS64 engines start at the address their image gives, in 32-bit words. *)
 let start_engine g ~engine ~cntl ~me ~inst =
-  match List.assoc_opt engine g.images.Images.starts with
+  match List.assoc_opt engine g.starts with
   | None ->
       raise (Regs.Stuck (strf "the %s's image has no start address" engine))
   | Some start ->
@@ -311,7 +311,8 @@ let start_kiq g m =
             [ ("scheduler0", (2 lsl 5) lor (1 lsl 3) lor 0x80) ]);
       g.kiq <- Some (w, va)
 
-let start g m ~partial =
+let start g m images ~partial =
+  g.starts <- images.Images.starts;
   let r = g.r in
   if Regs.has (Regs.layout_of r) "regRLC_RLCS_BOOTLOAD_STATUS" then
     Regs.wait r "the RLC's autoload" (fun () ->

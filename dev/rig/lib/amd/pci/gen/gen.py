@@ -57,6 +57,9 @@ SOURCES = {
     "amdgpu_vm.h": KERNEL + "amdgpu/amdgpu_vm.h",  # page-table entries
     "amdgpu_psp.h": KERNEL + "amdgpu/amdgpu_psp.h",  # the security processor's bootloader and ring
     "amdgpu_doorbell.h": KERNEL + "amdgpu/amdgpu_doorbell.h",  # doorbell indices
+    "amdgpu_discovery.c": KERNEL + "amdgpu/amdgpu_discovery.c",  # the registers read before discovery
+    "amdgpu_virt.h": KERNEL + "amdgpu/amdgpu_virt.h",  # virtual functions
+    "mxgpu_nv.h": KERNEL + "amdgpu/mxgpu_nv.h",  # their mailbox
     "v9_structs.h": KERNEL + "include/v9_structs.h",  # GFX9's queue descriptors
     "v11_structs.h": KERNEL + "include/v11_structs.h",  # GFX11's
     "v12_structs.h": KERNEL + "include/v12_structs.h",  # GFX12's
@@ -184,6 +187,16 @@ MQD_FIELDS = ["header", "cp_mqd_base_addr_lo", "cp_mqd_base_addr_hi", "cp_hqd_pi
               "cp_hqd_eop_base_addr_hi", "cp_hqd_eop_control"]
 MQD_OPTIONAL = ["compute_tg_chunk_size", "compute_current_logic_xcc_id", "cp_mqd_stride_size"]
 SH_MEM = ["SH_MEM_ADDRESS_MODE_64", "SH_MEM_ALIGNMENT_MODE_UNALIGNED"]
+
+# Before its discovery table is read: the registers that hold the GPU's
+# memory size and its firmware's readiness, and the memory index window a
+# small BAR reads the table through; a virtual function's identifier and
+# mailbox.
+EARLY = ["mmRCC_CONFIG_MEMSIZE", "mmMP0_SMN_C2PMSG_33", "mmMM_INDEX", "mmMM_INDEX_HI", "mmMM_DATA"]
+VF = ["mmRCC_IOV_FUNC_IDENTIFIER"]
+MAILBOX = ["NV_MAILBOX_POLL_ACK_TIMEDOUT", "NV_MAILBOX_POLL_MSG_TIMEDOUT", "mmMAILBOX_CONTROL",
+           "NV_MAIBOX_CONTROL_TRN_OFFSET_BYTE", "mmMAILBOX_MSGBUF_TRN_DW0", "mmMAILBOX_MSGBUF_RCV_DW0"]
+MAILBOX_ENUMS = ["IDH_REQ_GPU_INIT_ACCESS", "IDH_REQ_GPU_FINI_ACCESS", "IDH_READY_TO_ACCESS_GPU"]
 
 FIRMWARE_COMMIT = "0a6871b19abf5d6e024b5d208b101ae53e7fa0de"
 FIRMWARE_URL = f"https://gitlab.com/kernel-firmware/linux-firmware/-/raw/{FIRMWARE_COMMIT}/"
@@ -643,6 +656,13 @@ def excerpt(name, text):
     elif name in MTYPES:
         keep |= {i for i, l in enumerate(lines) if re.match(r"\s*(MTYPE_UC|SH_MEM_ADDRESS_MODE_64|"
                                                               r"SH_MEM_ALIGNMENT_MODE_UNALIGNED)\s*=", l)}
+    elif name == "amdgpu_discovery.c":
+        keep |= {i for i, l in enumerate(lines) if DEFINE.match(l) and DEFINE.match(l).group(1) in EARLY}
+    elif name == "amdgpu_virt.h":
+        keep |= {i for i, l in enumerate(lines) if DEFINE.match(l) and DEFINE.match(l).group(1) in VF}
+    elif name == "mxgpu_nv.h":
+        keep |= {i for i, l in enumerate(lines) if DEFINE.match(l) and DEFINE.match(l).group(1) in MAILBOX}
+        keep |= enum_blocks(text, ["idh_request", "idh_event"])
     elif name == "amdgpu_doorbell.h":
         keep |= enum_blocks(text, ["AMDGPU_NAVI10_DOORBELL_ASSIGNMENT"])
     elif name in MQDS:
@@ -769,6 +789,16 @@ def generate(h):
             if m is None:
                 sys.exit(f"{hdr}: no {n}")
             out.append(f"let {gen_name}_{n.lower()} = {int(m.group(1), 0)}")
+    out.append("")
+
+    # Before discovery, and virtual functions
+    out += ["(* Before the discovery table *)", ""]
+    for n, v in constants(h["amdgpu_discovery.c"], EARLY).items():
+        out.append(f"let {n.lower()} = {ml_int(v)}")
+    out += ["", "(* Virtual functions and their mailbox *)", ""]
+    for n, v in {**constants(h["amdgpu_virt.h"], VF), **constants(h["mxgpu_nv.h"], MAILBOX),
+                 **enum_values(h["mxgpu_nv.h"], MAILBOX_ENUMS)}.items():
+        out.append(f"let {n.lower()} = {ml_int(v)}")
     out.append("")
 
     # Compute queues

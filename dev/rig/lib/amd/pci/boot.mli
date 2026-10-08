@@ -23,42 +23,66 @@
     One mutex per GPU serializes the register sequences and page-table edits of
     every domain; [sleep] waits for interrupts outside it. *)
 
+(** {1:sessions Sessions} *)
+
+val session : int
+(** [session] is the mark a GPU this library booted carries in its seventh GC
+    scratch register. *)
+
+val plan :
+  mark:int ->
+  dirty:int ->
+  fault:int ->
+  gc:Discovery.version ->
+  alive:bool ->
+  [ `Partial | `Full | `Booted ]
+(** [plan ~mark ~dirty ~fault ~gc ~alive] is how a GPU boots that carries [mark]
+    in its seventh scratch register and [dirty] in its sixth, with [fault] in
+    GC's protection fault status, and whose security processor and power manager
+    run iff [alive]:
+    - [`Partial] if it carries {!session}, [dirty] and [fault] are [0], or its
+      GC is 9.5.0, whose full boot over live state can stall its fabric;
+    - [`Full] otherwise if no firmware runs;
+    - [`Booted] otherwise: firmware this library did not leave runs on it, and
+      only a reset stops it. Pure. *)
+
+(** {1:gpus GPUs} *)
+
 type t
+(** The type for GPUs this process booted. *)
 
-(* [space] is the GPU addresses every GPU this library boots shares, in the
-   process and on this machine, which reserves them before the first take: 2^44
-   bytes from 0x2000_0000_0000. *)
 val space : Rig_pci.Space.t
+(** [space] is the GPU addresses every GPU this library boots shares, in the
+    process and on this machine, which reserves them before the first take:
+    2{^ 44} bytes from [0x2000_0000_0000]. *)
 
-(* [start f find] boots the GPU of [f], whose function the caller took and whose
-   machine has [space] reserved, its firmware read with [find]: a partial boot
-   if the GPU carries the clean mark, else a full one. [Error msg] if the GPU
-   has a block of a version this library does not boot (Discovery.supported), if
-   it runs firmware without the mark, saying that a reset stops it, if it is in
-   a fabric left running, if firmware is missing, or if a block does not answer,
-   naming the step. Nothing is written to the GPU before its firmware is read
-   and its state checked. *)
 val start :
   Rig_pci.Function.t ->
   (string -> digest:string -> (string, string) result) ->
   (t, string) result
+(** [start f find] boots the GPU of [f], whose function the caller took and
+    whose machine has {!space} reserved, its firmware read with [find]: a
+    partial or full boot as {!plan} says. [Error msg], the GPU left as it was,
+    if a BAR cannot be mapped, if its discovery table is refused, if a block has
+    a version this library does not boot, if firmware is missing, if it is
+    [`Booted], saying that a reset stops it, or if it is in a fabric left
+    running. [Error msg] after its first write if a block does not answer,
+    naming the step; the GPU is then stopped as lost. *)
 
-(* [reset f] resets the GPU of [f] as Rig_amd_pci.reset states. *)
 val reset : Rig_pci.Function.t -> (unit, string) result
+(** [reset f] resets the GPU of [f] as [Rig_amd_pci.reset] states. *)
+
 val gpu : t -> Rig_amd_abi.Gpu.t
 val gc : t -> Discovery.gc
 val mec : t -> int
 val wgps : t -> int array array
 
-(* [memory g] is the GPU's memory, placed by kind. *)
 val memory : t -> Rig_pci.Memory.t
+(** [memory g] is the GPU's memory, placed by kind. *)
 
-(* [hive g] is Gmc.hive. *)
 val hive : t -> bool
+(** [hive g] is {!Gmc.hive}. *)
 
-(* [queue g kind ~ring ~bytes ~read ~write] is Rig_amd.path's [queue]: the
-   end-of-pipe buffer of a compute queue is the GPU's own memory, freed by
-   [stop]. *)
 val queue :
   t ->
   [ `Pm4 | `Aql | `Sdma ] ->
@@ -67,24 +91,35 @@ val queue :
   read:int ->
   write:int ->
   (int, string) result
+(** [queue g kind ~ring ~bytes ~read ~write] is [Rig_amd.path]'s [queue]: the
+    host address of the queue's doorbell. A compute queue's end-of-pipe buffer
+    is the GPU's own memory. [Error msg] if the doorbell BAR is not mapped into
+    the process, or no GPU memory is left for the buffer. *)
 
-(* [hdp g] is the host address of the HDP flush register, if the register BAR is
-   mapped into the process. *)
 val hdp : t -> int option
+(** [hdp g] is the host address of the HDP flush register, if the register BAR
+    is mapped into the process. *)
 
-(* [sleep g ~ms] is Rig_amd.path's [sleep]: it waits at most [ms]
-   milliseconds for an interrupt, or for the interrupt ring to move where the
-   function has no interrupts, then reads the ring. It raises Rig_amd.Fault
-   with every report of a fault, and with the function's or machine's failure.
-   Once raised, every later sleep raises the same report. *)
 val sleep : t -> ms:int -> unit
+(** [sleep g ~ms] is [Rig_amd.path]'s [sleep]: it waits at most [ms]
+    milliseconds for the interrupt ring to move, then reads it. It raises
+    [Rig_amd.Fault] with every report of a fault, a fatal hardware error and the
+    GPU's machine-check banks, or the function's or machine's failure. Once
+    raised, every later sleep raises the same report. *)
 
-(* [stop g] stops the GPU's queues and leaves it for the next open, clocks
-   lowered: - [`Clean] if every queue left and no fault was reported: the mark
-   is clean, and the next open boots partially; - [`Lost] if a fault was
-   reported or a queue did not leave, whose GPU then loses its bus mastering and
-   reaches no memory outside its own: the mark is dirty, and only a reset
-   recovers it; - [`Unknown] if its machine failed, or a queue of a GPU in a
-   fabric did not leave, whose writes to its peers bus mastering does not stop.
-   [`Clean] and [`Lost] answer Rig_amd's [`Stopped]. *)
+val give_back : t -> unit
+(** [give_back g] gives back the access a virtual function asked its host for,
+    once the device's queues are made: a host resets a VF that holds access
+    long. It does nothing on a physical function. *)
+
 val stop : t -> [ `Clean | `Lost | `Unknown ]
+(** [stop g] stops the GPU's queues and leaves it for the next open, clocks
+    lowered:
+    - [`Clean] if every queue left and no fault was reported: the mark is clean,
+      and the next open boots partially;
+    - [`Lost] if a fault was reported or a queue did not leave, whose GPU then
+      loses its bus mastering and reaches no memory outside its own: the mark is
+      dirty, and only a reset recovers it;
+    - [`Unknown] if its machine failed, or a queue of a GPU in a fabric did not
+      leave, whose writes to its peers bus mastering does not stop. [`Clean] and
+      [`Lost] answer [Rig_amd]'s [`Stopped]. *)

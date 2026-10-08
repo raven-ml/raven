@@ -574,6 +574,32 @@ let queues =
                (List.map (fun w -> 4 * w) [ 23; 24; 26; 27; 39; 41; 226; 181 ])));
     ]
 
+(* Sessions *)
+
+module Boot = Rig_amd_pci.Boot
+
+let sessions =
+  let plan ?(mark = Boot.session) ?(dirty = 0) ?(fault = 0) ?(gc = (12, 0, 1))
+      alive =
+    Boot.plan ~mark ~dirty ~fault ~gc ~alive
+  in
+  let how = function
+    | `Partial -> "partial"
+    | `Full -> "full"
+    | `Booted -> "booted"
+  in
+  cases ~name:fst "a GPU boots as its marks and firmware say"
+    [
+      ("clean mark", (plan true, `Partial));
+      ("dirty mark, firmware running", (plan ~dirty:1 true, `Booted));
+      ("dirty mark, no firmware", (plan ~dirty:1 false, `Full));
+      ("clean mark and a fault", (plan ~fault:0x10 true, `Booted));
+      ("dirty mark on GC 9.5.0", (plan ~dirty:1 ~gc:(9, 5, 0) true, `Partial));
+      ("no mark, firmware running", (plan ~mark:0 true, `Booted));
+      ("no mark, no firmware", (plan ~mark:0 false, `Full));
+    ]
+    (fun (_, (got, want)) -> equal string (how want) (how got))
+
 (* Interrupts *)
 
 module Ih = Rig_amd_pci.Ih
@@ -978,6 +1004,7 @@ let () =
          power;
          security;
          queues;
+         sessions;
          interrupts;
          firmware;
        ])

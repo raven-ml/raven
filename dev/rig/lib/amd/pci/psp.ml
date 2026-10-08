@@ -110,6 +110,10 @@ type t = {
 
 let ring_bytes = 0x1_0000
 
+(* MP0 14 renamed the message registers. *)
+let prefix_of mp0 =
+  if mp0 < (14, 0, 0) then "regMP0_SMN_C2PMSG" else "regMPASP_SMN_C2PMSG"
+
 let make r gmc vram tables m =
   let mp0 = Regs.version (Regs.layout_of r) D.mp0_hwid in
   {
@@ -119,8 +123,7 @@ let make r gmc vram tables m =
     tables;
     m;
     msg = Window.sub vram m.message D.psp_1_meg;
-    prefix =
-      (if mp0 < (14, 0, 0) then "regMP0_SMN_C2PMSG" else "regMPASP_SMN_C2PMSG");
+    prefix = prefix_of mp0;
     mp0;
     fence_value = 0;
     tmr = 0;
@@ -136,7 +139,12 @@ let reg p n = strf "%s_%d" p.prefix n
 let read p n = Regs.read p.r (reg p n)
 let write p n v = Regs.write ~value:v p.r (reg p n) []
 let ready = 0x8000_0000
-let alive p = read p 81 <> 0
+
+let running r =
+  let mp0 = Regs.version (Regs.layout_of r) D.mp0_hwid in
+  Regs.read r (strf "%s_81" (prefix_of mp0)) <> 0
+
+let alive p = running p.r
 
 (* The PSPs of these versions set up their TMR at boot, and those of the first
    two load the GC's firmware into it themselves. *)

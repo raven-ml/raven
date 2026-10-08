@@ -70,8 +70,12 @@ val make :
   Regs.t -> Gmc.t -> Rig_pci.Window.t -> Rig_pci.Page_table.t -> memory -> t
 (** [make r gmc vram tables m] is the processor, whose memory is [m]. *)
 
+val running : Regs.t -> bool
+(** [running r] is [true] iff the OS of the security processor of [r]'s GPU
+    runs, as its sign-of-life register says. *)
+
 val alive : t -> bool
-(** [alive p] is [true] iff the processor's OS runs. *)
+(** [alive p] is [running] of [p]'s GPU. *)
 
 val start : t -> Images.t -> partial:bool -> unit
 (** [start p images ~partial] starts the processor and loads [images]: a full
