@@ -174,10 +174,13 @@ module Driver = struct
       visible = not d.transport;
     }
 
+  (* Reads the fault under the lock without a closure, so that a read of the
+     word allocates nothing, as a driver's must not. *)
   let signaled d =
-    match Mutex.protect d.lock (fun () -> d.word_fault) with
-    | Some why -> raise (Fault why)
-    | None -> polled_word d.c
+    Mutex.lock d.lock;
+    let fault = d.word_fault in
+    Mutex.unlock d.lock;
+    match fault with Some why -> raise (Fault why) | None -> polled_word d.c
 
   (* What a sleep does once its gate opens. *)
   (* Blocks at [d]'s gate while it is shut. [d]'s lock is held. *)
