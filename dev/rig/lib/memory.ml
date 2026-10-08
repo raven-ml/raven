@@ -999,7 +999,7 @@ type reach =
   | Empty (* no bytes to map *)
   | Map (* through [d]'s mapping of it *)
 
-let reach d (m : memory) host =
+let[@inline] reach d (m : memory) host =
   if m.dev == d then Itself
   else if Dev.is_io d || (Dev.is_io m.dev && host < 0) then Cannot
   else if (not (Dev.same_machine m.dev d)) && not (Dev.is_io m.dev) then Cannot
@@ -1011,8 +1011,11 @@ let reach d (m : memory) host =
 
 (* Whether [m] is io memory of no bytes, which every other device borrows over
    no pages. *)
-let empty_io d (m : memory) = is_io_memory m.entry && m.bytes = 0 && m.dev != d
-let host_of (m : memory) = if is_io_memory m.entry then pages m else m.host
+let[@inline] empty_io d (m : memory) =
+  is_io_memory m.entry && m.bytes = 0 && m.dev != d
+
+let[@inline] host_of (m : memory) =
+  if is_io_memory m.entry then pages m else m.host
 
 let borrow d m =
   let m = m.root in
