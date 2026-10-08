@@ -9,9 +9,10 @@ module Gpu = Rig_amd_abi.Gpu
 
 let strf = Printf.sprintf
 
-(* Machines as their files show them, written under this suite's directory: an
-   R9700 (gfx1201) behind two bridges of its own, with its audio function, as
-   nonnormal's /sys lists them. *)
+(* Machines as their files show them, written under a temporary directory of
+   this process's own, which it removes at its exit, so that no two runs share
+   a tree: an R9700 (gfx1201) behind two bridges of its own, with its audio
+   function, as nonnormal's /sys lists them. *)
 
 let rec mkdirs d =
   if not (Sys.file_exists d) then begin
@@ -27,8 +28,14 @@ let rec remove p =
     end
     else Sys.remove p
 
+let trees =
+  lazy
+    (let d = Filename.temp_dir "rig-amdgpu-trees" "" in
+     at_exit (fun () -> remove d);
+     d)
+
 let tree name files =
-  let root = Filename.concat (Sys.getcwd ()) ("trees/" ^ name) in
+  let root = Filename.concat (Lazy.force trees) name in
   remove root;
   List.iter
     (fun (path, contents) ->

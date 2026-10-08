@@ -184,8 +184,9 @@ end
 
 (** {1:trees Machines in a fixture tree} *)
 
-(** A machine's files as Linux shows them, written under the test's own
-    directory, for {!Rig_pci.Machine.at}.
+(** A machine's files as Linux shows them, for {!Rig_pci.Machine.at}, written
+    under a temporary directory of the process's own, which it removes at its
+    exit: no two runs share a tree.
 
     A function's directory holds [vendor], [device] and [class] in hexadecimal,
     [enable], [resource] (one line per BAR: start, end and flags), the first 64

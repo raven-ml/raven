@@ -338,18 +338,14 @@ module Tree = struct
     mkdir_p (Filename.dirname file);
     Out_channel.with_open_bin file (fun oc -> output_string oc s)
 
-  (* The suite's trees are under one directory beside it in _build, named for
-     the executable so that suites running at once keep apart, and cleared at
-     its first tree, since a killed run leaves it. *)
+  (* The process's trees are under a new temporary directory of its own, so
+     that no two runs, of one suite or of two, share a tree. The process that
+     made it removes it at its exit; a child of [fork] leaves it. *)
   let trees =
     lazy
-      (let d =
-         Sys.getcwd ()
-         / (Filename.remove_extension (Filename.basename Sys.executable_name)
-           ^ ".trees")
-       in
-       remove d;
-       mkdir_p d;
+      (let d = Filename.temp_dir "rig-pci-trees" "" in
+       let maker = Unix.getpid () in
+       at_exit (fun () -> if Unix.getpid () = maker then remove d);
        d)
 
   let count = Atomic.make 0
