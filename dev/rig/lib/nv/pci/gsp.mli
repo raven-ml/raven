@@ -103,6 +103,12 @@ val rm :
     submit token carries its runlist. Its [free] answers [Error]: the GSP's
     objects live as long as the GSP. *)
 
+val objects : Rig_nv.rm -> (int * int * int, string) result
+(** [objects rm] is the GPU's device, subdevice and virtual address space, new
+    objects of [rm]'s client: the objects a path gives the driver. The address
+    space spans the GPU's addresses from 4 KiB, and is externally owned: its
+    page directory is the process's. *)
+
 val gpu : t -> Rig_nv.rm -> subdevice:int -> (Rig_nv.gpu, string) result
 (** [gpu g rm ~subdevice] is the GPU's classes, by its family, and its counts,
     from the RM's static graphics information. *)

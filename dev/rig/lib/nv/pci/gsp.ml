@@ -680,6 +680,33 @@ let rm g ~locate =
   in
   Ok r
 
+(* The objects a path gives the driver *)
+
+(* The address space's first address and size: 49-bit addresses from 4 KiB, less
+   80 MiB at their top. *)
+let va_base = 0x1000
+let va_size = (1 lsl 49) - (80 lsl 20)
+
+let objects (rm : Rig_nv.rm) =
+  let module D = Defs.Nv0080_alloc in
+  let module V = Defs.Vaspace_alloc in
+  let dp = params D.sizeof in
+  pset dp D.h_client_share rm.client;
+  pset dp D.va_mode Defs.nv_device_allocation_vamode_optional_multiple_vaspaces;
+  let* device = rm.alloc ~parent:rm.client Defs.nv01_device_0 (Some dp) in
+  let* subdevice =
+    rm.alloc ~parent:device Defs.nv20_subdevice_0
+      (Some (params Defs.Nv2080_alloc.sizeof))
+  in
+  let vp = params V.sizeof in
+  pset vp V.va_base va_base;
+  pset vp V.va_size va_size;
+  pset vp V.flags
+    (Defs.nv_vaspace_allocation_flags_enable_page_faulting
+   lor Defs.nv_vaspace_allocation_flags_is_externally_owned);
+  let* vaspace = rm.alloc ~parent:device Defs.fermi_vaspace_a (Some vp) in
+  Ok (device, subdevice, vaspace)
+
 (* GR information *)
 
 let gr_indices =
