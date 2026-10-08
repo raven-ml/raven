@@ -204,6 +204,39 @@ module Msgq_rx_header = struct
   let read_ptr = (0, 4)
 end
 
+module Seq_reg_write = struct
+  let sizeof = 8
+  let addr = (0, 4)
+  let val_ = (4, 4)
+end
+
+module Seq_reg_modify = struct
+  let sizeof = 12
+  let addr = (0, 4)
+  let mask = (4, 4)
+  let val_ = (8, 4)
+end
+
+module Seq_reg_poll = struct
+  let sizeof = 20
+  let addr = (0, 4)
+  let mask = (4, 4)
+  let val_ = (8, 4)
+  let timeout = (0xc, 4)
+  let error = (0x10, 4)
+end
+
+module Seq_delay_us = struct
+  let sizeof = 4
+  let val_ = (0, 4)
+end
+
+module Seq_reg_store = struct
+  let sizeof = 8
+  let addr = (0, 4)
+  let index = (4, 4)
+end
+
 module Queue_element = struct
   let sizeof = 80
   let auth_tag_buffer = (0, 1, 0x10)

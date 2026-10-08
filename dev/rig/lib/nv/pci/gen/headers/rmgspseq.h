@@ -33,3 +33,36 @@ typedef enum GSP_SEQ_BUF_OPCODE
     GSP_SEQ_BUF_OPCODE_CORE_WAIT_FOR_HALT,
     GSP_SEQ_BUF_OPCODE_CORE_RESUME,
 } GSP_SEQ_BUF_OPCODE;
+
+typedef struct
+{
+    NvU32 addr;
+    NvU32 val;
+} GSP_SEQ_BUF_PAYLOAD_REG_WRITE;
+
+typedef struct
+{
+    NvU32 addr;
+    NvU32 mask;
+    NvU32 val;
+} GSP_SEQ_BUF_PAYLOAD_REG_MODIFY;
+
+typedef struct
+{
+    NvU32 addr;
+    NvU32 mask;
+    NvU32 val;
+    NvU32 timeout;
+    NvU32 error;
+} GSP_SEQ_BUF_PAYLOAD_REG_POLL;
+
+typedef struct
+{
+    NvU32 val;
+} GSP_SEQ_BUF_PAYLOAD_DELAY_US;
+
+typedef struct
+{
+    NvU32 addr;
+    NvU32 index;
+} GSP_SEQ_BUF_PAYLOAD_REG_STORE;

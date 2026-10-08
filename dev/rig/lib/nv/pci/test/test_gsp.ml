@@ -105,10 +105,11 @@ let test_registry =
 (* CPU sequences *)
 
 (* rpc_run_cpu_sequencer_v17_00: bufferSizeDWord, cmdIndex (the words used),
-   regSaveArea of 8 words, then the commands from 0x28. Opcodes: REG_WRITE 0
-   (register, value), REG_MODIFY 1 (register, value, mask), REG_POLL 2
-   (register, mask, value, timeout, error), DELAY_US 3, REG_STORE 4 (register,
-   index), CORE_RESET 5, CORE_START 6, CORE_WAIT_FOR_HALT 7, CORE_RESUME 8. *)
+   regSaveArea of 8 words, then the commands from 0x28, each its opcode and its
+   payload, a GSP_SEQ_BUF_PAYLOAD_ structure. Opcodes: REG_WRITE 0 (addr, val),
+   REG_MODIFY 1 (addr, mask, val), REG_POLL 2 (addr, mask, val, timeout, error),
+   DELAY_US 3 (val), REG_STORE 4 (addr, index), CORE_RESET 5, CORE_START 6,
+   CORE_WAIT_FOR_HALT 7, CORE_RESUME 8. *)
 let sequencer words =
   let n = List.length words in
   let b = Bytes.make (0x28 + (4 * n)) '\000' in
@@ -138,10 +139,6 @@ let test_sequence () =
               0;
               0x1000;
               0x5;
-              1;
-              0x2000;
-              0x1;
-              0x3;
               2;
               0x3000;
               0xff;
@@ -156,13 +153,22 @@ let test_sequence () =
             ]))
   in
   equal (list string)
-    [
-      "write 0x1000 0x5";
-      "modify 0x2000 0x3 0x1";
-      "poll 0x3000 0xff 0x10";
-      "delay 20";
-    ]
+    [ "write 0x1000 0x5"; "poll 0x3000 0xff 0x10"; "delay 20" ]
     (show ops)
+
+(* The RM's sequencer modifies a register as [(r & ~mask) | val] (kernel_gsp.c,
+   GSP_SEQ_BUF_OPCODE_REG_MODIFY): the value's bits are set whether or not the
+   mask covers them. *)
+let test_sequence_modify =
+  let word = Gen.int_range 0 0xffff_ffff in
+  prop "a modify sets the register as the RM's sequencer does"
+    Gen.(triple word word word)
+    (fun (r, mask, v) ->
+      match Gsp.sequence ~libos:0 (sequencer [ 1; 0x2000; mask; v ]) with
+      | Ok [ Modify (0x2000, m, x) ] ->
+          equal int (r land lnot mask lor v) (r land lnot m lor (x land m))
+      | Ok ops -> failf "the modify ran as %s" (String.concat "; " (show ops))
+      | Error why -> fail why)
 
 let test_sequence_cores () =
   let one op =
@@ -270,6 +276,7 @@ let () =
          group ~timeout:10. "sequences"
            [
              test "register accesses" test_sequence;
+             test_sequence_modify;
              test "the GSP's falcon" test_sequence_cores;
              test_sequence_refused;
            ];

@@ -173,31 +173,40 @@ let sequence ~libos body =
         if i >= n then Ok (List.concat (List.rev acc))
         else
           let op = word i in
-          let args k = if i + k >= n then None else Some (word (i + k)) in
-          let take k f =
-            match args k with
-            | None -> Error (strf "a CPU sequence ending inside opcode %d" op)
-            | Some _ -> go (i + k + 1) (f () :: acc)
+          (* A field of the payload after the opcode. *)
+          let at (off, _) = word (i + 1 + (off / 4)) in
+          let take size f =
+            let k = size / 4 in
+            if i + k >= n then
+              Error (strf "a CPU sequence ending inside opcode %d" op)
+            else go (i + k + 1) (f () :: acc)
           in
           if op = Defs.gsp_seq_buf_opcode_reg_write then
-            take 2 (fun () -> [ Falcon.Write (word (i + 1), word (i + 2)) ])
+            let module P = Defs.Seq_reg_write in
+            take P.sizeof (fun () -> [ Falcon.Write (at P.addr, at P.val_) ])
           else if op = Defs.gsp_seq_buf_opcode_reg_modify then
-            take 3 (fun () ->
-                [ Falcon.Modify (word (i + 1), word (i + 3), word (i + 2)) ])
+            let module P = Defs.Seq_reg_modify in
+            (* The RM writes [(r & ~mask) | val], setting the value's bits
+               outside the mask too. *)
+            take P.sizeof (fun () ->
+                let v = at P.val_ in
+                [ Falcon.Modify (at P.addr, at P.mask lor v, v) ])
           else if op = Defs.gsp_seq_buf_opcode_reg_poll then
-            (* The poll's timeout and error, its two last words, are the
-               runner's. *)
-            take 5 (fun () ->
-                let r = word (i + 1)
-                and mask = word (i + 2)
-                and v = word (i + 3) in
-                [ Falcon.Poll (strf "register 0x%x" r, r, mask, Is v) ])
+            let module P = Defs.Seq_reg_poll in
+            (* The poll's timeout and error are the runner's. *)
+            take P.sizeof (fun () ->
+                let r = at P.addr in
+                [
+                  Falcon.Poll
+                    (strf "register 0x%x" r, r, at P.mask, Is (at P.val_));
+                ])
           else if op = Defs.gsp_seq_buf_opcode_delay_us then
-            take 1 (fun () -> [ Falcon.Delay (word (i + 1)) ])
+            let module P = Defs.Seq_delay_us in
+            take P.sizeof (fun () -> [ Falcon.Delay (at P.val_) ])
           else if op = Defs.gsp_seq_buf_opcode_reg_store then
             (* A register's value for the GSP's save area, which it does not
                read back from the CPU. *)
-            take 2 (fun () -> [])
+            take Defs.Seq_reg_store.sizeof (fun () -> [])
           else if op = Defs.gsp_seq_buf_opcode_core_reset then
             take 0 (fun () ->
                 Falcon.reset gsp `Falcon
