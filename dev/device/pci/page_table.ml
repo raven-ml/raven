@@ -266,8 +266,9 @@ let rec fragment ~lo ~hi ~delta v k =
 (* The physical ranges a map writes, read in virtual order as one walk of the
    tables reaches them. The current run maps [lo, hi) to the addresses [delta]
    bytes further; ranges that follow each other in both address spaces are one
-   run. Its pages below [until] share the fragment [frag]. The walk is at the
-   entry that maps [reached]: it wrote those before it and none from it on. *)
+   run. Its pages below [until] share the fragment [frag]. The walk wrote no
+   entry past the one that maps [reached], so undoing a map clears through
+   it. *)
 type run = {
   target : target;
   uncached : bool;
@@ -328,9 +329,12 @@ let rec write t d table ~at lo hi r =
   let level = level t d and c = covers t d in
   match table with
   | Leaf (pa, l) ->
-      for i = (lo - at) / c to ((hi - at) / c) - 1 do
+      let last = ((hi - at) / c) - 1 in
+      (* Undoing clears through the whole range, and a clear skips the entries
+         that map nothing. *)
+      r.reached <- at + (last * c);
+      for i = (lo - at) / c to last do
         let v = at + (i * c) in
-        r.reached <- v;
         seek r v;
         map_page t r d pa i v;
         set_bit l i true;
@@ -357,9 +361,11 @@ let rec clear t d table ~at lo hi =
   match table with
   | Leaf (pa, l) ->
       for i = (lo - at) / c to ((hi - at) / c) - 1 do
-        if is_page l i then begin
+        let k = i lsr 3 and m = 1 lsl (i land 7) in
+        let b = Char.code (Bytes.unsafe_get l.bits k) in
+        if b land m <> 0 then begin
           t.fmt.clear ~level ~table:pa i;
-          set_bit l i false;
+          Bytes.unsafe_set l.bits k (Char.unsafe_chr (b land lnot m));
           l.pages <- l.pages - 1
         end
       done;
