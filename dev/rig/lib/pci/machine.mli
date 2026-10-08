@@ -50,7 +50,9 @@ type id = Ops.id = {
   bus : string;  (** Its bus address. *)
   vendor : int;  (** Its vendor's identifier, such as [0x1002] for AMD. *)
   device : int;  (** Its device identifier, assigned by its vendor. *)
-  class_ : int;  (** Its base class, such as [0x03] for display controllers. *)
+  class_ : int;
+      (** Its 24-bit class code: base class, subclass and programming interface,
+          such as [0x030000] for a VGA controller. *)
 }
 (** The type for the identity of a function. *)
 

@@ -61,7 +61,7 @@ external lock : string -> string -> int = "rig_pci_test_lock"
 
 let this_gpus () =
   List.filter
-    (fun (id : Rig_pci.Machine.id) -> id.class_ = 0x03)
+    (fun (id : Rig_pci.Machine.id) -> id.class_ lsr 16 = 0x03)
     (Rig_pci.Machine.functions Rig_pci.Machine.this)
 
 let gpu_lock = "/tmp/raven-rig-gpu.lock"
@@ -298,7 +298,7 @@ module Tree = struct
       bus;
       vendor = 0x1002;
       device = 0x744c;
-      class_ = 0x03;
+      class_ = 0x030000;
       driver;
       group;
       enabled;
@@ -378,7 +378,9 @@ module Tree = struct
     let b = Bytes.make 64 '\000' in
     Bytes.set_uint16_le b 0 fn.vendor;
     Bytes.set_uint16_le b 2 fn.device;
-    Bytes.set_uint8 b 0x0b fn.class_;
+    Bytes.set_uint8 b 0x09 (fn.class_ land 0xff);
+    Bytes.set_uint8 b 0x0a ((fn.class_ lsr 8) land 0xff);
+    Bytes.set_uint8 b 0x0b (fn.class_ lsr 16);
     List.iteri
       (fun i r -> Bytes.set_int32_le b (0x10 + (4 * i)) (Int32.of_int r))
       (registers fn.bars);
@@ -400,7 +402,7 @@ module Tree = struct
         let d = devices / fn.bus in
         write (d / "vendor") (strf "0x%04x\n" fn.vendor);
         write (d / "device") (strf "0x%04x\n" fn.device);
-        write (d / "class") (strf "0x%06x\n" (fn.class_ lsl 16));
+        write (d / "class") (strf "0x%06x\n" fn.class_);
         write (d / "enable") (if fn.enabled then "1\n" else "0\n");
         write (d / "resource") (resource fn.bars);
         write (d / "config") (config fn);

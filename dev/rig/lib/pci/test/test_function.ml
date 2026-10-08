@@ -1160,7 +1160,7 @@ let take_on ?lockdown ?groups ?noiommu fns bus =
   Function.take (Machine.at (Tree.make ?lockdown ?groups ?noiommu fns)) bus
 
 let audio bus =
-  { (Tree.gpu ~driver:"snd_hda_intel" bus) with class_ = 0x04; bars = [] }
+  { (Tree.gpu ~driver:"snd_hda_intel" bus) with class_ = 0x040300; bars = [] }
 
 (* Each refusal names the function and its cause, and what cures it where a
    detach does. *)

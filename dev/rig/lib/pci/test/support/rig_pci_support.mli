@@ -60,7 +60,7 @@ val now_ns : unit -> int
     machine's GPU lock, so that suites take their turns on the GPUs. *)
 
 val this_gpus : unit -> Rig_pci.Machine.id list
-(** [this_gpus ()] is this machine's display controllers, class [0x03]. *)
+(** [this_gpus ()] is this machine's display controllers, base class [0x03]. *)
 
 val hold_gpu : unit -> unit
 (** [hold_gpu ()] returns once the process holds the machine's GPU lock, which
@@ -208,7 +208,7 @@ module Tree : sig
     bus : string;
     vendor : int;
     device : int;
-    class_ : int;  (** The base class, such as [0x03]. *)
+    class_ : int;  (** Its 24-bit class code, such as [0x030000]. *)
     driver : string option;
     group : string option;  (** Its IOMMU group. *)
     enabled : bool;

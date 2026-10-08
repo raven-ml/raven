@@ -131,12 +131,17 @@ let machines =
 (* Functions *)
 
 let id_of n =
-  { Machine.bus = address n; vendor = 0x1002; device = 0x744c; class_ = 3 }
+  {
+    Machine.bus = address n;
+    vendor = 0x1002;
+    device = 0x744c;
+    class_ = 0x030000;
+  }
 
 let id =
   Testable.make
     ~pp:(fun ppf (d : Machine.id) ->
-      Format.fprintf ppf "%s %04x:%04x class %02x" d.bus d.vendor d.device
+      Format.fprintf ppf "%s %04x:%04x class %06x" d.bus d.vendor d.device
         d.class_)
     ~equal:( = )
 
@@ -168,20 +173,41 @@ let test_no_sysfs () =
   if on_linux then skip ~reason:"this machine has /sys/bus/pci" ();
   equal (list id) [] (Machine.functions Machine.this)
 
-(* A machine's functions, from their files: identity in hexadecimal, the class
-   file's top byte the base class. *)
+(* A machine's functions, from their files, in hexadecimal: the class code
+   whole, its subclass and programming interface kept, so that a VGA controller
+   and a 3D controller of one base class stay apart. *)
 let test_tree () =
   let gpu = Tree.gpu "0000:c3:00.0" in
   let nv =
-    { (Tree.gpu "10000:21:00.0") with vendor = 0x10de; device = 0x2684 }
+    {
+      (Tree.gpu "10000:21:00.0") with
+      vendor = 0x10de;
+      device = 0x2684;
+      class_ = 0x030200;
+    }
   in
-  let audio = { (Tree.gpu "0000:03:00.1") with class_ = 0x04; bars = [] } in
+  let audio = { (Tree.gpu "0000:03:00.1") with class_ = 0x040300; bars = [] } in
   let m = Machine.at (Tree.make [ gpu; nv; audio ]) in
   equal (list id)
     [
-      { bus = "0000:03:00.1"; vendor = 0x1002; device = 0x744c; class_ = 0x04 };
-      { bus = "0000:c3:00.0"; vendor = 0x1002; device = 0x744c; class_ = 0x03 };
-      { bus = "10000:21:00.0"; vendor = 0x10de; device = 0x2684; class_ = 0x03 };
+      {
+        bus = "0000:03:00.1";
+        vendor = 0x1002;
+        device = 0x744c;
+        class_ = 0x040300;
+      };
+      {
+        bus = "0000:c3:00.0";
+        vendor = 0x1002;
+        device = 0x744c;
+        class_ = 0x030000;
+      };
+      {
+        bus = "10000:21:00.0";
+        vendor = 0x10de;
+        device = 0x2684;
+        class_ = 0x030200;
+      };
     ]
     (Machine.functions m)
 

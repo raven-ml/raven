@@ -90,7 +90,7 @@ let functions m =
             Ops.bus;
             vendor = read_hex (path m bus "vendor");
             device = read_hex (path m bus "device");
-            class_ = read_hex (path m bus "class") lsr 16;
+            class_ = read_hex (path m bus "class");
           }
         with
         | id -> Some id

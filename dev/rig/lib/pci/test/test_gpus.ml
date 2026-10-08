@@ -94,17 +94,17 @@ let taken_w = list string
 
 let vendor = 0x1002
 
-let id ?(vendor = vendor) ?(class_ = 0x03) bus =
+let id ?(vendor = vendor) ?(class_ = 0x030000) bus =
   { Machine.bus; vendor; device = 0x73bf; class_ }
 
-let is_gpu (id : Machine.id) = id.vendor = vendor && id.class_ = 0x03
+let is_gpu (id : Machine.id) = id.vendor = vendor && id.class_ lsr 16 = 0x03
 let gpus () = Gpus.make ~memory_bar:0 is_gpu
 let gpu_buses = [ "0000:03:00.0"; "0000:43:00.0"; "0000:c3:00.0" ]
 
 let functions =
   [
     id "0000:03:00.0";
-    id ~class_:0x04 "0000:03:00.1";
+    id ~class_:0x040300 "0000:03:00.1";
     id ~vendor:0x10de "0000:21:00.0";
     id "0000:43:00.0";
     id "0000:c3:00.0";
@@ -155,7 +155,7 @@ let names n why =
 let pool =
   [
     id "0000:00:01.0";
-    id ~class_:0x04 "0000:00:01.1";
+    id ~class_:0x040300 "0000:00:01.1";
     id "0000:0a:00.0";
     id ~vendor:0x10de "0000:10:00.0";
     id "0000:10:00.1";
@@ -166,7 +166,7 @@ let pool =
   ]
 
 let pp_id ppf (id : Machine.id) =
-  Format.fprintf ppf "%s/%04x/%02x" id.bus id.vendor id.class_
+  Format.fprintf ppf "%s/%04x/%06x" id.bus id.vendor id.class_
 
 let pp_ids = Format.pp_print_list ~pp_sep:Format.pp_print_space pp_id
 
@@ -229,7 +229,7 @@ let test_no_gpu (_, f, i) =
   names 3 (unopened (f g m i))
 
 let test_none () =
-  let m, _ = machine [ id ~class_:0x04 "0000:03:00.1" ] in
+  let m, _ = machine [ id ~class_:0x040300 "0000:03:00.1" ] in
   let g = gpus () in
   equal (list string) [] (Gpus.buses g m);
   has_none (unopened (pci g m 0));
@@ -470,7 +470,7 @@ let test_this_none () =
 (* This machine's display controllers: the kernel driver opens nothing, so
    holding one through it changes nothing. *)
 let this_gpus () =
-  let g = Gpus.make ~memory_bar:0 (fun id -> id.class_ = 0x03) in
+  let g = Gpus.make ~memory_bar:0 (fun id -> id.class_ lsr 16 = 0x03) in
   if Gpus.buses g Machine.this = [] then
     skip ~reason:"this machine lists no GPU" ();
   g
@@ -657,7 +657,7 @@ let starts = Gen.of_list ~pp:pp_start [ Starts; Fails; Raises_invalid ]
 let indices l = Gen.of_list ~pp:Format.pp_print_int l
 
 let two_gpus =
-  [ id "0000:03:00.0"; id ~class_:0x04 "0000:03:00.1"; id "0000:43:00.0" ]
+  [ id "0000:03:00.0"; id ~class_:0x040300 "0000:03:00.1"; id "0000:43:00.0" ]
 
 let two_buses = [| "0000:03:00.0"; "0000:43:00.0" |]
 
@@ -780,7 +780,7 @@ let serialized =
 let gpu_bus = "0000:03:00.0"
 
 let audio bus =
-  { (Tree.gpu ~driver:"snd_hda_intel" bus) with class_ = 0x04; bars = [] }
+  { (Tree.gpu ~driver:"snd_hda_intel" bus) with class_ = 0x040300; bars = [] }
 
 let needs_flock () =
   if not on_linux then skip ~reason:"flock on a function's file needs Linux" ()
