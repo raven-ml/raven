@@ -29,11 +29,8 @@ external load : nativeint -> string -> string * string array * nativeint array
   = "caml_device_metal_image"
 
 external make_icb :
-  nativeint ->
-  nativeint ->
-  nativeint array ->
-  int array ->
-  string * nativeint array = "caml_device_metal_icb"
+  nativeint -> nativeint -> int array -> int array -> string * nativeint array
+  = "caml_device_metal_icb"
 
 external release_icb : nativeint -> nativeint -> unit
   = "caml_device_metal_icb_release"

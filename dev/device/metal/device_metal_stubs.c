@@ -269,7 +269,7 @@ static void check(struct device_metal *d, id<MTLBuffer> args, value v_pipelines,
     caml_invalid_argument(
         "Device_metal_abi.icb: the argument buffer is another GPU's");
   for (mlsize_t i = 0; i < Wosize_val(v_pipelines); i++) {
-    id<MTLComputePipelineState> p = Object_val(Field(v_pipelines, i));
+    id<MTLComputePipelineState> p = (id)Long_val(Field(v_pipelines, i));
     intnat offset = Long_val(Field(v_sizes, 7 * i)), threads = 1;
     for (int k = 4; k < 7; k++) threads *= Long_val(Field(v_sizes, 7 * i + k));
     if (p.device != d->device)
@@ -332,7 +332,8 @@ value caml_device_metal_icb(value v_d, value v_buffer, value v_pipelines,
   for (int i = 0; i < n; i++) {
     id<MTLIndirectComputeCommand> c =
         [[b->icb indirectComputeCommandAtIndex:(NSUInteger)i] retain];
-    id<MTLComputePipelineState> p = [Object_val(Field(v_pipelines, i)) retain];
+    id<MTLComputePipelineState> p =
+        [(id)Long_val(Field(v_pipelines, i)) retain];
     intnat w[7];
     for (int k = 0; k < 7; k++) w[k] = Long_val(Field(v_sizes, 7 * i + k));
     [c setComputePipelineState:p];

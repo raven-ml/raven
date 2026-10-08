@@ -373,7 +373,7 @@ let work =
 (* Indirect command buffers *)
 
 let dispatch ?(offset = 0) ?(groups = (1, 1, 1)) ?(threads = (1, 1, 1)) p =
-  { Device_metal_abi.pipeline = Nativeint.of_int p; offset; groups; threads }
+  { Device_metal_abi.pipeline = p; offset; groups; threads }
 
 let icb t args ds =
   (Device_metal.capability t.d).icb (Device_metal.handle args) ds

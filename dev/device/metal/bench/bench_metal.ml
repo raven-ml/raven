@@ -63,7 +63,7 @@ let run t ps =
 let launch t n =
   let dispatch =
     {
-      Device_metal_abi.pipeline = Nativeint.of_int t.step;
+      Device_metal_abi.pipeline = t.step;
       offset = 0;
       groups = (1, 1, 1);
       threads = (1, 1, 1);
@@ -169,7 +169,7 @@ let icb_rows =
   let icb t =
     let dispatch =
       {
-        Device_metal_abi.pipeline = Nativeint.of_int t.step;
+        Device_metal_abi.pipeline = t.step;
         offset = 0;
         groups = (1, 1, 1);
         threads = (1, 1, 1);
