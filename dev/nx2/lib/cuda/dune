@@ -1,0 +1,10 @@
+; nx.cuda: nx's kernels for NVIDIA GPUs, compiled ahead of time into
+; cubins (kernels/). C only until the binding: launch records and the fill
+; that enqueues them through rig.cuda.
+
+(library
+ (name nx_cuda)
+ (modules)
+ (foreign_stubs
+  (language c)
+  (names fill_cuda)))

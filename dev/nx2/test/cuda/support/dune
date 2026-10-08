@@ -1,0 +1,12 @@
+; What the CUDA suite and bench share: the GPU lock, the harness's kernels,
+; launch records and runs, device time, and operands.
+
+(library
+ (name nx_cuda_support)
+ (libraries nx_array nx_cuda rig rig.cuda windtrap)
+ (foreign_stubs
+  (language c)
+  (include_dirs ../../../lib/cuda)
+  (extra_deps sm_89.cubin)
+  (flags :standard -DNX_HARNESS_CUBIN=sm_89.cubin)
+  (names nx_cuda_support_stubs)))

@@ -1,0 +1,6 @@
+; Correctness on CUDA's GPU 0, skipping without one.
+
+(tests
+ (names test_cuda)
+ (modules test_cuda)
+ (libraries nx_array nx_cuda_support rig windtrap))
