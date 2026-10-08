@@ -38,9 +38,6 @@
 
 #include "rig_nv_stubs.h"
 
-/* A join tag holds a part's index in 16 bits. */
-#define MAX_PARTS 65535
-
 /* The waits a submission may carry: rig_nv_room, which does not see
    them, keeps room for this many on each channel. */
 #define MAX_WAITS 256
@@ -163,14 +160,15 @@ static int runs(const struct rig_part *p, int n) {
   return 1;
 }
 
-/* Whether a part after part [i], on the other channel, runs after it. */
-static int awaited(const struct rig_part *p, int n, int i) {
-  for (int k = i + 1; k < n; k++) {
-    if (p[k].queue == p[i].queue) continue;
-    for (int j = 0; j < p[k].nafter; j++)
-      if (p[k].after[j] == i) return 1;
-  }
-  return 0;
+/* Marks in [d->awaited] the parts that a later part on the other channel
+   runs after. */
+static void mark_awaited(struct device *d, const struct rig_part *p, int n) {
+  for (int i = 0; i < n; i++) d->awaited[i] = 0;
+  for (int k = 0; k < n; k++)
+    for (int j = 0; j < p[k].nafter; j++) {
+      int a = p[k].after[j];
+      if (p[a].queue != p[k].queue) d->awaited[a] = 1;
+    }
 }
 
 static uint64_t bytes_of(const struct device *d, int k) {
@@ -291,6 +289,7 @@ int rig_nv_submit(void *self, uint64_t v, const struct rig_wait *waits,
   /* Whether COMPUTE has launches it has not waited for. */
   int running = 0;
   for (int i = 0; i < n; i++) last[p[i].queue] = i;
+  mark_awaited(d, p, n);
   for (int i = 0; i < n; i++) {
     int q = p[i].queue;
     enter(d, q, v, used, waits, nwaits);
@@ -302,7 +301,7 @@ int rig_nv_submit(void *self, uint64_t v, const struct rig_wait *waits,
     if (q == COMPUTE && running) emit(d, &d->ch[q], T_IDLE, 0, 0, 0);
     place(d, &p[i]);
     if (q == COMPUTE) running = 1;
-    if (awaited(p, n, i) || (i == last[q] && q != r)) {
+    if (d->awaited[i] || (i == last[q] && q != r)) {
       signal(d, q, JOIN_GPU(d, q), tag(v, i));
       if (q == COMPUTE) running = 0;
     }

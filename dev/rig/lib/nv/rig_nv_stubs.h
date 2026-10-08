@@ -88,6 +88,9 @@ struct channel {
   uint64_t open, open_words;
 };
 
+/* A join tag holds a part's index in 16 bits. */
+#define MAX_PARTS 65535
+
 /* A device. The fields up to [last] live for the process; the channels'
    memory ends at a stop that answered Stopped. */
 struct device {
@@ -109,6 +112,9 @@ struct device {
   volatile const uint32_t *bar;
   /* a notification's error fields */
   uint32_t info32_at, status_at;
+  /* during a submission: whether a later part on the other channel runs
+     after part i */
+  uint8_t awaited[MAX_PARTS];
 };
 
 /* The join word of channel [q]: its GPU address. */

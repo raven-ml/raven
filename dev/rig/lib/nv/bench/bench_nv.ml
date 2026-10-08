@@ -190,7 +190,8 @@ let wait_rows =
 (* A run of 64 launches follows the GPU's SM clock, which moves by up to a tenth
    between and within runs and which no unprivileged process pins. Chained
    launches in one part are the floor of launches that each wait for the one
-   before; [64-parts] orders them as parts of one queue instead. *)
+   before; [64-parts] orders them as parts of one queue instead, and
+   [4096-parts] shows what the writer costs per part of a large submission. *)
 let launch_rows =
   let launching_as how count () =
     let t = dev () in
@@ -211,6 +212,7 @@ let launch_rows =
       row "64" (launching 64) (fun (t, _, _, s) -> run t s);
       row "floor-64" (floor_launching 64) floor_run;
       row "64-parts" (launching_as `Apart 64) (fun (t, _, _, s) -> run t s);
+      row "4096-parts" (launching_as `Apart 4096) (fun (t, _, _, s) -> run t s);
     ]
 
 let copy_rows =
