@@ -5,7 +5,6 @@
  (name device_metal)
  (libraries device_edge device_metal_abi)
  (install_c_headers device_metal device_metal_ring)
- (modules_without_implementation device_metal)
  (foreign_stubs
   (language c)
   (names device_metal_ring))

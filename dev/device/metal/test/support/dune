@@ -1,8 +1,16 @@
-; What the Metal suite and bench share: a device's ring driven by hand.
+; What the Metal suite and bench share: a device's ring driven by hand, and
+; fills over Metal with probes of its objects. The fills are Objective-C on
+; macOS, as the driver's stubs are.
 
 (library
  (name device_metal_support)
- (libraries device_metal)
+ (libraries device_metal device_metal_abi)
  (foreign_stubs
   (language c)
-  (names device_metal_support_ring)))
+  (names device_metal_support_ring))
+ (foreign_stubs
+  (language c)
+  (names device_metal_support_stubs)
+  (flags
+   (:standard
+    (:include ../../objc_flags.sexp)))))
