@@ -88,28 +88,25 @@ let device_name i =
   if i = 0 then "METAL" else strf "METAL:%d" i
 
 let icb self align buffer (ds : Device_metal_abi.dispatch array) =
-  let check i (d : Device_metal_abi.dispatch) =
+  let sizes = Array.make (7 * Array.length ds) 0 in
+  let record i (d : Device_metal_abi.dispatch) =
     let gx, gy, gz = d.groups and tx, ty, tz = d.threads in
     if d.offset < 0 || d.offset mod align <> 0 then
       invalid_argf
         "Device_metal_abi.icb: dispatch %d's offset %d, expected a \
          non-negative multiple of %d"
         i d.offset align;
-    if List.exists (fun x -> x < 1) [ gx; gy; gz; tx; ty; tz ] then
+    if gx < 1 || gy < 1 || gz < 1 || tx < 1 || ty < 1 || tz < 1 then
       invalid_argf
         "Device_metal_abi.icb: dispatch %d has groups %dx%dx%d and threads \
          %dx%dx%d, expected each at least 1"
-        i gx gy gz tx ty tz
+        i gx gy gz tx ty tz;
+    Array.blit [| d.offset; gx; gy; gz; tx; ty; tz |] 0 sizes (7 * i) 7
   in
-  Array.iteri check ds;
-  let sizes (d : Device_metal_abi.dispatch) =
-    let gx, gy, gz = d.groups and tx, ty, tz = d.threads in
-    [| d.offset; gx; gy; gz; tx; ty; tz |]
-  in
+  Array.iteri record ds;
   let pipelines =
     Array.map (fun (d : Device_metal_abi.dispatch) -> d.pipeline) ds
   in
-  let sizes = Array.concat (Array.to_list (Array.map sizes ds)) in
   match make_icb self buffer pipelines sizes with
   | "", objects ->
       let released = Atomic.make false in
