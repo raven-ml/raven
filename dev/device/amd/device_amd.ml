@@ -798,3 +798,16 @@ let stop g =
       List.iter (give_back g)
         (List.map fst (buffers @ st.retired) @ traces @ g.own);
       `Stopped
+
+(* Tests *)
+
+external renumber_device : int -> int -> unit = "caml_device_amd_renumber"
+
+let renumber g v =
+  let last = last g.self in
+  if signaled g <> last then
+    invalid_arg "Device_amd.renumber: the device's work runs";
+  if v - 1 < last then
+    invalid_argf "Device_amd.renumber: value %d, expected at least %d" v
+      (last + 1);
+  renumber_device g.self v

@@ -441,3 +441,14 @@ val is_gpu : vendor:int -> class_:int -> bool
     display controller or a processing accelerator, base class [0x03] or [0x12].
     Every path numbers a machine's GPUs [0], [1], ... in bus order among such
     functions. *)
+
+(**/**)
+
+(* [renumber g v] makes [v] the value after [g]'s last one: the timeline word
+   and the last value given become [v - 1]. [g] is idle: its word holds the last
+   value it was given. Tests reach the values a long run reaches, such as those
+   past 2^31 and 2^32, without making that many submissions.
+
+   Raises [Invalid_argument] if [g] is not idle or [v - 1] is below its last
+   value. *)
+val renumber : t -> int -> unit

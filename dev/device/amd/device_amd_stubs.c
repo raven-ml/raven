@@ -309,3 +309,21 @@ value caml_device_amd_zero(value v_host, value v_n) {
   memset(Host_val(v_host), 0, (size_t)Long_val(v_n));
   return Val_unit;
 }
+
+/* Makes [v] the value after the device's last one; the device is idle. A
+   ring that released the last value is taken to have released v - 1, which
+   the word now holds, and each slot gets low32(v - 1), as the writer's
+   refresh keeps every slot within 2^31 values of the last. */
+value caml_device_amd_renumber(value v_self, value v_v) {
+  struct device_amd *d = Device_val(v_self);
+  uint64_t prev = (uint64_t)Long_val(v_v) - 1;
+  for (int i = 0; i < DEVICE_AMD_SLOTS; i++) {
+    d->slots[2 * i] = (uint32_t)prev;
+    d->slot_last[i] = prev;
+  }
+  for (int q = 0; q < DEVICE_AMD_QUEUES; q++)
+    if (d->rings[q].released == d->last) d->rings[q].released = prev;
+  d->last = prev;
+  atomic_store_explicit(d->word, prev, memory_order_release);
+  return Val_unit;
+}
