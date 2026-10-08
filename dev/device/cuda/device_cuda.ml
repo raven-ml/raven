@@ -387,14 +387,13 @@ let unload g (m : image) =
   | 0 -> ()
   | s -> fault "unloading the image" s
 
-(* Work. A part is the ints the C submit reads, the shape every driver's submit
-   hands its C side: the device's C state, then nx_part's queue, fill, arg,
-   copy_dst, copy_dst_offset, copy_src, copy_src_offset and copy_bytes, then the
-   [after] indices, from [after_at]. *)
+(* Work. A part is its device and the ints the C submit reads: nx_part's int
+   fields in its order (queue, fill, arg, ring_units, segment_bytes, copy_dst,
+   copy_dst_offset, copy_src, copy_src_offset, copy_bytes), then the [after]
+   indices. *)
+type part = { owner : int; ints : int array }
 
-type part = int array
-
-let after_at = 9
+let after_at = 10
 
 (* nx_edge.h's codes *)
 
@@ -425,7 +424,7 @@ let part g ~queue ?(after = [||]) w =
       if j < 0 then
         invalid_argf "Device_cuda.part: after index %d is negative" j)
     after;
-  let part work = Array.concat [ [| g.self; queue |]; work; after ] in
+  let part ints = { owner = g.self; ints = Array.append ints after } in
   match w with
   | `Words _ -> invalid_arg "Device_cuda.part: the device runs no words"
   | `Fill (f, arg, units, bytes) ->
@@ -434,7 +433,8 @@ let part g ~queue ?(after = [||]) w =
           "Device_cuda.part: the fill declares %d ring units and %d segment \
            bytes, expected 0"
           units bytes;
-      part [| Nativeint.to_int f; Nativeint.to_int arg; 0; 0; 0; 0; 0 |]
+      let fill = Nativeint.to_int f and arg = Nativeint.to_int arg in
+      part [| queue; fill; arg; 0; 0; 0; 0; 0; 0; 0 |]
   | `Copy ((dst, o), (src, o'), n) ->
       let check what (r : region) o =
         if r.owner <> g.self || not r.live then
@@ -449,19 +449,19 @@ let part g ~queue ?(after = [||]) w =
       in
       check "destination" dst o;
       check "source" src o';
-      part [| 0; 0; dst.handle; o; src.handle; o'; n |]
+      part [| queue; 0; 0; 0; 0; dst.handle; o; src.handle; o'; n |]
 
 let room _ _ = `Fits
 
-let check_part self i (p : part) =
-  if p.(0) <> self then
+let check_part self i p =
+  if p.owner <> self then
     invalid_argf "Device_cuda.submit: part %d is another device's" i;
-  for k = after_at to Array.length p - 1 do
-    if p.(k) >= i then
+  for k = after_at to Array.length p.ints - 1 do
+    if p.ints.(k) >= i then
       invalid_argf
         "Device_cuda.submit: part %d waits for part %d, expected an earlier \
          part"
-        i p.(k)
+        i p.ints.(k)
   done
 
 let wait_kind = function
