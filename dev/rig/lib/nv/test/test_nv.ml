@@ -3,9 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The driver's work runs as programs hand it over, through Rig, except
-   for what only the C edge reaches: waits on any host word, the 64-bit wrap of
-   a wait's value, and room's answers. *)
+(* The driver's work runs as programs hand it over, through Rig, except for what
+   only the C edge reaches: waits on any host word, the 64-bit wrap of a wait's
+   value, and room's answers. *)
 
 open Windtrap
 module N = Rig_nv
@@ -273,6 +273,26 @@ let image_asks_nothing () =
 (* The memory a path answers lies below 2^40, the widest address a channel's
    semaphore takes, up to its last byte; memory past it goes back to the path,
    and the call raises. *)
+(* A device stopped with an image loaded: stop ends the image, and the code
+   region is the caller's to free, after which the device keeps only its
+   word. *)
+let stop_with_image () =
+  let f = Fake.make 0 in
+  let g = require_ok (N.make (Fake.path f)) in
+  let n, lay =
+    match require_ok (N.image g (S.fixture "kernels_sm89.cubin")) with
+    | `Place (n, lay) -> (n, lay)
+    | `Loaded _ -> fail "an image with nothing to place"
+  in
+  let r = require_some (N.alloc g `Device n) in
+  ignore (lay r);
+  N.stop g;
+  N.free g r;
+  equal (list int) ~msg:"memory"
+    [ address (N.word g) ]
+    (List.map (fun (a, _, _) -> a) f.memory);
+  equal (list string) ~msg:"given back wrongly" [] f.wrong
+
 let address_limit () =
   let f = Fake.make 0 in
   let g = require_ok (N.make (Fake.path f)) in
@@ -326,6 +346,10 @@ let paths =
          device keeps only its word"
         refused_makes;
       test "image and lay ask the path for nothing" image_asks_nothing;
+      test
+        "a device stopped with an image keeps only its word once its code is \
+         freed"
+        stop_with_image;
       test "memory a path answers past 2^40 goes back, and the call raises"
         address_limit;
     ]
@@ -844,7 +868,8 @@ module Segments = struct
     c.at_end <- false
 
   let emit c n =
-    cover "a segment whose words go on past the ring's end" (c.at_end && c.open_);
+    cover "words after an open segment that ends at the ring's end"
+      (c.at_end && c.open_);
     let at = c.written mod ring in
     cover "words that do not fit before the ring's end" (at + n > ring);
     if at + n > ring then begin
@@ -977,6 +1002,33 @@ let mixed subs =
   let segment = release l (address scratch) 1 in
   let model = Segments.make (N.capability g) in
   let v = ref 0 in
+  let submit ~waits ps =
+    hand g v ~waits:(Array.make waits (address w, 1)) ps;
+    Segments.submit model !v ~waits ps
+  in
+  (* On every other pass of COMPUTE:0's segment ring, once its end is near, a
+     submission of [p] parts there and satisfied waits whose words end exactly
+     at the ring's end: each part after the first adds a wait for idle. *)
+  let fit () =
+    let c = model.ch.(0) in
+    let at = c.written mod Segments.ring in
+    let left = Segments.ring - at in
+    let entered = if c.released <> !v then Segments.acquire else 0 in
+    let waits p =
+      let rest =
+        left - entered - ((p - 1) * Segments.idle) - Segments.release 0
+      in
+      if rest >= 0 && rest mod Segments.acquire = 0 then
+        let n = rest / Segments.acquire in
+        if n <= 256 then Some (p, n) else None
+      else None
+    in
+    if at > 0 && c.written / Segments.ring mod 2 = 0 then
+      match List.find_map waits [ 1; 2; 3 ] with
+      | None -> ()
+      | Some (p, n) ->
+          submit ~waits:n (Array.init p (fun _ -> on_compute segment))
+  in
   List.iteri
     (fun s { waits; parts } ->
       let at = s * 4099 mod size in
@@ -999,9 +1051,9 @@ let mixed subs =
              parts)
       in
       let seen = N.signaled g in
-      hand g v ~waits:(Array.make waits (address w, 1)) ps;
-      Segments.submit model !v ~waits ps;
-      at_least int ~msg:"the word" ~than:seen (N.signaled g))
+      submit ~waits ps;
+      at_least int ~msg:"the word" ~than:seen (N.signaled g);
+      fit ())
     subs;
   cover "a submission of 200 waits or more"
     (List.exists (fun s -> s.waits >= 200) subs);
@@ -1012,22 +1064,15 @@ let mixed subs =
   S.free_launches l;
   List.iter (N.free g) [ w; src; dst; scratch ]
 
-let wrap_bug =
-  "a segment the writer ends exactly at its ring's end goes on past it: the RM \
-   stops the channel with channel error 32 (PBDMA_ERROR)"
-
 let room =
   group ~timeout:300. "room"
     [
       test "room is Later while the rings hold unreached work, then Fits" later;
       test "40,000 submissions wrap both channels and every copy arrives" wraps;
-      xfail ~reason:wrap_bug
-        (test "40,000 copies one after the other pass the segment ring's end"
-           sequential);
-      xfail ~reason:wrap_bug
-        (prop ~count:12
-           "submissions that wrap the segment rings complete in order" steps
-           mixed);
+      test "40,000 copies one after the other pass the segment ring's end"
+        sequential;
+      prop ~count:12 "submissions that wrap the segment rings complete in order"
+        steps mixed;
     ]
 
 (* Local memory *)
