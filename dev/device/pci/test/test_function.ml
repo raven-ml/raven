@@ -27,6 +27,7 @@ type fn_fake = {
   page : int;
   config : Bytes.t;
   mutable maps : (int * int) list; (* live BAR windows, (address, length) *)
+  mutable ways : (int * bool) list; (* their BARs and [combine], a multiset *)
   mutable dmas : (int * int) list;
   mutable pins : (int * int) list; (* a multiset *)
   mutable released : bool;
@@ -82,6 +83,7 @@ let fake_fn m bus =
       page = m.m_page;
       config = Bytes.init config_size (fun i -> Char.chr (i land 0xff));
       maps = [];
+      ways = [];
       dmas = [];
       pins = [];
       released = false;
@@ -141,23 +143,36 @@ let fake_fn m bus =
             (fun () -> if i < 0 then Some "index" else None)
             (fun () -> bar_of i));
       map =
-        (fun i off n ->
+        (fun ~combine i off n ->
           call "map"
             (fun () ->
               match bar_of i with
+              | _ when List.mem (i, not combine) f.ways ->
+                  Some "a BAR mapped the other way"
               | Some (_, size) when off >= 0 && n >= 0 && off <= size - n ->
                   None
               | _ -> Some "bytes outside the BAR")
             (fun () ->
               let a = fresh m n in
               f.maps <- (a, n) :: f.maps;
+              f.ways <- (i, combine) :: f.ways;
               Ok (Window.through m.tr a n)));
       unmap =
         (fun w ->
           call "unmap"
             (fun () ->
               if List.mem (window w) f.maps then None else Some "no window")
-            (fun () -> f.maps <- Option.get (remove (window w) f.maps)));
+            (fun () ->
+              let rec drop k = function
+                | x :: l when x = window w -> (k, l)
+                | x :: l ->
+                    let k, l = drop (k + 1) l in
+                    (k, x :: l)
+                | [] -> (k, [])
+              in
+              let k, maps = drop 0 f.maps in
+              f.maps <- maps;
+              f.ways <- List.filteri (fun j _ -> j <> k) f.ways));
       interrupt = (fun _ -> call "interrupt" (fun () -> None) (fun () -> false));
       reset = (fun () -> call "reset" (fun () -> None) (fun () -> Ok ()));
       alloc_dma =
@@ -210,6 +225,7 @@ let fake_fn m bus =
               if not f.released then begin
                 f.released <- true;
                 f.maps <- [];
+                f.ways <- [];
                 Mutex.protect m.m_lock (fun () ->
                     m.held <- List.filter (( <> ) bus) m.held)
               end));
@@ -279,7 +295,10 @@ let take_fake ?base ?page ?addressing () =
   (machine, f, List.hd m.taken)
 
 (* The requests of a fake machine, which refuses none within its contract. *)
-let map ?off ?length f i = require_ok (Function.map ?off ?length f i)
+external c_combines : Window.t -> bool = "device_pci_test_combines"
+
+let map ?combine ?off ?length f i =
+  require_ok (Function.map ?combine ?off ?length f i)
 
 let alloc_dma ?contiguous ?va f n =
   require_ok (Function.alloc_dma ?contiguous ?va f n)
@@ -575,7 +594,7 @@ and f_ref = {
 (* [at] is the address asked for DMA memory. *)
 and w_ref = {
   owner : f_ref;
-  kind : [ `Bar | `Dma ];
+  kind : [ `Bar of int * bool | `Dma ];  (** A BAR's index and [combine]. *)
   len : int;
   at : int option;
 }
@@ -653,7 +672,7 @@ let misuse label =
 
 let live f = if f.r_released then misuse "a released function"
 
-let map_ref f i off len =
+let map_ref f combine i off len =
   live f;
   if i < 0 then misuse "a BAR index below zero";
   match bar_of i with
@@ -663,11 +682,13 @@ let map_ref f i off len =
       let len = Option.value len ~default:(size - off) in
       if off < 0 || len < 0 || off > size - len then
         misuse "bytes outside the BAR";
-      let w = { owner = f; kind = `Bar; len; at = None } in
+      if List.exists (fun w -> w.kind = `Bar (i, not combine)) f.r_maps then
+        misuse "a BAR mapped the other way";
+      let w = { owner = f; kind = `Bar (i, combine); len; at = None } in
       f.r_maps <- w :: f.r_maps;
       w
 
-let map_sys (f, _) i off len = map ?off ?length:len f i
+let map_sys (f, _) combine i off len = map ~combine ?off ?length:len f i
 let without w l = List.filter (fun x -> x != w) l
 
 (* Windows are values: a window equal to a live one, as DMA memory asked twice
@@ -681,7 +702,7 @@ let live_one w l =
     l
 
 let unmap_ref f w =
-  if not (w.kind = `Bar && w.owner == f && List.memq w f.r_maps) then
+  if not (w.owner == f && List.memq w f.r_maps) then
     misuse "a window that is not the function's live BAR window";
   f.r_maps <- without w f.r_maps
 
@@ -854,13 +875,21 @@ let commands =
       @-> returns (option (pair int int)))
       bar_ref (fsys Function.bar);
     command "map"
-      (fn_t
-      ^-> ints [ -1; 0; 1; 2; 6 ]
+      (fn_t ^-> Gen.bool
+      @-> ints [ -1; 0; 1; 2; 6 ]
       @-> opt_ints offs @-> opt_ints map_lens @-> makes win_t)
       map_ref map_sys;
     command "unmap"
       (fn_t ^-> win_t ^-> returns unit)
       unmap_ref (fsys Function.unmap);
+    command "pin a pinned range again, then unpin it"
+      (fn_t ^-> pinned ^-> returns unit)
+      (fun f (a, n) ->
+        pin_ref f a n;
+        unpin_ref f a n)
+      (fun (f, _) (a, n) ->
+        ignore (pin f a n : (int * int) list);
+        Function.unpin f a n);
     command "config"
       (fn_t
       ^-> ints [ 0; 4; 60; 64; 256; 4092 ]
@@ -1027,7 +1056,7 @@ let far_function far =
       set_config16 = (fun _ _ -> ());
       set_config32 = (fun _ _ -> ());
       bar = (fun i -> if i = 0 then Some (base, 4096) else None);
-      map = (fun _ off n -> Ok (Window.through tr (base + off) n));
+      map = (fun ~combine:_ _ off n -> Ok (Window.through tr (base + off) n));
       unmap = ignore;
       interrupt = (fun _ -> false);
       reset = (fun () -> Ok ());
@@ -1325,6 +1354,29 @@ let test_exit_stops_dma () =
     (Function.config16 f command);
   Function.release f
 
+(* Linux offers a prefetchable BAR combining through [resourceN_wc]: BAR 0 of
+   the fixture's GPU is prefetchable, BAR 5 is not. *)
+let test_combining () =
+  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  let fn = Host.gpu "0000:03:00.0" in
+  let f = require_ok (Function.take (Machine.at (Host.make [ fn ])) fn.bus) in
+  Fun.protect ~finally:(fun () -> Function.release f) @@ fun () ->
+  let combines ?combine i =
+    let w = map ?combine ~length:4096 f i in
+    equal ~msg:"its bytes" int 0 (Window.get32 w 0);
+    (w, c_combines w)
+  in
+  let w, c = combines ~combine:true 0 in
+  equal ~msg:"a prefetchable BAR, asked" bool true c;
+  raises_match ~msg:"the other way while it lives" Exn.invalid_arg (fun () ->
+      Function.map f 0);
+  Function.unmap f w;
+  let w, c = combines 0 in
+  equal ~msg:"a prefetchable BAR, not asked" bool false c;
+  Function.unmap f w;
+  let _, c = combines ~combine:true 5 in
+  equal ~msg:"a BAR that is not prefetchable, asked" bool false c
+
 let host_files =
   group ~timeout:patience "a host's files"
     [
@@ -1341,6 +1393,10 @@ let host_files =
          its device or whether it is enabled"
         ~name:(fun (n, _, _, _, _) -> n)
         through_vfio test_through_vfio;
+      test
+        "a prefetchable BAR of a function taken physically combines where \
+         asked, one way at a time"
+        test_combining;
       test "a function taken physically stops mastering the bus when released"
         test_release_stops_dma;
       test
