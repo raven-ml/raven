@@ -9,6 +9,7 @@
    is never closed under a transfer. *)
 
 let strf = Printf.sprintf
+let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
 type pages =
   (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
@@ -20,14 +21,14 @@ external close : int -> unit = "caml_rig_disk_close"
 external sync : int -> int = "caml_rig_disk_sync"
 external error : int -> string = "caml_rig_disk_error"
 
-external read :
+external pread :
   (int[@untagged]) ->
   (int[@untagged]) ->
   (int[@untagged]) ->
   (int[@untagged]) ->
   (int[@untagged]) = "caml_rig_disk_read_byte" "caml_rig_disk_read"
 
-external write :
+external pwrite :
   (int[@untagged]) ->
   (int[@untagged]) ->
   (int[@untagged]) ->
@@ -211,7 +212,7 @@ module Io = struct
 
   let read () f ~at ~dst ~len =
     using f @@ fun fd ->
-    let k = read fd at dst len in
+    let k = pread fd at dst len in
     if k < 0 then sys_error f (error (-k));
     if k < len then
       sys_error f
@@ -219,9 +220,9 @@ module Io = struct
 
   let write () f ~at ~src ~len =
     if not f.writable then
-      invalid_arg (strf "Rig.Buffer.copy: %s was opened for reading" f.path);
+      invalid_argf "Rig.Buffer.copy: %s was opened for reading" f.path;
     using f @@ fun fd ->
-    let k = write fd at src len in
+    let k = pwrite fd at src len in
     if k < 0 then sys_error f (error (-k))
 
   (* A file opened for writing maps shared, so the mapping is the file; one
@@ -254,27 +255,26 @@ let device =
   | Error why -> failwith (strf "Rig_disk: cannot open DISK: %s" why)
 
 let open_file path mode n =
-  let writable = mode <> read_mode in
-  let opened () =
-    match open_retrying path mode n with
-    | 0, fd, size, identity ->
-        let f = file ~path ~writable ~size ~identity in
-        admit f fd;
-        rest f;
-        Ok f
-    | code, _, _, _ -> Error (strf "%s: %s" path (why code))
-  in
   if String.contains path '\000' then
-    Error (strf "%s: a path has no NUL byte" path)
+    Error (strf "%s: the path holds a NUL byte" path)
   else
+    let writable = mode <> read_mode in
+    let opened () =
+      match open_retrying path mode n with
+      | 0, fd, size, identity ->
+          let f = file ~path ~writable ~size ~identity in
+          admit f fd;
+          rest f;
+          Ok f
+      | code, _, _, _ -> Error (strf "%s: %s" path (why code))
+    in
     Mutex.protect lock opened
     |> Result.map (fun f -> Rig.Buffer.of_io device Io.region_key f f.size)
 
 let of_file path = open_file path read_mode 0
 
 let create_file path n =
-  if n < 0 then
-    invalid_arg (strf "Rig_disk.create_file: %d bytes is negative" n);
+  if n < 0 then invalid_argf "Rig_disk.create_file: %d bytes is negative" n;
   open_file path create_mode n
 
 let barrier b =

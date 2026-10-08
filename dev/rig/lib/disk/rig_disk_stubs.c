@@ -154,6 +154,9 @@ static void append(unsigned char *id, size_t *len, const void *p, size_t n) {
    inode's number and generation on ext4, xfs and btrfs: a reused inode has
    a new generation, while its number and its coarse-clock times may repeat.
    A file system that gives no handle gives no exact identity. */
+_Static_assert(sizeof(dev_t) + sizeof(int) + MAX_HANDLE_SZ <= IDENTITY_BYTES,
+               "an identity holds a device, a handle's type and its bytes");
+
 static void identify(int fd, const struct stat *st, unsigned char *id,
                      size_t *len) {
   struct {
@@ -411,6 +414,9 @@ static intnat transfer_calls(int write, intnat h, int64_t pos, char *buf,
 #define DEPTH 16
 #define SEGMENT ((intnat)2 << 20)
 
+/* The operations the ring's probe asks about. */
+#define PROBE_OPS 256
+
 /* 0 before the first transfer that takes the ring, 1 ready, -1 unavailable.
    Written only by the ring's holder. */
 static int ring_state;
@@ -444,11 +450,12 @@ static int ring_setup(void) {
   int fd = (int)syscall(__NR_io_uring_setup, DEPTH, &p);
   if (fd < 0) return 0;
   size_t probe_size =
-      sizeof(struct io_uring_probe) + 256 * sizeof(struct io_uring_probe_op);
+      sizeof(struct io_uring_probe) +
+      PROBE_OPS * sizeof(struct io_uring_probe_op);
   struct io_uring_probe *probe = calloc(1, probe_size);
   int ok = probe != NULL &&
            syscall(__NR_io_uring_register, fd, IORING_REGISTER_PROBE, probe,
-                   256) == 0 &&
+                   PROBE_OPS) == 0 &&
            supports(probe, IORING_OP_READ);
   free(probe);
   size_t sq_size = p.sq_off.array + p.sq_entries * sizeof(unsigned);
