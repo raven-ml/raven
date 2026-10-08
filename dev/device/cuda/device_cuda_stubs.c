@@ -634,14 +634,19 @@ int device_cuda_submit(void *self, uint64_t v, const struct nx_wait *waits,
   return NX_FAILED;
 }
 
+/* Assigned to the edge's types, so a signature that drifts from nx_edge.h
+   is a compile error. */
+static nx_room_fn *const room_entry = device_cuda_room;
+static nx_submit_fn *const submit_entry = device_cuda_submit;
+
 value caml_device_cuda_room_entry(value unit) {
   (void)unit;
-  return Val_long((intnat)(nx_room_fn *)device_cuda_room);
+  return Val_long((intnat)room_entry);
 }
 
 value caml_device_cuda_submit_entry(value unit) {
   (void)unit;
-  return Val_long((intnat)(nx_submit_fn *)device_cuda_submit);
+  return Val_long((intnat)submit_entry);
 }
 
 /* Device_cuda.submit's C side. [v_waits] holds a kind, an address and a
