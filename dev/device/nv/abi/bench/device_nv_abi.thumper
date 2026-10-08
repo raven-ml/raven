@@ -19,8 +19,8 @@ gpfifo/entry-fill-into-bytes	alloc_words	exact	0
 gpfifo/entry-fill-into-bytes	wall_time	batch=2097152	n=20	4.601e-09	4.591e-09 4.592e-09 4.593e-09 4.594e-09 4.595e-09 4.599e-09 4.599e-09 4.600e-09 4.600e-09 4.600e-09 4.601e-09 4.605e-09 4.606e-09 4.606e-09 4.607e-09 4.609e-09 4.614e-09 4.617e-09 4.872e-09 4.890e-09
 launch/driver-parameters-into-bytes/ada	alloc_words	exact	0
 launch/driver-parameters-into-bytes/ada	wall_time	batch=2097152	n=20	4.190e-09	4.188e-09 4.188e-09 4.189e-09 4.189e-09 4.189e-09 4.189e-09 4.189e-09 4.189e-09 4.190e-09 4.190e-09 4.190e-09 4.190e-09 4.191e-09 4.191e-09 4.191e-09 4.194e-09 4.194e-09 4.194e-09 4.196e-09 4.202e-09
-launch/driver-parameters/ada	alloc_words	exact	46
-launch/driver-parameters/ada	wall_time	batch=524288	n=20	1.176e-08	1.158e-08 1.161e-08 1.163e-08 1.165e-08 1.167e-08 1.168e-08 1.171e-08 1.173e-08 1.174e-08 1.174e-08 1.177e-08 1.177e-08 1.178e-08 1.189e-08 1.191e-08 1.192e-08 1.192e-08 1.197e-08 1.202e-08 1.203e-08
+launch/driver-parameters/ada	alloc_words	exact	49
+launch/driver-parameters/ada	wall_time	batch=262144	n=20	2.365e-08	2.338e-08 2.341e-08 2.347e-08 2.348e-08 2.349e-08 2.353e-08 2.358e-08 2.359e-08 2.359e-08 2.363e-08 2.367e-08 2.374e-08 2.375e-08 2.383e-08 2.385e-08 2.388e-08 2.393e-08 2.394e-08 2.400e-08 2.436e-08
 launch/make/ada	alloc_words	exact	9
 launch/make/ada	wall_time	batch=1048576	n=20	5.806e-09	5.793e-09 5.796e-09 5.796e-09 5.796e-09 5.799e-09 5.801e-09 5.803e-09 5.804e-09 5.805e-09 5.805e-09 5.806e-09 5.836e-09 5.876e-09 5.877e-09 5.878e-09 5.879e-09 5.880e-09 5.881e-09 5.882e-09 5.888e-09
 method/placement-encode	alloc_words	exact	223
@@ -65,8 +65,8 @@ gpfifo/entry-fill-into-bytes	alloc_words	exact	0
 gpfifo/entry-fill-into-bytes	wall_time	batch=1048576	n=20	9.145e-09	9.022e-09 9.023e-09 9.025e-09 9.036e-09 9.052e-09 9.067e-09 9.081e-09 9.120e-09 9.142e-09 9.144e-09 9.146e-09 9.158e-09 9.162e-09 9.166e-09 9.173e-09 9.183e-09 9.203e-09 9.212e-09 9.257e-09 9.331e-09
 launch/driver-parameters-into-bytes/ada	alloc_words	exact	0
 launch/driver-parameters-into-bytes/ada	wall_time	batch=524288	n=20	9.576e-09	9.461e-09 9.493e-09 9.531e-09 9.539e-09 9.551e-09 9.566e-09 9.566e-09 9.567e-09 9.573e-09 9.573e-09 9.578e-09 9.605e-09 9.609e-09 9.623e-09 9.634e-09 9.641e-09 9.646e-09 9.699e-09 9.701e-09 9.724e-09
-launch/driver-parameters/ada	alloc_words	exact	46
-launch/driver-parameters/ada	wall_time	batch=262144	n=20	2.787e-08	2.748e-08 2.762e-08 2.764e-08 2.776e-08 2.779e-08 2.781e-08 2.783e-08 2.784e-08 2.787e-08 2.787e-08 2.788e-08 2.803e-08 2.804e-08 2.805e-08 2.810e-08 2.816e-08 2.816e-08 2.816e-08 2.817e-08 2.853e-08
+launch/driver-parameters/ada	alloc_words	exact	49
+launch/driver-parameters/ada	wall_time	batch=131072	n=20	4.499e-08	4.305e-08 4.428e-08 4.428e-08 4.428e-08 4.446e-08 4.450e-08 4.458e-08 4.481e-08 4.490e-08 4.498e-08 4.500e-08 4.501e-08 4.506e-08 4.507e-08 4.539e-08 4.550e-08 4.551e-08 4.551e-08 4.558e-08 4.567e-08
 launch/make/ada	alloc_words	exact	9
 launch/make/ada	wall_time	batch=524288	n=20	1.073e-08	1.046e-08 1.048e-08 1.060e-08 1.063e-08 1.065e-08 1.067e-08 1.069e-08 1.069e-08 1.071e-08 1.072e-08 1.073e-08 1.075e-08 1.078e-08 1.079e-08 1.083e-08 1.085e-08 1.089e-08 1.091e-08 1.091e-08 1.101e-08
 method/placement-encode	alloc_words	exact	223
@@ -106,8 +106,8 @@ gpfifo/entry-fill-into-bytes	alloc_words	exact	0
 gpfifo/entry-fill-into-bytes	wall_time	batch=1048576	n=20	9.091e-09	8.965e-09 8.987e-09 8.992e-09 8.994e-09 8.997e-09 9.002e-09 9.009e-09 9.027e-09 9.053e-09 9.062e-09 9.121e-09 9.150e-09 9.152e-09 9.164e-09 9.174e-09 9.197e-09 9.208e-09 9.210e-09 9.273e-09 9.276e-09
 launch/driver-parameters-into-bytes/ada	alloc_words	exact	0
 launch/driver-parameters-into-bytes/ada	wall_time	batch=1048576	n=20	8.878e-09	8.830e-09 8.844e-09 8.846e-09 8.850e-09 8.851e-09 8.866e-09 8.868e-09 8.873e-09 8.874e-09 8.876e-09 8.881e-09 8.893e-09 8.897e-09 8.898e-09 8.907e-09 8.911e-09 8.912e-09 8.940e-09 8.941e-09 8.961e-09
-launch/driver-parameters/ada	alloc_words	exact	46
-launch/driver-parameters/ada	wall_time	batch=524288	n=20	1.676e-08	1.648e-08 1.648e-08 1.648e-08 1.654e-08 1.666e-08 1.667e-08 1.668e-08 1.673e-08 1.673e-08 1.675e-08 1.678e-08 1.678e-08 1.684e-08 1.685e-08 1.769e-08 1.788e-08 1.790e-08 1.853e-08 1.860e-08 1.890e-08
+launch/driver-parameters/ada	alloc_words	exact	49
+launch/driver-parameters/ada	wall_time	batch=131072	n=20	4.369e-08	4.358e-08 4.358e-08 4.359e-08 4.359e-08 4.360e-08 4.361e-08 4.362e-08 4.362e-08 4.363e-08 4.368e-08 4.370e-08 4.392e-08 4.392e-08 4.394e-08 4.395e-08 4.395e-08 4.396e-08 4.399e-08 4.401e-08 4.421e-08
 launch/make/ada	alloc_words	exact	9
 launch/make/ada	wall_time	batch=524288	n=20	9.894e-09	9.812e-09 9.828e-09 9.873e-09 9.878e-09 9.881e-09 9.882e-09 9.882e-09 9.883e-09 9.883e-09 9.889e-09 9.900e-09 9.902e-09 9.920e-09 9.939e-09 9.942e-09 9.952e-09 9.953e-09 9.953e-09 9.989e-09 1.003e-08
 method/placement-encode	alloc_words	exact	223
