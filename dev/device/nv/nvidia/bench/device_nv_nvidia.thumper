@@ -1,0 +1,9 @@
+# thumper baseline v1
+# suite: device_nv_nvidia
+
+# machine: 6e4c99d648da0929
+# host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.1 · 64-bit · release
+
+open/0	alloc_words	exact	9619
+open/0	wall_time	batch=1	n=20	1.212e-02	1.173e-02 1.178e-02 1.180e-02 1.181e-02 1.189e-02 1.191e-02 1.195e-02 1.197e-02 1.202e-02 1.210e-02 1.213e-02 1.215e-02 1.228e-02 1.228e-02 1.230e-02 1.231e-02 1.237e-02 1.280e-02 1.316e-02 2.084e-02
