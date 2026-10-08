@@ -6,7 +6,7 @@ description:
   "Rig drives the host's CPU, Metal, CUDA, AMD and NVIDIA GPUs, files and remote machines as devices: their memory, the order of work across them, and the work itself. AMD and NVIDIA GPUs run through their kernel drivers or directly over PCI."
 maintainer: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 authors: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
-license: "ISC"
+license: "ISC AND MIT AND NCSA AND Apache-2.0 WITH LLVM-exception"
 tags: ["gpu" "device" "driver" "metal" "cuda" "amd" "nvidia"]
 homepage: "https://github.com/raven-ml/raven"
 doc: "https://raven-ml.dev/docs/"
