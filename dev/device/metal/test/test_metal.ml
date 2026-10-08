@@ -409,6 +409,8 @@ let icb_refusals () =
   let align = (Device_metal.capability t.d).align in
   let invalid ds = raises_match Exn.invalid_arg (fun () -> icb t args ds) in
   is_error (icb t args [| dispatch ~threads:(1025, 1, 1) fill |]);
+  is_error
+    (icb t args [| dispatch ~threads:(1 lsl 21, 1 lsl 21, 1 lsl 21) fill |]);
   invalid [| dispatch ~offset:args_bytes fill |];
   if align > 1 then invalid [| dispatch ~offset:(align / 2) fill |];
   invalid [| dispatch ~groups:(0, 1, 1) fill |];

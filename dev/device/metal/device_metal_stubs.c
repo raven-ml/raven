@@ -273,8 +273,14 @@ static void check(struct device_metal *d, id<MTLBuffer> args, value v_pipelines,
         "Device_metal_abi.icb: the argument buffer is another GPU's");
   for (mlsize_t i = 0; i < Wosize_val(v_pipelines); i++) {
     id<MTLComputePipelineState> p = (id)Long_val(Field(v_pipelines, i));
-    intnat offset = Long_val(Field(v_sizes, 7 * i)), threads = 1;
-    for (int k = 4; k < 7; k++) threads *= Long_val(Field(v_sizes, 7 * i + k));
+    intnat offset = Long_val(Field(v_sizes, 7 * i));
+    intnat tx = Long_val(Field(v_sizes, 7 * i + 4));
+    intnat ty = Long_val(Field(v_sizes, 7 * i + 5));
+    intnat tz = Long_val(Field(v_sizes, 7 * i + 6));
+    intnat max = (intnat)p.maxTotalThreadsPerThreadgroup;
+    /* The product of three sizes can overflow, so each is compared with
+       the bound divided by the ones before it; every size is at least 1. */
+    int too_many = tx > max || ty > max / tx || tz > max / (tx * ty);
     if (p.device != d->device)
       snprintf(m, sizeof m, "dispatch %d's pipeline is another GPU's", (int)i);
     else if (offset >= (intnat)args.length)
@@ -282,13 +288,11 @@ static void check(struct device_metal *d, id<MTLBuffer> args, value v_pipelines,
                "dispatch %d's offset %ld lies outside the buffer's %lu bytes",
                (int)i, (long)offset, (unsigned long)args.length);
     else {
-      if (why[0] == '\0' && threads > (intnat)p.maxTotalThreadsPerThreadgroup)
-        snprintf(
-            why, n,
-            "dispatch %d asks for %ld threads per threadgroup, expected at "
-            "most %lu",
-            (int)i, (long)threads,
-            (unsigned long)p.maxTotalThreadsPerThreadgroup);
+      if (why[0] == '\0' && too_many)
+        snprintf(why, n,
+                 "dispatch %d asks for %ldx%ldx%ld threads per threadgroup, "
+                 "expected at most %ld in all",
+                 (int)i, (long)tx, (long)ty, (long)tz, (long)max);
       continue;
     }
     char full[200];
