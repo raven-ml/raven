@@ -27,13 +27,18 @@ type t = private {
 }
 (** The type for GPUs whose registers the process reaches. *)
 
+val chip : int -> (family * int, string) result
+(** [chip boot42] is the family and implementation of the chip whose
+    [NV_PMC_BOOT_42] register holds [boot42], its architecture in bits 29:24 and
+    its implementation in bits 23:20. It is [Error] naming the chip if it is
+    none of GA102, GA103, GA104, GA106, GA107, AD102, AD103, AD104, AD106,
+    AD107, GB202, GB203, GB205, GB206 and GB207, the chips whose boot this
+    library lays out. *)
+
 val of_function : Device_pci.Function.t -> (t, string) result
 (** [of_function fn] maps [fn]'s register BAR and reads which chip it is
-    ([NV_PMC_BOOT_42]: architecture and implementation) and its memory size,
-    changing nothing on the GPU. It is [Error] naming the chip if it is none of
-    GA102, GA103, GA104, GA106, GA107, AD102, AD103, AD104, AD106, AD107, GB202,
-    GB203, GB205, GB206 and GB207, the chips whose boot this library lays out,
-    or if the BAR cannot be mapped. *)
+    ({!chip}) and its memory size, changing nothing on the GPU. It is [Error] as
+    {!chip}, or if the BAR cannot be mapped. *)
 
 val name : t -> string
 (** [name c] is the chip's name, such as ["AD102"]. *)

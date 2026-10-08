@@ -6,7 +6,6 @@
  (private_modules defs falcon gsp)
  (modules_without_implementation
   device_nv_pci
-  chip
   falcon
   gsp
   held
