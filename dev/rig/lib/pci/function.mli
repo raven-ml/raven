@@ -8,8 +8,8 @@
     A taken function gives the process what a kernel driver has of it: its
     configuration space, its BARs mapped as windows on its registers and memory,
     its interrupts and reset, and the system memory it reaches by DMA. Taking a
-    function changes nothing on its machine; only {!Gpus.detach} and
-    {!Gpus.attach} do.
+    function changes nothing on its machine but its legacy interrupts ({!take});
+    only {!Gpus.detach} and {!Gpus.attach} change more.
 
     A function of {!Machine.this} is taken in one of two ways, which follow from
     the machine's state and which {!addressing} reports:
@@ -44,7 +44,11 @@ type t
 val take : Machine.t -> string -> (t, string) result
 (** [take m bus] takes the function at [bus] on [m] for this process alone:
     behind an IOMMU, VFIO opens its group for one process at a time; taken
-    physically, [m] locks it. Taking a function changes nothing on [m].
+    physically, [m] locks it.
+
+    Taking a function changes one thing on [m]: taken physically without VFIO's
+    interrupts, its legacy interrupts (INTx) are turned off, since nothing
+    handles them, until {!release} turns them back as it found them.
 
     [Error why] if [bus] is no function of [m], if [m] failed, if a process,
     this one included, holds it, or if neither way is open:
@@ -61,16 +65,18 @@ val take : Machine.t -> string -> (t, string) result
 
 val release : t -> unit
 (** [release f] gives [f] back: it turns [f]'s bus mastering off, so that [f]
-    reaches system memory by DMA no more, unmaps its BAR windows, closes the
-    process's files for it and unlocks it. The memory allocated for [f] stays
-    allocated until {!free_dma}. Releasing it again does nothing.
+    reaches system memory by DMA no more, gives it its legacy interrupts back as
+    {!take} found them, unmaps its BAR windows, closes the process's files for
+    it and unlocks it. The memory allocated for [f] stays allocated until
+    {!free_dma}. Releasing it again does nothing.
 
     A function of {!Machine.this} the process still holds when it exits loses
     its bus mastering then, once the exit functions of the libraries above this
     one, such as its driver's, have run; a child of [fork] exiting changes
     nothing. A process killed by a signal stops nothing: behind an IOMMU, Linux
     then stops the function's DMA as it closes the process's files; taken
-    physically, the function keeps mastering the bus. *)
+    physically, the function keeps mastering the bus. Its legacy interrupts stay
+    off then, until a kernel driver enables the function. *)
 
 val machine : t -> Machine.t
 (** [machine f] is the machine [f] is on. *)

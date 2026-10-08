@@ -50,6 +50,7 @@ type taken = {
   bars : (int * int) option array; (* read once: a held function keeps them *)
   seek : Mutex.t; (* a seek and its read or write, one at a time *)
   interrupts : Unix.file_descr option; (* the eventfd VFIO signals *)
+  intx : int option; (* the INTx bit as found, if the take turned INTx off *)
   container : Vfio.t option; (* behind an IOMMU *)
   fds : Unix.file_descr list; (* every descriptor the take opened *)
 }
@@ -83,12 +84,20 @@ let set_config t off n x =
   ignore (config_io t Unix.single_write off b n : int);
   ignore (config t off n : int)
 
-(* A function's command register, and its bit that lets the function master the
-   bus, reaching system memory by DMA (PCI Express Base Specification,
+(* A function's command register, its bit that lets the function master the bus,
+   reaching system memory by DMA, and its bit that keeps it from signalling
+   legacy interrupts on its INTx line (PCI Express Base Specification,
    7.5.1.1.3). *)
 let command = 0x04
 let bus_master = 0x4
+let intx_disable = 0x400
 let stop_dma t = set_config t command 2 (config t command 2 land lnot bus_master)
+
+(* Turns INTx off: the bit as it was. *)
+let intx_off t =
+  let c = config t command 2 in
+  set_config t command 2 (c lor intx_disable);
+  c land intx_disable
 
 (* The functions processes hold physically, with the process that took each.
    VFIO stops a function's DMA when its files close, at release or at exit;
@@ -207,11 +216,17 @@ let unpin t a n =
   | None -> Sysmem.unpin a n
   | Some c -> Vfio.unmap_dma t.bus c a (round_page n)
 
+(* Release gives the function its INTx back as the take found it. *)
 let release t =
   (match t.container with
   | Some c -> Vfio.close c
   | None ->
       stop_dma t;
+      Option.iter
+        (fun bit ->
+          set_config t command 2
+            (config t command 2 land lnot intx_disable lor bit))
+        t.intx;
       forget t);
   List.iter Unix.close t.fds
 
@@ -249,12 +264,15 @@ let take_iommu files fds bus bars =
     bars;
     seek = Mutex.create ();
     interrupts = Some efd;
+    intx = None;
     container = Some c;
     fds = !fds;
   }
 
 (* Bound to vfio-pci, a function taken physically has its interrupts through
-   VFIO's no-IOMMU mode. *)
+   VFIO's no-IOMMU mode. Otherwise nothing handles them: the take turns its INTx
+   off, which bus mastering does not gate, so that a GPU left running signals no
+   line another device's handler shares. *)
 let take_physical files fds bus bars =
   let file = Sysfs.path files bus "config" in
   let config =
@@ -283,9 +301,13 @@ let take_physical files fds bus bars =
       bars;
       seek = Mutex.create ();
       interrupts;
+      intx = None;
       container = None;
       fds = !fds;
     }
+  in
+  let t =
+    if Option.is_some interrupts then t else { t with intx = Some (intx_off t) }
   in
   hold t;
   t

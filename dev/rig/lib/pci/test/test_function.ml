@@ -1319,6 +1319,10 @@ let command = 0x04
 let memory_space = 0x2
 let bus_master = 0x4
 
+(* The command register's bit that keeps the function from signalling legacy
+   interrupts, its INTx line (PCI Express Base Specification, 7.5.1.1.3). *)
+let intx_disable = 0x400
+
 (* [take_mastering m bus] takes [bus] on [m] and turns its bus mastering on. *)
 let take_mastering m bus =
   let f = require_ok (Function.take m bus) in
@@ -1331,8 +1335,44 @@ let test_release_stops_dma () =
   let m = Machine.at (Tree.make [ fn ]) in
   Function.release (take_mastering m fn.bus);
   let f = require_ok (Function.take m fn.bus) in
-  equal hex memory_space (Function.config16 f command);
+  equal hex (memory_space lor intx_disable) (Function.config16 f command);
   Function.release f
+
+(* The command register as the fixture's configuration file holds it. *)
+let config_file root bus =
+  Filename.concat root (strf "sys/bus/pci/devices/%s/config" bus)
+
+let command_in root bus =
+  let s =
+    In_channel.with_open_bin (config_file root bus) In_channel.input_all
+  in
+  String.get_uint16_le s command
+
+let set_command root bus v =
+  let fd = Unix.openfile (config_file root bus) [ O_WRONLY ] 0 in
+  Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+  let b = Bytes.create 2 in
+  Bytes.set_uint16_le b 0 v;
+  ignore (Unix.lseek fd command SEEK_SET);
+  ignore (Unix.write fd b 0 2)
+
+(* A function taken physically, with no interrupt route through VFIO, signals no
+   legacy interrupt while taken: nothing handles it, and bus mastering does not
+   gate it. Release gives its INTx back as it found it. *)
+let test_intx (_, before) =
+  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  let fn = Tree.gpu "0000:03:00.0" in
+  let root = Tree.make [ fn ] in
+  let m = Machine.at root in
+  set_command root fn.bus (memory_space lor before);
+  let f = require_ok (Function.take m fn.bus) in
+  equal ~msg:"taken" hex
+    (memory_space lor intx_disable)
+    (Function.config16 f command);
+  Function.release f;
+  equal ~msg:"released" hex (memory_space lor before) (command_in root fn.bus)
+
+let intx_states = [ ("INTx on", 0); ("INTx off", intx_disable) ]
 
 (* The test's executable, run with [exiting], is [exit_mastering]'s process. *)
 let exiting = "--exit-mastering"
@@ -1371,10 +1411,8 @@ let test_exit_stops_dma () =
   end;
   let code = match !status with Some (WEXITED c) -> c | _ -> -1 in
   equal ~msg:"its child's exit left it mastering the bus" int 0 code;
-  let f = require_ok (Function.take (Machine.at root) fn.bus) in
-  equal ~msg:"its own exit stopped it" hex memory_space
-    (Function.config16 f command);
-  Function.release f
+  equal ~msg:"its own exit stopped it" hex 0
+    (command_in root fn.bus land bus_master)
 
 (* Linux offers a prefetchable BAR combining through [resourceN_wc]: BAR 0 of
    the fixture's GPU is prefetchable, BAR 5 is not. *)
@@ -1424,6 +1462,10 @@ let tree_files =
         test_combining;
       test "a function taken physically stops mastering the bus when released"
         test_release_stops_dma;
+      cases
+        "a function taken physically has its INTx off while taken, as found \
+         after"
+        ~name:fst intx_states test_intx;
       test
         "a function taken physically stops mastering the bus when its process \
          exits, and a child that process forked exits without stopping it"
