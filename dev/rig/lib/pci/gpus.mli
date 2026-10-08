@@ -99,7 +99,8 @@ val open_ :
     A GPU a process that died left reaching memory, which it may still write
     ({!Function.alloc_dma}), is reset as {!reset} does before [f] runs, under
     the same take: its bus mastering off, the vendor's reset, and that memory
-    given back.
+    given back. An exception raised by the vendor's reset of such a GPU passes
+    through, the GPU given back and lost.
 
     [Error why] without calling [f] if [m] has no GPU [i], saying how many it
     has, if the process holds it already, if it was lost and not {!reset} since,

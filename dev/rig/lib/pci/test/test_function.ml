@@ -1738,6 +1738,21 @@ let fixture_gpus ?(reset = fun _ -> Ok ()) () =
     (fun (id : Machine.id) -> id.class_ lsr 16 = 0x03)
 
 (* A vendor whose resets are counted in [n], each answering [answer ()]. *)
+(* A fixture tree whose one GPU a child that allocated its memory left by dying
+   of SIGKILL: its root and bus. *)
+let left_by_death () =
+  let fn = Tree.gpu "0000:03:00.0" in
+  let root = Tree.make [ fn ] in
+  let va = free_base + (6 * mib) in
+  ignore (frames root va mib);
+  let pid, feed, said = holder "die" root fn.bus va in
+  Unix.close feed;
+  Unix.close said;
+  (match wait_exit pid with
+  | WSIGNALED s when s = Sys.sigkill -> ()
+  | _ -> fail "the process holding the function did not die by SIGKILL");
+  root
+
 let counted_gpus ?(answer = fun () -> Ok ()) n =
   fixture_gpus
     ~reset:(fun _ ->
@@ -1881,6 +1896,18 @@ let test_open_after_death () =
   equal ~msg:"its memory given back" (list string) [] (memory_files root);
   Gpus.release h
 
+(* A vendor's reset that raises for a GPU a process that died left passes
+   through, the GPU given back and lost. *)
+let test_open_after_death_raising () =
+  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  let root = left_by_death () in
+  let resets = Atomic.make 0 and m = Machine.at root in
+  let g = counted_gpus ~answer:(fun () -> raise Exit) resets in
+  raises Exit (fun () -> ignore (open_held g m));
+  contains ~msg:"lost until reset" ~sub:"was lost"
+    (require_error (open_held g m));
+  Function.release (require_ok (Function.take m "0000:03:00.0"))
+
 (* A GPU a process that died left whose reset fails is lost, its memory kept. *)
 let test_open_after_death_stuck () =
   if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
@@ -2009,6 +2036,10 @@ let system_memory =
         "an open whose reset of a GPU a process that died left fails leaves it \
          lost (SIGKILL in a child)"
         test_open_after_death_stuck;
+      test
+        "an open whose reset of a GPU a process that died left raises gives it \
+         back, lost (SIGKILL in a child)"
+        test_open_after_death_raising;
       test
         "a released function's memory stays, and a later take shares its page"
         test_released_block;

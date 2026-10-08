@@ -183,7 +183,12 @@ let open_ g m i ~at_exit f =
         | Ok () -> Ok ()
         | Error _ as e ->
             Function.release fn;
-            e)
+            e
+        | exception e ->
+            let bt = Printexc.get_raw_backtrace () in
+            Mutex.protect g.holds (fun () -> g.spent <- (m, bus) :: g.spent);
+            Function.release fn;
+            Printexc.raise_with_backtrace e bt)
     | Error _ as e ->
         Function.release fn;
         e

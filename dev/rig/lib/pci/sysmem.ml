@@ -553,11 +553,15 @@ let if_dead path f =
 
 (* A dead process's file without a list died being made, and holds no page. *)
 let reachers_on_disk path =
-  match
-    In_channel.with_open_text (path ^ reach_suffix) In_channel.input_lines
-  with
-  | lines -> Some (List.filter (( <> ) "") lines)
-  | exception Sys_error _ -> None
+  let list = path ^ reach_suffix in
+  match Unix.openfile list [ O_RDONLY; O_CLOEXEC ] 0 with
+  | exception Unix.Unix_error (ENOENT, _, _) -> None
+  | exception Unix.Unix_error (e, _, _) ->
+      Fail.fail "reading %s: %s" list (Unix.error_message e)
+  | fd ->
+      let ic = Unix.in_channel_of_descr fd in
+      Fun.protect ~finally:(fun () -> close_in_noerr ic) @@ fun () ->
+      Some (List.filter (( <> ) "") (In_channel.input_lines ic))
 
 (* The memory files under [root] other processes made, and the lists that
    outlived their files. [state] is held. *)
@@ -588,10 +592,12 @@ let forget ~root ~bus =
   leave ~root bus;
   let files, orphans = others ~root in
   List.iter unlink orphans;
+  (* A list that cannot be read keeps its file, which only leaks it. *)
   List.iter
     (fun path ->
       if_dead path (fun () ->
           match reachers_on_disk path with
+          | exception Fail.Failed why -> prerr_endline ("rig.pci: " ^ why)
           | None | Some [] -> delete path
           | Some buses when List.mem bus buses -> (
               match List.filter (( <> ) bus) buses with
