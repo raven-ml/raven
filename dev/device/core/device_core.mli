@@ -1029,10 +1029,13 @@ val open_ :
   (unit -> ('a, string) result) ->
   (t, string) result
 (** [open_ (module D) ~machine ~name make] is the open device named [name] on
-    [machine] (defaults to this one), the machine whose hardware [make] opens.
-    If no device of that name is open there, [make ()] opens it, under the
-    name's lock, so one name on one machine has one live device; its [Error] is
-    the result. Opens of other names go on meanwhile. A lost device's name opens
+    [machine] (defaults to this one), the machine whose hardware [make] opens. A
+    machine's name names one machine for the life of the process: a library that
+    reaches machines gives each one it makes a name of its own, so a second
+    connection to one address is another machine, with devices of its own. If no
+    device of that name is open there, [make ()] opens it, under the name's
+    lock, so one name on one machine has one live device; its [Error] is the
+    result. Opens of other names go on meanwhile. A lost device's name opens
     again once its driver's {!Driver.stop} returned.
 
     The result is [Error why] if the name's device is lost and its stop has not
