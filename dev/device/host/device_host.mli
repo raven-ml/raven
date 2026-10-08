@@ -214,6 +214,13 @@ val workers : unit -> int
     [com.apple.security.cs.allow-unsigned-executable-memory] (x86_64); without
     it [link] is an [Error]. With [com.apple.security.cs.single-jit], a process
     maps executable memory once, so its links after the first are [Error]s. With
-    [com.apple.security.cs.jit-write-allowlist], the system forbids the
-    per-thread write protection [link] lifts and ends the process at its first
-    link. *)
+    [com.apple.security.cs.jit-write-allowlist], the system writes code only
+    through functions that the executable, or a library it loaded at start-up,
+    lists. This library's C stubs list theirs, so links work where the stubs are
+    linked into the executable: in native programs, and in bytecode ones built
+    with [-custom] or [-output-complete-exe]. A bytecode program that loads the
+    stubs at run time, as [ocamlrun] does, ends at its first link. Link the
+    stubs into its executable, or give it the
+    [com.apple.security.cs.jit-write-allowlist-freeze-late] entitlement and call
+    [pthread_jit_write_freeze_callbacks_np] once the stubs are loaded, before
+    its first link. *)

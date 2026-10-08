@@ -159,10 +159,30 @@ value caml_device_host_base(value v_mapping) {
   return Val_long(m->base ? (intnat)m->base : m->error);
 }
 
+#if defined(__APPLE__) && defined(__aarch64__)
+/* On arm64 macOS the system lifts this thread's write protection around
+   write_code alone. Under the jit-write-allowlist entitlement it runs only
+   the callbacks an image listed when the process started, and ends the
+   process for any other. The system reads an image's list up to its first
+   NULL, so this is the one list of the image that links this file. */
+typedef struct {
+  char *to;
+  const char *from;
+  size_t n;
+} code_write;
+
+static int write_code(void *ctx) {
+  code_write *w = ctx;
+  memcpy(w->to, w->from, w->n);
+  return 0;
+}
+
+PTHREAD_JIT_WRITE_ALLOW_CALLBACKS_NP(write_code);
+#endif
+
 /* Writes [bytes] at the start of [mapping], makes it executable and
    synchronizes the instruction caches with it: 0, or the error. It is the
-   only writer of code memory. On arm64 macOS the write window is this
-   thread's and closes before it returns. */
+   only writer of code memory. */
 value caml_device_host_install(value v_mapping, value v_bytes) {
   mapping *m = Mapping_val(v_mapping);
   size_t n = caml_string_length(v_bytes);
@@ -174,9 +194,8 @@ value caml_device_host_install(value v_mapping, value v_bytes) {
   FlushInstructionCache(GetCurrentProcess(), m->base, n);
 #else
 #if defined(__APPLE__) && defined(__aarch64__)
-  pthread_jit_write_protect_np(0);
-  memcpy(m->base, Bytes_val(v_bytes), n);
-  pthread_jit_write_protect_np(1);
+  code_write w = {m->base, (const char *)Bytes_val(v_bytes), n};
+  pthread_jit_write_with_callback_np(write_code, &w);
 #else
   memcpy(m->base, Bytes_val(v_bytes), n);
   if (mprotect(m->base, m->size, PROT_READ | PROT_EXEC) != 0)
