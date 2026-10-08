@@ -1395,11 +1395,36 @@ let stopped_peer () =
   less float_exact ~than:(silence +. 1.5) took;
   equal (list string) [ "failed: stopped: silent for 10 s" ] (finish idle)
 
+(* A peer that beats but reads nothing: a rail whose ready count runs far ahead
+   fills the socket, and once a send has made no progress for 10 s the job fails
+   naming the peer. *)
+let deaf_peer () =
+  with_raw @@ fun j l p ->
+  let t = { Rig_remote_abi.src = 0; dst = 0; length = 1 lsl 16 } in
+  let e = Link.rail l ~id:1 ~send:[| t |] ~receive:[||] in
+  let beating = Atomic.make true in
+  let beats =
+    Thread.create
+      (fun () ->
+        while Atomic.get beating do
+          (try write p (frame k_beat "") with Unix.Unix_error _ -> ());
+          Thread.delay 0.5
+        done)
+      ()
+  in
+  e.ready 1_000_000_000;
+  let s, took = timed (fun () -> Link.wait j ~ms:15_000) in
+  Atomic.set beating false;
+  Thread.join beats;
+  equal state (Link.Failed "peer: read nothing for 10 s") s;
+  at_least float_exact ~than:(silence -. 1.) took
+
 let silences =
   group "silence"
     [
       slow "a stopped peer fails the job after 10 s, and every peer learns it"
         stopped_peer;
+      slow "a peer that reads nothing for 10 s fails the job, named" deaf_peer;
     ]
 
 (* Fork *)
@@ -1550,6 +1575,8 @@ let domains =
    raises. *)
 let () =
   Watchdog.start ();
+  (* A write to a peer that reset its connection fails with EPIPE. *)
+  Sys.set_signal Sys.sigpipe Sys.Signal_ignore;
   exit
     (run "rig_remote_proxy.link"
        [

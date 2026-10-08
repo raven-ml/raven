@@ -52,6 +52,7 @@ typedef WSAPOLLFD rig_remote_pollfd;
 #define close_sock closesocket
 #define SHUT_BOTH SD_BOTH
 #else
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
@@ -66,7 +67,7 @@ typedef struct pollfd rig_remote_pollfd;
 #define BEAT_NS 1000000000LL
 #define SILENCE_MS 10000
 
-/* The seconds a send may make no progress: the silence a peer fails on. */
+/* The seconds a send may wait for its peer to take a byte. */
 #define SEND_S 10
 
 /* The bytes a link's queue holds before its writers wait. One frame larger
@@ -83,8 +84,14 @@ typedef struct pollfd rig_remote_pollfd;
 #define COUNT_STRIDE 128
 
 
-/* What a receive answers besides 0 and a socket error. */
-enum { ENDED = -1, SILENT = -2, MALFORMED = -3, TOO_LARGE = -4 };
+/* What a send or a receive answers besides 0 and a socket error. */
+enum {
+  ENDED = -1,
+  SILENT = -2,
+  MALFORMED = -3,
+  TOO_LARGE = -4,
+  STALLED = -5,
+};
 
 /* Structures */
 
@@ -155,6 +162,52 @@ static _Atomic uint64_t *count(struct rail *r, int which) {
   return (_Atomic uint64_t *)(r->counts + COUNT_STRIDE * which);
 }
 
+/* Sockets
+
+   A link's socket does not block: each send and receive polls for at most
+   the time its peer has left, so a peer that stops reading or sending fails
+   the job after a bound the same on every system. */
+
+/* Whether the socket error [e] asks to try again. */
+static int again(int e) {
+#ifdef _WIN32
+  return e == WSAEWOULDBLOCK || e == WSAEINTR;
+#else
+  return e == EAGAIN || e == EWOULDBLOCK || e == EINTR;
+#endif
+}
+
+/* Sends the [n] bytes at [p] on [l]'s socket: 0, a socket error, or
+   [STALLED] once its peer took no byte for [SEND_S] seconds. Calls nothing
+   of the runtime. */
+static int send_all(struct rig_remote_link *l, const void *p, size_t n) {
+  const char *c = p;
+  int64_t stuck = 0; /* when the peer last took a byte, once a send waits */
+  while (n > 0) {
+    int chunk = n > (1u << 30) ? (1 << 30) : (int)n;
+    long k = (long)send(l->fd, c, chunk, RIG_REMOTE_NOSIGNAL);
+    if (k > 0) {
+      c += k;
+      n -= (size_t)k;
+      stuck = 0;
+      continue;
+    }
+    int e = k < 0 ? rig_remote_sock_error() : 0;
+    if (k < 0 && !again(e)) return e;
+    if (stuck == 0) stuck = now_ns();
+    int64_t left = SEND_S * 1000LL - (now_ns() - stuck) / 1000000;
+    if (left <= 0) return STALLED;
+    rig_remote_pollfd pf = {0};
+    pf.fd = l->fd;
+    pf.events = POLLOUT;
+    if (poll(&pf, 1, (int)left) < 0) {
+      e = rig_remote_sock_error();
+      if (!again(e)) return e;
+    }
+  }
+  return 0;
+}
+
 /* Reasons */
 
 static struct rig_remote_why failed_why = {14, "the job failed"};
@@ -214,7 +267,11 @@ static struct rig_remote_why *link_reason(struct rig_remote_link *l,
   case ENDED:
     return reason("%s: closed its connection%s", l->name, "");
   case SILENT:
-    return reason("%s: silent for 10 s%s", l->name, "");
+    snprintf(buf, sizeof buf, "%d", SILENCE_MS / 1000);
+    return reason("%s: silent for %s s", l->name, buf);
+  case STALLED:
+    snprintf(buf, sizeof buf, "%d", SEND_S);
+    return reason("%s: read nothing for %s s", l->name, buf);
   case MALFORMED:
     return reason("%s: a malformed frame%s", l->name, "");
   case TOO_LARGE:
@@ -261,7 +318,7 @@ static void send_abort(struct rig_remote_link *l,
   for (int i = 0; i < 4; i++)
     buf[HEADER + i] = (unsigned char)(why->n >> (8 * i));
   memcpy(buf + HEADER + 4, why->s, why->n);
-  (void)rig_remote_send_all(l->fd, buf, HEADER + 4 + why->n);
+  (void)send_all(l, buf, HEADER + 4 + why->n);
 }
 
 /* Sends the abort a failure owes [l], then shuts its socket down, so that
@@ -368,10 +425,9 @@ static int send_rails(struct rig_remote_link *l) {
       put_header(h, 16 + t[2], K_RAIL);
       rig_remote_put_u64(h + HEADER, r->id);
       rig_remote_put_u64(h + HEADER + 8, c);
-      err = rig_remote_send_all(l->fd, h, sizeof h);
+      err = send_all(l, h, sizeof h);
       if (err == 0)
-        err = rig_remote_send_all(l->fd, r->out + k * r->out_stride + t[0],
-                                  (size_t)t[2]);
+        err = send_all(l, r->out + k * r->out_stride + t[0], (size_t)t[2]);
       if (err == 0) {
         atomic_store_explicit(count(r, SENT), c, memory_order_release);
         r->posted = c;
@@ -406,7 +462,7 @@ static void *sender(void *arg) {
       l->sending = 1;
       pthread_cond_broadcast(&l->cv);
       pthread_mutex_unlock(&l->mu);
-      int err = rig_remote_send_all(l->fd, e->buf, e->n);
+      int err = send_all(l, e->buf, e->n);
       int closed = e->buf[8] == K_CLOSE;
       free(e->buf);
       free(e);
@@ -437,7 +493,7 @@ static void *sender(void *arg) {
       put_header(h, 0, K_BEAT);
       l->sending = 1;
       pthread_mutex_unlock(&l->mu);
-      int err = rig_remote_send_all(l->fd, h, sizeof h);
+      int err = send_all(l, h, sizeof h);
       pthread_mutex_lock(&l->mu);
       l->sending = 0;
       l->sent_ns = now_ns();
@@ -476,9 +532,7 @@ static int recv_all(struct rig_remote_link *l, unsigned char *p, uint64_t n,
     int k = poll(&pf, 1, (int)left);
     if (k < 0) {
       int e = rig_remote_sock_error();
-#ifndef _WIN32
-      if (e == EINTR) continue;
-#endif
+      if (again(e)) continue;
       return e;
     }
     if (k == 0) return SILENT;
@@ -487,9 +541,7 @@ static int recv_all(struct rig_remote_link *l, unsigned char *p, uint64_t n,
     if (m == 0) return ENDED;
     if (m < 0) {
       int e = rig_remote_sock_error();
-#ifndef _WIN32
-      if (e == EINTR || e == EAGAIN) continue;
-#endif
+      if (again(e)) continue;
       return e;
     }
     *last = now_ns();
@@ -928,15 +980,12 @@ value caml_rig_remote_link_make(value vj, value fd, value name, value peer) {
   int one = 1;
   (void)setsockopt(l->fd, IPPROTO_TCP, TCP_NODELAY, (const char *)&one,
                    sizeof one);
-  /* A send that makes no progress for [SEND_S] seconds fails: the peer
-     reads nothing, and a failure's abort waits for no longer. */
 #ifdef _WIN32
-  DWORD bound = SEND_S * 1000;
+  u_long on = 1;
+  (void)ioctlsocket(l->fd, FIONBIO, &on);
 #else
-  struct timeval bound = {SEND_S, 0};
+  (void)fcntl(l->fd, F_SETFL, fcntl(l->fd, F_GETFL) | O_NONBLOCK);
 #endif
-  (void)setsockopt(l->fd, SOL_SOCKET, SO_SNDTIMEO, (const char *)&bound,
-                   sizeof bound);
   if (rig_remote_forked(j)) {
     atomic_store(&l->failed, 1);
     l->fd_closed = 1;

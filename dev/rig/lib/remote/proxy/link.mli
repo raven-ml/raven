@@ -29,8 +29,8 @@
     - a link's stream breaks or ends without a close:
       ["NAME: closed its connection"], or the system's error after ["NAME: "];
     - no byte comes on a link for 10 seconds: ["NAME: silent for 10 s"];
-    - a send on a link makes no progress for 10 seconds: the system's error
-      after ["NAME: "];
+    - a link's peer takes no byte of a send for 10 seconds:
+      ["NAME: read nothing for 10 s"];
     - a frame is malformed: ["NAME: a malformed frame"];
     - a frame is larger than this process can hold:
       ["NAME: a frame larger than this process can hold"];
