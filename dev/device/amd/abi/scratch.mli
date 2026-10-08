@@ -22,7 +22,9 @@ val tmpring : Gpu.t -> int -> int
     of 256 bytes after, and the waves one die's scratch serves, every scratch
     slot of its compute units, divided among its shader engines after GFX9.
 
-    Raises [Invalid_argument] if [g]'s GC has no such register. *)
+    Raises [Invalid_argument] if [g]'s GC has no such register, or if [n] is
+    more than a lane's share of the most its 64-lane wave's field holds: 131056
+    bytes on GFX9, 131068 on GFX11 and 1048572 on GFX12. *)
 
 val descriptor : Gpu.t -> base:int -> int -> string
 (** [descriptor g ~base n] is the 16 bytes of the buffer descriptor of the

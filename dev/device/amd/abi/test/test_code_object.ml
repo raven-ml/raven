@@ -382,6 +382,31 @@ let refusals =
                  (fun (k : Code_object.kernel) -> k.group_segment)
                  (Code_object.kernel (read obj) "a"))
           else refused ~sub:"LDS" obj);
+      (* What WAVESIZE holds for a lane of a 64-lane wave, by the processor's
+         generation (LLVM's GCNSubtarget.h, getMaxWaveScratchSize). *)
+      cases
+        ~name:(fun (p, _, n, _) -> strf "%s, %d bytes" p n)
+        "a kernel's scratch past what its processor's waves hold is refused"
+        (List.concat_map
+           (fun (p, obj, most) ->
+             [ (p, obj, most, true); (p, obj, most + 1, false) ])
+           [
+             ("gfx1030", linked, 8191 * 1024 / 64);
+             ("gfx942", (fun () -> with_flags 0x4c), 8191 * 1024 / 64);
+             ("gfx1100", (fun () -> with_flags 0x41), 32767 * 256 / 64);
+             ( "gfx11-generic",
+               (fun () -> with_flags (generic 0x54)),
+               32767 * 256 / 64 );
+             ("gfx1201", (fun () -> with_flags 0x4e), 262143 * 256 / 64);
+           ])
+        (fun (_, obj, n, taken) ->
+          let obj = descriptor_field (obj ()) 4 n in
+          if taken then
+            equal (option int) (Some n)
+              (Option.map
+                 (fun (k : Code_object.kernel) -> k.private_segment)
+                 (Code_object.kernel (read obj) "a"))
+          else refused ~sub:"scratch" obj);
       (* The image starts at 0x300 and ends with .data's 3 bytes. *)
       cases
         ~name:(fun (n, _) -> strf "an image of 2^48%+d bytes" n)

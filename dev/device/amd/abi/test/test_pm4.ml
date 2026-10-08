@@ -568,6 +568,12 @@ let runs =
           else
             raises_match (Exn.invalid_arg ~substring:"Pm4.dispatch") (fun () ->
                 lds g n));
+      test "a kernel's scratch past what WAVESIZE holds is refused" (fun () ->
+          raises_match (Exn.invalid_arg ~substring:"Scratch.tmpring") (fun () ->
+              Pm4.dispatch gfx11
+                { kernel with private_segment = (32767 * 256 / 64) + 1 }
+                ~program:0 ~scratch:0 ~args:0 ~packet:0 ~threads:(1, 1, 1)
+                ~groups:(1, 1, 1) ()));
       cases ~name:string_of_int "a wave limit outside 10 bits is refused"
         [ 0; 1024 ] (fun n ->
           raises_match (Exn.invalid_arg ~substring:"waves_per_array") (fun () ->

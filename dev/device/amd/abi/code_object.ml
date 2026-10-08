@@ -44,6 +44,24 @@ let max_size = 1 lsl 48
    dispatch on any GPU sets it. *)
 let max_group_segment = 511 * 512
 
+(* The most scratch a lane takes on processor [p]: its share of a 64-lane wave's
+   most, what COMPUTE_TMPRING_SIZE.WAVESIZE holds, 18 bits of 256 bytes on
+   GFX12, 15 bits of 256 on GFX11 and 13 bits of 1024 before (LLVM's
+   GCNSubtarget.h, getMaxWaveScratchSize). [p]'s generation is the major version
+   LLVM's name starts with: "gfx1201", "gfx90a", "gfx11-generic". *)
+let max_private_segment p =
+  let n = String.length p in
+  let digits =
+    match String.index_opt p '-' with Some i -> i - 3 | None -> n - 5
+  in
+  let bits, unit =
+    match int_of_string (String.sub p 3 digits) with
+    | m when m >= 12 -> (18, 256)
+    | 11 -> (15, 256)
+    | _ -> (13, 1024)
+  in
+  ((1 lsl bits) - 1) * unit / 64
+
 (* The processor of [o]'s flags. A generic processor's code object carries the
    version of the processor's code, which LLVM numbers from 1, in a code object
    of version 6 or later. *)
@@ -127,7 +145,7 @@ let field s (off, width) =
 
 let kd_suffix = ".kd"
 
-let kernel_of o ~size ps name kd =
+let kernel_of o ~target ~most ~size ps name kd =
   if kd + K.sizeof > size then
     Error
       (strf "kernel %S's descriptor at %d lies past the image's end" name kd)
@@ -135,6 +153,7 @@ let kernel_of o ~size ps name kd =
     let d = read o ps kd K.sizeof in
     let entry = kd + field d K.kernel_code_entry_byte_offset in
     let group_segment = field d K.group_segment_fixed_size in
+    let private_segment = field d K.private_segment_fixed_size in
     let has flag = field d K.kernel_code_properties land flag <> 0 in
     if entry < 0 || entry >= size then
       Error (strf "kernel %S's code at %d lies outside the image" name entry)
@@ -142,13 +161,19 @@ let kernel_of o ~size ps name kd =
       Error
         (strf "kernel %S takes %d bytes of LDS, expected at most %d" name
            group_segment max_group_segment)
+    else if private_segment > most then
+      Error
+        (strf
+           "kernel %S takes %d bytes of scratch per lane, expected at most %d \
+            for %s"
+           name private_segment most target)
     else
       Ok
         {
           descriptor = kd;
           entry;
           group_segment;
-          private_segment = field d K.private_segment_fixed_size;
+          private_segment;
           kernarg_size = field d K.kernarg_size;
           rsrc1 = field d K.compute_pgm_rsrc1;
           rsrc2 = field d K.compute_pgm_rsrc2;
@@ -180,11 +205,12 @@ let descriptors (o : Device_elf.t) =
   |> List.stable_sort (fun (a, _) (b, _) -> String.compare a b)
   |> first
 
-let rec kernels o ~size ps acc = function
+let rec kernels o ~target ~most ~size ps acc = function
   | [] -> Ok (List.rev acc)
-  | (name, kd) :: rest ->
-      let* k = kernel_of o ~size ps name kd in
-      kernels o ~size ps ((name, k) :: acc) rest
+  | (name, kd) :: rest -> (
+      match kernel_of o ~target ~most ~size ps name kd with
+      | Ok k -> kernels o ~target ~most ~size ps ((name, k) :: acc) rest
+      | Error _ as e -> e)
 
 let of_string obj =
   let* o = Device_elf.of_string obj in
@@ -201,7 +227,8 @@ let of_string obj =
   in
   let size = (o.size + 3) / 4 * 4 in
   let* ps = patches ~size 0 [] o.relocations in
-  let* ks = kernels o ~size ps [] (descriptors o) in
+  let most = max_private_segment target in
+  let* ks = kernels o ~target ~most ~size ps [] (descriptors o) in
   Ok { elf = o; target; size; patches = ps; kernels = ks }
 
 let target co = co.target

@@ -39,6 +39,11 @@ let tmpring (g : Gpu.t) n =
         invalid_argf "Scratch.tmpring: %s has no COMPUTE_TMPRING_SIZE"
           (gc_name g)
   in
+  let lo, hi = List.assoc "wavesize" r.fields in
+  let most = ((1 lsl (hi - lo + 1)) - 1) * granule g / lanes in
+  if n > most then
+    invalid_argf "Scratch.tmpring: %d bytes per lane, expected at most %d on %s"
+      n most (gc_name g);
   (* [per_lane] is a multiple of [granule g / lanes], so a wave's scratch is
      whole granules and a die's buffer holds one for every slot of its compute
      units. *)

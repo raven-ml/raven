@@ -12,6 +12,7 @@ open Windtrap
 open Device_amd_abi
 module S = Device_amd_abi_support
 
+let strf = Printf.sprintf
 let timeout = S.timeout
 let gfx11 = S.gpu ~shader_engines:6 ~compute_units:48 (11, 0, 0)
 
@@ -129,12 +130,43 @@ let laws =
             (field "wavesize" w, field "waves" w));
     ]
 
+(* The most scratch a lane of a 64-lane wave takes, by generation: what
+   COMPUTE_TMPRING_SIZE.WAVESIZE holds, 13 bits of 1024 bytes on GFX9, 15 bits
+   of 256 on GFX11, 18 bits of 256 on GFX12 (LLVM's GCNSubtarget.h,
+   getMaxWaveScratchSize). *)
+let most_per_lane =
+  [
+    ((9, 4, 3), 8191 * 1024 / 64);
+    ((11, 0, 0), 32767 * 256 / 64);
+    ((12, 0, 0), 262143 * 256 / 64);
+  ]
+
+let wavesize g w =
+  let r = Option.get (Register.find g "regCOMPUTE_TMPRING_SIZE") in
+  let lo, hi = List.assoc "wavesize" r.fields in
+  (w lsr lo) land ((1 lsl (hi - lo + 1)) - 1)
+
 let sizes =
   group ~timeout "sizes"
     [
       test "a GC with no scratch ring register is refused" (fun () ->
           raises_match (Exn.invalid_arg ~substring:"Scratch.tmpring") (fun () ->
               Scratch.tmpring { gfx11 with gc = (10, 3, 0) } 0));
+      cases
+        ~name:(fun (gc, n, _) -> strf "GC %s, %d bytes" (S.version gc) n)
+        "a lane's scratch is taken up to what WAVESIZE holds"
+        (List.concat_map
+           (fun (gc, most) -> [ (gc, most, true); (gc, most + 1, false) ])
+           most_per_lane)
+        (fun (gc, n, taken) ->
+          let g = S.gpu gc in
+          if taken then
+            equal int
+              (n * 64 / match gc with 9, _, _ -> 1024 | _ -> 256)
+              (wavesize g (Scratch.tmpring g n))
+          else
+            raises_match (Exn.invalid_arg ~substring:"Scratch.tmpring")
+              (fun () -> Scratch.tmpring g n));
     ]
 
 (* Words 3's selects of x, y, z and w, and its added thread id. *)

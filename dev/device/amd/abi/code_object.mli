@@ -51,7 +51,9 @@ val of_string : string -> (t, string) result
       Records");
     - a kernel's descriptor, or the instruction it points to, lies outside the
       image, or its group segment is more than 511 * 512 bytes, the most every
-      GPU's LDS field holds;
+      GPU's LDS field holds, or its private segment is more than a lane's share
+      of the most scratch a 64-lane wave of its processor takes: 131056 bytes
+      before GFX11, 131068 on GFX11 and 1048572 on GFX12;
     - its image is longer than [2{^48}] bytes, which no GPU's virtual addresses
       reach. *)
 
