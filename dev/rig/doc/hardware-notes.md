@@ -627,8 +627,8 @@ and its suites set `protect_shadow_gap=0` in their own environment
 
 ## PCI functions on Linux
 
-These matter to a driver that takes a GPU from its kernel driver. Our hosts
-give no root, so none of them ran here.
+These matter to a driver that takes a GPU from its kernel driver. A note
+that a run as root on the R9700's host confirmed says so.
 
 ### Bus mastering outlives the process
 
@@ -653,7 +653,27 @@ lock. Read in source.
 Writing a size to `resourceN_resize` fails with `ENOSPC` when the bridge
 window above has no room for it, and a smaller size may then fit. Any other
 refusal (`EBUSY`, a bridge that cannot move, no privilege) holds for every
-size, and the BAR keeps its own (c19f11152). Read in source.
+size, and the BAR keeps its own (c19f11152). Read in source, and seen on the
+R9700: `Gpus.detach`, run as root, was refused every size from 32 GiB down to
+1 GiB, its bridges' prefetchable window lying below 4 GiB, and took 512 MiB,
+where amdgpu had left 256 MiB. The kernel moves the device's other BARs as it
+resizes: the doorbell BAR went from `0xa0000000` to `0xb0000000`.
+
+### Unbinding amdgpu leaves KFD refusing every process
+
+On Linux 6.12, after amdgpu is unbound from a GPU and bound again, amdgpu
+serves the render node, but every `open("/dev/kfd")` fails with `EINVAL`
+until the amdgpu module reloads. KFD refuses to create a process while its
+module-wide counter `kfd_locked` is above zero (`kfd_process.c:860`,
+`kfd_locked` at `kfd_device.c:46`). The unbind's `amdgpu_device_ip_fini_early`
+calls `amdgpu_amdkfd_suspend(adev, false)` (`amdgpu_device.c:3390`), whose
+`kgd2kfd_suspend` raises the counter (`kfd_device.c:1021`); the device is then
+freed without the matching resume, and nothing lowers it again. The kernel
+frees KFD's device first only for a surprise removal
+(`amdgpu_device.c:4756`). Seen on the R9700 after `Gpus.detach` then
+`Gpus.attach`, on Linux 6.12.111; source read at v6.12.111. Reloading amdgpu
+(`modprobe -r amdgpu`, then `modprobe amdgpu`) clears it, so a session that
+detaches an AMD GPU reloads the module before KFD's users come back.
 
 ## Round trips on these machines
 
