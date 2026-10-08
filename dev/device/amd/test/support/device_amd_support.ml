@@ -9,6 +9,11 @@ external lock : string -> bool = "device_amd_test_lock"
 external read : nativeint -> int -> string = "device_amd_test_read"
 external write : nativeint -> string -> unit = "device_amd_test_write"
 
+external fill_arg : nativeint -> nativeint -> int array -> int -> nativeint
+  = "device_amd_test_fill_arg"
+
+external fill_entry : unit -> nativeint = "device_amd_test_fill_entry"
+
 let gpu_lock = "DEVICE_AMD_TEST_GPU_LOCK"
 
 (* The lock is taken once and kept: [Some true] once taken. *)
@@ -61,3 +66,6 @@ let wait g v =
     end
   in
   loop ()
+
+let fill (c : Device_amd.capability) ws ~bytes =
+  (fill_entry (), fill_arg c.place c.segment ws bytes)

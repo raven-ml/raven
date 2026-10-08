@@ -1,3 +1,5 @@
 (tests
  (names test_amd)
- (libraries device_amd device_amd_abi device_amd_support windtrap))
+ (libraries device_amd device_amd_abi device_amd_support windtrap)
+ (deps
+  (glob_files fixtures/*)))

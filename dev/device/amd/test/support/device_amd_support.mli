@@ -32,3 +32,10 @@ val read : nativeint -> int -> string
 
 val write : nativeint -> string -> unit
 (** [write a s] writes [s] to host memory at [a]. *)
+
+val fill :
+  Device_amd.capability -> int array -> bytes:int -> nativeint * nativeint
+(** [fill c ws ~bytes] is a fill, as a C function and its argument, that places
+    the words [ws] with [c]'s [place], then takes [bytes] bytes of the argument
+    segment with [c]'s [segment] if [bytes > 0], and returns the first failure.
+    The argument lives as long as the process. *)
