@@ -382,11 +382,12 @@ value caml_device_core_set_answer(value v_d, value v_answer) {
 }
 
 /* Records [Stopped] in place of [Unknown] once [d]'s word reads its
-   submitted value: then no work of [d] runs. Answers whether this call
+   submitted value, read last through its driver for a word behind a
+   transport: then no work of [d] runs. Answers whether this call
    recorded it. Never in a forked child, which reads no word. */
 value caml_device_core_upgrade(value v_d) {
   struct dc_device *d = Device_val(v_d);
-  if (atomic_load(&forked) || d->word == NULL) return Val_false;
+  if (atomic_load(&forked)) return Val_false;
   if (atomic_load(&d->answer) != DC_UNKNOWN) return Val_false;
   if (dc_word(d) < atomic_load(&d->submitted)) return Val_false;
   int unknown = DC_UNKNOWN;

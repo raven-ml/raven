@@ -202,7 +202,7 @@ let stamps m = m.root.entry.stamps
 let region_info (Region { m; r; _ }) =
   let module D = (val m) in
   let address = Option.value ~default:(-1) (D.address r) in
-  let host = match D.host r with Some p -> Nativeint.to_int p | None -> -1 in
+  let host = Option.value ~default:(-1) (D.host r) in
   (address, D.handle r, host)
 
 (* Allocation events *)
@@ -228,18 +228,15 @@ let driver_alloc d kind n =
       | Some r -> Some (Region { m; h; r; rid }))
   | _ -> None
 
-(* After [d]'s loss, its memory is freed, unmapped and unloaded only once its
-   stop answered, and uncounted. *)
+(* After [d]'s loss, its memory and mappings are freed only once its stop
+   returned, and uncounted. *)
 let call d f =
   if Dev.is_lost d then try f () with _ -> () else Dev.counted d f
 
+(* Gives back a region [d] allocated or mapped. *)
 let free_region d (Region { m; h; r; _ }) =
   let module D = (val m) in
   call d (fun () -> D.free h r)
-
-let unmap_region d (Region { m; h; r; _ }) =
-  let module D = (val m) in
-  call d (fun () -> D.unmap h r)
 
 let unload d (Image { m; h; i }) =
   let module D = (val m) in
@@ -278,7 +275,8 @@ let free_entry (e : entry) =
 
 let cache_key (e : entry) = (e.bytes * 4) + e.memory
 
-(* Whether [d]'s loss is answered: its memory may be freed. *)
+(* Whether the lost [d] counts as stopped: its stop returned and its word reads
+   its last submitted value, so its memory may be freed. *)
 let answered d =
   Dev.is_lost d && (Dev.answer d = Dev.answer_stopped || Dev.upgrade d)
 
@@ -287,7 +285,7 @@ let holds_lock = Mutex.create ()
 let holds : (int * (unit -> unit)) list ref = ref []
 
 (* A hold's release is due once each of its points is reached and each of its
-   lost devices answered. *)
+   lost devices' stop returned. *)
 let hold_due (st, _) =
   for_all_points
     (fun p ->
@@ -359,8 +357,8 @@ let route d = function
       Mutex.protect holds_lock (fun () -> holds := (stamps, release) :: !holds)
 
 (* Takes what became due: retiring memory whose foreign uses are reached enters
-   the cache, or is freed if [d] is lost and answered; pending releases whose
-   value [d] reached. *)
+   the cache, or is freed if [d] is lost and counts as stopped; pending releases
+   whose value [d] reached. *)
 let due d =
   let lost = Dev.is_lost d in
   let free_lost = lost && answered d in
@@ -397,7 +395,7 @@ let due d =
 
 let run_pending d = function
   | Free e -> free_entry e
-  | Unmap r -> unmap_region d r
+  | Unmap r -> free_region d r
   | Unload (image, code) -> (
       unload d image;
       match code with
@@ -405,8 +403,8 @@ let run_pending d = function
       | Some e -> to_cache d e
       | None -> ())
 
-(* Lost devices whose answer was recorded and that still hold memory: every
-   drain drains them, and reads the word of those that answered [Unknown]. *)
+(* Lost devices whose stop returned and that still hold memory: every drain
+   drains them, and reads the word of those whose work may still run. *)
 let lost_devices : device list Atomic.t = Atomic.make []
 
 let rec change_lost f =
@@ -618,8 +616,7 @@ let map_host_range d start n =
   match d.kind with
   | Driver { m = dm; h; rid } -> (
       let module D = (val dm) in
-      let p = Nativeint.of_int start in
-      match Dev.counted d (fun () -> D.map_host h p n) with
+      match Dev.counted d (fun () -> D.map_host h start n) with
       | Some r -> Some (Region { m = dm; h; r; rid })
       | None -> None)
   | _ -> None

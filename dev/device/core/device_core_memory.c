@@ -126,24 +126,9 @@ value caml_device_core_memory_submit(value unit) {
   return caml_copy_nativeint((intnat)&memory_submit);
 }
 
-/* Calls the fill at [v_fill] with [v_arg] and [v_v], for a memory device
-   used alone: answers what it returns. */
-value caml_device_core_memory_fill(value v_fill, value v_arg, value v_v) {
-  int (*fill)(void *, void *, uint64_t) =
-      (int (*)(void *, void *, uint64_t))Nativeint_val(v_fill);
-  return Val_int(
-      fill(NULL, (void *)Nativeint_val(v_arg), (uint64_t)Long_val(v_v)));
-}
-
 value caml_device_core_load64(value v_addr) {
   return Val_long((intnat)atomic_load_explicit(
       (_Atomic uint64_t *)Long_val(v_addr), memory_order_acquire));
-}
-
-value caml_device_core_store64(value v_addr, value v) {
-  atomic_store_explicit((_Atomic uint64_t *)Long_val(v_addr),
-                        (uint64_t)Long_val(v), memory_order_release);
-  return Val_unit;
 }
 
 /* Copies the string [v_s] to the host address [v_dst]. */

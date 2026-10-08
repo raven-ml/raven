@@ -18,6 +18,7 @@ external nx_object : unit -> int = "device_core_test_nx_object"
 external polled_room : unit -> nativeint = "device_core_test_polled_room"
 external polled_submit : unit -> nativeint = "device_core_test_polled_submit"
 external polled_word : nativeint -> int = "device_core_test_polled_word"
+external polled_stop : nativeint -> unit = "device_core_test_polled_stop"
 
 external polled_set_word : nativeint -> int -> unit
   = "device_core_test_polled_set_word"
@@ -67,7 +68,6 @@ module Driver = struct
   (* A region the driver allocated has a kind; a mapping has none. *)
   type region = { at : int; kind : kind option; bytes : int; visible : bool }
   type image = region
-  type part = unit
   type capability = unit
 
   exception Fault of string
@@ -108,8 +108,9 @@ module Driver = struct
     | [] -> []
     | y :: l -> if y = x then l else y :: remove x l
 
+  (* A mapping's free is logged as ["unmap"]. *)
   let free d r =
-    note d "free";
+    note d (if r.kind = None then "unmap" else "free");
     let w = polled_word d.c in
     Mutex.protect d.lock (fun () ->
         d.frees <- (r.at, w) :: d.frees;
@@ -120,7 +121,7 @@ module Driver = struct
 
   let address r = Some r.at
   let handle r = Nativeint.of_int r.at
-  let host r = if r.visible then Some (Nativeint.of_int r.at) else None
+  let host r = if r.visible then Some r.at else None
   let peer d _ = d.peers
 
   let map_peer d _ r =
@@ -130,9 +131,7 @@ module Driver = struct
   let map_host d p n =
     counted d "map_host";
     Mutex.protect d.lock (fun () -> d.maps <- n :: d.maps);
-    Some { at = Nativeint.to_int p; kind = None; bytes = n; visible = true }
-
-  let unmap d _ = note d "unmap"
+    Some { at = p; kind = None; bytes = n; visible = true }
 
   let image d b =
     counted d "image";
@@ -185,13 +184,6 @@ module Driver = struct
   let completion d = if d.objects then `Object d.c else `Host
   let waits_on d c = List.mem c d.waits
   let blocks d = if d.may_block then `May_block else `Returns
-
-  let part _ ~queue:_ ?after:_ = function
-    | `Words _ -> invalid_arg "Polled.part: no words"
-    | _ -> ()
-
-  let room _ _ = `Fits
-  let submit _ ~v:_ ~waits:_ ~handles:_ _ = `Failed "Polled runs from C only"
   let room_entry = polled_room ()
   let submit_entry = polled_submit ()
   let self d = d.c
@@ -200,7 +192,7 @@ module Driver = struct
 
   let stop d =
     note d "stop";
-    d.answer
+    if d.answer = `Stopped then polled_stop d.c
 end
 
 module Polled = struct

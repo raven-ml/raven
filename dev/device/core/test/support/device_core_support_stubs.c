@@ -92,6 +92,7 @@ struct polled {
   int blocked; /* submits waiting for room */
   int nlast;   /* the waits of the last submit, the first [LAST] of them */
   struct nx_wait last[LAST];
+  uint64_t received; /* the last value a submit received */
 };
 
 #define Polled_val(v) ((struct polled *)Nativeint_val(v))
@@ -230,6 +231,7 @@ static int polled_submit(void *self, uint64_t v, const struct nx_wait *waits,
   (void)nhandles;
   atomic_fetch_add(&p->submits, 1);
   lock(&p->mu);
+  p->received = v;
   if (p->fail) {
     p->fail = 0;
     unlock(&p->mu);
@@ -279,6 +281,23 @@ value device_core_test_polled_submit(value unit) {
 
 value device_core_test_polled_word(value v_p) {
   return Val_long((intnat)atomic_load(&Polled_val(v_p)->word));
+}
+
+/* Stops the device: drops its queued work, which never runs, and writes the
+   last value it received into the word, as a stopped driver does. */
+value device_core_test_polled_stop(value v_p) {
+  struct polled *p = Polled_val(v_p);
+  lock(&p->mu);
+  for (int i = 0; i < p->n; i++) {
+    free(p->q[i].waits);
+    free(p->q[i].parts);
+  }
+  p->n = 0;
+  p->held = 0;
+  atomic_store_explicit(&p->word, p->received, memory_order_release);
+  cond_broadcast(&p->cv);
+  unlock(&p->mu);
+  return Val_unit;
 }
 
 /* Writes [v] into the word, as a stopped device's driver does. */

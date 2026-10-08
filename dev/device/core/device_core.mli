@@ -25,7 +25,7 @@
           │                         ▲                  ▲
           │ Submission.read/write   │ Hold.make        │ submit
           ▼                         │                  │
-      Submission.t ──────────── one device ── Driver.submit (C)
+      Submission.t ──────────── one device ── Driver.submit_entry (C)
     v}
 
     A program opens devices through their opener, allocates {!Buffer}s, and
@@ -488,13 +488,13 @@ module Hold : sig
       beyond memory, such as a driver object that work runs. It runs once, after
       the hold is unreachable and, for each device the hold has a stamp of, that
       stamp is reached and, if the device is lost, its driver's {!Driver.stop}
-      answered. It runs in a drain: a {!Buffer.create} or {!Buffer.copy} on a
-      device of the hold, the recording of a lost device's stop, or any drain
-      once the hold's devices are all lost and answered. It holds no lock of
-      this library, must not call it, and must not raise: an exception it raises
-      is raised again by the call whose drain ran it. It counts as a call in
-      flight on each device of the hold that is not lost, so no {!Driver.stop}
-      of those devices runs beside it.
+      returned. It runs in a drain: a {!Buffer.create} or {!Buffer.copy} on a
+      device of the hold, the return of a lost device's stop, or any drain once
+      the hold's devices are all lost and stopped. It holds no lock of this
+      library, must not call it, and must not raise: an exception it raises is
+      raised again by the call whose drain ran it. It counts as a call in flight
+      on each device of the hold that is not lost, so no {!Driver.stop} of those
+      devices runs beside it.
 
       Raises [Invalid_argument] if a buffer is dead, or its memory is already in
       a hold. *)
@@ -541,11 +541,11 @@ module Submission : sig
         ring_units : int;
         segment_bytes : int;
       }
-        (** The C function at [fill], called inside the driver's submit with the
-            queue's context, the host address of [arg] and the value
-            ({!Driver.part}). A ring driver's fill writes at most [ring_units]
-            entries and [segment_bytes] bytes of argument segment; a library
-            driver's declares [0] of each. *)
+        (** The C function at [fill], called inside the driver's hand-over with
+            the queue's context, the host address of [arg] and the value
+            ({!Driver.submit_entry}). A ring driver's fill writes at most
+            [ring_units] entries and [segment_bytes] bytes of argument segment;
+            a library driver's declares [0] of each. *)
     | Copy of { src : Buffer.t; dst : Buffer.t }
         (** A copy of [src]'s bytes into [dst], on a copy queue. *)
 
@@ -573,8 +573,8 @@ module Submission : sig
       [after] is not below its own, a queue is not one of [d]'s, a part's buffer
       is dead, a {!Copy}'s buffers differ in size or are not [d]'s memory, [d]'s
       driver runs no copies (it lists no copy queue, {!Driver.queues}), a part
-      names memory of a hold other than [hold], or [d]'s driver refuses a part's
-      words or fill ({!Driver.part}); and {!Lost} if [d] is lost. *)
+      names memory of a hold other than [hold]; and {!Lost} if [d] is lost. A
+      part [d]'s driver does not run is refused at {!submit}. *)
 
   val read : t -> int -> Buffer.t -> unit
   (** [read s i b] sets read slot [i] to [b]: the next submit waits for the last
@@ -608,12 +608,12 @@ val submit : Submission.t -> Point.t
       for it now, holding no lock.
     + Takes [d]'s {e turn}, the right to be [d]'s one submission between its
       room check and its hand-over, and asks [d]'s driver for room
-      ({!Driver.room}). Once the parts fit, it assigns [v], one more than
-      {!submitted}[ d], hands the work over ({!Driver.submit}), and raises the
-      stamps of the slots, the parts' buffers and the hold to [(d, v)]. While
-      they do not fit, it waits for [d]'s next value with the turn released, and
-      tries again. No OCaml code runs between the assignment and the turn's
-      release, so a value is handed over or [d] is lost.
+      ({!Driver.room_entry}). Once the parts fit, it assigns [v], one more than
+      {!submitted}[ d], hands the work over ({!Driver.submit_entry}), and raises
+      the stamps of the slots, the parts' buffers and the hold to [(d, v)].
+      While they do not fit, it waits for [d]'s next value with the turn
+      released, and tries again. No OCaml code runs between the assignment and
+      the turn's release, so a value is handed over or [d] is lost.
     + Clears [s]'s slots.
 
     It allocates nothing unless it waits.
@@ -811,13 +811,19 @@ end
     host learn that a prefix completed or that the device faulted
     ({e observable completion}).
 
-    {b Calls.} This library calls {!room} and {!submit} one at a time per
-    device, under the device's turn. Every other call it makes on a device that
-    is not lost is {e counted}: {!stop} waits for none of them. {!stop} runs
-    once, with no counted call inside, and after its answer only {!free},
-    {!unmap} and holds' releases follow. A {!Fault} from a counted call, and a
-    failed {!submit}, lose the device. {!address}, {!handle} and {!host} read a
-    region and call no library function. *)
+    {b Work} crosses in C only: this library calls the driver's C room check and
+    hand-over ({!room_entry}, {!submit_entry}), in the shapes [nx_edge.h]
+    states, one at a time per device, under the device's turn. A driver's own
+    OCaml forms of them, for a driver used alone, are no part of this signature.
+
+    {b Calls.} The facts ({!arch}, {!budget}, {!queues}, {!completion},
+    {!waits_on}, {!blocks}) and {!capability} are read once, when the device
+    opens: a {!Fault} there is the open's [Error]. Every other call this library
+    makes on a device that is not lost is {e counted}: {!stop} waits for none of
+    them. {!stop} runs once, with no counted call inside, and after it only
+    {!free}, {!signaled} and holds' releases follow. A {!Fault} from a counted
+    call, and a failed hand-over, lose the device. {!address}, {!handle} and
+    {!host} read a region and call no library function. *)
 module type Driver = sig
   type t
   (** The type for open devices of the driver. *)
@@ -827,9 +833,6 @@ module type Driver = sig
 
   type image
   (** The type for loaded code. *)
-
-  type part
-  (** The type for work on one queue. *)
 
   type capability
   (** The type for what compiled code needs from a device, declared by the
@@ -853,7 +856,7 @@ module type Driver = sig
   (** [queues d] is [d]'s queues, ["COMPUTE:0"] first, then ["COPY:i"] for its
       copy queues. A part's queue is its index in the list. A driver that lists
       no copy queue runs no {!Submission.Copy}: every region it allocates has a
-      host address, and the host copies it. *)
+      host address, and the host copies it. Read at open. *)
 
   val alloc : t -> [ `Device | `Pinned | `Mapped ] -> int -> region option
   (** [alloc d kind n] is [n] bytes of [d]'s memory of [kind]
@@ -861,8 +864,9 @@ module type Driver = sig
   *)
 
   val free : t -> region -> unit
-  (** [free d r] gives [r] back. The caller frees once no work of [d] that uses
-      [r] can run. *)
+  (** [free d r] gives back [r], a region {!alloc} made or a mapping {!map_peer}
+      or {!map_host} made. The caller frees once no work of [d] that uses [r]
+      can run; it may free after {!stop}. *)
 
   val address : region -> int option
   (** [address r] is [r]'s address as [d]'s work addresses it, or [None] for
@@ -872,7 +876,7 @@ module type Driver = sig
   (** [handle r] is the driver's object for [r]: a buffer object, a
       [CUdeviceptr], an [MTLBuffer]. *)
 
-  val host : region -> nativeint option
+  val host : region -> int option
   (** [host r] is the host address of [r]'s first byte, if the host addresses
       it. *)
 
@@ -884,14 +888,10 @@ module type Driver = sig
   (** [map_peer d d' r] is a region of [d] over [r], any memory of [d'], a
       device of the same driver, or [None]. Counted. *)
 
-  val map_host : t -> nativeint -> int -> region option
+  val map_host : t -> int -> int -> region option
   (** [map_host d p n] is a region of [d] over the [n] bytes of host memory at
       [p], or [None]. [p] starts a page and [n] is positive. The memory stays
-      mapped until {!unmap}. Counted. *)
-
-  val unmap : t -> region -> unit
-  (** [unmap d r] ends a {!map_peer} or {!map_host} mapping, once no work of [d]
-      that uses it can run. *)
+      mapped until the region is freed ({!free}). Counted. *)
 
   val image :
     t ->
@@ -923,93 +923,62 @@ module type Driver = sig
       transport. *)
 
   val signaled : t -> int
-  (** [signaled d] is the value in [d]'s word, read with acquire order. Counted.
-  *)
+  (** [signaled d] is the value in [d]'s word, read with acquire order. This
+      library calls it only for a word with no host address, behind a transport,
+      and may call it after {!stop}. Counted. *)
 
   val sleep : t -> seen:int -> still_ms:int -> unit
   (** [sleep d ~seen ~still_ms] returns once the word differs from [seen], at
       once if it already does, or after [still_ms] milliseconds. It blocks on
       the device's events and raises {!Fault} once the device faulted. It may
-      run beside {!submit}. Counted. *)
+      run beside the hand-over. Counted. *)
 
   val completion : t -> [ `Store | `Object of nativeint | `Host ]
   (** [completion d] is how [d]'s word advances: the queue stores it ([`Store]);
       an object of the driver's API completes, and the driver writes the word
-      ([`Object h], [h] fitting in 62 bits, as it crosses {!submit}'s waits as
-      an [int]); or the host writes it from the driver's handler or before
-      {!submit} returns ([`Host]). *)
+      ([`Object h], [h] fitting in 62 bits, as it crosses the hand-over's waits
+      as an integer); or the host writes it from the driver's handler or before
+      the hand-over returns ([`Host]). Read at open. *)
 
   val waits_on : t -> [ `Store | `Object | `Host ] -> bool
   (** [waits_on d c] is [true] iff [d]'s queues wait for a producer of
-      completion [c] in the queue. *)
+      completion [c] in the queue. Read at open. *)
 
   val blocks : t -> [ `Returns | `May_block ]
-  (** [blocks d] is [`Returns] if {!room} and {!submit} never block, and
-      [`May_block] if they may block on [d]'s own earlier work, on its own
-      transfers or on its library's back-pressure. *)
-
-  val part :
-    t ->
-    queue:string ->
-    ?after:int array ->
-    [ `Words of int array
-    | `Fill of nativeint * nativeint * int * int
-    | `Copy of (region * int) * (region * int) * int ] ->
-    part
-  (** [part d ~queue ~after w] is the work [w] on [queue]: words, a fill (its
-      function, argument, ring units and segment bytes), or a copy
-      [((dst, o), (src, o'), n)] of the [n] bytes at offset [o'] of [src] to
-      offset [o] of [dst]. [after] lists earlier parts of its submission.
-
-      Raises [Invalid_argument] for a part [d] does not run. *)
-
-  val room : t -> part array -> [ `Fits | `Later | `Never ]
-  (** [room d ps] is [`Fits] if [ps] fit [d]'s queues now, [`Later] while one of
-      [d]'s values is unreached, and [`Never] if they exceed [d]'s empty queues
-      or name work [d] does not run. *)
-
-  val submit :
-    t ->
-    v:int ->
-    waits:([ `Word | `Equal | `Object ] * int * int) array ->
-    handles:nativeint array ->
-    part array ->
-    [ `Ok | `Failed of string ]
-  (** [submit d ~v ~waits ~handles ps] hands [ps] to [d] as the work of [v], the
-      value after the last one it received, after [waits] and [d]'s earlier
-      work, and writes [v] into the word once that work completed. When it
-      returns nothing of [v] is left uncommitted. [`Failed why] loses [d].
-
-      Each wait [(k, at, w)] holds the work back until the 64-bit word at the
-      address [at] holds at least [w] ([`Word]) or exactly [w] ([`Equal]), or
-      the object [at] of the driver reaches [w] ([`Object]). [handles] is the
-      {!handle} of every region the submission's parts and slots name, each
-      once. *)
+  (** [blocks d] is [`Returns] if the C room check and hand-over never block,
+      and [`May_block] if they may block on [d]'s own earlier work, on its own
+      transfers or on its library's back-pressure. Read at open. *)
 
   val room_entry : nativeint
-  (** [room_entry] is the address of {!room} for C, in the shape [nx_room_fn] of
-      [nx_edge.h]. *)
+  (** [room_entry] is the address of [d]'s room check, in the shape [nx_room_fn]
+      of [nx_edge.h]: whether parts fit [d]'s queues now, once one of [d]'s
+      values is reached, or never, for parts that exceed [d]'s empty queues or
+      name work [d] does not run. *)
 
   val submit_entry : nativeint
-  (** [submit_entry] is the address of {!submit} for C, in the shape
-      [nx_submit_fn] of [nx_edge.h]. It calls no function of the OCaml runtime
-      and reads no OCaml value. *)
+  (** [submit_entry] is the address of [d]'s hand-over, in the shape
+      [nx_submit_fn] of [nx_edge.h]: it hands the parts to [d] as the work of
+      the value after the last one it received, after the waits and [d]'s
+      earlier work, and writes the value into the word once that work completed.
+      When it returns nothing of the value is left uncommitted; a failure loses
+      [d]. It calls no function of the OCaml runtime and reads no OCaml value.
+  *)
 
   val self : t -> nativeint
   (** [self d] is the [self] argument of the C entries for [d], valid while the
       process runs. *)
 
   val capability : t -> capability
-  (** [capability d] is [d]'s record, filled when [d] opened. Counted. *)
+  (** [capability d] is [d]'s record, filled when [d] opened. Read at open. *)
 
   val capability_key : capability Type.Id.t
   (** [capability_key] is the key the driver's ABI library declares. *)
 
-  val stop : t -> [ `Stopped | `Unknown ]
-  (** [stop d] stops [d] once it is lost, never waiting. [`Stopped]: no work of
-      [d] runs, and the word holds the last value {!submit} received.
-      [`Unknown]: work may still run, and the driver writes that value into the
-      word, with release order, once none does. *)
+  val stop : t -> unit
+  (** [stop d] stops [d] once it is lost, never waiting. The driver writes the
+      last value its hand-over received into the word, with release order, once
+      no work of [d] runs: before [stop] returns if none does. This library
+      counts [d] as stopped once the word reads that value. *)
 end
 
 (** Devices of memory reached by reading and writing.
@@ -1064,10 +1033,10 @@ val open_ :
     If no device of that name is open there, [make ()] opens it, under the
     name's lock, so one name on one machine has one live device; its [Error] is
     the result. Opens of other names go on meanwhile. A lost device's name opens
-    again once its driver's {!Driver.stop} answered.
+    again once its driver's {!Driver.stop} returned.
 
     The result is [Error why] if the name's device is lost and its stop has not
-    answered, or if the process opened 65,535 devices already: device indices
+    returned, or if the process opened 65,535 devices already: device indices
     are never reused.
 
     Raises [Invalid_argument] if the open device of that name is another

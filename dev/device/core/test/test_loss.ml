@@ -123,10 +123,11 @@ let test_two_sleeps () =
 
 (* A lost device still answers its facts: its name, architecture, budget and
    capability as before, the last value handed over and the last value its word
-   reached. *)
+   reached. Its work may still run, so its stop leaves the word where it
+   stood. *)
 let test_facts transport () =
   let d, p =
-    P.open_ ~transport
+    P.open_ ~transport ~answer:`Unknown
       (if transport then "loss:facts-transport" else "loss:facts")
   in
   C.set_budget d 4096;

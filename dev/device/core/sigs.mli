@@ -9,7 +9,6 @@ module type Driver = sig
   type t
   type region
   type image
-  type part
   type capability
 
   exception Fault of string
@@ -22,11 +21,10 @@ module type Driver = sig
   val free : t -> region -> unit
   val address : region -> int option
   val handle : region -> nativeint
-  val host : region -> nativeint option
+  val host : region -> int option
   val peer : t -> t -> bool
   val map_peer : t -> t -> region -> region option
-  val map_host : t -> nativeint -> int -> region option
-  val unmap : t -> region -> unit
+  val map_host : t -> int -> int -> region option
 
   val image :
     t ->
@@ -43,32 +41,12 @@ module type Driver = sig
   val completion : t -> [ `Store | `Object of nativeint | `Host ]
   val waits_on : t -> [ `Store | `Object | `Host ] -> bool
   val blocks : t -> [ `Returns | `May_block ]
-
-  val part :
-    t ->
-    queue:string ->
-    ?after:int array ->
-    [ `Words of int array
-    | `Fill of nativeint * nativeint * int * int
-    | `Copy of (region * int) * (region * int) * int ] ->
-    part
-
-  val room : t -> part array -> [ `Fits | `Later | `Never ]
-
-  val submit :
-    t ->
-    v:int ->
-    waits:([ `Word | `Equal | `Object ] * int * int) array ->
-    handles:nativeint array ->
-    part array ->
-    [ `Ok | `Failed of string ]
-
   val room_entry : nativeint
   val submit_entry : nativeint
   val self : t -> nativeint
   val capability : t -> capability
   val capability_key : capability Type.Id.t
-  val stop : t -> [ `Stopped | `Unknown ]
+  val stop : t -> unit
 end
 
 module type Io = sig

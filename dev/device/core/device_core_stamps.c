@@ -370,7 +370,7 @@ value caml_device_core_sub_point(value v_s, value v_i) {
 }
 
 /* Adds an in-queue wait on the producer [v_producer]'s value [v_value], at
-   [v_at] by the kind [v_kind] (NX_WORD, NX_EQUAL, NX_OBJECT). */
+   [v_at] by the kind [v_kind] (NX_WORD, NX_OBJECT). */
 value caml_device_core_sub_wait(value v_s, value v_producer, value v_at,
                                 value v_value, value v_kind) {
   struct dc_sub *s = Sub_val(v_s);

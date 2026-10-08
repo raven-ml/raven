@@ -136,7 +136,6 @@ let lost d = if is_lost d then Some (c_why d.c) else None
 let raise_lost d = raise (Lost (d, c_why d.c))
 let submitted d = if d.c = 0 then 0 else c_submitted d.c
 let answer d = if d.c = 0 then 0 else c_answer d.c
-let upgrade d = d.c <> 0 && c_upgrade d.c
 let copies d = Array.exists (String.starts_with ~prefix:"COPY:") d.queues
 let machines : (string, device) Hashtbl.t = Hashtbl.create 4
 let table_lock = Mutex.create ()
@@ -157,22 +156,35 @@ let host_of d =
    [d]'s answer makes due ([answered], set by the memory module). *)
 let answered : (device -> unit) ref = ref ignore
 
+(* Reads a lost device's word behind a transport through its driver, which may
+   be called after [stop], so the core's copy of it moves on. *)
+let refresh d =
+  match d.kind with
+  | Driver { m; h; _ } when d.word = 0 -> (
+      let module D = (val m) in
+      match D.signaled h with w -> c_set_seen d.c w | exception _ -> ())
+  | _ -> ()
+
+let upgrade d =
+  d.c <> 0
+  && begin
+    refresh d;
+    c_upgrade d.c
+  end
+
 let stop d =
-  let answer =
-    match d.kind with
-    | Driver { m; h; _ } -> (
-        let module D = (val m) in
-        match D.stop h with
-        | `Stopped -> answer_stopped
-        | `Unknown -> answer_unknown
-        | exception _ -> answer_unknown)
-    | Io { m; h } ->
-        let module I = (val m) in
-        (try I.stop h with _ -> ());
-        answer_stopped
-    | Host -> answer_stopped
-  in
-  c_set_answer d.c answer;
+  (match d.kind with
+  | Driver { m; h; _ } -> (
+      let module D = (val m) in
+      try D.stop h with _ -> ())
+  | Io { m; h } -> (
+      let module I = (val m) in
+      try I.stop h with _ -> ())
+  | Host -> ());
+  c_set_answer d.c answer_unknown;
+  (match d.kind with
+  | Driver _ -> ignore (upgrade d)
+  | _ -> c_set_answer d.c answer_stopped);
   !answered d
 
 let stop_claimed indices =
@@ -374,7 +386,9 @@ let driver_device (type a) (module D : Sigs.Driver with type t = a) (h : a)
   let m : (a, D.region, D.image) dm = (module D) in
   let rid : D.region Type.Id.t = Type.Id.make () in
   let word_region = D.word h in
-  let word = match D.host word_region with Some p -> p | None -> 0n in
+  let word =
+    match D.host word_region with Some p -> Nativeint.of_int p | None -> 0n
+  in
   let c =
     c_new index name
       (D.blocks h = `May_block)

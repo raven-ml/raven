@@ -32,9 +32,8 @@ enum { NX_FITS, NX_LATER, NX_NEVER };
 enum { NX_OK, NX_FAILED };
 
 /* A wait's kinds: the 64-bit word at the mapped address [at] holds at
-   least [value]; it holds exactly [value] (the driver's own words); [at]
-   is an object of the driver that reaches [value]. */
-enum { NX_WORD, NX_EQUAL, NX_OBJECT };
+   least [value]; [at] is an object of the driver that reaches [value]. */
+enum { NX_WORD, NX_OBJECT };
 
 struct nx_wait {
   uint64_t at, value;

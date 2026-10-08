@@ -106,21 +106,6 @@ let host_address fn b =
     invalid_argf "Device_core.%s: the buffer is not host memory" fn;
   b.mem.host + b.offset
 
-(* Asks [d]'s driver whether it runs [w] on [queue], for words and fills. *)
-let check_part d ~queue ~after
-    (w : [ `Words of int array | `Fill of nativeint * nativeint * int * int ]) =
-  match d.kind with
-  | Driver { m; h; _ } ->
-      let module D = (val m) in
-      let w =
-        (w
-          :> [ `Words of int array
-             | `Fill of nativeint * nativeint * int * int
-             | `Copy of (D.region * int) * (D.region * int) * int ])
-      in
-      ignore (Dev.counted d (fun () -> D.part h ~queue ~after w))
-  | _ -> ()
-
 let make ?hold ~reads ~writes ~waits d parts =
   let fn = "Submission.make" in
   if reads < 0 || writes < 0 || waits < 0 then
@@ -149,16 +134,10 @@ let make ?hold ~reads ~writes ~waits d parts =
       | Words w ->
           check_buffer w;
           ignore (host_address fn w);
-          check_part d ~queue:p.queue ~after:p.after (`Words [||]);
           incr nfixed
       | Fill f ->
           check_buffer f.arg;
-          check_part d ~queue:p.queue ~after:p.after
-            (`Fill
-               ( f.fill,
-                 Nativeint.of_int (host_address fn f.arg),
-                 f.ring_units,
-                 f.segment_bytes ));
+          ignore (host_address fn f.arg);
           incr nfixed
       | Copy { src; dst } ->
           (* A driver that lists no copy queue runs no copy. *)
@@ -241,7 +220,7 @@ let clear s =
 (* In-queue waits *)
 
 let nx_word = 0
-let nx_object = 2
+let nx_object = 1
 let host_wait = -1
 
 (* How [d] waits for [p]'s values, decided once per pair: [host_wait], or the

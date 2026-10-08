@@ -39,7 +39,9 @@ module Polled : sig
       Its word advances as [completion] says (defaults to [`Host]): with
       [`Object], it is the driver's object, its handle the word's address. Its
       queue waits for producers of the completions [waits_on] lists (defaults to
-      none). Its stop answers [answer] (defaults to [`Stopped]). *)
+      none). With [answer] [`Stopped] (the default) its stop drops its queued
+      work and writes the last value it received into its word; with [`Unknown]
+      it leaves both, as a driver whose work may still run. *)
 
   val open_ :
     ?capacity:int ->
@@ -76,7 +78,8 @@ module Polled : sig
 
   val log : t -> string list
   (** [log d] is [d]'s driver calls, oldest first: ["alloc"], ["free"],
-      ["map_host"], ["unmap"], ["sleep"], ["stop"], ["image"], ["unload"]. *)
+      ["map_host"], ["unmap"] (a mapping's free), ["sleep"], ["stop"],
+      ["image"], ["unload"]. *)
 
   val frees : t -> (int * int) list
   (** [frees d] is the address of each region [d] freed, oldest first, with
