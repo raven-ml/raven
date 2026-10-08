@@ -30,8 +30,14 @@ let rec take refused =
         (strf "%s: still held after %d s, by %s" gpu_lock gpu_wait (holder ()))
   | errno -> failwith (strf "%s: errno %d" gpu_lock errno)
 
+(* Whether the process that started this one holds the lock for it. *)
+let held_outside () = Sys.getenv_opt "RIG_GPU_LOCK_HELD" <> None
+
 let hold_gpu () =
-  if Sys.file_exists "/System/Library/Frameworks/Metal.framework" then take 0
+  if
+    (not (held_outside ()))
+    && Sys.file_exists "/System/Library/Frameworks/Metal.framework"
+  then take 0
 
 (* A device's ring, by hand *)
 

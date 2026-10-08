@@ -49,7 +49,11 @@ let rec take refused =
         (strf "%s: still held after %d s, by %s" gpu_lock gpu_wait (holder ()))
   | errno -> failwith (strf "%s: errno %d" gpu_lock errno)
 
-let hold_gpu () = if Rig_amd_amdgpu.count () > 0 then take 0
+(* Whether the process that started this one holds the lock for it. *)
+let held_outside () = Sys.getenv_opt "RIG_GPU_LOCK_HELD" <> None
+
+let hold_gpu () =
+  if (not (held_outside ())) && Rig_amd_amdgpu.count () > 0 then take 0
 
 (* The device gpu opened and rig's device over it, until a test stops it or rig
    loses it: one a failed test left open is stopped by the next gpu. Each open

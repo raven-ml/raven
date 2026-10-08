@@ -499,6 +499,10 @@ let rec take refused =
         (strf "%s: still held after %d s, by %s" gpu_lock gpu_wait (holder ()))
   | errno -> failwith (strf "%s: errno %d" gpu_lock errno)
 
+(* Whether the process that started this one holds the lock for it, as a timing
+   run takes it before the host's timing locks. *)
+let held_outside () = Sys.getenv_opt "RIG_GPU_LOCK_HELD" <> None
+
 let () =
-  if gpus <> [] then take 0;
+  if gpus <> [] && not (held_outside ()) then take 0;
   exit @@ Thumper.run "rig-gpu" (if gpus = [] then [] else host_rows :: gpus)

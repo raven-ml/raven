@@ -69,7 +69,9 @@ val hold_gpu : unit -> unit
     suite that acts on a GPU of the machine locks; its holder writes its
     executable and process id into it. A suite calls [hold_gpu] before
     [Windtrap.run], so that the wait counts against no test's timeout, and a
-    test that takes a GPU calls it again.
+    test that takes a GPU calls it again. It returns at once, taking nothing, if the variable
+    [RIG_GPU_LOCK_HELD] is set: the process that started this one holds the
+    lock for it, as a timing run takes it before the host's timing locks.
 
     Raises [Failure] naming the holder if another process still holds the lock
     after 300 s, or naming the errno if the file cannot be locked. *)

@@ -85,7 +85,11 @@ let rec take refused =
         (strf "%s: still held after %d s, by %s" gpu_lock gpu_wait (holder ()))
   | errno -> failwith (strf "%s: errno %d" gpu_lock errno)
 
-let hold_gpu () = if on_linux && this_gpus () <> [] then take 0
+(* Whether the process that started this one holds the lock for it. *)
+let held_outside () = Sys.getenv_opt "RIG_GPU_LOCK_HELD" <> None
+
+let hold_gpu () =
+  if (not (held_outside ())) && on_linux && this_gpus () <> [] then take 0
 
 (* Process memory and far machines *)
 

@@ -271,8 +271,24 @@ which a bench must not start before it forks. The process holds the lock
 until it exits; the holder writes its executable and process id into the
 file. A process still waiting after 300 s fails, naming the holder. Under
 `dune runtest` the GPU suites of a machine therefore run one after another.
-The benches' timing locks on kimchi and nonnormal are separate and taken
-outside, around a bench run.
+
+One lock order holds everywhere: the GPU lock first, then the hosts' timing
+locks, so nothing waits for the GPU while it holds a timing lock. A timing
+run of a GPU bench on kimchi or nonnormal takes the GPU lock in the shell,
+then the timing locks, and tells the bench it holds it with
+`RIG_GPU_LOCK_HELD=1`, which makes `hold_gpu` and the core's GPU bench
+return at once:
+
+```
+flock -w 1800 /tmp/raven-rig-gpu.lock env RIG_GPU_LOCK_HELD=1 \
+  flock -w 1800 ~/benchwork/TIMING.lock flock -w 1800 ~/benchwork/TIMING-GPU.lock \
+  taskset -c 0-5 ./bench_gpu.exe ...          # kimchi
+flock -w 1800 /tmp/raven-rig-gpu.lock env RIG_GPU_LOCK_HELD=1 \
+  flock -w 1800 ~/wt/TIMING-AMD.lock ./bench_gpu.exe ...   # nonnormal
+```
+
+The variable says the process that started the bench holds the lock for it;
+set otherwise, nothing guards the GPU.
 
 | Host | Hardware | What only it runs |
 |---|---|---|
