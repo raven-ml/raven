@@ -129,6 +129,15 @@ let check_buffer fn hold_stamps b =
   if e.held && e.stamps <> hold_stamps then
     invalid_argf "Rig.%s: a part names memory of another hold" fn
 
+(* Hands the C form [c] its [!k]th fixed buffer [b], and counts it. Only [d]'s
+   own memory names a handle of its driver ([rig_edge.h]'s [handles]):
+   another's, such as this process's memory a copy on another machine's device
+   names, keeps its stamps alone. *)
+let fix c k d b write =
+  let handle = if b.mem.dev == d then b.mem.handle else 0n in
+  sub_fixed c !k (entry_of b).stamps handle write;
+  incr k
+
 let build named ~reads ~writes d parts =
   let fn = "Submission.make" in
   if reads < 0 || writes < 0 then invalid_argf "Rig.%s: a count is negative" fn;
@@ -175,14 +184,6 @@ let build named ~reads ~writes d parts =
   (* The hold keeps its stamps while the submission holds it. *)
   if hold_stamps <> 0 then sub_hold c hold_stamps;
   let at = ref 0 and k = ref 0 in
-  (* Only [d]'s own memory names a handle of its driver ([rig_edge.h]'s
-     [handles]): another's, such as this process's memory a copy on another
-     machine's device names, keeps its stamps alone. *)
-  let fixed b write =
-    let handle = if b.mem.dev == d then b.mem.handle else 0n in
-    sub_fixed c !k (entry_of b).stamps handle write;
-    incr k
-  in
   Array.iteri
     (fun i p ->
       sub_part c i (queue_index d fn p.queue) p.after !at;
@@ -190,11 +191,11 @@ let build named ~reads ~writes d parts =
       match p.work with
       | Words w ->
           sub_words c i (host_address fn w) (Buffer.length w / 4);
-          fixed w false
+          fix c k d w false
       | Fill f ->
           sub_fill c i f.fill (host_address fn f.arg) f.ring_units
             f.segment_bytes;
-          fixed f.arg false
+          fix c k d f.arg false
       | Copy { src; dst } ->
           let side = copy_local d src dst in
           sub_copy c i
@@ -204,8 +205,8 @@ let build named ~reads ~writes d parts =
               src.offset,
               Buffer.length src );
           if side <> local_none then sub_copy_local c i side;
-          fixed src false;
-          fixed dst true)
+          fix c k d src false;
+          fix c k d dst true)
     parts;
   { dev = d; c; parts; nreads = reads; nwrites = writes; named }
 
