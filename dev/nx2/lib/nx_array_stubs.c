@@ -18,8 +18,8 @@
 #endif
 
 /* An array is the record { dtype; layout; buffer }, in this order: the
-   dtype an immediate whose value is its code, the layout a string. This
-   file is the only C that reads it. */
+   dtype an immediate whose value is its code, the layout a record
+   (nx_layout.h). This file is the only C that reads it. */
 enum { ARRAY_DTYPE, ARRAY_LAYOUT, ARRAY_BUFFER };
 
 /* Layouts */
