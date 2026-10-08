@@ -2,4 +2,7 @@
  (name rig_remote)
  (public_name rig.remote)
  (private_modules agent)
- (libraries rig rig_remote_proxy rig_remote_abi unix threads.posix))
+ (libraries rig rig_remote_proxy rig_remote_abi unix threads.posix)
+ (foreign_stubs
+  (language c)
+  (names rig_remote_report)))

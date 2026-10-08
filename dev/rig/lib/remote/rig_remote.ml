@@ -22,19 +22,23 @@ type machine = {
   lock : Mutex.t;
 }
 
-type t = { job : Link.job; machines : machine list }
+type t = {
+  job : Link.job;
+  machines : machine list;
+  report : Agent.report option;  (** Its launcher's, if {!launched} made it. *)
+}
 
 (* Each machine's name names it for the life of the process: the [n]th
-   connection to an address is ["HOST:PORT#n"] from the second on. *)
+   connection named [base], such as ["HOST:PORT"], is ["base#n"] from the second
+   on. *)
 let names : (string, int) Hashtbl.t = Hashtbl.create 4
 let names_lock = Mutex.create ()
 
-let machine_name host port =
-  let address = strf "%s:%d" host port in
+let machine_name base =
   Mutex.protect names_lock @@ fun () ->
-  let n = 1 + Option.value ~default:0 (Hashtbl.find_opt names address) in
-  Hashtbl.replace names address n;
-  if n = 1 then address else strf "%s#%d" address n
+  let n = 1 + Option.value ~default:0 (Hashtbl.find_opt names base) in
+  Hashtbl.replace names base n;
+  if n = 1 then base else strf "%s#%d" base n
 
 (* The machines of the open job, by name, which a host's record names. *)
 let machines : (string, machine) Hashtbl.t = Hashtbl.create 4
@@ -177,11 +181,13 @@ let hosts j = List.filter_map (fun m -> m.host) j.machines
 let failure j = Link.failure j.job
 
 let close j =
-  match Link.wait j.job ~ms:0 with
+  (match Link.wait j.job ~ms:0 with
   | Link.Closed | Link.Failed _ -> ()
   | Link.Open ->
       List.iter Rig.close (hosts j);
-      Link.close j.job
+      Link.close j.job);
+  Agent.ended j.report
+    (match Link.failure j.job with Some why -> `Failed why | None -> `Closed)
 
 let () =
   at_exit (fun () ->
@@ -193,11 +199,12 @@ let abandon job name why =
   Link.fail job why;
   Error why
 
-(* Connects to each agent and runs its handshake, in order. *)
+(* Connects to each agent and runs its handshake, in order, naming each machine
+   after its [base]. *)
 let rec dial ~key job acc i = function
   | [] -> Ok (List.rev acc)
-  | (host, port) :: rest -> (
-      let name = machine_name host port in
+  | (base, host, port) :: rest -> (
+      let name = machine_name base in
       match Agent.dial_tcp ~s:Agent.join_s host port with
       | Error why -> abandon job name why
       | Ok fd -> (
@@ -232,7 +239,7 @@ let join_answer_s = Agent.join_s +. 1.
 let join job agents ms =
   let agents =
     List.map2
-      (fun m (host, port) -> { Wire.name = m.name; host; port })
+      (fun m (_, host, port) -> { Wire.name = m.name; host; port })
       ms agents
   in
   let answers = Array.make (List.length ms) None in
@@ -286,13 +293,13 @@ let check_agents agents =
   if List.length (List.sort_uniq compare agents) <> List.length agents then
     invalid_arg "Rig_remote.connect: an address is listed twice"
 
-let connect ~key agents =
-  Agent.check_key "connect" key;
-  check_agents agents;
+(* Starts a job with the agents at [agents]' hosts and ports, each machine named
+   after its base, reporting on [report]. [fn] names the caller. *)
+let start ~fn ~key ~report agents =
   Mutex.protect lock (fun () ->
       match !current with
       | Some j when Link.wait j.job ~ms:0 = Link.Open ->
-          invalid_arg "Rig_remote.connect: a job of the process is open"
+          invalid_argf "Rig_remote.%s: a job of the process is open" fn
       | _ -> ());
   match Rig.failure () with
   | Some why -> Error why
@@ -304,13 +311,100 @@ let connect ~key agents =
           match Result.bind (join job agents ms) (open_hosts job ms) with
           | Error _ as e -> e
           | Ok () ->
-              let j = { job; machines = ms } in
+              let j = { job; machines = ms; report } in
               Mutex.protect lock (fun () ->
                   Hashtbl.reset machines;
                   List.iter (fun m -> Hashtbl.replace machines m.name m) ms;
                   current := Some j);
-              Agent.watch job;
+              Agent.watch report job;
               Ok j))
+
+let connect ~key agents =
+  Agent.check_key "connect" key;
+  check_agents agents;
+  let named = List.map (fun (h, p) -> (strf "%s:%d" h p, h, p)) agents in
+  start ~fn:"connect" ~key ~report:None named
+
+(* Launched jobs *)
+
+let agents_var = "RIG_REMOTE_AGENTS"
+let key_var = "RIG_REMOTE_KEY"
+let digits s = s <> "" && String.for_all (fun c -> '0' <= c && c <= '9') s
+
+let is_hex = function
+  | '0' .. '9' | 'a' .. 'f' | 'A' .. 'F' -> true
+  | _ -> false
+
+(* One machine of [agents_var]: ["NAME=ADDRESS:PORT"], an IPv6 address in
+   brackets, as ["[fd00::2]=[fd00::2]:41234"]. *)
+let launched_agent s =
+  let unbracket a =
+    let n = String.length a in
+    if n >= 2 && a.[0] = '[' && a.[n - 1] = ']' then String.sub a 1 (n - 2)
+    else a
+  in
+  let ( let* ) = Option.bind in
+  let* i = String.index_opt s '=' in
+  let name = String.sub s 0 i in
+  let address = String.sub s (i + 1) (String.length s - i - 1) in
+  let* k = String.rindex_opt address ':' in
+  let host = unbracket (String.sub address 0 k) in
+  let port = String.sub address (k + 1) (String.length address - k - 1) in
+  let* p = if digits port then int_of_string_opt port else None in
+  if name = "" || host = "" || p < 1 || p > 65535 then None
+  else Some (name, host, p)
+
+let launched_agents = function
+  | None -> Error (strf "%s is not set" agents_var)
+  | Some v -> (
+      let rec all acc = function
+        | [] -> Ok (List.rev acc)
+        | s :: rest -> (
+            match launched_agent s with
+            | Some a -> all (a :: acc) rest
+            | None ->
+                Error (strf "%s: %S is not NAME=ADDRESS:PORT" agents_var s))
+      in
+      match all [] (String.split_on_char ',' v) with
+      | Error _ as e -> e
+      | Ok agents ->
+          let unique l =
+            List.length (List.sort_uniq compare l) = List.length l
+          in
+          if not (unique (List.map (fun (n, _, _) -> n) agents)) then
+            Error (strf "%s names a machine twice" agents_var)
+          else if not (unique (List.map (fun (_, h, p) -> (h, p)) agents)) then
+            Error (strf "%s lists an address twice" agents_var)
+          else Ok agents)
+
+let launched_key = function
+  | None -> Error (strf "%s is not set" key_var)
+  | Some k when String.length k = 64 && String.for_all is_hex k -> Ok k
+  | Some _ -> Error (strf "%s is not 64 hexadecimal characters" key_var)
+
+let called = Atomic.make false
+
+let launched () =
+  if Atomic.exchange called true then
+    invalid_arg "Rig_remote.launched: the process called it before";
+  match Agent.take Agent.report_var with
+  | None -> None
+  | Some fd -> (
+      let agents = Agent.take agents_var in
+      let key = Agent.take key_var in
+      match Agent.report fd with
+      | Error _ as e -> Some e
+      | Ok r ->
+          let report = Some r in
+          let job =
+            match (launched_key key, launched_agents agents) with
+            | (Error _ as e), _ | _, (Error _ as e) -> e
+            | Ok key, Ok agents -> start ~fn:"launched" ~key ~report agents
+          in
+          (match job with
+          | Ok _ -> Agent.started report
+          | Error why -> Agent.ended report (`Failed why));
+          Some job)
 
 (* Agents *)
 

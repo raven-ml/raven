@@ -26,14 +26,82 @@ let check_key fn key =
   let n = String.length key in
   if n < Wire.min_key || n > Wire.max_key then invalid_arg (err_key fn n)
 
+(* Reports to a launcher *)
+
+external unsetenv : string -> unit = "caml_rig_remote_unsetenv"
+external report_open : int -> bool = "caml_rig_remote_report_open"
+external report_write : int -> string -> unit = "caml_rig_remote_report_write"
+
+let report_var = "RIG_REMOTE_REPORT"
+
+type report = {
+  fd : int;
+  pid : int;  (** The process that reports. *)
+  lock : Mutex.t;
+  mutable started : bool;
+  mutable ended : bool;
+}
+
+let take name =
+  let v = Sys.getenv_opt name in
+  if Option.is_some v then unsetenv name;
+  v
+
+let report fd =
+  let n =
+    if fd <> "" && String.for_all (fun c -> '0' <= c && c <= '9') fd then
+      int_of_string_opt fd
+    else None
+  in
+  match n with
+  | Some n when report_open n ->
+      Ok
+        {
+          fd = n;
+          pid = Unix.getpid ();
+          lock = Mutex.create ();
+          started = false;
+          ended = false;
+        }
+  | _ -> Error (strf "%s=%S is no open file descriptor" report_var fd)
+
+(* Writes [line] in one write, a reason's newlines as spaces, unless this
+   process is a child of the one that reports. *)
+let write r line =
+  if Unix.getpid () = r.pid then
+    report_write r.fd (String.map (function '\n' -> ' ' | c -> c) line ^ "\n")
+
+let started = function
+  | None -> ()
+  | Some r ->
+      Mutex.protect r.lock @@ fun () ->
+      if not (r.started || r.ended) then begin
+        r.started <- true;
+        write r "started"
+      end
+
+let ended report e =
+  match report with
+  | None -> ()
+  | Some r ->
+      Mutex.protect r.lock @@ fun () ->
+      if not r.ended then begin
+        r.ended <- true;
+        write r
+          (match e with `Closed -> "closed" | `Failed why -> "failed " ^ why)
+      end
+
 (* The job's fate *)
 
-(* Fails the process with [j]'s root cause once [j] fails, and fails [j] once a
-   device of the process is lost other than by a close. *)
-let watch j =
+(* Fails the process with [j]'s root cause once [j] fails, after it reports the
+   failure on [report]; and fails [j] once a device of the process is lost other
+   than by a close. *)
+let watch report j =
   let rec loop () =
     match Link.wait j ~ms:1000 with
-    | Link.Failed why -> Rig.fail why
+    | Link.Failed why ->
+        ended report (`Failed why);
+        Rig.fail why
     | Link.Closed -> ()
     | Link.Open ->
         Option.iter (Link.fail j) (Rig.failure ());
@@ -454,13 +522,8 @@ let rec apply s =
           Link.fail s.job why;
           apply s)
 
-let serve a kinds =
-  let names = List.map fst kinds in
-  if List.length (List.sort_uniq String.compare names) <> List.length names then
-    invalid_arg "Rig_remote.serve: kinds names a kind twice";
-  if Mutex.protect a.lock (fun () -> a.served) then
-    invalid_arg "Rig_remote.serve: the agent served already";
-  Mutex.protect a.lock (fun () -> a.served <- true);
+(* Serves one job, reporting its end on [report]. *)
+let run a kinds report =
   let wake, waker =
     Unix.socketpair ~cloexec:true Unix.PF_UNIX Unix.SOCK_STREAM 0
   in
@@ -473,7 +536,7 @@ let serve a kinds =
     Option.get a.controller
   in
   let job = Option.get a.job in
-  watch job;
+  watch report job;
   let devices = Hashtbl.create 8 in
   Hashtbl.replace devices 0 Rig.host;
   let s =
@@ -507,5 +570,23 @@ let serve a kinds =
         Link.close job;
         match Link.failure job with Some why -> Error why | None -> Ok ())
   in
-  Result.iter_error Rig.fail r;
+  (match r with
+  | Ok () -> ended report `Closed
+  | Error why ->
+      ended report (`Failed why);
+      Rig.fail why);
   r
+
+let serve a kinds =
+  let names = List.map fst kinds in
+  if List.length (List.sort_uniq String.compare names) <> List.length names then
+    invalid_arg "Rig_remote.serve: kinds names a kind twice";
+  if Mutex.protect a.lock (fun () -> a.served) then
+    invalid_arg "Rig_remote.serve: the agent served already";
+  Mutex.protect a.lock (fun () -> a.served <- true);
+  match take report_var with
+  | None -> run a kinds None
+  | Some fd -> (
+      match report fd with
+      | Ok r -> run a kinds (Some r)
+      | Error why -> Error why)

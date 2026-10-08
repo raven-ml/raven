@@ -17,7 +17,7 @@
   test_rig_remote_ids
   remote_job
   watchdog)
- (deps support/agent.exe support/controller.exe)
+ (deps support/agent.exe support/controller.exe support/launched.exe)
  (libraries
   rig
   rig_remote

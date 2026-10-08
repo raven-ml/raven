@@ -143,14 +143,49 @@ val connect : key:string -> (string * int) list -> (t, string) result
     bytes, [agents] is empty or lists an address twice, or a job of the process
     is open. *)
 
+val launched : unit -> (t, string) result option
+(** [launched ()] starts the job that a launcher, such as [rig run], set up for
+    this process, or is [None] if [RIG_REMOTE_REPORT] is not in the environment.
+    It takes three variables out of the process's environment, so that no
+    program the process runs is launched:
+    - [RIG_REMOTE_REPORT]: the decimal number of a descriptor open for writing,
+      the {e report}, which it sets close-on-exec;
+    - [RIG_REMOTE_AGENTS]: the job's agents, comma-separated, each as
+      [NAME=ADDRESS:PORT], an IPv6 [ADDRESS] in brackets, as
+      ["h100-b=10.0.0.2:41234,[fd00::2]=[fd00::2]:41234"];
+    - [RIG_REMOTE_KEY]: the job's key, 64 hexadecimal characters, which are the
+      key's bytes as they are.
+
+    It starts the job as {!connect} does, with an agent at each [ADDRESS] and
+    [PORT], and names each machine [NAME]: a proxy is ["CUDA:3@h100-b"], and a
+    reason names ["h100-b"].
+
+    It writes on the report one line for each of these, in one write, a reason's
+    newlines written as spaces:
+    - ["started"] once the job started;
+    - ["failed WHY"] once the job failed, [WHY] its root cause, before the
+      process fails ({!Rig.fail});
+    - ["closed"] once {!close}, or the process's exit, closed the job in order.
+
+    It writes at most one ["started"] and one end, and only from this process: a
+    child of [fork] writes nothing.
+
+    [Some (Error why)], after it wrote ["failed why"], if [RIG_REMOTE_AGENTS] or
+    [RIG_REMOTE_KEY] is missing or malformed, or the job does not start, as
+    {!connect} answers; the process should then exit. [Some (Error why)], with
+    nothing written, if [RIG_REMOTE_REPORT] names no open descriptor.
+
+    Raises [Invalid_argument] if the process called [launched] before, or a job
+    of the process is open. *)
+
 val hosts : t -> Rig.t list
-(** [hosts j] is the host of each of [j]'s machines, in the order {!connect} was
-    given their agents. A host is named ["CPU@NAME"], [NAME] its machine's name,
-    and is {!Rig.host_of} of every device of its machine. Its {!Rig.arch} is the
-    agent's instruction set, and its memory is the agent's. Its queues are
-    ["COMPUTE:0"] and ["COPY:0"]; it runs copies between its memory and this
-    process's ({!Rig.Buffer.copy}). It loads no code: {!Rig.Image.load} on it is
-    [Error].
+(** [hosts j] is the host of each of [j]'s machines, in the order of their
+    agents in {!connect}'s list or in [RIG_REMOTE_AGENTS] ({!launched}). A host
+    is named ["CPU@NAME"], [NAME] its machine's name, and is {!Rig.host_of} of
+    every device of its machine. Its {!Rig.arch} is the agent's instruction set,
+    and its memory is the agent's. Its queues are ["COMPUTE:0"] and ["COPY:0"];
+    it runs copies between its memory and this process's ({!Rig.Buffer.copy}).
+    It loads no code: {!Rig.Image.load} on it is [Error].
 
     Its capability record ({!Rig.capability}, {!Rig_remote_abi.key}) is a
     {!Rig_remote_abi.Host}, whose function makes rails between its machine and
@@ -232,6 +267,14 @@ val serve :
     that no kernel driver resets may still run into memory the process holds:
     exit the process. [a] listens no more once [serve] returns, and after a
     close, before the controller's {!close} returns.
+
+    An agent that a launcher started, with [RIG_REMOTE_REPORT] in the
+    environment, reports its job's end on that descriptor as {!launched} does,
+    without ["started"]: [serve] takes the variable out of the environment, sets
+    the descriptor close-on-exec, and writes ["failed WHY"] once the job failed,
+    before the process fails, or ["closed"] once [serve] released the closed
+    job. It answers [Error why] at once if [RIG_REMOTE_REPORT] names no open
+    descriptor.
 
     Raises [Invalid_argument] if [a] served already, or [kinds] names a kind
     twice. *)

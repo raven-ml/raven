@@ -60,11 +60,20 @@ type agent = {
 let address a = ("127.0.0.1", a.port)
 let machine a = Printf.sprintf "127.0.0.1:%d" a.port
 
-(* Starts an agent of the key in [file]. *)
-let start ?(mode = "") file =
+(* This process's environment and the variables [vars]. *)
+let environment vars =
+  Array.append (Unix.environment ())
+    (Array.of_list (List.map (fun (k, v) -> k ^ "=" ^ v) vars))
+
+(* Starts an agent of the key in [file], with the variables [vars] added to its
+   environment. *)
+let start ?(mode = "") ?(vars = []) file =
   let r, w = Unix.pipe ~cloexec:true () in
   let args = [| agent_exe; file; mode |] in
-  let pid = Unix.create_process agent_exe args Unix.stdin w Unix.stderr in
+  let pid =
+    Unix.create_process_env agent_exe args (environment vars) Unix.stdin w
+      Unix.stderr
+  in
   Unix.close w;
   let out = Unix.in_channel_of_descr r in
   match int_of_string (input_line out) with
@@ -161,6 +170,76 @@ let far_of_string d s =
   b
 
 let lost_why = function Rig.Lost (_, why) -> Some why | _ -> None
+
+(* Launched programs *)
+
+(* A key as a launcher gives it: 64 hexadecimal characters. *)
+let hex_key = String.init 64 (fun i -> "0123456789abcdef".[i * 7 mod 16])
+
+let launched_exe =
+  Filename.concat (Filename.dirname Sys.executable_name) "support/launched.exe"
+
+(* The variables a launcher sets for a program whose report descriptor is 3,
+   each agent named [mi] for the [i]th. *)
+let launch_vars agents =
+  let item i a = Printf.sprintf "m%d=127.0.0.1:%d" (i + 1) a.port in
+  [
+    ("RIG_REMOTE_REPORT", "3");
+    ("RIG_REMOTE_AGENTS", String.concat "," (List.mapi item agents));
+    ("RIG_REMOTE_KEY", hex_key);
+  ]
+
+type launch = { lpid : int; report : in_channel; said : in_channel }
+
+(* Starts support/launched.exe in [mode] with the variables [vars] added to its
+   environment, as a launcher does: its descriptor 3 is a pipe read here, the
+   report, and its standard output and error another, what it said. *)
+let launch ?(args = []) vars mode =
+  let rr, rw = Unix.pipe ~cloexec:true () in
+  let sr, sw = Unix.pipe ~cloexec:true () in
+  let sh = "/bin/sh" in
+  let argv =
+    Array.of_list
+      ([ sh; "-c"; "exec \"$0\" \"$@\" 3>&1 >&2"; launched_exe; mode ] @ args)
+  in
+  let lpid =
+    Unix.create_process_env sh argv (environment vars) Unix.stdin rw sw
+  in
+  Unix.close rw;
+  Unix.close sw;
+  {
+    lpid;
+    report = Unix.in_channel_of_descr rr;
+    said = Unix.in_channel_of_descr sr;
+  }
+
+let lines ic =
+  let rec go acc =
+    match input_line ic with
+    | l -> go (l :: acc)
+    | exception End_of_file -> List.rev acc
+  in
+  let ls = go [] in
+  close_in ic;
+  ls
+
+(* The program's exit code, its report's lines and what it said, once it
+   exited. *)
+let ended p =
+  let report = lines p.report in
+  let said = lines p.said in
+  let code =
+    match snd (Unix.waitpid [] p.lpid) with
+    | Unix.WEXITED n -> n
+    | Unix.WSIGNALED n | Unix.WSTOPPED n -> -n
+  in
+  (code, report, said)
+
+(* Runs [f] with [n] agents of [hex_key]. *)
+let with_hex_agents ?(n = 1) ?vars f =
+  with_key_file ~key:hex_key @@ fun file ->
+  let agents = List.init n (fun _ -> start ?vars file) in
+  Fun.protect ~finally:(fun () -> List.iter kill agents) (fun () -> f agents)
 
 (* A raw controller *)
 

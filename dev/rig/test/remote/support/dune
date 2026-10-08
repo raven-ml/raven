@@ -1,3 +1,3 @@
 (executables
- (names agent controller)
+ (names agent controller launched)
  (libraries rig rig_remote rig_remote_proxy rig_support unix))

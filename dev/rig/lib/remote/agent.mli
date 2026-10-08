@@ -27,11 +27,38 @@ val serve :
   (unit, string) result
 (** {!Rig_remote.serve}. *)
 
-val watch : Rig_remote_proxy.Link.job -> unit
-(** [watch j] starts a thread that fails the process ({!Rig.fail}) with [j]'s
-    root cause once [j] fails, and fails [j] with the process's failure
-    ({!Rig.failure}) within a second of a device's loss. It ends once [j] failed
-    or closed. *)
+(** {1:reports Reports to a launcher} *)
+
+type report
+(** The type for the descriptor a launcher reads a process's reports on. *)
+
+val report_var : string
+(** [report_var] is the variable that names a launched process's report
+    descriptor: ["RIG_REMOTE_REPORT"]. *)
+
+val take : string -> string option
+(** [take name] is the variable [name]'s value, taken out of the process's
+    environment. *)
+
+val report : string -> (report, string) result
+(** [report fd] is the report descriptor [fd], a decimal number, which it sets
+    close-on-exec. Only this process reports on it. [Error why] if [fd] is no
+    open descriptor. *)
+
+val started : report option -> unit
+(** [started r] writes ["started"] on [r], unless it wrote a line before. *)
+
+val ended : report option -> [ `Closed | `Failed of string ] -> unit
+(** [ended r e] writes ["closed"] or ["failed WHY"] on [r], unless it wrote an
+    end before. *)
+
+(** {1:fate The job's fate} *)
+
+val watch : report option -> Rig_remote_proxy.Link.job -> unit
+(** [watch r j] starts a thread that, once [j] fails, reports the failure on [r]
+    and then fails the process ({!Rig.fail}) with [j]'s root cause; and fails
+    [j] with the process's failure ({!Rig.failure}) within a second of a
+    device's loss. It ends once [j] failed or closed. *)
 
 val dial_tcp : s:float -> string -> int -> (Unix.file_descr, string) result
 (** [dial_tcp ~s host port] is a TCP connection to [host] and [port], made

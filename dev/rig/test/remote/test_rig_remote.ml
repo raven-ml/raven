@@ -575,6 +575,163 @@ let frames =
         outside_memory;
     ]
 
+(* Launched programs *)
+
+let report_w = triple int (list string) (list string)
+
+let without_variables () =
+  equal ~msg:"no RIG_REMOTE_REPORT" (option string) None
+    (Option.map (fun _ -> "a job") (Rig_remote.launched ()));
+  raises_match ~msg:"a second call" Exn.invalid_arg (fun () ->
+      Rig_remote.launched ())
+
+let started_closed () =
+  with_hex_agents ~n:2 @@ fun agents ->
+  let e = ended (launch (launch_vars agents) "close") in
+  equal report_w
+    (0, [ "started"; "closed" ], [ "connected"; "CPU@m1"; "CPU@m2" ])
+    e;
+  equal (list exit_w)
+    [ (0, [ "closed" ]); (0, [ "closed" ]) ]
+    (List.map finish agents)
+
+let exits_unclosed () =
+  with_hex_agents @@ fun agents ->
+  let e = ended (launch (launch_vars agents) "exit") in
+  equal report_w (0, [ "started"; "closed" ], [ "connected"; "CPU@m1" ]) e;
+  equal (list exit_w) [ (0, [ "closed" ]) ] (List.map finish agents)
+
+(* The program kills itself once its process failed: the report was written
+   before. *)
+let agent_killed () =
+  with_hex_agents ~n:2 @@ fun agents ->
+  let p = launch (launch_vars agents) "watch" in
+  Fun.protect
+    ~finally:(fun () ->
+      try Unix.kill p.lpid Sys.sigkill with Unix.Unix_error _ -> ())
+    (fun () ->
+      equal ~msg:"connected" string "connected" (input_line p.said);
+      kill (List.hd agents);
+      equal report_w
+        ( -Sys.sigkill,
+          [ "started"; "failed m1: closed its connection" ],
+          [ "CPU@m1"; "CPU@m2" ] )
+        (ended p))
+
+(* A port nothing listens at. *)
+let dead_port () =
+  let s = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
+  Unix.bind s (Unix.ADDR_INET (Unix.inet_addr_loopback, 0));
+  let port =
+    match Unix.getsockname s with
+    | Unix.ADDR_INET (_, p) -> p
+    | Unix.ADDR_UNIX _ -> assert false
+  in
+  Unix.close s;
+  port
+
+let failed_start (vars, affix) =
+  let code, report, said = ended (launch vars "close") in
+  equal ~msg:"exit code" int 1 code;
+  (match report with
+  | [ l ] -> starts_with ~msg:"the report" ~affix:("failed " ^ affix) l
+  | ls -> failf "reported [%s]" (String.concat "; " ls));
+  match said with
+  | [ l ] -> starts_with ~msg:"launched's error" ~affix:("error: " ^ affix) l
+  | ls -> failf "said [%s]" (String.concat "; " ls)
+
+let bad_starts =
+  let vars ?(agents = "m1=127.0.0.1:1") ?(key = hex_key) () =
+    [
+      ("RIG_REMOTE_REPORT", "3");
+      ("RIG_REMOTE_AGENTS", agents);
+      ("RIG_REMOTE_KEY", key);
+    ]
+  in
+  [
+    ( "nothing listens",
+      (vars ~agents:(Printf.sprintf "m1=127.0.0.1:%d" (dead_port ())) (), "m1: ")
+    );
+    ("no name", (vars ~agents:"127.0.0.1:1" (), "RIG_REMOTE_AGENTS"));
+    ("no port", (vars ~agents:"m1=127.0.0.1" (), "RIG_REMOTE_AGENTS"));
+    ("a short key", (vars ~key:"abcd" (), "RIG_REMOTE_KEY"));
+    ( "a key not hexadecimal",
+      (vars ~key:(String.make 64 'x') (), "RIG_REMOTE_KEY") );
+    ( "no key",
+      ( [ ("RIG_REMOTE_REPORT", "3"); ("RIG_REMOTE_AGENTS", "m1=127.0.0.1:1") ],
+        "RIG_REMOTE_KEY" ) );
+  ]
+
+let forked () =
+  with_hex_agents @@ fun agents ->
+  let e = ended (launch (launch_vars agents) "fork") in
+  equal report_w
+    (0, [ "started"; "closed" ], [ "connected"; "CPU@m1"; "going on" ])
+    e;
+  equal (list exit_w) [ (0, [ "closed" ]) ] (List.map finish agents)
+
+(* The program runs a shell that counts the variables it sees and writes on
+   descriptor 3, which the report's close-on-exec closed there. *)
+let execs () =
+  with_hex_agents @@ fun agents ->
+  let p =
+    launch
+      ~args:[ "env | grep -c '^RIG_REMOTE_'; echo leaked >&3" ]
+      (launch_vars agents) "exec"
+  in
+  let code, report, said = ended p in
+  equal ~msg:"exit code" int 0 code;
+  equal ~msg:"the report" (list string) [ "started"; "closed" ] report;
+  equal ~msg:"variables the shell saw" bool true (List.mem "0" said);
+  ignore (List.map finish agents)
+
+(* An agent under RIG_REMOTE_REPORT, here its standard output, reports its job's
+   end there before support/agent.exe prints its own. *)
+let serve_closed () =
+  with_hex_agents ~vars:[ ("RIG_REMOTE_REPORT", "1") ] @@ fun agents ->
+  (match Rig_remote.connect ~key:hex_key (List.map address agents) with
+  | Ok j -> Rig_remote.close j
+  | Error why -> fail why);
+  equal exit_w (0, [ "closed"; "closed" ]) (finish (List.hd agents))
+
+let serve_failed () =
+  with_key_file ~key:hex_key @@ fun file ->
+  let a = start ~vars:[ ("RIG_REMOTE_REPORT", "1") ] file in
+  let c = start_controller file "wait" [ a ] in
+  Fun.protect
+    ~finally:(fun () -> List.iter kill [ c; a ])
+    (fun () ->
+      equal ~msg:"the controller" string "connected" (input_line c.out);
+      kill c;
+      match finish a with
+      | 2, [ report; said ] ->
+          ends_with ~msg:"the report" ~affix:"closed its connection" report;
+          equal ~msg:"the report's reason" string said
+            ("failed: " ^ String.sub report 7 (String.length report - 7))
+      | code, lines ->
+          failf "the agent exited %d, printing [%s]" code
+            (String.concat "; " lines))
+
+let launching =
+  group "launched"
+    [
+      test "without the variables it is None, and a second call raises"
+        without_variables;
+      test "started, then closed, its machines named as the launcher names them"
+        started_closed;
+      test "a program that exits without close reports closed" exits_unclosed;
+      test "an agent killed: failed, reported before the process fails"
+        agent_killed;
+      cases ~name:fst "a start that fails reports failed" bad_starts
+        (fun (_, c) -> failed_start c);
+      test "a child of fork reports nothing, and the job goes on" forked;
+      test "a program it runs sees no variable and no report descriptor" execs;
+      test "an agent under RIG_REMOTE_REPORT reports its job closed"
+        serve_closed;
+      test "an agent under RIG_REMOTE_REPORT reports its job failed"
+        serve_failed;
+    ]
+
 (* Keys *)
 
 let read_ok contents =
@@ -754,6 +911,7 @@ let () =
              rails;
              forks;
              frames;
+             launching;
              keys;
              processes;
            ];
