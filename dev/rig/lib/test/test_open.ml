@@ -179,6 +179,13 @@ let test_failed_open () =
   let d, _ = P.open_ "open:failed" in
   equal string "open:failed" (C.name d)
 
+(* An exception the opener raises is raised again, the name left unopened. *)
+let test_opener_raises () =
+  raises Exit (fun () ->
+      C.open_ (module P) ~name:"open:raises" (fun () -> raise Exit));
+  let d, _ = P.open_ "open:raises" in
+  equal string "open:raises" (C.name d)
+
 let test_reopen () =
   let d, p = P.open_ "open:reopen" in
   let s = C.Submission.make ~reads:0 ~writes:0 ~waits:0 d [||] in
@@ -232,6 +239,8 @@ let tests =
         test_machine_without_host;
       test "a point prints as its device's name and its value" test_point;
       test "an opener's error leaves the name free" test_failed_open;
+      test "an opener's exception is raised, the name left free"
+        test_opener_raises;
       test "a fault reading a device's facts stops its handle"
         test_fault_at_open;
       test "a lost device's name opens anew once its stop answered" test_reopen;

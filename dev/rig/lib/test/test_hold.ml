@@ -34,6 +34,25 @@ let[@inline never] submit_held ?(release = ignore) d m runs =
 
 (* Releases *)
 
+(* A hold named on two devices is released once both its stamps are reached. *)
+let test_two_devices () =
+  let d, pd = P.open_ "hold:first" and e, pe = P.open_ "hold:second" in
+  let m = B.create d 64 and runs = Atomic.make 0 in
+  (fun () ->
+    let h = H.make ~release:(fun () -> Atomic.incr runs) [ m ] in
+    let on x = Sub.make ~hold:h ~reads:0 ~writes:0 ~waits:0 x [||] in
+    ignore (C.submit (on d));
+    ignore (C.submit (on e)))
+    ();
+  Gc.full_major ();
+  ignore (P.run pd);
+  drain d;
+  drain e;
+  equal ~msg:"with one stamp reached" int 0 (Atomic.get runs);
+  ignore (P.run pe);
+  drain e;
+  equal ~msg:"with both reached" int 1 (Atomic.get runs)
+
 let test_release () =
   let d, p = P.open_ "hold:release" in
   let m = B.create d 64 and runs = Atomic.make 0 in
@@ -227,6 +246,8 @@ let tests =
   [
     group ~timeout "releases"
       [
+        test "a hold named on two devices is released once both are reached"
+          test_two_devices;
         test "a release runs once, in a drain, after its stamp is reached"
           test_release;
         test "a release waits for a lost device's word and answer"

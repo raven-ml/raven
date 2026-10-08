@@ -253,6 +253,48 @@ let test_read_keeps () =
   equal (list string) [ "collected: false"; "frees: 0" ] !seen;
   ignore (Sys.opaque_identity src)
 
+(* Faults and refusals *)
+
+let lost d = function C.Lost (d', _) -> C.equal d d' | _ -> false
+
+(* A fault an io read raises loses the io device; a failure of the memory alone,
+   such as a file truncated since it was opened, reaches the caller and loses
+   nothing. *)
+let test_faults () =
+  let io, t = open_pages () in
+  let m = B.create io page_bytes and out = filled page_bytes '0' in
+  t.during <- (fun () -> raise (Sys_error "truncated"));
+  raises (Sys_error "truncated") (fun () -> B.copy ~src:m ~dst:out);
+  equal ~msg:"after Sys_error" (option string) None (C.lost io);
+  t.during <- (fun () -> ());
+  B.copy ~src:m ~dst:out;
+  t.during <- (fun () -> raise (Pages.Fault "the link went down"));
+  raises_match (lost io) (fun () -> B.copy ~src:out ~dst:m);
+  equal ~msg:"after Fault" (option string) (Some "the link went down")
+    (C.lost io)
+
+(* A region an io library made is a buffer of its io device only, by its
+   library's key, never exclusive. *)
+let test_of_io () =
+  let io, t = open_pages () in
+  let d, _ = P.open_ "io:not-io" in
+  let r = Option.get (Pages.alloc t page_bytes) in
+  let other : Pages.region Type.Id.t = Type.Id.make () in
+  raises_match Exn.invalid_arg (fun () -> B.of_io d Pages.region_key r 8);
+  raises_match Exn.invalid_arg (fun () -> B.of_io io other r 8);
+  raises_match Exn.invalid_arg (fun () -> B.of_io io Pages.region_key r (-1));
+  let b = B.of_io io Pages.region_key r page_bytes in
+  C.Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
+      equal bool false (C.Claim.exclusive c b))
+
+(* Io memory has no address or object of a driver, and loads no code. *)
+let test_io_refusals () =
+  let io, _ = open_pages () in
+  let m = B.create io 8 in
+  raises_match Exn.invalid_arg (fun () -> B.address m);
+  raises_match Exn.invalid_arg (fun () -> B.handle m);
+  raises_match Exn.invalid_arg (fun () -> C.Program.load io "code:8")
+
 let tests =
   [
     group ~timeout "io memory"
@@ -269,6 +311,12 @@ let tests =
           test_copy_order;
         test "a host access of io memory waits for a borrower's work" test_wait;
         test "io memory returns once unreachable and its uses reached" test_free;
+        test "a fault of io loses its device, a failure of its memory nothing"
+          test_faults;
+        test "a region an io library made is a buffer of its device alone"
+          test_of_io;
+        test "io memory has no driver address or object and loads no code"
+          test_io_refusals;
         test "a copy into io memory keeps its buffers until written"
           test_write_keeps;
         test "a copy from io memory keeps its buffers until read"

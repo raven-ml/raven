@@ -68,6 +68,14 @@ let test_unload () =
   equal ~msg:"its code's memory" bool true
     (List.exists (fun (a, _) -> a = code) (P.frees pd))
 
+let test_entry_lost () =
+  let d, p = P.open_ "program:entry-lost" in
+  let prog = load d "code:64" in
+  P.fail p;
+  raises_match (lost d) (fun () ->
+      C.submit (Sub.make ~reads:0 ~writes:0 ~waits:0 d [||]));
+  raises_match (lost d) (fun () -> Program.entry prog "main")
+
 let test_budget () =
   let d, _ = P.open_ "program:budget" in
   C.set_budget d 4096;
@@ -110,6 +118,7 @@ let tests =
     group ~timeout "programs"
       [
         test "a program is loaded on its device with its functions" test_load;
+        test "a lost device's program names no function" test_entry_lost;
         test "a binary its driver refuses is an error naming the device"
           test_refused;
         test "a device that loads no code refuses a binary" test_no_code;
