@@ -21,8 +21,9 @@
    signal their channel's join word with the tag v << 16 | i + 1, i the
    part's index; the waiter acquires the tag. Tags rise on each join word,
    and the acquire compares 64 bits circularly, so ">=" is exact. The
-   channel of the last part (COMPUTE when there is none) waits for the
-   other channel's last part, then releases v into the timeline word: on
+   channel of the last part (COMPUTE when there is none, or when v's low 32
+   bits are 0) waits for the other channel's last part, then releases v
+   into the timeline word: on
    COMPUTE a release that waits for the channel to be idle, on COPY a
    release after its copies completed.
 
@@ -178,9 +179,21 @@ static uint64_t bytes_of(const struct device *d, int k) {
 /* The most entries and segment bytes [p] takes of each channel, the words
    a channel may owe and MAX_WAITS waits counted, and a wrap of the segment
    ring that wastes a template's words and splits a segment. */
+/* The channel that releases [v]: the last part's, or COMPUTE when there is
+   none or when [v]'s low 32 bits are 0. The copy engine may write a
+   release's two 32-bit words one at a time, and the timeline word's high
+   word changes only at those values, where the next value's release, on
+   the other channel, may follow at once. COMPUTE writes its 64 bits at
+   once. */
+static int releaser(const struct rig_part *p, int n, uint64_t v) {
+  if (n == 0 || (uint32_t)v == 0) return COMPUTE;
+  return p[n - 1].queue;
+}
+
 static void need(const struct device *d, const struct rig_part *p, int n,
                  uint64_t *entries, uint64_t *bytes) {
-  int r = n > 0 ? p[n - 1].queue : COMPUTE;
+  uint64_t v = atomic_load_explicit(&d->last, memory_order_relaxed) + 1;
+  int r = releaser(p, n, v);
   int used[CHANNELS] = {0, 0};
   used[r] = 1;
   for (int q = 0; q < CHANNELS; q++) entries[q] = bytes[q] = 0;
@@ -283,7 +296,7 @@ int rig_nv_submit(void *self, uint64_t v, const struct rig_wait *waits,
   (void)nhandles;
   (void)failure;
   struct device *d = self;
-  int r = n > 0 ? p[n - 1].queue : COMPUTE;
+  int r = releaser(p, n, v);
   int used[CHANNELS] = {0, 0};
   int last[CHANNELS] = {-1, -1};
   /* Whether COMPUTE has launches it has not waited for. */

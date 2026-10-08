@@ -122,6 +122,8 @@ module Fake = struct
     mutable hang_ms : int option;
     mutable stops : [ `Stopped | `Unknown ]; (* what the path's stop answers *)
     mutable on_free : unit N.memory -> unit; (* runs before each free *)
+    mutable bar_room : bool; (* whether [`Bar] memory is given *)
+    mutable kinds : string list; (* the kinds of memory given, newest first *)
   }
 
   (* The path's own objects. *)
@@ -171,8 +173,16 @@ module Fake = struct
 
   let alloc f kind n =
     if f.faults then raise (N.Fault "the GPU fell off the bus");
-    if refused f then None
+    if refused f || (kind = `Bar && not f.bar_room) then None
     else
+      let () =
+        f.kinds <-
+          (match kind with
+          | `Gpu -> "`Gpu"
+          | `Bar -> "`Bar"
+          | `System -> "`System")
+          :: f.kinds
+      in
       let bytes = (n + S.page - 1) / S.page * S.page in
       let host = if kind = `Gpu then None else Some (S.pages bytes) in
       let address =
@@ -252,6 +262,8 @@ module Fake = struct
       hang_ms = None;
       stops = `Unknown;
       on_free = ignore;
+      bar_room = true;
+      kinds = [];
     }
 end
 
@@ -359,6 +371,42 @@ let address_limit () =
   N.stop g;
   N.stop g'
 
+(* A device whose channels the RM stopped on a fault, and kept: nothing of it
+   runs, so stop raises the word, though its memory stays the path's. *)
+let faulted_stop () =
+  let f = Fake.make 0 in
+  let g = require_ok (N.make (Fake.path f)) in
+  hand g (ref 0) [||];
+  let word = address (N.word g) in
+  let fault (a, host, bytes) =
+    match host with
+    | Some h when bytes = S.page && a <> word ->
+        for i = 0 to (S.page / 8) - 1 do
+          S.set64 (h + (8 * i)) (-1)
+        done
+    | Some _ | None -> ()
+  in
+  List.iter fault f.memory;
+  f.frees <- false;
+  N.stop g;
+  equal int ~msg:"the word" 1 (N.signaled g);
+  greater int ~msg:"memories the path still gives" ~than:1
+    (List.length f.memory)
+
+(* Mapped memory is the BAR's while it has room, then host memory. *)
+let mapped_fallback () =
+  let f = Fake.make 0 in
+  let g = require_ok (N.make (Fake.path f)) in
+  let r = require_some ~msg:"with room" (N.alloc g `Mapped 64) in
+  equal (option string) ~msg:"with room" (Some "`Bar") (List.nth_opt f.kinds 0);
+  f.bar_room <- false;
+  let r' = require_some ~msg:"without room" (N.alloc g `Mapped 64) in
+  equal (option string) ~msg:"without room" (Some "`System")
+    (List.nth_opt f.kinds 0);
+  equal bool ~msg:"host addresses it" true (Option.is_some (N.host r'));
+  List.iter (N.free g) [ r; r' ];
+  N.stop g
+
 (* Compiled code links local memory through the capability, whose [local]
    answers a failure as [Error]. *)
 let failing_local () =
@@ -443,6 +491,10 @@ let paths =
       test "free and stop raise no Fault when the path's frees do"
         failing_frees;
       test "local memory answers the path's Fault as Error" failing_local;
+      test "stop raises the word of channels the RM stopped on a fault"
+        faulted_stop;
+      test "Mapped memory falls back to host memory once the BAR is full"
+        mapped_fallback;
       test
         "a device stopped with an image keeps only its word once its code is \
          freed"
@@ -928,6 +980,81 @@ let sequential () =
   S.run t [| S.copy ~dst:h a |];
   equal int ~msg:"the first byte that differs" (-1) (S.mismatch ha 16 7)
 
+(* The tear probe's rounds, and the host's waits before it lets the compute
+   release go: [delays] steps of [delay_step] reads of the word. *)
+let tear_rounds = 20_000
+let delays = 64
+let delay_step = 40
+
+(* The copy engine's release of a 64-bit value and the compute engine's,
+   unordered on one word across its 32-bit carry: whichever lands last, the
+   word holds one of the two values, never a half of each. The compute release
+   waits for a host word the host sets after a delay it sweeps, so that the
+   two land in both orders and close together. *)
+let carry_tear () =
+  S.with_gpu @@ fun t ->
+  let l = S.launches t.g in
+  let w, wa = S.shared t 8 and gate, ga = S.shared t 8 in
+  let below = (1 lsl 32) - 1 and above = 1 lsl 32 in
+  let at = B.address w in
+  let by_copy =
+    {
+      (S.words (S.segment l (A.Method.copy_release System at below))) with
+      queue = "COPY:0";
+    }
+  in
+  let by_compute =
+    S.words
+      (S.segment l
+         (A.Method.acquire (B.address gate) 1
+         @ A.Method.release System at above))
+  in
+  let torn = ref [] and copy_last = ref 0 and compute_last = ref 0 in
+  S.watchdog "unordered releases across a carry" (fun () ->
+      for i = 1 to tear_rounds do
+        S.set64 wa 0;
+        S.set64 ga 0;
+        let v = S.submit t [| by_copy; by_compute |] in
+        for _ = 1 to i mod delays * delay_step do
+          ignore (Sys.opaque_identity (S.get64 wa))
+        done;
+        S.set64 ga 1;
+        Rig.wait t.d v;
+        let x = S.get64 wa in
+        if x = below then incr copy_last
+        else if x = above then incr compute_last
+        else torn := x :: !torn
+      done);
+  (* The host reads and writes [w] and [gate] by address: they live until
+     here. *)
+  ignore (Sys.opaque_identity (w, gate));
+  equal (list int) ~msg:"torn values" [] !torn;
+  at_least int ~msg:"rounds the copy's release landed last" ~than:1
+    !copy_last;
+  at_least int ~msg:"rounds the compute release landed last" ~than:1
+    !compute_last;
+  S.free_launches l
+
+(* A copy's join word, which the copy engine writes as two 32-bit words, takes
+   tags of the submission's value times 65,536: its high word first moves at
+   value 65,536. Work that waits on the copy runs on past it, in order. *)
+let join_carry () =
+  S.with_gpu @@ fun t ->
+  let l = S.launches t.g in
+  let scratch = alloc t.g `Pinned 8 in
+  let segment = release l (address scratch) 1 in
+  let h, ha = S.shared t 16 in
+  let a = B.create t.d 16 in
+  S.pattern ha 16 7;
+  S.watchdog "work across a join's carry" (fun () ->
+      for _ = 1 to 66_000 do
+        S.run t [| S.copy ~dst:a h; S.words ~after:[| 0 |] segment |]
+      done);
+  at_least int ~msg:"the values" ~than:65_536 (N.signaled t.g);
+  equal int ~msg:"the compute part's release" 1 (S.get64 (host scratch));
+  S.free_launches l;
+  N.free t.g scratch
+
 (* The segment ring of each channel, as the writer fills it: the bytes of the
    words it places around the parts, from the ABI's methods. A model of where
    each channel's words fall, so that the law can tell which submissions put a
@@ -1177,6 +1304,9 @@ let room =
       test "40,000 submissions wrap both channels and every copy arrives" wraps;
       test "40,000 copies one after the other pass the segment ring's end"
         sequential;
+      test "work waiting on copies runs on past their joins' 32-bit carry"
+        join_carry;
+      test "two engines' releases across a 32-bit carry never tear" carry_tear;
       prop ~count:12 "submissions that wrap the segment rings complete in order"
         steps mixed;
     ]
@@ -1985,7 +2115,8 @@ module Handover = struct
   let release h = N.stop h.g
 end
 
-let handover = abstract "h" ~invariant:Handover.invariant ~release:Handover.release
+let handover =
+  abstract "h" ~invariant:Handover.invariant ~release:Handover.release
 
 let handover_commands =
   [

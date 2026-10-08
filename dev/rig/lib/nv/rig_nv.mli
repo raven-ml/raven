@@ -371,9 +371,10 @@ type 'm memory = {
       (** The GPU address of its first byte. The memory lies below [2{^40}], its
           last byte included: rings and semaphores take addresses of 40 bits,
           and the device packs its local memory's address in 40 bits and keeps
-          kernels' windows onto shared and local memory above. A path maps host
-          memory at a GPU address of its own where the host's is higher. A
-          device raises [Invalid_argument] for memory a path answers above. *)
+          kernels' windows onto shared and local memory above. A path may map
+          host memory at a GPU address of its own, as the host's may lie
+          higher. A device raises [Invalid_argument] for memory a path answers
+          above. *)
   host : int option;
       (** The host address of its first byte, if the host addresses it. *)
   handle : int;  (** The RM's name for it, which channel allocations take. *)
@@ -408,9 +409,9 @@ type 'm path = {
             the host. *)
   map_host : int -> int -> 'm memory option;
       (** [map_host a n] is the [n] bytes of host memory at [a], mapped for the
-          GPU, or [None] if the path refuses them. The path maps whole pages,
-          once per process for the pages of one range, and keeps them mapped
-          until every memory it gave over them is freed. *)
+          GPU, or [None] if the path refuses them. The path maps whole pages
+          and keeps them mapped until every memory it gave over them is
+          freed. *)
   reaches : int -> bool;
       (** [reaches i] is [true] iff this GPU's work addresses the GPU memory of
           GPU [i] of this path, another GPU. *)

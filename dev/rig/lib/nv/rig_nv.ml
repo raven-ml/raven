@@ -865,12 +865,12 @@ let bounded d w ~still_ms hang =
   let idle = last d.self <= w in
   if idle || p.idle || p.seen <> w then begin
     Atomic.set d.progress { seen = w; idle; since = now };
-    if idle then still_ms else min still_ms hang
+    if idle then still_ms else Int.min still_ms hang
   end
   else
     let left = p.since + hang - now in
     if left <= 0 then raise (Fault (strf "no progress for %d ms" hang));
-    min still_ms left
+    Int.min still_ms left
 
 let sleep (T d) ~seen ~still_ms =
   if read_word d.self = seen then begin
