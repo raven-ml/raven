@@ -29,6 +29,7 @@ external total_memory : int -> int = "caml_device_cuda_total_memory"
 
 (* From cuda.h *)
 
+let cuda_error_peer_access_already_enabled = 704
 let attribute_unified_addressing = 41
 let attribute_compute_capability_major = 75
 let attribute_compute_capability_minor = 76
@@ -272,6 +273,7 @@ let map_peer g g' r =
     match peer g.self r.home with
     | 1 -> true
     | 0 -> false
+    | s when -s = cuda_error_peer_access_already_enabled -> true
     | _ -> refused g.self false
   in
   if not reach then None

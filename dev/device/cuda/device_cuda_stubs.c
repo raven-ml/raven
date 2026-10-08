@@ -107,7 +107,6 @@ typedef union {
 enum {
   CUDA_SUCCESS = 0,
   CUDA_ERROR_NOT_READY = 600,
-  CUDA_ERROR_PEER_ACCESS_ALREADY_ENABLED = 704,
   CU_DEVICE_ATTRIBUTE_CAN_FLUSH_REMOTE_WRITES = 98,
   CU_STREAM_NON_BLOCKING = 0x1,
   CU_EVENT_DISABLE_TIMING = 0x2,
@@ -364,8 +363,8 @@ value caml_device_cuda_open(value v_device) {
 }
 
 /* Whether [v_self]'s GPU addresses the memory of [v_home]'s GPU: [1], after
-   enabling the access if it was not; [0] if CUDA says it cannot; or CUDA's
-   status negated. */
+   enabling the access; [0] if CUDA says it cannot; or CUDA's status
+   negated. */
 value caml_device_cuda_peer(value v_self, value v_home) {
   struct device *d = Device_val(v_self), *h = Device_val(v_home);
   int can = 0;
@@ -373,11 +372,7 @@ value caml_device_cuda_peer(value v_self, value v_home) {
   CUresult s = p_cuDeviceCanAccessPeer(&can, d->device, h->device);
   if (s == CUDA_SUCCESS && can == 0) return Val_long(0);
   if (s == CUDA_SUCCESS) s = push(d->context);
-  if (s == CUDA_SUCCESS) {
-    s = p_cuCtxEnablePeerAccess(h->context, 0);
-    if (s == CUDA_ERROR_PEER_ACCESS_ALREADY_ENABLED) s = CUDA_SUCCESS;
-    s = pop(s);
-  }
+  if (s == CUDA_SUCCESS) s = pop(p_cuCtxEnablePeerAccess(h->context, 0));
   return Val_long(s == CUDA_SUCCESS ? 1 : -s);
 }
 
