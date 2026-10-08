@@ -721,7 +721,7 @@ type desc = {
   banks : (int * int option * int) list;
       (** bank index, its kernel (None for the cubin's), bytes *)
   attrs : (int * target * int) list;  (** parameter, function, value *)
-  truncated : bool;  (** .nv.info ends inside an attribute *)
+  truncated : bool;  (** .nv.info ends inside an attribute, which is refused *)
   order : tag list;  (** the sections, in the object's order *)
 }
 
@@ -962,43 +962,52 @@ let kernels =
         "a kernel's record is what its sections and attributes say" desc_gen
         (fun d ->
           let obj = assemble d in
-          let o = layout obj and c = read obj in
-          cover "an attribute by a symbol's name"
-            (List.exists
-               (function _, Undefined _, _ -> true | _ -> false)
-               d.attrs);
-          cover "a function named after another kernel"
-            (List.exists
-               (function
-                 | _, Named_in (i, s), _ -> s <> (List.nth d.kernels i).kname
-                 | _ -> false)
-               d.attrs);
-          cover "a kernel's sections before its code"
-            (List.exists
-               (fun t ->
-                 match t with
-                 | Bank _ | Shared _ | Own_info _ | Info ->
-                     List.exists
-                       (function Text _ -> true | _ -> false)
-                       (List.tl
-                          (List.filteri (fun j _ -> j >= index d t - 1) d.order))
-                 | Text _ | Dead -> false)
-               d.order);
-          cover "k1 and k10" (List.length d.kernels >= 2);
-          cover "an attribute past the symbol table"
-            (List.exists
-               (function _, No_symbol, _ -> true | _ -> false)
-               d.attrs);
-          cover "a bank of the cubin and of a kernel"
-            (List.exists (fun (_, k, _) -> k = None) d.banks
-            && List.exists (fun (_, k, _) -> k <> None) d.banks);
-          List.iteri
-            (fun i k ->
-              equal ~msg:k.kname (option kernel)
-                (Some (expected o d i))
-                (Cubin.kernel c k.kname))
-            d.kernels);
-      prop "kernels are the code sections the image holds, in order" desc_gen
+          cover "a truncated .nv.info" d.truncated;
+          if d.truncated then
+            contains ~sub:"truncated"
+              (require_error ~pp:pp_cubin (Cubin.of_string obj))
+          else
+            let o = layout obj and c = read obj in
+            cover "an attribute by a symbol's name"
+              (List.exists
+                 (function _, Undefined _, _ -> true | _ -> false)
+                 d.attrs);
+            cover "a function named after another kernel"
+              (List.exists
+                 (function
+                   | _, Named_in (i, s), _ -> s <> (List.nth d.kernels i).kname
+                   | _ -> false)
+                 d.attrs);
+            cover "a kernel's sections before its code"
+              (List.exists
+                 (fun t ->
+                   match t with
+                   | Bank _ | Shared _ | Own_info _ | Info ->
+                       List.exists
+                         (function Text _ -> true | _ -> false)
+                         (List.tl
+                            (List.filteri
+                               (fun j _ -> j >= index d t - 1)
+                               d.order))
+                   | Text _ | Dead -> false)
+                 d.order);
+            cover "k1 and k10" (List.length d.kernels >= 2);
+            cover "an attribute past the symbol table"
+              (List.exists
+                 (function _, No_symbol, _ -> true | _ -> false)
+                 d.attrs);
+            cover "a bank of the cubin and of a kernel"
+              (List.exists (fun (_, k, _) -> k = None) d.banks
+              && List.exists (fun (_, k, _) -> k <> None) d.banks);
+            List.iteri
+              (fun i k ->
+                equal ~msg:k.kname (option kernel)
+                  (Some (expected o d i))
+                  (Cubin.kernel c k.kname))
+              d.kernels);
+      prop "kernels are the code sections the image holds, in order"
+        (Gen.with_pp pp_desc
+           (Gen.map (fun d -> { d with truncated = false }) desc_gen))
         (fun d ->
           let c = read (assemble d) in
           equal (list string)
@@ -1009,6 +1018,26 @@ let kernels =
             (Cubin.kernels c);
           equal ~msg:"a code section outside the image" (option kernel) None
             (Cubin.kernel c "dead"));
+      cases
+        ~name:(fun (n, _, _) -> n)
+        "a truncated .nv.info attribute is refused"
+        [
+          ("a header cut short", ".nv.info", fillers ^ "\x04\x2f");
+          ( "data cut short",
+            ".nv.info",
+            fillers ^ String.sub (of_symbol eiattr_regcount 1 99) 0 10 );
+          ( "a kernel's own, data cut short",
+            ".nv.info.k",
+            fillers ^ String.sub (param_cbank 1 0x160 0x1c) 0 9 );
+        ]
+        (fun (_, name, contents) ->
+          let obj =
+            write
+              ([ code "k" 16; nv_info ~name ~info:1 contents ]
+              @ symbols ~index:3 [ ("k", 1, 0) ])
+          in
+          contains ~sub:"truncated"
+            (require_error ~pp:pp_cubin (Cubin.of_string obj)));
       test "a cubin without code has no kernel" (fun () ->
           let c = read (write [ nv_info "" ]) in
           equal

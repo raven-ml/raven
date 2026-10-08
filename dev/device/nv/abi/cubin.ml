@@ -165,23 +165,37 @@ let after ~prefix name =
     String.length prefix
   else -1
 
+(* An .nv.info section whose last attribute runs past its end, which [of_string]
+   returns as its error. *)
+exception Truncated of string
+
+let truncated (s : Device_elf.section) at =
+  raise_notrace
+    (Truncated
+       (strf "the attribute at %d of section %S is truncated" (at - s.at) s.name))
+
 (* Calls [f param at] for each attribute of the .nv.info section [s] whose data
    follows its header and holds at least a symbol index and a 32-bit value, [at]
-   being where the data starts in the object, up to the first attribute the
-   section truncates. *)
+   being where the data starts in the object. Raises [Truncated] if an attribute
+   runs past the section's end. *)
 let iter_attributes (o : Device_elf.t) (s : Device_elf.section) f =
   let file = o.file and stop = s.at + s.length in
+  (* [go at] is where an attribute from [at] on runs past [stop], or [-1]. *)
   let rec go at =
-    if at + 4 <= stop then
+    if at >= stop then -1
+    else if at + 4 > stop then at
+    else
       let fmt = Char.code (String.unsafe_get file at)
       and param = Char.code (String.unsafe_get file (at + 1))
       and size = String.get_uint16_le file (at + 2) in
       if fmt <> eifmt_sval then go (at + 4)
-      else if at + 4 + size <= stop then (
+      else if at + 4 + size > stop then at
+      else (
         if size >= 8 then f param (at + 4);
         go (at + 4 + size))
   in
-  go s.at
+  let past = go s.at in
+  if past >= 0 then truncated s past
 
 (* A 32-bit little-endian unsigned integer, read as two halves, which no int32
    is boxed for. *)
@@ -361,8 +375,10 @@ let of_string obj =
   let size = ((o.size + page - 1) / page * page) + page in
   let kernels = kernel_names o in
   let names, hashes = order kernels in
-  let records = read_kernels o names hashes in
-  Ok { elf = o; size; relocations; kernels; names; hashes; records }
+  match read_kernels o names hashes with
+  | records ->
+      Ok { elf = o; size; relocations; kernels; names; hashes; records }
+  | exception Truncated msg -> Error msg
 
 let size c = c.size
 let elf c = c.elf

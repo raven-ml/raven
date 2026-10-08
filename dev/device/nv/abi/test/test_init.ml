@@ -5,8 +5,9 @@
 
 (* The library's initialisation, measured between the initialisers of the probes
    linked around it (support/dune): it computes no value, and allocates only
-   what its declarations make when a module starts: Gpu.key, and the exception
-   Packet.template stops at a hole with. *)
+   what its declarations make when a module starts: Gpu.key, the exception
+   Packet.template stops at a hole with, and the one Cubin.of_string stops at a
+   truncated attribute with. *)
 
 open Windtrap
 module B = Device_nv_abi_before
@@ -35,7 +36,7 @@ let tests =
   group ~timeout:10. "initialisation"
     [
       test "initialising the library allocates only its declarations" (fun () ->
-          equal float_exact (key_words () +. exception_words ()) init);
+          equal float_exact (key_words () +. (2. *. exception_words ())) init);
     ]
 
 let () = exit (run "device_nv_abi.init" [ tests ])
