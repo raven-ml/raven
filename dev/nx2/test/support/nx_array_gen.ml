@@ -64,7 +64,6 @@ let ints_of l = Gen.of_list ~pp:Format.pp_print_int l
 let extent = Gen.frequency [ (1, Gen.int_range 0 0); (6, Gen.int_range 1 4) ]
 let shape = Gen.array ~size:(Gen.int_range 0 4) extent
 
-(* Layouts over arbitrary strides and offsets. *)
 (* [o] raised by the reach of [s]'s negative strides, so that [o] is the least
    position: positions are non-negative. *)
 let lift s strides o =
@@ -192,10 +191,79 @@ let reached ~apart =
 
 let any_layout = Gen.with_pp L.pp (Gen.one_of [ strided; reached ~apart:false ])
 
+(* Movements of [s] drawn about the bounds of their preconditions, most of them
+   refused. *)
+let near_bounds s =
+  let open Gen in
+  let r = Array.length s in
+  let small = int_range (-1) 5 in
+  let reshape =
+    let+ s' = array ~size:(int_range 0 4) small in
+    M.Reshape s'
+  in
+  let broadcast =
+    let+ s' = array ~size:(int_range (max 0 (r - 1)) (r + 2)) small in
+    M.Broadcast s'
+  in
+  let permute =
+    let+ p =
+      array ~size:(int_range (max 0 (r - 1)) (r + 1)) (int_range (-1) r)
+    in
+    M.Permute p
+  in
+  let range d =
+    let+ start = int_range (-1) (d + 1)
+    and+ count = int_range (-1) (d + 1)
+    and+ step = int_range (-3) 3 in
+    { M.start; count; step }
+  in
+  let slice =
+    let* n = int_range (max 0 (r - 1)) (r + 1) in
+    let rec all i =
+      if i = n then constant []
+      else
+        let+ x = range (if i < r then s.(i) else 2) and+ xs = all (i + 1) in
+        x :: xs
+    in
+    let+ rs = all 0 in
+    M.Slice (Array.of_list rs)
+  in
+  let window =
+    let+ axis = int_range (-1) r
+    and+ size = int_range 0 4
+    and+ step = int_range 0 3
+    and+ dilation = int_range 0 3 in
+    { M.axis; size; step; dilation }
+  in
+  let windows =
+    let+ ws = list ~size:(int_range 0 3) window in
+    M.Window (Array.of_list ws)
+  in
+  one_of [ reshape; broadcast; permute; slice; windows ]
+
+(* Shapes of up to four axes, an extent among them now and then negative, with
+   movements valid or not. *)
+let shape_and_move =
+  let open Gen in
+  with_pp
+    (fun ppf (s, m) -> Format.fprintf ppf "%a, %a" pp_ints s pp_move m)
+    (let* s =
+       frequency
+         [ (8, shape); (1, array ~size:(int_range 1 4) (int_range (-1) 3)) ]
+     in
+     let valid = Array.for_all (fun d -> d >= 0) s in
+     let+ m =
+       if valid then one_of [ movement ~apart:false s; near_bounds s ]
+       else near_bounds s
+     in
+     (s, m))
+
+(* Layouts with movements of their shape, valid or not. *)
 let layout_and_move =
   let open Gen in
   with_pp
     (fun ppf (l, m) -> Format.fprintf ppf "%a, %a" L.pp l pp_move m)
     (let* l = one_of [ strided; reached ~apart:false ] in
-     let+ m = movement ~apart:false (L.shape l) in
+     let s = L.shape l in
+     let+ m = frequency [ (3, movement ~apart:false s); (1, near_bounds s) ] in
      (l, m))
