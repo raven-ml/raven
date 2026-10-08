@@ -15,7 +15,6 @@ type node = {
   lds : int;
   mec : int;
   budget : int;
-  waves_per_cu : int;
   arrays : int;
   cwsr : int;
   ctl_stack : int;
@@ -138,7 +137,6 @@ let node root bus =
       let* simd_per_cu = prop "simd_per_cu" in
       let* arrays = prop "array_count" in
       let* arrays_per_engine = prop "simd_arrays_per_engine" in
-      let* waves_per_simd = prop "max_waves_per_simd" in
       let* lds_kib = prop "lds_size_in_kb" in
       let* scratch_slots = prop "max_slots_scratch_cu" in
       let* mec = prop "fw_version" in
@@ -167,7 +165,6 @@ let node root bus =
           lds = lds_kib * 1024;
           mec;
           budget = budget (nodes root // string_of_int index);
-          waves_per_cu = waves_per_simd * simd_per_cu;
           arrays = arrays_per_engine;
           cwsr;
           ctl_stack;
