@@ -58,6 +58,11 @@ type keep =
       (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
   | Bigarray : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> keep
 
+(** The type for the end of a stopped device's timeline word: read still, its
+    readers moved to the C record's copy at a count of minor collections, or
+    given back to the driver. *)
+type word_end = Read | Moved of int | Given
+
 type device = {
   index : int;
   name : string;
@@ -100,8 +105,10 @@ type device = {
           undecided, [-1] on the host, otherwise the producer's object or its
           word's address as this device maps it. Replaced whole, and read
           without the lock. *)
-  mutable pair_maps : region list;
-      (** The mappings of producers' words, kept for good. *)
+  mutable pair_maps : (int * region) list;
+      (** The mappings of producers' words, by producer index, kept until the
+          producer's word ends. *)
+  mutable word_end : word_end;  (** Guarded by [lock]. *)
   mutable afters : (int * (unit -> unit)) list;
 }
 

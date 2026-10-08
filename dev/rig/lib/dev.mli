@@ -127,6 +127,18 @@ val give : device -> (unit -> unit) -> unit
     fault and a [Sys_error] it raises, and not at all on an Orphaned one. On a
     device lost and not Stopped it raises {!Lost} without calling [f]. *)
 
+val move_word : device -> bool
+(** [move_word d] moves the readers of the stopped [d]'s word to a copy in its
+    C record once nothing else reads the driver's word: no record of another
+    device holds a wait on it that its word has not passed. Every reader holding
+    a domain's runtime lock may still read the driver's word until that domain
+    passed a minor collection ({!minors}). It is [true] once, for the call that
+    moved them. *)
+
+val minors : unit -> int
+(** [minors ()] is the number of minor collections the program made. Each waits
+    for every domain that holds its runtime lock. *)
+
 val close : device -> unit
 (** {!Rig.close}. *)
 

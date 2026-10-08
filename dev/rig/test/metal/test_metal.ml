@@ -589,7 +589,6 @@ let misused_regions () =
   let invalid f = raises_match Exn.invalid_arg f in
   let r = alloc t 64 in
   let m = require_some (Rig_metal.map_host t.d (S.pages page) page) in
-  invalid (fun () -> Rig_metal.free t.d (Rig_metal.word t.d));
   Rig_metal.free t.d r;
   invalid (fun () -> Rig_metal.free t.d r);
   Rig_metal.free t.d m;
@@ -641,7 +640,7 @@ let memory =
         (Gen.int_range 1 (64 lsl 20))
         aligned_256;
       test
-        "free and map_peer refuse the word, another device's region or one \
+        "free and map_peer refuse another device's region or one \
          given back"
         misused_regions;
       test "free releases an allocation's or a mapping's buffer" given_back;
@@ -903,6 +902,15 @@ let stopped_running () =
   b.release ();
   await_release w
 
+(* A stopped device's word frees once, after the stop. *)
+let word_after_stop () =
+  let t = dev_of (opened ()) in
+  S.wait t.d (submit t [||]);
+  Rig_metal.stop t.d;
+  Rig_metal.free t.d (Rig_metal.word t.d);
+  raises_match Exn.invalid_arg (fun () ->
+      Rig_metal.free t.d (Rig_metal.word t.d))
+
 (* Images still loaded when the device stops stay loaded: their unload after
    the stop releases them. *)
 let unload_after_stop () =
@@ -934,6 +942,7 @@ let timeline =
         stopped_running;
       test "an image a stop left loaded is released by its unload"
         unload_after_stop;
+      test "a stopped device's word frees once" word_after_stop;
     ]
 
 (* Opening and misuse *)

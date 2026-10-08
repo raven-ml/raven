@@ -1061,9 +1061,10 @@ module type Driver = sig
   *)
 
   val free : t -> region -> unit
-  (** [free d r] gives back [r], a region {!alloc} made or a mapping {!map_peer}
-      or {!map_host} made. This library frees [r] once no work of [d] that uses
-      it can run; it may free after {!stop}. *)
+  (** [free d r] gives back [r], a region {!alloc} made, a mapping {!map_peer}
+      or {!map_host} made, or [d]'s {!word}. This library frees [r] once no work
+      of [d] that uses it can run; it may free after {!stop}, and frees the word
+      only after it. *)
 
   val address : region -> int option
   (** [address r] is [r]'s address as [d]'s work addresses it, or [None] for
@@ -1122,9 +1123,10 @@ module type Driver = sig
   (** {1:timeline Timeline} *)
 
   val word : t -> region
-  (** [word d] is [d]'s timeline word, never freed: other devices may map it,
-      and it is read after a loss. It has a host address except behind a
-      transport. *)
+  (** [word d] is [d]'s timeline word. Other devices may map it, and it is read
+      after a loss. This library frees it ({!free}) after {!stop}, once nothing
+      reads it: it holds the last value, and no work of another device that
+      waits on it is left. It has a host address except behind a transport. *)
 
   val signaled : t -> int
   (** [signaled d] is the value in [d]'s word, read with acquire order. This

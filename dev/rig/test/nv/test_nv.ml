@@ -754,7 +754,6 @@ let misuse () =
   raises "alloc of 0 bytes" (fun () -> N.alloc g `Device 0);
   raises "map_host of 0 bytes" (fun () -> N.map_host g (host (N.word g)) 0);
   raises "map_peer of one device" (fun () -> N.map_peer g g r);
-  raises "free of the word" (fun () -> N.free g (N.word g));
   N.free g r;
   raises "free twice" (fun () -> N.free g r);
   let a = S.pages S.page in

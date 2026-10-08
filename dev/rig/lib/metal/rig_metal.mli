@@ -211,11 +211,11 @@ val alloc : t -> [ `Device | `Pinned | `Mapped ] -> int -> region option
     Raises [Invalid_argument] if [n < 1]. *)
 
 val free : t -> region -> unit
-(** [free d r] gives back [r], an allocation or a {!map_host} region of [d]. The
-    caller frees a region once no work of [d] that uses it is in flight.
+(** [free d r] gives back [r], an allocation, a {!map_host} region or the
+    {!word} of [d]. The caller frees a region once no work of [d] that uses it
+    is in flight, and the word once [d] is stopped and holds its last value.
 
-    Raises [Invalid_argument] if [r] is another device's or {!word}, or was
-    freed. *)
+    Raises [Invalid_argument] if [r] is another device's, or was freed. *)
 
 val address : region -> int option
 (** [address r] is [Some a] with [a] the GPU address of [r]'s first byte
@@ -312,7 +312,7 @@ val word : t -> region
     that every submission up to [v] completed without failure. The device's
     handlers write it with release order, and never lower it. Once {!stop} was
     called and no work of [d] is in flight, it holds the last value the submit
-    received, whatever that work did. It lives while the process runs. *)
+    received, whatever that work did. It lives until {!free}. *)
 
 val signaled : t -> int
 (** [signaled d] is the value in {!word}, read with acquire order: every

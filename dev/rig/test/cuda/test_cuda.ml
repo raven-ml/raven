@@ -290,7 +290,6 @@ let misuse () =
   raises "map_host of 0 bytes" (fun () -> C.map_host g (word g) 0);
   raises "peer of one device" (fun () -> C.peer g g);
   raises "map_peer of one device" (fun () -> C.map_peer g g r);
-  raises "free of the word" (fun () -> C.free g (C.word g));
   C.free g r;
   raises "free twice" (fun () -> C.free g r);
   let p = S.pages S.page in
@@ -469,6 +468,7 @@ let unload_after_reopen () =
   at_most int ~msg:"reopened" ~than:(before - (global / 2)) (S.free_memory ());
   C.unload g m;
   at_least int ~msg:"unloaded" ~than:(before - (global / 2)) (S.free_memory ());
+  C.free g (C.word g);
   S.wait g' (S.submit g' [||]);
   S.stop g'
 
@@ -482,7 +482,8 @@ let stop_idle () =
   equal int ~msg:"the word" 1 (C.signaled g);
   C.free g r;
   equal bool ~msg:"locked after free" false (S.locked p);
-  S.free_pages p S.page
+  S.free_pages p S.page;
+  C.free g (C.word g)
 
 let stop_running () =
   let g = S.gpu () in

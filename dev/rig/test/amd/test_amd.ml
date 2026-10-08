@@ -371,7 +371,7 @@ let make_gives_back () =
 
 (* [stop] gives the device's memory back only once the path stopped its queues
    (the host path refuses a free of memory a queue reads before), and never the
-   timeline word. *)
+   timeline word, which its free after the stop gives back. *)
 let stop_gives_back () =
   let h, g = Host.device () in
   let word = address (A.word g) in
@@ -381,6 +381,8 @@ let stop_gives_back () =
   equal (option string) ~msg:"the fault the path's stop got" None h.stop_fault;
   equal bool ~msg:"the word given back" false (List.mem word h.frees);
   equal int ~msg:"the memory left: the word" 1 h.live;
+  A.free g (A.word g);
+  equal bool ~msg:"the word, freed after the stop" true (List.mem word h.frees);
   Host.close h
 
 (* A device is stopped for good: a later [stop], as rig's own after a loss and
@@ -506,7 +508,6 @@ let misuse () =
   raises "map_peer" (fun () -> A.map_peer g g r);
   raises "map_peer" (fun () -> A.map_peer g g' r);
   raises "map_host" (fun () -> A.map_host g page 0);
-  raises "free" (fun () -> A.free g (A.word g));
   let view = Option.get (A.map_peer g g' r') in
   raises "free" (fun () -> A.free g' view);
   A.free g view;

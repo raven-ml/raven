@@ -57,10 +57,14 @@ let open_gpu () =
   | Ok d -> { S.d; g }
   | Error why -> failwith why
 
+(* Collects and drains twice: a stopped device's word goes back at the second
+   drain, once every domain passed a minor collection since the first. *)
 let collect () =
-  Gc.full_major ();
-  Gc.full_major ();
-  ignore (Rig.Buffer.create Rig.host 8)
+  for _ = 1 to 2 do
+    Gc.full_major ();
+    Gc.full_major ();
+    ignore (Rig.Buffer.create Rig.host 8)
+  done
 
 (* Launches [double_index] on [t] over [out], an address of [t]'s. *)
 let double t out =
@@ -158,8 +162,8 @@ let address_access l =
 
 (* The device is lost with the RM's report, which every later use raises again:
    the channel group's error once, by number and name, then the MMU's fault at
-   address 0 on a write. The files the device took come back; its timeline word
-   stays mapped, as it is never freed. *)
+   address 0 on a write. The files and mappings the device took come back, its
+   timeline word's included. *)
 let test_fault () =
   need_gpu ();
   let r = require_ok (in_child fault) in
@@ -176,7 +180,7 @@ let test_fault () =
       equal ~msg:("a later " ^ use) string ("Lost: " ^ why) got)
     r.later;
   equal ~msg:"files" int (fst r.files) (snd r.files);
-  equal ~msg:"mappings, with the word" int (fst r.maps + 1) (snd r.maps)
+  equal ~msg:"mappings" int (fst r.maps) (snd r.maps)
 
 let test_fresh () =
   need_gpu ();

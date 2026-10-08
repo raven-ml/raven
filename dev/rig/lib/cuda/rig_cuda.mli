@@ -192,10 +192,11 @@ val free : t -> region -> unit
     it runs. CUDA may wait for all of the GPU's work before it frees an
     allocation. A {!map_host} region whose unregistration CUDA refuses, because
     [g]'s context failed, keeps the pages locked, and every later {!map_host}
-    that overlaps them is [None].
+    that overlaps them is [None]. The free of the {!word} ends a stopped [g]:
+    it destroys the streams a {!stop} that found work running left, and the
+    GPU then opens again.
 
-    Raises [Invalid_argument] if [r] is another device's or {!word}, or was
-    freed. *)
+    Raises [Invalid_argument] if [r] is another device's, or was freed. *)
 
 val address : region -> int option
 (** [address r] is [Some a], [a] the address of [r]'s first byte in the
@@ -288,8 +289,9 @@ val word : t -> region
     streams write it after a fence that makes the work's writes visible
     ([cuStreamWriteValue64] with [CU_STREAM_WRITE_VALUE_DEFAULT], a system-wide
     memory fence before the write); it never decreases. Other devices may map it
-    and wait on it. It is never freed: another device's work may still read it
-    after [g] is stopped or collected. *)
+    and wait on it. It lives until
+    {!free}, which the caller calls once [g] is stopped, the word holds its
+    last value, and no other device's work reads it. *)
 
 val signaled : t -> int
 (** [signaled g] is the value in {!word}, read with acquire order: the work of

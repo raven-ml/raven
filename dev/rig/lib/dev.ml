@@ -42,6 +42,8 @@ external c_fail : string -> bool = "caml_rig_fail"
 external c_failed : unit -> string option = "caml_rig_failed"
 external c_first : unit -> int = "caml_rig_first" [@@noalloc]
 external generation : unit -> int = "caml_rig_generation" [@@noalloc]
+external c_word_retire : int -> bool = "caml_rig_word_retire"
+external minors : unit -> int = "caml_rig_minors" [@@noalloc]
 external c_enter : int -> int = "caml_rig_enter"
 external c_exit : int -> unit = "caml_rig_exit"
 external c_spin : int -> int -> int -> int = "caml_rig_spin"
@@ -121,6 +123,7 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~completion ~waits
     pending = [];
     pairs = [||];
     pair_maps = [];
+    word_end = Read;
     afters = [];
   }
 
@@ -269,6 +272,8 @@ let give d f =
     | exception Sys_error _ -> ()
     | exception e when Option.is_some (d.fault e) -> ()
   else counted d f
+
+let move_word d = c_word_retire d.c
 
 let fail why = if c_fail why then run_owed ()
 

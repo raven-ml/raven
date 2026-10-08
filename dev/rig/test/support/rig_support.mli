@@ -105,8 +105,9 @@ module Polled : sig
 
   val log : t -> string list
   (** [log d] is [d]'s driver calls, oldest first: ["alloc"], ["free"],
-      ["map_host"], ["map_peer"], ["unmap"] (a mapping's free), ["sleep"],
-      ["stop"], ["image"], ["entry"], ["unload"]. *)
+      ["map_host"], ["map_peer"], ["unmap"] (a mapping's free), ["word"] (the
+      timeline word's free), ["sleep"], ["stop"], ["image"], ["entry"],
+      ["unload"]. *)
 
   val frees : t -> (int * int) list
   (** [frees d] is the address of each region [d] freed, oldest first, with

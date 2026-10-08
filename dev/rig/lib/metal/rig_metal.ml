@@ -21,6 +21,7 @@ external map_buffer : int -> int -> int -> buffer option
   = "caml_rig_metal_map_host"
 
 external free_buffer : int -> nativeint -> unit = "caml_rig_metal_free"
+external free_word : int -> unit = "caml_rig_metal_free_word"
 external release : int -> unit = "caml_rig_metal_release"
 
 external load : int -> string -> string * string array * int array
@@ -230,12 +231,12 @@ let map_peer d d' (r : region) =
   None
 
 let free d (r : region) =
-  if r.owner <> d.self || r == d.word then
+  if r.owner <> d.self then
     invalid_arg
       "Rig_metal.free: the region is no allocation or mapping of the device";
   if not (Atomic.compare_and_set r.live true false) then
     invalid_arg "Rig_metal.free: the region was freed";
-  free_buffer d.self r.handle
+  if r == d.word then free_word d.self else free_buffer d.self r.handle
 
 (* Images *)
 

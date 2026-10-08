@@ -37,7 +37,8 @@ let test_fault () =
   equal (option string) (Some "the engine hung") (Rig.lost d);
   equal int 1 (count "stop" p)
 
-(* After the stop answered, only free and unmap reach the driver. *)
+(* After the stop answered, only frees reach the driver: of memory, of
+   mappings and of the word. *)
 let test_after_stop () =
   let d, p = P.open_ "loss:after-stop" in
   let b = B.create d 64 in
@@ -51,7 +52,9 @@ let test_after_stop () =
     | _ :: rest -> after rest
     | [] -> []
   in
-  List.iter (fun call -> mem string call [ "free"; "unmap" ]) (after (P.log p))
+  List.iter
+    (fun call -> mem string call [ "free"; "unmap"; "word" ])
+    (after (P.log p))
 
 (* A submit refused because its device is lost runs no work on its buffers'
    memory, which does not raise Lost for that device. *)
@@ -387,6 +390,7 @@ let test_close_frees () =
   equal ~msg:"held at the close" (slist int compare)
     [ 64; 128; 1 lsl 16 ]
     (P.outstanding p);
+  ignore (Sys.opaque_identity !kept);
   kept := [];
   collect ();
   equal ~msg:"once the buffers are collected" (list int) [ 1 lsl 16 ]
@@ -417,6 +421,51 @@ let test_close_fault () =
   Rig.close d;
   equal (option string) (Some "the engine hung") (Rig.lost d);
   equal int 1 (count "stop" p)
+
+(* A stopped device's timeline word goes back to its driver once nothing
+   reads it, after the stop: the next drains move its readers off it, then
+   give it back once every domain passed a minor collection. *)
+let test_close_word () =
+  let d, p = P.open_ "loss:close-word" in
+  ignore (submit (empty d));
+  Rig.close d;
+  collect ();
+  collect ();
+  let rec after = function
+    | "stop" :: rest -> rest
+    | _ :: rest -> after rest
+    | [] -> []
+  in
+  equal (list string) [ "word" ]
+    (List.filter (( = ) "word") (after (P.log p)));
+  equal ~msg:"the last value" int 1 (Rig.signaled d)
+
+(* A word another device's queue waits on goes back only once that wait ran,
+   after that device's mapping of it. *)
+let test_word_waited () =
+  let producer, pp = P.open_ "loss:word-producer" in
+  let consumer, pc = P.open_ ~waits_on:[ `Host ] "loss:word-consumer" in
+  let v = submit (empty producer) in
+  ignore (submit (empty consumer) ~waits:[| v |]);
+  equal ~msg:"waited in the queue" int 1 (List.length (P.last_waits pc));
+  Rig.close producer;
+  collect ();
+  collect ();
+  equal ~msg:"while the wait is queued" int 0 (count "word" pp);
+  ignore (P.run pc);
+  collect ();
+  collect ();
+  equal ~msg:"once it ran" int 1 (count "word" pp);
+  equal ~msg:"the consumer's mapping" int 1 (count "unmap" pc)
+
+(* The word of a device whose work may still run is never given back. *)
+let test_word_unknown () =
+  let d, p = P.open_ ~answer:`Unknown "loss:word-unknown" in
+  ignore (submit (empty d));
+  lose d p;
+  collect ();
+  collect ();
+  equal int 0 (count "word" p)
 
 let test_close_host () =
   raises_match Exn.invalid_arg (fun () -> Rig.close Rig.host)
@@ -466,7 +515,7 @@ let tests =
       [
         test "a failed hand-over loses the device once" test_failed_submit;
         test "a fault a wait finds loses the device" test_fault;
-        test "a stopped device is only freed and unmapped" test_after_stop;
+        test "a stopped device is only freed" test_after_stop;
         test "memory a refused submit named does not raise Lost"
           test_unrun_names;
         test ~timeout:10. "a wait finds a fault past 64 waits on one producer"
@@ -511,6 +560,12 @@ let tests =
         test "a close of a lost device waits for its stop" test_close_lost;
         test "a fault during a close's wait is the device's loss"
           test_close_fault;
+        test "a closed device's word goes back once nothing reads it"
+          test_close_word;
+        test "a word another queue waits on goes back once the wait ran"
+          test_word_waited;
+        test "the word of a device whose work may run is kept"
+          test_word_unknown;
         test "the host is never closed" test_close_host;
         test "an io device's close ends it at once" test_close_io;
       ];

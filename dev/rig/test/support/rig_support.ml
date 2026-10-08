@@ -149,7 +149,7 @@ module Driver = struct
     | y :: l -> if y = x then l else y :: remove x l
 
   (* A mapping's free is logged as ["unmap"]. *)
-  let free d r =
+  let free_region d r =
     note d (if r.kind = None then "unmap" else "free");
     let w = polled_word d.c in
     Mutex.protect d.lock (fun () ->
@@ -158,6 +158,12 @@ module Driver = struct
         | Some k -> d.held <- remove (k, r.bytes) d.held
         | None -> d.mapped <- remove r.bytes d.mapped);
     if r.kind <> None then host_free r.at
+
+  (* The word is the device's own record: its free is logged as ["word"]
+     alone. *)
+  let free d r =
+    if r.kind = None && r.at = Nativeint.to_int d.c then note d "word"
+    else free_region d r
 
   let address r = Some r.at
   let handle r = Nativeint.of_int r.at

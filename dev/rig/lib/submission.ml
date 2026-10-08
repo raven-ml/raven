@@ -237,7 +237,7 @@ let decide d p =
         match mapped with
         | None -> host_wait
         | Some r ->
-            Dev.protect d (fun () -> d.pair_maps <- r :: d.pair_maps);
+            Dev.protect d (fun () -> d.pair_maps <- (p.index, r) :: d.pair_maps);
             let at, _, _ = Memory.region_info r in
             if at < 0 then host_wait else at + skip)
 

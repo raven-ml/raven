@@ -14,7 +14,8 @@ module D = struct
   type t = { self : nativeint }
 
   (* A region is memory the device allocated, which [free] gives back, or a
-     mapping of host memory, which it leaves alone. *)
+     mapping of host memory, which it leaves alone. The word is the device's
+     state, which its free ends. *)
   type region = { at : int; owned : bool }
   type image = unit
   type capability = unit
@@ -40,7 +41,7 @@ module D = struct
   let image _ _ = Error "a memory device loads no code"
   let entry () _ = None
   let unload _ () = ()
-  let word d = { at = Nativeint.to_int d.self; owned = false }
+  let word d = { at = Nativeint.to_int d.self; owned = true }
   let signaled d = load (Nativeint.to_int d.self)
   let sleep _ ~seen:_ ~still_ms:_ = ()
   let completion _ = `Host

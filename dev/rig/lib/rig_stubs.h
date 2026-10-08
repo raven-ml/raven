@@ -77,8 +77,12 @@ struct rig_device {
   void *self;
   rig_room_fn *room;
   rig_submit_fn *submit;
-  _Atomic uint64_t *word; /* the timeline word, or NULL behind a transport */
-  _Atomic uint64_t seen;  /* the last value a read of the word showed */
+  /* The timeline word, or NULL behind a transport. Once the device is
+     stopped and nothing else reads the driver's word, it points to [final],
+     and the driver's word is given back ([caml_rig_word_retire]). */
+  _Atomic(_Atomic uint64_t *) word;
+  _Atomic uint64_t final;
+  _Atomic uint64_t seen; /* the last value a read of the word showed */
   _Atomic uint64_t submitted;
   _Atomic int state;
   _Atomic(char *) lost;     /* NULL, or the loss's reason */

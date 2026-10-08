@@ -635,13 +635,10 @@ let free (T d) r =
   match mine d r with
   | None -> invalid_arg "Rig_nv.free: the region is not the device's"
   | Some r -> (
-      match r.kind with
-      | Word -> invalid_arg "Rig_nv.free: the timeline word is never freed"
-      | Path | Bar ->
-          if not (Atomic.compare_and_set r.live true false) then
-            invalid_arg "Rig_nv.free: the region was freed";
-          give d r.mem;
-          if r.kind = Bar then bar_live d.self (-1))
+      if not (Atomic.compare_and_set r.live true false) then
+        invalid_arg "Rig_nv.free: the region was freed";
+      give d r.mem;
+      if r.kind = Bar then bar_live d.self (-1))
 
 let address (R r) = Some r.mem.address
 let handle (R r) = Nativeint.of_int r.mem.address

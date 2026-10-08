@@ -61,6 +61,10 @@ type gpus = { devices : int array; held : int Atomic.t array }
 let unheld = 0
 let taken = 1
 let lock = Mutex.create ()
+
+(* Held by a claim of a GPU and by the free of a stopped device's word, which
+   ends the state the claim would stop. *)
+let held_lock = Mutex.create ()
 let gpus = ref None
 
 let discover () =
@@ -168,6 +172,7 @@ type t = {
 
 external open_device : int -> int = "caml_rig_cuda_open"
 external stop_device : int -> bool = "caml_rig_cuda_stop"
+external free_word : int -> unit = "caml_rig_cuda_free_word"
 external unload_module : int -> int -> int = "caml_rig_cuda_unload"
 external word_address : int -> int = "caml_rig_cuda_word" [@@noalloc]
 
@@ -253,6 +258,7 @@ let graph self guard stopped images (ks : Rig_cuda_abi.kernel array) =
 (* Takes a GPU's [held] for a new device: unheld, or held by a stopped device
    whose work has since ended, which is then stopped for good. *)
 let claim held =
+  Mutex.protect held_lock @@ fun () ->
   let p = Atomic.get held in
   if p > 0 || not (Atomic.compare_and_set held p taken) then
     Error "the GPU has a device open; stop it first"
@@ -431,11 +437,8 @@ let map_host g a n =
     | None -> if List.exists shares !registry then None else page_lock g a n
 
 let free g (r : region) =
-  (match r.kind with
-  | Word -> invalid_arg "Rig_cuda.free: the region is a timeline word"
-  | _ when r.owner <> g.self ->
-      invalid_arg "Rig_cuda.free: the region is another device's"
-  | _ -> ());
+  if r.owner <> g.self then
+    invalid_arg "Rig_cuda.free: the region is another device's";
   if not (Atomic.compare_and_set r.live true false) then
     invalid_arg "Rig_cuda.free: the region was freed";
   match r.kind with
@@ -450,7 +453,11 @@ let free g (r : region) =
         if lock g.self false e.start 0 = 0 then
           registry := List.filter (fun e' -> e' != e) !registry
         else e.stuck <- true
-  | Locked None | Peer _ | Word -> ()
+  | Word ->
+      Mutex.protect held_lock @@ fun () ->
+      ignore (Atomic.compare_and_set g.held (-g.self) unheld);
+      free_word g.self
+  | Locked None | Peer _ -> ()
 
 (* Images *)
 

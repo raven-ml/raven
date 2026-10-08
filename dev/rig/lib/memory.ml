@@ -608,15 +608,52 @@ let drain_own d =
    value. A drain of an idle device allocates nothing. *)
 let idle d = d.retiring == [] && d.pending == [] && not (released_any d.release)
 
-(* Drains the devices of [l] whose stop returned, other than [d]: every drain
-   drains those that hold memory or have a release waiting, and reads the word
-   of those whose work may still run. It allocates nothing for an idle one, as
-   every drain walks them all. *)
+(* Gives back the stopped [d]'s timeline word once nothing reads it: its
+   readers move to the C record's copy, then, once every domain passed a minor
+   collection since, the driver gets the word back, after every other device's
+   mapping of it. One drain takes each step. *)
+let end_word d =
+  match d.word_end with
+  | Given -> ()
+  | Read ->
+      if Dev.stopped d && Dev.move_word d then begin
+        let n = Dev.minors () in
+        Dev.protect d (fun () -> d.word_end <- Moved n)
+      end
+  | Moved n ->
+      let mine =
+        Dev.minors () > n
+        && Dev.protect d (fun () ->
+            match d.word_end with
+            | Moved m when m = n ->
+                d.word_end <- Given;
+                true
+            | _ -> false)
+      in
+      if mine then begin
+        let maps_of c =
+          Dev.protect c (fun () ->
+              let of_d, others =
+                List.partition (fun (i, _) -> i = d.index) c.pair_maps
+              in
+              c.pair_maps <- others;
+              of_d)
+        in
+        Dev.iter (fun c -> List.iter (fun (_, r) -> free_region c r) (maps_of c));
+        Option.iter (free_region d) d.word_region
+      end
+
+(* Drains the devices of [l] whose stop returned, other than [d], and ends
+   their words: every drain drains those that hold memory or have a release
+   waiting, and reads the word of those whose work may still run. It allocates
+   nothing for an idle one, as every drain walks them all. *)
 let rec drain_lost d = function
   | [] -> ()
   | e :: l ->
-      if e != d && (not (Dev.orphaned e)) && not (idle e && e.cached = 0) then
-        drain_own e;
+      if not (Dev.orphaned e) then begin
+        if e.word_end != Given then end_word e;
+        if e != d && not (idle e && e.cached = 0) then drain_own e
+      end;
       drain_lost d l
 
 (* An orphaned device's objects are forgotten: nothing of it drains. *)

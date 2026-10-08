@@ -22,6 +22,7 @@
 #include <caml/custom.h>
 #include <caml/fail.h>
 #include <caml/memory.h>
+#include <caml/minor_gc.h>
 #include <caml/mlvalues.h>
 #include <caml/signals.h>
 #include <caml/threads.h>
@@ -160,8 +161,8 @@ static struct rig_device *device_of(int i) {
 
 /* The last value [d]'s word showed. */
 static uint64_t device_word(struct rig_device *d) {
-  if (d->word != NULL)
-    return atomic_load_explicit(d->word, memory_order_acquire);
+  _Atomic uint64_t *w = atomic_load_explicit(&d->word, memory_order_acquire);
+  if (w != NULL) return atomic_load_explicit(w, memory_order_acquire);
   return atomic_load_explicit(&d->seen, memory_order_acquire);
 }
 
@@ -336,7 +337,7 @@ value caml_rig_device_new(value v_index, value v_name,
   d->self = (void *)Nativeint_val(v_self);
   d->room = (rig_room_fn *)Nativeint_val(v_room);
   d->submit = (rig_submit_fn *)Nativeint_val(v_submit);
-  d->word = (_Atomic uint64_t *)Nativeint_val(v_word);
+  atomic_init(&d->word, (_Atomic uint64_t *)Nativeint_val(v_word));
   return Val_long((intnat)d);
 }
 
@@ -650,16 +651,74 @@ value caml_rig_exit(value v_d) {
 
 /* Spins on [d]'s word, yielding the processor with the domain lock
    released, until it reads [v_target], [d] is lost, or [v_ms] milliseconds
-   passed. Answers the last value read. */
+   passed. Answers the last value read. The spin counts as a call inside
+   [d], so [d]'s stop, and the end of its word, wait for it: it reads the
+   word without the domain lock, which no minor collection waits for. */
 value caml_rig_spin(value v_d, value v_target, value v_ms) {
   struct rig_device *d = Device_val(v_d);
   uint64_t target = (uint64_t)Long_val(v_target), w;
   int64_t until = now_ms() + Long_val(v_ms);
   caml_enter_blocking_section_no_pending();
+  mu_lock(d);
+  int lost = is_lost(d);
+  if (!lost) d->inside++;
+  else w = device_word(d);
+  mu_unlock(d);
+  if (lost) {
+    caml_leave_blocking_section();
+    return Val_long((intnat)w);
+  }
   while ((w = device_word(d)) < target && !is_lost(d) && now_ms() < until)
     relax();
+  mu_lock(d);
+  d->inside--;
+  mu_unlock(d);
   caml_leave_blocking_section();
   return Val_long((intnat)w);
+}
+
+/* The end of a stopped device's word. Once nothing reads the driver's
+   word, the record moves its readers to [final], which holds the word's
+   last value; the driver's word is given back once every domain that
+   holds its runtime lock passed a minor collection since, as a reader that
+   held it may have loaded the old address. Readers without the runtime
+   lock read under the device's mutex or as a call inside it. The driver's
+   word is still read by another device's queue while that device's record
+   holds a wait on it its word has not passed. Answers whether this call
+   moved the readers; [d] is stopped. */
+value caml_rig_word_retire(value v_d) {
+  struct rig_device *d = Device_val(v_d);
+  caml_enter_blocking_section_no_pending();
+  int n = atomic_load(&top), waited = 0;
+  for (int i = 1; i <= n && !waited; i++) {
+    struct rig_device *c = device_of(i);
+    if (c == NULL || c == d) continue;
+    mu_lock(c);
+    uint64_t cw = device_word(c);
+    for (int j = 0; j < c->nrecord && !waited; j++)
+      waited = c->record[j].producer == d->index && c->record[j].u > cw;
+    mu_unlock(c);
+  }
+  int moved = 0;
+  if (!waited) {
+    mu_lock(d);
+    _Atomic uint64_t *w = atomic_load(&d->word);
+    moved = w != &d->final && d->inside == 0;
+    if (moved) {
+      atomic_store(&d->final, atomic_load(w != NULL ? w : &d->seen));
+      atomic_store(&d->word, &d->final);
+    }
+    mu_unlock(d);
+  }
+  caml_leave_blocking_section();
+  return Val_bool(moved);
+}
+
+/* The minor collections the program made: each one waited for every domain
+   that holds its runtime lock. */
+value caml_rig_minors(value unit) {
+  (void)unit;
+  return Val_long((intnat)atomic_load(&caml_minor_collections_count));
 }
 
 /* The producers [d]'s unreached work waits on in its queue, each once, for

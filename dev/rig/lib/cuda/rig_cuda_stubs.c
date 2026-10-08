@@ -870,6 +870,22 @@ value caml_rig_cuda_signaled(value v_self) {
   return Val_long(atomic_load_explicit(d->word, memory_order_acquire));
 }
 
+/* Gives back the stopped device's word, which holds its last value: the
+   streams and events of a stop that found work running go first, as that
+   work has ended. Releases the runtime: CUDA may wait for the GPU. */
+value caml_rig_cuda_free_word(value v_self) {
+  struct device *d = Device_val(v_self);
+  caml_enter_blocking_section_no_pending();
+  if (push(d->context) == CUDA_SUCCESS) {
+    destroy(d);
+    p_cuMemFreeHost((void *)d->word);
+    d->word = NULL;
+    pop(CUDA_SUCCESS);
+  }
+  caml_leave_blocking_section();
+  return Val_unit;
+}
+
 value caml_rig_cuda_word(value v_self) {
   return Val_long((intnat)Device_val(v_self)->word);
 }

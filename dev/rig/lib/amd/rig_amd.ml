@@ -556,7 +556,7 @@ let release g r =
   give_back g r.mem
 
 let free g r =
-  if r.owner <> g.self || r == g.word then
+  if r.owner <> g.self then
     invalid_arg
       "Rig_amd.free: the region is no allocation or mapping of the device";
   if not (Atomic.compare_and_set r.live true false) then

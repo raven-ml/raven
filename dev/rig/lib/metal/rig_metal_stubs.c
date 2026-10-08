@@ -181,6 +181,15 @@ value caml_rig_metal_free(value v_d, value v_buffer) {
   return Val_unit;
 }
 
+/* Releases the stopped device's word, which no handler writes any more:
+   the word is in no residency set. */
+value caml_rig_metal_free_word(value v_d) {
+  struct rig_metal *d = Device_val(v_d);
+  [d->word release];
+  d->word = nil;
+  return Val_unit;
+}
+
 /* Images */
 
 /* The metallib [v_b] with a pipeline for each of its functions:
@@ -443,6 +452,7 @@ NO_METAL1(caml_rig_metal_facts)
 NO_METAL2(caml_rig_metal_alloc)
 NO_METAL3(caml_rig_metal_map_host)
 NO_METAL2(caml_rig_metal_free)
+NO_METAL1(caml_rig_metal_free_word)
 NO_METAL1(caml_rig_metal_release)
 NO_METAL2(caml_rig_metal_image)
 NO_METAL1(caml_rig_metal_icb_release)

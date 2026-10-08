@@ -147,7 +147,7 @@ val free : t -> region -> unit
     caller frees [r] once no work that uses it runs, and frees a mapping of
     another device's memory before that memory.
 
-    Raises [Invalid_argument] if [r] is no such region of [g], such as {!word},
+    Raises [Invalid_argument] if [r] is no such region of [g] nor its {!word},
     or was freed. *)
 
 val address : region -> int option
@@ -235,9 +235,9 @@ val word : t -> region
     unsigned 64-bit integer in the host's byte order, the last value [v] such
     that the work of every value up to [v] completed. The queue that releases
     [v] writes it whole, after its work's writes reached memory; it never
-    decreases. Other devices may map it and wait on it. It is never freed:
-    another device's work may still read it after [g] is stopped or collected.
-*)
+    decreases. Other devices may map it and wait on it. It lives until
+    {!free}, which the caller calls once [g] is stopped, the word holds its
+    last value, and no other device's work reads it. *)
 
 val signaled : t -> int
 (** [signaled g] is the value in {!word}, read with acquire order: the work of

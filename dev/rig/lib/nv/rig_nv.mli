@@ -161,8 +161,7 @@ val free : t -> region -> unit
     maps, and other regions over it, stay. The caller frees [r] once no work
     that uses it runs.
 
-    Raises [Invalid_argument] if [r] is not a region of [g], is the timeline
-    word, or was freed. *)
+    Raises [Invalid_argument] if [r] is not a region of [g], or was freed. *)
 
 val address : region -> int option
 (** [address r] is [Some a], [a] the address of [r]'s first byte in the GPU's
@@ -248,8 +247,9 @@ val word : t -> region
     that the work of every value up to [v] completed. [g]'s channels write it
     with one 64-bit store, after waiting for their work and making its writes
     visible to the system; it never decreases. Other devices may map it and wait
-    on it. It is never freed: another device's work may still read it after [g]
-    is stopped or collected. *)
+    on it. It lives until
+    {!free}, which the caller calls once [g] is stopped, the word holds its
+    last value, and no other device's work reads it. *)
 
 val signaled : t -> int
 (** [signaled g] is the value in {!word}, read with acquire order: the work of
