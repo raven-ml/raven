@@ -84,15 +84,16 @@ write/floor-64M	wall_time	batch=1	n=20	9.547e-03	9.319e-03 9.361e-03 9.413e-03 9
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed under load 14.0 on 10 cores
+# forced: blessed borrow/first-64M borrow/first-read-64M under load 15.2 on 10 cores
 
 barrier/1M	alloc_words	exact	72
 barrier/1M	wall_time	batch=1	n=20	9.958e-04	7.755e-04 8.419e-04 8.674e-04 8.692e-04 9.039e-04 9.222e-04 9.638e-04 9.813e-04 9.858e-04 9.953e-04 9.964e-04 1.005e-03 1.018e-03 1.030e-03 1.032e-03 1.037e-03 1.040e-03 1.070e-03 1.078e-03 1.151e-03
 barrier/floor-1M	alloc_words	exact	0
 barrier/floor-1M	wall_time	batch=8	n=20	9.438e-04	7.349e-04 7.460e-04 7.530e-04 7.643e-04 7.667e-04 8.879e-04 8.970e-04 9.199e-04 9.238e-04 9.430e-04 9.446e-04 9.621e-04 9.677e-04 1.028e-03 1.069e-03 1.246e-03 1.285e-03 1.302e-03 1.337e-03 1.384e-03
-borrow/first-64M	alloc_words	exact	249
-borrow/first-64M	wall_time	batch=8	n=20	8.179e-04	5.826e-04 6.329e-04 6.695e-04 6.732e-04 6.870e-04 7.403e-04 7.833e-04 7.846e-04 7.847e-04 7.865e-04 8.493e-04 9.023e-04 9.927e-04 1.009e-03 1.043e-03 1.044e-03 1.060e-03 1.064e-03 1.111e-03 1.133e-03
-borrow/first-read-64M	alloc_words	exact	267
-borrow/first-read-64M	wall_time	batch=1	n=20	7.128e-03	6.622e-03 6.852e-03 6.866e-03 6.879e-03 6.921e-03 6.945e-03 7.024e-03 7.074e-03 7.098e-03 7.113e-03 7.142e-03 7.142e-03 7.149e-03 7.286e-03 7.409e-03 7.555e-03 7.841e-03 8.221e-03 8.659e-03 8.680e-03
+borrow/first-64M	alloc_words	exact	243
+borrow/first-64M	wall_time	batch=8	n=20	8.946e-04	7.968e-04 8.033e-04 8.070e-04 8.217e-04 8.247e-04 8.581e-04 8.598e-04 8.763e-04 8.876e-04 8.925e-04 8.967e-04 8.968e-04 8.980e-04 8.997e-04 9.145e-04 9.184e-04 9.492e-04 9.747e-04 9.803e-04 9.956e-04
+borrow/first-read-64M	alloc_words	exact	261
+borrow/first-read-64M	wall_time	batch=1	n=20	7.758e-03	6.745e-03 6.751e-03 6.828e-03 6.892e-03 6.960e-03 7.050e-03 7.638e-03 7.645e-03 7.665e-03 7.727e-03 7.789e-03 7.929e-03 8.038e-03 8.173e-03 8.219e-03 8.272e-03 8.331e-03 8.459e-03 8.475e-03 9.252e-03
 borrow/floor-first-64M	alloc_words	exact	0
 borrow/floor-first-64M	wall_time	batch=8	n=20	7.730e-04	6.003e-04 6.745e-04 6.830e-04 7.092e-04 7.163e-04 7.285e-04 7.426e-04 7.439e-04 7.623e-04 7.652e-04 7.808e-04 8.134e-04 8.135e-04 8.483e-04 8.753e-04 9.387e-04 9.525e-04 9.811e-04 9.829e-04 1.006e-03
 borrow/floor-first-read-64M	alloc_words	exact	0
