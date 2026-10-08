@@ -251,8 +251,9 @@ let entries =
       false,
       0,
       0x8000_0000_0000_1071L );
-    (* GFX12 maps system memory MTYPE_NC however uncached it is asked to be: the
-       kernel's gmc_v12_0_get_vm_pte works around a hardware bug so. *)
+    (* GFX12 maps system memory MTYPE_UC however cached it is asked to be, as
+       the kernel's GART does for the queues and words of VMID 0
+       (gmc_v12_0_gart_init). *)
     ( "GFX12 2 MiB uncached system page",
       gfx12,
       2,
@@ -261,7 +262,16 @@ let entries =
       true,
       true,
       9,
-      0x8000_0000_0020_04f7L );
+      0x80c0_0000_0020_04f7L );
+    ( "GFX12 cached system page",
+      gfx12,
+      3,
+      0x1000,
+      `Page `System,
+      false,
+      true,
+      0,
+      0x80c0_0000_0000_1077L );
     ("GFX12 root table", gfx12, 0, 0x5000, `Table, false, false, 0, 0x5001L);
     ( "GFX11 uncached leaf",
       gfx11,

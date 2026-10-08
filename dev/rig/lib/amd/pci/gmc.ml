@@ -178,11 +178,13 @@ let entry ~gc ~level ~pa target ~uncached ~snooped ~fragment =
   let table = target = `Table in
   let system = target = `Page `System in
   let shift v s = Int64.shift_left (Int64.of_int v) s in
-  (* GFX12 reaches system memory MTYPE_NC whatever the mapping asks, as the
-     kernel's gmc_v12_0_get_vm_pte does to avoid a hardware bug. *)
+  (* GFX12 reaches system memory MTYPE_UC whatever the mapping asks, as the
+     kernel's GART maps the queues and words of VMID 0, which every table of
+     this library serves (gmc_v12_0_gart_init). Its MTYPE_NC is for other
+     VMIDs' system pages (gmc_v12_0_get_vm_pte). *)
   let mtype =
     match gc with
-    | (12 | 13), _, _ when system -> D.soc24_mtype_nc
+    | (12 | 13), _, _ when system -> D.soc24_mtype_uc
     | _ -> if uncached then mtype_uc gc else 0
   in
   let base =

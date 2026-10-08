@@ -60,8 +60,8 @@ val entry :
     controller gives it, or system memory at its bus address; [uncached],
     [snooped] and [fragment] (the log2 of the run, in 4 KiB pages) as
     {!Rig_pci.Page_table.format} states, but that GC 12 reaches system memory
-    non-coherently cached (MTYPE_NC) even when [uncached], working around a
-    hardware bug as the kernel does. Pure.
+    uncached (MTYPE_UC) even when not [uncached], as the kernel's GART does for
+    the queues of VMID 0. Pure.
 
     Raises [Invalid_argument] if [pa] is not on 4 KiB or has bits above the 48
     the entry holds. *)
