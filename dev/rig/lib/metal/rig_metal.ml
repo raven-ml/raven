@@ -166,6 +166,7 @@ let budget d = d.budget
 let queues _ = [ "COMPUTE:0" ]
 let completion _ = `Host
 let waits_on _ _ = false
+let max_waits _ = 0
 let blocks _ = `May_block
 let capability d = d.cap
 let capability_key = Rig_metal_abi.key

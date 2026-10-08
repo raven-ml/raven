@@ -151,6 +151,9 @@ val waits_on : t -> [ `Store | `Object | `Host ] -> bool
     Work that depends on another device starts after the caller waited for it on
     the host. *)
 
+val max_waits : t -> int
+(** [max_waits d] is [0]: a Metal queue waits on no other device's word. *)
+
 val blocks : t -> [ `Returns | `May_block ]
 (** [blocks d] is [`May_block]: the submit calls Metal, and waits for [d]'s
     oldest command buffer to complete when 1,024 of them are uncommitted or

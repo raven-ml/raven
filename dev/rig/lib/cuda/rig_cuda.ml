@@ -245,6 +245,7 @@ let budget g = g.budget
 let queues _ = [ "COMPUTE:0"; "COPY:0" ]
 let completion _ = `Store
 let waits_on _ = function `Store | `Host -> true | `Object -> false
+let max_waits _ = max_int
 let blocks _ = `May_block
 
 type capability = Rig_cuda_abi.t

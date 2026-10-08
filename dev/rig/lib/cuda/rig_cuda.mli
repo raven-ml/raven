@@ -138,6 +138,10 @@ val waits_on : t -> [ `Store | `Object | `Host ] -> bool
     on any 64-bit word it maps, whoever writes it. It is [false] for [`Object].
 *)
 
+val max_waits : t -> int
+(** [max_waits g] is [max_int]: a submission's waits go to its stream in
+    batches, as many as it carries. *)
+
 val blocks : t -> [ `Returns | `May_block ]
 (** [blocks g] is [`May_block]: the submit calls CUDA, which may block. *)
 
