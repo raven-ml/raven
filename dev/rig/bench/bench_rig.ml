@@ -267,6 +267,12 @@ let copy_rows =
           let d, _ = P.open_ ~host_visible:false (strf "bench:%d" !opened) in
           (B.create Rig.host (64 * kib), B.create d (64 * kib)))
         copy;
+      row "staged-4K"
+        (fun () ->
+          incr opened;
+          let d, _ = P.open_ ~host_visible:false (strf "bench:%d" !opened) in
+          (B.create Rig.host (4 * kib), B.create d (4 * kib)))
+        copy;
     ]
 
 (* A collection hands the memory of 1,000 dropped buffers back, and the next
