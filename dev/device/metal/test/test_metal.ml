@@ -146,6 +146,7 @@ type dev = { c : Device_core.t; d : Device_metal.t; fill : Device_metal.image }
 let names = Atomic.make 0
 
 let opened () =
+  S.hold_gpu ();
   let name = strf "METAL:test-%d" (Atomic.fetch_and_add names 1) in
   let d = ref None in
   let make () =
@@ -739,6 +740,7 @@ let opening =
     ]
 
 let () =
+  S.hold_gpu ();
   exit
     (run "device_metal"
        [ ring_tests; work; icbs; memory; images; timeline; opening ])

@@ -5,6 +5,20 @@
 
 (** What the Metal suite and bench share. *)
 
+(** {1:gpu The machine's GPU lock} *)
+
+val hold_gpu : unit -> unit
+(** [hold_gpu ()] returns once the process holds the machine's GPU lock, which
+    it keeps until it exits, or at once if the machine has no Metal GPU. The
+    lock is [flock] on [/tmp/raven-device-gpu.lock], the file every suite that
+    acts on a GPU of the machine locks; its holder writes its executable and
+    process id into it. A suite calls [hold_gpu] before [Windtrap.run], so that
+    the wait counts against no test's timeout; the suite calls it again before
+    each open.
+
+    Raises [Failure] naming the holder if another process still holds the lock
+    after 300 s, or naming the errno if the file cannot be locked. *)
+
 (** {1:ring A device's ring, by hand}
 
     The ring of a device's command buffers, driven without Metal: the suite
