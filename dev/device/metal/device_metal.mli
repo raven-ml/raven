@@ -144,9 +144,9 @@ val waits_on : t -> [ `Store | `Object | `Host ] -> bool
     the host. *)
 
 val blocks : t -> [ `Returns | `May_block ]
-(** [blocks d] is [`May_block]: {!submit} calls Metal, and may wait for [d]'s
-    earlier command buffers to complete when [d] holds as many uncompleted
-    command buffers as its queue does. *)
+(** [blocks d] is [`May_block]: {!submit} calls Metal, and waits for [d]'s
+    oldest command buffer to complete when 1,024 of them are uncommitted or
+    uncompleted, as many as [d]'s queue holds. *)
 
 type capability = Device_metal_abi.t
 (** The type for what compiled code needs from the device. *)
@@ -270,8 +270,8 @@ val part :
   part
 (** [part d ~queue ~after w] is the work [w] on [queue]. The device runs one
     kind: [`Fill (f, arg, 0, 0)], the fill at address [f], called with [arg]
-    ({!Device_metal_abi}). A fill may start any number of command buffers, so it
-    declares no ring units and no segment bytes.
+    ({!Device_metal_abi}). A fill declares no room: its ring units and segment
+    bytes are [0], and the driver refuses work that declares any other.
 
     [after] (defaults to [[||]]) lists the earlier parts of the submission this
     part waits for. The device runs a submission's parts in order, each after
@@ -285,7 +285,8 @@ val part :
 val room : t -> part array -> [ `Fits | `Later | `Never ]
 (** [room d ps] is [`Fits]: {!submit} takes any parts {!part} makes, waiting
     inside for command buffers when the queue is full. The C form answers
-    [NX_NEVER] for a part that is no fill, which {!part} never makes. *)
+    [NX_NEVER] for a part that is no fill or declares room, which {!part} never
+    makes. *)
 
 val submit :
   t ->

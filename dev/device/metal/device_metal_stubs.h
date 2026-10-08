@@ -13,7 +13,11 @@
 #include "device_metal.h"
 #include "device_metal_ring.h"
 
-/* The command buffers a device's queue holds, and its ring's slots. */
+/* The command buffers a device's queue holds, and its ring's slots. A
+   queue holds 64 by default; a fill that splits once per kernel, as one
+   profiling its kernels does, would then wait after 64 kernels. 1,024 lets
+   such work run ahead of the host, at 32 bytes of ring per command buffer;
+   past it, a submission waits for the oldest to complete. */
 enum { ring_slots = 1024 };
 
 /* A device: never freed, since a completion handler, another device or the
