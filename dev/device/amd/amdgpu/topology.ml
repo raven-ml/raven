@@ -16,6 +16,7 @@ type node = {
   mec : int;
   budget : int;
   waves_per_cu : int;
+  arrays : int;
   cwsr : int;
   ctl_stack : int;
 }
@@ -167,6 +168,17 @@ let node root bus =
           mec;
           budget = budget (nodes root // string_of_int index);
           waves_per_cu = waves_per_simd * simd_per_cu;
+          arrays = arrays_per_engine;
           cwsr;
           ctl_stack;
         }
+
+let linked root n n' =
+  let dir = nodes root // string_of_int n in
+  let to_ links l =
+    List.assoc_opt "node_to" (properties (dir // links // l // "properties"))
+  in
+  List.exists
+    (fun links ->
+      List.exists (fun l -> to_ links l = Some n') (entries (dir // links)))
+    [ "io_links"; "p2p_links" ]

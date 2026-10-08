@@ -18,6 +18,7 @@ type node = {
   mec : int; (* the version of its compute queues' firmware *)
   budget : int; (* its memory, in bytes *)
   waves_per_cu : int; (* the most waves a compute unit runs at once *)
+  arrays : int; (* the shader arrays of a shader engine *)
   cwsr : int; (* a die's context save area, in bytes *)
   ctl_stack : int; (* the part of it that holds the control stack *)
 }
@@ -29,3 +30,7 @@ val gpus : string -> string list
 (* [node root bus] is the GPU at bus address [bus], or why the kernel driver
    describes none there. *)
 val node : string -> string -> (node, string) result
+
+(* [linked root n n'] is [true] iff the topology lists a link from node [n] to
+   node [n']: over XGMI, or over PCIe through a large BAR. *)
+val linked : string -> int -> int -> bool
