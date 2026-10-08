@@ -300,8 +300,7 @@ let take host bus =
       Error why
     in
     match
-      let state = Sysfs.state host bus in
-      let* addressing = Sysfs.access host bus state in
+      let* addressing = Sysfs.access host bus in
       let by =
         match addressing with
         | Ops.Iommu -> take_iommu

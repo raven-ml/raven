@@ -29,9 +29,6 @@ val driver : t -> string -> string option
 val group : t -> string -> string option
 (** [group h bus] is the IOMMU group of the function at [bus]. *)
 
-val header : int
-(** [header] is the bytes of configuration space every reader sees. *)
-
 val bar : t -> string -> int -> (int * int) option
 (** [bar h bus i] is BAR [i]'s bus address, from its register, and its size;
     [None] if there is no BAR [i], such as the upper index of a 64-bit BAR. *)
@@ -44,28 +41,8 @@ val vfio_file : t -> string -> string
 
 (** {1:access How a function is taken} *)
 
-(** The type for what an IOMMU does with a function's DMA while no process holds
-    it. *)
-type iommu =
-  | No_iommu  (** There is none, or VFIO's no-IOMMU mode stands in for one. *)
-  | Identity  (** It passes physical addresses through. *)
-  | Translating  (** It translates them. *)
-
-type state = {
-  driver : string option;
-  iommu : iommu;
-  siblings : string list;  (** The other functions of its device. *)
-  enabled : bool;
-  locked_down : bool;  (** Whether the kernel refuses mappings of BARs. *)
-}
-(** The type for the state of a function. *)
-
-val state : t -> string -> state
-(** [state h bus] is the state of the function at [bus]. *)
-
-val access : t -> string -> state -> (Ops.addressing, string) result
-(** [access h bus s] is how a function at [bus] in state [s] is taken, or why it
-    cannot be:
+val access : t -> string -> (Ops.addressing, string) result
+(** [access h bus] is how the function at [bus] is taken, or why it cannot be:
     - bound to [vfio-pci] behind an IOMMU, siblings and all: [Iommu];
     - bound to [vfio-pci] without one, or unbound and enabled under none or an
       identity one, alone on its device and the kernel not locked down:

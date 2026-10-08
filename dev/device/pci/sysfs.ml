@@ -223,7 +223,8 @@ let group_holders h g =
               Some (f, d)
           | _ -> None)
 
-let access h bus s =
+(* How a function in state [s] is taken, or why it cannot be. *)
+let addressing h bus s =
   match s with
   | { driver = Some d; iommu = No_iommu; _ } when d <> vfio_pci ->
       Error (strf "%s is bound to the driver %s; detach the GPU first" bus d)
@@ -254,10 +255,12 @@ let access h bus s =
            h.lockdown bus (bind_vfio bus))
   | _ -> Ok Ops.Physical
 
+let access h bus = addressing h bus (state h bus)
+
 (* Changes *)
 
 let detach h bus =
-  match access h bus (state h bus) with
+  match access h bus with
   | Ok _ -> ()
   | Error _ -> (
       (match driver h bus with
@@ -270,7 +273,7 @@ let detach h bus =
       if driver h bus = None && not (enabled h bus) then
         write (path h bus "enable") "1";
       let s = state h bus in
-      match (access h bus s, s) with
+      match (addressing h bus s, s) with
       | Ok _, _ -> ()
       | Error _, { siblings = sibling :: _; _ } ->
           Fail.fail "%s still shares its device with %s after removing it" bus
