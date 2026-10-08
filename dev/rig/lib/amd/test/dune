@@ -1,5 +1,9 @@
+; test_fault loses a device to a page fault of its work, after which the
+; kernel driver runs no queue of the process on that GPU, so it is a suite of
+; its own.
+
 (tests
- (names test_amd)
+ (names test_amd test_fault)
  (libraries rig rig_amd rig_amd_abi rig_amd_amdgpu rig_amd_support windtrap)
  (deps
   (glob_files fixtures/*)))
