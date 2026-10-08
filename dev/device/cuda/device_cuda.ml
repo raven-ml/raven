@@ -248,6 +248,7 @@ let self g = Nativeint.of_int g.self
 external alloc_memory : int -> bool -> int -> int = "caml_device_cuda_alloc"
 external free_memory : int -> bool -> int -> int = "caml_device_cuda_free"
 external mapped : int -> int -> int = "caml_device_cuda_mapped"
+external allocation : int -> int -> int = "caml_device_cuda_allocation"
 external lock : int -> bool -> int -> int -> int = "caml_device_cuda_lock"
 external peer : int -> int -> int = "caml_device_cuda_peer"
 
@@ -303,10 +304,15 @@ let locked g e a n address = region g.self (Locked e) ~address ~handle:a n
 let page_locking n a = strf "page-locking %d bytes at 0x%x" n a
 
 (* A range CUDA did not page-lock is registered. One it did, for another owner,
-   is mapped as it is if both its ends are locked. *)
+   is mapped as it is if both its ends lie in one allocation: two allocations
+   may have unlocked pages between them. *)
 let page_lock g a n =
   let first = mapped g.self a and last = mapped g.self (a + n - 1) in
-  if first >= 0 && last >= 0 then Some (locked g None a n first)
+  if first >= 0 && last >= 0 then
+    let start = allocation g.self a in
+    if start >= 0 && start = allocation g.self (a + n - 1) then
+      Some (locked g None a n first)
+    else None
   else if first >= 0 || last >= 0 then None
   else if lock g.self true a n <> 0 then refused (page_locking n a) g.self None
   else

@@ -218,8 +218,9 @@ val map_host : t -> nativeint -> int -> region option
     {!map_host} gave over them, on any device, is unmapped. A range that shares
     a page with one without lying inside it is [None]. Memory that CUDA
     page-locked for another owner, such as an allocation of {!alloc} or of
-    another library, is mapped as it is, uncounted, and must stay page-locked
-    until [r] is unmapped.
+    another library, is mapped as it is, uncounted, if the range lies inside one
+    of its allocations ([None] otherwise), and must stay page-locked until [r]
+    is unmapped.
 
     [r]'s {!address} is the one CUDA gives for the memory
     ([cuMemHostGetDevicePointer]), which every device's work uses under unified

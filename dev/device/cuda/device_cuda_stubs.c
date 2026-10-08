@@ -117,6 +117,7 @@ enum {
   CUDA_SUCCESS = 0,
   CUDA_ERROR_NOT_READY = 600,
   CU_DEVICE_ATTRIBUTE_CAN_FLUSH_REMOTE_WRITES = 98,
+  CU_POINTER_ATTRIBUTE_RANGE_START_ADDR = 11,
   CU_STREAM_NON_BLOCKING = 0x1,
   CU_EVENT_DISABLE_TIMING = 0x2,
   CU_MEMHOST_PORTABLE_DEVICEMAP = 0x3,
@@ -157,6 +158,7 @@ enum {
   X(cuMemHostRegister_v2, (void *, size_t, unsigned int))                      \
   X(cuMemHostUnregister, (void *))                                             \
   X(cuMemHostGetDevicePointer_v2, (CUdeviceptr *, void *, unsigned int))       \
+  X(cuPointerGetAttribute, (void *, int, CUdeviceptr))                         \
   X(cuMemcpyAsync, (CUdeviceptr, CUdeviceptr, size_t, CUstream))               \
   X(cuModuleLoadData, (CUmodule *, const void *))                              \
   X(cuModuleGetFunction, (CUfunction *, CUmodule, const char *))               \
@@ -451,6 +453,19 @@ value caml_device_cuda_mapped(value v_self, value v_address) {
              p_cuMemHostGetDevicePointer_v2(&a, (void *)Long_val(v_address),
                                             0));
   return answer(s, (intnat)a);
+}
+
+/* The start of the CUDA allocation that holds [v_address], or CUDA's
+   status negated: host memory CUDA allocated or page-locked, under unified
+   addressing. */
+value caml_device_cuda_allocation(value v_self, value v_address) {
+  CUdeviceptr start = 0;
+  CUresult s;
+  IN_CONTEXT(s, Device_val(v_self),
+             p_cuPointerGetAttribute(&start,
+                                     CU_POINTER_ATTRIBUTE_RANGE_START_ADDR,
+                                     (CUdeviceptr)Long_val(v_address)));
+  return answer(s, (intnat)start);
 }
 
 /* Page-locks the [v_n] bytes of host memory at [v_address] for every

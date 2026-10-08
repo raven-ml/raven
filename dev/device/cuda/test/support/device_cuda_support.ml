@@ -12,6 +12,8 @@ external lock : string -> bool = "device_cuda_test_lock"
 external current : unit -> nativeint = "device_cuda_test_current"
 external locked : nativeint -> bool = "device_cuda_test_locked"
 external attribute : int -> int = "device_cuda_test_attribute"
+external register : nativeint -> int -> unit = "device_cuda_test_register"
+external unregister : nativeint -> unit = "device_cuda_test_unregister"
 
 (* The GPU *)
 
@@ -48,6 +50,8 @@ let bind g =
          "cuMemcpyAsync";
          "cuMemcpyDtoH_v2";
          "cuMemcpyHtoD_v2";
+         "cuMemHostRegister_v2";
+         "cuMemHostUnregister";
        |])
 
 (* The device gpu opened, until a test stops it: one a failed test left open is

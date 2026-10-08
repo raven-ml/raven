@@ -56,11 +56,13 @@ static CUresult(CUDAAPI *get_attribute)(int *, int, int);
 static CUresult(CUDAAPI *memcpy_async)(uint64_t, uint64_t, size_t, void *);
 static CUresult(CUDAAPI *memcpy_dtoh)(void *, uint64_t, size_t);
 static CUresult(CUDAAPI *memcpy_htod)(uint64_t, const void *, size_t);
+static CUresult(CUDAAPI *host_register)(void *, size_t, unsigned int);
+static CUresult(CUDAAPI *host_unregister)(void *);
 
 /* Binds cuLaunchKernel, cuCtxGetCurrent, cuDevicePrimaryCtxRetain,
    cuCtxPushCurrent_v2, cuCtxPopCurrent_v2, cuMemHostGetDevicePointer_v2,
-   cuDeviceGetAttribute, cuMemcpyAsync, cuMemcpyDtoH_v2 and
-   cuMemcpyHtoD_v2, in this order. */
+   cuDeviceGetAttribute, cuMemcpyAsync, cuMemcpyDtoH_v2, cuMemcpyHtoD_v2,
+   cuMemHostRegister_v2 and cuMemHostUnregister, in this order. */
 value device_cuda_test_bind(value v_f) {
   launch_kernel = Ptr_val(Field(v_f, 0));
   get_current = Ptr_val(Field(v_f, 1));
@@ -72,6 +74,8 @@ value device_cuda_test_bind(value v_f) {
   memcpy_async = Ptr_val(Field(v_f, 7));
   memcpy_dtoh = Ptr_val(Field(v_f, 8));
   memcpy_htod = Ptr_val(Field(v_f, 9));
+  host_register = Ptr_val(Field(v_f, 10));
+  host_unregister = Ptr_val(Field(v_f, 11));
   return Val_unit;
 }
 
@@ -99,6 +103,27 @@ value device_cuda_test_locked(value v_p) {
   CUresult s = device_pointer(&d, Ptr_val(v_p), 0);
   pop(&popped);
   return Val_bool(s == 0);
+}
+
+/* Page-locks the [v_n] bytes of host memory at [v_p] for every device and
+   maps them (CU_MEMHOST_PORTABLE | CU_MEMHOST_DEVICEMAP), as another library
+   would. */
+value device_cuda_test_register(value v_p, value v_n) {
+  CUcontext popped;
+  push_primary();
+  CUresult s = host_register(Ptr_val(v_p), Long_val(v_n), 0x3);
+  pop(&popped);
+  if (s != 0) caml_failwith("cuMemHostRegister");
+  return Val_unit;
+}
+
+value device_cuda_test_unregister(value v_p) {
+  CUcontext popped;
+  push_primary();
+  CUresult s = host_unregister(Ptr_val(v_p));
+  pop(&popped);
+  if (s != 0) caml_failwith("cuMemHostUnregister");
+  return Val_unit;
 }
 
 /* The [v_n] bytes of GPU memory at [v_a], copied by CUDA once every stream

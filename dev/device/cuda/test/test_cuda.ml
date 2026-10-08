@@ -509,7 +509,7 @@ let shared = fixture ~teardown:(fun g -> ignore (S.stop g)) S.gpu
 (* map_host: the registry *)
 
 module Registry = struct
-  type area = Arena | Foreign | Read_only
+  type area = Arena | Foreign | Split | Read_only
   type entry = { start : int; bytes : int; mutable maps : int }
   type region = Counted of entry | Uncounted
   type t = { mutable entries : entry list; mutable regions : region list }
@@ -525,6 +525,14 @@ module Registry = struct
 
   let map m (area, a, n) =
     match area with
+    | Split ->
+        let inside lo = lo <= a && a + n <= lo + S.page in
+        let one = inside 0 || inside (2 * S.page) in
+        cover "a range inside one of another owner's two allocations" one;
+        cover "a range across another owner's two allocations"
+          (a < S.page && a + n > 2 * S.page);
+        if one then m.regions <- m.regions @ [ Uncounted ];
+        one
     | Read_only ->
         cover "read-only memory" true;
         false
@@ -576,6 +584,7 @@ module Registry = struct
     g : C.t;
     base : nativeint;
     foreign : C.region;
+    split : nativeint; (* pages 0 and 2 page-locked by another owner *)
     read_only : nativeint;
     mutable live : C.region list;
   }
@@ -585,10 +594,14 @@ module Registry = struct
   let start () =
     let g = shared () in
     let foreign = Option.get (C.alloc g `Pinned (2 * S.page)) in
+    let split = S.pages (3 * S.page) in
+    S.register split S.page;
+    S.register (Nativeint.add split (Nativeint.of_int (2 * S.page))) S.page;
     {
       g;
       base = S.pages (arena * S.page);
       foreign;
+      split;
       read_only = S.pages ~read_only:true S.page;
       live = [];
     }
@@ -596,6 +609,9 @@ module Registry = struct
   let release s =
     List.iter (C.unmap s.g) s.live;
     C.free s.g s.foreign;
+    S.unregister s.split;
+    S.unregister (Nativeint.add s.split (Nativeint.of_int (2 * S.page)));
+    S.free_pages s.split (3 * S.page);
     S.free_pages s.base (arena * S.page);
     S.free_pages s.read_only S.page
 
@@ -604,6 +620,7 @@ module Registry = struct
       match area with
       | Arena -> at s a
       | Foreign -> Nativeint.add (host s.foreign) (Nativeint.of_int a)
+      | Split -> Nativeint.add s.split (Nativeint.of_int a)
       | Read_only -> Nativeint.add s.read_only (Nativeint.of_int a)
     in
     match C.map_host s.g a n with
@@ -643,6 +660,7 @@ module Registry = struct
         (match area with
         | Arena -> "arena"
         | Foreign -> "foreign"
+        | Split -> "split"
         | Read_only -> "read-only")
         a n
     in
@@ -663,6 +681,16 @@ module Registry = struct
              Gen.map
                (fun a -> (Foreign, scale a, 64))
                (Gen.of_list [ 0; 8; 4096 ]) );
+           (* A split range starts in another owner's page: map_host would
+              page-lock one in page 1 itself. *)
+           ( 2,
+             Gen.such_that
+               (fun (_, a, n) -> a + n <= 3 * S.page)
+               (Gen.map
+                  (fun (a, n) -> (Split, scale a, scale n))
+                  (Gen.pair
+                     (Gen.of_list [ 0; 8; 4088; 8192; 8200 ])
+                     (Gen.of_list [ 8; 64; 4096; 8200; 12288 ]))) );
            (1, Gen.constant (Read_only, 0, 64));
          ])
 end

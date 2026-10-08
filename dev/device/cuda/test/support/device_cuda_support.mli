@@ -24,8 +24,8 @@ val stop : Device_cuda.t -> [ `Stopped | `Unknown ]
 
 val bind : Device_cuda.t -> unit
 (** [bind g] makes the CUDA functions of [g]'s capability those {!attribute},
-    {!current}, {!locked}, {!read_gpu}, {!write_gpu}, {!launch} and {!delayed}
-    call. {!gpu} binds them. *)
+    {!current}, {!locked}, {!register}, {!unregister}, {!read_gpu},
+    {!write_gpu}, {!launch} and {!delayed} call. {!gpu} binds them. *)
 
 val with_gpu : (Device_cuda.t -> 'a) -> 'a
 (** [with_gpu f] is [f g], [g] the {!gpu} opened for [f] and stopped after it,
@@ -42,6 +42,13 @@ val current : unit -> nativeint
 val locked : nativeint -> bool
 (** [locked a] is [true] iff CUDA holds the host memory at [a] page-locked and
     mapped for its devices, after a {!with_gpu}. *)
+
+val register : nativeint -> int -> unit
+(** [register a n] page-locks the [n] bytes of host memory at [a] for every CUDA
+    device and maps them, as another library would, after a {!with_gpu}. *)
+
+val unregister : nativeint -> unit
+(** [unregister a] ends what {!register} page-locked at [a]. *)
 
 val wait : Device_cuda.t -> int -> unit
 (** [wait g v] returns once [g]'s word, read as host memory, reaches [v]. It
