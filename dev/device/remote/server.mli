@@ -15,11 +15,11 @@
 type t
 (** The type for servers. *)
 
-val listen : key:string -> Unix.sockaddr -> (t, string) result
+val listen : key:string -> string -> int -> (t, string) result
 (** {!Device_remote.listen}. *)
 
-val address : t -> Unix.sockaddr
-(** {!Device_remote.address}. *)
+val port : t -> int
+(** {!Device_remote.port}. *)
 
 val stop : t -> unit
 (** {!Device_remote.stop}. *)

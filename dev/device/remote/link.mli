@@ -56,17 +56,19 @@ val post : t -> Wire.cmd -> int -> int -> int -> int -> string -> unit
 
 val read : t -> int -> dst:int -> int -> bool
 (** [read l a ~dst n] copies the machine's [n] bytes at [a] to this process's
-    memory at [dst], and is [false] if [l] failed before or meanwhile, the bytes
-    at [dst] then all ones. *)
+    memory at [dst], in requests of at most {!Wire.max_payload} bytes, and is
+    [false] if [l] failed before or meanwhile, the bytes at [dst] then all ones.
+*)
 
 val write : t -> int -> src:int -> int -> bool
 (** [write l a ~src n] posts a copy of this process's [n] bytes at [src] to the
-    machine's at [a], and is [false] if [l] had failed. [src] may be reused once
-    it returns. *)
+    machine's at [a], in requests of at most {!Wire.max_payload} bytes, and is
+    [false] if [l] had failed. [src] may be reused once it returns. *)
 
 val transport : t -> Device_pci.Window.transport
 (** [transport l] is [l] as the machine's transport, whose reads and writes are
     {!read} and {!write} and whose [failed] is {!failed}. *)
 
 val close : t -> unit
-(** [close l] is [fail l "the connection is closed"]. *)
+(** [close l] sends {!Wire.End} and waits for its answer, unless [l] failed,
+    then is [fail l "the connection is closed"]. *)

@@ -53,6 +53,9 @@ type cmd =
   | Free
   | Read  (** Read the machine's bytes: they are the answer's payload. *)
   | Write  (** Write the machine's bytes: they are the payload. *)
+  | End
+      (** End the session: answered once the server released what the client
+          held. *)
 
 val code : cmd -> int
 (** [code c] is [c]'s number on the wire. *)
@@ -88,6 +91,28 @@ val max_text : int
 
 val max_payload : int
 (** [max_payload] bounds a request's payload: 1 GiB. *)
+
+(** {1:sends Sends}
+
+    Both ends send through these, which never raise [SIGPIPE]: a send to a peer
+    that left fails with [EPIPE] and changes no signal disposition. *)
+
+val quiet : Unix.file_descr -> unit
+(** [quiet fd] keeps sends on the socket [fd] from raising [SIGPIPE] where the
+    system needs a socket option for that (macOS). *)
+
+val send : Unix.file_descr -> string -> unit
+(** [send fd s] sends all of [s] on [fd], releasing the runtime meanwhile.
+    Raises [Unix.Unix_error] if the stream fails. *)
+
+val send_memory :
+  Unix.file_descr ->
+  (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t ->
+  int ->
+  int ->
+  unit
+(** [send_memory fd b off n] sends the [n] bytes of [b] from [off] on [fd], as
+    {!send}, without a copy. *)
 
 (** {1:keys Keys and proofs} *)
 

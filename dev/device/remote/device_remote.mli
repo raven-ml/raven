@@ -41,11 +41,12 @@
     or when a posted operation fails on the server, which then reports why and
     ends the session. From then on:
     - the machine is failed ({!Device_pci.Machine.failed}), with a reason that
-      starts with ["HOST:PORT: "];
+      starts with the machine's name;
     - its accesses raise nothing: a load gives all ones and a store is dropped,
       as on a function that left the bus, so a driver over it owes the checks
       {!Device_pci} lists;
-    - its requests, such as taking a function, answer [Error];
+    - its requests, such as taking a function, answer [Error], and its list of
+      functions is empty;
     - the host's next read or write loses it ({!Device_core.Lost}).
 
     A request the server refuses, such as taking a function another process
@@ -103,37 +104,42 @@ val connect :
     [timeout_ms <= 0]. *)
 
 val machine : t -> Device_pci.Machine.t
-(** [machine c] is the machine [c] reaches, named ["HOST:PORT"] as {!connect}
-    was given them. Its functions are those of the server's machine; its system
-    memory, reservations and DMA mappings are made in the server's process. A
-    function behind an IOMMU reaches memory at device addresses the server maps
-    for it. A function has no interrupts: {!Device_pci.Function.interrupt} is
-    [false] at once. *)
+(** [machine c] is the machine [c] reaches. Its name is ["HOST:PORT"] as
+    {!connect} was given them, followed by ["#n"] for the process's [n]th
+    connection to that address from the second on: a name identifies one
+    connection's machine for the life of the process, so a device opened on it
+    is never another connection's. Its functions are those of the server's
+    machine; its system memory, reservations and DMA mappings are made in the
+    server's process. A function behind an IOMMU reaches memory at device
+    addresses the server maps for it. A function has no interrupts:
+    {!Device_pci.Function.interrupt} is [false] at once. *)
 
 val host : t -> Device_core.t
 (** [host c] is the host of [c]'s machine, an io device ({!Device_core.Io})
-    named ["CPU@HOST:PORT"]: {!Device_core.host_of} of every device of the
-    machine. Its memory is memory of the server's process, starting on a page,
-    which the machine's functions may pin; it computes nothing, and the process
-    reaches its bytes only by copies over [c]. *)
+    named ["CPU@NAME"], [NAME] the machine's name: {!Device_core.host_of} of
+    every device of the machine. Its memory is memory of the server's process,
+    starting on a page, which the machine's functions may pin; it computes
+    nothing, and the process reaches its bytes only by copies over [c]. A write
+    returns once sent; if it fails on the server, the host's next use raises
+    {!Device_core.Lost}. *)
 
 val close : t -> unit
 (** [close c] ends the connection once the operations in flight in other domains
-    returned: the machine fails with the reason
-    ["HOST:PORT: the connection is closed"], and the server releases what [c]
-    held. Closing it again does nothing. *)
+    returned, and returns once the server released what [c] held, or at once if
+    [c] had failed: the machine fails with the reason
+    ["NAME: the connection is closed"], [NAME] the machine's name. Closing it
+    again does nothing. *)
 
 (** {1:serving Serving} *)
 
 type server
 (** The type for servers of this machine. *)
 
-val listen : key:string -> Unix.sockaddr -> (server, string) result
-(** [listen ~key addr] listens at [addr] and serves this machine
-    ({!Device_pci.Machine.this}) and its host's memory, from a domain of its
-    own, until {!stop}, to clients that prove [key]. The process ignores
-    [SIGPIPE] from then on, so that a send to a client that left fails instead
-    of ending it.
+val listen : key:string -> string -> int -> (server, string) result
+(** [listen ~key host port] listens at [host] and [port] and serves this machine
+    ({!Device_pci.Machine.this}) and its host's memory, from two domains of its
+    own, until {!stop}, to clients that prove [key]. Port [0] lets the system
+    choose ({!port}).
 
     The server serves one client at a time: its functions' memory lives at
     addresses that client chooses in the server's process, where two would
@@ -150,13 +156,13 @@ val listen : key:string -> Unix.sockaddr -> (server, string) result
     turned off, the server keeps the client's memory for as long as it runs,
     refuses to map memory over it again, and says so on its standard error.
 
-    [Error why] if the process cannot listen at [addr].
+    [Error why] if [host] does not resolve or the process cannot listen there.
 
     Raises [Invalid_argument] if [key] has fewer than 16 bytes. *)
 
-val address : server -> Unix.sockaddr
-(** [address s] is the address [s] listens at, with the port the system chose if
-    {!listen} was given port [0]. *)
+val port : server -> int
+(** [port s] is the port [s] listens at: the one {!listen} was given, or the one
+    the system chose for [0]. *)
 
 val stop : server -> unit
 (** [stop s] stops listening, ends the client's session, cleans up after it as
