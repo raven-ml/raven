@@ -4,12 +4,10 @@
   ---------------------------------------------------------------------------*/
 
 /* What the disk's suite asks of the system that OCaml's Unix does not give: a
-   limit on this process's open files, dropping a file's cached pages, whether
-   AddressSanitizer watches this process, and which system it runs on. */
+   limit on this process's open files, and dropping a file's cached pages. */
 
 #define _GNU_SOURCE
 
-#include <caml/alloc.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 #include <errno.h>
@@ -50,38 +48,5 @@ value rig_disk_test_drop_pages(value v_path) {
 #else
   (void)v_path;
   return Val_int(-1);
-#endif
-}
-
-/* [sanitized ()] is whether this executable was compiled with
-   AddressSanitizer, which ends the process at a use of freed memory. Keeps
-   the runtime. */
-value rig_disk_test_sanitized(value v_unit) {
-  (void)v_unit;
-#if defined(__SANITIZE_ADDRESS__)
-  return Val_true;
-#elif defined(__has_feature)
-#if __has_feature(address_sanitizer)
-  return Val_true;
-#else
-  return Val_false;
-#endif
-#else
-  return Val_false;
-#endif
-}
-
-/* [system ()] is the system this executable was compiled for: "linux",
-   "macos", "windows" or "other". Keeps the runtime. */
-value rig_disk_test_system(value v_unit) {
-  (void)v_unit;
-#if defined(__linux__)
-  return caml_copy_string("linux");
-#elif defined(__APPLE__)
-  return caml_copy_string("macos");
-#elif defined(_WIN32)
-  return caml_copy_string("windows");
-#else
-  return caml_copy_string("other");
 #endif
 }

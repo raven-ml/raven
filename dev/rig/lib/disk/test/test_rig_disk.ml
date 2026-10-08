@@ -25,11 +25,6 @@ let segment = 2 lsl 20
 
 external set_open_files : int -> int = "rig_disk_test_set_open_files"
 external drop_pages : string -> int = "rig_disk_test_drop_pages"
-external sanitized : unit -> bool = "rig_disk_test_sanitized"
-external system : unit -> string = "rig_disk_test_system"
-
-(* ["linux"], ["macos"], ["windows"] or ["other"]. *)
-let system = system ()
 
 let contains s sub =
   let n = String.length s and k = String.length sub in
@@ -112,15 +107,6 @@ let read b =
   string_of_host h
 
 let write b s = B.copy ~src:(host_of_string s) ~dst:b
-
-(* [write_kept b s] is [write b s] with its source reachable until the copy
-   returned, which a copy alone does not keep while another domain collects ("a
-   copy into a file writes its source's bytes while another domain
-   collects"). *)
-let write_kept b s =
-  let src = host_of_string s in
-  B.copy ~src ~dst:b;
-  ignore (Sys.opaque_identity src)
 
 (* A device whose memory is the host's, which maps any host memory. *)
 let memory_device = lazy (require_ok (Rig.memory_device "DISK-TEST"))
@@ -472,6 +458,22 @@ let test_copy_into_opened n =
       B.copy ~src:(host_of_string (String.make n 'y')) ~dst);
   equal octets ~msg:"the file" "x" (contents path)
 
+(* 20,000 copies of 64 bytes into a file, each from a fresh host buffer that
+   nothing else holds: a collection during a copy, such as one an allocation of
+   the disk's own runs, must not free its source. *)
+let test_source_held () =
+  let k = 64 and count = 20_000 in
+  let s = pattern 7 (k * count) in
+  let path = new_path () in
+  removing [ path ] @@ fun () ->
+  let file = create path (k * count) in
+  for i = 0 to count - 1 do
+    B.copy
+      ~src:(host_of_string (String.sub s (i * k) k))
+      ~dst:(B.view file ~first:(i * k) ~length:k)
+  done;
+  same s (contents path)
+
 let copies =
   group ~timeout "copies"
     [
@@ -486,6 +488,9 @@ let copies =
       test "a copy of 40 MiB at an odd offset moves every byte, both ways"
         test_large_copy;
       test "a copy reads a file whose pages the system dropped" test_cold_read;
+      test
+        "a copy into a file writes its source's bytes, which nothing else holds"
+        test_source_held;
       test "a copy into a file opened for reading is refused" (fun () ->
           test_copy_into_opened 1);
     ]
@@ -1170,7 +1175,7 @@ let shelf =
                  let s = pattern (i + 10) n in
                  let path = new_path () in
                  let buf = create path n in
-                 write_kept buf s;
+                 write buf s;
                  ({ path; buf }, s))
                sizes)
         in
@@ -1218,9 +1223,7 @@ let domain_commands =
         let f, s = written i in
         let at, len = clamp (B.length f.buf) r in
         sys_result f (fun () ->
-            write_kept
-              (B.view f.buf ~first:at ~length:len)
-              (String.sub s at len)));
+            write (B.view f.buf ~first:at ~length:len) (String.sub s at len)));
     command "copy from a created file"
       (shelved @-> big_ranges @-> judges (result octets string))
       (fun i r outcome ->
@@ -1235,51 +1238,9 @@ let domain_commands =
       (fun () -> use_others others_count);
   ]
 
-(* One domain copies 4 KiB from fresh host buffers into a file, 4096 times,
-   while another collects and fills host buffers of that size. *)
-let test_source_kept () =
-  if sanitized () then
-    skip ~reason:"its use of freed memory ends a sanitized process" ();
-  if system <> "macos" then
-    skip ~reason:"only macOS's allocator reuses the freed source every time" ();
-  let k = 4096 and count = 4096 in
-  let s = pattern 7 (k * count) in
-  let path = new_path () in
-  removing [ path ] @@ fun () ->
-  let file = create path (k * count) in
-  let finished = Atomic.make false in
-  let churn =
-    Domain.spawn (fun () ->
-        while not (Atomic.get finished) do
-          Gc.minor ();
-          for _ = 1 to 16 do
-            let b = B.create host k in
-            Bigarray.Array1.fill (B.bigarray Bigarray.char b) '#'
-          done
-        done)
-  in
-  Fun.protect
-    ~finally:(fun () ->
-      Atomic.set finished true;
-      Domain.join churn)
-    (fun () ->
-      for i = 0 to count - 1 do
-        write (B.view file ~first:(i * k) ~length:k) (String.sub s (i * k) k)
-      done);
-  same s (contents path)
-
 let domains =
   group ~timeout "domains"
     [
-      xfail
-        ~reason:
-          "the source of a copy into io memory is collectable while the io \
-           device writes it, so the file gets the bytes of whatever reuses its \
-           memory"
-        (test
-           "a copy into a file writes its source's bytes while another domain \
-            collects"
-           test_source_kept);
       stateful ~domains:2 ~count:10 ~steps:4
         "copies from two domains at once read and write each file's own bytes, \
          through closed and reopened descriptors"
