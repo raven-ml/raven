@@ -495,6 +495,7 @@ value caml_rig_cuda_lock(value v_self, value v_lock, value v_address,
    CUDA reads up to a NUL: the image is copied with one. Releases the
    runtime: CUDA may compile it, and waits for the GPU's running work. */
 value caml_rig_cuda_load_module(value v_self, value v_image) {
+  CAMLparam1(v_image);
   struct device *d = Device_val(v_self);
   size_t n = caml_string_length(v_image);
   char *image = malloc(n + 1);
@@ -505,7 +506,7 @@ value caml_rig_cuda_load_module(value v_self, value v_image) {
   image[n] = '\0';
   RELEASED(IN_CONTEXT(s, d, p_cuModuleLoadData(&m, image)));
   free(image);
-  return answer(s, (intnat)m);
+  CAMLreturn(answer(s, (intnat)m));
 }
 
 value caml_rig_cuda_function(value v_self, value v_module, value v_name) {

@@ -47,13 +47,14 @@ value caml_rig_nv_nvidia_address(value v_params) {
 /* Opens the device file [v_path]: its descriptor. A GPU's first open
    initialises it, so this releases the runtime. */
 value caml_rig_nv_nvidia_open(value v_path) {
+  CAMLparam1(v_path);
   char *path = caml_stat_strdup(String_val(v_path));
   caml_release_runtime_system();
   int fd = open(path, O_RDWR | O_CLOEXEC);
   int e = errno;
   caml_acquire_runtime_system();
   caml_stat_free(path);
-  return Val_long(fd < 0 ? -e : fd);
+  CAMLreturn(Val_long(fd < 0 ? -e : fd));
 }
 
 value caml_rig_nv_nvidia_close(value v_fd) {
@@ -129,8 +130,8 @@ value caml_rig_nv_nvidia_unmap(value v_at, value v_n) {
 #else
 
 value caml_rig_nv_nvidia_open(value v_path) {
-  (void)v_path;
-  return Val_long(-ENOSYS);
+  CAMLparam1(v_path);
+  CAMLreturn(Val_long(-ENOSYS));
 }
 
 value caml_rig_nv_nvidia_close(value v_fd) {
