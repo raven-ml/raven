@@ -165,7 +165,10 @@ val map :
     Without [combine], the window maps BAR [i] as its live windows do, and with
     [~combine:false] if it has none.
 
-    [Error why] if VFIO or the kernel does not let the process map them.
+    [Error why] if VFIO or the kernel does not let the process map them, or if
+    [f] is taken physically and the file of its BAR [i] is shorter than the
+    BAR, naming the file: an access past a mapped file's end would end the
+    process.
 
     Raises [Invalid_argument] if [i < 0], the bytes do not lie in the BAR, or a
     live window of [f] maps BAR [i] with the other [combine]: the processor maps

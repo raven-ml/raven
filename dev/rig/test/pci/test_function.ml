@@ -1339,6 +1339,30 @@ let test_physical () =
       ("VFIO's no-IOMMU mode", [], [ "12" ], Some "12");
     ]
 
+(* A BAR's file is as long as the BAR, and maps whole. A file shorter than its
+   BAR would end the process with SIGBUS at the first access past its end, so
+   the map refuses it, naming the file. *)
+let test_map_files () =
+  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  let fn = Tree.gpu "0000:03:00.0" in
+  let root = Tree.make [ fn ] in
+  Tree.add root "sys/bus/pci/devices/0000:03:00.0/resource5"
+    (String.make 4096 '\000');
+  let f = require_ok (Function.take (Machine.at root) fn.bus) in
+  Fun.protect ~finally:(fun () -> Function.release f) @@ fun () ->
+  List.iter
+    (fun (i, combine, n) ->
+      let msg = strf "BAR %d, combine:%b" i combine in
+      let w = require_ok ~msg (Function.map ~combine f i) in
+      equal ~msg int n (Window.length w);
+      equal ~msg:(msg ^ ", its last word") hex 0 (Window.get32 w (n - 4));
+      Function.unmap f w)
+    [ (0, false, 256 * mib); (0, true, 256 * mib); (2, false, 2 * mib) ];
+  let why = require_error ~msg:"BAR 5" (Function.map f 5) in
+  List.iter
+    (fun sub -> contains ~sub why)
+    [ "0000:03:00.0/resource5"; "4096 bytes"; "BAR 5"; "1048576" ]
+
 (* Bound to vfio-pci, a function is taken through VFIO, which takes its IOMMU
    group whole: neither what shares its device nor whether it is enabled refuses
    it. The machine has none of VFIO's files, so the take is refused naming the
@@ -1499,6 +1523,10 @@ let tree_files =
          physically by one take at a time, its BARs as its registers and \
          resource file say, all ones past 64 bytes, without interrupts"
         test_physical;
+      test
+        "a BAR of a function taken physically maps whole from its file, and \
+         a file shorter than its BAR is refused"
+        test_map_files;
       cases
         "a function bound to vfio-pci is taken through VFIO, whatever shares \
          its device or whether it is enabled"

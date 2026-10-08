@@ -413,19 +413,25 @@ module Tree = struct
         write (d / "enable") (if fn.enabled then "1\n" else "0\n");
         write (d / "resource") (resource fn.bars);
         write (d / "config") (config fn);
+        (* A BAR's file is as long as the BAR, as Linux makes it: sparse, so
+           it holds no bytes on disk. *)
+        let zeroes file n =
+          write file "";
+          Unix.truncate file n
+        in
         List.iteri
           (fun i r ->
             let file = d / strf "resource%d" i in
             match r with
-            | `Mem -> write file (String.make 4096 '\000')
-            | `Prefetchable ->
-                write file (String.make 4096 '\000');
-                write (file ^ "_wc") (String.make 4096 '\000')
+            | `Mem n -> zeroes file n
+            | `Prefetchable n ->
+                zeroes file n;
+                zeroes (file ^ "_wc") n
             | `None -> ())
           (List.concat_map
              (function
-               | Mem32 _ -> [ `Mem ]
-               | Mem64 _ -> [ `Prefetchable; `None ]
+               | Mem32 (_, n) -> [ `Mem n ]
+               | Mem64 (_, n) -> [ `Prefetchable n; `None ]
                | Io _ -> [ `None ])
              fn.bars);
         write (d / "remove") "";

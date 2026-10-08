@@ -187,9 +187,16 @@ let map t ~combine i off n =
           Fail.step ("opening " ^ file) (fun () ->
               Unix.openfile file [ O_RDWR; O_SYNC; O_CLOEXEC ] 0)
         in
-        Fun.protect
-          ~finally:(fun () -> Unix.close fd)
-          (fun () -> window ~combines fd 0)
+        Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+        (* An access past a mapped file's end raises SIGBUS, which ends the
+           process: Linux sizes a BAR's file as the BAR, so a shorter one is
+           refused here. *)
+        let bytes = (Unix.fstat fd).st_size in
+        let size = snd (Option.get t.bars.(i)) in
+        if bytes < size then
+          Fail.fail "%s holds %d bytes, fewer than BAR %d's %d" file bytes i
+            size;
+        window ~combines fd 0
 
 let unmap w =
   if Window.length w > 0 then
