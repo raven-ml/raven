@@ -1,6 +1,6 @@
 (executable
  (name bench_nv_abi)
- (libraries rig_nv_abi rig_elf rig_packet thumper))
+ (libraries rig_nv_abi rig_elf thumper))
 
 (rule
  (alias bench)

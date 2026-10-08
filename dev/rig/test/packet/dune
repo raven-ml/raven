@@ -1,8 +1,0 @@
-; The stubs place a C template with rig_fill, as a driver's writer does.
-
-(test
- (name test_packet)
- (libraries rig_packet windtrap)
- (foreign_stubs
-  (language c)
-  (names test_packet_stubs)))

@@ -114,7 +114,7 @@ let on_copy t =
 
 (* Packets *)
 
-let encode p = Rig_packet.encode Int64.of_int p
+let encode p = Packet.encode Int64.of_int p
 
 (* A template's holes as the C reads them: each word's index, its width, the
    argument [arg v] of its value, then the operations on it in the order they
@@ -233,7 +233,7 @@ let floor_with ~waits () =
       Sdma.max_copy gpu;
     |];
   let set i p =
-    let ws, hs = Rig_packet.template (fun _ -> None) p in
+    let ws, hs = Packet.template (fun _ -> None) p in
     template i ws (holes Fun.id hs)
   in
   List.iteri set (templates gpu ~waits ~interrupt:(interrupt ()));
@@ -384,7 +384,7 @@ let launch_rows =
            ~groups:(`Known 1, `Known 1, `Known 1)
            ())
     in
-    let ws, hs = Rig_packet.template known run in
+    let ws, hs = Packet.template known run in
     let f = filled t ~arg:(address out) ~bytes:8 (ws, holes (fun _ -> 0) hs) in
     (t, p, prepare t [| f |])
   in

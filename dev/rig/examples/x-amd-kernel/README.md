@@ -22,7 +22,7 @@ dune exec ./main.exe
 - What compiled code finds in an AMD device's capability:
   `Rig.capability g Rig_amd_abi.Capability.key`, its `gpu` and `compute`
 - Writing a dispatch: `Pm4.dispatch` inside `Pm4.run`, encoded by
-  `Rig_packet.encode`
+  `Packet.encode`
 - Work as words: `Submission.Words`
 
 ## Key Functions
@@ -32,7 +32,7 @@ dune exec ./main.exe
 | `Code_object.kernel co name`              | A kernel as its descriptor describes it |
 | `Pm4.dispatch gpu k ~program ~args ...`   | The packets that launch it              |
 | `Pm4.run gpu p`                           | Order it after earlier work, and before later |
-| `Rig_packet.encode Int64.of_int p`        | The packets' bytes                      |
+| `Packet.encode Int64.of_int p`            | The packets' bytes                      |
 
 ## The code object
 

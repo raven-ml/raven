@@ -26,7 +26,7 @@
     failure that call returned, or returns [0] once every call succeeded.
 
     A fill whose work declares [r] ring units places at most [r] words
-    ({!Rig_packet.size}), and one whose work declares [s] segment bytes takes at
+    ({!Packet.size}), and one whose work declares [s] segment bytes takes at
     most [s] bytes: a call beyond them returns a failure. *)
 
 (** The type for the packets a device's compute queue reads. *)

@@ -1058,7 +1058,7 @@ let join_carry () =
    segment's end at the ring's end. *)
 module Segments = struct
   let ring = 1 lsl 20
-  let bytes p = 4 * Rig_packet.size p
+  let bytes p = 4 * A.Packet.size p
   let acquire = bytes (A.Method.acquire 0 0)
 
   let release q =
@@ -2104,8 +2104,8 @@ module Handover = struct
         | None, m -> h.newest <- m
         | Some _, _ -> ())
 
-  (* Hands one submission, then moves the word on by [k] values, up to the last
-     handed. *)
+  (* Hands one submission, then moves the word on by [k] values, up to the
+     last handed. *)
   let submit k h =
     hand h;
     Mutex.protect h.lock @@ fun () ->

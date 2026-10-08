@@ -76,7 +76,7 @@ let run g (cap : Abi.Capability.t) =
       ()
   in
   let words =
-    of_string (Rig_packet.encode Int64.of_int (Abi.Pm4.run cap.gpu dispatch))
+    of_string (Abi.Packet.encode Int64.of_int (Abi.Pm4.run cap.gpu dispatch))
   in
   Printf.printf "the dispatch is %d words of PM4\n" (Buffer.length words / 4);
 

@@ -78,7 +78,7 @@ let describe g =
   Qmd.structure (Option.get (Qmd.release System signal 1 q))
 
 let encode_structure s = Abi.Structure.encode Int64.of_int s
-let encode p = Rig_packet.encode Int64.of_int p
+let encode p = Packet.encode Int64.of_int p
 
 (* The floor of an encoder whose result is [filled]: a writer that holds
    [template], [filled] with its holes zero, copies it into bytes allocated
@@ -115,13 +115,12 @@ let fill_into_bytes ~template ~filled holes =
     failwith "a floor writes other bytes";
   fill
 
-(* The floor of [Rig_packet.encode value p], from [p]'s template with the values
+(* The floor of [Packet.encode value p], from [p]'s template with the values
    [known] leaves. *)
 let packet_floor ?(known = fun _ -> None) value p =
-  let template, holes = Rig_packet.template known p in
+  let template, holes = Packet.template known p in
   let width = function Packet.Dword _ | W32 _ -> 4 | W64 _ -> 8 in
-  fill_into_bytes ~template
-    ~filled:(Rig_packet.encode value p)
+  fill_into_bytes ~template ~filled:(Packet.encode value p)
     (List.map (fun (i, w) -> (4 * i, width w)) holes)
 
 (* The floor of [encode_structure s]. *)
@@ -182,10 +181,9 @@ let methods =
   Thumper.group "method"
     [
       Thumper.bench "release-encode" (fun () ->
-          Rig_packet.encode value
-            (Method.release System (Thumper.black_box Word) V));
+          Packet.encode value (Method.release System (Thumper.black_box Word) V));
       Thumper.bench "release-template" (fun () ->
-          Rig_packet.template known
+          Packet.template known
             (Method.release System (Thumper.black_box Word) V));
       Thumper.bench "release-fill-into-bytes"
         (packet_floor ~known value (Method.release System Word V));

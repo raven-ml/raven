@@ -19,7 +19,6 @@
 #include <string.h>
 
 #define CAML_NAME_SPACE
-#include <caml/alloc.h>
 #include <caml/mlvalues.h>
 #include <caml/signals.h>
 
@@ -124,9 +123,34 @@ value caml_rig_nv_doorbell(value v_self, value v_at) {
   return Val_unit;
 }
 
-/* The address of template [v_k], for Rig_packet.load. */
-value caml_rig_nv_template(value v_self, value v_k) {
-  return caml_copy_nativeint((intnat)&Device_val(v_self)->t[Int_val(v_k)]);
+/* The ints of a hole: its index, slot and width, its number of operations,
+   then for each of HOLE_OPS operations its shift and its addend. */
+enum { hole_at, hole_slot, hole_wide, hole_nops, hole_ops, hole_fields =
+       hole_ops + 2 * HOLE_OPS };
+
+/* Sets template [v_k] to the words [v_words] with the holes [v_holes]. The
+   OCaml side checks the counts against TEMPLATE_WORDS and TEMPLATE_HOLES. */
+value caml_rig_nv_template(value v_self, value v_k, value v_words,
+                           value v_holes) {
+  struct template *t = &Device_val(v_self)->t[Int_val(v_k)];
+  t->nwords = (int)Wosize_val(v_words);
+  for (int i = 0; i < t->nwords; i++)
+    t->words[i] = (uint32_t)Long_val(Field(v_words, i));
+  t->nholes = (int)(Wosize_val(v_holes) / hole_fields);
+  for (int i = 0; i < t->nholes; i++) {
+    struct hole *h = &t->holes[i];
+#define F(f) Long_val(Field(v_holes, i * hole_fields + (f)))
+    h->at = (uint16_t)F(hole_at);
+    h->slot = (uint8_t)F(hole_slot);
+    h->wide = (uint8_t)F(hole_wide);
+    h->nops = (uint8_t)F(hole_nops);
+    for (int j = 0; j < HOLE_OPS; j++) {
+      h->shift[j] = (uint8_t)F(hole_ops + 2 * j);
+      h->n[j] = (uint64_t)F(hole_ops + 2 * j + 1);
+    }
+#undef F
+  }
+  return Val_unit;
 }
 
 /* An entry is its segment's address plus [v_base] plus its words times

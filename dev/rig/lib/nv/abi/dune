@@ -1,6 +1,6 @@
 (library
  (name rig_nv_abi)
  (public_name rig.nv.abi)
- (libraries rig_elf rig_packet)
+ (libraries rig_elf)
  (private_modules defs repr)
  (modules_without_implementation repr))

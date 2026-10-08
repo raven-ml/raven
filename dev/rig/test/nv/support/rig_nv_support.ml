@@ -294,7 +294,7 @@ let at_gpu l at = address l.memory + at
 
 let entry_of l at words =
   let e =
-    Rig_packet.encode Int64.of_int
+    A.Packet.encode Int64.of_int
       (A.Gpfifo.entry (at_gpu l at) ~offset:0 ~words:(String.length words / 4))
   in
   Array.init 2 (fun i ->
@@ -302,7 +302,7 @@ let entry_of l at words =
 
 let segment l p =
   let at = take l + segment_at in
-  let words = Rig_packet.encode Int64.of_int p in
+  let words = A.Packet.encode Int64.of_int p in
   write (at_host l at) words;
   entry_of l at words
 
@@ -351,9 +351,7 @@ let launch_kernel l cubin name entry ~blocks args =
         (Bytes.to_string b))
     args;
   write (at_host l at) (A.Structure.encode Int64.of_int (A.Qmd.structure q));
-  let words =
-    Rig_packet.encode Int64.of_int (A.Method.schedule (at_gpu l at))
-  in
+  let words = A.Packet.encode Int64.of_int (A.Method.schedule (at_gpu l at)) in
   write (at_host l (at + segment_at)) words;
   entry_of l (at + segment_at) words
 

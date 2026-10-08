@@ -484,7 +484,7 @@ let amd_kernel g d =
   let base = Option.get (Rig.Image.entry p "empty") - k.descriptor in
   let gpu = (Rig_amd.capability g).gpu in
   let packets =
-    Rig_packet.encode Int64.of_int
+    Abi.Packet.encode Int64.of_int
       (Pm4.run gpu
          (Pm4.dispatch gpu k ~program:(base + k.entry) ~scratch:0 ~args:0
             ~packet:0 ~threads:(1, 1, 1) ~groups:(1, 1, 1) ()))

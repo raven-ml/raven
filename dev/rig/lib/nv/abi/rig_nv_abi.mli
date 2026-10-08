@@ -13,10 +13,10 @@
     Three ideas carry the library:
     - A {e packet} ({!Packet.t}) is a channel's 32-bit words around values of
       the caller's type ['v]: each word is a constant, or a {e term} that
-      computes on a value. The caller interprets it: {!Rig_packet.encode} with
-      integers, {!Rig_packet.template} with some values left for later, a
-      compiler as its own nodes. {!Method} and {!Gpfifo} give each operation's
-      words as a packet.
+      computes on a value. The caller interprets it: {!Packet.encode} with
+      integers, {!Packet.template} with some values left for later, a compiler
+      as its own nodes. {!Method} and {!Gpfifo} give each operation's words as a
+      packet.
     - A {e structure} ({!Structure.t}) is bytes in memory around the caller's
       values: fields the layout knows, and {e holes} that terms fill. A launch
       descriptor ({!Qmd}) is built as one.

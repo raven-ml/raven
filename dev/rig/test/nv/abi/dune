@@ -1,5 +1,6 @@
 (tests
  (names
+  test_packet
   test_method
   test_gpfifo
   test_cubin
@@ -8,6 +9,7 @@
   test_qmd
   test_structure)
  (modules
+  test_packet
   test_method
   test_gpfifo
   test_cubin
@@ -15,7 +17,7 @@
   test_local_memory
   test_qmd
   test_structure)
- (libraries rig_nv_abi rig_nv_abi_support rig_elf rig_packet windtrap)
+ (libraries rig_nv_abi rig_nv_abi_support rig_elf windtrap)
  (deps
   (source_tree fixtures)))
 

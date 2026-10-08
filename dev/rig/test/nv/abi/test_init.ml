@@ -3,11 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The library's initialisation, with rig_packet's, measured between the
-   initialisers of the probes linked around them (support/dune): it computes no
-   value, and allocates only what its declarations make when a module starts:
-   Gpu.key, the exception Rig_packet.template stops at a hole with, and the one
-   Cubin.of_string stops at a malformed attribute with. *)
+(* The library's initialisation, measured between the initialisers of the probes
+   linked around it (support/dune): it computes no value, and allocates only
+   what its declarations make when a module starts: Gpu.key, the exception
+   Packet.template stops at a hole with, and the one Cubin.of_string stops at a
+   malformed attribute with. *)
 
 open Windtrap
 module B = Rig_nv_abi_before

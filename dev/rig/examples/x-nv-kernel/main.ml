@@ -46,7 +46,7 @@ let le64 x =
   Bytes.set_int64_le b 0 (Int64.of_int x);
   Bytes.to_string b
 
-let encode p = Rig_packet.encode Int64.of_int p
+let encode p = Abi.Packet.encode Int64.of_int p
 
 let run g (gpu : Abi.Gpu.t) =
   let bin =

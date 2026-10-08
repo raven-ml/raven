@@ -16,7 +16,6 @@
   rig_amd_bench
   rig_amd_support
   rig
-  rig_packet
   thumper
   unix))
 

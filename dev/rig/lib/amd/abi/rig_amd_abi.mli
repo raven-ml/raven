@@ -14,9 +14,9 @@
     Three ideas carry the library:
     - A {e packet} ({!Packet.t}) is a queue's 32-bit words around values of the
       caller's type ['v]: each word is a constant, or a {e term} that computes
-      on a value. The caller interprets it: {!Rig_packet.encode} with integers,
-      {!Rig_packet.template} with some values left for later, a compiler as its
-      own nodes. {!Pm4}, {!Aql}, {!Sdma} and {!Thread_trace} give each command's
+      on a value. The caller interprets it: {!Packet.encode} with integers,
+      {!Packet.template} with some values left for later, a compiler as its own
+      nodes. {!Pm4}, {!Aql}, {!Sdma} and {!Thread_trace} give each command's
       words as a packet.
     - A {e GPU} ({!Gpu.t}) is what the formats depend on: the versions of its
       blocks and the number of its parts. An encoder whose words depend on it

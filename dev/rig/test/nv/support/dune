@@ -9,7 +9,6 @@
   rig_nv
   rig_nv_abi
   rig_nv_nvidia
-  rig_packet
   unix
   windtrap)
  (foreign_stubs

@@ -104,7 +104,7 @@ let segment_bytes = 1 lsl 20
 let shared_window = 0x7294_0000_0000
 let local_window = 0x7293_0000_0000
 
-(* rig_nv_stubs.h's templates, by index. *)
+(* rig_nv_stubs.h's templates, by index, and their bounds. *)
 let t_acquire = 0
 let t_release = 1
 let t_copy_release = 2
@@ -114,6 +114,9 @@ let t_setup = 5
 let t_setup_copy = 6
 let t_invalidate = 7
 let t_idle = 8
+let template_words = 16
+let template_holes = 6
+let hole_ops = 3
 
 (* A pending local memory is one word: its address, below 2^40, and its bytes
    per cluster in units of 32 KiB above them. *)
@@ -136,7 +139,11 @@ external set_channel : int -> int -> int array -> bool = "caml_rig_nv_channel"
 [@@noalloc]
 
 external set_doorbell : int -> int -> unit = "caml_rig_nv_doorbell" [@@noalloc]
-external template_at : int -> int -> nativeint = "caml_rig_nv_template"
+
+external set_template : int -> int -> int array -> int array -> unit
+  = "caml_rig_nv_template"
+[@@noalloc]
+
 external set_entry : int -> int -> int -> unit = "caml_rig_nv_entry" [@@noalloc]
 external set_bar : int -> int -> unit = "caml_rig_nv_bar" [@@noalloc]
 external bar_live : int -> int -> unit = "caml_rig_nv_bar_live" [@@noalloc]
@@ -347,40 +354,74 @@ let local d n =
 
 (* Templates *)
 
-(* Sets template [k] of [self] to [p], whose values are the writer's. *)
-let template self k p = Rig_packet.load (template_at self k) p
-
-(* Sets template [k] of [self] to [p], whose values are known: its words. *)
-let constant self k p =
-  let b = Rig_packet.encode Int64.of_int p in
-  let word i =
-    Rig_packet.Dword (Int32.to_int (String.get_int32_le b (4 * i)))
+(* The ints of a hole as caml_rig_nv_template reads them: its index, slot, width
+   and number of operations, then each operation's shift (an addition if [0])
+   and addend. *)
+let hole_ints (at, (word : int Packet.word)) =
+  let rec ops acc : int Packet.term -> int * (int * int64) list = function
+    | Packet.Value s -> (s, acc)
+    | Packet.Add (t, n) -> ops ((0, n) :: acc) t
+    | Packet.Shift (t, n) -> ops ((n, 0L) :: acc) t
   in
-  template self k (List.init (String.length b / 4) word)
+  let wide, term =
+    match word with
+    | Packet.W32 t -> (0, t)
+    | Packet.W64 t -> (1, t)
+    | Packet.Dword _ ->
+        invalid_arg "Rig_nv.make: a template hole holds no value"
+  in
+  let slot, l = ops [] term in
+  if List.length l > hole_ops then
+    invalid_arg "Rig_nv.make: a template hole takes too many operations";
+  let op (shift, n) =
+    let x = Int64.to_int n in
+    if Int64.of_int x <> n then
+      invalid_arg "Rig_nv.make: a template's addend exceeds an int";
+    [| shift; x |]
+  in
+  let pad = List.init (hole_ops - List.length l) (fun _ -> (0, 0L)) in
+  Array.concat ([| at; slot; wide; List.length l |] :: List.map op (l @ pad))
+
+(* Sets template [k] of [self] to [p]: the words of [p] with a hole for every
+   value [known] does not give. *)
+let template self k ~known p =
+  let bytes, holes = Packet.template known p in
+  let words =
+    Array.init
+      (String.length bytes / 4)
+      (fun i ->
+        Int32.to_int (String.get_int32_le bytes (4 * i)) land 0xffff_ffff)
+  in
+  if Array.length words > template_words || List.length holes > template_holes
+  then invalid_arg "Rig_nv.make: a template exceeds its bounds";
+  set_template self k words (Array.concat (List.map hole_ints holes))
+
+let unknown _ = None
+let known v = Some (Int64.of_int v)
 
 let templates self (g : gpu) =
   (* The writer's values, by slot: two addresses or an address and a value, then
      a size. *)
   let a = 0 and b = 1 and n = 2 in
   let system = Packet.System in
-  template self t_acquire (Method.acquire a b);
-  template self t_release (Method.release system a b);
-  template self t_copy_release (Method.copy_release system a b);
-  template self t_copy (Method.copy ~dst:a ~src:b n);
-  template self t_local (Method.local_memory a ~per_tpc:b);
-  constant self t_setup
+  template self t_acquire ~known:unknown (Method.acquire a b);
+  template self t_release ~known:unknown (Method.release system a b);
+  template self t_copy_release ~known:unknown (Method.copy_release system a b);
+  template self t_copy ~known:unknown (Method.copy ~dst:a ~src:b n);
+  template self t_local ~known:unknown (Method.local_memory a ~per_tpc:b);
+  template self t_setup ~known
     (Method.set_object Method.Compute g.compute_class
     @ Method.local_memory_window local_window
     @ Method.shared_memory_window shared_window);
-  constant self t_setup_copy (Method.set_object Method.Copy g.copy_class);
-  constant self t_invalidate (Method.invalidate_caches system);
-  constant self t_idle Method.wait_for_idle;
+  template self t_setup_copy ~known (Method.set_object Method.Copy g.copy_class);
+  template self t_invalidate ~known (Method.invalidate_caches system);
+  template self t_idle ~known Method.wait_for_idle;
   (* An entry is its segment's address plus a constant plus its words times
      another: the address is a term's value, and the words a field of their
      own. *)
   let entry words =
     let e = Abi.Gpfifo.entry 0 ~offset:0 ~words in
-    Int64.to_int (String.get_int64_le (Rig_packet.encode Int64.of_int e) 0)
+    Int64.to_int (String.get_int64_le (Packet.encode Int64.of_int e) 0)
   in
   set_entry self (entry 0) (entry 1 - entry 0)
 

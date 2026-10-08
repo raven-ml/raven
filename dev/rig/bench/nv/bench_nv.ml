@@ -124,11 +124,11 @@ let launches t count how =
   let segment = alloc t `Mapped (segments * segment_bytes) in
   let entry i =
     let qmd = address qmds + (i * stride) in
-    let ws = Rig_packet.encode Int64.of_int (Abi.Method.schedule qmd) in
+    let ws = Abi.Packet.encode Int64.of_int (Abi.Method.schedule qmd) in
     S.write (at segment (i * segment_bytes)) ws;
     let start = address segment + (i * segment_bytes) in
     let e = Abi.Gpfifo.entry start ~offset:0 ~words:(String.length ws / 4) in
-    words (Rig_packet.encode Int64.of_int e)
+    words (Abi.Packet.encode Int64.of_int e)
   in
   (p, Array.init segments entry)
 

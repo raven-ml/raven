@@ -1,7 +1,7 @@
 (library
  (name rig_amd_abi_support)
  (modules rig_amd_abi_support)
- (libraries rig_amd_abi rig_packet))
+ (libraries rig_amd_abi))
 
 ; The words allocated before and after rig_amd_abi initialises: an
 ; executable that links rig_amd_abi_before, rig_amd_abi and

@@ -45,11 +45,10 @@ let runs_of_regs =
   let up_to_end =
     let+ _, (_, stop) = of_list ranges
     and+ ws = list ~size:(int_range 1 4) word in
-    (stop - Rig_packet.size ws, ws)
+    (stop - Packet.size ws, ws)
   in
   with_pp
-    (fun ppf (a, ws) ->
-      Format.fprintf ppf "0x%x, %d words" a (Rig_packet.size ws))
+    (fun ppf (a, ws) -> Format.fprintf ppf "0x%x, %d words" a (Packet.size ws))
     (frequency [ (3, around); (1, up_to_end) ])
 
 let memory =
@@ -74,18 +73,18 @@ let memory =
       prop "a run of registers is set iff it lies in one range" runs_of_regs
         (fun (a, ws) ->
           let fits (start, stop) =
-            start <= a && a < stop && a + Rig_packet.size ws <= stop
+            start <= a && a < stop && a + Packet.size ws <= stop
           in
           let range = List.find_opt (fun (_, r) -> fits r) ranges in
           cover "past a range's end" (range = None);
           cover "up to a range's end"
             (List.exists
-               (fun (_, (_, stop)) -> a + Rig_packet.size ws = stop)
+               (fun (_, (_, stop)) -> a + Packet.size ws = stop)
                ranges);
           match (range, Pm4.set_reg a ws) with
           | Some (op, (start, _)), p ->
               equal (list int)
-                ([ packet3 op (Rig_packet.size ws); a - start ] @ words ws)
+                ([ packet3 op (Packet.size ws); a - start ] @ words ws)
                 (words p)
           | None, _ -> fail "set"
           | exception Invalid_argument m ->
@@ -307,12 +306,11 @@ let control =
         (Gen.pair (Gen.int_range 0 255) packets)
         (fun (xcc_mask, p) ->
           equal (list int)
-            ([ packet3 0x23 0; (xcc_mask lsl 24) lor Rig_packet.size p ]
-            @ words p)
+            ([ packet3 0x23 0; (xcc_mask lsl 24) lor Packet.size p ] @ words p)
             (words (Pm4.pred_exec ~xcc_mask p)));
       test "a predicated block of 16383 words" (fun () ->
           equal int 16385
-            (Rig_packet.size
+            (Packet.size
                (Pm4.pred_exec ~xcc_mask:0xff
                   (List.init 16383 (fun _ -> Packet.Dword 0)))));
       cases ~name:string_of_int "a die mask past 8 bits is refused"
