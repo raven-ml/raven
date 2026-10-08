@@ -11,9 +11,11 @@
    doorbell, and spins until a word of host memory holds the last value
    released. Memory floors are the KFD calls behind each memory row.
 
-   Also a fill for the driver's rows that takes its kernel's arguments from
-   the device's argument segment. A failing call raises Failure with its
-   step and errno. Every stub holds the runtime. */
+   Also, for the driver's rows: a fill that places a launch, taking its
+   kernel's argument from the device's argument segment where it has one,
+   and a submission with waits on host memory through the driver's C
+   entries. A failing call raises Failure with its step and errno. Every
+   stub holds the runtime. */
 
 #define _GNU_SOURCE
 
@@ -26,9 +28,12 @@
 
 #define CAML_NAME_SPACE
 #include <caml/alloc.h>
+#include <caml/bigarray.h>
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
+
+#include <nx_edge.h>
 
 #define Ptr_val(v) ((void *)Nativeint_val(v))
 #define Addr_val(v) ((void *)Long_val(v))
@@ -51,14 +56,23 @@ struct hole {
 };
 
 struct template {
-  uint32_t words[WORDS];
   int n, nholes;
   struct hole holes[HOLES];
+  uint32_t words[];
 };
 
+/* The bytes of a template of the words [v_words]. */
+static size_t template_bytes(value v_words) {
+  return sizeof(struct template) + caml_string_length(v_words);
+}
+
+/* Reads a template into [t], of template_bytes([v_words]) bytes. A
+   template with holes is patched on the stack, so it has at most WORDS
+   words. */
 static void read_template(struct template *t, value v_words, value v_holes) {
   size_t bytes = caml_string_length(v_words);
-  if (bytes > sizeof t->words) caml_failwith("template: too many words");
+  if (Wosize_val(v_holes) > 0 && bytes > WORDS * 4)
+    caml_failwith("template: too many words");
   memcpy(t->words, String_val(v_words), bytes);
   t->n = (int)(bytes / 4);
   t->nholes = 0;
@@ -96,20 +110,26 @@ static void patch(const struct template *t, const uint64_t *args,
   }
 }
 
-/* The driver's fill: takes 8 bytes of the argument segment, writes the
-   kernel's argument there, and places the template with argument 0 the
-   bytes' GPU address. */
+/* The driver rows' fill: places the template; a template with holes first
+   takes 8 bytes of the argument segment, writes the kernel's argument
+   there, and fills argument 0 with the bytes' GPU address. */
 
 struct fill {
   int (*place)(void *queue, const uint32_t *words, size_t n);
   int (*segment)(void *queue, size_t n, void **host, uint64_t *address);
   uint64_t arg;
-  struct template t;
 };
+
+/* A fill's template, which follows it in its argument. */
+static struct template *fill_template(struct fill *f) {
+  return (struct template *)(f + 1);
+}
 
 static int fill(void *queue, void *arg, uint64_t v) {
   (void)v;
   struct fill *f = arg;
+  struct template *t = fill_template(f);
+  if (t->nholes == 0) return f->place(queue, t->words, (size_t)t->n);
   void *host;
   uint64_t at;
   int e = f->segment(queue, sizeof f->arg, &host, &at);
@@ -117,8 +137,8 @@ static int fill(void *queue, void *arg, uint64_t v) {
   memcpy(host, &f->arg, sizeof f->arg);
   uint64_t args[1] = {at};
   uint32_t w[WORDS];
-  patch(&f->t, args, w);
-  return f->place(queue, w, (size_t)f->t.n);
+  patch(t, args, w);
+  return f->place(queue, w, (size_t)t->n);
 }
 
 value device_amd_bench_fill_entry(value unit) {
@@ -126,16 +146,45 @@ value device_amd_bench_fill_entry(value unit) {
   return caml_copy_nativeint((intnat)fill);
 }
 
-/* A fill's argument, which lives as long as the process. */
+/* A fill's argument, as a bigarray the bench hands nx.device as a host
+   buffer. */
 value device_amd_bench_fill_arg(value v_place, value v_segment, value v_arg,
                                 value v_words, value v_holes) {
-  struct fill *f = calloc(1, sizeof *f);
-  if (f == NULL) caml_raise_out_of_memory();
+  CAMLparam5(v_place, v_segment, v_arg, v_words, v_holes);
+  CAMLlocal1(r);
+  size_t bytes = sizeof(struct fill) + template_bytes(v_words);
+  r = caml_ba_alloc_dims(CAML_BA_UINT8 | CAML_BA_C_LAYOUT, 1, NULL,
+                         (intnat)bytes);
+  struct fill *f = Caml_ba_data_val(r);
+  memset(f, 0, bytes);
   f->place = (int (*)(void *, const uint32_t *, size_t))Ptr_val(v_place);
   f->segment = (int (*)(void *, size_t, void **, uint64_t *))Ptr_val(v_segment);
   f->arg = (uint64_t)Long_val(v_arg);
-  read_template(&f->t, v_words, v_holes);
-  return caml_copy_nativeint((intnat)f);
+  read_template(fill_template(f), v_words, v_holes);
+  CAMLreturn(r);
+}
+
+/* A submission of no parts as value [v_v] through the driver's C entries
+   [v_f] (room, submit, the device's state), after [v_n] waits for the word
+   at GPU address [v_at] to hold at least [v_value]: for the rows nx.device
+   cannot express, waits on a word of host memory. */
+value device_amd_bench_submit(value v_f, value v_v, value v_at, value v_value,
+                              value v_n) {
+  nx_room_fn *room = (nx_room_fn *)Ptr_val(Field(v_f, 0));
+  nx_submit_fn *submit = (nx_submit_fn *)Ptr_val(Field(v_f, 1));
+  void *self = Ptr_val(Field(v_f, 2));
+  struct nx_wait w[16];
+  int n = Int_val(v_n);
+  if (n > 16) caml_invalid_argument("submit: more than 16 waits");
+  for (int i = 0; i < n; i++)
+    w[i] = (struct nx_wait){(uint64_t)Long_val(v_at),
+                            (uint64_t)Long_val(v_value), NX_WORD};
+  if (room(self, NULL, 0) != NX_FITS) caml_failwith("submit: no room");
+  const char *why = NULL;
+  if (submit(self, (uint64_t)Long_val(v_v), w, n, NULL, 0, NULL, 0, &why) !=
+      NX_OK)
+    caml_failwith(why);
+  return Val_unit;
 }
 
 /* Host memory */
@@ -147,6 +196,11 @@ value device_amd_bench_read(value v_p, value v_n) {
   uint64_t s = 0;
   for (size_t i = 0; i < n; i++) s += p[i];
   return Val_long((intnat)s);
+}
+
+value device_amd_bench_write(value v_p, value v_s) {
+  memcpy(Addr_val(v_p), String_val(v_s), caml_string_length(v_s));
+  return Val_unit;
 }
 
 /* Stores [v_v] at [v_p], a 64-bit word of host memory. */
@@ -325,7 +379,7 @@ enum {
   S_TRAP,
   TEMPLATES
 };
-static struct template templates[TEMPLATES];
+static struct template *templates[TEMPLATES];
 
 static volatile uint64_t *doorbell(uint64_t off) {
   uint64_t base = off & ~(uint64_t)0x1fff;
@@ -423,8 +477,15 @@ value device_amd_bench_interrupt(value unit) {
   return Val_long(interrupt);
 }
 
+/* Sets floor template [v_i], kept for the process. */
 value device_amd_bench_template(value v_i, value v_words, value v_holes) {
-  read_template(&templates[Int_val(v_i)], v_words, v_holes);
+  struct template **t = &templates[Int_val(v_i)];
+  if (caml_string_length(v_words) > WORDS * 4)
+    caml_failwith("template: too many words");
+  free(*t);
+  *t = calloc(1, template_bytes(v_words));
+  if (*t == NULL) caml_raise_out_of_memory();
+  read_template(*t, v_words, v_holes);
   return Val_unit;
 }
 
@@ -444,8 +505,8 @@ static void put(struct ring *r, const uint32_t *w, size_t n) {
 static void emit(int q, int t, uint64_t a0, uint64_t a1, uint64_t a2) {
   uint64_t args[3] = {a0, a1, a2};
   uint32_t w[WORDS];
-  patch(&templates[t], args, w);
-  put(&rings[q], w, (size_t)templates[t].n);
+  patch(templates[t], args, w);
+  put(&rings[q], w, (size_t)templates[t]->n);
 }
 
 static void barrier(void) {

@@ -1,6 +1,7 @@
 (library
  (name device_amd_bench)
  (modules)
+ (libraries device_edge)
  (foreign_stubs
   (language c)
   (names device_amd_bench_stubs)))
@@ -13,7 +14,7 @@
   device_amd_abi
   device_amd_amdgpu
   device_amd_bench
-  device_amd_support
+  device_core
   device_elf
   thumper
   unix))
