@@ -455,6 +455,23 @@ value rig_test_countdown(value unit) {
   return caml_copy_nativeint((intnat)&countdown);
 }
 
+/* A fill that copies bytes: its argument's three 64-bit words are the
+   destination's address, the source's and the number of bytes. */
+static int carry(void *queue, void *arg, uint64_t v) {
+  (void)queue;
+  (void)v;
+  _Atomic uint64_t *a = arg;
+  memmove((void *)(uintptr_t)atomic_load(&a[0]),
+          (const void *)(uintptr_t)atomic_load(&a[1]),
+          (size_t)atomic_load(&a[2]));
+  return 0;
+}
+
+value rig_test_carry(value unit) {
+  (void)unit;
+  return caml_copy_nativeint((intnat)&carry);
+}
+
 /* Raises SIGINT in the calling thread: the runtime records it, and the
    thread's next poll point runs its handler. */
 value rig_test_interrupt(value unit) {

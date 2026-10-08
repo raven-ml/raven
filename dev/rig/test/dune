@@ -67,3 +67,8 @@
    CAML_LD_LIBRARY_PATH
    "../lib:support:%{lib:windtrap:../stublibs}"
    (run %{dep:test_readers.bc}))))
+
+(tests
+ (names test_model test_model_fork)
+ (modules test_model test_model_fork)
+ (libraries rig_model windtrap))

@@ -32,6 +32,7 @@ external host_alloc : int -> int = "rig_test_alloc"
 external host_free : int -> unit = "rig_test_free"
 external bump : unit -> nativeint = "rig_test_bump"
 external poke : unit -> nativeint = "rig_test_poke"
+external carry : unit -> nativeint = "rig_test_carry"
 external countdown : unit -> nativeint = "rig_test_countdown"
 external interrupt : unit -> unit = "rig_test_interrupt"
 
@@ -57,6 +58,7 @@ let bump = bump ()
 let rig_word = rig_word ()
 let rig_object = rig_object ()
 let poke = poke ()
+let carry = carry ()
 let countdown = countdown ()
 
 module Driver = struct

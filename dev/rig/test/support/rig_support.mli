@@ -176,6 +176,10 @@ val countdown : nativeint
 (** [countdown] is a fill taking one from the 64-bit word its argument points
     at, which fails if that makes the word zero. *)
 
+val carry : nativeint
+(** [carry] is a fill copying bytes: its argument's three 64-bit words are the
+    destination's address, the source's and the number of bytes. *)
+
 val load : int -> int
 (** [load a] reads the 64-bit word at the host address [a]. *)
 

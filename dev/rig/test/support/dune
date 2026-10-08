@@ -3,7 +3,31 @@
 
 (library
  (name rig_support)
+ (modules rig_support)
  (libraries rig rig_edge threads.posix unix)
  (foreign_stubs
   (language c)
   (names rig_support_stubs)))
+
+; The model of rig's API, which the model's suites share. It opens a device
+; of every driver the machine has.
+
+(library
+ (name rig_model)
+ (modules rig_model)
+ (libraries
+  rig
+  rig_support
+  rig_disk
+  rig_metal
+  rig_metal_support
+  rig_cuda
+  rig_cuda_support
+  rig_nv
+  rig_nv_nvidia
+  rig_amd
+  rig_amd_amdgpu
+  rig_amd_support
+  threads.posix
+  unix
+  windtrap))
