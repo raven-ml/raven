@@ -62,6 +62,11 @@ let slot i =
       slots.(i) <- Some b;
       b
 
+(* Whether [m] is a staging slot's memory: a copy through it that no device runs
+   goes no further. *)
+let is_slot m =
+  Array.exists (function Some b -> b.mem.root == m.root | None -> false) slots
+
 let as_bytes b = Buffer.view b ~offset:0 Scalar.UInt8 (Buffer.nbytes b)
 
 (* A copy on [d]'s copy queue between buffers [d] maps, waited for. *)
@@ -133,7 +138,7 @@ and route src dst n =
     let runner = if local src.mem then dd else sd in
     let copied = (not (Dev.is_io runner)) && on_queue runner src dst in
     if copied then ()
-    else if local src.mem || local dst.mem then
+    else if is_slot src.mem || is_slot dst.mem then
       invalid_argf "Device_core.%s: no device copies between %s and %s" fn
         sd.name dd.name
     else staged src dst n

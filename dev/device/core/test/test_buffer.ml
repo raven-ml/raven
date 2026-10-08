@@ -467,12 +467,8 @@ let tests =
     group ~timeout "copy routes"
       [
         test "a device copies from host memory it maps" test_copy_mapped_host;
-        xfail
-          ~reason:
-            "Buffer.copy raises Invalid_argument between host memory the \
-             device cannot map and memory the host does not address"
-          (test "host memory off a page is copied through the staging memory"
-             test_copy_staged);
+        test "host memory off a page is copied through the staging memory"
+          test_copy_staged;
         test
           "devices that map none of each other's memory copy through the \
            staging memory"
