@@ -64,6 +64,9 @@ type 'm path = {
   free : 'm memory -> unit;
   register : int -> (unit, string) result;
   unregister : int -> (unit, string) result;
+  check : unit -> unit;
+  hang_ms : int option;
+  stop : unit -> [ `Stopped | `Unknown ];
 }
 
 let is_gpu ~vendor ~class_ = vendor = 0x10de && class_ lsr 16 = 0x03
@@ -144,6 +147,8 @@ external owe_invalidate : int -> unit = "caml_rig_nv_owe_invalidate"
 external read_word : int -> int = "caml_rig_nv_signaled" [@@noalloc]
 external notification : int -> int -> int = "caml_rig_nv_notification"
 external watch : int -> int -> int -> bool = "caml_rig_nv_watch"
+external last : int -> int = "caml_rig_nv_last" [@@noalloc]
+external now_ms : unit -> int = "caml_rig_nv_now_ms" [@@noalloc]
 external raise_word : int -> unit = "caml_rig_nv_raise"
 external end_channels : int -> unit = "caml_rig_nv_end"
 external room_entry_address : unit -> int = "caml_rig_nv_room_entry"
@@ -204,6 +209,7 @@ type 'm dev = {
   debugger : int;
   channels : int list;
   compute_channel : int;
+  progress : progress Atomic.t;
   local_lock : Mutex.t;
   mutable stopped : bool;
   mutable per_thread : int;
@@ -211,6 +217,10 @@ type 'm dev = {
   mutable local_pending : ('m memory * int) option;
   mutable local_retired : ('m memory * int) list;
 }
+
+(* The word as [sleep] last saw it, whether the device was idle then, and since
+   when, in milliseconds of the monotonic clock. *)
+and progress = { seen : int; idle : bool; since : int }
 
 and 'm reg = {
   dev : 'm dev;
@@ -577,6 +587,7 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
         debugger;
         channels = [ compute; copy ];
         compute_channel = compute;
+        progress = Atomic.make { seen = 0; idle = true; since = 0 };
         local_lock = Mutex.create ();
         stopped = false;
         per_thread = 0;
@@ -588,6 +599,12 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
     Ok (T d)
 
 let make p =
+  Option.iter
+    (fun n ->
+      if n < 1 then
+        invalid_argf "Rig_nv.make: a hang bound of %d ms, expected at least 1"
+          n)
+    p.hang_ms;
   match D.release p.rm.release with
   | None ->
       Error
@@ -795,14 +812,35 @@ let sm_errors_of d =
         (List.init sm_errors Fun.id)
 
 let check_faults d =
+  d.path.check ();
   match channel_errors d @ sm_errors_of d with
   | [] -> ()
   | report -> raise (Fault (String.concat "\n" report))
 
+(* How long [sleep] may watch the word [w] under the hang bound [hang]. The
+   clock restarts when the word moved or the device was idle at the last look,
+   and runs on while the same value stays outstanding. *)
+let bounded d w ~still_ms hang =
+  let now = now_ms () and p = Atomic.get d.progress in
+  let idle = last d.self <= w in
+  if idle || p.idle || p.seen <> w then begin
+    Atomic.set d.progress { seen = w; idle; since = now };
+    if idle then still_ms else min still_ms hang
+  end
+  else
+    let left = p.since + hang - now in
+    if left <= 0 then raise (Fault (strf "no progress for %d ms" hang));
+    min still_ms left
+
 let sleep (T d) ~seen ~still_ms =
   if read_word d.self = seen then begin
     check_faults d;
-    if watch d.self seen still_ms then check_faults d
+    let ms =
+      match d.path.hang_ms with
+      | None -> still_ms
+      | Some hang -> bounded d seen ~still_ms hang
+    in
+    if watch d.self seen ms then check_faults d
   end
 
 (* Loss *)
@@ -821,7 +859,8 @@ let stop (T d) =
     ok (rm.free ~parent:d.path.device d.debugger)
     && ok (rm.free ~parent:d.path.device d.group)
   in
-  if unregistered && freed then begin
+  let path = try d.path.stop () with Fault _ -> `Unknown in
+  if (unregistered && freed) || path = `Stopped then begin
     raise_word d.self;
     end_channels d.self;
     (* The work no longer runs: what it used goes back, and a failure to give

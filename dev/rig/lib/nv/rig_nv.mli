@@ -50,8 +50,9 @@
     {b Faults.} The RM stops a channel that faults, such as on a read its page
     tables refuse, and writes the error into the channel's notifier; the GPU's
     multiprocessors report their own errors to it. {!sleep} reads both, and
-    raises {!Fault} with the report. Work that runs long is no fault: a wait
-    lasts until the work ends.
+    raises {!Fault} with the report, and the path's own ({!field-check}). Work
+    that runs long is no fault, unless the path bounds it ({!field-hang_ms}):
+    a wait lasts until the work ends.
 
     A function that calls the RM answers its refusal of the arguments as its
     result ([None], [Error]) and raises {!Fault} for any other failure.
@@ -281,10 +282,16 @@ val sleep : t -> seen:int -> still_ms:int -> unit
     [seen], at once if it does already, or after [still_ms] milliseconds,
     whichever comes first; [still_ms] is not negative. It reads the word and the
     channels' error notifiers each millisecond, and the RM's report of the
-    multiprocessors' errors once per call. It lets other domains run while it
-    waits, and may run while [rig_nv_submit] does.
+    multiprocessors' errors and the path's {!field-check} once per call. It lets
+    other domains run while it waits, and may run while [rig_nv_submit] does.
 
-    Raises {!Fault} with the report if [g]'s work faulted. *)
+    Raises {!Fault} with the report if [g]'s work faulted. If the path bounds
+    progress ([hang_ms] is [Some n]), it also raises {!Fault} once work is
+    outstanding and the word has not moved for [n] milliseconds. The clock runs
+    only while the last value given is above the word: it starts at the later
+    of the word's last move and the first [sleep] after the device was idle, as
+    [sleep] observes them, so an idle device never hangs and the report may come
+    late but never early. *)
 
 (** {1:loss Loss} *)
 
@@ -294,14 +301,16 @@ exception Fault of string
 val stop : t -> unit
 (** [stop g] stops [g] for good, never waiting for its work: it ends its path's
     registration of [g]'s channels ({!field-unregister}), then frees them, and
-    the RM preempts what they run. Once none of [g]'s work runs, the timeline
-    word holds the last value [rig_nv_submit] was given, written with release
-    order, so work of other devices that waits on it runs on: before [stop]
-    returns if the RM freed the channels or had stopped them on a fault, and
-    otherwise by the channels' own releases as their work ends. [stop] ends
-    [g]'s images too: an image holds nothing of [g] but its code region, which
-    the caller frees. After [stop], only {!free} is called on [g], and it raises
-    no {!Fault}. *)
+    the RM preempts what they run; then it asks the path to stop
+    ({!field-stop}). Once none of [g]'s work runs, the timeline word holds the
+    last value [rig_nv_submit] was given, written with release order, so work
+    of other devices that waits on it runs on: before [stop] returns if the RM
+    freed the channels, the path answered [`Stopped] or the RM had stopped the
+    channels on a fault, and otherwise by the channels' own releases as their
+    work ends. [g]'s memory goes back to the path in the first two cases.
+    [stop] ends [g]'s images too: an image holds nothing of [g] but its code
+    region, which the caller frees. After [stop], only {!free} is called on
+    [g], and it raises no {!Fault}. *)
 
 (** {1:paths Paths}
 
@@ -409,6 +418,19 @@ type 'm path = {
   unregister : int -> (unit, string) result;
       (** [unregister c] gives back what [register c] took, before the device
           frees [c]. *)
+  check : unit -> unit;
+      (** [check ()] raises {!Fault} with the path's report of a fault of the
+          GPU's work that the RM sent the path, or of the GPU's failure, such as
+          a lost function. *)
+  hang_ms : int option;
+      (** [Some n] if work whose timeline word has not moved for [n]
+          milliseconds is a fault ({!val-sleep}), where nothing else bounds the
+          GPU's work; [None] where the path's kernel driver does. [n] is
+          positive. *)
+  stop : unit -> [ `Stopped | `Unknown ];
+      (** [stop ()] ends the path's hold of the GPU after the device freed its
+          channels: [`Stopped] once none of the device's work runs or can write
+          memory outside the GPU, [`Unknown] if some may. *)
 }
 (** The type for what a path gives a device. Each function answers the GPU's
     refusal as its result and raises {!Fault} for any other failure. Any domain
@@ -422,7 +444,9 @@ val make : 'm path -> (t, string) result
     clocks. The result is [Error msg] if [p.rm.release] is none of [570], [580],
     [610] and [615], if the RM refuses an object, or if [p] has not the memory.
     A failed [make] frees what it allocated; [p]'s own objects stay [p]'s, and
-    another [make] may use them once this one's device is stopped or failed. *)
+    another [make] may use them once this one's device is stopped or failed.
+
+    Raises [Invalid_argument] if [p.hang_ms] is [Some n] with [n < 1]. *)
 
 val is_gpu : vendor:int -> class_:int -> bool
 (** [is_gpu ~vendor ~class_] is [true] iff a PCI function of vendor [vendor] and

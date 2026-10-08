@@ -866,6 +866,12 @@ let path g =
     free = free g;
     register = register g;
     unregister = unregister g;
+    (* The RM reports the GPU's faults through the channels, and the kernel
+       driver bounds the GPU's work; channels the device could not free may
+       still run. *)
+    check = ignore;
+    hang_ms = None;
+    stop = (fun () -> `Unknown);
   }
 
 (* Opening *)

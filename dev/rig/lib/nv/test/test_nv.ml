@@ -98,6 +98,9 @@ let path release : unit N.path =
     free = (fun _ -> called "free");
     register = (fun _ -> called "register");
     unregister = (fun _ -> called "unregister");
+    check = (fun () -> called "check");
+    hang_ms = None;
+    stop = (fun () -> called "stop");
   }
 
 (* A path that refuses its [n]th call (an RM object, a control, memory or a
@@ -113,6 +116,10 @@ module Fake = struct
     mutable wrong : string list; (* what the device gave back wrongly *)
     mutable next : int;
     mutable at : int option; (* the address of the path's next memory *)
+    mutable frees : bool; (* whether the RM frees objects *)
+    mutable report : string option; (* a fault the path reports *)
+    mutable hang_ms : int option;
+    mutable stops : [ `Stopped | `Unknown ]; (* what the path's stop answers *)
   }
 
   (* The path's own objects. *)
@@ -149,10 +156,14 @@ module Fake = struct
       control = (fun _ _ _ -> if refused f then Error "refused" else Ok ());
       free =
         (fun ~parent:_ h ->
-          if not (List.mem_assoc h f.objects) then
-            f.wrong <- Printf.sprintf "freed object %d" h :: f.wrong;
-          f.objects <- List.filter (fun (o, _) -> not (under f o h)) f.objects;
-          Ok ());
+          if not f.frees then Error "refused"
+          else begin
+            if not (List.mem_assoc h f.objects) then
+              f.wrong <- Printf.sprintf "freed object %d" h :: f.wrong;
+            f.objects <-
+              List.filter (fun (o, _) -> not (under f o h)) f.objects;
+            Ok ()
+          end);
     }
 
   let alloc f kind n =
@@ -211,6 +222,9 @@ module Fake = struct
             f.wrong <- Printf.sprintf "unregistered %d" c :: f.wrong;
           f.registered <- List.filter (( <> ) c) f.registered;
           Ok ());
+      check = (fun () -> Option.iter (fun r -> raise (N.Fault r)) f.report);
+      hang_ms = f.hang_ms;
+      stop = (fun () -> f.stops);
     }
 
   let make refuse =
@@ -223,6 +237,10 @@ module Fake = struct
       wrong = [];
       next = 16;
       at = None;
+      frees = true;
+      report = None;
+      hang_ms = None;
+      stops = `Unknown;
     }
 end
 
@@ -270,9 +288,6 @@ let image_asks_nothing () =
   N.free g r;
   N.stop g
 
-(* The memory a path answers lies below 2^40, the widest address a channel's
-   semaphore takes, up to its last byte; memory past it goes back to the path,
-   and the call raises. *)
 (* A device stopped with an image loaded: stop ends the image, and the code
    region is the caller's to free, after which the device keeps only its
    word. *)
@@ -293,6 +308,9 @@ let stop_with_image () =
     (List.map (fun (a, _, _) -> a) f.memory);
   equal (list string) ~msg:"given back wrongly" [] f.wrong
 
+(* The memory a path answers lies below 2^40, the widest address a channel's
+   semaphore takes, up to its last byte; memory past it goes back to the path,
+   and the call raises. *)
 let address_limit () =
   let f = Fake.make 0 in
   let g = require_ok (N.make (Fake.path f)) in
@@ -324,6 +342,40 @@ let address_limit () =
   equal (list string) ~msg:"given back wrongly" [] f.wrong;
   N.stop g
 
+(* A device whose channels the RM keeps at stop: the path's [`Stopped] says
+   none of its work runs, so the word reaches the last value and the memory
+   goes back; [`Unknown] keeps both, as the work may still run. *)
+let path_stops () =
+  List.iter
+    (fun answer ->
+      let f = Fake.make 0 in
+      let g = require_ok (N.make (Fake.path f)) in
+      hand g (ref 0) [||];
+      f.frees <- false;
+      f.stops <- answer;
+      N.stop g;
+      let stopped = answer = `Stopped in
+      let what = if stopped then "`Stopped" else "`Unknown" in
+      equal int ~msg:(what ^ ": the word") (if stopped then 1 else 0)
+        (N.signaled g);
+      equal bool ~msg:(what ^ ": only the word's memory left") stopped
+        (List.map (fun (a, _, _) -> a) f.memory = [ address (N.word g) ]))
+    [ `Stopped; `Unknown ]
+
+(* A fault the path reports surfaces from sleep while a value is
+   outstanding. *)
+let path_check () =
+  let f = Fake.make 0 in
+  let g = require_ok (N.make (Fake.path f)) in
+  hand g (ref 0) [||];
+  f.report <- Some "the GPU fell off the bus";
+  (match N.sleep g ~seen:0 ~still_ms:1 with
+  | () -> fail "no Fault for the path's report"
+  | exception N.Fault why ->
+      contains ~msg:"the report" ~sub:"the GPU fell off the bus" why);
+  f.report <- None;
+  N.stop g
+
 let paths =
   group ~timeout:10. "paths"
     [
@@ -346,6 +398,8 @@ let paths =
          device keeps only its word"
         refused_makes;
       test "image and lay ask the path for nothing" image_asks_nothing;
+      test "stop gives back what the path says no work can use" path_stops;
+      test "sleep raises the fault the path reports" path_check;
       test
         "a device stopped with an image keeps only its word once its code is \
          freed"
@@ -1800,6 +1854,75 @@ let stateful =
         "an image unloaded from two domains is unloaded once" image_commands;
     ]
 
+(* Progress bounds
+
+   A path that bounds work's progress ([hang_ms]) makes [sleep] raise once a
+   value is outstanding and the word has not moved for that long. The fake
+   path's word moves only when a test stores to it. *)
+
+let bounded hang_ms =
+  let f = Fake.make 0 in
+  f.hang_ms <- hang_ms;
+  require_ok (N.make (Fake.path f))
+
+let hangs () =
+  let g = bounded (Some 50) in
+  hand g (ref 0) [||];
+  let rec sleeps n =
+    if n = 0 then fail "no Fault after 10 sleeps of a value making no progress";
+    match N.sleep g ~seen:0 ~still_ms:1000 with
+    | () -> sleeps (n - 1)
+    | exception N.Fault why -> contains ~msg:"the report" ~sub:"50 ms" why
+  in
+  sleeps 10;
+  N.stop g
+
+let idle () =
+  let g = bounded (Some 50) in
+  N.sleep g ~seen:0 ~still_ms:150;
+  hand g (ref 0) [||];
+  N.sleep g ~seen:0 ~still_ms:1;
+  N.stop g
+
+let moving () =
+  let g = bounded (Some 50) in
+  let v = ref 0 in
+  for _ = 1 to 8 do
+    hand g v [||]
+  done;
+  for v = 1 to 8 do
+    N.sleep g ~seen:(v - 1) ~still_ms:20;
+    S.set64 (host (N.word g)) v
+  done;
+  N.stop g
+
+let unbounded () =
+  let g = bounded None in
+  hand g (ref 0) [||];
+  N.sleep g ~seen:0 ~still_ms:150;
+  N.sleep g ~seen:0 ~still_ms:150;
+  N.stop g
+
+let bounds () =
+  List.iter
+    (fun n ->
+      let f = Fake.make 0 in
+      f.hang_ms <- Some n;
+      raises_match ~msg:(strf "hang_ms %d" n)
+        (Exn.invalid_arg ~substring:"Rig_nv.make")
+        (fun () -> N.make (Fake.path f)))
+    [ 0; -1; min_int ]
+
+let progress =
+  group ~timeout:30. "progress"
+    [
+      test "a value that makes no progress for hang_ms is a fault" hangs;
+      test "an idle device never hangs, nor its next value at once" idle;
+      test "values reached more often than hang_ms are no fault" moving;
+      test "without hang_ms a value making no progress is no fault" unbounded;
+      test "make raises on a hang_ms below 1" bounds;
+    ]
+
 let () =
   S.hold_gpu ();
   exit
@@ -1813,6 +1936,7 @@ let () =
          local;
          images;
          timeline;
+         progress;
          two;
          stateful;
        ])
