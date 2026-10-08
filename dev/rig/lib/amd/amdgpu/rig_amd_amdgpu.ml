@@ -504,22 +504,27 @@ let report g e r =
              r.(0) r.(1) r.(2))
     | _ -> None
   in
-  Option.iter
-    (fun w -> ignore (Atomic.compare_and_set g.faulted None (Some w)))
-    why
+  match why with
+  | Some _ -> ignore (Atomic.compare_and_set g.faulted None why)
+  | None -> ()
 
+let raise_fault g =
+  match Atomic.get g.faulted with
+  | Some why -> raise (Amd.Fault why)
+  | None -> ()
+
+(* Allocates the stub's answer alone, as a wait that reported no fault does. *)
 let sleep d ~ms =
   let g = d.gpu in
-  let raise_fault () =
-    Option.iter (fun why -> raise (Amd.Fault why)) (Atomic.get g.faulted)
-  in
-  raise_fault ();
+  raise_fault g;
   let r = Array.make 6 0 in
   let e = wait d.fd d.events g.node.gpu_id ms r in
   arm d.events.(0);
   if e < 0 then fault "waiting for KFD events" e;
-  report g e r;
-  raise_fault ()
+  if e > 0 then begin
+    report g e r;
+    raise_fault g
+  end
 
 (* Asks the exception events of the GPU's open devices, without waiting, for a
    fault no sleep has read yet. The events stay set: they reset only by hand. *)
