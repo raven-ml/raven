@@ -92,6 +92,8 @@ let stopped ?(before = ignore) (gpu : Rig_nv_pci_support.gpu) =
   in
   (g, s, !unloads)
 
+let hold g m = Rig_pci.Gpus.open_ g m 0 ~at_exit:ignore (fun h _ -> Ok h)
+
 let reopen g (gpu : Rig_nv_pci_support.gpu) =
   Rig_pci.Gpus.open_ g gpu.machine 0 ~at_exit:ignore (fun _ _ -> Ok ())
 
@@ -181,21 +183,21 @@ let resets root =
   in
   In_channel.with_open_bin file In_channel.input_all
 
-(* With [how] ["stop"] the child gives the GPU up as a device's stop does and
-   exits; with ["kill"] it dies by SIGKILL holding it, having allocated nothing;
-   with ["hold"] it says "holding" and holds it until its standard input
-   closes. *)
+(* [stop g m] opens GPU 0 of [m] through [g] and gives it up as a device's stop
+   does. *)
+let stop g m =
+  Rig_pci.Gpus.open_ g m 0 ~at_exit:ignore (fun h fn -> Ok (h, fn))
+  |> Result.map (fun (h, fn) -> Rig_nv_pci.give_up h fn ~unload:ignore)
+
+(* With [how] ["stop"] the child stops the GPU and exits; with ["kill"] it dies
+   by SIGKILL holding it, having allocated nothing; with ["hold"] it says
+   "holding" and holds it until its standard input closes. *)
 let take how root =
   let m = Rig_pci.Machine.at root in
   match how with
   | "stop" -> (
-      match
-        Rig_pci.Gpus.open_ (gpus ()) m 0 ~at_exit:ignore (fun h fn ->
-            Ok (h, fn))
-      with
-      | Ok (h, fn) ->
-          ignore (Rig_nv_pci.give_up h fn ~unload:ignore);
-          exit 0
+      match stop (gpus ()) m with
+      | Ok _ -> exit 0
       | Error why ->
           prerr_endline why;
           exit 2)
@@ -259,6 +261,36 @@ let test_left how expected () =
   equal ~msg:"reset" string "1" (resets root);
   contains ~msg:"the firmware outlived the reset" ~sub:"after its reset" why
 
+(* The stop gives the GPU back without losing it: this process opens it again,
+   and the open resets it. *)
+let test_stopped_here () =
+  let root = fixture () in
+  let g = gpus () and machine = Rig_pci.Machine.at root in
+  equal ~msg:"the stop" state `Stopped (require_ok (stop g machine));
+  Rig_pci.Gpus.release (require_ok (hold g machine));
+  let why = require_error (Rig_nv_pci.open_ ~machine ~firmware:[] 0) in
+  equal ~msg:"reset" string "1" (resets root);
+  contains ~msg:"the firmware outlived the reset" ~sub:"after its reset" why
+
+(* A GPU whose WPR2 is still up after the open's reset is refused, and given
+   back unlost: the next open resets it again. *)
+let test_outlived () =
+  let root = fixture () in
+  let machine = Rig_pci.Machine.at root in
+  let opened () =
+    let why = require_error (Rig_nv_pci.open_ ~machine ~firmware:[] 0) in
+    let reset = resets root in
+    Tree.add root (strf "sys/bus/pci/devices/%s/reset" gpu_bus) "";
+    (reset, why)
+  in
+  let reset, why = opened () in
+  equal ~msg:"reset" string "1" reset;
+  contains ~msg:"refused" ~sub:"still runs the GSP's firmware after its reset"
+    why;
+  let reset, why = opened () in
+  equal ~msg:"reset again" string "1" reset;
+  contains ~msg:"refused again" ~sub:"after its reset" why
+
 let test_held () =
   let root = fixture () in
   let pid, feed, said = child "hold" root in
@@ -283,6 +315,12 @@ let booted =
         "a GPU whose holder died before allocating memory is reset by the next \
          open (SIGKILL in a child)"
         (test_left "kill" (WSIGNALED Sys.sigkill));
+      test "a GPU this process stopped opens again, its open resetting it"
+        test_stopped_here;
+      test
+        "a GPU whose WPR2 is up after the open's reset is refused, and reset \
+         again by the next open"
+        test_outlived;
       test "a GPU another process holds is refused, never reset (a child holds)"
         test_held;
     ]
