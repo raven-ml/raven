@@ -89,10 +89,12 @@ after `Rig_nv_pci.reset i`.
 - **`rig.amd.pci` on a Radeon AI PRO R9700** (GC 12.0.1, taken physically, no
   IOMMU): detach, reset and attach; a boot through the security processor,
   every firmware image, the power manager, the memory hubs, the interrupt
-  rings, the compute and copy engines, clocks and gating, all with bus
-  mastering off. The GPU has not yet run a submission on this path. Its other
-  GPUs (GC 9.4.3 and 9.5.0, the MI300 and MI350 series; GC 11.0.0, 11.0.2 and
-  12.0.0) have not booted here.
+  rings, the compute and copy engines, clocks and gating; then submissions:
+  rig's AMD suite passes on this path as through `amdgpu`, but for the one test
+  that needs two devices of one GPU, which a process taking the GPU cannot
+  hold. Opens boot in full after a reset and partially after a clean stop. Its
+  other GPUs (GC 9.4.3 and 9.5.0, the MI300 and MI350 series; GC 11.0.0, 11.0.2
+  and 12.0.0) have not booted here.
 - **`rig.nv.pci`** is written for Ampere, Ada and Blackwell chips and has
   never booted a GPU: no NVIDIA machine here gives root.
 - **Virtual functions and XGMI fabrics** on AMD Instinct GPUs are written and
@@ -135,6 +137,24 @@ every row waits for its work.
 The RTX 5000 Ada sits in an Intel Core Ultra 5 235 with driver 615.71.09; the
 R9700 in an Intel i9-9900K on PCIe 3.0 x16; the Mac is an M1 Max, measured
 under load, where the GPU's wake-up takes most of a launch.
+
+### Driver-less against `amdgpu` on one GPU
+
+The same rows on the R9700, through `rig.amd.amdgpu` and through `rig.amd.pci`
+on the same machine. The driver-less boot holds every clock at its highest,
+where `amdgpu` lets its power management move them: the latency rows compare
+each path as it runs, and do not isolate the queues.
+
+| Work | through `amdgpu` | driver-less |
+|---|---|---|
+| An empty submission, submit to signal | 15.5 µs | 3.5 µs |
+| One kernel, launch and wait | 16.3 µs | 4.0 µs |
+| 64 kernels in one submission, launch and wait | 49.3 µs | 24.3 µs |
+| A sleep woken by a release | 48.5 µs | 22.9 µs |
+| 256 MiB host to GPU / back | 19.3 / 19.2 ms | 19.3 / 19.2 ms |
+| 256 MiB GPU to GPU | 3.63 ms | 2.46 ms |
+| Allocate and free 64 KiB / 64 MiB | 653 / 557 µs | 34 / 36 µs |
+| Open and stop | 22.8 ms | 105 ms (over a clean stop), 1.46 s (after a reset) |
 
 ### Against PyTorch and JAX
 
@@ -209,4 +229,11 @@ dune build @dev/rig/runtest   # every suite; GPU suites skip without their GPU
 dune build @dev/rig/bench     # every bench, against its machine's baseline
 ```
 
-Baselines are per machine, in `bench/**/*.thumper`.
+Baselines are per machine, in `bench/**/*.thumper`. With
+`RIG_AMD_PCI_FIRMWARE` set to the directories of an AMD GPU's firmware, the
+AMD suites and `bench/amd` open GPU 0 with no kernel driver, the GPU detached
+first and the process privileged to take it. The bench then records its rows
+under the machine's key with `-pci` appended: a section of its own, whose rows
+compare by name with those through `amdgpu`. Rows that wait on the copy queue's
+fence take one of two values per process (14.5 or 18.8 µs for a queue switch,
+3.9 to 6.1 µs for a 16-byte copy), so compare them across runs with care.
