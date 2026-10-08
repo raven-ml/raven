@@ -353,7 +353,7 @@ let test_copy_mapped_host () =
     [ 1 lsl 16; 1 lsl 16 ]
     (List.filter (( = ) (1 lsl 16)) (P.host_maps p))
 
-let staging = 64 lsl 20
+let staging = 32 lsl 20
 
 (* Host memory and a device's memory that the host does not address, filled from
    host memory the device maps. *)
@@ -368,8 +368,8 @@ let contents b =
   B.copy ~src:b ~dst:back;
   bytes back
 
-(* Host memory off a page goes through the host's staging memory, two slots of
-   64 MiB the device maps once. *)
+(* Host memory off a page goes through the host's staging memory, whose halves
+   of 32 MiB the device maps once. *)
 let test_copy_staged () =
   let d, p = P.open_ ~host_visible:false "buffer:staged" in
   let paged = B.create C.host (1 lsl 16) in
@@ -425,13 +425,13 @@ let test_copy_borrowed_host () =
   B.copy ~src:(filled (1 lsl 16) 'i') ~dst:b;
   equal ~msg:"into the borrow" string (String.make (1 lsl 16) 'i') (bytes h)
 
-(* A copy larger than a staging slot goes through it a slot at a time: every
-   byte lands where it belongs, across the slots' edges. *)
+(* A copy larger than a staging slot goes through its halves in turn: every byte
+   lands where it belongs, across the halves' edges and a half's reuse. *)
 let test_copy_staged_large () =
   let open_ name = P.open_ ~host_visible:false ~peers:false name in
   let d, _ = open_ "buffer:staged-large-src" in
   let e, _ = open_ "buffer:staged-large-dst" in
-  let n = staging + 4096 in
+  let n = (2 * staging) + 4096 in
   let byte i = Char.unsafe_chr ((i + ((i lsr 16) * 13)) land 255) in
   let h = B.create C.host n in
   let ba = B.bigarray Bigarray.char h in
@@ -444,7 +444,7 @@ let test_copy_staged_large () =
   let back = B.create C.host n in
   B.copy ~src:dst ~dst:back;
   let got = B.bigarray Bigarray.char back in
-  let at = [ 0; 4095; staging - 1; staging; staging + 1; n - 1 ] in
+  let at = [ 0; 4095; staging - 1; staging; staging + 1; 2 * staging; n - 1 ] in
   equal (list char) (List.map byte at) (List.map (Bigarray.Array1.get got) at);
   let wrong = ref 0 in
   for i = 0 to n - 1 do

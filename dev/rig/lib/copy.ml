@@ -21,10 +21,12 @@ let record src dst bytes start =
     Prof.record (Copy { src; dst; bytes; start; stop = Prof.now () })
 
 (* The host's staging memory: two slots, made at the first copy that needs them,
-   each copied through by one copy at a time. A slot whose stamps name a lost
-   device is replaced, so a loss reaches no other copy. *)
-let slot_bytes = 64 * 1024 * 1024
-let slots = [| None; None |]
+   each copied through by one copy at a time. A slot is two halves, each a
+   memory of its own: stamps order the uses of a whole memory, so halves of one
+   memory would order every leg after the other half's last one. A half whose
+   stamps name a lost device is replaced, so a loss reaches no other copy. *)
+let half_bytes = 32 * 1024 * 1024
+let slots = [| [| None; None |]; [| None; None |] |]
 let slots_lock = Lock.create ()
 let in_use = [| false; false |]
 
@@ -53,18 +55,20 @@ let give_slot i =
       in_use.(i) <- false;
       Lock.broadcast slots_lock)
 
-let slot i =
-  match slots.(i) with
+let half i h =
+  match slots.(i).(h) with
   | Some b when not (names_lost b) -> b
   | _ ->
-      let b = Buffer.create Dev.host slot_bytes in
-      slots.(i) <- Some b;
+      let b = Buffer.create Dev.host half_bytes in
+      slots.(i).(h) <- Some b;
       b
 
 (* Whether [m] is a staging slot's memory: a copy through it that no device runs
    goes no further. *)
 let is_slot m =
-  Array.exists (function Some b -> b.mem.root == m.root | None -> false) slots
+  Array.exists
+    (Array.exists (function Some b -> b.mem.root == m.root | None -> false))
+    slots
 
 (* A copy on [d]'s copy queue, its point. *)
 let submit_copy d queue ~src ~dst =
@@ -172,19 +176,18 @@ and route ~wait src dst n =
    the slot fills one half while the device drains the other. *)
 and staged src dst n =
   let i = take_slot () in
-  let half = slot_bytes / 2 in
-  let pieces = (n + half - 1) / half in
-  let len k = Int.min half (n - (k * half)) in
-  let run slot =
+  let pieces = (n + half_bytes - 1) / half_bytes in
+  let len k = Int.min half_bytes (n - (k * half_bytes)) in
+  let run halves =
+    let half k = Buffer.view halves.(k land 1) ~first:0 ~length:(len k) in
     let into k =
       leg
-        ~src:(Buffer.view src ~first:(k * half) ~length:(len k))
-        ~dst:(Buffer.view slot ~first:(k land 1 * half) ~length:(len k))
+        ~src:(Buffer.view src ~first:(k * half_bytes) ~length:(len k))
+        ~dst:(half k)
     in
     let out_of k =
-      leg
-        ~src:(Buffer.view slot ~first:(k land 1 * half) ~length:(len k))
-        ~dst:(Buffer.view dst ~first:(k * half) ~length:(len k))
+      leg ~src:(half k)
+        ~dst:(Buffer.view dst ~first:(k * half_bytes) ~length:(len k))
     in
     let ahead = not (local src.mem || Dev.is_io src.mem.dev) in
     if ahead then into 0;
@@ -197,13 +200,15 @@ and staged src dst n =
   (* No leg outlives the copy: the slot is given back unused, also when making
      its memory raised. *)
   let settle () =
-    Option.iter (fun b -> Buffer.wait b Buffer.Read_write) slots.(i)
+    Array.iter
+      (Option.iter (fun b -> Buffer.wait b Buffer.Read_write))
+      slots.(i)
   in
   Fun.protect
     ~finally:(fun () ->
       (try settle () with Dev.Lost _ -> ());
       give_slot i)
-    (fun () -> run (slot i))
+    (fun () -> run (Array.init 2 (half i)))
 
 (* One leg of a staged copy, which a device's queue runs without the host
    waiting. *)

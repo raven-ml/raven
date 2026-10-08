@@ -105,10 +105,11 @@ let test_free_cache () =
   equal ~msg:"after free_cache" bool true (freed p at)
 
 (* A copy between devices that map none of each other's memory goes through the
-   host's staging memory: a host whose budget cannot hold it refuses at once,
-   and the refused copy gives its slot back, so a copy after more refusals than
-   slots still finds one. The staging memory is made at the first copy that
-   needs it, and no earlier test of this suite copies through it. *)
+   host's staging memory: a host whose budget cannot hold a half of a slot
+   refuses at once, and the refused copy gives its slot back, so a copy after
+   more refusals than slots still finds one. The staging memory is made at the
+   first copy that needs it, and no earlier test of this suite copies through
+   it. *)
 let test_staging_refused () =
   let open_ name = P.open_ ~host_visible:false ~peers:false name in
   let d, _ = open_ "memory:staging-src" and e, _ = open_ "memory:staging-dst" in
@@ -120,7 +121,7 @@ let test_staging_refused () =
     (fun () ->
       for _ = 1 to 3 do
         raises_match
-          (out_of_memory C.host (64 * kib * kib))
+          (out_of_memory C.host (32 * kib * kib))
           (fun () -> B.copy ~src ~dst)
       done);
   B.copy ~src ~dst
