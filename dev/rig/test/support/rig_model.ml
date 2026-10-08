@@ -47,6 +47,7 @@ type config = {
   waits : bool;
   unknown : bool;
   maps_host : bool;
+  itself : bool;
 }
 
 let polled =
@@ -61,12 +62,15 @@ let polled =
     waits = false;
     unknown = false;
     maps_host = true;
+    itself = false;
   }
 
 (* Polled's configurations and the weight each is drawn with: memory the host
    does not address is what a device's queue copies, so it weighs most. A device
    that runs no copy has memory the host addresses: [copies = false] keeps
-   [visible]. *)
+   [visible]. A device of driver objects keeps its word behind a transport: rig
+   spins a still interval, 200 ms, on a word of driver objects the host reads
+   before it sleeps in the driver, which is where Polled runs its queue. *)
 let configs =
   [
     (1, polled);
@@ -80,7 +84,14 @@ let configs =
       } );
     (1, { polled with label = "polled-tight"; capacity = 1 });
     (1, { polled with label = "polled-transport"; transport = true });
-    (1, { polled with label = "polled-objects"; objects = true; waits = true });
+    ( 1,
+      {
+        polled with
+        label = "polled-objects";
+        objects = true;
+        waits = true;
+        transport = true;
+      } );
     (1, { polled with label = "polled-waits"; waits = true });
     (1, { polled with label = "polled-copyless"; copies = false });
     (1, { polled with label = "polled-unknown"; unknown = true });
@@ -146,16 +157,17 @@ let opened_gpu g =
 
 (* A GPU opens once per process, on first use, and again once a program lost it:
    its queue may wait on a lost Polled device's work. *)
-let gpu_device =
-  let lock = Mutex.create () and opened = ref [] in
-  fun g ->
-    Mutex.protect lock @@ fun () ->
-    match List.assoc_opt g !opened with
-    | Some d when Rig.lost d = None -> d
-    | _ ->
-        let d = opened_gpu g in
-        opened := (g, d) :: List.remove_assoc g !opened;
-        d
+let gpu_lock = Mutex.create ()
+let gpus_opened = ref []
+
+let gpu_device g =
+  Mutex.protect gpu_lock @@ fun () ->
+  match List.assoc_opt g !gpus_opened with
+  | Some d when Rig.lost d = None -> d
+  | _ ->
+      let d = opened_gpu g in
+      gpus_opened := (g, d) :: List.remove_assoc g !gpus_opened;
+      d
 
 (* Files *)
 
@@ -213,6 +225,8 @@ type rdev = {
   mutable budget : int;
   mutable seen : int;  (** The last value the system showed assigned. *)
   mutable made : rmem list;  (** Memories the device allocated. *)
+  mutable followers : rdev list;
+      (** Devices whose queue may wait on this device's work. *)
 }
 
 (* A memory's stamps as the reference knows them: the device of its last write
@@ -284,6 +298,7 @@ let new_dev w kind =
       budget = 1 lsl 30;
       seen = 0;
       made = [];
+      followers = [];
     }
   in
   w.next_dev <- w.next_dev + 1;
@@ -350,14 +365,17 @@ type verdict = {
   mutable must : rdev list;
   mutable may : rdev list;
   mutable oom : [ `No | `May | `Must ];
+  mutable waited : rdev list;  (** Every device the call may wait for. *)
 }
 
-let verdict () = { invalid = false; must = []; may = []; oom = `No }
+let verdict () =
+  { invalid = false; must = []; may = []; oom = `No; waited = [] }
 
 (* The call uses [devs]; with [maybe], it may. *)
 let uses ?(maybe = false) v devs =
   List.iter
     (fun r ->
+      v.waited <- r :: v.waited;
       match r.state with
       | Lost when not maybe -> v.must <- r :: v.must
       | Lost | Faulting -> v.may <- r :: v.may
@@ -382,18 +400,31 @@ let owned v b = uses v [ b.on; b.mem.owner ]
 let reads v m = waits ~all:(m.hold <> None) v m.stamps
 let invalid_if v c = if c then v.invalid <- true
 
+(* [r] may be lost, and so may the devices whose queue may wait on its work. *)
+let rec faulting r =
+  if r.state = Fine then begin
+    r.state <- Faulting;
+    List.iter faulting r.followers
+  end
+
 (* A device whose queue waits on others' work, which a GPU's and Polled's do,
-   may be lost with a device whose point its work follows. *)
+   may be lost with a device whose point its work follows, now or once that
+   device faults. *)
 let follows dev v =
   let waits_in_queue =
     match dev.kind with
     | Polled _ | Gpu _ -> true
     | Host | Memory | Disk -> false
   in
-  if
-    dev.state = Fine && waits_in_queue
-    && List.exists (fun r -> r.state <> Fine && r != dev) (v.must @ v.may)
-  then dev.state <- Faulting
+  if waits_in_queue then begin
+    List.iter
+      (fun r ->
+        if r != dev && not (List.memq dev r.followers) then
+          r.followers <- dev :: r.followers)
+      v.waited;
+    if List.exists (fun r -> r.state <> Fine && r != dev) (v.must @ v.may) then
+      faulting dev
+  end
 
 exception Empty
 
@@ -403,7 +434,13 @@ exception Lost_at of int * string
 exception Oom_at of int
 exception Skipped
 
-let lose w k = List.iter (fun r -> if r.id = k then r.state <- Lost) w.devs
+(* [r] showed its loss: the devices whose queue may wait on its work may be
+   lost with it. *)
+let lost_dev r =
+  r.state <- Lost;
+  List.iter faulting r.followers
+
+let lose w k = List.iter (fun r -> if r.id = k then lost_dev r) w.devs
 
 (* A demand that a case reached [label], on one domain: on two, whether a case
    reaches it is the scheduler's. *)
@@ -513,9 +550,11 @@ let counts m =
   | _ -> false
 
 (* Whether an allocation of [n] bytes on [d] may be refused: past what [d]'s
-   memories may hold, or on two domains, where the other domain's allocations
-   and budgets change what [d] holds at the same time. *)
-let may_refuse w d made n = made + n > d.budget || w.two
+   memories may hold; on two domains, where the other domain's allocations and
+   budgets change what [d] holds at the same time; and under a lowered budget,
+   which memory a pooled device kept from earlier programs may fill, such as
+   memory whose stamps name a lost device. *)
+let may_refuse w d made n = made + n > d.budget || w.two || d.budget < 1 lsl 30
 
 (* The bytes of [d]'s budget that live buffers hold for sure: those of cells and
    of submissions' parts. *)
@@ -575,6 +614,7 @@ let fresh kind =
           ~completion:(if c.objects then `Object else `Host)
           ~waits_on:(if c.waits then [ `Host; `Object ] else [])
           ~answer:(if c.unknown then `Unknown else `Stopped)
+          ~runs:(if c.itself then `Itself else `When_slept)
           (name ())
       in
       { d; skind = kind; p = Some p; spoiled = false }
@@ -668,12 +708,30 @@ let on_host b = Rig.equal (B.device b) Rig.host
 
 let host_bytes b =
   let ba = B.bigarray Bigarray.char b in
-  String.init (Bigarray.Array1.dim ba) (Bigarray.Array1.unsafe_get ba)
+  let s = Bytes.create (Bigarray.Array1.dim ba) in
+  for i = 0 to Bytes.length s - 1 do
+    Bytes.unsafe_set s i (Bigarray.Array1.unsafe_get ba i)
+  done;
+  Bytes.unsafe_to_string s
+
+(* Writes [pattern seed] over the bytes of [ba]: its first period, then copies
+   of what is written, as [pattern] makes it. *)
+let fill_pattern ba seed =
+  let n = Bigarray.Array1.dim ba in
+  let first = pattern seed (min n 251) in
+  Bytes.iteri (Bigarray.Array1.unsafe_set ba) first;
+  let filled = ref (Bytes.length first) in
+  while !filled < n do
+    let m = min !filled (n - !filled) in
+    Bigarray.Array1.blit
+      (Bigarray.Array1.sub ba 0 m)
+      (Bigarray.Array1.sub ba !filled m);
+    filled := !filled + m
+  done
 
 let host_pattern seed n =
   let h = B.create Rig.host n in
-  let ba = B.bigarray Bigarray.char h in
-  Bytes.iteri (Bigarray.Array1.unsafe_set ba) (pattern seed n);
+  fill_pattern (B.bigarray Bigarray.char h) seed;
   h
 
 (* Bytes print by their length and digest past a line. *)
@@ -707,10 +765,15 @@ let prefixes_sys a b =
 (* Generators *)
 
 (* Sizes at the edges rig.mli names: none, a page, a host buffer that starts on
-   a page from 64 KiB. A copy larger than a staging slot is test_buffer.ml's. *)
+   a page from 64 KiB; a megabyte now and then, whose bytes cost every call that
+   touches them. A copy larger than a staging slot is test_buffer.ml's. *)
 let size =
-  Gen.of_list ~pp:Format.pp_print_int
-    [ 0; 1; 8; 24; 4096; 65535; 65536; 69632; 1 lsl 20 ]
+  let pp = Format.pp_print_int in
+  Gen.frequency
+    [
+      (8, Gen.of_list ~pp [ 0; 1; 8; 24; 4096; 65535; 65536; 69632 ]);
+      (1, Gen.of_list ~pp [ 1 lsl 20 ]);
+    ]
 
 let seed = Gen.int_range 0 255
 
@@ -739,8 +802,26 @@ let pp_access ppf = function
 
 let access = Gen.of_list ~pp:pp_access [ B.Read; B.Read_write ]
 
-let kinds =
+(* Polled runs its work only when the host sleeps on it, where rig.mli has a
+   [`Host] completion's word written as the work completes. CUDA's queue waits
+   on such words and its hand-over may block on that work, so a hand-over
+   behind Polled work would wait forever: with CUDA, Polled devices run their
+   own work. *)
+let polled_itself = List.mem Cuda gpus
+
+(* Polled configurations that run their own work. *)
+let itself configs =
+  List.map
+    (fun (k, c) -> (k, { c with label = c.label ^ "-itself"; itself = true }))
+    configs
+
+(* The kinds of device a program opens. On two domains each program runs 50
+   times, and a GPU whose queue waits on Polled work that only a sleep on Polled
+   runs spins rig's still interval, 200 ms, every time: there too Polled
+   devices run their own work. *)
+let kinds ~two =
   let pp ppf k = Format.pp_print_string ppf (kind_name k) in
+  let configs = if two || polled_itself then itself configs else configs in
   Gen.frequency
     ([
        (1, Gen.of_list ~pp [ Host ]);
@@ -754,8 +835,13 @@ let kinds =
     if gpus = [] then []
     else [ (3, Gen.of_list ~pp (List.map (fun g -> Gpu g) gpus)) ])
 
-let budgets =
-  Gen.of_list ~pp:Format.pp_print_int [ 0; 4096; 65536; 1 lsl 20; 1 lsl 30 ]
+(* On two domains each program runs 50 times, and an allocation the budget
+   refuses runs the out-of-memory ladder, two full collections among its
+   rounds: there budgets leave room for most allocations. *)
+let budgets ~two =
+  Gen.of_list ~pp:Format.pp_print_int
+    (if two then [ 1 lsl 20; 1 lsl 30 ]
+     else [ 0; 4096; 65536; 1 lsl 20; 1 lsl 30 ])
 
 (* Values *)
 
@@ -798,7 +884,32 @@ let holds =
 
 (* The world and its devices *)
 
-let start_ref two forks () = new_world two forks
+(* The cases the laws need, each demanded of every run on one domain: a label is
+   demanded once registered, so each program registers them all. *)
+let demands =
+  [
+    "an allocation the budget refuses";
+    "a call reports a loss it must";
+    "a call reports a device's loss";
+    "a hold's release ran";
+    "a driver's device borrows host memory";
+    "a device borrows a file's pages";
+    "a device borrows another device's memory";
+    "a fill whose buffer is unreachable during it";
+    "a copy the host makes";
+    "a copy a device runs";
+    "a copy between two devices";
+    "a copy whose source is unreachable during it";
+    "a submit whose slots are unreachable during it";
+    "a fill copies its read slot into its write slot";
+    "a donation held exclusive";
+    "a memory consumed";
+  ]
+
+let start_ref two forks () =
+  let w = new_world two forks in
+  List.iter (fun label -> seen w label false) demands;
+  w
 
 let start_sys () =
   let w =
@@ -923,7 +1034,7 @@ let array_ref (v : rdevv) n seed c outcome =
 
 let array_sys (_, w) n seed c =
   let ba = Bigarray.Array1.create Bigarray.char Bigarray.c_layout n in
-  Bytes.iteri (Bigarray.Array1.unsafe_set ba) (pattern seed n);
+  fill_pattern ba seed;
   Atomic.set c.cell (Some { b = B.of_bigarray ba; m = new_smem w })
 
 (* A file the disk creates, of zeros, or one written here and opened for
@@ -1095,7 +1206,7 @@ let fill_sys seed last c =
   if on_host b then begin
     B.wait b B.Read_write;
     let ba = B.bigarray Bigarray.char b in
-    Bytes.iteri (Bigarray.Array1.unsafe_set ba) (pattern seed (B.length b))
+    fill_pattern ba seed
   end
   else B.copy ~src:(host_pattern seed (B.length b)) ~dst:b
 
@@ -1382,11 +1493,15 @@ let submit_ref last rc wc sc outcome =
       let parts = match sub.copy with Some (a, b) -> [ a; b ] | None -> [] in
       invalid_if vd (List.exists dead (r :: wb :: parts));
       invalid_if vd (r.mem.hold <> None || wb.mem.hold <> None);
-      (* A slot not on the device is borrowed on it first. *)
+      (* A slot not on the device is borrowed on it first, which waits for
+         every point of its memory (rig.mli, Buffer.borrow). *)
       let slot b = if b.on == d then `Some else maps d b in
       invalid_if vd (slot r = `None || slot wb = `None || read_only wb.mem);
       uses ~maybe:true vd [ r.on; wb.on ];
       uses vd [ r.mem.owner; wb.mem.owner ];
+      List.iter
+        (fun b -> if b.on != d then waits ~all:true vd b.mem.stamps)
+        [ r; wb ];
       invalid_if vd
         (List.exists
            (fun b ->
@@ -1409,7 +1524,8 @@ let submit_ref last rc wc sc outcome =
             maybe_write b.mem.stamps d;
             unknown b)
           (wb :: parts);
-        maybe_use r.mem.stamps d
+        maybe_use r.mem.stamps d;
+        Option.iter (fun h -> maybe_use h.hstamps d) sub.held
       in
       match outcome with
       | Error (Invalid_argument _) when slot r = `Either || slot wb = `Either ->
@@ -1651,7 +1767,7 @@ let facts_ref (v : rdevv) outcome =
       r.seen <- submitted;
       match (lost, r.state) with
       | true, Fine -> fail "a device lost with no fault"
-      | true, _ -> r.state <- Lost
+      | true, _ -> lost_dev r
       | false, Lost -> fail "a lost device answers it is not"
       | false, _ -> ())
 
@@ -1670,8 +1786,7 @@ let polled_cmd f ((s : sdev), _) =
       f p
   | None -> ()
 
-let arm_ref (v : rdevv) =
-  if is_polled v.r && v.r.state = Fine then v.r.state <- Faulting
+let arm_ref (v : rdevv) = if is_polled v.r then faulting v.r
 
 let run_sys ((s : sdev), _) =
   match s.p with Some p -> ignore (P.run p) | None -> ()
@@ -1694,7 +1809,14 @@ let barrier_ref last c outcome =
   with_buf c outcome @@ fun b ->
   let vd = verdict () in
   invalid_if vd (dead b || b.mem.owner.kind <> Disk);
-  reads vd b.mem;
+  (* A barrier returns at once on a file opened for reading (rig_disk.mli). On
+     an empty file it may write it waits as on any other, which test_rig_disk.ml
+     holds as an expected failure. *)
+  if not (read_only b.mem) then begin
+    if b.length > 0 then owned vd b
+    else uses ~maybe:true vd [ b.on; b.mem.owner ];
+    reads vd b.mem
+  end;
   judge c.w vd outcome Fun.id;
   drop_if last c
 
@@ -1872,6 +1994,128 @@ let fork_sys w =
       | Ok f -> { f with parent_file }
       | Error e -> failwith ("the forked child raised " ^ e))
 
+(* Leaks *)
+
+(* A program that makes every kind of call on every kind of device, without
+   faults, and drops what it made, so that what it leaves behind is a leak. A
+   call the API refuses here, such as a copy part on a device that runs no copy,
+   makes nothing. With [fork], it forks a child that reads its buffers before it
+   drops them. *)
+let exercise ~fork =
+  let step f = try f () with Empty | Skipped | Invalid_argument _ -> () in
+  let w = start_sys () in
+  let kinds =
+    [ Host; Memory; Disk ]
+    @ List.filter_map
+        (fun (_, c) ->
+          if List.mem c.label [ "polled"; "polled-hidden"; "polled-copyless" ]
+          then Some (Polled { c with itself = polled_itself })
+          else None)
+        configs
+    @ List.map (fun g -> Gpu g) gpus
+  in
+  let devs = List.map (fun k -> open_sys k w) kinds in
+  (* A copy staged from hidden memory of a Polled device that runs its work
+     only when the host sleeps on it, to a GPU, waits on the GPU's leg, which
+     waits on Polled's, for rig's still interval, 200 ms, before rig sleeps on
+     the producer. Such copies are left to the commands; transfers between GPUs
+     stage through GPU legs here. *)
+  let transfer ((s, _) as v) ((s', _) as v') j =
+    match (s.skind, s'.skind) with
+    | Polled { visible = false; itself = false; _ }, Gpu _ -> ()
+    | _ -> ignore (transfer_sys v v' 4096 j)
+  in
+  let cells = Array.init 4 (fun i -> new_cell_sys 65536 i w) in
+  let c i = cells.(i mod 4) in
+  List.iteri
+    (fun i v ->
+      step (fun () -> create_sys v B.Device 65536 (c i));
+      step (fun () -> fill_sys i false (c i));
+      step (fun () -> ignore (read_sys false (c i)));
+      List.iteri (fun j v' -> step (fun () -> transfer v v' j)) devs;
+      step (fun () -> ignore (borrow_sys v (c (i + 1)) (c (i + 2))));
+      step (fun () -> copy_prefix_sys false (c i) (c (i + 1)));
+      let own = new_sub_sys w and fill = new_sub_sys w in
+      step (fun () -> make_own_sys v 4096 own);
+      step (fun () -> ignore (submit_sys false (c i) (c (i + 1)) own));
+      step (fun () -> make_sys v None fill);
+      step (fun () -> ignore (submit_sys false (c i) (c (i + 1)) fill));
+      step (fun () -> claim_sys (c i));
+      step (fun () -> release_sys (c i));
+      step (fun () -> ignore (with_sys (c i) (c (i + 1))));
+      step (fun () -> wait_sys B.Read_write (c i)))
+    devs;
+  let disk = List.nth devs 2 in
+  step (fun () -> file_sys disk 69632 1 true (c 0));
+  step (fun () -> barrier_sys false (c 0));
+  step (fun () -> file_sys disk 4096 2 false (c 1));
+  step (fun () -> array_sys disk 4096 3 (c 2));
+  step (fun () -> hold_sys (c 0) (c 3) (new_hold_sys w));
+  if fork then step (fun () -> ignore (fork_sys w));
+  Array.iter (fun c -> Atomic.set c.cell None) cells;
+  List.iter (fun (s, _) -> give_device s) devs
+
+(* Returns what a program left to its devices: four rounds of a full collection,
+   then a wait for every device's work and its cache given back, since a chain
+   of finalisers frees its memory one round late. *)
+let settle () =
+  for _ = 1 to 4 do
+    Gc.full_major ();
+    let pooled = Mutex.protect pool_lock (fun () -> !pool) in
+    let gpus = Mutex.protect gpu_lock (fun () -> List.map snd !gpus_opened) in
+    List.iter
+      (fun d ->
+        (* An allocation of no bytes drains the device: what was collected
+           returns to its library, a file's descriptor closed. *)
+        (match
+           Rig.wait d (Rig.submitted d);
+           ignore (B.create d 0)
+         with
+        | () -> ()
+        | exception Rig.Lost _ -> ());
+        Rig.free_cache d)
+      ((Rig.host :: Rig_disk.device :: List.map (fun s -> s.d) pooled) @ gpus)
+  done
+
+(* The C heap's bytes and the open descriptors after [n] programs, settled. *)
+let census ~fork n =
+  for _ = 1 to n do
+    exercise ~fork
+  done;
+  settle ();
+  match (S.heap_bytes (), S.descriptors ()) with
+  | Some bytes, Some files -> (bytes, files)
+  | _ -> skip ~reason:"the system counts no C heap or descriptors" ()
+
+(* Bytes the C heap's own bookkeeping may grow by over eight programs. *)
+let slack = 16 * 1024
+
+(* Runs of eight programs the heap may take to settle. *)
+let warm_runs = 10
+
+(* The process makes what lasts it over its first programs (devices, the
+   staging memory, queues grown to their longest), and its heap settles over
+   up to several runs more, the longer after other tests. A leak grows the heap
+   over every run: the law runs eight programs uncounted, then runs of eight
+   until one leaves the heap within [slack] of the run before, and fails when
+   none of [warm_runs] does. *)
+let leaves_nothing ~fork =
+  if fork && Sys.win32 then skip ~reason:"Windows has no fork" ();
+  ignore (census ~fork 8);
+  let bytes, files = census ~fork 8 in
+  let rec run n before =
+    let bytes, now = census ~fork 8 in
+    equal ~msg:"open descriptors" int files now;
+    let grown = bytes - before in
+    if grown > slack then
+      if n = 1 then
+        failf "the C heap grew over each of %d runs of eight programs, by %d \
+               bytes in the last"
+          warm_runs grown
+      else run (n - 1) bytes
+  in
+  run warm_runs bytes
+
 (* Values of two worlds of one program never meet: a call naming both does
    nothing. *)
 let one_world ws outcome k =
@@ -1900,7 +2144,7 @@ let commands ~two ~fork =
     command "start" (Gen.unit @-> makes world) (start_ref two fork) start_sys
   in
   let open_ =
-    command "open" (kinds @-> world ^-> makes device) open_ref open_sys
+    command "open" (kinds ~two @-> world ^-> makes device) open_ref open_sys
   in
   let new_cell =
     command "cell"
@@ -2107,17 +2351,24 @@ let commands ~two ~fork =
       facts_ref facts_sys
   in
   let run = command "run" (device ^-> returns unit) unit_ref run_sys in
+  (* A fault or a failure arms on one draw in eight: a device lost early leaves
+     the rest of its program little to do. *)
+  let arms = Gen.int_range 0 7 in
+  let arm f k v = if k = 0 then f v in
   let fault =
     command "fault"
-      (device ^-> returns unit)
-      arm_ref
-      (polled_cmd (fun p -> P.fault p "the model's fault"))
+      (arms @-> device ^-> returns unit)
+      (arm arm_ref)
+      (arm (polled_cmd (fun p -> P.fault p "the model's fault")))
   in
   let fail_ =
-    command "fail" (device ^-> returns unit) arm_ref (polled_cmd P.fail)
+    command "fail"
+      (arms @-> device ^-> returns unit)
+      (arm arm_ref)
+      (arm (polled_cmd P.fail))
   in
   let budget =
-    command "budget" (budgets @-> device ^-> judges unit) budget_ref budget_sys
+    command "budget" (budgets ~two @-> device ^-> judges unit) budget_ref budget_sys
   in
   let free_cache =
     command "free cache" (device ^-> judges unit) free_cache_ref free_cache_sys
@@ -2149,46 +2400,51 @@ let commands ~two ~fork =
             Atomic.set c.used true;
             Atomic.set c.sh None))
   in
+  (* A major collection marks the whole heap, and on two domains stops both: it
+     costs most of a program's time, so one draw in four collects. It runs the
+     finalisers of values dropped before it began. *)
+  let collects = Gen.int_range 0 3 in
   let collect =
     command "collect"
-      (world ^-> returns unit)
-      unit_ref
-      (fun _ -> Gc.full_major ())
+      (collects @-> world ^-> returns unit)
+      (fun _ _ -> ())
+      (fun k _ -> if k = 0 then Gc.major ())
   in
   (* A command listed [n] times is drawn [n] times as often. *)
   let times n c = List.init n (fun _ -> c) in
   List.concat
     [
-      [ start; new_hold ];
+      [ start ];
+      times 2 new_hold;
       times 2 new_sub;
       times 2 open_;
       times 3 new_cell;
       times 8 create;
       times 3 create_host;
-      [ of_bigarray ];
-      times 2 file;
-      [ of_bigarray ];
-      times 3 borrow;
+      times 4 of_bigarray;
+      times 4 file;
+      times 5 borrow;
       times 2 view;
       times 3 fill;
       times 4 read;
-      [ copy ];
+      times 3 copy;
       times 4 copy_prefix;
       times 2 transfer;
-      times 3 make_copy;
-      times 2 make_own;
-      times 2 make_fill;
+      times 5 make_copy;
+      times 4 make_own;
+      times 3 make_fill;
       (* A held copy takes six values, more than two domains' prefix makes. *)
       (if two then [] else times 2 make_held);
-      times 4 submit;
-      times 3 hold;
-      [ claim; release; with_; consume; wait; wait_device; facts ];
+      times 6 submit;
+      times 5 hold;
+      List.concat_map (times 2) [ claim; with_; wait; facts ];
+      List.concat_map (times 3) [ release; consume; wait_device ];
       times 2 run;
-      [ fault; fail_; budget; free_cache; barrier ];
-      [ drop ];
-      [ drop_sub ];
+      List.concat_map (times 2) [ fault; fail_; budget; free_cache; barrier ];
+      times 3 drop;
+      times 2 drop_sub;
       times 2 drop_hold;
-      times 3 collect;
+      times 2 collect;
       (if fork then
          times 2
            (command "fork"
