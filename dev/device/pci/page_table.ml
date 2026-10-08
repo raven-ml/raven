@@ -103,10 +103,6 @@ let aligned x a = x land (a - 1) = 0
 (* A table that cannot be allocated, inside a walk. *)
 exception No_room
 
-(* A map that ran out of tables at this address: it wrote the entries below it
-   and none from it on. *)
-exception Stopped of int
-
 (* Physical memory *)
 
 let pool t ~table =
@@ -183,6 +179,14 @@ let set_bit l i on =
   Bytes.unsafe_set l.bits (i lsr 3)
     (Char.unsafe_chr (if on then b lor m else b land lnot m))
 
+(* Stops keeping [table], at depth [d], and frees it. *)
+let drop t d table =
+  (match table with
+  | Directory (_, dir) -> t.spare.(d) <- dir.entries :: t.spare.(d)
+  | Leaf _ -> ());
+  Held.remove t.held (address table);
+  pfree t (address table)
+
 (* The table entry [i] of the directory [dir] at [pa], at depth [d], points to,
    made if missing. *)
 let child t d pa dir i =
@@ -191,7 +195,14 @@ let child t d pa dir i =
   | Page -> invalid_arg "Page_table.tables: a larger page maps the address"
   | Invalid ->
       let c = new_table t (d + 1) in
-      t.fmt.set_table ~level:(level t d) ~table:pa i ~child:(address c);
+      (match
+         t.fmt.set_table ~level:(level t d) ~table:pa i ~child:(address c)
+       with
+      | () -> ()
+      | exception e ->
+          let bt = Printexc.get_raw_backtrace () in
+          drop t (d + 1) c;
+          Printexc.raise_with_backtrace e bt);
       dir.entries.(i) <- Table c;
       dir.valid <- dir.valid + 1;
       c
@@ -253,7 +264,8 @@ let rec fragment ~lo ~hi ~delta v k =
 (* The physical ranges a map writes, read in virtual order as one walk of the
    tables reaches them. The current run maps [lo, hi) to the addresses [delta]
    bytes further; ranges that follow each other in both address spaces are one
-   run. Its pages below [until] share the fragment [frag]. *)
+   run. Its pages below [until] share the fragment [frag]. The walk is at the
+   entry that maps [reached]: it wrote those before it and none from it on. *)
 type run = {
   target : target;
   uncached : bool;
@@ -264,6 +276,7 @@ type run = {
   mutable delta : int;
   mutable frag : int;
   mutable until : int;
+  mutable reached : int;
 }
 
 (* Moves [r] on to the run that holds [v]. *)
@@ -315,13 +328,15 @@ let rec write t d table ~at lo hi r =
   | Leaf (pa, l) ->
       for i = (lo - at) / c to ((hi - at) / c) - 1 do
         let v = at + (i * c) in
+        r.reached <- v;
         seek r v;
         map_page t r d pa i v;
-        set_bit l i true
-      done;
-      l.pages <- l.pages + ((hi - lo) / c)
+        set_bit l i true;
+        l.pages <- l.pages + 1
+      done
   | Directory (pa, dir) -> (
       each t d ~at lo hi @@ fun i at lo hi ->
+      r.reached <- lo;
       seek r lo;
       let whole =
         lo = at && hi = at + c && hi <= r.hi && aligned (lo + r.delta) c
@@ -331,30 +346,21 @@ let rec write t d table ~at lo hi r =
           map_page t r d pa i lo;
           dir.entries.(i) <- Page;
           dir.valid <- dir.valid + 1
-      | _ -> (
-          match child t d pa dir i with
-          | c -> write t (d + 1) c ~at lo hi r
-          | exception No_room -> raise (Stopped lo)))
+      | _ -> write t (d + 1) (child t d pa dir i) ~at lo hi r)
 
-(* Stops keeping [table], at depth [d], and frees it. *)
-let drop t d table =
-  (match table with
-  | Directory (_, dir) -> t.spare.(d) <- dir.entries :: t.spare.(d)
-  | Leaf _ -> ());
-  Held.remove t.held (address table);
-  pfree t (address table)
-
-(* Clears the entries of [lo, hi) and frees the tables it empties: [true] iff
-   [table] is then empty. *)
+(* Clears the entries of [lo, hi) that map or point to something and frees the
+   tables it empties: [true] iff [table] is then empty. *)
 let rec clear t d table ~at lo hi =
   let level = level t d and c = covers t d in
   match table with
   | Leaf (pa, l) ->
       for i = (lo - at) / c to ((hi - at) / c) - 1 do
-        t.fmt.clear ~level ~table:pa i;
-        set_bit l i false
+        if is_page l i then begin
+          t.fmt.clear ~level ~table:pa i;
+          set_bit l i false;
+          l.pages <- l.pages - 1
+        end
       done;
-      l.pages <- l.pages - ((hi - lo) / c);
       l.pages = 0
   | Directory (pa, dir) ->
       let forget i =
@@ -476,10 +482,15 @@ let tables t ~va n =
           go (d + 1) (child t d pa dir i) path
   in
   let path =
-    match go 0 t.root [] with p -> Some p | exception No_room -> None
+    match go 0 t.root [] with
+    | p -> Ok p
+    | exception e -> Error (e, Printexc.get_raw_backtrace ())
   in
   if Held.length t.held > held then t.fmt.flush ();
-  path
+  match path with
+  | Ok p -> Some p
+  | Error (No_room, _) -> None
+  | Error (e, bt) -> Printexc.raise_with_backtrace e bt
 
 let unmap t ~va n =
   check t "unmap" ~va n;
@@ -510,18 +521,21 @@ let map ?(uncached = false) ?(snooped = false) t ~va target ranges =
       delta = 0;
       frag = 0;
       until = lo;
+      reached = lo;
     }
   in
   match write t 0 t.root ~at:0 lo (lo + size) r with
   | () ->
       t.fmt.flush ();
       Some { va; size; pages = ranges; target; uncached; snooped }
-  | exception Stopped v ->
-      (* Clearing up to the page at [v] also frees the tables made on the way to
-         it, which hold nothing. *)
-      ignore (clear t 0 t.root ~at:0 lo (v + page));
+  | exception e -> (
+      let bt = Printexc.get_raw_backtrace () in
+      (* Out of tables, or the format raised: clearing through the page at
+         [reached] also frees the tables made on the way to it, which hold
+         nothing. *)
+      ignore (clear t 0 t.root ~at:0 lo (r.reached + page));
       t.fmt.flush ();
-      None
+      match e with No_room -> None | e -> Printexc.raise_with_backtrace e bt)
 
 (* Physical blocks for [n] bytes, the largest [pages] allows first, falling to
    smaller ones when the pool has none left. *)
@@ -561,17 +575,24 @@ let alloc ?(uncached = false) ?(contiguous = false) t n =
     let n = round_up n page in
     match Space.alloc t.space n with
     | None -> None
-    | Some va ->
+    | Some va -> (
         let pages =
           if contiguous then Option.map (fun pa -> [ (pa, n) ]) (block t n)
           else blocks t n
         in
-        let m = Option.bind pages (map ~uncached t ~va Gpu) in
-        if Option.is_none m then begin
+        let give_back () =
           Option.iter (List.iter (fun (pa, _) -> pfree t pa)) pages;
           Space.free t.space va
-        end;
-        m
+        in
+        match Option.bind pages (map ~uncached t ~va Gpu) with
+        | Some _ as m -> m
+        | None ->
+            give_back ();
+            None
+        | exception e ->
+            let bt = Printexc.get_raw_backtrace () in
+            give_back ();
+            Printexc.raise_with_backtrace e bt)
 
 let free t (m : mapping) =
   unmap t ~va:m.va m.size;

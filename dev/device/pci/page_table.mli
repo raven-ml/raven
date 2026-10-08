@@ -182,7 +182,9 @@ val map :
 (** [map t ~va tg ranges] maps the physical [ranges] of [tg], in order, from
     [va] on, creating the tables it needs, and flushes. [uncached] and [snooped]
     default to [false]. [None] if the GPU's memory has no room for a table it
-    needs, having unmapped what it mapped and freed the tables it made.
+    needs, having unmapped what it mapped and freed the tables it made. If a
+    setter of the format raises, [map] raises the same exception, having done
+    the same.
 
     Raises [Invalid_argument], changing nothing, if [va] or an address or length
     of [ranges] is not a multiple of 4 KiB, the range is not within {!span}
@@ -219,7 +221,8 @@ val alloc : ?uncached:bool -> ?contiguous:bool -> t -> int -> mapping option
 
     [None] if the space or the pool cannot supply them, as {!Space.alloc} and
     {!palloc} bound each request, or if a table has no room, having given back
-    what it took.
+    what it took. If a setter of the format raises, [alloc] raises the same
+    exception, having given back what it took.
 
     Raises [Invalid_argument] if [n <= 0]. *)
 

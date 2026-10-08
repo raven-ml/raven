@@ -601,6 +601,66 @@ let test_failed_descent () =
     (snd (walk g t));
   is_some ~msg:"the 8 KiB free again" (Page_table.palloc ~zero:false t page)
 
+(* The fake format of [g], whose store of an entry number [k], from 0, raises
+   [Exit]. *)
+let raising_at k g =
+  let f = format g and stores = ref 0 in
+  let store () =
+    let i = !stores in
+    incr stores;
+    if i = k then raise Exit
+  in
+  {
+    f with
+    set_table =
+      (fun ~level ~table i ~child ->
+        store ();
+        f.set_table ~level ~table i ~child);
+    set_page =
+      (fun ~level ~table i ~pa tg ~uncached ~snooped ~fragment ->
+        store ();
+        f.set_page ~level ~table i ~pa tg ~uncached ~snooped ~fragment);
+  }
+
+let raising_tables k =
+  let g = Tables.memory () in
+  let s = Space.create ~base (64 * mib) in
+  let t =
+    Page_table.create (raising_at k g) s ~memory:(66 * mib) ~boot:mib
+      ~tables:Main
+      ~pages:[ (2 * mib, 2 * mib); (page, page) ]
+  in
+  Page_table.booted t;
+  (t, g)
+
+(* Seven stores into fresh tables: two tables, a 2 MiB page, a table and three 4
+   KiB pages. *)
+let seven = [ (0, 2 * mib); (8 * mib, 3 * page) ]
+
+let test_raising_format =
+  cases "a map whose format raises gives back what it wrote and made"
+    ~name:(strf "store %d") (List.init 7 Fun.id) (fun k ->
+      let t, g = raising_tables k in
+      let free = capacity t and va = far 0 in
+      raises Exit (fun () -> Page_table.map t ~va System seven);
+      equal ~msg:"no entry" (list entry) [] (pages g t);
+      equal ~msg:"no table but the root" (list hex)
+        [ Page_table.root t ]
+        (snd (walk g t));
+      equal ~msg:"flushed" int 0 g.unflushed;
+      equal ~msg:"its tables freed" int free (capacity t);
+      let m = require_some (Page_table.map t ~va System seven) in
+      equal ~msg:"mapped again" (list placed) (expect_mapping ~base m)
+        (pages g t))
+
+let test_raising_alloc () =
+  let t, g = raising_tables 3 in
+  let free = capacity t and addresses = space_capacity t in
+  raises Exit (fun () -> Page_table.alloc t (3 * page));
+  equal ~msg:"no entry" (list entry) [] (pages g t);
+  equal ~msg:"its memory and tables" int free (capacity t);
+  equal ~msg:"its addresses" int addresses (space_capacity t)
+
 (* The tables in use are not blocks [pfree] frees. *)
 let test_pfree_tables () =
   let t, g = tables () in
@@ -1500,6 +1560,9 @@ let () =
                test_out_of_tables;
              test "a full main pool answers None" test_out_of_main;
              test "a map out of tables frees those it made" test_failed_descent;
+             test_raising_format;
+             test "an alloc whose format raises gives back what it took"
+               test_raising_alloc;
              test "pfree refuses the tables in use" test_pfree_tables;
              test "unmapping frees the tables it empties" test_tables_freed;
              test "unmapping 2 MiB and 4 KiB pages frees their tables"
