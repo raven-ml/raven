@@ -418,7 +418,7 @@ let failing_local () =
   N.stop g
 
 (* A path whose frees raise Fault, as one whose GPU is lost: free and stop still
-   return, as the core calls them after a loss. *)
+   return, as rig calls them after a loss. *)
 let failing_frees () =
   let f = Fake.make 0 in
   let g = require_ok (N.make (Fake.path f)) in

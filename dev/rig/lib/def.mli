@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** The records the core's modules share.
+(** The records rig's modules share.
 
     [rig_memory.c] reads by position, for the readers and claims [rig.h]
     declares, the fields of {!buffer} and {!claim}, those of {!memory} up to

@@ -181,7 +181,7 @@ int rig_point_done(uint64_t p) {
 
 /* Locks */
 
-/* A lock of the core's OCaml state, with a condition. Every lock is on
+/* A lock of rig's OCaml state, with a condition. Every lock is on
    one list, so a forked child can make each anew; none is freed, as a
    device and a module live as long as their process. */
 struct rig_lock {
@@ -200,7 +200,7 @@ static _Atomic(struct rig_lock *) locks;
    forgotten. A driver's device the child inherits is lost, its stop
    answered Unknown for good: freeing would call a driver, and a word may
    be a page the child shares with its parent. An io device's state is its
-   io library's, which decides what a fork does to it: the core leaves it
+   io library's, which decides what a fork does to it: rig leaves it
    open. A device the child opens is its own. */
 #ifndef _WIN32
 static void forked_child(void) {

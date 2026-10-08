@@ -657,11 +657,11 @@ value caml_rig_external_bytes(value v_addr, value v_n) {
                        (void *)Long_val(v_addr), &dim);
 }
 
-/* Bigarrays over memory the core frees share a proxy whose first share
-   is the core's own. The runtime frees a proxy, and the memory it names,
-   only when its count falls to 0: the core's share keeps the runtime from
+/* Bigarrays over memory rig frees share a proxy whose first share
+   is rig's own. The runtime frees a proxy, and the memory it names,
+   only when its count falls to 0: rig's share keeps the runtime from
    ever freeing a device's or an io library's memory. The proxy names no
-   memory, so the runtime's free of it would free nothing else. The core
+   memory, so the runtime's free of it would free nothing else. Rig
    gives up its share once the memory's buffers are collected and it is the
    last ([caml_rig_proxy_drop]), then frees the memory itself. */
 
@@ -691,7 +691,7 @@ value caml_rig_proxy_bytes(value v_p, value v_addr, value v_n) {
   return ba;
 }
 
-/* Gives up the core's share of the proxy [v_p] if it is the last, and
+/* Gives up rig's share of the proxy [v_p] if it is the last, and
    frees the proxy: [true] then, as no bigarray over its memory is left.
    The count falls from 1 to 0 in one step, after the runtime's last
    decrement, which a view finalised on another domain made. */

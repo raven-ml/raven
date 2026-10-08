@@ -3,9 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Submits on this machine's GPUs through the core, beside the same submits
+(* Submits on this machine's GPUs through rig, beside the same submits
    through each driver's C entries alone. An executable of its own: a process
-   that links the GPU drivers makes every full collection longer, and the core's
+   that links the GPU drivers makes every full collection longer, and rig's
    host rows run collections. *)
 
 module C = Rig
@@ -45,7 +45,7 @@ let depth = 3
 let slots = 24
 let runs = 100
 
-(* The core's still interval: a wait returns to OCaml at least this often. *)
+(* Rig's still interval: a wait returns to OCaml at least this often. *)
 let still_ms = 200
 let row name setup f = Thumper.bench_with_setup ~setup name f
 
@@ -173,16 +173,16 @@ let floor_part f (p : Sub.part) =
   | Sub.Words b -> floor_words f (B.address b) (B.length b / 4)
   | Sub.Copy _ -> invalid_arg "floor_part: a copy"
 
-(* A GPU's submits through the core, beside the same submits through its
+(* A GPU's submits through rig, beside the same submits through its
    driver's C entries alone. [empty] and [cost] submit no work and wait for each
    submit or every [drain]. The replay rows run [depth] copies of a step over
    [slots] parameters, each run waiting for its copy's last run: with no part,
    and with the part [kernel] makes, a launch of the vendor's smallest kernel. A
    floor spins on the word; [release-sleep], for a driver whose host writes the
-   word ([sleeps]), and the replay floors wait as the core waits for that
+   word ([sleeps]), and the replay floors wait as rig waits for that
    driver: in its [sleep] from the first read, or spinning. The kernel floor
-   drives the device the core opened, through its driver's entries alone, after
-   the core loaded the kernel. With [graph], the graph rows do the same with the
+   drives the device rig opened, through its driver's entries alone, after
+   rig loaded the kernel. With [graph], the graph rows do the same with the
    part [graph] makes, the launch of a recorded step of 64 such kernels. Each
    case opens its GPU in its own worker, so that no process forks after a vendor
    library started. *)
@@ -201,7 +201,7 @@ let gpu_rows (type a) (module D : C.Driver with type t = a) ?(sleeps = false)
     let g = get (C.open_ (module D) ~name make) in
     (g, Option.get !d)
   in
-  let core () =
+  let rig () =
     let g, _ = opened () in
     (g, Sub.make ~reads:0 ~writes:0 g [||], ref 0)
   in
@@ -368,10 +368,10 @@ let gpu_rows (type a) (module D : C.Driver with type t = a) ?(sleeps = false)
       ];
     Thumper.group (strf "submit/%s" v)
       [
-        row "empty" core (fun (g, s, _) ->
+        row "empty" rig (fun (g, s, _) ->
             C.wait g
               (C.Point.value (C.submit s ~reads:[||] ~writes:[||] ~waits:[||])));
-        row "cost" core (fun (g, s, n) ->
+        row "cost" rig (fun (g, s, n) ->
             let p = C.submit s ~reads:[||] ~writes:[||] ~waits:[||] in
             incr n;
             if !n mod drain = 0 then C.wait g (C.Point.value p));
@@ -457,7 +457,7 @@ let cuda_graph g _ =
   ( S.part ~queue:"COMPUTE:0" f,
     fun () -> ignore (Sys.opaque_identity (image, gr, f)) )
 
-(* [empty] over one block, loaded by the core. *)
+(* [empty] over one block, loaded by rig. *)
 let nv_kernel g c =
   let module S = Rig_nv_support in
   let k = S.kernels ~file:"kernels_sm89.cubin" { S.d = c; g } in
@@ -465,7 +465,7 @@ let nv_kernel g c =
   ( S.words (S.launch l k "empty" ~blocks:1 []),
     fun () -> ignore (Sys.opaque_identity (k, l)) )
 
-(* [empty] over one work-item, loaded by the core, as the packets that dispatch
+(* [empty] over one work-item, loaded by rig, as the packets that dispatch
    it. *)
 let amd_kernel g c =
   let module Abi = Rig_amd_abi in

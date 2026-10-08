@@ -1,4 +1,4 @@
-; What the core's suites and benches share: Polled, a host-memory driver
+; What rig's suites and benches share: Polled, a host-memory driver
 ; whose queue runs only when its sleep runs it.
 
 (library

@@ -120,7 +120,7 @@ let open_store name =
     (C.open_io (module Store) ~name (fun () -> Ok ()))
 
 (* An io device's state is its library's, which decides what a fork does to it:
-   the core leaves it usable in the child, where a driver's device is lost. *)
+   rig leaves it usable in the child, where a driver's device is lost. *)
 let test_io_child () =
   if Sys.win32 then skip ~reason:"Windows has no fork" ();
   let io = open_store "fork:io" in
@@ -202,8 +202,8 @@ let test_own_device () =
   equal string "exited 0" (status ended);
   equal (list string) [ "not lost"; "reused: true"; "forked" ] lines
 
-(* A thread of the parent inside every lock of the core at the fork, with a
-   profile being taken, leaves the child a working core: the child makes each
+(* A thread of the parent inside every lock of rig at the fork, with a
+   profile being taken, leaves the child a working rig: the child makes each
    lock anew. A child that still waits for one is killed by its alarm. *)
 let test_locks () =
   if Sys.win32 then skip ~reason:"Windows has no fork" ();
@@ -255,7 +255,7 @@ let tests =
           test_io_used;
         test "a device a forked child opens drains as in any process"
           test_own_device;
-        test "a forked child uses the core a parent's thread had locked"
+        test "a forked child uses rig while a parent's thread held its locks"
           test_locks;
       ];
   ]

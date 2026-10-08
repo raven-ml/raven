@@ -7,7 +7,7 @@
    floor: the same submissions through rig_nv_room and rig_nv_submit, called
    from C in a loop on the device the row opened, then a spin on the timeline
    word. A row submits through Rig.submit and waits with Rig.wait, as a program
-   does, so its distance to the floor is the core's share and the OCaml side of
+   does, so its distance to the floor is rig's share and the OCaml side of
    the driver. Memory rows call the driver. Each case opens its device in its
    own worker. Without an NVIDIA GPU the suite has no rows. *)
 
@@ -33,7 +33,7 @@ let address r = Option.get (N.address r)
 let at r off = host r + off
 let row name setup f = Thumper.bench_with_setup ~setup name f
 
-(* The device: [d] the core's, [g] its driver's. *)
+(* The device: [d] rig's, [g] its driver's. *)
 
 type dev = { d : C.t; g : N.t }
 
@@ -171,7 +171,7 @@ let release_rows =
       row "floor-no-wait-100" (floor_of empty) (fun _ -> floor_release 100);
     ]
 
-(* The core passes a driver only the waits not yet reached, so four satisfied
+(* Rig passes a driver only the waits not yet reached, so four satisfied
    waits are timed from C alone: the waits the driver encodes and the
    release. *)
 let wait_rows =

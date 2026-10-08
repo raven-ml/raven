@@ -235,7 +235,7 @@ module Io = struct
       sys_error f
         (strf "the file ends at byte %d, before byte %d" (at + k) (at + len))
 
-  (* The core writes no file opened for reading: its memory admits only reads
+  (* Rig writes no file opened for reading: its memory admits only reads
      ([Rig.Buffer.access]). *)
   let write () f ~at ~src ~len =
     using f @@ fun fd ->

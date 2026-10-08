@@ -87,13 +87,13 @@ let gpu () =
       opened := Some (g, c);
       g
 
-let core g =
+let rig g =
   match !opened with
   | Some (o, c) when o == g -> c
-  | _ -> invalid_arg "Rig_amd_support.core: the device is not open"
+  | _ -> invalid_arg "Rig_amd_support.rig: the device is not open"
 
 let submit g parts =
-  let s = Rig.Submission.make ~reads:0 ~writes:0 (core g) parts in
+  let s = Rig.Submission.make ~reads:0 ~writes:0 (rig g) parts in
   match Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||] with
   | p -> Rig.Point.value p
   | exception (Rig.Lost _ as e) ->

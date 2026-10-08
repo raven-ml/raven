@@ -145,7 +145,7 @@ value caml_rig_blit_bytes(value v_src, value v_b, value v_j, value v_n) {
    memory { dev; bytes; host; address; handle; claim; entry; root; ... },
    its claim { count; generation; why } and the entry of its root
    { owner; memory; bytes; region; io_region; access; stamps; held; ... },
-   as the core's Def module lays them out. */
+   as rig's Def module lays them out. */
 
 enum { BUFFER_MEM, BUFFER_OFFSET, BUFFER_LENGTH, BUFFER_GEN };
 enum { MEMORY_DEV, MEMORY_BYTES, MEMORY_HOST, MEMORY_ADDRESS, MEMORY_HANDLE,
@@ -155,7 +155,7 @@ enum { ENTRY_OWNER, ENTRY_MEMORY, ENTRY_BYTES, ENTRY_REGION, ENTRY_IO_REGION,
        ENTRY_ACCESS, ENTRY_STAMPS, ENTRY_HELD };
 
 /* The claim word's bit for memory that admits only reads, and its step
-   per claim, as the core's Memory module lays the word out. */
+   per claim, as rig's Memory module lays the word out. */
 #define CLAIM_READ_ONLY 2
 #define CLAIM_ONE 4
 

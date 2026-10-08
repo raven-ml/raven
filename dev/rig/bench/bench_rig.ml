@@ -6,7 +6,7 @@
 (* Submits on Polled, a driver over host memory whose queue runs when the bench
    runs it, each row beside the floor that bounds it: the driver's own room and
    submit entries called directly, with the same parts and the same runs of the
-   queue. A row's distance to its floor is the core's share of a submit.
+   queue. A row's distance to its floor is rig's share of a submit.
 
    A row that does not wait runs the queue every [drain] submits, as its floor
    does, so the queue stays short. A replay row runs the queue once per run,
@@ -340,7 +340,7 @@ let memory_floor_rows =
 (* Floors *)
 
 (* [timeline] is the address of the driver's timeline word, which a floor loads
-   as the core reads it. *)
+   as rig reads it. *)
 type floor = {
   f : nativeint;
   fp : P.t;
@@ -367,7 +367,7 @@ let floor_run t =
 
 (* Another domain calling the same device's entries until the row ends, with a
    floor of its own: the driver alone serializes the two. With [share], each
-   submit also takes one turn the two share, as the core takes a device's: by
+   submit also takes one turn the two share, as rig takes a device's: by
    try-lock, and otherwise with the runtime released. *)
 let floor_contended ~share () =
   let t = floor () in

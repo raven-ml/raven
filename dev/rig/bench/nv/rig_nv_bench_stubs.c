@@ -8,7 +8,7 @@
    device the row opened, then a spin until the device's timeline word
    holds the last value. The submission is the least sequence the hardware
    needs (the driver's words in a segment, a ring entry, GP_PUT, the
-   doorbell), so a row's distance to its floor is what the core and the
+   doorbell), so a row's distance to its floor is what rig and the
    driver's OCaml side add.
 
    A failing call raises Failure. Every stub holds the runtime. */

@@ -32,7 +32,7 @@ let sticky name f =
    through rig, which loses the device and stops it. *)
 let faults () =
   let g = S.gpu () in
-  let c = S.core g in
+  let c = S.rig g in
   let _, kernel = S.kernels g in
   let watched = B.create ~memory:Pinned c 64 and src = B.create c 64 in
   let zeros = String.make 64 '\000' in

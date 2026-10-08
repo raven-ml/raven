@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Test drivers and probes for the core's suites. *)
+(** Test drivers and probes for rig's suites. *)
 
 (** A driver over host memory whose queue runs only when its {!run} or its sleep
     runs it: a wait that returns before it slept leaves work unrun. Every driver
@@ -194,12 +194,12 @@ val host_held : unit -> int
     not yet returned, and devices' pinned host memory. *)
 
 val locked : (unit -> 'a) -> 'a
-(** [locked f] is [f ()] run holding every lock of rig's core at once, as
+(** [locked f] is [f ()] run holding every lock of rig at once, as
     threads inside each would: what a fork during [f] leaves the child. [f] must
     not call rig, whose calls would wait for those locks. *)
 
 val waiting : unit -> int
-(** [waiting ()] is how many threads wait inside a lock of rig's core for
+(** [waiting ()] is how many threads wait inside a lock of rig for
     another to change what it guards, such as a copy waiting for a staging slot.
 *)
 

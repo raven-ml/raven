@@ -167,7 +167,7 @@ let host_of d =
 let answered : (device -> unit) ref = ref ignore
 
 (* Reads a lost device's word behind a transport through its driver, which may
-   be called after [stop], so the core's copy of it moves on. *)
+   be called after [stop], so rig's copy of it moves on. *)
 let refresh d =
   match d.kind with
   | Driver { m; h; _ } when d.word = 0 -> (

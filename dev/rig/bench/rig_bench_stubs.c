@@ -4,11 +4,11 @@
   ---------------------------------------------------------------------------*/
 
 /* The driver alone: a device's room and submit entries called directly, with
-   a fill that adds 1 to a word of its own, as the core calls them for a
+   a fill that adds 1 to a word of its own, as rig calls them for a
    submission of no part or of that fill, naming the fill's word or the
    handles it was given, and the machine's GPU lock. A submit holds the
    runtime, even for a driver whose submit may block, except a turn's: it
-   takes the floor's mutex as the core takes a device's turn, by try-lock and
+   takes the floor's mutex as rig takes a device's turn, by try-lock and
    otherwise with the runtime released. The lock releases it for its nap.
    And a host kernel's claims on its operands, from C. */
 

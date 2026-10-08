@@ -801,7 +801,7 @@ let test_bigarray_keeps_borrowed () =
   equal ~msg:"once no array reads it" int at (B.address again);
   ignore (Sys.opaque_identity other)
 
-(* The core holds a share of the storage of every bigarray over a borrow: once
+(* Rig holds a share of the storage of every bigarray over a borrow: once
    collected, the views dropped while its memory lives leave that share and free
    nothing. *)
 let test_bigarray_shares () =
@@ -821,9 +821,9 @@ let test_bigarray_shares () =
     let sub = Bigarray.Array1.sub view 0 8 in
     [ alone; Rig_support.shares sub ]
   in
-  equal ~msg:"the core and a view, then its sub" (list int) [ 2; 3 ] (first ());
+  equal ~msg:"rig and a view, then its sub" (list int) [ 2; 3 ] (first ());
   let view, alone = collected_shares () in
-  equal ~msg:"the core and a new view" int 2 alone;
+  equal ~msg:"rig and a new view" int 2 alone;
   equal ~msg:"the bytes" char 's' view.{4095};
   ignore (Sys.opaque_identity m)
 
@@ -914,7 +914,7 @@ let tests =
           test_bigarray_keeps;
         test "a bigarray over a borrow keeps the device memory it reads"
           test_bigarray_keeps_borrowed;
-        test "a bigarray's storage keeps the core's share" test_bigarray_shares;
+        test "a bigarray's storage keeps rig's share" test_bigarray_shares;
       ];
     group ~timeout "waits"
       [

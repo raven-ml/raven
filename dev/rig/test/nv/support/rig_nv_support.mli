@@ -43,18 +43,18 @@ val stop : Rig_nv.t -> unit
     opened through it. *)
 
 val close : dev -> unit
-(** [close t] stops [t]'s driver device, once the core gave back what it mapped
-    of collected memory, unless the core lost [t], which stopped it. *)
+(** [close t] stops [t]'s driver device, once rig gave back what it mapped
+    of collected memory, unless rig lost [t], which stopped it. *)
 
 val with_gpu : (dev -> 'a) -> 'a
 (** [with_gpu f] is [f t], [t] the {!gpu} opened for [f] and its driver device
     stopped after it, whether it returns or raises, unless [f] stopped it or the
-    core lost it, which stops it. *)
+    rig lost it, which stops it. *)
 
 val with_driver : (Rig_nv.t -> 'a) -> 'a
 (** [with_driver f] is {!with_gpu} for {!driver}. *)
 
-(** {1:work Work through the core} *)
+(** {1:work Work through rig} *)
 
 module Sub := Rig.Submission
 

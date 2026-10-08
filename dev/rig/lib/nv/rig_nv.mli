@@ -17,7 +17,7 @@
     {e timeline word} ({!word}), 64 bits of host memory that hold [v] once the
     work of every value up to [v] completed, whichever channel ran it.
 
-    A program opens a GPU through the device core, [Rig], which submits by
+    A program opens a GPU through [Rig], which submits by
     calling this library's C functions ({!room_entry}, {!submit_entry}):
     {[
     let d =

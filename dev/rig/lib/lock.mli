@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Locks: a C mutex and a condition. Every lock of the core's state is one.
+(** Locks: a C mutex and a condition. Every lock of rig's state is one.
 
     Any domain may call any function. A call that waits for a lock, and {!wait},
     release the runtime while they block and run no signal handler. A lock is

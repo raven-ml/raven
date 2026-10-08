@@ -511,7 +511,7 @@ value rig_test_shares(value v_ba) {
   return Val_long(p == NULL ? 0 : (intnat)atomic_load(&p->refcount));
 }
 
-/* The core's own: every lock it has, in one order. */
+/* Rig's own: every lock it has, in one order. */
 extern void rig_locks_take(void);
 extern void rig_locks_give(void);
 extern int rig_locks_waiting(void);
@@ -535,7 +535,7 @@ value rig_test_locks_waiting(value unit) {
   return Val_int(rig_locks_waiting());
 }
 
-/* The core's own: the bytes its host heap keeps for reuse. */
+/* Rig's own: the bytes its host heap keeps for reuse. */
 extern intnat rig_heap_kept(void);
 extern intnat rig_heap_held(void);
 

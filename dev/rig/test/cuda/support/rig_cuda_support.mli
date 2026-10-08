@@ -34,8 +34,8 @@ val stop : Rig_cuda.t -> unit
 (** [stop g] is [Rig_cuda.stop g]. Tests stop the devices {!gpu} opened through
     it. *)
 
-val core : Rig_cuda.t -> Rig.t
-(** [core g] is rig's device over [g], which {!gpu} opened under a name of its
+val rig : Rig_cuda.t -> Rig.t
+(** [rig g] is rig's device over [g], which {!gpu} opened under a name of its
     own.
 
     Raises [Invalid_argument] if [g] was stopped, lost or opened otherwise. *)

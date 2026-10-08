@@ -6,7 +6,7 @@
 /* Submitting to an NVIDIA device from C.
 
    The device's room check and submission, over the structures and codes of
-   rig_edge.h, for the core and any caller that holds its submissions in C.
+   rig_edge.h, for rig and any caller that holds its submissions in C.
    [self] is Rig_nv.self. Both are called without the OCaml runtime: they
    call no function of it and read no OCaml value.
 

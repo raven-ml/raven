@@ -159,7 +159,7 @@ let unread () =
    new process runs work on the GPU. *)
 let faults () =
   let g = S.gpu () in
-  let c = S.core g in
+  let c = S.rig g in
   let bin = read_fixture "kernels_gfx1201.hsaco" in
   let co = Result.get_ok (Abi.Code_object.of_string bin) in
   let p =

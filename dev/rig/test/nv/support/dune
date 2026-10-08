@@ -1,4 +1,4 @@
-; What the NV suites share: the GPU lock, devices through the core, host
+; What the NV suites share: the GPU lock, devices through rig, host
 ; memory, the C edge, and launches of the fixtures' kernels.
 
 (library

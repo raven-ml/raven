@@ -47,8 +47,8 @@ let hold_gpu () =
 
 type dev = { d : C.t; g : N.t }
 
-(* The driver device a test opened, with its core device if it has one, until a
-   test stops it: one a failed test left open is stopped by the next. The core
+(* The driver device a test opened, with its rig device if it has one, until a
+   test stops it: one a failed test left open is stopped by the next. Rig
    stops a device it lost. *)
 let opened = ref None
 
@@ -56,7 +56,7 @@ let stop g =
   (match !opened with Some (o, _) when o == g -> opened := None | _ -> ());
   N.stop g
 
-(* Before a core device's driver stops, the core gives back what the device
+(* Before a rig device's driver stops, rig gives back what the device
    mapped of collected host memory: the host's next allocation hands each
    mapping to its device, whose next allocation gives it back. A stopped device
    allocates no more, and the path would keep mappings of memory the process may
@@ -91,7 +91,7 @@ let driver () =
   opened := Some (g, None);
   g
 
-(* Each core device takes a name of its own: the core keeps a name's device open
+(* Each rig device takes a name of its own: rig keeps a name's device open
    until it is lost, and a test stops the driver device under it. *)
 let names = ref 0
 
@@ -104,7 +104,7 @@ let gpu () =
       { d; g }
   | Error why ->
       opened := Some (g, None);
-      failf "opening GPU 0 in the core: %s" why
+      failf "opening GPU 0 in rig: %s" why
 
 let close t =
   if Option.is_none (C.lost t.d) then begin
@@ -147,7 +147,7 @@ let address r = Option.get (N.address r)
 let get32 a i =
   Int32.to_int (String.get_int32_le (read (a + (4 * i)) 4) 0) land 0xffff_ffff
 
-(* Work through the core *)
+(* Work through rig *)
 
 let submit t ps =
   C.Point.value

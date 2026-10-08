@@ -1,6 +1,6 @@
 # Testing the device libraries
 
-This document is for a contributor who adds a driver or changes the core. It
+This document is for a contributor who adds a driver or changes rig. It
 says what the device libraries promise, which test pins each kind of promise,
 and why the suites are built the way they are. Paths are relative to
 `dev/rig/`.
@@ -23,11 +23,11 @@ The promises fall into a few kinds, each tested its own way:
 | State across calls follows rules | stamps, rings, windows, page tables | `stateful` against a model |
 | Calls from several domains are safe | free, unmap and unload end a value once | `stateful ~domains:2` |
 | A known interleaving is handled | a worker parking as a job is published | a held schedule (hook points, gates) |
-| A device that fails is lost cleanly | loss, faults, Unknown stops | the core's test driver, guarded runs on GPUs |
+| A device that fails is lost cleanly | loss, faults, Unknown stops | rig's test driver, guarded runs on GPUs |
 | A path costs what it says | a submit that does not wait allocates nothing | words counted with `Gc.minor_words` |
 
 Layout mirrors `lib/`. A library's suites live in `test/<lib>/` as
-`test_<module>.ml` (the core's in `test/`), helpers shared by two suites (or by
+`test_<module>.ml` (rig's in `test/`), helpers shared by two suites (or by
 a suite and a bench) in `test/<lib>/support/`, and fixtures in
 `test/<lib>/fixtures/` with the command that made them. Its benches live in
 `bench/<lib>/` and read their fixtures from `test/<lib>/fixtures/`. A suite
@@ -104,7 +104,7 @@ lets two domains both pass the check: two `cuMemFree` of one address, two
 `cuModuleUnload` of one module, or a Metal pipeline released twice, each of
 which crashes the process. The two-domain models reach that race on their first
 cases; an `Atomic` taken with `compare_and_set` lets exactly one call end the
-value. In the core, "stamps raised from two domains are their maxima" runs the
+value. In rig, "stamps raised from two domains are their maxima" runs the
 stamp model on two domains. In pci, "two domains allocate at once" and "pins
 and DMA memory are counted the same from two domains".
 
@@ -125,7 +125,7 @@ after, runs the job" and "a child forked while a worker holds the parking
 mutex runs a job on every core". Every wait gives up after 10 s and the
 scenario reports which event it was waiting for.
 
-The core's test driver (below) gives the same control over a wait. Its sleeps
+Rig's test driver (below) gives the same control over a wait. Its sleeps
 check, in order, a gate, a fault, an interruption and a stall:
 `Polled.gate` blocks every sleep until `open_gate`, `sleepers` says how many
 are blocked, `interrupt` raises SIGINT in the next sleep's thread, and
@@ -166,14 +166,14 @@ memory whose stamps name it, raises `Lost`; other devices go on; its facts
 still answer; its memory returns only once its word shows its last value
 reached.
 
-**The core's test driver.** The core's job is to keep that contract over any
+**Rig's test driver.** Rig's job is to keep that contract over any
 driver, so its suites run on `Rig_support.Polled`
 (`test/support/`), a driver over host memory whose queue runs only when
 the test runs it or a wait sleeps. A wait that returns before it slept leaves
 work unrun, which is how the stamp tests see that a submit waited for the
 right point. Every driver call is logged, so a test can say which calls reached
 the driver: "a stopped device is only freed and unmapped". Its options select
-the driver behaviours the core must handle:
+the driver behaviours rig must handle:
 
 | Option | Driver it stands for | Test |
 |---|---|---|
@@ -188,10 +188,10 @@ laws in `test/test_loss.ml` pin each sentence of the contract: "a failed
 hand-over loses the device once", "a fault two domains' sleeps find loses the
 device once", "a queue waiting on a lost device's value is lost", "a lost
 device answers its facts and values", "a loss leaves other devices and their
-memory working". Polled tests the core; it is never used to test a driver.
+memory working". Polled tests rig; it is never used to test a driver.
 
 **Failure walks.** A failure path is reached by few tests, so a walk reaches
-every one. `test/test_walk.ml` runs each operation of the core over Polled
+every one. `test/test_walk.ml` runs each operation of rig over Polled
 once for each fallible call it makes, with that call failing.
 `Polled.fail_at d n` makes the `n`-th of the driver's facts, counted calls and
 hand-overs fault, and every one after it, as a faulted device's do; or refuses
@@ -248,7 +248,7 @@ machine's reason.
 Long work is no fault: a device is lost only on its driver's report, and no
 timeout decides it. The CUDA suite holds it as "long work is no fault, and a
 stale seen returns at once", the AMD suite as "long work is no fault", and the
-core as "a word still for three intervals loses nothing".
+rig as "a word still for three intervals loses nothing".
 
 ## Rings
 
@@ -304,7 +304,7 @@ One lock order holds everywhere: the GPU lock first, then the hosts' timing
 locks, so nothing waits for the GPU while it holds a timing lock. A timing
 run of a GPU bench on kimchi or nonnormal takes the GPU lock in the shell,
 then the timing locks, and tells the bench it holds it with
-`RIG_GPU_LOCK_HELD=1`, which makes `hold_gpu` and the core's GPU bench
+`RIG_GPU_LOCK_HELD=1`, which makes `hold_gpu` and rig's GPU bench
 return at once:
 
 ```
@@ -324,7 +324,7 @@ set otherwise, nothing guards the GPU.
 | kimchi | Linux x86_64, RTX 5000 Ada, NVIDIA driver 615 | CUDA, NV and its `nvidia` kernel path |
 | nonnormal | Linux x86_64, Radeon AI PRO R9700 (gfx1201) | AMD and its `amdgpu` kernel path |
 
-Every other suite (pool, elf, host, core, pci, the ABI libraries) runs on all
+Every other suite (pool, elf, host, rig, pci, the ABI libraries) runs on all
 three. The Linux hosts also run the pool's cgroup and thread tests, pci's live
 reads of `/sys/bus/pci`, and the gcc build. A library is done when its suite
 passes on the Mac, under the sanitize profile, and on Linux. Tests that need
@@ -457,7 +457,7 @@ there; a dev build checks code, never baselines.
 
 Each row times what a caller calls, beside the floor that bounds it where the
 process can measure one: CUDA's release row beside a row that makes the same
-CUDA calls directly, the core's submit rows beside Polled's own C room and
+CUDA calls directly, rig's submit rows beside Polled's own C room and
 submit entries. The distance to the floor is the library's share. Rows also
 record words allocated: a reached `Buffer.wait` that builds the closure of its
 slow path before it takes its fast path shows there as 6 words a call.

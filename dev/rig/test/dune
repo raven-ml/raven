@@ -51,7 +51,7 @@
   (run %{dep:test_readers.exe})))
 
 ; ocamlrun loads each library's stubs as a shared library of its own, found
-; on CAML_LD_LIBRARY_PATH; the core's readers resolve at load. Under the
+; on CAML_LD_LIBRARY_PATH; rig's readers resolve at load. Under the
 ; sanitize profile the stubs need the sanitizer runtime, which ocamlrun
 ; lacks, so the bytecode run is skipped.
 

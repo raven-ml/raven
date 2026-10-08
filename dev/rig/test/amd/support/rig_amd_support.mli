@@ -23,13 +23,13 @@ val hold_gpu : unit -> unit
 
 val gpu : unit -> Rig_amd.t
 (** [gpu ()] is AMD GPU [0], opened through the amdgpu path and handed to rig
-    under a name of its own ({!core}), after stopping the device an earlier
+    under a name of its own ({!rig}), after stopping the device an earlier
     {!gpu} opened if no {!stop} stopped it, as a failed test leaves it, while
     the process holds the machine's GPU lock ({!hold_gpu}). It skips the test if
     the machine has no AMD GPU. *)
 
-val core : Rig_amd.t -> Rig.t
-(** [core g] is rig's device over [g], which {!gpu} opened.
+val rig : Rig_amd.t -> Rig.t
+(** [rig g] is rig's device over [g], which {!gpu} opened.
 
     Raises [Invalid_argument] if [g] was stopped, lost or opened otherwise. *)
 

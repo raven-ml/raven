@@ -120,7 +120,7 @@ let round_trip (ka, kb, n, (oa, ob)) =
   let r = require_some (C.alloc g ka 1) in
   equal bool ~msg:"host of a" (ka <> `Device) (Option.is_some (C.host r));
   C.free g r;
-  let c = S.core g in
+  let c = S.rig g in
   let at k o =
     B.view (B.create ~memory:(memory_of k) c (n + o)) ~first:o ~length:n
   in
@@ -199,7 +199,7 @@ let kernel_through_map_host () =
    still written after the copy. *)
 let failed_fill () =
   let g = S.gpu () in
-  let c = S.core g in
+  let c = S.rig g in
   let src = B.create c 64 and dst = B.create ~memory:Pinned c 64 in
   let data = pattern 64 3 in
   S.write_gpu (Nativeint.of_int (B.address src)) data;
@@ -1048,7 +1048,7 @@ module Order = struct
     let g = shared () in
     let buffers =
       Array.init buffers (fun b ->
-          let r = B.create (S.core g) size in
+          let r = B.create (S.rig g) size in
           S.write_gpu
             (Nativeint.of_int (B.address r))
             (Bytes.to_string (initial b));
@@ -1077,7 +1077,7 @@ module Order = struct
           (S.delayed ~spin:s.spin ~flag:(address s.flag) ~ns:p.delay
              ~dst:(B.address dst) ~src:(B.address src) p.n)
     in
-    let first = Rig.submitted (S.core s.g) + 1 in
+    let first = Rig.submitted (S.rig s.g) + 1 in
     let hand ps = S.submit s.g (Array.of_list (List.map part ps)) in
     let last = List.fold_left (fun _ ps -> hand ps) (first - 1) subs in
     let rec watch seen =

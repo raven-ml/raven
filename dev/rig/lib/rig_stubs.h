@@ -3,7 +3,7 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* What the core's stub files share: the device record, stamp records and
+/* What rig's stub files share: the device record, stamp records and
    the prepared form of a submission. */
 
 #ifndef RIG_STUBS_H

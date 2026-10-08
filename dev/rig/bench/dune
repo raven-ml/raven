@@ -7,8 +7,8 @@
   (names rig_bench_stubs)))
 
 (executable
- (name bench_core)
- (modules bench_core)
+ (name bench_rig)
+ (modules bench_rig)
  (libraries rig rig_bench rig_support thumper))
 
 ; The GPU rows link every GPU driver, which makes each full collection longer:
@@ -42,5 +42,5 @@
   (source_tree fixtures))
  (action
   (progn
-   (run %{exe:bench_core.exe})
+   (run %{exe:bench_rig.exe})
    (run %{exe:bench_gpu.exe}))))

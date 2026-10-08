@@ -1519,7 +1519,7 @@ let domains =
 (* Work through rig, on a device [S.gpu] opened *)
 
 let buffer ?(memory = Rig.Buffer.Device) g n =
-  Rig.Buffer.create ~memory (S.core g) n
+  Rig.Buffer.create ~memory (S.rig g) n
 
 let addr = Rig.Buffer.address
 let view b first length = Rig.Buffer.view b ~first ~length
@@ -1548,7 +1548,7 @@ let live = ref []
 
 (* Submits [ps] and waits for their value. *)
 let run g ps =
-  Rig.wait (S.core g) (S.submit g ps);
+  Rig.wait (S.rig g) (S.submit g ps);
   live := []
 
 let pattern n seed =
@@ -1585,7 +1585,7 @@ let dispatch ?(of_ = kernels) gpu entry name ~args ~groups =
           ~threads:(64, 1, 1) ~groups:(groups, 1, 1) ()))
 
 let program ?(of_ = kernels) g =
-  match Rig.Program.load (S.core g) (Lazy.force of_).binary with
+  match Rig.Program.load (S.rig g) (Lazy.force of_).binary with
   | Ok p -> p
   | Error why -> fail why
 
@@ -2698,7 +2698,7 @@ let opens = ref 0
 let in_queue () =
   S.with_gpu @@ fun g ->
   waits_on g;
-  let c = S.core g in
+  let c = S.rig g in
   incr opens;
   let made = ref None in
   let pc =
