@@ -448,6 +448,55 @@ let after_unload () =
   b.release ();
   List.iter (Rig_metal.free t.d) [ out; args ]
 
+let stopped_icb = "the device was stopped"
+
+(* A stop releases the pipelines of the images still loaded; an icb call after
+   it retains none. *)
+let after_stop () =
+  let t = dev_of (opened ()) in
+  let args = alloc t args_bytes in
+  let step = pipeline t "step" in
+  Rig_metal.stop t.d;
+  equal (result pass string) ~msg:"after the stop" (Error stopped_icb)
+    (Result.map ignore (icb t args [| dispatch step |]));
+  Rig_metal.free t.d args
+
+(* An icb call beside a stop: each answers as if made before the stop or after
+   it, never with a pipeline released under it. A device of its own per program,
+   as its stop ends it. *)
+type stop = { mutable stopped : bool }
+
+let icb_model s = if s.stopped then Error stopped_icb else Ok ()
+
+let icb_sys (t, args, step, _) =
+  match icb t args (Array.make 64 (dispatch step)) with
+  | Ok b ->
+      b.release ();
+      Ok ()
+  | Error e -> Error e
+
+(* The device's one stop: a second call returns once the first did. *)
+let stop_once (t, args, _, (lock, stopped)) =
+  Mutex.protect lock @@ fun () ->
+  if not !stopped then begin
+    Rig_metal.stop t.d;
+    Rig_metal.free t.d args;
+    stopped := true
+  end
+
+let stop_commands =
+  let dev = abstract "d" ~release:stop_once in
+  [
+    command "open"
+      (Gen.unit @-> makes dev)
+      (fun () -> { stopped = false })
+      (fun () ->
+        let t = dev_of (opened ()) in
+        (t, alloc t args_bytes, pipeline t "step", (Mutex.create (), ref false)));
+    command "icb" (dev ^-> returns (result unit string)) icb_model icb_sys;
+    command "stop" (dev ^-> returns unit) (fun s -> s.stopped <- true) stop_once;
+  ]
+
 let icbs =
   group ~timeout:60. "indirect command buffers"
     [
@@ -459,6 +508,9 @@ let icbs =
       test "release frees the buffer and its commands" released_objects;
       test "release raises when called twice" released_twice;
       test "runs after its image is unloaded" after_unload;
+      test "an icb call after the stop answers the stop" after_stop;
+      stateful ~domains:2 ~count:20
+        "an icb call beside a stop answers as before or after it" stop_commands;
     ]
 
 (* Bytes *)

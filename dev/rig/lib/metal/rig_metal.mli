@@ -60,12 +60,14 @@
     {b Domains.} Any domain may call any function, at the same time as others,
     with three exceptions. The C room and submit are called one at a time: the
     caller holds the device's {e turn} from a room check to the end of the
-    submit it precedes. {!stop} is called once, after every other call returned.
-    After {!stop} only {!free} and the release of an indirect command buffer are
-    called. These rules are the caller's; the device does not check them.
-    {!sleep} may run while another domain submits. A region or an image is given
-    back once: of two {!free}s or {!unload}s of one value, from any domains, one
-    gives it back and the other raises [Invalid_argument].
+    submit it precedes. {!stop} is called once, after every other call returned
+    but the [icb] function of {!val-capability}, which compiled code may call at
+    any time and which a stop waits for. After {!stop} only {!free}, the [icb]
+    function and the release of an indirect command buffer are called. These
+    rules are the caller's; the device does not check them. {!sleep} may run
+    while another domain submits. A region or an image is given back once: of
+    two {!free}s or {!unload}s of one value, from any domains, one gives it back
+    and the other raises [Invalid_argument].
 
     {b Platforms.} A device opens on macOS 15 and later: its queue keeps every
     region resident through a residency set, which Metal has from macOS 15
@@ -346,5 +348,7 @@ val stop : t -> unit
 
     Either way it releases the pipelines of every image not unloaded, as
     {!unload} would: the command buffers in flight and the indirect command
-    buffers that use one keep it until they end. {!unload} is not called after
-    [stop]. Regions end at {!free}, which may follow. *)
+    buffers that use one keep it until they end. An [icb] call of
+    {!val-capability} in flight returns before [stop] begins, and every later
+    one answers [Error]. {!unload} is not called after [stop]. Regions end at
+    {!free}, which may follow. *)

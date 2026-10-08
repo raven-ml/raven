@@ -82,13 +82,18 @@ type t = {
   word : region;
   cap : capability;
   images : image list Atomic.t; (* loaded, for stop to release *)
+  guard : Mutex.t; (* held by an icb call and by stop *)
+  stopped : bool Atomic.t; (* stop began *)
 }
 
 let device_name i =
   if i < 0 then invalid_argf "Rig_metal.device_name: GPU %d is negative" i;
   if i = 0 then "METAL" else strf "METAL:%d" i
 
-let icb self align buffer (ds : Rig_metal_abi.dispatch array) =
+(* Compiled code calls a device's [icb] beside every other call, so [icb] and
+   [stop] exclude each other under the device's [guard]: once the stop began,
+   the pipelines [icb] would retain may be released. *)
+let icb self guard stopped align buffer (ds : Rig_metal_abi.dispatch array) =
   let sizes = Array.make (7 * Array.length ds) 0 in
   let record i (d : Rig_metal_abi.dispatch) =
     let gx, gy, gz = d.groups and tx, ty, tz = d.threads in
@@ -108,17 +113,20 @@ let icb self align buffer (ds : Rig_metal_abi.dispatch array) =
   let pipelines =
     Array.map (fun (d : Rig_metal_abi.dispatch) -> d.pipeline) ds
   in
-  match make_icb self buffer pipelines sizes with
-  | "", objects ->
-      let released = Atomic.make false in
-      let release () =
-        if not (Atomic.compare_and_set released false true) then
-          invalid_arg "Rig_metal_abi.icb: release called twice";
-        release_icb objects.(0)
-      in
-      let commands = Array.sub objects 2 (Array.length ds) in
-      Ok { Rig_metal_abi.handle = objects.(1); commands; release }
-  | why, _ -> Error why
+  Mutex.protect guard @@ fun () ->
+  if Atomic.get stopped then Error "the device was stopped"
+  else
+    match make_icb self buffer pipelines sizes with
+    | "", objects ->
+        let released = Atomic.make false in
+        let release () =
+          if not (Atomic.compare_and_set released false true) then
+            invalid_arg "Rig_metal_abi.icb: release called twice";
+          release_icb objects.(0)
+        in
+        let commands = Array.sub objects 2 (Array.length ds) in
+        Ok { Rig_metal_abi.handle = objects.(1); commands; release }
+    | why, _ -> Error why
 
 (* The minimum constant buffer offset alignment of Apple GPU families, from the
    Metal feature set tables (May 21, 2026, page 7). The tables list none for Mac
@@ -153,10 +161,21 @@ let open_ i =
       let family, budget, word = facts self in
       let arch = if family > 0 then strf "Apple%d" family else "Mac2" in
       let align = if family > 0 then apple_align else mac_align in
-      let icb = icb self align in
+      let guard = Mutex.create () and stopped = Atomic.make false in
+      let icb = icb self guard stopped align in
       let word = region self word in
       let cap = { Rig_metal_abi.align; icb; split } in
-      Ok { self; arch; budget; word; cap; images = Atomic.make [] }
+      Ok
+        {
+          self;
+          arch;
+          budget;
+          word;
+          cap;
+          images = Atomic.make [];
+          guard;
+          stopped;
+        }
 
 (* Facts *)
 
@@ -256,6 +275,8 @@ let sleep d ~seen ~still_ms =
   if sleep_word d.self seen still_ms <> 0 then raise (Fault (failure d.self))
 
 let stop d =
+  Mutex.protect d.guard @@ fun () ->
+  Atomic.set d.stopped true;
   stop_ring d.self;
   let release_loaded i =
     if Atomic.compare_and_set i.loaded true false then

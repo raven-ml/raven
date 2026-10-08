@@ -116,13 +116,14 @@ type t = {
 
           The result is [Error msg] if a dispatch asks for more threads per
           threadgroup than its pipeline allows
-          ([maxTotalThreadsPerThreadgroup]), or if Metal cannot make the
-          indirect command buffer.
+          ([maxTotalThreadsPerThreadgroup]), if Metal cannot make the indirect
+          command buffer, or once the driver began to stop the device; a stop
+          waits for an [icb] call in flight.
 
           Raises [Invalid_argument] if [buffer] or a pipeline belongs to another
           [MTLDevice], or if a dispatch's offset lies outside [buffer] or is not
           a multiple of {!field-align}, or one of its sizes is less than [1].
-          Any domain may call it while the device is open. *)
+          Any domain may call it at any time. *)
   split : nativeint;
       (** [split] is the address of
           [int split(void *queue, uint64_t *start, uint64_t *end)], which a fill
