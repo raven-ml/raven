@@ -135,13 +135,25 @@ let poke b i c = Bigarray.Array1.set (B.bigarray Bigarray.char b) i c
 
 (* Files *)
 
-let dir = "files"
+(* This executable, and the directory it lies in, under _build: the suite and
+   its children write their files there, whatever directory they run from, and
+   remove them as they end. *)
+let exe =
+  let e = Sys.executable_name in
+  if Filename.is_relative e then Filename.concat (Sys.getcwd ()) e else e
+
+let root = Filename.dirname exe
+let dir = Filename.concat root "files"
 let names = Atomic.make 0
 
 let clear dir =
   if Sys.file_exists dir then
     Array.iter (fun f -> Sys.remove (Filename.concat dir f)) (Sys.readdir dir)
   else Sys.mkdir dir 0o755
+
+let removed dir =
+  clear dir;
+  Sys.rmdir dir
 
 let new_path () =
   Filename.concat dir (strf "f%d" (Atomic.fetch_and_add names 1))
@@ -190,7 +202,7 @@ let on_inode ino entry =
    answer only the file's inode, which APFS never gives another file, while ext4
    does at once. *)
 let open_on_made () =
-  let files = Filename.concat (Sys.getcwd ()) dir ^ Filename.dir_sep in
+  let files = dir ^ Filename.dir_sep in
   open_where (fun entry ->
       match Unix.readlink entry with
       | target -> String.starts_with ~prefix:files target
@@ -271,7 +283,6 @@ let naming path m = if contains m path then names_file else "Sys_error: " ^ m
 
 (* [child args] is the trimmed output of this suite run as [args]. *)
 let child args =
-  let exe = Sys.executable_name in
   let ic = Unix.open_process_args_in exe (Array.of_list (exe :: args)) in
   let out = In_channel.input_all ic in
   match Unix.close_process_in ic with
@@ -951,6 +962,23 @@ let test_forked () =
   equal string "exited 0" (child [ "fork"; path; out ]);
   same ~msg:"the forked child's file" s (contents out)
 
+(* A child run from another directory writes there nothing, and leaves nothing
+   beside the suite. *)
+let test_elsewhere () =
+  if Sys.win32 then skip ~reason:"no limit of open files" ();
+  let elsewhere = Filename.concat root "elsewhere" in
+  clear elsewhere;
+  let here = Sys.getcwd () in
+  Fun.protect
+    ~finally:(fun () -> Sys.chdir here)
+    (fun () ->
+      Sys.chdir elsewhere;
+      ignore (child [ "open-files" ]));
+  equal (array string) ~msg:"where it ran" [||] (Sys.readdir elsewhere);
+  removed elsewhere;
+  equal bool ~msg:"its files beside the suite" false
+    (Sys.file_exists (Filename.concat root "files-limit"))
+
 let test_too_many () =
   if Sys.win32 then skip ~reason:"no limit of open files" ();
   equal text "ninth: f8\nfirst: f0" (child [ "open-files" ])
@@ -1010,6 +1038,10 @@ let descriptors =
          tries once more"
         test_too_many;
       test "a forked child reads and writes files with the disk" test_forked;
+      test
+        "a child run from another directory writes nothing there, and leaves \
+         no file"
+        test_elsewhere;
       cases
         ~name:(fun k -> Format.asprintf "%a" pp_kind k)
         "a copy past the end of a file truncated since raises Sys_error naming \
@@ -1303,7 +1335,7 @@ let open_on_child ino = print_int (open_where (on_inode (int_of_string ino)))
    files on the disk, takes every descriptor left, then opens a ninth file and
    reads the first again. *)
 let open_files_child () =
-  let dir = "files-limit" in
+  let dir = Filename.concat root "files-limit" in
   clear dir;
   let paths =
     Array.init 9 (fun i ->
@@ -1328,7 +1360,8 @@ let open_files_child () =
   let taken = take [] in
   Printf.printf "ninth: %s\n" (said (Rig_disk.of_file paths.(8)));
   Printf.printf "first: %s\n" (said opened.(0));
-  List.iter Unix.close taken
+  List.iter Unix.close taken;
+  removed dir
 
 (* Opens [path], reads it, then forks a child that copies it into a new file at
    [out] and orders it, and prints how the child ended. *)
@@ -1389,5 +1422,5 @@ let () =
             domains;
           ]
       in
-      clear dir;
+      removed dir;
       exit code
