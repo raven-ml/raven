@@ -90,6 +90,10 @@ submit/metal/empty	wall_time	batch=256	n=20	1.578e-05	1.309e-05 1.333e-05 1.344e
 # host: nonnormal · Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz · x86_64 · linux
 # ocaml: 5.5.1 · 64-bit · release
 
+file/amd/from-device-256M	alloc_words	exact	123
+file/amd/from-device-256M	wall_time	batch=1	n=20	1.933e-02	1.920e-02 1.924e-02 1.925e-02 1.927e-02 1.930e-02 1.930e-02 1.931e-02 1.933e-02 1.933e-02 1.933e-02 1.933e-02 1.933e-02 1.934e-02 1.934e-02 1.936e-02 1.938e-02 1.945e-02 1.945e-02 1.949e-02 1.950e-02
+file/amd/to-device-256M	alloc_words	exact	1508
+file/amd/to-device-256M	wall_time	batch=1	n=20	4.459e-02	4.407e-02 4.434e-02 4.439e-02 4.447e-02 4.449e-02 4.449e-02 4.451e-02 4.455e-02 4.456e-02 4.457e-02 4.461e-02 4.461e-02 4.465e-02 4.470e-02 4.475e-02 4.480e-02 4.483e-02 4.492e-02 4.517e-02 4.563e-02
 floor/amd/cost	alloc_words	exact	0
 floor/amd/cost	wall_time	batch=4096	n=20	1.405e-06	1.374e-06 1.381e-06 1.381e-06 1.382e-06 1.383e-06 1.389e-06 1.395e-06 1.395e-06 1.402e-06 1.405e-06 1.406e-06 1.408e-06 1.411e-06 1.421e-06 1.423e-06 1.432e-06 1.437e-06 1.441e-06 1.479e-06 1.481e-06
 floor/amd/kernel-pipelined-100	alloc_words	exact	3
