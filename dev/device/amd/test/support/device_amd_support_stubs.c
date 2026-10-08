@@ -128,12 +128,13 @@ value device_amd_test_write(value v_a, value v_s) {
   return Val_unit;
 }
 
-/* A fill: words to place and segment bytes to take, through the
-   capability's functions, then its own answer. */
+/* A fill: words to place, in two calls if [split] is inside them, and
+   segment bytes to take, through the capability's functions, then its own
+   answer. */
 struct fill {
   int (*place)(void *queue, const uint32_t *words, size_t n);
   int (*segment)(void *queue, size_t n, void **host, uint64_t *address);
-  size_t n, bytes;
+  size_t n, split, bytes;
   int code;
   uint32_t words[];
 };
@@ -141,7 +142,10 @@ struct fill {
 static int fill(void *queue, void *arg, uint64_t v) {
   (void)v;
   struct fill *f = arg;
-  int e = f->place(queue, f->words, f->n);
+  size_t first = f->split > 0 && f->split < f->n ? f->split : f->n;
+  int e = f->place(queue, f->words, first);
+  if (e == 0 && first < f->n)
+    e = f->place(queue, f->words + first, f->n - first);
   if (e) return e;
   if (f->bytes > 0) {
     void *host;
@@ -158,7 +162,7 @@ value device_amd_test_fill_entry(value unit) {
 }
 
 value device_amd_test_fill_arg(value v_place, value v_segment, value v_ws,
-                               value v_bytes, value v_code) {
+                               value v_split, value v_bytes, value v_code) {
   size_t n = Wosize_val(v_ws);
   struct fill *f = malloc(sizeof *f + n * sizeof(uint32_t));
   if (f == NULL) caml_raise_out_of_memory();
@@ -166,10 +170,17 @@ value device_amd_test_fill_arg(value v_place, value v_segment, value v_ws,
   f->segment =
       (int (*)(void *, size_t, void **, uint64_t *))Nativeint_val(v_segment);
   f->n = n;
+  f->split = (size_t)Long_val(v_split);
   f->bytes = (size_t)Long_val(v_bytes);
   f->code = Int_val(v_code);
   for (size_t i = 0; i < n; i++) f->words[i] = (uint32_t)Long_val(Field(v_ws, i));
   return caml_copy_nativeint((intnat)f);
+}
+
+value device_amd_test_fill_arg_byte(value *argv, int argn) {
+  (void)argn;
+  return device_amd_test_fill_arg(argv[0], argv[1], argv[2], argv[3], argv[4],
+                                  argv[5]);
 }
 
 /* What the room function at [v_entry] answers for one part on queue

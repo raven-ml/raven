@@ -13,8 +13,8 @@ external pages : int -> int = "device_amd_test_pages"
 external free_pages : int -> int -> unit = "device_amd_test_free_pages"
 
 external fill_arg :
-  nativeint -> nativeint -> int array -> int -> int -> nativeint
-  = "device_amd_test_fill_arg"
+  nativeint -> nativeint -> int array -> int -> int -> int -> nativeint
+  = "device_amd_test_fill_arg_byte" "device_amd_test_fill_arg"
 
 external fill_entry : unit -> nativeint = "device_amd_test_fill_entry"
 
@@ -86,8 +86,8 @@ let still ?msg w x f ~ms =
     equal ?msg w x (f ())
   done
 
-let fill ?(code = 0) (c : Device_amd.capability) ws ~bytes =
-  (fill_entry (), fill_arg c.place c.segment ws bytes code)
+let fill ?(code = 0) ?(split = 0) (c : Device_amd.capability) ws ~bytes =
+  (fill_entry (), fill_arg c.place c.segment ws split bytes code)
 
 external room_c :
   nativeint -> nativeint -> int -> int -> bool -> int -> int -> int

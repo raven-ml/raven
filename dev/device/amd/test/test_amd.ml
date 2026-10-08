@@ -1043,6 +1043,51 @@ let stops () =
   case "the path may run a queue" (fun () -> `Unknown) 0;
   case "the path failed" (fun () -> raise (A.Fault "lost")) 0
 
+(* A fill on COPY:0 that places exactly the units it declares, in two calls,
+   wherever the copy ring's end falls: [room] words from the fill's start to
+   the end, then its two calls of [first] and [second] words. SDMA packets
+   never wrap, so a call that does not fit before the end goes after it. *)
+let fill_at_the_end (room, first, second) =
+  cover "the first call does not fit before the end" (first > room);
+  cover "the first call ends exactly at the end" (first = room);
+  cover "only the second call does not fit" (first < room && first + second > room);
+  Host.with_device @@ fun h g ->
+  let q = Host.copy h in
+  let size = q.bytes / 4 in
+  let v = ref 0 in
+  let go ps =
+    equal room_answer ~msg:"room" `Fits (A.room g ps);
+    incr v;
+    equal answer ~msg:"submit" `Ok (submit g ~v:!v ps);
+    Host.reach g !v
+  in
+  let words n = A.part g ~queue:"COPY:0" (`Words (Array.sub (Lazy.force zeros) 0 n)) in
+  let put () = Host.position q / 4 in
+  (* A submission of [n] words takes [n] and its release's. *)
+  let p0 = put () in
+  go [| words 1 |];
+  let release = put () - p0 - 1 in
+  let chunk = 1 lsl 20 in
+  let rec advance () =
+    let left = size - room - put () in
+    if left > chunk + release then (go [| words chunk |]; advance ())
+    else if left >= release + 1 then go [| words (left - release) |]
+    else (go [| words chunk |]; advance ())
+  in
+  advance ();
+  equal int ~msg:"the fill's start" (size - room) (put () mod size);
+  let ws = Array.init (first + second) (fun i -> marker (i + 1)) in
+  let f, arg = S.fill ~split:first (A.capability g) ws ~bytes:0 in
+  let start = put () in
+  go [| A.part g ~queue:"COPY:0" (`Fill (f, arg, first + second, 0)) |];
+  equal (list int) ~msg:"its words, handed over in order" (Array.to_list ws)
+    (List.filter is_marker (handed q start (put ())))
+
+let at_the_end =
+  Gen.with_pp
+    (fun ppf (r, a, b) -> Format.fprintf ppf "%d words left; calls of %d and %d" r a b)
+    Gen.(triple (int_range 1 40) (int_range 1 24) (int_range 1 24))
+
 let failures =
   group ~timeout:60. "failures"
     [
@@ -1052,6 +1097,16 @@ let failures =
         "on an AQL queue, a failed fill leaves none of its packets valid past \
          the write position"
         aql_failure;
+      xfail
+        ~reason:
+          "a fill's place charges the zeros that pad the copy ring's end to \
+           the fill's declared units: a fill placing exactly its units in two \
+           calls fails when a call goes past the end"
+        (prop ~count:200
+           ~examples:[ (10, 16, 8); (10, 4, 8) ]
+           "a fill on COPY:0 placing exactly its units runs wherever the \
+            ring's end falls"
+           at_the_end fill_at_the_end);
       test "sleep asks the path only while the word holds seen" sleeps;
       test "stop writes the last value only once the path stopped its queues"
         stops;

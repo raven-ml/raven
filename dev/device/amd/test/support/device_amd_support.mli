@@ -53,15 +53,17 @@ val free_pages : int -> int -> unit
 
 val fill :
   ?code:int ->
+  ?split:int ->
   Device_amd.capability ->
   int array ->
   bytes:int ->
   nativeint * nativeint
-(** [fill ~code c ws ~bytes] is a fill, as a C function and its argument, that
-    places the words [ws] with [c]'s [place], then takes [bytes] bytes of the
-    argument segment with [c]'s [segment] if [bytes > 0], and returns the first
-    failure of these, else [code] (defaults to [0]). The argument lives as long
-    as the process. *)
+(** [fill ~code ~split c ws ~bytes] is a fill, as a C function and its
+    argument, that places the words [ws] with [c]'s [place], in two calls, the
+    first of the first [split] words, if [0 < split < Array.length ws] (defaults
+    to [0]: one call), then takes [bytes] bytes of the argument segment with
+    [c]'s [segment] if [bytes > 0], and returns the first failure of these,
+    else [code] (defaults to [0]). The argument lives as long as the process. *)
 
 val room :
   ?words:int ->
