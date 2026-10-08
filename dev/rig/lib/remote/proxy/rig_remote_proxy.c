@@ -270,8 +270,9 @@ value caml_rig_remote_proxy_sleep(value vd, value vseen, value vms) {
   return Val_bool(failed);
 }
 
-/* Writes the last value handed over into the shadow. Does not release the
-   runtime: it waits for nothing. */
+/* Stops the proxy: the last value handed over goes into the shadow at once,
+   or, while a copy into this process's memory may still land, once none
+   may. Does not release the runtime: it waits for nothing. */
 value caml_rig_remote_proxy_stop(value vd) {
   struct rig_remote_dev *d = Dev_val(vd);
   struct rig_remote_link *l = d->link;
@@ -280,9 +281,8 @@ value caml_rig_remote_proxy_stop(value vd) {
     return Val_unit;
   }
   pthread_mutex_lock(&l->mu);
-  if (atomic_load(&d->word) < d->handed)
-    atomic_store_explicit(&d->word, d->handed, memory_order_release);
-  pthread_cond_broadcast(&l->cv);
+  d->stopped = 1;
+  rig_remote_settle(d);
   pthread_mutex_unlock(&l->mu);
   return Val_unit;
 }

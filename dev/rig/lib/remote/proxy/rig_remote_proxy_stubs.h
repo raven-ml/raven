@@ -148,6 +148,7 @@ struct rig_remote_link {
   size_t queued;
   int sending; /* a frame is being sent, by the thread or an abort */
   int closing, sent_close, got_close, threads, fd_closed;
+  int receiving; /* the receiving thread runs: copies' bytes may land */
   _Atomic int failed;
   struct pending *pending, *pending_last;
   struct cmd *cmds, *cmds_last;
@@ -180,6 +181,8 @@ struct rig_remote_dev {
   uint64_t handed;       /* the last value handed over */
   uint64_t written;      /* the last value that copies into local memory */
   uint64_t flying;       /* bytes of [flights] */
+  int stopped; /* its stop ran: the word takes [handed] once no copy's
+                  bytes may land */
   struct rig_remote_local *locals, *locals_last;
   struct rig_remote_flight *flights, *flights_last;
 };
@@ -194,6 +197,11 @@ int rig_remote_forked(struct rig_remote_job *j);
    without the link's lock. */
 int rig_remote_queue(struct rig_remote_link *l, int kind,
                      const unsigned char *p, size_t n, struct pending *q);
+
+/* Writes [handed] into a stopped proxy's word once no copy into this
+   process's memory may still land: none is pending, or the receiving thread
+   ended. Holds the link's lock. */
+void rig_remote_settle(struct rig_remote_dev *d);
 
 /* Adds [d] to its link's proxies: [0]; [-1] if the link has a proxy of
    [d]'s id; [-2] if memory ran out. */

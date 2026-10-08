@@ -243,4 +243,7 @@ val self : t -> nativeint
 
 val stop : t -> unit
 (** [stop d] writes the last value handed over into [d]'s shadow with release
-    order, unless the shadow holds it already, without waiting for the agent. *)
+    order, unless the shadow holds it already, once no bytes of a copy into this
+    process's memory may still land: at once if none is pending or the link's
+    receiving thread ended, and otherwise as the last pending copy's bytes land
+    or the thread ends. It waits for nothing. *)

@@ -12,13 +12,16 @@ open Proxy_machine
 (* With a copy into this process held at the agent, the process fails. The
    proxy's stop may write its last value only once no work of it runs
    (Rig.Driver.stop): the word stays below the copy's value until the agent
-   reports it, the copy's bytes land before that, and the report fails
-   nothing. *)
+   reports it, the copy's bytes land before that, and the report fails nothing.
+   The copy was not reached before the loss, so rig refuses the memory for good
+   ({!Rig.Lost}); its bytes are read through the bigarray it was made over. *)
 let stopped_in_flight () =
   with_machine @@ fun m ->
   let n = 4096 in
   let far = far_of_string m.host (String.make n 'f') in
-  let here = host_buffer (String.make n '.') in
+  let bytes = Bigarray.(Array1.create char c_layout n) in
+  Bigarray.Array1.fill bytes '.';
+  let here = Rig.Buffer.of_bigarray bytes in
   pause m.ag;
   let v =
     Rig.Point.value (submit (copy_submission m.host ~src:far ~dst:here))
@@ -35,7 +38,11 @@ let stopped_in_flight () =
   less ~msg:"the word while the agent held the copy" int ~than:v early;
   equal ~msg:"the job, after the agent's report" (option string) None
     (Link.failure m.ag.job);
-  equal ~msg:"the copy's bytes" string (String.make n 'f') (read_host here)
+  raises_match ~msg:"the memory after the loss"
+    (function Rig.Lost _ -> true | _ -> false)
+    (fun () -> read_host here);
+  equal ~msg:"the copy's bytes" string (String.make n 'f')
+    (String.init n (Bigarray.Array1.get bytes))
 
 let () =
   Watchdog.start ();
@@ -44,8 +51,7 @@ let () =
        [
          group ~timeout:60. "proxy"
            [
-             xfail ~reason:"stop writes the last value handed over at once"
-               (test "a proxy lost with work in flight stops after the work"
-                  stopped_in_flight);
+             test "a proxy lost with work in flight stops after the work"
+               stopped_in_flight;
            ];
        ])

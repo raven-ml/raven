@@ -580,6 +580,12 @@ static int recv_word(struct rig_remote_link *l, uint64_t n, int64_t *last) {
   uint64_t id = rig_remote_get_u64(h), v = rig_remote_get_u64(h + 8);
   pthread_mutex_lock(&l->mu);
   struct rig_remote_dev *d = dev_of(l, id);
+  /* A stopped proxy's word took its last value already, maybe before this
+     report. */
+  if (d != NULL && d->stopped && v <= atomic_load(&d->word)) {
+    pthread_mutex_unlock(&l->mu);
+    return 0;
+  }
   if (d == NULL || v <= atomic_load(&d->word) || v > d->handed ||
       (d->locals != NULL && d->locals->value <= v)) {
     pthread_mutex_unlock(&l->mu);
@@ -613,12 +619,25 @@ static int recv_bytes(struct rig_remote_link *l, uint64_t n, int64_t *last) {
     pthread_mutex_unlock(&l->mu);
     return MALFORMED;
   }
+  pthread_mutex_unlock(&l->mu);
+  /* The copy stays pending while its bytes land, so a stop meanwhile leaves
+     the word below it and rig keeps the memory. */
+  r = recv_all(l, c->at, c->bytes, last);
+  pthread_mutex_lock(&l->mu);
   d->locals = c->next;
   if (d->locals == NULL) d->locals_last = NULL;
+  rig_remote_settle(d);
   pthread_mutex_unlock(&l->mu);
-  r = recv_all(l, c->at, c->bytes, last);
   free(c);
   return r;
+}
+
+void rig_remote_settle(struct rig_remote_dev *d) {
+  struct rig_remote_link *l = d->link;
+  if (!d->stopped || (d->locals != NULL && l->receiving)) return;
+  if (atomic_load(&d->word) < d->handed)
+    atomic_store_explicit(&d->word, d->handed, memory_order_release);
+  pthread_cond_broadcast(&l->cv);
 }
 
 /* Handles one frame: 0 to read on, 1 once the peer closed, or a code. */
@@ -673,6 +692,12 @@ static void *receiver(void *arg) {
       break;
     }
   }
+  /* No copy's bytes land any more: stopped proxies take their last value. */
+  pthread_mutex_lock(&l->mu);
+  l->receiving = 0;
+  for (size_t i = 0; i < l->ndevs; i++)
+    if (l->devs[i] != NULL) rig_remote_settle(l->devs[i]);
+  pthread_mutex_unlock(&l->mu);
   thread_ends(l);
   return NULL;
 }
@@ -874,10 +899,12 @@ value caml_rig_remote_link_make(value vj, value fd, value name, value peer) {
   pthread_attr_init(&attr);
   pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
   l->threads = 2;
+  l->receiving = 1;
   int e = pthread_create(&ts, &attr, sender, l);
   if (e != 0) l->threads -= 2;
   if (e == 0 && (e = pthread_create(&tr, &attr, receiver, l)) != 0)
     l->threads -= 1;
+  if (e != 0) l->receiving = 0;
   pthread_attr_destroy(&attr);
   pthread_mutex_unlock(&j->mu);
   if (e != 0) link_lost(l, e);
