@@ -165,9 +165,10 @@ and scratch = {
 }
 
 (* The minimum version of a GC's compute firmware whose queues run 64-bit waits
-   (Pm4.wait_64), by GC version. None is known: a version enters once a queue
-   was seen waiting on a word the host moved across 2^32. *)
-let wait64_from : ((int * int * int) * int) list = []
+   (Pm4.wait_64), by GC version: a version enters once a queue was seen
+   comparing all 64 bits of a word the host moved across 2^32. GC 12.0.1: the
+   R9700, MEC firmware 3010. *)
+let wait64_from = [ ((12, 0, 1), 3010) ]
 let ring_bytes = 16 lsl 20
 let segment_bytes = 1 lsl 20
 let slots = 513

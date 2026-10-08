@@ -2275,6 +2275,148 @@ let order_commands =
       Order.run Order.run_sys;
   ]
 
+(* Waits on words
+
+   Where the compute queue compares 64-bit words ([waits_on]), a submission
+   holds its work until each word it waits on, as unsigned 64 bits, reaches
+   its value; a 32-bit compare would pass a word whose low half alone is
+   above. The words here are the host's, in memory the device maps. *)
+
+let waits_on g =
+  if not (A.waits_on g `Store) then
+    skip ~reason:"the GPU's compute queue does not wait on words" ()
+
+(* [t] at or past 2^32, and a first value of the word below it. *)
+let crossing =
+  Gen.with_pp
+    (fun ppf (w0, t) -> Format.fprintf ppf "word 2^32%+d, wait for 2^32%+d" (w0 - (1 lsl 32)) (t - (1 lsl 32)))
+    Gen.(
+      let+ j = frequency [ (3, constant 0); (3, int_range 1 3) ]
+      and+ d = int_range 1 4 in
+      let t = (1 lsl 32) + j in
+      (t - d, t))
+
+let held (w0, t) =
+  S.with_gpu @@ fun g ->
+  waits_on g;
+  let word = Option.get (A.alloc g `Pinned 8) in
+  let src = Option.get (A.alloc g `Pinned 64) and dst = Option.get (A.alloc g `Pinned 64) in
+  let zeros = String.make 64 '\000' in
+  S.write (host src) (String.make 64 'w');
+  S.write (host dst) zeros;
+  S.write (host word) (le64 w0);
+  let below =
+    List.sort_uniq compare
+      (List.filter (fun x -> x >= w0) ((t - 1) :: ((t lsr 32) lsl 32) - 1 :: [ w0 ]))
+  in
+  cover "a value below the wait whose low half is above its" (List.mem ((1 lsl 32) - 1) below);
+  cover "a wait for a value whose low half is 0" (t land 0xffff_ffff = 0);
+  equal answer ~msg:"submit" `Ok
+    (E.submit g ~v:1 ~waits:[| (address word, t) |]
+       [| E.copy ~dst:(address dst) ~src:(address src) 64 |]);
+  List.iter
+    (fun x ->
+      S.write (host word) (le64 x);
+      S.still ~msg:(strf "the copy, the word at %d (sampled)" x) string zeros
+        (fun () -> S.read (host dst) 64)
+        ~ms:20;
+      equal int ~msg:(strf "the timeline, the word at %d" x) 0 (A.signaled g))
+    below;
+  S.write (host word) (le64 t);
+  S.wait g 1;
+  equal string ~msg:"the copy, the word reached" (String.make 64 'w') (S.read (host dst) 64);
+  List.iter (A.free g) [ word; src; dst ]
+
+(* Through rig, between two devices of the GPU: the consumer's submission
+   reads memory whose last writer is the producer's value still running, so
+   rig has the consumer's queue wait on the producer's word. Its submit
+   returns before the producer's value is reached, and its work runs after
+   it. *)
+let opens = ref 0
+
+let in_queue () =
+  S.with_gpu @@ fun g ->
+  waits_on g;
+  let c = S.core g in
+  incr opens;
+  let made = ref None in
+  let pc =
+    match
+      Rig.open_
+        (module A)
+        ~name:(strf "AMD:test-producer-%d" !opens)
+        (fun () ->
+          Result.map
+            (fun x ->
+              made := Some x;
+              x)
+            (Rig_amd_amdgpu.open_ 0))
+    with
+    | Ok pc -> pc
+    | Error why -> fail why
+  in
+  let pg = Option.get !made in
+  Fun.protect ~finally:(fun () -> A.stop pg) @@ fun () ->
+  let prog =
+    match Rig.Program.load pc (Lazy.force kernels).binary with
+    | Ok p -> p
+    | Error why -> fail why
+  in
+  let flag = Rig.Buffer.create ~memory:Pinned pc 8 in
+  let args = Rig.Buffer.create ~memory:Pinned pc 64 in
+  let fresh = Rig.Buffer.create ~memory:Pinned pc 64 and b = Rig.Buffer.create pc 64 in
+  put flag (le64 0);
+  put fresh (String.make 64 'n');
+  put args (le64 (addr flag) ^ le64 300_000);
+  let entry f = Option.get (Rig.Program.entry prog f) in
+  let spin =
+    S.words_part ~queue:"COMPUTE:0"
+      (dispatch (A.capability pg).gpu entry "spin" ~args:(addr args) ~groups:1)
+  in
+  let s = Rig.Submission.make ~reads:0 ~writes:0 ~waits:0 pc [| spin; copy ~after:[| 0 |] ~dst:b fresh |] in
+  let vp = Rig.Point.value (Rig.submit s) in
+  let out = buffer ~memory:Pinned g 64 in
+  put out (String.make 64 '\000');
+  let seen = Option.get (Rig.Buffer.borrow c b) in
+  let vc = S.submit g [| copy ~dst:out seen |] in
+  less int ~msg:"the producer's word, at the consumer's submit" ~than:vp (A.signaled pg);
+  less int ~msg:"the consumer's word" ~than:vc (A.signaled g);
+  (* amdgpu maps host memory at its GPU address *)
+  S.still ~msg:"the consumer's copy (sampled)" string (String.make 64 '\000')
+    (fun () -> S.read (addr out) 64)
+    ~ms:50;
+  Rig.wait c vc;
+  at_least int ~msg:"the producer's word, once the consumer's is reached" ~than:vp
+    (A.signaled pg);
+  equal string ~msg:"the consumer's copy" (String.make 64 'n') (get out);
+  ignore (Sys.opaque_identity args)
+
+(* A submission waits on at most 255 words. *)
+let wait_bound () =
+  S.with_gpu @@ fun g ->
+  waits_on g;
+  let word = Option.get (A.alloc g `Pinned 8) in
+  S.write (host word) (le64 1);
+  let waits n = Array.make n (address word, 1) in
+  equal answer ~msg:"255 waits" `Ok (E.submit g ~v:1 ~waits:(waits 255) [||]);
+  S.wait g 1;
+  match E.submit g ~v:2 ~waits:(waits 256) [||] with
+  | `Ok -> fail "256 waits handed over"
+  | `Failed why ->
+      S.wait g 2;
+      equal answer ~msg:"the next submit" (`Failed why) (submit g ~v:3 [||])
+
+let waits =
+  group ~timeout:120. "waits"
+    [
+      test "a submission reading another device's writes waits for them in its queue (sampled)"
+        in_queue;
+      prop ~count:12
+        "a wait holds the work until the word reaches it, across 2^32 (sampled)"
+        crossing held;
+      test "a submission waits on 255 words, and fails on 256" wait_bound;
+    ]
+
 (* Slots aged past 2^31
 
    A slot word holds the low 32 bits of the last value that wrote it, and a
@@ -2458,6 +2600,7 @@ let () =
          work;
          code;
          failures_hw;
+         waits;
          two;
          traces;
          rings;

@@ -403,6 +403,21 @@ another with `EBUSY`. The AMD driver takes it for thread traces, which need
 steady clocks and shader engines, once per process under a lock, so that two
 threads cannot both create a context and ask (c27af1ddc).
 
+### A GFX12 compute queue's 64-bit wait compares all 64 bits
+
+`WAIT_REG_MEM64`, which the kernel's headers name but do not lay out (PAL's
+`PM4_MEC_WAIT_REG_MEM64` does), compares the whole 64-bit word on the R9700
+with MEC firmware 3010. A probe had a queue wait on a host word for 300 ms in
+five cases, releasing any that held with a write a 32-bit reading would also
+pass: 2^32 − 1 ≥ 2^32 held until the word became 2^32; 2^33 ≥ 2^32 + 5 and
+2^32 + 5 ≥ 0xFFFFFFFF passed at once; 5 ≥ 2^32 + 3 and 2^32 + 7 ≥ 3·2^32
+held. A compare of the low 32 bits gets four of the five wrong. The AMD
+suite's waits group keeps the fact: a wait across 2^32 holds through a word
+whose low half is above the target's. The AMD driver waits in its queue on
+another device's word only from a firmware version seen to do this, per GC
+version (`wait64_from` in `lib/amd/rig_amd.ml`); elsewhere the wait is the
+host's.
+
 ## Apple GPUs under Metal
 
 ### Stores to unmapped GPU addresses do not fault
