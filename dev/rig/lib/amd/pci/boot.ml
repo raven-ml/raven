@@ -373,8 +373,12 @@ let boot g ~partial ~pool ~kiq =
   end;
   Gfx.wait_autoload g.gfx;
   if gc_late then start_gc ();
+  (* No TLB flush here: [start_hub] invalidates a new hub's caches, and the GC
+     hub's invalidation engine does not answer before the GC's engines start
+     (seen on the R9700). The kernel waits 100 ms for that answer and goes on
+     without it (gmc_v12_0_flush_vm_hub); tinygrad flushes the GC hub first on
+     a mapping after the GFX start. *)
   Gmc.flush_hdp g.gmc;
-  Gmc.invalidate g.gmc;
   Page_table.booted g.tables;
   if g.vf then master ();
   Gfx.start g.gfx g.memory g.images ~partial;
