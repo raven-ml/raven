@@ -40,9 +40,8 @@ external last : (int[@untagged]) -> (int[@untagged])
   = "caml_device_metal_last_byte" "caml_device_metal_last"
 [@@noalloc]
 
-external sleep_word : int -> int -> int -> string option
-  = "caml_device_metal_sleep"
-
+external sleep_word : int -> int -> int -> int = "caml_device_metal_sleep"
+external failure : int -> string = "caml_device_metal_failure"
 external stop_ring : int -> bool = "caml_device_metal_stop"
 
 external entries : unit -> nativeint * nativeint * nativeint
@@ -256,6 +255,9 @@ type part = { owner : int; ints : int array }
 
 let after_at = 10
 
+(* nx_edge.h's answer for a submission handed over. *)
+let nx_ok = 0
+
 let part d ~queue ?(after = [||]) w =
   if queue <> "COMPUTE:0" then
     invalid_argf "Device_metal.part: queue %S, expected COMPUTE:0" queue;
@@ -278,7 +280,7 @@ let part d ~queue ?(after = [||]) w =
 
 let room _ _ = `Fits
 
-external submit_parts : int -> int -> part array -> string option
+external submit_parts : int -> int -> part array -> int
   = "caml_device_metal_submit"
 
 let check_part self i p =
@@ -301,7 +303,7 @@ let submit d ~v ~waits ~handles:_ ps =
   for i = 0 to Array.length ps - 1 do
     check_part d.self i ps.(i)
   done;
-  match submit_parts d.self v ps with None -> `Ok | Some why -> `Failed why
+  if submit_parts d.self v ps = nx_ok then `Ok else `Failed (failure d.self)
 
 (* Timeline and loss *)
 
@@ -309,8 +311,6 @@ let word d = d.word
 let signaled d = signaled_word d.self
 
 let sleep d ~seen ~still_ms =
-  match sleep_word d.self seen still_ms with
-  | None -> ()
-  | Some why -> raise (Fault why)
+  if sleep_word d.self seen still_ms <> 0 then raise (Fault (failure d.self))
 
 let stop d = if stop_ring d.self then `Stopped else `Unknown

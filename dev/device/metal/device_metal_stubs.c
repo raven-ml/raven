@@ -40,15 +40,6 @@ enum {
   no_memory
 };
 
-/* [None], or [Some why] once a submission failed. */
-static value failure(const char *why) {
-  CAMLparam0();
-  CAMLlocal1(v);
-  if (why == NULL) CAMLreturn(Val_none);
-  v = caml_copy_string(why);
-  CAMLreturn(caml_alloc_some(v));
-}
-
 static value tuple(int n, value a, value b, value c) {
   CAMLparam3(a, b, c);
   CAMLlocal1(v);
@@ -385,6 +376,8 @@ intnat caml_device_metal_last(intnat d) {
   return (intnat)((struct device_metal *)d)->last;
 }
 
+/* 0 once the word differs from [v_seen] or [v_ms] passed, 1 if a
+   submission failed. */
 value caml_device_metal_sleep(value v_d, value v_seen, value v_ms) {
   struct device_metal *d = Device_val(v_d);
   uint64_t seen = (uint64_t)Long_val(v_seen);
@@ -392,7 +385,13 @@ value caml_device_metal_sleep(value v_d, value v_seen, value v_ms) {
   caml_enter_blocking_section_no_pending();
   const char *why = device_metal_ring_sleep(&d->ring, seen, ms);
   caml_leave_blocking_section();
-  return failure(why);
+  return Val_int(why != NULL);
+}
+
+/* The device's first failure. */
+value caml_device_metal_failure(value v_d) {
+  const char *why = device_metal_ring_failure(&Device_val(v_d)->ring);
+  return caml_copy_string(why ? why : "");
 }
 
 /* Stops the device. Once its ring is empty no handler runs, so the queue
@@ -442,6 +441,7 @@ NO_METAL1(caml_device_metal_release)
 NO_METAL2(caml_device_metal_image)
 NO_METAL1(caml_device_metal_icb_release)
 NO_METAL3(caml_device_metal_sleep)
+NO_METAL1(caml_device_metal_failure)
 NO_METAL1(caml_device_metal_stop)
 
 value caml_device_metal_icb(value a, value b, value c, value d) {
@@ -479,7 +479,7 @@ value caml_device_metal_entries(value unit) {
 /* Device_metal.submit's C side. A part is a record whose second field
    holds ints: nx_part's int fields in the order below, then its [after]
    indices. The parts are copied out of the OCaml heap, then submitted
-   without the runtime: [None], or [Some why] if the submission failed. */
+   without the runtime: NX_OK, or NX_FAILED. */
 enum {
   part_queue,
   part_fill,
@@ -530,5 +530,5 @@ value caml_device_metal_submit(value v_d, value v_v, value v_parts) {
   int rc = device_metal_submit(self, v, NULL, 0, p, n, NULL, 0, &why);
   free(p);
   caml_leave_blocking_section();
-  CAMLreturn(rc == NX_OK ? Val_none : failure(why));
+  CAMLreturn(Val_int(rc));
 }
