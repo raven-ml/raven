@@ -21,6 +21,65 @@
  *
  */
 
+enum psp_gfx_crtl_cmd_id
+{
+    GFX_CTRL_CMD_ID_INIT_RBI_RING   = 0x00010000,   /* initialize RBI ring */
+    GFX_CTRL_CMD_ID_INIT_GPCOM_RING = 0x00020000,   /* initialize GPCOM ring */
+    GFX_CTRL_CMD_ID_DESTROY_RINGS   = 0x00030000,   /* destroy rings */
+    GFX_CTRL_CMD_ID_CAN_INIT_RINGS  = 0x00040000,   /* is it allowed to initialized the rings */
+    GFX_CTRL_CMD_ID_ENABLE_INT      = 0x00050000,   /* enable PSP-to-Gfx interrupt */
+    GFX_CTRL_CMD_ID_DISABLE_INT     = 0x00060000,   /* disable PSP-to-Gfx interrupt */
+    GFX_CTRL_CMD_ID_MODE1_RST       = 0x00070000,   /* trigger the Mode 1 reset */
+    GFX_CTRL_CMD_ID_GBR_IH_SET      = 0x00080000,   /* set Gbr IH_RB_CNTL registers */
+    GFX_CTRL_CMD_ID_CONSUME_CMD     = 0x00090000,   /* send interrupt to psp for updating write pointer of vf */
+    GFX_CTRL_CMD_ID_DESTROY_GPCOM_RING = 0x000C0000, /* destroy GPCOM ring */
+
+    GFX_CTRL_CMD_ID_MAX             = 0x000F0000,   /* max command ID */
+};
+enum psp_gfx_cmd_id
+{
+    GFX_CMD_ID_LOAD_TA            = 0x00000001,   /* load TA */
+    GFX_CMD_ID_UNLOAD_TA          = 0x00000002,   /* unload TA */
+    GFX_CMD_ID_INVOKE_CMD         = 0x00000003,   /* send command to TA */
+    GFX_CMD_ID_LOAD_ASD           = 0x00000004,   /* load ASD Driver */
+    GFX_CMD_ID_SETUP_TMR          = 0x00000005,   /* setup TMR region */
+    GFX_CMD_ID_LOAD_IP_FW         = 0x00000006,   /* load HW IP FW */
+    GFX_CMD_ID_DESTROY_TMR        = 0x00000007,   /* destroy TMR region */
+    GFX_CMD_ID_SAVE_RESTORE       = 0x00000008,   /* save/restore HW IP FW */
+    GFX_CMD_ID_SETUP_VMR          = 0x00000009,   /* setup VMR region */
+    GFX_CMD_ID_DESTROY_VMR        = 0x0000000A,   /* destroy VMR region */
+    GFX_CMD_ID_PROG_REG           = 0x0000000B,   /* program regs */
+    GFX_CMD_ID_GET_FW_ATTESTATION = 0x0000000F,   /* Query GPUVA of the Fw Attestation DB */
+    /* IDs upto 0x1F are reserved for older programs (Raven, Vega 10/12/20) */
+    GFX_CMD_ID_LOAD_TOC           = 0x00000020,   /* Load TOC and obtain TMR size */
+    GFX_CMD_ID_AUTOLOAD_RLC       = 0x00000021,   /* Indicates all graphics fw loaded, start RLC autoload */
+    GFX_CMD_ID_BOOT_CFG           = 0x00000022,   /* Boot Config */
+    GFX_CMD_ID_SRIOV_SPATIAL_PART = 0x00000027,   /* Configure spatial partitioning mode */
+    /*IDs of performance monitoring/profiling*/
+    GFX_CMD_ID_CONFIG_SQ_PERFMON  = 0x00000046,   /* Config CGTT_SQ_CLK_CTRL */
+    /* Dynamic memory partitioninig (NPS mode change)*/
+    GFX_CMD_ID_FB_NPS_MODE        = 0x00000048,  /* Configure memory partitioning mode */
+    GFX_CMD_ID_PERF_HW            = 0x0000004C,   /* performance monitor */
+    GFX_CMD_ID_FB_FW_RESERV_ADDR  = 0x00000050,  /* Query FW reservation addr */
+    GFX_CMD_ID_FB_FW_RESERV_EXT_ADDR = 0x00000051,  /* Query FW reservation extended addr */
+};
+struct psp_gfx_cmd_setup_tmr
+{
+    uint32_t        buf_phy_addr_lo;       /* bits [31:0] of GPU Virtual address of TMR buffer (must be 4 KB aligned) */
+    uint32_t        buf_phy_addr_hi;       /* bits [63:32] of GPU Virtual address of TMR buffer */
+    uint32_t        buf_size;              /* buffer size in bytes (must be multiple of 4 KB) */
+    union {
+	struct {
+		uint32_t	sriov_enabled:1; /* whether the device runs under SR-IOV*/
+		uint32_t	virt_phy_addr:1; /* driver passes both virtual and physical address to PSP*/
+		uint32_t	reserved:30;
+	} bitfield;
+	uint32_t        tmr_flags;
+    };
+    uint32_t        system_phy_addr_lo;        /* bits [31:0] of system physical address of TMR buffer (must be 4 KB aligned) */
+    uint32_t        system_phy_addr_hi;        /* bits [63:32] of system physical address of TMR buffer */
+
+};
 enum psp_gfx_fw_type {
 	GFX_FW_TYPE_NONE        = 0,    /* */
 	GFX_FW_TYPE_CP_ME       = 1,    /* CP-ME                    VG + RV */
@@ -121,4 +180,80 @@ enum psp_gfx_fw_type {
 	GFX_FW_TYPE_JPEG_RAM                        = 128,  /**< JPEG Command buffer */
 	GFX_FW_TYPE_P2S_TABLE                       = 129,
 	GFX_FW_TYPE_MAX
+};
+struct psp_gfx_cmd_load_ip_fw
+{
+    uint32_t                fw_phy_addr_lo;    /* bits [31:0] of GPU Virtual address of FW location (must be 4 KB aligned) */
+    uint32_t                fw_phy_addr_hi;    /* bits [63:32] of GPU Virtual address of FW location */
+    uint32_t                fw_size;           /* FW buffer size in bytes */
+    enum psp_gfx_fw_type    fw_type;           /* FW type */
+
+};
+struct psp_gfx_cmd_load_toc
+{
+    uint32_t        toc_phy_addr_lo;        /* bits [31:0] of GPU Virtual address of FW location (must be 4 KB aligned) */
+    uint32_t        toc_phy_addr_hi;        /* bits [63:32] of GPU Virtual address of FW location */
+    uint32_t        toc_size;               /* FW buffer size in bytes */
+};
+struct psp_gfx_cmd_sriov_spatial_part {
+	uint32_t mode;
+	uint32_t override_ips;
+	uint32_t override_xcds_avail;
+	uint32_t override_this_aid;
+};
+struct psp_gfx_resp
+{
+    uint32_t	status;		/* +0  status of command execution */
+    uint32_t	session_id;	/* +4  session ID in response to LoadTa command */
+    uint32_t	fw_addr_lo;	/* +8  bits [31:0] of FW address within TMR (in response to cmd_load_ip_fw command) */
+    uint32_t	fw_addr_hi;	/* +12 bits [63:32] of FW address within TMR (in response to cmd_load_ip_fw command) */
+    uint32_t	tmr_size;	/* +16 size of the TMR to be reserved including MM fw and Gfx fw in response to cmd_load_toc command */
+
+    uint32_t	reserved[11];
+
+    union psp_gfx_uresp uresp;      /* +64 response union containing command-specific responses */
+
+    /* total 96 bytes */
+};
+struct psp_gfx_cmd_resp
+{
+    uint32_t        buf_size;           /* +0  total size of the buffer in bytes */
+    uint32_t        buf_version;        /* +4  version of the buffer strusture; must be PSP_GFX_CMD_BUF_VERSION */
+    uint32_t        cmd_id;             /* +8  command ID */
+
+    /* These fields are used for RBI only. They are all 0 in GPCOM commands
+    */
+    uint32_t        resp_buf_addr_lo;   /* +12 bits [31:0] of GPU Virtual address of response buffer (must be 4 KB aligned) */
+    uint32_t        resp_buf_addr_hi;   /* +16 bits [63:32] of GPU Virtual address of response buffer */
+    uint32_t        resp_offset;        /* +20 offset within response buffer */
+    uint32_t        resp_buf_size;      /* +24 total size of the response buffer in bytes */
+
+    union psp_gfx_commands  cmd;        /* +28 command specific structures */
+
+    uint8_t         reserved_1[864 - sizeof(union psp_gfx_commands) - 28];
+
+    /* Note: Resp is part of this buffer for GPCOM ring. For RBI ring the response
+    *        is separate buffer pointed by resp_buf_addr_hi and resp_buf_addr_lo.
+    */
+    struct psp_gfx_resp     resp;       /* +864 response */
+
+    uint8_t         reserved_2[1024 - 864 - sizeof(struct psp_gfx_resp)];
+
+    /* total size 1024 bytes */
+};
+struct psp_gfx_rb_frame
+{
+    uint32_t    cmd_buf_addr_lo;    /* +0  bits [31:0] of GPU Virtual address of command buffer (must be 4 KB aligned) */
+    uint32_t    cmd_buf_addr_hi;    /* +4  bits [63:32] of GPU Virtual address of command buffer */
+    uint32_t    cmd_buf_size;       /* +8  command buffer size in bytes */
+    uint32_t    fence_addr_lo;      /* +12 bits [31:0] of GPU Virtual address of Fence for this frame */
+    uint32_t    fence_addr_hi;      /* +16 bits [63:32] of GPU Virtual address of Fence for this frame */
+    uint32_t    fence_value;        /* +20 Fence value */
+    uint32_t    sid_lo;             /* +24 bits [31:0] of SID value (used only for RBI frames) */
+    uint32_t    sid_hi;             /* +28 bits [63:32] of SID value (used only for RBI frames) */
+    uint8_t     vmid;               /* +32 VMID value used for mapping of all addresses for this frame */
+    uint8_t     frame_type;         /* +33 1: destory context frame, 0: all other frames; used only for RBI frames */
+    uint8_t     reserved1[2];       /* +34 reserved, must be 0 */
+    uint32_t    reserved2[7];       /* +36 reserved, must be 0 */
+                /* total 64 bytes */
 };

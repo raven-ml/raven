@@ -55,6 +55,7 @@ SOURCES = {
     "amdgpu_ucode.h": KERNEL + "amdgpu/amdgpu_ucode.h",  # firmware images' headers
     "psp_gfx_if.h": KERNEL + "amdgpu/psp_gfx_if.h",  # the types the PSP loads images as
     "amdgpu_vm.h": KERNEL + "amdgpu/amdgpu_vm.h",  # page-table entries
+    "amdgpu_psp.h": KERNEL + "amdgpu/amdgpu_psp.h",  # the security processor's bootloader and ring
     "vega10_enum.h": KERNEL + "include/vega10_enum.h",  # memory types, GFX9
     "soc21_enum.h": KERNEL + "include/soc21_enum.h",  # GFX11
     "soc24_enum.h": KERNEL + "include/soc24_enum.h",  # GFX12
@@ -234,7 +235,28 @@ GFX_FW_TYPES = ["GFX_FW_TYPE_" + n for n in (
     "RLC_RESTORE_LIST_GPM_MEM", "RLC_RESTORE_LIST_SRM_MEM", "RLC_RESTORE_LIST_SRM_CNTL", "RLC_P", "RLC_IRAM",
     "RLC_DRAM_BOOT", "P2S_TABLE", "REG_LIST", "IMU_I", "IMU_D", "SDMA_UCODE_TH0", "SDMA_UCODE_TH1", "RS64_PFP",
     "RS64_ME", "RS64_MEC", "RS64_PFP_P0_STACK", "RS64_ME_P0_STACK", "RS64_MEC_P0_STACK")]
-ENUMS = {"amdgpu_ucode.h": ["psp_fw_type"], "psp_gfx_if.h": ["psp_gfx_fw_type"]}
+ENUMS = {"amdgpu_ucode.h": ["psp_fw_type"],
+         "psp_gfx_if.h": ["psp_gfx_fw_type", "psp_gfx_crtl_cmd_id", "psp_gfx_cmd_id"],
+         "amdgpu_psp.h": ["psp_bootloader_cmd", "psp_ring_type"]}
+
+# The security processor: its commands, ring frames and bootloader steps.
+PSP_COMMANDS = ["GFX_CTRL_CMD_ID_DESTROY_RINGS", "GFX_CMD_ID_SETUP_TMR", "GFX_CMD_ID_LOAD_IP_FW", "GFX_CMD_ID_LOAD_TOC",
+                "GFX_CMD_ID_AUTOLOAD_RLC", "GFX_CMD_ID_SRIOV_SPATIAL_PART"]
+PSP_BOOT = ["PSP_BL__LOAD_KEY_DATABASE", "PSP_BL__LOAD_TOS_SPL_TABLE", "PSP_BL__LOAD_SYSDRV", "PSP_BL__LOAD_SOCDRV",
+            "PSP_BL__LOAD_INTFDRV", "PSP_BL__LOAD_DBGDRV", "PSP_BL__LOAD_RASDRV", "PSP_BL__LOAD_SOSDRV",
+            "PSP_RING_TYPE__KM"]
+PSP_SIZES = ["PSP_FENCE_BUFFER_SIZE", "PSP_CMD_BUFFER_SIZE", "PSP_1_MEG", "PSP_TMR_ALIGNMENT"]
+# Each command's struct, the fields kept, and the member the layout stops at
+# (a union this library does not read).
+PSP_STRUCTS = {
+    "psp_gfx_cmd_setup_tmr": (["buf_phy_addr_lo", "buf_phy_addr_hi", "buf_size", "virt_phy_addr",
+                               "system_phy_addr_lo", "system_phy_addr_hi"], None),
+    "psp_gfx_cmd_load_ip_fw": (["fw_phy_addr_lo", "fw_phy_addr_hi", "fw_size", "fw_type"], None),
+    "psp_gfx_cmd_load_toc": (["toc_phy_addr_lo", "toc_phy_addr_hi", "toc_size"], None),
+    "psp_gfx_cmd_sriov_spatial_part": (["mode"], None),
+    "psp_gfx_resp": (["status", "tmr_size"], "uresp"),
+    "psp_gfx_rb_frame": (["cmd_buf_addr_lo", "cmd_buf_addr_hi", "fence_addr_lo", "fence_addr_hi", "fence_value"], None),
+}
 
 # The blocks a boot programs, by their hardware IDs' names.
 HWIDS = ["GC", "SDMA0", "SDMA1", "SDMA2", "SDMA3", "MP0", "MP1", "MMHUB", "OSSSYS", "NBIF", "HDP"]
@@ -353,7 +375,7 @@ def preprocess(text):
 SCALARS = {"uint8_t": 1, "uint16_t": 2, "uint32_t": 4, "uint64_t": 8}
 
 
-def packed_layout(text, name):
+def packed_layout(text, name, upto=None):
     """(sizeof, {field: (byte offset, bytes) or ("bits", bit offset, bits)}) of
     the struct [name] of [text], laid out under #pragma pack(1): every member
     at the bit where the one before ends, a bit field's run ending on a byte,
@@ -405,6 +427,9 @@ def packed_layout(text, name):
                 isize = walk(k, inner, base + start, fields)
                 size = max(size, isize) if kind == "union" else size
                 pos = pos if kind == "union" else start + isize
+                # Past the member's name, if it has one, and its semicolon.
+                while tokens[after] != ";":
+                    after += 1
                 i = after + 1
                 continue
             j = i
@@ -412,6 +437,8 @@ def packed_layout(text, name):
                 j += 1
             decl = tokens[i:j]
             i = j + 1
+            if not decl:
+                continue
             if ":" in decl:
                 c = decl.index(":")
                 width = int(decl[c + 1])
@@ -426,8 +453,12 @@ def packed_layout(text, name):
                 count = 0 if decl[b + 1] == "]" else int(sizes.get(decl[b + 1], decl[b + 1]))
                 decl = decl[:b]
             ftype, fname = " ".join(t for t in decl[:-1] if t != "struct"), decl[-1]
+            if fname == upto:
+                return pos
             if ftype in SCALARS:
                 fbytes = SCALARS[ftype]
+            elif ftype.startswith("enum "):
+                fbytes = 4
             elif ftype in defs:
                 k, inner = defs[ftype]
                 fbytes = walk(k, inner, 0, {}) // 8
@@ -589,7 +620,10 @@ def excerpt(name, text):
     elif name in MTYPES:
         keep |= {i for i, l in enumerate(lines) if re.match(r"\s*MTYPE_UC\s*=", l)}
     elif name == "psp_gfx_if.h":
+        keep |= enum_blocks(text, ENUMS[name]) | blocks(text, set(PSP_STRUCTS) | {"psp_gfx_cmd_resp"})
+    elif name == "amdgpu_psp.h":
         keep |= enum_blocks(text, ENUMS[name])
+        keep |= {i for i, l in enumerate(lines) if DEFINE.match(l) and DEFINE.match(l).group(1) in PSP_SIZES}
     elif name.endswith(("_offset.h", "_sh_mask.h")):
         prefix = next(p for p, vs in REG_FILES.items() for v in vs
                       if name in (reg_header(p, v, "offset"), reg_header(p, v, "sh_mask")))
@@ -707,6 +741,33 @@ def generate(h):
             sys.exit(f"{hdr}: no MTYPE_UC")
         out.append(f"let {gen_name}_mtype_uc = {int(m.group(1), 0)}")
     out.append("")
+
+    # Security processor
+    g, ps = h["psp_gfx_if.h"], h["amdgpu_psp.h"]
+    out += ["(* The security processor *)", ""]
+    for n, v in {**enum_values(g, PSP_COMMANDS), **enum_values(ps, PSP_BOOT), **constants(ps, PSP_SIZES)}.items():
+        out.append(f"let {n.lower()} = {ml_int(v)}")
+    # A command buffer holds the command at the offset its first reserved
+    # array's size subtracts, and the response at the one it subtracts from,
+    # in a buffer of the size the second array's subtracts from.
+    m = re.search(r"reserved_1\[(\d+)\s*-\s*sizeof\(union psp_gfx_commands\)\s*-\s*(\d+)\]", g)
+    n = re.search(r"reserved_2\[(\d+)\s*-\s*(\d+)\s*-\s*sizeof\(struct psp_gfx_resp\)\]", g)
+    if m is None or n is None or m.group(1) != n.group(2):
+        sys.exit("psp_gfx_cmd_resp: no command and response offsets")
+    out += [f"let psp_command_bytes = {n.group(1)}", f"let psp_command_at = {m.group(2)}",
+            f"let psp_response_at = {m.group(1)}"]
+    size, fields = packed_layout(g, "psp_gfx_cmd_resp", upto="cmd")
+    out.append(f"let psp_command_id = {ml_field(fields['cmd_id'])}")
+    out.append("")
+    for st, (wanted, upto) in PSP_STRUCTS.items():
+        size, fields = packed_layout(g, st, upto)
+        out.append(f"module {ml_module(st)} = struct")
+        out.append(f"  let sizeof = {size}")
+        for f in wanted:
+            if f not in fields:
+                sys.exit(f"{st} has no field {f}")
+            out.append(f"  let {f} = {ml_field(fields[f])}")
+        out += ["end", ""]
 
     # Power manager
     out += ["(* The power manager's messages and clocks, by MP1 version, as (name, value). *)",

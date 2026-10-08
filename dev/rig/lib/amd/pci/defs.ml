@@ -224,6 +224,77 @@ let soc15_mtype_uc = 3
 let soc21_mtype_uc = 3
 let soc24_mtype_uc = 3
 
+(* The security processor *)
+
+let gfx_ctrl_cmd_id_destroy_rings = 0x30000
+let gfx_cmd_id_setup_tmr = 5
+let gfx_cmd_id_load_ip_fw = 6
+let gfx_cmd_id_load_toc = 0x20
+let gfx_cmd_id_autoload_rlc = 0x21
+let gfx_cmd_id_sriov_spatial_part = 0x27
+let psp_bl__load_key_database = 0x80000
+let psp_bl__load_tos_spl_table = 0x10000000
+let psp_bl__load_sysdrv = 0x10000
+let psp_bl__load_socdrv = 0xb0000
+let psp_bl__load_intfdrv = 0xd0000
+let psp_bl__load_dbgdrv = 0xc0000
+let psp_bl__load_rasdrv = 0xe0000
+let psp_bl__load_sosdrv = 0x20000
+let psp_ring_type__km = 2
+let psp_fence_buffer_size = 0x1000
+let psp_cmd_buffer_size = 0x1000
+let psp_1_meg = 0x100000
+let psp_tmr_alignment = 0x100000
+let psp_command_bytes = 1024
+let psp_command_at = 28
+let psp_response_at = 864
+let psp_command_id = (8, 4)
+
+module Psp_gfx_cmd_setup_tmr = struct
+  let sizeof = 24
+  let buf_phy_addr_lo = (0, 4)
+  let buf_phy_addr_hi = (4, 4)
+  let buf_size = (8, 4)
+  let virt_phy_addr = (97, 1)
+  let system_phy_addr_lo = (16, 4)
+  let system_phy_addr_hi = (20, 4)
+end
+
+module Psp_gfx_cmd_load_ip_fw = struct
+  let sizeof = 16
+  let fw_phy_addr_lo = (0, 4)
+  let fw_phy_addr_hi = (4, 4)
+  let fw_size = (8, 4)
+  let fw_type = (12, 4)
+end
+
+module Psp_gfx_cmd_load_toc = struct
+  let sizeof = 12
+  let toc_phy_addr_lo = (0, 4)
+  let toc_phy_addr_hi = (4, 4)
+  let toc_size = (8, 4)
+end
+
+module Psp_gfx_cmd_sriov_spatial_part = struct
+  let sizeof = 16
+  let mode = (0, 4)
+end
+
+module Psp_gfx_resp = struct
+  let sizeof = 64
+  let status = (0, 4)
+  let tmr_size = (16, 4)
+end
+
+module Psp_gfx_rb_frame = struct
+  let sizeof = 64
+  let cmd_buf_addr_lo = (0, 4)
+  let cmd_buf_addr_hi = (4, 4)
+  let fence_addr_lo = (12, 4)
+  let fence_addr_hi = (16, 4)
+  let fence_value = (20, 4)
+end
+
 (* The power manager's messages and clocks, by MP1 version, as (name, value). *)
 let smu_messages = function
   | (13, 0, 0) | (13, 0, 10) ->

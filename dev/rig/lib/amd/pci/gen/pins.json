@@ -45,6 +45,7 @@
  "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/0a6871b19abf5d6e024b5d208b101ae53e7fa0de/amdgpu/smu_14_0_2.bin": "1b2054e3f710d1ab8dbdf6ff35914ad376b51caa6337831260c955add874b2ee",
  "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/0a6871b19abf5d6e024b5d208b101ae53e7fa0de/amdgpu/smu_14_0_3.bin": "4e1522d3c96c1028be2961dfcfc5f1ff783fb77724b260a99c4c8b4a901ef3fe",
  "https://raw.githubusercontent.com/ROCm/ROCK-Kernel-Driver/33970e1351f5e511029602454979f3de7e22260f/drivers/gpu/drm/amd/amdgpu/amdgpu_discovery.h": "b4583234ff25eef4e8cd19d322e5cae3315af7348916f63d906930a51b5737f6",
+ "https://raw.githubusercontent.com/ROCm/ROCK-Kernel-Driver/33970e1351f5e511029602454979f3de7e22260f/drivers/gpu/drm/amd/amdgpu/amdgpu_psp.h": "b66abc7d2fe6a8ecfb6efde58a9cbfb3f885e0e5b77c42201ee571e2ae80bfc5",
  "https://raw.githubusercontent.com/ROCm/ROCK-Kernel-Driver/33970e1351f5e511029602454979f3de7e22260f/drivers/gpu/drm/amd/amdgpu/amdgpu_ucode.h": "9b717be2e98470203d188c44c6a9468e37efbec397140af9f4106518b6f31e3c",
  "https://raw.githubusercontent.com/ROCm/ROCK-Kernel-Driver/33970e1351f5e511029602454979f3de7e22260f/drivers/gpu/drm/amd/amdgpu/amdgpu_vm.h": "64b8c0cdb32c28714996de8a721e4b0cad55f9ddaa83e24ba2083098d7c48453",
  "https://raw.githubusercontent.com/ROCm/ROCK-Kernel-Driver/33970e1351f5e511029602454979f3de7e22260f/drivers/gpu/drm/amd/amdgpu/psp_gfx_if.h": "15b8ba212548d5e68852b404edc0476ba20cae4f67449a131958b867b661c7bf",
