@@ -47,8 +47,9 @@ external failed : int -> int = "caml_device_cuda_failed"
    every call, and [refused] raises it. *)
 let refused self x = match failed self with 0 -> x | e -> fault e
 
-(* Loads the library and finds its GPUs once, at the first call that needs
-   them. *)
+(* Loads the library and finds its GPUs at the first call that needs them,
+   until they are found: a failed load is tried again by the next call, so a
+   driver installed meanwhile is found. *)
 
 type gpus = { devices : int array; busy : bool Atomic.t array }
 
@@ -91,10 +92,10 @@ let discover () =
 let find_gpus () =
   Mutex.protect lock @@ fun () ->
   match !gpus with
-  | Some r -> r
+  | Some g -> Ok g
   | None ->
       let r = discover () in
-      gpus := Some r;
+      Result.iter (fun g -> gpus := Some g) r;
       r
 
 (* Memory. Page-locking is the process's: a registration serves every device,
