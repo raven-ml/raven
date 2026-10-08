@@ -91,6 +91,7 @@ wait/memory/reached	wall_time	batch=1048576	n=20	5.415e-09	5.412e-09 5.412e-09 5
 # forced: blessed claim/read-release claim/with-24 under load 8.7 on 10 cores
 # forced: blessed submit/polled/empty submit/polled/cost submit/polled/slots-24 submit/polled/foreign-24 submit/polled/two-domains replay/polled/params-24 buffer/bigarray-64M heap/take-64K heap/take-64K-cached-100 under load 5.3 on 10 cores
 # forced: blessed submit/polled/slots-24 submit/polled/foreign-24 replay/polled/params-24 replay/polled/pipelined-100 under load 6.3 on 10 cores
+# forced: blessed submit/polled/cost submit/polled/slots-24 submit/polled/foreign-24 replay/polled/params-24 replay/polled/pipelined-100 under load 10.5 on 10 cores
 
 buffer/bigarray-64M	alloc_words	exact	18
 buffer/bigarray-64M	major_collections	exact	0
@@ -154,17 +155,17 @@ heap/take-64K-cached-100	wall_time	batch=16384	n=20	3.198e-07	3.087e-07 3.092e-0
 heap/trim-64M	alloc_words	exact	36
 heap/trim-64M	wall_time	batch=128	n=20	7.538e-05	7.419e-05 7.443e-05 7.470e-05 7.486e-05 7.491e-05 7.497e-05 7.499e-05 7.503e-05 7.506e-05 7.520e-05 7.557e-05 7.572e-05 7.610e-05 7.613e-05 7.614e-05 7.620e-05 7.627e-05 7.676e-05 7.679e-05 7.707e-05
 replay/polled/params-24	alloc_words	exact	0
-replay/polled/params-24	wall_time	batch=16384	n=20	5.777e-07	5.655e-07 5.673e-07 5.676e-07 5.692e-07 5.741e-07 5.747e-07 5.749e-07 5.751e-07 5.758e-07 5.774e-07 5.780e-07 5.797e-07 5.822e-07 5.845e-07 5.866e-07 5.903e-07 5.906e-07 5.927e-07 5.930e-07 5.941e-07
+replay/polled/params-24	wall_time	batch=16384	n=20	4.348e-07	4.262e-07 4.281e-07 4.297e-07 4.304e-07 4.320e-07 4.321e-07 4.321e-07 4.321e-07 4.327e-07 4.339e-07 4.357e-07 4.364e-07 4.379e-07 4.387e-07 4.398e-07 4.399e-07 4.559e-07 5.130e-07 5.231e-07 8.729e-07
 replay/polled/pipelined-100	alloc_words	exact	0
-replay/polled/pipelined-100	wall_time	batch=128	n=20	5.872e-05	5.724e-05 5.758e-05 5.758e-05 5.784e-05 5.813e-05 5.845e-05 5.854e-05 5.868e-05 5.869e-05 5.870e-05 5.875e-05 5.905e-05 5.929e-05 5.972e-05 5.984e-05 6.050e-05 6.056e-05 6.062e-05 6.089e-05 6.164e-05
+replay/polled/pipelined-100	wall_time	batch=128	n=20	4.357e-05	4.218e-05 4.221e-05 4.221e-05 4.242e-05 4.250e-05 4.260e-05 4.320e-05 4.322e-05 4.346e-05 4.351e-05 4.362e-05 4.421e-05 4.439e-05 4.486e-05 4.497e-05 4.516e-05 4.529e-05 4.584e-05 4.730e-05 9.291e-05
 submit/polled/cost	alloc_words	exact	0
-submit/polled/cost	wall_time	batch=65536	n=20	9.405e-08	9.088e-08 9.101e-08 9.119e-08 9.158e-08 9.243e-08 9.259e-08 9.297e-08 9.314e-08 9.317e-08 9.387e-08 9.423e-08 9.490e-08 9.534e-08 9.560e-08 9.640e-08 9.707e-08 9.936e-08 9.964e-08 1.069e-07 1.263e-07
+submit/polled/cost	wall_time	batch=65536	n=20	9.032e-08	8.807e-08 8.849e-08 8.872e-08 8.912e-08 8.945e-08 8.976e-08 8.988e-08 8.989e-08 8.996e-08 9.027e-08 9.037e-08 9.043e-08 9.076e-08 9.084e-08 9.122e-08 9.127e-08 9.153e-08 9.221e-08 9.237e-08 9.250e-08
 submit/polled/empty	alloc_words	exact	0
 submit/polled/empty	wall_time	batch=65536	n=20	1.053e-07	1.028e-07 1.029e-07 1.033e-07 1.039e-07 1.039e-07 1.047e-07 1.048e-07 1.050e-07 1.050e-07 1.052e-07 1.054e-07 1.056e-07 1.057e-07 1.058e-07 1.059e-07 1.063e-07 1.067e-07 1.067e-07 1.069e-07 1.070e-07
 submit/polled/foreign-24	alloc_words	exact	0
-submit/polled/foreign-24	wall_time	batch=16384	n=20	5.403e-07	5.347e-07 5.353e-07 5.354e-07 5.354e-07 5.363e-07 5.383e-07 5.391e-07 5.392e-07 5.397e-07 5.401e-07 5.404e-07 5.407e-07 5.411e-07 5.414e-07 5.421e-07 5.421e-07 5.426e-07 5.447e-07 5.463e-07 5.488e-07
+submit/polled/foreign-24	wall_time	batch=16384	n=20	4.038e-07	3.941e-07 3.992e-07 3.997e-07 4.002e-07 4.011e-07 4.012e-07 4.023e-07 4.025e-07 4.031e-07 4.038e-07 4.038e-07 4.039e-07 4.039e-07 4.051e-07 4.060e-07 4.065e-07 4.069e-07 4.073e-07 4.081e-07 4.088e-07
 submit/polled/slots-24	alloc_words	exact	0
-submit/polled/slots-24	wall_time	batch=16384	n=20	5.035e-07	4.880e-07 4.951e-07 4.953e-07 4.965e-07 4.966e-07 4.971e-07 4.983e-07 4.996e-07 5.025e-07 5.031e-07 5.039e-07 5.048e-07 5.091e-07 5.119e-07 5.191e-07 5.214e-07 5.226e-07 5.228e-07 5.305e-07 5.337e-07
+submit/polled/slots-24	wall_time	batch=16384	n=20	3.566e-07	3.464e-07 3.502e-07 3.531e-07 3.539e-07 3.539e-07 3.544e-07 3.548e-07 3.550e-07 3.556e-07 3.558e-07 3.574e-07 3.580e-07 3.590e-07 3.594e-07 3.609e-07 3.616e-07 3.631e-07 3.645e-07 3.651e-07 3.668e-07
 submit/polled/two-domains	alloc_words	exact	0
 submit/polled/two-domains	wall_time	batch=16384	n=20	4.557e-07	3.472e-07 3.491e-07 3.860e-07 4.017e-07 4.133e-07 4.220e-07 4.311e-07 4.323e-07 4.359e-07 4.486e-07 4.628e-07 4.673e-07 4.726e-07 4.762e-07 4.834e-07 4.873e-07 4.881e-07 4.920e-07 4.925e-07 4.946e-07
 wait/memory/reached	alloc_words	exact	0
