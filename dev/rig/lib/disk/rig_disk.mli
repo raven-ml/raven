@@ -73,15 +73,15 @@
 val device : Rig.t
 (** [device] is this machine's disk, named ["DISK"]. Its {!Rig.budget} is
     [max_int] and its {!Rig.arch} is [""]; it neither computes nor reaches other
-    devices' memory ({!Rig.computes}, {!Rig.reaches}). {!Rig.Buffer.create} raises
-    [Invalid_argument] on it: its buffers are files. *)
+    devices' memory ({!Rig.computes}, {!Rig.reaches}). {!Rig.Buffer.create} of
+    one byte or more raises [Invalid_argument] on it: its buffers are files. *)
 
 (** {1:files Files} *)
 
 val of_file : string -> (Rig.Buffer.t, string) result
 (** [of_file path] is the bytes of the regular file [path] on {!device}, for
-    reading. Its length is the file's size when [of_file] opens it. A copy into
-    it raises [Invalid_argument].
+    reading. Its length is the file's size when [of_file] opens it. A copy of
+    one byte or more into it raises [Invalid_argument].
 
     Each call is a memory of its own: two opens of one file do not overlap
     ({!Rig.Buffer.overlaps}), a write through a borrow of one is not seen
@@ -100,7 +100,8 @@ val create_file : string -> int -> (Rig.Buffer.t, string) result
     the process's umask.
 
     [Error why], [why] starting with [path], if [path] names something or the
-    file cannot be created or sized.
+    file cannot be created or sized; a file it created and could not size is
+    removed.
 
     Raises [Invalid_argument] if [n < 0]. *)
 

@@ -240,7 +240,7 @@ let open_file path mode n =
     | code, _, _ -> Error (strf "%s: %s" path (error code))
   in
   if String.contains path '\000' then
-    Error (strf "%S: a path has no NUL byte" path)
+    Error (strf "%s: a path has no NUL byte" path)
   else
     Mutex.protect lock opened
     |> Result.map (fun f -> Rig.Buffer.of_io device Io.region_key f f.size)

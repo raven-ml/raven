@@ -77,7 +77,7 @@ static int open_file(const char *path, int mode, int64_t size, intnat *handle,
       wpath, mode == MODE_READ ? GENERIC_READ : GENERIC_READ | GENERIC_WRITE,
       FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
       create ? CREATE_NEW : OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-  int code = 0;
+  int code = 0, unsized = 0;
   BY_HANDLE_FILE_INFORMATION info;
   LARGE_INTEGER n;
   if (h == INVALID_HANDLE_VALUE) {
@@ -91,6 +91,7 @@ static int open_file(const char *path, int mode, int64_t size, intnat *handle,
     n.QuadPart = size;
     if (!SetFilePointerEx(h, n, NULL, FILE_BEGIN) || !SetEndOfFile(h))
       code = (int)GetLastError();
+    unsized = code != 0;
     *file_size = size;
   } else if (!GetFileSizeEx(h, &n)) {
     code = (int)GetLastError();
@@ -98,6 +99,8 @@ static int open_file(const char *path, int mode, int64_t size, intnat *handle,
     *file_size = n.QuadPart;
   }
   if (code != 0 && h != INVALID_HANDLE_VALUE) CloseHandle(h);
+  /* The file this call created and could not size goes. */
+  if (unsized) DeleteFileW(wpath);
   caml_acquire_runtime_system();
   caml_stat_free(wpath);
   *handle = (intnat)h;
@@ -140,7 +143,7 @@ static int open_file(const char *path, int mode, int64_t size, intnat *handle,
   do
     fd = open(p, flags, 0666);
   while (fd < 0 && errno == EINTR);
-  int code = 0;
+  int code = 0, unsized = 0;
   struct stat st;
   if (fd < 0)
     code = errno == EMFILE || errno == ENFILE ? TOO_MANY : errno;
@@ -148,11 +151,14 @@ static int open_file(const char *path, int mode, int64_t size, intnat *handle,
     code = errno;
   else if (!S_ISREG(st.st_mode))
     code = NOT_REGULAR;
-  else if (create && ftruncate(fd, (off_t)size) != 0)
+  else if (create && ftruncate(fd, (off_t)size) != 0) {
     code = errno;
-  else
+    unsized = 1;
+  } else
     *file_size = create ? size : (int64_t)st.st_size;
   if (code != 0 && fd >= 0) close(fd);
+  /* The file this call created and could not size goes. */
+  if (unsized) unlink(p);
   caml_acquire_runtime_system();
   caml_stat_free(p);
   *handle = fd;

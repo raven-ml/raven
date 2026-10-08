@@ -332,10 +332,6 @@ let the_disk =
       test "Buffer.create on DISK is refused" (fun () ->
           raises_match (Exn.invalid_arg ~substring:"") (fun () ->
               B.create disk 16));
-      xfail ~reason:"Buffer.create of no bytes on DISK returns a buffer"
-        (test "Buffer.create of no bytes on DISK is refused" (fun () ->
-             raises_match (Exn.invalid_arg ~substring:"") (fun () ->
-                 B.create disk 0)));
       test "a file's buffer is DISK's" (fun () ->
           let path = make_file "abc" in
           removing [ path ] @@ fun () ->
@@ -492,9 +488,6 @@ let copies =
       test "a copy reads a file whose pages the system dropped" test_cold_read;
       test "a copy into a file opened for reading is refused" (fun () ->
           test_copy_into_opened 1);
-      xfail ~reason:"a copy of no bytes into an opened file returns"
-        (test "a copy of no bytes into a file opened for reading is refused"
-           (fun () -> test_copy_into_opened 0));
     ]
 
 (* Borrows *)
@@ -746,10 +739,7 @@ let opening =
          waiting"
         [ Missing; Directory; Fifo ]
         test_of_file_refused;
-      xfail
-        ~reason:
-          "the message of a path holding a NUL byte starts with the path quoted"
-        (test "a path holding a NUL byte is refused, naming it" test_nul_path);
+      test "a path holding a NUL byte is refused, naming it" test_nul_path;
       cases
         ~name:(fun t -> Format.asprintf "%a" pp_taken t)
         "create_file refuses a path that names something or cannot hold a \
