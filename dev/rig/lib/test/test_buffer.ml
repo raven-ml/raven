@@ -332,6 +332,39 @@ let test_mapping_released () =
   drain ();
   equal ~msg:"once it ran" int 1 (unmaps ())
 
+(* Borrowed bytes return to their keeper only once every device's mapping of
+   them is released: a device whose unmap waits for its other work keeps them
+   from the collector until it ran. *)
+let test_bytes_after_unmap () =
+  let d, p = P.open_ "buffer:bytes-after-unmap" in
+  let collected = ref false in
+  (fun () ->
+    let paged = B.bigarray Bigarray.char (B.create C.host (1 lsl 16)) in
+    let ba = Bigarray.Array1.sub paged 0 (1 lsl 16) in
+    Gc.finalise (fun _ -> collected := true) ba;
+    let h = B.of_bigarray ba in
+    let s = Sub.make ~reads:1 ~writes:0 d [||] in
+    ignore (submit s ~reads:[| require_some (B.borrow d h) |]);
+    ignore (P.run p))
+    ();
+  ignore (submit (Sub.make ~reads:0 ~writes:0 d [||]));
+  let drain () =
+    Gc.full_major ();
+    Gc.full_major ();
+    ignore (B.create C.host 8);
+    ignore (B.create ~memory:Pinned d 8);
+    Gc.full_major ();
+    Gc.full_major ()
+  in
+  drain ();
+  equal ~msg:"while d's other work is unrun: unmaps, bytes collected"
+    (pair int bool) (0, false)
+    (count "unmap" p, !collected);
+  ignore (P.run p);
+  drain ();
+  equal ~msg:"once it ran" (pair int bool) (1, true)
+    (count "unmap" p, !collected)
+
 (* A borrow of a borrow maps the memory under it. *)
 let test_borrow_of_borrow () =
   let d, _ = P.open_ "buffer:first" in
@@ -697,6 +730,10 @@ let tests =
         test "a borrow on its own device is the buffer" test_borrow_own;
         test "a mapping is released once its memory died and its work ran"
           test_mapping_released;
+        test
+          "borrowed bytes return to their keeper once every mapping of them is \
+           released"
+          test_bytes_after_unmap;
         test "a borrow of a borrow maps the memory under it"
           test_borrow_of_borrow;
         test "a device borrows another device's memory of its driver"

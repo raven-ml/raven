@@ -103,6 +103,8 @@ and entry = {
   mutable stamps : int;  (** The C stamps, a hold's once held; 0 none. *)
   mutable own : int;  (** The memory's own stamps. *)
   mutable maps : mapping list;  (** Other devices' mappings of it. *)
+  mutable unmaps : int; [@atomic]
+      (** The unmaps left before a dead memory is given back. *)
   mutable held : bool;
   mutable pages : pages;
       (** An io memory's pages, asked at its first borrow. *)
@@ -123,7 +125,13 @@ and mapping = { on : device; map : region; at : int; by : nativeint }
 
 (* A release that waits for a value of its device, which covers the work that
    may use it without naming it. *)
-and pending = Free of entry | Unmap of region | Unload of image * entry option
+(* An [Unmap] of a dead memory's mapping names the memory, given back after its
+   last unmap. *)
+and pending =
+  | Free of entry
+  | Unmap of region * entry option
+  | Unload of image * entry option
+
 and image = Image : { m : ('a, 'r, 'i) dm; h : 'a; i : 'i } -> image
 
 type claim = {

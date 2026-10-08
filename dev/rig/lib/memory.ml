@@ -136,6 +136,7 @@ let entry ?region ?io_region ?(access = Read_write) owner memory bytes stamps =
     stamps;
     own = stamps;
     maps = [];
+    unmaps = 0;
     held = false;
     pages = Unasked;
     proxy = 0;
@@ -312,26 +313,52 @@ let defer d p =
    counts as stopped. *)
 let retire d e = defer d (Free e)
 
-(* Unmaps the other devices' mappings of [e]'s memory, each once its mapper's
-   work submitted until now is done. *)
-let unmap_all (e : entry) =
-  List.iter (fun mp -> defer mp.on (Unmap mp.map)) e.maps;
-  e.maps <- []
-
 let drop_stamps (e : entry) =
   if e.held then stamps_unref e.stamps;
   if e.own <> 0 then stamps_unref e.own
 
-(* Gives [e]'s region back to its driver. *)
-let free_entry (e : entry) =
+(* Gives [e]'s region back to its driver, and its bytes to their keeper. *)
+let give_back (e : entry) =
   let d = e.owner in
-  unmap_all e;
   (match e.region with Some r -> free_region d r | None -> ());
   (match e.io_region with Some r -> free_io d r | None -> ());
   drop_stamps e;
   let budget = budget_of d e.memory in
   give_room d budget e.bytes;
   if budget = Device_budget then note d
+
+(* Releases the mapping [mp] now if its mapper ran all the work submitted so
+   far, which is then all that could use it, and is whether it did. A device a
+   forked child inherited maps its parent's copy of the memory, never the
+   child's: the child is done with it without calling its driver. *)
+let unmap_now mp =
+  let d = mp.on in
+  let v = Dev.submitted d in
+  Dev.inherited d
+  || (not (Dev.is_lost d))
+     && Dev.word d >= v
+     && begin
+       free_region d mp.map;
+       true
+     end
+
+(* Gives [e] back once no other device maps its memory: each mapping is released
+   once its mapper's work submitted until now is done, and the last release
+   gives [e] back. Until then a mapper's driver may still name the memory's
+   pages, and a driver that maps host memory by its address would hand them to
+   new memory at that address. *)
+let free_entry (e : entry) =
+  let later = List.filter (fun mp -> not (unmap_now mp)) e.maps in
+  e.maps <- [];
+  match later with
+  | [] -> give_back e
+  | _ ->
+      Atomic.Loc.set [%atomic.loc e.unmaps] (List.length later);
+      List.iter (fun mp -> defer mp.on (Unmap (mp.map, Some e))) later
+
+(* Notes one of [e]'s unmaps done, and gives [e] back after the last. *)
+let unmapped (e : entry) =
+  if Atomic.Loc.fetch_and_add [%atomic.loc e.unmaps] (-1) = 1 then give_back e
 
 let key n kind =
   let k =
@@ -540,7 +567,9 @@ let due_pending d =
 
 let run_pending d = function
   | Free e -> free_entry e
-  | Unmap r -> free_region d r
+  | Unmap (r, after) ->
+      free_region d r;
+      Option.iter unmapped after
   | Unload (image, code) -> (
       unload d image;
       match code with
@@ -867,7 +896,7 @@ let mapping d m host =
           match raced with
           | None -> Some mp
           | Some other ->
-              defer d (Unmap r);
+              defer d (Unmap (r, None));
               Some other))
 
 (* The host address of the io memory [m]'s pages, or [-1] if it maps none: the
