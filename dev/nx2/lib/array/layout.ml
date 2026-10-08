@@ -193,40 +193,54 @@ let v ?(offset = 0) ~strides s =
 
 let moved = finish "Layout.move"
 
+(* The first axis of [s] from [i] whose extent is not 1, or [s]'s rank. *)
+let past_ones s i =
+  let i = ref i in
+  while !i < Array.length s && Array.unsafe_get s !i = 1 do
+    incr i
+  done;
+  !i
+
 (* Strides for [s'] over the same elements in the same C order as [l], if
    strides express it. Axes of extent 1 are left out on both sides; the others
    are matched in groups of equal product, and a group of [l]'s axes must lay
    out one run. *)
 let reshape l s' =
-  let axes n d = List.filter (fun i -> d i > 1) (List.init n Fun.id) in
-  let old = Array.of_list (axes (rank l) (unsafe_dim l)) in
-  let fresh = Array.of_list (axes (Array.length s') (Array.get s')) in
+  let r = rank l in
   let strides = Shape.zeros (Array.length s') in
-  let rec group oi ni =
-    oi >= Array.length old
-    ||
-    let rec grow oj nj po pn =
-      if po = pn && oj > oi then (oj, nj)
-      else if po <= pn then grow (oj + 1) nj (po * unsafe_dim l old.(oj)) pn
-      else grow oj (nj + 1) po (pn * s'.(fresh.(nj)))
-    in
-    let oj, nj = grow oi ni 1 1 in
-    let run = ref true in
-    for k = oi to oj - 2 do
-      let a = old.(k) and a' = old.(k + 1) in
-      if unsafe_stride l a <> unsafe_stride l a' * unsafe_dim l a' then
-        run := false
+  (* [i] and [j] walk [l]'s axes and [s']'s, skipping extents of 1. *)
+  let i = ref (past_ones l.shape 0) and j = ref (past_ones s' 0) in
+  let runs = ref true in
+  while !runs && !i < r do
+    (* Grow a group of each side's axes until their products are equal.
+       Move.shape checked that the shapes have one number of elements, so
+       neither side runs out first. *)
+    let i0 = !i and j0 = !j and po = ref 1 and pn = ref 1 and last = ref !i in
+    while not (!po = !pn && !i > i0) do
+      if !po <= !pn then begin
+        let a = !i in
+        if a > i0 && unsafe_stride l !last <> unsafe_stride l a * unsafe_dim l a
+        then runs := false;
+        po := !po * unsafe_dim l a;
+        last := a;
+        i := past_ones l.shape (a + 1)
+      end
+      else begin
+        pn := !pn * Array.unsafe_get s' !j;
+        j := past_ones s' (!j + 1)
+      end
     done;
-    !run
-    &&
-    let st = ref (unsafe_stride l old.(oj - 1)) in
-    for k = nj - 1 downto ni do
-      strides.(fresh.(k)) <- !st;
-      st := !st * s'.(fresh.(k))
-    done;
-    group oj nj
-  in
-  if group 0 0 then Some (moved s' strides (offset l)) else None
+    (* The group of [l] lays out one run: the new axes split it in C order. *)
+    let st = ref (unsafe_stride l !last) in
+    for k = !j - 1 downto j0 do
+      let d = Array.unsafe_get s' k in
+      if d > 1 then begin
+        Array.unsafe_set strides k !st;
+        st := !st * d
+      end
+    done
+  done;
+  if !runs then Some (moved s' strides (offset l)) else None
 
 let move m l =
   let s' = Move.shape m (shape l) in
