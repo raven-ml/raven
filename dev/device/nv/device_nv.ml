@@ -535,17 +535,44 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
           Ok (set_bar self h)
     in
     let owned = [ block; fst compute_notifier; fst copy_notifier ] in
-    Ok
-      ( self,
-        words,
-        (match bar with Some m -> m :: owned | None -> owned),
-        Option.is_some bar,
-        group,
-        debugger,
-        [ compute; copy ],
-        compute )
+    let g = p.gpu in
+    let rec d =
+      {
+        path = p;
+        self;
+        arch = arch_of g.sm_version;
+        release = (module R : D.RELEASE);
+        capability =
+          {
+            Abi.Gpu.compute_class = g.compute_class;
+            sass_version =
+              ((g.sm_version land 0xf00) lsr 4) lor (g.sm_version land 0xf);
+            gpcs = g.gpcs;
+            tpcs_per_gpc = g.tpcs_per_gpc;
+            sms_per_tpc = g.sms_per_tpc;
+            warps_per_sm = g.warps_per_sm;
+            shared_window;
+            local_window;
+            local = (fun n -> local d n);
+          };
+        word = { dev = d; mem = words; bytes = 8; kind = Word; live = true };
+        owned = (match bar with Some m -> m :: owned | None -> owned);
+        bar = Option.is_some bar;
+        group;
+        debugger;
+        channels = [ compute; copy ];
+        compute_channel = compute;
+        stopped = Atomic.make false;
+        local_lock = Mutex.create ();
+        per_thread = 0;
+        local_current = None;
+        local_pending = None;
+        local_retired = [];
+      }
+    in
+    Ok (T d)
 
-let make (type m) (p : m path) =
+let make p =
   match D.release p.rm.release with
   | None ->
       Error
@@ -565,44 +592,7 @@ let make (type m) (p : m path) =
       | Error _ as e ->
           give_back ();
           e
-      | Ok (self, words, owned, bar, group, debugger, channels, compute) ->
-          let g = p.gpu in
-          let rec d =
-            {
-              path = p;
-              self;
-              arch = arch_of g.sm_version;
-              release;
-              capability =
-                {
-                  Abi.Gpu.compute_class = g.compute_class;
-                  sass_version =
-                    ((g.sm_version land 0xf00) lsr 4) lor (g.sm_version land 0xf);
-                  gpcs = g.gpcs;
-                  tpcs_per_gpc = g.tpcs_per_gpc;
-                  sms_per_tpc = g.sms_per_tpc;
-                  warps_per_sm = g.warps_per_sm;
-                  shared_window;
-                  local_window;
-                  local = (fun n -> local d n);
-                };
-              word =
-                { dev = d; mem = words; bytes = 8; kind = Word; live = true };
-              owned;
-              bar;
-              group;
-              debugger;
-              channels;
-              compute_channel = compute;
-              stopped = Atomic.make false;
-              local_lock = Mutex.create ();
-              per_thread = 0;
-              local_current = None;
-              local_pending = None;
-              local_retired = [];
-            }
-          in
-          Ok (T d))
+      | Ok _ as d -> d)
 
 (* Memory *)
 
