@@ -57,12 +57,30 @@ let case =
         (* The whole memory, donated, often enough to be alone. *)
         map (fun whole -> if whole then (0, n, Donate) :: vs else vs) bool)
   in
+  let any n =
+    map
+      (fun (views, (claimed, exported), raises) ->
+        { n; views; claimed; exported; raises })
+      (triple (views n) (pair bool bool) bool)
+  in
+  (* The whole memory donated with no other claim, the one case held
+     exclusive, drawn by construction as one case in four: [any] reaches it in
+     one of about thirty. *)
+  let alone n =
+    map
+      (fun raises ->
+        {
+          n;
+          views = [ (0, n, Donate) ];
+          claimed = false;
+          exported = false;
+          raises;
+        })
+      bool
+  in
   with_pp pp_case
     (bind (int_range 1 32) (fun n ->
-         map
-           (fun (views, (claimed, exported), raises) ->
-             { n; views; claimed; exported; raises })
-           (triple (views n) (pair bool bool) bool)))
+         bind (int_range 0 3) (fun k -> if k = 0 then alone n else any n)))
 
 let overlap (o, l, _) (o', l', _) = l > 0 && l' > 0 && o < o' + l' && o' < o + l
 
