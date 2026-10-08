@@ -336,12 +336,21 @@ let memory_floor_rows =
 
 (* Floors *)
 
-type floor = { f : nativeint; fp : P.t; word : int; mutable k : int }
+(* [timeline] is the address of the driver's timeline word, which a floor loads
+   as the core reads it. *)
+type floor = {
+  f : nativeint;
+  fp : P.t;
+  word : int;
+  timeline : int;
+  mutable k : int;
+}
 
 let floor () =
   let fp = P.make () in
   let f = floor_new (P.self fp) P.room_entry P.submit_entry Support.bump in
-  { f; fp; word = B.address (B.create C.host 8); k = 0 }
+  let timeline = Option.get (P.address (P.word fp)) in
+  { f; fp; word = B.address (B.create C.host 8); timeline; k = 0 }
 
 let floor_drained t =
   t.k <- t.k + 1;
@@ -385,7 +394,7 @@ let floor_rows =
        row "polled/release" (fun t ->
            floor_submit t.f 0;
            ignore (P.run t.fp);
-           ignore (P.signaled t.fp));
+           ignore (Support.load t.timeline));
        row "polled/cost" (fun t ->
            floor_submit t.f 1;
            floor_drained t);
@@ -413,7 +422,7 @@ let floor_rows =
              floor_run t
            done;
            ignore (P.run t.fp);
-           ignore (P.signaled t.fp));
+           ignore (Support.load t.timeline));
        Thumper.bench_with_setup ~setup:Mutex.create "mutex-section" (fun m ->
            Mutex.lock m;
            Mutex.unlock m);
