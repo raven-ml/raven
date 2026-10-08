@@ -92,11 +92,11 @@ let queue_index d fn q =
   in
   go 0
 
-(* The stamps a submission raises for the memory of [b]. *)
-let stamps_of b =
+(* The record of [b]'s memory, which holds the stamps a submission raises. *)
+let entry_of b =
   let m = b.mem.root in
   if m.entry == Memory.no_entry then Memory.ensure_entry m;
-  m.entry.stamps
+  m.entry
 
 let host_address fn b =
   if b.mem.host < 0 then
@@ -152,7 +152,7 @@ let make ?hold ~reads ~writes ~waits d parts =
   let c = sub_new d.c (Array.length parts) !nafter !nfixed reads writes waits in
   let at = ref 0 and k = ref 0 in
   let fixed b write =
-    sub_fixed c !k (stamps_of b) b.mem.handle write;
+    sub_fixed c !k (entry_of b).stamps b.mem.handle write;
     incr k
   in
   Array.iteri
@@ -188,10 +188,10 @@ let make ?hold ~reads ~writes ~waits d parts =
   }
 
 let set fn s k b =
-  Buffer.check_live fn b;
-  if b.mem.root.entry.held then
+  let e = entry_of b in
+  if e.held then
     invalid_argf "Device_core.%s: the buffer's memory is in a hold" fn;
-  sub_slot s.c k (stamps_of b) b.mem.handle;
+  sub_slot s.c k e.stamps b.mem.handle;
   s.slots.(k) <- b
 
 let read s i b =
