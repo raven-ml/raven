@@ -1,5 +1,25 @@
 (tests
- (names test_rig_remote)
- (modules test_rig_remote)
+ (names
+  test_rig_remote
+  test_rig_remote_lost
+  test_rig_remote_own
+  test_rig_remote_killed
+  test_rig_remote_abort)
+ (modules
+  test_rig_remote
+  test_rig_remote_lost
+  test_rig_remote_own
+  test_rig_remote_killed
+  test_rig_remote_abort
+  remote_job
+  watchdog)
  (deps support/agent.exe)
- (libraries rig rig_remote unix windtrap))
+ (libraries
+  rig
+  rig_remote
+  rig_remote_proxy
+  rig_remote_abi
+  rig_support
+  threads.posix
+  unix
+  windtrap))

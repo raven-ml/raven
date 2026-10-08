@@ -1,4 +1,4 @@
 (executable
  (name agent)
  (modules agent)
- (libraries rig rig_remote))
+ (libraries rig rig_remote rig_support unix))
