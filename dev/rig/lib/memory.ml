@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Def
+module Cache = Hashtbl.Make (Int)
 
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
@@ -389,7 +390,7 @@ let take_due_holds () =
       raise e
 
 let drain_holds () =
-  if !holds <> [] then begin
+  if !holds != [] then begin
     let first = ref None in
     List.iter
       (fun h ->
@@ -429,8 +430,8 @@ let viewed (e : entry) =
 (* Puts the entry [e] of [d] in [d]'s cache, for reuse. [d]'s lock is held. *)
 let cache d e =
   let k = cache_key e in
-  let l = Option.value ~default:[] (Hashtbl.find_opt d.cache k) in
-  Hashtbl.replace d.cache k (e :: l);
+  let l = Option.value ~default:[] (Cache.find_opt d.cache k) in
+  Cache.replace d.cache k (e :: l);
   d.cached <- d.cached + e.bytes
 
 let to_cache d e = Dev.protect d (fun () -> cache d e)
@@ -496,8 +497,8 @@ let due d =
           | Freed -> frees := e :: !frees)
         fates;
       if free_lost then begin
-        Hashtbl.iter (fun _ l -> frees := l @ !frees) d.cache;
-        Hashtbl.reset d.cache;
+        Cache.iter (fun _ l -> frees := l @ !frees) d.cache;
+        Cache.reset d.cache;
         d.cached <- 0
       end;
       let pending, later =
@@ -574,10 +575,11 @@ let drain_others d =
 let take_cached d kind n =
   Dev.protect d (fun () ->
       let k = key n kind in
-      match Hashtbl.find_opt d.cache k with
+      match Cache.find_opt d.cache k with
       | Some (e :: rest) ->
-          if rest = [] then Hashtbl.remove d.cache k
-          else Hashtbl.replace d.cache k rest;
+          (match rest with
+          | [] -> Cache.remove d.cache k
+          | _ -> Cache.replace d.cache k rest);
           d.cached <- d.cached - e.bytes;
           Some e
       | _ -> None)
@@ -593,7 +595,7 @@ let take_cache ?upto d =
         | None -> true
         | Some upto -> owns d e.memory && !held > upto
       in
-      Hashtbl.filter_map_inplace
+      Cache.filter_map_inplace
         (fun _ l ->
           let l =
             List.filter
@@ -607,7 +609,7 @@ let take_cache ?upto d =
                 else true)
               l
           in
-          if l = [] then None else Some l)
+          match l with [] -> None | _ -> Some l)
         d.cache;
       !taken)
 
@@ -849,7 +851,7 @@ let borrow d m =
     let host = if is_io_memory m.entry then pages m else m.host in
     if m.dev == d then Some m
     else if Dev.is_io d || (Dev.is_io m.dev && host < 0) then None
-    else if m.dev.machine <> d.machine && not (Dev.is_io m.dev) then None
+    else if (not (Dev.same_machine m.dev d)) && not (Dev.is_io m.dev) then None
     else if Dev.is_host d then
       if host >= 0 then Some (borrow_of m d ~host ~address:host ~handle:0n)
       else None

@@ -15,7 +15,7 @@ external now : unit -> int = "caml_rig_now"
 let profiles : t list Atomic.t = Atomic.make []
 let numbers = Atomic.make 0
 let active () = Atomic.get profiles
-let enabled () = Atomic.get profiles <> []
+let enabled () = match Atomic.get profiles with [] -> false | _ -> true
 
 let rec change f =
   let ps = Atomic.get profiles in

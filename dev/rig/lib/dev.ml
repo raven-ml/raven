@@ -73,6 +73,11 @@ let register d =
   in
   go ()
 
+(* Whether [d] and [d'] are of one machine. *)
+let same_machine d d' = Option.equal String.equal d.machine d'.machine
+
+module Cache = Hashtbl.Make (Int)
+
 let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~completion ~waits
     ~max_waits ~word ~word_region ~key ~memory_device ~fault ~capability ~budget
     =
@@ -102,7 +107,7 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~completion ~waits
     budget;
     used = 0;
     cached = 0;
-    cache = Hashtbl.create 16;
+    cache = Cache.create 16;
     retiring = [];
     pending = [];
     pairs = [||];
@@ -297,7 +302,7 @@ let look_at_producers d =
 
 let reached d w =
   if is_lost d then raise_lost d;
-  if d.afters <> [] then run_afters d w
+  if d.afters != [] then run_afters d w
 
 (* Waits for [d]'s value [v], the word having read [seen] since [since]. Top
    level, so a wait that finds its value reached allocates nothing. *)
@@ -488,7 +493,7 @@ let peer d d' =
 
 let reaches d d' =
   d == d'
-  || d.machine = d'.machine
+  || same_machine d d'
      &&
      match (d.kind, d'.kind) with
      | Io _, _ | _, Io _ -> false

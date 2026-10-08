@@ -226,7 +226,7 @@ let decide d p =
     | Object _ -> d.waits_object && d.key = p.key
     | Host_writes -> d.waits_host
   in
-  if (not waits) || p.machine <> d.machine then host_wait
+  if (not waits) || not (Dev.same_machine p d) then host_wait
   else
     match (p.completion, p.word_region) with
     | Object o, _ -> o

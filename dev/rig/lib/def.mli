@@ -75,7 +75,7 @@ type device = {
   mutable budget : int;
   mutable used : int;  (** Own bytes in live buffers, code and cache. *)
   mutable cached : int;
-  cache : (int, entry list) Hashtbl.t;  (** By [bytes * 8 + kind]. *)
+  cache : entry list Hashtbl.Make(Int).t;  (** By [bytes * 8 + kind]. *)
   mutable retiring : entry list;  (** Waiting for other devices' uses. *)
   mutable pending : (int * pending) list;  (** Waiting for its own value. *)
   mutable pairs : int array;  (** By producer index: 0 unknown, 1 host. *)

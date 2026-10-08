@@ -50,7 +50,7 @@ type t = { reads : claim list; mutable exclusive : claim list }
 let span b =
   let m = b.mem.root in
   let n = Buffer.length b in
-  if m.host >= 0 && m.dev.machine = None then (0, m.host + b.offset, n)
+  if m.host >= 0 && Option.is_none m.dev.machine then (0, m.host + b.offset, n)
   else
     let base =
       if m.address >= 0 then m.address else Nativeint.to_int m.handle

@@ -13,7 +13,6 @@ type access = Read | Read_write
 
 let generation (c : claim) = Atomic.Loc.get [%atomic.loc c.generation]
 let is_live b = b.generation = generation b.mem.claim
-
 let dead b = if is_live b then None else Some b.mem.claim.why
 
 let check_live fn b =
@@ -106,7 +105,7 @@ let overlaps b b' =
   n > 0 && n' > 0
   &&
   let m = b.mem.root and m' = b'.mem.root in
-  if m.host >= 0 && m'.host >= 0 && m.dev.machine = m'.dev.machine then
+  if m.host >= 0 && m'.host >= 0 && Dev.same_machine m.dev m'.dev then
     let a = m.host + b.offset and a' = m'.host + b'.offset in
     a < a' + n' && a' < a + n
   else m == m' && b.offset < b'.offset + n' && b'.offset < b.offset + n

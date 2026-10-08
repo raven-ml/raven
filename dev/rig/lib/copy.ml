@@ -13,7 +13,7 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 external memmove : int -> int -> int -> unit = "caml_rig_memmove"
 
 let fn = "Buffer.copy"
-let local m = m.dev.machine = None && m.host >= 0
+let local m = Option.is_none m.dev.machine && m.host >= 0
 let host_address b = b.mem.host + b.offset
 
 let record src dst bytes start =
