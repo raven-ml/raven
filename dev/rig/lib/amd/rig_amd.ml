@@ -43,7 +43,7 @@ type 'm path = {
   hang_ms : int option;
   sleep : ms:int -> unit;
   stable_power : unit -> (unit, string) result;
-  stop : unit -> [ `Stopped | `Unknown ];
+  stop : fault:string option -> [ `Stopped | `Unknown ];
 }
 
 (* A path's memory, with the key that tells whose it is. *)
@@ -60,7 +60,7 @@ type ops = {
   map_peer : mem -> mem option;
   free : mem -> unit;
   sleep : ms:int -> unit;
-  stop : unit -> [ `Stopped | `Unknown ];
+  stop : fault:string option -> [ `Stopped | `Unknown ];
 }
 
 let ops (type m) (p : m path) =
@@ -388,7 +388,7 @@ let make (type m) (p : m path) =
     let stopped =
       (not !queues)
       ||
-      match ops.stop () with
+      match ops.stop ~fault:None with
       | `Stopped -> true
       | `Unknown -> false
       | exception Fault _ -> false
@@ -691,7 +691,7 @@ let sleep g ~seen ~still_ms =
    own releases raise the word. *)
 let stop g =
   if Atomic.compare_and_set g.stopped false true then
-    match g.ops.stop () with
+    match g.ops.stop ~fault:(Atomic.get g.fault) with
     | exception Fault _ -> ()
     | `Unknown -> ()
     | `Stopped ->

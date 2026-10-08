@@ -218,7 +218,10 @@ let finisher g h ~index ~made =
 
 let path g fn ~index ~finish : mem Amd.path =
   let gc = Boot.gc g and gpu = Boot.gpu g in
-  let stop () =
+  (* A fault the device raised itself, as a hang, is the GPU's as much as one
+     its interrupt ring reported: the stop leaves the GPU lost. *)
+  let stop ~fault =
+    Option.iter (Boot.faulted g) fault;
     match finish () with `Clean | `Lost -> `Stopped | `Unknown -> `Unknown
   in
   {

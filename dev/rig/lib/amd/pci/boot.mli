@@ -154,6 +154,12 @@ val sleep : t -> ms:int -> unit
     GPU's machine-check banks, or the function's or machine's failure. Once
     raised, every later sleep raises the same report. *)
 
+val faulted : t -> string -> unit
+(** [faulted g why] records [why] as a fault of the GPU's work that its
+    interrupt ring did not report, such as work that stopped making progress,
+    unless a fault was recorded already: {!stop} then answers [`Lost], and
+    {!sleep} raises the first fault. *)
+
 val give_back : t -> unit
 (** [give_back g] gives back the access a virtual function asked its host for,
     once the device's queues are made: a host resets a VF that holds access

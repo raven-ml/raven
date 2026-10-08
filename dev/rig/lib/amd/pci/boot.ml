@@ -567,6 +567,9 @@ let fault g why =
   g.fault <- Some why;
   raise (Rig_amd.Fault why)
 
+let faulted g why =
+  Mutex.protect g.hw @@ fun () -> if g.fault = None then g.fault <- Some why
+
 (* The GPU's fatal hardware errors, which NBIO flags outside the interrupt ring,
    with the power manager's machine-check banks. *)
 let fatal g =

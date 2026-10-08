@@ -135,6 +135,7 @@ module Host = struct
     mutable queues : queue list; (* in the order made *)
     mutable refused_queue : bool;
     mutable stops : int;
+    mutable stop_fault : string option; (* the fault the stop was given *)
     mutable sleeps : int;
     mutable report : string option; (* the fault its sleep reports *)
     mutable free_fault : string option; (* the fault its free raises *)
@@ -171,6 +172,7 @@ module Host = struct
         queues = [];
         refused_queue = false;
         stops = 0;
+        stop_fault = None;
         sleeps = 0;
         report = None;
         free_fault = None;
@@ -237,8 +239,9 @@ module Host = struct
       h.sleeps <- h.sleeps + 1;
       Option.iter (fun why -> raise (A.Fault why)) h.report
     in
-    let stop () =
+    let stop ~fault =
       h.stops <- h.stops + 1;
+      h.stop_fault <- fault;
       stop ()
     in
     ( h,
@@ -375,6 +378,7 @@ let stop_gives_back () =
   equal answer ~msg:"submit" `Ok (submit g ~v:1 [||]);
   A.stop g;
   equal int ~msg:"stops" 1 h.stops;
+  equal (option string) ~msg:"the fault the path's stop got" None h.stop_fault;
   equal bool ~msg:"the word given back" false (List.mem word h.frees);
   equal int ~msg:"the memory left: the word" 1 h.live;
   Host.close h
@@ -1275,6 +1279,9 @@ let hangs () =
   | () -> fail "no Fault after 2 s of a value making no progress"
   | exception A.Fault why -> contains ~msg:"the report" ~sub:"50 ms" why);
   A.stop g;
+  (match h.stop_fault with
+  | Some why -> contains ~msg:"the fault the path's stop got" ~sub:"50 ms" why
+  | None -> fail "the path's stop got no fault after a hang");
   Host.close h
 
 let idle () =
@@ -1381,7 +1388,10 @@ let scratch =
 let progress =
   group ~timeout:30. "progress"
     [
-      test "a value that makes no progress for hang_ms is a fault" hangs;
+      test
+        "a value that makes no progress for hang_ms is a fault, which the \
+         path's stop is given"
+        hangs;
       test "an idle device never hangs, nor its next value at once" idle;
       test "values reached more often than hang_ms are no fault" moving;
       test "without hang_ms a value making no progress is no fault" unbounded;

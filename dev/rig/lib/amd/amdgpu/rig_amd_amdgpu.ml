@@ -554,8 +554,9 @@ let stable_power g () =
 
 (* Each queue destroyed, and the memory of those destroyed given back. A queue
    the kernel driver kept may still run and raise the device's interrupt, so its
-   memory and the events stay. *)
-let stop d () =
+   memory and the events stay. The kernel driver keeps nothing of a fault for
+   later opens. *)
+let stop d ~fault:_ =
   let gone, kept =
     List.partition (fun (id, _) -> destroy_queue d.fd id = 0) d.queues
   in

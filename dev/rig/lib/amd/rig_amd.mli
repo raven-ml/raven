@@ -417,10 +417,13 @@ type 'm path = {
   stable_power : unit -> (unit, string) result;
       (** [stable_power ()] holds the GPU's clocks and shader engines steady, as
           tracing needs, for the life of the process. *)
-  stop : unit -> [ `Stopped | `Unknown ];
-      (** [stop ()] destroys the queues [queue] made: [`Stopped] once none of
-          them runs or none can write memory outside the GPU, [`Unknown] if one
-          may. *)
+  stop : fault:string option -> [ `Stopped | `Unknown ];
+      (** [stop ~fault] destroys the queues [queue] made: [`Stopped] once none
+          of them runs or none can write memory outside the GPU, [`Unknown] if
+          one may. [fault] is the device's first fault, if any: the path's own
+          report or the end of the progress bound, a hang ({!val-sleep}). A
+          path that keeps the GPU's state for later opens records it as its
+          own; one that keeps none ignores it. *)
 }
 (** The type for what a path gives a device. A path fills it with functions over
     its own state, which this library never names. Each function answers the
