@@ -1,0 +1,16 @@
+(executable
+ (name main)
+ (libraries rig)
+ (foreign_stubs
+  (language c)
+  (names scale)))
+
+(rule
+ (with-stdout-to
+  main.output
+  (run ./main.exe)))
+
+(rule
+ (alias runtest)
+ (action
+  (diff main.expected main.output)))
