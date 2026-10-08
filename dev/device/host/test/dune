@@ -1,0 +1,5 @@
+(test
+ (name test_host)
+ (libraries device_host device_host_support unix windtrap)
+ (deps
+  (source_tree fixtures)))
