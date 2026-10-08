@@ -52,6 +52,19 @@ let watchdog what f =
       Domain.join d)
     f
 
+(* [once f] is a function that answers [f ()], made by its first call from any
+   domain. [Lazy] would raise when two domains force it at once. *)
+let once f =
+  let made = ref None and lock = Mutex.create () in
+  fun () ->
+    Mutex.protect lock @@ fun () ->
+    match !made with
+    | Some v -> v
+    | None ->
+        let v = f () in
+        made := Some v;
+        v
+
 (* Bytes *)
 
 (* Bytes print by their length, start and digest past a line. *)
@@ -212,19 +225,10 @@ let needs_dev_fd () =
 let others_count = max_descriptors + 6
 
 let others =
-  let made = ref None and lock = Mutex.create () in
-  fun () ->
-    Mutex.protect lock @@ fun () ->
-    match !made with
-    | Some o -> o
-    | None ->
-        let o =
-          Array.init others_count (fun i ->
-              let s = pattern i 1 in
-              (of_file (make_file s), s))
-        in
-        made := Some o;
-        o
+  once @@ fun () ->
+  Array.init others_count (fun i ->
+      let s = pattern i 1 in
+      (of_file (make_file s), s))
 
 (* [use_others k] reads the first [k] other files: the ones whose bytes
    differ. *)
@@ -1140,32 +1144,25 @@ type shelf = {
 }
 
 let shelf =
-  let made = ref None and lock = Mutex.create () in
-  fun () ->
-    Mutex.protect lock @@ fun () ->
-    match !made with
-    | Some s -> s
-    | None ->
-        let file i n =
-          let s = pattern i n in
-          (make_file s, s)
-        in
-        let sizes = [ 0; 1; 4096; 16385; segment + 7 ] in
-        let opened = Array.of_list (List.mapi file sizes) in
-        let written =
-          Array.of_list
-            (List.mapi
-               (fun i n ->
-                 let s = pattern (i + 10) n in
-                 let path = new_path () in
-                 let buf = create path n in
-                 write buf s;
-                 ({ path; buf }, s))
-               sizes)
-        in
-        let s = { opened; written } in
-        made := Some s;
-        s
+  once @@ fun () ->
+  let file i n =
+    let s = pattern i n in
+    (make_file s, s)
+  in
+  let sizes = [ 0; 1; 4096; 16385; segment + 7 ] in
+  let opened = Array.of_list (List.mapi file sizes) in
+  let written =
+    Array.of_list
+      (List.mapi
+         (fun i n ->
+           let s = pattern (i + 10) n in
+           let path = new_path () in
+           let buf = create path n in
+           write buf s;
+           ({ path; buf }, s))
+         sizes)
+  in
+  { opened; written }
 
 let shelved = Gen.int_range 0 4
 
