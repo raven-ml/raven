@@ -2073,8 +2073,19 @@ module Handover = struct
           | None -> ());
     h
 
-  (* Grows local memory by 1 KiB a thread, which replaces it. *)
+  (* Hands one empty submission, which takes a pending local memory. *)
+  let hand h =
+    Mutex.protect h.turn @@ fun () ->
+    if S.edge_room h.g [||] = 0 then begin
+      let v = Atomic.get h.handed + 1 in
+      Atomic.set h.handed v;
+      S.edge_submit h.g ~v ~waits:[||] [||]
+    end
+
+  (* Grows local memory by 1 KiB a thread, which replaces it, then hands a
+     submission that takes the new one. *)
   let grow h =
+    Fun.protect ~finally:(fun () -> hand h) @@ fun () ->
     Mutex.protect h.grows @@ fun () ->
     h.kib <- h.kib + 1;
     match (N.capability h.g).local (h.kib * 1024) with
@@ -2093,18 +2104,13 @@ module Handover = struct
         | None, m -> h.newest <- m
         | Some _, _ -> ())
 
-  (* Hands one empty submission, which takes a pending local memory, then moves
-     the word on by [k] values, up to the last handed. *)
+  (* Hands one submission, then moves the word on by [k] values, up to the
+     last handed. *)
   let submit k h =
-    Mutex.protect h.turn (fun () ->
-        if S.edge_room h.g [||] = 0 then begin
-          let v = Atomic.get h.handed + 1 in
-          Atomic.set h.handed v;
-          S.edge_submit h.g ~v ~waits:[||] [||]
-        end);
+    hand h;
     Mutex.protect h.lock @@ fun () ->
     let w = S.get64 (word h) in
-    S.set64 (word h) (min (Atomic.get h.handed) (w + k))
+    S.set64 (word h) (Int.min (Atomic.get h.handed) (w + k))
 
   let invariant _ h =
     cover "a replaced local memory went back" (h.returned > 0);
@@ -2140,7 +2146,7 @@ let stateful =
         "a mapping freed from two domains is freed once" mapping_commands;
       stateful ~count:30 ~domains:2
         "an image unloaded from two domains is unloaded once" image_commands;
-      stateful ~count:100 ~steps:40 ~domains:2
+      stateful ~count:100 ~steps:100 ~domains:2
         "local memory goes back only once the values that could use it ran"
         handover_commands;
     ]
