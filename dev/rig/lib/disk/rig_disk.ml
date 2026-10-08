@@ -297,9 +297,11 @@ let create_file path n =
   open_file path create_mode n
 
 let barrier b =
-  Option.iter
-    (invalid_argf "Rig_disk.barrier: the buffer is dead: %s")
-    (Rig.Buffer.dead b);
+  (* The message is formatted only on failure: a partial application of a format
+     builds its closure at every call. *)
+  (match Rig.Buffer.dead b with
+  | Some why -> invalid_argf "Rig_disk.barrier: the buffer is dead: %s" why
+  | None -> ());
   match Rig.Buffer.io b Io.region_key with
   | None when Rig.equal (Rig.Buffer.device b) device ->
       (* A buffer of no bytes, which no file holds. *)
