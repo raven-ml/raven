@@ -3,7 +3,6 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-
 /* Probes of nx_pool.h for the pool's suite: jobs whose bodies record what the
    pool did with them, called from OCaml as a consumer's stubs call the pool.
    They build on every system the pool does.

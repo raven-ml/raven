@@ -6,7 +6,6 @@
 (* Recorded jobs *)
 
 type call = { lo : int64; hi : int64; worker : int; thread : int }
-
 type job = { calls : call list; count : int; overlaps : int }
 
 external record_raw :
@@ -28,7 +27,6 @@ external balance : int -> bool = "probe_balance"
 (* Jobs observed from another domain *)
 
 external reset : unit -> unit = "probe_reset"
-
 external hold : only_worker:bool -> bool = "probe_hold"
 external hold_arrived : unit -> int = "probe_hold_arrived"
 external hold_release : unit -> unit = "probe_hold_release"
@@ -43,11 +41,8 @@ external counted_calls : unit -> int = "probe_counted_calls"
 external cores : unit -> int = "probe_cores"
 external performance_cores : unit -> int = "probe_performance_cores"
 external cgroup_cpus : string -> int = "probe_cgroup_cpus"
-
 external sysctl : string -> int = "probe_sysctl"
-
 external active_processors : unit -> int = "probe_active_processors"
-
 external pinned_cores : unit -> int * int = "probe_pinned_cores"
 
 let needs_two_cores () =

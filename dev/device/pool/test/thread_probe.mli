@@ -18,8 +18,8 @@ val burst_stop : unit -> unit
 (** {1:bodies Bodies on a worker} *)
 
 val worker_mask : unit -> bool * (string * bool) list
-(** [worker_mask ()] is whether a worker ran a chunk, and the signals of a
-    table with whether that worker blocks them. *)
+(** [worker_mask ()] is whether a worker ran a chunk, and the signals of a table
+    with whether that worker blocks them. *)
 
 val faults : string list
 (** [faults] are the signals a body may raise itself, in the order of the bits
@@ -30,11 +30,11 @@ val faults : string list
 (** What a child made by fork answers, right after a job of the parent's. *)
 type scenario =
   | Threads
-      (** The process's threads before any job, after a job of one thread,
-          after the first job of two, after jobs on every core. *)
+      (** The process's threads before any job, after a job of one thread, after
+          the first job of two, after jobs on every core. *)
   | Job
-      (** Whether a worker ran a chunk; the units of a job on every core not
-          run once. *)
+      (** Whether a worker ran a chunk; the units of a job on every core not run
+          once. *)
   | Stack  (** Whether a worker ran a chunk that used 7 MiB of stack. *)
   | Faults
       (** Whether a worker ran a chunk; a bit per signal of {!faults} that it
@@ -53,8 +53,8 @@ val fork : unit -> unit
 (** [fork ()] forks a child that exits at once, and waits for it. *)
 
 val limits_threads : unit -> bool
-(** [limits_threads ()] is whether the system can limit a process's own
-    threads: Linux counts each thread against [RLIMIT_NPROC]. *)
+(** [limits_threads ()] is whether the system can limit a process's own threads:
+    Linux counts each thread against [RLIMIT_NPROC]. *)
 
 (** {1:threads Threads} *)
 

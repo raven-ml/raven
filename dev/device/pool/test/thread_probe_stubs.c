@@ -3,7 +3,6 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-
 /* Probes of nx_pool.h's threads for the pool's suite: what a body sees on a
    worker, fork children, and the process's threads. They fork and read
    signal masks and thread states, so they build where POSIX does.
@@ -49,7 +48,6 @@ static void nothing(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)worker;
   (void)ctx;
 }
-
 
 /* A burst of jobs */
 

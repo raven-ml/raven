@@ -3,12 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** What the pool's suites and bench share: probes of [nx_pool.h], whose
-    bodies record what the pool did (pool_probe_stubs.c), and the suites'
-    waits.
+(** What the pool's suites and bench share: probes of [nx_pool.h], whose bodies
+    record what the pool did (pool_probe_stubs.c), and the suites' waits.
 
-    A probe that waits for another call of its job, which [nx_pool.h] forbids
-    a body, gives up after 10 s, so a pool that breaks a promise fails the test
+    A probe that waits for another call of its job, which [nx_pool.h] forbids a
+    body, gives up after 10 s, so a pool that breaks a promise fails the test
     instead of hanging it. *)
 
 (** {1:recorded Recorded jobs} *)
@@ -32,15 +31,14 @@ val visibility : jobs:int -> threads:int -> int * int
     stale). *)
 
 val nested : threads:int -> outer:int -> inner:int -> int * int * int * int
-(** [nested ~threads ~outer ~inner] runs a job of [outer] units whose every
-    call runs a job of [inner] units, and is (outer units run, inner jobs not
-    run in one call, inner calls off their body's thread or not worker 0,
-    inner units not run once). *)
+(** [nested ~threads ~outer ~inner] runs a job of [outer] units whose every call
+    runs a job of [inner] units, and is (outer units run, inner jobs not run in
+    one call, inner calls off their body's thread or not worker 0, inner units
+    not run once). *)
 
 val balance : int -> bool
-(** [balance chunks] is whether, in a job of [chunks] chunks of one unit on
-    two threads, the units after the call that runs unit 0 ran while it
-    lasted. *)
+(** [balance chunks] is whether, in a job of [chunks] chunks of one unit on two
+    threads, the units after the call that runs unit 0 ran while it lasted. *)
 
 (** {1:observed Jobs observed from another domain} *)
 
@@ -48,9 +46,9 @@ val reset : unit -> unit
 (** [reset ()] clears what {!hold} and {!counted} recorded. *)
 
 val hold : only_worker:bool -> bool
-(** [hold ~only_worker] runs a job of two chunks on two threads whose chunks,
-    or with [only_worker] the worker's once both began, wait for
-    {!hold_release}. It is whether they were released before 10 s. *)
+(** [hold ~only_worker] runs a job of two chunks on two threads whose chunks, or
+    with [only_worker] the worker's once both began, wait for {!hold_release}.
+    It is whether they were released before 10 s. *)
 
 val hold_arrived : unit -> int
 (** [hold_arrived ()] is the chunks of {!hold}'s job that began. *)
@@ -76,15 +74,14 @@ val performance_cores : unit -> int
 
 val cgroup_cpus : string -> int
 (** [cgroup_cpus root] is the cgroup v2 bound of [nx_pool_cores ()], ceil q,
-    read from the tree of files under the directory [root] as the pool reads
-    the host's under [/]: [-1] without a quota (nx_pool_cgroup.h). *)
+    read from the tree of files under the directory [root] as the pool reads the
+    host's under [/]: [-1] without a quota (nx_pool_cgroup.h). *)
 
 val sysctl : string -> int
 (** [sysctl name] is the integer the sysctl [name] reads (macOS). *)
 
 val active_processors : unit -> int
-(** [active_processors ()] is the processors active in every group
-    (Windows). *)
+(** [active_processors ()] is the processors active in every group (Windows). *)
 
 val pinned_cores : unit -> int * int
 (** [pinned_cores ()] pins the calling thread to one CPU of its affinity, reads
@@ -92,14 +89,14 @@ val pinned_cores : unit -> int * int
 
 val needs_two_cores : unit -> unit
 (** [needs_two_cores ()] skips the running test on a host of one core. It calls
-    [nx_pool_cores] only when run: test_pool's affinity child must call
-    nothing of the pool before it pins itself. *)
+    [nx_pool_cores] only when run: test_pool's affinity child must call nothing
+    of the pool before it pins itself. *)
 
 (** {1:waits Waits} *)
 
 val timeout : float
-(** [timeout] is each test's limit, 30 s, past the 10 s that a probe or a
-    poll waits before it fails with what it waited for. *)
+(** [timeout] is each test's limit, 30 s, past the 10 s that a probe or a poll
+    waits before it fails with what it waited for. *)
 
 val settle : float -> (unit -> 'a) -> ('a -> bool) -> 'a
 (** [settle seconds read ok] reads [read ()] every millisecond until [ok] holds

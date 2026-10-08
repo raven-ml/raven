@@ -129,8 +129,8 @@ let test_windows_cores () =
 
 (* A cgroup tree as Linux shows it to a process: proc/self/cgroup's lines,
    proc/self/mountinfo's mounts, and the cpu.max files under the mount points,
-   all under one directory. [cpus] is ceil q of nx_pool.h: the least ceil
-   (quota / period) over the cgroup and its ancestors up to the mount. *)
+   all under one directory. [cpus] is ceil q of nx_pool.h: the least ceil (quota
+   / period) over the cgroup and its ancestors up to the mount. *)
 type tree = {
   name : string;
   cgroup : string list;
@@ -151,7 +151,13 @@ let no_quota = "max 100000\n"
 
 let trees =
   let on_host ~name limits cpus =
-    { name; cgroup = [ "0::" ^ session ]; mounts = [ host_mount ]; limits; cpus }
+    {
+      name;
+      cgroup = [ "0::" ^ session ];
+      mounts = [ host_mount ];
+      limits;
+      cpus;
+    }
   in
   [
     on_host ~name:"no quota on the path"
@@ -198,7 +204,9 @@ let trees =
       name = "cgroup v1 alone";
       cgroup = [ "12:cpu,cpuacct:" ^ session ];
       mounts =
-        [ "36 24 0:31 / /sys/fs/cgroup/cpu rw shared:10 - cgroup cgroup rw,cpu" ];
+        [
+          "36 24 0:31 / /sys/fs/cgroup/cpu rw shared:10 - cgroup cgroup rw,cpu";
+        ];
       limits = [ ("sys/fs/cgroup/cpu" ^ session ^ "/cpu.max", quota 100000) ];
       cpus = -1;
     };
