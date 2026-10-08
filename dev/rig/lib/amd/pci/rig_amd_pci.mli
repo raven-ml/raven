@@ -122,16 +122,17 @@ val open_ :
     through a transport, if [i >= count ~machine ()], saying how many GPUs there
     are, if the process holds the GPU, if this process lost it and did not reset
     it since, if amdgpu, unbound from it, has not let go of it yet (KFD's
-    topology still lists it), naming the holder's reason, if its function cannot
-    be taken, with {!Rig_pci.Function.take}'s reason, if one of its blocks has a
-    version this library does not boot, naming the block and the version, if an
-    image is missing, with {!Rig_pci.Firmware.find}'s reason, or if firmware
-    this library did not start runs on it, which a {!reset} stops, or if the
-    memory controller does not place all of the GPU's memory. It is also
-    [Error msg] if a block does not answer during the boot, naming the step, or
-    with {!Rig_amd.make}'s message; the GPU is then stopped, and opens again
-    only after a reset. An exception raised after the boot's first write stops
-    the GPU the same way and passes through.
+    topology still lists it, or its [ip_discovery] directory stays), naming the
+    holder's reason, if its function cannot be taken, with
+    {!Rig_pci.Function.take}'s reason, if one of its blocks has a version this
+    library does not boot, naming the block and the version, if an image is
+    missing, with {!Rig_pci.Firmware.find}'s reason, or if firmware this library
+    did not start runs on it, which a {!reset} stops, or if the memory
+    controller does not place all of the GPU's memory. It is also [Error msg] if
+    a block does not answer during the boot, naming the step, or with
+    {!Rig_amd.make}'s message; the GPU is then stopped, and opens again only
+    after a reset. An exception raised after the boot's first write stops the
+    GPU the same way and passes through.
 
     Raises [Invalid_argument] if [i < 0]. *)
 
@@ -160,20 +161,23 @@ val detach : int -> (unit, string) result
     the unbind: once [detach] is [Ok ()], amdgpu's last write to the GPU is
     done. It reads them from debugfs, which must be mounted at
     [/sys/kernel/debug]. After the unbind, KFD's topology no longer listing the
-    GPU confirms that amdgpu let go.
+    GPU and its [ip_discovery] directory gone confirm that amdgpu let go: the
+    release removes the first at its start and the second at its end.
 
     The result is [Error msg], changing nothing, if [i] is no GPU, if a process
     holds a file of its DRM nodes open or mapped, this one included, naming it,
     if KFD still holds one after 30 s, if an IOMMU translates its addresses and
     it is not bound to [vfio-pci], or if debugfs or [/proc] cannot be read. It
     is [Error msg] with the GPU detached and its memory BAR as it was if KFD's
-    topology still lists the GPU after the unbind: a process opened a DRM node
-    meanwhile, or memory of the GPU exported to another device or process (a
-    dma-buf) holds it, and amdgpu lets go when that holder does. [detach] called
-    again waits up to 30 s for KFD's topology to drop the GPU and finishes, but
-    amdgpu may then still be writing to it: its release starts there, and
-    nothing marks its end. It is [Error msg] if a file cannot be written, or if
-    the GPU is still not detached, saying why.
+    topology still lists the GPU or its [ip_discovery] directory stays after the
+    unbind: a process opened a DRM node meanwhile, or memory of the GPU exported
+    to another device or process (a dma-buf) holds it, and amdgpu lets go when
+    that holder does. [detach] called again waits up to 30 s for both to go, the
+    end of amdgpu's release, and finishes. A release that never comes, as after
+    a failed resume of the GPU, leaves the directory for good: [detach] then
+    answers [Error msg] past 30 s, and only a reboot clears it. It is
+    [Error msg] if a file cannot be written, or if the GPU is still not
+    detached, saying why.
 
     Raises [Invalid_argument] if [i < 0]. *)
 

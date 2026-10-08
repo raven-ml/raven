@@ -28,8 +28,11 @@ let ( let* ) = Result.bind
 
    amdgpu releases a GPU's device, its teardown writing to the GPU, when the
    last file of its DRM nodes goes, KFD's references to them included, which
-   Gpus waits for. The release removes the GPU's node from KFD's topology: of an
-   unbound GPU, a node still there means amdgpu has not let go. *)
+   Gpus waits for. The release removes the GPU's node from KFD's topology at its
+   start, and the device's [ip_discovery] directory at its end: of an unbound
+   GPU, either one still there means amdgpu has not let go. A release that never
+   comes, as after a failed resume, leaves the directory for good, and a load of
+   amdgpu then fails on it. *)
 
 let topology = "sys/class/kfd/kfd/topology/nodes"
 
@@ -69,6 +72,9 @@ let unreleased ~root bus =
   in
   if List.exists listed nodes then
     Some "KFD's topology still lists it, which amdgpu's release removes"
+  else if
+    Sys.file_exists (file (strf "sys/bus/pci/devices/%s/ip_discovery" bus))
+  then Some "its ip_discovery directory stays, which amdgpu's release removes"
   else None
 
 (* Numbering *)

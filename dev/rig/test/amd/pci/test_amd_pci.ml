@@ -1198,6 +1198,45 @@ let numbering =
         (fun (_, f) -> raises_match Exn.invalid_arg f);
     ]
 
+(* Letting go: a fixture tree's unbound AMD GPU at 0000:05:00.0, and what of
+   amdgpu's device the kernel still lists for it. amdgpu's release removes its
+   node from KFD's topology at its start and its [ip_discovery] directory at its
+   end, so either one listed means amdgpu has not let go. *)
+
+let r9700 = "0000:05:00.0"
+
+let unbound () =
+  Tree.make [ { (Tree.gpu r9700) with vendor = 0x1002; class_ = 0x030000 } ]
+
+let refusal root =
+  match Rig_amd_pci.open_ ~machine:(Rig_pci.Machine.at root) ~firmware:[] 0 with
+  | Ok _ -> fail "a GPU opened"
+  | Error why -> why
+
+let letting_go =
+  group "letting go"
+    [
+      test "an unbound GPU whose ip_discovery stays is refused an open"
+        (fun () ->
+          let root = unbound () in
+          Tree.add root
+            (strf "sys/bus/pci/devices/%s/ip_discovery/die/0/GC/0/major" r9700)
+            "12\n";
+          Windtrap.contains ~sub:"ip_discovery" (refusal root));
+      test "an unbound GPU KFD's topology lists is refused an open" (fun () ->
+          let root = unbound () in
+          Tree.add root "sys/class/kfd/kfd/topology/nodes/1/properties"
+            "domain 0\nlocation_id 1280\n";
+          Windtrap.contains ~sub:"topology" (refusal root));
+      test "an unbound GPU amdgpu let go of is not refused for it" (fun () ->
+          let root = unbound () in
+          Tree.add root "sys/class/kfd/kfd/topology/nodes/1/properties"
+            "domain 0\nlocation_id 17152\n";
+          let why = refusal root in
+          if contains ~sub:"not let go" why then
+            failf "refused as held by amdgpu: %s" why);
+    ]
+
 let () =
   exit
     (run "rig_amd_pci"
@@ -1216,4 +1255,5 @@ let () =
          interrupts;
          firmware;
          numbering;
+         letting_go;
        ])
