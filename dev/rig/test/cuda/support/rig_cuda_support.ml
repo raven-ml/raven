@@ -12,6 +12,9 @@ external attribute : int -> int = "rig_cuda_test_attribute"
 external register : int -> int -> unit = "rig_cuda_test_register"
 external unregister : int -> unit = "rig_cuda_test_unregister"
 external free_memory : unit -> int = "rig_cuda_test_free_memory"
+external loaded_c : nativeint -> int * int = "rig_cuda_test_loaded"
+
+let functions_loaded f = loaded_c (Nativeint.of_int f)
 
 (* The GPU *)
 
@@ -36,6 +39,10 @@ let bind g =
          "cuMemGetInfo_v2";
          "cuGraphExecKernelNodeSetParams_v2";
          "cuGraphLaunch";
+         "cuFuncIsLoaded";
+         "cuFuncGetModule";
+         "cuModuleGetFunctionCount";
+         "cuModuleEnumerateFunctions";
        |])
 
 include Rig_gpu_support.Make (struct

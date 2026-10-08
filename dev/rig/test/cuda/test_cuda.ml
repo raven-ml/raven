@@ -306,9 +306,22 @@ let images () =
   raises_match Exn.invalid_arg (fun () -> C.entry m "empty");
   raises_match Exn.invalid_arg (fun () -> C.unload g m)
 
+(* Loading places every function's code, whatever CUDA_MODULE_LOADING says:
+   a function CUDA loads lazily, at its [entry], could fail there for lack of
+   memory. One entry, which loads its own function, shows the others. *)
+let loads_every_function () =
+  S.with_ @@ fun { g; _ } ->
+  let m = S.loaded (require_ok (C.image g (S.fixture "kernels.ptx"))) in
+  equal (pair int int) (5, 5)
+    (S.functions_loaded (Option.get (C.entry m "empty")));
+  C.unload g m
+
 let images =
   group ~timeout:60. "images"
-    [ test "load, find their kernels and unload" images ]
+    [
+      test "load, find their kernels and unload" images;
+      test "loading places every function's code" loads_every_function;
+    ]
 
 (* Timeline and loss *)
 

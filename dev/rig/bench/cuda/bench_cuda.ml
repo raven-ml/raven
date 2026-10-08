@@ -232,6 +232,22 @@ let map_host_rows =
         (fun (_, p) -> floor_map_host p n);
     ]
 
+(* Loading an image of 140 kernels, the size of a kernel library's, every
+   function's code placed (Rig_cuda.image), then unloading it. *)
+let image_rows =
+  let loading () =
+    (dev (), In_channel.with_open_bin (Filename.concat fixtures "many.cubin")
+       In_channel.input_all)
+  in
+  Thumper.group "image"
+    [
+      row "load-140" loading (fun (t, bin) ->
+          match C.image t.g bin with
+          | Ok (`Loaded m) -> C.unload t.g m
+          | Ok (`Place _) -> failwith "a CUDA image is placed by CUDA"
+          | Error why -> failwith why);
+    ]
+
 let () =
   S.hold ();
   if Sys.file_exists "/dev/nvidiactl" then
@@ -245,4 +261,5 @@ let () =
            copy_rows;
            alloc_rows;
            map_host_rows;
+           image_rows;
          ]

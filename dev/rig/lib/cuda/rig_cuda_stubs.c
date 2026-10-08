@@ -127,6 +127,7 @@ typedef union {
 
 enum {
   CUDA_SUCCESS = 0,
+  CUDA_ERROR_OUT_OF_MEMORY = 2,
   CUDA_ERROR_NOT_READY = 600,
   CU_DEVICE_ATTRIBUTE_CAN_FLUSH_REMOTE_WRITES = 98,
   CU_POINTER_ATTRIBUTE_RANGE_START_ADDR = 11,
@@ -179,6 +180,9 @@ enum {
   X(cuMemcpyAsync, (CUdeviceptr, CUdeviceptr, size_t, CUstream))               \
   X(cuModuleLoadData, (CUmodule *, const void *))                              \
   X(cuModuleGetFunction, (CUfunction *, CUmodule, const char *))               \
+  X(cuModuleGetFunctionCount, (unsigned int *, CUmodule))                      \
+  X(cuModuleEnumerateFunctions, (CUfunction *, unsigned int, CUmodule))        \
+  X(cuFuncLoad, (CUfunction))                                                  \
   X(cuModuleUnload, (CUmodule))                                                \
   X(cuGraphCreate, (CUgraph *, unsigned int))                                  \
   X(cuGraphAddKernelNode_v2, (CUgraphNode *, CUgraph, const CUgraphNode *,     \
@@ -514,9 +518,34 @@ value caml_rig_cuda_lock(value v_self, value v_lock, value v_address,
 
 /* Images */
 
-/* The module of [v_image], or CUDA's status negated. PTX is text, which
-   CUDA reads up to a NUL: the image is copied with one. Releases the
-   runtime: CUDA may compile it, and waits for the GPU's running work. */
+/* Loads the module of [image] into [*m] with every function's code: under
+   lazy loading, CUDA's default, a function's code is placed at its first
+   use, where an out-of-memory would read as no such kernel or fail a fill.
+   On a failure the module is unloaded and the failure is the answer: an
+   unload CUDA refuses then could only repeat a failed context's error,
+   which the next call meets. */
+static CUresult load_module(CUmodule *m, const char *image) {
+  unsigned int n = 0;
+  CUfunction *fs = NULL;
+  CUresult s = p_cuModuleLoadData(m, image);
+  if (s != CUDA_SUCCESS) return s;
+  s = p_cuModuleGetFunctionCount(&n, *m);
+  if (s == CUDA_SUCCESS && n > 0) {
+    fs = malloc(n * sizeof *fs);
+    s = fs == NULL ? CUDA_ERROR_OUT_OF_MEMORY
+                   : p_cuModuleEnumerateFunctions(fs, n, *m);
+  }
+  for (unsigned int i = 0; i < n && s == CUDA_SUCCESS; i++)
+    s = p_cuFuncLoad(fs[i]);
+  free(fs);
+  if (s != CUDA_SUCCESS) p_cuModuleUnload(*m);
+  return s;
+}
+
+/* The module of [v_image], every function loaded, or CUDA's status
+   negated. PTX is text, which CUDA reads up to a NUL: the image is copied
+   with one. Releases the runtime: CUDA may compile it, and waits for the
+   GPU's running work. */
 value caml_rig_cuda_load_module(value v_self, value v_image) {
   CAMLparam1(v_image);
   struct device *d = Device_val(v_self);
@@ -527,7 +556,7 @@ value caml_rig_cuda_load_module(value v_self, value v_image) {
   if (image == NULL) caml_raise_out_of_memory();
   memcpy(image, String_val(v_image), n);
   image[n] = '\0';
-  RELEASED(IN_CONTEXT(s, d, p_cuModuleLoadData(&m, image)));
+  RELEASED(IN_CONTEXT(s, d, load_module(&m, image)));
   free(image);
   CAMLreturn(answer(s, (intnat)m));
 }

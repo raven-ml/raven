@@ -13,8 +13,8 @@ include Rig_gpu_support.S with type gpu = Rig_cuda.t
 val bind : Rig_cuda.t -> unit
 (** [bind g] makes the CUDA functions of [g]'s capability those {!attribute},
     {!current}, {!locked}, {!register}, {!unregister}, {!read_gpu},
-    {!write_gpu}, {!free_memory}, {!launch} and {!delayed} call. {!open_}
-    binds them. *)
+    {!write_gpu}, {!free_memory}, {!functions_loaded}, {!launch} and
+    {!delayed} call. {!open_} binds them. *)
 
 val attribute : int -> int
 (** [attribute a] is the value of CUDA's device attribute [a] of CUDA's device
@@ -38,6 +38,11 @@ val unregister : int -> unit
 val free_memory : unit -> int
 (** [free_memory ()] is the bytes of GPU [0]'s memory CUDA reports free
     ([cuMemGetInfo]), after a {!with_}. *)
+
+val functions_loaded : int -> int * int
+(** [functions_loaded f] is [(n, k)]: the image of the function [f], an
+    entry's [CUfunction], has [n] functions, and CUDA holds the code of [k] of
+    them loaded on the GPU ([cuFuncIsLoaded]), after a {!with_}. *)
 
 val read_gpu : nativeint -> int -> string
 (** [read_gpu a n] is the [n] bytes of GPU memory at the address [a], read by

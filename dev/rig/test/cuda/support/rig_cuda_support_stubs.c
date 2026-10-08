@@ -52,12 +52,18 @@ static CUresult(CUDAAPI *host_unregister)(void *);
 static CUresult(CUDAAPI *mem_get_info)(size_t *, size_t *);
 static CUresult(CUDAAPI *set_params)(void *, void *, const void *);
 static CUresult(CUDAAPI *graph_launch_fn)(void *, void *);
+static CUresult(CUDAAPI *func_is_loaded)(int *, void *);
+static CUresult(CUDAAPI *func_get_module)(void **, void *);
+static CUresult(CUDAAPI *function_count)(unsigned int *, void *);
+static CUresult(CUDAAPI *enumerate_functions)(void **, unsigned int, void *);
 
 /* Binds cuLaunchKernel, cuCtxGetCurrent, cuDevicePrimaryCtxRetain,
    cuCtxPushCurrent_v2, cuCtxPopCurrent_v2, cuMemHostGetDevicePointer_v2,
    cuDeviceGetAttribute, cuMemcpyAsync, cuMemcpyDtoH_v2, cuMemcpyHtoD_v2,
    cuMemHostRegister_v2, cuMemHostUnregister, cuMemGetInfo_v2,
-   cuGraphExecKernelNodeSetParams_v2 and cuGraphLaunch, in this order. */
+   cuGraphExecKernelNodeSetParams_v2, cuGraphLaunch, cuFuncIsLoaded,
+   cuFuncGetModule, cuModuleGetFunctionCount and cuModuleEnumerateFunctions,
+   in this order. */
 value rig_cuda_test_bind(value v_f) {
   launch_kernel = Ptr_val(Field(v_f, 0));
   get_current = Ptr_val(Field(v_f, 1));
@@ -74,6 +80,10 @@ value rig_cuda_test_bind(value v_f) {
   mem_get_info = Ptr_val(Field(v_f, 12));
   set_params = Ptr_val(Field(v_f, 13));
   graph_launch_fn = Ptr_val(Field(v_f, 14));
+  func_is_loaded = Ptr_val(Field(v_f, 15));
+  func_get_module = Ptr_val(Field(v_f, 16));
+  function_count = Ptr_val(Field(v_f, 17));
+  enumerate_functions = Ptr_val(Field(v_f, 18));
   return Val_unit;
 }
 
@@ -165,6 +175,32 @@ value rig_cuda_test_write_gpu(value v_a, value v_s) {
   pop(&popped);
   if (s != 0) caml_failwith("cuMemcpyHtoD");
   return Val_unit;
+}
+
+/* The count of the functions of the module of the function [v_f], and of
+   those whose code CUDA holds loaded (CU_FUNCTION_LOADING_STATE_LOADED). */
+value rig_cuda_test_loaded(value v_f) {
+  CAMLparam1(v_f);
+  CAMLlocal1(r);
+  void *m = NULL, **fs;
+  unsigned int n = 0, loaded = 0;
+  if (func_get_module(&m, Ptr_val(v_f)) != 0 || function_count(&n, m) != 0)
+    caml_failwith("cuModuleGetFunctionCount");
+  fs = calloc(n + 1, sizeof *fs);
+  if (fs == NULL) caml_raise_out_of_memory();
+  if (enumerate_functions(fs, n, m) != 0) {
+    free(fs);
+    caml_failwith("cuModuleEnumerateFunctions");
+  }
+  for (unsigned int i = 0; i < n; i++) {
+    int state = 0;
+    if (func_is_loaded(&state, fs[i]) == 0 && state == 1) loaded++;
+  }
+  free(fs);
+  r = caml_alloc_tuple(2);
+  Store_field(r, 0, Val_int(n));
+  Store_field(r, 1, Val_int(loaded));
+  CAMLreturn(r);
 }
 
 /* CUDA device 0's attribute [v_a]. */

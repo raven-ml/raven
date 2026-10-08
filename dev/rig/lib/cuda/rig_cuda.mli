@@ -43,10 +43,11 @@
     loaded in its place, for the whole process. Building and linking this
     library needs no CUDA installation.
 
-    {b Requirements.} The device writes its timeline from its streams with
-    64-bit stream memory operations, and its memory and the host's share one
-    address space (unified addressing). A GPU without either does not open;
-    there is no fallback.
+    {b Requirements.} A CUDA library of CUDA 12.4 or later (driver 550). The
+    device writes its timeline from its streams with 64-bit stream memory
+    operations, and its memory and the host's share one address space
+    (unified addressing). A GPU without either does not open; there is no
+    fallback.
 
     {b Other CUDA libraries} in the process share the primary context. Every
     call that needs a current context makes the device's current on the calling
@@ -115,12 +116,13 @@ val open_ : int -> (t, string) result
     with streams of its own.
 
     The result is [Error msg] if the CUDA library cannot be loaded or
-    initialised, if [i >= count ()], if the GPU lacks 64-bit stream memory
-    operations or unified addressing, while a device of GPU [i] is open or was
-    stopped while its work still ran and that work runs on, or with CUDA's
-    error, such as the error a fault left in the GPU's context. A GPU has one
-    device at a time: two would wait on each other's words through the context's
-    shared hardware queues, ordering CUDA does not see.
+    initialised, or is older than CUDA 12.4 (driver 550), if [i >= count ()],
+    if the GPU lacks 64-bit stream memory operations or unified addressing,
+    while a device of GPU [i] is open or was stopped while its work still ran
+    and that work runs on, or with CUDA's error, such as the error a fault left
+    in the GPU's context. A GPU has one device at a time: two would wait on each
+    other's words through the context's shared hardware queues, ordering CUDA
+    does not see.
 
     Raises [Invalid_argument] if [i < 0]. *)
 
@@ -262,9 +264,12 @@ val image :
   result
 (** [image g bin] is [Ok (`Loaded m)] with [m] the module of [bin], a cubin, a
     fatbin or PTX text, which CUDA compiles for the GPU. CUDA holds the code
-    itself. CUDA may wait for all of the GPU's work before it loads [bin], and
-    [image] lets other domains run meanwhile. The result is [Error msg] with
-    CUDA's error if CUDA refuses [bin], for instance a cubin for another GPU. *)
+    itself: [image] places every function's code before it returns, whatever
+    [CUDA_MODULE_LOADING] asks, so {!entry} and a launch place none. CUDA may
+    wait for all of the GPU's work before it loads [bin], and [image] lets
+    other domains run meanwhile. The result is [Error msg] with CUDA's error
+    if CUDA refuses [bin], for instance a cubin for another GPU, or lacks the
+    memory for its code. *)
 
 val entry : image -> string -> int option
 (** [entry m f] is [Some h], [h] the [CUfunction] of the kernel [f] of [m],
