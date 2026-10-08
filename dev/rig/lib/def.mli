@@ -71,13 +71,19 @@ type device = {
   fault : exn -> string option;  (** The driver's faults. *)
   capability : capability option;
   release : int;  (** The C release list. *)
-  lock : Lock.t;  (** Guards everything mutable below. *)
-  mutable budget : int;
-  mutable used : int;  (** Own bytes in live buffers, code and cache. *)
-  mutable cached : int;
+  lock : Lock.t;
+      (** Guards everything mutable below. The atomic fields are written under
+          it and read without it too, such as by a drain that finds nothing to
+          do. *)
+  mutable budget : int; [@atomic]
+  mutable used : int; [@atomic]
+      (** Own bytes in live buffers, code and cache. *)
+  mutable cached : int; [@atomic]
   cache : entry list Hashtbl.Make(Int).t;  (** By [bytes * 8 + kind]. *)
-  mutable retiring : entry list;  (** Waiting for other devices' uses. *)
-  mutable pending : (int * pending) list;  (** Waiting for its own value. *)
+  mutable retiring : entry list; [@atomic]
+      (** Waiting for other devices' uses. *)
+  mutable pending : (int * pending) list; [@atomic]
+      (** Waiting for its own value. *)
   mutable pairs : int array;  (** By producer index: 0 unknown, 1 host. *)
   mutable pair_maps : region list;
   mutable afters : (int * (unit -> unit)) list;
