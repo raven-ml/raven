@@ -387,26 +387,45 @@ let test_allocation () =
   equal int 0 words
 
 (* Two domains submitting one submission: the submits take turns, each takes the
-   device's next value, and every fill runs. *)
-type shared = { dev : C.t; arg : B.t; sub : Sub.t }
+   device's next value, and every fill runs. A program counts values from
+   [base], its device's value when it began. *)
+type shared = { dev : C.t; base : int; arg : B.t; sub : Sub.t }
 type shared_model = { mutable values : int }
 
+(* Devices go back to a pool when their program ends. *)
+let shared_pool = Mutex.create ()
+let shared_free = ref []
 let shared_opened = Atomic.make 0
 
 let make_shared () =
-  let n = Atomic.fetch_and_add shared_opened 1 in
-  let d = memory (Printf.sprintf "submit:shared-%d" n) in
+  let d =
+    match
+      Mutex.protect shared_pool (fun () ->
+          match !shared_free with
+          | d :: rest ->
+              shared_free := rest;
+              Some d
+          | [] -> None)
+    with
+    | Some d -> d
+    | None ->
+        memory
+          (Printf.sprintf "submit:shared-%d"
+             (Atomic.fetch_and_add shared_opened 1))
+  in
   let arg = B.create C.host 8 in
   Support.store (B.address arg) 0;
   {
     dev = d;
+    base = C.submitted d;
     arg;
     sub = Sub.make ~reads:0 ~writes:0 ~waits:0 d [| bump arg; bump arg |];
   }
 
 (* Every submit ran both its fills. *)
 let release_shared t =
-  equal ~msg:"fills" int (2 * C.submitted t.dev) (word t.arg)
+  equal ~msg:"fills" int (2 * (C.submitted t.dev - t.base)) (word t.arg);
+  Mutex.protect shared_pool (fun () -> shared_free := t.dev :: !shared_free)
 
 let shared =
   abstract
@@ -428,7 +447,7 @@ let shared_commands =
     command "submit"
       (shared ^-> judges int)
       judge_submit
-      (fun t -> C.Point.value (C.submit t.sub));
+      (fun t -> C.Point.value (C.submit t.sub) - t.base);
   ]
 
 let tests =

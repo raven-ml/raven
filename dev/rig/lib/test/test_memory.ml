@@ -304,12 +304,77 @@ let test_host_cache () =
   Bigarray.Array1.fill (B.bigarray Bigarray.char b) 'b';
   equal ~msg:"the view keeps its bytes" char 'a' view.{n - 1}
 
+(* Two domains allocating on one device under a budget of three buffers: the
+   live buffers never exceed it. *)
+type budgeted = { d : C.t; live : B.t list ref; lock : Mutex.t }
+type budgeted_model = { mutable held : int }
+
+let per = 4 * kib
+
+(* Devices go back to a pool when their program ends, with their buffers
+   dropped: a drain at the next program's first allocation takes them back. *)
+let budgeted_pool = Mutex.create ()
+let budgeted_free = ref []
+let budgeted_opened = Atomic.make 0
+
+let make_budgeted () =
+  let d =
+    match
+      Mutex.protect budgeted_pool (fun () ->
+          match !budgeted_free with
+          | d :: rest ->
+              budgeted_free := rest;
+              Some d
+          | [] -> None)
+    with
+    | Some d -> d
+    | None ->
+        let n = Atomic.fetch_and_add budgeted_opened 1 in
+        let d, _ = P.open_ (Printf.sprintf "memory:budgeted-%d" n) in
+        C.set_budget d (3 * per);
+        d
+  in
+  { d; live = ref []; lock = Mutex.create () }
+
+let release_budgeted t =
+  t.live := [];
+  Gc.full_major ();
+  C.free_cache t.d;
+  Mutex.protect budgeted_pool (fun () -> budgeted_free := t.d :: !budgeted_free)
+
+let alloc_budgeted t =
+  let b = B.create t.d per in
+  Mutex.protect t.lock (fun () -> t.live := b :: !(t.live))
+
+let judge_alloc r = function
+  | Ok () ->
+      at_most ~msg:"live buffers" int ~than:2 r.held;
+      r.held <- r.held + 1
+  | Error (C.Out_of_memory _) -> equal ~msg:"live buffers" int 3 r.held
+  | Error e -> raise e
+
+let budgeted =
+  abstract
+    ~pp:(fun ppf r -> Format.fprintf ppf "held %d" r.held)
+    ~release:release_budgeted "b"
+
+let budget_commands =
+  [
+    command "open"
+      (Gen.unit @-> makes budgeted)
+      (fun () -> { held = 0 })
+      make_budgeted;
+    command "alloc" (budgeted ^-> judges unit) judge_alloc alloc_budgeted;
+  ]
+
 let tests =
   [
     group ~timeout "budget"
       [
         test "an allocation over the budget raises at once and keeps the cache"
           test_over_budget;
+        stateful ~count:15 ~domains:2
+          "two domains' allocations stay within the budget" budget_commands;
         test "an allocation the driver refuses releases the cache, then raises"
           test_refused;
         test "an allocation the driver refuses collects unreachable buffers"

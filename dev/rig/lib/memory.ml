@@ -268,6 +268,25 @@ let budget_of d = function
 
 let owns d kind = budget_of d kind = Device_budget
 
+(* Takes [n] bytes of the room of [budget] on [d], if it has them. *)
+let take_room d budget n =
+  match budget with
+  | Device_budget ->
+      Dev.protect d (fun () ->
+          d.used + n <= d.budget
+          && begin
+            d.used <- d.used + n;
+            true
+          end)
+  | Host_budget -> heap_reserve n Dev.host.budget
+  | No_budget -> true
+
+let give_room d budget n =
+  match budget with
+  | Device_budget -> Dev.protect d (fun () -> d.used <- d.used - n)
+  | Host_budget -> heap_release n
+  | No_budget -> ()
+
 (* Releases *)
 
 (* Puts [p] on [d]'s pending list, due once [d] reached the value it has
@@ -293,12 +312,9 @@ let free_entry (e : entry) =
   Option.iter (free_region d) e.region;
   Option.iter (free_io d) e.io_region;
   drop_stamps e;
-  match budget_of d e.memory with
-  | Device_budget ->
-      Dev.protect d (fun () -> d.used <- d.used - e.bytes);
-      note d
-  | Host_budget -> heap_release e.bytes
-  | No_budget -> ()
+  let budget = budget_of d e.memory in
+  give_room d budget e.bytes;
+  if budget = Device_budget then note d
 
 let key n kind =
   let k =
@@ -618,23 +634,28 @@ let of_entry d e =
   m.token <- token d.release (Memory e) e.bytes (room d) live;
   m
 
+(* [new_entry] within the budget memory of [kind] counts in: its room is taken
+   before the driver is asked, so two domains' allocations never both fit the
+   last room, and given back if the driver refuses. *)
+let new_counted d kind n =
+  let budget = budget_of d kind in
+  if not (take_room d budget n) then None
+  else
+    match new_entry d kind n with
+    | Some _ as e -> e
+    | None ->
+        give_room d budget n;
+        None
+    | exception x ->
+        give_room d budget n;
+        raise x
+
 let rec alloc_entry d kind n round =
   match take_cached d kind n with
   | Some e -> e
   | None -> (
-      let budget = budget_of d kind in
-      let fits =
-        match budget with
-        | Device_budget -> Dev.protect d (fun () -> d.used + n <= d.budget)
-        | Host_budget -> heap_reserve n Dev.host.budget
-        | No_budget -> true
-      in
-      let made = if fits then new_entry d kind n else None in
-      if fits && Option.is_none made && budget = Host_budget then heap_release n;
-      match made with
+      match new_counted d kind n with
       | Some e ->
-          if budget = Device_budget then
-            Dev.protect d (fun () -> d.used <- d.used + n);
           note d;
           e
       (* Mapped memory the window or the budget cannot hold is pinned memory,
