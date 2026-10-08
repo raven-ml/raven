@@ -63,6 +63,13 @@ static const size_t stack_bytes = 8 << 20;
    together. */
 enum { line_bytes = 128 };
 
+/* Hook points: the suite compiles this file again with NX_POOL_HOOK defined
+   (test/nx_pool_hooked_probe_stubs.c), to stop threads at the named points
+   and hold an interleaving of the protocol below. Here they are empty. */
+#ifndef NX_POOL_HOOK
+#define NX_POOL_HOOK(point) ((void)0)
+#endif
+
 /* Clock */
 
 static uint64_t now_ns(void) {
@@ -323,6 +330,7 @@ static void claim(pool *p, const job *j, int id) {
   for (;;) {
     int64_t i = atomic_fetch_add_explicit(&p->next, 1, memory_order_relaxed);
     if (i >= j->chunks) return;
+    NX_POOL_HOOK(chunk);
     j->body(bound(j, i), bound(j, i + 1), id, j->ctx);
   }
 }
@@ -342,8 +350,9 @@ static void claim(pool *p, const job *j, int id) {
 static const uint64_t closed = (uint64_t)1 << 63;
 
 static void leave(pool *p) {
-  if (atomic_fetch_sub(&p->inside, 1) == (closed | 1) &&
-      atomic_load(&p->waiting)) {
+  uint64_t was = atomic_fetch_sub(&p->inside, 1);
+  NX_POOL_HOOK(left);
+  if (was == (closed | 1) && atomic_load(&p->waiting)) {
     pthread_mutex_lock(&p->mtx);
     pthread_cond_signal(&p->done);
     pthread_mutex_unlock(&p->mtx);
@@ -353,9 +362,11 @@ static void leave(pool *p) {
 static int enter(pool *p) {
   if (atomic_load_explicit(&p->inside, memory_order_relaxed) & closed)
     return 0;
+  NX_POOL_HOOK(enter_open);
   if (!(atomic_fetch_add_explicit(&p->inside, 1, memory_order_acquire) &
         closed))
     return 1;
+  NX_POOL_HOOK(enter_refused);
   leave(p);
   return 0;
 }
@@ -372,6 +383,7 @@ static uint64_t park_worker(pool *p, int id, uint64_t seen) {
   uint64_t bit = (uint64_t)1 << (id % 64);
   pthread_mutex_lock(&p->mtx);
   atomic_fetch_or(word, bit);
+  NX_POOL_HOOK(parking);
   uint64_t g;
   while ((g = atomic_load(&p->generation)) == seen)
     pthread_cond_wait(&p->wake, &p->mtx);
@@ -399,8 +411,10 @@ static int participant_parked(pool *p, int threads) {
 static uint64_t next_job(pool *p, int id, uint64_t g, uint64_t deadline) {
   for (;;) {
     uint64_t v = spin(&p->generation, g, LEAVE, deadline);
-    if (v == g || (id >= (int)(uint32_t)v && now_ns() >= deadline))
+    if (v == g || (id >= (int)(uint32_t)v && now_ns() >= deadline)) {
+      NX_POOL_HOOK(park);
       v = park_worker(p, id, v);
+    }
     if (id < (int)(uint32_t)v) return v;
     g = v;
   }
@@ -421,6 +435,7 @@ static void *work(void *arg) {
     /* The job open by now may be a later one than [seen], whose threads
        the worker learns inside. */
     if (enter(p)) {
+      NX_POOL_HOOK(entered);
       if (w->id < p->job.threads) claim(p, &p->job, w->id);
       leave(p);
     }
@@ -571,8 +586,10 @@ __attribute__((noinline)) static void run(int t, int64_t total, int64_t c,
   p->job = j;
   atomic_store_explicit(&p->next, 0, memory_order_relaxed);
   atomic_fetch_and_explicit(&p->inside, ~closed, memory_order_release);
+  NX_POOL_HOOK(opened);
   uint64_t g = atomic_load_explicit(&p->generation, memory_order_relaxed);
   atomic_store(&p->generation, ((g >> 32) + 1) << 32 | (uint32_t)t);
+  NX_POOL_HOOK(published);
   if (participant_parked(p, t)) {
     pthread_mutex_lock(&p->mtx);
     pthread_cond_broadcast(&p->wake);
@@ -583,10 +600,14 @@ __attribute__((noinline)) static void run(int t, int64_t total, int64_t c,
   claim(p, &j, 0);
   in_body = 0;
 
-  if (atomic_fetch_or(&p->inside, closed) != 0 &&
+  NX_POOL_HOOK(claimed);
+  uint64_t was = atomic_fetch_or(&p->inside, closed);
+  NX_POOL_HOOK(closed);
+  if (was != 0 &&
       spin(&p->inside, closed, REACH, now_ns() + spin_ns) != closed) {
     pthread_mutex_lock(&p->mtx);
     atomic_store(&p->waiting, 1);
+    NX_POOL_HOOK(waiting);
     while (atomic_load(&p->inside) != closed)
       pthread_cond_wait(&p->done, &p->mtx);
     atomic_store(&p->waiting, 0);
