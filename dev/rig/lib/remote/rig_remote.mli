@@ -3,75 +3,96 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Another machine, reached over a socket.
+(** Devices of other machines, through an agent on each.
 
-    A machine runs a {e server} ({!listen}) that serves its PCI functions and
-    its host's memory over TCP to one {e client} at a time. A process
-    {e connects} to it ({!connect}) and gets two things: the machine
-    ({!machine}), whose GPUs a path that drives them over PCI opens as it opens
-    this machine's, and the machine's host ({!host}), a device whose memory the
-    server holds and the connection reads and writes.
+    A {e job} is one process, the {e controller}, and one {e agent} on each
+    other machine: a process that opens its machine's devices for the controller
+    and runs the work the controller hands them ({!serve}). The controller
+    {!connect}s to every agent of the job at once, and gets, for each other
+    machine, devices of two kinds:
+    - the machine's {e host} ({!hosts}): a device whose memory is the agent's;
+    - a {e proxy} of each device the agent opens ({!devices}): its memory is
+      that device's.
+
+    Both copy between their machine's memory and this process's. A program uses
+    them through {!Rig} as it uses this machine's devices. {!Rig.host_of} of
+    each is the machine's host: two devices are of one machine iff their hosts
+    are equal.
 
     {v
-       this process                               the server's process
-      ─────────────────────────────────          ─────────────────────────
-       machine c ── Machine.t ── Function.t       functions it took ── GPU
-                         │                              │
-                     Window.t ─┐                    their windows
-                               ├── one stream ──>       │
-       host c ──── io device ──┘                    host memory
+       controller                                   agent of machine B
+      ───────────────────────────────────          ─────────────────────────
+       hosts j, devices h ─ alloc, free ────────>  Rig.Buffer.create
+                          ── hand-overs ────────>  Rig.submit, copies
+                         <── words, copies' bytes  points reached
     v}
 
-    {1:order Order and cost}
+    {1:order Order}
 
-    One connection carries every operation, in the order the process makes them.
-    An operation that gives nothing back, such as a store to a window or the
-    release of a function, is {e posted}: it returns once sent, and the server
-    runs it before any later operation. A configuration write is not: it returns
-    once it reached the function. Every other operation waits for the server's
-    answer. So each domain's accesses reach the machine in the order it makes
-    them, and a load that returns has seen every store sent before it. A load
-    costs a round trip; a store, a send. A driver whose device is on such a
-    machine declares that its submission may block.
+    Every call on a job's device that reaches its agent is a {e frame} on the
+    connection, and a device's hand-over of one value is one frame. Frames leave
+    in the order their calls made them, from every domain, and the agent applies
+    them in that order through its own rig. So a machine's memory is ordered by
+    its own rig: work the controller hands over follows, on that machine, every
+    use of the memory it names that was handed over before it.
 
-    {1:failures Failures}
+    A device's word, the host's included, advances in value order, and only once
+    the agent's devices reached the work of the value: for a copy into this
+    process's memory, once the copy's bytes are in that memory. Values are
+    assigned here, under each device's turn, as for any device. A wait between
+    two devices of one machine is made there, in the agent's queues.
 
-    The connection {e fails} for good when the server sends no byte for
-    [timeout_ms] while the process waits for an answer, when the stream breaks,
-    or when a posted operation fails on the server, which then reports why and
-    ends the session. From then on:
-    - the machine is failed ({!Rig_pci.Machine.failed}), with a reason that
-      starts with the machine's name;
-    - its accesses raise nothing: a load gives all ones and a store is dropped,
-      as on a function that left the bus, so a driver over it owes the checks
-      {!Rig_pci} lists;
-    - its requests, such as taking a function, answer [Error], and its list of
-      functions is empty;
-    - the host's next read or write loses it ({!Rig.Lost}).
+    {1:costs Costs}
 
-    A child of [fork] never uses its parent's connection, whose stream it would
-    interleave with the parent's: there the connection is failed from the start,
-    and the parent's goes on.
+    A hand-over costs a copy of its parts into the connection's queue, which a
+    thread of the connection sends: it returns once queued. It waits while the
+    queue is full, while its device has more than 64 MiB of work handed over and
+    not done, and, for a copy from this process's memory, until the work that
+    copy follows is done. An allocation, a mapping and opening devices each wait
+    for the agent's answer, a round trip. A copy between this process's memory
+    and a machine's carries its bytes across the connection once; a copy between
+    two devices of one machine never crosses it.
 
-    A request the server refuses, such as taking a function another process
-    holds, answers [Error] and leaves the connection usable. The server stops
-    the DMA of the functions a client took and frees its memory once the
-    connection is gone, however it ended.
+    {1:failure Failure}
+
+    The job {e fails} once, as a whole, with its first failure as the
+    {e root cause} ({!failure}), when:
+    - a connection between two of its processes ends without a close;
+    - no byte comes on a connection for 10 seconds, though each end sends at
+      least once a second;
+    - a frame is malformed or names nothing of the job;
+    - a device of any of its processes is lost other than by a close, as
+      {!Rig.failure} reports it. This process notices its own within a second.
+
+    Then, on each of its processes that still answer: every connection is shut
+    down, every count of a rail is raised so that no wait for one blocks, and
+    every device of the process but {!Rig.host} is lost with the root cause
+    ({!Rig.fail}). Agents then return from {!serve}. Here the call in progress,
+    and every later use of any device of the process but {!Rig.host}, raises
+    {!Rig.Lost} with the root cause. The process stays failed: it starts no
+    other job ({!connect}).
+
+    A job has no world before it has agents, and a device of a process in no job
+    fails alone, as {!Rig} states.
+
+    A child of [fork] never uses its parent's connections, whose streams it
+    would interleave with the parent's: there they are failed from the start,
+    the child's devices of the job lost, and the parent's job goes on.
 
     {1:security Security}
 
-    A client is root on the server's machine: it programs its functions' DMA and
-    reads and writes the memory it allocated there. Both ends prove that they
-    hold the same key before any operation, by HMAC over BLAKE2b-256 of fresh
-    random nonces of both, and the key never crosses the network. Nothing
-    protects the stream after that. Listen only on a network whose every host
-    may drive the machine, such as the machines' own, or on the loopback behind
-    a tunnel that fails when it cannot forward, such as
-    [ssh -o ExitOnForwardFailure=yes -L ...]. The client proves the key first,
-    so whoever answers in the server's place learns a proof against which it can
-    test guesses of the key: make the key random, with
-    [head -c 32 /dev/urandom > FILE && chmod 600 FILE], and read it with
-    {!read_key}.
+    Each pair of the job's processes proves, on connecting, that both hold the
+    job's key, by HMAC over BLAKE2b-256 of fresh random nonces of both; the key
+    never crosses the network. A process that does not hold the key is refused,
+    so an agent of another job, or one left from an earlier job, is refused when
+    each job has a key of its own, as [rig run] gives it. Nothing after the
+    proofs is authenticated or encrypted: whoever reads the network reads the
+    bytes of copies and of runs, and whoever writes it can change them. Listen
+    only on a network that only the job's machines read and write, such as the
+    cluster's own. The dialing end proves the key first, so whoever answers in a
+    listener's place learns a proof against which it can test guesses: make the
+    key random, with [head -c 32 /dev/urandom > FILE && chmod 600 FILE], and
+    read it with {!read_key}.
 
     {1:references References}
 
@@ -84,94 +105,126 @@
       {e The BLAKE2 Cryptographic Hash and Message Authentication Code}:
       BLAKE2b, its block and digest sizes. *)
 
-(** {1:connections Connections} *)
+(** {1:jobs Jobs} *)
 
 type t
-(** The type for connections to another machine. Every function may be called
-    from any domain at once; the connection runs one operation at a time. *)
+(** The type for jobs, seen from their controller. Every function may be called
+    from any domain at once. *)
 
-val connect :
-  ?timeout_ms:int -> key:string -> string -> int -> (t, string) result
-(** [connect ~key host port] connects to the server listening at [host] and
-    [port], proves [key] to it, checks that it proves [key] back, and opens the
-    machine's host ({!host}). [timeout_ms] (defaults to [30_000]) bounds the
-    connection, the handshake and, afterwards, each wait for the server's next
-    byte; an operation the server runs for longer, such as a reset, fails the
-    connection.
+val connect : key:string -> (string * int) list -> (t, string) result
+(** [connect ~key agents] starts a job with an agent at each host and port of
+    [agents]. It connects to each agent, proves [key] to it and checks that it
+    proves [key] back, has the agents connect to each other likewise, and opens
+    each machine's host ({!hosts}). It waits at most 10 seconds for each answer.
+    Once it returns, the job's processes watch each other, and the process
+    closes the job at exit ({!close}).
 
-    [Error why] if the server cannot be reached, is busy with another client or
-    speaks another version of the protocol, if either end does not know the key,
-    or if the server describes its machine wrongly. [why] starts with
-    ["HOST:PORT: "].
+    Each machine's name is ["HOST:PORT"] as [agents] gives them, followed by
+    ["#n"] for the process's [n]th connection to that address from the second
+    on: a name names one machine for the life of the process, so a device opened
+    on one job's machine is never another's.
 
-    Raises [Invalid_argument] if [key] has fewer than 16 bytes or if
-    [timeout_ms <= 0]. *)
+    [Error why] if an agent cannot be reached, serves another job, speaks
+    another version of the protocol, or does not know [key], if the controller
+    does not, or if two agents cannot connect to each other, [why] starting with
+    ["HOST:PORT: "]; and if the process failed ({!Rig.failure}), [why] its
+    failure: a process whose job failed, or that lost a device before, starts no
+    job. Nothing of the job is left: the agents reached are told it failed.
 
-val machine : t -> Rig_pci.Machine.t
-(** [machine c] is the machine [c] reaches. Its name is ["HOST:PORT"] as
-    {!connect} was given them, followed by ["#n"] for the process's [n]th
-    connection to that address from the second on: a name identifies one
-    connection's machine for the life of the process, so a device opened on it
-    is never another connection's. Its functions are those of the server's
-    machine; its system memory, reservations and DMA mappings are made in the
-    server's process. A function behind an IOMMU reaches memory at device
-    addresses the server maps for it. A function has no interrupts:
-    {!Rig_pci.Function.interrupt} is [false] at once. *)
+    Raises [Invalid_argument] if [key] has fewer than 16 or more than 4096
+    bytes, [agents] is empty or lists an address twice, or a job of the process
+    is open. *)
 
-val host : t -> Rig.t
-(** [host c] is the host of [c]'s machine, an io device ({!Rig.Io})
-    named ["CPU@NAME"], [NAME] the machine's name: {!Rig.host_of} of
-    every device of the machine. Its memory is memory of the server's process,
-    starting on a page, which the machine's functions may pin; it computes
-    nothing, and the process reaches its bytes only by copies over [c]. A write
-    returns once sent; if it fails on the server, the host's next use raises
-    {!Rig.Lost}. *)
+val hosts : t -> Rig.t list
+(** [hosts j] is the host of each of [j]'s machines, in the order {!connect} was
+    given their agents. A host is named ["CPU@NAME"], [NAME] its machine's name,
+    and is {!Rig.host_of} of every device of its machine. Its {!Rig.arch} is the
+    agent's instruction set, and its memory is the agent's. Its queues are
+    ["COMPUTE:0"] and ["COPY:0"]; it runs copies between its memory and this
+    process's ({!Rig.Buffer.copy}). It loads no code: {!Rig.Image.load} on it is
+    [Error].
+
+    Its capability record ({!Rig.capability}, {!Rig_remote_abi.key}) is a
+    {!Rig_remote_abi.Host}, whose function makes rails between its machine and
+    another of the job, or this process's. *)
+
+val devices : Rig.t -> string -> (Rig.t list, string) result
+(** [devices h kind] is a proxy of each device of [kind] that the agent of [h]'s
+    machine serves ({!serve}), [h] a host of {!hosts}, in the agent's index
+    order, opened at the first call for [kind] and the same devices at the next
+    ones. A proxy's name is the agent's name for the device followed by
+    ["@NAME"], [NAME] the machine's name, as ["CUDA:3@h100-b:7000"]. Its
+    {!Rig.arch} and {!Rig.budget} are the agent's device's when it opened, and
+    {!Rig.reaches} answers between devices of the machine as the agent's rig
+    does. It loads no code: {!Rig.Image.load} on it is [Error], naming the
+    machine's host. Its capability record is a {!Rig_remote_abi.Device} with the
+    device's id on its machine.
+
+    A proxy copies between memory of its machine and this process's memory, as
+    one {!Rig.Submission.Copy} the agent runs ({!Rig.Buffer.copy}). This process
+    writes the bytes a copy brings back only into the memory its copy named.
+
+    [Error why] if the agent serves no devices of [kind] or its opener fails,
+    [why] starting with the machine's name, or if the job failed or was closed,
+    [why] its root cause or that it was closed.
+
+    Raises [Invalid_argument] if [h] is no host {!hosts} gave. *)
+
+val failure : t -> string option
+(** [failure j] is [Some why] if [j] failed, [why] its root cause, and [None]
+    otherwise. It raises nothing and waits for nothing. *)
 
 val close : t -> unit
-(** [close c] ends the connection once the operations in flight in other domains
-    returned, and returns once the server released what [c] held, or at once if
-    [c] had failed: the machine fails with the reason
-    ["NAME: the connection is closed"], [NAME] the machine's name. Closing it
-    again does nothing. *)
+(** [close j] ends [j] in order. It closes each machine's host ({!Rig.close}),
+    which waits for the work submitted on each of the machine's devices and
+    closes them first; then each agent receives a close, releases what the job
+    held on its machine and returns from {!serve}. It returns once every agent
+    did, or at once if [j] failed or was closed. A close is no failure of the
+    job or of the process. *)
 
-(** {1:serving Serving} *)
+(** {1:agents Agents} *)
 
-type server
-(** The type for servers of this machine. *)
+type agent
+(** The type for agents of this machine. *)
 
-val listen : key:string -> string -> int -> (server, string) result
-(** [listen ~key host port] listens at [host] and [port] and serves this machine
-    ({!Rig_pci.Machine.this}) and its host's memory, from two domains of its
-    own, until {!stop}, to clients that prove [key]. Port [0] lets the system
-    choose ({!port}).
-
-    The server serves one client at a time: its functions' memory lives at
-    addresses that client chooses in the server's process, where two would
-    collide. A second client that proves the key is told the server is busy. A
-    connection holds nothing until it proves the key: the server runs up to 64
-    handshakes at once, each for at most 10 seconds, and tells the connections
-    beyond those that it has too many. A client that answers no keepalive probe
-    for about a minute, such as one whose machine lost power, is gone. Nothing a
-    connection does stops the server from accepting the next.
-
-    When a client leaves, for whatever reason, the server turns bus mastering
-    off on every function it took, so that their DMA stops, then frees its
-    memory and releases its functions. If a function's bus mastering cannot be
-    turned off, the server keeps the client's memory for as long as it runs,
-    refuses to map memory over it again, and says so on its standard error.
+val listen : key:string -> string -> int -> (agent, string) result
+(** [listen ~key host port] listens at [host] and [port] for the processes of
+    one job that prove [key]. Port [0] lets the system choose ({!port}). It
+    holds nothing until a controller proves [key]; connections beyond 64 waiting
+    for their proofs are told it has too many, and a connection that proves
+    nothing within 10 seconds is dropped.
 
     [Error why] if [host] does not resolve or the process cannot listen there.
 
-    Raises [Invalid_argument] if [key] has fewer than 16 bytes. *)
+    Raises [Invalid_argument] if [key] has fewer than 16 or more than 4096
+    bytes. *)
 
-val port : server -> int
-(** [port s] is the port [s] listens at: the one {!listen} was given, or the one
+val port : agent -> int
+(** [port a] is the port [a] listens at: the one {!listen} was given, or the one
     the system chose for [0]. *)
 
-val stop : server -> unit
-(** [stop s] stops listening, ends the client's session, cleans up after it as
-    {!listen} says, and returns once [s] has stopped. Stopping it again does
-    nothing. *)
+val serve :
+  agent ->
+  (string * (unit -> (Rig.t list, string) result)) list ->
+  (unit, string) result
+(** [serve a kinds] makes the process the agent of one job on its machine, and
+    returns when the job ends. It waits for a controller that proves [a]'s key,
+    then for the job's other agents; a second controller is told the agent
+    serves another job. It opens the devices of a kind of [kinds] at the
+    controller's first {!devices} call for it, with the kind's opener, runs the
+    work the controller hands over, and advances each device's word as
+    {{!order}Order} says. It applies the controller's frames from one domain, in
+    the order they were made.
+
+    The result is [Ok ()] once the controller closed the job ({!close}), every
+    device's work handed over is done and the job's memory is released, and
+    [Error why] once the job failed, [why] its root cause, every device of the
+    process lost. After [Error], a GPU that no kernel driver resets may still
+    run into memory the process holds: exit the process. [a] listens no more
+    once [serve] returns.
+
+    Raises [Invalid_argument] if [a] served already, or [kinds] names a kind
+    twice. *)
 
 (** {1:keys Keys} *)
 
@@ -184,11 +237,3 @@ val read_key : string -> (string, string) result
     [Error why] naming [file] if it cannot be opened, is no regular file,
     belongs to another user, may be read or written by others, or holds too few
     or too many bytes. *)
-
-(**/**)
-
-val window : t -> int -> (Rig_pci.Window.t, string) result
-(* [window c n] is a window through [c] on [n] new bytes of its host's memory,
-   never freed: tests reach the connection's window accesses through it, since a
-   function of the server's machine needs root. [Error why] if the server has no
-   memory or [c] failed. Raises [Invalid_argument] if [n <= 0]. *)

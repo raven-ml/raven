@@ -1,7 +1,5 @@
-; Another machine over a socket: client and server.
-
 (library
  (name rig_remote)
  (public_name rig.remote)
- (modules_without_implementation rig_remote)
- (libraries rig rig_pci unix))
+ (private_modules agent)
+ (libraries rig rig_remote_proxy rig_remote_abi unix threads.posix))

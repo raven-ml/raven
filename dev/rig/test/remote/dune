@@ -1,0 +1,5 @@
+(tests
+ (names test_rig_remote)
+ (modules test_rig_remote)
+ (deps support/agent.exe)
+ (libraries rig rig_remote unix windtrap))
