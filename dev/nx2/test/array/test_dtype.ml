@@ -641,6 +641,15 @@ let printed =
     Printed (D.Complex64, { Complex.re = 1.; im = 2. }, "1+2i");
     Printed (D.Complex128, { Complex.re = 1.; im = -2. }, "1-2i");
     Printed (D.Float32, -.nan, "nan");
+    Printed (D.Float16, 65504., "65504");
+    Printed (D.Float8_e4m3fn, -448., "-448");
+    Printed (D.Float16, 0x1p-6, "0.01563");
+    Printed (D.Float8_e4m3fn, 0.125, "0.13");
+    Printed (D.Bfloat16, 0x1p+97, "1.59e+29");
+    Printed (D.Float64, 0x1p-1017, "7.120236347223045e-307");
+    Printed (D.Complex64, { Complex.re = 0.5; im = -2. }, "0.5-2i");
+    Printed (D.Bool, false, "false");
+    Printed (D.Bit, true, "true");
   ]
 
 let law_text gen (text : 'v -> string) dt =
@@ -724,8 +733,12 @@ let check_printed dt v =
     else if v = -.inf then Some "-inf"
     else None
   in
+  let whole = Float.is_integer v && Float.abs v < 1e16 in
   match special with
   | Some t -> if s = t then None else Some (strf "%h printed %s" v s)
+  | None when whole ->
+      let t = strf "%.0f" v in
+      if s = t then None else Some (strf "%h printed %s, not %s" v s t)
   | None when not (reads_back s) -> Some (strf "%h printed %s" v s)
   | None -> (
       match List.filter reads_back (shorter s) with
@@ -834,9 +847,12 @@ let tests =
           test_printed;
         group "integers print in their dtype's reading" printing_integers;
         cases ~name:format_name
-          "every value prints as the shortest decimal that reads back" narrow
-          test_every_value_printed;
-        group "a wider float prints as the shortest decimal that reads back"
+          "every value prints in full if a whole number, else as the shortest \
+           decimal that reads back"
+          narrow test_every_value_printed;
+        group
+          "a wider float prints in full if a whole number, else as the \
+           shortest decimal that reads back"
           (List.map law_printed
              (List.filter (fun (F (dt, _)) -> D.bits dt >= 32) formats));
       ];
