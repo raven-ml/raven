@@ -3,17 +3,16 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* GPU 0 through the driver, its work submitted through rig, each row
-   beside the packets that bound it, placed from C on a compute and a copy queue
-   the bench makes through KFD: a release by a release packet that raises the
-   interrupt a sleeping host wakes on, as the driver's does, a ring of the
-   doorbell and a spin on a word; a queue switch by the same after a wait for
-   the value before; foreign waits by 64-bit waits; launches by the same
-   dispatch words; copies by the same SDMA copies; allocations and host mappings
-   by the KFD calls behind them. The floors' packets are the ABI's, encoded once
-   as the driver encodes its own, without the driver's cache acquire, slot words
-   and host data path flush. A row waits by spinning on the word, except the
-   wake row.
+(* GPU 0 through the driver, its work submitted through rig, each row beside the
+   packets that bound it, placed from C on a compute and a copy queue the bench
+   makes through KFD: a release by a release packet that raises the interrupt a
+   sleeping host wakes on, as the driver's does, a ring of the doorbell and a
+   spin on a word; a queue switch by the same after a wait for the value before;
+   foreign waits by 64-bit waits; launches by the same dispatch words; copies by
+   the same SDMA copies; allocations and host mappings by the KFD calls behind
+   them. The floors' packets are the ABI's, encoded once as the driver encodes
+   its own, without the driver's cache acquire, slot words and host data path
+   flush. A row waits by spinning on the word, except the wake row.
 
    Each case opens its device, or the floors' queues, in its own worker: KFD
    gives a process one address space per GPU, kept by the first render node that
@@ -271,13 +270,12 @@ let release_rows =
     let t = dev () in
     (t, prepare t [||])
   in
-  (* A copy queue's part of one no-op word. *)
+  (* A part that places nothing on the copy queue, so that the submission only
+     enters it, as the floor's switch does. *)
   let switching () =
     let t = dev () in
-    let nop =
-      B.of_bigarray (Bigarray.(Array1.init int32 c_layout 1) (fun _ -> 0l))
-    in
-    (t, prepare t [| part "COPY:0" (Words nop) |], prepare t [||])
+    let none = B.of_bigarray Bigarray.(Array1.create int32 c_layout 0) in
+    (t, prepare t [| part "COPY:0" (Words none) |], prepare t [||])
   in
   let mapped () =
     let t = dev () in
@@ -302,9 +300,9 @@ let release_rows =
 
 (* Waits on a word the host set, and a wait across 2^32: the host sets the word
    to 2^32 k - 1, the queue waits for 2^32 k, and the host stores it once a
-   short spin saw the release held back. rig waits on other devices'
-   values only, so these rows submit through the driver's C entries, on a device
-   opened without it. *)
+   short spin saw the release held back. rig waits on other devices' values
+   only, so these rows submit through the driver's C entries, on a device opened
+   without it. *)
 let wait_rows =
   let raw () =
     let g = get (P.open_ 0) in
