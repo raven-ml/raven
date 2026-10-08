@@ -27,6 +27,7 @@ let device a = Buffer.device a.buffer
 
 (* Refusals. The codes are nx_array.h's. *)
 
+let not_host = 3
 let pending = 4
 
 let reason = function
@@ -395,12 +396,18 @@ let of_array dt s values =
   write ();
   a
 
+(* The host gathers, so memory it does not address is refused before the copy is
+   allocated on [a]'s device. *)
 let copy a =
+  let fn = "Nx_array.copy" in
+  live fn a.buffer;
+  if Layout.numel a.layout > 0 && host_address a.buffer < 0 then
+    settle fn not_host [ Any a ];
   let dst = create (device a) a.dtype (Layout.shape a.layout) in
   let rec gather () =
     let e = copy_into dst a in
     if e <> 0 then begin
-      settle "Nx_array.copy" e [ Any dst; Any a ];
+      settle fn e [ Any dst; Any a ];
       gather ()
     end
   in
@@ -408,6 +415,7 @@ let copy a =
   dst
 
 let to_device d a =
+  live "Nx_array.to_device" a.buffer;
   let l = a.layout and bits = Dtype.bits a.dtype in
   let lo, hi = Layout.span l in
   let first = lo * bits / 8 and last = ((hi * bits) + 7) / 8 in
@@ -427,6 +435,7 @@ let to_device d a =
 
 let bigarray (type v s) (k : (v, s) Bigarray.kind) (a : (v, s) t) :
     (v, s, Bigarray.c_layout) Bigarray.Genarray.t option =
+  live "Nx_array.bigarray" a.buffer;
   let l = a.layout in
   if
     (not (Rig.equal (Buffer.device a.buffer) Rig.host))
