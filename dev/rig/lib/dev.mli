@@ -16,6 +16,11 @@ val protect : device -> (unit -> 'a) -> 'a
 (* [protect d f] is [f ()] run holding [d]'s lock, which guards [d]'s mutable
    fields. A forked child makes every lock anew. *)
 
+val hold : device -> unit
+val release : device -> unit
+(* [hold d] holds [d]'s lock and [release d] gives it back, around a section
+   that raises nothing. *)
+
 val busy : device -> bool
 (* [busy d] is [true] if a call holds [d]'s lock. *)
 

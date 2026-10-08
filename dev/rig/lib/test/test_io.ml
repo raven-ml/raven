@@ -233,6 +233,29 @@ let collecting t io collected seen =
           Printf.sprintf "frees: %d" (count "free" t);
         ])
 
+(* The minor words [f ()] allocates. *)
+let minor_words f =
+  let before = Gc.minor_words () in
+  f ();
+  int_of_float (Gc.minor_words () -. before)
+
+(* Draining one collected io memory returns it to its library for few words,
+   this library's io release included, beyond what an idle drain costs. *)
+let test_release_words () =
+  let io, t = open_pages () in
+  let drain () = ignore (Sys.opaque_identity (B.create io 0)) in
+  drain ();
+  let idle = minor_words drain in
+  let[@inline never] dropped () =
+    ignore (Sys.opaque_identity (B.create io 64))
+  in
+  dropped ();
+  Gc.full_major ();
+  let release = minor_words drain in
+  equal ~msg:"freed" int 1 (count "free" t);
+  at_most ~msg:"a release's words over an idle drain's" int ~than:40
+    (release - idle)
+
 (* A copy into io memory keeps both buffers until the write returned: a
    collection during it frees neither the source nor the io memory. *)
 let test_write_keeps () =
@@ -311,6 +334,8 @@ let tests =
           test_copy_order;
         test "a host access of io memory waits for a borrower's work" test_wait;
         test "io memory returns once unreachable and its uses reached" test_free;
+        test "a collected io memory's release costs few words"
+          test_release_words;
         test "a fault of io loses its device, a failure of its memory nothing"
           test_faults;
         test "a region an io library made is a buffer of its device alone"

@@ -290,7 +290,10 @@ let take_room d budget n =
 
 let give_room d budget n =
   match budget with
-  | Device_budget -> Dev.protect d (fun () -> d.used <- d.used - n)
+  | Device_budget ->
+      Dev.hold d;
+      d.used <- d.used - n;
+      Dev.release d
   | Host_budget -> heap_release n
   | No_budget -> ()
 
@@ -320,8 +323,8 @@ let drop_stamps (e : entry) =
 let free_entry (e : entry) =
   let d = e.owner in
   unmap_all e;
-  Option.iter (free_region d) e.region;
-  Option.iter (free_io d) e.io_region;
+  (match e.region with Some r -> free_region d r | None -> ());
+  (match e.io_region with Some r -> free_io d r | None -> ());
   drop_stamps e;
   let budget = budget_of d e.memory in
   give_room d budget e.bytes;
@@ -449,8 +452,9 @@ let route d = function
         && reached ~except:d.index e.stamps
         && not (viewed e)
       in
-      Dev.protect d (fun () ->
-          if cached then cache d e else d.retiring <- e :: d.retiring)
+      Dev.hold d;
+      if cached then cache d e else d.retiring <- e :: d.retiring;
+      Dev.release d
   | Program (image, code) -> defer d (Unload (image, code))
   | Release { stamps; release } ->
       Lock.protect holds_lock (fun () -> holds := (stamps, release) :: !holds)
@@ -467,45 +471,62 @@ let fate d ~lost ~free_lost (e : entry) =
   else if reached ~except:d.index e.stamps then Cached
   else Stays
 
+(* Judges each retiring entry of [l] with no lock held, puts back those that
+   stay or enter the cache, and is those to free, consed onto [freed]. *)
+let rec judge d ~lost ~free_lost freed = function
+  | [] -> freed
+  | e :: l -> (
+      match fate d ~lost ~free_lost e with
+      | Freed -> judge d ~lost ~free_lost (e :: freed) l
+      | Stays ->
+          Dev.hold d;
+          d.retiring <- e :: d.retiring;
+          Dev.release d;
+          judge d ~lost ~free_lost freed l
+      | Cached ->
+          Dev.hold d;
+          cache d e;
+          Dev.release d;
+          judge d ~lost ~free_lost freed l
+      | exception x ->
+          Dev.hold d;
+          d.retiring <- (e :: l) @ d.retiring;
+          Dev.release d;
+          raise x)
+
 (* Takes what became due: retiring memory no bigarray reads and whose foreign
    uses are reached enters the cache, or is freed if [d] is lost and counts as
-   stopped; pending releases whose value [d] reached. *)
+   stopped; pending releases whose value [d] reached. Is the memory to free. *)
 let due d =
   let lost = Dev.is_lost d in
   let free_lost = lost && Dev.stopped d in
-  let w = if lost && not free_lost then -1 else Dev.word d in
-  let retiring =
+  Dev.hold d;
+  let retiring = d.retiring in
+  d.retiring <- [];
+  Dev.release d;
+  let freed = judge d ~lost ~free_lost [] retiring in
+  if not free_lost then freed
+  else begin
+    Dev.hold d;
+    let freed = Cache.fold (fun _ l freed -> l @ freed) d.cache freed in
+    Cache.reset d.cache;
+    d.cached <- 0;
+    Dev.release d;
+    freed
+  end
+
+(* Takes the pending releases whose value [d] reached. *)
+let due_pending d =
+  if d.pending == [] then []
+  else
+    let lost = Dev.is_lost d in
+    let w = if lost && not (Dev.stopped d) then -1 else Dev.word d in
     Dev.protect d (fun () ->
-        let l = d.retiring in
-        d.retiring <- [];
-        l)
-  in
-  let fates =
-    match List.map (fun e -> (e, fate d ~lost ~free_lost e)) retiring with
-    | fates -> fates
-    | exception x ->
-        Dev.protect d (fun () -> d.retiring <- retiring @ d.retiring);
-        raise x
-  in
-  Dev.protect d (fun () ->
-      let frees = ref [] in
-      List.iter
-        (fun (e, f) ->
-          match f with
-          | Stays -> d.retiring <- e :: d.retiring
-          | Cached -> cache d e
-          | Freed -> frees := e :: !frees)
-        fates;
-      if free_lost then begin
-        Cache.iter (fun _ l -> frees := l @ !frees) d.cache;
-        Cache.reset d.cache;
-        d.cached <- 0
-      end;
-      let pending, later =
-        List.partition (fun (v, _) -> w >= 0 && v <= w) d.pending
-      in
-      d.pending <- later;
-      (!frees, List.map snd pending))
+        let pending, later =
+          List.partition (fun (v, _) -> w >= 0 && v <= w) d.pending
+        in
+        d.pending <- later;
+        List.map snd pending)
 
 let run_pending d = function
   | Free e -> free_entry e
@@ -528,12 +549,29 @@ let rec add_lost d =
   let l = Atomic.get lost_devices in
   if not (Atomic.compare_and_set lost_devices l (d :: l)) then add_lost d
 
+let rec route_all d = function
+  | [] -> ()
+  | r :: l ->
+      route d r;
+      route_all d l
+
+let rec free_all = function
+  | [] -> ()
+  | e :: l ->
+      free_entry e;
+      free_all l
+
+let rec run_all d = function
+  | [] -> ()
+  | p :: l ->
+      run_pending d p;
+      run_all d l
+
 (* Drains [d]'s own list and what became due on it. *)
 let drain_own d =
-  if released_any d.release then List.iter (route d) (released d.release);
-  let frees, pending = due d in
-  List.iter free_entry frees;
-  List.iter (run_pending d) pending
+  if released_any d.release then route_all d (released d.release);
+  free_all (due d);
+  run_all d (due_pending d)
 
 (* Whether [d] has nothing to drain: no collected memory, nothing waiting for a
    value. A drain of an idle device allocates nothing. *)

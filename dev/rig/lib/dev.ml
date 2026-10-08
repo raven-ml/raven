@@ -136,6 +136,8 @@ let () =
 (* Locks *)
 
 let protect d f = Lock.protect d.lock f
+let hold d = Lock.hold d.lock
+let release d = Lock.release d.lock
 let busy d = Lock.busy d.lock
 
 (* Facts *)

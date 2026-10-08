@@ -10,6 +10,11 @@
 type t [@@immediate]
 
 val create : unit -> t
+val hold : t -> unit
+val release : t -> unit
+(* [hold l] waits for [l] and holds it, [release l] gives it back: for a section
+   that raises nothing and allocates no closure. *)
+
 val protect : t -> (unit -> 'a) -> 'a
 (* [protect l f] is [f ()] run holding [l]. *)
 

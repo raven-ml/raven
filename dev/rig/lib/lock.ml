@@ -12,8 +12,11 @@ external give : t -> unit = "caml_rig_lock_give" [@@noalloc]
 external wait : t -> unit = "caml_rig_lock_wait"
 external broadcast : t -> unit = "caml_rig_lock_broadcast" [@@noalloc]
 
+let hold l = if not (try_take l) then take l
+let release = give
+
 let protect l f =
-  if not (try_take l) then take l;
+  hold l;
   match f () with
   | v ->
       give l;
