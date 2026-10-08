@@ -1,0 +1,394 @@
+/*---------------------------------------------------------------------------
+   Copyright (c) 2026 The Raven authors. All rights reserved.
+   SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*/
+
+/* The rings' one writer: device_amd_room, device_amd_submit, and the place
+   and segment functions fills call. No function here calls the OCaml
+   runtime or blocks.
+
+   A submission of value v places, on each queue it uses: its own prefix (a
+   wait for v-1 on the timeline word, or a partial flush where this queue
+   released v-1), the compute queue's cache acquire and foreign waits, the
+   parts in array order, the slot signals and waits that order parts of two
+   queues, and on the last queue the release of v into the word. It then
+   flushes the host data path if the host wrote GPU memory through the BAR,
+   and rings the doorbells. */
+
+#define _GNU_SOURCE
+
+#include <stdatomic.h>
+#include <stdio.h>
+#include <string.h>
+
+#include "device_amd_stubs.h"
+
+/* The alignment of the bytes a fill takes from the segment. */
+#define SEGMENT_ALIGN 64
+
+/* A slot older than this is rewritten from the host before it is used. */
+#define SLOT_STALE (UINT64_C(1) << 31)
+
+#define LOW32(v) ((uint32_t)((v) & 0xffffffffu))
+
+static uint64_t align_up(uint64_t n, uint64_t a) { return (n + a - 1) / a * a; }
+
+/* A part is words, a fill, or a copy of at least one byte; a part with
+   none of them places nothing. */
+static int is_copy(const struct nx_part *p) {
+  return !p->words && !p->fill && p->copy_bytes > 0;
+}
+
+/* Templates */
+
+static uint64_t hole_value(const struct device_amd_hole *h,
+                           const uint64_t *args) {
+  uint64_t v = args[h->arg];
+  for (int i = 0; i < h->nops; i++) switch (h->op[i]) {
+      case OP_ADD: v += h->k[i]; break;
+      case OP_SHIFT: v >>= h->k[i]; break;
+      default: v |= h->k[i]; break;
+    }
+  return v;
+}
+
+/* Places [n] words on [q]: on a PM4 ring they wrap; on an SDMA ring they
+   never do, and the ring's end is zeroed when they do not fit before it. */
+static void put_words(struct device_amd_ring *q, const uint32_t *w, size_t n) {
+  uint64_t at = q->put & (q->size - 1);
+  if (q->sdma && at + n > q->size) {
+    for (uint64_t i = at; i < q->size; i++) q->words[i] = 0;
+    q->put += q->size - at;
+    at = 0;
+  }
+  for (size_t i = 0; i < n; i++) q->words[(at + i) & (q->size - 1)] = w[i];
+  q->put += n;
+}
+
+static void emit(struct device_amd *d, struct device_amd_ring *q, int t,
+                 uint64_t a0, uint64_t a1, uint64_t a2) {
+  const struct device_amd_template *tp = &d->templates[t];
+  uint64_t args[3] = {a0, a1, a2};
+  uint32_t w[DEVICE_AMD_TEMPLATE_WORDS];
+  memcpy(w, tp->words, sizeof w);
+  for (int i = 0; i < tp->nholes; i++) {
+    const struct device_amd_hole *h = &tp->holes[i];
+    uint64_t v = hole_value(h, args);
+    w[h->at] = (uint32_t)v;
+    if (h->wide == 2) w[h->at + 1] = (uint32_t)(v >> 32);
+  }
+  put_words(q, w, (size_t)tp->n);
+}
+
+static int words_of(const struct device_amd *d, int t) {
+  return d->templates[t].n;
+}
+
+/* Room */
+
+/* Takes back the room of the submissions the word shows reached. */
+static uint64_t reclaim(struct device_amd_marks *m, uint64_t free,
+                        uint64_t word) {
+  while (m->count > 0 && m->at[m->head].v <= word) {
+    free = m->at[m->head].end;
+    m->head = (m->head + 1) % DEVICE_AMD_MARKS;
+    m->count--;
+  }
+  return free;
+}
+
+static void mark(struct device_amd_marks *m, uint64_t v, uint64_t end) {
+  m->at[(m->head + m->count) % DEVICE_AMD_MARKS] = (struct device_amd_mark){v, end};
+  m->count++;
+}
+
+static uint64_t copies(const struct device_amd *d, uint64_t bytes) {
+  return (bytes + d->max_copy - 1) / d->max_copy;
+}
+
+/* The words a submission of [parts] places on each queue, at most, with
+   DEVICE_AMD_WAITS waits, and the segment bytes it takes. */
+static void need(const struct device_amd *d, const struct nx_part *p, int n,
+                 uint64_t *words, uint64_t *bytes) {
+  int c = DEVICE_AMD_COMPUTE, s = DEVICE_AMD_COPY;
+  uint64_t slot_wait_c = words_of(d, T_WAIT) + words_of(d, T_ACQUIRE);
+  words[c] = words_of(d, T_WAIT) + words_of(d, T_ACQUIRE) +
+             DEVICE_AMD_WAITS * words_of(d, T_WAIT64) + words_of(d, T_SIGNAL) +
+             slot_wait_c + words_of(d, T_RELEASE);
+  words[s] = 2 * words_of(d, S_POLL) + words_of(d, S_POLL) +
+             words_of(d, S_FENCE) + words_of(d, S_TRAP);
+  *bytes = SEGMENT_ALIGN;
+  for (int i = 0; i < n; i++) {
+    uint64_t w = p[i].words ? p[i].n
+                 : p[i].fill ? p[i].ring_units
+                             : copies(d, p[i].copy_bytes) * words_of(d, S_COPY);
+    if (p[i].queue == c)
+      words[c] += w + words_of(d, T_FLUSH) + words_of(d, T_SIGNAL) +
+                  (uint64_t)p[i].nafter * slot_wait_c;
+    else
+      words[s] += w + words_of(d, S_FENCE) +
+                  (uint64_t)p[i].nafter * words_of(d, S_POLL);
+    *bytes += align_up(p[i].segment_bytes, SEGMENT_ALIGN);
+  }
+}
+
+/* Whether a part is one the device runs. */
+static int runs(const struct nx_part *p, int i) {
+  if (p->queue != DEVICE_AMD_COMPUTE && p->queue != DEVICE_AMD_COPY) return 0;
+  if (is_copy(p) && p->queue != DEVICE_AMD_COPY) return 0;
+  if (p->words && p->fill) return 0;
+  for (int j = 0; j < p->nafter; j++)
+    if (p->after[j] < 0 || p->after[j] >= i) return 0;
+  return 1;
+}
+
+int device_amd_room(void *self, const struct nx_part *parts, int n) {
+  struct device_amd *d = self;
+  if (n > DEVICE_AMD_PARTS) return NX_NEVER;
+  for (int i = 0; i < n; i++)
+    if (!runs(&parts[i], i)) return NX_NEVER;
+  uint64_t words[DEVICE_AMD_QUEUES], bytes;
+  need(d, parts, n, words, &bytes);
+  struct device_amd_ring *c = &d->rings[DEVICE_AMD_COMPUTE];
+  struct device_amd_ring *s = &d->rings[DEVICE_AMD_COPY];
+  struct device_amd_segment *g = &d->segment;
+  if (words[0] >= c->size || 2 * words[1] >= s->size || 2 * bytes > g->size)
+    return NX_NEVER;
+  uint64_t word = atomic_load_explicit(d->word, memory_order_acquire);
+  c->free = reclaim(&c->marks, c->free, word);
+  s->free = reclaim(&s->marks, s->free, word);
+  g->free = reclaim(&g->marks, g->free, word);
+  int full = c->marks.count == DEVICE_AMD_MARKS ||
+             s->marks.count == DEVICE_AMD_MARKS ||
+             g->marks.count == DEVICE_AMD_MARKS;
+  if (full || c->put + words[0] - c->free > c->size ||
+      s->put + 2 * words[1] - s->free > s->size ||
+      g->put + 2 * bytes - g->free > g->size)
+    return NX_LATER;
+  return NX_FITS;
+}
+
+/* Fills */
+
+int device_amd_place(void *queue, const uint32_t *words, size_t n) {
+  struct device_amd_writer *w = queue;
+  if (w->q->put + n > w->ring_end) return 1;
+  put_words(w->q, words, n);
+  return 0;
+}
+
+int device_amd_segment(void *queue, size_t n, void **host, uint64_t *address) {
+  struct device_amd_writer *w = queue;
+  struct device_amd_segment *g = &w->d->segment;
+  uint64_t take = align_up(n, SEGMENT_ALIGN);
+  if (g->put + take > w->segment_end) return 2;
+  uint64_t at = g->put % g->size;
+  *host = g->host + at;
+  *address = g->gpu + at;
+  g->put += take;
+  return 0;
+}
+
+/* Submitting */
+
+/* The state of one submission while it is placed. */
+struct submission {
+  struct device_amd *d;
+  uint64_t v;
+  int used[DEVICE_AMD_QUEUES];
+  int last[DEVICE_AMD_QUEUES];   /* the queue's last part, or -1 */
+  int nsignalled;
+  int slot[DEVICE_AMD_SLOTS];
+};
+
+static uint64_t slot_gpu(const struct device_amd *d, int i) {
+  return d->slots_gpu + 8 * (uint64_t)i;
+}
+
+/* Places the queue's prefix once per submission: its own wait for v-1 or
+   a partial flush, and on compute the cache acquire and the waits. */
+static void enter(struct submission *s, int q, const struct nx_wait *waits,
+                  int nwaits, int copy_parts) {
+  struct device_amd *d = s->d;
+  struct device_amd_ring *r = &d->rings[q];
+  if (s->used[q]) return;
+  s->used[q] = 1;
+  if (q == DEVICE_AMD_COMPUTE) {
+    if (r->released == s->v - 1) emit(d, r, T_FLUSH, 0, 0, 0);
+    else emit(d, r, T_WAIT, d->word_gpu, s->v - 1, 0);
+    emit(d, r, T_ACQUIRE, 0, 0, 0);
+    for (int i = 0; i < nwaits; i++)
+      emit(d, r, T_WAIT64, waits[i].at, waits[i].value, 0);
+    if (nwaits > 0 && copy_parts) {
+      emit(d, r, T_SIGNAL, slot_gpu(d, DEVICE_AMD_SLOT_W), s->v, 0);
+      s->slot[s->nsignalled++] = DEVICE_AMD_SLOT_W;
+    }
+    return;
+  }
+  if (r->released != s->v - 1) emit(d, r, S_POLL, d->word_gpu, s->v - 1, 0);
+  if (nwaits > 0) emit(d, r, S_POLL, slot_gpu(d, DEVICE_AMD_SLOT_W), s->v, 0);
+}
+
+static void wait_slot(struct submission *s, int q, int j) {
+  struct device_amd *d = s->d;
+  struct device_amd_ring *r = &d->rings[q];
+  if (q == DEVICE_AMD_COMPUTE) {
+    emit(d, r, T_WAIT, slot_gpu(d, j), s->v, 0);
+    emit(d, r, T_ACQUIRE, 0, 0, 0);
+  } else
+    emit(d, r, S_POLL, slot_gpu(d, j), s->v, 0);
+}
+
+static void signal_slot(struct submission *s, int q, int i) {
+  struct device_amd *d = s->d;
+  struct device_amd_ring *r = &d->rings[q];
+  emit(d, r, q == DEVICE_AMD_COMPUTE ? T_SIGNAL : S_FENCE, slot_gpu(d, i),
+       s->v, 0);
+  s->slot[s->nsignalled++] = i;
+}
+
+static void copy(struct submission *s, const struct nx_part *p) {
+  struct device_amd *d = s->d;
+  struct device_amd_ring *r = &d->rings[DEVICE_AMD_COPY];
+  uint64_t dst = p->copy_dst + p->copy_dst_offset;
+  uint64_t src = p->copy_src + p->copy_src_offset;
+  for (uint64_t off = 0; off < p->copy_bytes; off += d->max_copy) {
+    uint64_t n = p->copy_bytes - off;
+    emit(d, r, S_COPY, dst + off, src + off, n < d->max_copy ? n : d->max_copy);
+  }
+}
+
+static void release(struct submission *s, int q) {
+  struct device_amd *d = s->d;
+  struct device_amd_ring *r = &d->rings[q];
+  if (q == DEVICE_AMD_COMPUTE) emit(d, r, T_RELEASE, d->word_gpu, s->v, 0);
+  else {
+    emit(d, r, S_FENCE, d->word_gpu, s->v, 0);
+    emit(d, r, S_TRAP, 0, 0, 0);
+  }
+  r->released = s->v;
+}
+
+/* Hands the queues what was placed: the HDP flush the host's writes through
+   the BAR need, read back so that it completed, then each queue's write
+   position and doorbell. */
+static void hand_over(struct submission *s) {
+  struct device_amd *d = s->d;
+  for (int i = 0; i < DEVICE_AMD_HDPS; i++)
+    if (atomic_load_explicit(&d->hdps[i].count, memory_order_acquire) > 0) {
+      device_amd_barrier();
+      d->hdps[i].reg[0] = 0;
+      (void)d->hdps[i].reg[0];
+    }
+  device_amd_barrier();
+  for (int q = 0; q < DEVICE_AMD_QUEUES; q++) {
+    struct device_amd_ring *r = &d->rings[q];
+    if (!s->used[q]) continue;
+    mark(&r->marks, s->v, r->put);
+    uint64_t at = r->sdma ? 4 * r->put : r->put;
+    *r->write = at;
+    device_amd_barrier();
+    *r->doorbell = at;
+  }
+}
+
+/* The slot of v mod DEVICE_AMD_SLOTS, if its last write is old, gets
+   low32(v-1) from the host: no wait of the next 2^32 values compares with
+   it, and no queued work writes it. */
+static void refresh_slot(struct device_amd *d, uint64_t v) {
+  int i = (int)(v % DEVICE_AMD_SLOTS);
+  if (v - d->slot_last[i] <= SLOT_STALE) return;
+  d->slots[2 * i] = LOW32(v - 1);
+  d->slot_last[i] = v - 1;
+}
+
+/* After a fill failed: drops every word placed for v and places only v's
+   release, after every earlier value, on compute. */
+static int fail(struct submission *s, int part, int code) {
+  struct device_amd *d = s->d;
+  for (int q = 0; q < DEVICE_AMD_QUEUES; q++) {
+    d->rings[q].put = d->rings[q].start;
+    s->used[q] = 0;
+  }
+  s->nsignalled = 0;
+  snprintf(d->failure_text, sizeof d->failure_text,
+           "a fill on %s failed with %d",
+           part == DEVICE_AMD_COMPUTE ? "COMPUTE:0" : "COPY:0", code);
+  enter(s, DEVICE_AMD_COMPUTE, NULL, 0, 0);
+  release(s, DEVICE_AMD_COMPUTE);
+  mark(&d->segment.marks, s->v, d->segment.put);
+  hand_over(s);
+  d->last = s->v;
+  d->failure = d->failure_text;
+  return NX_FAILED;
+}
+
+int device_amd_submit(void *self, uint64_t v, const struct nx_wait *waits,
+                      int nwaits, const struct nx_part *parts, int nparts,
+                      const uint64_t *handles, int nhandles,
+                      const char **failure) {
+  (void)handles;
+  (void)nhandles;
+  struct device_amd *d = self;
+  if (d->failure) {
+    *failure = d->failure;
+    return NX_FAILED;
+  }
+  struct submission s = {.d = d, .v = v, .last = {-1, -1}};
+  uint8_t named[DEVICE_AMD_PARTS] = {0};
+  int copy_parts = 0;
+  for (int i = 0; i < nparts; i++) {
+    s.last[parts[i].queue] = i;
+    copy_parts |= parts[i].queue == DEVICE_AMD_COPY;
+    for (int j = 0; j < parts[i].nafter; j++)
+      if (parts[parts[i].after[j]].queue != parts[i].queue)
+        named[parts[i].after[j]] = 1;
+  }
+  int r = nparts > 0 ? parts[nparts - 1].queue : DEVICE_AMD_COMPUTE;
+  if (r == DEVICE_AMD_COPY && LOW32(v) == 0) r = DEVICE_AMD_COMPUTE;
+  refresh_slot(d, v);
+  for (int q = 0; q < DEVICE_AMD_QUEUES; q++) d->rings[q].start = d->rings[q].put;
+
+  /* The submission's segment bytes lie in one run, which never wraps. */
+  struct device_amd_segment *g = &d->segment;
+  uint64_t bytes = 0;
+  for (int i = 0; i < nparts; i++)
+    bytes += align_up(parts[i].segment_bytes, SEGMENT_ALIGN);
+  if (g->put % g->size + bytes > g->size) g->put += g->size - g->put % g->size;
+  g->start = g->put;
+
+  if (nwaits > 0) enter(&s, DEVICE_AMD_COMPUTE, waits, nwaits, copy_parts);
+  int placed_compute = 0;
+  for (int i = 0; i < nparts; i++) {
+    const struct nx_part *p = &parts[i];
+    int q = p->queue;
+    struct device_amd_ring *ring = &d->rings[q];
+    enter(&s, q, waits, nwaits, copy_parts);
+    if (q == DEVICE_AMD_COMPUTE && placed_compute++)
+      emit(d, ring, T_FLUSH, 0, 0, 0);
+    for (int j = 0; j < p->nafter; j++)
+      if (parts[p->after[j]].queue != q) wait_slot(&s, q, p->after[j]);
+    if (p->words) put_words(ring, p->words, p->n);
+    else if (p->fill) {
+      struct device_amd_writer w = {d, ring, ring->put + p->ring_units,
+                                    g->put + p->segment_bytes};
+      int code = p->fill(&w, p->arg, v);
+      if (code != 0) {
+        int answer = fail(&s, q, code);
+        *failure = d->failure;
+        return answer;
+      }
+    } else if (is_copy(p))
+      copy(&s, p);
+    if (named[i] || (s.last[q] == i && r != q)) signal_slot(&s, q, i);
+  }
+  enter(&s, r, waits, nwaits, copy_parts);
+  int o = 1 - r;
+  if (s.last[o] >= 0) wait_slot(&s, r, s.last[o]);
+  release(&s, r);
+  mark(&g->marks, v, g->put);
+  hand_over(&s);
+  for (int i = 0; i < s.nsignalled; i++) d->slot_last[s.slot[i]] = v;
+  d->last = v;
+  return NX_OK;
+}

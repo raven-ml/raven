@@ -1,0 +1,622 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+let strf = Printf.sprintf
+let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
+let ( let* ) = Result.bind
+
+module Abi = Device_amd_abi
+module Packet = Abi.Packet
+module Pm4 = Abi.Pm4
+module Sdma = Abi.Sdma
+
+exception Fault of string
+
+type 'm memory = { address : int; host : nativeint option; path : 'm }
+
+type 'm path = {
+  id : 'm Type.Id.t;
+  gpu : Abi.Gpu.t;
+  lds : int;
+  clock_hz : int;
+  mec : int;
+  wgps : int array array;
+  budget : int;
+  alloc : [ `Gpu | `Bar | `System ] -> int -> 'm memory option;
+  map_host : nativeint -> int -> 'm memory option;
+  map_peer : 'm memory -> 'm memory option;
+  free : 'm memory -> unit;
+  queue :
+    [ `Pm4 | `Aql | `Sdma ] ->
+    ring:int ->
+    bytes:int ->
+    read:int ->
+    write:int ->
+    (nativeint, string) result;
+  hdp : nativeint option;
+  interrupt : int;
+  sleep : ms:int -> unit;
+  stable_power : unit -> (unit, string) result;
+  stop : unit -> [ `Stopped | `Unknown ];
+}
+
+(* A path's memory, with the key that tells whose it is. *)
+type mem = Mem : 'm Type.Id.t * 'm memory -> mem
+
+let mem_address (Mem (_, m)) = m.address
+let mem_host (Mem (_, m)) = m.host
+
+(* The path's functions over memory whose type the key hides. *)
+type ops = {
+  alloc : [ `Gpu | `Bar | `System ] -> int -> mem option;
+  map_host : nativeint -> int -> mem option;
+  map_peer : mem -> mem option;
+  free : mem -> unit;
+  sleep : ms:int -> unit;
+  stop : unit -> [ `Stopped | `Unknown ];
+}
+
+let ops (type m) (p : m path) =
+  let pack m = Mem (p.id, m) in
+  let own (Mem (id, m)) : m memory option =
+    match Type.Id.provably_equal id p.id with
+    | Some Type.Equal -> Some m
+    | None -> None
+  in
+  {
+    alloc = (fun k n -> Option.map pack (p.alloc k n));
+    map_host = (fun a n -> Option.map pack (p.map_host a n));
+    map_peer =
+      (fun m -> Option.bind (own m) (fun m -> Option.map pack (p.map_peer m)));
+    free = (fun m -> Option.iter p.free (own m));
+    sleep = p.sleep;
+    stop = p.stop;
+  }
+
+(* Memory *)
+
+type kind = Alloc | Word | View | Borrowed
+
+type region = {
+  owner : int; (* the device's C state *)
+  kind : kind;
+  address : int;
+  host : nativeint option;
+  bytes : int;
+  mem : mem;
+  flush : nativeint option; (* the HDP register this region keeps flushed *)
+  mutable live : bool;
+}
+
+(* C state *)
+
+external create : unit -> int = "caml_device_amd_create"
+
+external set_memory : int -> nativeint -> int -> nativeint -> int -> unit
+  = "caml_device_amd_memory"
+
+external set_segment : int -> nativeint -> int -> int -> unit
+  = "caml_device_amd_segment"
+
+external set_ring :
+  int -> int -> nativeint -> int -> nativeint -> nativeint -> bool -> unit
+  = "caml_device_amd_ring_byte" "caml_device_amd_ring"
+
+external set_template : int -> int -> string -> int array -> unit
+  = "caml_device_amd_template"
+
+external set_max_copy : int -> int -> unit = "caml_device_amd_max_copy"
+external hdp_count : int -> nativeint -> int -> bool = "caml_device_amd_hdp"
+external zero : nativeint -> int -> unit = "caml_device_amd_zero"
+
+(* Opening *)
+
+type t = {
+  self : int;
+  gpu : Abi.Gpu.t;
+  budget : int;
+  lds : int;
+  waits64 : bool;
+  hdp : nativeint option;
+  hdps : Mutex.t; (* the HDP registers' counts *)
+  ops : ops;
+  capability : Abi.Capability.t;
+  word : region;
+  own : mem list; (* rings, pointers, segment, slots *)
+}
+
+(* The minimum version of a GC's compute firmware whose queues run 64-bit waits
+   (Pm4.wait_64), by GC version. None is known: a version enters once a queue
+   was seen waiting on a word the host moved across 2^32. *)
+let wait64_from : ((int * int * int) * int) list = []
+let ring_bytes = 16 lsl 20
+let segment_bytes = 1 lsl 20
+let slots = 513
+let pointers_bytes = 4096
+
+(* Where each queue's read and write positions are in the pointers. *)
+let read_at = function 0 -> 0 | _ -> 64
+let write_at q = read_at q + 8
+
+(* Templates: each packet the writer places, its values the arguments 0, 1 and 2
+   of a use. Their order is device_amd_stubs.h's. *)
+
+let op_add = 0
+let op_shift = 1
+let op_or = 2
+
+let hole (at, w) =
+  let rec flatten ops : int Packet.term -> _ = function
+    | Value i -> (i, ops)
+    | Add (t, k) -> flatten ((op_add, Int64.to_int k) :: ops) t
+    | Shift (t, n) -> flatten ((op_shift, n) :: ops) t
+    | Or (t, k) -> flatten ((op_or, Int64.to_int k) :: ops) t
+  in
+  let wide, t =
+    match (w : int Packet.word) with
+    | W32 t -> (1, t)
+    | W64 t -> (2, t)
+    | Dword _ -> assert false
+  in
+  let arg, ops = flatten [] t in
+  [ at; wide; arg; List.length ops ]
+  @ List.concat_map (fun (op, k) -> [ op; k ]) ops
+
+let templates (g : Abi.Gpu.t) ~interrupt ~waits64 =
+  [
+    Pm4.wait g (Memory 0) Equal 1 ();
+    Pm4.event_write Cs_partial_flush;
+    Pm4.acquire_mem g System;
+    (if waits64 then Pm4.wait_64 g 0 Greater_equal 1 () else []);
+    Pm4.release_mem g System 0 (Low_32 1);
+    Pm4.release_mem g System ~interrupt 0 (Data_64 1);
+    Pm4.write_data (Memory 0) 1;
+    Sdma.poll 0 Equal 1 ();
+    Sdma.fence g 0 1;
+    Sdma.trap;
+    Sdma.copy_linear ~dst:0 ~src:1 ~bytes:2;
+  ]
+
+let set_templates self g ~interrupt ~waits64 =
+  let set i p =
+    let words, holes = Packet.template (fun _ -> None) p in
+    set_template self i words (Array.of_list (List.concat_map hole holes))
+  in
+  List.iteri set (templates g ~interrupt ~waits64);
+  set_max_copy self (Sdma.max_copy g)
+
+let supported (g : Abi.Gpu.t) =
+  let major, _, _ = g.target in
+  if not (major = 11 || major = 12 || List.mem g.target [ (9, 4, 2); (9, 5, 0) ])
+  then Error (strf "the device drives no %s GPU" (Abi.Gpu.processor g))
+  else if g.xccs > 1 then
+    Error
+      (strf "the device drives no GPU of several dies such as this %s"
+         (Abi.Gpu.processor g))
+  else if Abi.Register.registers g = [] then
+    Error (strf "no registers are known for the GC of %s" (Abi.Gpu.processor g))
+  else Ok ()
+
+let waits64 (p : _ path) =
+  match List.assoc_opt p.gpu.gc wait64_from with
+  | Some from -> p.mec >= from
+  | None -> false
+
+external place_entry : unit -> int = "caml_device_amd_place_entry"
+external segment_entry : unit -> int = "caml_device_amd_segment_entry"
+
+let capability_of (p : _ path) =
+  {
+    Abi.Capability.gpu = p.gpu;
+    clock_hz = p.clock_hz;
+    compute = Pm4;
+    place = Nativeint.of_int (place_entry ());
+    segment = Nativeint.of_int (segment_entry ());
+  }
+
+let host_of what m =
+  match mem_host m with
+  | Some h -> Ok h
+  | None -> Error (strf "the host does not address the %s" what)
+
+(* Makes the device's memory and queues, giving back what it took if one of them
+   is refused. *)
+let make (type m) (p : m path) =
+  if p.interrupt = 0 then
+    invalid_arg "Device_amd.make: the release's interrupt context is 0";
+  let* () = supported p.gpu in
+  let ops = ops p in
+  let taken = ref [] and queues = ref false in
+  let give_back () =
+    if !queues then ignore (ops.stop ());
+    List.iter ops.free !taken
+  in
+  let alloc what n =
+    match ops.alloc `System n with
+    | Some m ->
+        taken := m :: !taken;
+        Ok m
+    | None -> Error (strf "no memory for its %s" what)
+  in
+  let waits64 = waits64 p in
+  let opened =
+    let* word = alloc "timeline word" 8 in
+    let* slot_words = alloc "slot words" (8 * slots) in
+    let* segment = alloc "argument segment" segment_bytes in
+    let* compute = alloc "compute ring" ring_bytes in
+    let* copy = alloc "copy ring" ring_bytes in
+    let* pointers = alloc "queue positions" pointers_bytes in
+    let* word_host = host_of "timeline word" word in
+    let* slots_host = host_of "slot words" slot_words in
+    let* segment_host = host_of "argument segment" segment in
+    let* pointers_host = host_of "queue positions" pointers in
+    let self = create () in
+    set_memory self word_host (mem_address word) slots_host
+      (mem_address slot_words);
+    set_segment self segment_host (mem_address segment) segment_bytes;
+    set_templates self p.gpu ~interrupt:p.interrupt ~waits64;
+    zero pointers_host pointers_bytes;
+    let queue q kind ring =
+      let* ring_host = host_of "ring" ring in
+      let at = mem_address pointers in
+      let* doorbell =
+        p.queue kind ~ring:(mem_address ring) ~bytes:ring_bytes
+          ~read:(at + read_at q)
+          ~write:(at + write_at q)
+      in
+      queues := true;
+      let write = Nativeint.add pointers_host (Nativeint.of_int (write_at q)) in
+      set_ring self q ring_host ring_bytes write doorbell (kind = `Sdma);
+      Ok ()
+    in
+    let* () = queue 0 `Pm4 compute in
+    let* () = queue 1 `Sdma copy in
+    let word =
+      {
+        owner = self;
+        kind = Word;
+        address = mem_address word;
+        host = Some word_host;
+        bytes = 8;
+        mem = word;
+        flush = None;
+        live = true;
+      }
+    in
+    Ok
+      {
+        self;
+        gpu = p.gpu;
+        budget = p.budget;
+        lds = p.lds;
+        waits64;
+        hdp = p.hdp;
+        hdps = Mutex.create ();
+        ops;
+        capability = capability_of p;
+        word;
+        own = [ slot_words; segment; compute; copy; pointers ];
+      }
+  in
+  match opened with
+  | Ok _ as g -> g
+  | Error _ as e ->
+      give_back ();
+      e
+  | exception (Fault _ as e) ->
+      give_back ();
+      raise e
+
+let is_gpu ~vendor ~class_ =
+  let base = class_ lsr 16 in
+  vendor = 0x1002 && (base = 0x03 || base = 0x12)
+
+(* Facts *)
+
+let key = Type.Id.make ()
+let arch g = Abi.Gpu.processor g.gpu
+let machine _ = None
+let budget g = g.budget
+let queues _ = [ "COMPUTE:0"; "COPY:0" ]
+let completion _ = `Store
+let waits_on g = function `Store | `Host -> g.waits64 | `Object -> false
+let blocks _ = `Returns
+
+type capability = Abi.Capability.t
+
+let capability g = g.capability
+let capability_key = Abi.Capability.key
+let self g = Nativeint.of_int g.self
+
+(* Memory *)
+
+(* Counts a region that needs [reg] flushed before a doorbell: [false] if the
+   device keeps no more registers. *)
+let count_hdp g reg delta =
+  Mutex.protect g.hdps (fun () -> hdp_count g.self reg delta)
+
+let region g kind ?flush n m =
+  {
+    owner = g.self;
+    kind;
+    address = mem_address m;
+    host = mem_host m;
+    bytes = n;
+    mem = m;
+    flush;
+    live = true;
+  }
+
+let alloc g kind n =
+  if n < 1 then invalid_argf "Device_amd.alloc: %d bytes, expected at least 1" n;
+  let system () = Option.map (region g Alloc n) (g.ops.alloc `System n) in
+  match kind with
+  | `Device -> Option.map (region g Alloc n) (g.ops.alloc `Gpu n)
+  | `Pinned -> system ()
+  | `Mapped -> (
+      match g.hdp with
+      | None -> system ()
+      | Some reg -> (
+          match g.ops.alloc `Bar n with
+          | None -> system ()
+          | Some m ->
+              ignore (count_hdp g reg 1);
+              Some (region g Alloc ~flush:reg n m)))
+
+let release g r =
+  r.live <- false;
+  Option.iter (fun reg -> ignore (count_hdp g reg (-1))) r.flush;
+  g.ops.free r.mem
+
+let free g r =
+  if r.owner <> g.self || r.kind <> Alloc then
+    invalid_arg "Device_amd.free: the region is no allocation of the device";
+  if not r.live then invalid_arg "Device_amd.free: the region was freed";
+  release g r
+
+let address (r : region) = Some r.address
+let handle (r : region) = Nativeint.of_int r.address
+let host (r : region) = r.host
+
+let map_peer g g' r =
+  if g.self = g'.self then
+    invalid_arg "Device_amd.map_peer: the devices are one";
+  if r.owner <> g'.self || not r.live then
+    invalid_arg "Device_amd.map_peer: the region is no live region of the peer";
+  match g.ops.map_peer r.mem with
+  | None -> None
+  | Some m -> (
+      let view flush = Some (region g View ?flush r.bytes m) in
+      match r.flush with
+      | Some reg when count_hdp g reg 1 -> view (Some reg)
+      | Some _ ->
+          g.ops.free m;
+          None
+      | None -> view None)
+
+let map_host g a n =
+  if n < 1 then
+    invalid_argf "Device_amd.map_host: %d bytes, expected at least 1" n;
+  Option.map (region g Borrowed n) (g.ops.map_host a n)
+
+let unmap g r =
+  if r.owner <> g.self || (r.kind <> View && r.kind <> Borrowed) then
+    invalid_arg "Device_amd.unmap: the region is no mapping of the device";
+  if not r.live then invalid_arg "Device_amd.unmap: the region was unmapped";
+  release g r
+
+(* Images *)
+
+module Code_object = Abi.Code_object
+
+type image = {
+  holder : int;
+  co : Code_object.t;
+  code : region;
+  mutable loaded : bool;
+}
+
+(* The image's bytes, as the code object lays them out. *)
+let image_bytes co =
+  let o = Code_object.elf co in
+  let b = Bytes.make (Code_object.size co) '\000' in
+  let put (s : Device_elf.section) =
+    match s.offset with
+    | Some off -> Bytes.blit_string o.file s.at b off s.length
+    | None -> ()
+  in
+  Iarray.iter put o.sections;
+  let patch (off, p) = Bytes.blit_string p 0 b off (String.length p) in
+  List.iter patch (Code_object.patches co);
+  Bytes.unsafe_to_string b
+
+let too_large g co =
+  let large name =
+    match Code_object.kernel co name with
+    | Some k when k.group_segment > g.lds -> Some (name, k.group_segment)
+    | _ -> None
+  in
+  List.find_map large (Code_object.kernels co)
+
+let image g bin =
+  let* co = Code_object.of_string bin in
+  if not (Code_object.runs_on co g.gpu) then
+    Error
+      (strf "a code object for %s; the GPU is %s" (Code_object.target co)
+         (arch g))
+  else
+    match too_large g co with
+    | Some (name, n) ->
+        Error
+          (strf "kernel %s takes %d bytes of local data share; the GPU has %d"
+             name n g.lds)
+    | None -> (
+        let n = Code_object.size co in
+        match g.ops.alloc `Gpu n with
+        | None -> Error (strf "no GPU memory for its %d bytes" n)
+        | Some m ->
+            let code = region g Alloc n m in
+            Ok
+              ( { holder = g.self; co; code; loaded = true },
+                Some (code, image_bytes co) ))
+
+let entry m f =
+  if not m.loaded then invalid_arg "Device_amd.entry: the image was unloaded";
+  Option.map
+    (fun (k : Code_object.kernel) -> m.code.address + k.descriptor)
+    (Code_object.kernel m.co f)
+
+let unload g m =
+  if m.holder <> g.self then
+    invalid_arg "Device_amd.unload: the image is another device's";
+  if not m.loaded then invalid_arg "Device_amd.unload: the image was unloaded";
+  m.loaded <- false;
+  release g m.code
+
+(* Work. A part is the ints the C submit reads: the device's state, then
+   nx_part's queue, fill, arg, ring units, segment bytes, copy_dst,
+   copy_dst_offset, copy_src, copy_src_offset and copy_bytes, the counts of
+   [after] indices and of words, then the indices, then the words. *)
+
+type part = int array
+
+let after_at = 13
+let nafter_at = 11
+
+(* nx_edge.h's codes *)
+
+let nx_word = 0
+let nx_ok = 0
+let max_waits = 255
+
+external last : int -> int = "caml_device_amd_last" [@@noalloc]
+external room_parts : int -> part array -> int = "caml_device_amd_room"
+
+external submit_parts : int -> int -> int array -> part array -> int
+  = "caml_device_amd_submit"
+
+external failure : int -> string = "caml_device_amd_failure"
+external room_entry : unit -> int = "caml_device_amd_room_entry"
+external submit_entry : unit -> int = "caml_device_amd_submit_entry"
+
+let part g ~queue ?(after = [||]) w =
+  let queue =
+    match queue with
+    | "COMPUTE:0" -> 0
+    | "COPY:0" -> 1
+    | q ->
+        invalid_argf "Device_amd.part: queue %S, expected COMPUTE:0 or COPY:0" q
+  in
+  Array.iter
+    (fun j ->
+      if j < 0 then invalid_argf "Device_amd.part: after index %d is negative" j)
+    after;
+  let part work words =
+    Array.concat
+      [
+        [| g.self; queue |];
+        work;
+        [| Array.length after; Array.length words |];
+        after;
+        words;
+      ]
+  in
+  match w with
+  | `Words ws ->
+      let ws = Array.map (fun w -> w land 0xffff_ffff) ws in
+      part [| 0; 0; Array.length ws; 0; 0; 0; 0; 0; 0 |] ws
+  | `Fill (f, arg, units, bytes) ->
+      if units < 0 || bytes < 0 then
+        invalid_argf
+          "Device_amd.part: the fill declares %d ring units and %d segment \
+           bytes, expected at least 0"
+          units bytes;
+      part
+        [|
+          Nativeint.to_int f; Nativeint.to_int arg; units; bytes; 0; 0; 0; 0; 0;
+        |]
+        [||]
+  | `Copy ((dst, o), (src, o'), n) ->
+      if queue <> 1 then invalid_arg "Device_amd.part: a copy runs on COPY:0";
+      let check what (r : region) o =
+        if r.owner <> g.self || not r.live then
+          invalid_argf
+            "Device_amd.part: the copy's %s is no live region of the device"
+            what;
+        if o < 0 || n < 0 || o + n > r.bytes then
+          invalid_argf
+            "Device_amd.part: the copy's %s range [%d, %d) lies outside its %d \
+             bytes"
+            what o (o + n) r.bytes
+      in
+      check "destination" dst o;
+      check "source" src o';
+      part [| 0; 0; 0; 0; dst.address; o; src.address; o'; n |] [||]
+
+let room g parts =
+  match room_parts g.self parts with 0 -> `Fits | 1 -> `Later | _ -> `Never
+
+let check_part self i (p : part) =
+  if p.(0) <> self then
+    invalid_argf "Device_amd.submit: part %d is another device's" i;
+  for k = after_at to after_at + p.(nafter_at) - 1 do
+    if p.(k) >= i then
+      invalid_argf
+        "Device_amd.submit: part %d waits for part %d, expected an earlier part"
+        i p.(k)
+  done
+
+let wait_kind = function
+  | `Word -> nx_word
+  | `Equal | `Object ->
+      invalid_arg
+        "Device_amd.submit: the device waits only on other devices' timeline \
+         words"
+
+(* Allocates nothing for a submission without waits. *)
+let submit g ~v ~waits ~handles:_ parts =
+  let next = last g.self + 1 in
+  if v <> next then
+    invalid_argf "Device_amd.submit: value %d, expected %d" v next;
+  Array.iteri (check_part g.self) parts;
+  let n = Array.length waits in
+  if n > 0 && not g.waits64 then
+    invalid_arg "Device_amd.submit: the device waits on no other device";
+  if n > max_waits then
+    invalid_argf "Device_amd.submit: %d waits, expected at most %d" n max_waits;
+  let words = if n = 0 then [||] else Array.make (3 * n) 0 in
+  Array.iteri
+    (fun k (kind, a, w) ->
+      words.(3 * k) <- wait_kind kind;
+      words.((3 * k) + 1) <- a;
+      words.((3 * k) + 2) <- w)
+    waits;
+  if submit_parts g.self v words parts = nx_ok then `Ok
+  else `Failed (failure g.self)
+
+let room_entry = Nativeint.of_int (room_entry ())
+let submit_entry = Nativeint.of_int (submit_entry ())
+
+(* Timeline *)
+
+external signaled_word : int -> int = "caml_device_amd_signaled" [@@noalloc]
+external settle : int -> unit = "caml_device_amd_settle"
+
+let word g = g.word
+let signaled g = signaled_word g.self
+let sleep g ~seen ~still_ms = if signaled g = seen then g.ops.sleep ~ms:still_ms
+
+(* Loss *)
+
+let give_back g m = try g.ops.free m with Fault _ -> ()
+
+let stop g =
+  match g.ops.stop () with
+  | exception Fault _ -> `Unknown
+  | `Unknown -> `Unknown
+  | `Stopped ->
+      settle g.self;
+      List.iter (give_back g) g.own;
+      `Stopped
