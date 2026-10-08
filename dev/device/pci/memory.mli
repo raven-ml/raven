@@ -18,7 +18,8 @@
     {b After the GPU is given back.} Once the GPU's function is released
     ({!Function.release}, {!Gpus.release}, {!Gpus.lose}), {!free} and {!unmap}
     touch none of the GPU's memory: they return system memory, pins and virtual
-    addresses only. A GPU reset and opened again by another instance is not
+    addresses only, and {!alloc}, {!map_host} and {!map_peer} raise
+    [Invalid_argument]. A GPU reset and opened again by another instance is not
     written by this one.
 
     A call whose page tables' format raises ({!Page_table.map}) raises the same

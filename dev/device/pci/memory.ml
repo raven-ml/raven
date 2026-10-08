@@ -121,7 +121,13 @@ let gpu m ~uncached ~bar n =
 let positive fn n =
   if n <= 0 then invalid_argf "Memory.%s: %d bytes, expected more than 0" fn n
 
+(* A released GPU may be another instance's: no request writes its tables. *)
+let live fn m =
+  if Function.released m.fn then
+    invalid_argf "Memory.%s: %s is released" fn (Function.bus m.fn)
+
 let alloc ?(uncached = false) m kind n =
+  live "alloc" m;
   positive "alloc" n;
   let mem =
     match kind with
@@ -165,6 +171,7 @@ let free m mem =
 let no_room = "no GPU memory left for a page table"
 
 let map_host m a n =
+  live "map_host" m;
   positive "map_host" n;
   let page = Machine.page (Function.machine m.fn) in
   let n = round_up n page in
@@ -196,6 +203,8 @@ let map_host m a n =
             Error no_room)
 
 let map_peer m ~owner mem =
+  live "map_peer" m;
+  live "map_peer" owner;
   (match Hashtbl.find_opt owner.allocated mem.mapping.va with
   | Some mem' when mem' == mem -> ()
   | _ ->

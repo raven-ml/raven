@@ -961,6 +961,36 @@ let touched x f =
   f ();
   x.g.touches > before
 
+(* [mine] is the released GPU's memory and [theirs] the other GPU's, both
+   allocated before the release. *)
+let test_released_refused =
+  cases "a released GPU refuses requests, writing nothing"
+    ~name:(fun (what, _) -> what)
+    [
+      ("alloc Gpu", fun x _ _ _ -> ignore (Memory.alloc x.memory Gpu page));
+      ("alloc Host", fun x _ _ _ -> ignore (Memory.alloc x.memory Host page));
+      ( "map_host",
+        fun x _ _ _ -> ignore (Memory.map_host x.memory (slot_address 0) page)
+      );
+      ( "map_peer of its memory",
+        fun x owner mine _ ->
+          ignore (Memory.map_peer owner.memory ~owner:x.memory mine) );
+      ( "map_peer for it",
+        fun x owner _ theirs ->
+          ignore (Memory.map_peer x.memory ~owner:owner.memory theirs) );
+    ]
+    (fun (_, request) ->
+      let owner, x = pair_of () in
+      let mine = alloc x Gpu page and theirs = alloc owner Gpu page in
+      Function.release x.fn;
+      let before = capacity x in
+      equal ~msg:"nothing written" bool false
+        (touched x (fun () ->
+             raises_match (Exn.invalid_arg ~substring:"released") (fun () ->
+                 request x owner mine theirs)));
+      equal ~msg:"nothing taken" (pair int int) before (capacity x);
+      release_all [ owner ])
+
 let test_released =
   let gpus = abstract "g" ~release:(fun x -> Function.release x.fn) in
   let mems = abstract "mem" in
@@ -1076,6 +1106,7 @@ let () =
            [
              test "a reopened GPU is not written by its old instance"
                test_reopened;
+             test_released_refused;
              test_released;
            ];
        ]
