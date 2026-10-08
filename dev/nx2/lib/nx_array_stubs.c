@@ -115,7 +115,12 @@ void nx_done(int n, nx_array *a) {
   for (int k = 0; k < n; k++) rig_buffer_release(a[k].buffer);
   /* Unlink the roots nx_read pushed, under any pushed since. */
   struct caml__roots_block **p = &CAML_LOCAL_ROOTS;
-  while (*p != &a[n - 1].roots) p = &(*p)->next;
+  while (*p != &a[n - 1].roots) {
+    if (*p == NULL)
+      caml_fatal_error("nx_done: the descriptors' roots were popped before "
+                       "nx_done");
+    p = &(*p)->next;
+  }
   *p = a[0].roots.next;
 }
 

@@ -70,10 +70,12 @@ let alignment dt =
   else if Dtype.is Dtype.Complex dt then bits / 16
   else bits / 8
 
-let check fn dt l b =
-  (match Buffer.dead b with
+let live fn b =
+  match Buffer.dead b with
   | Some why -> invalid_argf "%s: the buffer is dead: %s" fn why
-  | None -> ());
+  | None -> ()
+
+let reaches fn dt l b =
   if Layout.numel l > 0 then begin
     let hi = snd (Layout.span l) in
     let bits = Dtype.bits dt and length = Buffer.length b in
@@ -85,20 +87,26 @@ let check fn dt l b =
     in
     if not fits then
       invalid_argf "%s: %a reaches past %d bytes of %a" fn Layout.pp l length
-        Dtype.pp dt;
-    let first = if bits >= 8 then Layout.offset l * (bits / 8) else 0 in
-    let a = alignment dt and host = host_address b in
-    if
-      (Buffer.offset b + first) mod a <> 0
-      || (host >= 0 && (host + first) mod a <> 0)
-    then
-      invalid_argf
-        "%s: the first element of %a is not on a multiple of %d bytes" fn
-        Dtype.pp dt a
+        Dtype.pp dt
   end
 
+(* Whether [l]'s first element over [b] lies on a multiple of [dt]'s alignment,
+   in [b]'s memory and, for host memory, as an address. *)
+let aligned dt l b =
+  let bits = Dtype.bits dt in
+  Layout.numel l = 0
+  ||
+  let first = if bits >= 8 then Layout.offset l * (bits / 8) else 0 in
+  let a = alignment dt and host = host_address b in
+  (Buffer.offset b + first) mod a = 0 && (host < 0 || (host + first) mod a = 0)
+
 let v dtype layout buffer =
-  check "Nx_array.v" dtype layout buffer;
+  let fn = "Nx_array.v" in
+  live fn buffer;
+  reaches fn dtype layout buffer;
+  if not (aligned dtype layout buffer) then
+    invalid_argf "%s: the first element of %a is not on a multiple of %d bytes"
+      fn Dtype.pp dtype (alignment dtype);
   { dtype; layout; buffer }
 
 (* Zeroes the last byte of [b], whose elements are [bits] wide, if elements do
@@ -161,7 +169,9 @@ let widen r l =
         in
         Some (Layout.v ~offset:(Layout.offset l / r) ~strides shape)
 
+(* A bitcast keeps the bits the array reaches, so its bounds hold. *)
 let bitcast dtype' a =
+  live "Nx_array.bitcast" a.buffer;
   let w = Dtype.bits a.dtype and w' = Dtype.bits dtype' in
   let layout =
     if w = w' then Some a.layout
@@ -170,10 +180,9 @@ let bitcast dtype' a =
   in
   match layout with
   | None -> None
-  | Some layout -> (
-      match check "Nx_array.bitcast" dtype' layout a.buffer with
-      | () -> Some { dtype = dtype'; layout; buffer = a.buffer }
-      | exception Invalid_argument _ -> None)
+  | Some layout when aligned dtype' layout a.buffer ->
+      Some { dtype = dtype'; layout; buffer = a.buffer }
+  | Some _ -> None
 
 let expect (type v s) (dt : (v, s) Dtype.t) (Any a) : (v, s) t =
   match Dtype.equal_witness dt a.dtype with

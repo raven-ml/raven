@@ -115,7 +115,12 @@ int nx_array_dtype(value v);
    while earlier device work on it is unfinished (wait on the buffer with
    Rig.Buffer.wait and read again), NX_EXCLUSIVE if it is held exclusive,
    NX_READ_ONLY if a written operand's memory is Read. It allocates nothing
-   and raises nothing. With no operand it answers NX_OK. */
+   and raises nothing. With no operand it answers NX_OK.
+
+   Between nx_read and nx_done the function that called nx_read does not
+   return, and no CAMLreturn or CAMLdrop pops a root frame registered before
+   nx_read: the descriptors' buffers are local roots linked into that
+   frame. */
 int nx_read(int n, const nx_operand *in, nx_array *out);
 
 /* Releases the claims of the [n] operands a successful nx_read filled. */
@@ -142,8 +147,10 @@ int nx_coalesce(int n, const nx_array *a, nx_loop *l);
 /* Sub-byte elements
 
    Element p of a dtype of [bits] bits (1 or 4) is bits p·bits to p·bits +
-   bits - 1 of the bytes from [base], LSB first. Loads and stores are atomic
-   on their byte, so threads may store other elements of a byte at once. */
+   bits - 1 of the bytes from [base], LSB first. A store is one
+   compare-and-swap of its byte and a load one relaxed atomic load of it, so
+   threads may load and store elements of one byte at once: no store loses
+   another element's bits, and no load sees an element no store wrote. */
 
 static inline uint32_t nx_sub_load(const uint8_t *base, int bits, int64_t p) {
   uint64_t bit = (uint64_t)p * (uint64_t)bits;
@@ -151,10 +158,7 @@ static inline uint32_t nx_sub_load(const uint8_t *base, int bits, int64_t p) {
   return (byte >> (bit & 7)) & ((1u << bits) - 1);
 }
 
-/* Stores the low [bits] of [v] at element [p] with one atomic
-   read-modify-write of its byte: writes to the byte's other elements, from
-   other threads too, are kept, and no reader sees a value of the element
-   that no store wrote. */
+/* Stores the low [bits] of [v] at element [p]. */
 static inline void nx_sub_store(uint8_t *base, int bits, int64_t p,
                                 uint32_t v) {
   uint64_t bit = (uint64_t)p * (uint64_t)bits;

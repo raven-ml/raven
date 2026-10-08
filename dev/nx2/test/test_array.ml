@@ -295,7 +295,9 @@ let test_dead_access () =
   kill (A.buffer a);
   let fails f = raises_match (Exn.invalid_arg ~substring:"dead") f in
   fails (fun () -> A.get a [| 0 |]);
-  fails (fun () -> A.to_array a)
+  fails (fun () -> A.to_array a);
+  fails (fun () -> A.bitcast D.Uint32 a);
+  fails (fun () -> A.bitcast D.Uint8 a)
 
 (* Writes to the elements of one byte from two domains keep each other. *)
 let int4s = abstract "a"

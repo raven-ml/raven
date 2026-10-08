@@ -118,8 +118,8 @@ val bitcast : ('w, 'r) Dtype.t -> ('v, 's) t -> ('w, 'r) t option
     It is [None] where widening's conditions fail or the result's first element
     is not on a multiple of [dt]'s alignment.
 
-    Raises [Invalid_argument] on a narrowing of an array of rank
-    {!Layout.max_rank}. *)
+    Raises [Invalid_argument] if [a]'s buffer is dead, and on a narrowing of an
+    array of rank {!Layout.max_rank}. *)
 
 val expect : ('w, 'r) Dtype.t -> any -> ('w, 'r) t
 (** [expect dt (Any a)] is [a] at type [dt] if its dtype is [dt].
