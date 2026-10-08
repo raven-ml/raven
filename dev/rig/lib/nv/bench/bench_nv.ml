@@ -3,14 +3,13 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* GPU 0, opened through NVIDIA's kernel driver and Rig, each row beside
-   its floor: the same submissions through rig_nv_room and rig_nv_submit,
-   called from C in a loop on the device the row opened, then a spin on the
-   timeline word. A row submits through Rig.submit and waits with
-   Rig.wait, as a program does, so its distance to the floor is the
-   core's share and the OCaml side of the driver. Memory rows call the driver.
-   Each case opens its device in its own worker. Without an NVIDIA GPU the suite
-   has no rows. *)
+(* GPU 0, opened through NVIDIA's kernel driver and Rig, each row beside its
+   floor: the same submissions through rig_nv_room and rig_nv_submit, called
+   from C in a loop on the device the row opened, then a spin on the timeline
+   word. A row submits through Rig.submit and waits with Rig.wait, as a program
+   does, so its distance to the floor is the core's share and the OCaml side of
+   the driver. Memory rows call the driver. Each case opens its device in its
+   own worker. Without an NVIDIA GPU the suite has no rows. *)
 
 module N = Rig_nv
 module C = Rig
@@ -232,8 +231,10 @@ let copy_rows =
   in
   let big = 256 * mib in
   Thumper.group "copy"
-    (copy "h2d-256MiB" big (B.Device, B.Pinned)
-    @ copy "d2h-256MiB" big (B.Pinned, B.Device))
+    (copy "16B" 16 (B.Device, B.Device)
+    @ copy "h2d-256MiB" big (B.Device, B.Pinned)
+    @ copy "d2h-256MiB" big (B.Pinned, B.Device)
+    @ copy "d2d-256MiB" big (B.Device, B.Device))
 
 (* A device with a live allocation of [kind], which keeps its page tables, as in
    a program's steady state. *)
