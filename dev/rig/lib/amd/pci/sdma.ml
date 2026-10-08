@@ -12,13 +12,16 @@ type t = {
   r : Regs.t;
   v : Discovery.version; (* SDMA0's *)
   name : string; (* its micro-engine's: F32 before SDMA 7, MCU from it *)
-  mutable rings : (string * int) list;
-      (* the rings programmed: registers, instance *)
 }
 
 let make r =
   let v = Regs.version (Regs.layout_of r) D.sdma0_hwid in
-  { r; v; name = (if v < (7, 0, 0) then "F32" else "MCU"); rings = [] }
+  { r; v; name = (if v < (7, 0, 0) then "F32" else "MCU") }
+
+(* The one queue this library programs, queue 0 of engine 0: SDMA 4 names it
+   regSDMA_GFX, later engines regSDMA0_QUEUE0. *)
+let queue_regs s =
+  match s.v with 4, _, _ -> "regSDMA_GFX" | _ -> "regSDMA0_QUEUE0"
 
 (* SDMA 4's engines are sixteen instances of one pipe; later ones one instance
    of pipes named by number. *)
@@ -81,18 +84,17 @@ let halt s =
 (* The engines take 10 ms to leave their soft reset, with no state to poll. *)
 let reset_ms = 10
 
+(* The queue is disabled whichever process programmed it: a session that died
+   left it enabled for the next boot. *)
 let stop s =
   let r = s.r in
-  List.iter
-    (fun (reg, inst) ->
-      Regs.update ~inst r (reg ^ "_RB_CNTL") [ ("rb_enable", 0) ];
-      Regs.update ~inst r (reg ^ "_IB_CNTL") [ ("ib_enable", 0) ];
-      Regs.update ~inst r (reg ^ "_DOORBELL") [ ("enable", 0) ];
-      Regs.update ~inst r (reg ^ "_DOORBELL_OFFSET") [ ("offset", 0) ])
-    s.rings;
-  s.rings <- [];
-  (* The engine halted and held in reset, its queue's preemption cleared,
-     before its soft reset, each write of which is read back, as the kernel's
+  let reg = queue_regs s in
+  Regs.update r (reg ^ "_RB_CNTL") [ ("rb_enable", 0) ];
+  Regs.update r (reg ^ "_IB_CNTL") [ ("ib_enable", 0) ];
+  Regs.update r (reg ^ "_DOORBELL") [ ("enable", 0) ];
+  Regs.update r (reg ^ "_DOORBELL_OFFSET") [ ("offset", 0) ];
+  (* The engine halted and held in reset, its queue's preemption cleared, before
+     its soft reset, each write of which is read back, as the kernel's
      sdma_v7_0_soft_reset; the next start lets it run. *)
   if s.v >= (6, 0, 0) then begin
     Regs.update r
@@ -107,26 +109,22 @@ let stop s =
     ignore (Regs.read r "regGRBM_SOFT_RESET")
   end
 
-(* Queue 0 of engine 0: SDMA 4 names it regSDMA_GFX, later engines
-   regSDMA0_QUEUE0. Its doorbell is the first SDMA engine's. *)
+(* Its doorbell is the first SDMA engine's. *)
 let queue s ~ring ~bytes ~read ~write =
   let r = s.r in
-  let reg, inst =
-    match s.v with 4, _, _ -> ("regSDMA_GFX", 0) | _ -> ("regSDMA0_QUEUE0", 0)
-  in
+  let reg = queue_regs s in
   let doorbell = D.amdgpu_navi10_doorbell_sdma_engine0 in
-  s.rings <- s.rings @ [ (reg, inst) ];
-  let w64 n ~lo ~hi v = Regs.write64 ~inst r (reg ^ n) ~lo ~hi v in
-  Regs.write ~inst ~value:1 r (reg ^ "_MINOR_PTR_UPDATE") [];
+  let w64 n ~lo ~hi v = Regs.write64 r (reg ^ n) ~lo ~hi v in
+  Regs.write ~value:1 r (reg ^ "_MINOR_PTR_UPDATE") [];
   w64 "_RB_RPTR" ~lo:"" ~hi:"_HI" 0;
   w64 "_RB_WPTR" ~lo:"" ~hi:"_HI" 0;
   w64 "_RB_BASE" ~lo:"" ~hi:"_HI" (ring lsr 8);
   w64 "_RB_RPTR_ADDR" ~lo:"_LO" ~hi:"_HI" read;
   w64 "_RB_WPTR_POLL_ADDR" ~lo:"_LO" ~hi:"_HI" write;
-  Regs.update ~inst r (reg ^ "_DOORBELL_OFFSET") [ ("offset", doorbell * 2) ];
-  Regs.update ~inst r (reg ^ "_DOORBELL") [ ("enable", 1) ];
-  Regs.write ~inst ~value:0 r (reg ^ "_MINOR_PTR_UPDATE") [];
-  Regs.write ~inst r (reg ^ "_RB_CNTL")
+  Regs.update r (reg ^ "_DOORBELL_OFFSET") [ ("offset", doorbell * 2) ];
+  Regs.update r (reg ^ "_DOORBELL") [ ("enable", 1) ];
+  Regs.write ~value:0 r (reg ^ "_MINOR_PTR_UPDATE") [];
+  Regs.write r (reg ^ "_RB_CNTL")
     ((match s.v with
        | 4, _, _ -> []
        | _ -> [ (String.lowercase_ascii s.name ^ "_wptr_poll_enable", 1) ])
@@ -138,5 +136,5 @@ let queue s ~ring ~bytes ~read ~write =
         ("rb_priv", 1);
         ("rb_size", log2 (bytes / 4));
       ]);
-  Regs.update ~inst r (reg ^ "_IB_CNTL") [ ("ib_enable", 1) ];
+  Regs.update r (reg ^ "_IB_CNTL") [ ("ib_enable", 1) ];
   doorbell

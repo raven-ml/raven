@@ -284,6 +284,13 @@ let give_back_access g =
     g.lease <- 0
   end
 
+(* Stops the engines a session runs: the thread trace, the copy queue and the
+   compute queues. [false] if a compute queue stayed. *)
+let quiet g ~wait =
+  Gfx.untrace g.gfx;
+  Sdma.stop g.sdma;
+  Gfx.dequeue g.gfx ~wait
+
 let stop_locked g =
   if Machine.failed (Function.machine g.f) <> None then `Unknown
   else begin
@@ -292,11 +299,7 @@ let stop_locked g =
        | Ok lease -> g.lease <- lease
        | Error _ -> ());
     let left =
-      match
-        Gfx.untrace g.gfx;
-        Sdma.stop g.sdma;
-        Gfx.dequeue g.gfx ~wait:(g.fault = None)
-      with
+      match quiet g ~wait:(g.fault = None) with
       | left -> left
       | exception Regs.Stuck _ -> false
     in
@@ -339,6 +342,11 @@ let boot g ~partial ~pool ~kiq =
      memory alone, so that no address a step gets wrong reaches the host's. A
      virtual function's KIQ, in system memory, needs it earlier. *)
   set_bus_master g.f false;
+  (* A partial boot follows a session whose process may have died with its
+     engines running, as GC 9.5.0's over a dirty mark does: they stop before the
+     hubs take this session's tables, so that none reaches this session's
+     memory. A compute queue that stays is reset with the MEC below. *)
+  if partial then ignore (quiet g ~wait:true);
   (* The GPU masters the bus only while both hubs translate: an untranslated
      address goes to host memory as it stands. *)
   let master () =
@@ -352,9 +360,9 @@ let boot g ~partial ~pool ~kiq =
   in
   (* The hubs as the kernel starts them: the MM hub, and on GC 9 the GC's too,
      before the interrupt handler and the firmware (gmc_v9_0_gart_enable); from
-     GC 11 the GC hub once the RLC's autoload is done, since the autoload
-     resets it (gfx_v11_0_hw_init, gfx_v12_0_hw_init). The hubs' fault page
-     and the handler's dummy read are this session's page. *)
+     GC 11 the GC hub once the RLC's autoload is done, since the autoload resets
+     it (gfx_v11_0_hw_init, gfx_v12_0_hw_init). The hubs' fault page and the
+     handler's dummy read are this session's page. *)
   let start_gc () =
     Gmc.start_hub g.gmc `Gc g.tables ~scratch:(fabric pool.scratch);
     Gmc.fault_page g.gmc `Gc g.fault_bus
@@ -377,8 +385,8 @@ let boot g ~partial ~pool ~kiq =
   (* No TLB flush here: [start_hub] invalidates a new hub's caches, and the GC
      hub's invalidation engine does not answer before the GC's engines start
      (seen on the R9700). The kernel waits 100 ms for that answer and goes on
-     without it (gmc_v12_0_flush_vm_hub); tinygrad flushes the GC hub first on
-     a mapping after the GFX start. *)
+     without it (gmc_v12_0_flush_vm_hub); tinygrad flushes the GC hub first on a
+     mapping after the GFX start. *)
   Gmc.flush_hdp g.gmc;
   Page_table.booted g.tables;
   if g.vf then master ();
@@ -596,8 +604,8 @@ let fatal g =
   end
 
 (* A sleep that a stop overtakes reads nothing more: the stop's release unmaps
-   the windows the interrupt ring lies in. Each look at the ring holds the
-   lock the stop takes. *)
+   the windows the interrupt ring lies in. Each look at the ring holds the lock
+   the stop takes. *)
 let sleep g ~ms =
   (match g.fault with Some why -> raise (Rig_amd.Fault why) | None -> ());
   let stopped () = Option.is_some g.stopped in
@@ -723,8 +731,8 @@ let reset f =
             if Psp.running r && Smu.alive smu then begin
               Regs.write ~value:0 r "regSCRATCH_REG7" [];
               let gfx = Gfx.make r gmc vram doorbells ~mqds:[||] in
-              (* As the clocks below: a GC that does not answer the dequeue
-                 does not stop the reset that recovers it. *)
+              (* As the clocks below: a GC that does not answer the dequeue does
+                 not stop the reset that recovers it. *)
               (try ignore (Gfx.dequeue gfx ~wait:true)
                with Regs.Stuck why ->
                  prerr_endline

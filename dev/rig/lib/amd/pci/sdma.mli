@@ -27,5 +27,5 @@ val halt : t -> unit
 (** [halt s] halts the engines' micro-engines, from SDMA 6. *)
 
 val stop : t -> unit
-(** [stop s] disables the rings {!queue} programmed, then soft-resets the
-    engines from SDMA 6. *)
+(** [stop s] disables the queue {!queue} programs, whichever process programmed
+    it, then soft-resets the engines from SDMA 6. *)

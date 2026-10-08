@@ -1247,6 +1247,54 @@ let letting_go =
             failf "refused as held by amdgpu: %s" why);
     ]
 
+(* Copy engines: registers in a fixture tree's register BAR, a file of zeroes
+   that keeps what is written. *)
+
+module Sdma = Rig_amd_pci.Sdma
+
+let mi350 =
+  List.fold_left
+    (fun d (b, v) -> with_version d b v)
+    (table "r9700.bin")
+    (List.rev ((11, (9, 5, 0)) :: (42, (4, 4, 5)) :: mi300_blocks))
+
+let registers_of d =
+  if not Rig_pci_support.on_linux then
+    skip ~reason:"flock on a function's file needs Linux" ();
+  let root = unbound () in
+  let f =
+    match Rig_pci.Function.take (Rig_pci.Machine.at root) r9700 with
+    | Ok f -> f
+    | Error why -> failf "take: %s" why
+  in
+  match Rig_pci.Function.map f 5 with
+  | Ok mmio -> Regs.make f mmio (layout d) ~vf:false
+  | Error why -> failf "map: %s" why
+
+let copy_engines =
+  group "copy engines"
+    [
+      cases ~name:fst
+        "a stop disables the ring a session that died left, which this process \
+         never programmed"
+        [
+          ("SDMA 7.0.1", (table "r9700.bin", "regSDMA0_QUEUE0"));
+          ("SDMA 4.4.5", (mi350, "regSDMA_GFX"));
+        ]
+        (fun (_, (d, queue)) ->
+          let r = registers_of d in
+          Regs.update r (queue ^ "_RB_CNTL") [ ("rb_enable", 1) ];
+          Regs.update r (queue ^ "_IB_CNTL") [ ("ib_enable", 1) ];
+          Regs.update r (queue ^ "_DOORBELL") [ ("enable", 1) ];
+          Sdma.stop (Sdma.make r);
+          equal ~msg:"ring" int 0
+            (Regs.field r (queue ^ "_RB_CNTL") "rb_enable");
+          equal ~msg:"indirect buffers" int 0
+            (Regs.field r (queue ^ "_IB_CNTL") "ib_enable");
+          equal ~msg:"doorbell" int 0
+            (Regs.field r (queue ^ "_DOORBELL") "enable"));
+    ]
+
 let () =
   exit
     (run "rig_amd_pci"
@@ -1266,4 +1314,5 @@ let () =
          firmware;
          numbering;
          letting_go;
+         copy_engines;
        ])
