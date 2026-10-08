@@ -41,14 +41,14 @@
     + the rail stores [sent := c] at the sender with release order once the
       source bytes may be written again.
 
-    [ready] advances only through that function: the rail does not watch the
-    count, so a store to it alone moves nothing. Work of a device that cannot
-    call the function, such as a GPU's, is followed by host code that waits for
-    its point and calls it. Counts only grow, and nothing else writes [sent] and
-    [arrived]. Work that waits for [arrived >= c] then reads the transfer's
-    bytes; work that writes copy [k] of [outbound] again first waits for [sent]
-    to reach the count of the last transfer that read it. A rail moves no byte
-    outside the landing areas.
+    [ready] advances only through that function: the rail reads the count when
+    something wakes it, so a store to it alone may go unseen for up to a second.
+    Work of a device that cannot call the function, such as a GPU's, is followed
+    by host code that waits for its point and calls it. Counts only grow, and
+    nothing else writes [sent] and [arrived]. Work that waits for [arrived >= c]
+    then reads the transfer's bytes; work that writes copy [k] of [outbound]
+    again first waits for [sent] to reach the count of the last transfer that
+    read it. A rail moves no byte outside the landing areas.
 
     If the job fails, every count of every end on a machine that still answers
     is raised to [Int64.max_int], so that no wait for one blocks; what the
@@ -87,8 +87,8 @@ type end_ = {
       (** The address of the C function
           {v void ready(void *arg, uint64_t c); v}
           that does what [ready] does, called with [ready_arg], for compiled
-          host code. It calls nothing of the OCaml runtime and blocks only on
-          the rail's lock. *)
+          host code, until the rail is released. It calls nothing of the OCaml
+          runtime and blocks only on a lock of the rail's connection. *)
   ready_arg : nativeint;  (** The [arg] of [ready_fn] for this end. *)
 }
 (** The type for one machine's end of a rail. *)
