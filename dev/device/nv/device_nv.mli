@@ -290,10 +290,11 @@ val submit :
     The result is [`Ok] once every part is in its channel's ring and the
     channels were woken: stores to this machine's memory cannot fail.
 
-    Raises [Invalid_argument] if [v] is not the value after the last one, if a
-    part is another device's, if a part's [after] names a part at or after its
-    own index, or if a wait is [`Equal] or [`Object]: the device waits only for
-    words to reach a value. *)
+    Raises [Invalid_argument] if [v] is not the value after the last one, if
+    {!room} does not answer [`Fits] for [ps], if a part is another device's, if
+    a part's [after] names a part at or after its own index, if [waits] holds
+    more than 256 waits, or if a wait is [`Equal] or [`Object]: the device waits
+    only for words to reach a value. *)
 
 val room_entry : nativeint
 (** [room_entry] is the address of the C function [device_nv_room], {!room} for

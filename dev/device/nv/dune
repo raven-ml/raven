@@ -6,4 +6,6 @@
  (libraries device_nv_abi device_elf device_edge)
  (private_modules defs)
  (install_c_headers device_nv)
- (modules_without_implementation device_nv))
+ (foreign_stubs
+  (language c)
+  (names device_nv_ring device_nv_stubs)))

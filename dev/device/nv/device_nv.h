@@ -14,7 +14,8 @@
    is ring entries, two words each, low first (Device_nv_abi.Gpfifo), or a
    copy between handles on queue 1; it is no fill and declares no ring units
    or segment bytes. A wait is NX_WORD on a 64-bit word the device maps,
-   compared circularly. [handles] is ignored: the device's work names its
+   compared circularly; a submission has at most 256, for which
+   device_nv_room, which does not see them, keeps room. [handles] is ignored: the device's work names its
    memory by address. */
 
 #ifndef DEVICE_NV_H
