@@ -373,9 +373,18 @@ value caml_device_metal_sleep(value v_d, value v_seen, value v_ms) {
   return failure(why);
 }
 
+/* Stops the device. Once its ring is empty no handler runs, so the queue
+   and fence go; the residency set stays for the frees that may follow. */
 value caml_device_metal_stop(value v_d) {
   struct device_metal *d = Device_val(v_d);
-  return Val_bool(device_metal_ring_stop(&d->ring, d->last));
+  int idle = device_metal_ring_stop(&d->ring, d->last);
+  if (idle) {
+    [d->queue release];
+    [d->fence release];
+    d->queue = nil;
+    d->fence = nil;
+  }
+  return Val_bool(idle);
 }
 
 static int (*const split)(void *, uint64_t *, uint64_t *) = device_metal_split;
