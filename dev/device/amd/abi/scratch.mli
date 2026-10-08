@@ -19,8 +19,8 @@ val size : Gpu.t -> int -> int
 val tmpring : Gpu.t -> int -> int
 (** [tmpring g n] is the word of [COMPUTE_TMPRING_SIZE] for kernels of [n] bytes
     per lane: the size of a wave's scratch, in units of 1024 bytes on GFX9 and
-    of 256 bytes after, and the waves one die's scratch serves, divided among
-    its shader engines after GFX9 and at most every slot's.
+    of 256 bytes after, and the waves one die's scratch serves, every scratch
+    slot of its compute units, divided among its shader engines after GFX9.
 
     Raises [Invalid_argument] if [g]'s GC has no such register. *)
 

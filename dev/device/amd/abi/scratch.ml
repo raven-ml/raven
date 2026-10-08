@@ -39,14 +39,14 @@ let tmpring (g : Gpu.t) n =
         invalid_argf "Scratch.tmpring: %s has no COMPUTE_TMPRING_SIZE"
           (gc_name g)
   in
-  let granule = granule g in
-  let wave = ((lanes * per_lane g n) + granule - 1) / granule in
+  (* [per_lane] is a multiple of [granule g / lanes], so a wave's scratch is
+     whole granules and a die's buffer holds one for every slot of its compute
+     units. *)
+  let wave = lanes * per_lane g n / granule g in
   let engines = if major g = 9 then 1 else g.shader_engines in
-  let waves = per_die g n / (wave * granule) / engines in
   Register.encode r
     [
-      ("waves", Int.min waves (g.compute_units * g.scratch_slots * g.xccs));
-      ("wavesize", wave);
+      ("waves", g.scratch_slots * g.compute_units / engines); ("wavesize", wave);
     ]
 
 (* The descriptor's fields as ROCR-Runtime sets them for a queue's scratch
