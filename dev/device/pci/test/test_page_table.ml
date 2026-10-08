@@ -662,6 +662,21 @@ let test_raising_alloc () =
   equal ~msg:"its memory and tables" int free (capacity t);
   equal ~msg:"its addresses" int addresses (space_capacity t)
 
+(* A new table is zeroed before it is linked: memory that held entries maps none
+   of them. The tables' pool, 1 MiB after the boot pool, holds a valid page
+   entry in every slot first. *)
+let test_tables_zeroed () =
+  let t, g = tables ~tables:Pool () in
+  for slot = 0 to (mib / 8) - 1 do
+    Hashtbl.replace g.entries (mib + (8 * slot)) 0x1003L
+  done;
+  let m = require_some (Page_table.map t ~va:(far 0) System seven) in
+  equal ~msg:"only what the map wrote" (list placed) (expect_mapping ~base m)
+    (pages g t);
+  satisfies ~msg:"its tables" ~claim:"in the pool that held entries" (list hex)
+    (List.for_all (fun a -> a >= mib && a < 2 * mib))
+    (List.tl (snd (walk g t)))
+
 (* The tables in use are not blocks [pfree] frees. *)
 let test_pfree_tables () =
   let t, g = tables () in
@@ -1565,6 +1580,8 @@ let () =
              test "an alloc whose format raises gives back what it took"
                test_raising_alloc;
              test "pfree refuses the tables in use" test_pfree_tables;
+             test "new tables are zeroed before they are linked"
+               test_tables_zeroed;
              test "unmapping frees the tables it empties" test_tables_freed;
              test "unmapping 2 MiB and 4 KiB pages frees their tables"
                test_mixed_unmap;
