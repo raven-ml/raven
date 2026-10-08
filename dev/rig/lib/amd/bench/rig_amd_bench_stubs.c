@@ -628,11 +628,16 @@ value rig_amd_bench_alloc(value v_kind, value v_n) {
   return Val_unit;
 }
 
-/* [v_n] bytes of page-aligned host memory, written once, never freed. */
+/* [v_n] bytes of page-aligned host memory, written once, never freed, in
+   pages of 4 KiB. Mapping memory for the GPU walks its pages: 256 MiB took
+   about 6 ms in 4 KiB pages and 1.4 to 3 ms in the huge pages the kernel
+   had free for the process, so a row over huge pages read the machine's
+   fragmentation. */
 value rig_amd_bench_pages(value v_n) {
   void *p;
   size_t n = (size_t)Long_val(v_n);
   if (posix_memalign(&p, 4096, n)) caml_raise_out_of_memory();
+  if (madvise(p, n, MADV_NOHUGEPAGE)) fail("keeping huge pages out", errno);
   memset(p, 1, n);
   return Val_long((intnat)p);
 }
