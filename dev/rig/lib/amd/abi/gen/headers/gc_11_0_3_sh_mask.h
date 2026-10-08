@@ -94,6 +94,7 @@
 #define SDMA0_QUEUE0_DOORBELL__ENABLE_MASK                                                                    0x10000000L
 #define SDMA0_QUEUE0_DOORBELL__CAPTURED_MASK                                                                  0x40000000L
 #define SDMA0_QUEUE0_DOORBELL_OFFSET__OFFSET_MASK                                                             0x0FFFFFFCL
+#define SDMA0_QUEUE0_PREEMPT__IB_PREEMPT_MASK                                                                 0x00000001L
 #define SDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI__ADDR_MASK                                                          0xFFFFFFFFL
 #define SDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO__ADDR_MASK                                                          0xFFFFFFFCL
 #define SDMA0_QUEUE0_MINOR_PTR_UPDATE__ENABLE_MASK                                                            0x00000001L

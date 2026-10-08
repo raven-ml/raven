@@ -91,10 +91,20 @@ let stop s =
       Regs.update ~inst r (reg ^ "_DOORBELL_OFFSET") [ ("offset", 0) ])
     s.rings;
   s.rings <- [];
+  (* The engine halted and held in reset, its queue's preemption cleared,
+     before its soft reset, each write of which is read back, as the kernel's
+     sdma_v7_0_soft_reset; the next start lets it run. *)
   if s.v >= (6, 0, 0) then begin
+    Regs.update r
+      (strf "regSDMA0_%s_CNTL" s.name)
+      [ ("halt", 1); ((if s.name = "F32" then "th1_reset" else "reset"), 1) ];
+    if Regs.has (Regs.layout_of r) "regSDMA0_QUEUE0_PREEMPT" then
+      Regs.write ~value:0 r "regSDMA0_QUEUE0_PREEMPT" [];
     Regs.write r "regGRBM_SOFT_RESET" [ ("soft_reset_sdma0", 1) ];
+    ignore (Regs.read r "regGRBM_SOFT_RESET");
     Regs.pause r reset_ms;
-    Regs.write ~value:0 r "regGRBM_SOFT_RESET" []
+    Regs.write ~value:0 r "regGRBM_SOFT_RESET" [];
+    ignore (Regs.read r "regGRBM_SOFT_RESET")
   end
 
 (* Queue 0 of engine 0: SDMA 4 names it regSDMA_GFX, later engines

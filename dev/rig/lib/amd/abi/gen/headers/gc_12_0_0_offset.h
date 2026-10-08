@@ -57,6 +57,8 @@
 #define regSDMA0_QUEUE0_DOORBELL_BASE_IDX                                                               0
 #define regSDMA0_QUEUE0_DOORBELL_OFFSET                                                                 0x0091
 #define regSDMA0_QUEUE0_DOORBELL_OFFSET_BASE_IDX                                                        0
+#define regSDMA0_QUEUE0_PREEMPT                                                                         0x0096
+#define regSDMA0_QUEUE0_PREEMPT_BASE_IDX                                                                0
 #define regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO                                                            0x0098
 #define regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO_BASE_IDX                                                   0
 #define regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI                                                            0x0099

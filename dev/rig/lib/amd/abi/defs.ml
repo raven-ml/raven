@@ -849,6 +849,7 @@ let gc_11_0_0_regSDMA0_QUEUE0_RB_RPTR_ADDR_LO = { name = "regSDMA0_QUEUE0_RB_RPT
 let gc_11_0_0_regSDMA0_QUEUE0_IB_CNTL = { name = "regSDMA0_QUEUE0_IB_CNTL"; offset = 0x8a; segment = 0; fields = [ ("ib_enable", (0, 0)); ("ib_swap_enable", (4, 4)); ("switch_inside_ib", (8, 8)); ("cmd_vmid", (16, 19)) ] }
 let gc_11_0_0_regSDMA0_QUEUE0_DOORBELL = { name = "regSDMA0_QUEUE0_DOORBELL"; offset = 0x92; segment = 0; fields = [ ("enable", (28, 28)); ("captured", (30, 30)) ] }
 let gc_11_0_0_regSDMA0_QUEUE0_DOORBELL_OFFSET = { name = "regSDMA0_QUEUE0_DOORBELL_OFFSET"; offset = 0xab; segment = 0; fields = [ ("offset", (2, 27)) ] }
+let gc_11_0_0_regSDMA0_QUEUE0_PREEMPT = { name = "regSDMA0_QUEUE0_PREEMPT"; offset = 0xb0; segment = 0; fields = [ ("ib_preempt", (0, 0)) ] }
 let gc_11_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI = { name = "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI"; offset = 0xb2; segment = 0; fields = [ ("addr", (0, 31)) ] }
 let gc_11_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO = { name = "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO"; offset = 0xb3; segment = 0; fields = [ ("addr", (2, 31)) ] }
 let gc_11_0_0_regSDMA0_QUEUE0_MINOR_PTR_UPDATE = { name = "regSDMA0_QUEUE0_MINOR_PTR_UPDATE"; offset = 0xb5; segment = 0; fields = [ ("enable", (0, 0)) ] }
@@ -1078,6 +1079,7 @@ let gc_11_0_0_registers = [
   gc_11_0_0_regSDMA0_QUEUE0_IB_CNTL;
   gc_11_0_0_regSDMA0_QUEUE0_DOORBELL;
   gc_11_0_0_regSDMA0_QUEUE0_DOORBELL_OFFSET;
+  gc_11_0_0_regSDMA0_QUEUE0_PREEMPT;
   gc_11_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI;
   gc_11_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO;
   gc_11_0_0_regSDMA0_QUEUE0_MINOR_PTR_UPDATE;
@@ -1308,6 +1310,7 @@ let gc_11_0_0_find = function
   | "regSDMA0_QUEUE0_IB_CNTL" -> Some gc_11_0_0_regSDMA0_QUEUE0_IB_CNTL
   | "regSDMA0_QUEUE0_DOORBELL" -> Some gc_11_0_0_regSDMA0_QUEUE0_DOORBELL
   | "regSDMA0_QUEUE0_DOORBELL_OFFSET" -> Some gc_11_0_0_regSDMA0_QUEUE0_DOORBELL_OFFSET
+  | "regSDMA0_QUEUE0_PREEMPT" -> Some gc_11_0_0_regSDMA0_QUEUE0_PREEMPT
   | "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI" -> Some gc_11_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI
   | "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO" -> Some gc_11_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO
   | "regSDMA0_QUEUE0_MINOR_PTR_UPDATE" -> Some gc_11_0_0_regSDMA0_QUEUE0_MINOR_PTR_UPDATE
@@ -1539,6 +1542,7 @@ let gc_11_0_3_regSDMA0_QUEUE0_RB_RPTR_ADDR_LO = { name = "regSDMA0_QUEUE0_RB_RPT
 let gc_11_0_3_regSDMA0_QUEUE0_IB_CNTL = { name = "regSDMA0_QUEUE0_IB_CNTL"; offset = 0x8a; segment = 0; fields = [ ("ib_enable", (0, 0)); ("ib_swap_enable", (4, 4)); ("switch_inside_ib", (8, 8)); ("cmd_vmid", (16, 19)); ("ib_priv", (31, 31)) ] }
 let gc_11_0_3_regSDMA0_QUEUE0_DOORBELL = { name = "regSDMA0_QUEUE0_DOORBELL"; offset = 0x92; segment = 0; fields = [ ("enable", (28, 28)); ("captured", (30, 30)) ] }
 let gc_11_0_3_regSDMA0_QUEUE0_DOORBELL_OFFSET = { name = "regSDMA0_QUEUE0_DOORBELL_OFFSET"; offset = 0xab; segment = 0; fields = [ ("offset", (2, 27)) ] }
+let gc_11_0_3_regSDMA0_QUEUE0_PREEMPT = { name = "regSDMA0_QUEUE0_PREEMPT"; offset = 0xb0; segment = 0; fields = [ ("ib_preempt", (0, 0)) ] }
 let gc_11_0_3_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI = { name = "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI"; offset = 0xb2; segment = 0; fields = [ ("addr", (0, 31)) ] }
 let gc_11_0_3_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO = { name = "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO"; offset = 0xb3; segment = 0; fields = [ ("addr", (2, 31)) ] }
 let gc_11_0_3_regSDMA0_QUEUE0_MINOR_PTR_UPDATE = { name = "regSDMA0_QUEUE0_MINOR_PTR_UPDATE"; offset = 0xb5; segment = 0; fields = [ ("enable", (0, 0)) ] }
@@ -1768,6 +1772,7 @@ let gc_11_0_3_registers = [
   gc_11_0_3_regSDMA0_QUEUE0_IB_CNTL;
   gc_11_0_3_regSDMA0_QUEUE0_DOORBELL;
   gc_11_0_3_regSDMA0_QUEUE0_DOORBELL_OFFSET;
+  gc_11_0_3_regSDMA0_QUEUE0_PREEMPT;
   gc_11_0_3_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI;
   gc_11_0_3_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO;
   gc_11_0_3_regSDMA0_QUEUE0_MINOR_PTR_UPDATE;
@@ -1998,6 +2003,7 @@ let gc_11_0_3_find = function
   | "regSDMA0_QUEUE0_IB_CNTL" -> Some gc_11_0_3_regSDMA0_QUEUE0_IB_CNTL
   | "regSDMA0_QUEUE0_DOORBELL" -> Some gc_11_0_3_regSDMA0_QUEUE0_DOORBELL
   | "regSDMA0_QUEUE0_DOORBELL_OFFSET" -> Some gc_11_0_3_regSDMA0_QUEUE0_DOORBELL_OFFSET
+  | "regSDMA0_QUEUE0_PREEMPT" -> Some gc_11_0_3_regSDMA0_QUEUE0_PREEMPT
   | "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI" -> Some gc_11_0_3_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI
   | "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO" -> Some gc_11_0_3_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO
   | "regSDMA0_QUEUE0_MINOR_PTR_UPDATE" -> Some gc_11_0_3_regSDMA0_QUEUE0_MINOR_PTR_UPDATE
@@ -2229,6 +2235,7 @@ let gc_11_5_0_regSDMA0_QUEUE0_RB_RPTR_ADDR_LO = { name = "regSDMA0_QUEUE0_RB_RPT
 let gc_11_5_0_regSDMA0_QUEUE0_IB_CNTL = { name = "regSDMA0_QUEUE0_IB_CNTL"; offset = 0x8a; segment = 0; fields = [ ("ib_enable", (0, 0)); ("ib_swap_enable", (4, 4)); ("switch_inside_ib", (8, 8)); ("cmd_vmid", (16, 19)) ] }
 let gc_11_5_0_regSDMA0_QUEUE0_DOORBELL = { name = "regSDMA0_QUEUE0_DOORBELL"; offset = 0x92; segment = 0; fields = [ ("enable", (28, 28)); ("captured", (30, 30)) ] }
 let gc_11_5_0_regSDMA0_QUEUE0_DOORBELL_OFFSET = { name = "regSDMA0_QUEUE0_DOORBELL_OFFSET"; offset = 0xab; segment = 0; fields = [ ("offset", (2, 27)) ] }
+let gc_11_5_0_regSDMA0_QUEUE0_PREEMPT = { name = "regSDMA0_QUEUE0_PREEMPT"; offset = 0xb0; segment = 0; fields = [ ("ib_preempt", (0, 0)) ] }
 let gc_11_5_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI = { name = "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI"; offset = 0xb2; segment = 0; fields = [ ("addr", (0, 31)) ] }
 let gc_11_5_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO = { name = "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO"; offset = 0xb3; segment = 0; fields = [ ("addr", (2, 31)) ] }
 let gc_11_5_0_regSDMA0_QUEUE0_MINOR_PTR_UPDATE = { name = "regSDMA0_QUEUE0_MINOR_PTR_UPDATE"; offset = 0xb5; segment = 0; fields = [ ("enable", (0, 0)) ] }
@@ -2456,6 +2463,7 @@ let gc_11_5_0_registers = [
   gc_11_5_0_regSDMA0_QUEUE0_IB_CNTL;
   gc_11_5_0_regSDMA0_QUEUE0_DOORBELL;
   gc_11_5_0_regSDMA0_QUEUE0_DOORBELL_OFFSET;
+  gc_11_5_0_regSDMA0_QUEUE0_PREEMPT;
   gc_11_5_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI;
   gc_11_5_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO;
   gc_11_5_0_regSDMA0_QUEUE0_MINOR_PTR_UPDATE;
@@ -2684,6 +2692,7 @@ let gc_11_5_0_find = function
   | "regSDMA0_QUEUE0_IB_CNTL" -> Some gc_11_5_0_regSDMA0_QUEUE0_IB_CNTL
   | "regSDMA0_QUEUE0_DOORBELL" -> Some gc_11_5_0_regSDMA0_QUEUE0_DOORBELL
   | "regSDMA0_QUEUE0_DOORBELL_OFFSET" -> Some gc_11_5_0_regSDMA0_QUEUE0_DOORBELL_OFFSET
+  | "regSDMA0_QUEUE0_PREEMPT" -> Some gc_11_5_0_regSDMA0_QUEUE0_PREEMPT
   | "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI" -> Some gc_11_5_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI
   | "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO" -> Some gc_11_5_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO
   | "regSDMA0_QUEUE0_MINOR_PTR_UPDATE" -> Some gc_11_5_0_regSDMA0_QUEUE0_MINOR_PTR_UPDATE
@@ -2913,6 +2922,7 @@ let gc_12_0_0_regSDMA0_QUEUE0_RB_RPTR_ADDR_HI = { name = "regSDMA0_QUEUE0_RB_RPT
 let gc_12_0_0_regSDMA0_QUEUE0_IB_CNTL = { name = "regSDMA0_QUEUE0_IB_CNTL"; offset = 0x89; segment = 0; fields = [ ("ib_enable", (0, 0)); ("ib_swap_enable", (4, 4)); ("switch_inside_ib", (8, 8)); ("cmd_vmid", (16, 19)) ] }
 let gc_12_0_0_regSDMA0_QUEUE0_DOORBELL = { name = "regSDMA0_QUEUE0_DOORBELL"; offset = 0x8f; segment = 0; fields = [ ("enable", (28, 28)); ("captured", (30, 30)) ] }
 let gc_12_0_0_regSDMA0_QUEUE0_DOORBELL_OFFSET = { name = "regSDMA0_QUEUE0_DOORBELL_OFFSET"; offset = 0x91; segment = 0; fields = [ ("offset", (2, 27)) ] }
+let gc_12_0_0_regSDMA0_QUEUE0_PREEMPT = { name = "regSDMA0_QUEUE0_PREEMPT"; offset = 0x96; segment = 0; fields = [ ("ib_preempt", (0, 0)) ] }
 let gc_12_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO = { name = "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO"; offset = 0x98; segment = 0; fields = [ ("addr", (2, 31)) ] }
 let gc_12_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI = { name = "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI"; offset = 0x99; segment = 0; fields = [ ("addr", (0, 31)) ] }
 let gc_12_0_0_regSDMA0_QUEUE0_MINOR_PTR_UPDATE = { name = "regSDMA0_QUEUE0_MINOR_PTR_UPDATE"; offset = 0x9b; segment = 0; fields = [ ("enable", (0, 0)) ] }
@@ -3148,6 +3158,7 @@ let gc_12_0_0_registers = [
   gc_12_0_0_regSDMA0_QUEUE0_IB_CNTL;
   gc_12_0_0_regSDMA0_QUEUE0_DOORBELL;
   gc_12_0_0_regSDMA0_QUEUE0_DOORBELL_OFFSET;
+  gc_12_0_0_regSDMA0_QUEUE0_PREEMPT;
   gc_12_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO;
   gc_12_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI;
   gc_12_0_0_regSDMA0_QUEUE0_MINOR_PTR_UPDATE;
@@ -3384,6 +3395,7 @@ let gc_12_0_0_find = function
   | "regSDMA0_QUEUE0_IB_CNTL" -> Some gc_12_0_0_regSDMA0_QUEUE0_IB_CNTL
   | "regSDMA0_QUEUE0_DOORBELL" -> Some gc_12_0_0_regSDMA0_QUEUE0_DOORBELL
   | "regSDMA0_QUEUE0_DOORBELL_OFFSET" -> Some gc_12_0_0_regSDMA0_QUEUE0_DOORBELL_OFFSET
+  | "regSDMA0_QUEUE0_PREEMPT" -> Some gc_12_0_0_regSDMA0_QUEUE0_PREEMPT
   | "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO" -> Some gc_12_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO
   | "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI" -> Some gc_12_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI
   | "regSDMA0_QUEUE0_MINOR_PTR_UPDATE" -> Some gc_12_0_0_regSDMA0_QUEUE0_MINOR_PTR_UPDATE
