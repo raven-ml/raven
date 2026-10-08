@@ -1,0 +1,185 @@
+/*
+ * Copyright 2021 Advanced Micro Devices, Inc.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+ * THE COPYRIGHT HOLDER(S) OR AUTHOR(S) BE LIABLE FOR ANY CLAIM, DAMAGES OR
+ * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ *
+ */
+
+#define BIF_BX0_PCIE_INDEX2__PCIE_INDEX2_MASK                                                                 0xFFFFFFFFL
+#define BIF_BX0_PCIE_DATA2__PCIE_DATA2_MASK                                                                   0xFFFFFFFFL
+#define BIF_BX0_PCIE_INDEX2_HI__PCIE_INDEX2_HI_MASK                                                           0x000000FFL
+#define BIF_BX0_BIF_DOORBELL_INT_CNTL__DOORBELL_INTERRUPT_STATUS_MASK                                         0x00000001L
+#define BIF_BX0_BIF_DOORBELL_INT_CNTL__RAS_CNTLR_INTERRUPT_STATUS_MASK                                        0x00000002L
+#define BIF_BX0_BIF_DOORBELL_INT_CNTL__RAS_ATHUB_ERR_EVENT_INTERRUPT_STATUS_MASK                              0x00000004L
+#define BIF_BX0_BIF_DOORBELL_INT_CNTL__DOORBELL_INTERRUPT_CLEAR_MASK                                          0x00010000L
+#define BIF_BX0_BIF_DOORBELL_INT_CNTL__RAS_CNTLR_INTERRUPT_CLEAR_MASK                                         0x00020000L
+#define BIF_BX0_BIF_DOORBELL_INT_CNTL__RAS_ATHUB_ERR_EVENT_INTERRUPT_CLEAR_MASK                               0x00040000L
+#define BIF_BX0_BIF_DOORBELL_INT_CNTL__RAS_CNTLR_ERR_EVENT_INTERRUPT_ENABLE_MASK                              0x00800000L
+#define BIF_BX0_BIF_DOORBELL_INT_CNTL__DOORBELL_INTERRUPT_DISABLE_MASK                                        0x01000000L
+#define BIF_BX0_BIF_DOORBELL_INT_CNTL__RAS_CNTLR_INTERRUPT_DISABLE_MASK                                       0x02000000L
+#define BIF_BX0_BIF_DOORBELL_INT_CNTL__RAS_ATHUB_ERR_EVENT_INTERRUPT_DISABLE_MASK                             0x04000000L
+#define BIF_BX0_BIF_DOORBELL_INT_CNTL__SET_DB_INTR_STATUS_WHEN_RB_ENABLE_MASK                                 0x10000000L
+#define BIF_BX0_BIF_DOORBELL_INT_CNTL__SET_IOH_RAS_INTR_STATUS_WHEN_RB_ENABLE_MASK                            0x20000000L
+#define BIF_BX0_BIF_DOORBELL_INT_CNTL__SET_ATH_RAS_INTR_STATUS_WHEN_RB_ENABLE_MASK                            0x40000000L
+#define BIF_BX0_BIF_DOORBELL_INT_CNTL__TIMEOUT_ERR_EVENT_INTERRUPT_ENABLE_MASK                                0x80000000L
+#define BIF_BX0_REMAP_HDP_MEM_FLUSH_CNTL__ADDRESS_MASK                                                        0x0007FFFCL
+#define RCC_DEV0_EPF0_RCC_DOORBELL_APER_EN__BIF_DOORBELL_APER_EN_MASK                                         0x00000001L
+#define BIF_BX_DEV0_EPF0_VF0_HDP_MEM_COHERENCY_FLUSH_CNTL__HDP_MEM_FLUSH_ADDR_MASK                            0x00000001L
+#define RCC_DEV0_EPF2_STRAP2__STRAP_NO_SOFT_RESET_DEV0_F2_MASK                                                0x00000080L
+#define RCC_DEV0_EPF2_STRAP2__STRAP_RESIZE_BAR_EN_DEV0_F2_MASK                                                0x00000100L
+#define RCC_DEV0_EPF2_STRAP2__STRAP_MAX_PASID_WIDTH_DEV0_F2_MASK                                              0x00003E00L
+#define RCC_DEV0_EPF2_STRAP2__STRAP_MSI_PERVECTOR_MASK_CAP_DEV0_F2_MASK                                       0x00004000L
+#define RCC_DEV0_EPF2_STRAP2__STRAP_AER_EN_DEV0_F2_MASK                                                       0x00010000L
+#define RCC_DEV0_EPF2_STRAP2__STRAP_ACS_EN_DEV0_F2_MASK                                                       0x00020000L
+#define RCC_DEV0_EPF2_STRAP2__STRAP_CPL_ABORT_ERR_EN_DEV0_F2_MASK                                             0x00100000L
+#define RCC_DEV0_EPF2_STRAP2__STRAP_DPA_EN_DEV0_F2_MASK                                                       0x00200000L
+#define RCC_DEV0_EPF2_STRAP2__STRAP_VC_EN_DEV0_F2_MASK                                                        0x00800000L
+#define RCC_DEV0_EPF2_STRAP2__STRAP_MSI_MULTI_CAP_DEV0_F2_MASK                                                0x07000000L
+#define RCC_DEV0_EPF2_STRAP2__STRAP_PASID_EN_DEV0_F2_MASK                                                     0x10000000L
+#define RCC_DEV0_EPF2_STRAP2__STRAP_PASID_EXE_PERMISSION_SUPPORTED_DEV0_F2_MASK                               0x20000000L
+#define RCC_DEV0_EPF2_STRAP2__STRAP_PASID_GLOBAL_INVALIDATE_SUPPORTED_DEV0_F2_MASK                            0x40000000L
+#define RCC_DEV0_EPF2_STRAP2__STRAP_PASID_PRIV_MODE_SUPPORTED_DEV0_F2_MASK                                    0x80000000L
+#define S2A_DOORBELL_ENTRY_0_CTRL__S2A_DOORBELL_PORT0_ENABLE_MASK                                             0x00000001L
+#define S2A_DOORBELL_ENTRY_0_CTRL__S2A_DOORBELL_PORT0_AWID_MASK                                               0x0000003EL
+#define S2A_DOORBELL_ENTRY_0_CTRL__S2A_DOORBELL_PORT0_FENCE_ENABLE_MASK                                       0x00000040L
+#define S2A_DOORBELL_ENTRY_0_CTRL__S2A_DOORBELL_PORT0_RANGE_OFFSET_MASK                                       0x0001FF80L
+#define S2A_DOORBELL_ENTRY_0_CTRL__S2A_DOORBELL_PORT0_RANGE_SIZE_MASK                                         0x01FE0000L
+#define S2A_DOORBELL_ENTRY_0_CTRL__S2A_DOORBELL_PORT0_64BIT_SUPPORT_DIS_MASK                                  0x02000000L
+#define S2A_DOORBELL_ENTRY_0_CTRL__S2A_DOORBELL_PORT0_NEED_DEDUCT_RANGE_OFFSET_MASK                           0x04000000L
+#define S2A_DOORBELL_ENTRY_0_CTRL__S2A_DOORBELL_PORT0_AWADDR_31_28_VALUE_MASK                                 0xF0000000L
+#define S2A_DOORBELL_ENTRY_1_CTRL__S2A_DOORBELL_PORT1_ENABLE_MASK                                             0x00000001L
+#define S2A_DOORBELL_ENTRY_1_CTRL__S2A_DOORBELL_PORT1_AWID_MASK                                               0x0000003EL
+#define S2A_DOORBELL_ENTRY_1_CTRL__S2A_DOORBELL_PORT1_FENCE_ENABLE_MASK                                       0x00000040L
+#define S2A_DOORBELL_ENTRY_1_CTRL__S2A_DOORBELL_PORT1_RANGE_OFFSET_MASK                                       0x0001FF80L
+#define S2A_DOORBELL_ENTRY_1_CTRL__S2A_DOORBELL_PORT1_RANGE_SIZE_MASK                                         0x01FE0000L
+#define S2A_DOORBELL_ENTRY_1_CTRL__S2A_DOORBELL_PORT1_64BIT_SUPPORT_DIS_MASK                                  0x02000000L
+#define S2A_DOORBELL_ENTRY_1_CTRL__S2A_DOORBELL_PORT1_NEED_DEDUCT_RANGE_OFFSET_MASK                           0x04000000L
+#define S2A_DOORBELL_ENTRY_1_CTRL__S2A_DOORBELL_PORT1_AWADDR_31_28_VALUE_MASK                                 0xF0000000L
+#define S2A_DOORBELL_ENTRY_2_CTRL__S2A_DOORBELL_PORT2_ENABLE_MASK                                             0x00000001L
+#define S2A_DOORBELL_ENTRY_2_CTRL__S2A_DOORBELL_PORT2_AWID_MASK                                               0x0000003EL
+#define S2A_DOORBELL_ENTRY_2_CTRL__S2A_DOORBELL_PORT2_FENCE_ENABLE_MASK                                       0x00000040L
+#define S2A_DOORBELL_ENTRY_2_CTRL__S2A_DOORBELL_PORT2_RANGE_OFFSET_MASK                                       0x0001FF80L
+#define S2A_DOORBELL_ENTRY_2_CTRL__S2A_DOORBELL_PORT2_RANGE_SIZE_MASK                                         0x01FE0000L
+#define S2A_DOORBELL_ENTRY_2_CTRL__S2A_DOORBELL_PORT2_64BIT_SUPPORT_DIS_MASK                                  0x02000000L
+#define S2A_DOORBELL_ENTRY_2_CTRL__S2A_DOORBELL_PORT2_NEED_DEDUCT_RANGE_OFFSET_MASK                           0x04000000L
+#define S2A_DOORBELL_ENTRY_2_CTRL__S2A_DOORBELL_PORT2_AWADDR_31_28_VALUE_MASK                                 0xF0000000L
+#define S2A_DOORBELL_ENTRY_3_CTRL__S2A_DOORBELL_PORT3_ENABLE_MASK                                             0x00000001L
+#define S2A_DOORBELL_ENTRY_3_CTRL__S2A_DOORBELL_PORT3_AWID_MASK                                               0x0000003EL
+#define S2A_DOORBELL_ENTRY_3_CTRL__S2A_DOORBELL_PORT3_FENCE_ENABLE_MASK                                       0x00000040L
+#define S2A_DOORBELL_ENTRY_3_CTRL__S2A_DOORBELL_PORT3_RANGE_OFFSET_MASK                                       0x0001FF80L
+#define S2A_DOORBELL_ENTRY_3_CTRL__S2A_DOORBELL_PORT3_RANGE_SIZE_MASK                                         0x01FE0000L
+#define S2A_DOORBELL_ENTRY_3_CTRL__S2A_DOORBELL_PORT3_64BIT_SUPPORT_DIS_MASK                                  0x02000000L
+#define S2A_DOORBELL_ENTRY_3_CTRL__S2A_DOORBELL_PORT3_NEED_DEDUCT_RANGE_OFFSET_MASK                           0x04000000L
+#define S2A_DOORBELL_ENTRY_3_CTRL__S2A_DOORBELL_PORT3_AWADDR_31_28_VALUE_MASK                                 0xF0000000L
+#define S2A_DOORBELL_ENTRY_4_CTRL__S2A_DOORBELL_PORT4_ENABLE_MASK                                             0x00000001L
+#define S2A_DOORBELL_ENTRY_4_CTRL__S2A_DOORBELL_PORT4_AWID_MASK                                               0x0000003EL
+#define S2A_DOORBELL_ENTRY_4_CTRL__S2A_DOORBELL_PORT4_FENCE_ENABLE_MASK                                       0x00000040L
+#define S2A_DOORBELL_ENTRY_4_CTRL__S2A_DOORBELL_PORT4_RANGE_OFFSET_MASK                                       0x0001FF80L
+#define S2A_DOORBELL_ENTRY_4_CTRL__S2A_DOORBELL_PORT4_RANGE_SIZE_MASK                                         0x01FE0000L
+#define S2A_DOORBELL_ENTRY_4_CTRL__S2A_DOORBELL_PORT4_64BIT_SUPPORT_DIS_MASK                                  0x02000000L
+#define S2A_DOORBELL_ENTRY_4_CTRL__S2A_DOORBELL_PORT4_NEED_DEDUCT_RANGE_OFFSET_MASK                           0x04000000L
+#define S2A_DOORBELL_ENTRY_4_CTRL__S2A_DOORBELL_PORT4_AWADDR_31_28_VALUE_MASK                                 0xF0000000L
+#define S2A_DOORBELL_ENTRY_5_CTRL__S2A_DOORBELL_PORT5_ENABLE_MASK                                             0x00000001L
+#define S2A_DOORBELL_ENTRY_5_CTRL__S2A_DOORBELL_PORT5_AWID_MASK                                               0x0000003EL
+#define S2A_DOORBELL_ENTRY_5_CTRL__S2A_DOORBELL_PORT5_FENCE_ENABLE_MASK                                       0x00000040L
+#define S2A_DOORBELL_ENTRY_5_CTRL__S2A_DOORBELL_PORT5_RANGE_OFFSET_MASK                                       0x0001FF80L
+#define S2A_DOORBELL_ENTRY_5_CTRL__S2A_DOORBELL_PORT5_RANGE_SIZE_MASK                                         0x01FE0000L
+#define S2A_DOORBELL_ENTRY_5_CTRL__S2A_DOORBELL_PORT5_64BIT_SUPPORT_DIS_MASK                                  0x02000000L
+#define S2A_DOORBELL_ENTRY_5_CTRL__S2A_DOORBELL_PORT5_NEED_DEDUCT_RANGE_OFFSET_MASK                           0x04000000L
+#define S2A_DOORBELL_ENTRY_5_CTRL__S2A_DOORBELL_PORT5_AWADDR_31_28_VALUE_MASK                                 0xF0000000L
+#define S2A_DOORBELL_ENTRY_6_CTRL__S2A_DOORBELL_PORT6_ENABLE_MASK                                             0x00000001L
+#define S2A_DOORBELL_ENTRY_6_CTRL__S2A_DOORBELL_PORT6_AWID_MASK                                               0x0000003EL
+#define S2A_DOORBELL_ENTRY_6_CTRL__S2A_DOORBELL_PORT6_FENCE_ENABLE_MASK                                       0x00000040L
+#define S2A_DOORBELL_ENTRY_6_CTRL__S2A_DOORBELL_PORT6_RANGE_OFFSET_MASK                                       0x0001FF80L
+#define S2A_DOORBELL_ENTRY_6_CTRL__S2A_DOORBELL_PORT6_RANGE_SIZE_MASK                                         0x01FE0000L
+#define S2A_DOORBELL_ENTRY_6_CTRL__S2A_DOORBELL_PORT6_64BIT_SUPPORT_DIS_MASK                                  0x02000000L
+#define S2A_DOORBELL_ENTRY_6_CTRL__S2A_DOORBELL_PORT6_NEED_DEDUCT_RANGE_OFFSET_MASK                           0x04000000L
+#define S2A_DOORBELL_ENTRY_6_CTRL__S2A_DOORBELL_PORT6_AWADDR_31_28_VALUE_MASK                                 0xF0000000L
+#define S2A_DOORBELL_ENTRY_7_CTRL__S2A_DOORBELL_PORT7_ENABLE_MASK                                             0x00000001L
+#define S2A_DOORBELL_ENTRY_7_CTRL__S2A_DOORBELL_PORT7_AWID_MASK                                               0x0000003EL
+#define S2A_DOORBELL_ENTRY_7_CTRL__S2A_DOORBELL_PORT7_FENCE_ENABLE_MASK                                       0x00000040L
+#define S2A_DOORBELL_ENTRY_7_CTRL__S2A_DOORBELL_PORT7_RANGE_OFFSET_MASK                                       0x0001FF80L
+#define S2A_DOORBELL_ENTRY_7_CTRL__S2A_DOORBELL_PORT7_RANGE_SIZE_MASK                                         0x01FE0000L
+#define S2A_DOORBELL_ENTRY_7_CTRL__S2A_DOORBELL_PORT7_64BIT_SUPPORT_DIS_MASK                                  0x02000000L
+#define S2A_DOORBELL_ENTRY_7_CTRL__S2A_DOORBELL_PORT7_NEED_DEDUCT_RANGE_OFFSET_MASK                           0x04000000L
+#define S2A_DOORBELL_ENTRY_7_CTRL__S2A_DOORBELL_PORT7_AWADDR_31_28_VALUE_MASK                                 0xF0000000L
+#define S2A_DOORBELL_ENTRY_8_CTRL__S2A_DOORBELL_PORT8_ENABLE_MASK                                             0x00000001L
+#define S2A_DOORBELL_ENTRY_8_CTRL__S2A_DOORBELL_PORT8_AWID_MASK                                               0x0000003EL
+#define S2A_DOORBELL_ENTRY_8_CTRL__S2A_DOORBELL_PORT8_FENCE_ENABLE_MASK                                       0x00000040L
+#define S2A_DOORBELL_ENTRY_8_CTRL__S2A_DOORBELL_PORT8_RANGE_OFFSET_MASK                                       0x0001FF80L
+#define S2A_DOORBELL_ENTRY_8_CTRL__S2A_DOORBELL_PORT8_RANGE_SIZE_MASK                                         0x01FE0000L
+#define S2A_DOORBELL_ENTRY_8_CTRL__S2A_DOORBELL_PORT8_64BIT_SUPPORT_DIS_MASK                                  0x02000000L
+#define S2A_DOORBELL_ENTRY_8_CTRL__S2A_DOORBELL_PORT8_NEED_DEDUCT_RANGE_OFFSET_MASK                           0x04000000L
+#define S2A_DOORBELL_ENTRY_8_CTRL__S2A_DOORBELL_PORT8_AWADDR_31_28_VALUE_MASK                                 0xF0000000L
+#define S2A_DOORBELL_ENTRY_9_CTRL__S2A_DOORBELL_PORT9_ENABLE_MASK                                             0x00000001L
+#define S2A_DOORBELL_ENTRY_9_CTRL__S2A_DOORBELL_PORT9_AWID_MASK                                               0x0000003EL
+#define S2A_DOORBELL_ENTRY_9_CTRL__S2A_DOORBELL_PORT9_FENCE_ENABLE_MASK                                       0x00000040L
+#define S2A_DOORBELL_ENTRY_9_CTRL__S2A_DOORBELL_PORT9_RANGE_OFFSET_MASK                                       0x0001FF80L
+#define S2A_DOORBELL_ENTRY_9_CTRL__S2A_DOORBELL_PORT9_RANGE_SIZE_MASK                                         0x01FE0000L
+#define S2A_DOORBELL_ENTRY_9_CTRL__S2A_DOORBELL_PORT9_64BIT_SUPPORT_DIS_MASK                                  0x02000000L
+#define S2A_DOORBELL_ENTRY_9_CTRL__S2A_DOORBELL_PORT9_NEED_DEDUCT_RANGE_OFFSET_MASK                           0x04000000L
+#define S2A_DOORBELL_ENTRY_9_CTRL__S2A_DOORBELL_PORT9_AWADDR_31_28_VALUE_MASK                                 0xF0000000L
+#define S2A_DOORBELL_ENTRY_10_CTRL__S2A_DOORBELL_PORT10_ENABLE_MASK                                           0x00000001L
+#define S2A_DOORBELL_ENTRY_10_CTRL__S2A_DOORBELL_PORT10_AWID_MASK                                             0x0000003EL
+#define S2A_DOORBELL_ENTRY_10_CTRL__S2A_DOORBELL_PORT10_FENCE_ENABLE_MASK                                     0x00000040L
+#define S2A_DOORBELL_ENTRY_10_CTRL__S2A_DOORBELL_PORT10_RANGE_OFFSET_MASK                                     0x0001FF80L
+#define S2A_DOORBELL_ENTRY_10_CTRL__S2A_DOORBELL_PORT10_RANGE_SIZE_MASK                                       0x01FE0000L
+#define S2A_DOORBELL_ENTRY_10_CTRL__S2A_DOORBELL_PORT10_64BIT_SUPPORT_DIS_MASK                                0x02000000L
+#define S2A_DOORBELL_ENTRY_10_CTRL__S2A_DOORBELL_PORT10_NEED_DEDUCT_RANGE_OFFSET_MASK                         0x04000000L
+#define S2A_DOORBELL_ENTRY_10_CTRL__S2A_DOORBELL_PORT10_AWADDR_31_28_VALUE_MASK                               0xF0000000L
+#define S2A_DOORBELL_ENTRY_11_CTRL__S2A_DOORBELL_PORT11_ENABLE_MASK                                           0x00000001L
+#define S2A_DOORBELL_ENTRY_11_CTRL__S2A_DOORBELL_PORT11_AWID_MASK                                             0x0000003EL
+#define S2A_DOORBELL_ENTRY_11_CTRL__S2A_DOORBELL_PORT11_FENCE_ENABLE_MASK                                     0x00000040L
+#define S2A_DOORBELL_ENTRY_11_CTRL__S2A_DOORBELL_PORT11_RANGE_OFFSET_MASK                                     0x0001FF80L
+#define S2A_DOORBELL_ENTRY_11_CTRL__S2A_DOORBELL_PORT11_RANGE_SIZE_MASK                                       0x01FE0000L
+#define S2A_DOORBELL_ENTRY_11_CTRL__S2A_DOORBELL_PORT11_64BIT_SUPPORT_DIS_MASK                                0x02000000L
+#define S2A_DOORBELL_ENTRY_11_CTRL__S2A_DOORBELL_PORT11_NEED_DEDUCT_RANGE_OFFSET_MASK                         0x04000000L
+#define S2A_DOORBELL_ENTRY_11_CTRL__S2A_DOORBELL_PORT11_AWADDR_31_28_VALUE_MASK                               0xF0000000L
+#define S2A_DOORBELL_ENTRY_12_CTRL__S2A_DOORBELL_PORT12_ENABLE_MASK                                           0x00000001L
+#define S2A_DOORBELL_ENTRY_12_CTRL__S2A_DOORBELL_PORT12_AWID_MASK                                             0x0000003EL
+#define S2A_DOORBELL_ENTRY_12_CTRL__S2A_DOORBELL_PORT12_FENCE_ENABLE_MASK                                     0x00000040L
+#define S2A_DOORBELL_ENTRY_12_CTRL__S2A_DOORBELL_PORT12_RANGE_OFFSET_MASK                                     0x0001FF80L
+#define S2A_DOORBELL_ENTRY_12_CTRL__S2A_DOORBELL_PORT12_RANGE_SIZE_MASK                                       0x01FE0000L
+#define S2A_DOORBELL_ENTRY_12_CTRL__S2A_DOORBELL_PORT12_64BIT_SUPPORT_DIS_MASK                                0x02000000L
+#define S2A_DOORBELL_ENTRY_12_CTRL__S2A_DOORBELL_PORT12_NEED_DEDUCT_RANGE_OFFSET_MASK                         0x04000000L
+#define S2A_DOORBELL_ENTRY_12_CTRL__S2A_DOORBELL_PORT12_AWADDR_31_28_VALUE_MASK                               0xF0000000L
+#define S2A_DOORBELL_ENTRY_13_CTRL__S2A_DOORBELL_PORT13_ENABLE_MASK                                           0x00000001L
+#define S2A_DOORBELL_ENTRY_13_CTRL__S2A_DOORBELL_PORT13_AWID_MASK                                             0x0000003EL
+#define S2A_DOORBELL_ENTRY_13_CTRL__S2A_DOORBELL_PORT13_FENCE_ENABLE_MASK                                     0x00000040L
+#define S2A_DOORBELL_ENTRY_13_CTRL__S2A_DOORBELL_PORT13_RANGE_OFFSET_MASK                                     0x0001FF80L
+#define S2A_DOORBELL_ENTRY_13_CTRL__S2A_DOORBELL_PORT13_RANGE_SIZE_MASK                                       0x01FE0000L
+#define S2A_DOORBELL_ENTRY_13_CTRL__S2A_DOORBELL_PORT13_64BIT_SUPPORT_DIS_MASK                                0x02000000L
+#define S2A_DOORBELL_ENTRY_13_CTRL__S2A_DOORBELL_PORT13_NEED_DEDUCT_RANGE_OFFSET_MASK                         0x04000000L
+#define S2A_DOORBELL_ENTRY_13_CTRL__S2A_DOORBELL_PORT13_AWADDR_31_28_VALUE_MASK                               0xF0000000L
+#define S2A_DOORBELL_ENTRY_14_CTRL__S2A_DOORBELL_PORT14_ENABLE_MASK                                           0x00000001L
+#define S2A_DOORBELL_ENTRY_14_CTRL__S2A_DOORBELL_PORT14_AWID_MASK                                             0x0000003EL
+#define S2A_DOORBELL_ENTRY_14_CTRL__S2A_DOORBELL_PORT14_FENCE_ENABLE_MASK                                     0x00000040L
+#define S2A_DOORBELL_ENTRY_14_CTRL__S2A_DOORBELL_PORT14_RANGE_OFFSET_MASK                                     0x0001FF80L
+#define S2A_DOORBELL_ENTRY_14_CTRL__S2A_DOORBELL_PORT14_RANGE_SIZE_MASK                                       0x01FE0000L
+#define S2A_DOORBELL_ENTRY_14_CTRL__S2A_DOORBELL_PORT14_64BIT_SUPPORT_DIS_MASK                                0x02000000L
+#define S2A_DOORBELL_ENTRY_14_CTRL__S2A_DOORBELL_PORT14_NEED_DEDUCT_RANGE_OFFSET_MASK                         0x04000000L
+#define S2A_DOORBELL_ENTRY_14_CTRL__S2A_DOORBELL_PORT14_AWADDR_31_28_VALUE_MASK                               0xF0000000L
+#define S2A_DOORBELL_ENTRY_15_CTRL__S2A_DOORBELL_PORT15_ENABLE_MASK                                           0x00000001L
+#define S2A_DOORBELL_ENTRY_15_CTRL__S2A_DOORBELL_PORT15_AWID_MASK                                             0x0000003EL
+#define S2A_DOORBELL_ENTRY_15_CTRL__S2A_DOORBELL_PORT15_FENCE_ENABLE_MASK                                     0x00000040L
+#define S2A_DOORBELL_ENTRY_15_CTRL__S2A_DOORBELL_PORT15_RANGE_OFFSET_MASK                                     0x0001FF80L
+#define S2A_DOORBELL_ENTRY_15_CTRL__S2A_DOORBELL_PORT15_RANGE_SIZE_MASK                                       0x01FE0000L
+#define S2A_DOORBELL_ENTRY_15_CTRL__S2A_DOORBELL_PORT15_64BIT_SUPPORT_DIS_MASK                                0x02000000L
+#define S2A_DOORBELL_ENTRY_15_CTRL__S2A_DOORBELL_PORT15_NEED_DEDUCT_RANGE_OFFSET_MASK                         0x04000000L
+#define S2A_DOORBELL_ENTRY_15_CTRL__S2A_DOORBELL_PORT15_AWADDR_31_28_VALUE_MASK                               0xF0000000L

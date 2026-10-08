@@ -1,5 +1,5 @@
 (tests
  (names test_amd_pci)
- (libraries device_amd_pci windtrap)
+ (libraries device_amd_pci device_amd_abi windtrap)
  (deps
   (glob_files fixtures/*)))

@@ -141,6 +141,92 @@ let damaged =
       cover "refused by a checksum" (refused "checksum");
       cover "refused by a field outside" (refused "outside"))
 
+(* Registers *)
+
+module Regs = Device_amd_pci.Regs
+
+let layout d =
+  match Regs.layout d with Ok l -> l | Error why -> failf "layout: %s" why
+
+(* [with_version d b v] is [d] with block [b] of version [v]. *)
+let with_version (d : Discovery.t) b v =
+  { d with versions = (b, v) :: List.remove_assoc b d.versions }
+
+let registers =
+  group ~timeout:10. "registers"
+    [
+      test "the R9700 is a GPU of 64 compute units that runs gfx1201" (fun () ->
+          let g = Regs.gpu (layout (table "r9700.bin")) in
+          equal (list int) [ 12; 0; 1; 1; 4; 64; 32 ]
+            (let a, b, c = g.target in
+             [
+               a;
+               b;
+               c;
+               g.xccs;
+               g.shader_engines;
+               g.compute_units;
+               g.scratch_slots;
+             ]);
+          equal version (12, 0, 1) g.gc;
+          equal version (7, 0, 1) g.sdma);
+      cases ~name:fst
+        "a register lies at its block's segment base plus its offset"
+        [
+          (* (name, segment base + offset), from the R9700's bases and the
+             kernel's register headers of its blocks' versions. *)
+          ("regGRBM_GFX_CNTL", 0xa000 + 0x900);
+          ("regMMVM_L2_CNTL", 0x1a000 + 0x4e4);
+          ("regIH_RB_CNTL", 0x10a0 + 0x80);
+          ("mmMP1_SMN_C2PMSG_90", 0x16000 + 0x29a);
+          ("regBIF_BX_PF0_RSMU_INDEX", 0x14);
+          ("regHDP_MEM_POWER_CTRL", 0xf20 + 0xd4);
+        ]
+        (fun (name, a) ->
+          equal int a (Regs.address (layout (table "r9700.bin")) name));
+      test "a block takes its major's latest table at or before its version"
+        (fun () ->
+          let d = table "r9700.bin" in
+          let later = layout (with_version d 34 (4, 1, 7)) in
+          equal int
+            (Regs.address (layout d) "regMMVM_L2_CNTL")
+            (Regs.address later "regMMVM_L2_CNTL"));
+      cases
+        ~name:(fun (b, v, _) ->
+          strf "block %d at %s" b
+            (let a, b, c = v in
+             strf "%d.%d.%d" a b c))
+        "a block of a version with no table is refused, naming it"
+        [
+          (34, (1, 7, 0), "MMHUB 1.7.0 is a version this library does not boot");
+          (34, (2, 0, 0), "MMHUB 2.0.0 is a version this library does not boot");
+          (11, (10, 3, 0), "GC 10.3.0 is a version this library does not boot");
+        ]
+        (fun (b, v, msg) ->
+          equal (result pass string) (Error msg)
+            (Result.map ignore
+               (Regs.layout (with_version (table "r9700.bin") b v))));
+      test "a GPU without a block a boot programs is refused" (fun () ->
+          let d = table "r9700.bin" in
+          equal (result pass string) (Error "the GPU has no OSSSYS block")
+            (Result.map ignore
+               (Regs.layout
+                  { d with versions = List.remove_assoc 40 d.versions })));
+      test "every GC register lies in a range a virtual function guards"
+        (fun () ->
+          let l = layout (table "r9700.bin") in
+          List.iter
+            (fun (r : Device_amd_abi.Register.t) ->
+              let a = Regs.address l r.name in
+              if
+                not
+                  (List.exists
+                     (fun (lo, hi) -> lo <= a && a <= hi)
+                     (Regs.guarded l))
+              then failf "%s at 0x%x is in no guarded range" r.name a)
+            (Device_amd_abi.Register.registers (Regs.gpu l)));
+    ]
+
 (* Firmware *)
 
 module Images = Device_amd_pci.Images
@@ -447,4 +533,4 @@ let firmware =
             (List.length (List.sort_uniq compare paths)));
     ]
 
-let () = exit (run "device_amd_pci" [ discovery; damaged; firmware ])
+let () = exit (run "device_amd_pci" [ discovery; damaged; registers; firmware ])

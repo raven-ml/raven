@@ -6,7 +6,6 @@
  (private_modules psp smu gfx sdma boot)
  (modules_without_implementation
   device_amd_pci
-  regs
   gmc
   ih
   psp

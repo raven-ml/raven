@@ -2,7 +2,8 @@
 # requires-python = ">=3.10"
 # ///
 """Generates defs.ml, the tables of device_amd_pci: the layouts of the
-discovery table and its blocks' hardware IDs, the layouts of firmware
+discovery table and its blocks' hardware IDs, the registers of each block
+but GC (whose are device_amd_abi's) at each version with headers, the layouts of firmware
 images' headers and the types the security processor loads them as, and the
 pinned firmware images.
 
@@ -54,6 +55,64 @@ SOURCES = {
     "amdgpu_ucode.h": KERNEL + "amdgpu/amdgpu_ucode.h",  # firmware images' headers
     "psp_gfx_if.h": KERNEL + "amdgpu/psp_gfx_if.h",  # the types the PSP loads images as
 }
+
+# The register headers of each block but GC, by the stem of their names, at
+# each version with headers the GPUs the library boots program.
+REG_FILES = {
+    "mmhub": [(1, 8, 0), (3, 0, 0), (3, 0, 1), (3, 0, 2), (4, 1, 0)],
+    "nbio": [(4, 3, 0), (7, 2, 0), (7, 7, 0), (7, 9, 0)],
+    "nbif": [(6, 3, 1)],
+    "mp": [(11, 0, 0), (13, 0, 0), (14, 0, 2)],
+    "hdp": [(4, 4, 2), (6, 0, 0), (7, 0, 0)],
+    "osssys": [(4, 4, 2), (6, 0, 0), (7, 0, 0)],
+    "sdma": [(4, 4, 2)],
+}
+REG_DIRS = {"osssys": "oss"}
+
+
+def reg_header(prefix, ver, kind):
+    """The header of [prefix]'s registers at [ver]: MP 11.0's is unversioned."""
+    stem = "mp_11_0" if (prefix, ver) == ("mp", (11, 0, 0)) else f"{prefix}_{'_'.join(map(str, ver))}"
+    return f"{stem}_{kind}.h"
+
+
+for _p, _vs in REG_FILES.items():
+    for _v in _vs:
+        for _k in ("offset", "sh_mask"):
+            SOURCES[reg_header(_p, _v, _k)] = KERNEL + f"include/asic_reg/{REG_DIRS.get(_p, _p)}/" + reg_header(_p, _v, _k)
+
+# The registers the library reads and writes, by block: names that match.
+VM = r"regMM"
+REG_INVENTORY = {
+    "mmhub": [
+        VM + r"VM_CONTEXT0_(CNTL|PAGE_TABLE_(START|END|BASE)_ADDR_(LO32|HI32))",
+        VM + r"VM_INVALIDATE_ENG17_(REQ|ACK|SEM)",
+        VM + r"VM_INVALIDATE_ENG\d+_ADDR_RANGE_(LO32|HI32)",
+        VM + r"VM_L2_(CNTL[2-5]?|PROTECTION_FAULT_(CNTL2?|STATUS(_LO32)?|DEFAULT_ADDR_(LO32|HI32)|ADDR_(LO32|HI32))|"
+        r"CONTEXT1_IDENTITY_APERTURE_(LOW|HIGH)_ADDR_(LO32|HI32)|CONTEXT_IDENTITY_PHYSICAL_OFFSET_(LO32|HI32)|"
+        r"BANK_SELECT_RESERVED_CID2)",
+        VM + r"MC_VM_(AGP_(BASE|BOT|TOP)|SYSTEM_APERTURE_(LOW|HIGH)_ADDR|SYSTEM_APERTURE_DEFAULT_ADDR_(LSB|MSB)|"
+        r"MX_L1_TLB_CNTL|FB_LOCATION_(BASE|TOP)|XGMI_LFB_(CNTL|SIZE))",
+        r"regMM_ATC_L2_MISC_CG",
+    ],
+    "nbio": [
+        r"regBIF_BX_PF0_RSMU_(INDEX|DATA)",
+        r"regBIF_BX0_(PCIE_INDEX2(_HI)?|PCIE_DATA2|REMAP_HDP_MEM_FLUSH_CNTL|BIF_DOORBELL_INT_CNTL)",
+        r"regBIF_BX_DEV0_EPF0_VF0_HDP_MEM_COHERENCY_FLUSH_CNTL",
+        r"regBIFC_(GFX_INT_MONITOR_MASK|DOORBELL_ACCESS_EN_PF)", r"regXCC_DOORBELL_FENCE",
+        r"regDOORBELL0_CTRL_ENTRY_\d+", r"reg(GDC_S2A0_S2A|S2A)_DOORBELL_ENTRY_\d+_CTRL",
+        r"regRCC_DEV0_EPF0_RCC_DOORBELL_APER_EN", r"regRCC_DEV0_EPF2_STRAP2",
+    ],
+    "mp": [r"reg(MP0|MPASP)_SMN_C2PMSG_\d+", r"mmMP1_SMN_C2PMSG_\d+"],
+    "hdp": [r"regHDP_MEM_POWER_CTRL"],
+    "osssys": [
+        r"regIH_(RB_BASE|RB_BASE_HI|RB_CNTL|RB_RPTR|RB_WPTR|DOORBELL_RPTR)(_RING1)?",
+        r"regIH_(RB_WPTR_ADDR_(LO|HI)|STORM_CLIENT_LIST_CNTL|INT_FLOOD_CNTL|MSI_STORM_CTRL)",
+    ],
+    "sdma": [r"regSDMA_GFX_(RB_CNTL|RB_BASE(_HI)?|RB_RPTR(_HI)?|RB_WPTR(_HI)?|RB_RPTR_ADDR_(LO|HI)|"
+             r"RB_WPTR_POLL_ADDR_(LO|HI)|DOORBELL|DOORBELL_OFFSET|MINOR_PTR_UPDATE|IB_CNTL)", r"regSDMA_CNTL"],
+}
+REG_INVENTORY["nbif"] = REG_INVENTORY["nbio"]
 
 FIRMWARE_COMMIT = "0a6871b19abf5d6e024b5d208b101ae53e7fa0de"
 FIRMWARE_URL = f"https://gitlab.com/kernel-firmware/linux-firmware/-/raw/{FIRMWARE_COMMIT}/"
@@ -325,6 +384,48 @@ def packed_layout(text, name):
     return walk(kind, body, 0, fields) // 8, fields
 
 
+# Registers
+
+REG_DEFINE = re.compile(r"^\s*#\s*define\s+((?:mm|reg)\w+)\s+(0x[\da-fA-F]+|\d+)\b", re.M)
+MASK_DEFINE = re.compile(r"^\s*#\s*define\s+(\w+?)__(\w+)_MASK\s+(0x[\da-fA-F]+L?|\d+)\b", re.M)
+
+
+def split_name(name):
+    """(prefix, name) of a register's macro: "reg" or "mm", and the rest."""
+    pos = next((i for i, c in enumerate(name) if c.isupper()), len(name))
+    return name[:pos], name[pos:]
+
+
+def normalize(prefix, reg):
+    """An MMHUB VM register is named with its hub, as GC's are: regVM_L2_CNTL is
+    regMMVM_L2_CNTL."""
+    p, rest = split_name(reg)
+    if prefix == "mmhub" and rest.startswith(("VM_", "MC_VM_")):
+        return p + "MM" + rest
+    return reg
+
+
+def kept(prefix, reg):
+    return any(re.fullmatch(r, normalize(prefix, reg)) for r in REG_INVENTORY[prefix])
+
+
+def block_registers(prefix, offsets, masks):
+    """{name: (offset, segment, [(field, lowest bit, highest bit)])} of the
+    registers of [prefix] kept, from its offset and mask headers."""
+    defs = {m.group(1): int(m.group(2), 0) for m in REG_DEFINE.finditer(offsets)}
+    fields = {}
+    for m in MASK_DEFINE.finditer(masks):
+        mask = int(m.group(3).rstrip("L"), 0)
+        fields.setdefault(m.group(1), []).append(
+            (m.group(2).lower(), (mask & -mask).bit_length() - 1, mask.bit_length() - 1))
+    out = {}
+    for reg, off in defs.items():
+        if reg.endswith("_BASE_IDX") or f"{reg}_BASE_IDX" not in defs or not kept(prefix, reg):
+            continue
+        out[normalize(prefix, reg)] = (off, defs[f"{reg}_BASE_IDX"], fields.get(split_name(reg)[1], []))
+    return out
+
+
 def hw_ids(text):
     """[(name, id)] of soc15_hw_ip.h's hardware IDs, in the header's order,
     aliases resolved."""
@@ -400,6 +501,16 @@ def excerpt(name, text):
         keep |= blocks(text, set(UCODE_STRUCTS) | set(UCODE_NESTED)) | enum_blocks(text, ENUMS[name])
     elif name == "psp_gfx_if.h":
         keep |= enum_blocks(text, ENUMS[name])
+    elif name.endswith(("_offset.h", "_sh_mask.h")):
+        prefix = next(p for p, vs in REG_FILES.items() for v in vs
+                      if name in (reg_header(p, v, "offset"), reg_header(p, v, "sh_mask")))
+        for i, l in enumerate(lines):
+            r = REG_DEFINE.match(l)
+            if r and kept(prefix, r.group(1).removesuffix("_BASE_IDX")):
+                keep.add(i)
+            k = MASK_DEFINE.match(l)
+            if k and kept(prefix, "reg" + k.group(1)):
+                keep.add(i)
     elif name == "soc15_hw_ip.h":
         keep |= {i for i, l in enumerate(lines) if DEFINE.match(l) and DEFINE.match(l).group(1).endswith("_HWID")}
     return licence(name, text) + "\n" + "\n".join(lines[i] for i in sorted(keep)) + "\n"
@@ -491,6 +602,25 @@ def generate(h):
         out.append(f"  | {v} -> {json.dumps(n)}")
     out.append("  | _ -> \"\"")
     out.append("")
+
+    # Registers
+    out += ["(* Registers *)", "",
+            "(* The registers of each block but GC, at each version with headers: each",
+            "   register's name, offset and segment in 32-bit words, and its fields as",
+            "   (name, (lowest bit, highest bit)). *)",
+            "let registers = ["]
+    for prefix, vs in REG_FILES.items():
+        for v in vs:
+            regs = block_registers(prefix, h[reg_header(prefix, v, "offset")], h[reg_header(prefix, v, "sh_mask")])
+            if not regs:
+                sys.exit(f"{prefix} {v}: no register kept")
+            out.append(f"  ( {json.dumps(prefix)}, ({v[0]}, {v[1]}, {v[2]}), [")
+            for n, (off, seg, fs) in sorted(regs.items()):
+                f = "; ".join(f"({json.dumps(fn)}, ({lo}, {hi}))" for fn, lo, hi in fs)
+                out.append(f"      {{ Device_amd_abi.Register.name = {json.dumps(n)}; offset = {ml_int(off)}; "
+                           f"segment = {seg}; fields = [ {f} ] }};")
+            out.append("    ] );")
+    out += ["]", ""]
 
     # Firmware
     u = h["amdgpu_ucode.h"]

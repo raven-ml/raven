@@ -176,6 +176,7 @@ val reset : ?machine:Device_pci.Machine.t -> int -> (unit, string) result
 (* The parts of a boot that read bytes and lay them out, for tests on fixture
    tables, synthetic images and the layouts amdgpu's headers state. *)
 module Discovery = Discovery
+module Regs = Regs
 module Images = Images
 module Gmc = Gmc
 module Ih = Ih
