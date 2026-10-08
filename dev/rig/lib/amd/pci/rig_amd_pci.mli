@@ -184,12 +184,14 @@ val reset : ?machine:Rig_pci.Machine.t -> int -> (unit, string) result
 
 (**/**)
 
-(* The parts of a boot that read bytes and lay them out, for tests on fixture
-   tables, synthetic images and the layouts amdgpu's headers state. *)
+(* The parts of a boot: for tests on fixture tables, synthetic images and the
+   layouts amdgpu's headers state, and for bringing a GPU up one block at a
+   time. *)
 module Discovery = Discovery
 module Regs = Regs
 module Images = Images
 module Gmc = Gmc
+module Soc = Soc
 module Smu = Smu
 module Psp = Psp
 module Gfx = Gfx

@@ -7,6 +7,7 @@ module Discovery = Discovery
 module Regs = Regs
 module Images = Images
 module Gmc = Gmc
+module Soc = Soc
 module Smu = Smu
 module Psp = Psp
 module Gfx = Gfx

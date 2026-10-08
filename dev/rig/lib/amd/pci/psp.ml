@@ -285,24 +285,30 @@ let steps =
       (psp_fw_type_psp_sos, psp_bl__load_sosdrv);
     ]
 
+let os p images =
+  if not (alive p) then begin
+    List.iter (bootloader_load p images) steps;
+    Regs.wait p.r "the PSP's OS to start" (fun () -> alive p)
+  end;
+  ring_create p;
+  tmr_init p images ~partial:false
+
+let firmware p images =
+  Option.iter (load p) images.Images.smu;
+  if (not (boot_time_tmr p)) || not (autoload_tmr p) then tmr_load p;
+  List.iter (load p) images.pieces;
+  let gc = Regs.version (Regs.layout_of p.r) D.gc_hwid in
+  if gc >= (11, 0, 0) then ignore (submit p "autoload the RLC" autoload_rlc)
+  else
+    match List.assoc_opt D.psp_fw_type_psp_rl images.sos with
+    | Some rl -> load p ([ D.gfx_fw_type_reg_list ], rl)
+    | None -> raise (Regs.Stuck "the PSP's image has no register list")
+
 let start p images ~partial =
   if partial then tmr_init p images ~partial
   else begin
-    if not (alive p) then begin
-      List.iter (bootloader_load p images) steps;
-      Regs.wait p.r "the PSP's OS to start" (fun () -> alive p)
-    end;
-    ring_create p;
-    tmr_init p images ~partial;
-    Option.iter (load p) images.smu;
-    if (not (boot_time_tmr p)) || not (autoload_tmr p) then tmr_load p;
-    List.iter (load p) images.pieces;
-    let gc = Regs.version (Regs.layout_of p.r) D.gc_hwid in
-    if gc >= (11, 0, 0) then ignore (submit p "autoload the RLC" autoload_rlc)
-    else
-      match List.assoc_opt D.psp_fw_type_psp_rl images.sos with
-      | Some rl -> load p ([ D.gfx_fw_type_reg_list ], rl)
-      | None -> raise (Regs.Stuck "the PSP's image has no register list")
+    os p images;
+    firmware p images
   end
 
 let set_partition p mode =

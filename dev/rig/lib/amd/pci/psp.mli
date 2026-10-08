@@ -86,6 +86,12 @@ val steps : (int * int) list
     the SOS component each loads ([PSP_FW_TYPE_*]) and the command that loads it
     ([PSP_BL__LOAD_*]). The last loads the SOS itself. Pure. *)
 
+val os : t -> Images.t -> unit
+(** [os p images] starts the processor's OS from the SOS components of [images],
+    unless it runs, makes its ring and reads the TMR's size from the table of
+    contents: the first part of a full {!start}, before any firmware is loaded.
+    Raises as {!start} does. *)
+
 val start : t -> Images.t -> partial:bool -> unit
 (** [start p images ~partial] starts the processor and loads [images]: a full
     boot loads the SOS components, makes the ring, sets up the TMR and loads
