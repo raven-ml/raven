@@ -17,9 +17,9 @@
    through C's double-to-float cast, as bfloat16's from a double, does
    not.
 
-   C, CUDA and HIP sources compile this header with no OCaml header. Metal
-   sources compile it too, without the row table and the functions of
-   doubles, which Metal lacks. */
+   C, CUDA and HIP sources compile this header with no OCaml header, CUDA's
+   device code included. Metal sources compile it too, without the row
+   table and the functions of doubles, which Metal lacks. */
 
 #ifndef NX_DTYPE_H
 #define NX_DTYPE_H
@@ -30,6 +30,16 @@
 #include <math.h>
 #include <stdint.h>
 #include <string.h>
+#endif
+
+/* Every function here is inline, and under CUDA a device function too.
+   C++ needs no static: an inline function may be defined in every unit
+   that uses it, and nvcc warns of an unused static one. It stays defined
+   for the headers beside this one (nx_kinds.h) to qualify theirs. */
+#ifdef __CUDACC__
+#define NX_INLINE inline __host__ __device__
+#else
+#define NX_INLINE static inline
 #endif
 
 /* Codes and facts */
@@ -78,7 +88,7 @@ typedef struct {
 } nx_dtype_row;
 
 /* The row of the dtype [dt], a code. */
-static inline nx_dtype_row nx_dtype_row_of(int dt) {
+NX_INLINE nx_dtype_row nx_dtype_row_of(int dt) {
 #define NX_ROW(NAME, name, bits, kind) {name, bits, kind},
   static const nx_dtype_row rows[NX_DTYPE_COUNT] = {NX_DTYPES(NX_ROW)};
 #undef NX_ROW
@@ -89,16 +99,16 @@ static inline nx_dtype_row nx_dtype_row_of(int dt) {
 /* A binary32's bits, and back. */
 
 #ifdef __METAL_VERSION__
-static inline uint32_t nx_float_bits(float f) { return as_type<uint32_t>(f); }
-static inline float nx_bits_float(uint32_t i) { return as_type<float>(i); }
+NX_INLINE uint32_t nx_float_bits(float f) { return as_type<uint32_t>(f); }
+NX_INLINE float nx_bits_float(uint32_t i) { return as_type<float>(i); }
 #else
-static inline uint32_t nx_float_bits(float f) {
+NX_INLINE uint32_t nx_float_bits(float f) {
   uint32_t i;
   memcpy(&i, &f, 4);
   return i;
 }
 
-static inline float nx_bits_float(uint32_t i) {
+NX_INLINE float nx_bits_float(uint32_t i) {
   float f;
   memcpy(&f, &i, 4);
   return f;
@@ -108,15 +118,15 @@ static inline float nx_bits_float(uint32_t i) {
 /* The sign and NaN-ness of [f], from its bits: a compiler folds a float
    predicate such as isnan away under -ffinite-math-only, which a kernel
    library's flags may set. */
-static inline uint32_t nx_float_sign(float f) { return nx_float_bits(f) >> 31; }
+NX_INLINE uint32_t nx_float_sign(float f) { return nx_float_bits(f) >> 31; }
 
-static inline int nx_float_nan(float f) {
+NX_INLINE int nx_float_nan(float f) {
   return (nx_float_bits(f) & 0x7FFFFFFFu) > 0x7F800000u;
 }
 
 /* bfloat16: binary32's top half */
 
-static inline uint16_t nx_float_to_bf16(float f) {
+NX_INLINE uint16_t nx_float_to_bf16(float f) {
   uint32_t i = nx_float_bits(f);
   /* NaN first: the rounding bias could carry a small NaN significand into
      the exponent and turn it into inf. */
@@ -129,7 +139,7 @@ static inline uint16_t nx_float_to_bf16(float f) {
    magnitude [m] past the infinity's makes [0x7F80 - m] wrap in 16 bits,
    setting its top bit, which the shift moves to bit 6: 16-bit lanes, so a
    loop of decodes vectorises nearly as the plain shift does. */
-static inline float nx_bf16_to_float(uint16_t c) {
+NX_INLINE float nx_bf16_to_float(uint16_t c) {
   uint16_t past = (uint16_t)(0x7F80u - (c & 0x7FFFu));
   uint16_t q = (uint16_t)(c | ((past >> 9) & 0x40u));
   return nx_bits_float((uint32_t)q << 16);
@@ -137,8 +147,8 @@ static inline float nx_bf16_to_float(uint16_t c) {
 
 /* float16: IEEE 754 binary16 */
 
-static inline uint16_t nx_float_to_f16(float f) {
-#if defined(__aarch64__) && !defined(__METAL_VERSION__)
+NX_INLINE uint16_t nx_float_to_f16(float f) {
+#if defined(__aarch64__) && !defined(__METAL_VERSION__) && !defined(__CUDA_ARCH__)
   /* FCVT, from s to h, rounds and keeps NaN payloads as the code below
      does. */
   __fp16 h = (__fp16)f;
@@ -179,8 +189,8 @@ static inline uint16_t nx_float_to_f16(float f) {
 #endif
 }
 
-static inline float nx_f16_to_float(uint16_t c) {
-#if defined(__aarch64__) && !defined(__METAL_VERSION__)
+NX_INLINE float nx_f16_to_float(uint16_t c) {
+#if defined(__aarch64__) && !defined(__METAL_VERSION__) && !defined(__CUDA_ARCH__)
   /* FCVT, from h to s, is exact and keeps NaN payloads as the code below
      does. */
   __fp16 h;
@@ -231,7 +241,7 @@ static inline float nx_f16_to_float(uint16_t c) {
 
    Above it, the exponent is rebiased and the fraction rounded to m bits in
    the integer; a carry runs into the exponent. */
-static inline uint32_t nx_mini_round(float f, int m, int bias) {
+NX_INLINE uint32_t nx_mini_round(float f, int m, int bias) {
   uint32_t u = nx_float_bits(f) & 0x7FFFFFFFu;
   float magic = nx_bits_float((uint32_t)(127 + 24 - bias - m) << 23);
   uint32_t sub = nx_float_bits(nx_bits_float(u) + magic) - nx_float_bits(magic);
@@ -242,11 +252,11 @@ static inline uint32_t nx_mini_round(float f, int m, int bias) {
 }
 
 /* The value of the magnitude code [q]. */
-#if defined(__aarch64__) && !defined(__METAL_VERSION__)
+#if defined(__aarch64__) && !defined(__METAL_VERSION__) && !defined(__CUDA_ARCH__)
 /* Through binary16, which FCVT widens: the code's bits moved to binary16's
    exponent and fraction fields read as its value times 2^(bias-15),
    exactly, subnormals included, so one exact scale finishes it. */
-static inline float nx_mini_value(uint32_t q, int m, int bias) {
+NX_INLINE float nx_mini_value(uint32_t q, int m, int bias) {
   return nx_f16_to_float((uint16_t)(q << (10 - m))) *
          nx_bits_float((uint32_t)(127 + 15 - bias) << 23);
 }
@@ -254,7 +264,7 @@ static inline float nx_mini_value(uint32_t q, int m, int bias) {
 /* A subnormal's value is frac·2^(1-bias-m), a normal's binary32 bits are
    its fields moved into place. Both are exact and both are computed, so a
    loop over codes does not branch. */
-static inline float nx_mini_value(uint32_t q, int m, int bias) {
+NX_INLINE float nx_mini_value(uint32_t q, int m, int bias) {
   uint32_t exp = q >> m;
   uint32_t frac = q & ((1u << m) - 1);
   float sub = (float)frac * nx_bits_float((uint32_t)(128 - bias - m) << 23);
@@ -265,36 +275,36 @@ static inline float nx_mini_value(uint32_t q, int m, int bias) {
 #endif
 
 /* [v], positive, with the sign bit of [sign] (0 or 1). */
-static inline float nx_with_sign(float v, uint32_t sign) {
+NX_INLINE float nx_with_sign(float v, uint32_t sign) {
   return nx_bits_float(nx_float_bits(v) | (sign << 31));
 }
 
-static inline uint32_t nx_mini_saturate(float f, int m, int bias,
-                                        uint32_t max) {
+NX_INLINE uint32_t nx_mini_saturate(float f, int m, int bias,
+                                    uint32_t max) {
   uint32_t q = nx_mini_round(f, m, bias);
   return q > max ? max : q;
 }
 
 /* e4m3fn: no infinity; S.1111.111 is NaN; largest finite 448. */
 
-static inline uint8_t nx_float_to_e4m3fn(float f) {
+NX_INLINE uint8_t nx_float_to_e4m3fn(float f) {
   uint32_t q = nx_mini_saturate(f, 3, 7, 0x7E);
   return (uint8_t)((nx_float_sign(f) << 7) | (nx_float_nan(f) ? 0x7F : q));
 }
 
-static inline float nx_e4m3fn_to_float(uint8_t c) {
+NX_INLINE float nx_e4m3fn_to_float(uint8_t c) {
   uint32_t q = c & 0x7F;
   return nx_with_sign(q == 0x7F ? NAN : nx_mini_value(q, 3, 7), c >> 7);
 }
 
 /* e5m2: IEEE-like, with infinities; largest finite 57344. */
 
-static inline uint8_t nx_float_to_e5m2(float f) {
+NX_INLINE uint8_t nx_float_to_e5m2(float f) {
   uint32_t q = nx_mini_saturate(f, 2, 15, 0x7B);
   return (uint8_t)((nx_float_sign(f) << 7) | (nx_float_nan(f) ? 0x7F : q));
 }
 
-static inline float nx_e5m2_to_float(uint8_t c) {
+NX_INLINE float nx_e5m2_to_float(uint8_t c) {
   uint32_t q = c & 0x7F;
   float v = q > 0x7C ? NAN : q == 0x7C ? INFINITY : nx_mini_value(q, 2, 15);
   return nx_with_sign(v, c >> 7);
@@ -303,17 +313,17 @@ static inline float nx_e5m2_to_float(uint8_t c) {
 /* e2m1fn: no infinity and no NaN, values ±{0, 0.5, 1, 1.5, 2, 3, 4, 6}. A
    code is the low four bits of its byte. */
 
-static inline uint8_t nx_float_to_e2m1fn(float f) {
+NX_INLINE uint8_t nx_float_to_e2m1fn(float f) {
   uint32_t q = nx_mini_saturate(f, 1, 1, 0x7);
   return (uint8_t)(nx_float_nan(f) ? 0 : (nx_float_sign(f) << 3) | q);
 }
 
-static inline float nx_e2m1fn_to_float(uint8_t c) {
+NX_INLINE float nx_e2m1fn_to_float(uint8_t c) {
   return nx_with_sign(nx_mini_value(c & 0x7, 1, 1), (c >> 3) & 1);
 }
 
 /* The value of the bits [c] of an element of the narrow float dtype [dt]. */
-static inline float nx_bits_to_float(int dt, uint32_t c) {
+NX_INLINE float nx_bits_to_float(int dt, uint32_t c) {
   switch (dt) {
     case NX_FLOAT16: return nx_f16_to_float((uint16_t)c);
     case NX_BFLOAT16: return nx_bf16_to_float((uint16_t)c);
@@ -335,7 +345,7 @@ static inline float nx_bits_to_float(int dt, uint32_t c) {
 
 #ifndef __METAL_VERSION__
 
-static inline float nx_float_odd(double x) {
+NX_INLINE float nx_float_odd(double x) {
   float f = (float)x;
   uint32_t i = nx_float_bits(f);
   /* Stepping back from a result that rounded away from zero truncates,
@@ -347,23 +357,23 @@ static inline float nx_float_odd(double x) {
 
 /* From a double, rounded once */
 
-static inline uint16_t nx_double_to_f16(double x) {
+NX_INLINE uint16_t nx_double_to_f16(double x) {
   return nx_float_to_f16(nx_float_odd(x));
 }
 
-static inline uint16_t nx_double_to_bf16(double x) {
+NX_INLINE uint16_t nx_double_to_bf16(double x) {
   return nx_float_to_bf16(nx_float_odd(x));
 }
 
-static inline uint8_t nx_double_to_e4m3fn(double x) {
+NX_INLINE uint8_t nx_double_to_e4m3fn(double x) {
   return nx_float_to_e4m3fn(nx_float_odd(x));
 }
 
-static inline uint8_t nx_double_to_e5m2(double x) {
+NX_INLINE uint8_t nx_double_to_e5m2(double x) {
   return nx_float_to_e5m2(nx_float_odd(x));
 }
 
-static inline uint8_t nx_double_to_e2m1fn(double x) {
+NX_INLINE uint8_t nx_double_to_e2m1fn(double x) {
   return nx_float_to_e2m1fn(nx_float_odd(x));
 }
 
@@ -377,19 +387,19 @@ static inline uint8_t nx_double_to_e2m1fn(double x) {
    format. A value that rounds to 2^63 or 2^64 cannot be converted back, and
    rounded away from zero. */
 
-static inline uint64_t nx_double_bits(double d) {
+NX_INLINE uint64_t nx_double_bits(double d) {
   uint64_t i;
   memcpy(&i, &d, 8);
   return i;
 }
 
-static inline double nx_bits_double(uint64_t i) {
+NX_INLINE double nx_bits_double(uint64_t i) {
   double d;
   memcpy(&d, &i, 8);
   return d;
 }
 
-static inline double nx_u64_odd(uint64_t a) {
+NX_INLINE double nx_u64_odd(uint64_t a) {
   double d = (double)a;
   uint64_t top = d >= 18446744073709551616.0;
   uint64_t back = top ? 0 : (uint64_t)d;
@@ -398,7 +408,7 @@ static inline double nx_u64_odd(uint64_t a) {
   return nx_bits_double((nx_double_bits(d) - away) | inexact);
 }
 
-static inline double nx_i64_odd(int64_t v) {
+NX_INLINE double nx_i64_odd(int64_t v) {
   double d = (double)v;
   uint64_t top = d >= 9223372036854775808.0;
   int64_t back = top ? 0 : (int64_t)d;
@@ -413,14 +423,14 @@ static inline double nx_i64_odd(int64_t v) {
    is a power of two, or one less than a power of two where the bound is
    below 2^53. */
 
-static inline int64_t nx_double_to_i64(double x) {
+NX_INLINE int64_t nx_double_to_i64(double x) {
   if (x != x) return 0;
   if (x <= -9223372036854775808.0) return INT64_MIN;
   if (x >= 9223372036854775808.0) return INT64_MAX;
   return (int64_t)x;
 }
 
-static inline uint64_t nx_double_to_u64(double x) {
+NX_INLINE uint64_t nx_double_to_u64(double x) {
   if (!(x > 0.0)) return 0; /* NaN too */
   if (x >= 18446744073709551616.0) return UINT64_MAX;
   return (uint64_t)x;
@@ -429,7 +439,7 @@ static inline uint64_t nx_double_to_u64(double x) {
 /* Saturates [x] to [[lo, hi]], a range of at most 32 bits; NaN gives 0. The
    bounds are selected before the truncation, with no branch, so a loop over
    values vectorises. */
-static inline int64_t nx_double_to_int(double x, int64_t lo, int64_t hi) {
+NX_INLINE int64_t nx_double_to_int(double x, int64_t lo, int64_t hi) {
   double y = x == x ? x : 0.0;
   y = y < (double)lo ? (double)lo : y;
   y = y > (double)hi ? (double)hi : y;
@@ -440,7 +450,7 @@ static inline int64_t nx_double_to_int(double x, int64_t lo, int64_t hi) {
    narrow float dtype [dt], in the low bits of the result: sign-extended for
    signed integers. [dt] is none of float64, float32 and the complex
    dtypes. */
-static inline int64_t nx_double_to_bits(int dt, double x) {
+NX_INLINE int64_t nx_double_to_bits(int dt, double x) {
   switch (dt) {
     case NX_FLOAT16: return nx_double_to_f16(x);
     case NX_BFLOAT16: return nx_double_to_bf16(x);
@@ -469,14 +479,14 @@ static inline int64_t nx_double_to_bits(int dt, double x) {
    odd) then FCVTN, gcc converts each element with FCVT from d to h. A
    sub-byte format has no run form: its elements share bytes. */
 
-#if defined(__aarch64__)
+#if defined(__aarch64__) && !defined(__CUDA_ARCH__)
 /* The run forms read and write uint16_t memory as __fp16. */
 typedef __fp16 __attribute__((may_alias)) nx_fp16;
 #endif
 
-static inline void nx_f16_to_double_run(const uint16_t *src, double *dst,
-                                        size_t n) {
-#if defined(__aarch64__)
+NX_INLINE void nx_f16_to_double_run(const uint16_t *src, double *dst,
+                                    size_t n) {
+#if defined(__aarch64__) && !defined(__CUDA_ARCH__)
   const nx_fp16 *h = (const nx_fp16 *)src;
   for (size_t i = 0; i < n; i++) dst[i] = (double)h[i];
 #else
@@ -484,9 +494,9 @@ static inline void nx_f16_to_double_run(const uint16_t *src, double *dst,
 #endif
 }
 
-static inline void nx_double_to_f16_run(const double *src, uint16_t *dst,
-                                        size_t n) {
-#if defined(__aarch64__)
+NX_INLINE void nx_double_to_f16_run(const double *src, uint16_t *dst,
+                                    size_t n) {
+#if defined(__aarch64__) && !defined(__CUDA_ARCH__)
   nx_fp16 *h = (nx_fp16 *)dst;
   for (size_t i = 0; i < n; i++) h[i] = (__fp16)src[i];
 #else
@@ -494,13 +504,13 @@ static inline void nx_double_to_f16_run(const double *src, uint16_t *dst,
 #endif
 }
 
-static inline void nx_bf16_to_double_run(const uint16_t *src, double *dst,
-                                         size_t n) {
+NX_INLINE void nx_bf16_to_double_run(const uint16_t *src, double *dst,
+                                     size_t n) {
   for (size_t i = 0; i < n; i++) dst[i] = nx_bf16_to_float(src[i]);
 }
 
-static inline void nx_double_to_bf16_run(const double *src, uint16_t *dst,
-                                         size_t n) {
+NX_INLINE void nx_double_to_bf16_run(const double *src, uint16_t *dst,
+                                     size_t n) {
   for (size_t i = 0; i < n; i++) dst[i] = nx_double_to_bf16(src[i]);
 }
 
