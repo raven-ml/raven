@@ -315,15 +315,19 @@ let empty_submission () =
   equal int v (Rig_metal.signaled t.d)
 
 (* Metal hands a command buffer to its completion handler before the word moves
-   and releases it once the handler returned: no signal marks that, so the test
-   waits for it under its group's timeout. *)
+   and releases it, with the objects it holds, once the handler returned: no
+   signal marks that, so a test waits for the weak reference [w] to empty under
+   its group's timeout. *)
+let await_release w =
+  while S.alive w do
+    Domain.cpu_relax ()
+  done
+
 let released_buffer () =
   let t = dev () in
   let f, w = S.watching () in
   S.wait t.d (submit t [| f |]);
-  while S.alive w do
-    Domain.cpu_relax ()
-  done
+  await_release w
 
 let failing_fill () =
   let t = dev_of (opened ()) in
@@ -898,7 +902,7 @@ let stopped_running () =
   S.wait t.d v;
   equal bool true (S.get32 (host out) 0 <> 0);
   b.release ();
-  equal bool false (S.alive w)
+  await_release w
 
 (* Images still loaded when the device stops are released with it: unload is
    never called after stop. *)
