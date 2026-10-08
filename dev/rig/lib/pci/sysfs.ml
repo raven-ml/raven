@@ -343,13 +343,6 @@ let resize m bus i =
 
 (* Open devices *)
 
-let contents m file =
-  match
-    In_channel.with_open_bin (Filename.concat m.root file) In_channel.input_all
-  with
-  | s -> Some s
-  | exception Sys_error _ -> None
-
 (* A [dev] file holds a device's number as "MAJOR:MINOR". *)
 let dev_number file =
   let s = read file in
@@ -385,27 +378,118 @@ let device file =
   | exception Unix.Unix_error (e, _, _) ->
       Fail.fail "reading %s: %s" file (Unix.error_message e)
 
-(* The character devices the process holds open, by number, each with the file
-   its descriptor names. A descriptor closed since the listing is left out. *)
-let opened m =
-  let fds = Filename.concat m.root "proc/self/fd" in
-  List.filter_map
-    (fun fd ->
-      let link = Filename.concat fds fd in
-      Option.map
-        (fun n ->
-          ( n,
-            match Unix.readlink link with
-            | f -> f
-            | exception Unix.Unix_error _ -> link ))
-        (device link))
-    (entries fds)
+(* The names in [dir], or [None] if it is gone, as the directory of a process
+   gone since the listing is. *)
+let listing dir =
+  match Unix.opendir dir with
+  | exception Unix.Unix_error ((ENOENT | ESRCH), _, _) -> None
+  | exception Unix.Unix_error (e, _, _) ->
+      Fail.fail "reading %s: %s" dir (Unix.error_message e)
+  | d ->
+      Fun.protect ~finally:(fun () -> Unix.closedir d) @@ fun () ->
+      let rec go acc =
+        match Unix.readdir d with
+        | "." | ".." -> go acc
+        | name -> go (name :: acc)
+        | exception End_of_file -> Some acc
+        | exception Unix.Unix_error ((ENOENT | ESRCH), _, _) -> Some acc
+      in
+      go []
 
-let held m bus nodes =
-  let gpu =
-    numbers (Filename.concat m.devices bus)
-    @ List.filter_map (fun f -> device (Filename.concat m.root f)) nodes
-  in
+(* The character devices open in the process whose [proc] directory is [proc],
+   by number, each with the file its descriptor or mapping names: its open
+   descriptors, under [fd], and its mapped files, under [map_files], which
+   outlive a closed descriptor. A directory or an entry gone since the listing
+   is left out. *)
+let opened proc =
+  List.concat_map
+    (fun dir ->
+      let dir = Filename.concat proc dir in
+      List.filter_map
+        (fun name ->
+          let link = Filename.concat dir name in
+          Option.map
+            (fun n ->
+              ( n,
+                match Unix.readlink link with
+                | f -> f
+                | exception Unix.Unix_error _ -> link ))
+            (device link))
+        (Option.value (listing dir) ~default:[]))
+    [ "fd"; "map_files" ]
+
+(* The numbers of the GPU at [bus]'s character devices. *)
+let gpu_devices m bus nodes =
+  numbers (Filename.concat m.devices bus)
+  @ List.filter_map (fun f -> device (Filename.concat m.root f)) nodes
+
+let find_held gpu opened =
   List.find_map
     (fun (n, file) -> if List.mem n gpu then Some file else None)
-    (opened m)
+    opened
+
+let held m bus nodes =
+  let self = Filename.concat m.root "proc/self" in
+  if listing (Filename.concat self "fd") = None then
+    Fail.fail "reading %s: no such directory" (Filename.concat self "fd");
+  find_held (gpu_devices m bus nodes) (opened self)
+
+let held_elsewhere m bus nodes =
+  let gpu = gpu_devices m bus nodes and me = string_of_int (Unix.getpid ()) in
+  let proc = Filename.concat m.root "proc" in
+  List.find_map
+    (fun pid ->
+      if pid = me || int_of_string_opt pid = None then None
+      else
+        Option.map
+          (fun file -> (int_of_string pid, file))
+          (find_held gpu (opened (Filename.concat proc pid))))
+    (Option.value (listing proc) ~default:[])
+
+let refusal m bus =
+  let s = state m bus in
+  match
+    addressing m bus { s with driver = None; siblings = []; enabled = true }
+  with
+  | Ok _ -> None
+  | Error why -> Some why
+
+(* DRM's debugfs lists each file of a device, by the device's PCI name: one line
+   a file after a header, its fields the opener's command, which may hold
+   spaces, then its process id, the minor, master, authenticated, uid and magic.
+   A file is listed from its open until its last reference goes, its descriptors
+   closed, its mappings gone and any reference the kernel took to it, such as
+   KFD's, dropped. *)
+let debugfs = "sys/kernel/debug/dri"
+
+let drm_clients m bus =
+  if
+    not
+      (Sys.file_exists (Filename.concat (Filename.concat m.devices bus) "drm"))
+  then []
+  else
+    let file =
+      Filename.concat
+        (Filename.concat (Filename.concat m.root debugfs) bus)
+        "clients"
+    in
+    match In_channel.with_open_text file In_channel.input_lines with
+    | exception Sys_error why ->
+        Fail.fail "%s: debugfs lists the files of %s's DRM device there" why bus
+    | [] -> []
+    | _header :: lines ->
+        List.filter_map
+          (fun line ->
+            let fields =
+              List.filter (( <> ) "") (String.split_on_char ' ' line)
+            in
+            let n = List.length fields in
+            if n < 7 then None
+            else
+              Option.map
+                (fun pid ->
+                  ( pid,
+                    String.concat " "
+                      (List.filteri (fun i _ -> i < n - 6) fields) ))
+                (int_of_string_opt (List.nth fields (n - 6))))
+          lines

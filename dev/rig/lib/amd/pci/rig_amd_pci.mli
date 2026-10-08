@@ -152,8 +152,27 @@ val detach : int -> (unit, string) result
     all of the GPU's memory. Its display and the kernel driver's users lose the
     GPU until {!attach} or a reboot.
 
-    The result is [Error msg] if [i] is no GPU, if this process holds it, if a
-    file cannot be written, or if the GPU is still not detached, saying why.
+    amdgpu lets go of the GPU, writing to it, once the last file of its DRM
+    nodes goes, which its unbind does not wait for; KFD holds one for a process
+    that computed on the GPU until some time after the process exits. So
+    [detach] waits up to 30 s for those to go, and amdgpu then lets go inside
+    the unbind: once [detach] is [Ok ()], amdgpu's last write to the GPU is
+    done. It reads them from debugfs, which must be mounted at
+    [/sys/kernel/debug]. After the unbind, KFD's topology no longer listing the
+    GPU confirms that amdgpu let go.
+
+    The result is [Error msg], changing nothing, if [i] is no GPU, if a process
+    holds a file of its DRM nodes open or mapped, this one included, naming it,
+    if KFD still holds one after 30 s, if an IOMMU translates its addresses and
+    it is not bound to [vfio-pci], or if debugfs or [/proc] cannot be read. It
+    is [Error msg] with the GPU detached and its memory BAR as it was if KFD's
+    topology still lists the GPU after the unbind: a process opened a DRM node
+    meanwhile, or memory of the GPU exported to another device or process (a
+    dma-buf) holds it, and amdgpu lets go when that holder does. [detach] called
+    again waits up to 30 s for KFD's topology to drop the GPU and finishes, but
+    amdgpu may then still be writing to it: its release starts there, and
+    nothing marks its end. It is [Error msg] if a file cannot be written, or if
+    the GPU is still not detached, saying why.
 
     Raises [Invalid_argument] if [i < 0]. *)
 

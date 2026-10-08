@@ -16,7 +16,9 @@ let ( let* ) = Result.bind
    GPU is named by its machine and bus address. *)
 type t = {
   memory_bar : int;
-  nodes : read:(string -> string option) -> string -> string list;
+  nodes : root:string -> string -> string list;
+  unreleased : root:string -> string -> string option;
+  teardown_ms : int;
   reset : Function.t -> (unit, string) result;
   is_gpu : Machine.id -> bool;
   mutex : Mutex.t;
@@ -38,10 +40,12 @@ and hold = {
   mutable stop : unit -> unit;
 }
 
-let make ~memory_bar ~nodes ~reset is_gpu =
+let make ~memory_bar ~nodes ~unreleased ~teardown_ms ~reset is_gpu =
   {
     memory_bar;
     nodes;
+    unreleased;
+    teardown_ms;
     reset;
     is_gpu;
     mutex = Mutex.create ();
@@ -177,15 +181,90 @@ let change g fn m i f =
       let* bus = gpu g m i in
       Local.locked files bus (fun () -> Fail.result (fun () -> f files bus))
 
-(* Unbinding a driver waits until no process holds its devices open: this
-   process would wait for itself. *)
+(* What of this process holds the GPU at [bus]: a device open or mapped, or a
+   file of its DRM device the kernel still holds for it. *)
+let own files bus nodes =
+  match Sysfs.held files bus nodes with
+  | Some _ as file -> file
+  | None ->
+      let me = Unix.getpid () in
+      if List.exists (fun (pid, _) -> pid = me) (Sysfs.drm_clients files bus)
+      then Some "a file of its DRM device"
+      else None
+
+(* A file of the GPU at [bus] another process holds open or mapped: no bound
+   holds its wait, so it is refused at once. *)
+let refuse_held files bus nodes =
+  Option.iter
+    (fun (pid, file) ->
+      Fail.fail "process %d holds %s open, a file of %s" pid file bus)
+    (Sysfs.held_elsewhere files bus nodes)
+
+(* Why the kernel driver has not let go of the GPU at [bus], once no process
+   holds a file of it: a file of its DRM device the kernel still holds for a
+   process, or, unbound, the vendor's reason. *)
+let kernel_holds g files bus ~bound =
+  let me = Unix.getpid () in
+  match
+    List.find_opt (fun (pid, _) -> pid <> me) (Sysfs.drm_clients files bus)
+  with
+  | Some (0, command) ->
+      Some
+        (strf
+           "a process of another PID namespace (%s) holds a file of its DRM \
+            device"
+           command)
+  | Some (pid, command) ->
+      Some
+        (strf "the kernel holds a file of its DRM device for process %d (%s)"
+           pid command)
+  | None when bound -> None
+  | None -> g.unreleased ~root:(Sysfs.root files) bus
+
+(* Waits up to [g.teardown_ms] until the kernel lets go, reading every [poll_s]
+   and refusing a process that opens a file meanwhile. *)
+let poll_s = 0.1
+
+let let_go g files bus nodes ~bound =
+  let deadline = Unix.gettimeofday () +. (float g.teardown_ms /. 1000.) in
+  let rec go () =
+    refuse_held files bus nodes;
+    match kernel_holds g files bus ~bound with
+    | None -> ()
+    | Some why when Unix.gettimeofday () >= deadline ->
+        Fail.fail "%s after %d ms: %s" bus g.teardown_ms why
+    | Some _ ->
+        Unix.sleepf poll_s;
+        go ()
+  in
+  go ()
+
+(* A kernel driver lets go of a GPU, writing to it as it does, once the last
+   file of its devices goes: a DRM driver's unbind returns first. So detach
+   unbinds a driver only once no file remains, refusing at once a file a process
+   holds, this one's included, which it would wait for itself, and the driver
+   lets go inside the unbind; the vendor confirms it after. A GPU on vfio-pci
+   stays as it is, and an unbound one waits for the vendor. *)
 let detach g m i =
   change g "detach" m i (fun files bus ->
-      let nodes = g.nodes ~read:(Sysfs.contents files) bus in
+      let nodes = g.nodes ~root:(Sysfs.root files) bus in
       Option.iter
         (Fail.fail "%s is open in this process, through %s" bus)
-        (Sysfs.held files bus nodes);
-      Sysfs.detach files bus;
+        (own files bus nodes);
+      (match Sysfs.driver files bus with
+      | Some d when d = Sysfs.vfio_pci -> Sysfs.detach files bus
+      | driver ->
+          Option.iter (Fail.fail "%s") (Sysfs.refusal files bus);
+          let bound = Option.is_some driver in
+          let_go g files bus nodes ~bound;
+          Sysfs.detach files bus;
+          if bound then
+            Option.iter
+              (Fail.fail
+                 "%s is detached, but its kernel driver has not let go of it: \
+                  %s"
+                 bus)
+              (g.unreleased ~root:(Sysfs.root files) bus));
       Sysfs.resize files bus g.memory_bar)
 
 (* Resets *)

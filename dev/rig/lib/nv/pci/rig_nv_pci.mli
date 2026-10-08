@@ -163,10 +163,15 @@ val detach : int -> (unit, string) result
     driver's users, a display among them, lose the GPU until {!attach} or a
     reboot.
 
+    It refuses a GPU a process holds a file of open or mapped ([/dev/nvidiaN], N
+    its minor in [/proc/driver/nvidia/gpus/<bus>/information], and nvidia-drm's
+    DRM nodes): the driver's unbind would wait for them. With nvidia-drm loaded
+    it reads the DRM nodes' files from debugfs, which must be mounted at
+    [/sys/kernel/debug].
+
     The result is [Error why] if there is no GPU [i], if this process holds it
-    over PCI, or holds a file of its kernel driver for it open ([/dev/nvidiaN],
-    N its minor in [/proc/driver/nvidia/gpus/<bus>/information]), whose
-    unbinding would wait for this process, or as {!Rig_pci.Gpus.detach}.
+    over PCI, if a process holds a file of its devices, naming it, or as
+    {!Rig_pci.Gpus.detach}.
 
     Raises [Invalid_argument] if [i < 0]. *)
 

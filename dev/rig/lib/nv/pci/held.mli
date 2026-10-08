@@ -11,9 +11,9 @@
     from the GPU waits for the process to close it, so a detach refuses a GPU
     whose file this process holds ({!Rig_pci.Gpus.make}'s [nodes]). *)
 
-val nodes : read:(string -> string option) -> string -> string list
-(** [nodes ~read bus] is [["dev/nvidiaN"]], the device file of the GPU at [bus]
-    as a path from the machine's root, [N] the minor that
-    [read ("proc/driver/nvidia/gpus/" ^ bus ^ "/information")] states. It is
-    [[]] if [read] gives [None], as when the kernel driver does not serve the
-    GPU, or if the file states no minor. *)
+val nodes : root:string -> string -> string list
+(** [nodes ~root bus] is [["dev/nvidiaN"]], the device file of the GPU at [bus]
+    as a path from the machine's root [root], [N] the minor that
+    [proc/driver/nvidia/gpus/BUS/information] under [root] states. It is [[]] if
+    that file cannot be read, as when the kernel driver does not serve the GPU,
+    or if it states no minor. *)

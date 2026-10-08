@@ -16,7 +16,7 @@
 
     These facts belong to a value of {!t}: a process makes one per vendor.
     Opening and changing GPUs of one vendor are serialized, the driver's start
-    included, so a start that takes seconds delays the vendor's other opens and
+    and {!detach}'s wait included, so either delays the vendor's other opens and
     changes; {!release} and {!lose} wait for none. The driver puts the GPU's
     name in front of an [Error]'s message. A function given a GPU number [i]
     raises [Invalid_argument] if [i < 0]. *)
@@ -26,19 +26,28 @@ type t
 
 val make :
   memory_bar:int ->
-  nodes:(read:(string -> string option) -> string -> string list) ->
+  nodes:(root:string -> string -> string list) ->
+  unreleased:(root:string -> string -> string option) ->
+  teardown_ms:int ->
   reset:(Function.t -> (unit, string) result) ->
   (Machine.id -> bool) ->
   t
-(** [make ~memory_bar ~nodes ~reset is_gpu] is the GPUs of a vendor: the
-    functions [f] with [is_gpu f].
+(** [make ~memory_bar ~nodes ~unreleased ~teardown_ms ~reset is_gpu] is the GPUs
+    of a vendor: the functions [f] with [is_gpu f]. The vendor's facts read the
+    machine's files under [root], ["/"] for {!Machine.this}.
     - [memory_bar] is the BAR through which the process reaches their memory,
       which {!detach} enlarges.
-    - [nodes ~read bus] is the character devices through which the kernel driver
+    - [nodes ~root bus] is the character devices through which the kernel driver
       serves the GPU at [bus] without a [dev] file under the GPU's directory in
-      [/sys/bus/pci], by path from the machine's root, such as
-      [["dev/nvidia0"]]; [read file] is the contents of [file], a path from the
-      machine's root, if it can be read.
+      [/sys/bus/pci], by path from [root], such as [["dev/nvidia0"]].
+    - [unreleased ~root bus] is [Some why] if the kernel driver, no longer bound
+      to the GPU at [bus], has not let go of it, and [None] if it has or the
+      vendor cannot tell. {!detach} asks it only of an unbound GPU. It raises
+      nothing: a file it cannot read is [None].
+    - [teardown_ms] is the longest the kernel driver takes to drop the files of
+      the GPU's devices that it holds for a process after the process let go of
+      them, such as a compute runtime's after its process exits: {!detach} waits
+      that long for them. A file a process still holds is not waited for.
     - [reset fn] stops whatever runs on the GPU of the taken function [fn],
       whatever ran on it before, its kernel driver included, and resets it as
       its vendor does, returning [Ok ()] once the GPU answers again with nothing
@@ -128,22 +137,41 @@ val detach : t -> Machine.t -> int -> (unit, string) result
     kernel driver's users, a display among them, lose the GPU until {!attach} or
     a reboot.
 
-    [Error why] if [m] is reached through a transport, if [i] is no GPU, if a
-    process could not take its function once detached, such as when an IOMMU
-    translates its addresses and it is not bound to [vfio-pci], changing
-    nothing, if the process holds it, through this library or through a
-    character device of its kernel driver it has open, if the process may not
-    write a file, or if the GPU is still not detached, saying why. A memory BAR
-    left small is no error: on [vfio-pci], or where the kernel refuses every
-    larger size.
+    A kernel driver lets go of a GPU, writing to it as it does, once the last
+    file of the GPU's character devices goes. Its unbind either waits for that
+    or, as a DRM driver's does, returns first and lets go later. So [detach]
+    unbinds the driver only once no file remains, and the driver lets go inside
+    the unbind. A file remains while a process holds it open or mapped, and
+    while the kernel holds it for a process, as a compute runtime does for a
+    while after the process exits. The GPU's character devices are those with a
+    [dev] file under its directory in [/sys/bus/pci], such as its DRM nodes, and
+    those [nodes] names ({!make}). [detach] reads the files processes hold from
+    [/proc/PID/fd] and [/proc/PID/map_files], the processes of its PID
+    namespace, and those of a DRM device from debugfs's
+    [/sys/kernel/debug/dri/BUS/clients], which lists a file until its last
+    reference goes. It waits up to [teardown_ms] ({!make}) for the files the
+    kernel holds. After the unbind, [unreleased] ({!make}) confirms that the
+    driver let go.
 
-    The GPU's character devices are those with a [dev] file under its directory
-    in [/sys/bus/pci], such as its DRM nodes, and those [nodes] names ({!make}).
-    Unbinding the driver waits until no process holds one open, so [detach]
-    would wait for its own process: it compares them with the devices
-    [/proc/self/fd] lists, and is an [Error] if it cannot read that directory.
-    An open that completes while [detach] runs is not refused; the unbind then
-    waits for its file to close. *)
+    Two holders escape the wait: a process that opens a device after its last
+    check, and memory of the GPU exported to another device or process (a
+    dma-buf), which Linux lists by no device. The driver then lets go when the
+    holder does, after [detach] returns, unless [unreleased] sees it.
+
+    [Error why], changing nothing, if [m] is reached through a transport, if [i]
+    is no GPU, if a process could not take its function once detached, such as
+    when an IOMMU translates its addresses and it is not bound to [vfio-pci], if
+    a process holds a file of one of its devices, this one included, naming it,
+    if the kernel still holds one after [teardown_ms], or if [/proc] or, for a
+    GPU with a DRM device, its list of files in debugfs cannot be read.
+    [Error why] with the GPU detached and its memory BAR as it was if
+    [unreleased] answers [Some _] after the unbind: the driver lets go of the
+    GPU when the holder does, writing to it then, and a process that takes it
+    before that races those writes; [detach] called again waits for it up to
+    [teardown_ms] and finishes once it let go. [Error why] if the process may
+    not write a file, or if the GPU is still not detached, saying why. A memory
+    BAR left small is no error: on [vfio-pci], or where the kernel refuses every
+    larger size. *)
 
 val attach : t -> Machine.t -> int -> (unit, string) result
 (** [attach g m i] gives GPU [i] of [m] back to its kernel driver. A GPU bound

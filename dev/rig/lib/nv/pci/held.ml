@@ -14,10 +14,13 @@ let minor info =
   in
   List.find_map of_line (String.split_on_char '\n' info)
 
-let nodes ~read bus =
-  match read ("proc/driver/nvidia/gpus/" ^ bus ^ "/information") with
-  | None -> []
-  | Some info -> (
+let nodes ~root bus =
+  let file =
+    Filename.concat root ("proc/driver/nvidia/gpus/" ^ bus ^ "/information")
+  in
+  match In_channel.with_open_bin file In_channel.input_all with
+  | exception Sys_error _ -> []
+  | info -> (
       match minor info with
       | Some n -> [ "dev/nvidia" ^ string_of_int n ]
       | None -> [])

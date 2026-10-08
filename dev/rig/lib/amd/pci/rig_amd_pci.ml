@@ -24,14 +24,61 @@ let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 let ( let* ) = Result.bind
 
+(* Letting go
+
+   amdgpu releases a GPU's device, its teardown writing to the GPU, when the
+   last file of its DRM nodes goes, KFD's references to them included, which
+   Gpus waits for. The release removes the GPU's node from KFD's topology: of an
+   unbound GPU, a node still there means amdgpu has not let go. *)
+
+let topology = "sys/class/kfd/kfd/topology/nodes"
+
+(* The KFD topology's PCI location of the function at [bus], "DDDD:BB:DD.F": its
+   domain and its bus, device and function as [bus << 8 | dev << 3 | fn], that
+   of a GPU of one partition. *)
+let location bus =
+  Scanf.sscanf_opt bus "%x:%x:%x.%x%!" (fun d b dev fn ->
+      (d, (b lsl 8) lor (dev lsl 3) lor fn))
+
+let unreleased ~root bus =
+  let file p = Filename.concat root p in
+  let listed node =
+    match
+      In_channel.with_open_text
+        (file (strf "%s/%s/properties" topology node))
+        In_channel.input_lines
+    with
+    | exception Sys_error _ -> false
+    | lines ->
+        let field k =
+          List.find_map
+            (fun l ->
+              match String.split_on_char ' ' l with
+              | [ k'; v ] when k' = k -> int_of_string_opt v
+              | _ -> None)
+            lines
+        in
+        location bus
+        = Option.bind (field "domain") (fun d ->
+            Option.map (fun l -> (d, l)) (field "location_id"))
+  in
+  let nodes =
+    match Sys.readdir (file topology) with
+    | names -> Array.to_list names
+    | exception Sys_error _ -> []
+  in
+  if List.exists listed nodes then
+    Some "KFD's topology still lists it, which amdgpu's release removes"
+  else None
+
 (* Numbering *)
 
 (* The kernel driver serves a GPU through DRM nodes, each with a [dev] file
    under the GPU's directory, which {!Gpus.detach} finds itself. *)
 let gpus =
   Gpus.make ~memory_bar:0
-    ~nodes:(fun ~read:_ _ -> [])
-    ~reset:Boot.reset
+    ~nodes:(fun ~root:_ _ -> [])
+    ~unreleased ~teardown_ms:30_000 ~reset:Boot.reset
     (fun (id : Machine.id) -> Amd.is_gpu ~vendor:id.vendor ~class_:id.class_)
 
 let gpus_at root = Gpus.buses gpus (Machine.at root)

@@ -1732,7 +1732,9 @@ let wait_exit pid =
 
 let fixture_gpus () =
   Gpus.make ~memory_bar:0
-    ~nodes:(fun ~read:_ _ -> [])
+    ~nodes:(fun ~root:_ _ -> [])
+    ~unreleased:(fun ~root:_ _ -> None)
+    ~teardown_ms:0
     ~reset:(fun _ -> Ok ())
     (fun (id : Machine.id) -> id.class_ lsr 16 = 0x03)
 

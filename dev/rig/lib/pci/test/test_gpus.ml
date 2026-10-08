@@ -102,7 +102,7 @@ let is_gpu (id : Machine.id) = id.vendor = vendor && id.class_ lsr 16 = 0x03
 
 (* Its kernel driver serves a GPU through character devices that [/sys/bus/pci]
    lists. *)
-let no_nodes ~read:_ _ = []
+let no_nodes ~root:_ _ = []
 
 (* The resets the vendor ran, unless a test gives its own reset. *)
 let vendor_resets = Atomic.make 0
@@ -111,8 +111,16 @@ let counted _ =
   Atomic.incr vendor_resets;
   Ok ()
 
-let gpus ?(reset = counted) ?(nodes = no_nodes) () =
-  Gpus.make ~memory_bar:0 ~nodes ~reset is_gpu
+(* Its kernel driver lets go of a GPU once no process holds its devices. *)
+let released ~root:_ _ = None
+
+(* How long detach waits for a kernel driver to let go: long enough for the
+   tests that let go while it waits. *)
+let teardown_ms = 2000
+
+let gpus ?(reset = counted) ?(nodes = no_nodes) ?(unreleased = released)
+    ?(teardown_ms = teardown_ms) () =
+  Gpus.make ~memory_bar:0 ~nodes ~unreleased ~teardown_ms ~reset is_gpu
 
 let gpu_buses = [ "0000:03:00.0"; "0000:43:00.0"; "0000:c3:00.0" ]
 
@@ -481,7 +489,8 @@ let resets =
 
 let test_this_none () =
   let g =
-    Gpus.make ~memory_bar:0 ~nodes:no_nodes ~reset:counted (fun _ -> false)
+    Gpus.make ~memory_bar:0 ~nodes:no_nodes ~unreleased:released ~teardown_ms
+      ~reset:counted (fun _ -> false)
   in
   let this = Machine.this in
   equal (list string) [] (Gpus.buses g this);
@@ -1023,10 +1032,14 @@ let test_change_transport () =
 
 (* The vendor's nodes as NVIDIA's driver gives them: the GPU's minor in [/proc],
    its node [/dev/nvidiaN]. *)
-let nvidia_nodes ~read bus =
-  match read (strf "proc/driver/nvidia/gpus/%s/information" bus) with
-  | None -> []
-  | Some info ->
+let nvidia_nodes ~root bus =
+  match
+    In_channel.with_open_bin
+      (Filename.concat root (strf "proc/driver/nvidia/gpus/%s/information" bus))
+      In_channel.input_all
+  with
+  | exception Sys_error _ -> []
+  | info ->
       List.filter_map
         (fun line ->
           match String.split_on_char ':' line with
@@ -1036,8 +1049,24 @@ let nvidia_nodes ~read bus =
 
 let render = devices gpu_bus "drm/renderD128/dev"
 
+(* The files of the GPU's DRM device that debugfs lists, as [(pid, command)]. *)
+let clients root files =
+  Tree.add root
+    (strf "sys/kernel/debug/dri/%s/clients" gpu_bus)
+    (String.concat ""
+       (strf "%20s %5s %3s master a %5s %10s\n" "command" "tgid" "dev" "uid"
+          "magic"
+       :: List.map
+            (fun (pid, command) ->
+              strf "%20s %5d %3d   %c    %c %5d %10u\n" command pid 128 'n' 'y'
+                1000 0)
+            files))
+
 let open_devices =
-  let null root = Tree.add root (sys render) (Tree.device_number "/dev/null") in
+  let null root =
+    Tree.add root (sys render) (Tree.device_number "/dev/null");
+    clients root []
+  in
   let fd n target root = Tree.link root ("proc/self/fd/" ^ n) target in
   let nvidia root =
     Tree.add root
@@ -1093,6 +1122,142 @@ let test_open_device (_, setup, nodes, want) =
       contains ~msg:"names the device" ~sub:file why
   | `Error sub, r -> contains ~sub (require_error r)
 
+(* The kernel driver lets go
+
+   Detach refuses at once a file a process holds, and waits up to [teardown_ms]
+   for those the kernel holds: files of the GPU's DRM device debugfs lists with
+   no descriptor or mapping in [/proc], and, of an unbound GPU, the vendor's
+   [unreleased]. Another process's descriptors and mappings are links in the
+   fixture's [proc/PID/fd] and [proc/PID/map_files]. *)
+
+let override root =
+  In_channel.with_open_text
+    (Filename.concat root ("sys/bus/pci/" ^ devices gpu_bus "driver_override"))
+    In_channel.input_all
+
+let held_tree () =
+  let root = Tree.make [ Tree.gpu gpu_bus ] in
+  Tree.add root (sys render) (Tree.device_number "/dev/null");
+  clients root [];
+  root
+
+(* A device another process holds open or mapped is refused at once, with the
+   machine untouched, naming the process and the device. *)
+let test_held_elsewhere () =
+  needs_flock ();
+  let g = gpus ~teardown_ms:60_000 () in
+  List.iter
+    (fun (msg, link) ->
+      let root = held_tree () in
+      Tree.link root link "/dev/null";
+      Tree.link root "proc/4242/fd/8" "/dev/zero";
+      let before = override root in
+      let why = require_error (Gpus.detach g (Machine.at root) 0) in
+      contains ~msg ~sub:"process 4242 holds /dev/null" why;
+      equal ~msg string before (override root))
+    [
+      ("an open descriptor", "proc/4242/fd/7");
+      ("a mapping", "proc/4242/map_files/7f00-7f01");
+    ]
+
+(* Detach waits until the kernel lets go of the last file of the GPU's DRM
+   device, as a compute runtime's deferred release does, then detaches. *)
+let test_let_go_drm () =
+  needs_flock ();
+  let root = held_tree () in
+  clients root [ (4242, "<unknown>") ];
+  let closer =
+    Domain.spawn (fun () ->
+        Unix.sleepf 0.2;
+        clients root [])
+  in
+  let r = Gpus.detach (gpus ()) (Machine.at root) 0 in
+  Domain.join closer;
+  require_ok r;
+  equal ~msg:"detached" string "none" (String.trim (override root))
+
+(* A file of the GPU's DRM device the kernel keeps past the bound refuses
+   detach, naming the process it holds it for, with the machine untouched. *)
+let test_kernel_holds () =
+  needs_flock ();
+  let root = held_tree () in
+  clients root [ (4242, "a compositor") ];
+  let before = override root in
+  let why =
+    require_error (Gpus.detach (gpus ~teardown_ms:200 ()) (Machine.at root) 0)
+  in
+  contains ~msg:"names the process" ~sub:"process 4242 (a compositor)" why;
+  equal ~msg:"nothing written" string before (override root)
+
+(* A file of the GPU's DRM device this process opened is refused at once: detach
+   would wait for itself. *)
+let test_own_drm () =
+  needs_flock ();
+  let root = held_tree () in
+  clients root [ (Unix.getpid (), "this test") ];
+  let g = gpus ~teardown_ms:60_000 () in
+  contains ~sub:"0000:03:00.0 is open in this process"
+    (require_error (Gpus.detach g (Machine.at root) 0))
+
+(* A GPU with a DRM device whose files debugfs does not list is refused, since
+   detach cannot know them, naming the list. *)
+let test_no_debugfs () =
+  needs_flock ();
+  let root = held_tree () in
+  let list = strf "sys/kernel/debug/dri/%s/clients" gpu_bus in
+  Sys.remove (Filename.concat root list);
+  let before = override root in
+  contains ~sub:list (require_error (Gpus.detach (gpus ()) (Machine.at root) 0));
+  equal ~msg:"nothing written" string before (override root)
+
+(* A process's [/proc] entry that cannot be read for a reason other than its end
+   is an Error naming it, never a silent "nothing held". *)
+let test_unreadable_proc () =
+  needs_flock ();
+  if Unix.geteuid () = 0 then
+    skip ~reason:"root reads a directory whatever its mode" ();
+  let root = held_tree () in
+  Tree.link root "proc/4242/fd/3" "/dev/zero";
+  let fd = Filename.concat root "proc/4242/fd" in
+  Unix.chmod fd 0o000;
+  let r = Gpus.detach (gpus ()) (Machine.at root) 0 in
+  Unix.chmod fd 0o755;
+  contains ~sub:"proc/4242/fd" (require_error r)
+
+(* The vendor's [unreleased] is asked of an unbound GPU: detach waits until it
+   lets go, and refuses past the bound, changing nothing. *)
+let test_unreleased () =
+  needs_flock ();
+  let asked = Atomic.make 0 in
+  let root = held_tree () in
+  let twice ~root:_ _ =
+    if Atomic.fetch_and_add asked 1 < 2 then Some "its release pending"
+    else None
+  in
+  require_ok (Gpus.detach (gpus ~unreleased:twice ()) (Machine.at root) 0);
+  at_least ~msg:"asked until it let go" int ~than:3 (Atomic.get asked);
+  let root = held_tree () in
+  let original = override root in
+  let always ~root:_ _ = Some "its release pending" in
+  let why =
+    require_error
+      (Gpus.detach
+         (gpus ~unreleased:always ~teardown_ms:200 ())
+         (Machine.at root) 0)
+  in
+  contains ~msg:"the vendor's reason" ~sub:"its release pending" why;
+  equal ~msg:"nothing written" string original (override root)
+
+(* A GPU bound to vfio-pci stays as it is: nothing is waited for. *)
+let test_vfio_unwaited () =
+  needs_flock ();
+  let root = Tree.make [ Tree.gpu ~driver:"vfio-pci" ~group:"7" gpu_bus ] in
+  let always ~root:_ _ = Some "its release pending" in
+  require_ok
+    (Gpus.detach
+       (gpus ~unreleased:always ~teardown_ms:60_000 ())
+       (Machine.at root) 0)
+
 let tree_changes =
   group ~timeout:patience "changes on a machine's files"
     [
@@ -1112,6 +1277,26 @@ let tree_changes =
       cases "detach refuses a GPU whose device this process holds open"
         ~name:(fun (n, _, _, _) -> n)
         open_devices test_open_device;
+      test
+        "detach refuses at once a GPU another process holds open or mapped, \
+         changing nothing"
+        test_held_elsewhere;
+      test "detach waits for the last file of the GPU's DRM device to go"
+        test_let_go_drm;
+      test
+        "detach refuses a file of the DRM device the kernel keeps past its \
+         bound, changing nothing"
+        test_kernel_holds;
+      test "detach refuses at once a file of the DRM device this process opened"
+        test_own_drm;
+      test "detach refuses a DRM device whose files debugfs does not list"
+        test_no_debugfs;
+      test "a process's /proc entry that cannot be read is an Error"
+        test_unreadable_proc;
+      test "detach waits for the vendor's driver to let go of an unbound GPU"
+        test_unreleased;
+      test "detach waits for nothing on a GPU bound to vfio-pci"
+        test_vfio_unwaited;
       test "a file the process may not write is refused, naming it"
         test_change_unwritable;
       test "another machine reached through a transport is refused"

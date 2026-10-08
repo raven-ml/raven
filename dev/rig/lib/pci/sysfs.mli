@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** A machine's PCI functions, through its [sys/bus/pci] (private).
+(** A machine's PCI functions, through its [sys/bus/pci].
 
     Reading changes nothing. A write the process may not make raises
     {!Fail.Failed} naming the file and the privilege it needs. *)
@@ -90,14 +90,33 @@ val resize : t -> string -> int -> unit
 
 (** {1:open Open devices} *)
 
-val contents : t -> string -> string option
-(** [contents m file] is the contents of [file], a path from [m]'s root such as
-    ["proc/driver/nvidia/gpus/0000:03:00.0/information"], if it can be read. *)
-
 val held : t -> string -> string list -> string option
 (** [held m bus nodes] is the file of a character device this process holds open
     that serves the function at [bus]: one whose number a [dev] file under the
     function's directory gives, such as a DRM node's, or the number of a file of
     [nodes], paths from [m]'s root. Descriptors are read from [m]'s
-    [proc/self/fd]. Raises {!Fail.Failed} if a directory or a [dev] file cannot
-    be read. *)
+    [proc/self/fd], and mapped files from [proc/self/map_files]. Raises
+    {!Fail.Failed} if [proc/self/fd] is missing, or if it, [map_files], a
+    directory of the function or a [dev] file cannot be read. *)
+
+val drm_clients : t -> string -> (int * string) list
+(** [drm_clients m bus] is the files of the DRM device of the function at [bus],
+    each by the id and command of the process that opened it, from debugfs's
+    [dri/BUS/clients] under [m]'s root: [[]] if the function has no DRM device.
+    A file stays listed until its last reference goes, its descriptors closed,
+    its mappings gone and the references the kernel took to it dropped; a file
+    opened in another PID namespace is listed with id [0]. Raises {!Fail.Failed}
+    if the function has a DRM device and the list cannot be read, naming the
+    file and the cause. *)
+
+val held_elsewhere : t -> string -> string list -> (int * string) option
+(** [held_elsewhere m bus nodes] is a process other than this one, by id, and
+    the file of a device of {!held}'s that it holds open or mapped, read from
+    [m]'s [proc/PID]: the processes of this PID namespace. A process gone since
+    the listing is left out. Raises {!Fail.Failed} as {!held}, or if a process's
+    [fd] or [map_files] cannot be read for another reason, naming it. *)
+
+val refusal : t -> string -> string option
+(** [refusal m bus] is why a process could not take the function at [bus] once
+    detached from its kernel driver, as an IOMMU translating its addresses
+    without [vfio-pci], if it could not. *)

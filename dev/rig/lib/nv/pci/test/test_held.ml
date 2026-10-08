@@ -22,13 +22,19 @@ let information minor =
       "GPU Excluded:\t No\n";
     ]
 
-let read_of files p = List.assoc_opt p files
+open Rig_pci_support
+
+(* A machine whose files under its root are [files], as (path, contents). *)
+let root_of files =
+  let root = Tree.make [] in
+  List.iter (fun (p, contents) -> Tree.add root p contents) files;
+  root
 
 let test_minor =
   prop "the minor names the device file" (Gen.int_range 0 255) (fun minor ->
       equal (list string)
         [ Printf.sprintf "dev/nvidia%d" minor ]
-        (Held.nodes ~read:(read_of [ (path, information minor) ]) bus))
+        (Held.nodes ~root:(root_of [ (path, information minor) ]) bus))
 
 let test_none =
   cases "a GPU the driver does not serve has no device file"
@@ -41,7 +47,7 @@ let test_none =
       );
     ]
     (fun (_, files) ->
-      equal (list string) [] (Held.nodes ~read:(read_of files) bus))
+      equal (list string) [] (Held.nodes ~root:(root_of files) bus))
 
 let () =
   exit
