@@ -14,8 +14,8 @@
     free neighbours at once.
 
     The price of the bound is the fit: a request of [n] bytes aligned to [a]
-    succeeds while a free block of [2 * (n + a)] bytes exists, and may fail with
-    a smaller one that would fit.
+    succeeds while a free block of [2 * (max n 16 + a)] bytes exists, and may
+    fail with a smaller one that would fit.
 
     Not synchronized: the owner serializes calls.
 

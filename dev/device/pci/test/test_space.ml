@@ -28,7 +28,7 @@ let largest_gap m = largest_gap m.base (m.base + m.length) m.live
 
 (* An allocation is aligned, inside the space and apart from every live range.
    [None] is accepted only where the fit bound does not promise a range: no free
-   range of [2 * (n + a)] addresses. *)
+   range of [2 * (max n 16 + a)] addresses. *)
 let alloc_judge align n m got =
   let refused =
     n <= 0 || match align with Some a -> not (is_pow2 a) | None -> false
@@ -54,7 +54,7 @@ let alloc_judge align n m got =
         (Format.pp_print_option pp_hex)
         align
   | Ok None ->
-      if fits ~gap n a then
+      if fits ~gap (max n 16) a then
         failf "None for %d addresses aligned to 0x%x with %d free in a row" n a
           gap
   | Ok (Some x) ->
@@ -116,6 +116,7 @@ let lengths =
   Gen.of_list ~pp:pp_hex
     [
       0;
+      24;
       4096;
       0x3000;
       0x1_0000;

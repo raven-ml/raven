@@ -30,8 +30,8 @@ val alloc : ?align:int -> t -> int -> int option
 (** [alloc s n] is the first of [n] free addresses of [s], aligned to the
     largest power of two not above [n] and to [align] (defaults to 4096), so
     that large ranges map with large pages. It is [Some _] while [s] has a free
-    range of [2 * (n + a)] addresses, [a] being that alignment, and may be
-    [None] with a smaller free range that would fit. An allocation and a free
+    range of [2 * (max n 16 + a)] addresses, [a] being that alignment, and may
+    be [None] with a smaller free range that would fit. An allocation and a free
     take a time bounded independently of what [s] holds.
 
     Raises [Invalid_argument] if [n <= 0] or [align] is not a positive power of
