@@ -35,8 +35,10 @@
     [executeCommandsInBuffer:withRange:], and does nothing else: it ends no
     encoder and makes no other encoder or command buffer, and waiting for
     earlier work and signalling [v] are the driver's. To start a new command
-    buffer it calls {!field-split}. It stops at the first [split] that fails and
-    returns its failure, and returns [0] otherwise.
+    buffer it calls {!field-split}; nothing bounds how many command buffers a
+    fill makes, so work given as a fill declares [0] ring units, which the
+    driver does not read. It stops at the first [split] that fails and returns
+    its failure, and returns [0] otherwise.
 
     After the fill returns, the driver ends the open encoder and commits the
     last command buffer. [v] is reached once every command buffer of the work
