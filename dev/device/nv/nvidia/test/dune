@@ -1,3 +1,6 @@
-(test
- (name test_nvidia)
- (libraries device_nv device_nv_nvidia windtrap))
+; test_files forks and lowers the child's file limit: an executable of its
+; own, which runs no other test.
+
+(tests
+ (names test_nvidia test_files)
+ (libraries device_nv device_nv_nvidia device_nv_nvidia_support unix windtrap))

@@ -1,0 +1,9 @@
+; What the NVIDIA path's suites share: the GPU lock and the process's file
+; limit.
+
+(library
+ (name device_nv_nvidia_support)
+ (libraries device_nv_nvidia windtrap)
+ (foreign_stubs
+  (language c)
+  (names device_nv_nvidia_support_stubs)))

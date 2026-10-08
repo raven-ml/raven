@@ -5,6 +5,7 @@
 
 open Windtrap
 module N = Device_nv_nvidia
+module S = Device_nv_nvidia_support
 
 (* Machines in a tree *)
 
@@ -64,6 +65,17 @@ let numbering () =
     [ "0000:01:00.0"; "0000:0a:00.0"; "ffff:00:00.0"; "10000:00:01.0" ]
     (N.gpus_at root)
 
+(* A device's objects are the GPU's for the process: a stopped device's GPU
+   opens again. *)
+let once () =
+  S.hold_gpu ();
+  let g = require_ok (N.open_ 0) in
+  let e = require_error ~msg:"a second open" (N.open_ 0) in
+  contains ~sub:"has a device open" e;
+  Device_nv.stop g;
+  let g' = require_ok ~msg:"an open after stop" (N.open_ 0) in
+  Device_nv.stop g'
+
 let () =
   exit
   @@ run "device_nv_nvidia"
@@ -74,12 +86,16 @@ let () =
                numbering;
              test "a machine without PCI functions has no GPU" (fun () ->
                  equal (list string) [] (N.gpus_at "no-such-directory"));
+             test "this machine's GPUs are those its /sys lists" (fun () ->
+                 equal int (List.length (N.gpus_at "/")) (N.count ()));
              test "names GPU 0 NV and GPU i NV:i" (fun () ->
                  equal (list string) [ "NV"; "NV:1"; "NV:7" ]
                    (List.map N.device_name [ 0; 1; 7 ]));
            ];
-         group ~timeout:10. "opening"
+         group ~timeout:60. "opening"
            [
+             test "count never raises" (fun () ->
+                 at_least int ~than:0 (N.count ()));
              test "a negative GPU raises" (fun () ->
                  raises_match Exn.invalid_arg (fun () -> N.open_ (-1));
                  raises_match Exn.invalid_arg (fun () -> N.device_name (-1)));
@@ -87,5 +103,6 @@ let () =
                  let n = N.count () in
                  let e = require_error (N.open_ n) in
                  contains ~sub:(Printf.sprintf "has %d NVIDIA GPUs" n) e);
+             test "a GPU has one device until it is stopped" once;
            ];
        ]
