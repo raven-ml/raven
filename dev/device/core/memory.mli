@@ -89,7 +89,15 @@ val map_host_range : device -> int -> int -> region option
 val map_peer_region : device -> region -> region option
 val borrow : device -> memory -> memory option
 (* [borrow d m] is [d]'s borrow of [m]'s memory, or [None] where [d] cannot map
-   it. *)
+   it. An io memory borrows through its pages. *)
+
+val prefetch : device -> memory -> at:int -> len:int -> unit
+(* [prefetch d m ~at ~len] asks the io device of [m] to read [len] bytes of it
+   from [at] ahead, if [d] is no host. *)
+
+val of_io : device -> io_region -> int -> memory
+(* [of_io d r n] is a memory record over [n] bytes of the region [r] an io
+   library gave the io device [d], after draining [d]. *)
 
 (* Allocation and drains *)
 

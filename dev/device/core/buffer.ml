@@ -27,8 +27,6 @@ let kind_of = function
   | Mapped -> Memory.mapped_kind
 
 let create ?(memory = Device) d n =
-  if Dev.is_io d then
-    invalid_argf "Device_core.Buffer.create: %s is an io device" d.name;
   if n < 0 then invalid_argf "Device_core.Buffer.create: %d bytes is negative" n;
   if Dev.is_lost d then Dev.raise_lost d;
   let mem =
@@ -37,9 +35,36 @@ let create ?(memory = Device) d n =
       Memory.drain d;
       Memory.make d 0 Memory.no_entry
     end
+    else if Dev.is_io d then Memory.alloc d Memory.device_kind n
     else Memory.alloc d (kind_of memory) n
   in
   of_memory mem n
+
+let of_io (type r) d (k : r Type.Id.t) (r : r) n =
+  if n < 0 then invalid_argf "Device_core.Buffer.of_io: %d bytes is negative" n;
+  match d.kind with
+  | Io { m; h } -> (
+      let module I = (val m) in
+      match Type.Id.provably_equal I.region_key k with
+      | Some Type.Equal ->
+          let mem = Memory.of_io d (Io_region { m; h; r }) n in
+          (* The io library reaches the memory outside the claims. *)
+          mem.claim.count <- 1;
+          of_memory mem n
+      | None ->
+          invalid_argf
+            "Device_core.Buffer.of_io: %s is another io library's device" d.name
+      )
+  | _ -> invalid_argf "Device_core.Buffer.of_io: %s is no io device" d.name
+
+let io (type r) b (k : r Type.Id.t) : r option =
+  match b.mem.root.entry.io_region with
+  | Some (Io_region { m; r; _ }) -> (
+      let module I = (val m) in
+      match Type.Id.provably_equal I.region_key k with
+      | Some Type.Equal -> Some r
+      | None -> None)
+  | None -> None
 
 let of_bigarray ba =
   let n = Bigarray.Array1.size_in_bytes ba in
@@ -91,7 +116,9 @@ let borrow d b =
   if b.mem.dev == d then Some b
   else
     match Memory.borrow d b.mem with
-    | Some mem -> Some { b with mem }
+    | Some mem ->
+        Memory.prefetch d b.mem ~at:b.offset ~len:b.length;
+        Some { b with mem }
     | None -> None
 
 let wait_point p = Dev.wait (Dev.of_index (Point.index p)) (Point.value p)

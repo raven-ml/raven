@@ -55,10 +55,19 @@ module type Io = sig
 
   exception Fault of string
 
+  val region_key : region Type.Id.t
   val budget : t -> int
   val alloc : t -> int -> region option
   val free : t -> region -> unit
   val read : t -> region -> at:int -> dst:int -> len:int -> unit
   val write : t -> region -> at:int -> src:int -> len:int -> unit
+
+  val pages :
+    t ->
+    region ->
+    (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+    option
+
+  val prefetch : t -> region -> at:int -> len:int -> unit
   val stop : t -> unit
 end

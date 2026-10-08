@@ -71,7 +71,8 @@ type device = {
 and entry = {
   owner : device;
   memory : int;
-      (** 0 device, 1 pinned, 2 mapped, 3 heap, 4 kept by its maker. *)
+      (** 0 device, 1 pinned, 2 mapped, 3 heap, 4 kept by its maker, 5 io memory
+          its device made, 6 io memory its library gave. *)
   bytes : int;
   region : region option;
   io_region : io_region option;
@@ -79,7 +80,14 @@ and entry = {
   mutable own : int;  (** The memory's own stamps. *)
   mutable maps : mapping list;  (** Other devices' mappings of it. *)
   mutable held : bool;
+  mutable pages : pages;  (** An io memory's pages, asked at its first borrow. *)
 }
+
+and pages =
+  | Unasked
+  | Pages of
+      (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+  | No_pages
 
 and mapping = { on : device; map : region; at : int; by : nativeint }
 

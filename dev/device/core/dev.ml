@@ -424,11 +424,10 @@ let open_driver (type a) ?(memory_device = false)
       | d -> Ok d
       | exception D.Fault why -> Error (strf "%s: %s" full why))
 
-let io_key = -2
-
 let open_io (type a) (module I : Sigs.Io with type t = a) ?machine
     ?(host = false) ~name make =
-  open_named ~machine ~name ~key:io_key ~host @@ fun ~index ~name:full ->
+  let key = Type.Id.uid I.region_key in
+  open_named ~machine ~name ~key ~host @@ fun ~index ~name:full ->
   match make () with
   | Error e -> Error e
   | Ok h ->
@@ -437,7 +436,7 @@ let open_io (type a) (module I : Sigs.Io with type t = a) ?machine
         make_device ~index ~name:full ~machine
           ~kind:(Io { m = (module I); h })
           ~c ~arch:"" ~queues:[||] ~completion:Host_writes
-          ~waits:(false, false, false) ~word:0 ~word_region:None ~key:io_key
+          ~waits:(false, false, false) ~word:0 ~word_region:None ~key
           ~memory_device:false
           ~fault:(function I.Fault why -> Some why | _ -> None)
           ~capability:None ~budget:(I.budget h)

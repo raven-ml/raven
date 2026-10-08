@@ -125,11 +125,13 @@ and route src dst n =
     memmove (host_address dst) (host_address src) n
   end
   else if Dev.is_io sd && local dst.mem then begin
+    Buffer.wait src Buffer.Read;
     Buffer.wait dst Buffer.Read_write;
     io_read src dst n
   end
   else if Dev.is_io dd && local src.mem then begin
     Buffer.wait src Buffer.Read;
+    Buffer.wait dst Buffer.Read_write;
     io_write src dst n
   end
   else

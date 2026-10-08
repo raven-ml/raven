@@ -55,19 +55,34 @@ let test_reach () =
     [ C.reaches g C.host; C.reaches C.host g; C.shares_host_memory g ];
   equal (list bool) [ true; false ] [ C.reaches d e; C.reaches f d ]
 
-(* An io device whose memory is bytes that nothing reads. *)
+(* An io device whose memory is bytes that nothing reads, as host pages. *)
 module Store = struct
   type t = unit
-  type region = Bytes.t
+
+  type region =
+    (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
 
   exception Fault of string
 
+  let region_key : region Type.Id.t = Type.Id.make ()
   let budget () = max_int
-  let alloc () n = Some (Bytes.create n)
+
+  let alloc () n =
+    Some (Bigarray.Array1.create Bigarray.char Bigarray.c_layout n)
+
   let free () _ = ()
   let read () _ ~at:_ ~dst:_ ~len:_ = ()
   let write () _ ~at:_ ~src:_ ~len:_ = ()
+  let pages () r = Some r
+  let prefetch () _ ~at:_ ~len:_ = ()
   let stop () = ()
+end
+
+(* Another io library, of the same shape. *)
+module Other = struct
+  include Store
+
+  let region_key : region Type.Id.t = Type.Id.make ()
 end
 
 let open_store ?machine ?host name =
@@ -80,7 +95,33 @@ let test_io () =
   equal bool false (C.computes io);
   equal (list bool) [ false; false ]
     [ C.reaches io C.host; C.reaches C.host io ];
-  raises_match Exn.invalid_arg (fun () -> Device_core.Buffer.create io 8)
+  equal int 8 (C.Buffer.length (C.Buffer.create io 8))
+
+(* A name an io library opened stays that library's: another's open of it
+   raises. *)
+let test_io_key () =
+  ignore (open_store "open:io-key");
+  raises_match Exn.invalid_arg (fun () ->
+      C.open_io (module Other) ~name:"open:io-key" (fun () -> Ok ()))
+
+(* A region an io library gave is a buffer of its device, which gives it back by
+   the library's key alone, and borrows on the host through its pages. *)
+let test_of_io () =
+  let io = open_store "open:of-io" in
+  let r = Bigarray.Array1.create Bigarray.char Bigarray.c_layout 16 in
+  Bigarray.Array1.fill r 'p';
+  let b = C.Buffer.of_io io Store.region_key r 16 in
+  equal ~msg:"the region given" bool true
+    (match C.Buffer.io b Store.region_key with
+    | Some r' -> r' == r
+    | None -> false);
+  is_none (C.Buffer.io b Other.region_key);
+  raises_match Exn.invalid_arg (fun () ->
+      C.Buffer.of_io io Other.region_key r 16);
+  let h = require_some (C.Buffer.borrow C.host b) in
+  equal string (String.make 16 'p')
+    (let ba = C.Buffer.bigarray Bigarray.char h in
+     String.init 16 (Bigarray.Array1.get ba))
 
 (* A device of another machine is named after it, and its host is the io device
    opened as that machine's. *)
@@ -156,6 +197,8 @@ let tests =
       test "the host states its facts" test_host;
       test "a driver's device reaches by its copies and its peers" test_reach;
       test "an io device computes nothing and reaches nothing" test_io;
+      test "a name stays with the io library that opened it" test_io_key;
+      test "a region an io library gave is a buffer of its device" test_of_io;
       test "a device of another machine is named after it, its host the io's"
         test_machine;
       test "a point prints as its device's name and its value" test_point;

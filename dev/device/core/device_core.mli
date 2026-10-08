@@ -260,13 +260,26 @@ module Buffer : sig
       allocates nothing. On a device whose memory the host addresses, every
       [memory] is the device's own. On a host, a buffer of 64 KiB or more (four
       pages, where pages are larger) starts on a page, so devices can {!borrow}
-      it.
+      it. On an {!Io} device it is memory the device's {!Io.alloc} makes.
 
       [create] first drains what [d] holds for reuse: memory of buffers
       collected since, and the releases of holds that became due ({!Hold}).
 
-      Raises [Invalid_argument] if [d] is an {!Io} device or [n < 0];
-      {!Out_of_memory}; and {!Lost} if [d] is lost. *)
+      Raises [Invalid_argument] if [n < 0] or [d] is an io device that makes no
+      memory of its own; {!Out_of_memory}; and {!Lost} if [d] is lost. *)
+
+  val of_io : device -> 'r Type.Id.t -> 'r -> int -> t
+  (** [of_io d k r n] is a buffer over the [n] bytes of [r], a region of the io
+      device [d] whose library declares [k] ({!Io.region_key}). It drains [d]
+      first, as {!create} does. The memory is never exclusive ({!Claim}), and
+      returns to [d]'s {!Io.free} once unreachable.
+
+      Raises [Invalid_argument] if [d] is no io device, its library's key is not
+      [k], or [n < 0]. *)
+
+  val io : t -> 'r Type.Id.t -> 'r option
+  (** [io b k] is the region [b]'s memory lies in, if it is io memory of a
+      library whose key is [k], and [None] otherwise. *)
 
   val of_bigarray : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> t
   (** [of_bigarray ba] is a borrowed buffer on {!host} over [ba]'s bytes,
@@ -277,7 +290,8 @@ module Buffer : sig
   (** [borrow d b] is [Some b'], a borrowed buffer on [d] over [b]'s memory,
       without a copy, of [b]'s length, or [None] where [d] cannot map it. It is
       [Some b] for [b] on [d]. [b'] keeps [b] reachable, and its stamps are
-      [b]'s: work through [b'] is work on [b]'s memory.
+      [b]'s: work through [b'] is work on [b]'s memory, with the one exception
+      {!Io.pages} states for memory an io device holds for reading.
 
       [d] maps host memory of its machine that starts on a page, and memory of a
       device of its own driver that its driver maps ({!Driver.map_peer}). Every
@@ -287,7 +301,10 @@ module Buffer : sig
       nothing. A borrow of a borrow maps the memory the first one maps. A
       {!memory_device} maps any host memory. Host memory that does not start on
       a page, such as a host buffer of fewer than 64 KiB, borrows only on hosts
-      and memory devices.
+      and memory devices. An io device's memory borrows through its pages
+      ({!Io.pages}), as host memory, where its device maps them; a device other
+      than the host asks the io device to read the borrowed bytes ahead
+      ({!Io.prefetch}).
 
       Raises [Invalid_argument] if [b] is dead ({!Claim.consume}), and {!Lost}
       if [d] is lost or [b]'s stamps name a lost device. *)
@@ -997,11 +1014,20 @@ module type Io = sig
   (** [Fault why] reports that the device failed, such as a closed connection.
   *)
 
+  val region_key : region Type.Id.t
+  (** [region_key] identifies the io library and its regions: {!Buffer.of_io}
+      and {!Buffer.io} cast regions by it, and a device's name stays with the
+      library that opened it. *)
+
   val budget : t -> int
   (** [budget d] is the bytes [d] should hold at most. *)
 
   val alloc : t -> int -> region option
-  (** [alloc d n] is [n] bytes of [d]'s memory, or [None]. *)
+  (** [alloc d n] is [n] new bytes of [d]'s memory, or [None] if [d] has not the
+      room. [n] is positive.
+
+      Raises [Invalid_argument] if [d] makes no memory of its own, which
+      {!Buffer.create} raises in turn. *)
 
   val free : t -> region -> unit
   (** [free d r] gives [r] back. *)
@@ -1009,12 +1035,29 @@ module type Io = sig
   val read : t -> region -> at:int -> dst:int -> len:int -> unit
   (** [read d r ~at ~dst ~len] reads the [len] bytes at [at] in [r] into host
       memory at [dst]. A failure of the memory alone, such as a file truncated
-      since it was opened, raises [Sys_error], which reaches the caller and
-      loses nothing; {!Fault} loses [d]. *)
+      since it was opened, raises [Sys_error], which loses nothing; {!Fault}
+      loses [d]. *)
 
   val write : t -> region -> at:int -> src:int -> len:int -> unit
   (** [write d r ~at ~src ~len] writes the [len] bytes of host memory at [src]
       at [at] in [r]. It raises as {!read}. *)
+
+  val pages :
+    t ->
+    region ->
+    (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+    option
+  (** [pages d r] is [r]'s bytes as host memory, or [None] if [d] maps none. The
+      mapping is [r]'s memory: {!read} and {!write} see writes through it, and
+      it sees theirs. The exception is [r] that [d] holds for reading: writes
+      through the mapping, by the host or by a device that borrowed it, stay the
+      process's own, and {!read} does not see them. This library asks once per
+      memory, at its first borrow. *)
+
+  val prefetch : t -> region -> at:int -> len:int -> unit
+  (** [prefetch d r ~at ~len] asks [d] to read the [len] bytes at [at] in [r]
+      ahead, before a device other than the host reaches them through {!pages}.
+      It is a hint: it raises nothing. *)
 
   val stop : t -> unit
   (** [stop d] ends [d] once it is lost. *)

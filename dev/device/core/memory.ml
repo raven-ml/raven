@@ -119,13 +119,16 @@ let heap_bytes n =
 
 let new_claim () = { count = 0; generation = 0; why = "" }
 
-(* Kinds: [Buffer.memory]'s, then the host's heap, then memory its maker
-   keeps. *)
+(* Kinds: [Buffer.memory]'s, then the host's heap, memory its maker keeps, io
+   memory its device made and io memory its library gave. *)
 let device_kind = 0
 let pinned_kind = 1
 let mapped_kind = 2
 let heap_kind = 3
 let kept_kind = 4
+let io_kind = 5
+let given_kind = 6
+let is_io_memory (e : entry) = e.memory = io_kind || e.memory = given_kind
 
 let entry ?region ?io_region owner memory bytes stamps =
   {
@@ -138,6 +141,7 @@ let entry ?region ?io_region owner memory bytes stamps =
     own = stamps;
     maps = [];
     held = false;
+    pages = Unasked;
   }
 
 (* The entry of host memory no device borrowed: no stamps, no mapping. *)
@@ -219,14 +223,27 @@ let poly kind =
   else if kind = mapped_kind then `Mapped
   else `Device
 
-let driver_alloc d kind n =
+(* [n] new bytes of [d]'s memory of [kind] as a release record, or [None] if [d]
+   has not the room. *)
+let new_entry d kind n =
   match d.kind with
   | Driver { m; h; rid } -> (
       let module D = (val m) in
       match Dev.counted d (fun () -> D.alloc h (poly kind) n) with
       | None -> None
-      | Some r -> Some (Region { m; h; r; rid }))
-  | _ -> None
+      | Some r ->
+          Some
+            (entry ~region:(Region { m; h; r; rid }) d kind n (stamps_new ())))
+  | Io { m; h } -> (
+      let module I = (val m) in
+      match Dev.counted d (fun () -> I.alloc h n) with
+      | None -> None
+      | Some r ->
+          Some
+            (entry
+               ~io_region:(Io_region { m; h; r })
+               d io_kind n (stamps_new ())))
+  | Host -> None
 
 (* After [d]'s loss, its memory and mappings are freed only once its stop
    returned, and uncounted. *)
@@ -238,11 +255,15 @@ let free_region d (Region { m; h; r; _ }) =
   let module D = (val m) in
   call d (fun () -> D.free h r)
 
+let free_io d (Io_region { m; h; r }) =
+  let module I = (val m) in
+  call d (fun () -> I.free h r)
+
 let unload d (Image { m; h; i }) =
   let module D = (val m) in
   if not (Dev.is_lost d) then Dev.counted d (fun () -> D.unload h i)
 
-let owns kind = kind = device_kind || kind = mapped_kind
+let owns kind = kind = device_kind || kind = mapped_kind || kind = io_kind
 
 (* Releases *)
 
@@ -267,13 +288,15 @@ let free_entry (e : entry) =
   let d = e.owner in
   unmap_all e;
   Option.iter (free_region d) e.region;
+  Option.iter (free_io d) e.io_region;
   drop_stamps e;
   if owns e.memory then begin
     Mutex.protect d.lock (fun () -> d.used <- d.used - e.bytes);
     note d
   end
 
-let cache_key (e : entry) = (e.bytes * 4) + e.memory
+let key n kind = (n * 8) + kind
+let cache_key (e : entry) = key e.bytes e.memory
 
 (* Whether the lost [d] counts as stopped: its stop returned and its word reads
    its last submitted value, so its memory may be freed. *)
@@ -348,6 +371,7 @@ let route d = function
       let cached =
         (not (Dev.is_lost d))
         && (not e.held)
+        && (not (is_io_memory e))
         && reached ~except:d.index e.stamps
       in
       Mutex.protect d.lock (fun () ->
@@ -373,11 +397,15 @@ let due d =
                 frees := e :: !frees;
                 false)
               else true
-            else if (not e.held) && reached ~except:d.index e.stamps then begin
+            else if
+              (not e.held)
+              && (not (is_io_memory e))
+              && reached ~except:d.index e.stamps
+            then begin
               cache d e;
               false
             end
-            else if e.held && reached e.stamps then (
+            else if (e.held || is_io_memory e) && reached e.stamps then (
               frees := e :: !frees;
               false)
             else true)
@@ -423,9 +451,8 @@ let drain_own d =
   List.iter free_entry frees;
   List.iter (run_pending d) pending
 
-(* Drains [d], then the lost devices that hold memory, then the holds. *)
-(* Whether [d] has nothing to drain: no collected memory, nothing waiting
-   for a value. A drain of an idle device allocates nothing. *)
+(* Whether [d] has nothing to drain: no collected memory, nothing waiting for a
+   value. A drain of an idle device allocates nothing. *)
 let idle d = d.retiring == [] && d.pending == [] && not (released_any d.release)
 
 let drain_lost d =
@@ -438,6 +465,7 @@ let drain_lost d =
       end)
     (Atomic.get lost_devices)
 
+(* Drains [d], then the lost devices that hold memory, then the holds. *)
 let drain d =
   if not (Dev.forked ()) then begin
     if not (idle d) then drain_own d;
@@ -468,7 +496,7 @@ let drain_others d =
 
 let take_cached d kind n =
   Mutex.protect d.lock (fun () ->
-      let k = (n * 4) + kind in
+      let k = key n kind in
       match Hashtbl.find_opt d.cache k with
       | Some (e :: rest) ->
           if rest = [] then Hashtbl.remove d.cache k
@@ -551,13 +579,12 @@ let rec alloc_entry d kind n round =
         (not (owns kind))
         || Mutex.protect d.lock (fun () -> d.used + n <= d.budget)
       in
-      let r = if fits then driver_alloc d kind n else None in
-      match r with
-      | Some r ->
-          if owns kind then
+      match if fits then new_entry d kind n else None with
+      | Some e ->
+          if owns e.memory then
             Mutex.protect d.lock (fun () -> d.used <- d.used + n);
           note d;
-          entry ~region:r d kind n (stamps_new ())
+          e
       (* Mapped memory the window or the budget cannot hold is pinned memory,
          which keeps its promises, and the cache stays. *)
       | None when kind = mapped_kind -> alloc_entry d pinned_kind n round
@@ -627,8 +654,6 @@ let map_host_range d start n =
       | None -> None)
   | _ -> None
 
-let map_host d m = map_host_range d m.host m.bytes
-
 (* [d]'s mapping of the region of another device of [d]'s driver. The region's
    module types it; the keys' equality types [d]'s handle. *)
 let map_peer_region d (Region { m = om; h = oh; r; rid }) =
@@ -647,14 +672,16 @@ let map_peer_region d (Region { m = om; h = oh; r; rid }) =
 let map_peer d m =
   match m.entry.region with Some r -> map_peer_region d r | None -> None
 
-(* [d]'s mapping of the memory [m] owns, made at the first borrow and shared by
-   the later ones. *)
-let mapping d m =
+(* [d]'s mapping of the memory [m] owns, whose host address is [host] or [-1],
+   made at the first borrow and shared by the later ones. *)
+let mapping d m host =
   let found = Mutex.protect m.dev.lock (fun () -> find_map m.entry d) in
   match found with
   | Some mp -> Some mp
   | None -> (
-      let made = if m.host >= 0 then map_host d m else map_peer d m in
+      let made =
+        if host >= 0 then map_host_range d host m.bytes else map_peer d m
+      in
       match made with
       | None -> None
       | Some r -> (
@@ -674,25 +701,62 @@ let mapping d m =
               defer d (Unmap r);
               Some other))
 
+(* The host address of the io memory [m]'s pages, asked of its device at the
+   first borrow, or [-1] if it maps none. *)
+let pages (m : memory) =
+  let e = m.entry in
+  (match e.pages with
+  | Unasked -> (
+      match e.io_region with
+      | Some (Io_region { m = im; h; r }) ->
+          let module I = (val im) in
+          let got =
+            match Dev.counted m.dev (fun () -> I.pages h r) with
+            | Some ba -> Pages ba
+            | None -> No_pages
+          in
+          Mutex.protect m.dev.lock (fun () ->
+              if e.pages = Unasked then e.pages <- got)
+      | None -> ())
+  | Pages _ | No_pages -> ());
+  match e.pages with Pages ba -> ba_address ba | Unasked | No_pages -> -1
+
 let borrow d m =
   let m = m.root in
+  let host = if is_io_memory m.entry then pages m else m.host in
   if m.dev == d then Some m
-  else if m.dev.machine <> d.machine || Dev.is_io d || Dev.is_io m.dev then None
+  else if Dev.is_io d || (Dev.is_io m.dev && host < 0) then None
+  else if m.dev.machine <> d.machine && not (Dev.is_io m.dev) then None
   else if Dev.is_host d then
-    if m.host >= 0 then
-      Some (borrow_of m d ~host:m.host ~address:m.host ~handle:0n)
+    if host >= 0 then Some (borrow_of m d ~host ~address:host ~handle:0n)
     else None
-  else if d.memory_device && m.host >= 0 then
-    Some
-      (borrow_of m d ~host:m.host ~address:m.host
-         ~handle:(Nativeint.of_int m.host))
-  else if m.host >= 0 && m.entry.region = None && m.host mod page <> 0 then None
+  else if d.memory_device && host >= 0 then
+    Some (borrow_of m d ~host ~address:host ~handle:(Nativeint.of_int host))
+  else if host >= 0 && m.entry.region = None && host mod page <> 0 then None
   else begin
     if m.entry == no_entry then ensure_entry m;
-    match mapping d m with
+    match mapping d m host with
     | None -> None
     | Some mp -> Some (borrow_of m d ~host:(-1) ~address:mp.at ~handle:mp.by)
   end
+
+(* Asks the io device of [m] to read the bytes of [m] from [at] ahead, for a
+   device other than the host that borrowed them. A hint: it raises nothing. *)
+let prefetch d (m : memory) ~at ~len =
+  match m.root.entry.io_region with
+  | Some (Io_region { m = im; h; r }) when not (Dev.is_host d) -> (
+      let module I = (val im) in
+      try I.prefetch h r ~at ~len with _ -> ())
+  | _ -> ()
+
+(* A memory record over [n] bytes of the region [r] an io library gave the io
+   device [d], which [d]'s free gives back once unreachable. *)
+let of_io d r n =
+  drain d;
+  let e = entry ~io_region:r d given_kind n (stamps_new ()) in
+  let m = make d n e in
+  m.token <- token d.release (Memory e) n max_int (-1);
+  m
 
 (* Releases the device's cache down to its budget. *)
 let trim d = release_cache ~upto:d.budget ~wait:false d
