@@ -66,15 +66,8 @@ static void cond_wait(rig_cond *c, rig_mutex *m) {
   SleepConditionVariableSRW(c, m, INFINITE, 0);
 }
 static void cond_broadcast(rig_cond *c) { WakeAllConditionVariable(c); }
-static void mu_init(struct rig_device *d) {
-  mutex_init(&d->mu);
-  InitializeConditionVariable(&d->cv);
-}
 static void cv_wait_ms(struct rig_device *d, int ms) {
   SleepConditionVariableSRW(&d->cv, &d->mu, (DWORD)ms, 0);
-}
-static void cv_broadcast(struct rig_device *d) {
-  WakeAllConditionVariable(&d->cv);
 }
 #else
 static void mutex_init(rig_mutex *m) { pthread_mutex_init(m, NULL); }
@@ -84,10 +77,6 @@ static void mutex_unlock(rig_mutex *m) { pthread_mutex_unlock(m); }
 static void cond_init(rig_cond *c) { pthread_cond_init(c, NULL); }
 static void cond_wait(rig_cond *c, rig_mutex *m) { pthread_cond_wait(c, m); }
 static void cond_broadcast(rig_cond *c) { pthread_cond_broadcast(c); }
-static void mu_init(struct rig_device *d) {
-  mutex_init(&d->mu);
-  pthread_cond_init(&d->cv, NULL);
-}
 /* A clock jump moves one timeout, which only returns a waiter early or late
    to OCaml. */
 static void cv_wait_ms(struct rig_device *d, int ms) {
@@ -101,11 +90,13 @@ static void cv_wait_ms(struct rig_device *d, int ms) {
   }
   pthread_cond_timedwait(&d->cv, &d->mu, &t);
 }
-static void cv_broadcast(struct rig_device *d) {
-  pthread_cond_broadcast(&d->cv);
-}
 #endif
 
+static void mu_init(struct rig_device *d) {
+  mutex_init(&d->mu);
+  cond_init(&d->cv);
+}
+static void cv_broadcast(struct rig_device *d) { cond_broadcast(&d->cv); }
 static void mu_lock(struct rig_device *d) { mutex_lock(&d->mu); }
 static void mu_unlock(struct rig_device *d) { mutex_unlock(&d->mu); }
 

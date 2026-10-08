@@ -18,10 +18,6 @@
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 
-#ifndef _WIN32
-#include <unistd.h>
-#endif
-
 #include "rig.h"
 #include "rig_stubs.h"
 
@@ -33,14 +29,6 @@
 struct memory_device {
   _Atomic uint64_t word;
 };
-
-static size_t page(void) {
-#ifdef _WIN32
-  return 4096;
-#else
-  return (size_t)sysconf(_SC_PAGESIZE);
-#endif
-}
 
 static void *aligned(size_t align, size_t n) {
 #ifdef _WIN32
@@ -62,16 +50,17 @@ static void aligned_free(void *p) {
 /* A memory device's state, never freed: its word outlives it. */
 value caml_rig_memory_new(value unit) {
   (void)unit;
-  struct memory_device *m = aligned(page(), page());
+  size_t page = rig_page_bytes();
+  struct memory_device *m = aligned(page, page);
   if (m == NULL) caml_raise_out_of_memory();
-  memset(m, 0, page());
+  memset(m, 0, page);
   return caml_copy_nativeint((intnat)m);
 }
 
 /* [v_n] bytes of host memory, on a page from 64 KiB on, or 0. */
 value caml_rig_memory_alloc(value v_n) {
   size_t n = (size_t)Long_val(v_n);
-  void *p = aligned(n >= (1 << 16) ? page() : 64, n);
+  void *p = aligned(n >= (1 << 16) ? rig_page_bytes() : 64, n);
   return Val_long((intnat)p);
 }
 

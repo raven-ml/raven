@@ -33,19 +33,19 @@
 
 #include "rig_stubs.h"
 
-static intnat page_bytes(void) {
+size_t rig_page_bytes(void) {
 #ifdef _WIN32
   SYSTEM_INFO info;
   GetSystemInfo(&info);
-  return (intnat)info.dwPageSize;
+  return (size_t)info.dwPageSize;
 #else
-  return (intnat)sysconf(_SC_PAGESIZE);
+  return (size_t)sysconf(_SC_PAGESIZE);
 #endif
 }
 
 value caml_rig_page_size(value unit) {
   (void)unit;
-  return Val_long(page_bytes());
+  return Val_long((intnat)rig_page_bytes());
 }
 
 /* The host clock: nanoseconds of the monotonic clock; on macOS, mach time,
@@ -168,7 +168,7 @@ static mlsize_t pace(mlsize_t mem, mlsize_t room, intnat live) {
     mlsize_t program = caml_custom_get_max_major() + (mlsize_t)live / 150 * ratio;
     if (program < max) max = program;
   }
-  mlsize_t floor = (mlsize_t)page_bytes();
+  mlsize_t floor = (mlsize_t)rig_page_bytes();
   if (max < floor) max = floor;
   if (mem <= atomic_load_explicit(&caml_custom_minor_max_bsz,
                                   memory_order_relaxed)) {

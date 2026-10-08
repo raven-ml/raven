@@ -10,6 +10,7 @@
 #define RIG_STUBS_H
 
 #include <stdatomic.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "rig_edge.h"
@@ -141,6 +142,9 @@ struct rig_sub {
   int nclaims; /* the stops a failed hand-over's spread claimed */
   int *claims;
 };
+
+/* The host's page size in bytes. */
+size_t rig_page_bytes(void);
 
 /* Raises the stamps [s]'s work names to [p]. */
 void rig_sub_raise(struct rig_sub *s, uint64_t p);
