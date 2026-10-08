@@ -295,6 +295,9 @@ let create_file path n =
   open_file path create_mode n
 
 let barrier b =
+  Option.iter
+    (invalid_argf "Rig_disk.barrier: the buffer is dead: %s")
+    (Rig.Buffer.dead b);
   match Rig.Buffer.io b Io.region_key with
   | None -> invalid_arg "Rig_disk.barrier: the buffer is not on DISK"
   | Some f when not f.writable -> ()

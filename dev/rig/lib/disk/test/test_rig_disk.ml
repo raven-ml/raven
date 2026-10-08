@@ -1026,7 +1026,9 @@ let test_barrier_dead () =
   ignore
     (Rig.Claim.with_ ~read:[ file ] ~donate:[] (fun c ->
          Rig.Claim.consume c ~why:"gone" file));
-  raises_match (Exn.invalid_arg ~substring:"") (fun () -> Rig_disk.barrier file)
+  raises_match
+    (Exn.invalid_arg ~substring:"Rig_disk.barrier: the buffer is dead: gone")
+    (fun () -> Rig_disk.barrier file)
 
 let barriers =
   group ~timeout "barriers"
