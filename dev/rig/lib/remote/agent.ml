@@ -456,40 +456,42 @@ let drop s id =
   | Some (Buffer _) -> Hashtbl.remove s.objects id
   | None -> ()
 
-(* Runs a hand-over's parts in order, then sends the bytes of its copies into
-   the controller's memory and the word of its value. *)
+(* [b]'s bytes as the host reads them in place: [b]'s own memory on this
+   machine's host, a copy of them elsewhere. *)
+let host_bytes b =
+  let b =
+    if Rig.Buffer.device b == Rig.host then b
+    else begin
+      let h = Rig.Buffer.create Rig.host (Rig.Buffer.length b) in
+      Rig.Buffer.copy ~src:b ~dst:h;
+      h
+    end
+  in
+  Rig.Buffer.wait b Rig.Buffer.Read;
+  Rig.Buffer.bigarray Bigarray.char b
+
+(* Runs a hand-over's parts in order, sending the bytes of each copy into the
+   controller's memory as it comes, then the word of its value. *)
 let hand_over s (h : Wire.handover) local =
-  let side bytes k = function
+  let next = ref 0 in
+  let side bytes = function
     | Wire.Region { id; offset } ->
         Rig.Buffer.view (buffer s id) ~first:offset ~length:bytes
-    | Wire.Local -> (
-        match k with
-        | Some area -> Rig.Buffer.of_bigarray area
-        | None -> Rig.Buffer.create Rig.host bytes)
+    | Wire.Local ->
+        let a = local.(!next) in
+        incr next;
+        Rig.Buffer.of_bigarray a
   in
-  let next = ref 0 in
-  let back = ref [] in
   Array.iter
     (function
       | Wire.Words _ -> raise (Refused "the agent runs no code")
+      | Wire.Copy { src; dst = Wire.Local; bytes } ->
+          Link.bytes s.link ~device:h.device ~value:h.value
+            (host_bytes (side bytes src))
       | Wire.Copy { src; dst; bytes } ->
-          let from =
-            match src with
-            | Wire.Local ->
-                let a = local.(!next) in
-                incr next;
-                side bytes (Some a) src
-            | _ -> side bytes None src
-          in
-          let into = side bytes None dst in
-          if bytes > 0 then Rig.Buffer.copy ~src:from ~dst:into;
-          if dst = Wire.Local then back := into :: !back)
+          if bytes > 0 then
+            Rig.Buffer.copy ~src:(side bytes src) ~dst:(side bytes dst))
     h.parts;
-  List.iter
-    (fun b ->
-      Link.bytes s.link ~device:h.device ~value:h.value
-        (Rig.Buffer.bigarray Bigarray.char b))
-    (List.rev !back);
   Link.word s.link ~device:h.device h.value
 
 (* Applies the controller's commands in order until it closes the job, then

@@ -209,13 +209,15 @@ struct rig_remote_span {
 
 /* A frame for the sending thread: [buf]'s [n] bytes, the header and the
    payload's own bytes, then its [spans], which it borrows until it is sent
-   or dropped. Once it is, [reader]'s [reading], if set, drops by one. */
+   or dropped. Once it is, [reader]'s [reading], if set, drops by one and
+   [*sent], if set, becomes [1]. */
 struct rig_remote_frame {
   struct rig_remote_frame *next;
   int kind;
   unsigned char *buf;
   size_t n;
   struct rig_remote_dev *reader;
+  int *sent;
   int nspans;
   struct rig_remote_span spans[];
 };

@@ -325,6 +325,7 @@ static void frame_done(struct rig_remote_link *l, struct rig_remote_frame *f) {
     f->reader->reading--;
     rig_remote_settle(f->reader);
   }
+  if (f->sent != NULL) *f->sent = 1;
   pthread_cond_broadcast(&l->cv);
   free(f);
 }
@@ -915,6 +916,7 @@ struct rig_remote_frame *rig_remote_frame(int kind, size_t np, int nspans) {
   f->buf = (unsigned char *)f->spans + spans;
   f->n = HEADER + np;
   f->reader = NULL;
+  f->sent = NULL;
   f->nspans = nspans;
   return f;
 }
@@ -1139,21 +1141,28 @@ value caml_rig_remote_link_post(value vl, value vkind, value head) {
   CAMLreturn(Val_unit);
 }
 
-/* Queues the frame of [kind] whose payload is [head] then [area]'s bytes.
-   Releases the runtime while the queue is full. */
+/* Sends the frame of [kind] whose payload is [head] then [area]'s bytes,
+   which it reads in place: it returns once they are sent, or the job
+   failed. Releases the runtime. */
 value caml_rig_remote_link_post_area(value vl, value vkind, value head,
                                      value area) {
   CAMLparam4(vl, vkind, head, area);
   struct rig_remote_link *l = Link_val(vl);
   if (rig_remote_forked(l->job)) CAMLreturn(Val_unit);
-  size_t nh = caml_string_length(head);
-  size_t nb = caml_ba_byte_size(Caml_ba_array_val(area));
-  struct rig_remote_frame *f = rig_remote_frame(Int_val(vkind), nh + nb, 0);
+  size_t n = caml_string_length(head);
+  struct rig_remote_frame *f = rig_remote_frame(Int_val(vkind), n, 1);
   if (f == NULL) caml_raise_out_of_memory();
-  memcpy(f->buf + HEADER, String_val(head), nh);
-  memcpy(f->buf + HEADER + nh, Caml_ba_data_val(area), nb);
+  memcpy(f->buf + HEADER, String_val(head), n);
+  f->spans[0].p = Caml_ba_data_val(area);
+  f->spans[0].n = caml_ba_byte_size(Caml_ba_array_val(area));
+  int sent = 0;
+  f->sent = &sent;
   caml_release_runtime_system();
-  rig_remote_queue(l, f, NULL);
+  if (rig_remote_queue(l, f, NULL) == 0) {
+    pthread_mutex_lock(&l->mu);
+    while (!sent) pthread_cond_wait(&l->cv, &l->mu);
+    pthread_mutex_unlock(&l->mu);
+  }
   caml_acquire_runtime_system();
   CAMLreturn(Val_unit);
 }

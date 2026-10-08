@@ -166,8 +166,9 @@ val word : t -> device:int -> int -> unit
 
 val bytes : t -> device:int -> value:int -> Rig_remote_abi.area -> unit
 (** [bytes l ~device ~value b] sends [b]'s bytes as those of the next copy into
-    the controller's memory of the work of [device] at [value]. It copies [b]
-    before it returns. *)
+    the controller's memory of the work of [device] at [value]. It reads [b] in
+    place and returns once its bytes are sent, or once the job failed: the
+    caller must not write [b] until it returns. *)
 
 (** {1:rails Rails} *)
 
