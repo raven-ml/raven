@@ -238,6 +238,7 @@ let ops =
     load;
     wait_transport;
     hold;
+    profile;
   ]
 
 (* Walking *)
@@ -457,14 +458,7 @@ let () =
                  test op.name
                    (walk ~kinds:[ (fun n -> Fault n); (fun n -> Refuse n) ] op))
                staged
-           @ List.map exhausted staged
-           @ [
-               xfail
-                 ~reason:
-                   "every Profile.take makes a C lock, which the process keeps \
-                    for good"
-                 (test profile.name (walk profile));
-             ]);
+           @ List.map exhausted staged);
          group ~timeout "opening"
            [
              test "every failing fact or opener leaves the name to open"

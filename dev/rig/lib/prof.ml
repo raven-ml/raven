@@ -6,8 +6,7 @@
 type t = {
   counters : string list;
   trace : bool;
-  lock : Lock.t;
-  mutable events : (int * Def.event) list;
+  events : (int * Def.event) list Atomic.t;
 }
 
 external now : unit -> int = "caml_rig_now"
@@ -22,17 +21,19 @@ let rec change f =
   if not (Atomic.compare_and_set profiles ps (f ps)) then change f
 
 let start ~counters ~trace =
-  let p = { counters; trace; lock = Lock.create (); events = [] } in
+  let p = { counters; trace; events = Atomic.make [] } in
   change (fun ps -> ps @ [ p ]);
   p
 
 let stop p = change (List.filter (fun p' -> p' != p))
 
+let rec push a x =
+  let l = Atomic.get a in
+  if not (Atomic.compare_and_set a l (x :: l)) then push a x
+
 let add ps e =
   let n = Atomic.fetch_and_add numbers 1 in
-  List.iter
-    (fun p -> Lock.protect p.lock (fun () -> p.events <- (n, e) :: p.events))
-    ps
+  List.iter (fun p -> push p.events (n, e)) ps
 
 let record e = match active () with [] -> () | ps -> add ps e
 let add_all ps es = List.iter (add ps) es

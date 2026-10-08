@@ -6,13 +6,12 @@
 (** The profiles being taken, which every module records into.
 
     Any domain may call any function. The profiles being taken are one atomic
-    list; a profile's lock guards its events. *)
+    list, and so are a profile's events. *)
 
 type t = {
   counters : string list;
   trace : bool;
-  lock : Lock.t;  (** Guards [events]. *)
-  mutable events : (int * Def.event) list;
+  events : (int * Def.event) list Atomic.t;
       (** Numbered in the order recorded, newest first. *)
 }
 

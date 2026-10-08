@@ -100,7 +100,7 @@ let take ?(counters = []) ?(trace = false) f =
   match f () with
   | r ->
       Fun.protect ~finally:(fun () -> Prof.stop p) read_pending;
-      let events = Lock.protect p.lock (fun () -> p.events) in
+      let events = Atomic.get p.events in
       (r, List.map snd (List.stable_sort order events))
   | exception e ->
       let bt = Printexc.get_raw_backtrace () in
