@@ -365,24 +365,49 @@ let start_hub g hub tables ~scratch =
 
 (* A hub translates once its L2 cache and context 0 are on, over the tables'
    root: a block's reset clears them, as the RLC's autoload does the GC's, and
-   the hub then passes addresses through untranslated. *)
-let translates g hub tables =
+   the hub then passes addresses through untranslated. The reset also clears
+   the faults' page, which then sends them to host address 0, and the system
+   aperture and its access mode. *)
+let translates g hub tables ~fault =
   let r = g.r and ip = hub_prefix hub in
   let reg s = strf "reg%s%s" ip s in
-  let root = fabric g (Page_table.root tables) lor 1 in
+  let read64 ~inst name =
+    Regs.read ~inst r (reg (name ^ "_LO32"))
+    lor (Regs.read ~inst r (reg (name ^ "_HI32")) lsl 32)
+  in
   let wrong inst =
-    let l2 = Regs.field ~inst r (reg "VM_L2_CNTL") "enable_l2_cache" in
-    let ctx = Regs.field ~inst r (reg "VM_CONTEXT0_CNTL") "enable_context" in
-    let base =
-      Regs.read ~inst r (reg "VM_CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32")
-      lor (Regs.read ~inst r (reg "VM_CONTEXT0_PAGE_TABLE_BASE_ADDR_HI32") lsl 32)
+    let field name f = Regs.field ~inst r (reg name) f in
+    let checks =
+      [
+        ("its L2 cache", field "VM_L2_CNTL" "enable_l2_cache", 1);
+        ("its context 0", field "VM_CONTEXT0_CNTL" "enable_context", 1);
+        ( "its table base",
+          read64 ~inst "VM_CONTEXT0_PAGE_TABLE_BASE_ADDR",
+          fabric g (Page_table.root tables) lor 1 );
+        ( "its faults' page",
+          read64 ~inst "VM_L2_PROTECTION_FAULT_DEFAULT_ADDR",
+          fault lsr 12 );
+        ( "its system access mode",
+          field "MC_VM_MX_L1_TLB_CNTL" "system_access_mode",
+          3 );
+        ( "its system aperture's low end",
+          Regs.read ~inst r (reg "MC_VM_SYSTEM_APERTURE_LOW_ADDR"),
+          first g.base lsr 18 );
+        ( "its system aperture's high end",
+          Regs.read ~inst r (reg "MC_VM_SYSTEM_APERTURE_HIGH_ADDR"),
+          last g.top lsr 18 );
+      ]
     in
-    if l2 = 1 && ctx = 1 && base = root then None
-    else
-      Some
-        (strf
-           "the %s hub (instance %d) does not translate: L2 cache %d, context             0 %d, table base 0x%x where 0x%x was written"
-           ip inst l2 ctx base root)
+    List.find_map
+      (fun (what, got, want) ->
+        if got = want then None
+        else
+          Some
+            (strf
+               "the %s hub (instance %d) does not translate: %s reads 0x%x \
+                where 0x%x was written"
+               ip inst what got want))
+      checks
   in
   match List.find_map wrong (instances g hub) with
   | None -> Ok ()

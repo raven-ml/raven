@@ -343,7 +343,7 @@ let boot g ~partial ~pool ~kiq =
   let master () =
     List.iter
       (fun hub ->
-        match Gmc.translates g.gmc hub g.tables with
+        match Gmc.translates g.gmc hub g.tables ~fault:g.fault_bus with
         | Ok () -> ()
         | Error why -> raise (Regs.Stuck why))
       [ `Mm; `Gc ];
