@@ -235,34 +235,36 @@ let acquire fd (node : Topology.node) =
   | None ->
       let path = strf "/dev/dri/renderD%d" node.render in
       let* drm = opened path "the GPU's render node" (open_file path) in
-      let fail step e =
-        close_file drm;
-        Error (strf "%s: %s" step (strerror (-e)))
+      let ok step e =
+        if e >= 0 then Ok e
+        else begin
+          close_file drm;
+          Error (strf "%s: %s" step (strerror (-e)))
+        end
       in
-      let v = version fd in
-      let e = acquire_vm fd drm node.gpu_id in
-      let e = if e = 0 && v >= runtime_from then runtime_enable fd else e in
+      let acquiring = "acquiring the GPU's address space" in
+      let* v = ok "reading KFD's version" (version fd) in
+      let* _ = ok acquiring (acquire_vm fd drm node.gpu_id) in
+      let* _ =
+        if v < runtime_from then Ok 0 else ok acquiring (runtime_enable fd)
+      in
       let cus = Array.make 16 0 in
-      let khz = if e < 0 then e else device_info drm cus in
-      if v < 0 then fail "reading KFD's version" v
-      else if e < 0 then fail "acquiring the GPU's address space" e
-      else if khz < 0 then fail "reading the GPU's facts" khz
-      else
-        let g =
-          {
-            node;
-            drm;
-            hdp = remap_hdp fd node.gpu_id;
-            clock_khz = khz;
-            cus;
-            doorbells = None;
-            events_mapped = false;
-            stable = false;
-            faulted = Atomic.make None;
-          }
-        in
-        Hashtbl.replace acquired node.gpu_id g;
-        Ok g
+      let* khz = ok "reading the GPU's facts" (device_info drm cus) in
+      let g =
+        {
+          node;
+          drm;
+          hdp = remap_hdp fd node.gpu_id;
+          clock_khz = khz;
+          cus;
+          doorbells = None;
+          events_mapped = false;
+          stable = false;
+          faulted = Atomic.make None;
+        }
+      in
+      Hashtbl.replace acquired node.gpu_id g;
+      Ok g
 
 (* Events. On an interrupt from the GPU, the kernel driver sets a signal event
    only if the event's slot of the event page holds a value other than all ones,
