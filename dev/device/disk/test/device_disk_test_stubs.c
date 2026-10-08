@@ -4,11 +4,12 @@
   ---------------------------------------------------------------------------*/
 
 /* What the disk's suite asks of the system that OCaml's Unix does not give: a
-   limit on this process's open files, dropping a file's cached pages, and
-   whether AddressSanitizer watches this process. */
+   limit on this process's open files, dropping a file's cached pages, whether
+   AddressSanitizer watches this process, and which system it runs on. */
 
 #define _GNU_SOURCE
 
+#include <caml/alloc.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 #include <errno.h>
@@ -67,5 +68,20 @@ value device_disk_test_sanitized(value v_unit) {
 #endif
 #else
   return Val_false;
+#endif
+}
+
+/* [system ()] is the system this executable was compiled for: "linux",
+   "macos", "windows" or "other". Keeps the runtime. */
+value device_disk_test_system(value v_unit) {
+  (void)v_unit;
+#if defined(__linux__)
+  return caml_copy_string("linux");
+#elif defined(__APPLE__)
+  return caml_copy_string("macos");
+#elif defined(_WIN32)
+  return caml_copy_string("windows");
+#else
+  return caml_copy_string("other");
 #endif
 }
