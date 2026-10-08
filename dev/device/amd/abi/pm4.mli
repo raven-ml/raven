@@ -35,11 +35,12 @@ val dispatch :
     It sets the [COMPUTE_*] registers from [k]'s descriptor: its code, its
     resource words, with the privilege GFX11 runs kernels with and the LDS its
     workgroups take, in units of 1280 bytes on GFX950 and 512 bytes on the
-    others, the scratch of [k]'s private segment ({!Scratch.tmpring}) in the
-    buffer at [scratch], and the user SGPRs [k] enables, in their order: a
-    buffer descriptor of the scratch at [scratch], the address [packet] of its
-    dispatch packet ({!Aql.dispatch}), and the address [args] of its arguments.
-    The scratch's descriptor is read only if [k.private_segment_buffer], which
+    others (AMDGPUUsage, the kernel descriptor's [GRANULATED_LDS_SIZE]), the
+    scratch of [k]'s private segment ({!Scratch.tmpring}) in the buffer at
+    [scratch], and the user SGPRs [k] enables, in their order: a buffer
+    descriptor of the scratch at [scratch], the address [packet] of its dispatch
+    packet ({!Aql.dispatch}), and the address [args] of its arguments. The
+    scratch's descriptor is read only if [k.private_segment_buffer], which
     compilers set for GFX9 and GFX10, and [packet] only if [k.dispatch_ptr]. At
     most [waves_per_array] waves run at once on each shader array; without it,
     as many as fit.

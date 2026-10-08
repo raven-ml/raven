@@ -10,9 +10,10 @@
     from time to time on GFX11 on, markers of the GPU's clock ({!Pm4.source}).
     Its times count the engine's cycles from the start of the trace.
 
-    A compute queue starts tracing with {!start} and stops with {!stop}; the
-    host then reads each engine's buffer up to its {!length} and decodes it with
-    {!waves} and {!clock}. Engines are numbered across dies: engine [e] is
+    A compute queue starts tracing with {!val-start} and stops with {!val-stop};
+    the host then reads each engine's buffer up to its {!length} and decodes it
+    with {!waves} and {!clock}. The program is the one Mesa writes for a compute
+    queue, register by register. Engines are numbered across dies: engine [e] is
     engine [e mod g.shader_engines] of die [e / g.shader_engines], for
     [0 <= e < g.shader_engines * g.xccs]. *)
 
@@ -20,10 +21,11 @@
 
 val start : Gpu.t -> size:int -> (int -> 'v) -> 'v Packet.t
 (** [start g ~size buffer] starts tracing on every shader engine of [g], engine
-    [e] writing at most [size] bytes into its buffer at address [buffer e]. It
-    traces compute waves on the first SIMD of each engine's first workgroup
-    processor, and the instructions they issue on engines [0] and [1] only. It
-    makes the caches coherent before and after.
+    [e] writing at most [size] bytes into its buffer at address [buffer e]. Each
+    engine traces the compute waves of one unit of its first shader array: every
+    SIMD of its first compute unit on GFX9, the first SIMD of its first
+    workgroup processor on GFX11 on. Engines [0] and [1] alone trace the
+    instructions the waves issue. It makes the caches coherent before and after.
 
     [size] and every [buffer e] are multiples of 4096. Raises [Invalid_argument]
     if [size] is not a positive multiple of 4096. *)
@@ -36,8 +38,9 @@ val stop : Gpu.t -> (int -> 'v) -> 'v Packet.t
 
 val length : Gpu.t -> buffer:int -> int -> int
 (** [length g ~buffer w] is the bytes a shader engine of [g] wrote into its
-    buffer at address [buffer], from the word [w] {!stop} stored for it. A
-    result outside \[[0];[size]\] means the trace is not whole. *)
+    buffer at address [buffer], from the word [w] {!val-stop} stored for it. A
+    result outside \[[0];[size]\], [size] as {!val-start} took it, means the
+    trace is not whole. *)
 
 (** {1:decoding Decoding} *)
 
@@ -55,9 +58,10 @@ type wave = {
 
 val waves : Gpu.t -> string -> wave list
 (** [waves g trace] is the waves that start and end in [trace], one shader
-    engine's bytes as [g] wrote them, in the order they end. A wave's start is
-    paired with the next end of the same compute unit, SIMD and slot. A trace
-    cut short yields the waves of its whole packets. *)
+    engine's bytes as [g] wrote them, in the order they end. A wave's end is
+    paired with the latest start before it of the same compute unit, SIMD and
+    slot that no end took; a start or an end without its pair is no wave. A
+    trace cut short yields the waves of its whole packets. *)
 
 val clock : Gpu.t -> string -> (int -> int) option
 (** [clock g trace] maps a shader time of [trace] to the GPU's clock

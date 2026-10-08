@@ -58,11 +58,16 @@
     - The Linux kernel's amdgpu driver (ROCK-Kernel-Driver): the PM4 packet
       headers [soc15d.h], [nvd.h] and [kfd_pm4_headers_ai.h], the SDMA packet
       headers, and the GC register headers [gc_*_offset.h] and [gc_*_sh_mask.h].
-    - GPUOpen's PAL: the PM4 packet headers of the compute engine's firmware.
-    - ROCm's runtime: [hsa.h] (AQL packets).
+    - GPUOpen's PAL: the PM4 packet layouts of the compute engine's firmware,
+      and the register spaces PM4 packets set ([gfx9_plus_merged_enum.h]).
+    - ROCm's runtime (ROCR-Runtime): [hsa.h] (AQL packets), [registers.h] and
+      [amd_aql_queue.cpp] (the scratch buffer descriptor and the vendor packet
+      of PM4 commands).
     - LLVM's
       {{:https://llvm.org/docs/AMDGPUUsage.html}User Guide for AMDGPU Backend}:
-      code objects, their relocations and kernel descriptors. *)
+      code objects, their relocation records and kernel descriptors.
+    - Mesa's [src/amd/common/ac_sqtt.c]: the program that records a thread trace
+      on a compute queue. *)
 
 (** {1:words Queue words} *)
 

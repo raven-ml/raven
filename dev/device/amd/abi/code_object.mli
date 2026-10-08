@@ -39,17 +39,20 @@ type t
     relocations write over its image. *)
 
 val of_string : string -> (t, string) result
-(** [of_string obj] is the code object [obj].
-
-    The result is [Error msg] if [obj] is not an ELF object for AMD GPUs
-    ({!Device_elf.of_string}), if it is compiled for no processor LLVM names, or
-    for a generic one in a code object before version 6 or of generic version
-    [0], if one of its relocations is of another kind than [R_AMDGPU_REL64], has
-    no addend in its entry ([SHT_REL]), uses a symbol whose bytes the image does
-    not hold, or patches bytes past the image's end, if a kernel's descriptor or
-    the instruction it points to lies outside the image, or if its image is
-    longer than [2{^48}] bytes, which no GPU's virtual addresses reach. [msg]
-    says which. *)
+(** [of_string obj] is the code object [obj]. It is [Error msg], [msg] saying
+    which, if:
+    - [obj] is not an ELF object for AMD GPUs ({!Device_elf.of_string});
+    - it is compiled for no processor LLVM names, or for a generic one in a code
+      object before version 6 or of generic version [0];
+    - one of its relocations is of another kind than [R_AMDGPU_REL64], uses a
+      symbol whose bytes the image does not hold, patches bytes past the image's
+      end, or has no addend in its entry ([SHT_REL]): LLVM writes those for
+      Mesa's and PAL's code objects, never for HSA's (AMDGPUUsage, "Relocation
+      Records");
+    - a kernel's descriptor, or the instruction it points to, lies outside the
+      image;
+    - its image is longer than [2{^48}] bytes, which no GPU's virtual addresses
+      reach. *)
 
 val target : t -> string
 (** [target co] is the processor [co] is compiled for, as LLVM names it: a GPU,
@@ -71,8 +74,9 @@ val patches : t -> (int * string) list
 (** [patches co] is what [co]'s relocations write over its image, in the order
     of the object's relocations: each [(off, p)] puts the bytes [p] at offset
     [off], and [off + String.length p <= size co]. Each [p] is the 8
-    little-endian bytes of an [R_AMDGPU_REL64] word, its target's offset from
-    the word itself, so the patches hold wherever the image is loaded. *)
+    little-endian bytes of an [R_AMDGPU_REL64] word, [S + A - P]: its target's
+    offset plus the relocation's addend, less the word's own offset. A patch
+    holds wherever the image is loaded. *)
 
 val kernels : t -> string list
 (** [kernels co] is the names of [co]'s kernels, in increasing order: each
