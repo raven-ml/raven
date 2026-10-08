@@ -1668,9 +1668,15 @@ let memory_file root =
   | [ f ] -> Filename.concat root ("dev/hugepages/" ^ f)
   | fs -> failf "%d memory files" (List.length fs)
 
+let reachers file =
+  In_channel.with_open_bin (file ^ ".reach") In_channel.input_all
+
 let reserved f =
   granted (Machine.reserve (Function.machine f) ~base:free_base (8 * mib))
 
+(* A memory file is locked by its process from the moment it has a name, and
+   lists the function before it holds a page: a process that finds it unlocked
+   may take it for one a dead process left. *)
 let test_memory_file () =
   with_fixture @@ fun root f ->
   reserved f;
@@ -1678,6 +1684,11 @@ let test_memory_file () =
   ignore (frames root va mib);
   let w, _ = given (Function.alloc_dma ~va f mib) in
   equal ~msg:"a file of its own" int 1 (List.length (memory_files root));
+  let file = memory_file root in
+  equal ~msg:"locked by its process" bool true (Tree.flocked file);
+  equal ~msg:"listing the function" string
+    (Function.bus f ^ "\n")
+    (reachers file);
   Function.free_dma f w;
   equal ~msg:"kept while the function is held" int 1
     (List.length (memory_files root));

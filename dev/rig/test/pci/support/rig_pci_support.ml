@@ -285,6 +285,7 @@ end
 
 external device_number : string -> string = "rig_pci_test_device_number"
 external stored : string -> int = "rig_pci_test_stored"
+external flocked : string -> bool = "rig_pci_test_flocked"
 
 module Tree = struct
   type bar = Mem32 of int * int | Mem64 of int * int | Io of int * int
@@ -456,6 +457,7 @@ module Tree = struct
 
   let device_number = device_number
   let stored = stored
+  let flocked = flocked
   let add root file s = write (root / file) s
 
   (* An entry of a page map: bit 63 says the page is present, bits 0-54 hold its

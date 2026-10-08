@@ -303,6 +303,25 @@ value rig_pci_test_stored(value v_path) {
 #endif
 }
 
+/* Whether an open file holds flock's lock on the file at [v_path]: a new
+   open of it cannot take the exclusive lock, which it drops at once if it
+   can. Raises Unix_error if the file cannot be opened. Holds the runtime:
+   the try does not wait. */
+value rig_pci_test_flocked(value v_path) {
+#ifdef _WIN32
+  (void)v_path;
+  caml_failwith("rig_pci_test_flocked: Windows has no flock");
+#else
+  CAMLparam1(v_path);
+  int fd = open(String_val(v_path), O_RDONLY | O_CLOEXEC);
+  if (fd < 0) caml_uerror("open", v_path);
+  int r = flock(fd, LOCK_EX | LOCK_NB), e = errno;
+  close(fd);
+  if (r != 0 && e != EWOULDBLOCK) caml_unix_error(e, "flock", v_path);
+  CAMLreturn(Val_bool(r != 0));
+#endif
+}
+
 /* The GPU lock */
 
 /* One try at the exclusive lock of the file [v_path], which the process

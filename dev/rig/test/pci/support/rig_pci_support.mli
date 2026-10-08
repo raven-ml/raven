@@ -248,6 +248,11 @@ module Tree : sig
   (** [stored file] is the bytes the file system holds for [file], which its
       holes do not count. Raises [Unix.Unix_error] if [file] cannot be read. *)
 
+  val flocked : string -> bool
+  (** [flocked file] is [true] iff an open file holds flock's lock on [file],
+      shared or exclusive, so that a new open of it cannot take the exclusive
+      one. Raises [Unix.Unix_error] if [file] cannot be opened. *)
+
   val add : string -> string -> string -> unit
   (** [add root file s] writes [s] to [file], a path from the tree [root],
       making its directories. *)

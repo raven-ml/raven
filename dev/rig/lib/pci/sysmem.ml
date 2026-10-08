@@ -21,7 +21,10 @@ external allocate : Unix.file_descr -> int -> int -> unit
   = "caml_rig_pci_sysmem_allocate"
 
 external region : int -> int = "caml_rig_pci_sysmem_region"
-external share : Unix.file_descr -> unit = "caml_rig_pci_sysmem_share"
+
+external create : string -> string -> Unix.file_descr
+  = "caml_rig_pci_sysmem_create"
+
 external own_lock : Unix.file_descr -> unit = "caml_rig_pci_flock"
 external zero : int -> int -> unit = "caml_rig_pci_sysmem_zero"
 
@@ -157,8 +160,9 @@ let unmap w = unmap_range (Window.address w) (Window.length w)
    function that no longer reaches memory leaves the list: at its release the
    process's file, from memory; at its GPU's reset every file under the root
    that a process that died left. A file whose list is empty and that holds no
-   block goes. The process holds a shared flock on its file while it lives, so a
-   reset tells a dead process's file by taking the lock. *)
+   block goes. The process holds a shared flock on its file from before the file
+   has a name until it dies, so a reset tells a dead process's file by taking
+   the lock. *)
 
 type file = {
   pid : int; (* the process that made it *)
@@ -270,7 +274,9 @@ let collect f =
   end
 
 (* The process's file under [root], made with its list naming [bus] before it
-   holds a page. *)
+   holds a page. It has a name only once locked, and its list only once named: a
+   process that meets a file unlocked with no list takes it for one that died
+   being made. *)
 let file_of ~root bus =
   match List.find_opt (fun (f : file) -> f.root = root) !files with
   | Some f -> f
@@ -278,29 +284,24 @@ let file_of ~root bus =
       let name =
         strf "%s%d-%.0f" prefix (Unix.getpid ()) (Unix.gettimeofday () *. 1e6)
       in
-      let path = Filename.concat (Filename.concat root hugepages) name in
+      let dir = Filename.concat root hugepages in
+      let path = Filename.concat dir name in
       let fd =
-        try Unix.openfile path [ O_RDWR; O_CREAT; O_EXCL; O_CLOEXEC ] 0o600
+        try create dir path
         with Unix.Unix_error (e, _, _) ->
           Fail.fail "%s"
             (with_remedy
                (strf "creating %s for a GPU's memory: %s" path
                   (Unix.error_message e))
-               (if e = ENOENT then Some hugetlbfs else None))
+               (match e with
+               | ENOENT | EOPNOTSUPP -> Some hugetlbfs
+               | _ -> None))
       in
-      (match
-         share fd;
-         persist path [ bus ]
-       with
-      | () -> ()
-      | exception Unix.Unix_error (e, _, _) ->
-          Unix.close fd;
-          unlink path;
-          Fail.fail "locking %s: %s" path (Unix.error_message e)
-      | exception e ->
-          Unix.close fd;
-          unlink path;
-          raise e);
+      (try persist path [ bus ]
+       with e ->
+         delete path;
+         Unix.close fd;
+         raise e);
       let f =
         {
           pid = Unix.getpid ();

@@ -40,6 +40,7 @@ value caml_rig_pci_page_size(value unit) {
 #include <fcntl.h>
 #include <sys/file.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include <sys/mman.h>
 
@@ -81,12 +82,30 @@ value caml_rig_pci_flock(value fd) {
   return Val_unit;
 }
 
-/* Takes flock's shared lock on [fd] without waiting, holding the runtime;
-   raises Unix_error EWOULDBLOCK if an open file holds the exclusive lock.
-   The process holds it on its memory's file while it lives. */
-value caml_rig_pci_sysmem_share(value fd) {
-  if (flock(Int_val(fd), LOCK_SH | LOCK_NB) != 0) caml_uerror("flock", Nothing);
-  return Val_unit;
+/* Makes the file [path] in the directory [dir], and is its descriptor,
+   which holds flock's shared lock from before the file has a name: the file
+   is made nameless (O_TMPFILE), locked, then linked at [path] through the
+   process's link to it (open(2)), so that no process meets it unlocked. The
+   process holds the lock on its memory's file while it lives. Raises
+   Unix_error on a failing call, the file then gone. Holds the runtime:
+   nothing waits. */
+value caml_rig_pci_sysmem_create(value dir, value path) {
+  int fd = open(String_val(dir), O_TMPFILE | O_RDWR | O_CLOEXEC, 0600);
+  if (fd < 0) caml_uerror("open", dir);
+  if (flock(fd, LOCK_SH | LOCK_NB) != 0) {
+    int e = errno;
+    close(fd);
+    caml_unix_error(e, "flock", path);
+  }
+  char self[32];
+  snprintf(self, sizeof self, "/proc/self/fd/%d", fd);
+  if (linkat(AT_FDCWD, self, AT_FDCWD, String_val(path),
+             AT_SYMLINK_FOLLOW) != 0) {
+    int e = errno;
+    close(fd);
+    caml_unix_error(e, "linkat", path);
+  }
+  return Val_int(fd);
 }
 
 /* Maps [n] bytes of [fd] from [off], on a page, shared, not inherited by
@@ -236,7 +255,7 @@ value caml_rig_pci_sysmem_release(value va, value n) {
   }
 
 FAILS1(caml_rig_pci_flock, "flock")
-FAILS1(caml_rig_pci_sysmem_share, "flock")
+FAILS2(caml_rig_pci_sysmem_create, "open")
 FAILS2(caml_rig_pci_unmap, "munmap")
 FAILS2(caml_rig_pci_reserve, "mmap")
 FAILS2(caml_rig_pci_sysmem_unmap, "munmap")
