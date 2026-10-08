@@ -20,27 +20,49 @@ let window n =
 
 (* Fake GPUs *)
 
+type event = Alloc of int | Free | Master of bool
+
 type gpu = {
   machine : Rig_pci.Machine.t;
   far : int;
   regs : Rig_pci.Window.t;
   released : int ref;
+  events : event list ref;
 }
 
 let regs_size = 16 lsl 20
 
+(* The command register of the configuration space and its bus master bit. *)
+let command = 0x04
+let bus_master = 0x4
+
 let gpu ?(vendor = fun () -> 0x10de) () =
   let far = Rig_pci_support.far 0 regs_size in
   let tr = Rig_pci.Window.unsafe_transport far in
-  let released = ref 0 in
+  let released = ref 0 and events = ref [] and cmd = ref 0 in
+  let log e = events := e :: !events in
+  let next = ref 0x1_0000_0000 in
+  let alloc_dma ~contiguous:_ ~va n =
+    let bus = match va with Some va -> va | None -> !next in
+    next := !next + n;
+    log (Alloc n);
+    Ok (window n, [ (bus, n) ])
+  in
   let fn =
     {
       Rig_pci.Machine.addressing = Physical;
       config8 = (fun _ -> 0);
-      config16 = (fun r -> if r = 0 then vendor () else 0);
+      config16 =
+        (fun r -> if r = 0 then vendor () else if r = command then !cmd else 0);
       config32 = (fun _ -> 0);
       set_config8 = (fun _ _ -> ());
-      set_config16 = (fun _ _ -> ());
+      set_config16 =
+        (fun r x ->
+          if r = command then begin
+            if x land bus_master <> !cmd land bus_master then
+              log (Master (x land bus_master <> 0));
+            cmd := x
+          end);
       set_config32 = (fun _ _ -> ());
       bar = (fun i -> if i = 0 then Some (0, regs_size) else None);
       map =
@@ -50,11 +72,15 @@ let gpu ?(vendor = fun () -> 0x10de) () =
       unmap = ignore;
       interrupt = (fun _ -> false);
       reset = (fun () -> Ok ());
-      alloc_dma = (fun ~contiguous:_ ~va:_ _ -> Error "no memory");
-      free_dma = ignore;
+      alloc_dma;
+      free_dma = (fun _ -> log Free);
       pin = (fun _ _ -> Error "no memory");
       unpin = (fun _ _ -> ());
-      release = (fun () -> incr released);
+      release =
+        (fun () ->
+          if !cmd land bus_master <> 0 then log (Master false);
+          cmd := !cmd land lnot bus_master;
+          incr released);
     }
   in
   let id =
@@ -75,4 +101,10 @@ let gpu ?(vendor = fun () -> 0x10de) () =
     }
   in
   let machine = Rig_pci.Machine.make ~name:"far:1" ops in
-  { machine; far; regs = Rig_pci.Window.through tr 0 regs_size; released }
+  {
+    machine;
+    far;
+    regs = Rig_pci.Window.through tr 0 regs_size;
+    released;
+    events;
+  }

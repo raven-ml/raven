@@ -198,7 +198,9 @@ let give_up hold fn ~unload =
 let stop g gsp hold () =
   Mutex.protect opened_lock (fun () ->
       opened := List.filter (fun o -> o != g) !opened);
-  give_up hold g.fn ~unload:(fun () -> ignore (Gsp.unload gsp))
+  let s = give_up hold g.fn ~unload:(fun () -> ignore (Gsp.unload gsp)) in
+  Gsp.free gsp;
+  s
 
 (* Opening *)
 
@@ -255,10 +257,9 @@ let device g ~gsp ~hold ~tables (c : Chip.t) =
       stop = stop g gsp hold;
     }
 
-(* [start] writes to the GPU: from its first write, the GPU is in a state only a
-   reset clears, so a failure loses it. A failure after the GSP started unloads
-   it first. *)
-let start ~index machine hold fn (c : Chip.t) (fw : Images.t) =
+(* [start] boots the GPU's GSP, writing to the GPU: from its first write, the
+   GPU is in a state only a reset clears. *)
+let start fn (c : Chip.t) (fw : Images.t) =
   Chip.bus_master c true;
   let* () = Falcon.run c (Falcon.wait_reset c.family) in
   let* memory = Chip.memory c in
@@ -277,30 +278,11 @@ let start ~index machine hold fn (c : Chip.t) (fw : Images.t) =
      the main pool. *)
   Page_table.booted tables;
   let* gsp = Gsp.boot { chip = c; memory; fn; tables; bar; space } fw in
-  let g =
-    {
-      index;
-      machine;
-      fn;
-      memory = Memory.create fn tables ~bar:memory_bar;
-      handles = Hashtbl.create 64;
-      next = 1;
-      lock = Mutex.create ();
-    }
-  in
-  let opened_device =
-    match device g ~gsp ~hold ~tables c with
-    | r -> r
-    | exception Rig_nv.Fault why -> Error why
-  in
-  match opened_device with
-  | Ok d ->
-      Mutex.protect opened_lock (fun () -> opened := g :: !opened);
-      Ok (d, gsp)
-  | Error why ->
-      ignore (Gsp.unload gsp);
-      Error why
+  Ok (gsp, tables)
 
+(* A failure from the first write on loses the GPU; one after the GSP started
+   unloads it first, and gives its memory back once the GPU masters the bus no
+   more. *)
 let boot ~firmware ~index machine hold fn =
   let* c = Chip.of_function fn in
   let* () = started c fn ~index in
@@ -308,14 +290,30 @@ let boot ~firmware ~index machine hold fn =
   let* () =
     Machine.reserve machine ~base:(Space.base space) (Space.length space)
   in
-  let lose why =
-    Gpus.lose hold;
-    Error why
-  in
-  match start ~index machine hold fn c fw with
-  | Ok _ as r -> r
-  | Error why -> lose why
-  | exception Rig_nv.Fault why -> lose why
+  match start fn c fw with
+  | Error why | (exception Rig_nv.Fault why) ->
+      Gpus.lose hold;
+      Error why
+  | Ok (gsp, tables) -> (
+      let g =
+        {
+          index;
+          machine;
+          fn;
+          memory = Memory.create fn tables ~bar:memory_bar;
+          handles = Hashtbl.create 64;
+          next = 1;
+          lock = Mutex.create ();
+        }
+      in
+      match device g ~gsp ~hold ~tables c with
+      | Ok d ->
+          Mutex.protect opened_lock (fun () -> opened := g :: !opened);
+          Ok (d, gsp)
+      | Error why | (exception Rig_nv.Fault why) ->
+          ignore (give_up hold fn ~unload:(fun () -> ignore (Gsp.unload gsp)));
+          Gsp.free gsp;
+          Error why)
 
 let open_ ?(machine = Machine.this) ~firmware i =
   if i < 0 then invalid_argf "Rig_nv_pci.open_: index %d < 0" i;

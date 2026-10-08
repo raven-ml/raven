@@ -251,12 +251,14 @@ type t = {
   mutable runlists : (int * int) list; (* each engine's runlist *)
   channels : (int, int) Hashtbl.t; (* each channel's runlist *)
   mutable buffers : (int * buffer) list; (* the graphics context's *)
+  taken : sys list ref; (* the system memory the boot took *)
 }
 
-(* System memory for the GSP: [w] and the bus address of each 4 KiB page. *)
-type sys = { w : Window.t; pages : int list }
+(* System memory for the GSP: [w], its address in the space and the bus address
+   of each 4 KiB page. *)
+and sys = { w : Window.t; va : int; pages : int list }
 
-let sys p ?(contiguous = false) n =
+let sys p ~taken ?(contiguous = false) n =
   let n = round_up n page in
   let align =
     if contiguous && n > Machine.page (Function.machine p.fn) then 2 * mib
@@ -271,7 +273,17 @@ let sys p ?(contiguous = false) n =
           (fun (a, len) -> List.init (len / page) (fun i -> a + (i * page)))
           runs
       in
-      Ok { w; pages }
+      let s = { w; va; pages } in
+      taken := s :: !taken;
+      Ok s
+
+let give_back p taken =
+  List.iter
+    (fun s ->
+      Function.free_dma p.fn s.w;
+      Space.free p.space s.va)
+    !taken;
+  taken := []
 
 let first s = List.hd s.pages
 
@@ -349,12 +361,12 @@ let system_info p =
 
 (* The radix-3 table: each level's pages hold the addresses of the next's, the
    image's pages last. *)
-let radix3 p (image : Images.range) =
+let radix3 sys (image : Images.range) =
   let n = Layout.radix3 image.length in
   let starts =
     Array.init 4 (fun i -> Array.fold_left ( + ) 0 (Array.sub n 0 i) * page)
   in
-  let* s = sys p (starts.(3) + image.length) in
+  let* s = sys (starts.(3) + image.length) in
   blit image s.w starts.(3);
   let pages = Array.of_list s.pages in
   for i = 0 to 2 do
@@ -927,13 +939,14 @@ let golden g =
 
 (* The boot *)
 
-let boot p (fw : Images.t) =
+let start p (fw : Images.t) ~taken =
   let c = p.chip in
+  let sys = sys p ~taken in
   (* The queues and the table of their pages. *)
   let queue_pages = 2 * queue_size / page in
   let ptes = queue_pages + (round_up (queue_pages * 8) page / page) in
   let pt_size = round_up (ptes * 8) page in
-  let* queues = sys p (pt_size + (2 * queue_size)) in
+  let* queues = sys (pt_size + (2 * queue_size)) in
   Window.write queues.w 0 (u64s queues.pages);
   let doorbell = Window.sub c.regs (Defs.nv_pgsp_queue_head 0) 4 in
   let q =
@@ -951,9 +964,9 @@ let boot p (fw : Images.t) =
         set b (qa Q.stat_queue_offset) (pt_size + queue_size);
         set b A.b_dmem_stack 1)
   in
-  let* rm_args = sys p page in
+  let* rm_args = sys page in
   Window.write rm_args.w 0 args;
-  let* logs_mem = sys p ~contiguous:true (List.length logs * log_size) in
+  let* logs_mem = sys ~contiguous:true (List.length logs * log_size) in
   let regions =
     List.mapi
       (fun i n ->
@@ -963,15 +976,15 @@ let boot p (fw : Images.t) =
       logs
     @ [ libos_region "RMARGS" ~pa:(first rm_args) ~size:page ]
   in
-  let* libos = sys p page in
+  let* libos = sys page in
   Window.write libos.w 0 (String.concat "" regions);
   (* The images. *)
-  let* radix = radix3 p fw.gsp in
-  let* signature = sys p ~contiguous:true fw.signature.length in
+  let* radix = radix3 (fun n -> sys n) fw.gsp in
+  let* signature = sys ~contiguous:true fw.signature.length in
   blit fw.signature signature.w 0;
-  let* bootloader = sys p ~contiguous:true fw.bootloader.image.length in
+  let* bootloader = sys ~contiguous:true fw.bootloader.image.length in
   blit fw.bootloader.image bootloader.w 0;
-  let* meta = sys p page in
+  let* meta = sys page in
   Window.write meta.w 0
     (wpr_meta fw c.family ~memory:p.memory ~radix3:(first radix)
        ~bootloader:(first bootloader) ~signature:(first signature));
@@ -987,6 +1000,7 @@ let boot p (fw : Images.t) =
       runlists = [];
       channels = Hashtbl.create 8;
       buffers = [];
+      taken;
     }
   in
   (* What the GSP reads first, before it runs. *)
@@ -1031,10 +1045,10 @@ let boot p (fw : Images.t) =
           (Falcon.legacy ~fwsec ~booter ~libos:(first libos)
              ~wpr_meta:(first meta))
     | `Fmc m, Blackwell ->
-        let* args = sys p page in
+        let* args = sys page in
         Window.write args.w 0
           (Falcon.cot_args ~libos:(first libos) ~wpr_meta:(first meta));
-        let* fmc = sys p ~contiguous:true m.fmc.length in
+        let* fmc = sys ~contiguous:true m.fmc.length in
         blit m.fmc fmc.w 0;
         Ok
           (Falcon.cot
@@ -1056,3 +1070,23 @@ let boot p (fw : Images.t) =
       0;
   let* () = golden g in
   Ok g
+
+(* A failed boot gives back the system memory it took once the GPU masters the
+   bus no more: the GSP or a falcon may still be reading it. *)
+let boot p fw =
+  let taken = ref [] in
+  let failed () =
+    Chip.bus_master p.chip false;
+    give_back p taken
+  in
+  match start p fw ~taken with
+  | Ok _ as r -> r
+  | Error _ as e ->
+      failed ();
+      e
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      failed ();
+      Printexc.raise_with_backtrace e bt
+
+let free g = give_back g.p g.taken

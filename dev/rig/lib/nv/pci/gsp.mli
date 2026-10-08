@@ -93,9 +93,10 @@ val boot : placement -> Images.t -> (t, string) result
     metadata, the system's description and the registry into memory the GPU
     reads, starts the GSP ({!Falcon.legacy} or {!Falcon.cot}), waits for its
     [GSP_INIT_DONE], and sets up its golden context: a channel of the GSP's own
-    client whose context buffers later channels' contexts copy. The memory it
-    takes stays the GSP's for the process. [Error] names the step that failed.
-*)
+    client whose context buffers later channels' contexts copy. Its system
+    memory stays the GSP's until {!free}; its GPU memory, as long as the page
+    tables. [Error] names the step that failed, the GPU's bus mastering turned
+    off and the system memory given back; so if it raises. *)
 
 (** {1:rm The resource manager} *)
 
@@ -133,3 +134,8 @@ val check : t -> string option
 val unload : t -> (unit, string) result
 (** [unload g] tells the GSP the driver unloads, and waits for its answer, at
     most 10 seconds. *)
+
+val free : t -> unit
+(** [free g] gives back the system memory of [g]'s boot. Call it once the GPU
+    masters the bus no more, its function released ({!Rig_pci.Gpus.lose}): the
+    GSP may read it until then. *)

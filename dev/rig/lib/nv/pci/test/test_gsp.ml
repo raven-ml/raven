@@ -259,6 +259,79 @@ let test_boot_pool_fmc () =
              public_key = r;
            })))
 
+(* A failed boot *)
+
+module Support = Rig_nv_pci_support
+
+let range n =
+  { Rig_nv_pci.Images.contents = String.make n 'x'; at = 0; length = n }
+
+(* Firmware whose VBIOS holds no FWSEC: its boot fails once the GSP's memory is
+   written and its first messages sent, before any falcon runs. *)
+let firmware () =
+  let start = booter 0x1000 in
+  ( start,
+    {
+      Rig_nv_pci.Images.gsp = range 0x8000;
+      signature = range 0x1000;
+      bootloader = { image = range 0x1000; code = 0; data = 0; manifest = 0 };
+      start;
+    } )
+
+let test_failed_boot () =
+  let gpu = Support.gpu () in
+  (* NV_PMC_BOOT_42 of an AD102. *)
+  Rig_pci.Window.set32 gpu.regs 0xa00 ((0x19 lsl 24) lor (2 lsl 20));
+  let fn = require_ok (Rig_pci.Function.take gpu.machine "0000:01:00.0") in
+  let chip = require_ok (Rig_nv_pci.Chip.of_function fn) in
+  let base = 64 lsl 30 in
+  let space = Rig_pci.Space.create ~base (1 lsl 36) in
+  require_ok (Rig_pci.Machine.reserve gpu.machine ~base (1 lsl 36));
+  let start, fw = firmware () in
+  let boot = Gsp.boot_pool start in
+  let tables =
+    Page_table.create
+      (Tables.format (Tables.memory ()))
+      space
+      ~memory:(boot + (64 * Rig_pci_support.mib))
+      ~boot ~tables:Main
+      ~pages:[ (page, page) ]
+  in
+  Page_table.booted tables;
+  Rig_nv_pci.Chip.bus_master chip true;
+  let placement =
+    {
+      Gsp.chip;
+      memory = 1 lsl 33;
+      fn;
+      tables;
+      bar = Support.window (16 * Rig_pci_support.mib);
+      space;
+    }
+  in
+  ignore
+    (require_error
+       ~pp:(fun ppf _ -> Format.pp_print_string ppf "a GSP")
+       (Gsp.boot placement fw));
+  let events = List.rev !(gpu.events) in
+  let allocs =
+    List.length
+      (List.filter (function Support.Alloc _ -> true | _ -> false) events)
+  in
+  let frees = List.filter (( = ) Support.Free) events in
+  not_equal ~msg:"allocations" int 0 allocs;
+  equal int ~msg:"frees" allocs (List.length frees);
+  (* Every free comes after the bus mastering went off for the last time. *)
+  let rec after_off off = function
+    | [] -> ()
+    | Support.Master on :: rest -> after_off (not on) rest
+    | Free :: rest ->
+        equal bool ~msg:"bus mastering off before a free" true off;
+        after_off off rest
+    | Alloc _ :: rest -> after_off off rest
+  in
+  after_off true events
+
 let () =
   exit
   @@ run "rig_nv_pci.gsp"
@@ -279,6 +352,10 @@ let () =
              test_sequence_modify;
              test "the GSP's falcon" test_sequence_cores;
              test_sequence_refused;
+           ];
+         group ~timeout:10. "failures"
+           [
+             test "a failed boot gives its system memory back" test_failed_boot;
            ];
          group ~timeout:10. "boot pool"
            [
