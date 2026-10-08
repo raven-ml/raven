@@ -714,8 +714,8 @@ module Boot = Rig_amd_pci.Boot
 
 let sessions =
   let plan ?(mark = Boot.session) ?(dirty = 0) ?(fault = 0) ?(gc = (12, 0, 1))
-      alive =
-    Boot.plan ~mark ~dirty ~fault ~gc ~alive
+      os =
+    Boot.plan ~mark ~dirty ~fault ~gc ~os
   in
   let how = function
     | `Partial -> "partial"

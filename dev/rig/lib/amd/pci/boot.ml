@@ -19,10 +19,10 @@ let ( let* ) = Result.bind
    carries another mark, and is not booted partially. *)
 let session = 0x5241_0002
 
-let plan ~mark ~dirty ~fault ~gc ~alive =
+let plan ~mark ~dirty ~fault ~gc ~os =
   let marked = mark = session in
   if marked && (gc = (9, 5, 0) || (dirty = 0 && fault = 0)) then `Partial
-  else if alive then `Booted
+  else if os then `Booted
   else `Full
 
 (* The GPU *)
@@ -425,14 +425,16 @@ let start f find =
     refused
     @@ stuck (fun () ->
         let gmc = Gmc.make r vram in
-        let alive =
-          (not vf) && Psp.running r && Smu.alive (Smu.make r gmc ~table:0)
-        in
+        (* A running OS alone asks for a reset, whatever the power manager
+           answers, as the kernel's soc24_need_reset_on_init decides: a full
+           boot over it would reload the firmware over a GC whose queues may
+           still run. *)
+        let os = (not vf) && Psp.running r in
         let read name = Regs.read r name in
         ( gmc,
           plan ~mark:(read "regSCRATCH_REG7") ~dirty:(read "regSCRATCH_REG6")
             ~fault:(read (fault_status l))
-            ~gc ~alive ))
+            ~gc ~os ))
   in
   let* () =
     match p with

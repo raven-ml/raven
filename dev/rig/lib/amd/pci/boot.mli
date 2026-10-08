@@ -34,12 +34,12 @@ val plan :
   dirty:int ->
   fault:int ->
   gc:Discovery.version ->
-  alive:bool ->
+  os:bool ->
   [ `Partial | `Full | `Booted ]
-(** [plan ~mark ~dirty ~fault ~gc ~alive] is how a GPU boots that carries [mark]
-    in its seventh scratch register and [dirty] in its sixth, with [fault] in
-    GC's protection fault status, and whose security processor and power manager
-    run iff [alive]:
+(** [plan ~mark ~dirty ~fault ~gc ~os] is how a GPU boots that carries [mark] in
+    its seventh scratch register and [dirty] in its sixth, with [fault] in GC's
+    protection fault status, and whose security processor's OS runs iff [os],
+    whatever its power manager answers:
     - [`Partial] if it carries {!session}, [dirty] and [fault] are [0], or its
       GC is 9.5.0, whose full boot over live state can stall its fabric;
     - [`Full] otherwise if no firmware runs;

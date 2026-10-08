@@ -244,7 +244,9 @@ let reset_mec g =
 let eop_bytes = 0x1000
 
 (* Programs queue [q] of MEC [me], pipe [pipe], queue [queue] on each of
-   [insts], from the descriptor at [mqd] (one page per die): writes the
+   [insts], from the descriptor at [mqd] (one page per die): dequeues the
+   hardware queue if it is active, as the kernel's kiq_init_register does, so
+   that no running queue has its registers rewritten under it, writes the
    descriptor, copies its registers into the hardware queue and activates it. *)
 let program g ~me ~pipe ~queue ~insts ~mqd:at ~kiq ~aql q =
   let l = Regs.layout_of g.r in
@@ -252,6 +254,15 @@ let program g ~me ~pipe ~queue ~insts ~mqd:at ~kiq ~aql q =
   List.iter
     (fun xcc ->
       grbm_select g ~me ~pipe ~queue ~inst:xcc;
+      let active () =
+        Regs.read ~inst:xcc g.r "regCP_HQD_ACTIVE" land 1 = 1
+      in
+      if active () then begin
+        Regs.write ~inst:xcc ~value:1 g.r "regCP_HQD_DEQUEUE_REQUEST" [];
+        Regs.wait g.r "an active queue's dequeue before its descriptor"
+          (fun () -> not (active ()));
+        Regs.write ~inst:xcc ~value:0 g.r "regCP_HQD_DEQUEUE_REQUEST" []
+      end;
       let pa = at + (die_stride * xcc) in
       let d = mqd l q ~base:(Gmc.mc g.gmc pa) ~kiq ~aql ~xcc ~xccs in
       Window.write g.vram pa d;
