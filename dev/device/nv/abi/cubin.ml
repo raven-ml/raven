@@ -165,22 +165,42 @@ let after ~prefix name =
     String.length prefix
   else -1
 
-(* An .nv.info section whose last attribute runs past its end, which [of_string]
-   returns as its error. *)
-exception Truncated of string
+(* An .nv.info section with an attribute that runs past its end, or with one the
+   reader reads whose data is too short, which [of_string] returns as its
+   error. *)
+exception Malformed of string
 
-let truncated (s : Device_elf.section) at =
-  raise_notrace
-    (Truncated
-       (strf "the attribute at %d of section %S is truncated" (at - s.at) s.name))
+(* The attributes the reader reads hold a symbol's index and a 32-bit value
+   (EIATTR_PARAM_CBANK: two 16-bit values). *)
+let read_bytes = 8
+
+let reads param =
+  param = eiattr_regcount
+  || param = eiattr_min_stack_size
+  || param = eiattr_param_cbank
+
+(* Raises [Malformed] for the attribute at [at] of [s], where the walk
+   stopped. *)
+let malformed file (s : Device_elf.section) at =
+  let stop = s.at + s.length in
+  let size = if at + 4 <= stop then String.get_uint16_le file (at + 2) else 0 in
+  let msg =
+    if at + 4 <= stop && at + 4 + size <= stop then
+      strf
+        "the attribute at %d of section %S holds %d bytes, expected at least %d"
+        (at - s.at) s.name size read_bytes
+    else
+      strf "the attribute at %d of section %S is truncated" (at - s.at) s.name
+  in
+  raise_notrace (Malformed msg)
 
 (* Calls [f param at] for each attribute of the .nv.info section [s] whose data
-   follows its header and holds at least a symbol index and a 32-bit value, [at]
-   being where the data starts in the object. Raises [Truncated] if an attribute
-   runs past the section's end. *)
+   follows its header and holds at least [read_bytes], [at] being where the data
+   starts in the object. Raises [Malformed] if an attribute runs past the
+   section's end, or one the reader reads holds less. *)
 let iter_attributes (o : Device_elf.t) (s : Device_elf.section) f =
   let file = o.file and stop = s.at + s.length in
-  (* [go at] is where an attribute from [at] on runs past [stop], or [-1]. *)
+  (* [go at] is where an attribute from [at] on is malformed, or [-1]. *)
   let rec go at =
     if at >= stop then -1
     else if at + 4 > stop then at
@@ -190,12 +210,14 @@ let iter_attributes (o : Device_elf.t) (s : Device_elf.section) f =
       and size = String.get_uint16_le file (at + 2) in
       if fmt <> eifmt_sval then go (at + 4)
       else if at + 4 + size > stop then at
-      else (
-        if size >= 8 then f param (at + 4);
+      else if size >= read_bytes then (
+        f param (at + 4);
         go (at + 4 + size))
+      else if reads param then at
+      else go (at + 4 + size)
   in
   let past = go s.at in
-  if past >= 0 then truncated s past
+  if past >= 0 then malformed file s past
 
 (* A 32-bit little-endian unsigned integer, read as two halves, which no int32
    is boxed for. *)
@@ -377,7 +399,7 @@ let of_string obj =
   match read_kernels o names hashes with
   | records ->
       Ok { elf = o; size; relocations; kernels; names; hashes; records }
-  | exception Truncated msg -> Error msg
+  | exception Malformed msg -> Error msg
 
 let size c = c.size
 let elf c = c.elf

@@ -53,7 +53,10 @@ val of_string : string -> (t, string) result
     - a relocation is of a type other than these three: a symbol's 64-bit
       address ([R_CUDA_64], [0x2]), its low 32 bits ([R_CUDA_ABS32_LO_32],
       [0x38]) and its high 32 bits ([R_CUDA_ABS32_HI_32], [0x39]);
-    - an attribute of a [.nv.info] section it reads runs past the section's end;
+    - an attribute of a [.nv.info] section it reads runs past the section's end,
+      or one of the attributes it reads ([EIATTR_REGCOUNT],
+      [EIATTR_MIN_STACK_SIZE], [EIATTR_PARAM_CBANK]) holds less than its 8
+      bytes, a symbol's index and a value;
     - a relocation's symbol is not in the image, or the bytes it patches
       ({!patches}) lie past the end of the image of {!elf}, or, for one without
       an addend in its entry, past the end of their section. *)

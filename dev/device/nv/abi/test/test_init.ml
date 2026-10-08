@@ -7,7 +7,7 @@
    linked around it (support/dune): it computes no value, and allocates only
    what its declarations make when a module starts: Gpu.key, the exception
    Packet.template stops at a hole with, and the one Cubin.of_string stops at a
-   truncated attribute with. *)
+   malformed attribute with. *)
 
 open Windtrap
 module B = Device_nv_abi_before

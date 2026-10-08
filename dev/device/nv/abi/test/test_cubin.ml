@@ -1019,25 +1019,39 @@ let kernels =
           equal ~msg:"a code section outside the image" (option kernel) None
             (Cubin.kernel c "dead"));
       cases
-        ~name:(fun (n, _, _) -> n)
-        "a truncated .nv.info attribute is refused"
+        ~name:(fun (n, _, _, _) -> n)
+        "a truncated .nv.info attribute, or one the reader reads cut short, is \
+         refused"
         [
-          ("a header cut short", ".nv.info", fillers ^ "\x04\x2f");
+          ("a header cut short", ".nv.info", fillers ^ "\x04\x2f", "truncated");
           ( "data cut short",
             ".nv.info",
-            fillers ^ String.sub (of_symbol eiattr_regcount 1 99) 0 10 );
+            fillers ^ String.sub (of_symbol eiattr_regcount 1 99) 0 10,
+            "truncated" );
           ( "a kernel's own, data cut short",
             ".nv.info.k",
-            fillers ^ String.sub (param_cbank 1 0x160 0x1c) 0 9 );
+            fillers ^ String.sub (param_cbank 1 0x160 0x1c) 0 9,
+            "truncated" );
+          ( "registers without their value",
+            ".nv.info",
+            fillers ^ attribute 4 eiattr_regcount (u32s [ 1 ]),
+            "expected at least 8" );
+          ( "a stack size without its value",
+            ".nv.info",
+            fillers ^ attribute 4 eiattr_min_stack_size (u32s [ 1 ]),
+            "expected at least 8" );
+          ( "a kernel's parameters without their offset",
+            ".nv.info.k",
+            fillers ^ attribute 4 eiattr_param_cbank (u32s [ 1 ]),
+            "expected at least 8" );
         ]
-        (fun (_, name, contents) ->
+        (fun (_, name, contents, sub) ->
           let obj =
             write
               ([ code "k" 16; nv_info ~name ~info:1 contents ]
               @ symbols ~index:3 [ ("k", 1, 0) ])
           in
-          contains ~sub:"truncated"
-            (require_error ~pp:pp_cubin (Cubin.of_string obj)));
+          contains ~sub (require_error ~pp:pp_cubin (Cubin.of_string obj)));
       test "a cubin without code has no kernel" (fun () ->
           let c = read (write [ nv_info "" ]) in
           equal
