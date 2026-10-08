@@ -666,7 +666,7 @@ let served_twice () =
   equal exit_w (0, [ "closed"; "serve raised" ]) (finish (List.hd agents))
 
 (* A kind named twice raises before serve waits for a controller; a serve that
-   waited instead fails the test after 2 s. *)
+   waited instead fails the test after 5 s. *)
 let kind_twice () =
   match Rig_remote.listen ~key "127.0.0.1" 0 with
   | Error why -> fail why
