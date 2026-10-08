@@ -18,8 +18,8 @@ let bytes (r : Images.range) = String.sub r.contents r.at r.length
 
 (* As firmware.py lays the booter out: its data, 0x1000 bytes of code then 0x800
    of data, each byte its offset modulo 256; the first application from 0x100;
-   the second of two 384-byte signatures, of 0xa2 bytes, written at 0x1010,
-   0x10 into the data; engines 0x5 and ucode ID 9. *)
+   the second of two 384-byte signatures, of 0xa2 bytes, written at 0x1010, 0x10
+   into the data; engines 0x5 and ucode ID 9. *)
 let test_booter () =
   let b = require_ok (Images.booter (file "booter.bin")) in
   equal int 0x1800 (String.length b.image);
@@ -123,10 +123,6 @@ let test_digests () =
         d)
     Images.pinned
 
-let test_origin () =
-  starts_with ~affix:"https://" Images.origin;
-  ends_with ~affix:"/" Images.origin
-
 let () =
   exit
   @@ run "rig_nv_pci.images"
@@ -149,9 +145,5 @@ let () =
              test "a missing image is refused, naming it" test_read_missing;
            ];
          group ~timeout:10. "pins"
-           [
-             test_names;
-             test "every pin is a BLAKE2b-256 digest" test_digests;
-             test "an image's URL is the origin and its path" test_origin;
-           ];
+           [ test_names; test "every pin is a BLAKE2b-256 digest" test_digests ];
        ]

@@ -36,8 +36,6 @@ let device_name i =
   if i < 0 then invalid_argf "Rig_nv_pci.device_name: index %d < 0" i;
   if i = 0 then "NV-PCI" else strf "NV-PCI:%d" i
 
-let pinned = Images.pinned
-let origin = Images.origin
 let named i r = Result.map_error (fun why -> device_name i ^ ": " ^ why) r
 
 (* Memory *)

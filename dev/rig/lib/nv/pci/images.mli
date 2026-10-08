@@ -72,10 +72,6 @@ val pinned : (string * string) list
 (** [pinned] is every file of every family, by path, with its BLAKE2b-256
     digest. *)
 
-val origin : string
-(** [origin] is the URL prefix of the linux-firmware tree every image of
-    {!pinned} comes from: an image's URL is [origin] followed by its path. *)
-
 val read : Chip.family -> string list -> (t, string) result
 (** [read f dirs] is the firmware of family [f], each file found in [dirs] with
     its pinned digest ({!Rig_pci.Firmware.find}). It is [Error] naming the file

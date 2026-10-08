@@ -12,3 +12,9 @@ NVIDIA GPUs through their kernel driver (`rig.nv.nvidia`) or over PCI
 PCI function, and `rig.edge` is the C interface by which work reaches a
 driver. Each `.mli` documents its library; `doc/` holds the GPU hardware
 notes and the testing guide.
+
+The PCI drivers boot GPUs with firmware they read from directories the caller
+names, and download nothing. For NVIDIA GPUs,
+`uv run dev/rig/lib/nv/pci/gen/fetch.py DIR` fills `DIR` with the images
+`rig.nv.pci` boots with, each checked against its pinned digest; open a GPU
+with `Rig_nv_pci.open_ ~firmware:[ DIR ]`.

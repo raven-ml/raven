@@ -33,7 +33,6 @@ let names : Chip.family -> string list = function
   | Blackwell -> Defs.firmware_blackwell
 
 let pinned = Defs.pinned
-let origin = Defs.origin
 
 (* Reading containers *)
 

@@ -1075,10 +1075,6 @@ module Blackwell = struct
   let nv_pfsp_msgq_tail_val = (0, 0x20)
 end
 
-(* The linux-firmware tree the firmware comes from: an image's URL is this
-   followed by its path. *)
-let origin = "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/0a6871b19abf5d6e024b5d208b101ae53e7fa0de/"
-
 (* The firmware images of each family, GSP first, and every image's
    BLAKE2b-256 digest. *)
 let firmware_ampere = [ "nvidia/ga102/gsp/gsp-570.144.bin"; "nvidia/ga102/gsp/bootloader-570.144.bin"; "nvidia/ga102/gsp/booter_load-570.144.bin" ]

@@ -27,11 +27,15 @@
     it.
 
     {b Firmware.} A boot loads the GSP's firmware, its bootloader and the image
-    that starts it (the booter on Ampere and Ada, the FMC on Blackwell): the
-    files of linux-firmware's [nvidia/] directory that {!pinned} lists, each
-    pinned by its BLAKE2b-256 digest. They are read from directories the caller
-    names; this library downloads nothing. The VBIOS's FWSEC ucode, which Ampere
-    and Ada also run, is read from the GPU itself.
+    that starts it: files of linux-firmware's [nvidia/] directory at commit
+    [0a6871b1], each pinned by its BLAKE2b-256 digest. Every family takes
+    [nvidia/ga102/gsp/gsp-570.144.bin]; Ampere
+    [ga102/gsp/bootloader-570.144.bin] and [ga102/gsp/booter_load-570.144.bin],
+    Ada the same two under [ad102], and Blackwell
+    [gb202/gsp/bootloader-570.144.bin] and [gb202/gsp/fmc-570.144.bin]. They are
+    read from directories the caller names; this library downloads nothing. The
+    VBIOS's FWSEC ucode, which Ampere and Ada also run, is read from the GPU
+    itself.
 
     {b The machine.} {!open_} changes nothing on the machine but the GPU it
     boots. A GPU becomes openable by {!detach}, which unbinds its kernel driver,
@@ -110,18 +114,6 @@ val device_name : int -> string
     otherwise. Every [Error] about GPU [i] starts with it.
 
     Raises [Invalid_argument] if [i < 0]. *)
-
-val pinned : (string * string) list
-(** [pinned] is the firmware images this library boots GPUs with: each file's
-    path under a firmware directory, such as
-    ["nvidia/ad102/gsp/booter_load-570.144.bin"], with its BLAKE2b-256 digest
-    ({!Rig_pci.Firmware.digest}). A tool that fills a firmware directory fetches
-    these. *)
-
-val origin : string
-(** [origin] is the URL prefix of the linux-firmware tree every image of
-    {!pinned} comes from, at the commit pinned: an image's URL is [origin]
-    followed by its path. *)
 
 (** {1:opening Opening} *)
 

@@ -18,7 +18,8 @@ the definitions this script reads, verbatim and in the header's order, with
 the definitions they depend on; a few small headers are kept whole. They
 come from NVIDIA's open-gpu-kernel-modules at release 570.144, the GSP
 firmware's release, and from Linux's nouveau driver. firmware.json holds the
-BLAKE2b-256 digest of each firmware image. --excerpt makes the excerpts and
+linux-firmware tree the firmware images come from and the BLAKE2b-256 digest
+of each, which fetch.py downloads and checks. --excerpt makes the excerpts and
 firmware.json from the upstream files, each pinned in pins.json by URL and
 SHA-256 and checked against its pin; downloads are kept in --cache, and
 --pin records the digests of files not yet pinned. Generating reads the
@@ -1092,11 +1093,7 @@ def generate():
         out.append("end")
         out.append("")
 
-    digests = json.loads(FIRMWARE_DIGESTS.read_text())
-    out.append("(* The linux-firmware tree the firmware comes from: an image's URL is this")
-    out.append("   followed by its path. *)")
-    out.append(f"let origin = {json.dumps(ORIGIN)}")
-    out.append("")
+    digests = json.loads(FIRMWARE_DIGESTS.read_text())["images"]
     out.append("(* The firmware images of each family, GSP first, and every image's")
     out.append("   BLAKE2b-256 digest. *)")
     for f, paths in FIRMWARE.items():
@@ -1157,7 +1154,7 @@ def main():
         files.update({HEADERS / h: get(url).decode("latin-1") for h, url in WHOLE.items()})
         images = sorted({p for ps in FIRMWARE.values() for p in ps})
         digests = {p: hashlib.blake2b(get(ORIGIN + p), digest_size=32).hexdigest() for p in images}
-        files[FIRMWARE_DIGESTS] = json.dumps(digests, indent=1) + "\n"
+        files[FIRMWARE_DIGESTS] = json.dumps({"origin": ORIGIN, "images": digests}, indent=1) + "\n"
         if a.pin:
             files[PINS] = json.dumps(dict(sorted(pins.items())), indent=1) + "\n"
     else:
