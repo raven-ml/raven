@@ -59,9 +59,14 @@
 
     {b Requirements.} Linux. Taking a GPU's function needs either an IOMMU and
     the GPU bound to [vfio-pci] with its group's file granted to the user, or
-    write access to the function's files ({!Rig_pci.Function.take}). Two GPUs
-    map each other's memory only if both are taken physically, on one machine,
-    and each BAR reaches all of its GPU's memory.
+    write access to the function's files ({!Rig_pci.Function.take}). A boot
+    takes about 64 MiB of system memory for the GSP, its image chief among them,
+    which counts against [RLIMIT_MEMLOCK]. Its logs and bootloader, and on
+    Blackwell the FMC, each lie in one run of bus addresses: on a function taken
+    physically each is a huge page of 2 MiB, so the system must have up to three
+    free ([vm.nr_hugepages], {!Rig_pci.Function.alloc_dma}). Two GPUs map each
+    other's memory only if both are taken physically, on one machine, and each
+    BAR reaches all of its GPU's memory.
 
     {b Domains.} Any domain may call any function. Opens and changes of NVIDIA
     GPUs are serialized: a boot of a few seconds delays the others.
