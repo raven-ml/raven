@@ -330,8 +330,17 @@ external next_c : nativeint -> int * area = "caml_rig_remote_link_next"
 external area : int -> area * int = "caml_rig_remote_link_area"
 
 external rail_c :
-  nativeint -> int -> int array -> int array -> area -> area -> area -> unit
-  = "caml_rig_remote_link_rail_bc" "caml_rig_remote_link_rail"
+  nativeint ->
+  int ->
+  int array ->
+  int array ->
+  area ->
+  area ->
+  area ->
+  nativeint = "caml_rig_remote_link_rail_bc" "caml_rig_remote_link_rail"
+
+external ready_c : nativeint -> int -> unit = "caml_rig_remote_link_ready"
+external ready_fn : unit -> nativeint = "caml_rig_remote_link_ready_fn"
 
 external release_rail_c : nativeint -> int -> unit
   = "caml_rig_remote_link_release_rail"
@@ -473,14 +482,20 @@ let rail l ~id ~send ~receive =
   Mutex.protect l.lock @@ fun () ->
   if Hashtbl.mem l.rails id then
     invalid_argf "Rig_remote_proxy.Link.rail: the link has a rail %d" id;
+  let outbound = landing send (fun t -> t.src) in
+  let inbound = landing receive (fun t -> t.dst) in
+  let counts = aligned counts_bytes in
+  let r = rail_c l.c id (flat send) (flat receive) outbound inbound counts in
   let e : Rig_remote_abi.end_ =
     {
-      outbound = landing send (fun t -> t.src);
-      inbound = landing receive (fun t -> t.dst);
-      counts = aligned counts_bytes;
+      outbound;
+      inbound;
+      counts;
+      ready = ready_c r;
+      ready_fn = ready_fn ();
+      ready_arg = r;
     }
   in
-  rail_c l.c id (flat send) (flat receive) e.outbound e.inbound e.counts;
   Hashtbl.replace l.rails id e;
   e
 

@@ -19,8 +19,12 @@ external stream_open : Unix.file_descr -> Unix.file_descr -> int -> nativeint
 external stream_run : nativeint -> int = "rig_remote_bench_stream_run"
 external stream_close : nativeint -> unit = "rig_remote_bench_stream_close"
 
-external rail_run : Rig_remote_abi.area -> Rig_remote_abi.area -> int -> int
+external rail_run_c :
+  nativeint -> nativeint -> Rig_remote_abi.area -> int -> int
   = "rig_remote_bench_rail_run"
+
+let rail_run (s : Rig_remote_abi.end_) (r : Rig_remote_abi.end_) c =
+  rail_run_c s.ready_fn s.ready_arg r.counts c
 
 (* Requests *)
 

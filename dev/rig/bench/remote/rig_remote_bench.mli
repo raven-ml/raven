@@ -43,11 +43,10 @@ external stream_close : nativeint -> unit = "rig_remote_bench_stream_close"
 
 (** {1:rails Rail runs} *)
 
-external rail_run : Rig_remote_abi.area -> Rig_remote_abi.area -> int -> int
-  = "rig_remote_bench_rail_run"
-(** [rail_run sender receiver c] stores [ready := c] in the counts [sender] and
-    waits until [arrived] in the counts [receiver] reaches [c]: [0], or [1] if
-    the job failed meanwhile. *)
+val rail_run : Rig_remote_abi.end_ -> Rig_remote_abi.end_ -> int -> int
+(** [rail_run sender receiver c] advances [sender]'s [ready] to [c] through its
+    C function and waits until [receiver]'s [arrived] reaches [c]: [0], or [1]
+    if the job failed meanwhile. *)
 
 (** {1:requests Requests} *)
 

@@ -159,11 +159,11 @@ val rail :
   Rig_remote_abi.end_
 (** [rail l ~id ~send ~receive] is this machine's end of the rail [id] to [l]'s
     peer, which carries [send] to it and [receive] from it, with the rail's
-    areas, as [Rig_remote_abi] states them, zeroed. From then on the sending
-    thread sends transfer [j]'s bytes once [ready] reaches its count, and stores
-    [sent] once they are sent; the receiving thread places arriving transfers
-    and stores [arrived]. While the link has rails, its sending thread reads
-    their [ready] at least every 50 microseconds.
+    areas, as [Rig_remote_abi] states them, zeroed, and its [ready] function.
+    From then on the sending thread, which the [ready] function wakes, sends
+    transfer [j]'s bytes once [ready] reaches its count, and stores [sent] once
+    they are sent; the receiving thread places arriving transfers and stores
+    [arrived].
 
     Raises [Invalid_argument] if [l] has a rail [id], [send] and [receive] are
     both empty, or a transfer's [length] is not positive or its [src] or [dst]

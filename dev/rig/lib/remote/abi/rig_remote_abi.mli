@@ -31,8 +31,9 @@
     [r = (c - 1) / n] and transfer [j = (c - 1) mod n]; the run uses copy
     [k = r mod 2] of each landing area. For each [c] in order:
     + the sending machine's work places transfer [j]'s bytes at its [src] in
-      copy [k] of the sender's [outbound], then stores [ready := c] with release
-      order;
+      copy [k] of the sender's [outbound], then advances [ready] to [c] through
+      its end's [ready] function, which stores it with release order and wakes
+      the rail;
     + the rail sees [ready >= c], moves the bytes to [dst] in copy [k] of the
       receiver's [inbound], then stores [arrived := c] at the receiver with
       release order, so that work that reads [arrived] with acquire order and
@@ -40,11 +41,14 @@
     + the rail stores [sent := c] at the sender with release order once the
       source bytes may be written again.
 
-    Counts only grow, and nothing else writes [sent] and [arrived]. Work that
-    waits for [arrived >= c] then reads the transfer's bytes; work that writes
-    copy [k] of [outbound] again first waits for [sent] to reach the count of
-    the last transfer that read it. A rail moves no byte outside the landing
-    areas.
+    [ready] advances only through that function: the rail does not watch the
+    count, so a store to it alone moves nothing. Work of a device that cannot
+    call the function, such as a GPU's, is followed by host code that waits for
+    its point and calls it. Counts only grow, and nothing else writes [sent] and
+    [arrived]. Work that waits for [arrived >= c] then reads the transfer's
+    bytes; work that writes copy [k] of [outbound] again first waits for [sent]
+    to reach the count of the last transfer that read it. A rail moves no byte
+    outside the landing areas.
 
     If the job fails, every count of every end on a machine that still answers
     is raised to [Int64.max_int], so that no wait for one blocks; what the
@@ -76,6 +80,16 @@ type end_ = {
       (** [ready], [sent] and [arrived], each a 64-bit unsigned integer in the
           host's byte order, at bytes [0], [128] and [256]: each alone in its
           cache line. They start at [0]. *)
+  ready : int -> unit;
+      (** [ready c] stores [ready := c] with release order and wakes the rail.
+          It may be called from any domain, until the rail is released. *)
+  ready_fn : nativeint;
+      (** The address of the C function
+          {v void ready(void *arg, uint64_t c); v}
+          that does what [ready] does, called with [ready_arg], for compiled
+          host code. It calls nothing of the OCaml runtime and blocks only on
+          the rail's lock. *)
+  ready_arg : nativeint;  (** The [arg] of [ready_fn] for this end. *)
 }
 (** The type for one machine's end of a rail. *)
 

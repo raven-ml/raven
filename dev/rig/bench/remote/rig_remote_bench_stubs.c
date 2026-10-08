@@ -224,22 +224,25 @@ value rig_remote_bench_stream_close(value vst) {
 
 /* Rails */
 
-/* A rail end's counts: [ready] at byte 0, [arrived] at byte 256. */
-#define READY 0
+/* A rail end's [arrived], at byte 256 of its counts. */
 #define ARRIVED 256
 
-/* [rail_run sender receiver c] stores [ready := c] in the sending end's
-   counts with release order and waits until the receiving end's [arrived]
-   reaches [c]: 0, or [1] if the job failed meanwhile. Releases the
-   runtime. */
-value rig_remote_bench_rail_run(value vsender, value vreceiver, value vc) {
-  unsigned char *s = Caml_ba_data_val(vsender);
+/* An end's ready function (Rig_remote_abi.end_'s [ready_fn]). */
+typedef void ready_fn(void *arg, uint64_t c);
+
+/* [rail_run fn arg receiver c] advances the sending end's [ready] to [c]
+   through its ready function [fn] and [arg], and waits until the receiving
+   end's [arrived], in the counts [receiver], reaches [c]: 0, or [1] if the
+   job failed meanwhile. Releases the runtime. */
+value rig_remote_bench_rail_run(value vfn, value varg, value vreceiver,
+                                value vc) {
+  ready_fn *fn = (ready_fn *)Nativeint_val(vfn);
+  void *arg = (void *)Nativeint_val(varg);
   unsigned char *r = Caml_ba_data_val(vreceiver);
   uint64_t c = (uint64_t)Long_val(vc);
-  _Atomic uint64_t *ready = (_Atomic uint64_t *)(s + READY);
   _Atomic uint64_t *arrived = (_Atomic uint64_t *)(r + ARRIVED);
   caml_release_runtime_system();
-  atomic_store_explicit(ready, c, memory_order_release);
+  fn(arg, c);
   await(arrived, c);
   caml_acquire_runtime_system();
   return Val_long(atomic_load(arrived) == (uint64_t)INT64_MAX ? 1 : 0);

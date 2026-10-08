@@ -1101,9 +1101,10 @@ let count (e : Rig_remote_abi.end_) at =
   Atomic.incr fence;
   v
 
+(* [ready] advances through the end's function, which wakes the rail. *)
 let store (e : Rig_remote_abi.end_) at v =
   Atomic.incr fence;
-  set64 e.counts at (Int64.of_int v)
+  if at = ready then e.ready v else set64 e.counts at (Int64.of_int v)
 
 let round256 n = (n + 255) / 256 * 256
 

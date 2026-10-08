@@ -66,9 +66,6 @@ typedef struct pollfd rig_remote_pollfd;
 #define BEAT_NS 1000000000LL
 #define SILENCE_MS 10000
 
-/* How often the sending thread reads its rails' [ready] while idle. */
-#define POLL_NS 50000LL
-
 /* The bytes a link's queue holds before its writers wait. One frame larger
    than this still goes, alone. */
 #define QUEUE_BYTES ((size_t)8 << 20)
@@ -109,6 +106,7 @@ struct cmd {
 };
 
 struct rail {
+  struct rig_remote_link *link;
   struct rail *next;
   uint64_t id;
   uint64_t *send, *receive; /* src, dst and length of each transfer */
@@ -400,9 +398,8 @@ static void *sender(void *arg) {
       }
       continue;
     }
-    int64_t until = l->sent_ns + BEAT_NS;
-    if (l->rails != NULL && now + POLL_NS < until) until = now + POLL_NS;
-    wait_ns(&l->cv, &l->mu, until - now);
+    /* A rail's ready function, a frame queued and a failure wake it. */
+    wait_ns(&l->cv, &l->mu, l->sent_ns + BEAT_NS - now);
   }
   if (atomic_load(&l->failed)) free_entries(l);
   pthread_mutex_unlock(&l->mu);
@@ -1086,10 +1083,35 @@ static uint64_t *transfers(value a) {
   return t;
 }
 
-/* Registers the rail [id] on the link: [send] and [receive] hold each
-   transfer's src, dst and length in turn; [out], [in] and [counts] are its
-   end's areas, which the caller keeps reachable until the rail is
-   released. Does not release the runtime. */
+/* Advances a rail's [ready] to [c] with release order and wakes its link's
+   sending thread. Calls nothing of the runtime: compiled host code calls it
+   through its address. */
+static void rail_ready(void *arg, uint64_t c) {
+  struct rail *r = arg;
+  struct rig_remote_link *l = r->link;
+  atomic_store_explicit(count(r, READY), c, memory_order_release);
+  if (rig_remote_forked(l->job)) return;
+  pthread_mutex_lock(&l->mu);
+  pthread_cond_broadcast(&l->cv);
+  pthread_mutex_unlock(&l->mu);
+}
+
+value caml_rig_remote_link_ready(value vr, value vc) {
+  rail_ready((void *)Nativeint_val(vr), (uint64_t)Long_val(vc));
+  return Val_unit;
+}
+
+value caml_rig_remote_link_ready_fn(value unit) {
+  (void)unit;
+  return caml_copy_nativeint((intnat)&rail_ready);
+}
+
+/* Registers the rail [id] on the link, and is its C state, which
+   [rail_ready] takes: [send] and [receive] hold each transfer's src, dst and
+   length in turn; [out], [in] and [counts] are its end's areas, which the
+   caller keeps reachable until the rail is released. In a child of fork the
+   rail is not registered, and its state is never freed. Does not release
+   the runtime. */
 value caml_rig_remote_link_rail(value vl, value id, value send, value receive,
                                 value out, value in, value counts) {
   CAMLparam5(vl, id, send, receive, out);
@@ -1097,6 +1119,7 @@ value caml_rig_remote_link_rail(value vl, value id, value send, value receive,
   struct rig_remote_link *l = Link_val(vl);
   struct rail *r = calloc(1, sizeof *r);
   if (r == NULL) caml_raise_out_of_memory();
+  r->link = l;
   r->id = (uint64_t)Long_val(id);
   r->send = transfers(send);
   r->receive = transfers(receive);
@@ -1109,10 +1132,7 @@ value caml_rig_remote_link_rail(value vl, value id, value send, value receive,
   r->in_stride = caml_ba_byte_size(Caml_ba_array_val(in)) / 2;
   if (rig_remote_forked(l->job)) {
     for (int c = 0; c < 3; c++) atomic_store(count(r, c), INT64_MAX);
-    free(r->send);
-    free(r->receive);
-    free(r);
-    CAMLreturn(Val_unit);
+    CAMLreturn(caml_copy_nativeint((intnat)r));
   }
   pthread_mutex_lock(&l->mu);
   if (atomic_load(&l->failed))
@@ -1121,7 +1141,7 @@ value caml_rig_remote_link_rail(value vl, value id, value send, value receive,
   l->rails = r;
   pthread_cond_broadcast(&l->cv);
   pthread_mutex_unlock(&l->mu);
-  CAMLreturn(Val_unit);
+  CAMLreturn(caml_copy_nativeint((intnat)r));
 }
 
 value caml_rig_remote_link_rail_bc(value *argv, int argc) {

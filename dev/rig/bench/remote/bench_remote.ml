@@ -146,7 +146,7 @@ let rail n () =
 
 let run r =
   r.count <- r.count + 1;
-  check "rail" (rail_run r.sender.counts r.receiver.counts r.count)
+  check "rail" (rail_run r.sender r.receiver r.count)
 
 let stream n () =
   let d, a = connected () in
