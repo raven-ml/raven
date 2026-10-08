@@ -163,6 +163,16 @@ let test_of_bigarray () =
   Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
       equal bool false (Claim.exclusive c b))
 
+(* Releasing a bigarray's memory that holds no read claim raises: the claim its
+   holder keeps outside the claims stays, and the memory is never exclusive. *)
+let test_release_kept () =
+  let b =
+    B.of_bigarray (Bigarray.Array1.create Bigarray.char Bigarray.c_layout 8)
+  in
+  raises_match Exn.invalid_arg (fun () -> Claim.release b);
+  Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
+      equal bool false (Claim.exclusive c b))
+
 (* A value of several buffers is exclusive only if each of them is. *)
 let test_shards () =
   let d =
@@ -255,6 +265,8 @@ let tests =
         test "a borrow and the memory it maps share one count"
           test_borrow_counts;
         test "a bigarray's memory is never exclusive" test_of_bigarray;
+        test "a release without a read claim keeps a bigarray's hidden one"
+          test_release_kept;
         test "a value of several buffers is exclusive only if each is"
           test_shards;
       ];

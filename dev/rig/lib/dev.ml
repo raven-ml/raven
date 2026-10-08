@@ -145,13 +145,18 @@ let submitted d = if d.c = 0 then 0 else c_submitted d.c
 let machines : (string, device) Hashtbl.t = Hashtbl.create 4
 let table_lock = Lock.create ()
 
-let host_of d =
+(* The host of [d]'s machine, if open: this process's for its own machine's
+   devices, the io device opened as another machine's host for that
+   machine's. *)
+let machine_host d =
   match d.machine with
-  | None -> host
-  | Some m -> (
-      match Lock.protect table_lock (fun () -> Hashtbl.find_opt machines m) with
-      | Some h -> h
-      | None -> d)
+  | None -> Some host
+  | Some m -> Lock.protect table_lock (fun () -> Hashtbl.find_opt machines m)
+
+let host_of d =
+  match machine_host d with
+  | Some h -> h
+  | None -> invalid_argf "Rig.host_of: no host of %s's machine is open" d.name
 
 (* Loss and stops *)
 

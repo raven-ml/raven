@@ -472,6 +472,16 @@ static void heap_drop_all(void) {
   heap_free_list(e);
 }
 
+/* Gives back [v_n] bytes a reservation took ([caml_rig_heap_reserve]) for
+   memory other than a buffer's bigarray, such as a device's pinned memory. */
+value caml_rig_heap_release(value v_n) {
+  atomic_fetch_sub_explicit(&heap_bytes, Long_val(v_n), memory_order_relaxed);
+  return Val_unit;
+}
+
+/* The bytes the heap keeps for reuse, for tests. */
+intnat rig_heap_kept(void) { return heap_kept(); }
+
 value caml_rig_heap_drop(value unit) {
   (void)unit;
   heap_drop_all();

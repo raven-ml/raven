@@ -41,10 +41,12 @@
     Every function may be called from any domain, at the same time as others. No
     function but {!open_} holds a lock while it waits: {!open_} holds its name's
     lock while the opener runs, so opens of one name run one at a time and opens
-    of other names go on. A wait releases the domain lock while it blocks and
-    returns to OCaml at least every still interval (200 ms), so a pending
-    [Sys.Break] from Ctrl-C raises there; an interrupted wait loses no device
-    and assigns no value.
+    of other names go on. A copy through the host's staging memory
+    ({!Buffer.copy}) holds a staging slot while it waits for devices, and a copy
+    that finds both slots held waits for one. A wait releases the domain lock
+    while it blocks and returns to OCaml at least every still interval (200 ms),
+    so a pending [Sys.Break] from Ctrl-C raises there; an interrupted wait loses
+    no device and assigns no value.
 
     {1:loss Loss}
 
@@ -107,7 +109,10 @@ val name : t -> string
 val host_of : t -> t
 (** [host_of d] is the host of [d]'s machine: {!host} for this machine's
     devices, the device {!open_io} opened with [~host:true] for another
-    machine's. A host is its own. *)
+    machine's. A host is its own.
+
+    Raises [Invalid_argument] if [d] is of another machine whose host is not
+    open. *)
 
 val arch : t -> string
 (** [arch d] is the architecture of [d]'s processor, as its driver names it,
@@ -128,7 +133,8 @@ val shares_host_memory : t -> bool
 (** [shares_host_memory d] is [true] iff [d] and its host reach each other's
     memory: [reaches (host_of d) d && reaches d (host_of d)]. It holds for a
     host, a {!memory_device}, and a driver's device that runs no copy, such as
-    Metal's. *)
+    Metal's. It is [false] for a device of another machine whose host is not
+    open. *)
 
 val reaches : t -> t -> bool
 (** [reaches d d'] is [true] iff [d]'s work addresses [d']'s own memory
@@ -157,9 +163,11 @@ val pp : Format.formatter -> t -> unit
 
 val budget : t -> int
 (** [budget d] is the most bytes of [d]'s own memory ({!Buffer.Device} and
-    {!Buffer.Mapped}) that [d] holds at once in live buffers, loaded programs'
-    code and its cache. It is [max_int] for a host, and the driver's
-    {!Driver.budget} until {!set_budget}. *)
+    {!Buffer.Mapped}, and {!Buffer.Pinned} where the host addresses [d]'s
+    memory) that [d] holds at once in live buffers, loaded programs' code and
+    its cache; for a host, of host buffers and of devices' other pinned memory.
+    It is [max_int] for a host, and the driver's {!Driver.budget} until
+    {!set_budget}. *)
 
 val set_budget : t -> int -> unit
 (** [set_budget d n] sets [d]'s budget to [n], returning cached memory to its
@@ -169,7 +177,8 @@ val set_budget : t -> int -> unit
     Raises [Invalid_argument] if [n < 0]. *)
 
 val free_cache : t -> unit
-(** [free_cache d] returns [d]'s cached memory to its driver. *)
+(** [free_cache d] returns [d]'s cached memory to its driver; for a host, the
+    memory it keeps of collected buffers for reuse. *)
 
 exception Out_of_memory of t * int
 (** [Out_of_memory (d, n)] is raised when [d] cannot allocate [n] bytes, at once
@@ -253,7 +262,9 @@ module Buffer : sig
     | Pinned
         (** Host memory that both the device's work and the host address,
             page-locked where the host pages: coherent, with no flush. It counts
-            in no budget. *)
+            in the host's {!budget}, except on a device whose memory the host
+            addresses, where it is the device's own memory and counts in the
+            device's. *)
     | Mapped
         (** The device's own memory, which the host also addresses through a
             write-combined window. A host write is seen by work submitted after
@@ -357,17 +368,20 @@ module Buffer : sig
       no copy has memory the host addresses, which the host copies. An {!Io}
       device's memory is read and written by its {!Io.read} and {!Io.write},
       through the staging memory when the host does not address the other side.
-      Between machines the bytes go through both hosts.
+      Between machines, only memory of an {!Io} device copies, by its reads and
+      writes, with memory this process's host addresses; no device copies other
+      memory between machines.
 
       [copy] first drains the devices of [src] and [dst] ({!create}). Staging
       memory that a device lost while it used it is replaced, so a loss reaches
       no other device's copies.
 
       Raises [Invalid_argument] if [src] and [dst] differ in size, overlap
-      ({!overlaps}), or either is dead; {!Lost} if a device involved is lost or
-      is lost by the copy, or a point it waits for is on a lost device;
-      {!Out_of_memory} if a host cannot allocate its staging memory; and what an
-      {!Io} device's read or write raises. *)
+      ({!overlaps}), or either is dead, or if no device copies between their
+      memory; {!Lost} if a device involved is lost or is lost by the copy, or a
+      point it waits for is on a lost device; {!Out_of_memory} if a host cannot
+      allocate its staging memory; and what an {!Io} device's read or write
+      raises. *)
 
   val device : t -> device
   (** [device b] is the device [b] is on: [d] for a buffer that {!create},
@@ -421,15 +435,18 @@ module Buffer : sig
   val address : t -> int
   (** [address b] is the address of [b]'s first byte as [b]'s device's work
       addresses it: its memory's {!Driver.address} plus {!offset} for a driver's
-      memory, the host address for a host's. An address fits in the 62 bits of
-      an [int]'s non-negative range.
+      memory, the host address for a host's. An empty buffer that {!create} made
+      on a driver's device names no memory: its address is [0], as work of no
+      bytes reads none. An address fits in the 62 bits of an [int]'s
+      non-negative range.
 
       Raises [Invalid_argument] if [b] is dead, is an {!Io} device's memory, or
       is memory its driver names by handle only. *)
 
   val handle : t -> nativeint
   (** [handle b] is the driver's object for [b]'s memory ({!Driver.handle}),
-      which [b] starts {!offset} bytes into, such as an [MTLBuffer].
+      which [b] starts {!offset} bytes into, such as an [MTLBuffer]; [0n] for an
+      empty buffer that {!create} made on a driver's device.
 
       Raises [Invalid_argument] if [b] is dead or is a host's or an {!Io}
       device's memory, which no driver object names. *)
@@ -467,7 +484,8 @@ module Claim : sig
   (** [release b] ends a {!read} of [b]'s memory. It accepts a dead [b].
 
       Raises [Invalid_argument] and changes nothing if the memory has no read
-      claim. *)
+      claim of a {!read} or a {!with_}: the reader that holds memory of
+      {!Buffer.of_bigarray} or {!Buffer.of_io} outside the claims is not one. *)
 
   type t
   (** The type for the claims of a {!with_}. *)

@@ -81,6 +81,7 @@ type bytes_ba =
 external heap_alloc : int -> bytes_ba = "caml_rig_heap_alloc"
 external heap_aligned : int -> int -> bytes_ba option = "caml_rig_heap_aligned"
 external heap_drop : unit -> unit = "caml_rig_heap_drop"
+external heap_release : int -> unit = "caml_rig_heap_release" [@@noalloc]
 
 external ba_address : ('a, 'b, 'c) Bigarray.Array1.t -> int
   = "caml_rig_bigarray_address"
@@ -250,10 +251,16 @@ let unload d (Image { m; h; i }) =
   let module D = (val m) in
   if not (Dev.is_lost d) then Dev.counted d (fun () -> D.unload h i)
 
-(* Whether memory of [kind] counts in its device's budget. *)
-let owns = function
-  | Device | Mapped | Io_made -> true
-  | Pinned | Host_kept | Io_given -> false
+(* The budget memory of [kind] on [d] counts in. Pinned memory is [d]'s own
+   where the host addresses [d]'s memory, and host memory elsewhere. *)
+type budget = Device_budget | Host_budget | No_budget
+
+let budget_of d = function
+  | Device | Mapped | Io_made -> Device_budget
+  | Pinned -> if Dev.reaches Dev.host d then Device_budget else Host_budget
+  | Host_kept | Io_given -> No_budget
+
+let owns d kind = budget_of d kind = Device_budget
 
 (* Releases *)
 
@@ -280,10 +287,12 @@ let free_entry (e : entry) =
   Option.iter (free_region d) e.region;
   Option.iter (free_io d) e.io_region;
   drop_stamps e;
-  if owns e.memory then begin
-    Dev.protect d (fun () -> d.used <- d.used - e.bytes);
-    note d
-  end
+  match budget_of d e.memory with
+  | Device_budget ->
+      Dev.protect d (fun () -> d.used <- d.used - e.bytes);
+      note d
+  | Host_budget -> heap_release e.bytes
+  | No_budget -> ()
 
 let key n kind =
   let k =
@@ -523,7 +532,7 @@ let take_cache ?upto d =
       let take (e : entry) =
         match upto with
         | None -> true
-        | Some upto -> owns e.memory && !held > upto
+        | Some upto -> owns d e.memory && !held > upto
       in
       Hashtbl.filter_map_inplace
         (fun _ l ->
@@ -532,7 +541,7 @@ let take_cache ?upto d =
               (fun (e : entry) ->
                 if take e then begin
                   taken := e :: !taken;
-                  if owns e.memory then held := !held - e.bytes;
+                  if owns d e.memory then held := !held - e.bytes;
                   d.cached <- d.cached - e.bytes;
                   false
                 end
@@ -584,12 +593,19 @@ let rec alloc_entry d kind n round =
   match take_cached d kind n with
   | Some e -> e
   | None -> (
+      let budget = budget_of d kind in
       let fits =
-        (not (owns kind)) || Dev.protect d (fun () -> d.used + n <= d.budget)
+        match budget with
+        | Device_budget -> Dev.protect d (fun () -> d.used + n <= d.budget)
+        | Host_budget -> heap_reserve n Dev.host.budget
+        | No_budget -> true
       in
-      match if fits then new_entry d kind n else None with
+      let made = if fits then new_entry d kind n else None in
+      if fits && Option.is_none made && budget = Host_budget then heap_release n;
+      match made with
       | Some e ->
-          if owns e.memory then Dev.protect d (fun () -> d.used <- d.used + n);
+          if budget = Device_budget then
+            Dev.protect d (fun () -> d.used <- d.used + n);
           note d;
           e
       (* Mapped memory the window or the budget cannot hold is pinned memory,
@@ -602,7 +618,13 @@ let rec alloc_entry d kind n round =
 
 let alloc_entry d kind n =
   let kind = if kind = Mapped && n > d.budget then Pinned else kind in
-  if owns kind && n > d.budget then raise (Dev.Out_of_memory (d, n));
+  let limit =
+    match budget_of d kind with
+    | Device_budget -> d.budget
+    | Host_budget -> Dev.host.budget
+    | No_budget -> max_int
+  in
+  if n > limit then raise (Dev.Out_of_memory (d, n));
   drain d;
   alloc_entry d kind n 1
 
@@ -778,4 +800,5 @@ let set_budget d n =
   Dev.protect d (fun () -> d.budget <- n);
   trim d
 
-let free_cache d = release_cache ~wait:false d
+let free_cache d =
+  if Dev.is_host d then heap_drop () else release_cache ~wait:false d

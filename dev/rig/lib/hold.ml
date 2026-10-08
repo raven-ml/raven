@@ -8,7 +8,6 @@ open Def
 type t = hold
 
 let make ?(release = ignore) bs =
-  let st = Memory.stamps_new () in
   List.iter
     (fun b ->
       Buffer.check_live "Hold.make" b;
@@ -16,6 +15,7 @@ let make ?(release = ignore) bs =
       if m.entry.held then
         invalid_arg "Rig.Hold.make: a buffer's memory is in a hold")
     bs;
+  let st = Memory.stamps_new () in
   List.iter
     (fun b ->
       let m = b.mem.root in

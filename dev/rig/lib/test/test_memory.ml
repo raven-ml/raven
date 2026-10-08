@@ -108,12 +108,38 @@ let test_host_budget () = equal int max_int (C.budget C.host)
 
 (* Kinds *)
 
+(* Runs [f] with the host's budget [n], then restores it. *)
+let with_host_budget n f =
+  let before = C.budget C.host in
+  C.set_budget C.host n;
+  Fun.protect ~finally:(fun () -> C.set_budget C.host before) f
+
+(* On a device with copies, pinned memory is host memory: it counts in the
+   host's budget, not the device's. *)
 let test_pinned () =
   let d, p = P.open_ "memory:pinned" in
   C.set_budget d 0;
   equal int (4 * kib) (B.length (B.create ~memory:Pinned d (4 * kib)));
   equal allocs [ (`Pinned, 4 * kib, true) ] (P.allocs p);
-  raises_match (out_of_memory d 1) (fun () -> B.create d 1)
+  raises_match (out_of_memory d 1) (fun () -> B.create d 1);
+  let n = 1 lsl 40 in
+  with_host_budget n (fun () ->
+      raises_match
+        (out_of_memory d (n + 1))
+        (fun () -> B.create ~memory:Pinned d (n + 1)));
+  equal ~msg:"asked of the driver" int 1 (List.length (P.allocs p))
+
+(* On a device whose memory the host addresses, pinned memory is the device's
+   own: it counts in the device's budget. *)
+let test_pinned_own () =
+  let d, _ = P.open_ ~copies:false "memory:pinned-own" in
+  C.set_budget d (8 * kib);
+  raises_match
+    (out_of_memory d (16 * kib))
+    (fun () -> B.create ~memory:Pinned d (16 * kib));
+  let b = B.create ~memory:Pinned d (4 * kib) in
+  raises_match (out_of_memory d (8 * kib)) (fun () -> B.create d (8 * kib));
+  ignore (Sys.opaque_identity b)
 
 (* Mapped memory the window cannot hold is pinned memory, and the cache
    stays. *)
@@ -199,6 +225,15 @@ let test_foreign_use () =
   collect a;
   equal ~msg:"once it is reached" bool true (freed pa at)
 
+(* free_cache on the host returns what the host keeps for reuse. *)
+let test_host_free_cache () =
+  ignore (dropped C.host ((64 * kib) + 4093));
+  Gc.full_major ();
+  Gc.full_major ();
+  at_least ~msg:"kept" int ~than:1 (Support.host_kept ());
+  C.free_cache C.host;
+  equal ~msg:"after free_cache" int 0 (Support.host_kept ())
+
 (* The host keeps a collected buffer of 64 KiB or more for the next buffer of
    its size, unless a bigarray of it lives, which keeps its bytes. *)
 let test_host_cache () =
@@ -240,7 +275,10 @@ let tests =
       ];
     group ~timeout "kinds"
       [
-        test "pinned memory counts in no budget" test_pinned;
+        test "pinned memory on a device with copies counts in the host's budget"
+          test_pinned;
+        test "pinned memory the host addresses counts in its device's budget"
+          test_pinned_own;
         test "mapped memory the window cannot hold is pinned, the cache kept"
           test_mapped_window;
         test "mapped memory the budget cannot hold is pinned" test_mapped_budget;
@@ -256,6 +294,7 @@ let tests =
           test_foreign_use;
         test "the host keeps a collected buffer's memory for its size"
           test_host_cache;
+        test "free_cache on the host returns what it keeps" test_host_free_cache;
       ];
   ]
 

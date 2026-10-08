@@ -41,6 +41,10 @@ val inherited : device -> bool
 (* [inherited d] is [true] iff [d] is a driver's device this process inherited
    from the parent it was forked from. *)
 
+val machine_host : device -> device option
+(* [machine_host d] is the host of [d]'s machine, or [None] if no host of that
+   machine is open. *)
+
 val host_of : device -> device
 val reaches : device -> device -> bool
 val answered : (device -> unit) ref

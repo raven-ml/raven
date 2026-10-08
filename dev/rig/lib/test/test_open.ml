@@ -144,6 +144,19 @@ let test_machine () =
   equal device far (C.host_of far);
   equal (list bool) [ false; false ] [ C.reaches g C.host; C.reaches C.host g ]
 
+(* A device of a machine whose host is not open has no host here: it shares no
+   memory with this process's host. *)
+let test_machine_without_host () =
+  let g =
+    require_ok ~pp:Format.pp_print_string
+      (C.open_
+         (module P)
+         ~machine:"hostless" ~name:"open:lone-gpu"
+         (fun () -> Ok (P.make ())))
+  in
+  raises_match Exn.invalid_arg (fun () -> C.host_of g);
+  equal bool false (C.shares_host_memory g)
+
 let test_point () =
   let d = memory "open:point" in
   let p = C.submit (C.Submission.make ~reads:0 ~writes:0 ~waits:0 d [||]) in
@@ -206,6 +219,8 @@ let tests =
       test "a region an io library gave is a buffer of its device" test_of_io;
       test "a device of another machine is named after it, its host the io's"
         test_machine;
+      test "a device of a machine whose host is not open has no host"
+        test_machine_without_host;
       test "a point prints as its device's name and its value" test_point;
       test "an opener's error leaves the name free" test_failed_open;
       test "a lost device's name opens anew once its stop answered" test_reopen;

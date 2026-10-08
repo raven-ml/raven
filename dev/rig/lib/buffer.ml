@@ -32,8 +32,9 @@ let create ?(memory = Device) d n =
   let mem =
     if Dev.is_host d then Memory.host_memory n
     else if n = 0 then begin
+      (* No memory: work of no bytes reads none, so 0 names it. *)
       Memory.drain d;
-      Memory.make d 0 Memory.no_entry
+      Memory.make ~address:0 d 0 Memory.no_entry
     end
     else if Dev.is_io d then Memory.alloc d Def.Device n
     else Memory.alloc d (kind_of memory) n
@@ -207,7 +208,8 @@ let address b =
 
 let handle b =
   check_live "Buffer.handle" b;
-  if b.mem.handle = 0n then
-    invalid_argf "Rig.Buffer.handle: no driver object names %s's memory"
-      b.mem.dev.name;
-  b.mem.handle
+  match b.mem.dev.kind with
+  | Driver _ -> b.mem.handle
+  | Host | Io _ ->
+      invalid_argf "Rig.Buffer.handle: no driver object names %s's memory"
+        b.mem.dev.name

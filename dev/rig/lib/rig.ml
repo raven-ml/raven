@@ -18,8 +18,9 @@ let runs_on_host d = Dev.is_host d || d.memory_device
 let reaches = Dev.reaches
 
 let shares_host_memory d =
-  let h = Dev.host_of d in
-  Dev.reaches h d && Dev.reaches d h
+  match Dev.machine_host d with
+  | Some h -> Dev.reaches h d && Dev.reaches d h
+  | None -> false
 
 let budget d = d.budget
 let set_budget = Memory.set_budget

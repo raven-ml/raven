@@ -23,14 +23,24 @@ let take fn b =
 
 let read b = take "Claim.read" b
 
-let rec release_claim c =
+(* The readers of [m]'s memory outside the claims: whoever holds the bigarray or
+   the io library's region it is, counted in when the memory was made. *)
+let kept (m : memory) =
+  match m.keep with
+  | Bigarray _ -> 1
+  | Nothing | Heap _ -> if m.entry.memory = Io_given then 1 else 0
+
+(* Takes a read claim off [c], of which [kept] are outside the claims. *)
+let rec release_above kept c =
   let n = count c in
-  if n = 0 then invalid_arg "Rig.Claim.release: the memory has no read claim"
+  if n >= 0 && n <= kept then
+    invalid_arg "Rig.Claim.release: the memory has no read claim"
   else if n < 0 then
     invalid_arg "Rig.Claim.release: the memory is held exclusive"
-  else if not (swap c n (n - 1)) then release_claim c
+  else if not (swap c n (n - 1)) then release_above kept c
 
-let release b = release_claim b.mem.claim
+let release_claim c = release_above 0 c
+let release b = release_above (kept b.mem.root) b.mem.claim
 
 type t = { reads : claim list; mutable exclusive : claim list }
 

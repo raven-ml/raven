@@ -175,6 +175,27 @@ let test_create_empty_words () =
 
 (* Borrows of memory that dies *)
 
+(* A copy between this machine's host memory and another machine's driver memory
+   raises: no device copies between them. *)
+let test_copy_machines () =
+  let g =
+    require_ok ~pp:Format.pp_print_string
+      (C.open_
+         (module P)
+         ~machine:"elsewhere" ~name:"buffer:far-gpu"
+         (fun () -> Ok (P.make ())))
+  in
+  raises_match Exn.invalid_arg (fun () ->
+      B.copy ~src:(B.create C.host 64) ~dst:(B.create g 64))
+
+(* An empty buffer of a driver's device names no memory: its address and its
+   handle are 0. *)
+let test_empty_address () =
+  let d, _ = P.open_ "buffer:empty" in
+  let b = B.create d 0 in
+  equal ~msg:"address" int 0 (B.address b);
+  equal ~msg:"handle" nativeint 0n (B.handle b)
+
 let test_borrow_own () =
   let d, _ = P.open_ "buffer:own" in
   let b = B.create d 64 in
@@ -493,6 +514,10 @@ let tests =
         test "a memory a device borrows is mapped once" test_borrow_maps_once;
         test "host memory off a page does not borrow on a driver's device"
           test_borrow_small;
+        test "a copy between machines with no device to copy raises"
+          test_copy_machines;
+        test "an empty buffer of a driver's device has address and handle 0"
+          test_empty_address;
         test "a borrow on its own device is the buffer" test_borrow_own;
         test "a mapping is released once its memory died and its work ran"
           test_mapping_released;
