@@ -4,6 +4,7 @@
 # machine: 6e4c99d648da0929
 # host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.1 · 64-bit · release
+# forced: blessed submit/cuda/empty submit/cuda/cost replay/cuda/params-24 replay/cuda/pipelined-100 replay/cuda/kernel-pipelined-100 under load 3.0 on 4 cores
 
 floor/cuda/cost	alloc_words	exact	0
 floor/cuda/cost	wall_time	batch=4096	n=20	1.763e-06	1.756e-06 1.762e-06 1.762e-06 1.762e-06 1.762e-06 1.763e-06 1.763e-06 1.763e-06 1.763e-06 1.763e-06 1.763e-06 1.763e-06 1.764e-06 1.764e-06 1.764e-06 1.764e-06 1.764e-06 1.764e-06 1.765e-06 1.766e-06
@@ -26,11 +27,11 @@ floor/nv/release	wall_time	batch=2048	n=20	3.393e-06	3.386e-06 3.388e-06 3.388e-
 floor/nv/run	alloc_words	exact	0
 floor/nv/run	wall_time	batch=4096	n=20	1.521e-06	1.467e-06 1.472e-06 1.473e-06 1.486e-06 1.492e-06 1.495e-06 1.501e-06 1.514e-06 1.515e-06 1.518e-06 1.524e-06 1.530e-06 1.544e-06 1.548e-06 1.576e-06 1.594e-06 1.606e-06 1.622e-06 1.661e-06 1.676e-06
 replay/cuda/kernel-pipelined-100	alloc_words	exact	3
-replay/cuda/kernel-pipelined-100	wall_time	batch=16	n=20	3.701e-04	3.694e-04 3.694e-04 3.695e-04 3.695e-04 3.696e-04 3.698e-04 3.699e-04 3.699e-04 3.700e-04 3.700e-04 3.701e-04 3.701e-04 3.704e-04 3.705e-04 3.705e-04 3.709e-04 3.711e-04 3.715e-04 3.727e-04 3.727e-04
+replay/cuda/kernel-pipelined-100	wall_time	batch=16	n=20	3.443e-04	3.436e-04 3.437e-04 3.437e-04 3.440e-04 3.441e-04 3.442e-04 3.442e-04 3.443e-04 3.443e-04 3.443e-04 3.444e-04 3.444e-04 3.445e-04 3.446e-04 3.446e-04 3.447e-04 3.448e-04 3.448e-04 3.448e-04 3.451e-04
 replay/cuda/params-24	alloc_words	exact	0
-replay/cuda/params-24	wall_time	batch=4096	n=20	2.037e-06	2.031e-06 2.032e-06 2.033e-06 2.033e-06 2.035e-06 2.036e-06 2.036e-06 2.036e-06 2.037e-06 2.037e-06 2.037e-06 2.037e-06 2.037e-06 2.037e-06 2.037e-06 2.039e-06 2.039e-06 2.040e-06 2.040e-06 2.041e-06
+replay/cuda/params-24	wall_time	batch=4096	n=20	2.019e-06	2.006e-06 2.008e-06 2.014e-06 2.015e-06 2.016e-06 2.016e-06 2.017e-06 2.018e-06 2.018e-06 2.019e-06 2.019e-06 2.019e-06 2.020e-06 2.020e-06 2.020e-06 2.022e-06 2.023e-06 2.024e-06 2.024e-06 2.036e-06
 replay/cuda/pipelined-100	alloc_words	exact	0
-replay/cuda/pipelined-100	wall_time	batch=32	n=20	2.075e-04	2.061e-04 2.065e-04 2.066e-04 2.066e-04 2.066e-04 2.068e-04 2.068e-04 2.069e-04 2.073e-04 2.075e-04 2.075e-04 2.076e-04 2.076e-04 2.077e-04 2.078e-04 2.079e-04 2.081e-04 2.081e-04 2.082e-04 2.082e-04
+replay/cuda/pipelined-100	wall_time	batch=32	n=20	2.012e-04	2.005e-04 2.005e-04 2.006e-04 2.007e-04 2.009e-04 2.011e-04 2.011e-04 2.011e-04 2.011e-04 2.011e-04 2.012e-04 2.012e-04 2.013e-04 2.013e-04 2.015e-04 2.015e-04 2.017e-04 2.017e-04 2.017e-04 2.021e-04
 replay/nv/kernel-pipelined-100	alloc_words	exact	3
 replay/nv/kernel-pipelined-100	wall_time	batch=32	n=20	2.490e-04	2.487e-04 2.487e-04 2.487e-04 2.488e-04 2.489e-04 2.489e-04 2.489e-04 2.490e-04 2.490e-04 2.490e-04 2.490e-04 2.490e-04 2.491e-04 2.491e-04 2.492e-04 2.492e-04 2.492e-04 2.492e-04 2.492e-04 2.495e-04
 replay/nv/params-24	alloc_words	exact	0
@@ -38,9 +39,9 @@ replay/nv/params-24	wall_time	batch=4096	n=20	1.927e-06	1.911e-06 1.913e-06 1.92
 replay/nv/pipelined-100	alloc_words	exact	0
 replay/nv/pipelined-100	wall_time	batch=32	n=20	1.865e-04	1.857e-04 1.859e-04 1.860e-04 1.861e-04 1.861e-04 1.862e-04 1.862e-04 1.863e-04 1.863e-04 1.864e-04 1.865e-04 1.867e-04 1.867e-04 1.870e-04 1.870e-04 1.871e-04 1.871e-04 1.871e-04 1.872e-04 1.873e-04
 submit/cuda/cost	alloc_words	exact	0
-submit/cuda/cost	wall_time	batch=4096	n=20	1.732e-06	1.729e-06 1.730e-06 1.731e-06 1.732e-06 1.732e-06 1.732e-06 1.732e-06 1.732e-06 1.732e-06 1.732e-06 1.732e-06 1.732e-06 1.732e-06 1.732e-06 1.733e-06 1.733e-06 1.733e-06 1.733e-06 1.733e-06 1.734e-06
+submit/cuda/cost	wall_time	batch=4096	n=20	1.726e-06	1.723e-06 1.725e-06 1.725e-06 1.725e-06 1.725e-06 1.726e-06 1.726e-06 1.726e-06 1.726e-06 1.726e-06 1.726e-06 1.727e-06 1.727e-06 1.727e-06 1.727e-06 1.727e-06 1.727e-06 1.728e-06 1.728e-06 1.728e-06
 submit/cuda/empty	alloc_words	exact	0
-submit/cuda/empty	wall_time	batch=2048	n=20	3.969e-06	3.962e-06 3.963e-06 3.963e-06 3.964e-06 3.964e-06 3.965e-06 3.968e-06 3.968e-06 3.968e-06 3.969e-06 3.969e-06 3.969e-06 3.971e-06 3.971e-06 3.971e-06 3.973e-06 3.974e-06 3.974e-06 3.978e-06 4.026e-06
+submit/cuda/empty	wall_time	batch=2048	n=20	3.908e-06	3.901e-06 3.903e-06 3.903e-06 3.904e-06 3.904e-06 3.904e-06 3.904e-06 3.905e-06 3.906e-06 3.908e-06 3.908e-06 3.908e-06 3.908e-06 3.909e-06 3.909e-06 3.909e-06 3.909e-06 3.909e-06 3.909e-06 3.910e-06
 submit/nv/cost	alloc_words	exact	0
 submit/nv/cost	wall_time	batch=8192	n=20	7.776e-07	7.748e-07 7.766e-07 7.772e-07 7.774e-07 7.775e-07 7.775e-07 7.775e-07 7.776e-07 7.776e-07 7.776e-07 7.777e-07 7.777e-07 7.778e-07 7.778e-07 7.778e-07 7.778e-07 7.779e-07 7.780e-07 7.780e-07 7.781e-07
 submit/nv/empty	alloc_words	exact	0
