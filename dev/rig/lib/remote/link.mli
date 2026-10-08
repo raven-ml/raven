@@ -3,23 +3,23 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* A client's end of a connection, in C (private).
+(** A client's end of a connection, in C.
 
-   A link owns the socket after the handshake. Every operation of the client
-   goes through it: requests from OCaml and, as the machine's transport, window
-   accesses from a driver's C, which hold no OCaml runtime. A lock makes each
-   request and its answer one exchange on the stream. A link that failed stays
-   failed: its requests answer [Error], its reads fail, its writes are dropped,
-   and its socket is closed.
+    A link owns the socket after the handshake. Every operation of the client
+    goes through it: requests from OCaml and, as the machine's transport, window
+    accesses from a driver's C, which hold no OCaml runtime. A lock makes each
+    request and its answer one exchange on the stream. A link that failed stays
+    failed: its requests answer [Error], its reads fail, its writes are dropped,
+    and its socket is closed.
 
-   A child of fork finds the link failed: every function compares the process id
-   with the one that made the link before it takes the lock or touches the
-   socket, and the child's copy alone records the failure.
+    A child of fork finds the link failed: every function compares the process
+    id with the one that made the link before it takes the lock or touches the
+    socket, and the child's copy alone records the failure.
 
-   A link is never freed: windows hold its transport's address, which no
-   collection can follow. A closed link keeps its name and reason, about 300
-   bytes. Every function may be called from any domain; each releases the
-   runtime while it waits for the stream. *)
+    A link is never freed: windows hold its transport's address, which no
+    collection can follow. A closed link keeps its name and reason, about 300
+    bytes. Every function may be called from any domain; each releases the
+    runtime while it waits for the stream. *)
 
 type t
 (** The type for links. *)

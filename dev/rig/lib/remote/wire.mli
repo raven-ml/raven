@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** The protocol both ends speak (private).
+(** The protocol both ends speak.
 
     The server speaks first. Then each end proves the key over both nonces, the
     client first:
@@ -23,8 +23,7 @@
     command has no answer; any other is answered by a header of {!answer} bytes,
     a status (u8), two results (i64) and the length of its payload (u32), then
     the payload. Every integer is little-endian. The client's C
-    ([rig_remote_link.c]) writes requests and reads answers to this layout.
-*)
+    ([rig_remote_link.c]) writes requests and reads answers to this layout. *)
 
 val magic : string
 (** [magic] opens the server's greeting. *)

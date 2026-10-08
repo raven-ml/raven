@@ -3,14 +3,14 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Servers of this machine, documented in rig_remote.mli (private).
+(** Servers of this machine ({!Rig_remote.listen}).
 
-   An acceptor domain runs every handshake itself, over non-blocking sockets in
-   one select loop, and gives the session to a client once its proof checks and
-   no other client holds it. A session domain runs the client's commands one
-   after another, over the functions it took, the windows they gave and the host
-   memory it allocated, and checks every address it is given against them.
-   Whatever ends a session, its cleanup runs. *)
+    An acceptor domain runs every handshake itself, over non-blocking sockets in
+    one select loop, and gives the session to a client once its proof checks and
+    no other client holds it. A session domain runs the client's commands one
+    after another, over the functions it took, the windows they gave and the
+    host memory it allocated, and checks every address it is given against them.
+    Whatever ends a session, its cleanup runs. *)
 
 type t
 (** The type for servers. *)
