@@ -1087,9 +1087,6 @@ let agents =
 
 external get64 : Rig_remote_abi.area -> int -> int64 = "%caml_bigstring_get64"
 
-external set64 : Rig_remote_abi.area -> int -> int64 -> unit
-  = "%caml_bigstring_set64"
-
 (* A full barrier: reads after it see what the stores the count published. *)
 let fence = Atomic.make 0
 let ready = 0
@@ -1101,10 +1098,6 @@ let count (e : Rig_remote_abi.end_) at =
   Atomic.incr fence;
   v
 
-(* [ready] advances through the end's function, which wakes the rail. *)
-let store (e : Rig_remote_abi.end_) at v =
-  Atomic.incr fence;
-  if at = ready then e.ready v else set64 e.counts at (Int64.of_int v)
 
 let round256 n = (n + 255) / 256 * 256
 
@@ -1176,9 +1169,9 @@ let carry ~dir p (ts : Rig_remote_abi.transfer array) (s : Rig_remote_abi.end_)
           for i = 0 to t.length - 1 do
             s.outbound.{(k * out) + t.src + i} <- byte ~dir r j i
           done;
-          if not p.batched then store s ready ((r * n) + j + 1))
+          if not p.batched then s.ready ((r * n) + j + 1))
         ts;
-      if p.batched then store s ready last;
+      if p.batched then s.ready last;
       until ~what:"arrived" (fun () ->
           let a = count d arrived in
           if a < !seen then failf "arrived went from %d to %d" !seen a;
@@ -1289,7 +1282,7 @@ let rail_to_raw () =
   with_raw @@ fun _ l p ->
   let e = Link.rail l ~id:4 ~send:[| { t5 with src = 2 } |] ~receive:[||] in
   String.iteri (fun i ch -> e.outbound.{2 + i} <- ch) "hello";
-  store e ready 1;
+  e.ready 1;
   equal (option frame_w) (Some (k_rail, u64 4 ^ u64 1 ^ "hello")) (next_frame p);
   until ~what:"sent" (fun () -> count e sent >= 1)
 
@@ -1301,7 +1294,7 @@ let released () =
   Link.release_rail a 1;
   Link.release_rail a 1;
   equal state Link.Open (Link.wait j ~ms:0);
-  store s ready 1;
+  s.ready 1;
   match Link.wait j ~ms:2000 with
   | Link.Failed _ -> ()
   | st -> failf "the job is %a" (Testable.pp state) st

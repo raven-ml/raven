@@ -11,9 +11,6 @@ open Windtrap
 open Remote_job
 module Polled = Rig_support.Polled
 
-external set64 : Rig_remote_abi.area -> int -> int64 -> unit
-  = "%caml_bigstring_set64"
-
 let root = "OWN lost: the controller's device faulted"
 
 (* A rail from this process whose ready count runs far ahead keeps the

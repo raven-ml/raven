@@ -432,12 +432,6 @@ let closes =
 
 external get64 : Rig_remote_abi.area -> int -> int64 = "%caml_bigstring_get64"
 
-external set64 : Rig_remote_abi.area -> int -> int64 -> unit
-  = "%caml_bigstring_set64"
-
-(* A full barrier, between the bytes and the count that publishes them. *)
-let fence = Atomic.make 0
-
 let host_record h =
   match Rig.capability h Rig_remote_abi.key with
   | Some (Rig_remote_abi.Host r) -> r
@@ -482,7 +476,6 @@ let with_here () =
     (fun at -> equal ~msg:"a count starts at 0" int64 0L (get64 e.counts at))
     [ 0; 128; 256 ];
   String.iteri (fun i c -> e.outbound.{300 + i} <- c) "hello";
-  Atomic.incr fence;
   e.ready 1;
   until ~what:"sent" (fun () -> get64 e.counts 128 >= 1L);
   rail.release ()
