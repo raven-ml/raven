@@ -116,7 +116,11 @@ external floor_f64_to_i32 : f64 -> i32 -> unit
   = "nx_array_bench_floor_f64_to_i32"
 [@@noalloc]
 
-let vec k = A1.create k Bigarray.c_layout mib
+(* A vector of 1 Mi elements over a rig host buffer, which starts on a page as
+   an array's does: a loop's speed can depend on where its data starts. *)
+let vec k =
+  B.bigarray k (B.create Rig.host (mib * Bigarray.kind_size_in_bytes k))
+
 let float32 = Bigarray.float32
 let float64 = Bigarray.float64
 
@@ -390,7 +394,7 @@ let access_rows =
       row "floor-bigarray-copy-f32-1M"
         (fun () -> values float32)
         (fun x ->
-          let y = vec float32 in
+          let y = A1.create float32 Bigarray.c_layout mib in
           A1.blit x y;
           y);
     ]
