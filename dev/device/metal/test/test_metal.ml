@@ -145,12 +145,15 @@ type dev = { d : Device_metal.t; mutable v : int; fill : Device_metal.image }
 let opened () =
   match Device_metal.open_ 0 with Ok d -> d | Error why -> skip ~reason:why ()
 
-let dev_of d =
-  let fill =
-    fst (require_ok (Device_metal.image d (S.fixture ~dir:"fixtures" "fill")))
-  in
-  { d; v = 0; fill }
+(* The image of the fixture [fill], which Metal places itself. *)
+let load d =
+  match
+    require_ok (Device_metal.image d (S.fixture ~dir:"fixtures" "fill"))
+  with
+  | `Loaded i -> i
+  | `Place (n, _) -> failf "the device asked to place %d bytes of code" n
 
+let dev_of d = { d; v = 0; fill = load d }
 let shared = lazy (dev_of (opened ()))
 let dev () = Lazy.force shared
 let pipeline t f = require_some (Device_metal.entry t.fill f)
@@ -442,9 +445,7 @@ let after_unload () =
   let t = dev () in
   let out = alloc t 256 and args = alloc t args_bytes in
   set_args args ~at:0 ~out:(gpu out) ~c:0;
-  let i, _ =
-    require_ok (Device_metal.image t.d (S.fixture ~dir:"fixtures" "fill"))
-  in
+  let i = load t.d in
   let step = require_some (Device_metal.entry i "step") in
   let b = require_ok (icb t args [| dispatch step; dispatch step |]) in
   Device_metal.unload t.d i;
@@ -522,6 +523,7 @@ let misused_regions () =
   invalid (fun () -> Device_metal.map_host t.d (S.pages page) 0);
   let other = opened () in
   let o = require_some (Device_metal.alloc other `Device 64) in
+  equal bool false (Device_metal.peer t.d other);
   equal (option pass) None (Device_metal.map_peer t.d other o);
   invalid (fun () -> Device_metal.map_peer t.d t.d o);
   invalid (fun () -> Device_metal.map_peer t.d other (alloc t 64));
@@ -582,9 +584,7 @@ let entries () =
 
 let unloaded_twice () =
   let t = dev () in
-  let i, _ =
-    require_ok (Device_metal.image t.d (S.fixture ~dir:"fixtures" "fill"))
-  in
+  let i = load t.d in
   let other = opened () in
   raises_match Exn.invalid_arg (fun () -> Device_metal.unload other i);
   Device_metal.unload t.d i;
@@ -611,11 +611,7 @@ let unload_commands =
     command "image"
       (Gen.unit @-> makes loaded_image)
       (fun () -> { loaded = true })
-      (fun () ->
-        let t = dev () in
-        fst
-          (require_ok
-             (Device_metal.image t.d (S.fixture ~dir:"fixtures" "fill"))));
+      (fun () -> load (dev ()).d);
     command "unload" (loaded_image ^-> returns unit) unload_model unload_system;
   ]
 
@@ -623,9 +619,7 @@ let unloaded_releases () =
   let t = dev () in
   let weaks =
     List.init 60 (fun _ ->
-        let i, _ =
-          require_ok (Device_metal.image t.d (S.fixture ~dir:"fixtures" "fill"))
-        in
+        let i = load t.d in
         let w =
           S.weak (Nativeint.of_int (require_some (Device_metal.entry i "fill")))
         in

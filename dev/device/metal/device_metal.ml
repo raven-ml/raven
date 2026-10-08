@@ -160,7 +160,6 @@ let open_ i =
 
 let key = Type.Id.make ()
 let arch d = d.arch
-let machine _ = None
 let budget d = d.budget
 let queues _ = [ "COMPUTE:0" ]
 let completion _ = `Host
@@ -201,6 +200,8 @@ let map_host d p n =
     invalid_argf "Device_metal.map_host: %d bytes, expected at least 1" n;
   Option.map (region d.self Mapped) (map_buffer d.self p n)
 
+let peer _ _ = false
+
 let map_peer d d' r =
   if d.self = d'.self then
     invalid_arg "Device_metal.map_peer: the two devices are one";
@@ -233,7 +234,8 @@ type image = {
 let image d b =
   match load d.self b with
   | "", names, pipelines ->
-      Ok ({ owner = d.self; names; pipelines; loaded = Atomic.make true }, None)
+      Ok
+        (`Loaded { owner = d.self; names; pipelines; loaded = Atomic.make true })
   | why, _, _ -> Error why
 
 let entry i f =

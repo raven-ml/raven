@@ -44,10 +44,15 @@ let get = function Ok x -> x | Error why -> failwith why
 let alloc t n = Option.get (M.alloc t.d `Device n)
 let host r = Option.get (M.host r)
 
+let load d =
+  match get (M.image d metallib) with
+  | `Loaded i -> i
+  | `Place _ -> failwith "Metal asked to place its code"
+
 (* A device whose argument buffer points [step] at a word of its own. *)
 let dev () =
   let d = get (M.open_ 0) in
-  let image, _ = get (M.image d metallib) in
+  let image = load d in
   let step = Option.get (M.entry image "step") in
   let args = Option.get (M.alloc d `Device 16) in
   let t = { d; v = 0; step; args } in
@@ -181,7 +186,7 @@ let map_host_rows =
 let image_rows =
   Thumper.group "image"
     [
-      row "fill" dev (fun t -> M.unload t.d (fst (get (M.image t.d metallib))));
+      row "fill" dev (fun t -> M.unload t.d (load t.d));
       row "floor" floor floor_image;
     ]
 
@@ -230,10 +235,10 @@ let sleep_rows =
         "floor-under-load" (fun f -> floor_launch f 1);
     ]
 
-(* A launch whose argument points into 1 GiB of memory, back to back and after
-   3 s idle. On the M1 Max (macOS 26) the first submission after an idle of
-   1.2 to 3 s or more waits 20 to 80 ms while the memory is made resident
-   again; asking for residency at that submission does not shorten it. *)
+(* A launch whose argument points into 1 GiB of memory, back to back and after 3
+   s idle. On the M1 Max (macOS 26) the first submission after an idle of 1.2 to
+   3 s or more waits 20 to 80 ms while the memory is made resident again; asking
+   for residency at that submission does not shorten it. *)
 let residency_rows =
   let gib () =
     let t = dev () in

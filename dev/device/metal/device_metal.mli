@@ -135,9 +135,6 @@ val arch : t -> string
     GPU supports, such as ["Apple7"] for an M1, else its Mac family, ["Mac2"].
 *)
 
-val machine : t -> string option
-(** [machine d] is [None]: the device is this machine's. *)
-
 val budget : t -> int
 (** [budget d] is the memory, in bytes, Metal recommends the device keep
     allocated at most ([recommendedMaxWorkingSetSize]). *)
@@ -223,6 +220,10 @@ val handle : region -> nativeint
 val host : region -> nativeint option
 (** [host r] is [Some p] with [p] the host address of [r]'s first byte. *)
 
+val peer : t -> t -> bool
+(** [peer d d'] is [false]: a Mac has one GPU, and {!map_peer} maps no memory of
+    another device of it. *)
+
 val map_peer : t -> t -> region -> region option
 (** [map_peer d d' r] is [None]: a Mac has one GPU, and a region of another
     device of it is not mapped into [d].
@@ -253,10 +254,15 @@ type image
 (** The type for loaded code: a Metal library, with a compute pipeline for each
     of its functions. *)
 
-val image : t -> string -> (image * (region * string) option, string) result
+val image :
+  t ->
+  string ->
+  ( [ `Loaded of image | `Place of int * (region -> image * string) ],
+    string )
+  result
 (** [image d b] loads the metallib [b] and makes a compute pipeline, usable from
     an indirect command buffer, for each function it holds. Metal places the
-    code itself, so the result has no upload: [Ok (i, None)].
+    code itself: the result is [Ok (`Loaded i)].
 
     The result is [Error msg] if [b] is no metallib, or if Metal makes no
     pipeline of one of its functions. It releases the domain lock while Metal
