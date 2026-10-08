@@ -22,16 +22,10 @@
 
 #ifdef __METAL_VERSION__
 #include <metal_stdlib>
-#define nx_signbit metal::signbit
-#define nx_isfinite metal::isfinite
-#define nx_isnan metal::isnan
 #else
 #include <math.h>
 #include <stdint.h>
 #include <string.h>
-#define nx_signbit signbit
-#define nx_isfinite isfinite
-#define nx_isnan isnan
 #endif
 
 /* Codes and facts */
@@ -106,6 +100,15 @@ static inline float nx_bits_float(uint32_t i) {
   return f;
 }
 #endif
+
+/* The sign and NaN-ness of [f], from its bits: a compiler folds a float
+   predicate such as isnan away under -ffinite-math-only, which a kernel
+   library's flags may set. */
+static inline uint32_t nx_float_sign(float f) { return nx_float_bits(f) >> 31; }
+
+static inline int nx_float_nan(float f) {
+  return (nx_float_bits(f) & 0x7FFFFFFFu) > 0x7F800000u;
+}
 
 /* bfloat16: binary32's top half */
 
@@ -272,7 +275,7 @@ static inline uint32_t nx_mini_saturate(float f, int m, int bias,
 
 static inline uint8_t nx_float_to_e4m3fn(float f) {
   uint32_t q = nx_mini_saturate(f, 3, 7, 0x7E);
-  return (uint8_t)((nx_signbit(f) ? 0x80 : 0) | (nx_isnan(f) ? 0x7F : q));
+  return (uint8_t)((nx_float_sign(f) << 7) | (nx_float_nan(f) ? 0x7F : q));
 }
 
 static inline float nx_e4m3fn_to_float(uint8_t c) {
@@ -284,7 +287,7 @@ static inline float nx_e4m3fn_to_float(uint8_t c) {
 
 static inline uint8_t nx_float_to_e5m2(float f) {
   uint32_t q = nx_mini_saturate(f, 2, 15, 0x7B);
-  return (uint8_t)((nx_signbit(f) ? 0x80 : 0) | (nx_isnan(f) ? 0x7F : q));
+  return (uint8_t)((nx_float_sign(f) << 7) | (nx_float_nan(f) ? 0x7F : q));
 }
 
 static inline float nx_e5m2_to_float(uint8_t c) {
@@ -298,7 +301,7 @@ static inline float nx_e5m2_to_float(uint8_t c) {
 
 static inline uint8_t nx_float_to_e2m1fn(float f) {
   uint32_t q = nx_mini_saturate(f, 1, 1, 0x7);
-  return (uint8_t)(nx_isnan(f) ? 0 : (nx_signbit(f) ? 0x8 : 0) | q);
+  return (uint8_t)(nx_float_nan(f) ? 0 : (nx_float_sign(f) << 3) | q);
 }
 
 static inline float nx_e2m1fn_to_float(uint8_t c) {
@@ -457,14 +460,20 @@ static inline int64_t nx_double_to_bits(int dt, double x) {
 /* Runs
 
    The same conversions over [n] contiguous elements, where the hardware has
-   them: arm64 converts float16 in FCVTL and FCVTN, which round as the
-   scalar forms do. A sub-byte format has no run form: its elements share
-   bytes. */
+   them. arm64 widens float16 with FCVT and FCVTL, exactly. A double narrows
+   to __fp16 in one rounding: clang narrows a vector through FCVTXN (round to
+   odd) then FCVTN, gcc converts each element with FCVT from d to h. A
+   sub-byte format has no run form: its elements share bytes. */
+
+#if defined(__aarch64__)
+/* The run forms read and write uint16_t memory as __fp16. */
+typedef __fp16 __attribute__((may_alias)) nx_fp16;
+#endif
 
 static inline void nx_f16_to_double_run(const uint16_t *src, double *dst,
                                         size_t n) {
 #if defined(__aarch64__)
-  const __fp16 *h = (const __fp16 *)src;
+  const nx_fp16 *h = (const nx_fp16 *)src;
   for (size_t i = 0; i < n; i++) dst[i] = (double)h[i];
 #else
   for (size_t i = 0; i < n; i++) dst[i] = nx_f16_to_float(src[i]);
@@ -474,8 +483,7 @@ static inline void nx_f16_to_double_run(const uint16_t *src, double *dst,
 static inline void nx_double_to_f16_run(const double *src, uint16_t *dst,
                                         size_t n) {
 #if defined(__aarch64__)
-  /* A double converts to __fp16 in one rounding, FCVT from d to h. */
-  __fp16 *h = (__fp16 *)dst;
+  nx_fp16 *h = (nx_fp16 *)dst;
   for (size_t i = 0; i < n; i++) h[i] = (__fp16)src[i];
 #else
   for (size_t i = 0; i < n; i++) dst[i] = nx_double_to_f16(src[i]);
