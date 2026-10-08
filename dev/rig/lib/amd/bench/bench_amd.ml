@@ -105,6 +105,12 @@ let run t s =
 
 let part queue work = { C.Submission.queue; after = [||]; work }
 
+(* A submission whose one part, on the copy queue, places nothing: its value is
+   released by the copy queue. *)
+let on_copy t =
+  let none = B.of_bigarray Bigarray.(Array1.create int32 c_layout 0) in
+  prepare t [| part "COPY:0" (Words none) |]
+
 (* Packets *)
 
 let encode p = Packet.encode Int64.of_int p
@@ -239,20 +245,10 @@ let system_memory = 1
 (* The image of the code object as it lies in memory, at the GPU address of the
    result, copied in by the floor's copy queue. *)
 let floor_load () =
-  let co = Lazy.force code_object in
-  let o = Abi.Code_object.elf co in
-  let b = Bytes.make (Abi.Code_object.size co) '\000' in
-  let put (s : Rig_elf.section) =
-    match s.offset with
-    | Some off -> Bytes.blit_string o.file s.at b off s.length
-    | None -> ()
-  in
-  Iarray.iter put o.sections;
-  let patch (off, p) = Bytes.blit_string p 0 b off (String.length p) in
-  List.iter patch (Abi.Code_object.patches co);
-  let n = Bytes.length b in
+  let b = Abi.Code_object.image (Lazy.force code_object) in
+  let n = String.length b in
   let code = buffer gpu_memory n and staging = buffer system_memory n in
-  write staging (Bytes.unsafe_to_string b);
+  write staging b;
   floor_copy code staging n;
   code
 
@@ -263,12 +259,15 @@ let release_rows =
     let t = dev () in
     (t, prepare t [||])
   in
-  (* A part that places nothing on the copy queue, so that the submission only
-     enters it, as the floor's switch does. *)
+  (* Values released by the compute queue and the copy queue in turn, as the
+     floor's switch releases them. *)
   let switching () =
     let t = dev () in
-    let none = B.of_bigarray Bigarray.(Array1.create int32 c_layout 0) in
-    (t, prepare t [| part "COPY:0" (Words none) |], prepare t [||])
+    (t, on_copy t, prepare t [||])
+  in
+  let copying () =
+    let t = dev () in
+    (t, on_copy t)
   in
   let mapped () =
     let t = dev () in
@@ -282,6 +281,7 @@ let release_rows =
       row "switch" switching (fun (t, copy, none) ->
           run t (if t.v land 1 = 0 then copy else none));
       row "floor-switch" floor (fun _ -> floor_switch ());
+      row "copy" copying (fun (t, s) -> run t s);
       row "no-wait-100" empty (fun (t, s) ->
           for _ = 1 to 100 do
             submit t s
@@ -511,9 +511,16 @@ let wake_rows =
     let t = dev () in
     (t, prepare t [||])
   in
+  let copy () =
+    let t = dev () in
+    (t, on_copy t)
+  in
   Thumper.group "wake"
     [
       row "driver" empty (fun (t, s) ->
+          submit t s;
+          sleep t);
+      row "copy" copy (fun (t, s) ->
           submit t s;
           sleep t);
     ]
