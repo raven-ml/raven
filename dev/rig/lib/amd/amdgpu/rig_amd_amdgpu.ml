@@ -149,6 +149,13 @@ let userptr = 3
 let mmio = 4
 let alloc_kind = function `Gpu -> 0 | `Bar -> 1 | `System -> 2
 
+(* Gives back the KFD memory [handle] and the [n] addresses at [at] reserved for
+   it, then raises the failure of [step]. *)
+let undo fd handle at n step e =
+  ignore (kfd_free fd handle);
+  unmap_mem at n;
+  fault step e
+
 (* [n] bytes of [kind] at addresses reserved in the process, mapped for the GPU,
    and for the host unless they are [`Gpu]. *)
 let alloc fd g kind n : mem Amd.memory option =
@@ -167,15 +174,10 @@ let alloc fd g kind n : mem Amd.memory option =
         fault (strf "allocating %d bytes of GPU memory" n) e
     | _ ->
         let handle = get64 b 0 in
-        let undo step e =
-          ignore (kfd_free fd handle);
-          unmap_mem at n;
-          fault step e
-        in
         let e = if kind = `Gpu then 0 else map_file g.drm at n (offset b) in
-        if e < 0 then undo "mapping GPU memory" e;
+        if e < 0 then undo fd handle at n "mapping GPU memory" e;
         let e = map_gpu fd handle g.node.gpu_id true in
-        if e < 0 then undo "mapping memory for the GPU" e;
+        if e < 0 then undo fd handle at n "mapping memory for the GPU" e;
         let host = if kind = `Gpu then None else Some at in
         let data = { handle; bytes = n; at; kind = Own; owner = g } in
         Some { Amd.address = at; host; data }
