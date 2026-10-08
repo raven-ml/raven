@@ -453,6 +453,22 @@ module Tree = struct
   let device_number = device_number
   let add root file s = write (root / file) s
 
+  (* An entry of a page map: bit 63 says the page is present, bits 0-54 hold its
+     frame (proc(5), /proc/pid/pagemap). *)
+  let pagemap root ~page a frames =
+    let file = root / "proc/self/pagemap" in
+    mkdir_p (Filename.dirname file);
+    let fd = Unix.openfile file [ O_WRONLY; O_CREAT ] 0o644 in
+    Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+    let b = Bytes.create (8 * List.length frames) in
+    List.iteri
+      (fun i frame ->
+        Bytes.set_int64_le b (8 * i)
+          (Int64.logor (Int64.shift_left 1L 63) (Int64.of_int frame)))
+      frames;
+    ignore (Unix.lseek fd (Int.div a page * 8) SEEK_SET);
+    ignore (Unix.write fd b 0 (Bytes.length b))
+
   let link root file target =
     mkdir_p (Filename.dirname (root / file));
     Unix.symlink target (root / file)

@@ -21,12 +21,14 @@ val reserve : base:int -> int -> unit
 (** [reserve ~base n] reserves [n] addresses from [base] once per range, for
     {!alloc} and {!map} only. *)
 
-val alloc : ?contiguous:bool -> ?va:int -> int -> Window.t * int list
-(** [alloc n] is [n] bytes, rounded up to {!page}, of new, zeroed, locked
-    memory, with the physical address of each page, pinned until {!free}. At
-    [va], or where the system chooses. [~contiguous:true] memory larger than a
-    page is one 2 MiB huge page. [va] and the bytes mapped there lie in a range
-    {!reserve} reserved, as {!Function.alloc_dma} checks. *)
+val alloc :
+  ?contiguous:bool -> ?va:int -> root:string -> int -> Window.t * int list
+(** [alloc ~root n] is [n] bytes, rounded up to {!page}, of new, zeroed, locked
+    memory, with the physical address of each page, pinned until {!free}, read
+    from [proc/self/pagemap] under the machine's root [root]. At [va], or where
+    the system chooses. [~contiguous:true] memory larger than a page is one 2
+    MiB huge page. [va] and the bytes mapped there lie in a range {!reserve}
+    reserved, as {!Function.alloc_dma} checks. *)
 
 val map : ?va:int -> int -> Window.t
 (** [map n] is {!alloc}'s memory, neither locked nor read for its addresses. *)
@@ -34,9 +36,10 @@ val map : ?va:int -> int -> Window.t
 val free : Window.t -> unit
 (** [free w] releases {!alloc} or {!map} memory, with {!alloc}'s pins. *)
 
-val pin : int -> int -> int list
-(** [pin a n] locks the [n] bytes at [a] and is their pages' physical addresses.
-    Pins are counted per page across the process. *)
+val pin : root:string -> int -> int -> int list
+(** [pin ~root a n] locks the [n] bytes at [a] and is their pages' physical
+    addresses, read as {!alloc} reads them. Pins are counted per page across the
+    process. *)
 
 val unpin : int -> int -> unit
 (** [unpin a n] drops one pin of each page of the [n] bytes at [a], which {!pin}

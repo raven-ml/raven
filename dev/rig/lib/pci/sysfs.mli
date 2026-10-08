@@ -38,6 +38,9 @@ val bars : t -> string -> (int * int) option array
     as at the upper index of a 64-bit BAR. Raises {!Fail.Failed} if a file
     cannot be read. *)
 
+val root : t -> string
+(** [root m] is the directory {!v} took. *)
+
 val path : t -> string -> string -> string
 (** [path m bus file] is the file [file] of the function at [bus]. *)
 

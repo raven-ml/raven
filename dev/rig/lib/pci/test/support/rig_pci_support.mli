@@ -246,6 +246,11 @@ module Tree : sig
   (** [add root file s] writes [s] to [file], a path from the tree [root],
       making its directories. *)
 
+  val pagemap : string -> page:int -> int -> int list -> unit
+  (** [pagemap root ~page a frames] writes the tree's [proc/self/pagemap]
+      entries of the pages from [a] on, one present page per frame of [frames],
+      each page [page] bytes. The file is sparse. *)
+
   val link : string -> string -> string -> unit
   (** [link root file target] makes [file], a path from the tree [root], a link
       to [target], making its directories. *)

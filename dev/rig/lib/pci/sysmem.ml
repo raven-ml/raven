@@ -56,32 +56,35 @@ let pages_of a n = List.init ((n + page - 1) / page) (fun i -> a + (i * page))
 (* Physical addresses *)
 
 (* Locked pages stay at the physical address the process read for them only
-   while the kernel does not compact them. The setting is read until it reads 0
-   once: turning it back on while the process runs is not seen. *)
-let setting = "/proc/sys/vm/compact_unevictable_allowed"
-let checked = Atomic.make false
+   while the kernel does not compact them. The setting is read under the
+   machine's root [root] until it reads 0 once: turning it back on while the
+   process runs is not seen. *)
+let setting = "proc/sys/vm/compact_unevictable_allowed"
+let checked = Atomic.make []
 
-let check_setting () =
-  if not (Atomic.get checked) then begin
+let rec check_setting root =
+  let seen = Atomic.get checked in
+  if not (List.mem root seen) then begin
+    let file = Filename.concat root setting in
     let value =
-      try In_channel.with_open_text setting In_channel.input_all |> String.trim
+      try In_channel.with_open_text file In_channel.input_all |> String.trim
       with Sys_error _ -> "0"
     in
     if value <> "0" then
       Fail.fail
         "the kernel may move locked pages (%s is %s); forbid it: sudo sysctl \
          -w vm.compact_unevictable_allowed=0"
-        setting value;
-    Atomic.set checked true
+        file value;
+    if not (Atomic.compare_and_set checked seen (root :: seen)) then
+      check_setting root
   end
 
 (* The page-map entries of the [pages] pages from [a], 8 bytes each. The kernel
    walks the page tables for what is read: a channel, which reads 64 KiB ahead,
    would make it walk 32 MiB of them to pin one page. [Unix.read] reads at most
    64 KiB a call and releases the runtime for each. *)
-let pagemap_file = "/proc/self/pagemap"
-
-let pagemap a pages =
+let pagemap root a pages =
+  let pagemap_file = Filename.concat root "proc/self/pagemap" in
   let n = 8 * pages and b = Bytes.create (8 * pages) in
   let read fd =
     ignore (Unix.lseek fd (a / page * 8) SEEK_SET);
@@ -107,10 +110,10 @@ let pagemap a pages =
    the privilege. *)
 let frame_mask = 0x7F_FFFF_FFFF_FFFFL
 
-let physical a n =
-  check_setting ();
+let physical root a n =
+  check_setting root;
   let count = (n + page - 1) / page in
-  let map = pagemap a count in
+  let map = pagemap root a count in
   List.init count (fun i ->
       let frame =
         Int64.to_int (Int64.logand (String.get_int64_le map (8 * i)) frame_mask)
@@ -140,7 +143,7 @@ let drop_pins a n =
       | k -> Tables.Address.replace pins p (k - 1))
     (pages_of a n)
 
-let pin a n =
+let pin ~root a n =
   Mutex.protect lock (fun () ->
       (match lock_at a n with
       | () -> ()
@@ -150,7 +153,7 @@ let pin a n =
       | exception Unix.Unix_error (e, _, _) ->
           Fail.fail "locking %d bytes for a GPU: %s" n (Unix.error_message e));
       add_pins a n);
-  match physical a n with
+  match physical root a n with
   | addresses -> addresses
   | exception e ->
       Mutex.protect lock (fun () -> drop_pins a n);
@@ -188,12 +191,12 @@ let map ?va n =
   let n = round_page n in
   Window.v (map_bytes ?va n ~huge:false ~locked:false) n
 
-let alloc ?(contiguous = false) ?va n =
+let alloc ?(contiguous = false) ?va ~root n =
   let huge_page = contiguous && n > page in
   let n = if huge_page then huge else round_page n in
   let a = map_bytes ?va n ~huge:huge_page ~locked:true in
   let pages =
-    try physical a n
+    try physical root a n
     with e ->
       unmap a n;
       raise e

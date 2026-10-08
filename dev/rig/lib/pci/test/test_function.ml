@@ -1516,22 +1516,33 @@ let tree_files =
 (* Locked system memory
 
    Functions of a machine in a fixture tree, taken physically, reach this
-   process's memory as GPUs of this machine do. Locking memory and reading its
-   physical addresses need privileges: a test the machine refuses them skips
-   with the reason. *)
+   process's memory as GPUs of this machine do, at the physical addresses the
+   tree's page map gives. Locking memory needs the locked-memory limit: a test
+   the machine refuses it skips with the reason. *)
 
-(* [with_fixtures n f] is [f fns], [fns] the [n] functions of a fixture machine,
-   taken. *)
+(* [with_fixtures n f] is [f root fns], [fns] the [n] functions of a fixture
+   machine at [root], taken. *)
 let with_fixtures n f =
   if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
   let buses = List.init n (fun i -> strf "0000:%02x:00.0" (3 + i)) in
-  let m = Machine.at (Tree.make (List.map Tree.gpu buses)) in
+  let root = Tree.make (List.map Tree.gpu buses) in
+  let m = Machine.at root in
   let fns = List.map (fun bus -> require_ok (Function.take m bus)) buses in
   Fun.protect
     ~finally:(fun () -> List.iter Function.release fns)
-    (fun () -> f fns)
+    (fun () -> f root fns)
 
-let with_fixture f = with_fixtures 1 (fun fns -> f (List.hd fns))
+let with_fixture f = with_fixtures 1 (fun root fns -> f root (List.hd fns))
+
+(* Frames the fixture's page map gives the [n] bytes at [a]: one per page, from
+   a frame no other range of a test uses. *)
+let frames root a n =
+  let page = Machine.page Machine.this in
+  let first = 0x10_0000 + (a / page land 0xffff) in
+  let fs = List.init ((n + page - 1) / page) (fun i -> first + i) in
+  Tree.pagemap root ~page a fs;
+  List.map (fun f -> f * page) fs
+
 let granted = function Ok x -> x | Error why -> skip ~reason:why ()
 
 (* The kibibytes of the process's memory Linux keeps locked. *)
@@ -1548,12 +1559,15 @@ let locked_kib () =
 (* DMA memory stays locked through a pin and an unpin of it, which another
    function's mapping of it makes. *)
 let test_dma_locked () =
-  with_fixture @@ fun f ->
-  let w, runs = granted (Function.alloc_dma f mib) in
-  let page = Machine.page Machine.this in
-  equal ~msg:"a run per page" (list int)
-    (List.init (mib / page) (fun _ -> page))
-    (List.map snd runs);
+  with_fixture @@ fun root f ->
+  granted (Machine.reserve (Function.machine f) ~base:free_base (8 * mib));
+  let va = free_base and page = Machine.page Machine.this in
+  let pas = frames root va mib in
+  let w, runs = granted (Function.alloc_dma ~va f mib) in
+  equal ~msg:"a run per page, at the page map's frames"
+    (list (pair hex int))
+    (List.map (fun pa -> (pa, page)) pas)
+    runs;
   equal ~msg:"zeroed" string (String.make mib '\000') (Window.read w 0 mib);
   let locked = locked_kib () in
   at_least ~msg:"locked" int ~than:1024 locked;
@@ -1564,10 +1578,11 @@ let test_dma_locked () =
   equal ~msg:"unlocked once freed" int (locked - 1024) (locked_kib ())
 
 let test_counted_pins () =
-  with_fixtures 2 @@ fun fns ->
+  with_fixtures 2 @@ fun root fns ->
   let f, g = (List.nth fns 0, List.nth fns 1) in
   let page = Machine.page Machine.this in
   let a = round_up (memory (2 * page)) page in
+  ignore (frames root a page);
   ignore (granted (Function.pin f a page));
   let pinned = locked_kib () in
   ignore (pin g a page);
@@ -1579,9 +1594,10 @@ let test_counted_pins () =
     (locked_kib ())
 
 let test_contiguous () =
-  with_fixture @@ fun f ->
+  with_fixture @@ fun root f ->
   granted (Machine.reserve (Function.machine f) ~base:free_base (8 * mib));
   let va = free_base + (2 * mib) in
+  ignore (frames root va (2 * mib));
   let w, runs =
     granted (Function.alloc_dma ~contiguous:true ~va f (300 * kib))
   in

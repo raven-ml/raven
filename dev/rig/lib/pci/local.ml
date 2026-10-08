@@ -195,7 +195,9 @@ let runs ~contiguous n = function
 let alloc_dma t ~contiguous ~va n =
   match t.container with
   | None ->
-      let w, pages = Sysmem.alloc ~contiguous ?va n in
+      let w, pages =
+        Sysmem.alloc ~contiguous ?va ~root:(Sysfs.root t.files) n
+      in
       (w, runs ~contiguous (Window.length w) pages)
   | Some c -> (
       let w = Sysmem.map ?va n in
@@ -214,7 +216,7 @@ let free_dma t w =
 
 let pin t a n =
   match t.container with
-  | None -> runs ~contiguous:false n (Sysmem.pin a n)
+  | None -> runs ~contiguous:false n (Sysmem.pin ~root:(Sysfs.root t.files) a n)
   | Some c ->
       let n = round_page n in
       [ (Vfio.map_dma "pin" t.bus c a n, n) ]
