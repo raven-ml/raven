@@ -567,6 +567,12 @@ let block t n =
   | None when align > page -> take t pool n
   | found -> found
 
+(* Gives back the addresses at [va] and the blocks [pages] of an allocation that
+   failed. *)
+let give_back t va pages =
+  Option.iter (List.iter (fun (pa, _) -> pfree t pa)) pages;
+  Space.free t.space va
+
 let alloc ?(uncached = false) ?(contiguous = false) t n =
   if n <= 0 then
     invalid_argf "Page_table.alloc: %d bytes, expected more than 0" n;
@@ -580,18 +586,14 @@ let alloc ?(uncached = false) ?(contiguous = false) t n =
           if contiguous then Option.map (fun pa -> [ (pa, n) ]) (block t n)
           else blocks t n
         in
-        let give_back () =
-          Option.iter (List.iter (fun (pa, _) -> pfree t pa)) pages;
-          Space.free t.space va
-        in
         match Option.bind pages (map ~uncached t ~va Gpu) with
         | Some _ as m -> m
         | None ->
-            give_back ();
+            give_back t va pages;
             None
         | exception e ->
             let bt = Printexc.get_raw_backtrace () in
-            give_back ();
+            give_back t va pages;
             Printexc.raise_with_backtrace e bt)
 
 let free t (m : mapping) =

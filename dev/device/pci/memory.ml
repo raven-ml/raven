@@ -58,6 +58,11 @@ let small_bar m = m.bar_size < Page_table.memory m.tables
 
 (* Allocating *)
 
+(* Gives back system memory [view] at [va] that the GPU could not map. *)
+let give_back m view va =
+  Function.free_dma m.fn view;
+  Space.free (Page_table.space m.tables) va
+
 (* System memory at the same address for the process and the GPU. *)
 let system m n =
   let page = Machine.page (Function.machine m.fn) in
@@ -74,21 +79,17 @@ let system m n =
           Space.free space va;
           Error why
       | Ok (view, runs) -> (
-          let give_back () =
-            Function.free_dma m.fn view;
-            Space.free space va
-          in
           match
             Page_table.map ~snooped:true ~uncached:true m.tables ~va System runs
           with
           | Some mapping ->
               Ok (Some { mapping; host = Some view; source = Allocated })
           | None ->
-              give_back ();
+              give_back m view va;
               Ok None
           | exception e ->
               let bt = Printexc.get_raw_backtrace () in
-              give_back ();
+              give_back m view va;
               Printexc.raise_with_backtrace e bt))
 
 (* The GPU's memory, one block the process reaches through the BAR when [bar],
