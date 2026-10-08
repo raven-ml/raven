@@ -45,7 +45,8 @@
     kind is unknown or not expected from its sender, whose payload is malformed,
     or that names an id of no object of the job or of another kind than it
     needs, fails the job; so does one longer than the receiving process can
-    hold.
+    hold. Frames carry no integrity check: the handshake admits the processes,
+    and the job trusts the network between them.
 
     {v
      kind  name      sent by     payload
