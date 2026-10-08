@@ -7,10 +7,7 @@ let strf = Printf.sprintf
 
 external page_size : unit -> int = "caml_rig_pci_page_size"
 external reserve_at : int -> int -> unit = "caml_rig_pci_reserve"
-
-external map_at : int -> int -> bool -> bool -> int
-  = "caml_rig_pci_sysmem_map"
-
+external map_at : int -> int -> bool -> bool -> int = "caml_rig_pci_sysmem_map"
 external release_at : int -> int -> unit = "caml_rig_pci_sysmem_release"
 external unmap_at : int -> int -> unit = "caml_rig_pci_sysmem_unmap"
 external lock_at : int -> int -> unit = "caml_rig_pci_sysmem_lock"
@@ -19,10 +16,10 @@ external unlock_at : int -> int -> unit = "caml_rig_pci_sysmem_unlock"
 let page = page_size ()
 let round_page n = (n + page - 1) / page * page
 
-(* The huge page of x86-64 and of arm64 with 4 KiB pages, which contiguous
-   memory larger than a page is: one entry of the second-level page table maps
-   512 pages of 4 KiB. arm64 with 16 or 64 KiB pages has larger huge pages,
-   which this library does not use. *)
+(* The huge page contiguous memory larger than a page is: one entry of the
+   second-level page table of x86-64 and of arm64 with 4 KiB pages maps 512
+   pages of 4 KiB. arm64 with 16 or 64 KiB pages has larger default huge pages,
+   and 2 MiB ones too, which the library asks for by their size. *)
 let huge = 2 lsl 20
 
 (* The ranges [reserve] reserved, and pins, counted per page across the process:

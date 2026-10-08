@@ -19,14 +19,18 @@
 #include <caml/threads.h>
 #include <caml/unixsupport.h>
 
-#ifndef _WIN32
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <unistd.h>
 #endif
 
 value caml_rig_pci_page_size(value unit) {
   (void)unit;
 #ifdef _WIN32
-  return Val_long(4096);
+  SYSTEM_INFO info;
+  GetSystemInfo(&info);
+  return Val_long(info.dwPageSize);
 #else
   return Val_long(sysconf(_SC_PAGESIZE));
 #endif
@@ -39,6 +43,14 @@ value caml_rig_pci_page_size(value unit) {
 #ifndef MAP_FIXED_NOREPLACE
 #define MAP_FIXED_NOREPLACE 0x100000
 #endif
+
+/* A huge page of 2 MiB, asked for by its size: MAP_HUGETLB alone takes the
+   system's default huge page, which is larger on arm64 with 16 or 64 KiB pages
+   (mmap(2), MAP_HUGE_2MB in <linux/mman.h>). */
+#ifndef MAP_HUGE_SHIFT
+#define MAP_HUGE_SHIFT 26
+#endif
+#define HUGE_2MB (21 << MAP_HUGE_SHIFT)
 
 #define PTR(v) ((void *)Long_val(v))
 
@@ -118,7 +130,7 @@ value caml_rig_pci_sysmem_map(value va, value n, value huge, value locked) {
   void *at = PTR(va);
   int flags = MAP_SHARED | MAP_ANONYMOUS | MAP_POPULATE |
               (Bool_val(locked) ? MAP_LOCKED : 0) | (at ? MAP_FIXED : 0) |
-              (Bool_val(huge) ? MAP_HUGETLB : 0);
+              (Bool_val(huge) ? MAP_HUGETLB | HUGE_2MB : 0);
   void *p = map_released(at, Long_val(n), PROT_READ | PROT_WRITE, flags);
   if (p == MAP_FAILED) caml_uerror("mmap", Nothing);
   return Val_long((intnat)p);
