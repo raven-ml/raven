@@ -15,13 +15,20 @@
     with {!waves} and {!clock}. The program is the one Mesa writes for a compute
     queue, register by register. Engines are numbered across dies: engine [e] is
     engine [e mod g.shader_engines] of die [e / g.shader_engines], for
-    [0 <= e < g.shader_engines * g.xccs]. *)
+    [0 <= e < g.shader_engines * g.xccs].
+
+    The programs take the GPU's work-group processors that run work as
+    {!Capability.t}'s [wgps] gives them: [wgps.(e).(a)] for shader array [a] of
+    engine [e]. An engine whose arrays are all [0], harvested, is neither traced
+    nor awaited, and its end is not stored. *)
 
 (** {1:recording Recording} *)
 
-val start : Gpu.t -> size:int -> (int -> 'v) -> 'v Packet.t
-(** [start g ~size buffer] starts tracing on every shader engine of [g], engine
-    [e] writing at most [size] bytes into its buffer at address [buffer e]. Each
+val start :
+  Gpu.t -> wgps:int array array -> size:int -> (int -> 'v) -> 'v Packet.t
+(** [start g ~wgps ~size buffer] starts tracing on every shader engine of [g]
+    whose arrays run work ([wgps]), engine [e] writing at most [size] bytes into
+    its buffer at address [buffer e]. Each
     engine traces the compute waves of one unit of its first shader array: every
     SIMD of its first compute unit on GFX9, the first SIMD of its first
     workgroup processor on GFX11 on. Engines [0] and [1] alone trace the
@@ -29,13 +36,15 @@ val start : Gpu.t -> size:int -> (int -> 'v) -> 'v Packet.t
 
     [size] and every [buffer e] are multiples of 4096. Raises [Invalid_argument]
     if [size] is not a multiple of 4096 from 4096 to 2{^ 22} - 1 pages of 4096
-    bytes, the most an engine's 22-bit size field holds. *)
+    bytes, the most an engine's 22-bit size field holds, or if [wgps] does not
+    hold [g.shader_engines * g.xccs] engines. *)
 
-val stop : Gpu.t -> (int -> 'v) -> 'v Packet.t
-(** [stop g ends] stops tracing on every shader engine of [g], waits until each
-    has written its trace out, then stores where engine [e]'s trace ends, a
-    32-bit word, to address [ends e], confirmed before the next packet starts.
-    {!length} reads that word. *)
+val stop : Gpu.t -> wgps:int array array -> (int -> 'v) -> 'v Packet.t
+(** [stop g ~wgps ends] stops tracing on every shader engine of [g] whose
+    arrays run work ([wgps]), waits until each has written its trace out, then
+    stores where engine [e]'s trace ends, a 32-bit word, to address [ends e],
+    confirmed before the next packet starts. {!length} reads that word. Raises [Invalid_argument]
+    if [wgps] does not hold [g.shader_engines * g.xccs] engines. *)
 
 val length : Gpu.t -> buffer:int -> int -> int
 (** [length g ~buffer w] is the bytes a shader engine of [g] wrote into its

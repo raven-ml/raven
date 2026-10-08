@@ -50,8 +50,10 @@ let read_tables () =
       ignore (Sys.opaque_identity (Scratch.descriptor g ~base:0 0));
       ignore (Sys.opaque_identity (Pm4.run g []));
       ignore (Sys.opaque_identity (Sdma.copy g ~dst:0 ~src:0 1));
-      ignore (Sys.opaque_identity (Thread_trace.start g ~size:4096 Fun.id));
-      ignore (Sys.opaque_identity (Thread_trace.stop g Fun.id));
+      let wgps = S.harvest_none g in
+      ignore
+        (Sys.opaque_identity (Thread_trace.start g ~wgps ~size:4096 Fun.id));
+      ignore (Sys.opaque_identity (Thread_trace.stop g ~wgps Fun.id));
       ignore
         (Sys.opaque_identity (Thread_trace.waves g (String.make 64 '\001'))))
     S.families

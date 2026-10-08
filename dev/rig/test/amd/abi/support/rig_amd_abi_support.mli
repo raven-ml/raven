@@ -25,6 +25,11 @@ val gpu :
 (** [gpu gc] is a GPU of GC [gc]: target [gc], SDMA 6.0.0, one die of 4 shader
     engines and 32 compute units of 32 scratch slots, unless said otherwise. *)
 
+val harvest_none : Gpu.t -> int array array
+(** [harvest_none g] is [g]'s work-group processors as a capability gives them
+    ({!Capability.t}), with no engine harvested: one array of one processor in
+    each engine. *)
+
 val families : Gpu.version list
 (** [families] is the GC versions the register tables define. *)
 

@@ -77,11 +77,17 @@ let grbm g ?se () =
 let on_dies (g : Gpu.t) xcc_mask p =
   if g.xccs > 1 then Pm4.pred_exec ~xcc_mask p else p
 
-(* The engines of every die, each with its die's mask and its number there. *)
-let engines (g : Gpu.t) f =
+(* The engines of every die that run work, each with its die's mask and its
+   number there: an engine whose arrays all run no work, harvested, is skipped,
+   as Mesa's ac_sqtt_se_is_disabled. *)
+let engines (g : Gpu.t) ~wgps f =
   List.concat
     (List.init (g.shader_engines * g.xccs) (fun e ->
-         on_dies g (1 lsl (e / g.shader_engines)) (f e (e mod g.shader_engines))))
+         if Array.for_all (( = ) 0) wgps.(e) then []
+         else
+           on_dies g
+             (1 lsl (e / g.shader_engines))
+             (f e (e mod g.shader_engines))))
 
 (* A packet of known values, as constant words of any packet. *)
 let known (p : int Packet.t) =
@@ -168,7 +174,7 @@ let excluded e =
           sq_tt_token_exclude_inst_shift;
         ]
 
-let start_gfx11 g ~size buffer =
+let start_gfx11 g ~wgps ~size buffer =
   let base e shift = Shift (Value (buffer e), shift) in
   let gfx12 = major g >= 12 in
   (* BUF0_SIZE before the base: "order seems important". *)
@@ -184,7 +190,7 @@ let start_gfx11 g ~size buffer =
       write g "SQ_THREAD_TRACE_BUF0_SIZE" [ W32 (Or (base e high_shift, size)) ]
       @ write g "SQ_THREAD_TRACE_BUF0_BASE" [ W32 (base e page_shift) ]
   in
-  engines g (fun e se ->
+  engines g ~wgps (fun e se ->
       grbm g ~se () @ buffer_words e
       @ set g "SQ_THREAD_TRACE_MASK"
           [
@@ -230,9 +236,9 @@ let gfx9_mode ~on =
     ("tc_perf_en", 1);
   ]
 
-let start_gfx9 g ~size buffer =
+let start_gfx9 g ~wgps ~size buffer =
   let base e shift = W32 (Shift (Value (buffer e), shift)) in
-  engines g (fun e se ->
+  engines g ~wgps (fun e se ->
       let tokens =
         if itraced e then gfx9_tokens
         else gfx9_tokens land lnot gfx9_instruction_tokens
@@ -264,25 +270,33 @@ let start_gfx9 g ~size buffer =
       @ set g "SQ_THREAD_TRACE_STATUS" [ ("utc_error", 0) ]
       @ set g "SQ_THREAD_TRACE_MODE" (gfx9_mode ~on:true))
 
-let start_program g ~size buffer =
+let start_program g ~wgps ~size buffer =
   let program =
-    if major g = 9 then start_gfx9 g ~size buffer
-    else start_gfx11 g ~size buffer
+    if major g = 9 then start_gfx9 g ~wgps ~size buffer
+    else start_gfx11 g ~wgps ~size buffer
   in
   Pm4.acquire_mem g System @ sqg_events g ~on:true @ program @ grbm g ()
   @ set g "COMPUTE_THREAD_TRACE_ENABLE" [ ("thread_trace_enable", 1) ]
   @ Pm4.acquire_mem g System
 
-let start (g : Gpu.t) ~size buffer =
+(* An engine count the harvest does not cover is the caller's mistake. *)
+let check_wgps fn (g : Gpu.t) wgps =
+  let n = g.shader_engines * g.xccs in
+  if Array.length wgps <> n then
+    invalid_argf "Thread_trace.%s: wgps covers %d engines, expected %d" fn
+      (Array.length wgps) n
+
+let start (g : Gpu.t) ~wgps ~size buffer =
+  check_wgps "start" g wgps;
   if size <= 0 || size mod page <> 0 || size > max_size then
     invalid_argf
       "Thread_trace.start: size %d, expected a multiple of 4096 from 4096 to %d"
       size max_size;
-  try start_program g ~size buffer
+  try start_program g ~wgps ~size buffer
   with Missing r ->
     invalid_argf "Thread_trace.start: %s has no reg%s" (gc_name g) r
 
-let stop_program g ends =
+let stop_program g ~wgps ends =
   let status = register g "SQ_THREAD_TRACE_STATUS" in
   let wptr = Register.address g (register g "SQ_THREAD_TRACE_WPTR") in
   (* Until the status's [field] compares to [v] as [cmp] says. *)
@@ -304,12 +318,14 @@ let stop_program g ends =
   Pm4.acquire_mem g System
   @ set g "COMPUTE_THREAD_TRACE_ENABLE" [ ("thread_trace_enable", 0) ]
   @ Pm4.event_write Thread_trace_finish
-  @ engines g (fun e se ->
-      grbm g ~se () @ finished @ Pm4.copy_data Confirmed (Counter wptr) (ends e))
+  @ engines g ~wgps (fun e se ->
+      grbm g ~se () @ finished
+      @ Pm4.copy_data Confirmed (Counter wptr) (ends e))
   @ grbm g () @ sqg_events g ~on:false @ Pm4.acquire_mem g System
 
-let stop g ends =
-  try stop_program g ends
+let stop g ~wgps ends =
+  check_wgps "stop" g wgps;
+  try stop_program g ~wgps ends
   with Missing r ->
     invalid_argf "Thread_trace.stop: %s has no reg%s" (gc_name g) r
 

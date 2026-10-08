@@ -17,8 +17,9 @@ let timeout = S.timeout
 let program g =
   S.pm4 g
     (S.encode
-       (Thread_trace.start g ~size:0x10_0000 (fun e -> (e + 1) lsl 20)
-       @ Thread_trace.stop g (fun e -> 0x1000 + (8 * e))))
+       (let wgps = S.harvest_none g in
+        Thread_trace.start g ~wgps ~size:0x10_0000 (fun e -> (e + 1) lsl 20)
+        @ Thread_trace.stop g ~wgps (fun e -> 0x1000 + (8 * e))))
 
 let programs =
   group ~timeout "programs"

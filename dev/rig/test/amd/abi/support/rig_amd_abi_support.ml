@@ -15,6 +15,8 @@ let gpu ?target ?(sdma = (6, 0, 0)) ?(xccs = 1) ?(shader_engines = 4)
   let target = Option.value ~default:gc target in
   { Gpu.target; gc; sdma; xccs; shader_engines; compute_units; scratch_slots }
 
+let harvest_none (g : Gpu.t) = Array.make (g.shader_engines * g.xccs) [| 1 |]
+
 let families = [ (9, 4, 3); (11, 0, 0); (11, 0, 3); (11, 5, 0); (12, 0, 0) ]
 let version (a, b, c) = strf "%d.%d.%d" a b c
 

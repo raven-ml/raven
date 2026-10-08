@@ -84,6 +84,9 @@ let uses g (p : int Packet.t) =
 
 let engines (g : Gpu.t) = List.init (g.shader_engines * g.xccs) Fun.id
 
+let start g = Thread_trace.start g ~wgps:(S.harvest_none g)
+let stop g = Thread_trace.stop g ~wgps:(S.harvest_none g)
+
 (* The uses an engine's number must have: its die's predication on a GPU of
    several dies, and its engine selected. *)
 let expected (g : Gpu.t) e =
@@ -128,6 +131,37 @@ let engine_law name program =
         (engines g);
       List.iter (fun u -> less int ~than:(List.length (engines g)) u.engine) us)
 
+(* An engine whose arrays all run no work, harvested, is neither programmed nor
+   awaited: its die's other engines are, each as [engine_law] states. *)
+let harvested name program =
+  let gen =
+    Gen.with_pp
+      (fun ppf ((g : Gpu.t), off) ->
+        Format.fprintf ppf "GC %s, %d dies of %d engines, %s off"
+          (S.version g.gc) g.xccs g.shader_engines
+          (String.concat " " (List.map string_of_int off)))
+      (let open Gen in
+       let* g = traced in
+       let n = g.shader_engines * g.xccs in
+       let+ off = list ~size:(int_range 1 n) (int_range 0 (n - 1)) in
+       (g, List.sort_uniq compare off))
+  in
+  prop ~timeout name gen (fun (g, off) ->
+      let wgps =
+        Array.init (g.shader_engines * g.xccs) (fun e ->
+            if List.mem e off then [| 0; 0 |] else [| 0; 1 |])
+      in
+      cover "every engine off" (List.length off = g.shader_engines * g.xccs);
+      let us = uses g (program g wgps) in
+      List.iter
+        (fun e ->
+          let mine = List.filter (fun u -> u.engine = e) us in
+          if List.mem e off then
+            equal int ~msg:(strf "uses of harvested engine %d" e) 0
+              (List.length mine)
+          else if mine = [] then failf "engine %d is unused" e)
+        (engines g))
+
 (* The GC versions whose trace programs differ in their size register: GFX9's
    SQ_THREAD_TRACE_SIZE, GFX11's BUF0_SIZE beside the address's top bits,
    GFX12's BUF0_SIZE alone. Each field is 22 bits of 4096-byte pages. *)
@@ -145,7 +179,7 @@ let size_field (g : Gpu.t) size =
   in
   let r = Option.get (Register.find g name) in
   let lo, hi = List.assoc "size" r.fields in
-  let ws = S.encode (Thread_trace.start g ~size (fun _ -> 0)) in
+  let ws = S.encode (start g ~size (fun _ -> 0)) in
   let v = List.assoc (Register.address g r) (S.writes ws) in
   (v lsr lo) land ((1 lsl (hi - lo + 1)) - 1)
 
@@ -153,9 +187,13 @@ let recording =
   group ~timeout "recording"
     [
       engine_law "a start programs each engine's buffer on that engine"
-        (fun g -> Thread_trace.start g ~size:4096 Fun.id);
+        (fun g -> start g ~size:4096 Fun.id);
       engine_law "a stop stores each engine's end from that engine" (fun g ->
-          Thread_trace.stop g Fun.id);
+          stop g Fun.id);
+      harvested "a start programs no engine whose arrays run no work"
+        (fun g wgps -> Thread_trace.start g ~wgps ~size:4096 Fun.id);
+      harvested "a stop awaits no engine whose arrays run no work"
+        (fun g wgps -> Thread_trace.stop g ~wgps Fun.id);
       prop "a start and a stop acquire every cache before and after" traced
         (fun g ->
           let acquire = S.encode (Pm4.acquire_mem g System) in
@@ -170,17 +208,17 @@ let recording =
                 ( List.filteri (fun i _ -> i < n) ws,
                   List.filteri (fun i _ -> i >= k - n) ws ))
             [
-              (fun g -> Thread_trace.start g ~size:4096 (fun _ -> 0));
-              (fun g -> Thread_trace.stop g (fun _ -> 0));
+              (fun g -> start g ~size:4096 (fun _ -> 0));
+              (fun g -> stop g (fun _ -> 0));
             ]);
       cases ~name:string_of_int "a size of no whole pages is refused"
         [ min_int; -4096; 0; 1; 4095; 4097 ] (fun size ->
           raises_match (Exn.invalid_arg ~substring:"Thread_trace.start")
-            (fun () -> Thread_trace.start (gpu (11, 0, 0)) ~size (fun _ -> 0)));
+            (fun () -> start (gpu (11, 0, 0)) ~size (fun _ -> 0)));
       cases ~name:string_of_int "a size of whole pages is taken"
         [ 4096; 1 lsl 30 ]
         (fun size ->
-          let p = Thread_trace.start (gpu (11, 0, 0)) ~size (fun _ -> 0) in
+          let p = start (gpu (11, 0, 0)) ~size (fun _ -> 0) in
           greater int ~than:0 (Packet.size p));
       cases
         ~name:(fun (g, size) -> strf "GC %s, %d" (S.version g.Gpu.gc) size)
@@ -190,7 +228,7 @@ let recording =
            trace_families)
         (fun (g, size) ->
           raises_match (Exn.invalid_arg ~substring:"Thread_trace.start")
-            (fun () -> Thread_trace.start g ~size (fun _ -> 0)));
+            (fun () -> start g ~size (fun _ -> 0)));
       cases
         ~name:(fun (g, size) -> strf "GC %s, %d" (S.version g.Gpu.gc) size)
         "a size up to 2^22 - 1 pages is the size field's pages"
