@@ -28,7 +28,7 @@ let take machine bus =
     match Machine.failed machine with
     | Some why -> Error why
     | None when Option.is_none (Bus_address.numbers bus) ->
-        Error (strf "%S is no PCI bus address" bus)
+        Error (strf "%S is no PCI bus address, expected DDDD:BB:DD.F" bus)
     | None -> Machine.take machine bus
   in
   Result.map
@@ -49,9 +49,7 @@ let machine f = f.machine
 let bus f = f.bus
 let addressing f = f.fn.addressing
 let released f = f.released
-
-let live f fn =
-  if f.released then invalid_argf "Function.%s: %s is released" fn f.bus
+let live f fn = if f.released then Fail.err_released fn f.bus
 
 let release f =
   if not f.released then begin
@@ -74,7 +72,9 @@ let config_size = 4096
 let in_config f fn off n =
   live f fn;
   if off < 0 || off > config_size - n then
-    invalid_argf "Function.%s: byte %d outside configuration space" fn off
+    invalid_argf
+      "Function.%s: %d bytes at %d outside the %d bytes of configuration space"
+      fn n off config_size
 
 let config8 f off =
   in_config f "config8" off 1;
@@ -213,7 +213,9 @@ let alloc_dma ?(contiguous = false) ?va f n =
           "Function.alloc_dma: 0x%x is not on 2 MiB, which a huge page needs" va;
       if not (Machine.reserved f.machine va mapped) then
         invalid_argf
-          "Function.alloc_dma: 0x%x is in no range Machine.reserve reserved" va);
+          "Function.alloc_dma: %d bytes at 0x%x lie in no range \
+           Machine.reserve reserved"
+          mapped va);
   let* ((w, _) as dma) = f.fn.alloc_dma ~contiguous ~va n in
   Mutex.protect f.lock (fun () -> Hashtbl.add f.dmas w ());
   Ok dma

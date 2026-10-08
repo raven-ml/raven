@@ -209,8 +209,6 @@ let state m bus =
     locked_down = locked_down m;
   }
 
-let bind_vfio bus = strf "sudo driverctl set-override %s vfio-pci" bus
-
 (* Bridges are held by pcieport, which VFIO accepts. *)
 let group_holders m g =
   match Sys.readdir (strf "%s/%s/devices" m.groups g) with
@@ -231,17 +229,16 @@ let addressing m bus s =
   | { driver = Some d; _ } when d <> vfio_pci ->
       Error
         (strf
-           "%s is bound to the driver %s (to take it through the IOMMU, \
-            without root, bind it to vfio-pci: %s)"
-           bus d (bind_vfio bus))
+           "%s is bound to the driver %s; to take it through the IOMMU without \
+            root, bind it to vfio-pci"
+           bus d)
   | { driver = Some _; iommu = Identity | Translating; _ } -> Ok Ops.Iommu
   | { driver = None; iommu = Translating; _ } ->
       Error
         (strf
            "the IOMMU translates the addresses %s reaches, so it cannot reach \
-            physical ones; bind it to vfio-pci to take it through the IOMMU \
-            (%s), or boot Linux with iommu=pt"
-           bus (bind_vfio bus))
+            physical memory; bind it to vfio-pci, or boot Linux with iommu=pt"
+           bus)
   | { siblings = s :: _; _ } ->
       Error (strf "%s shares its device with %s; detach the GPU first" bus s)
   | { driver = None; enabled = false; _ } ->
@@ -249,10 +246,9 @@ let addressing m bus s =
   | { locked_down = true; _ } ->
       Error
         (strf
-           "the kernel is locked down (%s), which refuses mapping a BAR \
-            outside VFIO; take %s behind an IOMMU: turn the IOMMU on and bind \
-            it to vfio-pci (%s)"
-           m.lockdown bus (bind_vfio bus))
+           "the kernel is locked down (%s) and refuses mapping a BAR outside \
+            VFIO; turn the IOMMU on and bind %s to vfio-pci"
+           m.lockdown bus)
   | _ -> Ok Ops.Physical
 
 let access m bus = addressing m bus (state m bus)
@@ -290,9 +286,8 @@ let attach m bus =
   match driver m bus with
   | Some d when d = vfio_pci ->
       Fail.fail
-        "%s is bound to vfio-pci; unbind it and clear its driver_override \
-         first: sudo driverctl unset-override %s"
-        bus bus
+        "%s is bound to vfio-pci; clear its driver_override and unbind it first"
+        bus
   | Some _ -> ()
   | None ->
       if enabled m bus then write (path m bus "enable") "0";

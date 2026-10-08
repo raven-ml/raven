@@ -18,8 +18,9 @@ type t = {
 let create ~base n =
   if base < 0 || n < 0 || n > max_int - base then
     invalid_argf
-      "Space.create: %d addresses at 0x%x, expected a range of 0 to max_int" n
-      base;
+      "Space.create: %d addresses at 0x%x, expected both 0 or more and an end \
+       at most max_int"
+      n base;
   { base; length = n; tlsf = None; lock = Mutex.create () }
 
 let base s = s.base

@@ -157,7 +157,8 @@ let map t ~combine i off n =
 let unmap w =
   if Window.length w > 0 then
     let a, n = pages (Window.address w) (Window.length w) in
-    Fail.bug "unmapping a BAR" (fun () -> file_unmap a n)
+    Fail.bug (strf "unmapping %d bytes of a BAR at 0x%x" n a) (fun () ->
+        file_unmap a n)
 
 let interrupt t ms =
   match t.interrupts with Some fd -> Vfio.wait fd ms | None -> false

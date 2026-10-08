@@ -47,11 +47,8 @@ val access : t -> string -> (Ops.addressing, string) result
     - bound to [vfio-pci] without one, or unbound and enabled under none or an
       identity one, alone on its device and the kernel not locked down:
       [Physical];
-    - otherwise [Error why], naming the [driverctl] command that binds it to
-      [vfio-pci] where that would do, or {!detach} where it would. *)
-
-val bind_vfio : string -> string
-(** [bind_vfio bus] is the command that binds [bus] to [vfio-pci]. *)
+    - otherwise [Error why], naming the binding to [vfio-pci] where that would
+      do, or {!detach} where it would. *)
 
 val noiommu_file : t -> string -> string
 (** [noiommu_file m g] is the file of group [g] in VFIO's no-IOMMU mode. *)

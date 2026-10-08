@@ -8,7 +8,6 @@
    with their errno when refused, ENOSYS without Linux. *)
 
 let strf = Printf.sprintf
-let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
 (* The IOMMU models. device_pci_vfio.c reads the constructors in this order as
    its enum model: keep the two in sync. *)
@@ -46,26 +45,17 @@ let round_page n = (n + page - 1) / page * page
 
 (* Messages *)
 
-let user () =
-  try (Unix.getpwuid (Unix.getuid ())).pw_name
-  with Not_found -> string_of_int (Unix.getuid ())
-
 (* Opens the VFIO file [file] of [bus], naming the step that grants it. *)
 let open_file bus file =
   match Unix.openfile file [ O_RDWR; O_CLOEXEC ] 0 with
   | fd -> fd
-  | exception Unix.Unix_error ((EACCES | EPERM), _, _) ->
-      let u = user () in
+  | exception Unix.Unix_error (((EACCES | EPERM) as e), _, _) ->
       Fail.fail
-        "%s: permission denied; grant it to %s with a udev rule: echo \
-         'SUBSYSTEM==\"vfio\", KERNEL==\"%s\", OWNER=\"%s\"' | sudo tee -a \
-         /etc/udev/rules.d/90-raven-vfio.rules && sudo udevadm control \
-         --reload && sudo udevadm trigger --action=add --subsystem-match=vfio \
-         (a no-IOMMU group also needs CAP_SYS_RAWIO)"
-        file u (Filename.basename file) u
+        "opening %s: %s; give the user the file with a udev rule, or run as \
+         root; a no-IOMMU group also needs CAP_SYS_RAWIO"
+        file (Unix.error_message e)
   | exception Unix.Unix_error (ENOENT, _, _) ->
-      Fail.fail "%s does not exist; bind %s to vfio-pci: %s" file bus
-        (Sysfs.bind_vfio bus)
+      Fail.fail "%s does not exist; bind %s to vfio-pci" file bus
   | exception Unix.Unix_error (EBUSY, _, _) ->
       Fail.fail "%s is open in another process; find it: lsof %s" file file
   | exception Unix.Unix_error (e, _, _) ->
@@ -79,23 +69,17 @@ let not_viable files bus g =
   | held ->
       strf
         "IOMMU group %s of %s also holds %s, bound to other drivers; VFIO \
-         takes a group whole: bind each to vfio-pci: %s"
+         takes a group whole: bind each to vfio-pci"
         g bus
         (String.concat ", " (List.map (fun (f, d) -> strf "%s (%s)" f d) held))
-        (String.concat " && " (List.map (fun (f, _) -> Sysfs.bind_vfio f) held))
 
 (* Mapping memory behind an IOMMU pins it, and the kernel counts the pinned
    bytes against the process's locked-memory limit. *)
 let map_error bus n (e : Unix.error) =
-  let u = user () in
   match e with
   | ENOMEM ->
-      strf
-        "mapping %d bytes for %s: %s; the locked-memory limit (ulimit -l) \
-         bounds the memory an IOMMU maps for a process: raise it for %s with \
-         echo '%s - memlock unlimited' | sudo tee \
-         /etc/security/limits.d/90-raven.conf, then log in again"
-        n bus (Unix.error_message e) u u
+      strf "mapping %d bytes for %s: %s; %s" n bus (Unix.error_message e)
+        Fail.memlock
   | ENOSPC ->
       strf
         "mapping %d bytes for %s: the IOMMU holds as many mappings as Linux \
@@ -260,7 +244,7 @@ let open_ files fds bus =
    the first count. *)
 let map_dma fn bus c a n =
   Mutex.protect c.mutex @@ fun () ->
-  if c.closed then invalid_argf "Function.%s: %s is released" fn bus;
+  if c.closed then Fail.err_released fn bus;
   match Hashtbl.find_opt c.maps (a, n) with
   | Some (iova, k) ->
       Hashtbl.replace c.maps (a, n) (iova, k + 1);

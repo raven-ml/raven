@@ -136,6 +136,9 @@ let unopened ?__POS__ open_ =
   require_error ?__POS__ r
 
 (* [names n why] asserts that the number [n] is a word of [why]. *)
+(* The refusal of a GPU on a machine that has none says so. *)
+let has_none why = contains ~sub:"the machine has none" why
+
 let names n why =
   let digits c = if c >= '0' && c <= '9' then c else ' ' in
   let words = String.split_on_char ' ' (String.map digits why) in
@@ -229,8 +232,8 @@ let test_none () =
   let m, _ = machine [ id ~class_:0x04 "0000:03:00.1" ] in
   let g = gpus () in
   equal (list string) [] (Gpus.buses g m);
-  names 0 (unopened (pci g m 0));
-  names 0 (unopened (reset g m 0))
+  has_none (unopened (pci g m 0));
+  has_none (unopened (reset g m 0))
 
 let negative =
   let far () = fst (machine functions) in
@@ -458,9 +461,9 @@ let test_this_none () =
   let g = Gpus.make ~memory_bar:0 (fun _ -> false) in
   let this = Machine.this in
   equal (list string) [] (Gpus.buses g this);
-  names 0 (unopened (kernel g this 0));
-  names 0 (unopened (pci g this 0));
-  names 0 (unopened (reset g this 0));
+  has_none (unopened (kernel g this 0));
+  has_none (unopened (pci g this 0));
+  has_none (unopened (reset g this 0));
   ignore (require_error (Gpus.detach g this 0));
   ignore (require_error (Gpus.attach g this 0))
 
@@ -838,11 +841,10 @@ let changes =
       `Attach,
       None,
       [ ("rescan", ""); ("drivers_probe", "") ] );
-    ( "attach refuses a GPU bound to vfio-pci, naming the command that unbinds \
-       it",
+    ( "attach refuses a GPU bound to vfio-pci, naming its driver_override",
       [ Tree.gpu ~driver:"vfio-pci" gpu_bus ],
       `Attach,
-      Some "sudo driverctl unset-override 0000:03:00.0",
+      Some "0000:03:00.0 is bound to vfio-pci; clear its driver_override",
       [ ("rescan", "") ] );
   ]
 

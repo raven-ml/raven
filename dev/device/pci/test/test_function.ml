@@ -393,7 +393,7 @@ let test_take_no_bus () =
   List.iter
     (fun bus ->
       equal ~msg:(String.escaped bus) (result pass string)
-        (Error (strf "%S is no PCI bus address" bus))
+        (Error (strf "%S is no PCI bus address, expected DDDD:BB:DD.F" bus))
         (Function.take machine bus))
     not_buses;
   equal ~msg:"what the machine was asked" (list string) [] !calls

@@ -143,10 +143,8 @@ let pin a n =
       (match lock_at a n with
       | () -> ()
       | exception Unix.Unix_error (((ENOMEM | EPERM) as e), _, _) ->
-          Fail.fail
-            "locking %d bytes for a GPU: %s; raise the locked-memory limit \
-             (ulimit -l)"
-            n (Unix.error_message e)
+          Fail.fail "locking %d bytes for a GPU: %s; %s" n
+            (Unix.error_message e) Fail.memlock
       | exception Unix.Unix_error (e, _, _) ->
           Fail.fail "locking %d bytes for a GPU: %s" n (Unix.error_message e));
       add_pins a n);
@@ -174,11 +172,8 @@ let map_bytes ?va n ~huge ~locked =
       Fail.fail "%s"
         (match e with
         | ENOMEM when huge ->
-            why
-            ^ "; reserve huge pages for contiguous memory: sudo sysctl -w \
-               vm.nr_hugepages=16"
-        | EAGAIN when locked ->
-            why ^ "; raise the locked-memory limit (ulimit -l)"
+            why ^ "; reserve huge pages for contiguous memory (vm.nr_hugepages)"
+        | EAGAIN when locked -> why ^ "; " ^ Fail.memlock
         | _ -> why)
 
 (* Returns [n] bytes at [a] to their reservation, or to the system. *)

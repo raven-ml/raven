@@ -192,7 +192,7 @@ let drop t d table =
 let child t d pa dir i =
   match dir.entries.(i) with
   | Table c -> c
-  | Page -> invalid_arg "Page_table.tables: a larger page maps the address"
+  | Page -> assert false (* map finds the range unmapped, tables a page first *)
   | Invalid ->
       let c = new_table t (d + 1) in
       (match
@@ -248,8 +248,9 @@ let rec mapped t d table ~at lo hi =
       | Table c -> mapped t (d + 1) c ~at lo hi
       | Page ->
           if lo <> at || hi <> at + c then
-            invalid_argf "Page_table.unmap: the page at 0x%x is partly outside"
-              (t.base + at))
+            invalid_argf
+              "Page_table.unmap: [0x%x, 0x%x) covers part of the page at 0x%x"
+              (t.base + lo) (t.base + hi) (t.base + at))
 
 (* The fragment of the page at [v] of the run [lo, hi), mapped [delta] bytes
    further: the log2 of the pages of the largest block naturally aligned in both
@@ -390,7 +391,12 @@ let create ?base fmt space ~memory ~boot ~tables ~pages =
     List.nth_opt fmt.levels 0 <> Some page_bits
     || fmt.bits >= Sys.int_size - 1
     || not (rising (fmt.levels @ [ fmt.bits ]))
-  then invalid_arg "Page_table.create: levels must rise from 12 below bits";
+  then
+    invalid_argf
+      "Page_table.create: levels [%s] and bits %d, expected levels rising from \
+       12 below bits"
+      (String.concat "; " (List.map string_of_int fmt.levels))
+      fmt.bits;
   let table_bytes =
     match tables with
     | Pool -> round_up (memory / table_share) table_round
@@ -422,7 +428,10 @@ let create ?base fmt space ~memory ~boot ~tables ~pages =
     else largest (d + 1)
   in
   if base < 0 || not (aligned base (largest 0)) then
-    invalid_argf "Page_table.create: base 0x%x off a page" base;
+    invalid_argf
+      "Page_table.create: base 0x%x is not on a %d-byte page, the largest the \
+       format maps"
+      base (largest 0);
   let counts = Array.mapi (fun d s -> 1 lsl (above d - s)) shifts in
   let held = Held.create 64 in
   Held.replace held root ();
@@ -455,8 +464,10 @@ let check t fn ~va n =
   let v = va - t.base in
   if v < 0 || n < 0 || n > span t - v || not (aligned (v lor n) page) then
     invalid_argf
-      "Page_table.%s: 0x%x bytes at 0x%x are not whole pages the tables reach"
-      fn n va
+      "Page_table.%s: %d bytes at 0x%x, expected whole %d-byte pages in [0x%x, \
+       0x%x)"
+      fn n va page t.base
+      (t.base + span t)
 
 let tables t ~va n =
   check t "tables" ~va n;
@@ -471,7 +482,7 @@ let tables t ~va n =
     | Leaf (_, l) ->
         l.pages <- l.pages + 1;
         List.rev path
-    | Directory (pa, dir) ->
+    | Directory (pa, dir) -> (
         let c = covers t d in
         if t.fmt.large ~level:(level t d) && c <= n && aligned v c then begin
           dir.valid <- dir.valid + 1;
@@ -479,7 +490,10 @@ let tables t ~va n =
         end
         else
           let i = (v lsr t.shifts.(d)) land (t.counts.(d) - 1) in
-          go (d + 1) (child t d pa dir i) path
+          match dir.entries.(i) with
+          | Page ->
+              invalid_argf "Page_table.tables: 0x%x lies in a larger page" va
+          | Invalid | Table _ -> go (d + 1) (child t d pa dir i) path)
   in
   let path =
     match go 0 t.root [] with
@@ -504,7 +518,9 @@ let map ?(uncached = false) ?(snooped = false) t ~va target ranges =
     (fun (pa, n) ->
       if pa < 0 || n < 0 || not (aligned (pa lor n) page) then
         invalid_argf
-          "Page_table.map: 0x%x bytes at physical 0x%x are not whole pages" n pa)
+          "Page_table.map: %d bytes at physical 0x%x are not whole %d-byte \
+           pages"
+          n pa page)
     ranges;
   let size = List.fold_left (fun n (_, k) -> n + k) 0 ranges in
   check t "map" ~va size;

@@ -14,10 +14,10 @@
     A function of {!Machine.this} is taken in one of two ways, which follow from
     the machine's state and which {!addressing} reports:
     - {e Behind an IOMMU}, through VFIO, without root. An administrator turns
-      the IOMMU on, binds the function to [vfio-pci]
-      ([driverctl set-override BUS vfio-pci]) and grants the user its group's
-      file [/dev/vfio/N]. The function reaches only the memory the process maps
-      for it, at device addresses the process chooses.
+      the IOMMU on, binds the function to [vfio-pci] (its [driver_override]) and
+      grants the user its group's file [/dev/vfio/N]. The function reaches only
+      the memory the process maps for it, at device addresses the process
+      chooses.
     - {e Physically}, through [/sys/bus/pci], with write access to its BAR files
       and no driver bound other than [vfio-pci]. The function reaches system
       memory at its physical addresses, which the IOMMU, if any, must not
@@ -55,9 +55,9 @@ val take : Machine.t -> string -> (t, string) result
       distributions), which refuses every mapping of a BAR;
     - the process may not open its files.
 
-    [why] names what to change, such as the udev rule that grants [/dev/vfio/N],
-    or the [driverctl] commands that bind the other functions of its IOMMU group
-    to [vfio-pci]. *)
+    [why] names what to change, such as the user's access to [/dev/vfio/N], or
+    the other functions of its IOMMU group, which must be bound to [vfio-pci]
+    too. *)
 
 val release : t -> unit
 (** [release f] gives [f] back: it turns [f]'s bus mastering off, so that [f]

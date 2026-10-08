@@ -124,7 +124,7 @@ val attach : t -> Machine.t -> int -> (unit, string) result
 
     [Error why] if [m] is reached through a transport, if [i] is no GPU, if the
     process holds it, if the process may not write a file, if it is bound to
-    [vfio-pci], naming the [driverctl] command that unbinds it, or if no driver
+    [vfio-pci], whose [driver_override] must be cleared first, or if no driver
     takes it, such as when the driver's module is not loaded. *)
 
 val reset :

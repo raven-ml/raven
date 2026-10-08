@@ -59,6 +59,7 @@ let index fn i = if i < 0 then invalid_argf "Gpus.%s: GPU %d is negative" fn i
 let gpu g m i =
   let all = buses g m in
   match List.nth_opt all i with
+  | None when all = [] -> Error "no such GPU; the machine has none"
   | None -> Error (strf "no such GPU; the machine has %d" (List.length all))
   | Some bus
     when Mutex.protect g.holds (fun () ->
