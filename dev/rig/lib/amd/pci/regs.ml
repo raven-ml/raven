@@ -49,11 +49,15 @@ let layout d =
   in
   let* gc = block D.gc_hwid in
   let* sdma = block D.sdma0_hwid in
-  let* () = Result.map ignore (block D.mp1_hwid) in
+  let* mp1 = block D.mp1_hwid in
   let unbooted b v =
     Error
       (strf "%s %s is a version this library does not boot" (Discovery.name b)
          (dotted v))
+  in
+  (* The power manager is programmed by messages of its version. *)
+  let* () =
+    if D.smu_messages mp1 = [] then unbooted D.mp1_hwid mp1 else Ok ()
   in
   let table prefix b =
     let* v = block b in
@@ -165,9 +169,7 @@ let wait ?(ms = default_ms) r what f =
     | Some why -> raise (Stuck (strf "%s: %s" what why))
     | None -> raise (Stuck (strf "%s did not answer in %d ms" what ms))
 
-let pause r ms =
-  ignore (Rig_pci.Machine.wait (machine r) ~ms (fun () -> false))
-
+let pause r ms = ignore (Rig_pci.Machine.wait (machine r) ~ms (fun () -> false))
 let words r = Window.length r.mmio / 4
 let lo32 v = v land 0xffff_ffff
 let hi32 v = (v lsr 32) land 0xffff_ffff
@@ -239,8 +241,7 @@ let mask (reg : Register.t) names =
     (fun acc f ->
       match List.assoc_opt f reg.fields with
       | Some (lo, hi) -> acc lor (((1 lsl (hi - lo + 1)) - 1) lsl lo)
-      | None ->
-          invalid_argf "Rig_amd_pci.open_: %s has no field %s" reg.name f)
+      | None -> invalid_argf "Rig_amd_pci.open_: %s has no field %s" reg.name f)
     0 names
 
 let update ?inst r name fs =

@@ -4,11 +4,10 @@
  (name rig_amd_pci)
  (public_name rig.amd.pci)
  (libraries rig_amd rig_amd_abi rig_pci)
- (private_modules psp smu gfx sdma boot)
+ (private_modules psp gfx sdma boot)
  (modules_without_implementation
   rig_amd_pci
   psp
-  smu
   gfx
   sdma
   boot))

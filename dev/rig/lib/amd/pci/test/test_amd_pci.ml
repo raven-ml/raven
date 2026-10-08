@@ -380,6 +380,42 @@ let dies =
           equal (list int) [ 0; 1; 2 ] (Discovery.aids d));
     ]
 
+(* Power manager *)
+
+module Smu = Rig_amd_pci.Smu
+
+(* The IDs of amdgpu's message headers (smu_v13_0_0_ppsmc.h,
+   smu_v13_0_6_ppsmc.h, smu_v13_0_12_ppsmc.h, smu_v14_0_2_ppsmc.h) and clock
+   enumerations, by the MP1 versions amdgpu drives with each. *)
+let messages =
+  [
+    ((14, 0, 3), "PPSMC_MSG_SetSoftMinByFreq", Some 0x19);
+    ((14, 0, 3), "PPSMC_MSG_GetDpmFreqByIndex", Some 0x1f);
+    ((14, 0, 3), "PPCLK_GFXCLK", Some 0);
+    ((13, 0, 10), "PPSMC_MSG_Mode1Reset", Some 0x2f);
+    ((13, 0, 14), "PPSMC_MSG_GfxDriverReset", Some 3);
+    ((13, 0, 14), "PPCLK_UCLK", Some 3);
+    ((13, 0, 14), "PPCLK_GFXCLK", None);
+    ((13, 0, 12), "PPSMC_MSG_McaBankDumpDW", Some 0x37);
+    ((13, 0, 4), "PPSMC_MSG_GetSmuVersion", None);
+  ]
+
+let power =
+  group ~timeout:10. "power manager"
+    [
+      cases
+        ~name:(fun ((a, b, c), n, _) -> strf "%s of MP1 %d.%d.%d" n a b c)
+        "a message has its header's ID" messages
+        (fun (mp1, name, id) -> equal (option int) id (Smu.message mp1 name));
+      test "a clock's request holds the clock above the value" (fun () ->
+          equal int 0x2_0010 (Smu.clock_request ~clock:2 0x10));
+      test "a GPU whose MP1 has no messages is refused, naming it" (fun () ->
+          equal (result pass string)
+            (Error "MP1 13.0.4 is a version this library does not boot")
+            (Result.map ignore
+               (Regs.layout (with_version (table "r9700.bin") 1 (13, 0, 4)))));
+    ]
+
 (* Interrupts *)
 
 module Ih = Rig_amd_pci.Ih
@@ -776,5 +812,12 @@ let () =
   exit
     (run "rig_amd_pci"
        [
-         discovery; damaged; dies; registers; page_tables; interrupts; firmware;
+         discovery;
+         damaged;
+         dies;
+         registers;
+         page_tables;
+         power;
+         interrupts;
+         firmware;
        ])

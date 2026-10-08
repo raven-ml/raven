@@ -64,6 +64,25 @@ SOURCES = {
                     ("sdma0", "sdma0_5_0"))},
 }
 
+# The power manager's messages and clocks, by the MP1 versions amdgpu drives
+# with each message header (amdgpu_smu.c's smu_set_funcs): the header of the
+# messages, and the header of the clocks.
+SMU_TABLES = [
+    ([(13, 0, 0), (13, 0, 10)], "smu_v13_0_0_ppsmc.h", "smu13_driver_if_v13_0_0.h"),
+    ([(13, 0, 7)], "smu_v13_0_7_ppsmc.h", "smu13_driver_if_v13_0_7.h"),
+    ([(13, 0, 6), (13, 0, 14)], "smu_v13_0_6_ppsmc.h", "smu13_driver_if_v13_0_6.h"),
+    ([(13, 0, 12)], "smu_v13_0_12_ppsmc.h", "smu13_driver_if_v13_0_6.h"),
+    ([(14, 0, 2), (14, 0, 3)], "smu_v14_0_2_ppsmc.h", "smu14_driver_if_v14_0.h"),
+]
+SMU_MESSAGES = ["PPSMC_MSG_" + m for m in (
+    "SetDriverDramAddrHigh", "SetDriverDramAddrLow", "EnableAllSmuFeatures", "GetSmuVersion", "GfxDriverReset",
+    "Mode1Reset", "GetDpmFreqByIndex", "SetSoftMinByFreq", "SetSoftMaxByFreq", "QueryValidMcaCount",
+    "McaBankDumpDW", "QueryValidMcaCeCount", "McaBankCeDumpDW")]
+SMU_CLOCKS = ["PPCLK_UCLK", "PPCLK_FCLK", "PPCLK_SOCCLK", "PPCLK_GFXCLK"]
+for _, _m, _c in SMU_TABLES:
+    SOURCES[_m] = KERNEL + "pm/swsmu/inc/pmfw_if/" + _m
+    SOURCES[_c] = KERNEL + "pm/swsmu/inc/pmfw_if/" + _c
+
 # Interrupts: the clients' enumerations, and the source headers of the blocks
 # whose interrupts the library reads.
 IH_ENUMS = ["soc15_ih_clientid", "soc21_ih_clientid"]
@@ -527,6 +546,18 @@ def enum_blocks(text, names):
     return out
 
 
+def enum_with(text, member):
+    """The lines of the enumeration that has [member], from its keyword to its
+    closing brace."""
+    lines = text.splitlines()
+    at = next((i for i, l in enumerate(lines) if re.match(rf"\s*{member}\b", l)), None)
+    if at is None:
+        sys.exit(f"no enumeration with {member}")
+    first = next(i for i in range(at, -1, -1) if re.match(r"\s*(typedef\s+)?enum\b", lines[i]))
+    last = next(i for i in range(at, len(lines)) if lines[i].strip().startswith("}"))
+    return set(range(first, last + 1))
+
+
 def excerpt(name, text):
     """[name]'s excerpt of [text]: its licence notice and the lines this script
     reads, in order."""
@@ -547,6 +578,10 @@ def excerpt(name, text):
     elif name == "amdgpu_vm.h":
         keep |= enum_blocks(text, ["amdgpu_vm_level"])
         keep |= {i for i, l in enumerate(lines) if DEFINE.match(l) and DEFINE.match(l).group(1) in PTE_BITS + PTE_SHIFTS}
+    elif any(name == m for _, m, _ in SMU_TABLES):
+        keep |= {i for i, l in enumerate(lines) if DEFINE.match(l) and DEFINE.match(l).group(1) in SMU_MESSAGES}
+    elif any(name == c for _, _, c in SMU_TABLES):
+        keep |= enum_with(text, "PPCLK_UCLK")
     elif name == "soc15_ih_clientid.h":
         keep |= enum_blocks(text, IH_ENUMS)
     elif name in IH_SOURCES:
@@ -672,6 +707,19 @@ def generate(h):
             sys.exit(f"{hdr}: no MTYPE_UC")
         out.append(f"let {gen_name}_mtype_uc = {int(m.group(1), 0)}")
     out.append("")
+
+    # Power manager
+    out += ["(* The power manager's messages and clocks, by MP1 version, as (name, value). *)",
+            "let smu_messages = function"]
+    for versions, m, c in SMU_TABLES:
+        msgs = {n: v for n, v in ((n, b) for n, b in defines(h[m]).items()) if n in SMU_MESSAGES}
+        vals = [(n, evaluate(msgs[n], {})) for n in SMU_MESSAGES if n in msgs]
+        clocks = enum_values(h[c], [n for n in SMU_CLOCKS if re.search(rf"\b{n}\b", h[c])])
+        vals += list(clocks.items())
+        pats = " | ".join(f"({a}, {b}, {cc})" for a, b, cc in versions)
+        out.append(f"  | {pats} ->")
+        out.append("      [ " + "; ".join(f"({json.dumps(n)}, {ml_int(v)})" for n, v in vals) + " ]")
+    out += ["  | _ -> []", ""]
 
     # Interrupts
     ih = h["soc15_ih_clientid.h"]

@@ -224,6 +224,20 @@ let soc15_mtype_uc = 3
 let soc21_mtype_uc = 3
 let soc24_mtype_uc = 3
 
+(* The power manager's messages and clocks, by MP1 version, as (name, value). *)
+let smu_messages = function
+  | (13, 0, 0) | (13, 0, 10) ->
+      [ ("PPSMC_MSG_SetDriverDramAddrHigh", 0xe); ("PPSMC_MSG_SetDriverDramAddrLow", 0xf); ("PPSMC_MSG_EnableAllSmuFeatures", 6); ("PPSMC_MSG_GetSmuVersion", 2); ("PPSMC_MSG_Mode1Reset", 0x2f); ("PPSMC_MSG_GetDpmFreqByIndex", 0x1f); ("PPSMC_MSG_SetSoftMinByFreq", 0x19); ("PPSMC_MSG_SetSoftMaxByFreq", 0x1a); ("PPCLK_UCLK", 2); ("PPCLK_FCLK", 3); ("PPCLK_SOCCLK", 1); ("PPCLK_GFXCLK", 0) ]
+  | (13, 0, 7) ->
+      [ ("PPSMC_MSG_SetDriverDramAddrHigh", 0xe); ("PPSMC_MSG_SetDriverDramAddrLow", 0xf); ("PPSMC_MSG_EnableAllSmuFeatures", 6); ("PPSMC_MSG_GetSmuVersion", 2); ("PPSMC_MSG_Mode1Reset", 0x2f); ("PPSMC_MSG_GetDpmFreqByIndex", 0x1f); ("PPSMC_MSG_SetSoftMinByFreq", 0x19); ("PPSMC_MSG_SetSoftMaxByFreq", 0x1a); ("PPCLK_UCLK", 2); ("PPCLK_FCLK", 3); ("PPCLK_SOCCLK", 1); ("PPCLK_GFXCLK", 0) ]
+  | (13, 0, 6) | (13, 0, 14) ->
+      [ ("PPSMC_MSG_SetDriverDramAddrHigh", 0xd); ("PPSMC_MSG_SetDriverDramAddrLow", 0xe); ("PPSMC_MSG_EnableAllSmuFeatures", 5); ("PPSMC_MSG_GetSmuVersion", 2); ("PPSMC_MSG_GfxDriverReset", 3); ("PPSMC_MSG_GetDpmFreqByIndex", 0x17); ("PPSMC_MSG_SetSoftMinByFreq", 0x13); ("PPSMC_MSG_SetSoftMaxByFreq", 0x14); ("PPSMC_MSG_QueryValidMcaCount", 0x36); ("PPSMC_MSG_McaBankDumpDW", 0x37); ("PPSMC_MSG_QueryValidMcaCeCount", 0x3a); ("PPSMC_MSG_McaBankCeDumpDW", 0x3b); ("PPCLK_UCLK", 3); ("PPCLK_FCLK", 4); ("PPCLK_SOCCLK", 2) ]
+  | (13, 0, 12) ->
+      [ ("PPSMC_MSG_SetDriverDramAddrHigh", 0xd); ("PPSMC_MSG_SetDriverDramAddrLow", 0xe); ("PPSMC_MSG_EnableAllSmuFeatures", 5); ("PPSMC_MSG_GetSmuVersion", 2); ("PPSMC_MSG_GfxDriverReset", 3); ("PPSMC_MSG_GetDpmFreqByIndex", 0x17); ("PPSMC_MSG_SetSoftMinByFreq", 0x13); ("PPSMC_MSG_SetSoftMaxByFreq", 0x14); ("PPSMC_MSG_QueryValidMcaCount", 0x36); ("PPSMC_MSG_McaBankDumpDW", 0x37); ("PPSMC_MSG_QueryValidMcaCeCount", 0x3a); ("PPSMC_MSG_McaBankCeDumpDW", 0x3b); ("PPCLK_UCLK", 3); ("PPCLK_FCLK", 4); ("PPCLK_SOCCLK", 2) ]
+  | (14, 0, 2) | (14, 0, 3) ->
+      [ ("PPSMC_MSG_SetDriverDramAddrHigh", 0xe); ("PPSMC_MSG_SetDriverDramAddrLow", 0xf); ("PPSMC_MSG_EnableAllSmuFeatures", 6); ("PPSMC_MSG_GetSmuVersion", 2); ("PPSMC_MSG_GetDpmFreqByIndex", 0x1f); ("PPSMC_MSG_SetSoftMinByFreq", 0x19); ("PPSMC_MSG_SetSoftMaxByFreq", 0x1a); ("PPCLK_UCLK", 2); ("PPCLK_FCLK", 3); ("PPCLK_SOCCLK", 1); ("PPCLK_GFXCLK", 0) ]
+  | _ -> []
+
 (* Interrupts *)
 
 let soc15_ih_clientid_grbm_cp = 0x14

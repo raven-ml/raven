@@ -179,6 +179,7 @@ module Discovery = Discovery
 module Regs = Regs
 module Images = Images
 module Gmc = Gmc
+module Smu = Smu
 module Ih = Ih
 
 (* [gpus_at root] is the bus addresses of the AMD GPUs of the machine whose
