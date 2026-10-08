@@ -746,9 +746,10 @@ let serialized =
       stateful "opens, gives back and resets behave as the model" ~count:300
         ~steps:30
         (commands (indices [ 0; 1; 2; -1 ]));
-      (* 60 programs of 50 runs each, as Test_function's two-domain test. *)
-      stateful "from two domains, as some order of the calls" ~domains:2
-        ~count:60
+      (* 60 programs of 50 runs each, with the limit of Test_function's
+         two-domain test, for the same reason. *)
+      stateful "from two domains, as some order of the calls"
+        ~timeout:(3. *. patience) ~domains:2 ~count:60
         (commands (indices [ 0 ]));
       cases "opens and resets run their drivers one at a time (sampled)"
         ~name:fst others test_one_at_a_time;

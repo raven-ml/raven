@@ -954,11 +954,12 @@ let sequences =
    the suffix unpins it. The invariant runs only before the parallel calls, so
    misuse that reached the machine is read by a command. Each program runs 50
    times, each run a hand-off between domains that waits for a time slice when
-   the processors are busy: 60 programs keep the test well within its patience
-   on a loaded machine. *)
+   the processors are busy, and a minor collection stops both domains: under the
+   sanitize profile's collector stress, with suites running side by side, the
+   test takes ten times its second, so its limit is three patiences. *)
 let parallel =
   stateful "pins and DMA memory are counted the same from two domains"
-    ~domains:2 ~count:60
+    ~timeout:(3. *. patience) ~domains:2 ~count:60
     ([
        machine_cmd;
        take_cmd;
