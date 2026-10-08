@@ -1,0 +1,16 @@
+; What the Metal suite and bench share: a device's ring driven by hand, and
+; fills over Metal with probes of its objects. The fills are Objective-C on
+; macOS, as the driver's stubs are.
+
+(library
+ (name rig_metal_support)
+ (libraries rig rig_metal rig_metal_abi)
+ (foreign_stubs
+  (language c)
+  (names rig_metal_support_ring))
+ (foreign_stubs
+  (language c)
+  (names rig_metal_support_stubs)
+  (flags
+   (:standard
+    (:include ../../../lib/metal/objc_flags.sexp)))))

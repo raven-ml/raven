@@ -154,7 +154,7 @@ buffer stayed still. `cuStreamQuery` reported the error within the driver's
 1 ms poll, a new context on the GPU in the same process was refused with the
 same error, and the GPU was back at its idle power state, with no memory in
 use, 11 s after the process exited. Every run of the fault test showed this,
-one of them under ASan and UBSan (lib/cuda/test/test_fault.ml, 7b4d40034 and
+one of them under ASan and UBSan (test/cuda/test_fault.ml, 7b4d40034 and
 36de95b6c).
 
 A driver that reports a device stopped after a sticky error, promising that
@@ -385,7 +385,7 @@ polled a copy's completion with 1 ms sleeps took 8 to 12 ms on the R9700 for a
 copy of microseconds, since the copy raised no event (main b6963ba6c). A
 driver spins on the word before it sleeps, and sleeps in KFD only on work that
 raises an event. A wake through the interrupt path costs about 36 µs more
-than spinning (`wake/driver` against `release/driver` in lib/amd/bench).
+than spinning (`wake/driver` against `release/driver` in bench/amd).
 
 ### A process has one GPU address space per GPU
 

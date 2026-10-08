@@ -1,0 +1,25 @@
+(library
+ (name rig_metal_bench)
+ (modules)
+ (foreign_stubs
+  (language c)
+  (names rig_metal_bench_stubs)
+  (flags
+   (:standard
+    (:include ../../lib/metal/objc_flags.sexp))))
+ (c_library_flags
+  (:include ../../lib/metal/frameworks.sexp)))
+
+(executable
+ (name bench_metal)
+ (modules bench_metal)
+ (libraries rig rig_metal rig_metal_abi rig_metal_bench rig_metal_support thumper))
+
+(rule
+ (alias bench)
+ (locks %{workspace_root}/bench)
+ (deps
+  (glob_files *.thumper)
+  (source_tree ../../test/metal/fixtures))
+ (action
+  (run %{exe:bench_metal.exe})))

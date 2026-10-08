@@ -26,13 +26,14 @@ The promises fall into a few kinds, each tested its own way:
 | A device that fails is lost cleanly | loss, faults, Unknown stops | the core's test driver, guarded runs on GPUs |
 | A path costs what it says | a submit that does not wait allocates nothing | words counted with `Gc.minor_words` |
 
-Layout follows the library. Each library keeps its suites in `<lib>/test/` as
-`test_<module>.ml`, helpers shared by two suites (or by a suite and a bench) in
-`<lib>/test/support/`, and fixtures in `<lib>/test/fixtures/` beside the source
-and the command that made them. A suite reads only its own library's
-directory. Every top-level group sets `~timeout`, and `dev/rig/dune` sets
-`WINDTRAP_TIMEOUT` to 60 s for any test without one, because a test that never
-ends blocks every build on the shared watch server.
+Layout mirrors `lib/`. A library's suites live in `test/<lib>/` as
+`test_<module>.ml` (the core's in `test/`), helpers shared by two suites (or by
+a suite and a bench) in `test/<lib>/support/`, and fixtures in
+`test/<lib>/fixtures/` with the command that made them. Its benches live in
+`bench/<lib>/` and read their fixtures from `test/<lib>/fixtures/`. A suite
+reads only its own directory. Every top-level group sets `~timeout`, and
+`dev/rig/dune` sets `WINDTRAP_TIMEOUT` to 60 s for any test without one,
+because a test that never ends blocks every build on the shared watch server.
 
 ## Laws, cases and models
 
@@ -43,14 +44,14 @@ contract for every verb below.
 **Laws.** A `prop` states something true of every input. Its strength comes
 from the generator and its `cover`s. Inputs are drawn at the edges: zero,
 one, the largest legal value and its neighbours, `min_int` and `max_int`,
-addresses at the top of their range. `lib/nv/abi/test/test_gpfifo.ml` draws
+addresses at the top of their range. `test/nv/abi/test_gpfifo.ml` draws
 segments whose word count is 0, 1 or `Gpfifo.max_words` one time in four, and
 "an entry names its segment's address and words, and waits for nothing" covers
 "the most words" and "the last address". A cover that a random draw reaches
 only by luck fails some seeds: uniform sizes reach the largest SDMA copy in
 about one draw in fifty, which fails a law requiring it about one seed in
 thirty. So a size at a bound is drawn by construction, at a fixed weight
-(`lib/amd/abi/test/test_sdma.ml`). The space model in `lib/pci/test/test_space.ml`
+(`test/amd/abi/test_sdma.ml`). The space model in `test/pci/test_space.ml`
 draws, for the largest free range of `g` addresses, each size `g / 2 - a` at
 its alignment `a`, the fit bound exactly. A `cover` names an outcome the
 generator decides. An outcome the scheduler decides may not occur on a given
@@ -58,32 +59,32 @@ machine, so it is no cover.
 
 **Cases.** A `cases` test lists values a spec states. Expected values come from
 the spec: the NV ABI suites read descriptors back field by field at the
-`MW(hi:lo)` positions of NVIDIA's QMD headers (`lib/nv/abi/test/test_qmd.ml`); the
+`MW(hi:lo)` positions of NVIDIA's QMD headers (`test/nv/abi/test_qmd.ml`); the
 GPFIFO refusals are `min_int`, `-1`, `max_words + 1` and `max_int`. A value
 learned by running the code is a baseline and is written as `expect`
-(the Chrome trace in `lib/test/test_profile.ml`, the cubin listings in
-`lib/nv/abi/test/test_cubin.ml`).
+(the Chrome trace in `test/test_profile.ml`, the cubin listings in
+`test/nv/abi/test_cubin.ml`).
 
 **Models.** A `stateful` test runs random programs of calls against a model
 that says what each call returns. Use one whenever a promise spans calls.
-`lib/metal/test/test_metal.ml` models the ring of a device's command buffers:
+`test/metal/test_metal.ml` models the ring of a device's command buffers:
 slots taken in commit order, completed in any order, released in commit order,
 the word stopped at the first failed slot. Its covers ("a slot completes before
 an earlier one", "a value completes after a failed slot", "the last slot
 completes after stop") show the programs reached the cases the rules are about.
-`lib/test/test_stamps.ml` models what a submit and a `Buffer.wait` wait for
-across two devices that share memory. `lib/pci/test/test_window.ml` holds a mapped
+`test/test_stamps.ml` models what a submit and a `Buffer.wait` wait for
+across two devices that share memory. `test/pci/test_window.ml` holds a mapped
 window, a combining window and a window through a transport against a model of
 plain bytes. windtrap fails a stateful test whose commands were never called
 over a passing run, so a `~pre` that is never true shows up.
 
 **Cost.** Where an `.mli` promises an allocation bound, a test counts words:
-"a submit that does not wait allocates nothing" (`lib/test/test_submit.ml`),
-"a host buffer of 64 bytes costs at most 61 words" (`lib/test/test_buffer.ml`).
-`lib/amd/abi/test/test_init.ml` measures the AMD ABI library's own initialisation
+"a submit that does not wait allocates nothing" (`test/test_submit.ml`),
+"a host buffer of 64 bytes costs at most 61 words" (`test/test_buffer.ml`).
+`test/amd/abi/test_init.ml` measures the AMD ABI library's own initialisation
 between probes linked before and after it. Time is asserted as CPU time or as
 a ratio between two sizes. "70,000 symbols at extended indexes, in linear
-time" (`lib/elf/test/test_elf.ml`) reads an object of `n` and of `n / 4` symbols
+time" (`test/elf/test_elf.ml`) reads an object of `n` and of `n / 4` symbols
 and requires a ratio below 8, about 4 if reading is linear and 16 if it is
 quadratic. A ratio holds on a slow or sanitized build where seconds would not.
 
@@ -97,7 +98,7 @@ then two branches at once on two domains, then a suffix, and passes when some
 order of the calls explains every result. A driver suite holds its end-once
 rule this way: "an allocation freed from two domains is freed once", "a mapping
 unmapped from two domains is unmapped once", "an image unloaded from two domains
-is unloaded once" (`lib/cuda/test/test_cuda.ml`; `lib/metal/test/test_metal.ml` for
+is unloaded once" (`test/cuda/test_cuda.ml`; `test/metal/test_metal.ml` for
 images). A value's flag that is a plain mutable bool, read and then written,
 lets two domains both pass the check: two `cuMemFree` of one address, two
 `cuModuleUnload` of one module, or a Metal pipeline released twice, each of
@@ -108,7 +109,7 @@ stamp model on two domains. In pci, "two domains allocate at once" and "pins
 and DMA memory are counted the same from two domains".
 
 A process whose test spawned domains cannot fork afterwards, so a test that
-forks lives in a suite of its own (`lib/test/test_fork.ml`: "a forked child's
+forks lives in a suite of its own (`test/test_fork.ml`: "a forked child's
 devices are lost for good").
 
 **Held interleavings.** Random schedules rarely land in the window a protocol
@@ -116,9 +117,9 @@ bug needs. When the window is known, the test holds it. The pool's protocol
 (`lib/pool/rig_pool.c`) has named hook points, `RIG_POOL_HOOK(published)`,
 `RIG_POOL_HOOK(parking)` and others, which compile to nothing. The suite compiles
 `rig_pool.c` a second time with the hooks defined
-(`lib/pool/test/rig_pool_hooked_probe_stubs.c`), and each scenario makes the caller
+(`test/pool/rig_pool_hooked_probe_stubs.c`), and each scenario makes the caller
 and chosen workers wait for each other's events, so the timeline in its comment
-is the one that runs. `lib/pool/test/test_interleavings.ml` holds eleven of them,
+is the one that runs. `test/pool/test_interleavings.ml` holds eleven of them,
 among them "a worker that decided to park before a publication, and set its bit
 after, runs the job" and "a child forked while a worker holds the parking
 mutex runs a job on every core". Every wait gives up after 10 s and the
@@ -130,7 +131,7 @@ check, in order, a gate, a fault, an interruption and a stall:
 are blocked, `interrupt` raises SIGINT in the next sleep's thread, and
 `stall n` makes the next `n` sleeps return without running the queue, as over
 work that runs long. "a fault while a submit waits for room commits nothing"
-(`lib/test/test_turn.ml`) opens a device of capacity 1, gates it, starts a
+(`test/test_turn.ml`) opens a device of capacity 1, gates it, starts a
 submit that must wait for room, waits until it sleeps at the gate, faults the
 device, opens the gate, and checks that the submit raised `Lost` and that no
 value was assigned to it.
@@ -139,7 +140,7 @@ value was assigned to it.
 one submission between the room check and the hand-over, and releases it while
 it waits for room. A driver's `room` and `submit` are called one at a time per
 device under the turn; every other call may come from any domain. The tests in
-`lib/test/test_turn.ml` pin each part: "a submit waiting for room lets a
+`test/test_turn.ml` pin each part: "a submit waiting for room lets a
 submission that fits through", "a submit blocked in its driver holds only its
 device's turn", "two threads of one domain submit to a device that blocks", and
 "Sys.Break while waiting for room assigns no value". The last two use
@@ -153,7 +154,7 @@ sleep for a fixed time. `Rig_support.await` polls a condition with a
 10 s watchdog. Where a correct library gives no signal, such as a call held
 back on a mutex, the test waits for the other side's signal, samples a short
 window, and its name says "(sampled)": "fork waits for a running job of more
-than one thread to end, sampled for 50 ms" (`lib/pool/test/test_threads.ml`). A
+than one thread to end, sampled for 50 ms" (`test/pool/test_threads.ml`). A
 fixed delay fails a correct run under load, or ends before the contending
 domain arrives and leaves the race unexercised.
 
@@ -167,7 +168,7 @@ reached.
 
 **The core's test driver.** The core's job is to keep that contract over any
 driver, so its suites run on `Rig_support.Polled`
-(`lib/test/support/`), a driver over host memory whose queue runs only when
+(`test/support/`), a driver over host memory whose queue runs only when
 the test runs it or a wait sleeps. A wait that returns before it slept leaves
 work unrun, which is how the stamp tests see that a submit waited for the
 right point. Every driver call is logged, so a test can say which calls reached
@@ -183,14 +184,14 @@ the driver behaviours the core must handle:
 | `~host_visible`, `~peers`, `~memory`, `~window`, `~budget` | memory the host or peers cannot address, and limits | the budget, borrow and copy-route tests |
 
 `Polled.fault`, `fail`, `interrupt` and `stall` inject the failures. The loss
-laws in `lib/test/test_loss.ml` pin each sentence of the contract: "a failed
+laws in `test/test_loss.ml` pin each sentence of the contract: "a failed
 hand-over loses the device once", "a fault two domains' sleeps find loses the
 device once", "a queue waiting on a lost device's value is lost", "a lost
 device answers its facts and values", "a loss leaves other devices and their
 memory working". Polled tests the core; it is never used to test a driver.
 
 **Failure walks.** A failure path is reached by few tests, so a walk reaches
-every one. `lib/test/test_walk.ml` runs each operation of the core over Polled
+every one. `test/test_walk.ml` runs each operation of the core over Polled
 once for each fallible call it makes, with that call failing.
 `Polled.fail_at d n` makes the `n`-th of the driver's facts, counted calls and
 hand-overs fault, and every one after it, as a faulted device's do; or refuses
@@ -222,7 +223,7 @@ process, nothing else using the GPU, killed after 60 s, and the GPU checked
 idle with no memory in use afterwards. The shared Linux hosts give no root, so
 a wedged GPU cannot be reset there.
 
-`lib/cuda/test/test_fault.ml` is such a test. Value 1 stores to address 0; value 2,
+`test/cuda/test_fault.ml` is such a test. Value 1 stores to address 0; value 2,
 queued behind it, would copy into a watched host buffer. The test checks that
 `sleep` raises `Fault` with `CUDA_ERROR_ILLEGAL_ADDRESS`, that `alloc` and
 `image` raise it afterwards and `submit` answers `Failed` with it, that the
@@ -235,12 +236,12 @@ On Metal no kernel makes the GPU fault on demand. On the M1 Max (macOS 26.3.1)
 a kernel's stores to GPU address `0x10`, to `0x7f0000000000` and to a freed
 buffer's address all complete without a command-buffer error. The handler's
 failure path is therefore tested through the ring's C seam
-(`lib/metal/test/support/`, `rig_metal_ring.h`) by the ring model above, which
+(`test/metal/support/`, `rig_metal_ring.h`) by the ring model above, which
 completes slots as failed in any order. On the GPU, "a failed fill stops the
 word before its value" covers a submission that fails as it is made.
 
 pci injects failure at its transport: "a transport failing at access k ends a
-step in Error, never in bytes" (`lib/pci/test/test_function.ml`) fails the k-th
+step in Error, never in bytes" (`test/pci/test_function.ml`) fails the k-th
 access of a driver's step, for every k, and requires the step to end in the
 machine's reason.
 
@@ -272,7 +273,7 @@ What each ring suite holds:
 - Streams longer than the rings, with every byte of every copy checked at the
   end.
 - Counters past their width. "a Word wait holds the work across the 64-bit
-  wrap (sampled)" (`lib/cuda/test/test_cuda.ml`). A counter that wraps only after
+  wrap (sampled)" (`test/cuda/test_cuda.ml`). A counter that wraps only after
   billions of values is reached through a hidden seam that renumbers an idle
   device (`Rig_amd.renumber`), so the test makes a handful of submissions.
 - Order. The Metal ring model above: releases in commit order whatever order
@@ -338,7 +339,7 @@ Tests never exhaust a shared resource: threads, processes, file descriptors,
 memory, GPU memory or disk. A failure path that needs a limit is reached by a
 limit on a forked child alone. "workers that cannot be made are missing from
 every job; with none, the calling thread runs every chunk"
-(`lib/pool/test/test_threads.ml`) sets `RLIMIT_NPROC` to 0 in a child on Linux,
+(`test/pool/test_threads.ml`) sets `RLIMIT_NPROC` to 0 in a child on Linux,
 where it binds that process only. Without such a limit or a seam that injects
 the failure, the case is not tested.
 
@@ -352,10 +353,10 @@ pci tests its own logic on fake machines. A transport is a machine the library
 already supports, so a fake is a transport that keeps each operation's
 contract, records each call, and records as `wrong` any call that breaks the
 contract, which the library had to refuse before asking
-(`lib/pci/test/test_function.ml`, `lib/pci/test/test_gpus.ml`). Machine files come
+(`test/pci/test_function.ml`, `test/pci/test_gpus.ml`). Machine files come
 from fixture trees (`Machine.at root`). The fakes find bugs in pci's own
 logic. "system memory is freed before its addresses are handed out again"
-(`lib/pci/test/test_memory.ml`) has the fake's `free_dma` ask the shared address
+(`test/pci/test_memory.ml`) has the fake's `free_dma` ask the shared address
 space for memory while it frees. A free that returns a region's addresses to
 the space before it frees the system memory at them lets another GPU's owner,
 on another domain, map over memory still being freed.
