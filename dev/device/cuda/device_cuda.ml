@@ -300,11 +300,10 @@ let registry_lock = Mutex.create ()
 let page = page_size ()
 let pages a n = (a / page * page, (a + n + page - 1) / page * page)
 let locked g e a n address = region g.self (Locked e) ~address ~handle:a n
+let page_locking n a = strf "page-locking %d bytes at 0x%x" n a
 
 (* A range CUDA did not page-lock is registered. One it did, for another owner,
    is mapped as it is if both its ends are locked. *)
-let page_locking n a = strf "page-locking %d bytes at 0x%x" n a
-
 let page_lock g a n =
   let first = mapped g.self a and last = mapped g.self (a + n - 1) in
   if first >= 0 && last >= 0 then Some (locked g None a n first)
