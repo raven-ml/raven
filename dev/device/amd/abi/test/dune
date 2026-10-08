@@ -25,8 +25,8 @@
  (deps
   (source_tree fixtures)))
 
-; The probes' initialisers run around device_amd_abi's in the order the
-; libraries are listed, and -linkall links every module of the library.
+; -linkall links every module of the library, so each one's initialiser
+; runs between the probes'.
 
 (test
  (name test_init)
