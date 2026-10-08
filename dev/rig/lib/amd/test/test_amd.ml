@@ -129,6 +129,9 @@ module Host = struct
     mutable allocated : int; (* the allocations made *)
     mutable last_gpu : int; (* the address of the last [`Gpu] allocation *)
     mutable frees : int list; (* the addresses given back, latest first *)
+    mutable queue_memory : int list;
+        (* what the device allocated before its first queue: rings, positions,
+           word, slots and segment, which its queues read *)
     mutable queues : queue list; (* in the order made *)
     mutable refused_queue : bool;
     mutable stops : int;
@@ -164,6 +167,7 @@ module Host = struct
         allocated = 0;
         last_gpu = 0;
         frees = [];
+        queue_memory = [];
         queues = [];
         refused_queue = false;
         stops = 0;
@@ -191,6 +195,7 @@ module Host = struct
         h.allocated <- h.allocated + 1;
         if kind = `Gpu then h.last_gpu <- m.A.address;
         h.held <- m.data :: h.held;
+        if h.queues = [] then h.queue_memory <- m.A.address :: h.queue_memory;
         Some m
       end
     in
@@ -202,6 +207,10 @@ module Host = struct
       Option.iter (fun why -> raise (A.Fault why)) h.free_fault;
       if not h.closed then begin
         if m.data.given then fail "the device gave the same memory back twice";
+        if h.queues <> [] && h.stops = 0 && List.mem m.data.at h.queue_memory
+        then
+          fail
+            "the device gave back memory its queues read before stopping them";
         m.data.given <- true;
         h.frees <- m.data.at :: h.frees;
         if not m.data.view then begin
@@ -357,6 +366,19 @@ let make_gives_back () =
         [ `Stopped; `Unknown ])
     [ `Refuse; `Fault ]
 
+(* [stop] gives the device's memory back only once the path stopped its queues
+   (the host path refuses a free of memory a queue reads before), and never the
+   timeline word. *)
+let stop_gives_back () =
+  let h, g = Host.device () in
+  let word = address (A.word g) in
+  equal answer ~msg:"submit" `Ok (submit g ~v:1 [||]);
+  A.stop g;
+  equal int ~msg:"stops" 1 h.stops;
+  equal bool ~msg:"the word given back" false (List.mem word h.frees);
+  equal int ~msg:"the memory left: the word" 1 h.live;
+  Host.close h
+
 let facts () =
   List.iter
     (fun (g, kind, aql) ->
@@ -424,6 +446,8 @@ let paths =
               A.make { p with interrupt = 0 });
           Host.close h);
       test "a failed make gives back what it took" make_gives_back;
+      test "stop gives back a device's memory once its queues stopped"
+        stop_gives_back;
       test "a device states its path's facts" facts;
     ]
 
