@@ -313,8 +313,6 @@ let take host bus =
     | Error why -> refused why
     | exception Fail.Failed why -> refused why
 
-let this = Sysfs.v "/"
-
 let ops host =
   {
     Ops.transport = Window.unsafe_transport 0;

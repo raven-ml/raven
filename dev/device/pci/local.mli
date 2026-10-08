@@ -6,9 +6,6 @@
 (** This machine's PCI functions (private): taken through VFIO behind an IOMMU,
     or physically through [/sys/bus/pci]. *)
 
-val this : Sysfs.t
-(** [this] is this machine's files, under [/]. *)
-
 val ops : Sysfs.t -> Ops.ops
 (** [ops h] is the operations of the host [h]'s functions: {!Machine.this}'s for
     [Sysfs.v "/"]. *)

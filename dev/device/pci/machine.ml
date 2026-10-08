@@ -65,7 +65,7 @@ let at root =
   let host = Sysfs.v root in
   machine None (Some host) (Local.ops host)
 
-let this = machine None (Some Local.this) (Local.ops Local.this)
+let this = at "/"
 let make ~name ops = machine (Some name) None ops
 let host m = m.host
 let name m = m.name
