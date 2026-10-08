@@ -160,9 +160,10 @@ let unmap w = unmap_range (Window.address w) (Window.length w)
    function that no longer reaches memory leaves the list: at its release the
    process's file, from memory; at its GPU's reset every file under the root
    that a process that died left. A file whose list is empty and that holds no
-   block goes. The process holds a shared flock on its file from before the file
-   has a name until it dies, so a reset tells a dead process's file by taking
-   the lock. *)
+   block goes, and a dead process's file whose list is empty goes at the next
+   take of a function of the machine, blocks and all. The process holds a shared
+   flock on its file from before the file has a name until it dies, so a take or
+   a reset tells a dead process's file by taking the lock. *)
 
 type file = {
   pid : int; (* the process that made it *)
@@ -244,7 +245,7 @@ let write_reachers path buses =
   with Fail.Failed why -> prerr_endline ("rig.pci: " ^ why)
 
 (* The file goes first: a crash in between leaves a list without its file, which
-   the next reset of any GPU of the machine takes. *)
+   the next take of a function of the machine takes. *)
 let delete path =
   unlink path;
   unlink (path ^ tmp_suffix);
@@ -588,9 +589,10 @@ let others ~root =
           else (files, orphans))
         names ([], [])
 
-(* [bus] leaves the lists of the files under [root] that processes that died
-   left, and the files no function reaches go. [state] is held. *)
-let forget_left ~root ~bus =
+(* The bus whose GPU was [reset], if any, leaves the lists of the files under
+   [root] that processes that died left, and the files no function reaches go.
+   [state] is held. *)
+let sweep ~root ~reset =
   let files, orphans = others ~root in
   List.iter unlink orphans;
   (* A list that cannot be read keeps its file, which only leaks it. *)
@@ -600,20 +602,23 @@ let forget_left ~root ~bus =
           match reachers_on_disk path with
           | exception Fail.Failed why -> prerr_endline ("rig.pci: " ^ why)
           | None | Some [] -> delete path
-          | Some buses when List.mem bus buses -> (
-              match List.filter (( <> ) bus) buses with
+          | Some buses -> (
+              match List.filter (fun b -> Some b <> reset) buses with
               | [] -> delete path
-              | rest -> write_reachers path rest)
-          | Some _ -> ()))
+              | rest when rest <> buses -> write_reachers path rest
+              | _ -> ())))
     files
+
+let collect_dead ~root =
+  Mutex.protect state @@ fun () -> sweep ~root ~reset:None
 
 let forget ~root ~bus =
   Mutex.protect state @@ fun () ->
   leave ~root bus;
-  forget_left ~root ~bus
+  sweep ~root ~reset:(Some bus)
 
 let forget_dead ~root ~bus =
-  Mutex.protect state @@ fun () -> forget_left ~root ~bus
+  Mutex.protect state @@ fun () -> sweep ~root ~reset:(Some bus)
 
 (* A file that cannot be opened for another reason than its end might hold the
    GPU's memory: it is no answer. *)

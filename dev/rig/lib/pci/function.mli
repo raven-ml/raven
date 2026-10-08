@@ -235,13 +235,16 @@ val alloc_dma :
     kernel neither swaps nor compacts them. The process's file goes once each
     function that reaches it was released, its bus mastering off ({!release}),
     and it holds no memory, or at the process's exit; the file of a process that
-    died goes once each of its GPUs was reset ({!Gpus.reset}, which
-    {!Gpus.attach} runs too). Some cases stay open, and only an IOMMU closes
-    them: the kernel moves even huge pages to allocate a contiguous area (CMA),
-    for virtio-mem, and to take memory offline or a failing page out of service;
-    and a kernel booted by kexec, without the platform's reset, inherits a GPU
-    still writing. Behind an IOMMU the memory is the process's: VFIO ends the
-    function's access when the process's files close, at its death too.
+    died goes once each function that reached it was released, its bus mastering
+    off, or its GPU reset ({!Gpus.reset}, which {!Gpus.attach} runs too, as does
+    {!Gpus.open_} of a GPU such a file names): at that reset, or at the next
+    {!take} of a function of the machine. Some cases stay open, and only an
+    IOMMU closes them: the kernel moves even huge pages to allocate a contiguous
+    area (CMA), for virtio-mem, and to take memory offline or a failing page out
+    of service; and a kernel booted by kexec, without the platform's reset,
+    inherits a GPU still writing. Behind an IOMMU the memory is the process's:
+    VFIO ends the function's access when the process's files close, at its death
+    too.
 
     [Ok None] if the machine has no free memory for it now: taken physically, no
     free huge page for a new block ([vm.nr_hugepages]) or, without [va], no free

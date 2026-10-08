@@ -333,6 +333,9 @@ let take_physical files fds bus bars =
   in
   fds := config :: !fds;
   if not (in_change file) then lock files bus config;
+  (* The first act of a process on the machine's memory: what processes that
+     died left and no function reaches goes, without waiting for a reset. *)
+  Sysmem.collect_dead ~root:(Sysfs.root files);
   let interrupts =
     if Sysfs.driver files bus = Some "vfio-pci" then
       let _, _, efd = Vfio.open_function files fds bus Vfio.No_iommu in

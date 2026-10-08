@@ -70,7 +70,8 @@ val close : store -> unit
 (** [close s] records that [s]'s function reaches no memory any more, its bus
     mastering off: it leaves the list of the process's file, which goes once it
     lists no function and holds no memory. The process's mappings keep their
-    pages until {!free}. Files a process that died left stay until {!forget}.
+    pages until {!free}. A file a process that died left goes at {!collect_dead}
+    once it lists no function, or at {!forget} of each function it lists.
     Closing it again does nothing. *)
 
 val reach : a:int -> n:int -> bus:string -> unit
@@ -84,6 +85,12 @@ val reach : a:int -> n:int -> bus:string -> unit
 
 val unreach : a:int -> n:int -> unit
 (** [unreach ~a ~n] records that a peer's mapping {!reach} recorded is gone. *)
+
+val collect_dead : root:string -> unit
+(** [collect_dead ~root] deletes the files under [root] that processes that died
+    left and that list no function, whatever memory they hold: each function
+    that reached it was released, its bus mastering off, or its GPU reset.
+    Called at each take of a function of the machine. *)
 
 val forget_dead : root:string -> bus:string -> unit
 (** [forget_dead ~root ~bus] is {!forget} for the files processes that died left

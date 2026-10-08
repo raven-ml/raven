@@ -1668,6 +1668,11 @@ let memory_file root =
   | [ f ] -> Filename.concat root ("dev/hugepages/" ^ f)
   | fs -> failf "%d memory files" (List.length fs)
 
+(* Every entry of the machine's [dev/hugepages]: files and their lists. *)
+let hugepages root =
+  Sys.readdir (Filename.concat root "dev/hugepages")
+  |> Array.to_list |> List.sort compare
+
 let reachers file =
   In_channel.with_open_bin (file ^ ".reach") In_channel.input_all
 
@@ -1736,7 +1741,8 @@ let refused_code = 3
    allocation, then dies by SIGKILL. With [how] ["die"] it then dies by SIGKILL,
    which runs no exit function; with ["wait"] it waits for its standard input to
    close and exits. ["released-die"] and ["released-wait"] release the function
-   first. *)
+   first. ["released-quit"] releases it, waits as ["wait"] does, and leaves by
+   [_exit], which runs no exit function either. *)
 let hold_memory how root bus va =
   let ok = function Ok x -> x | Error _ -> exit refused_code in
   if how = "renew-die" then begin
@@ -1757,6 +1763,10 @@ let hold_memory how root bus va =
   if String.starts_with ~prefix:"released-" how then Function.release f;
   match how with
   | "die" | "released-die" -> Unix.kill (Unix.getpid ()) Sys.sigkill
+  | "released-quit" ->
+      print_endline "holding";
+      ignore (In_channel.input_all stdin);
+      Unix._exit 0
   | _ ->
       print_endline "holding";
       ignore (In_channel.input_all stdin);
@@ -1930,6 +1940,59 @@ let test_released_holder how () =
       | _ -> fail "the holder did not exit");
       equal ~msg:"gone at its process's exit" (list string) []
         (memory_files root)
+
+(* The memory of a function its process released, its bus mastering off, stays
+   while the process lives, through takes of other functions of the machine. A
+   death that runs no exit function leaves it, and the next take of any function
+   of the machine deletes it. *)
+let test_released_death () =
+  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  let fn = Tree.gpu "0000:03:00.0" and other = "0000:04:00.0" in
+  let root = Tree.make [ fn; Tree.gpu other ] in
+  let m = Machine.at root and va = free_base + (6 * mib) in
+  ignore (frames root va mib);
+  let pid, feed, said = holder "released-quit" root fn.bus va in
+  if In_channel.input_line (Unix.in_channel_of_descr said) <> Some "holding"
+  then begin
+    Unix.close feed;
+    ignore (wait_exit pid);
+    fail "the holder did not hold the function"
+  end;
+  let file = memory_file root in
+  equal ~msg:"listing no function" string "" (reachers file);
+  Function.release (require_ok (Function.take m other));
+  equal ~msg:"kept through a take while its process lives" bool true
+    (Sys.file_exists file);
+  Unix.close feed;
+  (match wait_exit pid with
+  | WEXITED 0 -> ()
+  | _ -> fail "the holder did not exit");
+  equal ~msg:"left by its death" bool true (Sys.file_exists file);
+  Function.release (require_ok (Function.take m other));
+  equal ~msg:"gone at the next take" (list string) [] (hugepages root)
+
+(* At a take, the files processes that died left go if they list no function:
+   one with no list, which died being made, and one with an empty list. A list
+   whose file is gone goes too. One that lists a function stays until that
+   function's GPU is reset. *)
+let test_left_files () =
+  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  let gpu0 = "0000:03:00.0" and gpu1 = "0000:04:00.0" in
+  let root = Tree.make [ Tree.gpu gpu0; Tree.gpu gpu1 ] in
+  let add name s = Tree.add root ("dev/hugepages/" ^ name) s in
+  add "rig-pci-1-1" "";
+  add "rig-pci-2-2" "";
+  add "rig-pci-2-2.reach" "";
+  add "rig-pci-3-3" "";
+  add "rig-pci-3-3.reach" (gpu1 ^ "\n");
+  add "rig-pci-4-4.reach" (gpu1 ^ "\n");
+  let m = Machine.at root in
+  Function.release (require_ok (Function.take m gpu0));
+  equal ~msg:"the file listing a function stays" (list string)
+    [ "rig-pci-3-3"; "rig-pci-3-3.reach" ]
+    (hugepages root);
+  require_ok (Gpus.reset (fixture_gpus ()) m 1);
+  equal ~msg:"gone at its GPU's reset" (list string) [] (hugepages root)
 
 (* An open of a GPU a process that died left reaching memory resets it first,
    under its take, and gives that memory back; one nobody left is not reset. *)
@@ -2163,6 +2226,14 @@ let system_memory =
         "a reset keeps the file of a living process that released its function \
          (a child holds)"
         (test_released_holder "released-wait");
+      test
+        "a released function's memory stays while its process lives and goes \
+         at the first take after its death (a child holds, then _exits)"
+        test_released_death;
+      test
+        "a take deletes the files processes that died left listing no \
+         function, and keeps one that lists a function until its reset"
+        test_left_files;
       test "memory whose frames are not one block is refused" test_scattered;
       test "memory in one 2 MiB block shares a huge page, gone once both are"
         test_shared_page;
