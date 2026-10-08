@@ -58,7 +58,7 @@ let fn ~bar_size =
     reset = (fun () -> Ok ());
     alloc_dma =
       (fun ~contiguous:_ ~va n ->
-        Ok (Window.v (Option.get va) n, List.assoc n runs));
+        Ok (Some (Window.v (Option.get va) n, List.assoc n runs)));
     free_dma = ignore;
     pin = (fun a n -> Ok [ (a, n) ]);
     unpin = (fun _ _ -> ());

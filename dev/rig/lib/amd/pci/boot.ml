@@ -366,8 +366,12 @@ let fault_status l =
    page. *)
 let alloc_fault_page f =
   match Function.alloc_dma f (Machine.page (Function.machine f)) with
-  | Ok (w, (bus, _) :: _) -> Ok (w, bus)
-  | Ok (_, []) -> Error "the hubs' fault page has no bus address"
+  | Ok (Some (w, (bus, _) :: _)) -> Ok (w, bus)
+  | Ok (Some (_, [])) -> Error "the hubs' fault page has no bus address"
+  | Ok None ->
+      Error
+        "the hubs' fault page: the machine has no free system memory; free \
+         some, or reserve huge pages (vm.nr_hugepages)"
   | Error why -> Error (strf "the hubs' fault page: %s" why)
 
 let start f find =

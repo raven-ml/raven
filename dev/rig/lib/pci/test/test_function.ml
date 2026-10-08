@@ -198,7 +198,10 @@ let fake_fn m bus =
                 Error "far:1: the addresses are in use"
               else begin
                 f.dmas <- (a, bytes) :: f.dmas;
-                Ok (Window.through m.tr a bytes, runs f a bytes ~one:contiguous)
+                Ok
+                  (Some
+                     ( Window.through m.tr a bytes,
+                       runs f a bytes ~one:contiguous ))
               end));
       free_dma =
         (fun w ->
@@ -304,7 +307,7 @@ let map ?combine ?off ?length f i =
   require_ok (Function.map ?combine ?off ?length f i)
 
 let alloc_dma ?contiguous ?va f n =
-  require_ok (Function.alloc_dma ?contiguous ?va f n)
+  require_some (require_ok (Function.alloc_dma ?contiguous ?va f n))
 
 let pin f a n = require_ok (Function.pin f a n)
 
@@ -783,8 +786,8 @@ let alloc_at f contiguous va n =
 let alloc_sys (f, _) contiguous va n =
   let va = Option.map (fun v -> va_base + v) va in
   match Function.alloc_dma ~contiguous ?va f n with
-  | Ok (w, _) -> w
-  | Error _ -> raise In_use
+  | Ok (Some (w, _)) -> w
+  | Ok None | Error _ -> raise In_use
 
 let alloc_ref f contiguous va n =
   alloc_at f contiguous (Option.map (fun v -> va_base + v) va) n
@@ -1533,89 +1536,426 @@ let with_fixtures n f =
     (fun () -> f root fns)
 
 let with_fixture f = with_fixtures 1 (fun root fns -> f root (List.hd fns))
+let huge = 2 * mib
 
-(* Frames the fixture's page map gives the [n] bytes at [a]: one per page, from
-   a frame no other range of a test uses. *)
+(* Frames the fixture's page map gives the 2 MiB blocks of addresses that hold
+   the [n] bytes at [a], one block of frames each, from a frame no other block
+   of a test uses; and the physical addresses of the pages of the [n] bytes. *)
 let frames root a n =
   let page = Machine.page Machine.this in
-  let first = 0x10_0000 + (a / page land 0xffff) in
-  let fs = List.init ((n + page - 1) / page) (fun i -> first + i) in
-  Tree.pagemap root ~page a fs;
-  List.map (fun f -> f * page) fs
+  let lo = a / huge * huge and hi = round_up (a + n) huge in
+  let first block = 0x10_0000 + (block / huge land 0xfff * (huge / page)) in
+  let rec give block =
+    if block < hi then begin
+      Tree.pagemap root ~page block
+        (List.init (huge / page) (fun i -> first block + i));
+      give (block + huge)
+    end
+  in
+  give lo;
+  List.init
+    ((n + page - 1) / page)
+    (fun i ->
+      let p = a + (i * page) in
+      (first (p / huge * huge) * page) + (p mod huge))
+
+(* The runs of pages [pas]: those that follow each other merged. *)
+let runs_of pas =
+  let page = Machine.page Machine.this in
+  List.fold_left
+    (fun acc pa ->
+      match acc with
+      | (a, n) :: rest when a + n = pa -> (a, n + page) :: rest
+      | _ -> (pa, page) :: acc)
+    [] pas
+  |> List.rev
 
 let granted = function Ok x -> x | Error why -> skip ~reason:why ()
 
-(* The kibibytes of the process's memory Linux keeps locked. *)
-let locked_kib () =
-  In_channel.with_open_text "/proc/self/status" In_channel.input_lines
-  |> List.find_map (fun l ->
-      match String.split_on_char ':' l with
-      | [ "VmLck"; v ] ->
-          int_of_string_opt
-            (String.trim (Filename.chop_suffix (String.trim v) "kB"))
-      | _ -> None)
-  |> Option.get
+let given r =
+  match granted r with
+  | Some x -> x
+  | None -> skip ~reason:"the machine has no free memory" ()
 
-(* DMA memory stays locked through a pin and an unpin of it, which another
-   function's mapping of it makes. *)
-let test_dma_locked () =
+(* Memory reached physically lies in huge pages: its runs are those of the
+   blocks of frames that hold it. *)
+let test_dma () =
   with_fixture @@ fun root f ->
   granted (Machine.reserve (Function.machine f) ~base:free_base (8 * mib));
-  let va = free_base and page = Machine.page Machine.this in
-  let pas = frames root va mib in
-  let w, runs = granted (Function.alloc_dma ~va f mib) in
-  equal ~msg:"a run per page, at the page map's frames"
+  let va = free_base + mib in
+  let pas = frames root va (3 * mib) in
+  let w, runs = given (Function.alloc_dma ~va f (3 * mib)) in
+  equal ~msg:"a run per block of frames"
     (list (pair hex int))
-    (List.map (fun pa -> (pa, page)) pas)
-    runs;
-  equal ~msg:"zeroed" string (String.make mib '\000') (Window.read w 0 mib);
-  let locked = locked_kib () in
-  at_least ~msg:"locked" int ~than:1024 locked;
-  ignore (granted (Function.pin f (Window.address w) mib));
-  Function.unpin f (Window.address w) mib;
-  equal ~msg:"still locked after a pin and an unpin" int locked (locked_kib ());
-  Function.free_dma f w;
-  equal ~msg:"unlocked once freed" int (locked - 1024) (locked_kib ())
+    (runs_of pas) runs;
+  equal ~msg:"zeroed" string
+    (String.make (3 * mib) '\000')
+    (Window.read w 0 (3 * mib));
+  Function.free_dma f w
 
-let test_counted_pins () =
-  with_fixtures 2 @@ fun root fns ->
-  let f, g = (List.nth fns 0, List.nth fns 1) in
+(* The process's pages go back to the system when it dies: a function taken
+   physically, which would keep writing them, is refused them. *)
+let test_pin_physical () =
+  with_fixture @@ fun root f ->
   let page = Machine.page Machine.this in
   let a = round_up (memory (2 * page)) page in
   ignore (frames root a page);
-  ignore (granted (Function.pin f a page));
-  let pinned = locked_kib () in
-  ignore (pin g a page);
-  Function.unpin f a page;
-  equal ~msg:"still locked after one of two unpins" int pinned (locked_kib ());
-  Function.unpin g a page;
-  equal ~msg:"unlocked after the second" int
-    (pinned - (page / 1024))
-    (locked_kib ())
+  contains ~sub:"without an IOMMU" (require_error (Function.pin f a page))
 
 let test_contiguous () =
   with_fixture @@ fun root f ->
   granted (Machine.reserve (Function.machine f) ~base:free_base (8 * mib));
   let va = free_base + (2 * mib) in
   ignore (frames root va (2 * mib));
-  let w, runs =
-    granted (Function.alloc_dma ~contiguous:true ~va f (300 * kib))
-  in
+  let w, runs = given (Function.alloc_dma ~contiguous:true ~va f (300 * kib)) in
   equal ~msg:"at the address asked" hex va (Window.address w);
   equal ~msg:"one run" int 1 (List.length runs);
   Function.free_dma f w
 
+(* Memory that outlives the process
+
+   A function taken physically keeps writing memory after its process dies: its
+   memory lies in huge pages of files under the machine's [dev/hugepages], which
+   keep their pages until no function reaches them. *)
+
+let memory_files root =
+  Sys.readdir (Filename.concat root "dev/hugepages")
+  |> Array.to_list
+  |> List.filter (fun f ->
+      String.starts_with ~prefix:"rig-pci-" f
+      && not (String.ends_with ~suffix:".reach" f))
+
+let memory_file root =
+  match memory_files root with
+  | [ f ] -> Filename.concat root ("dev/hugepages/" ^ f)
+  | fs -> failf "%d memory files" (List.length fs)
+
+let reserved f =
+  granted (Machine.reserve (Function.machine f) ~base:free_base (8 * mib))
+
+let test_memory_file () =
+  with_fixture @@ fun root f ->
+  reserved f;
+  let va = free_base + (4 * mib) in
+  ignore (frames root va mib);
+  let w, _ = given (Function.alloc_dma ~va f mib) in
+  equal ~msg:"a file of its own" int 1 (List.length (memory_files root));
+  Function.free_dma f w;
+  equal ~msg:"kept while the function is held" int 1
+    (List.length (memory_files root));
+  Function.release f;
+  equal ~msg:"gone once released" (list string) [] (memory_files root)
+
+(* A function is named by its machine and bus: the release of one leaves the
+   memory of a function at the same bus on another machine. *)
+let test_memory_machines () =
+  with_fixture @@ fun root f ->
+  with_fixture @@ fun root' f' ->
+  reserved f;
+  reserved f';
+  let va = free_base + (4 * mib) and va' = free_base + (6 * mib) in
+  ignore (frames root va mib);
+  ignore (frames root' va' mib);
+  let w, _ = given (Function.alloc_dma ~va f mib) in
+  let w', _ = given (Function.alloc_dma ~va:va' f' mib) in
+  equal ~msg:"one bus on both machines" string (Function.bus f)
+    (Function.bus f');
+  let kept = memory_files root in
+  Function.release f';
+  equal ~msg:"the other machine's memory stays" (list string) kept
+    (memory_files root);
+  Function.free_dma f' w';
+  Function.free_dma f w
+
+(* The test's executable, run with [holding], is [hold_memory]'s process. *)
+let holding = "--hold-memory"
+
+(* The code [hold_memory] exits with when the machine refuses it the function's
+   memory. *)
+let refused_code = 3
+
+(* Takes the fixture's function at [bus] and allocates its memory at [va], whose
+   frames the tree's page map gives, which it never frees. With [how] ["die"] it
+   then dies by SIGKILL, which runs no exit function; with ["wait"] it waits for
+   its standard input to close and exits. ["released-die"] and ["released-wait"]
+   release the function first. *)
+let hold_memory how root bus va =
+  let ok = function Ok x -> x | Error _ -> exit refused_code in
+  let f = ok (Function.take (Machine.at root) bus) in
+  ok (Machine.reserve (Function.machine f) ~base:free_base (8 * mib));
+  if Option.is_none (ok (Function.alloc_dma ~va f mib)) then exit refused_code;
+  if String.starts_with ~prefix:"released-" how then Function.release f;
+  match how with
+  | "die" | "released-die" -> Unix.kill (Unix.getpid ()) Sys.sigkill
+  | _ ->
+      print_endline "holding";
+      ignore (In_channel.input_all stdin);
+      exit 0
+
+(* [holder how root bus va] starts [hold_memory]: its pid, the pipe on its
+   standard input, and its first line of output, which waits until it holds. *)
+let holder how root bus va =
+  let exe = Sys.executable_name in
+  let input, feed = Unix.pipe ~cloexec:true () in
+  let said, output = Unix.pipe ~cloexec:true () in
+  let pid =
+    Unix.create_process exe
+      [| exe; holding; how; root; bus; string_of_int va |]
+      input output Unix.stderr
+  in
+  Unix.close input;
+  Unix.close output;
+  (pid, feed, said)
+
+let wait_exit pid =
+  let status = ref None in
+  let exited () =
+    match Unix.waitpid [ WNOHANG ] pid with
+    | 0, _ -> false
+    | _, s ->
+        status := Some s;
+        true
+  in
+  if not (poll exited) then begin
+    Unix.kill pid Sys.sigkill;
+    failf "the process %d did not exit" pid
+  end;
+  match !status with
+  | Some (WEXITED c) when c = refused_code ->
+      skip ~reason:"the machine refused the function's memory" ()
+  | Some s -> s
+  | None -> assert false
+
+let fixture_gpus () =
+  Gpus.make ~memory_bar:0
+    ~nodes:(fun ~read:_ _ -> [])
+    ~reset:(fun _ -> Ok ())
+    (fun (id : Machine.id) -> id.class_ lsr 16 = 0x03)
+
+(* What a process that died left stays through another take and release, which
+   does not reset the GPU, and goes once its GPU is reset. *)
+let test_death () =
+  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  let fn = Tree.gpu "0000:03:00.0" in
+  let root = Tree.make [ fn ] in
+  let va = free_base + (6 * mib) in
+  ignore (frames root va mib);
+  let pid, feed, said = holder "die" root fn.bus va in
+  Unix.close feed;
+  Unix.close said;
+  (match wait_exit pid with
+  | WSIGNALED s when s = Sys.sigkill -> ()
+  | _ -> fail "the process holding the function did not die by SIGKILL");
+  let left = memory_files root in
+  equal ~msg:"left by the dead process" int 1 (List.length left);
+  let m = Machine.at root in
+  Function.release (require_ok (Function.take m fn.bus));
+  equal ~msg:"kept through a take and a release" (list string) left
+    (memory_files root);
+  require_ok (Gpus.reset (fixture_gpus ()) m 0);
+  equal ~msg:"gone once the GPU is reset" (list string) [] (memory_files root)
+
+(* A reset of a GPU another process holds is refused, its memory untouched; the
+   holder's exit gives the memory back. *)
+let test_reset_held () =
+  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  let fn = Tree.gpu "0000:03:00.0" in
+  let root = Tree.make [ fn ] in
+  let va = free_base + (6 * mib) in
+  ignore (frames root va mib);
+  let pid, feed, said = holder "wait" root fn.bus va in
+  let line = In_channel.input_line (Unix.in_channel_of_descr said) in
+  if line <> Some "holding" then begin
+    Unix.close feed;
+    ignore (wait_exit pid);
+    fail "the holder did not hold the function"
+  end;
+  let held = memory_files root in
+  equal ~msg:"the holder's memory" int 1 (List.length held);
+  ignore (require_error (Gpus.reset (fixture_gpus ()) (Machine.at root) 0));
+  equal ~msg:"kept while held" (list string) held (memory_files root);
+  Unix.close feed;
+  (match wait_exit pid with
+  | WEXITED 0 -> ()
+  | _ -> fail "the holder did not exit");
+  equal ~msg:"given back at the holder's exit" (list string) []
+    (memory_files root)
+
+(* A released function's memory stays, and a later take of the machine allocates
+   beside it in its huge page. *)
+let test_released_block () =
+  with_fixture @@ fun root f ->
+  reserved f;
+  let va = free_base + (2 * mib) and page = Machine.page Machine.this in
+  ignore (frames root va (2 * page));
+  let w, _ = given (Function.alloc_dma ~va f page) in
+  Function.release f;
+  equal ~msg:"kept while it holds memory" int 1
+    (List.length (memory_files root));
+  let f' = require_ok (Function.take (Function.machine f) (Function.bus f)) in
+  let w', _ = given (Function.alloc_dma ~va:(va + page) f' page) in
+  Function.free_dma f w;
+  Function.free_dma f' w';
+  Function.release f';
+  equal ~msg:"gone once it lists no function and holds nothing" (list string) []
+    (memory_files root)
+
+(* A reset deletes the file of a process that died after it released its
+   function, and keeps that of a process that lives. *)
+let test_released_holder how () =
+  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  let fn = Tree.gpu "0000:03:00.0" in
+  let root = Tree.make [ fn ] in
+  let va = free_base + (6 * mib) in
+  ignore (frames root va mib);
+  let pid, feed, said = holder how root fn.bus va in
+  let reset () =
+    require_ok (Gpus.reset (fixture_gpus ()) (Machine.at root) 0)
+  in
+  match how with
+  | "released-die" ->
+      Unix.close feed;
+      Unix.close said;
+      (match wait_exit pid with
+      | WSIGNALED s when s = Sys.sigkill -> ()
+      | _ -> fail "the holder did not die by SIGKILL");
+      equal ~msg:"left by the dead process" int 1
+        (List.length (memory_files root));
+      reset ();
+      equal ~msg:"gone at the reset" (list string) [] (memory_files root)
+  | _ ->
+      if In_channel.input_line (Unix.in_channel_of_descr said) <> Some "holding"
+      then begin
+        Unix.close feed;
+        ignore (wait_exit pid);
+        fail "the holder did not hold the function"
+      end;
+      let held = memory_files root in
+      equal ~msg:"the holder's memory" int 1 (List.length held);
+      reset ();
+      equal ~msg:"kept while its process lives" (list string) held
+        (memory_files root);
+      Unix.close feed;
+      (match wait_exit pid with
+      | WEXITED 0 -> ()
+      | _ -> fail "the holder did not exit");
+      equal ~msg:"gone at its process's exit" (list string) []
+        (memory_files root)
+
+(* A huge page is one block: frames that are not, as a file system that is no
+   hugetlbfs gives, are refused, naming the mount. *)
+let test_scattered () =
+  with_fixture @@ fun root f ->
+  reserved f;
+  let va = free_base + (2 * mib) and page = Machine.page Machine.this in
+  Tree.pagemap root ~page va
+    (List.init (2 * mib / page) (fun i -> 0x30_0000 + (2 * i)));
+  contains ~sub:"hugetlbfs"
+    (require_error (Function.alloc_dma ~va f (300 * kib)))
+
+(* Memory whose addresses share a 2 MiB block shares its huge page, which goes
+   back once neither holds it. *)
+let test_shared_page () =
+  with_fixture @@ fun root f ->
+  reserved f;
+  let va = free_base + (2 * mib) in
+  let pas = frames root va (128 * kib) in
+  let a, ra = given (Function.alloc_dma ~va f (64 * kib)) in
+  let b, rb = given (Function.alloc_dma ~va:(va + (64 * kib)) f (64 * kib)) in
+  let pa = List.hd pas in
+  equal ~msg:"the first at its frames"
+    (list (pair hex int))
+    [ (pa, 64 * kib) ]
+    ra;
+  equal ~msg:"the second after it, in the same huge page"
+    (list (pair hex int))
+    [ (pa + (64 * kib), 64 * kib) ]
+    rb;
+  let file = memory_file root in
+  equal ~msg:"one huge page" int huge (Tree.stored file);
+  Function.free_dma f a;
+  equal ~msg:"kept while the second holds it" int huge (Tree.stored file);
+  Function.free_dma f b;
+  equal ~msg:"given back once neither does" int 0 (Tree.stored file)
+
+(* Memory handed out again in a huge page that stayed is zeroed. *)
+let test_reused_zeroed () =
+  with_fixture @@ fun root f ->
+  reserved f;
+  let va = free_base + (2 * mib) and page = Machine.page Machine.this in
+  ignore (frames root va (2 * page));
+  let a, _ = given (Function.alloc_dma ~va f page) in
+  let b, _ = given (Function.alloc_dma ~va:(va + page) f page) in
+  Window.write a 0 (String.make page 'x');
+  Function.free_dma f a;
+  let a, _ = given (Function.alloc_dma ~va f page) in
+  equal ~msg:"zeroed" string (String.make page '\000') (Window.read a 0 page);
+  Function.free_dma f a;
+  Function.free_dma f b
+
+(* Addresses whose 2 MiB block another machine's memory holds are refused. *)
+let test_block_taken () =
+  with_fixture @@ fun root f ->
+  with_fixture @@ fun root' f' ->
+  reserved f;
+  reserved f';
+  let va = free_base + (2 * mib) and page = Machine.page Machine.this in
+  ignore (frames root va (2 * page));
+  ignore (frames root' va (2 * page));
+  let w, _ = given (Function.alloc_dma ~va f page) in
+  ignore (require_error (Function.alloc_dma ~va:(va + page) f' page));
+  Function.free_dma f w
+
+(* The huge page around memory at a reserved address must be reserved whole. *)
+let test_block_reserved () =
+  with_fixture @@ fun root f ->
+  let page = Machine.page Machine.this in
+  let base = free_base + (16 * mib) + page in
+  granted (Machine.reserve (Function.machine f) ~base (4 * mib));
+  ignore (frames root base page);
+  raises_match (Exn.invalid_arg ~substring:"2 MiB") (fun () ->
+      Function.alloc_dma ~va:base f page)
+
 let system_memory =
-  group ~timeout:patience "locked system memory"
+  group ~timeout:patience "system memory"
     [
-      test
-        "DMA memory, zeroed and a run per page, stays locked through a pin and \
-         an unpin until freed"
-        test_dma_locked;
-      test "of two functions' pins of a range, the second unpin unlocks it"
-        test_counted_pins;
+      test "DMA memory, zeroed, at the frames of the huge pages that hold it"
+        test_dma;
+      test "a function taken physically is refused the process's pages"
+        test_pin_physical;
       test "contiguous memory is one run at the reserved address asked"
         test_contiguous;
+      test
+        "a physical take's memory lies in a file of its own, gone once released"
+        test_memory_file;
+      test "a release leaves the memory of another machine's function"
+        test_memory_machines;
+      test
+        "memory a killed process left stays through a release and goes at its \
+         GPU's reset (SIGKILL in a child)"
+        test_death;
+      test
+        "a reset of a GPU another process holds is refused, its memory kept (a \
+         child holds)"
+        test_reset_held;
+      test
+        "a released function's memory stays, and a later take shares its page"
+        test_released_block;
+      test
+        "a reset deletes the file of a process that died after releasing its \
+         function (SIGKILL in a child)"
+        (test_released_holder "released-die");
+      test
+        "a reset keeps the file of a living process that released its function \
+         (a child holds)"
+        (test_released_holder "released-wait");
+      test "memory whose frames are not one block is refused" test_scattered;
+      test "memory in one 2 MiB block shares a huge page, gone once both are"
+        test_shared_page;
+      test "memory handed out again in a huge page is zeroed" test_reused_zeroed;
+      test "a 2 MiB block another machine's memory holds is refused"
+        test_block_taken;
+      test "the 2 MiB block around memory must be reserved" test_block_reserved;
     ]
 
 let this_machine =
@@ -1633,6 +1973,8 @@ let this_machine =
 let () =
   match Sys.argv with
   | [| _; arg; root; bus |] when arg = exiting -> exit_mastering root bus
+  | [| _; arg; how; root; bus; va |] when arg = holding ->
+      hold_memory how root bus (int_of_string va)
   | _ ->
       hold_gpu ();
       exit

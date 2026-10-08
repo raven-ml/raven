@@ -77,9 +77,6 @@ let not_viable files bus g =
    bytes against the process's locked-memory limit. *)
 let map_error bus n (e : Unix.error) =
   match e with
-  | ENOMEM ->
-      strf "mapping %d bytes for %s: %s; %s" n bus (Unix.error_message e)
-        Fail.memlock
   | ENOSPC ->
       strf
         "mapping %d bytes for %s: the IOMMU holds as many mappings as Linux \
@@ -253,20 +250,21 @@ let map_dma fn bus c a n =
   match Tables.Range.find_opt c.maps (a, n) with
   | Some (iova, k) ->
       Tables.Range.replace c.maps (a, n) (iova, k + 1);
-      iova
-  | None ->
-      let iova =
-        match Space.alloc c.iova n with
-        | Some x -> x
-        | None -> Fail.fail "%s has no IOMMU addresses left for %d bytes" bus n
-      in
-      (match map c.fd a iova n with
-      | () -> ()
-      | exception Unix.Unix_error (e, _, _) ->
-          Space.free c.iova iova;
-          Fail.fail "%s" (map_error bus n e));
-      Tables.Range.replace c.maps (a, n) (iova, 1);
-      iova
+      Some iova
+  | None -> (
+      match Space.alloc c.iova n with
+      | None -> None
+      | Some iova -> (
+          match map c.fd a iova n with
+          | () ->
+              Tables.Range.replace c.maps (a, n) (iova, 1);
+              Some iova
+          | exception Unix.Unix_error (ENOMEM, _, _) ->
+              Space.free c.iova iova;
+              None
+          | exception Unix.Unix_error (e, _, _) ->
+              Space.free c.iova iova;
+              Fail.fail "%s" (map_error bus n e)))
 
 (* Drops a count of the [n] bytes at [a], unmapping them with the last. A
    released function's container has unmapped them already. *)

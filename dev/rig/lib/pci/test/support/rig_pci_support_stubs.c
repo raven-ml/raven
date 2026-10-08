@@ -288,6 +288,21 @@ value rig_pci_test_device_number(value v_path) {
 #endif
 }
 
+/* The bytes the file system holds for the file at [v_path], from its
+   blocks of 512 bytes, which a hole holds none of. Raises Unix_error if it
+   cannot be read. Holds the runtime. */
+value rig_pci_test_stored(value v_path) {
+#ifdef _WIN32
+  (void)v_path;
+  caml_failwith("rig_pci_test_stored: Windows counts no block");
+#else
+  CAMLparam1(v_path);
+  struct stat st;
+  if (stat(String_val(v_path), &st) != 0) caml_uerror("stat", v_path);
+  CAMLreturn(Val_long((intnat)st.st_blocks * 512));
+#endif
+}
+
 /* The GPU lock */
 
 /* One try at the exclusive lock of the file [v_path], which the process

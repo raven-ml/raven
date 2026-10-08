@@ -46,7 +46,7 @@ let gpu ?(vendor = fun () -> 0x10de) () =
     let bus = match va with Some va -> va | None -> !next in
     next := !next + n;
     log (Alloc n);
-    Ok (window n, [ (bus, n) ])
+    Ok (Some (window n, [ (bus, n) ]))
   in
   let fn =
     {

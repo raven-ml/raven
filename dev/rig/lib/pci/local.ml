@@ -59,6 +59,10 @@ let locked files bus f =
 
 (* Taking *)
 
+(* How a function is taken: through VFIO behind an IOMMU, or physically, its
+   memory in files of its own. *)
+type way = Iommu_take of Vfio.t | Physical_take of Sysmem.store
+
 type taken = {
   files : Sysfs.t;
   bus : string;
@@ -67,7 +71,7 @@ type taken = {
   seek : Mutex.t; (* a seek and its read or write, one at a time *)
   interrupts : Unix.file_descr option; (* the eventfd VFIO signals *)
   intx : int option; (* the INTx bit as found, if the take turned INTx off *)
-  container : Vfio.t option; (* behind an IOMMU *)
+  way : way;
   fds : Unix.file_descr list; (* every descriptor the take opened *)
 }
 
@@ -109,6 +113,15 @@ let bus_master = 0x4
 let intx_disable = 0x400
 let stop_dma t = set_config t command 2 (config t command 2 land lnot bus_master)
 
+(* Whether the function masters the bus no more: its bit reads 0, or the
+   function left the bus and reads all ones. A write the system refused leaves
+   it on, and its memory then stays, which leaks safely. *)
+let stopped t =
+  let c = config t command 2 in
+  c land bus_master = 0 || c = 0xffff
+
+let close_memory t s = if stopped t then Sysmem.close s
+
 (* Turns INTx off: the bit as it was. *)
 let intx_off t =
   let c = config t command 2 in
@@ -131,7 +144,13 @@ let () =
   at_exit (fun () ->
       let pid = Unix.getpid () in
       List.iter
-        (fun (owner, t) -> if owner = pid then stop_dma t)
+        (fun (owner, t) ->
+          if owner = pid then begin
+            stop_dma t;
+            match t.way with
+            | Physical_take s -> close_memory t s
+            | Iommu_take _ -> ()
+          end)
         (Atomic.get physical))
 
 (* mmap maps whole pages from an offset on a page: the pages that hold the [n]
@@ -154,10 +173,10 @@ let map t ~combine i off n =
       in
       Window.v ?combines (a + off - first) n
     in
-    match t.container with
-    | Some c ->
+    match t.way with
+    | Iommu_take c ->
         window (Vfio.device c) (Vfio.bar_offset t.bus (Vfio.device c) i off n)
-    | None ->
+    | Physical_take _ ->
         let wc = Sysfs.path t.files t.bus (strf "resource%d_wc" i) in
         let combines = combine && Sys.file_exists wc in
         let file =
@@ -182,68 +201,77 @@ let interrupt t ms =
   match t.interrupts with Some fd -> Vfio.wait fd ms | None -> false
 
 let reset t =
-  match t.container with
-  | Some c ->
+  match t.way with
+  | Iommu_take c ->
       Fail.step ("resetting " ^ t.bus) (fun () -> Vfio.reset (Vfio.device c))
-  | None -> Sysfs.reset t.files t.bus
-
-(* Physical addresses as runs: one per page, or one for contiguous memory. *)
-let runs ~contiguous n = function
-  | first :: _ when contiguous -> [ (first, n) ]
-  | pages -> List.map (fun p -> (p, page)) pages
+  | Physical_take _ -> Sysfs.reset t.files t.bus
 
 let alloc_dma t ~contiguous ~va n =
-  match t.container with
-  | None ->
-      let w, pages =
-        Sysmem.alloc ~contiguous ?va ~root:(Sysfs.root t.files) n
-      in
-      (w, runs ~contiguous (Window.length w) pages)
-  | Some c -> (
+  match t.way with
+  | Physical_take s -> Sysmem.alloc ~contiguous ?va s n
+  | Iommu_take c -> (
       let w = Sysmem.map ?va n in
       let n = Window.length w in
       match Vfio.map_dma "alloc_dma" t.bus c (Window.address w) n with
-      | iova -> (w, [ (iova, n) ])
+      | Some iova -> Some (w, [ (iova, n) ])
+      | None ->
+          Sysmem.unmap w;
+          None
       | exception e ->
-          Sysmem.free w;
+          Sysmem.unmap w;
           raise e)
 
 let free_dma t w =
-  Option.iter
-    (fun c -> Vfio.unmap_dma t.bus c (Window.address w) (Window.length w))
-    t.container;
-  Sysmem.free w
+  match t.way with
+  | Iommu_take c ->
+      Vfio.unmap_dma t.bus c (Window.address w) (Window.length w);
+      Sysmem.unmap w
+  | Physical_take s -> Sysmem.free s w
 
 let pin t a n =
-  match t.container with
-  | None -> runs ~contiguous:false n (Sysmem.pin ~root:(Sysfs.root t.files) a n)
-  | Some c ->
+  match t.way with
+  | Physical_take _ ->
+      Fail.fail
+        "%s reaches memory without an IOMMU, and the process's pages go back \
+         to the system when it dies; take it behind an IOMMU, bound to \
+         vfio-pci, or give it memory from alloc_dma"
+        t.bus
+  | Iommu_take c -> (
       let n = round_page n in
-      [ (Vfio.map_dma "pin" t.bus c a n, n) ]
+      match Vfio.map_dma "pin" t.bus c a n with
+      | Some iova -> [ (iova, n) ]
+      | None ->
+          Fail.fail
+            "%s has no device addresses left for %d bytes, or the process \
+             reached its limit; %s"
+            t.bus n Fail.memlock)
 
 let unpin t a n =
-  match t.container with
-  | None -> Sysmem.unpin a n
-  | Some c -> Vfio.unmap_dma t.bus c a (round_page n)
+  match t.way with
+  | Physical_take _ -> () (* a physical take pins nothing *)
+  | Iommu_take c -> Vfio.unmap_dma t.bus c a (round_page n)
 
-(* Release gives the function its INTx back as the take found it. *)
+(* Release gives the function its INTx back as the take found it. Once its bus
+   mastering reads off, a physical take's memory files go. Its descriptors close
+   whatever happens before. *)
 let release t =
-  (match t.container with
-  | Some c -> Vfio.close c
-  | None ->
+  Fun.protect ~finally:(fun () -> List.iter Unix.close t.fds) @@ fun () ->
+  match t.way with
+  | Iommu_take c -> Vfio.close c
+  | Physical_take s ->
       stop_dma t;
       Option.iter
         (fun bit ->
           set_config t command 2
             (config t command 2 land lnot intx_disable lor bit))
         t.intx;
-      forget t);
-  List.iter Unix.close t.fds
+      forget t;
+      close_memory t s
 
 let fn t =
   {
     Ops.addressing =
-      (match t.container with None -> Physical | Some _ -> Iommu);
+      (match t.way with Physical_take _ -> Physical | Iommu_take _ -> Iommu);
     config8 = (fun off -> config t off 1);
     config16 = (fun off -> config t off 2);
     config32 = (fun off -> config t off 4);
@@ -275,7 +303,7 @@ let take_iommu files fds bus bars =
     seek = Mutex.create ();
     interrupts = Some efd;
     intx = None;
-    container = Some c;
+    way = Iommu_take c;
     fds = !fds;
   }
 
@@ -312,7 +340,7 @@ let take_physical files fds bus bars =
       seek = Mutex.create ();
       interrupts;
       intx = None;
-      container = None;
+      way = Physical_take (Sysmem.store ~root:(Sysfs.root files) ~bus);
       fds = !fds;
     }
   in

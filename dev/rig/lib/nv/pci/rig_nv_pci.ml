@@ -121,7 +121,8 @@ let alloc g kind n =
   in
   match protect g (fun () -> Memory.alloc g.memory kind n) with
   | Ok (Some r) -> Some (whole g (Own (g, r)) r)
-  | Ok None | Error _ -> None
+  | Ok None -> None
+  | Error why -> raise (Rig_nv.Fault why)
 
 let round_up n a = (n + a - 1) / a * a
 

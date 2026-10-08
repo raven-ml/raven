@@ -8,8 +8,10 @@
     A taken function gives the process what a kernel driver has of it: its
     configuration space, its BARs mapped as windows on its registers and memory,
     its interrupts and reset, and the system memory it reaches by DMA. Taking a
-    function changes nothing on its machine but its legacy interrupts ({!take});
-    only {!Gpus.detach} and {!Gpus.attach} change more.
+    function changes nothing on its machine but its legacy interrupts ({!take})
+    and the memory {!alloc_dma} gives a function taken physically, which lies in
+    files that outlive the process; only {!Gpus.detach} and {!Gpus.attach}
+    change more.
 
     A function of {!Machine.this} is taken in one of two ways, which follow from
     the machine's state and which {!addressing} reports:
@@ -77,8 +79,9 @@ val release : t -> unit
     one, such as its driver's, have run; a child of [fork] exiting changes
     nothing. A process killed by a signal stops nothing: behind an IOMMU, Linux
     then stops the function's DMA as it closes the process's files; taken
-    physically, the function keeps mastering the bus. Its legacy interrupts stay
-    off then, until a kernel driver enables the function. *)
+    physically, the function keeps mastering the bus, into memory that stays
+    until its GPU is reset ({!alloc_dma}). Its legacy interrupts stay off then,
+    until a kernel driver enables the function. *)
 
 val machine : t -> Machine.t
 (** [machine f] is the machine [f] is on. *)
@@ -201,32 +204,56 @@ val reset : t -> (unit, string) result
       against the process's locked-memory limit ([memlock]), and the function's
       VFIO container holds at most [dma_entry_limit] mappings (a parameter of
       [vfio_iommu_type1], 65,535 by default).
-    - Taken {!Machine.Physical}ly, they are physical addresses, one run per page
-      unless contiguous. Reading them needs the privileges for
-      [/proc/self/pagemap] and [mlock], and the kernel setting
-      [vm.compact_unevictable_allowed = 0], without which the kernel may move
-      locked pages. *)
+    - Taken {!Machine.Physical}ly, they are physical addresses. The memory lies
+      in huge pages of 2 MiB of a file under [/dev/hugepages], a hugetlbfs of 2
+      MiB pages, one for each 2 MiB block of the process's addresses that holds
+      memory, which the memory of every function of the machine in that block
+      shares: a run per block, merged where their pages follow each other.
+      Reading the addresses needs the privilege for [/proc/self/pagemap], and
+      the system must have a free huge page ([vm.nr_hugepages]) for each new
+      block. *)
 
 val alloc_dma :
   ?contiguous:bool ->
   ?va:int ->
   t ->
   int ->
-  (Window.t * (int * int) list, string) result
-(** [alloc_dma f n] is [n] bytes, rounded up to {!Machine.page}, of new, zeroed
-    memory of [f]'s machine, locked where it is, at [va] inside a range
-    {!Machine.reserve} reserved or where the machine chooses without [va], with
-    the runs at which [f] reaches it. With [~contiguous:true] (defaults to
-    [false]) the memory is one run of at most 2 MiB; reached physically and
-    larger than a page, it is a huge page the system must have free
-    ([vm.nr_hugepages]).
+  ((Window.t * (int * int) list) option, string) result
+(** [alloc_dma f n] is [Some (w, runs)], [w] [n] bytes, rounded up to
+    {!Machine.page}, of new, zeroed memory of [f]'s machine, which stays where
+    it is, at [va] inside a range {!Machine.reserve} reserved or where the
+    machine chooses without [va], and [runs] those at which [f] reaches it. With
+    [~contiguous:true] (defaults to [false]) the memory is one run of at most 2
+    MiB; reached physically and larger than a page, it starts on 2 MiB.
 
-    [Error why] naming what is missing if the machine cannot: free memory or a
-    huge page, or one of the privileges, settings and limits above.
+    Taken physically, a function keeps writing its memory after its process
+    dies, by a signal or a crash, so the memory lies in a file
+    [/dev/hugepages/rig-pci-*] that keeps its pages when the process dies. The
+    kernel neither swaps nor compacts them. The process's file goes once each
+    function that reaches it was released, its bus mastering off ({!release}),
+    and it holds no memory, or at the process's exit; the file of a process that
+    died goes once each of its GPUs was reset ({!Gpus.reset}, which
+    {!Gpus.attach} runs too). Some cases stay open, and only an IOMMU closes
+    them: the kernel moves even huge pages to allocate a contiguous area (CMA),
+    for virtio-mem, and to take memory offline or a failing page out of service;
+    and a kernel booted by kexec, without the platform's reset, inherits a GPU
+    still writing. Behind an IOMMU the memory is the process's: VFIO ends the
+    function's access when the process's files close, at its death too.
+
+    [Ok None] if the machine has no free memory for it now: taken physically, no
+    free huge page for a new block ([vm.nr_hugepages]) or, without [va], no free
+    addresses of the process's own; behind an IOMMU, the process's locked-memory
+    limit reached or no device addresses left. Freeing memory makes room.
+
+    [Error why] naming what is missing if the machine refuses: a privilege or a
+    file system above, or, reached physically, a 2 MiB block of [va] that holds
+    memory of another machine.
 
     Raises [Invalid_argument] if [n <= 0] or rounding it up overflows, if [va]
-    is not on a page or in no range {!Machine.reserve} reserved, if [contiguous]
-    memory is larger than 2 MiB, or if [va] is not on 2 MiB for a huge page. *)
+    is not on a page, if the bytes from [va] lie in no range {!Machine.reserve}
+    reserved or, reached physically, if the 2 MiB blocks that hold them do not,
+    if [contiguous] memory is larger than 2 MiB, or if [va] is not on 2 MiB for
+    contiguous memory reached physically larger than a page. *)
 
 val free_dma : t -> Window.t -> unit
 (** [free_dma f w] frees [w], and [f] reaches it no more.
@@ -240,8 +267,10 @@ val pin : t -> int -> int -> ((int * int) list, string) result
     stays locked until each pin is {!unpin}ned, and behind an IOMMU [(a, n)]
     stays mapped for [f] as long.
 
-    [Error why] as {!alloc_dma}, or if the pages cannot be locked or their
-    addresses read.
+    [Error why] as {!alloc_dma}, if the pages cannot be locked or their
+    addresses read, or if [f] is taken physically: the pages are the process's
+    and go back to the system when it dies, with [f] still writing them. Memory
+    {!alloc_dma} gives outlives the process.
 
     Raises [Invalid_argument] if [a] is not on a page or [n <= 0]. *)
 

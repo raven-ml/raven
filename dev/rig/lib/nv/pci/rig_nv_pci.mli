@@ -52,21 +52,25 @@
     machine's system memory otherwise. GPU addresses and the process's addresses
     of system memory coincide, from [64 GiB] to [1 TiB], which the process
     reserves at its first open; every memory of the GPUs it opens takes its GPU
-    addresses from that range. System memory counts against the process's limit
-    on locked memory ([RLIMIT_MEMLOCK]): once it is reached, {!Rig_nv.alloc}
-    answers [None], as for memory the GPU lacks, and raising the limit is the
-    cure.
+    addresses from that range. Behind an IOMMU, system memory counts against the
+    process's limit on locked memory ([RLIMIT_MEMLOCK]): once it is reached,
+    {!Rig_nv.alloc} answers [None], as for memory the GPU lacks, and raising the
+    limit is the cure. Taken physically, it lies in huge pages of 2 MiB from the
+    hugetlbfs at [/dev/hugepages], one for each 2 MiB block of addresses that
+    holds some ({!Rig_pci.Function.alloc_dma}): once no huge page is free,
+    {!Rig_nv.alloc} answers [None], and reserving more ([vm.nr_hugepages]) or
+    freeing memory is the cure. Such a GPU maps no host memory:
+    {!Rig_nv.map_host} answers [None] for it.
 
     {b Requirements.} Linux. Taking a GPU's function needs either an IOMMU and
     the GPU bound to [vfio-pci] with its group's file granted to the user, or
     write access to the function's files ({!Rig_pci.Function.take}). A boot
-    takes about 64 MiB of system memory for the GSP, its image chief among them,
-    which counts against [RLIMIT_MEMLOCK]. Its logs and bootloader, and on
-    Blackwell the FMC, each lie in one run of bus addresses: on a function taken
-    physically each is a huge page of 2 MiB, so the system must have up to three
-    free ([vm.nr_hugepages], {!Rig_pci.Function.alloc_dma}). Two GPUs map each
-    other's memory only if both are taken physically, on one machine, and each
-    BAR reaches all of its GPU's memory.
+    takes about 64 MiB of system memory for the GSP, its image chief among them:
+    behind an IOMMU it counts against [RLIMIT_MEMLOCK]; taken physically, it
+    takes free huge pages of 2 MiB for as much ([vm.nr_hugepages]). Its logs and
+    bootloader, and on Blackwell the FMC, each lie in one run of bus addresses.
+    Two GPUs map each other's memory only if both are taken physically, on one
+    machine, and each BAR reaches all of its GPU's memory.
 
     {b Domains.} Any domain may call any function. Opens and changes of NVIDIA
     GPUs are serialized: a boot of a few seconds delays the others.

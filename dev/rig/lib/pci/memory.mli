@@ -91,11 +91,12 @@ val alloc : ?uncached:bool -> t -> kind -> int -> (region option, string) result
     on so that large ones map with large pages. With [~uncached:true] (defaults
     to [false]) the GPU bypasses its caches for them; {!Host} memory is always
     uncached. [Ok None] if the GPU's memory, a page table or the address space
-    has no room, as {!Page_table.alloc} bounds it, or for {!Bar} memory, if the
-    BAR does not reach a block that fits: freeing memory makes room. [Error why]
-    if the machine refuses system memory or a window on the BAR, having freed
-    what it took, [why] naming what is missing as {!Function.alloc_dma} does:
-    such a limit is cured by a setting, rarely by freeing memory.
+    has no room, as {!Page_table.alloc} bounds it, for {!Bar} memory if the BAR
+    does not reach a block that fits, or for system memory if the machine has
+    none free now ({!Function.alloc_dma}): freeing memory makes room.
+    [Error why] if the machine refuses system memory or a window on the BAR,
+    having freed what it took, [why] naming what is missing as
+    {!Function.alloc_dma} does.
 
     Raises [Invalid_argument] if [n <= 0], or if system memory goes at addresses
     {!Machine.reserve} did not reserve. *)
@@ -114,9 +115,12 @@ val map_host : t -> int -> int -> (region, string) result
     addresses it takes from the GPU's space ({!Page_table.space}), whatever [a].
     The region's [mapping.va] is the first, and its source is [Borrowed a]. Each
     call maps anew: memory mapped already, borrowed or allocated, maps again at
-    other addresses, pinned once more. [Error why] if [a] is not on a page of
-    the machine ({!Machine.page}), if the space or a page table has no room, or
-    if the memory cannot be pinned, [why] being {!Function.pin}'s reason.
+    other addresses, pinned once more.
+
+    [Error why] if [a] is not on a page of the machine ({!Machine.page}), if the
+    space or a page table has no room, or if the memory cannot be pinned, [why]
+    being {!Function.pin}'s reason, such as a GPU that reaches memory without an
+    IOMMU.
 
     Raises [Invalid_argument] if [n <= 0]. *)
 
@@ -127,8 +131,9 @@ val map_peer : t -> owner:t -> region -> (region, string) result
     stay [owner]'s. [Error why] if the GPUs are on different machines, if their
     page tables take addresses from different spaces ({!Page_table.space}),
     naming both, if either is behind an IOMMU ({!Machine.Iommu}), if [mem] is in
-    the GPU's memory and [owner]'s BAR is {!small_bar}, or if a page table has
-    no room.
+    the GPU's memory and [owner]'s BAR is {!small_bar}, if the machine cannot
+    record that the GPU of [m] reaches [owner]'s system memory, or if a page
+    table has no room.
 
     Raises [Invalid_argument] if [mem] is not {!Allocated} by [owner], or if the
     GPU of [m] maps its addresses already. *)

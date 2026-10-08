@@ -50,7 +50,8 @@ let fake_fn fake tr bus =
     interrupt = (fun _ -> false);
     reset = (fun () -> Ok ());
     alloc_dma =
-      (fun ~contiguous:_ ~va:_ n -> Ok (Window.through tr 0 n, [ (0, n) ]));
+      (fun ~contiguous:_ ~va:_ n ->
+        Ok (Some (Window.through tr 0 n, [ (0, n) ])));
     free_dma = (fun _ -> ());
     pin = (fun a n -> Ok [ (a, n) ]);
     unpin = (fun _ _ -> ());

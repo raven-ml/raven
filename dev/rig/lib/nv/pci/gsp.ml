@@ -244,16 +244,25 @@ let sys p ~taken ?(contiguous = false) n =
   in
   match Space.alloc ~align p.space (round_up n align) with
   | None -> Error "no addresses for the GSP's system memory"
-  | Some va ->
-      let* w, runs = Function.alloc_dma ~contiguous ~va p.fn n in
-      let pages =
-        List.concat_map
-          (fun (a, len) -> List.init (len / page) (fun i -> a + (i * page)))
-          runs
-      in
-      let s = { w; va; pages } in
-      taken := s :: !taken;
-      Ok s
+  | Some va -> (
+      match Function.alloc_dma ~contiguous ~va p.fn n with
+      | Error why ->
+          Space.free p.space va;
+          Error why
+      | Ok None ->
+          Space.free p.space va;
+          Error
+            "the machine has no free system memory for the GSP; free some, or \
+             reserve huge pages (vm.nr_hugepages)"
+      | Ok (Some (w, runs)) ->
+          let pages =
+            List.concat_map
+              (fun (a, len) -> List.init (len / page) (fun i -> a + (i * page)))
+              runs
+          in
+          let s = { w; va; pages } in
+          taken := s :: !taken;
+          Ok s)
 
 let give_back p taken =
   List.iter

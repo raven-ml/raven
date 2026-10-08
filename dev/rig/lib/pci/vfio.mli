@@ -53,10 +53,12 @@ val open_ : Sysfs.t -> Unix.file_descr list ref -> string -> t * Unix.file_descr
 val device : t -> Unix.file_descr
 (** [device c] is the descriptor of [c]'s function. *)
 
-val map_dma : string -> string -> t -> int -> int -> int
+val map_dma : string -> string -> t -> int -> int -> int option
 (** [map_dma fn bus c a n] is the device address at which [c] maps the [n] bytes
-    at [a], counted: each map of the same [(a, n)] adds a count. [fn] is the
-    public function that asks, for the misuse of a released function. *)
+    at [a], counted: each map of the same [(a, n)] adds a count. [None] if the
+    process reached its locked-memory limit or [c] has no device addresses left:
+    unmapping memory makes room. [fn] is the public function that asks, for the
+    misuse of a released function. *)
 
 val unmap_dma : string -> t -> int -> int -> unit
 (** [unmap_dma bus c a n] drops a count of [(a, n)], unmapping it with the last.

@@ -284,6 +284,7 @@ end
 (* Machines in a fixture tree *)
 
 external device_number : string -> string = "rig_pci_test_device_number"
+external stored : string -> int = "rig_pci_test_stored"
 
 module Tree = struct
   type bar = Mem32 of int * int | Mem64 of int * int | Io of int * int
@@ -448,9 +449,11 @@ module Tree = struct
       fns;
     List.iter (fun g -> write (root / "dev/vfio" / ("noiommu-" ^ g)) "") noiommu;
     mkdir_p (root / "proc/self/fd");
+    mkdir_p (root / "dev/hugepages");
     root
 
   let device_number = device_number
+  let stored = stored
   let add root file s = write (root / file) s
 
   (* An entry of a page map: bit 63 says the page is present, bits 0-54 hold its

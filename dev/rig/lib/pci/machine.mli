@@ -122,7 +122,7 @@ type fn = Ops.fn = {
     contiguous:bool ->
     va:int option ->
     int ->
-    (Window.t * (int * int) list, string) result;
+    ((Window.t * (int * int) list) option, string) result;
       (** {!Function.alloc_dma}. *)
   free_dma : Window.t -> unit;  (** {!Function.free_dma}. *)
   pin : int -> int -> ((int * int) list, string) result;

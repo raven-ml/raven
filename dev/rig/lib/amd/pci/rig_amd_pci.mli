@@ -35,6 +35,16 @@
     {!Rig_pci.Function.take} lists. The GPU then belongs to the process: its
     display, if any, and the kernel driver's users lose it.
 
+    {b Host memory.} Taken without an IOMMU, a GPU reaches only the host memory
+    this library allocates for it: huge pages of 2 MiB from the hugetlbfs at
+    [/dev/hugepages], one for each 2 MiB block of addresses that holds the
+    device's host memory, the copies the library stages through it included,
+    which the system must have free ([vm.nr_hugepages]). They outlive a process
+    killed while its GPU runs, until the GPU's next successful {!reset}. The
+    kernel may still move them to allocate a contiguous area or to take memory
+    offline, which only an IOMMU prevents ({!Rig_pci.Function.alloc_dma}). Such
+    a GPU maps no other host memory: {!Rig_amd.map_host} answers [None].
+
     {b Firmware.} An open reads the GPU's firmware images from the directories
     its caller names. Each image has the BLAKE2b-256 digest this library pins
     ({!pinned}); a file with another digest is skipped, and nothing is
@@ -173,7 +183,7 @@ val reset : ?machine:Rig_pci.Machine.t -> int -> (unit, string) result
     gives back its access instead, and its physical function resets it.
     Afterwards the GPU opens with a full boot.
 
-    The result is [Error msg] if [i] is no GPU, if this process holds it, if its
+    The result is [Error msg] if [i] is no GPU, if a process holds it, if its
     function cannot be taken, if it does not answer after the reset, in which
     case only a power cycle recovers it, if its configuration differs after it,
     if its security processor or interrupt rings still run after it, or if its

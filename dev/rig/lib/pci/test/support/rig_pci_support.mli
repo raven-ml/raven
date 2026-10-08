@@ -196,9 +196,10 @@ end
     driver's directory holds empty [bind] and [unbind], the bus directory empty
     [rescan] and [drivers_probe], and an IOMMU group's directory its [type] and
     its functions. The process's [proc/self/fd] is an empty directory, to which
-    a test adds links. The machine takes what a change writes as plain files and
-    acts on none of it. Names hold [:], so trees are written only where the file
-    system allows it: {!make} skips the test on Windows. *)
+    a test adds links, and so is [dev/hugepages]. The machine takes what a
+    change writes as plain files and acts on none of it. Names hold [:], so
+    trees are written only where the file system allows it: {!make} skips the
+    test on Windows. *)
 module Tree : sig
   (** The type for a BAR, in BAR order from BAR 0. *)
   type bar =
@@ -241,6 +242,10 @@ module Tree : sig
   (** [device_number file] is the number of the character device at [file], as a
       [dev] file under [/sys] spells it: ["MAJOR:MINOR"], such as ["1:3"] for
       Linux's [/dev/null]. Raises [Unix.Unix_error] if [file] cannot be read. *)
+
+  val stored : string -> int
+  (** [stored file] is the bytes the file system holds for [file], which its
+      holes do not count. Raises [Unix.Unix_error] if [file] cannot be read. *)
 
   val add : string -> string -> string -> unit
   (** [add root file s] writes [s] to [file], a path from the tree [root],

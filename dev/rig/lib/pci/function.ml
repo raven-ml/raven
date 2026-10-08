@@ -245,38 +245,42 @@ let alloc_dma_entered ~contiguous ?va f n =
       "Function.alloc_dma: %d bytes of contiguous memory, expected at most 2 \
        MiB"
       n;
-  (* Reached physically, contiguous memory larger than a page is a huge page,
-     which maps whole at [va]. *)
-  let huge_page =
-    contiguous && n > page && f.fn.addressing = Machine.Physical
-  in
-  let mapped = if huge_page then huge else n in
+  (* Reached physically, memory lies in huge pages, each mapped whole on the 2
+     MiB block of addresses that holds it; contiguous memory larger than a page
+     is one of them. *)
+  let physical = f.fn.addressing = Machine.Physical in
   (match va with
   | None -> ()
   | Some va ->
       on_page f "alloc_dma" va;
-      if huge_page && va mod huge <> 0 then
+      if physical && contiguous && n > page && va mod huge <> 0 then
         invalid_argf
           "Function.alloc_dma: 0x%x is not on 2 MiB, which a huge page needs" va;
-      if not (Machine.reserved f.machine va mapped) then
+      let lo, hi =
+        if physical then (va / huge * huge, (va + n + huge - 1) / huge * huge)
+        else (va, va + n)
+      in
+      if not (Machine.reserved f.machine lo (hi - lo)) then
         invalid_argf
           "Function.alloc_dma: %d bytes at 0x%x lie in no range \
-           Machine.reserve reserved"
-          mapped va);
+           Machine.reserve reserved%s"
+          n va
+          (if physical then ", whole with the 2 MiB blocks that hold them"
+           else ""));
   f.fn.alloc_dma ~contiguous ~va n
 
 let alloc_dma ?(contiguous = false) ?va f n =
   enter f "alloc_dma";
   match alloc_dma_entered ~contiguous ?va f n with
-  | Ok (w, _) as dma ->
+  | Ok (Some (w, _)) as dma ->
       Mutex.lock f.lock;
       Tables.Window.add f.dmas w ();
       leave_locked f;
       Mutex.unlock f.lock;
       dma
-  | Error _ as e ->
+  | (Ok None | Error _) as r ->
       leave f;
-      e
+      r
   | exception e ->
       leave f;
       raise e

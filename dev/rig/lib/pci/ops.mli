@@ -29,7 +29,7 @@ type fn = {
     contiguous:bool ->
     va:int option ->
     int ->
-    (Window.t * (int * int) list, string) result;
+    ((Window.t * (int * int) list) option, string) result;
   free_dma : Window.t -> unit;
   pin : int -> int -> ((int * int) list, string) result;
   unpin : int -> int -> unit;

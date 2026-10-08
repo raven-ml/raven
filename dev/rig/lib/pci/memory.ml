@@ -81,7 +81,10 @@ let system m n =
       | Error why ->
           Space.free space va;
           Error why
-      | Ok (view, runs) -> (
+      | Ok None ->
+          Space.free space va;
+          Ok None
+      | Ok (Some (view, runs)) -> (
           match
             Page_table.map ~snooped:true ~uncached:true m.tables ~va System runs
           with
@@ -216,6 +219,10 @@ let map_host m a n =
                 give_back ();
                 Error no_room))
 
+(* Whether [m]'s GPU is of a machine the process reaches through its files,
+   whose system memory {!Sysmem} keeps. *)
+let reaches_files m = Option.is_some (Machine.files (Function.machine m.fn))
+
 let map_peer m ~owner mem =
   live "map_peer" m;
   live "map_peer" owner;
@@ -248,15 +255,36 @@ let map_peer m ~owner mem =
       | System -> (map.pages, Page_table.System)
       | Gpu | Peer _ -> owner.peer map.pages
     in
-    match
-      Page_table.map ~snooped:true ~uncached:map.uncached m.tables ~va:map.va
-        target pages
-    with
-    | Some mapping ->
-        let mem = { mapping; host = None; source = Peer } in
-        Tables.Address.replace m.mapped map.va mem;
-        Ok mem
-    | None -> Error no_room
+    (* System memory the owner allocated stays while this GPU may reach it, from
+       before its page table points at it. *)
+    let reached =
+      if map.target = System && reaches_files m then
+        Fail.result (fun () ->
+            Sysmem.reach ~a:map.va ~n:map.size ~bus:(Function.bus m.fn))
+      else Ok ()
+    in
+    let unreach () =
+      if map.target = System && reaches_files m then
+        Sysmem.unreach ~a:map.va ~n:map.size
+    in
+    match reached with
+    | Error _ as e -> e
+    | Ok () -> (
+        match
+          Page_table.map ~snooped:true ~uncached:map.uncached m.tables
+            ~va:map.va target pages
+        with
+        | Some mapping ->
+            let mem = { mapping; host = None; source = Peer } in
+            Tables.Address.replace m.mapped map.va mem;
+            Ok mem
+        | None ->
+            unreach ();
+            Error no_room
+        | exception e ->
+            let bt = Printexc.get_raw_backtrace () in
+            unreach ();
+            Printexc.raise_with_backtrace e bt)
 
 let unmap m mem =
   held m.mapped "unmap" mem;
@@ -268,4 +296,6 @@ let unmap m mem =
   | Borrowed a ->
       Function.unpin m.fn a map.size;
       Space.free (Page_table.space m.tables) map.va
+  | Peer when map.target = System && reaches_files m ->
+      Sysmem.unreach ~a:map.va ~n:map.size
   | Allocated | Peer -> ()

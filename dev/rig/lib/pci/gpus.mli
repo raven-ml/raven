@@ -174,8 +174,9 @@ val reset : t -> Machine.t -> int -> (unit, string) result
 (** [reset g m i] takes the function of GPU [i] of [m], turns its bus mastering
     off, resets the GPU as its vendor does ({!make}) and releases it, whatever
     the vendor's reset returns or raises. A GPU lost opens again after a reset
-    that is [Ok ()]. Exceptions raised by the vendor's reset pass through, as in
-    {{!holds}an open}.
+    that is [Ok ()], and the memory a process that died left for it goes then
+    ({!Function.alloc_dma}). Exceptions raised by the vendor's reset pass
+    through, as in {{!holds}an open}.
 
-    [Error why] if [i] is no GPU, if the process holds it, if its function
-    cannot be taken, or the vendor's reset's. *)
+    [Error why] if [i] is no GPU, if a process holds it, if its function cannot
+    be taken, or the vendor's reset's. *)

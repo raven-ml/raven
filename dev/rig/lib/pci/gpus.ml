@@ -199,7 +199,14 @@ let reset_gpu g m bus =
     Fun.protect ~finally:(fun () -> Function.release fn) @@ fun () ->
     let c = Function.config16 fn Local.command in
     Function.set_config16 fn Local.command (c land lnot Local.bus_master);
-    g.reset fn
+    let r = g.reset fn in
+    (* Still taken, so no process holds the function: every file naming it was
+       left by one that died, and the GPU reaches none of it now. *)
+    if Result.is_ok r then
+      Option.iter
+        (fun files -> Sysmem.forget ~root:(Sysfs.root files) ~bus)
+        (Machine.files m);
+    r
   in
   if Result.is_ok r then
     Mutex.protect g.holds (fun () ->

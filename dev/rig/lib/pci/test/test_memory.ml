@@ -42,6 +42,7 @@ type fake = {
   mutable pins : (int * int) list;  (** Pins held. *)
   mutable refuse : string option;
       (** [alloc_dma], [pin] and [map] fail with it. *)
+  mutable exhausted : bool;  (** [alloc_dma] has no free memory. *)
   mutable combined : bool list;  (** Each [map]'s [combine], newest first. *)
   mutable freeing : unit -> unit;  (** Called as [free_dma] starts. *)
 }
@@ -96,10 +97,12 @@ let ops k =
           | None ->
               fail "system memory for the GPU is allocated without an address"
         in
-        let n = round_up n page in
-        let r = runs k n in
-        k.dma <- (va, r) :: k.dma;
-        (Window.through (Lazy.force system) va n, r));
+        if k.exhausted then None
+        else
+          let n = round_up n page in
+          let r = runs k n in
+          k.dma <- (va, r) :: k.dma;
+          Some (Window.through (Lazy.force system) va n, r));
     free_dma =
       (fun w ->
         k.freeing ();
@@ -134,6 +137,7 @@ let machine () =
         dma = [];
         pins = [];
         refuse = None;
+        exhausted = false;
         combined = [];
         freeing = ignore;
       }
@@ -224,7 +228,7 @@ type gpu = {
   memory : Memory.t;
 }
 
-let gpu ?(addressing = Machine.Physical) ?(memory = gpu_memory) ?bar
+let gpu ?(addressing = Machine.Iommu) ?(memory = gpu_memory) ?bar
     ?(tables = Page_table.Pool) ?(format = Fun.id) ?peer ?space ?machine:m () =
   let m = match m with Some m -> m | None -> machine () in
   let bar = Option.value bar ~default:memory in
@@ -553,15 +557,31 @@ let test_tables_full () =
 let test_system_refused () =
   let x = gpu ~memory:(512 * mib) ~bar:(256 * mib) () in
   let before = capacity x in
-  x.fake.refuse <- Some "fake: the locked-memory limit (ulimit -l) is reached";
+  x.fake.refuse <- Some "fake: /dev/hugepages is no hugetlbfs";
   List.iter
     (fun kind ->
-      contains ~sub:"ulimit -l"
+      contains ~sub:"hugetlbfs"
         (require_error (Memory.alloc x.memory kind (64 * kib))))
     [ Memory.Host; Visible; Bar ];
   equal ~msg:"its addresses returned" (pair int int) before (capacity x);
   x.fake.refuse <- None;
-  is_some ~msg:"allocated once the limit is lifted"
+  is_some ~msg:"allocated once the machine gives it"
+    (alloc_opt x.memory Host (64 * kib));
+  Function.release x.fn
+
+(* System memory the machine has none of now is no room, which freeing makes. *)
+let test_system_exhausted () =
+  let x = gpu ~memory:(512 * mib) ~bar:(256 * mib) () in
+  let before = capacity x in
+  x.fake.exhausted <- true;
+  List.iter
+    (fun kind ->
+      is_none ~msg:"no room" ~pp:pp_region
+        (require_ok (Memory.alloc x.memory kind (64 * kib))))
+    [ Memory.Host; Visible ];
+  equal ~msg:"its addresses returned" (pair int int) before (capacity x);
+  x.fake.exhausted <- false;
+  is_some ~msg:"allocated once memory is free"
     (alloc_opt x.memory Host (64 * kib));
   Function.release x.fn
 
@@ -918,16 +938,111 @@ let test_peer_no_tables () =
   is_error ~msg:"refused" (Memory.map_peer x.memory ~owner:owner.memory mem);
   release_all [ owner; x ]
 
+(* System memory one GPU allocated and another maps outlives the first GPU's
+   release while the second still reaches it: the machine keeps the owner's
+   file, listing both, until the second is released too. On a fixture machine,
+   whose page map gives the frames. *)
+(* Two GPUs of a fixture tree, the first of which allocated a page of host
+   memory: [f root (owner_fn, owner) (x_fn, x) mem]. *)
+let with_host_peers ?(peer_format = Fun.id) f =
+  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  let buses = [ "0000:03:00.0"; "0000:43:00.0" ] in
+  let root = Tree.make (List.map Tree.gpu buses) in
+  let m = Machine.at root in
+  let page = Machine.page m in
+  (match Machine.reserve m ~base:space_base space_length with
+  | Ok () -> ()
+  | Error why -> skip ~reason:why ());
+  let space = Space.create ~base:space_base space_length in
+  let open_gpu format bus =
+    let fn = require_ok (Function.take m bus) in
+    let g = Tables.memory () in
+    let tables =
+      Page_table.create ~base:tables_base
+        (format (Tables.format g))
+        space ~memory:gpu_memory ~boot:mib ~tables:Pool ~pages:large_pages
+    in
+    Page_table.booted tables;
+    (fn, Memory.create fn tables ~bar:0)
+  in
+  let owner = open_gpu Fun.id (List.nth buses 0)
+  and x = open_gpu peer_format (List.nth buses 1) in
+  Fun.protect ~finally:(fun () ->
+      Function.release (fst owner);
+      Function.release (fst x))
+  @@ fun () ->
+  (* Host memory takes the next addresses of the space: give the page map's
+     frames to all of them. *)
+  Tree.pagemap root ~page space_base
+    (List.init (space_length / page / 256) (fun i -> 0x20_0000 + i));
+  let mem =
+    match Memory.alloc (snd owner) Host page with
+    | Ok (Some mem) -> mem
+    | Ok None -> fail "no room"
+    | Error why -> skip ~reason:why ()
+  in
+  f root owner x mem
+
+(* The memory files under [root], without their lists of reachers. *)
+let host_files root =
+  Sys.readdir (Filename.concat root "dev/hugepages")
+  |> Array.to_list
+  |> List.filter (fun f -> not (String.ends_with ~suffix:".reach" f))
+
+let test_peer_reach () =
+  with_host_peers @@ fun root (owner_fn, owner) (x_fn, x) mem ->
+  let p = Result.get_ok (Memory.map_peer x ~owner mem) in
+  let name = require_some (List.nth_opt (host_files root) 0) in
+  let file = Filename.concat root ("dev/hugepages/" ^ name) in
+  let stored = Tree.stored file in
+  at_least ~msg:"the memory's pages" int
+    ~than:(Machine.page Machine.this)
+    stored;
+  Memory.free owner mem;
+  equal ~msg:"pages kept through the owner's free" int stored (Tree.stored file);
+  Function.release owner_fn;
+  equal ~msg:"kept through the owner's release" (list string) [ name ]
+    (host_files root);
+  Memory.unmap x p;
+  Function.release x_fn;
+  equal ~msg:"gone once neither reaches it" (list string) [] (host_files root)
+
+(* A peer mapping that fails leaves the owner's memory to go at its free. *)
+let test_peer_failed () =
+  let armed = ref false in
+  with_host_peers ~peer_format:(raising armed)
+  @@ fun root (_, owner) (_, x) mem ->
+  armed := true;
+  raises Exit (fun () -> ignore (Memory.map_peer x ~owner mem));
+  armed := false;
+  let file =
+    Filename.concat root
+      ("dev/hugepages/" ^ require_some (List.nth_opt (host_files root) 0))
+  in
+  Memory.free owner mem;
+  equal ~msg:"given back at the owner's free" int 0 (Tree.stored file)
+
+(* A peer whose reach cannot be recorded for after the process's death is
+   refused before its page table points at the memory. *)
+let test_peer_unrecorded () =
+  with_host_peers @@ fun root (_, owner) (_, x) mem ->
+  let file =
+    Filename.concat root
+      ("dev/hugepages/" ^ require_some (List.nth_opt (host_files root) 0))
+  in
+  (* A directory where the list's new copy goes refuses its write. *)
+  Unix.mkdir (file ^ ".reach.tmp") 0o700;
+  contains ~sub:"could not be written"
+    (require_error (Memory.map_peer x ~owner mem));
+  Unix.rmdir (file ^ ".reach.tmp");
+  is_some ~msg:"maps once it can be recorded"
+    (Result.to_option (Memory.map_peer x ~owner mem))
+
 let test_peer_not_owned () =
   let owner, x = pair_of () in
   let mine = alloc x Gpu (64 * kib) in
   raises_match (Exn.invalid_arg ~substring:"") (fun () ->
       Memory.map_peer x.memory ~owner:owner.memory mine);
-  let borrowed =
-    Result.get_ok (Memory.map_host owner.memory tables_base page)
-  in
-  raises_match (Exn.invalid_arg ~substring:"") (fun () ->
-      Memory.map_peer x.memory ~owner:owner.memory borrowed);
   let mem = alloc owner Gpu (64 * kib) in
   let p = peer_ok x owner mem in
   raises_match (Exn.invalid_arg ~substring:"") (fun () ->
@@ -953,14 +1068,13 @@ let bindings g =
 let test_reopened () =
   let m = machine () in
   let space = Space.create ~base:space_base space_length in
-  let owner = gpu ~machine:m ~space () in
-  let x = gpu ~machine:m ~space () in
+  let owner = gpu ~machine:m ~space ~addressing:Physical () in
+  let x = gpu ~machine:m ~space ~addressing:Physical () in
   let shared = alloc owner Gpu (64 * kib) in
   let addresses = snd (capacity x) in
   let held =
     List.map (fun k -> alloc x k (3 * mib)) [ Memory.Gpu; Bar; Host; Visible ]
   in
-  let borrowed = Result.get_ok (Memory.map_host x.memory tables_base page) in
   let p = peer_ok x owner shared in
   Function.release x.fn;
   let reopened =
@@ -971,7 +1085,6 @@ let test_reopened () =
   let fresh = require_some (Page_table.alloc reopened (3 * mib)) in
   let entries = bindings x.g and touches = x.g.touches in
   List.iter (Memory.free x.memory) held;
-  Memory.unmap x.memory borrowed;
   Memory.unmap x.memory p;
   equal ~msg:"no entry read or written" int touches x.g.touches;
   equal ~msg:"the new instance's entries unchanged"
@@ -1144,6 +1257,8 @@ let () =
                "system memory or a BAR window refused is an Error, having \
                 given back its addresses"
                test_system_refused;
+             test "system memory the machine has none of now is no room"
+               test_system_exhausted;
              test "a format that raises passes through, having given back"
                test_raising_format;
              test
@@ -1185,6 +1300,12 @@ let () =
                "memory the owner did not allocate, or mapped already, is \
                 refused"
                test_peer_not_owned;
+             test "system memory a peer maps stays until neither GPU reaches it"
+               test_peer_reach;
+             test "a peer mapping that fails leaves the owner's memory to go"
+               test_peer_failed;
+             test "a peer whose reach cannot be recorded is refused"
+               test_peer_unrecorded;
            ];
          group ~timeout:patience "after the release"
            [
