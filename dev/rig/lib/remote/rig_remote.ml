@@ -69,6 +69,11 @@ let check_transfers send receive =
   Array.iter check send;
   Array.iter check receive
 
+(* [f] made to run at its first call alone: a rail's release runs once. *)
+let once f =
+  let ran = Atomic.make false in
+  fun () -> if not (Atomic.exchange ran true) then f ()
+
 (* The rail function of [m]'s host. *)
 let rail m (peer : Rig_remote_abi.host option) ~send ~receive :
     (Rig_remote_abi.rail, string) result =
@@ -81,9 +86,10 @@ let rail m (peer : Rig_remote_abi.host option) ~send ~receive :
   match peer with
   | None -> (
       let local = Link.rail m.link ~id ~send:receive ~receive:send in
-      let release () =
-        Link.release_rail m.link id;
-        Link.drop m.link id
+      let release =
+        once (fun () ->
+            Link.release_rail m.link id;
+            Link.drop m.link id)
       in
       match
         request m (Wire.Rail { id; peer = Wire.Controller; send; receive })
@@ -96,9 +102,10 @@ let rail m (peer : Rig_remote_abi.host option) ~send ~receive :
       match machine_of_name h.machine with
       | None -> Error (strf "%s is of another job" h.machine)
       | Some m' -> (
-          let release () =
-            Link.drop m.link id;
-            Link.drop m'.link id
+          let release =
+            once (fun () ->
+                Link.drop m.link id;
+                Link.drop m'.link id)
           in
           let rail' =
             Wire.Rail { id; peer = Wire.Agent m'.agent; send; receive }

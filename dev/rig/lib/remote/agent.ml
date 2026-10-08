@@ -398,7 +398,9 @@ let rec apply s =
       | exception Refused why -> Link.answer s.link r (Error why));
       apply s
   | Ok (Wire.Drop id) ->
-      drop s id;
+      (* A drop takes no answer: one of no object fails the job. *)
+      if Hashtbl.mem s.objects id then drop s id
+      else Link.fail s.job (strf "%s: a malformed frame" (Link.name s.link));
       apply s
   | Ok (Wire.Handover (h, local)) -> (
       match hand_over s h local with

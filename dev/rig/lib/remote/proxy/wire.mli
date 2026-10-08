@@ -42,11 +42,13 @@
 
     After the handshake, each direction is a sequence of {e frames}: the
     payload's length (u64), the frame's kind (u8) and the payload. A frame whose
-    kind is unknown or not expected from its sender, whose payload is malformed,
-    or that names an id of no object of the job or of another kind than it
-    needs, fails the job; so does one longer than the receiving process can
-    hold. Frames carry no integrity check: the handshake admits the processes,
-    and the job trusts the network between them.
+    kind is unknown or not expected from its sender, or whose payload is
+    malformed, fails the job; so does one longer than the receiving process can
+    hold. An id of no object of the job, or of another kind than its frame
+    needs, is refused in a request, which an answer can refuse, and the job goes
+    on; in a hand-over or a drop, which take no answer, it fails the job. Frames
+    carry no integrity check: the handshake admits the processes, and the job
+    trusts the network between them.
 
     {v
      kind  name      sent by     payload
