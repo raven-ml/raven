@@ -279,9 +279,8 @@ static void place(struct device *d, const struct rig_part *p) {
 }
 
 int rig_nv_submit(void *self, uint64_t v, const struct rig_wait *waits,
-                     int nwaits, const struct rig_part *p, int n,
-                     const uint64_t *handles, int nhandles,
-                     const char **failure) {
+                  int nwaits, const struct rig_part *p, int n,
+                  const uint64_t *handles, int nhandles, const char **failure) {
   (void)handles;
   (void)nhandles;
   (void)failure;
@@ -323,7 +322,8 @@ int rig_nv_submit(void *self, uint64_t v, const struct rig_wait *waits,
   }
   store_fence();
   for (int q = 0; q < CHANNELS; q++)
-    if (used[q]) *d->ch[q].gp_put = (uint32_t)(d->ch[q].put & (d->ch[q].entries - 1));
+    if (used[q])
+      *d->ch[q].gp_put = (uint32_t)(d->ch[q].put & (d->ch[q].entries - 1));
   if (atomic_load_explicit(&d->bar_live, memory_order_acquire) > 0) {
     full_fence();
     (void)*d->bar;

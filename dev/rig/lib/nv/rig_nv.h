@@ -38,8 +38,7 @@ int rig_nv_room(void *self, const struct rig_part *parts, int n);
    its stores are to this machine's memory and cannot fail. It never
    blocks. */
 int rig_nv_submit(void *self, uint64_t v, const struct rig_wait *waits,
-                     int nwaits, const struct rig_part *parts, int nparts,
-                     const uint64_t *handles, int nhandles,
-                     const char **failure);
+                  int nwaits, const struct rig_part *parts, int nparts,
+                  const uint64_t *handles, int nhandles, const char **failure);
 
 #endif

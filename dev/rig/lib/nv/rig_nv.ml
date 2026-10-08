@@ -89,6 +89,10 @@ let path_alloc p fn kind n = below p fn n (p.alloc kind n)
 
 let page = 4096
 
+(* The device's words: the timeline word, then the channels' join words, as
+   rig_nv_stubs.h's JOIN_GPU lays them out. *)
+let words_bytes = 8 * 3
+
 (* Each channel's ring holds [entries] entries, and its segment ring
    [segment_bytes] bytes, both powers of two: a submission takes at least one
    entry of each channel it uses, so thousands may be in flight. *)
@@ -127,32 +131,54 @@ let sm_errors =
 (* The C state *)
 
 external create : int -> int -> int -> int -> int = "caml_rig_nv_create"
+[@@noalloc]
 
-external set_channel : int -> int -> int array -> bool
-  = "caml_rig_nv_channel"
+external destroy : int -> unit = "caml_rig_nv_destroy" [@@noalloc]
+
+external set_channel : int -> int -> int array -> bool = "caml_rig_nv_channel"
+[@@noalloc]
 
 external set_doorbell : int -> int -> unit = "caml_rig_nv_doorbell"
+[@@noalloc]
 
 external set_template : int -> int -> int array -> int array -> unit
   = "caml_rig_nv_template"
+[@@noalloc]
 
 external set_entry : int -> int -> int -> unit = "caml_rig_nv_entry"
-external set_bar : int -> int -> unit = "caml_rig_nv_bar"
-external bar_live : int -> int -> unit = "caml_rig_nv_bar_live"
-external zero : int -> int -> unit = "caml_rig_nv_zero"
+[@@noalloc]
+
+external set_bar : int -> int -> unit = "caml_rig_nv_bar" [@@noalloc]
+external bar_live : int -> int -> unit = "caml_rig_nv_bar_live" [@@noalloc]
+external zero : int -> int -> unit = "caml_rig_nv_zero" [@@noalloc]
+
 external offer_local : int -> int -> int -> bool = "caml_rig_nv_offer_local"
-external set_local : int -> int -> unit = "caml_rig_nv_set_local"
+[@@noalloc]
+
+external set_local : int -> int -> unit = "caml_rig_nv_set_local" [@@noalloc]
+
 external pending_local : int -> int = "caml_rig_nv_pending_local"
+[@@noalloc]
+
 external owe_invalidate : int -> unit = "caml_rig_nv_owe_invalidate"
+[@@noalloc]
+
 external read_word : int -> int = "caml_rig_nv_signaled" [@@noalloc]
+
 external notification : int -> int -> int = "caml_rig_nv_notification"
+[@@noalloc]
+
 external watch : int -> int -> int -> bool = "caml_rig_nv_watch"
 external last : int -> int = "caml_rig_nv_last" [@@noalloc]
 external now_ms : unit -> int = "caml_rig_nv_now_ms" [@@noalloc]
-external raise_word : int -> unit = "caml_rig_nv_raise"
-external end_channels : int -> unit = "caml_rig_nv_end"
+external raise_word : int -> unit = "caml_rig_nv_raise" [@@noalloc]
+external end_channels : int -> unit = "caml_rig_nv_end" [@@noalloc]
+
 external room_entry_address : unit -> int = "caml_rig_nv_room_entry"
+[@@noalloc]
+
 external submit_entry_address : unit -> int = "caml_rig_nv_submit_entry"
+[@@noalloc]
 
 (* RM parameters *)
 
@@ -256,6 +282,10 @@ let arch_of v =
       ((v lsr 8) land 0xff)
       (if minor > 0xf then minor lsr 4 else minor)
 
+(* The SASS version of SM version [v], as cubins state it: major and minor in
+   one byte each nibble. *)
+let sass_of v = ((v land 0xf00) lsr 4) lor (v land 0xf)
+
 let arch (T d) = d.arch
 let budget (T d) = d.path.budget
 let queues (T _) = [ "COMPUTE:0"; "COPY:0" ]
@@ -271,6 +301,10 @@ type capability = Abi.Gpu.t
 let capability (T d) = d.capability
 let capability_key = Abi.Gpu.key
 let self (T d) = Nativeint.of_int d.self
+
+(* Gives [m] back to its path. The device holds [m] no more whatever the path
+   answers: a path that fails to take it back keeps it. *)
+let give d m = try d.path.free m with Fault _ -> ()
 
 (* Local memory *)
 
@@ -294,14 +328,14 @@ let retire d =
   let seen = read_word d.self in
   let done_, kept = List.partition (fun (_, v) -> v <= seen) d.local_retired in
   d.local_retired <- kept;
-  List.iter (fun (m, _) -> d.path.free m) done_
+  List.iter (fun (m, _) -> give d m) done_
 
 (* Makes [packed] the pending local memory, freeing a pending one that no
    submission took. *)
 let publish d m packed =
   (match d.local_pending with
   | Some (old, old_packed) when offer_local d.self old_packed packed ->
-      d.path.free old
+      give d old
   | Some _ | None ->
       settle d;
       set_local d.self packed);
@@ -317,6 +351,7 @@ let local d n =
     if l.per_thread <= d.per_thread then Ok ()
     else
       match path_alloc d.path "Rig_nv.capability" `Gpu l.bytes with
+      | exception Fault why -> Error why
       | None ->
           Error (strf "no GPU memory for %d bytes of local memory" l.bytes)
       | Some m ->
@@ -342,15 +377,16 @@ let hole_ints (at, (word : int Packet.word)) =
     match word with
     | Packet.W32 t -> (0, t)
     | Packet.W64 t -> (1, t)
-    | Packet.Dword _ -> invalid_arg "Rig_nv: a template hole holds no value"
+    | Packet.Dword _ ->
+        invalid_arg "Rig_nv.make: a template hole holds no value"
   in
   let slot, l = ops [] term in
   if List.length l > hole_ops then
-    invalid_arg "Rig_nv: a template hole takes too many operations";
+    invalid_arg "Rig_nv.make: a template hole takes too many operations";
   let op (shift, n) =
     let x = Int64.to_int n in
     if Int64.of_int x <> n then
-      invalid_arg "Rig_nv: a template's addend exceeds an int";
+      invalid_arg "Rig_nv.make: a template's addend exceeds an int";
     [| shift; x |]
   in
   let pad = List.init (hole_ops - List.length l) (fun _ -> (0, 0L)) in
@@ -367,7 +403,7 @@ let template self k ~known p =
         Int32.to_int (String.get_int32_le bytes (4 * i)) land 0xffff_ffff)
   in
   if Array.length words > template_words || List.length holes > template_holes
-  then invalid_arg "Rig_nv: a template exceeds its bounds";
+  then invalid_arg "Rig_nv.make: a template exceeds its bounds";
   set_template self k words (Array.concat (List.map hole_ints holes))
 
 let unknown _ = None
@@ -387,7 +423,8 @@ let templates self (g : gpu) =
     (Method.set_object Method.Compute g.compute_class
     @ Method.local_memory_window local_window
     @ Method.shared_memory_window shared_window);
-  template self t_setup_copy ~known (Method.set_object Method.Copy g.copy_class);
+  template self t_setup_copy ~known
+    (Method.set_object Method.Copy g.copy_class);
   template self t_invalidate ~known (Method.invalidate_caches system);
   template self t_idle ~known Method.wait_for_idle;
   (* An entry is its segment's address plus a constant plus its words times
@@ -435,7 +472,7 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
   in
   let* words = alloc `System page "timeline word" in
   let* words_host = host "timeline word" words in
-  zero words_host 24;
+  zero words_host words_bytes;
   let* block = alloc `System block_bytes "channels' rings" in
   let* block_host = host "channels' rings" block in
   let notifier q =
@@ -471,6 +508,7 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
   in
   if self = 0 then Error "no host memory for the device's state"
   else
+    let () = taken (fun () -> destroy self) in
     let channel q engine (notifier, notifier_host) =
       let module G = R.Gpfifo_alloc in
       let* ch =
@@ -564,8 +602,7 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
         capability =
           {
             Abi.Gpu.compute_class = g.compute_class;
-            sass_version =
-              ((g.sm_version land 0xf00) lsr 4) lor (g.sm_version land 0xf);
+            sass_version = sass_of g.sm_version;
             gpcs = g.gpcs;
             tpcs_per_gpc = g.tpcs_per_gpc;
             sms_per_tpc = g.sms_per_tpc;
@@ -654,8 +691,7 @@ let free (T d) r =
       | Path | Bar ->
           if not (Atomic.compare_and_set r.live true false) then
             invalid_arg "Rig_nv.free: the region was freed";
-          (* A path that cannot give the memory back has lost it. *)
-          (try d.path.free r.mem with Fault _ -> ());
+          give d r.mem;
           if r.kind = Bar then bar_live d.self (-1))
 
 let address (R r) = Some r.mem.address
@@ -869,12 +905,11 @@ let stop (T d) =
     end_channels d.self;
     (* The work no longer runs: what it used goes back, and a failure to give
        some back leaves the device stopped. *)
-    let give m = try d.path.free m with Fault _ -> () in
-    List.iter give d.owned;
+    List.iter (give d) d.owned;
     Mutex.protect d.local_lock (fun () ->
-        Option.iter give d.local_current;
-        Option.iter (fun (m, _) -> give m) d.local_pending;
-        List.iter (fun (m, _) -> give m) d.local_retired)
+        Option.iter (give d) d.local_current;
+        Option.iter (fun (m, _) -> give d m) d.local_pending;
+        List.iter (fun (m, _) -> give d m) d.local_retired)
   end
     (* The RM stopped the channels on a fault: nothing runs, though their
        objects stay. Otherwise their own releases bring the word up as their

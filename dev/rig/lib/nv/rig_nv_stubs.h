@@ -76,7 +76,8 @@ struct channel {
   uint64_t entries, put, freed;
   volatile uint32_t *gp_put; /* in USERD */
   uint32_t token;            /* the work submit token the doorbell takes */
-  uint8_t *segments;         /* the driver's segments, as the host writes them */
+  /* the driver's segments, as the host writes them */
+  uint8_t *segments;
   uint64_t segments_gpu, size, written, reclaimed;
   struct mark *marks; /* a queue of [entries] marks */
   uint64_t first, count;
@@ -96,12 +97,18 @@ struct device {
   struct channel ch[CHANNELS];
   volatile uint32_t *doorbell;
   struct template t[TEMPLATES];
-  uint64_t entry_base, entry_word; /* an entry is address + base + words * word */
-  _Atomic uint64_t local;          /* a pending local memory: address | per_tpc / 32 KiB << 40 */
-  _Atomic int invalidate;          /* whether the compute caches are owed an invalidation */
-  _Atomic long bar_live;           /* live regions the host writes through the BAR */
-  volatile const uint32_t *bar;    /* a word of the BAR, read to flush its writes */
-  uint32_t info32_at, status_at;   /* a notification's error fields */
+  /* an entry is address + base + words * word */
+  uint64_t entry_base, entry_word;
+  /* a pending local memory: address | per_tpc / 32 KiB << 40 */
+  _Atomic uint64_t local;
+  /* whether the compute caches are owed an invalidation */
+  _Atomic int invalidate;
+  /* live regions the host writes through the BAR */
+  _Atomic long bar_live;
+  /* a word of the BAR, read to flush its writes */
+  volatile const uint32_t *bar;
+  /* a notification's error fields */
+  uint32_t info32_at, status_at;
 };
 
 /* The join word of channel [q]: its GPU address. */

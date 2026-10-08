@@ -56,7 +56,8 @@
 
     A function that calls the RM answers its refusal of the arguments as its
     result ([None], [Error]) and raises {!Fault} for any other failure.
-    {!signaled}, {!free} and {!stop} never raise it.
+    {!signaled}, {!free} and {!stop} never raise it, and {!make} answers it as
+    [Error].
 
     {b Domains.} Any domain may call any function, at the same time as others,
     under two rules. [rig_nv_room] and [rig_nv_submit] run one at a time: the
@@ -230,7 +231,7 @@ val entry : image -> string -> int option
 val unload : t -> image -> unit
 (** [unload g c] ends [c]: its code region goes back to the caller, who frees
     it. The caller unloads it once no work that runs its kernels runs, and never
-    after {!stop}, which ends [g]'s images itself.
+    after {!stop}: an image of a stopped device needs no ending.
 
     Raises [Invalid_argument] if [c] is another device's or was unloaded. *)
 
@@ -316,8 +317,8 @@ val stop : t -> unit
     it as their work ends. [g]'s memory goes back to the path in the first two
     cases.
 
-    [stop] ends [g]'s images too: an image holds nothing of [g] but its code
-    region, which the caller frees. *)
+    [g]'s images need no {!unload} after [stop]: an image holds nothing of [g]
+    but its code region, which the caller frees. *)
 
 (** {1:paths Paths}
 

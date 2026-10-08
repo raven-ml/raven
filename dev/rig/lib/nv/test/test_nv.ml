@@ -117,7 +117,7 @@ module Fake = struct
     mutable next : int;
     mutable at : int option; (* the address of the path's next memory *)
     mutable frees : bool; (* whether the RM frees objects *)
-    mutable faults : bool; (* whether the RM's and the path's frees raise *)
+    mutable faults : bool; (* whether RM frees and path memory calls raise *)
     mutable report : string option; (* a fault the path reports *)
     mutable hang_ms : int option;
     mutable stops : [ `Stopped | `Unknown ]; (* what the path's stop answers *)
@@ -170,6 +170,7 @@ module Fake = struct
     }
 
   let alloc f kind n =
+    if f.faults then raise (N.Fault "the GPU fell off the bus");
     if refused f then None
     else
       let bytes = (n + S.page - 1) / S.page * S.page in
@@ -358,6 +359,16 @@ let address_limit () =
   N.stop g;
   N.stop g'
 
+(* Compiled code links local memory through the capability, whose [local]
+   answers a failure as [Error]. *)
+let failing_local () =
+  let f = Fake.make 0 in
+  let g = require_ok (N.make (Fake.path f)) in
+  f.faults <- true;
+  ignore (require_error ((N.capability g).local 1024) : string);
+  f.faults <- false;
+  N.stop g
+
 (* A path whose frees raise Fault, as one whose GPU is lost: free and stop
    still return, as the core calls them after a loss. *)
 let failing_frees () =
@@ -431,6 +442,7 @@ let paths =
       test "sleep raises the fault the path reports" path_check;
       test "free and stop raise no Fault when the path's frees do"
         failing_frees;
+      test "local memory answers the path's Fault as Error" failing_local;
       test
         "a device stopped with an image keeps only its word once its code is \
          freed"

@@ -19,9 +19,6 @@
 #include <string.h>
 
 #define CAML_NAME_SPACE
-#include <caml/alloc.h>
-#include <caml/fail.h>
-#include <caml/memory.h>
 #include <caml/mlvalues.h>
 #include <caml/signals.h>
 
@@ -70,7 +67,7 @@ static void poll_pause(void) {
    notifications hold their error at [v_info32] and its status at
    [v_status]; or [0] without memory. The state lives for the process. */
 value caml_rig_nv_create(value v_word, value v_word_gpu, value v_info32,
-                            value v_status) {
+                         value v_status) {
   struct device *d = calloc(1, sizeof *d);
   if (d == NULL) return Val_long(0);
   d->word = Pointer_val(v_word);
@@ -79,6 +76,14 @@ value caml_rig_nv_create(value v_word, value v_word_gpu, value v_info32,
   d->status_at = (uint32_t)Long_val(v_status);
   for (int q = 0; q < CHANNELS; q++) d->ch[q].owes_setup = 1;
   return Val_long((intnat)d);
+}
+
+/* Frees the state of a device whose open failed, which nothing holds. */
+value caml_rig_nv_destroy(value v_self) {
+  struct device *d = Device_val(v_self);
+  for (int q = 0; q < CHANNELS; q++) free(d->ch[q].marks);
+  free(d);
+  return Val_unit;
 }
 
 /* The fields of [caml_rig_nv_channel]'s ints. */
@@ -126,7 +131,7 @@ enum { hole_at, hole_slot, hole_wide, hole_nops, hole_ops, hole_fields =
 /* Sets template [v_k] to the words [v_words] with the holes [v_holes]. The
    OCaml side checks the counts against TEMPLATE_WORDS and TEMPLATE_HOLES. */
 value caml_rig_nv_template(value v_self, value v_k, value v_words,
-                              value v_holes) {
+                           value v_holes) {
   struct template *t = &Device_val(v_self)->t[Int_val(v_k)];
   t->nwords = (int)Wosize_val(v_words);
   for (int i = 0; i < t->nwords; i++)
@@ -179,7 +184,7 @@ value caml_rig_nv_zero(value v_at, value v_n) {
 /* Replaces the pending local memory [v_expected] with [v_desired]: [true],
    or [false] if a submission took [v_expected] meanwhile. */
 value caml_rig_nv_offer_local(value v_self, value v_expected,
-                                 value v_desired) {
+                              value v_desired) {
   uint64_t expected = (uint64_t)Long_val(v_expected);
   return Val_bool(atomic_compare_exchange_strong(
       &Device_val(v_self)->local, &expected, (uint64_t)Long_val(v_desired)));
@@ -193,7 +198,8 @@ value caml_rig_nv_pending_local(value v_self) {
 
 /* Makes [v_packed] the pending local memory; none is pending. */
 value caml_rig_nv_set_local(value v_self, value v_packed) {
-  atomic_store_explicit(&Device_val(v_self)->local, (uint64_t)Long_val(v_packed),
+  atomic_store_explicit(&Device_val(v_self)->local,
+                        (uint64_t)Long_val(v_packed),
                         memory_order_release);
   return Val_unit;
 }
