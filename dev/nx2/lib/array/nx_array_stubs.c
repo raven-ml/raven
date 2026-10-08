@@ -147,6 +147,18 @@ int nx_coalesce(int n, const nx_array *a, nx_loop *l) {
       if (a[k].dim[i] != a[0].dim[i]) return NX_SHAPE;
   }
   for (int k = 0; k < n; k++) l->first[k] = a[k].offset;
+  /* Operands all in C order merge into one run: the loop is their number
+     of elements, in steps of one. */
+  int contiguous = 1;
+  for (int k = 0; k < n; k++) contiguous &= (a[k].flags & NX_CONTIGUOUS) != 0;
+  if (contiguous) {
+    int64_t e = 1;
+    for (int i = 0; i < r; i++) e *= a[0].dim[i];
+    l->rank = 1;
+    l->extent[0] = e;
+    for (int k = 0; k < n; k++) l->step[k][0] = e > 1;
+    return NX_OK;
+  }
   int out = 0;
   for (int i = 0; i < r; i++) {
     int64_t d = a[0].dim[i];
