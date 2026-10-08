@@ -1045,7 +1045,9 @@ module type Driver = sig
   val blocks : t -> [ `Returns | `May_block ]
   (** [blocks d] is [`Returns] if the C room check and hand-over never block,
       and [`May_block] if they may block on [d]'s own earlier work, on its own
-      transfers or on its library's back-pressure. *)
+      transfers or on its library's back-pressure. A [`May_block] device's room
+      check and hand-over are counted calls: its {!stop} never runs while one
+      blocks. *)
 
   val maps_host : t -> bool
   (** [maps_host d] is [true] iff [d] maps host memory of its machine that
