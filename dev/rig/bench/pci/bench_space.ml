@@ -162,9 +162,19 @@ let page_table_rows =
     let size = Thumper.black_box size in
     Thumper.bench_with_setup ~setup name (fun t -> alloc_free t size)
   in
+  (* A process times this row at one of two levels about 8% apart, 105 or 113
+     us on an i9-9900K, fixed when it starts. The level persists with address
+     randomisation and transparent huge pages off, on one pinned core, and over
+     eight page tables and run lists rotated within the process, so it is most
+     likely where the process's runtime memory lies physically. The budget
+     admits both levels; the other map-unmap rows time the same mapping at the
+     default 5%. *)
   let runs_row =
     let va = Thumper.black_box (va + runs_size) in
-    Thumper.bench_with_setup ~setup "16MiB-pages" (fun t -> map_unmap_runs t va)
+    Thumper.bench_with_setup ~setup
+      ~budgets:[ Thumper.Budget.no_slower_than 0.15 ]
+      "16MiB-pages"
+      (fun t -> map_unmap_runs t va)
   in
   (* 512 GiB on, under another entry of the root. *)
   let tables_row =
