@@ -398,6 +398,7 @@ let sleep d ~ms =
   | e -> fault "waiting for KFD events" e
 
 let stable_power g () =
+  Mutex.protect opening @@ fun () ->
   match g.node.gpu.target with
   | 9, _, _ -> Ok ()
   | _ when g.stable -> Ok ()
