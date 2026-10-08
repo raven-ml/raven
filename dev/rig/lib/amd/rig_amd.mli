@@ -418,10 +418,12 @@ type 'm path = {
 val make : 'm path -> (t, string) result
 (** [make p] is a device of the GPU [p] reaches: its queues, timeline word and
     argument segment, made through [p]. The result is [Error msg] if this
-    library does not drive the GPU's family, naming it, if [p] refuses a queue,
-    with [p]'s message, or if [p] lacks the memory they need. A failed [make]
-    gives back what it took: it frees the memory [p] gave and calls [p.stop] if
-    [p] made a queue.
+    library does not drive the GPU's family, or knows no registers for its GC,
+    naming the GPU's processor; if [p] refuses a queue, with [p]'s message; if
+    [p] lacks the memory they need; or if [p]'s [`System] memory has no host
+    address, which a path's contract rules out. A failed [make] gives back what
+    it took: it frees the memory [p] gave and calls [p.stop] if [p] made a
+    queue.
 
     Raises [Invalid_argument] if [p.interrupt] is [0] or [p.hang_ms] is [Some n]
     with [n < 1]. *)
