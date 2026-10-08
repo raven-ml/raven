@@ -30,8 +30,8 @@
     The system reads a page when the host first touches it; for a device other
     than the host, the disk asks the system to read the borrowed bytes ahead. A
     borrow reads in place only the pages a program touches, and is the faster
-    read of a file the system holds in memory. A copy is the faster read of a
-    file the system must read from its storage.
+    read of a file the system holds in memory. A file the system must read from
+    its storage reads at the storage's pace, borrowed or copied.
 
     The pages of a file {!create_file} made are the file: copies see writes
     through a borrow, and a borrow sees theirs. The pages of a file {!of_file}
