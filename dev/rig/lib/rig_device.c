@@ -625,6 +625,9 @@ value caml_rig_ensure_record(value v_d, value v_n) {
    the entries [d]'s word shows reached, and refuses if a producer is lost.
    The mutex is held. */
 static int record_waits(struct rig_device *d, struct rig_sub *s) {
+  /* Nothing to drop or record reads no word: the device writes its line,
+     so a read is a cache miss on every submit. */
+  if (d->nrecord == 0 && s->nwaits == 0) return SUBMIT_OK;
   uint64_t w = device_word(d);
   int k = 0;
   for (int j = 0; j < d->nrecord; j++)

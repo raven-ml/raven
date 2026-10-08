@@ -86,7 +86,7 @@ let queue_index d fn q =
   go 0
 
 (* The record of [b]'s memory, which holds the stamps a submission raises. *)
-let entry_of b =
+let[@inline] entry_of b =
   let m = b.mem.root in
   if m.entry == Memory.no_entry then Memory.ensure_entry m;
   m.entry

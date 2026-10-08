@@ -15,9 +15,11 @@ let generation (c : claim) = Atomic.Loc.get [%atomic.loc c.generation]
 let is_live b = b.generation = generation b.mem.claim
 let dead b = if is_live b then None else Some b.mem.claim.why
 
-let check_live fn b =
-  if not (is_live b) then
-    invalid_argf "Rig.%s: the buffer is dead: %s" fn b.mem.claim.why
+let refuse_dead fn b =
+  invalid_argf "Rig.%s: the buffer is dead: %s" fn b.mem.claim.why
+
+(* Inlined where it is called per buffer of a submit. *)
+let[@inline] check_live fn b = if not (is_live b) then refuse_dead fn b
 
 let of_memory mem length =
   { mem; offset = 0; length; generation = generation mem.claim }

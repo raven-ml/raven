@@ -94,9 +94,11 @@ struct rig_stamps {
   _Atomic int refs; /* in the first chunk only */
 };
 
-/* A slot of a prepared submission: a memory's stamps, the handle by which
-   the device names it, and the device's use word in the stamps, reserved
-   at each submit. */
+/* A slot of a prepared submission: a memory's stamps, NULL while unset,
+   the handle by which the device names it, and the device's use word in
+   the stamps, reserved at each submit. A slot's handle outlives its
+   clearing, so a submit whose slots name the handles of the last one
+   collects none. */
 struct rig_slot {
   struct rig_stamps *stamps;
   uint64_t handle;
@@ -136,6 +138,8 @@ struct rig_sub {
   int nwaits, cwaits;
   struct rig_wait *waits;
   int *producers;
+  /* Built by a collect once a slot's handle changed, kept after. */
+  int handles_stale;
   int nhandles; /* at most one per fixed buffer and slot */
   uint64_t *handles;
   int seen_bits; /* [seen] has 2^seen_bits entries, twice the handles */

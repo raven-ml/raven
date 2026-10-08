@@ -309,6 +309,58 @@ let handles_law c =
     (List.sort Int.compare (List.map (fun k -> B.address bs.(k)) named))
     (List.sort Int.compare (P.last_handles p))
 
+(* Each submit of one submission hands its driver the handles that submit's
+   slots and parts name, whatever the submits before it named. A case submits
+   once per element of [runs], each picking the slots' buffers among [n]. *)
+type rerun = { n : int; reads : int; writes : int; runs : int list list }
+
+let pp_rerun ppf c =
+  let ints = Format.(pp_print_list ~pp_sep:pp_print_space pp_print_int) in
+  let runs = Format.(pp_print_list ~pp_sep:(fun ppf () -> fprintf ppf ";@ ")) in
+  Format.fprintf ppf "@[{ n = %d;@ reads = %d;@ writes = %d;@ runs = [%a] }@]"
+    c.n c.reads c.writes
+    (runs (fun ppf r -> Format.fprintf ppf "[%a]" ints r))
+    c.runs
+
+let rerun_case =
+  let open Gen in
+  with_pp pp_rerun
+    (let* n = int_range 1 6 in
+     let* reads = int_range 0 4 in
+     let* writes = int_range 0 2 in
+     let run = list ~size:(constant (reads + writes)) (int_range 0 (n - 1)) in
+     map
+       (fun runs -> { n; reads; writes; runs })
+       (list ~size:(int_range 2 4) run))
+
+let rerun_law c =
+  let d, p = Lazy.force handles_device in
+  let bs = Array.init c.n (fun _ -> B.create d 8) in
+  let s =
+    Sub.make ~reads:c.reads ~writes:c.writes ~waits:0 d
+      [| bump (B.create C.host 8) |]
+  in
+  let submit run =
+    List.iteri
+      (fun i k ->
+        if i < c.reads then Sub.read s i bs.(k)
+        else Sub.write s (i - c.reads) bs.(k))
+      run;
+    ignore (C.submit s);
+    List.sort Int.compare (P.last_handles p)
+  in
+  List.iteri
+    (fun i run ->
+      if i > 0 then begin
+        let last = List.nth c.runs (i - 1) in
+        cover "a submit names the last one's buffers" (last = run);
+        cover "a submit names other buffers" (last <> run)
+      end;
+      equal (list int)
+        (List.sort_uniq Int.compare (List.map (fun k -> B.address bs.(k)) run))
+        (submit run))
+    c.runs
+
 (* A full queue answers Later: the submit waits for one more value. *)
 let test_room () =
   let d, p = P.open_ ~capacity:1 "submit:room" in
@@ -564,6 +616,8 @@ let tests =
           test_in_queue_object;
         test "a full queue's submit waits for room" test_room;
         prop "a submit names each region it uses once" handles_case handles_law;
+        prop "each submit names the regions it uses, whatever the last named"
+          rerun_case rerun_law;
       ];
     group ~timeout "lifetime"
       [
