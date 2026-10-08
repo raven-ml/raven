@@ -15,8 +15,12 @@
    A job fails once. Whoever finds the failure, a thread or a caller, sets
    the root cause under the job's lock, then for each link: marks it
    failed, raises its rails' counts, sends an abort if no frame is being
-   sent, shuts the socket down and wakes every waiter. A link's socket
-   closes once both its threads ended and no abort is being sent.
+   sent, ends its stream and wakes every waiter. The receiving thread of a
+   failed link discards frames until the peer ends its stream, so that no
+   unread byte makes the system reset the connection and drop the abort
+   before the peer reads it; a peer silent for the bound ends it too. A
+   link's socket closes once both its threads ended and no abort is being
+   sent.
 
    Reasons are formatted here, because the threads that find a failure hold
    no runtime: a fixed phrase, the system's error, or a peer's abort, each
@@ -50,7 +54,7 @@
 #define poll WSAPoll
 typedef WSAPOLLFD rig_remote_pollfd;
 #define close_sock closesocket
-#define SHUT_BOTH SD_BOTH
+#define SHUT_SEND SD_SEND
 #else
 #include <fcntl.h>
 #include <netinet/in.h>
@@ -59,7 +63,7 @@ typedef WSAPOLLFD rig_remote_pollfd;
 #include <unistd.h>
 typedef struct pollfd rig_remote_pollfd;
 #define close_sock close
-#define SHUT_BOTH SHUT_RDWR
+#define SHUT_SEND SHUT_WR
 #endif
 
 /* A beat after a second without a send; a failure after ten without a
@@ -321,10 +325,9 @@ static void send_abort(struct rig_remote_link *l,
   (void)send_all(l, buf, HEADER + 4 + why->n);
 }
 
-/* Sends the abort a failure owes [l], then shuts its socket down, so that
-   no thread waits on it; nothing while a frame or an abort is being sent,
-   whose sender calls it after. Holds [l]'s lock, which it releases while it
-   sends. */
+/* Sends the abort a failure owes [l], then ends its stream; nothing while a
+   frame or an abort is being sent, whose sender calls it after. Holds [l]'s
+   lock, which it releases while it sends. */
 static void abort_link(struct rig_remote_link *l) {
   if (l->fd_closed || l->sending) return;
   if (l->abort_owed && !l->sent_close) {
@@ -335,7 +338,7 @@ static void abort_link(struct rig_remote_link *l) {
     pthread_mutex_lock(&l->mu);
     l->sending = 0;
   }
-  shutdown(l->fd, SHUT_BOTH);
+  shutdown(l->fd, SHUT_SEND);
   close_if_idle(l);
 }
 
@@ -520,7 +523,7 @@ static void *sender(void *arg) {
 /* The receiving thread */
 
 /* Receives [n] bytes into [p]: 0, a socket error, [ENDED] or [SILENT].
-   [last] is when the link's last byte came. */
+   [last] is when the link's last byte came before it failed. */
 static int recv_all(struct rig_remote_link *l, unsigned char *p, uint64_t n,
                     int64_t *last) {
   while (n > 0) {
@@ -544,7 +547,7 @@ static int recv_all(struct rig_remote_link *l, unsigned char *p, uint64_t n,
       if (again(e)) continue;
       return e;
     }
-    *last = now_ns();
+    if (!atomic_load(&l->failed)) *last = now_ns();
     p += m;
     n -= (uint64_t)m;
   }
@@ -789,13 +792,37 @@ static int recv_frame(struct rig_remote_link *l, int kind, uint64_t n, int64_t *
   }
 }
 
+/* Receives and discards [n] bytes: 0 or a receive's answer. */
+static int skip(struct rig_remote_link *l, uint64_t n, int64_t *last) {
+  unsigned char b[16384];
+  while (n > 0) {
+    size_t k = n < sizeof b ? (size_t)n : sizeof b;
+    int r = recv_all(l, b, k, last);
+    if (r != 0) return r;
+    n -= k;
+  }
+  return 0;
+}
+
+/* Handles one frame of a failed link: its peer's abort or close ends the
+   stream, and anything else is discarded. */
+static int drain_frame(struct rig_remote_link *l, int kind, uint64_t n,
+                       int64_t *last) {
+  if (kind == K_ABORT || kind == K_CLOSE) return 1;
+  return skip(l, n, last);
+}
+
 static void *receiver(void *arg) {
   struct rig_remote_link *l = arg;
   int64_t last = now_ns();
   for (;;) {
     unsigned char h[HEADER];
     int r = recv_all(l, h, HEADER, &last);
-    if (r == 0) r = recv_frame(l, h[8], rig_remote_get_u64(h), &last);
+    if (r == 0) {
+      uint64_t n = rig_remote_get_u64(h);
+      r = atomic_load(&l->failed) ? drain_frame(l, h[8], n, &last)
+                                  : recv_frame(l, h[8], n, &last);
+    }
     if (r == 1) break;
     if (r != 0) {
       link_lost(l, r);

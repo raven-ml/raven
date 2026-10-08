@@ -532,6 +532,59 @@ let malformed_reaches_peer () =
   equal (list int) [ k_abort ] (kinds p);
   equal state (Link.Failed "peer: a malformed frame") (Link.wait j ~ms:0)
 
+(* The frames of the bytes [s], other than beats and rails, up to the last whole
+   one. *)
+let frames_of s =
+  let rec go off acc =
+    if off + 9 > String.length s then List.rev acc
+    else
+      let n = Int64.to_int (String.get_int64_le s off) in
+      let k = Char.code s.[off + 8] in
+      if off + 9 + n > String.length s then List.rev acc
+      else if k = k_beat || k = k_rail then go (off + 9 + n) acc
+      else go (off + 9 + n) ((k, String.sub s (off + 9) n) :: acc)
+  in
+  go 0 []
+
+(* A busy rail fills the connection; once the job fails, the peer keeps the
+   connection nearly full for a while and beats, so beats arrive after the
+   failed side ended its stream. Its stream still ends with the abort. *)
+let abort_behind_rail () =
+  with_raw @@ fun j l p ->
+  let t = { Rig_remote_abi.src = 0; dst = 0; length = 1 lsl 16 } in
+  let e = Link.rail l ~id:1 ~send:[| t |] ~receive:[||] in
+  e.ready 1_000_000_000;
+  if not (readable p patience) then fail "the rail sent nothing";
+  Thread.delay 0.1 (* the rail fills the connection *);
+  Link.fail j "the test fails it";
+  let beating = Atomic.make true in
+  let beats =
+    Thread.create
+      (fun () ->
+        while Atomic.get beating do
+          (try write p (frame k_beat "") with Unix.Unix_error _ -> ());
+          Thread.delay 0.02
+        done)
+      ()
+  in
+  let got = Buffer.create (1 lsl 20) in
+  let slow_until = Unix.gettimeofday () +. 1.5 in
+  let rec slowly () =
+    let s = read_n p 16384 in
+    Buffer.add_string got s;
+    if String.length s = 16384 && Unix.gettimeofday () < slow_until then begin
+      Thread.delay 0.05;
+      slowly ()
+    end
+  in
+  slowly ();
+  Buffer.add_string got (read_all p);
+  Atomic.set beating false;
+  Thread.join beats;
+  equal (list frame_w)
+    [ (k_abort, str "the test fails it") ]
+    (frames_of (Buffer.contents got))
+
 (* The job fails on one link; the other link's peer receives an abort. *)
 let every_link_aborts () =
   with_job @@ fun j ->
@@ -615,6 +668,8 @@ let failures =
         abort_reaches_peer;
       test "a malformed frame's sender receives the abort"
         malformed_reaches_peer;
+      test "a failed job's abort reaches a peer still reading a busy rail"
+        abort_behind_rail;
       test "a job that fails on one link aborts every other" every_link_aborts;
       test "a failed job's requests and next answer its root cause"
         after_failure;

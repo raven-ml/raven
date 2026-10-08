@@ -41,12 +41,14 @@
     longer one is cut there, here and in an agent's refusal ({!answer}).
 
     Then every link of the job that sent no close sends its peer an abort with
-    the root cause, after the frame it is sending if any, and shuts its socket
-    down, so that no thread waits on it. Its queue drops what it is given,
-    {!request} and {!next} answer [Error], the proxies' sleeps return, and every
-    count of every rail of the job reads [Int64.max_int]. Nothing raises from a
-    C thread, and nothing calls OCaml: the process learns of the failure from
-    {!failure}, {!wait} or a function's [Error].
+    the root cause, after the frame it is sending if any, and ends its stream.
+    It reads and discards what the peer still sends until the peer ends its
+    stream or is silent for 10 seconds, so the abort reaches a peer still
+    reading earlier frames. Its queue drops what it is given, {!request} and
+    {!next} answer [Error], the proxies' sleeps return, and every count of every
+    rail of the job reads [Int64.max_int]. Nothing raises from a C thread, and
+    nothing calls OCaml: the process learns of the failure from {!failure},
+    {!wait} or a function's [Error].
 
     A child of [fork] never uses its parent's links, whose streams it would
     interleave with the parent's: every function compares the process id with
