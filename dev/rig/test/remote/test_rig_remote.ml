@@ -526,6 +526,55 @@ let forks =
   group "fork"
     [ test "a child's job is failed there, and the parent's goes on" forked ]
 
+(* Frames rig.remote's controller never sends *)
+
+let answer_pp = Format.pp_print_string
+
+(* Requests an agent cannot apply are refused, and the job goes on: an id the
+   job holds already, a rail of no transfer or of an empty one. *)
+let refused_requests () =
+  with_agents @@ fun agents ->
+  let a = List.hd agents in
+  let fd = raw_controller a in
+  Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+  is_ok ~msg:"the join" ~pp:answer_pp (join_alone fd a);
+  is_ok ~msg:"memory 1" ~pp:answer_pp (ask fd (alloc_host 1 16));
+  is_error ~msg:"memory 1 again" (ask fd (alloc_host 1 16));
+  is_ok ~msg:"rail 2" ~pp:answer_pp (ask fd (rail_out 2 [ (0, 0, 5) ]));
+  is_error ~msg:"rail 2 again" (ask fd (rail_out 2 [ (0, 0, 5) ]));
+  is_error ~msg:"a rail as memory 1" (ask fd (rail_out 1 [ (0, 0, 5) ]));
+  is_error ~msg:"a rail of no transfer" (ask fd (rail_out 3 []));
+  is_error ~msg:"a rail of an empty transfer"
+    (ask fd (rail_out 4 [ (0, 0, 0) ]));
+  send fd (frame k_close "");
+  equal ~msg:"the agent's close" (option int) (Some k_close)
+    (Option.map fst (next_frame fd));
+  equal exit_w (0, [ "closed" ]) (finish a)
+
+(* A hand-over naming bytes outside its memory fails the job: the agent ends
+   with it, and does not die of it. *)
+let outside_memory () =
+  with_agents @@ fun agents ->
+  let a = List.hd agents in
+  let fd = raw_controller a in
+  Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+  is_ok ~msg:"the join" ~pp:answer_pp (join_alone fd a);
+  is_ok ~msg:"memory 1" ~pp:answer_pp (ask fd (alloc_host 1 16));
+  send fd (frame k_handover (copy_on_host ~value:1 ~bytes:8 (1, 12) (1, 0)));
+  match finish a with
+  | 2, [ why ] -> starts_with ~affix:"failed: " why
+  | code, lines ->
+      failf "the agent exited %d, printing [%s]" code (String.concat "; " lines)
+
+let frames =
+  group "frames"
+    [
+      test "requests an agent cannot apply are refused, and the job goes on"
+        refused_requests;
+      test "a hand-over outside its memory fails the job at the agent"
+        outside_memory;
+    ]
+
 (* Keys *)
 
 let read_ok contents =
@@ -698,6 +747,14 @@ let () =
        [
          group ~timeout:60. "rig_remote"
            [
-             connecting; machines; copies; closes; rails; forks; keys; processes;
+             connecting;
+             machines;
+             copies;
+             closes;
+             rails;
+             forks;
+             frames;
+             keys;
+             processes;
            ];
        ])

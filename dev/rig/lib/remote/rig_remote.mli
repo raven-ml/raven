@@ -62,9 +62,9 @@
     - no byte comes on a connection for 10 seconds, though each end sends at
       least once a second, or a send on one makes no progress for 10 seconds;
     - a frame is malformed;
-    - a hand-over names memory the job does not hold on its machine, or carries
-      words, which agents do not run, or a release names an object the job does
-      not hold there;
+    - a hand-over names memory the job does not hold on its machine, asks for a
+      copy the agent's rig refuses, or carries words, which agents do not run,
+      or a release names an object the job does not hold there;
     - a device of any of its processes is lost other than by a close, as
       {!Rig.failure} reports it. This process notices its own within a second.
 

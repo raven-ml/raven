@@ -161,3 +161,108 @@ let far_of_string d s =
   b
 
 let lost_why = function Rig.Lost (_, why) -> Some why | _ -> None
+
+(* A raw controller *)
+
+(* The frames of wire.mli, written and read byte by byte, for what a controller
+   of rig.remote never sends. *)
+
+let k_request = 1
+let k_answer = 2
+let k_handover = 3
+let k_beat = 8
+let k_abort = 9
+let k_close = 10
+let u8 n = String.make 1 (Char.chr n)
+
+let u32 n =
+  let b = Bytes.create 4 in
+  Bytes.set_int32_le b 0 (Int32.of_int n);
+  Bytes.to_string b
+
+let u64 n =
+  let b = Bytes.create 8 in
+  Bytes.set_int64_le b 0 (Int64.of_int n);
+  Bytes.to_string b
+
+let str s = u32 (String.length s) ^ s
+let frame kind payload = u64 (String.length payload) ^ u8 kind ^ payload
+
+(* A connection to agent [a] as its controller, once the handshake proved [key].
+   A read gives up after [patience]. *)
+let raw_controller a =
+  let module Wire = Rig_remote_proxy.Wire in
+  let fd = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
+  Unix.connect fd (Unix.ADDR_INET (Unix.inet_addr_loopback, a.port));
+  match Wire.dial fd ~key ~self:Wire.Controller ~peer:(Wire.Agent 1) with
+  | Error why ->
+      Unix.close fd;
+      failf "dial: %s" why
+  | Ok () ->
+      Unix.setsockopt_float fd Unix.SO_RCVTIMEO patience;
+      fd
+
+let send fd s = ignore (Unix.write_substring fd s 0 (String.length s))
+
+(* The next [n] bytes of [fd], fewer if its stream ends first. *)
+let read_n fd n =
+  let b = Bytes.create n in
+  let rec go off =
+    if off = n then off
+    else
+      match Unix.read fd b off (n - off) with
+      | 0 -> off
+      | k -> go (off + k)
+      | exception Unix.Unix_error (Unix.ECONNRESET, _, _) -> off
+      | exception Unix.Unix_error ((Unix.EAGAIN | Unix.EWOULDBLOCK), _, _) ->
+          failf "no byte within %.0f s" patience
+  in
+  Bytes.sub_string b 0 (go 0)
+
+(* The next frame of [fd] other than a beat, its kind and payload, or [None]
+   once its stream ends. *)
+let rec next_frame fd =
+  let h = read_n fd 9 in
+  if String.length h < 9 then None
+  else
+    let n = Int64.to_int (String.get_int64_le h 0) in
+    if n < 0 || n > 1 lsl 20 then failf "a frame of %d bytes" n;
+    let p = read_n fd n in
+    if String.length p < n then None
+    else if Char.code h.[8] = k_beat then next_frame fd
+    else Some (Char.code h.[8], p)
+
+(* The answer to the request whose payload is [r]: [Ok] its bytes, or [Error]
+   the agent's refusal. *)
+let ask fd r =
+  send fd (frame k_request r);
+  match next_frame fd with
+  | Some (k, p) when k = k_answer && p.[0] = '\000' ->
+      Ok (String.sub p 1 (String.length p - 1))
+  | Some (k, p) when k = k_answer ->
+      Error (String.sub p 5 (String.length p - 5))
+  | Some (k, _) -> failf "a frame of kind %d in place of an answer" k
+  | None -> fail "the agent ended the connection in place of an answer"
+
+(* A join of the agent [a] alone. *)
+let join_alone fd a =
+  ask fd (u8 1 ^ u32 1 ^ str (machine a) ^ str "127.0.0.1" ^ u32 a.port)
+
+(* An allocation of [bytes] of the agent's host memory as [id]. *)
+let alloc_host id bytes = u8 3 ^ u64 id ^ u64 0 ^ u8 0 ^ u64 bytes
+
+(* A rail [id] with this process carrying [send] from the agent's machine, each
+   a transfer's source, destination and length. *)
+let rail_out id send =
+  let transfer (src, dst, length) = u64 src ^ u64 dst ^ u64 length in
+  u8 7 ^ u64 id ^ u32 0
+  ^ u32 (List.length send)
+  ^ String.concat "" (List.map transfer send)
+  ^ u32 0
+
+(* A hand-over of the host's work at [value]: one copy of [bytes] from memory
+   [src] at [src_at] to memory [dst] at [dst_at]. *)
+let copy_on_host ~value ~bytes (src, src_at) (dst, dst_at) =
+  let region id at = u8 0 ^ u64 id ^ u64 at in
+  u64 0 ^ u64 value ^ u32 0 ^ u32 1 ^ u8 1 ^ u64 bytes ^ region src src_at
+  ^ region dst dst_at

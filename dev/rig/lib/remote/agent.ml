@@ -240,6 +240,11 @@ let buffer s id =
   | Some (Buffer b) -> b
   | _ -> raise (Refused (strf "no memory %d" id))
 
+(* Refuses a new object [id] while the job holds one of that id. *)
+let fresh s id =
+  if Hashtbl.mem s.objects id then
+    raise (Refused (strf "id %d names an object already" id))
+
 let account s id d : Wire.account =
   let reaches =
     Hashtbl.fold
@@ -354,12 +359,14 @@ let answer : type a. state -> a Wire.request -> a =
   | Wire.Join { agents } -> join s agents
   | Wire.Open kind -> open_kind s kind
   | Wire.Alloc { id; device = d; memory = m; bytes } -> (
+      fresh s id;
       match Rig.Buffer.create ~memory:(memory m) (device s d) bytes with
       | b ->
           Hashtbl.replace s.objects id (Buffer b);
           true
       | exception Rig.Out_of_memory _ -> false)
   | Wire.Map { id; device = d; region } -> (
+      fresh s id;
       match Rig.Buffer.borrow (device s d) (buffer s region) with
       | Some b ->
           Hashtbl.replace s.objects id (Buffer b);
@@ -368,6 +375,7 @@ let answer : type a. state -> a Wire.request -> a =
   | Wire.Load _ -> raise (Refused "the agent loads no code")
   | Wire.Entry _ -> None
   | Wire.Rail { id; peer; send; receive } ->
+      fresh s id;
       let l = peer_link s peer in
       ignore (Link.rail l ~id ~send ~receive);
       Hashtbl.replace s.objects id (Rail l)
@@ -427,9 +435,12 @@ let rec apply s =
       Hashtbl.iter (fun id d -> if id <> 0 then Rig.close d) s.devices;
       Ok ()
   | Ok (Wire.Request r) ->
+      (* The agent's rig raises [Invalid_argument] on what the frame asks of it,
+         such as a rail of no transfer: a refusal too. *)
       (match answer s r with
       | v -> Link.answer s.link r (Ok v)
-      | exception Refused why -> Link.answer s.link r (Error why));
+      | exception (Refused why | Invalid_argument why) ->
+          Link.answer s.link r (Error why));
       apply s
   | Ok (Wire.Drop id) ->
       (* A drop takes no answer: one of no object fails the job. *)
@@ -439,7 +450,7 @@ let rec apply s =
   | Ok (Wire.Handover (h, local)) -> (
       match hand_over s h local with
       | () -> apply s
-      | exception Refused why ->
+      | exception (Refused why | Invalid_argument why) ->
           Link.fail s.job why;
           apply s)
 
