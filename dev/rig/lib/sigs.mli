@@ -17,6 +17,12 @@ module type Driver = sig
   val arch : t -> string
   val budget : t -> int
   val queues : t -> string list
+  val completion : t -> [ `Store | `Object of nativeint | `Host ]
+  val waits_on : t -> [ `Store | `Object | `Host ] -> bool
+  val max_waits : t -> int
+  val blocks : t -> [ `Returns | `May_block ]
+  val capability : t -> capability
+  val capability_key : capability Type.Id.t
   val alloc : t -> [ `Device | `Pinned | `Mapped ] -> int -> region option
   val free : t -> region -> unit
   val address : region -> int option
@@ -38,15 +44,9 @@ module type Driver = sig
   val word : t -> region
   val signaled : t -> int
   val sleep : t -> seen:int -> still_ms:int -> unit
-  val completion : t -> [ `Store | `Object of nativeint | `Host ]
-  val waits_on : t -> [ `Store | `Object | `Host ] -> bool
-  val max_waits : t -> int
-  val blocks : t -> [ `Returns | `May_block ]
   val room_entry : nativeint
   val submit_entry : nativeint
   val self : t -> nativeint
-  val capability : t -> capability
-  val capability_key : capability Type.Id.t
   val stop : t -> unit
 end
 
