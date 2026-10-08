@@ -587,9 +587,9 @@ let others ~root =
           else (files, orphans))
         names ([], [])
 
-let forget ~root ~bus =
-  Mutex.protect state @@ fun () ->
-  leave ~root bus;
+(* [bus] leaves the lists of the files under [root] that processes that died
+   left, and the files no function reaches go. [state] is held. *)
+let forget_left ~root ~bus =
   let files, orphans = others ~root in
   List.iter unlink orphans;
   (* A list that cannot be read keeps its file, which only leaks it. *)
@@ -605,6 +605,14 @@ let forget ~root ~bus =
               | rest -> write_reachers path rest)
           | Some _ -> ()))
     files
+
+let forget ~root ~bus =
+  Mutex.protect state @@ fun () ->
+  leave ~root bus;
+  forget_left ~root ~bus
+
+let forget_dead ~root ~bus =
+  Mutex.protect state @@ fun () -> forget_left ~root ~bus
 
 (* A file that cannot be opened for another reason than its end might hold the
    GPU's memory: it is no answer. *)

@@ -259,15 +259,39 @@ let start ~firmware ~index h fn =
       ~base:(Rig_pci.Space.base Boot.space)
       (Rig_pci.Space.length Boot.space)
   in
-  match Boot.start fn (Rig_pci.Firmware.find firmware) with
-  | Error (`Refused why) -> Error why
+  let boot () =
+    match Boot.start fn (Rig_pci.Firmware.find firmware) with
+    | r -> r
+    | exception e ->
+        let bt = Printexc.get_raw_backtrace () in
+        Gpus.lose h;
+        Printexc.raise_with_backtrace e bt
+  in
+  (* Firmware this library did not start, as a process that died leaves, is
+     reset through the hold, and the GPU booted in full. *)
+  let again = function
+    | Ok g -> Ok g
+    | Error (`Refused why) -> Error (`Refused why)
+    | Error (`Lost why) -> Error (`Lost why)
+    | Error `Running ->
+        Error
+          (`Refused
+             "firmware this library did not start still runs on the GPU after \
+              its reset")
+  in
+  let booted =
+    match boot () with
+    | Error `Running -> (
+        match Gpus.renew h with
+        | Error why -> Error (`Given_back why)
+        | Ok () -> again (boot ()))
+    | r -> again r
+  in
+  match booted with
+  | Error (`Refused why | `Given_back why) -> Error why
   | Error (`Lost why) ->
       Gpus.lose h;
       Error why
-  | exception e ->
-      let bt = Printexc.get_raw_backtrace () in
-      Gpus.lose h;
-      Printexc.raise_with_backtrace e bt
   | Ok g -> (
       Mutex.protect opened_lock (fun () -> Hashtbl.replace opened index g);
       let made = Atomic.make false in

@@ -63,10 +63,12 @@
     GPU it holds at exit, leaving it marked clean: the next open, by this
     process or another, boots only the GPU's compute and copy blocks, from the
     state the last one left, which takes milliseconds where a full boot takes a
-    second. A child of [fork] stops nothing at its exit. A GPU a process that
-    died left running is reset by the open, as {!reset} does. One booted by its
-    kernel driver opens only after a {!reset}. So does a GPU this process lost,
-    to a fault or a hang, since its state is then unknown.
+    second. A child of [fork] stops nothing at its exit. A GPU that runs
+    firmware without this mark, booted by its kernel driver or left by a process
+    that died, is reset as {!reset} does by the open, which then boots it in
+    full; one in a fabric (XGMI) left running is refused, since its GPUs reset
+    together. A GPU this process lost, to a fault or a hang, opens only after a
+    {!reset}, since its state is then unknown.
 
     {b Faults and hangs.} The GPU reports faults on its interrupt ring: page
     faults with their address, shader errors, and fatal hardware errors with its
@@ -126,13 +128,15 @@ val open_ :
     holder's reason, if its function cannot be taken, with
     {!Rig_pci.Function.take}'s reason, if one of its blocks has a version this
     library does not boot, naming the block and the version, if an image is
-    missing, with {!Rig_pci.Firmware.find}'s reason, or if firmware this library
-    did not start runs on it, which a {!reset} stops, or if the memory
-    controller does not place all of the GPU's memory. It is also [Error msg] if
-    a block does not answer during the boot, naming the step, or with
-    {!Rig_amd.make}'s message; the GPU is then stopped, and opens again only
-    after a reset. An exception raised after the boot's first write stops the
-    GPU the same way and passes through.
+    missing, with {!Rig_pci.Firmware.find}'s reason, if it is in a fabric left
+    running, or if the memory controller does not place all of the GPU's memory.
+    It is [Error msg] if the reset of a GPU running firmware this library did
+    not start fails, with its reason, the GPU then lost, or if such firmware
+    still runs after that reset. It is also [Error msg] if a block does not
+    answer during the boot, naming the step, or with {!Rig_amd.make}'s message;
+    the GPU is then stopped, and opens again only after a reset. An exception
+    raised after the boot's first write stops the GPU the same way and passes
+    through.
 
     Raises [Invalid_argument] if [i < 0]. *)
 

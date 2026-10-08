@@ -1671,6 +1671,13 @@ let test_memory_machines () =
   Function.free_dma f' w';
   Function.free_dma f w
 
+let fixture_gpus ?(reset = fun _ -> Ok ()) () =
+  Gpus.make ~memory_bar:0
+    ~nodes:(fun ~root:_ _ -> [])
+    ~unreleased:(fun ~root:_ _ -> None)
+    ~teardown_ms:0 ~reset
+    (fun (id : Machine.id) -> id.class_ lsr 16 = 0x03)
+
 (* The test's executable, run with [holding], is [hold_memory]'s process. *)
 let holding = "--hold-memory"
 
@@ -1679,12 +1686,26 @@ let holding = "--hold-memory"
 let refused_code = 3
 
 (* Takes the fixture's function at [bus] and allocates its memory at [va], whose
-   frames the tree's page map gives, which it never frees. With [how] ["die"] it
-   then dies by SIGKILL, which runs no exit function; with ["wait"] it waits for
-   its standard input to close and exits. ["released-die"] and ["released-wait"]
-   release the function first. *)
+   frames the tree's page map gives, which it never frees. With [how]
+   ["renew-die"] it opens the fixture's GPU 0 instead and renews it after the
+   allocation, then dies by SIGKILL. With [how] ["die"] it then dies by SIGKILL,
+   which runs no exit function; with ["wait"] it waits for its standard input to
+   close and exits. ["released-die"] and ["released-wait"] release the function
+   first. *)
 let hold_memory how root bus va =
   let ok = function Ok x -> x | Error _ -> exit refused_code in
+  if how = "renew-die" then begin
+    (* Opens the GPU, allocates its memory, renews it, and dies. *)
+    let g = fixture_gpus () in
+    ignore
+      (Gpus.open_ g (Machine.at root) 0 ~at_exit:ignore (fun h f ->
+           ok (Machine.reserve (Function.machine f) ~base:free_base (8 * mib));
+           if Option.is_none (ok (Function.alloc_dma ~va f mib)) then
+             exit refused_code;
+           ok (Gpus.renew h);
+           Unix.kill (Unix.getpid ()) Sys.sigkill;
+           Ok ()))
+  end;
   let f = ok (Function.take (Machine.at root) bus) in
   ok (Machine.reserve (Function.machine f) ~base:free_base (8 * mib));
   if Option.is_none (ok (Function.alloc_dma ~va f mib)) then exit refused_code;
@@ -1730,22 +1751,15 @@ let wait_exit pid =
   | Some s -> s
   | None -> assert false
 
-let fixture_gpus ?(reset = fun _ -> Ok ()) () =
-  Gpus.make ~memory_bar:0
-    ~nodes:(fun ~root:_ _ -> [])
-    ~unreleased:(fun ~root:_ _ -> None)
-    ~teardown_ms:0 ~reset
-    (fun (id : Machine.id) -> id.class_ lsr 16 = 0x03)
-
 (* A vendor whose resets are counted in [n], each answering [answer ()]. *)
 (* A fixture tree whose one GPU a child that allocated its memory left by dying
    of SIGKILL: its root and bus. *)
-let left_by_death () =
+let left_by_death ?(how = "die") () =
   let fn = Tree.gpu "0000:03:00.0" in
   let root = Tree.make [ fn ] in
   let va = free_base + (6 * mib) in
   ignore (frames root va mib);
-  let pid, feed, said = holder "die" root fn.bus va in
+  let pid, feed, said = holder how root fn.bus va in
   Unix.close feed;
   Unix.close said;
   (match wait_exit pid with
@@ -1908,6 +1922,53 @@ let test_open_after_death_raising () =
     (require_error (open_held g m));
   Function.release (require_ok (Function.take m "0000:03:00.0"))
 
+(* A driver that finds firmware it cannot continue from renews the GPU it holds:
+   the vendor's reset runs, the memory of processes that died goes, and the
+   process's own stays listed, so that its death leaves the GPU to be reset by
+   the next open. *)
+let test_renew () =
+  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  let root = left_by_death () in
+  let m = Machine.at root and resets = Atomic.make 0 in
+  let renewing g =
+    Gpus.open_ g m 0 ~at_exit:ignore (fun h _ ->
+        Result.map (fun () -> h) (Gpus.renew h))
+  in
+  let g = counted_gpus resets in
+  Atomic.set resets 0;
+  let h = require_ok (renewing g) in
+  equal ~msg:"reset at open, then renewed" int 2 (Atomic.get resets);
+  equal ~msg:"the dead process's memory given back" (list string) []
+    (memory_files root);
+  Gpus.release h;
+  let root = left_by_death ~how:"renew-die" () in
+  equal ~msg:"the renewing process's memory left" int 1
+    (List.length (memory_files root));
+  let resets = Atomic.make 0 in
+  Gpus.release (require_ok (open_held (counted_gpus resets) (Machine.at root)));
+  equal ~msg:"reset by the next open" int 1 (Atomic.get resets);
+  equal ~msg:"and given back" (list string) [] (memory_files root)
+
+(* A renew whose reset fails or raises gives the GPU back, lost. *)
+let test_renew_fails () =
+  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  let root = Tree.make [ Tree.gpu "0000:03:00.0" ] in
+  let m = Machine.at root and resets = Atomic.make 0 in
+  let renewing g =
+    Gpus.open_ g m 0 ~at_exit:ignore (fun h _ ->
+        Result.map (fun () -> h) (Gpus.renew h))
+  in
+  let g =
+    counted_gpus ~answer:(fun () -> Error "fake: the GPU is stuck") resets
+  in
+  contains ~msg:"the reset's reason" ~sub:"stuck" (require_error (renewing g));
+  contains ~msg:"lost until reset" ~sub:"was lost"
+    (require_error (open_held g m));
+  let g = counted_gpus ~answer:(fun () -> raise Exit) resets in
+  raises Exit (fun () -> ignore (renewing g));
+  contains ~msg:"lost after a raise" ~sub:"was lost"
+    (require_error (open_held g m))
+
 (* A GPU a process that died left whose reset fails is lost, its memory kept. *)
 let test_open_after_death_stuck () =
   if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
@@ -2040,6 +2101,12 @@ let system_memory =
         "an open whose reset of a GPU a process that died left raises gives it \
          back, lost (SIGKILL in a child)"
         test_open_after_death_raising;
+      test
+        "a renew resets the GPU held and gives back only what processes that \
+         died left (SIGKILL in a child)"
+        test_renew;
+      test "a renew whose reset fails or raises gives the GPU back, lost"
+        test_renew_fails;
       test
         "a released function's memory stays, and a later take shares its page"
         test_released_block;

@@ -179,16 +179,24 @@ let read_table ~vram ~mmio ~memory =
 
 (* The windows on the GPU's BARs: its memory combined, its doorbells and
    registers uncached. *)
-let map_bars f =
-  let* vram = Function.map ~combine:true f vram_bar in
-  let* doorbells = Function.map ~combine:false f doorbell_bar in
-  let* mmio = Function.map ~combine:false f register_bar in
-  Ok (vram, doorbells, mmio)
+(* [k w] for [w] a new window on BAR [bar] of [f], unmapped if [k] answers
+   [Error] or raises: a caller may hold [f] on after a refusal. *)
+let with_bar f ~combine bar k =
+  let* w = Function.map ~combine f bar in
+  match k w with
+  | Ok _ as r -> r
+  | Error _ as e ->
+      Function.unmap f w;
+      e
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      Function.unmap f w;
+      Printexc.raise_with_backtrace e bt
 
-(* What the GPU says of itself before any block is touched. A VF asks for access
-   first, as its registers need it. *)
-let survey f =
-  let* vram, doorbells, mmio = map_bars f in
+let unmap_bars f (vram, doorbells, mmio) =
+  List.iter (Function.unmap f) [ vram; doorbells; mmio ]
+
+let surveyed f vram doorbells mmio =
   let vf = Window.get32 mmio (D.mmrcc_iov_func_identifier * 4) land 1 = 1 in
   let* lease =
     if vf then vf_request mmio f D.idh_req_gpu_init_access else Ok 0
@@ -208,6 +216,14 @@ let survey f =
   in
   let* d = Discovery.of_string (read_table ~vram ~mmio ~memory) in
   Ok (vram, doorbells, mmio, vf, lease, memory, d)
+
+(* What the GPU says of itself before any block is touched, its BARs unmapped if
+   it answers [Error]. A VF asks for access first, as its registers need it. *)
+let survey f =
+  with_bar f ~combine:true vram_bar @@ fun vram ->
+  with_bar f ~combine:false doorbell_bar @@ fun doorbells ->
+  with_bar f ~combine:false register_bar @@ fun mmio ->
+  surveyed f vram doorbells mmio
 
 let stuck f =
   match f () with v -> Ok v | exception Regs.Stuck why -> Error why
@@ -395,18 +411,17 @@ let start f find =
             ~gc ~alive ))
   in
   let* () =
-    refused
-    @@
     match p with
     | `Booted when Gmc.hive gmc ->
         Error
-          "the GPU is in a fabric left running; reset its GPUs together \
-           outside this process"
+          (`Refused
+             "the GPU is in a fabric left running; reset its GPUs together \
+              outside this process")
     | `Booted ->
-        Error
-          "firmware this library did not start runs on the GPU; a reset stops \
-           it"
-    | `Partial | `Full -> Gmc.covers gmc ~memory
+        (* The caller resets the GPU and starts again, which maps anew. *)
+        unmap_bars f (vram, doorbells, mmio);
+        Error `Running
+    | `Partial | `Full -> refused (Gmc.covers gmc ~memory)
   in
   let kiq = ref None in
   let flush () =
@@ -644,6 +659,9 @@ let restore f saved =
 
 let reset f =
   let* vram, doorbells, mmio, vf, lease, _, d = survey f in
+  (* The caller may hold [f] on, as a renew does. *)
+  Fun.protect ~finally:(fun () -> unmap_bars f (vram, doorbells, mmio))
+  @@ fun () ->
   if vf then
     (* A VF's physical function resets it: it gives back its access. *)
     Result.map ignore (vf_request mmio f ~ready:false lease)

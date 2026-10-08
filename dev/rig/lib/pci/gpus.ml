@@ -116,14 +116,18 @@ let drop g h =
   g.held <- List.filter (fun h' -> h' != h) g.held;
   Function.release h.fn
 
-(* Turns the bus mastering of the GPU at [bus] on [m], whose function [fn] is
-   taken, off and resets it as its vendor does. A GPU reset opens again, and the
-   memory processes that died left for it goes; one whose reset failed is
-   lost. *)
-let renew_taken g m bus fn =
+(* Turns the bus mastering of the GPU of the taken function [fn] off and resets
+   it as its vendor does. *)
+let stop_and_reset g fn =
   let c = Function.config16 fn Local.command in
   Function.set_config16 fn Local.command (c land lnot Local.bus_master);
-  let r = g.reset fn in
+  g.reset fn
+
+(* Resets the GPU at [bus] on [m], whose function [fn] is taken: a GPU reset
+   opens again, and the memory processes that died left for it, and this
+   process's lists of it, go; one whose reset failed is lost. *)
+let renew_taken g m bus fn =
+  let r = stop_and_reset g fn in
   (* Still taken, so no process holds the function: every file naming it was
      left by one that died, and the GPU reaches none of it now. *)
   Mutex.protect g.holds (fun () ->
@@ -230,6 +234,22 @@ let give_back ending h =
 
 let release h = give_back Released h
 let lose h = give_back Lost h
+
+let renew h =
+  match stop_and_reset h.gpus h.fn with
+  | Ok () ->
+      (* The process's own memory stays listed: the driver may map it again. *)
+      Option.iter
+        (fun files -> Sysmem.forget_dead ~root:(Sysfs.root files) ~bus:h.bus)
+        (Machine.files h.machine);
+      Ok ()
+  | Error _ as e ->
+      lose h;
+      e
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      lose h;
+      Printexc.raise_with_backtrace e bt
 
 (* Changes to the machine *)
 

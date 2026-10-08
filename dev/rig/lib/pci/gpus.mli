@@ -112,6 +112,16 @@ val open_ :
 
     Raises [Invalid_argument] if [f] gave the GPU back and answered [Ok _]. *)
 
+val renew : hold -> (unit, string) result
+(** [renew h] resets the GPU [h] holds as its vendor does ([reset] of {!make}),
+    its bus mastering off, and gives back the memory processes that died left
+    for it; the memory this process allocated for it stays. A driver calls it
+    from its start, before it keeps any of the GPU's state, when it finds the
+    GPU running firmware it cannot continue from, such as one a process that
+    died left. [Error why] with the reset's reason, [h] then given back as
+    {!lose} does: the GPU opens again only after a {!reset}. An exception the
+    reset raises passes through, [h] given back the same way. *)
+
 val release : hold -> unit
 (** [release h] gives the GPU [h] holds back: it releases its function, and the
     GPU may be opened again. The driver stops its use of the GPU first.

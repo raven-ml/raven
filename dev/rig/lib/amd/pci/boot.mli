@@ -59,7 +59,7 @@ val space : Rig_pci.Space.t
 val start :
   Rig_pci.Function.t ->
   (string -> digest:string -> (string, string) result) ->
-  (t, [ `Refused of string | `Lost of string ]) result
+  (t, [ `Refused of string | `Running | `Lost of string ]) result
 (** [start f find] boots the GPU of [f], whose function the caller took and
     whose machine has {!space} reserved, its firmware read with [find]: a
     partial or full boot as {!plan} says. The GPU masters the bus only once
@@ -67,12 +67,14 @@ val start :
 
     [Error (`Refused msg)], no register written, if a BAR cannot be mapped, if
     its discovery table is refused, if a block has a version this library does
-    not boot, if firmware is missing, if it is [`Booted], saying that a reset
-    stops it, if it is in a fabric left running, if its memory controller's
-    window does not hold its memory ({!Gmc.window}), or if the machine has no
-    memory for its page tables or fault page. [Error (`Lost msg)] if a block
-    does not answer, naming the step: the GPU is then stopped ({!stop}). An
-    exception raised during the boot stops it too, and passes through. *)
+    not boot, if firmware is missing, if it is in a fabric left running, if its
+    memory controller's window does not hold its memory ({!Gmc.window}), or if
+    the machine has no memory for its page tables or fault page.
+    [Error `Running], no register written and its BARs unmapped, if it is
+    [`Booted] outside a fabric: firmware this library did not start runs on it,
+    which the vendor's reset stops. [Error (`Lost msg)] if a block does not
+    answer, naming the step: the GPU is then stopped ({!stop}). An exception
+    raised during the boot stops it too, and passes through. *)
 
 val writes : pcie:int option -> rebars:int list -> (int * int) list
 (** [writes ~pcie ~rebars] is the configuration a reset restores, as (offset,
