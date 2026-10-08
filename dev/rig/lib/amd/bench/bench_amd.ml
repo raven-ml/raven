@@ -538,6 +538,7 @@ let waits_on () =
       match Unix.waitpid [] pid with _, Unix.WEXITED 0 -> true | _ -> false)
 
 let () =
+  Rig_amd_support.hold_gpu ();
   if P.count () > 0 then
     exit
     @@ Thumper.run "rig_amd"

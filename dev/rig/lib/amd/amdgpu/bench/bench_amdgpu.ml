@@ -15,6 +15,7 @@ let open_stop () =
   match P.open_ 0 with Ok g -> ignore (A.stop g) | Error why -> failwith why
 
 let () =
+  Rig_amd_support.hold_gpu ();
   if P.count () > 0 then
     exit
     @@ Thumper.run "rig_amd_amdgpu"
