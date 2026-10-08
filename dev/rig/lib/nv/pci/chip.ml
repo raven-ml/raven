@@ -14,7 +14,6 @@ type t = {
   regs : Window.t;
   family : family;
   implementation : int;
-  memory : int;
 }
 
 let field (lo, n) x = (x lsr lo) land ((1 lsl n) - 1)
@@ -52,10 +51,6 @@ let name c =
 let get c r = Window.get32 c.regs r
 let set c r x = Window.set32 c.regs r x
 
-(* The GPU's memory in MiB, as its firmware wrote it at boot
-   (NV_PGC6_AON_SECURE_SCRATCH_GROUP_42). *)
-let memory_mib regs = Window.get32 regs Defs.nv_pgc6_aon_secure_scratch_group_42
-
 let of_function fn =
   match Function.map ~combine:false fn 0 with
   | Error _ as e -> e
@@ -64,9 +59,14 @@ let of_function fn =
       | Error _ as e ->
           Function.unmap fn regs;
           e
-      | Ok (family, implementation) ->
-          let memory = memory_mib regs lsl 20 in
-          Ok { fn; regs; family; implementation; memory })
+      | Ok (family, implementation) -> Ok { fn; regs; family; implementation })
+
+(* The GPU's memory in MiB, as its firmware wrote it at boot
+   (NV_PGC6_AON_SECURE_SCRATCH_GROUP_42). *)
+let memory c =
+  match get c Defs.nv_pgc6_aon_secure_scratch_group_42 with
+  | 0 -> Error (name c ^ "'s firmware wrote no memory size")
+  | mib -> Ok (mib lsl 20)
 
 let booted c = get c Defs.nv_pfb_pri_mmu_wpr2_addr_hi <> 0
 

@@ -65,6 +65,29 @@ let test_other_bits () =
     done
   done
 
+(* The memory size *)
+
+(* The GPU's firmware writes its memory in MiB to
+   NV_PGC6_AON_SECURE_SCRATCH_GROUP_42 (0x1183a4, dev_gc6_island.h) once it
+   booted, which a reset clears: the size is the one written by the time the
+   firmware's boot ended, however early the chip was opened. *)
+let boot_42 = 0xa00
+let scratch_42 = 0x1183a4
+
+let test_memory_after_boot () =
+  let gpu = Rig_nv_pci_support.gpu () in
+  Rig_pci.Window.set32 gpu.regs boot_42 (boot42 ~arch:0x19 ~impl:2);
+  let fn =
+    match Rig_pci.Function.take gpu.machine "0000:01:00.0" with
+    | Ok fn -> fn
+    | Error why -> fail why
+  in
+  let c = require_ok (Chip.of_function fn) in
+  is_error ~msg:"before the firmware wrote it" ~pp:Format.pp_print_int
+    (Chip.memory c);
+  Rig_pci.Window.set32 gpu.regs scratch_42 24576;
+  equal (result int string) (Ok (24576 lsl 20)) (Chip.memory c)
+
 let () =
   exit
   @@ run "rig_nv_pci.chip"
@@ -74,5 +97,10 @@ let () =
              test_listed;
              test_refused;
              test "the revision does not change the chip" test_other_bits;
+           ];
+         group ~timeout:10. "memory"
+           [
+             test "the size is read once the firmware booted"
+               test_memory_after_boot;
            ];
        ]

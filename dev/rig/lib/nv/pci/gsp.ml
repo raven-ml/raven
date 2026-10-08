@@ -231,6 +231,7 @@ let sequence ~libos body =
 
 type placement = {
   chip : Chip.t;
+  memory : int;
   fn : Function.t;
   tables : Page_table.t;
   bar : Window.t;
@@ -528,8 +529,8 @@ let paddr (m : Page_table.mapping) = fst (List.hd m.pages)
 (* A memory descriptor of a channel's allocation, cached: the GSP's RM gives
    system memory described cached the coherent aperture, whose accesses snoop
    the processors' caches, and any other the non-coherent one
-   (kgmmuGetHwPteApertureFromMemdesc_GM107). A channel's USERD in system
-   memory, which the host writes, must be snooped. *)
+   (kgmmuGetHwPteApertureFromMemdesc_GM107). A channel's USERD in system memory,
+   which the host writes, must be snooped. *)
 let memdesc p field ~base ~size ~space =
   let module M = Defs.Memory_desc in
   pset p (at field M.base) base;
@@ -972,7 +973,7 @@ let boot p (fw : Images.t) =
   blit fw.bootloader.image bootloader.w 0;
   let* meta = sys p page in
   Window.write meta.w 0
-    (wpr_meta fw c.family ~memory:c.memory ~radix3:(first radix)
+    (wpr_meta fw c.family ~memory:p.memory ~radix3:(first radix)
        ~bootloader:(first bootloader) ~signature:(first signature));
   let g =
     {
@@ -998,7 +999,7 @@ let boot p (fw : Images.t) =
     match (fw.start, c.family) with
     | `Booter b, (Ampere | Ada) ->
         let rom = Vbios.read c in
-        let* f = Vbios.fwsec rom ~frts:(Layout.frts ~memory:c.memory) in
+        let* f = Vbios.fwsec rom ~frts:(Layout.frts ~memory:p.memory) in
         let* fwsec_pa, fwsec_w = vram p (String.length f.image) in
         Window.write fwsec_w 0 f.image;
         let* booter_pa, booter_w = vram p (String.length b.image) in

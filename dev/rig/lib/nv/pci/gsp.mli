@@ -68,6 +68,7 @@ type t
 
 type placement = {
   chip : Chip.t;
+  memory : int;  (** The size of the GPU's memory ({!Chip.memory}). *)
   fn : Rig_pci.Function.t;  (** The GPU's function. *)
   tables : Rig_pci.Page_table.t;
       (** The GPU's page tables: the GSP's objects' memory comes from them. *)

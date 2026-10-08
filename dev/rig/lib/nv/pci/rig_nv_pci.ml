@@ -261,21 +261,22 @@ let device g ~gsp ~hold ~tables (c : Chip.t) =
 let start ~index machine hold fn (c : Chip.t) (fw : Images.t) =
   Chip.bus_master c true;
   let* () = Falcon.run c (Falcon.wait_reset c.family) in
+  let* memory = Chip.memory c in
   let* bar = Function.map ~combine:false fn memory_bar in
   let top =
-    Layout.top c.family ~memory:c.memory ~boot:fw.bootloader.image.length
+    Layout.top c.family ~memory ~boot:fw.bootloader.image.length
       ~image:fw.gsp.length
   in
   let tables =
     Page_table.create (Mmu.format c bar) space ~memory:top
       ~boot:(Gsp.boot_pool fw.start)
-      ~tables:(if Window.length bar >= c.memory then Main else Pool)
+      ~tables:(if Window.length bar >= memory then Main else Pool)
       ~pages
   in
   (* The boot pool holds only the falcons' images: the GSP's objects come from
      the main pool. *)
   Page_table.booted tables;
-  let* gsp = Gsp.boot { chip = c; fn; tables; bar; space } fw in
+  let* gsp = Gsp.boot { chip = c; memory; fn; tables; bar; space } fw in
   let g =
     {
       index;

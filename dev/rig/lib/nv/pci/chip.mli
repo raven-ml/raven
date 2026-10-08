@@ -8,8 +8,8 @@
     Registers and their fields are the constants of [Defs], generated from
     NVIDIA's published register headers, per family where they differ, so a
     register this library writes exists for every family it boots. Accesses go
-    through a {!Rig_pci.Window.t}, on this machine or another. The GPU's
-    owner serializes calls. *)
+    through a {!Rig_pci.Window.t}, on this machine or another. The GPU's owner
+    serializes calls. *)
 
 (** The type for the GPU families this library boots. *)
 type family =
@@ -23,7 +23,6 @@ type t = private {
   family : family;
   implementation : int;
       (** The chip within its family, such as [2] for AD102. *)
-  memory : int;  (** The GPU's memory, in bytes. *)
 }
 (** The type for GPUs whose registers the process reaches. *)
 
@@ -37,11 +36,16 @@ val chip : int -> (family * int, string) result
 
 val of_function : Rig_pci.Function.t -> (t, string) result
 (** [of_function fn] maps [fn]'s register BAR and reads which chip it is
-    ({!chip}) and its memory size, changing nothing on the GPU. It is [Error] as
-    {!chip}, or if the BAR cannot be mapped. *)
+    ({!chip}), changing nothing on the GPU. It is [Error] as {!chip}, or if the
+    BAR cannot be mapped. *)
 
 val name : t -> string
 (** [name c] is the chip's name, such as ["AD102"]. *)
+
+val memory : t -> (int, string) result
+(** [memory c] is the size of the GPU's memory in bytes, as its firmware writes
+    it once its boot after a reset ended ({!Falcon.wait_reset}). [Error] if it
+    wrote none. *)
 
 val booted : t -> bool
 (** [booted c] is [true] iff the GPU's protected region of memory (WPR2) is up:
