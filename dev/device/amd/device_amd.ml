@@ -14,10 +14,10 @@ module Sdma = Abi.Sdma
 
 exception Fault of string
 
-type 'm memory = { address : int; host : nativeint option; path : 'm }
+type 'm memory = { address : int; host : nativeint option; data : 'm }
 
 type 'm path = {
-  id : 'm Type.Id.t;
+  key : 'm Type.Id.t;
   gpu : Abi.Gpu.t;
   lds : int;
   clock_hz : int;
@@ -59,9 +59,9 @@ type ops = {
 }
 
 let ops (type m) (p : m path) =
-  let pack m = Mem (p.id, m) in
+  let pack m = Mem (p.key, m) in
   let own (Mem (id, m)) : m memory option =
-    match Type.Id.provably_equal id p.id with
+    match Type.Id.provably_equal id p.key with
     | Some Type.Equal -> Some m
     | None -> None
   in

@@ -9,12 +9,12 @@
     that reaches the GPU one way, such as through Linux's [amdgpu] driver, and
     gives this one the GPU's memory, queues and interrupts as a {!path}
     ({!make}). Whichever path opened it, the device runs work on two hardware
-    queues, ["COMPUTE:0"] and ["COPY:0"], whose rings this library alone
-    writes, and makes completion observable through its {e timeline word}, 64
-    bits of host memory: the word holds [v] once the work of every value up to
-    [v] completed. Its caller numbers the work it hands over: the first
-    submission is value [1], each next one the value after it, and value [v]
-    runs after every value below it, whichever queue each ran on.
+    queues, ["COMPUTE:0"] and ["COPY:0"], whose rings this library alone writes,
+    and makes completion observable through its {e timeline word}, 64 bits of
+    host memory: the word holds [v] once the work of every value up to [v]
+    completed. Its caller numbers the work it hands over: the first submission
+    is value [1], each next one the value after it, and value [v] runs after
+    every value below it, whichever queue each ran on.
 
     A program that uses a GPU alone opens it through a path, allocates and
     submits, then waits for the word:
@@ -43,16 +43,16 @@
 
     {b Memory and caches.} Every submission's work on the compute queue starts
     by invalidating the GPU's caches, its L2 included, and the release of a
-    value writes the L2 back: work reads what the host, the copy queue and
-    other devices wrote before the values it runs after, and they read what it
-    wrote once its value is reached.
+    value writes the L2 back: work reads what the host, the copy queue and other
+    devices wrote before the values it runs after, and they read what it wrote
+    once its value is reached.
 
     {b Faults.} The path reports a fault of a device's work, such as a page
     fault or a reset of the GPU, at a later {!sleep}. Work that runs long is no
-    fault: only the path's report is. A function that calls the path answers
-    its refusal of the arguments as its result ([None], [Error]) and raises
-    {!Fault} for any other failure. {!signaled}, {!free}, {!unmap} and {!stop}
-    never raise it.
+    fault: only the path's report is. A function that calls the path answers its
+    refusal of the arguments as its result ([None], [Error]) and raises {!Fault}
+    for any other failure. {!signaled}, {!free}, {!unmap} and {!stop} never
+    raise it.
 
     {b Domains.} Every value may be called from any domain, at the same time as
     others, with three exceptions. {!room} and {!submit} run one call at a time,
@@ -65,8 +65,8 @@
       {{:https://llvm.org/docs/AMDGPUUsage.html}User Guide for AMDGPU Backend}:
       code objects, kernel descriptors, the memory model of each GFX version.
     - The Linux kernel's amdgpu driver: the PM4 and SDMA packet headers
-      ([nvd.h], [soc15d.h], [sdma_v*_0_pkt_open.h]), its fences
-      ([gfx_v12_0.c], [sdma_v7_0.c]) and its flush of the host data path
+      ([nvd.h], [soc15d.h], [sdma_v*_0_pkt_open.h]), its fences ([gfx_v12_0.c],
+      [sdma_v7_0.c]) and its flush of the host data path
       ([amdgpu_hdp_generic_flush]).
     - ROCm's runtime: [amd_queue.h] (the AQL queue's descriptor) and
       [amd_aql_queue.cpp]. *)
@@ -137,9 +137,8 @@ val alloc : t -> [ `Device | `Pinned | `Mapped ] -> int -> region option
       fast as other memory;
     - [`Mapped], GPU memory the host addresses through the GPU's memory BAR,
       write-combined: fast to write and slow to read. The host's writes reach
-      the GPU's work submitted after them. Where the path has no such memory
-      or cannot flush the host's writes into it, it is host memory, as
-      [`Pinned].
+      the GPU's work submitted after them. Where the path has no such memory or
+      cannot flush the host's writes into it, it is host memory, as [`Pinned].
 
     It is [None] if the GPU or the host has not the memory.
 
@@ -163,11 +162,11 @@ val host : region -> nativeint option
 
 val map_peer : t -> t -> region -> region option
 (** [map_peer g g' r] is [Some r'] with [r'] a new region of [g] over the memory
-    of [g']'s region [r], at the same address, if the path that opened both
-    maps it and [g]'s GPU reaches [g']'s memory: over a link between them, or
-    through a memory BAR as large as [g']'s memory. It is [None] otherwise,
-    and for devices two paths opened. {!unmap} of [r'] ends only [r'], and
-    {!free} refuses it.
+    of [g']'s region [r], at the same address, if the path that opened both maps
+    it and [g]'s GPU reaches [g']'s memory: over a link between them, or through
+    a memory BAR as large as [g']'s memory. It is [None] otherwise, and for
+    devices two paths opened. {!unmap} of [r'] ends only [r'], and {!free}
+    refuses it.
 
     Raises [Invalid_argument] if [g'] is [g], or if [r] is no region of [g'] or
     was freed or unmapped. *)
@@ -175,8 +174,8 @@ val map_peer : t -> t -> region -> region option
 val map_host : t -> nativeint -> int -> region option
 (** [map_host g a n] is [Some r] with [r] the [n] bytes of host memory at [a],
     which [g]'s work addresses at [a]. The path maps the pages that hold them,
-    which must stay mapped in the process until [r] is unmapped. It is [None]
-    if the path refuses them, such as read-only pages, or pages that a region
+    which must stay mapped in the process until [r] is unmapped. It is [None] if
+    the path refuses them, such as read-only pages, or pages that a region
     {!map_host} gave a device of the same GPU maps: a GPU maps a page at most
     once.
 
@@ -204,20 +203,20 @@ val image : t -> string -> (image * (region * string) option, string) result
     The result is [Error msg] if [bin] is not a code object, with
     {!Device_amd_abi.Code_object.of_string}'s message, if it is for another
     processor, as ["a code object for gfx90a; the GPU is gfx1201"], if a kernel
-    takes more local data share than the GPU has, as ["kernel reduce takes
-    98304 bytes of local data share; the GPU has 65536"], or if the GPU has not
-    the memory for its image. *)
+    takes more local data share than the GPU has, as
+    ["kernel reduce takes 98304 bytes of local data share; the GPU has 65536"],
+    or if the GPU has not the memory for its image. *)
 
 val entry : image -> string -> int option
 (** [entry m f] is [Some a], [a] the address of the descriptor of [m]'s kernel
-    [f], the symbol [f ^ ".kd"], which a dispatch names. It is [None] if [m]
-    has no kernel [f].
+    [f], the symbol [f ^ ".kd"], which a dispatch names. It is [None] if [m] has
+    no kernel [f].
 
     Raises [Invalid_argument] if [m] was unloaded. *)
 
 val unload : t -> image -> unit
-(** [unload g m] frees [m]'s image. The caller unloads it once no work that
-    runs its kernels runs.
+(** [unload g m] frees [m]'s image. The caller unloads it once no work that runs
+    its kernels runs.
 
     Raises [Invalid_argument] if [m] is another device's or was unloaded. *)
 
@@ -239,9 +238,9 @@ val part :
     given to {!submit}, of the parts of its submission that it runs after, each
     smaller than its own. Parts on one queue run in array order; parts on two
     queues that [after] does not order may run at once. [w] is:
-    - [`Words ws], whole packets of the queue's kind, each integer's low 32
-      bits a word: PM4 or AQL ([Array.length ws] a multiple of 16) on
-      ["COMPUTE:0"], SDMA on ["COPY:0"];
+    - [`Words ws], whole packets of the queue's kind, each integer's low 32 bits
+      a word: PM4 or AQL ([Array.length ws] a multiple of 16) on ["COMPUTE:0"],
+      SDMA on ["COPY:0"];
     - [`Fill (f, arg, units, bytes)], a C function [f] that places packets on
       the queue, called during {!submit} with [arg] as
       {!Device_amd_abi.Capability} states. It places at most [units] words and
@@ -259,8 +258,8 @@ val part :
 val room : t -> part array -> [ `Fits | `Later | `Never ]
 (** [room g ps] is [`Fits] if [ps] fit [g]'s rings and argument segment now,
     [`Later] if they fit once work [g] was given completes, as it stands when
-    [room] reads the timeline word, and [`Never] if they exceed a ring when
-    it is empty (half the copy ring, whose packets never wrap), the argument
+    [room] reads the timeline word, and [`Never] if they exceed a ring when it
+    is empty (half the copy ring, whose packets never wrap), the argument
     segment, or 512 parts. Its C form, [device_amd_room], also answers
     [NX_NEVER] for a part {!part} refuses. *)
 
@@ -272,27 +271,26 @@ val submit :
   part array ->
   [ `Ok | `Failed of string ]
 (** [submit g ~v ~waits ~handles ps] hands over [ps], which {!room} answered
-    [`Fits] for, as [g]'s value [v], the value after the last one [g] was
-    given. Each wait [(k, a, w)] holds the work back until the aligned 64-bit
-    word at address [a], which [g]'s work addresses, holds at least [w]
-    ([`Word]), as unsigned integers; the compute queue waits. The work
-    runs after every earlier value of [g] and after the waits; once it
-    completed, the timeline word holds [v]. A submission of no parts writes [v]
-    after its waits and after every earlier value. [handles] is ignored: the
-    GPU's work names its memory by address.
+    [`Fits] for, as [g]'s value [v], the value after the last one [g] was given.
+    Each wait [(k, a, w)] holds the work back until the aligned 64-bit word at
+    address [a], which [g]'s work addresses, holds at least [w] ([`Word]), as
+    unsigned integers; the compute queue waits. The work runs after every
+    earlier value of [g] and after the waits; once it completed, the timeline
+    word holds [v]. A submission of no parts writes [v] after its waits and
+    after every earlier value. [handles] is ignored: the GPU's work names its
+    memory by address.
 
     The result is [`Ok] once the queues were given every part, or [`Failed why]
     if a fill failed, as ["a fill on COMPUTE:0 failed with 1"]. The queues then
     run none of [ps], and the timeline word still reaches [v] once the earlier
-    values completed. Every later [submit] answers the same [`Failed] and
-    hands nothing over.
+    values completed. Every later [submit] answers the same [`Failed] and hands
+    nothing over.
 
     Raises [Invalid_argument] if [v] is not the value after the last one, if a
     part is another device's, if a part's [after] names a part at or after its
-    own index, if [waits] is not empty while {!waits_on}[ g `Store] is
-    [false], or if a wait is [`Equal] or [`Object]: the device waits only on
-    other devices' timeline words.
-*)
+    own index, if [waits] is not empty while {!waits_on}[ g `Store] is [false],
+    or if a wait is [`Equal] or [`Object]: the device waits only on other
+    devices' timeline words. *)
 
 val room_entry : nativeint
 (** [room_entry] is the address of the C function [device_amd_room], {!room} for
@@ -300,8 +298,8 @@ val room_entry : nativeint
 
 val submit_entry : nativeint
 (** [submit_entry] is the address of the C function [device_amd_submit],
-    {!submit} for C, which [device_amd.h] declares. It is called with or
-    without the domain lock, and calls no function of the OCaml runtime. *)
+    {!submit} for C, which [device_amd.h] declares. It is called with or without
+    the domain lock, and calls no function of the OCaml runtime. *)
 
 (** {1:timeline Timeline} *)
 
@@ -320,9 +318,10 @@ val signaled : t -> int
 
 val sleep : t -> seen:int -> still_ms:int -> unit
 (** [sleep g ~seen ~still_ms] returns once [g]'s timeline word differs from
-    [seen], at once if it does already, or after [still_ms] milliseconds. It
-    blocks on the path's interrupt, which every release raises, and lets other
-    domains run while it waits. It may run while {!submit} does.
+    [seen], at once if it does already, or after [still_ms] milliseconds,
+    whichever comes first; [still_ms] is not negative. It blocks on the path's
+    interrupt, which every release raises, and lets other domains run while it
+    waits. It may run while {!submit} does.
 
     Raises {!Fault} with the path's report if [g]'s work met a fault. *)
 
@@ -336,8 +335,8 @@ val stop : t -> [ `Stopped | `Unknown ]
     raises the timeline word to the last value {!submit} was given, so work of
     other devices that waits on it runs on, and is [`Stopped]. It is [`Unknown]
     if the path could not destroy a queue; the word then reaches the last value
-    only if every queue still runs. After [stop], only {!free} and {!unmap} may be called
-    on [g]. *)
+    only if every queue still runs. After [stop], only {!free} and {!unmap} may
+    be called on [g]. *)
 
 (** {1:paths Paths}
 
@@ -349,13 +348,13 @@ type 'm memory = {
   address : int;  (** The GPU address of its first byte. *)
   host : nativeint option;
       (** The host address of its first byte, if the host addresses it. *)
-  path : 'm;  (** The path's own value for it. *)
+  data : 'm;  (** The path's own data for it. *)
 }
 (** The type for memory a path gives a device. *)
 
 type 'm path = {
-  id : 'm Type.Id.t;
-      (** The path's key. Devices whose paths have one key map each other's
+  key : 'm Type.Id.t;
+      (** The path's key: devices whose paths share [key] map each other's
           memory with [map_peer]. *)
   gpu : Device_amd_abi.Gpu.t;  (** The GPU, as its formats depend on it. *)
   lds : int;  (** The local data share of a workgroup, in bytes. *)
@@ -371,13 +370,13 @@ type 'm path = {
           address; [`Bar], GPU memory the host addresses through the GPU's
           memory BAR; [`System], host memory the GPU addresses, cached for the
           host and snooped by the GPU, which the kernel driver owns, so that no
-          unmap of host memory takes it from the GPU. It is [None] if the
-          memory of [k] is exhausted, or [`Bar] memory does not exist. *)
+          unmap of host memory takes it from the GPU. It is [None] if the memory
+          of [k] is exhausted, or [`Bar] memory does not exist. *)
   map_host : nativeint -> int -> 'm memory option;
       (** [map_host a n] maps for the GPU the pages that hold the [n] bytes of
-          host memory at [a], at their host address: the result's [address]
-          is [a]. It is [None] where the path refuses the pages, such as
-          read-only ones. *)
+          host memory at [a], at their host address: the result's [address] is
+          [a]. It is [None] where the path refuses the pages, such as read-only
+          ones. *)
   map_peer : 'm memory -> 'm memory option;
       (** [map_peer m] maps for the GPU the memory [m] that the path gave
           another of its devices, at the same address, or is [None] if the GPU
@@ -399,43 +398,43 @@ type 'm path = {
           write position from the word at [write], all GPU addresses. It is the
           host address of the queue's 64-bit doorbell, or [Error msg]. *)
   hdp : nativeint option;
-      (** The host address of the 32-bit register whose store flushes the
-          GPU's host data path, after which host writes through the memory
-          BAR are in the GPU's memory; [None] if the host does not reach it. *)
+      (** The host address of the 32-bit register whose store flushes the GPU's
+          host data path, after which host writes through the memory BAR are in
+          the GPU's memory; [None] if the host does not reach it. *)
   interrupt : int;
-      (** The context, not [0], that the interrupt of a value's release
-          carries, which wakes [sleep]. *)
+      (** The context, not [0], that the interrupt of a value's release carries,
+          which wakes [sleep]. *)
   sleep : ms:int -> unit;
       (** [sleep ~ms] returns once the GPU interrupts, or after [ms]
-          milliseconds, and raises {!Fault} with the path's report of a fault
-          of the GPU's work. *)
+          milliseconds, and raises {!Fault} with the path's report of a fault of
+          the GPU's work. *)
   stable_power : unit -> (unit, string) result;
-      (** [stable_power ()] holds the GPU's clocks and shader engines steady,
-          as tracing needs, for the life of the process. *)
+      (** [stable_power ()] holds the GPU's clocks and shader engines steady, as
+          tracing needs, for the life of the process. *)
   stop : unit -> [ `Stopped | `Unknown ];
       (** [stop ()] destroys the queues [queue] made: [`Stopped] once none of
           them runs, [`Unknown] if one may. *)
 }
-(** The type for what a path gives a device. A path fills it with functions
-    over its own state, which this library never names. Each function answers
-    the GPU's refusal as its result and raises {!Fault} for any other failure
-    of the GPU or of the path's kernel driver. Any domain may call them at the
-    same time, except [stop], which the device calls once, after every other
-    call returned, and after which it calls only [free]. *)
+(** The type for what a path gives a device. A path fills it with functions over
+    its own state, which this library never names. Each function answers the
+    GPU's refusal as its result and raises {!Fault} for any other failure of the
+    GPU or of the path's kernel driver. Any domain may call them at the same
+    time, except [stop], which the device calls once, after every other call
+    returned, and after which it calls only [free]. *)
 
 val make : 'm path -> (t, string) result
 (** [make p] is a device of the GPU [p] reaches: its queues, timeline word and
     argument segment, made through [p]. The result is [Error msg] if this
     library does not drive the GPU's family, naming it, if [p] refuses a queue,
-    with [p]'s message, or if [p] has not the memory they need. A failed
-    [make] gives back what it took: it frees the memory [p] gave and calls
-    [p.stop] if [p] made a queue.
+    with [p]'s message, or if [p] has not the memory they need. A failed [make]
+    gives back what it took: it frees the memory [p] gave and calls [p.stop] if
+    [p] made a queue.
 
     Raises [Invalid_argument] if [p.interrupt] is [0]. *)
 
 val is_gpu : vendor:int -> class_:int -> bool
 (** [is_gpu ~vendor ~class_] is [true] iff a PCI function of vendor [vendor] and
     24-bit class code [class_] is an AMD GPU: AMD's vendor [0x1002] and a
-    display controller or a processing accelerator, base class [0x03] or
-    [0x12]. Every path numbers a machine's GPUs [0], [1], ... in bus order
-    among such functions. *)
+    display controller or a processing accelerator, base class [0x03] or [0x12].
+    Every path numbers a machine's GPUs [0], [1], ... in bus order among such
+    functions. *)

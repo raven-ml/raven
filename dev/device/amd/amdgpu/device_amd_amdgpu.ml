@@ -150,14 +150,14 @@ let alloc fd g kind n : mem Amd.memory option =
         check "mapping GPU memory" (map_file g.drm at n (offset b));
       check "mapping memory for the GPU" (map_gpu fd handle g.node.gpu_id true);
       let host = if kind = `Gpu then None else Some (Nativeint.of_int at) in
-      let path = { handle; bytes = n; at; kind = Own; owner = g } in
-      Some { Amd.address = at; host; path }
+      let data = { handle; bytes = n; at; kind = Own; owner = g } in
+      Some { Amd.address = at; host; data }
 
 (* The kernel driver lets go of memory before the process unmaps it: unmapping
    host memory the driver still maps makes it evict every queue of the process
    and restore them later, which stalls the next work 5 to 10 ms. *)
 let free fd g (m : mem Amd.memory) =
-  let p = m.path in
+  let p = m.data in
   match p.kind with
   | View -> ()
   | Peer ->
@@ -180,18 +180,18 @@ let map_host fd g a n : mem Amd.memory option =
       None
     end
     else
-      let path = { handle; bytes; at = base; kind = Borrowed; owner = g } in
-      Some { Amd.address = Nativeint.to_int a; host = Some a; path }
+      let data = { handle; bytes; at = base; kind = Borrowed; owner = g } in
+      Some { Amd.address = Nativeint.to_int a; host = Some a; data }
 
 (* Memory of another device: of the same GPU, in this address space already; of
    a GPU the topology links this one to, mapped for it. *)
 let map_peer fd g (m : mem Amd.memory) =
-  let o = m.path.owner in
+  let o = m.data.owner in
   if o.node.gpu_id = g.node.gpu_id then
-    Some { m with path = { m.path with kind = View } }
+    Some { m with data = { m.data with kind = View } }
   else if not (Topology.linked "/" g.node.index o.node.index) then None
-  else if map_gpu fd m.path.handle g.node.gpu_id true < 0 then None
-  else Some { m with path = { m.path with kind = Peer } }
+  else if map_gpu fd m.data.handle g.node.gpu_id true < 0 then None
+  else Some { m with data = { m.data with kind = Peer } }
 
 (* Opening a GPU *)
 
@@ -275,8 +275,8 @@ let page_for fd g =
       match alloc fd g `System event_page_bytes with
       | None -> raise (Amd.Fault "no memory for the event page")
       | Some m ->
-          check "making the event page" (event fd signal m.path.handle);
-          event_page := Some (m.path.handle, m.address, g.node.gpu_id);
+          check "making the event page" (event fd signal m.data.handle);
+          event_page := Some (m.data.handle, m.address, g.node.gpu_id);
           g.events_mapped <- true)
 
 let make_events fd g =
@@ -303,13 +303,14 @@ type device = {
 
 let eop_bytes = 0x1000
 
-(* The waves a GPU runs at once, which the context save area holds, as the
-   kernel driver counts them (kfd_queue.c). *)
+(* The waves the context save area holds, as the kernel driver counts them
+   (kfd_queue.c, kfd_queue_ctx_save_restore_size): 32 per compute unit from
+   GFX 10.1, before it 40 per compute unit up to 512 per shader engine. *)
 let waves (n : Topology.node) =
   let g = n.gpu in
-  match g.target with
-  | 9, _, _ -> Int.min (g.compute_units * 40) (g.shader_engines * g.xccs * 512)
-  | _ -> g.compute_units * n.waves_per_cu
+  if compare g.target (10, 1, 0) < 0 then
+    Int.min (g.compute_units * 40) (g.shader_engines * g.xccs * 512)
+  else g.compute_units * 32
 
 (* A compute queue's context save area: each die's, and the debugger's 32 bytes
    per wave after it. *)
@@ -445,7 +446,7 @@ let key : mem Type.Id.t = Type.Id.make ()
 let path d : mem Amd.path =
   let g = d.gpu and fd = d.fd in
   {
-    id = key;
+    key;
     gpu = g.node.gpu;
     lds = g.node.lds;
     clock_hz = g.clock_khz * 1000;
