@@ -40,8 +40,9 @@ type dim =
 val max_size : dim -> int
 (** [max_size d] is the largest size [d] takes: [2{^31}-1] blocks along a grid's
     [X], [65535] along [Y] and [Z]; [1024] threads along a block's [X] and [Y],
-    [64] along [Z]. A block's threads, the product of its three sizes, are at
-    most {!Launch.max_threads} too. *)
+    [64] along [Z]. The caller also keeps a block's threads, the product of its
+    three sizes, at most {!Launch.max_threads}: {!set_dim} checks each axis
+    alone. *)
 
 val set_dim : dim -> int -> 'v t -> 'v t
 (** [set_dim d n q] is [q] whose launch has the size [n] along [d].
