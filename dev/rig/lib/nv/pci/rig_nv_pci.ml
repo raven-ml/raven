@@ -42,10 +42,12 @@ let named i r = Result.map_error (fun why -> device_name i ^ ": " ^ why) r
 
 (* Memory *)
 
-(* The GPU addresses of every NVIDIA GPU this path opens, [272 GiB, 384 GiB) of
-   the process: system memory lies at the same address for the process and the
-   GPU, so the range is reserved on the GPU's machine. *)
-let space = Space.create ~base:(272 * gib) (112 * gib)
+(* The GPU addresses of every NVIDIA GPU this path opens, [64 GiB, 1 TiB) of the
+   process: below 2^40, as a device requires of every memory, and where an IOMMU
+   maps device addresses. System memory lies at the same address for the process
+   and the GPU, so the range is reserved on the GPU's machine. One range serves
+   every GPU: a peer's memory maps at its owner's address. *)
+let space = Space.create ~base:(64 * gib) ((1 lsl 40) - (64 * gib))
 
 (* A GPU this path opened. [handles] holds the names the path gave its memory,
    which the RM's channel allocations take, with the region this GPU sees under

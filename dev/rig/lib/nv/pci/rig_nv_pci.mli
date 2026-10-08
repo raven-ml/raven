@@ -50,8 +50,9 @@
     {b Memory.} The memory a device gives the host is the GPU's own, through its
     memory BAR, while the BAR reaches it ([`Mapped] of {!Rig_nv.alloc}), and the
     machine's system memory otherwise. GPU addresses and the process's addresses
-    of system memory coincide, from [272 GiB] to [384 GiB], which the process
-    reserves at its first open. System memory counts against the process's limit
+    of system memory coincide, from [64 GiB] to [1 TiB], which the process
+    reserves at its first open; every memory of the GPUs it opens takes its GPU
+    addresses from that range. System memory counts against the process's limit
     on locked memory ([RLIMIT_MEMLOCK]): once it is reached, {!Rig_nv.alloc}
     answers [None], as for memory the GPU lacks, and raising the limit is the
     cure.
