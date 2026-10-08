@@ -21,24 +21,26 @@
 
     {b Privileges.} Opening needs read and write access to [/dev/kfd] and to the
     GPU's render node, [/dev/dri/renderD*], which members of the [render] group
-    have, and no other privilege. Elsewhere than Linux, {!count} is [0].
+    have, and no other privilege.
 
     {b The process's GPU.} The kernel driver gives a process one address space
     per GPU, which the first open takes and the process keeps until it exits.
     Every device of a GPU works in it, and a fault of one device's work is
     reported to every device of the GPU. An open after a device of the GPU was
-    lost makes new queues there, unless the kernel driver reported a fault: it
-    then schedules none of the process's queues on the GPU again, so {!open_}
-    answers [Error] and another process opens the GPU.
+    lost makes new queues there, unless {!Rig_amd.sleep} raised a fault for a
+    device of the GPU: the kernel driver then schedules none of the process's
+    queues on the GPU again, so {!open_} answers [Error] and another process
+    opens the GPU.
 
     {b Faults.} The kernel driver reports a fault of the GPU's work, a page
     fault or a hardware exception such as a reset, with its address or cause;
     {!Rig_amd.sleep} raises it. It also bounds long work by its own rules:
     nothing in this library decides that work hangs.
 
-    {b Tracing.} Thread traces hold the GPU's stable power state, its clocks and
-    shader engines steady, from the first trace to the end of the process,
-    unless another process holds it.
+    {b Tracing.} The first thread trace takes the GPU's stable power state,
+    which holds its clocks and shader engines steady, until the process exits.
+    The trace fails while another process holds that state. On a GFX 9 GPU,
+    traces take no power state.
 
     {b References.}
     - The Linux kernel's [include/uapi/linux/kfd_ioctl.h] and
@@ -63,8 +65,9 @@ val open_ : int -> (Rig_amd.t, string) result
 (** [open_ i] opens GPU [i] through the [amdgpu] driver, with queues of its own.
     The result is [Error msg] if [i >= count ()], saying how many GPUs there
     are, if the [amdgpu] driver does not hold the GPU, if a file cannot be
-    opened, naming it and the reason, if the GPU faulted in this process, with
-    the fault, or with {!Rig_amd.make}'s message.
+    opened, naming it and the reason, if the kernel driver refuses the GPU's
+    address space or events, naming the step and the reason, if the GPU faulted
+    in this process, with the fault, or with {!Rig_amd.make}'s message.
 
     Raises [Invalid_argument] if [i < 0]. *)
 
