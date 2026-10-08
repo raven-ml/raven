@@ -578,6 +578,88 @@ let law_float64 =
   prop "float64 stores the double" (Gen.with_pp pp_hex Gen.any_float) (fun x ->
       equal float_exact x (D.of_float D.Float64 x))
 
+(* From 64-bit integers *)
+
+(* The bit length of [m], read unsigned. *)
+let bit_length m =
+  let rec go n m =
+    if m = 0L then n else go (n + 1) (Int64.shift_right_logical m 1)
+  in
+  go 0 m
+
+(* [v], read signed or unsigned, rounded to nearest, ties to even, at [p]
+   significant bits, by integer arithmetic: the exact value, which a double
+   holds. *)
+let round_int ~signed p v =
+  let negative = signed && Int64.compare v 0L < 0 in
+  let m = if negative then Int64.neg v else v in
+  let n = bit_length m in
+  let r =
+    if n <= p then Int64.to_float m
+    else
+      let s = n - p in
+      let q = Int64.shift_right_logical m s in
+      let rest = Int64.logand m (Int64.pred (Int64.shift_left 1L s)) in
+      let c = Int64.unsigned_compare rest (Int64.shift_left 1L (s - 1)) in
+      let up = c > 0 || (c = 0 && Int64.logand q 1L = 1L) in
+      Float.ldexp (Int64.to_float (if up then Int64.succ q else q)) s
+  in
+  if negative then -.r else r
+
+(* The value of the code [c] of [f], with its sign bit. *)
+let signed_decode f c =
+  let w = f.exp + f.frac in
+  let v = decode f (c land ((1 lsl w) - 1)) in
+  if (c lsr w) land 1 = 1 then -.v else v
+
+(* Integers at and about every tie of a precision of 2 to 53 bits below 2^64,
+   and the extremes. *)
+let integers =
+  lazy
+    (let ties =
+       List.concat_map
+         (fun k ->
+           List.concat_map
+             (fun p ->
+               if k <= p then []
+               else
+                 List.concat_map
+                   (fun j ->
+                     let t =
+                       Int64.add (Int64.shift_left 1L k)
+                         (Int64.shift_left (Int64.of_int j) (k - p))
+                     in
+                     [ Int64.pred t; t; Int64.succ t ])
+                   [ 1; 3 ])
+             [ 2; 3; 4; 8; 11; 24; 53 ])
+         (List.init 64 Fun.id)
+     in
+     [ 0L; 1L; -1L; Int64.max_int; Int64.min_int ] @ ties)
+
+(* A store of an int64 or uint64 into a narrow float rounds the integer once:
+   converting it to a double first rounds past 2^53 and can land on a tie. *)
+let test_integers (F (dt, f)) =
+  let p = f.frac + 1 in
+  let wrong signed store =
+    List.filter_map
+      (fun v ->
+        let want = exact dt f (round_int ~signed p v) in
+        let got = signed_decode f (store (D.code dt) v) in
+        if Testable.equal float_exact want got then None
+        else
+          Some
+            (strf "%s %s stored %h, expected %h"
+               (if signed then "int64" else "uint64")
+               (if signed then Int64.to_string v else Printf.sprintf "%Lu" v)
+               got want))
+      (Lazy.force integers)
+  in
+  let first8 l = List.filteri (fun i _ -> i < 8) l in
+  equal ~msg:"int64" (list string) []
+    (first8 (wrong true Nx_array_support.of_int64));
+  equal ~msg:"uint64" (list string) []
+    (first8 (wrong false Nx_array_support.of_uint64))
+
 (* Integers *)
 
 (* Doubles across [lo, hi], their neighbours and the extremes. *)
@@ -906,6 +988,9 @@ let tests =
         cases ~name:format_name "every code reads as its definition's value"
           narrow test_every_code;
         law_float64;
+        cases ~name:format_name
+          "an int64 or uint64 stores as the exact reference rounds it once"
+          narrow test_integers;
         group "integers truncate toward zero and saturate" integer_laws;
         group "complex numbers store a real part in their component's format"
           [

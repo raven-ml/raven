@@ -49,6 +49,18 @@ value nx_array_support_layout(value l) {
   CAMLreturn(out);
 }
 
+/* The bits a store of the int64 [v], or of the uint64 whose bits [v] holds,
+   writes into an element of the narrow float [dt], rounded once. */
+value nx_array_support_of_i64(value dt, value v) {
+  return Val_long(
+      nx_double_to_bits((int)Long_val(dt), nx_i64_odd(Int64_val(v))));
+}
+
+value nx_array_support_of_u64(value dt, value v) {
+  return Val_long(
+      nx_double_to_bits((int)Long_val(dt), nx_u64_odd((uint64_t)Int64_val(v))));
+}
+
 /* A kernel: z <- x + y over float32, through the door and the coalescer. */
 
 static void add_loop(const nx_array *a, const nx_loop *l) {

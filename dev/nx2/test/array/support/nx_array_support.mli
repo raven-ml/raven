@@ -10,6 +10,14 @@ val row : int -> (string * int * int) option
     and kind (the index of the kind in [enum nx_kind]), or [None] if no dtype
     has the code. *)
 
+val of_int64 : int -> int64 -> int
+(** [of_int64 code v] is the bits a store of [v] writes into an element of the
+    narrow float dtype [code], through [nx_dtype.h]'s conversions from 64-bit
+    integers. *)
+
+val of_uint64 : int -> int64 -> int
+(** [of_uint64 code v] is {!of_int64} for the uint64 whose bits [v] holds. *)
+
 val layout : Nx_array.Layout.t -> int array
 (** [layout l] is [l]'s fields as C reads them through [nx_layout.h]'s field
     order: rank, flags, offset, lo, hi, then the extents and the strides. *)

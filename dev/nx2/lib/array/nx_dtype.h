@@ -353,6 +353,46 @@ static inline uint8_t nx_double_to_e2m1fn(double x) {
   return nx_float_to_e2m1fn(nx_float_odd(x));
 }
 
+/* From 64-bit integers, rounded once
+
+   Past 2^53 an integer narrows to binary64 by rounding to odd from its exact
+   value, as a double narrows to binary32 above: rounding to odd twice is
+   rounding to odd once at the coarser precision, so the encoders from a
+   double then round the integer once, as in nx_double_to_bf16(nx_i64_odd(v)).
+   Converting to double rounds to nearest, which can land on a tie of a narrow
+   format. A value that rounds to 2^63 or 2^64 cannot be converted back, and
+   rounded away from zero. */
+
+static inline uint64_t nx_double_bits(double d) {
+  uint64_t i;
+  memcpy(&i, &d, 8);
+  return i;
+}
+
+static inline double nx_bits_double(uint64_t i) {
+  double d;
+  memcpy(&d, &i, 8);
+  return d;
+}
+
+static inline double nx_u64_odd(uint64_t a) {
+  double d = (double)a;
+  uint64_t top = d >= 18446744073709551616.0;
+  uint64_t back = top ? 0 : (uint64_t)d;
+  uint64_t away = top | (back > a);
+  uint64_t inexact = top | (back != a);
+  return nx_bits_double((nx_double_bits(d) - away) | inexact);
+}
+
+static inline double nx_i64_odd(int64_t v) {
+  double d = (double)v;
+  uint64_t top = d >= 9223372036854775808.0;
+  int64_t back = top ? 0 : (int64_t)d;
+  uint64_t away = top | (v > 0 ? back > v : back < v);
+  uint64_t inexact = top | (back != v);
+  return nx_bits_double((nx_double_bits(d) - away) | inexact);
+}
+
 /* Integers
 
    Comparing a double against a range's bounds is exact: each bound below
