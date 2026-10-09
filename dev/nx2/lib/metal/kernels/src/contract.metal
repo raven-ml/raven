@@ -480,6 +480,94 @@ static float4 run4(device const typename elt<D>::t *q, uint i, uint i_n) {
   return x;
 }
 
+/* The 8 elements of a run at q, inside the matrix, as two float4. With
+   V16, q lies on a 16-byte boundary, and 2-byte elements load in one
+   16-byte read. */
+template <int D> struct run8;
+template <> struct run8<F32> {
+  template <bool V16>
+  static void get(device const float *q, thread float4 &lo,
+                  thread float4 &hi) {
+    lo = *(device const packed_float4 *)q;
+    hi = *(device const packed_float4 *)(q + 4);
+  }
+};
+template <int D> struct run8 {
+  typedef typename elt<D>::t T;
+  template <bool V16>
+  static void get(device const T *q, thread float4 &lo, thread float4 &hi) {
+    if (V16) {
+      uint4 w = *(device const uint4 *)q;
+      lo = elt<D>::get4(as_type<vec<T, 4>>(w.xy));
+      hi = elt<D>::get4(as_type<vec<T, 4>>(w.zw));
+      return;
+    }
+    lo = elt<D>::get4(vec<T, 4>(*(device const packed_vec<T, 4> *)q));
+    hi = elt<D>::get4(vec<T, 4>(*(device const packed_vec<T, 4> *)(q + 4)));
+  }
+};
+
+/* Whether runs of 8 elements at multiples of 8 from p, rows ld elements
+   apart, lie on 16-byte boundaries. A kernel tests it once and runs the
+   loop compiled for its answer: tested in the loop, it made decode 1.5
+   times slower. */
+template <typename T>
+static bool v16(device const T *p, uint ld) {
+  return ((ulong(p) | ulong(ld) * sizeof(T)) & 15) == 0;
+}
+
+/* The t form's sums over the lane's k from k0, its 8 elements of a run at
+   once. */
+template <int D, bool V16>
+static void sum_t(device const typename elt<D>::t *a,
+                  device const typename elt<D>::t *b,
+                  constant nx_metal_contract &p, uint n0, uint k0,
+                  thread float (&acc)[SKINNY_T]) {
+  typedef typename elt<D>::t T;
+  for (; k0 < p.k; k0 += THREADS * 8) {
+    float av[8];
+    if (p.a_k == 1 && k0 + 8 <= p.k) {
+      float4 lo, hi;
+      run8<D>::template get<V16>(a + k0, lo, hi);
+      UNROLL
+      for (uint e = 0; e < 4; e++) av[e] = lo[e], av[e + 4] = hi[e];
+    } else {
+      UNROLL
+      for (uint e = 0; e < 8; e++)
+        av[e] = k0 + e < p.k ? elt<D>::get1(a[(k0 + e) * p.a_k]) : 0.0f;
+    }
+    UNROLL
+    for (uint j = 0; j < SKINNY_T; j++) {
+      device const T *q = b + min(n0 + j, p.n - 1) * p.b_n + k0;
+      uint k_n = n0 + j < p.n ? p.k : 0;
+      float4 lo, hi;
+      if (k0 + 8 <= k_n)
+        run8<D>::template get<V16>(q, lo, hi);
+      else
+        lo = run4<D>(q, k0, k_n), hi = run4<D>(q + 4, k0 + 4, k_n);
+      UNROLL
+      for (uint e = 0; e < 4; e++) acc[j] = fma(av[e], lo[e], acc[j]);
+      UNROLL
+      for (uint e = 0; e < 4; e++) acc[j] = fma(av[e + 4], hi[e], acc[j]);
+    }
+  }
+}
+
+/* The n form's sums over its k, its 8 columns inside the matrix. */
+template <int D, bool V16>
+static void sum_n(device const typename elt<D>::t *a,
+                  device const typename elt<D>::t *b,
+                  constant nx_metal_contract &p, uint k0, uint n0,
+                  thread float4 &lo, thread float4 &hi) {
+  for (uint k = k0; k < p.k; k += 32) {
+    float av = elt<D>::get1(a[k * p.a_k]);
+    float4 bl, bh;
+    run8<D>::template get<V16>(b + k * p.b_k + n0, bl, bh);
+    lo = fma(float4(av), bl, lo);
+    hi = fma(float4(av), bh, hi);
+  }
+}
+
 template <int D, bool BT>
 kernel void skinny(constant nx_metal_contract &p [[buffer(0)]],
                    uint3 g [[threadgroup_position_in_grid]],
@@ -494,28 +582,10 @@ kernel void skinny(constant nx_metal_contract &p [[buffer(0)]],
     uint n0 = g.x * SKINNY_T;
     if (n0 >= p.n) return;
     float acc[SKINNY_T] = {};
-    for (uint k0 = 8 * lane + 256 * sg; k0 < p.k; k0 += THREADS * 8) {
-      float av[8];
-      if (p.a_k == 1 && k0 + 8 <= p.k) {
-        float4 lo = run4<D>(a + k0, 0, 4), hi = run4<D>(a + k0 + 4, 0, 4);
-        UNROLL
-        for (uint e = 0; e < 4; e++) av[e] = lo[e], av[e + 4] = hi[e];
-      } else {
-        UNROLL
-        for (uint e = 0; e < 8; e++)
-          av[e] = k0 + e < p.k ? elt<D>::get1(a[(k0 + e) * p.a_k]) : 0.0f;
-      }
-      UNROLL
-      for (uint j = 0; j < SKINNY_T; j++) {
-        device const T *q = b + min(n0 + j, p.n - 1) * p.b_n + k0;
-        uint k_n = n0 + j < p.n ? p.k : 0;
-        float4 lo = run4<D>(q, k0, k_n), hi = run4<D>(q + 4, k0 + 4, k_n);
-        UNROLL
-        for (uint e = 0; e < 4; e++) acc[j] = fma(av[e], lo[e], acc[j]);
-        UNROLL
-        for (uint e = 0; e < 4; e++) acc[j] = fma(av[e + 4], hi[e], acc[j]);
-      }
-    }
+    if (v16(a, 0) && v16(b, p.b_n))
+      sum_t<D, true>(a, b, p, n0, 8 * lane + 256 * sg, acc);
+    else
+      sum_t<D, false>(a, b, p, n0, 8 * lane + 256 * sg, acc);
     UNROLL
     for (uint j = 0; j < SKINNY_T; j++) {
       float x = simd_sum(acc[j]);
@@ -533,12 +603,18 @@ kernel void skinny(constant nx_metal_contract &p [[buffer(0)]],
   threadgroup float4 part[THREADS / 32][SKINNY_N / 4];
   uint n0 = g.x * SKINNY_N + 8 * (lane % 4);
   float4 lo = 0, hi = 0;
-  for (uint k = lane / 4 + 8 * sg; k < p.k; k += 32) {
-    float av = elt<D>::get1(a[k * p.a_k]);
-    device const T *q = b + k * p.b_k + n0;
-    lo = fma(float4(av), run4<D>(q, n0, p.n), lo);
-    hi = fma(float4(av), run4<D>(q + 4, n0 + 4, p.n), hi);
-  }
+  uint k0 = lane / 4 + 8 * sg;
+  if (n0 + 8 > p.n)
+    for (uint k = k0; k < p.k; k += 32) {
+      float av = elt<D>::get1(a[k * p.a_k]);
+      device const T *q = b + k * p.b_k + n0;
+      lo = fma(float4(av), run4<D>(q, n0, p.n), lo);
+      hi = fma(float4(av), run4<D>(q + 4, n0 + 4, p.n), hi);
+    }
+  else if (v16(b, p.b_k))
+    sum_n<D, true>(a, b, p, k0, n0, lo, hi);
+  else
+    sum_n<D, false>(a, b, p, k0, n0, lo, hi);
   UNROLL
   for (uint d = 4; d < 32; d *= 2) {
     lo += simd_shuffle_xor(lo, d);
