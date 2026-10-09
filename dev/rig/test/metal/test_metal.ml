@@ -1008,23 +1008,22 @@ let file_tests =
         created_file_borrow;
     ]
 
-(* Scratch *)
+(* Workspace *)
 
-(* Launches, each through a scratch of [k] KiB: a fill writes [3i + c] into it,
-   a copy reads it into the launch's own buffer. Nothing waits between them, so
-   a scratch's memory returns while the work before it may still run. *)
+(* Launches through one workspace, each over its first [k] KiB: a fill writes
+   [3i + c] into it, a copy reads it into the launch's own buffer. Nothing waits
+   between them: the workspace's stamps order each launch after the one
+   before. *)
 let gen_launches = Gen.list ~size:(Gen.int_range 1 12) (Gen.int_range 1 4)
 
-let through_scratch sizes =
+let through_workspace sizes =
   let t = dev () in
   let args = alloc t (2 * List.length sizes * args_bytes) in
   let copy = pipeline t "copy" in
-  let seen = Hashtbl.create 16 and reused = ref false in
+  let s = B.create t.d (4 * 1024) in
   let launch i k =
     let words = k * 256 and c = i + 1 and at = 2 * i * args_bytes in
-    let s = B.scratch t.d (4 * words) and out = B.create t.d (4 * words) in
-    reused := !reused || Hashtbl.mem seen (B.address s);
-    Hashtbl.replace seen (B.address s) ();
+    let out = B.create t.d (4 * words) in
     let fill = fill_dispatch t ~args ~at ~out:(B.address s) ~c words in
     H.set64 (host args + at + args_bytes) (B.address out);
     H.set64 (host args + at + args_bytes + 8) (B.address s);
@@ -1038,7 +1037,6 @@ let through_scratch sizes =
     (out, c, words)
   in
   let outs = List.mapi launch sizes in
-  cover "a scratch reuses an earlier one's memory" !reused;
   List.iter
     (fun (out, c, words) ->
       let h = B.create Rig.host (4 * words) in
@@ -1051,11 +1049,11 @@ let through_scratch sizes =
     outs;
   Rig_metal.free t.g args
 
-let scratch =
-  group ~timeout:60. "scratch"
+let workspace =
+  group ~timeout:60. "workspace"
     [
-      prop ~count:50 "a launch reads what its submission wrote into a scratch"
-        gen_launches through_scratch;
+      prop ~count:50 "a launch reads what its submission wrote into a workspace"
+        gen_launches through_workspace;
     ]
 
 (* Images *)
@@ -1345,7 +1343,7 @@ let () =
          icbs;
          memory;
          file_tests;
-         scratch;
+         workspace;
          images;
          timeline;
          opening;

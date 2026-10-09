@@ -68,9 +68,6 @@ type t = {
   hold : hold option;
       (** The hold whose stamps each run raises, kept reachable: its release
           frees what the parts run. *)
-  mutable scratches : (memory * int) list;
-      (** The scratches the running submit named, each with its claim word
-          before. *)
 }
 
 let queue_index d fn q =
@@ -190,22 +187,9 @@ let build hold ~reads ~writes d parts =
           fix c k d src false;
           fix c k d dst true)
     parts;
-  { dev = d; c; parts; nreads = reads; nwrites = writes; hold; scratches = [] }
+  { dev = d; c; parts; nreads = reads; nwrites = writes; hold }
 
-let is_scratch b = b.mem.root.entry.life = Scratch
-
-let names_scratch p =
-  match p.work with
-  | Words b -> is_scratch b
-  | Fill f -> is_scratch f.arg
-  | Copy { src; dst } -> is_scratch src || is_scratch dst
-
-(* A part outlives its first submit, which ends a scratch; the library's own
-   copy, built with [build], runs once. *)
-let make ?hold ~reads ~writes d parts =
-  if Array.exists names_scratch parts then
-    invalid_arg "Rig.Submission.make: a part names a scratch buffer";
-  build hold ~reads ~writes d parts
+let make ?hold ~reads ~writes d parts = build hold ~reads ~writes d parts
 
 (* In-queue waits *)
 
@@ -294,32 +278,12 @@ let check_counts s reads writes =
       (counted nr "read") (counted nw "write") (counted s.nreads "read")
       (counted s.nwrites "write")
 
-(* Takes the scratch [b] for the running submit: its claim word goes
-   exclusive, so no submit on another domain names it until this one ends it
-   or raises. A scratch this submit named already is its own. *)
-let claim_scratch s what i b =
-  let m = b.mem.root in
-  if not (List.exists (fun (m', _) -> m' == m) s.scratches) then begin
-    let cl = m.claim in
-    let w = Atomic.Loc.get [%atomic.loc cl.count] in
-    if w = Memory.consumed then
-      invalid_argf "Rig.%s: %s.(%d) is dead: scratch" fn what i;
-    if
-      w < 0 || w >= Memory.one_claim
-      || not
-           (Atomic.Loc.compare_and_set [%atomic.loc cl.count] w Memory.exclusive)
-    then
-      invalid_argf "Rig.%s: %s.(%d) is a scratch another submit or claim holds"
-        fn what i;
-    s.scratches <- (m, w) :: s.scratches
-  end
-
 (* Refuses [b], element [i] of the run's array of [access] ([reads] or
    [writes]), unless it is live, on [s]'s device and, written, of memory that
    admits writes; and hands its stamps and handle to the C slot [k]. Memory of
    another device that is lost raises its loss; [s]'s device's own loss is the
-   hand-over's. Once a scratch exists, [marked], a scratch is claimed. *)
-let name_one s marked (access : access) i k b =
+   hand-over's. *)
+let name_one s (access : access) i k b =
   let what = match access with Read -> "reads" | Read_write -> "writes" in
   if not (Buffer.is_live b) then
     invalid_argf "Rig.%s: %s.(%d) is dead: %s" fn what i b.mem.claim.why;
@@ -331,7 +295,6 @@ let name_one s marked (access : access) i k b =
   if m != b.mem && m.dev != s.dev && Dev.is_lost m.dev then Dev.raise_lost m.dev;
   if m.entry == Memory.no_entry then Memory.ensure_entry m;
   let e = m.entry in
-  if marked && e.life = Scratch then claim_scratch s what i b;
   if access = Read_write && e.access = Read then
     invalid_argf "Rig.%s: %s.(%d)'s memory admits only reads" fn what i;
   sub_slot s.c k e.stamps b.mem.handle
@@ -395,16 +358,16 @@ let rec hand_over s nwaits =
 
 (* Names the run's [k]th buffer, a read below [s.nreads], else a write: the
    buffer. *)
-let name s marked reads writes k =
+let name s reads writes k =
   let nr = s.nreads in
   if k < nr then begin
     let b = Array.unsafe_get reads k in
-    name_one s marked Read k k b;
+    name_one s Read k k b;
     b
   end
   else begin
     let b = Array.unsafe_get writes (k - nr) in
-    name_one s marked Read_write (k - nr) k b;
+    name_one s Read_write (k - nr) k b;
     b
   end
 
@@ -413,17 +376,17 @@ let name s marked reads writes k =
    hand-over returned: the C slots hold its stamps without a reference, and the
    caller's array may change meanwhile. A frame keeps four buffers, so the
    rooting costs a call per four. *)
-let rec run s marked reads writes waits k =
+let rec run s reads writes waits k =
   let n = s.nreads + s.nwrites in
   if k >= n then
     let hold = match s.hold with Some h -> h.hstamps | None -> 0 in
     hand_over s (wait_points s (sub_collect s.c waits hold) 0 0)
   else
-    let b0 = name s marked reads writes k in
-    let b1 = if k + 1 < n then name s marked reads writes (k + 1) else b0 in
-    let b2 = if k + 2 < n then name s marked reads writes (k + 2) else b0 in
-    let b3 = if k + 3 < n then name s marked reads writes (k + 3) else b0 in
-    let p = run s marked reads writes waits (k + 4) in
+    let b0 = name s reads writes k in
+    let b1 = if k + 1 < n then name s reads writes (k + 1) else b0 in
+    let b2 = if k + 2 < n then name s reads writes (k + 2) else b0 in
+    let b3 = if k + 3 < n then name s reads writes (k + 3) else b0 in
+    let p = run s reads writes waits (k + 4) in
     ignore (Sys.opaque_identity b0);
     ignore (Sys.opaque_identity b1);
     ignore (Sys.opaque_identity b2);
@@ -437,26 +400,17 @@ let submit s ~reads ~writes ~waits =
   if Dev.is_lost s.dev then Dev.raise_lost s.dev;
   check_counts s reads writes;
   sub_take s.c;
-  let marked = Atomic.get Memory.any_marked in
   match
     check_parts s;
-    run s marked reads writes waits 0
+    run s reads writes waits 0
   with
   | p ->
-      let named = s.scratches in
-      s.scratches <- [];
       sub_clear s.c;
       sub_give s.c;
-      List.iter (fun (m, _) -> Memory.end_scratch m) named;
       p
   | exception e ->
-      let named = s.scratches in
-      s.scratches <- [];
       sub_clear s.c;
       sub_give s.c;
-      List.iter
-        (fun (m, w) -> Atomic.Loc.set [%atomic.loc m.claim.count] w)
-        named;
       raise e
 
 let copy d queue ~src ~dst =

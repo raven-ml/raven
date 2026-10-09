@@ -347,24 +347,6 @@ module Buffer : sig
       Raises [Invalid_argument] if [n < 0] or [d] is an io device that makes no
       memory of its own; {!Out_of_memory}; and {!Lost} if [d] is lost. *)
 
-  val scratch : device -> int -> t
-  (** [scratch d n] is an owned buffer of [n] bytes of [d]'s [Device] memory for
-      the work of one submission. The first {!submit} that names it in [reads]
-      or [writes] and hands its work over ends it: once that submit returns, it
-      and every buffer over its memory are dead, with the reason ["scratch"],
-      and its memory returns as a collected buffer's does
-      ({{!reclaim}reclamation}), at once, so [d]'s later work may reuse it. A
-      submit that raises leaves it alive. A scratch no submit names returns as
-      any buffer does, and one of no bytes, which holds no memory, is a buffer
-      of no bytes. Work that clears a workspace before a launch uses it clears
-      it in the launch's submission, as a part before the launch's. A submit
-      holds the scratches it names until it returns: another submit that names
-      one meanwhile, from another thread or domain, raises [Invalid_argument].
-
-      Raises [Invalid_argument] if [n < 0] or [d] runs no submitted work
-      ({!host}, an {!Io} device), and {!Out_of_memory} and {!Lost} as {!create}
-      does. *)
-
   (** The type for accesses to memory. *)
   type access =
     | Read  (** Reading it. *)
@@ -414,8 +396,7 @@ module Buffer : sig
       memory, where its device maps them; a device other than the host asks the
       io device to read the borrowed bytes ahead ({!Io.prefetch}).
 
-      Raises [Invalid_argument] if [b] is dead ({!Claim.consume}) or a
-      {!scratch}; {!Lost} if [d] is lost or is lost by the borrow, and for [b]
+      Raises [Invalid_argument] if [b] is dead ({!Claim.consume}); {!Lost} if [d] is lost or is lost by the borrow, and for [b]
       as {!Lost} states; and [Sys_error] where asking an io device for [b]'s
       pages failed and may pass ({!Io.pages}). *)
 
@@ -700,8 +681,8 @@ module Hold : sig
       hold that is not lost, so no {!Driver.stop} of those devices runs beside
       it.
 
-      Raises [Invalid_argument] if a buffer is dead or a {!Buffer.scratch}, or
-      its memory is already in a hold. *)
+      Raises [Invalid_argument] if a buffer is dead or its memory is already in
+      a hold. *)
 end
 
 (** {1:submitting Submitting work} *)
@@ -766,7 +747,7 @@ module Submission : sig
       Raises [Invalid_argument] if [d] is {!host} or an {!Io} device, which run
       no submitted work, [reads] or [writes] is negative, an index of a part's
       [after] is negative or not below its own, a queue is not one of [d]'s, a
-      part's buffer is dead or a {!Buffer.scratch}, a {!Words} or {!Fill} buffer
+      part's buffer is dead, a {!Words} or {!Fill} buffer
       is not host memory, a {!Copy}'s buffers differ in size, are not [d]'s
       memory (on a driver's device of another machine, one of them may be memory
       this process's host addresses), or its [dst]'s memory is [Read]
@@ -819,14 +800,13 @@ val submit :
     value at most [k] values late, and values submitted since the last commit
     show after the next wait for [d] or the next [k] values.
 
-    It allocates nothing unless it waits or names a {!Buffer.scratch}.
+    It allocates nothing unless it waits.
 
     Raises [Invalid_argument] if [reads] or [writes] holds another number of
     buffers than {!Submission.make} declared, a buffer of [reads], [writes] or a
-    part is dead, a buffer of [reads] or [writes] is not on [d], a buffer of
-    [reads] or [writes] is a {!Buffer.scratch} another submit or a claim holds,
-    the memory of a buffer of [writes] is [Read] ({!Buffer.val-access}), or the
-    parts never fit [d]'s empty queues or name one its driver does not run;
+    part is dead, a buffer of [reads] or [writes] is not on [d], the memory of
+    a buffer of [writes] is [Read] ({!Buffer.val-access}), or the parts never
+    fit [d]'s empty queues or name one its driver does not run;
     and {!Lost} if [d] is lost, [d]'s hand-over fails, or a producer [d]'s
     queue waits on is lost before the hand-over, and for the buffers and the
     points [s] follows as {!Lost} states. A device lost after [v] was handed

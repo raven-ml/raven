@@ -624,15 +624,15 @@ let commits =
         copy_after_compute;
     ]
 
-(* Scratch *)
+(* Workspace *)
 
-(* Launches, each through a scratch of [k] KiB: a kernel on one stream copies
-   the launch's own bytes into it, one on the other copies them out. Nothing
-   waits between launches, so a scratch's memory returns while the work before
-   it may still run. *)
+(* Launches through one workspace, each over its first [k] KiB: a kernel on one
+   stream copies the launch's own bytes into it, one on the other copies them
+   out. Nothing waits between launches: the workspace's stamps order each
+   launch after the one before. *)
 let gen_launches = Gen.list ~size:(Gen.int_range 1 12) (Gen.int_range 1 4)
 
-let through_scratch sizes =
+let through_workspace sizes =
   S.with_ @@ fun { d; g } ->
   let _, kernel = S.kernels g in
   let flag = require_some (C.alloc g `Pinned 8) in
@@ -640,15 +640,12 @@ let through_scratch sizes =
   let copy ~dst ~src n =
     S.delayed ~spin:(kernel "spin") ~flag:(address flag) ~ns:0 ~dst ~src n
   in
-  let seen = Hashtbl.create 16 and reused = ref false in
+  let s = B.create d (4 * 1024) in
   let launch i k =
     let n = k * 1024 in
     let data = pattern n i in
     let src = B.create ~memory:Pinned d n
     and out = B.create ~memory:Pinned d n in
-    let s = B.scratch d n in
-    reused := !reused || Hashtbl.mem seen (B.address s);
-    Hashtbl.replace seen (B.address s) ();
     H.write (B.address src) data;
     let into = copy ~dst:(B.address s) ~src:(B.address src) n
     and out_of = copy ~dst:(B.address out) ~src:(B.address s) n in
@@ -663,7 +660,6 @@ let through_scratch sizes =
     (out, data)
   in
   let outs = List.mapi launch sizes in
-  cover "a scratch reuses an earlier one's memory" !reused;
   List.iteri
     (fun i (out, data) ->
       B.wait out Read;
@@ -672,11 +668,11 @@ let through_scratch sizes =
     outs;
   C.free g flag
 
-let scratch =
-  group ~timeout:60. "scratch"
+let workspace =
+  group ~timeout:60. "workspace"
     [
-      prop ~count:30 "a launch reads what its submission wrote into a scratch"
-        gen_launches through_scratch;
+      prop ~count:30 "a launch reads what its submission wrote into a workspace"
+        gen_launches through_workspace;
     ]
 
 let timeline =
@@ -1383,7 +1379,7 @@ let () =
          images;
          graphs;
          commits;
-         scratch;
+         workspace;
          timeline;
          two;
          stateful;

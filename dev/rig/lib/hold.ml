@@ -13,8 +13,6 @@ let making = Lock.create ()
 
 let make ?(release = ignore) bs =
   List.iter (Buffer.check_live "Hold.make") bs;
-  if List.exists (fun b -> b.mem.root.entry.life = Scratch) bs then
-    invalid_arg "Rig.Hold.make: a buffer is a scratch";
   let entries =
     List.fold_left
       (fun acc b ->

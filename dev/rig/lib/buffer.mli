@@ -25,7 +25,6 @@ val of_memory : Def.memory -> int -> t
     [n <= m.bytes]. *)
 
 val create : ?memory:memory -> device -> int -> t
-val scratch : device -> int -> t
 val of_io : device -> 'r Type.Id.t -> 'r -> access:access -> int -> t
 val io : t -> 'r Type.Id.t -> 'r option
 val of_bigarray : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> t

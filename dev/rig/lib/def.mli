@@ -120,7 +120,6 @@ and entry = {
   io_region : io_region option;
   access : access;
   stamps : int;  (** The C stamps, which link to a hold's once held. *)
-  mutable life : life;  (** Guarded by [owner]'s lock. *)
   mutable maps : mapping list;  (** Other devices' mappings of it. *)
   mutable unmaps : int; [@atomic]
       (** The unmaps left before a dead memory is given back. *)
@@ -132,10 +131,6 @@ and entry = {
       (** Host memory a device borrowed: its bytes, held until its uses are
           reached. *)
 }
-
-(** The type for how an entry's memory ends: once its buffers are collected,
-    or once the first submit naming it returns. *)
-and life = Collected | Scratch
 
 and pages =
   | Unasked

@@ -45,17 +45,6 @@ let create ?(memory = Device) d n =
   in
   of_memory mem n
 
-let scratch d n =
-  if n < 0 then invalid_argf "Rig.Buffer.scratch: %d bytes is negative" n;
-  if Dev.is_lost d then Dev.raise_lost d;
-  if Dev.is_host d || Dev.is_io d then
-    invalid_argf "Rig.Buffer.scratch: %s runs no submitted work" d.name;
-  if n = 0 then create d 0
-  else begin
-    Atomic.set Memory.any_marked true;
-    of_memory (Memory.alloc ~life:Scratch d Def.Device n) n
-  end
-
 let of_io (type r) d (k : r Type.Id.t) (r : r) ~access n =
   if n < 0 then invalid_argf "Rig.Buffer.of_io: %d bytes is negative" n;
   match d.kind with
@@ -120,8 +109,6 @@ let overlaps b b' =
 
 let borrow d b =
   check_live "Buffer.borrow" b;
-  if b.mem.root.entry.life = Scratch then
-    invalid_arg "Rig.Buffer.borrow: the buffer is a scratch";
   if Dev.is_lost d then Dev.raise_lost d;
   Memory.check b.mem;
   if b.mem.dev == d then Some b

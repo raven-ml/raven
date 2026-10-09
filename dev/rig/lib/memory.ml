@@ -67,7 +67,6 @@ let reached ?(except = -1) st =
 external token : int -> released -> int -> int -> int -> token
   = "caml_rig_token"
 
-external token_release : token -> unit = "caml_rig_token_release" [@@noalloc]
 external no_token : unit -> token = "%identity"
 external released : int -> released list = "caml_rig_released"
 external released_any : int -> bool = "caml_rig_released_any" [@@noalloc]
@@ -123,7 +122,6 @@ let entry ?region ?io_region ?(access = Read_write) owner memory bytes stamps =
     stamps;
     maps = [];
     unmaps = 0;
-    life = Collected;
     pages = Unasked;
     proxy = 0;
     kept = Nothing;
@@ -314,17 +312,6 @@ let defer d p =
 
 let retire d e = defer d (Free e)
 
-(* Ends the scratch memory [m], which a submit holds exclusive: its buffers die
-   with the reason "scratch", its claim word says consumed, and its memory goes
-   on its device's release list, as its collection would: the device's next
-   drain returns it. *)
-let end_scratch m =
-  let cl = m.claim in
-  cl.why <- "scratch";
-  Atomic.Loc.set [%atomic.loc cl.count] consumed;
-  Atomic.Loc.incr [%atomic.loc cl.generation];
-  if m.token != no_token then token_release m.token
-
 let drop_stamps (e : entry) = if e.stamps <> 0 then stamps_unref e.stamps
 
 (* Gives [e]'s region back to its driver, and its bytes to their keeper. *)
@@ -451,7 +438,6 @@ let drain_holds () =
     Option.iter raise !first
   end
 
-let any_marked = Atomic.make false
 let holds_list = Dev.release_list ()
 
 (* Bigarrays over memory *)
@@ -812,21 +798,14 @@ let reclaiming d ~pool n f = reclaim_from d pool n f 1
 
 let room d = Int.max 0 (d.budget - d.used)
 
-(* A fresh memory record over the entry [e] of [d], with its token, and the
-   entry's life, which a cached entry carries over from its last memory. A
-   scratch's token paces the collector by nothing: its submit returns the
-   memory, not its collection. *)
-let of_entry ~life d e =
+(* A fresh memory record over the entry [e] of [d], with its token. *)
+let of_entry d e =
   let address, handle, host =
     match e.region with Some r -> region_info r | None -> (-1, 0n, -1)
   in
   let live = if host >= 0 then d.used else -1 in
-  (* The entry is this record's alone: the cache gave it up under [d]'s
-     lock, or nothing reached it yet. *)
-  if e.life <> life then e.life <- life;
   let m = make ~host ~address ~handle d e.bytes e in
-  let paced = if life = Scratch then 0 else e.bytes in
-  m.token <- token d.release (Memory e) paced (room d) live;
+  m.token <- token d.release (Memory e) e.bytes (room d) live;
   m
 
 (* [new_entry] within the budget memory of [kind] counts in: its room is taken
@@ -884,8 +863,7 @@ let alloc_entry d kind n =
     | Some e -> e
     | None -> laddered d Pinned n
 
-let alloc ?(life = Collected) d kind n =
-  of_entry ~life d (alloc_entry d kind n)
+let alloc d kind n = of_entry d (alloc_entry d kind n)
 let reserve n () = if heap_reserve n Dev.host.budget then Some () else None
 
 let heap_reserved n =

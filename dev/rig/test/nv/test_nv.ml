@@ -1218,24 +1218,22 @@ let stop_running () =
   S.free_launches l;
   List.iter (N.free t.g) [ flag; marked ]
 
-(* Scratch *)
+(* Workspace *)
 
-(* Launches, each through a scratch of [k] KiB: a kernel copies the launch's own
-   bytes into it, a second copies them out. Nothing waits between launches, so a
-   scratch's memory returns while the work before it may still run. *)
+(* Launches through one workspace, each over its first [k] KiB: a kernel copies
+   the launch's own bytes into it, a second copies them out. Nothing waits
+   between launches: the workspace's stamps order each launch after the one
+   before. *)
 let gen_launches = Gen.list ~size:(Gen.int_range 1 12) (Gen.int_range 1 4)
 
-let through_scratch sizes =
+let through_workspace sizes =
   S.with_ @@ fun t ->
   let k = S.kernels t in
   let l = S.launches t.g in
-  let seen = Hashtbl.create 16 and reused = ref false in
+  let s = B.create t.d (4 * 1024) in
   let launch i kib =
     let n = kib * 1024 in
     let src, sa = S.shared t n and out, oa = S.shared t n in
-    let s = B.scratch t.d n in
-    reused := !reused || Hashtbl.mem seen (B.address s);
-    Hashtbl.replace seen (B.address s) ();
     S.pattern sa n i;
     let parts =
       [|
@@ -1248,7 +1246,6 @@ let through_scratch sizes =
     (out, oa, n)
   in
   let outs = List.mapi launch sizes in
-  cover "a scratch reuses an earlier one's memory" !reused;
   List.iteri
     (fun i (out, oa, n) ->
       B.wait out Read;
@@ -1256,11 +1253,11 @@ let through_scratch sizes =
     outs;
   S.free_launches l
 
-let scratch =
-  group ~timeout:60. "scratch"
+let workspace =
+  group ~timeout:60. "workspace"
     [
-      prop ~count:30 "a launch reads what its submission wrote into a scratch"
-        gen_launches through_scratch;
+      prop ~count:30 "a launch reads what its submission wrote into a workspace"
+        gen_launches through_workspace;
     ]
 
 let timeline =
@@ -1943,7 +1940,7 @@ let () =
          room;
          local;
          images;
-         scratch;
+         workspace;
          timeline;
          progress;
          two;
