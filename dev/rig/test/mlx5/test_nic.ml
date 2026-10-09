@@ -89,6 +89,36 @@ let open_nic ?context ?qp ?wait () =
   let p, calls = path ?context ?qp ?wait () in
   match M.make p with Ok nic -> (nic, calls) | Error e -> failf "make: %s" e
 
+let regions =
+  let region () =
+    let nic, _ = open_nic () in
+    match
+      M.Region.register nic Remote (Host { address = 0x10000; bytes = 64 })
+    with
+    | Ok r -> r
+    | Error e -> failf "register: %s" e
+  in
+  let refused name f =
+    test name (fun () ->
+        let r = region () in
+        raises_match (Exn.invalid_arg ~substring:"Region") (fun () -> f r))
+  in
+  group "regions"
+    [
+      test "a piece at the region's end is in it" (fun () ->
+          let r = region () in
+          equal int (0x10000 + 63) (M.Region.local r 63 1).address);
+      refused "a piece past the end is refused" (fun r -> M.Region.local r 63 2);
+      refused "a piece whose end overflows is refused" (fun r ->
+          M.Region.local r max_int 1);
+      refused "a piece of an overflowing length is refused" (fun r ->
+          M.Region.local r 1 max_int);
+      refused "an offset past the end is refused" (fun r ->
+          M.Region.remote r 64);
+      refused "the largest offset is refused" (fun r ->
+          M.Region.remote r max_int);
+    ]
+
 (* Two queue pairs made at once on a completion queue with room for one: the
    first holds in its path call until the second's make returned, so both check
    the queue's room before either is made. *)
@@ -144,4 +174,4 @@ let events =
             (Unix.gettimeofday () -. start));
     ]
 
-let () = exit (run "rig_mlx5" [ room; events ])
+let () = exit (run "rig_mlx5" [ regions; room; events ])

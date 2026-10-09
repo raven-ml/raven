@@ -332,7 +332,7 @@ module Region = struct
   let check fn r at n =
     alive ("Region." ^ fn) r.nic;
     if r.gone then invalid_arg (strf "Rig_mlx5.Region.%s: deregistered" fn);
-    if at < 0 || n < 0 || at + n > r.bytes then
+    if at < 0 || n < 0 || at > r.bytes || n > r.bytes - at then
       invalid_arg
         (strf "Rig_mlx5.Region.%s: %d bytes at %d of %d" fn n at r.bytes)
 
