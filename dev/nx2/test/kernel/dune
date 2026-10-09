@@ -1,7 +1,14 @@
 (tests
- (names test_kinds)
- (modules test_kinds)
- (libraries nx_kinds_support windtrap)
+ (names test_kinds test_spec)
+ (modules test_kinds test_spec)
+ (libraries
+  nx_array
+  nx_array_gen
+  nx_kernel
+  nx_kernel_support
+  nx_kinds_support
+  rig
+  windtrap)
  (deps
   (glob_files golden/kinds/*.golden)
   golden/kinds/f32-sweep.txt

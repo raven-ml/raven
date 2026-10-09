@@ -13,6 +13,6 @@
 
     [apply1] computes [Copy] and [Cast], and answers [Declined] for the other
     kinds. A [Copy] whose operand's dtype is not [dst]'s is refused with
-    [Wrong_dtype]. *)
+    [Wrong_dtype]. [contract] answers [Declined]. *)
 
 include Nx_kernel.S

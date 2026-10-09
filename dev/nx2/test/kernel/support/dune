@@ -30,3 +30,14 @@
 
 (rule
  (copy nx_kinds_support_loops.c nx_kinds_support_loops_v3.c))
+
+; nx_spec.h's structs as C reads them.
+
+(library
+ (name nx_kernel_support)
+ (modules nx_kernel_support)
+ (libraries nx_kernel)
+ (foreign_stubs
+  (language c)
+  (include_dirs ../../../lib/kernel)
+  (names nx_kernel_support_stubs)))

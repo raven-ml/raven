@@ -13,11 +13,16 @@
 
     include Nx_kernel.S
     ]}
-    {!Prog} names what a kernel computes. In C, [nx_kinds.h] computes each kind,
-    with no OCaml header, so device sources include it. *)
+    {!Prog} names what an elementwise kernel computes and {!Spec} describes
+    what the others compute. In C, [nx_kinds.h] computes each kind and
+    [nx_spec.h] holds the descriptors' structs, with no OCaml header, so device
+    sources include them. *)
 
 module Prog = Prog
 (** Scalar kinds. *)
+
+module Spec = Spec
+(** Descriptors. *)
 
 (** {1:contract The contract} *)
 
@@ -41,6 +46,7 @@ module Prog = Prog
 module type S = sig
   type ('v, 's) a := ('v, 's) Nx_array.t
   type answer := Nx_array.answer
+  type any := Nx_array.any
 
   val name : string
   (** [name] names the kernels in messages, as ["nx.cpu"]. *)
@@ -52,4 +58,10 @@ module type S = sig
 
   val apply1 : Prog.op1 -> dst:('v, 's) a -> ('a, 'b) a -> answer
   (** [apply1 k ~dst x] stores [k] of each element of [x] into [dst]. *)
+
+  (** {1:contraction Contraction} *)
+
+  val contract : Spec.contract Spec.t -> dst:any -> any array -> answer
+  (** [contract s ~dst ops] stores the contraction [s] of [ops] into [dst]: [a],
+      [b], then [init] where [s] has one. *)
 end

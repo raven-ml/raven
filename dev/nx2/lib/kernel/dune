@@ -1,8 +1,12 @@
 ; nx.kernel: the vocabulary kernels compute and the contract kernel
 ; libraries implement. nx_kinds.h computes each kind in C, CUDA, HIP and
-; Metal sources.
+; Metal sources; nx_spec.h holds the descriptors' structs.
 
 (library
  (name nx_kernel)
  (libraries nx_array rig)
- (install_c_headers nx_kinds nx_kinds_real))
+ (install_c_headers nx_spec nx_kinds nx_kinds_real)
+ (foreign_stubs
+  (language c)
+  (include_dirs ../array)
+  (names nx_kernel_stubs)))

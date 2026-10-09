@@ -19,3 +19,5 @@ let apply1 (k : Nx_kernel.Prog.op1) ~dst x =
   | Copy -> copy ~dst x
   | Cast -> cast ~dst x
   | Unary _ | Bitcast -> Declined
+
+let contract _ ~dst:_ _ = Nx_array.Declined
