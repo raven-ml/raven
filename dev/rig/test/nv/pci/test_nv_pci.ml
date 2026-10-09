@@ -12,6 +12,8 @@ let strf = Printf.sprintf
 
 module Tree = Rig_pci_support.Tree
 
+let mib = Rig_pci_support.mib
+
 (* A machine whose NVIDIA GPUs are a display controller and a 3D controller,
    beside an NVIDIA audio function and another vendor's GPU, listed out of bus
    order. *)
@@ -258,11 +260,24 @@ let state =
 let gpu_bus = "0000:03:00.0"
 let taking = "--take"
 
-let fixture ?(booted = true) () =
+(* The GPU's BARs as an NVIDIA GPU's: registers in BAR 0, 16 MiB; memory in BAR
+   1, 256 MiB; BAR 3. *)
+let bars =
+  Tree.
+    [
+      Mem32 (0xfa00_0000, 16 * mib);
+      Mem64 (0x7c_0000_0000, 256 * mib);
+      Mem64 (0x7d_0000_0000, 32 * mib);
+    ]
+
+(* [fixture ~booted ~memory ()] is a tree whose GPU's GSP runs if [booted],
+   whose firmware wrote [memory] bytes as its memory size otherwise. *)
+let fixture ?(booted = true) ?(memory = 0) () =
   if not Rig_pci_support.on_linux then
     skip ~reason:"flock on a function's file needs Linux" ();
   let root =
-    Tree.make [ { (Tree.gpu gpu_bus) with vendor = 0x10de; class_ = 0x030000 } ]
+    Tree.make
+      [ { (Tree.gpu gpu_bus) with vendor = 0x10de; class_ = 0x030000; bars } ]
   in
   let device = strf "sys/bus/pci/devices/%s/" gpu_bus in
   let write r s =
@@ -287,7 +302,9 @@ let fixture ?(booted = true) () =
        in the PROM window, from 0x300000. *)
     set32 0x118128 1;
     set32 0x118234 0xff;
-    write 0x300000 (rom "vbios.rom")
+    write 0x300000 (rom "vbios.rom");
+    (* NV_PGC6_AON_SECURE_SCRATCH_GROUP_42: the memory in MiB. *)
+    set32 0x1183a4 (memory / mib)
   end;
   Tree.add root (device ^ "reset") "";
   root
@@ -431,6 +448,86 @@ let test_failed_early () =
   done;
   equal ~msg:"no reset" string "" (resets root)
 
+(* A boot that fails once it took its memory
+
+   The tree's GPU states 8 GiB of memory, which BAR 1 reaches the first 256 MiB
+   of. Its registers keep what is written, so the falcon's first DMA never
+   completes: the open fails at the poll's bound, 30 s, having taken the boot's
+   system memory from the tree's huge pages, at the frames its page map gives
+   from 64 GiB on, where this library places it, and having written FWSEC to the
+   GPU's memory. A boot needs NVIDIA's firmware, which a test run cannot hold:
+   its licence keeps it out of the repository, so the test runs where
+   RIG_NV_PCI_FIRMWARE lists it. *)
+
+let gpu_memory = 8 * 1024 * mib
+let system_base = 64 * 1024 * mib
+let u32 s off = Int32.to_int (String.get_int32_le s off) land 0xffff_ffff
+
+let device_file root name =
+  Filename.concat root (strf "sys/bus/pci/devices/%s/%s" gpu_bus name)
+
+(* FWSEC in the GPU's memory: as fixtures/vbios.py lays it out, 512 bytes of
+   code then 1024 of data, byte [k] of its image [k land 0xff], so the first
+   page that starts 0, 1, ..., 255 in the first 16 MiB. *)
+let imem = 0x200
+let fwsec_size = imem + 0x400
+
+let fwsec root =
+  let ramp = String.init 256 Char.chr in
+  In_channel.with_open_bin (device_file root "resource1") @@ fun ic ->
+  let rec find at =
+    if at >= 16 * mib then fail "no FWSEC in the GPU's memory"
+    else begin
+      In_channel.seek ic (Int64.of_int at);
+      let s = really_input_string ic fwsec_size in
+      if String.sub s 0 256 = ramp then s else find (at + 4096)
+    end
+  in
+  find 0
+
+let memory_files root =
+  Sys.readdir (Filename.concat root "dev/hugepages")
+  |> Array.to_list
+  |> List.filter (fun f -> not (String.ends_with ~suffix:".reach" f))
+
+(* The FRTS region is the 1 MiB below the 1 MiB VGA workspace at the end of the
+   GPU's memory (kgspCalculateFbLayout_TU102). FWSEC's DMEM mapper, at 0x80 of
+   its data, takes the FRTS command (0x15) at 0x2c, and its input buffer, at
+   0x100 of the data, FWSECLIC_FRTS_CMD: version 1 and size 24 of the VBIOS
+   read, from the GPU's ROM (flags 2), then version 1 and size 20 of the region,
+   its offset in 4 KiB units, 1 MiB in 4 KiB units (0x100), in the GPU's memory
+   (2). The descriptor's last signature, 384 bytes of 0x22, is in place at 0x200
+   of the data. *)
+let test_failed_boot () =
+  let root = fixture ~booted:false ~memory:gpu_memory () in
+  let firmware = firmware () in
+  let machine = Rig_pci.Machine.at root in
+  let page = Rig_pci.Machine.page machine in
+  Tree.pagemap root ~page system_base
+    (List.init (256 * mib / page) (fun i -> 0x10_0000 + i));
+  let why = require_error (Rig_nv_pci.open_ ~machine ~firmware 0) in
+  contains ~msg:"the falcon failed" ~sub:"DMA" why;
+  let f = fwsec root in
+  let frts = gpu_memory - (2 * mib) in
+  equal ~msg:"the mapper's command" int 0x15 (u32 f (imem + 0x80 + 0x2c));
+  let c = imem + 0x100 in
+  equal ~msg:"the FRTS command" (list int)
+    [ 1; 24; 2; 1; 20; frts lsr 12; 0x100; 2 ]
+    (List.map
+       (fun off -> u32 f (c + off))
+       [ 0; 4; 0x14; 0x18; 0x1c; 0x20; 0x24; 0x28 ]);
+  equal ~msg:"the signature" string (String.make 384 '\x22')
+    (String.sub f (imem + 0x200) 384);
+  let command =
+    In_channel.with_open_bin (device_file root "config") @@ fun ic ->
+    In_channel.seek ic 4L;
+    Char.code (input_char ic)
+  in
+  equal ~msg:"bus mastering" int 0 (command land 0x4);
+  equal ~msg:"system memory left" (list string) [] (memory_files root);
+  ignore (require_error (Rig_nv_pci.open_ ~machine ~firmware:[] 0));
+  equal ~msg:"the next open's reset" string "1" (resets root)
+
 let booted =
   group ~timeout:Rig_pci_support.patience "booted GPUs"
     [
@@ -454,7 +551,20 @@ let booted =
         test_failed_early;
     ]
 
+(* The falcon's poll waits 30 s before the boot fails. *)
+let failed_boot =
+  group ~timeout:60. "a failed boot"
+    [
+      test
+        "a boot that fails stops the GPU: FWSEC was set up for its memory, bus \
+         mastering is off, its system memory given back, and it is reset by \
+         the next open (RIG_NV_PCI_FIRMWARE)"
+        test_failed_boot;
+    ]
+
 let () =
   match Sys.argv with
   | [| _; arg; how; root |] when arg = taking -> take how root
-  | _ -> exit (run "rig_nv_pci" [ numbering; opening; reports; booted ])
+  | _ ->
+      exit
+        (run "rig_nv_pci" [ numbering; opening; reports; booted; failed_boot ])
