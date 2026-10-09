@@ -52,8 +52,8 @@
       all ones and drops writes, and nothing tells the process; through a
       machine whose transport failed, accesses do the same. Failure is state:
       {!Machine.failed} for a machine, {!Function.failed} for a function, which
-      also reads the function's vendor ID. {!Machine.wait} answers [false] once
-      its machine failed.
+      also reads the function's vendor ID. {!Function.wait} answers [Error] once
+      its function or machine failed.
     - {e Misuse} raises [Invalid_argument]: an index below zero, bytes outside a
       window, memory given back twice.
 
@@ -61,10 +61,10 @@
     command, privilege or setting that does.
 
     A driver owes four checks, each where it acts on what it read:
-    + Its wait for the device: when the wait ends [false], {!Function.failed}
-      says whether the function or its machine failed, and why.
-    + Its submission from C: one call of [rig_pci_failed] after its last
-      access ([rig_pci.h]).
+    + Its wait for the device: {!Function.wait} answers the failure in its
+      [Error].
+    + Its submission from C: one call of [rig_pci_failed] after its last access
+      ([rig_pci.h]).
     + A progress word read through a window: read it, then ask
       {!Function.failed}; once failed, the word keeps its last value.
     + A read whose bytes leave the driver, such as a copy of results: ask

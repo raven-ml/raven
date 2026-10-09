@@ -57,28 +57,42 @@ val space : Rig_pci.Space.t
     ({!Rig_pci.Machine.reserve}): 2{^ 44} bytes from [0x2000_0000_0000]. *)
 
 val start :
+  gpus:int ->
   Rig_pci.Function.t ->
   (string -> digest:string -> (string, string) result) ->
   (t, [ `Refused of string | `Running | `Lost of string ]) result
-(** [start f find] boots the GPU of [f], whose function the caller took and
-    whose machine has {!space} reserved, its firmware read with [find]: a
-    partial or full boot as {!plan} says. A partial boot first stops the engines
-    the last session may have left running, as {!stop} does, before its hubs
-    take this boot's tables. The GPU masters the bus only once booted and both
-    its hubs read back as translating ({!Gmc.translates}), its hubs' faults
-    reaching a page of system memory the boot owns.
+(** [start ~gpus f find] boots the GPU of [f], whose function the caller took
+    and whose machine has {!space} reserved and [gpus] AMD GPUs, its firmware
+    read with [find]: a partial or full boot as {!plan} says. Its memory joins
+    its fabric's links as {!Gmc.link} says. A partial boot first stops the
+    engines the last session may have left running, as {!stop} does, before its
+    hubs take this boot's tables. The GPU masters the bus only once booted,
+    every flush confirmed ({!confirm}) and both its hubs read back as
+    translating ({!Gmc.translates}), its hubs' faults reaching a page of system
+    memory the boot owns.
 
     [Error (`Refused msg)], no register written, if a BAR cannot be mapped, if
-    its discovery table is refused, if a block has a version this library does
-    not boot, if firmware is missing, if it is in a fabric left running, if its
-    memory controller's window does not hold its memory ({!Gmc.window}), or if
-    the machine has no memory for its page tables or fault page.
-    [Error `Running], no register written and its BARs unmapped, if it is
-    [`Booted] outside a fabric: firmware this library did not start runs on it,
-    which the vendor's reset stops. [Error (`Lost msg)] if a block does not
-    answer, naming the step, or a hub does not translate: the GPU is then
+    its register or doorbell BAR is not mapped into the process, as through a
+    transport, if its discovery table is refused, if a block has a version this
+    library does not boot, if firmware is missing, if it is in a fabric left
+    running, if its memory controller's window does not hold its memory
+    ({!Gmc.window}), or if the machine has no memory for its page tables or
+    fault page. [Error `Running], no register written and its BARs unmapped, if
+    it is [`Booted] outside a fabric: firmware this library did not start runs
+    on it, which the vendor's reset stops. [Error (`Lost msg)] if a block does
+    not answer, naming the step, or a hub does not translate: the GPU is then
     stopped ({!stop}). An exception raised during the boot stops it too, and
     passes through. *)
+
+val confirm :
+  Rig_pci.Function.t -> string option ref -> (unit -> unit) -> unit -> bool
+(** [confirm f fault invalidate] is the hubs' flush of the GPU of [f]:
+    [confirm f fault invalidate ()] runs [invalidate] and is [true] iff it
+    completes. If it raises {!Regs.Stuck}, it turns [f]'s bus mastering off,
+    records the first such reason in [fault] and is [false]: a GPU whose hubs
+    did not confirm a flush may still reach memory through a translation the
+    flush removed. {!start} gives every flush to its tables this way, and turns
+    bus mastering on only while [fault] is [None]. *)
 
 val writes : pcie:int option -> rebars:int list -> (int * int) list
 (** [writes ~pcie ~rebars] is the configuration a reset restores, as (offset,
@@ -123,11 +137,6 @@ val hive : t -> bool
 val budget : t -> int
 (** [budget g] is the bytes of the GPU's memory it hands out: its page tables'
     main pool. *)
-
-val reaches : t -> t -> bool
-(** [reaches g o] is [true] iff [g] reaches all of [o]'s memory, both GPUs of
-    one machine: over their fabric, or through [o]'s memory BAR as large as its
-    memory, both at physical addresses no IOMMU translates. *)
 
 val protect : t -> (unit -> 'a) -> 'a
 (** [protect g f] is [f ()] with [g]'s register sequences and page-table edits

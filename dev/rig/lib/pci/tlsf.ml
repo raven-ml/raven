@@ -57,15 +57,14 @@ let from f m = if f >= levels then 0 else m land (-1 lsl f)
 
 (* Classes *)
 
-(* The class of a block of [size > 0] bytes. *)
-let class_of size =
-  let f = bit_length size in
+(* The class of a block of [size > 0] bytes is its first level [f] and its
+   second level [second f size]. *)
+let first size = bit_length size
+
+let second f size =
   let rest = size - (1 lsl (f - 1)) in
-  let s =
-    if f - 1 >= second_bits then rest lsr (f - 1 - second_bits)
-    else rest lsl (second_bits - (f - 1))
-  in
-  (f, s)
+  if f - 1 >= second_bits then rest lsr (f - 1 - second_bits)
+  else rest lsl (second_bits - (f - 1))
 
 (* [size] rounded up to the smallest size of its class's successor, unless it
    starts its class: every block of the class found for it fits it. *)
@@ -76,15 +75,16 @@ let round_class size =
     let step = 1 lsl (f - 1 - second_bits) in
     (size + step - 1) land lnot (step - 1)
 
-let slot (f, s) = (f * classes) + s
+let slot f s = (f * classes) + s
 
 (* Free lists *)
 
 let find t start = Tables.Address.find t.blocks start
 
 let insert t start b =
-  let ((f, s) as c) = class_of b.size in
-  let i = slot c in
+  let f = first b.size in
+  let s = second f b.size in
+  let i = slot f s in
   let head = t.heads.(i) in
   b.free <- true;
   b.prev_free <- none;
@@ -95,8 +95,9 @@ let insert t start b =
   t.firsts <- t.firsts lor (1 lsl f)
 
 let remove t b =
-  let ((f, s) as c) = class_of b.size in
-  let i = slot c in
+  let f = first b.size in
+  let s = second f b.size in
+  let i = slot f s in
   if b.prev_free <> none then (find t b.prev_free).next_free <- b.next_free
   else t.heads.(i) <- b.next_free;
   if b.next_free <> none then (find t b.next_free).prev_free <- b.prev_free;
@@ -106,21 +107,21 @@ let remove t b =
   end;
   b.free <- false
 
-(* The first free block of class [c] or a larger one. *)
-let suitable t (f, s) =
+(* The first free block of class [(f, s)] or a larger one, or [none]. *)
+let suitable t f s =
   let m = from s t.seconds.(f) in
-  if m <> 0 then Some t.heads.(slot (f, lowest m))
+  if m <> 0 then t.heads.(slot f (lowest m))
   else
     let m = from (f + 1) t.firsts in
-    if m = 0 then None
+    if m = 0 then none
     else
       let f = lowest m in
-      Some t.heads.(slot (f, lowest t.seconds.(f)))
+      t.heads.(slot f (lowest t.seconds.(f)))
 
 (* Blocks *)
 
 (* Shrinks the block [b] at [start] to [n] bytes and is the block made of the
-   rest, which is on no list. *)
+   rest, at [start + n], which is on no list. *)
 let carve t start b n =
   let rest = start + n in
   let r =
@@ -137,7 +138,7 @@ let carve t start b n =
   | None -> ());
   b.size <- n;
   Tables.Address.replace t.blocks rest r;
-  (rest, r)
+  r
 
 (* Joins the block at [next] to [b], before it. Neither is on a list. *)
 let absorb t start b next =
@@ -188,19 +189,18 @@ let take_from t ~align start b req =
   (* The gap below the aligned start stays free. Its neighbour before was [b]'s,
      which is not free. *)
   let gap = round_up (t.base + start) align - t.base - start in
-  let start, b =
-    if gap = 0 then (start, b)
-    else
-      let a, ab = carve t start b gap in
+  let at = start + gap in
+  let b =
+    if gap = 0 then b
+    else begin
+      let ab = carve t start b gap in
       insert t start b;
-      (a, ab)
+      ab
+    end
   in
   (* The tail above the request is free, unless smaller than a block. *)
-  if b.size - req >= min_block then begin
-    let r, rb = carve t start b req in
-    insert t r rb
-  end;
-  Some (t.base + start)
+  if b.size - req >= min_block then insert t (at + req) (carve t at b req);
+  Some (t.base + at)
 
 (* The first free block, in address order, that holds [req] bytes at an aligned
    start ending at or below [below]: a walk of the blocks, for a request that
@@ -228,14 +228,15 @@ let alloc ?(align = 1) ?below t n =
     match below with
     | Some below when below < t.base + t.length ->
         first_below t ~align ~below req
-    | _ -> (
+    | _ ->
         let need = round_class (req + align - 1) in
         (* Rounding wraps below 0 only for a range within 2^57 of [max_int]. *)
         if need < 0 then None
         else
-          match suitable t (class_of need) with
-          | None -> None
-          | Some start -> take_from t ~align start (find t start) req)
+          let f = first need in
+          let start = suitable t f (second f need) in
+          if start = none then None
+          else take_from t ~align start (find t start) req
 
 let free t x =
   let start = x - t.base in
@@ -254,5 +255,6 @@ let free t x =
           remove t n;
           absorb t start b (start + b.size)
       | _ -> ());
-      insert t start b
-  | _ -> invalid_argf "Tlsf.free: no block at 0x%x" x
+      insert t start b;
+      true
+  | _ -> false

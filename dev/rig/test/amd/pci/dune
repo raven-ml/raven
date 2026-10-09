@@ -1,5 +1,8 @@
 (tests
- (names test_amd_pci)
- (libraries rig_amd_pci rig_amd_abi rig_pci rig_pci_support windtrap)
+ (names test_amd_pci test_root)
+ (libraries rig_amd rig_amd_pci rig_amd_abi rig_pci rig_pci_support unix windtrap)
+ (foreign_stubs
+  (language c)
+  (names test_root_stubs))
  (deps
   (glob_files fixtures/*)))

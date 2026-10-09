@@ -136,5 +136,5 @@ val unload : t -> (unit, string) result
 
 val free : t -> unit
 (** [free g] gives back the system memory of [g]'s boot. Call it once the GPU
-    masters the bus no more, its function released ({!Rig_pci.Gpus.lose}): the
-    GSP may read it until then. *)
+    masters the bus no more ({!Rig_pci.Function.set_bus_master}): the GSP may
+    read it until then. *)

@@ -21,7 +21,6 @@ module Gpus = Rig_pci.Gpus
 module Amd = Rig_amd
 
 let strf = Printf.sprintf
-let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 let ( let* ) = Result.bind
 
 (* Letting go
@@ -82,52 +81,30 @@ let unreleased ~root bus =
 (* The kernel driver serves a GPU through DRM nodes, each with a [dev] file
    under the GPU's directory, which {!Gpus.detach} finds itself. *)
 let gpus =
-  Gpus.make ~memory_bar:0
+  Gpus.make ~name:"AMD-PCI" ~memory_bar:0
     ~nodes:(fun ~root:_ _ -> [])
     ~unreleased ~teardown_ms:30_000 ~reset:Boot.reset
     (fun (id : Machine.id) -> Amd.is_gpu ~vendor:id.vendor ~class_:id.class_)
 
 let gpus_at root = Gpus.buses gpus (Machine.at root)
 let count ?(machine = Machine.this) () = List.length (Gpus.buses gpus machine)
-
-let index fn i =
-  if i < 0 then invalid_argf "Rig_amd_pci.%s: GPU %d is negative" fn i
-
-let device_name i =
-  index "device_name" i;
-  if i = 0 then "AMD-PCI" else strf "AMD-PCI:%d" i
+let device_name i = Gpus.name gpus i
 
 (* Memory *)
 
-(* The memory a path gives a device: its own, another GPU's mapped for it, or a
-   view of its own GPU's, which maps nothing. A peer mapping keeps its owner's
-   region, which a third GPU maps in turn. *)
-type mem =
-  | Own of Boot.t * Memory.region
-  | Peer of { owner : Boot.t; region : Memory.region; mapped : Memory.region }
-  | View of Boot.t * Memory.region
-
-let origin_of = function
-  | Own (o, r) | View (o, r) -> (o, r)
-  | Peer { owner; region; _ } -> (owner, region)
-
-(* Borrowed memory lies at its own address for the process, apart from where the
-   GPU reaches it. *)
-let host (r : Memory.region) =
-  match (r.source, r.host) with
-  | Borrowed a, _ -> Some a
-  | _, Some w when Window.mapped w -> Some (Window.address w)
+let host r =
+  match Memory.host r with
+  | Some w when Window.mapped w -> Some (Window.address w)
   | _ -> None
 
-let memory (r : Memory.region) data =
-  { Amd.address = r.mapping.va; host = host r; data }
+let memory r = { Amd.address = Memory.address r; host = host r; data = r }
 
 (* The opened GPUs of this machine, by number, for [reaches]. *)
 let opened : (int, Boot.t) Hashtbl.t = Hashtbl.create 4
 let opened_lock = Mutex.create ()
 
-(* A path function raises Rig_amd.Fault for any failure of the GPU but its
-   refusal: a register sequence that does not complete is one. *)
+(* A path function raises Rig_amd.Fault for a register sequence that does not
+   complete. A flush the hubs do not confirm is raised by the next sleep. *)
 let guard f = try f () with Regs.Stuck why -> raise (Amd.Fault why)
 
 let alloc g kind n =
@@ -138,56 +115,37 @@ let alloc g kind n =
     | `System -> Memory.Host
   in
   match Boot.protect g (fun () -> Memory.alloc (Boot.memory g) kind n) with
-  | Ok (Some r) -> Some (memory r (Own (g, r)))
+  | Ok (Some r) -> Some (memory r)
   | Ok None -> None
   | Error why -> raise (Amd.Fault why)
 
 let map_host g a n =
   match Boot.protect g (fun () -> Memory.map_host (Boot.memory g) a n) with
-  | Ok r -> Some (memory r (Own (g, r)))
-  | Error _ -> None
+  | Ok (Some r) -> Some (memory r)
+  | Ok None | Error _ -> None
 
 let reaches g ~index j =
   j = index
   ||
   match Mutex.protect opened_lock (fun () -> Hashtbl.find_opt opened j) with
-  | Some o -> Boot.reaches g o
+  | Some o -> Memory.reaches (Boot.memory g) (Boot.memory o)
   | None -> false
 
-let map_peer g (m : mem Amd.memory) =
-  let owner, region = origin_of m.data in
-  if owner == g then Some { m with data = View (owner, region) }
-  else if not (Boot.reaches g owner) then None
-  else
-    let mapped () =
-      Memory.map_peer (Boot.memory g) ~owner:(Boot.memory owner) region
-    in
-    match Boot.protect g mapped with
-    | Ok mapped -> Some { m with data = Peer { owner; region; mapped } }
-    | Error _ -> None
+let map_peer g (m : Memory.region Amd.memory) =
+  match Boot.protect g (fun () -> Memory.map_peer (Boot.memory g) m.data) with
+  | Ok (Some r) -> Some (memory r)
+  | Ok None | Error _ -> None
 
-let free g (m : mem Amd.memory) =
-  match m.data with
-  | View _ -> ()
-  | Peer { mapped; _ } ->
-      Boot.protect g (fun () -> Memory.unmap (Boot.memory g) mapped)
-  | Own (_, r) -> (
-      let m = Boot.memory g in
-      match r.source with
-      | Memory.Allocated -> Boot.protect g (fun () -> Memory.free m r)
-      | Borrowed _ | Peer -> Boot.protect g (fun () -> Memory.unmap m r))
+let free g (m : Memory.region Amd.memory) =
+  Boot.protect g (fun () -> Memory.free (Boot.memory g) m.data)
 
 (* Opening *)
 
-let key : mem Type.Id.t = Type.Id.make ()
+let key : Memory.region Type.Id.t = Type.Id.make ()
 
 (* The reference clock of SOC15 and SOC21 GPUs, which the timestamps of their
    packets count. *)
 let clock_hz = 100_000_000
-
-(* Work whose timeline word has not moved for 30 s is a hang: no kernel bounds
-   the GPU's work. *)
-let hang_ms = 30_000
 
 (* A compute unit's SIMDs: 4 on GC 9, 2 from GC 10 on (NUM_SIMD_PER_CU of the
    kernel's vega10_enum.h, navi10_enum.h, soc21_enum.h and soc24_enum.h). *)
@@ -198,31 +156,14 @@ let simds_per_cu (gpu : Rig_amd_abi.Gpu.t) =
    interrupt ring, so any context but 0 serves. *)
 let interrupt = 1
 
-(* [finish ()] stops the GPU [g] once and gives its hold [h] back: released if
-   it stopped clean after the device was made, lost otherwise, so that a GPU a
-   failed open wrote to opens again only after a reset. *)
-let finisher g h ~index ~made =
-  let answer = ref None and lock = Mutex.create () in
-  fun () ->
-    Mutex.protect lock @@ fun () ->
-    match !answer with
-    | Some s -> s
-    | None ->
-        let s = Boot.stop g in
-        answer := Some s;
-        Mutex.protect opened_lock (fun () -> Hashtbl.remove opened index);
-        (match s with
-        | `Clean when Atomic.get made -> Gpus.release h
-        | `Clean | `Lost | `Unknown -> Gpus.lose h);
-        s
-
-let path g fn ~index ~finish : mem Amd.path =
+let path g h fn ~index : Memory.region Amd.path =
   let gc = Boot.gc g and gpu = Boot.gpu g in
   (* A fault the device raised itself, as a hang, is the GPU's as much as one
      its interrupt ring reported: the stop leaves the GPU lost. *)
   let stop ~fault =
     Option.iter (Boot.faulted g) fault;
-    match finish () with `Clean | `Lost -> `Stopped | `Unknown -> `Unknown
+    Mutex.protect opened_lock (fun () -> Hashtbl.remove opened index);
+    Gpus.stop h
   in
   {
     key;
@@ -249,11 +190,44 @@ let path g fn ~index ~finish : mem Amd.path =
         guard (fun () -> Boot.queue g kind ~ring ~bytes ~read ~write));
     hdp = Boot.hdp g;
     interrupt;
-    hang_ms = Some hang_ms;
+    hang_ms = Some Gpus.hang_ms;
     sleep = (fun ~ms -> guard (fun () -> Boot.sleep g ~ms));
     stable_power = (fun () -> guard (fun () -> Boot.stable_power g));
     stop;
   }
+
+(* A boot that wrote to the GPU and failed stopped it, as lost, before it
+   answered: the hold's stop then answers so. *)
+let boot h fn find =
+  let lost () = Gpus.set_stop h (fun () -> `Lost) in
+  let gpus = List.length (Gpus.buses gpus (Rig_pci.Function.machine fn)) in
+  match Boot.start ~gpus fn find with
+  | Ok g -> Ok g
+  | Error (`Refused why) -> Error (`Refused why)
+  | Error `Running -> Error `Running
+  | Error (`Lost why) ->
+      lost ();
+      Error (`Refused why)
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      lost ();
+      Printexc.raise_with_backtrace e bt
+
+(* Firmware this library did not start, as a process that died leaves, is reset
+   through the hold, and the GPU booted in full. *)
+let booted h fn find =
+  match boot h fn find with
+  | Ok g -> Ok g
+  | Error (`Refused why) -> Error why
+  | Error `Running -> (
+      let* () = Gpus.renew h in
+      match boot h fn find with
+      | Ok g -> Ok g
+      | Error (`Refused why) -> Error why
+      | Error `Running ->
+          Error
+            "firmware this library did not start still runs on the GPU after \
+             its reset")
 
 let start ~firmware ~index h fn =
   let* () =
@@ -262,86 +236,22 @@ let start ~firmware ~index h fn =
       ~base:(Rig_pci.Space.base Boot.space)
       (Rig_pci.Space.length Boot.space)
   in
-  let boot () =
-    match Boot.start fn (Rig_pci.Firmware.find firmware) with
-    | r -> r
-    | exception e ->
-        let bt = Printexc.get_raw_backtrace () in
-        Gpus.lose h;
-        Printexc.raise_with_backtrace e bt
-  in
-  (* Firmware this library did not start, as a process that died leaves, is
-     reset through the hold, and the GPU booted in full. *)
-  let again = function
-    | Ok g -> Ok g
-    | Error (`Refused why) -> Error (`Refused why)
-    | Error (`Lost why) -> Error (`Lost why)
-    | Error `Running ->
-        Error
-          (`Refused
-             "firmware this library did not start still runs on the GPU after \
-              its reset")
-  in
-  let booted =
-    match boot () with
-    | Error `Running -> (
-        match Gpus.renew h with
-        | Error why -> Error (`Given_back why)
-        | Ok () -> again (boot ()))
-    | r -> again r
-  in
-  match booted with
-  | Error (`Refused why | `Given_back why) -> Error why
-  | Error (`Lost why) ->
-      Gpus.lose h;
-      Error why
-  | Ok g -> (
+  let* g = booted h fn (Rig_pci.Firmware.find firmware) in
+  Gpus.set_stop h (fun () -> Boot.stop g);
+  match Amd.make (path g h fn ~index) with
+  | Ok d ->
+      (* A host resets a VF that holds its access long: every queue is made, so
+         it goes back. *)
+      Boot.give_back g;
       Mutex.protect opened_lock (fun () -> Hashtbl.replace opened index g);
-      let made = Atomic.make false in
-      let finish = finisher g h ~index ~made in
-      match Amd.make (path g fn ~index ~finish) with
-      | Ok d ->
-          Atomic.set made true;
-          (* A host resets a VF that holds its access long: every queue is made,
-             so it goes back. *)
-          Boot.give_back g;
-          Ok (d, g)
-      | Error why | (exception (Amd.Fault why | Regs.Stuck why)) ->
-          ignore (finish ());
-          Error why
-      | exception e ->
-          let bt = Printexc.get_raw_backtrace () in
-          ignore (finish ());
-          Printexc.raise_with_backtrace e bt)
-
-(* The GPU's name in front of a refusal's message. *)
-let named i r =
-  Result.map_error (fun why -> strf "%s: %s" (device_name i) why) r
+      Ok d
+  | Error why | (exception (Amd.Fault why | Regs.Stuck why)) -> Error why
 
 let open_ ?(machine = Machine.this) ~firmware i =
-  index "open_" i;
-  named i
-  @@
-  let* () =
-    match Machine.files machine with
-    | Some _ -> Ok ()
-    | None -> Error "its machine is reached through a transport"
-  in
-  Gpus.open_ gpus machine i
-    ~at_exit:(fun (_, g) -> ignore (Boot.stop g))
-    (start ~firmware ~index:i)
-  |> Result.map fst
+  Gpus.open_ gpus machine i (start ~firmware ~index:i)
 
 (* Changes to the machine *)
 
-let detach i =
-  index "detach" i;
-  named i (Gpus.detach gpus Machine.this i)
-
-let attach i =
-  index "attach" i;
-  named i (Gpus.attach gpus Machine.this i)
-
-let reset ?(machine = Machine.this) i =
-  index "reset" i;
-  named i (Gpus.reset gpus machine i)
+let detach i = Gpus.detach gpus Machine.this i
+let attach i = Gpus.attach gpus Machine.this i
+let reset ?(machine = Machine.this) i = Gpus.reset gpus machine i

@@ -8,299 +8,7 @@ open Rig_pci
 open Rig_pci_support
 
 let strf = Printf.sprintf
-let config_size = 4096
 
-exception In_use
-
-(* A fake machine
-
-   A transport's machine that keeps the contract of each operation as this
-   machine's does, and records each call it gets. A call that breaks an
-   operation's contract is misuse the library had to refuse before asking the
-   machine: the fake records it in [wrong] and fails. Each BAR range, DMA
-   allocation and pin is reached at a fresh address, as a server that maps them
-   in its own process gives. Operations take a lock, since pins and DMA memory
-   may be asked from any domain. *)
-
-type fn_fake = {
-  addressing : Machine.addressing;
-  page : int;
-  config : Bytes.t;
-  mutable maps : (int * int) list; (* live BAR windows, (address, length) *)
-  mutable ways : (int * bool) list; (* their BARs and [combine], a multiset *)
-  mutable dmas : (int * int) list;
-  mutable pins : (int * int) list; (* a multiset *)
-  mutable released : bool;
-  mutable before_pin : unit -> unit; (* runs before a pin reaches the fake *)
-  mutable calls : string list; (* newest first *)
-  mutable wrong : string list;
-  lock : Mutex.t;
-}
-
-and machine_fake = {
-  far : int; (* its C transport *)
-  tr : Window.transport;
-  buses : string list;
-  m_page : int;
-  m_addressing : Machine.addressing;
-  mutable held : string list;
-  mutable taken : fn_fake list; (* newest first *)
-  mutable next : int;
-  m_lock : Mutex.t;
-}
-
-let transport () = Window.unsafe_transport (far 0 4096)
-
-(* BAR 0 is 64-bit, so index 1 is its upper half. *)
-let bars = [| Some (0xe000_0000, 64 * 1024); None; Some (0xf000_0000, 4096) |]
-let bar_of i = if i >= 0 && i < Array.length bars then bars.(i) else None
-
-let fresh m n =
-  Mutex.protect m.m_lock @@ fun () ->
-  let a = m.next in
-  m.next <- m.next + round_up (max n 1) (2 * mib);
-  a
-
-(* A run per page, or one. *)
-let runs f a n ~one =
-  let n = round_up n f.page in
-  if one || f.addressing = Iommu then [ (0x1_0000_0000 + a, n) ]
-  else List.init (n / f.page) (fun i -> (a + (i * f.page), f.page))
-
-let disjoint (a, n) (b, k) = a + n <= b || b + k <= a
-
-let remove x l =
-  let rec go = function
-    | [] -> None
-    | y :: l when y = x -> Some l
-    | y :: l -> Option.map (fun l -> y :: l) (go l)
-  in
-  go l
-
-let fake_fn m bus =
-  let f =
-    {
-      addressing = m.m_addressing;
-      page = m.m_page;
-      config = Bytes.init config_size (fun i -> Char.chr (i land 0xff));
-      maps = [];
-      ways = [];
-      dmas = [];
-      pins = [];
-      released = false;
-      before_pin = ignore;
-      calls = [];
-      wrong = [];
-      lock = Mutex.create ();
-    }
-  in
-  let call ?(after_release = false) name check run =
-    Mutex.protect f.lock @@ fun () ->
-    f.calls <- name :: f.calls;
-    let misuse =
-      if f.released && not after_release then Some "after release" else check ()
-    in
-    match misuse with
-    | Some why ->
-        f.wrong <- strf "%s: %s" name why :: f.wrong;
-        failwith ("misuse reached the machine: " ^ name)
-    | None -> run ()
-  in
-  let in_config off n =
-    if off < 0 || off > config_size - n then Some "offset" else None
-  in
-  let config n off =
-    call
-      (strf "config%d" (8 * n))
-      (fun () -> in_config off n)
-      (fun () ->
-        let x = ref 0 in
-        for i = n - 1 downto 0 do
-          x := (!x lsl 8) lor Bytes.get_uint8 f.config (off + i)
-        done;
-        !x)
-  in
-  let set_config n off x =
-    call
-      (strf "set_config%d" (8 * n))
-      (fun () -> in_config off n)
-      (fun () ->
-        for i = 0 to n - 1 do
-          Bytes.set_uint8 f.config (off + i) ((x lsr (8 * i)) land 0xff)
-        done)
-  in
-  let window w = (Window.address w, Window.length w) in
-  let ops =
-    {
-      Machine.addressing = f.addressing;
-      config8 = config 1;
-      config16 = config 2;
-      config32 = config 4;
-      set_config8 = set_config 1;
-      set_config16 = set_config 2;
-      set_config32 = set_config 4;
-      bar =
-        (fun i ->
-          call "bar"
-            (fun () -> if i < 0 then Some "index" else None)
-            (fun () -> bar_of i));
-      map =
-        (fun ~combine i off n ->
-          call "map"
-            (fun () ->
-              match bar_of i with
-              | _ when List.mem (i, not combine) f.ways ->
-                  Some "a BAR mapped the other way"
-              | Some (_, size) when off >= 0 && n >= 0 && off <= size - n ->
-                  None
-              | _ -> Some "bytes outside the BAR")
-            (fun () ->
-              let a = fresh m n in
-              f.maps <- (a, n) :: f.maps;
-              f.ways <- (i, combine) :: f.ways;
-              Ok (Window.through m.tr a n)));
-      unmap =
-        (fun w ->
-          call "unmap"
-            (fun () ->
-              if List.mem (window w) f.maps then None else Some "no window")
-            (fun () ->
-              let rec drop k = function
-                | x :: l when x = window w -> (k, l)
-                | x :: l ->
-                    let k, l = drop (k + 1) l in
-                    (k, x :: l)
-                | [] -> (k, [])
-              in
-              let k, maps = drop 0 f.maps in
-              f.maps <- maps;
-              f.ways <- List.filteri (fun j _ -> j <> k) f.ways));
-      interrupt = (fun _ -> call "interrupt" (fun () -> None) (fun () -> false));
-      reset = (fun () -> call "reset" (fun () -> None) (fun () -> Ok ()));
-      alloc_dma =
-        (fun ~contiguous ~va n ->
-          let bytes = round_up n f.page in
-          call "alloc_dma"
-            (fun () ->
-              match va with
-              | _ when n mod f.page <> 0 -> Some "a size off the page"
-              | Some v when v mod f.page <> 0 -> Some "va off a page"
-              | _ when contiguous && bytes > 2 * mib -> Some "too large"
-              | Some v
-                when contiguous && f.addressing = Physical && bytes > f.page
-                     && v mod (2 * mib) <> 0 ->
-                  Some "va off 2 MiB"
-              | _ -> None)
-            (fun () ->
-              let a = match va with Some v -> v | None -> fresh m bytes in
-              let used = List.concat_map (fun g -> g.dmas) m.taken in
-              if List.exists (fun r -> not (disjoint r (a, bytes))) used then
-                Error "far:1: the addresses are in use"
-              else begin
-                f.dmas <- (a, bytes) :: f.dmas;
-                Ok
-                  (Some
-                     ( Window.through m.tr a bytes,
-                       runs f a bytes ~one:contiguous ))
-              end));
-      free_dma =
-        (fun w ->
-          call ~after_release:true "free_dma"
-            (fun () ->
-              if List.mem (window w) f.dmas then None else Some "no memory")
-            (fun () -> f.dmas <- Option.get (remove (window w) f.dmas)));
-      pin =
-        (fun a n ->
-          f.before_pin ();
-          call "pin"
-            (fun () -> if a mod f.page <> 0 then Some "off a page" else None)
-            (fun () ->
-              f.pins <- (a, n) :: f.pins;
-              Ok (runs f a n ~one:false)));
-      unpin =
-        (fun a n ->
-          call ~after_release:true "unpin"
-            (fun () ->
-              if List.mem (a, n) f.pins then None else Some "not pinned")
-            (fun () -> f.pins <- Option.get (remove (a, n) f.pins)));
-      release =
-        (fun () ->
-          call ~after_release:true "release"
-            (fun () -> if f.released then Some "released twice" else None)
-            (fun () ->
-              if not f.released then begin
-                f.released <- true;
-                f.maps <- [];
-                f.ways <- [];
-                Mutex.protect m.m_lock (fun () ->
-                    m.held <- List.filter (( <> ) bus) m.held)
-              end));
-    }
-  in
-  (f, ops)
-
-let bus1 = "0000:01:00.0"
-let bus2 = "0000:02:00.0"
-let absent = "0000:03:00.0"
-
-(* Each machine reaches its BAR ranges and memory at its own 4 GiB, below the
-   addresses DMA memory is asked at, so that no two machines' windows are equal;
-   [test_other_machine] makes them equal. *)
-let machines = Atomic.make 0
-let next_base () = (1 + (Atomic.fetch_and_add machines 1 mod 0x7000)) lsl 32
-
-(* Each machine reserves [reserved] bytes from [va_base], where DMA memory is
-   asked. *)
-let va_base = 0x7f00_0000_0000
-let reserved = 8 * mib
-
-let fake_machine ?(base = next_base ()) ?(page = 4096)
-    ?(addressing = Machine.Physical) () =
-  let far = far 0 4096 in
-  let m =
-    {
-      far;
-      tr = Window.unsafe_transport far;
-      buses = [ bus1; bus2 ];
-      m_page = page;
-      m_addressing = addressing;
-      held = [];
-      taken = [];
-      next = base;
-      m_lock = Mutex.create ();
-    }
-  in
-  let take bus =
-    Mutex.protect m.m_lock @@ fun () ->
-    if not (List.mem bus m.buses) then
-      Error (bus ^ " is no PCI function of far:1")
-    else if List.mem bus m.held then Error (bus ^ " is held")
-    else begin
-      let f, ops = fake_fn m bus in
-      m.held <- bus :: m.held;
-      m.taken <- f :: m.taken;
-      Ok ops
-    end
-  in
-  let machine =
-    Machine.make ~name:"far:1"
-      {
-        transport = m.tr;
-        page;
-        functions = (fun () -> []);
-        take;
-        reserve = (fun ~base:_ _ -> Ok ());
-      }
-  in
-  require_ok (Machine.reserve machine ~base:va_base reserved);
-  (machine, m)
-
-let take_fake ?base ?page ?addressing () =
-  let machine, m = fake_machine ?base ?page ?addressing () in
-  let f = Result.get_ok (Function.take machine bus1) in
-  (machine, f, List.hd m.taken)
-
-(* The requests of a fake machine, which refuses none within its contract. *)
 external c_combines : Window.t -> bool = "rig_pci_test_combines"
 
 let map ?combine ?off ?length f i =
@@ -318,56 +26,6 @@ let addressing =
         (match a with Machine.Physical -> "Physical" | Iommu -> "Iommu"))
     ~equal:( = )
 
-let runs_w = list (pair int int)
-
-(* Taking *)
-
-let test_take_asks () =
-  let calls = ref [] in
-  let machine =
-    Machine.make ~name:"far:1"
-      {
-        transport = transport ();
-        page = 4096;
-        functions = (fun () -> []);
-        take =
-          (fun bus ->
-            calls := bus :: !calls;
-            Error "far:1: run `driverctl set-override 0000:01:00.0 vfio-pci`");
-        reserve = (fun ~base:_ _ -> Ok ());
-      }
-  in
-  equal ~msg:"the machine's refusal" (result pass string)
-    (Error "far:1: run `driverctl set-override 0000:01:00.0 vfio-pci`")
-    (Function.take machine bus1);
-  equal ~msg:"what the machine was asked" (list string) [ bus1 ] !calls
-
-let test_taken () =
-  List.iter
-    (fun a ->
-      let machine, f, fake = take_fake ~addressing:a () in
-      equal ~msg:"machine" (option string) (Machine.name machine)
-        (Machine.name (Function.machine f));
-      equal ~msg:"bus" string bus1 (Function.bus f);
-      equal ~msg:"addressing" addressing a (Function.addressing f);
-      equal ~msg:"released" bool false (Function.released f);
-      equal ~msg:"what the machine was asked" (list string) [] fake.calls)
-    [ Machine.Physical; Iommu ]
-
-(* A refused take holds nothing, and a release lets the function be taken
-   again. *)
-let test_refused () =
-  let machine, m = fake_machine () in
-  equal ~msg:"absent" bool true (Result.is_error (Function.take machine absent));
-  let f = Result.get_ok (Function.take machine bus1) in
-  equal ~msg:"held" (result pass string)
-    (Error (bus1 ^ " is held"))
-    (Function.take machine bus1);
-  Function.release f;
-  let g = Result.get_ok (Function.take machine bus1) in
-  equal ~msg:"taken again once released" string bus1 (Function.bus g);
-  equal ~msg:"functions made" int 2 (List.length m.taken)
-
 (* A bus that is no bus address reaches no file, here or on another machine:
    these name sysfs's directory, its parent, or a path through it. *)
 let not_buses =
@@ -380,597 +38,6 @@ let not_buses =
     "0000:01:00.0\000";
     "0000:01:00";
   ]
-
-let test_take_no_bus () =
-  let calls = ref [] in
-  let machine =
-    Machine.make ~name:"far:1"
-      {
-        transport = transport ();
-        page = 4096;
-        functions = (fun () -> []);
-        take =
-          (fun bus ->
-            calls := bus :: !calls;
-            Error "asked");
-        reserve = (fun ~base:_ _ -> Ok ());
-      }
-  in
-  List.iter
-    (fun bus ->
-      equal ~msg:(String.escaped bus) (result pass string)
-        (Error (strf "%S is no PCI bus address, expected DDDD:BB:DD.F" bus))
-        (Function.take machine bus))
-    not_buses;
-  equal ~msg:"what the machine was asked" (list string) [] !calls
-
-let test_take_failed () =
-  let machine, m = fake_machine () in
-  break m.far;
-  equal ~msg:"a failed machine" (result pass string)
-    (Error "far: the link broke")
-    (Function.take machine bus1);
-  equal ~msg:"functions made" int 0 (List.length m.taken)
-
-(* After release, only free_dma and unpin reach the machine. *)
-let test_released () =
-  let _, f, fake = take_fake () in
-  let d, _ = alloc_dma f 4096 in
-  ignore (pin f 0x5000_0000 4096 : (int * int) list);
-  Function.release f;
-  List.iter
-    (fun (name, use) ->
-      raises_match ~msg:name (Exn.invalid_arg ~substring:"released") use)
-    [
-      ("failed", fun () -> ignore (Function.failed f : string option));
-      ("config16", fun () -> ignore (Function.config16 f 0 : int));
-      ("set_config16", fun () -> Function.set_config16 f 0 0);
-      ("bar", fun () -> ignore (Function.bar f 0 : (int * int) option));
-      ("map", fun () -> ignore (Function.map f 0 : _ result));
-      ("interrupt", fun () -> ignore (Function.interrupt f 0 : bool));
-      ("reset", fun () -> ignore (Function.reset f : _ result));
-      ("alloc_dma", fun () -> ignore (Function.alloc_dma f 4096 : _ result));
-      ("pin", fun () -> ignore (Function.pin f 0x5000_0000 4096 : _ result));
-    ];
-  Function.free_dma f d;
-  Function.unpin f 0x5000_0000 4096;
-  Function.release f;
-  equal ~msg:"what the machine was asked" (list string)
-    [ "unpin"; "free_dma"; "release"; "pin"; "alloc_dma" ]
-    fake.calls
-
-let taking =
-  group ~timeout:patience "taking"
-    [
-      test "a take asks the machine for its bus, and keeps its refusal"
-        test_take_asks;
-      test "a taken function is on its machine at its bus, as the machine says"
-        test_taken;
-      test "a function another holder has is refused until released"
-        test_refused;
-      test "a string that is no bus address is refused before the machine"
-        test_take_no_bus;
-      test "a failed machine refuses a take" test_take_failed;
-      test "a released function refuses all but free_dma and unpin"
-        test_released;
-    ]
-
-(* Pass-through: a function's windows and runs are its machine's. *)
-let test_machine_values () =
-  let _, f, fake = take_fake ~page:4096 () in
-  let w = map f 0 ~off:256 ~length:512 in
-  equal ~msg:"a BAR window" (pair int int) (List.hd fake.maps)
-    (Window.address w, Window.length w);
-  equal ~msg:"its BAR" (option (pair int int)) bars.(0) (Function.bar f 0);
-  let d, runs = alloc_dma f (3 * 4096) in
-  equal ~msg:"DMA memory" (pair int int) (List.hd fake.dmas)
-    (Window.address d, Window.length d);
-  equal ~msg:"its runs" runs_w
-    (List.init 3 (fun i -> (Window.address d + (i * 4096), 4096)))
-    runs;
-  equal ~msg:"pinned runs" runs_w
-    [ (0x7000_0000, 4096); (0x7000_1000, 4096) ]
-    (pin f 0x7000_0000 8192)
-
-let test_defaults () =
-  let _, f, fake = take_fake () in
-  let size = 64 * 1024 in
-  let lengths =
-    List.map Window.length [ map f 0; map f 0 ~off:256; map f 0 ~length:16 ]
-  in
-  equal ~msg:"lengths" (list int) [ size; size - 256; 16 ] lengths;
-  equal ~msg:"windows the machine mapped" int 3 (List.length fake.maps)
-
-(* Two machines at the same address give equal windows but for their
-   transports. *)
-let test_other_machine () =
-  let _, f, fake = take_fake ~base:(1 lsl 40) () in
-  let _, g, _ = take_fake ~base:(1 lsl 40) () in
-  let w, _ = alloc_dma f 4096 in
-  let w', _ = alloc_dma g 4096 in
-  equal ~msg:"one address" int (Window.address w) (Window.address w');
-  raises_match ~msg:"DMA memory" (Exn.invalid_arg ~substring:"") (fun () ->
-      Function.free_dma f w');
-  let b = map f 0 and b' = map g 0 in
-  equal ~msg:"one address" int (Window.address b) (Window.address b');
-  raises_match ~msg:"a BAR window" (Exn.invalid_arg ~substring:"") (fun () ->
-      Function.unmap f b');
-  equal ~msg:"its memory and window stay" (pair int int) (1, 1)
-    (List.length fake.dmas, List.length fake.maps)
-
-(* Bytes [0, 0) at [size] lie in the BAR, as a window's [sub] takes them. *)
-let test_empty () =
-  let _, f, _ = take_fake () in
-  let size = 64 * 1024 in
-  equal ~msg:"at the start" int 0 (Window.length (map f 0 ~length:0));
-  equal ~msg:"at the end" int 0 (Window.length (map f 0 ~off:size))
-
-(* After the reset, the function's vendor ID is read until it answers. *)
-let test_reset () =
-  let _, f, fake = take_fake () in
-  require_ok (Function.reset f);
-  equal ~msg:"asked" (list string) [ "config16"; "reset" ] fake.calls
-
-(* A vendor ID of all ones is a function that does not answer. *)
-let test_reset_silent () =
-  let _, f, _ = take_fake () in
-  Function.set_config16 f 0 0xffff;
-  equal (result unit string)
-    (Error (bus1 ^ " does not answer 1000 ms after its reset"))
-    (Function.reset f)
-
-(* A pin from another domain runs while the owner releases the function: the
-   release waits for it, so no pin reaches the machine after the release, and a
-   pin that starts after the release begins is refused. The pin is held inside
-   the function, before the machine; the release is sampled while it waits. *)
-let test_release_waits_pin () =
-  let _, f, fake = take_fake () in
-  let inside = Atomic.make false and go = Atomic.make false in
-  fake.before_pin <-
-    (fun () ->
-      Atomic.set inside true;
-      ignore (poll (fun () -> Atomic.get go)));
-  let pinning = Domain.spawn (fun () -> Function.pin f 0 4096) in
-  equal ~msg:"the pin is inside" bool true (poll (fun () -> Atomic.get inside));
-  fake.before_pin <- ignore;
-  let releasing = Domain.spawn (fun () -> Function.release f) in
-  Unix.sleepf 0.05;
-  equal ~msg:"the release waits for the pin" bool false
-    (Mutex.protect fake.lock (fun () -> fake.released));
-  Atomic.set go true;
-  ignore (require_ok (Domain.join pinning));
-  Domain.join releasing;
-  equal ~msg:"misuse that reached the machine" (list string) []
-    (Mutex.protect fake.lock (fun () -> fake.wrong));
-  equal ~msg:"released" bool true fake.released;
-  raises_match (Exn.invalid_arg ~substring:"released") (fun () ->
-      Function.pin f 0 4096)
-
-let uses =
-  group ~timeout:patience "uses"
-    [
-      test "a function's windows, BARs and runs are its machine's"
-        test_machine_values;
-      test
-        "a release waits for a pin from another domain, and refuses later ones \
-         (sampled)"
-        test_release_waits_pin;
-      test "a BAR window is the rest of the BAR from its offset by default"
-        test_defaults;
-      test "a reset asks the machine, then waits for the function to answer"
-        test_reset;
-      test "a function that does not answer after its reset fails"
-        test_reset_silent;
-      test "a window of no bytes inside a BAR is mapped" test_empty;
-      test "another machine's window at the same address is refused"
-        test_other_machine;
-    ]
-
-(* Misuse at the bounds, each refused before the machine is asked. *)
-let refused name ?page ?addressing use =
-  test name (fun () ->
-      let _, f, fake = take_fake ?page ?addressing () in
-      raises_match (Exn.invalid_arg ~substring:"") (fun () -> use f);
-      equal ~msg:"what the machine was asked" (list string) [] fake.calls)
-
-let misuse_refused =
-  group ~timeout:patience "misuse is refused before the machine is asked"
-    [
-      refused "a BAR index below zero" (fun f -> Function.bar f (-1));
-      refused "the least BAR index" (fun f -> Function.bar f min_int);
-      refused "a map of a BAR index below zero" (fun f -> map f (-1));
-      refused "a pin off a page" ~page:16384 (fun f ->
-          Function.pin f (0x5000_0000 + 4096) 4096);
-      refused "DMA memory at an address off a page" ~page:16384 (fun f ->
-          Function.alloc_dma ~va:(va_base + 4096) f 16384);
-      refused "contiguous DMA memory above 2 MiB" (fun f ->
-          Function.alloc_dma ~contiguous:true f ((2 * mib) + 1));
-      refused "a huge page at an address off 2 MiB" ~page:16384
-        ~addressing:Physical (fun f ->
-          Function.alloc_dma ~contiguous:true ~va:(va_base + 16384) f 32768);
-      refused "DMA memory of no bytes" (fun f -> alloc_dma f 0);
-      refused "DMA memory of more bytes than an int holds" (fun f ->
-          alloc_dma f max_int);
-      refused "a pin of no bytes" (fun f -> Function.pin f 0x5000_0000 0);
-      refused "configuration space below its first byte" (fun f ->
-          Function.config8 f (-1));
-      refused "configuration space past its 4096 bytes" (fun f ->
-          Function.set_config32 f 4094 0);
-      refused "an interrupt wait below zero" (fun f ->
-          Function.interrupt f (-1));
-      refused "DMA memory at an address no reservation holds" (fun f ->
-          Function.alloc_dma ~va:(va_base + reserved) f 4096);
-      refused "DMA memory that ends past its reservation" (fun f ->
-          Function.alloc_dma ~va:(va_base + reserved - 4096) f 8192);
-    ]
-
-(* Sequences against a model
-
-   The reference is a model of what the interface promises: which windows are
-   live, which ranges are pinned, which functions are held. The fake machine
-   checks the other side: what reached it is never misuse, and its live windows,
-   memory and pins are the model's. *)
-
-type m_ref = {
-  r_page : int;
-  r_addressing : Machine.addressing;
-  mutable r_held : string list;
-  mutable r_fns : f_ref list;
-}
-
-and f_ref = {
-  rm : m_ref;
-  r_bus : string;
-  r_config : Bytes.t;
-  mutable r_released : bool;
-  mutable r_maps : w_ref list;
-  mutable r_dmas : w_ref list;
-  mutable r_pins : (int * int) list;
-}
-
-(* [at] is the address asked for DMA memory. *)
-and w_ref = {
-  owner : f_ref;
-  kind : [ `Bar of int * bool | `Dma ];  (** A BAR's index and [combine]. *)
-  len : int;
-  at : int option;
-}
-
-let sorted l = List.sort_uniq compare l
-let machine_t = abstract "m"
-
-let fn_t =
-  abstract "f" ~invariant:(fun r ((f : Function.t), (fake : fn_fake)) ->
-      equal ~msg:"released" bool r.r_released (Function.released f);
-      equal ~msg:"misuse that reached the machine" (list string) [] fake.wrong;
-      equal ~msg:"the machine's BAR windows" (slist int compare)
-        (List.map (fun w -> w.len) r.r_maps)
-        (List.map snd fake.maps);
-      equal ~msg:"the machine's DMA memory" (slist int compare)
-        (List.map (fun w -> w.len) r.r_dmas)
-        (List.map snd fake.dmas);
-      if not r.r_released then
-        equal ~msg:"the machine's pins" runs_w (sorted r.r_pins)
-          (sorted fake.pins))
-
-let win_t =
-  abstract "w" ~invariant:(fun r w ->
-      equal ~msg:"length" int r.len (Window.length w))
-
-let pp_int ppf = Format.fprintf ppf "%#x"
-let ints l = Gen.of_list ~pp:pp_int l
-
-let pp_opt ppf = function
-  | None -> Format.pp_print_string ppf "None"
-  | Some x -> pp_int ppf x
-
-let opt_ints l = Gen.of_list ~pp:pp_opt (None :: List.map Option.some l)
-
-let make_ref (page, a) =
-  { r_page = page; r_addressing = a; r_held = []; r_fns = [] }
-
-let make_sys (page, a) = fake_machine ~page ~addressing:a ()
-
-exception Refused
-
-let take_ref m bus =
-  if List.mem bus m.r_held || bus = absent then raise Refused;
-  m.r_held <- bus :: m.r_held;
-  let f =
-    {
-      rm = m;
-      r_bus = bus;
-      r_config = Bytes.init config_size (fun i -> Char.chr (i land 0xff));
-      r_released = false;
-      r_maps = [];
-      r_dmas = [];
-      r_pins = [];
-    }
-  in
-  m.r_fns <- f :: m.r_fns;
-  f
-
-let take_sys ((machine : Machine.t), (m : machine_fake)) bus =
-  match Function.take machine bus with
-  | Ok f -> (f, List.hd m.taken)
-  | Error _ -> raise Refused
-
-let release_ref f =
-  if not f.r_released then begin
-    f.r_released <- true;
-    f.r_maps <- [];
-    f.rm.r_held <- List.filter (( <> ) f.r_bus) f.rm.r_held
-  end
-
-(* Each refusal is labelled, so a run that never reaches one fails. *)
-let misuse label =
-  cover label true;
-  invalid_arg label
-
-let live f = if f.r_released then misuse "a released function"
-
-(* Without [combine] a window maps its BAR as the live windows of the BAR do,
-   uncached where there is none. *)
-let map_ref f combine i off len =
-  live f;
-  if i < 0 then misuse "a BAR index below zero";
-  match bar_of i with
-  | None -> misuse "no such BAR"
-  | Some (_, size) ->
-      let off = Option.value off ~default:0 in
-      let len = Option.value len ~default:(size - off) in
-      if off < 0 || len < 0 || off > size - len then
-        misuse "bytes outside the BAR";
-      let way c = List.exists (fun w -> w.kind = `Bar (i, c)) f.r_maps in
-      let combine = match combine with Some c -> c | None -> way true in
-      if way (not combine) then misuse "a BAR mapped the other way";
-      let w = { owner = f; kind = `Bar (i, combine); len; at = None } in
-      f.r_maps <- w :: f.r_maps;
-      w
-
-let map_sys (f, _) combine i off len = map ?combine ?off ?length:len f i
-let without w l = List.filter (fun x -> x != w) l
-
-(* Windows are values: a window equal to a live one, as DMA memory asked twice
-   at one address of one machine gives, names it. *)
-let live_one w l =
-  List.find_opt
-    (fun x ->
-      x == w
-      || w.at <> None && x.at = w.at && x.len = w.len
-         && x.owner.rm == w.owner.rm)
-    l
-
-let unmap_ref f w =
-  if not (w.owner == f && List.memq w f.r_maps) then
-    misuse "a window that is not the function's live BAR window";
-  f.r_maps <- without w f.r_maps
-
-let alloc_at f contiguous va n =
-  live f;
-  let page = f.rm.r_page in
-  let bytes = round_up n page in
-  (match va with
-  | Some v when v mod page <> 0 -> misuse "an address off a page"
-  | _ when contiguous && bytes > 2 * mib -> misuse "contiguous above 2 MiB"
-  | Some v
-    when contiguous
-         && f.rm.r_addressing = Physical
-         && bytes > page
-         && v mod (2 * mib) <> 0 ->
-      misuse "a huge page off 2 MiB"
-  | Some v ->
-      let huge = contiguous && f.rm.r_addressing = Physical && bytes > page in
-      let mapped = if huge then 2 * mib else bytes in
-      if v + mapped > va_base + reserved then
-        misuse "an address no reservation holds"
-  | _ -> ());
-  let used =
-    List.concat_map
-      (fun g ->
-        List.filter_map
-          (fun w -> Option.map (fun a -> (a, w.len)) w.at)
-          g.r_dmas)
-      f.rm.r_fns
-  in
-  (match va with
-  | Some a when List.exists (fun r -> not (disjoint r (a, bytes))) used ->
-      cover "addresses in use" true;
-      raise In_use
-  | _ -> ());
-  let w = { owner = f; kind = `Dma; len = bytes; at = va } in
-  f.r_dmas <- w :: f.r_dmas;
-  w
-
-(* Reserved addresses: the fake maps memory at any [va]. *)
-let alloc_sys (f, _) contiguous va n =
-  let va = Option.map (fun v -> va_base + v) va in
-  match Function.alloc_dma ~contiguous ?va f n with
-  | Ok (Some (w, _)) -> w
-  | Ok None | Error _ -> raise In_use
-
-let alloc_ref f contiguous va n =
-  alloc_at f contiguous (Option.map (fun v -> va_base + v) va) n
-
-let free_ref f w =
-  match live_one w f.r_dmas with
-  | None -> misuse "memory that is not the function's live DMA memory"
-  | Some w -> f.r_dmas <- without w f.r_dmas
-
-let pin_ref f a n =
-  live f;
-  if a mod f.rm.r_page <> 0 then misuse "a pin off a page";
-  f.r_pins <- (a, n) :: f.r_pins
-
-let unpin_ref f a n =
-  match remove (a, n) f.r_pins with
-  | None -> misuse "a range not pinned"
-  | Some l ->
-      cover "a range pinned twice, unpinned once" (List.mem (a, n) l);
-      f.r_pins <- l
-
-let pin_base = 0x5000_0000
-
-let config_ref f off n =
-  live f;
-  let x = ref 0 in
-  for i = n - 1 downto 0 do
-    x := (!x lsl 8) lor Bytes.get_uint8 f.r_config (off + i)
-  done;
-  !x
-
-let set_config_ref f off n x =
-  live f;
-  for i = 0 to n - 1 do
-    Bytes.set_uint8 f.r_config (off + i) ((x lsr (8 * i)) land 0xff)
-  done
-
-(* The access of width [n] bytes. *)
-let config_sys f off = function
-  | 1 -> Function.config8 f off
-  | 2 -> Function.config16 f off
-  | _ -> Function.config32 f off
-
-let set_config_sys f off n x =
-  match n with
-  | 1 -> Function.set_config8 f off x
-  | 2 -> Function.set_config16 f off x
-  | _ -> Function.set_config32 f off x
-
-let bar_ref f i =
-  live f;
-  if i < 0 then misuse "a BAR index below zero";
-  bar_of i
-
-let page_gen = ints [ 4096; 16384 ]
-
-let addressing_gen =
-  Gen.of_list
-    ~pp:(fun ppf a ->
-      Format.pp_print_string ppf
-        (match a with Machine.Physical -> "Physical" | Iommu -> "Iommu"))
-    [ Machine.Physical; Iommu ]
-
-let machine_cmd =
-  command "machine"
-    (Gen.pair page_gen addressing_gen @-> makes machine_t)
-    make_ref make_sys
-
-let take_cmd =
-  command "take"
-    (machine_t
-    ^-> Gen.of_list ~pp:Format.pp_print_string [ bus1; bus2; absent ]
-    @-> makes fn_t)
-    take_ref take_sys
-
-let fsys g (f, _) = g f
-
-(* Inputs at each bound: empty windows, addresses off a 16 KiB page, contiguous
-   memory above 2 MiB, huge pages off 2 MiB and memory past the reservation
-   among them. *)
-let size = 64 * 1024
-let offs = [ -1; 0; 1; 16; size - 1; size; size + 1; max_int ]
-let map_lens = [ -1; 0; 1; 16; 4096; size - 1; size + 1; max_int ]
-let lens = [ 1; 4095; 4096; 4097; 16385; (2 * mib) - 1; 2 * mib; (2 * mib) + 1 ]
-let vas = [ 0; 4096; 16384; 2 * mib; 4 * mib; reserved - 4096; reserved ]
-let pin_addrs = ints (List.map (( + ) pin_base) [ 0; 4096; 16384 ])
-let pin_lens = ints [ 1; 16384 ]
-let pinned = among (pair int int) fn_t (fun f -> sorted f.r_pins)
-
-let dma_cmds =
-  [
-    command "alloc_dma"
-      (fn_t ^-> Gen.bool @-> opt_ints vas @-> ints lens @-> makes win_t)
-      alloc_ref alloc_sys;
-    command "free_dma"
-      (fn_t ^-> win_t ^-> returns unit)
-      free_ref (fsys Function.free_dma);
-    command "pin"
-      (fn_t ^-> pin_addrs @-> pin_lens @-> returns unit)
-      pin_ref
-      (fun (f, _) a n -> ignore (pin f a n : (int * int) list));
-    command "unpin"
-      (fn_t ^-> pin_addrs @-> pin_lens @-> returns unit)
-      unpin_ref (fsys Function.unpin);
-    command "unpin a pinned range"
-      (fn_t ^-> pinned ^-> returns unit)
-      (fun f (a, n) -> unpin_ref f a n)
-      (fun (f, _) (a, n) -> Function.unpin f a n);
-  ]
-
-let commands =
-  [
-    machine_cmd;
-    take_cmd;
-    command "release"
-      (fn_t ^-> returns unit)
-      release_ref (fsys Function.release);
-    command "released"
-      (fn_t ^-> returns bool)
-      (fun f -> f.r_released)
-      (fsys Function.released);
-    command "bar"
-      (fn_t
-      ^-> ints [ min_int; -1; 0; 1; 2; 5; 6 ]
-      @-> returns (option (pair int int)))
-      bar_ref (fsys Function.bar);
-    command "map"
-      (fn_t ^-> Gen.option Gen.bool
-      @-> ints [ -1; 0; 1; 2; 6 ]
-      @-> opt_ints offs @-> opt_ints map_lens @-> makes win_t)
-      map_ref map_sys;
-    command "unmap"
-      (fn_t ^-> win_t ^-> returns unit)
-      unmap_ref (fsys Function.unmap);
-    command "pin a pinned range again, then unpin it"
-      (fn_t ^-> pinned ^-> returns unit)
-      (fun f (a, n) ->
-        pin_ref f a n;
-        unpin_ref f a n)
-      (fun (f, _) (a, n) ->
-        ignore (pin f a n : (int * int) list);
-        Function.unpin f a n);
-    command "config"
-      (fn_t
-      ^-> ints [ 0; 4; 60; 64; 256; 4092 ]
-      @-> ints [ 1; 2; 4 ]
-      @-> returns int)
-      config_ref (fsys config_sys);
-    command "set_config"
-      (fn_t
-      ^-> ints [ 0; 4; 64; 4092 ]
-      @-> ints [ 1; 2; 4 ]
-      @-> ints [ 0; 0xff; 0x1234; 0xdead_beef; -1; max_int; min_int ]
-      @-> returns unit)
-      set_config_ref (fsys set_config_sys);
-  ]
-  @ dma_cmds
-
-let sequences =
-  stateful "takes, uses and releases behave as the model" ~count:300 ~steps:30
-    commands
-
-(* Pins and DMA memory from two domains at once. A pin lost by a race shows when
-   the suffix unpins it. The invariant runs only before the parallel calls, so
-   misuse that reached the machine is read by a command. Each program runs 50
-   times, each run a hand-off between domains that waits for a time slice when
-   the processors are busy, and a minor collection stops both domains: under the
-   sanitize profile's collector stress, with suites running side by side, the
-   test takes ten times its second, so its limit is three patiences. *)
-let parallel =
-  stateful "pins and DMA memory are counted the same from two domains"
-    ~timeout:(3. *. patience) ~domains:2 ~count:60
-    ([
-       machine_cmd;
-       take_cmd;
-       command "misuse that reached the machine"
-         (fn_t ^-> returns (list string))
-         (fun _ -> [])
-         (fun (_, fake) -> Mutex.protect fake.lock (fun () -> fake.wrong));
-     ]
-    @ dma_cmds)
-
-let model = group ~timeout:patience "against a model" [ sequences; parallel ]
 
 (* This machine *)
 
@@ -1083,116 +150,6 @@ let test_vfio () =
   equal ~msg:"a pin is one run" int 1 (List.length pinned);
   Function.unpin f (Window.address w) (Window.length w);
   List.iter (fun (w, _) -> Function.free_dma f w) allocs
-
-(* Failing at any access *)
-
-(* A machine of one function whose BAR 0 is [base, base + 4096) of the far
-   machine [far], as a transport reaches it. *)
-let far_function far =
-  let tr = Window.unsafe_transport far and base = 0x10_0000 in
-  let fn =
-    {
-      Machine.addressing = Iommu;
-      config8 = (fun _ -> 0);
-      config16 = (fun off -> if off = 0 then 0x1002 else 0);
-      config32 = (fun _ -> 0);
-      set_config8 = (fun _ _ -> ());
-      set_config16 = (fun _ _ -> ());
-      set_config32 = (fun _ _ -> ());
-      bar = (fun i -> if i = 0 then Some (base, 4096) else None);
-      map = (fun ~combine:_ _ off n -> Ok (Window.through tr (base + off) n));
-      unmap = ignore;
-      interrupt = (fun _ -> false);
-      reset = (fun () -> Ok ());
-      alloc_dma = (fun ~contiguous:_ ~va:_ _ -> Error "far:1: no memory");
-      free_dma = ignore;
-      pin = (fun _ _ -> Error "far:1: no memory");
-      unpin = (fun _ _ -> ());
-      release = ignore;
-    }
-  in
-  let m =
-    Machine.make ~name:"far:1"
-      {
-        transport = tr;
-        page = 4096;
-        functions = (fun () -> []);
-        take = (fun _ -> Ok fn);
-        reserve = (fun ~base:_ _ -> Ok ());
-      }
-  in
-  (m, require_ok (Function.take m bus1))
-
-let data = "0123456789abcdef"
-
-(* A driver's step with the checks it owes: a command, a wait for the device's
-   ready bit, a copy out of 16 bytes, then [Function.failed] before the bytes
-   leave. Three accesses reach the transport. *)
-let step m f w =
-  Window.set32 w 0 1;
-  let ready () = Window.get32 w 4 land 1 = 1 in
-  if not (Machine.wait m ~us:1_000_000 ready) then
-    Error (Option.value (Function.failed f) ~default:"the device is not ready")
-  else
-    let s = Window.read w 8 16 in
-    match Function.failed f with Some why -> Error why | None -> Ok s
-
-let accesses = 3
-
-(* Whichever access the transport fails at, the step ends in the machine's
-   reason, never in bytes: a read through it gives all ones, and the checks
-   catch them. *)
-let fails_at_any_access =
-  prop "a transport failing at access k ends a step in Error, never in bytes"
-    (Gen.int_range 0 (accesses + 2))
-    (fun k ->
-      let far = far 0x10_0000 4096 in
-      let m, f = far_function far in
-      let w = require_ok (Function.map f 0) in
-      Window.set32 w 4 1;
-      Window.write w 8 data;
-      break_at far k;
-      cover "fails before the copy is checked" (k < accesses);
-      cover "never fails" (k >= accesses);
-      let want =
-        if k < accesses then Error "far: the link broke" else Ok data
-      in
-      equal (result string string) want (step m f w))
-
-let test_failed_function () =
-  let far = far 0x10_0000 4096 in
-  let m, f = far_function far in
-  equal ~msg:"live" (option string) None (Function.failed f);
-  break far;
-  equal ~msg:"its machine failed" (option string) (Some "far: the link broke")
-    (Function.failed f);
-  let w = require_ok (Function.map f 0) in
-  equal ~msg:"a read gives all ones" int 0xffff_ffff (Window.get32 w 4);
-  Window.set32 w 4 0;
-  equal ~msg:"a write is dropped" string (String.make 16 '\xff')
-    (Window.read w 8 16);
-  equal ~msg:"a wait is false" bool false
-    (Machine.wait m ~us:1_000_000 (fun () -> true));
-  equal ~msg:"a reset is refused" (result unit string)
-    (Error "far: the link broke") (Function.reset f)
-
-(* A function whose vendor ID reads all ones left the bus. *)
-let test_left_bus () =
-  let _, f, _ = take_fake () in
-  equal ~msg:"live" (option string) None (Function.failed f);
-  Function.set_config16 f 0 0xffff;
-  equal (option string)
-    (Some (bus1 ^ " left the bus: its vendor ID reads 0xffff"))
-    (Function.failed f)
-
-let failures =
-  group ~timeout:patience "failures"
-    [
-      fails_at_any_access;
-      test "a function of a failed machine is failed, its accesses all ones"
-        test_failed_function;
-      test "a function whose vendor ID reads 0xffff left the bus" test_left_bus;
-    ]
 
 (* A machine's files *)
 
@@ -1308,6 +265,8 @@ let test_physical () =
       let fn = Tree.gpu ?group "0000:03:00.0" in
       let m = Machine.at (Tree.make ~groups ~noiommu [ fn ]) in
       let f = require_ok ~msg (Function.take m fn.bus) in
+      equal ~msg:"bus" string fn.bus (Function.bus f);
+      equal ~msg:"released" bool false (Function.released f);
       equal ~msg addressing Physical (Function.addressing f);
       equal ~msg:"vendor" int 0x1002 (Function.config16 f 0);
       equal ~msg:"device" int 0x744c (Function.config16 f 2);
@@ -1430,6 +389,29 @@ let set_command root bus v =
   ignore (Unix.lseek fd command SEEK_SET);
   ignore (Unix.write fd b 0 2)
 
+(* Whatever the command register holds, set_bus_master changes its bus master
+   bit alone. *)
+let test_set_bus_master =
+  prop
+    "set_bus_master sets or clears the command register's bus master bit alone"
+    ~count:50
+    (Gen.pair (Gen.with_pp pp_hex (Gen.int_range 0 0xffff)) Gen.bool)
+    (fun (found, on) ->
+      if not on_linux then
+        skip ~reason:"flock on a function's file needs Linux" ();
+      let fn = Tree.gpu "0000:03:00.0" in
+      let root = Tree.make [ fn ] in
+      set_command root fn.bus found;
+      let f = require_ok (Function.take (Machine.at root) fn.bus) in
+      Fun.protect ~finally:(fun () -> Function.release f) @@ fun () ->
+      let before = command_in root fn.bus in
+      cover "the bit set before" (before land bus_master <> 0);
+      cover "the bit clear before" (before land bus_master = 0);
+      Function.set_bus_master f on;
+      equal hex
+        (if on then before lor bus_master else before land lnot bus_master)
+        (command_in root fn.bus))
+
 (* A function taken physically, with no interrupt route through VFIO, signals no
    legacy interrupt while taken: nothing handles it, and bus mastering does not
    gate it. Release gives its INTx back as it found it. *)
@@ -1541,6 +523,7 @@ let tree_files =
         "a prefetchable BAR of a function taken physically combines where \
          asked, one way at a time"
         test_combining;
+      test_set_bus_master;
       test "a function taken physically stops mastering the bus when released"
         test_release_stops_dma;
       cases
@@ -1700,6 +683,42 @@ let test_memory_file () =
   Function.release f;
   equal ~msg:"gone once released" (list string) [] (memory_files root)
 
+(* Taken physically, a function pins memory alloc_dma gave on its machine, for
+   itself or another function: its huge page stays through its free until each
+   pin is unpinned. *)
+let test_pin_dma () =
+  with_fixtures 2 @@ fun root fns ->
+  let f = List.nth fns 0 and g = List.nth fns 1 in
+  reserved f;
+  let va = free_base + (2 * mib) in
+  ignore (frames root va (64 * kib));
+  let w, runs = given (Function.alloc_dma ~va f (64 * kib)) in
+  let n = Window.length w in
+  equal ~msg:"pinned for itself, at its runs"
+    (list (pair hex int))
+    runs (pin f va n);
+  equal ~msg:"pinned for another function, at its runs"
+    (list (pair hex int))
+    runs (pin g va n);
+  let file = memory_file root in
+  Function.free_dma f w;
+  equal ~msg:"kept through its free" int huge (Tree.stored file);
+  Function.unpin f va n;
+  equal ~msg:"kept while one pin holds it" int huge (Tree.stored file);
+  Function.unpin g va n;
+  equal ~msg:"given back once unpinned" int 0 (Tree.stored file)
+
+(* Memory another machine's function allocated is not this machine's. *)
+let test_pin_other_machine () =
+  with_fixture @@ fun root f ->
+  with_fixture @@ fun _ f' ->
+  reserved f;
+  let va = free_base + (2 * mib) in
+  ignore (frames root va (64 * kib));
+  let w, _ = given (Function.alloc_dma ~va f (64 * kib)) in
+  contains ~sub:"alloc_dma" (require_error (Function.pin f' va (64 * kib)));
+  Function.free_dma f w
+
 (* A function is named by its machine and bus: the release of one leaves the
    memory of a function at the same bus on another machine. *)
 let test_memory_machines () =
@@ -1722,7 +741,7 @@ let test_memory_machines () =
   Function.free_dma f w
 
 let fixture_gpus ?(reset = fun _ -> Ok ()) () =
-  Gpus.make ~memory_bar:0
+  Gpus.make ~name:"fixture" ~memory_bar:0
     ~nodes:(fun ~root:_ _ -> [])
     ~unreleased:(fun ~root:_ _ -> None)
     ~teardown_ms:0 ~reset
@@ -1749,7 +768,7 @@ let hold_memory how root bus va =
     (* Opens the GPU, allocates its memory, renews it, and dies. *)
     let g = fixture_gpus () in
     ignore
-      (Gpus.open_ g (Machine.at root) 0 ~at_exit:ignore (fun h f ->
+      (Gpus.open_ g (Machine.at root) 0 (fun h f ->
            ok (Machine.reserve (Function.machine f) ~base:free_base (8 * mib));
            if Option.is_none (ok (Function.alloc_dma ~va f mib)) then
              exit refused_code;
@@ -1806,9 +825,8 @@ let wait_exit pid =
   | Some s -> s
   | None -> assert false
 
-(* A vendor whose resets are counted in [n], each answering [answer ()]. *)
-(* A fixture tree whose one GPU a child that allocated its memory left by dying
-   of SIGKILL: its root and bus. *)
+(* The root of a fixture tree whose one GPU a child that allocated its memory
+   left by dying of SIGKILL. *)
 let left_by_death ?(how = "die") () =
   let fn = Tree.gpu "0000:03:00.0" in
   let root = Tree.make [ fn ] in
@@ -1822,14 +840,21 @@ let left_by_death ?(how = "die") () =
   | _ -> fail "the process holding the function did not die by SIGKILL");
   root
 
-let counted_gpus ?(answer = fun () -> Ok ()) n =
+(* A vendor whose resets are counted in [n]. *)
+let counted_gpus n =
   fixture_gpus
     ~reset:(fun _ ->
       Atomic.incr n;
-      answer ())
+      Ok ())
     ()
 
-let open_held g m = Gpus.open_ g m 0 ~at_exit:ignore (fun h _ -> Ok h)
+(* [kept h] gives [h] a clean stop and keeps it. *)
+let kept h =
+  Gpus.set_stop h (fun () -> `Clean);
+  Ok h
+
+let open_held g m = Gpus.open_ g m 0 (fun h _ -> kept h)
+let stop h = ignore (Gpus.stop h : [ `Stopped | `Unknown ])
 
 (* What a process that died left stays through another take and release, which
    does not reset the GPU, and goes once its GPU is reset. *)
@@ -1994,42 +1019,6 @@ let test_left_files () =
   require_ok (Gpus.reset (fixture_gpus ()) m 1);
   equal ~msg:"gone at its GPU's reset" (list string) [] (hugepages root)
 
-(* An open of a GPU a process that died left reaching memory resets it first,
-   under its take, and gives that memory back; one nobody left is not reset. *)
-let test_open_after_death () =
-  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
-  let fn = Tree.gpu "0000:03:00.0" in
-  let root = Tree.make [ fn ] in
-  let va = free_base + (6 * mib) in
-  ignore (frames root va mib);
-  let resets = Atomic.make 0 in
-  let g = counted_gpus resets and m = Machine.at root in
-  Gpus.release (require_ok (open_held g m));
-  equal ~msg:"nobody left it: no reset" int 0 (Atomic.get resets);
-  let pid, feed, said = holder "die" root fn.bus va in
-  Unix.close feed;
-  Unix.close said;
-  (match wait_exit pid with
-  | WSIGNALED s when s = Sys.sigkill -> ()
-  | _ -> fail "the process holding the function did not die by SIGKILL");
-  equal ~msg:"left by the dead process" int 1 (List.length (memory_files root));
-  let h = require_ok (open_held g m) in
-  equal ~msg:"reset before the driver's start" int 1 (Atomic.get resets);
-  equal ~msg:"its memory given back" (list string) [] (memory_files root);
-  Gpus.release h
-
-(* A vendor's reset that raises for a GPU a process that died left passes
-   through, the GPU given back and lost. *)
-let test_open_after_death_raising () =
-  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
-  let root = left_by_death () in
-  let resets = Atomic.make 0 and m = Machine.at root in
-  let g = counted_gpus ~answer:(fun () -> raise Exit) resets in
-  raises Exit (fun () -> ignore (open_held g m));
-  contains ~msg:"lost until reset" ~sub:"was lost"
-    (require_error (open_held g m));
-  Function.release (require_ok (Function.take m "0000:03:00.0"))
-
 (* A driver that finds firmware it cannot continue from renews the GPU it holds:
    the vendor's reset runs, the memory of processes that died goes, and the
    process's own stays listed, so that its death leaves the GPU to be reset by
@@ -2039,8 +1028,7 @@ let test_renew () =
   let root = left_by_death () in
   let m = Machine.at root and resets = Atomic.make 0 in
   let renewing g =
-    Gpus.open_ g m 0 ~at_exit:ignore (fun h _ ->
-        Result.map (fun () -> h) (Gpus.renew h))
+    Gpus.open_ g m 0 (fun h _ -> Result.bind (Gpus.renew h) (fun () -> kept h))
   in
   let g = counted_gpus resets in
   Atomic.set resets 0;
@@ -2048,58 +1036,14 @@ let test_renew () =
   equal ~msg:"reset at open, then renewed" int 2 (Atomic.get resets);
   equal ~msg:"the dead process's memory given back" (list string) []
     (memory_files root);
-  Gpus.release h;
+  stop h;
   let root = left_by_death ~how:"renew-die" () in
   equal ~msg:"the renewing process's memory left" int 1
     (List.length (memory_files root));
   let resets = Atomic.make 0 in
-  Gpus.release (require_ok (open_held (counted_gpus resets) (Machine.at root)));
+  stop (require_ok (open_held (counted_gpus resets) (Machine.at root)));
   equal ~msg:"reset by the next open" int 1 (Atomic.get resets);
   equal ~msg:"and given back" (list string) [] (memory_files root)
-
-(* A renew whose reset fails or raises gives the GPU back, lost. *)
-let test_renew_fails () =
-  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
-  let root = Tree.make [ Tree.gpu "0000:03:00.0" ] in
-  let m = Machine.at root and resets = Atomic.make 0 in
-  let renewing g =
-    Gpus.open_ g m 0 ~at_exit:ignore (fun h _ ->
-        Result.map (fun () -> h) (Gpus.renew h))
-  in
-  let g =
-    counted_gpus ~answer:(fun () -> Error "fake: the GPU is stuck") resets
-  in
-  contains ~msg:"the reset's reason" ~sub:"stuck" (require_error (renewing g));
-  contains ~msg:"lost until reset" ~sub:"was lost"
-    (require_error (open_held g m));
-  let g = counted_gpus ~answer:(fun () -> raise Exit) resets in
-  raises Exit (fun () -> ignore (renewing g));
-  contains ~msg:"lost after a raise" ~sub:"was lost"
-    (require_error (open_held g m))
-
-(* A GPU a process that died left whose reset fails is lost, its memory kept. *)
-let test_open_after_death_stuck () =
-  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
-  let fn = Tree.gpu "0000:03:00.0" in
-  let root = Tree.make [ fn ] in
-  let va = free_base + (6 * mib) in
-  ignore (frames root va mib);
-  let pid, feed, said = holder "die" root fn.bus va in
-  Unix.close feed;
-  Unix.close said;
-  (match wait_exit pid with
-  | WSIGNALED s when s = Sys.sigkill -> ()
-  | _ -> fail "the process holding the function did not die by SIGKILL");
-  let left = memory_files root in
-  let resets = Atomic.make 0 and m = Machine.at root in
-  let g =
-    counted_gpus ~answer:(fun () -> Error "fake: the GPU is stuck") resets
-  in
-  contains ~msg:"the reset's reason" ~sub:"stuck"
-    (require_error (open_held g m));
-  equal ~msg:"its memory kept" (list string) left (memory_files root);
-  contains ~msg:"lost until reset" ~sub:"was lost"
-    (require_error (open_held g m))
 
 (* A huge page is one block: frames that are not, as a file system that is no
    hugetlbfs gives, are refused, naming the mount. *)
@@ -2182,6 +1126,14 @@ let system_memory =
         test_dma;
       test "a function taken physically is refused the process's pages"
         test_pin_physical;
+      test
+        "a function taken physically pins memory alloc_dma gave, its own or \
+         another function's, until unpinned"
+        test_pin_dma;
+      test
+        "a function taken physically is refused memory another machine's \
+         function allocated"
+        test_pin_other_machine;
       test "contiguous memory is one run at the reserved address asked"
         test_contiguous;
       test
@@ -2198,23 +1150,9 @@ let system_memory =
          child holds)"
         test_reset_held;
       test
-        "an open resets a GPU a process that died left reaching memory, giving \
-         it back (SIGKILL in a child)"
-        test_open_after_death;
-      test
-        "an open whose reset of a GPU a process that died left fails leaves it \
-         lost (SIGKILL in a child)"
-        test_open_after_death_stuck;
-      test
-        "an open whose reset of a GPU a process that died left raises gives it \
-         back, lost (SIGKILL in a child)"
-        test_open_after_death_raising;
-      test
         "a renew resets the GPU held and gives back only what processes that \
          died left (SIGKILL in a child)"
         test_renew;
-      test "a renew whose reset fails or raises gives the GPU back, lost"
-        test_renew_fails;
       test
         "a released function's memory stays, and a later take shares its page"
         test_released_block;
@@ -2243,6 +1181,474 @@ let system_memory =
       test "the 2 MiB block around memory must be reserved" test_block_reserved;
     ]
 
+(* Taking and using a function of a machine's files *)
+
+let test_take_no_bus () =
+  let m = Machine.at (Tree.make []) in
+  List.iter
+    (fun bus ->
+      equal ~msg:(String.escaped bus) (result pass string)
+        (Error (strf "%S is no PCI bus address, expected DDDD:BB:DD.F" bus))
+        (Function.take m bus))
+    not_buses
+
+(* After release, all but free_dma, unpin and wait raise. *)
+let test_released () =
+  with_fixture @@ fun root f ->
+  reserved f;
+  let va = free_base + (2 * mib) and page = Machine.page Machine.this in
+  ignore (frames root va page);
+  let d, _ = given (Function.alloc_dma ~va f page) in
+  ignore (pin f va page : (int * int) list);
+  Function.release f;
+  List.iter
+    (fun (name, use) ->
+      raises_match ~msg:name (Exn.invalid_arg ~substring:"released") use)
+    [
+      ("failed", fun () -> ignore (Function.failed f : string option));
+      ("config16", fun () -> ignore (Function.config16 f 0 : int));
+      ("set_config16", fun () -> Function.set_config16 f 0 0);
+      ("bar", fun () -> ignore (Function.bar f 0 : (int * int) option));
+      ("map", fun () -> ignore (Function.map f 0 : _ result));
+      ("interrupt", fun () -> ignore (Function.interrupt f 0 : bool));
+      ("reset", fun () -> ignore (Function.reset f : _ result));
+      ("alloc_dma", fun () -> ignore (Function.alloc_dma f page : _ result));
+      ("pin", fun () -> ignore (Function.pin f va page : _ result));
+      ("set_bus_master", fun () -> Function.set_bus_master f false);
+    ];
+  equal ~msg:"a wait" (result unit string) (Ok ())
+    (Function.wait f ~us:0 "a wait" (fun () -> true));
+  Function.free_dma f d;
+  Function.unpin f va page;
+  Function.release f
+
+(* BAR 2 of the fixture's GPU is 2 MiB. *)
+let bar2 = 2 * mib
+
+let test_defaults () =
+  with_fixture @@ fun _ f ->
+  let lengths =
+    List.map Window.length [ map f 2; map f 2 ~off:256; map f 2 ~length:16 ]
+  in
+  equal (list int) [ bar2; bar2 - 256; 16 ] lengths
+
+(* Bytes [0, 0) at the BAR's size lie in the BAR, as a window's [sub] takes
+   them. *)
+let test_empty () =
+  with_fixture @@ fun _ f ->
+  equal ~msg:"at the start" int 0 (Window.length (map f 2 ~length:0));
+  equal ~msg:"at the end" int 0 (Window.length (map f 2 ~off:bar2))
+
+let test_other_machine () =
+  with_fixture @@ fun _ f ->
+  with_fixture @@ fun _ g ->
+  let w = map g 2 in
+  raises_match (Exn.invalid_arg ~substring:"") (fun () -> Function.unmap f w);
+  Function.unmap g w
+
+(* A function whose vendor ID reads all ones left the bus. *)
+let test_left_bus () =
+  with_fixture @@ fun _ f ->
+  equal ~msg:"live" (option string) None (Function.failed f);
+  Function.set_config16 f 0 0xffff;
+  equal (option string)
+    (Some (Function.bus f ^ " left the bus: its vendor ID reads 0xffff"))
+    (Function.failed f)
+
+(* Resets *)
+
+(* The 16 bits at [off] of the fixture's configuration file, written as the
+   function would change them. *)
+let set_config_file root bus off v =
+  let fd = Unix.openfile (config_file root bus) [ O_WRONLY ] 0 in
+  Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+  let b = Bytes.create 2 in
+  Bytes.set_uint16_le b 0 v;
+  ignore (Unix.lseek fd off SEEK_SET);
+  ignore (Unix.write fd b 0 2)
+
+let reset_path bus = strf "sys/bus/pci/devices/%s/reset" bus
+let read_text file = In_channel.with_open_bin file In_channel.input_all
+
+(* The function answers again once its reset file was written: the reset waits
+   for its vendor ID. *)
+let test_reset_waits () =
+  with_fixture @@ fun root f ->
+  let bus = Function.bus f in
+  Tree.add root (reset_path bus) "";
+  let file = Filename.concat root (reset_path bus) in
+  Function.set_config16 f 0 0xffff;
+  let answering =
+    Domain.spawn (fun () ->
+        poll (fun () -> String.trim (read_text file) = "1")
+        && begin
+          set_config_file root bus 0 0x1002;
+          true
+        end)
+  in
+  let r = Function.reset f in
+  equal ~msg:"the reset file written" bool true (Domain.join answering);
+  equal ~msg:"the reset" (result unit string) (Ok ()) r;
+  equal ~msg:"its vendor" hex 0x1002 (Function.config16 f 0)
+
+(* A function whose vendor ID reads all ones does not answer. *)
+let test_reset_silent () =
+  with_fixture @@ fun root f ->
+  Tree.add root (reset_path (Function.bus f)) "";
+  Function.set_config16 f 0 0xffff;
+  let why = require_error (Function.reset f) in
+  contains ~msg:"names the function" ~sub:(Function.bus f) why;
+  contains ~msg:"says it does not answer" ~sub:"does not answer" why
+
+(* Linux has no reset for a function without a reset file. *)
+let test_reset_no_file () =
+  with_fixture @@ fun _ f ->
+  contains ~sub:(Function.bus f ^ "/reset") (require_error (Function.reset f))
+
+let resets =
+  group ~timeout:patience "resets"
+    [
+      test "a reset waits for the function to answer" test_reset_waits;
+      test "a function that does not answer after its reset fails"
+        test_reset_silent;
+      test "a function without a reset file is refused, naming it"
+        test_reset_no_file;
+    ]
+
+(* Pins and DMA memory from two domains
+
+   One GPU of a fixture tree, taken by each program and released at its end. Its
+   memory lies at addresses of a range of its own, a 2 MiB block each, whose
+   frames the tree's page map gives. *)
+
+let dma_base = free_base + (64 * mib)
+let dma_blocks = 32
+
+(* A program takes a function at most once a step: the tree has a GPU for each
+   step. *)
+let dma_steps = 16
+
+let dma_tree =
+  lazy
+    (let buses = List.init dma_steps (fun i -> strf "0000:%02x:00.0" (3 + i)) in
+     let root = Tree.make (List.map Tree.gpu buses) in
+     let m = Machine.at root in
+     (match Machine.reserve m ~base:dma_base (dma_blocks * huge) with
+     | Ok () -> ()
+     | Error why -> skip ~reason:why ());
+     ignore (frames root dma_base (dma_blocks * huge));
+     (m, buses))
+
+type dma_sys = {
+  f : Function.t;
+  blocks : int list Atomic.t;  (** The blocks it took. *)
+  kept : Window.t list Atomic.t;  (** Memory alloc_dma gave, unnamed. *)
+  made : Window.t list Atomic.t;  (** Memory alloc_dma gave, named. *)
+}
+
+type dma_ref = { mutable dmas : int }
+type win_ref = { mutable pins : int; mutable freed : bool }
+
+let rec push l x =
+  let xs = Atomic.get l in
+  if not (Atomic.compare_and_set l xs (x :: xs)) then push l x
+
+let rec pop l =
+  match Atomic.get l with
+  | [] -> None
+  | x :: rest as xs ->
+      if Atomic.compare_and_set l xs rest then Some x else pop l
+
+(* The blocks no program holds. A block goes back at the end of the program that
+   took it, so that memory freed during a program is not given again in it. *)
+let free_blocks = Atomic.make (List.init dma_blocks Fun.id)
+
+(* A new page of memory, in a block of its own. *)
+let alloc_block s =
+  match pop free_blocks with
+  | None -> failf "more than %d blocks" dma_blocks
+  | Some k ->
+      push s.blocks k;
+      let va = dma_base + (k * huge) in
+      fst (require_some (require_ok (Function.alloc_dma ~va s.f 4096)))
+
+let rec unpin_all f w =
+  match Function.unpin f (Window.address w) (Window.length w) with
+  | () -> unpin_all f w
+  | exception Invalid_argument _ -> ()
+
+let free_live f w =
+  match Function.free_dma f w with
+  | () -> ()
+  | exception Invalid_argument _ -> ()
+
+(* At a program's end its function goes, then its memory, pins and blocks. *)
+let release_dma s =
+  Function.release s.f;
+  List.iter
+    (fun w ->
+      unpin_all s.f w;
+      free_live s.f w)
+    (Atomic.get s.made);
+  List.iter (free_live s.f) (Atomic.get s.kept);
+  List.iter (push free_blocks) (Atomic.get s.blocks)
+
+let dma_t = abstract "f" ~release:release_dma
+let win_t = abstract "w"
+
+(* The first GPU of the tree no take holds. *)
+let take_dma () =
+  let m, buses = Lazy.force dma_tree in
+  let f =
+    match
+      List.find_map (fun b -> Result.to_option (Function.take m b)) buses
+    with
+    | Some f -> f
+    | None -> failf "every one of the %d GPUs is taken" dma_steps
+  in
+  { f; blocks = Atomic.make []; kept = Atomic.make []; made = Atomic.make [] }
+
+let pin_ref w =
+  if w.freed then false
+  else begin
+    w.pins <- w.pins + 1;
+    true
+  end
+
+let pin_sys (s, w) =
+  Result.is_ok (Function.pin s.f (Window.address w) (Window.length w))
+
+let unpin_ref w =
+  if w.pins = 0 then invalid_arg "not pinned";
+  cover "a page pinned twice, unpinned once" (w.pins > 1);
+  w.pins <- w.pins - 1
+
+let dma_commands =
+  [
+    Windtrap.command "take"
+      (Gen.unit @-> makes dma_t)
+      (fun () -> { dmas = 0 })
+      take_dma;
+    Windtrap.command "alloc_dma, named"
+      (dma_t ^-> makes win_t)
+      (fun _ -> { pins = 0; freed = false })
+      (fun s ->
+        let w = alloc_block s in
+        push s.made w;
+        (s, w));
+    Windtrap.command "free_dma, named"
+      ~pre:(fun w -> w.pins = 0 && not w.freed)
+      (win_t ^-> returns unit)
+      (fun w -> w.freed <- true)
+      (fun (s, w) -> Function.free_dma s.f w);
+    Windtrap.command "pin" (win_t ^-> returns bool) pin_ref pin_sys;
+    Windtrap.command "unpin"
+      (win_t ^-> returns unit)
+      unpin_ref
+      (fun (s, w) -> Function.unpin s.f (Window.address w) (Window.length w));
+    Windtrap.command "alloc_dma"
+      (dma_t ^-> returns unit)
+      (fun r -> r.dmas <- r.dmas + 1)
+      (fun s -> push s.kept (alloc_block s));
+    Windtrap.command "free_dma"
+      (dma_t ^-> returns unit)
+      (fun r ->
+        if r.dmas = 0 then raise Not_found;
+        r.dmas <- r.dmas - 1)
+      (fun s ->
+        match pop s.kept with
+        | None -> raise Not_found
+        | Some w -> Function.free_dma s.f w);
+  ]
+
+(* 25 programs of 50 runs each, a hand-off between domains each, which waits for
+   a time slice when the processors are busy: its limit is three patiences. *)
+let dma_law = "pins and DMA memory are counted the same from two domains"
+
+let dma_domains =
+  group ~timeout:patience "two domains"
+    [
+      (if on_linux then
+         stateful dma_law ~timeout:(3. *. patience) ~domains:2 ~count:25
+           ~steps:dma_steps dma_commands
+       else
+         test dma_law (fun () ->
+             skip ~reason:"flock on a function's file needs Linux" ()));
+    ]
+
+let uses =
+  group ~timeout:patience "uses"
+    [
+      test "a string that is no bus address is refused" test_take_no_bus;
+      test "a released function refuses all but free_dma, unpin and wait"
+        test_released;
+      test "a BAR window is the rest of the BAR from its offset by default"
+        test_defaults;
+      test "a window of no bytes inside a BAR is mapped" test_empty;
+      test "another machine's window is refused" test_other_machine;
+      test "a function whose vendor ID reads 0xffff left the bus" test_left_bus;
+    ]
+
+(* Misuse at the bounds raises Invalid_argument. *)
+let misuse name use =
+  test name (fun () ->
+      with_fixture @@ fun _ f ->
+      reserved f;
+      raises_match (Exn.invalid_arg ~substring:"") (fun () ->
+          use f (Machine.page Machine.this)))
+
+let misuse_refused =
+  group ~timeout:patience "misuse"
+    [
+      misuse "a BAR index below zero" (fun f _ -> Function.bar f (-1));
+      misuse "the least BAR index" (fun f _ -> Function.bar f min_int);
+      misuse "a map of a BAR index below zero" (fun f _ -> map f (-1));
+      misuse "a pin off a page" (fun f page ->
+          Function.pin f (free_base + 1) page);
+      misuse "DMA memory at an address off a page" (fun f page ->
+          Function.alloc_dma ~va:(free_base + 1) f page);
+      misuse "contiguous DMA memory above 2 MiB" (fun f _ ->
+          Function.alloc_dma ~contiguous:true f ((2 * mib) + 1));
+      misuse "a huge page at an address off 2 MiB" (fun f page ->
+          Function.alloc_dma ~contiguous:true ~va:(free_base + page) f (2 * page));
+      misuse "DMA memory of no bytes" (fun f _ -> alloc_dma f 0);
+      misuse "DMA memory of more bytes than an int holds" (fun f _ ->
+          alloc_dma f max_int);
+      misuse "a pin of no bytes" (fun f _ -> Function.pin f free_base 0);
+      misuse "configuration space below its first byte" (fun f _ ->
+          Function.config8 f (-1));
+      misuse "configuration space past its 4096 bytes" (fun f _ ->
+          Function.set_config32 f 4094 0);
+      misuse "an interrupt wait below zero" (fun f _ ->
+          Function.interrupt f (-1));
+      misuse "DMA memory at an address no reservation holds" (fun f page ->
+          Function.alloc_dma ~va:(free_base + (8 * mib)) f page);
+      misuse "DMA memory that ends past its reservation" (fun f page ->
+          Function.alloc_dma ~va:(free_base + (8 * mib) - page) f (2 * page));
+      misuse "a wait of fewer than 0 us" (fun f _ ->
+          Function.wait f ~us:(-1) "the fence" (fun () -> true));
+    ]
+
+(* Waits *)
+
+let counter () =
+  let n = ref 0 in
+  ( n,
+    fun k () ->
+      incr n;
+      !n >= k )
+
+let waited = result unit string
+
+(* The GPU of a fixture tree, taken once for the waits that leave it as it was,
+   and released at the end of the run. *)
+let waiter =
+  fixture ~teardown:Function.release (fun () ->
+      if not on_linux then
+        skip ~reason:"flock on a function's file needs Linux" ();
+      let fn = Tree.gpu "0000:03:00.0" in
+      require_ok (Function.take (Machine.at (Tree.make [ fn ])) fn.bus))
+
+let test_at_once () =
+  let n, cond = counter () in
+  equal ~msg:"result" waited (Ok ())
+    (Function.wait (waiter ()) ~us:10_000_000 "the fence" (cond 1));
+  equal ~msg:"calls" int 1 !n
+
+let until_true =
+  prop "a wait calls its condition until it holds, and no more"
+    (Gen.int_range 1 200) (fun k ->
+      let n, cond = counter () in
+      equal ~msg:"result" waited (Ok ())
+        (Function.wait (waiter ()) ~us:10_000_000 "the fence" (cond k));
+      equal ~msg:"calls" int k !n)
+
+let test_times_out () =
+  let n, cond = counter () in
+  let why =
+    require_error
+      (Function.wait (waiter ()) ~us:30_000 "the fence" (cond max_int))
+  in
+  starts_with ~msg:"names what it waited for" ~affix:"the fence" why;
+  contains ~msg:"and its bound" ~sub:"30" why;
+  at_least ~msg:"calls" int ~than:1 !n
+
+(* Ten waits of each bound, below and past the first millisecond's spin, so that
+   one cut short shows however the machine is loaded. *)
+let test_full_time () =
+  List.iter
+    (fun us ->
+      for _ = 1 to 10 do
+        let t0 = now_ns () in
+        ignore
+          (Function.wait (waiter ()) ~us "a pause" (fun () -> false)
+            : (unit, string) result);
+        at_least
+          ~msg:(strf "ns waited for %d us" us)
+          int ~than:(us * 1000)
+          (now_ns () - t0)
+      done)
+    [ 50; 2000 ]
+
+(* A wait of 100 ms spins for its first millisecond only: the rest sleeps. *)
+let test_naps () =
+  let f = waiter () in
+  let t0 = Sys.time () in
+  ignore
+    (Function.wait f ~us:100_000 "a pause" (fun () -> false)
+      : (unit, string) result);
+  less ~msg:"CPU ms" int ~than:50 (int_of_float ((Sys.time () -. t0) *. 1000.))
+
+let test_zero () =
+  let n, cond = counter () in
+  equal ~msg:"result" waited (Ok ())
+    (Function.wait (waiter ()) ~us:0 "the fence" (cond 1));
+  equal ~msg:"calls" int 1 !n
+
+(* A function that left the bus goes unnoticed until the bound, where the wait
+   answers why. *)
+let test_wait_left_bus () =
+  with_fixture @@ fun _ f ->
+  Function.set_config16 f 0 0xffff;
+  let why =
+    require_error (Function.wait f ~us:10_000 "the fence" (fun () -> false))
+  in
+  starts_with ~msg:"names what it waited for" ~affix:"the fence" why;
+  contains ~msg:"names the cause" ~sub:"left the bus" why
+
+let test_wait_released () =
+  with_fixture @@ fun _ f ->
+  Function.set_config16 f 0 0xffff;
+  Function.release f;
+  equal ~msg:"held" waited (Ok ())
+    (Function.wait f ~us:10_000 "the fence" (fun () -> true));
+  let why =
+    require_error (Function.wait f ~us:10_000 "the fence" (fun () -> false))
+  in
+  starts_with ~msg:"names what it waited for" ~affix:"the fence" why;
+  not_contains ~msg:"reads no configuration space" ~sub:"left the bus" why
+
+let waits =
+  group ~timeout:patience "waits"
+    [
+      test "a wait whose condition holds at once is Ok after one call"
+        test_at_once;
+      until_true;
+      test
+        "a wait whose condition never holds is an Error naming what it waited \
+         for, asked at least once"
+        test_times_out;
+      test "a wait whose condition never holds lasts its whole time"
+        test_full_time;
+      test "a long wait holds no core" test_naps;
+      test "a wait of 0 us asks its condition once (unstated)" test_zero;
+      test
+        "a wait on a function that left the bus answers, at its bound, that it \
+         left"
+        test_wait_left_bus;
+      test "a released function waits as its machine does" test_wait_released;
+    ]
+
 let this_machine =
   group ~timeout:patience "this machine"
     [
@@ -2265,11 +1671,11 @@ let () =
       exit
       @@ run "rig_pci.function"
            [
-             taking;
              uses;
+             resets;
+             waits;
+             dma_domains;
              misuse_refused;
-             model;
-             failures;
              tree_files;
              system_memory;
              this_machine;

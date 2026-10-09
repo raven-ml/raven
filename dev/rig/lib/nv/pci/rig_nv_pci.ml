@@ -6,7 +6,6 @@
 open Rig_pci
 
 let strf = Printf.sprintf
-let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 let ( let* ) = Result.bind
 let mib = 1 lsl 20
 let gib = 1 lsl 30
@@ -29,18 +28,13 @@ let memory_bar = 1
 (* NVIDIA's driver holds no file of a GPU's devices past the process that opened
    it, and tells nothing of an unbound GPU. *)
 let gpus =
-  Gpus.make ~memory_bar ~nodes:Held.nodes
+  Gpus.make ~name:"NV-PCI" ~memory_bar ~nodes:Held.nodes
     ~unreleased:(fun ~root:_ _ -> None)
     ~teardown_ms:0 ~reset:Function.reset
     (fun (id : Machine.id) -> Rig_nv.is_gpu ~vendor:id.vendor ~class_:id.class_)
 
 let count ?(machine = Machine.this) () = List.length (Gpus.buses gpus machine)
-
-let device_name i =
-  if i < 0 then invalid_argf "Rig_nv_pci.device_name: index %d < 0" i;
-  if i = 0 then "NV-PCI" else strf "NV-PCI:%d" i
-
-let named i r = Result.map_error (fun why -> device_name i ^ ": " ^ why) r
+let device_name i = Gpus.name gpus i
 
 (* Memory *)
 
@@ -52,47 +46,37 @@ let named i r = Result.map_error (fun why -> device_name i ^ ": " ^ why) r
 let space = Space.create ~base:(64 * gib) ((1 lsl 40) - (64 * gib))
 
 (* A GPU this path opened. [handles] holds the names the path gave its memory,
-   which the RM's channel allocations take, with the region this GPU sees under
-   each and the memory's offset in it. *)
+   which the RM's channel allocations take, with each name's region. [fault] is
+   the first flush the GPU did not confirm. *)
 type gpu = {
   index : int;
   machine : Machine.t;
   fn : Function.t;
   memory : Memory.t;
-  handles : (int, Memory.region * int) Hashtbl.t;
+  handles : (int, Memory.region) Hashtbl.t;
   mutable next : int;
   lock : Mutex.t; (* its memory, page tables and handles *)
+  fault : string option Atomic.t;
 }
 
-(* The memory a path gives a device: its own, host memory among it, another
-   GPU's mapped for it, or a view of its own GPU's, which maps nothing. A peer
-   mapping keeps its owner's region, which a third GPU maps in turn. *)
-type mem =
-  | Own of gpu * Memory.region
-  | Peer of { owner : gpu; region : Memory.region; mapped : Memory.region }
-  | View of gpu * Memory.region
-
-let key : mem Type.Id.t = Type.Id.make ()
+let key : Memory.region Type.Id.t = Type.Id.make ()
 let protect g f = Mutex.protect g.lock f
 
-let window_address (r : Memory.region) =
-  match r.host with
+let host r =
+  match Memory.host r with
   | Some w when Window.mapped w -> Some (Window.address w)
   | _ -> None
 
-(* [memory g data r ~off ~host] names [data] for [g]: its first byte lies [off]
-   bytes into [r], the region [g] sees. *)
-let memory g data (r : Memory.region) ~off ~host =
+(* [memory g r] names [r] for [g]. *)
+let memory g r =
   let handle =
     protect g @@ fun () ->
     let h = g.next in
     g.next <- h + 1;
-    Hashtbl.replace g.handles h (r, off);
+    Hashtbl.replace g.handles h r;
     h
   in
-  { Rig_nv.address = r.mapping.va + off; host; handle; data }
-
-let whole g data r = memory g data r ~off:0 ~host:(window_address r)
+  { Rig_nv.address = Memory.address r; host = host r; handle; data = r }
 
 (* The memory and address a channel's USERD is described at: the physical
    address of GPU memory, the bus address of system memory, of the byte [off] of
@@ -101,18 +85,17 @@ let locate g h off =
   protect g @@ fun () ->
   match Hashtbl.find_opt g.handles h with
   | None -> None
-  | Some ((r : Memory.region), start) ->
+  | Some r ->
+      let target, pages = Memory.pages r in
       let rec find off = function
         | [] -> None
         | (a, n) :: _ when off < n -> Some (a + off)
         | (_, n) :: rest -> find (off - n) rest
       in
       let where =
-        match r.mapping.target with
-        | Page_table.Gpu -> `Gpu
-        | System | Peer _ -> `System
+        match target with Page_table.Gpu -> `Gpu | System | Peer _ -> `System
       in
-      Option.map (fun a -> (where, a)) (find (start + off) r.mapping.pages)
+      Option.map (fun a -> (where, a)) (find off pages)
 
 let alloc g kind n =
   let kind =
@@ -122,107 +105,64 @@ let alloc g kind n =
     | `System -> Memory.Host
   in
   match protect g (fun () -> Memory.alloc g.memory kind n) with
-  | Ok (Some r) -> Some (whole g (Own (g, r)) r)
+  | Ok (Some r) -> Some (memory g r)
   | Ok None -> None
   | Error why -> raise (Rig_nv.Fault why)
 
-let round_up n a = (n + a - 1) / a * a
-
-(* Host memory maps by whole pages, at GPU addresses of the GPU's space. *)
 let map_host g a n =
-  let page = Machine.page g.machine in
-  let at = a land lnot (page - 1) in
-  let bytes = round_up (a + n) page - at in
-  match protect g (fun () -> Memory.map_host g.memory at bytes) with
-  | Ok r -> Some (memory g (Own (g, r)) r ~off:(a - at) ~host:(Some a))
-  | Error _ -> None
+  match protect g (fun () -> Memory.map_host g.memory a n) with
+  | Ok (Some r) -> Some (memory g r)
+  | Ok None | Error _ -> None
 
 (* The GPUs open, for [reaches]. *)
 let opened : gpu list ref = ref []
 let opened_lock = Mutex.create ()
 
 let reaches g j =
-  let physical g = Function.addressing g.fn = Machine.Physical in
   let owner () =
     List.find_opt (fun o -> o.index = j && o.machine == g.machine) !opened
   in
   j = g.index
   ||
   match Mutex.protect opened_lock owner with
-  | Some o -> physical g && physical o && not (Memory.small_bar o.memory)
+  | Some o -> Memory.reaches g.memory o.memory
   | None -> false
 
-(* Another GPU's host memory maps for this one as host memory; its GPU memory
-   through the owner's BAR or link. *)
-let map_peer g (m : mem Rig_nv.memory) =
-  let owner, (region : Memory.region) =
-    match m.data with
-    | Own (o, r) | View (o, r) -> (o, r)
-    | Peer { owner; region; _ } -> (owner, region)
-  in
-  let off = m.address - region.mapping.va in
-  if owner == g then
-    Some (memory g (View (owner, region)) region ~off ~host:m.host)
-  else
-    let mapped () =
-      match region.source with
-      | Borrowed at -> Memory.map_host g.memory at region.mapping.size
-      | Allocated | Peer -> Memory.map_peer g.memory ~owner:owner.memory region
-    in
-    match protect g mapped with
-    | Error _ -> None
-    | Ok mapped when region.source = Allocated ->
-        Some
-          (memory g (Peer { owner; region; mapped }) mapped ~off ~host:m.host)
-    | Ok mapped -> Some (memory g (Own (g, mapped)) mapped ~off ~host:m.host)
+let map_peer g (m : Memory.region Rig_nv.memory) =
+  match protect g (fun () -> Memory.map_peer g.memory m.data) with
+  | Ok (Some r) -> Some (memory g r)
+  | Ok None | Error _ -> None
 
-let free g (m : mem Rig_nv.memory) =
+let free g (m : Memory.region Rig_nv.memory) =
   protect g @@ fun () ->
   Hashtbl.remove g.handles m.handle;
-  match m.data with
-  | View _ -> ()
-  | Peer { mapped; _ } -> Memory.unmap g.memory mapped
-  | Own (_, r) -> (
-      match r.source with
-      | Memory.Allocated -> Memory.free g.memory r
-      | Borrowed _ | Peer -> Memory.unmap g.memory r)
+  Memory.free g.memory m.data
 
 (* Faults, hangs and stops *)
-
-(* Work whose timeline word has not moved for 30 s is a hang: no kernel bounds
-   the GPU's work, and no other program shares a GPU this path boots. *)
-let hang_ms = 30_000
 
 let check g gsp () =
   let why =
     match Gsp.check gsp with
     | Some _ as why -> why
-    | None -> Function.failed g.fn
+    | None -> (
+        match Atomic.get g.fault with
+        | Some _ as why -> why
+        | None -> Function.failed g.fn)
   in
   Option.iter (fun why -> raise (Rig_nv.Fault why)) why
 
 (* The GSP stops every channel, unless the GPU cannot be reached, which an
-   unload would wait for in vain. Giving the hold back turns the GPU's bus
-   mastering off, so it reaches system memory no more whatever its channels do.
-   Whether that write reached the GPU is known only if the GPU answered before
-   it; one that did not is lost. The GSP runs on, and the next open resets
-   it. *)
-let give_up hold fn ~unload =
-  match Function.failed fn with
-  | None ->
-      unload ();
-      Gpus.release hold;
-      `Stopped
-  | Some _ ->
-      Gpus.lose hold;
-      `Unknown
-
-let stop g gsp hold () =
-  Mutex.protect opened_lock (fun () ->
-      opened := List.filter (fun o -> o != g) !opened);
-  let s = give_up hold g.fn ~unload:(fun () -> ignore (Gsp.unload gsp)) in
+   unload would wait for in vain. With its bus mastering off the GPU reaches
+   system memory no more, whatever its channels do, and the boot's memory goes
+   back. Whether that write reached the GPU is known only if the GPU answered
+   before it; one that did not is lost. The GSP runs on, and the next open
+   resets it. *)
+let stop_gsp fn gsp =
+  let reached = Option.is_none (Function.failed fn) in
+  if reached then ignore (Gsp.unload gsp);
+  Function.set_bus_master fn false;
   Gsp.free gsp;
-  s
+  if reached then `Clean else `Unknown
 
 (* Opening *)
 
@@ -284,14 +224,18 @@ let device g ~gsp ~hold ~tables (c : Chip.t) =
       register = (fun _ -> Ok ());
       unregister = (fun _ -> Ok ());
       check = check g gsp;
-      hang_ms = Some hang_ms;
-      stop = stop g gsp hold;
+      hang_ms = Some Gpus.hang_ms;
+      stop =
+        (fun () ->
+          Mutex.protect opened_lock (fun () ->
+              opened := List.filter (fun o -> o != g) !opened);
+          Gpus.stop hold);
     }
 
 (* [start] boots the GPU's GSP, writing to the GPU: from its first write, the
    GPU is in a state only a reset clears. *)
-let start fn (c : Chip.t) (fw : Images.t) =
-  Chip.bus_master fn true;
+let start fn (c : Chip.t) (fw : Images.t) ~failed =
+  Function.set_bus_master fn true;
   let* () = Falcon.run c (Falcon.wait_reset c.family) in
   let* memory = Chip.memory c in
   let* bar = Function.map ~combine:false fn memory_bar in
@@ -300,7 +244,7 @@ let start fn (c : Chip.t) (fw : Images.t) =
       ~image:fw.gsp.length
   in
   let tables =
-    Page_table.create (Mmu.format c bar) space ~memory:top
+    Page_table.create (Mmu.format c bar ~failed) space ~memory:top
       ~boot:(Gsp.boot_pool fw.start)
       ~tables:(if Window.length bar >= memory then Main else Pool)
       ~pages
@@ -311,79 +255,66 @@ let start fn (c : Chip.t) (fw : Images.t) =
   let* gsp = Gsp.boot { chip = c; memory; fn; tables; bar; space } fw in
   Ok (gsp, tables)
 
-(* A failure in [start], an [Error] or any exception, loses the GPU: it may have
-   stopped before WPR2 rose, in a state the next open would not see. One after
-   the GSP booted gives the GPU up as a stop does, and its memory back once the
-   GPU masters the bus no more. A [Fault] is answered as [Error], any other
-   exception passes through. *)
-let boot ~firmware ~index machine hold fn =
+(* The GPU's registers and doorbell are written from the process and from C: a
+   machine whose windows the process does not map is refused before the first
+   write. The hold's stop is set before [start] writes: until the GSP booted, a
+   failure leaves the GPU lost, its boot having given back what it took. *)
+let boot ~firmware ~index h fn =
+  let machine = Function.machine fn in
   let* c = Chip.of_function fn in
-  let* () = started hold c fn in
+  let* () =
+    if Window.mapped c.regs then Ok ()
+    else
+      Error
+        "the GPU's registers are not mapped into the process, as through a \
+         transport"
+  in
+  let* () = started h c fn in
   let* fw = Images.read c.family firmware in
   let* () =
     Machine.reserve machine ~base:(Space.base space) (Space.length space)
   in
-  match start fn c fw with
-  | Error why | (exception Rig_nv.Fault why) ->
-      Gpus.lose hold;
-      Error why
-  | exception e ->
-      let bt = Printexc.get_raw_backtrace () in
-      Gpus.lose hold;
-      Printexc.raise_with_backtrace e bt
-  | Ok (gsp, tables) -> (
-      let give_back () =
-        ignore (give_up hold fn ~unload:(fun () -> ignore (Gsp.unload gsp)));
-        Gsp.free gsp
-      in
-      let g =
-        {
-          index;
-          machine;
-          fn;
-          memory = Memory.create fn tables ~bar:memory_bar;
-          handles = Hashtbl.create 64;
-          next = 1;
-          lock = Mutex.create ();
-        }
-      in
-      match device g ~gsp ~hold ~tables c with
-      | Ok d ->
-          Mutex.protect opened_lock (fun () -> opened := g :: !opened);
-          Ok (d, gsp)
-      | Error why | (exception Rig_nv.Fault why) ->
-          give_back ();
-          Error why
-      | exception e ->
-          let bt = Printexc.get_raw_backtrace () in
-          give_back ();
-          Printexc.raise_with_backtrace e bt)
+  let booted = ref None and fault = Atomic.make None in
+  Gpus.set_stop h (fun () ->
+      match !booted with None -> `Lost | Some gsp -> stop_gsp fn gsp);
+  (* A flush the GPU did not confirm loses it: its bus mastering goes off at
+     once, so that no stale translation reaches host memory. *)
+  let failed why =
+    Function.set_bus_master fn false;
+    ignore (Atomic.compare_and_set fault None (Some why))
+  in
+  let* gsp, tables =
+    match start fn c fw ~failed with
+    | r -> r
+    | exception Rig_nv.Fault why -> Error why
+  in
+  booted := Some gsp;
+  let* () =
+    match Atomic.get fault with Some why -> Error why | None -> Ok ()
+  in
+  let g =
+    {
+      index;
+      machine;
+      fn;
+      memory = Memory.create fn tables ~bar:memory_bar;
+      handles = Hashtbl.create 64;
+      next = 1;
+      lock = Mutex.create ();
+      fault;
+    }
+  in
+  match device g ~gsp ~hold:h ~tables c with
+  | Ok d ->
+      Mutex.protect opened_lock (fun () -> opened := g :: !opened);
+      Ok d
+  | Error why | (exception Rig_nv.Fault why) -> Error why
 
 let open_ ?(machine = Machine.this) ~firmware i =
-  if i < 0 then invalid_argf "Rig_nv_pci.open_: index %d < 0" i;
-  named i
-  @@
-  match Machine.files machine with
-  | None ->
-      Error
-        "the GPU's machine is reached through a transport, through which \
-         Rig_nv makes no submissions"
-  | Some _ ->
-      Gpus.open_ gpus machine i
-        ~at_exit:(fun (_, gsp) -> ignore (Gsp.unload gsp))
-        (boot ~firmware ~index:i machine)
-      |> Result.map fst
+  Gpus.open_ gpus machine i (boot ~firmware ~index:i)
 
 (* Changes to the machine *)
 
-let detach i =
-  if i < 0 then invalid_argf "Rig_nv_pci.detach: index %d < 0" i;
-  named i (Gpus.detach gpus Machine.this i)
-
-let attach i =
-  if i < 0 then invalid_argf "Rig_nv_pci.attach: index %d < 0" i;
-  named i (Gpus.attach gpus Machine.this i)
-
-let reset ?(machine = Machine.this) i =
-  if i < 0 then invalid_argf "Rig_nv_pci.reset: index %d < 0" i;
-  named i (Gpus.reset gpus machine i)
+let detach i = Gpus.detach gpus Machine.this i
+let attach i = Gpus.attach gpus Machine.this i
+let reset ?(machine = Machine.this) i = Gpus.reset gpus machine i

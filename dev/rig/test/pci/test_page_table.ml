@@ -39,6 +39,11 @@ let placed =
 
 let pages g t = fst (walk g t)
 
+(* [unmap t ~va n] unmaps the [n] bytes from [va], whose flush the fake format
+   confirms. *)
+let unmap t ~va n =
+  equal ~msg:"the flush confirmed" bool true (Page_table.unmap t ~va n)
+
 (* The entries that map [ranges] from [va] on. Each page maps at the highest
    level that allows pages, to whose size its virtual and physical addresses are
    aligned and that the rest of its range fills. Its fragment is the largest
@@ -368,7 +373,7 @@ let test_map =
         | _ -> false);
       equal ~msg:"entries" (list placed) want (pages g t);
       equal ~msg:"flushed" int 0 g.unflushed;
-      Page_table.unmap t ~va size;
+      unmap t ~va size;
       equal ~msg:"no entry after unmap" (list entry) [] (pages g t);
       equal ~msg:"flushed after unmap" int 0 g.unflushed;
       equal ~msg:"no table but the root" (list hex)
@@ -443,7 +448,7 @@ let test_gib_pages () =
       };
     ]
     (pages g t);
-  Page_table.unmap t ~va gib;
+  unmap t ~va gib;
   let pa = (4 * gib) + (2 * mib) in
   ignore (require_some (Page_table.map t ~va Gpu [ (pa, gib) ]));
   let ps = pages g t in
@@ -475,13 +480,13 @@ let test_map_refusals =
         fun t ->
           ignore (Page_table.map t ~va:(va - page) System [ (0, 0x5000) ]) );
       ( "an unmap whose first address is not mapped",
-        fun t -> Page_table.unmap t ~va:(va - page) 0x2000 );
+        fun t -> ignore (Page_table.unmap t ~va:(va - page) 0x2000) );
       ( "an unmap whose last address is not mapped",
-        fun t -> Page_table.unmap t ~va 0x4000 );
+        fun t -> ignore (Page_table.unmap t ~va 0x4000) );
       ( "an unmap of nothing mapped",
-        fun t -> Page_table.unmap t ~va:(va + 0x3000) page );
+        fun t -> ignore (Page_table.unmap t ~va:(va + 0x3000) page) );
       ( "an unmap of half a 2 MiB page",
-        fun t -> Page_table.unmap t ~va:large mib );
+        fun t -> ignore (Page_table.unmap t ~va:large mib) );
       ( "a map at an address off a page",
         fun t ->
           ignore (Page_table.map t ~va:(va + 0x3001) System [ (0, page) ]) );
@@ -497,7 +502,7 @@ let test_map_refusals =
           let last = base + Page_table.span t - page in
           ignore (Page_table.map t ~va:last System [ (0, 2 * page) ]) );
       ( "an unmap below the base",
-        fun t -> Page_table.unmap t ~va:(base - page) page );
+        fun t -> ignore (Page_table.unmap t ~va:(base - page) page) );
       ( "the tables of an address off a page",
         fun t -> ignore (Page_table.tables t ~va:(va + 0x3001) page) );
       ( "the tables of a range past the tables' reach",
@@ -517,6 +522,90 @@ let test_map_refusals =
       let before = pages g t in
       raises_match (Exn.invalid_arg ~substring:"") (fun () -> f t);
       equal ~msg:"the tables as they were" (list entry) before (pages g t))
+
+(* Physical addresses *)
+
+(* An entry holds from 12 bits of a physical address, a page's, to 61. *)
+let test_pa_bits_create =
+  cases
+    ~name:(fun (b, _) -> strf "pa_bits %d" b)
+    "create takes pa_bits from 12 to 61"
+    [
+      (min_int, false);
+      (0, false);
+      (11, false);
+      (12, true);
+      (52, true);
+      (61, true);
+      (62, false);
+      (max_int, false);
+    ]
+    (fun (pa_bits, takes) ->
+      let g = Tables.memory () in
+      let s = Space.create ~base (1 lsl 40) in
+      let create () =
+        Page_table.create
+          { (format g) with pa_bits }
+          s ~memory:(66 * mib) ~boot:mib ~tables:Main
+          ~pages:[ (page, page) ]
+      in
+      if takes then equal int pa_bits (Page_table.pa_bits (create ()))
+      else raises_match (Exn.invalid_arg ~substring:"") create)
+
+(* Entries of 32 bits of address hold memory up to 4 GiB. A refused map writes
+   nothing, and the tables stay as they were. *)
+let test_pa_bits_map =
+  let top = 1 lsl 32 in
+  cases ~name:fst "map holds memory below 2^pa_bits"
+    [
+      ("a range that ends at the bound", ([ (top - page, page) ], true));
+      ("a range that ends a page past it", ([ (top - page, 2 * page) ], false));
+      ("a range from the bound", ([ (top, page) ], false));
+      ("a second range past it", ([ (0, page); (top, page) ], false));
+      ("a range far past it", ([ (1 lsl 51, page) ], false));
+    ]
+    (fun (_, (ranges, holds)) ->
+      let g = Tables.memory () in
+      let s = Space.create ~base (1 lsl 40) in
+      let t =
+        Page_table.create
+          { (format g) with pa_bits = 32 }
+          s ~memory:(66 * mib) ~boot:mib ~tables:Main
+          ~pages:[ (page, page) ]
+      in
+      Page_table.booted t;
+      let va = base + (2 * mib) in
+      ignore (require_some (Page_table.map t ~va:(va + mib) Gpu [ (0, page) ]));
+      let before = pages g t and touches = g.touches in
+      if holds then
+        let m = require_some (Page_table.map t ~va Gpu ranges) in
+        equal ~msg:"mapped" (list placed)
+          (List.sort
+             (fun a b -> compare a.va b.va)
+             (before @ expect_mapping ~base m))
+          (pages g t)
+      else begin
+        raises_match (Exn.invalid_arg ~substring:"") (fun () ->
+            Page_table.map t ~va Gpu ranges);
+        equal ~msg:"entries, zeroes and flushes" int touches g.touches;
+        equal ~msg:"the tables as they were" (list entry) before (pages g t)
+      end)
+
+(* A map flushes whatever the GPU answers; an unmap answers it, its entries gone
+   either way. *)
+let test_unmap_confirms =
+  cases
+    ~name:(fun c -> if c then "confirmed" else "not confirmed")
+    "unmap answers whether the GPU confirmed its flush" [ true; false ]
+    (fun confirms ->
+      let t, g = tables () in
+      g.confirms <- confirms;
+      let va = base + (2 * mib) in
+      ignore (require_some (Page_table.map t ~va Gpu [ (0, 3 * page) ]));
+      equal ~msg:"flushed after map" int 0 g.unflushed;
+      equal ~msg:"the answer" bool confirms (Page_table.unmap t ~va (3 * page));
+      equal ~msg:"no entry after" (list entry) [] (pages g t);
+      equal ~msg:"flushed after unmap" int 0 g.unflushed)
 
 (* Out of memory for tables *)
 
@@ -554,7 +643,7 @@ let test_out_of_tables () =
   equal ~msg:"and its addresses" int addresses (space_capacity t);
   (* Two mappings' tables, so that the freed range passes the fit bound. *)
   List.iter
-    (fun (m : Page_table.mapping) -> Page_table.unmap t ~va:m.va m.size)
+    (fun (m : Page_table.mapping) -> unmap t ~va:m.va m.size)
     (List.filteri (fun i _ -> i < 2) mapped);
   is_some ~msg:"unmapping gives tables back"
     (Page_table.map t ~va:(far k) System [ (0x10_0000, page) ])
@@ -602,65 +691,9 @@ let test_failed_descent () =
     (snd (walk g t));
   is_some ~msg:"the 8 KiB free again" (Page_table.palloc ~zero:false t page)
 
-(* The fake format of [g], whose store of an entry number [k], from 0, raises
-   [Exit]. *)
-let raising_at k g =
-  let f = format g and stores = ref 0 in
-  let store () =
-    let i = !stores in
-    incr stores;
-    if i = k then raise Exit
-  in
-  {
-    f with
-    set_table =
-      (fun ~level ~table i ~child ->
-        store ();
-        f.set_table ~level ~table i ~child);
-    set_page =
-      (fun ~level ~table i ~pa tg ~uncached ~snooped ~fragment ->
-        store ();
-        f.set_page ~level ~table i ~pa tg ~uncached ~snooped ~fragment);
-  }
-
-let raising_tables k =
-  let g = Tables.memory () in
-  let s = Space.create ~base (64 * mib) in
-  let t =
-    Page_table.create (raising_at k g) s ~memory:(66 * mib) ~boot:mib
-      ~tables:Main
-      ~pages:[ (2 * mib, 2 * mib); (page, page) ]
-  in
-  Page_table.booted t;
-  (t, g)
-
 (* Seven stores into fresh tables: two tables, a 2 MiB page, a table and three 4
    KiB pages. *)
 let seven = [ (0, 2 * mib); (8 * mib, 3 * page) ]
-
-let test_raising_format =
-  cases "a map whose format raises gives back what it wrote and made"
-    ~name:(strf "store %d") (List.init 7 Fun.id) (fun k ->
-      let t, g = raising_tables k in
-      let free = capacity t and va = far 0 in
-      raises Exit (fun () -> Page_table.map t ~va System seven);
-      equal ~msg:"no entry" (list entry) [] (pages g t);
-      equal ~msg:"no table but the root" (list hex)
-        [ Page_table.root t ]
-        (snd (walk g t));
-      equal ~msg:"flushed" int 0 g.unflushed;
-      equal ~msg:"its tables freed" int free (capacity t);
-      let m = require_some (Page_table.map t ~va System seven) in
-      equal ~msg:"mapped again" (list placed) (expect_mapping ~base m)
-        (pages g t))
-
-let test_raising_alloc () =
-  let t, g = raising_tables 3 in
-  let free = capacity t and addresses = space_capacity t in
-  raises Exit (fun () -> Page_table.alloc t (3 * page));
-  equal ~msg:"no entry" (list entry) [] (pages g t);
-  equal ~msg:"its memory and tables" int free (capacity t);
-  equal ~msg:"its addresses" int addresses (space_capacity t)
 
 (* A new table is zeroed before it is linked: memory that held entries maps none
    of them. The tables' pool, 1 MiB after the boot pool, holds a valid page
@@ -697,7 +730,7 @@ let test_tables_freed () =
     let va = far k in
     ignore
       (require_some ~msg:"mapped" (Page_table.map t ~va System [ (0, page) ]));
-    Page_table.unmap t ~va page
+    unmap t ~va page
   done
 
 (* One range that maps a 2 MiB page and then a full table of 4 KiB pages. *)
@@ -706,7 +739,7 @@ let test_mixed_unmap () =
   let free = capacity t in
   let ranges = [ (0, (2 * mib) + page); (0x1000_0000, (2 * mib) - page) ] in
   ignore (require_some (Page_table.map t ~va:base Gpu ranges));
-  Page_table.unmap t ~va:base (4 * mib);
+  unmap t ~va:base (4 * mib);
   equal ~msg:"no table but the root" (list hex)
     [ Page_table.root t ]
     (snd (walk g t));
@@ -776,7 +809,7 @@ let test_last_entry =
         | s :: rest ->
             let left = List.filter (( <> ) s) left in
             let touches = g.touches in
-            Page_table.unmap t ~va:(va s) (size s);
+            unmap t ~va:(va s) (size s);
             less ~msg:"entries the unmap touched" int ~than:(4 * 4)
               (g.touches - touches);
             cover "an unmap that frees a table"
@@ -813,7 +846,7 @@ let test_tables_path =
       equal ~msg:"tables made, nothing mapped" (list entry) [] (pages g t);
       ignore (require_some (Page_table.map t ~va System [ (offset, n) ]));
       equal ~msg:"the tables map uses" (list hex) path (snd (walk g t));
-      Page_table.unmap t ~va n;
+      unmap t ~va n;
       equal ~msg:"never freed" (list hex) path (snd (walk g t)))
 
 (* A page larger than the range [tables] kept a table for maps into that table,
@@ -825,7 +858,7 @@ let test_tables_under_page () =
   ignore (require_some (Page_table.map t ~va System [ (2 * mib, 2 * mib) ]));
   equal ~msg:"the kept tables map it" (list hex) path (snd (walk g t));
   equal ~msg:"in 4 KiB pages" int 512 (List.length (pages g t));
-  Page_table.unmap t ~va (2 * mib);
+  unmap t ~va (2 * mib);
   equal ~msg:"never freed" (list hex) path (snd (walk g t))
 
 (* The host copy *)
@@ -859,8 +892,9 @@ let through g w =
         Window.fill w pa n '\000');
     flush =
       (fun () ->
-        f.flush ();
-        Window.flush w);
+        let confirmed = f.flush () in
+        Window.flush w;
+        confirmed);
   }
 
 (* A GPU memory of 1 MiB on a far machine, at its addresses from 0: a boot pool
@@ -1030,7 +1064,7 @@ let map_far va ranges (t, _, f) =
   if Option.is_none (Page_table.map t ~va Gpu ranges) then
     failwith "no room for a table"
 
-let unmap_far va n (t, _, f) = sending f @@ fun () -> Page_table.unmap t ~va n
+let unmap_far va n (t, _, f) = sending f @@ fun () -> unmap t ~va n
 
 let copy_commands =
   [
@@ -1065,8 +1099,8 @@ let test_failed_machine () =
   raises_match ~msg:"a map over it" (Exn.invalid_arg ~substring:"") (fun () ->
       Page_table.map t ~va:(va + page) Gpu [ (0, page) ]);
   raises_match ~msg:"an unmap past it" (Exn.invalid_arg ~substring:"")
-    (fun () -> Page_table.unmap t ~va (4 * page));
-  Page_table.unmap t ~va (3 * page);
+    (fun () -> ignore (Page_table.unmap t ~va (4 * page)));
+  unmap t ~va (3 * page);
   is_some ~msg:"mapped again" (Page_table.map t ~va Gpu [ (0, page) ])
 
 (* Real formats *)
@@ -1107,6 +1141,7 @@ let test_real_formats =
         {
           Page_table.levels;
           bits;
+          pa_bits = 52;
           first;
           set_table =
             (fun ~level ~table i ~child -> set ~level ~table i (child lor 1));
@@ -1120,7 +1155,7 @@ let test_real_formats =
               Hashtbl.filter_map_inplace
                 (fun k e -> if k >= pa && k < pa + n then None else Some e)
                 mem);
-          flush = ignore;
+          flush = (fun () -> true);
         }
       in
       let t =
@@ -1207,8 +1242,8 @@ let test_free () =
   let free = capacity t and addresses = space_capacity t in
   let m = require_some (Page_table.alloc t (5 * mib)) in
   let c = require_some (Page_table.alloc ~contiguous:true t (3 * mib)) in
-  Page_table.free t m;
-  Page_table.free t c;
+  equal ~msg:"confirmed" (pair bool bool) (true, true)
+    (Page_table.free t m, Page_table.free t c);
   equal ~msg:"nothing mapped" (list entry) [] (pages g t);
   equal ~msg:"memory back in the pool" int free (capacity t);
   equal ~msg:"addresses back in the space" int addresses (space_capacity t);
@@ -1216,9 +1251,21 @@ let test_free () =
   let va = require_some (Space.alloc s (2 * mib)) in
   let taken = require_some (Page_table.palloc ~zero:false t page) in
   let sys = require_some (Page_table.map t ~va System [ (taken, page) ]) in
-  Page_table.free t sys;
+  equal ~msg:"system memory: confirmed" bool true (Page_table.free t sys);
   equal ~msg:"system memory: addresses back" int addresses (space_capacity t);
   Page_table.pfree t taken
+
+(* A free the GPU does not confirm unmaps, and keeps the memory and the
+   addresses, which the GPU may still reach. *)
+let test_free_unconfirmed () =
+  let t, g = tables ~length:(64 * mib) () in
+  let free = capacity t and addresses = space_capacity t in
+  let m = require_some (Page_table.alloc t (5 * mib)) in
+  g.confirms <- false;
+  equal ~msg:"the answer" bool false (Page_table.free t m);
+  equal ~msg:"nothing mapped" (list entry) [] (pages g t);
+  less ~msg:"memory kept" int ~than:free (capacity t);
+  less ~msg:"addresses kept" int ~than:addresses (space_capacity t)
 
 (* Physical pools, against lists of the blocks they handed out *)
 
@@ -1591,8 +1638,10 @@ let alloc_commands =
         alloc_judge ~below contiguous false n m got)
       (fun contiguous n tg below -> alloc ~below contiguous false n tg);
     command "free"
-      (allocs ^-> live_maps ^-> returns unit)
-      free_alloc
+      (allocs ^-> live_maps ^-> returns bool)
+      (fun m a ->
+        free_alloc m a;
+        true)
       (fun (t, _) a -> Page_table.free t a);
   ]
 
@@ -1607,6 +1656,7 @@ let () =
              test_create_refusals;
              test_level_refusals;
              test_base_refusals;
+             test_pa_bits_create;
            ];
          group ~timeout:patience "map"
            [
@@ -1621,6 +1671,8 @@ let () =
              test "fragments align in the space's addresses"
                test_fragments_from_base;
              test_map_refusals;
+             test_pa_bits_map;
+             test_unmap_confirms;
              test_tables_path;
              test "a page over a kept table maps into it" test_tables_under_page;
            ];
@@ -1630,9 +1682,6 @@ let () =
                test_out_of_tables;
              test "a full main pool answers None" test_out_of_main;
              test "a map out of tables frees those it made" test_failed_descent;
-             test_raising_format;
-             test "an alloc whose format raises gives back what it took"
-               test_raising_alloc;
              test "pfree refuses the tables in use" test_pfree_tables;
              test "new tables are zeroed before they are linked"
                test_tables_zeroed;
@@ -1662,6 +1711,8 @@ let () =
              test_contiguous;
              test "large blocks map as large pages" test_blocks;
              test "free gives back memory and addresses" test_free;
+             test "a free the GPU does not confirm keeps them"
+               test_free_unconfirmed;
              stateful
                "the tables map exactly what is allocated, under its bound"
                ~count:200 alloc_commands;

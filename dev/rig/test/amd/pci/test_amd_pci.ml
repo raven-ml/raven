@@ -1295,6 +1295,49 @@ let copy_engines =
             (Regs.field r (queue ^ "_DOORBELL") "enable"));
     ]
 
+(* Flushes: a flush the hubs did not confirm turns the GPU's bus mastering off
+   at once, and is the boot's fault, which keeps bus mastering off. The fixture
+   tree's configuration file holds the command register. *)
+
+let command = 0x04
+let bus_master = 0x4
+
+let flushes =
+  let take () =
+    if not Rig_pci_support.on_linux then
+      skip ~reason:"flock on a function's file needs Linux" ();
+    match Rig_pci.Function.take (Rig_pci.Machine.at (unbound ())) r9700 with
+    | Ok f ->
+        Rig_pci.Function.set_bus_master f true;
+        f
+    | Error why -> failf "take: %s" why
+  in
+  let mastering f = Rig_pci.Function.config16 f command land bus_master in
+  group "flushes"
+    [
+      test
+        "an unconfirmed flush turns bus mastering off and records its reason \
+         once" (fun () ->
+          let f = take () in
+          let fault = ref None in
+          let stuck why () = raise (Rig_amd_pci.Regs.Stuck why) in
+          equal ~msg:"answer" bool false
+            (Rig_amd_pci.Boot.confirm f fault (stuck "first") ());
+          equal ~msg:"bus mastering" int 0 (mastering f);
+          ignore (Rig_amd_pci.Boot.confirm f fault (stuck "second") () : bool);
+          equal ~msg:"the first reason" (option string) (Some "first") !fault;
+          Rig_pci.Function.release f);
+      test "a confirmed flush leaves bus mastering and the fault as they were"
+        (fun () ->
+          let f = take () in
+          let fault = ref None in
+          equal ~msg:"answer" bool true
+            (Rig_amd_pci.Boot.confirm f fault ignore ());
+          equal ~msg:"bus mastering" int bus_master (mastering f);
+          equal ~msg:"fault" (option string) None !fault;
+          Rig_pci.Function.release f);
+    ]
+
 let () =
   exit
     (run "rig_amd_pci"
@@ -1315,4 +1358,5 @@ let () =
          numbering;
          letting_go;
          copy_engines;
+         flushes;
        ])

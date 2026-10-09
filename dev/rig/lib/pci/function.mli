@@ -33,8 +33,8 @@
     {!unpin}, {!alloc_dma} and {!free_dma} may be called from any domain:
     {!release} waits for the pins and allocations that run, and those that start
     after it began raise [Invalid_argument]. After {!release}, every operation
-    but {!free_dma}, {!unpin}, {!machine}, {!bus}, {!addressing} and {!released}
-    raises [Invalid_argument].
+    but {!free_dma}, {!unpin}, {!wait}, {!machine}, {!bus}, {!addressing} and
+    {!released} raises [Invalid_argument].
 
     Windows are values: a window equal to a live one that {!map} or {!alloc_dma}
     gave names it, and a window of another function or machine is never equal to
@@ -103,6 +103,33 @@ val failed : t -> string option
 
     Raises [Invalid_argument] if [f] was released. *)
 
+val wait : t -> us:int -> string -> (unit -> bool) -> (unit, string) result
+(** [wait f ~us what cond] calls [cond], at least once, until it is [true] or at
+    least [us] microseconds passed on a monotonic clock. It is [Ok ()] iff
+    [cond] became [true] while [f]'s machine had not failed: the machine's state
+    is read after each call of [cond], so an answer computed from the all ones
+    of a failed machine is not trusted. A function that leaves the bus while its
+    machine does not fail goes unnoticed until the bound, since noticing it
+    reads configuration space. For its first millisecond it calls [cond] back to
+    back, relaxing the processor; then it sleeps 0.1 ms between calls, so that a
+    long wait holds no core. A driver waits for its device in it, and pauses in
+    it with a [cond] that never holds, ignoring the [Error].
+
+    [Error why] otherwise, [why] starting with [what]: at the bound, with
+    {!failed}'s reason if [f] failed, which names the cause, or saying that
+    [what] did not complete in time, naming the bound. A released [f] waits as
+    its machine does.
+
+    Raises [Invalid_argument] if [us < 0]. *)
+
+val set_bus_master : t -> bool -> unit
+(** [set_bus_master f on] lets [f] master the bus, reaching system memory by
+    DMA, iff [on]: it sets or clears the bus master bit of [f]'s command
+    register (PCI Express Base Specification, 7.5.1.1.3), keeping its other
+    bits. {!release} clears it.
+
+    Raises [Invalid_argument] if [f] was released. *)
+
 (** {1:config Configuration space}
 
     A function's configuration space is 4096 bytes of little-endian values.
@@ -166,9 +193,8 @@ val map :
     [~combine:false] if it has none.
 
     [Error why] if VFIO or the kernel does not let the process map them, or if
-    [f] is taken physically and the file of its BAR [i] is shorter than the
-    BAR, naming the file: an access past a mapped file's end would end the
-    process.
+    [f] is taken physically and the file of its BAR [i] is shorter than the BAR,
+    naming the file: an access past a mapped file's end would end the process.
 
     Raises [Invalid_argument] if [i < 0], the bytes do not lie in the BAR, or a
     live window of [f] maps BAR [i] with the other [combine]: the processor maps
@@ -276,10 +302,16 @@ val pin : t -> int -> int -> ((int * int) list, string) result
     Behind an IOMMU the pinned pages stay the process's across a fork: the child
     gets copies of them.
 
+    Taken physically, [f] pins only memory {!alloc_dma} gave on [f]'s machine,
+    for [f] or another function: memory that outlives the process. Its huge
+    pages then stay, after the process's death too, until each pin is
+    {!unpin}ned or [f]'s GPU is reset ({!Gpus.reset}) or renewed
+    ({!Gpus.renew}).
+
     [Error why] as {!alloc_dma}, if the pages cannot be locked or their
-    addresses read, or if [f] is taken physically: the pages are the process's
-    and go back to the system when it dies, with [f] still writing them. Memory
-    {!alloc_dma} gives outlives the process.
+    addresses read, or if [f] is taken physically and the pages are not memory
+    {!alloc_dma} gave on [f]'s machine: the process's own pages go back to the
+    system when it dies, with [f] still writing them.
 
     Raises [Invalid_argument] if [a] is not on a page or [n <= 0]. *)
 
@@ -287,3 +319,18 @@ val unpin : t -> int -> int -> unit
 (** [unpin f a n] releases one pin of the [n] bytes at [a].
 
     Raises [Invalid_argument] if [(a, n)] is not pinned for [f]. *)
+
+(**/**)
+
+(* [inherited f] is [true] iff a process that died left [f] reaching memory of
+   its machine when [f] was taken, which [f] may still write, and {!forget} has
+   not run since. *)
+val inherited : t -> bool
+
+(* [forget f] records that [f]'s device was reset, so that [f] reaches none of
+   the memory processes that died left: that memory goes once no other function
+   reaches it. The memory this process allocated stays listed for [f], so that
+   the process's own death still leaves [f] to be reset.
+
+   Raises [Invalid_argument] if [f] was released. *)
+val forget : t -> (unit, string) result

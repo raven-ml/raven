@@ -51,19 +51,20 @@ let gpu ?(vendor = fun () -> 0x10de) () =
   let fn =
     {
       Rig_pci.Machine.addressing = Physical;
-      config8 = (fun _ -> 0);
-      config16 =
-        (fun r -> if r = 0 then vendor () else if r = command then !cmd else 0);
-      config32 = (fun _ -> 0);
-      set_config8 = (fun _ _ -> ());
-      set_config16 =
-        (fun r x ->
-          if r = command then begin
+      inherited = false;
+      config =
+        (fun r n ->
+          if n <> 2 then 0
+          else if r = 0 then vendor ()
+          else if r = command then !cmd
+          else 0);
+      set_config =
+        (fun r n x ->
+          if n = 2 && r = command then begin
             if x land bus_master <> !cmd land bus_master then
               log (Master (x land bus_master <> 0));
             cmd := x
           end);
-      set_config32 = (fun _ _ -> ());
       bar = (fun i -> if i = 0 then Some (0, regs_size) else None);
       map =
         (fun ~combine:_ i off n ->
@@ -72,6 +73,7 @@ let gpu ?(vendor = fun () -> 0x10de) () =
       unmap = ignore;
       interrupt = (fun _ -> false);
       reset = (fun () -> Ok ());
+      forget = (fun () -> Ok ());
       alloc_dma;
       free_dma = (fun _ -> log Free);
       pin = (fun _ _ -> Error "no memory");

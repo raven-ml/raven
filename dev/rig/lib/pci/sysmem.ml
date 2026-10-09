@@ -187,7 +187,6 @@ type store = {
   root : string;
   bus : string;
   placed : unit Tables.Address.t; (* the addresses of its live windows *)
-  mutable closed : bool;
 }
 
 (* [state] guards every value below and every store, file and block. *)
@@ -198,10 +197,8 @@ let blocks : block Tables.Address.t = Tables.Address.create 16
 (* The range memory without an address takes its addresses from. *)
 let own_length = 1 lsl 30
 let own : Tlsf.t option ref = ref None
-
-let store ~root ~bus =
-  { root; bus; placed = Tables.Address.create 16; closed = false }
-
+let store ~root ~bus = { root; bus; placed = Tables.Address.create 16 }
+let root s = s.root
 let prefix = "rig-pci-"
 let hugepages = "dev/hugepages"
 let reach_suffix = ".reach"
@@ -254,17 +251,13 @@ let delete path =
 let has_blocks f =
   Tables.Address.fold (fun _ b r -> r || b.file == f) blocks false
 
-(* At the process's exit, after every function's exit stopped it, the files that
-   list no function go, blocks and all: nothing else will free them. This
-   module's initialization registers it before any function is taken, so it runs
-   last. A child of [fork] leaves its parent's files, and takes no lock a thread
-   of its parent may have held. *)
-let () =
-  Stdlib.at_exit (fun () ->
-      let pid = Unix.getpid () in
-      if List.exists (fun f -> f.pid = pid) !files then
-        Mutex.protect state @@ fun () ->
-        List.iter (fun f -> if f.reachers = [] then delete f.path) !files)
+(* A child of [fork] leaves its parent's files, and takes no lock a thread of
+   its parent may have held. *)
+let exit () =
+  let pid = Unix.getpid () in
+  if List.exists (fun f -> f.pid = pid) !files then
+    Mutex.protect state @@ fun () ->
+    List.iter (fun f -> if f.reachers = [] then delete f.path) !files
 
 (* A file that lists no function and holds no block goes. *)
 let collect f =
@@ -429,7 +422,9 @@ let own_addresses ~align n =
 let own_free a =
   match !own with
   | Some t when a >= Tlsf.base t && a < Tlsf.base t + Tlsf.length t ->
-      Tlsf.free t a
+      (* [free] gives back only addresses [placed] holds. *)
+      if not (Tlsf.free t a) then
+        invalid_arg (strf "Function.free_dma: no addresses at 0x%x" a)
   | _ -> ()
 
 (* The physical runs of the [n] bytes at [a], whose blocks exist: one a block,
@@ -517,25 +512,29 @@ let leave ~root bus =
       end)
     !files
 
-let close s =
-  Mutex.protect state @@ fun () ->
-  if not s.closed then begin
-    s.closed <- true;
-    leave ~root:s.root s.bus
-  end
+let close s = Mutex.protect state @@ fun () -> leave ~root:s.root s.bus
 
-let reach ~a ~n ~bus =
+(* Every block of the [n] bytes at [a] must be [root]'s: memory of the process's
+   own, or of another machine, would not outlive the process. *)
+let reach ~root ~bus a n =
   Mutex.protect state @@ fun () ->
-  match Tables.Address.find_opt blocks (a / huge * huge) with
-  | None -> ()
-  | Some b ->
-      join b.file bus;
-      List.iter
-        (fun (at, _, len) ->
-          Option.iter
-            (fun b -> b.users <- b.users + len)
-            (Tables.Address.find_opt blocks at))
-        (parts a n)
+  let held (at, _, _) =
+    match Tables.Address.find_opt blocks at with
+    | Some b -> b.file.root = root
+    | None -> false
+  in
+  let ps = parts a n in
+  if not (List.for_all held ps) then None
+  else begin
+    let bs =
+      List.map (fun (at, _, len) -> (Tables.Address.find blocks at, len)) ps
+    in
+    (* Each file lists [bus] before a block counts it: a failed record counts
+       nothing, and a list longer than needed only leaks. *)
+    List.iter (fun (b, _) -> join b.file bus) bs;
+    List.iter (fun (b, len) -> b.users <- b.users + len) bs;
+    Some (runs a n)
+  end
 
 let unreach ~a ~n =
   Mutex.protect state @@ fun () ->
@@ -613,11 +612,6 @@ let collect_dead ~root =
   Mutex.protect state @@ fun () -> sweep ~root ~reset:None
 
 let forget ~root ~bus =
-  Mutex.protect state @@ fun () ->
-  leave ~root bus;
-  sweep ~root ~reset:(Some bus)
-
-let forget_dead ~root ~bus =
   Mutex.protect state @@ fun () -> sweep ~root ~reset:(Some bus)
 
 (* A file that cannot be opened for another reason than its end might hold the

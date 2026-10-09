@@ -9,31 +9,6 @@ open Rig_pci_support
 
 let strf = Printf.sprintf
 
-(* A machine a transport reaches: [far] is its C transport, [calls] the
-   operations it was asked for, newest first. *)
-type fake = { far : int; machine : Machine.t; calls : string list ref }
-
-let fake ?(page = 16384) ?(ids = []) ?(name = "far:7000") () =
-  let far = far 0 4096 and calls = ref [] in
-  let ask call x =
-    calls := call :: !calls;
-    x
-  in
-  let machine =
-    Machine.make ~name
-      {
-        transport = Window.unsafe_transport far;
-        page;
-        functions = (fun () -> ask "functions" ids);
-        take = (fun _ -> ask "take" (Error "far:7000: taken"));
-        reserve =
-          (fun ~base n ->
-            if base = 0 then Error "far:7000: the range is in use"
-            else ask (strf "reserve 0x%x %d" base n) (Ok ()));
-      }
-  in
-  { far; machine; calls }
-
 (* Bus addresses *)
 
 (* Linux names a function [pci_name]: "%04x:%02x:%02x.%d" of its domain, bus,
@@ -96,47 +71,19 @@ let test_this () =
   equal ~msg:"name" (option string) None (Machine.name Machine.this);
   equal ~msg:"failed" (option string) None (Machine.failed Machine.this)
 
-let test_named () =
-  let f = fake ~name:"host:7000" () in
-  equal (option string) (Some "host:7000") (Machine.name f.machine)
-
 let test_page () =
-  let f = fake ~page:65536 () in
-  equal ~msg:"another machine's" int 65536 (Machine.page f.machine);
   let p = Machine.page Machine.this in
   at_least ~msg:"this machine's" int ~than:4096 p;
   equal ~msg:"a power of two" int 0 (p land (p - 1))
-
-let test_failed () =
-  let f = fake () in
-  equal ~msg:"before" (option string) None (Machine.failed f.machine);
-  break f.far;
-  let why = Some "far: the link broke" in
-  equal ~msg:"once its transport failed" (option string) why
-    (Machine.failed f.machine);
-  equal ~msg:"and after" (option string) why (Machine.failed f.machine);
-  equal ~msg:"this machine" (option string) None (Machine.failed Machine.this)
 
 let machines =
   group ~timeout:patience "machines"
     [
       test "this machine has no name and has not failed" test_this;
-      test "another machine is named as its transport names it" test_named;
-      test "a machine's page size is its transport's, this one's a power of two"
-        test_page;
-      test "a machine has failed exactly once its transport has, and stays so"
-        test_failed;
+      test "this machine's page size is a power of two" test_page;
     ]
 
 (* Functions *)
-
-let id_of n =
-  {
-    Machine.bus = address n;
-    vendor = 0x1002;
-    device = 0x744c;
-    class_ = 0x030000;
-  }
 
 let id =
   Testable.make
@@ -144,30 +91,6 @@ let id =
       Format.fprintf ppf "%s %04x:%04x class %06x" d.bus d.vendor d.device
         d.class_)
     ~equal:( = )
-
-(* Whatever order the transport lists them in. *)
-let listed_in_bus_order =
-  prop "a machine lists its functions in bus order"
-    (Gen.list ~size:(Gen.int_range 0 12) numbers)
-    (fun ns ->
-      let ns = List.sort_uniq compare ns in
-      let shuffled =
-        List.map snd
-          (List.sort compare (List.mapi (fun i n -> (i * 7919 mod 13, n)) ns))
-      in
-      cover "a four- and a five-digit domain"
-        (List.exists (fun (d, _, _, _) -> d < 0x10000) ns
-        && List.exists (fun (d, _, _, _) -> d >= 0x10000) ns);
-      let f = fake ~ids:(List.map id_of shuffled) () in
-      equal (list id) (List.map id_of ns) (Machine.functions f.machine))
-
-(* Listing asks the machine one question and changes nothing. *)
-let test_listing_asks () =
-  let ids = List.map id_of [ (0, 1, 0, 0); (0, 2, 0, 0) ] in
-  let f = fake ~ids () in
-  equal ~msg:"functions" (list id) ids (Machine.functions f.machine);
-  equal ~msg:"what the machine was asked" (list string) [ "functions" ]
-    !(f.calls)
 
 let test_no_sysfs () =
   if on_linux then skip ~reason:"this machine has /sys/bus/pci" ();
@@ -223,6 +146,22 @@ let test_tree_unreadable () =
        (fun (d : Machine.id) -> d.bus)
        (Machine.functions (Machine.at root)))
 
+(* Whatever order the files list them in, with domains of four and five
+   digits. *)
+let listed_in_bus_order =
+  prop "a machine lists its functions in bus order" ~count:30
+    (Gen.list ~size:(Gen.int_range 0 12) numbers)
+    (fun ns ->
+      let ns = List.sort_uniq compare ns in
+      cover "a four- and a five-digit domain"
+        (List.exists (fun (d, _, _, _) -> d < 0x10000) ns
+        && List.exists (fun (d, _, _, _) -> d >= 0x10000) ns);
+      let root = Tree.make (List.map (fun n -> Tree.gpu (address n)) ns) in
+      equal (list string) (List.map address ns)
+        (List.map
+           (fun (d : Machine.id) -> d.bus)
+           (Machine.functions (Machine.at root))))
+
 let test_tree_empty () =
   equal (list id) [] (Machine.functions (Machine.at (Tree.make [])))
 
@@ -238,8 +177,6 @@ let functions =
   group ~timeout:patience "functions"
     [
       listed_in_bus_order;
-      test "listing a machine's functions asks it nothing else"
-        test_listing_asks;
       test "this machine without /sys/bus/pci has none" test_no_sysfs;
       test "a machine's functions are its files', in bus order" test_tree;
       test "a function whose files cannot be read is left out"
@@ -249,17 +186,6 @@ let functions =
     ]
 
 (* Reservations *)
-
-let test_reserve () =
-  let f = fake () in
-  let reserved = result unit string in
-  equal ~msg:"reserved" reserved (Ok ())
-    (Machine.reserve f.machine ~base:0x2000_0000_0000 (1 lsl 30));
-  equal ~msg:"asked" (list string)
-    [ "reserve 0x200000000000 1073741824" ]
-    !(f.calls);
-  equal ~msg:"refused" reserved (Error "far:7000: the range is in use")
-    (Machine.reserve f.machine ~base:0 4096)
 
 let test_reserve_this () =
   let n = 4 lsl 20 in
@@ -279,107 +205,11 @@ let test_reserve_this () =
 let reservations =
   group ~timeout:patience "reservations"
     [
-      test "another machine's reservation is its transport's" test_reserve;
       test
         "this machine reserves a range once and refuses one in use, on Linux \
          alone"
         test_reserve_this;
     ]
 
-(* Waits *)
-
-let counter () =
-  let n = ref 0 in
-  ( n,
-    fun k () ->
-      incr n;
-      !n >= k )
-
-let test_at_once () =
-  let n, f = counter () in
-  equal ~msg:"result" bool true (Machine.wait Machine.this ~us:10_000_000 (f 1));
-  equal ~msg:"calls" int 1 !n
-
-let until_true =
-  prop "a wait calls its condition until it holds, and no more"
-    (Gen.int_range 1 200) (fun k ->
-      let n, f = counter () in
-      equal ~msg:"result" bool true
-        (Machine.wait Machine.this ~us:10_000_000 (f k));
-      equal ~msg:"calls" int k !n)
-
-let test_times_out () =
-  let n, f = counter () in
-  equal ~msg:"result" bool false
-    (Machine.wait Machine.this ~us:30_000 (f max_int));
-  at_least ~msg:"calls" int ~than:1 !n
-
-(* Ten waits of each bound, below and above the first millisecond's spin, so
-   that one cut short shows however the machine is loaded. *)
-let test_full_time () =
-  List.iter
-    (fun us ->
-      for _ = 1 to 10 do
-        let t0 = now_ns () in
-        ignore (Machine.wait Machine.this ~us (fun () -> false) : bool);
-        at_least
-          ~msg:(Printf.sprintf "ns waited for %d us" us)
-          int ~than:(us * 1000)
-          (now_ns () - t0)
-      done)
-    [ 50; 2000 ]
-
-(* A wait of 100 ms spins for its first millisecond only: the rest sleeps. *)
-let test_naps () =
-  let t0 = Sys.time () in
-  ignore (Machine.wait Machine.this ~us:100_000 (fun () -> false) : bool);
-  less ~msg:"CPU ms" int ~than:50 (int_of_float ((Sys.time () -. t0) *. 1000.))
-
-let test_zero () =
-  let n, f = counter () in
-  equal ~msg:"result" bool true (Machine.wait Machine.this ~us:0 (f 1));
-  equal ~msg:"calls" int 1 !n
-
-let test_failed_wait () =
-  let f = fake () in
-  break f.far;
-  let n, cond = counter () in
-  equal ~msg:"result" bool false
-    (Machine.wait f.machine ~us:10_000_000 (cond 1));
-  equal ~msg:"calls" int 1 !n
-
-(* The condition holds on the call during which the machine fails, as one
-   computed from all ones would: the wait does not trust it. *)
-let test_fails_during () =
-  let f = fake () in
-  let n = ref 0 in
-  let cond () =
-    incr n;
-    if !n = 3 then break f.far;
-    !n >= 3
-  in
-  equal ~msg:"result" bool false (Machine.wait f.machine ~us:10_000_000 cond);
-  equal ~msg:"calls" int 3 !n
-
-let waits =
-  group ~timeout:patience "waits"
-    [
-      test "a wait whose condition holds at once is true after one call"
-        test_at_once;
-      until_true;
-      test "a wait whose condition never holds is false, asked at least once"
-        test_times_out;
-      test "a wait whose condition never holds lasts its whole time"
-        test_full_time;
-      test "a long wait holds no core" test_naps;
-      test "a wait of 0 ms asks its condition once (unstated)" test_zero;
-      test "a wait on a failed machine is false, its condition asked once"
-        test_failed_wait;
-      test "a machine that fails during a wait ends it false at once"
-        test_fails_during;
-    ]
-
 let () =
-  exit
-  @@ run "rig_pci.machine"
-       [ addresses; machines; functions; reservations; waits ]
+  exit @@ run "rig_pci.machine" [ addresses; machines; functions; reservations ]

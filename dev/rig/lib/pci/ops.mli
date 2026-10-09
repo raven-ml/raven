@@ -14,17 +14,15 @@ type addressing = Physical | Iommu
 
 type fn = {
   addressing : addressing;
-  config8 : int -> int;
-  config16 : int -> int;
-  config32 : int -> int;
-  set_config8 : int -> int -> unit;
-  set_config16 : int -> int -> unit;
-  set_config32 : int -> int -> unit;
+  inherited : bool;
+  config : int -> int -> int;
+  set_config : int -> int -> int -> unit;
   bar : int -> (int * int) option;
   map : combine:bool -> int -> int -> int -> (Window.t, string) result;
   unmap : Window.t -> unit;
   interrupt : int -> bool;
   reset : unit -> (unit, string) result;
+  forget : unit -> (unit, string) result;
   alloc_dma :
     contiguous:bool ->
     va:int option ->

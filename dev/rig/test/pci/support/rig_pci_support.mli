@@ -109,7 +109,7 @@ val log : int -> (bool * int * int) list
     by address.
 
     Four levels of 512 entries, the root numbered 0: level [l] indexes the bits
-    from [shifts.(l)] on. Pages map at levels 1 to 3: 1 GiB, 2 MiB and 4 KiB.
+    from [shifts.(l)] on, and entries hold physical addresses of 52 bits. Pages map at levels 1 to 3: 1 GiB, 2 MiB and 4 KiB.
     Entries: bit 0 valid, bit 1 a page, bits 2-3 the target, bit 4 uncached, bit
     5 snooped, bits 6-11 the fragment, bits 12-51 the address, bits 52-55 a
     peer's number. *)
@@ -119,20 +119,19 @@ module Tables : sig
     mutable zeroed : (int * int) list;  (** [zero] calls, newest first. *)
     mutable unflushed : int;  (** Entries written since the last [flush]. *)
     mutable touches : int;  (** Entries written, zeroes and flushes. *)
+    mutable confirms : bool;
+        (** What [flush] answers: whether the GPU confirmed it. *)
   }
   (** The type for a GPU memory that holds page tables. *)
 
   val memory : unit -> memory
-  (** [memory ()] is a memory that holds no entry. *)
+  (** [memory ()] is a memory that holds no entry, whose flushes confirm. *)
 
   val format : memory -> Rig_pci.Page_table.format
   (** [format m] is the format, its entries in [m]. *)
 
   val shifts : int array
   (** [shifts.(l)] is the lowest bit of a virtual address level [l] indexes. *)
-
-  val address_mask : int
-  (** [address_mask] is an entry's address bits. *)
 
   val leaf : int
   (** [leaf] is the level of the smallest pages. *)

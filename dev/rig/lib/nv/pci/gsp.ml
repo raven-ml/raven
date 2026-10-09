@@ -427,15 +427,15 @@ let wait_for g fn =
         true
   in
   let* () =
-    Chip.wait g.p.chip
+    Function.wait g.p.fn ~us:(answer_ms * 1000)
       (strf "the GSP's answer to call %d" fn)
-      ~ms:answer_ms answered
+      answered
   in
   !found
 
 let send g fn body =
-  Chip.wait g.p.chip "room in the GSP's command queue" ~ms:answer_ms (fun () ->
-      Msgq.send g.q fn body)
+  Function.wait g.p.fn ~us:(answer_ms * 1000) "room in the GSP's command queue"
+    (fun () -> Msgq.send g.q fn body)
 
 let call g fn body =
   Mutex.protect g.lock (fun () ->
@@ -1047,8 +1047,8 @@ let start p (fw : Images.t) ~taken =
      set its queue up and so runs nothing an unload would stop. *)
   let running () =
     let* () =
-      Chip.wait c "the GSP's message queue" ~ms:answer_ms (fun () ->
-          Msgq.ready q)
+      Function.wait c.fn ~us:(answer_ms * 1000) "the GSP's message queue"
+        (fun () -> Msgq.ready q)
     in
     let* _ =
       Mutex.protect g.lock (fun () ->
@@ -1076,7 +1076,7 @@ let start p (fw : Images.t) ~taken =
 let boot p fw =
   let taken = ref [] in
   let failed () =
-    Chip.bus_master p.fn false;
+    Function.set_bus_master p.fn false;
     give_back p taken
   in
   match start p fw ~taken with

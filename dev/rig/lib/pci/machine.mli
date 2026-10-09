@@ -33,7 +33,19 @@ type t
 (** The type for machines. *)
 
 val this : t
-(** [this] is the machine this process runs on. *)
+(** [this] is the machine this process runs on: [at "/"]. *)
+
+val at : string -> t
+(** [at root] is this machine as the directory [root] shows it: its functions
+    and their files under [root/sys/bus/pci], its IOMMU groups under
+    [root/sys/kernel/iommu_groups], its lockdown state at
+    [root/sys/kernel/security/lockdown], its VFIO files under [root/dev/vfio],
+    the memory of functions taken physically under [root/dev/hugepages] and
+    [root/proc/self/pagemap], and, for {!Gpus.detach}, its processes under
+    [root/proc] and its DRM clients under [root/sys/kernel/debug/dri]. A root
+    that shows no PCI functions makes a machine with none. Each call makes
+    another machine: two machines at one root share no holds ({!Gpus}), and the
+    kernel's own exclusion still refuses a second take of one function. *)
 
 val name : t -> string option
 (** [name m] is the name of [m] as its transport gives it, such as
@@ -70,15 +82,6 @@ val reserve : t -> base:int -> int -> (unit, string) result
     [Error why] if part of the range is in use, or if [m] is {!this} and not
     Linux. *)
 
-val wait : t -> us:int -> (unit -> bool) -> bool
-(** [wait m ~us f] calls [f], at least once, until it is [true], [m] failed, or
-    at least [us] microseconds passed on a monotonic clock. It is [true] iff [f]
-    became [true] while [m] had not failed: [m]'s state is read after each call
-    of [f], so an answer computed from the all ones of a failed machine is not
-    trusted. For its first millisecond it calls [f] back to back, relaxing the
-    processor; then it sleeps 0.1 ms between calls, so that a long wait holds no
-    core. Drivers wait for their devices in it. *)
-
 (** {1:transports Transports}
 
     A library that reaches another machine makes it a machine with {!make}, from
@@ -105,12 +108,17 @@ type addressing = Ops.addressing =
 
 type fn = Ops.fn = {
   addressing : addressing;  (** How it reaches system memory. *)
-  config8 : int -> int;  (** {!Function.config8}. *)
-  config16 : int -> int;  (** {!Function.config16}. *)
-  config32 : int -> int;  (** {!Function.config32}. *)
-  set_config8 : int -> int -> unit;  (** {!Function.set_config8}. *)
-  set_config16 : int -> int -> unit;  (** {!Function.set_config16}. *)
-  set_config32 : int -> int -> unit;  (** {!Function.set_config32}. *)
+  inherited : bool;
+      (** Whether a process that died left the function reaching memory of the
+          machine when it was taken, which it may still write: read once, at the
+          take. *)
+  config : int -> int -> int;
+      (** [config off n] is the [n]-byte value at byte [off] of its
+          configuration space, [n] being 1, 2 or 4. Only {!Function}'s accessors
+          call it. *)
+  set_config : int -> int -> int -> unit;
+      (** [set_config off n x] writes the low [n] bytes of [x] at byte [off],
+          [n] being 1, 2 or 4. Only {!Function}'s accessors call it. *)
   bar : int -> (int * int) option;  (** {!Function.bar}. *)
   map : combine:bool -> int -> int -> int -> (Window.t, string) result;
       (** [map ~combine i off n] is {!Function.map} of BAR [i]. *)
@@ -118,6 +126,10 @@ type fn = Ops.fn = {
   interrupt : int -> bool;  (** {!Function.interrupt}. *)
   reset : unit -> (unit, string) result;
       (** {!Function.reset}, without waiting for the function to answer. *)
+  forget : unit -> (unit, string) result;
+      (** [forget ()] records that the function's device was reset, so that it
+          reaches none of the memory processes that died left: that memory goes
+          once no other function reaches it. *)
   alloc_dma :
     contiguous:bool ->
     va:int option ->
@@ -157,10 +169,15 @@ val take : t -> string -> (fn, string) result
 val reserved : t -> int -> int -> bool
 
 (* [files m] is the files of [m] if the process reaches [m] without a transport:
-   {!this}'s, or those of a machine {!at} made. *)
+   {!this}'s, or those of a machine {!at} made. Only {!Gpus}' changes to kernel
+   drivers read them. *)
 val files : t -> Sysfs.t option
 
-(* [at root] is this machine as the directory [root] shows it: its functions
-   under [root/sys/bus/pci], its VFIO files under [root/dev/vfio]. {!this} is
-   [at "/"]. Tests run it on a fixture tree. *)
-val at : string -> t
+(* [wait m ~us f] calls [f], at least once, until it is [true], [m] failed, or
+   at least [us] microseconds passed on a monotonic clock. It is [true] iff [f]
+   became [true] while [m] had not failed: [m]'s state is read after each call
+   of [f], so an answer computed from the all ones of a failed machine is not
+   trusted. For its first millisecond it calls [f] back to back, relaxing the
+   processor; then it sleeps 0.1 ms between calls, so that a long wait holds no
+   core. {!Function.wait} builds on it. *)
+val wait : t -> us:int -> (unit -> bool) -> bool

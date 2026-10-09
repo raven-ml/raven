@@ -45,8 +45,9 @@ type t = {
   fault_bus : int; (* its bus address *)
   vf : bool;
   mutable lease : int; (* a VF's access to give back, 0 if none *)
-  mutable fault : string option;
-      (* the first report, raised again by each sleep *)
+  fault : string option ref;
+      (* the first report, raised again by each sleep: a fault, a hang, or a
+         flush the hubs did not confirm *)
   mutable eops : Memory.region list;
   mutable stopped : [ `Clean | `Lost | `Unknown ] option;
   hw : Mutex.t; (* the register sequences and page-table edits *)
@@ -73,20 +74,14 @@ let vram_bar = 0
 let doorbell_bar = 2
 let register_bar = 5
 
-(* PCI configuration space: the command register's bus master bit, and the PCI
-   Express capability's link control register, whose low two bits enable ASPM
-   (PCI Express Base Specification 7.5.3.7). *)
+(* PCI configuration space: the command register, and the PCI Express
+   capability's link control register, whose low two bits enable ASPM (PCI
+   Express Base Specification 7.5.3.7). *)
 let command = 0x04
-let bus_master = 0x4
 let capabilities = 0x34
 let pcie_capability = 0x10
 let link_control = 0x10
 let aspm = 0x3
-
-let set_bus_master f on =
-  let c = Function.config16 f command in
-  Function.set_config16 f command
-    (if on then c lor bus_master else c land lnot bus_master)
 
 (* The PCI Express capability. The walk is bounded: a dead link can give back
    pointers for ever. *)
@@ -109,13 +104,6 @@ let disable_aspm f =
 
 (* Before the registers' layout is known *)
 
-let wait_raw f ~ms what cond =
-  if Machine.wait (Function.machine f) ~us:(ms * 1000) cond then Ok ()
-  else
-    match Function.failed f with
-    | Some why -> Error (strf "%s: %s" what why)
-    | None -> Error (strf "%s did not answer in %d ms" what ms)
-
 (* A function's firmware sets bit 31 of MP0's register 33 once it has laid out
    the GPU, within 2 s of its power, as the kernel's
    amdgpu_discovery_read_binary_from_mem waits for. *)
@@ -131,15 +119,15 @@ let vf_request mmio f ?(ready = true) req =
   let mb = Window.sub mmio D.nv_maibox_control_trn_offset_byte 2 in
   Window.set8 mb 0 0;
   let* () =
-    wait_raw f ~ms:mailbox_ms "the VF mailbox's acknowledgement" (fun () ->
-        Window.get8 mb 0 land 2 = 0)
+    Function.wait f ~us:(mailbox_ms * 1000) "the VF mailbox's acknowledgement"
+      (fun () -> Window.get8 mb 0 land 2 = 0)
   in
   List.iteri
     (fun i w -> Window.set32 mmio ((D.mmmailbox_msgbuf_trn_dw0 + i) * 4) w)
     [ req; 0; 0; 0 ];
   Window.set8 mb 0 1;
   let* () =
-    wait_raw f ~ms:D.nv_mailbox_poll_ack_timedout
+    Function.wait f ~us:(D.nv_mailbox_poll_ack_timedout * 1000)
       (strf "the VF mailbox's request 0x%x" req) (fun () ->
         Window.get8 mb 0 land 2 = 2)
   in
@@ -148,7 +136,7 @@ let vf_request mmio f ?(ready = true) req =
     if not ready then Ok ()
     else
       let* () =
-        wait_raw f ~ms:D.nv_mailbox_poll_msg_timedout
+        Function.wait f ~us:(D.nv_mailbox_poll_msg_timedout * 1000)
           "the VF's host granting access" (fun () ->
             Window.get32 mmio (D.mmmailbox_msgbuf_rcv_dw0 * 4)
             = D.idh_ready_to_access_gpu)
@@ -204,8 +192,8 @@ let surveyed f vram doorbells mmio =
   let* () =
     if vf then Ok ()
     else
-      wait_raw f ~ms:firmware_ms "the GPU's firmware laying out its memory"
-        (fun () ->
+      Function.wait f ~us:(firmware_ms * 1000)
+        "the GPU's firmware laying out its memory" (fun () ->
           let v = Window.get32 mmio (D.mmmp0_smn_c2pmsg_33 * 4) in
           v <> 0xffff_ffff && v land ready <> 0)
   in
@@ -219,10 +207,23 @@ let surveyed f vram doorbells mmio =
 
 (* What the GPU says of itself before any block is touched, its BARs unmapped if
    it answers [Error]. A VF asks for access first, as its registers need it. *)
-let survey f =
+(* A driven GPU's registers and doorbells are written from the process and from
+   C: windows a transport reaches but the process does not map are refused
+   before the first write, a VF's mailbox's included. A reset writes through
+   the transport. *)
+let survey ~driven f =
   with_bar f ~combine:true vram_bar @@ fun vram ->
   with_bar f ~combine:false doorbell_bar @@ fun doorbells ->
   with_bar f ~combine:false register_bar @@ fun mmio ->
+  let* () =
+    match driven with
+    | `Reset -> Ok ()
+    | `Driven when Window.mapped mmio && Window.mapped doorbells -> Ok ()
+    | `Driven ->
+        Error
+          "the GPU's registers and doorbells are not mapped into the process, \
+           as through a transport"
+  in
   surveyed f vram doorbells mmio
 
 let stuck f =
@@ -299,22 +300,22 @@ let stop_locked g =
        | Ok lease -> g.lease <- lease
        | Error _ -> ());
     let left =
-      match quiet g ~wait:(g.fault = None) with
+      match quiet g ~wait:(!(g.fault) = None) with
       | left -> left
       | exception Regs.Stuck _ -> false
     in
     (* The GPU reaches no memory outside its own once it masters the bus no
        more, but over a fabric: from here nothing it may still write goes back
        before. A step that fails loses the GPU. *)
-    set_bus_master g.f false;
+    Function.set_bus_master g.f false;
     let failed = ref false in
     let step f = try f () with Regs.Stuck _ -> failed := true in
     if not g.vf then step (fun () -> Smu.clocks g.smu `Lowest);
     step (fun () -> ignore (Ih.read g.ih));
     step (fun () -> List.iter (Memory.free g.memory) g.eops);
     g.eops <- [];
-    step (fun () -> mark g ~dirty:(g.fault <> None || (not left) || !failed));
-    let lost = g.fault <> None || (not left) || !failed in
+    step (fun () -> mark g ~dirty:(!(g.fault) <> None || (not left) || !failed));
+    let lost = !(g.fault) <> None || (not left) || !failed in
     give_back_access g;
     Function.free_dma g.f g.fault_page;
     if not lost then `Clean
@@ -341,7 +342,7 @@ let boot g ~partial ~pool ~kiq =
   (* The GPU masters the bus only once booted: until then it reaches its own
      memory alone, so that no address a step gets wrong reaches the host's. A
      virtual function's KIQ, in system memory, needs it earlier. *)
-  set_bus_master g.f false;
+  Function.set_bus_master g.f false;
   (* A partial boot follows a session whose process may have died with its
      engines running, as GC 9.5.0's over a dirty mark does: they stop before the
      hubs take this session's tables, so that none reaches this session's
@@ -350,13 +351,16 @@ let boot g ~partial ~pool ~kiq =
   (* The GPU masters the bus only while both hubs translate: an untranslated
      address goes to host memory as it stands. *)
   let master () =
+    (* A flush the hubs did not confirm loses the boot before the GPU reaches
+       host memory. *)
+    Option.iter (fun why -> raise (Regs.Stuck why)) !(g.fault);
     List.iter
       (fun hub ->
         match Gmc.translates g.gmc hub g.tables ~fault:g.fault_bus with
         | Ok () -> ()
         | Error why -> raise (Regs.Stuck why))
       [ `Mm; `Gc ];
-    set_bus_master g.f true
+    Function.set_bus_master g.f true
   in
   (* The hubs as the kernel starts them: the MM hub, and on GC 9 the GC's too,
      before the interrupt handler and the firmware (gmc_v9_0_gart_enable); from
@@ -423,9 +427,22 @@ let alloc_fault_page f =
          some, or reserve huge pages (vm.nr_hugepages)"
   | Error why -> Error (strf "the hubs' fault page: %s" why)
 
-let start f find =
+(* A flush the hubs do not confirm is the GPU's failure: its bus mastering goes
+   off at once, so that no stale translation reaches host memory, the next sleep
+   raises it, and the stop leaves the GPU lost. *)
+let confirm f fault invalidate () =
+  match invalidate () with
+  | () -> true
+  | exception Regs.Stuck why ->
+      Function.set_bus_master f false;
+      if !fault = None then fault := Some why;
+      false
+
+let start ~gpus f find =
   let refused r = Result.map_error (fun why -> `Refused why) r in
-  let* vram, doorbells, mmio, vf, lease, memory, d = refused (survey f) in
+  let* vram, doorbells, mmio, vf, lease, memory, d =
+    refused (survey ~driven:`Driven f)
+  in
   let* l = refused (Regs.layout d) in
   let r = Regs.make f mmio l ~vf in
   let* images = refused (Images.load find (Regs.discovery l)) in
@@ -458,13 +475,14 @@ let start f find =
         Error `Running
     | `Partial | `Full -> refused (Gmc.covers gmc ~memory)
   in
-  let kiq = ref None in
-  let flush () =
-    Window.flush vram;
-    Gmc.flush_hdp gmc;
-    match !kiq with
-    | Some gfx -> Gfx.invalidate gfx
-    | None -> Gmc.invalidate gmc
+  let kiq = ref None and fault = ref None in
+  let flush =
+    confirm f fault (fun () ->
+        Window.flush vram;
+        Gmc.flush_hdp gmc;
+        match !kiq with
+        | Some gfx -> Gfx.invalidate gfx
+        | None -> Gmc.invalidate gmc)
   in
   let* tables, pool =
     refused
@@ -478,15 +496,9 @@ let start f find =
                else Page_table.Main)
             ~pages:main_blocks
         in
-        (tables, lay_out tables ~vf ~xccs:(Regs.gpu l).xccs))
-  in
-  let peer =
-    if not (Gmc.hive gmc) then None
-    else
-      Some
-        (fun ranges ->
-          ( List.map (fun (pa, n) -> (Gmc.fabric gmc pa, n)) ranges,
-            Page_table.Peer 0 ))
+        let pool = lay_out tables ~vf ~xccs:(Regs.gpu l).xccs in
+        Option.iter (fun why -> raise (Regs.Stuck why)) !fault;
+        (tables, pool))
   in
   let* fault_page, fault_bus = refused (alloc_fault_page f) in
   let g =
@@ -497,7 +509,7 @@ let start f find =
       doorbells;
       mmio;
       tables;
-      memory = Memory.create ?peer f tables ~bar:vram_bar;
+      memory = Memory.create ?link:(Gmc.link gmc ~gpus) f tables ~bar:vram_bar;
       ih = Ih.make r gmc vram ~rings:pool.ih_rings ~wptr:pool.ih_wptr;
       psp = Psp.make r gmc vram tables pool.psp;
       smu = Smu.make r gmc ~table:pool.smu_table;
@@ -508,7 +520,7 @@ let start f find =
       fault_bus;
       vf;
       lease;
-      fault = None;
+      fault;
       eops = [];
       stopped = None;
       hw = Mutex.create ();
@@ -516,14 +528,18 @@ let start f find =
   in
   (* From here the GPU's registers are written: a failure stops it as lost. *)
   match boot g ~partial:(p = `Partial) ~pool ~kiq with
-  | () -> Ok g
+  | () when !fault = None -> Ok g
+  | () ->
+      let why = Option.get !fault in
+      ignore (stop g);
+      Error (`Lost why)
   | exception Regs.Stuck why ->
-      g.fault <- Some why;
+      g.fault := Some why;
       ignore (stop g);
       Error (`Lost why)
   | exception e ->
       let bt = Printexc.get_raw_backtrace () in
-      g.fault <- Some (Printexc.to_string e);
+      g.fault := Some (Printexc.to_string e);
       ignore (stop g);
       Printexc.raise_with_backtrace e bt
 
@@ -537,12 +553,6 @@ let memory g = g.memory
 let hive g = Gmc.hive g.gmc
 let budget g = Page_table.main_pool g.tables
 let protect g f = Mutex.protect g.hw f
-
-let reaches g o =
-  let physical g = Function.addressing g.f = Machine.Physical in
-  (hive g && hive o)
-  || (physical g && physical o && not (Memory.small_bar o.memory))
-
 let host w off = if Window.mapped w then Some (Window.address w + off) else None
 let hdp g = host g.mmio (Gmc.hdp g.gmc)
 
@@ -567,7 +577,8 @@ let queue g kind ~ring ~bytes ~read ~write =
       | Ok (Some m) -> (
           g.eops <- m :: g.eops;
           match
-            Gfx.queue g.gfx kind ~ring ~bytes ~read ~write ~eop:m.mapping.va
+            Gfx.queue g.gfx kind ~ring ~bytes ~read ~write
+              ~eop:(Memory.address m)
           with
           | index -> doorbell index
           | exception Regs.Stuck why -> Error why))
@@ -575,11 +586,11 @@ let queue g kind ~ring ~bytes ~read ~write =
 (* Sleeping *)
 
 let fault g why =
-  g.fault <- Some why;
+  g.fault := Some why;
   raise (Rig_amd.Fault why)
 
 let faulted g why =
-  Mutex.protect g.hw @@ fun () -> if g.fault = None then g.fault <- Some why
+  Mutex.protect g.hw @@ fun () -> if !(g.fault) = None then g.fault := Some why
 
 (* The GPU's fatal hardware errors, which NBIO flags outside the interrupt ring,
    with the power manager's machine-check banks. *)
@@ -607,13 +618,15 @@ let fatal g =
    the windows the interrupt ring lies in. Each look at the ring holds the lock
    the stop takes. *)
 let sleep g ~ms =
-  (match g.fault with Some why -> raise (Rig_amd.Fault why) | None -> ());
+  (match !(g.fault) with Some why -> raise (Rig_amd.Fault why) | None -> ());
   let stopped () = Option.is_some g.stopped in
+  let moved () = Mutex.protect g.hw (fun () -> stopped () || Ih.pending g.ih) in
+  (* A failed wait is read below, with the ring. *)
   ignore
-    (Machine.wait (Function.machine g.f) ~us:(ms * 1000) (fun () ->
-         Mutex.protect g.hw (fun () -> stopped () || Ih.pending g.ih)));
+    (Function.wait g.f ~us:(ms * 1000) "the interrupt ring" moved
+      : (unit, string) result);
   Mutex.protect g.hw @@ fun () ->
-  match g.fault with
+  match !(g.fault) with
   | Some why -> raise (Rig_amd.Fault why)
   | None when stopped () -> ()
   | None -> (
@@ -703,7 +716,7 @@ let restore f saved =
            o (read f w) v)
 
 let reset f =
-  let* vram, doorbells, mmio, vf, lease, _, d = survey f in
+  let* vram, doorbells, mmio, vf, lease, _, d = survey ~driven:`Reset f in
   (* The caller may hold [f] on, as a renew does. *)
   Fun.protect ~finally:(fun () -> unmap_bars f (vram, doorbells, mmio))
   @@ fun () ->

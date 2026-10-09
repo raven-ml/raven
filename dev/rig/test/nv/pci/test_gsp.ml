@@ -298,7 +298,7 @@ let test_failed_boot () =
       ~pages:[ (page, page) ]
   in
   Page_table.booted tables;
-  Rig_nv_pci.Chip.bus_master fn true;
+  Rig_pci.Function.set_bus_master fn true;
   let placement =
     {
       Gsp.chip;

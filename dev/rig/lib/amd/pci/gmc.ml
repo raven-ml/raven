@@ -27,12 +27,15 @@ type t = {
   xccs : int list; (* the GC hub's instances *)
   mm : int list; (* the MM hub's instances *)
   node : int; (* where the GPU's memory starts in the fabric's window *)
+  region : int; (* its node's number in the fabric *)
+  regions : int; (* the fabric's highest node number *)
+  segment : int; (* the bytes of a node's segment *)
+  offset : int; (* the memory controller's offset of the fabric's window *)
   fabric_base : int; (* where its page tables name it *)
   mc_base : int; (* where it starts for the memory controller *)
   base : int; (* the FB location registers *)
   top : int;
   hive : bool;
-  address_mask : int; (* the physical addresses the GPU's entries hold *)
   mutable gc_started : bool; (* whether the GC hub walks tables yet *)
   engines : ([ `Gc | `Mm ] * (int * engine list)) list;
       (* each hub's request value and engines *)
@@ -132,6 +135,10 @@ let make r vram =
     xccs;
     mm;
     node;
+    region;
+    regions;
+    segment;
+    offset;
     fabric_base = offset + node;
     mc_base = first base + node;
     base;
@@ -139,7 +146,6 @@ let make r vram =
     (* A segment size alone describes an address window; a fabric of GPUs also
        has regions. *)
     hive = segment > 0 && regions > 0;
-    address_mask = (1 lsl address_bits gc) - 1;
     gc_started = false;
     engines = [ engines `Gc xccs; engines `Mm mm ];
   }
@@ -159,6 +165,17 @@ let covers g ~memory = window ~base:g.base ~top:g.top ~fabric:g.node ~memory
 let mc g pa = g.mc_base + pa
 let fabric g pa = g.fabric_base + pa
 let hive g = g.hive
+
+(* This library reads no hive identity: a GPU's fabric is taken to be the
+   machine's only one when the machine's AMD GPUs number its nodes. Otherwise
+   the GPUs reach each other through their BARs. A machine whose AMD GPUs number
+   one fabric's nodes but belong to several, as two halves of two fabrics, is
+   taken for one fabric. *)
+let link g ~gpus =
+  if g.hive && gpus = g.regions + 1 then
+    Some { Rig_pci.Memory.fabric = 0L; node = g.region }
+  else None
+
 let instances g = function `Gc -> g.xccs | `Mm -> g.mm
 
 (* Entries *)
@@ -180,8 +197,8 @@ let entry ~gc ~level ~pa target ~uncached ~snooped ~fragment =
   let shift v s = Int64.shift_left (Int64.of_int v) s in
   (* GFX12 reaches system memory MTYPE_UC whatever the mapping asks, as the
      kernel's GART maps the queues and words of VMID 0, which every table of
-     this library serves (gmc_v12_0_gart_init). Its MTYPE_NC is for other
-     VMIDs' system pages (gmc_v12_0_get_vm_pte). *)
+     this library serves (gmc_v12_0_gart_init). Its MTYPE_NC is for other VMIDs'
+     system pages (gmc_v12_0_get_vm_pte). *)
   let mtype =
     match gc with
     | (12 | 13), _, _ when system -> D.soc24_mtype_uc
@@ -226,35 +243,29 @@ let entry ~gc ~level ~pa target ~uncached ~snooped ~fragment =
 let levels = [ 12; 21; 30; 39 ]
 let bits = 48
 
+(* A peer's memory lies at its node's segment of the fabric's window. *)
 let format g ~flush =
   let set ~table i e = Window.set64 g.vram (table + (8 * i)) e in
-  let at pa =
-    if pa land g.address_mask <> pa then
-      invalid_argf "Gmc.format: address 0x%x is beyond the GPU's %d bits" pa
-        (address_bits g.gc);
-    pa
-  in
   {
     Page_table.levels;
     bits;
+    pa_bits = address_bits g.gc;
     first = D.amdgpu_vm_pdb2;
     set_table =
       (fun ~level ~table i ~child ->
         set ~table i
-          (entry ~gc:g.gc ~level
-             ~pa:(at (fabric g child))
-             `Table ~uncached:false ~snooped:false ~fragment:0));
+          (entry ~gc:g.gc ~level ~pa:(fabric g child) `Table ~uncached:false
+             ~snooped:false ~fragment:0));
     set_page =
       (fun ~level ~table i ~pa target ~uncached ~snooped ~fragment ->
         let pa, kind =
           match target with
           | Page_table.Gpu -> (fabric g pa, `Gpu)
-          | Peer _ -> (pa, `Gpu)
+          | Peer node -> (g.offset + (node * g.segment) + pa, `Gpu)
           | System -> (pa, `System)
         in
         set ~table i
-          (entry ~gc:g.gc ~level ~pa:(at pa) (`Page kind) ~uncached ~snooped
-             ~fragment));
+          (entry ~gc:g.gc ~level ~pa (`Page kind) ~uncached ~snooped ~fragment));
     clear = (fun ~level:_ ~table i -> set ~table i 0L);
     (* Pages map at PDB1 (1 GiB), PDB0 (2 MiB) and PTB (4 KiB). *)
     large = (fun ~level -> level >= D.amdgpu_vm_pdb1);
@@ -365,8 +376,8 @@ let start_hub g hub tables ~scratch =
 
 (* A hub translates once its L2 cache and context 0 are on, over the tables'
    root: a block's reset clears them, as the RLC's autoload does the GC's, and
-   the hub then passes addresses through untranslated. The reset also clears
-   the faults' page, which then sends them to host address 0, and the system
+   the hub then passes addresses through untranslated. The reset also clears the
+   faults' page, which then sends them to host address 0, and the system
    aperture and its access mode. *)
 let translates g hub tables ~fault =
   let r = g.r and ip = hub_prefix hub in

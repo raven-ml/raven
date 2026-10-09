@@ -72,6 +72,7 @@ type taken = {
   interrupts : Unix.file_descr option; (* the eventfd VFIO signals *)
   intx : int option; (* the INTx bit as found, if the take turned INTx off *)
   way : way;
+  inherited : bool; (* a dead process left it reaching memory, at the take *)
   fds : Unix.file_descr list; (* every descriptor the take opened *)
 }
 
@@ -142,14 +143,15 @@ let give_back t s =
 (* The functions processes hold physically, with the process that took each.
    VFIO stops a function's DMA when its files close, at release or at exit;
    closing a physical take's files stops nothing, so this library does, before
-   the memory the function reaches goes back to the system. A child of fork
-   inherits the list, and acts on none of it. The exit handler is registered
-   when the library loads, before a driver above it registers its own, so it
-   runs after theirs: a driver stops its GPU while it still reaches memory. It
-   is a list in an atomic, so that a child of fork meets no held lock. *)
+   the memory the function reaches goes back to the system: then the memory
+   files that list no function go. A child of fork inherits the list, and acts
+   on none of it. The exit handler is registered when the library loads, before
+   a driver above it registers its own, so it runs after theirs: a driver stops
+   its GPU while it still reaches memory. It is a list in an atomic, so that a
+   child of fork meets no held lock. *)
 let physical = Atomic.make []
 let hold t = update physical (List.cons (Unix.getpid (), t))
-let forget t = update physical (List.filter (fun (_, t') -> t' != t))
+let unhold t = update physical (List.filter (fun (_, t') -> t' != t))
 
 let () =
   at_exit (fun () ->
@@ -160,7 +162,8 @@ let () =
             match t.way with
             | Physical_take s -> give_back t s
             | Iommu_take _ -> stop_dma t)
-        (Atomic.get physical))
+        (Atomic.get physical);
+      Sysmem.exit ())
 
 (* mmap maps whole pages from an offset on a page: the pages that hold the [n]
    bytes at [off]. *)
@@ -244,14 +247,20 @@ let free_dma t w =
       Sysmem.unmap w
   | Physical_take s -> Sysmem.free s w
 
+(* Taken physically, a function reaches only memory that outlives the process:
+   what alloc_dma gave on its machine. *)
 let pin t a n =
   match t.way with
-  | Physical_take _ ->
-      Fail.fail
-        "%s reaches memory without an IOMMU, and the process's pages go back \
-         to the system when it dies; take it behind an IOMMU, bound to \
-         vfio-pci, or give it memory from alloc_dma"
-        t.bus
+  | Physical_take s -> (
+      match Sysmem.reach ~root:(Sysmem.root s) ~bus:t.bus a (round_page n) with
+      | Some runs -> runs
+      | None ->
+          Fail.fail
+            "%s reaches memory without an IOMMU and pins only memory alloc_dma \
+             gave on its machine: the process's own pages go back to the \
+             system when it dies; take it behind an IOMMU, bound to vfio-pci, \
+             or give it memory from alloc_dma"
+            t.bus)
   | Iommu_take c -> (
       let n = round_page n in
       match Vfio.map_dma "pin" t.bus c a n with
@@ -264,8 +273,15 @@ let pin t a n =
 
 let unpin t a n =
   match t.way with
-  | Physical_take _ -> () (* a physical take pins nothing *)
+  | Physical_take _ -> Sysmem.unreach ~a ~n:(round_page n)
   | Iommu_take c -> Vfio.unmap_dma t.bus c a (round_page n)
+
+(* A reset GPU reaches none of the memory processes that died left. Behind an
+   IOMMU it never did: VFIO ended their access as their files closed. *)
+let forget t =
+  match t.way with
+  | Physical_take s -> Sysmem.forget ~root:(Sysmem.root s) ~bus:t.bus
+  | Iommu_take _ -> ()
 
 (* A take's descriptors close whatever happens before. *)
 let release t =
@@ -273,25 +289,23 @@ let release t =
   match t.way with
   | Iommu_take c -> Vfio.close c
   | Physical_take s ->
-      forget t;
+      unhold t;
       give_back t s
 
 let fn t =
   {
     Ops.addressing =
       (match t.way with Physical_take _ -> Physical | Iommu_take _ -> Iommu);
-    config8 = (fun off -> config t off 1);
-    config16 = (fun off -> config t off 2);
-    config32 = (fun off -> config t off 4);
-    set_config8 = (fun off x -> set_config t off 1 x);
-    set_config16 = (fun off x -> set_config t off 2 x);
-    set_config32 = (fun off x -> set_config t off 4 x);
+    inherited = t.inherited;
+    config = config t;
+    set_config = set_config t;
     bar = (fun i -> if i < Array.length t.bars then t.bars.(i) else None);
     map =
       (fun ~combine i off n -> Fail.result (fun () -> map t ~combine i off n));
     unmap;
     interrupt = interrupt t;
     reset = (fun () -> Fail.result (fun () -> reset t));
+    forget = (fun () -> Fail.result (fun () -> forget t));
     alloc_dma =
       (fun ~contiguous ~va n ->
         Fail.result (fun () -> alloc_dma t ~contiguous ~va n));
@@ -312,6 +326,7 @@ let take_iommu files fds bus bars =
     interrupts = Some efd;
     intx = None;
     way = Iommu_take c;
+    inherited = false;
     fds = !fds;
   }
 
@@ -334,8 +349,11 @@ let take_physical files fds bus bars =
   fds := config :: !fds;
   if not (in_change file) then lock files bus config;
   (* The first act of a process on the machine's memory: what processes that
-     died left and no function reaches goes, without waiting for a reset. *)
-  Sysmem.collect_dead ~root:(Sysfs.root files);
+     died left and no function reaches goes, without waiting for a reset. What
+     the function still reaches stays, until its GPU is reset. *)
+  let root = Sysfs.root files in
+  Sysmem.collect_dead ~root;
+  let inherited = Sysmem.left ~root ~bus in
   let interrupts =
     if Sysfs.driver files bus = Some "vfio-pci" then
       let _, _, efd = Vfio.open_function files fds bus Vfio.No_iommu in
@@ -351,7 +369,8 @@ let take_physical files fds bus bars =
       seek = Mutex.create ();
       interrupts;
       intx = None;
-      way = Physical_take (Sysmem.store ~root:(Sysfs.root files) ~bus);
+      way = Physical_take (Sysmem.store ~root ~bus);
+      inherited;
       fds = !fds;
     }
   in

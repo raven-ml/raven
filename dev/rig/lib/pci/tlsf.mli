@@ -49,8 +49,7 @@ val alloc : ?align:int -> ?below:int -> t -> int -> int option
 
     Raises [Invalid_argument] if [n < 0] or [align <= 0]. *)
 
-val free : t -> int -> unit
-(** [free a x] frees the block {!alloc} returned at [x].
-
-    Raises [Invalid_argument] if no block of [a] starts at [x] or it is free
-    already. *)
+val free : t -> int -> bool
+(** [free a x] frees the block {!alloc} returned at [x], and is [true] iff there
+    was one: [false], changing nothing, if no block of [a] starts at [x] or it
+    is free already. *)

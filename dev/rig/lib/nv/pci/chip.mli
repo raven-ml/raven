@@ -61,15 +61,3 @@ val set : t -> int -> int -> unit
 val field : int * int -> int -> int
 (** [field (lo, n) x] is the [n]-bit field of [x] from bit [lo], a field of
     [Defs]. *)
-
-val wait : t -> string -> ms:int -> (unit -> bool) -> (unit, string) result
-(** [wait c what ~ms f] waits for [f ()] ({!Rig_pci.Machine.wait}). [Error]
-    names [what] if [ms] milliseconds passed, or the function's failure
-    ({!Rig_pci.Function.failed}) if it or its machine failed. *)
-
-val delay : t -> int -> unit
-(** [delay c ms] waits [ms] milliseconds. *)
-
-val bus_master : Rig_pci.Function.t -> bool -> unit
-(** [bus_master fn on] turns the bus mastering of the GPU's function [fn] on or
-    off. *)

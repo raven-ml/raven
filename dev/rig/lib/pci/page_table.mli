@@ -30,9 +30,9 @@ type target =
   | Gpu  (** The GPU's own memory. *)
   | System  (** System memory, which the GPU reaches over the bus. *)
   | Peer of int
-      (** [Peer i] is another GPU's memory, reached over a direct link: [i] is
-          the number this GPU's links give that GPU. A format whose links
-          address peers by physical address alone ignores [i]. *)
+      (** [Peer i] is the memory of GPU [i] of this GPU's fabric, reached over a
+          direct link, at a physical address of that GPU's memory
+          ({!Memory.link}). *)
 
 type format = {
   levels : int list;
@@ -45,6 +45,9 @@ type format = {
           or [bits] for the root: with 48 bits, [[12; 21; 30; 39]] is four
           levels of 512 entries; with 49 bits, [[12; 21; 29; 38; 47]] has a root
           of 4 entries and a level of 256. *)
+  pa_bits : int;
+      (** The number of bits of a physical address an entry holds: {!map}
+          refuses memory past [2{^pa_bits}]. *)
   first : int;  (** The number of the root level. *)
   set_table : level:int -> table:int -> int -> child:int -> unit;
       (** [set_table ~level ~table i ~child] points entry [i] of that table to
@@ -70,10 +73,13 @@ type format = {
       (** [large ~level] is [true] iff pages may map at [level]. *)
   zero : int -> int -> unit;
       (** [zero pa n] zeroes the [n] bytes of the GPU's memory at [pa]. *)
-  flush : unit -> unit;
+  flush : unit -> bool;
       (** [flush ()] makes the GPU walk the entries written and zeroed since the
-          last flush and forget what it cached of those cleared. The setters and
-          [zero] may leave their stores in flight until then. *)
+          last flush and forget what it cached of those cleared, and is [true]
+          iff the GPU confirmed it. [false] means the GPU may still reach what
+          the cleared entries mapped: the vendor records it as a failure of the
+          GPU. The setters and [zero] may leave their stores in flight until
+          then. *)
 }
 (** The type for a vendor's page-table format and the access to the GPU's memory
     that holds the tables. Page_table keeps what each entry holds and never
@@ -81,7 +87,8 @@ type format = {
     with [~combine:true]. An entry in memory that [zero] zeroed maps nothing.
 
     Page_table calls [set_page] only at the leaf level or where [large] holds,
-    and [set_table] only with tables in the GPU's memory. *)
+    with an address below [2{^pa_bits}], and [set_table] only with tables in the
+    GPU's memory. The setters, [clear] and [zero] raise nothing. *)
 
 (** {1:page_tables Page tables} *)
 
@@ -114,8 +121,9 @@ val create :
     {!palloc} and {!alloc} take by default come from the boot pool.
 
     Raises [Invalid_argument] if [fmt]'s levels do not rise from 12 to below
-    [bits], [base] is not a multiple of the largest page a level maps, the pools
-    do not fit in [memory] or the boot pool cannot hold the root table. *)
+    [bits], its [pa_bits] is below 12 or past 61, [base] is not a multiple of
+    the largest page a level maps, the pools do not fit in [memory] or the boot
+    pool cannot hold the root table. *)
 
 val booted : t -> unit
 (** [booted t] ends booting: tables and memory come from the other pools. *)
@@ -136,6 +144,10 @@ val root : t -> int
 val memory : t -> int
 (** [memory t] is the number of bytes of the GPU's physical memory [t] manages:
     [memory] of {!create}. *)
+
+val pa_bits : t -> int
+(** [pa_bits t] is the number of bits of a physical address [t]'s entries hold:
+    [pa_bits] of its format. *)
 
 val main_pool : t -> int
 (** [main_pool t] is the number of bytes of the main pool: {!memory} less the
@@ -185,31 +197,32 @@ val map :
   (int * int) list ->
   mapping option
 (** [map t ~va tg ranges] maps the physical [ranges] of [tg], in order, from
-    [va] on, creating the tables it needs, and flushes. [uncached] and [snooped]
-    default to [false]. [None] if the GPU's memory has no room for a table it
-    needs, having unmapped what it mapped and freed the tables it made. If a
-    setter of the format raises, [map] raises the same exception, having done
-    the same.
+    [va] on, creating the tables it needs, and flushes, whatever the flush
+    answers. [uncached] and [snooped] default to [false]. [None] if the GPU's
+    memory has no room for a table it needs, having unmapped what it mapped and
+    freed the tables it made.
 
     Raises [Invalid_argument], changing nothing, if [va] or an address or length
-    of [ranges] is not a multiple of 4 KiB, the range is not within {!span}
-    bytes from {!base}, or an address of it is mapped already. *)
+    of [ranges] is not a multiple of 4 KiB, a range ends past the addresses
+    {!pa_bits} bits hold, the range is not within {!span} bytes from {!base}, or
+    an address of it is mapped already. *)
 
 val tables : t -> va:int -> int -> int list option
 (** [tables t ~va n] is the physical addresses of the tables from the root down
     to the one whose entries would map the [n] bytes from [va], root first,
-    creating those that are missing and flushing, as {!map} would. They are
-    never freed: the caller may write the entries that map those bytes itself.
-    [t] knows only the entries it wrote, so {!map} does not refuse the addresses
-    the caller's entries map, and maps them inside these tables. [None] if the
-    GPU's memory has no room for one, keeping those it made.
+    creating those that are missing and flushing, as {!map} does. They are never
+    freed: the caller may write the entries that map those bytes itself. [t]
+    knows only the entries it wrote, so {!map} does not refuse the addresses the
+    caller's entries map, and maps them inside these tables. [None] if the GPU's
+    memory has no room for one, keeping those it made.
 
     Raises [Invalid_argument] if the range is not as {!map} requires, or a page
     larger than [n] bytes maps [va]. *)
 
-val unmap : t -> va:int -> int -> unit
+val unmap : t -> va:int -> int -> bool
 (** [unmap t ~va n] unmaps the [n] bytes mapped from [va], frees the tables that
-    become empty, and flushes, so the GPU no longer reaches the memory.
+    become empty, and flushes. It is [true] iff the flush was confirmed, so that
+    the GPU no longer reaches the memory; on [false] it may still reach it.
 
     Raises [Invalid_argument], changing nothing, if the range is not as {!map}
     requires, an address of it is not mapped, or a page maps addresses on both
@@ -231,11 +244,12 @@ val alloc :
 
     [None] if the space or the pool cannot supply them, as {!Space.alloc} and
     {!palloc} bound each request, or if a table has no room, having given back
-    what it took. If a setter of the format raises, [alloc] raises the same
-    exception, having given back what it took.
+    what it took.
 
     Raises [Invalid_argument] if [n <= 0]. *)
 
-val free : t -> mapping -> unit
-(** [free t m] unmaps [m], frees its virtual addresses and, if it is in the
-    {!Gpu}'s memory, its physical memory. *)
+val free : t -> mapping -> bool
+(** [free t m] unmaps [m] and flushes. It is [true] iff the flush was confirmed,
+    having freed [m]'s virtual addresses and, if it is in the {!Gpu}'s memory,
+    its physical memory; on [false] it keeps both, which the GPU may still
+    reach. *)

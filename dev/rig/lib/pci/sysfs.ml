@@ -271,8 +271,8 @@ let access m bus = addressing m bus (state m bus)
 let no_driver = "none"
 let override m bus = path m bus "driver_override"
 
-(* The command register and its bit that lets the function master the bus
-   (PCI Express Base Specification, 7.5.1.1.3). *)
+(* The command register and its bit that lets the function master the bus (PCI
+   Express Base Specification, 7.5.1.1.3). *)
 let command = 0x04
 let bus_master = 0x4
 
@@ -347,9 +347,9 @@ let attach m bus =
 
 (* [resourceN_resize] holds a bitmap of the sizes BAR [N] supports, bit [k] for
    [2^k] MiB, and takes the [k] to set. A bridge whose window cannot hold a size
-   refuses it with ENOSPC, and a smaller one may fit. Any other refusal holds
-   for every size, so the BAR keeps its own. The bitmap is an [int], whose
-   highest bit is [largest]. *)
+   refuses it with ENOSPC, and a smaller one may fit. A file the process may not
+   write is refused, naming it. Any other refusal holds for every size, so the
+   BAR keeps its own. The bitmap is an [int], whose highest bit is [largest]. *)
 let largest = Sys.int_size - 2
 
 let resize m bus i =
@@ -363,6 +363,8 @@ let resize m bus i =
           match put file (string_of_int k) with
           | () -> ()
           | exception Unix.Unix_error (ENOSPC, _, _) -> try_from (k - 1)
+          | exception Unix.Unix_error (((EACCES | EPERM) as e), _, _) ->
+              refused file e
           | exception Unix.Unix_error _ -> ()
     in
     try_from largest

@@ -85,10 +85,17 @@ module Tables = struct
     mutable zeroed : (int * int) list;
     mutable unflushed : int;
     mutable touches : int;
+    mutable confirms : bool;
   }
 
   let memory () =
-    { entries = Hashtbl.create 64; zeroed = []; unflushed = 0; touches = 0 }
+    {
+      entries = Hashtbl.create 64;
+      zeroed = [];
+      unflushed = 0;
+      touches = 0;
+      confirms = true;
+    }
 
   let shifts = [| 39; 30; 21; 12 |]
   let leaf = 3
@@ -120,6 +127,7 @@ module Tables = struct
     {
       Page_table.levels = [ 12; 21; 30; 39 ];
       bits = 48;
+      pa_bits = 52;
       first = 0;
       set_table = (fun ~level:_ ~table i ~child -> set table i (child lor 1));
       set_page =
@@ -139,7 +147,8 @@ module Tables = struct
       flush =
         (fun () ->
           touch ();
-          m.unflushed <- 0);
+          m.unflushed <- 0;
+          m.confirms);
     }
 
   type entry = {
@@ -237,6 +246,7 @@ module Buffer_tables = struct
       {
         Page_table.levels;
         bits;
+        pa_bits = bits;
         first = 0;
         set_table =
           (fun ~level:_ ~table i ~child -> set b table i (child lor 3));
@@ -246,7 +256,7 @@ module Buffer_tables = struct
         clear = (fun ~level:_ ~table i -> set b table i 0);
         large;
         zero = zero b;
-        flush = ignore;
+        flush = (fun () -> true);
       }
     in
     let t = Page_table.create format space ~memory ~boot ~tables:Pool ~pages in

@@ -40,6 +40,12 @@ val fabric : t -> int -> int
 val hive : t -> bool
 (** [hive g] is [true] iff the GPU is one of several joined by a fabric. *)
 
+val link : t -> gpus:int -> Rig_pci.Memory.link option
+(** [link g ~gpus] is the GPU's place in its fabric, its node's number, if
+    {!hive} and the machine's [gpus] AMD GPUs number the fabric's nodes; [None]
+    otherwise. Halves of two fabrics that number one fabric's nodes are taken
+    for one fabric. *)
+
 val instances : t -> [ `Gc | `Mm ] -> int list
 (** [instances g hub] is the instances of [hub]: GC's dies, or MM's hubs (the
     live accelerator dies on a GPU of several). *)
@@ -66,13 +72,14 @@ val entry :
     Raises [Invalid_argument] if [pa] is not on 4 KiB or has bits above the 48
     the entry holds. *)
 
-val format : t -> flush:(unit -> unit) -> Rig_pci.Page_table.format
+val format : t -> flush:(unit -> bool) -> Rig_pci.Page_table.format
 (** [format g ~flush] is the format of the GPU's page tables, which it writes
     through the memory BAR; a page in [Page_table.Gpu] memory is named by its
-    fabric address. [flush] makes the hubs walk the entries written: an HDP
-    flush, then the hubs' invalidation, which a virtual function asks its KIQ
-    for ({!Gfx}). Its [set_table] and [set_page] raise [Invalid_argument] for an
-    address beyond the GPU's address bits. *)
+    fabric address, and one in [Page_table.Peer i] memory by the address of node
+    [i]'s segment of the fabric. Its [pa_bits] is the GPU's: 48 on GC 9.4 and
+    9.5, 44 on the others. [flush] makes the hubs walk the entries written: an
+    HDP flush, then the hubs' invalidation, which a virtual function asks its
+    KIQ for ({!Gfx}), and is [true] iff they confirmed it. *)
 
 val start_hub :
   t -> [ `Gc | `Mm ] -> Rig_pci.Page_table.t -> scratch:int -> unit
@@ -88,14 +95,13 @@ val translates :
   fault:int ->
   (unit, string) result
 (** [translates g hub tables ~fault] is [Ok ()] iff every instance of [hub]
-    holds what {!start_hub} and {!fault_page} gave it over [tables] and the
-    page at bus address [fault]: its L2 cache and context 0 on, the context
-    over the tables' root, its faults sent to [fault], and its system aperture
-    and access mode. A block's reset clears them, as the RLC's autoload clears
-    the GC's hub, which then passes the GPU's addresses through untranslated,
-    to host memory if no IOMMU stands between, and sends its faults to host
-    address 0. [Error msg] names the hub, the instance, the setting, and what
-    it reads. *)
+    holds what {!start_hub} and {!fault_page} gave it over [tables] and the page
+    at bus address [fault]: its L2 cache and context 0 on, the context over the
+    tables' root, its faults sent to [fault], and its system aperture and access
+    mode. A block's reset clears them, as the RLC's autoload clears the GC's
+    hub, which then passes the GPU's addresses through untranslated, to host
+    memory if no IOMMU stands between, and sends its faults to host address 0.
+    [Error msg] names the hub, the instance, the setting, and what it reads. *)
 
 val fault_page : t -> [ `Gc | `Mm ] -> int -> unit
 (** [fault_page g hub a] makes the page of system memory at bus address [a] the

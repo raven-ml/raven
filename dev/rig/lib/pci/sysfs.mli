@@ -71,9 +71,9 @@ val detach : t -> string -> unit
 (** [detach m bus] makes [bus] takeable and keeps kernel drivers off it, unless
     it is bound to [vfio-pci]: it sets its [driver_override] to no driver,
     unbinds its driver, removes its siblings and, unbound, enables it and turns
-    its bus mastering off. Raises
-    {!Fail.Failed}, having written nothing, if it would not be takeable once
-    unbound, alone and enabled, and if it is still not takeable after. *)
+    its bus mastering off. Raises {!Fail.Failed}, having written nothing, if it
+    would not be takeable once unbound, alone and enabled, and if it is still
+    not takeable after. *)
 
 val attach : t -> string -> unit
 (** [attach m bus] gives [bus] back to its kernel driver, unbinding [vfio-pci]
@@ -86,8 +86,9 @@ val reset : t -> string -> unit
 val resize : t -> string -> int -> unit
 (** [resize m bus i] makes BAR [i] of the unbound function the largest size it
     supports that its bridge takes. A bound function keeps its size, and so does
-    one whose resize the kernel refuses for another reason than room: its BAR
-    may stay small. *)
+    one whose resize the kernel refuses for another reason than room or
+    permission: its BAR may stay small. Raises {!Fail.Failed} naming the file if
+    the process may not write it. *)
 
 (** {1:open Open devices} *)
 

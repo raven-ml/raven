@@ -40,12 +40,12 @@
     [/dev/hugepages], one for each 2 MiB block of addresses that holds the
     device's host memory, the copies the library stages through it included,
     which the system must have free ([vm.nr_hugepages]). They outlive a process
-    killed while its GPU runs, until the GPU's next successful {!reset}. The
-    kernel may still move them to allocate a contiguous area or to take memory
-    offline, which only an IOMMU prevents ({!Rig_pci.Function.alloc_dma}). Such
-    a GPU maps no other host memory: {!Rig_amd.maps_host} is [false] for its
-    device, as the process's pages would go back to the system at its death with
-    the GPU still writing them.
+    killed while its GPU runs, until the GPU is next reset, by {!reset} or by
+    its next open. The kernel may still move them to allocate a contiguous area
+    or to take memory offline, which only an IOMMU prevents
+    ({!Rig_pci.Function.alloc_dma}). Such a GPU maps no other host memory:
+    {!Rig_amd.maps_host} is [false] for its device, as the process's pages would
+    go back to the system at its death with the GPU still writing them.
 
     {b Firmware.} An open reads the GPU's firmware images from the directories
     its caller names, files of linux-firmware's [amdgpu/] directory at commit
@@ -67,15 +67,22 @@
     firmware without this mark, booted by its kernel driver or left by a process
     that died, is reset as {!reset} does by the open, which then boots it in
     full; one in a fabric (XGMI) left running is refused, since its GPUs reset
-    together. A GPU this process lost, to a fault or a hang, opens only after a
-    {!reset}, since its state is then unknown.
+    together. A GPU this process lost, to a fault or a hang, is reset by its
+    next open the same way, since its state is then unknown.
+
+    {b Fabrics.} GPUs of one fabric (XGMI) reach each other's memory over its
+    links when the machine's AMD GPUs number the fabric's size: this library
+    reads no fabric's identity. Otherwise they reach each other through their
+    memory BARs, as other GPUs do. A machine whose AMD GPUs number one fabric's
+    size but belong to several, as two halves of two fabrics, is treated as one
+    fabric.
 
     {b Faults and hangs.} The GPU reports faults on its interrupt ring: page
     faults with their address, shader errors, and fatal hardware errors with its
     machine-check banks. {!Rig_amd.sleep} raises them. No kernel bounds the
     GPU's work, so this library states a bound: work that leaves the device's
-    timeline word below its last value for 30 seconds is a hang, which
-    {!Rig_amd.sleep} raises too.
+    timeline word below its last value for {!Rig_pci.Gpus.hang_ms} is a hang,
+    which {!Rig_amd.sleep} raises too.
 
     {b Domains.} Every value may be called from any domain. Opens, resets and
     changes to the machine of AMD GPUs run one at a time, so a boot delays the
@@ -116,27 +123,28 @@ val open_ :
     {!Rig_pci.Machine.this}) and opens it, each firmware image read from the
     first of the directories [firmware] that holds it with its pinned digest.
 
-    The process holds the GPU until the device is stopped ({!Rig_amd.stop}); a
-    device stopped after a fault or a hang leaves the GPU lost, to be {!reset}
-    before it opens again.
+    The process holds the GPU until [Rig.close] ends the device or it is lost; a
+    device lost to a fault or a hang leaves the GPU lost, reset by its next
+    open. A GPU this process lost, or one running firmware this library did not
+    start outside a fabric, is reset first as {!reset} does.
 
-    The result is [Error msg], the GPU left as it was, if [machine] is reached
-    through a transport, if [i >= count ~machine ()], saying how many GPUs there
-    are, if the process holds the GPU, if this process lost it and did not reset
-    it since, if amdgpu, unbound from it, has not let go of it yet (KFD's
+    The result is [Error msg], the GPU left as it was, if
+    [i >= count ~machine ()], saying how many GPUs there are, if the process
+    holds the GPU, if amdgpu, unbound from it, has not let go of it yet (KFD's
     topology still lists it, or its [ip_discovery] directory stays), naming the
     holder's reason, if its function cannot be taken, with
     {!Rig_pci.Function.take}'s reason, if one of its blocks has a version this
     library does not boot, naming the block and the version, if an image is
     missing, with {!Rig_pci.Firmware.find}'s reason, if it is in a fabric left
-    running, or if the memory controller does not place all of the GPU's memory.
-    It is [Error msg] if the reset of a GPU running firmware this library did
-    not start fails, with its reason, the GPU then lost, or if such firmware
-    still runs after that reset. It is also [Error msg] if a block does not
-    answer during the boot, naming the step, or with {!Rig_amd.make}'s message;
-    the GPU is then stopped, and opens again only after a reset. An exception
-    raised after the boot's first write stops the GPU the same way and passes
-    through.
+    running, if the memory controller does not place all of the GPU's memory, or
+    if [machine]'s windows are not mapped into the process, as through a
+    transport, before anything is written. It is [Error msg] if the reset of a
+    GPU this process lost or of one running firmware this library did not start
+    fails, with its reason, the GPU then lost, or if such firmware still runs
+    after that reset. It is also [Error msg] if a block does not answer during
+    the boot, naming the step, or with {!Rig_amd.make}'s message; the GPU is
+    then lost, and its next open resets it. An exception raised after the boot's
+    first write stops the GPU the same way and passes through.
 
     Raises [Invalid_argument] if [i < 0]. *)
 
@@ -155,9 +163,9 @@ val detach : int -> (unit, string) result
     {!open_} can take its function, unless no driver but [vfio-pci] holds it. It
     removes the GPU's other functions, such as its audio, turns its bus
     mastering off, which amdgpu's unbind may leave on, and makes its memory BAR
-    as large as the BAR and its bridge allow, so that the process reaches
-    all of the GPU's memory. Its display and the kernel driver's users lose the
-    GPU until {!attach} or a reboot.
+    as large as the BAR and its bridge allow, so that the process reaches all of
+    the GPU's memory. Its display and the kernel driver's users lose the GPU
+    until {!attach} or a reboot.
 
     amdgpu lets go of the GPU, writing to it, once the last file of its DRM
     nodes goes, which its unbind does not wait for; KFD holds one for a process

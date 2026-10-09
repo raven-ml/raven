@@ -47,11 +47,14 @@ let rec run c = function
           Chip.set c r' (Chip.get c r);
           continue ()
       | Delay us ->
-          Chip.delay c ((us + 999) / 1000);
+          ignore
+            (Rig_pci.Function.wait c.fn ~us "a delay" (fun () -> false)
+              : (unit, string) result);
           continue ()
       | Poll (what, r, mask, cond) -> (
           match
-            Chip.wait c what ~ms:poll_ms (fun () -> meets c r mask cond)
+            Rig_pci.Function.wait c.fn ~us:(poll_ms * 1000) what (fun () ->
+                meets c r mask cond)
           with
           | Ok () -> continue ()
           | Error _ as e -> e)

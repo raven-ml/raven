@@ -17,6 +17,7 @@ type t = {
   machine : Machine.t;
   bus : string;
   fn : Machine.fn;
+  inherited : bool Atomic.t; (* until [forget] *)
   released : bool Atomic.t; (* set under [lock] *)
   mutable users : int;
   lock : Mutex.t;
@@ -41,6 +42,7 @@ let take machine bus =
         machine;
         bus;
         fn;
+        inherited = Atomic.make fn.inherited;
         released = Atomic.make false;
         users = 0;
         lock = Mutex.create ();
@@ -114,27 +116,33 @@ let in_config f fn off n =
 
 let config8 f off =
   in_config f "config8" off 1;
-  f.fn.config8 off
+  f.fn.config off 1
 
 let config16 f off =
   in_config f "config16" off 2;
-  f.fn.config16 off
+  f.fn.config off 2
 
 let config32 f off =
   in_config f "config32" off 4;
-  f.fn.config32 off
+  f.fn.config off 4
 
 let set_config8 f off x =
   in_config f "set_config8" off 1;
-  f.fn.set_config8 off x
+  f.fn.set_config off 1 x
 
 let set_config16 f off x =
   in_config f "set_config16" off 2;
-  f.fn.set_config16 off x
+  f.fn.set_config off 2 x
 
 let set_config32 f off x =
   in_config f "set_config32" off 4;
-  f.fn.set_config32 off x
+  f.fn.set_config off 4 x
+
+let set_bus_master f on =
+  live f "set_bus_master";
+  let c = f.fn.config Local.command 2 in
+  f.fn.set_config Local.command 2
+    (if on then c lor Local.bus_master else c land lnot Local.bus_master)
 
 (* BARs *)
 
@@ -181,14 +189,14 @@ let map ?combine ?(off = 0) ?length f i =
   Ok w
 
 (* Removes one binding of the live window [w] from [table], or refuses [w]. *)
-let forget f table fn w =
+let unlist f table fn w =
   Mutex.protect f.lock @@ fun () ->
   if not (Tables.Window.mem table w) then
     invalid_argf "Function.%s: no such window of %s" fn f.bus;
   Tables.Window.remove table w
 
 let unmap f w =
-  forget f f.maps "unmap" w;
+  unlist f f.maps "unmap" w;
   f.fn.unmap w
 
 (* Interrupts and reset *)
@@ -209,14 +217,50 @@ let failed f =
   live f "failed";
   match Machine.failed f.machine with
   | Some _ as why -> why
-  | None when f.fn.config16 0 = absent ->
+  | None when f.fn.config 0 2 = absent ->
       Some (strf "%s left the bus: its vendor ID reads 0xffff" f.bus)
   | None -> None
+
+(* The failure at a wait's bound. A driver's sleep may race its device's stop:
+   the vendor ID is read as a user, so that a release waits for the read, and a
+   release that came first answers as the machine does. *)
+let failed_at_bound f =
+  match Machine.failed f.machine with
+  | Some _ as why -> why
+  | None ->
+      let entered =
+        Mutex.protect f.lock (fun () ->
+            let live = not (Atomic.get f.released) in
+            if live then f.users <- f.users + 1;
+            live)
+      in
+      if not entered then None
+      else
+        Fun.protect ~finally:(fun () -> leave f) @@ fun () ->
+        if f.fn.config 0 2 = absent then
+          Some (strf "%s left the bus: its vendor ID reads 0xffff" f.bus)
+        else None
+
+let wait f ~us what cond =
+  if us < 0 then invalid_argf "Function.wait: %d us is negative" us;
+  if Machine.wait f.machine ~us cond then Ok ()
+  else
+    match failed_at_bound f with
+    | Some why -> Error (strf "%s: %s" what why)
+    | None -> Error (strf "%s did not complete in %d us" what us)
+
+let inherited f = Atomic.get f.inherited
+
+let forget f =
+  live f "forget";
+  let* () = f.fn.forget () in
+  Atomic.set f.inherited false;
+  Ok ()
 
 let reset f =
   live f "reset";
   let* () = f.fn.reset () in
-  let answers () = f.fn.config16 0 <> absent in
+  let answers () = f.fn.config 0 2 <> absent in
   if Machine.wait f.machine ~us:(reset_ms * 1000) answers then Ok ()
   else
     match Machine.failed f.machine with
@@ -286,7 +330,7 @@ let alloc_dma ?(contiguous = false) ?va f n =
       raise e
 
 let free_dma f w =
-  forget f f.dmas "free_dma" w;
+  unlist f f.dmas "free_dma" w;
   f.fn.free_dma w
 
 let pin_entered f a n =

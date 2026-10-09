@@ -42,15 +42,21 @@ let top_bit n =
   let rec go b = if b > n / 2 then b else go (b * 2) in
   go 1
 
+(* Tlsf raises nothing on the arguments Space checks, so [alloc] and [free] take
+   the lock without a handler. *)
 let alloc ?(align = 0x1000) s n =
   if n <= 0 then
     invalid_argf "Space.alloc: %d addresses, expected more than 0" n;
   if not (is_pow2 align) then
     invalid_argf "Space.alloc: align %d is not a positive power of two" align;
   let align = Int.max (top_bit n) align in
-  Mutex.protect s.lock (fun () -> Tlsf.alloc ~align (tlsf s) n)
+  Mutex.lock s.lock;
+  let a = Tlsf.alloc ~align (tlsf s) n in
+  Mutex.unlock s.lock;
+  a
 
 let free s a =
-  Mutex.protect s.lock @@ fun () ->
-  try Tlsf.free (tlsf s) a
-  with Invalid_argument _ -> invalid_argf "Space.free: no range at 0x%x" a
+  Mutex.lock s.lock;
+  let freed = Tlsf.free (tlsf s) a in
+  Mutex.unlock s.lock;
+  if not freed then invalid_argf "Space.free: no range at 0x%x" a

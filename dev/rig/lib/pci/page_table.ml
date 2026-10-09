@@ -18,6 +18,7 @@ type target = Gpu | System | Peer of int
 type format = {
   levels : int list;
   bits : int;
+  pa_bits : int;
   first : int;
   set_table : level:int -> table:int -> int -> child:int -> unit;
   set_page :
@@ -33,7 +34,7 @@ type format = {
   clear : level:int -> table:int -> int -> unit;
   large : level:int -> bool;
   zero : int -> int -> unit;
-  flush : unit -> unit;
+  flush : unit -> bool;
 }
 
 type tables = Pool | Main
@@ -50,15 +51,6 @@ type mapping = {
 (* The GPU's page: what the leaf level maps, and the unit of a fragment. *)
 let page_bits = 12
 let page = 1 lsl page_bits
-
-(* Tables by physical address, a multiple of a page: its page number hashes it,
-   cheaper than the generic hash that a walk would pay at each table. *)
-module Held = Hashtbl.Make (struct
-  type t = int
-
-  let equal = Int.equal
-  let hash pa = pa lsr page_bits
-end)
 
 (* The tables as this module wrote them, a tree beside the GPU's that a walk
    follows: the GPU's copy is never read back, since each read crosses the bus.
@@ -82,7 +74,7 @@ type t = {
   tables : Tlsf.t; (* empty unless the tables have a pool *)
   main : Tlsf.t;
   pages : (int * int) list; (* block sizes and alignments, largest first *)
-  held : unit Held.t; (* the tables in use, the root among them *)
+  held : unit Tables.Address.t; (* the tables in use, the root among them *)
   spare : entry array list array;
       (* by depth, the entries of directories freed, all invalid: a directory's
          4 KiB is dear to allocate, and tables come and go with mappings *)
@@ -135,13 +127,16 @@ let palloc ?(align = page) ?zero ?boot t n =
   in
   take t tlsf ~align ?zero n
 
+let inside a pa = pa >= Tlsf.base a && pa < Tlsf.base a + Tlsf.length a
+
 let pfree t pa =
-  let refuse () = invalid_argf "Page_table.pfree: no block at 0x%x" pa in
-  let inside a = pa >= Tlsf.base a && pa < Tlsf.base a + Tlsf.length a in
-  if Held.mem t.held pa then refuse ();
-  match List.find_opt inside [ t.boot; t.tables; t.main ] with
-  | Some a -> ( try Tlsf.free a pa with Invalid_argument _ -> refuse ())
-  | None -> refuse ()
+  let pool =
+    if inside t.main pa then t.main
+    else if inside t.tables pa then t.tables
+    else t.boot
+  in
+  if Tables.Address.mem t.held pa || not (Tlsf.free pool pa) then
+    invalid_argf "Page_table.pfree: no block at 0x%x" pa
 
 (* Tables *)
 
@@ -159,7 +154,7 @@ let empty ~leaf n pa =
 
 (* The table at [pa], at depth [d], whose entries are invalid. *)
 let hold t d pa =
-  Held.replace t.held pa ();
+  Tables.Address.replace t.held pa ();
   match t.spare.(d) with
   | entries :: rest ->
       t.spare.(d) <- rest;
@@ -185,7 +180,7 @@ let drop t d table =
   (match table with
   | Directory (_, dir) -> t.spare.(d) <- dir.entries :: t.spare.(d)
   | Leaf _ -> ());
-  Held.remove t.held (address table);
+  Tables.Address.remove t.held (address table);
   pfree t (address table)
 
 (* The table entry [i] of the directory [dir] at [pa], at depth [d], points to,
@@ -196,14 +191,7 @@ let child t d pa dir i =
   | Page -> assert false (* map finds the range unmapped, tables a page first *)
   | Invalid ->
       let c = new_table t (d + 1) in
-      (match
-         t.fmt.set_table ~level:(level t d) ~table:pa i ~child:(address c)
-       with
-      | () -> ()
-      | exception e ->
-          let bt = Printexc.get_raw_backtrace () in
-          drop t (d + 1) c;
-          Printexc.raise_with_backtrace e bt);
+      t.fmt.set_table ~level:(level t d) ~table:pa i ~child:(address c);
       dir.entries.(i) <- Table c;
       dir.valid <- dir.valid + 1;
       c
@@ -404,6 +392,9 @@ let create ?base fmt space ~memory ~boot ~tables ~pages =
        12 below bits"
       (String.concat "; " (List.map string_of_int fmt.levels))
       fmt.bits;
+  if fmt.pa_bits < page_bits || fmt.pa_bits >= Sys.int_size - 1 then
+    invalid_argf "Page_table.create: pa_bits %d, expected %d to %d" fmt.pa_bits
+      page_bits (Sys.int_size - 2);
   let table_bytes =
     match tables with
     | Pool -> round_up (memory / table_share) table_round
@@ -440,8 +431,8 @@ let create ?base fmt space ~memory ~boot ~tables ~pages =
        format maps"
       base (largest 0);
   let counts = Array.mapi (fun d s -> 1 lsl (above d - s)) shifts in
-  let held = Held.create 64 in
-  Held.replace held root ();
+  let held = Tables.Address.create 64 in
+  Tables.Address.replace held root ();
   {
     fmt;
     space;
@@ -465,6 +456,7 @@ let space t = t.space
 let base t = t.base
 let span t = 1 lsl t.fmt.bits
 let memory t = t.memory
+let pa_bits t = t.fmt.pa_bits
 let main_pool t = Tlsf.length t.main
 
 (* Raises unless the [n] bytes from [va] are whole pages the tables reach. *)
@@ -480,7 +472,7 @@ let check t fn ~va n =
 let tables t ~va n =
   check t "tables" ~va n;
   let v = va - t.base in
-  let held = Held.length t.held in
+  let held = Tables.Address.length t.held in
   (* Down to the table where [map] would write the entry of [v]. The caller may
      write entries of that table that its count does not see: one more keeps it,
      and so its path, from being freed. *)
@@ -504,32 +496,36 @@ let tables t ~va n =
           | Invalid | Table _ -> go (d + 1) (child t d pa dir i) path)
   in
   let path =
-    match go 0 t.root [] with
-    | p -> Ok p
-    | exception e -> Error (e, Printexc.get_raw_backtrace ())
+    match go 0 t.root [] with p -> Some p | exception No_room -> None
   in
-  if Held.length t.held > held then t.fmt.flush ();
-  match path with
-  | Ok p -> Some p
-  | Error (No_room, _) -> None
-  | Error (e, bt) -> Printexc.raise_with_backtrace e bt
+  if Tables.Address.length t.held > held then ignore (t.fmt.flush () : bool);
+  path
 
 let unmap t ~va n =
   check t "unmap" ~va n;
   let lo = va - t.base in
   mapped t 0 t.root ~at:0 lo (lo + n);
-  ignore (clear t 0 t.root ~at:0 lo (lo + n));
+  ignore (clear t 0 t.root ~at:0 lo (lo + n) : bool);
   t.fmt.flush ()
 
-let map ?(uncached = false) ?(snooped = false) t ~va target ranges =
-  List.iter
-    (fun (pa, n) ->
+(* Raises unless each range is whole pages an entry's address holds. *)
+let rec check_ranges t = function
+  | [] -> ()
+  | (pa, n) :: rest ->
       if pa < 0 || n < 0 || not (aligned (pa lor n) page) then
         invalid_argf
           "Page_table.map: %d bytes at physical 0x%x are not whole %d-byte \
            pages"
-          n pa page)
-    ranges;
+          n pa page;
+      if pa > (1 lsl t.fmt.pa_bits) - n then
+        invalid_argf
+          "Page_table.map: %d bytes at physical 0x%x end past the %d bits an \
+           entry holds"
+          n pa t.fmt.pa_bits;
+      check_ranges t rest
+
+let map ?(uncached = false) ?(snooped = false) t ~va target ranges =
+  check_ranges t ranges;
   let size = List.fold_left (fun n (_, k) -> n + k) 0 ranges in
   check t "map" ~va size;
   let lo = va - t.base in
@@ -550,16 +546,14 @@ let map ?(uncached = false) ?(snooped = false) t ~va target ranges =
   in
   match write t 0 t.root ~at:0 lo (lo + size) r with
   | () ->
-      t.fmt.flush ();
+      ignore (t.fmt.flush () : bool);
       Some { va; size; pages = ranges; target; uncached; snooped }
-  | exception e -> (
-      let bt = Printexc.get_raw_backtrace () in
-      (* Out of tables, or the format raised: clearing through the page at
-         [reached] also frees the tables made on the way to it, which hold
-         nothing. *)
-      ignore (clear t 0 t.root ~at:0 lo (r.reached + page));
-      t.fmt.flush ();
-      match e with No_room -> None | e -> Printexc.raise_with_backtrace e bt)
+  | exception No_room ->
+      (* Clearing through the page at [reached] also frees the tables made on
+         the way to it, which hold nothing. *)
+      ignore (clear t 0 t.root ~at:0 lo (r.reached + page) : bool);
+      ignore (t.fmt.flush () : bool);
+      None
 
 (* Physical blocks for [n] bytes, the largest [pages] allows first, falling to
    smaller ones when the pool has none left. *)
@@ -615,13 +609,12 @@ let alloc ?(uncached = false) ?(contiguous = false) ?below t n =
         | Some _ as m -> m
         | None ->
             give_back t va pages;
-            None
-        | exception e ->
-            let bt = Printexc.get_raw_backtrace () in
-            give_back t va pages;
-            Printexc.raise_with_backtrace e bt)
+            None)
 
 let free t (m : mapping) =
-  unmap t ~va:m.va m.size;
-  Space.free t.space m.va;
-  if m.target = Gpu then List.iter (fun (pa, _) -> pfree t pa) m.pages
+  let confirmed = unmap t ~va:m.va m.size in
+  if confirmed then begin
+    Space.free t.space m.va;
+    if m.target = Gpu then List.iter (fun (pa, _) -> pfree t pa) m.pages
+  end;
+  confirmed

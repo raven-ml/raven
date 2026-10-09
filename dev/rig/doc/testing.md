@@ -270,11 +270,11 @@ failure path is therefore tested through the ring's C seam
 completes slots as failed in any order. On the GPU, "a failed fill stops the
 word before its value" covers a submission that fails as it is made.
 
-pci still injects failure at a fake transport: "a transport failing at access
-k ends a step in Error, never in bytes" (`test/pci/test_function.ml`) fails
-the k-th access of a driver's step, for every k, and requires the step to
-end in the machine's reason. It goes with pci's fake machines (below); a
-link's failure is then tested over a real connection to a real agent.
+pci injects failure only at a window's far transport, which stands for no
+device: test_window's `break` and `break_at` fail an access at a chosen count.
+A driver's step over a failed machine ("a transport failing at access k ends a
+step in Error, never in bytes") left with pci's fake machines; a link's
+failure is tested over a real connection to a real agent once one exists.
 
 Long work is no fault: a device is lost only on its driver's report, and no
 timeout decides it. The CUDA suite holds it as "long work is no fault, and a
@@ -391,8 +391,10 @@ entry on fixture trees built under the test's own `_build` directory on
 every machine. Otherwise its parsers are tested live, on the host's own
 files, on the host that has the device; no public reader exists only so that
 a test can reach a parser, and hardware no host has gets no fixture test.
-Two suites still reach such a reader through a hidden section: pci's
-machine at a root (`Machine.at`) and amdgpu's GPU list (`gpus_at`).
+pci's machine at a root (`Machine.at`) is public: pci's suites and the PCI
+paths' numbering run on fixture trees through it. Two suites still reach a
+reader through a hidden section: the GPU lists (`gpus_at`) of amdgpu and
+amd.pci.
 
 Tests never exhaust a shared resource: threads, processes, file descriptors,
 memory, GPU memory or disk. A failure path that needs a limit is reached by a
@@ -423,14 +425,24 @@ A state the public interface reaches too slowly, such as a counter past
 `.mli` or in an installed header (`rig_metal_ring.h`), never through a
 hidden one.
 
-Three simulations remain, and their tests move to hardware: the host path
-of `test/amd/test_amd.ml`, whose rings nothing runs; the fake RM path of
+Two simulations remain, and their tests move to hardware: the host path of
+`test/amd/test_amd.ml`, whose rings nothing runs; and the fake RM path of
 `test/nv/test_nv.ml`, which still holds the hang-bound laws and the
-local-memory handover; and pci's fake machines and transports
-(`test/pci/test_function.ml`, `test/pci/test_gpus.ml`,
-`test/pci/test_memory.ml`), which fail an access at a chosen count. A test
-that hands a fake device's values to rig opens it through `Rig.open_` and
-submits through `Rig.submit`, as a program does.
+local-memory handover. A test that hands a fake device's values to rig opens it
+through `Rig.open_` and submits through `Rig.submit`, as a program does.
+
+pci's suites use no fake machine. They take functions of fixture trees
+through `Machine.at`, physically on Linux, with memory in the tree's hugetlbfs
+and frames in its pagemap, and write page tables in the table-backed format
+of `test/pci/support` (`Tables`), whose flush answers what the test sets.
+What only a transport, an IOMMU host or a second GPU reaches has no pci test:
+a failed machine and its accesses, failure at access k, a wait that fails
+midway, the IOMMU paths of placement, pins and peers, and system memory
+exhausted. The root suite on nonnormal (`test/amd/pci/test_root.ml`) states
+the hold's laws on the R9700: a device two domains stop, frees after a reopen
+that leave the new device's bytes, and the reset after a holder killed by
+SIGKILL. It is to restate the rest where the R9700 reaches them; the others
+wait for a host with an IOMMU, two GPUs or a transport.
 
 kimchi gives no root. nonnormal gives root for one purpose: the driver-less
 AMD path on its R9700, which takes the GPU from amdgpu, boots it with no

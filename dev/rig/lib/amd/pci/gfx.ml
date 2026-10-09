@@ -335,8 +335,8 @@ let start_kiq g m =
   | Error why -> raise (Regs.Stuck (strf "the KIQ's memory: %s" why))
   | Ok None -> raise (Regs.Stuck "no GPU addresses for the KIQ")
   | Ok (Some region) ->
-      let va = region.mapping.va in
-      let w = Option.get region.host in
+      let va = Rig_pci.Memory.address region in
+      let w = Option.get (Rig_pci.Memory.host region) in
       each_xcc g (fun xcc ->
           let b = va + (kiq_bytes * xcc) in
           program g ~me:2 ~pipe:1 ~queue:0 ~insts:[ xcc ] ~mqd:g.mqds.(1)

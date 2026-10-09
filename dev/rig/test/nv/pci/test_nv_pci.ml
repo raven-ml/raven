@@ -65,81 +65,22 @@ let opening =
 (* Stopping *)
 
 let gpus () =
-  Rig_pci.Gpus.make ~memory_bar:1
+  Rig_pci.Gpus.make ~name:"NV-PCI" ~memory_bar:1
     ~nodes:(fun ~root:_ _ -> [])
     ~unreleased:(fun ~root:_ _ -> None)
     ~teardown_ms:0 ~reset:Rig_pci.Function.reset
     (fun (id : Rig_pci.Machine.id) ->
       Rig_nv.is_gpu ~vendor:id.vendor ~class_:id.class_)
 
-(* [stopped gpu] opens [gpu], runs [before], and gives the GPU up, recording the
-   releases that preceded each unload. *)
-let stopped ?(before = ignore) (gpu : Rig_nv_pci_support.gpu) =
-  let g = gpus () in
-  let unloads = ref [] in
-  let hold, fn =
-    match
-      Rig_pci.Gpus.open_ g gpu.machine 0 ~at_exit:ignore (fun h fn ->
-          Ok (h, fn))
-    with
-    | Ok v -> v
-    | Error why -> failf "GPU 0 did not open: %s" why
-  in
-  before ();
-  let s =
-    Rig_nv_pci.give_up hold fn ~unload:(fun () ->
-        unloads := !(gpu.released) :: !unloads)
-  in
-  (g, s, !unloads)
-
-let hold g m = Rig_pci.Gpus.open_ g m 0 ~at_exit:ignore (fun h _ -> Ok h)
-
-let reopen g (gpu : Rig_nv_pci_support.gpu) =
-  Rig_pci.Gpus.open_ g gpu.machine 0 ~at_exit:ignore (fun _ _ -> Ok ())
+let hold g m =
+  Rig_pci.Gpus.open_ g m 0 (fun h _ ->
+      Rig_pci.Gpus.set_stop h (fun () -> `Clean);
+      Ok h)
 
 let state =
   Testable.contramap
     (function `Stopped -> "`Stopped" | `Unknown -> "`Unknown")
     string
-
-let stopping =
-  group "stopping"
-    [
-      test
-        "a stop unloads the GPU before giving it back, and the GPU opens again"
-        (fun () ->
-          let gpu = Rig_nv_pci_support.gpu () in
-          let g, s, unloads = stopped gpu in
-          equal state `Stopped s;
-          equal (list int) ~msg:"releases before each unload" [ 0 ] unloads;
-          equal int ~msg:"releases" 1 !(gpu.released);
-          require_ok (reopen g gpu));
-      test
-        "a stop on a failed machine gives the GPU back unknown, unloading \
-         nothing, and loses it" (fun () ->
-          let gpu = Rig_nv_pci_support.gpu () in
-          let before () = Rig_pci_support.break gpu.far in
-          let g, s, unloads = stopped ~before gpu in
-          equal state `Unknown s;
-          equal (list int) ~msg:"unloads" [] unloads;
-          equal int ~msg:"releases" 1 !(gpu.released);
-          contains ~sub:"was lost" (require_error (reopen g gpu)));
-      test
-        "a stop of a GPU that left the bus gives it back unknown, unloading \
-         nothing, and loses it" (fun () ->
-          let gone = ref false in
-          let gpu =
-            Rig_nv_pci_support.gpu
-              ~vendor:(fun () -> if !gone then 0xffff else 0x10de)
-              ()
-          in
-          let before () = gone := true in
-          let g, s, unloads = stopped ~before gpu in
-          equal state `Unknown s;
-          equal (list int) ~msg:"unloads" [] unloads;
-          equal int ~msg:"releases" 1 !(gpu.released);
-          contains ~sub:"was lost" (require_error (reopen g gpu)));
-    ]
 
 (* Booted GPUs
 
@@ -183,11 +124,8 @@ let resets root =
   in
   In_channel.with_open_bin file In_channel.input_all
 
-(* [stop g m] opens GPU 0 of [m] through [g] and gives it up as a device's stop
-   does. *)
-let stop g m =
-  Rig_pci.Gpus.open_ g m 0 ~at_exit:ignore (fun h fn -> Ok (h, fn))
-  |> Result.map (fun (h, fn) -> Rig_nv_pci.give_up h fn ~unload:ignore)
+(* [stop g m] opens GPU 0 of [m] through [g] and stops it. *)
+let stop g m = Result.map Rig_pci.Gpus.stop (hold g m)
 
 (* With [how] ["stop"] the child stops the GPU and exits; with ["kill"] it dies
    by SIGKILL holding it, having allocated nothing; with ["hold"] it says
@@ -267,7 +205,7 @@ let test_stopped_here () =
   let root = fixture () in
   let g = gpus () and machine = Rig_pci.Machine.at root in
   equal ~msg:"the stop" state `Stopped (require_ok (stop g machine));
-  Rig_pci.Gpus.release (require_ok (hold g machine));
+  ignore (Rig_pci.Gpus.stop (require_ok (hold g machine)));
   let why = require_error (Rig_nv_pci.open_ ~machine ~firmware:[] 0) in
   equal ~msg:"reset" string "1" (resets root);
   contains ~msg:"the firmware outlived the reset" ~sub:"after its reset" why
@@ -328,4 +266,4 @@ let booted =
 let () =
   match Sys.argv with
   | [| _; arg; how; root |] when arg = taking -> take how root
-  | _ -> exit (run "rig_nv_pci" [ numbering; opening; stopping; booted ])
+  | _ -> exit (run "rig_nv_pci" [ numbering; opening; booted ])

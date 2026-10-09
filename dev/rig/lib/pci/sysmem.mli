@@ -46,6 +46,9 @@ val store : root:string -> bus:string -> store
 (** [store ~root ~bus] is the memory of the function at [bus] of the machine
     whose root is [root]. It makes no file until {!alloc}. *)
 
+val root : store -> string
+(** [root s] is the root of [s]'s machine. *)
+
 val alloc :
   ?contiguous:bool ->
   ?va:int ->
@@ -68,34 +71,35 @@ val free : store -> Window.t -> unit
 
 val close : store -> unit
 (** [close s] records that [s]'s function reaches no memory any more, its bus
-    mastering off: it leaves the list of the process's file, which goes once it
-    lists no function and holds no memory. The process's mappings keep their
-    pages until {!free}. A file a process that died left goes at {!collect_dead}
-    once it lists no function, or at {!forget} of each function it lists.
-    Closing it again does nothing. *)
+    mastering off: it leaves the lists of the process's files, each of which
+    goes once it lists no function and holds no memory. The process's mappings
+    keep their pages until {!free}. A file a process that died left goes at
+    {!collect_dead} once it lists no function, or at {!forget} of each function
+    it lists. Called once per store. *)
 
-val reach : a:int -> n:int -> bus:string -> unit
-(** [reach ~a ~n ~bus] records that the function at [bus] maps, as a peer's, the
-    [n] bytes at [a] that {!alloc} gave: their huge pages stay until {!unreach},
-    and the file until that function no longer reaches it either. Nothing if no
-    memory {!alloc} gave is at [a].
+val reach : root:string -> bus:string -> int -> int -> (int * int) list option
+(** [reach ~root ~bus a n] is the physical runs of the [n] bytes at [a], if
+    {!alloc} gave every 2 MiB block that holds them under [root], and records
+    that the function at [bus] reaches them: their huge pages stay until
+    {!unreach}, and their file until that function no longer reaches it either.
+    [None], recording nothing, otherwise.
 
     Raises {!Fail.Failed}, recording nothing, if the record cannot be written
     for after the process's death. *)
 
 val unreach : a:int -> n:int -> unit
-(** [unreach ~a ~n] records that a peer's mapping {!reach} recorded is gone. *)
+(** [unreach ~a ~n] ends one {!reach} of the [n] bytes at [a]. *)
+
+val exit : unit -> unit
+(** [exit ()] deletes the process's files that list no function, blocks and all:
+    nothing else frees them once the process exits. The exit function of
+    {!Local} calls it, after its takes are given back. *)
 
 val collect_dead : root:string -> unit
 (** [collect_dead ~root] deletes the files under [root] that processes that died
     left and that list no function, whatever memory they hold: each function
     that reached it was released, its bus mastering off, or its GPU reset.
     Called at each take of a function of the machine. *)
-
-val forget_dead : root:string -> bus:string -> unit
-(** [forget_dead ~root ~bus] is {!forget} for the files processes that died left
-    alone: the process's own file keeps listing the function at [bus], which
-    still reaches its memory. *)
 
 val left : root:string -> bus:string -> bool
 (** [left ~root ~bus] is [true] iff a process that died left memory under [root]
@@ -105,7 +109,9 @@ val left : root:string -> bus:string -> bool
 
 val forget : root:string -> bus:string -> unit
 (** [forget ~root ~bus] records that the GPU of the function at [bus] was reset,
-    so it reaches no memory: it leaves the list of the process's file and of
-    every file under [root] that a process that died left, which a shared flock
-    its process held while it lived tells, and each such file no function
-    reaches then goes. Called with the function taken. *)
+    so it reaches none of the memory processes that died left: it leaves the
+    list of every file under [root] that a process that died left, which a
+    shared flock its process held while it lived tells, and each such file no
+    function reaches then goes. The process's own files keep listing it, since
+    its driver may reach their memory again; its release ({!close}) leaves them.
+    Called with the function taken. *)

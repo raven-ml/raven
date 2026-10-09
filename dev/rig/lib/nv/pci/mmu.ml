@@ -132,7 +132,15 @@ let dual v = function
    waits 2 seconds for the trigger to clear. *)
 let invalidate_ms = 2_000
 
-let format (c : Chip.t) bar : Page_table.format =
+(* An entry holds a system page's frame number: 46 bits on V2, 40 on V3. *)
+let pa_bits v =
+  page
+  + snd
+      (match v with
+      | V2 -> Defs.nv_mmu_ver2_pte_address_sys
+      | V3 -> Defs.nv_mmu_ver3_pte_address_sys)
+
+let format (c : Chip.t) bar ~failed : Page_table.format =
   let v = version c.family in
   let levels = levels v in
   let n = List.length levels in
@@ -180,13 +188,19 @@ let format (c : Chip.t) bar : Page_table.format =
         (Chip.get c r)
       = 0
     in
-    match Chip.wait c "the TLB invalidation" ~ms:invalidate_ms cleared with
-    | Ok () -> ()
-    | Error why -> raise (Rig_nv.Fault why)
+    match
+      Rig_pci.Function.wait c.fn ~us:(invalidate_ms * 1000)
+        "the TLB invalidation" cleared
+    with
+    | Ok () -> true
+    | Error why ->
+        failed why;
+        false
   in
   {
     levels;
     bits = bits v;
+    pa_bits = pa_bits v;
     first = 0;
     set_table;
     set_page;

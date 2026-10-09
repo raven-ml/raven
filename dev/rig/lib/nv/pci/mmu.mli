@@ -49,9 +49,14 @@ val dual :
     the leaf table at [pa] (with [NO_ATS] in the low half on [V2]), [`Page pte]
     maps a 2 MiB page, [`None] maps nothing. *)
 
-val format : Chip.t -> Rig_pci.Window.t -> Rig_pci.Page_table.format
-(** [format c bar] is the format, of [c]'s {!version}, whose tables are in the
-    GPU's memory, which [bar] (its memory BAR) reaches. Its [flush] flushes
+val format :
+  Chip.t ->
+  Rig_pci.Window.t ->
+  failed:(string -> unit) ->
+  Rig_pci.Page_table.format
+(** [format c bar ~failed] is the format, of [c]'s {!version}, whose tables are
+    in the GPU's memory, which [bar] (its memory BAR) reaches, and whose entries
+    hold system addresses of 58 bits on [V2] and 52 on [V3]. Its [flush] flushes
     [bar] ({!Rig_pci.Window.flush}), triggers the TLB invalidation of every
-    level and waits for the GPU to clear its trigger, at most 2 seconds; it
-    raises {!Rig_nv.Fault} if the GPU does not. *)
+    level and waits for the GPU to clear its trigger, at most 2 seconds; if the
+    GPU does not, it calls [failed] with the reason and answers [false]. *)
