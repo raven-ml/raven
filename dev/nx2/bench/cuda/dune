@@ -1,9 +1,9 @@
 ; bench_cuda.exe holds the CUDA rows against this machine's baseline;
-; gate_cuda.exe prints their device times and floors for a batch's gate.
+; bench_cuda.exe gate prints their device times and floors for a batch's gate.
 
-(executables
- (names bench_cuda gate_cuda)
- (modules rows bench_cuda gate_cuda)
+(executable
+ (name bench_cuda)
+ (modules rows bench_cuda)
  (libraries nx_array nx_cuda_support nx_gpu_ref rig thumper unix))
 
 (rule

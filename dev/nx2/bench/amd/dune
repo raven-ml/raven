@@ -1,9 +1,9 @@
 ; bench_amd.exe holds the AMD rows against this machine's baseline;
-; gate_amd.exe prints their device times and floors for a batch's gate.
+; bench_amd.exe gate prints their device times and floors for a batch's gate.
 
-(executables
- (names bench_amd gate_amd)
- (modules rows bench_amd gate_amd)
+(executable
+ (name bench_amd)
+ (modules rows bench_amd)
  (libraries
   nx_array
   nx_amd_support
