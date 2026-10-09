@@ -124,6 +124,8 @@ buffer/wait-reached-24	alloc_words	exact	0
 buffer/wait-reached-24	wall_time	batch=8192	n=20	7.308e-07	7.143e-07 7.244e-07 7.254e-07 7.260e-07 7.262e-07 7.267e-07 7.270e-07 7.284e-07 7.301e-07 7.308e-07 7.308e-07 7.322e-07 7.339e-07 7.355e-07 7.361e-07 7.365e-07 7.366e-07 7.371e-07 7.372e-07 7.393e-07
 claim/c-read-release-3	alloc_words	exact	0
 claim/c-read-release-3	wall_time	batch=262144	n=20	1.868e-08	1.806e-08 1.823e-08 1.834e-08 1.838e-08 1.843e-08 1.848e-08 1.852e-08 1.852e-08 1.858e-08 1.868e-08 1.868e-08 1.872e-08 1.873e-08 1.875e-08 1.883e-08 1.884e-08 1.885e-08 1.898e-08 1.899e-08 1.973e-08
+claim/exclusive-1000	alloc_words	exact	111
+claim/exclusive-1000	wall_time	batch=2048	n=20	2.405e-06	2.361e-06 2.382e-06 2.388e-06 2.388e-06 2.388e-06 2.391e-06 2.396e-06 2.403e-06 2.405e-06 2.405e-06 2.405e-06 2.420e-06 2.437e-06 2.440e-06 2.451e-06 2.452e-06 2.454e-06 2.470e-06 2.478e-06 2.548e-06
 claim/read-release	alloc_words	exact	0
 claim/read-release	wall_time	batch=524288	n=20	1.271e-08	1.259e-08 1.260e-08 1.262e-08 1.265e-08 1.265e-08 1.265e-08 1.265e-08 1.268e-08 1.269e-08 1.270e-08 1.272e-08 1.273e-08 1.273e-08 1.275e-08 1.276e-08 1.277e-08 1.278e-08 1.279e-08 1.282e-08 1.285e-08
 claim/with-24	alloc_words	exact	991
