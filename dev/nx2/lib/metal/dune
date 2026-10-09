@@ -1,10 +1,18 @@
-; nx.metal: nx's kernels for Apple GPUs, compiled ahead of time by
-; kernels/gen.py. C only until the binding: launch records and the fill
-; that encodes them through rig.metal.
+; nx.metal: nx's kernels for Apple GPUs, compiled ahead of time into one
+; metallib (kernels/) and embedded. C only until the binding: launch
+; records, the plans that make them, and the fill that encodes them through
+; rig.metal.
 
 (library
  (name nx_metal)
  (modules)
+ (foreign_stubs
+  (language c)
+  (names plan nx_metal_stubs)
+  (include_dirs ../array)
+  (extra_deps kernels/kernels.metallib)
+  (flags
+   (:standard -DNX_METAL_METALLIB=kernels/kernels.metallib)))
  (foreign_stubs
   (language c)
   (names fill_metal)

@@ -46,9 +46,10 @@ NX2 = pathlib.Path(__file__).resolve().parents[3]
 PINS = NX2 / "lib/metal/kernels/pins.json"
 
 # Each artifact: the directory of its sources, its metallib, and the
-# header whose X macro lists its kernels, with the macro's name. nx.metal's
-# own joins with its first kernel.
+# header whose X macro lists its kernels, with the macro's name.
 ARTIFACTS = [
+    ("lib/metal/kernels/src", "lib/metal/kernels/kernels.metallib",
+     "lib/metal/kernels.h", "NX_METAL_KERNELS"),
     ("test/metal/support", "test/metal/support/harness.metallib",
      "test/metal/support/harness.h", "NX_HARNESS_KERNELS"),
 ]

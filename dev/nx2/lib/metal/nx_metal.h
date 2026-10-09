@@ -42,6 +42,47 @@ int nx_metal_add(nx_metal_records *r, uint32_t entry, const uint32_t groups[3],
    planning, at [base]. */
 void nx_metal_rebase(unsigned char *r, size_t len, uint64_t base);
 
+/* Plans */
+
+/* What a plan answers when it does not compute a call: nx's expansion of
+   the operation runs instead. */
+#define NX_NOT_COMPUTED (-1)
+
+/* An operand of a call as a plan reads it: its GPU address, its dtype (an
+   nx_dtype.h code), and its strides in elements over the call's three
+   axes, such as (batch, m, k) for a contraction's a. */
+typedef struct {
+  uint64_t address;
+  int dtype;
+  int64_t strides[3];
+} nx_metal_operand;
+
+/* A contraction: out[p][i][j] = Σ_l a[p][i][l] · b[p][l][j] + init, the
+   sum in [acc], rounded once to out's dtype, or wrapped for integers. */
+typedef struct {
+  uint32_t batch, m, n, k;
+  int acc; /* the accumulator's dtype */
+} nx_metal_contract_in;
+
+/* Appends the launches of the contraction [c] to [r] and is their count,
+   NX_NOT_COMPUTED, or -2 if memory runs out. The operands are a (batch, m,
+   k), b (batch, k, n), out, C-contiguous (batch, m, n), and init (batch,
+   m, n) unless [init] is NULL. [*scratch] is set to the scratch bytes the
+   launches address, a multiple of 16: nx_metal_rebase places it. */
+int nx_metal_plan_contract(const nx_metal_contract_in *c,
+                           const nx_metal_operand *a,
+                           const nx_metal_operand *b,
+                           const nx_metal_operand *out,
+                           const nx_metal_operand *init,
+                           nx_metal_records *r, size_t *scratch);
+
+/* The metallib of nx.metal's kernels, [*len] bytes: one for every Apple
+   GPU. */
+const char *nx_metal_metallib(size_t *len);
+
+/* The name of each kernel, by its nx_metal_kernel. */
+extern const char *const nx_metal_kernel_names[NX_METAL_KERNEL_COUNT];
+
 /* A fill's argument: [count] pipelines, pipelines[k] the
    MTLComputePipelineState of the run's kernel k (Rig_metal.entry), and a
    run of [bytes] bytes of records, which follows this header in memory. */
