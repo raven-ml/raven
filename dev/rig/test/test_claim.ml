@@ -61,7 +61,7 @@ let case =
   in
   let views n =
     bind
-      (list ~size:(int_range 0 4) (view n))
+      (list ~size:(int_range 0 24) (view n))
       (fun vs ->
         (* The whole memory, donated, often enough to be alone. *)
         map (fun whole -> if whole then (0, n, Donate) :: vs else vs) bool)
@@ -161,6 +161,8 @@ let law c =
   cover "a donation of all the memory held for reading"
     (List.exists (fun (o, l, r) -> r = Donate && o = 0 && l = c.n) c.views
     && Option.fold ~none:false ~some:(fun ex -> not (List.mem true ex)) e);
+  cover "nine or more donated buffers"
+    (List.length (List.filter (fun (_, _, r) -> r = Donate) c.views) >= 9);
   cover "a claim of no bytes"
     (List.exists (fun (_, l, r) -> l = 0 && r <> Skip) c.views);
   let alone = List.exists (fun (o, l, r) -> r = Donate && o = 0 && l = c.n) in
@@ -184,6 +186,19 @@ let test_nested_overlap () =
   let view first length = B.view b ~first ~length in
   raises_match Exn.invalid_arg (fun () ->
       Claim.with_ ~read:[ view 0 20; view 2 1 ] ~donate:[ [ view 19 1 ] ] ignore)
+
+(* Donations that overlap each other are refused, as values of their own or
+   within one value, with nothing else claimed. *)
+let test_donations_overlap () =
+  let b = B.create Rig.host 16 in
+  let view first length = B.view b ~first ~length in
+  raises_match ~msg:"two values" Exn.invalid_arg (fun () ->
+      Claim.with_ ~read:[] ~donate:[ [ view 0 8 ]; [ view 4 8 ] ] ignore);
+  raises_match ~msg:"one value" Exn.invalid_arg (fun () ->
+      Claim.with_ ~read:[] ~donate:[ [ view 0 8; view 4 8 ] ] ignore);
+  Claim.with_ ~read:[] ~donate:[ [ view 0 8 ]; [ view 8 8 ] ] (fun c ->
+      equal ~msg:"apart, neither spans" (pair bool bool) (false, false)
+        (Claim.exclusive c (view 0 8), Claim.exclusive c (view 8 8)))
 
 (* Memories of one device that has no address of them share no byte: two io
    memories are donated together, and views of one that overlap are refused. *)
@@ -716,6 +731,8 @@ let tests =
         test
           "a donation inside a long read with a short read between is refused"
           test_nested_overlap;
+        test "donations that overlap each other are refused"
+          test_donations_overlap;
         test "memories with no address are claimed apart" test_io_spans;
         test "readers share a memory, an exclusive claim excludes them"
           test_claims;

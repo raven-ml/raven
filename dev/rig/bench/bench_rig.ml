@@ -307,6 +307,13 @@ let claim_rows =
       row "with-24"
         (fun () -> (List.init slots (fun _ -> host 16), [ [ host 16 ] ]))
         (fun (read, donate) -> Claim.with_ ~read ~donate ignore);
+      (* A donation of one buffer, the call an operation makes per donated
+         operand. *)
+      row "with-donate-1"
+        (fun () ->
+          let b = host 16 in
+          ([ [ b ] ], fun c -> Claim.exclusive c b))
+        (fun (donate, f) -> Claim.with_ ~read:[] ~donate f);
       (* A donation's answer on memory no one shared, a thousand times under
          one with_. *)
       row "exclusive-1000"
