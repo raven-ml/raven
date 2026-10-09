@@ -790,6 +790,50 @@ static inline __attribute__((always_inline)) void block8(uint8_t *d, int64_t dr,
 }
 #endif
 
+/* Interleaves the [n] elements of [w] bytes at [a] and at [b] into [d]:
+   a's i-th element at d's 2i-th, b's at the 2i+1-th, as a window two
+   elements wide reads its rows. 4- and 8-byte elements zip in registers,
+   four or two pairs at a time. */
+static inline __attribute__((always_inline)) void zip2(uint8_t *d,
+                                                       const uint8_t *a,
+                                                       const uint8_t *b,
+                                                       int64_t n, size_t w) {
+  int64_t i = 0;
+#if defined(__aarch64__)
+  if (w == 4)
+    for (; i + 4 <= n; i += 4) {
+      uint32x4x2_t x = {{vld1q_u32((const uint32_t *)(a + 4 * i)),
+                         vld1q_u32((const uint32_t *)(b + 4 * i))}};
+      vst2q_u32((uint32_t *)(d + 8 * i), x);
+    }
+  if (w == 8)
+    for (; i + 2 <= n; i += 2) {
+      uint64x2x2_t x = {{vld1q_u64((const uint64_t *)(a + 8 * i)),
+                         vld1q_u64((const uint64_t *)(b + 8 * i))}};
+      vst2q_u64((uint64_t *)(d + 16 * i), x);
+    }
+#elif defined(__x86_64__)
+  if (w == 4)
+    for (; i + 4 <= n; i += 4) {
+      __m128 x = _mm_loadu_ps((const float *)(a + 4 * i));
+      __m128 y = _mm_loadu_ps((const float *)(b + 4 * i));
+      _mm_storeu_ps((float *)(d + 8 * i), _mm_unpacklo_ps(x, y));
+      _mm_storeu_ps((float *)(d + 8 * i + 16), _mm_unpackhi_ps(x, y));
+    }
+  if (w == 8)
+    for (; i + 2 <= n; i += 2) {
+      __m128d x = _mm_loadu_pd((const double *)(a + 8 * i));
+      __m128d y = _mm_loadu_pd((const double *)(b + 8 * i));
+      _mm_storeu_pd((double *)(d + 16 * i), _mm_unpacklo_pd(x, y));
+      _mm_storeu_pd((double *)(d + 16 * i + 16), _mm_unpackhi_pd(x, y));
+    }
+#endif
+  for (; i < n; i++) {
+    memcpy(d + 2 * i * w, a + i * w, w);
+    memcpy(d + (2 * i + 1) * w, b + i * w, w);
+  }
+}
+
 /* Sub-byte runs
 
    A run of sub-byte elements written one after another covers whole bytes,
@@ -881,11 +925,20 @@ static __attribute__((noinline)) void sub_run(uint8_t *d, int64_t pd,
 /* A block of elements of [w] bytes, steps in bytes: rows of adjacent
    elements are memcpy, a source that steps one element across rows into
    adjacent elements moves in square blocks, 8x8 of 4-byte elements and 4x4
-   of the others, other steps element by element. */
+   of the others, two adjacent runs of the source into adjacent elements
+   zip, other steps element by element. */
 static inline __attribute__((always_inline)) void bytes(
     uint8_t *d, int64_t dr, int64_t dc, const uint8_t *s, int64_t sr,
     int64_t sc, int64_t rows, int64_t cols, size_t w) {
   int64_t i = 0, sw = (int64_t)w, side = w == 4 ? 8 : 4;
+  if (rows == 2 && dr == sw && dc == 2 * sw && sc == sw) {
+    zip2(d, s, s + sr, cols, w);
+    return;
+  }
+  if (cols == 2 && dc == sw && dr == 2 * sw && sr == sw) {
+    zip2(d, s, s + sc, rows, w);
+    return;
+  }
   if (dc == sw && sr == sw)
     for (; i + side <= rows; i += side) {
       int64_t j = 0;

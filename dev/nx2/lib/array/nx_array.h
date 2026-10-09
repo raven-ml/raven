@@ -175,7 +175,9 @@ int nx_coalesce(int n, const nx_array *a, nx_loop *l);
    source steps one element across rows and the destination one along
    them, as for a transposed source, it moves square blocks through
    registers: 8x8 of 4-byte elements, 32 bytes from each of eight columns
-   into each of eight rows, and 4x4 of the others. */
+   into each of eight rows, and 4x4 of the others. Two adjacent runs of the
+   source interleaved into adjacent elements, as a window two elements
+   wide reads its rows, zip in registers. */
 void nx_copy_block(uint8_t *dst, int64_t pd, int64_t dst_row, int64_t dst_col,
                    const uint8_t *src, int64_t ps, int64_t src_row,
                    int64_t src_col, int64_t rows, int64_t cols, int bits);

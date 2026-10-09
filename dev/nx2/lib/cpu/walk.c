@@ -23,7 +23,9 @@
 
    The units of the job are planes (indices of the axes outside the rows) ×
    blocks of rows × pieces of a row, and unit u's block is computed from u
-   alone, so any thread runs any unit. */
+   alone, so any thread runs any unit. Where a block is a whole plane of
+   fewer than PLANES elements, a unit runs the planes that follow it along
+   the next axis out too, up to PLANES elements. */
 
 #include "cpu.h"
 
@@ -45,12 +47,20 @@
    tile, takes 4.6 times memcpy's time on one kimchi core. */
 #define STRIDED_COST 4
 
+/* The elements of a unit of small planes. A unit's first block costs
+   divisions, which a unit per plane of 2x2 windows, 52 elements, pays for
+   every 52: kimchi copies the 2x2 windows of 32x16x26x26 float32 in 19.7
+   us a plane to a unit, 15.5 at most 4096 elements to one. */
+#define PLANES 4096
+
 typedef struct {
   int n;
   nx_loop l;
   int64_t n0, n1;    /* a block's elements per row and rows, at most */
   int64_t pieces;    /* blocks along a row */
   int64_t rowblocks; /* blocks along the rows of a plane */
+  int64_t n2;          /* planes a unit runs, along the innermost outer axis */
+  int64_t planeblocks; /* units along that axis */
   nx_cpu_block_fn f;
   void *ctx;
 } walk;
@@ -86,7 +96,10 @@ static int tile_axis(int n, const nx_loop *l) {
   return t;
 }
 
-static void block_of(const walk *w, int64_t u, nx_cpu_block *b) {
+/* Unit u's first block, and the number of planes its unit runs: the
+   block, then the same block in each next plane along the innermost axis
+   outside the rows. */
+static int64_t block_of(const walk *w, int64_t u, nx_cpu_block *b) {
   const nx_loop *l = &w->l;
   int r = l->rank;
   int64_t piece = u % w->pieces;
@@ -102,28 +115,38 @@ static void block_of(const walk *w, int64_t u, nx_cpu_block *b) {
     b->s1[k] = r > 1 ? l->step[k][r - 2] : 0;
     b->at[k] = l->first[k] + i0 * b->s0[k] + j0 * b->s1[k];
   }
+  if (r < 3) return 1;
   /* u is the plane: its index on each axis outside the rows, innermost
-     first. */
-  for (int i = r - 3; i >= 0; i--) {
-    int64_t x = u % l->extent[i];
+     first, the innermost in runs of n2. */
+  int64_t x = u % w->planeblocks * w->n2, planes = l->extent[r - 3] - x;
+  u /= w->planeblocks;
+  for (int k = 0; k < w->n; k++) b->at[k] += x * l->step[k][r - 3];
+  for (int i = r - 4; i >= 0; i--) {
+    x = u % l->extent[i];
     u /= l->extent[i];
     for (int k = 0; k < w->n; k++) b->at[k] += x * l->step[k][i];
   }
+  return planes < w->n2 ? planes : w->n2;
 }
 
 static void run(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)worker;
   const walk *w = ctx;
+  const nx_loop *l = &w->l;
   nx_cpu_block b;
   for (int64_t u = lo; u < hi; u++) {
-    block_of(w, u, &b);
-    w->f(&b, w->ctx);
+    int64_t planes = block_of(w, u, &b);
+    for (int64_t p = 0; p < planes; p++) {
+      if (p > 0)
+        for (int k = 0; k < w->n; k++) b.at[k] += l->step[k][l->rank - 3];
+      w->f(&b, w->ctx);
+    }
   }
 }
 
 void nx_cpu_walk(int n, const nx_array *a, const nx_loop *l, int64_t most,
                  nx_cpu_block_fn f, void *ctx) {
-  walk w = {n, *l, 0, 0, 0, 0, f, ctx};
+  walk w = {n, *l, 0, 0, 0, 0, 1, 1, f, ctx};
   nx_loop *wl = &w.l;
   int r = wl->rank, bits = 0, widest = 1, byte_wide = 1;
   if (wl->extent[0] == 0) return;
@@ -170,6 +193,15 @@ void nx_cpu_walk(int n, const nx_array *a, const nx_loop *l, int64_t most,
   int64_t elements = 1;
   for (int i = 0; i < r; i++) elements *= wl->extent[i];
   int64_t planes = elements / (len * height);
+  if (r > 2) {
+    /* A block of a whole small plane runs with the next ones in its
+       unit. */
+    if (w.pieces == 1 && w.rowblocks == 1 && len * height < PLANES)
+      w.n2 = PLANES / (len * height);
+    if (w.n2 > wl->extent[r - 3]) w.n2 = wl->extent[r - 3];
+    w.planeblocks = (wl->extent[r - 3] + w.n2 - 1) / w.n2;
+    planes = planes / wl->extent[r - 3] * w.planeblocks;
+  }
   int strided = tiled;
   for (int k = 0; k < n; k++) strided |= magnitude(wl->step[k][r - 1]) > 1;
   int64_t bytes = elements * bits / 8;

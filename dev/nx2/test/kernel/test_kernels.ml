@@ -373,8 +373,9 @@ let case_of dts =
 let case = Gen.with_pp pp_case (case_of dtypes)
 
 (* Arrays of a few hundred thousand elements at most, in shapes about the walk's
-   block and tile sizes, transposed or stepped: a job of several threads and
-   blocks. *)
+   block and tile sizes, transposed, stepped, or cut into 2x2 windows whose
+   last two axes are swapped, as a pooling layer reads them: a job of several
+   threads and blocks. *)
 let large_of dts =
   let open Gen in
   let* (D.Any dt) = dts in
@@ -383,7 +384,7 @@ let large_of dts =
   in
   let* h = of_list ~pp:Format.pp_print_int [ 255; 256; 257; 300 ] in
   let* w = side in
-  let* view = int_range 0 2 in
+  let* view = of_list ~pp:Format.pp_print_int [ 0; 1; 2; 3 ] in
   let s =
     match view with 0 -> [| h; w |] | 1 -> [| w; h |] | _ -> [| h; 2 * w |]
   in
@@ -392,11 +393,15 @@ let large_of dts =
   match view with
   | 0 -> Case a
   | 1 -> Case (Option.get (A.move (M.Permute [| 1; 0 |]) a))
-  | _ ->
+  | 2 ->
       let all = { M.start = 0; count = h; step = 1 } in
       Case
         (Option.get
            (A.move (M.Slice [| all; { M.start = 1; count = w; step = 2 } |]) a))
+  | _ ->
+      let w axis = { M.axis; size = 2; step = 2; dilation = 1 } in
+      let v = Option.get (A.move (M.Window [| w 0; w 1 |]) a) in
+      Case (Option.get (A.move (M.Permute [| 0; 1; 3; 2 |]) v))
 
 let large = Gen.with_pp pp_case (large_of dtypes)
 
@@ -413,6 +418,7 @@ let covers_large (Case a) =
   let l = A.layout a in
   cover "transposed" (L.rank l = 2 && abs (L.stride l 0) < abs (L.stride l 1));
   cover "stepped" (L.rank l = 2 && L.stride l 1 = 2);
+  cover "2x2 windows" (L.rank l = 4);
   cover "several blocks" (L.numel l > 4096)
 
 (* Copies *)
@@ -713,7 +719,7 @@ let laws (b : Support.backend) =
         (run (fun c ->
              covers c;
              law_copy b c));
-      prop ~count:20 "copy of large views is bits for bits" large
+      prop ~count:32 "copy of large views is bits for bits" large
         (run (fun c ->
              covers_large c;
              law_copy b c));
@@ -723,7 +729,7 @@ let laws (b : Support.backend) =
              covers c;
              cover "to the source's dtype" (D.equal (A.dtype a) d);
              law_cast b (c, D.Any d)));
-      prop ~count:20 "cast of large views is the reference" (pair large)
+      prop ~count:32 "cast of large views is the reference" (pair large)
         (run (fun (c, d) ->
              covers_large c;
              law_cast b (c, d)));
