@@ -2,3 +2,8 @@
  (names test_metal)
  (modules test_metal)
  (libraries nx_array nx_metal_support rig windtrap))
+
+(tests
+ (names test_metal_place)
+ (modules test_metal_place)
+ (libraries nx nx_array nx_metal_support rig windtrap))

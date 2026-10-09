@@ -7,14 +7,24 @@
 
     Placing reads and writes memory through nx.array and rig alone and runs no
     kernel, so a set without kernels places. Each device of the destination
-    takes its window of the value from the one source array that holds it: the
-    array itself on the same device, a borrow where the device maps the array's
-    memory ({!Nx_array.borrow}), and otherwise a copy of the bytes the window
-    reaches ({!Nx_array.to_device}), keeping its layout. A window that no one
-    source array holds, as a split changing axis gives, is taken from the value
-    assembled on the host once per call: rig copies runs of whole bytes, and an
-    element narrower than a byte is copied alone. That assembly runs no kernel
-    either. *)
+    holds its window of the value and allocates at most the window's bytes.
+
+    Where one source array holds the window, the device takes the array itself
+    on the same device, a borrow where the array's memory and the device are
+    both the host's ({!Rig.shares_host_memory}), or a copy of the bytes the window reaches where they
+    are no more than the window's ({!Nx_array.to_device}), keeping its layout.
+
+    Otherwise the device gathers its window into a fresh C-contiguous array:
+    each distinct source window gives the box it shares with the destination's,
+    from a source on the device where one holds it. Into memory the host
+    addresses, the host copies each box ({!Nx_array.blit}), first bringing to
+    the host the bytes a box reaches in a source it does not address. Into other
+    memory, runs of whole bytes copy through {!Rig.Buffer.copy}, which stages
+    between devices that do not reach each other; a transposed or broadcast
+    source is first packed in C order on the host, box by box. An element
+    narrower than a byte gathers on the host for such a device, and the window
+    is then brought to it. Nothing holds the whole value unless the destination
+    does. *)
 
 val value :
   by:string ->

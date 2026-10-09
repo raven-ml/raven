@@ -4,3 +4,8 @@
  (names test_cuda)
  (modules test_cuda)
  (libraries nx_array nx_kernel nx_cuda_support nx_gpu_ref rig windtrap))
+
+(tests
+ (names test_cuda_place)
+ (modules test_cuda_place)
+ (libraries nx nx_array nx_cuda_support rig rig.cuda windtrap))

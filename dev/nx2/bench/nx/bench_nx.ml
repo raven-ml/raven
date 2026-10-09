@@ -88,6 +88,26 @@ let borrow_16 () =
   let module Mem = (val Nx.devices [ memory 0 ]) in
   Borrow (Mem.on, x16)
 
+(* A 1024 × 1024 float32 value, 4 MiB, and a split on axis 1 over four memory
+   devices: from the host, and from a split on axis 0, where each device's
+   column window meets every row window. *)
+type reshard =
+  | Reshard : 'd Nx.Placement.t * (float, D.float32_elt, 'e) Nx.t -> reshard
+
+let square =
+  Nx.Repr.of_array Nx.Host.v
+    (A.of_array D.Float32 [| 1024; 1024 |] (Array.make (1024 * 1024) 1.))
+
+let host_to_columns () =
+  let module Four = (val Nx.devices [ memory 0; memory 1; memory 2; memory 3 ])
+  in
+  Reshard (Four.split ~axis:1, square)
+
+let rows_to_columns () =
+  let module Four = (val Nx.devices [ memory 0; memory 1; memory 2; memory 3 ])
+  in
+  Reshard (Four.split ~axis:1, Nx.place (Four.split ~axis:0) square)
+
 let placed_rows =
   Thumper.group "placed"
     [
@@ -102,6 +122,10 @@ let place_rows =
           Nx.place Nx.Host.on (Thumper.black_box x1));
       Thumper.bench_with_setup "borrow-memory-device-16" ~setup:borrow_16
         (fun (Borrow (on, x)) -> Value (Nx.place on x));
+      Thumper.bench_with_setup "host-to-split-axis1" ~setup:host_to_columns
+        (fun (Reshard (p, x)) -> Value (Nx.place p x));
+      Thumper.bench_with_setup "split-to-split" ~setup:rows_to_columns
+        (fun (Reshard (p, x)) -> Value (Nx.place p x));
     ]
 
 (* Interpretations. Each row adds one-element host values 100 times: eagerly;

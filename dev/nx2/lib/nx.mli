@@ -242,10 +242,12 @@ val devices : ?kernels:(module Nx_kernel.S) -> Rig.t list -> (module Devices)
     [kernels] does not compute on one of [ds]. *)
 
 val place : 'e Placement.t -> ('v, 's, 'd) t -> ('v, 's, 'e) t
-(** [place p x] is [x]'s elements at [p]: over [x]'s own memory where [x]
-    already lies at [p] or where [p]'s device maps [x]'s memory, a copy
-    otherwise, and computed at [p] for a value of every set. Across sets it
-    changes the brand; within one, the arrangement.
+(** [place p x] is [x]'s elements at [p]. Each device of [p] holds its window
+    over [x]'s own memory where [x] already lies there, or where [x]'s memory is
+    the host's and that device shares host memory ({!Rig.shares_host_memory});
+    otherwise it holds a copy of its window, allocating at most the window's
+    bytes. A value of every set is computed at [p]. Across sets it changes the
+    brand; within one, the arrangement.
 
     Raises [Invalid_argument] if [p]'s cuts do not divide [x]'s shape, and
     {!Rig.Lost} for a lost device. *)
