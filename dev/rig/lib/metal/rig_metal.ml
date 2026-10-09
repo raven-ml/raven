@@ -266,18 +266,40 @@ let edge d = Nativeint.of_int d.self
    driver promises 256 and checks it. *)
 let region_align = 256
 
-(* The live region of [d]'s [n]-byte buffer [b]. *)
-let live d n b =
-  let r = region d.self n b in
-  Mutex.protect d.guard (fun () -> Hashtbl.replace d.regions r.handle r);
-  r
+(* [locked d g r] is [g d r] under [d.guard], which an exception also releases.
+   [g] is a toplevel function, so a call makes no closure: every alloc and free
+   takes the guard. *)
+let locked d g r =
+  Mutex.lock d.guard;
+  match g d r with
+  | x ->
+      Mutex.unlock d.guard;
+      x
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      Mutex.unlock d.guard;
+      Printexc.raise_with_backtrace e bt
 
-(* Whether [r] is a live region of [d], under [d.guard]: a handle Metal gives
-   again after a free names another region. *)
+let enter d r = Hashtbl.replace d.regions r.handle r
+
+(* Whether [r] is a live region of [d]: a handle Metal gives again after a free
+   names another region. *)
 let held d r =
   match Hashtbl.find_opt d.regions r.handle with
   | Some r' -> r' == r
   | None -> false
+
+(* Takes [r] out of [d]'s live regions: [false] if it was not in them. *)
+let take d r =
+  let live = held d r in
+  if live then Hashtbl.remove d.regions r.handle;
+  live
+
+(* The live region of [d]'s [n]-byte buffer [b]. *)
+let live d n b =
+  let r = region d.self n b in
+  locked d enter r;
+  r
 
 let alloc d _ n =
   if n < 1 then invalid_argf "Rig_metal.alloc: %d bytes, expected at least 1" n;
@@ -306,8 +328,7 @@ let peer _ _ = false
 let map_peer d d' (r : region) =
   if d.self = d'.self then
     invalid_arg "Rig_metal.map_peer: the two devices are one";
-  if r.owner <> d'.self || not (Mutex.protect d'.guard (fun () -> held d' r))
-  then
+  if r.owner <> d'.self || not (locked d' held r) then
     invalid_arg
       "Rig_metal.map_peer: the region is no live region of the second device";
   None
@@ -316,13 +337,8 @@ let free d (r : region) =
   if r.owner <> d.self then
     invalid_arg
       "Rig_metal.free: the region is no allocation or mapping of the device";
-  let taken =
-    Mutex.protect d.guard @@ fun () ->
-    let live = held d r in
-    if live then Hashtbl.remove d.regions r.handle;
-    live
-  in
-  if not taken then invalid_arg "Rig_metal.free: the region was freed";
+  if not (locked d take r) then
+    invalid_arg "Rig_metal.free: the region was freed";
   if r == d.word then free_word d.self else free_buffer d.self r.handle
 
 (* Images *)
