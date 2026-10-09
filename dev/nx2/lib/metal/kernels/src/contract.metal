@@ -33,7 +33,8 @@ using namespace metal;
 
 #define WM 2
 #define WN 2
-#define THREADS (32 * WM * WN)
+#define THREADS NX_METAL_THREADS
+static_assert(THREADS == 32 * WM * WN, "a dense threadgroup is 4 simdgroups");
 #define PAD 4
 
 /* Operand dtypes, by their storage. */
@@ -47,7 +48,7 @@ template <int D> struct elt;
    the matrix units may sum in float32 and stay exact, every partial sum an
    integer of at most 2^24 (0 for floats). */
 template <> struct elt<F32> {
-  static constant constexpr uint chunk = 0, bk = 16;
+  static constant constexpr uint chunk = 0, bk = NX_METAL_BK;
   typedef float t, s, f;
   static vec<s, 4> stage(vec<t, 4> x) { return x; }
   static float2 get(vec<s, 2> x) { return x; }
@@ -55,7 +56,7 @@ template <> struct elt<F32> {
   static float get1(t x) { return x; }
 };
 template <> struct elt<F16> {
-  static constant constexpr uint chunk = 0, bk = 32;
+  static constant constexpr uint chunk = 0, bk = NX_METAL_BK_HALF;
   typedef half t, s, f;
   static vec<s, 4> stage(vec<t, 4> x) { return x; }
   static half2 get(vec<s, 2> x) { return x; }
@@ -66,7 +67,7 @@ template <> struct elt<F16> {
    for every value. A NaN stays a NaN, though not always a quiet one,
    which is all a product needs. */
 template <> struct elt<BF16> {
-  static constant constexpr uint chunk = 0, bk = 16;
+  static constant constexpr uint chunk = 0, bk = NX_METAL_BK;
   typedef ushort t, s;
   typedef float f;
   static vec<s, 4> stage(vec<t, 4> x) { return x; }
@@ -81,14 +82,14 @@ template <> struct elt<BF16> {
 /* Bytes are exact in half, and stage as half; products of int8 are at
    most 2^14, of uint8 under 2^16. */
 template <> struct elt<I8> {
-  static constant constexpr uint chunk = 1024, bk = 32;
+  static constant constexpr uint chunk = 1024, bk = NX_METAL_BK_HALF;
   typedef char t;
   typedef half s, f;
   static vec<s, 4> stage(vec<t, 4> x) { return half4(x); }
   static half2 get(vec<s, 2> x) { return x; }
 };
 template <> struct elt<U8> {
-  static constant constexpr uint chunk = 258, bk = 32;
+  static constant constexpr uint chunk = 258, bk = NX_METAL_BK_HALF;
   typedef uchar t;
   typedef half s, f;
   static vec<s, 4> stage(vec<t, 4> x) { return half4(x); }
@@ -305,7 +306,7 @@ static void multiply(thread simdgroup_float8x8 (&acc)[TM][TN],
   }
 }
 
-template <int D, bool AT, bool BT, bool EDGE, int TM, int TN, int BK>
+template <int D, bool AT, bool BT, bool EDGE, int BM, int BN, int BK>
 kernel void contract(constant nx_metal_contract &p [[buffer(0)]],
                      uint3 g [[threadgroup_position_in_grid]],
                      uint t [[thread_index_in_threadgroup]],
@@ -314,7 +315,7 @@ kernel void contract(constant nx_metal_contract &p [[buffer(0)]],
   typedef typename elt<D>::t T;
   /* The tile: TM × TN accumulators of 8 × 8 a simdgroup, and BK steps of
      k at a time. */
-  constexpr int BM = 8 * TM * WM, BN = 8 * TN * WN;
+  constexpr int TM = BM / (8 * WM), TN = BN / (8 * WN);
   /* a's and b's tiles as stored: a's BM × BK, or BK × BM if AT; b's
      BK × BN, or BN × BK if BT. */
   constexpr int AR = AT ? BK : BM, AC = AT ? BM : BK;
@@ -465,8 +466,8 @@ kernel void contract(constant nx_metal_contract &p [[buffer(0)]],
 
    Either way an output's association is a function of the shape. */
 
-#define SKINNY_T 4
-#define SKINNY_N 32
+#define SKINNY_T NX_METAL_SKINNY_T
+#define SKINNY_N NX_METAL_SKINNY_N
 
 /* Adds out's init and stores it, as the dense kernel does. */
 static void finish(constant nx_metal_contract &p, uint z, uint c, float x) {
@@ -598,8 +599,8 @@ kernel void contract_combine(constant nx_metal_combine &p [[buffer(0)]],
    INT_THREADS threads computes an INT_TILE × INT_TILE tile of out, each
    thread a 4 × 4 block, staging INT_BK steps of a's and b's tiles widened. */
 
-#define INT_TILE 64
-#define INT_THREADS 256
+#define INT_TILE NX_METAL_INT_TILE
+#define INT_THREADS NX_METAL_INT_THREADS
 #define INT_BK 16
 
 /* A is unsigned, so the sum wraps as the dtype's arithmetic does. */
@@ -661,20 +662,27 @@ template [[host_name("contract_i32")]] kernel void contract_int<uint>(
 template [[host_name("contract_i64")]] kernel void contract_int<ulong>(
     constant nx_metal_contract &, uint3, uint);
 
-#define CONTRACT(name, D, AT, BT, TM, TN, BK)                            \
+#define CONTRACT(name, D, AT, BT, EDGE, BM, BN, BK)                      \
   template [[host_name(name)]] kernel void                                \
-  contract<D, AT, BT, false, TM, TN, BK>(constant nx_metal_contract &,    \
-                                         uint3, uint, uint, uint);        \
-  template [[host_name(name "_edge")]] kernel void                        \
-  contract<D, AT, BT, true, TM, TN, BK>(constant nx_metal_contract &,     \
+  contract<D, AT, BT, EDGE, BM, BN, BK>(constant nx_metal_contract &,     \
                                         uint3, uint, uint, uint);
 
-/* Floats: 64 × 64 tiles, 32 × 32 ones (_s) for products of few tiles, and
-   16 × 64 ones (_w) for products of few rows, 32 steps of k deep. */
+/* A square tile's instance with no bounds checks, for products of whole
+   tiles, and its twin that reads tiles reaching past the matrix. The
+   checks' absence is measured: the edge instance on whole tiles runs
+   2-11% slower (f32 4096-nt 9%, 64 x 512 batches 8-11%). */
+#define TWINS(name, D, AT, BT, SIDE, BK)                                  \
+  CONTRACT(name, D, AT, BT, false, SIDE, SIDE, BK)                        \
+  CONTRACT(name "_edge", D, AT, BT, true, SIDE, SIDE, BK)
+
+/* Floats: large tiles, small ones (_s) for products of few tiles, and wide
+   ones (_w) for products of few rows. A wide tile has no unchecked twin:
+   on 16-row products the checked instance runs 10-13% faster. */
 #define FLOATS(name, D, AT, BT)                                           \
-  CONTRACT(name, D, AT, BT, 4, 4, elt<D>::bk)                             \
-  CONTRACT(name "_s", D, AT, BT, 2, 2, elt<D>::bk)                        \
-  CONTRACT(name "_w", D, AT, BT, 1, 4, 32)
+  TWINS(name, D, AT, BT, NX_METAL_LARGE, elt<D>::bk)                      \
+  TWINS(name "_s", D, AT, BT, NX_METAL_SMALL, elt<D>::bk)                 \
+  CONTRACT(name "_w", D, AT, BT, true, NX_METAL_WIDE_M, NX_METAL_WIDE_N,  \
+           NX_METAL_BK_WIDE)
 
 FLOATS("contract_f32_nn", F32, false, false)
 FLOATS("contract_f32_nt", F32, false, true)
@@ -689,7 +697,7 @@ FLOATS("contract_bf16_nt", BF16, false, true)
 FLOATS("contract_bf16_tn", BF16, true, false)
 FLOATS("contract_bf16_tt", BF16, true, true)
 
-#define BYTES(name, D, AT, BT) CONTRACT(name, D, AT, BT, 4, 4, elt<D>::bk)
+#define BYTES(name, D, AT, BT) TWINS(name, D, AT, BT, NX_METAL_LARGE, elt<D>::bk)
 
 BYTES("contract_i8_nn", I8, false, false)
 BYTES("contract_i8_nt", I8, false, true)

@@ -25,20 +25,22 @@ static int append(nx_metal_records *r, int entry, const uint32_t groups[3],
 
 /* Contract */
 
-/* The dense kernels' tiles, rows × columns, and threadgroup
-   (contract.metal), and the column of tiles that consecutive threadgroups
-   take, as a power of two: 4 tiles reading one tile of b share it in the
-   GPU's cache. */
-enum { tile_threads = 128, swizzle = 2 };
+/* The dense kernels' tiles, rows × columns (kernels.h), and the column
+   of tiles that consecutive threadgroups take, as a power of two: 4 tiles
+   reading one tile of b share it in the GPU's cache. */
+enum { swizzle = 2 };
 enum size { Large, Small, Wide };
-static const uint32_t tile_rows[] = {64, 32, 16}, tile_cols[] = {64, 32, 64};
+static const uint32_t tile_rows[] = {NX_METAL_LARGE, NX_METAL_SMALL,
+                                     NX_METAL_WIDE_M},
+                      tile_cols[] = {NX_METAL_LARGE, NX_METAL_SMALL,
+                                     NX_METAL_WIDE_N};
 
-/* The steps of k the dense kernel stages for a dtype and tile
-   (contract.metal's elt::bk, and 32 for wide tiles). */
+/* The steps of k the dense kernel stages for a dtype and tile. */
 static uint32_t tile_k(int dt, enum size size) {
-  return size == Wide || dt == NX_FLOAT16 || dt == NX_INT8 || dt == NX_UINT8
-             ? 32
-             : 16;
+  if (size == Wide) return NX_METAL_BK_WIDE;
+  return dt == NX_FLOAT16 || dt == NX_INT8 || dt == NX_UINT8
+             ? NX_METAL_BK_HALF
+             : NX_METAL_BK;
 }
 
 /* A float product of fewer large tiles than this runs on small ones, which
@@ -65,9 +67,10 @@ static int dense_dtype(int dt) {
 /* The instance for a's and b's dtype and order: NX_METAL_contract_<dt>_<a
    order><b order>, n where the operand's last axis has unit stride; its
    _s and _w twins, of small and wide tiles (floats only); and the _edge
-   twin of each, which reads tiles that reach past m, n or k. */
+   twin of a square tile's, which reads tiles that reach past m, n or k,
+   as the wide tile's one instance does. */
 static int dense_entry(int dt, int a_t, int b_t, enum size size, int edge) {
-  int order = 2 * a_t + b_t, at = 6 * order + 2 * size + edge;
+  int order = 2 * a_t + b_t, at = 5 * order + 2 * size + (size != Wide && edge);
   switch (dt) {
   case NX_FLOAT32: return NX_METAL_contract_f32_nn + at;
   case NX_FLOAT16: return NX_METAL_contract_f16_nn + at;
@@ -76,10 +79,6 @@ static int dense_entry(int dt, int a_t, int b_t, enum size size, int edge) {
   default: return NX_METAL_contract_u8_nn + 2 * order + edge;
   }
 }
-
-/* The skinny kernels' columns of out per threadgroup, b stored [n][k] (t)
-   or [k][n] (n) (contract.metal). */
-enum { skinny_t = 4, skinny_n = 32 };
 
 /* The instance for a's and b's dtype and b's order. */
 static int skinny_entry(int dt, int b_t) {
@@ -105,8 +104,6 @@ static int integer(int dt) {
          dt == NX_INT64 || dt == NX_UINT64;
 }
 
-/* The integer kernel's tile and threadgroup (contract_int.metal). */
-enum { int_tile = 64, int_threads = 256 };
 
 /* An integer contraction: any strides, operands widened to the
    accumulator, 32 or 64 bits. */
@@ -114,9 +111,10 @@ static int plan_integer(const nx_metal_contract_in *c, nx_metal_contract *p,
                         nx_metal_records *r) {
   if (c->batch == 0 || c->m == 0 || c->n == 0) return 0;
   int wide = c->acc == NX_INT64 || c->acc == NX_UINT64;
-  uint32_t groups[3] = {(c->n + int_tile - 1) / int_tile,
-                        (c->m + int_tile - 1) / int_tile, c->batch};
-  uint32_t threads[3] = {int_threads, 1, 1};
+  uint32_t tile = NX_METAL_INT_TILE;
+  uint32_t groups[3] = {(c->n + tile - 1) / tile, (c->m + tile - 1) / tile,
+                        c->batch};
+  uint32_t threads[3] = {NX_METAL_INT_THREADS, 1, 1};
   int e = append(r, wide ? NX_METAL_contract_i64 : NX_METAL_contract_i32,
                  groups, threads, p, sizeof *p, 4, 0);
   return e ? e : 1;
@@ -140,13 +138,16 @@ int nx_metal_plan_contract(const nx_metal_contract_in *c,
       !spans32(is, c->m, c->n))
     return NX_NOT_COMPUTED;
   nx_metal_contract p = {
-      a->address, b->address, init ? init->address : 0, out->address,
-      as[0], bs[0], is[0],
-      (uint32_t)as[1], (uint32_t)as[2], (uint32_t)bs[1], (uint32_t)bs[2],
-      (uint32_t)is[1], (uint32_t)is[2],
-      c->batch, c->m, c->n, c->k,
-      init ? (uint32_t)init->dtype : NX_DTYPE_COUNT, (uint32_t)out->dtype,
-      0, (uint32_t)a->dtype, (uint32_t)c->acc};
+      .a = a->address, .b = b->address, .init = init ? init->address : 0,
+      .out = out->address,
+      .a_batch = as[0], .b_batch = bs[0], .init_batch = is[0],
+      .a_m = (uint32_t)as[1], .a_k = (uint32_t)as[2],
+      .b_k = (uint32_t)bs[1], .b_n = (uint32_t)bs[2],
+      .init_m = (uint32_t)is[1], .init_n = (uint32_t)is[2],
+      .batch = c->batch, .m = c->m, .n = c->n, .k = c->k,
+      .init_dtype = init ? (uint32_t)init->dtype : NX_DTYPE_COUNT,
+      .out_dtype = (uint32_t)out->dtype, .dtype = (uint32_t)a->dtype,
+      .acc = (uint32_t)c->acc};
   /* The matrix units take an operand with one axis of unit stride, or of
      one element; the order names which, the last axis where both may. */
   int a_t = as[2] != 1 && c->k > 1, b_t = bs[2] != 1 && c->n > 1;
@@ -158,9 +159,9 @@ int nx_metal_plan_contract(const nx_metal_contract_in *c,
     return plan_integer(c, &p, r);
   if (!ordered) return NX_NOT_COMPUTED;
   if (c->batch == 0 || c->m == 0 || c->n == 0) return 0;
-  uint32_t threads[3] = {tile_threads, 1, 1};
+  uint32_t threads[3] = {NX_METAL_THREADS, 1, 1};
   if (c->m == 1 && floats) {
-    uint32_t per = b_t ? skinny_t : skinny_n;
+    uint32_t per = b_t ? NX_METAL_SKINNY_T : NX_METAL_SKINNY_N;
     uint32_t groups[3] = {(c->n + per - 1) / per, 1, c->batch};
     int e = append(r, skinny_entry(a->dtype, b_t), groups, threads, &p,
                    sizeof p, 4, 0);
@@ -207,10 +208,11 @@ int nx_metal_plan_contract(const nx_metal_contract_in *c,
   }
   uint64_t count = (uint64_t)c->m * c->n;
   *scratch = (parts * count * 4 + 15) / 16 * 16;
-  nx_metal_combine q = {out->address, 0, p.init,
-                        p.init_batch, p.init_m, p.init_n,
-                        1, c->m, c->n, parts,
-                        p.init_dtype, p.out_dtype};
+  nx_metal_combine q = {
+      .out = out->address, .parts = 0, .init = p.init,
+      .init_batch = p.init_batch, .init_m = p.init_m, .init_n = p.init_n,
+      .batch = 1, .m = c->m, .n = c->n, .split = parts,
+      .init_dtype = p.init_dtype, .out_dtype = p.out_dtype};
   p.out = 0;
   p.a_batch = (int64_t)part_k * as[2];
   p.b_batch = (int64_t)part_k * bs[1];
