@@ -10,6 +10,7 @@ type work =
   | Cast of D.any * D.any * int
   | Fma of D.any * int
   | Read of int
+  | Stream of { ins : int; inb : int; outb : int; n : int }
 
 type bytes =
   (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
@@ -34,6 +35,10 @@ external floor_codec : int -> codec -> bytes -> bytes -> int -> unit
   = "nx_cpu_bench_floor_codec"
 
 external codecs_run : unit -> bool = "nx_cpu_bench_codecs_run" [@@noalloc]
+
+external floor_stream :
+  int -> int -> int -> int -> bytes -> bytes -> bytes -> bytes -> int -> unit
+  = "nx_cpu_bench_floor_stream_byte" "nx_cpu_bench_floor_stream"
 
 external floor_fma : int -> bool -> int -> unit = "nx_cpu_bench_floor_fma"
 external floor_read : int -> bytes -> unit = "nx_cpu_bench_floor_read"
@@ -90,6 +95,7 @@ type floor =
   | Codec of codec * int
   | Peak of { f64 : bool; n : int }
   | Bytes_read of int
+  | Streamed of { ins : int; inb : int; outb : int; n : int }
 
 (* A codec's source and destination, and their bytes per element. *)
 let codec_pair = function
@@ -113,6 +119,7 @@ let floor_name = function
       strf "codec-%s-%s-%s" s d (count n)
   | Peak { f64; n } -> strf "fma-%s-%s" (if f64 then "f64" else "f32") (count n)
   | Bytes_read n -> strf "read-%s" (count n)
+  | Streamed s -> strf "stream-%dx%d-%d-%s" s.ins s.inb s.outb (count s.n)
 
 (* The flops of a peak's row: a rate, the same for every contraction, about
    10 ms on one core. A row's floor is its flops at that rate. *)
@@ -137,6 +144,7 @@ let floors = function
       move :: List.filter_map codec codecs
   | Fma (dt, _) -> [ Peak { f64 = dt = D.Any D.Float64; n = peak_flops } ]
   | Read n -> [ Bytes_read n ]
+  | Stream { ins; inb; outb; n } -> [ Streamed { ins; inb; outb; n } ]
 
 (* The floors of [ws], each once, in the order the work asks for them. *)
 let needed ws =
@@ -158,35 +166,42 @@ let floor_rows ws =
   let threads =
     [ ("1t", 1); ("performance", performance_cores ()); ("all", cores ()) ]
   in
-  let run f threads =
+  let run name f threads =
+    let pair setup body = row name setup body in
     match f with
     | Memcpy n ->
-        ( (fun () -> (buffer n, buffer n)),
-          fun (d, s) -> floor_move threads 0 0 d s n )
+        pair
+          (fun () -> (buffer n, buffer n))
+          (fun (d, s) -> floor_move threads 0 0 d s n)
     | Move { inb; outb; n } ->
-        ( (fun () -> (buffer (outb * n), buffer (inb * n))),
-          fun (d, s) -> floor_move threads inb outb d s n )
+        pair
+          (fun () -> (buffer (outb * n), buffer (inb * n)))
+          (fun (d, s) -> floor_move threads inb outb d s n)
     | Codec (c, n) ->
         let _, inb, _, outb = codec_pair c in
-        ( (fun () -> (buffer (outb * n), buffer (inb * n))),
-          fun (d, s) -> floor_codec threads c d s n )
-    | Peak { f64; n } ->
-        ((fun () -> (buffer 1, buffer 1)), fun _ -> floor_fma threads f64 n)
-    | Bytes_read n -> ((fun () -> (buffer 1, buffer n)), fun (_, s) -> floor_read threads s)
+        pair
+          (fun () -> (buffer (outb * n), buffer (inb * n)))
+          (fun (d, s) -> floor_codec threads c d s n)
+    | Peak { f64; n } -> pair (fun () -> ()) (fun () -> floor_fma threads f64 n)
+    | Bytes_read n -> pair (fun () -> buffer n) (fun s -> floor_read threads s)
+    | Streamed { ins; inb; outb; n } ->
+        let src k = buffer (if k < ins then inb * n else 1) in
+        pair
+          (fun () -> (buffer (outb * n), src 0, src 1, src 2))
+          (fun (d, a, b, c) -> floor_stream threads ins inb outb d a b c n)
   in
   let floors =
     List.filter
       (function
         | Codec _ | Peak _ | Bytes_read _ -> codecs_run ()
-        | Memcpy _ | Move _ -> true)
+        | Memcpy _ | Move _ | Streamed _ -> true)
       (needed ws)
   in
   List.concat_map
     (fun f ->
       List.map
         (fun (t, threads) ->
-          let setup, body = run f threads in
-          row (strf "floor-%s-%s" (floor_name f) t) setup body)
+          run (strf "floor-%s-%s" (floor_name f) t) f threads)
         threads)
     floors
 

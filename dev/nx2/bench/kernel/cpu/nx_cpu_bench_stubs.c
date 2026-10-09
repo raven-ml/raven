@@ -85,6 +85,78 @@ value nx_cpu_bench_floor_move(value threads, value in, value out, value dst,
   return Val_unit;
 }
 
+/* Streams: [ins] arrays of [n] elements of [inb] bytes read, their xor
+   stored into [n] elements of [outb] bytes, one integer operation per
+   element: the floor of an elementwise kind's loop. With no array read it
+   stores a constant, as a fill does. */
+typedef struct {
+  uint8_t *d;
+  const uint8_t *s[3];
+  int64_t n, total;
+  int ins, inb, outb;
+} stream_job;
+
+#define STREAM(TI, TO)                                                       \
+  {                                                                          \
+    TO *o = (TO *)d;                                                         \
+    const TI *a = (const TI *)s[0], *b = (const TI *)s[1],                   \
+             *c = (const TI *)s[2];                                          \
+    switch (f->ins) {                                                        \
+      case 0: for (int64_t i = 0; i < n; i++) o[i] = (TO)1; break;           \
+      case 1: for (int64_t i = 0; i < n; i++) o[i] = (TO)a[i]; break;        \
+      case 2: for (int64_t i = 0; i < n; i++) o[i] = (TO)(a[i] ^ b[i]); break; \
+      default:                                                               \
+        for (int64_t i = 0; i < n; i++) o[i] = (TO)(a[i] ^ b[i] ^ c[i]);     \
+    }                                                                        \
+  }
+
+static void stream_slice(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)worker;
+  const stream_job *f = ctx;
+  int64_t first = f->n * lo / f->total, n = f->n * hi / f->total - first;
+  uint8_t *d = f->d + first * f->outb;
+  const uint8_t *s[3];
+  for (int k = 0; k < 3; k++) s[k] = f->s[k] + first * f->inb;
+  switch (f->inb * 100 + f->outb) {
+    case 101: STREAM(uint8_t, uint8_t); return;
+    case 401: STREAM(uint32_t, uint8_t); return;
+    case 404: STREAM(uint32_t, uint32_t); return;
+    default: STREAM(uint64_t, uint64_t); return; /* 8 to 8 */
+  }
+}
+
+/* [floor_stream threads ins inb outb dst a b c n]: a stream on [threads] of
+   the pool's threads; [b] and [c] are read only as [ins] says. */
+value nx_cpu_bench_floor_stream(value threads, value ins, value inb,
+                                value outb, value dst, value a, value b,
+                                value c, value n) {
+  int t = Int_val(threads);
+  stream_job f = {Caml_ba_data_val(dst),
+                  {Caml_ba_data_val(a), Caml_ba_data_val(b),
+                   Caml_ba_data_val(c)},
+                  Long_val(n),
+                  t * SLICES,
+                  Int_val(ins),
+                  Int_val(inb),
+                  Int_val(outb)};
+  if (t == 1) {
+    f.total = 1;
+    stream_slice(0, 1, 0, &f);
+    return Val_unit;
+  }
+  caml_enter_blocking_section_no_pending();
+  rig_pool_run(t, f.total, f.total, stream_slice, &f);
+  caml_leave_blocking_section();
+  return Val_unit;
+}
+
+value nx_cpu_bench_floor_stream_byte(value *argv, int argn) {
+  (void)argn;
+  return nx_cpu_bench_floor_stream(argv[0], argv[1], argv[2], argv[3],
+                                   argv[4], argv[5], argv[6], argv[7],
+                                   argv[8]);
+}
+
 value nx_cpu_bench_floor_move_byte(value *argv, int argn) {
   (void)argn;
   return nx_cpu_bench_floor_move(argv[0], argv[1], argv[2], argv[3], argv[4],

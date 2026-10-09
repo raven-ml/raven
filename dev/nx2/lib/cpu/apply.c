@@ -28,9 +28,14 @@
 #include "nx_kinds.h"
 #include "nx_spec.h"
 
-/* Elements of a block: at 16 Ki a block's call costs next to nothing
-   beside its loads and stores, and its rows stay in L1. */
-#define MOST (16 * 1024)
+/* A block holds at most NX_CPU_SLOT bytes of its widest operand, so that
+   an input staged into a slot fits it and the block's rows stay in L1. */
+static int64_t most(int n, const nx_array *a) {
+  int w = 1;
+  for (int k = 0; k < n; k++)
+    if (a[k].bits / 8 > w) w = a[k].bits / 8;
+  return NX_CPU_SLOT / w;
+}
 
 typedef void (*row2)(int64_t n, uint8_t *d, int64_t sd, const uint8_t *x,
                      int64_t sx, const uint8_t *y, int64_t sy);
@@ -214,21 +219,66 @@ static inline uint8_t *at(const nx_array *a, int k, int64_t p) {
   return a[k].base + p * (a[k].bits / 8);
 }
 
+/* The rows of a plane: operand k's row r at in[k] + r·s1[k] elements of
+   its width, stepping s0[k] along it. */
+static void rows(const job *j, int64_t n0, int64_t n1, uint8_t *const *in,
+                 const int64_t *s0, const int64_t *s1) {
+  const nx_array *a = j->a;
+  for (int64_t r = 0; r < n1; r++) {
+    uint8_t *p[NX_MAX_OPERANDS];
+    for (int k = 0; k < j->n; k++) p[k] = in[k] + r * s1[k] * (a[k].bits / 8);
+    if (j->n == 3)
+      j->f2(n0, p[0], s0[0], p[1], s0[1], p[2], s0[2]);
+    else
+      j->f3(n0, p[0], s0[0], p[1], s0[1], p[2], s0[2], p[3], s0[3]);
+  }
+}
+
+/* An input whose rows step more than one element, as a transposed one's
+   do, is copied into a slot first through nx_copy_box's block transposes,
+   so the rows read contiguous elements. Out of line, so that only a staged
+   block's call takes the slots' stack. */
+static __attribute__((noinline)) void staged(const nx_cpu_block *b,
+                                             const job *j) {
+  _Alignas(64) uint8_t slot[NX_MAX_OPERANDS - 1][NX_CPU_SLOT];
+  const nx_array *a = j->a;
+  for (int64_t q = 0; q < b->n2; q++) {
+    uint8_t *in[NX_MAX_OPERANDS];
+    int64_t s0[NX_MAX_OPERANDS], s1[NX_MAX_OPERANDS];
+    for (int k = 0; k < j->n; k++) {
+      int64_t p = b->at[k] + q * b->s2[k];
+      s0[k] = b->s0[k];
+      s1[k] = b->s1[k];
+      if (k == 0 || s0[k] == 0 || s0[k] == 1) {
+        in[k] = at(a, k, p);
+        continue;
+      }
+      nx_copy_box(slot[k - 1], a[k].base,
+                  &(nx_box){{1, b->n1, b->n0},
+                            {0, p},
+                            {{0, b->n0, 1}, {0, b->s1[k], b->s0[k]}}},
+                  a[k].bits);
+      in[k] = slot[k - 1];
+      s0[k] = 1;
+      s1[k] = b->n0;
+    }
+    rows(j, b->n0, b->n1, in, s0, s1);
+  }
+}
+
 static void block(const nx_cpu_block *b, void *ctx) {
   const job *j = ctx;
   const nx_array *a = j->a;
-  for (int64_t q = 0; q < b->n2; q++)
-    for (int64_t r = 0; r < b->n1; r++) {
-      int64_t p[NX_MAX_OPERANDS];
-      for (int k = 0; k < j->n; k++)
-        p[k] = b->at[k] + q * b->s2[k] + r * b->s1[k];
-      if (j->n == 3)
-        j->f2(b->n0, at(a, 0, p[0]), b->s0[0], at(a, 1, p[1]), b->s0[1],
-              at(a, 2, p[2]), b->s0[2]);
-      else
-        j->f3(b->n0, at(a, 0, p[0]), b->s0[0], at(a, 1, p[1]), b->s0[1],
-              at(a, 2, p[2]), b->s0[2], at(a, 3, p[3]), b->s0[3]);
+  for (int k = 1; k < j->n; k++)
+    if (b->s0[k] != 0 && b->s0[k] != 1 && b->n1 > 1) {
+      staged(b, j);
+      return;
     }
+  for (int64_t q = 0; q < b->n2; q++) {
+    uint8_t *in[NX_MAX_OPERANDS];
+    for (int k = 0; k < j->n; k++) in[k] = at(a, k, b->at[k] + q * b->s2[k]);
+    rows(j, b->n0, b->n1, in, b->s0, b->s1);
+  }
 }
 
 /* A fill stores its element by its width. */
@@ -273,7 +323,7 @@ static value run(int n, const nx_operand *in, nx_cpu_block_fn f, job *j) {
   if (e) return Val_int(e);
   j->a = a;
   j->n = n;
-  if (!(e = nx_coalesce(n, a, &l))) nx_cpu_walk(n, a, &l, MOST, f, j);
+  if (!(e = nx_coalesce(n, a, &l))) nx_cpu_walk(n, a, &l, most(n, a), f, j);
   nx_done(n, a);
   return Val_int(e);
 }
@@ -325,15 +375,47 @@ value nx_cpu_fill(value vbits, value vd) {
   CAMLreturn(run(1, in, fill_of(bits / 8), &j));
 }
 
-/* Iota: each element is its index along axis [axis], cast to the dtype. The
-   walk merges axes, so iota counts its own: an odometer over the axes
-   outside the innermost, rows along it. */
+/* Iota: each element is its index along axis [axis], cast to the dtype. A
+   C-contiguous destination, as a fresh one is, runs as a job over its
+   elements in C order: along it the index is constant for [inner]
+   elements, the product of the extents past [axis], and counts up to the
+   axis's extent and back to 0. Another layout runs on one thread, an
+   odometer over its axes. */
+typedef struct {
+  uint8_t *base;
+  int64_t inner, ext;
+  void (*run)(void *d, int64_t lo, int64_t hi, int64_t inner, int64_t ext);
+} iota_job;
+
 #define IOTA(D, T)                                                           \
+  static void iota_run_##D(void *d_, int64_t lo, int64_t hi, int64_t inner,  \
+                           int64_t ext) {                                    \
+    T *d = d_;                                                               \
+    int64_t i = lo, v = lo / inner % ext;                                    \
+    if (inner == 1) {                                                        \
+      /* To the period's end, whole periods, then the rest. */               \
+      int64_t head = (ext - v) % ext < hi - i ? (ext - v) % ext : hi - i;    \
+      for (int64_t k = 0; k < head; k++) d[i + k] = (T)(v + k);              \
+      i += head;                                                             \
+      for (; hi - i >= ext; i += ext)                                        \
+        for (int64_t e = 0; e < ext; e++) d[i + e] = (T)e;                   \
+      for (int64_t e = 0; i < hi; i++, e++) d[i] = (T)e;                     \
+      return;                                                                \
+    }                                                                        \
+    int64_t r = lo % inner;                                                  \
+    while (i < hi) {                                                         \
+      int64_t n = inner - r < hi - i ? inner - r : hi - i;                   \
+      T x = (T)v;                                                            \
+      for (int64_t k = 0; k < n; k++) d[i + k] = x;                          \
+      i += n;                                                                \
+      r = 0;                                                                 \
+      if (++v == ext) v = 0;                                                 \
+    }                                                                        \
+  }                                                                          \
+                                                                             \
   static void iota_##D(const nx_array *a, int axis) {                        \
     int r = a->rank;                                                         \
     int64_t idx[NX_MAX_RANK] = {0}, n = a->dim[r - 1], s = a->dim[2 * r - 1]; \
-    for (int i = 0; i < r; i++)                                              \
-      if (a->dim[i] == 0) return;                                            \
     for (;;) {                                                               \
       int64_t p = a->offset;                                                 \
       for (int i = 0; i < r - 1; i++) p += idx[i] * a->dim[r + i];           \
@@ -359,27 +441,58 @@ IOTA(u16, uint16_t)
 IOTA(u32, uint32_t)
 IOTA(u64, uint64_t)
 
-typedef void (*iota_fn)(const nx_array *a, int axis);
+typedef struct {
+  void (*run)(void *d, int64_t lo, int64_t hi, int64_t inner, int64_t ext);
+  void (*odometer)(const nx_array *a, int axis);
+} iota_fns;
 
-static const iota_fn iotas[NX_DTYPE_COUNT] = {
-    [NX_FLOAT32] = iota_f32, [NX_FLOAT64] = iota_f64, [NX_INT8] = iota_i8,
-    [NX_INT16] = iota_i16,   [NX_INT32] = iota_i32,   [NX_INT64] = iota_i64,
-    [NX_UINT8] = iota_u8,    [NX_UINT16] = iota_u16,  [NX_UINT32] = iota_u32,
-    [NX_UINT64] = iota_u64,
+#define IOTA_FNS(D) {iota_run_##D, iota_##D}
+
+static const iota_fns iotas[NX_DTYPE_COUNT] = {
+    [NX_FLOAT32] = IOTA_FNS(f32), [NX_FLOAT64] = IOTA_FNS(f64),
+    [NX_INT8] = IOTA_FNS(i8),     [NX_INT16] = IOTA_FNS(i16),
+    [NX_INT32] = IOTA_FNS(i32),   [NX_INT64] = IOTA_FNS(i64),
+    [NX_UINT8] = IOTA_FNS(u8),    [NX_UINT16] = IOTA_FNS(u16),
+    [NX_UINT32] = IOTA_FNS(u32),  [NX_UINT64] = IOTA_FNS(u64),
 };
+
+/* Elements of an iota's unit of work. */
+#define IOTA_UNIT (16 * 1024)
+
+static void iota_body(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)worker;
+  const iota_job *j = ctx;
+  j->run(j->base, lo * IOTA_UNIT, hi * IOTA_UNIT, j->inner, j->ext);
+}
 
 value nx_cpu_iota(value vaxis, value vd) {
   int d = nx_array_dtype(vd), axis = Int_val(vaxis);
-  iota_fn f = iotas[d];
-  if (f == NULL) return Val_int(NX_DECLINED);
+  const iota_fns *f = &iotas[d];
+  if (f->run == NULL) return Val_int(NX_DECLINED);
   nx_operand in[1] = {{vd, d, 1}};
   nx_array a[1];
   int e = nx_read(1, in, a);
   if (e) return Val_int(e);
-  if (axis < 0 || axis >= a->rank)
-    e = NX_SHAPE;
-  else
-    f(a, axis);
+  if (axis < 0 || axis >= a->rank) {
+    nx_done(1, a);
+    return Val_int(NX_SHAPE);
+  }
+  int64_t numel = 1, inner = 1;
+  for (int i = 0; i < a->rank; i++) numel *= a->dim[i];
+  for (int i = axis + 1; i < a->rank; i++) inner *= a->dim[i];
+  if (numel > 0 && (a->flags & NX_CONTIGUOUS)) {
+    int w = a->bits / 8;
+    iota_job j = {a->base + a->offset * w, inner, a->dim[axis], f->run};
+    /* The last unit runs past [numel]: it is cut to it. */
+    int64_t units = (numel + IOTA_UNIT - 1) / IOTA_UNIT;
+    if (numel % IOTA_UNIT == 0) {
+      nx_cpu_job(units, numel * w, numel * w, iota_body, &j);
+    } else {
+      nx_cpu_job(units - 1, numel * w, numel * w, iota_body, &j);
+      f->run(j.base, (units - 1) * IOTA_UNIT, numel, inner, a->dim[axis]);
+    }
+  } else if (numel > 0)
+    f->odometer(a, axis);
   nx_done(1, a);
-  return Val_int(e);
+  return Val_int(NX_OK);
 }

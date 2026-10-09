@@ -817,6 +817,15 @@ let pairs =
      let+ y = alike x in
      Pair (x, y))
 
+(* Large views, as the copy laws draw them, against a contiguous operand:
+   blocks staged through transposes and jobs of several threads. *)
+let large_pairs =
+  Gen.with_pp pp_pair
+    (let open Gen in
+     let* (Case x) = large_of (of_list ~pp:pp_dtype D.[ Any Float32; Any Int8; Any Float64 ]) in
+     let+ seed = int in
+     Pair (x, seeded (A.dtype x) (L.shape (A.layout x)) seed))
+
 (* The answer of [run] into a seeded destination of [dt] and [shape], checked:
    [Done] with the bytes [want ()], a decline only of a case [b] does not
    claim, and nothing written but on [Done]. *)
@@ -842,7 +851,7 @@ let answers (b : Support.backend) kind (D.Any at) (D.Any dt) shape ~accepted
         (bits_of (host dst))
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
 
-let law_apply2 (b : Support.backend) (Pair (x, y)) =
+let law_apply2 ?(kinds = op2s) (b : Support.backend) (Pair (x, y)) =
   let module K = (val b.kernels) in
   let dt = A.dtype x and shape = L.shape (A.layout x) in
   let x = on b x and y = on b y in
@@ -853,7 +862,7 @@ let law_apply2 (b : Support.backend) (Pair (x, y)) =
       answers b (K2 k) (D.Any dt) rd shape ~accepted:(P.accepts2 k dt)
         ~want:(fun () -> expected (name2 k) dt ~compare [| x; y |])
         { into = (fun dst -> K.apply2 k ~dst x y) })
-    op2s
+    kinds
 
 (* Where picks each element's bytes; Fma is nx_kinds.h's. *)
 let law_apply3 (b : Support.backend) (Pair (x, y), seed) =
@@ -931,6 +940,18 @@ let test_apply_values () =
   done_ ~msg:"iota" (K.apply0 (Iota 1) ~dst:d);
   equal ~msg:"iota along axis 1" (array int32) [| 0l; 1l; 2l; 0l; 1l; 2l |]
     (A.to_array d);
+  (* Large enough for a job of several units, each starting inside a run. *)
+  let big = A.create Rig.host D.Int32 [| 3; 70001 |] in
+  List.iter
+    (fun axis ->
+      done_ ~msg:"iota" (K.apply0 (Iota axis) ~dst:big);
+      let want =
+        Array.init (3 * 70001) (fun p ->
+            Int32.of_int (if axis = 0 then p / 70001 else p mod 70001))
+      in
+      equal ~msg:(strf "iota along axis %d of 3x70001" axis) (array int32) want
+        (A.to_array big))
+    [ 0; 1 ];
   done_ ~msg:"fill" (K.apply0 (Fill (P.bits D.Int32 7l)) ~dst:d);
   equal ~msg:"fill" (array int32) (Array.make 6 7l) (A.to_array d);
   equal ~msg:"idiv on float32 is refused" answer A.Wrong_dtype
@@ -1025,6 +1046,10 @@ let laws (b : Support.backend) =
         (unit (test_declined_contract b));
       prop "kinds of two operands are nx_kinds.h's at each index" pairs
         (run (law_apply2 b));
+      prop ~count:8 "kinds of two operands over large views" large_pairs
+        (run (fun (Pair (x, _) as c) ->
+             covers_large (Case x);
+             law_apply2 ~kinds:P.[ Binary Add; Compare Less ] b c));
       prop "where picks bytes and fma is nx_kinds.h's"
         (Gen.pair pairs Gen.nat)
         (run (law_apply3 b));

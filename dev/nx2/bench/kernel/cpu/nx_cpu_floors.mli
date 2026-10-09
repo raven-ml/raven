@@ -15,7 +15,9 @@
     over 1024 Mi flops, floor-fma-f32-1024M-performance on the performance
     cores, at which its flops would run; one that streams its operands, as a
     product of few rows does, also reads their bytes, floor-read-64M-all on
-    every core. *)
+    every core. An elementwise kind's floor streams its operands' bytes with
+    one integer operation per element, floor-stream-2x4-4-1M-all reading two
+    arrays of 1 Mi 4-byte elements and writing one on every core. *)
 
 (** The type for the work of a kernel row. *)
 type work =
@@ -25,6 +27,11 @@ type work =
   | Fma of Nx_array.Dtype.any * int
       (** [Fma (dt, n)] runs [n] flops in [dt], float32 or float64. *)
   | Read of int  (** [Read n] reads [n] bytes. *)
+  | Stream of { ins : int; inb : int; outb : int; n : int }
+      (** [Stream { ins; inb; outb; n }] reads [n] elements of [inb] bytes
+          from each of [ins] arrays, at most 3, and writes [n] of [outb]
+          bytes, as an elementwise kind does; [inb] and [outb] are [1] and
+          [1], [4] and [1], [4] and [4], or [8] and [8]. *)
 
 val rows : work list -> Thumper.bench list
 (** [rows ws] is the floor rows that bound [ws], each once, then

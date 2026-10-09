@@ -171,20 +171,25 @@ let cast_rows =
     ]
 
 (* Kinds of no, two and three operands into a fresh C-contiguous array. *)
-let apply name dst run =
+let apply ?work name dst run =
   let bench (module K : Nx_kernel.S) =
     row name (fun () -> dst ()) (fun x -> ok (run (module K : Nx_kernel.S) x))
   in
-  { bench; work = [] }
+  { bench; work = Option.to_list work }
+
+(* The floor of an elementwise kind over [n] elements. *)
+let stream ins inb outb n = F.Stream { ins; inb; outb; n }
 
 let fill n =
   let k = Nx_kernel.Prog.Fill (Nx_kernel.Prog.bits f32 1.5) in
-  apply ("fill-f32-" ^ count n)
+  apply ~work:(stream 0 4 4 n) ("fill-f32-" ^ count n)
     (fun () -> A.create Rig.host f32 [| n |])
     (fun (module K) dst -> K.apply0 k ~dst)
 
 let binary name k dt n rd =
-  apply name
+  apply
+    ~work:(stream 2 (D.bits dt / 8) (D.bits rd / 8) n)
+    name
     (fun () -> (filled dt [| n |], filled dt [| n |], A.create Rig.host rd [| n |]))
     (fun (module K) (x, y, dst) -> K.apply2 k ~dst x y)
 
@@ -193,7 +198,7 @@ let apply_rows =
   [
     fill 1;
     fill m;
-    apply "iota-i64-1M"
+    apply ~work:(stream 0 8 8 m) "iota-i64-1M"
       (fun () -> A.create Rig.host D.Int64 [| m |])
       (fun (module K) dst -> K.apply0 (Iota 0) ~dst);
   ]
@@ -201,7 +206,7 @@ let apply_rows =
       (fun n -> binary ("add-f32-" ^ count n) (Binary Add) f32 n f32)
       [ 1; kib; m ]
   @ [
-      apply "add-f32-1M-transposed"
+      apply ~work:(stream 2 4 4 m) "add-f32-1M-transposed"
         (fun () ->
           let x = filled f32 [| 1024; 1024 |] in
           ( Option.get (A.move (M.Permute [| 1; 0 |]) x),
@@ -210,7 +215,7 @@ let apply_rows =
         (fun (module K) (x, y, dst) -> K.apply2 (Binary Add) ~dst x y);
       binary "add-i8-1M" (Binary Add) D.Int8 m D.Int8;
       binary "less-f32-1M" (Compare Less) f32 m D.Bool;
-      apply "where-f32-1M"
+      apply ~work:(stream 2 4 4 m) "where-f32-1M"
         (fun () ->
           let c = A.create Rig.host D.Bool [| m |] in
           ok
@@ -218,7 +223,7 @@ let apply_rows =
                (filled f32 [| m |]));
           (c, filled f32 [| m |], filled f32 [| m |], A.create Rig.host f32 [| m |]))
         (fun (module K) (c, x, y, dst) -> K.apply3 Where ~dst c x y);
-      apply "fma-f32-1M"
+      apply ~work:(stream 3 4 4 m) "fma-f32-1M"
         (fun () ->
           ( filled f32 [| m |],
             filled f32 [| m |],
