@@ -75,8 +75,8 @@ __device__ __forceinline__ u64 int_at(const void *p, int64_t i, int dt) {
   return 0;
 }
 
-/* The same out of line: the operands of the SIMT kernels, and init, read
-   at every element of an unrolled tile. */
+/* The same out of line, for init's element, which a store reads at every
+   element of an unrolled tile. */
 __device__ __noinline__ double read_float(const void *p, int64_t i, int dt) {
   return float_at(p, i, dt);
 }
@@ -85,22 +85,24 @@ __device__ __noinline__ u64 read_int(const void *p, int64_t i, int dt) {
   return int_at(p, i, dt);
 }
 
-/* The accumulator types: integers wrap, so they sum unsigned. */
-template <typename T> __device__ T read(const void *p, int64_t i, int dt);
-template <> __device__ float read(const void *p, int64_t i, int dt) {
-  return (float)read_float(p, i, dt);
+/* Whether the accumulator type T is a float: integers wrap, so they sum
+   unsigned. */
+template <typename T> constexpr bool is_float = T(0.5) != T(0);
+
+/* [s] as the accumulator T: an integer widened by its own sign. */
+template <typename T, typename S> __device__ T widen(S s) {
+  if constexpr (T(-1) > T(0) && S(-1) < S(0))
+    return (T)(int64_t)s;
+  else
+    return (T)s;
 }
-template <> __device__ double read(const void *p, int64_t i, int dt) {
-  return read_float(p, i, dt);
-}
-template <> __device__ u64 read(const void *p, int64_t i, int dt) {
-  return read_int(p, i, dt);
-}
-template <> __device__ int read(const void *p, int64_t i, int dt) {
-  return (int)read_int(p, i, dt);
-}
-template <> __device__ uint32_t read(const void *p, int64_t i, int dt) {
-  return (uint32_t)read_int(p, i, dt);
+
+/* Element [i] of [p], of the dtype [dt], as the accumulator T. */
+template <typename T> __device__ T read(const void *p, int64_t i, int dt) {
+  if constexpr (is_float<T>)
+    return (T)read_float(p, i, dt);
+  else
+    return (T)read_int(p, i, dt);
 }
 
 /* Stores the bits [c] of an element of the integer, bool or narrow float
@@ -122,7 +124,7 @@ __device__ void put(void *p, int64_t i, int dt, int64_t c) {
 /* The sum [v] at element [i] of y, as a cast from the accumulator writes
    it. A float sum rounds once to y's dtype, nx_dtype.h's conversions
    reaching the narrow floats, the integers and bool. */
-__device__ void write(const contract_params &p, int64_t i, double v) {
+__device__ void write_float(const contract_params &p, int64_t i, double v) {
   switch (p.y_dtype) {
   case NX_FLOAT64: ((double *)p.y)[i] = v; return;
   case NX_FLOAT32: ((float *)p.y)[i] = (float)v; return;
@@ -130,15 +132,11 @@ __device__ void write(const contract_params &p, int64_t i, double v) {
   put(p.y, i, p.y_dtype, nx_double_to_bits(p.y_dtype, v));
 }
 
-__device__ void write(const contract_params &p, int64_t i, float v) {
-  write(p, i, (double)v);
-}
-
 /* An integer sum [v], wrapped to the accumulator and widened by its sign:
    wrapped to an integer y, rounded once to a float y, nonzero for bool. A
    32-bit accumulator's sum, summed in 64 bits, wraps to 32 here: the same
    sum, modulo 2^32. */
-__device__ void write(const contract_params &p, int64_t i, u64 v) {
+__device__ void write_int(const contract_params &p, int64_t i, u64 v) {
   if (p.acc_dtype == NX_INT32) v = (u64)(int64_t)(int32_t)v;
   if (p.acc_dtype == NX_UINT32) v = (uint32_t)v;
   const bool s = p.acc_dtype == NX_INT32 || p.acc_dtype == NX_INT64;
@@ -162,12 +160,13 @@ __device__ void write(const contract_params &p, int64_t i, u64 v) {
   put(p.y, i, p.y_dtype, (int64_t)v);
 }
 
-__device__ void write(const contract_params &p, int64_t i, int v) {
-  write(p, i, (u64)(int64_t)v);
-}
-
-__device__ void write(const contract_params &p, int64_t i, uint32_t v) {
-  write(p, i, (u64)v);
+/* The sum [v], of the accumulator type T, at element [i] of y. */
+template <typename T>
+__device__ void write(const contract_params &p, int64_t i, T v) {
+  if constexpr (is_float<T>)
+    write_float(p, i, (double)v);
+  else
+    write_int(p, i, widen<u64>(v));
 }
 
 /* y's element (z, i, j), if inside: init added, then rounded once. Out of
@@ -700,14 +699,6 @@ template <typename T> __device__ T tree32(T v) {
 #pragma unroll
   for (int d = 16; d > 0; d /= 2) v += __shfl_xor_sync(0xFFFFFFFFu, v, d);
   return v;
-}
-
-/* [s] as the accumulator T: an integer widened by its own sign. */
-template <typename T, typename S> __device__ T widen(S s) {
-  if constexpr (T(-1) > T(0) && S(-1) < S(0))
-    return (T)(int64_t)s;
-  else
-    return (T)s;
 }
 
 /* The four elements of S at [src], aligned on their 4 sizeof(S) bytes,
