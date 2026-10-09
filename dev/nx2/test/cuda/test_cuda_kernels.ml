@@ -46,6 +46,7 @@ let kernel_row (name, instance) =
     | Mma (k, a, b, t) -> [ "MMA"; kind k; axis a; axis b; tile t ]
     | Simt (sum, side) -> [ "SIMT"; acc sum; string_of_int side ]
     | Skinny sum -> [ "SKINNY"; acc sum ]
+    | Fold -> [ "FOLD" ]
   in
   String.concat ", " (name :: args)
 
@@ -76,6 +77,12 @@ let constants () =
       ("b_across", K.b_across);
       ("y_whole", K.y_whole);
       ("skinny_rows", K.skinny_rows);
+      ("fold_block", K.fold_block);
+      ("fold_lanes", K.fold_lanes);
+      ("scan_chunk", K.scan_chunk);
+      ("fold_rank", K.fold_rank);
+      ("monoid_max", K.monoid_max);
+      ("monoid_min", K.monoid_min);
     ]
 
 (* The fields the stub lists are all of their struct's: in memory order, each
@@ -106,12 +113,14 @@ let fields_tile () =
 let offsets () =
   let module C = K.Contract_params in
   let module P = K.Pack_params in
+  let module F = K.Fold_params in
   equal
     (list (pair string int))
     (named (H.structs ()) @ named (H.fields ()))
     [
       ("contract_params", C.size);
       ("pack_params", P.size);
+      ("fold_params", F.size);
       ("contract_params.a", C.a);
       ("contract_params.b", C.b);
       ("contract_params.init", C.init);
@@ -144,6 +153,21 @@ let offsets () =
       ("pack_params.dtype", P.dtype);
       ("pack_params.out", P.out);
       ("pack_params.bytes", P.bytes);
+      ("fold_params.x", F.x);
+      ("fold_params.y", F.y);
+      ("fold_params.partials", F.partials);
+      ("fold_params.outputs", F.outputs);
+      ("fold_params.terms", F.terms);
+      ("fold_params.blocks", F.blocks);
+      ("fold_params.groups", F.groups);
+      ("fold_params.full", F.full);
+      ("fold_params.span", F.span);
+      ("fold_params.monoid", F.monoid);
+      ("fold_params.dtype", F.dtype);
+      ("fold_params.nkept", F.nkept);
+      ("fold_params.nred", F.nred);
+      ("fold_params.kept", F.kept);
+      ("fold_params.red", F.red);
     ]
 
 let () =
@@ -154,7 +178,7 @@ let () =
            [
              test "the kernels, row by row" kernels;
              test "the tiles, row by row" tiles;
-             test "the aligned bits and the skinny rows" constants;
+             test "the constants" constants;
              test "the listed fields tile their structs" fields_tile;
              test "the structs' sizes and fields' offsets" offsets;
            ];

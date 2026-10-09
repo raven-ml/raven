@@ -19,8 +19,8 @@
  (libraries windtrap)
  (foreign_stubs
   (language c)
-  (include_dirs ../../lib/cuda)
-  (extra_deps ../../lib/cuda/kernels.h)
+  (include_dirs ../../lib/cuda ../../lib/kernel)
+  (extra_deps ../../lib/cuda/kernels.h ../../lib/kernel/nx_spec.h)
   (names test_cuda_kernels_stubs)))
 
 (rule

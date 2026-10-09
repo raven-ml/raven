@@ -7,6 +7,7 @@
  (libraries nx_array nx_kernel rig)
  (foreign_stubs
   (language c)
-  (extra_deps kernels/sm_89.cubin)
+  (include_dirs ../kernel)
+  (extra_deps kernels/sm_89.cubin ../kernel/nx_spec.h)
   (flags :standard -DNX_CUDA_KERNELS_DIR=kernels)
   (names nx_cuda_stubs)))

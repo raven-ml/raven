@@ -873,14 +873,14 @@ let answers ?checked (b : Support.backend) kind (D.Any at) (D.Any dt) shape
 let law_apply1 ?(kinds = unaries) (b : Support.backend) (Case x) =
   let module K = (val b.kernels) in
   let dt = A.dtype x and shape = L.shape (A.layout x) in
-  let x = on b x in
+  let x' = on b x in
   List.iter
     (fun (u, name) ->
       let k = P.Unary u in
       answers b (K1 k) (D.Any dt) (D.Any dt) shape
         ~accepted:(P.accepts1 k dt dt)
         ~want:(fun () -> expected name dt ~compare:false [| x |])
-        (fun dst -> K.apply1 k ~dst x))
+        (fun dst -> K.apply1 k ~dst x'))
     kinds
 
 (* A bitcast keeps every element's bits, sub-byte codes and NaN payloads
@@ -910,14 +910,14 @@ let same_width c =
 let law_apply2 ?(kinds = op2s) (b : Support.backend) (Pair (x, y)) =
   let module K = (val b.kernels) in
   let dt = A.dtype x and shape = L.shape (A.layout x) in
-  let x = on b x and y = on b y in
+  let x' = on b x and y' = on b y in
   List.iter
     (fun k ->
       let compare = match k with P.Compare _ -> true | Binary _ -> false in
       let rd = if compare then D.Any D.Bool else D.Any dt in
       answers b (K2 k) (D.Any dt) rd shape ~accepted:(P.accepts2 k dt)
         ~want:(fun () -> expected (name2 k) dt ~compare [| x; y |])
-        (fun dst -> K.apply2 k ~dst x y))
+        (fun dst -> K.apply2 k ~dst x' y'))
     kinds
 
 (* Where picks each element's bytes; Fma is nx_kinds.h's. *)
@@ -944,7 +944,7 @@ let law_apply3 (b : Support.backend) (Pair (x, y), seed) =
   let z = on b (seeded dt shape (seed + 1)) in
   answers b (K3 Fma) (D.Any dt) (D.Any dt) shape
     ~accepted:(P.accepts3 Fma dt dt)
-    ~want:(fun () -> expected "fma" dt ~compare:false [| x; y; z |])
+    ~want:(fun () -> expected "fma" dt ~compare:false [| host x; host y; host z |])
     (fun dst -> K.apply3 Fma ~dst x y z)
 
 let law_apply0 (b : Support.backend) (D.Any dt, shape, seed) =
@@ -959,19 +959,12 @@ let law_apply0 (b : Support.backend) (D.Any dt, shape, seed) =
     (fun dst -> K.apply0 (Fill fill) ~dst);
   if Array.length shape > 0 then begin
     let axis = seed mod Array.length shape in
+    (* Each index along [axis] stored as a cast from int64 stores it. *)
     answers b (K0 (Iota axis)) (D.Any dt) (D.Any dt) shape
       ~accepted:(P.accepts0 (Iota axis) dt)
       ~want:(fun () ->
-        Array.of_list
-          (List.concat_map
-             (fun idx ->
-               let i = idx.(axis) in
-               match D.kind dt with
-               | D.Float when D.bits dt = 32 ->
-                   low_bytes 4 (Int64.of_int32 (Int32.bits_of_float (Float.of_int i)))
-               | D.Float -> low_bytes 8 (Int64.bits_of_float (Float.of_int i))
-               | _ -> low_bytes w (Int64.of_int i))
-             (indices shape)))
+        let i = List.map (fun idx -> Int64.of_int idx.(axis)) (indices shape) in
+        bits_of (reference (A.of_array D.Int64 shape (Array.of_list i)) dt))
       (fun dst -> K.apply0 (Iota axis) ~dst)
   end
 

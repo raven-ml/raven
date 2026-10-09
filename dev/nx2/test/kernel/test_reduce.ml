@@ -3,12 +3,14 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Reductions and scans through every kernel library the host runs: a float
-   sum within its bound of the exact sum, the same bits under every layout of
-   the same values, a scan of a prefix the prefix of the scan, and nothing
-   written where declined. nx.cpu's group checks what nx_cpu.mli states: the
-   cases it computes, and its order, bit for bit, against a reference built
-   here; and the same bits on one thread as on the job's. *)
+(* Reductions and scans through every kernel library the host runs, with
+   operands and results on its device: a float sum within its bound of the
+   exact sum, the same bits under every layout of the same values, a scan of
+   a prefix the prefix of the scan, and nothing written where declined.
+   Every library states nx.cpu's cases and order, which a group checks for
+   each: the cases it computes, and its order, bit for bit, against a
+   reference built here. nx.cpu's own group checks the same bits on one
+   thread as on the job's, and a sum as a contraction with ones. *)
 
 open Windtrap
 open Nx_array_gen
@@ -71,17 +73,30 @@ let result_shape c =
     Array.of_list
       (List.filteri (fun i _ -> not (Array.mem i c.axes)) (Array.to_list s))
 
-(* The kernels' result into a fresh destination; [None] if they declined. *)
-let run (b : Support.backend) c =
+(* [x] where the host reads it: [x] itself on the host, a copy elsewhere. *)
+let host (A.Any x as a) =
+  if Rig.equal (A.device x) Rig.host then a
+  else A.Any (A.to_device Rig.host x)
+
+(* [x] on [b]'s device, its layout kept. *)
+let on (b : Support.backend) (A.Any x as a) =
+  if Rig.equal (A.device x) b.device then a
+  else A.Any (A.to_device b.device x)
+
+(* [c] by [b]'s kernels into [dst], on [b]'s device. *)
+let call (b : Support.backend) c dst =
   let module K = (val b.kernels) in
+  let x = on b c.x in
+  if c.scan then K.scan (scan_spec c) ~dsts:[| dst |] [| x |]
+  else K.reduce (reduce_spec c) ~dsts:[| dst |] [| x |]
+
+(* The kernels' result into a fresh destination, read where the host reads
+   it; [None] if they declined. *)
+let run (b : Support.backend) c =
   let (A.Any x) = c.x in
-  let dst = A.create Rig.host (A.dtype x) (result_shape c) in
-  let answer =
-    if c.scan then K.scan (scan_spec c) ~dsts:[| A.Any dst |] [| c.x |]
-    else K.reduce (reduce_spec c) ~dsts:[| A.Any dst |] [| c.x |]
-  in
-  match answer with
-  | A.Done -> Some (A.Any dst)
+  let dst = A.Any (A.create b.device (A.dtype x) (result_shape c)) in
+  match call b c dst with
+  | A.Done -> Some (host dst)
   | A.Declined -> None
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
 
@@ -231,22 +246,24 @@ let operand (D.Any dt) s v ~specials seed =
   let x = move (M.Permute v.perm) x in
   A.Any (if v.broadcast then move (M.Broadcast s) x else x)
 
-(* Shapes: small extents of any rank; one long axis past several blocks or
-   chunks, or at a block's or a chunk's edge; rows of a few to a few hundred
-   terms; an empty axis beside others. *)
-let shape_gen =
+(* One long axis past several blocks or chunks, or at a block's or a
+   chunk's edge, between up to two short ones. *)
+let long =
   let open Gen in
-  let small = array ~size:(int_range 0 4) (int_range 0 5) in
   let edge =
     of_list ~pp:Format.pp_print_int
       [ 15; 16; 17; 1023; 1024; 1025; 4095; 4096; 4097 ]
   in
-  let long =
-    let* n = frequency [ (2, edge); (1, int_range 5000 70000) ] in
-    let* before = array ~size:(int_range 0 1) (int_range 1 3) in
-    let+ after = array ~size:(int_range 0 1) (int_range 1 3) in
-    Array.concat [ before; [| n |]; after ]
-  in
+  let* n = frequency [ (2, edge); (1, int_range 5000 70000) ] in
+  let* before = array ~size:(int_range 0 1) (int_range 1 3) in
+  let+ after = array ~size:(int_range 0 1) (int_range 1 3) in
+  Array.concat [ before; [| n |]; after ]
+
+(* Shapes: small extents of any rank; a long axis; rows of a few to a few
+   hundred terms; an empty axis beside others. *)
+let shape_gen =
+  let open Gen in
+  let small = array ~size:(int_range 0 4) (int_range 0 5) in
   let rows =
     let* r = int_range 1 300 in
     let+ k = of_list ~pp:Format.pp_print_int [ 2; 4; 9; 64; 300 ] in
@@ -311,7 +328,13 @@ let floats = D.[ Any Float32; Any Float64 ]
 (* Floats, whose order and NaNs the laws check, come twice as often. *)
 let computed = Gen.with_pp pp_case (case_of (floats @ floats @ base))
 let any_case = Gen.with_pp pp_case (case_of D.all)
-let scans = Gen.with_pp pp_case (case_of ~scan:(Gen.constant true) base)
+(* Scans draw long axes as often as the others, so that prefixes pass a
+   chunk. *)
+let scans =
+  Gen.with_pp pp_case
+    (case_of ~scan:(Gen.constant true)
+       ~shapes:(Gen.frequency [ (1, shape_gen); (1, long) ])
+       base)
 
 let sums =
   Gen.with_pp pp_case
@@ -691,23 +714,18 @@ let law_prefix (b : Support.backend) c =
 
 (* A kernel that declines writes nothing. *)
 let law_declined (b : Support.backend) c =
-  let module K = (val b.kernels) in
   let (A.Any x) = c.x in
-  let dst = A.create Rig.host (A.dtype x) (result_shape c) in
-  let bits () = Array.map bits_of (terms (A.Any dst)) in
+  let dst = on b (A.Any (A.create Rig.host (A.dtype x) (result_shape c))) in
+  let bits () = Array.map bits_of (terms (host dst)) in
   let before = bits () in
-  let answer =
-    if c.scan then K.scan (scan_spec c) ~dsts:[| A.Any dst |] [| c.x |]
-    else K.reduce (reduce_spec c) ~dsts:[| A.Any dst |] [| c.x |]
-  in
-  match answer with
+  match call b c dst with
   | A.Declined ->
       cover "declined" true;
       equal (array int64) before (bits ())
   | A.Done -> cover "computed" true
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
 
-(* nx.cpu *)
+(* nx.cpu's cases and order *)
 
 (* Whether nx_cpu.mli says nx.cpu computes [c]: the base dtypes, booleans
    for the extremes alone. *)
@@ -718,7 +736,7 @@ let cpu_computes c =
 let law_order (b : Support.backend) c =
   covers c;
   match run b c with
-  | None when cpu_computes c -> failf "nx.cpu declined a case nx_cpu.mli says it computes"
+  | None when cpu_computes c -> failf "%s declined a case it states it computes" b.name
   | None -> cover "declined" true
   | Some y -> equal (list string) [] (differ (expected c) y)
 
@@ -799,7 +817,7 @@ let test_far_nans (b : Support.backend) () =
     (fun (scan, monoid) ->
       let c = { scan; monoid; axes = [| 0 |]; x; views = [] } in
       match run b c with
-      | None -> failf "nx.cpu declined a float32 %s" (monoid_name monoid)
+      | None -> failf "%s declined a float32 %s" b.name (monoid_name monoid)
       | Some y ->
           equal (list string) [] (differ (expected c) y);
           let last = (terms y).(if scan then n - 1 else 0) in
@@ -808,20 +826,22 @@ let test_far_nans (b : Support.backend) () =
     [ (false, S.Sum); (false, S.Max); (true, S.Sum); (true, S.Prod) ]
 let test_refusals (b : Support.backend) () =
   let module K = (val b.kernels) in
-  let x = A.of_array D.Float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let on x = on b (A.Any x) in
+  let x = on (A.of_array D.Float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]) in
   let f32 = D.Any D.Float32 in
   let spec m axes = S.reduce (identity f32) ~loads:[| S.Plain |] ~axes [| (S.Monoid m, 0, f32) |] in
   let answer = Testable.make ~pp:Nx_array_support.pp_answer ~equal:( = ) in
-  let wrong = A.create Rig.host D.Float32 [| 3 |] in
+  let wrong = on (A.create Rig.host D.Float32 [| 3 |]) in
   equal ~msg:"a destination of another shape" answer A.Shape_mismatch
-    (K.reduce (spec Sum [| 1 |]) ~dsts:[| A.Any wrong |] [| A.Any x |]);
-  let empty = A.create Rig.host D.Float32 [| 2; 0 |] in
-  let dst = A.create Rig.host D.Float32 [| 2 |] in
+    (K.reduce (spec Sum [| 1 |]) ~dsts:[| wrong |] [| x |]);
+  let empty = on (A.create Rig.host D.Float32 [| 2; 0 |]) in
+  let dst = on (A.create Rig.host D.Float32 [| 2 |]) in
   equal ~msg:"a maximum of no term" answer A.Shape_mismatch
-    (K.reduce (spec Max [| 1 |]) ~dsts:[| A.Any dst |] [| A.Any empty |]);
+    (K.reduce (spec Max [| 1 |]) ~dsts:[| dst |] [| empty |]);
   equal ~msg:"a sum of no term" answer A.Done
-    (K.reduce (spec Sum [| 1 |]) ~dsts:[| A.Any dst |] [| A.Any empty |]);
-  equal ~msg:"is +0" (array float_exact) [| 0.; 0. |] (A.to_array dst)
+    (K.reduce (spec Sum [| 1 |]) ~dsts:[| dst |] [| empty |]);
+  equal ~msg:"is +0" (array float_exact) [| 0.; 0. |]
+    (A.to_array (A.expect D.Float32 (host dst)))
 
 (* The suite *)
 
@@ -837,25 +857,33 @@ let laws (b : Support.backend) =
       prop "a declined case writes nothing" any_case (run (law_declined b));
     ]
 
-let cpu (b : Support.backend) =
+let order (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
-  group ("nx.cpu " ^ b.name)
+  group ("nx.cpu's cases and order, " ^ b.name)
     [
       prop "each result folds its terms in nx.cpu's order" computed
         (run (law_order b));
       prop "computes the cases nx_cpu.mli lists, declines others" any_case
         (run (law_computes b));
-      prop "a sum of one axis is a contraction with ones" dots
-        (run (law_contract b));
-      prop ~count:20 "one thread gives the job's bits" large
-        (run (law_threads b));
       test "a NaN past the first block and chunk is the result's"
         (fun () -> b.around (test_far_nans b));
       test "refuses a destination of another shape and an extreme of nothing"
         (fun () -> b.around (test_refusals b));
     ]
 
+let cpu (b : Support.backend) =
+  let run f x = b.around (fun () -> f x) in
+  group ("nx.cpu " ^ b.name)
+    [
+      prop "a sum of one axis is a contraction with ones" dots
+        (run (law_contract b));
+      prop ~count:20 "one thread gives the job's bits" large
+        (run (law_threads b));
+    ]
+
 let () =
   exit
     (Windtrap.run "nx_kernel.reduce"
-       (List.map laws Support.backends @ List.map cpu Support.backends))
+       (List.map laws Support.backends
+       @ List.map order Support.backends
+       @ List.map cpu Support.cpus))

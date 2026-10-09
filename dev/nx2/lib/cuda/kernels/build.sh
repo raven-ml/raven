@@ -14,8 +14,8 @@ nx2=$(cd "$(dirname "$0")/../../.." && pwd)
 nvcc() {
   "${CUDA_HOME:-/usr/local/cuda}/bin/nvcc" -cubin -arch=sm_89 -std=c++17 -O3 \
     --fmad=false -prec-div=true -prec-sqrt=true -ftz=false \
-    -Werror all-warnings -I "$nx2/lib/array" -I "$nx2/lib/cuda" "$@"
+    -Werror all-warnings -I "$nx2/lib/array" -I "$nx2/lib/kernel" -I "$nx2/lib/cuda" "$@"
 }
 
-nvcc -o "$nx2/lib/cuda/kernels/sm_89.cubin" "$nx2/lib/cuda/kernels/src/contract.cu"
+nvcc -o "$nx2/lib/cuda/kernels/sm_89.cubin" "$nx2/lib/cuda/kernels/src/kernels.cu"
 nvcc -o "$nx2/test/cuda/support/sm_89.cubin" "$nx2/test/cuda/support/harness.cu"

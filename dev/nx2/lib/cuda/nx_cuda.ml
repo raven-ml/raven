@@ -3,15 +3,16 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* A call fills its domain's view and plan, writes the plan into its run's
-   blocks and submits the submission of the plan's sequence, made once per
-   device, through the door:
+(* A call fills its domain's plan, writes the plan into its run's blocks and
+   submits the submission of the plan's sequence, made once per device,
+   through the door:
 
    contract --> device (== scan) --> frame (the domain's, or a fresh one) -->
    View.fill, Plan.choose --> workspace, submission --> Plan.write into the run
    --> door --> Rig.submit
 
-   A call that finds every cache warm allocates nothing. *)
+   reduce and scan take the same path with Fold's plan. A call that finds
+   every cache warm allocates nothing. *)
 
 module A = Nx_array
 module V = Nx_kernel.Spec.Contract_view
@@ -38,6 +39,7 @@ type device = {
   workspace : workspace Atomic.t;
   tickets : workspace Atomic.t;
   subs : Sub.t option array;  (** By {!Plan.sequence}, made on first use. *)
+  folds : Sub.t option array;  (** By {!Fold.sequence}. *)
 }
 
 (* Every device asked about and what this library keeps for it, [None] where it
@@ -76,6 +78,7 @@ let load d =
                   workspace = Atomic.make none;
                   tickets = Atomic.make none;
                   subs = Array.make Plan.sequences None;
+                  folds = Array.make Fold.sequences None;
                 }))
 
 let device d =
@@ -140,54 +143,62 @@ let submission d dv p =
       dv.subs.(key) <- s;
       s
 
+let fold_submission d dv p =
+  let key = Fold.sequence p in
+  match dv.folds.(key) with
+  | Some _ as s -> s
+  | None ->
+      let parts = Fold.parts p dv.image ~queue:dv.queue in
+      let s = Some (Sub.make ~reads:1 ~writes:(Fold.writes p) d parts) in
+      dv.folds.(key) <- s;
+      s
+
 (* Frames *)
 
 (* A call's state: one per domain, guarded by [busy]. A call that finds it busy,
    such as one of another systhread of the domain or a signal handler's, uses a
-   fresh frame it does not keep. *)
+   fresh frame it does not keep. A call's buffers and arrays sit in arrays of
+   their count, made once: [reads] and [writes] are the submit's, [read] and
+   [written] the door's. *)
 type frame = {
   busy : bool Atomic.t;
   view : V.t;
   plan : Plan.t;
+  fold : Fold.t;
   run : Sub.Run.t;
   mutable sub : Sub.t option;
-  reads2 : Rig.Buffer.t array;
-  reads3 : Rig.Buffer.t array;
-  writes1 : Rig.Buffer.t array;
-  writes2 : Rig.Buffer.t array;
-  writes3 : Rig.Buffer.t array;
-  read2 : A.any array;
-  read3 : A.any array;
-  written : A.any array;
+  read_buffers : Rig.Buffer.t array array;  (** By count, up to 3. *)
+  write_buffers : Rig.Buffer.t array array;
+  read_arrays : A.any array array;
+  written_arrays : A.any array array;
   mutable reads : Rig.Buffer.t array;
   mutable writes : Rig.Buffer.t array;
   mutable read : A.any array;
+  mutable written : A.any array;
 }
 
 (* What a frame holds between calls: no user buffer. *)
 let no_buffer = Rig.Buffer.of_string ""
 let no_array = A.Any (A.create Rig.host A.Dtype.Uint8 [| 0 |])
+let by_count x = Array.init 4 (fun n -> Array.make n x)
 
 let frame ~busy =
-  let reads2 = Array.make 2 no_buffer and writes1 = Array.make 1 no_buffer in
-  let read2 = Array.make 2 no_array in
+  let read_buffers = by_count no_buffer and read_arrays = by_count no_array in
   {
     busy = Atomic.make busy;
     view = V.make ();
     plan = Plan.make ();
+    fold = Fold.make ();
     run = Sub.Run.make ();
     sub = None;
-    reads2;
-    reads3 = Array.make 3 no_buffer;
-    writes1;
-    writes2 = Array.make 2 no_buffer;
-    writes3 = Array.make 3 no_buffer;
-    read2;
-    read3 = Array.make 3 no_array;
-    written = Array.make 1 no_array;
-    reads = reads2;
-    writes = writes1;
-    read = read2;
+    read_buffers;
+    write_buffers = by_count no_buffer;
+    read_arrays;
+    written_arrays = by_count no_array;
+    reads = read_buffers.(0);
+    writes = read_buffers.(0);
+    read = read_arrays.(0);
+    written = read_arrays.(0);
   }
 
 let frames = Domain.DLS.new_key (fun () -> frame ~busy:false)
@@ -197,34 +208,32 @@ let take () =
   if Atomic.compare_and_set f.busy false true then f else frame ~busy:true
 
 let release f =
-  Array.fill f.reads3 0 3 no_buffer;
-  Array.fill f.reads2 0 2 no_buffer;
-  Array.fill f.writes2 0 2 no_buffer;
-  Array.fill f.writes3 0 3 no_buffer;
-  f.writes1.(0) <- no_buffer;
-  Array.fill f.read3 0 3 no_array;
-  Array.fill f.read2 0 2 no_array;
-  f.written.(0) <- no_array;
+  for n = 1 to 3 do
+    Array.fill f.read_buffers.(n) 0 n no_buffer;
+    Array.fill f.write_buffers.(n) 0 n no_buffer;
+    Array.fill f.read_arrays.(n) 0 n no_array;
+    Array.fill f.written_arrays.(n) 0 n no_array
+  done;
   f.sub <- None;
   Atomic.set f.busy false
 
-(* Makes the frame's arrays hold the call's buffers: [a], [b] and [init] read,
-   [dst], the workspace and the tickets written. *)
-let bind f ~dst ops ws tk =
+(* Makes the frame's arrays hold the call's buffers: [ops] read, [dst], then
+   [w1] and [w2] while [writes] counts them, written. *)
+let bind f ~dst ops ~writes w1 w2 =
   let n = Array.length ops in
-  f.reads <- (if n = 3 then f.reads3 else f.reads2);
-  f.read <- (if n = 3 then f.read3 else f.read2);
+  f.reads <- f.read_buffers.(n);
+  f.read <- f.read_arrays.(n);
   for i = 0 to n - 1 do
     let (A.Any x) = ops.(i) in
     f.reads.(i) <- A.buffer x;
     f.read.(i) <- ops.(i)
   done;
   let (A.Any y) = dst in
-  let k = Plan.writes f.plan in
-  f.writes <- (if k = 3 then f.writes3 else if k = 2 then f.writes2 else f.writes1);
+  f.writes <- f.write_buffers.(writes);
   f.writes.(0) <- A.buffer y;
-  if k >= 2 then f.writes.(1) <- ws;
-  if k = 3 then f.writes.(2) <- tk;
+  if writes >= 2 then f.writes.(1) <- w1;
+  if writes = 3 then f.writes.(2) <- w2;
+  f.written <- f.written_arrays.(1);
   f.written.(0) <- dst
 
 let issue f =
@@ -257,7 +266,7 @@ let run d dv f s ~dst ops =
         let sub = submission d dv f.plan in
         f.sub <- sub;
         Plan.write f.run (Option.get sub) f.plan;
-        bind f ~dst ops ws tk;
+        bind f ~dst ops ~writes:(Plan.writes f.plan) ws tk;
         A.door ~written:f.written ~read:f.read issue f
 
 let contract s ~dst ops =
@@ -275,6 +284,44 @@ let contract s ~dst ops =
           release f;
           raise e)
 
+(* Reductions and scans *)
+
+let fold d dv f family s ~dst x =
+  match Fold.choose f.fold family s ~dst x with
+  | Declined -> A.Declined
+  | Refused r -> r
+  | Nothing -> A.door ~written:[| dst |] ~read:[| x |] nothing ()
+  | Launches ->
+      let ws = workspace d dv (Fold.workspace f.fold) in
+      let sub = fold_submission d dv f.fold in
+      f.sub <- sub;
+      Fold.write f.run (Option.get sub) f.fold;
+      let ops = f.read_arrays.(1) in
+      ops.(0) <- x;
+      bind f ~dst ops ~writes:(Fold.writes f.fold) ws no_buffer;
+      A.door ~written:f.written ~read:f.read issue f
+
+(* The case Fold computes has one destination and one operand. *)
+let folds family s ~dsts ops =
+  if Array.length dsts <> 1 || Array.length ops <> 1 then A.Declined
+  else
+    let (A.Any y) = dsts.(0) in
+    let d = A.device y in
+    match device d with
+    | None -> A.Declined
+    | Some dv -> (
+        let f = take () in
+        match fold d dv f family s ~dst:dsts.(0) ops.(0) with
+        | answer ->
+            release f;
+            answer
+        | exception e ->
+            release f;
+            raise e)
+
+let reduce s ~dsts ops = folds `Reduce s ~dsts ops
+let scan s ~dsts ops = folds `Scan s ~dsts ops
+
 (* Elementwise *)
 
 let apply0 _ ~dst:_ = A.Declined
@@ -282,5 +329,3 @@ let apply1 _ ~dst:_ _ = A.Declined
 let apply2 _ ~dst:_ _ _ = A.Declined
 let apply3 _ ~dst:_ _ _ _ = A.Declined
 let map _ ~dsts:_ _ = A.Declined
-let reduce _ ~dsts:_ _ = A.Declined
-let scan _ ~dsts:_ _ = A.Declined

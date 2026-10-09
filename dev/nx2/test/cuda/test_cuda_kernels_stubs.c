@@ -13,6 +13,7 @@
 #include <caml/mlvalues.h>
 
 #include "kernels.h"
+#include "nx_spec.h"
 
 /* Each X(...) of a list: its arguments' text, as "pack, PACK". */
 #define ROW(...) #__VA_ARGS__,
@@ -41,7 +42,13 @@ static const fact constants[] = {
     {"b_vectors", NX_CONTRACT_B_VECTORS, 0},
     {"b_across", NX_CONTRACT_B_ACROSS, 0},
     {"y_whole", NX_CONTRACT_Y_WHOLE, 0},
-    {"skinny_rows", NX_SKINNY_ROWS, 0}};
+    {"skinny_rows", NX_SKINNY_ROWS, 0},
+    {"fold_block", NX_FOLD_BLOCK, 0},
+    {"fold_lanes", NX_FOLD_LANES, 0},
+    {"scan_chunk", NX_SCAN_CHUNK, 0},
+    {"fold_rank", NX_FOLD_RANK, 0},
+    {"monoid_max", NX_MAX, 0},
+    {"monoid_min", NX_MIN, 0}};
 
 /* Every field of a struct must be listed: the test checks that the fields
    tile their struct. */
@@ -63,11 +70,20 @@ static const fact fields[] = {
     F(pack_params, s),              F(pack_params, lead),
     F(pack_params, batch),          F(pack_params, rows),
     F(pack_params, k),              F(pack_params, dtype),
-    F(pack_params, out),            F(pack_params, bytes)};
+    F(pack_params, out),            F(pack_params, bytes),
+    F(fold_params, x),              F(fold_params, y),
+    F(fold_params, partials),       F(fold_params, outputs),
+    F(fold_params, terms),          F(fold_params, blocks),
+    F(fold_params, groups),         F(fold_params, full),
+    F(fold_params, span),           F(fold_params, monoid),
+    F(fold_params, dtype),          F(fold_params, nkept),
+    F(fold_params, nred),           F(fold_params, kept),
+    F(fold_params, red)};
 
 #define S(s) {#s, sizeof(s), 0}
 
-static const fact structs[] = {S(contract_params), S(pack_params)};
+static const fact structs[] = {S(contract_params), S(pack_params),
+                               S(fold_params)};
 
 #define COUNT(xs) (sizeof xs / sizeof xs[0])
 

@@ -552,7 +552,8 @@ __device__ void mma_kernel(const contract_params &p) {
     mma_contract<KIND_bf16, A_T, B_T, Tile>(p);
 }
 
-#define DEFINE(name, FAMILY, ...) FAMILY(name, __VA_ARGS__)
+/* Each family's definition of its rows of NX_CUDA_KERNELS, which
+   kernels.cu defines. */
 #define PACK(name, ...)                                                        \
   extern "C" __global__ void name(const __grid_constant__ pack_params p) {     \
     pack_rows(p);                                                              \
@@ -572,4 +573,3 @@ __device__ void mma_kernel(const contract_params &p) {
       name(const __grid_constant__ contract_params p) {                        \
     skinny_kernel<ACC_##acc>(p);                                               \
   }
-NX_CUDA_KERNELS(DEFINE)

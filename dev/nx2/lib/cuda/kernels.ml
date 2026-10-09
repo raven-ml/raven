@@ -21,6 +21,7 @@ type instance =
   | Mma of kind * axis * axis * tile
   | Simt of acc * int
   | Skinny of acc
+  | Fold
 
 (* NX_CUDA_KERNELS's rows in order: each kernel's name and instance. *)
 let kernels =
@@ -47,6 +48,11 @@ let kernels =
     ("contract_simt_i64_64", Simt (I64, 64));
     ("contract_skinny_f64", Skinny F64);
     ("contract_skinny_i64", Skinny I64);
+    ("fold_rows", Fold);
+    ("fold_cols", Fold);
+    ("fold_tree", Fold);
+    ("scan_totals", Fold);
+    ("scan_rescan", Fold);
   |]
 
 (* Tiles *)
@@ -74,6 +80,15 @@ let y_whole = 8
 (* NX_SKINNY_ROWS. *)
 let skinny_rows = 4
 
+(* NX_FOLD_BLOCK, NX_FOLD_LANES, NX_SCAN_CHUNK, NX_FOLD_RANK. *)
+let fold_block = 1024
+let fold_lanes = 16
+let scan_chunk = 4096
+let fold_rank = 32
+
+(* nx_spec.h's NX_MAX and NX_MIN, the monoids fold.cu reads. *)
+let monoid_max = 2
+let monoid_min = 3
 (* Parameters *)
 
 (* Each struct's size and its fields' byte offsets. *)
@@ -116,4 +131,23 @@ module Pack_params = struct
   let dtype = 60
   let out = 64
   let bytes = 68
+end
+
+module Fold_params = struct
+  let size = 1624
+  let x = 0
+  let y = 8
+  let partials = 16
+  let outputs = 24
+  let terms = 32
+  let blocks = 40
+  let groups = 48
+  let full = 56
+  let span = 64
+  let monoid = 72
+  let dtype = 76
+  let nkept = 80
+  let nred = 84
+  let kept = 88
+  let red = 856
 end
