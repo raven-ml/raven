@@ -1047,9 +1047,7 @@ let laws (b : Support.backend) =
       prop "kinds of two operands are nx_kinds.h's at each index" pairs
         (run (law_apply2 b));
       prop ~count:8 "kinds of two operands over large views" large_pairs
-        (run (fun (Pair (x, _) as c) ->
-             covers_large (Case x);
-             law_apply2 ~kinds:P.[ Binary Add; Compare Less ] b c));
+        (run (law_apply2 ~kinds:P.[ Binary Add; Compare Less ] b));
       prop "where picks bytes and fma is nx_kinds.h's"
         (Gen.pair pairs Gen.nat)
         (run (law_apply3 b));
