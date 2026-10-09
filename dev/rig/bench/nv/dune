@@ -4,7 +4,8 @@
  (libraries rig_edge rig_nv)
  (foreign_stubs
   (language c)
-  (names rig_nv_bench_stubs)))
+  (names rig_nv_bench_stubs)
+  (include_dirs ../../lib/nv)))
 
 (executable
  (name bench_nv)

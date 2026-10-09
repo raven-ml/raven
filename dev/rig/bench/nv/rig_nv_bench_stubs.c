@@ -25,6 +25,7 @@
 #include <caml/mlvalues.h>
 
 #include <rig_nv.h>
+#include <rig_nv_stubs.h>
 
 #define Ptr_val(v) ((void *)Nativeint_val(v))
 
@@ -97,10 +98,9 @@ value rig_nv_bench_entry(value v_lo, value v_hi) {
 #define ENTRIES 64
 
 /* The ring entries of two words each, [v_words] one after the other, on
-   COMPUTE:0: with [v_each], a submission per entry, each with its release;
-   otherwise one submission of them all, with one release. Then the wait
+   COMPUTE:0, a submission per entry, each with its release. Then the wait
    for the last. */
-value rig_nv_bench_entries(value v_words, value v_each) {
+value rig_nv_bench_entries(value v_words) {
   uint32_t words[2 * ENTRIES];
   struct rig_part parts[ENTRIES];
   int n = (int)Wosize_val(v_words) / 2;
@@ -110,10 +110,126 @@ value rig_nv_bench_entries(value v_words, value v_each) {
     words[2 * i + 1] = (uint32_t)Long_val(Field(v_words, 2 * i + 1));
     parts[i] = (struct rig_part){.queue = 0, .words = &words[2 * i], .n = 2};
   }
-  if (Bool_val(v_each))
-    for (int i = 0; i < n; i++) submit(NULL, 0, &parts[i], 1);
-  else
-    submit(NULL, 0, parts, n);
+  for (int i = 0; i < n; i++) submit(NULL, 0, &parts[i], 1);
+  spin();
+  return Val_unit;
+}
+
+/* The writer's sequence, for a floor that rings the doorbell where
+   rig_nv_submit does not: rig_nv_ring.c's helpers, copied. */
+
+static void store_fence(void) {
+#if defined(__x86_64__)
+  __asm__ __volatile__("sfence" ::: "memory");
+#elif defined(__aarch64__)
+  __asm__ __volatile__("dsb st" ::: "memory");
+#else
+  atomic_thread_fence(memory_order_seq_cst);
+#endif
+}
+
+static void close_segment(const struct device *d, struct channel *c) {
+  if (c->open_words == 0) return;
+  uint64_t at = c->segments_gpu + (c->open & (c->size - 1));
+  c->ring[c->put & (c->entries - 1)] =
+      at + d->entry_base + c->open_words * d->entry_word;
+  c->put++;
+  c->open = c->written;
+  c->open_words = 0;
+}
+
+static void emit(const struct device *d, struct channel *c, int k, uint64_t a,
+                 uint64_t b) {
+  const struct template *t = &d->t[k];
+  uint64_t bytes = 4 * (uint64_t)t->nwords;
+  uint64_t start = c->open & (c->size - 1);
+  if (start + 4 * c->open_words + bytes > c->size) {
+    close_segment(d, c);
+    uint64_t end = c->written & (c->size - 1);
+    if (end + bytes > c->size) c->written += c->size - end;
+    c->open = c->written;
+  }
+  uint64_t at = c->written & (c->size - 1);
+  const uint64_t values[3] = {a, b, 0};
+  rig_nv_fill(t, values, (uint32_t *)(c->segments + at));
+  c->written += bytes;
+  c->open_words += (uint64_t)t->nwords;
+}
+
+static void full_fence(void) {
+#if defined(__x86_64__)
+  __asm__ __volatile__("mfence" ::: "memory");
+#elif defined(__aarch64__)
+  __asm__ __volatile__("dsb sy" ::: "memory");
+#else
+  atomic_thread_fence(memory_order_seq_cst);
+#endif
+}
+
+/* Makes the channel's entries up to [c->put] the GPU's and rings, as
+   rig_nv_submit does. */
+static void ring(struct device *d, struct channel *c) {
+  store_fence();
+  *c->gp_put = (uint32_t)(c->put & (c->entries - 1));
+  if (atomic_load_explicit(&d->bar_live, memory_order_acquire) > 0) {
+    full_fence();
+    (void)*d->bar;
+  } else
+    store_fence();
+  *d->doorbell = c->token;
+}
+
+/* Ends the value [v] on [c]: its release into the timeline word and its
+   mark. */
+static void release(struct device *d, struct channel *c, uint64_t v) {
+  emit(d, c, T_RELEASE, d->word_gpu, v);
+  close_segment(d, c);
+  c->released = v;
+  c->marks[(c->first + c->count++) & (c->entries - 1)] =
+      (struct mark){v, c->put, c->written};
+  atomic_store_explicit(&d->last, v, memory_order_release);
+}
+
+/* The ring entries of two words each, [v_words] one after the other, on
+   COMPUTE:0, as values written as the driver writes them, each entry put
+   and rung: with [v_each], each value ends with its release, which waits
+   for idle; otherwise each ends with the wait for idle that orders the next
+   value's launches after it, and one release ends them all. Then the wait
+   for the last. The rows' gap is the releases' cost on the GPU; their gap
+   to [rig_nv_bench_entries] is the driver's on the host. */
+value rig_nv_bench_rung(value v_words, value v_each) {
+  struct device *d = self;
+  struct channel *c = &d->ch[COMPUTE];
+  uint32_t words[2 * ENTRIES];
+  struct rig_part parts[ENTRIES];
+  int n = (int)Wosize_val(v_words) / 2, each = Bool_val(v_each);
+  if (n > ENTRIES) caml_invalid_argument("rig_nv_bench_rung: too many");
+  for (int i = 0; i < n; i++) {
+    words[2 * i] = (uint32_t)Long_val(Field(v_words, 2 * i));
+    words[2 * i + 1] = (uint32_t)Long_val(Field(v_words, 2 * i + 1));
+    parts[i] = (struct rig_part){.queue = 0, .words = &words[2 * i], .n = 2};
+  }
+  /* The words a channel owes come with a submission of rig_nv_submit's. */
+  if (c->owes_setup || c->released != last ||
+      atomic_load_explicit(&d->local, memory_order_acquire) != 0 ||
+      atomic_load_explicit(&d->invalidate, memory_order_acquire) != 0)
+    submit(NULL, 0, NULL, 0);
+  if (rig_nv_room(self, parts, n) != RIG_FITS)
+    caml_failwith("rig_nv_room: the parts do not fit");
+  c->open = c->written;
+  c->open_words = 0;
+  for (int i = 0; i < n; i++) {
+    close_segment(d, c);
+    c->ring[c->put++ & (c->entries - 1)] =
+        (uint64_t)words[2 * i] | (uint64_t)words[2 * i + 1] << 32;
+    if (each || i + 1 == n)
+      release(d, c, ++last);
+    else {
+      emit(d, c, T_IDLE, 0, 0);
+      close_segment(d, c);
+    }
+    ring(d, c);
+  }
   spin();
   return Val_unit;
 }

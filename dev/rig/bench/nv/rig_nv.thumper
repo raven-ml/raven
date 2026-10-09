@@ -45,6 +45,8 @@ launch/floor-64	alloc_words	exact	0
 launch/floor-64	wall_time	batch=128	n=20	4.020e-05	4.018e-05 4.018e-05 4.018e-05 4.018e-05 4.018e-05 4.018e-05 4.019e-05 4.019e-05 4.019e-05 4.019e-05 4.020e-05 4.020e-05 4.020e-05 4.020e-05 4.020e-05 4.020e-05 4.021e-05 4.021e-05 4.021e-05 4.021e-05
 launch/floor-submits-64	alloc_words	exact	0
 launch/floor-submits-64	wall_time	batch=64	n=20	1.053e-04	1.051e-04 1.052e-04 1.052e-04 1.052e-04 1.052e-04 1.052e-04 1.052e-04 1.053e-04 1.053e-04 1.053e-04 1.053e-04 1.053e-04 1.053e-04 1.053e-04 1.053e-04 1.053e-04 1.053e-04 1.053e-04 1.053e-04 1.054e-04
+launch/floor-submits-64-rung	alloc_words	exact	0
+launch/floor-submits-64-rung	wall_time	batch=64	n=20	1.047e-04	1.046e-04 1.046e-04 1.046e-04 1.046e-04 1.046e-04 1.047e-04 1.047e-04 1.047e-04 1.047e-04 1.047e-04 1.047e-04 1.048e-04 1.048e-04 1.048e-04 1.048e-04 1.048e-04 1.049e-04 1.049e-04 1.049e-04 1.049e-04
 launch/floor-submits-64-unreleased	alloc_words	exact	0
 launch/floor-submits-64-unreleased	wall_time	batch=128	n=20	6.203e-05	6.198e-05 6.198e-05 6.198e-05 6.198e-05 6.199e-05 6.200e-05 6.201e-05 6.202e-05 6.202e-05 6.202e-05 6.203e-05 6.203e-05 6.203e-05 6.203e-05 6.203e-05 6.203e-05 6.203e-05 6.204e-05 6.205e-05 6.205e-05
 launch/submits-64	alloc_words	exact	0
