@@ -304,6 +304,22 @@ let contract_rows =
 
 let rows = copy_rows @ cast_rows @ apply_rows @ contract_rows
 
+(* A contraction's axes grouped as a GPU planner reads them: Spec.Contract_view
+   of the bf16 4096 call, a and b [1; 4096; 4096] over the batch pair (0, 0)
+   and the contracting pair (2, 2). It allocates nothing. *)
+let view =
+  let bf16 = D.Bfloat16 in
+  row "spec/contract-view-bf16-4096"
+    (fun () ->
+      let spec =
+        Nx_kernel.Spec.contract ~batch:[| (0, 0) |] ~contracting:[| (2, 2) |]
+          ~acc:(D.Any f32) ~out:(D.Any bf16) ~init:false
+      in
+      let x () = A.Any (A.create Rig.host bf16 [| 1; 4096; 4096 |]) in
+      (Nx_kernel.Spec.Contract_view.make (), spec, x (), [| x (); x () |]))
+    (fun (v, spec, dst, ops) ->
+      ignore (Nx_kernel.Spec.Contract_view.fill v spec ~dst ops))
+
 (* A backend: its rows, then the floors its support derives from their work. *)
 let backend name kernels floors =
   Thumper.group name
@@ -313,4 +329,4 @@ let backend name kernels floors =
 let () =
   exit
   @@ Thumper.run "nx_kernels"
-       [ backend "cpu" (module Nx_cpu : Nx_kernel.S) F.rows ]
+       [ backend "cpu" (module Nx_cpu : Nx_kernel.S) F.rows; view ]
