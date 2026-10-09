@@ -250,8 +250,18 @@ let load_shape (type d) (Plain x : d load) = shape x
 let load_placement (type d) (Plain x : d load) : d Devices.placement =
   placement x
 
-let load_dtype (type d) (Plain x : d load) : D.any = D.Any (dtype x)
+(* Whether [x]'s shape is [s], allocating nothing. *)
+let has_shape x s =
+  let r = Array.length s in
+  rank x = r
+  &&
+  let i = ref 0 in
+  while !i < r && dim x !i = s.(!i) do
+    incr i
+  done;
+  !i = r
 
+(* A map's rule; its result's layout, C-contiguous of [shape]. *)
 let check_map (type d r) ~by shape prog (outs : (d, r) outs)
     (loads : d load array) =
   let ins = P.ins prog in
@@ -259,9 +269,9 @@ let check_map (type d r) ~by shape prog (outs : (d, r) outs)
     invalid_argf "%s: a program of %d operands over %d loads" by
       (Array.length ins) (Array.length loads);
   Array.iteri
-    (fun i l ->
+    (fun i (Plain x) ->
       let (D.Any want) = ins.(i) in
-      let (D.Any have) = load_dtype l in
+      let have = dtype x in
       if not (same_dtype want have) then
         invalid_argf "%s: load %d is %s where the program reads %s" by i
           (D.name have) (D.name want))
@@ -284,26 +294,30 @@ let check_map (type d r) ~by shape prog (outs : (d, r) outs)
          check (k + 1) rest
   in
   check 0 outs;
-  (match L.contiguous shape with
-  | _ -> ()
-  | exception Invalid_argument e -> invalid_argf "%s: %s" by e);
+  let layout =
+    match L.contiguous shape with
+    | l -> l
+    | exception Invalid_argument e -> invalid_argf "%s: %s" by e
+  in
   Array.iteri
-    (fun i l ->
-      if load_shape l <> shape then
+    (fun i (Plain x as l) ->
+      if not (has_shape x shape) then
         invalid_argf "%s: load %d has shape %a, the map %a" by i pp_shape
           (load_shape l) pp_shape shape)
-    loads
+    loads;
+  layout
 
 (* Each operation's route: where it reads its operands, in [operands]'s order,
    and where its results lie. [results] and [prepare] take placements from it
    alone. *)
 
-let map_route (type d) ~by (loads : d load array) : d Route.t =
+(* A map's route, its loads of the map's [shape] by its rule. *)
+let map_route (type d) ~by shape (loads : d load array) : d Route.t =
   if Array.length loads = 0 then { operands = [||]; result = Devices.anywhere }
   else
     Route.route ~by Elementwise
       (Array.map load_placement loads)
-      (Array.map load_shape loads)
+      (Array.make (Array.length loads) shape)
 
 let rec make_outs : type d r.
     maker -> int -> L.t -> d Devices.placement -> (d, r) outs -> r =
@@ -359,9 +373,9 @@ let results : type r. by:string -> maker -> r prim -> r =
  fun ~by m op ->
   match op with
   | Map { shape; prog; outs; loads } ->
-      check_map ~by shape prog outs loads;
-      let placement = (map_route ~by loads).result in
-      make_outs m 0 (L.contiguous shape) placement outs
+      let layout = check_map ~by shape prog outs loads in
+      let placement = (map_route ~by shape loads).result in
+      make_outs m 0 layout placement outs
   | Copy x ->
       let placement = (one_route ~by Elementwise x).result in
       m.make 0 { dtype = dtype x; layout = L.contiguous (shape x); placement }
@@ -405,9 +419,8 @@ let results : type r. by:string -> maker -> r prim -> r =
 (* One-node programs and maps *)
 
 (* Each domain's one-node programs, by node and operand dtypes: plain data,
-   compared structurally. A program built once is not built again, which saves
-   a slow-path operation the program's construction (7% of
-   dispatch/zeros_like-1). *)
+   compared structurally. A slow-path operation finds its program here instead
+   of building it, 7% of dispatch/zeros_like-1. *)
 let programs = Domain.DLS.new_key (fun () -> Hashtbl.create 64)
 
 let program node ins =
@@ -448,15 +461,21 @@ let prepare : type r. by:string -> placer -> r prim -> r prim =
   let one rule x = pl.place (one_route ~by rule x).operands.(0) x in
   match op with
   | Map p ->
-      let r = map_route ~by p.loads in
-      Map
-        {
-          p with
-          loads =
-            Array.mapi
-              (fun i (Plain x) -> Plain (pl.place r.operands.(i) x))
-              p.loads;
-        }
+      ignore (check_map ~by p.shape p.prog p.outs p.loads);
+      let r = map_route ~by p.shape p.loads in
+      let moved = ref false in
+      let loads =
+        Array.mapi
+          (fun i (Plain x as l) ->
+            let y = pl.place r.operands.(i) x in
+            if y == x then l
+            else begin
+              moved := true;
+              Plain y
+            end)
+          p.loads
+      in
+      if !moved then Map { p with loads } else op
   | Copy x -> Copy (one Elementwise x)
   | Move (mv, x) -> Move (mv, one (Move mv) x)
   | Bitcast (dt, x) -> Bitcast (dt, one (bitcast_rule dt x) x)

@@ -37,6 +37,13 @@ let done_or_declined ~by answer operands =
   | Declined -> false
   | refusal -> A.refused by refusal operands
 
+(* As [done_or_declined] over [dsts] then [ops], listing them only to raise. *)
+let ran ~by answer dsts ops =
+  match (answer : A.answer) with
+  | Done -> true
+  | Declined -> false
+  | refusal -> A.refused by refusal (Array.to_list (Array.append dsts ops))
+
 (* Values from arrays *)
 
 let make (type v s d) (p : d Devices.placement) (arrays : (v, s) A.t array) :
@@ -57,10 +64,14 @@ let starts (w : M.range array) = Array.map (fun (r : M.range) -> r.start) w
    window. *)
 let fresh ~by p dt shape =
   let set = Devices.set p in
-  Array.mapi
-    (fun j k ->
-      A.create (Devices.rig set k) dt (extents (Devices.window ~by p shape j)))
-    (Grid.devices (Devices.grid p))
+  match Grid.one (Devices.grid p) with
+  | Some k -> [| A.create (Devices.rig set k) dt shape |]
+  | None ->
+      Array.mapi
+        (fun j k ->
+          A.create (Devices.rig set k) dt
+            (extents (Devices.window ~by p shape j)))
+        (Grid.devices (Devices.grid p))
 
 (* A maker of fresh results at [at], or at their form's placement, recording the
    placement in [where]. *)
@@ -82,8 +93,10 @@ let alloc ~by ?(at : unit Devices.placement option) ?where () =
 let with_offsets prog (first : int array) =
   let r = Array.length first in
   let shifted = function P.Coord c -> first.(r - 1 - c) <> 0 | _ -> false in
-  if not (List.exists shifted (List.init (P.length prog) (P.node prog))) then
-    prog
+  if
+    Array.for_all (fun s -> s = 0) first
+    || not (List.exists shifted (List.init (P.length prog) (P.node prog)))
+  then prog
   else begin
     let nodes = ref [] and n = ref 0 in
     let index = Array.make (P.length prog) 0 in
@@ -221,16 +234,13 @@ let map_on ~by (module K : Nx_kernel.S) d prog shape first ops dsts =
   let prog = with_offsets prog first in
   let ran =
     match single prog with
-    | Some node ->
-        done_or_declined ~by
-          (apply_node (module K) node dsts.(0) ops)
-          (Array.to_list (Array.append dsts ops))
+    | Some node -> ran ~by (apply_node (module K) node dsts.(0) ops) dsts ops
     | None ->
-        done_or_declined ~by
+        ran ~by
           (K.map
              (S.map prog ~loads:(Array.make (Array.length ops) S.Plain))
              ~dsts ops)
-          (Array.to_list (Array.append dsts ops))
+          dsts ops
   in
   if not ran then by_nodes ~by (module K) d prog shape ops dsts
 
@@ -239,13 +249,23 @@ let map_on ~by (module K : Nx_kernel.S) d prog shape first ops dsts =
 let map_devices ~by (p : unit Devices.placement) shape prog ops dsts =
   let set = Devices.set p in
   let kernels = kernels_of ~by ~op:"Map" set in
-  Array.iteri
-    (fun j k ->
-      let w = Devices.window ~by p shape j in
-      map_on ~by kernels (Devices.rig set k) prog (extents w) (starts w)
-        (ops k w)
-        (Array.map (fun per -> per.(j)) dsts))
-    (Grid.devices (Devices.grid p))
+  match Grid.one (Devices.grid p) with
+  | Some k ->
+      let whole =
+        Array.map (fun count -> { M.start = 0; count; step = 1 }) shape
+      in
+      map_on ~by kernels (Devices.rig set k) prog shape
+        (Array.make (Array.length shape) 0)
+        (ops k whole)
+        (Array.map (fun per -> per.(0)) dsts)
+  | None ->
+      Array.iteri
+        (fun j k ->
+          let w = Devices.window ~by p shape j in
+          map_on ~by kernels (Devices.rig set k) prog (extents w) (starts w)
+            (ops k w)
+            (Array.map (fun per -> per.(j)) dsts))
+        (Grid.devices (Devices.grid p))
 
 let load_view (type d) ~by k w (Value.Plain x : d Value.load) =
   A.Any (Place.view ~by x k w)
@@ -510,15 +530,20 @@ and fill node p =
 and compute_node (Value.Node n) p =
   let by = n.by in
   match n.op with
-  | Value.Map { loads = [||]; shape; prog; _ } ->
+  | Value.Map { loads; shape; prog; _ } ->
+      (* Its loads are computed at [p] already. *)
       let r = Prim.results ~by (alloc ~by ~at:p ()) n.op in
       let dsts = Prim.arrays n.op r in
-      map_devices ~by p shape prog (fun _ _ -> [||]) dsts;
+      let view k w (Value.Plain x) =
+        A.Any (Place.view ~by (at (Devices.rebrand p) x) k w)
+      in
+      map_devices ~by p shape prog (fun k w -> Array.map (view k w) loads) dsts;
       dsts
   | op ->
       let q = operand_at op p in
+      (* Its rule held when it was made, and its operands lie at [q]. *)
       let op' = Prim.map { map = (fun y -> at (Devices.rebrand q) y) } op in
-      let arrays = Prim.arrays op' (run ~by op') in
+      let arrays = Prim.arrays op' (compute ~by op') in
       if Devices.equal q p then arrays
       else
         (* Whole on every device: each device of [p] keeps its window. *)
@@ -575,8 +600,7 @@ let apply1 (type v s w r d) ~by k (dt : (w, r) D.t) (x : (v, s, d) Value.t) :
 let apply2 (type v s w r d) ~by k (dt : (w, r) D.t) (x : (v, s, d) Value.t)
     (y : (v, s, d) Value.t) : (w, r, d) Value.t =
   match (x, y) with
-  | Value.Array { at; a }, Value.Array { at = at'; a = b }
-    when at == at' -> (
+  | Value.Array { at; a }, Value.Array { at = at'; a = b } when at == at' -> (
       match Devices.kernels (Devices.set at) with
       | None -> map2 ~by k dt x y
       | Some (module K) -> (

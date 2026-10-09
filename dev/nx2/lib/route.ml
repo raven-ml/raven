@@ -112,11 +112,27 @@ let covers g want =
           (fun k -> Array.mem k (Grid.devices g))
           (Grid.devices want)
 
-let route ~by rule ps shapes =
+(* Placements an elementwise operation or a movement reads its operands at with
+   nothing to work out: every operand a constant, or every one at one placement
+   [p], constants apart, that cuts no axis. *)
+type 'd common = Constants | Uncut of 'd Devices.placement | Other
+
+let common (type d) (ps : d Devices.placement array) : d common =
   let n = Array.length ps in
-  if n = 0 || n <> Array.length shapes then
-    invalid_argf "%s: a route of %d placements and %d shapes" by n
-      (Array.length shapes);
+  let rec go i (p : d Devices.placement) =
+    if i = n then p
+    else if is_constant ps.(i) then go (i + 1) p
+    else if is_constant p || ps.(i) == p then go (i + 1) ps.(i)
+    else raise_notrace Exit
+  in
+  match go 0 Devices.anywhere with
+  | p when is_constant p -> Constants
+  | p -> if Grid.cuts (Devices.grid p) = [||] then Uncut p else Other
+  | exception Exit -> Other
+
+(* Any route, worked out from the operands' grids. *)
+let general ~by rule ps shapes =
+  let n = Array.length ps in
   let rank i = Array.length shapes.(i) in
   let check axes i =
     Array.iter
@@ -193,3 +209,28 @@ let route ~by rule ps shapes =
           ps
       in
       { operands; result = Devices.v ~by set target }
+
+let route ~by rule ps shapes =
+  let n = Array.length ps in
+  if n = 0 || n <> Array.length shapes then
+    invalid_argf "%s: a route of %d placements and %d shapes" by n
+      (Array.length shapes);
+  let simple p =
+    match rule with
+    | Elementwise -> Some { operands = Array.make n p; result = p }
+    | Move m when n = 1 -> (
+        match Nx_array.Move.shape m shapes.(0) with
+        | _ -> Some { operands = [| p |]; result = p }
+        | exception Invalid_argument e -> invalid_argf "%s: %s" by e)
+    | Move _ | Reduce _ | Along _ | Gather _ | Into _ | Replicated -> None
+  in
+  let fast =
+    match common ps with
+    | Constants -> (
+        match simple Devices.anywhere with
+        | Some r -> Some { r with operands = Array.copy ps }
+        | None -> None)
+    | Uncut p -> simple p
+    | Other -> None
+  in
+  match fast with Some r -> r | None -> general ~by rule ps shapes

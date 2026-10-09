@@ -22,11 +22,13 @@ let relative (outer : M.range array) (inner : M.range array) =
 (* [a]'s elements in window [w]: [a] itself when [w] is all of it. *)
 let slice a (w : M.range array) =
   let l = A.layout a in
-  if
-    Array.for_all2
-      (fun (r : M.range) n -> r.start = 0 && r.count = n)
-      w (L.shape l)
-  then a
+  let whole = ref (Array.length w = L.rank l) and i = ref 0 in
+  while !whole && !i < Array.length w do
+    let r = w.(!i) in
+    whole := r.start = 0 && r.count = L.dim l !i;
+    incr i
+  done;
+  if !whole then a
   else
     match A.move (M.Slice w) a with
     | Some v -> v
@@ -149,7 +151,8 @@ let value (type v s d e) ~by (p : e Devices.placement) (x : (v, s, d) Value.t) :
     make (Array.mapi take (Grid.devices (Devices.grid p)))
   end
 
-let view (type v s d) ~by (x : (v, s, d) Value.t) k w : (v, s) A.t =
+(* [x]'s window [w] from the array of device [k], which holds it. *)
+let held (type v s d) ~by (x : (v, s, d) Value.t) k w : (v, s) A.t =
   let at = Prim.placement x and shape = Prim.shape x in
   let arrays =
     match x with
@@ -165,3 +168,12 @@ let view (type v s d) ~by (x : (v, s, d) Value.t) k w : (v, s) A.t =
       if not (contains held w) then
         invalid_arg "Place.view: the window is not held";
       slice arrays.(j) (relative held w)
+
+let view (type v s d) ~by (x : (v, s, d) Value.t) k w : (v, s) A.t =
+  match x with
+  | Value.Array { at; a } -> (
+      (* On one device the array is the whole. *)
+      match Grid.one (Devices.grid at) with
+      | Some j when j = k -> slice a w
+      | Some _ | None -> held ~by x k w)
+  | Value.Shards _ | Value.Deferred _ -> held ~by x k w

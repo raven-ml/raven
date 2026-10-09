@@ -106,8 +106,11 @@ type placer = {
 
 val prepare : by:string -> placer -> 'r prim -> 'r prim
 (** [prepare ~by pl op] is [op] with each operand [x] replaced by
-    [pl.place p x], [p] where [op]'s route reads [x]. [Place] and [Check] are
-    [op] itself. *)
+    [pl.place p x], [p] where [op]'s route reads [x]; [op] itself where none
+    changes. [Place] and [Check] are [op] itself.
+
+    Raises [Invalid_argument] naming [by], before [pl] is called, where [op]'s
+    operands break its rule. *)
 
 val is_constant : ('v, 's, 'd) t -> bool
 
