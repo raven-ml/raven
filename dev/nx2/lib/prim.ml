@@ -47,6 +47,19 @@ let dim (type v s d) (x : (v, s, d) t) i =
 
 let shape x = Array.init (rank x) (dim x)
 
+let rec layouts_equal la lb i =
+  i = L.rank la || (L.dim la i = L.dim lb i && layouts_equal la lb (i + 1))
+
+let rec dims_equal x y i =
+  i = rank x || (dim x i = dim y i && dims_equal x y (i + 1))
+
+let same_shape (type v s w r d) (x : (v, s, d) t) (y : (w, r, d) t) =
+  match (x, y) with
+  | Array { a; _ }, Array { a = b; _ } ->
+      let la = Nx_array.layout a and lb = Nx_array.layout b in
+      L.rank la = L.rank lb && layouts_equal la lb 0
+  | _ -> rank x = rank y && dims_equal x y 0
+
 let form (type v s d) (x : (v, s, d) t) : (v, s, d) form =
   match x with
   | Array { at; a } ->

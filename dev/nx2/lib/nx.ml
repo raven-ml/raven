@@ -139,20 +139,16 @@ let broadcast_shape ~by s s' =
 let broadcast ~by s x =
   if shape x = s then x else Exec.run ~by (Value.Move (Broadcast s, x))
 
-let rec dims_equal a b i =
-  i = Prim.rank a || (Prim.dim a i = Prim.dim b i && dims_equal a b (i + 1))
-
-(* Whether [a] and [b] have one shape, allocating nothing. *)
-let same_shape a b = Prim.rank a = Prim.rank b && dims_equal a b 0
+let same_shape = Prim.same_shape
 
 let binary ~by k a b =
-  if same_shape a b then Exec.apply2 ~by (Binary k) (dtype a) a b
+  if same_shape a b then Exec.apply2 ~by k (dtype a) a b
   else
     let s = broadcast_shape ~by (shape a) (shape b) in
-    Exec.apply2 ~by (Binary k) (dtype a) (broadcast ~by s a) (broadcast ~by s b)
+    Exec.apply2 ~by k (dtype a) (broadcast ~by s a) (broadcast ~by s b)
 
-let add a b = binary ~by:"Nx.add" Add a b
-let mul a b = binary ~by:"Nx.mul" Mul a b
+let add a b = binary ~by:"Nx.add" (Binary Add) a b
+let mul a b = binary ~by:"Nx.mul" (Binary Mul) a b
 
 let less a b =
   let by = "Nx.less" in

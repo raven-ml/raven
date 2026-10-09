@@ -47,12 +47,13 @@ val apply3 :
   ('v, 's, 'd) Value.t ->
   ('v, 's, 'd) Value.t ->
   ('v, 's, 'd) Value.t
-(** [applyN ~by k dt x …] is {!run} of the one-node map [k] over [x …] with
-    result dtype [dt] (the second operand's for [apply3]). For operands of one
-    shape on one device at physically one placement it builds no operation: it
-    checks the kind's dtypes, allocates the result, sharing the first operand's
-    layout when that is C-contiguous at offset 0 and of the result's dtype, and
-    calls the set's kernel. *)
+(** [applyN ~by k dt x …] is {!run} of the one-node map [k] over [x …], of one
+    shape, with result dtype [dt] (the second operand's for [apply3]). For
+    operands on one device at physically one placement it builds no operation:
+    it allocates the result, sharing the first operand's layout when that is
+    C-contiguous at offset 0 and of the result's dtype, and calls the set's
+    kernel, which checks the dtypes and shapes. A kernel that declines or
+    refuses them runs the map, whose rule raises. *)
 
 val at : 'd Devices.placement -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
 (** [at p c] is the constant [c] computed at [p]: a map, a creation included, at

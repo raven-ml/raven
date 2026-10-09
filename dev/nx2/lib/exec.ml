@@ -536,13 +536,6 @@ and compute_node (Value.Node n) p =
 
 (* The fast path *)
 
-let rec dims_equal la lb i =
-  i = L.rank la || (L.dim la i = L.dim lb i && dims_equal la lb (i + 1))
-
-let same_shape a b =
-  let la = A.layout a and lb = A.layout b in
-  L.rank la = L.rank lb && dims_equal la lb 0
-
 (* A destination for a result of [dt] beside [x]: over [x]'s layout where it is
    C-contiguous from offset 0 and of [dt], fresh otherwise. *)
 let destination (type v s w r) (dt : (w, r) D.t) (x : (v, s) A.t) : (w, r) A.t =
@@ -568,36 +561,29 @@ let map3 ~by k c x y =
 let apply1 (type v s w r d) ~by k (dt : (w, r) D.t) (x : (v, s, d) Value.t) :
     (w, r, d) Value.t =
   match x with
-  | Value.Array { at; a } when P.accepts1 k (A.dtype a) dt -> (
+  | Value.Array { at; a } -> (
       match Devices.kernels (Devices.set at) with
       | None -> map1 ~by k dt x
       | Some (module K) -> (
           let dst = destination dt a in
           match K.apply1 k ~dst a with
           | Done -> Value.Array { at; a = dst }
-          | Declined -> map1 ~by k dt x
+          | Declined | Wrong_dtype -> map1 ~by k dt x
           | refusal -> A.refused by refusal [ A.Any dst; A.Any a ]))
-  | _ -> map1 ~by k dt x
-
-let result_ok (type v s w r) (k : P.op2) (dt : (w, r) D.t) (a : (v, s) A.t) =
-  match k with
-  | Binary _ -> D.equal dt (A.dtype a)
-  | Compare _ -> D.equal dt D.Bool
+  | Value.Shards _ | Value.Deferred _ -> map1 ~by k dt x
 
 let apply2 (type v s w r d) ~by k (dt : (w, r) D.t) (x : (v, s, d) Value.t)
     (y : (v, s, d) Value.t) : (w, r, d) Value.t =
   match (x, y) with
   | Value.Array { at; a }, Value.Array { at = at'; a = b }
-    when at == at' && same_shape a b
-         && P.accepts2 k (A.dtype a)
-         && result_ok k dt a -> (
+    when at == at' -> (
       match Devices.kernels (Devices.set at) with
       | None -> map2 ~by k dt x y
       | Some (module K) -> (
           let dst = destination dt a in
           match K.apply2 k ~dst a b with
           | Done -> Value.Array { at; a = dst }
-          | Declined -> map2 ~by k dt x y
+          | Declined | Wrong_dtype | Shape_mismatch -> map2 ~by k dt x y
           | refusal -> A.refused by refusal [ A.Any dst; A.Any a; A.Any b ]))
   | _ -> map2 ~by k dt x y
 
@@ -607,15 +593,14 @@ let apply3 (type a b v s d) ~by k (c : (a, b, d) Value.t)
   | ( Value.Array { at; a = ca },
       Value.Array { at = at'; a },
       Value.Array { at = at''; a = b } )
-    when at == at' && at == at'' && same_shape ca a && same_shape a b
-         && P.accepts3 k (A.dtype ca) (A.dtype a) -> (
+    when at == at' && at == at'' -> (
       match Devices.kernels (Devices.set at) with
       | None -> map3 ~by k c x y
       | Some (module K) -> (
           let dst = destination (A.dtype a) a in
           match K.apply3 k ~dst ca a b with
           | Done -> Value.Array { at; a = dst }
-          | Declined -> map3 ~by k c x y
+          | Declined | Wrong_dtype | Shape_mismatch -> map3 ~by k c x y
           | refusal ->
               A.refused by refusal [ A.Any dst; A.Any ca; A.Any a; A.Any b ]))
   | _ -> map3 ~by k c x y

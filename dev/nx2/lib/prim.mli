@@ -26,6 +26,9 @@ val rank : ('v, 's, 'd) t -> int
 val dim : ('v, 's, 'd) t -> int -> int
 (** Raises [Invalid_argument] if the axis is not below {!rank}. *)
 
+val same_shape : ('v, 's, 'd) t -> ('w, 'r, 'd) t -> bool
+(** [same_shape x y] is [shape x = shape y]. It allocates nothing. *)
+
 val shape : ('v, 's, 'd) t -> int array
 (** [shape x] is a fresh array. [dtype], [placement], [rank] and [dim] of a
     value on one device allocate nothing. *)
