@@ -16,8 +16,7 @@
 #include <caml/mlvalues.h>
 #include <caml/signals.h>
 
-#include "nx_array.h"
-#include "rig_pool.h"
+#include "cpu.h"
 
 /* The loops are compiled for x86-64's v3 too, and the host's best runs, as
    nx.cpu's own loops are (convert_v3.c, rows_v3.c): a floor compiled for
@@ -98,8 +97,10 @@ value nx_cpu_bench_floor_move(value threads, value in, value out, value dst,
 /* Streams: [ins] arrays of [n] elements read, their xor stored into [n]
    elements of [outb] bytes, one integer operation per element: the floor
    of an elementwise kind's loop. The inputs are [inb] bytes each, or, for
-   where's, a byte then two of [inb] bytes. With no array read it stores a
-   constant, as a fill does. */
+   where's, a byte then two of [inb] bytes, of which a mask from the byte
+   picks one: where-f32-1M ran under an xor's floor on kimchi, and a
+   branching select ran scalar on the M1. With no array read it stores a
+   constant through nx.cpu's fill row, as a fill does. */
 typedef struct {
   uint8_t *d;
   const uint8_t *s[3];
@@ -113,7 +114,6 @@ typedef struct {
     const TI *a = (const TI *)s[0], *b = (const TI *)s[1],                   \
              *c = (const TI *)s[2];                                          \
     switch (f->ins) {                                                        \
-      case 0: for (int64_t i = 0; i < n; i++) o[i] = (TO)1; break;           \
       case 1: for (int64_t i = 0; i < n; i++) o[i] = (TO)a[i]; break;        \
       case 2: for (int64_t i = 0; i < n; i++) o[i] = (TO)(a[i] ^ b[i]); break; \
       default:                                                               \
@@ -129,12 +129,24 @@ BEST static void stream_slice(int64_t lo, int64_t hi, int worker,
   uint8_t *d = f->d + first * f->outb;
   const uint8_t *s[3];
   for (int k = 0; k < 3; k++) s[k] = f->s[k] + first * f->inb;
+  if (f->ins == 0) {
+    /* A fill's floor is nx.cpu's own fill row on the slice, nothing around
+       it: a loop of stores written here ran slower than fill-f32-1M on the
+       M1, which no floor may. */
+    static const uint8_t one[8] = {1};
+    int i = f->outb == 1 ? 0 : f->outb == 2 ? 1 : f->outb == 4 ? 2 : 3;
+    nx_cpu_runs->fill[i](n, d, 1, one);
+    return;
+  }
   if (f->cond) {
     /* A condition byte, then two words: where's operands. */
     const uint8_t *c = f->s[0] + first;
     const uint32_t *a = (const uint32_t *)s[1], *b = (const uint32_t *)s[2];
     uint32_t *o = (uint32_t *)d;
-    for (int64_t i = 0; i < n; i++) o[i] = c[i] ^ a[i] ^ b[i];
+    for (int64_t i = 0; i < n; i++) {
+      uint32_t m = 0u - (uint32_t)(c[i] != 0);
+      o[i] = (a[i] & m) | (b[i] & ~m);
+    }
     return;
   }
   switch (f->inb * 100 + f->outb) {
