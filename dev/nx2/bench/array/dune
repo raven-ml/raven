@@ -12,7 +12,13 @@
 (executable
  (name bench_nx_array)
  (modules bench_nx_array)
- (libraries nx_array nx_array_bench nx_array_support rig thumper))
+ (libraries
+  nx_array
+  nx_array_bench
+  nx_array_support
+  nx_kinds_support
+  rig
+  thumper))
 
 (rule
  (alias bench)

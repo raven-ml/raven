@@ -482,6 +482,52 @@ let kernel_rows =
       row "add-1-reached" late (fun (_, z, x, y) -> add z x y);
     ]
 
+(* Kinds: each transcendental's throughput over 1M elements, drawn where the
+   kind is defined, against access/floor-bigarray-copy-f32-1M's stream: the loop
+   nx.cpu runs on the machine (on x86-64 its v3 target), the trigonometric kinds
+   through the vector pattern nx_kinds.h describes *)
+
+let kinds_rows =
+  let n = mib in
+  let domains =
+    [
+      ("exp", -80., 80.);
+      ("exp2", -120., 120.);
+      ("expm1", -10., 10.);
+      ("log", 1e-3, 1e3);
+      ("log2", 1e-3, 1e3);
+      ("log1p", -0.9, 10.);
+      ("sin", -100., 100.);
+      ("cos", -100., 100.);
+      ("tan", -100., 100.);
+      ("asin", -1., 1.);
+      ("acos", -1., 1.);
+      ("atan", -10., 10.);
+      ("sinh", -10., 10.);
+      ("cosh", -10., 10.);
+      ("tanh", -10., 10.);
+      ("erf", -5., 5.);
+      ("pow", 0.1, 10.);
+      ("atan2", -10., 10.);
+    ]
+  in
+  let drawn kind lo hi =
+    let st = Random.State.make [| Hashtbl.hash kind |] in
+    fun _ -> lo +. Random.State.float st (hi -. lo)
+  in
+  let row (type s) (k : (float, s) Bigarray.kind) suffix (kind, lo, hi) =
+    let make f = A1.init k Bigarray.c_layout n f in
+    let x = make (drawn kind lo hi) in
+    (* pow's exponent and atan2's x *)
+    let z = make (drawn (kind ^ "'") 0.5 3.5) in
+    let y = A1.create k Bigarray.c_layout n in
+    Thumper.bench (Printf.sprintf "%s-%s-1M" kind suffix) (fun () ->
+        Nx_kinds_support.run kind x z y)
+  in
+  Thumper.group "kinds"
+    (List.map (row Bigarray.float32 "f32") domains
+    @ List.map (row Bigarray.float64 "f64") domains)
+
 let () =
   exit
   @@ Thumper.run "nx_array"
@@ -494,4 +540,5 @@ let () =
          access_rows;
          placement_rows;
          kernel_rows;
+         kinds_rows;
        ]
