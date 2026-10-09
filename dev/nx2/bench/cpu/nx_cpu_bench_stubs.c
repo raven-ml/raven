@@ -16,6 +16,7 @@
 #include <caml/mlvalues.h>
 #include <caml/signals.h>
 
+#include "nx_array.h"
 #include "rig_pool.h"
 
 /* Slices of a job per thread: as many as nx.cpu's jobs make. */
@@ -88,6 +89,16 @@ value nx_cpu_bench_floor_move_byte(value *argv, int argn) {
   (void)argn;
   return nx_cpu_bench_floor_move(argv[0], argv[1], argv[2], argv[3], argv[4],
                                  argv[5]);
+}
+
+/* [block_transposed dst src n] copies the transpose of [src], [n] x [n]
+   float32, into [dst] with nx_array.h's block copy, on the calling thread:
+   the copy kernel the walk runs, without the walk. */
+value nx_cpu_bench_block_transposed(value dst, value src, value n) {
+  int64_t k = Long_val(n);
+  nx_copy_block(Caml_ba_data_val(dst), 0, k, 1, Caml_ba_data_val(src), 0, 1, k,
+                k, k, 32);
+  return Val_unit;
 }
 
 value nx_cpu_bench_cores(value unit) {
