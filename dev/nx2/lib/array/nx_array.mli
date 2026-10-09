@@ -180,8 +180,19 @@ val to_device : Rig.t -> ('v, 's) t -> ('v, 's) t
     source's neighbouring elements, as found before or after a store another
     domain makes to them while it copies.
 
+    {!borrow} shares the memory instead, where [d] maps it.
+
     Raises [Invalid_argument] if [a]'s buffer is dead or its memory is held
     exclusive, and what {!Rig.Buffer.create} and {!Rig.Buffer.copy} raise. *)
+
+val borrow : Rig.t -> ('v, 's) t -> ('v, 's) t option
+(** [borrow d a] is [Some a'], [a]'s elements on [d] without a copy: [a]'s
+    dtype and layout over a borrow of its buffer ({!Rig.Buffer.borrow}), which
+    shares [a]'s memory, so writes through either show in the other. It is
+    [Some a] for [a] on [d], and [None] where [d] cannot map [a]'s memory.
+
+    Raises [Invalid_argument] if [a]'s buffer is dead, and what
+    {!Rig.Buffer.borrow} raises: {!Rig.Lost} for a lost device. *)
 
 (** {1:bigarrays Bigarrays}
 

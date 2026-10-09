@@ -607,6 +607,14 @@ let to_device d a =
   let layout = Layout.v ~offset ~strides:(Layout.strides l) (Layout.shape l) in
   v a.dtype layout buffer
 
+let borrow d a =
+  live "Nx_array.borrow" a.buffer;
+  if Rig.equal (device a) d then Some a
+  else
+    match Buffer.borrow d a.buffer with
+    | None -> None
+    | Some buffer -> Some { a with buffer }
+
 (* Bigarrays *)
 
 let bigarray (type v s) (k : (v, s) Bigarray.kind) (a : (v, s) t) :

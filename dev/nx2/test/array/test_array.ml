@@ -991,6 +991,50 @@ let memory =
     | Ok d -> d
     | Error e -> failwith e)
 
+(* A borrow shares its source's memory, dtype and layout, on any device that
+   maps it, and back. *)
+let law_borrow (Case (a, m)) =
+  let check : type v s. (v, s) A.t -> unit =
+   fun a ->
+    let d = Lazy.force memory in
+    let b = Option.get (A.borrow d a) in
+    equal ~msg:"device" bool true (Rig.equal d (A.device b));
+    equal ints (L.shape (A.layout a)) (L.shape (A.layout b));
+    equal ints (L.strides (A.layout a)) (L.strides (A.layout b));
+    equal int (L.offset (A.layout a)) (L.offset (A.layout b));
+    equal (values (A.dtype a)) (A.to_array a) (A.to_array b);
+    if B.length (A.buffer a) > 0 then
+      equal ~msg:"shares" bool true (B.overlaps (A.buffer a) (A.buffer b));
+    let back = Option.get (A.borrow Rig.host b) in
+    equal ~msg:"back" (values (A.dtype a)) (A.to_array a) (A.to_array back)
+  in
+  match Option.bind m (fun m -> A.move m a) with
+  | Some b ->
+      cover "a view" true;
+      check b
+  | None -> check a
+
+let test_borrow_cases () =
+  let a = floats32 [| 2 |] [| 1.; 2. |] in
+  equal ~msg:"its own device" bool true
+    (Option.get (A.borrow Rig.host a) == a);
+  let b = Option.get (A.borrow (Lazy.force memory) a) in
+  A.set b [| 1 |] 5.;
+  equal ~msg:"writes show" float_exact 5. (A.get a [| 1 |]);
+  let dead = floats32 [| 2 |] [| 1.; 2. |] in
+  kill (A.buffer dead);
+  raises_match ~msg:"dead" (Exn.invalid_arg ~substring:"dead") (fun () ->
+      A.borrow (Lazy.force memory) dead);
+  let closed =
+    match Rig.memory_device "nx2-test-borrow-closed" with
+    | Ok d -> d
+    | Error e -> failwith e
+  in
+  Rig.close closed;
+  raises_match ~msg:"lost"
+    (function Rig.Lost _ -> true | _ -> false)
+    (fun () -> A.borrow closed a)
+
 let test_bitcast_devices () =
   let x = floats32 [| 2 |] [| 1.; -2. |] in
   let want = bytes_of x in
@@ -1599,6 +1643,10 @@ let tests =
           test_to_device_io;
         test "bitcast is a view on a memory device and an io device"
           test_bitcast_devices;
+        prop "borrow shares memory and keeps the layout" case law_borrow;
+        test "borrow is the array on its device, writes show, dead and lost \
+              refuse"
+          test_borrow_cases;
       ];
     group "bigarray"
       [
