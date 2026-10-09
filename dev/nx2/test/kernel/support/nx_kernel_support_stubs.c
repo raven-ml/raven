@@ -118,3 +118,41 @@ value nx_kernel_support_prog(value p) {
   free(s);
   CAMLreturn(r);
 }
+
+/* The map descriptor [s] read through nx_spec_map and nx_spec_pad, copied
+   first: its program's bytes in hex, then per load "plain", or "padded",
+   its rank, window count, fill in hex, lo, hi, interior and each window's
+   axis, size, step and dilation. */
+value nx_kernel_support_map(value s) {
+  CAMLparam1(s);
+  size_t n = caml_string_length(s);
+  nx_spec_map *m = malloc(n);
+  if (m == NULL) caml_raise_out_of_memory();
+  memcpy(m, String_val(s), n);
+  size_t cap = 64 + 2 * (size_t)m->prog_len + 8192 * (size_t)m->nloads;
+  char *r = malloc(cap);
+  if (r == NULL) {
+    free(m);
+    caml_raise_out_of_memory();
+  }
+  size_t at = snprintf(r, cap, "family %d prog ", m->family);
+  const uint8_t *p = (const uint8_t *)nx_spec_map_prog(m);
+  for (int i = 0; i < m->prog_len; i++)
+    at += snprintf(r + at, cap - at, "%02x", p[i]);
+  for (int k = 0; k < m->nloads; k++) {
+    const nx_spec_pad *d = nx_spec_map_pad(m, k);
+    if (d == NULL) {
+      at += snprintf(r + at, cap - at, "\nplain");
+      continue;
+    }
+    at += snprintf(r + at, cap - at, "\npadded %d %d ", d->rank, d->nwindows);
+    for (int i = 0; i < 16; i++)
+      at += snprintf(r + at, cap - at, "%02x", d->fill[i]);
+    for (int i = 0; i < 3 * d->rank + 4 * d->nwindows; i++)
+      at += snprintf(r + at, cap - at, " %lld", (long long)d->geometry[i]);
+  }
+  free(m);
+  value v = caml_copy_string(r);
+  free(r);
+  CAMLreturn(v);
+}

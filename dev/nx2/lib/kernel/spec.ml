@@ -42,6 +42,213 @@ let at_contracting s = at_pairs + (8 * nbatch s)
 let batch_axis s k side = pair_axis s at_batch k side
 let contracting_axis s k side = pair_axis s (at_contracting s) k side
 
+let pp_shape ppf s =
+  Format.fprintf ppf "[%a]"
+    (Format.pp_print_list
+       ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
+       Format.pp_print_int)
+    (Array.to_list s)
+
+(* Loads and monoids *)
+
+type pad = {
+  lo : int array;
+  hi : int array;
+  interior : int array;
+  windows : Nx_array.Move.window array;
+}
+
+type load = Plain | Padded of { fill : string; pad : pad }
+type monoid = Sum | Prod | Max | Min | Logsumexp
+type extreme = Max | Min
+type combine = Set | Add | Max | Min
+
+(* Maps. nx_spec_map: the family, the load count, the program's byte offset
+   and length, then one int32 per load, the byte offset of its record or 0
+   for a plain load. The program follows, then each padded load's record:
+   its rank and window count, sixteen bytes of fill, then int64 [lo], [hi]
+   and [interior] by axis and each window's axis, size, step and dilation.
+   Every part starts on 8 bytes. *)
+
+type map
+
+let family_map = 2
+let at_nloads = 4
+let at_prog = 8
+let at_prog_len = 12
+let at_loads = 16
+let at_fill = 8
+let at_geometry = 24
+let align8 n = (n + 7) land lnot 7
+let get64 s at = Int64.to_int (String.get_int64_ne s at)
+let set64 b at x = Bytes.set_int64_ne b at (Int64.of_int x)
+
+(* Whether [b] is the bits of an element of [dt]. *)
+let is_element (D.Any dt) b =
+  String.length b = D.bytes dt 1
+  &&
+  match D.bits dt with
+  | 1 -> Char.code b.[0] <= 1
+  | 4 -> Char.code b.[0] < 16
+  | 8 when D.equal dt D.Bool -> Char.code b.[0] <= 1
+  | _ -> true
+
+let check_pad fn k (p : pad) =
+  let r = Array.length p.lo in
+  if Array.length p.hi <> r || Array.length p.interior <> r then
+    invalid_argf "%s: load %d's lo, hi and interior differ in length" fn k;
+  if Array.exists (fun i -> i < 0) p.interior then
+    invalid_argf "%s: load %d's interior padding is negative" fn k;
+  Array.iteri
+    (fun w (x : Nx_array.Move.window) ->
+      let prev = if w = 0 then -1 else p.windows.(w - 1).axis in
+      if x.axis <= prev || x.axis >= r then
+        invalid_argf "%s: load %d's window %d is on axis %d" fn k w x.axis;
+      if x.size < 1 || x.step < 1 || x.dilation < 1 then
+        invalid_argf "%s: load %d's window %d is empty" fn k w)
+    p.windows
+
+let record_bytes (p : pad) =
+  at_geometry + (8 * 3 * Array.length p.lo) + (8 * 4 * Array.length p.windows)
+
+let map p ~loads =
+  let fn = "Nx_kernel.Spec.map" in
+  let ins = Prog.ins p in
+  if Array.length loads <> Array.length ins then
+    invalid_argf "%s: %d loads for %d operands" fn (Array.length loads)
+      (Array.length ins);
+  Array.iteri
+    (fun k l ->
+      match l with
+      | Plain -> ()
+      | Padded { fill; pad } ->
+          if not (is_element ins.(k) fill) then
+            invalid_argf "%s: load %d's fill is no element of its dtype" fn k;
+          check_pad fn k pad)
+    loads;
+  let n = Array.length loads in
+  let at_p = align8 (at_loads + (4 * n)) in
+  let p = (p :> string) in
+  let len = String.length p in
+  let next = ref (align8 (at_p + len)) in
+  let ats =
+    Array.map
+      (function
+        | Plain -> 0
+        | Padded { pad; _ } ->
+            let at = !next in
+            next := align8 (at + record_bytes pad);
+            at)
+      loads
+  in
+  let b = Bytes.make !next '\000' in
+  set b at_family family_map;
+  set b at_nloads n;
+  set b at_prog at_p;
+  set b at_prog_len len;
+  Bytes.blit_string p 0 b at_p len;
+  Array.iteri
+    (fun k l ->
+      set b (at_loads + (4 * k)) ats.(k);
+      match l with
+      | Plain -> ()
+      | Padded { fill; pad } ->
+          let at = ats.(k) and r = Array.length pad.lo in
+          set b at r;
+          set b (at + 4) (Array.length pad.windows);
+          Bytes.blit_string fill 0 b (at + at_fill) (String.length fill);
+          let g = at + at_geometry in
+          for i = 0 to r - 1 do
+            set64 b (g + (8 * i)) pad.lo.(i);
+            set64 b (g + (8 * (r + i))) pad.hi.(i);
+            set64 b (g + (8 * ((2 * r) + i))) pad.interior.(i)
+          done;
+          Array.iteri
+            (fun w (x : Nx_array.Move.window) ->
+              let at = g + (8 * 3 * r) + (32 * w) in
+              set64 b at x.axis;
+              set64 b (at + 8) x.size;
+              set64 b (at + 16) x.step;
+              set64 b (at + 24) x.dilation)
+            pad.windows)
+    loads;
+  Bytes.unsafe_to_string b
+
+(* The program's bytes, made by Prog.v when the map was. *)
+let prog s =
+  Option.get (Prog.of_string (String.sub s (int32 s at_prog) (int32 s at_prog_len)))
+
+let load s k =
+  let at = int32 s (at_loads + (4 * k)) in
+  if at = 0 then Plain
+  else
+    let r = int32 s at and nw = int32 s (at + 4) in
+    let (D.Any dt) = (Prog.ins (prog s)).(k) in
+    let fill = String.sub s (at + at_fill) (D.bytes dt 1) in
+    let g = at + at_geometry in
+    let axis o = Array.init r (fun i -> get64 s (g + (8 * ((o * r) + i)))) in
+    let windows =
+      Array.init nw (fun w ->
+          let at = g + (8 * 3 * r) + (32 * w) in
+          {
+            Nx_array.Move.axis = get64 s at;
+            size = get64 s (at + 8);
+            step = get64 s (at + 16);
+            dilation = get64 s (at + 24);
+          })
+    in
+    Padded { fill; pad = { lo = axis 0; hi = axis 1; interior = axis 2; windows } }
+
+let loads s = Array.init (int32 s at_nloads) (load s)
+
+(* The shape operand [k] of shape [x] has once loaded, or why it has none. *)
+let loaded s k x =
+  match load s k with
+  | Plain -> Ok x
+  | Padded { pad; _ } -> (
+      let r = Array.length pad.lo in
+      if Array.length x <> r then
+        Error (Printf.sprintf "operand %d has rank %d, its pad %d" k
+                 (Array.length x) r)
+      else
+        let padded =
+          Array.mapi
+            (fun i d ->
+              pad.lo.(i) + pad.hi.(i) + d
+              + if d > 0 then pad.interior.(i) * (d - 1) else 0)
+            x
+        in
+        match Array.find_index (fun d -> d < 0) padded with
+        | Some i ->
+            Error (Printf.sprintf "operand %d's padded axis %d is negative" k i)
+        | None -> (
+            if pad.windows = [||] then Ok padded
+            else
+              match Nx_array.Move.shape (Window pad.windows) padded with
+              | y -> Ok y
+              | exception Invalid_argument msg ->
+                  Error (Printf.sprintf "operand %d's windows: %s" k msg)))
+
+let map_shapes s ins =
+  let n = int32 s at_nloads in
+  if Array.length ins <> n then
+    Error (Printf.sprintf "%d operands, not %d" (Array.length ins) n)
+  else if n = 0 then Error "a map with no operand has no shape of its own"
+  else
+    let outs = Array.length (Prog.outs (prog s)) in
+    let rec go k first =
+      if k = n then Ok (Array.make outs first)
+      else
+        match loaded s k ins.(k) with
+        | Error _ as e -> e
+        | Ok y when k > 0 && y <> first ->
+            Error
+              (Format.asprintf "operand %d loads as %a, operand 0 as %a" k
+                 pp_shape y pp_shape first)
+        | Ok y -> go (k + 1) (if k = 0 then y else first)
+    in
+    go 0 [||]
+
 (* Contractions *)
 
 let narrow_acc (D.Any dt) =
@@ -114,13 +321,6 @@ let free s side r =
   in
   List.filter (fun ax -> not (named ax)) (List.init r Fun.id)
 
-let pp_shape ppf s =
-  Format.fprintf ppf "[%a]"
-    (Format.pp_print_list
-       ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
-       Format.pp_print_int)
-    (Array.to_list s)
-
 let contract_shapes s ins =
   let nb = nbatch s and nc = ncontracting s in
   let n = 2 + Bool.to_int (init s) in
@@ -170,6 +370,7 @@ let contract_shapes s ins =
 let shapes s ins =
   let f = int32 s at_family in
   if f = family_contract then contract_shapes s ins
+  else if f = family_map then map_shapes s ins
   else invalid_argf "Nx_kernel.Spec.shapes: family %d" f
 
 (* Views *)

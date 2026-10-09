@@ -490,6 +490,181 @@ let test_view_allocates_nothing () =
   calls ();
   equal float_exact (minor_words nothing) (minor_words calls)
 
+(* Maps *)
+
+module P = Nx_kernel.Prog
+
+let hex s =
+  String.concat ""
+    (List.init (String.length s) (fun i -> Printf.sprintf "%02x" (Char.code s.[i])))
+
+let map_dtypes = D.[ Any Float32; Any Int8; Any Bool; Any Int4; Any Complex64 ]
+
+type map_case = { ins : D.any array; loads : S.load array; shape : int array }
+
+let pp_load ppf = function
+  | S.Plain -> Format.pp_print_string ppf "plain"
+  | Padded { pad; _ } ->
+      Format.fprintf ppf "padded lo %a hi %a interior %a, %d windows" pp_ints
+        pad.lo pp_ints pad.hi pp_ints pad.interior (Array.length pad.windows)
+
+let pp_map_case ppf c =
+  Format.fprintf ppf "shape %a, loads %a" pp_ints c.shape
+    (Format.pp_print_list pp_load)
+    (Array.to_list c.loads)
+
+let load_of (D.Any dt) r =
+  let open Gen in
+  let small = int_range (-2) 3 in
+  let* padded = bool in
+  if not padded then constant S.Plain
+  else
+    let* lo = array ~size:(constant r) small in
+    let* hi = array ~size:(constant r) small in
+    let* interior = array ~size:(constant r) (int_range 0 2) in
+    let* window = option (pair (int_range 0 (max 0 (r - 1))) (int_range 1 3)) in
+    let windows =
+      match window with
+      | Some (axis, size) when r > 0 ->
+          [| { Nx_array.Move.axis; size; step = 1 + (size mod 2); dilation = 1 } |]
+      | _ -> [||]
+    in
+    constant
+      (S.Padded
+         { fill = P.bits dt (D.one dt); pad = { lo; hi; interior; windows } })
+
+let map_case =
+  Gen.with_pp pp_map_case
+    (let open Gen in
+     let* shape = Nx_array_gen.shape in
+     let* ins =
+       array ~size:(int_range 1 (P.max_operands / 2)) (of_list ~pp:(fun ppf (D.Any d) -> D.pp ppf d) map_dtypes)
+     in
+     let+ loads =
+       let rec go k acc =
+         if k = Array.length ins then constant (Array.of_list (List.rev acc))
+         else
+           let* l = load_of ins.(k) (Array.length shape) in
+           go (k + 1) (l :: acc)
+       in
+       go 0 []
+     in
+     { ins; loads; shape })
+
+let prog_of c =
+  P.v ~ins:c.ins
+    (Array.mapi (fun k _ -> P.In k) c.ins)
+    ~outs:(Array.mapi (fun k _ -> k) c.ins)
+
+(* What C reads, rendered as the support reader renders it. *)
+let render (p : P.t) loads =
+  let line = function
+    | S.Plain -> "\nplain"
+    | Padded { fill; pad } ->
+        let nums =
+          Array.concat
+            [
+              pad.lo;
+              pad.hi;
+              pad.interior;
+              Array.concat
+                (Array.to_list
+                   (Array.map
+                      (fun (w : Nx_array.Move.window) ->
+                        [| w.axis; w.size; w.step; w.dilation |])
+                      pad.windows));
+            ]
+        in
+        Printf.sprintf "\npadded %d %d %s%s" (Array.length pad.lo)
+          (Array.length pad.windows)
+          (hex (fill ^ String.make (16 - String.length fill) '\000'))
+          (String.concat "" (Array.to_list (Array.map (Printf.sprintf " %d") nums)))
+  in
+  Printf.sprintf "family 2 prog %s" (hex (p :> string))
+  ^ String.concat "" (Array.to_list (Array.map line loads))
+
+let law_map_encoding c =
+  let p = prog_of c in
+  let s = S.map p ~loads:c.loads in
+  equal ~msg:"C reads" string (render p c.loads) (Nx_kernel_support.map s);
+  equal ~msg:"prog" string (p :> string) (S.prog s : P.t :> string);
+  equal ~msg:"loads" bool true (S.loads s = c.loads)
+
+(* The shape an operand of shape [x] has once loaded, by the rule. *)
+let loaded x = function
+  | S.Plain -> Some x
+  | Padded { pad; _ } ->
+      let padded =
+        Array.mapi
+          (fun i d ->
+            pad.lo.(i) + pad.hi.(i) + d + (pad.interior.(i) * max 0 (d - 1)))
+          x
+      in
+      if Array.exists (fun d -> d < 0) padded then None
+      else if pad.windows = [||] then Some padded
+      else
+        match Nx_array.Move.shape (Window pad.windows) padded with
+        | y -> Some y
+        | exception Invalid_argument _ -> None
+
+let law_map_shapes c =
+  let s = S.map (prog_of c) ~loads:c.loads in
+  let ins = Array.map (fun _ -> c.shape) c.ins in
+  let shapes = Array.map (loaded c.shape) c.loads in
+  let want =
+    match shapes.(0) with
+    | Some y when Array.for_all (fun z -> z = Some y) shapes ->
+        Ok (List.init (Array.length c.ins) (fun _ -> Array.to_list y))
+    | _ -> Error ()
+  in
+  cover "fits" (Result.is_ok want);
+  cover "padded" (Array.exists (fun l -> l <> S.Plain) c.loads);
+  equal (result (list (list int)) unit) want (result_of (S.shapes s ins))
+
+let test_map_refuses () =
+  let f32 = D.Any D.Float32 in
+  let p = P.v ~ins:[| f32 |] [| P.In 0 |] ~outs:[| 0 |] in
+  let pad = { S.lo = [| 0 |]; hi = [| 0 |]; interior = [| 0 |]; windows = [||] } in
+  let fill = P.bits D.Float32 0. in
+  let refuses ~msg loads =
+    raises_match ~msg Exn.invalid_arg (fun () -> S.map p ~loads)
+  in
+  refuses ~msg:"a load too many" [| S.Plain; Plain |];
+  refuses ~msg:"no load" [||];
+  refuses ~msg:"a fill of the wrong width"
+    [| Padded { fill = "\000"; pad } |];
+  refuses ~msg:"lengths differ"
+    [| Padded { fill; pad = { pad with hi = [| 0; 0 |] } } |];
+  refuses ~msg:"negative interior"
+    [| Padded { fill; pad = { pad with interior = [| -1 |] } } |];
+  refuses ~msg:"a window past the rank"
+    [|
+      Padded
+        {
+          fill;
+          pad =
+            {
+              pad with
+              windows = [| { Nx_array.Move.axis = 1; size = 1; step = 1; dilation = 1 } |];
+            };
+        };
+    |];
+  refuses ~msg:"an empty window"
+    [|
+      Padded
+        {
+          fill;
+          pad =
+            {
+              pad with
+              windows = [| { Nx_array.Move.axis = 0; size = 0; step = 1; dilation = 1 } |];
+            };
+        };
+    |];
+  let none = P.v ~ins:[||] [| P.Coord 0 |] ~outs:[| 0 |] in
+  equal ~msg:"no operand, no shape" bool true
+    (Result.is_error (S.shapes (S.map none ~loads:[||]) [||]))
+
 let tests =
   [
     group "encoder"
@@ -500,6 +675,14 @@ let tests =
           "refuses negative, repeated and out-of-range axes and narrow \
            accumulators"
           test_encoder_refuses;
+      ];
+    group "maps"
+      [
+        prop "C reads what map was given, and so do the readers" map_case
+          law_map_encoding;
+        prop "results have the operands' one shape once loaded" map_case
+          law_map_shapes;
+        test "refuses loads that do not fit the program" test_map_refuses;
       ];
     group "shapes"
       [

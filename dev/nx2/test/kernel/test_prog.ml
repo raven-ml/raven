@@ -379,7 +379,10 @@ let build ins choices nouts =
   {
     ins;
     nodes;
-    outs = Array.init (min nouts n) (fun k -> n - 1 - k);
+    outs =
+      Array.init
+        (min (min nouts n) (P.max_operands - Array.length ins))
+        (fun k -> n - 1 - k);
   }
 
 let pp_drawn ppf d =
@@ -466,10 +469,10 @@ let test_program_refuses () =
   refuses ~msg:"a bool of 2" [| P.Const (D.Any D.Bool, "\002") |] [| 0 |];
   refuses ~msg:"no output" [| P.In 0 |] [||];
   refuses ~msg:"an output past the nodes" [| P.In 0 |] [| 1 |];
-  refuses ~msg:"seventeen operands and outputs"
-    ~ins:(Array.make 16 f32)
+  refuses ~msg:"more operands and outputs than a loop holds"
+    ~ins:(Array.make P.max_operands f32)
     [| P.In 0 |] [| 0 |];
-  ignore (P.v ~ins:(Array.make 15 f32) [| P.In 0 |] ~outs:[| 0 |])
+  ignore (P.v ~ins:(Array.make (P.max_operands - 1) f32) [| P.In 0 |] ~outs:[| 0 |])
 
 let test_readers_refuse () =
   let p = P.v ~ins:[| D.Any D.Float32 |] [| P.In 0 |] ~outs:[| 0 |] in

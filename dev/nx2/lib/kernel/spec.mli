@@ -16,7 +16,63 @@ type 'f t
 val shapes : 'f t -> int array array -> (int array array, string) result
 (** [shapes s ins] is the shapes of [s]'s results for operands of the shapes
     [ins], in the order the family's kernel takes them, or why they do not fit
-    [s]. *)
+    [s]. A map's results have the one shape its operands have once loaded;
+    a map with no operand has no shape of its own, and is an [Error]. *)
+
+(** {1:loads Loads} *)
+
+type pad = {
+  lo : int array;
+  hi : int array;
+  interior : int array;
+  windows : Nx_array.Move.window array;
+}
+(** The type for paddings of an operand of rank [r], each array of [lo], [hi]
+    and [interior] of length [r]. Along axis [i] it puts [lo.(i)] elements
+    before the operand's, [hi.(i)] after and [interior.(i)] between
+    neighbours; a negative [lo] or [hi] crops instead. Then it takes the
+    windows [windows] of the padded operand, as {!Nx_array.Move.Window}
+    does. *)
+
+type load =
+  | Plain  (** The operand through its layout. *)
+  | Padded of { fill : string; pad : pad }
+      (** The operand padded with the element of bits [fill] in its dtype
+          ({!Prog.bits}), as [pad] says. *)
+(** The type for how a loop reads an operand. *)
+
+(** {1:monoids Monoids} *)
+
+type monoid = Sum | Prod | Max | Min | Logsumexp
+(** The type for monoids a reduction folds with. *)
+
+type extreme = Max | Min
+(** The type for extremes a reduction finds with their positions. *)
+
+type combine = Set | Add | Max | Min
+(** The type for how a scatter combines an element with its target's. *)
+
+(** {1:maps Maps} *)
+
+type map
+(** The family of maps. *)
+
+val map : Prog.t -> loads:load array -> map t
+(** [map p ~loads] runs [p] at every index of one shape, reading operand [i]
+    as [loads.(i)] says. Result [k] is [p]'s output [k] at each index, of that
+    node's dtype.
+
+    Raises [Invalid_argument] unless [loads] has one load per operand of [p],
+    each [fill] is an element of its operand's dtype, each [pad]'s arrays have
+    one length, [interior] is not negative, and [windows] are on strictly
+    increasing axes below that length, with [size], [step] and [dilation] at
+    least [1]. *)
+
+val prog : map t -> Prog.t
+(** [prog s] is [s]'s program. *)
+
+val loads : map t -> load array
+(** [loads s] is how [s] reads each operand. *)
 
 (** {1:contract Contractions} *)
 

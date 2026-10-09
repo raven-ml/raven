@@ -188,7 +188,11 @@ type node =
    order. *)
 type t = string
 
-let max_operands = 16
+external loop_operands : unit -> (int[@untagged])
+  = "nx_kernel_max_operands_byte" "nx_kernel_max_operands"
+[@@noalloc]
+
+let max_operands = loop_operands ()
 let header = 16
 let record = 40
 let at_bits = 24
@@ -385,3 +389,19 @@ let node p i =
   | 3 -> Op1 (op1_of (f 4), dtypes.(f 8), a)
   | 4 -> Op2 (op2_of (f 4), a, b)
   | _ -> Op3 (op3_of (f 4), a, b, c)
+
+let of_string s =
+  let n = String.length s in
+  if n < header then None
+  else
+    let nins = get s 0 and nnodes = get s 4 and nouts = get s 8 in
+    if
+      nins < 0 || nnodes < 0 || nouts < 0
+      || n <> header + (record * nnodes) + (4 * (nins + nouts))
+    then None
+    else
+      match
+        v ~ins:(ins s) (Array.init nnodes (node s)) ~outs:(outs s)
+      with
+      | p -> if String.equal p s then Some p else None
+      | exception Invalid_argument _ -> None

@@ -29,6 +29,24 @@ _Static_assert(offsetof(nx_prog_node, bits) == 24, "at_bits");
 _Static_assert(NX_OP1_COUNT == 28 && NX_OP2_COUNT == 18 && NX_OP3_COUNT == 2,
                "one code per kind");
 
+/* spec.ml writes nx_spec_map and nx_spec_pad at these byte offsets. */
+_Static_assert(offsetof(nx_spec_map, nloads) == 4, "at_nloads");
+_Static_assert(offsetof(nx_spec_map, at_prog) == 8, "at_prog");
+_Static_assert(offsetof(nx_spec_map, prog_len) == 12, "at_prog_len");
+_Static_assert(offsetof(nx_spec_map, loads) == 16, "at_loads");
+_Static_assert(offsetof(nx_spec_pad, fill) == 8, "at_fill");
+_Static_assert(offsetof(nx_spec_pad, geometry) == 24, "at_geometry");
+
+/* The most operands plus outputs of a loop, which bounds a program's. */
+intnat nx_kernel_max_operands(value unit) {
+  (void)unit;
+  return NX_MAX_OPERANDS;
+}
+
+value nx_kernel_max_operands_byte(value unit) {
+  return Val_long(nx_kernel_max_operands(unit));
+}
+
 /* The bits nx_dtype.h's store of [x] writes into an element of the float
    dtype [dt] of at most 16 bits. */
 intnat nx_kernel_narrow_bits(intnat dt, double x) {

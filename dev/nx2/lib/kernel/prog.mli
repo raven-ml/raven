@@ -179,14 +179,15 @@ type node =
   | Op3 of op3 * int * int * int
       (** [Op3 (k, i, j, l)] is [k] of nodes [i], [j] and [l]. *)
 
-type t
+type t = private string
 (** The type for programs: operand dtypes, nodes, and the nodes it outputs.
     Each node's value is its exact result rounded once to its dtype. It is
     [nx_spec.h]'s [nx_prog] in a string, so equal programs are equal
-    strings. *)
+    strings, and a descriptor that holds a program holds these bytes. *)
 
 val max_operands : int
-(** [max_operands] is [16], the most operands plus outputs a program has. *)
+(** [max_operands] is the most operands plus outputs a program has: the most
+    a loop holds, [NX_MAX_OPERANDS] of [nx_array.h]. *)
 
 val accepts : node -> Nx_array.Dtype.any array -> bool
 (** [accepts n dts] is [true] iff [n]'s kind takes nodes of the dtypes [dts],
@@ -203,6 +204,10 @@ val v : ins:Nx_array.Dtype.any array -> node array -> outs:int array -> t
     dtypes ({!accepts}); every [Const]'s bits are an element of its dtype;
     [outs] is not empty and names nodes; and operands plus outputs are at
     most {!max_operands}. *)
+
+val of_string : string -> t option
+(** [of_string s] is [Some p] iff [s] is the program [p]: the bytes {!v}
+    makes for some arguments. *)
 
 val ins : t -> Nx_array.Dtype.any array
 (** [ins p] is [p]'s operand dtypes. *)

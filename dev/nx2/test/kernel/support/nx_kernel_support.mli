@@ -22,3 +22,10 @@ val prog : Nx_kernel.Prog.t -> string
     name in snake case or [-], its dtype's code, its three operand fields and
     its sixteen bytes of constant bits in hex; then a line [ins] with the
     operands' dtype codes and a line [outs] with the output nodes. *)
+
+val map : Nx_kernel.Spec.map Nx_kernel.Spec.t -> string
+(** [map s] is [s] read by C through [nx_spec.h]'s [nx_spec_map] and
+    [nx_spec_pad]: [family f prog h], [h] its program's bytes in hex, then a
+    line per load, [plain], or [padded r w f] followed by [lo], [hi],
+    [interior] and each window's axis, size, step and dilation, [f] the fill's
+    sixteen bytes in hex. *)

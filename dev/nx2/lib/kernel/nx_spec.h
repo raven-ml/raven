@@ -17,7 +17,7 @@
 #include <stdint.h>
 
 /* A descriptor's family, its first field. */
-enum { NX_SPEC_CONTRACT = 1 };
+enum { NX_SPEC_CONTRACT = 1, NX_SPEC_MAP = 2 };
 
 /* Prog.t: a scalar program. Counts of operands, nodes and outputs, then a
    record per node, then the operands' dtype codes (nx_dtype.h) and the
@@ -63,6 +63,34 @@ static inline const int32_t *nx_prog_ins(const nx_prog *p) {
 
 static inline const int32_t *nx_prog_outs(const nx_prog *p) {
   return nx_prog_ins(p) + p->nins;
+}
+
+/* Spec.map: the program, at byte [at_prog] and [prog_len] bytes long, and
+   per load the byte offset of its padding, or 0 for a plain load. A
+   padding holds its operand's rank and window count, the fill's bits,
+   zero-padded, then int64 [lo], [hi] and [interior] by axis and each
+   window's axis, size, step and dilation. */
+typedef struct {
+  int32_t family; /* NX_SPEC_MAP */
+  int32_t nloads;
+  int32_t at_prog, prog_len;
+  int32_t loads[];
+} nx_spec_map;
+
+typedef struct {
+  int32_t rank, nwindows;
+  uint8_t fill[16];
+  int64_t geometry[]; /* lo, hi, interior, then windows[nwindows][4] */
+} nx_spec_pad;
+
+static inline const nx_prog *nx_spec_map_prog(const nx_spec_map *m) {
+  return (const nx_prog *)((const uint8_t *)m + m->at_prog);
+}
+
+/* Load [k]'s padding, or NULL for a plain load. */
+static inline const nx_spec_pad *nx_spec_map_pad(const nx_spec_map *m, int k) {
+  if (m->loads[k] == 0) return 0;
+  return (const nx_spec_pad *)((const uint8_t *)m + m->loads[k]);
 }
 
 /* Spec.contract: the dtypes the sum runs in and its result has (nx_dtype.h's
