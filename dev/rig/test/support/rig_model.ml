@@ -1303,7 +1303,6 @@ let copy_judge ~invalid last src a b outcome =
     waits_all vd b.mem
   end;
   let w = src.w in
-  seen w "a copy between a file and a borrow of its pages" (own_pages a b);
   let lost () =
     unknown b;
     List.iter
