@@ -149,8 +149,11 @@ let slot names hashes name off =
 
 (* [names] without repeats, by hash, then bytes, and their hashes. *)
 let order names =
+  let by_key (h, n) (h', n') =
+    match Int.compare h h' with 0 -> String.compare n n' | c -> c
+  in
   let keyed = List.map (fun n -> (hash_from n 0 fnv_offset, n)) names in
-  let keyed = Array.of_list (List.sort_uniq compare keyed) in
+  let keyed = Array.of_list (List.sort_uniq by_key keyed) in
   (Array.map snd keyed, Array.map fst keyed)
 
 (* The position after [prefix] in [name], or [-1]. A loop of its own:

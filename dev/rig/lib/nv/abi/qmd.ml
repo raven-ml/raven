@@ -170,8 +170,9 @@ let set_program addr q =
     p.program_prefetch_addr_upper_shifted
     (shifted addr prefetch_unit)
 
+(* [memq]: ints are equal when physically equal, with no polymorphic compare. *)
 let set_bank i addr q =
-  if not (List.mem i q.banks) then
+  if not (List.memq i q.banks) then
     invalid_argf "Qmd.set_bank: bank %d, expected one of %s" i
       (String.concat ", " (List.map string_of_int q.banks));
   let p = q.layout in
