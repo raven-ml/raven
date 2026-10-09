@@ -12,27 +12,48 @@ let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 
 (* Values' facts *)
 
+let live = ""
+
 let at : type v s d. (v, s, d) t -> d Devices.placement option = function
-  | Array { at; _ } | Shards { at; _ } -> Some at
+  | Array { at; _ } | Shards { at; _ } | Donated { at; _ } -> Some at
   | Deferred { form; _ } | Traced { form; _ } -> form.placement
 
 let placement : type v s d. (v, s, d) t -> d Devices.placement = function
-  | Array { at; _ } | Shards { at; _ } -> at
+  | Array { at; _ } | Shards { at; _ } | Donated { at; _ } -> at
   | Traced { form = { placement = Some p; _ }; _ } -> p
   | Deferred _ | Traced _ -> invalid_arg "Prim.placement: a value of every set"
 
 let dtype : type v s d. (v, s, d) t -> (v, s) dtype = function
   | Array { a; _ } -> Nx_array.dtype a
-  | Shards { arrays; _ } -> Nx_array.dtype arrays.(0)
+  | Shards { arrays; _ } | Donated { arrays; _ } -> Nx_array.dtype arrays.(0)
   | Deferred { form; _ } | Traced { form; _ } -> form.dtype
 
 (* The layout of [x]'s array, of its first shard, or of its form. *)
 let own_layout : type v s d. (v, s, d) t -> L.t = function
   | Array { a; _ } -> Nx_array.layout a
-  | Shards { arrays; _ } -> Nx_array.layout arrays.(0)
+  | Shards { arrays; _ } | Donated { arrays; _ } -> Nx_array.layout arrays.(0)
   | Deferred { form; _ } | Traced { form; _ } -> form.layout
 
 let rank x = L.rank (own_layout x)
+
+let death : type v s d. (v, s, d) t -> string = function
+  | Array r -> r.dead
+  | Shards r -> r.dead
+  | Donated r ->
+      (* A handle passed on dies with its chain's consumer. *)
+      let c = r.chain.consumer in
+      if String.length c > 0 then c else r.spent
+  | Deferred _ | Traced _ -> ""
+
+let alive ~by i x =
+  let why = death x in
+  if String.length why > 0 then
+    invalid_argf "%s: operand %d was donated to %s" by (i + 1) why
+
+let of_arrays (type v s d) (p : d Devices.placement)
+    (arrays : (v, s) Nx_array.t array) : (v, s, d) t =
+  if Array.length arrays = 1 then Array { at = p; a = arrays.(0); dead = live }
+  else Shards { at = p; arrays; dead = live }
 
 (* The tiles along [axis] of a value at [p]: 1 where it is not cut. *)
 let tiles p axis =
@@ -48,7 +69,7 @@ let dim (type v s d) (x : (v, s, d) t) i =
       (Printf.sprintf "Prim.dim: axis %d of a value of rank %d" i (L.rank l));
   match x with
   | Array _ | Deferred _ | Traced _ -> L.dim l i
-  | Shards { at; _ } -> L.dim l i * tiles at i
+  | Shards { at; _ } | Donated { at; _ } -> L.dim l i * tiles at i
 
 let shape x = Array.init (rank x) (dim x)
 
@@ -67,19 +88,19 @@ let same_shape (type v s w r d) (x : (v, s, d) t) (y : (w, r, d) t) =
 
 let form (type v s d) (x : (v, s, d) t) : (v, s, d) form =
   match x with
-  | Array { at; a } ->
+  | Array { at; a; _ } | Donated { at; arrays = [| a |]; _ } ->
       {
         dtype = Nx_array.dtype a;
         layout = Nx_array.layout a;
         placement = Some at;
       }
-  | Shards { at; _ } ->
+  | Shards { at; _ } | Donated { at; _ } ->
       { dtype = dtype x; layout = L.contiguous (shape x); placement = Some at }
   | Deferred { form; _ } | Traced { form; _ } -> form
 
 let is_constant : type v s d. (v, s, d) t -> bool = function
   | Deferred _ -> true
-  | Array _ | Shards _ | Traced _ -> false
+  | Array _ | Shards _ | Donated _ | Traced _ -> false
 
 let expect (type v s) (dt : (v, s) dtype) (Any x : 'd any) : (v, s, 'd) t =
   match D.equal_witness dt (dtype x) with
@@ -519,7 +540,8 @@ let prepare : type r. by:string -> placer -> r prim -> r prim =
 
 let arrays_of : type v s d. (v, s, d) t -> Nx_array.any array = function
   | Array { a; _ } -> [| Nx_array.Any a |]
-  | Shards { arrays; _ } -> Array.map (fun a -> Nx_array.Any a) arrays
+  | Shards { arrays; _ } | Donated { arrays; _ } ->
+      Array.map (fun a -> Nx_array.Any a) arrays
   | Deferred _ -> invalid_arg "Prim.arrays: a constant has no arrays"
   | Traced _ -> invalid_arg "Prim.arrays: a traced value has no arrays"
 

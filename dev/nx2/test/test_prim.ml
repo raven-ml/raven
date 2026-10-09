@@ -24,7 +24,8 @@ let invalid f = raises_match (Exn.invalid_arg ~substring:"Nx.f: ") f
 let floats shape = Array.init (Array.fold_left ( * ) 1 shape) float_of_int
 
 let value d a : ('v, 's, b) Value.t =
-  Value.Array { at = Devices.one s2 d; a = A.to_device (m d) a }
+  Value.Array
+    { at = Devices.one s2 d; a = A.to_device (m d) a; dead = Prim.live }
 
 let f32 ?(d = 0) shape = value d (A.of_array D.Float32 shape (floats shape))
 
@@ -37,7 +38,8 @@ let recording () =
       (k, D.Any f.dtype, f.layout, Option.map Devices.rebrand f.placement)
       :: !forms;
     let a = A.create Rig.host f.dtype (L.shape f.layout) in
-    Value.Array { at = Devices.rebrand (Devices.one Devices.host 0); a }
+    Value.Array
+      { at = Devices.rebrand (Devices.one Devices.host 0); a; dead = Prim.live }
   in
   ({ Prim.make }, fun () -> List.rev !forms)
 
@@ -76,6 +78,7 @@ let split_x () : (float, D.float32_elt, b) Value.t =
           A.to_device (m 0) (A.of_array D.Float32 [| 2 |] [| 0.; 1. |]);
           A.to_device (m 1) (A.of_array D.Float32 [| 2 |] [| 2.; 3. |]);
         |];
+      dead = Prim.live;
     }
 
 let i32 : (int32, D.int32_elt, b) Value.t =
@@ -286,13 +289,14 @@ let array_of (type v s) (x : (v, s, b) Value.t) =
     ~pp:(fun ppf _ -> Format.pp_print_string ppf "a value on two devices")
     (function
       | Value.Array { a; _ } -> Some a
-      | Shards _ | Deferred _ | Traced _ -> None)
+      | Shards _ | Donated _ | Deferred _ | Traced _ -> None)
     x
 
 let moved_by mv x =
   match x with
-  | Value.Array { at; a } -> Value.Array { at; a = Option.get (A.move mv a) }
-  | Shards _ | Deferred _ | Traced _ -> x
+  | Value.Array { at; a; _ } ->
+      Value.Array { at; a = Option.get (A.move mv a); dead = Prim.live }
+  | Shards _ | Donated _ | Deferred _ | Traced _ -> x
 
 let movements =
   group "movements"

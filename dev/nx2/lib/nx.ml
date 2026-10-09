@@ -190,6 +190,7 @@ let reshape s x =
   Eval.eval ~by:"Nx.reshape" (Value.Move (Reshape (Array.copy s), x))
 
 let copy x = Eval.eval ~by:"Nx.copy" (Value.Copy x)
+let donate x = Exec.donate ~by:"Nx.donate" x
 
 (* Operations as data *)
 

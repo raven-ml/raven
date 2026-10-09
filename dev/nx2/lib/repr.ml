@@ -10,7 +10,10 @@ let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 
 let of_array ~by s a =
   match Devices.position s (A.device a) with
-  | Some k -> Value.Array { at = Devices.one s k; a }
+  | Some k ->
+      (* Its caller keeps the array: no donation writes this memory. *)
+      Rig.Claim.share (A.buffer a);
+      Value.Array { at = Devices.one s k; a; dead = Prim.live }
   | None ->
       invalid_argf "%s: the array lies on %s, which is not a device of %a" by
         (Rig.name (A.device a))
@@ -42,24 +45,30 @@ let of_shards ~by p arrays =
         invalid_argf "%s: the placement cuts axis %d of arrays of rank %d" by
           axis (Array.length shape))
     (Grid.cuts (Devices.grid p));
-  if n = 1 then Value.Array { at = p; a = arrays.(0) }
-  else Value.Shards { at = p; arrays = Array.copy arrays }
+  Array.iter (fun a -> Rig.Claim.share (A.buffer a)) arrays;
+  Prim.of_arrays p (Array.copy arrays)
 
-(* A traced value has no bytes to read; a formula answers [None]. *)
-let concrete (type v s d) ~by (x : (v, s, d) Value.t) =
+(* [x]'s arrays, handed to a caller: their memory leaves the claims for good, so
+   that no donation writes what the caller reads. A traced value has no bytes to
+   read; a formula answers [None]. *)
+let crossing (type v s d) ~by (x : (v, s, d) Value.t) : (v, s) A.t array option
+    =
+  Prim.alive ~by 0 x;
+  let out arrays =
+    Array.iter (fun a -> Rig.Claim.share (A.buffer a)) arrays;
+    Some arrays
+  in
   match x with
-  | Value.Deferred _ -> x
+  | Value.Deferred _ -> None
   | Value.Traced { owner; _ } ->
       invalid_argf "%s: a value traced by %s has no bytes" by owner.name
-  | Value.Array _ | Value.Shards _ -> x
+  | Value.Array { a; _ } -> out [| a |]
+  | Value.Shards { arrays; _ } | Value.Donated { arrays; _ } ->
+      out (Array.copy arrays)
 
-let array (type v s d) (x : (v, s, d) Value.t) =
-  match concrete ~by:"Nx.Repr.array" x with
-  | Value.Array { a; _ } -> Some a
-  | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> None
+let array x =
+  match crossing ~by:"Nx.Repr.array" x with
+  | Some [| a |] -> Some a
+  | Some _ | None -> None
 
-let shards (type v s d) (x : (v, s, d) Value.t) =
-  match concrete ~by:"Nx.Repr.shards" x with
-  | Value.Array { a; _ } -> Some [| a |]
-  | Value.Shards { arrays; _ } -> Some (Array.copy arrays)
-  | Value.Deferred _ | Value.Traced _ -> None
+let shards x = crossing ~by:"Nx.Repr.shards" x

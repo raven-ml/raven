@@ -11,8 +11,9 @@ let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 type domain = { mutable next : int; extents : int Atomic.t }
 
 let here = Domain.DLS.new_key (fun () -> { next = 0; extents = Atomic.make 0 })
-(* Live [Extent] interpretations on every domain: with none, an operation
-   reads this and not its domain's count, a domain-local read it saves. *)
+
+(* Live [Extent] interpretations on every domain: with none, an operation reads
+   this and not its domain's count, a domain-local read it saves. *)
 let all_extents = Atomic.make 0
 
 let quiet () =
@@ -70,12 +71,12 @@ let traced i form payload = Traced { form; owner = i; payload }
 let payload (type v s d) i (x : (v, s, d) t) =
   match x with
   | Traced { owner; payload; _ } when owner == i -> Some payload
-  | Traced _ | Array _ | Shards _ | Deferred _ -> None
+  | Traced _ | Array _ | Shards _ | Donated _ | Deferred _ -> None
 
 let owner (type v s d) (x : (v, s, d) t) =
   match x with
   | Traced { owner; _ } -> Some owner
-  | Array _ | Shards _ | Deferred _ -> None
+  | Array _ | Shards _ | Donated _ | Deferred _ -> None
 
 let later a b =
   if a.domain <> b.domain then
@@ -105,7 +106,7 @@ let receiver ~by op =
         | Traced { owner; _ } ->
             check ~by owner;
             innermost best (Some owner)
-        | Array _ | Shards _ | Deferred _ -> best)
+        | Array _ | Shards _ | Donated _ | Deferred _ -> best)
       None xs
   in
   if quiet () then best

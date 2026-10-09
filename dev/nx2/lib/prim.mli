@@ -29,6 +29,23 @@ val placement : ('v, 's, 'd) t -> 'd Devices.placement
 (** [placement x] is [x]'s placement, as {!at} gives it. Raises
     [Invalid_argument] for a value of every set. *)
 
+val of_arrays :
+  'd Devices.placement -> ('v, 's) Nx_array.t array -> ('v, 's, 'd) t
+(** [of_arrays p arrays] is the live value over [arrays], one per device of [p]:
+    [Array] for one, [Shards] otherwise. *)
+
+val live : string
+(** [live] is the death word of a live value: values are made with it, so that a
+    death claims it by physical comparison. *)
+
+val death : ('v, 's, 'd) t -> string
+(** [death x] is [""] while [x] lives, and the function it was donated to, or
+    that read its handle, once it died. It reads one atomic word. *)
+
+val alive : by:string -> int -> ('v, 's, 'd) t -> unit
+(** [alive ~by i x] raises [Invalid_argument] naming [by], operand [i + 1] and
+    the function [x] was donated to, if [x] died. *)
+
 val rank : ('v, 's, 'd) t -> int
 
 val dim : ('v, 's, 'd) t -> int -> int

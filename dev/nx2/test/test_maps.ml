@@ -30,6 +30,7 @@ let f32 data : (float, D.float32_elt, b) Value.t =
     {
       at = at1;
       a = A.to_device (m 0) (A.of_array D.Float32 [| Array.length data |] data);
+      dead = Prim.live;
     }
 
 let elements (type v s) (x : (v, s, b) Value.t) : v array =
@@ -106,6 +107,7 @@ let checks =
                 at = at1;
                 a =
                   A.to_device (m 0) (A.of_array D.Bool [| 2 |] [| true; true |]);
+                dead = Prim.live;
               }
           in
           Exec.run ~by:"t"
@@ -120,6 +122,7 @@ let checks =
                 a =
                   A.to_device (m 0)
                     (A.of_array D.Bool [| 3 |] [| true; false; false |]);
+                dead = Prim.live;
               }
           in
           let fail i data =
@@ -187,7 +190,9 @@ let constants =
             match x with
             | Value.Deferred { node = Value.Node n; _ } ->
                 List.length (Atomic.get n.memo)
-            | Value.Array _ | Value.Shards _ | Value.Traced _ -> -1
+            | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _
+              ->
+                -1
           in
           ignore (Exec.at at1 d);
           equal ~msg:"d" int 1 (kept d);
@@ -261,4 +266,72 @@ let programs =
   group "programs"
     [ test "programs of distinct literals are not kept" test_literals_not_kept ]
 
-let () = exit (run "nx maps" [ maps; checks; constants; rules; programs ])
+(* Donation's reuse: an elementwise operation writes into a donated operand's
+   memory where rig holds it exclusive and it fits the result. *)
+let array_of (type v s) (x : (v, s, b) Value.t) : (v, s) A.t =
+  match x with
+  | Value.Array { a; _ } -> a
+  | Value.Shards _ | Value.Donated _ | Value.Deferred _ | Value.Traced _ ->
+      fail "not on one device"
+
+let donated_add x =
+  let d = Exec.donate ~by:"t" x in
+  let y =
+    first
+      (Exec.run ~by:"t" (Prim.op2 (Binary Add) D.Float32 d (f32 [| 1.; 1. |])))
+  in
+  (y, Rig.Buffer.overlaps (A.buffer (array_of x)) (A.buffer (array_of y)))
+
+let test_reuse () =
+  let x = f32 [| 1.; 2. |] in
+  let y, reused = donated_add x in
+  equal ~msg:"written in place" bool true reused;
+  equal ~msg:"the result" (array bits) [| 2.; 3. |] (elements y)
+
+(* The same through the fast path of an elementwise operation. *)
+let test_reuse_fast () =
+  let x = f32 [| 1.; 2. |] in
+  let d = Exec.donate ~by:"t" x in
+  let y =
+    Exec.apply2 ~slow:slow2 ~by:"t" (Binary Add) D.Float32 (f32 [| 1.; 1. |]) d
+  in
+  equal ~msg:"written in place" bool true
+    (Rig.Buffer.overlaps (A.buffer (array_of x)) (A.buffer (array_of y)));
+  equal ~msg:"the result" (array bits) [| 2.; 3. |] (elements y)
+
+let test_no_reuse_shared () =
+  let x = f32 [| 1.; 2. |] in
+  Rig.Claim.share (A.buffer (array_of x));
+  let y, reused = donated_add x in
+  equal ~msg:"fresh memory" bool false reused;
+  equal ~msg:"the result" (array bits) [| 2.; 3. |] (elements y)
+
+let test_no_reuse_strided () =
+  let base = f32 [| 1.; 0.; 2.; 0. |] in
+  let x =
+    Value.Array
+      {
+        at = at1;
+        a =
+          Option.get
+            (A.move
+               (Slice [| { start = 0; count = 2; step = 2 } |])
+               (array_of base));
+        dead = Prim.live;
+      }
+  in
+  let y, reused = donated_add x in
+  equal ~msg:"fresh memory" bool false reused;
+  equal ~msg:"the result" (array bits) [| 2.; 3. |] (elements y)
+
+let donation =
+  group "donation"
+    [
+      test "an elementwise operation writes into a donated operand" test_reuse;
+      test "the fast path writes into a donated operand too" test_reuse_fast;
+      test "shared memory is not written" test_no_reuse_shared;
+      test "a strided operand is not written" test_no_reuse_strided;
+    ]
+
+let () =
+  exit (run "nx maps" [ maps; checks; constants; rules; programs; donation ])

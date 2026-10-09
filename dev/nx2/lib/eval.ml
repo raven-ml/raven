@@ -9,21 +9,29 @@ open Value
    over values of every set alone has no placement to read them at: they stay
    formulas, which an interpreter places as any caller does. *)
 let computing =
-  { Prim.place = (fun p x -> match p with Some p -> Exec.at p x | None -> x) }
+  {
+    Prim.place =
+      (fun p x ->
+        let x = Exec.live x in
+        match p with Some p -> Exec.at p x | None -> x);
+  }
 
-let read = { Prim.map = Exec.read }
+let read = { Prim.map = (fun x -> Exec.read (Exec.live x)) }
 
 let delivered : type r. by:string -> r prim -> r prim =
  fun ~by op ->
   match op with
-  | Place (p, x) -> Place (p, Exec.at (Devices.rebrand p) x)
+  | Place (p, x) -> Place (p, Exec.at (Devices.rebrand p) (Exec.live x))
   | Check _ -> Prim.map read op
   | Map _ | Copy _ | Move _ | Bitcast _ -> Prim.prepare ~by computing op
 
 let eval ~by op =
   match Interp.receiver ~by op with
   | None -> Exec.run ~by op
-  | Some i -> Interp.apply i ~by (delivered ~by op)
+  | Some i ->
+      let (Prim.Operands xs) = Prim.operands op in
+      List.iteri (fun k (Any x) -> Prim.alive ~by k x) xs;
+      Interp.apply i ~by (delivered ~by op)
 
 (* The one-node maps, built and evaluated: the paths off the fast one. *)
 let eval1 ~by k dt x =
@@ -52,9 +60,15 @@ let apply3 ~by k c x y =
 
 let place ~by p x =
   match x with
-  | Array { at; a } when Devices.rebrand at == p && Interp.quiet () ->
-      Array { at = p; a }
-  | Array _ | Shards _ | Deferred _ | Traced _ -> eval ~by (Place (p, x))
+  | Array r
+    when Devices.rebrand r.at == p
+         && String.length r.dead = 0
+         && Interp.quiet () ->
+      (* A second value over the memory shares it. *)
+      Rig.Claim.share (Nx_array.buffer r.a);
+      Array { at = p; a = r.a; dead = Prim.live }
+  | Array _ | Shards _ | Donated _ | Deferred _ | Traced _ ->
+      eval ~by (Place (p, x))
 
 let expand i ~by op =
   Interp.expanding i (fun () -> Expand.run { apply = eval } ~by op)

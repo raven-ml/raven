@@ -3,8 +3,14 @@
 ; reaches yet: their suites compile copies of the sources.
 
 (tests
- (names test_devices test_values test_place test_exec test_interp)
- (modules test_devices test_values test_place test_exec test_interp)
+ (names test_devices test_values test_place test_exec test_interp test_donate)
+ (modules
+  test_devices
+  test_values
+  test_place
+  test_exec
+  test_interp
+  test_donate)
  (libraries nx nx_array nx_kernel nx_cpu nx_support rig windtrap))
 
 (copy_files

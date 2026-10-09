@@ -186,10 +186,7 @@ let gather d dt w sources =
 
 let value (type v s d e) ~by (p : e Devices.placement) (x : (v, s, d) Value.t) :
     (v, s, e) Value.t =
-  let make arrays =
-    if Array.length arrays = 1 then Value.Array { at = p; a = arrays.(0) }
-    else Value.Shards { at = p; arrays }
-  in
+  let make arrays = Prim.of_arrays p arrays in
   let at = Prim.placement x in
   let arrays =
     match x with
@@ -199,6 +196,8 @@ let value (type v s d e) ~by (p : e Devices.placement) (x : (v, s, d) Value.t) :
         invalid_arg "Place.value: a constant is placed computed"
     | Value.Traced _ ->
         invalid_arg "Place.value: a traced value is placed by its owner"
+    | Value.Donated _ ->
+        invalid_arg "Place.value: a donated value is placed as its consumer"
   in
   if Devices.equal at p then make arrays
   else begin
@@ -225,6 +224,8 @@ let held (type v s d) ~by (x : (v, s, d) Value.t) k w : (v, s) A.t =
     | Value.Shards { arrays; _ } -> arrays
     | Value.Deferred _ -> invalid_arg "Place.view: a constant has no arrays"
     | Value.Traced _ -> invalid_arg "Place.view: a traced value has no arrays"
+    | Value.Donated _ ->
+        invalid_arg "Place.view: a donated value is viewed live"
   in
   let devices = Grid.devices (Devices.grid at) in
   match Array.find_index (( = ) k) devices with
@@ -237,9 +238,10 @@ let held (type v s d) ~by (x : (v, s, d) Value.t) k w : (v, s) A.t =
 
 let view (type v s d) ~by (x : (v, s, d) Value.t) k w : (v, s) A.t =
   match x with
-  | Value.Array { at; a } -> (
+  | Value.Array { at; a; _ } -> (
       (* On one device the array is the whole. *)
       match Grid.one (Devices.grid at) with
       | Some j when j = k -> slice a w
       | Some _ | None -> held ~by x k w)
-  | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> held ~by x k w
+  | Value.Shards _ | Value.Donated _ | Value.Deferred _ | Value.Traced _ ->
+      held ~by x k w

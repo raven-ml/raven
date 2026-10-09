@@ -61,6 +61,12 @@ let dispatch_rows =
           Nx.zeros_like (Thumper.black_box x1m));
       Thumper.bench "zeros-1M" (fun () ->
           Nx.place Nx.Host.on (Nx.zeros D.Float32 [| 1 lsl 20 |]));
+      Thumper.bench "add-1-twice" (fun () ->
+          let x = Thumper.black_box x1 in
+          Nx.add (Nx.add x x) x);
+      Thumper.bench "add-1-twice-donated" (fun () ->
+          let x = Thumper.black_box x1 in
+          Nx.add (Nx.donate (Nx.add x x)) x);
       Thumper.bench "add-scalar-1" (fun () ->
           Nx.add (Thumper.black_box x1) (Nx.scalar D.Float32 1.));
     ]

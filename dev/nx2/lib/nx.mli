@@ -90,6 +90,31 @@ val scalar : ('v, 's) dtype -> 'v -> ('v, 's, 'd) t
 val zeros_like : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [zeros_like x] is zeros of [x]'s dtype and shape, where [x] lies. *)
 
+val donate : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [donate x] is [x], given up by its owner: a handle that one operation reads.
+    [x] stays usable until that operation is called. When it is called, [x] and
+    the handle die: a later operation on either raises [Invalid_argument] naming
+    the consumer, and its shape, dtype and placement still answer.
+
+    A movement that maps the elements one to one ({!reshape}) spends its handle
+    and passes a new one to its result, whether it makes a view or a copy; the
+    deaths wait for the final consumer. Any other operation consumes it. Two
+    handles of one donor reaching one operation raise naming [Nx.donate]: the
+    same handle twice, two donations, or one chain read twice.
+
+    The consumer may write its result into the donated memory when it reads the
+    operand only at the result's own index (an elementwise operand), the memory
+    is C-contiguous with the result's shape and dtype, and the memory is not
+    shared. Memory is shared once a value outside the donor's handle chain has
+    been made over it (a view, a borrow by {!place}, a {!Repr} crossing), and
+    stays shared. Otherwise the consumer computes into fresh memory, and a value
+    that shares the memory keeps it. Its result is the same either way.
+
+    A traced value and a value of every set are returned unchanged: nothing
+    dies, and passing such a value twice raises nothing.
+
+    Raises [Invalid_argument] if [x] is dead. *)
+
 val copy : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [copy x] is [x] stored afresh: equal elements in new memory. *)
 
@@ -317,8 +342,9 @@ end
     operands' set's kernels, and raises if the set has none. Each refusal raises
     [Invalid_argument] naming [by] and the interpretation.
 
-    No rule receives a value of every set: each such operand is computed first,
-    where the operation reads it. *)
+    A value of every set reaches a rule computed where the operation reads it,
+    beside an operand with a placement. An operation over values of every set
+    alone reaches it with them as they are, formulas with no placement. *)
 module Prim : sig
   type ('v, 's, 'd) nx := ('v, 's, 'd) t
 

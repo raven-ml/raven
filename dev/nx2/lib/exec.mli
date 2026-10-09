@@ -93,6 +93,21 @@ val at : 'd Devices.placement -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
     kernel's refusal or decline raises here, naming the function that made the
     constant. A value that is not a constant is returned as it is. *)
 
+val donate : by:string -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
+(** [donate ~by x] is a handle over [x]'s memory that one operation reads
+    ({!Value.Donated}): [x] lives until that operation is called, then dies with
+    the handle, naming the operation. An elementwise operation writes its result
+    into the memory, where rig holds it exclusive (no other value reads it) and
+    it has the result's dtype and C-contiguous layout; the memory is consumed
+    either way where no other value reads it. A movement that maps elements one
+    to one passes a new handle on instead. A constant or a traced [x] is [x].
+
+    Raises [Invalid_argument] naming [by] if [x] is dead. *)
+
+val live : ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
+(** [live x] is a handle's arrays as a live value, for an interpretation that
+    reads it without consuming it; any other value as it is. *)
+
 val read : ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
 (** [read c] is [c] computed on the host's device into memory of its own: a
     value of every set computed for this library to read, its placement the

@@ -46,26 +46,231 @@ let ran ~by answer dsts ops =
 
 (* Values from arrays *)
 
-let make (type v s d) (p : d Devices.placement) (arrays : (v, s) A.t array) :
-    (v, s, d) Value.t =
-  if Array.length arrays = 1 then Value.Array { at = p; a = arrays.(0) }
-  else Value.Shards { at = p; arrays }
+let make = Prim.of_arrays
 
 let arrays_of (type v s d) (x : (v, s, d) Value.t) : (v, s) A.t array =
   match x with
   | Value.Array { a; _ } -> [| a |]
-  | Value.Shards { arrays; _ } -> arrays
+  | Value.Shards { arrays; _ } | Value.Donated { arrays; _ } -> arrays
   | Value.Deferred _ -> invalid_arg "Exec: a constant has no arrays"
   | Value.Traced _ -> invalid_arg "Exec: a traced value has no arrays"
 
-(* Raises unless [x] is concrete or a constant: an interpretation receives every
-   operation on its traced values before eager execution can. *)
-let untraced ~by (Value.Any x) =
+(* A live value: its death word is [""]. *)
+let live_word w = String.length w = 0
+
+(* Raises unless operand [i], [x], is alive and concrete or a constant: an
+   interpretation receives every operation on its traced values before eager
+   execution can. *)
+let checked ~by i (Value.Any x) =
   match x with
   | Value.Traced { owner; _ } ->
       invalid_argf "%s: a value traced by %s reached eager execution" by
         owner.name
-  | Value.Array _ | Value.Shards _ | Value.Deferred _ -> ()
+  | Value.Donated d when live_word d.chain.consumer && not (live_word d.spent)
+    ->
+      (* A handle passed on and read again: the chain read twice. *)
+      invalid_argf "Nx.donate: %s reads one donation twice" by
+  | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Deferred _ ->
+      Prim.alive ~by i x
+
+(* Donation *)
+
+let donations = Atomic.make 0
+
+let donate (type v s d) ~by (x : (v, s, d) Value.t) : (v, s, d) Value.t =
+  Prim.alive ~by 0 x;
+  let chain claim =
+    {
+      Value.origin = Atomic.fetch_and_add donations 1;
+      claim;
+      consumer = Prim.live;
+    }
+  in
+  match x with
+  | Value.Array r ->
+      let claim why =
+        if Atomic.Loc.compare_and_set [%atomic.loc r.dead] Prim.live why then ""
+        else r.dead
+      in
+      Value.Donated
+        {
+          at = r.at;
+          arrays = [| r.a |];
+          chain = chain claim;
+          spent = Prim.live;
+        }
+  | Value.Shards r ->
+      let claim why =
+        if Atomic.Loc.compare_and_set [%atomic.loc r.dead] Prim.live why then ""
+        else r.dead
+      in
+      Value.Donated
+        { at = r.at; arrays = r.arrays; chain = chain claim; spent = Prim.live }
+  | Value.Donated _ | Value.Deferred _ | Value.Traced _ -> x
+
+(* A handle's arrays as a live value, which the operation reads. *)
+let live (type v s d) (x : (v, s, d) Value.t) : (v, s, d) Value.t =
+  match x with
+  | Value.Donated { at; arrays; _ } -> Prim.of_arrays at arrays
+  | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> x
+
+let live_operands = { Prim.map = live }
+
+type handle = Handle : ('v, 's, 'd) Value.t -> handle
+
+(* The donated operands among [xs]. Two handles of one donation, or over one
+   memory, raise naming [Nx.donate]. *)
+let handles ~by xs =
+  let hs =
+    List.filter_map
+      (fun (Value.Any x) ->
+        match x with
+        | Value.Donated _ -> Some (Handle x)
+        | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ ->
+            None)
+      xs
+  in
+  let rec check = function
+    | [] -> ()
+    | Handle x :: rest ->
+        List.iter
+          (fun (Handle y) ->
+            let same =
+              match (x, y) with
+              | Value.Donated a, Value.Donated b ->
+                  a.chain.origin = b.chain.origin
+                  || Array.exists
+                       (fun p ->
+                         Array.exists
+                           (fun q ->
+                             Rig.Buffer.overlaps (A.buffer p) (A.buffer q))
+                           b.arrays)
+                       a.arrays
+              | _ -> false
+            in
+            if same then
+              invalid_argf "Nx.donate: %s reads one donation twice" by)
+          rest;
+        check rest
+  in
+  check hs;
+  hs
+
+(* The buffers of a handle, one per device. *)
+let buffers (Handle x) = Array.to_list (Array.map A.buffer (arrays_of x))
+
+(* Claims the handles [hs] for their consumer [by], before it reads them: each
+   chain, then its donor, dies naming [by]. A chain or donor another consumer
+   claimed first, on any domain, raises naming it, with nothing computed. *)
+let claim_handle (type v s d) ~by (x : (v, s, d) Value.t) =
+  match x with
+  | Value.Donated d ->
+      let lost earlier =
+        invalid_argf "%s: a donated operand was donated to %s" by earlier
+      in
+      if
+        not
+          (Atomic.Loc.compare_and_set [%atomic.loc d.chain.consumer] Prim.live
+             by)
+      then lost d.chain.consumer;
+      let earlier = d.chain.claim by in
+      if not (live_word earlier) then lost earlier;
+      d.spent <- by
+  | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> ()
+
+let claim ~by hs = List.iter (fun (Handle x) -> claim_handle ~by x) hs
+
+(* [b]'s memory consumed for [by], where rig holds it exclusive: no other value
+   reads it. The live buffer over it, if so. *)
+let take ~by b =
+  Rig.Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
+      if Rig.Claim.exclusive c b then
+        Some (Rig.Claim.consume c ~why:("donated to " ^ by) b)
+      else None)
+
+(* Ends the claimed handles [hs] once [by] read them: memory no other value
+   reads, and that [by] did not write its result into, is consumed. *)
+let consumed ~by ~reused hs =
+  List.iter
+    (fun (Handle x as h) ->
+      match x with
+      | Value.Donated _ ->
+          if not (reused h) then begin
+            let bufs = buffers h in
+            Rig.Claim.with_ ~read:[] ~donate:[ bufs ] (fun c ->
+                if List.for_all (Rig.Claim.exclusive c) bufs then
+                  List.iter
+                    (fun b ->
+                      ignore (Rig.Claim.consume c ~why:("donated to " ^ by) b))
+                    bufs)
+          end
+      | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> ())
+    hs
+
+let origin_is origin (Handle y) =
+  match y with
+  | Value.Donated d -> d.chain.origin = origin
+  | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> false
+
+(* The load of a map whose memory takes the map's first result, if one may: a
+   handle on one device, of the result's dtype, C-contiguous with the map's
+   layout over all of its memory, beside loads at its placement, and whose
+   memory no other value reads (rig holds it exclusive). Its memory is then
+   consumed, naming [by], and its index, chain and new array are the answer. *)
+let reuse (type d r) ~by layout (outs : (d, r) Value.outs)
+    (loads : d Value.load array) =
+  match outs with
+  | [] -> None
+  | dt :: _ -> (
+      let fits (Value.Plain y) =
+        match y with
+        | Value.Donated { at; arrays = [| a |]; _ } ->
+            D.equal (A.dtype a) dt
+            && L.equal (A.layout a) layout
+            && Rig.Buffer.spans (A.buffer a)
+            && Array.for_all
+                 (fun (Value.Plain z) ->
+                   match Prim.at z with
+                   | Some q -> Devices.rebrand q == at
+                   | None -> true)
+                 loads
+        | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Deferred _
+        | Value.Traced _ ->
+            false
+      in
+      match Array.find_index fits loads with
+      | None -> None
+      | Some i -> (
+          match loads.(i) with
+          | Value.Plain (Value.Donated d) ->
+              let a = d.arrays.(0) in
+              let b = A.buffer a in
+              Rig.Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
+                  if not (Rig.Claim.exclusive c b) then None
+                  else
+                    let b' = Rig.Claim.consume c ~why:("donated to " ^ by) b in
+                    Some
+                      ( i,
+                        d.chain.origin,
+                        A.Any (A.v (A.dtype a) (A.layout a) b') ))
+          | Value.Plain _ -> None))
+
+(* A view made over [a]'s memory, outside any handle chain: the memory is shared
+   from then on, so that no donation of [a]'s value writes what the view
+   reads. *)
+let view_of a = Rig.Claim.share (A.buffer a)
+
+(* Whether [mv] maps the elements of a value of [shape] one to one, which passes
+   a handle on. *)
+let bijective (mv : M.t) shape =
+  match mv with
+  | Reshape _ | Permute _ -> true
+  | Broadcast s -> s = shape
+  | Slice rs ->
+      Array.for_all2
+        (fun (r : M.range) n -> r.count = n && (r.step = 1 || r.step = -1))
+        rs shape
+  | Window _ -> false
 
 let extents (w : M.range array) = Array.map (fun (r : M.range) -> r.count) w
 let starts (w : M.range array) = Array.map (fun (r : M.range) -> r.start) w
@@ -85,10 +290,10 @@ let fresh ~by p dt shape =
 
 (* A maker of fresh results at [at], or at their form's placement, recording the
    placement in [where]. *)
-let alloc ~by ?(at : unit Devices.placement option) ?where () =
+let alloc ~by ?(at : unit Devices.placement option) ?where ?into () =
   {
     Prim.make =
-      (fun _ f ->
+      (fun k f ->
         let p =
           match (at, f.placement) with
           | Some p, _ -> Devices.rebrand p
@@ -96,7 +301,9 @@ let alloc ~by ?(at : unit Devices.placement option) ?where () =
           | None, None -> invalid_arg "Exec.alloc: a value of every set"
         in
         Option.iter (fun r -> r := Some (Devices.rebrand p)) where;
-        make p (fresh ~by p f.dtype (L.shape f.layout)));
+        match into with
+        | Some a when k = 0 -> make p [| A.expect f.dtype a |]
+        | Some _ | None -> make p (fresh ~by p f.dtype (L.shape f.layout)));
   }
 
 (* Programs on one device *)
@@ -291,7 +498,8 @@ let pending (Value.Node n) p =
       match x with
       | Value.Deferred { node = Value.Node m as node; _ } ->
           if find m.memo q = None then Some (node, q) else None
-      | Value.Array _ | Value.Shards _ | Value.Traced _ -> None)
+      | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ ->
+          None)
     xs
 
 (* The host's device, at the brand of a value this library reads there: a
@@ -325,19 +533,84 @@ let rec outs_of : type d. A.any list -> d outs = function
 let rec run : type r. by:string -> r Value.prim -> r =
  fun ~by op ->
   let (Prim.Operands xs) = Prim.operands op in
-  List.iter (untraced ~by) xs;
+  List.iteri (checked ~by) xs;
+  match handles ~by xs with [] -> plain ~by op | hs -> donated ~by op hs
+
+(* [op] over donated operands [hs]: a movement that maps elements one to one
+   passes a new handle on; any other operation reads the handles' memory, writes
+   its first result into a handle's memory where it may, and ends the
+   handles. *)
+and donated : type r. by:string -> r Value.prim -> handle list -> r =
+ fun ~by op hs ->
+  match op with
+  | Value.Move (mv, (Value.Donated d as x)) when bijective mv (Prim.shape x) ->
+      let r = run ~by (Value.Move (mv, live x)) in
+      d.spent <- by;
+      Value.Donated
+        {
+          at = Prim.placement r;
+          arrays = arrays_of r;
+          chain = d.chain;
+          spent = Prim.live;
+        }
+  | Value.Map ({ loads; _ } as m) -> (
+      claim ~by hs;
+      match reuse ~by m.layout m.outs loads with
+      | Some (i, origin, a) ->
+          (* Load [i] is the result's memory: the kernel reads each index of it
+             before it writes the result there. *)
+          let load j (Value.Plain y) =
+            if j <> i then Value.Plain (live y)
+            else
+              let at = Prim.placement y in
+              Value.Plain
+                (Value.Array
+                   { at; a = A.expect (Prim.dtype y) a; dead = Prim.live })
+          in
+          let r =
+            plain ~by ~into:a
+              (Value.Map { m with loads = Array.mapi load loads })
+          in
+          consumed ~by ~reused:(origin_is origin) hs;
+          r
+      | None ->
+          let r = run ~by (Prim.map live_operands op) in
+          consumed ~by ~reused:(fun _ -> false) hs;
+          r)
+  | Value.Copy _ | Value.Move _ | Value.Bitcast _ | Value.Place _
+  | Value.Check _ ->
+      claim ~by hs;
+      let r = run ~by (Prim.map live_operands op) in
+      consumed ~by ~reused:(fun _ -> false) hs;
+      r
+
+and plain : type r. by:string -> ?into:A.any -> r Value.prim -> r =
+ fun ~by ?into op ->
+  let (Prim.Operands xs) = Prim.operands op in
   match op with
   | Value.Place (p, x) -> (
       match x with
       | Value.Deferred _ -> Place.value ~by p (own (Devices.rebrand p) x)
-      | Value.Array _ | Value.Shards _ | Value.Traced _ -> Place.value ~by p x)
+      | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ ->
+          let y = Place.value ~by p x in
+          (* A value over [x]'s memory, kept or borrowed, shares it. *)
+          let xs = arrays_of x in
+          Array.iter
+            (fun b ->
+              if
+                Array.exists
+                  (fun a -> Rig.Buffer.overlaps (A.buffer a) (A.buffer b))
+                  xs
+              then Rig.Claim.share (A.buffer b))
+            (arrays_of y);
+          y)
   | Value.Check { ok; data; fail } ->
       Prim.results ~by (alloc ~by ()) op;
       check ~by ok data fail
   | _ ->
       if List.for_all (fun (Value.Any x) -> Prim.is_constant x) xs then
         defer ~by op
-      else compute ~by (Prim.prepare ~by (placer ~by) op)
+      else compute ~by ?into (Prim.prepare ~by (placer ~by) op)
 
 and placer ~by =
   {
@@ -348,7 +621,7 @@ and placer ~by =
         let p = Option.get p in
         match x with
         | Value.Deferred _ -> at p x
-        | Value.Array _ | Value.Shards _ | Value.Traced _ ->
+        | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ ->
             if Devices.equal (Prim.placement x) p then x
             else Place.value ~by p x);
   }
@@ -361,12 +634,12 @@ and defer : type r. by:string -> r Value.prim -> r =
     { make = (fun k form -> Value.Deferred { form; node; k }) }
     op
 
-and compute : type r. by:string -> r Value.prim -> r =
- fun ~by op ->
+and compute : type r. by:string -> ?into:A.any -> r Value.prim -> r =
+ fun ~by ?into op ->
   match op with
   | Value.Map { layout; prog; loads; _ } ->
       let where = ref None in
-      let r = Prim.results ~by (alloc ~by ~where ()) op in
+      let r = Prim.results ~by (alloc ~by ~where ?into ()) op in
       map_devices ~by (Option.get !where) (L.shape layout) prog
         (fun k w -> Array.map (load_view ~by k w) loads)
         (Prim.arrays op r);
@@ -389,7 +662,9 @@ and compute : type r. by:string -> r Value.prim -> r =
       let moved a =
         let local = localize mv shape cuts (L.shape (A.layout a)) in
         match A.move local a with
-        | Some v -> v
+        | Some v ->
+            view_of a;
+            v
         | None ->
             let kernels = kernels_of ~by ~op:"Copy" (Devices.set xp) in
             Option.get (A.move local (copy_array ~by kernels a))
@@ -399,7 +674,9 @@ and compute : type r. by:string -> r Value.prim -> r =
       let xp = Prim.placement x and xs = arrays_of x in
       let cast a =
         match A.bitcast dt a with
-        | Some v -> v
+        | Some v ->
+            view_of a;
+            v
         | None ->
             let kernels = kernels_of ~by ~op:"Copy" (Devices.set xp) in
             Option.get (A.bitcast dt (copy_array ~by kernels a))
@@ -445,7 +722,7 @@ and check : type d.
   let on_host (type v s) (x : (v, s, d) Value.t) : (v, s) A.t =
     match x with
     | Value.Deferred _ -> (arrays_of (at host x)).(0)
-    | Value.Array _ | Value.Shards _ | Value.Traced _ ->
+    | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ ->
         (arrays_of (Place.value ~by host x)).(0)
   in
   let shape = Prim.shape ok in
@@ -461,7 +738,7 @@ and check : type d.
         let v =
           Option.get (A.move (Reshape [||]) (Option.get (A.move (Slice one) a)))
         in
-        Value.Any (Value.Array { at = host; a = v })
+        Value.Any (Value.Array { at = host; a = v; dead = Prim.live })
       in
       raise (fail idx (List.map at_idx data))
 
@@ -471,7 +748,7 @@ and at : type v s d.
     d Devices.placement -> (v, s, d) Value.t -> (v, s, d) Value.t =
  fun p x ->
   match x with
-  | Value.Array _ | Value.Shards _ | Value.Traced _ -> x
+  | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ -> x
   | Value.Deferred { form; node = Value.Node n as node; k } ->
       let key = Devices.rebrand p in
       let arrays =
@@ -491,7 +768,7 @@ and own : type v s d.
     d Devices.placement -> (v, s, d) Value.t -> (v, s, d) Value.t =
  fun p x ->
   match x with
-  | Value.Array _ | Value.Shards _ | Value.Traced _ -> x
+  | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ -> x
   | Value.Deferred { form; node; k } ->
       let arrays = evaluate node (Devices.rebrand p) in
       make p (Array.map (A.expect form.dtype) arrays.(k))
@@ -524,7 +801,8 @@ and evaluate root p =
           | Value.Deferred { form; node; k } ->
               let arrays = Option.get (lookup node (Devices.rebrand q)) in
               make q (Array.map (A.expect form.dtype) arrays.(k))
-          | Value.Array _ | Value.Shards _ | Value.Traced _ -> x);
+          | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ ->
+              x);
     }
   in
   let missing node q =
@@ -577,7 +855,9 @@ and map_devices ~by (p : unit Devices.placement) shape prog ops dsts =
 and expand_on ~by (set : unit Devices.t) k prog shape first ops dsts =
   let at = Devices.one set k in
   let loads =
-    Array.map (fun (A.Any a) -> Value.Plain (Value.Array { at; a })) ops
+    Array.map
+      (fun (A.Any a) -> Value.Plain (Value.Array { at; a; dead = Prim.live }))
+      ops
   in
   let (Outs outs) = outs_of (Array.to_list dsts) in
   let op =
@@ -670,47 +950,105 @@ let destination (type v s w r) (dt : (w, r) D.t) (x : (v, s) A.t) : (w, r) A.t =
     A.v dt l (Rig.Buffer.create (A.device x) (D.bytes dt (L.numel l)))
   else A.create (A.device x) dt (L.shape l)
 
+(* The one-node map [k] over the handle [h], whose array is [a], and the live
+   array [o], [first] if [h] is the first operand, on [at]'s one device: [h] is
+   claimed, then its memory takes the result where rig holds it exclusive and it
+   has the result's dtype and C-contiguous layout over all of its memory;
+   otherwise the result is fresh and the memory, where no other value reads it,
+   is consumed after the kernel. *)
+let donated2 (type v s w r d) ~slow ~by k (dt : (w, r) D.t)
+    (at : d Devices.placement) (h : (v, s, d) Value.t) (a : (v, s) A.t)
+    (o : (v, s) A.t) ~first : (w, r, d) Value.t =
+  let (module K) = Option.get (Devices.kernels (Devices.set at)) in
+  let l = A.layout a in
+  let reusable =
+    L.is_contiguous l && L.offset l = 0 && Rig.Buffer.spans (A.buffer a)
+  in
+  claim_handle ~by h;
+  let run_on (dst : (w, r) A.t) x y : (w, r, d) Value.t =
+    match K.apply2 k ~dst x y with
+    | A.Done -> Value.Array { at; a = dst; dead = Prim.live }
+    | Declined | Wrong_dtype | Shape_mismatch ->
+        let lx = Value.Array { at; a = x; dead = Prim.live }
+        and ly = Value.Array { at; a = y; dead = Prim.live } in
+        slow ~by k dt lx ly
+    | refusal -> A.refused by refusal [ A.Any dst; A.Any x; A.Any y ]
+  in
+  let pair a' = if first then (a', o) else (o, a') in
+  let fresh () =
+    let x, y = pair a in
+    let r = run_on (destination dt a) x y in
+    ignore (take ~by (A.buffer a));
+    r
+  in
+  match D.equal_witness (A.dtype a) dt with
+  | Some Type.Equal when reusable -> (
+      match take ~by (A.buffer a) with
+      | Some b' ->
+          let a' = A.v (A.dtype a) l b' in
+          let x, y = pair a' in
+          run_on a' x y
+      | None ->
+          let x, y = pair a in
+          run_on (destination dt a) x y)
+  | Some _ | None -> fresh ()
+
 let apply1 (type v s w r d) ~slow ~by k (dt : (w, r) D.t)
     (x : (v, s, d) Value.t) : (w, r, d) Value.t =
   match x with
-  | Value.Array { at; a } -> (
+  | Value.Array rx when live_word rx.dead -> (
+      let at = rx.at and a = rx.a in
       match Devices.kernels (Devices.set at) with
       | None -> slow ~by k dt x
       | Some (module K) -> (
           let dst = destination dt a in
           match K.apply1 k ~dst a with
-          | Done -> Value.Array { at; a = dst }
+          | Done -> Value.Array { at; a = dst; dead = Prim.live }
           | Declined | Wrong_dtype -> slow ~by k dt x
           | refusal -> A.refused by refusal [ A.Any dst; A.Any a ]))
-  | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> slow ~by k dt x
+  | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Deferred _
+  | Value.Traced _ ->
+      slow ~by k dt x
 
 let apply2 (type v s w r d) ~slow ~by k (dt : (w, r) D.t)
     (x : (v, s, d) Value.t) (y : (v, s, d) Value.t) : (w, r, d) Value.t =
   match (x, y) with
-  | Value.Array { at; a }, Value.Array { at = at'; a = b } when at == at' -> (
+  | Value.Array rx, Value.Array ry
+    when rx.at == ry.at && live_word rx.dead && live_word ry.dead -> (
+      let at = rx.at and a = rx.a and b = ry.a in
       match Devices.kernels (Devices.set at) with
       | None -> slow ~by k dt x y
       | Some (module K) -> (
           let dst = destination dt a in
           match K.apply2 k ~dst a b with
-          | Done -> Value.Array { at; a = dst }
+          | Done -> Value.Array { at; a = dst; dead = Prim.live }
           | Declined | Wrong_dtype | Shape_mismatch -> slow ~by k dt x y
           | refusal -> A.refused by refusal [ A.Any dst; A.Any a; A.Any b ]))
+  | Value.Donated dx, Value.Array ry
+    when dx.at == ry.at && live_word ry.dead
+         && Array.length dx.arrays = 1
+         && Devices.kernels (Devices.set dx.at) <> None ->
+      donated2 ~slow ~by k dt dx.at x dx.arrays.(0) ry.a ~first:true
+  | Value.Array rx, Value.Donated dy
+    when dy.at == rx.at && live_word rx.dead
+         && Array.length dy.arrays = 1
+         && Devices.kernels (Devices.set dy.at) <> None ->
+      donated2 ~slow ~by k dt dy.at y dy.arrays.(0) rx.a ~first:false
   | _ -> slow ~by k dt x y
 
 let apply3 (type a b v s d) ~slow ~by k (c : (a, b, d) Value.t)
     (x : (v, s, d) Value.t) (y : (v, s, d) Value.t) : (v, s, d) Value.t =
   match (c, x, y) with
-  | ( Value.Array { at; a = ca },
-      Value.Array { at = at'; a },
-      Value.Array { at = at''; a = b } )
-    when at == at' && at == at'' -> (
+  | Value.Array rc, Value.Array rx, Value.Array ry
+    when rc.at == rx.at && rc.at == ry.at && live_word rc.dead
+         && live_word rx.dead && live_word ry.dead -> (
+      let at = rc.at and ca = rc.a and a = rx.a and b = ry.a in
       match Devices.kernels (Devices.set at) with
       | None -> slow ~by k c x y
       | Some (module K) -> (
           let dst = destination (A.dtype a) a in
           match K.apply3 k ~dst ca a b with
-          | Done -> Value.Array { at; a = dst }
+          | Done -> Value.Array { at; a = dst; dead = Prim.live }
           | Declined | Wrong_dtype | Shape_mismatch -> slow ~by k c x y
           | refusal ->
               A.refused by refusal [ A.Any dst; A.Any ca; A.Any a; A.Any b ]))
