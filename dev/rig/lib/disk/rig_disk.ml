@@ -303,7 +303,7 @@ module Io = struct
 
   let alloc () _ =
     invalid_arg
-      "Rig.Buffer.create: DISK makes no memory: open a file with \
+      "Rig.Buffer.create: DISK makes no memory; open a file with \
        Rig_disk.of_file or Rig_disk.create_file"
 
   (* Nothing reaches [f]: no pin is held. *)
@@ -344,12 +344,12 @@ end
 
 (* The disk *)
 
-(* The first open of its name, by a device that is never lost: it cannot
-   fail. *)
+(* The first open of its name, as the library starts: it answers [Error] only in
+   a process that failed before ([Rig.fail]). *)
 let device =
   match Rig.open_io (module Io) ~name:"DISK" (fun () -> Ok ()) with
   | Ok d -> d
-  | Error why -> failwith (strf "Rig_disk: cannot open DISK: %s" why)
+  | Error why -> failwith (strf "Rig_disk.device: cannot open DISK: %s" why)
 
 let open_file path mode n =
   if String.contains path '\000' then
