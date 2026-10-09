@@ -13,16 +13,6 @@
 #include "nx_metal.h"
 #include "nx_dtype.h"
 
-/* Appends a launch as nx_metal_add does: 0, or -2 if memory runs out. */
-static int append(nx_metal_records *r, int entry, const uint32_t groups[3],
-                  const uint32_t threads[3], const void *params,
-                  uint32_t bytes, uint32_t addrs, uint32_t scratch) {
-  return nx_metal_add(r, (uint32_t)entry, groups, threads, params, bytes,
-                      addrs, scratch)
-             ? -2
-             : 0;
-}
-
 /* Contract */
 
 /* The dense kernels' tiles, rows × columns (kernels.h), and the column
@@ -107,7 +97,8 @@ static int plan_integer(const nx_metal_contract_in *c, nx_metal_contract *p,
   uint32_t groups[3] = {(c->n + tile - 1) / tile, (c->m + tile - 1) / tile,
                         c->batch};
   uint32_t threads[3] = {NX_METAL_INT_THREADS, 1, 1};
-  int e = append(r, NX_METAL_contract_int, groups, threads, p, sizeof *p, 4, 0);
+  int e = nx_metal_add(r, NX_METAL_contract_int, groups, threads, p,
+                       sizeof *p, 4, 0);
   return e ? e : 1;
 }
 
@@ -141,7 +132,7 @@ static uint64_t take(size_t *used, size_t bytes) {
    [bytes] bytes, at [o] with the batch stride [batch], row and col, into
    scratch with cols contiguous, its rows 16-byte vectors; sets [o] to the
    copy, an offset into the scratch, and [*ld] and [*batch] to its
-   strides. 0, or -2 if memory runs out. */
+   strides. 0, or NX_OUT_OF_MEMORY if memory runs out. */
 static int pack(nx_metal_records *r, size_t *used,
                 const nx_metal_contract_in *c, uint32_t bytes, uint64_t *o,
                 int64_t *batch, uint32_t row, uint32_t col, uint32_t rows,
@@ -158,7 +149,8 @@ static int pack(nx_metal_records *r, size_t *used,
   uint32_t groups[3] = {(*ld + side - 1) / side, (rows + side - 1) / side,
                         c->batch};
   uint32_t threads[3] = {side / 4, NX_METAL_PACK_ROWS, 1};
-  return append(r, NX_METAL_pack, groups, threads, &q, sizeof q, 2, 1u << 1);
+  return nx_metal_add(r, NX_METAL_pack, groups, threads, &q, sizeof q, 2,
+                      1u << 1);
 }
 
 /* A plan's answer: [launches] records over [used] bytes of scratch; or,
@@ -172,7 +164,7 @@ static int done(size_t used, size_t *scratch, int launches) {
 static int fail(nx_metal_records *r, size_t len, size_t *scratch) {
   r->len = len;
   *scratch = 0;
-  return -2;
+  return NX_OUT_OF_MEMORY;
 }
 
 /* Whether an operand's tiles start on 16-byte boundaries: its address,
@@ -229,8 +221,8 @@ int nx_metal_plan_contract(const nx_metal_contract_in *c,
   if (c->m == 1 && floats) {
     uint32_t per = b_t ? NX_METAL_SKINNY_T : NX_METAL_SKINNY_N;
     uint32_t groups[3] = {(c->n + per - 1) / per, 1, c->batch};
-    int e = append(r, skinny_entry(a->dtype, b_t), groups, threads, &p,
-                   sizeof p, 4, 0);
+    int e = nx_metal_add(r, skinny_entry(a->dtype, b_t), groups, threads, &p,
+                         sizeof p, 4, 0);
     return e ? e : 1;
   }
   /* The tile the shape picks: wide for few rows; large for products of
@@ -289,7 +281,8 @@ int nx_metal_plan_contract(const nx_metal_contract_in *c,
   uint32_t parts = split(c, tiles(c, shape), floats);
   int entry = dense_entry(a->dtype, size, b_t);
   if (parts == 1) {
-    if (!e) e = append(r, entry, groups, threads, &p, sizeof p, 4, mask);
+    if (!e)
+      e = nx_metal_add(r, entry, groups, threads, &p, sizeof p, 4, mask);
     return e ? fail(r, len, scratch) : done(used, scratch, launches);
   }
   uint32_t part_k = c->k / parts;
@@ -308,12 +301,13 @@ int nx_metal_plan_contract(const nx_metal_contract_in *c,
   p.out_dtype = NX_FLOAT32;
   groups[2] = parts;
   if (!e)
-    e = append(r, entry, groups, threads, &p, sizeof p, 4, mask | 1u << 3);
+    e = nx_metal_add(r, entry, groups, threads, &p, sizeof p, 4,
+                     mask | 1u << 3);
   uint32_t cgroups[3] = {
       (uint32_t)((count + combine_threads - 1) / combine_threads), 1, 1};
   uint32_t cthreads[3] = {combine_threads, 1, 1};
   if (!e)
-    e = append(r, NX_METAL_contract_combine, cgroups, cthreads, &q, sizeof q, 3,
-               1u << 1);
+    e = nx_metal_add(r, NX_METAL_contract_combine, cgroups, cthreads, &q,
+                     sizeof q, 3, 1u << 1);
   return e ? fail(r, len, scratch) : done(used, scratch, launches + 1);
 }

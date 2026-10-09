@@ -21,6 +21,9 @@
 
 #include "kernels.h"
 
+/* What nx_metal_add and a plan answer when the host's memory runs out. */
+#define NX_OUT_OF_MEMORY (-2)
+
 /* A run of launch records: [len] bytes of records at [bytes], in a buffer
    of [cap] bytes that nx_metal_add grows. A zeroed run is empty. */
 typedef struct {
@@ -31,8 +34,8 @@ typedef struct {
 /* Appends a launch of [entry] over [groups] threadgroups of [threads]
    threads, whose parameters are the [bytes] bytes at [params], their first
    [addrs] 8-byte words addresses and [scratch] the mask of those that are
-   scratch offsets, as nx_metal_launch states them. Returns 0, or -1 if
-   memory runs out, the run unchanged. */
+   scratch offsets, as nx_metal_launch states them. Returns 0, or
+   NX_OUT_OF_MEMORY if memory runs out, the run unchanged. */
 int nx_metal_add(nx_metal_records *r, uint32_t entry, const uint32_t groups[3],
                  const uint32_t threads[3], const void *params, uint32_t bytes,
                  uint32_t addrs, uint32_t scratch);
@@ -64,8 +67,9 @@ typedef struct {
   int acc; /* the accumulator's dtype */
 } nx_metal_contract_in;
 
-/* Appends the launches of the contraction [c] to [r] and is their count,
-   NX_NOT_COMPUTED, or -2 if memory runs out. The operands are a (batch, m,
+/* Appends the launches of the contraction [c] to [r] and is their count;
+   or NX_NOT_COMPUTED, or NX_OUT_OF_MEMORY if memory runs out, having
+   appended nothing. The operands are a (batch, m,
    k), b (batch, k, n), out, C-contiguous (batch, m, n), and init (batch,
    m, n) unless [init] is NULL. [*scratch] is set to the scratch bytes the
    launches address, a multiple of 16: nx_metal_rebase places it. */

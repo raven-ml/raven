@@ -23,7 +23,7 @@ int nx_metal_add(nx_metal_records *r, uint32_t entry, const uint32_t groups[3],
     size_t cap = r->cap ? r->cap : 256;
     while (cap < need) cap *= 2;
     unsigned char *b = realloc(r->bytes, cap);
-    if (b == NULL) return -1;
+    if (b == NULL) return NX_OUT_OF_MEMORY;
     r->bytes = b, r->cap = cap;
   }
   nx_metal_launch l = {entry, {groups[0], groups[1], groups[2]},

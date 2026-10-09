@@ -345,8 +345,11 @@ value nx_metal_test_plan_contract(value v_dims, value v_a, value v_b,
   size_t scratch;
   int e = nx_metal_plan_contract(&c, &a, &b, &out,
                                  Is_some(v_init) ? &init : NULL, &r, &scratch);
-  if (e == -2) caml_raise_out_of_memory();
-  if (e == NX_NOT_COMPUTED) CAMLreturn(Val_none);
+  if (e == NX_NOT_COMPUTED || e == NX_OUT_OF_MEMORY) {
+    free(r.bytes);
+    if (e == NX_OUT_OF_MEMORY) caml_raise_out_of_memory();
+    CAMLreturn(Val_none);
+  }
   s = caml_alloc_initialized_string(r.len, (const char *)r.bytes);
   free(r.bytes);
   v = caml_alloc_tuple(2);
