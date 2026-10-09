@@ -19,6 +19,9 @@ val open_spare : string -> (int option, string) result
     system has no file left ([EMFILE], [ENFILE]): for a file opened for one
     call, whose lack refuses the call. *)
 
+val host_page : unit -> int
+(** [host_page ()] is the host's page size, in bytes, on Linux. *)
+
 val close : int -> unit
 (** [close fd] closes [fd], ignoring a failure. *)
 
@@ -47,11 +50,13 @@ type t = {
 }
 (** The type for the process's client. *)
 
-val client : unit -> (t, string) result
-(** [client ()] is the process's client, opened at its first call: the RM's
-    client, the unified memory driver, and the GPU's addresses, reserved in the
-    process below [2{^40}]. It is [Error] if the kernel driver's release is none
-    of {!Defs.releases}. *)
+val client : dev:string -> (t, string) result
+(** [client ~dev] is the process's client, opened at its first call from the
+    device files in the directory [dev]: the RM's client, the unified memory
+    driver, and the GPU's addresses, reserved in the process below [2{^40}].
+    Later calls answer it whatever their [dev]: a process has one client of
+    the machine's kernel driver. It is [Error] if the kernel driver's release
+    is none of {!Defs.releases}. *)
 
 val handle : unit -> int
 (** [handle ()] is a new handle for an object the process names itself. *)

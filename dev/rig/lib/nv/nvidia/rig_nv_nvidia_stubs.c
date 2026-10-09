@@ -137,7 +137,18 @@ value caml_rig_nv_nvidia_unmap(value v_at, value v_n) {
   return Val_long(p == MAP_FAILED ? -errno : 0);
 }
 
+/* The host's page size, which bounds the ranges the process maps. */
+value caml_rig_nv_nvidia_page_size(value unit) {
+  (void)unit;
+  return Val_long(sysconf(_SC_PAGESIZE));
+}
+
 #else
+
+value caml_rig_nv_nvidia_page_size(value unit) {
+  (void)unit;
+  return Val_long(-ENOSYS);
+}
 
 value caml_rig_nv_nvidia_open(value v_path) {
   CAMLparam1(v_path);

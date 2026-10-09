@@ -42,7 +42,7 @@ let bits (lo, n) v = (v land ((1 lsl n) - 1)) lsl lo
 
 type gpu = {
   c : Rm.t;
-  minor : int;
+  file : string; (* its device file, [/dev/nvidiaN] under the machine's root *)
   device : int;
   subdevice : int;
   virtmem : int;
@@ -94,7 +94,7 @@ let gpus_lock = Mutex.create ()
    own, as the driver keeps one mapping context per file. [Ok None] if the
    process or the system has no file left, a refusal of the memory. *)
 let with_file g f =
-  match Rm.open_spare (strf "/dev/nvidia%d" g.minor) with
+  match Rm.open_spare g.file with
   | Ok None -> Ok None
   | Error _ as e -> e
   | Ok (Some fd) ->
@@ -306,9 +306,10 @@ let with_addresses space ~align size f =
           Va.free space va size;
           r)
 
-(* Host memory the process allocates and describes to the RM. *)
+(* Host memory the process allocates and describes to the RM, [size] a
+   multiple of the host's page. *)
 let alloc_host g size =
-  with_addresses g.c.low ~align:page size @@ fun va ->
+  with_addresses g.c.low ~align:(Rm.host_page ()) size @@ fun va ->
   let* () = Rm.map (-1) va size in
   match describe g va size with
   | (Error _ | Ok None) as r ->
@@ -361,7 +362,7 @@ let alloc g kind n =
   @@
   match kind with
   | `System ->
-      let size = round_up n page in
+      let size = round_up n (Rm.host_page ()) in
       let* x = alloc_host g size in
       Ok
         (Option.map
@@ -396,6 +397,7 @@ let ranges_lock = Mutex.create ()
 let ranges : range list ref = ref []
 
 let map_host g a n =
+  let page = Rm.host_page () in
   let a0 = a land lnot (page - 1) in
   let a1 = round_up (a + n) page in
   let mem r =
@@ -640,7 +642,7 @@ let gpus : (string * gpu) list ref = ref []
 
 (* GPU [bus]'s objects, made at its first open and kept for the process; a
    failed open gives back what it took, last first. *)
-let make_gpu c ~index bus =
+let make_gpu c ~dev ~index bus =
   let undo = ref [] in
   let taken f = undo := f :: !undo in
   let rm = Rm.rm c in
@@ -651,7 +653,8 @@ let make_gpu c ~index bus =
       | Some (_, id, minor) -> Ok (id, minor)
       | None -> Error (bus ^ " is not held by NVIDIA's kernel driver")
     in
-    let* file = Rm.open_file (strf "/dev/nvidia%d" minor) in
+    let path = Filename.concat dev (strf "nvidia%d" minor) in
+    let* file = Rm.open_file path in
     taken (fun () -> Rm.close file);
     let* () = Rm.register file ~ctl:c.ctl in
     let id = params D.Id_info.sizeof in
@@ -742,7 +745,7 @@ let make_gpu c ~index bus =
     let g =
       {
         c;
-        minor;
+        file = path;
         device;
         subdevice;
         virtmem;
@@ -826,12 +829,12 @@ let enable_peers g others =
           g'.refused <- g.index :: g'.refused)
     others
 
-let gpu c ~index bus =
+let gpu c ~dev ~index bus =
   Mutex.protect gpus_lock @@ fun () ->
   match List.assoc_opt bus !gpus with
   | Some g -> Ok g
   | None ->
-      let* g = make_gpu c ~index bus in
+      let* g = make_gpu c ~dev ~index bus in
       enable_peers g (List.map snd !gpus);
       gpus := (bus, g) :: !gpus;
       Ok g
@@ -867,18 +870,17 @@ let path g =
 
 (* Opening *)
 
-let sysfs = "/"
-let gpus_at = Sysfs.gpus
-let count () = List.length (Sysfs.gpus sysfs)
+let buses ?(root = "/") () = Sysfs.gpus root
+let count ?root () = List.length (buses ?root ())
 
 let device_name i =
   if i < 0 then invalid_argf "Rig_nv_nvidia.device_name: GPU %d < 0" i;
   if i = 0 then "NV" else strf "NV:%d" i
 
-let open_ i =
+let open_ ?(root = "/") i =
   if i < 0 then invalid_argf "Rig_nv_nvidia.open_: GPU %d < 0" i;
   let* buses =
-    match Sysfs.gpus sysfs with
+    match buses ~root () with
     | exception Failure why -> Error ("reading the machine's GPUs: " ^ why)
     | buses -> Ok buses
   in
@@ -887,8 +889,9 @@ let open_ i =
       Error
         (strf "no GPU %d: the machine has %d NVIDIA GPUs" i (List.length buses))
   | Some bus -> (
-      let* c = Rm.client () in
-      let* g = gpu c ~index:i bus in
+      let dev = Filename.concat root "dev" in
+      let* c = Rm.client ~dev in
+      let* g = gpu c ~dev ~index:i bus in
       let claimed =
         Mutex.protect gpus_lock @@ fun () ->
         let free = not g.opened in

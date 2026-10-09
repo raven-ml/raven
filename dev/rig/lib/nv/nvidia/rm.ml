@@ -21,6 +21,7 @@ external unmap_raw : int -> int -> int = "caml_rig_nv_nvidia_unmap"
 external unreserve_raw : int -> int -> int = "caml_rig_nv_nvidia_unreserve"
 external strerror : int -> string = "caml_rig_nv_nvidia_strerror"
 external address : Rig_nv.params -> int = "caml_rig_nv_nvidia_address"
+external host_page : unit -> int = "caml_rig_nv_nvidia_page_size" [@@noalloc]
 
 (* A stub's result: non-negative, or errno negated. *)
 let result what r =
@@ -192,8 +193,6 @@ let uvm_call c cmd p status what =
 let low_base = 0x60_0000_0000
 let main_base = 0x70_0000_0000
 let top = 1 lsl 40
-let ctl_path = "/dev/nvidiactl"
-let uvm_path = "/dev/nvidia-uvm"
 
 (* The release branch of a driver version, such as 615 of "615.71.09". *)
 let branch version =
@@ -221,11 +220,12 @@ let driver_version ctl root =
 let client_lock = Mutex.create ()
 let opened = ref None
 
-let make_client () =
+let make_client ~dev =
   let undo = ref [] in
   let taken f = undo := f :: !undo in
+  let uvm_path = Filename.concat dev "nvidia-uvm" in
   let opened_client =
-    let* ctl = open_file ctl_path in
+    let* ctl = open_file (Filename.concat dev "nvidiactl") in
     taken (fun () -> close ctl);
     let* s, root = alloc_raw ctl ~root:0 ~parent:0 D.nv01_root_client None in
     let* () =
@@ -286,12 +286,12 @@ let make_client () =
   | Error _ -> List.iter (fun f -> f ()) !undo);
   opened_client
 
-let client () =
+let client ~dev =
   Mutex.protect client_lock @@ fun () ->
   match !opened with
   | Some c -> Ok c
   | None ->
-      let* c = make_client () in
+      let* c = make_client ~dev in
       opened := Some c;
       Ok c
 

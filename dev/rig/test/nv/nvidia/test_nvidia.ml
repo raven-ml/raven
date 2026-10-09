@@ -63,7 +63,8 @@ let numbering () =
   in
   equal (list string)
     [ "0000:01:00.0"; "0000:0a:00.0"; "ffff:00:00.0"; "10000:00:01.0" ]
-    (N.gpus_at root)
+    (N.buses ~root ());
+  equal int 4 (N.count ~root ())
 
 (* The kernel driver lists the GPUs it holds under /proc, by bus address: on a
    machine whose driver holds every NVIDIA GPU, they are the GPUs the path
@@ -74,7 +75,7 @@ let kernel_list () =
   if not (Sys.file_exists proc_gpus) then
     skip ~reason:"NVIDIA's kernel driver is not loaded" ();
   let held = List.sort compare (Array.to_list (Sys.readdir proc_gpus)) in
-  equal (list string) held (List.sort compare (N.gpus_at "/"))
+  equal (list string) held (List.sort compare (N.buses ()))
 
 (* A device's objects are the GPU's for the process: a stopped device's GPU
    opens again. *)
@@ -86,6 +87,34 @@ let once () =
   contains ~sub:"has a device open" e;
   Rig_nv.stop g;
   let g' = require_ok ~msg:"an open after stop" (N.open_ 0) in
+  Rig_nv.stop g'
+
+(* Every root shows this machine: a root that links to [/] names the same
+   GPUs, so a GPU open through one is open through the other. The link lives
+   beside the suite in _build; it is unlinked, never walked. *)
+let mirror = Filename.concat "trees" "mirror"
+
+let other_root () =
+  if N.count () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
+  S.hold_gpu ();
+  mkdir_p "trees";
+  (match Unix.lstat mirror with
+  | _ -> Unix.unlink mirror
+  | exception Unix.Unix_error (Unix.ENOENT, _, _) -> ());
+  Unix.symlink "/" mirror;
+  equal (list string) (N.buses ()) (N.buses ~root:mirror ());
+  let g = require_ok (N.open_ 0) in
+  let e =
+    require_error ~msg:"an open through the other root"
+      (N.open_ ~root:mirror 0)
+  in
+  contains ~sub:"has a device open" e;
+  Rig_nv.stop g;
+  let g' =
+    require_ok ~msg:"an open through it after stop" (N.open_ ~root:mirror 0)
+  in
+  let e = require_error ~msg:"an open through /" (N.open_ 0) in
+  contains ~sub:"has a device open" e;
   Rig_nv.stop g'
 
 (* Opening and stopping a GPU again and again, its word freed after each stop,
@@ -143,7 +172,7 @@ let () =
              test "the GPUs are NVIDIA's display functions in bus order"
                numbering;
              test "a machine without PCI functions has no GPU" (fun () ->
-                 equal (list string) [] (N.gpus_at "no-such-directory"));
+                 equal (list string) [] (N.buses ~root:"no-such-directory" ()));
              test "this machine's GPUs are those NVIDIA's kernel driver lists"
                kernel_list;
              test "names GPU 0 NV and GPU i NV:i" (fun () ->
@@ -162,6 +191,7 @@ let () =
                  let e = require_error (N.open_ n) in
                  contains ~sub:(Printf.sprintf "has %d NVIDIA GPUs" n) e);
              test "a GPU has one device until it is stopped" once;
+             test "a GPU has one device whatever the root" other_root;
              test "opening and stopping a GPU leaves no mapping behind" reopen;
              test "opening and closing a GPU through rig leaves no mapping \
                    behind"

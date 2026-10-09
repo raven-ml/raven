@@ -391,9 +391,8 @@ entry on fixture trees built under the test's own `_build` directory on
 every machine. Otherwise its parsers are tested live, on the host's own
 files, on the host that has the device; no public reader exists only so that
 a test can reach a parser, and hardware no host has gets no fixture test.
-Three suites still reach such a reader through a hidden section: pci's
-machine at a root (`Machine.at`), and amdgpu's and nvidia's GPU lists
-(`gpus_at`).
+Two suites still reach such a reader through a hidden section: pci's
+machine at a root (`Machine.at`) and amdgpu's GPU list (`gpus_at`).
 
 Tests never exhaust a shared resource: threads, processes, file descriptors,
 memory, GPU memory or disk. A failure path that needs a limit is reached by a
