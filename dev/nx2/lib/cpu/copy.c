@@ -55,6 +55,10 @@ static void cast_plane(const nx_cpu_block *b, const nx_array *a) {
 
 /* A cast stages plane by plane: its slot holds one. */
 static void cast_block(const nx_cpu_block *b, void *ctx) {
+  if (b->n2 == 1) {
+    cast_plane(b, ctx);
+    return;
+  }
   nx_cpu_block p = *b;
   p.n2 = 1;
   for (int64_t q = 0; q < b->n2; q++) {

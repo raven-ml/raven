@@ -1021,6 +1021,11 @@ void nx_copy_box(uint8_t *dst, const uint8_t *src, const nx_box *b,
     rows = cols;
     cols = x;
   }
+  /* One plane, the walk's common block, takes no loop. */
+  if (b->extent[0] == 1) {
+    copy_block(dst, pd, dr, dc, src, ps, sr, sc, rows, cols, bits);
+    return;
+  }
   for (int64_t p = 0; p < b->extent[0]; p++, pd += dp, ps += sp)
     copy_block(dst, pd, dr, dc, src, ps, sr, sc, rows, cols, bits);
 }
