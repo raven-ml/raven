@@ -108,17 +108,18 @@ suites test that sentence.
 
 **Two domains against a model.** `stateful ~domains:2` runs a prefix of calls,
 then two branches at once on two domains, then a suffix, and passes when some
-order of the calls explains every result. A driver suite holds its end-once
-rule this way: "an allocation freed from two domains is freed once", "a mapping
-unmapped from two domains is unmapped once", "an image unloaded from two domains
-is unloaded once" (`test/cuda/test_cuda.ml`; `test/metal/test_metal.ml` for
-images). A value's flag that is a plain mutable bool, read and then written,
-lets two domains both pass the check: two `cuMemFree` of one address, two
-`cuModuleUnload` of one module, or a Metal pipeline released twice, each of
-which crashes the process. The two-domain models reach that race on their first
-cases; an `Atomic` taken with `compare_and_set` lets exactly one call end the
-value. In rig, "stamps raised from two domains are their maxima" runs the
-stamp model on two domains. In pci, "two domains allocate at once" and "pins
+order of the calls explains every result. Ending a value once is rig's rule:
+rig frees each region once and unloads each image once, so a driver checks
+neither (`Rig_edge.Driver`), and the two-domain model of rig
+(`test/test_model.ml`, "calls on two domains answer as some order of them")
+drops buffers and submissions and collects on both domains, so either may
+free their memory. A flag that is a plain
+mutable bool, read and then written, lets two domains both pass the check and
+end a value twice, which a driver answers by crashing the process; an `Atomic`
+taken with `compare_and_set` lets exactly one call end it. "stamps raised from
+two domains are their maxima" runs the stamp model on two domains, and "two
+domains submit one submission at once" (`test/test_submit.ml`) submits with a
+run per domain. In pci, "two domains allocate at once" and "pins
 and DMA memory are counted the same from two domains".
 
 A process whose test spawned domains cannot fork afterwards, so a test that
