@@ -199,18 +199,10 @@ static int pack(nx_cuda_records *out, size_t *used, const void **operand,
              NX_PACK_ADDRS, NX_PACK_SCRATCH);
 }
 
-/* Whether [dt] is the SIMT accumulator [simt]'s own dtype: the dtype
-   the SIMT and skinny kernels read. */
-static int own(int simt, int dt) {
-  switch (simt) {
-  case ACC_f32: return dt == NX_FLOAT32;
-  case ACC_f64: return dt == NX_FLOAT64;
-  }
-  return dt == NX_INT64 || dt == NX_UINT64;
-}
-
-static int own_dtype(int simt) {
-  switch (simt) {
+/* The dtype of the accumulator [sum]: what the SIMT kernels read, and the
+   float skinny kernels. */
+static int own_dtype(int sum) {
+  switch (sum) {
   case ACC_f32: return NX_FLOAT32;
   case ACC_f64: return NX_FLOAT64;
   }
@@ -232,8 +224,9 @@ static int common_int(int x, int y) {
   return types[sx || sy][bits <= 8 ? 0 : bits <= 16 ? 1 : bits <= 32 ? 2 : 3];
 }
 
-/* Whether the skinny kernel reads [dt] as [to] with no pack: the same
-   bytes, bool as uint8, and either 64-bit integer as the other. */
+/* Whether a SIMT or skinny kernel reads [dt] as [to] with no pack: the same
+   bytes, bool as uint8, and either 64-bit integer as the other (a float64
+   never meets an integer [to]: the plan declines that call). */
 static int reads_as(int dt, int to) {
   return dt == to || (dt == NX_BOOL && to == NX_UINT8) ||
          (bytes_of(dt) == 8 && bytes_of(to) == 8);
@@ -250,13 +243,10 @@ static int summable(int dt) {
   return r.kind != NX_KIND_COMPLEX && r.bits >= 8;
 }
 
+/* Whether the summable dtype [dt] is an integer or bool. */
 static int is_int(int dt) {
-  switch (dt) {
-  case NX_INT64: case NX_UINT64: case NX_INT32: case NX_UINT32:
-  case NX_INT16: case NX_UINT16: case NX_INT8: case NX_UINT8: case NX_BOOL:
-    return 1;
-  }
-  return 0;
+  const enum nx_kind k = nx_dtype_row_of(dt).kind;
+  return k == NX_KIND_SIGNED || k == NX_KIND_UNSIGNED || k == NX_KIND_BOOLEAN;
 }
 
 
@@ -355,16 +345,14 @@ int nx_cuda_plan_contract(const nx_cuda_contract_in *in,
       : at == NX_INT8 && b->dtype == NX_INT8 && acc == NX_INT32 ? K_s8 : -1;
   const int t = kind < 0 ? -1 : mma_tile(kind, batch, m, n);
   const int mma_kind = t < 0 ? -1 : kind;
-  int simt = -1;
+  int sum = -1;
   if (acc == NX_FLOAT32 || acc == NX_FLOAT64) {
-    if (is_int(at) || is_int(b->dtype) || bytes_of(at) == 0 ||
-        bytes_of(b->dtype) == 0)
-      return NX_NOT_COMPUTED;
-    simt = acc == NX_FLOAT32 ? ACC_f32 : ACC_f64;
+    if (is_int(at) || is_int(b->dtype)) return NX_NOT_COMPUTED;
+    sum = acc == NX_FLOAT32 ? ACC_f32 : ACC_f64;
   } else if (acc == NX_INT32 || acc == NX_UINT32 || acc == NX_INT64 ||
              acc == NX_UINT64) {
     if (!is_int(at) || !is_int(b->dtype)) return NX_NOT_COMPUTED;
-    simt = ACC_i64;
+    sum = ACC_i64;
   } else
     return NX_NOT_COMPUTED;
 
@@ -399,7 +387,7 @@ int nx_cuda_plan_contract(const nx_cuda_contract_in *in,
     kernel = find(F_MMA, mma_kind, pack_a ? A_k : la, pack_b ? A_k : lb, t);
     gx = ceil_div(m, tiles[t].bm) * ceil_div(n, tiles[t].bn);
   } else if (m <= 16) {
-    kernel = find(F_SKINNY, simt, 0, 0, 0);
+    kernel = find(F_SKINNY, sum, 0, 0, 0);
     gx = ceil_div(m, NX_SKINNY_ROWS) * ceil_div(n, 32);
   } else {
     /* The SIMT tile of least cost among the accumulator's instances, waves
@@ -409,13 +397,13 @@ int nx_cuda_plan_contract(const nx_cuda_contract_in *in,
     double least = -1;
     for (int i = 0; i < 2; i++) {
       const int64_t q = sides[i];
-      if (find(F_SIMT, simt, sides[i], 0, 0) < 0) continue;
+      if (find(F_SIMT, sum, sides[i], 0, 0) < 0) continue;
       const double cost =
           (double)ceil_div(batch * ceil_div(m, q) * ceil_div(n, q), WAVE) * q *
           q / eff[i];
       if (least < 0 || cost < least) least = cost, side = sides[i];
     }
-    kernel = find(F_SIMT, simt, side, 0, 0);
+    kernel = find(F_SIMT, sum, side, 0, 0);
     gx = ceil_div(m, side) * ceil_div(n, side);
   }
   if (kernel < 0 || gx > INT32_MAX) return NX_NOT_COMPUTED;
@@ -448,9 +436,9 @@ int nx_cuda_plan_contract(const nx_cuda_contract_in *in,
     /* SIMT kernels read their accumulator's own dtype, the skinny kernels
        a float accumulator's or one integer dtype both operands hold: an
        operand of another is packed into it, exactly, with k contiguous. */
-    const int narrow = simt == ACC_i64 && m <= 16;
-    const int to = narrow ? common_int(at, b->dtype) : own_dtype(simt);
-    if (narrow ? !reads_as(at, to) : !own(simt, at)) {
+    const int to = sum == ACC_i64 && m <= 16 ? common_int(at, b->dtype)
+                                              : own_dtype(sum);
+    if (!reads_as(at, to)) {
       if ((e = pack(out, &used, &p.a, p.sa, a->address, at, to, batch, m, k,
                     sbat[0], sm[0], sk[0])) != 0)
         goto fail;
@@ -458,7 +446,7 @@ int nx_cuda_plan_contract(const nx_cuda_contract_in *in,
       mask |= NX_CONTRACT_SCRATCH_A;
       sm[0] = p.sa[1], sk[0] = 1;
     }
-    if (narrow ? !reads_as(b->dtype, to) : !own(simt, b->dtype)) {
+    if (!reads_as(b->dtype, to)) {
       if ((e = pack(out, &used, &p.b, p.sb, b->address, b->dtype, to, batch,
                     n, k, sbat[1], sn[0], sk[1])) != 0)
         goto fail;
@@ -494,8 +482,8 @@ int nx_cuda_plan_contract(const nx_cuda_contract_in *in,
   const int wide = yd == NX_INT64 || yd == NX_UINT64;
   const int natural =
       mma_kind == K_s8 ? yd == NX_INT32 || yd == NX_UINT32
-      : simt == ACC_f32 ? yd == NX_FLOAT32 || yd == NX_BFLOAT16 || yd == NX_FLOAT16
-      : simt == ACC_f64 ? yd == NX_FLOAT64
+      : sum == ACC_f32 ? yd == NX_FLOAT32 || yd == NX_BFLOAT16 || yd == NX_FLOAT16
+      : sum == ACC_f64 ? yd == NX_FLOAT64
                         : wide && (acc == NX_INT64 || acc == NX_UINT64);
   if (!init && natural && sn[1] == 1 && sm[1] * yb % 16 == 0 &&
       sbat[2] * yb % 16 == 0 && y->address % 16 == 0)
@@ -503,7 +491,7 @@ int nx_cuda_plan_contract(const nx_cuda_contract_in *in,
 
   /* The split sum's partials and tickets, the tickets zeroed first. */
   if (splits > 1) {
-    const int acc_bytes = simt == ACC_f64 || simt == ACC_i64 ? 8 : 4;
+    const int acc_bytes = sum == ACC_f64 || sum == ACC_i64 ? 8 : 4;
     const uint64_t tickets = (uint64_t)batch * gx;
     p.partials = (void *)(uintptr_t)take(
         &used, (size_t)tickets * splits * values * threads * acc_bytes);
