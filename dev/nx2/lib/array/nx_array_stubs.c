@@ -727,11 +727,12 @@ static inline __attribute__((always_inline)) void block(
 }
 
 /* The 8x8 block of 4-byte elements whose column q is the 32 bytes at
-   [s + q·sc] into the rows at [d + p·dr], in registers: eight 32-byte
-   loads and eight 32-byte stores, which read and write whole lines faster
-   than 4x4 blocks: a transposed 512x512 float32 copy on one thread takes
-   36.4 us against 59.2 in 4x4 blocks on the M1, where Accelerate's
-   vDSP_mtrans takes 35.4, and 44.3 against 61.7 on kimchi. */
+   [s + q·sc] into the rows at [d + p·dr], in registers: each column read
+   and each row written as two 16-byte vectors, four 4x4 transposes
+   between. 32 bytes of each line at a time beat the 16 of 4x4 blocks: a
+   transposed 512x512 float32 copy on one thread takes 36.4 us against
+   59.2 in 4x4 blocks on the M1, where Accelerate's vDSP_mtrans takes 35.4,
+   and 44.3 against 61.7 on kimchi. */
 #if defined(__aarch64__)
 static inline __attribute__((always_inline)) void transpose4(
     uint32x4_t a, uint32x4_t b, uint32x4_t c, uint32x4_t e, uint32x4_t *o) {
