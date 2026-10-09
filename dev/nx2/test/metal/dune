@@ -1,0 +1,4 @@
+(tests
+ (names test_metal)
+ (modules test_metal)
+ (libraries nx_array nx_metal_support rig windtrap))
