@@ -128,6 +128,14 @@ typedef struct {
 /* The dtype of the OCaml array [v], a code. */
 int nx_array_dtype(value v);
 
+/* The layout of the array [v], an Nx_array.t, read without a claim: its
+   rank, then at [dim] its [rank] extents and its [rank] strides, as
+   nx_array's dim holds them, and at [offset] its first element, in
+   elements. [dim] holds 2 · NX_MAX_RANK. It reads [v] alone and allocates
+   nothing; what it writes is C memory, so it stays valid after [v]
+   moves. */
+int nx_array_layout(value v, int64_t *dim, int64_t *offset);
+
 /* Reads the [n] operands [in] into [out] and answers NX_OK, or answers why
    it refuses one, claims nothing and leaves [out] unspecified. Per operand
    it checks the dtype, the layout, that the buffer lives and, unless the

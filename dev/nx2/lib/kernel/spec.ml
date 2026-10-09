@@ -40,7 +40,6 @@ let ncontracting s = int32 s at_ncontracting
 let at_batch = at_pairs
 let at_contracting s = at_pairs + (8 * nbatch s)
 let batch_axis s k side = pair_axis s at_batch k side
-let contracting_axis s k side = pair_axis s (at_contracting s) k side
 
 let pp_shape ppf s =
   Format.fprintf ppf "[%a]"
@@ -380,24 +379,17 @@ module Contract_view = struct
   type axis = Batch | Row | Column | Contracted
 
   (* A view is nx_spec.h's nx_contract_view, int64 fields in the host's byte
-     order, followed by [fill]'s scratch. Operands and axes by index: A 0, B 1,
-     Init 2, Dst 3; Batch 0, Row 1, Column 2, Contracted 3. The scratch holds
-     the coalescer's extents and strides, then each operand's layout axes of
-     each group, by operand, group and place, and whether the view has an
-     init. *)
+     order, then an int64 that is 1 iff it has an init. Operands and axes by
+     index: A 0, B 1, Init 2, Dst 3; Batch 0, Row 1, Column 2, Contracted 3.
+     C fills it (nx_kernel_view_fill). *)
   type t = Bytes.t
 
   let at_extent = 0
   let at_offset = 32
   let at_strides = 64
-  let view_bytes = 192
-  let at_ext = view_bytes
-  let at_st = at_ext + (8 * max_rank)
-  let at_axes = at_st + (8 * 4 * max_rank)
-  let at_has_init = at_axes + (8 * 4 * 4 * max_rank)
+  let at_has_init = 192
   let size = at_has_init + 8
   let get v at = Int64.to_int (Bytes.get_int64_ne v at)
-  let put v at x = Bytes.set_int64_ne v at (Int64.of_int x)
   let make () = Bytes.make size '\000'
 
   let operand_index = function A -> 0 | B -> 1 | Init -> 2 | Dst -> 3
@@ -408,153 +400,42 @@ module Contract_view = struct
     | Column -> 2
     | Contracted -> 3
 
-  (* nx_array.h's coalescer over [n] operands of the [r] extents at [at_ext]
-     of [v], operand k's strides from [at_st] + 8·k·max_rank, in place;
-     answers the merged rank. *)
-  external coalesce :
-    (int[@untagged]) -> (int[@untagged]) -> t -> (int[@untagged]) ->
-    (int[@untagged]) -> (int[@untagged])
-    = "nx_kernel_coalesce_byte" "nx_kernel_coalesce"
-  [@@noalloc]
-
   let has_init v = get v at_has_init <> 0
-  let at_axis o g k = at_axes + (8 * ((((4 * o) + g) * max_rank) + k))
   let at_stride o x = at_strides + (8 * ((4 * o) + x))
   let misfit what = invalid_arg ("Nx_kernel.Spec.Contract_view.fill: " ^ what)
 
-  (* Writes [r] consecutive layout axes from [first] as group [g] of operand
-     [o]. *)
-  let run v o g first r =
-    for k = 0 to r - 1 do
-      put v (at_axis o g k) (first + k)
-    done
-
-  (* Writes the free axes of a side of rank [r], those whose bit in [named] is
-     clear, as group [g] of operand [o]. *)
-  let free v o g r named =
-    let n = ref 0 in
-    for ax = 0 to r - 1 do
-      if named land (1 lsl ax) = 0 then begin
-        put v (at_axis o g !n) ax;
-        incr n
-      end
-    done
-
-  (* Raises unless the operands [o0] and [o] agree on group [g]'s [count]
-     extents. *)
-  let fits v l0 o0 l o g count =
-    for k = 0 to count - 1 do
-      if L.dim l (get v (at_axis o g k)) <> L.dim l0 (get v (at_axis o0 g k))
-      then misfit "extents differ within a group"
-    done
-
-  (* Places operand [o]'s strides along group [g]'s [count] axes as operand
-     [n] of the coalescer, its extents too where [n] is 0. *)
-  let gather v l o g n count =
-    for k = 0 to count - 1 do
-      let ax = get v (at_axis o g k) in
-      if n = 0 then put v (at_ext + (8 * k)) (L.dim l ax);
-      put v (at_st + (8 * ((n * max_rank) + k))) (L.stride l ax)
-    done
-
-  (* Writes coalescer operand [k]'s merged stride as operand [o]'s along
-     group [g]. *)
-  let merged v g o k = put v (at_stride o g) (get v (at_st + (8 * k * max_rank)))
-
-  (* Groups the [count] axes of group [g] over its first [n] operands of
-     [o0] to [o3], laid out as [l0] to [l3], into one, or is [false]. *)
-  let group v g count n o0 l0 o1 l1 o2 l2 o3 l3 =
-    gather v l0 o0 g 0 count;
-    gather v l1 o1 g 1 count;
-    if n > 2 then gather v l2 o2 g 2 count;
-    if n > 3 then gather v l3 o3 g 3 count;
-    coalesce n count v at_ext at_st = 1
-    && begin
-      put v (at_extent + (8 * g)) (get v at_ext);
-      merged v g o0 0;
-      merged v g o1 1;
-      if n > 2 then merged v g o2 2;
-      if n > 3 then merged v g o3 3;
-      true
-    end
+  (* [fill_c s v y a b i] fills [v] for the descriptor [s], [dst] [y] and the
+     operands [a], [b] and [i], [y] again without an init: [1] filled, [0] a
+     group that does not merge, [-1] extents that differ within a group, [-2]
+     ranks the pairs do not fit. *)
+  external fill_c :
+    string ->
+    Bytes.t ->
+    ('a, 'b) Nx_array.t ->
+    ('c, 'd) Nx_array.t ->
+    ('e, 'f) Nx_array.t ->
+    ('g, 'h) Nx_array.t ->
+    (int[@untagged]) = "nx_kernel_view_fill_byte" "nx_kernel_view_fill"
+  [@@noalloc]
 
   let fill v s ~dst ops =
     let init = int32 s at_init <> 0 in
     if Array.length ops <> 2 + Bool.to_int init then
       misfit "another number of operands";
+    let (Nx_array.Any y) = dst in
     let (Nx_array.Any a) = ops.(0) in
     let (Nx_array.Any b) = ops.(1) in
-    let (Nx_array.Any y) = dst in
-    let la = Nx_array.layout a and lb = Nx_array.layout b in
-    let ly = Nx_array.layout y in
-    let li =
+    let r =
       if init then
         let (Nx_array.Any i) = ops.(2) in
-        Nx_array.layout i
-      else ly
+        fill_c s v y a b i
+      else fill_c s v y a b y
     in
-    let nb = nbatch s and nc = ncontracting s in
-    let ra = L.rank la and rb = L.rank lb in
-    let fa = ra - nb - nc and fb = rb - nb - nc in
-    let ry = nb + fa + fb in
-    (* Each side's named axes as a mask; a pair past an operand's rank sets
-       a bit at or past it. *)
-    let na = ref 0 and nb' = ref 0 in
-    for k = 0 to nb - 1 do
-      let i = batch_axis s k 0 and j = batch_axis s k 1 in
-      na := !na lor (1 lsl i);
-      nb' := !nb' lor (1 lsl j);
-      put v (at_axis 0 0 k) i;
-      put v (at_axis 1 0 k) j
-    done;
-    for k = 0 to nc - 1 do
-      let i = contracting_axis s k 0 and j = contracting_axis s k 1 in
-      na := !na lor (1 lsl i);
-      nb' := !nb' lor (1 lsl j);
-      put v (at_axis 0 3 k) i;
-      put v (at_axis 1 3 k) j
-    done;
-    if
-      fa < 0 || fb < 0
-      || !na lsr ra <> 0
-      || !nb' lsr rb <> 0
-      || L.rank ly <> ry
-      || (init && L.rank li <> ry)
-    then misfit "ranks the pairs do not fit";
-    free v 0 1 ra !na;
-    free v 1 2 rb !nb';
-    for o = 2 to 3 do
-      run v o 0 0 nb;
-      run v o 1 nb fa;
-      run v o 2 (nb + fa) fb
-    done;
-    put v at_has_init (Bool.to_int init);
-    (* What an operand lacks reads 0: its axes, and an absent init. *)
-    Bytes.fill v at_offset (view_bytes - at_offset) '\000';
-    put v at_offset (L.offset la);
-    put v (at_offset + 8) (L.offset lb);
-    if init then put v (at_offset + 16) (L.offset li);
-    put v (at_offset + 24) (L.offset ly);
-    (* Every group fits before any merges: a misfit raises even behind a
-       group that does not merge. *)
-    fits v la 0 lb 1 0 nb;
-    fits v la 0 ly 3 0 nb;
-    fits v la 0 ly 3 1 fa;
-    fits v lb 1 ly 3 2 fb;
-    fits v la 0 lb 1 3 nc;
-    if init then begin
-      fits v la 0 li 2 0 nb;
-      fits v la 0 li 2 1 fa;
-      fits v lb 1 li 2 2 fb
-    end;
-    (* Batch over all, rows over a, init and dst, columns over b, init and
-       dst, contracted over a and b. *)
-    let i = Bool.to_int init in
-    let oy = if init then 2 else 3 and ly' = if init then li else ly in
-    group v 0 nb (3 + i) 0 la 1 lb oy ly' 3 ly
-    && group v 1 fa (2 + i) 0 la oy ly' 3 ly 3 ly
-    && group v 2 fb (2 + i) 1 lb oy ly' 3 ly 3 ly
-    && group v 3 nc 2 0 la 1 lb 0 la 0 la
+    match r with
+    | 1 -> true
+    | 0 -> false
+    | -1 -> misfit "extents differ within a group"
+    | _ -> misfit "ranks the pairs do not fit"
 
   let extent v x = get v (at_extent + (8 * axis_index x))
 

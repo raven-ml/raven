@@ -52,6 +52,19 @@ static int read_layout(value v, nx_array *a) {
 
 int nx_array_dtype(value v) { return (int)Long_val(Field(v, ARRAY_DTYPE)); }
 
+int nx_array_layout(value v, int64_t *dim, int64_t *offset) {
+  value l = Field(v, ARRAY_LAYOUT);
+  value shape = Field(l, NX_LAYOUT_SHAPE);
+  value strides = Field(l, NX_LAYOUT_STRIDES);
+  int r = (int)Wosize_val(shape);
+  for (int i = 0; i < r; i++) {
+    dim[i] = Long_val(Field(shape, i));
+    dim[r + i] = Long_val(Field(strides, i));
+  }
+  *offset = Long_val(Field(l, NX_LAYOUT_OFFSET));
+  return r;
+}
+
 static int claim_code(enum rig_claim c) {
   switch (c) {
     case RIG_CLAIMED:
