@@ -51,15 +51,20 @@ let filled ?memory d s =
   put b s;
   b
 
-(* [n] bytes of host memory that starts on a page, borrowed by [d], and the
-   host's buffer over them, which the host reads with no call of rig. *)
+(* [n] bytes of host memory that starts on a page, borrowed by [d], where [d]
+   maps host memory. *)
 let borrowed d n =
   let h = B.view (B.create Rig.host (Int.max n 65536)) ~first:0 ~length:n in
-  match B.borrow d h with Some b -> Some (b, h) | None -> None
+  B.borrow d h
 
-let host_bytes h =
-  let a = B.bigarray Bigarray.char h in
-  String.init (Bigarray.Array1.dim a) (Bigarray.Array1.get a)
+(* [n] zeroed bytes of [d]'s Pinned memory, which every driver's host
+   addresses, and a read of them at that address (rig.h's [rig_buffer_host]),
+   which calls nothing of rig. The caller keeps the buffer reachable while it
+   reads. *)
+let watched d n =
+  let b = filled ~memory:Pinned d (String.make n '\000') in
+  let a = Rig_support.Reader.host b in
+  (b, fun () -> Rig_gpu_support.Host.read a n)
 
 (* Submitting *)
 
@@ -270,9 +275,8 @@ let readers (module G : Gpu) (place, writer, reader, same) =
     match place with
     | Own memory -> B.create ~memory t.d n
     | Borrowed -> (
-        match borrowed t.d n with
-        | Some (b, _) -> b
-        | None -> skip ~reason:"the device maps no host memory" ())
+        (* A device that maps no host memory has no such place. *)
+        match borrowed t.d n with Some b -> b | None -> reject ())
   in
   (* [agent]'s part copying [src] into [dst], and the buffers it reads. *)
   let device agent ~dst ~src =
@@ -454,18 +458,14 @@ let sleep_aside (module G : Gpu) () =
 let runs_alone (module G : Gpu) () =
   G.with_ @@ fun t ->
   let n = 4096 in
-  let dst, h =
-    match borrowed t.d n with
-    | Some x -> x
-    | None -> skip ~reason:"the device maps no host memory" ()
-  in
-  B.blit_from_string (String.make n '\000') 0 h 0 n;
+  let dst, read = watched t.d n in
   let data = pattern n 5 in
   let src = filled ~memory:Pinned t.d data in
   let p, args = G.copy_words t ~dst ~src in
   let v = submit t.d [ p ] ~reads:[ src; args ] ~writes:[ dst ] in
-  await "the work ran" (fun () -> host_bytes h = data);
-  Rig.wait t.d v
+  await "the work ran" (fun () -> read () = data);
+  Rig.wait t.d v;
+  ignore (Sys.opaque_identity dst)
 
 (* The driver commits on its own: after a submit, submits alone bring the word
    to its value. *)
@@ -516,13 +516,8 @@ let loss (module G : Gpu) () =
 let holds (module G : Gpu) (t : G.t) point go =
   let pd = Rig.Point.device point and vp = Rig.Point.value point in
   let n = 4096 in
-  let dst, h =
-    match borrowed t.G.d n with
-    | Some x -> x
-    | None -> skip ~reason:"the device maps no host memory" ()
-  in
+  let dst, read = watched t.G.d n in
   let old = String.make n '\000' in
-  B.blit_from_string old 0 h 0 n;
   let data = pattern n 9 in
   let src = filled ~memory:Pinned t.d data in
   let p, args = G.copy_words t ~dst ~src in
@@ -533,7 +528,7 @@ let holds (module G : Gpu) (t : G.t) point go =
         let t0 = Rig.Profile.now () in
         let started = ref false in
         while not (Atomic.get finished) do
-          let x = host_bytes h in
+          let x = read () in
           if Rig.signaled pd < vp && x <> old then
             Atomic.set early (Some "the work ran before the producer's value");
           if (not !started) && Rig.Profile.now () - t0 > 20_000_000 then begin
@@ -554,7 +549,8 @@ let holds (module G : Gpu) (t : G.t) point go =
       Domain.join sampler)
     consumed;
   equal (option string) ~msg:"early" None (Atomic.get early);
-  equal octets ~msg:"the work's bytes" data (host_bytes h)
+  equal octets ~msg:"the work's bytes" data (read ());
+  ignore (Sys.opaque_identity dst)
 
 let empty_point d =
   Rig.submit (Sub.make ~reads:0 ~writes:0 d [||]) ~reads:[||] ~writes:[||]
