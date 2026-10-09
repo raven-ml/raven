@@ -7,12 +7,15 @@
 
    A link owns its socket and two threads that never hold the OCaml
    runtime. A frame goes from its writer's thread, which holds the link's
-   send claim while it sends: frames leave whole, one after another. The
-   sending thread sends the transfers of the link's rails and a beat after
-   a second without a send; it waits on nothing but a writer's send and its
-   socket. The receiving thread reads frames, places rail transfers,
-   answers requests, and queues an agent's commands; it measures silence on
-   its own.
+   send claim while it sends: frames leave whole, one after another. A
+   rail's ready function sends a transfer the same way when the claim is
+   free, as much of it as the socket takes at once, and hands the rest to
+   the sending thread with the claim. The sending thread sends the rest,
+   the transfers due while the claim was held, and a beat after a second
+   without a send; it wakes only to send, and waits on nothing but a
+   writer's send and its socket. The receiving thread reads frames, places
+   rail transfers, answers requests, and queues an agent's commands; it
+   measures silence on its own.
 
    A job fails once. Whoever finds the failure, a thread or a caller, sets
    the root cause under the job's lock, then for each link: marks it
@@ -93,6 +96,10 @@ typedef struct pollfd rig_remote_pollfd;
 #define ARRIVED 2
 #define COUNT_STRIDE 128
 
+/* A rail transfer's frame before its bytes: the header, the rail's id and
+   the transfer's count. */
+#define RAIL_HEADER (HEADER + 16)
+
 
 /* What a send or a receive answers besides 0 and a socket error. */
 enum {
@@ -129,7 +136,8 @@ struct rail {
   unsigned char *out, *in, *counts;
   value areas; /* a root holding [out], [in] and [counts] until released */
   size_t out_stride, in_stride;
-  uint64_t posted; /* the sending thread's last count sent */
+  uint64_t posted; /* the last count sent, by the claim's holders */
+  size_t partial;  /* bytes of transfer [posted + 1]'s frame sent */
   uint64_t placed; /* the receiving thread's last count placed */
   int users;       /* threads using it outside the link's lock */
   int releasing;   /* [release_rail] waits for its users */
@@ -354,6 +362,7 @@ static void abort_link(struct rig_remote_link *l) {
     send_abort(l, atomic_load(&l->job->why));
     pthread_mutex_lock(&l->mu);
     l->sending = 0;
+    pthread_cond_signal(&l->wake);
   }
   shutdown(l->fd, SHUT_SEND);
   close_if_idle(l);
@@ -422,16 +431,106 @@ static void thread_ends(struct rig_remote_link *l) {
   pthread_mutex_unlock(&j->mu);
 }
 
+/* Sends what [l]'s socket takes at once of the [n] bytes at [p] then of
+   [b], in one call that does not wait: the bytes sent, or a negated socket
+   error. One call sends a small frame in one segment, so that its peer's
+   receiving thread wakes once for it. Where the system has no call for
+   two areas, it sends [p]'s bytes alone, or [b]'s once [n] is 0. */
+static long send_some(struct rig_remote_link *l, const unsigned char *p,
+                      size_t n, struct rig_remote_span b) {
+  if (b.n > (1u << 30)) b.n = 1u << 30;
+#ifdef _WIN32
+  if (n == 0) {
+    p = b.p;
+    n = b.n;
+  }
+  long k = (long)send(l->fd, (const char *)p, n > (1u << 30) ? 1 << 30 : (int)n,
+                      RIG_REMOTE_NOSIGNAL);
+#else
+  struct iovec v[2] = {{(void *)p, n}, {(void *)b.p, b.n}};
+  struct msghdr m = {0};
+  m.msg_iov = v;
+  m.msg_iovlen = 2;
+  long k = (long)sendmsg(l->fd, &m, RIG_REMOTE_NOSIGNAL);
+#endif
+  return k < 0 ? -(long)rig_remote_sock_error() : k;
+}
+
+/* Sends the [n] bytes at [p], then [spans], the first span in the same call
+   as [p]'s bytes. */
+static int send_spans(struct rig_remote_link *l, const unsigned char *p,
+                      size_t n, const struct rig_remote_span *spans,
+                      int nspans) {
+  size_t own = 0, first = 0; /* bytes of [p] and of the first span sent */
+  if (nspans > 0) {
+    long k = send_some(l, p, n, spans[0]);
+    if (k < 0 && !again((int)-k)) return (int)-k;
+    if (k > 0) {
+      own = (size_t)k < n ? (size_t)k : n;
+      first = (size_t)k - own;
+    }
+  }
+  int err = send_all(l, p + own, n - own);
+  for (int i = 0; err == 0 && i < nspans; i++) {
+    size_t skip = i == 0 ? first : 0;
+    err = send_all(l, spans[i].p + skip, spans[i].n - skip);
+  }
+  return err;
+}
+
 /* Releases the send claim. Holds [l]'s lock. The writers waiting for it
-   go first. The sending thread wakes only to act: once the link closed, or
-   for a rail that is due once no writer waits, the last writer's release
-   waking it then. */
+   go first. The sending thread wakes only to act: once the link closed or
+   failed, or for a rail that is due once no writer waits, the last
+   writer's release waking it then. */
 static void release_claim(struct rig_remote_link *l) {
   l->sending = 0;
   l->sent_ns = now_ns();
   if (l->writers > 0) pthread_cond_broadcast(&l->cv);
-  if (l->sent_close || (l->due && l->writers == 0))
+  if (l->sent_close || atomic_load(&l->failed) || (l->due && l->writers == 0))
     pthread_cond_signal(&l->wake);
+}
+
+/* Rail transfers */
+
+/* The frame of [r]'s transfer [c] after its first [at] bytes: the rest of
+   its header, which it writes in [h], and of the transfer's bytes. */
+static void rail_frame(struct rail *r, uint64_t c, size_t at,
+                       unsigned char h[RAIL_HEADER],
+                       struct rig_remote_span s[2]) {
+  uint64_t j = (c - 1) % r->nsend, k = ((c - 1) / r->nsend) % 2;
+  uint64_t *t = r->send + 3 * j;
+  put_header(h, 16 + t[2], K_RAIL);
+  rig_remote_put_u64(h + HEADER, r->id);
+  rig_remote_put_u64(h + HEADER + 8, c);
+  size_t in_h = at < RAIL_HEADER ? at : RAIL_HEADER;
+  s[0].p = h + in_h;
+  s[0].n = RAIL_HEADER - in_h;
+  s[1].p = r->out + k * r->out_stride + t[0] + (at - in_h);
+  s[1].n = (size_t)t[2] - (at - in_h);
+}
+
+/* Marks [r]'s transfer [c] sent. */
+static void rail_sent(struct rail *r, uint64_t c) {
+  r->partial = 0;
+  r->posted = c;
+  atomic_store_explicit(count(r, SENT), c, memory_order_release);
+}
+
+/* Sends [r]'s transfers up to [ready], the first from its byte
+   [r->partial]. Holds the send claim, not [l]'s lock. [0], or a socket
+   error. */
+static int send_due(struct rig_remote_link *l, struct rail *r,
+                    uint64_t ready) {
+  while (r->posted < ready && !atomic_load(&l->failed)) {
+    uint64_t c = r->posted + 1;
+    unsigned char h[RAIL_HEADER];
+    struct rig_remote_span s[2];
+    rail_frame(r, c, r->partial, h, s);
+    int err = send_spans(l, s[0].p, s[0].n, &s[1], 1);
+    if (err != 0) return err;
+    rail_sent(r, c);
+  }
+  return 0;
 }
 
 /* Ends a rail's use by a thread outside [l]'s lock. Holds [l]'s lock. */
@@ -452,23 +551,7 @@ static int send_rails(struct rig_remote_link *l) {
     r->users++;
     l->sending = 1;
     pthread_mutex_unlock(&l->mu);
-    int err = 0;
-    while (r->posted < ready && err == 0 && !atomic_load(&l->failed)) {
-      uint64_t c = r->posted + 1;
-      uint64_t j = (c - 1) % r->nsend, k = ((c - 1) / r->nsend) % 2;
-      uint64_t *t = r->send + 3 * j;
-      unsigned char h[HEADER + 16];
-      put_header(h, 16 + t[2], K_RAIL);
-      rig_remote_put_u64(h + HEADER, r->id);
-      rig_remote_put_u64(h + HEADER + 8, c);
-      err = send_all(l, h, sizeof h);
-      if (err == 0)
-        err = send_all(l, r->out + k * r->out_stride + t[0], (size_t)t[2]);
-      if (err == 0) {
-        atomic_store_explicit(count(r, SENT), c, memory_order_release);
-        r->posted = c;
-      }
-    }
+    int err = send_due(l, r, ready);
     pthread_mutex_lock(&l->mu);
     rail_unused(l, r);
     release_claim(l);
@@ -482,47 +565,49 @@ static int send_rails(struct rig_remote_link *l) {
   return 0;
 }
 
-/* Sends [f]: its own bytes, then its spans. The first span goes in the
-   same call as the frame's own bytes, so that a small frame leaves in one
-   segment. */
-static int send_frame(struct rig_remote_link *l, struct rig_remote_frame *f) {
-  size_t own = 0, first = 0; /* bytes of [buf] and of the first span sent */
-#ifndef _WIN32
-  if (f->nspans > 0) {
-    struct iovec v[2] = {{f->buf, f->n},
-                         {(void *)f->spans[0].p, f->spans[0].n}};
-    struct msghdr m = {0};
-    m.msg_iov = v;
-    m.msg_iovlen = 2;
-    ssize_t k = sendmsg(l->fd, &m, RIG_REMOTE_NOSIGNAL);
-    if (k < 0 && !again(errno)) return errno;
-    if (k > 0) {
-      own = (size_t)k < f->n ? (size_t)k : f->n;
-      first = (size_t)k - own;
-    }
-  }
-#endif
-  int err = send_all(l, f->buf + own, f->n - own);
-  for (int i = 0; err == 0 && i < f->nspans; i++) {
-    size_t skip = i == 0 ? first : 0;
-    err = send_all(l, f->spans[i].p + skip, f->spans[i].n - skip);
-  }
-  return err;
+/* Finishes what the ready function began ([rail_ready]): it handed over the
+   send claim and its use of the rail, whose transfer it sent in part or
+   not at all, or met a socket error on. Holds [l]'s lock, and releases it
+   while it sends. [0], or [-1] if the link failed. */
+static int resume(struct rig_remote_link *l) {
+  struct rail *r = l->resume;
+  int err = l->resume_error;
+  l->resume = NULL;
+  l->resume_error = 0;
+  pthread_mutex_unlock(&l->mu);
+  if (err == 0)
+    err = send_due(l, r, atomic_load_explicit(count(r, READY),
+                                              memory_order_acquire));
+  pthread_mutex_lock(&l->mu);
+  rail_unused(l, r);
+  release_claim(l);
+  if (err == 0) return 0;
+  pthread_mutex_unlock(&l->mu);
+  link_lost(l, err);
+  pthread_mutex_lock(&l->mu);
+  return -1;
 }
 
 static void *sender(void *arg) {
   struct rig_remote_link *l = arg;
   pthread_mutex_lock(&l->mu);
   for (;;) {
-    if (atomic_load(&l->failed) || l->sent_close) break;
+    if (l->resume != NULL) {
+      if (resume(l) < 0) break;
+      continue;
+    }
+    /* Once the link ends, it waits for the claim's holder: a ready function
+       leaves a failure's abort to it. */
+    int ended = atomic_load(&l->failed) || l->sent_close;
+    if (ended && !l->sending) break;
     int claimed = l->sending || l->writers > 0;
-    if (!claimed && l->due) {
+    if (!ended && !claimed && l->due) {
       l->due = 0;
       if (send_rails(l) < 0) break;
       continue;
     }
     int64_t now = now_ns();
-    if (!claimed && now - l->sent_ns >= BEAT_NS) {
+    if (!ended && !claimed && now - l->sent_ns >= BEAT_NS) {
       unsigned char h[HEADER];
       put_header(h, 0, K_BEAT);
       l->sending = 1;
@@ -538,10 +623,10 @@ static void *sender(void *arg) {
       }
       continue;
     }
-    /* A rail's ready function, the claim's release while a rail is due,
-       and the link's end wake it. A claim's release counts as a send, so
-       while one is held the beat is a second away. */
-    if (l->due)
+    /* A claim handed over, the claim's release while a rail is due or once
+       the link ended, and the link's end wake it. A claim's release counts
+       as a send, so while one is held the beat is a second away. */
+    if (ended || l->due)
       pthread_cond_wait(&l->wake, &l->mu);
     else
       wait_ns(&l->wake, &l->mu, claimed ? BEAT_NS : l->sent_ns + BEAT_NS - now);
@@ -925,7 +1010,7 @@ int rig_remote_send(struct rig_remote_link *l, struct rig_remote_frame *f,
   if (f->kind == K_CLOSE) l->closing = 1;
   l->sending = 1;
   pthread_mutex_unlock(&l->mu);
-  int err = send_frame(l, f);
+  int err = send_spans(l, f->buf, f->n, f->spans, f->nspans);
   pthread_mutex_lock(&l->mu);
   if (err == 0 && f->kind == K_CLOSE) l->sent_close = 1;
   release_claim(l);
@@ -1319,18 +1404,50 @@ static uint64_t *transfers(value a) {
   return t;
 }
 
-/* Advances a rail's [ready] to [c] with release order and wakes its link's
-   sending thread, or, while the send claim is held, has its release wake
-   it. Calls nothing of the runtime: compiled host code calls it through
-   its address. */
+/* Advances a rail's [ready] to [c] with release order. If the link sends
+   nothing, it sends the rail's next transfer itself, as much of it as the
+   socket takes in one call that does not wait, and hands what is left to
+   the sending thread with the send claim; else the claim's release wakes
+   the sending thread for it. Calls nothing of the runtime: compiled host
+   code calls it through its address. */
 static void rail_ready(void *arg, uint64_t c) {
   struct rail *r = arg;
   struct rig_remote_link *l = r->link;
   atomic_store_explicit(count(r, READY), c, memory_order_release);
   if (rig_remote_forked(l->job)) return;
   pthread_mutex_lock(&l->mu);
-  l->due = 1;
-  if (!l->sending && l->writers == 0) pthread_cond_signal(&l->wake);
+  if (l->sending || l->writers > 0) {
+    l->due = 1;
+    pthread_mutex_unlock(&l->mu);
+    return;
+  }
+  if (atomic_load(&l->failed) || l->closing || r->posted >= c) {
+    pthread_mutex_unlock(&l->mu);
+    return;
+  }
+  l->sending = 1;
+  r->users++;
+  pthread_mutex_unlock(&l->mu);
+  uint64_t next = r->posted + 1;
+  unsigned char h[RAIL_HEADER];
+  struct rig_remote_span s[2];
+  rail_frame(r, next, r->partial, h, s);
+  long k = send_some(l, s[0].p, s[0].n, s[1]);
+  int whole = k == (long)(s[0].n + s[1].n);
+  if (whole)
+    rail_sent(r, next);
+  else if (k > 0)
+    r->partial += (size_t)k;
+  pthread_mutex_lock(&l->mu);
+  if (whole) {
+    if (r->posted < c) l->due = 1;
+    rail_unused(l, r);
+    release_claim(l);
+  } else {
+    l->resume = r;
+    l->resume_error = k < 0 && !again((int)-k) ? (int)-k : 0;
+    pthread_cond_signal(&l->wake);
+  }
   pthread_mutex_unlock(&l->mu);
 }
 

@@ -1419,6 +1419,43 @@ let rail_to_raw () =
   equal (option frame_w) (Some (k_rail, u64 4 ^ u64 1 ^ "hello")) (next_frame p);
   until ~what:"sent" (fun () -> count e sent >= 1)
 
+(* A transfer of 8 MiB, more than a socket takes in one call: the ready function
+   sends part of it, the sending thread the rest, and a drop sent once ready
+   returned leaves after the transfer's last byte. *)
+let rail_in_parts () =
+  with_raw @@ fun _ l p ->
+  let n = 8 lsl 20 in
+  let e = Link.rail l ~id:4 ~send:[| { t5 with length = n } |] ~receive:[||] in
+  Bigarray.Array1.fill e.outbound 'r';
+  e.ready 1;
+  let dropped = spawn (fun () -> Link.drop l 7) in
+  (match next_frame p with
+  | Some (k, f) when k = k_rail && String.length f = 16 + n ->
+      equal ~msg:"its rail and count" string (u64 4 ^ u64 1) (String.sub f 0 16);
+      let others = ref 0 in
+      String.iteri (fun i ch -> if i >= 16 && ch <> 'r' then incr others) f;
+      equal ~msg:"bytes other than the end's" int 0 !others
+  | f -> failf "the first frame is %a" (Testable.pp (option frame_w)) f);
+  equal (option frame_w) (Some (k_drop, u64 7)) (next_frame p);
+  dropped ();
+  until ~what:"sent" (fun () -> count e sent >= 1)
+
+(* A ready count once the link sent its close sends nothing. *)
+let rail_after_close () =
+  with_raw @@ fun j l p ->
+  let e = Link.rail l ~id:4 ~send:[| t5 |] ~receive:[||] in
+  let peer =
+    spawn (fun () ->
+        let f = next_frame p in
+        e.ready 1;
+        write p (frame k_close "");
+        (f, frames p))
+  in
+  Link.close j;
+  let f, rest = peer () in
+  equal (option frame_w) (Some (k_close, "")) f;
+  equal (list frame_w) [] rest
+
 let released () =
   with_pair @@ fun j c a ->
   Link.release_rail c 9;
@@ -1473,6 +1510,9 @@ let rails =
       test "a rail frame of another length fails the job" rail_wrong_length;
       test "a ready count sends its transfer as wire.mli lays it out"
         rail_to_raw;
+      test "a transfer larger than a send arrives whole, before later frames"
+        rail_in_parts;
+      test "a ready count after the close sends nothing" rail_after_close;
       test "a transfer to a released rail fails the job, release twice is one"
         released;
       test "a rail's end lives until its release, reachable or not"

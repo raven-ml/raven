@@ -11,9 +11,10 @@
     from a proxy's C or one of this module's functions, goes from its writer's
     thread: the writer waits for the frame being sent, sends its own whole, and
     returns once it is sent. The socket is the only back-pressure.
-    - the {e sending thread} sends the transfers of the link's rails ({!rail}),
-      and a beat after a second in which nothing was sent, between writers'
-      frames. It waits on nothing but the writers and its socket.
+    - the {e sending thread} sends what the [ready] functions of the link's
+      rails ({!rail}) leave, and a beat after a second in which nothing was
+      sent, between writers' frames. It waits on nothing but the writers and
+      its socket.
     - the {e receiving thread} reads each frame. It places the transfers of the
       link's rails, and on the controller, writes the bytes of copies into this
       process's memory, advances the proxies' words and delivers the answers to
@@ -187,10 +188,12 @@ val rail :
 (** [rail l ~id ~send ~receive] is this machine's end of the rail [id] to [l]'s
     peer, which carries [send] to it and [receive] from it, with the rail's
     areas, as [Rig_remote_abi] states them, zeroed, and its [ready] function.
-    From then on the sending thread, which the [ready] function wakes, sends
-    transfer [j]'s bytes once [ready] reaches its count, and stores [sent] once
-    they are sent; the receiving thread places arriving transfers and stores
-    [arrived]. The end's memory lives until {!release_rail}, reachable or not.
+    From then on, once [ready] reaches transfer [j]'s count, its bytes are
+    sent, as many as the socket takes at once by the [ready] function if the
+    link sends nothing then, the rest by the sending thread, and [sent] is
+    stored once they all are. The receiving thread places arriving transfers
+    and stores [arrived]. The end's memory lives until {!release_rail},
+    reachable or not.
 
     Raises [Invalid_argument] if [l] has a rail [id], [send] and [receive] are
     both empty, or a transfer's [length] is not positive or its [src] or [dst]

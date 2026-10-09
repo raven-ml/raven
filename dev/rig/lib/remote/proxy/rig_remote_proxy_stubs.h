@@ -156,6 +156,9 @@ struct rig_remote_link {
                   abort is being sent */
   int writers;  /* writers waiting for the claim, which go first */
   int due;      /* a rail's ready advanced since the sending thread looked */
+  struct rail *resume; /* a rail whose ready function handed the claim to the
+                          sending thread, its transfer not all sent */
+  int resume_error;    /* the socket error that function met, or 0 */
   int closing, sent_close, got_close, threads, fd_closed;
   int receiving; /* the receiving thread runs: copies' bytes may land */
   int abort_owed; /* the job failed: the peer is owed an abort */
