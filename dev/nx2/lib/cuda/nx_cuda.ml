@@ -23,9 +23,11 @@ external cubin : string -> string option = "nx_cuda_cubin"
 
 (* Devices *)
 
-(* The workspace holds a call's packed operands and split sums. It is named in
-   each call's writes, so rig orders the calls that share it. It grows to [kept]
-   bytes and is kept; a call that needs more takes a buffer of its own. *)
+(* A device's buffer, of [bytes] bytes, named in the writes of each call that
+   uses it, so rig orders those calls: the workspace, which holds a call's
+   packed operands and split sums, grows to [kept] bytes and is kept, a call
+   that needs more taking a buffer of its own; the tickets of split sums are
+   zero words, which every call leaves zero. *)
 type workspace = { buffer : Rig.Buffer.t; bytes : int }
 
 let kept = 64 * 1024 * 1024
@@ -34,6 +36,7 @@ type device = {
   image : Rig.Image.t;
   queue : string;  (** The queue that runs launches. *)
   workspace : workspace Atomic.t;
+  tickets : workspace Atomic.t;
   subs : Sub.t option array;  (** By {!Plan.sequence}, made on first use. *)
 }
 
@@ -71,6 +74,7 @@ let load d =
                   image;
                   queue;
                   workspace = Atomic.make none;
+                  tickets = Atomic.make none;
                   subs = Array.make Plan.sequences None;
                 }))
 
@@ -90,23 +94,37 @@ let device d =
 
 let computes_on d = Option.is_some (device d)
 
-(* The workspace of at least [need] bytes. A race stores only a larger one, so
-   it never shrinks. *)
+(* [cell]'s buffer of at least [need] bytes, grown to twice its bytes or
+   [need] by [make] at most [cap]. A race stores only a larger one, so it
+   never shrinks. A call whose buffer is large enough reads it without
+   reaching here, which would allocate [make]'s closure. *)
+let grow cell need ~cap make =
+  let w = Atomic.get cell in
+  let bytes = Int.min cap (Int.max need (2 * w.bytes)) in
+  let fresh = { buffer = make bytes; bytes } in
+  let rec store () =
+    let w = Atomic.get cell in
+    if w.bytes >= need then w.buffer
+    else if Atomic.compare_and_set cell w fresh then fresh.buffer
+    else store ()
+  in
+  store ()
+
 let workspace d dv need =
   let w = Atomic.get dv.workspace in
   if w.bytes >= need then w.buffer
   else if need > kept then Rig.Buffer.create d need
-  else begin
-    let bytes = Int.min kept (Int.max need (2 * w.bytes)) in
-    let fresh = { buffer = Rig.Buffer.create d bytes; bytes } in
-    let rec store () =
-      let w = Atomic.get dv.workspace in
-      if w.bytes >= need then w.buffer
-      else if Atomic.compare_and_set dv.workspace w fresh then fresh.buffer
-      else store ()
-    in
-    store ()
-  end
+  else grow dv.workspace need ~cap:kept (Rig.Buffer.create d)
+
+let zeros d bytes =
+  let b = Rig.Buffer.create d bytes in
+  Rig.Buffer.copy ~src:(Rig.Buffer.of_string (String.make bytes '\000')) ~dst:b;
+  b
+
+let tickets d dv need =
+  let w = Atomic.get dv.tickets in
+  if w.bytes >= need then w.buffer
+  else grow dv.tickets need ~cap:max_int (zeros d)
 
 (* The submission of [p]'s sequence on [d]. Two domains that make one at once
    each make it, and the last store wins. *)
@@ -137,6 +155,7 @@ type frame = {
   reads3 : Rig.Buffer.t array;
   writes1 : Rig.Buffer.t array;
   writes2 : Rig.Buffer.t array;
+  writes3 : Rig.Buffer.t array;
   read2 : A.any array;
   read3 : A.any array;
   written : A.any array;
@@ -162,6 +181,7 @@ let frame ~busy =
     reads3 = Array.make 3 no_buffer;
     writes1;
     writes2 = Array.make 2 no_buffer;
+    writes3 = Array.make 3 no_buffer;
     read2;
     read3 = Array.make 3 no_array;
     written = Array.make 1 no_array;
@@ -180,6 +200,7 @@ let release f =
   Array.fill f.reads3 0 3 no_buffer;
   Array.fill f.reads2 0 2 no_buffer;
   Array.fill f.writes2 0 2 no_buffer;
+  Array.fill f.writes3 0 3 no_buffer;
   f.writes1.(0) <- no_buffer;
   Array.fill f.read3 0 3 no_array;
   Array.fill f.read2 0 2 no_array;
@@ -188,8 +209,8 @@ let release f =
   Atomic.set f.busy false
 
 (* Makes the frame's arrays hold the call's buffers: [a], [b] and [init] read,
-   [dst] and the workspace written. *)
-let bind f ~dst ops ws =
+   [dst], the workspace and the tickets written. *)
+let bind f ~dst ops ws tk =
   let n = Array.length ops in
   f.reads <- (if n = 3 then f.reads3 else f.reads2);
   f.read <- (if n = 3 then f.read3 else f.read2);
@@ -199,9 +220,11 @@ let bind f ~dst ops ws =
     f.read.(i) <- ops.(i)
   done;
   let (A.Any y) = dst in
-  f.writes <- (if Plan.writes f.plan = 2 then f.writes2 else f.writes1);
+  let k = Plan.writes f.plan in
+  f.writes <- (if k = 3 then f.writes3 else if k = 2 then f.writes2 else f.writes1);
   f.writes.(0) <- A.buffer y;
-  if Plan.writes f.plan = 2 then f.writes.(1) <- ws;
+  if k >= 2 then f.writes.(1) <- ws;
+  if k = 3 then f.writes.(2) <- tk;
   f.written.(0) <- dst
 
 let issue f =
@@ -230,10 +253,11 @@ let run d dv f s ~dst ops =
     | Nothing -> A.door ~written:[| dst |] ~read:ops nothing ()
     | Launches ->
         let ws = workspace d dv (Plan.workspace f.plan) in
+        let tk = tickets d dv (Plan.tickets f.plan) in
         let sub = submission d dv f.plan in
         f.sub <- sub;
         Plan.write f.run (Option.get sub) f.plan;
-        bind f ~dst ops ws;
+        bind f ~dst ops ws tk;
         A.door ~written:f.written ~read:f.read issue f
 
 let contract s ~dst ops =

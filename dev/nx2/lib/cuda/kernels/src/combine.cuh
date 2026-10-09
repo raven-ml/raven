@@ -19,8 +19,10 @@
    blockIdx.y of the tile of blockIdx.x and blockIdx.z, whose [splits]
    partials go to [partials] (N * threads values each, the tiles one after
    another) and whose ticket is its word of [tickets], 0 before the first
-   block arrives. Returns true in the last block, its [v] then the tile's
-   sum, and false in the others, which stop there. */
+   block arrives. The last block returns the ticket to 0, so tickets left
+   by one launch are zero for the next. Returns true in the last block,
+   its [v] then the tile's sum, and false in the others, which stop
+   there. */
 template <typename T, int N>
 __device__ bool combine(T (&v)[N], T *partials, uint32_t *tickets,
                         int splits) {
@@ -38,6 +40,8 @@ __device__ bool combine(T (&v)[N], T *partials, uint32_t *tickets,
   if (tid == 0) last = atomicAdd(ticket, 1u) == (uint32_t)splits - 1;
   __syncthreads();
   if (!last) return false;
+  /* Every other block of the tile has taken its ticket. */
+  if (tid == 0) *ticket = 0;
   __threadfence();
 #pragma unroll
   for (int f = 0; f < N; f++) v[f] = __ldcg(part + (size_t)f * threads + tid);

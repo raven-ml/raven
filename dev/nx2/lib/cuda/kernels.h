@@ -20,7 +20,7 @@
 
 /* X(name, FAMILY, ...) for every kernel of the cubin, in enum order; the
    arguments after the family are its instance's:
-   - ZERO, PACK: none.
+   - PACK: none.
    - MMA (contract.cu): the operands' kind (bf16, f16, s8, or any for
      each of them, by a's dtype at the kernel's entry), the contiguous
      axis of a (k or m) and of b (k or n), and the tile.
@@ -29,8 +29,6 @@
    Instances are a budget: each names the rows that keep it. The plan
    packs an operand into a layout and dtype an instance reads. */
 #define NX_CUDA_KERNELS(X)                                                    \
-  /* every split sum */                                                     \
-  X(zero_u32, ZERO)                                                         \
   /* f8 operands, rows not of vectors, layouts with no instance */          \
   X(pack, PACK)                                                             \
   /* bf16 4096 to 8192, 4096x14336x4096, 512x201088x2880 */                 \
@@ -91,10 +89,11 @@ enum nx_cuda_kernel { NX_CUDA_KERNELS(NX_CUDA_ENUM) NX_CUDA_KERNEL_COUNT };
 /* y[z, i, j] = init[z, i, j] + sum_k a[z, i, k] * b[z, j, k], rounded once
    to y's dtype, for z < batch, i < m, j < n: each operand's element
    (z, i, k) at its address plus z, i and k times its strides, in elements.
-   [init] is NULL for none. [partials] and [tickets] are the workspace's when
-   [splits] > 1: the sum over k is cut into [splits] ranges, each summed by
-   its own block, and the last block to arrive adds them in range order
-   (combine.cuh). a and b are of the dtypes [a_dtype] and [b_dtype], the
+   [init] is NULL for none. When [splits] > 1 the sum over k is cut into
+   [splits] ranges, each summed by its own block into [partials], and the
+   last block to take its tile's ticket adds them in range order
+   (combine.cuh): [tickets] holds a zero word a tile, which that block
+   returns to zero. a and b are of the dtypes [a_dtype] and [b_dtype], the
    kernel's own: an mma kernel of kind any sums the kind of [a_dtype], and
    the integer skinny kernel's loop reads [b_dtype]. The sum, of
    [acc_dtype], reaches y as a cast from it does. [aligned] holds the
@@ -133,11 +132,5 @@ typedef struct {
   int64_t s[3], lead;
   int32_t batch, rows, k, dtype, out, bytes;
 } pack_params;
-
-/* zero_u32: [n] 32-bit words at [p] set to 0. */
-typedef struct {
-  uint32_t *p;
-  uint64_t n;
-} zero_params;
 
 #endif

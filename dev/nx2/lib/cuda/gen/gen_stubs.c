@@ -127,8 +127,6 @@ static const field pack_fields[] = {
     F(pack_params, k),     F(pack_params, dtype), F(pack_params, out),
     F(pack_params, bytes)};
 
-static const field zero_fields[] = {F(zero_params, p), F(zero_params, n)};
-
 static int by_offset(const void *x, const void *y) {
   const field *a = x, *b = y;
   return a->offset < b->offset ? -1 : a->offset > b->offset;
@@ -238,8 +236,6 @@ CAMLprim value nx_cuda_gen_text(value unit) {
             contract_fields, COUNT(contract_fields));
   structure("Pack_params", "pack_params", sizeof(pack_params), pack_fields,
             COUNT(pack_fields));
-  structure("Zero_params", "zero_params", sizeof(zero_params), zero_fields,
-            COUNT(zero_fields));
 
   r = caml_alloc_initialized_string(len, text);
   free(text);

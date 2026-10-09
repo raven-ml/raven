@@ -90,7 +90,6 @@ let index i =
   go 0
 
 let pack_kernel = index K.Pack
-let zero_kernel = index K.Zero_u32
 
 (* The first mma instance that sums [kind] with a's and b's contiguous axes [a]
    and [b] on the tile [t], or -1. An instance of kind [Any] sums every kind. *)
@@ -197,8 +196,7 @@ type t = {
   (* The workspace: its bytes taken, and the split sum's pieces. *)
   mutable used : int;
   mutable partials : int;
-  mutable tickets : int;
-  mutable count : int;  (** Tickets. *)
+  mutable count : int;  (** Output tiles of a split sum: its tickets. *)
   costs : Float.Array.t;
       (** Two tiles' costs while choosing one: floats unboxed. *)
 }
@@ -230,7 +228,6 @@ let make () =
     aligned = 0;
     used = 0;
     partials = 0;
-    tickets = 0;
     count = 0;
     costs = Float.Array.make 2 0.;
   }
@@ -548,12 +545,10 @@ let rules c =
             let mma_s8 = match kind with Some S8 -> t >= 0 | _ -> false in
             if whole c ~mma_s8 sum ~y_address:c.y_address then
               c.aligned <- c.aligned lor K.y_whole;
-            (* The split sum's partials and tickets, the tickets zeroed
-               first. *)
+            (* The split sum's partials, and a ticket a tile. *)
             if c.splits > 1 then begin
               c.count <- batch * c.blocks;
-              c.partials <- take c (c.count * c.splits * c.sums * c.sum_bytes);
-              c.tickets <- take c (c.count * 4)
+              c.partials <- take c (c.count * c.splits * c.sums * c.sum_bytes)
             end;
             Launches
           end
@@ -605,7 +600,10 @@ let reads c = if c.init then 3 else 2
 (* The workspace is a slot of the sequence whenever a launch addresses it,
    whatever its bytes: a pack of no element takes none. *)
 let uses_workspace c = c.a.packed || c.b.packed || c.splits > 1
-let writes c = if uses_workspace c then 2 else 1
+let writes c =
+  1 + Bool.to_int (uses_workspace c) + Bool.to_int (c.splits > 1)
+
+let tickets c = if c.splits > 1 then 4 * c.count else 0
 let workspace c = if uses_workspace c then Int.max 1 c.used else 0
 
 (* [c]'s launches in order: each kernel, its parameter bytes and its refs into
@@ -628,16 +626,13 @@ let launches c =
         [ ref P.b (if c.b.packed then ws else 1) ];
         (if c.init then [ ref P.init 2 ] else []);
         [ ref P.y y ];
-        (if split then [ ref P.partials ws; ref P.tickets ws ] else []);
+        (if split then [ ref P.partials ws; ref P.tickets (ws + 1) ] else []);
       ]
   in
   List.concat
     [
       (if c.a.packed then [ pack 0 ] else []);
       (if c.b.packed then [ pack 1 ] else []);
-      (if split then
-         [ (zero_kernel, K.Zero_params.size, [| ref K.Zero_params.p ws |]) ]
-       else []);
       [ (c.kernel, P.size, Array.of_list refs) ];
     ]
 
@@ -689,15 +684,6 @@ let write run sub c =
     incr i
   end;
   let split = c.splits > 1 in
-  if split then begin
-    let at = Rig.Submission.block sub !i in
-    incr i;
-    Run.groups run at (ceil_div c.count 256) 1 1;
-    Run.threads run at 256 1 1;
-    Run.shared run at 0;
-    Run.int64 run at K.Zero_params.p c.tickets;
-    Run.int64 run at K.Zero_params.n c.count
-  end;
   let module P = K.Contract_params in
   let at = Rig.Submission.block sub !i in
   Run.groups run at c.blocks c.splits c.batch;
@@ -708,7 +694,7 @@ let write run sub c =
   Run.int64 run at P.init (if c.init then c.i_first else 0);
   Run.int64 run at P.y c.y_first;
   Run.int64 run at P.partials (if split then c.partials else 0);
-  Run.int64 run at P.tickets (if split then c.tickets else 0);
+  Run.int64 run at P.tickets 0;
   write_strides run at P.sa c.a.s;
   write_strides run at P.sb c.b.s;
   write_strides run at P.si c.si;

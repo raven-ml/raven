@@ -523,12 +523,6 @@ __device__ void pack_rows(const pack_params &p) {
 
 /* Instances */
 
-extern "C" __global__ void zero_u32(const __grid_constant__ zero_params p) {
-  for (u64 i = blockIdx.x * (u64)blockDim.x + threadIdx.x; i < p.n;
-       i += (u64)gridDim.x * blockDim.x)
-    p.p[i] = 0;
-}
-
 #define TRANSPOSED_k false
 #define TRANSPOSED_m true
 #define TRANSPOSED_n true
@@ -559,7 +553,6 @@ __device__ void mma_kernel(const contract_params &p) {
 }
 
 #define DEFINE(name, FAMILY, ...) FAMILY(name, __VA_ARGS__)
-#define ZERO(name, ...)
 #define PACK(name, ...)                                                        \
   extern "C" __global__ void name(const __grid_constant__ pack_params p) {     \
     pack_rows(p);                                                              \

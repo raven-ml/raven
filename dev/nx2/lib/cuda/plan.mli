@@ -48,7 +48,13 @@ val reads : t -> int
 
 val writes : t -> int
 (** [writes p] is the count of buffers they write: the result, then the
-    workspace where [workspace p > 0]. *)
+    workspace where [workspace p > 0], then the tickets where
+    [tickets p > 0]. *)
+
+val tickets : t -> int
+(** [tickets p] is the bytes of tickets [p]'s split sum takes, from the start
+    of a buffer whose words are zero, which [p]'s launches leave zero; [0]
+    for no split. *)
 
 val parts : t -> Rig.Image.t -> queue:string -> Rig.Submission.part array
 (** [parts p i ~queue] is the launches of [p]'s sequence of [i]'s kernels on
