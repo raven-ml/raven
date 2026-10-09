@@ -141,7 +141,7 @@ static int holds(int acc, int d) {
 /* Whether nx.cpu computes a contraction in [acc] into [out] of the [n]
    operands of dtypes [dts]. */
 static int computes(int acc, int out, const int *dts, int n) {
-  if (out != acc || nx_cpu_table->gemm[acc].kernel == NULL) return 0;
+  if (out != acc || nx_cpu_table->gemm[acc].kernel.f == NULL) return 0;
   for (int i = 0; i < n; i++)
     if (!holds(acc, dts[i])) return 0;
   return 1;
@@ -231,8 +231,8 @@ typedef struct {
 
 /* Sliver [s] of element [e]'s panel, packed: kc steps of NR. */
 static uint8_t *sliver(const panel *c, int64_t e, int64_t s) {
-  const nx_cpu_gemm *g = c->p->g;
-  return c->b + ((e - c->e0) * c->slivers + s) * g->nr * c->kc * c->p->w;
+  int64_t nr = c->p->g->kernel.nr;
+  return c->b + ((e - c->e0) * c->slivers + s) * nr * c->kc * c->p->w;
 }
 
 /* Packs [a]'s rows [i, i + m) of element [e], along k from
@@ -260,7 +260,7 @@ static void pack_b(const problem *p, int64_t e, int64_t j, int64_t n, int nr,
 static void pack_panel(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)worker;
   const panel *c = ctx;
-  int nr = c->p->g->nr;
+  int nr = c->p->g->kernel.nr;
   for (int64_t u = lo; u < hi; u++) {
     int64_t e = c->e0 + u / c->slivers, v = u % c->slivers;
     int64_t j = c->jc + v * nr;
@@ -269,22 +269,16 @@ static void pack_panel(int64_t lo, int64_t hi, int worker, void *ctx) {
   }
 }
 
-/* A microkernel and its tile. */
-typedef struct {
-  nx_cpu_kernel kernel;
-  int mr, nr;
-} shape;
-
 /* Adds the products of the packed [a], its steps [lda] apart, and [b] to
    R's tile of [m] rows and [n] columns from (e, i, j) with [k]'s kernel: in
    place where its columns are adjacent and it is whole, else through a
    buffer. */
-static void tile(const problem *p, shape k, int64_t kc, const uint8_t *a,
-                 int64_t lda, const uint8_t *b, int64_t e, int64_t i,
-                 int64_t j, int64_t m, int64_t n) {
+static void tile(const problem *p, nx_cpu_micro k, int64_t kc,
+                 const uint8_t *a, int64_t lda, const uint8_t *b, int64_t e,
+                 int64_t i, int64_t j, int64_t m, int64_t n) {
   const int64_t *s = p->op[DST].st;
   if (m == k.mr && n == k.nr && s[COL] == 1) {
-    k.kernel(kc, a, lda, b, at_r(p, e, i, j), s[ROW]);
+    k.f(kc, a, lda, b, at_r(p, e, i, j), s[ROW]);
     return;
   }
   _Alignas(64) uint8_t t[NX_CPU_TILE];
@@ -296,7 +290,7 @@ static void tile(const problem *p, shape k, int64_t kc, const uint8_t *a,
     else
       for (int64_t q = 0; q < n; q++)
         memcpy(t + (r * k.nr + q) * w, at_r(p, e, i + r, j + q), w);
-  k.kernel(kc, a, lda, b, t, k.nr);
+  k.f(kc, a, lda, b, t, k.nr);
   for (int64_t r = 0; r < m; r++)
     if (s[COL] == 1)
       memcpy(at_r(p, e, i + r, j), t + r * k.nr * w, (size_t)(n * w));
@@ -309,8 +303,8 @@ static void compute(int64_t lo, int64_t hi, int worker, void *ctx) {
   const panel *c = ctx;
   problem *p = c->p;
   const nx_cpu_gemm *g = p->g;
-  shape k = {g->kernel, g->mr, g->nr};
-  int64_t m_all = p->ext[ROW], mr = g->mr, w = p->w;
+  nx_cpu_micro k = g->kernel;
+  int64_t m_all = p->ext[ROW], mr = k.mr, w = p->w;
   int64_t rows = min64(g->mc, ceil_div(m_all, mr) * mr);
   uint8_t *ap = scratch(p, worker, rows * min64(g->kc, p->ext[CON]) * w);
   if (ap == NULL) return;
@@ -321,14 +315,14 @@ static void compute(int64_t lo, int64_t hi, int worker, void *ctx) {
     int64_t v0 = range * c->per_range;
     int64_t v1 = min64(c->slivers, v0 + c->per_range);
     if (v0 >= v1) continue;
-    int64_t j0 = c->jc + v0 * g->nr;
-    int64_t j1 = min64(c->jc + c->nc, c->jc + v1 * g->nr);
+    int64_t j0 = c->jc + v0 * k.nr;
+    int64_t j1 = min64(c->jc + c->nc, c->jc + v1 * k.nr);
     int64_t lda = ceil_div(mc, mr) * mr;
     pack_a(p, e, i0, mc, lda, c->pc, c->kc, ap);
     if (c->pc == 0) start(p, e, i0, i0 + mc, j0, j1);
     if (c->kc == 0) continue;
     for (int64_t v = v0; v < v1; v++) {
-      int64_t j = c->jc + v * g->nr, n = min64(g->nr, c->jc + c->nc - j);
+      int64_t j = c->jc + v * k.nr, n = min64(k.nr, c->jc + c->nc - j);
       const uint8_t *b = sliver(c, e, v);
       for (int64_t ir = 0; ir < mc; ir += mr)
         tile(p, k, c->kc, ap + ir * w, lda, b, e, i0 + ir, j,
@@ -345,7 +339,7 @@ static void compute(int64_t lo, int64_t hi, int worker, void *ctx) {
    thin kernel. */
 typedef struct {
   problem *p;
-  shape k;
+  nx_cpu_micro k;
   int64_t lda, kblocks, slivers;
   uint8_t *a; /* element e's step q at a + (e·K + q)·lda·w */
 } few_rows_job;
@@ -385,10 +379,12 @@ static void few_rows_unit(int64_t lo, int64_t hi, int worker, void *ctx) {
   }
 }
 
-/* The thin kernel for [m] rows, if the target has one. */
-static const nx_cpu_thin *thin_of(const nx_cpu_gemm *g, int64_t m) {
-  int i = m <= 1 ? 0 : m <= 2 ? 1 : m <= 4 ? 2 : 3;
-  return i < 3 && g->thin[i].kernel ? &g->thin[i] : NULL;
+/* The kernel for [m] rows: the thin kernel of fewest rows that holds
+   them, else the main one. */
+static nx_cpu_micro kernel_of(const nx_cpu_gemm *g, int64_t m) {
+  for (int i = 0; i < 3; i++)
+    if (g->thin[i].f && g->thin[i].mr >= m) return g->thin[i];
+  return g->kernel;
 }
 
 /* [p] as the product of b's transpose by a's, which has the same outputs
@@ -411,10 +407,7 @@ static void few_rows(problem *p) {
   const nx_cpu_gemm *g = p->g;
   int64_t m = p->ext[ROW], n = p->ext[COL], k = p->ext[CON], w = p->w;
   int64_t batch = p->ext[BATCH];
-  const nx_cpu_thin *t = thin_of(g, m);
-  few_rows_job r = {p, {g->kernel, g->mr, g->nr}, 0, ceil_div(k, g->kc), 0,
-                    NULL};
-  if (t) r.k = (shape){t->kernel, m <= 1 ? 1 : m <= 2 ? 2 : 4, t->nr};
+  few_rows_job r = {p, kernel_of(g, m), 0, ceil_div(k, g->kc), 0, NULL};
   r.lda = ceil_div(m, r.k.mr) * r.k.mr;
   r.slivers = ceil_div(n, r.k.nr);
   int64_t packed = batch * k * r.lda * w;
@@ -434,8 +427,9 @@ static void chain(problem *p) {
   const nx_cpu_gemm *g = p->g;
   int64_t batch = p->ext[BATCH], m = p->ext[ROW], n = p->ext[COL];
   int64_t k = p->ext[CON], w = p->w;
-  int64_t nc = min64(g->nc, n), slivers = ceil_div(nc, g->nr);
-  int64_t panel_bytes = slivers * g->nr * min64(g->kc, k) * w;
+  int64_t nc = min64(g->nc, n), nr = g->kernel.nr;
+  int64_t slivers = ceil_div(nc, nr);
+  int64_t panel_bytes = slivers * nr * min64(g->kc, k) * w;
   int64_t group = panel_bytes > 0 && PANELS / panel_bytes > 1
                       ? PANELS / panel_bytes
                       : 1;
@@ -450,12 +444,12 @@ static void chain(problem *p) {
     int64_t ne = min64(group, batch - e0);
     for (int64_t jc = 0; jc < n; jc += g->nc) {
       panel c = {p, e0, ne, jc, min64(g->nc, n - jc), 0, 0, 0, mblocks, 1, 0, b};
-      c.slivers = ceil_div(c.nc, g->nr);
+      c.slivers = ceil_div(c.nc, nr);
       /* Enough units for the threads the compute job takes, splitting
          blocks of a into ranges of slivers only where there are too few:
          each range packs its block again. */
       int64_t kc = min64(g->kc, k);
-      int64_t packed = ne * c.slivers * g->nr * kc * w;
+      int64_t packed = ne * c.slivers * nr * kc * w;
       int64_t want =
           UNITS * nx_cpu_threads(packed, 2 * ne * m * c.nc * kc + packed);
       int64_t units = ne * mblocks;
@@ -466,7 +460,7 @@ static void chain(problem *p) {
         c.pc = pc;
         c.kc = min64(g->kc, k - pc);
         int64_t flops = 2 * ne * m * c.nc * c.kc;
-        packed = ne * c.slivers * g->nr * c.kc * w;
+        packed = ne * c.slivers * nr * c.kc * w;
         if (c.kc > 0)
           nx_cpu_job(ne * c.slivers, packed, 2 * packed, pack_panel, &c);
         nx_cpu_job(ne * mblocks * c.ranges, packed, flops + packed, compute,

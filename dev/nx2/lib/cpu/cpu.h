@@ -55,18 +55,17 @@ typedef void (*nx_cpu_kernel)(int64_t k, const void *a, int64_t lda,
 typedef void (*nx_cpu_dot)(const void *a, const void *b, int64_t n,
                            void *lanes);
 
-/* A microkernel of few rows: MR is 1, 2 or 4, NR is [nr]. */
+/* A microkernel and its tile of MR × NR outputs. */
 typedef struct {
-  nx_cpu_kernel kernel;
-  int nr;
-} nx_cpu_thin;
+  nx_cpu_kernel f;
+  int mr, nr;
+} nx_cpu_micro;
 
 /* A contraction's kernels for chain order in one accumulator dtype. */
 typedef struct {
-  nx_cpu_kernel kernel; /* the microkernel, of MR × NR outputs */
-  int mr, nr;
-  int64_t mc, kc, nc;   /* the driver's blocks of rows, of k and of columns */
-  nx_cpu_thin thin[3];  /* thin[i] has 2^i rows; NULL kernel where none */
+  nx_cpu_micro kernel;
+  int64_t mc, kc, nc;    /* the driver's blocks of rows, of k and of columns */
+  nx_cpu_micro thin[3];  /* of 1, 2 and 4 rows; f NULL where none */
 } nx_cpu_gemm;
 
 /* A row of a kind of two operands: n elements of [d] from [x] and [y], each

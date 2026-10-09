@@ -57,11 +57,9 @@ DOT(dot_f64, double, fma)
 
 static void set(nx_cpu_target *t) {
   t->gemm[NX_FLOAT32] = (nx_cpu_gemm){
-      .kernel = kernel_f32, .mr = MR, .nr = NR, .mc = 64, .kc = 256,
-      .nc = 1024};
+      .kernel = {kernel_f32, MR, NR}, .mc = 64, .kc = 256, .nc = 1024};
   t->gemm[NX_FLOAT64] = (nx_cpu_gemm){
-      .kernel = kernel_f64, .mr = MR, .nr = NR, .mc = 64, .kc = 256,
-      .nc = 1024};
+      .kernel = {kernel_f64, MR, NR}, .mc = 64, .kc = 256, .nc = 1024};
   t->dot[NX_FLOAT32] = dot_f32;
   t->dot[NX_FLOAT64] = dot_f64;
 }

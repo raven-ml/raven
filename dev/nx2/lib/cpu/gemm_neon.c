@@ -110,21 +110,17 @@ THIN(thin4_f64, double, float64x2_t, 2, 4, 4)
 
 void nx_cpu_set_neon(nx_cpu_target *t) {
   t->gemm[NX_FLOAT32] = (nx_cpu_gemm){
-      .kernel = kernel_f32,
-      .mr = F32_MR,
-      .nr = F32_NR,
+      .kernel = {kernel_f32, F32_MR, F32_NR},
       .mc = 128,
       .kc = 512,
       .nc = 3072,
-      .thin = {{thin1_f32, 64}, {thin2_f32, 32}, {thin4_f32, 16}}};
+      .thin = {{thin1_f32, 1, 64}, {thin2_f32, 2, 32}, {thin4_f32, 4, 16}}};
   t->gemm[NX_FLOAT64] = (nx_cpu_gemm){
-      .kernel = kernel_f64,
-      .mr = F64_MR,
-      .nr = F64_NR,
+      .kernel = {kernel_f64, F64_MR, F64_NR},
       .mc = 128,
       .kc = 256,
       .nc = 3072,
-      .thin = {{thin1_f64, 32}, {thin2_f64, 16}, {thin4_f64, 8}}};
+      .thin = {{thin1_f64, 1, 32}, {thin2_f64, 2, 16}, {thin4_f64, 4, 8}}};
 }
 
 #else

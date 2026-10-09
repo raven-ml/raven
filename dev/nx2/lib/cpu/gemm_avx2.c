@@ -79,21 +79,17 @@ THIN(thin4_f64, double, __m256d, 4, 4, 3)
 
 void nx_cpu_set_avx2(nx_cpu_target *t) {
   t->gemm[NX_FLOAT32] = (nx_cpu_gemm){
-      .kernel = kernel_f32,
-      .mr = MR,
-      .nr = 16,
+      .kernel = {kernel_f32, MR, 16},
       .mc = 96,
       .kc = 384,
       .nc = 3072,
-      .thin = {{thin1_f32, 96}, {thin2_f32, 48}, {thin4_f32, 24}}};
+      .thin = {{thin1_f32, 1, 96}, {thin2_f32, 2, 48}, {thin4_f32, 4, 24}}};
   t->gemm[NX_FLOAT64] = (nx_cpu_gemm){
-      .kernel = kernel_f64,
-      .mr = MR,
-      .nr = 8,
+      .kernel = {kernel_f64, MR, 8},
       .mc = 96,
       .kc = 256,
       .nc = 3072,
-      .thin = {{thin1_f64, 48}, {thin2_f64, 24}, {thin4_f64, 12}}};
+      .thin = {{thin1_f64, 1, 48}, {thin2_f64, 2, 24}, {thin4_f64, 4, 12}}};
 }
 
 #else
