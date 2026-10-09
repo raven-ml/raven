@@ -123,6 +123,12 @@ static uint32_t split(const nx_metal_contract_in *c, uint64_t tiles,
   return parts;
 }
 
+/* The tiles of [size] that cover a product's outputs. */
+static uint64_t tiles(const nx_metal_contract_in *c, enum size size) {
+  uint64_t rows = tile_rows[size], cols = tile_cols[size];
+  return (c->m + rows - 1) / rows * ((c->n + cols - 1) / cols) * c->batch;
+}
+
 /* [bytes] of the call's scratch after the [*used] bytes taken: their
    offset, on a 256-byte boundary. */
 static uint64_t take(size_t *used, size_t bytes) {
@@ -227,19 +233,21 @@ int nx_metal_plan_contract(const nx_metal_contract_in *c,
                    sizeof p, 4, 0);
     return e ? e : 1;
   }
-  /* The tile: wide for few rows; large for products of whole large tiles,
-     enough of them, and whole steps of k in each part; small otherwise,
-     or wide where b is stored [n][k], which small tiles do not read: it
-     reads b where it lies, where packing b would copy all of it. */
+  /* The tile the shape picks: wide for few rows; large for products of
+     whole large tiles, enough of them, and whole steps of k in each part;
+     small otherwise. It fixes the split, so every output's association
+     is the shape's. A b stored [n][k], which small tiles do not read, runs
+     their products on wide ones, which sum an output alike: they read b
+     where it lies, where packing b would copy all of it. */
   uint64_t large = (uint64_t)(c->m / side) * (c->n / side) * c->batch;
-  enum size size =
+  enum size shape =
       !floats ? Large
       : c->m <= wide_rows ? Wide
       : whole && large >= small_tiles &&
               c->k / split(c, large, floats) % tile_k(a->dtype, Large) == 0
           ? Large
-      : b_t ? Wide
-            : Small;
+          : Small;
+  enum size size = shape == Small && b_t ? Wide : shape;
   uint32_t rows = tile_rows[size], cols = tile_cols[size];
   uint32_t tiles_m = (c->m + rows - 1) / rows;
   uint32_t tiles_n = (c->n + cols - 1) / cols;
@@ -278,7 +286,7 @@ int nx_metal_plan_contract(const nx_metal_contract_in *c,
      batch of contractions of float32 parts, which contract_combine adds
      in order. Integers sum in chunks within one threadgroup: they never
      split. */
-  uint32_t parts = split(c, (uint64_t)tiles_m * tiles_n * c->batch, floats);
+  uint32_t parts = split(c, tiles(c, shape), floats);
   int entry = dense_entry(a->dtype, size, b_t);
   if (parts == 1) {
     if (!e) e = append(r, entry, groups, threads, &p, sizeof p, 4, mask);

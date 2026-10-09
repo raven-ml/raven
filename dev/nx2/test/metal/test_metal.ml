@@ -192,6 +192,7 @@ type values =
   | Special of int (* NaN, ±inf, -0 and a subnormal at places from a seed *)
   | Subnormal of int (* subnormals at a tenth of the places, from a seed *)
   | Extreme (* integers: every element its dtype's extreme *)
+  | Underflow (* float32: every product negative and below the least normal *)
 
 type case = {
   dt : Dt.any;
@@ -215,6 +216,7 @@ let pp_values ppf = function
   | Special s -> Format.fprintf ppf "special %d" s
   | Subnormal s -> Format.fprintf ppf "subnormal %d" s
   | Extreme -> Format.pp_print_string ppf "extreme"
+  | Underflow -> Format.pp_print_string ppf "underflow"
 
 let pp_case ppf c =
   let name (Dt.Any dt) = Dt.name dt in
@@ -368,6 +370,16 @@ let write_values c a b =
             set i (extreme c.dt)
           done)
         [ a; b ]
+  | Underflow ->
+      (* 2^-70 and -2^-70: each sum is a subnormal, which the GPU writes as
+         -0. *)
+      List.iter
+        (fun (x, code) ->
+          let _, set = codes x size in
+          for i = 0 to x.len - 1 do
+            set i code
+          done)
+        [ (a, 0x1c800000); (b, 0x9c800000) ]
 
 let init_arg t c (Dt.Any dt) =
   match c.init with
@@ -893,6 +905,124 @@ let determinism =
     ]
     (fun c -> deterministic c ())
 
+(* Layouts: a contraction's bits are a function of its operands' values and
+   shapes, never of the order a and b are stored in (RFC 0034, Law 4). *)
+
+(* [x], an operand of [rows] x [cols] per batch, copied element for element into
+   a fresh one stored [cols][rows] if [trans]. *)
+let relaid t c x ~trans ~rows ~cols =
+  let y =
+    matrix t c.dt ~trans ~batch:c.batch ~rows ~cols ~pad:c.pad ~bpad:c.bpad
+      ~seed:0 ~spread:0
+  in
+  let (Dt.Any dt) = c.dt in
+  let get, _ = codes x (Dt.bytes dt 1) and _, set = codes y (Dt.bytes dt 1) in
+  for p = 0 to c.batch - 1 do
+    for r = 0 to rows - 1 do
+      for q = 0 to cols - 1 do
+        set (y.at p r q) (get (x.at p r q))
+      done
+    done
+  done;
+  y
+
+(* Whether the code [x] of the float [dt] is a NaN: a NaN result is some NaN. *)
+let nan_code dt x =
+  match dt with
+  | Dt.Any Dt.Float32 -> x land 0x7f800000 = 0x7f800000 && x land 0x7fffff <> 0
+  | Dt.Any Dt.Float16 -> x land 0x7c00 = 0x7c00 && x land 0x3ff <> 0
+  | _ -> x land 0x7f80 = 0x7f80 && x land 0x7f <> 0
+
+let orders_agree c =
+  let t = dev () in
+  let a =
+    matrix t c.dt ~trans:false ~batch:c.batch ~rows:c.m ~cols:c.k ~pad:c.pad
+      ~bpad:c.bpad ~seed:1 ~spread:c.spread
+  and b =
+    matrix t c.dt ~trans:false ~batch:c.batch ~rows:c.k ~cols:c.n ~pad:c.pad
+      ~bpad:c.bpad ~seed:2 ~spread:c.spread
+  in
+  write_values c a b;
+  let a_t = relaid t c a ~trans:true ~rows:c.m ~cols:c.k
+  and b_t = relaid t c b ~trans:true ~rows:c.k ~cols:c.n in
+  let init = init_arg t c c.out in
+  let (Dt.Any out_dt) = c.out in
+  let size = Dt.bytes out_dt 1 in
+  let mn = c.batch * c.m * c.n in
+  (* The outputs' codes of the call with a and b. *)
+  let outputs a b =
+    let out =
+      matrix t c.out ~trans:false ~batch:c.batch ~rows:c.m ~cols:c.n ~pad:0
+        ~bpad:0 ~seed:5 ~spread:0
+    in
+    let run =
+      require_some ~msg:"the planner declined"
+        (S.plan_contract ?init t (c.batch, c.m, c.n, c.k) ~a:a.arg ~b:b.arg
+           ~out:out.arg)
+    in
+    ignore (S.run t run);
+    let get, _ = codes out size in
+    (S.entries run, Array.init mn get)
+  in
+  let entries, nn = outputs a b in
+  cover "a skinny product"
+    (List.exists (String.starts_with ~prefix:"skinny_") entries);
+  cover "a split along k" (List.mem "contract_combine" entries);
+  List.iter
+    (fun (name, a, b) ->
+      let _, y = outputs a b in
+      let differs i =
+        y.(i) <> nn.(i) && not (nan_code c.out y.(i) && nan_code c.out nn.(i))
+      in
+      let wrong = List.filter differs (List.init mn Fun.id) in
+      let show i =
+        strf "output %d: %#x, a and b C-contiguous %#x" i y.(i) nn.(i)
+      in
+      equal ~msg:name (list string) []
+        (List.filteri (fun j _ -> j < 4) (List.map show wrong)))
+    [
+      ("b stored [n][k]", a, b_t);
+      ("a stored [k][m]", a_t, b);
+      ("both transposed", a_t, b_t);
+    ]
+
+let orders =
+  let example dt ~m ~n ~k =
+    {
+      dt;
+      out = Dt.Any Dt.Float32;
+      a_t = false;
+      b_t = false;
+      batch = 1;
+      m;
+      n;
+      k;
+      init = No_init;
+      pad = 0;
+      bpad = 0;
+      spread = 8;
+      values = Drawn;
+    }
+  in
+  let examples =
+    [
+      (* One row: the skinny kernel, b read along either axis. *)
+      example (Dt.Any Dt.Bfloat16) ~m:1 ~n:70 ~k:2880;
+      example (Dt.Any Dt.Float32) ~m:1 ~n:70 ~k:300;
+      (* 40 rows past whole tiles: 32 x 32 tiles count 158 and split k in 2, 16
+         x 64 tiles count 120 and would split it in 4. *)
+      example (Dt.Any Dt.Float32) ~m:40 ~n:2500 ~k:4096;
+      (* Sums of -0 over 48 terms: 16-step tiles end on k, 32-step tiles pass
+         it. *)
+      {
+        (example (Dt.Any Dt.Float32) ~m:17 ~n:17 ~k:48) with
+        values = Underflow;
+      };
+    ]
+  in
+  prop ~count:30 ~examples "a contraction's bits do not depend on its orders"
+    case orders_agree
+
 let contract =
   group ~timeout:120. "contract"
     [
@@ -903,6 +1033,7 @@ let contract =
       test "every kernel runs" every_kernel;
       test "the plan declines or is right" every_quadruple;
       determinism;
+      orders;
     ]
 
 let () =
