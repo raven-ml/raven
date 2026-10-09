@@ -42,7 +42,9 @@ module Spec = Spec
     write; [Declined] if it does not compute the case, before any write or
     queued work. Value-dependent failures are NaN. A kernel's result is a
     function of its operands' values alone: neither layouts nor threads change a
-    bit.
+    bit. A kernel raises [Out_of_memory] if host memory runs out and
+    {!Rig.Out_of_memory} if its device's does; [Declined] says only that it
+    does not compute the case.
 
     An [apply] entry answers [Wrong_dtype] for dtypes its kind does not take
     ({!Prog.accepts0} to {!Prog.accepts3}), whatever its caller checked. A
