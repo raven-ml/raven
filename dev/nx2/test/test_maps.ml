@@ -367,9 +367,28 @@ let test_no_reuse_strided () =
   equal ~msg:"fresh memory" bool false reused;
   equal ~msg:"the result" (array bits) [| 2.; 3. |] (elements y)
 
+(* A handle a view passes on keeps its memory unshared: the view is within the
+   chain, so the final consumer writes into it. *)
+let test_reuse_after_view () =
+  let x = f32 [| 1.; 2. |] in
+  let d =
+    Exec.run ~by:"t" (Value.Move (Reshape [| 1; 2 |], Exec.donate ~by:"t" x))
+  in
+  let one =
+    Exec.run ~by:"t" (Value.Move (Reshape [| 1; 2 |], f32 [| 1.; 1. |]))
+  in
+  let y =
+    first (Exec.run ~by:"t" (Prim.op2 ~by:"t" (Binary Add) D.Float32 d one))
+  in
+  equal ~msg:"written in place" bool true
+    (Rig.Buffer.overlaps (A.buffer (array_of x)) (A.buffer (array_of y)));
+  equal ~msg:"the result" (array bits) [| 2.; 3. |] (elements y)
+
 let donation =
   group "donation"
     [
+      test "a handle passed on by a view is written in place"
+        test_reuse_after_view;
       test "an elementwise operation writes into a donated operand" test_reuse;
       test "the fast path writes into a donated operand too" test_reuse_fast;
       test "the fast path of one operand writes into it" test_reuse_fast1;

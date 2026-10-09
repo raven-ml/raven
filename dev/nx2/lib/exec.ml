@@ -565,15 +565,23 @@ and donated : type r. by:string -> r Value.prim -> handle list -> r =
  fun ~by op hs ->
   match op with
   | Value.Move (mv, (Value.Donated d as x)) when bijective mv (Prim.shape x) ->
-      let r = run ~by (Value.Move (mv, live x)) in
+      (* A view within the chain leaves the memory unshared: the handle it
+         passes on is the chain's, so its consumer may still write into it. *)
+      let moved () =
+        let r = run ~by (Value.Move (mv, live x)) in
+        (Prim.placement r, arrays_of r)
+      in
+      let at, arrays =
+        match d.arrays with
+        | [| a |] -> (
+            ignore (Prim.prepare ~by (fun _ y -> y) op);
+            match A.move mv a with
+            | Some v -> (d.at, [| v |])
+            | None -> moved ())
+        | _ -> moved ()
+      in
       d.spent <- by;
-      Value.Donated
-        {
-          at = Prim.placement r;
-          arrays = arrays_of r;
-          chain = d.chain;
-          spent = Prim.live;
-        }
+      Value.Donated { at; arrays; chain = d.chain; spent = Prim.live }
   | Value.Map ({ loads; _ } as m) -> (
       claim ~by hs;
       match reuse ~by m.layout m.outs loads with
