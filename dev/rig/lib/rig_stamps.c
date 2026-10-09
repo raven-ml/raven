@@ -462,8 +462,12 @@ void rig_sub_raise(struct rig_sub *s, uint64_t p) {
     raise_own(s->fixed[k].use, p);
     if (s->fixed[k].held_use != NULL) raise_own(s->fixed[k].held_use, p);
   }
-  for (int k = 0; k < s->nreads + s->nwrites; k++) {
-    if (k >= s->nreads) raise_last_write(s->slots[k].stamps, p);
+  for (int k = 0; k < s->nreads; k++) {
+    raise_own(s->slots[k].use, p);
+    if (s->slots[k].held_use != NULL) raise_own(s->slots[k].held_use, p);
+  }
+  for (int k = s->nreads; k < s->nreads + s->nwrites; k++) {
+    raise_last_write(s->slots[k].stamps, p);
     raise_own(s->slots[k].use, p);
     if (s->slots[k].held_use != NULL) raise_own(s->slots[k].held_use, p);
   }
