@@ -178,6 +178,7 @@ val entries : run -> string list
 
 val contract_wrong :
   ?init:arg ->
+  ?samples:int ->
   acc:Nx_array.Dtype.any ->
   int * int * int * int ->
   a:arg ->
@@ -187,13 +188,22 @@ val contract_wrong :
 (** [contract_wrong ~acc] is, for an integer contraction accumulated in [acc],
     once its run returned, the number of outputs that differ from the sum
     wrapped to [acc]'s width then to out's, and the first one's index, or [-1].
-*)
+    With [samples], it reads that many outputs spread evenly, the last
+    included; all of them by default. *)
 
 val contract_error :
-  ?init:arg -> int * int * int * int -> a:arg -> b:arg -> out:arg -> float * int
+  ?init:arg ->
+  ?samples:int ->
+  int * int * int * int ->
+  a:arg ->
+  b:arg ->
+  out:arg ->
+  float * int
 (** [contract_error] is, for a float contraction, once its run returned, the
     largest distance of an output to the exact result as a fraction of the
     distance the contraction's bound allows, float32 subnormals flushed, with
-    that output's index: at most [1.] when every output is within it.
+    that output's index: at most [1.] when every output is within it. With
+    [samples], it reads that many outputs spread evenly, the last included;
+    all of them by default.
 
     Raises [Failure] if an output's ratio is NaN, which no bound orders. *)

@@ -403,9 +403,23 @@ static double device_read(int dt, double x) {
   return x;
 }
 
-/* Over every output of the contraction (batch, m, n, k), the largest
-   |out - s| / allowed, s the sum in double: allowed is the contraction's
-   bound γ(k + 1, 2u)·(|init| + Σ|a||b|) at float32's u, plus
+/* The [t]th of [count] outputs checked among [total]: all of them, or
+   [count] spread evenly, the last included. */
+static int64_t sampled(int64_t t, int64_t count, int64_t total) {
+  if (count == total) return t;
+  return t == count - 1 ? total - 1 : t * total / count;
+}
+
+/* How many outputs to check among [total]: [samples] if positive and
+   fewer, all of them otherwise. */
+static int64_t checked(int64_t samples, int64_t total) {
+  return samples > 0 && samples < total ? samples : total;
+}
+
+/* Over the outputs checked of the contraction (batch, m, n, k, acc,
+   samples), the largest |out - s| / allowed, s the sum in double:
+   allowed is the contraction's bound γ(k + 1, 2u)·(|init| + Σ|a||b|) at
+   float32's u, plus
    2^-126·(1 + Σ(1 + |a| + |b|)) for the flushed subnormals, operands,
    products and sums, widened by the rounding to out's dtype. An output
    whose terms, as the GPU reads them, sum to a NaN or an infinity in
@@ -425,56 +439,56 @@ value nx_metal_test_contract_error(value v_dims, value v_a, value v_b,
   readable(1, ds, 4);
   double u = 0x1p-24, g = (k + 1) * 2 * u / (1 - (k + 1) * 2 * u);
   double worst = 0;
-  int64_t at = 0;
-  for (int64_t p = 0; p < batch; p++)
-    for (int64_t i = 0; i < m; i++)
-      for (int64_t j = 0; j < n; j++) {
-        double s = 0, mag = 0, flush = 1, read = 0;
-        for (int64_t l = 0; l < k; l++) {
-          double x = element((void *)a.address, a.dtype,
-                             p * a.strides[0] + i * a.strides[1] +
-                                 l * a.strides[2]);
-          double y = element((void *)b.address, b.dtype,
-                             p * b.strides[0] + l * b.strides[1] +
-                                 j * b.strides[2]);
-          s += x * y;
-          mag += fabs(x * y);
-          flush += 1 + fabs(x) + fabs(y);
-          read += device_read(a.dtype, x) * device_read(b.dtype, y);
-        }
-        if (has_init) {
-          double z = element((void *)init.address, init.dtype,
-                             p * init.strides[0] + i * init.strides[1] +
-                                 j * init.strides[2]);
-          s += z;
-          mag += fabs(z);
-          read += z;
-        }
-        flush *= 0x1p-126;
-        int64_t o = (p * m + i) * n + j;
-        double got = element((void *)out.address, out.dtype, o);
-        if (!isfinite(read)) {
-          int same = isnan(read) ? isnan(got) : got == read;
-          if (!same && worst < INFINITY) {
-            worst = INFINITY;
-            at = o;
-          }
-          continue;
-        }
-        double allowed = g * mag + flush +
-                         1.01 * rounding(out.dtype, fabs(s) + g * mag + flush);
-        /* A NaN output of a finite sum is wrong by any measure. */
-        double e = isnan(got) ? INFINITY : fabs(got - s);
-        double ratio = allowed > 0 ? e / allowed : (e > 0 ? INFINITY : 0);
-        /* A float32 result within the bound past out's range rounds to the
-           infinity of its sign. */
-        double far = copysign(1, got) * s + g * mag + flush;
-        if (isinf(got) && far >= overflow(out.dtype)) ratio = 0;
-        if (ratio > worst) {
-          worst = ratio;
-          at = o;
-        }
+  int64_t at = 0, total = batch * m * n;
+  int64_t count = checked(Long_val(Field(v_dims, 5)), total);
+  for (int64_t t = 0; t < count; t++) {
+    int64_t o = sampled(t, count, total);
+    int64_t p = o / (m * n), i = o / n % m, j = o % n;
+    double s = 0, mag = 0, flush = 1, read = 0;
+    for (int64_t l = 0; l < k; l++) {
+      double x = element((void *)a.address, a.dtype,
+                         p * a.strides[0] + i * a.strides[1] +
+                             l * a.strides[2]);
+      double y = element((void *)b.address, b.dtype,
+                         p * b.strides[0] + l * b.strides[1] +
+                             j * b.strides[2]);
+      s += x * y;
+      mag += fabs(x * y);
+      flush += 1 + fabs(x) + fabs(y);
+      read += device_read(a.dtype, x) * device_read(b.dtype, y);
+    }
+    if (has_init) {
+      double z = element((void *)init.address, init.dtype,
+                         p * init.strides[0] + i * init.strides[1] +
+                             j * init.strides[2]);
+      s += z;
+      mag += fabs(z);
+      read += z;
+    }
+    flush *= 0x1p-126;
+    double got = element((void *)out.address, out.dtype, o);
+    if (!isfinite(read)) {
+      int same = isnan(read) ? isnan(got) : got == read;
+      if (!same && worst < INFINITY) {
+        worst = INFINITY;
+        at = o;
       }
+      continue;
+    }
+    double allowed = g * mag + flush +
+                     1.01 * rounding(out.dtype, fabs(s) + g * mag + flush);
+    /* A NaN output of a finite sum is wrong by any measure. */
+    double e = isnan(got) ? INFINITY : fabs(got - s);
+    double ratio = allowed > 0 ? e / allowed : (e > 0 ? INFINITY : 0);
+    /* A float32 result within the bound past out's range rounds to the
+       infinity of its sign. */
+    double far = copysign(1, got) * s + g * mag + flush;
+    if (isinf(got) && far >= overflow(out.dtype)) ratio = 0;
+    if (ratio > worst) {
+      worst = ratio;
+      at = o;
+    }
+  }
   v = caml_alloc_tuple(2);
   Store_field(v, 0, caml_copy_double(worst));
   Store_field(v, 1, Val_long(at));
@@ -501,8 +515,8 @@ static uint64_t widen_sign(uint64_t x, int bits) {
   return (low ^ top) - top;
 }
 
-/* Over every output of the integer contraction (batch, m, n, k, acc), how
-   many differ from the sum wrapped to acc's width, widened by acc's sign,
+/* Over the outputs checked of the integer contraction (batch, m, n, k,
+   acc, samples), how many differ from the sum wrapped to acc's width, widened by acc's sign,
    then wrapped to out's, as a cast from acc does, with the first such
    output's index, or -1. */
 value nx_metal_test_contract_wrong(value v_dims, value v_a, value v_b,
@@ -523,28 +537,28 @@ value nx_metal_test_contract_wrong(value v_dims, value v_a, value v_b,
   readable(0, ds, 5);
   int bits = nx_dtype_row_of(out.dtype).bits;
   uint64_t out_mask = bits == 64 ? ~0ull : (1ull << bits) - 1;
-  int64_t wrong = 0, first = -1;
-  for (int64_t p = 0; p < batch; p++)
-    for (int64_t i = 0; i < m; i++)
-      for (int64_t j = 0; j < n; j++) {
-        uint64_t s = 0;
-        for (int64_t l = 0; l < k; l++)
-          s += widened((void *)a.address, a.dtype,
-                       p * a.strides[0] + i * a.strides[1] + l * a.strides[2]) *
-               widened((void *)b.address, b.dtype,
-                       p * b.strides[0] + l * b.strides[1] + j * b.strides[2]);
-        if (has_init)
-          s += widened((void *)init.address, init.dtype,
-                       p * init.strides[0] + i * init.strides[1] +
-                           j * init.strides[2]);
-        int64_t o = (p * m + i) * n + j;
-        uint64_t got = widened((void *)out.address, out.dtype, o);
-        uint64_t want = acc_signed ? widen_sign(s, acc_bits) : s & acc_mask;
-        if ((want & out_mask) != (got & out_mask)) {
-          if (first < 0) first = o;
-          wrong++;
-        }
-      }
+  int64_t wrong = 0, first = -1, total = batch * m * n;
+  int64_t count = checked(Long_val(Field(v_dims, 5)), total);
+  for (int64_t t = 0; t < count; t++) {
+    int64_t o = sampled(t, count, total);
+    int64_t p = o / (m * n), i = o / n % m, j = o % n;
+    uint64_t s = 0;
+    for (int64_t l = 0; l < k; l++)
+      s += widened((void *)a.address, a.dtype,
+                   p * a.strides[0] + i * a.strides[1] + l * a.strides[2]) *
+           widened((void *)b.address, b.dtype,
+                   p * b.strides[0] + l * b.strides[1] + j * b.strides[2]);
+    if (has_init)
+      s += widened((void *)init.address, init.dtype,
+                   p * init.strides[0] + i * init.strides[1] +
+                       j * init.strides[2]);
+    uint64_t got = widened((void *)out.address, out.dtype, o);
+    uint64_t want = acc_signed ? widen_sign(s, acc_bits) : s & acc_mask;
+    if ((want & out_mask) != (got & out_mask)) {
+      if (first < 0) first = o;
+      wrong++;
+    }
+  }
   v = caml_alloc_tuple(2);
   Store_field(v, 0, Val_long(wrong));
   Store_field(v, 1, Val_long(first));

@@ -224,7 +224,9 @@ let arg_operand a = a.o
 let gpu a = (address a.o, a.dtype, a.strides)
 let cpu a = (a.o.host, a.dtype, a.strides)
 
-type dims = int * int * int * int * int
+(* batch, m, n, k, the accumulator's dtype code, and how many outputs a
+   check reads, 0 for all. *)
+type dims = int * int * int * int * int * int
 type view = int * int * (int * int * int)
 
 external plan_contract :
@@ -242,7 +244,8 @@ external contract_wrong :
   dims -> view -> view -> view -> view option -> int * int
   = "nx_metal_test_contract_wrong"
 
-let with_acc acc (batch, m, n, k) = (batch, m, n, k, acc)
+let with_acc ?(samples = 0) acc (batch, m, n, k) =
+  (batch, m, n, k, acc, samples)
 let float32 = Nx_array.Dtype.(Any Float32)
 let code (Nx_array.Dtype.Any dt) = Nx_array.Dtype.code dt
 
@@ -261,10 +264,10 @@ let plan_contract ?init ?(acc = float32) t dims ~a ~b ~out =
 
 let entries r = List.map (fun k -> kernels.(k)) r.kernels
 
-let contract_error ?init dims ~a ~b ~out =
+let contract_error ?init ?samples dims ~a ~b ~out =
   let worst, at =
     contract_error
-      (with_acc (code float32) dims)
+      (with_acc ?samples (code float32) dims)
       (cpu a) (cpu b) (cpu out) (Option.map cpu init)
   in
   (* windtrap's at_most orders NaN below every number: a NaN worst would
@@ -273,7 +276,7 @@ let contract_error ?init dims ~a ~b ~out =
     failwith "Nx_metal_support.contract_error: a NaN ratio";
   (worst, at)
 
-let contract_wrong ?init ~acc dims ~a ~b ~out =
+let contract_wrong ?init ?samples ~acc dims ~a ~b ~out =
   contract_wrong
-    (with_acc (code acc) dims)
+    (with_acc ?samples (code acc) dims)
     (cpu a) (cpu b) (cpu out) (Option.map cpu init)

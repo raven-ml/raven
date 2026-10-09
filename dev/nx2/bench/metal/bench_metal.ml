@@ -102,7 +102,11 @@ let peak_row name kernel (Dt.Any dt) ~flops_per_round =
 (* Contractions of a [batch][m][k] and b [batch][k][n], stored transposed where
    [trans] says ("nt": b stored [n][k]), against the simdgroup-matrix peak of
    the type their fragments hold. A skinny product (m at most 16) streams b: its
-   floor reads as many bytes. *)
+   floor reads as many bytes. Each row's setup runs it once and checks 512 of
+   its outputs, against the error bound for floats and exactly for integers: a
+   row whose results are wrong fails instead of timing them. *)
+let samples = 512
+
 let contract_row ?(batch = 1) ?name ?acc ?out (Dt.Any dt) ~m ~k ~n trans =
   let a_t = trans.[0] = 't' and b_t = trans.[1] = 't' in
   let short = function
@@ -151,7 +155,20 @@ let contract_row ?(batch = 1) ?name ?acc ?out (Dt.Any dt) ~m ~k ~n trans =
             out_dt
             (m * n, n, 1)
         in
-        Option.get (S.plan_contract ?acc t (batch, m, n, k) ~a ~b ~out));
+        let dims = (batch, m, n, k) in
+        let run = Option.get (S.plan_contract ?acc t dims ~a ~b ~out) in
+        ignore (S.run t run);
+        (match acc with
+        | Some acc ->
+            let wrong, first = S.contract_wrong ~samples ~acc dims ~a ~b ~out in
+            if wrong > 0 then
+              failwith
+                (strf "%s: %d outputs wrong, the first %d" name wrong first)
+        | None ->
+            let worst, at = S.contract_error ~samples dims ~a ~b ~out in
+            if not (worst <= 1.) then
+              failwith (strf "%s: output %d at %g of the bound" name at worst));
+        run);
   }
 
 (* Squares, the four orders, gpt-oss's prefill, few-row and decode products (k
