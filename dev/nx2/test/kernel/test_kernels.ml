@@ -4,9 +4,10 @@
   ---------------------------------------------------------------------------*)
 
 (* The laws of Nx_kernel.S, run through every kernel library the host runs:
-   copies and casts, each against a reference built element by element, over
-   every dtype and pair of dtypes, drawn layouts and drawn bytes; the door's
-   refusals; and operands kept alive across a call. *)
+   copies and casts into fresh C-contiguous destinations, each against a
+   reference built element by element, over every dtype and pair of dtypes,
+   drawn source layouts and drawn bytes; a decline writes nothing; and operands
+   kept alive across a call. nx.cpu's own refusals have a group of their own. *)
 
 open Windtrap
 open Nx_array_gen
@@ -27,7 +28,6 @@ let cast (k : kernels) ~dst a =
   K.apply1 Nx_kernel.Prog.Cast ~dst a
 
 let answer = Testable.make ~pp:Nx_array_support.pp_answer ~equal:( = )
-
 let strf = Printf.sprintf
 let pp_dtype ppf (D.Any dt) = D.pp ppf dt
 let dtypes = Gen.of_list ~pp:pp_dtype D.all
@@ -312,12 +312,6 @@ let seeded (type v s) (dt : (v, s) D.t) s seed : (v, s) A.t =
       done);
   A.v dt (L.contiguous s) (B.of_string (Bytes.to_string data))
 
-(* How a generator fills an array of a dtype and shape. *)
-type fill = { fill : 'v 's. ('v, 's) D.t -> int array -> ('v, 's) A.t Gen.t }
-
-(* [seeded] from a drawn seed: data for arrays too large to draw. *)
-let seeded_gen = { fill = (fun dt s -> Gen.map (seeded dt s) Gen.int) }
-
 let pp_case ppf (Case a) =
   Format.fprintf ppf "%a %a" D.pp (A.dtype a) L.pp (A.layout a)
 
@@ -403,74 +397,6 @@ let law_copy k (Case a) =
   equal answer A.Done (copy k ~dst a);
   same a dst
 
-(* A written view: the array transposed, or every other element of an array
-   twice as long on its last axis, over drawn bytes the copy must keep. *)
-let into ?(fill = { fill = drawn }) (type v s) (dt : (v, s) D.t) s =
-  let open Gen in
-  let r = Array.length s in
-  let* stepped = bool in
-  if r = 0 || not stepped then
-    let rev a = Array.init (Array.length a) (fun i -> a.(r - 1 - i)) in
-    let+ base = fill.fill dt (rev s) in
-    (base, Option.get (A.move (M.Permute (rev (Array.init r Fun.id))) base))
-  else
-    let wide = Array.mapi (fun i d -> if i = r - 1 then 2 * d else d) s in
-    let+ base = fill.fill dt wide in
-    let range i d =
-      if i = r - 1 then { M.start = 1; count = d; step = 2 }
-      else { M.start = 0; count = d; step = 1 }
-    in
-    (base, Option.get (A.move (M.Slice (Array.mapi range s)) base))
-
-(* Stores [a]'s elements' bits into [d], a view of its dtype and shape, one
-   element at a time through nx.array's stores: bytes of a byte-wide dtype,
-   codes of a sub-byte one. *)
-let set_bits (type v s) (a : (v, s) A.t) (d : (v, s) A.t) =
-  let each (type w r) (src : (w, r) A.t) (dst : (w, r) A.t) =
-    List.iter
-      (fun i -> A.set dst i (A.get src i))
-      (indices (L.shape (A.layout src)))
-  in
-  match D.bits (A.dtype a) with
-  | 1 -> each (A.expect D.Bit (A.Any a)) (A.expect D.Bit (A.Any d))
-  | 4 ->
-      each (Option.get (A.bitcast D.Uint4 a)) (Option.get (A.bitcast D.Uint4 d))
-  | _ ->
-      each (Option.get (A.bitcast D.Uint8 a)) (Option.get (A.bitcast D.Uint8 d))
-
-let contents b =
-  let s = Bytes.create (B.length b) in
-  B.blit_to_bytes b 0 s 0 (Bytes.length s);
-  Bytes.to_string s
-
-(* A copy into a written view writes its elements and no other bit of its
-   buffer: a sub-byte view shares bytes with the elements between its own. *)
-let copy_into_keeps k (Case a, Case base, Case dst) =
-  let dst = A.expect (A.dtype a) (A.Any dst) in
-  let base = A.expect (A.dtype a) (A.Any base) in
-  let want =
-    A.v (A.dtype a) (A.layout base) (B.of_string (contents (A.buffer base)))
-  in
-  set_bits a (A.v (A.dtype a) (A.layout dst) (A.buffer want));
-  equal answer A.Done (copy k ~dst a);
-  equal string (contents (A.buffer want)) (contents (A.buffer base))
-
-let law_copy_into k ((Case a, _, Case dst) as c) =
-  cover "a sub-byte view" (D.bits (A.dtype a) < 8);
-  cover "a transposed view" (L.rank (A.layout dst) > 1);
-  copy_into_keeps k c
-
-let copy_into =
-  let open Gen in
-  let* (Case a) = case in
-  let+ base, dst = into (A.dtype a) (L.shape (A.layout a)) in
-  (Case a, Case base, Case dst)
-
-let pp_into ppf (c, _, Case dst) =
-  Format.fprintf ppf "%a into %a" pp_case c L.pp (A.layout dst)
-
-let copy_into = Gen.with_pp pp_into copy_into
-
 let test_copy_nan_payloads k () =
   let bits = [| 0x7fc00001l; 0xffa00002l; 0x80000000l; 0x7f800001l |] in
   let f = Option.get (A.bitcast D.Float32 (A.of_array D.Uint32 [| 4 |] bits)) in
@@ -493,35 +419,6 @@ let pair c =
     frequency [ (4, dtypes); (1, constant ~pp:pp_dtype (D.Any (A.dtype a))) ]
   in
   (c, d)
-
-(* A cast into a written view writes each of its elements as the reference
-   does, and no other bit of its buffer. *)
-let cast_into_keeps k (Case a, Case base, Case dst) =
-  let d = A.dtype base in
-  let dst = A.expect d (A.Any dst) in
-  let want = A.v d (A.layout base) (B.of_string (contents (A.buffer base))) in
-  set_bits (reference a d) (A.v d (A.layout dst) (A.buffer want));
-  equal answer A.Done (cast k ~dst a);
-  equal string (contents (A.buffer want)) (contents (A.buffer base))
-
-let covers_into (Case a, Case base, Case dst) =
-  let d = A.dtype base in
-  cover "a sub-byte view" (D.bits d < 8);
-  cover "a transposed view" (L.rank (A.layout dst) > 1);
-  cover "another dtype" (not (D.equal (A.dtype a) d))
-
-(* Large views are all transposed or stepped, and twenty draws reach a
-   sub-byte destination too rarely to cover: test_sub_byte_threads holds
-   those. *)
-let covers_large_into (Case a, Case base, _) =
-  cover "another dtype" (not (D.equal (A.dtype a) (A.dtype base)))
-
-let cast_into ?fill c =
-  let open Gen in
-  let* (Case a) = c in
-  let* (D.Any d) = dtypes in
-  let+ base, dst = into ?fill d (L.shape (A.layout a)) in
-  (Case a, Case base, Case dst)
 
 (* Every code of a format of at most 16 bits, cast to every dtype. *)
 let test_every_code k (D.Any s) () =
@@ -552,8 +449,8 @@ let test_every_code k (D.Any s) () =
 let narrow = List.filter (fun (D.Any dt) -> D.bits dt <= 16) D.all
 
 (* Floats about every rounding point of the narrow float formats, as float32 and
-   as float64, cast to every dtype: the integer stores meet NaN, the
-   infinities and the bounds of every range there too. *)
+   as float64, cast to every dtype: the integer stores meet NaN, the infinities
+   and the bounds of every range there too. *)
 
 (* float32 whose low half is about a float16 or bfloat16 rounding bit, or all
    ones, the largest float32 below a power of two; every float8 and float4
@@ -646,40 +543,78 @@ let test_past_the_caches k () =
       equal ~msg:(D.name d) (list string) [] (differ (reference a d) dst))
     [ D.Any D.Float64; D.Any D.Int32; D.Any D.Float16 ]
 
-(* Copies and casts of several MiB into int4 views that start inside a byte,
-   on several threads: rows of an odd length, and one axis whose blocks
-   share their end bytes. *)
-let test_sub_byte_threads k () =
-  let rows = 513 and cols = 4097 in
-  let base = seeded D.Int4 [| rows; cols + 1 |] 5 in
-  let view =
-    M.Slice
-      [|
-        { M.start = 0; count = rows; step = 1 };
-        { M.start = 1; count = cols; step = 1 };
-      |]
-  in
-  let dst = Option.get (A.move view base) in
-  cast_into_keeps k (Case (seeded D.Int8 [| rows; cols |] 7), Case base, Case dst);
-  copy_into_keeps k (Case (seeded D.Int4 [| rows; cols |] 9), Case base, Case dst);
-  (* One axis from element 1: a block ends on an odd element, so the next
-     block's first element shares its byte, and the two blocks run on
-     different threads. *)
-  let n = (4 * 1024 * 1024) + 1 in
-  let base = seeded D.Int4 [| n + 1 |] 11 in
-  let dst =
-    Option.get (A.move (M.Slice [| { M.start = 1; count = n; step = 1 } |]) base)
-  in
-  cast_into_keeps k (Case (seeded D.Int8 [| n |] 13), Case base, Case dst);
-  copy_into_keeps k (Case (seeded D.Int4 [| n |] 15), Case base, Case dst)
+(* Declines *)
 
-(* The door *)
+(* Every kind of one operand, to every kernel's [apply1]. *)
+let op1s =
+  let open Nx_kernel.Prog in
+  [ Copy; Cast; Bitcast ]
+  @ List.map
+      (fun u -> Unary u)
+      [
+        Neg;
+        Recip;
+        Abs;
+        Sign;
+        Sqrt;
+        Exp;
+        Exp2;
+        Log;
+        Log2;
+        Log1p;
+        Expm1;
+        Sin;
+        Cos;
+        Tan;
+        Asin;
+        Acos;
+        Atan;
+        Sinh;
+        Cosh;
+        Tanh;
+        Erf;
+        Floor;
+        Ceil;
+        Round;
+        Trunc;
+      ]
 
-(* A kernel refused by the door answers a refusal and writes nothing. *)
-let refused ~substring r dst =
+(* A kernel that declines writes nothing: [dst] keeps its drawn bytes. *)
+let law_declined_apply1 (k : kernels) (Case a, D.Any d) =
+  let module K = (val k) in
+  let dst = seeded d (L.shape (A.layout a)) 99 in
+  List.iter
+    (fun op ->
+      let before = bits_of dst in
+      match K.apply1 op ~dst a with
+      | A.Declined ->
+          cover "declined" true;
+          equal (array int) before (bits_of dst)
+      | _ -> cover "computed" true)
+    op1s
+
+let test_declined_contract (k : kernels) () =
+  let module K = (val k) in
+  let spec =
+    Nx_kernel.Spec.contract ~batch:[||]
+      ~contracting:[| (1, 0) |]
+      ~acc:(D.Any D.Float32) ~out:(D.Any D.Float32) ~init:false
+  in
+  let a = A.of_array D.Float32 [| 2; 3 |] (Array.make 6 1.) in
+  let b = A.of_array D.Float32 [| 3; 2 |] (Array.make 6 2.) in
+  let y = A.of_array D.Float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |] in
+  let before = bits_of y in
+  match K.contract spec ~dst:(A.Any y) [| A.Any a; A.Any b |] with
+  | A.Declined -> equal (array int) before (bits_of y)
+  | A.Done -> ()
+  | r -> failf "contract answered %a" Nx_array_support.pp_answer r
+
+(* nx.cpu's refusals *)
+
+(* Each answers the refusal nx_cpu.mli states, before any write. *)
+let refuses r dst answered =
   let before = bits_of dst in
-  raises_match (Exn.invalid_arg ~substring) (fun () ->
-      A.refused "Nx.cast" r [ A.Any dst ]);
+  equal answer r answered;
   equal (array int) before (bits_of dst)
 
 let test_refusals k () =
@@ -688,25 +623,25 @@ let test_refusals k () =
   let i32 = A.of_array D.Int32 [| 2; 3 |] (Array.make 6 7l) in
   let t = Option.get (A.move (M.Permute [| 1; 0 |]) x) in
   let d = A.of_array f32 [| 2; 3 |] (Array.make 6 9.) in
-  refused ~substring:"dtype" (copy k ~dst:d i32) d;
-  refused ~substring:"shapes" (copy k ~dst:d t) d;
-  refused ~substring:"shapes" (cast k ~dst:d t) d;
+  refuses A.Wrong_dtype d (copy k ~dst:d i32);
+  refuses A.Shape_mismatch d (copy k ~dst:d t);
+  refuses A.Shape_mismatch d (cast k ~dst:d t);
   let d = A.of_array D.Int32 [| 2; 3 |] (Array.make 6 9l) in
-  refused ~substring:"dtype" (copy k ~dst:d x) d;
+  refuses A.Wrong_dtype d (copy k ~dst:d x);
   (* Into bytes the source reads, and into a broadcast. *)
   let flat = A.of_array f32 [| 6 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let part start =
     Option.get (A.move (M.Slice [| { M.start; count = 3; step = 1 } |]) flat)
   in
-  refused ~substring:"shares bytes" (copy k ~dst:(part 0) (part 1)) (part 0);
-  refused ~substring:"shares bytes" (cast k ~dst:(part 0) (part 2)) (part 0);
+  refuses A.Overlapping (part 0) (copy k ~dst:(part 0) (part 1));
+  refuses A.Overlapping (part 0) (cast k ~dst:(part 0) (part 2));
   let b =
     Option.get
       (A.move
          (M.Broadcast [| 2; 3 |])
          (A.of_array f32 [| 3 |] [| 0.; 0.; 0. |]))
   in
-  refused ~substring:"twice" (cast k ~dst:b i32) b
+  refuses A.Repeated_elements b (cast k ~dst:b i32)
 
 (* Operands outlive the call *)
 
@@ -735,57 +670,6 @@ let test_collect_during_call k () =
           (A.get dst [| n - 1 |])
       done)
 
-(* Sub-byte writes from two domains *)
-
-let int4s = abstract "a"
-let nibble = Gen.int_range (-8) 7
-
-(* A copy or cast into elements 1 to 4 of six int4s writes their bytes, the
-   first and last shared with elements 0 and 5: stores to those from another
-   domain are kept. The source starts on a byte or inside one. Copies from two
-   domains race on elements 1 to 4, so only elements 0 and 5 are read. *)
-let into_middle k to_int8 phase xs a =
-  let src =
-    if to_int8 then A.Any (A.of_array D.Int8 [| 4 |] xs)
-    else
-      let all =
-        A.of_array D.Int4 [| phase + 4 |] (Array.append (Array.make phase 0) xs)
-      in
-      A.Any
-        (Option.get
-           (A.move (M.Slice [| { M.start = phase; count = 4; step = 1 } |]) all))
-  in
-  let dst =
-    Option.get (A.move (M.Slice [| { M.start = 1; count = 4; step = 1 } |]) a)
-  in
-  let (A.Any src) = src in
-  cast k ~dst src
-
-let commands (b : Support.backend) =
-  let nibbles = Gen.array ~size:(Gen.constant 4) nibble in
-  let neighbour = Gen.map (fun last -> if last then 5 else 0) Gen.bool in
-  [
-    command "create"
-      (Gen.unit @-> makes int4s)
-      (fun () -> Array.make 6 0)
-      (fun () -> A.of_array D.Int4 [| 6 |] (Array.make 6 0));
-    command "write"
-      (Gen.bool @-> Gen.int_range 0 1 @-> nibbles @-> int4s ^-> returns answer)
-      (fun _ _ xs m ->
-        Array.blit xs 0 m 1 4;
-        A.Done)
-      (fun to_int8 phase xs a ->
-        b.around (fun () -> into_middle b.kernels to_int8 phase xs a));
-    command "set"
-      (neighbour @-> nibble @-> int4s ^-> returns unit)
-      (fun i x m -> m.(i) <- x)
-      (fun i x a -> A.set a [| i |] x);
-    command "get"
-      (neighbour @-> int4s ^-> returns int)
-      (fun i m -> m.(i))
-      (fun i a -> A.get a [| i |]);
-  ]
-
 (* The suite *)
 
 let laws (b : Support.backend) =
@@ -802,21 +686,7 @@ let laws (b : Support.backend) =
         (run (fun c ->
              covers_large c;
              law_copy k c));
-      prop "a copy into a view keeps the rest of its buffer" copy_into
-        (run (law_copy_into k));
       test "copy keeps NaN payloads" (unit (test_copy_nan_payloads k));
-      prop "a cast into a view is the reference and keeps the rest of its buffer"
-        (Gen.with_pp pp_into (cast_into case))
-        (run (fun c ->
-             covers_into c;
-             cast_into_keeps k c));
-      prop ~count:20
-        "a cast into a large view is the reference and keeps the rest of its \
-         buffer"
-        (Gen.with_pp pp_into (cast_into ~fill:seeded_gen large))
-        (run (fun c ->
-             covers_large_into c;
-             cast_into_keeps k c));
       prop "cast is the reference, element by element" (pair case)
         (run (fun ((Case a as c), D.Any d) ->
              covers c;
@@ -837,13 +707,22 @@ let laws (b : Support.backend) =
       test "integers about every rounding point" (unit (test_integer_ties k));
       test "a cast past the caches is the reference"
         (unit (test_past_the_caches k));
-      test "sub-byte views on several threads keep each other's bits"
-        (unit (test_sub_byte_threads k));
-      test "the door refuses before any write" (unit (test_refusals k));
+      prop "a declined kind of one operand writes nothing" (pair case)
+        (run (law_declined_apply1 k));
+      test "a declined contraction writes nothing"
+        (unit (test_declined_contract k));
       test "operands outlive a released call"
         (unit (test_collect_during_call k));
-      stateful ~domains:2
-        "writes into one byte from two domains keep each other" (commands b);
     ]
 
-let () = exit (run "nx_kernel.kernels" (List.map laws Support.backends))
+(* nx.cpu under the table the host runs best: what nx_cpu.mli promises beyond
+   Nx_kernel.S. *)
+let cpu =
+  group "nx.cpu"
+    [
+      test "refuses before any write"
+        (test_refusals (module Nx_cpu : Nx_kernel.S));
+    ]
+
+let () =
+  exit (run "nx_kernel.kernels" (List.map laws Support.backends @ [ cpu ]))

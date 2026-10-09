@@ -5,6 +5,7 @@
   nx_array
   nx_array_gen
   nx_array_support
+  nx_cpu
   nx_kernel
   nx_kernel_support
   nx_kernels_support
