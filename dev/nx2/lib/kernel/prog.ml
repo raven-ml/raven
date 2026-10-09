@@ -198,7 +198,13 @@ let record = 40
 let at_bits = 24
 let get s at = Int32.to_int (String.get_int32_ne s at)
 let set b at x = Bytes.set_int32_ne b at (Int32.of_int x)
-let dtypes = Array.of_list D.all
+
+(* The dtype whose code is at [at]. A code of none raises, and [of_string]
+   answers [None] for it. *)
+let dtype_at s at =
+  match D.of_code (get s at) with
+  | Some dt -> dt
+  | None -> invalid_arg "Nx_kernel.Prog: a code of no dtype"
 
 (* Kinds as nx_spec.h's codes: one enum per arity, in the order of the types'
    constructors. *)
@@ -361,7 +367,7 @@ let length p = get p 4
 let at_ins p = header + (record * length p)
 
 let ins p =
-  Array.init (get p 0) (fun k -> dtypes.(get p (at_ins p + (4 * k))))
+  Array.init (get p 0) (fun k -> dtype_at p (at_ins p + (4 * k)))
 
 let outs p =
   let at = at_ins p + (4 * get p 0) in
@@ -373,7 +379,7 @@ let check_node fn p i =
 
 let dtype p i =
   check_node "dtype" p i;
-  dtypes.(get p (header + (record * i) + 8))
+  dtype_at p (header + (record * i) + 8)
 
 let node p i =
   check_node "node" p i;
@@ -384,9 +390,9 @@ let node p i =
   | 0 -> In a
   | 1 -> Coord a
   | 2 ->
-      let (D.Any dt as d) = dtypes.(f 8) in
+      let (D.Any dt as d) = dtype_at p (at + 8) in
       Const (d, String.sub p (at + at_bits) (D.bytes dt 1))
-  | 3 -> Op1 (op1_of (f 4), dtypes.(f 8), a)
+  | 3 -> Op1 (op1_of (f 4), dtype_at p (at + 8), a)
   | 4 -> Op2 (op2_of (f 4), a, b)
   | _ -> Op3 (op3_of (f 4), a, b, c)
 

@@ -157,6 +157,26 @@ let test_of_name (D.Any dt, name, _, _) =
 let test_of_other_name s =
   equal (option string) None (Option.map any_name (D.of_name s))
 
+let test_of_code (D.Any dt) =
+  equal (option string) (Some (D.name dt))
+    (Option.map any_name (D.of_code (D.code dt)))
+
+let codes_refused = [ -1; List.length D.all; min_int; max_int ]
+
+let law_of_other_code c =
+  assume (c < 0 || c >= List.length D.all);
+  equal (option string) None (Option.map any_name (D.of_code c))
+
+let test_of_code_allocates_nothing () =
+  let n = List.length D.all in
+  let before = Gc.minor_words () in
+  for c = -1 to n do
+    ignore (Sys.opaque_identity (D.of_code c))
+  done;
+  let words = Gc.minor_words () -. before in
+  equal ~msg:"words for every code and its neighbours" int 0
+    (int_of_float words)
+
 let test_equal () =
   List.iter
     (fun (D.Any a) ->
@@ -1052,6 +1072,13 @@ let tests =
         cases ~name:row_name "of_name finds each name" table test_of_name;
         cases ~name:(strf "%S") "of_name refuses other names" names_refused
           test_of_other_name;
+      ];
+    group "codes"
+      [
+        cases ~name:any_name "of_code finds each code" D.all test_of_code;
+        prop ~examples:codes_refused "of_code refuses every other code"
+          Gen.int law_of_other_code;
+        test "of_code allocates nothing" test_of_code_allocates_nothing;
       ];
     group "bytes is the bytes n elements fill" (List.map law_bytes D.all);
     group "values"

@@ -51,7 +51,7 @@ type ('v, 's) t =
   | Bool : (bool, bool_elt) t
   | Bit : (bool, bit_elt) t
 
-type any = Any : ('v, 's) t -> any
+type any = Any : ('v, 's) t -> any [@@unboxed]
 
 let all =
   [
@@ -100,6 +100,13 @@ let code : type v s. (v, s) t -> int = function
   | Complex64 -> 18
   | Bool -> 19
   | Bit -> 20
+
+(* Each dtype's option by code, made once: a lookup allocates none. *)
+let by_code = Array.of_list (List.map Option.some all)
+
+let of_code c =
+  if c < 0 || c >= Array.length by_code then None
+  else Array.unsafe_get by_code c
 
 (* Facts *)
 

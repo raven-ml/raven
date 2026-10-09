@@ -17,8 +17,8 @@ let max_rank = L.max_rank
 let int32 s at = Int32.to_int (String.get_int32_ne s at)
 let set b at x = Bytes.set_int32_ne b at (Int32.of_int x)
 
-(* The dtype of each code, shared: an accessor allocates none. *)
-let dtypes = Array.of_list D.all
+(* A dtype by the code a constructor wrote. *)
+let dtype s at = Option.get (D.of_code (int32 s at))
 
 (* nx_spec_contract's fields. *)
 
@@ -276,7 +276,7 @@ let reductions s =
   let at = at_axes s + (4 * int32 s at_naxes) in
   Array.init (int32 s at_nreductions) (fun j ->
       let at = at + (12 * j) in
-      (kinds.(int32 s at), int32 s (at + 4), dtypes.(int32 s (at + 8))))
+      (kinds.(int32 s at), int32 s (at + 4), dtype s (at + 8)))
 
 (* The program's bytes, made by Prog.v when the loop was. *)
 let prog s =
@@ -444,8 +444,8 @@ let pairs s n at =
 
 let batch s = pairs s (nbatch s) at_batch
 let contracting s = pairs s (ncontracting s) (at_contracting s)
-let acc s = dtypes.(int32 s at_acc)
-let out s = dtypes.(int32 s at_out)
+let acc s = dtype s at_acc
+let out s = dtype s at_out
 let init s = int32 s at_init <> 0
 
 (* The axes of [a] (side 0) or [b] of rank [r] that no pair names, in axis

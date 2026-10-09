@@ -127,8 +127,8 @@ type ('v, 's) t =
   | Bit : (bool, bit_elt) t
 
 (** The type for dtypes chosen at run time. {!equal_witness} recovers the static
-    type. *)
-type any = Any : ('v, 's) t -> any
+    type. An [any] is its dtype's own value, so making one allocates nothing. *)
+type any = Any : ('v, 's) t -> any [@@unboxed]
 
 val all : any list
 (** [all] is every dtype, in {!code} order. *)
@@ -138,6 +138,10 @@ val all : any list
 val code : ('v, 's) t -> int
 (** [code dt] is [dt]'s code: its index in {!all} and the constant [NX_<NAME>]
     of [nx_dtype.h], as [NX_FLOAT32] for [Float32]. *)
+
+val of_code : int -> any option
+(** [of_code c] is the dtype whose {!code} is [c], if any: [None] unless
+    [0 <= c < List.length all]. It allocates nothing. *)
 
 val bits : ('v, 's) t -> int
 (** [bits dt] is the width of one element of [dt] in bits: [1] for [Bit], [4]

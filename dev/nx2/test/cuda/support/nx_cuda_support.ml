@@ -409,8 +409,7 @@ type operand = {
   first : int;
 }
 
-let dtype code =
-  List.find (fun (A.Dtype.Any d) -> A.Dtype.code d = code) A.Dtype.all
+let dtype code = Option.get (A.Dtype.of_code code)
 
 (* [o] as an array over its buffer, as nx hands the kernels their operands. *)
 let array (o : operand) =

@@ -17,71 +17,49 @@ module S = Nx_kernel.Spec
 module D = Nx_array.Dtype
 module Run = Rig.Submission.Run
 
-(* Dtypes, by code *)
+(* Dtypes *)
 
-let codes = List.length D.all
-let bits = Array.make codes 0
-let signed = Array.make codes false
-let unsigned = Array.make codes false
-let complex = Array.make codes false
-let boolean = Array.make codes false
-
-let () =
-  List.iter
-    (fun (D.Any d) ->
-      let c = D.code d in
-      bits.(c) <- D.bits d;
-      signed.(c) <- D.is D.Signed d;
-      unsigned.(c) <- D.is D.Unsigned d;
-      complex.(c) <- D.is D.Complex d;
-      boolean.(c) <- D.is D.Boolean d)
-    D.all
-
-let f64 = D.code D.Float64
-let f32 = D.code D.Float32
-let f16 = D.code D.Float16
-let bf16 = D.code D.Bfloat16
-let e4m3 = D.code D.Float8_e4m3fn
-let e5m2 = D.code D.Float8_e5m2
-let i64 = D.code D.Int64
-let u64 = D.code D.Uint64
-let i32 = D.code D.Int32
-let u32 = D.code D.Uint32
-let i16 = D.code D.Int16
-let u16 = D.code D.Uint16
-let i8 = D.code D.Int8
-let u8 = D.code D.Uint8
-let bool = D.code D.Bool
+(* A dtype's code: only the kernels' parameters hold one. *)
 let code (D.Any d) = D.code d
-let code_of (Nx_array.Any x) = D.code (Nx_array.dtype x)
-let width c = bits.(c) / 8
-let is_f8 c = c = e4m3 || c = e5m2
-let is_int c = signed.(c) || unsigned.(c) || boolean.(c)
+let dtype_of (Nx_array.Any x) = D.Any (Nx_array.dtype x)
+let bits (D.Any d) = D.bits d
+let width dt = bits dt / 8
+let signed (D.Any d) = D.is Signed d
+let same (D.Any d) (D.Any d') = D.equal d d'
+let is_f8 = function D.Any (Float8_e4m3fn | Float8_e5m2) -> true | _ -> false
 
-(* Whether [c] reads as a value the kernels sum: no complex, no sub-byte
+let is_int (D.Any d) =
+  match D.kind d with
+  | Signed | Unsigned | Boolean -> true
+  | Float | Complex -> false
+
+(* Whether [dt] reads as a value the kernels sum: no complex, no sub-byte
    element. *)
-let summable c = (not complex.(c)) && bits.(c) >= 8
+let summable (D.Any d) = (not (D.is Complex d)) && D.bits d >= 8
 
 (* The integer dtype the skinny kernel reads integer operands [x] and [y] in:
    the narrowest that holds both exactly, or 64 bits, whose products wrap as the
    accumulator's sum does. *)
-let common_int x y =
-  let sx = signed.(x) and sy = signed.(y) in
-  let widest = Int.max bits.(x) bits.(y) in
+let common_int x y : D.any =
+  let sx = signed x and sy = signed y in
+  let widest = Int.max (bits x) (bits y) in
   (* A signed type holds an unsigned one's values with a bit to spare. *)
-  let unsigned = if sx then bits.(y) else bits.(x) in
+  let unsigned = if sx then bits y else bits x in
   let b = if sx <> sy then Int.max widest (2 * unsigned) else widest in
-  if b > 32 then i64
-  else if sx || sy then if b <= 8 then i8 else if b <= 16 then i16 else i32
-  else if b <= 8 then u8
-  else if b <= 16 then u16
-  else u32
+  if b > 32 then D.Any Int64
+  else if sx || sy then
+    if b <= 8 then D.Any Int8 else if b <= 16 then D.Any Int16 else D.Any Int32
+  else if b <= 8 then D.Any Uint8
+  else if b <= 16 then D.Any Uint16
+  else D.Any Uint32
 
 (* Whether a SIMT or skinny kernel reads [dt] as [into] with no pack: the same
    bytes, bool as uint8, and either 64-bit integer as the other (a float64 never
    meets an integer [into]: the plan declines that call). *)
 let reads_as dt into =
-  dt = into || (dt = bool && into = u8) || (width dt = 8 && width into = 8)
+  same dt into
+  || (match (dt, into) with D.Any Bool, D.Any Uint8 -> true | _ -> false)
+  || (width dt = 8 && width into = 8)
 
 (* Instances *)
 
@@ -136,7 +114,7 @@ let ceil_div a b = (a + b - 1) / b
 (* An operand a or b as the contraction kernel reads it, and, when packed, as it
    is: the pack copies it into the workspace. *)
 type operand = {
-  mutable dtype : int;  (** As the kernel reads it. *)
+  mutable dtype : D.any;  (** As the kernel reads it. *)
   mutable first : int;
       (** Its first element: bytes into its slot, or into the workspace once
           packed. *)
@@ -145,7 +123,7 @@ type operand = {
           offset once packed, the workspace being 256-byte aligned. *)
   s : int array;  (** Strides along batch, its row or column, and k. *)
   mutable packed : bool;
-  mutable own : int;  (** Its own dtype. *)
+  mutable own : D.any;  (** Its own dtype. *)
   mutable src : int;  (** Its own first element, bytes into its slot. *)
   ps : int array;  (** Its own strides. *)
   mutable rows : int;
@@ -155,12 +133,12 @@ type operand = {
 
 let operand () =
   {
-    dtype = 0;
+    dtype = D.Any Uint8;
     first = 0;
     address = 0;
     s = Array.make 3 0;
     packed = false;
-    own = 0;
+    own = D.Any Uint8;
     src = 0;
     ps = Array.make 3 0;
     rows = 0;
@@ -175,11 +153,11 @@ type t = {
   si : int array;
   mutable y_first : int;
   mutable y_address : int;
-  mutable y_dtype : int;
+  mutable y_dtype : D.any;
   mutable i_first : int;
-  mutable i_dtype : int;
+  mutable i_dtype : D.any;
   mutable init : bool;
-  mutable acc : int;
+  mutable acc : D.any;
   mutable batch : int;
   mutable m : int;
   mutable n : int;
@@ -211,11 +189,11 @@ let make () =
     si = Array.make 3 0;
     y_first = 0;
     y_address = 0;
-    y_dtype = 0;
+    y_dtype = D.Any Uint8;
     i_first = 0;
-    i_dtype = 0;
+    i_dtype = D.Any Uint8;
     init = false;
-    acc = 0;
+    acc = D.Any Uint8;
     batch = 0;
     m = 0;
     n = 0;
@@ -368,7 +346,12 @@ let plan_mma c kind t =
   c.blocks <- ceil_div c.m s.bm * ceil_div c.n s.bn;
   if c.kernel < 0 || c.blocks > max_int32 then false
   else begin
-    let into = match kind with S8 -> i8 | F16 -> f16 | Bf16 | Any -> bf16 in
+    let into =
+      match kind with
+      | S8 -> D.Any Int8
+      | F16 -> D.Any Float16
+      | Bf16 | K.Any -> D.Any Bfloat16
+    in
     if pack_a then pack c a ~rows:c.m ~into;
     if pack_b then pack c b ~rows:c.n ~into;
     a.dtype <- into;
@@ -389,7 +372,10 @@ let plan_mma c kind t =
 
 (* The dtype of the accumulator [sum]: what the SIMT kernels read, and the float
    skinny kernels. *)
-let own_dtype : K.acc -> int = function F32 -> f32 | F64 -> f64 | I64 -> i64
+let own_dtype : K.acc -> D.any = function
+  | F32 -> D.Any Float32
+  | F64 -> D.Any Float64
+  | I64 -> D.Any Int64
 
 (* The SIMT kernels of the accumulator [sum], m > 16: the tile of least cost
    among its instances; on sm_89, the 64-wide tile computes 70% as fast as the
@@ -436,7 +422,7 @@ let plan_skinny c sum =
        with it. *)
     c.splits <- split_count (ceil_div c.n 32 * c.batch) 64 c.k 1024;
     (* A 32-bit integer accumulator sums in 32 bits here. *)
-    let narrow = c.acc = i32 || c.acc = u32 in
+    let narrow = match c.acc with D.Any (Int32 | Uint32) -> true | _ -> false in
     c.threads <- 256;
     c.shared <- 0;
     c.sums <- 256;
@@ -454,10 +440,9 @@ let plan_skinny c sum =
 
 (* [o] as the operand [which] of [v], read from the array [x]. *)
 let read o v which x =
-  let dt = code_of x in
   let (Nx_array.Any arr) = x in
-  o.dtype <- dt;
-  o.first <- V.offset v which * width dt;
+  o.dtype <- dtype_of x;
+  o.first <- V.offset v which * width o.dtype;
   o.address <- Rig.Buffer.address (Nx_array.buffer arr) + o.first;
   o.packed <- false
 
@@ -471,14 +456,19 @@ let strides into v which (row : V.axis) (col : V.axis) =
    unit keeps 13 bits of its sums, where the error bound needs each addition to
    err by at most 2u. *)
 let mma_kind a b acc : K.kind option =
-  let bf16_like x = x = bf16 || is_f8 x in
-  if acc = f32 && bf16_like a && bf16_like b then Some Bf16
-  else if acc = f32 && a = f16 && b = f16 then Some F16
-  else if acc = i32 && a = i8 && b = i8 then Some S8
-  else None
+  match (acc, a, b) with
+  | ( D.Any Float32,
+      D.Any (Bfloat16 | Float8_e4m3fn | Float8_e5m2),
+      D.Any (Bfloat16 | Float8_e4m3fn | Float8_e5m2) ) ->
+      Some Bf16
+  | D.Any Float32, D.Any Float16, D.Any Float16 -> Some F16
+  | D.Any Int32, D.Any Int8, D.Any Int8 -> Some S8
+  | _ -> None
+
+let is_float_acc = function D.Any (Float32 | Float64) -> true | _ -> false
 
 let declines ~ad ~bd ~yd ~id ~init ~acc =
-  let float_acc = acc = f32 || acc = f64 in
+  let float_acc = is_float_acc acc in
   (not (summable ad))
   || (not (summable bd))
   || (not (summable yd))
@@ -490,13 +480,12 @@ let declines ~ad ~bd ~yd ~id ~init ~acc =
 
 (* The accumulator family of [acc] over [a] and [b], or [None] to decline. *)
 let sum_of ~acc a b : K.acc option =
-  if acc = f32 || acc = f64 then
-    if is_int a || is_int b then None
-    else if acc = f32 then Some F32
-    else Some F64
-  else if acc = i32 || acc = u32 || acc = i64 || acc = u64 then
-    if is_int a && is_int b then Some I64 else None
-  else None
+  match acc with
+  | D.Any Float32 -> if is_int a || is_int b then None else Some F32
+  | D.Any Float64 -> if is_int a || is_int b then None else Some F64
+  | D.Any (Int32 | Uint32 | Int64 | Uint64) ->
+      if is_int a && is_int b then Some I64 else None
+  | _ -> None
 
 (* Outputs stored 16 bytes at once: no init, y's j contiguous, its rows on
    16-byte boundaries, and its dtype one the kernels store as they are, or
@@ -505,12 +494,13 @@ let whole c ~mma_s8 (sum : K.acc) ~y_address =
   let yd = c.y_dtype in
   let yb = width yd in
   let natural =
-    if mma_s8 then yd = i32 || yd = u32
+    if mma_s8 then match yd with D.Any (Int32 | Uint32) -> true | _ -> false
     else
-      match sum with
-      | F32 -> yd = f32 || yd = bf16 || yd = f16
-      | F64 -> yd = f64
-      | I64 -> (yd = i64 || yd = u64) && (c.acc = i64 || c.acc = u64)
+      match (sum, yd, c.acc) with
+      | F32, D.Any (Float32 | Bfloat16 | Float16), _ -> true
+      | F64, D.Any Float64, _ -> true
+      | I64, D.Any (Int64 | Uint64), D.Any (Int64 | Uint64) -> true
+      | _ -> false
   in
   (not c.init) && natural
   && c.sy.(2) = 1
@@ -561,18 +551,18 @@ let choose c v s ~dst ops =
   c.n <- V.extent v Column;
   c.k <- V.extent v Contracted;
   c.init <- S.init s;
-  c.acc <- code (S.acc s);
+  c.acc <- S.acc s;
   read c.a v A ops.(0);
   strides c.a.s v A Row Contracted;
   read c.b v B ops.(1);
   strides c.b.s v B Column Contracted;
   let (Nx_array.Any y) = dst in
-  c.y_dtype <- code_of dst;
+  c.y_dtype <- dtype_of dst;
   c.y_first <- V.offset v Dst * width c.y_dtype;
   c.y_address <- Rig.Buffer.address (Nx_array.buffer y) + c.y_first;
   strides c.sy v Dst Row Column;
   if c.init then begin
-    c.i_dtype <- code_of ops.(2);
+    c.i_dtype <- dtype_of ops.(2);
     c.i_first <- V.offset v Init * width c.i_dtype;
     strides c.si v Init Row Column
   end
@@ -665,8 +655,8 @@ let write_pack run at c o =
   Run.int32 run at P.batch c.batch;
   Run.int32 run at P.rows o.rows;
   Run.int32 run at P.k c.k;
-  Run.int32 run at P.dtype o.own;
-  Run.int32 run at P.out o.dtype;
+  Run.int32 run at P.dtype (code o.own);
+  Run.int32 run at P.out (code o.dtype);
   Run.int32 run at P.bytes (width o.dtype)
 
 let write_strides run at field s =
@@ -706,10 +696,10 @@ let write run sub c =
   Run.int32 run at P.n c.n;
   Run.int32 run at P.k c.k;
   Run.int32 run at P.splits c.splits;
-  Run.int32 run at P.a_dtype c.a.dtype;
-  Run.int32 run at P.b_dtype c.b.dtype;
-  Run.int32 run at P.init_dtype c.i_dtype;
-  Run.int32 run at P.y_dtype c.y_dtype;
-  Run.int32 run at P.acc_dtype c.acc;
+  Run.int32 run at P.a_dtype (code c.a.dtype);
+  Run.int32 run at P.b_dtype (code c.b.dtype);
+  Run.int32 run at P.init_dtype (code c.i_dtype);
+  Run.int32 run at P.y_dtype (code c.y_dtype);
+  Run.int32 run at P.acc_dtype (code c.acc);
   Run.int32 run at P.aligned c.aligned;
   Run.int32 run at P.unused 0
