@@ -408,7 +408,7 @@ and compute : type r. by:string -> r Value.prim -> r =
             let kernels = kernels_of ~by ~op:"Copy" (Devices.set xp) in
             Option.get (A.move local (copy_array ~by kernels a))
       in
-      shard_views ~by op xp (Array.map moved xs)
+      shard_views ~by op xp (fun () -> Array.map moved xs)
   | Value.Bitcast (dt, x) ->
       let xp = Prim.placement x and xs = arrays_of x in
       let cast a =
@@ -418,23 +418,25 @@ and compute : type r. by:string -> r Value.prim -> r =
             let kernels = kernels_of ~by ~op:"Copy" (Devices.set xp) in
             Option.get (A.bitcast dt (copy_array ~by kernels a))
       in
-      shard_views ~by op xp (Array.map cast xs)
+      shard_views ~by op xp (fun () -> Array.map cast xs)
   | Value.Place _ | Value.Check _ -> run ~by op
 
-(* The one result of [op] over the arrays [vs], one per device of [xp] in order:
-   at [op]'s placement, whose devices hold them. *)
+(* The one result of [op] over the arrays [views ()], one per device of [xp] in
+   order: at [op]'s placement, whose devices hold them. [views] runs once [op]'s
+   rule holds, so that no kernel copies for an operation it refuses. *)
 and shard_views : type v s d.
     by:string ->
     (v, s, d) Value.t Value.prim ->
     d Devices.placement ->
-    (v, s) A.t array ->
+    (unit -> (v, s) A.t array) ->
     (v, s, d) Value.t =
- fun ~by op xp vs ->
+ fun ~by op xp views ->
   let xdev = Grid.devices (Devices.grid xp) in
   Prim.results ~by
     {
       make =
         (fun _ f ->
+          let vs = views () in
           let p = f.placement in
           make p
             (Array.map
