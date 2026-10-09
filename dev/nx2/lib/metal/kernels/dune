@@ -1,0 +1,16 @@
+; The metallib of the Metal suite's harness (and nx.metal's, with its
+; first kernel), which gen.py compiles ahead of time on a Mac with the
+; pinned Metal toolchain. Their digests are checked here on every machine.
+
+(rule
+ (alias runtest)
+ (deps
+  (:pins pins.json)
+  gen.py
+  ../kernels.h
+  ../../array/nx_dtype.h
+  ../../../test/metal/support/harness.h
+  (glob_files ../../../test/metal/support/*.metal)
+  (glob_files ../../../test/metal/support/*.metallib))
+ (action
+  (run %{exe:../../../tools/pins/pins.exe} %{pins} lib/metal/kernels %{deps})))
