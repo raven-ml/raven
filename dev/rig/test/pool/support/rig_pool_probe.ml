@@ -42,6 +42,10 @@ external counted_calls : unit -> int = "rig_pool_test_counted_calls"
 external cores : unit -> int = "rig_pool_test_cores"
 external performance_cores : unit -> int = "rig_pool_test_performance_cores"
 external cgroup_cpus : string -> int = "rig_pool_test_cgroup_cpus"
+
+external capacity_cpus : string -> int array -> int
+  = "rig_pool_test_capacity_cpus"
+
 external sysctl : string -> int = "rig_pool_test_sysctl"
 external active_processors : unit -> int = "rig_pool_test_active_processors"
 external pinned_cores : unit -> int * int = "rig_pool_test_pinned_cores"

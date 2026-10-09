@@ -27,7 +27,7 @@
  (foreign_stubs
   (language c)
   (names rig_pool_hooked_probe_stubs)
-  (extra_deps ../../lib/pool/rig_pool.c ../../lib/pool/rig_pool.h ../../lib/pool/rig_pool_cgroup.h)))
+  (extra_deps ../../lib/pool/rig_pool.c ../../lib/pool/rig_pool.h ../../lib/pool/rig_pool_host.h)))
 
 (executable
  (name test_pool)

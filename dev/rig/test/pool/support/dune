@@ -1,7 +1,7 @@
 ; What the pool's suites share: rig_pool_probe, the probes of rig_pool.h whose
 ; bodies record what the pool did, and the suites' waits; rig_pool_probe.h, the
 ; clock and patience its stubs and rig_pool_thread_probe's share. The stubs also
-; include the pool's private rig_pool_cgroup.h, copied here.
+; include the pool's private rig_pool_host.h, copied here.
 
 (library
  (name rig_pool_probe)
@@ -12,4 +12,4 @@
   (names rig_pool_probe_stubs)))
 
 (copy_files
- (files ../../../lib/pool/rig_pool_cgroup.h))
+ (files ../../../lib/pool/rig_pool_host.h))

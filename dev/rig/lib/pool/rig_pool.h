@@ -18,12 +18,15 @@
 
    A caller sizes a job by two facts about the host: its cores, which bound
    the threads of every job, and its performance cores, those that run
-   compute-bound work at full speed.
+   compute-bound work at more than half the speed of its fastest.
 
-   References. The host facts come from sched_getaffinity(2) and the
-   cpu.max files of the Linux kernel's cgroup v2
-   (Documentation/admin-guide/cgroup-v2.rst), from sysctl(3) on macOS, and
-   from GetActiveProcessorCount on Windows. */
+   References. The host facts come from sched_getaffinity(2), the cpu.max
+   files of the Linux kernel's cgroup v2
+   (Documentation/admin-guide/cgroup-v2.rst), the cpu.cfs_quota_us and
+   cpu.cfs_period_us files of its cgroup v1 (Documentation/scheduler/
+   sched-bwc.rst) and the cpu_capacity files of its CPUs
+   (Documentation/ABI/testing/sysfs-devices-system-cpu), from sysctl(3) on
+   macOS, and from GetActiveProcessorCount on Windows. */
 
 #ifndef RIG_POOL_H
 #define RIG_POOL_H
@@ -36,23 +39,27 @@
    the most threads a job runs on. 1 <= rig_pool_cores ().
 
    On Linux it is min (a, ceil q): a the CPUs of the affinity mask of the
-   thread that makes the first call, q the smallest cpu.max quota / period
-   of the process's cgroup v2 and the cgroup's ancestors (no bound without
-   a quota). On macOS it is the physical cores; on Windows, the active
+   thread that makes the first call, q the smallest quota / period of the
+   process's cgroups and their ancestors, from cgroup v2's cpu.max and
+   cgroup v1's cpu.cfs_quota_us and cpu.cfs_period_us (no bound without a
+   quota). On macOS it is the physical cores; on Windows, the active
    processors; elsewhere, the online CPUs. Nothing else bounds it, however
    many cores the host has. It is computed at the first call: a later
    change of affinity or quota is not seen. */
 int rig_pool_cores(void);
 
 /* rig_pool_performance_cores () is the number of those cores that run
-   compute-bound work at full speed.
+   compute-bound work at more than half the speed of the fastest.
    1 <= rig_pool_performance_cores () <= rig_pool_cores ().
 
    On macOS it counts the performance cores (hw.perflevel0) where the host
    reports them, since a chunk that an efficiency core claims takes two to
-   three times as long and delays the end of its job; elsewhere, and on a
-   Mac that does not report them, it is rig_pool_cores (). It is computed at
-   the first call. */
+   three times as long and delays the end of its job. On Linux, where the
+   kernel reports the CPUs' cpu_capacity, it counts the CPUs of the
+   affinity mask whose capacity is more than half the largest of theirs, at
+   most rig_pool_cores (). Elsewhere,
+   and on a host that reports neither, it is rig_pool_cores (). It is
+   computed at the first call. */
 int rig_pool_performance_cores(void);
 
 /* Jobs */

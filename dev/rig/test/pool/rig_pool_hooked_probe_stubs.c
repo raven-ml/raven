@@ -38,6 +38,7 @@ static void hook(point at);
 #define rig_pool_performance_cores rig_pool_hooked_performance_cores
 #define rig_pool_run rig_pool_hooked_run
 #define rig_pool_cgroup_cpus rig_pool_hooked_cgroup_cpus
+#define rig_pool_capacity_cpus rig_pool_hooked_capacity_cpus
 /* rig_pool.c's clock is static; renamed, it leaves now_ns to the probes'. */
 #define now_ns rig_pool_now_ns
 #include "../../lib/pool/rig_pool.c"

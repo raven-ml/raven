@@ -116,6 +116,8 @@ let test_macos_cores () =
 let test_other_performance_cores () =
   if P.sysctl "hw.perflevel0.physicalcpu" >= 0 then
     skip ~reason:"the host reports its performance cores" ();
+  if Sys.file_exists "/sys/devices/system/cpu/cpu0/cpu_capacity" then
+    skip ~reason:"the host reports its CPUs' capacities" ();
   equal int cores (P.performance_cores ())
 
 (* A process of this executable pins itself to one CPU, reads the cores, then
@@ -141,9 +143,9 @@ let test_windows_cores () =
   equal ~msg:"cores" int active cores
 
 (* A cgroup tree as Linux shows it to a process: proc/self/cgroup's lines,
-   proc/self/mountinfo's mounts, and the cpu.max files under the mount points,
-   all under one directory. [cpus] is ceil q of rig_pool.h: the least ceil (quota
-   / period) over the cgroup and its ancestors up to the mount. *)
+   proc/self/mountinfo's mounts, and the quota files under the mount points, all
+   under one directory. [cpus] is ceil q of rig_pool.h: the least ceil (quota /
+   period) over the cgroups and their ancestors up to their mounts. *)
 type tree = {
   name : string;
   cgroup : string list;
@@ -161,6 +163,28 @@ let session = "/user.slice/user-1000.slice/session-2.scope"
 let cpu_max cgroup = "sys/fs/cgroup" ^ cgroup ^ "/cpu.max"
 let quota q = strf "%d 100000\n" q
 let no_quota = "max 100000\n"
+
+(* cgroup v1's hierarchy of [controllers], mounted at [point]. *)
+let v1_mount ?(root = "/") ?(controllers = "cpu,cpuacct") point =
+  String.concat " "
+    [
+      "36 24 0:31";
+      root;
+      point;
+      "rw shared:10 - cgroup cgroup rw," ^ controllers;
+    ]
+
+let v1_point = "/sys/fs/cgroup/cpu,cpuacct"
+let v1_line = "4:cpu,cpuacct:" ^ session
+
+(* cgroup v1's quota files of [cgroup], a quota of [q] microseconds a period of
+   100 ms, -1 for none. *)
+let cfs ?(point = v1_point) cgroup q =
+  let dir = String.sub point 1 (String.length point - 1) ^ cgroup in
+  [
+    (dir ^ "/cpu.cfs_quota_us", strf "%d\n" q);
+    (dir ^ "/cpu.cfs_period_us", "100000\n");
+  ]
 
 let trees =
   let on_host ~name limits cpus =
@@ -221,14 +245,62 @@ let trees =
       cpus = 2;
     };
     {
-      name = "cgroup v1 alone";
-      cgroup = [ "12:cpu,cpuacct:" ^ session ];
+      name = "cgroup v1's quota";
+      cgroup = [ v1_line ];
+      mounts = [ v1_mount v1_point ];
+      limits = cfs session 150000;
+      cpus = 2;
+    };
+    {
+      name = "cgroup v1 without a quota";
+      cgroup = [ v1_line ];
+      mounts = [ v1_mount v1_point ];
+      limits = cfs session (-1) @ cfs "/user.slice" (-1);
+      cpus = -1;
+    };
+    {
+      name = "the tightest of a cgroup v1 and its ancestors";
+      cgroup = [ v1_line ];
+      mounts = [ v1_mount v1_point ];
+      limits = cfs session 400000 @ cfs "/user.slice" 250000;
+      cpus = 3;
+    };
+    {
+      name = "cgroup v1 reads no cpu.max";
+      cgroup = [ v1_line ];
+      mounts = [ v1_mount v1_point ];
+      limits =
+        [ ("sys/fs/cgroup/cpu,cpuacct" ^ session ^ "/cpu.max", quota 100000) ];
+      cpus = -1;
+    };
+    {
+      name = "a cgroup v1 hierarchy without the cpu controller";
+      cgroup = [ "3:cpuset:" ^ session; "5:cpuacct:" ^ session ];
       mounts =
         [
-          "36 24 0:31 / /sys/fs/cgroup/cpu rw shared:10 - cgroup cgroup rw,cpu";
+          v1_mount ~controllers:"cpuset" "/sys/fs/cgroup/cpuset";
+          v1_mount ~controllers:"cpuacct" "/sys/fs/cgroup/cpuacct";
         ];
-      limits = [ ("sys/fs/cgroup/cpu" ^ session ^ "/cpu.max", quota 100000) ];
+      limits =
+        cfs ~point:"/sys/fs/cgroup/cpuset" session 100000
+        @ cfs ~point:"/sys/fs/cgroup/cpuacct" session 100000;
       cpus = -1;
+    };
+    {
+      name = "a mount of a cgroup v1 below the hierarchy's root";
+      cgroup = [ "4:cpu,cpuacct:/docker/c1" ];
+      mounts = [ v1_mount ~root:"/docker/c1" v1_point ];
+      limits = cfs "" 200000;
+      cpus = 2;
+    };
+    {
+      name = "the tighter of cgroup v2 and v1";
+      cgroup = [ v1_line; "0::" ^ session ];
+      mounts = [ v1_mount v1_point; mount "/sys/fs/cgroup/unified" ];
+      limits =
+        ("sys/fs/cgroup/unified" ^ session ^ "/cpu.max", quota 300000)
+        :: cfs session 200000;
+      cpus = 2;
     };
   ]
 
@@ -270,6 +342,86 @@ let test_cgroup tree =
   equal ~msg:"ceil q, or -1 without a quota" int tree.cpus
     (with_files files P.cgroup_cpus)
 
+(* The CPUs [cpus] of a tree whose CPU i has capacity [capacities.(i)], none
+   where it is negative. [fast] is what rig_pool_host.h counts. *)
+type capacities = {
+  name : string;
+  capacities : int array;
+  cpus : int array;
+  fast : int;
+}
+
+let capacity_trees =
+  let all n = Array.init n Fun.id in
+  let big_little = [| 1024; 1024; 1024; 1024; 446; 446; 446; 446 |] in
+  [
+    {
+      name = "cores of one size";
+      capacities = Array.make 4 1024;
+      cpus = all 4;
+      fast = 4;
+    };
+    {
+      name = "big and little cores";
+      capacities = big_little;
+      cpus = all 8;
+      fast = 4;
+    };
+    {
+      name = "three sizes, the middle one more than half the largest";
+      capacities = [| 1024; 900; 900; 900; 280; 280; 280; 280 |];
+      cpus = all 8;
+      fast = 4;
+    };
+    {
+      name = "a capacity of exactly half the largest";
+      capacities = [| 1024; 512 |];
+      cpus = all 2;
+      fast = 1;
+    };
+    {
+      name = "a capacity just over half the largest";
+      capacities = [| 1024; 513 |];
+      cpus = all 2;
+      fast = 2;
+    };
+    {
+      name = "an affinity of little cores";
+      capacities = big_little;
+      cpus = [| 4; 5; 6; 7 |];
+      fast = 4;
+    };
+    {
+      name = "an affinity of a big and a little core";
+      capacities = big_little;
+      cpus = [| 1; 5 |];
+      fast = 1;
+    };
+    {
+      name = "a CPU without a capacity";
+      capacities = [| 1024; -1 |];
+      cpus = all 2;
+      fast = -1;
+    };
+    { name = "no CPU"; capacities = [||]; cpus = [||]; fast = 0 };
+  ]
+
+let test_capacities tree =
+  let files =
+    List.filter_map Fun.id
+      (Array.to_list
+         (Array.mapi
+            (fun cpu c ->
+              if c < 0 then None
+              else
+                Some
+                  ( strf "sys/devices/system/cpu/cpu%d/cpu_capacity" cpu,
+                    strf "%d\n" c ))
+            tree.capacities))
+  in
+  equal ~msg:"the CPUs over half the largest capacity, or -1" int tree.fast
+    (with_files files (fun root -> P.capacity_cpus root tree.cpus))
+
 let cores_tests =
   group ~timeout:P.timeout "cores"
     [
@@ -288,10 +440,16 @@ let cores_tests =
          a later change is not seen"
         test_affinity;
       cases
-        ~name:(fun t -> t.name)
-        "Linux's cgroup v2 bound is the least ceil (quota / period) up the \
-         process's cgroup, read from any tree"
+        ~name:(fun (t : tree) -> t.name)
+        "Linux's cgroup bound is the least ceil (quota / period) up the \
+         process's cgroups of v2 and of v1's cpu controller, read from any \
+         tree"
         trees test_cgroup;
+      cases
+        ~name:(fun (t : capacities) -> t.name)
+        "Linux's performance cores are the CPUs of capacity more than half the \
+         largest of theirs, read from any tree"
+        capacity_trees test_capacities;
     ]
 
 (* Chunks *)

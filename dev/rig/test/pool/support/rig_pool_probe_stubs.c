@@ -34,7 +34,7 @@
 #endif
 
 #include "rig_pool.h"
-#include "rig_pool_cgroup.h"
+#include "rig_pool_host.h"
 #include "rig_pool_probe.h"
 
 /* Time */
@@ -387,6 +387,16 @@ value rig_pool_test_performance_cores(value unit) {
 
 value rig_pool_test_cgroup_cpus(value v_root) {
   return Val_long(rig_pool_cgroup_cpus(String_val(v_root)));
+}
+
+value rig_pool_test_capacity_cpus(value v_root, value v_cpus) {
+  long n = (long)Wosize_val(v_cpus);
+  int *cpus = malloc((size_t)(n > 0 ? n : 1) * sizeof *cpus);
+  if (cpus == NULL) caml_raise_out_of_memory();
+  for (long i = 0; i < n; i++) cpus[i] = Int_val(Field(v_cpus, i));
+  long count = rig_pool_capacity_cpus(String_val(v_root), cpus, n);
+  free(cpus);
+  return Val_long(count);
 }
 
 /* [rig_pool_test_sysctl name] is the integer [name] reads, or -1. */

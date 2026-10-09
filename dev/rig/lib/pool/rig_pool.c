@@ -23,10 +23,11 @@
 #define _GNU_SOURCE
 
 #include "rig_pool.h"
-#include "rig_pool_cgroup.h"
+#include "rig_pool_host.h"
 
 #include <pthread.h>
 #include <sched.h>
+#include <stdarg.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -101,28 +102,36 @@ static uint64_t now_ns(void) {
 
 #if defined(__linux__)
 
-/* The CPUs of the affinity mask. The kernel refuses a mask smaller than
-   its own, which can exceed the configured CPUs, so the mask doubles until
-   it fits, up to 2^20 CPUs, far past any kernel's limit. */
-static long affinity_cpus(void) {
+/* The CPUs of the affinity mask, their number, written to [*cpus], a new
+   array the caller frees, NULL if it cannot be had; -1 if the mask cannot
+   be read. The kernel refuses a mask smaller than its own, which can
+   exceed the configured CPUs, so the mask doubles until it fits, up to
+   2^20 CPUs, far past any kernel's limit. */
+static long affinity_cpus(int **cpus) {
+  *cpus = NULL;
   long conf = sysconf(_SC_NPROCESSORS_CONF);
   for (long n = conf > 0 ? conf : 1; n <= (1 << 20); n *= 2) {
     cpu_set_t *set = CPU_ALLOC(n);
-    if (set == NULL) break;
+    if (set == NULL) return -1;
     size_t size = CPU_ALLOC_SIZE(n);
-    int ok = sched_getaffinity(0, size, set) == 0;
-    long count = ok ? CPU_COUNT_S(size, set) : 0;
+    if (sched_getaffinity(0, size, set) == 0) {
+      long count = CPU_COUNT_S(size, set);
+      *cpus = malloc((size_t)count * sizeof **cpus);
+      for (long cpu = 0, k = 0; *cpus != NULL && k < count; cpu++)
+        if (CPU_ISSET_S((size_t)cpu, size, set)) (*cpus)[k++] = (int)cpu;
+      CPU_FREE(set);
+      return count;
+    }
     CPU_FREE(set);
-    if (ok) return count;
-    if (errno != EINVAL) break;
+    if (errno != EINVAL) return -1;
   }
-  return sysconf(_SC_NPROCESSORS_ONLN);
+  return -1;
 }
 
 #endif
 
-/* The cgroup quota is plain reading of files, compiled everywhere so that
-   the suite runs it on every system. */
+/* The cgroup quotas and the CPUs' capacities are plain reading of files,
+   compiled everywhere so that the suite runs them on every system. */
 
 /* The file [name] under [root], opened for reading, or NULL. */
 static FILE *open_under(const char *root, const char *name) {
@@ -132,29 +141,88 @@ static FILE *open_under(const char *root, const char *name) {
   return fopen(file, "r");
 }
 
-/* The process's cgroup v2 directory under [root], written to [dir]: the
-   cgroup2 mount that holds the path of proc/self/cgroup's "0::" line. A
-   mount's root is the cgroup it shows, so the directory is the mount point
-   joined with the path below that root. Returns the length of [root] and
-   the mount point, where the walk to the ancestors stops, or 0 if there is
-   none. */
-static size_t cgroup_dir(const char *root, char *dir, size_t size) {
-  char line[4096], path[4096] = "", mount[4096], point[4096];
+/* Whether the file [name] under [root] opens and [format] reads its [n]
+   values. */
+__attribute__((format(scanf, 4, 5))) static int
+scan_under(const char *root, const char *name, int n, const char *format,
+           ...) {
+  FILE *f = open_under(root, name);
+  if (f == NULL) return 0;
+  va_list args;
+  va_start(args, format);
+  int read = vfscanf(f, format, args);
+  va_end(args);
+  fclose(f);
+  return read == n;
+}
+
+/* Whether the comma-separated [list] holds [token]. */
+static int has_token(const char *list, const char *token) {
+  size_t n = strlen(token);
+  for (const char *s = list;; s++) {
+    if (strncmp(s, token, n) == 0 && (s[n] == ',' || s[n] == '\0')) return 1;
+    s = strchr(s, ',');
+    if (s == NULL) return 0;
+  }
+}
+
+/* The hierarchies that may bound the CPU time: cgroup v2's, and cgroup
+   v1's that holds the cpu controller. A host mounts either or both, the
+   cpu controller in one of them. */
+typedef enum { V2, V1 } hierarchy;
+
+/* Whether a line "ID:CONTROLLERS:PATH" of proc/self/cgroup is [h]'s, with
+   its path written to [path]: v2's line is "0::PATH", v1's lists cpu among
+   its controllers. */
+static int cgroup_line(hierarchy h, const char *line, char *path) {
+  if (h == V2)
+    return strncmp(line, "0::", 3) == 0 &&
+           sscanf(line + 3, "%4095s", path) == 1;
+  char controllers[4096];
+  return sscanf(line, "%*d:%4095[^:]:%4095s", controllers, path) == 2 &&
+         has_token(controllers, "cpu");
+}
+
+/* Whether a line of proc/self/mountinfo mounts [h], with its root, the
+   cgroup it shows, written to [mount] and its mount point to [point]. The
+   filesystem type and its options follow " - ": "cgroup2", or "cgroup"
+   with cpu among the options. */
+static int cgroup_mount(hierarchy h, const char *line, char *mount,
+                        char *point) {
+  char type[64], options[4096];
+  const char *fields = strstr(line, " - ");
+  if (fields == NULL ||
+      sscanf(fields + 3, "%63s %*s %4095s", type, options) != 2)
+    return 0;
+  int mounts = h == V2 ? strcmp(type, "cgroup2") == 0
+                       : strcmp(type, "cgroup") == 0 &&
+                             has_token(options, "cpu");
+  return mounts &&
+         sscanf(line, "%*s %*s %*s %4095s %4095s", mount, point) == 2;
+}
+
+/* The process's cgroup directory of [h] under [root], written to [dir]:
+   the mount of [h] that holds the path of the hierarchy's line in
+   proc/self/cgroup. A mount's root is the cgroup it shows, so the
+   directory is the mount point joined with the path below that root.
+   Returns the length of [root] and the mount point, where the walk to the
+   ancestors stops, or 0 if there is none. */
+static size_t cgroup_dir(hierarchy h, const char *root, char *dir,
+                         size_t size) {
+  char line[4096], path[4096], mount[4096], point[4096];
   FILE *f = open_under(root, "/proc/self/cgroup");
   if (f == NULL) return 0;
-  while (fgets(line, sizeof line, f))
-    if (strncmp(line, "0::", 3) == 0 && sscanf(line + 3, "%4095s", path) == 1)
-      break;
+  int found = 0;
+  while (!found && fgets(line, sizeof line, f))
+    found = cgroup_line(h, line, path);
   fclose(f);
-  if (path[0] != '/') return 0;
+  if (!found || path[0] != '/') return 0;
 
   size_t stop = 0;
   f = open_under(root, "/proc/self/mountinfo");
   if (f == NULL) return 0;
   while (stop == 0 && fgets(line, sizeof line, f)) {
-    if (strstr(line, " - cgroup2 ") == NULL) continue;
-    if (sscanf(line, "%*s %*s %*s %4095s %4095s", mount, point) != 2)
-      continue;
+    if (!cgroup_mount(h, line, mount, point)) continue;
     size_t n = strcmp(mount, "/") == 0 ? 0 : strlen(mount);
     if (strncmp(path, mount, n) != 0 || (path[n] != '/' && path[n] != '\0'))
       continue;
@@ -165,67 +233,101 @@ static size_t cgroup_dir(const char *root, char *dir, size_t size) {
   return stop;
 }
 
-/* The smallest of ceil (quota / period) over the cgroup and its ancestors,
-   since limits nest. Rounded up: n threads spend at most n CPUs a period,
-   so rounding a quota of 1.5 down would leave a third of it idle. A file
-   reads "max PERIOD" without a quota and "QUOTA PERIOD" with one. */
-long rig_pool_cgroup_cpus(const char *root) {
+/* The tighter of two bounds, -1 being none. */
+static long tighter(long a, long b) {
+  return a < 0 || (b >= 0 && b < a) ? b : a;
+}
+
+/* The quota of the cgroup [dir] of [h] in CPUs, ceil (quota / period), or
+   -1 without one. Rounded up: n threads spend at most n CPUs a period, so
+   rounding a quota of 1.5 down would leave a third of it idle. v2's
+   cpu.max reads "max PERIOD" without a quota and "QUOTA PERIOD" with one;
+   v1's cpu.cfs_quota_us reads -1 without one, beside cpu.cfs_period_us. */
+static long quota_cpus(hierarchy h, const char *dir) {
+  long quota = -1, period = -1;
+  if (h == V2)
+    scan_under(dir, "/cpu.max", 2, "%ld %ld", &quota, &period);
+  else if (scan_under(dir, "/cpu.cfs_quota_us", 1, "%ld", &quota))
+    scan_under(dir, "/cpu.cfs_period_us", 1, "%ld", &period);
+  return quota > 0 && period > 0 ? (quota + period - 1) / period : -1;
+}
+
+/* The tightest quota of the cgroup of [h] and its ancestors, since limits
+   nest. */
+static long hierarchy_cpus(hierarchy h, const char *root) {
   char dir[4096];
-  size_t stop = cgroup_dir(root, dir, sizeof dir);
+  size_t stop = cgroup_dir(h, root, dir, sizeof dir);
   if (stop == 0) return -1;
   long least = -1;
   for (;;) {
-    FILE *f = open_under(dir, "/cpu.max");
-    long quota, period;
-    if (f != NULL) {
-      if (fscanf(f, "%ld %ld", &quota, &period) == 2 && quota > 0 &&
-          period > 0) {
-        long cpus = (quota + period - 1) / period;
-        if (least < 0 || cpus < least) least = cpus;
-      }
-      fclose(f);
-    }
+    least = tighter(least, quota_cpus(h, dir));
     char *slash = strrchr(dir, '/');
     if (strlen(dir) <= stop || slash == NULL) return least;
     *slash = '\0';
   }
 }
 
-static int count_cores(void) {
-  long n;
-#if defined(__APPLE__)
-  int c = 0;
-  size_t size = sizeof c;
-  n = sysctlbyname("hw.physicalcpu", &c, &size, NULL, 0) == 0 ? c : 1;
-#elif defined(_WIN32)
-  n = (long)GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
-#elif defined(__linux__)
-  n = affinity_cpus();
-  long quota = rig_pool_cgroup_cpus("");
-  if (quota > 0 && quota < n) n = quota;
-#else
-  n = sysconf(_SC_NPROCESSORS_ONLN);
-#endif
-  return n < 1 ? 1 : (int)n;
+long rig_pool_cgroup_cpus(const char *root) {
+  return tighter(hierarchy_cpus(V2, root), hierarchy_cpus(V1, root));
 }
 
-static int count_performance_cores(int cores) {
-#if defined(__APPLE__)
-  int p = 0;
-  size_t size = sizeof p;
-  if (sysctlbyname("hw.perflevel0.physicalcpu", &p, &size, NULL, 0) == 0 &&
-      p >= 1 && p <= cores)
-    return p;
-#endif
-  return cores;
+/* The capacity of CPU [cpu] under [root], or -1 without one. */
+static long capacity(const char *root, int cpu) {
+  char name[64];
+  long c = -1;
+  snprintf(name, sizeof name, "/sys/devices/system/cpu/cpu%d/cpu_capacity",
+           cpu);
+  return scan_under(root, name, 1, "%ld", &c) ? c : -1;
+}
+
+/* Two passes over the files, so that nothing is allocated. A core of half
+   the largest capacity or less takes twice as long or more for a chunk, as
+   an efficiency core does. Unmeasured on hardware: no Linux host with cores
+   of several sizes was at hand. */
+long rig_pool_capacity_cpus(const char *root, const int *cpus, long n) {
+  long largest = -1;
+  for (long i = 0; i < n; i++) {
+    long c = capacity(root, cpus[i]);
+    if (c < 0) return -1;
+    if (c > largest) largest = c;
+  }
+  long count = 0;
+  for (long i = 0; i < n; i++) count += 2 * capacity(root, cpus[i]) > largest;
+  return count;
 }
 
 static int g_cores, g_performance_cores;
 static pthread_once_t cores_once = PTHREAD_ONCE_INIT;
 
+#if defined(__APPLE__)
+static long sysctl_int(const char *name) {
+  int v = 0;
+  size_t size = sizeof v;
+  return sysctlbyname(name, &v, &size, NULL, 0) == 0 ? v : -1;
+}
+#endif
+
+/* The cores, and the performance cores where the host tells them apart
+   (-1 where it does not). */
 static void cores_init(void) {
-  g_cores = count_cores();
-  g_performance_cores = count_performance_cores(g_cores);
+  long cores, fast = -1;
+#if defined(__APPLE__)
+  cores = sysctl_int("hw.physicalcpu");
+  fast = sysctl_int("hw.perflevel0.physicalcpu");
+#elif defined(_WIN32)
+  cores = (long)GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
+#elif defined(__linux__)
+  int *cpus;
+  cores = affinity_cpus(&cpus);
+  if (cores < 0) cores = sysconf(_SC_NPROCESSORS_ONLN);
+  if (cpus != NULL) fast = rig_pool_capacity_cpus("", cpus, cores);
+  free(cpus);
+  cores = tighter(cores, rig_pool_cgroup_cpus(""));
+#else
+  cores = sysconf(_SC_NPROCESSORS_ONLN);
+#endif
+  g_cores = cores < 1 ? 1 : (int)cores;
+  g_performance_cores = fast < 1 || fast > g_cores ? g_cores : (int)fast;
 }
 
 int rig_pool_cores(void) {

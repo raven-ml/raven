@@ -59,10 +59,3 @@ next model targets:
 - quantized inference: gguf loading (tinygrad `gguf_load` parity; the tolk
   gpt2 example's gguf path), int8/int4 kernels (int4 currently rejected by
   rune's jit) — pairs with llama3
-
-device pool follow-ups:
-- read the cgroup v1 CPU quota (`cpu.cfs_quota_us` / `cpu.cfs_period_us`)
-  in `nx_pool_cores`: hosts on cgroup v1 (RHEL 8, v1 Docker) see no quota
-- count performance cores on Linux hybrid hosts (Intel P/E, Arm
-  big.LITTLE) by the CPUs of maximum `cpu_capacity`; `nx_pool_performance_cores`
-  counts them on macOS only
