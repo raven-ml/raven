@@ -4,7 +4,14 @@
 (executables
  (names bench_amd gate_amd)
  (modules rows bench_amd gate_amd)
- (libraries nx_amd_support rig rig.amd.amdgpu thumper))
+ (libraries
+  nx_array
+  nx_amd_support
+  nx_gpu_ref
+  rig
+  rig.amd.amdgpu
+  thumper
+  unix))
 
 (rule
  (alias bench)
