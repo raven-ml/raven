@@ -240,31 +240,32 @@ let codecs_e5m2 () = codecs D.Float8_e5m2 ~code:D.Uint8 ~spread:30
 
 (* Determinism *)
 
-let cus_of s =
+let wgps_of s =
   List.init
     (String.length s / 4)
     (fun i -> Int32.to_int (String.get_int32_le s (4 * i)))
 
-(* Beside the hog, work runs only on the compute units the hog left free. A
-   workgroup of [where] is one wave, on one compute unit. *)
-let hog_holds_its_cus () =
+(* Beside the hog, work runs only on the work-group processors the hog left
+   free: each hog workgroup holds a processor of its own, and no wave of
+   [where], a workgroup of one wave, lands on one. *)
+let hog_holds_its_wgps () =
   let g = S.gpu () in
-  let blocks = 4 * S.cus g in
-  let cu = S.buffer g (4 * blocks) in
-  S.write cu (String.make (4 * blocks) '\xff');
+  let blocks = 4 * S.wgps g in
+  let wgp = S.buffer g (4 * blocks) in
+  S.write wgp (String.make (4 * blocks) '\xff');
   let where =
     S.record (S.harness g)
-      [ S.launch "where" ~groups:(blocks, 1, 1) ~threads:32 [ A cu ] ]
+      [ S.launch "where" ~groups:(blocks, 1, 1) ~threads:32 [ A wgp ] ]
   in
   let hog = S.hog g ~ns:2_000_000 in
   S.run g ~beside:hog where;
-  let held = S.held_cus hog in
+  let held = S.held_wgps hog in
   equal int
-    (Int.max 1 (S.cus g / 2))
+    (Int.max 1 (S.wgps g / 2))
     (List.length (List.sort_uniq compare held));
-  let ran = cus_of (S.read cu) in
-  equal (list int) [] (List.filter (fun c -> c = -1) ran);
-  equal (list int) [] (List.filter (fun c -> List.mem c held) ran)
+  let ran = wgps_of (S.read wgp) in
+  equal (list int) [] (List.filter (fun w -> w = -1) ran);
+  equal (list int) [] (List.filter (fun w -> List.mem w held) ran)
 
 (* Contract *)
 
@@ -909,7 +910,7 @@ let tests =
         test "float8 e5m2 as the host's" codecs_e5m2;
       ];
     group "determinism"
-      [ test "the hog holds its compute units" hog_holds_its_cus ];
+      [ test "the hog holds its work-group processors" hog_holds_its_wgps ];
     group "matrix unit"
       [
         test "bfloat16 sums err by at most 2u an addition"
