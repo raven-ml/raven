@@ -1,5 +1,0 @@
-; Checks a kernel library's committed artifacts against the digests its
-; gen.py pinned, with no toolchain. Each kernels/dune runs it in runtest.
-
-(executable
- (name pins))

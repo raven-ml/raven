@@ -49,13 +49,13 @@ enum {
 
 static value object(id o) { return caml_copy_nativeint((intnat)o); }
 
-static value tuple(int n, value a, value b, value c) {
+static value triple(value a, value b, value c) {
   CAMLparam3(a, b, c);
   CAMLlocal1(v);
-  v = caml_alloc_tuple(n);
+  v = caml_alloc_tuple(3);
   Store_field(v, 0, a);
   Store_field(v, 1, b);
-  if (n > 2) Store_field(v, 2, c);
+  Store_field(v, 2, c);
   CAMLreturn(v);
 }
 
@@ -124,8 +124,8 @@ static value buffer(id<MTLBuffer> b) {
   CAMLparam0();
   CAMLlocal1(handle);
   handle = object(b);
-  CAMLreturn(tuple(3, handle, Val_long((intnat)b.gpuAddress),
-                   Val_long((intnat)b.contents)));
+  CAMLreturn(triple(handle, Val_long((intnat)b.gpuAddress),
+                    Val_long((intnat)b.contents)));
 }
 
 /* The device's family, budget and word. */
@@ -135,7 +135,7 @@ value caml_rig_metal_facts(value v_d) {
   struct rig_metal *d = Device_val(v_d);
   word = buffer(d->word);
   intnat budget = (intnat)d->device.recommendedMaxWorkingSetSize;
-  CAMLreturn(tuple(3, Val_int(family(d->device)), Val_long(budget), word));
+  CAMLreturn(triple(Val_int(family(d->device)), Val_long(budget), word));
 }
 
 /* Memory */
@@ -230,13 +230,13 @@ value caml_rig_metal_image(value v_d, value v_b) {
   }
   dispatch_release(data);
   why = caml_copy_string(text);
-  CAMLreturn(tuple(3, why, lib, names));
+  CAMLreturn(triple(why, lib, names));
 }
 
 /* The pipeline, usable from an indirect command buffer, of the function
-   [v_f] of the library [v_lib]: [("", pipeline)], or [(why, 0)] with
-   Metal's reason if Metal makes none. It releases the runtime while Metal
-   compiles. */
+   [v_f] of the library [v_lib]: [("", pipeline, most threads per
+   threadgroup)], or [(why, 0, 0)] with Metal's reason if Metal makes none.
+   It releases the runtime while Metal compiles. */
 value caml_rig_metal_pipeline(value v_lib, value v_f) {
   CAMLparam2(v_lib, v_f);
   CAMLlocal1(why);
@@ -264,7 +264,8 @@ value caml_rig_metal_pipeline(value v_lib, value v_f) {
   caml_leave_blocking_section();
   caml_stat_free(f);
   why = caml_copy_string(text);
-  CAMLreturn(tuple(2, why, Val_long((intnat)p), Val_unit));
+  intnat max = p == nil ? 0 : (intnat)p.maxTotalThreadsPerThreadgroup;
+  CAMLreturn(triple(why, Val_long((intnat)p), Val_long(max)));
 }
 
 value caml_rig_metal_release(value v_pipeline) {
@@ -293,79 +294,39 @@ static void free_icb(struct icb *b) {
   free(b);
 }
 
-/* Raises [Invalid_argument] for what [icb] cannot record, and is why Metal
-   cannot record it, or "". */
-static void check(struct rig_metal *d, id<MTLBuffer> args, value v_pipelines,
-                  value v_sizes, char *why, size_t n) {
-  char m[160];
-  if (args.device != d->device)
-    caml_invalid_argument(
-        "Rig_metal_abi.icb: the argument buffer is another GPU's");
-  for (mlsize_t i = 0; i < Wosize_val(v_pipelines); i++) {
-    id<MTLComputePipelineState> p = (id)Long_val(Field(v_pipelines, i));
-    intnat offset = Long_val(Field(v_sizes, 7 * i));
-    intnat tx = Long_val(Field(v_sizes, 7 * i + 4));
-    intnat ty = Long_val(Field(v_sizes, 7 * i + 5));
-    intnat tz = Long_val(Field(v_sizes, 7 * i + 6));
-    intnat max = (intnat)p.maxTotalThreadsPerThreadgroup;
-    /* The product of three sizes can overflow, so each is compared with
-       the bound divided by the ones before it; every size is at least 1. */
-    int too_many = tx > max || ty > max / tx || tz > max / (tx * ty);
-    if (p.device != d->device)
-      snprintf(m, sizeof m, "dispatch %d's pipeline is another GPU's", (int)i);
-    else if (offset >= (intnat)args.length)
-      snprintf(m, sizeof m,
-               "dispatch %d's offset %ld lies outside the buffer's %lu bytes",
-               (int)i, (long)offset, (unsigned long)args.length);
-    else {
-      if (why[0] == '\0' && too_many)
-        snprintf(why, n,
-                 "dispatch %d asks for %ldx%ldx%ld threads per threadgroup, "
-                 "expected at most %ld in all",
-                 (int)i, (long)tx, (long)ty, (long)tz, (long)max);
-      continue;
-    }
-    char full[200];
-    snprintf(full, sizeof full, "Rig_metal_abi.icb: %s", m);
-    caml_invalid_argument(full);
-  }
+/* The bytes of [v_buffer], or -1 if it is another GPU's. */
+value caml_rig_metal_buffer_bytes(value v_d, value v_buffer) {
+  id<MTLBuffer> b = Object_val(v_buffer);
+  return Val_long(b.device == Device_val(v_d)->device ? (intnat)b.length : -1);
 }
 
 /* An indirect command buffer of one dispatch per pipeline of [v_pipelines],
    each after the one before, with [v_buffer] as kernel buffer 0; [v_sizes]
    gives each its offset, threadgroups per grid and threads per threadgroup,
-   seven words. The result is [("", objects)], the objects being the
-   release, the buffer, then each command, or [(why, [||])]. */
+   seven words, all checked by the caller. The result is the release, the
+   buffer, then each command, or [[||]] if Metal made no buffer. */
 value caml_rig_metal_icb(value v_d, value v_buffer, value v_pipelines,
                             value v_sizes) {
   CAMLparam4(v_d, v_buffer, v_pipelines, v_sizes);
-  CAMLlocal3(objects, why, v);
+  CAMLlocal2(objects, v);
   struct rig_metal *d = Device_val(v_d);
   id<MTLBuffer> args = Object_val(v_buffer);
   int n = (int)Wosize_val(v_pipelines);
-  char text[160] = "";
-  check(d, args, v_pipelines, v_sizes, text, sizeof text);
-  struct icb *b = NULL;
-  if (text[0] == '\0') {
-    b = calloc(1, sizeof *b + 2 * n * sizeof(id));
-    if (b == NULL) caml_raise_out_of_memory();
-    MTLIndirectCommandBufferDescriptor *desc =
-        [[MTLIndirectCommandBufferDescriptor alloc] init];
-    desc.commandTypes = MTLIndirectCommandTypeConcurrentDispatch;
-    desc.inheritBuffers = NO;
-    desc.inheritPipelineState = NO;
-    desc.maxKernelBufferBindCount = 1;
-    b->icb = [d->device newIndirectCommandBufferWithDescriptor:desc
-                                               maxCommandCount:n > 0 ? n : 1
-                                                       options:0];
-    [desc release];
-  }
-  if (b == NULL || b->icb == nil) {
+  struct icb *b = calloc(1, sizeof *b + 2 * n * sizeof(id));
+  if (b == NULL) caml_raise_out_of_memory();
+  MTLIndirectCommandBufferDescriptor *desc =
+      [[MTLIndirectCommandBufferDescriptor alloc] init];
+  desc.commandTypes = MTLIndirectCommandTypeConcurrentDispatch;
+  desc.inheritBuffers = NO;
+  desc.inheritPipelineState = NO;
+  desc.maxKernelBufferBindCount = 1;
+  b->icb = [d->device newIndirectCommandBufferWithDescriptor:desc
+                                             maxCommandCount:n > 0 ? n : 1
+                                                     options:0];
+  [desc release];
+  if (b->icb == nil) {
     free(b);
-    if (text[0] == '\0')
-      snprintf(text, sizeof text, "Metal made no indirect command buffer");
-    why = caml_copy_string(text);
-    CAMLreturn(tuple(2, why, Atom(0), Val_unit));
+    CAMLreturn(Atom(0));
   }
   b->n = n;
   /* Metal returns each command autoreleased: without a pool of its own,
@@ -396,8 +357,7 @@ value caml_rig_metal_icb(value v_d, value v_buffer, value v_pipelines,
     v = object(b->commands[2 * i]);
     Store_field(objects, 2 + i, v);
   }
-  why = caml_copy_string("");
-  CAMLreturn(tuple(2, why, objects, Val_unit));
+  CAMLreturn(objects);
 }
 
 value caml_rig_metal_icb_release(value v_icb) {
@@ -478,6 +438,7 @@ NO_METAL1(caml_rig_metal_free_word)
 NO_METAL1(caml_rig_metal_release)
 NO_METAL2(caml_rig_metal_image)
 NO_METAL2(caml_rig_metal_pipeline)
+NO_METAL2(caml_rig_metal_buffer_bytes)
 NO_METAL1(caml_rig_metal_release_library)
 NO_METAL1(caml_rig_metal_icb_release)
 NO_METAL3(caml_rig_metal_sleep)

@@ -618,6 +618,21 @@ let icb_refusals () =
   (require_ok (icb t args [||])).release ();
   Rig_metal.free t.g args
 
+(* A pipeline that no entry of a loaded image gave: an address of nothing, and
+   one its image's unload released. *)
+let foreign_pipelines () =
+  let t = dev () in
+  let args = alloc t args_bytes in
+  let i = load t.g in
+  let step = require_some (Rig_metal.entry i "step") in
+  Rig_metal.unload t.g i;
+  let invalid p =
+    raises_match Exn.invalid_arg (fun () -> icb t args [| dispatch p |])
+  in
+  invalid 1;
+  invalid step;
+  Rig_metal.free t.g args
+
 let released_twice () =
   let t = dev () in
   let args = alloc t args_bytes in
@@ -709,6 +724,7 @@ let icbs =
         "chain" [ 0; 1; 2; 17; 64 ] chain;
       test "a command runs with the sizes set before its run" resized;
       test "refuses what it cannot record" icb_refusals;
+      test "refuses a pipeline no loaded image gave" foreign_pipelines;
       test "release frees the buffer and its commands" released_objects;
       test "release raises when called twice" released_twice;
       test "runs after its image is unloaded" after_unload;

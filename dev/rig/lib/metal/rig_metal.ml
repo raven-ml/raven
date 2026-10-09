@@ -27,13 +27,14 @@ external release : int -> unit = "caml_rig_metal_release"
 external load : int -> string -> string * nativeint * string array
   = "caml_rig_metal_image"
 
-external pipeline : nativeint -> string -> string * int
+external pipeline : nativeint -> string -> string * int * int
   = "caml_rig_metal_pipeline"
 
 external release_library : nativeint -> unit = "caml_rig_metal_release_library"
+external buffer_bytes : int -> nativeint -> int = "caml_rig_metal_buffer_bytes"
 
 external make_icb :
-  int -> nativeint -> int array -> int array -> string * nativeint array
+  int -> nativeint -> int array -> int array -> nativeint array
   = "caml_rig_metal_icb"
 
 external release_icb : nativeint -> unit = "caml_rig_metal_icb_release"
@@ -77,12 +78,14 @@ type capability = Rig_metal_abi.t
 (* An image's pipelines, 0 until its first [entry], and whether it is loaded,
    both under [guard]: an [entry] compiles holding it, so calls for one function
    from several domains make one pipeline, and an [unload] either waits for a
-   compile or makes the [entry] after it raise. *)
+   compile or makes the [entry] after it raise. [limits] holds each pipeline's
+   most threads per threadgroup. *)
 type image = {
   owner : int;
   library : nativeint;
   names : string array;
   pipelines : int array;
+  limits : int array;
   guard : Mutex.t;
   mutable loaded : bool;
 }
@@ -93,18 +96,61 @@ type t = {
   budget : int;
   word : region;
   cap : capability;
-  guard : Mutex.t; (* held by an icb call and by stop *)
+  guard : Mutex.t; (* held by an icb call, by stop and over [images] *)
   stopped : bool Atomic.t; (* stop began *)
+  images : image list ref; (* loaded, whose pipelines an icb may record *)
 }
 
 let device_name i =
   if i < 0 then invalid_argf "Rig_metal.device_name: GPU %d is negative" i;
   if i = 0 then "METAL" else strf "METAL:%d" i
 
-(* Compiled code calls a device's [icb] beside every other call, so [icb] and
-   [stop] exclude each other under the device's [guard]: once the stop began,
-   the pipelines [icb] would retain may be released. *)
-let icb self guard stopped align buffer (ds : Rig_metal_abi.dispatch array) =
+(* The most threads per threadgroup of [p], a pipeline that [entry] gave for one
+   of [images], else [0]. An icb asks it of every dispatch, so it allocates
+   nothing. *)
+let rec limit images p =
+  match images with
+  | [] -> 0
+  | (i : image) :: rest ->
+      let n = Array.length i.pipelines in
+      let k = ref 0 in
+      while !k < n && i.pipelines.(!k) <> p do
+        incr k
+      done;
+      if !k < n && p <> 0 then i.limits.(!k) else limit rest p
+
+(* Why dispatch [i] cannot be recorded with a [bytes]-byte argument buffer:
+   [Invalid_argument] for a pipeline [entry] never gave or an offset outside the
+   buffer, [Some why] for more threads than its pipeline allows. *)
+let refusal images bytes i (d : Rig_metal_abi.dispatch) =
+  let max = limit images d.pipeline in
+  if max = 0 then
+    invalid_argf
+      "Rig_metal_abi.icb: dispatch %d's pipeline is of no image the device \
+       loaded"
+      i;
+  if d.offset >= bytes then
+    invalid_argf
+      "Rig_metal_abi.icb: dispatch %d's offset %d lies outside the buffer's %d \
+       bytes"
+      i d.offset bytes;
+  (* The product of three sizes can overflow, so each is compared with the bound
+     divided by the ones before it; every size is at least 1. *)
+  let tx, ty, tz = d.threads in
+  if tx > max || ty > max / tx || tz > max / (tx * ty) then
+    Some
+      (strf
+         "dispatch %d asks for %dx%dx%d threads per threadgroup, expected at \
+          most %d in all"
+         i tx ty tz max)
+  else None
+
+(* Compiled code calls a device's [icb] beside every other call, so [icb],
+   [stop] and an [unload] exclude each other under the device's [guard]: once
+   the stop began or the unload took the image, the pipelines [icb] would retain
+   may be released. *)
+let icb self guard stopped images align buffer
+    (ds : Rig_metal_abi.dispatch array) =
   let sizes = Array.make (7 * Array.length ds) 0 in
   let record i (d : Rig_metal_abi.dispatch) =
     let gx, gy, gz = d.groups and tx, ty, tz = d.threads in
@@ -127,17 +173,28 @@ let icb self guard stopped align buffer (ds : Rig_metal_abi.dispatch array) =
   Mutex.protect guard @@ fun () ->
   if Atomic.get stopped then Error "the device was stopped"
   else
-    match make_icb self buffer pipelines sizes with
-    | "", objects ->
-        let released = Atomic.make false in
-        let release () =
-          if not (Atomic.compare_and_set released false true) then
-            invalid_arg "Rig_metal_abi.icb: release called twice";
-          release_icb objects.(0)
-        in
-        let commands = Array.sub objects 2 (Array.length ds) in
-        Ok { Rig_metal_abi.handle = objects.(1); commands; release }
-    | why, _ -> Error why
+    let bytes = buffer_bytes self buffer in
+    if bytes < 0 then
+      invalid_arg "Rig_metal_abi.icb: the argument buffer is another GPU's";
+    let why = ref None in
+    for i = 0 to Array.length ds - 1 do
+      let r = refusal !images bytes i ds.(i) in
+      if Option.is_none !why then why := r
+    done;
+    match !why with
+    | Some why -> Error why
+    | None -> (
+        match make_icb self buffer pipelines sizes with
+        | [||] -> Error "Metal made no indirect command buffer"
+        | objects ->
+            let released = Atomic.make false in
+            let release () =
+              if not (Atomic.compare_and_set released false true) then
+                invalid_arg "Rig_metal_abi.icb: release called twice";
+              release_icb objects.(0)
+            in
+            let commands = Array.sub objects 2 (Array.length ds) in
+            Ok { Rig_metal_abi.handle = objects.(1); commands; release })
 
 (* The minimum constant buffer offset alignment of Apple GPU families, from the
    Metal feature set tables (May 21, 2026, page 7). The tables list none for Mac
@@ -173,19 +230,11 @@ let open_ i =
       let arch = if family > 0 then strf "Apple%d" family else "Mac2" in
       let align = if family > 0 then apple_align else mac_align in
       let guard = Mutex.create () and stopped = Atomic.make false in
-      let icb = icb self guard stopped align in
+      let images = ref [] in
+      let icb = icb self guard stopped images align in
       let word = region self word in
       let cap = { Rig_metal_abi.align; icb; split } in
-      Ok
-        {
-          self;
-          arch;
-          budget;
-          word;
-          cap;
-          guard;
-          stopped;
-        }
+      Ok { self; arch; budget; word; cap; guard; stopped; images }
 
 (* Facts *)
 
@@ -254,11 +303,21 @@ let free d (r : region) =
 let image d b =
   match load d.self b with
   | "", library, names ->
-      let pipelines = Array.make (Array.length names) 0 in
-      let guard = Mutex.create () in
-      Ok
-        (`Loaded
-           { owner = d.self; library; names; pipelines; guard; loaded = true })
+      let n = Array.length names in
+      let pipelines = Array.make n 0 and limits = Array.make n 0 in
+      let i =
+        {
+          owner = d.self;
+          library;
+          names;
+          pipelines;
+          limits;
+          guard = Mutex.create ();
+          loaded = true;
+        }
+      in
+      Mutex.protect d.guard (fun () -> d.images := i :: !(d.images));
+      Ok (`Loaded i)
   | why, _, _ -> Error why
 
 (* A refusal is not kept: a later call compiles again. *)
@@ -270,10 +329,11 @@ let entry (i : image) f =
   | Some k when i.pipelines.(k) <> 0 -> Some i.pipelines.(k)
   | Some k -> (
       match pipeline i.library f with
-      | "", p ->
+      | "", p, limit ->
+          i.limits.(k) <- limit;
           i.pipelines.(k) <- p;
           Some p
-      | why, _ ->
+      | why, _, _ ->
           invalid_argf "Rig_metal.entry: Metal makes no pipeline of %S: %s" f
             why)
 
@@ -283,6 +343,8 @@ let unload d (i : image) =
   Mutex.protect i.guard @@ fun () ->
   if not i.loaded then invalid_arg "Rig_metal.unload: the image was unloaded";
   i.loaded <- false;
+  Mutex.protect d.guard (fun () ->
+      d.images := List.filter (fun j -> j != i) !(d.images));
   Array.iter (fun p -> if p <> 0 then release p) i.pipelines;
   release_library i.library
 
