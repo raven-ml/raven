@@ -291,39 +291,51 @@ __device__ void epilogue(const contract_params &p, uint8_t *smem,
 
 /* The mma kernels */
 
-__device__ void mma(float *c, const uint32_t *a, const uint32_t *b,
-                           int kind) {
-  if (kind == 0)
+/* The kinds of operands an mma kernel sums, as kernels.h's list names them:
+   any is each of the others, chosen by a's dtype at the kernel's entry. */
+#define KIND_bf16 0
+#define KIND_f16 1
+#define KIND_s8 2
+#define KIND_any 3
+
+/* The accumulator of an mma kind: int32 for int8, float32 otherwise. */
+template <int KIND> struct Mma_acc { typedef float type; };
+template <> struct Mma_acc<KIND_s8> { typedef int type; };
+
+/* One mma.sync step of the kind [KIND] into the accumulators [c]. */
+template <int KIND>
+__device__ void mma(typename Mma_acc<KIND>::type *c, const uint32_t *a,
+                    const uint32_t *b) {
+  if constexpr (KIND == KIND_bf16)
     asm("mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 "
         "{%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};\n"
         : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3])
         : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b[0]), "r"(b[1]));
-  else
+  else if constexpr (KIND == KIND_f16)
     asm("mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 "
         "{%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};\n"
         : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3])
         : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b[0]), "r"(b[1]));
+  else
+    asm("mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 "
+        "{%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};\n"
+        : "+r"(c[0]), "+r"(c[1]), "+r"(c[2]), "+r"(c[3])
+        : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b[0]), "r"(b[1]));
 }
 
-__device__ void mma(int *c, const uint32_t *a, const uint32_t *b,
-                           int) {
-  asm("mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 "
-      "{%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};\n"
-      : "+r"(c[0]), "+r"(c[1]), "+r"(c[2]), "+r"(c[3])
-      : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b[0]), "r"(b[1]));
-}
-
-__device__ void ldsm(uint32_t *r, uint32_t addr) {
-  asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0,%1,%2,%3}, [%4];\n"
-               : "=r"(r[0]), "=r"(r[1]), "=r"(r[2]), "=r"(r[3])
-               : "r"(addr));
-}
-
-__device__ void ldsm_trans(uint32_t *r, uint32_t addr) {
-  asm volatile(
-      "ldmatrix.sync.aligned.m8n8.x4.trans.shared.b16 {%0,%1,%2,%3}, [%4];\n"
-      : "=r"(r[0]), "=r"(r[1]), "=r"(r[2]), "=r"(r[3])
-      : "r"(addr));
+/* Four 8 x 8 matrices of 16-bit elements from shared memory, transposed if
+   [T]. */
+template <bool T> __device__ void ldsm(uint32_t *r, uint32_t addr) {
+  if constexpr (T)
+    asm volatile(
+        "ldmatrix.sync.aligned.m8n8.x4.trans.shared.b16 {%0,%1,%2,%3}, [%4];\n"
+        : "=r"(r[0]), "=r"(r[1]), "=r"(r[2]), "=r"(r[3])
+        : "r"(addr));
+  else
+    asm volatile(
+        "ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0,%1,%2,%3}, [%4];\n"
+        : "=r"(r[0]), "=r"(r[1]), "=r"(r[2]), "=r"(r[3])
+        : "r"(addr));
 }
 
 /* [bytes] of the 16 at [src] to shared [dst], the rest zero. */
@@ -404,20 +416,16 @@ template <int R, int BK, int ES, bool T, int THREADS> struct Operand {
   }
 };
 
-/* The accumulator of an mma kind: int32 for int8, float32 otherwise. */
-template <int KIND> struct Mma_acc { typedef float type; };
-template <> struct Mma_acc<2> { typedef int type; };
-
-template <int KIND, bool AM, bool BN_, typename Tile>
+template <int KIND, bool A_T, bool B_T, typename Tile>
 __device__ void mma_contract(const contract_params &p) {
   typedef typename Mma_acc<KIND>::type Acc;
   constexpr int BM = Tile::BM, BN = Tile::BN, BKB = Tile::BKB, WM = Tile::WM,
                 WN = Tile::WN, STAGES = Tile::STAGES;
-  constexpr int ES = KIND == 2 ? 1 : 2, BK = BKB / ES;
+  constexpr int ES = KIND == KIND_s8 ? 1 : 2, BK = BKB / ES;
   constexpr int WARPS_N = BN / WN, THREADS = (BM / WM) * WARPS_N * 32;
   constexpr int MI = WM / 16, NI = WN / 8, KS = BKB / 32;
-  typedef Operand<BM, BK, ES, AM, THREADS> A;
-  typedef Operand<BN, BK, ES, BN_, THREADS> B;
+  typedef Operand<BM, BK, ES, A_T, THREADS> A;
+  typedef Operand<BN, BK, ES, B_T, THREADS> B;
   extern __shared__ __align__(128) uint8_t smem[];
   const uint32_t sa = __cvta_generic_to_shared(smem);
   const uint32_t sb = sa + STAGES * A::BYTES;
@@ -439,9 +447,9 @@ __device__ void mma_contract(const contract_params &p) {
 
   A a;
   B b;
-  a.make((const char *)p.a + z * p.sa[0] * ES, (AM ? p.sa[2] : p.sa[1]) * ES,
+  a.make((const char *)p.a + z * p.sa[0] * ES, (A_T ? p.sa[2] : p.sa[1]) * ES,
          p.m, m0, tid);
-  b.make((const char *)p.b + z * p.sb[0] * ES, (BN_ ? p.sb[2] : p.sb[1]) * ES,
+  b.make((const char *)p.b + z * p.sb[0] * ES, (B_T ? p.sb[2] : p.sb[1]) * ES,
          p.n, n0, tid);
 
   auto load = [&](int slot, int kt) {
@@ -458,24 +466,24 @@ __device__ void mma_contract(const contract_params &p) {
     const int q = lane >> 3, r8 = lane & 7;
 #pragma unroll
     for (int i = 0; i < MI; i++) {
-      if (AM) {
+      if (A_T) {
         const int r = ks * 16 + r8 + 8 * (q >> 1), c = (wm0 + i * 16) / 8 + (q & 1);
-        ldsm_trans(fa[i], ta + (r * A::C + swz(r, c, A::C)) * 16);
+        ldsm<true>(fa[i], ta + (r * A::C + swz(r, c, A::C)) * 16);
       } else {
         const int r = wm0 + i * 16 + (lane & 15), c = 2 * ks + (lane >> 4);
-        ldsm(fa[i], ta + (r * A::C + swz(r, c, A::C)) * 16);
+        ldsm<false>(fa[i], ta + (r * A::C + swz(r, c, A::C)) * 16);
       }
     }
 #pragma unroll
     for (int j = 0; j < NI / 2; j++) {
       uint32_t t[4];
-      if (BN_) {
+      if (B_T) {
         const int r = ks * 16 + r8 + 8 * (q & 1), c = (wn0 + j * 16) / 8 + (q >> 1);
-        ldsm_trans(t, tb + (r * B::C + swz(r, c, B::C)) * 16);
+        ldsm<true>(t, tb + (r * B::C + swz(r, c, B::C)) * 16);
       } else {
         const int r = wn0 + j * 16 + r8 + ((lane >> 4) << 3);
         const int c = 2 * ks + ((lane >> 3) & 1);
-        ldsm(t, tb + (r * B::C + swz(r, c, B::C)) * 16);
+        ldsm<false>(t, tb + (r * B::C + swz(r, c, B::C)) * 16);
       }
       fb[2 * j][0] = t[0], fb[2 * j][1] = t[1];
       fb[2 * j + 1][0] = t[2], fb[2 * j + 1][1] = t[3];
@@ -524,7 +532,7 @@ __device__ void mma_contract(const contract_params &p) {
       for (int i = 0; i < MI; i++)
 #pragma unroll
         for (int j = 0; j < NI; j++)
-          mma(acc[i][j], fa[ks & 1][i], fb[ks & 1][j], KIND);
+          mma<KIND>(acc[i][j], fa[ks & 1][i], fb[ks & 1][j]);
     }
   }
   cp_wait<0>();
@@ -1054,10 +1062,6 @@ extern "C" __global__ void zero_u32(const __grid_constant__ zero_params p) {
     p.p[i] = 0;
 }
 
-#define KIND_bf16 0
-#define KIND_f16 1
-#define KIND_s8 2
-#define KIND_any 3
 #define TRANSPOSED_k false
 #define TRANSPOSED_m true
 #define TRANSPOSED_n true
@@ -1075,16 +1079,16 @@ NX_CUDA_TILES(TILE)
 
 /* The mma kernel of [KIND]; for KIND_any, each kind's by a's dtype, each
    loop compiled apart so that none keeps another's registers live. */
-template <int KIND, bool AM, bool BN_, typename Tile>
+template <int KIND, bool A_T, bool B_T, typename Tile>
 __device__ void mma_kernel(const contract_params &p) {
   if constexpr (KIND != KIND_any)
-    mma_contract<KIND, AM, BN_, Tile>(p);
+    mma_contract<KIND, A_T, B_T, Tile>(p);
   else if (p.a_dtype == NX_INT8)
-    mma_contract<KIND_s8, AM, BN_, Tile>(p);
+    mma_contract<KIND_s8, A_T, B_T, Tile>(p);
   else if (p.a_dtype == NX_FLOAT16)
-    mma_contract<KIND_f16, AM, BN_, Tile>(p);
+    mma_contract<KIND_f16, A_T, B_T, Tile>(p);
   else
-    mma_contract<KIND_bf16, AM, BN_, Tile>(p);
+    mma_contract<KIND_bf16, A_T, B_T, Tile>(p);
 }
 
 #define DEFINE(name, FAMILY, ...) FAMILY(name, __VA_ARGS__)
