@@ -62,7 +62,7 @@ let maps =
               (Exec.run ~by:"t"
                  (Value.Map
                     {
-                      shape = [| 3 |];
+                      layout = Nx_array.Layout.contiguous [| 3 |];
                       prog;
                       outs = Value.[ D.Float32 ];
                       loads = [| Plain x; Plain y |];
@@ -80,7 +80,7 @@ let maps =
               (Exec.run ~by:"t"
                  (Value.Map
                     {
-                      shape = [| 4 |];
+                      layout = Nx_array.Layout.contiguous [| 4 |];
                       prog;
                       outs = Value.[ D.Float32 ];
                       loads = [||];
@@ -144,7 +144,7 @@ let fresh_one () =
     (Exec.run ~by:"t"
        (Value.Map
           {
-            shape = [||];
+            layout = Nx_array.Layout.contiguous [||];
             prog =
               Prim.program (Const (D.Any D.Float32, P.bits D.Float32 1.)) [||];
             outs = Value.[ D.Float32 ];
@@ -156,7 +156,9 @@ let constants =
     [
       test "a node shared by many values computes once per placement" (fun () ->
           let one = fresh_one () in
-          let c = Exec.apply2 ~slow:slow2 ~by:"t" (Binary Add) D.Float32 one one in
+          let c =
+            Exec.apply2 ~slow:slow2 ~by:"t" (Binary Add) D.Float32 one one
+          in
           let d = Exec.apply2 ~slow:slow2 ~by:"t" (Binary Mul) D.Float32 c c in
           let e = Exec.apply2 ~slow:slow2 ~by:"t" (Binary Add) D.Float32 c d in
           C.reset ();
@@ -174,10 +176,12 @@ let constants =
           let rec chain k x =
             if k = 0 then x
             else
-              chain (k - 1) (Exec.apply2 ~slow:slow2 ~by:"t" (Binary Add) D.Float32 x one)
+              chain (k - 1)
+                (Exec.apply2 ~slow:slow2 ~by:"t" (Binary Add) D.Float32 x one)
           in
           let x =
-            chain n (Exec.apply2 ~slow:slow2 ~by:"t" (Binary Mul) D.Float32 one one)
+            chain n
+              (Exec.apply2 ~slow:slow2 ~by:"t" (Binary Mul) D.Float32 one one)
           in
           C.reset ();
           let v = Exec.at at1 x in
@@ -201,7 +205,8 @@ let constants =
    kernel runs, even where its arrays could only be moved after a copy. *)
 let refused name op =
   C.reset ();
-  raises_match (Exn.invalid_arg ~substring:"t: ") (fun () -> Exec.run ~by:"t" op);
+  raises_match (Exn.invalid_arg ~substring:"t: ") (fun () ->
+      Exec.run ~by:"t" op);
   equal ~msg:(name ^ ": kernel calls") int 0 (C.calls ())
 
 let rules =
@@ -209,7 +214,8 @@ let rules =
     [
       test "an ill-formed bitcast or movement calls no kernel" (fun () ->
           let x = f32 [| 1.; 2.; 3. |] in
-          refused "a wider bitcast of an odd axis" (Value.Bitcast (D.Float64, x));
+          refused "a wider bitcast of an odd axis"
+            (Value.Bitcast (D.Float64, x));
           refused "a permutation of another rank"
             (Value.Move (Permute [| 1; 0 |], x));
           refused "a reshape of another size" (Value.Move (Reshape [| 4 |], x)));

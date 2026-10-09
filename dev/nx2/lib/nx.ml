@@ -109,8 +109,14 @@ let bits ~by dt v =
 
 let fill ~by dt shape v =
   let prog = Prim.program (Const (D.Any dt, bits ~by dt v)) [||] in
+  let layout =
+    match Nx_array.Layout.contiguous shape with
+    | l -> l
+    | exception Invalid_argument e -> invalid_argf "%s: %s" by e
+  in
   let x, () =
-    Eval.eval ~by (Value.Map { shape; prog; outs = Value.[ dt ]; loads = [||] })
+    Eval.eval ~by
+      (Value.Map { layout; prog; outs = Value.[ dt ]; loads = [||] })
   in
   x
 
@@ -203,7 +209,7 @@ module Prim = struct
 
   type 'r t = 'r Value.prim =
     | Map : {
-        shape : int array;
+        layout : Nx_array.Layout.t;
         prog : Nx_kernel.Prog.t;
         outs : ('d, 'r) outs;
         loads : 'd load array;

@@ -358,12 +358,57 @@ let test_every_set () =
   every_function ~every_set:true "a value of every set"
     (Nx.add (Nx.zeros D.Float32 [| 2; 2 |]) (Nx.scalar D.Float32 (-1.5)))
 
+(* An operation keeps nothing of its caller's arrays: overwriting an int-array
+   argument after the call changes neither the value's shape nor its elements
+   (the external review's program, for zeros). *)
+let test_zeros_shape_owned () =
+  let shape = [| 2 |] in
+  let x = Nx.zeros D.Float32 shape in
+  shape.(0) <- 3;
+  equal ~msg:"shape" (array int) [| 2 |] (Nx.shape x);
+  equal ~msg:"placed" (array int) [| 2 |] (Nx.shape (Nx.place Nx.Host.on x));
+  equal ~msg:"read" (array bits) [| 0.; 0. |]
+    (elements (Nx.add x (Nx.place Nx.Host.on (Nx.zeros D.Float32 [| 2 |]))))
+
+(* Every public function taking an int array, over a value of every set and a
+   value with bytes, the argument overwritten after the call. *)
+let law_arguments_owned (junk, s) =
+  let overwrite a =
+    Array.iteri (fun i _ -> a.(i) <- junk.(i mod Array.length junk)) a
+  in
+  let n = Array.fold_left ( * ) 1 s in
+  let call name f =
+    let arg = Array.copy s in
+    let x = f arg in
+    overwrite arg;
+    equal ~msg:(name ^ ": shape") (array int)
+      (Nx.shape (f (Array.copy s)))
+      (Nx.shape x);
+    equal ~msg:(name ^ ": elements") (array bits)
+      (elements (f (Array.copy s)))
+      (elements x)
+  in
+  let host = on_host Plain D.Float32 [| n |] (Array.init n Float.of_int) in
+  call "zeros" (fun a -> Nx.zeros D.Float32 a);
+  call "reshape of a formula" (fun a ->
+      Nx.reshape a
+        (Nx.add (Nx.zeros D.Float32 [| n |]) (Nx.scalar D.Float32 1.)));
+  call "reshape" (fun a -> Nx.reshape a host)
+
+let int_arrays =
+  Gen.pair
+    (Gen.array ~size:(Gen.int_range 1 3) (Gen.int_range (-2) 5))
+    (Gen.array ~size:(Gen.int_range 0 3) (Gen.int_range 0 3))
+
 let sets =
   group "sets"
     [
       test "zeros_like reads none of its argument's elements"
         test_zeros_like_reads_nothing;
       test "every function takes a value of every set" test_every_set;
+      test "zeros keeps nothing of its shape argument" test_zeros_shape_owned;
+      prop "an int-array argument overwritten after the call changes nothing"
+        int_arrays law_arguments_owned;
     ]
 
 let allocation =

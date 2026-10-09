@@ -294,8 +294,8 @@ let pending (Value.Node n) p =
       | Value.Array _ | Value.Shards _ | Value.Traced _ -> None)
     xs
 
-(* The host's device, at the brand of a value this library reads there: a check's
-   flag, a value of every set an interpretation receives. No value at it
+(* The host's device, at the brand of a value this library reads there: a
+   check's flag, a value of every set an interpretation receives. No value at it
    reaches a function of nx's own. *)
 let host () = Devices.rebrand (Devices.one Devices.host 0)
 
@@ -349,10 +349,10 @@ and defer : type r. by:string -> r Value.prim -> r =
 and compute : type r. by:string -> r Value.prim -> r =
  fun ~by op ->
   match op with
-  | Value.Map { shape; prog; loads; _ } ->
+  | Value.Map { layout; prog; loads; _ } ->
       let where = ref None in
       let r = Prim.results ~by (alloc ~by ~where ()) op in
-      map_devices ~by (Option.get !where) shape prog
+      map_devices ~by (Option.get !where) (L.shape layout) prog
         (fun k w -> Array.map (load_view ~by k w) loads)
         (Prim.arrays op r);
       r
@@ -511,7 +511,15 @@ and expand_on ~by (set : unit Devices.t) k prog shape first ops dsts =
     Array.map (fun (A.Any a) -> Value.Plain (Value.Array { at; a })) ops
   in
   let (Outs outs) = outs_of (Array.to_list dsts) in
-  let op = Value.Map { shape; prog = with_offsets prog first; outs; loads } in
+  let op =
+    Value.Map
+      {
+        layout = L.contiguous shape;
+        prog = with_offsets prog first;
+        outs;
+        loads;
+      }
+  in
   let on_device = { Expand.apply = (fun ~by op -> compute_at ~by at op) } in
   match Expand.run on_device ~by op with
   | None -> invalid_arg "Exec.expand_on: a map of one node"
@@ -534,12 +542,12 @@ and compute_at : type r.
     by:string -> unit Devices.placement -> r Value.prim -> r =
  fun ~by p op ->
   match op with
-  | Value.Map { loads; shape; prog; _ } ->
+  | Value.Map { loads; layout; prog; _ } ->
       let r = Prim.results ~by (alloc ~by ~at:p ()) op in
       let view k w (Value.Plain x) =
         A.Any (Place.view ~by (at (Devices.rebrand p) x) k w)
       in
-      map_devices ~by p shape prog
+      map_devices ~by p (L.shape layout) prog
         (fun k w -> Array.map (view k w) loads)
         (Prim.arrays op r);
       r
@@ -587,8 +595,8 @@ let destination (type v s w r) (dt : (w, r) D.t) (x : (v, s) A.t) : (w, r) A.t =
     A.v dt l (Rig.Buffer.create (A.device x) (D.bytes dt (L.numel l)))
   else A.create (A.device x) dt (L.shape l)
 
-let apply1 (type v s w r d) ~slow ~by k (dt : (w, r) D.t) (x : (v, s, d) Value.t) :
-    (w, r, d) Value.t =
+let apply1 (type v s w r d) ~slow ~by k (dt : (w, r) D.t)
+    (x : (v, s, d) Value.t) : (w, r, d) Value.t =
   match x with
   | Value.Array { at; a } -> (
       match Devices.kernels (Devices.set at) with
@@ -601,8 +609,8 @@ let apply1 (type v s w r d) ~slow ~by k (dt : (w, r) D.t) (x : (v, s, d) Value.t
           | refusal -> A.refused by refusal [ A.Any dst; A.Any a ]))
   | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> slow ~by k dt x
 
-let apply2 (type v s w r d) ~slow ~by k (dt : (w, r) D.t) (x : (v, s, d) Value.t)
-    (y : (v, s, d) Value.t) : (w, r, d) Value.t =
+let apply2 (type v s w r d) ~slow ~by k (dt : (w, r) D.t)
+    (x : (v, s, d) Value.t) (y : (v, s, d) Value.t) : (w, r, d) Value.t =
   match (x, y) with
   | Value.Array { at; a }, Value.Array { at = at'; a = b } when at == at' -> (
       match Devices.kernels (Devices.set at) with

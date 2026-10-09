@@ -93,7 +93,7 @@ let maps =
               (Op
                  (Map
                     {
-                      shape = [| 2; 3 |];
+                      layout = L.contiguous [| 2; 3 |];
                       prog = add_mul;
                       outs = two;
                       loads = [| Plain x; Plain y |];
@@ -110,12 +110,13 @@ let maps =
           List.iter
             (fun (_, _, _, p) ->
               equal bool true
-                (Devices.equal (Option.get p) (Devices.split ~by:"t" ~axis:0 s2)))
+                (Devices.equal (Option.get p)
+                   (Devices.split ~by:"t" ~axis:0 s2)))
             (forms
                (Op
                   (Map
                      {
-                       shape = [| 4 |];
+                       layout = L.contiguous [| 4 |];
                        prog = add_mul;
                        outs = two;
                        loads = [| Plain x; Plain x |];
@@ -131,7 +132,7 @@ let maps =
               (Op
                  (Map
                     {
-                      shape = [| 3 |];
+                      layout = L.contiguous [| 3 |];
                       prog = one;
                       outs = [ D.Float32 ];
                       loads = [||];
@@ -144,7 +145,7 @@ let maps =
             Op
               (Map
                  {
-                   shape = [| 2 |];
+                   layout = L.contiguous [| 2 |];
                    prog = add_mul;
                    outs = two;
                    loads = [| Plain (f32 [| 2 |]) |];
@@ -153,7 +154,7 @@ let maps =
             Op
               (Map
                  {
-                   shape = [| 2 |];
+                   layout = L.contiguous [| 2 |];
                    prog = add_mul;
                    outs = two;
                    loads = [| Plain (f32 [| 2 |]); Plain i32 |];
@@ -162,7 +163,7 @@ let maps =
             Op
               (Map
                  {
-                   shape = [| 3 |];
+                   layout = L.contiguous [| 3 |];
                    prog = add_mul;
                    outs = two;
                    loads = [| Plain (f32 [| 2 |]); Plain (f32 [| 2 |]) |];
@@ -171,7 +172,7 @@ let maps =
             Op
               (Map
                  {
-                   shape = [| 2 |];
+                   layout = L.contiguous [| 2 |];
                    prog = add_mul;
                    outs = [ D.Float32; D.Float64 ];
                    loads = [| Plain (f32 [| 2 |]); Plain (f32 [| 2 |]) |];
@@ -180,16 +181,20 @@ let maps =
             Op
               (Map
                  {
-                   shape = [| 2 |];
+                   layout = L.contiguous [| 2 |];
                    prog = add_mul;
                    outs = [ D.Float32 ];
                    loads = [| Plain (f32 [| 2 |]); Plain (f32 [| 2 |]) |];
                  }) );
-          ( "a negative extent",
+          ( "a layout that is not C-contiguous",
             Op
               (Map
-                 { shape = [| -1 |]; prog = add_mul; outs = two; loads = [||] })
-          );
+                 {
+                   layout = L.v ~offset:0 ~strides:[| 2 |] [| 2 |];
+                   prog = add_mul;
+                   outs = two;
+                   loads = [||];
+                 }) );
         ]
         (fun (_, op) -> refuses op);
       test "a map prints its program as expressions of its operands" (fun () ->
@@ -200,7 +205,7 @@ let maps =
             (Format.asprintf "%a" Prim.pp
                (Value.Map
                   {
-                    shape = [| 2 |];
+                    layout = L.contiguous [| 2 |];
                     prog = add_mul;
                     outs = two;
                     loads = [| Plain x; Plain x |];
@@ -437,7 +442,7 @@ let ops () =
       Op
         (Map
            {
-             shape = [| 2 |];
+             layout = L.contiguous [| 2 |];
              prog = add_mul;
              outs = two;
              loads = [| Plain x; Plain x |];
@@ -482,7 +487,7 @@ let operations =
           let op =
             Value.Map
               {
-                shape = [| 2 |];
+                layout = L.contiguous [| 2 |];
                 prog = add_mul;
                 outs = two;
                 loads = [| Plain x; Plain x |];

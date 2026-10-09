@@ -238,8 +238,9 @@ let pp_operand ppf (Any x) =
     | Some p -> Format.fprintf ppf "at %a" Devices.pp_placement p
     | None -> Format.pp_print_string ppf "of every set"
   in
-  Format.fprintf ppf "%s %a %a" (D.name (dtype x)) pp_shape (shape x) pp_at
-    (at x)
+  Format.fprintf ppf "%s %a %a"
+    (D.name (dtype x))
+    pp_shape (shape x) pp_at (at x)
 
 let pp ppf op =
   let (Operands xs) = operands op in
@@ -262,19 +263,19 @@ let load_shape (type d) (Plain x : d load) = shape x
 let load_placement (type d) (Plain x : d load) : d Devices.placement option =
   at x
 
-(* Whether [x]'s shape is [s], allocating nothing. *)
-let has_shape x s =
-  let r = Array.length s in
+(* Whether [x]'s shape is [l]'s, allocating nothing. *)
+let has_layout_shape x l =
+  let r = L.rank l in
   rank x = r
   &&
   let i = ref 0 in
-  while !i < r && dim x !i = s.(!i) do
+  while !i < r && dim x !i = L.dim l !i do
     incr i
   done;
   !i = r
 
 (* A map's rule; its result's layout, C-contiguous of [shape]. *)
-let check_map (type d r) ~by shape prog (outs : (d, r) outs)
+let check_map (type d r) ~by layout prog (outs : (d, r) outs)
     (loads : d load array) =
   let ins = P.ins prog in
   if Array.length loads <> Array.length ins then
@@ -306,27 +307,24 @@ let check_map (type d r) ~by shape prog (outs : (d, r) outs)
          check (k + 1) rest
   in
   check 0 outs;
-  let layout =
-    match L.contiguous shape with
-    | l -> l
-    | exception Invalid_argument e -> invalid_argf "%s: %s" by e
-  in
+  if not (L.is_contiguous layout && L.offset layout = 0) then
+    invalid_argf "%s: a map's layout %a is not C-contiguous" by L.pp layout;
   Array.iteri
     (fun i (Plain x as l) ->
-      if not (has_shape x shape) then
+      if not (has_layout_shape x layout) then
         invalid_argf "%s: load %d has shape %a, the map %a" by i pp_shape
-          (load_shape l) pp_shape shape)
-    loads;
-  layout
+          (load_shape l) pp_shape (L.shape layout))
+    loads
 
 (* Each operation's route: where it reads its operands, in [operands]'s order,
    and where its results lie. [results] and [prepare] take placements from it
    alone. *)
 
-(* A map's route, its loads of the map's [shape] by its rule. *)
-let map_route (type d) ~by shape (loads : d load array) : d Route.t option =
+(* A map's route, its loads of the map's layout's shape by its rule. *)
+let map_route (type d) ~by layout (loads : d load array) : d Route.t option =
   if Array.length loads = 0 then None
   else
+    let shape = L.shape layout in
     Route.route ~by Elementwise
       (Array.map load_placement loads)
       (Array.make (Array.length loads) shape)
@@ -340,7 +338,9 @@ let rec make_outs : type d r.
       (v, make_outs m (k + 1) layout placement rest)
 
 let one_route ~by rule x = Route.route ~by rule [| at x |] [| shape x |]
-let result (r : _ Route.t option) = Option.map (fun (r : _ Route.t) -> r.result) r
+
+let result (r : _ Route.t option) =
+  Option.map (fun (r : _ Route.t) -> r.result) r
 
 let bitcast_rule dt x =
   if D.bits dt > D.bits (dtype x) then Route.Reduce [| rank x - 1 |]
@@ -385,9 +385,9 @@ let bitcast_layout ~by l (from : D.any) (into : D.any) =
 let results : type r. by:string -> maker -> r prim -> r =
  fun ~by m op ->
   match op with
-  | Map { shape; prog; outs; loads } ->
-      let layout = check_map ~by shape prog outs loads in
-      let placement = result (map_route ~by shape loads) in
+  | Map { layout; prog; outs; loads } ->
+      check_map ~by layout prog outs loads;
+      let placement = result (map_route ~by layout loads) in
       make_outs m 0 layout placement outs
   | Copy x ->
       let placement = result (one_route ~by Elementwise x) in
@@ -448,7 +448,13 @@ let program node ins =
 
 let one_node node dt ins loads =
   let shape = match loads.(0) with Plain x -> shape x in
-  Map { shape; prog = program node ins; outs = Value.[ dt ]; loads }
+  Map
+    {
+      layout = L.contiguous shape;
+      prog = program node ins;
+      outs = Value.[ dt ];
+      loads;
+    }
 
 let op1 k dt x =
   one_node (P.Op1 (k, D.Any dt, 0)) dt [| D.Any (dtype x) |] [| Plain x |]
@@ -467,8 +473,7 @@ let op3 k c x y =
 
 type placer = {
   place :
-    'v 's 'd.
-    'd Devices.placement option -> ('v, 's, 'd) t -> ('v, 's, 'd) t;
+    'v 's 'd. 'd Devices.placement option -> ('v, 's, 'd) t -> ('v, 's, 'd) t;
 }
 
 (* Where a route reads operand [i]: [None] where every operand is of every
@@ -481,8 +486,8 @@ let prepare : type r. by:string -> placer -> r prim -> r prim =
   let one rule x = pl.place (read_at (one_route ~by rule x) 0) x in
   match op with
   | Map p ->
-      ignore (check_map ~by p.shape p.prog p.outs p.loads);
-      let r = map_route ~by p.shape p.loads in
+      check_map ~by p.layout p.prog p.outs p.loads;
+      let r = map_route ~by p.layout p.loads in
       let moved = ref false in
       let loads =
         Array.mapi

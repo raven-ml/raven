@@ -298,7 +298,7 @@ let cases_of shape a b =
       ( "add",
         Map
           {
-            shape;
+            layout = L.contiguous shape;
             prog = add_prog;
             outs = Nx.Prim.[ f32 ];
             loads = [| Plain x; Plain y |];
@@ -307,7 +307,7 @@ let cases_of shape a b =
       ( "chain",
         Map
           {
-            shape;
+            layout = L.contiguous shape;
             prog = chain_prog;
             outs = Nx.Prim.[ f32; f32 ];
             loads = [| Plain x; Plain y |];
@@ -383,7 +383,7 @@ let ill_formed () =
       ( "loads of another shape",
         Map
           {
-            shape = [| 3 |];
+            layout = L.contiguous [| 3 |];
             prog = add_prog;
             outs = Nx.Prim.[ f32 ];
             loads = [| Plain x; Plain y |];
@@ -392,7 +392,7 @@ let ill_formed () =
       ( "a load of another dtype",
         Map
           {
-            shape = [| 3 |];
+            layout = L.contiguous [| 3 |];
             prog = add_prog;
             outs = Nx.Prim.[ f32 ];
             loads = [| Plain x; Plain (Nx.cast Nx.int32 x) |];
@@ -736,9 +736,9 @@ let capturing =
             in
             let e =
               match op with
-              | Map { loads = [||]; prog; shape; _ } -> (
+              | Map { loads = [||]; prog; layout; _ } -> (
                   match P.node prog (P.length prog - 1) with
-                  | Const (_, bits) -> Lit (bits, shape)
+                  | Const (_, bits) -> Lit (bits, L.shape layout)
                   | _ -> App ("creation", []))
               | _ -> App (Nx.Prim.name op, List.map arg xs)
             in
@@ -771,7 +771,7 @@ let test_capture () =
            Nx.Prim.eval ~by:"test"
              (Map
                 {
-                  shape = [| 3 |];
+                  layout = L.contiguous [| 3 |];
                   prog = chain_prog;
                   outs = Nx.Prim.[ f32; f32 ];
                   loads = [| Plain x; Plain x |];

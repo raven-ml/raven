@@ -7,10 +7,10 @@
     mentions the other. This module has no implementation.
 
     A value is concrete, arrays on the devices of its placement; a constant not
-    yet computed, a value of every set; or an interpretation's stand-in. The brand ['d] is phantom:
-    every function that makes a value checks that its arrays lie on its
-    placement's devices, and nothing at run time reads ['d]. A constant has no
-    placement. *)
+    yet computed, a value of every set; or an interpretation's stand-in. The
+    brand ['d] is phantom: every function that makes a value checks that its
+    arrays lie on its placement's devices, and nothing at run time reads ['d]. A
+    constant has no placement. *)
 
 type ('v, 's) dtype = ('v, 's) Nx_array.Dtype.t
 
@@ -80,6 +80,9 @@ and rule = { rule : 'r. interpretation -> by:string -> 'r prim -> 'r }
 
 (** {1:operations Operations}
 
+    An operation's arrays are its own: whoever builds one from a caller's array
+    copies it, so that nothing a caller changes later reaches it.
+
     A loop's loads have exactly its iteration shape: no operation broadcasts or
     promotes. *)
 
@@ -93,15 +96,16 @@ and ('d, _) outs =
 
 and _ prim =
   | Map : {
-      shape : int array;
+      layout : Nx_array.Layout.t;
       prog : Nx_kernel.Prog.t;
       outs : ('d, 'r) outs;
       loads : 'd load array;
     }
       -> 'r prim
-      (** [prog] at every index of [shape], reading load [i] as its operand [i];
-          result [k] is its output [k]. A one-result map is ['v * unit]. With no
-          loads, a creation. *)
+      (** [prog] at every index of [layout]'s shape, reading load [i] as its
+          operand [i]; result [k] is its output [k], laid out as [layout], which
+          is C-contiguous. A one-result map is ['v * unit]. With no loads, a
+          creation. *)
   | Copy : ('v, 's, 'd) t -> ('v, 's, 'd) t prim
       (** The value stored afresh, C-contiguous. *)
   | Move : Nx_array.Move.t * ('v, 's, 'd) t -> ('v, 's, 'd) t prim

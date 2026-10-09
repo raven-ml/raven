@@ -333,15 +333,16 @@ module Prim : sig
       operation broadcasts or promotes. *)
   type 'r t =
     | Map : {
-        shape : int array;
+        layout : Nx_array.Layout.t;
         prog : Nx_kernel.Prog.t;
         outs : ('d, 'r) outs;
         loads : 'd load array;
       }
         -> 'r t
-        (** [prog] at every index of [shape], reading load [i] as its operand
-            [i]; result [k] is its output [k]. A one-result map is ['v * unit].
-            With no loads, a creation. *)
+        (** [prog] at every index of [layout]'s shape, reading load [i] as its
+            operand [i]; result [k] is its output [k], laid out as [layout],
+            which is C-contiguous. A one-result map is ['v * unit]. With no
+            loads, a creation. *)
     | Copy : ('v, 's, 'd) nx -> ('v, 's, 'd) nx t
         (** The value stored afresh, C-contiguous. *)
     | Move : Nx_array.Move.t * ('v, 's, 'd) nx -> ('v, 's, 'd) nx t
