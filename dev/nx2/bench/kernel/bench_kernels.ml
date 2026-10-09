@@ -329,7 +329,81 @@ let contract_rows =
           ~streams:(4 * 4096 * 4096))
       [ 1; 8; 32; 128 ]
 
-let rows = copy_rows @ cast_rows @ apply_rows @ contract_rows
+(* Reductions and scans of one operand by a monoid. A reduction's floor reads
+   its operand's bytes; a scan's copies them, since it writes as many. *)
+
+let identity dt = Nx_kernel.Prog.v ~ins:[| dt |] [| In 0 |] ~outs:[| 0 |]
+
+let reduce name m ~axes a (module K : Nx_kernel.S) =
+  row name
+    (fun () ->
+      let (A.Any x as a) = a () in
+      let dt = D.Any (A.dtype x) in
+      let s = A.Layout.shape (A.layout x) in
+      let y =
+        Array.of_list
+          (List.filteri (fun i _ -> not (Array.mem i axes)) (Array.to_list s))
+      in
+      let spec =
+        Nx_kernel.Spec.reduce (identity dt) ~loads:[| Plain |] ~axes
+          [| (Monoid m, 0, dt) |]
+      in
+      (spec, a, A.Any (A.create Rig.host (A.dtype x) y)))
+    (fun (spec, a, dst) -> ok (K.reduce spec ~dsts:[| dst |] [| a |]))
+
+let scan name m ~axis a (module K : Nx_kernel.S) =
+  row name
+    (fun () ->
+      let (A.Any x as a) = a () in
+      let dt = D.Any (A.dtype x) in
+      let spec =
+        Nx_kernel.Spec.scan (identity dt) ~loads:[| Plain |] ~axis
+          (Monoid m, 0, dt)
+      in
+      let s = A.Layout.shape (A.layout x) in
+      (spec, a, A.Any (A.create Rig.host (A.dtype x) s)))
+    (fun (spec, a, dst) -> ok (K.scan spec ~dsts:[| dst |] [| a |]))
+
+let fold_rows =
+  let bytes dt s = D.bits dt / 8 * Array.fold_left ( * ) 1 s in
+  let any dt s () = A.Any (filled dt s) in
+  let along name dt s axes m =
+    { bench = reduce name m ~axes (any dt s); work = [ F.Read (bytes dt s) ] }
+  in
+  let running name dt s axis =
+    { bench = scan name Sum ~axis (any dt s); work = [ F.Copy (bytes dt s) ] }
+  in
+  let m = mib in
+  [
+    along "reduce-sum-f32-1M" f32 [| m |] [| 0 |] Sum;
+    along "reduce-sum-f32-16M" f32 [| 16 * m |] [| 0 |] Sum;
+    along "reduce-sum-f64-16M" f64 [| 16 * m |] [| 0 |] Sum;
+    along "reduce-sum-i32-16M" D.Int32 [| 16 * m |] [| 0 |] Sum;
+    along "reduce-max-f32-16M" f32 [| 16 * m |] [| 0 |] Max;
+    (* Along an axis whose outputs lie side by side: rows of outputs. *)
+    along "reduce-sum-f32-1024x1024-axis0" f32 [| 1024; 1024 |] [| 0 |] Sum;
+    along "reduce-sum-f32-4096x4096-axis0" f32 [| 4096; 4096 |] [| 0 |] Sum;
+    (* Along the innermost axis: each output's run into lanes. *)
+    along "reduce-sum-f32-1024x1024-axis1" f32 [| 1024; 1024 |] [| 1 |] Sum;
+    along "reduce-sum-f32-4096x4096-axis1" f32 [| 4096; 4096 |] [| 1 |] Sum;
+    (* Four terms an output. *)
+    along "reduce-sum-f32-1Mx4-axis1" f32 [| m; 4 |] [| 1 |] Sum;
+    (* The maximum of each 2x2 window of a pooling layer. *)
+    {
+      bench =
+        reduce "reduce-max-f32-2x2-windows-32x16x26x26" Max ~axes:[| 4; 5 |]
+          (fun () ->
+            let w axis = { M.axis; size = 2; step = 2; dilation = 1 } in
+            let a = filled f32 [| 32; 16; 26; 26 |] in
+            A.Any (Option.get (A.move (M.Window [| w 2; w 3 |]) a)));
+      work = [ F.Read (bytes f32 [| 32; 16; 26; 26 |]) ];
+    };
+    running "scan-sum-f64-5M" f64 [| 5 * m |] 0;
+    running "scan-sum-f32-4096x1024-axis1" f32 [| 4096; 1024 |] 1;
+    running "scan-sum-f32-1024x4096-axis0" f32 [| 1024; 4096 |] 0;
+  ]
+
+let rows = copy_rows @ cast_rows @ apply_rows @ contract_rows @ fold_rows
 
 (* A contraction's axes grouped as a GPU planner reads them: Spec.Contract_view
    of the bf16 4096 call, a and b [1; 4096; 4096] over the batch pair (0, 0)
