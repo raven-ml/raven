@@ -1,0 +1,10 @@
+; nx's suites. The engine's modules are private, so the suites that test them
+; directly compile copies of their sources.
+
+(copy_files
+ (files ../lib/{grid,devices,msg,route}.{ml,mli}))
+
+(tests
+ (names test_devices test_route)
+ (modules test_devices test_route grid devices msg route)
+ (libraries nx_array nx_kernel nx_cpu nx_support rig windtrap))

@@ -1,0 +1,6 @@
+; Devices for nx's suites.
+
+(library
+ (name nx_support)
+ (modules nx_support)
+ (libraries rig))

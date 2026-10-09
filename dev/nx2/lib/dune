@@ -1,0 +1,8 @@
+; nx: arrays as values on device sets. Its engine is private modules; the
+; sub-libraries live in the directories below.
+
+(library
+ (name nx)
+ (modules grid devices msg route)
+ (private_modules grid devices msg route)
+ (libraries nx_array nx_kernel nx_cpu rig))
