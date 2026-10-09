@@ -17,13 +17,13 @@
 
    Claims are a job of 65,536 empty chunks, which the threads claim in runs:
    what the claims cost beyond the empty job on every core, whose floor is
-   launch/floor-empty-all-cores.
+   launch/floor-empty-all-cores. An empty job ends sooner the fewer threads take
+   part, so a pool that wakes its workers late reads lower here.
 
    Compute jobs are 65,536 units of 64 dependent multiply-adds, 8 chunks a
    thread: on one thread, on the performance cores, on every core, with the cost
-   skewed (the costliest units first, the threads balanced by claiming), and
-   against one spinning process per core, another program on the host. Again in
-   chunks of one unit, claimed in runs: balanced on every core, where the
+   skewed (the costliest units first, the threads balanced by claiming). Again
+   in chunks of one unit, claimed in runs: balanced on every core, where the
    efficiency cores must end with the others, and skewed on the performance
    cores, where a run must not hold the costliest units on one thread. Both run
    as fast as 8 chunks a thread.
@@ -31,56 +31,6 @@
    A floor row runs the job of the row above it on threads of the bench's own,
    each with a fixed share of the chunks and nothing claimed: what announcing a
    job and waiting for every thread cost without the pool. *)
-
-(* Competing load
-
-   A process of this executable started with [spin_flag] spins until it is
-   killed or its parent ends, and runs nothing else of the bench. Spinning
-   domains would join the bench's collections; processes share nothing with it
-   but the cores. Windows tells a process nothing of its parent, so there a
-   spinner whose bench was killed spins until it is killed too. *)
-
-let spin_flag = "--spin"
-
-let spin parent =
-  print_char '.';
-  flush stdout;
-  let x = ref 1 in
-  while Sys.win32 || Unix.getppid () = parent do
-    for _ = 1 to 1 lsl 20 do
-      x := Sys.opaque_identity ((!x * 3) + 1)
-    done
-  done;
-  exit 0
-
-let () =
-  match Sys.argv with
-  | [| _; flag; parent |] when flag = spin_flag -> spin (int_of_string parent)
-  | _ -> ()
-
-(* [load_start n] is [n] spinning processes, once each spins. *)
-let load_start n =
-  let exe = Sys.executable_name in
-  let args = [| exe; spin_flag; string_of_int (Unix.getpid ()) |] in
-  let r, w = Unix.pipe ~cloexec:true () in
-  let pids =
-    Array.init n (fun _ ->
-        Unix.create_process exe args Unix.stdin w Unix.stderr)
-  in
-  Unix.close w;
-  let b = Bytes.create n in
-  let rec await got =
-    if got < n then
-      match Unix.read r b got (n - got) with
-      | 0 -> failwith "a spinning process ended before it spun"
-      | k -> await (got + k)
-  in
-  Fun.protect ~finally:(fun () -> Unix.close r) (fun () -> await 0);
-  pids
-
-let load_stop pids =
-  Array.iter (fun pid -> Unix.kill pid Sys.sigkill) pids;
-  Array.iter (fun pid -> ignore (Unix.waitpid [] pid)) pids
 
 (* Jobs *)
 
@@ -158,15 +108,10 @@ let compute =
       Thumper.bench "skewed-performance-cores" (job ~skewed:true fast);
       Thumper.bench "skewed-performance-cores-65536-chunks" (fun () ->
           compute fast units units true);
-      Thumper.bench_with_setup
-        ~setup:(fun () -> load_start cores)
-        ~teardown:load_stop "balanced-performance-cores-under-load"
-        (fun _ -> job fast ());
     ]
 
 (* The process's CPU time counts what spinning workers spend. A batch of at
-   least 50 ms spans several of the scheduler's time slices, which steadies the
-   rows a competing load shares the cores with. *)
+   least 50 ms spans several of the scheduler's time slices. *)
 let config =
   Thumper.Config.(
     default |> batch_floor 0.05

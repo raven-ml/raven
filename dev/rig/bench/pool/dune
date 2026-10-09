@@ -9,7 +9,7 @@
 (executable
  (name bench_pool)
  (modules bench_pool)
- (libraries rig_pool_bench_probe rig_pool_probe thumper unix))
+ (libraries rig_pool_bench_probe rig_pool_probe thumper))
 
 (rule
  (alias bench)

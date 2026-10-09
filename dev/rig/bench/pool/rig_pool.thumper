@@ -20,9 +20,6 @@ compute/balanced-all-cores-65536-chunks	wall_time	batch=64	n=20	8.808e-04	8.807e
 compute/balanced-performance-cores	alloc_words	exact	0
 compute/balanced-performance-cores	cpu_time	batch=64	n=20	5.252e-03	5.136e-03 5.137e-03 5.194e-03 5.213e-03 5.216e-03 5.226e-03 5.252e-03 5.252e-03 5.252e-03 5.252e-03 5.252e-03 5.252e-03 5.252e-03 5.252e-03 5.252e-03 5.252e-03 5.252e-03 5.252e-03 5.313e-03 5.564e-03
 compute/balanced-performance-cores	wall_time	batch=64	n=20	8.768e-04	8.768e-04 8.768e-04 8.768e-04 8.768e-04 8.768e-04 8.768e-04 8.768e-04 8.768e-04 8.768e-04 8.768e-04 8.768e-04 8.768e-04 8.768e-04 8.768e-04 8.768e-04 8.769e-04 8.769e-04 8.769e-04 8.789e-04 8.793e-04
-compute/balanced-performance-cores-under-load	alloc_words	exact	0
-compute/balanced-performance-cores-under-load	cpu_time	batch=8	n=20	5.274e-03	5.269e-03 5.269e-03 5.269e-03 5.269e-03 5.270e-03 5.270e-03 5.270e-03 5.270e-03 5.272e-03 5.273e-03 5.274e-03 5.274e-03 5.275e-03 5.275e-03 5.276e-03 5.277e-03 5.280e-03 5.280e-03 5.280e-03 5.284e-03
-compute/balanced-performance-cores-under-load	wall_time	batch=8	n=20	8.996e-03	8.493e-03 8.500e-03 8.501e-03 8.504e-03 8.507e-03 8.648e-03 8.974e-03 8.987e-03 8.987e-03 8.993e-03 8.999e-03 9.001e-03 9.001e-03 9.001e-03 9.002e-03 9.004e-03 9.005e-03 9.006e-03 9.006e-03 9.344e-03
 compute/skewed-performance-cores	alloc_words	exact	0
 compute/skewed-performance-cores	cpu_time	batch=64	n=20	5.090e-03	4.923e-03 4.927e-03 4.967e-03 5.006e-03 5.007e-03 5.019e-03 5.036e-03 5.070e-03 5.072e-03 5.088e-03 5.091e-03 5.137e-03 5.141e-03 5.153e-03 5.169e-03 5.185e-03 5.202e-03 5.216e-03 5.221e-03 5.226e-03
 compute/skewed-performance-cores	wall_time	batch=64	n=20	8.708e-04	8.708e-04 8.708e-04 8.708e-04 8.708e-04 8.708e-04 8.708e-04 8.708e-04 8.708e-04 8.708e-04 8.708e-04 8.708e-04 8.708e-04 8.708e-04 8.708e-04 8.708e-04 8.709e-04 8.709e-04 8.711e-04 8.713e-04 8.723e-04
@@ -79,9 +76,6 @@ compute/balanced-all-cores-65536-chunks	wall_time	batch=128	n=20	6.381e-04	6.235
 compute/balanced-performance-cores	alloc_words	exact	0
 compute/balanced-performance-cores	cpu_time	batch=128	n=20	5.689e-03	5.615e-03 5.615e-03 5.629e-03 5.630e-03 5.636e-03 5.639e-03 5.639e-03 5.658e-03 5.664e-03 5.678e-03 5.700e-03 5.721e-03 5.724e-03 5.764e-03 5.788e-03 5.824e-03 6.065e-03 6.073e-03 6.097e-03 6.215e-03
 compute/balanced-performance-cores	wall_time	batch=128	n=20	7.214e-04	7.028e-04 7.046e-04 7.060e-04 7.067e-04 7.080e-04 7.105e-04 7.105e-04 7.114e-04 7.138e-04 7.201e-04 7.227e-04 7.253e-04 7.254e-04 7.272e-04 7.283e-04 7.415e-04 8.082e-04 8.218e-04 8.258e-04 9.082e-04
-compute/balanced-performance-cores-under-load	alloc_words	exact	0
-compute/balanced-performance-cores-under-load	cpu_time	batch=16	n=20	6.132e-03	5.732e-03 5.784e-03 5.790e-03 5.878e-03 5.980e-03 5.988e-03 6.057e-03 6.090e-03 6.091e-03 6.099e-03 6.166e-03 6.177e-03 6.218e-03 6.291e-03 6.323e-03 6.497e-03 6.804e-03 6.904e-03 6.924e-03 7.042e-03
-compute/balanced-performance-cores-under-load	wall_time	batch=16	n=20	3.701e-03	1.726e-03 2.328e-03 2.724e-03 2.889e-03 2.904e-03 2.979e-03 3.131e-03 3.191e-03 3.506e-03 3.663e-03 3.740e-03 4.056e-03 4.155e-03 4.265e-03 4.432e-03 4.464e-03 4.493e-03 4.763e-03 4.979e-03 6.265e-03
 compute/skewed-performance-cores	alloc_words	exact	0
 compute/skewed-performance-cores	cpu_time	batch=128	n=20	5.601e-03	5.528e-03 5.531e-03 5.531e-03 5.533e-03 5.547e-03 5.548e-03 5.555e-03 5.558e-03 5.582e-03 5.591e-03 5.611e-03 5.622e-03 5.710e-03 5.715e-03 5.730e-03 5.747e-03 5.773e-03 5.823e-03 5.852e-03 5.858e-03
 compute/skewed-performance-cores	wall_time	batch=128	n=20	7.078e-04	6.916e-04 6.917e-04 6.923e-04 6.928e-04 6.948e-04 6.952e-04 6.953e-04 6.974e-04 6.994e-04 7.060e-04 7.097e-04 7.152e-04 7.329e-04 7.445e-04 7.510e-04 7.533e-04 7.664e-04 7.702e-04 7.851e-04 7.858e-04
@@ -135,9 +129,6 @@ compute/balanced-all-cores	wall_time	batch=128	n=20	4.477e-04	4.477e-04 4.477e-0
 compute/balanced-performance-cores	alloc_words	exact	0
 compute/balanced-performance-cores	cpu_time	batch=128	n=20	6.990e-03	6.731e-03 6.873e-03 6.886e-03 6.896e-03 6.919e-03 6.921e-03 6.943e-03 6.945e-03 6.954e-03 6.988e-03 6.991e-03 6.995e-03 6.998e-03 7.042e-03 7.294e-03 7.365e-03 7.371e-03 7.395e-03 7.422e-03 7.430e-03
 compute/balanced-performance-cores	wall_time	batch=128	n=20	4.477e-04	4.477e-04 4.477e-04 4.477e-04 4.477e-04 4.477e-04 4.477e-04 4.477e-04 4.477e-04 4.477e-04 4.477e-04 4.477e-04 4.477e-04 4.477e-04 4.477e-04 4.478e-04 4.478e-04 4.478e-04 4.478e-04 4.481e-04 4.484e-04
-compute/balanced-performance-cores-under-load	alloc_words	exact	0
-compute/balanced-performance-cores-under-load	cpu_time	batch=16	n=20	7.247e-03	5.808e-03 7.070e-03 7.087e-03 7.140e-03 7.158e-03 7.206e-03 7.207e-03 7.241e-03 7.243e-03 7.244e-03 7.251e-03 7.252e-03 7.253e-03 7.255e-03 7.257e-03 7.260e-03 7.260e-03 7.262e-03 7.269e-03 7.292e-03
-compute/balanced-performance-cores-under-load	wall_time	batch=16	n=20	2.966e-03	2.183e-03 2.303e-03 2.488e-03 2.501e-03 2.618e-03 2.734e-03 2.764e-03 2.771e-03 2.901e-03 2.952e-03 2.979e-03 2.980e-03 3.106e-03 3.227e-03 3.235e-03 3.451e-03 3.680e-03 3.779e-03 3.787e-03 4.211e-03
 compute/skewed-performance-cores	alloc_words	exact	0
 compute/skewed-performance-cores	cpu_time	batch=128	n=20	7.156e-03	7.134e-03 7.144e-03 7.145e-03 7.146e-03 7.149e-03 7.149e-03 7.152e-03 7.154e-03 7.155e-03 7.156e-03 7.157e-03 7.157e-03 7.160e-03 7.161e-03 7.161e-03 7.162e-03 7.163e-03 7.163e-03 7.166e-03 7.171e-03
 compute/skewed-performance-cores	wall_time	batch=128	n=20	4.484e-04	4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.485e-04 4.485e-04 4.490e-04
