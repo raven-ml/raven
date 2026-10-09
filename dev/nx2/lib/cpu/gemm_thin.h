@@ -47,13 +47,13 @@
 /* [name] for a tile of M rows of V vectors of W lanes of the type [T], [VT]
    being the vector type. */
 #define THIN(name, T, VT, W, M, V)                                         \
-  static void name(int64_t k, const void *va, const void *vb, void *vc,   \
-                   int64_t ldc) {                                         \
+  static void name(int64_t k, const void *va, int64_t lda,                \
+                   const void *vb, void *vc, int64_t ldc) {               \
     const T *a = va, *b = vb;                                             \
     T *y = vc;                                                            \
     THIN_EACH(M, V, THIN_DECL, VT)                                        \
     THIN_EACH(M, V, THIN_LOAD, W)                                         \
-    for (int64_t p = 0; p < k; p++, a += M, b += V * W) {                 \
+    for (int64_t p = 0; p < k; p++, a += lda, b += V * W) {               \
       THIN_R##M(THIN_A, VT)                                               \
       THIN_EACH(M, V, THIN_ADD, W)                                        \
     }                                                                     \

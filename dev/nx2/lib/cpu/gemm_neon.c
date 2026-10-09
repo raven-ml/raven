@@ -26,14 +26,14 @@
   c[i][1] = vfmaq_laneq_f32(c[i][1], b1, av, lane);       \
   c[i][2] = vfmaq_laneq_f32(c[i][2], b2, av, lane);
 
-static void kernel_f32(int64_t k, const void *va, const void *vb, void *vc,
-                       int64_t ldc) {
+static void kernel_f32(int64_t k, const void *va, int64_t lda,
+                       const void *vb, void *vc, int64_t ldc) {
   const float *a = va, *b = vb;
   float *y = vc;
   float32x4_t c[F32_MR][3];
   for (int i = 0; i < F32_MR; i++)
     for (int v = 0; v < 3; v++) c[i][v] = vld1q_f32(y + i * ldc + 4 * v);
-  for (int64_t p = 0; p < k; p++, a += F32_MR, b += F32_NR) {
+  for (int64_t p = 0; p < k; p++, a += lda, b += F32_NR) {
     float32x4_t a0 = vld1q_f32(a), a1 = vld1q_f32(a + 4);
     float32x4_t b0 = vld1q_f32(b), b1 = vld1q_f32(b + 4),
                 b2 = vld1q_f32(b + 8);
@@ -61,14 +61,14 @@ static void kernel_f32(int64_t k, const void *va, const void *vb, void *vc,
 
 /* float64 adds 8 × 6 outputs per step: 24 accumulators of two lanes, four
    vectors of a and three of b, 31 registers. */
-static void kernel_f64(int64_t k, const void *va, const void *vb, void *vc,
-                       int64_t ldc) {
+static void kernel_f64(int64_t k, const void *va, int64_t lda,
+                       const void *vb, void *vc, int64_t ldc) {
   const double *a = va, *b = vb;
   double *y = vc;
   float64x2_t c[F64_MR][3];
   for (int i = 0; i < F64_MR; i++)
     for (int v = 0; v < 3; v++) c[i][v] = vld1q_f64(y + i * ldc + 2 * v);
-  for (int64_t p = 0; p < k; p++, a += F64_MR, b += F64_NR) {
+  for (int64_t p = 0; p < k; p++, a += lda, b += F64_NR) {
     float64x2_t a0 = vld1q_f64(a), a1 = vld1q_f64(a + 2),
                 a2 = vld1q_f64(a + 4), a3 = vld1q_f64(a + 6);
     float64x2_t b0 = vld1q_f64(b), b1 = vld1q_f64(b + 2),

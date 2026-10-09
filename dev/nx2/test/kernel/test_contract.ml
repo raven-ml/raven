@@ -147,10 +147,10 @@ let operand dt s nb v seed =
   A.Any (move (M.Permute v.perm) x)
 
 (* Extents of the batch, row, column and contracted axes, in profiles: any
-   ranks over a few elements; 64 outputs or more with edge tiles; several
-   blocks of the contraction on several threads; dots past a block of lanes;
-   several panels of columns; few rows over several blocks of the
-   contraction; few columns; several groups of batch elements. *)
+   ranks over a few elements; one output; 64 outputs or more with edge
+   tiles; several blocks of the contraction on several threads; dots past a
+   block of lanes; several panels of columns; few rows over several blocks
+   of the contraction; few columns; several groups of batch elements. *)
 let extents =
   let open Gen in
   let one lo hi = map (fun e -> [| e |]) (int_range lo hi) in
@@ -164,6 +164,7 @@ let extents =
   frequency
     [
       (6, ranked);
+      (1, shaped (axes 1 1 1) (axes 2 1 1) (axes 2 1 1) (axes 2 0 6));
       (3, shaped none (one 4 40) (one 8 40) (one 0 40));
       (1, shaped none (one 4 20) (one 8 24) (one 500 1300));
       (1, shaped (one 1 3) (one 1 2) (one 1 2) (one 1000 5000));

@@ -23,13 +23,13 @@
 #define NR 4
 
 #define KERNEL(name, T, FMA)                                                \
-  static void name(int64_t k, const void *va, const void *vb, void *vc,     \
-                   int64_t ldc) {                                           \
+  static void name(int64_t k, const void *va, int64_t lda, const void *vb,  \
+                   void *vc, int64_t ldc) {                                 \
     const T *a = va, *b = vb;                                               \
     T *c = vc, t[MR][NR];                                                   \
     for (int i = 0; i < MR; i++)                                            \
       for (int j = 0; j < NR; j++) t[i][j] = c[i * ldc + j];                \
-    for (int64_t p = 0; p < k; p++, a += MR, b += NR)                       \
+    for (int64_t p = 0; p < k; p++, a += lda, b += NR)                      \
       for (int i = 0; i < MR; i++)                                          \
         for (int j = 0; j < NR; j++) t[i][j] = FMA(a[i], b[j], t[i][j]);    \
     for (int i = 0; i < MR; i++)                                            \

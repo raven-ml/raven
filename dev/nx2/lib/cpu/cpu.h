@@ -43,11 +43,11 @@ typedef void (*nx_cpu_run)(const void *src, void *dst, int64_t n);
 
 /* A contraction's microkernel adds to the tile of MR × NR outputs at [c],
    output (i, j) at c + (i·ldc + j)·w, the products of [k] steps of packed
-   slivers: step p holds MR elements of a at a + p·MR·w and NR of b at
+   operands: step p holds MR elements of a at a + p·lda·w and NR of b at
    b + p·NR·w. Each output adds its products in increasing p, each fused
    into its addition. */
-typedef void (*nx_cpu_kernel)(int64_t k, const void *a, const void *b,
-                              void *c, int64_t ldc);
+typedef void (*nx_cpu_kernel)(int64_t k, const void *a, int64_t lda,
+                              const void *b, void *c, int64_t ldc);
 
 /* A dot adds the [n] products of the contiguous [a] and [b] into the lanes
    at [lanes], term t into lane t modulo NX_CPU_LANES, each fused. */

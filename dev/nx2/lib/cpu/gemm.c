@@ -37,10 +37,11 @@
                 a[mc × kc] -> slivers MR × kc, the worker's own
                 for each sliver of b, each sliver of a: R tile += a · b
 
-   A product of at most 4 rows, as decoding a token is, runs instead on a
-   thin kernel of 1, 2 or 4 rows, each unit packing a sliver of b and adding
-   it in, so that b is read once; one of at most 4 columns is computed as
-   its transpose.
+   A product of at most MC rows, as decoding a token is, packs a whole and
+   then streams b: each unit packs a sliver of b and adds it in, so that b
+   is read once and no panel passes between jobs. At most 4 rows run on a
+   thin kernel of 1, 2 or 4 rows. One of at most MC columns, and fewer
+   columns than rows, is computed as its transpose.
 
    R, the sum in acc, is dst itself: a dtype is computed with out = acc.
    Each tile starts as init, or +0, when its first KC block is computed. */
@@ -220,23 +221,28 @@ typedef struct {
   uint8_t *b;          /* the packed panel */
 } panel;
 
-/* Sliver [s] of element [e]'s panel, packed: kc rows of NR. */
+/* Sliver [s] of element [e]'s panel, packed: kc steps of NR. */
 static uint8_t *sliver(const panel *c, int64_t e, int64_t s) {
   const nx_cpu_gemm *g = c->p->g;
   return c->b + ((e - c->e0) * c->slivers + s) * g->nr * c->kc * c->p->w;
 }
 
-/* Packs the sliver of [a]'s rows [i, i + m) of element [e], along k from
-   [pc] for [kc], into [d]: kc steps of [mr] elements, zero past m. */
-static void pack_a(const problem *p, int64_t e, int64_t i, int64_t m, int mr,
-                   int64_t pc, int64_t kc, uint8_t *d) {
+/* Packs [a]'s rows [i, i + m) of element [e], along k from
+   [pc] for [kc], into [d]: kc steps of [lda] elements, zero past m. A
+   block of rows is one stage: its rows transpose in square blocks, where
+   a sliver as narrow as a microkernel's 6 rows would move element by
+   element. */
+static void pack_a(const problem *p, int64_t e, int64_t i, int64_t m,
+                   int64_t lda, int64_t pc, int64_t kc, uint8_t *d) {
   const int64_t *s = p->st[A];
-  if (m < mr) memset(d, 0, (size_t)(mr * kc * p->w));
+  for (int64_t q = 0; m < lda && q < kc; q++)
+    memset(d + (q * lda + m) * p->w, 0, (size_t)((lda - m) * p->w));
   stage(p, A, p->first[A] + e * s[BATCH] + i * s[ROW] + pc * s[CON], s[ROW],
-        s[CON], m, kc, d, mr);
+        s[CON], m, kc, d, lda);
 }
 
-/* Packs the sliver of [b]'s columns [j, j + n) likewise, [nr] wide. */
+/* Packs the sliver of [b]'s columns [j, j + n) likewise, kc steps of
+   [nr]. */
 static void pack_b(const problem *p, int64_t e, int64_t j, int64_t n, int nr,
                    int64_t pc, int64_t kc, uint8_t *d) {
   const int64_t *s = p->st[B];
@@ -263,27 +269,34 @@ typedef struct {
   int mr, nr;
 } shape;
 
-/* Adds the products of the packed slivers [a] and [b] to R's tile of [m]
-   rows and [n] columns from (e, i, j) with [k]'s kernel: in place where
-   its columns are adjacent and it is whole, else through a buffer. */
+/* Adds the products of the packed [a], its steps [lda] apart, and [b] to
+   R's tile of [m] rows and [n] columns from (e, i, j) with [k]'s kernel: in
+   place where its columns are adjacent and it is whole, else through a
+   buffer. */
 static void tile(const problem *p, shape k, int64_t kc, const uint8_t *a,
-                 const uint8_t *b, int64_t e, int64_t i, int64_t j, int64_t m,
-                 int64_t n) {
+                 int64_t lda, const uint8_t *b, int64_t e, int64_t i,
+                 int64_t j, int64_t m, int64_t n) {
   const int64_t *s = p->st[DST];
   if (m == k.mr && n == k.nr && s[COL] == 1) {
-    k.kernel(kc, a, b, at_r(p, e, i, j), s[ROW]);
+    k.kernel(kc, a, lda, b, at_r(p, e, i, j), s[ROW]);
     return;
   }
   _Alignas(64) uint8_t t[NX_CPU_TILE];
   int w = p->w;
   memset(t, 0, (size_t)(k.mr * k.nr * w));
   for (int64_t r = 0; r < m; r++)
-    for (int64_t q = 0; q < n; q++)
-      memcpy(t + (r * k.nr + q) * w, at_r(p, e, i + r, j + q), w);
-  k.kernel(kc, a, b, t, k.nr);
+    if (s[COL] == 1)
+      memcpy(t + r * k.nr * w, at_r(p, e, i + r, j), (size_t)(n * w));
+    else
+      for (int64_t q = 0; q < n; q++)
+        memcpy(t + (r * k.nr + q) * w, at_r(p, e, i + r, j + q), w);
+  k.kernel(kc, a, lda, b, t, k.nr);
   for (int64_t r = 0; r < m; r++)
-    for (int64_t q = 0; q < n; q++)
-      memcpy(at_r(p, e, i + r, j + q), t + (r * k.nr + q) * w, w);
+    if (s[COL] == 1)
+      memcpy(at_r(p, e, i + r, j), t + r * k.nr * w, (size_t)(n * w));
+    else
+      for (int64_t q = 0; q < n; q++)
+        memcpy(at_r(p, e, i + r, j + q), t + (r * k.nr + q) * w, w);
 }
 
 static void compute(int64_t lo, int64_t hi, int worker, void *ctx) {
@@ -304,48 +317,63 @@ static void compute(int64_t lo, int64_t hi, int worker, void *ctx) {
     if (v0 >= v1) continue;
     int64_t j0 = c->jc + v0 * g->nr;
     int64_t j1 = min64(c->jc + c->nc, c->jc + v1 * g->nr);
-    for (int64_t ir = 0; ir < mc; ir += mr)
-      pack_a(p, e, i0 + ir, min64(mr, mc - ir), g->mr, c->pc, c->kc,
-             ap + ir * c->kc * w);
+    int64_t lda = ceil_div(mc, mr) * mr;
+    pack_a(p, e, i0, mc, lda, c->pc, c->kc, ap);
     if (c->pc == 0) start(p, e, i0, i0 + mc, j0, j1);
     if (c->kc == 0) continue;
     for (int64_t v = v0; v < v1; v++) {
       int64_t j = c->jc + v * g->nr, n = min64(g->nr, c->jc + c->nc - j);
       const uint8_t *b = sliver(c, e, v);
       for (int64_t ir = 0; ir < mc; ir += mr)
-        tile(p, k, c->kc, ap + ir * c->kc * w, b, e, i0 + ir, j,
+        tile(p, k, c->kc, ap + ir * w, lda, b, e, i0 + ir, j,
              min64(mr, mc - ir), n);
     }
   }
 }
 
-/* Thin products: at most 4 rows, the rows padded to a thin kernel's 1, 2 or
-   4. A unit is a sliver of b's columns of one element, which it packs
-   KC block by KC block with the rows of a and adds into R: b, the large
-   operand, is read once, by one thread. */
+/* Products of few rows: at most MC, as decoding is. One job packs a whole,
+   each element's rows side by side over all of k; then a unit is a sliver of
+   b's columns of one element, which it packs KC block by KC block and adds
+   into R row sliver by row sliver. b, the large operand, is read once, by
+   one thread, and no panel is shared between jobs. At most 4 rows run on a
+   thin kernel. */
 typedef struct {
   problem *p;
   shape k;
-  int64_t slivers;
-} thin;
+  int64_t lda, kblocks, slivers;
+  uint8_t *a; /* element e's step q at a + (e·K + q)·lda·w */
+} rows;
 
-static void thin_units(int64_t lo, int64_t hi, int worker, void *ctx) {
-  const thin *t = ctx;
-  problem *p = t->p;
-  int64_t m = p->ext[ROW], n_all = p->ext[COL], k = p->ext[CON], w = p->w;
-  int64_t kc_most = min64(p->g->kc, k);
-  uint8_t *ap = scratch(p, worker, (t->k.mr + t->k.nr) * kc_most * w);
-  if (ap == NULL) return;
-  uint8_t *bp = ap + t->k.mr * kc_most * w;
+static void rows_pack(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)worker;
+  const rows *r = ctx;
+  const problem *p = r->p;
+  int64_t k = p->ext[CON], kc_most = p->g->kc;
   for (int64_t u = lo; u < hi; u++) {
-    int64_t e = u / t->slivers, j = u % t->slivers * t->k.nr;
-    int64_t n = min64(t->k.nr, n_all - j), pc = 0;
+    int64_t e = u / r->kblocks, pc = u % r->kblocks * kc_most;
+    pack_a(p, e, 0, p->ext[ROW], r->lda, pc, min64(kc_most, k - pc),
+           r->a + (e * k + pc) * r->lda * p->w);
+  }
+}
+
+static void rows_units(int64_t lo, int64_t hi, int worker, void *ctx) {
+  const rows *r = ctx;
+  problem *p = r->p;
+  int64_t m = p->ext[ROW], n_all = p->ext[COL], k = p->ext[CON], w = p->w;
+  int64_t kc_most = min64(p->g->kc, k), mr = r->k.mr, nr = r->k.nr;
+  uint8_t *bp = scratch(p, worker, nr * kc_most * w);
+  if (bp == NULL) return;
+  for (int64_t u = lo; u < hi; u++) {
+    int64_t e = u / r->slivers, j = u % r->slivers * nr;
+    int64_t n = min64(nr, n_all - j), pc = 0;
     start(p, e, 0, m, j, j + n);
     while (pc < k) {
       int64_t kc = min64(kc_most, k - pc);
-      pack_a(p, e, 0, m, t->k.mr, pc, kc, ap);
-      pack_b(p, e, j, n, t->k.nr, pc, kc, bp);
-      tile(p, t->k, kc, ap, bp, e, 0, j, m, n);
+      const uint8_t *ap = r->a + (e * k + pc) * r->lda * w;
+      pack_b(p, e, j, n, (int)nr, pc, kc, bp);
+      for (int64_t ir = 0; ir < m; ir += mr)
+        tile(p, r->k, kc, ap + ir * w, r->lda, bp, e, ir, j, min64(mr, m - ir),
+             n);
       pc += kc;
     }
   }
@@ -383,14 +411,26 @@ static void transpose(problem *p) {
   p->ext[COL] = m;
 }
 
-static void thin_product(problem *p, const nx_cpu_thin *t) {
+static void rows_product(problem *p) {
+  const nx_cpu_gemm *g = p->g;
   int64_t m = p->ext[ROW], n = p->ext[COL], k = p->ext[CON], w = p->w;
   int64_t batch = p->ext[BATCH];
-  thin j = {p, {t->kernel, m <= 1 ? 1 : m <= 2 ? 2 : 4, t->nr}, 0};
-  j.slivers = ceil_div(n, t->nr);
-  int64_t bytes = batch * (m + n) * k * w;
-  nx_cpu_job(batch * j.slivers, bytes, 2 * batch * m * n * k + bytes,
-             thin_units, &j);
+  const nx_cpu_thin *t = thin_of(g, m);
+  rows r = {p, {g->kernel, g->mr, g->nr}, 0, ceil_div(k, g->kc), 0, NULL};
+  if (t) r.k = (shape){t->kernel, m <= 1 ? 1 : m <= 2 ? 2 : 4, t->nr};
+  r.lda = ceil_div(m, r.k.mr) * r.k.mr;
+  r.slivers = ceil_div(n, r.k.nr);
+  int64_t packed = batch * k * r.lda * w;
+  r.a = alloc(packed);
+  if (r.a == NULL) {
+    atomic_store(&p->failed, 1);
+    return;
+  }
+  int64_t bytes = batch * n * k * w + packed;
+  nx_cpu_job(batch * r.kblocks, packed, 2 * packed, rows_pack, &r);
+  nx_cpu_job(batch * r.slivers, bytes, 2 * batch * m * n * k + bytes,
+             rows_units, &r);
+  free(r.a);
 }
 
 static void chain(problem *p) {
@@ -580,9 +620,8 @@ static int run(int acc, const nx_contract_view *v,
   atomic_init(&p.failed, 0);
   if (p.ext[ROW] * p.ext[COL] < FEW) blocks(&p);
   else {
-    if (p.ext[COL] < p.ext[ROW] && thin_of(p.g, p.ext[COL])) transpose(&p);
-    const nx_cpu_thin *t = thin_of(p.g, p.ext[ROW]);
-    if (t) thin_product(&p, t);
+    if (p.ext[COL] < p.ext[ROW] && p.ext[COL] <= p.g->mc) transpose(&p);
+    if (p.ext[ROW] <= p.g->mc) rows_product(&p);
     else chain(&p);
   }
   for (int i = 0; i < cores; i++) free(p.scratch[i]);

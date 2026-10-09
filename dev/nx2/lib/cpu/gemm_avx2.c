@@ -37,13 +37,13 @@
   M(__VA_ARGS__, 3); M(__VA_ARGS__, 4); M(__VA_ARGS__, 5)
 
 #define KERNEL(name, T, V, W, LOAD, STORE, BCAST, FMA)                    \
-  static void name(int64_t k, const void *va, const void *vb, void *vc,  \
-                   int64_t ldc) {                                        \
+  static void name(int64_t k, const void *va, int64_t lda,               \
+                   const void *vb, void *vc, int64_t ldc) {              \
     const T *a = va, *b = vb;                                            \
     T *y = vc;                                                           \
     ROWS(DECL, V);                                                       \
     ROWS(LOADC, LOAD, W);                                                \
-    for (int64_t p = 0; p < k; p++, a += MR, b += 2 * W) {               \
+    for (int64_t p = 0; p < k; p++, a += lda, b += 2 * W) {              \
       V b0 = LOAD(b), b1 = LOAD(b + W), ai;                              \
       ROWS(STEP, BCAST, FMA);                                            \
     }                                                                    \
