@@ -255,13 +255,17 @@ let constants =
           ignore (Nx.add a c);
           equal int 2 first;
           equal int 1 (C.calls ()));
-      test "placing a constant computes it at the placement, once" (fun () ->
-          let c = Nx.zeros D.Float32 [| 2 |] in
+      test "placing a constant computes it at the placement, its operands once"
+        (fun () ->
+          let z = Nx.zeros D.Float32 [| 2 |] in
+          let c = Nx.add z z in
           equal (array bits) [| 0.; 0. |] (elements (Nx.place Nx.Host.on c));
           C.reset ();
           let y = Nx.place Count.on c in
+          equal ~msg:"kernel calls: the zeros, then the add" int 2 (C.calls ());
           ignore (Nx.place Count.on c);
-          equal ~msg:"kernel calls" int 1 (C.calls ());
+          equal ~msg:"kernel calls: the add again, into memory of its own" int 3
+            (C.calls ());
           equal (array bits) [| 0.; 0. |] (elements y));
       test "a constant beside a split value is split with it" (fun () ->
           let x =
@@ -400,6 +404,17 @@ let int_arrays =
     (Gen.array ~size:(Gen.int_range 1 3) (Gen.int_range (-2) 5))
     (Gen.array ~size:(Gen.int_range 0 3) (Gen.int_range 0 3))
 
+(* A placed value of every set is memory of its own: writing it reaches neither
+   another placement of the formula nor a later operation on it. *)
+let test_placed_owns () =
+  let c = Nx.add (Nx.zeros D.Float32 [| 2 |]) (Nx.scalar D.Float32 1.) in
+  let first = Option.get (Nx.Repr.array (Nx.place Nx.Host.on c)) in
+  let second = Option.get (Nx.Repr.array (Nx.place Nx.Host.on c)) in
+  equal ~msg:"two placements share no memory" bool false
+    (Rig.Buffer.overlaps (A.buffer first) (A.buffer second));
+  A.set first [| 0 |] 42.;
+  equal ~msg:"a later use" (array bits) [| 2.; 2. |] (elements (Nx.add c c))
+
 let sets =
   group "sets"
     [
@@ -407,6 +422,7 @@ let sets =
         test_zeros_like_reads_nothing;
       test "every function takes a value of every set" test_every_set;
       test "zeros keeps nothing of its shape argument" test_zeros_shape_owned;
+      test "a placed formula is memory of its own" test_placed_owns;
       prop "an int-array argument overwritten after the call changes nothing"
         int_arrays law_arguments_owned;
     ]

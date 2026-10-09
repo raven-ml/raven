@@ -315,7 +315,7 @@ let rec run : type r. by:string -> r Value.prim -> r =
   match op with
   | Value.Place (p, x) -> (
       match x with
-      | Value.Deferred _ -> Place.value ~by p (at (Devices.rebrand p) x)
+      | Value.Deferred _ -> Place.value ~by p (own (Devices.rebrand p) x)
       | Value.Array _ | Value.Shards _ | Value.Traced _ -> Place.value ~by p x)
   | Value.Check { ok; data; fail } ->
       Prim.results ~by (alloc ~by ()) op;
@@ -463,6 +463,18 @@ and at : type v s d.
 
 (* Computes [node] at [p] after the constants it reads, depth first, with a
    stack of its own: a chain of any length takes no stack depth. *)
+(* The constant [c] computed at [p] into memory of its own, its operands taken
+   from their memos: a value given to a caller shares no memory with a memo. *)
+and own : type v s d.
+    d Devices.placement -> (v, s, d) Value.t -> (v, s, d) Value.t =
+ fun p x ->
+  match x with
+  | Value.Array _ | Value.Shards _ | Value.Traced _ -> x
+  | Value.Deferred { form; node; k } ->
+      let key = Devices.rebrand p in
+      List.iter (fun (dep, q) -> fill dep q) (pending node key);
+      make p (Array.map (A.expect form.dtype) (compute_node node key).(k))
+
 and fill node p =
   let stack = Stack.create () in
   Stack.push (node, p) stack;
@@ -583,7 +595,7 @@ and compute_node (Value.Node n) p =
               (Grid.devices (Devices.grid p)))
           arrays
 
-let read x = at (host ()) x
+let read x = own (host ()) x
 
 (* The fast path *)
 

@@ -13,11 +13,11 @@
     route moves, allocates each result at the route's placement, and calls the
     set's kernels once per device. [Done] is the result; a refusal raises
     through {!Nx_array.refused} naming [by]; a map a device's kernels decline
-    runs as its expansion ({!Expand.run}) on that device, over its own
-    operands, and a kernel a node needs that the kernels decline raises naming
-    the kernels, the kind, the dtypes and the device. Movements and bitcasts are views where a layout
-    expresses them, and a copy, then a view, otherwise. [Check] raises its
-    exception from the first failing index, read on the host.
+    runs as its expansion ({!Expand.run}) on that device, over its own operands,
+    and a kernel a node needs that the kernels decline raises naming the
+    kernels, the kind, the dtypes and the device. Movements and bitcasts are
+    views where a layout expresses them, and a copy, then a view, otherwise.
+    [Check] raises its exception from the first failing index, read on the host.
 
     A program that reads coordinates computes each device's window with that
     window's first index added to them. *)
@@ -73,12 +73,12 @@ val apply3 :
 (** [applyN ~slow ~by k dt x …] is the one-node map [k] over [x …], of one
     shape, with result dtype [dt] (the second operand's for [apply3]), where no
     interpretation reaches it. For operands on one device at physically one
-    placement it builds no operation: it allocates the result, sharing the
-    first operand's layout when that is C-contiguous at offset 0 and of the
-    result's dtype, and calls the set's kernel, which checks the dtypes and
-    shapes. Otherwise, and where the kernel declines or refuses them, it is
-    [slow ~by k dt x …], the operation built and evaluated, whose rule
-    raises. *)
+    placement it builds no operation: it allocates the result, sharing the first
+    operand's layout when that is C-contiguous at offset 0 and of the result's
+    dtype, and calls the set's kernel, which checks the dtypes and shapes.
+    Otherwise, and where the kernel declines or refuses them, it is
+    [slow ~by k dt x …], the operation built and evaluated, whose rule raises.
+*)
 
 val at : 'd Devices.placement -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
 (** [at p c] is the constant [c] computed at [p]: a map, a creation included, at
@@ -92,6 +92,7 @@ val at : 'd Devices.placement -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
     returned as it is. *)
 
 val read : ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
-(** [read c] is {!at} on the host's device: a value of every set computed for
-    this library to read, its placement the host's whatever ['d]. It never
-    reaches a function of nx's own as an operand. *)
+(** [read c] is [c] computed on the host's device into memory of its own: a
+    value of every set computed for this library to read, its placement the
+    host's whatever ['d]. It never reaches a function of nx's own as an operand.
+*)
