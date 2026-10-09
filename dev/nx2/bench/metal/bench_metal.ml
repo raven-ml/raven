@@ -6,13 +6,14 @@
 (* nx2's Metal floors and kernels on the Mac's GPU, each kernel row beside the
    floor that bounds it. A row runs [n] launches in one command buffer, enough
    for 10 ms of GPU time, so that the host's submission and wait are a small
-   part of a call.
+   part of a call. A call row ([.../call]) runs one, as an eager call does.
 
    [bench_metal.exe] runs the rows under thumper, which times calls on the
    host's clock. [bench_metal.exe gate [PAT]] prints each row's GPU time per
    launch, from the command buffer's GPU start and end, the median of 30, and
-   its distance to its floor. [bench_metal.exe probe] prints what the compiler
-   and the GPU do to float arithmetic. *)
+   its distance to its floor; for a call row, the wall time of a call and its
+   GPU time. [bench_metal.exe probe] prints what the compiler and the GPU do to
+   float arithmetic. *)
 
 module S = Nx_metal_support
 module Dt = Nx_array.Dtype
@@ -27,12 +28,14 @@ let m = k * k
 (* Rows *)
 
 (* A row: the floor that bounds it (none for a floor), the bytes or flops a
-   launch moves or computes, and its setup, which opens the device and is a
-   launch. *)
+   launch moves or computes, whether a call is one launch submitted and waited
+   for alone, as an eager call runs, and its setup, which opens the device and
+   is a launch. *)
 type row = {
   name : string;
   floor : string option;
   work : [ `Bytes of int | `Flops of int | `Launch ];
+  call : bool;
   setup : S.t -> S.run;
 }
 
@@ -54,6 +57,7 @@ let stream_row kernel ~ins ~out n =
   {
     name = strf "floor/%s-%s" name (size_name n);
     floor = None;
+    call = false;
     work = `Bytes (4 * n * (ins + if out then 1 else 0));
     setup =
       (fun t ->
@@ -71,6 +75,7 @@ let launch_row =
   {
     name = "floor/launch";
     floor = None;
+    call = false;
     work = `Launch;
     setup = (fun _ -> S.launch "empty" ~addrs:[] ~words:[]);
   }
@@ -82,6 +87,7 @@ let peak_row name kernel (Dt.Any dt) ~flops_per_round =
   {
     name;
     floor = None;
+    call = false;
     work = `Flops (threads * flops_per_round * iters);
     setup =
       (fun t ->
@@ -127,6 +133,7 @@ let contract_row ?(batch = 1) ?name ?acc ?out (Dt.Any dt) ~m ~k ~n trans =
     name;
     floor = Some floor;
     work;
+    call = false;
     setup =
       (fun t ->
         let matrix ~trans ~rows ~cols ~seed =
@@ -185,6 +192,20 @@ let contract_rows =
         (Dt.Any Dt.Int8) ~m:4096 ~k:4096 ~n:4096 "nn";
     ]
 
+(* Decode's rows as eager calls: each launch in a command buffer of its own,
+   waited for, b resident in the GPU's cache from the call before. *)
+let call_rows =
+  List.filter_map
+    (fun r ->
+      let decode =
+        List.exists
+          (fun s -> String.ends_with ~suffix:s r.name)
+          [ "-1x2880x5120-nt"; "-1x2880x5120-nn"; "-1x2880x201088-nt" ]
+      in
+      if decode then Some { r with name = r.name ^ "/call"; call = true }
+      else None)
+    contract_rows
+
 (* The floors of the skinny rows, a read of the bytes of b they stream. *)
 let skinny_floors =
   List.sort_uniq compare
@@ -214,7 +235,7 @@ let rows =
       peak_row "floor/simdgroup-matrix-f16-peak" "mma_f16" (Dt.Any Dt.Float16)
         ~flops_per_round:(8 * 1024 / 32);
     ]
-  @ skinny_floors @ contract_rows
+  @ skinny_floors @ contract_rows @ call_rows
 
 (* Timing *)
 
@@ -222,15 +243,18 @@ let target_ns = 10_000_000
 
 (* A row's run: [n] launches, enough for [target_ns] of GPU time, sized from the
    fastest of three runs after three that make the pipelines and warm the caches
-   and the GPU's clock. *)
-let calibrate t (launch : S.run) =
+   and the GPU's clock; one launch for a call row. *)
+let calibrate t r =
+  let launch = r.setup t in
   let one = S.prepare t launch in
   for _ = 1 to 3 do
     ignore (one ())
   done;
-  let ns = min (one ()) (min (one ()) (one ())) in
-  let n = max 1 (min 8192 ((target_ns + ns - 1) / max ns 1)) in
-  (n, S.prepare t (S.seq (List.init n (fun _ -> launch))))
+  if r.call then (1, one)
+  else
+    let ns = min (one ()) (min (one ()) (one ())) in
+    let n = max 1 (min 8192 ((target_ns + ns - 1) / max ns 1)) in
+    (n, S.prepare t (S.seq (List.init n (fun _ -> launch))))
 
 let median l =
   let a = Array.of_list l in
@@ -238,8 +262,8 @@ let median l =
   a.(Array.length a / 2)
 
 (* The median GPU time per launch, in nanoseconds, over 30 runs. *)
-let per_launch t launch =
-  let n, go = calibrate t launch in
+let per_launch t r =
+  let n, go = calibrate t r in
   for _ = 1 to 3 do
     ignore (go ())
   done;
@@ -264,27 +288,47 @@ let gate pat =
   let floors = Hashtbl.create 16 in
   Printf.printf "load %.2f\n%-40s %12s %12s %8s\n" (loadavg ()) "row"
     "us/launch" "rate" "/floor";
-  let time r =
-    let ns = per_launch t (r.setup t) in
+  (* A call row: the median of 30 samples of the wall time of 50 calls on the
+     host's clock, and the median GPU time of a call. *)
+  let call_time r =
+    let _, go = calibrate t r in
+    let spans = ref [] in
+    let sample () =
+      let t0 = Unix.gettimeofday () in
+      for _ = 1 to 50 do
+        spans := go () :: !spans
+      done;
+      (Unix.gettimeofday () -. t0) /. 50.
+    in
+    let wall = median (List.init 30 (fun _ -> sample ())) in
     Gc.full_major ();
-    if r.floor = None then Hashtbl.replace floors r.name (ns, r.work);
-    if selected r then
-      let rate =
-        match r.work with
-        | `Bytes b -> strf "%.1f GB/s" (float b /. ns)
-        | `Flops f -> strf "%.0f GF/s" (float f /. ns)
-        | `Launch -> ""
-      in
-      (* A memory-bound row's time over its floor's; a compute-bound row's
-         fraction of its peak. *)
-      let ratio =
-        match (r.work, Option.bind r.floor (Hashtbl.find_opt floors)) with
-        | `Flops f, Some (fns, `Flops ff) ->
-            strf "%.0f%%" (100. *. (float f /. ns) /. (float ff /. fns))
-        | _, Some (fns, _) -> strf "%.2f" (ns /. fns)
-        | _, None -> ""
-      in
-      Printf.printf "%-40s %12.2f %12s %8s\n%!" r.name (ns /. 1000.) rate ratio
+    Printf.printf "%-40s %12.2f %12s\n%!" r.name (wall *. 1e6)
+      (strf "gpu %.1f us" (float (median !spans) /. 1000.))
+  in
+  let time r =
+    if r.call then call_time r
+    else
+      let ns = per_launch t r in
+      Gc.full_major ();
+      if r.floor = None then Hashtbl.replace floors r.name (ns, r.work);
+      if selected r then
+        let rate =
+          match r.work with
+          | `Bytes b -> strf "%.1f GB/s" (float b /. ns)
+          | `Flops f -> strf "%.0f GF/s" (float f /. ns)
+          | `Launch -> ""
+        in
+        (* A memory-bound row's time over its floor's; a compute-bound row's
+           fraction of its peak. *)
+        let ratio =
+          match (r.work, Option.bind r.floor (Hashtbl.find_opt floors)) with
+          | `Flops f, Some (fns, `Flops ff) ->
+              strf "%.0f%%" (100. *. (float f /. ns) /. (float ff /. fns))
+          | _, Some (fns, _) -> strf "%.2f" (ns /. fns)
+          | _, None -> ""
+        in
+        Printf.printf "%-40s %12.2f %12s %8s\n%!" r.name (ns /. 1000.) rate
+          ratio
   in
   List.iter (fun r -> if needed r then time r) rows;
   Printf.printf "load %.2f\n" (loadavg ())
@@ -357,7 +401,7 @@ let case r =
   Thumper.bench_with_setup r.name
     ~setup:(fun () ->
       let t = dev () in
-      snd (calibrate t (r.setup t)))
+      snd (calibrate t r))
     (fun go -> go ())
 
 let () =

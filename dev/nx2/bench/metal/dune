@@ -8,7 +8,7 @@
 (executable
  (name bench_metal)
  (modules bench_metal)
- (libraries nx_array nx_metal_bench nx_metal_support rig thumper))
+ (libraries nx_array nx_metal_bench nx_metal_support rig thumper unix))
 
 (rule
  (alias bench)
