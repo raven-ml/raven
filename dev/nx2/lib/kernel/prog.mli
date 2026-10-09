@@ -112,3 +112,113 @@ type op3 =
   | Fma
       (** The product of the first two plus the third, rounded once; wrapping
           on integers. *)
+
+(** {1:domains Domains}
+
+    Where each kind is defined. Every dtype has one order: [false < true];
+    integers by value; floats by value, [-0] below [+0]; complex numbers by
+    real part, then imaginary part. A NaN, and a complex number with a NaN
+    part, is a NaN to each kind: comparisons with it are [false], [Maximum]
+    and [Minimum] give it. On booleans [Maximum] is [Or] and [Minimum] is
+    [And]. A kind keeps its operands' dtype where its type says so: the
+    absolute value of a complex number is no kind.
+
+    - [Neg], [Recip], [Add], [Sub], [Mul]: every dtype but booleans.
+    - [Fdiv]: floats and complex. [Idiv]: integers.
+    - [Abs], [Sign], [Floor], [Ceil], [Round], [Trunc], [Mod], [Pow], [Fma]:
+      floats and integers.
+    - [Sqrt], [Atan2] and the transcendental kinds, [Exp] to [Erf]: floats.
+    - [And], [Or], [Xor]: integers and booleans. [Threefry]: [uint64].
+    - [Maximum], [Minimum] and the comparisons: every dtype.
+    - [Copy]: every dtype, into itself. [Cast]: every pair. [Bitcast]: every
+      pair of one width.
+    - [Where]: a boolean, then two operands of any one dtype.
+    - [Fill]: every dtype. [Iota]: floats and integers. *)
+
+val accepts0 : op0 -> ('v, 's) Nx_array.Dtype.t -> bool
+(** [accepts0 k dt] is [true] iff [k] makes elements of [dt]. *)
+
+val accepts1 :
+  op1 -> ('a, 'b) Nx_array.Dtype.t -> ('v, 's) Nx_array.Dtype.t -> bool
+(** [accepts1 k x y] is [true] iff [k] takes an operand of [x] to a result of
+    [y]. [y] is [x] for [Copy] and [Unary]. *)
+
+val accepts2 : op2 -> ('a, 'b) Nx_array.Dtype.t -> bool
+(** [accepts2 k x] is [true] iff [k] takes two operands of [x]. Its result is
+    of [x] for [Binary], [bool] for [Compare]. *)
+
+val accepts3 :
+  op3 -> ('c, 'e) Nx_array.Dtype.t -> ('a, 'b) Nx_array.Dtype.t -> bool
+(** [accepts3 k c x] is [true] iff [k] takes a first operand of [c] and two of
+    [x]. Its result is of [x]. *)
+
+(** {1:bits Bits} *)
+
+val bits : ('v, 's) Nx_array.Dtype.t -> 'v -> string
+(** [bits dt x] is the bits of [x], an element of [dt], in the host's byte
+    order: {!Nx_array.Dtype.bytes}[ dt 1] bytes, a sub-byte element in the low
+    bits of one byte. It is the payload of [Fill] and [Const]. A float is
+    stored as {!Nx_array.Dtype.of_float} says.
+
+    Raises [Invalid_argument] for an [int] outside [dt]'s range. *)
+
+(** {1:programs Programs} *)
+
+(** The type for a program's nodes. A node refers to earlier nodes by index. *)
+type node =
+  | In of int  (** [In i] is operand [i] at the iteration index. *)
+  | Coord of int
+      (** [Coord i] is the index along axis [i], counted from the last, as an
+          [int64]. *)
+  | Const of Nx_array.Dtype.any * string
+      (** [Const (dt, b)] is the element of [dt] whose bits are [b]
+          ({!bits}). *)
+  | Op1 of op1 * Nx_array.Dtype.any * int
+      (** [Op1 (k, dt, i)] is [k] of node [i] into [dt]. *)
+  | Op2 of op2 * int * int  (** [Op2 (k, i, j)] is [k] of nodes [i] and [j]. *)
+  | Op3 of op3 * int * int * int
+      (** [Op3 (k, i, j, l)] is [k] of nodes [i], [j] and [l]. *)
+
+type t
+(** The type for programs: operand dtypes, nodes, and the nodes it outputs.
+    Each node's value is its exact result rounded once to its dtype. It is
+    [nx_spec.h]'s [nx_prog] in a string, so equal programs are equal
+    strings. *)
+
+val max_operands : int
+(** [max_operands] is [16], the most operands plus outputs a program has. *)
+
+val accepts : node -> Nx_array.Dtype.any array -> bool
+(** [accepts n dts] is [true] iff [n]'s kind takes nodes of the dtypes [dts],
+    its node operands' in order: [Op2]'s two of one dtype, [Op3]'s last two of
+    one dtype. [In], [Coord] and [Const] take none. *)
+
+val v : ins:Nx_array.Dtype.any array -> node array -> outs:int array -> t
+(** [v ~ins nodes ~outs] is the program over operands of dtypes [ins] whose
+    results are the nodes [outs].
+
+    Raises [Invalid_argument] unless every reference names an earlier node,
+    every [In] an operand and every [Coord] an axis below
+    {!Nx_array.Layout.max_rank}; every node's kind accepts its operands'
+    dtypes ({!accepts}); every [Const]'s bits are an element of its dtype;
+    [outs] is not empty and names nodes; and operands plus outputs are at
+    most {!max_operands}. *)
+
+val ins : t -> Nx_array.Dtype.any array
+(** [ins p] is [p]'s operand dtypes. *)
+
+val length : t -> int
+(** [length p] is [p]'s number of nodes. *)
+
+val node : t -> int -> node
+(** [node p i] is [p]'s node [i].
+
+    Raises [Invalid_argument] if [i] is not a node of [p]. *)
+
+val dtype : t -> int -> Nx_array.Dtype.any
+(** [dtype p i] is the dtype of [p]'s node [i].
+
+    Raises [Invalid_argument] if [i] is not a node of [p]. *)
+
+val outs : t -> int array
+(** [outs p] is the nodes [p] outputs. *)

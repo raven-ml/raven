@@ -8,3 +8,5 @@ external contract_fields : Nx_kernel.Spec.contract Nx_kernel.Spec.t -> int array
 
 external view_fields : Nx_kernel.Spec.Contract_view.t -> int array
   = "nx_kernel_support_view"
+
+external prog : Nx_kernel.Prog.t -> string = "nx_kernel_support_prog"

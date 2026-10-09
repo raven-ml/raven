@@ -22,6 +22,23 @@ _Static_assert(offsetof(nx_spec_contract, pairs) == 24, "at_pairs");
 _Static_assert(sizeof(((nx_spec_contract *)0)->pairs[0]) == 8,
                "two int32 per pair");
 
+/* prog.ml writes nx_prog at these byte offsets. */
+_Static_assert(offsetof(nx_prog, nodes) == 16, "header");
+_Static_assert(sizeof(nx_prog_node) == 40, "record");
+_Static_assert(offsetof(nx_prog_node, bits) == 24, "at_bits");
+_Static_assert(NX_OP1_COUNT == 28 && NX_OP2_COUNT == 18 && NX_OP3_COUNT == 2,
+               "one code per kind");
+
+/* The bits nx_dtype.h's store of [x] writes into an element of the float
+   dtype [dt] of at most 16 bits. */
+intnat nx_kernel_narrow_bits(intnat dt, double x) {
+  return (intnat)nx_double_to_bits((int)dt, x);
+}
+
+value nx_kernel_narrow_bits_byte(value dt, value x) {
+  return Val_long(nx_kernel_narrow_bits(Long_val(dt), Double_val(x)));
+}
+
 /* spec.ml writes nx_contract_view at these byte offsets. */
 _Static_assert(offsetof(nx_contract_view, extent) == 0, "at_extent");
 _Static_assert(offsetof(nx_contract_view, offset) == 32, "at_offset");

@@ -19,6 +19,52 @@
 /* A descriptor's family, its first field. */
 enum { NX_SPEC_CONTRACT = 1 };
 
+/* Prog.t: a scalar program. Counts of operands, nodes and outputs, then a
+   record per node, then the operands' dtype codes (nx_dtype.h) and the
+   outputs' node indices; read through nx_prog_ins and nx_prog_outs. A
+   node's [dtype] is its result's; [a], [b] and [c] are its operand, axis or
+   earlier nodes; a constant's bits are in [bits], zero-padded. Kinds are
+   the codes below, in the order of Prog's constructors. */
+enum { NX_NODE_IN, NX_NODE_COORD, NX_NODE_CONST, NX_NODE_OP1, NX_NODE_OP2,
+       NX_NODE_OP3 };
+
+enum {
+  NX_OP1_COPY, NX_OP1_CAST, NX_OP1_BITCAST, NX_OP1_NEG, NX_OP1_RECIP,
+  NX_OP1_ABS, NX_OP1_SIGN, NX_OP1_SQRT, NX_OP1_EXP, NX_OP1_EXP2, NX_OP1_LOG,
+  NX_OP1_LOG2, NX_OP1_LOG1P, NX_OP1_EXPM1, NX_OP1_SIN, NX_OP1_COS,
+  NX_OP1_TAN, NX_OP1_ASIN, NX_OP1_ACOS, NX_OP1_ATAN, NX_OP1_SINH,
+  NX_OP1_COSH, NX_OP1_TANH, NX_OP1_ERF, NX_OP1_FLOOR, NX_OP1_CEIL,
+  NX_OP1_ROUND, NX_OP1_TRUNC, NX_OP1_COUNT
+};
+
+enum {
+  NX_OP2_ADD, NX_OP2_SUB, NX_OP2_MUL, NX_OP2_FDIV, NX_OP2_IDIV, NX_OP2_MOD,
+  NX_OP2_POW, NX_OP2_ATAN2, NX_OP2_MAXIMUM, NX_OP2_MINIMUM, NX_OP2_AND,
+  NX_OP2_OR, NX_OP2_XOR, NX_OP2_THREEFRY, NX_OP2_EQUAL, NX_OP2_NOT_EQUAL,
+  NX_OP2_LESS, NX_OP2_LESS_EQUAL, NX_OP2_COUNT
+};
+
+enum { NX_OP3_WHERE, NX_OP3_FMA, NX_OP3_COUNT };
+
+typedef struct {
+  int32_t tag, kind, dtype;
+  int32_t a, b, c;
+  uint8_t bits[16];
+} nx_prog_node;
+
+typedef struct {
+  int32_t nins, nnodes, nouts, zero;
+  nx_prog_node nodes[];
+} nx_prog;
+
+static inline const int32_t *nx_prog_ins(const nx_prog *p) {
+  return (const int32_t *)(p->nodes + p->nnodes);
+}
+
+static inline const int32_t *nx_prog_outs(const nx_prog *p) {
+  return nx_prog_ins(p) + p->nins;
+}
+
 /* Spec.contract: the dtypes the sum runs in and its result has (nx_dtype.h's
    codes), whether an init operand is given, and the pairs of an axis of a and
    an axis of b: [nbatch] batch pairs, then [ncontracting] contracting
