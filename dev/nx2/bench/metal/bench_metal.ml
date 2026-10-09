@@ -208,6 +208,12 @@ let contract_rows =
       contract_row ~name:"4096" ~acc:(Dt.Any Dt.Int32) ~out:(Dt.Any Dt.Int32)
         (Dt.Any Dt.Int8) ~m:4096 ~k:4096 ~n:4096 "nn";
     ]
+  @ List.concat_map
+      (fun dt ->
+        List.map
+          (fun (m, k, n) -> contract_row dt ~m ~k ~n "nt")
+          [ (32, 2880, 201088); (48, 5120, 2880); (1000, 1000, 1000) ])
+      [ Dt.Any Dt.Bfloat16; Dt.Any Dt.Float16; Dt.Any Dt.Float32 ]
 
 (* Decode's rows as eager calls: each launch in a command buffer of its own,
    waited for, b resident in the GPU's cache from the call before. *)

@@ -228,7 +228,9 @@ int nx_metal_plan_contract(const nx_metal_contract_in *c,
     return e ? e : 1;
   }
   /* The tile: wide for few rows; large for products of whole large tiles,
-     enough of them, and whole steps of k in each part; small otherwise. */
+     enough of them, and whole steps of k in each part; small otherwise,
+     or wide where b is stored [n][k], which small tiles do not read: it
+     reads b where it lies, where packing b would copy all of it. */
   uint64_t large = (uint64_t)(c->m / side) * (c->n / side) * c->batch;
   enum size size =
       !floats ? Large
@@ -236,7 +238,8 @@ int nx_metal_plan_contract(const nx_metal_contract_in *c,
       : whole && large >= small_tiles &&
               c->k / split(c, large, floats) % tile_k(a->dtype, Large) == 0
           ? Large
-          : Small;
+      : b_t ? Wide
+            : Small;
   uint32_t rows = tile_rows[size], cols = tile_cols[size];
   uint32_t tiles_m = (c->m + rows - 1) / rows;
   uint32_t tiles_n = (c->n + cols - 1) / cols;
@@ -245,14 +248,13 @@ int nx_metal_plan_contract(const nx_metal_contract_in *c,
   uint32_t groups[3] = {tiles_n * column, (tiles_m + column - 1) / column,
                         c->batch};
   /* An operand in a layout the instance does not read is packed into
-     scratch first: every instance reads a stored [m][k], and small tiles
-     and int8's b stored [k][n]. int8's tiles read 16 bytes at a time,
-     from rows that start on 16-byte boundaries. */
+     scratch first: every instance reads a stored [m][k], and int8's b
+     stored [k][n]. int8's tiles read 16 bytes at a time, from rows that
+     start on 16-byte boundaries. */
   int pack_a = c->k > 0 &&
                (a_t || (bytes && !aligned(a->address, as[1], as[0], c->batch)));
-  int pack_b = c->k > 0 &&
-               ((b_t && (size == Small || bytes)) ||
-                (bytes && !aligned(b->address, bs[1], bs[0], c->batch)));
+  int pack_b = c->k > 0 && bytes &&
+               (b_t || !aligned(b->address, bs[1], bs[0], c->batch));
   uint32_t esize = a->dtype == NX_FLOAT32 ? 4 : bytes ? 1 : 2;
   size_t used = 0, len = r->len;
   uint32_t mask = 0;

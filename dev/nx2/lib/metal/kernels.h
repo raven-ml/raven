@@ -43,15 +43,15 @@
 
    Instances are a budget: each names the rows that keep it. An operand
    in a layout with no instance is packed first, and a product past whole
-   tiles runs on small ones. */
+   tiles runs on small ones, or on wide ones if b is stored [n][k]. */
 #define NX_METAL_KERNELS(X)                                                \
   /* squares 1024 to 4096, 4096-tn, 64 x 512 batches */                   \
   X(contract_f32_n) X(contract_f16_n) X(contract_bf16_n)                   \
   /* 4096-nt and -tt, 512-row prefills, Llama's up projection */          \
   X(contract_f32_t) X(contract_f16_t) X(contract_bf16_t)                   \
-  /* squares 256 and 512, and every product past whole tiles */           \
+  /* squares 256 and 512, and every product past whole tiles, b [k][n] */ \
   X(contract_f32_s) X(contract_f16_s) X(contract_bf16_s)                   \
-  /* 8 rows nn; 3, 8 and 16 rows nt */                                    \
+  /* 8 rows nn; 3 to 48 rows nt, and every nt product past whole tiles */ \
   X(contract_f32_wn) X(contract_f16_wn) X(contract_bf16_wn)                \
   X(contract_f32_wt) X(contract_f16_wt) X(contract_bf16_wt)                \
   /* int8-4096 */                                                         \
