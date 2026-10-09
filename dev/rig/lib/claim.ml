@@ -42,7 +42,13 @@ let take fn b =
 let read b = take "Claim.read" b
 let release b = release_claim b.mem.claim
 
-type t = { reads : claim list; mutable exclusive : claim list }
+(* [ended] is set once [with_]'s [f] returned or raised, before any claim is
+   released: then the claims hold nothing, though the lists still name them. *)
+type t = {
+  reads : claim list;
+  mutable exclusive : claim list;
+  mutable ended : bool; [@atomic]
+}
 
 (* Where a buffer's bytes lie, for the overlap check, as [Buffer.overlaps]
    places them: a space and the first byte and length within it. This process's
@@ -126,7 +132,7 @@ let with_ ~read ~donate f =
    with e ->
      undo ();
      raise e);
-  let c = { reads = !taken; exclusive = [] } in
+  let c = { reads = !taken; exclusive = []; ended = false } in
   List.iter
     (fun group ->
       let claims = List.map (fun b -> b.mem.claim) group in
@@ -134,14 +140,16 @@ let with_ ~read ~donate f =
         c.exclusive <- claims @ c.exclusive)
     donate;
   let finish () =
+    c.ended <- true;
     List.iter unhold c.exclusive;
     List.iter release_claim c.reads
   in
   Fun.protect ~finally:finish (fun () -> f c)
 
-let exclusive c b = List.memq b.mem.claim c.exclusive
+let exclusive c b = (not c.ended) && List.memq b.mem.claim c.exclusive
 
 let consume c ~why b =
+  if c.ended then invalid_arg "Rig.Claim.consume: the claims' with_ returned";
   if not (List.memq b.mem.claim c.reads) then
     invalid_arg "Rig.Claim.consume: the claims do not hold the memory";
   Buffer.check_live "Claim.consume" b;

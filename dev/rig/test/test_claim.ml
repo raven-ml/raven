@@ -287,6 +287,35 @@ let test_dead_claims () =
   Claim.read live;
   Claim.release live
 
+(* Claims that outlive their with_ hold nothing: beside a live with_ over the
+   same memory, a stale claim is not exclusive and consumes nothing. *)
+let test_stale_returned () =
+  let b = B.create Rig.host 64 in
+  let stale = Claim.with_ ~read:[] ~donate:[ [ b ] ] Fun.id in
+  equal ~msg:"alone" bool false (Claim.exclusive stale b);
+  Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
+      equal ~msg:"the live claim" bool true (Claim.exclusive c b);
+      equal ~msg:"beside a live claim" bool false (Claim.exclusive stale b);
+      raises_match Exn.invalid_arg (fun () ->
+          Claim.consume stale ~why:"stale" b);
+      ignore (Claim.consume c ~why:"live" b))
+
+(* A with_ whose [f] raised ends its claims too: beside a reader, the stale
+   claim is not exclusive and consumes nothing. *)
+let test_stale_raised () =
+  let b = B.create Rig.host 64 in
+  let stale = ref None in
+  raises (Failure "f") (fun () ->
+      Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
+          stale := Some c;
+          failwith "f"));
+  let stale = require_some !stale in
+  Claim.read b;
+  equal bool false (Claim.exclusive stale b);
+  raises_match Exn.invalid_arg (fun () -> Claim.consume stale ~why:"stale" b);
+  Claim.release b;
+  equal ~msg:"the buffer stays live" (option string) None (B.dead b)
+
 (* Two domains: with_ of a group of two memories, against a read of the second
    that ends in the same call. Whatever the order, no claim outlives its call:
    at the end the group is exclusive again. *)
@@ -623,6 +652,8 @@ let tests =
           test_consume_refusals;
         test "a dead buffer refuses claims and accepts a release"
           test_dead_claims;
+        test "a claim whose with_ returned holds nothing" test_stale_returned;
+        test "a claim whose with_ raised holds nothing" test_stale_raised;
         test "a buffer's death is a fact with its reason" test_dead_fact;
         test "claims on memory a loss reaches raise and release"
           test_lost_claims;

@@ -644,7 +644,11 @@ module Claim : sig
       exclusive, and is [f] of the claims. A value is exclusive if each of its
       buffers {!Buffer.spans} its memory and the memory has no other claim;
       otherwise its buffers stay read. Every claim is released when [f] returns
-      or raises.
+      or raises, and the claims [f] was given hold nothing from then on:
+      {!exclusive} of them is [false] and {!consume} raises. A use of them on
+      another domain that overlaps [f]'s return is the caller's to order: rig
+      does not detect it, and such a use may answer as if [f] were still
+      running.
 
       Raises [Invalid_argument] before [f], releasing what it claimed, if a
       buffer is dead, a memory is held exclusive, or a buffer of [donate]
@@ -662,8 +666,9 @@ module Claim : sig
       over the same memory, which the caller writes in place only if [c] holds
       it {!exclusive}.
 
-      Raises [Invalid_argument] if [c] does not claim [b]'s memory, [b] is dead,
-      or [b] does not {!Buffer.spans} its memory. *)
+      Raises [Invalid_argument] if [c]'s {!with_} returned or raised, [c] does
+      not claim [b]'s memory, [b] is dead, or [b] does not {!Buffer.spans} its
+      memory. *)
 end
 
 (** {1:holds Holds} *)
