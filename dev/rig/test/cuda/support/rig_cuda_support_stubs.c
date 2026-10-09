@@ -56,14 +56,15 @@ static CUresult(CUDAAPI *func_is_loaded)(int *, void *);
 static CUresult(CUDAAPI *func_get_module)(void **, void *);
 static CUresult(CUDAAPI *function_count)(unsigned int *, void *);
 static CUresult(CUDAAPI *enumerate_functions)(void **, unsigned int, void *);
+static CUresult(CUDAAPI *synchronize)(void);
 
 /* Binds cuLaunchKernel, cuCtxGetCurrent, cuDevicePrimaryCtxRetain,
    cuCtxPushCurrent_v2, cuCtxPopCurrent_v2, cuMemHostGetDevicePointer_v2,
    cuDeviceGetAttribute, cuMemcpyAsync, cuMemcpyDtoH_v2, cuMemcpyHtoD_v2,
    cuMemHostRegister_v2, cuMemHostUnregister, cuMemGetInfo_v2,
    cuGraphExecKernelNodeSetParams_v2, cuGraphLaunch, cuFuncIsLoaded,
-   cuFuncGetModule, cuModuleGetFunctionCount and cuModuleEnumerateFunctions,
-   in this order. */
+   cuFuncGetModule, cuModuleGetFunctionCount, cuModuleEnumerateFunctions and
+   cuCtxSynchronize, in this order. */
 value rig_cuda_test_bind(value v_f) {
   launch_kernel = Ptr_val(Field(v_f, 0));
   get_current = Ptr_val(Field(v_f, 1));
@@ -84,6 +85,7 @@ value rig_cuda_test_bind(value v_f) {
   func_get_module = Ptr_val(Field(v_f, 16));
   function_count = Ptr_val(Field(v_f, 17));
   enumerate_functions = Ptr_val(Field(v_f, 18));
+  synchronize = Ptr_val(Field(v_f, 19));
   return Val_unit;
 }
 
@@ -167,13 +169,31 @@ value rig_cuda_test_read_gpu(value v_a, value v_n) {
   CAMLreturn(r);
 }
 
+/* cuMemcpyHtoD from pageable memory returns once the bytes are staged, and
+   CUDA's default stream DMAs them later, which rig's streams, created
+   non-blocking, do not wait for: the context's synchronisation lands them. */
 value rig_cuda_test_write_gpu(value v_a, value v_s) {
   CUcontext popped;
   push_primary();
   CUresult s = memcpy_htod((uint64_t)Nativeint_val(v_a), String_val(v_s),
                            caml_string_length(v_s));
+  if (s == 0) s = synchronize();
   pop(&popped);
   if (s != 0) caml_failwith("cuMemcpyHtoD");
+  return Val_unit;
+}
+
+/* Runs the kernel [v_spin], with the parameters [v_flag] and [v_ns], on
+   CUDA's default stream. */
+value rig_cuda_test_stall(value v_spin, value v_flag, value v_ns) {
+  CUcontext popped;
+  uint64_t flag = (uint64_t)Long_val(v_flag), ns = (uint64_t)Long_val(v_ns);
+  void *params[2] = {&flag, &ns};
+  push_primary();
+  CUresult s = launch_kernel((void *)Long_val(v_spin), 1, 1, 1, 1, 1, 1, 0,
+                             NULL, params, NULL);
+  pop(&popped);
+  if (s != 0) caml_failwith("cuLaunchKernel");
   return Val_unit;
 }
 

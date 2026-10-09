@@ -142,6 +142,23 @@ let round_trip (ka, kb, n, (oa, ob)) =
 let past_memory () =
   S.with_ @@ fun { g; _ } -> is_none (C.alloc g `Device (2 * C.budget g))
 
+(* [write_gpu]'s bytes are in the GPU's memory once it returns, whatever runs on
+   CUDA's default stream: a copy on one of rig's streams, which wait for no
+   other stream, reads them right after, behind a 50 ms kernel there. *)
+let written_on_return () =
+  S.with_ @@ fun ({ d; g } as t) ->
+  let _, kernel = S.kernels g in
+  let flag = require_some (C.alloc g `Pinned 8) in
+  H.set64 (host flag) 0;
+  let n = 64 in
+  let src = B.create d n and dst = B.create ~memory:Pinned d n in
+  let data = pattern n 11 in
+  S.stall (kernel "spin") ~flag:(address flag) ~ns:(second / 20);
+  S.write_gpu (Nativeint.of_int (B.address src)) data;
+  S.wait t (S.submit t [| S.copy ~queue:"COPY:0" ~dst src |]);
+  equal string ~msg:"the bytes copied" data (H.read (B.address dst) n);
+  C.free g flag
+
 let memory =
   group ~timeout:120. "memory"
     [
@@ -149,6 +166,7 @@ let memory =
         (Gen.quad kind kind size (Gen.pair offset offset))
         round_trip;
       test "an allocation past the GPU's memory is None" past_memory;
+      test "write_gpu's bytes are on the GPU when it returns" written_on_return;
     ]
 
 (* Work *)

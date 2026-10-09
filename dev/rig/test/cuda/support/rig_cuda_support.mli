@@ -50,7 +50,13 @@ val read_gpu : nativeint -> int -> string
 
 val write_gpu : nativeint -> string -> unit
 (** [write_gpu a s] stores [s] in the GPU memory at the address [a], through
-    CUDA, after a {!with_}. *)
+    CUDA, after a {!with_}: the bytes are there when it returns, after every
+    work of CUDA's default stream ({!stall}). *)
+
+val stall : int -> flag:int -> ns:int -> unit
+(** [stall spin ~flag ~ns] runs the kernel [spin] of ["kernels.ptx"] with [flag]
+    and [ns] on CUDA's default stream, which rig's streams do not wait for,
+    after a {!with_}. *)
 
 (** {1:fills Fills} *)
 

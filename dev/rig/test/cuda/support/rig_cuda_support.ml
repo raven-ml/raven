@@ -43,6 +43,7 @@ let bind g =
          "cuFuncGetModule";
          "cuModuleGetFunctionCount";
          "cuModuleEnumerateFunctions";
+         "cuCtxSynchronize";
        |])
 
 include Rig_gpu_support.Make (struct
@@ -60,6 +61,9 @@ end)
 
 external read_gpu : nativeint -> int -> string = "rig_cuda_test_read_gpu"
 external write_gpu : nativeint -> string -> unit = "rig_cuda_test_write_gpu"
+external stall_c : int -> int -> int -> unit = "rig_cuda_test_stall"
+
+let stall spin ~flag ~ns = stall_c spin flag ns
 
 (* Fills *)
 
