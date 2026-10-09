@@ -851,7 +851,10 @@ type here = {
   mutable steps : lstep array;
   twos : B.t array array; (* Copy [k] of each memory of two copies. *)
   flag : B.t; (* The byte a loop's flag is read into. *)
-  last : Rig.Point.t option array; (* By device: the run's last point. *)
+  ran : bool array; (* By device: whether the run submitted there. *)
+  mutable last : Rig.Point.t array;
+      (* By device: the run's last point, where [ran]; empty before the first
+         submit. *)
   lock : Mutex.t;
   mutable runs : int;
 }
@@ -1165,7 +1168,8 @@ let load_here ~rails t devices =
           steps = [||];
           twos = [| twos 0; twos 1 |];
           flag = B.create Rig.host 1;
-          last = Array.make (Array.length devices) None;
+          ran = Array.make (Array.length devices) false;
+          last = [||];
           lock = Mutex.create ();
           runs = 0;
         }
@@ -1194,19 +1198,16 @@ let check_frame (t : t) devices (f : frame) =
   let n = Array.length t.inputs in
   if Array.length f.inputs <> n then
     invalid "%d inputs for a program of %d" (Array.length f.inputs) n;
-  Array.iteri
-    (fun i (spec : input) ->
-      let b = f.inputs.(i) and d = devices.(spec.device) in
-      if not (Rig.equal (B.device b) d) then
-        invalid "input %d is on %s, not %s" i
-          (Rig.name (B.device b))
-          (Rig.name d);
-      if B.length b < spec.bytes then
-        invalid "input %d holds %d bytes, fewer than %d" i (B.length b)
-          spec.bytes;
-      if spec.access = B.Read_write && B.access b = B.Read then
-        invalid "input %d is read-only memory, which the program writes" i)
-    t.inputs;
+  for i = 0 to n - 1 do
+    let spec = t.inputs.(i) in
+    let b = f.inputs.(i) and d = devices.(spec.device) in
+    if not (Rig.equal (B.device b) d) then
+      invalid "input %d is on %s, not %s" i (Rig.name (B.device b)) (Rig.name d);
+    if B.length b < spec.bytes then
+      invalid "input %d holds %d bytes, fewer than %d" i (B.length b) spec.bytes;
+    if spec.access = B.Read_write && B.access b = B.Read then
+      invalid "input %d is read-only memory, which the program writes" i
+  done;
   if Array.length f.ints > t.ints then
     invalid "%d ints for a program of %d" (Array.length f.ints) t.ints
 
@@ -1226,17 +1227,18 @@ let run_value (p : here) f k : value -> int = function
   | Leaf l -> leaf_value p k l
 
 let pass p f (s : slot array) bufs d =
-  Array.iteri
-    (fun i -> function
-      | Input j -> bufs.(i) <- input_on p f j d | Memory _ | Ints -> ())
-    s
+  for i = 0 to Array.length s - 1 do
+    match s.(i) with
+    | Input j -> bufs.(i) <- input_on p f j d
+    | Memory _ | Ints -> ()
+  done
 
 (* Drops the inputs [bufs] held, so a loaded program keeps no caller's buffer
    past its run. *)
 let unpass (s : slot array) bufs =
-  Array.iteri
-    (fun i -> function Input _ -> bufs.(i) <- unset | Memory _ | Ints -> ())
-    s
+  for i = 0 to Array.length s - 1 do
+    match s.(i) with Input _ -> bufs.(i) <- unset | Memory _ | Ints -> ()
+  done
 
 let mem_buffer p k (v : view) =
   B.view
@@ -1253,25 +1255,29 @@ let submit_step p f k after (spec : submit) copies =
   let d = spec.device in
   pass p f spec.reads q.reads d;
   pass p f spec.writes q.writes d;
-  Array.iter
-    (fun l ->
-      Array.iter
-        (fun h -> store_hole q.srun l.block l.params h (run_value p f k h.leaf))
-        l.holes;
-      if l.geometry_per_run then
-        store_geometry q.srun l.block l.groups l.threads l.shared
-          (run_value p f k))
-    q.launches;
-  let waits = match p.last.(d) with None -> after | Some _ -> [||] in
-  let point =
-    Fun.protect
-      ~finally:(fun () ->
-        unpass spec.reads q.reads;
-        unpass spec.writes q.writes)
-      (fun () ->
-        Rig.submit q.sub ~run:q.srun ~reads:q.reads ~writes:q.writes ~waits)
-  in
-  p.last.(d) <- Some point
+  for i = 0 to Array.length q.launches - 1 do
+    let l = q.launches.(i) in
+    for j = 0 to Array.length l.holes - 1 do
+      let h = l.holes.(j) in
+      store_hole q.srun l.block l.params h (run_value p f k h.leaf)
+    done;
+    if l.geometry_per_run then
+      store_geometry q.srun l.block l.groups l.threads l.shared
+        (run_value p f k)
+  done;
+  let waits = if p.ran.(d) then [||] else after in
+  match Rig.submit q.sub ~run:q.srun ~reads:q.reads ~writes:q.writes ~waits with
+  | point ->
+      unpass spec.reads q.reads;
+      unpass spec.writes q.writes;
+      if Array.length p.last = 0 then
+        p.last <- Array.make (Array.length p.devices) point;
+      p.last.(d) <- point;
+      p.ran.(d) <- true
+  | exception e ->
+      unpass spec.reads q.reads;
+      unpass spec.writes q.writes;
+      raise e
 
 let host p f k code buffers values split addresses words =
   Array.iteri
@@ -1319,24 +1325,60 @@ let rec exec (p : here) f k after = function
           Option.iter
             (fun w -> Bigarray.Array1.set p.ints.(k) w (Int64.of_int i))
             trip;
-          Array.iter (exec p f k after) body;
+          for s = 0 to Array.length body - 1 do
+            exec p f k after body.(s)
+          done;
           go (i + 1)
         end
       in
       go 0
 
-let run_here ~after (p : here) (f : frame) =
-  Mutex.protect p.lock @@ fun () ->
+(* The run's last point on each device it submitted to, in the devices'
+   order. *)
+let points (p : here) =
+  let n = ref 0 in
+  Array.iter (fun r -> if r then incr n) p.ran;
+  if !n = 0 then [||]
+  else begin
+    let a = Array.make !n p.last.(0) and j = ref 0 in
+    for d = 0 to Array.length p.ran - 1 do
+      if p.ran.(d) then begin
+        a.(!j) <- p.last.(d);
+        incr j
+      end
+    done;
+    a
+  end
+
+let run_steps ~after (p : here) (f : frame) =
   check_frame p.t p.devices f;
   let k = p.runs land 1 in
   p.runs <- p.runs + 1;
-  Array.iter (fun b -> B.wait b B.Read_write) p.twos.(k);
-  Array.iteri
-    (fun i v -> Bigarray.Array1.set p.ints.(k) i (Int64.of_int v))
-    f.ints;
-  Array.fill p.last 0 (Array.length p.last) None;
-  Array.iter (exec p f k after) p.steps;
-  Array.of_list (List.filter_map Fun.id (Array.to_list p.last))
+  let twos = p.twos.(k) in
+  for i = 0 to Array.length twos - 1 do
+    B.wait twos.(i) B.Read_write
+  done;
+  let ints = p.ints.(k) in
+  for i = 0 to Array.length f.ints - 1 do
+    Bigarray.Array1.set ints i (Int64.of_int f.ints.(i))
+  done;
+  Array.fill p.ran 0 (Array.length p.ran) false;
+  for s = 0 to Array.length p.steps - 1 do
+    exec p f k after p.steps.(s)
+  done;
+  points p
+
+(* The lock without [Mutex.protect]'s closure: a run allocates only its
+   answer. *)
+let run_here ~after (p : here) (f : frame) =
+  Mutex.lock p.lock;
+  match run_steps ~after p f with
+  | points ->
+      Mutex.unlock p.lock;
+      points
+  | exception e ->
+      Mutex.unlock p.lock;
+      raise e
 
 (* Programs of another machine *)
 
