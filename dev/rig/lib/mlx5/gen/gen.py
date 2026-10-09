@@ -68,14 +68,14 @@ SOURCES = {
 ABI_CONSTANTS = [
     ("mlx5dv.h", n) for n in [
         "MLX5_SEND_WQE_BB", "MLX5_OPCODE_RDMA_WRITE", "MLX5_OPCODE_RDMA_READ", "MLX5_WQE_CTRL_CQ_UPDATE",
-        "MLX5_INLINE_SEG", "MLX5_RCV_DBR", "MLX5_SND_DBR", "MLX5_CQE_OWNER_MASK",
+        "MLX5_INLINE_SEG", "MLX5_SND_DBR", "MLX5_CQE_OWNER_MASK",
         "MLX5_CQE_REQ", "MLX5_CQE_REQ_ERR", "MLX5_CQE_RESP_ERR", "MLX5_CQE_INVALID",
         "MLX5_CQE_SYNDROME_LOCAL_LENGTH_ERR", "MLX5_CQE_SYNDROME_LOCAL_QP_OP_ERR",
-        "MLX5_CQE_SYNDROME_LOCAL_PROT_ERR", "MLX5_CQE_SYNDROME_WR_FLUSH_ERR", "MLX5_CQE_SYNDROME_MW_BIND_ERR",
+        "MLX5_CQE_SYNDROME_LOCAL_PROT_ERR", "MLX5_CQE_SYNDROME_WR_FLUSH_ERR",
         "MLX5_CQE_SYNDROME_BAD_RESP_ERR", "MLX5_CQE_SYNDROME_LOCAL_ACCESS_ERR",
         "MLX5_CQE_SYNDROME_REMOTE_INVAL_REQ_ERR", "MLX5_CQE_SYNDROME_REMOTE_ACCESS_ERR",
         "MLX5_CQE_SYNDROME_REMOTE_OP_ERR", "MLX5_CQE_SYNDROME_TRANSPORT_RETRY_EXC_ERR",
-        "MLX5_CQE_SYNDROME_RNR_RETRY_EXC_ERR", "MLX5_CQE_SYNDROME_REMOTE_ABORTED_ERR", "MLX5_CQ_DB_REQ_NOT",
+        "MLX5_CQE_SYNDROME_REMOTE_ABORTED_ERR", "MLX5_CQ_DB_REQ_NOT",
         "MLX5_CQ_DOORBELL"]
 ] + [
     ("mlx5.h", n) for n in ["MLX5_BF_OFFSET", "MLX5_CQ_SET_CI", "MLX5_CQ_ARM_DB", "MLX5_IB_MMAP_CMD_SHIFT",
@@ -126,7 +126,7 @@ UVERBS_CONSTANTS = [
         "IBV_QPS_INIT", "IBV_QPS_RTR", "IBV_QPS_RTS", "IBV_QP_STATE", "IBV_QP_ACCESS_FLAGS", "IBV_QP_PKEY_INDEX",
         "IBV_QP_PORT", "IBV_QP_AV", "IBV_QP_PATH_MTU", "IBV_QP_TIMEOUT", "IBV_QP_RETRY_CNT", "IBV_QP_RNR_RETRY",
         "IBV_QP_RQ_PSN", "IBV_QP_MAX_QP_RD_ATOMIC", "IBV_QP_MIN_RNR_TIMER", "IBV_QP_SQ_PSN",
-        "IBV_QP_MAX_DEST_RD_ATOMIC", "IBV_QP_DEST_QPN", "IBV_MTU_256", "IBV_MTU_4096", "IBV_PORT_ACTIVE",
+        "IBV_QP_MAX_DEST_RD_ATOMIC", "IBV_QP_DEST_QPN", "IBV_MTU_256", "IBV_PORT_ACTIVE",
         "IBV_LINK_LAYER_INFINIBAND", "IBV_LINK_LAYER_ETHERNET", "IBV_EVENT_CQ_ERR", "IBV_EVENT_QP_FATAL",
         "IBV_EVENT_QP_REQ_ERR", "IBV_EVENT_QP_ACCESS_ERR", "IBV_EVENT_DEVICE_FATAL", "IBV_EVENT_PORT_ACTIVE",
         "IBV_EVENT_PORT_ERR"]
@@ -138,7 +138,7 @@ UVERBS_STRUCTS = [
         "get_context", "get_context_resp", "query_device", "query_device_resp", "query_port", "query_port_resp",
         "alloc_pd", "alloc_pd_resp", "reg_mr", "reg_mr_resp", "dereg_mr", "create_comp_channel",
         "create_comp_channel_resp", "create_cq", "create_cq_resp", "destroy_cq", "destroy_cq_resp", "create_qp",
-        "create_qp_resp", "qp_dest", "modify_qp", "destroy_qp", "destroy_qp_resp", "async_event_desc",
+        "create_qp_resp", "modify_qp", "destroy_qp", "destroy_qp_resp", "async_event_desc",
         "comp_event_desc"]
 ]
 

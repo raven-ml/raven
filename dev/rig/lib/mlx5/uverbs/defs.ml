@@ -99,7 +99,6 @@ let ibv_qp_sq_psn = 0x10000
 let ibv_qp_max_dest_rd_atomic = 0x20000
 let ibv_qp_dest_qpn = 0x100000
 let ibv_mtu_256 = 1
-let ibv_mtu_4096 = 5
 let ibv_port_active = 4
 let ibv_link_layer_infiniband = 1
 let ibv_link_layer_ethernet = 2
@@ -345,22 +344,6 @@ module Create_qp_resp = struct
   let max_inline_data = (24, 4)
   let reserved = (28, 4)
   let driver_data = (32, 0)
-end
-
-module Qp_dest = struct
-  let sizeof = 32
-  let dgid = (0, 16)
-  let flow_label = (16, 4)
-  let dlid = (20, 2)
-  let reserved = (22, 2)
-  let sgid_index = (24, 1)
-  let hop_limit = (25, 1)
-  let traffic_class = (26, 1)
-  let sl = (27, 1)
-  let src_path_bits = (28, 1)
-  let static_rate = (29, 1)
-  let is_global = (30, 1)
-  let port_num = (31, 1)
 end
 
 module Modify_qp = struct
