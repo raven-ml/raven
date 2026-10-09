@@ -1,0 +1,16 @@
+; The code objects of nx.amd's kernels and of the AMD suite's harness,
+; which gen.py compiles ahead of time on a machine with the pinned comgr.
+; Their digests are checked here on every machine.
+
+(rule
+ (alias runtest)
+ (deps
+  (:pins pins.json)
+  gen.py
+  ../../array/nx_dtype.h
+  (glob_files libc/*.h)
+  ../../../test/amd/support/harness.h
+  (glob_files ../../../test/amd/support/*.hip)
+  (glob_files ../../../test/amd/support/*.co))
+ (action
+  (run %{exe:../../../tools/pins/pins.exe} %{pins} lib/amd/kernels %{deps})))
