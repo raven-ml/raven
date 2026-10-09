@@ -2997,8 +2997,10 @@ let one_gpu () =
 
 (* Every root shows this machine: a root that links to [/] reaches the same
    GPU, whose address space the process holds once, so devices opened through
-   either root share its memory, whichever opens first. The link lives beside
-   the suite in _build; it is unlinked, never walked. *)
+   either root share its memory, whichever opens first. The link lives in the
+   suite's working directory only while the test runs: one left in a source
+   tree, where the suite runs on a GPU host, has dune walk the whole
+   filesystem. *)
 let mirror = "mirror"
 
 let two_roots () =
@@ -3007,6 +3009,7 @@ let two_roots () =
   | _ -> Unix.unlink mirror
   | exception Unix.Unix_error (Unix.ENOENT, _, _) -> ());
   Unix.symlink "/" mirror;
+  Fun.protect ~finally:(fun () -> Unix.unlink mirror) @@ fun () ->
   let through_mirror () = Rig_amd_amdgpu.open_ ~root:mirror 0 in
   S.with_ (fun t -> one_gpu_shared ~second:through_mirror t.g);
   let g = match through_mirror () with Ok g -> g | Error why -> fail why in
