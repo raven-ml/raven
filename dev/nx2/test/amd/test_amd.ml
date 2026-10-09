@@ -640,6 +640,60 @@ let sign_extends () =
             (String.get_int64_le (S.read y.buffer) 0))
     [ D.Any D.Int8; D.Any D.Int16 ]
 
+(* Operands whose rows are 16-byte vectors apart but whose k ends inside a
+   vector, each buffer ending at its last element, the gaps between rows
+   holding NaN or the integer extreme: no gap enters a sum. *)
+let rows_past_k (dt, acc, out) =
+  let g = S.gpu () in
+  let m = 64 and n = 64 and k = 77 and lead = 80 and w = width dt in
+  let gap = List.hd (edges dt) in
+  let strided rows ~seed : S.operand =
+    let v =
+      values g dt ~batch:1 ~rows ~k ~draw:(Spread 4) ~seed ~cancel:false
+    in
+    let len = ((rows - 1) * lead) + k in
+    let laid =
+      Bytes.of_string (String.concat "" (List.init len (fun _ -> gap)))
+    in
+    for r = 0 to rows - 1 do
+      Bytes.blit_string v (w * r * k) laid (w * r * lead) (w * k)
+    done;
+    let buffer = S.buffer g (w * len) in
+    S.write buffer (Bytes.to_string laid);
+    {
+      buffer;
+      dtype = code dt;
+      shape = [| 1; rows; k |];
+      strides = [| rows * lead; lead; 1 |];
+      first = 0;
+    }
+  in
+  let a = strided m ~seed:1 and b = strided n ~seed:2 in
+  let y : S.operand =
+    {
+      buffer = S.buffer g (width out * m * n);
+      dtype = code out;
+      shape = [| 1; m; n |];
+      strides = [| m * n; n; 1 |];
+      first = 0;
+    }
+  in
+  match
+    S.contract g ~a ~b ~y
+      ~batch:[ (0, 0) ]
+      ~contracting:[ (2, 2) ]
+      ~acc:(code acc) ()
+  with
+  | None -> fail "the plan declines"
+  | Some p ->
+      S.run g p;
+      let r =
+        Nx_gpu_ref.contract ~a:(view a) ~b:(view b) ~y:(view y) ~batch:1 ~m ~n
+          ~k ~acc:(code acc) ~samples:4096 ()
+      in
+      equal ~msg:(strf "wrong outputs, the first %d" r.at) int 0 r.wrong;
+      at_most ~msg:(strf "worst at output %d" r.at) float_exact ~than:1. r.worst
+
 (* Every dtype quadruple *)
 
 let pp_dtype ppf (D.Any d) = Format.pp_print_string ppf (D.name d)
@@ -925,6 +979,16 @@ let tests =
         cases ~name:case_name "edge inputs within the error bound" edge_cases
           within_bound;
         test "an int32 sum sign-extends into int64" sign_extends;
+        cases
+          ~name:(fun (D.Any d, _, _) -> D.name d)
+          "rows past k: their gaps enter no sum"
+          D.
+            [
+              (Any Bfloat16, Any Float32, Any Bfloat16);
+              (Any Float16, Any Float32, Any Float16);
+              (Any Int8, Any Int32, Any Int32);
+            ]
+          rows_past_k;
         prop ~count:400 "every dtype quadruple: declines or within the bound"
           quadruples every_quadruple;
         cases

@@ -35,13 +35,16 @@ DEVICE uint32_t group_z(void) { return __builtin_amdgcn_workgroup_id_z(); }
 DEVICE u64 index_of(uint32_t n) { return (u64)group() * n + item(); }
 
 /* Waits for the workgroup's work-items, each seeing the others' writes to
-   the local data share before it. The fences order the local data share
-   alone: a fence over global memory too would invalidate the compute
-   unit's vector cache at every barrier. */
+   the local data share before it: it waits for the wave's own writes
+   there, then meets the others. It orders the local data share alone.
+   Written as the instructions: before the compiler's barrier, gfx12's
+   code waits for every load in flight, and a k-tile's loads must stay in
+   flight across it; a fence over global memory would also empty the
+   compute unit's vector cache. */
 DEVICE void barrier(void) {
-  __builtin_amdgcn_fence(__ATOMIC_RELEASE, "workgroup", "local");
-  __builtin_amdgcn_s_barrier();
-  __builtin_amdgcn_fence(__ATOMIC_ACQUIRE, "workgroup", "local");
+  asm volatile("s_wait_dscnt 0x0\n\t"
+               "s_barrier_signal -1\n\t"
+               "s_barrier_wait 0xffff" ::: "memory");
 }
 
 /* [v] of the lane [lane] ^ [d] of the wave of 32. */

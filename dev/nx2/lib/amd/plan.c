@@ -345,11 +345,13 @@ int nx_amd_plan_contract(const nx_amd_contract_in *in,
   int vb = vectors(b->address, fb ? sn[0] : sk[1], fb ? sk[1] : sn[0],
                    sbat[1], bytes_of(b->dtype));
   if (wmma_kind >= 0) {
-    /* The WMMA kernels read rows of k as vectors: another operand is
-       packed into scratch with k contiguous. */
-    const int pack_a = fa || !va || is_f8(at);
-    const int pack_b = fb || !vb || is_f8(b->dtype);
-    const int mes = wmma_kind == K_s8 ? 1 : 2;
+    /* The WMMA kernels read rows of k as whole vectors and never past a
+       row's last: another operand, or one whose k ends inside a vector,
+       is packed into scratch with k contiguous, its rows padded with
+       zeros. */
+    const int mes = wmma_kind == K_s8 ? 1 : 2, whole = k % (16 / mes) == 0;
+    const int pack_a = fa || !va || is_f8(at) || !whole;
+    const int pack_b = fb || !vb || is_f8(b->dtype) || !whole;
     const int to = wmma_kind == K_s8   ? NX_INT8
                    : wmma_kind == K_f16 ? NX_FLOAT16
                                         : NX_BFLOAT16;

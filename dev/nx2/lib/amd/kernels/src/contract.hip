@@ -11,8 +11,9 @@
      on gfx12's WMMA 16 x 16 x 16. Each output sums its k in steps of 16
      in increasing k, one WMMA a step.
 
-       global --16-byte loads (zero past the extents)--> registers --> one
-       of two local data share k-tiles --8 k a lane--> fragments --WMMA-->
+       global --16-byte loads (zero past the extents), two k-tiles ahead-->
+       registers --> one of two local data share k-tiles --8 k a lane-->
+       fragments --WMMA-->
        accumulators --> combine (splits) --> + init --> y
 
    - simt (m > 16): float32 or float64 sums by fma, integer sums wrapping
@@ -249,8 +250,9 @@ template <> struct Wmma<KIND_s8> {
 
 /* One operand of a workgroup: [R] rows (m for a, n for b) from [r0], their
    k-tiles of [BKB] bytes loaded as 16-byte chunks, [CH] a work-item, into
-   rows of [LDB] bytes of the local data share. Rows hold whole vectors: the
-   plan packs an operand whose do not. */
+   rows of [LDB] bytes of the local data share. Rows hold whole vectors, k's
+   end included: the plan packs an operand whose do not, its rows padded
+   with zeros. */
 template <int R, int BKB, int ES, int LDB, int THREADS> struct Operand {
   static constexpr int C = BKB / 16;         /* chunks a row */
   static constexpr int CH = R * C / THREADS; /* chunks a work-item */
@@ -260,32 +262,33 @@ template <int R, int BKB, int ES, int LDB, int THREADS> struct Operand {
   int64_t lead;     /* bytes from a row to the next */
   int rows, k;      /* rows from r0 to the extent; k in elements */
 
-  /* This work-item's chunks of k-tile [kt]: zero past the extents, and a
-     chunk's elements past k zero. */
+  /* Whether chunk [e] of k-tile [kt] is inside the extents. */
+  DEVICE bool inside(int e, int kt) const {
+    return e / C < rows && kt * (BKB / ES) + e % C * (16 / ES) < k;
+  }
+
+  /* This work-item's chunks of k-tile [kt], as read. Every chunk is one
+     16-byte load, with no branch, so that the compiler counts a k-tile's
+     loads in flight: a chunk past the extents reads row 0's first. */
   DEVICE void load(u32x4 (&v)[CH], int kt, int tid) const {
 #pragma unroll
     for (int it = 0; it < CH; it++) {
-      const int e = tid + it * THREADS, row = e / C;
-      const int kk = kt * (BKB / ES) + e % C * (16 / ES);
-      const int inside = row < rows ? min_(16 / ES, k - kk) : 0;
-      const char *src = base + row * lead + (int64_t)kk * ES;
-      if (inside == 16 / ES) {
-        v[it] = *(const u32x4 *)src;
-        continue;
-      }
-      u32x4 w = 0;
-#pragma unroll
-      for (int q = 0; q < 16; q++)
-        if (q < inside * ES) w[q / 4] |= (uint32_t)(uint8_t)src[q] << 8 * (q % 4);
-      v[it] = w;
+      const int e = tid + it * THREADS;
+      const int64_t at = e / C * lead + (int64_t)kt * BKB + e % C * 16;
+      v[it] = *(const u32x4 *)(inside(e, kt) ? base + at : base);
     }
   }
 
-  DEVICE void stash(uint8_t *s, const u32x4 (&v)[CH], int tid) const {
+  /* The chunks [v] of k-tile [kt] into the tile [s], those past the
+     extents zero. Cleared here, at the store, so that the loads stay in
+     flight until their tile is stored. */
+  DEVICE void stash(uint8_t *s, const u32x4 (&v)[CH], int kt,
+                    int tid) const {
 #pragma unroll
     for (int it = 0; it < CH; it++) {
       const int e = tid + it * THREADS;
-      *(u32x4 *)(s + e / C * LDB + e % C * 16) = v[it];
+      *(u32x4 *)(s + e / C * LDB + e % C * 16) =
+          inside(e, kt) ? v[it] : (u32x4)0;
     }
   }
 };
@@ -332,25 +335,27 @@ DEVICE void wmma_contract(const contract_params &p) {
                p.sb[1] * ES, p.n - n0, p.k};
 
   typename W::tile acc[MI][NI] = {};
-  u32x4 ra[A::CH], rb[B::CH];
-  if (KT > 0) {
-    a.load(ra, kt0, tid);
-    b.load(rb, kt0, tid);
-    a.stash(smem, ra, tid);
-    b.stash(smem + BM * LDB, rb, tid);
-  }
-  barrier();
 
-  /* The next k-tile's loads are in flight while this one's WMMAs run; its
-     stores go to the other stage, which every wave finished reading at
-     the last barrier. */
-  for (int kt = 0; kt < KT; kt++) {
-    const uint8_t *sa = smem + kt % 2 * STAGE, *sb = sa + BM * LDB;
-    const bool more = kt + 1 < KT;
-    if (more) {
-      a.load(ra, kt0 + kt + 1, tid);
-      b.load(rb, kt0 + kt + 1, tid);
-    }
+  /* Tile kt of this range's k into the register set [s]. Past the range
+     it loads the last tile again, unused: under a branch, the loads would
+     leave the compiler unsure which are the newest, and it would wait for
+     every load in flight before each stash. */
+  u32x4 ra[2][A::CH], rb[2][B::CH];
+  auto fetch = [&](int s, int kt) __attribute__((always_inline)) {
+    const int t = kt0 + min_(kt, KT - 1);
+    a.load(ra[s], t, tid);
+    b.load(rb[s], t, tid);
+  };
+  /* The register set [s], holding tile kt, into the local data share's
+     stage [stage]. */
+  auto stash = [&](int s, int stage, int kt) __attribute__((always_inline)) {
+    uint8_t *st = smem + stage * STAGE;
+    a.stash(st, ra[s], kt0 + kt, tid);
+    b.stash(st + BM * LDB, rb[s], kt0 + kt, tid);
+  };
+  /* The WMMAs of the k-tile in the stage [stage]. */
+  auto compute = [&](int stage) __attribute__((always_inline)) {
+    const uint8_t *sa = smem + stage * STAGE, *sb = sa + BM * LDB;
 #pragma unroll
     for (int ks = 0; ks < KS; ks++) {
       const int k = ks * 16 + lane / 16 * 8;
@@ -369,11 +374,28 @@ DEVICE void wmma_contract(const contract_params &p) {
         for (int j = 0; j < NI; j++)
           acc[i][j] = W::step(fa[i], fb[j], acc[i][j]);
     }
-    if (more) {
-      uint8_t *next = smem + (kt + 1) % 2 * STAGE;
-      a.stash(next, ra, tid);
-      b.stash(next + BM * LDB, rb, tid);
-    }
+  };
+
+  /* Two k-tiles ahead: tile kt computes from one stage while tile kt + 1,
+     loaded a tile earlier, goes to the other stage, which every wave
+     finished reading at the last barrier, and tile kt + 2's loads are in
+     flight in the register set tile kt left. Unrolled by two, so that
+     each register set and stage is named by a constant. */
+  if (KT > 0) {
+    fetch(0, 0);
+    fetch(1, 1);
+    stash(0, 0, 0);
+    barrier();
+  }
+  for (int kt = 0; kt < KT; kt += 2) {
+    fetch(0, kt + 2);
+    compute(0);
+    if (kt + 1 < KT) stash(1, 1, kt + 1);
+    barrier();
+    if (kt + 1 >= KT) break;
+    fetch(1, kt + 3);
+    compute(1);
+    if (kt + 2 < KT) stash(0, 0, kt + 2);
     barrier();
   }
 
