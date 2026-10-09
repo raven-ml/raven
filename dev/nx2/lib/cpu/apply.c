@@ -5,15 +5,11 @@
 
 /* Kinds of no, two and three operands.
 
-   Each kind runs as a row function per dtype, which loads each operand's
-   element into its compute type, computes the kind as nx_kinds.h does, and
-   stores the result in the destination's dtype: 8- and 16-bit integers
-   compute in the 32-bit type of their signedness and wrap on the store,
-   booleans compute in uint32 from 0 or 1. The walk hands the row functions
-   rows of a block; rows of contiguous elements take a loop the compiler
-   vectorises. A dtype with no row function, a narrow float, complex or
-   sub-byte one, is declined. Fill and Where move bits, so they run on every
-   dtype of a byte or more by its width alone.
+   Each kind of two or three operands runs as a row function per dtype, the
+   target table's (rows.c). The walk hands the rows a block's rows, and an
+   input whose rows step more than one element is staged first. Fill and
+   Where move bits, so they run on every dtype of a byte or more by its
+   width alone.
 
    OCaml passes a kind as its value: a constant constructor is its index
    among the type's constant constructors, a constructor with an argument a
@@ -25,11 +21,13 @@
 #include <caml/mlvalues.h>
 
 #include "cpu.h"
-#include "nx_kinds.h"
 #include "nx_spec.h"
 
 /* A block holds at most NX_CPU_SLOT bytes of its widest operand, so that
-   an input staged into a slot fits it and the block's rows stay in L1. */
+   an input staged into a slot fits it and the block's rows stay in L1.
+   Blocks of 64 Ki elements where no input is staged ran fill-f32-1M and
+   where-f32-1M slower on kimchi (29-37 against 28-33 us, 44-60 against
+   44-54): fewer units for the job's threads to share. */
 static int64_t most(int n, const nx_array *a) {
   int w = 1;
   for (int k = 0; k < n; k++)
@@ -37,137 +35,8 @@ static int64_t most(int n, const nx_array *a) {
   return NX_CPU_SLOT / w;
 }
 
-typedef void (*row2)(int64_t n, uint8_t *d, int64_t sd, const uint8_t *x,
-                     int64_t sx, const uint8_t *y, int64_t sy);
-
-typedef void (*row3)(int64_t n, uint8_t *d, int64_t sd, const uint8_t *c,
-                     int64_t sc, const uint8_t *x, int64_t sx,
-                     const uint8_t *y, int64_t sy);
-
-/* Rows */
-
-/* A row of [F] over two operands of the storage type [T], loaded by [LD]
-   into the compute type, stored as [R]. */
-#define BIN(NAME, T, R, LD, F)                                               \
-  static void NAME(int64_t n, uint8_t *d_, int64_t sd, const uint8_t *x_,   \
-                   int64_t sx, const uint8_t *y_, int64_t sy) {             \
-    R *d = (R *)d_;                                                          \
-    const T *x = (const T *)x_, *y = (const T *)y_;                          \
-    if (sd == 1 && sx == 1 && sy == 1)                                       \
-      for (int64_t i = 0; i < n; i++) d[i] = (R)F(LD(x[i]), LD(y[i]));       \
-    else                                                                     \
-      for (int64_t i = 0; i < n; i++)                                        \
-        d[i * sd] = (R)F(LD(x[i * sx]), LD(y[i * sy]));                      \
-  }
-
-#define FMA(NAME, T, LD, F)                                                  \
-  static void NAME(int64_t n, uint8_t *d_, int64_t sd, const uint8_t *a_,   \
-                   int64_t sa, const uint8_t *b_, int64_t sb,                \
-                   const uint8_t *c_, int64_t sc) {                          \
-    T *d = (T *)d_;                                                          \
-    const T *a = (const T *)a_, *b = (const T *)b_, *c = (const T *)c_;      \
-    if (sd == 1 && sa == 1 && sb == 1 && sc == 1)                            \
-      for (int64_t i = 0; i < n; i++)                                        \
-        d[i] = (T)F(LD(a[i]), LD(b[i]), LD(c[i]));                           \
-    else                                                                     \
-      for (int64_t i = 0; i < n; i++)                                        \
-        d[i * sd] = (T)F(LD(a[i * sa]), LD(b[i * sb]), LD(c[i * sc]));       \
-  }
-
-/* The kinds every dtype of a class takes, at the compute suffix [S]. */
-#define COMPARES(D, T, LD, S)                                                \
-  BIN(equal_##D, T, uint8_t, LD, nx_equal_##S)                               \
-  BIN(not_equal_##D, T, uint8_t, LD, nx_not_equal_##S)                       \
-  BIN(less_##D, T, uint8_t, LD, nx_less_##S)                                 \
-  BIN(less_equal_##D, T, uint8_t, LD, nx_less_equal_##S)                     \
-  BIN(maximum_##D, T, T, LD, nx_maximum_##S)                                 \
-  BIN(minimum_##D, T, T, LD, nx_minimum_##S)
-
-#define ARITH(D, T, LD, S)                                                   \
-  COMPARES(D, T, LD, S)                                                      \
-  BIN(add_##D, T, T, LD, nx_add_##S)                                         \
-  BIN(sub_##D, T, T, LD, nx_sub_##S)                                         \
-  BIN(mul_##D, T, T, LD, nx_mul_##S)                                         \
-  BIN(mod_##D, T, T, LD, nx_mod_##S)                                         \
-  BIN(pow_##D, T, T, LD, nx_pow_##S)                                         \
-  FMA(fma_##D, T, LD, nx_fma_##S)
-
-#define FLOATS(D, T, S)                                                      \
-  ARITH(D, T, , S)                                                           \
-  BIN(fdiv_##D, T, T, , nx_fdiv_##S)                                         \
-  BIN(atan2_##D, T, T, , nx_atan2_##S)
-
-#define INTS(D, T, CT, S)                                                    \
-  ARITH(D, T, (CT), S)                                                       \
-  BIN(idiv_##D, T, T, (CT), nx_idiv_##S)                                     \
-  BIN(and_##D, T, T, (CT), nx_and_##S)                                       \
-  BIN(or_##D, T, T, (CT), nx_or_##S)                                         \
-  BIN(xor_##D, T, T, (CT), nx_xor_##S)
-
-/* A boolean is 1 where its byte is not zero. */
-#define BOOL_LD(v) ((uint32_t)((v) != 0))
-
-FLOATS(f32, float, f32)
-FLOATS(f64, double, f64)
-INTS(i8, int8_t, int32_t, i32)
-INTS(i16, int16_t, int32_t, i32)
-INTS(i32, int32_t, int32_t, i32)
-INTS(i64, int64_t, int64_t, i64)
-INTS(u8, uint8_t, uint32_t, u32)
-INTS(u16, uint16_t, uint32_t, u32)
-INTS(u32, uint32_t, uint32_t, u32)
-INTS(u64, uint64_t, uint64_t, u64)
-COMPARES(b, uint8_t, BOOL_LD, u32)
-BIN(and_b, uint8_t, uint8_t, BOOL_LD, nx_and_u32)
-BIN(or_b, uint8_t, uint8_t, BOOL_LD, nx_or_u32)
-BIN(xor_b, uint8_t, uint8_t, BOOL_LD, nx_xor_u32)
-BIN(threefry_u64, uint64_t, uint64_t, , nx_threefry_u64)
-
-/* The tables, by kind then dtype: NULL where the case is declined. */
-
-#define CMP_ROWS(DT, D)                                                      \
-  [NX_OP2_EQUAL][DT] = equal_##D, [NX_OP2_NOT_EQUAL][DT] = not_equal_##D,    \
-  [NX_OP2_LESS][DT] = less_##D, [NX_OP2_LESS_EQUAL][DT] = less_equal_##D,    \
-  [NX_OP2_MAXIMUM][DT] = maximum_##D, [NX_OP2_MINIMUM][DT] = minimum_##D
-
-#define ARITH_ROWS(DT, D)                                                    \
-  CMP_ROWS(DT, D), [NX_OP2_ADD][DT] = add_##D, [NX_OP2_SUB][DT] = sub_##D,   \
-  [NX_OP2_MUL][DT] = mul_##D, [NX_OP2_MOD][DT] = mod_##D,                    \
-  [NX_OP2_POW][DT] = pow_##D
-
-#define FLOAT_ROWS(DT, D)                                                    \
-  ARITH_ROWS(DT, D), [NX_OP2_FDIV][DT] = fdiv_##D,                           \
-  [NX_OP2_ATAN2][DT] = atan2_##D
-
-#define INT_ROWS(DT, D)                                                      \
-  ARITH_ROWS(DT, D), [NX_OP2_IDIV][DT] = idiv_##D,                           \
-  [NX_OP2_AND][DT] = and_##D, [NX_OP2_OR][DT] = or_##D,                      \
-  [NX_OP2_XOR][DT] = xor_##D
-
-static const row2 rows2[NX_OP2_COUNT][NX_DTYPE_COUNT] = {
-    FLOAT_ROWS(NX_FLOAT32, f32),
-    FLOAT_ROWS(NX_FLOAT64, f64),
-    INT_ROWS(NX_INT8, i8),
-    INT_ROWS(NX_INT16, i16),
-    INT_ROWS(NX_INT32, i32),
-    INT_ROWS(NX_INT64, i64),
-    INT_ROWS(NX_UINT8, u8),
-    INT_ROWS(NX_UINT16, u16),
-    INT_ROWS(NX_UINT32, u32),
-    INT_ROWS(NX_UINT64, u64),
-    CMP_ROWS(NX_BOOL, b),
-    [NX_OP2_AND][NX_BOOL] = and_b,
-    [NX_OP2_OR][NX_BOOL] = or_b,
-    [NX_OP2_XOR][NX_BOOL] = xor_b,
-    [NX_OP2_THREEFRY][NX_UINT64] = threefry_u64,
-};
-
-static const row3 fmas[NX_DTYPE_COUNT] = {
-    [NX_FLOAT32] = fma_f32, [NX_FLOAT64] = fma_f64, [NX_INT8] = fma_i8,
-    [NX_INT16] = fma_i16,   [NX_INT32] = fma_i32,   [NX_INT64] = fma_i64,
-    [NX_UINT8] = fma_u8,    [NX_UINT16] = fma_u16,  [NX_UINT32] = fma_u32,
-    [NX_UINT64] = fma_u64,
-};
+typedef nx_cpu_row2 row2;
+typedef nx_cpu_row3 row3;
 
 /* Where selects bits: one row per width, its condition a boolean. */
 #define WHERE(W, T)                                                          \
@@ -338,7 +207,7 @@ static int op2_code(value k) {
 
 value nx_cpu_apply2(value k, value vd, value vx, value vy) {
   int x = nx_array_dtype(vx), c = op2_code(k);
-  row2 f = rows2[c][x];
+  row2 f = nx_cpu_runs->op2[c][x];
   if (f == NULL) return Val_int(NX_DECLINED);
   int d = c >= NX_OP2_EQUAL ? NX_BOOL : x;
   nx_operand in[3] = {{vd, d, 1}, {vx, x, 0}, {vy, x, 0}};
@@ -354,7 +223,7 @@ value nx_cpu_apply3(value k, value vd, value vc, value vx, value vy) {
     f = bits < 8 || nx_array_dtype(vc) == NX_BIT ? NULL : where_of(bits / 8);
     c = NX_BOOL;
   } else
-    f = fmas[x];
+    f = nx_cpu_runs->fma[x];
   if (f == NULL) return Val_int(NX_DECLINED);
   nx_operand in[4] = {{vd, x, 1}, {vc, c, 0}, {vx, x, 0}, {vy, x, 0}};
   job j = {.f3 = f};

@@ -7,5 +7,5 @@
  (libraries nx_array nx_cpu rig rig.pool thumper)
  (foreign_stubs
   (language c)
-  (include_dirs ../../../lib/array ../../../lib/cpu)
+  (include_dirs ../../../lib/array ../../../lib/kernel ../../../lib/cpu)
   (names nx_cpu_bench_stubs nx_cpu_bench_codec nx_cpu_bench_fma)))

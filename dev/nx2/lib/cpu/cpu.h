@@ -24,6 +24,7 @@
 #include <stdint.h>
 
 #include "nx_array.h"
+#include "nx_spec.h"
 #include "rig_pool.h"
 
 /* Targets
@@ -72,6 +73,15 @@ typedef struct {
   nx_cpu_thin thin[3];
 } nx_cpu_gemm;
 
+/* A row of a kind of two operands: n elements of [d] from [x] and [y], each
+   stepping its own count of elements; of three, from [c], [x] and [y]. */
+typedef void (*nx_cpu_row2)(int64_t n, uint8_t *d, int64_t sd,
+                            const uint8_t *x, int64_t sx, const uint8_t *y,
+                            int64_t sy);
+typedef void (*nx_cpu_row3)(int64_t n, uint8_t *d, int64_t sd,
+                            const uint8_t *c, int64_t sc, const uint8_t *x,
+                            int64_t sx, const uint8_t *y, int64_t sy);
+
 /* The bytes of the largest tile of any target's microkernel. */
 #define NX_CPU_TILE 4096
 
@@ -85,6 +95,10 @@ typedef struct {
   /* gemm[acc] contracts in acc; its kernel is NULL where the target has
      none. */
   nx_cpu_gemm gemm[NX_DTYPE_COUNT];
+  /* op2[k][dt] computes the kind of two operands k (nx_spec.h's code) at
+     dt, fma[dt] fma: NULL where the table declines (rows.c). */
+  nx_cpu_row2 op2[NX_OP2_COUNT][NX_DTYPE_COUNT];
+  nx_cpu_row3 fma[NX_DTYPE_COUNT];
 } nx_cpu_target;
 
 /* The tables, each filled when the program starts on a host that runs it,
@@ -94,6 +108,7 @@ typedef struct {
 extern nx_cpu_target nx_cpu_base;
 void nx_cpu_fill_base(nx_cpu_target *t);
 void nx_cpu_fill_generic_base(nx_cpu_target *t);
+void nx_cpu_fill_rows_base(nx_cpu_target *t);
 #if defined(__aarch64__)
 void nx_cpu_fill_neon(nx_cpu_target *t);
 #endif
@@ -101,6 +116,7 @@ void nx_cpu_fill_neon(nx_cpu_target *t);
 extern nx_cpu_target nx_cpu_v3;
 void nx_cpu_fill_v3(nx_cpu_target *t);
 void nx_cpu_fill_generic_v3(nx_cpu_target *t);
+void nx_cpu_fill_rows_v3(nx_cpu_target *t);
 void nx_cpu_fill_avx2(nx_cpu_target *t);
 #endif
 
