@@ -5,27 +5,28 @@
 # host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed under load 3.3 on 6 cores
+# forced: blessed floor/host/memcpy-4M copy/cuda/host-to-borrow-4M copy/cuda/borrow-to-host-4M copy/nv/host-to-borrow-4M copy/nv/borrow-to-host-4M under load 7.3 on 6 cores
 
 copy/cuda/borrow-to-host-4M	alloc_words	exact	0
-copy/cuda/borrow-to-host-4M	wall_time	batch=32	n=20	1.831e-04	1.829e-04 1.830e-04 1.830e-04 1.830e-04 1.830e-04 1.830e-04 1.830e-04 1.830e-04 1.830e-04 1.831e-04 1.831e-04 1.832e-04 1.832e-04 1.832e-04 1.832e-04 1.832e-04 1.832e-04 1.833e-04 1.834e-04 1.872e-04
+copy/cuda/borrow-to-host-4M	wall_time	batch=32	n=20	1.843e-04	1.834e-04 1.838e-04 1.838e-04 1.838e-04 1.840e-04 1.840e-04 1.841e-04 1.841e-04 1.841e-04 1.842e-04 1.843e-04 1.843e-04 1.843e-04 1.844e-04 1.844e-04 1.848e-04 1.853e-04 1.853e-04 1.854e-04 1.877e-04
 copy/cuda/from-device-256M	alloc_words	exact	120
 copy/cuda/from-device-256M	wall_time	batch=1	n=20	1.410e-02	1.409e-02 1.409e-02 1.409e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.412e-02
 copy/cuda/from-device-off-page-256M	alloc_words	exact	1153
 copy/cuda/from-device-off-page-256M	wall_time	batch=1	n=20	1.719e-02	1.717e-02 1.717e-02 1.718e-02 1.718e-02 1.718e-02 1.718e-02 1.719e-02 1.719e-02 1.719e-02 1.719e-02 1.719e-02 1.719e-02 1.719e-02 1.719e-02 1.719e-02 1.719e-02 1.720e-02 1.720e-02 1.720e-02 1.720e-02
 copy/cuda/host-to-borrow-4M	alloc_words	exact	0
-copy/cuda/host-to-borrow-4M	wall_time	batch=32	n=20	1.832e-04	1.830e-04 1.830e-04 1.831e-04 1.831e-04 1.832e-04 1.832e-04 1.832e-04 1.832e-04 1.832e-04 1.832e-04 1.832e-04 1.832e-04 1.832e-04 1.833e-04 1.833e-04 1.833e-04 1.833e-04 1.834e-04 1.837e-04 1.841e-04
+copy/cuda/host-to-borrow-4M	wall_time	batch=32	n=20	1.841e-04	1.836e-04 1.838e-04 1.838e-04 1.839e-04 1.840e-04 1.840e-04 1.840e-04 1.840e-04 1.841e-04 1.841e-04 1.841e-04 1.842e-04 1.842e-04 1.843e-04 1.843e-04 1.846e-04 1.850e-04 1.850e-04 1.851e-04 1.859e-04
 copy/cuda/to-device-256M	alloc_words	exact	120
 copy/cuda/to-device-256M	wall_time	batch=1	n=20	1.068e-02	1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.069e-02 1.069e-02 1.069e-02 1.069e-02 1.069e-02 1.069e-02
 copy/cuda/to-device-off-page-256M	alloc_words	exact	1153
 copy/cuda/to-device-off-page-256M	wall_time	batch=1	n=20	1.416e-02	1.412e-02 1.414e-02 1.414e-02 1.415e-02 1.415e-02 1.415e-02 1.415e-02 1.415e-02 1.415e-02 1.415e-02 1.416e-02 1.416e-02 1.416e-02 1.416e-02 1.416e-02 1.416e-02 1.416e-02 1.417e-02 1.417e-02 1.417e-02
 copy/nv/borrow-to-host-4M	alloc_words	exact	0
-copy/nv/borrow-to-host-4M	wall_time	batch=32	n=20	1.832e-04	1.830e-04 1.830e-04 1.830e-04 1.831e-04 1.831e-04 1.831e-04 1.831e-04 1.831e-04 1.831e-04 1.832e-04 1.832e-04 1.832e-04 1.832e-04 1.832e-04 1.832e-04 1.832e-04 1.833e-04 1.833e-04 1.833e-04 1.834e-04
+copy/nv/borrow-to-host-4M	wall_time	batch=32	n=20	1.838e-04	1.815e-04 1.825e-04 1.829e-04 1.830e-04 1.830e-04 1.833e-04 1.834e-04 1.835e-04 1.835e-04 1.837e-04 1.839e-04 1.839e-04 1.841e-04 1.842e-04 1.857e-04 1.903e-04 1.903e-04 1.904e-04 1.906e-04 1.908e-04
 copy/nv/from-device-256M	alloc_words	exact	120
 copy/nv/from-device-256M	wall_time	batch=1	n=20	1.411e-02	1.410e-02 1.410e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.412e-02 1.412e-02 1.412e-02 1.412e-02
 copy/nv/from-device-off-page-256M	alloc_words	exact	1153
 copy/nv/from-device-off-page-256M	wall_time	batch=1	n=20	1.722e-02	1.720e-02 1.720e-02 1.721e-02 1.721e-02 1.721e-02 1.722e-02 1.722e-02 1.722e-02 1.722e-02 1.722e-02 1.722e-02 1.722e-02 1.722e-02 1.722e-02 1.723e-02 1.723e-02 1.724e-02 1.724e-02 1.724e-02 1.724e-02
 copy/nv/host-to-borrow-4M	alloc_words	exact	0
-copy/nv/host-to-borrow-4M	wall_time	batch=32	n=20	1.829e-04	1.828e-04 1.828e-04 1.828e-04 1.829e-04 1.829e-04 1.829e-04 1.829e-04 1.829e-04 1.829e-04 1.829e-04 1.829e-04 1.829e-04 1.830e-04 1.830e-04 1.830e-04 1.830e-04 1.830e-04 1.830e-04 1.830e-04 1.832e-04
+copy/nv/host-to-borrow-4M	wall_time	batch=32	n=20	1.839e-04	1.833e-04 1.835e-04 1.836e-04 1.836e-04 1.838e-04 1.838e-04 1.839e-04 1.839e-04 1.839e-04 1.839e-04 1.840e-04 1.841e-04 1.842e-04 1.843e-04 1.843e-04 1.844e-04 1.845e-04 1.846e-04 1.847e-04 1.852e-04
 copy/nv/to-device-256M	alloc_words	exact	120
 copy/nv/to-device-256M	wall_time	batch=1	n=20	1.068e-02	1.067e-02 1.067e-02 1.067e-02 1.067e-02 1.067e-02 1.067e-02 1.067e-02 1.067e-02 1.067e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02
 copy/nv/to-device-off-page-256M	alloc_words	exact	1153
@@ -71,7 +72,7 @@ floor/host/load-cold-256M	wall_time	batch=1	n=20	9.563e-02	9.280e-02 9.319e-02 9
 floor/host/memcpy-256M	alloc_words	exact	0
 floor/host/memcpy-256M	wall_time	batch=1	n=20	9.477e-03	9.454e-03 9.460e-03 9.464e-03 9.465e-03 9.468e-03 9.471e-03 9.471e-03 9.472e-03 9.475e-03 9.477e-03 9.478e-03 9.478e-03 9.480e-03 9.482e-03 9.483e-03 9.490e-03 9.493e-03 9.518e-03 9.530e-03 9.537e-03
 floor/host/memcpy-4M	alloc_words	exact	0
-floor/host/memcpy-4M	wall_time	batch=32	n=20	1.827e-04	1.826e-04 1.826e-04 1.826e-04 1.826e-04 1.826e-04 1.826e-04 1.826e-04 1.827e-04 1.827e-04 1.827e-04 1.827e-04 1.827e-04 1.827e-04 1.827e-04 1.827e-04 1.827e-04 1.827e-04 1.827e-04 1.828e-04 1.828e-04
+floor/host/memcpy-4M	wall_time	batch=32	n=20	1.833e-04	1.829e-04 1.830e-04 1.830e-04 1.830e-04 1.831e-04 1.831e-04 1.831e-04 1.831e-04 1.832e-04 1.833e-04 1.833e-04 1.834e-04 1.836e-04 1.837e-04 1.838e-04 1.840e-04 1.840e-04 1.841e-04 1.846e-04 1.847e-04
 floor/nv/copy-from-device-256M	alloc_words	exact	0
 floor/nv/copy-from-device-256M	wall_time	batch=1	n=20	1.410e-02	1.409e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.411e-02
 floor/nv/copy-to-device-256M	alloc_words	exact	0
@@ -123,13 +124,13 @@ submit/nv/kernel	wall_time	batch=4096	n=20	1.631e-06	1.623e-06 1.630e-06 1.630e-
 # forced: blessed floor/host/memcpy-4M copy/metal/host-to-borrow-4M copy/metal/borrow-to-host-4M under load 9.5 on 10 cores
 
 copy/metal/borrow-to-host-4M	alloc_words	exact	0
-copy/metal/borrow-to-host-4M	wall_time	batch=64	n=20	1.283e-04	1.191e-04 1.191e-04 1.204e-04 1.216e-04 1.227e-04 1.235e-04 1.251e-04 1.280e-04 1.281e-04 1.283e-04 1.283e-04 1.284e-04 1.285e-04 1.289e-04 1.289e-04 1.291e-04 1.294e-04 1.297e-04 1.308e-04 1.346e-04
+copy/metal/borrow-to-host-4M	wall_time	batch=64	n=20	1.151e-04	1.101e-04 1.113e-04 1.125e-04 1.128e-04 1.130e-04 1.138e-04 1.141e-04 1.145e-04 1.147e-04 1.148e-04 1.153e-04 1.156e-04 1.159e-04 1.160e-04 1.165e-04 1.180e-04 1.209e-04 1.224e-04 1.224e-04 1.234e-04
 copy/metal/from-device-256M	alloc_words	exact	0
 copy/metal/from-device-256M	wall_time	batch=1	n=20	5.967e-03	5.808e-03 5.822e-03 5.890e-03 5.891e-03 5.894e-03 5.913e-03 5.914e-03 5.927e-03 5.937e-03 5.945e-03 5.990e-03 6.055e-03 6.162e-03 6.197e-03 6.239e-03 6.274e-03 6.304e-03 6.430e-03 6.671e-03 7.728e-03
 copy/metal/from-device-off-page-256M	alloc_words	exact	0
 copy/metal/from-device-off-page-256M	wall_time	batch=1	n=20	6.070e-03	5.842e-03 5.896e-03 5.926e-03 5.936e-03 5.968e-03 5.982e-03 5.988e-03 6.029e-03 6.050e-03 6.056e-03 6.083e-03 6.095e-03 6.115e-03 6.150e-03 6.164e-03 6.167e-03 6.197e-03 6.204e-03 6.280e-03 6.306e-03
 copy/metal/host-to-borrow-4M	alloc_words	exact	0
-copy/metal/host-to-borrow-4M	wall_time	batch=64	n=20	1.239e-04	1.211e-04 1.211e-04 1.215e-04 1.227e-04 1.231e-04 1.232e-04 1.232e-04 1.235e-04 1.235e-04 1.238e-04 1.239e-04 1.243e-04 1.244e-04 1.257e-04 1.266e-04 1.267e-04 1.270e-04 1.289e-04 1.314e-04 1.319e-04
+copy/metal/host-to-borrow-4M	wall_time	batch=64	n=20	9.201e-05	7.908e-05 8.085e-05 8.138e-05 8.162e-05 8.368e-05 8.538e-05 8.763e-05 8.993e-05 9.145e-05 9.162e-05 9.240e-05 9.286e-05 9.360e-05 9.407e-05 9.501e-05 9.550e-05 9.591e-05 9.616e-05 9.634e-05 1.003e-04
 copy/metal/to-device-256M	alloc_words	exact	0
 copy/metal/to-device-256M	wall_time	batch=1	n=20	6.735e-03	6.132e-03 6.359e-03 6.385e-03 6.400e-03 6.453e-03 6.577e-03 6.588e-03 6.630e-03 6.687e-03 6.695e-03 6.774e-03 6.813e-03 6.844e-03 6.875e-03 6.928e-03 6.947e-03 6.959e-03 6.983e-03 7.289e-03 7.674e-03
 copy/metal/to-device-off-page-256M	alloc_words	exact	0
@@ -149,7 +150,7 @@ floor/host/load-cold-256M	wall_time	batch=1	n=20	5.346e-02	5.165e-02 5.185e-02 5
 floor/host/memcpy-256M	alloc_words	exact	0
 floor/host/memcpy-256M	wall_time	batch=1	n=20	7.262e-03	6.496e-03 6.603e-03 6.628e-03 6.656e-03 6.837e-03 6.925e-03 6.939e-03 7.021e-03 7.103e-03 7.209e-03 7.314e-03 7.359e-03 7.491e-03 7.560e-03 7.999e-03 8.037e-03 8.336e-03 8.835e-03 1.229e-02 2.991e-02
 floor/host/memcpy-4M	alloc_words	exact	0
-floor/host/memcpy-4M	wall_time	batch=64	n=20	1.262e-04	1.165e-04 1.169e-04 1.171e-04 1.197e-04 1.219e-04 1.253e-04 1.257e-04 1.258e-04 1.259e-04 1.259e-04 1.264e-04 1.283e-04 1.290e-04 1.305e-04 1.307e-04 1.309e-04 1.310e-04 1.313e-04 1.314e-04 1.330e-04
+floor/host/memcpy-4M	wall_time	batch=64	n=20	1.287e-04	1.099e-04 1.118e-04 1.189e-04 1.197e-04 1.212e-04 1.224e-04 1.269e-04 1.270e-04 1.278e-04 1.283e-04 1.290e-04 1.297e-04 1.299e-04 1.326e-04 1.352e-04 1.355e-04 1.356e-04 1.373e-04 1.404e-04 1.419e-04
 floor/metal/cost	alloc_words	exact	0
 floor/metal/cost	wall_time	batch=2048	n=20	5.021e-06	4.097e-06 4.124e-06 4.360e-06 4.489e-06 4.612e-06 4.701e-06 4.714e-06 4.757e-06 4.890e-06 5.019e-06 5.024e-06 5.036e-06 5.214e-06 5.277e-06 5.406e-06 5.409e-06 5.574e-06 6.338e-06 7.355e-06 7.579e-06
 floor/metal/encode	alloc_words	exact	0
