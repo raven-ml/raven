@@ -34,5 +34,5 @@
    (echo "let amd = {|")
    (cat %{dep:../lib/amd/pci/gen/headers/firmware.tsv})
    (echo "|}\n\nlet nv = {|")
-   (cat %{dep:../lib/nv/pci/gen/headers/firmware.tsv})
+   (cat %{dep:../lib/nv/gen/headers/pci/firmware.tsv})
    (echo "|}\n"))))
