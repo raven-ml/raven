@@ -218,11 +218,18 @@ type placement = {
 
 type buffer = { size : int; phys : bool; virt : bool; local : bool }
 
+(* How the boot starts the GSP: on Ampere and Ada, FWSEC and then the booter,
+   which the falcons read from GPU memory; on Blackwell, the FSP's ops, which
+   point to the FMC in system memory. *)
+type start = Legacy of Vbios.fwsec * Images.booter | Cot of Falcon.op list
+
 type t = {
   p : placement;
   q : Msgq.t;
   lock : Mutex.t;
   libos : int; (* the libos arguments' bus address, for a resumption *)
+  meta : int; (* the WPR metadata's bus address *)
+  start : start;
   mutable fault : string option;
   mutable next : int; (* the next handle the process names an object with *)
   mutable clients : int; (* the next client handle *)
@@ -931,7 +938,7 @@ let golden g =
 
 (* The boot *)
 
-let start p (fw : Images.t) ~taken =
+let take p (fw : Images.t) ~taken =
   let c = p.chip in
   let sys = sys p ~taken in
   (* The queues and the table of their pages. *)
@@ -980,12 +987,34 @@ let start p (fw : Images.t) ~taken =
   Window.write meta.w 0
     (wpr_meta fw c.family ~memory:p.memory ~radix3:(first radix)
        ~bootloader:(first bootloader) ~signature:(first signature));
-  let g =
+  (* The start, FWSEC read from the GPU's ROM. *)
+  let* start =
+    match (fw.start, c.family) with
+    | `Booter b, (Ampere | Ada) ->
+        let* f =
+          Vbios.fwsec (Vbios.read c) ~frts:(Layout.frts ~memory:p.memory)
+        in
+        Ok (Legacy (f, b))
+    | `Fmc m, Blackwell ->
+        let* args = sys page in
+        Window.write args.w 0
+          (Falcon.cot_args ~libos:(first libos) ~wpr_meta:(first meta));
+        let* fmc = sys ~contiguous:true m.fmc.length in
+        blit m.fmc fmc.w 0;
+        Ok
+          (Cot
+             (Falcon.cot
+                (Falcon.cot_payload ~args:(first args) ~fmc:(first fmc) m)))
+    | _ -> Error "the firmware is of another family than the GPU"
+  in
+  Ok
     {
       p;
       q;
       lock = Mutex.create ();
       libos = first libos;
+      meta = first meta;
+      start;
       fault = None;
       next = first_handle;
       clients = first_client;
@@ -994,105 +1023,91 @@ let start p (fw : Images.t) ~taken =
       buffers = [];
       taken;
     }
-  in
-  (* What the GSP reads first, before it runs. *)
-  let* () =
-    send g Defs.nv_vgpu_msg_function_gsp_set_system_info (system_info p)
-  in
-  let* () = send g Defs.nv_vgpu_msg_function_set_registry (registry keys) in
-  (* The start. *)
-  let* ops =
-    match (fw.start, c.family) with
-    | `Booter b, (Ampere | Ada) ->
-        let rom = Vbios.read c in
-        let* f = Vbios.fwsec rom ~frts:(Layout.frts ~memory:p.memory) in
-        let* fwsec_pa, fwsec_w = vram p (String.length f.image) in
-        Window.write fwsec_w 0 f.image;
-        let* booter_pa, booter_w = vram p (String.length b.image) in
-        Window.write booter_w 0 b.image;
-        let fwsec =
-          {
-            Falcon.image = fwsec_pa;
-            code =
-              { off = 0; pa = f.imem_pa; va = f.imem_va; size = f.imem_size };
-            data =
-              { off = f.imem_size; pa = f.dmem_pa; va = 0; size = f.dmem_size };
-            pkc = f.pkc;
-            engines = f.engines;
-            ucode = f.ucode;
-          }
-        in
-        let booter =
-          {
-            Falcon.image = booter_pa;
-            code =
-              { off = fst b.code; pa = 0; va = fst b.code; size = snd b.code };
-            data = { off = fst b.data; pa = 0; va = 0; size = snd b.data };
-            pkc = b.pkc;
-            engines = b.engines;
-            ucode = b.ucode;
-          }
-        in
-        Ok
-          (Falcon.legacy ~fwsec ~booter ~libos:(first libos)
-             ~wpr_meta:(first meta))
-    | `Fmc m, Blackwell ->
-        let* args = sys page in
-        Window.write args.w 0
-          (Falcon.cot_args ~libos:(first libos) ~wpr_meta:(first meta));
-        let* fmc = sys ~contiguous:true m.fmc.length in
-        blit m.fmc fmc.w 0;
-        Ok
-          (Falcon.cot
-             (Falcon.cot_payload ~args:(first args) ~fmc:(first fmc) m))
-    | _ -> Error "the firmware is of another family than the GPU"
-  in
-  let* () = Falcon.run c ops in
-  (* The GSP runs: its queue, its first answer, then the golden context. A
-     failure from here unloads it, so it stops what it began, unless it never
-     set its queue up and so runs nothing an unload would stop. *)
-  let running () =
-    let* () =
-      Function.wait c.fn ~us:(answer_ms * 1000) "the GSP's message queue"
-        (fun () -> Msgq.ready q)
-    in
-    let* _ =
-      Mutex.protect g.lock (fun () ->
-          wait_for g Defs.nv_vgpu_msg_event_gsp_init_done)
-    in
-    Chip.set c Defs.nv_pbus_bar1_block 0;
-    if c.family = Blackwell then
-      Chip.set c
-        Defs.Blackwell.nv_virtual_function_priv_func_bar1_block_low_addr 0;
-    golden g
-  in
-  let stop () = if Msgq.ready q then ignore (unload g) in
-  match running () with
-  | Ok () -> Ok g
-  | Error _ as e ->
-      stop ();
-      e
-  | exception e ->
-      let bt = Printexc.get_raw_backtrace () in
-      stop ();
-      Printexc.raise_with_backtrace e bt
 
-(* A failed boot gives back the system memory it took once the GPU masters the
-   bus no more: the GSP or a falcon may still be reading it. *)
-let boot p fw =
+(* Nothing was written to the GPU yet, so a failure gives back what it took at
+   once. *)
+let create p fw =
   let taken = ref [] in
-  let failed () =
-    Function.set_bus_master p.fn false;
-    give_back p taken
-  in
-  match start p fw ~taken with
+  match take p fw ~taken with
   | Ok _ as r -> r
   | Error _ as e ->
-      failed ();
+      give_back p taken;
       e
   | exception e ->
       let bt = Printexc.get_raw_backtrace () in
-      failed ();
+      give_back p taken;
       Printexc.raise_with_backtrace e bt
 
-let free g = give_back g.p g.taken
+let falcons g =
+  match g.start with
+  | Cot ops -> Ok ops
+  | Legacy (f, b) ->
+      let* fwsec_pa, fwsec_w = vram g.p (String.length f.image) in
+      Window.write fwsec_w 0 f.image;
+      let* booter_pa, booter_w = vram g.p (String.length b.image) in
+      Window.write booter_w 0 b.image;
+      let fwsec =
+        {
+          Falcon.image = fwsec_pa;
+          code = { off = 0; pa = f.imem_pa; va = f.imem_va; size = f.imem_size };
+          data =
+            { off = f.imem_size; pa = f.dmem_pa; va = 0; size = f.dmem_size };
+          pkc = f.pkc;
+          engines = f.engines;
+          ucode = f.ucode;
+        }
+      in
+      let booter =
+        {
+          Falcon.image = booter_pa;
+          code =
+            { off = fst b.code; pa = 0; va = fst b.code; size = snd b.code };
+          data = { off = fst b.data; pa = 0; va = 0; size = snd b.data };
+          pkc = b.pkc;
+          engines = b.engines;
+          ucode = b.ucode;
+        }
+      in
+      Ok (Falcon.legacy ~fwsec ~booter ~libos:g.libos ~wpr_meta:g.meta)
+
+let boot g =
+  let c = g.p.chip in
+  Function.set_bus_master g.p.fn true;
+  (* What the GSP reads first, before it runs. *)
+  let* () =
+    send g Defs.nv_vgpu_msg_function_gsp_set_system_info (system_info g.p)
+  in
+  let* () = send g Defs.nv_vgpu_msg_function_set_registry (registry keys) in
+  let* ops = falcons g in
+  let* () = Falcon.run c ops in
+  (* The GSP runs: its queue, its first answer, then the golden context. *)
+  let* () =
+    Function.wait c.fn ~us:(answer_ms * 1000) "the GSP's message queue"
+      (fun () -> Msgq.ready g.q)
+  in
+  let* _ =
+    Mutex.protect g.lock (fun () ->
+        wait_for g Defs.nv_vgpu_msg_event_gsp_init_done)
+  in
+  Chip.set c Defs.nv_pbus_bar1_block 0;
+  if c.family = Blackwell then
+    Chip.set c Defs.Blackwell.nv_virtual_function_priv_func_bar1_block_low_addr
+      0;
+  golden g
+
+(* The GSP stops every channel, unless the GPU cannot be reached, which an
+   unload would wait for in vain, or the GSP never set its queue up and so runs
+   nothing an unload would stop. With its bus mastering off the GPU reaches
+   system memory no more, whatever its channels do, and the boot's memory goes
+   back. Whether that write reached the GPU is known only if the GPU answered
+   before it: one that did not may still read the memory, which stays taken. The
+   GSP runs on, and the next open resets it. *)
+let stop g =
+  let reached = Option.is_none (Function.failed g.p.fn) in
+  if reached && Msgq.ready g.q then ignore (unload g);
+  Function.set_bus_master g.p.fn false;
+  if not reached then `Unknown
+  else begin
+    give_back g.p g.taken;
+    `Clean
+  end

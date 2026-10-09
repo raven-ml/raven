@@ -259,36 +259,48 @@ let test_boot_pool_fmc () =
              public_key = r;
            })))
 
-(* A failed boot *)
+(* The boot's system memory *)
 
 module Support = Rig_nv_pci_support
 
 let range n =
   { Rig_nv_pci.Images.contents = String.make n 'x'; at = 0; length = n }
 
-(* Firmware whose VBIOS holds no FWSEC: its boot fails once the GSP's memory is
-   written and its first messages sent, before any falcon runs. *)
-let firmware () =
-  let start = booter 0x1000 in
-  ( start,
-    {
-      Rig_nv_pci.Images.gsp = range 0x8000;
-      signature = range 0x1000;
-      bootloader = { image = range 0x1000; code = 0; data = 0; manifest = 0 };
-      start;
-    } )
+let firmware start =
+  {
+    Rig_nv_pci.Images.gsp = range 0x8000;
+    signature = range 0x1000;
+    bootloader = { image = range 0x1000; code = 0; data = 0; manifest = 0 };
+    start;
+  }
 
-let test_failed_boot () =
+(* Firmware whose VBIOS holds no FWSEC, for an AD102: its create fails once the
+   GSP's memory is written. *)
+let ada = ((0x19 lsl 24) lor (2 lsl 20), firmware (booter 0x1000))
+
+(* Firmware for a GB202, which reads no VBIOS. *)
+let blackwell =
+  ( (0x1b lsl 24) lor (2 lsl 20),
+    firmware
+      (`Fmc
+         {
+           Rig_nv_pci.Images.fmc = range 0x1000;
+           hash = range 48;
+           signature = range 384;
+           public_key = range 97;
+         }) )
+
+(* [placement (boot42, fw)] places a GSP on a fake GPU whose NV_PMC_BOOT_42
+   reads [boot42]: the GPU and the placement. *)
+let placement (boot42, (fw : Rig_nv_pci.Images.t)) =
   let gpu = Support.gpu () in
-  (* NV_PMC_BOOT_42 of an AD102. *)
-  Rig_pci.Window.set32 gpu.regs 0xa00 ((0x19 lsl 24) lor (2 lsl 20));
+  Rig_pci.Window.set32 gpu.regs 0xa00 boot42;
   let fn = require_ok (Rig_pci.Function.take gpu.machine "0000:01:00.0") in
   let chip = require_ok (Rig_nv_pci.Chip.of_function fn) in
   let base = 64 lsl 30 in
   let space = Rig_pci.Space.create ~base (1 lsl 36) in
   require_ok (Rig_pci.Machine.reserve gpu.machine ~base (1 lsl 36));
-  let start, fw = firmware () in
-  let boot = Gsp.boot_pool start in
+  let boot = Gsp.boot_pool fw.start in
   let tables =
     Page_table.create
       (Tables.format (Tables.memory ()))
@@ -298,8 +310,7 @@ let test_failed_boot () =
       ~pages:[ (page, page) ]
   in
   Page_table.booted tables;
-  Rig_pci.Function.set_bus_master fn true;
-  let placement =
+  ( gpu,
     {
       Gsp.chip;
       memory = 1 lsl 33;
@@ -307,20 +318,40 @@ let test_failed_boot () =
       tables;
       bar = Support.window (16 * Rig_pci_support.mib);
       space;
-    }
-  in
+    } )
+
+let count f events = List.length (List.filter f events)
+let alloc = function Support.Alloc _ -> true | _ -> false
+
+let test_refused_create () =
+  let gpu, p = placement ada in
   ignore
     (require_error
        ~pp:(fun ppf _ -> Format.pp_print_string ppf "a GSP")
-       (Gsp.boot placement fw));
+       (Gsp.create p (snd ada)));
   let events = List.rev !(gpu.events) in
-  let allocs =
-    List.length
-      (List.filter (function Support.Alloc _ -> true | _ -> false) events)
-  in
-  let frees = List.filter (( = ) Support.Free) events in
-  not_equal ~msg:"allocations" int 0 allocs;
-  equal int ~msg:"frees" allocs (List.length frees);
+  not_equal ~msg:"allocations" int 0 (count alloc events);
+  equal int ~msg:"frees" (count alloc events)
+    (count (( = ) Support.Free) events);
+  equal int ~msg:"bus mastering changes" 0
+    (count (function Support.Master _ -> true | _ -> false) events)
+
+let state =
+  Testable.contramap
+    (function `Clean -> "`Clean" | `Unknown -> "`Unknown")
+    string
+
+(* A GSP that never set its queue up is not unloaded: the stop answers at once.
+   The GPU masters the bus, as a boot that failed leaves it. *)
+let test_stop () =
+  let gpu, p = placement blackwell in
+  let g = require_ok (Gsp.create p (snd blackwell)) in
+  Rig_pci.Function.set_bus_master p.fn true;
+  equal state `Clean (Gsp.stop g);
+  let events = List.rev !(gpu.events) in
+  not_equal ~msg:"allocations" int 0 (count alloc events);
+  equal int ~msg:"frees" (count alloc events)
+    (count (( = ) Support.Free) events);
   (* Every free comes after the bus mastering went off for the last time. *)
   let rec after_off off = function
     | [] -> ()
@@ -355,7 +386,13 @@ let () =
            ];
          group ~timeout:10. "failures"
            [
-             test "a failed boot gives its system memory back" test_failed_boot;
+             test
+               "a refused create gives its system memory back, writing nothing \
+                to the GPU"
+               test_refused_create;
+             test
+               "a stop gives the boot's memory back once bus mastering is off"
+               test_stop;
            ];
          group ~timeout:10. "boot pool"
            [

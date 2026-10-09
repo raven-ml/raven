@@ -62,7 +62,7 @@ val sequence : libos:int -> string -> (Falcon.op list, string) result
 (** {1:boot Booting} *)
 
 type t
-(** The type for a running GSP. *)
+(** The type for a GSP, from the system memory of its boot on. *)
 
 type placement = {
   chip : Chip.t;
@@ -85,17 +85,31 @@ val boot_pool : [ `Booter of Images.booter | `Fmc of Images.fmc ] -> int
     GPU memory that any memory BAR reaches. Every other allocation of the boot
     comes from the main pool. *)
 
-val boot : placement -> Images.t -> (t, string) result
-(** [boot p fw] boots the GSP of [p.chip] with the firmware [fw]: it writes the
-    images, the radix-3 table, the queues, the libos arguments, the WPR
-    metadata, the system's description and the registry into memory the GPU
-    reads, starts the GSP ({!Falcon.legacy} or {!Falcon.cot}), waits for its
+val create : placement -> Images.t -> (t, string) result
+(** [create p fw] takes the system memory a boot of [p.chip] with the firmware
+    [fw] gives the GSP, and writes into it the queues, the libos arguments, the
+    radix-3 table and images, the WPR metadata and, on Blackwell, the FMC and
+    its arguments. On Ampere and Ada it reads FWSEC from the GPU's VBIOS
+    ({!Vbios.fwsec}). It writes nothing to the GPU. [Error] if the machine
+    refuses the memory, if the VBIOS has no FWSEC, or if [fw] is of another
+    family than the GPU, the memory given back; so if it raises. *)
+
+val boot : t -> (unit, string) result
+(** [boot g] boots the GSP: it turns the GPU's bus mastering on, sends the
+    system's description and the registry, writes the falcons' images to GPU
+    memory, starts the GSP ({!Falcon.legacy} or {!Falcon.cot}), waits for its
     [GSP_INIT_DONE], and sets up its golden context: a channel of the GSP's own
-    client whose context buffers later channels' contexts copy. Its system
-    memory stays the GSP's until {!free}; its GPU memory, as long as the page
-    tables. [Error] names the step that failed, the GSP unloaded if it ran, the
-    GPU's bus mastering turned off and the system memory given back; so if it
-    raises. *)
+    client whose context buffers later channels' contexts copy. [Error] names
+    the step that failed. Whether it fails or raises, the GPU may then run until
+    {!stop}. *)
+
+val stop : t -> [> `Clean | `Unknown ]
+(** [stop g] stops the GPU [g] booted, or began to: it unloads the GSP if the
+    GPU answers ({!Rig_pci.Function.failed}) and the GSP set its queue up,
+    waiting for its answer at most 10 seconds, turns the GPU's bus mastering
+    off, and gives back the memory {!create} took. It is [`Unknown], the memory
+    kept, if the GPU did not answer before the stop: it may still read that
+    memory. The GSP runs on until the GPU's next reset. *)
 
 (** {1:rm The resource manager} *)
 
@@ -129,12 +143,3 @@ val check : t -> string option
     first fault one reported ({!Msgq.fault}). Once it is [Some], it stays. It
     never waits for the GSP's lock: while a call holds it, the call's own reads
     handle the events, and [check] answers from what they found. *)
-
-val unload : t -> (unit, string) result
-(** [unload g] tells the GSP the driver unloads, and waits for its answer, at
-    most 10 seconds. *)
-
-val free : t -> unit
-(** [free g] gives back the system memory of [g]'s boot. Call it once the GPU
-    masters the bus no more ({!Rig_pci.Function.set_bus_master}): the GSP may
-    read it until then. *)

@@ -151,19 +151,6 @@ let check g gsp () =
   in
   Option.iter (fun why -> raise (Rig_nv.Fault why)) why
 
-(* The GSP stops every channel, unless the GPU cannot be reached, which an
-   unload would wait for in vain. With its bus mastering off the GPU reaches
-   system memory no more, whatever its channels do, and the boot's memory goes
-   back. Whether that write reached the GPU is known only if the GPU answered
-   before it; one that did not is lost. The GSP runs on, and the next open
-   resets it. *)
-let stop_gsp fn gsp =
-  let reached = Option.is_none (Function.failed fn) in
-  if reached then ignore (Gsp.unload gsp);
-  Function.set_bus_master fn false;
-  Gsp.free gsp;
-  if reached then `Clean else `Unknown
-
 (* Opening *)
 
 (* The usermode doorbell, [NVC361_NOTIFY_CHANNEL_PENDING], in BAR 0. *)
@@ -229,10 +216,12 @@ let device g ~gsp ~hold ~tables (c : Chip.t) =
           Gpus.stop hold);
     }
 
-(* [start] boots the GPU's GSP, writing to the GPU: from its first write, the
-   GPU is in a state only a reset clears. *)
-let start fn (c : Chip.t) (fw : Images.t) ~failed =
-  Function.set_bus_master fn true;
+(* [start] places the GSP's memory and boots it. Before the GSP's memory is
+   taken, the start only reads the GPU's registers and writes its page tables in
+   its memory, so a failure gives the GPU back as it found it. From then on the
+   hold's stop is the GSP's: a failure stops the GPU through it, and loses
+   it. *)
+let start h fn (c : Chip.t) (fw : Images.t) ~failed =
   let* () = Falcon.run c (Falcon.wait_reset c.family) in
   let* memory = Chip.memory c in
   let* bar = Function.map ~combine:false fn memory_bar in
@@ -249,13 +238,14 @@ let start fn (c : Chip.t) (fw : Images.t) ~failed =
   (* The boot pool holds only the falcons' images: the GSP's objects come from
      the main pool. *)
   Page_table.booted tables;
-  let* gsp = Gsp.boot { chip = c; memory; fn; tables; bar; space } fw in
+  let* gsp = Gsp.create { chip = c; memory; fn; tables; bar; space } fw in
+  Gpus.set_stop h (fun () -> Gsp.stop gsp);
+  let* () = Gsp.boot gsp in
   Ok (gsp, tables)
 
 (* The GPU's registers and doorbell are written from the process and from C: a
    machine whose windows the process does not map is refused before the first
-   write. The hold's stop is set before [start] writes: until the GSP booted, a
-   failure leaves the GPU lost, its boot having given back what it took. *)
+   write. *)
 let boot ~firmware ~index h fn =
   let machine = Function.machine fn in
   let* c = Chip.of_function fn in
@@ -271,9 +261,7 @@ let boot ~firmware ~index h fn =
   let* () =
     Machine.reserve machine ~base:(Space.base space) (Space.length space)
   in
-  let booted = ref None and fault = Atomic.make None in
-  Gpus.set_stop h (fun () ->
-      match !booted with None -> `Lost | Some gsp -> stop_gsp fn gsp);
+  let fault = Atomic.make None in
   (* A flush the GPU did not confirm loses it: its bus mastering goes off at
      once, so that no stale translation reaches host memory. *)
   let failed why =
@@ -281,11 +269,10 @@ let boot ~firmware ~index h fn =
     ignore (Atomic.compare_and_set fault None (Some why))
   in
   let* gsp, tables =
-    match start fn c fw ~failed with
+    match start h fn c fw ~failed with
     | r -> r
     | exception Rig_nv.Fault why -> Error why
   in
-  booted := Some gsp;
   let* () =
     match Atomic.get fault with Some why -> Error why | None -> Ok ()
   in
