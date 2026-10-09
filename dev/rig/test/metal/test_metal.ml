@@ -992,6 +992,56 @@ let file_tests =
         created_file_borrow;
     ]
 
+(* Scratch *)
+
+(* Launches, each through a scratch of [k] KiB: a fill writes [3i + c] into it,
+   a copy reads it into the launch's own buffer. Nothing waits between them, so
+   a scratch's memory returns while the work before it may still run. *)
+let gen_launches = Gen.list ~size:(Gen.int_range 1 12) (Gen.int_range 1 4)
+
+let through_scratch sizes =
+  let t = dev () in
+  let args = alloc t (2 * List.length sizes * args_bytes) in
+  let copy = pipeline t "copy" in
+  let seen = Hashtbl.create 16 and reused = ref false in
+  let launch i k =
+    let words = k * 256 and c = i + 1 and at = 2 * i * args_bytes in
+    let s = B.scratch t.d (4 * words) and out = B.create t.d (4 * words) in
+    reused := !reused || Hashtbl.mem seen (B.address s);
+    Hashtbl.replace seen (B.address s) ();
+    let fill = fill_dispatch t ~args ~at ~out:(B.address s) ~c words in
+    H.set64 (host args + at + args_bytes) (B.address out);
+    H.set64 (host args + at + args_bytes + 8) (B.address s);
+    let read =
+      S.dispatch ~pipeline:copy ~offset:(at + args_bytes) args
+        ~groups:(words / 256) ~threads:256
+    in
+    let parts = [| S.part fill; S.part read |] in
+    let sub = Rig.Submission.make ~reads:0 ~writes:2 t.d parts in
+    ignore (Rig.submit sub ~reads:[||] ~writes:[| s; out |] ~waits:[||]);
+    (out, c, words)
+  in
+  let outs = List.mapi launch sizes in
+  cover "a scratch reuses an earlier one's memory" !reused;
+  List.iter
+    (fun (out, c, words) ->
+      let h = B.create Rig.host (4 * words) in
+      B.copy ~src:out ~dst:h;
+      for i = 0 to words - 1 do
+        let got = H.get32 (B.address h + (4 * i)) in
+        if got <> (3 * i) + c then
+          failf "launch %d: word %d reads %d, not %d" c i got ((3 * i) + c)
+      done)
+    outs;
+  Rig_metal.free t.g args
+
+let scratch =
+  group ~timeout:60. "scratch"
+    [
+      prop ~count:50 "a launch reads what its submission wrote into a scratch"
+        gen_launches through_scratch;
+    ]
+
 (* Images *)
 
 let not_metallib () =
@@ -1032,7 +1082,7 @@ let entries () =
   let t = dev () in
   List.iter
     (fun f -> ignore (require_some ~msg:f (Rig_metal.entry t.fill f)))
-    [ "fill"; "step"; "spin"; "bump" ];
+    [ "fill"; "step"; "spin"; "bump"; "copy" ];
   equal (option int) None (Rig_metal.entry t.fill "absent")
 
 let unloaded_twice () =
@@ -1279,6 +1329,7 @@ let () =
          icbs;
          memory;
          file_tests;
+         scratch;
          images;
          timeline;
          opening;

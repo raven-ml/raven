@@ -128,9 +128,12 @@ value caml_rig_release_list(value unit) {
   return Val_long((intnat)l);
 }
 
-static void token_finalize(value v) {
-  struct token *t = Data_custom_val(v);
+/* Links [t]'s node onto its list, once: a token released early leaves its
+   finaliser nothing to link. */
+static void token_release(struct token *t) {
   struct release_node *n = t->node;
+  if (n == NULL) return;
+  t->node = NULL;
   struct release_node *head =
       atomic_load_explicit(&t->list->head, memory_order_relaxed);
   do
@@ -138,6 +141,8 @@ static void token_finalize(value v) {
   while (!atomic_compare_exchange_weak_explicit(
       &t->list->head, &head, n, memory_order_release, memory_order_relaxed));
 }
+
+static void token_finalize(value v) { token_release(Data_custom_val(v)); }
 
 static struct custom_operations token_ops = {
     "rig.token",        token_finalize,
@@ -199,6 +204,13 @@ value caml_rig_token(value v_list, value v_record, value v_mem,
   t->list = (struct release_list *)Long_val(v_list);
   t->node = n;
   CAMLreturn(v);
+}
+
+/* Puts [v_token]'s record on its list now, as its collection would. The
+   caller reaches [v_token], so its finaliser cannot run meanwhile. */
+value caml_rig_token_release(value v_token) {
+  token_release(Data_custom_val(v_token));
+  return Val_unit;
 }
 
 /* The records the list [v_list] holds, which it no longer does. */

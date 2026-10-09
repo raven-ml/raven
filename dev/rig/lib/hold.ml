@@ -7,16 +7,17 @@ open Def
 
 type t = hold
 
-(* Marks [e] held, under its device's lock, if no hold has it. *)
+(* Marks [e] held, under its device's lock, if its buffers' collection ends it:
+   no hold has it, and it is no scratch. *)
 let take (e : entry) =
   Dev.protect e.owner (fun () ->
-      (not e.held)
+      e.life = Collected
       && begin
-        e.held <- true;
+        e.life <- Held;
         true
       end)
 
-let give (e : entry) = Dev.protect e.owner (fun () -> e.held <- false)
+let give (e : entry) = Dev.protect e.owner (fun () -> e.life <- Collected)
 
 (* Takes every entry of [es], or none: a refusal gives back those taken. *)
 let rec take_all = function
@@ -31,6 +32,8 @@ let rec take_all = function
 
 let make ?(release = ignore) bs =
   List.iter (Buffer.check_live "Hold.make") bs;
+  if List.exists (fun b -> b.mem.root.entry.life = Scratch) bs then
+    invalid_arg "Rig.Hold.make: a buffer is a scratch";
   let entries =
     List.fold_left
       (fun acc b ->
@@ -39,7 +42,7 @@ let make ?(release = ignore) bs =
         if List.memq m.entry acc then acc else m.entry :: acc)
       [] bs
   in
-  Atomic.set Memory.any_held true;
+  Atomic.set Memory.any_marked true;
   take_all entries;
   let st = Memory.stamps_new () in
   List.iter

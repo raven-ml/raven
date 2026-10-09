@@ -30,3 +30,15 @@ kernel void bump(constant args &a [[buffer(0)]],
   device uchar *b = (device uchar *)a.out;
   if (i < a.c) b[i] = b[i] + 1;
 }
+
+// dst[i] = src[i] for each thread i of the grid.
+
+struct pair {
+  device uint *dst;
+  device const uint *src;
+};
+
+kernel void copy(constant pair &a [[buffer(0)]],
+                 uint i [[thread_position_in_grid]]) {
+  a.dst[i] = a.src[i];
+}

@@ -212,9 +212,10 @@ val free_entry : entry -> unit
     its mapper's work submitted until now is done, and the last release gives
     [e] back. *)
 
-val any_held : bool Atomic.t
-(** [any_held] is [true] once a hold was made in this process: until then no
-    memory is held, and a submit checks no buffer for a hold. *)
+val any_marked : bool Atomic.t
+(** [any_marked] is [true] once a hold or a scratch was made in this process:
+    until then every entry's life is [Collected], and a submit reads no buffer's
+    life. *)
 
 val retire : device -> entry -> unit
 (** [retire d e] frees [e] once [d] reached the value it has submitted now, or,
@@ -228,9 +229,14 @@ val alloc_entry : device -> memory_kind -> int -> entry
     allocation path: drains, the cache, the budget, the reclaim rounds, then
     {!Dev.Out_of_memory}. *)
 
-val alloc : device -> memory_kind -> int -> memory
-(** [alloc d kind n] is a memory record over [alloc_entry d kind n], with its
-    token. *)
+val alloc : ?life:life -> device -> memory_kind -> int -> memory
+(** [alloc ~life d kind n] is a memory record over [alloc_entry d kind n], with
+    its token, its entry's life set to [life] (defaults to [Collected]). *)
+
+val end_scratch : memory -> unit
+(** [end_scratch m] kills the buffers of the scratch [m], which a submit holds
+    exclusive, with the reason ["scratch"], marks its claim word consumed, and
+    returns its memory at its device's next drain, as if [m] were collected. *)
 
 val host_memory : int -> memory
 (** [host_memory n] is a new memory record of [n] bytes of the host's heap,

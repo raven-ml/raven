@@ -41,6 +41,9 @@ external evict : string -> int = "rig_bench_evict"
 
 let drain = 64
 
+(* A split-K workspace's size: a launch's scratch. *)
+let scratch_bytes = 4 lsl 20
+
 (* The runs a replay keeps in flight: each waits for the run [depth] back. At
    two, an R9700 flips between a fast and a slow mode within one process: a few
    hundred nanoseconds more host time a run let its queue drain, and each run
@@ -190,7 +193,8 @@ let floor_part f (p : Sub.part) =
 (* A GPU's submits through rig, beside the same submits through its driver's C
    entries alone. [empty] and [cost] submit no work and wait for each submit or
    every [drain]; [wait/reached] waits for a value reached; [kernel] submits the
-   part [kernel] makes over three buffers and waits every [drain]. A floor
+   part [kernel] makes over three buffers and waits every [drain], and
+   [scratch-4MiB] does so writing a scratch of its own each time. A floor
    submits and commits each value; [encode] commits every [drain], as [cost]'s
    waits do. The replay rows run [depth] copies of a step over [slots]
    parameters, each run waiting for its copy's last run: with no part, and with
@@ -403,6 +407,17 @@ let gpu_rows (type a) (module D : Rig.Driver with type t = a) ?(sleeps = false)
             incr n;
             if !n mod drain = 0 then Rig.wait g (Rig.Point.value p));
         row "kernel" kernel_rig (fun (g, s, reads, writes, keep, n) ->
+            let p = Rig.submit s ~reads ~writes ~waits:[||] in
+            incr n;
+            if !n mod drain = 0 then begin
+              Rig.wait g (Rig.Point.value p);
+              keep ()
+            end);
+      ];
+    Thumper.group (strf "alloc/%s" v)
+      [
+        row "scratch-4MiB" kernel_rig (fun (g, s, reads, writes, keep, n) ->
+            writes.(0) <- B.scratch g scratch_bytes;
             let p = Rig.submit s ~reads ~writes ~waits:[||] in
             incr n;
             if !n mod drain = 0 then begin

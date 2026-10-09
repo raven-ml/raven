@@ -78,6 +78,9 @@ type t = {
   nreads : int;  (** The buffers each run reads. *)
   nwrites : int;  (** The buffers each run writes. *)
   named : named;  (** The hold whose memory its parts may name. *)
+  mutable scratches : (memory * int) list;
+      (** The scratches the running submit named, each with its claim word
+          before. *)
 }
 
 let queue_index d fn q =
@@ -126,7 +129,7 @@ let copy_handle side k b =
 let check_buffer fn hold_stamps b =
   Buffer.check_live fn b;
   let e = b.mem.root.entry in
-  if e.held && e.stamps <> hold_stamps then
+  if e.life = Held && e.stamps <> hold_stamps then
     invalid_argf "Rig.%s: a part names memory of another hold" fn
 
 (* Hands the C form [c] its [!k]th fixed buffer [b], and counts it. Only [d]'s
@@ -208,9 +211,21 @@ let build named ~reads ~writes d parts =
           fix c k d src false;
           fix c k d dst true)
     parts;
-  { dev = d; c; parts; nreads = reads; nwrites = writes; named }
+  { dev = d; c; parts; nreads = reads; nwrites = writes; named; scratches = [] }
 
+let is_scratch b = b.mem.root.entry.life = Scratch
+
+let names_scratch p =
+  match p.work with
+  | Words b -> is_scratch b
+  | Fill f -> is_scratch f.arg
+  | Copy { src; dst } -> is_scratch src || is_scratch dst
+
+(* A part outlives its first submit, which ends a scratch; the library's own
+   copy, built with [build], runs once. *)
 let make ?hold ~reads ~writes d parts =
+  if Array.exists names_scratch parts then
+    invalid_arg "Rig.Submission.make: a part names a scratch buffer";
   let named = match hold with Some h -> Hold h | None -> No_hold in
   build named ~reads ~writes d parts
 
@@ -315,6 +330,26 @@ let check_counts s reads writes =
    and, written, of memory that admits writes; and hands its stamps and handle
    to the C slot [k]. Memory of another device that is lost raises its loss;
    [s]'s device's own loss is the hand-over's. *)
+(* Takes the scratch [b] for the running submit: its claim word goes
+   exclusive, so no submit on another domain names it until this one ends it
+   or raises. A scratch this submit named already is its own. *)
+let claim_scratch s what i b =
+  let m = b.mem.root in
+  if not (List.exists (fun (m', _) -> m' == m) s.scratches) then begin
+    let cl = m.claim in
+    let w = Atomic.Loc.get [%atomic.loc cl.count] in
+    if w = Memory.consumed then
+      invalid_argf "Rig.%s: %s.(%d) is dead: scratch" fn what i;
+    if
+      w < 0 || w >= Memory.one_claim
+      || not
+           (Atomic.Loc.compare_and_set [%atomic.loc cl.count] w Memory.exclusive)
+    then
+      invalid_argf "Rig.%s: %s.(%d) is a scratch another submit or claim holds"
+        fn what i;
+    s.scratches <- (m, w) :: s.scratches
+  end
+
 let name_one s held (access : access) i k b =
   let what = match access with Read -> "reads" | Read_write -> "writes" in
   if not (Buffer.is_live b) then
@@ -327,8 +362,9 @@ let name_one s held (access : access) i k b =
   if m != b.mem && m.dev != s.dev && Dev.is_lost m.dev then Dev.raise_lost m.dev;
   if m.entry == Memory.no_entry then Memory.ensure_entry m;
   let e = m.entry in
-  if held && e.held then
+  if held && e.life = Held then
     invalid_argf "Rig.%s: %s.(%d)'s memory is in a hold" fn what i;
+  if held && e.life = Scratch then claim_scratch s what i b;
   if access = Read_write && e.access = Read then
     invalid_argf "Rig.%s: %s.(%d)'s memory admits only reads" fn what i;
   sub_slot s.c k e.stamps b.mem.handle
@@ -432,18 +468,26 @@ let submit s ~reads ~writes ~waits =
   if Dev.is_lost s.dev then Dev.raise_lost s.dev;
   check_counts s reads writes;
   sub_take s.c;
+  let marked = Atomic.get Memory.any_marked in
   match
-    let held = Atomic.get Memory.any_held in
-    check_parts s held;
-    run s held reads writes waits 0
+    check_parts s marked;
+    run s marked reads writes waits 0
   with
   | p ->
+      let named = s.scratches in
+      s.scratches <- [];
       sub_clear s.c;
       sub_give s.c;
+      List.iter (fun (m, _) -> Memory.end_scratch m) named;
       p
   | exception e ->
+      let named = s.scratches in
+      s.scratches <- [];
       sub_clear s.c;
       sub_give s.c;
+      List.iter
+        (fun (m, w) -> Atomic.Loc.set [%atomic.loc m.claim.count] w)
+        named;
       raise e
 
 let copy ~hold_stamps d queue ~src ~dst =

@@ -7,6 +7,10 @@
 # forced: blessed under load 3.3 on 6 cores
 # forced: blessed floor/host/memcpy-4M copy/cuda/host-to-borrow-4M copy/cuda/borrow-to-host-4M copy/nv/host-to-borrow-4M copy/nv/borrow-to-host-4M under load 7.3 on 6 cores
 
+alloc/cuda/scratch-4MiB	alloc_words	batch=4096	n=20	7.406e+01	7.406e+01 7.406e+01 7.406e+01 7.406e+01 7.406e+01 7.406e+01 7.406e+01 7.406e+01 7.406e+01 7.406e+01 7.406e+01 7.406e+01 7.406e+01 7.406e+01 7.406e+01 7.406e+01 7.406e+01 7.406e+01 7.406e+01 7.406e+01
+alloc/cuda/scratch-4MiB	wall_time	batch=4096	n=20	1.703e-06	1.696e-06 1.696e-06 1.697e-06 1.698e-06 1.698e-06 1.700e-06 1.701e-06 1.701e-06 1.702e-06 1.702e-06 1.704e-06 1.704e-06 1.704e-06 1.705e-06 1.707e-06 1.709e-06 1.711e-06 1.713e-06 1.714e-06 1.716e-06
+alloc/nv/scratch-4MiB	alloc_words	batch=4096	n=20	7.406e+01	7.406e+01 7.406e+01 7.406e+01 7.406e+01 7.406e+01 7.406e+01 7.406e+01 7.406e+01 7.406e+01 7.406e+01 7.406e+01 7.406e+01 7.406e+01 7.406e+01 7.406e+01 7.406e+01 7.406e+01 7.406e+01 7.406e+01 7.406e+01
+alloc/nv/scratch-4MiB	wall_time	batch=4096	n=20	1.635e-06	1.630e-06 1.634e-06 1.635e-06 1.635e-06 1.635e-06 1.635e-06 1.635e-06 1.635e-06 1.635e-06 1.635e-06 1.635e-06 1.635e-06 1.635e-06 1.635e-06 1.636e-06 1.636e-06 1.637e-06 1.637e-06 1.637e-06 1.663e-06
 copy/cuda/borrow-to-host-4M	alloc_words	exact	0
 copy/cuda/borrow-to-host-4M	wall_time	batch=32	n=20	1.843e-04	1.834e-04 1.838e-04 1.838e-04 1.838e-04 1.840e-04 1.840e-04 1.841e-04 1.841e-04 1.841e-04 1.842e-04 1.843e-04 1.843e-04 1.843e-04 1.844e-04 1.844e-04 1.848e-04 1.853e-04 1.853e-04 1.854e-04 1.877e-04
 copy/cuda/from-device-256M	alloc_words	exact	120
@@ -127,6 +131,8 @@ wait/nv/reached	wall_time	batch=2097152	n=20	4.011e-09	4.010e-09 4.011e-09 4.011
 # forced: blessed floor/metal/encode under load 12.2 on 10 cores
 # forced: blessed floor/host/memcpy-4M copy/metal/host-to-borrow-4M copy/metal/borrow-to-host-4M under load 9.5 on 10 cores
 
+alloc/metal/scratch-4MiB	alloc_words	batch=1024	n=20	7.309e+01	7.309e+01 7.309e+01 7.309e+01 7.309e+01 7.309e+01 7.309e+01 7.309e+01 7.309e+01 7.309e+01 7.309e+01 7.309e+01 7.309e+01 7.309e+01 7.309e+01 7.309e+01 7.309e+01 7.309e+01 7.309e+01 7.309e+01 7.309e+01
+alloc/metal/scratch-4MiB	wall_time	batch=1024	n=20	6.737e-06	6.029e-06 6.092e-06 6.173e-06 6.174e-06 6.198e-06 6.294e-06 6.318e-06 6.384e-06 6.524e-06 6.650e-06 6.824e-06 6.851e-06 7.078e-06 7.082e-06 7.297e-06 7.498e-06 7.719e-06 8.174e-06 8.920e-06 8.951e-06
 copy/metal/borrow-to-host-4M	alloc_words	exact	0
 copy/metal/borrow-to-host-4M	wall_time	batch=64	n=20	1.151e-04	1.101e-04 1.113e-04 1.125e-04 1.128e-04 1.130e-04 1.138e-04 1.141e-04 1.145e-04 1.147e-04 1.148e-04 1.153e-04 1.156e-04 1.159e-04 1.160e-04 1.165e-04 1.180e-04 1.209e-04 1.224e-04 1.224e-04 1.234e-04
 copy/metal/from-device-256M	alloc_words	exact	0

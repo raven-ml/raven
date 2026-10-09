@@ -156,7 +156,7 @@ let queued d queue ~src ~dst =
    one submission names: the copy stages, each leg naming one hold's memory. *)
 let hold_stamps src dst =
   let e = src.mem.root.entry and e' = dst.mem.root.entry in
-  match (e.held, e'.held) with
+  match (e.life = Held, e'.life = Held) with
   | true, true when e.stamps <> e'.stamps -> None
   | true, _ -> Some e.stamps
   | false, true -> Some e'.stamps

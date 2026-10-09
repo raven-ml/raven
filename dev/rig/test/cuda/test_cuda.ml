@@ -606,6 +606,61 @@ let commits =
         copy_after_compute;
     ]
 
+(* Scratch *)
+
+(* Launches, each through a scratch of [k] KiB: a kernel on one stream copies
+   the launch's own bytes into it, one on the other copies them out. Nothing
+   waits between launches, so a scratch's memory returns while the work before
+   it may still run. *)
+let gen_launches = Gen.list ~size:(Gen.int_range 1 12) (Gen.int_range 1 4)
+
+let through_scratch sizes =
+  S.with_ @@ fun { d; g } ->
+  let _, kernel = S.kernels g in
+  let flag = require_some (C.alloc g `Pinned 8) in
+  H.set64 (host flag) 1;
+  let copy ~dst ~src n =
+    S.delayed ~spin:(kernel "spin") ~flag:(address flag) ~ns:0 ~dst ~src n
+  in
+  let seen = Hashtbl.create 16 and reused = ref false in
+  let launch i k =
+    let n = k * 1024 in
+    let data = pattern n i in
+    let src = B.create ~memory:Pinned d n
+    and out = B.create ~memory:Pinned d n in
+    let s = B.scratch d n in
+    reused := !reused || Hashtbl.mem seen (B.address s);
+    Hashtbl.replace seen (B.address s) ();
+    H.write (B.address src) data;
+    let into = copy ~dst:(B.address s) ~src:(B.address src) n
+    and out_of = copy ~dst:(B.address out) ~src:(B.address s) n in
+    let parts =
+      [|
+        S.part ~queue:"COPY:0" into;
+        S.part ~queue:"COMPUTE:0" ~after:[| 0 |] out_of;
+      |]
+    in
+    let sub = Rig.Submission.make ~reads:1 ~writes:2 d parts in
+    ignore (Rig.submit sub ~reads:[| src |] ~writes:[| s; out |] ~waits:[||]);
+    (out, data)
+  in
+  let outs = List.mapi launch sizes in
+  cover "a scratch reuses an earlier one's memory" !reused;
+  List.iteri
+    (fun i (out, data) ->
+      B.wait out Read;
+      let got = H.read (B.address out) (String.length data) in
+      equal string ~msg:(strf "launch %d" i) data got)
+    outs;
+  C.free g flag
+
+let scratch =
+  group ~timeout:60. "scratch"
+    [
+      prop ~count:30 "a launch reads what its submission wrote into a scratch"
+        gen_launches through_scratch;
+    ]
+
 let timeline =
   group ~timeout:60. "timeline"
     [
@@ -1310,6 +1365,7 @@ let () =
          images;
          graphs;
          commits;
+         scratch;
          timeline;
          two;
          stateful;

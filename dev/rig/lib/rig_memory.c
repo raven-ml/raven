@@ -167,7 +167,10 @@ enum { MEMORY_DEV, MEMORY_BYTES, MEMORY_HOST, MEMORY_ADDRESS, MEMORY_HANDLE,
        MEMORY_CLAIM, MEMORY_ENTRY, MEMORY_ROOT };
 enum { CLAIM_COUNT, CLAIM_GEN, CLAIM_WHY };
 enum { ENTRY_OWNER, ENTRY_MEMORY, ENTRY_BYTES, ENTRY_REGION, ENTRY_IO_REGION,
-       ENTRY_ACCESS, ENTRY_STAMPS, ENTRY_HELD };
+       ENTRY_ACCESS, ENTRY_STAMPS, ENTRY_LIFE };
+
+/* An entry's life Held, as rig's Def lays out its constructors. */
+#define LIFE_HELD 1
 
 /* The claim word's bit for memory that admits only reads, and its step
    per claim, as rig's Memory module lays the word out. */
@@ -253,7 +256,8 @@ enum rig_claim rig_buffer_claim(value b, enum rig_access access) {
   if (dev_lost(mem) || (root != mem && dev_lost(root)) ||
       (s != NULL &&
        !stamps_done(s, access == RIG_READ_WRITE ||
-                           Bool_val(load_field(entry, ENTRY_HELD)))))
+                           Long_val(load_field(entry, ENTRY_LIFE)) ==
+                               LIFE_HELD)))
     return RIG_WAIT;
   return RIG_CLAIMED;
 }
