@@ -30,8 +30,10 @@ module Prog = Prog
     shapes, dtypes and axes against the operation's rule.
 
     A kernel claims [dst] and its operands for the extent of its call through a
-    door: [nx_read] of [nx_array.h] for host kernels. [nx_read] waits, under its
-    claims, for earlier device work on the operands. A kernel answers [0] once
+    door: [nx_read] of [nx_array.h] for host kernels, {!Nx_array.door} for
+    kernels that submit device work. [nx_read] waits, under its claims, for
+    earlier device work on the operands; {!Nx_array.door} holds its claims
+    until the work is submitted. A kernel answers [0] once
     its work is done on the host or queued on the device's timeline; the door's
     code if the door refused an operand, before any write; {!not_computed} if it
     does not compute the case, before any write or queued work.

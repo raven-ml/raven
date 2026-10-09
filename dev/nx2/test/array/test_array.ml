@@ -1218,6 +1218,95 @@ let test_door_moving_gc () =
   equal bool true (unclaimed (A.buffer x));
   equal (values f32) [| 1.; 2.; 3.; 4. |] (A.to_array x)
 
+(* The OCaml door *)
+
+(* [door ~written ~read], its function recording whether every array was
+   claimed while it ran. *)
+let ocaml_door written read =
+  let ran = ref None in
+  let all = Array.append written read in
+  let e =
+    A.door ~written ~read
+      (fun all ->
+        ran :=
+          Some (Array.for_all (fun (A.Any a) -> not (unclaimed (A.buffer a))) all))
+      all
+  in
+  (e, !ran)
+
+(* Whether no claim holds a live array of [arrays]. *)
+let released arrays =
+  Array.iter
+    (fun (A.Any a) ->
+      if B.dead (A.buffer a) = None then
+        equal ~msg:"released" bool true (unclaimed (A.buffer a)))
+    arrays
+
+let test_ocaml_door_runs () =
+  let z = A.Any (zeros [| 2 |]) and x = A.Any (floats32 [| 2 |] [| 1.; 2. |]) in
+  equal (pair int (option bool)) (ok, Some true) (ocaml_door [| z |] [| x; x |]);
+  released [| z; x |];
+  equal (pair int (option bool)) (ok, Some true) (ocaml_door [||] [||])
+
+let test_ocaml_door_refuses () =
+  let x = floats32 [| 3 |] [| 1.; 2.; 3. |] in
+  let refuses ~msg code written read =
+    equal ~msg (pair int (option bool)) (code, None) (ocaml_door written read);
+    released (Array.append written read)
+  in
+  refuses ~msg:"z is x" overlap [| A.Any x |] [| A.Any x |];
+  refuses ~msg:"written twice" overlap [| A.Any x; A.Any x |] [||];
+  let b = A.buffer (zeros [| 8 |]) in
+  let at offset = A.v f32 (L.v ~offset ~strides:[| 1 |] [| 3 |]) b in
+  refuses ~msg:"z overlaps y" overlap [| A.Any (at 0) |] [| A.Any (at 2) |];
+  equal ~msg:"z beside y" (pair int (option bool)) (ok, Some true)
+    (ocaml_door [| A.Any (at 0) |] [| A.Any (at 3) |]);
+  let r = Option.get (A.move (M.Broadcast [| 3 |]) (zeros [| 1 |])) in
+  refuses ~msg:"z broadcast" not_distinct [| A.Any r |] [| A.Any x |];
+  let d = zeros [| 3 |] in
+  kill (A.buffer d);
+  refuses ~msg:"dead" dead [| A.Any (zeros [| 3 |]) |] [| A.Any x; A.Any d |];
+  let held = zeros [| 3 |] in
+  Rig.Claim.with_ ~read:[]
+    ~donate:[ [ A.buffer held ] ]
+    (fun _ ->
+      equal ~msg:"exclusive" (pair int (option bool)) (exclusive, None)
+        (ocaml_door [| A.Any (zeros [| 3 |]) |] [| A.Any x; A.Any held |]))
+
+(* Off the host, views of one buffer overlap by their offsets. *)
+let test_ocaml_door_off_host () =
+  let io = S.io_device () in
+  let b = A.buffer (A.to_device io (zeros [| 8 |])) in
+  let at offset = A.Any (A.v f32 (L.v ~offset ~strides:[| 1 |] [| 3 |]) b) in
+  equal ~msg:"overlap" (pair int (option bool)) (overlap, None)
+    (ocaml_door [| at 0 |] [| at 2 |]);
+  equal ~msg:"beside" (pair int (option bool)) (ok, Some true)
+    (ocaml_door [| at 0 |] [| at 3 |])
+
+(* Two bigarrays over one memory's bytes overlap by their addresses. *)
+let test_ocaml_door_bigarrays () =
+  let g = Bigarray.Array1.create Bigarray.float32 Bigarray.c_layout 8 in
+  let over first =
+    A.of_bigarray f32
+      (Bigarray.genarray_of_array1 (Bigarray.Array1.sub g first 4))
+  in
+  let part start a =
+    A.Any
+      (Option.get (A.move (M.Slice [| { M.start; count = 2; step = 1 } |]) a))
+  in
+  let head = part 0 and tail = part 2 in
+  equal ~msg:"overlap" (pair int (option bool)) (overlap, None)
+    (ocaml_door [| tail (over 0) |] [| head (over 2) |]);
+  equal ~msg:"beside" (pair int (option bool)) (ok, Some true)
+    (ocaml_door [| head (over 0) |] [| head (over 2) |])
+
+exception Raised
+
+let test_ocaml_door_raises () =
+  let z = A.Any (zeros [| 2 |]) and x = A.Any (floats32 [| 2 |] [| 1.; 2. |]) in
+  raises Raised (fun () -> A.door ~written:[| z |] ~read:[| x |] raise Raised);
+  released [| z; x |]
+
 (* Device work: operands on a Late device, whose work runs only once a wait
    sleeps on it. A kernel waits for the work its operands' accesses follow and
    then runs: a store that ran after the kernel would show in its result. *)
@@ -1482,6 +1571,19 @@ let tests =
           test_door_empty;
         test "a read releases its claims" test_door_releases;
         test "a read survives a moving collection" test_door_moving_gc;
+      ];
+    group "OCaml door"
+      [
+        test "claims every array while its function runs, then releases them"
+          test_ocaml_door_runs;
+        test "refuses before claiming or running anything"
+          test_ocaml_door_refuses;
+        test "off the host, views overlap by their offsets"
+          test_ocaml_door_off_host;
+        test "bigarrays over one memory overlap by their addresses"
+          test_ocaml_door_bigarrays;
+        test "releases its claims when its function raises"
+          test_ocaml_door_raises;
       ];
     group "device work"
       [

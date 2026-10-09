@@ -268,6 +268,7 @@ placement/to_device-transposed-512x512	wall_time	batch=128	n=20	4.129e-05	4.101e
 # forced: blessed dtype/bf16-to-f32-1M dtype/bf16-to-f64-run-1M layout/coalesce-3 layout/coalesce-3-transposed access/of_array-f32-1M access/of_array-bf16-1M access/of_array-e4m3fn-1M placement/to_device-f32-1 placement/to_device-f32-1M placement/to_device-transposed-512x512 under load 8.1 on 10 cores
 # forced: blessed kinds/exp-f32-1M kinds/exp2-f32-1M kinds/expm1-f32-1M kinds/log-f32-1M kinds/log2-f32-1M kinds/log1p-f32-1M kinds/sin-f32-1M kinds/cos-f32-1M kinds/tan-f32-1M kinds/asin-f32-1M kinds/acos-f32-1M kinds/atan-f32-1M kinds/sinh-f32-1M kinds/cosh-f32-1M kinds/tanh-f32-1M kinds/erf-f32-1M kinds/pow-f32-1M kinds/atan2-f32-1M kinds/exp-f64-1M kinds/exp2-f64-1M kinds/expm1-f64-1M kinds/log-f64-1M kinds/log2-f64-1M kinds/log1p-f64-1M kinds/sin-f64-1M kinds/cos-f64-1M kinds/tan-f64-1M kinds/asin-f64-1M kinds/acos-f64-1M kinds/atan-f64-1M kinds/sinh-f64-1M kinds/cosh-f64-1M kinds/tanh-f64-1M kinds/erf-f64-1M kinds/pow-f64-1M kinds/atan2-f64-1M under load 14.6 on 10 cores
 # forced: blessed kinds/sin-f32-1M kinds/cos-f32-1M under load 10.0 on 10 cores
+# forced: blessed door/ocaml-3 under load 9.9 on 10 cores
 
 access/bigarray-f32-1M	alloc_words	exact	23
 access/bigarray-f32-1M	wall_time	batch=65536	n=20	9.191e-08	8.921e-08 8.928e-08 9.041e-08 9.058e-08 9.065e-08 9.091e-08 9.174e-08 9.178e-08 9.189e-08 9.189e-08 9.192e-08 9.205e-08 9.208e-08 9.236e-08 9.251e-08 9.254e-08 9.271e-08 9.282e-08 9.287e-08 9.328e-08
@@ -347,6 +348,8 @@ door/loop-3-scalar	alloc_words	exact	0
 door/loop-3-scalar	wall_time	batch=131072	n=20	6.538e-08	6.478e-08 6.478e-08 6.497e-08 6.500e-08 6.501e-08 6.502e-08 6.512e-08 6.515e-08 6.517e-08 6.529e-08 6.547e-08 6.559e-08 6.571e-08 6.580e-08 6.584e-08 6.622e-08 6.628e-08 6.649e-08 6.688e-08 6.827e-08
 door/loop-3-transposed	alloc_words	exact	0
 door/loop-3-transposed	wall_time	batch=131072	n=20	6.271e-08	6.161e-08 6.163e-08 6.172e-08 6.189e-08 6.199e-08 6.235e-08 6.239e-08 6.239e-08 6.268e-08 6.270e-08 6.271e-08 6.276e-08 6.284e-08 6.306e-08 6.322e-08 6.332e-08 6.350e-08 6.362e-08 6.374e-08 6.408e-08
+door/ocaml-3	alloc_words	exact	0
+door/ocaml-3	wall_time	batch=131072	n=20	5.019e-08	4.898e-08 4.917e-08 4.921e-08 4.944e-08 4.945e-08 4.983e-08 5.014e-08 5.016e-08 5.017e-08 5.017e-08 5.021e-08 5.041e-08 5.048e-08 5.068e-08 5.070e-08 5.070e-08 5.092e-08 5.109e-08 5.199e-08 5.243e-08
 door/read-3	alloc_words	exact	0
 door/read-3	wall_time	batch=131072	n=20	4.445e-08	4.391e-08 4.391e-08 4.394e-08 4.398e-08 4.416e-08 4.422e-08 4.425e-08 4.433e-08 4.441e-08 4.444e-08 4.447e-08 4.450e-08 4.451e-08 4.453e-08 4.471e-08 4.477e-08 4.478e-08 4.483e-08 4.502e-08 4.523e-08
 dtype/bf16-to-f32-1M	alloc_words	exact	0

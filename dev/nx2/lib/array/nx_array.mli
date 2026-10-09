@@ -31,8 +31,8 @@
       let e = add_kernel z x y in
       if e <> 0 then Nx_array.refused "Nx.add" e [ Any z; Any x; Any y ]
     ]}
-    GPU kernel libraries bind arrays in OCaml, through their typed signatures or
-    {!expect}. [nx_dtype.h] holds the dtypes' codes, their facts and every
+    Kernels that submit device work from OCaml claim their arrays through
+    {!door}, which answers the same codes. [nx_dtype.h] holds the dtypes' codes, their facts and every
     conversion into them for C, CUDA, HIP and Metal sources. *)
 
 (** {1:dtypes Dtypes} *)
@@ -217,6 +217,21 @@ val of_bigarray :
     elements. *)
 
 (** {1:kernels Kernels} *)
+
+val door : written:any array -> read:any array -> ('a -> unit) -> 'a -> int
+(** [door ~written ~read f x] claims the memory of [written] for writing and of
+    [read] for reading, every claim or none, runs [f x], and releases the claims
+    when [f] returns or raises; an exception of [f] propagates once they are
+    released. It answers [0] once [f] returns, or, having claimed nothing and
+    run nothing, a code of [nx_array.h]: that a written array reaches an element
+    twice or shares a byte with another array, that an array's buffer is dead,
+    or that its memory is held exclusive or, for a written array, [Read].
+
+    It waits for no device work: [f] submits work that the device orders after
+    the work before it. [f] may write the elements of [written], but leaves the
+    OCaml arrays [written] and [read] holding the arrays they held: the door
+    releases what they hold when [f] ends. With a [f] that is not a closure and
+    arrays the caller reuses, it allocates nothing. *)
 
 val refused : string -> int -> any list -> 'a
 (** [refused name code operands] raises [Invalid_argument] for [code], a code

@@ -51,6 +51,87 @@ let refused name code operands =
        pp_operand)
     operands
 
+(* The OCaml door. It checks what nx_read checks of a written array, then
+   claims every array or none, as nx_read does, and waits for nothing. It
+   allocates nothing: the loops index the caller's arrays. *)
+
+let not_distinct = 6
+let overlap = 7
+
+external claim : Buffer.t -> (int[@untagged]) -> (int[@untagged])
+  = "nx_array_claim_byte" "nx_array_claim"
+[@@noalloc]
+
+external release : Buffer.t -> unit = "nx_array_release" [@@noalloc]
+
+external shares :
+  ('v, 's) t -> ('w, 'r) t -> (int[@untagged]) -> (int[@untagged]) -> bool
+  = "nx_array_shares_byte" "nx_array_shares"
+[@@noalloc]
+
+let shares_bytes (Any a) (Any b) =
+  Buffer.overlaps a.buffer b.buffer
+  && shares a b (Buffer.offset a.buffer) (Buffer.offset b.buffer)
+
+(* The first refusal of a written array: it reaches an element twice, or
+   shares a byte with another array. *)
+let refusal written read =
+  let code = ref 0 and i = ref 0 in
+  while !code = 0 && !i < Array.length written do
+    let (Any w as aw) = written.(!i) in
+    if not (Layout.is_distinct w.layout) then code := not_distinct
+    else begin
+      for j = 0 to Array.length written - 1 do
+        if j <> !i && shares_bytes aw written.(j) then code := overlap
+      done;
+      for j = 0 to Array.length read - 1 do
+        if shares_bytes aw read.(j) then code := overlap
+      done
+    end;
+    incr i
+  done;
+  !code
+
+(* The [k]th array of [written], then [read]. *)
+let nth written read k =
+  let n = Array.length written in
+  if k < n then written.(k) else read.(k - n)
+
+let release_first written read n =
+  for k = 0 to n - 1 do
+    let (Any a) = nth written read k in
+    release a.buffer
+  done
+
+let claim_all written read =
+  let nw = Array.length written in
+  let n = nw + Array.length read in
+  let code = ref 0 and k = ref 0 in
+  while !code = 0 && !k < n do
+    let (Any a) = nth written read !k in
+    code := claim a.buffer (if !k < nw then 1 else 0);
+    incr k
+  done;
+  if !code <> 0 then release_first written read (!k - 1);
+  !code
+
+let door ~written ~read f x =
+  let code = refusal written read in
+  if code <> 0 then code
+  else
+    let code = claim_all written read in
+    if code <> 0 then code
+    else
+      let n = Array.length written + Array.length read in
+      match f x with
+      | () ->
+          release_first written read n;
+          0
+      | exception e ->
+          let bt = Printexc.get_raw_backtrace () in
+          release_first written read n;
+          Printexc.raise_with_backtrace e bt
+
 (* Making arrays *)
 
 external host_address : Buffer.t -> (int[@untagged])

@@ -321,6 +321,14 @@ let door_rows =
           let shape = [| 5; 4; 3; 2 |] in
           (operand ~shape (), transpose (operand ()), operand ~shape ()))
         (fun (z, x, y) -> loop_3 z x y);
+      (* The OCaml door over the same three arrays: what a kernel that submits
+         device work pays to claim them. *)
+      Thumper.bench_with_setup ~budgets:no_alloc
+        ~setup:(fun () ->
+          let z, x, y = three () in
+          ([| A.Any z |], [| A.Any x; A.Any y |]))
+        "ocaml-3"
+        (fun (written, read) -> ok "ocaml-3" (A.door ~written ~read ignore ()));
       row "floor-claim-3"
         (fun () ->
           let z, x, y = three () in

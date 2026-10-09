@@ -159,6 +159,52 @@ void nx_done(int n, nx_array *a) {
   *p = a[0].roots.next;
 }
 
+/* The OCaml door (Nx_array.door) claims through these. It waits for no
+   device work: what it runs submits work, which rig orders after the work
+   before it. */
+
+intnat nx_array_claim(value b, intnat written) {
+  enum rig_claim c = rig_buffer_claim(b, written ? RIG_READ_WRITE : RIG_READ);
+  return c == RIG_WAIT ? NX_OK : claim_code(c);
+}
+
+value nx_array_claim_byte(value b, value written) {
+  return Val_long(nx_array_claim(b, Long_val(written)));
+}
+
+value nx_array_release(value b) {
+  rig_buffer_release(b);
+  return Val_unit;
+}
+
+/* Whether the arrays [a] and [b] reach a common byte. Their buffers' first
+   bytes lie at their host addresses where the host addresses both, and
+   otherwise at [pa] and [pb] of one memory. */
+value nx_array_shares(value a, value b, intnat pa, intnat pb) {
+  value la = Field(a, ARRAY_LAYOUT), lb = Field(b, ARRAY_LAYOUT);
+  if ((Long_val(Field(la, NX_LAYOUT_FLAGS)) |
+       Long_val(Field(lb, NX_LAYOUT_FLAGS))) &
+      NX_EMPTY)
+    return Val_false;
+  uint8_t *ha = rig_buffer_host(Field(a, ARRAY_BUFFER));
+  uint8_t *hb = rig_buffer_host(Field(b, ARRAY_BUFFER));
+  if (ha != NULL && hb != NULL) {
+    pa = (intnat)(intptr_t)ha;
+    pb = (intnat)(intptr_t)hb;
+  }
+  int64_t bits_a = nx_dtype_row_of(nx_array_dtype(a)).bits;
+  int64_t bits_b = nx_dtype_row_of(nx_array_dtype(b)).bits;
+  int64_t first_a = pa + Long_val(Field(la, NX_LAYOUT_LO)) * bits_a / 8;
+  int64_t last_a = pa + (Long_val(Field(la, NX_LAYOUT_HI)) * bits_a + 7) / 8;
+  int64_t first_b = pb + Long_val(Field(lb, NX_LAYOUT_LO)) * bits_b / 8;
+  int64_t last_b = pb + (Long_val(Field(lb, NX_LAYOUT_HI)) * bits_b + 7) / 8;
+  return Val_bool(first_a < last_b && first_b < last_a);
+}
+
+value nx_array_shares_byte(value a, value b, value pa, value pb) {
+  return nx_array_shares(a, b, Long_val(pa), Long_val(pb));
+}
+
 /* Coalescing */
 
 int nx_coalesce(int n, const nx_array *a, nx_loop *l) {
