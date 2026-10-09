@@ -193,12 +193,28 @@ let result_gpu =
       | Error e -> Format.fprintf ppf "Error %S" e)
     ~equal:( = )
 
+(* The amdgpu driver lists the functions it drives, by bus address, beside its
+   files: each is a GPU of the machine. *)
+let amdgpu = "/sys/bus/pci/drivers/amdgpu"
+
+let driven () =
+  if not (Sys.file_exists amdgpu) then
+    skip ~reason:"the amdgpu driver is not loaded" ();
+  let functions =
+    Array.to_list (Sys.readdir amdgpu)
+    |> List.filter (fun f -> String.contains f ':')
+    |> List.sort compare
+  in
+  let buses = P.buses () in
+  equal (list string) functions
+    (List.sort compare (List.filter (fun b -> List.mem b functions) buses))
+
 let numbering =
   group ~timeout:10. "numbering"
     [
       test "a machine's AMD GPUs are its display functions, in bus order"
         (fun () ->
-          equal (list string) [ "0000:05:00.0" ] (P.gpus_at (r9700 ())));
+          equal (list string) [ "0000:05:00.0" ] (P.buses ~root:(r9700 ()) ()));
       test "an accelerator is a GPU, and GPUs come in bus order" (fun () ->
           let root =
             tree "two"
@@ -211,11 +227,11 @@ let numbering =
           in
           equal (list string)
             [ "0000:05:00.0"; "0000:c1:00.0" ]
-            (P.gpus_at root));
+            (P.buses ~root ());
+          equal int 2 (P.count ~root ()));
       test "a machine without PCI files has no GPU" (fun () ->
-          equal (list string) [] (P.gpus_at (tree "empty" [])));
-      test "this machine's count is its files' GPUs" (fun () ->
-          equal int (List.length (P.gpus_at "/")) (P.count ()));
+          equal (list string) [] (P.buses ~root:(tree "empty" []) ()));
+      test "this machine's GPUs hold every function amdgpu drives" driven;
     ]
 
 let facts =

@@ -2941,10 +2941,10 @@ let one_gpu_driverless t =
   equal int ~msg:"the first device's next value" 1 (S.submit t [||]);
   S.wait t 1
 
-(* Through amdgpu, a process opens a GPU as often as it likes: the devices
-   share its memory. *)
-let one_gpu_shared g =
-  let g' = match S.open_gpu () with Ok g' -> g' | Error why -> fail why in
+(* Through amdgpu, a process opens a GPU as often as it likes: the devices,
+   [g] and one [second] opens, share its memory. *)
+let one_gpu_shared ~second g =
+  let g' = match second () with Ok g' -> g' | Error why -> fail why in
   Fun.protect ~finally:(fun () -> A.stop g') @@ fun () ->
   let r = device g and r' = device g' in
   let n = 4096 in
@@ -2992,7 +2992,26 @@ let one_gpu_shared g =
 
 let one_gpu () =
   S.with_ @@ fun t ->
-  if S.driverless () then one_gpu_driverless t else one_gpu_shared t.g
+  if S.driverless () then one_gpu_driverless t
+  else one_gpu_shared ~second:S.open_gpu t.g
+
+(* Every root shows this machine: a root that links to [/] reaches the same
+   GPU, whose address space the process holds once, so devices opened through
+   either root share its memory, whichever opens first. The link lives beside
+   the suite in _build; it is unlinked, never walked. *)
+let mirror = "mirror"
+
+let two_roots () =
+  if S.driverless () then skip ~reason:"amdgpu does not hold the GPU" ();
+  (match Unix.lstat mirror with
+  | _ -> Unix.unlink mirror
+  | exception Unix.Unix_error (Unix.ENOENT, _, _) -> ());
+  Unix.symlink "/" mirror;
+  let through_mirror () = Rig_amd_amdgpu.open_ ~root:mirror 0 in
+  S.with_ (fun t -> one_gpu_shared ~second:through_mirror t.g);
+  let g = match through_mirror () with Ok g -> g | Error why -> fail why in
+  Fun.protect ~finally:(fun () -> A.stop g) @@ fun () ->
+  one_gpu_shared ~second:S.open_gpu g
 
 let two =
   group ~timeout:60. "one GPU"
@@ -3001,13 +3020,15 @@ let two =
         "two devices of one GPU share its memory, mapping each page once, \
          where the path allows a second device"
         one_gpu;
+      test "devices of one GPU opened through two roots share its memory"
+        two_roots;
     ]
 
 (* Traces *)
 
 (* The level the kernel driver holds GPU 0's clocks at. *)
 let level () =
-  match Rig_amd_amdgpu.gpus_at "/" with
+  match Rig_amd_amdgpu.buses () with
   | [] -> None
   | bus :: _ ->
       let file =

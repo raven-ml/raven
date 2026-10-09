@@ -114,17 +114,17 @@ let views_lock = Mutex.create ()
 
 (* KFD serves a file to the process that opened it only: a forked child opens
    its own, and the parent's address spaces, event page and views stay the
-   parent's. *)
-let kfd_fd () =
+   parent's. The process's first open makes it from [dev/kfd], and later opens
+   take it whatever their [dev]. *)
+let kfd_fd ~dev =
   match !kfd with
   | Some (p, fd) when p = pid () -> Ok fd
   | _ ->
       Hashtbl.reset acquired;
       Hashtbl.reset views;
       event_page := None;
-      let* fd =
-        opened "/dev/kfd" "the compute interface" (open_file "/dev/kfd")
-      in
+      let path = Filename.concat dev "kfd" in
+      let* fd = opened path "the compute interface" (open_file path) in
       kfd := Some (pid (), fd);
       Ok fd
 
@@ -296,30 +296,30 @@ let gpus_of m =
          (bus, Result.map (fun (n : Topology.node) -> n.gpu) node))
        (nodes m))
 
-(* This machine, read at the first use. *)
-let this = ref None
-let this_lock = Mutex.create ()
+(* The machine as each root shows it, read at the root's first use. *)
+let machines : machine list ref = ref []
+let machines_lock = Mutex.create ()
 
-let topology () =
+let topology root =
   let m =
-    Mutex.protect this_lock @@ fun () ->
-    match !this with
+    Mutex.protect machines_lock @@ fun () ->
+    match List.find_opt (fun m -> m.root = root) !machines with
     | Some m -> m
     | None ->
         let m =
-          if linux () then machine_at "/"
-          else { root = "/"; gpus = [||]; look = Mutex.create () }
+          if linux () then machine_at root
+          else { root; gpus = [||]; look = Mutex.create () }
         in
-        this := Some m;
+        machines := m :: !machines;
         m
   in
   nodes m
 
-let acquire fd (node : Topology.node) =
+let acquire fd ~root (node : Topology.node) =
   match Hashtbl.find_opt acquired node.gpu_id with
   | Some g -> Ok g
   | None ->
-      let path = strf "/dev/dri/renderD%d" node.render in
+      let path = Filename.concat root (strf "dev/dri/renderD%d" node.render) in
       let* drm = opened path "the GPU's render node" (open_file path) in
       let ok step e =
         if e >= 0 then Ok e
@@ -337,10 +337,10 @@ let acquire fd (node : Topology.node) =
       let cus = Array.make 16 0 in
       let* khz = ok "reading the GPU's facts" (device_info drm cus) in
       let links =
-        Array.to_list (topology ())
+        Array.to_list (topology root)
         |> List.filter_map (function
           | _, Ok (n : Topology.node)
-            when Topology.linked "/" node.index n.index ->
+            when Topology.linked root node.index n.index ->
               Some n.index
           | _ -> None)
       in
@@ -630,7 +630,7 @@ let wgps_of (gpu : Rig_amd_abi.Gpu.t) ~arrays ~per_array cus =
 
 let key : mem Type.Id.t = Type.Id.make ()
 
-let path d ~index : mem Amd.path =
+let path d ~root ~index : mem Amd.path =
   let g = d.gpu and fd = d.fd in
   {
     key;
@@ -651,7 +651,7 @@ let path d ~index : mem Amd.path =
          Array.mapi
            (fun j (_, n) ->
              j = index || match n with Ok n -> linked g n | Error _ -> false)
-           (topology ())
+           (topology root)
        in
        fun j -> j >= 0 && j < Array.length reached && reached.(j));
     map_peer = map_peer fd g;
@@ -667,29 +667,29 @@ let path d ~index : mem Amd.path =
 
 (* Numbering *)
 
-let gpus_at = Topology.gpus
+let buses ?(root = "/") () = Topology.gpus root
 
 let gpu_at root bus =
   Result.map (fun (n : Topology.node) -> n.gpu) (Topology.node root bus)
 
 let save_area_at root bus = Result.map save_bytes (Topology.node root bus)
-let count () = Array.length (topology ())
+let count ?root () = List.length (buses ?root ())
 
 let device_name i =
   if i < 0 then invalid_argf "Rig_amd_amdgpu.device_name: GPU %d is negative" i;
   if i = 0 then "AMD" else strf "AMD:%d" i
 
-let open_ i =
+let open_ ?(root = "/") i =
   if i < 0 then invalid_argf "Rig_amd_amdgpu.open_: GPU %d is negative" i;
-  let gpus = topology () in
+  let gpus = topology root in
   if i >= Array.length gpus then
     Error (strf "no GPU %d; the machine has %d AMD GPUs" i (Array.length gpus))
   else
     let* node = snd gpus.(i) in
     let* fd, g, events =
       Mutex.protect opening (fun () ->
-          let* fd = kfd_fd () in
-          let* g = acquire fd node in
+          let* fd = kfd_fd ~dev:(Filename.concat root "dev") in
+          let* g = acquire fd ~root node in
           poll_faults fd g;
           match Atomic.get g.faulted with
           | Some why ->
@@ -706,7 +706,7 @@ let open_ i =
     (* The events stay while a queue the path could not stop may still raise the
        interrupt. *)
     let give_back () = if d.queues = [] then drop_events d in
-    match Amd.make (path d ~index:i) with
+    match Amd.make (path d ~root ~index:i) with
     | Ok _ as r ->
         Mutex.protect opening (fun () -> g.live <- events :: g.live);
         r

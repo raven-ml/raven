@@ -238,7 +238,7 @@ let templates gpu ~waits ~interrupt =
 (* The floors' queues for GPU 0, once per worker; [waits] encodes the 64-bit
    wait, which only GPUs whose driver waits on other devices run. *)
 let floor_with ~waits () =
-  let bus = List.hd (P.gpus_at "/") in
+  let bus = List.hd (P.buses ()) in
   let gpu = get (P.gpu_at "/" bus) in
   let p = node bus in
   let prop k = List.assoc k p in

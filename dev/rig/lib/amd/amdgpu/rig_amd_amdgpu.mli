@@ -17,14 +17,23 @@
     {b Numbering.} GPU [i] is the [i]th of the machine's AMD GPUs in bus order
     ({!Rig_amd.is_gpu}), whichever driver holds each: a GPU taken from the
     kernel driver keeps its index, and the others theirs. The GPUs are named
-    ["AMD"], ["AMD:1"], ["AMD:2"], ....
+    ["AMD"], ["AMD:1"], ["AMD:2"], .... {!buses} lists them.
+
+    {b The machine's files.} {!buses}, {!count} and {!open_} read this
+    machine's files under the directory [root] (defaults to ["/"]): its PCI
+    functions under [root/sys/bus/pci], the kernel driver's description of its
+    GPUs under [root/sys], and the kernel driver's files under [root/dev], such
+    as a container's view of its host. Every root shows the same kernel driver.
 
     {b Privileges.} Opening needs read and write access to [/dev/kfd] and to the
     GPU's render node, [/dev/dri/renderD*], which members of the [render] group
     have, and no other privilege.
 
-    {b The process's GPU.} The kernel driver gives a process one address space
-    per GPU, which the first open takes and the process keeps until it exits.
+    {b The process's GPU.} The process has one file of the compute interface,
+    which the first open that makes it opens under that open's [root/dev] and
+    keeps for every later open, whatever its [root]; an open that fails to make
+    it keeps nothing. The kernel driver gives a process one address space per
+    GPU, which the first open takes and the process keeps until it exits.
     Every device of a GPU works in it, and a fault of one device's work is
     reported to every device of the GPU. An open after a device of the GPU was
     lost makes new queues there, unless the kernel driver reported a fault of
@@ -54,9 +63,16 @@
       save area) and the topology it lists under
       [/sys/devices/virtual/kfd/kfd/topology]. *)
 
-val count : unit -> int
-(** [count ()] is the number of the machine's AMD GPUs, whichever driver holds
-    them: the indices [0] to [count () - 1]. It is [0] elsewhere than Linux. *)
+val buses : ?root:string -> unit -> string list
+(** [buses ~root ()] is the bus addresses of this machine's AMD GPUs
+    ({!Rig_amd.is_gpu}) under [root] (defaults to ["/"]), in bus order: GPU
+    [i] is the [i]th, whichever driver holds it. It is [[]] where
+    [root/sys/bus/pci] does not exist, such as off Linux. Listing them changes
+    nothing on the machine. *)
+
+val count : ?root:string -> unit -> int
+(** [count ~root ()] is [List.length (buses ~root ())], the indices [0] to
+    [count ~root () - 1]. *)
 
 val device_name : int -> string
 (** [device_name i] is the name of GPU [i]: ["AMD"] for [0], ["AMD:i"]
@@ -64,23 +80,18 @@ val device_name : int -> string
 
     Raises [Invalid_argument] if [i < 0]. *)
 
-val open_ : int -> (Rig_amd.t, string) result
-(** [open_ i] opens GPU [i] through the [amdgpu] driver, with queues of its own.
-    The result is [Error msg] if [i >= count ()], saying how many GPUs there
-    are, if the [amdgpu] driver does not hold the GPU, if a file cannot be
-    opened, naming it and the reason, if the kernel driver refuses the GPU's
-    address space or events, naming the step and the reason, if the GPU faulted
-    in this process, with the fault, or with {!Rig_amd.make}'s message.
+val open_ : ?root:string -> int -> (Rig_amd.t, string) result
+(** [open_ ~root i] opens GPU [i] under [root] (defaults to ["/"]) through the
+    [amdgpu] driver, with queues of its own. The result is [Error msg] if
+    [i >= count ~root ()], saying how many GPUs there are, if the [amdgpu]
+    driver does not hold the GPU, if a file cannot be opened, naming it and the
+    reason, if the kernel driver refuses the GPU's address space or events,
+    naming the step and the reason, if the GPU faulted in this process, with
+    the fault, or with {!Rig_amd.make}'s message.
 
     Raises [Invalid_argument] if [i < 0]. *)
 
 (**/**)
-
-(* [gpus_at root] is the bus addresses of the AMD GPUs of the machine whose
-   files are under the directory [root], in bus order: the functions of
-   [root/sys/bus/pci] that [Rig_amd.is_gpu] names. [/] for this machine, a
-   fixture's directory in tests. *)
-val gpus_at : string -> string list
 
 (* [gpu_at root bus] is the GPU at bus address [bus] as the [amdgpu] driver
    describes it under the directory [root]: its topology node and its blocks'
@@ -92,7 +103,7 @@ val gpu_at : string -> string -> (Rig_amd_abi.Gpu.t, string) result
 type machine
 
 (* [machine_at root] is the AMD GPUs of the machine whose files are under the
-   directory [root], as {!gpus_at} lists them, each with the node the driver has
+   directory [root], as {!buses} lists them, each with the node the driver has
    for it. *)
 val machine_at : string -> machine
 
