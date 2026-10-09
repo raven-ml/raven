@@ -19,7 +19,8 @@
     from operands, [init] and results of a byte or more that are not complex,
     whose layouts {!Nx_kernel.Spec.Contract_view} groups. It declines a float
     operand or [init] wider than a float accumulator, an operand or [init] of
-    the other kind than the accumulator, integer or float, a batch above 65,535
-    and a row, column or contracted extent above [2{^31} - 1]. *)
+    the other kind than the accumulator, integer or float, a batch above 65,535,
+    a row, column or contracted extent above [2{^31} - 1], and a product of
+    more than [2{^31} - 1] output tiles in a batch element. *)
 
 include Nx_kernel.S

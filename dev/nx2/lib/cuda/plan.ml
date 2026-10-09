@@ -7,9 +7,10 @@
    or y is complex or narrower than a byte; a float operand or init is wider
    than a float accumulator, which would round it before the sum; init is of the
    other kind than the accumulator; an integer meets a float accumulator or the
-   reverse; the batch is above 65,535 (the grid's z); or m, n or k is above 2^31
-   - 1. A call whose axes do not group never reaches the plan:
-   Contract_view.fill answers false first. *)
+   reverse; the batch is above 65,535 (the grid's z); m, n or k is above 2^31 -
+   1; or a batch element has more than 2^31 - 1 output tiles (the grid's x). A
+   call whose axes do not group never reaches the plan: Contract_view.fill
+   answers false first. *)
 
 module K = Kernels
 module V = Nx_kernel.Spec.Contract_view
