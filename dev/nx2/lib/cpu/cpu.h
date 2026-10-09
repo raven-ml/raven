@@ -35,6 +35,46 @@
 /* A run converts [n] contiguous elements at [src] into [dst]. */
 typedef void (*nx_cpu_run)(const void *src, void *dst, int64_t n);
 
+/* The lanes of a sum whose order is fixed by shape: term t of a block of
+   NX_CPU_FOLD_BLOCK consecutive terms adds into lane t modulo
+   NX_CPU_LANES. */
+#define NX_CPU_LANES 16
+#define NX_CPU_FOLD_BLOCK 1024
+
+/* A contraction's microkernel adds to the tile of MR × NR outputs at [c],
+   output (i, j) at c + (i·ldc + j)·w, the products of [k] steps of packed
+   slivers: step p holds MR elements of a at a + p·MR·w and NR of b at
+   b + p·NR·w. Each output adds its products in increasing p, each fused
+   into its addition. */
+typedef void (*nx_cpu_kernel)(int64_t k, const void *a, const void *b,
+                              void *c, int64_t ldc);
+
+/* A dot adds the [n] products of the contiguous [a] and [b] into the lanes
+   at [lanes], term t into lane t modulo NX_CPU_LANES, each fused. */
+typedef void (*nx_cpu_dot)(const void *a, const void *b, int64_t n,
+                           void *lanes);
+
+/* A microkernel of few rows: MR is 1, 2 or 4, NR is [nr]. */
+typedef struct {
+  nx_cpu_kernel kernel;
+  int nr;
+} nx_cpu_thin;
+
+/* A contraction's kernels in one accumulator dtype, the tile they compute
+   and the blocks of the outputs, the contraction and b's columns the
+   driver gives them; thin[i] has 2^i rows, its kernel NULL where the
+   target has none. */
+typedef struct {
+  nx_cpu_kernel kernel;
+  nx_cpu_dot dot;
+  int mr, nr;
+  int64_t mc, kc, nc;
+  nx_cpu_thin thin[3];
+} nx_cpu_gemm;
+
+/* The bytes of the largest tile of any target's microkernel. */
+#define NX_CPU_TILE 4096
+
 typedef struct {
   const char *name;
   /* convert[s][d] converts elements of the dtype s into the dtype d, as a
@@ -42,15 +82,26 @@ typedef struct {
      float32. A sub-byte dtype has one element per byte, in its low bits:
      int4 and uint4 their value modulo 16, float4 its code, bit 0 or 1. */
   nx_cpu_run convert[NX_DTYPE_COUNT][NX_DTYPE_COUNT];
+  /* gemm[acc] contracts in acc; its kernel is NULL where the target has
+     none. */
+  nx_cpu_gemm gemm[NX_DTYPE_COUNT];
 } nx_cpu_target;
 
 /* The tables, each filled when the program starts on a host that runs it,
-   by convert.c compiled for its target. */
+   by convert.c and gemm_generic.c compiled for its target, then by the
+   kernels of its instructions: gemm_neon.c's on arm64, gemm_avx2.c's for
+   v3. */
 extern nx_cpu_target nx_cpu_base;
 void nx_cpu_fill_base(nx_cpu_target *t);
+void nx_cpu_fill_generic_base(nx_cpu_target *t);
+#if defined(__aarch64__)
+void nx_cpu_fill_neon(nx_cpu_target *t);
+#endif
 #if defined(__x86_64__)
 extern nx_cpu_target nx_cpu_v3;
 void nx_cpu_fill_v3(nx_cpu_target *t);
+void nx_cpu_fill_generic_v3(nx_cpu_target *t);
+void nx_cpu_fill_avx2(nx_cpu_target *t);
 #endif
 
 /* The table the kernels run: the best one whose instructions the host
@@ -87,6 +138,10 @@ static inline int nx_cpu_width(int dt) {
    one, runs with the runtime released: [body] reads no OCaml value. */
 void nx_cpu_job(int64_t total, int64_t bytes, int64_t cost, rig_pool_body body,
                 void *ctx);
+
+/* The threads nx_cpu_job gives such work, if it has as many units: at
+   least 1. */
+int nx_cpu_threads(int64_t bytes, int64_t cost);
 
 /* Walks */
 

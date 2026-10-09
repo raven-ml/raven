@@ -1,24 +1,29 @@
 ; Kernels for host memory.
 ;
-; convert.c is compiled once per target: as itself for base, and as its copy
-; convert_v3.c for v3, with v3's instructions on x86-64 and as an empty unit
-; elsewhere. target.c picks the table at run time.
+; convert.c and gemm_generic.c are compiled once per target: as themselves
+; for base, and as their copies convert_v3.c and gemm_generic_v3.c for v3,
+; with v3's instructions on x86-64 and as empty units elsewhere.
+; gemm_neon.c holds arm64's kernels, in base; gemm_avx2.c, compiled with
+; v3's instructions, x86-64's. target.c picks the table at run time.
 
 (library
  (name nx_cpu)
  (libraries nx_array nx_kernel rig rig.pool)
  (foreign_stubs
   (language c)
-  (include_dirs ../array)
-  (names target job walk stage copy convert))
+  (include_dirs ../array ../kernel)
+  (names target job walk stage copy convert gemm gemm_generic gemm_neon))
  (foreign_stubs
   (language c)
   (include_dirs ../array)
   (flags :standard -DNX_CPU_V3 (:include v3_flags.sexp))
-  (names convert_v3)))
+  (names convert_v3 gemm_generic_v3 gemm_avx2)))
 
 (rule
  (copy convert.c convert_v3.c))
+
+(rule
+ (copy gemm_generic.c gemm_generic_v3.c))
 
 (rule
  (target v3_flags.sexp)

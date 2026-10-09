@@ -13,6 +13,25 @@
 
     [apply1] computes [Copy] and [Cast], and answers [Declined] for the other
     kinds. A [Copy] whose operand's dtype is not [dst]'s is refused with
-    [Wrong_dtype]. [contract] answers [Declined]. *)
+    [Wrong_dtype].
+
+    [contract] computes contractions in [float32] or [float64] whose [out] is
+    their [acc], whose [a], [b] and [init] each convert exactly into [acc],
+    and whose layouts {!Nx_kernel.Spec.Contract_view} groups; it answers
+    [Declined] for the others. [float32] holds [bool], [bit], the integers of
+    at most 16 bits and the floats of at most 32; [float64] also [int32],
+    [uint32] and [float64].
+
+    With at least 64 outputs in each batch element, each output adds its
+    products in increasing order of the contracting pairs' indices, taken in
+    C order, each product fused into its addition, from [init] or [+0]. With
+    fewer, each output's products fall into blocks of 1024 consecutive
+    indices and, within a block, into 16 lanes by index modulo 16, each lane
+    a fused chain from [+0]. Lane [i] takes lane [i + 8] for [i] below 8,
+    then lane [i + 4] for [i] below 4, then [i + 2] for [i] below 2, then
+    lane 0 takes lane 1. The blocks are summed by a binary tree whose left
+    part holds the largest power of two of blocks below their count, each
+    part summed the same way; then [init] is added. A NaN result's payload
+    is unspecified. *)
 
 include Nx_kernel.S

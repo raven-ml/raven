@@ -37,13 +37,18 @@
    runs slower, an efficiency core's say, takes fewer. */
 #define CHUNKS 8
 
-void nx_cpu_job(int64_t total, int64_t bytes, int64_t cost, rig_pool_body body,
-                void *ctx) {
-  if (total <= 0) return;
+int nx_cpu_threads(int64_t bytes, int64_t cost) {
   int64_t threads = cost / THREAD_BYTES;
   int cores =
       bytes > CACHE_BYTES ? rig_pool_cores() : rig_pool_performance_cores();
   if (threads > cores) threads = cores;
+  return threads < 1 ? 1 : (int)threads;
+}
+
+void nx_cpu_job(int64_t total, int64_t bytes, int64_t cost, rig_pool_body body,
+                void *ctx) {
+  if (total <= 0) return;
+  int64_t threads = nx_cpu_threads(bytes, cost);
   if (threads > total) threads = total;
   if (threads <= 1 && cost < HOLD_BYTES) {
     body(0, total, 0, ctx);
