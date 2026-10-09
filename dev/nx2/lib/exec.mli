@@ -12,10 +12,10 @@
     computes each constant operand where the route reads it, places operands the
     route moves, allocates each result at the route's placement, and calls the
     set's kernels once per device. [Done] is the result; a refusal raises
-    through {!Nx_array.refused} naming [by]; a map the kernels decline runs as
-    one kernel call per node on each device, over its own operands, and a kernel
-    a node needs that the kernels decline raises naming the kernels, the kind,
-    the dtypes and the device. Movements and bitcasts are views where a layout
+    through {!Nx_array.refused} naming [by]; a map a device's kernels decline
+    runs as its expansion ({!Expand.run}) on that device, over its own
+    operands, and a kernel a node needs that the kernels decline raises naming
+    the kernels, the kind, the dtypes and the device. Movements and bitcasts are views where a layout
     expresses them, and a copy, then a view, otherwise. [Check] raises its
     exception from the first failing index, read on the host.
 
@@ -23,9 +23,18 @@
     window's first index added to them. *)
 
 val run : by:string -> 'r Value.prim -> 'r
-(** [run ~by op] is [op]'s meaning where no interpretation reaches it. *)
+(** [run ~by op] is [op]'s meaning where no interpretation reaches it.
+
+    Raises [Invalid_argument] naming [by] for a traced operand: its
+    interpretation receives the operation first ({!Eval.eval}). *)
 
 val apply1 :
+  slow:
+    (by:string ->
+    Nx_kernel.Prog.op1 ->
+    ('w, 'r) Value.dtype ->
+    ('v, 's, 'd) Value.t ->
+    ('w, 'r, 'd) Value.t) ->
   by:string ->
   Nx_kernel.Prog.op1 ->
   ('w, 'r) Value.dtype ->
@@ -33,6 +42,13 @@ val apply1 :
   ('w, 'r, 'd) Value.t
 
 val apply2 :
+  slow:
+    (by:string ->
+    Nx_kernel.Prog.op2 ->
+    ('w, 'r) Value.dtype ->
+    ('v, 's, 'd) Value.t ->
+    ('v, 's, 'd) Value.t ->
+    ('w, 'r, 'd) Value.t) ->
   by:string ->
   Nx_kernel.Prog.op2 ->
   ('w, 'r) Value.dtype ->
@@ -41,19 +57,28 @@ val apply2 :
   ('w, 'r, 'd) Value.t
 
 val apply3 :
+  slow:
+    (by:string ->
+    Nx_kernel.Prog.op3 ->
+    ('a, 'b, 'd) Value.t ->
+    ('v, 's, 'd) Value.t ->
+    ('v, 's, 'd) Value.t ->
+    ('v, 's, 'd) Value.t) ->
   by:string ->
   Nx_kernel.Prog.op3 ->
   ('a, 'b, 'd) Value.t ->
   ('v, 's, 'd) Value.t ->
   ('v, 's, 'd) Value.t ->
   ('v, 's, 'd) Value.t
-(** [applyN ~by k dt x …] is {!run} of the one-node map [k] over [x …], of one
-    shape, with result dtype [dt] (the second operand's for [apply3]). For
-    operands on one device at physically one placement it builds no operation:
-    it allocates the result, sharing the first operand's layout when that is
-    C-contiguous at offset 0 and of the result's dtype, and calls the set's
-    kernel, which checks the dtypes and shapes. A kernel that declines or
-    refuses them runs the map, whose rule raises. *)
+(** [applyN ~slow ~by k dt x …] is the one-node map [k] over [x …], of one
+    shape, with result dtype [dt] (the second operand's for [apply3]), where no
+    interpretation reaches it. For operands on one device at physically one
+    placement it builds no operation: it allocates the result, sharing the
+    first operand's layout when that is C-contiguous at offset 0 and of the
+    result's dtype, and calls the set's kernel, which checks the dtypes and
+    shapes. Otherwise, and where the kernel declines or refuses them, it is
+    [slow ~by k dt x …], the operation built and evaluated, whose rule
+    raises. *)
 
 val at : 'd Devices.placement -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
 (** [at p c] is the constant [c] computed at [p]: a map, a creation included, at

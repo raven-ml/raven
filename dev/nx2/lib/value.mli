@@ -6,12 +6,17 @@
 (** Values and operations: nx's central types, defined together because each
     mentions the other. This module has no implementation.
 
-    A value is concrete, arrays on the devices of its placement, or a constant
-    not yet computed. The brand ['d] is phantom: every function that makes a
-    value checks that its arrays lie on its placement's devices, and nothing at
-    run time reads ['d]. A constant's placement is {!Devices.anywhere}. *)
+    A value is concrete, arrays on the devices of its placement; a constant not
+    yet computed; or an interpretation's stand-in. The brand ['d] is phantom:
+    every function that makes a value checks that its arrays lie on its
+    placement's devices, and nothing at run time reads ['d]. A constant's
+    placement is {!Devices.anywhere}. *)
 
 type ('v, 's) dtype = ('v, 's) Nx_array.Dtype.t
+
+type ('v, 's, +'d) payload = ..
+(** What an interpretation keeps in its traced values. A payload holds values,
+    never a function of ['d]. *)
 
 (** {1:values Values} *)
 
@@ -23,6 +28,11 @@ type ('v, 's, 'd) t =
           [Grid.devices (Devices.grid at)]'s order, its window of the value. *)
   | Deferred of { form : ('v, 's, 'd) form; node : node; k : int }
       (** Result [k] of the constant operation [node]. *)
+  | Traced of {
+      form : ('v, 's, 'd) form;
+      owner : interpretation;
+      payload : ('v, 's, 'd) payload;
+    }  (** An interpretation's stand-in: its form, and what [owner] keeps. *)
 
 and ('v, 's, 'd) form = {
   dtype : ('v, 's) dtype;
@@ -44,6 +54,29 @@ and node =
           one array per device. *)
 
 and 'd any = Any : ('v, 's, 'd) t -> 'd any
+
+(** {1:interpretations Interpretations} *)
+
+and reach =
+  | Values  (** Reaches the operations on its traced values. *)
+  | Extent
+      (** Also reaches every operation its starting fiber applies inside its
+          extent, on its domain. *)
+
+and interpretation = {
+  name : string;  (** In messages, as ["Rune.grad"]. *)
+  reach : reach;
+  rule : rule;
+  start : int;  (** Its order of start on [domain]. *)
+  domain : Domain.id;  (** Where it started. *)
+  extents : int Atomic.t;  (** [domain]'s count of live [Extent]s. *)
+  live : bool Atomic.t;  (** Cleared when its extent ends. *)
+  mutable running : bool;  (** Whether its rule runs, on [domain]. *)
+}
+(** An interpretation. Only {!Interp} writes its fields. *)
+
+and rule = { rule : 'r. interpretation -> by:string -> 'r prim -> 'r }
+(** What an interpretation makes of the operations it receives. *)
 
 (** {1:operations Operations}
 

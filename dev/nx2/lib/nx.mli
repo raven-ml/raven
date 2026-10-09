@@ -286,3 +286,155 @@ module Repr : sig
   (** [shards x] is [Some arrays], one per device of [x]'s placement, in order:
       [[| a |]] for a value on one device. *)
 end
+
+(**/**)
+
+(** Operations as data, for interpreters such as rune's.
+
+    An operation goes to the innermost live interpretation that reaches it.
+    Every interpretation reaches the operations on its traced values. An
+    [Extent] interpretation also reaches every operation the calling fiber
+    applies inside its extent, on its domain. Innermost is by start order. An
+    interpretation does not reach the operations its own running rule applies,
+    and that rule applying an operation to the interpretation's own traced
+    values raises. An operation no interpretation reaches computes now on its
+    operands' set's kernels, and raises if the set has none. Each refusal raises
+    [Invalid_argument] naming [by] and the interpretation.
+
+    No rule receives a constant: each constant operand is computed first, where
+    the operation reads it. *)
+module Prim : sig
+  type ('v, 's, 'd) nx := ('v, 's, 'd) t
+
+  type ('v, 's, 'd) form = {
+    dtype : ('v, 's) dtype;
+    layout : Nx_array.Layout.t;
+    placement : 'd Placement.t;
+  }
+  (** A value without its bytes. A value cut over devices has the C-contiguous
+      layout of the whole. *)
+
+  type 'd any = Any : ('v, 's, 'd) nx -> 'd any
+
+  type 'd load =
+    | Plain : ('v, 's, 'd) nx -> 'd load
+        (** How a loop reads an operand: through its layout. *)
+
+  type ('d, 'r) outs =
+    | [] : ('d, unit) outs
+    | ( :: ) : ('v, 's) dtype * ('d, 'r) outs -> ('d, ('v, 's, 'd) nx * 'r) outs
+        (** The dtypes of a map's results. *)
+
+  (** The operations. A loop's loads have exactly its iteration shape: no
+      operation broadcasts or promotes. *)
+  type 'r t =
+    | Map : {
+        shape : int array;
+        prog : Nx_kernel.Prog.t;
+        outs : ('d, 'r) outs;
+        loads : 'd load array;
+      }
+        -> 'r t
+        (** [prog] at every index of [shape], reading load [i] as its operand
+            [i]; result [k] is its output [k]. A one-result map is ['v * unit].
+            With no loads, a creation. *)
+    | Copy : ('v, 's, 'd) nx -> ('v, 's, 'd) nx t
+        (** The value stored afresh, C-contiguous. *)
+    | Move : Nx_array.Move.t * ('v, 's, 'd) nx -> ('v, 's, 'd) nx t
+    | Bitcast : ('w, 'r) dtype * ('v, 's, 'd) nx -> ('w, 'r, 'd) nx t
+        (** The bits read in another dtype: one width keeps the shape, a
+            narrower one appends an axis of the ratio, a wider one consumes a
+            trailing axis of it. *)
+    | Place : 'e Placement.t * ('v, 's, 'd) nx -> ('v, 's, 'e) nx t
+    | Check : {
+        ok : (bool, Dtype.bool_elt, 'd) nx;
+        data : 'd any list;
+        fail : int array -> 'd any list -> exn;
+      }
+        -> unit t
+        (** Raises [fail i data_i] at the first index [i], in C order, where
+            [ok] is [false], [data_i] each of [data] at [i]. *)
+
+  type operands = Operands : 'd any list -> operands
+  type mapper = { map : 'v 's 'd. ('v, 's, 'd) nx -> ('v, 's, 'd) nx }
+  type maker = { make : 'v 's 'd. int -> ('v, 's, 'd) form -> ('v, 's, 'd) nx }
+
+  val name : 'r t -> string
+  (** [name op] is [op]'s constructor, as ["Map"]. *)
+
+  val pp : Format.formatter -> 'r t -> unit
+  (** [pp] formats an operation: its name, its programs as expressions over its
+      operands, and each operand's dtype, shape and placement. *)
+
+  val operands : 'r t -> operands
+  (** [operands op] is [op]'s operands in order: a map's loads, [Check]'s [ok]
+      then its data, the one operand of the others. *)
+
+  val map : mapper -> 'r t -> 'r t
+  (** [map m op] is [op] with each operand [x] replaced by [m.map x]. *)
+
+  val form : ('v, 's, 'd) nx -> ('v, 's, 'd) form
+  (** [form x] is [x] without its bytes. *)
+
+  val results : by:string -> maker -> 'r t -> 'r
+  (** [results ~by m op] is [op]'s result, its value at position [k] made by
+      [m.make k f], [f] the form eager execution gives it; [()] for [Check].
+
+      Raises [Invalid_argument] naming [by], before [m] is called, where [op]'s
+      operands break its rule. *)
+
+  (** {1:interpretations Interpretations} *)
+
+  type interpretation
+  (** The type for interpretations. *)
+
+  type reach =
+    | Values  (** Reaches the operations on its traced values. *)
+    | Extent
+        (** Also reaches every operation its starting fiber applies inside its
+            extent, on its domain. *)
+
+  type ('v, 's, +'d) payload = ..
+  (** What an interpretation keeps in its traced values. A payload holds values,
+      never a function of ['d]. *)
+
+  type rule = { rule : 'r. interpretation -> by:string -> 'r t -> 'r }
+  (** What an interpretation makes of the operations it receives. *)
+
+  val interpret : name:string -> reach -> rule -> (interpretation -> 'a) -> 'a
+  (** [interpret ~name reach r f] is [f i], [i] a new interpretation that gives
+      the operations it reaches the meaning [r], live until [f] returns or
+      raises. [name] names it in messages, as ["Rune.grad"]. *)
+
+  val traced :
+    interpretation ->
+    ('v, 's, 'd) form ->
+    ('v, 's, 'd) payload ->
+    ('v, 's, 'd) nx
+  (** [traced i f p] is a value of form [f] that [i] owns, keeping [p]. Its
+      form, payload and owner answer after [i] returns; any operation on it then
+      raises. *)
+
+  val payload : interpretation -> ('v, 's, 'd) nx -> ('v, 's, 'd) payload option
+  (** [payload i x] is [Some p] iff [i] owns [x], [p] what it keeps. *)
+
+  val owner : ('v, 's, 'd) nx -> interpretation option
+  (** [owner x] is the interpretation that owns [x], if [x] is traced. *)
+
+  val later : interpretation -> interpretation -> bool
+  (** [later a b] is [true] iff [a] started after [b].
+
+      Raises [Invalid_argument] if they started on two domains. *)
+
+  val eval : by:string -> 'r t -> 'r
+  (** [eval ~by op] is [op]'s meaning under the rule, as the vocabulary's
+      functions apply it. *)
+
+  val expand : interpretation -> by:string -> 'r t -> 'r option
+  (** [expand i ~by op] is [Some r], [r] [op] as core operations applied by
+      {!eval} with [i] not running, so that they reach [i] again; [None] for an
+      operation that has no expansion. A map of several nodes expands into one
+      map per node. *)
+end
+
+(**/**)

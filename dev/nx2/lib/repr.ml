@@ -45,19 +45,22 @@ let of_shards ~by p arrays =
   if n = 1 then Value.Array { at = p; a = arrays.(0) }
   else Value.Shards { at = p; arrays = Array.copy arrays }
 
-(* A constant reads as computed on the host, its reported placement. *)
-let concrete (type v s d) (x : (v, s, d) Value.t) =
+(* A constant reads as computed on the host, its reported placement. A traced
+   value has no bytes to read. *)
+let concrete (type v s d) ~by (x : (v, s, d) Value.t) =
   match x with
   | Value.Deferred _ -> Exec.at Devices.anywhere x
+  | Value.Traced { owner; _ } ->
+      invalid_argf "%s: a value traced by %s has no bytes" by owner.name
   | Value.Array _ | Value.Shards _ -> x
 
 let array (type v s d) (x : (v, s, d) Value.t) =
-  match concrete x with
+  match concrete ~by:"Nx.Repr.array" x with
   | Value.Array { a; _ } -> Some a
-  | Value.Shards _ | Value.Deferred _ -> None
+  | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> None
 
 let shards (type v s d) (x : (v, s, d) Value.t) =
-  match concrete x with
+  match concrete ~by:"Nx.Repr.shards" x with
   | Value.Array { a; _ } -> Some [| a |]
   | Value.Shards { arrays; _ } -> Some (Array.copy arrays)
-  | Value.Deferred _ -> None
+  | Value.Deferred _ | Value.Traced _ -> None

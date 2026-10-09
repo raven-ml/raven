@@ -6,7 +6,7 @@
 (* nx's per-call costs above the array layer, each row what a user calls: an
    operation on one-element host values, its kernel called as nx calls it and
    directly, a view, constants, an operation over two devices, reading a value's
-   shape, and placing. *)
+   shape, placing, and operations beside and under interpretations. *)
 
 module A = Nx_array
 module D = Nx_array.Dtype
@@ -81,7 +81,8 @@ let split_two () =
   Value (Nx.place (Two.split ~axis:0) (host 2))
 
 (* Sixteen host elements, and a placement on a memory device. *)
-type borrow = Borrow : 'd Nx.Placement.t * (float, D.float32_elt, Nx.host) Nx.t -> borrow
+type borrow =
+  | Borrow : 'd Nx.Placement.t * (float, D.float32_elt, Nx.host) Nx.t -> borrow
 
 let borrow_16 () =
   let module Mem = (val Nx.devices [ memory 0 ]) in
@@ -103,6 +104,94 @@ let place_rows =
         (fun (Borrow (on, x)) -> Value (Nx.place on x));
     ]
 
+(* Interpretations. Each row adds one-element host values 100 times: eagerly;
+   under a Values interpretation that does not reach them; while an Extent lives
+   on another domain; while one lives on this domain around another fiber, which
+   costs each add a perform; and on a traced value, delivered to its
+   interpretation's rule. *)
+
+let adds () =
+  let x = Thumper.black_box x1 in
+  for _ = 1 to 100 do
+    ignore (Sys.opaque_identity (Nx.add x x))
+  done
+
+type ('v, 's, 'd) Nx.Prim.payload += Traced : ('v, 's, 'd) Nx.Prim.payload
+
+let tracing =
+  {
+    Nx.Prim.rule =
+      (fun i ~by op ->
+        Nx.Prim.results ~by
+          { make = (fun _ form -> Nx.Prim.traced i form Traced) }
+          op);
+  }
+
+(* An Extent on another domain, live until [end_elsewhere]. *)
+let extent_elsewhere () =
+  let started = Atomic.make false and stop = Atomic.make false in
+  let d =
+    Domain.spawn (fun () ->
+        Nx.Prim.interpret ~name:"bench" Extent tracing (fun _ ->
+            Atomic.set started true;
+            while not (Atomic.get stop) do
+              Domain.cpu_relax ()
+            done))
+  in
+  while not (Atomic.get started) do
+    Domain.cpu_relax ()
+  done;
+  (stop, d)
+
+let end_elsewhere (stop, d) =
+  Atomic.set stop true;
+  Domain.join d
+
+(* An Extent on this domain, suspended in its own fiber until [end_here]. *)
+type _ Effect.t += Suspend : unit Effect.t
+
+let extent_here () =
+  let k = ref None in
+  Effect.Deep.match_with
+    (fun () ->
+      Nx.Prim.interpret ~name:"bench" Extent tracing (fun _ ->
+          Effect.perform Suspend))
+    ()
+    {
+      retc = Fun.id;
+      exnc = raise;
+      effc =
+        (fun (type a) (e : a Effect.t) ->
+          match e with
+          | Suspend ->
+              Some
+                (fun (c : (a, unit) Effect.Deep.continuation) ->
+                  k := Some (fun () -> Effect.Deep.continue c ()))
+          | _ -> None);
+    };
+  k
+
+let end_here k = Option.iter (fun resume -> resume ()) !k
+
+let interp_rows =
+  Thumper.group "interp"
+    [
+      Thumper.bench "add-1-100-eager" adds;
+      Thumper.bench "add-1-100-under-values" (fun () ->
+          Nx.Prim.interpret ~name:"bench" Values tracing (fun _ -> adds ()));
+      Thumper.bench_with_setup "add-1-100-beside-extent-on-another-domain"
+        ~setup:extent_elsewhere ~teardown:end_elsewhere (fun _ -> adds ());
+      Thumper.bench_with_setup "add-1-100-fiber-beside-extent"
+        ~setup:extent_here ~teardown:end_here (fun _ -> adds ());
+      Thumper.bench "traced-add-1-100" (fun () ->
+          Nx.Prim.interpret ~name:"bench" Values tracing (fun i ->
+              let t = Nx.Prim.traced i (Nx.Prim.form x1) Traced in
+              for _ = 1 to 100 do
+                ignore (Sys.opaque_identity (Nx.add t t))
+              done));
+    ]
+
 let () =
   exit
-  @@ Thumper.run "nx" [ dispatch_rows; constant_rows; placed_rows; place_rows ]
+  @@ Thumper.run "nx"
+       [ dispatch_rows; constant_rows; placed_rows; place_rows; interp_rows ]

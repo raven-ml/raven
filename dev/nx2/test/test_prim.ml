@@ -277,13 +277,15 @@ let moved =
 let array_of (type v s) (x : (v, s, b) Value.t) =
   require_match
     ~pp:(fun ppf _ -> Format.pp_print_string ppf "a value on two devices")
-    (function Value.Array { a; _ } -> Some a | Shards _ | Deferred _ -> None)
+    (function
+      | Value.Array { a; _ } -> Some a
+      | Shards _ | Deferred _ | Traced _ -> None)
     x
 
 let moved_by mv x =
   match x with
   | Value.Array { at; a } -> Value.Array { at; a = Option.get (A.move mv a) }
-  | Shards _ | Deferred _ -> x
+  | Shards _ | Deferred _ | Traced _ -> x
 
 let movements =
   group "movements"

@@ -75,7 +75,7 @@ let devices ?kernels ds : (module Devices) =
     let split ~axis = Devices.split ~by:"Nx.Placement.split" ~axis v
   end)
 
-let place p x = Exec.run ~by:"Nx.place" (Value.Place (p, x))
+let place p x = Eval.eval ~by:"Nx.place" (Value.Place (p, x))
 let placement = Prim.placement
 
 module Repr = struct
@@ -104,7 +104,7 @@ let bits ~by dt v =
 let fill ~by dt shape v =
   let prog = Prim.program (Const (D.Any dt, bits ~by dt v)) [||] in
   let x, () =
-    Exec.run ~by (Value.Map { shape; prog; outs = Value.[ dt ]; loads = [||] })
+    Eval.eval ~by (Value.Map { shape; prog; outs = Value.[ dt ]; loads = [||] })
   in
   x
 
@@ -118,7 +118,7 @@ let zeros_like x =
   let dt = dtype x in
   let z = fill ~by dt (shape x) (D.zero dt) in
   if Prim.is_constant x then z
-  else Exec.run ~by (Value.Place (Prim.placement x, z))
+  else Eval.eval ~by (Value.Place (Prim.placement x, z))
 
 (* The shape [s] and [s'] broadcast to: aligned at their last axes, each extent
    equal or [1]. *)
@@ -137,43 +137,112 @@ let broadcast_shape ~by s s' =
           pp_shape s')
 
 let broadcast ~by s x =
-  if shape x = s then x else Exec.run ~by (Value.Move (Broadcast s, x))
+  if shape x = s then x else Eval.eval ~by (Value.Move (Broadcast s, x))
 
 let same_shape = Prim.same_shape
 
 let binary ~by k a b =
-  if same_shape a b then Exec.apply2 ~by k (dtype a) a b
+  if same_shape a b then Eval.apply2 ~by k (dtype a) a b
   else
     let s = broadcast_shape ~by (shape a) (shape b) in
-    Exec.apply2 ~by k (dtype a) (broadcast ~by s a) (broadcast ~by s b)
+    Eval.apply2 ~by k (dtype a) (broadcast ~by s a) (broadcast ~by s b)
 
 let add a b = binary ~by:"Nx.add" (Binary Add) a b
 let mul a b = binary ~by:"Nx.mul" (Binary Mul) a b
 
 let less a b =
   let by = "Nx.less" in
-  if same_shape a b then Exec.apply2 ~by (Compare Less) D.Bool a b
+  if same_shape a b then Eval.apply2 ~by (Compare Less) D.Bool a b
   else
     let s = broadcast_shape ~by (shape a) (shape b) in
-    Exec.apply2 ~by (Compare Less) D.Bool (broadcast ~by s a)
+    Eval.apply2 ~by (Compare Less) D.Bool (broadcast ~by s a)
       (broadcast ~by s b)
 
 let where c x y =
   let by = "Nx.where" in
-  if same_shape c x && same_shape x y then Exec.apply3 ~by Where c x y
+  if same_shape c x && same_shape x y then Eval.apply3 ~by Where c x y
   else
     let s =
       broadcast_shape ~by (broadcast_shape ~by (shape c) (shape x)) (shape y)
     in
-    Exec.apply3 ~by Where (broadcast ~by s c) (broadcast ~by s x)
+    Eval.apply3 ~by Where (broadcast ~by s c) (broadcast ~by s x)
       (broadcast ~by s y)
 
 let cast (type v s w r d) (dt : (w, r) D.t) (x : (v, s, d) t) : (w, r, d) t =
   match D.equal_witness (dtype x) dt with
   | Some Type.Equal -> x
-  | None -> Exec.apply1 ~by:"Nx.cast" Cast dt x
+  | None -> Eval.apply1 ~by:"Nx.cast" Cast dt x
 
 let reshape s x =
-  Exec.run ~by:"Nx.reshape" (Value.Move (Reshape (Array.copy s), x))
+  Eval.eval ~by:"Nx.reshape" (Value.Move (Reshape (Array.copy s), x))
 
-let copy x = Exec.run ~by:"Nx.copy" (Value.Copy x)
+let copy x = Eval.eval ~by:"Nx.copy" (Value.Copy x)
+
+(* Operations as data *)
+
+module Prim = struct
+  type ('v, 's, 'd) form = ('v, 's, 'd) Value.form = {
+    dtype : ('v, 's) dtype;
+    layout : Nx_array.Layout.t;
+    placement : 'd Placement.t;
+  }
+
+  type 'd any = 'd Value.any = Any : ('v, 's, 'd) t -> 'd any
+  type 'd load = 'd Value.load = Plain : ('v, 's, 'd) t -> 'd load
+
+  type ('d, 'r) outs = ('d, 'r) Value.outs =
+    | [] : ('d, unit) outs
+    | ( :: ) : ('v, 's) dtype * ('d, 'r) outs -> ('d, ('v, 's, 'd) t * 'r) outs
+
+  type 'r t = 'r Value.prim =
+    | Map : {
+        shape : int array;
+        prog : Nx_kernel.Prog.t;
+        outs : ('d, 'r) outs;
+        loads : 'd load array;
+      }
+        -> 'r t
+    | Copy : ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t t
+    | Move : Nx_array.Move.t * ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t t
+    | Bitcast : ('w, 'r) dtype * ('v, 's, 'd) Value.t -> ('w, 'r, 'd) Value.t t
+    | Place : 'e Placement.t * ('v, 's, 'd) Value.t -> ('v, 's, 'e) Value.t t
+    | Check : {
+        ok : (bool, Dtype.bool_elt, 'd) Value.t;
+        data : 'd any list;
+        fail : int array -> 'd any list -> exn;
+      }
+        -> unit t
+
+  type operands = Prim.operands = Operands : 'd any list -> operands
+
+  type mapper = Prim.mapper = {
+    map : 'v 's 'd. ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t;
+  }
+
+  type maker = Prim.maker = {
+    make : 'v 's 'd. int -> ('v, 's, 'd) form -> ('v, 's, 'd) Value.t;
+  }
+
+  let name = Prim.name
+  let pp = Prim.pp
+  let operands = Prim.operands
+  let map = Prim.map
+  let form = Prim.form
+  let results = Prim.results
+
+  type interpretation = Value.interpretation
+  type reach = Value.reach = Values | Extent
+  type ('v, 's, +'d) payload = ('v, 's, 'd) Value.payload = ..
+
+  type rule = Value.rule = {
+    rule : 'r. interpretation -> by:string -> 'r t -> 'r;
+  }
+
+  let interpret = Interp.interpret
+  let traced = Interp.traced
+  let payload = Interp.payload
+  let owner = Interp.owner
+  let later = Interp.later
+  let eval = Eval.eval
+  let expand = Eval.expand
+end

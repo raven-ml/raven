@@ -3,12 +3,12 @@
 ; reaches yet: their suites compile copies of the sources.
 
 (tests
- (names test_devices test_values test_place test_exec)
- (modules test_devices test_values test_place test_exec)
+ (names test_devices test_values test_place test_exec test_interp)
+ (modules test_devices test_values test_place test_exec test_interp)
  (libraries nx nx_array nx_kernel nx_cpu nx_support rig windtrap))
 
 (copy_files
- (files ../lib/{grid,devices,route,prim,place,exec,repr}.{ml,mli}))
+ (files ../lib/{grid,devices,route,prim,place,expand,exec,repr}.{ml,mli}))
 
 (copy_files
  (files ../lib/value.mli))
@@ -26,7 +26,19 @@
   value
   prim
   place
+  expand
   exec
   repr)
  (modules_without_implementation value)
  (libraries nx_array nx_kernel nx_cpu nx_support rig windtrap))
+
+; An interpreter's match over Nx.Prim is exhaustive, compiled against nx's
+; interfaces.
+
+(cram
+ (applies_to exhaustive)
+ (deps
+  (glob_files ../lib/.nx.objs/byte/*.cmi)
+  (glob_files ../lib/array/.nx_array.objs/byte/*.cmi)
+  (glob_files ../lib/kernel/.nx_kernel.objs/byte/*.cmi)
+  (glob_files ../../rig/lib/.rig.objs/byte/*.cmi)))

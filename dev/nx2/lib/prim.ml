@@ -14,18 +14,18 @@ let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 
 let placement : type v s d. (v, s, d) t -> d Devices.placement = function
   | Array { at; _ } | Shards { at; _ } -> at
-  | Deferred { form; _ } -> form.placement
+  | Deferred { form; _ } | Traced { form; _ } -> form.placement
 
 let dtype : type v s d. (v, s, d) t -> (v, s) dtype = function
   | Array { a; _ } -> Nx_array.dtype a
   | Shards { arrays; _ } -> Nx_array.dtype arrays.(0)
-  | Deferred { form; _ } -> form.dtype
+  | Deferred { form; _ } | Traced { form; _ } -> form.dtype
 
-(* The layout of [x]'s array, of its first shard, or of the constant. *)
+(* The layout of [x]'s array, of its first shard, or of its form. *)
 let own_layout : type v s d. (v, s, d) t -> L.t = function
   | Array { a; _ } -> Nx_array.layout a
   | Shards { arrays; _ } -> Nx_array.layout arrays.(0)
-  | Deferred { form; _ } -> form.layout
+  | Deferred { form; _ } | Traced { form; _ } -> form.layout
 
 let rank x = L.rank (own_layout x)
 
@@ -42,7 +42,7 @@ let dim (type v s d) (x : (v, s, d) t) i =
     invalid_arg
       (Printf.sprintf "Prim.dim: axis %d of a value of rank %d" i (L.rank l));
   match x with
-  | Array _ | Deferred _ -> L.dim l i
+  | Array _ | Deferred _ | Traced _ -> L.dim l i
   | Shards { at; _ } -> L.dim l i * tiles at i
 
 let shape x = Array.init (rank x) (dim x)
@@ -66,11 +66,11 @@ let form (type v s d) (x : (v, s, d) t) : (v, s, d) form =
       { dtype = Nx_array.dtype a; layout = Nx_array.layout a; placement = at }
   | Shards { at; _ } ->
       { dtype = dtype x; layout = L.contiguous (shape x); placement = at }
-  | Deferred { form; _ } -> form
+  | Deferred { form; _ } | Traced { form; _ } -> form
 
 let is_constant : type v s d. (v, s, d) t -> bool = function
   | Deferred _ -> true
-  | Array _ | Shards _ -> false
+  | Array _ | Shards _ | Traced _ -> false
 
 let expect (type v s) (dt : (v, s) dtype) (Any x : 'd any) : (v, s, 'd) t =
   match D.equal_witness dt (dtype x) with
@@ -485,6 +485,7 @@ let arrays_of : type v s d. (v, s, d) t -> Nx_array.any array = function
   | Array { a; _ } -> [| Nx_array.Any a |]
   | Shards { arrays; _ } -> Array.map (fun a -> Nx_array.Any a) arrays
   | Deferred _ -> invalid_arg "Prim.arrays: a constant has no arrays"
+  | Traced _ -> invalid_arg "Prim.arrays: a traced value has no arrays"
 
 let rec arrays_outs : type d q. (d, q) outs -> q -> Nx_array.any array list =
  fun outs r ->

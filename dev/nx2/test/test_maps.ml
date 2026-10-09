@@ -42,6 +42,9 @@ let elements (type v s) (x : (v, s, b) Value.t) : v array =
 
 let first (x, ()) = x
 
+(* A one-node map built and run: no interpretation reaches the engine here. *)
+let slow2 ~by k dt x y = first (Exec.run ~by (Prim.op2 k dt x y))
+
 let maps =
   group "maps"
     [
@@ -153,9 +156,9 @@ let constants =
     [
       test "a node shared by many values computes once per placement" (fun () ->
           let one = fresh_one () in
-          let c = Exec.apply2 ~by:"t" (Binary Add) D.Float32 one one in
-          let d = Exec.apply2 ~by:"t" (Binary Mul) D.Float32 c c in
-          let e = Exec.apply2 ~by:"t" (Binary Add) D.Float32 c d in
+          let c = Exec.apply2 ~slow:slow2 ~by:"t" (Binary Add) D.Float32 one one in
+          let d = Exec.apply2 ~slow:slow2 ~by:"t" (Binary Mul) D.Float32 c c in
+          let e = Exec.apply2 ~slow:slow2 ~by:"t" (Binary Add) D.Float32 c d in
           C.reset ();
           ignore (Exec.at at1 e);
           (* one, c, d, e: four nodes. *)
@@ -171,10 +174,10 @@ let constants =
           let rec chain k x =
             if k = 0 then x
             else
-              chain (k - 1) (Exec.apply2 ~by:"t" (Binary Add) D.Float32 x one)
+              chain (k - 1) (Exec.apply2 ~slow:slow2 ~by:"t" (Binary Add) D.Float32 x one)
           in
           let x =
-            chain n (Exec.apply2 ~by:"t" (Binary Mul) D.Float32 one one)
+            chain n (Exec.apply2 ~slow:slow2 ~by:"t" (Binary Mul) D.Float32 one one)
           in
           C.reset ();
           let v = Exec.at at1 x in
@@ -184,8 +187,8 @@ let constants =
       test "domains racing to compute a constant agree bit for bit" (fun () ->
           let one = fresh_one () in
           let c =
-            Exec.apply2 ~by:"t" (Binary Mul) D.Float32
-              (Exec.apply2 ~by:"t" (Binary Add) D.Float32 one one)
+            Exec.apply2 ~slow:slow2 ~by:"t" (Binary Mul) D.Float32
+              (Exec.apply2 ~slow:slow2 ~by:"t" (Binary Add) D.Float32 one one)
               one
           in
           let work () = elements (Exec.at at1 c) in
