@@ -37,7 +37,7 @@ and exit.
 |---|---|---|
 | [`x-gpu`](./x-gpu/) | Any GPU rig drives | Opening a GPU through its driver and path; copies; work in flight |
 | [`x-metal-kernel`](./x-metal-kernel/) | A Mac on macOS 15 or later | A kernel from an indirect command buffer, run by an Objective-C fill |
-| [`x-cuda-kernel`](./x-cuda-kernel/) | An NVIDIA GPU and `libcuda` | A PTX kernel launched by a fill through the CUDA library |
+| [`x-cuda-kernel`](./x-cuda-kernel/) | An NVIDIA GPU and `libcuda` | A PTX kernel launched as a part, its parameters in a run |
 | [`x-amd-kernel`](./x-amd-kernel/) | An AMD gfx1201 GPU under `amdgpu` | A dispatch written as PM4 words |
 | [`x-nv-kernel`](./x-nv-kernel/) | An NVIDIA sm_89 GPU under NVIDIA's kernel driver | A launch descriptor scheduled by channel words |
 | [`x-pci`](./x-pci/) | Linux | The machine's PCI functions and which are GPUs |

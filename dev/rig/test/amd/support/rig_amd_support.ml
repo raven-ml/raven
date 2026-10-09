@@ -121,7 +121,7 @@ let dispatch t (load, co) name ~groups args =
     Array.init (String.length s / 4) (fun i ->
         Int32.to_int (String.get_int32_le s (4 * i)) land 0xffff_ffff)
   in
-  (words_part ~queue:"COMPUTE:0" ws, args)
+  (Rig_gpu_support.work (words_part ~queue:"COMPUTE:0" ws), args)
 
 (* work.cl's [copy dst src n delay] copies [n] words. *)
 let copy_words t ~dst ~src =
@@ -141,6 +141,8 @@ let spin t ~ns =
     ~src:(Rig.Buffer.of_string (le (Rig.Buffer.address args + 16) 8 ^ le n 4))
     ~dst:(Rig.Buffer.view args ~first:0 ~length:12);
   dispatch t kernels "spin" ~groups:1 args
+
+let launch_binary () = None
 
 (* The C entries *)
 

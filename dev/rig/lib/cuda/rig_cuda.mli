@@ -143,7 +143,7 @@ val capability : t -> Rig_cuda_abi.t
       |------|-------|
       | [arch] | The GPU's compute capability, as ["sm_89"]. |
       | [budget] | The GPU's memory, in bytes. |
-      | [queues] | ["COMPUTE:0"], ["COPY:0"]; each runs [Fill], [Copy]. |
+      | [queues] | ["COMPUTE:0"] runs [Fill], [Copy], [Launch]; ["COPY:0"] runs [Fill], [Copy]. |
       | [completion] | [Store]: the streams write the word. |
       | [waits] | [stores] and [hosts]; no [objects]; [most] is [max_int]. |
       | [may_block] | [true]: the submit calls CUDA, which may block. |
@@ -211,12 +211,14 @@ val capability : t -> Rig_cuda_abi.t
     [Error msg] with CUDA's error if CUDA refuses [bin], for instance a cubin
     for another GPU, or lacks the memory for its code.
 
-    {!entry}[ m f] is the [CUfunction] of the kernel [f] of [m], which compiled
-    code passes to [cuLaunchKernel]. It is valid until [m] is unloaded. A launch
-    of it may take as much dynamic shared memory as a block of the GPU can have
-    (its opt-in maximum,
-    [CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN]), less [f]'s static
-    shared memory.
+    {!entry}[ m f]'s [code] is the [CUfunction] of the kernel [f] of [m], which
+    compiled code passes to [cuLaunchKernel]. Its [launch] is C memory holding
+    that function and its limits: the most threads a group of it has
+    ([CU_FUNC_ATTRIBUTE_MAX_THREADS_PER_BLOCK]), and the most dynamic shared
+    memory a group of it takes, as much as a block of the GPU can have (its
+    opt-in maximum, [CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN]),
+    less [f]'s static shared memory. Both are valid until [m] is unloaded, and
+    a second {!entry} for [f] gives the same.
 
     {!unload} may wait, in CUDA, for all of the GPU's work, and lets other
     domains run meanwhile.
@@ -238,10 +240,16 @@ val capability : t -> Rig_cuda_abi.t
     [rig_cuda.h] declares. The device's C state holds its word, which other
     devices may read after [g] is gone, so neither is ever freed.
 
-    [rig_cuda_room] answers [RIG_NEVER] for a part that is no fill or copy, a
-    fill with ring units or segment bytes, or a part on no queue of the device,
-    and [RIG_FITS] otherwise: CUDA's streams take any amount of work, and a
-    submit that finds a stream full waits for earlier work to free it.
+    [rig_cuda_room] answers [RIG_NEVER] for a part that is no fill, copy or
+    launch, a fill with ring units or segment bytes, a part on no queue of the
+    device, a launch on queue [1], or a launch whose block has a size of [0]
+    along an axis, more groups or threads along an axis than the GPU allows
+    ([CU_DEVICE_ATTRIBUTE_MAX_GRID_DIM_X] to [_Z],
+    [CU_DEVICE_ATTRIBUTE_MAX_BLOCK_DIM_X] to [_Z]: on an [sm_89], [2{^31} - 1]
+    groups along x and [65535] along y and z), or more threads per group or
+    dynamic shared memory than its function's limits; and [RIG_FITS]
+    otherwise: CUDA's streams take any amount of work, and a submit that finds
+    a stream full waits for earlier work to free it.
 
     [rig_cuda_submit] is called without the domain lock, and calls no function
     of the OCaml runtime. It encodes the parts on the device's streams as the
@@ -256,6 +264,11 @@ val capability : t -> Rig_cuda_abi.t
     - A copy moves [copy.bytes] bytes between the handles of two regions of the
       device at their offsets. The ranges are apart: a copy between overlapping
       ranges writes undefined bytes.
+    - A launch runs its function with [cuLaunchKernel] over the groups, threads
+      and dynamic shared memory of its block, its parameters passed as one
+      buffer ([CU_LAUNCH_PARAM_BUFFER_POINTER]). The submit copies them first
+      and adds to each ref's 8 bytes its slot's address, and CUDA copies the
+      result at the call.
     - Each wait holds the work back until the aligned 64-bit word at [at], which
       the device's work addresses, holds at least [value], compared circularly:
       [x] is at least [w] if [x - w], as a signed 64-bit integer, is not
@@ -273,7 +286,7 @@ val capability : t -> Rig_cuda_abi.t
 
     Once every part is enqueued it answers [RIG_COMMITTED] if it committed [v],
     and [RIG_OK] otherwise. It answers [RIG_FAILED] with the step and the error
-    of the first CUDA call that failed, a fill too, as
+    of the first CUDA call that failed, a fill or a launch too, as
     ["running a fill: CUDA_ERROR_ILLEGAL_ADDRESS: an illegal memory access was
      encountered"]. The parts enqueued before the failure may run; the others
     never do. A failed device stays failed, since CUDA may keep the context's

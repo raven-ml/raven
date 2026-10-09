@@ -146,10 +146,12 @@ let rec on_host = function
 
 (* Opening *)
 
+(* An image's [entries] are those [entry] made, each once, under [lock]. *)
 type image = {
   owner : int;
   m : int;
-  functions : int list Atomic.t; (* those [entry] gave *)
+  lock : Mutex.t;
+  entries : (string * Rig_edge.entry) list Atomic.t;
 }
 
 type t = {
@@ -217,7 +219,11 @@ let sizes i (k : Rig_cuda_abi.kernel) =
 
 (* Whether [f] is a function that [entry] gave for an image still loaded. *)
 let known images f =
-  let gave (i : image) = List.mem f (Atomic.get i.functions) in
+  let gave (i : image) =
+    List.exists
+      (fun (_, (e : Rig_edge.entry)) -> e.code = f)
+      (Atomic.get i.entries)
+  in
   List.exists gave (Atomic.get images)
 
 let graph self guard stopped images (ks : Rig_cuda_abi.kernel array) =
@@ -261,8 +267,9 @@ let claim held =
     Error "the GPU still runs the work of a stopped device"
   end
 
-(* Each stream runs fills and copies. *)
-let stream name = { Rig_edge.name; runs = [ Fill; Copy ] }
+(* Each stream runs fills and copies, and COMPUTE:0 launches. *)
+let compute = { Rig_edge.name = "COMPUTE:0"; runs = [ Fill; Copy; Launch ] }
+let copy = { Rig_edge.name = "COPY:0"; runs = [ Fill; Copy ] }
 
 let open_ i =
   if i < 0 then invalid_argf "Rig_cuda.open_: GPU %d is negative" i;
@@ -312,7 +319,7 @@ let open_ i =
             {
               Rig_edge.arch;
               budget;
-              queues = [ stream "COMPUTE:0"; stream "COPY:0" ];
+              queues = [ compute; copy ];
               completion = Store;
               (* A submission's waits go to its stream in batches, as many
                  as it carries. *)
@@ -453,7 +460,11 @@ let free g (r : region) =
 (* Images *)
 
 external load_module : int -> string -> int = "caml_rig_cuda_load_module"
-external get_function : int -> int -> string -> int = "caml_rig_cuda_function"
+
+(* A function's C record, which a launch reads: its CUfunction and limits. *)
+external make_entry : int -> int -> string -> int = "caml_rig_cuda_entry"
+external entry_code : int -> int = "caml_rig_cuda_code" [@@noalloc]
+external forget : int -> unit = "caml_rig_cuda_forget" [@@noalloc]
 
 let rec update a f =
   let x = Atomic.get a in
@@ -462,7 +473,9 @@ let rec update a f =
 let image g bin =
   match load_module g.self bin with
   | m when m >= 0 ->
-      let i = { owner = g.self; m; functions = Atomic.make [] } in
+      let i =
+        { owner = g.self; m; lock = Mutex.create (); entries = Atomic.make [] }
+      in
       update g.images (List.cons i);
       Ok (Rig_edge.Loaded i)
   | s ->
@@ -472,17 +485,26 @@ let image g bin =
 let entry (m : image) f =
   if String.contains f '\000' then None
   else
-    match get_function m.owner m.m f with
-    | h when h >= 0 ->
-        update m.functions (fun fs -> if List.mem h fs then fs else h :: fs);
-        Some { Rig_edge.code = h; launch = 0n }
-    | _ -> refused (strf "finding kernel %S" f) m.owner None
+    Mutex.protect m.lock @@ fun () ->
+    match List.assoc_opt f (Atomic.get m.entries) with
+    | Some e -> Some e
+    | None -> (
+        match make_entry m.owner m.m f with
+        | p when p >= 0 ->
+            let e =
+              { Rig_edge.code = entry_code p; launch = Nativeint.of_int p }
+            in
+            Atomic.set m.entries ((f, e) :: Atomic.get m.entries);
+            Some e
+        | _ -> refused (strf "finding kernel %S" f) m.owner None)
 
 let unload g (m : image) =
   update g.images (List.filter (fun i -> i != m));
-  match unload_module g.self m.m with
-  | 0 -> ()
-  | s -> fault "unloading the image" s
+  let unloaded = unload_module g.self m.m in
+  List.iter
+    (fun (_, (e : Rig_edge.entry)) -> forget (Nativeint.to_int e.launch))
+    (Atomic.get m.entries);
+  if unloaded <> 0 then fault "unloading the image" unloaded
 
 (* Timeline *)
 

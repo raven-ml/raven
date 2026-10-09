@@ -61,6 +61,8 @@ struct floor {
   int nhandles;
   turn *turn;
   struct rig_part part;
+  /* A launch's block: one group of one thread, its parameters 0. */
+  _Alignas(16) uint8_t args[sizeof(struct rig_block) + RIG_PARAMS];
 };
 
 #define Floor_val(v) ((struct floor *)Nativeint_val(v))
@@ -123,6 +125,22 @@ value rig_bench_floor_copy(value v_f, value v_queue, value v_dst, value v_src,
   return Val_unit;
 }
 
+/* Makes the floor's part a launch, on the queue at index 0, of the function
+   whose entry is [v_code] and [v_launch], with [v_params] parameter bytes,
+   over the floor's block. */
+value rig_bench_floor_launch(value v_f, value v_code, value v_launch,
+                             value v_params) {
+  struct floor *f = Floor_val(v_f);
+  struct rig_block *b = (struct rig_block *)f->args;
+  for (int k = 0; k < 3; k++) b->groups[k] = b->threads[k] = 1;
+  f->part = (struct rig_part){0};
+  f->part.kind = RIG_LAUNCH;
+  f->part.launch.code = (uint64_t)Long_val(v_code);
+  f->part.launch.launch = (const void *)Nativeint_val(v_launch);
+  f->part.launch.params = (uint32_t)Long_val(v_params);
+  return Val_unit;
+}
+
 /* Makes [v_v] the value the floor's device received last. */
 value rig_bench_floor_at(value v_f, value v_v) {
   Floor_val(v_f)->v = (uint64_t)Long_val(v_v);
@@ -152,9 +170,9 @@ static void encode(struct floor *f, int n) {
   const char *failure = NULL;
   const uint64_t *h = f->handles != NULL ? f->handles : &f->handle;
   int nh = f->handles != NULL ? f->nhandles : n;
-  if (f->driver.room(f->self, &f->part, n, NULL) != RIG_FITS) abort();
-  int r = f->driver.submit(f->self, ++f->v, NULL, 0, &f->part, n, NULL, NULL,
-                           0, h, nh, &failure);
+  if (f->driver.room(f->self, &f->part, n, f->args) != RIG_FITS) abort();
+  int r = f->driver.submit(f->self, ++f->v, NULL, 0, &f->part, n, f->args,
+                           NULL, 0, h, nh, &failure);
   if (r == RIG_FAILED) abort();
   if (r == RIG_COMMITTED) f->committed = f->v;
 }

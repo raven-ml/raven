@@ -35,13 +35,11 @@ let sticky name f =
    fault, which loses the device and stops it. *)
 let faults () =
   let ({ S.d; g } as t) = S.open_ () in
-  let _, kernel = S.kernels g in
   let watched = B.create ~memory:Pinned d 64 and src = B.create d 64 in
   let zeros = String.make 64 '\000' in
   H.write (B.address watched) zeros;
   S.write_gpu (Nativeint.of_int (B.address src)) (String.make 64 'x');
-  let f = S.launch (kernel "fault") ~grid:1 ~block:1 0 0 in
-  equal int ~msg:"value 1" 1 (S.submit t [| S.part ~queue:"COMPUTE:0" f |]);
+  equal int ~msg:"value 1" 1 (S.submit_work t [ S.launch t "fault" 0 0 ]);
   ignore (S.submit t [| S.copy ~queue:"COMPUTE:0" ~dst:watched src |]);
   raises_match
     (function

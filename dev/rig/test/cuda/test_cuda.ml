@@ -69,7 +69,10 @@ let facts () =
   equal
     (list (pair string (list string)))
     ~msg:"queues"
-    [ ("COMPUTE:0", [ "Fill"; "Copy" ]); ("COPY:0", [ "Fill"; "Copy" ]) ]
+    [
+      ("COMPUTE:0", [ "Fill"; "Copy"; "Launch" ]);
+      ("COPY:0", [ "Fill"; "Copy" ]);
+    ]
     (List.map runs f.queues);
   equal bool ~msg:"completion is the store" true (f.completion = Store);
   equal (list bool) ~msg:"waits on stores, hosts, objects" [ true; true; false ]
@@ -145,11 +148,8 @@ let memory =
 (* Work *)
 
 let fills_in_a_fresh_domain () =
-  S.with_ @@ fun ({ g; _ } as t) ->
-  let m, kernel = S.kernels g in
-  let n = 1000 in
-  let out = require_some (C.alloc g Pinned (4 * n)) in
-  let f = S.launch (kernel "double_index") ~grid:4 ~block:256 (address out) n in
+  S.with_ @@ fun t ->
+  let f = S.context () in
   let r, current =
     Domain.join
       (Domain.spawn (fun () ->
@@ -158,13 +158,8 @@ let fills_in_a_fresh_domain () =
   in
   equal int ~msg:"the value" 1 r;
   equal nativeint ~msg:"the domain's thread has no context after" 0n current;
-  not_equal nativeint ~msg:"the fill saw a context" 0n (S.seen f);
   S.wait t 1;
-  for i = 0 to n - 1 do
-    equal int ~msg:(strf "word %d" i) (2 * i) (H.get32 (host out + (4 * i)))
-  done;
-  C.unload g m;
-  C.free g out
+  not_equal nativeint ~msg:"the fill saw a context" 0n (S.seen f)
 
 (* Returns once [t]'s word reached [v], which a lost device's stop brings it
    to. *)
@@ -233,12 +228,17 @@ let work =
 (* Images *)
 
 let images () =
-  S.with_ @@ fun ({ g; _ } as t) ->
+  S.with_ @@ fun { g; _ } ->
   let m = S.loaded (require_ok (C.image g (S.fixture "kernels.ptx"))) in
   equal bool ~msg:"double_index" true
     (Option.is_some (C.entry m "double_index"));
-  equal (option int) ~msg:"a missing kernel" None
-    (Option.map (fun (e : Rig_edge.entry) -> e.code) (C.entry m "missing"));
+  is_none ~msg:"a missing kernel" (C.entry m "missing");
+  let entry () =
+    let e = Option.get (C.entry m "empty") in
+    (e.code, e.launch)
+  in
+  let first = entry () in
+  equal (pair int nativeint) ~msg:"a second entry" first (entry ());
   let e = require_error (C.image g "not a module") in
   starts_with ~affix:"loading the image: CUDA_ERROR_" e;
   let arch = (C.facts g).arch in
@@ -249,8 +249,6 @@ let images () =
   | Error e ->
       not_equal string ~msg:"the cubin's GPU" "sm_89" arch;
       starts_with ~affix:"loading the image: CUDA_ERROR_" e);
-  let f = S.launch (Option.get (C.entry m "empty")).code ~grid:1 ~block:1 0 0 in
-  S.wait t (S.submit t [| S.part ~queue:"COMPUTE:0" f |]);
   C.unload g m
 
 (* Loading places every function's code, whatever CUDA_MODULE_LOADING says:
@@ -263,51 +261,150 @@ let loads_every_function () =
     (S.functions_loaded (Option.get (C.entry m "empty")).code);
   C.unload g m
 
-(* An entry launches with as much dynamic shared memory as the GPU allows
-   a block, beyond the 48 KiB CUDA allows by default. *)
-let largest_shared_memory () =
-  S.with_ @@ fun ({ g; _ } as t) ->
-  let m = S.loaded (require_ok (C.image g (S.fixture "kernels.ptx"))) in
-  (* cuda.h's CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN. *)
-  let shared = S.attribute 97 in
-  let f =
-    S.launch ~shared (Option.get (C.entry m "empty")).code ~grid:1 ~block:1 0 0
-  in
-  S.wait t (S.submit t [| S.part ~queue:"COMPUTE:0" f |]);
-  C.unload g m
-
 let images =
   group ~timeout:60. "images"
     [
       test "load, find their kernels and unload" images;
       test "loading places every function's code" loads_every_function;
-      test "an entry takes the largest shared memory" largest_shared_memory;
+    ]
+
+(* Launches, through rig. The laws every driver's launches keep are the
+   conformance suite's; these are CUDA's limits. *)
+
+module Sub = Rig.Submission
+module Run = Rig.Submission.Run
+
+let launch_image = Rig_gpu_support.loader (fun () -> S.fixture "launch.ptx")
+
+(* A launch of [kernel] of fixtures/launch.ptx on [d], of [params] bytes of
+   parameters whose first 8 point into the run's one buffer, a write, over
+   [groups] of [threads] with [shared] bytes of dynamic shared memory: its
+   submission and a run holding its block. *)
+let launching ?(kernel = "ids") ?(params = 24) d ~groups:(gx, gy, gz)
+    ~threads:(tx, ty, tz) ~shared =
+  let refs = [| { Sub.at = 0; slot = 0 } |] in
+  let work = Sub.Launch { image = launch_image d; kernel; params; refs } in
+  let s =
+    Sub.make ~reads:0 ~writes:1 d
+      [| { Sub.queue = "COMPUTE:0"; after = [||]; work } |]
+  in
+  let run = Run.make () in
+  let b = Sub.block s 0 in
+  Run.groups run b gx gy gz;
+  Run.threads run b tx ty tz;
+  Run.shared run b shared;
+  (s, run)
+
+let submitted s run writes = Rig.submit s ~run ~reads:[||] ~writes ~waits:[||]
+
+(* The 32-bit words [b] holds. *)
+let words b n = Array.init n (fun i -> H.get32 (B.address b + (4 * i)))
+
+(* cuda.h's CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN. *)
+let largest_shared = 97
+
+(* Launches the GPU or the function cannot run are refused before any value,
+   and the device stays live: an sm_89 has at most 65535 groups along z, 1024
+   threads along x and 1024 threads in a group. *)
+let refused_launches () =
+  S.with_ @@ fun { d; _ } ->
+  let out = B.create ~memory:Pinned d 4096 in
+  let refuses msg ?kernel ?params ?(groups = (1, 1, 1)) ?(threads = (1, 1, 1))
+      ?(shared = 0) () =
+    let s, run = launching ?kernel ?params d ~groups ~threads ~shared in
+    raises_match ~msg
+      (Exn.invalid_arg ~substring:"never fit")
+      (fun () -> submitted s run [| out |])
+  in
+  refuses "no groups along x" ~groups:(0, 1, 1) ();
+  refuses "no threads along z" ~threads:(1, 1, 0) ();
+  refuses "65536 groups along z" ~groups:(1, 1, 65536) ();
+  refuses "1025 threads along x" ~threads:(1025, 1, 1) ();
+  refuses "2048 threads in a group" ~threads:(1024, 2, 1) ();
+  refuses "a byte of shared memory past the largest" ~kernel:"rotate"
+    ~params:12
+    ~shared:(S.attribute largest_shared + 1)
+    ();
+  equal int ~msg:"values assigned" 0 (Rig.submitted d);
+  equal (option string) ~msg:"the device's loss" None (Rig.lost d);
+  let n = 65535 * 1024 in
+  let s, run =
+    launching d ~groups:(1, 1, 65535) ~threads:(1024, 1, 1) ~shared:0
+  in
+  let big = B.create d (4 * n) in
+  Rig.wait d (Rig.Point.value (submitted s run [| big |]))
+
+(* A launch takes as much dynamic shared memory as the GPU gives a group,
+   beyond the 48 KiB CUDA allows by default. [rotate] stores into each word
+   the value of the next thread of its group, through shared memory. *)
+let largest_shared_memory () =
+  S.with_ @@ fun { d; _ } ->
+  let shared = S.attribute largest_shared in
+  let s, run =
+    launching ~kernel:"rotate" ~params:12 d ~groups:(1, 1, 1)
+      ~threads:(256, 1, 1) ~shared
+  in
+  Run.int32 run (Sub.block s 0) 8 5;
+  let out = B.create ~memory:Pinned d (4 * 256) in
+  Rig.wait d (Rig.Point.value (submitted s run [| out |]));
+  equal (array int) ~msg:"the words"
+    (Array.init 256 (fun t -> 5 + (3 * ((t + 1) mod 256))))
+    (words out 256)
+
+(* A cached launch submitted with a warm run, its block stored anew each time
+   through every setter, allocates nothing. *)
+let no_allocation () =
+  S.with_ @@ fun { d; _ } ->
+  let s, run = launching d ~groups:(1, 1, 1) ~threads:(32, 1, 1) ~shared:0 in
+  let writes = [| B.create d 4096 |] in
+  let b = Sub.block s 0 in
+  (* [float64] stores first, where [int64] then stores [a]. *)
+  let once i =
+    Run.groups run b 1 1 1;
+    Run.threads run b 32 1 1;
+    Run.shared run b 0;
+    Run.int64 run b 0 0;
+    Run.float64 run b 8 2.5;
+    Run.int64 run b 8 i;
+    Run.int32 run b 16 3;
+    Run.float32 run b 20 1.5;
+    ignore (Sys.opaque_identity (submitted s run writes))
+  in
+  once 0;
+  Rig.wait d 1;
+  let before = Gc.minor_words () in
+  for i = 1 to 100 do
+    once i
+  done;
+  let words = int_of_float (Gc.minor_words () -. before) / 100 in
+  Rig.wait d (Rig.submitted d);
+  equal int ~msg:"words per launch" 0 words
+
+let launches =
+  group ~timeout:120. "launches"
+    [
+      test "launches the GPU cannot run are refused" refused_launches;
+      test "a launch takes the largest shared memory" largest_shared_memory;
+      test "a cached launch allocates nothing" no_allocation;
     ]
 
 (* Timeline and loss *)
 
-(* A part that runs a kernel until [flag]'s first word is not 0, for at most 10
-   seconds, and the image it loaded. *)
+(* A launch that runs a kernel until [flag]'s first word is not 0, for at most
+   10 seconds. *)
 let spinning (t : S.t) flag =
-  let m, kernel = S.kernels t.g in
   H.set64 (host flag) 0;
-  let f =
-    S.launch (kernel "spin") ~grid:1 ~block:1 (address flag) (10 * second)
-  in
-  (m, S.part ~queue:"COMPUTE:0" f)
+  S.launch t "spin" (address flag) (10 * second)
 
 (* [spin t flag] submits {!spinning} as value 1. *)
 let spin t flag =
-  let m, p = spinning t flag in
-  equal int ~msg:"the value" 1 (S.submit t [| p |]);
-  m
+  equal int ~msg:"the value" 1 (S.submit_work t [ spinning t flag ])
 
 (* [lose t flag] submits {!spinning}, then a fill that fails: the loss stops
    [t] while the kernel runs. *)
 let lose t flag =
-  let _, p = spinning t flag in
-  let fails = S.part ~queue:"COMPUTE:0" (S.failing 1) in
-  ignore (lost (fun () -> S.submit t [| p; fails |]))
+  let fails = Rig_gpu_support.work (S.part ~queue:"COMPUTE:0" (S.failing 1)) in
+  ignore (lost (fun () -> S.submit_work t [ spinning t flag; fails ]))
 
 (* GPU 0, opened once the work a stop left running ended. *)
 let rec reopened () =
@@ -327,7 +424,7 @@ let unload_aside () =
   let flag = require_some (C.alloc g Pinned 8) in
   Fun.protect ~finally:(fun () -> H.set64 (host flag) 1) @@ fun () ->
   let other, _ = S.kernels g in
-  let m = spin t flag in
+  spin t flag;
   equal int ~msg:"the work committed" 0 (Rig.signaled t.d);
   let unloading = Atomic.make false in
   let d =
@@ -345,20 +442,13 @@ let unload_aside () =
   equal int ~msg:"the work after a collection" 0 (C.signaled g);
   H.set64 (host flag) 1;
   Domain.join d;
-  S.wait t 1;
-  C.unload g m
+  S.wait t 1
 
-(* The 256 MiB global of fixtures/global.ptx, loaded on [g] and touched by a run
-   of its kernel, as the value after [g]'s last. *)
+(* The 256 MiB global of fixtures/global.ptx, loaded on [g]: the load places
+   it with every function's code. *)
 let global = 256 * 1024 * 1024
-
 let load_global t =
-  let m = S.loaded (require_ok (C.image t.S.g (S.fixture "global.ptx"))) in
-  let touch =
-    S.launch (Option.get (C.entry m "touch")).code ~grid:1 ~block:1 0 0
-  in
-  S.wait t (S.submit t [| S.part ~queue:"COMPUTE:0" touch |]);
-  m
+  S.loaded (require_ok (C.image t.S.g (S.fixture "global.ptx")))
 
 (* A stop unloads no image: the global's memory returns at the unload that
    follows it. *)
@@ -856,6 +946,7 @@ let () =
          memory;
          work;
          images;
+         launches;
          graphs;
          timeline;
          stateful;

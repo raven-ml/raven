@@ -69,6 +69,23 @@ module type Gpu = sig
   (** [open_ ()] opens the driver's device of the GPU. *)
 end
 
+(** {1:work Work} *)
+
+type work = {
+  part : Rig.Submission.part;
+  block : Rig.Submission.Run.t -> Rig.Submission.block -> unit;
+      (** [block r b] stores the part's block [b] into the run [r], where the
+          part is a {!Rig.Submission.Launch}. *)
+}
+(** The type for work on a device: a part, and its block for a run. *)
+
+val work : Rig.Submission.part -> work
+(** [work p] is [p], which has no block. *)
+
+val blocks : Rig.Submission.t -> work list -> Rig.Submission.Run.t
+(** [blocks s ws] is a new run holding the block of each launch of [ws], [s]'s
+    parts in order. *)
+
 (** A GPU's device, opened through rig or by its driver alone. *)
 module type S = sig
   type gpu
@@ -122,6 +139,10 @@ module type S = sig
   val submit : t -> Rig.Submission.part array -> int
   (** [submit t ps] submits [ps] through rig on [t] and is their value. *)
 
+  val submit_work : t -> work list -> int
+  (** [submit_work t ws] submits [ws]' parts through rig on [t], with their
+      blocks ({!blocks}), and is their value. *)
+
   val wait : t -> int -> unit
   (** [wait t v] is {!Rig.wait}[ t.d v]. *)
 end
@@ -134,8 +155,8 @@ module Make (G : Gpu) : S with type gpu = G.D.t
     What the conformance suite needs of a GPU beyond its contract: a binary
     and work on the device's first queue, which a driver's support makes from
     its suite's fixtures, found from the directory a suite runs in. Each work
-    comes with the buffer of the device it reads its arguments from, which the
-    submission reads, so that rig keeps it until the work ran. *)
+    comes with a buffer of the device it reads, which the submission reads, so
+    that rig keeps it until the work ran. *)
 module type Conformance = sig
   module D : Rig.Driver
   include S with type gpu = D.t
@@ -150,14 +171,28 @@ module type Conformance = sig
       The caller stops it. *)
 
   val copy_words :
-    t -> dst:Rig.Buffer.t -> src:Rig.Buffer.t -> Rig.Submission.part * Rig.Buffer.t
+    t -> dst:Rig.Buffer.t -> src:Rig.Buffer.t -> work * Rig.Buffer.t
   (** [copy_words t ~dst ~src] is work on [t]'s first queue that copies [src]'s
       bytes into [dst], buffers of [t] of one length, a positive multiple of 4,
-      and the buffer of [t] it reads its arguments from. *)
+      and a buffer of [t] it reads. *)
 
-  val spin : t -> ns:int -> Rig.Submission.part * Rig.Buffer.t
+  val spin : t -> ns:int -> work * Rig.Buffer.t
   (** [spin t ~ns] is work on [t]'s first queue that runs at least [ns]
-      nanoseconds, and the buffer of [t] it reads its arguments from. *)
+      nanoseconds, and a buffer of [t] it reads. *)
+
+  val launch_binary : unit -> string option
+  (** [launch_binary ()] is a binary of the driver's fixtures holding the
+      launch laws' kernels, or [None] where the driver runs no launch. Their
+      parameters are 8-byte words at their offsets, and 4-byte ones where
+      named [u32] or [f32]; [k] is a thread's index in the grid, [g * T + t]:
+      [g] its group's index in the grid, x fastest, [t] its index in its
+      group, x fastest, [T] the threads of a group.
+      - [ids], parameters [out] (0), [a] (8), [b] (16, u32) and [f] (20, f32):
+        stores [a + b * k + f], [f] rounded toward zero, modulo [2{^32}],
+        into the 32-bit word [k] at [out].
+      - [twice], parameters [dst] (0), [src] (8) and [c] (16, u32), over a
+        grid of one dimension: stores [2 x + c] modulo [2{^32}], [x] the
+        32-bit word [k] at [src], into the 32-bit word [k] at [dst]. *)
 end
 
 val loader : (unit -> string) -> Rig.t -> Rig.Image.t

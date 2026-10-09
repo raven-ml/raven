@@ -252,10 +252,11 @@ let in_slot t f ~blocks args =
       (Lazy.force parsed) f entry ~blocks (args addr)
   in
   B.copy ~src:(B.of_string (Bytes.to_string bytes)) ~dst:s;
-  (words ring, s)
+  (Rig_gpu_support.work (words ring), s)
 
 let copy_words t ~dst ~src =
   in_slot t "copy_after" ~blocks:1 (fun _ ->
       [ 0; B.address dst; B.address src; B.length src ])
 
 let spin t ~ns = in_slot t "spin" ~blocks:1 (fun addr -> [ addr + flag_at; ns ])
+let launch_binary () = None

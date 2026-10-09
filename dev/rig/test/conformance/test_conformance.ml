@@ -18,6 +18,11 @@ let strf = Printf.sprintf
 
 module type Gpu = Rig_gpu_support.Conformance
 
+type work = Rig_gpu_support.work = {
+  part : Sub.part;
+  block : Sub.Run.t -> Sub.block -> unit;
+}
+
 let patience_ns = 10_000_000_000
 
 (* Bytes *)
@@ -68,20 +73,23 @@ let watched d n =
 
 (* Submitting *)
 
-(* Submits [ps] on [d], reading [reads] and writing [writes]: their value. *)
-let submit ?(waits = [||]) d ps ~reads ~writes =
+(* Submits [ws] on [d], reading [reads] and writing [writes]: its point. *)
+let submit_point ?(waits = [||]) d ws ~reads ~writes =
   let s =
     Sub.make ~reads:(List.length reads) ~writes:(List.length writes) d
-      (Array.of_list ps)
+      (Array.of_list (List.map (fun w -> w.part) ws))
   in
-  Rig.Point.value
-    (Rig.submit s ~run:(Sub.Run.make ()) ~reads:(Array.of_list reads)
-       ~writes:(Array.of_list writes) ~waits)
+  Rig.submit s ~run:(Rig_gpu_support.blocks s ws) ~reads:(Array.of_list reads)
+    ~writes:(Array.of_list writes) ~waits
+
+(* As [submit_point]: the point's value. *)
+let submit ?waits d ws ~reads ~writes =
+  Rig.Point.value (submit_point ?waits d ws ~reads ~writes)
 
 let copy_part ?(after = [||]) queue ~dst src =
-  { Sub.queue; after; work = Copy { src; dst } }
+  Rig_gpu_support.work { Sub.queue; after; work = Copy { src; dst } }
 
-let with_after after (p : Sub.part) = { p with after }
+let with_after after w = { w with part = { w.part with after } }
 
 (* Returns once [f ()] holds, failing after 10 s of the monotonic clock. *)
 let await what f =
@@ -127,6 +135,72 @@ let failing_fill queue =
       { fill = Rig_support.countdown; arg; ring_units = 0; segment_bytes = 0 }
   in
   { Sub.queue; after = [||]; work }
+
+(* Launch work *)
+
+(* The first queue of a device that runs launches, and the driver's launch
+   binary loaded on the device ([G.launch_binary]), or [None] where the device
+   runs no launch. *)
+let launcher (module G : Gpu) =
+  let load =
+    Rig_gpu_support.loader (fun () ->
+        match G.launch_binary () with
+        | Some b -> b
+        | None -> failf "%s runs launches, and has no launch binary" G.class_)
+  in
+  fun d ->
+    match running Rig.Launch d with
+    | q :: _ -> Some (q, load d)
+    | [] -> None
+
+(* As [launcher], skipping the law where the device runs no launch. *)
+let launches_on launcher d =
+  match launcher d with
+  | Some l -> l
+  | None -> skip ~reason:"the device runs no launch" ()
+
+let refer at slot = { Sub.at; slot }
+let u32 x = x land 0xffff_ffff
+
+(* [kernel] of the launcher's binary on its queue, with [params] bytes of
+   parameters, [block] storing its block. *)
+let launch_work ?(after = [||]) (queue, image) kernel ~params refs block =
+  let work = Sub.Launch { image; kernel; params; refs } in
+  { part = { Sub.queue; after; work }; block }
+
+(* [ids] over [groups] of [threads], [out] [offset] bytes into the slot
+   [slot]. *)
+let ids ?after l ~slot ~groups:(gx, gy, gz) ~threads:(tx, ty, tz) ~offset ~a ~b
+    ~f =
+  launch_work ?after l "ids" ~params:24 [| refer 0 slot |] (fun run k ->
+      Sub.Run.groups run k gx gy gz;
+      Sub.Run.threads run k tx ty tz;
+      Sub.Run.int64 run k 0 offset;
+      Sub.Run.int64 run k 8 a;
+      Sub.Run.int32 run k 16 b;
+      Sub.Run.float32 run k 20 f)
+
+(* [twice] over [n] words, [offset] bytes into the slots [dst] and [src]. *)
+let twice l ~dst ~src n ~offset ~c =
+  launch_work l "twice" ~params:20 [| refer 0 dst; refer 8 src |] (fun run k ->
+      Sub.Run.groups run k n 1 1;
+      Sub.Run.threads run k 1 1 1;
+      Sub.Run.int64 run k 0 offset;
+      Sub.Run.int64 run k 8 offset;
+      Sub.Run.int32 run k 16 c)
+
+(* [n] 32-bit words, word [i] holding [f i]. *)
+let le32s n f =
+  let b = Bytes.create (4 * n) in
+  for i = 0 to n - 1 do
+    Bytes.set_int32_le b (4 * i) (Int32.of_int (f i))
+  done;
+  Bytes.to_string b
+
+(* The 32-bit words of [s] from byte [at]. *)
+let words s ~at n =
+  Array.init n (fun i ->
+      u32 (Int32.to_int (String.get_int32_le s (at + (4 * i)))))
 
 (* Facts *)
 
@@ -363,6 +437,169 @@ let device_order (module G : Gpu) () =
   Rig.wait t.d (submit t.d [ r ] ~reads:[ ra ] ~writes:[ o ]);
   equal octets ~msg:"work after a copy" data (get o)
 
+(* Launches *)
+
+(* A launch of [ids] over [groups] of [threads], into a view that starts
+   [first] bytes into its buffer, from [offset] bytes into the view; then, in
+   the same submission, a launch of [twice] reading those words through the
+   same slot. *)
+type geometry = {
+  groups : int * int * int;
+  threads : int * int * int;
+  a : int;
+  b : int;
+  f : float;
+  c : int;
+  first : int;
+  offset : int;
+}
+
+let geometry =
+  let pp ppf g =
+    let gx, gy, gz = g.groups and tx, ty, tz = g.threads in
+    Format.fprintf ppf
+      "{ groups = %dx%dx%d; threads = %dx%dx%d; a = %d; b = %d; f = %g; c = \
+       %d; first = %d; offset = %d }"
+      gx gy gz tx ty tz g.a g.b g.f g.c g.first g.offset
+  in
+  let open Gen in
+  let flat n = map (fun x -> (x, 1, 1)) (int_range 1 n) in
+  let* three = bool in
+  let groups =
+    if three then triple (int_range 1 4) (int_range 1 3) (int_range 1 3)
+    else flat 64
+  and threads =
+    if three then triple (int_range 1 8) (int_range 1 4) (int_range 1 4)
+    else flat 256
+  in
+  with_pp pp
+    (let+ groups = groups
+     and+ threads = threads
+     and+ a = int_range 0 0xffff_ffff
+     and+ b = int_range 0 0xffff
+     and+ f = map float_of_int (int_range 0 ((1 lsl 24) - 1))
+     and+ c = int_range 0 0xffff
+     and+ first = of_list [ 0; 4; 256 ]
+     and+ offset = of_list [ 0; 8; 4096 ] in
+     { groups; threads; a; b; f; c; first; offset })
+
+let launches_conform (module G : Gpu) =
+  let launcher = launcher (module G) in
+  fun g ->
+    let gx, gy, gz = g.groups and tx, ty, tz = g.threads in
+    cover "groups along y or z" (gy > 1 || gz > 1);
+    cover "threads along y or z" (ty > 1 || tz > 1);
+    cover "a view at an offset" (g.first > 0);
+    cover "a ref at an offset" (g.offset > 0);
+    G.with_ @@ fun t ->
+    let l = launches_on launcher t.d in
+    let n = gx * gy * gz * tx * ty * tz in
+    let bytes = g.offset + (4 * n) in
+    let base = filled t.d (String.make (g.first + bytes) '\000') in
+    let out = B.view base ~first:g.first ~length:bytes in
+    let dst = filled t.d (String.make bytes '\000') in
+    let first =
+      ids l ~slot:0 ~groups:g.groups ~threads:g.threads ~offset:g.offset ~a:g.a
+        ~b:g.b ~f:g.f
+    in
+    let second = twice l ~dst:1 ~src:0 n ~offset:g.offset ~c:g.c in
+    Rig.wait t.d (submit t.d [ first; second ] ~reads:[] ~writes:[ out; dst ]);
+    let expected =
+      Array.init n (fun k -> u32 (g.a + (g.b * k) + int_of_float g.f))
+    in
+    equal (array int) ~msg:"ids" expected (words (get out) ~at:g.offset n);
+    equal (array int) ~msg:"twice"
+      (Array.map (fun x -> u32 ((2 * x) + g.c)) expected)
+      (words (get dst) ~at:g.offset n)
+
+(* A launch whose grid or group has no size along an axis is refused before
+   any value, and the device stays live. *)
+let empty_launches (module G : Gpu) =
+  let launcher = launcher (module G) in
+  fun () ->
+    G.with_ @@ fun t ->
+    let l = launches_on launcher t.d in
+    let out = filled t.d (String.make 64 '\000') in
+    let before = Rig.submitted t.d in
+    let refuses groups threads =
+      let gx, gy, gz = groups and tx, ty, tz = threads in
+      raises_match
+        ~msg:(strf "%dx%dx%d groups of %dx%dx%d" gx gy gz tx ty tz)
+        Exn.invalid_arg
+        (fun () ->
+          submit t.d
+            [ ids l ~slot:0 ~groups ~threads ~offset:0 ~a:0 ~b:0 ~f:0. ]
+            ~reads:[] ~writes:[ out ])
+    in
+    List.iter
+      (fun (groups, threads) -> refuses groups threads)
+      [
+        ((0, 1, 1), (1, 1, 1));
+        ((1, 0, 1), (1, 1, 1));
+        ((1, 1, 0), (1, 1, 1));
+        ((1, 1, 1), (0, 1, 1));
+        ((1, 1, 1), (1, 0, 1));
+        ((1, 1, 1), (1, 1, 0));
+      ];
+    equal int ~msg:"values assigned" before (Rig.submitted t.d);
+    equal (option string) ~msg:"the device's loss" None (Rig.lost t.d);
+    Rig.wait t.d
+      (submit t.d
+         [ ids l ~slot:0 ~groups:(1, 1, 1) ~threads:(16, 1, 1) ~offset:0 ~a:1
+             ~b:1 ~f:0. ]
+         ~reads:[] ~writes:[ out ]);
+    equal (array int) ~msg:"a launch after them"
+      (Array.init 16 (fun k -> 1 + k))
+      (words (get out) ~at:0 16)
+
+(* A value's work starts once every earlier value's completed, on every
+   queue, launches included. A copy beside the launch queue after 50 ms of
+   work writes [mid] and a launch at the next value reads it; and the other
+   way round, a launch after 50 ms of work writes [mid] and a copy beside it
+   at the next value reads it. *)
+let launch_order (module G : Gpu) =
+  let launcher = launcher (module G) in
+  fun () ->
+    G.with_ @@ fun t ->
+    let ((first, _) as l) = launches_on launcher t.d in
+    let q =
+      match List.filter (fun q -> q <> first) (copy_queues t.d) with
+      | q :: _ -> q
+      | [] -> skip ~reason:"the device runs no copy beside its launches" ()
+    in
+    let n = 16384 in
+    let late = 50_000_000 in
+    let src = filled t.d (le32s n Fun.id) in
+    let fresh () = filled t.d (String.make (4 * n) '\000') in
+    let sp, sa = G.spin t ~ns:late in
+    let mid = fresh () and dst = fresh () in
+    ignore
+      (submit t.d
+         [ sp; copy_part q ~after:[| 0 |] ~dst:mid src ]
+         ~reads:[ src; sa ] ~writes:[ mid ]);
+    Rig.wait t.d
+      (submit t.d
+         [ twice l ~dst:1 ~src:0 n ~offset:0 ~c:1 ]
+         ~reads:[ mid ] ~writes:[ dst ]);
+    equal (array int) ~msg:"a launch after a copy"
+      (Array.init n (fun i -> (2 * i) + 1))
+      (words (get dst) ~at:0 n);
+    let sp, sa = G.spin t ~ns:late in
+    let mid = fresh () and o = fresh () in
+    ignore
+      (submit t.d
+         [
+           sp;
+           ids ~after:[| 0 |] l ~slot:1 ~groups:(n / 64, 1, 1)
+             ~threads:(64, 1, 1) ~offset:0 ~a:7 ~b:3 ~f:0.;
+         ]
+         ~reads:[ sa ] ~writes:[ mid ]);
+    Rig.wait t.d
+      (submit t.d [ copy_part q ~dst:o mid ] ~reads:[] ~writes:[ o ]);
+    equal (array int) ~msg:"a copy after a launch"
+      (Array.init n (fun k -> 7 + (3 * k)))
+      (words (get o) ~at:0 n)
+
 (* Workspace *)
 
 (* Launches through one workspace, each over its first [k] KiB: a part copies
@@ -590,11 +827,7 @@ let device_waits (module G : Gpu) () =
   Fun.protect ~finally:(fun () -> Rig.close pd) @@ fun () ->
   let tp = { G.d = pd; g } in
   let sp, sa = G.spin tp ~ns:50_000_000 in
-  let point =
-    Rig.submit
-      (Sub.make ~reads:1 ~writes:0 pd [| sp |])
-      ~run:(Sub.Run.make ()) ~reads:[| sa |] ~writes:[||] ~waits:[||]
-  in
+  let point = submit_point pd [ sp ] ~reads:[ sa ] ~writes:[] in
   holds (module G) t point ignore
 
 (* Peers *)
@@ -888,6 +1121,13 @@ let laws (module G : Gpu) =
         accesses (readers g);
       test "a value's work starts once every earlier value's completed"
         (device_order g);
+      prop ~count:30
+        "a launch writes what its grid and parameters say, and a launch after \
+         it reads that"
+        geometry (launches_conform g);
+      test "a launch of no size along an axis is refused" (empty_launches g);
+      test "a value's launches start once every earlier value's work completed"
+        (launch_order g);
       prop ~count:30 "a launch reads what its submission wrote into a workspace"
         launches (workspace g);
       test "an image names its kernels, and bytes no binary are an error"

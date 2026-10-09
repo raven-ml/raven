@@ -130,8 +130,11 @@ enum {
   CUDA_SUCCESS = 0,
   CUDA_ERROR_OUT_OF_MEMORY = 2,
   CUDA_ERROR_NOT_READY = 600,
+  CU_FUNC_ATTRIBUTE_MAX_THREADS_PER_BLOCK = 0,
   CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES = 1,
   CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES = 8,
+  CU_DEVICE_ATTRIBUTE_MAX_BLOCK_DIM_X = 2, /* then Y and Z */
+  CU_DEVICE_ATTRIBUTE_MAX_GRID_DIM_X = 5,  /* then Y and Z */
   CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN = 97,
   CU_DEVICE_ATTRIBUTE_CAN_FLUSH_REMOTE_WRITES = 98,
   CU_POINTER_ATTRIBUTE_RANGE_START_ADDR = 11,
@@ -191,6 +194,9 @@ enum {
   X(cuFuncGetAttribute, (int *, int, CUfunction))                              \
   X(cuFuncSetAttribute, (CUfunction, int, int))                                \
   X(cuModuleUnload, (CUmodule))                                                \
+  X(cuLaunchKernel, (CUfunction, unsigned int, unsigned int, unsigned int,     \
+                     unsigned int, unsigned int, unsigned int, unsigned int,   \
+                     CUstream, void **, void **))                              \
   X(cuGraphCreate, (CUgraph *, unsigned int))                                  \
   X(cuGraphAddKernelNode_v2, (CUgraphNode *, CUgraph, const CUgraphNode *,     \
                               size_t, const kernel_node *))                    \
@@ -393,6 +399,7 @@ struct device {
   CUevent done[2];     /* the latest part of a stream another one waits for */
   CUevent ended;       /* the end of the last value, for the other stream */
   CUevent waited;      /* the foreign waits of the value being submitted */
+  unsigned int groups[3], threads[3]; /* a launch's most along x, y, z */
   _Atomic uint64_t *word;
   uint64_t last;       /* the last value submit received */
   uint64_t committed;  /* the last value written to the word */
@@ -444,6 +451,22 @@ static CUresult start(struct device *d) {
 static const struct rig_driver driver = {rig_cuda_room, rig_cuda_submit,
                                          rig_cuda_commit};
 
+/* Reads the GPU's limits on a launch's groups and threads into [d]. */
+static CUresult limits(struct device *d) {
+  CUresult s = CUDA_SUCCESS;
+  for (int k = 0; k < 3 && s == CUDA_SUCCESS; k++) {
+    int groups = 0, threads = 0;
+    s = p_cuDeviceGetAttribute(&groups, CU_DEVICE_ATTRIBUTE_MAX_GRID_DIM_X + k,
+                               d->device);
+    if (s == CUDA_SUCCESS)
+      s = p_cuDeviceGetAttribute(
+          &threads, CU_DEVICE_ATTRIBUTE_MAX_BLOCK_DIM_X + k, d->device);
+    d->groups[k] = (unsigned int)groups;
+    d->threads[k] = (unsigned int)threads;
+  }
+  return s;
+}
+
 /* Opens a device on the primary context of the CUdevice [v_device]: its
    state's address, or CUDA's status negated. A device that does not open
    gives back its retain of the context. Releases the runtime: CUDA may
@@ -457,6 +480,7 @@ value caml_rig_cuda_open(value v_device) {
   caml_enter_blocking_section_no_pending();
   CUresult s = p_cuDeviceGetAttribute(
       &flush, CU_DEVICE_ATTRIBUTE_CAN_FLUSH_REMOTE_WRITES, d->device);
+  if (s == CUDA_SUCCESS) s = limits(d);
   if (s == CUDA_SUCCESS)
     s = p_cuDevicePrimaryCtxRetain(&d->context, d->device);
   if (s == CUDA_SUCCESS) {
@@ -621,13 +645,49 @@ value caml_rig_cuda_load_module(value v_self, value v_image) {
   CAMLreturn(answer(s, (intnat)m));
 }
 
-value caml_rig_cuda_function(value v_self, value v_module, value v_name) {
-  CUfunction f = NULL;
+/* What a launch of a function reads: the function, the most threads a
+   group of it has, and the most dynamic shared memory a group of it
+   takes, which load_module set. */
+struct function {
+  CUfunction f;
+  unsigned int threads, shared;
+};
+
+static CUresult find(struct function *fn, CUmodule m, const char *name) {
+  int threads = 0, shared = 0;
+  CUresult s = p_cuModuleGetFunction(&fn->f, m, name);
+  if (s == CUDA_SUCCESS)
+    s = p_cuFuncGetAttribute(&threads, CU_FUNC_ATTRIBUTE_MAX_THREADS_PER_BLOCK,
+                             fn->f);
+  if (s == CUDA_SUCCESS)
+    s = p_cuFuncGetAttribute(
+        &shared, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, fn->f);
+  fn->threads = (unsigned int)threads;
+  fn->shared = (unsigned int)shared;
+  return s;
+}
+
+/* The struct function of [v_module]'s function [v_name], in memory of its
+   own that caml_rig_cuda_forget frees, or CUDA's status negated. */
+value caml_rig_cuda_entry(value v_self, value v_module, value v_name) {
+  struct function *fn = malloc(sizeof *fn);
   CUresult s;
+  if (fn == NULL) caml_raise_out_of_memory();
   IN_CONTEXT(s, Device_val(v_self),
-             p_cuModuleGetFunction(&f, (CUmodule)Long_val(v_module),
-                                   String_val(v_name)));
-  return answer(s, (intnat)f);
+             find(fn, (CUmodule)Long_val(v_module), String_val(v_name)));
+  if (s == CUDA_SUCCESS) return Val_long((intnat)fn);
+  free(fn);
+  return Val_long(-s);
+}
+
+/* The CUfunction of the struct function [v_fn]. */
+value caml_rig_cuda_code(value v_fn) {
+  return Val_long((intnat)((struct function *)Long_val(v_fn))->f);
+}
+
+value caml_rig_cuda_forget(value v_fn) {
+  free((void *)Long_val(v_fn));
+  return Val_unit;
 }
 
 /* Unloads [v_module]: CUDA's status. Releases the runtime: CUDA waits for
@@ -755,11 +815,14 @@ static CUresult query(CUstream q) {
 
 /* One submission's progress: the streams it entered, whether its foreign
    waits are placed, whether both streams run it, and the streams given
-   work since their [done] event was last recorded. */
+   work since their [done] event was last recorded; and its launches'
+   blocks and slots' addresses. */
 struct submission {
   struct device *d;
   const struct rig_wait *waits;
   int nwaits;
+  const uint8_t *args;
+  const uint64_t *slots;
   int entered[2];
   int waited;
   int both;
@@ -770,6 +833,7 @@ struct submission {
 
 /* The steps a failure names, beside ordering the streams. */
 static const char filling[] = "running a fill", copying[] = "copying",
+                  launching[] = "launching a kernel",
                   waiting[] = "waiting on a word", writing[] = "writing the word";
 
 /* [r], the status of a call of [step], recorded as the failing step. */
@@ -833,6 +897,47 @@ static CUresult follow(struct submission *s, int q) {
   return p_cuStreamWaitEvent(d->streams[q], d->done[o], 0);
 }
 
+/* Launches the function of the launch [p] on [stream] over the grid of its
+   block, with its parameters copied and each ref's word raised by its
+   slot's address: CUDA copies the parameters at the call. */
+static CUresult launch(const struct submission *s, CUstream stream,
+                       const struct rig_part *p) {
+  const struct function *fn = p->launch.launch;
+  const struct rig_block *b = (const void *)(s->args + p->launch.block);
+  _Alignas(16) uint8_t params[RIG_PARAMS];
+  size_t size = p->launch.params;
+  void *extra[] = {CU_LAUNCH_PARAM_BUFFER_POINTER, params,
+                   CU_LAUNCH_PARAM_BUFFER_SIZE, &size, CU_LAUNCH_PARAM_END};
+  memcpy(params, b->params, size);
+  for (int i = 0; i < p->launch.nrefs; i++) {
+    const struct rig_ref *r = &p->launch.refs[i];
+    uint64_t x;
+    memcpy(&x, params + r->at, sizeof x);
+    x += s->slots[r->slot];
+    memcpy(params + r->at, &x, sizeof x);
+  }
+  return p_cuLaunchKernel(fn->f, b->groups[0], b->groups[1], b->groups[2],
+                          b->threads[0], b->threads[1], b->threads[2],
+                          b->shared, stream, NULL, size > 0 ? extra : NULL);
+}
+
+/* Enqueues the work of the part [p] on [stream]. */
+static CUresult work(struct submission *s, CUstream stream,
+                     const struct rig_part *p, uint64_t v) {
+  s->bytes = p->kind == RIG_COPY ? p->copy.bytes : 0;
+  switch (p->kind) {
+  case RIG_FILL:
+    return in_step(s, filling, p->fill.fn(stream, p->fill.arg, v));
+  case RIG_LAUNCH:
+    return in_step(s, launching, launch(s, stream, p));
+  default:
+    return in_step(s, copying,
+                   p_cuMemcpyAsync(p->copy.dst + p->copy.dst_offset,
+                                   p->copy.src + p->copy.src_offset,
+                                   p->copy.bytes, stream));
+  }
+}
+
 /* Enqueues the parts in array order, and ends [v] on the stream of the
    last part (on the last value's stream for none) once both streams' work
    is done. A part that names a part of the other stream waits for all the
@@ -850,19 +955,11 @@ static CUresult run(struct submission *s, uint64_t v, const struct rig_part *p,
     e = p_cuEventRecord(d->ended, d->streams[d->tail]);
   for (int i = 0; i < n && e == CUDA_SUCCESS; i++) {
     int q = p[i].queue, across = 0;
-    CUstream stream = d->streams[q];
     e = enter(s, q);
     for (int k = 0; k < p[i].nafter; k++)
       across |= p[p[i].after[k]].queue != q;
     if (e == CUDA_SUCCESS && across) e = follow(s, q);
-    s->bytes = p[i].kind == RIG_COPY ? p[i].copy.bytes : 0;
-    if (e == CUDA_SUCCESS && p[i].kind == RIG_FILL)
-      e = in_step(s, filling, p[i].fill.fn(stream, p[i].fill.arg, v));
-    else if (e == CUDA_SUCCESS)
-      e = in_step(s, copying,
-             p_cuMemcpyAsync(p[i].copy.dst + p[i].copy.dst_offset,
-                             p[i].copy.src + p[i].copy.src_offset,
-                             p[i].copy.bytes, stream));
+    if (e == CUDA_SUCCESS) e = work(s, d->streams[q], &p[i], v);
     s->unrecorded[q] = 1;
   }
   if (e == CUDA_SUCCESS) e = enter(s, r);
@@ -909,31 +1006,53 @@ static void drain(struct submission *s, uint64_t v) {
   if (e == CUDA_SUCCESS) write_word(d, v);
 }
 
+/* Whether [d]'s GPU and the function run the launch [p] over its block in
+   [args]: no size is 0, and none exceeds a limit. */
+static int runs(const struct device *d, const struct rig_part *p,
+                const uint8_t *args) {
+  const struct function *fn = p->launch.launch;
+  const struct rig_block *b = (const void *)(args + p->launch.block);
+  uint64_t threads = 1;
+  for (int k = 0; k < 3; k++) {
+    if (b->groups[k] == 0 || b->groups[k] > d->groups[k]) return 0;
+    if (b->threads[k] == 0 || b->threads[k] > d->threads[k]) return 0;
+    threads *= b->threads[k];
+  }
+  return threads <= fn->threads && b->shared <= fn->shared;
+}
+
 int rig_cuda_room(void *self, const struct rig_part *p, int n,
                   const uint8_t *args) {
-  (void)args;
-  (void)self;
+  const struct device *d = self;
   for (int i = 0; i < n; i++) {
-    int fill = p[i].kind == RIG_FILL;
-    if (p[i].queue < 0 || p[i].queue > 1 ||
-        (!fill && p[i].kind != RIG_COPY) ||
-        (fill && (p[i].fill.ring_units != 0 || p[i].fill.segment_bytes != 0)))
+    if (p[i].queue < 0 || p[i].queue > 1) return RIG_NEVER;
+    switch (p[i].kind) {
+    case RIG_FILL:
+      if (p[i].fill.ring_units != 0 || p[i].fill.segment_bytes != 0)
+        return RIG_NEVER;
+      break;
+    case RIG_COPY:
+      break;
+    case RIG_LAUNCH:
+      if (p[i].queue != 0 || !runs(d, &p[i], args)) return RIG_NEVER;
+      break;
+    default:
       return RIG_NEVER;
+    }
   }
   return RIG_FITS;
 }
 
 int rig_cuda_submit(void *self, uint64_t v, const struct rig_wait *waits,
-                       int nwaits, const struct rig_part *parts, int nparts,
-                       const uint8_t *args, const uint64_t *slots, int nslots,
-                       const uint64_t *handles, int nhandles,
-                       const char **failure) {
-  (void)args;
-  (void)slots;
-  (void)nslots;
+                    int nwaits, const struct rig_part *parts, int nparts,
+                    const uint8_t *args, const uint64_t *slots, int nslots,
+                    const uint64_t *handles, int nhandles,
+                    const char **failure) {
   struct device *d = self;
-  struct submission s = {d, waits, nwaits, {0, 0}, 0, 0, {0, 0}, NULL, 0};
+  struct submission s = {
+      .d = d, .waits = waits, .nwaits = nwaits, .args = args, .slots = slots};
   int pushed;
+  (void)nslots;
   (void)handles;
   (void)nhandles;
   d->last = v;
@@ -962,7 +1081,7 @@ int rig_cuda_commit(void *self, uint64_t v, const char **failure) {
     CUresult e = own(d->context, &pushed);
     if (e == CUDA_SUCCESS) e = restore(pushed, write_word(d, v));
     if (e != CUDA_SUCCESS) {
-      struct submission s = {d, NULL, 0, {0, 0}, 0, 0, {0, 0}, writing, 0};
+      struct submission s = {.d = d, .step = writing};
       fail(d, &s, e);
       d->failed = 1;
     }

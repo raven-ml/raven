@@ -43,6 +43,25 @@ module type Gpu = sig
   val open_ : unit -> (D.t, string) result
 end
 
+(* Work *)
+
+type work = {
+  part : Rig.Submission.part;
+  block : Rig.Submission.Run.t -> Rig.Submission.block -> unit;
+}
+
+let work part = { part; block = (fun _ _ -> ()) }
+
+let blocks s ws =
+  let run = Rig.Submission.Run.make () in
+  List.iteri
+    (fun i w ->
+      match w.part.work with
+      | Launch _ -> w.block run (Rig.Submission.block s i)
+      | Words _ | Fill _ | Copy _ -> ())
+    ws;
+  run
+
 module type S = sig
   type gpu
   type t = { d : Rig.t; g : gpu }
@@ -58,6 +77,7 @@ module type S = sig
   val with_driver : (gpu -> 'a) -> 'a
   val release : unit -> unit
   val submit : t -> Rig.Submission.part array -> int
+  val submit_work : t -> work list -> int
   val wait : t -> int -> unit
 end
 
@@ -127,6 +147,12 @@ module Make (G : Gpu) = struct
     let run = Rig.Submission.Run.make () in
     Rig.Point.value (Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||])
 
+  let submit_work t ws =
+    let ps = Array.of_list (List.map (fun w -> w.part) ws) in
+    let s = Rig.Submission.make ~reads:0 ~writes:0 t.d ps in
+    let run = blocks s ws in
+    Rig.Point.value (Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||])
+
   let wait t v = Rig.wait t.d v
 end
 
@@ -140,9 +166,9 @@ module type Conformance = sig
   val second : unit -> (D.t, string) result option
 
   val copy_words :
-    t -> dst:Rig.Buffer.t -> src:Rig.Buffer.t -> Rig.Submission.part * Rig.Buffer.t
-
-  val spin : t -> ns:int -> Rig.Submission.part * Rig.Buffer.t
+    t -> dst:Rig.Buffer.t -> src:Rig.Buffer.t -> work * Rig.Buffer.t
+  val spin : t -> ns:int -> work * Rig.Buffer.t
+  val launch_binary : unit -> string option
 end
 
 let loader bin =

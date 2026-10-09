@@ -3,12 +3,11 @@
 **Needs an NVIDIA GPU and the CUDA library (`libcuda`), which NVIDIA's driver
 installs.** Elsewhere it prints a line and exits.
 
-A kernel reaches a CUDA device through a fill, `run.c`, that calls
-`cuLaunchKernel` on the stream the device hands it. The fill finds that function
-through the device's capability, so nothing links a CUDA library or needs its
-headers. This example loads a PTX kernel, adds two arrays of a million floats as
-a step (its argument in a hold, its arrays passed to each submit) and checks the
-result.
+A kernel reaches a CUDA device as a launch: a part that names the image's
+function and, for each parameter that holds an address, the buffer it points
+into. This example loads a PTX kernel, adds two arrays of a million floats as a
+step (its arrays passed to each submit, its grid and parameters stored in a
+run) and checks the result.
 
 ```bash
 cd dev/rig/examples/x-cuda-kernel
@@ -17,20 +16,19 @@ dune exec ./main.exe
 
 ## What You'll Learn
 
-- Loading PTX text, which CUDA compiles for the GPU it loads on:
-  `Image.load`, `Image.entry`
-- What compiled code finds in a CUDA device's capability:
-  `Rig.capability g Rig_cuda_abi.key`, its `symbol`
-- A fill's argument in pinned host memory: `Buffer.create ~memory:Pinned`
+- Loading PTX text, which CUDA compiles for the GPU it loads on: `Image.load`
+- A launch whose parameters point into the buffers a submit passes:
+  `Submission.Launch`, its `refs`
+- A run's grid and parameters: `Submission.block`, `Submission.Run`
 - A copy back that waits for the kernel's write
 
 ## Key Functions
 
-| Function                          | Purpose                                    |
-| --------------------------------- | ------------------------------------------ |
-| `Image.load g ptx`                | The module of `ptx` on `g`                 |
-| `cap.symbol "cuLaunchKernel"`     | A CUDA function's address                  |
-| `Submission.Fill { fill; arg; _ }`| The launch, as C work on the stream        |
+| Function                                            | Purpose                                 |
+| --------------------------------------------------- | --------------------------------------- |
+| `Image.load g ptx`                                  | The module of `ptx` on `g`              |
+| `Submission.Launch { image; kernel; params; refs }` | The kernel as a part                    |
+| `Submission.Run.groups`, `threads`, `int32`         | A launch's grid and parameters in a run |
 
 ## The kernel
 

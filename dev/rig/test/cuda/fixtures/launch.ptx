@@ -1,0 +1,150 @@
+/*---------------------------------------------------------------------------
+   Copyright (c) 2026 The Raven authors. All rights reserved.
+   SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*/
+
+// The kernels of launches, whose parameters a launch's block holds: ids and
+// twice for the conformance suite's launch laws, copy for its work, rotate
+// for the CUDA suite.
+// A thread's index k is g * T + t: g its group's index in the grid, x
+// fastest, t its index in its group, x fastest, and T the threads of a
+// group.
+
+.version 7.0
+.target sm_50
+.address_size 64
+
+.extern .shared .align 16 .b8 dyn[];
+
+// Stores (u32)a + b * k + (u32)f into the 32-bit word k at out, f rounded
+// toward zero.
+.visible .entry ids(.param .u64 out, .param .u64 a, .param .u32 b,
+                    .param .f32 f)
+{
+  .reg .u32 %r<20>;
+  .reg .u64 %rd<5>;
+  .reg .f32 %f1;
+  ld.param.u64 %rd1, [out];
+  ld.param.u64 %rd2, [a];
+  ld.param.u32 %r1, [b];
+  ld.param.f32 %f1, [f];
+  mov.u32 %r2, %ctaid.x;
+  mov.u32 %r3, %ctaid.y;
+  mov.u32 %r4, %ctaid.z;
+  mov.u32 %r5, %nctaid.x;
+  mov.u32 %r6, %nctaid.y;
+  mad.lo.u32 %r7, %r4, %r6, %r3;
+  mad.lo.u32 %r7, %r7, %r5, %r2;
+  mov.u32 %r8, %tid.x;
+  mov.u32 %r9, %tid.y;
+  mov.u32 %r10, %tid.z;
+  mov.u32 %r11, %ntid.x;
+  mov.u32 %r12, %ntid.y;
+  mov.u32 %r13, %ntid.z;
+  mad.lo.u32 %r14, %r10, %r12, %r9;
+  mad.lo.u32 %r14, %r14, %r11, %r8;
+  mul.lo.u32 %r15, %r11, %r12;
+  mul.lo.u32 %r15, %r15, %r13;
+  mad.lo.u32 %r16, %r7, %r15, %r14;
+  cvt.u32.u64 %r17, %rd2;
+  cvt.rzi.u32.f32 %r18, %f1;
+  mad.lo.u32 %r19, %r1, %r16, %r17;
+  add.u32 %r19, %r19, %r18;
+  mul.wide.u32 %rd3, %r16, 4;
+  add.u64 %rd4, %rd1, %rd3;
+  st.u32 [%rd4], %r19;
+  ret;
+}
+
+// Stores 2x + c into the 32-bit word i at dst, x the 32-bit word i at src,
+// for each thread i of a grid of one dimension.
+.visible .entry twice(.param .u64 dst, .param .u64 src, .param .u32 c)
+{
+  .reg .u32 %r<7>;
+  .reg .u64 %rd<6>;
+  ld.param.u64 %rd1, [dst];
+  ld.param.u64 %rd2, [src];
+  ld.param.u32 %r6, [c];
+  mov.u32 %r1, %ctaid.x;
+  mov.u32 %r2, %ntid.x;
+  mov.u32 %r3, %tid.x;
+  mad.lo.u32 %r4, %r1, %r2, %r3;
+  mul.wide.u32 %rd3, %r4, 4;
+  add.u64 %rd4, %rd2, %rd3;
+  add.u64 %rd5, %rd1, %rd3;
+  ld.u32 %r5, [%rd4];
+  mad.lo.u32 %r5, %r5, 2, %r6;
+  st.u32 [%rd5], %r5;
+  ret;
+}
+
+// Copies the 32-bit word i at src into the 32-bit word i at dst, for each
+// thread i below n of a grid of one dimension.
+.visible .entry copy(.param .u64 dst, .param .u64 src, .param .u32 n)
+{
+  .reg .pred %p;
+  .reg .u32 %r<6>;
+  .reg .u64 %rd<6>;
+  ld.param.u64 %rd1, [dst];
+  ld.param.u64 %rd2, [src];
+  ld.param.u32 %r5, [n];
+  mov.u32 %r1, %ctaid.x;
+  mov.u32 %r2, %ntid.x;
+  mov.u32 %r3, %tid.x;
+  mad.lo.u32 %r4, %r1, %r2, %r3;
+  setp.ge.u32 %p, %r4, %r5;
+  @%p bra DONE;
+  mul.wide.u32 %rd3, %r4, 4;
+  add.u64 %rd4, %rd2, %rd3;
+  add.u64 %rd5, %rd1, %rd3;
+  ld.u32 %r5, [%rd4];
+  st.u32 [%rd5], %r5;
+DONE:
+  ret;
+}
+
+// Stores k + 3i + 7g, i the thread's index in the grid, into the 32-bit
+// word t of the group's dynamic shared memory, of at least 4T bytes, then
+// the word t + 1 of it, the next thread's (thread 0's for the last), into
+// the 32-bit word i at out.
+.visible .entry rotate(.param .u64 out, .param .u32 k)
+{
+  .reg .u32 %r<20>;
+  .reg .u64 %rd<9>;
+  ld.param.u64 %rd1, [out];
+  ld.param.u32 %r1, [k];
+  mov.u32 %r2, %ctaid.x;
+  mov.u32 %r3, %ctaid.y;
+  mov.u32 %r4, %ctaid.z;
+  mov.u32 %r5, %nctaid.x;
+  mov.u32 %r6, %nctaid.y;
+  mad.lo.u32 %r7, %r4, %r6, %r3;
+  mad.lo.u32 %r7, %r7, %r5, %r2;
+  mov.u32 %r8, %tid.x;
+  mov.u32 %r9, %tid.y;
+  mov.u32 %r10, %tid.z;
+  mov.u32 %r11, %ntid.x;
+  mov.u32 %r12, %ntid.y;
+  mov.u32 %r13, %ntid.z;
+  mad.lo.u32 %r14, %r10, %r12, %r9;
+  mad.lo.u32 %r14, %r14, %r11, %r8;
+  mul.lo.u32 %r15, %r11, %r12;
+  mul.lo.u32 %r15, %r15, %r13;
+  mad.lo.u32 %r16, %r7, %r15, %r14;
+  mad.lo.u32 %r17, %r16, 3, %r1;
+  mad.lo.u32 %r17, %r7, 7, %r17;
+  mov.u64 %rd2, dyn;
+  mul.wide.u32 %rd3, %r14, 4;
+  add.u64 %rd4, %rd2, %rd3;
+  st.shared.u32 [%rd4], %r17;
+  bar.sync 0;
+  add.u32 %r18, %r14, 1;
+  rem.u32 %r18, %r18, %r15;
+  mul.wide.u32 %rd5, %r18, 4;
+  add.u64 %rd6, %rd2, %rd5;
+  ld.shared.u32 %r19, [%rd6];
+  mul.wide.u32 %rd7, %r16, 4;
+  add.u64 %rd8, %rd1, %rd7;
+  st.u32 [%rd8], %r19;
+  ret;
+}

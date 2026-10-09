@@ -8,21 +8,15 @@
    Needs an NVIDIA GPU and the CUDA library ([libcuda]), which the NVIDIA driver
    installs.
 
-   Compiled code runs a kernel through a fill ([run.c]) that calls
-   [cuLaunchKernel] on the stream the device hands it. It finds that function
-   through the device's capability, so it links no CUDA library. The code is
+   The kernel runs as a launch: a part that names the image's function and the
+   buffers its parameters point into. Each run's grid and parameters are stored
+   in a run, and rig adds each buffer's address to its parameter. The code is
    PTX text ([add.ptx]), which CUDA compiles for the GPU it loads on. *)
 
 open Rig
 
-external run : unit -> nativeint = "caml_rig_example_run"
-
 let n = 1 lsl 20
 let block = 256
-
-let words b xs =
-  let a = Buffer.bigarray Bigarray.int64 (Option.get (Buffer.borrow host b)) in
-  List.iteri (fun i x -> a.{i} <- Int64.of_int x) xs
 
 let floats g f =
   let h = Buffer.create host (4 * n) in
@@ -34,6 +28,10 @@ let floats g f =
   Buffer.copy ~src:h ~dst:b;
   b
 
+(* [add]'s parameters: the addresses of [a], [b] and [out], each 8 bytes, then
+   [n], 4 bytes. *)
+let params = 28
+
 let () =
   if Rig_cuda.count () = 0 then print_endline "no CUDA GPU on this machine"
   else
@@ -44,42 +42,32 @@ let () =
         (fun () -> Rig_cuda.open_ 0)
       |> Result.get_ok
     in
-    let cap = Option.get (capability g Rig_cuda_abi.key) in
-    let launch = Option.get (cap.symbol "cuLaunchKernel") in
 
-    (* The image, compiled by CUDA as it loads, and its kernel. *)
+    (* The image, compiled by CUDA as it loads. *)
     let ptx = In_channel.with_open_bin "add.ptx" In_channel.input_all in
-    let p = Result.get_ok (Image.load g ptx) in
-    let add = Option.get (Image.entry p "add") in
+    let image = Result.get_ok (Image.load g ptx) in
 
     (* The arrays, in the GPU's memory. *)
     let a = floats g float_of_int and b = floats g (fun _ -> 0.5) in
     let out = Buffer.create g (4 * n) in
 
-    (* The fill's argument, in pinned host memory that the fill reads on the
-       host. It is fixed memory of the step: a hold keeps it, and the image
-       until the work is done. *)
-    let arg = Buffer.create ~memory:Pinned g 64 in
-    words arg
-      [
-        Nativeint.to_int launch;
-        add;
-        n / block;
-        block;
-        Buffer.address a;
-        Buffer.address b;
-        Buffer.address out;
-        n;
-      ];
-    let hold =
-      Hold.make ~release:(fun () -> ignore (Sys.opaque_identity p)) [ arg ]
+    (* The step: [add] reading the run's buffers 0 and 1 and writing its buffer
+       2, each named by a parameter. *)
+    let into at slot = { Submission.at; slot } in
+    let refs = [| into 0 0; into 8 1; into 16 2 |] in
+    let launch = Submission.Launch { image; kernel = "add"; params; refs } in
+    let part =
+      { Submission.queue = "COMPUTE:0"; after = [||]; work = launch }
     in
-    let fill =
-      Submission.Fill { fill = run (); arg; ring_units = 0; segment_bytes = 0 }
-    in
-    let part = { Submission.queue = "COMPUTE:0"; after = [||]; work = fill } in
-    let s = Submission.make ~hold ~reads:2 ~writes:1 g [| part |] in
+    let s = Submission.make ~reads:2 ~writes:1 g [| part |] in
+
+    (* The run: the grid of n threads, and [n]. The refs' offsets stay 0, the
+       start of each buffer. *)
     let run = Submission.Run.make () in
+    let k = Submission.block s 0 in
+    Submission.Run.groups run k (n / block) 1 1;
+    Submission.Run.threads run k block 1 1;
+    Submission.Run.int32 run k 24 n;
     let pt = submit s ~run ~reads:[| a; b |] ~writes:[| out |] ~waits:[||] in
     Format.printf "%s (%s) ran add on %d floats at %a@." (name g) (arch g) n
       Point.pp pt;

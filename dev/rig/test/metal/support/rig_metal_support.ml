@@ -127,7 +127,7 @@ let dispatch_of t f args ~groups ~threads =
       (Nativeint.of_int (pipeline t f))
       (Rig.Buffer.handle args) (Rig.Buffer.offset args) groups threads
   in
-  (part { fn = dispatch_fill (); arg }, args)
+  (Rig_gpu_support.work (part { fn = dispatch_fill (); arg }), args)
 
 (* The kernel [copy] has a thread per word and no bound: the grid is the
    words, in threadgroups of the most threads up to 256 that divide them. *)
@@ -151,3 +151,5 @@ let spin t ~ns =
     ~src:(Rig.Buffer.of_string (le64 (Rig.Buffer.address args + 16) ^ le32 c))
     ~dst:(Rig.Buffer.view args ~first:0 ~length:12);
   dispatch_of t "spin" args ~groups:1 ~threads:1
+
+let launch_binary () = None

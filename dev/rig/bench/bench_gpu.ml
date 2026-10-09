@@ -35,6 +35,9 @@ external floor_at : nativeint -> int -> unit = "rig_bench_floor_at"
 external floor_copy : nativeint -> int -> nativeint -> nativeint -> int -> unit
   = "rig_bench_floor_copy"
 
+external floor_launch : nativeint -> int -> nativeint -> int -> unit
+  = "rig_bench_floor_launch"
+
 external evict : string -> int = "rig_bench_evict"
 
 let drain = 64
@@ -189,6 +192,27 @@ let floor_part f (p : Sub.part) =
   | Sub.Copy _ -> invalid_arg "floor_part: a copy"
   | Sub.Launch _ -> invalid_arg "floor_part: a launch"
 
+(* A kernel's work: its part; how a floor makes it the floor's part, which a
+   launch's entry, held by no part, needs; and what must stay reachable while
+   it runs. *)
+type work = { part : Sub.part; floor : nativeint -> unit; keep : unit -> unit }
+
+let work ?floor part keep =
+  let floor = Option.value floor ~default:(fun f -> floor_part f part) in
+  { part; floor; keep }
+
+(* Stores one group of one thread into [run] for each launch of [s]. *)
+let one_thread s run (parts : Sub.part array) =
+  Array.iteri
+    (fun i (p : Sub.part) ->
+      match p.work with
+      | Launch _ ->
+          let b = Sub.block s i in
+          Sub.Run.groups run b 1 1 1;
+          Sub.Run.threads run b 1 1 1
+      | Words _ | Fill _ | Copy _ -> ())
+    parts
+
 (* A GPU's submits through rig, beside the same submits through its driver's C
    entries alone. [empty] and [cost] submit no work and wait for each submit or
    every [drain]; [wait/reached] waits for a value reached; [kernel] submits the
@@ -224,18 +248,23 @@ let gpu_rows (type a) (module D : Rig.Driver with type t = a) ?(sleeps = false)
      operation of two operands. *)
   let kernel_rig () =
     let g, d = opened () in
-    let p, keep = kernel d g in
+    let k = kernel d g in
     let buffers n = Array.init n (fun _ -> B.create g 8) in
-    let s = Sub.make ~reads:2 ~writes:1 g [| p |] in
-    (g, s, Sub.Run.make (), buffers 2, buffers 1, keep, ref 0)
+    let s = Sub.make ~reads:2 ~writes:1 g [| k.part |] in
+    let run = Sub.Run.make () in
+    one_thread s run [| k.part |];
+    (g, s, run, buffers 2, buffers 1, k.keep, ref 0)
   in
   let replay g parts keep =
     let gparams = Array.init slots (fun _ -> B.create g 8) in
     let copy () =
       let gargs = B.create g 8 in
+      let gs = Sub.make ~reads:(slots + 1) ~writes:1 g parts in
+      let grun = Sub.Run.make () in
+      one_thread gs grun parts;
       {
-        gs = Sub.make ~reads:(slots + 1) ~writes:1 g parts;
-        grun = Sub.Run.make ();
+        gs;
+        grun;
         gargs;
         greads = Array.append gparams [| gargs |];
         gwrites = [| B.create g 8 |];
@@ -246,8 +275,8 @@ let gpu_rows (type a) (module D : Rig.Driver with type t = a) ?(sleeps = false)
   let replaying () = replay (fst (opened ())) [||] ignore in
   let part_replaying make () =
     let g, d = opened () in
-    let p, keep = make d g in
-    replay g [| p |] keep
+    let k = make d g in
+    replay g [| k.part |] k.keep
   in
   let run (r, n) =
     let c = r.gcopies.(!n mod depth) in
@@ -278,7 +307,7 @@ let gpu_rows (type a) (module D : Rig.Driver with type t = a) ?(sleeps = false)
   in
   let part_alone make () =
     let g, drv = opened () in
-    let p, hold = make drv g in
+    let k = make drv g in
     let a =
       {
         drv;
@@ -287,11 +316,11 @@ let gpu_rows (type a) (module D : Rig.Driver with type t = a) ?(sleeps = false)
         parts = 1;
         hold =
           (fun () ->
-            ignore (Sys.opaque_identity (g, p));
-            hold ());
+            ignore (Sys.opaque_identity (g, k.part));
+            k.keep ());
       }
     in
-    floor_part a.entries p;
+    k.floor a.entries;
     floor_at a.entries !(a.sent);
     named a
   in
@@ -457,8 +486,8 @@ let gpu_rows (type a) (module D : Rig.Driver with type t = a) ?(sleeps = false)
       else []);
   ]
 
-(* Kernels: each vendor's smallest, as one part of the first compute queue, and
-   what must stay reachable while it runs. *)
+(* Kernels: each vendor's smallest, as the work of one part of the first
+   compute queue. *)
 
 (* The fixtures of [vendor]'s suite. *)
 let fixtures vendor = "../test/" ^ vendor ^ "/fixtures"
@@ -479,16 +508,25 @@ let metal_kernel d _ =
   let word = Option.get (Rig_metal.locate (region 16)).address in
   Rig_gpu_support.Host.set64 (host_of args) word;
   let f = S.dispatch ~pipeline:step args ~groups:1 ~threads:1 in
-  (S.part f, fun () -> ignore (Sys.opaque_identity (image, f)))
+  work (S.part f) (fun () -> ignore (Sys.opaque_identity (image, f)))
 
-(* [empty] over one thread. *)
-let cuda_kernel g _ =
+(* [empty] over one thread as a launch, loaded by rig; the floor's launch is of
+   the image the driver loads. *)
+let cuda_kernel g d =
   let module S = Rig_cuda_support in
-  S.bind g;
-  let image, kernels = S.kernels ~dir:(fixtures "cuda") g in
-  let f = S.launch ~count:1 (kernels "empty") ~grid:1 ~block:1 0 0 in
-  ( S.part ~queue:"COMPUTE:0" f,
-    fun () -> ignore (Sys.opaque_identity (image, f)) )
+  let bin = S.fixture ~dir:(fixtures "cuda") "kernels.ptx" in
+  let image =
+    match Rig.Image.load d bin with Ok i -> i | Error why -> failwith why
+  in
+  let m, _ = S.kernels ~dir:(fixtures "cuda") g in
+  let e = Option.get (Rig_cuda.entry m "empty") in
+  let launch =
+    Sub.Launch { image; kernel = "empty"; params = 16; refs = [||] }
+  in
+  work
+    ~floor:(fun f -> floor_launch f e.code e.launch 16)
+    { Sub.queue = "COMPUTE:0"; after = [||]; work = launch }
+    (fun () -> ignore (Sys.opaque_identity m))
 
 (* A graph of 64 [empty] kernels over one thread each, made through the device's
    capability, launched by one part. *)
@@ -503,16 +541,17 @@ let cuda_graph g _ =
     | Error why -> failwith why
   in
   let f = S.graph_launch gr [||] in
-  ( S.part ~queue:"COMPUTE:0" f,
-    fun () -> ignore (Sys.opaque_identity (image, gr, f)) )
+  work (S.part ~queue:"COMPUTE:0" f) (fun () ->
+      ignore (Sys.opaque_identity (image, gr, f)))
 
 (* [empty] over one block, loaded by rig. *)
 let nv_kernel g d =
   let module S = Rig_nv_support in
   let k = S.kernels ~dir:(fixtures "nv") { S.d; g } in
   let l = S.launches g in
-  ( S.words (S.launch l k "empty" ~blocks:1 []),
-    fun () -> ignore (Sys.opaque_identity (k, l)) )
+  work
+    (S.words (S.launch l k "empty" ~blocks:1 []))
+    (fun () -> ignore (Sys.opaque_identity (k, l)))
 
 (* [empty] over one work-item, loaded by rig, as the packets that dispatch
    it. *)
@@ -544,8 +583,9 @@ let amd_kernel g d =
       (fun i ->
         Int32.to_int (String.get_int32_le packets (4 * i)) land 0xffff_ffff)
   in
-  ( Rig_amd_support.words_part ~queue:"COMPUTE:0" words,
-    fun () -> ignore (Sys.opaque_identity p) )
+  work
+    (Rig_amd_support.words_part ~queue:"COMPUTE:0" words)
+    (fun () -> ignore (Sys.opaque_identity p))
 
 (* A GPU opened through its suite's fixture, as rig's device and the
    driver's. *)

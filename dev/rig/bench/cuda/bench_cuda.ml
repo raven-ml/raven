@@ -84,6 +84,26 @@ let floor () =
 let row name setup f = Thumper.bench_with_setup ~setup name f
 let empty g = snd (S.kernels ~dir:fixtures g) "empty"
 
+(* [n] launches of [empty] over one thread, as parts of COMPUTE:0 loaded by rig,
+   their blocks stored in [t]'s run. *)
+let launches t n =
+  let module Sub = Rig.Submission in
+  let bin = S.fixture ~dir:fixtures "kernels.ptx" in
+  let image = get (Rig.Image.load t.d bin) in
+  let launch =
+    Sub.Launch { image; kernel = "empty"; params = 16; refs = [||] }
+  in
+  let s =
+    prepare t
+      (Array.make n { Sub.queue = "COMPUTE:0"; after = [||]; work = launch })
+  in
+  for i = 0 to n - 1 do
+    let b = Sub.block s i in
+    Sub.Run.groups t.run b 1 1 1;
+    Sub.Run.threads t.run b 1 1 1
+  done;
+  s
+
 let release_rows =
   let empty () =
     let t = dev () in
@@ -146,18 +166,11 @@ let graphing ?(updated = false) n () =
   (t, prepared 0, prepared 1)
 
 let launch_rows =
-  let launching count () =
+  (* [n] launches as parts of one submission: [4096-parts] shows what the
+     driver's ordering costs per part of a large submission. *)
+  let launching n () =
     let t = dev () in
-    let f = S.launch ~count (empty t.g) ~grid:1 ~block:1 0 0 in
-    (t, prepare t [| S.part ~queue:"COMPUTE:0" f |])
-  in
-  (* [n] launches as parts of one queue, a launch each: [64-parts] is [64]'s
-     launches, and [4096-parts] shows what the driver's ordering costs per
-     part of a large submission. *)
-  let parts n () =
-    let t = dev () in
-    let f = S.launch (empty t.g) ~grid:1 ~block:1 0 0 in
-    (t, prepare t (Array.make n (S.part ~queue:"COMPUTE:0" f)))
+    (t, launches t n)
   in
   let floor_launching () = Nativeint.of_int (empty (floor ())) in
   let graph_launching (t, even, odd) =
@@ -170,8 +183,7 @@ let launch_rows =
     [
       row "1" (launching 1) (fun (t, s) -> run t s);
       row "64" (launching 64) (fun (t, s) -> run t s);
-      row "64-parts" (parts 64) (fun (t, s) -> run t s);
-      row "4096-parts" (parts 4096) (fun (t, s) -> run t s);
+      row "4096-parts" (launching 4096) (fun (t, s) -> run t s);
       row "submits-64" (launching 1) (fun (t, s) ->
           for _ = 1 to 64 do
             submit t s

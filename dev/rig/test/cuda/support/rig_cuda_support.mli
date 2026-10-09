@@ -14,8 +14,8 @@ include Rig_gpu_support.Conformance with module D = Rig_cuda
 val bind : Rig_cuda.t -> unit
 (** [bind g] makes the CUDA functions of [g]'s capability those {!attribute},
     {!current}, {!locked}, {!register}, {!unregister}, {!read_gpu},
-    {!write_gpu}, {!free_memory}, {!functions_loaded}, {!launch} and
-    {!delayed} call. {!open_} binds them. *)
+    {!write_gpu}, {!free_memory}, {!functions_loaded}, {!stall}, {!context}
+    and {!graph_launch} call. {!open_} binds them. *)
 
 val attribute : int -> int
 (** [attribute a] is the value of CUDA's device attribute [a] of CUDA's device
@@ -79,19 +79,11 @@ val copy :
 val failing : int -> fill
 (** [failing code] returns [code] and enqueues nothing. *)
 
-val launch :
-  ?count:int -> ?shared:int -> int -> grid:int -> block:int -> int -> int -> fill
-(** [launch ~count ~shared f ~grid ~block a b] launches the kernel [f] [count]
-    times (defaults to [1]) over [grid] blocks of [block] threads, each with
-    [shared] bytes of dynamic shared memory (defaults to [0]), with the 64-bit
-    parameters [a] and [b], through the device's capability. *)
+val context : unit -> fill
+(** [context ()] records the context current while it runs ({!seen}). *)
 
-val delayed :
-  spin:int -> flag:int -> ns:int -> dst:int -> src:int -> int -> fill
-(** [delayed ~spin ~flag ~ns ~dst ~src n] runs the kernel [spin] of
-    ["kernels.ptx"] with [flag] and [ns], then copies [n] bytes from the address
-    [src] to the address [dst]: a copy that starts at least [ns] nanoseconds
-    late while the 32-bit word at [flag] is [0]. *)
+val seen : fill -> nativeint
+(** [seen f] is the context current while the {!context} fill [f] last ran. *)
 
 val kernel : ?grid:int -> ?block:int -> int -> int -> int -> Rig_cuda_abi.kernel
 (** [kernel ~grid ~block f a b] is a launch of the kernel [f] over [grid] blocks
@@ -104,10 +96,12 @@ val graph_launch :
     [(i, k)] of [us], in order, then launches [g], through the device's
     capability. Each argument block holds at most 64 bytes. *)
 
-val seen : fill -> nativeint
-(** [seen f] is the context current while the {!launch} fill [f] last ran. *)
-
 (** {1:kernels Kernels} *)
+
+val launch : t -> string -> int -> int -> Rig_gpu_support.work
+(** [launch t f a b] is a launch on [t]'s ["COMPUTE:0"] of the kernel [f] of
+    ["kernels.ptx"], loaded by rig, over one thread, with the 64-bit parameters
+    [a] and [b]. *)
 
 val fixture : ?dir:string -> string -> string
 (** [fixture ~dir f] is the file [f] of [dir] (defaults to ["fixtures"]):
@@ -117,7 +111,13 @@ val fixture : ?dir:string -> string -> string
     (stores [i + 1] into the 64-bit word at [out] if it holds [i]) and [fault]
     (stores to address [0]), each of two 64-bit parameters; ["kernels.cubin"] is
     them compiled for [sm_89]; ["global.ptx"] holds [touch], of the same
-    parameters, which stores to a global of 256 MiB. *)
+    parameters, which stores to a global of 256 MiB; ["launch.ptx"] holds the
+    conformance suite's launch kernels, [copy dst src n] (copies [n] 32-bit
+    words, one a thread) and [rotate out k], which stores into the 32-bit word
+    [i] at [out], [i] a thread's index in the grid, the value of the next
+    thread of its group (of the first for the last): [k + 3j + 7g] for [j]
+    that thread's index and [g] its group's, through the group's dynamic
+    shared memory of at least 4 bytes a thread. *)
 
 val loaded : (Rig_cuda.region, Rig_cuda.image) Rig_edge.code -> Rig_cuda.image
 (** [loaded i] is the image of {!Rig_cuda.image}'s answer [i].

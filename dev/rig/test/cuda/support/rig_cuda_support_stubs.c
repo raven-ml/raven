@@ -44,7 +44,6 @@ static CUresult(CUDAAPI *push)(CUcontext);
 static CUresult(CUDAAPI *pop)(CUcontext *);
 static CUresult(CUDAAPI *device_pointer)(uint64_t *, void *, unsigned int);
 static CUresult(CUDAAPI *get_attribute)(int *, int, int);
-static CUresult(CUDAAPI *memcpy_async)(uint64_t, uint64_t, size_t, void *);
 static CUresult(CUDAAPI *memcpy_dtoh)(void *, uint64_t, size_t);
 static CUresult(CUDAAPI *memcpy_htod)(uint64_t, const void *, size_t);
 static CUresult(CUDAAPI *host_register)(void *, size_t, unsigned int);
@@ -60,7 +59,7 @@ static CUresult(CUDAAPI *synchronize)(void);
 
 /* Binds cuLaunchKernel, cuCtxGetCurrent, cuDevicePrimaryCtxRetain,
    cuCtxPushCurrent_v2, cuCtxPopCurrent_v2, cuMemHostGetDevicePointer_v2,
-   cuDeviceGetAttribute, cuMemcpyAsync, cuMemcpyDtoH_v2, cuMemcpyHtoD_v2,
+   cuDeviceGetAttribute, cuMemcpyDtoH_v2, cuMemcpyHtoD_v2,
    cuMemHostRegister_v2, cuMemHostUnregister, cuMemGetInfo_v2,
    cuGraphExecKernelNodeSetParams_v2, cuGraphLaunch, cuFuncIsLoaded,
    cuFuncGetModule, cuModuleGetFunctionCount, cuModuleEnumerateFunctions and
@@ -73,19 +72,18 @@ value rig_cuda_test_bind(value v_f) {
   pop = Ptr_val(Field(v_f, 4));
   device_pointer = Ptr_val(Field(v_f, 5));
   get_attribute = Ptr_val(Field(v_f, 6));
-  memcpy_async = Ptr_val(Field(v_f, 7));
-  memcpy_dtoh = Ptr_val(Field(v_f, 8));
-  memcpy_htod = Ptr_val(Field(v_f, 9));
-  host_register = Ptr_val(Field(v_f, 10));
-  host_unregister = Ptr_val(Field(v_f, 11));
-  mem_get_info = Ptr_val(Field(v_f, 12));
-  set_params = Ptr_val(Field(v_f, 13));
-  graph_launch_fn = Ptr_val(Field(v_f, 14));
-  func_is_loaded = Ptr_val(Field(v_f, 15));
-  func_get_module = Ptr_val(Field(v_f, 16));
-  function_count = Ptr_val(Field(v_f, 17));
-  enumerate_functions = Ptr_val(Field(v_f, 18));
-  synchronize = Ptr_val(Field(v_f, 19));
+  memcpy_dtoh = Ptr_val(Field(v_f, 7));
+  memcpy_htod = Ptr_val(Field(v_f, 8));
+  host_register = Ptr_val(Field(v_f, 9));
+  host_unregister = Ptr_val(Field(v_f, 10));
+  mem_get_info = Ptr_val(Field(v_f, 11));
+  set_params = Ptr_val(Field(v_f, 12));
+  graph_launch_fn = Ptr_val(Field(v_f, 13));
+  func_is_loaded = Ptr_val(Field(v_f, 14));
+  func_get_module = Ptr_val(Field(v_f, 15));
+  function_count = Ptr_val(Field(v_f, 16));
+  enumerate_functions = Ptr_val(Field(v_f, 17));
+  synchronize = Ptr_val(Field(v_f, 18));
   return Val_unit;
 }
 
@@ -264,58 +262,30 @@ value rig_cuda_test_failing_fill(value unit) {
   return caml_copy_nativeint((intnat)failing);
 }
 
-/* A fill that launches [count] times the kernel [f] over [grid] blocks of
-   [block] threads with the two 64-bit parameters [a] and [b], and records
-   the context current while it ran. */
-struct launch {
-  void *f;
-  unsigned int grid, block, shared;
-  int count;
-  uint64_t a, b;
+/* A fill that records the context current while it runs. */
+struct context {
   CUcontext seen;
 };
 
-static int launch(void *queue, void *arg, uint64_t v) {
-  struct launch *l = arg;
-  void *params[2] = {&l->a, &l->b};
-  (void)v;
-  if (get_current(&l->seen) != 0) l->seen = NULL;
-  for (int i = 0; i < l->count; i++) {
-    CUresult s = launch_kernel(l->f, l->grid, 1, 1, l->block, 1, 1, l->shared,
-                               queue, params, NULL);
-    if (s != 0) return s;
-  }
+static int context(void *queue, void *arg, uint64_t v) {
+  struct context *c = arg;
+  (void)queue, (void)v;
+  if (get_current(&c->seen) != 0) c->seen = NULL;
   return 0;
 }
 
-value rig_cuda_test_launch(value v_f, value v_grid, value v_block,
-                              value v_shared, value v_count, value v_a,
-                              value v_b) {
-  value v = arg(sizeof(struct launch));
-  struct launch *l = Arg_val(v);
-  l->f = (void *)Long_val(v_f);
-  l->grid = (unsigned int)Long_val(v_grid);
-  l->block = (unsigned int)Long_val(v_block);
-  l->shared = (unsigned int)Long_val(v_shared);
-  l->count = Int_val(v_count);
-  l->a = (uint64_t)Long_val(v_a);
-  l->b = (uint64_t)Long_val(v_b);
-  return v;
-}
-
-value rig_cuda_test_launch_byte(value *argv, int argn) {
-  (void)argn;
-  return rig_cuda_test_launch(argv[0], argv[1], argv[2], argv[3], argv[4],
-                              argv[5], argv[6]);
-}
-
-value rig_cuda_test_launch_fill(value unit) {
+value rig_cuda_test_context(value unit) {
   (void)unit;
-  return caml_copy_nativeint((intnat)launch);
+  return arg(sizeof(struct context));
+}
+
+value rig_cuda_test_context_fill(value unit) {
+  (void)unit;
+  return caml_copy_nativeint((intnat)context);
 }
 
 value rig_cuda_test_seen(value v_arg) {
-  return caml_copy_nativeint((intnat)((struct launch *)Arg_val(v_arg))->seen);
+  return caml_copy_nativeint((intnat)((struct context *)Arg_val(v_arg))->seen);
 }
 
 /* A fill that updates nodes of a graph, then launches it. */
@@ -391,45 +361,4 @@ value rig_cuda_test_graph(value v_exec, value v_nodes, value v_funcs,
 value rig_cuda_test_graph_fill(value unit) {
   (void)unit;
   return caml_copy_nativeint((intnat)graph_launch);
-}
-
-/* A fill that runs the kernel [spin] for [ns] nanoseconds, then copies [n]
-   bytes from [src] to [dst]: a copy that starts late. */
-struct delayed {
-  void *spin;
-  uint64_t flag, ns, dst, src, n;
-};
-
-static int delayed(void *queue, void *arg, uint64_t v) {
-  struct delayed *d = arg;
-  void *params[2] = {&d->flag, &d->ns};
-  (void)v;
-  CUresult s =
-      launch_kernel(d->spin, 1, 1, 1, 1, 1, 1, 0, queue, params, NULL);
-  if (s != 0) return s;
-  return memcpy_async(d->dst, d->src, d->n, queue);
-}
-
-value rig_cuda_test_delayed(value v_spin, value v_flag, value v_ns,
-                               value v_dst, value v_src, value v_n) {
-  value v = arg(sizeof(struct delayed));
-  struct delayed *d = Arg_val(v);
-  d->spin = (void *)Long_val(v_spin);
-  d->flag = (uint64_t)Long_val(v_flag);
-  d->ns = (uint64_t)Long_val(v_ns);
-  d->dst = (uint64_t)Long_val(v_dst);
-  d->src = (uint64_t)Long_val(v_src);
-  d->n = (uint64_t)Long_val(v_n);
-  return v;
-}
-
-value rig_cuda_test_delayed_byte(value *argv, int argn) {
-  (void)argn;
-  return rig_cuda_test_delayed(argv[0], argv[1], argv[2], argv[3], argv[4],
-                                  argv[5]);
-}
-
-value rig_cuda_test_delayed_fill(value unit) {
-  (void)unit;
-  return caml_copy_nativeint((intnat)delayed);
 }

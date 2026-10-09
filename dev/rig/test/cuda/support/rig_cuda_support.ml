@@ -31,7 +31,6 @@ let bind g =
          "cuCtxPopCurrent_v2";
          "cuMemHostGetDevicePointer_v2";
          "cuDeviceGetAttribute";
-         "cuMemcpyAsync";
          "cuMemcpyDtoH_v2";
          "cuMemcpyHtoD_v2";
          "cuMemHostRegister_v2";
@@ -75,10 +74,8 @@ type arg =
 external failing_arg : int -> arg = "rig_cuda_test_failing"
 external failing_fill : unit -> nativeint = "rig_cuda_test_failing_fill"
 
-external launch_arg : int -> int -> int -> int -> int -> int -> int -> arg
-  = "rig_cuda_test_launch_byte" "rig_cuda_test_launch"
-
-external launch_fill : unit -> nativeint = "rig_cuda_test_launch_fill"
+external context_arg : unit -> arg = "rig_cuda_test_context"
+external context_fill : unit -> nativeint = "rig_cuda_test_context_fill"
 external seen_arg : arg -> nativeint = "rig_cuda_test_seen"
 
 type fill = { fn : nativeint; arg : arg }
@@ -96,18 +93,8 @@ let copy ~queue ?(after = [||]) ~dst src =
 
 let failing code = { fn = failing_fill (); arg = failing_arg code }
 
-let launch ?(count = 1) ?(shared = 0) f ~grid ~block a b =
-  { fn = launch_fill (); arg = launch_arg f grid block shared count a b }
-
+let context () = { fn = context_fill (); arg = context_arg () }
 let seen f = seen_arg f.arg
-
-external delayed_arg : int -> int -> int -> int -> int -> int -> arg
-  = "rig_cuda_test_delayed_byte" "rig_cuda_test_delayed"
-
-external delayed_fill : unit -> nativeint = "rig_cuda_test_delayed_fill"
-
-let delayed ~spin ~flag ~ns ~dst ~src n =
-  { fn = delayed_fill (); arg = delayed_arg spin flag ns dst src n }
 
 let kernel ?(grid = 1) ?(block = 1) func a b =
   let args = Bytes.create 16 in
@@ -157,32 +144,61 @@ let kernels ?dir g =
   in
   (m, fun name -> (Option.get (Rig_cuda.entry m name)).code)
 
-(* Conformance *)
+(* Launches. A launch's parameters hold its buffers' addresses: the caller
+   names the buffers in its submission, whose slots the launch does not
+   know. *)
 
 let binary () =
   ( fixture ~dir:"../cuda/fixtures" "kernels.ptx",
     [ "empty"; "double_index"; "spin"; "step"; "fault" ] )
 
-let second () = if Rig_cuda.count () < 2 then None else Some (Rig_cuda.open_ 1)
+let launch_binary () = Some (fixture ~dir:"../cuda/fixtures" "launch.ptx")
 let modules = Rig_gpu_support.loader (fun () -> fst (binary ()))
-let func t f = Option.get (Rig.Image.entry (modules t.d) f)
+let launches = Rig_gpu_support.loader (fun () -> Option.get (launch_binary ()))
+
+(* [kernel] of [image] on COMPUTE:0 over [groups] of [threads], with [params]
+   bytes of parameters [store] stores. *)
+let launching image kernel ~params ?(groups = 1) ?(threads = 1) store =
+  let module Run = Rig.Submission.Run in
+  let part =
+    {
+      Rig.Submission.queue = "COMPUTE:0";
+      after = [||];
+      work = Launch { image; kernel; params; refs = [||] };
+    }
+  in
+  let block run b =
+    Run.groups run b groups 1 1;
+    Run.threads run b threads 1 1;
+    store run b
+  in
+  { Rig_gpu_support.part; block }
+
+let launch t kernel a b =
+  launching (modules t.d) kernel ~params:16 (fun run k ->
+      Rig.Submission.Run.int64 run k 0 a;
+      Rig.Submission.Run.int64 run k 8 b)
+
+(* Conformance *)
+
+let second () = if Rig_cuda.count () < 2 then None else Some (Rig_cuda.open_ 1)
+
+(* fixtures/launch.ptx's [copy dst src n] copies [n] 32-bit words, one a
+   thread. *)
+let copy_words t ~dst ~src =
+  let module Run = Rig.Submission.Run in
+  let n = Rig.Buffer.length src / 4 in
+  let w =
+    launching (launches t.d) "copy" ~params:20 ~groups:((n + 255) / 256)
+      ~threads:256 (fun run k ->
+        Run.int64 run k 0 (Rig.Buffer.address dst);
+        Run.int64 run k 8 (Rig.Buffer.address src);
+        Run.int32 run k 16 n)
+  in
+  (w, src)
 
 (* The kernel [spin] holds until its flag, a zero word here, is not 0, or for
    its nanoseconds. *)
-let zero t = Rig_gpu_support.arguments t.d (String.make 8 '\000')
-
-let copy_words t ~dst ~src =
-  let flag = zero t in
-  let f =
-    delayed ~spin:(func t "spin") ~flag:(Rig.Buffer.address flag) ~ns:0
-      ~dst:(Rig.Buffer.address dst) ~src:(Rig.Buffer.address src)
-      (Rig.Buffer.length src)
-  in
-  (part ~queue:"COMPUTE:0" f, flag)
-
 let spin t ~ns =
-  let flag = zero t in
-  let f =
-    launch (func t "spin") ~grid:1 ~block:1 (Rig.Buffer.address flag) ns
-  in
-  (part ~queue:"COMPUTE:0" f, flag)
+  let flag = Rig_gpu_support.arguments t.d (String.make 8 '\000') in
+  (launch t "spin" (Rig.Buffer.address flag) ns, flag)
