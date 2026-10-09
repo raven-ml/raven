@@ -65,12 +65,12 @@ let launch g name ~n ps =
            ~threads:S.threads ps;
        ])
 
-(* Records *)
+(* Launches *)
 
 let xor a b =
   String.mapi (fun i c -> Char.chr (Char.code c lxor Char.code b.[i])) a
 
-let records_in_order () =
+let launches_in_order () =
   let g = S.gpu () in
   let n = 1 lsl 16 in
   let buf () = S.buffer g (4 * n) in
@@ -481,9 +481,7 @@ let contract g c ?(skip = 0) ?(seed = 1) () =
       ~acc:(code c.acc) ()
   with
   | None -> failf "the plan declines %s" (case_name c)
-  | Some p ->
-      S.run g p;
-      (a, b, init, y, p)
+  | Some p -> (a, b, init, y, p)
 
 let within_bound c =
   let g = S.gpu () in
@@ -630,39 +628,6 @@ let overflow_cases =
 
 (* An int32 sum reaches a wider output as a cast from int32 does, by its sign:
    -1 times 1 over 64 terms is -64. *)
-(* A record holds only the bytes the plan writes: every case of the suite,
-   planned on a stack of zeros and on one of 0xff bytes, gives the same
-   records. The plan reads no operand's memory, so host buffers serve. *)
-let records_written () =
-  let host = Rig.Buffer.create Rig.host (1 lsl 16) in
-  let operand dt shape strides : S.operand =
-    { buffer = host; dtype = code dt; shape; strides; first = 0 }
-  in
-  let laid c rows = function
-    | `K -> [| (rows * c.k) + c.pad; c.k; 1 |]
-    | `Free -> [| (rows * c.k) + c.pad; 1; rows |]
-  in
-  List.iter
-    (fun c ->
-      let a = operand c.dt [| c.batch; c.m; c.k |] (laid c c.m c.la) in
-      let b = operand c.dt [| c.batch; c.n; c.k |] (laid c c.n c.lb) in
-      let shape = [| c.batch; c.m; c.n |] in
-      let y = operand c.out shape [| c.m * c.n; c.n; 1 |] in
-      let init =
-        match c.init with
-        | `None -> None
-        | `Bias -> Some (operand c.out shape [| 0; 0; 1 |])
-        | `Full -> Some y
-      in
-      let plan paint =
-        S.records ~paint ~a ~b ?init ~y
-          ~batch:[ (0, 0) ]
-          ~contracting:[ (2, 2) ]
-          ~acc:(code c.acc) ()
-      in
-      equal ~msg:(case_name c) (option string) (plan 0) (plan 0xff))
-    (cases_of () @ edge_cases)
-
 (* Out of memory raises: the plan never declines a call for want of it. a,
    broadcast from one element, packs into 2^21 rows of 2^14 bfloat16, 64 GiB
    of scratch, more than the GPU holds. *)
@@ -716,8 +681,7 @@ let sign_extends () =
           ~acc:(D.code D.Int32) ()
       with
       | None -> fail "the plan declines"
-      | Some p ->
-          S.run g p;
+      | Some _ ->
           equal ~msg:(D.name d) int64 (-64L)
             (String.get_int64_le (S.read y.buffer) 0))
     [ D.Any D.Int8; D.Any D.Int16 ]
@@ -767,8 +731,7 @@ let rows_past_k (dt, acc, out) =
       ~acc:(code acc) ()
   with
   | None -> fail "the plan declines"
-  | Some p ->
-      S.run g p;
+  | Some _ ->
       let r =
         Nx_gpu_ref.contract ~a:(view a) ~b:(view b) ~y:(view y) ~batch:1 ~m ~n
           ~k ~acc:(code acc) ~samples:4096 ()
@@ -835,14 +798,13 @@ let every_quadruple ((a, b, acc, out), init, (batch, m, n, k), broadcast) =
       ~acc:(code acc) ()
   with
   | None -> collect "declines"
-  | Some p ->
+  | Some _ ->
       cover "an init" (Option.is_some init);
       cover "a float sum" (float_dt acc);
       cover "an integer sum" (not (float_dt acc));
       cover "an output of the other kind" (float_dt acc <> float_dt out);
       cover "an unsigned accumulator" (acc = dt "uint32" || acc = dt "uint64");
       cover "a broadcast operand" broadcast;
-      S.run g p;
       let r =
         Nx_gpu_ref.contract ~a:(view x) ~b:(view w) ?init:(Option.map view init)
           ~y:(view y) ~batch ~m ~n ~k ~acc:(code acc) ~samples:512 ()
@@ -1007,21 +969,69 @@ let wmma_sums (type s) (dt : (float, s) D.t) () =
       ~c:(List.filteri (fun i _ -> i < 256) c)
   done
 
+(* Calls *)
+
+(* A bfloat16 case that packs a and b, whose rows of 8191 elements are not
+   whole vectors, and splits its long sum: every piece of the workspace. *)
+let packed_split =
+  {
+    dt = D.Any D.Bfloat16;
+    acc = D.Any D.Float32;
+    out = D.Any D.Float32;
+    batch = 1;
+    m = 64;
+    n = 64;
+    k = 8191;
+    la = `K;
+    lb = `K;
+    init = `Bias;
+    draw = Spread 6;
+    pad = 0;
+  }
+
+(* A call that finds nx.amd's device, submission and workspace made, and its
+   domain's frame free, allocates nothing. *)
+let warm_calls_allocate_nothing () =
+  let g = S.gpu () in
+  let _, _, _, _, p = contract g packed_split () in
+  S.call p;
+  let before = Gc.minor_words () in
+  for _ = 1 to 64 do
+    S.call p
+  done;
+  let words = Gc.minor_words () -. before in
+  S.run g p;
+  equal ~msg:"words for 64 calls" int 0 (int_of_float words)
+
+(* Domains calling one sequence at once, each on its own operands, get the bits
+   one call alone gets. *)
+let domains_call_alike () =
+  let g = S.gpu () in
+  let _, _, _, (y : S.operand), _ = contract g packed_split () in
+  let want = S.read y.buffer in
+  let calls = List.init 2 (fun _ -> contract g packed_split ()) in
+  let ds =
+    List.map
+      (fun (_, _, _, _, p) ->
+        Domain.spawn (fun () ->
+            for _ = 1 to 50 do
+              S.call p
+            done))
+      calls
+  in
+  List.iter Domain.join ds;
+  List.iteri
+    (fun i (_, _, _, (y : S.operand), p) ->
+      S.run g p;
+      equal ~msg:(strf "domain %d" i) string want (S.read y.buffer))
+    calls
+
 let tests =
   [
-    group "records"
+    group "launches"
       [
-        test "run in order" records_in_order;
+        test "run in order" launches_in_order;
         test "the copy floor XORs its inputs" floor_copy_xors;
-        test "a record of other bytes than its kernel reads is refused"
-          (fun () ->
-            let g = S.gpu () in
-            let r =
-              S.record (S.harness g)
-                [ S.launch "where" ~groups:(1, 1, 1) ~threads:32 [ W 0; W 0 ] ]
-            in
-            raises (Invalid_argument "nx_amd_size refused a record") (fun () ->
-                S.run g r));
       ];
     group "operands"
       [
@@ -1064,7 +1074,8 @@ let tests =
           within_bound;
         test "an int32 sum sign-extends into int64" sign_extends;
         test "scratch past the GPU's memory raises" scratch_out_of_memory;
-        test "records hold only the bytes the plan writes" records_written;
+        test "warm calls allocate nothing" warm_calls_allocate_nothing;
+        test "domains calling at once get one call's bits" domains_call_alike;
         cases
           ~name:(fun (D.Any d, _, _) -> D.name d)
           "rows past k: their gaps enter no sum"

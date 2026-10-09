@@ -4,44 +4,14 @@
   ---------------------------------------------------------------------------*)
 
 module Abi = Rig_amd_abi
+module A = Nx_array
+module Spec = Nx_kernel.Spec
 
 let strf = Printf.sprintf
 
 external code_object : unit -> string = "nx_amd_support_code_object"
 external kernels : unit -> string array = "nx_amd_support_kernels"
 external sizes : unit -> int * int * int * int * int = "nx_amd_support_sizes"
-
-external entries :
-  nativeint -> nativeint -> (string * int array) array -> nativeint
-  = "nx_amd_support_entries"
-
-external record_c : (int array * string) array -> string
-  = "nx_amd_support_record"
-
-type bytes =
-  (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
-
-external run_arg : nativeint -> string -> bytes * int * int
-  = "nx_amd_support_run"
-
-external fill_fn : unit -> nativeint = "nx_amd_support_fill"
-external library_c : int -> string option = "nx_amd_support_library"
-
-external library_kernels : unit -> string array
-  = "nx_amd_support_library_kernels"
-
-(* An operand as the plan's stub reads it: address, dtype, shape, strides. *)
-type op_c = int * int * int array * int array
-
-external call_c : op_c array -> int array -> int array -> int -> bool -> bytes
-  = "nx_amd_support_call"
-
-external plan_c : bytes -> (string * int * int) option = "nx_amd_support_plan"
-external plan_only : bytes -> int = "nx_amd_support_plan_only" [@@noalloc]
-
-external plan_records : bytes -> int -> string option
-  = "nx_amd_support_plan_records"
-external rebase : string -> int -> string = "nx_amd_support_rebase"
 
 let threads, copy_threads, read_threads, read_vecs, hog_threads = sizes ()
 
@@ -53,115 +23,29 @@ let hold_gpu () = if Rig_amd_amdgpu.count () > 0 then Rig_gpu_lock.hold ()
 
 let ok = function Ok x -> x | Error why -> failwith why
 
-(* A loaded code object, the table of its kernels' dispatches, and the scratch
-   buffer they run with, if one takes scratch memory. *)
-type image = {
-  table : nativeint;
-  names : string array;
-  loaded : Rig.Image.t;
-  scratch : Rig.Buffer.t option;
-}
+type image = { names : string array; loaded : Rig.Image.t }
 
-(* A device of GPU 0, its capability, the harness loaded on it, nx.amd's
-   code object, loaded at its first use, and the two 64-bit stamps
-   device_time reads, in memory the host reads without a copy. *)
+(* A device of GPU 0, its capability, the harness loaded on it, and the two
+   64-bit stamps device_time reads, in memory the host reads without a copy. *)
 type device = {
   rig : Rig.t;
   cap : Abi.Capability.t;
   harness : image;
-  library : image Lazy.t;
   stamps : Rig.Buffer.t;
 }
 
 type gpu = { work : device; mutable beside : device option }
-
-(* The values of a dispatch's words: known now, or left for the fill. *)
-type hole = Known of int | Args | Threads of int | Groups of int
-
-(* The dispatch on [gpu] of [k], the kernel [name], with the scratch buffer at
-   [scratch], as [nx_amd_dispatch] holds it: its words with the fill's holes
-   zero, and their indices, args then threads and groups, and the bytes of
-   arguments [k] reads. The dispatch names no dispatch packet. *)
-let dispatch gpu name (k : Abi.Code_object.kernel) ~program ~scratch =
-  if k.dispatch_ptr then
-    failwith (strf "kernel %s reads its dispatch packet" name);
-  let p =
-    Abi.Pm4.run gpu
-      (Abi.Pm4.dispatch gpu k ~program:(Known program) ~scratch:(Known scratch)
-         ~args:Args ~packet:(Known 0)
-         ~threads:(Threads 0, Threads 1, Threads 2)
-         ~groups:(Groups 0, Groups 1, Groups 2)
-         ())
-  in
-  let known = function Known n -> Some (Int64.of_int n) | _ -> None in
-  let words, holes = Abi.Packet.template known p in
-  let at = Array.make 8 (-1) in
-  at.(7) <- k.kernarg_size;
-  List.iter
-    (fun (i, w) ->
-      match (w : hole Abi.Packet.word) with
-      | W64 (Value Args) -> at.(0) <- i
-      | W32 (Value (Threads d)) -> at.(1 + d) <- i
-      | W32 (Value (Groups d)) -> at.(4 + d) <- i
-      | _ ->
-          failwith
-            (strf "kernel %s: a dispatch word the fill cannot place" name))
-    holes;
-  if Array.mem (-1) at then
-    failwith (strf "kernel %s: a dispatch lacks a word the fill places" name);
-  (words, at)
-
-let image_on rig (cap : Abi.Capability.t) bin names =
-  let co = ok (Abi.Code_object.of_string bin)
-  and loaded = ok (Rig.Image.load rig bin) in
-  let kernel n =
-    match (Rig.Image.entry loaded n, Abi.Code_object.kernel co n) with
-    | Some descriptor, Some k -> (descriptor, k)
-    | _ -> failwith (strf "the code object has no kernel %s" n)
-  in
-  let ks = Array.map kernel names in
-  (* One buffer serves every kernel: a queue runs one at a time. *)
-  let lane =
-    Array.fold_left
-      (fun n (_, k) -> Int.max n k.Abi.Code_object.private_segment)
-      0 ks
-  in
-  let scratch =
-    if lane = 0 then None
-    else Some (Rig.Buffer.create rig (Abi.Scratch.size cap.gpu lane))
-  in
-  let base = Option.fold ~none:0 ~some:Rig.Buffer.address scratch in
-  let entry n (descriptor, (k : Abi.Code_object.kernel)) =
-    dispatch cap.gpu n k ~scratch:base
-      ~program:(descriptor - k.descriptor + k.entry)
-  in
-  let table = entries cap.place cap.segment (Array.map2 entry names ks) in
-  { table; names; loaded; scratch }
-
-(* nx.amd's code object for the GPU's processor, gfx1201's under 1201. *)
-let library_object (cap : Abi.Capability.t) =
-  let name = Abi.Gpu.processor cap.gpu in
-  match
-    library_c (int_of_string (String.sub name 3 (String.length name - 3)))
-  with
-  | Some co -> co
-  | None | (exception Failure _) ->
-      failwith (strf "nx.amd has no code object for %s" name)
 
 let open_device name =
   let rig =
     ok (Rig.open_ (module Rig_amd) ~name (fun () -> Rig_amd_amdgpu.open_ 0))
   in
   let cap = Option.get (Rig.capability rig Abi.Capability.key) in
-  (match cap.compute with
-  | Pm4 -> ()
-  | Aql _ -> failwith "nx.amd's fill places PM4: the GPU's queue reads AQL");
-  let harness = image_on rig cap (code_object ()) (kernels ()) in
-  let library =
-    lazy (image_on rig cap (library_object cap) (library_kernels ()))
+  let harness =
+    { names = kernels (); loaded = ok (Rig.Image.load rig (code_object ())) }
   in
   let stamps = Rig.Buffer.create ~memory:Rig.Buffer.Pinned rig 16 in
-  { rig; cap; harness; library; stamps }
+  { rig; cap; harness; stamps }
 
 let opened = ref None
 
@@ -172,10 +56,14 @@ let gpu () =
       if Rig_amd_amdgpu.count () = 0 then
         Windtrap.skip ~reason:"the machine has no AMD GPU" ();
       hold_gpu ();
-      let g = { work = open_device "AMD:nx2"; beside = None } in
+      let work = open_device "AMD:nx2" in
+      if not (Nx_amd.computes_on work.rig) then
+        failwith (strf "nx.amd does not compute on %s" (Rig.arch work.rig));
+      let g = { work; beside = None } in
       opened := Some g;
       g
 
+let device g = g.work.rig
 let arch g = Abi.Gpu.processor g.work.cap.gpu
 
 let wgps g =
@@ -189,94 +77,165 @@ let cus g = 2 * wgps g
 let ticks d ns = ns * (d.cap.clock_hz / 1_000_000) / 1_000
 let ns_of d t = float t *. 1e9 /. float d.cap.clock_hz
 let harness g = g.work.harness
-let library g = Lazy.force g.work.library
 
-let library_size g =
-  (Array.length (library g).names, String.length (library_object g.work.cap))
-
-let kernel i name =
-  match Array.find_index (String.equal name) i.names with
-  | Some k -> k
-  | None -> invalid_arg ("Nx_amd_support.record: no kernel " ^ name)
-
-(* Records *)
+(* Launches *)
 
 type param = A of Rig.Buffer.t | W of int | D of int * int
 
-(* A run of [launches] records keeps its image and the buffers it addresses
-   alive while it is. *)
-type run =
-  | Records of {
-      image : image;
-      records : string;
-      launches : int;
-      held : Rig.Buffer.t list;
-    }
+type launch = {
+  kernel : string;
+  groups : int * int * int;
+  threads : int;
+  params : param list;
+}
+
+let launch kernel ~groups ~threads params =
+  let rec addresses_first = function
+    | A _ :: ps -> addresses_first ps
+    | ps -> List.for_all (function A _ -> false | W _ | D _ -> true) ps
+  in
+  if not (addresses_first params) then
+    invalid_arg "Nx_amd_support.launch: an address follows another parameter";
+  { kernel; groups; threads; params }
+
+type contract = { spec : Spec.contract Spec.t; dst : A.any; ops : A.any array }
+
+(* Submissions *)
+
+(* Work on a queue: a launch of an image's kernel, a driver copy, or PM4 or SDMA
+   words. *)
+type work =
+  | Launch of image * launch
+  | Copied of Rig.Buffer.t * Rig.Buffer.t
+  | Words of string
+
+(* A submission made once, its run's blocks written, submitted any number of
+   times. *)
+type prepared = {
+  sub : Rig.Submission.t;
+  blocks : Rig.Submission.Run.t;
+  writes : Rig.Buffer.t array;
+}
+
+type body =
+  | Launches of { image : image; launches : launch list }
   | Copy of { src : Rig.Buffer.t; dst : Rig.Buffer.t }
+  | Contract of contract
 
-(* The count of [ps]'s addresses, and their bytes. *)
-let words ps =
-  let b = Buffer.create 64 and i64 x = Int64.of_int x in
-  let address = function A _ -> true | W _ | D _ -> false in
-  let addrs = List.length (List.filter address ps) in
-  if List.exists address (List.filteri (fun i _ -> i >= addrs) ps) then
-    invalid_arg "Nx_amd_support.record: address last";
+(* A run and the submissions of its repetitions, made on first use: a key names
+   what surrounds the run and its count. *)
+type run = { body : body; mutable prepared : (string * prepared) list }
+
+let record image launches =
   List.iter
-    (function
-      | A x -> Buffer.add_int64_le b (i64 (Rig.Buffer.address x))
-      | W x -> Buffer.add_int64_le b (i64 x)
-      | D (x, y) ->
-          Buffer.add_int32_le b (Int32.of_int x);
-          Buffer.add_int32_le b (Int32.of_int y))
-    ps;
-  (addrs, Buffer.contents b)
+    (fun l ->
+      if not (Array.mem l.kernel image.names) then
+        invalid_arg ("Nx_amd_support.record: no kernel " ^ l.kernel))
+    launches;
+  { body = Launches { image; launches }; prepared = [] }
 
-(* A launch is the record of its kernel in an image, and the buffers its
-   parameters address. *)
-type launch = image -> (int array * string) * Rig.Buffer.t list
+let driver_copy ~src ~dst = { body = Copy { src; dst }; prepared = [] }
 
-let launch name ~groups:(gx, gy, gz) ~threads ps image =
-  let addrs, words = words ps in
-  ( ([| kernel image name; gx; gy; gz; threads; addrs; 0 |], words),
-    List.filter_map (function A b -> Some b | _ -> None) ps )
+(* Makes the submission of [works] in order on [d], each on its queue, every
+   buffer a launch addresses written: one slot an address. *)
+let prepare d works =
+  let slots = ref [] and count = ref 0 in
+  let launch_work image l =
+    let ref i = function
+      | A b ->
+          slots := b :: !slots;
+          incr count;
+          [ { Rig.Submission.at = 8 * i; slot = !count - 1 } ]
+      | W _ | D _ -> []
+    in
+    Rig.Submission.Launch
+      {
+        image = image.loaded;
+        kernel = l.kernel;
+        params = 8 * List.length l.params;
+        refs = Array.of_list (List.concat (List.mapi ref l.params));
+      }
+  in
+  let part (q, w) =
+    let work =
+      match w with
+      | Copied (src, dst) -> Rig.Submission.Copy { src; dst }
+      | Words s -> Rig.Submission.Words (Rig.Buffer.of_string s)
+      | Launch (image, l) -> launch_work image l
+    in
+    { Rig.Submission.queue = q; after = [||]; work }
+  in
+  let parts = Array.of_list (List.map part works) in
+  let writes = Array.of_list (List.rev !slots) in
+  let sub =
+    Rig.Submission.make ~reads:0 ~writes:(Array.length writes) d.rig parts
+  in
+  let blocks = Rig.Submission.Run.make () in
+  List.iteri
+    (fun i (_, w) ->
+      match w with
+      | Copied _ | Words _ -> ()
+      | Launch (_, l) ->
+          let b = Rig.Submission.block sub i in
+          let x, y, z = l.groups in
+          Rig.Submission.Run.groups blocks b x y z;
+          Rig.Submission.Run.threads blocks b l.threads 1 1;
+          Rig.Submission.Run.shared blocks b 0;
+          List.iteri
+            (fun k -> function
+              | A _ -> Rig.Submission.Run.int64 blocks b (8 * k) 0
+              | W v -> Rig.Submission.Run.int64 blocks b (8 * k) v
+              | D (u, v) ->
+                  Rig.Submission.Run.int32 blocks b (8 * k) u;
+                  Rig.Submission.Run.int32 blocks b ((8 * k) + 4) v)
+            l.params)
+    works;
+  { sub; blocks; writes }
 
-let record image ls =
-  let rs, held = List.split (List.map (fun l -> l image) ls) in
-  let records = record_c (Array.of_list rs) in
-  Records { image; records; launches = List.length ls; held = List.concat held }
+let submit p =
+  Rig.Point.value
+    (Rig.submit p.sub ~run:p.blocks ~reads:[||] ~writes:p.writes ~waits:[||])
 
-let driver_copy ~src ~dst = Copy { src; dst }
+let compute = "COMPUTE:0"
 
-(* Runs *)
+let works r =
+  match r.body with
+  | Launches x -> List.map (fun l -> (compute, Launch (x.image, l))) x.launches
+  | Copy { src; dst } -> [ ("COPY:0", Copied (src, dst)) ]
+  | Contract _ -> invalid_arg "Nx_amd_support: a contraction among launches"
 
-let part queue work = { Rig.Submission.queue; after = [||]; work }
+(* [r]'s submission on [d] under [key], made by [works] on first use. *)
+let prepared d r key works =
+  match List.assoc_opt key r.prepared with
+  | Some p -> p
+  | None ->
+      let p = prepare d (works ()) in
+      r.prepared <- (key, p) :: r.prepared;
+      p
 
-(* The parts that run [r] [n] times: nx_amd_fill over its records, [n] times
-   over, declaring the ring words and segment bytes they take. *)
-let body r n =
-  match r with
-  | Copy { src; dst } ->
-      List.init n (fun _ -> part "COPY:0" (Copy { src; dst }))
-  | Records x ->
-      let records = String.concat "" (List.init n (fun _ -> x.records)) in
-      let arg, ring_units, segment_bytes = run_arg x.image.table records in
-      let arg = Rig.Buffer.of_bigarray arg in
-      [
-        part "COMPUTE:0"
-          (Fill { fill = fill_fn (); arg; ring_units; segment_bytes });
-      ]
+let repeat n xs = List.concat (List.init n (fun _ -> xs))
 
-let submit d parts =
-  let s = Rig.Submission.make ~reads:0 ~writes:0 d.rig (Array.of_list parts) in
-  let run = Rig.Submission.Run.make () in
-  Rig.Point.value (Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||])
+(* Calls nx.amd's contraction. *)
+let call_contract c =
+  match Nx_amd.contract c.spec ~dst:c.dst c.ops with
+  | A.Done -> ()
+  | A.Declined ->
+      failwith "Nx_amd_support: nx.amd declines a contraction it computed"
+  | r -> A.refused "Nx_amd.contract" r (c.dst :: Array.to_list c.ops)
 
-(* The images and buffers a run's work uses stay alive until it is done
-   (Rig.Image.entry). *)
-let keep = function
-  | Records r ->
-      ignore (Sys.opaque_identity (r.image.loaded, r.image.scratch, r.held))
-  | Copy { src; dst } -> ignore (Sys.opaque_identity (src, dst))
+let call r =
+  match r.body with
+  | Contract c -> call_contract c
+  | Launches _ | Copy _ -> invalid_arg "Nx_amd_support.call: no contraction"
+
+(* Submits [r] once on the work device, a contraction as a call of nx.amd's, and
+   is the value to wait for. *)
+let once g r =
+  match r.body with
+  | Contract c ->
+      call_contract c;
+      Rig.submitted g.work.rig
+  | Launches _ | Copy _ -> submit (prepared g.work r "run" (fun () -> works r))
 
 let buffer g n = Rig.Buffer.create g.work.rig n
 
@@ -292,10 +251,13 @@ let zero b = write b (String.make (Rig.Buffer.length b) '\000')
 
 (* A hog holds the work-group processors it fills from a second device of the
    GPU, whose compute queue runs beside the work's, until the work's queue
-   releases it. Its words are the work device's memory, which the GPU's
-   devices share: [started] counts the hog's workgroups that hold their
-   processors, [release] lets them go, and [late] and [let_go] say that the
-   work's queue or the hog gave up waiting for the other. *)
+   releases it. rig orders one device's submissions but never two devices', and
+   two devices of one GPU run on its processors at once: a result computed
+   beside a hog is a schedule that happens, as beside another process. Its words
+   are the work device's memory, which the GPU's devices share: [started] counts
+   the hog's workgroups that hold their processors, [release] lets them go, and
+   [late] and [let_go] say that the work's queue or the hog gave up waiting for
+   the other. *)
 type hog = {
   blocks : int;
   started : Rig.Buffer.t;
@@ -318,8 +280,8 @@ let beside g =
       g.beside <- Some d;
       d
 
-(* Each side gives up on the other after 2 s: a hog's workgroups start, and
-   the work beside it ends, well within it. *)
+(* Each side gives up on the other after 2 s: a hog's workgroups start, and the
+   work beside it ends, well within it. *)
 let hold_ns = 2_000_000_000
 
 let hog g =
@@ -361,19 +323,23 @@ let held_wgps h =
 
 (* Beside a hog, the work waits on its queue until every hog workgroup holds its
    processor, and releases them once done: rig orders nothing between two
-   devices' queues. *)
+   devices' queues, and orders the work device's submissions as made. *)
 let run ?beside g r =
   match beside with
-  | None ->
-      Rig.wait g.work.rig (submit g.work (body r 1));
-      keep r
+  | None -> Rig.wait g.work.rig (once g r)
   | Some h ->
+      (match r.body with
+      | Copy _ -> invalid_arg "Nx_amd_support.run: a driver copy beside a hog"
+      | Launches _ | Contract _ -> ());
       List.iter zero [ h.started; h.release; h.late; h.let_go ];
-      let held = submit h.device (body h.hold 1) in
-      let v = submit g.work (body h.wait 1 @ body r 1 @ body h.free 1) in
+      let held =
+        submit (prepared h.device h.hold "run" (fun () -> works h.hold))
+      in
+      ignore (once g h.wait);
+      ignore (once g r);
+      let v = once g h.free in
       Rig.wait g.work.rig v;
       Rig.wait h.device.rig held;
-      List.iter keep [ r; h.wait; h.free; h.hold ];
       let set b = read b <> "\000\000\000\000" in
       if set h.late then
         failwith "the hog's workgroups did not all start within the hold";
@@ -382,51 +348,81 @@ let run ?beside g r =
 (* rig.amd refuses a submission that takes more than half its argument segment.
    A launch's parameters take at most 256 bytes of it, so a round of 1,024
    launches at most 256 KiB. A submission holds at most 512 parts: 256 driver
-   copies. *)
+   copies. A contraction is at most four launches. *)
 let round = 1024
 let copies = 256
 
 (* The runs of [r] a submission holds. *)
-let per_round = function
-  | Records x -> Int.max 1 (round / x.launches)
+let per_round r =
+  match r.body with
+  | Launches x -> Int.max 1 (round / List.length x.launches)
   | Copy _ -> copies
-
-(* The words [p] as a part on [queue]. *)
-let words_part queue p =
-  part queue (Words (Rig.Buffer.of_string (Abi.Packet.encode Int64.of_int p)))
+  | Contract _ -> round / 4
 
 let enqueue g ~count r =
   let rec go left =
     if left > 0 then begin
       let n = Int.min left (per_round r) in
-      ignore (submit g.work (body r n));
+      (match r.body with
+      | Contract c ->
+          for _ = 1 to n do
+            call_contract c
+          done
+      | Launches _ | Copy _ ->
+          let key = strf "enqueue %d" n in
+          ignore (submit (prepared g.work r key (fun () -> repeat n (works r)))));
       go (left - n)
     end
   in
   go count
 
-(* rig.amd's queues read none of a submission before all of it is placed
-   (Rig_amd), so the host never starves the GPU: no hold is needed. A stamp is
-   the GPU's clock, which [r]'s queue writes once the work before it is done,
-   into the device's stamps: made once, so that a call allocates no GPU
-   memory, and read by the host without a copy. *)
+let issue g ~count r =
+  match r.body with
+  | Launches _ | Copy _ -> invalid_arg "Nx_amd_support.issue: no contraction"
+  | Contract c ->
+      for _ = 1 to count do
+        call_contract c
+      done;
+      Rig.wait g.work.rig (Rig.submitted g.work.rig)
+
+(* A stamp is the GPU's clock, which [queue] writes once the work before it is
+   done, into the device's stamps: made once, so that a call allocates no GPU
+   memory, and read by the host without a copy. A run of launches and its stamps
+   are one submission, which rig.amd's queues read only once placed whole, so
+   the host never starves the GPU; a contraction's calls are submissions of
+   their own between two stamps. *)
 let device_time g r ~count =
   let at = g.work.stamps in
   let slot i = Rig.Buffer.view at ~first:(8 * i) ~length:8 in
   let queue, clock =
-    match r with
-    | Records _ -> ("COMPUTE:0", Abi.Pm4.copy_data Posted Clock)
+    match r.body with
+    | Launches _ | Contract _ -> (compute, Abi.Pm4.copy_data Posted Clock)
     | Copy _ -> ("COPY:0", Abi.Sdma.timestamp)
   in
-  let stamp i = words_part queue (clock (Rig.Buffer.address (slot i))) in
+  let stamp i =
+    ( queue,
+      Words
+        (Abi.Packet.encode Int64.of_int (clock (Rig.Buffer.address (slot i))))
+    )
+  in
   let rec go left span =
     if left = 0 then span
     else begin
       let n = Int.min left (per_round r) in
-      let ps = (stamp 0 :: body r n) @ [ stamp 1 ] in
-      Rig.wait g.work.rig (submit g.work ps);
-      keep r;
-      ignore (Sys.opaque_identity ps);
+      let v =
+        match r.body with
+        | Contract c ->
+            ignore
+              (submit (prepared g.work r "stamp 0" (fun () -> [ stamp 0 ])));
+            for _ = 1 to n do
+              call_contract c
+            done;
+            submit (prepared g.work r "stamp 1" (fun () -> [ stamp 1 ]))
+        | Launches _ | Copy _ ->
+            let works () = (stamp 0 :: repeat n (works r)) @ [ stamp 1 ] in
+            submit (prepared g.work r (strf "timed %d" n) works)
+      in
+      Rig.wait g.work.rig v;
       let s = read at in
       let t i = Int64.to_int (String.get_int64_le s (8 * i)) in
       go (left - n) (span + (t 1 - t 0))
@@ -487,50 +483,47 @@ type operand = {
   first : int;
 }
 
-let ops a b init y =
-  match init with None -> [ a; b; y ] | Some i -> [ a; b; i; y ]
+let dtype code =
+  List.find (fun (A.Dtype.Any d) -> A.Dtype.code d = code) A.Dtype.all
 
-let call ~a ~b ?init ~y ~batch ~contracting ~acc () =
-  let op (o : operand) : op_c =
-    (Rig.Buffer.address o.buffer + o.first, o.dtype, o.shape, o.strides)
+(* [o] as an array over its buffer, as nx hands the kernels their operands. *)
+let array (o : operand) =
+  let (A.Dtype.Any d) = dtype o.dtype in
+  let bytes = Int.max 1 (A.Dtype.bits d / 8) in
+  let layout =
+    A.Layout.v ~offset:(o.first / bytes) ~strides:o.strides o.shape
   in
-  let pairs l = Array.of_list (List.concat_map (fun (x, y) -> [ x; y ]) l) in
-  call_c
-    (Array.of_list (List.map op (ops a b init y)))
-    (pairs batch) (pairs contracting) acc (Option.is_some init)
+  A.Any (A.v d layout o.buffer)
 
-let planner ~a ~b ?init ~y ~batch ~contracting ~acc () =
-  let c = call ~a ~b ?init ~y ~batch ~contracting ~acc () in
-  fun () -> plan_only c
-
-let records ~paint ~a ~b ?init ~y ~batch ~contracting ~acc () =
-  plan_records (call ~a ~b ?init ~y ~batch ~contracting ~acc ()) paint
-
-let contract g ~a ~b ?init ~y ~batch ~contracting ~acc () =
-  let plan = plan_c (call ~a ~b ?init ~y ~batch ~contracting ~acc ()) in
-  let held = List.map (fun (o : operand) -> o.buffer) (ops a b init y) in
-  let image = library g in
-  match plan with
-  | None -> None
-  | Some (records, 0, launches) ->
-      Some (Records { image; records; launches; held })
-  | Some (records, bytes, launches) ->
-      let s = buffer g bytes in
-      let records = rebase records (Rig.Buffer.address s) in
-      Some (Records { image; records; launches; held = s :: held })
+let contract (_ : gpu) ~a ~b ?init ~y ~batch ~contracting ~acc () =
+  let spec =
+    Spec.contract ~batch:(Array.of_list batch)
+      ~contracting:(Array.of_list contracting)
+      ~acc:(dtype acc) ~out:(dtype y.dtype) ~init:(Option.is_some init)
+  in
+  let c =
+    {
+      spec;
+      dst = array y;
+      ops = Array.of_list (List.map array (a :: b :: Option.to_list init));
+    }
+  in
+  match Nx_amd.contract c.spec ~dst:c.dst c.ops with
+  | A.Done -> Some { body = Contract c; prepared = [] }
+  | A.Declined -> None
+  | r -> A.refused "Nx_amd.contract" r (c.dst :: Array.to_list c.ops)
 
 (* Memory *)
 
 type draw = Uniform | Wide of int | Small
 
-let generate (type v s) g b (dt : (v, s) Nx_array.Dtype.t) draw ~seed =
+let generate (type v s) g b (dt : (v, s) A.Dtype.t) draw ~seed =
   (match dt with
   | Float4_e2m1fn | Int4 | Uint4 | Complex128 | Complex64 | Bit ->
       invalid_arg
-        (strf "Nx_amd_support.generate: %s is not drawn"
-           (Nx_array.Dtype.name dt))
+        (strf "Nx_amd_support.generate: %s is not drawn" (A.Dtype.name dt))
   | _ -> ());
-  let n = Rig.Buffer.length b * 8 / Nx_array.Dtype.bits dt in
+  let n = Rig.Buffer.length b * 8 / A.Dtype.bits dt in
   let draw, spread =
     match draw with Uniform -> (0, 0) | Wide e -> (1, e) | Small -> (2, 0)
   in
@@ -540,5 +533,5 @@ let generate (type v s) g b (dt : (v, s) Nx_array.Dtype.t) draw ~seed =
          launch "generate"
            ~groups:(blocks n threads, 1, 1)
            ~threads
-           [ A b; W n; W seed; D (Nx_array.Dtype.code dt, draw); D (spread, 0) ];
+           [ A b; W n; W seed; D (A.Dtype.code dt, draw); D (spread, 0) ];
        ])

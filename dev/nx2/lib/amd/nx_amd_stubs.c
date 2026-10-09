@@ -5,7 +5,11 @@
 
 /* The code objects, embedded: one per processor the library computes on. */
 
-#include "nx_amd.h"
+#include <string.h>
+
+#include <caml/alloc.h>
+#include <caml/memory.h>
+#include <caml/mlvalues.h>
 
 /* Defines [name] and [name]_end around the bytes of the file [file], a
    string, embedded in read-only data at build time. */
@@ -27,10 +31,12 @@
 
 EMBED(nx_amd_gfx1201, STR(NX_AMD_KERNELS_DIR) "/gfx1201.co")
 
-const char *nx_amd_code_object(int arch, size_t *len) {
-  switch (arch) {
-  case 1201: *len = (size_t)(nx_amd_gfx1201_end - nx_amd_gfx1201); return nx_amd_gfx1201;
-  }
-  *len = 0;
-  return NULL;
+/* The code object of the processor [arch], as "gfx1201", or None. */
+CAMLprim value nx_amd_code_object(value arch) {
+  CAMLparam1(arch);
+  CAMLlocal1(bytes);
+  if (strcmp(String_val(arch), "gfx1201") != 0) CAMLreturn(Val_none);
+  bytes = caml_alloc_initialized_string(nx_amd_gfx1201_end - nx_amd_gfx1201,
+                                        nx_amd_gfx1201);
+  CAMLreturn(caml_alloc_some(bytes));
 }

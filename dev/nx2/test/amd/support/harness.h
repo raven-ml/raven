@@ -5,8 +5,8 @@
 
 /* The kernels the AMD suite and bench run beside nx.amd's: the timing
    kernels, the operand generator, the floors, and the probes. harness.hip
-   defines them; the host launches them through launch records, as it
-   launches the library's.
+   defines them; the host launches them as rig's launches, as nx.amd
+   launches its own.
 
    Each kernel reads one parameter struct, its addresses first. A kernel
    reads no implicit argument, so its workgroup size is fixed: those whose

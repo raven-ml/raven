@@ -1,10 +1,11 @@
 ; What the AMD suite and bench share: the GPU lock, the harness's kernels,
-; launch records and runs, device time, and operands.
+; their runs as launches, device time, and operands.
 
 (library
  (name nx_amd_support)
  (libraries
   nx_array
+  nx_kernel
   nx_amd
   rig
   rig.amd
@@ -14,8 +15,7 @@
   windtrap)
  (foreign_stubs
   (language c)
-  (include_dirs ../../../lib/amd ../../../lib/array)
-  (extra_deps gfx1201.co)
+  (extra_deps gfx1201.co harness.h)
   (flags :standard -DNX_HARNESS_CO=gfx1201.co)
   (names nx_amd_support_stubs)))
 

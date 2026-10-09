@@ -1,6 +1,22 @@
-; Correctness on AMD GPU 0 through the amdgpu driver, skipping without one.
+; Correctness on AMD GPU 0 through the amdgpu driver, skipping without one;
+; and kernels.ml against kernels.h, on any machine.
 
 (tests
  (names test_amd)
  (modules test_amd)
  (libraries nx_array nx_amd_support nx_gpu_ref rig windtrap))
+
+; The library's kernels.ml, built here beside a stub that reads kernels.h.
+
+(tests
+ (names test_amd_kernels)
+ (modules test_amd_kernels kernels)
+ (libraries windtrap)
+ (foreign_stubs
+  (language c)
+  (include_dirs ../../lib/amd)
+  (extra_deps ../../lib/amd/kernels.h)
+  (names test_amd_kernels_stubs)))
+
+(rule
+ (copy ../../lib/amd/kernels.ml kernels.ml))

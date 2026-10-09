@@ -3,9 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** What the AMD suite and bench share: the GPU, loaded code objects, launch
-    records and the runs of them, their device time, and operands drawn on the
-    device. *)
+(** What the AMD suite and bench share: the GPU, the harness's kernels and runs
+    of them as rig's launches, nx.amd's contractions, their device time, and
+    operands drawn on the device. *)
 
 (** {1:gpu The GPU} *)
 
@@ -23,8 +23,11 @@ val gpu : unit -> gpu
     the process holds the GPU lock. It skips the test if the machine has no AMD
     GPU.
 
-    Raises [Failure] if the GPU's compute queue reads AQL packets: the fill
-    places PM4. *)
+    Raises [Failure] if nx.amd does not compute on it, as on a GPU whose compute
+    queue reads AQL packets, which runs no launch. *)
+
+val device : gpu -> Rig.t
+(** [device g] is [g]'s device. *)
 
 val arch : gpu -> string
 (** [arch g] is the processor [g] runs code objects of, as ["gfx1201"]. *)
@@ -39,9 +42,7 @@ val cus : gpu -> int
 (** {1:images Images} *)
 
 type image
-(** The type for loaded code objects and the table of their kernels' dispatches
-    a fill reads. Its kernels that take scratch memory share one buffer of the
-    device's, made with the image. *)
+(** The type for loaded code objects. *)
 
 val harness : gpu -> image
 (** [harness g] is the harness's code object (harness.h) loaded on [g] once. *)
@@ -50,7 +51,7 @@ val threads : int
 (** [threads] is the work-items of a workgroup of the harness's [generate],
     peaks and probes. *)
 
-(** {1:records Records} *)
+(** {1:launches Launches} *)
 
 (** The type for a kernel's parameters, laid out in order as 8-byte words: its
     addresses first. *)
@@ -65,18 +66,19 @@ type launch
 val launch :
   string -> groups:int * int * int -> threads:int -> param list -> launch
 (** [launch k ~groups ~threads ps] is a launch of the kernel [k] over [groups]
-    workgroups of [threads] work-items along X, with the parameters [ps]. *)
+    workgroups of [threads] work-items along X, with the parameters [ps].
+
+    Raises [Invalid_argument] if an address follows another parameter. *)
 
 type run
-(** The type for runs: launch records ([kernels.h]) of an image's kernels, which
-    keep the buffers they address alive, or a driver's copy. *)
+(** The type for runs: launches of an image's kernels, a driver's copy, or a
+    call of nx.amd's contraction. A run keeps the buffers it names. *)
 
 val record : image -> launch list -> run
-(** [record i ls] is the run of the records of [ls], in order, which
-    [nx_amd_add] appends to one run.
+(** [record i ls] is the run of [ls], in order, as one submission's launches,
+    every buffer they address written.
 
-    Raises [Invalid_argument] if [i] has no kernel a launch names, an address
-    follows another parameter, or [nx_amd_add] refuses a record. *)
+    Raises [Invalid_argument] if [i] has no kernel a launch names. *)
 
 val driver_copy : src:Rig.Buffer.t -> dst:Rig.Buffer.t -> run
 (** [driver_copy ~src ~dst] is the driver's copy of [src]'s bytes into [dst], a
@@ -92,8 +94,8 @@ val hog : gpu -> hog
     the GPU while a run beside it lasts ({!run}). *)
 
 val held_wgps : hog -> int list
-(** [held_wgps h] is the work-group processors [h] held when it last ran, as
-    the harness's [where] names them. *)
+(** [held_wgps h] is the work-group processors [h] held when it last ran, as the
+    harness's [where] names them. *)
 
 val run : ?beside:hog -> gpu -> run -> unit
 (** [run ~beside g r] runs [r] on [g]'s queue ["COMPUTE:0"], a driver copy on
@@ -101,22 +103,33 @@ val run : ?beside:hog -> gpu -> run -> unit
     hog holds every processor it holds, and the hog lets them go once [r] is
     done, so that [r]'s workgroups run only on the others.
 
-    Raises [Invalid_argument] if [r] is a driver copy beside a hog or a record's
-    parameters are not the bytes its kernel reads, and [Failure] if the hog's
-    workgroups do not all start within 2 s or the hog lets go after 2 s before
-    [r] is done. *)
+    Raises [Invalid_argument] if [r] is a driver copy beside a hog, and
+    [Failure] if the hog's workgroups do not all start within 2 s or the hog
+    lets go after 2 s before [r] is done. *)
 
 val enqueue : gpu -> count:int -> run -> unit
 (** [enqueue g ~count r] submits [r] [count] times, in submissions of at most
-    1,024 launches or 256 driver copies, and returns without waiting for them:
-    the host's share of [count] runs. The caller keeps [r] until a later {!run}
-    or {!device_time} returns. *)
+    1,024 launches or 256 driver copies, a contraction's calls each its own, and
+    returns without waiting for them: the host's share of [count] runs. *)
+
+val call : run -> unit
+(** [call r] calls the contraction [r] once and returns once its work is queued.
+    It allocates nothing beyond what {!Nx_amd.contract} allocates.
+
+    Raises [Invalid_argument] if [r] is not {!contract}'s, and [Failure] if
+    nx.amd declines it. *)
+
+val issue : gpu -> count:int -> run -> unit
+(** [issue g ~count r] calls the contraction [r] [count] times and returns once
+    their work is done.
+
+    Raises [Invalid_argument] if [r] is not {!contract}'s. *)
 
 val device_time : gpu -> run -> count:int -> float
 (** [device_time g r ~count] runs [r] [count] times and is the GPU's time per
     run, in seconds: the span between two stamps of the GPU's clock that [r]'s
     queue writes around the runs. A long [count] is cut into rounds of at most
-    1,024 launches or 256 driver copies, their spans summed. *)
+    1,024 launches, 256 calls or 256 driver copies, their spans summed. *)
 
 val cu_clock : gpu -> float
 (** [cu_clock g] is the clock of one of [g]'s compute units, in MHz, over ten
@@ -150,7 +163,7 @@ type operand = {
   strides : int array;  (** In elements. *)
   first : int;  (** Bytes from the buffer's start to element 0. *)
 }
-(** The type for operands of nx.amd's plans. *)
+(** The type for operands of nx.amd's contractions. *)
 
 val contract :
   gpu ->
@@ -163,58 +176,13 @@ val contract :
   acc:int ->
   unit ->
   run option
-(** [contract g ~a ~b ~init ~y ~batch ~contracting ~acc ()] is nx.amd's plan of
-    the contraction ([nx_amd_plan_contract]) on {!library}'s kernels, its
-    scratch allocated on [g] and kept by the run, or [None] if the plan
-    declines. [batch] and [contracting] pair an axis of [a] with one of [b].
+(** [contract g ~a ~b ~init ~y ~batch ~contracting ~acc ()] computes the
+    contraction with {!Nx_amd.contract} into [y], its work queued on [g], and is
+    the run that computes it again; or [None] if nx.amd declines it. [batch] and
+    [contracting] pair an axis of [a] with one of [b].
 
-    Raises [Out_of_memory] if the host's memory cannot hold the plan, and
-    {!Rig.Out_of_memory} if [g]'s cannot hold its scratch. *)
-
-val records :
-  paint:int ->
-  a:operand ->
-  b:operand ->
-  ?init:operand ->
-  y:operand ->
-  batch:(int * int) list ->
-  contracting:(int * int) list ->
-  acc:int ->
-  unit ->
-  string option
-(** [records ~paint ~a ~b ~init ~y ~batch ~contracting ~acc ()] is the plan's
-    records as {!contract} plans them, or [None] if it declines, planned on a
-    stack whose bytes below the planner were [paint] (a byte) first: a record
-    holds no byte the plan did not write. The operands' memory is never read,
-    so host buffers serve.
-
-    Raises [Out_of_memory] if the host's memory cannot hold the plan. *)
-
-val planner :
-  a:operand ->
-  b:operand ->
-  ?init:operand ->
-  y:operand ->
-  batch:(int * int) list ->
-  contracting:(int * int) list ->
-  acc:int ->
-  unit ->
-  unit ->
-  int
-(** [planner ~a ~b ~init ~y ~batch ~contracting ~acc () ()] plans the
-    contraction as {!contract} does, into records it keeps from one call to the
-    next, and is the plan's count of launches: the planner's own cost, for the
-    bench. *)
-
-val library : gpu -> image
-(** [library g] is nx.amd's code object for [g]'s processor loaded on [g] once,
-    its table holding every kernel of [kernels.h].
-
-    Raises [Failure] if nx.amd has no code object for [g]. *)
-
-val library_size : gpu -> int * int
-(** [library_size g] is the count of kernels and the bytes of {!library}'s code
-    object: the instance budget's measure. *)
+    Raises what {!Nx_amd.contract} raises, and [Invalid_argument] for a refusal.
+*)
 
 (** {1:memory Memory} *)
 

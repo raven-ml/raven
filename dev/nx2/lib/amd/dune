@@ -1,15 +1,13 @@
 ; nx.amd: nx's kernels for AMD GPUs, compiled ahead of time into code
-; objects (kernels/) and embedded. C only until the binding: launch
-; records, the plans that make them, and the fill that places them through
-; rig.amd.
+; objects (kernels/) and embedded, planned in OCaml and launched as rig's
+; Launch parts. kernels.ml states kernels.h's facts, which the device code
+; reads.
 
 (library
  (name nx_amd)
- (modules)
- (libraries nx_array)
+ (libraries nx_array nx_kernel rig)
  (foreign_stubs
   (language c)
-  (include_dirs ../array)
   (extra_deps kernels/gfx1201.co)
   (flags :standard -DNX_AMD_KERNELS_DIR=kernels)
-  (names fill_amd plan nx_amd_stubs)))
+  (names nx_amd_stubs)))
