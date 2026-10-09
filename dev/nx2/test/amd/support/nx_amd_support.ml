@@ -284,14 +284,22 @@ let write b s = Rig.Buffer.copy ~src:(Rig.Buffer.of_string s) ~dst:b
 let zero b = write b (String.make (Rig.Buffer.length b) '\000')
 
 (* A hog holds the work-group processors it fills from a second device of the
-   GPU, whose compute queue runs beside the work's. Its counter and processors
-   are the work device's memory, which the GPU's devices share. *)
+   GPU, whose compute queue runs beside the work's, until the work's queue
+   releases it. Its words are the work device's memory, which the GPU's
+   devices share: [started] counts the hog's workgroups that hold their
+   processors, [release] lets them go, and [late] and [let_go] say that the
+   work's queue or the hog gave up waiting for the other. *)
 type hog = {
   blocks : int;
   started : Rig.Buffer.t;
+  release : Rig.Buffer.t;
+  late : Rig.Buffer.t;
+  let_go : Rig.Buffer.t;
   wgp : Rig.Buffer.t;
   device : device;
-  run : run;
+  hold : run;
+  wait : run;
+  free : run;
 }
 
 (* The hog's device, opened at the first hog and kept for the process. *)
@@ -303,52 +311,66 @@ let beside g =
       g.beside <- Some d;
       d
 
-let hog g ~ns =
+(* Each side gives up on the other after 2 s: a hog's workgroups start, and
+   the work beside it ends, well within it. *)
+let hold_ns = 2_000_000_000
+
+let hog g =
   let d = beside g in
   let blocks = Int.max 1 (wgps g / 2) in
-  let started = buffer g 4 and wgp = buffer g (4 * blocks) in
+  let word () = buffer g 4 in
+  let started = word () and release = word () and late = word () in
+  let let_go = word () and wgp = buffer g (4 * blocks) in
   let on b = Option.get (Rig.Buffer.borrow d.rig b) in
-  let run =
+  let hold =
     record d.harness
       [
         launch "hog" ~groups:(blocks, 1, 1) ~threads:hog_threads
-          [ A (on started); A (on wgp); W (ticks d ns) ];
+          [
+            A (on started);
+            A (on wgp);
+            A (on release);
+            A (on let_go);
+            W (ticks d hold_ns);
+          ];
       ]
   in
-  { blocks; started; wgp; device = d; run }
+  let wait =
+    record (harness g)
+      [
+        launch "delay" ~groups:(1, 1, 1) ~threads:1
+          [ A started; A late; D (blocks, 0); W (ticks g.work hold_ns) ];
+      ]
+  in
+  let free =
+    record (harness g)
+      [ launch "release" ~groups:(1, 1, 1) ~threads:1 [ A release ] ]
+  in
+  { blocks; started; release; late; let_go; wgp; device = d; hold; wait; free }
 
 let held_wgps h =
   let s = read h.wgp in
   List.init h.blocks (fun i -> Int32.to_int (String.get_int32_le s (4 * i)))
 
-(* A delay gives up after 2 s: a hog's workgroups start well within it. *)
-let hold_ns = 2_000_000_000
-
 (* Beside a hog, the work waits on its queue until every hog workgroup holds its
-   processor: rig orders nothing between two devices' queues. *)
+   processor, and releases them once done: rig orders nothing between two
+   devices' queues. *)
 let run ?beside g r =
   match beside with
   | None ->
       Rig.wait g.work.rig (submit g.work (body r 1));
       keep r
   | Some h ->
-      zero h.started;
-      let late = buffer g 4 in
-      zero late;
-      let wait =
-        record (harness g)
-          [
-            launch "delay" ~groups:(1, 1, 1) ~threads:1
-              [ A h.started; A late; D (h.blocks, 0); W (ticks g.work hold_ns) ];
-          ]
-      in
-      let held = submit h.device (body h.run 1) in
-      let v = submit g.work (body wait 1 @ body r 1) in
+      List.iter zero [ h.started; h.release; h.late; h.let_go ];
+      let held = submit h.device (body h.hold 1) in
+      let v = submit g.work (body h.wait 1 @ body r 1 @ body h.free 1) in
       Rig.wait g.work.rig v;
       Rig.wait h.device.rig held;
-      List.iter keep [ r; wait; h.run ];
-      if read late <> "\000\000\000\000" then
-        failwith "the hog's workgroups did not all start within the hold"
+      List.iter keep [ r; h.wait; h.free; h.hold ];
+      let set b = read b <> "\000\000\000\000" in
+      if set h.late then
+        failwith "the hog's workgroups did not all start within the hold";
+      if set h.let_go then failwith "the hog let go before the work was done"
 
 (* rig.amd refuses a submission that takes more than half its argument segment.
    A launch's parameters take at most 256 bytes of it, so a round of 1,024

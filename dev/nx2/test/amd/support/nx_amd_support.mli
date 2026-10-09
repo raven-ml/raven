@@ -87,10 +87,9 @@ val driver_copy : src:Rig.Buffer.t -> dst:Rig.Buffer.t -> run
 type hog
 (** The type for hogs: runs that hold half of a GPU's work-group processors. *)
 
-val hog : gpu -> ns:int -> hog
-(** [hog g ~ns] holds half of [g]'s work-group processors from a second device
-    of the GPU, each for [ns] nanoseconds from the start of the workgroup that
-    holds it. *)
+val hog : gpu -> hog
+(** [hog g] holds half of [g]'s work-group processors from a second device of
+    the GPU while a run beside it lasts ({!run}). *)
 
 val held_wgps : hog -> int list
 (** [held_wgps h] is the work-group processors [h] held when it last ran, as
@@ -99,12 +98,13 @@ val held_wgps : hog -> int list
 val run : ?beside:hog -> gpu -> run -> unit
 (** [run ~beside g r] runs [r] on [g]'s queue ["COMPUTE:0"], a driver copy on
     ["COPY:0"], and returns once it is done. Beside a hog, [r] starts once the
-    hog holds every processor it holds, so that [r]'s workgroups run only on
-    the others while the hog lasts.
+    hog holds every processor it holds, and the hog lets them go once [r] is
+    done, so that [r]'s workgroups run only on the others.
 
     Raises [Invalid_argument] if [r] is a driver copy beside a hog or a record's
     parameters are not the bytes its kernel reads, and [Failure] if the hog's
-    workgroups do not all start within 2 s. *)
+    workgroups do not all start within 2 s or the hog lets go after 2 s before
+    [r] is done. *)
 
 val enqueue : gpu -> count:int -> run -> unit
 (** [enqueue g ~count r] submits [r] [count] times and returns without waiting

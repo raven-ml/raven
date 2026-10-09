@@ -257,7 +257,7 @@ let hog_holds_its_wgps () =
     S.record (S.harness g)
       [ S.launch "where" ~groups:(blocks, 1, 1) ~threads:32 [ A wgp ] ]
   in
-  let hog = S.hog g ~ns:2_000_000 in
+  let hog = S.hog g in
   S.run g ~beside:hog where;
   let held = S.held_wgps hog in
   equal int
@@ -550,7 +550,7 @@ let same_bits c =
         ~msg:(strf "layouts with %d skipped" skip)
         string want (S.read y.buffer))
     [ (`Free, `K, 0); (`K, `Free, 0); (`Free, `Free, 0); (`K, `K, 1) ];
-  S.run g ~beside:(S.hog g ~ns:2_000_000) p;
+  S.run g ~beside:(S.hog g) p;
   equal ~msg:"beside the hog" string want (S.read y.buffer)
 
 let shape_cases =

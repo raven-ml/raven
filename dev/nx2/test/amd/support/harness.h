@@ -21,8 +21,8 @@
 
 /* X(name) for every kernel of the harness's code object, in enum order. */
 #define NX_HARNESS_KERNELS(X)                                     \
-  X(empty) X(cu_clock) X(delay) X(hog) X(where) X(generate)       \
-  X(floor_copy) X(floor_read) X(wmma_bf16) X(fma_f32)             \
+  X(empty) X(cu_clock) X(delay) X(hog) X(release) X(where)        \
+  X(generate) X(floor_copy) X(floor_read) X(wmma_bf16) X(fma_f32) \
   X(div_sqrt_f32) X(div_sqrt_f64) X(wmma_probe) X(codecs)
 
 #define NX_HARNESS_ENUM(name) NX_HARNESS_##name,
@@ -51,19 +51,26 @@ typedef struct {
 } delay_params;
 
 /* Each workgroup of NX_HOG_THREADS work-items holds its work-group
-   processor for [ticks] ticks from its start, when it writes its processor
-   (where's) to wgp[group] and adds 1 to [*started]. It runs in WGP mode,
-   its 32 waves 8 to each of the processor's 4 SIMDs, each wave taking 192
-   VGPRs: every SIMD's 1,536 VGPRs are the hog's, so no other wave fits on
-   the processor, and the workgroup takes the 64 KiB of local data share it
-   can. Work queued behind a delay until [*started] counts every workgroup
-   runs only on the processors the hog left free. */
+   processor from its start, when it writes its processor (where's) to
+   wgp[group] and adds 1 to [*started], until the 32-bit word at [release]
+   is not 0; or, setting the 32-bit word at [late], until [ticks] ticks
+   have passed. It runs in WGP mode, its 32 waves 8 to each of the
+   processor's 4 SIMDs, each wave taking 192 VGPRs: every SIMD's 1,536
+   VGPRs are the hog's, so no other wave fits on the processor, and the
+   workgroup takes the 64 KiB of local data share it can. Work queued
+   behind a delay until [*started] counts every workgroup, and ahead of a
+   release, runs only on the processors the hog left free. */
 #define NX_HOG_THREADS 1024
 
 typedef struct {
-  uint32_t *started, *wgp;
+  uint32_t *started, *wgp, *release, *late;
   uint64_t ticks;
 } hog_params;
+
+/* Sets the 32-bit word at [flag] to 1. One work-item. */
+typedef struct {
+  uint32_t *flag;
+} release_params;
 
 /* Each workgroup of one wave writes its work-group processor to
    wgp[group]: the shader engine, shader array and processor, as bits of

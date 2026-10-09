@@ -61,8 +61,19 @@ KERNEL SIZED(NX_HOG_THREADS) void hog(hog_params p) {
     __hip_atomic_fetch_add(p.started, 1u, __ATOMIC_RELAXED,
                            __HIP_MEMORY_SCOPE_AGENT);
   }
-  while (now() - t0 < p.ticks) {
+  /* Polled about every 8,000 cycles, so that the hog's reads stay out of
+     the way of the work's. */
+  while (load_agent(p.release) == 0) {
+    if (now() - t0 > p.ticks) {
+      *p.late = 1;
+      return;
+    }
+    __builtin_amdgcn_s_sleep(127);
   }
+}
+
+KERNEL void release(release_params p) {
+  __hip_atomic_store(p.flag, 1u, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_AGENT);
 }
 
 KERNEL SIZED(32) void where(where_params p) {
