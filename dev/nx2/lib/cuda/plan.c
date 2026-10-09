@@ -15,8 +15,6 @@
    merge into one axis each; the batch is above 65,535 (the grid's z); or
    m, n or k is above 2^31 - 1. */
 
-#include <string.h>
-
 #include "nx_array.h"
 #include "nx_cuda.h"
 
@@ -201,6 +199,18 @@ static int vectors(uint64_t address, int64_t contiguous, int64_t lead,
 
 static int bytes_of(int dt) { return nx_dtype_row_of(dt).bits / 8; }
 
+/* Whether an operand of the strides [s] (batch, row, k) has its rows
+   contiguous rather than its k. */
+static int free_contiguous(const int64_t s[3]) { return s[1] == 1 && s[2] != 1; }
+
+/* Whether the rows of the operand at [x], of the strides [s] and dtype [dt],
+   load as 16-byte vectors along its contiguous axis. */
+static int rows_vectors(const void *x, const int64_t s[3], int dt) {
+  const int f = free_contiguous(s);
+  return vectors((uint64_t)(uintptr_t)x, f ? s[1] : s[2], f ? s[2] : s[1],
+                 s[0], bytes_of(dt));
+}
+
 /* [bytes] of the call's scratch after the [*used] bytes taken: their
    offset, each piece on a 256-byte boundary. */
 static size_t take(size_t *used, size_t bytes) {
@@ -209,28 +219,39 @@ static size_t take(size_t *used, size_t bytes) {
   return at;
 }
 
-/* Appends the launch that packs an operand of [batch] x [rows] x [k]
-   elements of [dtype], at [address] with the strides [sz], [sr] and [sk],
-   into scratch as elements of [to] with k contiguous and rows of whole
-   vectors; sets
-   [*operand] and [strides] to the packed copy's scratch offset and
-   strides. 0, or add's failure. */
-static int pack(nx_cuda_records *out, size_t *used, const void **operand,
-                int64_t strides[3], uint64_t address, int dtype, int to,
-                int64_t batch, int64_t rows, int64_t k, int64_t sz, int64_t sr,
-                int64_t sk) {
+/* A plan under way: the contraction's parameters, the records it appends
+   to and their count, its scratch so far and the mask of the parameters'
+   addresses that are scratch. */
+typedef struct {
+  contract_params p;
+  nx_cuda_records *out;
+  int records;
+  size_t used;
+  uint32_t mask;
+} plan;
+
+/* Appends the launch that packs b if [side], else a, into scratch as
+   elements of [to] with k contiguous and rows of whole vectors, and makes
+   the parameters address the copy. 0, or add's failure. */
+static int pack(plan *c, int side, int to) {
+  contract_params *p = &c->p;
+  const void **x = side ? &p->b : &p->a;
+  int64_t *s = side ? p->sb : p->sa;
+  const int64_t batch = p->batch, rows = side ? p->n : p->m, k = p->k;
   const int es = bytes_of(to);
   const int64_t per = 16 / es, lead = (k + per - 1) / per * per;
-  const size_t at = take(used, (size_t)(batch * rows * lead * es));
-  pack_params q = {(const void *)(uintptr_t)address, (void *)(uintptr_t)at,
-                   {sz, sr, sk}, lead, (int32_t)batch, (int32_t)rows,
-                   (int32_t)k, dtype, to, es};
+  const size_t at = take(&c->used, (size_t)(batch * rows * lead * es));
+  pack_params q = {*x, (void *)(uintptr_t)at, {s[0], s[1], s[2]}, lead,
+                   (int32_t)batch, (int32_t)rows, (int32_t)k,
+                   side ? p->b_dtype : p->a_dtype, to, es};
   /* A thread a 16-byte vector. */
   const uint64_t n = (uint64_t)(batch * rows * lead) / per;
   const uint32_t grid = (uint32_t)(ceil_div(n, 256) < 65535 ? ceil_div(n, 256) : 65535);
-  *operand = (const void *)(uintptr_t)at;
-  strides[0] = rows * lead, strides[1] = lead, strides[2] = 1;
-  return add(out, NX_CUDA_pack, grid ? grid : 1, 1, 1, 256, 0, &q, sizeof q,
+  *x = (const void *)(uintptr_t)at;
+  s[0] = rows * lead, s[1] = lead, s[2] = 1;
+  c->records++;
+  c->mask |= side ? NX_CONTRACT_SCRATCH_B : NX_CONTRACT_SCRATCH_A;
+  return add(c->out, NX_CUDA_pack, grid ? grid : 1, 1, 1, 256, 0, &q, sizeof q,
              NX_PACK_ADDRS, NX_PACK_SCRATCH);
 }
 
@@ -267,6 +288,21 @@ static int reads_as(int dt, int to) {
          (bytes_of(dt) == 8 && bytes_of(to) == 8);
 }
 
+/* Packs each operand the SIMT or skinny kernel cannot read as [to] into
+   [to], exactly, with k contiguous. 0, or add's failure. */
+static int pack_into(plan *c, int to) {
+  int e;
+  if (!reads_as(c->p.a_dtype, to)) {
+    if ((e = pack(c, 0, to)) != 0) return e;
+    c->p.a_dtype = to;
+  }
+  if (!reads_as(c->p.b_dtype, to)) {
+    if ((e = pack(c, 1, to)) != 0) return e;
+    c->p.b_dtype = to;
+  }
+  return 0;
+}
+
 static int is_f8(int dt) {
   return dt == NX_FLOAT8_E4M3FN || dt == NX_FLOAT8_E5M2;
 }
@@ -284,7 +320,6 @@ static int is_int(int dt) {
   return k == NX_KIND_SIGNED || k == NX_KIND_UNSIGNED || k == NX_KIND_BOOLEAN;
 }
 
-
 /* The split count of a grid of [grid] blocks: doubled while the grid has
    fewer than [target] blocks and each range keeps at least [k_min] of k,
    at most 16. The targets are constants measured on an architecture's
@@ -294,6 +329,106 @@ static int split_count(uint64_t grid, uint64_t target, int64_t k,
   int s = 1;
   while (s < 16 && grid * s < target && k / (2 * s) >= k_min) s *= 2;
   return s;
+}
+
+/* Families */
+
+/* The contraction kernel's launch: its [blocks] x [splits] x batch blocks
+   of [threads] threads and [shared] dynamic shared bytes, and the [sums]
+   partial sums a block holds when it splits. */
+typedef struct {
+  int kernel, splits, threads, shared;
+  uint64_t blocks, sums;
+} launch;
+
+/* Each family's launch, and the packs it takes, appended to [c]; answers
+   0, NX_NOT_COMPUTED having appended nothing, or add's failure. */
+
+/* The mma kernels, of [kind] on the tile [t]. An operand whose rows are
+   not vectors is packed into scratch with k contiguous, as is a float8 one
+   and one in a layout the tile has no instance of. */
+static int plan_mma(plan *c, int kind, int t, launch *l) {
+  const contract_params *p = &c->p;
+  const tile *tl = &tiles[t];
+  const int la = free_contiguous(p->sa) ? A_m : A_k;
+  const int lb = free_contiguous(p->sb) ? A_n : A_k;
+  const int pack_a = !rows_vectors(p->a, p->sa, p->a_dtype) ||
+                     is_f8(p->a_dtype) ||
+                     (la != A_k && find_mma(kind, la, A_k, t) < 0);
+  const int pack_b =
+      !rows_vectors(p->b, p->sb, p->b_dtype) || is_f8(p->b_dtype) ||
+      (lb != A_k && find_mma(kind, pack_a ? A_k : la, lb, t) < 0);
+  l->kernel = find_mma(kind, pack_a ? A_k : la, pack_b ? A_k : lb, t);
+  l->blocks = ceil_div(p->m, tl->bm) * ceil_div(p->n, tl->bn);
+  if (l->kernel < 0 || l->blocks > INT32_MAX) return NX_NOT_COMPUTED;
+  const int to = kind == K_s8 ? NX_INT8 : kind == K_f16 ? NX_FLOAT16 : NX_BFLOAT16;
+  int e;
+  if (pack_a && (e = pack(c, 0, to)) != 0) return e;
+  if (pack_b && (e = pack(c, 1, to)) != 0) return e;
+  /* A split sum stores and reloads its partials: worth it to fill a GPU
+     short of blocks, or to stream a long k for a few rows. */
+  const int mes = kind == K_s8 ? 1 : 2;
+  l->splits = p->m <= 16
+                  ? split_count(l->blocks * p->batch, 256, p->k, 4 * tl->bkb / mes)
+                  : split_count(l->blocks * p->batch, 64, p->k, 1024);
+  l->threads = tl->threads, l->shared = tl->shared;
+  l->sums = (uint64_t)tl->bm * tl->bn;
+  return 0;
+}
+
+/* The SIMT kernels of the accumulator [sum], m > 16: the tile of least
+   cost among its instances; on sm_89, the 64-wide tile computes 70% as fast
+   as the 128-wide one. They read their accumulator's own dtype. */
+static int plan_simt(plan *c, int sum, launch *l) {
+  contract_params *p = &c->p;
+  static const int sides[2] = {128, 64}, eff[2] = {100, 70};
+  int side = 64;
+  double least = -1;
+  for (int i = 0; i < 2; i++) {
+    if (find_simt(sum, sides[i]) < 0) continue;
+    const double x = cost(p->batch, p->m, p->n, sides[i], sides[i], eff[i]);
+    if (least < 0 || x < least) least = x, side = sides[i];
+  }
+  l->kernel = find_simt(sum, side);
+  l->blocks = ceil_div(p->m, side) * ceil_div(p->n, side);
+  if (l->kernel < 0 || l->blocks > INT32_MAX) return NX_NOT_COMPUTED;
+  const int e = pack_into(c, own_dtype(sum));
+  if (e != 0) return e;
+  /* A SIMT block's k-tiles run one after another, each waiting on its
+     loads: split while the grid has fewer than 256 blocks, down to 64 of k
+     a range. */
+  l->splits = split_count(l->blocks * p->batch, 256, p->k, 64);
+  l->threads = 256, l->shared = 0;
+  l->sums = (uint64_t)side * side;
+  p->aligned = (rows_vectors(p->a, p->sa, p->a_dtype) ? NX_CONTRACT_A_VECTORS : 0) |
+               (rows_vectors(p->b, p->sb, p->b_dtype) ? NX_CONTRACT_B_VECTORS : 0);
+  return 0;
+}
+
+/* The skinny kernel of the accumulator [sum], m <= 16. It reads a float
+   accumulator's own dtype, or one integer dtype both operands hold. */
+static int plan_skinny(plan *c, int sum, launch *l) {
+  contract_params *p = &c->p;
+  l->kernel = find_skinny(sum);
+  l->blocks = ceil_div(p->m, NX_SKINNY_ROWS) * ceil_div(p->n, 32);
+  if (l->kernel < 0 || l->blocks > INT32_MAX) return NX_NOT_COMPUTED;
+  const int to = sum == ACC_i64 ? common_int(p->a_dtype, p->b_dtype)
+                                : own_dtype(sum);
+  const int e = pack_into(c, to);
+  if (e != 0) return e;
+  /* By the columns alone: a row's sums are the same bits whatever rows come
+     with it. */
+  l->splits = split_count(ceil_div(p->n, 32) * p->batch, 64, p->k, 1024);
+  l->threads = 256, l->shared = 0;
+  l->sums = 256;
+  const int across = free_contiguous(p->sb);
+  p->aligned =
+      (across ? NX_CONTRACT_B_ACROSS : 0) |
+      (!across && rows_vectors(p->b, p->sb, p->b_dtype) ? NX_CONTRACT_B_VECTORS : 0) |
+      (!free_contiguous(p->sa) && rows_vectors(p->a, p->sa, p->a_dtype)
+           ? NX_CONTRACT_A_VECTORS
+           : 0);
+  return 0;
 }
 
 int nx_cuda_plan_contract(const nx_cuda_contract_in *in,
@@ -349,162 +484,53 @@ int nx_cuda_plan_contract(const nx_cuda_contract_in *in,
                      (init && bytes_of(init->dtype) > bytes_of(acc)))))
     return NX_NOT_COMPUTED;
 
-  contract_params p;
-  memset(&p, 0, sizeof p);
-  p.a = (const void *)(uintptr_t)a->address;
-  p.b = (const void *)(uintptr_t)b->address;
-  p.init = init ? (const void *)(uintptr_t)init->address : NULL;
-  p.y = (void *)(uintptr_t)y->address;
-  p.sa[0] = sbat[0], p.sa[1] = sm[0], p.sa[2] = sk[0];
-  p.sb[0] = sbat[1], p.sb[1] = sn[0], p.sb[2] = sk[1];
-  p.sy[0] = sbat[2], p.sy[1] = sm[1], p.sy[2] = sn[1];
-  p.si[0] = sbat[3], p.si[1] = sm[2], p.si[2] = sn[2];
-  p.batch = (int32_t)batch, p.m = (int32_t)m, p.n = (int32_t)n,
-  p.k = (int32_t)k;
-  p.a_dtype = a->dtype, p.b_dtype = b->dtype, p.y_dtype = y->dtype;
-  p.init_dtype = init ? init->dtype : y->dtype;
-  p.acc_dtype = in->acc;
+  plan c = {.out = out};
+  contract_params *p = &c.p;
+  p->a = (const void *)(uintptr_t)a->address;
+  p->b = (const void *)(uintptr_t)b->address;
+  p->init = init ? (const void *)(uintptr_t)init->address : NULL;
+  p->y = (void *)(uintptr_t)y->address;
+  p->sa[0] = sbat[0], p->sa[1] = sm[0], p->sa[2] = sk[0];
+  p->sb[0] = sbat[1], p->sb[1] = sn[0], p->sb[2] = sk[1];
+  p->sy[0] = sbat[2], p->sy[1] = sm[1], p->sy[2] = sn[1];
+  p->si[0] = sbat[3], p->si[1] = sm[2], p->si[2] = sn[2];
+  p->batch = (int32_t)batch, p->m = (int32_t)m, p->n = (int32_t)n,
+  p->k = (int32_t)k;
+  p->a_dtype = a->dtype, p->b_dtype = b->dtype, p->y_dtype = y->dtype;
+  p->init_dtype = init ? init->dtype : y->dtype;
+  p->acc_dtype = in->acc;
 
-  /* The kernel, by the operands' and the accumulator's dtypes, then m.
-     float8 operands decode exactly to bfloat16 and sum on its matrix unit:
-     Ada's float8 unit keeps 13 bits of its sums, where the error bound
-     needs each addition to err by at most 2u. */
-  const int at = a->dtype;
-  const int bf16_like_a = at == NX_BFLOAT16 || is_f8(at);
-  const int bf16_like_b = b->dtype == NX_BFLOAT16 || is_f8(b->dtype);
-  const int f16 = at == NX_FLOAT16 && b->dtype == NX_FLOAT16;
+  /* The family, by the operands' and the accumulator's dtypes, then the
+     shape. float8 operands decode exactly to bfloat16 and sum on its matrix
+     unit: Ada's float8 unit keeps 13 bits of its sums, where the error
+     bound needs each addition to err by at most 2u. */
+  const int at = a->dtype, bt = b->dtype;
+  const int bf16_like = (at == NX_BFLOAT16 || is_f8(at)) &&
+                        (bt == NX_BFLOAT16 || is_f8(bt));
   const int kind =
       acc != NX_FLOAT32 && acc != NX_INT32 ? -1
-      : bf16_like_a && bf16_like_b && acc == NX_FLOAT32 ? K_bf16
-      : f16 && acc == NX_FLOAT32 ? K_f16
-      : at == NX_INT8 && b->dtype == NX_INT8 && acc == NX_INT32 ? K_s8 : -1;
+      : bf16_like && acc == NX_FLOAT32 ? K_bf16
+      : at == NX_FLOAT16 && bt == NX_FLOAT16 && acc == NX_FLOAT32 ? K_f16
+      : at == NX_INT8 && bt == NX_INT8 && acc == NX_INT32 ? K_s8 : -1;
   const int t = kind < 0 ? -1 : mma_tile(kind, batch, m, n);
-  const int mma_kind = t < 0 ? -1 : kind;
-  int sum = -1;
-  if (acc == NX_FLOAT32 || acc == NX_FLOAT64) {
-    if (is_int(at) || is_int(b->dtype)) return NX_NOT_COMPUTED;
+  int sum;
+  if (float_acc) {
+    if (is_int(at) || is_int(bt)) return NX_NOT_COMPUTED;
     sum = acc == NX_FLOAT32 ? ACC_f32 : ACC_f64;
   } else if (acc == NX_INT32 || acc == NX_UINT32 || acc == NX_INT64 ||
              acc == NX_UINT64) {
-    if (!is_int(at) || !is_int(b->dtype)) return NX_NOT_COMPUTED;
+    if (!is_int(at) || !is_int(bt)) return NX_NOT_COMPUTED;
     sum = ACC_i64;
   } else
     return NX_NOT_COMPUTED;
 
-  int kernel, splits, values, threads, shared = 0;
-  uint32_t mask = 0;
-  uint64_t gx;
-  size_t used = 0;
   const size_t len = out->len;
-  int records = 0;
-  int e = 0; /* the last append's answer: NX_OUT_OF_MEMORY passes on */
-  /* a's and b's contiguous axes, k if neither. */
-  int la = sm[0] == 1 && sk[0] != 1 ? A_m : A_k;
-  int lb = sn[0] == 1 && sk[1] != 1 ? A_n : A_k;
-  int va = vectors(a->address, la == A_m ? sm[0] : sk[0],
-                   la == A_m ? sk[0] : sm[0], sbat[0], bytes_of(at));
-  int vb = vectors(b->address, lb == A_n ? sn[0] : sk[1],
-                   lb == A_n ? sk[1] : sn[0], sbat[1], bytes_of(b->dtype));
-
-  /* The kernel and its grid, from the dtypes and the shape, so that every
-     decline comes before the first append. An mma operand whose rows are
-     not vectors is packed into scratch with k contiguous, as is one in a
-     layout the tile has no instance of. */
-  const int pack_a =
-      mma_kind >= 0 && (!va || is_f8(at) ||
-                        (la != A_k && find_mma(kind, la, A_k, t) < 0));
-  const int pack_b =
-      mma_kind >= 0 &&
-      (!vb || is_f8(b->dtype) ||
-       (lb != A_k && find_mma(kind, pack_a ? A_k : la, lb, t) < 0));
-  int side = 64;
-  if (mma_kind >= 0) {
-    kernel = find_mma(mma_kind, pack_a ? A_k : la, pack_b ? A_k : lb, t);
-    gx = ceil_div(m, tiles[t].bm) * ceil_div(n, tiles[t].bn);
-  } else if (m <= 16) {
-    kernel = find_skinny(sum);
-    gx = ceil_div(m, NX_SKINNY_ROWS) * ceil_div(n, 32);
-  } else {
-    /* The SIMT tile of least cost among the accumulator's instances: on
-       sm_89, the 64-wide tile computes 70% as fast as the 128-wide one. */
-    static const int sides[2] = {128, 64}, eff[2] = {100, 70};
-    double least = -1;
-    for (int i = 0; i < 2; i++) {
-      if (find_simt(sum, sides[i]) < 0) continue;
-      const double c = cost(batch, m, n, sides[i], sides[i], eff[i]);
-      if (least < 0 || c < least) least = c, side = sides[i];
-    }
-    kernel = find_simt(sum, side);
-    gx = ceil_div(m, side) * ceil_div(n, side);
-  }
-  if (kernel < 0 || gx > INT32_MAX) return NX_NOT_COMPUTED;
-
-  if (mma_kind >= 0) {
-    const int mes = mma_kind == K_s8 ? 1 : 2;
-    const int to = mma_kind == K_s8 ? NX_INT8 : f16 ? NX_FLOAT16 : NX_BFLOAT16;
-    if (pack_a) {
-      if ((e = pack(out, &used, &p.a, p.sa, a->address, at, to, batch, m, k,
-                    sbat[0], sm[0], sk[0])) != 0)
-        goto fail;
-      records++;
-      mask |= NX_CONTRACT_SCRATCH_A;
-    }
-    if (pack_b) {
-      if ((e = pack(out, &used, &p.b, p.sb, b->address, b->dtype, to, batch,
-                    n, k, sbat[1], sn[0], sk[1])) != 0)
-        goto fail;
-      records++;
-      mask |= NX_CONTRACT_SCRATCH_B;
-    }
-    const tile *tl = &tiles[t];
-    /* A split sum stores and reloads its partials: worth it to fill a
-       GPU short of blocks, or to stream a long k for a few rows. */
-    splits = m <= 16 ? split_count(gx * batch, 256, k, 4 * tl->bkb / mes)
-                     : split_count(gx * batch, 64, k, 1024);
-    values = tl->bm * tl->bn / tl->threads, threads = tl->threads;
-    shared = tl->shared;
-  } else {
-    /* SIMT kernels read their accumulator's own dtype, the skinny kernels
-       a float accumulator's or one integer dtype both operands hold: an
-       operand of another is packed into it, exactly, with k contiguous. */
-    const int to = sum == ACC_i64 && m <= 16 ? common_int(at, b->dtype)
-                                              : own_dtype(sum);
-    if (!reads_as(at, to)) {
-      if ((e = pack(out, &used, &p.a, p.sa, a->address, at, to, batch, m, k,
-                    sbat[0], sm[0], sk[0])) != 0)
-        goto fail;
-      records++, la = A_k, va = 1, p.a_dtype = to;
-      mask |= NX_CONTRACT_SCRATCH_A;
-      sm[0] = p.sa[1], sk[0] = 1;
-    }
-    if (!reads_as(b->dtype, to)) {
-      if ((e = pack(out, &used, &p.b, p.sb, b->address, b->dtype, to, batch,
-                    n, k, sbat[1], sn[0], sk[1])) != 0)
-        goto fail;
-      records++, lb = A_k, vb = 1, p.b_dtype = to;
-      mask |= NX_CONTRACT_SCRATCH_B;
-      sn[0] = p.sb[1], sk[1] = 1;
-    }
-  }
-  if (mma_kind < 0 && m <= 16) {
-    const int nform = sn[0] == 1 && sk[1] != 1;
-    /* By the columns alone: a row's sums are the same bits whatever rows
-       come with it. */
-    splits = split_count(ceil_div(n, 32) * batch, 64, k, 1024);
-    values = 1, threads = 256;
-    p.aligned = (nform ? NX_CONTRACT_B_ACROSS : 0) |
-                (lb == A_k && vb ? NX_CONTRACT_B_VECTORS : 0) |
-                (la == A_k && va ? NX_CONTRACT_A_VECTORS : 0);
-  } else if (mma_kind < 0) {
-    /* A SIMT block's k-tiles run one after another, each waiting on its
-       loads: split while the grid has fewer than 256 blocks, down to 64
-       of k a range. */
-    splits = split_count(gx * batch, 256, k, 64);
-    values = side * side / 256, threads = 256;
-    p.aligned = (va ? NX_CONTRACT_A_VECTORS : 0) |
-                (vb ? NX_CONTRACT_B_VECTORS : 0);
-  }
-  p.splits = splits;
+  launch l;
+  int e = t >= 0     ? plan_mma(&c, kind, t, &l)
+          : m <= 16 ? plan_skinny(&c, sum, &l)
+                    : plan_simt(&c, sum, &l);
+  if (e != 0) goto fail;
+  p->splits = l.splits;
 
   /* Outputs stored 16 bytes at once: no init, y's j contiguous, its rows
      on 16-byte boundaries, and its dtype one the kernels store as they
@@ -512,34 +538,34 @@ int nx_cuda_plan_contract(const nx_cuda_contract_in *in,
   const int yd = y->dtype, yb = bytes_of(yd);
   const int wide = yd == NX_INT64 || yd == NX_UINT64;
   const int natural =
-      mma_kind == K_s8 ? yd == NX_INT32 || yd == NX_UINT32
+      t >= 0 && kind == K_s8 ? yd == NX_INT32 || yd == NX_UINT32
       : sum == ACC_f32 ? yd == NX_FLOAT32 || yd == NX_BFLOAT16 || yd == NX_FLOAT16
       : sum == ACC_f64 ? yd == NX_FLOAT64
-                        : wide && (acc == NX_INT64 || acc == NX_UINT64);
-  if (!init && natural && sn[1] == 1 && sm[1] * yb % 16 == 0 &&
-      sbat[2] * yb % 16 == 0 && y->address % 16 == 0)
-    p.aligned |= NX_CONTRACT_Y_WHOLE;
+                       : wide && (acc == NX_INT64 || acc == NX_UINT64);
+  if (!init && natural && p->sy[2] == 1 && p->sy[1] * yb % 16 == 0 &&
+      p->sy[0] * yb % 16 == 0 && y->address % 16 == 0)
+    p->aligned |= NX_CONTRACT_Y_WHOLE;
 
   /* The split sum's partials and tickets, the tickets zeroed first. */
-  if (splits > 1) {
+  if (l.splits > 1) {
     const int acc_bytes = sum == ACC_f64 || sum == ACC_i64 ? 8 : 4;
-    const uint64_t tickets = (uint64_t)batch * gx;
-    p.partials = (void *)(uintptr_t)take(
-        &used, (size_t)tickets * splits * values * threads * acc_bytes);
-    p.tickets = (uint32_t *)(uintptr_t)take(&used, tickets * 4);
-    zero_params z = {p.tickets, tickets};
+    const uint64_t tickets = (uint64_t)batch * l.blocks;
+    p->partials = (void *)(uintptr_t)take(
+        &c.used, (size_t)tickets * l.splits * l.sums * acc_bytes);
+    p->tickets = (uint32_t *)(uintptr_t)take(&c.used, tickets * 4);
+    zero_params z = {p->tickets, tickets};
     if ((e = add(out, NX_CUDA_zero_u32, (uint32_t)ceil_div(tickets, 256), 1,
                  1, 256, 0, &z, sizeof z, NX_ZERO_ADDRS, NX_ZERO_SCRATCH)) != 0)
       goto fail;
-    records++;
-    mask |= NX_CONTRACT_SCRATCH_SPLIT;
+    c.records++;
+    c.mask |= NX_CONTRACT_SCRATCH_SPLIT;
   }
-  if ((e = add(out, kernel, (uint32_t)gx, (uint32_t)splits, (uint32_t)batch,
-               (uint32_t)threads, (uint32_t)shared, &p, sizeof p,
-               NX_CONTRACT_ADDRS, mask)) != 0)
+  if ((e = add(out, l.kernel, (uint32_t)l.blocks, (uint32_t)l.splits,
+               (uint32_t)batch, (uint32_t)l.threads, (uint32_t)l.shared, p,
+               sizeof *p, NX_CONTRACT_ADDRS, c.mask)) != 0)
     goto fail;
-  *scratch = used;
-  return records + 1;
+  *scratch = c.used;
+  return c.records + 1;
 
 fail:
   out->len = len;
