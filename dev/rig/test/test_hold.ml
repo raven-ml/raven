@@ -173,8 +173,39 @@ let test_named () =
   at_least ~msg:"a read follows the hold's work" int ~than:v (Rig.signaled e);
   let copy = Sub.Copy { src = m'; dst = m } in
   let part = { Sub.queue = "COPY:0"; after = [||]; work = copy } in
+  let filled c =
+    let b = B.create Rig.host 64 in
+    Bigarray.Array1.fill (B.bigarray Bigarray.char b) c;
+    b
+  in
+  let contents b =
+    let back = B.create Rig.host 64 in
+    B.copy ~src:b ~dst:back;
+    let ba = B.bigarray Bigarray.char back in
+    String.init 64 (Bigarray.Array1.get ba)
+  in
+  B.copy ~src:(filled 'a') ~dst:m';
   ignore (submit (Sub.make ~reads:0 ~writes:0 d [| part |]));
-  ignore (submit (Sub.make ~hold:h ~reads:0 ~writes:0 d [| part |]))
+  equal ~msg:"a copy with no hold" string (String.make 64 'a') (contents m);
+  B.copy ~src:(filled 'b') ~dst:m';
+  ignore (submit (Sub.make ~hold:h ~reads:0 ~writes:0 d [| part |]));
+  equal ~msg:"a copy with another hold" string (String.make 64 'b') (contents m)
+
+(* A submission made with a hold may use any of its memory, named or not: it
+   follows another device's write of the hold's memory, still queued, though it
+   names none of it. *)
+let test_follows_hold () =
+  let d, _ = P.open_ "hold:follows" and e, pe = P.open_ "hold:follows-other" in
+  let m = B.create d 64 and m' = B.create d 64 in
+  let h = H.make [ m; m' ] in
+  let w = require_some (B.borrow e m') in
+  let writes = Sub.make ~reads:0 ~writes:1 e [||] in
+  let v =
+    Rig.Point.value (Rig.submit writes ~reads:[||] ~writes:[| w |] ~waits:[||])
+  in
+  equal ~msg:"the write, unrun" int 1 (P.queued pe);
+  ignore (submit (Sub.make ~hold:h ~reads:0 ~writes:0 d [||]));
+  at_least ~msg:"the hold's submission follows it" int ~than:v (Rig.signaled e)
 
 (* Refusals *)
 
@@ -298,6 +329,8 @@ let tests =
           test_memory_returns;
         test "held memory is named as any memory, its uses after the hold's"
           test_named;
+        test "a submission with a hold follows foreign work on its memory"
+          test_follows_hold;
         test "memory is in one hold at most" test_one_hold;
         test "a dead buffer is not held" test_dead;
         test "held memory a device's queue copies copies in and out"

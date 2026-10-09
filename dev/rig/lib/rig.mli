@@ -633,10 +633,11 @@ end
     A linked program keeps its fixed memory in one hold, and its images and the
     driver objects its work uses reachable through the hold's release. A hold
     has one stamp per device, raised to the point of each submission made with
-    it ({!Submission.make}), whose work may use any of the hold's memory. Every
-    use of that memory follows each stamp of the hold, a read as a write does,
-    beside the memory's own stamps. The memory returns once the hold is
-    unreachable and each of its stamps is reached. *)
+    it ({!Submission.make}), whose work may use any of the hold's memory, and
+    of each submission that names some of that memory. Every use of the
+    memory, and every submission made with the hold, follows each stamp of the
+    hold, a read as a write does, beside the memory's own stamps. The memory
+    returns once the hold is unreachable and each of its stamps is reached. *)
 module Hold : sig
   type t
   (** The type for holds. *)

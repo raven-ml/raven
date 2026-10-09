@@ -381,7 +381,8 @@ static void add_uses(struct rig_sub *s, int own, struct rig_stamps *st) {
 
 /* Adds the points the use of [sl] follows: its last write, every use if
    the work writes it, and every use of its hold's stamps. Reserves [own]'s
-   use word in its stamps. */
+   use word in its stamps and in its hold's: a submission made with the hold
+   may use any of the hold's memory, so it follows every use of any. */
 static void add_slot(struct rig_sub *s, int own, struct rig_slot *sl,
                      int write) {
   struct rig_stamps *st = sl->stamps;
@@ -390,6 +391,7 @@ static void add_slot(struct rig_sub *s, int own, struct rig_slot *sl,
   if (w != 0 && RIG_INDEX(w) != own) add_point(s, own, w);
   if (write) add_uses(s, own, st);
   struct rig_stamps *hold = held(st);
+  sl->held_use = hold != NULL ? reserve(hold, own) : NULL;
   if (hold != NULL) add_uses(s, own, hold);
 }
 
@@ -418,7 +420,10 @@ value caml_rig_sub_collect(value v_s, value v_waits, value v_hold) {
     add_slot(s, own, &s->slots[k], k >= s->nreads);
   for (mlsize_t k = 0; k < Wosize_val(v_waits); k++)
     add_point(s, own, (uint64_t)Long_val(Field(v_waits, k)));
-  if (s->hold != NULL) s->hold_use = reserve(s->hold, own);
+  if (s->hold != NULL) {
+    s->hold_use = reserve(s->hold, own);
+    add_uses(s, own, s->hold);
+  }
   if (s->handles_stale) collect_handles(s, nslots);
   return Val_int(s->npoints);
 }
@@ -455,11 +460,12 @@ void rig_sub_raise(struct rig_sub *s, uint64_t p) {
   for (int k = 0; k < s->nfixed; k++) {
     if (s->fixed_write[k]) raise_last_write(s->fixed[k].stamps, p);
     raise_own(s->fixed[k].use, p);
+    if (s->fixed[k].held_use != NULL) raise_own(s->fixed[k].held_use, p);
   }
-  for (int k = 0; k < s->nreads; k++) raise_own(s->slots[k].use, p);
-  for (int k = s->nreads; k < s->nreads + s->nwrites; k++) {
-    raise_last_write(s->slots[k].stamps, p);
+  for (int k = 0; k < s->nreads + s->nwrites; k++) {
+    if (k >= s->nreads) raise_last_write(s->slots[k].stamps, p);
     raise_own(s->slots[k].use, p);
+    if (s->slots[k].held_use != NULL) raise_own(s->slots[k].held_use, p);
   }
   if (s->hold != NULL) raise_own(s->hold_use, p);
 }

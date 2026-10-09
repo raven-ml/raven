@@ -124,13 +124,15 @@ static inline struct rig_stamps *held(struct rig_stamps *s) {
 
 /* A slot of a prepared submission: a memory's stamps, NULL while unset,
    the handle by which the device names it, and the device's use word in
-   the stamps, reserved at each submit. A slot's handle outlives its
+   the stamps and, for memory in a hold, in the hold's, reserved at each
+   submit. A slot's handle outlives its
    clearing, so a submit whose slots name the handles of the last one
    collects none. */
 struct rig_slot {
   struct rig_stamps *stamps;
   uint64_t handle;
   _Atomic uint64_t *use;
+  _Atomic uint64_t *held_use; /* NULL for memory in no hold */
 };
 
 /* A handle a collect added, by hash: an entry of an earlier epoch is

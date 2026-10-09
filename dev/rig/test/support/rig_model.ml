@@ -1528,6 +1528,7 @@ let submit_ref last rc wc sc outcome =
       uses vd [ d ];
       reads vd r.mem;
       waits_all vd wb.mem;
+      Option.iter (fun h -> waits ~all:true vd h.hstamps) sub.held;
       (match sub.copy with
       | Some (a, b) ->
           reads vd a.mem;
@@ -1541,7 +1542,10 @@ let submit_ref last rc wc sc outcome =
             unknown b)
           (wb :: parts);
         maybe_use r.mem.stamps d;
-        Option.iter (fun h -> maybe_use h.hstamps d) sub.held
+        Option.iter (fun h -> maybe_use h.hstamps d) sub.held;
+        List.iter
+          (fun b -> Option.iter (fun h -> maybe_use h.hstamps d) b.mem.hold)
+          (r :: wb :: parts)
       in
       match outcome with
       | Error (Invalid_argument _) when slot r = `Either || slot wb = `Either ->
@@ -1558,6 +1562,9 @@ let submit_ref last rc wc sc outcome =
               use r.mem.stamps d;
               write wb.mem.stamps d;
               Option.iter (fun h -> use h.hstamps d) sub.held;
+              List.iter
+                (fun b -> Option.iter (fun h -> use h.hstamps d) b.mem.hold)
+                (r :: wb :: parts);
               Option.iter (fun m -> use m.stamps d) sub.arg;
               match sub.copy with
               | Some (a, b) ->
