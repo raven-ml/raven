@@ -62,21 +62,10 @@
    which runs again only once the others' windows end. A job of 65,536
    empty chunks on every core of the M1 Max ran past 100 us in 1.2-2.7% of
    jobs without the yield and 0.1-0.4% with it, with the host near idle.
-   The mean ms a job of 65,536 units of 64 multiply-adds on every core,
-   beside:
-
-                                    6 x86 cores          M1 Max
-                                  yield    no yield   yield    no yield
-     nothing                      0.88     0.88       0.79     0.74
-     a busy process per core      2.4-2.8  1.8        3.4-4.9  2.5-2.8
-     busy processes on half       1.76     1.86       2.19     1.70
-     another pool                 1.8      1.9-2.0    1.62     1.60
-     two other pools              2.7      2.9-3.0    2.38     2.16
-     busy processes and 2 pools   4.3-4.5  3.5-3.8    5.04     3.27
-
-   Yielding only after 10-60 us of spinning, or sleeping 1 us in its place,
-   lost to keeping the core on the M1 Max wherever a busy program took
-   cores. */
+   Beside one busy process per core, jobs on every core took 2.4-2.8 ms
+   with the yield and 1.8 without on 6 x86 cores (fair share 1.75), 3.4-4.9
+   and 2.5-2.8 on the M1 Max; beside other pools the yield was 6-10% faster
+   on x86 and even on the M1. */
 static const uint64_t spin_ns = 100000;
 
 /* A worker's stack, the size of a main thread's on Linux and macOS, so that
