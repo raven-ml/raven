@@ -627,9 +627,9 @@ let test_past_the_caches () =
       equal ~msg:(D.name d) (list string) [] (differ (reference a d) dst))
     [ D.Any D.Float64; D.Any D.Int32; D.Any D.Float16 ]
 
-(* A copy and a cast of several MiB into an int4 view that starts inside a
-   byte, in rows of an odd length: blocks on different threads share their
-   end bytes. *)
+(* Copies and casts of several MiB into int4 views that start inside a byte,
+   on several threads: rows of an odd length, and one axis whose blocks
+   share their end bytes. *)
 let test_sub_byte_threads () =
   let rows = 513 and cols = 4097 in
   let base = seeded D.Int4 [| rows; cols + 1 |] 5 in
@@ -642,7 +642,17 @@ let test_sub_byte_threads () =
   in
   let dst = Option.get (A.move view base) in
   cast_into_keeps (Case (seeded D.Int8 [| rows; cols |] 7), Case base, Case dst);
-  copy_into_keeps (Case (seeded D.Int4 [| rows; cols |] 9), Case base, Case dst)
+  copy_into_keeps (Case (seeded D.Int4 [| rows; cols |] 9), Case base, Case dst);
+  (* One axis from element 1: a block ends on an odd element, so the next
+     block's first element shares its byte, and the two blocks run on
+     different threads. *)
+  let n = (4 * 1024 * 1024) + 1 in
+  let base = seeded D.Int4 [| n + 1 |] 11 in
+  let dst =
+    Option.get (A.move (M.Slice [| { M.start = 1; count = n; step = 1 } |]) base)
+  in
+  cast_into_keeps (Case (seeded D.Int8 [| n |] 13), Case base, Case dst);
+  copy_into_keeps (Case (seeded D.Int4 [| n |] 15), Case base, Case dst)
 
 (* The door *)
 
