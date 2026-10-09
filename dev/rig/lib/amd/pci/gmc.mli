@@ -40,10 +40,10 @@ val fabric : t -> int -> int
 val hive : t -> bool
 (** [hive g] is [true] iff the GPU is one of several joined by a fabric. *)
 
-val link : t -> gpus:int -> Rig_pci.Memory.link option
+val link : t -> gpus:int Lazy.t -> Rig_pci.Memory.link option
 (** [link g ~gpus] is the GPU's place in its fabric, its node's number, if
     {!hive} and the machine's [gpus] AMD GPUs number the fabric's nodes; [None]
-    otherwise. Halves of two fabrics that number one fabric's nodes are taken
+    otherwise. [gpus] is forced only if {!hive}. Halves of two fabrics that number one fabric's nodes are taken
     for one fabric. *)
 
 val instances : t -> [ `Gc | `Mm ] -> int list

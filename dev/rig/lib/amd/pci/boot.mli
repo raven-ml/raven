@@ -57,7 +57,7 @@ val space : Rig_pci.Space.t
     ({!Rig_pci.Machine.reserve}): 2{^ 44} bytes from [0x2000_0000_0000]. *)
 
 val start :
-  gpus:int ->
+  gpus:int Lazy.t ->
   Rig_pci.Function.t ->
   (string -> digest:string -> (string, string) result) ->
   (t, [ `Refused of string | `Running | `Lost of string ]) result

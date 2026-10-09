@@ -200,7 +200,9 @@ let path g h fn ~index : Memory.region Amd.path =
    answered: the hold's stop then answers so. *)
 let boot h fn find =
   let lost () = Gpus.set_stop h (fun () -> `Lost) in
-  let gpus = List.length (Gpus.buses gpus (Rig_pci.Function.machine fn)) in
+  let gpus =
+    lazy (List.length (Gpus.buses gpus (Rig_pci.Function.machine fn)))
+  in
   match Boot.start ~gpus fn find with
   | Ok g -> Ok g
   | Error (`Refused why) -> Error (`Refused why)

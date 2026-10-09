@@ -170,9 +170,9 @@ let hive g = g.hive
    machine's only one when the machine's AMD GPUs number its nodes. Otherwise
    the GPUs reach each other through their BARs. A machine whose AMD GPUs number
    one fabric's nodes but belong to several, as two halves of two fabrics, is
-   taken for one fabric. *)
+   taken for one fabric. Only a GPU in a fabric counts them. *)
 let link g ~gpus =
-  if g.hive && gpus = g.regions + 1 then
+  if g.hive && Lazy.force gpus = g.regions + 1 then
     Some { Rig_pci.Memory.fabric = 0L; node = g.region }
   else None
 
