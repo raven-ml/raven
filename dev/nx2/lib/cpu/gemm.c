@@ -108,28 +108,18 @@ static uint8_t *scratch(problem *p, int worker, int64_t bytes) {
 
 /* Dtypes */
 
-static int is_int(int dt) {
-  enum nx_kind k = nx_dtype_row_of(dt).kind;
-  return k == NX_KIND_SIGNED || k == NX_KIND_UNSIGNED;
-}
-
-/* Whether every value of [d] is one of [acc]'s. */
+/* Whether every value of [d] is one of [acc]'s, float32 or float64, as
+   nx_cpu.mli lists them: the booleans, the floats of at most [acc]'s
+   width, and the integers of at most half of it. */
 static int holds(int acc, int d) {
-  enum nx_kind k = nx_dtype_row_of(d).kind;
-  int bits = nx_dtype_row_of(d).bits;
-  if (d == acc || k == NX_KIND_BOOLEAN) return 1;
-  switch (acc) {
-    case NX_FLOAT32:
-      return (k == NX_KIND_FLOAT && bits < 32) || (is_int(d) && bits <= 16);
-    case NX_FLOAT64:
-      return holds(NX_FLOAT32, d) || d == NX_FLOAT32 ||
-             (is_int(d) && bits <= 32);
-    case NX_COMPLEX64: return d == NX_FLOAT32 || holds(NX_FLOAT32, d);
-    case NX_COMPLEX128:
-      return d == NX_COMPLEX64 || d == NX_FLOAT64 || holds(NX_FLOAT64, d);
-    default:
-      return is_int(acc) && is_int(d) &&
-             bits <= nx_dtype_row_of(acc).bits;
+  nx_dtype_row r = nx_dtype_row_of(d);
+  int width = nx_dtype_row_of(acc).bits;
+  switch (r.kind) {
+    case NX_KIND_BOOLEAN: return 1;
+    case NX_KIND_FLOAT: return r.bits <= width;
+    case NX_KIND_SIGNED:
+    case NX_KIND_UNSIGNED: return r.bits <= width / 2;
+    default: return 0;
   }
 }
 
