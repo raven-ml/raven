@@ -83,26 +83,33 @@ typedef struct {
 /* Contract */
 
 /* The contraction kernels' geometry, which plan.c and contract.metal
-   share. Dense tiles of NX_METAL_THREADS threads, rows × columns × steps
-   of k: large ones, small ones for products of few tiles, wide ones for
-   products of few rows; NX_METAL_BK_HALF steps for half and bytes in the
-   square tiles, NX_METAL_BK otherwise, NX_METAL_BK_WIDE in the wide ones.
-   Skinny products of one row: columns of out a threadgroup computes, b
-   stored [n][k] (T) or [k][n] (N). Integers on the SIMD units: tile and
-   threads. Packs: a threadgroup's tile side, and its threads, PACK / 4
-   × PACK_ROWS. */
+   share. */
+
+/* Dense tiles of THREADS threads, rows × columns: large ones for products
+   of many whole tiles, small ones for products of few tiles or past whole
+   tiles, wide ones for products of few rows. */
 #define NX_METAL_THREADS 128
 #define NX_METAL_LARGE 64
 #define NX_METAL_SMALL 32
 #define NX_METAL_WIDE_M 16
 #define NX_METAL_WIDE_N 64
-#define NX_METAL_BK 16
+
+/* The steps of k a dense tile stages: float16 and bytes in the square
+   tiles, the other dtypes there, and every dtype in the wide ones. */
 #define NX_METAL_BK_HALF 32
+#define NX_METAL_BK 16
 #define NX_METAL_BK_WIDE 32
+
+/* The columns of out a skinny threadgroup computes, b stored [n][k] (T) or
+   [k][n] (N). */
 #define NX_METAL_SKINNY_T 4
 #define NX_METAL_SKINNY_N 32
+
+/* The SIMD integer kernel's tile side and threads. */
 #define NX_METAL_INT_TILE 64
 #define NX_METAL_INT_THREADS 256
+
+/* A pack's tile side, and its threads: PACK / 4 × PACK_ROWS. */
 #define NX_METAL_PACK 64
 #define NX_METAL_PACK_ROWS 16
 

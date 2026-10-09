@@ -806,15 +806,12 @@ kernel void pack(constant nx_metal_pack &p [[buffer(0)]],
   contract<D, BT, EDGE, BM, BN, BK>(constant nx_metal_contract &, uint3,  \
                                     uint, uint, uint);
 
-/* Each float dtype: large tiles, unchecked, for products of whole tiles
-   with b stored either way; small ones (_s) for products of few tiles and
-   every product past whole tiles, b stored [k][n]; and wide ones (_w) for
-   products of few rows, b stored either way. The small and wide tiles'
-   one instance each reads tiles reaching past the matrix: measured, its
-   checks cost nothing on whole tiles (256 and 512 squares within 3%;
-   16-row products 10-13% faster than an unchecked twin), where the large
-   tile's cost 2-11% (f32 4096-nt 9%, 64 x 512 batches 8-11%). The
-   large tile with b stored [n][k] stages as DT. */
+/* Each float dtype's instances, as kernels.h lists them. The large tile
+   is compiled unchecked: checks cost it 2-11% on whole tiles (f32
+   4096-nt 9%, 64 x 512 batches 8-11%). The small and wide tiles check, at
+   no measured cost on whole tiles (256 and 512 squares within 3%; 16-row
+   products 10-13% faster than an unchecked twin). The large tile with b
+   stored [n][k] stages as DT. */
 #define FLOATS(name, D, DT)                                             \
   CONTRACT(name "_n", D, false, false, NX_METAL_LARGE, NX_METAL_LARGE,   \
            elt<D>::bk)                                                    \
