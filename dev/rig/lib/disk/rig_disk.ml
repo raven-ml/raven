@@ -4,9 +4,10 @@
   ---------------------------------------------------------------------------*)
 
 (* Every function may be called from any domain. The descriptor table is guarded
-   by one lock ([locked]); a copy pins its file's descriptor under it and moves
-   its bytes outside it, so copies of several domains run at once and a pinned
-   descriptor is never closed under a transfer. *)
+   by one lock ([locked]). A copy pins its file's descriptor, taking the lock
+   only to reopen it (Pins), and moves its bytes outside it, so copies of
+   several domains run at once and a pinned descriptor is never closed under a
+   transfer. *)
 
 let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
@@ -70,13 +71,13 @@ type file = {
   size : int;
   identity : string;
   mutable fd : int; (* [-1] while closed *)
-  mutable users : int; (* copies using [fd] *)
-  mutable newer : file; (* links in the idle ring, [f] itself out of it *)
+  mutable users : int; [@atomic] (* copies using [fd], [-1] while it closes *)
+  mutable newer : file; (* links in the table's ring, [f] itself out of it *)
   mutable older : file;
   mutable pages : pages option; (* its mapping, once a borrow made it *)
 }
 
-(* A file not yet open, out of the idle ring. *)
+(* A file not yet open, out of the ring. *)
 let file ~path ~writable ~size ~identity =
   let rec f =
     {
@@ -99,10 +100,11 @@ let sys_error f why = raise (Sys_error (strf "%s: %s" f.path why))
 
 (* The table holds the descriptors of files with an identity: at most
    [max_open], more only while copies pin them, the least recently used unpinned
-   one closed to open another. The unpinned ones are idle, in a ring through
-   [idle] from the most recently used ([idle.newer]) to the least
-   ([idle.older]), so an open or a copy takes the same few steps and allocates
-   nothing however full the table is. *)
+   one closed to open another. They are in a ring through [ring], from the most
+   recently used ([ring.newer]) to the least ([ring.older]). A pin leaves its
+   file where it is and [trim] passes over pinned files, so a copy of the most
+   recently used file changes no link, and an open or a copy takes the same few
+   steps and allocates nothing however full the table is. *)
 let max_open = 64
 let in_table = ref 0
 
@@ -120,10 +122,25 @@ let rec table_lock () =
     table_lock ()
   end
 
-let locked f = Mutex.protect (table_lock ()) f
+(* [locked g x] is [g x] under the table's lock. [g] is a toplevel function, so
+   a call makes no closure. *)
+let locked g x =
+  let m = table_lock () in
+  Mutex.lock m;
+  match g x with
+  | r ->
+      Mutex.unlock m;
+      r
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      Mutex.unlock m;
+      Printexc.raise_with_backtrace e bt
 
 (* The ring's ends: a file of no path, never open. *)
-let idle = file ~path:"" ~writable:false ~size:0 ~identity:""
+let ring = file ~path:"" ~writable:false ~size:0 ~identity:""
+
+(* Whether the table holds [f]'s descriptor while it is open. *)
+let listed f = f.identity <> ""
 
 let unlink f =
   f.older.newer <- f.newer;
@@ -131,53 +148,67 @@ let unlink f =
   f.newer <- f;
   f.older <- f
 
-(* Puts the unpinned [f] at the ring's most recent end, if its descriptor is in
-   the table. *)
-let rest f =
-  if f.identity <> "" && f.fd >= 0 then begin
-    f.older <- idle;
-    f.newer <- idle.newer;
-    idle.newer.older <- f;
-    idle.newer <- f
+(* Puts [f], whose descriptor is in the table, at the ring's most recent end. *)
+let touch f =
+  if ring.newer != f then begin
+    unlink f;
+    f.older <- ring;
+    f.newer <- ring.newer;
+    ring.newer.older <- f;
+    ring.newer <- f
   end
 
+(* Closes [f]'s descriptor, which no copy pins, and ends an eviction's claim on
+   [users]. The file reads as closed before the system's call, which may raise
+   an asynchronous exception. *)
 let close_fd f =
-  if f.fd >= 0 then begin
-    close f.fd;
+  let fd = f.fd in
+  if fd >= 0 then begin
     f.fd <- -1;
-    if f.identity <> "" then begin
+    if listed f then begin
       decr in_table;
       unlink f
-    end
+    end;
+    f.users <- 0;
+    close fd
   end
 
-(* Closes the least recently used idle descriptors while more than [max_open]
-   are open: the table comes back to its bound once a burst of pins ends. *)
-let trim () =
-  while !in_table > max_open && idle.older != idle do
-    close_fd idle.older
+(* Closes [f]'s descriptor unless a copy pins it. It claims [users] at 0, so no
+   pin starts meanwhile. *)
+let evict f =
+  if Atomic.Loc.compare_and_set [%atomic.loc f.users] 0 (-1) then close_fd f
+
+(* Closes the least recently used unpinned descriptors while more than [keep]
+   are open. *)
+let close_down keep =
+  let f = ref ring.older in
+  while !in_table > keep && !f != ring do
+    let g = !f in
+    f := g.newer;
+    if g.users = 0 then evict g
   done
+
+(* Brings the table back to its bound, once the pins that took it beyond end. *)
+let trim () = close_down max_open
 
 let admit f fd =
   f.fd <- fd;
-  if f.identity <> "" then begin
+  if listed f then begin
     incr in_table;
-    trim ()
+    touch f
   end
 
 (* Opens [path], closing every unpinned descriptor and trying once more if the
    process has too many open. *)
 let open_retrying path mode n =
-  match open_path path mode n with
-  | code, _, _, _ when code = too_many && idle.older != idle ->
-      while idle.older != idle do
-        close_fd idle.older
-      done;
-      open_path path mode n
-  | r -> r
+  let ((code, _, _, _) as r) = open_path path mode n and before = !in_table in
+  if code <> too_many then r
+  else begin
+    close_down 0;
+    if !in_table < before then open_path path mode n else r
+  end
 
-(* [f]'s descriptor, opened again by its path if it was closed, which must still
-   name [f]'s file. *)
+(* Opens [f]'s path again, which must still name [f]'s file. *)
 let reopen f =
   match
     open_retrying f.path (if f.writable then write_mode else read_mode) 0
@@ -188,25 +219,76 @@ let reopen f =
       sys_error f "the path names another file since its buffers opened it"
   | code, _, _, _ -> sys_error f (why code)
 
-let pin f =
-  locked @@ fun () ->
-  if f.fd < 0 then reopen f else if f.users = 0 then unlink f;
-  f.users <- f.users + 1;
+(* Pins
+
+   A copy pins its file's descriptor, which no eviction closes while [users] is
+   above 0. An open descriptor is pinned and unpinned by one step on [users],
+   without the table's lock: an eviction closes a descriptor only by claiming
+   [users] from 0, and a pin that finds the file closed reopens it under the
+   lock. An unpin takes the lock only to make its file the most recently used or
+   to bring the table back to its bound. *)
+
+(* [f]'s descriptor, opened again by its path if it was closed, pinned. Holds
+   the table's lock. *)
+let pinned f =
+  if f.fd < 0 then reopen f;
+  Atomic.Loc.incr [%atomic.loc f.users];
+  trim ();
   f.fd
 
-let unpin f =
-  locked @@ fun () ->
-  f.users <- f.users - 1;
-  if f.users = 0 then begin
-    rest f;
+(* The end of a pin that left [f] unpinned. Holds the table's lock. *)
+let unpinned f =
+  if f.users = 0 && f.fd >= 0 && listed f then begin
+    touch f;
     trim ()
   end
+
+(* [pin f] is [f]'s descriptor, which no eviction closes until [unpin f]. *)
+let rec pin f =
+  let n = f.users in
+  if n < 0 then locked pinned f
+  else if not (Atomic.Loc.compare_and_set [%atomic.loc f.users] n (n + 1)) then
+    pin f
+  else
+    let fd = f.fd in
+    if fd >= 0 then fd
+    else begin
+      Atomic.Loc.decr [%atomic.loc f.users];
+      locked pinned f
+    end
+
+let unpin f =
+  if
+    Atomic.Loc.fetch_and_add [%atomic.loc f.users] (-1) = 1
+    && listed f
+    && (ring.newer != f || !in_table > max_open)
+  then locked unpinned f
 
 (* [using f fn] is [fn fd] with [f]'s descriptor [fd] pinned. Raises [Sys_error]
    naming [f] if it cannot be reopened. *)
 let using f fn =
   let fd = pin f in
-  Fun.protect ~finally:(fun () -> unpin f) (fun () -> fn fd)
+  match fn fd with
+  | r ->
+      unpin f;
+      r
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      unpin f;
+      Printexc.raise_with_backtrace e bt
+
+(* [moved f transfer at addr len] is [transfer fd at addr len] with [f]'s
+   descriptor [fd] pinned: [using] without a closure, for copies. *)
+let moved f transfer at addr len =
+  let fd = pin f in
+  match transfer fd at addr len with
+  | k ->
+      unpin f;
+      k
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      unpin f;
+      Printexc.raise_with_backtrace e bt
 
 (* The disk as an io device *)
 
@@ -225,11 +307,10 @@ module Io = struct
        Rig_disk.of_file or Rig_disk.create_file"
 
   (* Nothing reaches [f]: no pin is held. *)
-  let free () f = locked (fun () -> close_fd f)
+  let free () f = locked close_fd f
 
   let read () f ~at ~dst ~len =
-    using f @@ fun fd ->
-    let k = pread fd at dst len in
+    let k = moved f pread at dst len in
     if k < 0 then sys_error f (error (-k));
     if k < len then
       sys_error f
@@ -238,8 +319,7 @@ module Io = struct
   (* Rig writes no file opened for reading: its memory admits only reads
      ([Rig.Buffer.access]). *)
   let write () f ~at ~src ~len =
-    using f @@ fun fd ->
-    let k = pwrite fd at src len in
+    let k = moved f pwrite at src len in
     if k < 0 then sys_error f (error (-k))
 
   (* A file opened for writing maps shared, so the mapping is the file; one
@@ -281,11 +361,11 @@ let open_file path mode n =
       | 0, fd, size, identity ->
           let f = file ~path ~writable ~size ~identity in
           admit f fd;
-          rest f;
+          trim ();
           Ok f
       | code, _, _, _ -> Error (strf "%s: %s" path (why code))
     in
-    locked opened
+    locked opened ()
     |> Result.map (fun f ->
         let access = if f.writable then Rig.Buffer.Read_write else Read in
         Rig.Buffer.of_io device Io.region_key f ~access f.size)
