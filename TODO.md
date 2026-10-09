@@ -59,3 +59,16 @@ next model targets:
 - quantized inference: gguf loading (tinygrad `gguf_load` parity; the tolk
   gpt2 example's gguf path), int8/int4 kernels (int4 currently rejected by
   rune's jit) — pairs with llama3
+
+## perf
+
+- rig pool, kimchi: launch/empty-performance-cores and launch/empty-all-cores
+  time the same 6-thread job and read 0.51-0.71 us by process, each process
+  steady within 0.4%, so a bless records one mode; find what sets the mode and
+  make the rows hold one
+- rig pool stall bound: a waiting thread parks once the job it waits on has
+  been closed with a thread inside for 10-20 us. In a probe it cut the jobs
+  that last a spin window when a preempted thread holds every other core
+  (M1 claim job past 100 us: 1.2-2.7% to 0.28-0.36%; kimchi beside a busy
+  process: 0.41-0.46% to 0.01-0.03%) at 2-3 times the parks; measure it on
+  every compute, launch and claim row of both hosts before it lands
