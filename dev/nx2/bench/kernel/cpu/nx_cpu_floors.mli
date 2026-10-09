@@ -17,7 +17,8 @@
     product of few rows does, also reads their bytes, floor-read-64M-all on
     every core. An elementwise kind's floor streams its operands' bytes with
     one integer operation per element, floor-stream-2x4-4-1M-all reading two
-    arrays of 1 Mi 4-byte elements and writing one on every core. *)
+    arrays of 1 Mi 4-byte elements and writing one on every core; a where's
+    floor-select-4-1M also reads its condition's bytes. *)
 
 (** The type for the work of a kernel row. *)
 type work =
@@ -32,6 +33,10 @@ type work =
           from each of [ins] arrays, at most 3, and writes [n] of [outb]
           bytes, as an elementwise kind does; [inb] and [outb] are [1] and
           [1], [4] and [1], [4] and [4], or [8] and [8]. *)
+  | Select of { inb : int; n : int }
+      (** [Select { inb; n }] reads [n] condition bytes and [n] elements of
+          [4] bytes from each of two arrays, and writes [n] of [4], as a
+          where does; [inb] is [4]. *)
 
 val rows : work list -> Thumper.bench list
 (** [rows ws] is the floor rows that bound [ws], each once, then

@@ -85,15 +85,16 @@ value nx_cpu_bench_floor_move(value threads, value in, value out, value dst,
   return Val_unit;
 }
 
-/* Streams: [ins] arrays of [n] elements of [inb] bytes read, their xor
-   stored into [n] elements of [outb] bytes, one integer operation per
-   element: the floor of an elementwise kind's loop. With no array read it
-   stores a constant, as a fill does. */
+/* Streams: [ins] arrays of [n] elements read, their xor stored into [n]
+   elements of [outb] bytes, one integer operation per element: the floor
+   of an elementwise kind's loop. The inputs are [inb] bytes each, or, for
+   where's, a byte then two of [inb] bytes. With no array read it stores a
+   constant, as a fill does. */
 typedef struct {
   uint8_t *d;
   const uint8_t *s[3];
   int64_t n, total;
-  int ins, inb, outb;
+  int ins, inb, outb, cond;
 } stream_job;
 
 #define STREAM(TI, TO)                                                       \
@@ -117,6 +118,14 @@ static void stream_slice(int64_t lo, int64_t hi, int worker, void *ctx) {
   uint8_t *d = f->d + first * f->outb;
   const uint8_t *s[3];
   for (int k = 0; k < 3; k++) s[k] = f->s[k] + first * f->inb;
+  if (f->cond) {
+    /* A condition byte, then two words: where's operands. */
+    const uint8_t *c = f->s[0] + first;
+    const uint32_t *a = (const uint32_t *)s[1], *b = (const uint32_t *)s[2];
+    uint32_t *o = (uint32_t *)d;
+    for (int64_t i = 0; i < n; i++) o[i] = c[i] ^ a[i] ^ b[i];
+    return;
+  }
   switch (f->inb * 100 + f->outb) {
     case 101: STREAM(uint8_t, uint8_t); return;
     case 401: STREAM(uint32_t, uint8_t); return;
@@ -131,14 +140,17 @@ value nx_cpu_bench_floor_stream(value threads, value ins, value inb,
                                 value outb, value dst, value a, value b,
                                 value c, value n) {
   int t = Int_val(threads);
+  /* [ins] of -1 asks for where's: a condition byte, then two of [inb]. */
+  int cond = Int_val(ins) < 0;
   stream_job f = {Caml_ba_data_val(dst),
                   {Caml_ba_data_val(a), Caml_ba_data_val(b),
                    Caml_ba_data_val(c)},
                   Long_val(n),
                   t * SLICES,
-                  Int_val(ins),
+                  cond ? 3 : Int_val(ins),
                   Int_val(inb),
-                  Int_val(outb)};
+                  Int_val(outb),
+                  cond};
   if (t == 1) {
     f.total = 1;
     stream_slice(0, 1, 0, &f);

@@ -11,6 +11,7 @@ type work =
   | Fma of D.any * int
   | Read of int
   | Stream of { ins : int; inb : int; outb : int; n : int }
+  | Select of { inb : int; n : int }
 
 type bytes =
   (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
@@ -96,6 +97,7 @@ type floor =
   | Peak of { f64 : bool; n : int }
   | Bytes_read of int
   | Streamed of { ins : int; inb : int; outb : int; n : int }
+  | Selected of { inb : int; n : int }
 
 (* A codec's source and destination, and their bytes per element. *)
 let codec_pair = function
@@ -120,6 +122,7 @@ let floor_name = function
   | Peak { f64; n } -> strf "fma-%s-%s" (if f64 then "f64" else "f32") (count n)
   | Bytes_read n -> strf "read-%s" (count n)
   | Streamed s -> strf "stream-%dx%d-%d-%s" s.ins s.inb s.outb (count s.n)
+  | Selected s -> strf "select-%d-%s" s.inb (count s.n)
 
 (* The flops of a peak's row: a rate, the same for every contraction, about
    10 ms on one core. A row's floor is its flops at that rate. *)
@@ -145,6 +148,7 @@ let floors = function
   | Fma (dt, _) -> [ Peak { f64 = dt = D.Any D.Float64; n = peak_flops } ]
   | Read n -> [ Bytes_read n ]
   | Stream { ins; inb; outb; n } -> [ Streamed { ins; inb; outb; n } ]
+  | Select { inb; n } -> [ Selected { inb; n } ]
 
 (* The floors of [ws], each once, in the order the work asks for them. *)
 let needed ws =
@@ -189,12 +193,16 @@ let floor_rows ws =
         pair
           (fun () -> (buffer (outb * n), src 0, src 1, src 2))
           (fun (d, a, b, c) -> floor_stream threads ins inb outb d a b c n)
+    | Selected { inb; n } ->
+        pair
+          (fun () -> (buffer (inb * n), buffer n, buffer (inb * n), buffer (inb * n)))
+          (fun (d, c, a, b) -> floor_stream threads (-1) inb inb d c a b n)
   in
   let floors =
     List.filter
       (function
         | Codec _ | Peak _ | Bytes_read _ -> codecs_run ()
-        | Memcpy _ | Move _ | Streamed _ -> true)
+        | Memcpy _ | Move _ | Streamed _ | Selected _ -> true)
       (needed ws)
   in
   List.concat_map

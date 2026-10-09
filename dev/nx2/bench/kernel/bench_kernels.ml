@@ -215,7 +215,7 @@ let apply_rows =
         (fun (module K) (x, y, dst) -> K.apply2 (Binary Add) ~dst x y);
       binary "add-i8-1M" (Binary Add) D.Int8 m D.Int8;
       binary "less-f32-1M" (Compare Less) f32 m D.Bool;
-      apply ~work:(stream 2 4 4 m) "where-f32-1M"
+      apply ~work:(F.Select { inb = 4; n = m }) "where-f32-1M"
         (fun () ->
           let c = A.create Rig.host D.Bool [| m |] in
           ok
