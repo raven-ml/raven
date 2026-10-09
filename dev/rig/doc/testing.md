@@ -30,10 +30,20 @@ Layout mirrors `lib/`. A library's suites live in `test/<lib>/` as
 `test_<module>.ml` (rig's in `test/`), helpers shared by two suites (or by
 a suite and a bench) in `test/<lib>/support/`, and fixtures in
 `test/<lib>/fixtures/` with the command that made them. Its benches live in
-`bench/<lib>/` and read their fixtures from `test/<lib>/fixtures/`. A suite
-reads only its own directory. Every top-level group sets `~timeout`, and
-`dev/rig/dune` sets `WINDTRAP_TIMEOUT` to 60 s for any test without one,
-because a test that never ends blocks every build on the shared watch server.
+`bench/<lib>/` and read their fixtures from `test/<lib>/fixtures/`; the GPU
+bench reads each vendor's. A suite reads only its own directory. What every
+GPU suite shares lives once in `test/support/`: `rig_gpu_lock`, the
+machine's GPU lock, which links no rig, and `rig_gpu_support`, host memory
+by address and a GPU of one driver opened through rig (below). A tool that
+makes fixtures for several libraries lives in `test/gen/`, such as
+`nvrtc.c`, which compiles the NV suites' cubins. Every top-level group sets
+`~timeout`, and `dev/rig/dune` sets `WINDTRAP_TIMEOUT` to 60 s for any test
+without one, because a test that never ends blocks every build on the shared
+watch server.
+
+A test names only what an `.mli` documents or an installed C header
+declares. A hidden section (`(**/**)`) holds only what modules of the same
+library need from each other; no test, bench or other library names it.
 
 ## Laws, cases and models
 
@@ -220,18 +230,28 @@ either way, so the walk checks the least growth of the four against 128 bytes:
 the one thing a failure may keep, a lost device's reason, and the allocator's
 rounding.
 
-A library whose driver has a seam of its own, such as a path record or a
-transport, walks it the same way, with a countdown copied into its own
-support. A library without one walks under a limit of a child process alone:
-the disk (`test/disk/test_walk.ml`) under limits of a file's size and of open
-files, and host programs (`test/host/test_walk.ml`) under a limit of the
-address space, on Linux, where it bounds mappings.
+A driver walks its real resources: the walk counts what an operation
+takes and makes the `k`-th acquisition fail, for every `k`, under a limit
+that a forked child alone carries, so nothing shared is exhausted. NVIDIA's
+kernel path (`test/nv/nvidia/test_walk.ml`) runs each operation with `k`
+more files than it holds, so the open of each file it takes fails once, and
+a process's first open with a few bytes of address space, so the reservation
+of the GPU's addresses fails. After each failure the walk checks that the
+outcome is one the `.mli` states, that the child holds no more files or
+mappings than before (`/proc/self/fd`, `/proc/self/maps`), that the
+operation succeeds once the limit is lifted, and that the GPU opens again.
+The same limits reach pinned memory (`RLIMIT_MEMLOCK` against a page
+range's pin), and on AMD the KFD and render-node files and the doorbell
+mappings, which no walk takes yet. The disk (`test/disk/test_walk.ml`) walks under limits of a
+file's size and of open files, and host programs (`test/host/test_walk.ml`)
+under a limit of the address space, on Linux, where it bounds mappings.
 
 **Drivers on their hardware.** A driver's fault path is tested on its GPU. A
 test that faults or hangs a GPU joins a suite only after one guarded run: one
 process, nothing else using the GPU, killed after 60 s, and the GPU checked
-idle with no memory in use afterwards. The shared Linux hosts give no root, so
-a wedged GPU cannot be reset there.
+idle with no memory in use afterwards. kimchi gives no root, so a wedged GPU
+cannot be reset there; nonnormal's root serves only the driver-less AMD path
+(below).
 
 `test/cuda/test_fault.ml` is such a test. Value 1 stores to address 0; value 2,
 queued behind it, would copy into a watched host buffer. The test checks that
@@ -250,10 +270,11 @@ failure path is therefore tested through the ring's C seam
 completes slots as failed in any order. On the GPU, "a failed fill stops the
 word before its value" covers a submission that fails as it is made.
 
-pci injects failure at its transport: "a transport failing at access k ends a
-step in Error, never in bytes" (`test/pci/test_function.ml`) fails the k-th
-access of a driver's step, for every k, and requires the step to end in the
-machine's reason.
+pci still injects failure at a fake transport: "a transport failing at access
+k ends a step in Error, never in bytes" (`test/pci/test_function.ml`) fails
+the k-th access of a driver's step, for every k, and requires the step to
+end in the machine's reason. It goes with pci's fake machines (below); a
+link's failure is then tested over a real connection to a real agent.
 
 Long work is no fault: a device is lost only on its driver's report, and no
 timeout decides it. The CUDA suite holds it as "long work is no fault, and a
@@ -275,17 +296,22 @@ stream test of other sizes can pass every crossing it makes.
 
 What each ring suite holds:
 
-- Room. `room` answers `Fits`, `Later` or `Never`: `Later` only while the rings
-  hold unreached work, `Fits` once the word reaches the last value, `Never` for
-  parts that do not fit the empty rings or exceed the part bound. Parts whose
-  declared sizes are near `max_int` must answer `Never`: summing them as 64-bit
-  integers can wrap and answer `Fits` for work no ring holds.
+- Room. A driver's `room` answers `Never` for parts that do not fit its empty
+  rings or exceed the part bound, and `Rig.submit` raises `Invalid_argument`
+  for them: "a submission of work the device does not run raises"
+  (`test/cuda/test_cuda.ml`, `test/nv/test_nv.ml`) submits ring words, ring
+  units and segment bytes CUDA does not run, and NV's fills, a copy on its
+  compute queue, a ring entry cut in half, more words than a segment holds and
+  more parts than its rings hold, and checks the refusal is the room's and no
+  value was assigned. `Later` is the core's to wait out; Polled's `~capacity`
+  holds it in rig's own suites. Parts whose declared sizes are near `max_int`
+  must answer `Never`: summing them as 64-bit integers can wrap and answer
+  `Fits` for work no ring holds.
 - Streams longer than the rings, with every byte of every copy checked at the
   end.
-- Counters past their width. "a Word wait holds the work across the 64-bit
-  wrap (sampled)" (`test/cuda/test_cuda.ml`). A counter that wraps only after
-  billions of values is reached through a hidden seam that renumbers an idle
-  device (`Rig_amd.renumber`), so the test makes a handful of submissions.
+- Counters past their width. A counter that wraps only after billions of
+  values is reached through a hidden seam that renumbers an idle device
+  (`Rig_amd.renumber`), so the test makes a handful of submissions.
 - Order. The Metal ring model above: releases in commit order whatever order
   slots complete in.
 
@@ -300,22 +326,40 @@ with the GPU has run its GPU tests. No test sweeps every device of the host.
 
 Suites and benches take turns on a machine's GPUs through one lock: `flock`
 on `/tmp/raven-rig-gpu.lock`, shared by every checkout and user of the
-machine. A suite that finds its GPU calls its support's `hold_gpu` before
-`Windtrap.run`, so the wait counts against no test's timeout; a bench calls
-it before `Thumper.run`, so the workers it forks measure under the lock, and
-no GPU row runs beside a GPU test. `hold_gpu` decides from files alone
-(`/dev/nvidiactl`, the Metal framework, `/sys`) and starts no vendor library,
-which a bench must not start before it forks. The process holds the lock
+machine, taken by `Rig_gpu_lock.hold`. The caller decides whether the
+machine has its GPU, from files alone (`/dev/nvidiactl`, the Metal
+framework, `/sys`), and takes the lock only then; deciding starts no vendor
+library, which a bench must not start before it forks. A suite takes the
+lock before `Windtrap.run`, so the wait counts against no test's timeout; a
+bench takes it before `Thumper.run`, so the workers it forks measure under
+the lock, and no GPU row runs beside a GPU test. The process holds the lock
 until it exits; the holder writes its executable and process id into the
-file. A process still waiting after 300 s fails, naming the holder. Under
-`dune runtest` the GPU suites of a machine therefore run one after another.
+file. While another process holds it, `hold` prints the file's note once,
+which names an earlier holder when the holder took the lock with the
+shell's `flock`. A process still waiting after 300 s fails. Under `dune
+runtest` the GPU suites of a machine therefore run one after another.
+
+A suite reaches its GPU through `Rig_gpu_support.Make`, applied once in its
+support to the driver and a line that says whether the machine has the GPU
+(`present`). `open_` opens the GPU, hands the driver's device to rig under
+one name of the GPU's and gives back both (`{ d; g }`); `close` is
+`Rig.close`; `with_` brackets the two; `submit` and `wait` go through rig.
+Before it opens, `open_` ends what the last open made, as a failed test
+leaves it, so no test stops a driver rig owns and one name serves every
+test. A test of the driver alone, which rig never takes, opens it with
+`driver` and stops it with `stop_driver`; `release` ends either kind, for a
+test that opens the GPU's driver itself on a GPU that has one device at a
+time. A test of the driver's stop states it through `Rig.close` where the
+statement survives, and through a loss where work must still run when the
+device stops, since a close waits for the work first. CUDA's, Metal's and
+NV's supports apply `Make`; AMD's still keeps its own fixture and a copy of
+the lock.
 
 One lock order holds everywhere: the GPU lock first, then the hosts' timing
 locks, so nothing waits for the GPU while it holds a timing lock. A timing
 run of a GPU bench on kimchi or nonnormal takes the GPU lock in the shell,
 then the timing locks, and tells the bench it holds it with
-`RIG_GPU_LOCK_HELD=1`, which makes `hold_gpu` and rig's GPU bench
-return at once:
+`RIG_GPU_LOCK_HELD=1`, which makes `Rig_gpu_lock.hold` return at once:
 
 ```
 flock -w 1800 /tmp/raven-rig-gpu.lock env RIG_GPU_LOCK_HELD=1 \
@@ -341,9 +385,15 @@ passes on the Mac, under the sanitize profile, and on Linux. Tests that need
 two GPUs ("map each other's memory") skip on every host, since each has one.
 
 Paths a library reads from the host (`/sys`, `/proc`, `/dev`, a firmware
-directory) are data its private module takes. The suite runs that code on a
-fixture tree built under the test's own `_build` directory on every machine,
-and checks the live machine with one read-only test.
+directory) are data. Where the library's public entry takes the host's files
+as data, a machine at a root or a firmware directory, the suite runs that
+entry on fixture trees built under the test's own `_build` directory on
+every machine. Otherwise its parsers are tested live, on the host's own
+files, on the host that has the device; no public reader exists only so that
+a test can reach a parser, and hardware no host has gets no fixture test.
+Three suites still reach such a reader through a hidden section: pci's
+machine at a root (`Machine.at`), and amdgpu's and nvidia's GPU lists
+(`gpus_at`).
 
 Tests never exhaust a shared resource: threads, processes, file descriptors,
 memory, GPU memory or disk. A failure path that needs a limit is reached by a
@@ -353,29 +403,46 @@ every job; with none, the calling thread runs every chunk"
 where it binds that process only. Without such a limit or a seam that injects
 the failure, the case is not tested.
 
-## What cannot be tested without root
+## No simulations, and root
 
-The hosts give no root. Taking a PCI function from its kernel driver, VFIO,
-BAR windows and GPU page tables on real hardware, and the driver-less AMD and
-NV paths built on them, cannot run there.
+No test simulates a kernel, a device, its firmware or its registers. A
+component that answers a library's calls in place of the hardware proves
+only that the library agrees with the component, and the bugs are in what
+the hardware does (ordering, visibility, completion, cost). What a test may
+give a library is:
 
-pci tests its own logic on fake machines. A transport is a machine the library
-already supports, so a fake is a transport that keeps each operation's
-contract, records each call, and records as `wrong` any call that breaks the
-contract, which the library had to refuse before asking
-(`test/pci/test_function.ml`, `test/pci/test_gpus.ml`). Machine files come
-from fixture trees (`Machine.at root`). The fakes find bugs in pci's own
-logic. "system memory is freed before its addresses are handed out again"
-(`test/pci/test_memory.ml`) has the fake's `free_dma` ask the shared address
-space for memory while it frees. A free that returns a region's addresses to
-the space before it frees the system memory at them lets another GPU's owner,
-on another domain, map over memory still being freed.
+- data it parses: sysfs and `/proc` trees, discovery tables, firmware and
+  VBIOS headers, an ioctl's answer written as bytes, recorded from a machine
+  or built from the vendor's layout;
+- values it encodes, compared with the vendor's specification, such as an
+  entry's bits or a message's checksum;
+- the core's reference implementation of its own extension point: Polled
+  implements `Rig.Driver` and stands for no vendor.
 
-A fake cannot show hardware ordering, visibility or cost. The hardware paths
-are not implemented against fakes and wait for a host with root. On the hosts,
-the live tests take only what the process may take, such as a function behind
-an IOMMU, which needs no root, and skip otherwise. Tests of file permissions
-skip when run as root, which opens a file whatever its mode.
+A state the public interface reaches too slowly, such as a counter past
+2^32, is reached through a seam the library documents, in a section of its
+`.mli` or in an installed header (`rig_metal_ring.h`), never through a
+hidden one.
+
+Three simulations remain, and their tests move to hardware: the host path
+of `test/amd/test_amd.ml`, whose rings nothing runs; the fake RM path of
+`test/nv/test_nv.ml`, which still holds the hang-bound laws and the
+local-memory handover; and pci's fake machines and transports
+(`test/pci/test_function.ml`, `test/pci/test_gpus.ml`,
+`test/pci/test_memory.ml`), which fail an access at a chosen count. A test
+that hands a fake device's values to rig opens it through `Rig.open_` and
+submits through `Rig.submit`, as a program does.
+
+kimchi gives no root. nonnormal gives root for one purpose: the driver-less
+AMD path on its R9700, which takes the GPU from amdgpu, boots it with no
+kernel driver and gives it back. Every such run takes the machine's GPU
+lock first, unbinds the GPU, runs, and gives it back to amdgpu by its
+reload protocol before it releases the lock. Deliberate faulting or hanging
+runs on a shared GPU host need the maintainer's go, beyond the fault suites
+already run on kimchi (CUDA's and NV's). The live tests elsewhere take only
+what the process may take, such as a function behind an IOMMU, and skip
+otherwise. Tests of file permissions skip when run as root, which opens a
+file whatever its mode.
 
 ## Sanitizers
 
@@ -484,16 +551,17 @@ rows and their numbers.
 
 ## A new driver's tests
 
-A driver's suite holds, on its GPU:
+A driver's suite opens its GPU through `Rig_gpu_support.Make` and holds, on
+its GPU:
 
 - Its facts and its refusals, with misuse raising `Invalid_argument` at each
   bound the `.mli` states.
 - Copies through any two kinds of its memory as the identity (`prop`).
-- Room: `Later` only while a value is unreached, `Never` past the empty rings,
-  ring wraps drawn at exact and near fits, and streams longer than the rings.
-- The timeline: values complete in order, the word never moves backwards, a
-  wait across its counter's wrap, long work that is no fault, `stop` of an
-  idle device and of a running one.
+- Room: work the device does not run refused through `Rig.submit`, ring
+  wraps drawn at exact and near fits, and streams longer than the rings.
+- The timeline: values complete in order, the word never moves backwards,
+  long work that is no fault, a close of an idle device that leaves the word
+  at the last value, and a loss that stops running work.
 - End-once for regions, mappings and images from two domains
   (`stateful ~domains:2`).
 - Its fault path, after a guarded run, in a suite of its own if a fault
