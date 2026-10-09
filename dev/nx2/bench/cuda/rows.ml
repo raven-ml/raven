@@ -144,7 +144,7 @@ let contracts =
   let open D in
   let bf16 = Any Bfloat16 and f16 = Any Float16 and f32 = Any Float32 in
   let i8 = Any Int8 and i32 = Any Int32 and f64 = Any Float64 in
-  let i16 = Any Int16 and i64 = Any Int64 in
+  let i16 = Any Int16 and i64 = Any Int64 and e4m3 = Any Float8_e4m3fn in
   let squares dt =
     List.map
       (fun s -> contract dt f32 dt s s s)
@@ -164,6 +164,8 @@ let contracts =
       contract bf16 f32 bf16 512 201088 2880;
       contract bf16 f32 bf16 1 5120 2880;
       contract f16 f32 f16 1 5120 2880;
+      (* float8 weights, packed to bfloat16 *)
+      contract e4m3 f32 bf16 1 5120 2880;
       contract bf16 f32 bf16 1 201088 2880;
       contract bf16 f32 bf16 4096 14336 4096;
       contract ~batch:64 bf16 f32 bf16 512 512 512;

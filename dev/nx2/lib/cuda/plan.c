@@ -182,7 +182,8 @@ static int pack(nx_cuda_records *out, size_t *used, const void **operand,
   pack_params q = {(const void *)(uintptr_t)address, (void *)(uintptr_t)at,
                    {sz, sr, sk}, lead, (int32_t)batch, (int32_t)rows,
                    (int32_t)k, dtype, to, es};
-  const uint64_t n = (uint64_t)(batch * rows * lead);
+  /* A thread a 16-byte vector. */
+  const uint64_t n = (uint64_t)(batch * rows * lead) / per;
   const uint32_t grid = (uint32_t)(ceil_div(n, 256) < 65535 ? ceil_div(n, 256) : 65535);
   *operand = (const void *)(uintptr_t)at;
   strides[0] = rows * lead, strides[1] = lead, strides[2] = 1;
