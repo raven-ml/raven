@@ -227,7 +227,7 @@ value nx_cpu_fill(value vbits, value vd) {
    odometer over its axes. */
 typedef struct {
   uint8_t *base;
-  int64_t inner, ext;
+  int64_t numel, inner, ext;
   void (*run)(void *d, int64_t lo, int64_t hi, int64_t inner, int64_t ext);
 } iota_job;
 
@@ -303,10 +303,12 @@ static const iota_fns iotas[NX_DTYPE_COUNT] = {
 /* Elements of an iota's unit of work. */
 #define IOTA_UNIT (16 * 1024)
 
+/* Units [lo, hi) of the job: the last one ends at the last element. */
 static void iota_body(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)worker;
   const iota_job *j = ctx;
-  j->run(j->base, lo * IOTA_UNIT, hi * IOTA_UNIT, j->inner, j->ext);
+  int64_t end = hi * IOTA_UNIT < j->numel ? hi * IOTA_UNIT : j->numel;
+  j->run(j->base, lo * IOTA_UNIT, end, j->inner, j->ext);
 }
 
 value nx_cpu_iota(value vaxis, value vd) {
@@ -326,15 +328,9 @@ value nx_cpu_iota(value vaxis, value vd) {
   for (int i = axis + 1; i < a->rank; i++) inner *= a->dim[i];
   if (numel > 0 && (a->flags & NX_CONTIGUOUS)) {
     int w = a->bits / 8;
-    iota_job j = {a->base + a->offset * w, inner, a->dim[axis], f->run};
-    /* The last unit runs past [numel]: it is cut to it. */
+    iota_job j = {a->base + a->offset * w, numel, inner, a->dim[axis], f->run};
     int64_t units = (numel + IOTA_UNIT - 1) / IOTA_UNIT;
-    if (numel % IOTA_UNIT == 0) {
-      nx_cpu_job(units, numel * w, numel * w, iota_body, &j);
-    } else {
-      nx_cpu_job(units - 1, numel * w, numel * w, iota_body, &j);
-      f->run(j.base, (units - 1) * IOTA_UNIT, numel, inner, a->dim[axis]);
-    }
+    nx_cpu_job(units, numel * w, numel * w, iota_body, &j);
   } else if (numel > 0)
     f->odometer(a, axis);
   nx_done(1, a);
