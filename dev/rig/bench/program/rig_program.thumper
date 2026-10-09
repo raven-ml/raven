@@ -20,6 +20,10 @@ step/remote-1900	wall_time	batch=32	n=20	2.435e-04	2.405e-04 2.406e-04 2.409e-04
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
 
+agent/floor-spins-16	alloc_words	exact	140
+agent/floor-spins-16	wall_time	batch=4	n=20	2.640e-03	2.538e-03 2.567e-03 2.586e-03 2.589e-03 2.602e-03 2.620e-03 2.622e-03 2.631e-03 2.635e-03 2.639e-03 2.641e-03 2.642e-03 2.649e-03 2.650e-03 2.654e-03 2.667e-03 2.669e-03 2.682e-03 2.683e-03 2.691e-03
+agent/spins-16	alloc_words	exact	304
+agent/spins-16	wall_time	batch=2	n=20	2.785e-03	2.440e-03 2.603e-03 2.614e-03 2.638e-03 2.642e-03 2.745e-03 2.762e-03 2.765e-03 2.774e-03 2.781e-03 2.790e-03 2.802e-03 2.812e-03 2.814e-03 2.823e-03 2.831e-03 2.840e-03 2.869e-03 2.904e-03 2.939e-03
 polled/floor-launch-1	alloc_words	exact	0
 polled/floor-launch-1	wall_time	batch=65536	n=20	1.299e-07	1.295e-07 1.296e-07 1.296e-07 1.296e-07 1.296e-07 1.297e-07 1.297e-07 1.298e-07 1.298e-07 1.299e-07 1.300e-07 1.300e-07 1.301e-07 1.301e-07 1.302e-07 1.304e-07 1.305e-07 1.315e-07 1.316e-07 1.318e-07
 polled/floor-launches-64	alloc_words	batch=1024	n=20	4.150e-01	4.150e-01 4.150e-01 4.150e-01 4.150e-01 4.150e-01 4.150e-01 4.150e-01 4.150e-01 4.150e-01 4.150e-01 4.150e-01 4.150e-01 4.150e-01 4.150e-01 4.150e-01 4.150e-01 4.150e-01 4.150e-01 4.150e-01 4.150e-01
