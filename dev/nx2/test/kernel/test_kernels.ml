@@ -405,6 +405,18 @@ let large_of dts =
 
 let large = Gen.with_pp pp_case (large_of dtypes)
 
+(* Transposed arrays whose rows lie a multiple of 4 KiB apart, as a
+   4096-wide matrix's do: a tile's rows share their addresses' low bits. *)
+let aliased =
+  Gen.with_pp pp_case
+    (let open Gen in
+     let* (D.Any dt) = dtypes in
+     let* h = of_list ~pp:Format.pp_print_int [ 1; 9; 70 ] in
+     let+ seed = int in
+     Case
+       (Option.get
+          (A.move (M.Permute [| 1; 0 |]) (seeded dt [| h; 4096 |] seed))))
+
 let covers (Case a) =
   let l = A.layout a in
   let n = L.numel l in
@@ -723,6 +735,8 @@ let laws (b : Support.backend) =
         (run (fun c ->
              covers_large c;
              law_copy b c));
+      prop ~count:16 "copy of views with rows 4 KiB apart is bits for bits"
+        aliased (run (law_copy b));
       test "copy keeps NaN payloads" (unit (test_copy_nan_payloads b));
       prop "cast is the reference, element by element" (pair case)
         (run (fun ((Case a as c), D.Any d) ->

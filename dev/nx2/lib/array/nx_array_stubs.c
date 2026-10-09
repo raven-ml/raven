@@ -732,7 +732,7 @@ static inline __attribute__((always_inline)) void block(
    between. 32 bytes of each line at a time beat the 16 of 4x4 blocks: a
    transposed 512x512 float32 copy on one thread takes 36.4 us against
    59.2 in 4x4 blocks on the M1, where Accelerate's vDSP_mtrans takes 35.4,
-   and 44.3 against 61.7 on kimchi. */
+   and 35.5 against 61.7 on kimchi, where OpenBLAS takes 41.2. */
 #if defined(__aarch64__)
 static inline __attribute__((always_inline)) void transpose4(
     uint32x4_t a, uint32x4_t b, uint32x4_t c, uint32x4_t e, uint32x4_t *o) {
@@ -762,23 +762,29 @@ static inline __attribute__((always_inline)) void block8(uint8_t *d, int64_t dr,
     }
 }
 #elif defined(__x86_64__)
+/* x86-64 writes each row's 32 bytes with two adjacent stores: a transposed
+   512x512 float32 copy on one kimchi thread takes 35.5 us against 43.8
+   with the halves of four rows interleaved. arm64 gains nothing from it. */
 static inline __attribute__((always_inline)) void block8(uint8_t *d, int64_t dr,
                                                          const uint8_t *s,
                                                          int64_t sc) {
-  for (int h = 0; h < 2; h++)
+  for (int h = 0; h < 2; h++) {
+    __m128 t[2][4];
     for (int v = 0; v < 2; v++) {
-      const float *b = (const float *)(s + 4 * v * sc + 16 * h);
-      __m128 x0 = _mm_loadu_ps(b);
-      __m128 x1 = _mm_loadu_ps((const float *)((const uint8_t *)b + sc));
-      __m128 x2 = _mm_loadu_ps((const float *)((const uint8_t *)b + 2 * sc));
-      __m128 x3 = _mm_loadu_ps((const float *)((const uint8_t *)b + 3 * sc));
+      const uint8_t *b = s + 4 * v * sc + 16 * h;
+      __m128 x0 = _mm_loadu_ps((const float *)b);
+      __m128 x1 = _mm_loadu_ps((const float *)(b + sc));
+      __m128 x2 = _mm_loadu_ps((const float *)(b + 2 * sc));
+      __m128 x3 = _mm_loadu_ps((const float *)(b + 3 * sc));
       _MM_TRANSPOSE4_PS(x0, x1, x2, x3);
-      uint8_t *o = d + 4 * h * dr + 16 * v;
-      _mm_storeu_ps((float *)o, x0);
-      _mm_storeu_ps((float *)(o + dr), x1);
-      _mm_storeu_ps((float *)(o + 2 * dr), x2);
-      _mm_storeu_ps((float *)(o + 3 * dr), x3);
+      t[v][0] = x0, t[v][1] = x1, t[v][2] = x2, t[v][3] = x3;
     }
+    for (int p = 0; p < 4; p++) {
+      uint8_t *o = d + (4 * h + p) * dr;
+      _mm_storeu_ps((float *)o, t[0][p]);
+      _mm_storeu_ps((float *)(o + 16), t[1][p]);
+    }
+  }
 }
 #else
 static inline __attribute__((always_inline)) void block8(uint8_t *d, int64_t dr,

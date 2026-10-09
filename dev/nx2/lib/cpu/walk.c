@@ -32,13 +32,18 @@
 #define SHORT 8
 
 /* A tile is TILE_WIDE bytes of its widest operand wide along the rows: one
-   128-byte line on the M1, a pair of 64-byte lines on x86-64, which its
-   spatial prefetcher fetches together. Along a row it reads across at most
-   TILE_SPAN bytes of the input's address range. On kimchi a transposed
-   float32 copy of 512x512 takes 14.1 us in tiles of 32 x 512 and 16.7 in
-   64 x 64; of 4096x4096, 3.3 ms in tiles spanning 1 MiB and 4.0 in tiles
-   spanning 2 MiB. */
+   128-byte line on the M1, eight 64-byte lines on x86-64. Along a row it
+   reads across at most TILE_SPAN bytes of the input's address range. On
+   kimchi a transposed float32 copy of 512x512 takes 12.4 us in tiles 512
+   bytes wide and 13.5 in tiles 128 wide, of 4096x4096 3.21 ms and 3.41;
+   on the M1 the 512x512 takes 11.7 us in tiles 512 bytes wide and 9.8 in
+   tiles 128 wide. Of 4096x4096 on kimchi, 3.3 ms in tiles spanning 1 MiB
+   and 4.0 in tiles spanning 2 MiB. */
+#if defined(__x86_64__)
+#define TILE_WIDE 512
+#else
 #define TILE_WIDE 128
+#endif
 #define TILE_SPAN (1 << 20)
 
 /* A walk that moves elements one by one, through tiles or along strides,

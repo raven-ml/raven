@@ -6,8 +6,9 @@
 /* Copies and casts.
 
    A copy moves bits, a block at a time through nx.array's nx_copy_block:
-   rows of bytes by memcpy, a transposed source in 4x4 blocks, sub-byte
-   rows as runs of whole bytes with compare-and-swap ends, other strides
+   rows of bytes by memcpy, a transposed source in square blocks (on
+   x86-64 through a buffer where its rows lie 4 KiB apart), sub-byte rows
+   as runs of whole bytes with compare-and-swap ends, other strides
    element by element. A cast is unstage ∘ stage: the stage brings
    the source's block to its carrier, in place where the source is already
    one in contiguous rows, and the unstage converts the carrier into the
@@ -52,8 +53,37 @@ static void cast_block(const nx_cpu_block *b, void *ctx) {
   nx_cpu_unstage(&a[0], b, 0, slot, b->n0 * w, c);
 }
 
+#if defined(__x86_64__)
+/* The bytes of a tile staged on x86-64. There a load waits for an earlier
+   store whose address has the same low 12 bits, and the rows of a tile
+   whose input rows lie a multiple of 4 KiB apart all share theirs with the
+   output's: such a tile is first copied row by row into a buffer, then
+   transposed from it. A transposed 4096x4096 float32 copy on kimchi takes
+   2.91 ms against 3.21; on the M1, which has no such wait, staging took it
+   from 1.7 to 2.6 ms. */
+#define STAGE (32 * 1024)
+
+/* Out of line, so that only a staged tile's call takes the buffer's stack. */
+static __attribute__((noinline)) void staged(const nx_cpu_block *b,
+                                             const nx_array *a) {
+  _Alignas(64) uint8_t tile[STAGE];
+  nx_copy_block(tile, 0, b->n1, 1, a[1].base, b->at[1], b->s0[1], 1, b->n0,
+                b->n1, a[0].bits);
+  nx_copy_block(a[0].base, b->at[0], b->s1[0], 1, tile, 0, 1, b->n1, b->n1,
+                b->n0, a[0].bits);
+}
+#endif
+
 static void copy_block(const nx_cpu_block *b, void *ctx) {
   const nx_array *a = ctx;
+#if defined(__x86_64__)
+  int64_t w = a[0].bits / 8;
+  if (b->s0[0] == 1 && b->s1[1] == 1 && a[0].bits >= 8 &&
+      b->s0[1] * w % 4096 == 0 && b->n0 * b->n1 * w <= STAGE) {
+    staged(b, a);
+    return;
+  }
+#endif
   nx_copy_block(a[0].base, b->at[0], b->s1[0], b->s0[0], a[1].base, b->at[1],
                 b->s1[1], b->s0[1], b->n1, b->n0, a[0].bits);
 }
