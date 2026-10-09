@@ -307,6 +307,15 @@ let claim_rows =
       row "with-24"
         (fun () -> (List.init slots (fun _ -> host 16), [ [ host 16 ] ]))
         (fun (read, donate) -> Claim.with_ ~read ~donate ignore);
+      (* A donation's answer on memory no one shared, a thousand times under
+         one with_. *)
+      row "exclusive-1000"
+        (fun () -> host 16)
+        (fun b ->
+          Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
+              for _ = 1 to 1000 do
+                ignore (Sys.opaque_identity (Claim.exclusive c b))
+              done));
       row "c-read-release-3"
         (fun () -> (host 16, host 16, host 16))
         (fun (a, b, c) -> claim_3 a b c);

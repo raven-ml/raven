@@ -100,7 +100,7 @@ val no_entry : entry
     is set for [Read] memory. The read claims count in steps of {!one_claim}.
     Only the word {!one_claim}, one claim and no bit, becomes {!exclusive}, then
     {!consumed} once the claims consumed the memory, then {!exported} once the
-    consumer exported or shared it. {!make} sets the bits. *)
+    consumer exported it. {!make} sets the bits. *)
 
 val outside : int
 val read_only : int

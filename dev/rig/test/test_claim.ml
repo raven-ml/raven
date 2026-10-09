@@ -239,31 +239,40 @@ let test_release_kept () =
   Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
       equal bool false (Claim.exclusive c b))
 
-(* A share through a view puts all the memory outside the claims for good:
-   no later with_ holds it exclusive, and readers claim and release it as
-   before. *)
-let test_share () =
-  let b = B.create Rig.host 16 in
-  Claim.share (B.view b ~first:8 ~length:4);
-  Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
-      equal ~msg:"through a view" bool false (Claim.exclusive c b));
-  Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
-      equal ~msg:"for good" bool false (Claim.exclusive c b));
+let donated_exclusive b =
+  Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c -> Claim.exclusive c b)
+
+(* Memory shared through one buffer is never exclusive through another: a view,
+   a borrow, the buffer itself. Sharing it again changes nothing, and readers
+   claim and release it as before. *)
+let test_share_covers () =
+  let d =
+    require_ok ~pp:Format.pp_print_string (Rig.memory_device "claim:share")
+  in
+  let fresh () =
+    let b = B.create Rig.host (1 lsl 16) in
+    (b, B.view b ~first:0 ~length:8, require_some (B.borrow d b))
+  in
+  let b, view, borrowed = fresh () in
+  equal ~msg:"unshared" bool true (donated_exclusive b);
+  Claim.share view;
+  equal ~msg:"shared through a view, the buffer" bool false
+    (donated_exclusive b);
+  equal ~msg:"shared through a view, the borrow" bool false
+    (donated_exclusive borrowed);
+  Claim.share view;
+  Claim.share b;
+  equal ~msg:"shared again" bool false (donated_exclusive b);
   Claim.read b;
   Claim.release b;
   raises_match ~msg:"no read claim left" Exn.invalid_arg (fun () ->
-      Claim.release b)
-
-(* A share through a borrow puts the memory it maps outside the claims. *)
-let test_share_borrow () =
-  let d =
-    require_ok ~pp:Format.pp_print_string
-      (Rig.memory_device "claim:share-borrow")
-  in
-  let b = B.create Rig.host (1 lsl 16) in
-  Claim.share (require_some (B.borrow d b));
-  Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
-      equal bool false (Claim.exclusive c b))
+      Claim.release b);
+  let b, _, borrowed = fresh () in
+  Claim.share borrowed;
+  equal ~msg:"shared through the borrow" bool false (donated_exclusive b);
+  let b, _, borrowed = fresh () in
+  Claim.share b;
+  equal ~msg:"shared through the buffer" bool false (donated_exclusive borrowed)
 
 (* A value of several buffers is exclusive only if each of them is. *)
 let test_shards () =
@@ -332,38 +341,29 @@ let test_dead_claims () =
   Claim.read live;
   Claim.release live
 
-(* A share under an exclusive claim is refused and marks nothing; once the
-   memory is consumed the dead buffer is refused, and the consumption's buffer
-   shares. *)
-let test_share_refusals () =
+(* Sharing a dead buffer, or memory claims hold exclusive, before or after they
+   consumed it, raises and changes nothing. *)
+let test_share_refused () =
   let b = B.create Rig.host 16 in
+  Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
+      raises_match ~msg:"held" Exn.invalid_arg (fun () -> Claim.share b);
+      equal ~msg:"held, after the refusal" bool true (Claim.exclusive c b));
+  equal ~msg:"unshared" bool true (donated_exclusive b);
+  let b =
+    Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
+        let b' = Claim.consume c ~why:"consumed" b in
+        raises_match ~msg:"consumed" Exn.invalid_arg (fun () -> Claim.share b');
+        equal ~msg:"consumed, after the refusal" bool true
+          (Claim.exclusive c b');
+        b')
+  in
+  equal ~msg:"unshared" bool true (donated_exclusive b);
   let b' =
     Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
-        raises_match ~msg:"held exclusive" Exn.invalid_arg (fun () ->
-            Claim.share b);
         Claim.consume c ~why:"donated" b)
   in
   raises_match ~msg:"dead" (dead "donated") (fun () -> Claim.share b);
-  Claim.with_ ~read:[] ~donate:[ [ b' ] ] (fun c ->
-      equal ~msg:"the refusal marked nothing" bool true (Claim.exclusive c b'));
-  Claim.share b';
-  Claim.with_ ~read:[] ~donate:[ [ b' ] ] (fun c ->
-      equal ~msg:"shared" bool false (Claim.exclusive c b'))
-
-(* A consumer that shares or exports the buffer consume gave holds it exclusive
-   no longer. *)
-let test_share_consumed () =
-  let shared = B.create Rig.host 16 in
-  Claim.with_ ~read:[] ~donate:[ [ shared ] ] (fun c ->
-      let b = Claim.consume c ~why:"donated" shared in
-      equal ~msg:"consumed" bool true (Claim.exclusive c b);
-      Claim.share b;
-      equal ~msg:"shared" bool false (Claim.exclusive c b));
-  let exported = B.create Rig.host 16 in
-  Claim.with_ ~read:[] ~donate:[ [ exported ] ] (fun c ->
-      let b = Claim.consume c ~why:"donated" exported in
-      ignore (B.bigarray Bigarray.char b);
-      equal ~msg:"exported" bool false (Claim.exclusive c b))
+  equal ~msg:"the live buffer" bool true (donated_exclusive b')
 
 (* Claims that outlive their with_ hold nothing: beside a live with_ over the
    same memory, a stale claim is not exclusive and consumes nothing. *)
@@ -721,9 +721,8 @@ let tests =
         test "a bigarray's memory is never exclusive" test_of_bigarray;
         test "a release without a read claim keeps a bigarray's hidden one"
           test_release_kept;
-        test "a share through a view is never exclusive again" test_share;
-        test "a share through a borrow reaches the memory it maps"
-          test_share_borrow;
+        test "memory shared through any of its buffers is never exclusive"
+          test_share_covers;
         test "a value of several buffers is exclusive only if each is"
           test_shards;
         test "an export under an exclusive claim waits for the consumption"
@@ -737,10 +736,8 @@ let tests =
           test_consume_refusals;
         test "a dead buffer refuses claims and accepts a release"
           test_dead_claims;
-        test "a share waits for the consumption and refuses its dead buffer"
-          test_share_refusals;
-        test "a consumer that shares its buffer holds it exclusive no longer"
-          test_share_consumed;
+        test "sharing a dead buffer or memory held exclusive is refused"
+          test_share_refused;
         test "a claim whose with_ returned holds nothing" test_stale_returned;
         test "a claim whose with_ raised holds nothing" test_stale_raised;
         test "a buffer's death is a fact with its reason" test_dead_fact;

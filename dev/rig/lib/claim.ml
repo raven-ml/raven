@@ -41,7 +41,24 @@ let take fn b =
 
 let read b = take "Claim.read" b
 let release b = release_claim b.mem.claim
-let share b = Buffer.share "Claim.share" b
+
+(* Sets [c]'s outside bit, or is [false] while claims hold it exclusive,
+   consumed or not: shared memory is never held exclusive, so [exclusive] need
+   not read the word. *)
+let rec mark_outside c =
+  let n = count c in
+  n >= 0
+  && (n land Memory.outside <> 0
+     || swap c n (n lor Memory.outside)
+     || mark_outside c)
+
+let share b =
+  Buffer.check_live "Claim.share" b;
+  if not (mark_outside b.mem.claim) then
+    invalid_arg "Rig.Claim.share: the memory is held exclusive by claims";
+  (* A consumption between the check and the mark killed [b]: the memory stays
+     marked, which costs only its donations. *)
+  Buffer.check_live "Claim.share" b
 
 (* [ended] is set once [with_]'s [f] returned or raised, before any claim is
    released: then the claims hold nothing, though the lists still name them. *)
@@ -147,12 +164,7 @@ let with_ ~read ~donate f =
   in
   Fun.protect ~finally:finish (fun () -> f c)
 
-(* A word [c] holds is exclusive, consumed, or exported by a share or an export
-   of the consumer's buffer, which puts the memory outside the claims. *)
-let exclusive c b =
-  (not c.ended)
-  && List.memq b.mem.claim c.exclusive
-  && count b.mem.claim <> Memory.exported
+let exclusive c b = (not c.ended) && List.memq b.mem.claim c.exclusive
 
 let consume c ~why b =
   if c.ended then invalid_arg "Rig.Claim.consume: the claims' with_ returned";
