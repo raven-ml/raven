@@ -209,7 +209,8 @@ let started hold c fn =
 let device g ~gsp ~hold ~tables (c : Chip.t) =
   let* () =
     match c.family with
-    | Blackwell -> Layout.check ~wpr2:(wpr2 c) ~top:(Page_table.memory tables)
+    | Blackwell ->
+        Fb_layout.check ~wpr2:(wpr2 c) ~top:(Page_table.memory tables)
     | Ampere | Ada -> Ok ()
   in
   let* rm = Gsp.rm gsp ~locate:(locate g) in
@@ -257,14 +258,14 @@ let start h fn (c : Chip.t) (fw : Images.t) fwsec ~failed =
   let* memory = Chip.memory c in
   let* bar = Function.map ~combine:false fn memory_bar in
   let top =
-    Layout.top c.family ~memory ~boot:fw.bootloader.image.length
-      ~image:fw.gsp.length
+    Fb_layout.top (Chip.layout c.family) ~memory
+      ~boot:fw.bootloader.image.length ~image:fw.gsp.length
   in
   let tables =
     Page_table.create (Mmu.format c bar ~failed) space ~memory:top
       ~boot:(Gsp.boot_pool fw.start)
       ~tables:(if Window.length bar >= memory then Main else Pool)
-      ~pages:(Mmu.pages (Mmu.version c.family))
+      ~pages:(Page_entry.pages (Mmu.version c.family))
   in
   (* The boot pool holds only the falcons' images: the GSP's objects come from
      the main pool. *)

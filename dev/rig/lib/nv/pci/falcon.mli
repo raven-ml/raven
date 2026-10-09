@@ -111,7 +111,7 @@ val cot_payload : args:int -> fmc:int -> Images.fmc -> string
 (** [cot_payload ~args ~fmc m] is the COT payload ([NVDM_PAYLOAD_COT], version
     2) that has the FSP boot the GSP from the FMC [m], whose image and boot
     arguments are at the bus addresses [fmc] and [args], its FRTS region where
-    {!Layout.cot_frts} puts it. *)
+    {!Fb_layout.cot_frts} puts it. *)
 
 val cot : string -> op list
 (** [cot payload] sends the FSP the COT [payload] and waits for the GSP's boot

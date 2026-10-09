@@ -24,186 +24,60 @@ let u64s l =
     (8 * List.length l)
     (fun b -> List.iteri (fun i x -> set b (8 * i, 8) x) l)
 
-(* Encodings *)
-
-let rm_alloc ~client ~parent ~obj ~cls params =
-  let module A = Defs.Rpc_rm_alloc in
-  record A.sizeof (fun b ->
-      set b A.h_client client;
-      set b A.h_parent parent;
-      set b A.h_object obj;
-      set b A.h_class cls;
-      set b A.params_size (String.length params))
-  ^ params
-
-let rm_control ~client ~obj ~cmd params =
-  let module C = Defs.Rpc_rm_control in
-  record C.sizeof (fun b ->
-      set b C.h_client client;
-      set b C.h_object obj;
-      set b C.cmd cmd;
-      set b C.params_size (String.length params))
-  ^ params
-
-let rm_answer kind body =
-  let size, status, params_size =
-    match kind with
-    | `Alloc -> Defs.Rpc_rm_alloc.(sizeof, status, params_size)
-    | `Control -> Defs.Rpc_rm_control.(sizeof, status, params_size)
-  in
-  if String.length body < size then Error "an RM answer shorter than its header"
-  else
-    let n = get body params_size in
-    if size + n > String.length body then
-      Error (strf "an RM answer of %d bytes of parameters, which it lacks" n)
-    else Ok (get body status, String.sub body size n)
-
-let page_directory ~client ~device ~vaspace ~root ~entries =
-  let module S = Defs.Rpc_set_page_directory in
-  let module P = Defs.Set_page_directory in
-  let p f = at S.params f in
-  record S.sizeof (fun b ->
-      set b S.h_client client;
-      set b S.h_device device;
-      (* No PASID: the address space is the GPU's own. *)
-      set b S.pasid 0xffff_ffff;
-      set b (p P.phys_address) root;
-      set b (p P.num_entries) entries;
-      (* NV0080_CTRL_DMA_SET_PAGE_DIRECTORY_FLAGS_APERTURE_VIDMEM: the root is
-         in the GPU's memory. *)
-      set b (p P.flags) 0x8;
-      set b (p P.h_va_space) vaspace;
-      set b (p P.pasid) 0xffff_ffff;
-      set b (p P.sub_device_id) 1)
-
-(* Unloading to level 6, NV2080_CTRL_GPU_SET_POWER_STATE_GPU_LEVEL_3's bit (RM's
-   unload to the deepest state the GSP keeps). *)
-let unload_level = 1 lsl 6
-
-let unloading =
-  record Defs.Rpc_unloading.sizeof (fun b ->
-      set b Defs.Rpc_unloading.new_level unload_level)
-
-let registry keys =
-  let module T = Defs.Registry_table in
-  let module E = Defs.Registry_entry in
-  let n = List.length keys in
-  let names_at = T.sizeof + (n * E.sizeof) in
-  let names = String.concat "" (List.map (fun (k, _) -> k ^ "\000") keys) in
-  let entries =
-    record (n * E.sizeof) (fun b ->
-        ignore
-          (List.fold_left
-             (fun (i, name) (k, v) ->
-               let f (off, w) = ((i * E.sizeof) + off, w) in
-               set b (f E.name_offset) name;
-               set b (f E.type_) Defs.registry_table_entry_type_dword;
-               set b (f E.data) v;
-               set b (f E.length) 4;
-               (i + 1, name + String.length k + 1))
-             (0, names_at) keys))
-  in
-  record T.sizeof (fun b ->
-      set b T.size (names_at + String.length names);
-      set b T.num_entries n)
-  ^ entries ^ names
-
 (* The CPU sequencer *)
 
-let sequence ~libos body =
-  let module S = Defs.Rpc_cpu_sequencer in
-  if String.length body < fst3 S.command_buffer then
-    Error "a CPU sequence shorter than its header"
-  else
-    let n = get body S.cmd_index in
-    let base = fst3 S.command_buffer in
-    if base + (4 * n) > String.length body then
-      Error (strf "a CPU sequence of %d words, longer than its message" n)
-    else
-      let word i = get body (base + (4 * i), 4) in
-      let module L = Defs.Legacy in
-      let gsp = Falcon.gsp and sec2 = Falcon.sec2 in
-      let resume =
-        Falcon.reset gsp `Riscv
+(* [ops ~libos steps] runs the GSP's register sequence [steps] on the falcons, a
+   resumption giving the GSP its libos arguments at the bus address [libos]
+   again. *)
+let ops ~libos steps =
+  let module L = Defs.Legacy in
+  let gsp = Falcon.gsp and sec2 = Falcon.sec2 in
+  let resume =
+    Falcon.reset gsp `Riscv
+    @ [
+        Falcon.Write (L.nv_pgsp_falcon_mailbox0, libos land 0xffff_ffff);
+        Falcon.Write (L.nv_pgsp_falcon_mailbox1, libos lsr 32);
+      ]
+    @ Falcon.start sec2
+    @ [
+        Poll
+          ( "SEC2 to hand the GSP over",
+            L.nv_pgc6_bsi_secure_scratch_14,
+            mask L.nv_pgc6_bsi_secure_scratch_14_boot_stage_3_handoff,
+            Is
+              (Defs
+               .nv_pgc6_bsi_secure_scratch_14_boot_stage_3_handoff_value_done
+              lsl fst L.nv_pgc6_bsi_secure_scratch_14_boot_stage_3_handoff) );
+        Expect
+          ( "SEC2 failed",
+            sec2 + L.nv_pfalcon_falcon_mailbox0,
+            0xffff_ffff,
+            Falcon.Is 0 );
+      ]
+  in
+  let op : Rpc.step -> Falcon.op list = function
+    | Write (r, x) -> [ Write (r, x) ]
+    (* A falcon modify writes the mask's bits only: the value's bits outside the
+       mask join it. *)
+    | Modify (r, m, x) -> [ Modify (r, m lor x, x) ]
+    (* The poll's timeout and error are the runner's. *)
+    | Poll (r, m, x) -> [ Poll (strf "register 0x%x" r, r, m, Is x) ]
+    | Delay_us n -> [ Delay n ]
+    | Store _ -> []
+    | Core_reset ->
+        Falcon.reset gsp `Falcon
         @ [
-            Falcon.Write (L.nv_pgsp_falcon_mailbox0, libos land 0xffff_ffff);
-            Falcon.Write (L.nv_pgsp_falcon_mailbox1, libos lsr 32);
+            Modify
+              ( gsp + L.nv_pfalcon_fbif_ctl,
+                mask L.nv_pfalcon_fbif_ctl_allow_phys_no_ctx,
+                1 lsl fst L.nv_pfalcon_fbif_ctl_allow_phys_no_ctx );
+            Write (gsp + L.nv_pfalcon_falcon_dmactl, 0);
           ]
-        @ Falcon.start sec2
-        @ [
-            Poll
-              ( "SEC2 to hand the GSP over",
-                L.nv_pgc6_bsi_secure_scratch_14,
-                mask L.nv_pgc6_bsi_secure_scratch_14_boot_stage_3_handoff,
-                Is
-                  (Defs
-                   .nv_pgc6_bsi_secure_scratch_14_boot_stage_3_handoff_value_done
-                  lsl fst L.nv_pgc6_bsi_secure_scratch_14_boot_stage_3_handoff)
-              );
-            Expect
-              ( "SEC2 failed",
-                sec2 + L.nv_pfalcon_falcon_mailbox0,
-                0xffff_ffff,
-                Falcon.Is 0 );
-          ]
-      in
-      let rec go i acc =
-        if i >= n then Ok (List.concat (List.rev acc))
-        else
-          let op = word i in
-          (* A field of the payload after the opcode. *)
-          let at (off, _) = word (i + 1 + (off / 4)) in
-          let take size f =
-            let k = size / 4 in
-            if i + k >= n then
-              Error (strf "a CPU sequence ending inside opcode %d" op)
-            else go (i + k + 1) (f () :: acc)
-          in
-          if op = Defs.gsp_seq_buf_opcode_reg_write then
-            let module P = Defs.Seq_reg_write in
-            take P.sizeof (fun () -> [ Falcon.Write (at P.addr, at P.val_) ])
-          else if op = Defs.gsp_seq_buf_opcode_reg_modify then
-            let module P = Defs.Seq_reg_modify in
-            (* The RM writes [(r & ~mask) | val], setting the value's bits
-               outside the mask too. *)
-            take P.sizeof (fun () ->
-                let v = at P.val_ in
-                [ Falcon.Modify (at P.addr, at P.mask lor v, v) ])
-          else if op = Defs.gsp_seq_buf_opcode_reg_poll then
-            let module P = Defs.Seq_reg_poll in
-            (* The poll's timeout and error are the runner's. *)
-            take P.sizeof (fun () ->
-                let r = at P.addr in
-                [
-                  Falcon.Poll
-                    (strf "register 0x%x" r, r, at P.mask, Is (at P.val_));
-                ])
-          else if op = Defs.gsp_seq_buf_opcode_delay_us then
-            let module P = Defs.Seq_delay_us in
-            take P.sizeof (fun () -> [ Falcon.Delay (at P.val_) ])
-          else if op = Defs.gsp_seq_buf_opcode_reg_store then
-            (* A register's value for the GSP's save area, which it does not
-               read back from the CPU. *)
-            take Defs.Seq_reg_store.sizeof (fun () -> [])
-          else if op = Defs.gsp_seq_buf_opcode_core_reset then
-            take 0 (fun () ->
-                Falcon.reset gsp `Falcon
-                @ [
-                    Falcon.Modify
-                      ( gsp + L.nv_pfalcon_fbif_ctl,
-                        mask L.nv_pfalcon_fbif_ctl_allow_phys_no_ctx,
-                        1 lsl fst L.nv_pfalcon_fbif_ctl_allow_phys_no_ctx );
-                    Write (gsp + L.nv_pfalcon_falcon_dmactl, 0);
-                  ])
-          else if op = Defs.gsp_seq_buf_opcode_core_start then
-            take 0 (fun () -> Falcon.start gsp)
-          else if op = Defs.gsp_seq_buf_opcode_core_wait_for_halt then
-            take 0 (fun () -> Falcon.wait_halt gsp)
-          else if op = Defs.gsp_seq_buf_opcode_core_resume then
-            take 0 (fun () -> resume)
-          else Error (strf "a CPU sequence of unknown opcode %d" op)
-      in
-      go 0 []
+    | Core_start -> Falcon.start gsp
+    | Core_wait_for_halt -> Falcon.wait_halt gsp
+    | Core_resume -> resume
+  in
+  List.concat_map op steps
 
 (* Booting *)
 
@@ -356,7 +230,7 @@ let system_info p =
 (* The radix-3 table: each level's pages hold the addresses of the next's, the
    image's pages last. *)
 let radix3 sys (image : Images.range) =
-  let n = Layout.radix3 image.length in
+  let n = Fb_layout.radix3 image.length in
   let starts =
     Array.init 4 (fun i -> Array.fold_left ( + ) 0 (Array.sub n 0 i) * page)
   in
@@ -370,28 +244,6 @@ let radix3 sys (image : Images.range) =
   done;
   Ok s
 
-let wpr_meta (fw : Images.t) family ~memory ~radix3 ~bootloader ~signature =
-  let module W = Defs.Wpr_meta in
-  record W.sizeof (fun b ->
-      let s (f, v) = set b f v in
-      Bytes.set_int64_le b (fst W.magic) Defs.gsp_fw_wpr_meta_magic;
-      set b W.revision Defs.gsp_fw_wpr_meta_revision;
-      set b W.size_of_bootloader fw.bootloader.image.length;
-      set b W.sysmem_addr_of_bootloader bootloader;
-      set b W.size_of_radix3_elf fw.gsp.length;
-      set b W.sysmem_addr_of_radix3_elf radix3;
-      set b W.size_of_signature (round_up fw.signature.length page);
-      set b W.sysmem_addr_of_signature signature;
-      set b W.bootloader_code_offset fw.bootloader.code;
-      set b W.bootloader_data_offset fw.bootloader.data;
-      set b W.bootloader_manifest_offset fw.bootloader.manifest;
-      match (family : Chip.family) with
-      | Blackwell -> List.iter s Layout.fmc_sizes
-      | Ampere | Ada ->
-          List.iter s
-            (Layout.wpr ~memory ~boot:fw.bootloader.image.length
-               ~image:fw.gsp.length))
-
 (* Calls *)
 
 (* How long the GSP takes to answer a call, and to boot. *)
@@ -402,14 +254,14 @@ let drain g ~want =
     match Msgq.receive g.q with
     | None -> Ok None
     | Some (Error why) -> Error why
-    | Some (Ok m) -> (
+    | Some (Ok (m : Rpc.message)) -> (
         let* () =
           if m.fn <> Defs.nv_vgpu_msg_event_gsp_run_cpu_sequencer then Ok ()
           else
-            let* ops = sequence ~libos:g.libos m.body in
-            Falcon.run g.p.chip ops
+            let* steps = Rpc.sequence m.body in
+            Falcon.run g.p.chip (ops ~libos:g.libos steps)
         in
-        (match Msgq.fault m with
+        (match Rpc.fault m with
         | Some f when g.fault = None -> g.fault <- Some f
         | _ -> ());
         match want with
@@ -461,7 +313,7 @@ let check g =
 
 let unload g =
   Result.map ignore
-    (call g Defs.nv_vgpu_msg_function_unloading_guest_driver unloading)
+    (call g Defs.nv_vgpu_msg_function_unloading_guest_driver Rpc.unloading)
 
 (* The RM *)
 
@@ -510,9 +362,9 @@ let control g ~client obj cmd p =
   let body = Option.fold ~none:"" ~some:string_of_params p in
   let* answer =
     call g Defs.nv_vgpu_msg_function_gsp_rm_control
-      (rm_control ~client ~obj ~cmd body)
+      (Rpc.rm_control ~client ~obj ~cmd body)
   in
-  let* status, out = rm_answer `Control answer in
+  let* status, out = Rpc.rm_answer `Control answer in
   if status <> 0 then
     Error (strf "the RM refused command 0x%x: 0x%x" cmd status)
   else (
@@ -524,9 +376,9 @@ let alloc_object g ~client ~parent cls p =
   let body = Option.fold ~none:"" ~some:string_of_params p in
   let* answer =
     call g Defs.nv_vgpu_msg_function_gsp_rm_alloc
-      (rm_alloc ~client ~parent ~obj ~cls body)
+      (Rpc.rm_alloc ~client ~parent ~obj ~cls body)
   in
-  let* status, _ = rm_answer `Alloc answer in
+  let* status, _ = Rpc.rm_answer `Alloc answer in
   if status <> 0 then Error (strf "the RM refused class 0x%x: 0x%x" cls status)
   else Ok obj
 
@@ -631,8 +483,9 @@ let promote g ~client ~subdevice channel buffers ?(have = []) ~virt ~phys () =
 (* The root table's entries: 4 on version 2, 2 on version 3. *)
 let root_entries (c : Chip.t) =
   let v = Mmu.version c.family in
-  let top = List.nth (Mmu.levels v) (List.length (Mmu.levels v) - 1) in
-  1 lsl (Mmu.bits v - top)
+  let levels = Page_entry.levels v in
+  let top = List.nth levels (List.length levels - 1) in
+  1 lsl (Page_entry.bits v - top)
 
 (* The subdevice a client made, on which compute engines' contexts are
    promoted. *)
@@ -664,7 +517,7 @@ let alloc g ~client ~locate ~objects ~parent cls p =
     else if cls = Defs.fermi_vaspace_a then
       let* _ =
         call g Defs.nv_vgpu_msg_function_set_page_directory
-          (page_directory ~client ~device:parent ~vaspace:obj
+          (Rpc.page_directory ~client ~device:parent ~vaspace:obj
              ~root:(Page_table.root g.p.tables)
              ~entries:(root_entries g.p.chip))
       in
@@ -852,7 +705,7 @@ let golden g =
   pset r R.num_levels_to_copy (List.length levels);
   pset r R.virt_addr_lo va;
   pset r R.virt_addr_hi (va + reserved - 1);
-  let shifts = List.rev (Mmu.levels (Mmu.version g.p.chip.family)) in
+  let shifts = List.rev (Page_entry.levels (Mmu.version g.p.chip.family)) in
   List.iteri
     (fun i table ->
       let f x = elt R.levels i x in
@@ -986,13 +839,18 @@ let take p (fw : Images.t) fwsec ~taken =
   blit fw.bootloader.image bootloader.w 0;
   let* meta = sys page in
   Window.write meta.w 0
-    (wpr_meta fw c.family ~memory:p.memory ~radix3:(first radix)
-       ~bootloader:(first bootloader) ~signature:(first signature));
+    (Fb_layout.wpr_meta (Chip.layout c.family) ~memory:p.memory
+       ~gsp:{ address = first radix; size = fw.gsp.length }
+       ~signature:{ address = first signature; size = fw.signature.length }
+       ~bootloader:
+         { address = first bootloader; size = fw.bootloader.image.length }
+       ~code:fw.bootloader.code ~data:fw.bootloader.data
+       ~manifest:fw.bootloader.manifest);
   (* The start, FWSEC set up for the GPU's memory. *)
   let* start =
     match (fw.start, fwsec, c.family) with
     | `Booter b, Some f, (Ampere | Ada) ->
-        Ok (Legacy (Vbios.patch f ~frts:(Layout.frts ~memory:p.memory), b))
+        Ok (Legacy (Vbios.patch f ~frts:(Fb_layout.frts ~memory:p.memory), b))
     | `Fmc m, None, Blackwell ->
         let* args = sys page in
         Window.write args.w 0
@@ -1075,7 +933,7 @@ let boot g =
   let* () =
     send g Defs.nv_vgpu_msg_function_gsp_set_system_info (system_info g.p)
   in
-  let* () = send g Defs.nv_vgpu_msg_function_set_registry (registry keys) in
+  let* () = send g Defs.nv_vgpu_msg_function_set_registry (Rpc.registry keys) in
   let* ops = falcons g in
   let* () = Falcon.run c ops in
   (* The GSP runs: its queue, its first answer, then the golden context. *)

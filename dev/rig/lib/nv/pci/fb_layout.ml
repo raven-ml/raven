@@ -3,10 +3,15 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+open Field
+
 let strf = Printf.sprintf
 let mib = 1 lsl 20
 let page = 0x1000
 let round_down n a = n / a * a
+let round_up n a = (n + a - 1) / a * a
+
+type layout = Process | Fmc
 
 (* Radix-3 *)
 
@@ -21,7 +26,7 @@ let radix3 n =
   let n1 = up n2 in
   [| up n1; n1; n2; n3 |]
 
-(* The region on Ampere and Ada *)
+(* The region the process lays out *)
 
 (* The parts of the region the process sizes itself: the VGA workspace
    (NV_PRAMIN's 1 MiB, kgspCalculateFbLayout_TU102 on a GPU without display),
@@ -36,6 +41,7 @@ let non_wpr = mib
    (kgspCalculateFbLayout_TU102's wprMetaSize). *)
 let meta = mib
 
+(* Each field of the WPR metadata the process sets, with its value. *)
 let wpr ~memory ~boot ~image =
   let module W = Defs.Wpr_meta in
   let vga_off = memory - vga in
@@ -64,7 +70,7 @@ let wpr ~memory ~boot ~image =
 
 let frts ~memory = memory - vga - frts_size
 
-(* The region on Blackwell *)
+(* The region the FMC lays out *)
 
 let cot_frts = (0x1c00000, mib)
 
@@ -90,15 +96,42 @@ let fmc_sizes =
    bounds what alignment takes. *)
 let fmc_alignment = 6 * mib
 
+(* The metadata *)
+
+type image = { address : int; size : int }
+
+let wpr_meta layout ~memory ~gsp ~signature ~bootloader ~code ~data ~manifest =
+  let module W = Defs.Wpr_meta in
+  record W.sizeof (fun b ->
+      Bytes.set_int64_le b (fst W.magic) Defs.gsp_fw_wpr_meta_magic;
+      set b W.revision Defs.gsp_fw_wpr_meta_revision;
+      set b W.size_of_bootloader bootloader.size;
+      set b W.sysmem_addr_of_bootloader bootloader.address;
+      set b W.size_of_radix3_elf gsp.size;
+      set b W.sysmem_addr_of_radix3_elf gsp.address;
+      set b W.size_of_signature (round_up signature.size page);
+      set b W.sysmem_addr_of_signature signature.address;
+      set b W.bootloader_code_offset code;
+      set b W.bootloader_data_offset data;
+      set b W.bootloader_manifest_offset manifest;
+      let fields =
+        match layout with
+        | Fmc -> fmc_sizes
+        | Process -> wpr ~memory ~boot:bootloader.size ~image:gsp.size
+      in
+      List.iter (fun (f, v) -> set b f v) fields)
+
+(* The memory the process manages *)
+
 (* The memory the process keeps clear of the GSP below the end of memory. *)
 let margin = 64 * mib
 
-let top (family : Chip.family) ~memory ~boot ~image =
+let top layout ~memory ~boot ~image =
   let bound =
-    match family with
-    | Ampere | Ada ->
+    match layout with
+    | Process ->
         List.assoc Defs.Wpr_meta.gsp_fw_rsvd_start (wpr ~memory ~boot ~image)
-    | Blackwell ->
+    | Fmc ->
         memory - fst cot_frts - snd cot_frts - boot - image - fmc_heap - meta
         - fmc_non_wpr - fmc_alignment
   in

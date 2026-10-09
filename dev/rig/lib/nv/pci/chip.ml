@@ -45,6 +45,10 @@ let chip boot42 =
             this library boots"
            arch impl)
 
+let layout : family -> Fb_layout.layout = function
+  | Ampere | Ada -> Process
+  | Blackwell -> Fmc
+
 let name family impl = strf "%s%X" (prefix family) impl
 let get c r = Window.get32 c.regs r
 let set c r x = Window.set32 c.regs r x

@@ -350,8 +350,8 @@ let cot_payload ~args ~fmc (m : Images.fmc) =
   let b = Bytes.make C.sizeof '\000' in
   set b C.version cot_version;
   set b C.size C.sizeof;
-  set b C.frts_vidmem_offset (fst Layout.cot_frts);
-  set b C.frts_vidmem_size (snd Layout.cot_frts);
+  set b C.frts_vidmem_offset (fst Fb_layout.cot_frts);
+  set b C.frts_vidmem_size (snd Fb_layout.cot_frts);
   set b C.gsp_boot_args_sysmem_offset args;
   set b C.gsp_fmc_sysmem_offset fmc;
   let words (off, _, n) (r : Images.range) =
