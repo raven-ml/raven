@@ -193,6 +193,12 @@ let binary name k dt n rd =
     (fun () -> (filled dt [| n |], filled dt [| n |], A.create Rig.host rd [| n |]))
     (fun (module K) (x, y, dst) -> K.apply2 k ~dst x y)
 
+(* An add of [n] elements of a dtype whose stream has no floor row. *)
+let narrow name dt n =
+  apply name
+    (fun () -> (filled dt [| n |], filled dt [| n |], A.create Rig.host dt [| n |]))
+    (fun (module K) (x, y, dst) -> K.apply2 (Binary Add) ~dst x y)
+
 (* A kind of one operand over [n] elements of [dt]. *)
 let unary name u dt n =
   let w = D.bits dt / 8 in
@@ -222,6 +228,11 @@ let apply_rows =
             A.create Rig.host f32 [| 1024; 1024 |] ))
         (fun (module K) (x, y, dst) -> K.apply2 (Binary Add) ~dst x y);
       binary "add-i8-1M" (Binary Add) D.Int8 m D.Int8;
+      (* Narrow dtypes through their carriers, bound by add-f32-1M's and
+         add-i8-1M's element rates rather than a floor of their own. *)
+      narrow "add-bf16-1M" D.Bfloat16 m;
+      narrow "add-e4m3-1M" D.Float8_e4m3fn m;
+      narrow "add-i4-1M" D.Int4 m;
       binary "less-f32-1M" (Compare Less) f32 m D.Bool;
       apply ~work:(F.Select { inb = 4; n = m }) "where-f32-1M"
         (fun () ->

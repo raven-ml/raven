@@ -11,10 +11,12 @@
     call. It answers [Done] once its work is done, or, before any write, a
     refusal: the door's, or [Shape_mismatch] if the operands' shapes differ.
 
-    [apply1] computes [Copy], [Cast] and [Bitcast] at every dtype and the
-    [Unary] kinds at float32, float64 and the 8- to 64-bit integers, and
-    answers [Declined] for the others. A [Copy] whose operand's dtype is not
-    [dst]'s is refused with [Wrong_dtype].
+    [apply1] computes [Copy], [Cast] and [Bitcast], and [apply3] [Where], at
+    every dtype; [apply0] computes [Fill] at every dtype of a byte or more and
+    [Iota] at float32, float64 and the 8- to 64-bit integers. The other kinds
+    are computed at every dtype but the complex ones, which are declined. A
+    [Copy] whose operand's dtype is not [dst]'s is refused with
+    [Wrong_dtype].
 
     [contract] computes contractions in [float32] or [float64] whose [out] is
     their [acc], whose [a], [b] and [init] each convert exactly into [acc],

@@ -13,8 +13,9 @@
    dtype: 8- and 16-bit integers compute in the 32-bit type of their
    signedness and wrap on the store, booleans compute in uint32 from 0 or 1.
    Rows of contiguous elements take a loop the compiler vectorises, the
-   transcendental kinds' polynomials included. A dtype with no row, a narrow
-   float, complex or sub-byte one, is declined. */
+   transcendental kinds' polynomials included. Rows exist at the carriers
+   alone (cpu.h): apply.c runs a narrow or sub-byte dtype's kinds at its
+   carrier's rows. */
 
 #include "cpu.h"
 

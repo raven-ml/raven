@@ -742,25 +742,33 @@ let name2 = function
       | Less -> "less"
       | Less_equal -> "less_equal")
 
-(* The dtypes nx_cpu.mli computes every kind at. *)
-let is_base (type v s) (dt : (v, s) D.t) =
-  match dt with
-  | D.Float32 | D.Float64 | D.Int8 | D.Uint8 | D.Int16 | D.Uint16 | D.Int32
-  | D.Uint32 | D.Int64 | D.Uint64 | D.Bool ->
-      true
-  | _ -> false
-
 (* [v]'s low [w] bytes, least significant first. *)
 let low_bytes w v =
   List.init w (fun i ->
       Int64.to_int (Int64.logand (Int64.shift_right_logical v (8 * i)) 0xFFL))
 
-(* The bytes of nx_kinds.h's kind [name] at each index of [ops], all of the
-   base dtype [dt], in C order: as [dt] for a kind of [dt], as a boolean for a
-   comparison. *)
-let expected (type v s) name (dt : (v, s) D.t) ~compare (ops : (v, s) A.t array)
-    =
+(* The bits of nx_kinds.h's kind [name] at each index of [ops], all of the
+   dtype [dt], in C order, as [bits_of] gives them: as [dt] for a kind of
+   [dt], as a boolean for a comparison. A narrow float computes in float32 and
+   rounds once on the store; int4 and uint4 in the 32-bit type of their
+   signedness, their result's low bits kept. *)
+let rec expected : type v s.
+    string -> (v, s) D.t -> compare:bool -> (v, s) A.t array -> int array =
+ fun name dt ~compare ops ->
   let shape = L.shape (A.layout ops.(0)) in
+  match D.kind dt with
+  | D.Float when D.bits dt < 32 ->
+      let r =
+        expected name D.Float32 ~compare
+          (Array.map (fun a -> reference a D.Float32) ops)
+      in
+      if compare then r
+      else
+        let b = String.init (Array.length r) (fun i -> Char.chr r.(i)) in
+        let b = if b = "" then "\000" else b in
+        bits_of
+          (reference (A.v D.Float32 (L.contiguous shape) (B.of_string b)) dt)
+  | _ ->
   let per idx =
     match D.kind dt with
     | D.Float when D.bits dt = 32 ->
@@ -792,6 +800,7 @@ let expected (type v s) name (dt : (v, s) D.t) ~compare (ops : (v, s) A.t array)
           | _ -> Nx_kinds_support.int ty name args
         in
         if compare then [ Bool.to_int (r <> 0L) ]
+        else if D.bits dt < 8 then [ Int64.to_int r land 0xF ]
         else low_bytes (D.bits dt / 8) r
     | D.Complex -> invalid_arg "expected: complex"
   in
@@ -827,13 +836,18 @@ let pairs =
 let large_pairs =
   Gen.with_pp pp_pair
     (let open Gen in
-     let* (Case x) = large_of (of_list ~pp:pp_dtype D.[ Any Float32; Any Int8; Any Float64 ]) in
+     let* (Case x) =
+       large_of
+         (of_list ~pp:pp_dtype
+            D.[ Any Float32; Any Int8; Any Float64; Any Bfloat16; Any Int4; Any Bit ])
+     in
      let+ seed = int in
      Pair (x, seeded (A.dtype x) (L.shape (A.layout x)) seed))
 
 (* The answer of [run] into a seeded destination of [dt] and [shape], checked:
-   [Done] with the bytes [want ()] where [checked] (by default at the base
-   dtypes), a decline only of a case [b] does not claim, and nothing written
+   [Done] with the bytes [want ()] where [checked] (by default but at the
+   complex dtypes), a decline only of a case [b] does not claim, and nothing
+   written
    but on [Done]. *)
 type into = { into : 'v 's. ('v, 's) A.t -> A.answer }
 
@@ -845,7 +859,7 @@ let answers ?checked (b : Support.backend) kind (D.Any at) (D.Any dt) shape
   | A.Done ->
       cover "computed" true;
       equal ~msg:"accepted" bool true accepted;
-      if Option.value checked ~default:(is_base at) then
+      if Option.value checked ~default:(not (D.is D.Complex at)) then
         equal (array int) (want ()) (bits_of (host dst))
   | A.Declined ->
       cover "declined" true;
@@ -912,18 +926,23 @@ let law_apply2 ?(kinds = op2s) (b : Support.backend) (Pair (x, y)) =
 let law_apply3 (b : Support.backend) (Pair (x, y), seed) =
   let module K = (val b.kernels) in
   let dt = A.dtype x and shape = L.shape (A.layout x) in
-  let c = on b (seeded D.Bool shape seed) and x = on b x and y = on b y in
+  let x = on b x and y = on b y in
   let w = max 1 (D.bits dt / 8) in
-  answers b (K3 Where) (D.Any dt) (D.Any dt) shape
-    ~accepted:(P.accepts3 Where D.Bool dt)
-    ~want:(fun () ->
-      let cs = A.to_array (host c) and xs = bits_of (host x)
-      and ys = bits_of (host y) in
-      Array.concat
-        (List.mapi
-           (fun i c -> Array.sub (if c then xs else ys) (i * w) w)
-           (Array.to_list cs)))
-    { into = (fun dst -> K.apply3 Where ~dst c x y) };
+  let where (type s) (c : (bool, s) A.t) =
+    let c = on b c in
+    answers ~checked:true b (K3 Where) (D.Any dt) (D.Any dt) shape
+      ~accepted:(P.accepts3 Where (A.dtype c) dt)
+      ~want:(fun () ->
+        let cs = A.to_array (host c) and xs = bits_of (host x)
+        and ys = bits_of (host y) in
+        Array.concat
+          (List.mapi
+             (fun i c -> Array.sub (if c then xs else ys) (i * w) w)
+             (Array.to_list cs)))
+      { into = (fun dst -> K.apply3 Where ~dst c x y) }
+  in
+  if seed mod 2 = 0 then where (seeded D.Bool shape seed)
+  else where (seeded D.Bit shape seed);
   let z = on b (seeded dt shape (seed + 1)) in
   answers b (K3 Fma) (D.Any dt) (D.Any dt) shape
     ~accepted:(P.accepts3 Fma dt dt)
@@ -1007,6 +1026,16 @@ let test_apply_values () =
     [ 0; 1 ];
   done_ ~msg:"fill" (K.apply0 (Fill (P.bits D.Int32 7l)) ~dst:d);
   equal ~msg:"fill" (array int32) (Array.make 6 7l) (A.to_array d);
+  let i4 xs = A.of_array D.Int4 [| Array.length xs |] xs in
+  let d = A.create Rig.host D.Int4 [| 2 |] in
+  done_ ~msg:"add" (K.apply2 (Binary Add) ~dst:d (i4 [| 7; -8 |]) (i4 [| 1; -1 |]));
+  equal ~msg:"add: int4 wraps" (array int) [| -8; 7 |] (A.to_array d);
+  let bf16 xs = A.of_array D.Bfloat16 [| Array.length xs |] xs in
+  let d = A.create Rig.host D.Bfloat16 [| 1 |] in
+  done_ ~msg:"add"
+    (K.apply2 (Binary Add) ~dst:d (bf16 [| 256. |]) (bf16 [| 1. |]));
+  equal ~msg:"add: bfloat16 rounds once, ties to even" (array float_exact)
+    [| 256. |] (A.to_array d);
   let unary ~msg u xs want =
     let d = A.create Rig.host D.Float32 [| Array.length xs |] in
     done_ ~msg (K.apply1 (Unary u) ~dst:d (f32 xs));
