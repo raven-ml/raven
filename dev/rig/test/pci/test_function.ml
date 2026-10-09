@@ -1056,6 +1056,16 @@ let test_scattered () =
   contains ~sub:"hugetlbfs"
     (require_error (Function.alloc_dma ~va f (300 * kib)))
 
+(* A page map read without the privilege gives every frame as 0: the refusal
+   names it. *)
+let test_unprivileged () =
+  with_fixture @@ fun root f ->
+  reserved f;
+  let va = free_base + (2 * mib) and page = Machine.page Machine.this in
+  Tree.pagemap root ~page va (List.init (2 * mib / page) (fun _ -> 0));
+  contains ~sub:"run as root"
+    (require_error (Function.alloc_dma ~va f (300 * kib)))
+
 (* Memory whose addresses share a 2 MiB block shares its huge page, which goes
    back once neither holds it. *)
 let test_shared_page () =
@@ -1173,6 +1183,8 @@ let system_memory =
          function, and keeps one that lists a function until its reset"
         test_left_files;
       test "memory whose frames are not one block is refused" test_scattered;
+      test "memory whose frames read without the privilege is refused"
+        test_unprivileged;
       test "memory in one 2 MiB block shares a huge page, gone once both are"
         test_shared_page;
       test "memory handed out again in a huge page is zeroed" test_reused_zeroed;

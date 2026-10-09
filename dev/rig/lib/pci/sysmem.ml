@@ -67,19 +67,18 @@ let reserved_at a n =
 
 (* Physical addresses *)
 
-(* The page-map entries of the [pages] pages from [a], 8 bytes each. The kernel
-   walks the page tables for what is read: a channel, which reads 64 KiB ahead,
-   would make it walk 32 MiB of them to pin one page. [Unix.read] reads at most
-   64 KiB a call and releases the runtime for each. *)
-let pagemap root a pages =
+(* The page-map entry of the page at [a], 8 bytes. The kernel walks the page
+   tables for what is read: a channel, which reads 64 KiB ahead, would make it
+   walk 32 MiB of them to pin one page. *)
+let pagemap root a =
   let pagemap_file = Filename.concat root "proc/self/pagemap" in
-  let n = 8 * pages and b = Bytes.create (8 * pages) in
+  let b = Bytes.create 8 in
   let read fd =
     ignore (Unix.lseek fd (a / page * 8) SEEK_SET);
     let rec go got =
-      if got < n then
-        match Unix.read fd b got (n - got) with
-        | 0 -> Fail.fail "reading %s: got %d of %d bytes" pagemap_file got n
+      if got < 8 then
+        match Unix.read fd b got (8 - got) with
+        | 0 -> Fail.fail "reading %s: got %d of 8 bytes" pagemap_file got
         | k -> go (got + k)
     in
     go 0
@@ -90,7 +89,7 @@ let pagemap root a pages =
   | fd -> (
       Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
       match read fd with
-      | () -> Bytes.unsafe_to_string b
+      | () -> Bytes.get_int64_le b 0
       | exception Unix.Unix_error (e, _, _) ->
           Fail.fail "reading %s: %s" pagemap_file (Unix.error_message e))
 
@@ -99,17 +98,15 @@ let pagemap root a pages =
 let present = Int64.shift_left 1L 63
 let frame_mask = 0x7F_FFFF_FFFF_FFFFL
 
-let physical root a n =
-  let count = (n + page - 1) / page in
-  let map = pagemap root a count in
-  List.init count (fun i ->
-      let entry = String.get_int64_le map (8 * i) in
-      if Int64.logand entry present = 0L then
-        Fail.fail "the page at 0x%x is not in memory" (a + (i * page));
-      let frame = Int64.to_int (Int64.logand entry frame_mask) in
-      if frame = 0 then
-        Fail.fail "reading physical addresses needs CAP_SYS_ADMIN; run as root";
-      frame * page)
+(* The physical address of the page at [a]. *)
+let physical root a =
+  let entry = pagemap root a in
+  if Int64.logand entry present = 0L then
+    Fail.fail "the page at 0x%x is not in memory" a;
+  let frame = Int64.to_int (Int64.logand entry frame_mask) in
+  if frame = 0 then
+    Fail.fail "reading physical addresses needs CAP_SYS_ADMIN; run as root";
+  frame * page
 
 (* Memory *)
 
@@ -321,10 +318,6 @@ let join f bus =
 let release_range fd off n =
   Fail.bug "punching out a GPU's memory" (fun () -> punch fd off n)
 
-let rec consecutive = function
-  | a :: (b :: _ as rest) -> b = a + page && consecutive rest
-  | _ -> true
-
 (* A new block at [at] of [root]'s file, its huge page mapped there. *)
 let new_block ~root ~bus at =
   let f = file_of ~root bus in
@@ -357,22 +350,23 @@ let new_block ~root ~bus at =
         (with_remedy
            (strf "mapping a huge page of %s: %s" f.path (Unix.error_message e))
            (match e with EINVAL -> Some hugetlbfs | _ -> None)));
-  let pages =
-    try physical root at huge
+  (* A huge page is one block of frames, so its first page's frame gives them
+     all, and its last confirms it: a file system that is no hugetlbfs gives
+     pages anywhere. *)
+  let first, last =
+    try (physical root at, physical root (at + huge - page))
     with e ->
       unmap_range at huge;
       give_back ();
       raise e
   in
-  (* A huge page is one block of frames: a file system that is no hugetlbfs
-     gives pages anywhere. *)
-  if not (consecutive pages) then begin
+  if last - first <> huge - page then begin
     unmap_range at huge;
     give_back ();
     Fail.fail "%s gave a huge page that is not one block of memory; %s"
       (Filename.dirname f.path) hugetlbfs
   end;
-  let b = { at; file = f; off; frame = List.hd pages; users = 0 } in
+  let b = { at; file = f; off; frame = first; users = 0 } in
   Tables.Address.replace blocks at b;
   b
 
