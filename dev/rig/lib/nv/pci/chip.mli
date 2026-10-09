@@ -39,8 +39,9 @@ val of_function : Rig_pci.Function.t -> (t, string) result
     ({!chip}), changing nothing on the GPU. It is [Error] as {!chip}, or if the
     BAR cannot be mapped. *)
 
-val name : t -> string
-(** [name c] is the chip's name, such as ["AD102"]. *)
+val name : family -> int -> string
+(** [name f i] is the name of the chip of family [f] and implementation [i],
+    such as ["AD102"]. *)
 
 val memory : t -> (int, string) result
 (** [memory c] is the size of the GPU's memory in bytes, as its firmware writes

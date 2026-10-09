@@ -15,30 +15,14 @@
     A record's checksum makes the XOR of its 64-bit words folded to 32 bits zero
     ([message_queue_cpu.c]).
 
-    The encoders are pure; {!send} and {!receive} access the rings, through
-    windows on this machine or another, and never wait. *)
+    {!send} and {!receive} access the rings, through windows on this machine or
+    another, and never wait. *)
 
 (** {1:codec Records} *)
-
-val checksum : string -> int
-(** [checksum s] is the XOR of [s]'s little-endian 64-bit words, [s] padded with
-    zeros to a multiple of 8 bytes, folded to 32 bits. *)
-
-val records : int -> string -> (int * string) list
-(** [records fn body] is the records [body] is sent as: [fn] with the first
-    bytes that fit 16 elements, then [CONTINUATION_RECORD]s with the rest. *)
-
-val element : seq:int -> int -> string -> string
-(** [element ~seq fn body] is the record of function [fn] with [body] and
-    sequence number [seq], whole elements long, with its checksum. *)
 
 type message = { fn : int; result : int; body : string }
 (** The type for messages the GSP sends: its function or event, its result ([0]
     for success) and its body. *)
-
-val message : string -> (message * int, string) result
-(** [message s] is the message that starts the bytes [s] of a ring and the
-    number of elements it takes, or [Error] if its header is not a GSP's. *)
 
 val fault : message -> string option
 (** [fault m] is the report of a fault of the GPU's work that [m] carries,

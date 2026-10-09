@@ -9,16 +9,6 @@ let strf = Printf.sprintf
 let ( let* ) = Result.bind
 let gib = 1 lsl 30
 
-module Chip = Chip
-module Falcon = Falcon
-module Gsp = Gsp
-module Held = Held
-module Images = Images
-module Layout = Layout
-module Mmu = Mmu
-module Msgq = Msgq
-module Vbios = Vbios
-
 (* GPUs *)
 
 (* The memory BAR, BAR 1. *)
@@ -35,6 +25,46 @@ let gpus =
 let buses ?(machine = Machine.this) () = Gpus.buses gpus machine
 let count ?machine () = List.length (buses ?machine ())
 let device_name i = Gpus.name gpus i
+
+(* Boot reports *)
+
+type image = { file : string; found : string option }
+type report = { chip : string; images : image list }
+
+(* [survey ~firmware boot42 rom] is the report on a GPU whose NV_PMC_BOOT_42
+   holds [boot42] and whose VBIOS [rom ()] reads, read on Ampere and Ada only,
+   and, once every image is found, what its boot loads: the firmware and the
+   VBIOS's FWSEC. [open_] and [report] both answer from it. *)
+let survey ~firmware boot42 rom =
+  let* family, implementation = Chip.chip boot42 in
+  let looked =
+    List.map
+      (fun file -> (file, Images.find firmware file))
+      (Images.names family)
+  in
+  let images =
+    List.map
+      (fun (file, r) -> { file; found = Option.map fst (Result.to_option r) })
+      looked
+  in
+  let* fwsec =
+    match family with
+    | Blackwell -> Ok None
+    | Ampere | Ada -> Result.map Option.some (Vbios.fwsec (rom ()))
+  in
+  let report = { chip = Chip.name family implementation; images } in
+  match List.map snd looked with
+  | [ Ok (_, gsp); Ok (_, bootloader); Ok (_, start) ] ->
+      let* fw = Images.parse family ~gsp ~bootloader ~start in
+      Ok (report, Ok (fw, fwsec))
+  | rs ->
+      let missing =
+        List.find_map (function Error why -> Some why | Ok _ -> None) rs
+      in
+      Ok (report, Error (Option.get missing))
+
+let report ~firmware ~chip ~vbios =
+  Result.map fst (survey ~firmware chip (fun () -> vbios))
 
 (* Memory *)
 
@@ -221,7 +251,7 @@ let device g ~gsp ~hold ~tables (c : Chip.t) =
    its memory, so a failure gives the GPU back as it found it. From then on the
    hold's stop is the GSP's: a failure stops the GPU through it, and loses
    it. *)
-let start h fn (c : Chip.t) (fw : Images.t) ~failed =
+let start h fn (c : Chip.t) (fw : Images.t) fwsec ~failed =
   let* () = Falcon.run c (Falcon.wait_reset c.family) in
   let* memory = Chip.memory c in
   let* bar = Function.map ~combine:false fn memory_bar in
@@ -238,7 +268,7 @@ let start h fn (c : Chip.t) (fw : Images.t) ~failed =
   (* The boot pool holds only the falcons' images: the GSP's objects come from
      the main pool. *)
   Page_table.booted tables;
-  let* gsp = Gsp.create { chip = c; memory; fn; tables; bar; space } fw in
+  let* gsp = Gsp.create { chip = c; memory; fn; tables; bar; space } fw fwsec in
   Gpus.set_stop h (fun () -> Gsp.stop gsp);
   let* () = Gsp.boot gsp in
   Ok (gsp, tables)
@@ -257,7 +287,10 @@ let boot ~firmware ~index h fn =
          transport"
   in
   let* () = started h c fn in
-  let* fw = Images.read c.family firmware in
+  let* _, loads =
+    survey ~firmware (Chip.get c Defs.nv_pmc_boot_42) (fun () -> Vbios.read c)
+  in
+  let* fw, fwsec = loads in
   let* () =
     Machine.reserve machine ~base:(Space.base space) (Space.length space)
   in
@@ -269,7 +302,7 @@ let boot ~firmware ~index h fn =
     ignore (Atomic.compare_and_set fault None (Some why))
   in
   let* gsp, tables =
-    match start h fn c fw ~failed with
+    match start h fn c fw fwsec ~failed with
     | r -> r
     | exception Rig_nv.Fault why -> Error why
   in

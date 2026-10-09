@@ -11,8 +11,8 @@
     entries: a 2 MiB page in the low half, or the leaf table in the high half.
     Pages are of kind [GENERIC_MEMORY] ([0x06]).
 
-    The encoders are pure. {!format} writes them into the GPU's memory and
-    publishes them with a TLB invalidation. *)
+    {!format} writes them into the GPU's memory and publishes them with a TLB
+    invalidation. *)
 
 (** The type for versions of the page-table format. *)
 type version = V2 | V3
@@ -31,28 +31,6 @@ val pages : version -> (int * int) list
 (** [pages v] is the blocks [v]'s tables map memory with, largest first, each
     aligned to its size: pages of 512 MiB, 2 MiB and 4 KiB, at the level above
     the dual level, the dual level and the leaf. *)
-
-val pte :
-  version ->
-  pa:int ->
-  Rig_pci.Page_table.target ->
-  uncached:bool ->
-  snooped:bool ->
-  int64
-(** [pte v ~pa tg ~uncached ~snooped] is the entry that maps the page at [pa] of
-    [tg]: aperture [0] for the GPU's memory, [1] for a peer with its index, [2]
-    for system memory reached snooped and [3] for system memory not snooped;
-    [uncached] sets [VOL] ([V2]) or the uncached [PCF] ([V3]). *)
-
-val pde : version -> child:int -> int64
-(** [pde v ~child] is the directory entry that points to the table at [child] in
-    the GPU's memory. *)
-
-val dual :
-  version -> [ `Table of int | `Page of int64 | `None ] -> int64 * int64
-(** [dual v e] is the low and high halves of a dual entry: [`Table pa] points to
-    the leaf table at [pa] (with [NO_ATS] in the low half on [V2]), [`Page pte]
-    maps a 2 MiB page, [`None] maps nothing. *)
 
 val format :
   Chip.t ->

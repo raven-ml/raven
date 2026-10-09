@@ -143,21 +143,30 @@ let fmc s =
 
 (* Reading the files *)
 
-let find dirs name =
-  Rig_pci.Firmware.find dirs name ~digest:(List.assoc name pinned)
+(* Each directory is asked alone, so that the one holding the file is known; the
+   files' cache makes the second find of a file free. *)
+let rec find dirs name =
+  let digest = List.assoc name pinned in
+  let holds dir =
+    match Rig_pci.Firmware.find [ dir ] name ~digest with
+    | Ok contents -> Some (Filename.concat dir name, contents)
+    | Error _ -> None
+  in
+  match List.find_map holds dirs with
+  | Some found -> Ok found
+  | None -> (
+      (* The reason names every directory; a file put there since is found
+         again. *)
+      match Rig_pci.Firmware.find dirs name ~digest with
+      | Error _ as e -> e
+      | Ok _ -> find dirs name)
 
-let read family dirs =
-  match names family with
-  | [ gsp_name; bootloader_name; start_name ] ->
-      let* g = find dirs gsp_name in
-      let* b = find dirs bootloader_name in
-      let* st = find dirs start_name in
-      let* gsp, signature = gsp family g in
-      let* bootloader = bootloader b in
-      let* start =
-        match family with
-        | Blackwell -> Result.map (fun f -> `Fmc f) (fmc st)
-        | Ampere | Ada -> Result.map (fun b -> `Booter b) (booter st)
-      in
-      Ok { gsp; signature; bootloader; start }
-  | _ -> assert false (* Defs lists three images per family *)
+let parse family ~gsp:g ~bootloader:b ~start:st =
+  let* gsp, signature = gsp family g in
+  let* bootloader = bootloader b in
+  let* start =
+    match family with
+    | Chip.Blackwell -> Result.map (fun f -> `Fmc f) (fmc st)
+    | Ampere | Ada -> Result.map (fun b -> `Booter b) (booter st)
+  in
+  Ok { gsp; signature; bootloader; start }

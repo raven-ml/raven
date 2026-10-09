@@ -68,30 +68,18 @@ val names : Chip.family -> string list
 (** [names f] is the paths of the three files of family [f] under a firmware
     directory, GSP first. *)
 
-val pinned : (string * string) list
-(** [pinned] is every file of every family, by path, with its BLAKE2b-256
-    digest. *)
+val find : string list -> string -> (string * string, string) result
+(** [find dirs file] is the path and contents of [file] in the first of the
+    directories [dirs] that holds it with its pinned digest
+    ({!Rig_pci.Firmware.find}). [file] is one of {!names}. [Error] as
+    {!Rig_pci.Firmware.find} if none does. *)
 
-val read : Chip.family -> string list -> (t, string) result
-(** [read f dirs] is the firmware of family [f], each file found in [dirs] with
-    its pinned digest ({!Rig_pci.Firmware.find}). It is [Error] naming the file
-    if one is missing, or if a file with its digest is not laid out as its
-    format says. *)
-
-(** {1:files Files}
-
-    What {!read} reads from each file's contents. Each is [Error] saying what
-    the file lacks. *)
-
-val gsp : Chip.family -> string -> (range * range, string) result
-(** [gsp f s] is the image and the signature for family [f] of the GSP's
-    firmware [s]. *)
-
-val bootloader : string -> (bootloader, string) result
-(** [bootloader s] is the bootloader in the container [s]. *)
-
-val booter : string -> (booter, string) result
-(** [booter s] is the booter in the container [s]. *)
-
-val fmc : string -> (fmc, string) result
-(** [fmc s] is the FMC of the ELF object [s]. *)
+val parse :
+  Chip.family ->
+  gsp:string ->
+  bootloader:string ->
+  start:string ->
+  (t, string) result
+(** [parse f ~gsp ~bootloader ~start] is the firmware of family [f] whose three
+    files ({!names}) hold [gsp], [bootloader] and [start]. It is [Error] saying
+    what a file lacks if one is not laid out as its format says. *)

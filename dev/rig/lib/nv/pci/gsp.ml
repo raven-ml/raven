@@ -939,7 +939,7 @@ let golden g =
 
 (* The boot *)
 
-let take p (fw : Images.t) ~taken =
+let take p (fw : Images.t) fwsec ~taken =
   let c = p.chip in
   let sys = sys p ~taken in
   (* The queues and the table of their pages. *)
@@ -988,15 +988,12 @@ let take p (fw : Images.t) ~taken =
   Window.write meta.w 0
     (wpr_meta fw c.family ~memory:p.memory ~radix3:(first radix)
        ~bootloader:(first bootloader) ~signature:(first signature));
-  (* The start, FWSEC read from the GPU's ROM. *)
+  (* The start, FWSEC set up for the GPU's memory. *)
   let* start =
-    match (fw.start, c.family) with
-    | `Booter b, (Ampere | Ada) ->
-        let* f =
-          Vbios.fwsec (Vbios.read c) ~frts:(Layout.frts ~memory:p.memory)
-        in
-        Ok (Legacy (f, b))
-    | `Fmc m, Blackwell ->
+    match (fw.start, fwsec, c.family) with
+    | `Booter b, Some f, (Ampere | Ada) ->
+        Ok (Legacy (Vbios.patch f ~frts:(Layout.frts ~memory:p.memory), b))
+    | `Fmc m, None, Blackwell ->
         let* args = sys page in
         Window.write args.w 0
           (Falcon.cot_args ~libos:(first libos) ~wpr_meta:(first meta));
@@ -1027,9 +1024,9 @@ let take p (fw : Images.t) ~taken =
 
 (* Nothing was written to the GPU yet, so a failure gives back what it took at
    once. *)
-let create p fw =
+let create p fw fwsec =
   let taken = ref [] in
-  match take p fw ~taken with
+  match take p fw fwsec ~taken with
   | Ok _ as r -> r
   | Error _ as e ->
       give_back p taken;

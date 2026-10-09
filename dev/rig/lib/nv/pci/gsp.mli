@@ -12,52 +12,11 @@
     engine's context buffers, a virtual address space's page directory), and
     reads the GSP's events. Every call goes through {!Msgq}.
 
-    The encodings below are pure; the rest acts on a GPU. The memory the boot
-    gives the GSP is system memory, as the RM places it, but for what the GPU's
-    falcons and the GSP's objects read from the GPU's memory. The structures are
-    release 570.144's.
+    The memory the boot gives the GSP is system memory, as the RM places it, but
+    for what the GPU's falcons and the GSP's objects read from the GPU's memory.
+    The structures are release 570.144's.
 
     Calls are serialized by a lock of the GSP's; any domain may make them. *)
-
-(** {1:encodings Encodings} *)
-
-val rm_alloc :
-  client:int -> parent:int -> obj:int -> cls:int -> string -> string
-(** [rm_alloc ~client ~parent ~obj ~cls p] is the body of the RPC [GSP_RM_ALLOC]
-    that makes the object [obj] of class [cls] under [parent] of [client] with
-    the parameters [p]. *)
-
-val rm_control : client:int -> obj:int -> cmd:int -> string -> string
-(** [rm_control ~client ~obj ~cmd p] is the body of the RPC [GSP_RM_CONTROL]
-    that runs the command [cmd] on [obj] of [client] with the parameters [p]. *)
-
-val rm_answer : [ `Alloc | `Control ] -> string -> (int * string, string) result
-(** [rm_answer k body] is the RM's status and the parameters it wrote back in
-    the GSP's answer [body] to an RPC of kind [k], or [Error] if [body] is
-    shorter than its header says. *)
-
-val page_directory :
-  client:int -> device:int -> vaspace:int -> root:int -> entries:int -> string
-(** [page_directory ~client ~device ~vaspace ~root ~entries] is the body of
-    [SET_PAGE_DIRECTORY], which points the virtual address space [vaspace] to
-    the root table at the physical address [root] of the GPU's memory, of
-    [entries] entries. *)
-
-val unloading : string
-(** [unloading] is the body of [UNLOADING_GUEST_DRIVER], unloading to level 6:
-    the GSP stops every channel and stays idle for the next boot. *)
-
-val registry : (string * int) list -> string
-(** [registry keys] is the RM's registry the GSP reads at boot
-    ([PACKED_REGISTRY_TABLE]): each key with its 32-bit value. *)
-
-val sequence : libos:int -> string -> (Falcon.op list, string) result
-(** [sequence ~libos body] is the register sequence a [GSP_RUN_CPU_SEQUENCER]
-    event's [body] asks of the CPU ([rmgspseq.h]): writes, modifications, polls
-    and delays, and the resets, starts, halts and resumption of the GSP's falcon
-    they name, resumption giving the GSP its libos arguments at the bus address
-    [libos] again. [Error] names an opcode it does not know or a sequence that
-    ends inside a command. *)
 
 (** {1:boot Booting} *)
 
@@ -85,14 +44,15 @@ val boot_pool : [ `Booter of Images.booter | `Fmc of Images.fmc ] -> int
     GPU memory that any memory BAR reaches. Every other allocation of the boot
     comes from the main pool. *)
 
-val create : placement -> Images.t -> (t, string) result
-(** [create p fw] takes the system memory a boot of [p.chip] with the firmware
-    [fw] gives the GSP, and writes into it the queues, the libos arguments, the
-    radix-3 table and images, the WPR metadata and, on Blackwell, the FMC and
-    its arguments. On Ampere and Ada it reads FWSEC from the GPU's VBIOS
-    ({!Vbios.fwsec}). It writes nothing to the GPU. [Error] if the machine
-    refuses the memory, if the VBIOS has no FWSEC, or if [fw] is of another
-    family than the GPU, the memory given back; so if it raises. *)
+val create : placement -> Images.t -> Vbios.fwsec option -> (t, string) result
+(** [create p fw fwsec] takes the system memory a boot of [p.chip] with the
+    firmware [fw] gives the GSP, and writes into it the queues, the libos
+    arguments, the radix-3 table and images, the WPR metadata and, on Blackwell,
+    the FMC and its arguments. On Ampere and Ada, [fwsec] is the VBIOS's FWSEC,
+    which the boot sets up for the GPU's memory; Blackwell's boot runs none. It
+    writes nothing to the GPU. [Error] if the machine refuses the memory, or if
+    [fw] and [fwsec] are not of the GPU's family, the memory given back; so if
+    it raises. *)
 
 val boot : t -> (unit, string) result
 (** [boot g] boots the GSP: it turns the GPU's bus mastering on, sends the

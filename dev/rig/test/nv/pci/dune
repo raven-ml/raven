@@ -1,7 +1,5 @@
 (tests
- (names test_chip test_mmu test_layout test_vbios test_msgq test_images test_held test_falcon test_gsp
-  test_nv_pci)
- (libraries rig_nv rig_nv_pci rig_nv_pci_support rig_pci rig_pci_support unix
-  windtrap)
+ (names test_nv_pci)
+ (libraries rig_nv rig_nv_pci rig_pci rig_pci_support unix windtrap)
  (deps
   (source_tree fixtures)))

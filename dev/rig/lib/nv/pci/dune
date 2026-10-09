@@ -4,4 +4,5 @@
  (name rig_nv_pci)
  (public_name rig.nv.pci)
  (libraries rig_nv rig_pci rig_elf)
- (private_modules defs field))
+ (private_modules chip defs falcon field gsp held images layout mmu msgq
+  vbios))

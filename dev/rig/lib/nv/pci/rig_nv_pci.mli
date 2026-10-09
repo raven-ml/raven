@@ -118,6 +118,54 @@ val device_name : int -> string
 
     Raises [Invalid_argument] if [i < 0]. *)
 
+(** {1:reports Boot reports}
+
+    A report says what {!open_} loads to boot a GPU, and whether it refuses the
+    GPU for its chip, its VBIOS or its firmware, from what an open reads before
+    it writes to it. It needs no GPU and writes nothing. *)
+
+type image = {
+  file : string;
+      (** The file's path under a firmware directory, such as
+          ["nvidia/ad102/gsp/booter_load-570.144.bin"]. *)
+  found : string option;
+      (** The path of the file with its pinned digest, in the first directory
+          that holds one, if any does. *)
+}
+(** The type for a firmware file a boot loads. *)
+
+type report = {
+  chip : string;  (** The chip's name, such as ["AD102"]. *)
+  images : image list;
+      (** The GSP's firmware, its bootloader, then the booter or the FMC. *)
+}
+(** The type for boot reports. *)
+
+val report :
+  firmware:string list -> chip:int -> vbios:string -> (report, string) result
+(** [report ~firmware ~chip ~vbios] is what {!open_} loads to boot a GPU whose
+    [NV_PMC_BOOT_42] register holds [chip] and whose VBIOS is [vbios]: its chip
+    and its firmware files, each looked up in the directories [firmware] as
+    {!open_} looks it up. It reads files and nothing else.
+
+    [vbios] is the first MiB of the GPU's ROM as its registers show it, from
+    [NV_PROM_DATA] (BAR 0 from [0x300000]), which {!open_} reads. Linux's [rom]
+    file of the GPU's function reads the ROM through its expansion ROM BAR
+    instead, which may show less of it. Blackwell's boot reads no VBIOS, and
+    [vbios] is then unread.
+
+    {!open_} of that GPU reads what [report] reads before it writes to the GPU,
+    but for the reset it gives a GPU whose GSP runs, that this process lost or
+    that a dead process left. If [report] answers [Error why], {!open_} answers
+    [Error] with [why] after the GPU's name; if an image is not [found], [Error]
+    naming it. Otherwise no refusal of {!open_} is about the chip, the VBIOS or
+    the firmware.
+
+    [Error why] if [chip] is no chip this library boots, naming it; on Ampere
+    and Ada, if [vbios] holds no FWSEC this library runs, naming what it lacks;
+    or if a file found with its pinned digest is not laid out as its format
+    says. *)
+
 (** {1:opening Opening} *)
 
 val open_ :
@@ -143,12 +191,13 @@ val open_ :
     holds GPU [i] (naming {!detach}), if the process holds it, if its function
     cannot be taken ({!Rig_pci.Function.take}'s reason), if [machine]'s windows
     are not mapped into the process, as through a transport, before anything is
-    written, if it is no chip this library boots, if its reset fails, the GPU
-    then lost, if its GSP still runs after that reset, if an image is missing
-    (naming the directories, and the files found with another digest), if the
-    machine refuses the memory or the addresses the GPU needs, or if a step of
-    the boot fails, naming it. A boot that failed after it started the GPU
-    leaves it lost, reset by its next open.
+    written, if its reset fails, the GPU then lost, if its GSP still runs after
+    that reset, if {!report} of it answers [Error] or finds an image missing
+    (naming the directories, and the files found with another digest), before
+    anything but that reset is written to it, if the machine refuses the memory
+    or the addresses the GPU needs, or if a step of the boot fails, naming it. A
+    boot that failed after it started the GPU leaves it lost, reset by its next
+    open.
 
     Raises [Invalid_argument] if [i < 0]. *)
 
@@ -202,17 +251,3 @@ val reset : ?machine:Rig_pci.Machine.t -> int -> (unit, string) result
     not answer after one.
 
     Raises [Invalid_argument] if [i < 0]. *)
-
-(**/**)
-
-(* The parts of a boot that read files and lay out bytes, for tests on fixtures
-   of the pinned firmware and on the layouts NVIDIA's sources state. *)
-module Chip = Chip
-module Falcon = Falcon
-module Gsp = Gsp
-module Held = Held
-module Images = Images
-module Layout = Layout
-module Mmu = Mmu
-module Msgq = Msgq
-module Vbios = Vbios

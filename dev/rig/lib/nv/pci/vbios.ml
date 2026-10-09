@@ -10,6 +10,7 @@ let read (c : Chip.t) =
 
 type fwsec = {
   image : string;
+  frts_at : int;
   imem_pa : int;
   imem_va : int;
   imem_size : int;
@@ -230,7 +231,7 @@ let frts_command frts =
 
 let round_up n a = (n + a - 1) / a * a
 
-let fwsec rom ~frts =
+let fwsec rom =
   match
     let desc, size = fwsec_desc rom in
     let module D = Defs.Ucode_desc_v3 in
@@ -283,9 +284,9 @@ let fwsec rom ~frts =
     put
       (mapper + fst M.init_cmd)
       (word Defs.falcon_application_interface_dmem_mapper_v3_cmd_frts);
-    put
-      (imem + image_u32 (mapper + fst M.cmd_in_buffer_offset))
-      (frts_command frts);
+    (* The FRTS command's arguments, zero until {!patch} sets them. *)
+    let frts_at = imem + image_u32 (mapper + fst M.cmd_in_buffer_offset) in
+    put frts_at (String.make Defs.Frts_cmd.sizeof '\000');
     let n = Defs.bcrt30_rsa3k_sig_size in
     let blob = String.sub rom (desc + signatures) (size - signatures) in
     if String.length blob < n then badf "FWSEC's descriptor holds no signature";
@@ -294,6 +295,7 @@ let fwsec rom ~frts =
       (String.sub blob (String.length blob - n) n);
     {
       image = Bytes.unsafe_to_string image;
+      frts_at;
       imem_pa = f D.imem_phys_base;
       imem_va = f D.imem_virt_base;
       imem_size = imem;
@@ -306,3 +308,9 @@ let fwsec rom ~frts =
   with
   | v -> Ok v
   | exception Bad why -> Error why
+
+let patch f ~frts =
+  let image = Bytes.of_string f.image in
+  let cmd = frts_command frts in
+  Bytes.blit_string cmd 0 image f.frts_at (String.length cmd);
+  { f with image = Bytes.unsafe_to_string image }

@@ -25,8 +25,11 @@ val read : Chip.t -> string
 
 type fwsec = {
   image : string;
-      (** The image, its code then its data, patched to run FRTS, its production
+      (** The image, its code then its data, set to run FRTS, its production
           signature in place. *)
+  frts_at : int;
+      (** The offset in [image] of the FRTS command's arguments, zero until
+          {!patch} sets them. *)
   imem_pa : int;  (** The falcon's address of its code. *)
   imem_va : int;  (** The virtual address of its code. *)
   imem_size : int;  (** The size of its code. *)
@@ -38,15 +41,18 @@ type fwsec = {
   engines : int;  (** The engines it runs on, as a mask. *)
   ucode : int;  (** Its ucode ID. *)
 }
-(** The type for FWSEC, ready to run. *)
+(** The type for FWSEC. *)
 
-val fwsec : string -> frts:int -> (fwsec, string) result
-(** [fwsec rom ~frts] is the FWSEC of the VBIOS [rom], patched to set up the
-    FRTS region at the byte [frts] of the GPU's memory. The walk is the RM's
-    ([kernel_gsp_vbios_tu102.c], [kernel_gsp_fwsec.c]): the PCI expansion ROM
-    images, by their PCI data structures and NVIDIA's extension of them, the BIT
-    table, found by its signature and checksum, its falcon data, and the first
-    production FWSEC entry of the ucode table. [Error] names what the ROM lacks:
-    valid images, the BIT table, a production FWSEC with a version 3 descriptor,
-    or the DMEM mapper, or a structure that points past its end. The signature
-    in place is the last of the descriptor's. *)
+val fwsec : string -> (fwsec, string) result
+(** [fwsec rom] is the FWSEC of the VBIOS [rom], set to run FRTS. The walk is
+    the RM's ([kernel_gsp_vbios_tu102.c], [kernel_gsp_fwsec.c]): the PCI
+    expansion ROM images, by their PCI data structures and NVIDIA's extension of
+    them, the BIT table, found by its signature and checksum, its falcon data,
+    and the first production FWSEC entry of the ucode table. [Error] names what
+    the ROM lacks: valid images, the BIT table, a production FWSEC with a
+    version 3 descriptor, or the DMEM mapper, or a structure that points past
+    its end. The signature in place is the last of the descriptor's. *)
+
+val patch : fwsec -> frts:int -> fwsec
+(** [patch f ~frts] is [f] ready to run: its FRTS command sets up the FRTS
+    region at the byte [frts] of the GPU's memory. *)

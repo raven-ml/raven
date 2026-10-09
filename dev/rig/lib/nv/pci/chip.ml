@@ -45,7 +45,7 @@ let chip boot42 =
             this library boots"
            arch impl)
 
-let name c = strf "%s%X" (prefix c.family) c.implementation
+let name family impl = strf "%s%X" (prefix family) impl
 let get c r = Window.get32 c.regs r
 let set c r x = Window.set32 c.regs r x
 
@@ -63,7 +63,8 @@ let of_function fn =
    (NV_PGC6_AON_SECURE_SCRATCH_GROUP_42). *)
 let memory c =
   match get c Defs.nv_pgc6_aon_secure_scratch_group_42 with
-  | 0 -> Error (name c ^ "'s firmware wrote no memory size")
+  | 0 ->
+      Error (name c.family c.implementation ^ "'s firmware wrote no memory size")
   | mib -> Ok (mib lsl 20)
 
 let booted c = get c Defs.nv_pfb_pri_mmu_wpr2_addr_hi <> 0

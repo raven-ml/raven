@@ -83,12 +83,6 @@ type section = {
 }
 (** The type for a ucode's code or data. *)
 
-val dma : int -> imem:bool -> image:int -> section -> op list
-(** [dma base ~imem ~image s] copies the section [s] of the image at the
-    physical address [image] of the GPU's memory into the falcon's instruction
-    memory if [imem], its data memory otherwise, 256 bytes per command, and
-    waits for the copy. *)
-
 type hs = {
   image : int;  (** The image's address in the GPU's memory. *)
   code : section;
@@ -98,11 +92,6 @@ type hs = {
   ucode : int;  (** Its ucode ID. *)
 }
 (** The type for heavy-secure ucodes in the GPU's memory. *)
-
-val hs : int -> ?mailbox:int -> hs -> op list
-(** [hs base ~mailbox u] runs the heavy-secure ucode [u] on the falcon at
-    [base], its 64-bit [mailbox] in its two mailbox registers, until it halts.
-*)
 
 (** {1:boots Boots} *)
 
@@ -123,12 +112,6 @@ val cot_payload : args:int -> fmc:int -> Images.fmc -> string
     2) that has the FSP boot the GSP from the FMC [m], whose image and boot
     arguments are at the bus addresses [fmc] and [args], its FRTS region where
     {!Layout.cot_frts} puts it. *)
-
-val fsp : int -> string -> op list
-(** [fsp kind payload] sends the FSP the NVDM message of type [kind] with
-    [payload] through its message queue, and waits for its answer.
-
-    Raises [Invalid_argument] if the message is 1 KiB or longer. *)
 
 val cot : string -> op list
 (** [cot payload] sends the FSP the COT [payload] and waits for the GSP's boot

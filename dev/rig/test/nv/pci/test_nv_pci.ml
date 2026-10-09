@@ -66,6 +66,166 @@ let opening =
         (fun (_, f) -> raises_match Exn.invalid_arg f);
     ]
 
+(* The pinned firmware, from the directories the variable RIG_NV_PCI_FIRMWARE
+   lists, separated by [:]: an open reaches the GPU's boot only with them. *)
+let firmware () =
+  match Sys.getenv_opt "RIG_NV_PCI_FIRMWARE" with
+  | Some dirs -> String.split_on_char ':' dirs
+  | None -> skip ~reason:"needs NVIDIA's firmware (RIG_NV_PCI_FIRMWARE)" ()
+
+(* Boot reports *)
+
+let rom name =
+  In_channel.with_open_bin
+    (Filename.concat "fixtures" name)
+    In_channel.input_all
+
+(* NV_PMC_BOOT_42: the architecture in bits 29:24, the implementation in bits
+   23:20; GA100, AD100 and GB200 are architectures 0x17, 0x19 and 0x1b
+   (nv_ref.h). *)
+let boot42 ~arch ~impl = (arch lsl 24) lor (impl lsl 20)
+
+let found =
+  Testable.contramap
+    (fun (i : Rig_nv_pci.image) -> (i.file, i.found))
+    (pair string (option string))
+
+(* The files the preamble lists for each family. *)
+let gsp = "nvidia/ga102/gsp/gsp-570.144.bin"
+
+let files = function
+  | `Ampere ->
+      [
+        gsp;
+        "nvidia/ga102/gsp/bootloader-570.144.bin";
+        "nvidia/ga102/gsp/booter_load-570.144.bin";
+      ]
+  | `Ada ->
+      [
+        gsp;
+        "nvidia/ad102/gsp/bootloader-570.144.bin";
+        "nvidia/ad102/gsp/booter_load-570.144.bin";
+      ]
+  | `Blackwell ->
+      [
+        gsp;
+        "nvidia/gb202/gsp/bootloader-570.144.bin";
+        "nvidia/gb202/gsp/fmc-570.144.bin";
+      ]
+
+let report ?(firmware = []) ?(vbios = rom "vbios.rom") ~arch ~impl () =
+  Rig_nv_pci.report ~firmware ~chip:(boot42 ~arch ~impl) ~vbios
+
+let reports =
+  group "boot reports"
+    [
+      cases "a listed chip is named, with its family's files, none found"
+        ~name:(fun (name, _, _, _) -> name)
+        [
+          ("GA102", 0x17, 2, `Ampere);
+          ("GA107", 0x17, 7, `Ampere);
+          ("AD102", 0x19, 2, `Ada);
+          ("AD104", 0x19, 4, `Ada);
+          ("GB202", 0x1b, 2, `Blackwell);
+          ("GB207", 0x1b, 7, `Blackwell);
+        ]
+        (fun (name, arch, impl, family) ->
+          let r = require_ok (report ~arch ~impl ()) in
+          equal string name r.chip;
+          equal (list found)
+            (List.map
+               (fun file -> { Rig_nv_pci.file; found = None })
+               (files family))
+            r.images);
+      cases "an unlisted chip is an error naming it"
+        ~name:(fun (name, _, _, _) -> name)
+        [
+          ("GA100", 0x17, 0, "GA100");
+          ("GA105", 0x17, 5, "GA105");
+          ("GB204", 0x1b, 4, "GB204");
+          ("GH100", 0x18, 0, "architecture 0x18");
+          ("TU102", 0x16, 2, "architecture 0x16");
+        ]
+        (fun (_, arch, impl, named) ->
+          contains ~sub:named (require_error (report ~arch ~impl ())));
+      test "only the architecture and implementation name the chip" (fun () ->
+          let noise = 0xc00f_ff00 in
+          let r =
+            require_ok
+              (Rig_nv_pci.report ~firmware:[] ~vbios:(rom "vbios.rom")
+                 ~chip:(boot42 ~arch:0x19 ~impl:3 lor noise))
+          in
+          equal string "AD103" r.chip);
+      cases "a VBIOS without what FWSEC needs is an error naming it"
+        ~name:(fun (name, _) -> name)
+        [
+          ("vbios_no_bit.rom", "no BIT table");
+          ("vbios_debug.rom", "no production FWSEC");
+          ("vbios_no_mapper.rom", "no DMEM mapper");
+        ]
+        (fun (name, why) ->
+          contains ~sub:why
+            (require_error (report ~vbios:(rom name) ~arch:0x19 ~impl:2 ())));
+      (* fixtures/vbios.py puts FWSEC's descriptor at 0x200 of the extension
+         image at 1536, 812 bytes, then 512 bytes of code and 1024 of data. *)
+      (let needed = 1536 + 0x200 + 812 + 0x200 + 0x400 in
+       let full = rom "vbios.rom" in
+       prop "a VBIOS cut before FWSEC's end is an error, never read past"
+         (Gen.int_range 0 (String.length full))
+         (fun n ->
+           cover "cut before" (n < needed);
+           cover "cut after" (n >= needed);
+           let r = report ~vbios:(String.sub full 0 n) ~arch:0x17 ~impl:2 () in
+           equal bool (n >= needed) (Result.is_ok r)));
+      test "Blackwell reads no VBIOS" (fun () ->
+          ignore (require_ok (report ~vbios:"" ~arch:0x1b ~impl:3 ())));
+      test "a file with another digest is not found" (fun () ->
+          let dir = Filename.temp_dir "rig_nv_pci" "" in
+          let rec remove p =
+            if Sys.is_directory p then begin
+              Array.iter (fun f -> remove (Filename.concat p f)) (Sys.readdir p);
+              Sys.rmdir p
+            end
+            else Sys.remove p
+          in
+          Fun.protect ~finally:(fun () -> remove dir) @@ fun () ->
+          List.iter
+            (fun file ->
+              let path = Filename.concat dir file in
+              let rec mkdir d =
+                if not (Sys.file_exists d) then begin
+                  mkdir (Filename.dirname d);
+                  Sys.mkdir d 0o755
+                end
+              in
+              mkdir (Filename.dirname path);
+              Out_channel.with_open_bin path (fun oc ->
+                  output_string oc "not NVIDIA's firmware"))
+            (files `Ada);
+          let r = require_ok (report ~firmware:[ dir ] ~arch:0x19 ~impl:2 ()) in
+          equal (list found)
+            (List.map
+               (fun file -> { Rig_nv_pci.file; found = None })
+               (files `Ada))
+            r.images);
+      test
+        "each file is found in the first directory that holds it with its \
+         digest (RIG_NV_PCI_FIRMWARE)" (fun () ->
+          let dirs = firmware () in
+          let r =
+            require_ok
+              (report ~firmware:("/nonexistent" :: dirs) ~arch:0x19 ~impl:2 ())
+          in
+          let holds dir file = Sys.file_exists (Filename.concat dir file) in
+          List.iter
+            (fun (i : Rig_nv_pci.image) ->
+              let first = List.find_opt (fun d -> holds d i.file) dirs in
+              equal (option string)
+                (Option.map (fun d -> Filename.concat d i.file) first)
+                i.found)
+            r.images);
+    ]
+
 (* Stopping *)
 
 let gpus () =
@@ -105,24 +265,29 @@ let fixture ?(booted = true) () =
     Tree.make [ { (Tree.gpu gpu_bus) with vendor = 0x10de; class_ = 0x030000 } ]
   in
   let device = strf "sys/bus/pci/devices/%s/" gpu_bus in
-  let set32 r x =
+  let write r s =
     let fd =
       Unix.openfile (Filename.concat root (device ^ "resource0")) [ O_WRONLY ] 0
     in
+    ignore (Unix.lseek fd r SEEK_SET);
+    ignore (Unix.write_substring fd s 0 (String.length s));
+    Unix.close fd
+  in
+  let set32 r x =
     let b = Bytes.create 4 in
     Bytes.set_int32_le b 0 (Int32.of_int x);
-    ignore (Unix.lseek fd r SEEK_SET);
-    ignore (Unix.write fd b 0 4);
-    Unix.close fd
+    write r (Bytes.to_string b)
   in
   (* NV_PMC_BOOT_42: architecture 0x19 (Ada), implementation 2. *)
   set32 0xa00 ((0x19 lsl 24) lor (2 lsl 20));
   (* NV_PFB_PRI_MMU_WPR2_ADDR_HI *)
   if booted then set32 0x1fa828 0x7ff
   else begin
-    (* The GPU's own boot done: its progress unlocked, then completed. *)
+    (* The GPU's own boot done: its progress unlocked, then completed. Its VBIOS
+       in the PROM window, from 0x300000. *)
     set32 0x118128 1;
-    set32 0x118234 0xff
+    set32 0x118234 0xff;
+    write 0x300000 (rom "vbios.rom")
   end;
   Tree.add root (device ^ "reset") "";
   root
@@ -253,13 +418,6 @@ let test_held () =
       contains ~msg:"the take's reason" ~sub:"taken already" why;
       equal ~msg:"no reset" string "" (resets root))
 
-(* The pinned firmware, from the directories the variable RIG_NV_PCI_FIRMWARE
-   lists, separated by [:]: an open reaches the GPU's boot only with them. *)
-let firmware () =
-  match Sys.getenv_opt "RIG_NV_PCI_FIRMWARE" with
-  | Some dirs -> String.split_on_char ':' dirs
-  | None -> skip ~reason:"needs NVIDIA's firmware (RIG_NV_PCI_FIRMWARE)" ()
-
 (* A GPU whose GSP is down boots without a reset. Its open fails at the memory
    size its firmware should have written, before the GSP's memory is taken: it
    gives the GPU back as found, so the next open does not reset it either. *)
@@ -299,4 +457,4 @@ let booted =
 let () =
   match Sys.argv with
   | [| _; arg; how; root |] when arg = taking -> take how root
-  | _ -> exit (run "rig_nv_pci" [ numbering; opening; booted ])
+  | _ -> exit (run "rig_nv_pci" [ numbering; opening; reports; booted ])
