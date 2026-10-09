@@ -174,6 +174,10 @@ int rig_point_done(uint64_t p);
 /* The host's page size in bytes. */
 size_t rig_page_bytes(void);
 
+/* The host clock: nanoseconds of the monotonic clock; on macOS, mach time,
+   the time base of Metal's command buffer times. */
+uint64_t rig_now_ns(void);
+
 /* Raises the stamps [s]'s work names to [p]. */
 void rig_sub_raise(struct rig_sub *s, uint64_t p);
 

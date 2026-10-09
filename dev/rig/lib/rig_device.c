@@ -139,15 +139,7 @@ static void relax(void) {
 #endif
 }
 
-static int64_t now_ms(void) {
-#ifdef _WIN32
-  return (int64_t)GetTickCount64();
-#else
-  struct timespec t;
-  clock_gettime(CLOCK_MONOTONIC, &t);
-  return (int64_t)t.tv_sec * 1000 + t.tv_nsec / 1000000;
-#endif
-}
+static int64_t now_ms(void) { return (int64_t)(rig_now_ns() / 1000000); }
 
 /* The table of devices */
 

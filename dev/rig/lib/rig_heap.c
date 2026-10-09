@@ -48,9 +48,7 @@ value caml_rig_page_size(value unit) {
   return Val_long((intnat)rig_page_bytes());
 }
 
-/* The host clock: nanoseconds of the monotonic clock; on macOS, mach time,
-   the time base of Metal's command buffer times. */
-static uint64_t now_ns(void) {
+uint64_t rig_now_ns(void) {
 #if defined(_WIN32)
   LARGE_INTEGER count, frequency;
   QueryPerformanceCounter(&count);
@@ -80,13 +78,13 @@ value caml_rig_arch(value unit) {
 
 value caml_rig_now(value unit) {
   (void)unit;
-  return Val_long((intnat)now_ns());
+  return Val_long((intnat)rig_now_ns());
 }
 
 /* Stores the host clock into the word at [word], for a device library's
    completion path: one aligned atomic store, no lock. */
 void rig_timestamp(void *word) {
-  atomic_store_explicit((_Atomic uint64_t *)word, now_ns(),
+  atomic_store_explicit((_Atomic uint64_t *)word, rig_now_ns(),
                         memory_order_release);
 }
 
