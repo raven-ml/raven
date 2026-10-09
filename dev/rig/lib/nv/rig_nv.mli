@@ -51,8 +51,9 @@
     tables refuse, and writes the error into the channel's notifier; the GPU's
     multiprocessors report their own errors to the RM. {!sleep} reads both
     reports and the path's ({!field-check}), and raises {!Fault} with them. Work
-    that runs long is no fault unless the path bounds it ({!field-hang_ms}): a
-    wait lasts until the work ends.
+    that runs long is no fault: a path that bounds progress states the bound
+    ({!field-hang_ms}), and rig loses the device past it
+    ({!Rig_edge.facts}). Otherwise a wait lasts until the work ends.
 
     A function that calls the RM answers its refusal of the arguments as its
     result ([None], [Error]) and raises {!Fault} for any other failure.
@@ -161,14 +162,6 @@ include Rig_edge.Driver
     each error the RM wrote into the channels' notifiers, by its number and
     name, then one for each fault the multiprocessors or the MMU reported, the
     MMU's with the faulting address and access.
-
-    If the path bounds progress ([hang_ms] is [Some n]), {!sleep} also raises
-    {!Fault} once work is outstanding and the word has not moved for [n]
-    milliseconds, and may return early when that clock runs out. The clock
-    runs while a value given is above the word, from the later of the word's
-    last move and the first [sleep] after the device was idle, as [sleep]
-    observes them: an idle device never hangs, and the report may come late
-    but never early.
 
     {b Hand-over.} [edge]'s room check, [rig_nv_room], answers [RIG_NEVER] for
     parts that exceed the device's empty rings, more than 65,535 parts, or a
@@ -304,9 +297,9 @@ type 'm path = {
           a lost function. *)
   hang_ms : int option;
       (** [Some n] if work whose timeline word has not moved for [n]
-          milliseconds is a fault ({!val-sleep}), where nothing else bounds the
-          GPU's work; [None] where the path's kernel driver does. [n] is
-          positive. *)
+          milliseconds hung, where nothing else bounds the GPU's work; [None]
+          where the path's kernel driver does. It is the device's [hang_ms]
+          fact ({!Rig_edge.facts}). *)
   stop : unit -> [ `Stopped | `Unknown ];
       (** [stop ()] ends the path's hold of the GPU after the device freed its
           channels: [`Stopped] once none of the device's work runs or can write
@@ -324,9 +317,7 @@ val make : 'm path -> (t, string) result
     clocks. The result is [Error msg] if [p.rm.release] is none of [570], [580],
     [610] and [615], if the RM refuses an object, or if [p] lacks the memory. A
     failed [make] frees what it allocated; [p]'s own objects stay [p]'s, and
-    another [make] may use them once this one's device is stopped or failed.
-
-    Raises [Invalid_argument] if [p.hang_ms] is [Some n] with [n < 1]. *)
+    another [make] may use them once this one's device is stopped or failed. *)
 
 val is_gpu : vendor:int -> class_:int -> bool
 (** [is_gpu ~vendor ~class_] is [true] iff a PCI function of vendor [vendor] and

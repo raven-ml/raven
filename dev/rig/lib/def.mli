@@ -66,6 +66,11 @@ type keep =
     given back to the driver. *)
 type word_end = Read | Moved of int | Given
 
+(** The type for the word as a wait under a hang bound last saw it: its value,
+    whether the device was idle then, and since when, in milliseconds of the
+    monotonic clock. *)
+type progress = { seen : int; idle : bool; since : int }
+
 type device = {
   index : int;
   name : string;
@@ -77,6 +82,9 @@ type device = {
   copy_queue : string option;  (** The queue its copies go to. *)
   completion : completion;
   waits : Rig_edge.waits;
+  hang_ms : int option;  (** Its hang bound. *)
+  mutable progress : progress; [@atomic]
+      (** The word as the last wait under [hang_ms] saw it. *)
   maps_host : bool;  (** Whether it maps host memory. *)
   word : int;  (** The word's host address, 0 behind a transport. *)
   word_region : region option;

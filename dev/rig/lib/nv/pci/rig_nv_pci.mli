@@ -45,9 +45,10 @@
     channel it stopped, or a fault its MMU queued. The device raises them from
     its waits ({!Rig_nv.sleep}). No other program shares a GPU the process
     boots, so its work never waits for theirs: work whose timeline makes no
-    progress for {!Rig_pci.Gpus.hang_ms} is a hang, which the device raises as a
-    fault. A device lost so, or stopped, leaves the GSP running, and the GPU's
-    next open resets it, as it does a GPU that no longer answered at the stop.
+    progress for {!Rig_pci.Gpus.hang_ms} hung, and rig loses its device (the
+    [hang_ms] fact, {!Rig_edge.facts}). A device lost so, or stopped, leaves
+    the GSP running, and the GPU's next open resets it, as it does a GPU that
+    no longer answered at the stop.
 
     {b Memory.} The memory a device gives the host is the GPU's own, through its
     memory BAR, while the BAR reaches it ([Mapped] of {!Rig_nv.alloc}), and the

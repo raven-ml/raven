@@ -159,7 +159,7 @@ module Host = struct
 
   let path ?(key = key) ?(reaches = true) ?(gpu = r9700) ?(lds = 65536)
       ?(refuse = fun _ -> false) ?(fault = fun _ -> false)
-      ?(on_alloc = fun _ _ -> ()) ?(stop = fun () -> `Stopped) ?hang_ms () =
+      ?(on_alloc = fun _ _ -> ()) ?(stop = fun () -> `Stopped) () =
     let h =
       {
         lock = Mutex.create ();
@@ -264,7 +264,7 @@ module Host = struct
         queue;
         hdp = Some h.hdp;
         interrupt = 1;
-        hang_ms;
+        hang_ms = None;
         sleep;
         stable_power = (fun () -> Ok ());
         stop;
@@ -280,8 +280,8 @@ module Host = struct
     h.held <- [];
     h.closed <- true
 
-  let device ?key ?reaches ?gpu ?lds ?on_alloc ?stop ?hang_ms () =
-    let h, p = path ?key ?reaches ?gpu ?lds ?on_alloc ?stop ?hang_ms () in
+  let device ?key ?reaches ?gpu ?lds ?on_alloc ?stop () =
+    let h, p = path ?key ?reaches ?gpu ?lds ?on_alloc ?stop () in
     match A.make p with Ok g -> (h, g) | Error why -> fail why
 
   let with_device ?gpu ?lds f =
@@ -386,19 +386,6 @@ let stop_gives_back () =
   equal bool ~msg:"the word, freed after the stop" true (List.mem at h.frees);
   Host.close h
 
-(* A device is stopped for good: a later [stop], as rig's own after a loss and
-   then its caller's, stops nothing and gives nothing back again. *)
-let stop_twice () =
-  let h, g = Host.device () in
-  let live = h.live in
-  A.stop g ~fault:None;
-  let frees = h.frees in
-  A.stop g ~fault:None;
-  equal int ~msg:"stops" 1 h.stops;
-  equal (list int) ~msg:"given back" frees h.frees;
-  less int ~msg:"the memory left" ~than:live h.live;
-  Host.close h
-
 let facts () =
   List.iter
     (fun (g, kind, aql) ->
@@ -497,7 +484,6 @@ let paths =
       test "a failed make gives back what it took" make_gives_back;
       test "stop gives back a device's memory once its queues stopped"
         stop_gives_back;
-      test "a second stop does nothing" stop_twice;
       test "a device states its path's facts" facts;
       test "a path with no HDP register has no Mapped memory" mapped_needs_hdp;
     ]
@@ -1146,30 +1132,6 @@ let sleeps () =
   A.stop g ~fault:None;
   Host.close h
 
-(* A stopped device's word holds its last value for good: a sleep after the
-   stop returns without asking the path, whose windows the stop may have
-   unmapped. *)
-let sleeps_after_stop () =
-  let h, g = Host.device () in
-  A.stop g ~fault:None;
-  A.sleep g ~seen:(A.signaled g) ~still_ms:10_000;
-  equal int ~msg:"the path's sleeps" 0 h.sleeps;
-  Host.close h
-
-(* A fault is the device's for good: every sleep after the path reported it
-   raises it again, whether the word moved past [seen] or the path would now
-   return quietly. *)
-let sleeps_after_fault () =
-  Host.with_device @@ fun h g ->
-  let why = "memory fault at 0x0" in
-  h.report <- Some why;
-  raises (A.Fault why) (fun () -> A.sleep g ~seen:0 ~still_ms:1);
-  h.report <- None;
-  raises ~msg:"the word at seen" (A.Fault why) (fun () ->
-      A.sleep g ~seen:0 ~still_ms:1);
-  raises ~msg:"the word past seen" (A.Fault why) (fun () ->
-      A.sleep g ~seen:5 ~still_ms:1)
-
 (* [free] never raises the path's faults. *)
 let free_through_fault () =
   Host.with_device @@ fun h g ->
@@ -1200,25 +1162,17 @@ let stops () =
   case "the path may run a queue" (fun () -> `Unknown) 0;
   case "the path failed" (fun () -> raise (A.Fault "lost")) 0
 
-(* The path's stop gets the device's first fault: the one [sleep] raised, else
-   the one the device was lost for. *)
+(* The path's stop gets the fault the device was lost for. *)
 let stop_fault () =
-  let case name ~report ~fault expected =
+  let case name fault =
     let h, g = Host.device () in
-    Option.iter
-      (fun why ->
-        h.report <- Some why;
-        raises ~msg:name (A.Fault why) (fun () -> A.sleep g ~seen:0 ~still_ms:1))
-      report;
     A.stop g ~fault;
-    equal (option string) ~msg:name expected h.stop_fault;
+    equal (option string) ~msg:name fault h.stop_fault;
     Host.close h
   in
-  case "no fault" ~report:None ~fault:None None;
-  case "the fault it was lost for" ~report:None ~fault:(Some "lost")
-    (Some "lost");
-  case "the fault sleep raised" ~report:(Some "page fault") ~fault:(Some "lost")
-    (Some "page fault")
+  case "no fault" None;
+  case "the fault it was lost for" (Some "page fault");
+  case "a hang" (Some "no progress for 30000 ms")
 
 (* NOPs
 
@@ -1302,68 +1256,6 @@ let at_the_end =
       Format.fprintf ppf "%d words left; calls of %d and %d" r a b)
     Gen.(triple (int_range 1 40) (int_range 1 24) (int_range 1 24))
 
-(* Progress bounds
-
-   A path that bounds work's progress ([hang_ms]) makes [sleep] raise once a
-   value is outstanding and the word has not moved for that long. The host
-   path's [sleep] returns at once, so these loops spin; [ms] of CPU time is at
-   most [ms] of the clock. *)
-
-let spin ~ms f =
-  let t0 = Rig.Profile.now () in
-  while Rig.Profile.now () - t0 < ms * 1_000_000 do
-    f ()
-  done
-
-let hangs () =
-  let h, g = Host.device ~hang_ms:50 () in
-  equal answer ~msg:"submit" `Ok (submit g ~v:1 [||]);
-  A.sleep g ~seen:0 ~still_ms:1;
-  (match spin ~ms:2000 (fun () -> A.sleep g ~seen:0 ~still_ms:1) with
-  | () -> fail "no Fault after 2 s of a value making no progress"
-  | exception A.Fault why -> contains ~msg:"the report" ~sub:"50 ms" why);
-  A.stop g ~fault:None;
-  (match h.stop_fault with
-  | Some why -> contains ~msg:"the fault the path's stop got" ~sub:"50 ms" why
-  | None -> fail "the path's stop got no fault after a hang");
-  Host.close h
-
-let idle () =
-  let h, g = Host.device ~hang_ms:50 () in
-  spin ~ms:150 (fun () -> A.sleep g ~seen:0 ~still_ms:1);
-  equal answer ~msg:"submit" `Ok (submit g ~v:1 [||]);
-  A.sleep g ~seen:0 ~still_ms:1;
-  A.stop g ~fault:None;
-  Host.close h
-
-let moving () =
-  let h, g = Host.device ~hang_ms:50 () in
-  for v = 1 to 8 do
-    equal answer ~msg:"submit" `Ok (submit g ~v [||])
-  done;
-  for v = 1 to 8 do
-    spin ~ms:20 (fun () -> A.sleep g ~seen:(v - 1) ~still_ms:1);
-    Host.reach g v
-  done;
-  A.stop g ~fault:None;
-  Host.close h
-
-let unbounded () =
-  let h, g = Host.device () in
-  equal answer ~msg:"submit" `Ok (submit g ~v:1 [||]);
-  spin ~ms:150 (fun () -> A.sleep g ~seen:0 ~still_ms:1);
-  A.stop g ~fault:None;
-  Host.close h
-
-let bounds () =
-  List.iter
-    (fun n ->
-      let h, p = Host.path ~hang_ms:n () in
-      raises_match ~msg:(strf "hang_ms %d" n)
-        (Exn.invalid_arg ~substring:"Rig_amd.make") (fun () -> A.make p);
-      Host.close h)
-    [ 0; -1; min_int ]
-
 (* An AQL queue's scratch
 
    On a GPU of several dies a kernel's scratch is the device's, grown through
@@ -1429,19 +1321,6 @@ let scratch =
         scratch_taken;
     ]
 
-let progress =
-  group ~timeout:30. "progress"
-    [
-      test
-        "a value that makes no progress for hang_ms is a fault, which the \
-         path's stop is given"
-        hangs;
-      test "an idle device never hangs, nor its next value at once" idle;
-      test "values reached more often than hang_ms are no fault" moving;
-      test "without hang_ms a value making no progress is no fault" unbounded;
-      test "make raises on a hang_ms below 1" bounds;
-    ]
-
 (* A device waits on other words only where [waits_on] says so, and on at most
    255 per submission: a submission past either fails as a fill's failure
    does. *)
@@ -1476,13 +1355,10 @@ let failures =
         at_the_end fill_at_the_end;
       test "a submission that waits where the device cannot fails" waits_refused;
       test "sleep asks the path only while the word holds seen" sleeps;
-      test "a sleep after the device's stop asks nothing of the path"
-        sleeps_after_stop;
-      test "every sleep after a fault raises it" sleeps_after_fault;
       test "free returns when the path fails to free" free_through_fault;
       test "stop writes the last value only once the path stopped its queues"
         stops;
-      test "stop gives the path the device's first fault" stop_fault;
+      test "stop gives the path the fault the device was lost for" stop_fault;
     ]
 
 (* [sleep] runs while another domain submits: a device whose submissions
@@ -1501,7 +1377,7 @@ let sleep_commands =
       (Gen.unit @-> makes sleeper)
       (fun () -> ref 0)
       (fun () ->
-        let h, g = Host.device ~hang_ms:60_000 () in
+        let h, g = Host.device () in
         { g; h; lock = Mutex.create (); v = 0 });
     command "submit"
       (sleeper ^-> returns unit)
@@ -3057,7 +2933,6 @@ let () =
          hdp;
          failures;
          scratch;
-         progress;
          domains;
          work;
          code;

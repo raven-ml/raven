@@ -75,6 +75,7 @@ module Driver = struct
     objects : bool;
     waits : [ `Store | `Object | `Host ] list;
     max_waits : int;
+    hang_ms : int option;
     answer : [ `Stopped | `Unknown ];
     lock : Mutex.t;
     opened : Condition.t;
@@ -142,6 +143,7 @@ module Driver = struct
           most = d.max_waits;
         };
       may_block = d.may_block;
+      hang_ms = d.hang_ms;
       maps_host = d.maps_host;
       capability = Capability (capability_key, ());
       word =
@@ -293,7 +295,7 @@ module Polled = struct
       ?(budget = 1 lsl 30) ?(memory = max_int) ?(window = max_int)
       ?(may_block = false) ?(completion = `Host) ?(waits_on = [])
       ?(max_waits = max_int) ?(answer = `Stopped) ?(runs = `When_slept)
-      ?(lag = 1) () =
+      ?(lag = 1) ?hang_ms () =
     if lag < 1 then invalid_arg "Polled.make: lag is below 1";
     let limits = function
       | Rig_edge.Device -> memory
@@ -316,6 +318,7 @@ module Polled = struct
         objects = completion = `Object;
         waits = waits_on;
         max_waits;
+        hang_ms;
         answer;
         lock = Mutex.create ();
         opened = Condition.create ();
@@ -340,11 +343,11 @@ module Polled = struct
 
   let open_ ?capacity ?copies ?host_visible ?transport ?peers ?maps_host ?budget
       ?memory ?window ?may_block ?completion ?waits_on ?max_waits ?answer ?runs
-      ?lag name =
+      ?lag ?hang_ms name =
     let p =
       make ?capacity ?copies ?host_visible ?transport ?peers ?maps_host ?budget
         ?memory ?window ?may_block ?completion ?waits_on ?max_waits ?answer
-        ?runs ?lag ()
+        ?runs ?lag ?hang_ms ()
     in
     match Rig.open_ (module Driver) ~name (fun () -> Ok p) with
     | Ok d -> (d, p)

@@ -239,6 +239,7 @@ let open_ i =
           completion = Host;
           waits = { stores = false; hosts = false; objects = false; most = 0 };
           may_block = true;
+          hang_ms = None;
           maps_host = true;
           capability = Capability (Rig_metal_abi.key, cap);
           word;

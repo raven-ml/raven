@@ -43,7 +43,8 @@
 
     {b Faults.} The path reports a fault of a device's work, such as a page
     fault or a reset of the GPU, at a later {!sleep}. Work that runs long is no
-    fault: only the path's report is, or a bound the path states ([hang_ms]). A
+    fault: only the path's report is. A path that bounds progress states the
+    bound ([hang_ms]), and rig loses the device past it ({!Rig_edge.facts}). A
     function that calls the path answers its refusal of the arguments as its
     result ([None], [Error]) and raises {!Fault} for any other failure.
     {!signaled}, {!free} and {!stop} never raise it.
@@ -148,16 +149,8 @@ val capability : t -> Rig_amd_abi.Capability.t
 
     {b Sleep and faults.} {!sleep} blocks on the path's interrupt, which every
     release raises, and lets other domains run while it waits. It may return
-    early on an interrupt of an earlier release or of other work of the GPU, or
-    when the hang bound's clock restarts. It raises {!Fault} with the path's
-    report if the device's work met a fault. Where the path bounds progress
-    ([hang_ms] is [Some n]), it also raises {!Fault} once work is outstanding
-    and the word has not moved for [n] milliseconds. That clock runs only while
-    the last value given is above the word: it starts at the later of the
-    word's last move and the first [sleep] after the device was idle, as
-    [sleep] observes them, so an idle device never hangs and the report may
-    come late but never early. Once [sleep] raised {!Fault}, every later
-    [sleep] raises it again. A [sleep] after {!stop} asks the path nothing.
+    early on an interrupt of an earlier release or of other work of the GPU. It
+    raises {!Fault} with the path's report if the device's work met a fault.
 
     {b Hand-over.} [edge]'s room check and hand-over are [rig_amd_room] and
     [rig_amd_submit], which [rig_amd.h] declares; its commit does nothing. A
@@ -285,9 +278,10 @@ type 'm path = {
       (** The context, not [0], that the interrupt of a value's release carries,
           which wakes [sleep]. *)
   hang_ms : int option;
-      (** [Some n] if work whose word has not moved for [n] milliseconds is a
-          fault ({!val-sleep}), where nothing else bounds the GPU's work; [None]
-          where the path's kernel driver does. [n] is positive. *)
+      (** [Some n] if work whose word has not moved for [n] milliseconds hung,
+          where nothing else bounds the GPU's work; [None] where the path's
+          kernel driver does. It is the device's [hang_ms] fact
+          ({!Rig_edge.facts}). *)
   sleep : ms:int -> unit;
       (** [sleep ~ms] returns once the GPU interrupts, or after [ms]
           milliseconds, and raises {!Fault} with the path's report of a fault of
@@ -298,9 +292,9 @@ type 'm path = {
   stop : fault:string option -> [ `Stopped | `Unknown ];
       (** [stop ~fault] destroys the queues [queue] made: [`Stopped] once none
           of them runs or none can write memory outside the GPU, [`Unknown] if
-          one may. [fault] is the device's first fault, if any: the path's own
-          report, the end of the progress bound, a hang ({!val-sleep}), or the
-          fault its caller lost the device for ({!val-stop}). A path that keeps
+          one may. [fault] is the fault rig lost the device for, if any: the
+          path's own report, another fault of a call, or a hang past
+          [hang_ms] ({!val-stop}). A path that keeps
           the GPU's state for later opens records it as its own; one that keeps
           none ignores it. *)
 }
@@ -323,8 +317,7 @@ val make : 'm path -> (t, string) result
     it took: it frees the memory [p] gave and calls [p.stop] if [p] made a
     queue.
 
-    Raises [Invalid_argument] if [p.interrupt] is [0] or [p.hang_ms] is [Some n]
-    with [n < 1]. *)
+    Raises [Invalid_argument] if [p.interrupt] is [0]. *)
 
 val is_gpu : vendor:int -> class_:int -> bool
 (** [is_gpu ~vendor ~class_] is [true] iff a PCI function of vendor [vendor] and

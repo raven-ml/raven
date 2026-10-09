@@ -34,6 +34,7 @@ module D = struct
       completion = Host;
       waits = { stores = false; hosts = false; objects = false; most = 0 };
       may_block = true;
+      hang_ms = None;
       maps_host = true;
       capability = Capability (capability_key, ());
       word = { at = d.word; base = Nativeint.to_int d.self };

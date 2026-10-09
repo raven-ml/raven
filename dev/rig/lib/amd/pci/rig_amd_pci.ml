@@ -195,8 +195,8 @@ let interrupt = 1
 
 let path g h fn ~index : Memory.region Amd.path =
   let gc = Boot.gc g and gpu = Boot.gpu g in
-  (* A fault the device raised itself, as a hang, is the GPU's as much as one
-     its interrupt ring reported: the stop leaves the GPU lost. *)
+  (* A fault rig lost the device for, a hang included, is the GPU's as much as
+     one its interrupt ring reported: the stop leaves the GPU lost. *)
   let stop ~fault =
     Option.iter (Boot.faulted g) fault;
     Mutex.protect opened_lock (fun () -> Hashtbl.remove opened index);

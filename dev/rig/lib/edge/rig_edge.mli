@@ -92,6 +92,16 @@ type 'region facts = {
           device's own earlier work, its own transfers or its library's
           back-pressure. Where they may, they are counted calls: {!Driver.stop}
           never runs while one blocks. *)
+  hang_ms : int option;
+      (** [Some n] if work whose word has not moved for [n] milliseconds hung,
+          where nothing else bounds the device's work; [None] where the
+          vendor's driver does. [n] is positive. rig's waits count while a
+          committed value stays above an unmoved word, from the first wait
+          that saw it so, and the loss may come late but never early. rig then
+          loses the device with the reason ["no progress for n ms"], which it
+          passes to {!Driver.stop}. The clock also runs while the device's
+          queue waits for another device's work, so a device's work does not
+          wait in its queue on work that runs longer than [n]. *)
   maps_host : bool;
       (** Whether the device maps host memory of its machine that starts on a
           page ({!Driver.map_host}). *)
@@ -172,7 +182,8 @@ type ('region, 'image) code =
     region once, on its device; it calls {!peer} and {!map_peer} with two
     distinct devices of the driver; it unloads each image once, and calls
     {!entry} only on a loaded image; it allocates [Pinned] memory where [Mapped]
-    answers [None]; and it never times out work in {!sleep}. *)
+    answers [None]; and it bounds hangs itself ([hang_ms]), so {!sleep} never
+    times out work. *)
 module type Driver = sig
   type t
   (** The type for open devices of the driver. *)
@@ -264,18 +275,18 @@ module type Driver = sig
 
   val stop : t -> fault:string option -> unit
   (** [stop d ~fault] stops the lost [d] without waiting. [fault] is the reason
-      rig lost [d] for, where it lost it for a {!Fault} of a counted call, and
-      [None] for any other loss. The driver writes the last value its hand-over
-      received into the word, with release order, once no work of [d] runs:
-      before [stop] returns if none does, otherwise through the queues'
-      releases or its own drain. Work [d] encoded that runs only once committed,
-      such as an open command buffer, is dropped. [stop] releases nothing rig
-      made: rig frees each region and unloads each image itself, also after
-      [stop]. After [stop] rig calls only {!free}, {!unload} and {!signaled},
-      and calls {!free} and {!unload} only once the word reads that last value,
-      uncounted, dropping their faults. {!free} and {!unload} may come after an
-      open of the same hardware made a new device of this driver; they touch
-      nothing of the new device. *)
+      rig lost [d] for, where it lost it for a {!Fault} of a counted call or for
+      its hang bound ([hang_ms]), and [None] for any other loss. The driver
+      writes the last value its hand-over received into the word, with release
+      order, once no work of [d] runs: before [stop] returns if none does,
+      otherwise through the queues' releases or its own drain. Work [d] encoded
+      that runs only once committed, such as an open command buffer, is
+      dropped. [stop] releases nothing rig made: rig frees each region and
+      unloads each image itself, also after [stop]. After [stop] rig calls only
+      {!free}, {!unload} and {!signaled}, and calls {!free} and {!unload} only
+      once the word reads that last value, uncounted, dropping their faults.
+      {!free} and {!unload} may come after an open of the same hardware made a
+      new device of this driver; they touch nothing of the new device. *)
 end
 
 (** Devices of memory reached by reading and writing.

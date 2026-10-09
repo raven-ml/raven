@@ -105,6 +105,17 @@ let test_copy_queue_refused () =
       Rig.open_ (module Copyless) ~name:"open:copyless" (fun () -> Ok p));
   equal ~msg:"stopped" bool true (List.mem "stop" (P.log p))
 
+let test_hang_refused () =
+  List.iteri
+    (fun i n ->
+      let p = P.make ~hang_ms:n () in
+      let name = Printf.sprintf "open:hang-%d" i in
+      raises_match ~msg:(Printf.sprintf "hang_ms %d" n)
+        (Exn.invalid_arg ~substring:"hang bound")
+        (fun () -> Rig.open_ (module P) ~name (fun () -> Ok p));
+      equal ~msg:"stopped" bool true (List.mem "stop" (P.log p)))
+    [ 0; -1; min_int ]
+
 let open_store name =
   require_ok ~pp:Format.pp_print_string
     (Rig.open_io (module Store) ~name (fun () -> Ok ()))
@@ -359,6 +370,7 @@ let tests =
       test "a device states its facts" test_facts;
       test "a queue named COPY:0 that runs no copy refuses the open"
         test_copy_queue_refused;
+      test "a hang bound below 1 ms refuses the open" test_hang_refused;
       test "the host states its facts" test_host;
       test "a driver's device reaches by its copies and its peers" test_reach;
       test "an io device computes nothing and reaches nothing" test_io;

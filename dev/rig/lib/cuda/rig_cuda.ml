@@ -324,6 +324,7 @@ let open_ i =
                   most = max_int;
                 };
               may_block = true;
+              hang_ms = None;
               maps_host = registers <> 0;
               capability = Capability (Rig_cuda_abi.key, cap);
               word;

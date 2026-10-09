@@ -116,7 +116,6 @@ external publish_scratch : int -> int array -> int array -> int
 
 external scratch_taken : int -> int = "caml_rig_amd_scratch_taken" [@@noalloc]
 external signaled_word : int -> int = "caml_rig_amd_signaled" [@@noalloc]
-external now_ms : unit -> int = "caml_rig_amd_now_ms" [@@noalloc]
 
 (* Opening *)
 
@@ -134,15 +133,7 @@ type t = {
   own : mem list; (* rings, pointers, segment, slots *)
   scratch : scratch;
   traces : traces;
-  hang_ms : int option;
-  progress : progress Atomic.t;
-  fault : string option Atomic.t; (* the first fault sleep raised *)
-  stopped : bool Atomic.t; (* whether a stop ran: the path stops once *)
 }
-
-(* The word as [sleep] last saw it, whether the device was idle then, and since
-   when, in milliseconds of the monotonic clock. *)
-and progress = { seen : int; idle : bool; since : int }
 
 (* The device's trace buffers, made at the first trace: the capability's record
    and the memory under it. *)
@@ -379,12 +370,6 @@ let host_of what m =
 let make (type m) (p : m path) =
   if p.interrupt = 0 then
     invalid_arg "Rig_amd.make: the release's interrupt context is 0";
-  Option.iter
-    (fun n ->
-      if n < 1 then
-        invalid_argf "Rig_amd.make: a hang bound of %d ms, expected at least 1"
-          n)
-    p.hang_ms;
   let* () = supported p.gpu in
   let ops = ops p in
   let taken = ref [] and queues = ref false in
@@ -486,6 +471,7 @@ let make (type m) (p : m path) =
             most = max_waits;
           };
         may_block = false;
+        hang_ms = p.hang_ms;
         maps_host = Option.is_some ops.map_host;
         capability = Capability (Abi.Capability.key, capability);
         word = region 8 word;
@@ -507,10 +493,6 @@ let make (type m) (p : m path) =
         own = [ slot_words; segment; compute; copy; pointers ];
         scratch;
         traces;
-        hang_ms = p.hang_ms;
-        progress = Atomic.make { seen = 0; idle = true; since = 0 };
-        fault = Atomic.make None;
-        stopped = Atomic.make false;
       }
   in
   match open_device () with
@@ -644,57 +626,23 @@ external last : int -> int = "caml_rig_amd_last" [@@noalloc]
 external settle : int -> unit = "caml_rig_amd_settle"
 
 let signaled g = signaled_word g.self
-
-(* A fault is the device's for good: the first one raised is raised again by
-   every later call. *)
-let faulted g why =
-  ignore (Atomic.compare_and_set g.fault None (Some why));
-  raise (Fault why)
-
-let path_sleep g ms = try g.ops.sleep ~ms with Fault why -> faulted g why
-
-(* The clock restarts when the word moved or the device was idle at the last
-   look, and runs on while the same value stays outstanding. *)
-let sleep g ~seen ~still_ms =
-  Option.iter (fun why -> raise (Fault why)) (Atomic.get g.fault);
-  let w = signaled g in
-  (* A stopped device's word holds its last value: the path, stopped, is asked
-     nothing more. *)
-  if w = seen && not (Atomic.get g.stopped) then
-    match g.hang_ms with
-    | None -> path_sleep g still_ms
-    | Some hang ->
-        let now = now_ms () and p = Atomic.get g.progress in
-        let idle = last g.self <= w in
-        if idle || p.idle || p.seen <> w then begin
-          Atomic.set g.progress { seen = w; idle; since = now };
-          path_sleep g (if idle then still_ms else Int.min still_ms hang)
-        end
-        else
-          let left = p.since + hang - now in
-          if left <= 0 then faulted g (strf "no progress for %d ms" hang);
-          path_sleep g (Int.min still_ms left)
+let sleep g ~seen ~still_ms = if signaled g = seen then g.ops.sleep ~ms:still_ms
 
 (* Loss *)
 
 (* A queue the path could not destroy may still run, so its memory stays and its
-   own releases raise the word. The path gets the first fault: the one [sleep]
-   raised, else the one rig lost the device for. *)
+   own releases raise the word. *)
 let stop g ~fault =
-  if Atomic.compare_and_set g.stopped false true then
-    let fault = match Atomic.get g.fault with None -> fault | f -> f in
-    match g.ops.stop ~fault with
-    | exception Fault _ -> ()
-    | `Unknown -> ()
-    | `Stopped ->
-        settle g.self;
-        let st = g.scratch in
-        let buffers = Option.to_list st.installed @ Option.to_list st.pending in
-        let traces =
-          match g.traces.made with Some (_, ms) -> ms | None -> []
-        in
-        List.iter (give_back g)
-          (List.map fst (buffers @ st.retired) @ traces @ g.own)
+  match g.ops.stop ~fault with
+  | exception Fault _ -> ()
+  | `Unknown -> ()
+  | `Stopped ->
+      settle g.self;
+      let st = g.scratch in
+      let buffers = Option.to_list st.installed @ Option.to_list st.pending in
+      let traces = match g.traces.made with Some (_, ms) -> ms | None -> [] in
+      List.iter (give_back g)
+        (List.map fst (buffers @ st.retired) @ traces @ g.own)
 
 (* Tests *)
 

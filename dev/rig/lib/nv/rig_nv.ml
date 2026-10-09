@@ -157,7 +157,6 @@ external notification : int -> int -> int = "caml_rig_nv_notification"
 
 external watch : int -> int -> int -> bool = "caml_rig_nv_watch"
 external last : int -> int = "caml_rig_nv_last" [@@noalloc]
-external now_ms : unit -> int = "caml_rig_nv_now_ms" [@@noalloc]
 external raise_word : int -> unit = "caml_rig_nv_raise" [@@noalloc]
 external end_channels : int -> unit = "caml_rig_nv_end" [@@noalloc]
 
@@ -216,7 +215,6 @@ type 'm dev = {
   debugger : int;
   channels : int list;
   compute_channel : int;
-  progress : progress Atomic.t;
   local_lock : Mutex.t;
   mutable stopped : bool;
   mutable per_thread : int;
@@ -224,10 +222,6 @@ type 'm dev = {
   mutable local_pending : ('m memory * int) option;
   mutable local_retired : ('m memory * int) list;
 }
-
-(* The word as [sleep] last saw it, whether the device was idle then, and since
-   when, in milliseconds of the monotonic clock. *)
-and progress = { seen : int; idle : bool; since : int }
 
 and 'm reg = { dev : 'm dev; mem : 'm memory; bytes : int; kind : kind }
 
@@ -273,6 +267,7 @@ let facts (T d) =
     completion = Store;
     waits;
     may_block = false;
+    hang_ms = d.path.hang_ms;
     maps_host = Option.is_some d.path.map_host;
     capability = Capability (Abi.Gpu.key, d.capability);
     word = R d.word;
@@ -558,7 +553,6 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
         debugger;
         channels = [ compute; copy ];
         compute_channel = compute;
-        progress = Atomic.make { seen = 0; idle = true; since = 0 };
         local_lock = Mutex.create ();
         stopped = false;
         per_thread = 0;
@@ -570,11 +564,6 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
     Ok (T d)
 
 let make p =
-  Option.iter
-    (fun n ->
-      if n < 1 then
-        invalid_argf "Rig_nv.make: a hang bound of %d ms, expected at least 1" n)
-    p.hang_ms;
   match D.release p.rm.release with
   | None ->
       Error
@@ -765,30 +754,10 @@ let check_faults d =
   | [] -> ()
   | report -> raise (Fault (String.concat "\n" report))
 
-(* How long [sleep] may watch the word [w] under the hang bound [hang]. The
-   clock restarts when the word moved or the device was idle at the last look,
-   and runs on while the same value stays outstanding. *)
-let bounded d w ~still_ms hang =
-  let now = now_ms () and p = Atomic.get d.progress in
-  let idle = last d.self <= w in
-  if idle || p.idle || p.seen <> w then begin
-    Atomic.set d.progress { seen = w; idle; since = now };
-    if idle then still_ms else Int.min still_ms hang
-  end
-  else
-    let left = p.since + hang - now in
-    if left <= 0 then raise (Fault (strf "no progress for %d ms" hang));
-    Int.min still_ms left
-
 let sleep (T d) ~seen ~still_ms =
   if read_word d.self = seen then begin
     check_faults d;
-    let ms =
-      match d.path.hang_ms with
-      | None -> still_ms
-      | Some hang -> bounded d seen ~still_ms hang
-    in
-    if watch d.self seen ms then check_faults d
+    if watch d.self seen still_ms then check_faults d
   end
 
 (* Loss *)

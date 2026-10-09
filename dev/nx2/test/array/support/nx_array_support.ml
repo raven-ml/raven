@@ -128,6 +128,7 @@ module Driver = struct
       completion = Host;
       waits = { stores = false; hosts = false; objects = false; most = 0 };
       may_block = false;
+      hang_ms = None;
       maps_host = false;
       capability = Capability (capability_key, ());
       word = { at = late_word d.self; raw = 0 };

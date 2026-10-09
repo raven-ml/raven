@@ -49,8 +49,10 @@
 
     {1:loss Loss}
 
-    A device whose driver reports a fault, or whose hand-over or commit fails,
-    is {e lost}, once and for good ({!Lost}); so is a device {!close} ended, and
+    A device whose driver reports a fault, whose hand-over or commit fails, or
+    whose word stays below a committed value past its driver's hang bound while
+    a wait of this library watches it ([hang_ms] in {!Rig_edge.facts}), is
+    {e lost}, once and for good ({!Lost}); so is a device {!close} ended, and
     every device of a process that {!fail}ed. Work that waits in its queue on a
     lost device's unreached values is lost with it. Every later use of the
     device, of its memory, and of other memory that waits for a point the device
@@ -291,9 +293,10 @@ val wait : t -> int -> unit
     [v] is not committed ({!submit}). For a driver whose host writes the word
     ([Host] {!Rig_edge.completion}), or whose word the host does not address,
     it blocks in the driver ({!Rig_edge.Driver.sleep}) from the first read of
-    the word. For another, it spins on the word, then waits with the domain lock released,
-    blocking in the driver between reads once the word stood still. It waits
-    however long the work runs: only [d]'s driver decides that work hung.
+    the word. For another, it spins on the word, then waits with the domain
+    lock released, blocking in the driver between reads once the word stood
+    still. It waits however long the work runs, unless [d]'s driver bounds
+    hangs ({!section-loss}).
 
     Raises [Invalid_argument] if [v > submitted d], and {!Lost} if [d] is lost
     or is lost by the wait. *)
@@ -1029,8 +1032,8 @@ val open_ :
     Raises [Invalid_argument] if the open device of that name is another
     driver's, [machine] is another machine whose host was never opened
     ({!open_host}), or the driver's facts break the contract: their [edge] is
-    [0n] or its state's first member is [NULL], or a queue named ["COPY:i"]
-    runs no [Copy] ({!Rig_edge.facts}). *)
+    [0n] or its state's first member is [NULL], a queue named ["COPY:i"] runs
+    no [Copy], or [hang_ms] is [Some n] with [n < 1] ({!Rig_edge.facts}). *)
 
 val open_host :
   (module Driver with type t = 'a) ->

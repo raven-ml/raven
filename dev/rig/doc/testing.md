@@ -426,8 +426,7 @@ hidden one.
 
 Two simulations remain, and their tests move to hardware: the host path of
 `test/amd/test_amd.ml`, whose rings nothing runs; and the fake RM path of
-`test/nv/test_nv.ml`, which still holds the hang-bound laws and the
-local-memory handover. A test that hands a fake device's values to rig opens it
+`test/nv/test_nv.ml`, which still holds the local-memory handover. A test that hands a fake device's values to rig opens it
 through `Rig.open_` and submits through `Rig.submit`, as a program does.
 
 pci's suites use no fake machine. They take functions of fixture trees

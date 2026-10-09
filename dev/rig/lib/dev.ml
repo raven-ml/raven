@@ -101,8 +101,8 @@ let copy_queue queues =
 let no_waits = { Rig_edge.stores = false; hosts = false; objects = false; most = 0 }
 
 let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~completion ~waits
-    ~maps_host ~word ~word_region ~key ~memory_device ~fault ~capability ~budget
-    =
+    ~hang_ms ~maps_host ~word ~word_region ~key ~memory_device ~fault
+    ~capability ~budget =
   {
     index;
     name;
@@ -114,6 +114,8 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~completion ~waits
     copy_queue = copy_queue queues;
     completion;
     waits;
+    hang_ms;
+    progress = { seen = 0; idle = true; since = 0 };
     maps_host;
     word;
     word_region;
@@ -139,7 +141,8 @@ let host =
   let d =
     make_device ~index:0 ~name:"CPU" ~machine:None ~kind:Host
       ~c:(c_host_new "CPU") ~arch:(host_arch ()) ~queues:[||]
-      ~completion:Host_writes ~waits:no_waits ~maps_host:false ~word:0 ~word_region:None ~key:(-1) ~memory_device:false
+      ~completion:Host_writes ~waits:no_waits ~hang_ms:None ~maps_host:false
+      ~word:0 ~word_region:None ~key:(-1) ~memory_device:false
       ~fault:(fun _ -> None)
       ~capability:None ~budget:max_int
   in
@@ -313,18 +316,40 @@ let word d =
         w
     | _ -> c_word d.c
 
-(* A counted call, written out so that a wait's sleep allocates nothing. *)
+let now_ms () = Prof.now () / 1_000_000
+
+(* How long a sleep may watch the word [w] under [d]'s hang bound [hang], or a
+   loss of [d] once the bound passed. The clock restarts when the word moved or
+   [d] was idle at this look or the last, and runs on while the same committed
+   value stays above the word. *)
+let bounded d w ~still_ms hang =
+  let now = now_ms () and p = d.progress in
+  let idle = committed d <= w in
+  if idle || p.idle || p.seen <> w then begin
+    d.progress <- { seen = w; idle; since = now };
+    if idle then still_ms else Int.min still_ms hang
+  end
+  else
+    let left = p.since + hang - now in
+    if left <= 0 then lose d (strf "no progress for %d ms" hang);
+    Int.min still_ms left
+
+(* A counted call, written out so that a wait's sleep without a hang bound
+   allocates nothing. *)
 let sleep d ~seen ~still_ms =
   match d.kind with
   | Driver { m; h; _ } -> (
       let module D = (val m) in
+      let still_ms =
+        match d.hang_ms with
+        | None -> still_ms
+        | Some hang -> bounded d seen ~still_ms hang
+      in
       if c_enter d.c <> 0 then refused d;
       match D.sleep h ~seen ~still_ms with
       | () -> leave d
       | exception e -> raised d e (Printexc.get_raw_backtrace ()))
   | _ -> ()
-
-let now_ms () = Prof.now () / 1_000_000
 
 module Answer = struct
   let ok = 0
@@ -599,6 +624,12 @@ let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
          && not (List.mem Rig_edge.Copy q.runs)
       then invalid_argf "Rig.open_: %s's queue %S runs no copies" name q.name)
     f.queues;
+  Option.iter
+    (fun n ->
+      if n < 1 then
+        invalid_argf "Rig.open_: %s's hang bound is %d ms, expected at least 1"
+          name n)
+    f.hang_ms;
   let word = Option.value ~default:0 (D.locate f.word).host in
   let c = c_new index name f.may_block f.edge (Nativeint.of_int word) in
   let d =
@@ -606,7 +637,7 @@ let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
       ~kind:(Driver { m; h; rid })
       ~c ~arch:f.arch ~queues:(Array.of_list f.queues)
       ~completion:(completion_of f.completion) ~waits:f.waits
-      ~maps_host:f.maps_host ~word
+      ~hang_ms:f.hang_ms ~maps_host:f.maps_host ~word
       ~word_region:(Some (Region { m; h; r = f.word; rid }))
       ~key:(Type.Id.uid D.key) ~memory_device
       ~fault:(function D.Fault why -> Some why | _ -> None)
@@ -655,7 +686,7 @@ let open_io (type a) (module I : Rig_edge.Io with type t = a) ?machine ~name
             make_device ~index ~name:full ~machine
               ~kind:(Io { m = (module I); h })
               ~c ~arch:"" ~queues:[||] ~completion:Host_writes ~waits:no_waits
-              ~maps_host:false ~word:0
+              ~hang_ms:None ~maps_host:false ~word:0
               ~word_region:None ~key ~memory_device:false
               ~fault:(function I.Fault why -> Some why | _ -> None)
               ~capability:None ~budget

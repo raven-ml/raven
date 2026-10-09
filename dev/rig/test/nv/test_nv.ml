@@ -115,7 +115,6 @@ module Fake = struct
     mutable frees : bool; (* whether the RM frees objects *)
     mutable faults : bool; (* whether RM frees and path memory calls raise *)
     mutable report : string option; (* a fault the path reports *)
-    mutable hang_ms : int option;
     mutable stops : [ `Stopped | `Unknown ]; (* what the path's stop answers *)
     mutable bar_room : bool; (* whether [`Bar] memory is given *)
     mutable kinds : string list; (* the kinds of memory given, newest first *)
@@ -237,7 +236,7 @@ module Fake = struct
           f.registered <- List.filter (( <> ) c) f.registered;
           Ok ());
       check = (fun () -> Option.iter (fun r -> raise (N.Fault r)) f.report);
-      hang_ms = f.hang_ms;
+      hang_ms = None;
       stop = (fun () -> f.stops);
     }
 
@@ -254,7 +253,6 @@ module Fake = struct
       frees = true;
       faults = false;
       report = None;
-      hang_ms = None;
       stops = `Unknown;
       bar_room = true;
       kinds = [];
@@ -1784,75 +1782,6 @@ let stateful =
         handover_commands;
     ]
 
-(* Progress bounds
-
-   A path that bounds work's progress ([hang_ms]) makes [sleep] raise once a
-   value is outstanding and the word has not moved for that long. The fake
-   path's word moves only when a test stores to it. *)
-
-let bounded hang_ms =
-  let f = Fake.make 0 in
-  f.hang_ms <- hang_ms;
-  require_ok (N.make (Fake.path f))
-
-let hangs () =
-  let g = bounded (Some 50) in
-  ignore (submit (handed g) [||]);
-  let rec sleeps n =
-    if n = 0 then fail "no Fault after 10 sleeps of a value making no progress";
-    match N.sleep g ~seen:0 ~still_ms:1000 with
-    | () -> sleeps (n - 1)
-    | exception N.Fault why -> contains ~msg:"the report" ~sub:"50 ms" why
-  in
-  sleeps 10;
-  N.stop g ~fault:None
-
-let idle () =
-  let g = bounded (Some 50) in
-  N.sleep g ~seen:0 ~still_ms:150;
-  ignore (submit (handed g) [||]);
-  N.sleep g ~seen:0 ~still_ms:1;
-  N.stop g ~fault:None
-
-let moving () =
-  let g = bounded (Some 50) in
-  let d = handed g in
-  for _ = 1 to 8 do
-    ignore (submit d [||])
-  done;
-  for v = 1 to 8 do
-    N.sleep g ~seen:(v - 1) ~still_ms:20;
-    H.set64 (host (S.word g)) v
-  done;
-  N.stop g ~fault:None
-
-let unbounded () =
-  let g = bounded None in
-  ignore (submit (handed g) [||]);
-  N.sleep g ~seen:0 ~still_ms:150;
-  N.sleep g ~seen:0 ~still_ms:150;
-  N.stop g ~fault:None
-
-let bounds () =
-  List.iter
-    (fun n ->
-      let f = Fake.make 0 in
-      f.hang_ms <- Some n;
-      raises_match ~msg:(strf "hang_ms %d" n)
-        (Exn.invalid_arg ~substring:"Rig_nv.make") (fun () ->
-          N.make (Fake.path f)))
-    [ 0; -1; min_int ]
-
-let progress =
-  group ~timeout:30. "progress"
-    [
-      test "a value that makes no progress for hang_ms is a fault" hangs;
-      test "an idle device never hangs, nor its next value at once" idle;
-      test "values reached more often than hang_ms are no fault" moving;
-      test "without hang_ms a value making no progress is no fault" unbounded;
-      test "make raises on a hang_ms below 1" bounds;
-    ]
-
 let () =
   S.hold ();
   exit
@@ -1867,7 +1796,6 @@ let () =
          images;
          workspace;
          timeline;
-         progress;
          two;
          stateful;
        ])

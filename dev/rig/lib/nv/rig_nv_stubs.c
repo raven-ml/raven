@@ -288,12 +288,6 @@ value caml_rig_nv_last(value v_self) {
                                        memory_order_acquire));
 }
 
-/* The monotonic clock, in milliseconds. */
-value caml_rig_nv_now_ms(value unit) {
-  (void)unit;
-  return Val_long(now_ms());
-}
-
 /* Raises the word to the last value submitted, by compare-and-set: it
    never moves backwards. */
 value caml_rig_nv_raise(value v_self) {

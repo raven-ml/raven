@@ -62,7 +62,7 @@ let test_polled () =
   equal int 0 (P.queued p);
   equal bool true (Rig.Point.value a < Rig.Point.value b)
 
-(* Work that runs long is waited for: only a driver declares a hang. *)
+(* Work that runs long is waited for where the driver states no hang bound. *)
 let test_still () =
   let d, p = P.open_ "submit:still" in
   let v = Rig.Point.value (submit (empty d)) in
@@ -70,6 +70,67 @@ let test_still () =
   Rig.wait d v;
   equal (option string) None (Rig.lost d);
   equal int 4 (List.length (List.filter (( = ) "sleep") (P.log p)))
+
+(* Hang bounds *)
+
+let hang_ms = 100
+let lost = function Rig.Lost _ -> true | _ -> false
+
+(* Work whose word stands still past the bound loses the device, not before
+   the bound, and the driver's stop is given the reason. *)
+let test_hang () =
+  let d, p = P.open_ ~hang_ms "submit:hang" in
+  let v = Rig.Point.value (submit (empty d)) in
+  P.stall p max_int;
+  let t0 = Rig.Profile.now () in
+  raises_match lost (fun () -> Rig.wait d v);
+  let waited = (Rig.Profile.now () - t0) / 1_000_000 in
+  let why = Printf.sprintf "no progress for %d ms" hang_ms in
+  equal (option string) ~msg:"the loss" (Some why) (Rig.lost d);
+  equal (option string) ~msg:"the stop's fault" (Some why) (P.stop_fault p);
+  at_least ~msg:"the wait, in ms" int ~than:hang_ms waited
+
+(* A word that moves within the bound loses nothing, however long the work
+   runs in all: here 15 values reached 20 ms apart. *)
+let test_hang_moving () =
+  let d, p = P.open_ ~hang_ms "submit:hang-moving" in
+  let s = empty d in
+  for _ = 1 to 15 do
+    ignore (submit s)
+  done;
+  let last = Rig.submitted d in
+  P.stall p max_int;
+  let move () =
+    for v = 1 to last do
+      Thread.delay 0.02;
+      P.set_word p v
+    done
+  in
+  let mover = Thread.create move () in
+  Rig.wait d last;
+  Thread.join mover;
+  equal (option string) None (Rig.lost d)
+
+(* A device idle for longer than its bound loses nothing by it: the clock counts
+   only while a committed value stays above the word. *)
+let test_hang_idle () =
+  let d, _ = P.open_ ~hang_ms "submit:hang-idle" in
+  let s = empty d in
+  Rig.wait d (Rig.Point.value (submit s));
+  Thread.delay (3. *. Float.of_int hang_ms /. 1000.);
+  Rig.wait d (Rig.Point.value (submit s));
+  equal (option string) None (Rig.lost d)
+
+(* A device whose queue waits on a value of a device lost to its bound is lost
+   with it. *)
+let test_hang_spread () =
+  let producer, pp = P.open_ ~hang_ms "submit:hang-producer" in
+  let consumer, _ = P.open_ ~waits_on:[ `Host ] "submit:hang-consumer" in
+  let a = submit (empty producer) in
+  ignore (submit (empty consumer) ~waits:[| a |]);
+  P.stall pp max_int;
+  raises_match lost (fun () -> Rig.wait producer (Rig.Point.value a));
+  equal (option string) (Some "submit:hang-producer lost") (Rig.lost consumer)
 
 let test_refusals () =
   let d = memory "submit:refusals" in
@@ -709,6 +770,14 @@ let tests =
         test "a device's work completes once a wait reaches it" test_polled;
         test "a wait names a submitted value" test_wait_beyond;
         test "a word still for three intervals loses nothing" test_still;
+      ];
+    group ~timeout "hangs"
+      [
+        test "work still past the hang bound loses the device" test_hang;
+        test "a word moving within the bound loses nothing" test_hang_moving;
+        test "an idle device loses nothing to the bound" test_hang_idle;
+        test "a queue waiting on a hung device is lost with it"
+          test_hang_spread;
       ];
     group ~timeout "refusals"
       [

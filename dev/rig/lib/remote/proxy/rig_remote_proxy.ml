@@ -70,6 +70,7 @@ let facts d =
     completion = Host;
     waits = { stores = false; hosts = true; objects = false; most = max_int };
     may_block = true;
+    hang_ms = None;
     maps_host = false;
     capability = Capability (Rig_remote_abi.key, d.capability);
     word = d.word;

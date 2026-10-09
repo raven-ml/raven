@@ -30,6 +30,7 @@ module Polled : sig
     ?answer:[ `Stopped | `Unknown ] ->
     ?runs:[ `When_slept | `Itself ] ->
     ?lag:int ->
+    ?hang_ms:int ->
     unit ->
     t
   (** [make ()] is a device whose queue holds [capacity] parts (defaults to
@@ -57,7 +58,8 @@ module Polled : sig
       each hand-over commits its value. Its queue runs only committed
       submissions, and a sleep that finds only uncommitted ones queued, its
       word unmoved, raises [Failure "Polled: nothing committed"], as a wait for
-      work nobody committed would hang.
+      work nobody committed would hang. With [hang_ms] its facts bound hangs
+      to that many milliseconds (defaults to no bound).
 
       Raises [Invalid_argument] if [lag < 1]. *)
 
@@ -78,6 +80,7 @@ module Polled : sig
     ?answer:[ `Stopped | `Unknown ] ->
     ?runs:[ `When_slept | `Itself ] ->
     ?lag:int ->
+    ?hang_ms:int ->
     string ->
     Rig.t * t
   (** [open_ name] opens a fresh device named [name]. *)

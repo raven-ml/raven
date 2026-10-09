@@ -81,11 +81,12 @@
     {b Faults and hangs.} The GPU reports faults on its interrupt ring: page
     faults with their address, shader errors, and fatal hardware errors with its
     machine-check banks. {!Rig_amd.sleep} raises them. No kernel bounds the
-    GPU's work, so this library states a bound: work that leaves the device's
-    timeline word below its last value for {!Rig_pci.Gpus.hang_ms} is a hang,
-    which {!Rig_amd.sleep} raises too. A device stopped with the fault it was
-    lost for ({!Rig_amd.stop}) leaves its GPU lost as well: the stop waits for
-    no queue to leave, and the GPU's next open resets it.
+    GPU's work, so this library states a bound, the device's [hang_ms] fact
+    ({!Rig_edge.facts}): rig loses a device whose timeline word stays below a
+    committed value for {!Rig_pci.Gpus.hang_ms}. A device stopped with the
+    fault it was lost for ({!Rig_amd.stop}), a hang included, leaves its GPU
+    lost as well: the stop waits for no queue to leave, and the GPU's next open
+    resets it.
 
     {b Domains.} Every value may be called from any domain. Opens, resets and
     changes to the machine of AMD GPUs run one at a time, so a boot delays the
