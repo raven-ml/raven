@@ -215,6 +215,28 @@ let test_constants () =
   equal ~msg:"computed on the operation's device" names [ "m0"; "m0" ] !devices;
   equal ~msg:"computed once" int 1 (C.calls ())
 
+(* An operation on values of every set alone reaches an Extent with its
+   operands as the caller passed them: formulas, with no placement. *)
+let test_formulas_stay () =
+  let c = Nx.zeros f32 [| 2 |] in
+  let seen = ref [] in
+  let looking =
+    {
+      Nx.Prim.rule =
+        (fun i ~by op ->
+          let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
+          List.iter
+            (fun (Nx.Prim.Any y) -> seen := (Nx.placement y = None) :: !seen)
+            xs;
+          Nx.Prim.results ~by
+            { make = (fun k form -> Nx.Prim.traced i form (Tag k)) }
+            op);
+    }
+  in
+  Nx.Prim.interpret ~name:"test.extent" Extent looking (fun _ ->
+      ignore (Nx.add c c));
+  equal ~msg:"operands without a placement" (list bool) [ true; true ] !seen
+
 let rule =
   group "rule"
     [
@@ -230,6 +252,7 @@ let rule =
       test "later orders by start on one domain" test_later;
       test "a constant reaches a rule computed where it is read, once"
         test_constants;
+      test "formulas alone reach an extent as formulas" test_formulas_stay;
     ]
 
 (* Forms: results gives the form eager execution gives (Law 3) *)

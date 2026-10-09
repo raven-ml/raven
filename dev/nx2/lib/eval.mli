@@ -7,8 +7,9 @@
 
     An operation goes to the interpretation {!Interp.receiver} gives, each
     constant operand first computed at the placement where the operation's route
-    reads it ({!Exec.at}; the host for a route of constants alone), so that no
-    interpretation sees a constant. An operation no interpretation reaches is
+    reads it ({!Exec.at}). An operation over values of every set alone reaches
+    the interpretation with them as they are: there is no placement to compute
+    them at. A check's data is read on the host. An operation no interpretation reaches is
     {!Exec.run}'s. *)
 
 open Value

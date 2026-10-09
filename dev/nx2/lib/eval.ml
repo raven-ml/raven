@@ -5,13 +5,11 @@
 
 open Value
 
-(* Computes each constant operand where the operation reads it; on the host
-   where every operand is of every set. *)
+(* Computes each constant operand where the operation reads it. An operation
+   over values of every set alone has no placement to read them at: they stay
+   formulas, which an interpreter places as any caller does. *)
 let computing =
-  {
-    Prim.place =
-      (fun p x -> match p with Some p -> Exec.at p x | None -> Exec.read x);
-  }
+  { Prim.place = (fun p x -> match p with Some p -> Exec.at p x | None -> x) }
 
 let read = { Prim.map = Exec.read }
 
