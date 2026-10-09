@@ -528,6 +528,9 @@ let configs =
     (Any Uint8, Any Int32, Any Int32);
     (Any Int16, Any Int64, Any Int64);
     (Any Int32, Any Int32, Any Int32);
+    (* int64 operands are read as they are, so b across n reaches the
+       across skinny kernel's int64 instance. *)
+    (Any Int64, Any Int64, Any Int64);
   ]
 
 let cases_of ?(layouts = [ (`K, `K); (`K, `Free); (`Free, `K); (`Free, `Free) ])
