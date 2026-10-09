@@ -18,7 +18,7 @@
   "-Werror"
  ],
  "inputs": {
-  "lib/array/nx_dtype.h": "e832a62d55b496b0544fa76e05f3947b02fc4490d6e573638a14926ddb8c33a7",
+  "lib/array/nx_dtype.h": "c8cc210b13d22644e92873bce6f82699c23b893c7ae7442b4782f24bfe9609ac",
   "lib/metal/kernels/gen.py": "295f9919009bd71b379ee897d37e870802ff8c520b4828a72b3d14ca0af35e98",
   "lib/metal/kernels/src/contract.metal": "c42b2085b63e1aeb646621547d041d1d22d046d3ae5ffa2176f665828d0b4f7c",
   "lib/metal/kernels.h": "c66d4e251ebf7de78f6af2beefa48f2d65c65688c99baa7640a18b1d9f9a612d",
@@ -27,6 +27,6 @@
  },
  "outputs": {
   "lib/metal/kernels/kernels.metallib": "d0a8c0c6e84d84904cc6c5938173b12dc49126f5b96fe651ef58a5b1e50cb489",
-  "test/metal/support/harness.metallib": "ef49391f515f6fc6345b3f7660662e9ed2ad8821f961f298e4bfd1cedf6b78f0"
+  "test/metal/support/harness.metallib": "80c0fa24b4115a05ffae6271e46e54254ebcd9348c8380348ada1aa87ffe3623"
  }
 }
