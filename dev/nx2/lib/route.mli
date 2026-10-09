@@ -19,7 +19,15 @@
     every device of the target the part of the operand the device's window of
     the result depends on: the same window, or the whole operand on that device;
     otherwise it is read at the target moved back to its axes, which the engine
-    places it at. *)
+    places it at.
+
+    Two rules follow, with JAX as the reference for placements. Operands of one
+    set never raise for where they lie: the brand already makes them one set,
+    and moving data within a set is the route's, as JAX computes over operands
+    sharded differently on one device set. Operands each alone on a different
+    device raise, as JAX refuses operands committed to two devices: no
+    arrangement holds both, and moving one is a choice the program makes with
+    [Nx.place]. *)
 
 (** The type for how an operation's results depend on its operands. *)
 type rule =
