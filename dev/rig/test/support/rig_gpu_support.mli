@@ -69,7 +69,7 @@ module type Gpu = sig
   (** [open_ ()] opens the driver's device of the GPU. *)
 end
 
-(** A GPU's device, opened through rig. *)
+(** A GPU's device, opened through rig or by its driver alone. *)
 module type S = sig
   type gpu
   (** The type for the driver's devices. *)
@@ -78,27 +78,41 @@ module type S = sig
   (** The type for an open GPU: [d] as programs reach it, [g] its driver's
       device, which rig owns. *)
 
+  val present : unit -> bool
+  (** [present ()] is [true] iff the machine has the GPU, from its files alone:
+      it starts no vendor library. *)
+
   val hold : unit -> unit
-  (** [hold ()] is {!Rig_gpu_lock.hold} if the machine has the GPU. *)
+  (** [hold ()] is {!Rig_gpu_lock.hold} if {!present}[ ()]. *)
 
   val open_ : unit -> t
   (** [open_ ()] is the GPU opened by its driver and handed to rig under a
       name of the GPU's, while the process holds the machine's GPU lock. It
-      first closes the device the last [open_] made, as a failed test leaves
-      it. It skips the test if the machine has no such GPU, and fails it if
-      the GPU does not open. *)
+      first ends what the last [open_] or {!driver} made ({!release}). It skips
+      the test if the machine has no such GPU, and fails it if the GPU does not
+      open. *)
 
   val close : t -> unit
   (** [close t] is {!Rig.close}[ t.d]. *)
 
-  val release : unit -> unit
-  (** [release ()] closes the device the last {!open_} made, if a failed test
-      left it open. A test that opens the GPU's driver alone calls it first,
-      where the GPU has one device at a time. *)
-
   val with_ : (t -> 'a) -> 'a
   (** [with_ f] is [f t], [t] the {!open_}ed GPU, closed after [f] returns or
       raises. *)
+
+  val driver : unit -> gpu
+  (** [driver ()] is the GPU opened by its driver alone, which rig never takes,
+      as {!open_} opens it. The caller stops it with {!stop_driver}. *)
+
+  val stop_driver : gpu -> unit
+  (** [stop_driver g] stops [g], which {!driver} opened. *)
+
+  val with_driver : (gpu -> 'a) -> 'a
+  (** [with_driver f] is [f g], [g] {!driver}[ ()], stopped after [f] returns
+      or raises. *)
+
+  val release : unit -> unit
+  (** [release ()] ends what the last {!open_} or {!driver} made, if a failed
+      test left it: it closes a device in rig, and stops one opened alone. *)
 
   val submit : t -> Rig.Submission.part array -> int
   (** [submit t ps] submits [ps] through rig on [t] and is their value. *)

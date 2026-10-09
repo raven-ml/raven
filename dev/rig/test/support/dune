@@ -45,6 +45,7 @@
   rig_cuda_support
   rig_nv
   rig_nv_nvidia
+  rig_nv_support
   rig_amd
   rig_amd_amdgpu
   rig_amd_support

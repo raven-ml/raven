@@ -141,7 +141,8 @@ let ring_tests =
    Work reaches a device through rig, which opens it: [d] is the device there,
    [g] the driver's. One device serves the tests that leave it healthy; a test
    that fails a submission opens its own, which the next shared use replaces.
-   The tests of the driver's own stop open a device that rig never takes. *)
+   The tests of the driver's own stop open a device that rig never takes
+   ([S.driver]), and the tests of two devices a second one. *)
 
 type dev = { d : Rig.t; g : Rig_metal.t; fill : Rig_metal.image }
 
@@ -165,10 +166,12 @@ let dev =
         shared := Some t;
         t
 
-(* A device of the driver alone, which the test stops. *)
-let driver () =
+(* A second device of the GPU, beside the fixture's: Metal opens a GPU as
+   often as asked. The test stops it. *)
+let second () =
+  if not (S.present ()) then skip ~reason:"the machine has no METAL GPU" ();
   S.hold ();
-  match Rig_metal.open_ 0 with Ok g -> g | Error why -> skip ~reason:why ()
+  require_ok (Rig_metal.open_ 0)
 
 let pipeline t f = require_some (Rig_metal.entry t.fill f)
 
@@ -537,10 +540,10 @@ let stopped_icb = "the device was stopped"
 
 (* An icb call after a stop retains no pipeline: it answers the stop. *)
 let after_stop () =
-  let g = driver () in
+  let g = S.driver () in
   let args = alloc_on g args_bytes in
   let step = require_some (Rig_metal.entry (load g) "step") in
-  Rig_metal.stop g;
+  S.stop_driver g;
   equal (result pass string) ~msg:"after the stop" (Error stopped_icb)
     (Result.map ignore (icb_on g args [| dispatch step |]));
   Rig_metal.free g args
@@ -575,7 +578,7 @@ let stop_commands =
       (Gen.unit @-> makes dev)
       (fun () -> { stopped = false })
       (fun () ->
-        let g = driver () in
+        let g = second () in
         let step = require_some (Rig_metal.entry (load g) "step") in
         (g, alloc_on g args_bytes, step, (Mutex.create (), ref false)));
     command "icb" (dev ^-> returns (result unit string)) icb_model icb_sys;
@@ -677,7 +680,7 @@ let misused_regions () =
   invalid (fun () -> Rig_metal.free t.g m);
   invalid (fun () -> Rig_metal.alloc t.g `Device 0);
   invalid (fun () -> Rig_metal.map_host t.g (H.pages page) 0);
-  let other = driver () in
+  let other = second () in
   Fun.protect ~finally:(fun () -> Rig_metal.stop other) @@ fun () ->
   let o = alloc_on other 64 in
   invalid (fun () -> Rig_metal.free t.g o);
@@ -919,7 +922,7 @@ let entries () =
 let unloaded_twice () =
   let t = dev () in
   let i = load t.g in
-  let other = driver () in
+  let other = second () in
   Fun.protect ~finally:(fun () -> Rig_metal.stop other) @@ fun () ->
   raises_match Exn.invalid_arg (fun () -> Rig_metal.unload other i);
   Rig_metal.unload t.g i;
@@ -1048,19 +1051,19 @@ let stopped_running () =
 
 (* A stopped device's word frees once, after the stop. *)
 let word_after_stop () =
-  let g = driver () in
-  Rig_metal.stop g;
+  let g = S.driver () in
+  S.stop_driver g;
   Rig_metal.free g (Rig_metal.word g);
   raises_match Exn.invalid_arg (fun () -> Rig_metal.free g (Rig_metal.word g))
 
 (* Images still loaded when the device stops stay loaded: their unload after
    the stop releases them. *)
 let unload_after_stop () =
-  let g = driver () in
+  let g = S.driver () in
   let i = load g in
   let weak f = S.weak (Nativeint.of_int (require_some (Rig_metal.entry i f))) in
   let weaks = [ weak "fill"; weak "step"; weak "bump" ] in
-  Rig_metal.stop g;
+  S.stop_driver g;
   List.iteri
     (fun k w ->
       equal bool ~msg:(strf "pipeline %d after the stop" k) true (S.alive w))
@@ -1089,7 +1092,7 @@ let timeline =
 (* Opening and misuse *)
 
 let two_devices () =
-  let b = driver () in
+  let b = second () in
   Fun.protect ~finally:(fun () -> Rig_metal.stop b) @@ fun () ->
   S.with_ @@ fun a ->
   S.wait a (S.submit a [||]);

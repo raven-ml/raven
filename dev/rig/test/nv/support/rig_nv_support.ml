@@ -12,41 +12,13 @@ module H = Rig_gpu_support.Host
 
 (* The GPU *)
 
-let present () = Rig_nv_nvidia.count () > 0
-
-(* The device [driver] opened last, until a test stops it: the GPU has one
-   device at a time, so each open first stops one a failed test left. *)
-let alone = ref None
-
-let stop g =
-  (match !alone with Some a when a == g -> alone := None | _ -> ());
-  N.stop g
-
-let open_gpu () =
-  Option.iter stop !alone;
-  Rig_nv_nvidia.open_ 0
-
 include Rig_gpu_support.Make (struct
   module D = N
 
   let class_ = "NV"
-  let present = present
-  let open_ = open_gpu
+  let present () = Rig_nv_nvidia.count () > 0
+  let open_ () = Rig_nv_nvidia.open_ 0
 end)
-
-let driver () =
-  if not (present ()) then skip ~reason:"the machine has no NV GPU" ();
-  hold ();
-  release ();
-  match open_gpu () with
-  | Ok g ->
-      alone := Some g;
-      g
-  | Error why -> failf "opening GPU 0: %s" why
-
-let with_driver f =
-  let g = driver () in
-  Fun.protect ~finally:(fun () -> stop g) (fun () -> f g)
 
 (* Host memory *)
 

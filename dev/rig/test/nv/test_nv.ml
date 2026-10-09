@@ -767,7 +767,7 @@ let another_device () =
   let p = H.pages H.page in
   let m = require_some (N.map_host a p 64) in
   let i, code, _ = S.image a (S.fixture "kernels_sm89.cubin") in
-  S.stop a;
+  S.stop_driver a;
   S.with_driver @@ fun b ->
   let raises name f = raises_match ~msg:name Exn.invalid_arg f in
   raises "free of its region" (fun () -> N.free b r);
@@ -1158,7 +1158,7 @@ let stop_waiting () =
   in
   let v = S.submit t [| S.words ws |] in
   still ~msg:"the word" int (v - 1) (fun () -> N.signaled t.g) ~ms:20;
-  S.watchdog "stop" (fun () -> S.stop t.g);
+  S.watchdog "stop" (fun () -> S.stop_driver t.g);
   equal int ~msg:"the word" v (N.signaled t.g);
   H.set64 (host w) 1;
   still ~msg:"the waiting work" int 0
@@ -1184,7 +1184,7 @@ let stop_running () =
       let v1 = S.submit t [| S.words spin |] in
       let v2 = S.submit t [| S.words (release l (address marked) 7) |] in
       still ~msg:"the word" int (v1 - 1) (fun () -> N.signaled t.g) ~ms:20;
-      S.watchdog "stop" (fun () -> S.stop t.g);
+      S.watchdog "stop" (fun () -> S.stop_driver t.g);
       equal int ~msg:"the word" v2 (N.signaled t.g));
   still ~msg:"the queued work" int 0 (fun () -> H.get64 (host marked)) ~ms:200;
   S.free_launches l;

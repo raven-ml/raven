@@ -129,10 +129,9 @@ let kind_name = function
 let gpus =
   List.concat
     [
-      (if Sys.file_exists "/System/Library/Frameworks/Metal.framework" then
-         [ Metal ]
-       else []);
-      (if Sys.file_exists "/dev/nvidiactl" then [ Cuda; Nv ] else []);
+      (if Rig_metal_support.present () then [ Metal ] else []);
+      (if Rig_cuda_support.present () then [ Cuda ] else []);
+      (if Rig_nv_support.present () then [ Nv ] else []);
       (if Rig_amd_support.gpus () > 0 then [ Amd ] else []);
     ]
 

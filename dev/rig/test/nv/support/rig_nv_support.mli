@@ -10,22 +10,6 @@
 include Rig_gpu_support.S with type gpu = Rig_nv.t
 (** GPU [0], opened through {!Rig_nv_nvidia}. *)
 
-val driver : unit -> Rig_nv.t
-(** [driver ()] is GPU [0]'s driver device alone, opened through
-    {!Rig_nv_nvidia} while the process holds the machine's GPU lock, after
-    closing the device {!open_} made ({!release}) and stopping the one an
-    earlier [driver] opened if no {!stop} stopped it, as a failed test leaves
-    them: the GPU has one device at a time. {!open_} stops it too. It skips
-    the test if the machine has no NVIDIA GPU. *)
-
-val stop : Rig_nv.t -> unit
-(** [stop g] is [Rig_nv.stop g]. Tests stop the devices {!driver} opened
-    through it. *)
-
-val with_driver : (Rig_nv.t -> 'a) -> 'a
-(** [with_driver f] is [f g], [g] the {!driver} opened for [f] and stopped
-    after it, whether it returns or raises. *)
-
 (** {1:work Work through rig} *)
 
 module Sub := Rig.Submission

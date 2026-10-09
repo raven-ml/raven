@@ -529,7 +529,7 @@ let fixture (type a) (module S : Rig_gpu_support.S with type gpu = a) () =
 let gpus =
   List.concat
     [
-      (if Sys.file_exists "/System/Library/Frameworks/Metal.framework" then
+      (if Rig_metal_support.present () then
          gpu_rows
            (module Rig_metal)
            ~sleeps:true ~copies:false "metal"
@@ -537,19 +537,21 @@ let gpus =
            (fun () -> Rig_metal.open_ 0)
            ~kernel:metal_kernel
        else []);
-      (if Sys.file_exists "/dev/nvidiactl" then
+      (if Rig_cuda_support.present () then
          gpu_rows
            (module Rig_cuda)
            "cuda"
            ~opened:(fixture (module Rig_cuda_support))
            (fun () -> Rig_cuda.open_ 0)
            ~kernel:cuda_kernel ~graph:cuda_graph
-         @ gpu_rows
-             (module Rig_nv)
-             "nv"
-             ~opened:(fixture (module Rig_nv_support))
-             (fun () -> Rig_nv_nvidia.open_ 0)
-             ~kernel:nv_kernel
+       else []);
+      (if Rig_nv_support.present () then
+         gpu_rows
+           (module Rig_nv)
+           "nv"
+           ~opened:(fixture (module Rig_nv_support))
+           (fun () -> Rig_nv_nvidia.open_ 0)
+           ~kernel:nv_kernel
        else []);
       (if Rig_amd_amdgpu.count () > 0 then
          let opened () =
