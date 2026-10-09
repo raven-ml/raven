@@ -132,6 +132,27 @@ let test_hang_spread () =
   raises_match lost (fun () -> Rig.wait producer (Rig.Point.value a));
   equal (option string) (Some "submit:hang-producer lost") (Rig.lost consumer)
 
+(* A device whose queue waits for another device's work loses nothing to its
+   bound while that work runs, however long: its clock starts once the work is
+   reached. The producer's kernel runs three bounds; the consumer's first two
+   sleeps return with its work unrun. *)
+let test_hang_in_queue () =
+  let producer, _ = P.open_ ~runs:`Itself "submit:in-queue-producer" in
+  let consumer, pc =
+    P.open_ ~hang_ms ~waits_on:[ `Host ] "submit:in-queue-consumer"
+  in
+  let ms = B.create Rig.host 8 in
+  Support.store (B.address ms) (3 * hang_ms);
+  let fill =
+    Sub.Fill { fill = Support.slow; arg = ms; ring_units = 0; segment_bytes = 0 }
+  in
+  let kernel = { Sub.queue = "COMPUTE:0"; after = [||]; work = fill } in
+  let a = submit (Sub.make ~reads:0 ~writes:0 producer [| kernel |]) in
+  let v = Rig.Point.value (submit (empty consumer) ~waits:[| a |]) in
+  P.stall pc 2;
+  Rig.wait consumer v;
+  equal (option string) None (Rig.lost consumer)
+
 let test_refusals () =
   let d = memory "submit:refusals" in
   let arg = B.create Rig.host 8 in
@@ -778,6 +799,8 @@ let tests =
         test "an idle device loses nothing to the bound" test_hang_idle;
         test "a queue waiting on a hung device is lost with it"
           test_hang_spread;
+        test "a queue waiting on longer work elsewhere loses nothing"
+          test_hang_in_queue;
       ];
     group ~timeout "refusals"
       [

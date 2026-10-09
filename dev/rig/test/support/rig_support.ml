@@ -40,6 +40,7 @@ external bump : unit -> nativeint = "rig_test_bump"
 external poke : unit -> nativeint = "rig_test_poke"
 external carry : unit -> nativeint = "rig_test_carry"
 external countdown : unit -> nativeint = "rig_test_countdown"
+external slow : unit -> nativeint = "rig_test_slow"
 external interrupt : unit -> unit = "rig_test_interrupt"
 
 external shares : ('a, 'b, 'c) Bigarray.Array1.t -> int = "rig_test_shares"
@@ -57,6 +58,7 @@ let rig_object = rig_object ()
 let poke = poke ()
 let carry = carry ()
 let countdown = countdown ()
+let slow = slow ()
 
 module Driver = struct
   type kind = Rig_edge.memory

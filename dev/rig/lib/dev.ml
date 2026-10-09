@@ -44,6 +44,7 @@ external c_enter : int -> int = "caml_rig_enter"
 external c_exit : int -> unit = "caml_rig_exit"
 external c_spin : int -> int -> int -> int = "caml_rig_spin"
 external c_producers : int -> int array = "caml_rig_producers"
+external c_waits_in_queue : int -> bool = "caml_rig_waits_in_queue"
 external release_list : unit -> int = "caml_rig_release_list"
 external host_arch : unit -> string = "caml_rig_arch"
 
@@ -321,10 +322,11 @@ let now_ms () = Prof.now () / 1_000_000
 (* How long a sleep may watch the word [w] under [d]'s hang bound [hang], or a
    loss of [d] once the bound passed. The clock restarts when the word moved or
    [d] was idle at this look or the last, and runs on while the same committed
-   value stays above the word. *)
+   value stays above the word. A device whose queue waits for a producer's
+   unreached value counts as idle: its own work may not have started. *)
 let bounded d w ~still_ms hang =
   let now = now_ms () and p = d.progress in
-  let idle = committed d <= w in
+  let idle = committed d <= w || c_waits_in_queue d.c in
   if idle || p.idle || p.seen <> w then begin
     d.progress <- { seen = w; idle; since = now };
     if idle then still_ms else Int.min still_ms hang

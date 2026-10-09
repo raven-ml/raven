@@ -746,6 +746,20 @@ value caml_rig_producers(value v_d) {
   return a;
 }
 
+/* Whether [d]'s unreached work waits in its queue on a producer's value the
+   producer has not reached: [d]'s own work may not have started. */
+value caml_rig_waits_in_queue(value v_d) {
+  struct rig_device *d = Device_val(v_d);
+  int released = take(d), waits = 0;
+  uint64_t w = device_word(d);
+  for (int j = 0; j < d->nrecord && !waits; j++) {
+    struct rig_entry *e = &d->record[j];
+    waits = e->u > w && !rig_point_done(RIG_POINT(e->producer, e->w));
+  }
+  give(d, released);
+  return Val_bool(waits);
+}
+
 /* Grows [d]'s record so that [v_n] more entries fit. The array is made
    with no mutex held, which a mutex section never waits for. */
 value caml_rig_ensure_record(value v_d, value v_n) {

@@ -212,6 +212,10 @@ val poke : nativeint
 (** [poke] is a fill storing the second 64-bit word of its argument at the
     address its first holds. *)
 
+val slow : nativeint
+(** [slow] is a fill that runs for the milliseconds in the 64-bit word its
+    argument points at, as a long kernel does. *)
+
 val countdown : nativeint
 (** [countdown] is a fill taking one from the 64-bit word its argument points
     at, which fails if that makes the word zero. *)

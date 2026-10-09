@@ -71,6 +71,7 @@ static void cond_wait(cond_t *c, lock_t *l) {
 }
 static void cond_broadcast(cond_t *c) { WakeAllConditionVariable(c); }
 static void nap(void) { Sleep(1); }
+static void sleep_ms(uint64_t ms) { Sleep((DWORD)ms); }
 static DWORD WINAPI engine_main(void *p);
 static int spawn(void *p) {
   HANDLE t = CreateThread(NULL, 0, engine_main, p, 0, NULL);
@@ -100,6 +101,11 @@ static void cond_broadcast(cond_t *c) { pthread_cond_broadcast(c); }
 static void nap(void) {
   struct timespec t = {0, 100000};
   nanosleep(&t, NULL);
+}
+static void sleep_ms(uint64_t ms) {
+  struct timespec t = {(time_t)(ms / 1000), (long)(ms % 1000) * 1000000};
+  while (nanosleep(&t, &t) != 0) {
+  }
 }
 static void *engine_main(void *p);
 static int spawn(void *p) {
@@ -673,6 +679,20 @@ static int poke(void *queue, void *arg, uint64_t v) {
 value rig_test_poke(value unit) {
   (void)unit;
   return caml_copy_nativeint((intnat)&poke);
+}
+
+/* A fill that runs for the milliseconds in the 64-bit word its argument
+   points at, as a long kernel does. */
+static int slow(void *queue, void *arg, uint64_t v) {
+  (void)queue;
+  (void)v;
+  sleep_ms(*(const uint64_t *)arg);
+  return 0;
+}
+
+value rig_test_slow(value unit) {
+  (void)unit;
+  return caml_copy_nativeint((intnat)&slow);
 }
 
 /* A fill that takes one from the 64-bit word its argument points at, and

@@ -99,9 +99,9 @@ type 'region facts = {
           committed value stays above an unmoved word, from the first wait
           that saw it so, and the loss may come late but never early. rig then
           loses the device with the reason ["no progress for n ms"], which it
-          passes to {!Driver.stop}. The clock also runs while the device's
-          queue waits for another device's work, so a device's work does not
-          wait in its queue on work that runs longer than [n]. *)
+          passes to {!Driver.stop}. The clock does not run while the device's
+          queue waits for another device's unreached value: work that waits
+          in the queue may wait however long the other device's work runs. *)
   maps_host : bool;
       (** Whether the device maps host memory of its machine that starts on a
           page ({!Driver.map_host}). *)
