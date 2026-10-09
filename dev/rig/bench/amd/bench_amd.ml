@@ -385,6 +385,14 @@ let launch_rows =
     let ws = String.concat "" (List.init count (fun _ -> one)) in
     (t, p, prepare t [| filled t (ws, [||]) |])
   in
+  (* [64]'s launches as parts of one queue, a launch each. *)
+  let parts n () =
+    let t = dev () in
+    let p, base = load t in
+    let gpu = (A.capability t.g).gpu in
+    let one = encode (dispatch gpu (kernel "empty") ~base ~args:0 ~threads:1) in
+    (t, p, prepare t (Array.make n (filled t (one, [||]))))
+  in
   let floor_launching () =
     let gpu = floor () in
     let base = floor_load () in
@@ -438,6 +446,7 @@ let launch_rows =
          [
            row "1" (launching 1) (fun (t, _, s) -> run t s);
            row "64" (launching 64) (fun (t, _, s) -> run t s);
+           row "64-parts" (parts 64) (fun (t, _, s) -> run t s);
            row "submits-64" (launching 1) (fun (t, _, s) ->
                for _ = 1 to 64 do
                  submit t s

@@ -149,6 +149,12 @@ let launch_rows =
     let f = S.launch ~count (empty t.g) ~grid:1 ~block:1 0 0 in
     (t, prepare t [| S.part ~queue:"COMPUTE:0" f |])
   in
+  (* [64]'s launches as parts of one queue, a launch each. *)
+  let parts n () =
+    let t = dev () in
+    let f = S.launch (empty t.g) ~grid:1 ~block:1 0 0 in
+    (t, prepare t (Array.make n (S.part ~queue:"COMPUTE:0" f)))
+  in
   let floor_launching () = Nativeint.of_int (empty (floor ())) in
   let graph_launching (t, even, odd) =
     run t (if t.v land 1 = 0 then even else odd)
@@ -160,6 +166,7 @@ let launch_rows =
     [
       row "1" (launching 1) (fun (t, s) -> run t s);
       row "64" (launching 64) (fun (t, s) -> run t s);
+      row "64-parts" (parts 64) (fun (t, s) -> run t s);
       row "submits-64" (launching 1) (fun (t, s) ->
           for _ = 1 to 64 do
             submit t s
