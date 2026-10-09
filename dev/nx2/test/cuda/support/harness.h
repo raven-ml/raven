@@ -5,10 +5,11 @@
 
 /* The kernels the CUDA suite and bench run beside nx.cuda's: the timing
    kernels, the operand generator, the floors, and the probes. harness.cu
-   defines them; the host launches them through launch records, as it
-   launches the library's.
+   defines them; the host launches them as rig's launches, as nx.cuda
+   launches its own.
 
-   Each kernel reads one parameter struct, its addresses first. */
+   Each kernel reads one parameter struct of 8-byte words, its addresses
+   first. */
 
 #ifndef NX_CUDA_HARNESS_H
 #define NX_CUDA_HARNESS_H
@@ -17,7 +18,7 @@
 
 /* X(name) for every kernel of the harness's cubin, in enum order. */
 #define NX_HARNESS_KERNELS(X)                                          \
-  X(empty) X(stamp) X(sm_clock) X(delay) X(hog) X(where) X(generate)  \
+  X(empty) X(stamp) X(sm_clock) X(delay) X(generate)                   \
   X(floor_copy) X(floor_read)                                          \
   X(mma_bf16) X(mma_f16) X(mma_s8) X(fma_f32) X(fma_f64)               \
   X(div_sqrt_f32) X(div_sqrt_f64) X(codecs)
@@ -49,21 +50,6 @@ typedef struct {
   uint32_t want, unused;
   uint64_t ns;
 } delay_params;
-
-/* Each block holds its SM for [ns] nanoseconds from its start, when it
-   writes its SM's index to sm[block] and adds 1 to [*started]: a block of
-   1024 threads, launched with the device's largest shared memory per
-   block, fills an SM. Work queued behind a delay until [*started] counts
-   every block runs only on the SMs the hog left free. */
-typedef struct {
-  uint32_t *started, *sm;
-  uint64_t ns;
-} hog_params;
-
-/* Each block writes its SM's index to sm[block]. */
-typedef struct {
-  uint32_t *sm;
-} where_params;
 
 /* Operands */
 

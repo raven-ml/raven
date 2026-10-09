@@ -3,9 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** What the CUDA suite and bench share: the GPU, loaded cubins, launch records
-    and the runs of them, their device time, and operands drawn on the device.
-*)
+(** What the CUDA suite and bench share: the GPU, the harness's kernels and runs
+    of them as rig's launches, nx.cuda's contractions, their device time, and
+    operands drawn on the device. *)
 
 (** {1:gpu The GPU} *)
 
@@ -19,7 +19,12 @@ type gpu
 
 val gpu : unit -> gpu
 (** [gpu ()] is GPU 0, opened at the first call and kept for the process, while
-    the process holds the GPU lock. It skips the test if CUDA sees no GPU. *)
+    the process holds the GPU lock. It skips the test if CUDA sees no GPU.
+
+    Raises [Failure] if nx.cuda does not compute on it. *)
+
+val device : gpu -> Rig.t
+(** [device g] is [g]'s device. *)
 
 val arch : gpu -> string
 (** [arch g] is [g]'s compute capability, as ["sm_89"]. *)
@@ -30,12 +35,12 @@ val sms : gpu -> int
 (** {1:images Images} *)
 
 type image
-(** The type for loaded cubins and the table of their kernels a fill reads. *)
+(** The type for loaded cubins. *)
 
 val harness : gpu -> image
 (** [harness g] is the harness's cubin (harness.h) loaded on [g] once. *)
 
-(** {1:records Records} *)
+(** {1:launches Launches} *)
 
 (** The type for a kernel's parameters, laid out in order as 8-byte words: its
     addresses first. *)
@@ -56,18 +61,19 @@ val launch :
   launch
 (** [launch k ~grid ~block ~shared ps] is a launch of the kernel [k] over [grid]
     blocks of [block] threads along X, with [shared] dynamic shared bytes
-    (defaults to [0]) and the parameters [ps]. *)
+    (defaults to [0]) and the parameters [ps].
+
+    Raises [Invalid_argument] if an address follows another parameter. *)
 
 type run
-(** The type for runs: launch records ([kernels.h]) of an image's kernels, which
-    keep the buffers they address alive, or a driver's copy. *)
+(** The type for runs: launches of an image's kernels, a driver's copy, or a
+    call of nx.cuda's contraction. A run keeps the buffers it names. *)
 
 val record : image -> launch list -> run
-(** [record i ls] is the run of the records of [ls], in order, which
-    [nx_cuda_add] appends to one run.
+(** [record i ls] is the run of [ls], in order, as one submission's launches,
+    every buffer they address written.
 
-    Raises [Invalid_argument] if [i] has no kernel a launch names, an address
-    follows another parameter, or [nx_cuda_add] refuses a record. *)
+    Raises [Invalid_argument] if [i] has no kernel a launch names. *)
 
 val driver_copy : src:Rig.Buffer.t -> dst:Rig.Buffer.t -> run
 (** [driver_copy ~src ~dst] is the driver's copy of [src]'s bytes into [dst], a
@@ -75,37 +81,35 @@ val driver_copy : src:Rig.Buffer.t -> dst:Rig.Buffer.t -> run
 
 (** {1:runs Runs} *)
 
-type hog
-(** The type for hogs: runs that hold half of a GPU's multiprocessors. *)
-
-val hog : gpu -> ns:int -> hog
-(** [hog g ~ns] holds half of [g]'s multiprocessors, each for [ns] nanoseconds
-    from the start of the block that holds it. *)
-
-val held_sms : hog -> int list
-(** [held_sms h] is the multiprocessors [h] held when it last ran. *)
-
-val run : ?beside:hog -> gpu -> run -> unit
-(** [run ~beside g r] runs [r] on [g]'s queue ["COMPUTE:0"], a driver copy on
-    ["COPY:0"], and returns once it is done. Beside a hog, [r] starts once the
-    hog, on ["COPY:0"], holds every multiprocessor it holds, so that [r]'s
-    blocks run only on the others while the hog lasts.
-
-    Raises [Invalid_argument] if [r] is a driver copy beside a hog, and
-    [Failure] if the hog's blocks do not all start within 2 s. *)
+val run : gpu -> run -> unit
+(** [run g r] runs [r], launches on [g]'s queue ["COMPUTE:0"], a driver copy on
+    ["COPY:0"], and returns once it is done. *)
 
 val enqueue : gpu -> count:int -> run -> unit
 (** [enqueue g ~count r] enqueues [r] [count] times behind a hold, releases the
     hold once they are queued, and returns without waiting for them: the host's
-    share of [count] runs. The caller keeps [r] until a later {!run} or
-    {!device_time} returns. *)
+    share of [count] runs. *)
+
+val call : run -> unit
+(** [call r] calls the contraction [r] once and returns once its work is queued.
+    It allocates nothing beyond what {!Nx_cuda.contract} allocates.
+
+    Raises [Invalid_argument] if [r] is not {!contract}'s, and [Failure] if
+    nx.cuda declines it. *)
+
+val issue : gpu -> count:int -> run -> unit
+(** [issue g ~count r] calls the contraction [r] [count] times behind a hold,
+    releases the hold, and returns once their work is done. With a warm [r] it
+    allocates nothing beyond what the calls allocate.
+
+    Raises [Invalid_argument] if [r] is not {!contract}'s. *)
 
 val device_time : gpu -> run -> count:int -> float
 (** [device_time g r ~count] runs [r] [count] times and is the GPU's time per
-    run, in seconds: the span between two timer stamps around the runs on [r]'s
-    queue, behind a kernel that holds it until every run is queued, so that the
-    host never starves the GPU. A long [count] is cut into rounds of at most 512
-    launches, their spans summed.
+    run, in seconds: the span between two timer stamps around the runs on
+    ["COMPUTE:0"], behind a kernel that holds it until every run is queued, so
+    that the host never starves the GPU. A long [count] is cut into rounds of at
+    most 512 launches, their spans summed.
 
     Raises [Failure] if a round's launches outgrew the stream before its hold
     ran out. *)
@@ -141,7 +145,7 @@ type operand = {
   strides : int array;  (** In elements. *)
   first : int;  (** Bytes from the buffer's start to element 0. *)
 }
-(** The type for operands of nx.cuda's plans. *)
+(** The type for operands of nx.cuda's contractions. *)
 
 val contract :
   gpu ->
@@ -154,39 +158,13 @@ val contract :
   acc:int ->
   unit ->
   run option
-(** [contract g ~a ~b ~init ~y ~batch ~contracting ~acc ()] is nx.cuda's plan of
-    the contraction ([nx_cuda_plan_contract]) on {!library}'s kernels, its
-    scratch allocated on [g] and kept by the run, or [None] if the plan
-    declines. [batch] and [contracting] pair an axis of [a] with one of [b].
+(** [contract g ~a ~b ~init ~y ~batch ~contracting ~acc ()] computes the
+    contraction with {!Nx_cuda.contract} into [y], its work queued on [g], and
+    is the run that computes it again; or [None] if nx.cuda declines it. [batch]
+    and [contracting] pair an axis of [a] with one of [b].
 
-    Raises [Out_of_memory] if the host's memory cannot hold the plan, and
-    {!Rig.Out_of_memory} if [g]'s cannot hold its scratch. *)
-
-val planner :
-  a:operand ->
-  b:operand ->
-  ?init:operand ->
-  y:operand ->
-  batch:(int * int) list ->
-  contracting:(int * int) list ->
-  acc:int ->
-  unit ->
-  unit ->
-  int
-(** [planner ~a ~b ~init ~y ~batch ~contracting ~acc () ()] plans the
-    contraction as {!contract} does, into records it keeps from one call to the
-    next, and is the plan's count of launches: the planner's own cost, for the
-    bench. *)
-
-val library : gpu -> image
-(** [library g] is nx.cuda's cubin for [g]'s architecture loaded on [g] once,
-    its table holding every kernel of [kernels.h].
-
-    Raises [Failure] if nx.cuda has no cubin for [g]. *)
-
-val library_size : gpu -> int * int
-(** [library_size g] is the count of kernels and the bytes of {!library}'s
-    cubin: the instance budget's measure. *)
+    Raises what {!Nx_cuda.contract} raises, and [Invalid_argument] for a
+    refusal. *)
 
 (** {1:memory Memory} *)
 

@@ -1,15 +1,17 @@
 ; nx.cuda: nx's kernels for NVIDIA GPUs, compiled ahead of time into
-; cubins (kernels/) and embedded. C only until the binding: launch
-; records, the plans that make them, and the fill that enqueues them
-; through rig.cuda.
+; cubins (kernels/) and embedded, planned in OCaml and launched as rig's
+; Launch parts. kernels.ml mirrors kernels.h, which the device code reads.
 
 (library
  (name nx_cuda)
- (modules)
- (libraries nx_array nx_kernel)
+ (libraries nx_array nx_kernel rig)
  (foreign_stubs
   (language c)
-  (include_dirs ../array ../kernel)
   (extra_deps kernels/sm_89.cubin)
   (flags :standard -DNX_CUDA_KERNELS_DIR=kernels)
-  (names fill_cuda plan nx_cuda_stubs)))
+  (names nx_cuda_stubs)))
+
+(rule
+ (with-stdout-to
+  kernels.ml
+  (run gen/gen.exe)))

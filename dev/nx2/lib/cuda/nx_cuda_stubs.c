@@ -3,9 +3,17 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* The cubins, embedded: one per architecture the library computes on. */
+/* The cubins, embedded: one per architecture the library computes on.
 
-#include "nx_cuda.h"
+   The kernels need a driver of CUDA 13 (R580) or later: nvcc 13.4 builds
+   their cubins, which a driver of the same major version runs, newer
+   minor versions included, since they carry no PTX to compile. */
+
+#include <string.h>
+
+#include <caml/alloc.h>
+#include <caml/memory.h>
+#include <caml/mlvalues.h>
 
 /* Defines [name] and [name]_end around the bytes of the file [file], a
    string, embedded in read-only data at build time. */
@@ -27,10 +35,12 @@
 
 EMBED(nx_cuda_sm_89, STR(NX_CUDA_KERNELS_DIR) "/sm_89.cubin")
 
-const char *nx_cuda_cubin(int arch, size_t *len) {
-  switch (arch) {
-  case 89: *len = (size_t)(nx_cuda_sm_89_end - nx_cuda_sm_89); return nx_cuda_sm_89;
-  }
-  *len = 0;
-  return NULL;
+/* The cubin of the architecture [arch], as "sm_89", or None. */
+CAMLprim value nx_cuda_cubin(value arch) {
+  CAMLparam1(arch);
+  CAMLlocal1(bytes);
+  if (strcmp(String_val(arch), "sm_89") != 0) CAMLreturn(Val_none);
+  bytes = caml_alloc_initialized_string(nx_cuda_sm_89_end - nx_cuda_sm_89,
+                                        nx_cuda_sm_89);
+  CAMLreturn(caml_alloc_some(bytes));
 }

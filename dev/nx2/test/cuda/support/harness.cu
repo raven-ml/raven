@@ -17,12 +17,6 @@ static __device__ u64 now(void) {
   return t;
 }
 
-static __device__ uint32_t sm_index(void) {
-  uint32_t sm;
-  asm volatile("mov.u32 %0, %%smid;" : "=r"(sm));
-  return sm;
-}
-
 static __device__ u64 thread_index(void) {
   return (u64)blockIdx.x * blockDim.x + threadIdx.x;
 }
@@ -50,23 +44,6 @@ extern "C" __global__ void delay(const __grid_constant__ delay_params p) {
       *p.late = 1;
       return;
     }
-}
-
-extern "C" __global__ void __launch_bounds__(1024)
-    hog(const __grid_constant__ hog_params p) {
-  extern __shared__ uint32_t held[];
-  u64 t0 = now();
-  if (threadIdx.x == 0) {
-    held[0] = 0;
-    p.sm[blockIdx.x] = sm_index();
-    atomicAdd(p.started, 1);
-  }
-  while (now() - t0 < p.ns) {
-  }
-}
-
-extern "C" __global__ void where(const __grid_constant__ where_params p) {
-  if (threadIdx.x == 0) p.sm[blockIdx.x] = sm_index();
 }
 
 /* Operands */

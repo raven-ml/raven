@@ -28,32 +28,20 @@ let case (r : Rows.row) =
   Thumper.bench_with_setup ~setup r.name (fun (g, (p : Rows.prepared), count) ->
       S.device_time g p.run ~count)
 
-(* The binding's host share of a call: the plan of a contraction alone, and the
-   enqueue of 64 launches of the smallest one behind a hold, its wait outside
-   the timed call. *)
+(* The host's share of a call: 64 calls of the smallest contraction issued
+   behind a hold, then their work once released. A call that finds nx.cuda's
+   caches warm allocates nothing. *)
 let host =
   let bf16 = D.Any D.Bfloat16 and f32 = D.Any D.Float32 in
-  let planner () =
-    let a, b, y, _ = Rows.plan (S.gpu ()) bf16 f32 bf16 4096 4096 4096 in
-    S.planner ~a ~b ~y
-      ~batch:[ (0, 0) ]
-      ~contracting:[ (2, 2) ]
-      ~acc:(D.code D.Float32) ()
-  in
-  let plan =
-    Thumper.bench_with_setup ~setup:planner "plan/contract-bf16-4096" (fun p ->
-        p ())
-  in
   let setup () =
     let g = S.gpu () in
     let _, _, _, run = Rows.plan g bf16 f32 bf16 1 1 1 in
     (g, run)
   in
-  let fill =
-    Thumper.bench_with_setup ~setup "fill/contract-64" (fun (g, run) ->
-        S.enqueue g ~count:64 run)
-  in
-  [ plan; fill ]
+  [
+    Thumper.bench_with_setup ~setup "issue/contract-64" (fun (g, run) ->
+        S.issue g ~count:64 run);
+  ]
 
 (* Gate *)
 
@@ -140,9 +128,7 @@ let gate patterns =
          patterns
   in
   let g = S.gpu () in
-  let kernels, bytes = S.library_size g in
-  Printf.printf "# %s, %d SMs; nx.cuda: %d kernels, contract's, %d bytes\n%!"
-    (S.arch g) (S.sms g) kernels bytes;
+  Printf.printf "# %s, %d SMs\n%!" (S.arch g) (S.sms g);
   List.iter (row g) (List.filter selected Rows.all)
 
 let () =

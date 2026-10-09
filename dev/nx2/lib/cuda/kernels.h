@@ -3,35 +3,18 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* nx.cuda's kernels as the host and the device both see them: the launch
-   record, and each family's parameters.
+/* nx.cuda's kernels as the host and the device both see them: the
+   instances, the tiles and each family's parameters.
 
-   A kernel reads one parameter struct, whose bytes a launch record
-   carries. Its addresses come first, as 8-byte words, so that whoever
-   moves or records a launch finds every address it names without knowing
-   the kernel. Every struct's size is a multiple of 8. */
+   A kernel reads one parameter struct, the parameters of its launch. The
+   host writes it field by field at the offsets gen/gen.exe prints into
+   kernels.ml, and rig turns each address field into the address of a
+   buffer of the submit. */
 
 #ifndef NX_CUDA_KERNELS_H
 #define NX_CUDA_KERNELS_H
 
 #include <stdint.h>
-
-/* One launch, followed in memory by its [bytes] parameter bytes; the next
-   record follows them. [kernel] indexes the table of functions the fill
-   reads. The parameters' first [addrs] 8-byte words are addresses; bit i
-   of [scratch] marks address i as an offset into the call's scratch,
-   which whoever allocates the scratch turns into an address, adding the
-   scratch's base, before the fill runs: scratch addresses come among the
-   first 32. A record holds no pointer, so a run of them can be kept,
-   moved and submitted after the call that planned it. */
-typedef struct __attribute__((aligned(8))) {
-  uint32_t kernel;
-  uint32_t grid[3], block[3];
-  uint32_t shared; /* dynamic shared bytes */
-  uint32_t bytes;  /* a multiple of 8 */
-  uint32_t addrs;
-  uint32_t scratch;
-} nx_cuda_launch;
 
 /* Kernels */
 
@@ -108,7 +91,7 @@ enum nx_cuda_kernel { NX_CUDA_KERNELS(NX_CUDA_ENUM) NX_CUDA_KERNEL_COUNT };
 /* y[z, i, j] = init[z, i, j] + sum_k a[z, i, k] * b[z, j, k], rounded once
    to y's dtype, for z < batch, i < m, j < n: each operand's element
    (z, i, k) at its address plus z, i and k times its strides, in elements.
-   [init] is NULL for none. [partials] and [tickets] are scratch when
+   [init] is NULL for none. [partials] and [tickets] are the workspace's when
    [splits] > 1: the sum over k is cut into [splits] ranges, each summed by
    its own block, and the last block to arrive adds them in range order
    (combine.cuh). a and b are of the dtypes [a_dtype] and [b_dtype], the
@@ -137,13 +120,6 @@ enum {
 /* The skinny kernels' block: NX_SKINNY_ROWS rows of 32 columns. */
 #define NX_SKINNY_ROWS 4
 
-/* contract_params' addresses, and those that are scratch: a and b when
-   packed, the split sum's partials and tickets. */
-#define NX_CONTRACT_ADDRS 6
-#define NX_CONTRACT_SCRATCH_A (1u << 0)
-#define NX_CONTRACT_SCRATCH_B (1u << 1)
-#define NX_CONTRACT_SCRATCH_SPLIT (1u << 4 | 1u << 5)
-
 /* pack: an operand of [batch] x [rows] x [k] elements of [dtype], element
    (z, r, q) at [src] plus z, r and q times [s], copied to [dst] as
    elements of [out], [bytes] bytes each, with k contiguous, [lead]
@@ -158,18 +134,10 @@ typedef struct {
   int32_t batch, rows, k, dtype, out, bytes;
 } pack_params;
 
-/* pack_params' addresses; [dst] is scratch. */
-#define NX_PACK_ADDRS 2
-#define NX_PACK_SCRATCH (1u << 1)
-
 /* zero_u32: [n] 32-bit words at [p] set to 0. */
 typedef struct {
   uint32_t *p;
   uint64_t n;
 } zero_params;
-
-/* zero_params' address, scratch. */
-#define NX_ZERO_ADDRS 1
-#define NX_ZERO_SCRATCH 1u
 
 #endif

@@ -7,40 +7,12 @@ let strf = Printf.sprintf
 
 external cubin : unit -> string = "nx_cuda_support_cubin"
 external kernels : unit -> string array = "nx_cuda_support_kernels"
-external bind_symbols : nativeint array -> unit = "nx_cuda_support_bind"
+external bind_symbol : nativeint -> unit = "nx_cuda_support_bind"
 external attribute : int -> int = "nx_cuda_support_attribute"
-external entries : int array -> nativeint = "nx_cuda_support_entries"
-
-external record_c : (int array * string) array -> string
-  = "nx_cuda_support_record"
-
 external floors : unit -> int * int * int = "nx_cuda_support_floors"
 
-type bytes =
-  (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
-
-external run_arg : nativeint -> string -> bytes = "nx_cuda_support_run"
-external fill : unit -> nativeint = "nx_cuda_support_fill"
-external library_c : int -> string option = "nx_cuda_support_library"
-
-external library_kernels : unit -> string array
-  = "nx_cuda_support_library_kernels"
-
+module A = Nx_array
 module Spec = Nx_kernel.Spec
-
-(* The operands as the plan's stub reads them: each the address of its
-   buffer's first byte and its dtype. *)
-external ops_c : (int * int) array -> bytes = "nx_cuda_support_ops"
-
-external plan_c :
-  Spec.contract Spec.t -> Spec.Contract_view.t -> bytes ->
-  (string * int * int) option = "nx_cuda_support_plan"
-
-external plan_only :
-  Spec.contract Spec.t -> Spec.Contract_view.t -> bytes -> int
-  = "nx_cuda_support_plan_only"
-[@@noalloc]
-external rebase : string -> int -> string = "nx_cuda_support_rebase"
 
 (* The GPU lock *)
 
@@ -48,44 +20,26 @@ let hold_gpu () = if Sys.file_exists "/dev/nvidiactl" then Rig_gpu_lock.hold ()
 
 (* The GPU *)
 
-type image = { table : nativeint; names : string array; loaded : Rig.Image.t }
+type image = { names : string array; loaded : Rig.Image.t }
 
 type gpu = {
   device : Rig.t;
   arch : string;
   harness : image Lazy.t;
-  library : image Lazy.t;
   (* Host memory the device maps, for the hold's flag and late words and two
      stamps: host words 0 to 3. *)
   page : (int64, Bigarray.int64_elt, Bigarray.c_layout) Bigarray.Array1.t;
   mapped : Rig.Buffer.t;
 }
 
-(* cuda.h's CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT and
-   CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN. *)
+(* cuda.h's CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT. *)
 let sms _ = attribute 16
-let shared_max () = attribute 97
 let arch g = g.arch
-
-(* Images *)
 
 let image device bin names =
   match Rig.Image.load device bin with
   | Error why -> failwith why
-  | Ok loaded ->
-      let func n =
-        match Rig.Image.entry loaded n with
-        | Some f -> f
-        | None -> failwith (strf "the cubin has no kernel %s" n)
-      in
-      { table = entries (Array.map func names); names; loaded }
-
-(* nx.cuda's cubin for the architecture [arch], "sm_89". *)
-let library_cubin arch =
-  let digits = String.sub arch 3 (String.length arch - 3) in
-  match library_c (int_of_string digits) with
-  | Some b -> b
-  | None -> failwith (strf "nx.cuda has no cubin for %s" arch)
+  | Ok loaded -> { names; loaded }
 
 let opened = ref None
 
@@ -101,165 +55,301 @@ let gpu () =
       let device =
         Result.get_ok (Rig.open_ (module Rig_cuda) ~name:"CUDA:nx2" open_)
       in
-      let cuda = Rig_cuda.capability cuda in
-      bind_symbols
-        (Array.map
-           (fun n -> Option.get (cuda.symbol n))
-           [| "cuLaunchKernel"; "cuDeviceGetAttribute" |]);
+      bind_symbol
+        (Option.get ((Rig_cuda.capability cuda).symbol "cuDeviceGetAttribute"));
+      if not (Nx_cuda.computes_on device) then
+        failwith (strf "nx.cuda does not compute on %s" arch);
       let host = Rig.Buffer.create Rig.host 65536 in
       let mapped = Option.get (Rig.Buffer.borrow device host) in
       let page = Rig.Buffer.bigarray Bigarray.int64 host in
       let harness = lazy (image device (cubin ()) (kernels ())) in
-      let library =
-        lazy (image device (library_cubin arch) (library_kernels ()))
-      in
-      let g = { device; arch; harness; library; page; mapped } in
+      let g = { device; arch; harness; page; mapped } in
       opened := Some g;
       g
 
+let device g = g.device
 let harness g = Lazy.force g.harness
-let library g = Lazy.force g.library
 
-let library_size g =
-  (Array.length (library g).names, String.length (library_cubin g.arch))
-
-(* Records *)
+(* Launches *)
 
 type param = A of Rig.Buffer.t | W of int | D of int * int
 
-(* A run of [launches] records keeps its image and the buffers it addresses
-   alive while it is. *)
-type run =
-  | Records of {
-      image : image;
-      records : string;
-      launches : int;
-      held : Rig.Buffer.t list;
-    }
+type launch = {
+  kernel : string;
+  grid : int * int * int;
+  block : int;
+  shared : int;
+  params : param list;
+}
+
+let launch kernel ~grid ~block ?(shared = 0) params =
+  let rec addresses_first = function
+    | A _ :: ps -> addresses_first ps
+    | ps -> List.for_all (function A _ -> false | W _ | D _ -> true) ps
+  in
+  if not (addresses_first params) then
+    invalid_arg "Nx_cuda_support.launch: an address follows another parameter";
+  { kernel; grid; block; shared; params }
+
+type contract = { spec : Spec.contract Spec.t; dst : A.any; ops : A.any array }
+
+(* Submissions *)
+
+(* Work on a queue: a hold until the next {!release}, a launch of an image's
+   kernel, or a driver copy. *)
+type work =
+  | Hold
+  | Launch of image * launch
+  | Copied of Rig.Buffer.t * Rig.Buffer.t
+
+(* A submission made once, its run's blocks written, submitted any number of
+   times; [held] if its first part is a hold, whose [want] each submit
+   stores. *)
+type prepared = {
+  sub : Rig.Submission.t;
+  blocks : Rig.Submission.Run.t;
+  writes : Rig.Buffer.t array;
+  held : bool;
+}
+
+type body =
+  | Launches of { image : image; launches : launch list }
   | Copy of { src : Rig.Buffer.t; dst : Rig.Buffer.t }
+  | Contract of contract
 
-(* The count of [ps]'s addresses, and their bytes. *)
-let words ps =
-  let b = Buffer.create 64 and i64 x = Int64.of_int x in
-  let address = function A _ -> true | W _ | D _ -> false in
-  let addrs = List.length (List.filter address ps) in
-  if List.exists address (List.filteri (fun i _ -> i >= addrs) ps) then
-    invalid_arg "Nx_cuda_support.record: address last";
+(* A run and the submissions of its repetitions, made on first use: a key names
+   what surrounds the run and its count. *)
+type run = { body : body; mutable prepared : (string * prepared) list }
+
+let record image launches =
   List.iter
-    (function
-      | A x -> Buffer.add_int64_le b (i64 (Rig.Buffer.address x))
-      | W x -> Buffer.add_int64_le b (i64 x)
-      | D (x, y) ->
-          Buffer.add_int32_le b (Int32.of_int x);
-          Buffer.add_int32_le b (Int32.of_int y))
-    ps;
-  (addrs, Buffer.contents b)
+    (fun l ->
+      if not (Array.mem l.kernel image.names) then
+        invalid_arg ("Nx_cuda_support.record: no kernel " ^ l.kernel))
+    launches;
+  { body = Launches { image; launches }; prepared = [] }
 
-(* A launch is the record of its kernel in an image, and the buffers its
-   parameters address. *)
-type launch = image -> (int array * string) * Rig.Buffer.t list
+let driver_copy ~src ~dst = { body = Copy { src; dst }; prepared = [] }
 
-let launch name ~grid:(gx, gy, gz) ~block ?(shared = 0) ps image =
-  let addrs, words = words ps in
-  let k =
-    match Array.find_index (String.equal name) image.names with
-    | Some k -> k
-    | None -> invalid_arg ("Nx_cuda_support.record: no kernel " ^ name)
-  in
-  ( ([| k; gx; gy; gz; block; shared; addrs; 0 |], words),
-    List.filter_map (function A b -> Some b | _ -> None) ps )
-
-let record image ls =
-  let rs, held = List.split (List.map (fun l -> l image) ls) in
-  let records = record_c (Array.of_list rs) in
-  Records { image; records; launches = List.length ls; held = List.concat held }
-
-let driver_copy ~src ~dst = Copy { src; dst }
-
-(* Runs *)
-
-let part queue work = { Rig.Submission.queue; after = [||]; work }
-
-(* [r]'s queue, and the parts that run [r] [n] times on [q]: nx_cuda_fill over
-   its records, [n] times over. *)
-let queue = function Records _ -> "COMPUTE:0" | Copy _ -> "COPY:0"
-
-let body q r n =
-  match r with
-  | Copy { src; dst } -> List.init n (fun _ -> part q (Copy { src; dst }))
-  | Records x ->
-      let records = String.concat "" (List.init n (fun _ -> x.records)) in
-      let arg = Rig.Buffer.of_bigarray (run_arg x.image.table records) in
-      [
-        part q (Fill { fill = fill (); arg; ring_units = 0; segment_bytes = 0 });
-      ]
-
-(* The images and buffers a run's work uses stay alive until it is done
-   (Rig.Image.entry). *)
-let keep = function
-  | Records r -> ignore (Sys.opaque_identity (r.image.loaded, r.held))
-  | Copy { src; dst } -> ignore (Sys.opaque_identity (src, dst))
-
-(* Submits [parts] of [runs], then releases the hold made for it: host word 0
-   counts the submissions, and a hold waits until it reaches its own
-   ({!hold_next}). With [wait], waits and fails with [late] if a hold timed out
-   (word 1). *)
-let submit ?(wait = true) g parts runs ~late =
-  g.page.{1} <- 0L;
-  let s =
-    Rig.Submission.make ~reads:0 ~writes:0 g.device (Array.of_list parts)
-  in
-  let run = Rig.Submission.Run.make () in
-  let p = Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||] in
-  let v = Rig.Point.value p in
-  g.page.{0} <- Int64.succ g.page.{0};
-  if wait then begin
-    Rig.wait g.device v;
-    List.iter keep runs;
-    ignore (Sys.opaque_identity parts);
-    if g.page.{1} <> 0L then failwith late
-  end
-
-(* Host words the device maps: the count of submissions (0), the late word
-   (1), and two stamps (2, 3). *)
+(* Host words the device maps: the count of releases (0), the late word (1), and
+   two stamps (2, 3). *)
 let word g i = Rig.Buffer.view g.mapped ~first:(8 * i) ~length:8
 
 (* A hold gives up after 2 s: a round whose launches outgrow the stream blocks
-   its submit until then, and a hog's blocks start well within it. *)
+   its submit until then. *)
 let hold_ns = 2_000_000_000
 
-let delay g flag ~want =
-  record (harness g)
-    [
-      launch "delay" ~grid:(1, 1, 1) ~block:1
-        [ A flag; A (word g 1); D (want, 0); W hold_ns ];
-    ]
+(* The hold's [want], at byte 16 of the delay's parameters. *)
+let want_at = 16
 
-(* The hold of the next submission, released once {!submit} counts it. The
+let delay g =
+  launch "delay" ~grid:(1, 1, 1) ~block:1
+    [ A (word g 0); A (word g 1); D (0, 0); W hold_ns ]
+
+(* Makes the submission of [works] in order, each on its queue, every buffer a
+   launch addresses written: one slot an address. *)
+let prepare g works =
+  let slots = ref [] and count = ref 0 in
+  let launch_work image l =
+    let ref i = function
+      | A b ->
+          slots := b :: !slots;
+          incr count;
+          [ { Rig.Submission.at = 8 * i; slot = !count - 1 } ]
+      | W _ | D _ -> []
+    in
+    Rig.Submission.Launch
+      {
+        image = image.loaded;
+        kernel = l.kernel;
+        params = 8 * List.length l.params;
+        refs = Array.of_list (List.concat (List.mapi ref l.params));
+      }
+  in
+  let part (q, w) =
+    let work =
+      match w with
+      | Copied (src, dst) -> Rig.Submission.Copy { src; dst }
+      | Hold -> launch_work (harness g) (delay g)
+      | Launch (image, l) -> launch_work image l
+    in
+    { Rig.Submission.queue = q; after = [||]; work }
+  in
+  let parts = Array.of_list (List.map part works) in
+  let writes = Array.of_list (List.rev !slots) in
+  let sub =
+    Rig.Submission.make ~reads:0 ~writes:(Array.length writes) g.device parts
+  in
+  let blocks = Rig.Submission.Run.make () in
+  let block i l =
+    let b = Rig.Submission.block sub i in
+    let x, y, z = l.grid in
+    Rig.Submission.Run.groups blocks b x y z;
+    Rig.Submission.Run.threads blocks b l.block 1 1;
+    Rig.Submission.Run.shared blocks b l.shared;
+    List.iteri
+      (fun k -> function
+        | A _ -> Rig.Submission.Run.int64 blocks b (8 * k) 0
+        | W v -> Rig.Submission.Run.int64 blocks b (8 * k) v
+        | D (u, v) ->
+            Rig.Submission.Run.int32 blocks b (8 * k) u;
+            Rig.Submission.Run.int32 blocks b ((8 * k) + 4) v)
+      l.params
+  in
+  List.iteri
+    (fun i (_, w) ->
+      match w with
+      | Copied _ -> ()
+      | Hold -> block i (delay g)
+      | Launch (_, l) -> block i l)
+    works;
+  let held = match works with (_, Hold) :: _ -> true | _ -> false in
+  { sub; blocks; writes; held }
+
+(* Submits [p], its hold waiting for the next {!release}, and is its value. The
    count only grows, so a hold an earlier submission queued, which the GPU has
    not run yet, stays released whatever later submissions do. *)
-let hold_next g = delay g (word g 0) ~want:(Int64.to_int g.page.{0} + 1)
+let submit g p =
+  if p.held then
+    Rig.Submission.Run.int32 p.blocks
+      (Rig.Submission.block p.sub 0)
+      want_at
+      (Int64.to_int g.page.{0} + 1);
+  Rig.Point.value
+    (Rig.submit p.sub ~run:p.blocks ~reads:[||] ~writes:p.writes ~waits:[||])
 
-type hog = {
-  blocks : int;
-  started : Rig.Buffer.t;
-  sm : Rig.Buffer.t;
-  run : run;
-}
+let release g = g.page.{0} <- Int64.succ g.page.{0}
+
+(* Waits for [v] and fails with [late] if a hold timed out. *)
+let finish g v ~late =
+  Rig.wait g.device v;
+  if g.page.{1} <> 0L then failwith late
+
+let compute = "COMPUTE:0"
+
+let works r =
+  match r.body with
+  | Launches x -> List.map (fun l -> (compute, Launch (x.image, l))) x.launches
+  | Copy { src; dst } -> [ ("COPY:0", Copied (src, dst)) ]
+  | Contract _ -> invalid_arg "Nx_cuda_support: a contraction among launches"
+
+(* [r]'s submission under [key], made by [works] on first use. *)
+let prepared g r key works =
+  match List.assoc_opt key r.prepared with
+  | Some p -> p
+  | None ->
+      let p = prepare g (works ()) in
+      r.prepared <- (key, p) :: r.prepared;
+      p
+
+(* The submissions of no run: holds and stamps, made once. *)
+let fixed = Hashtbl.create 4
+
+let fixed_prepared g key works =
+  match Hashtbl.find_opt fixed key with
+  | Some p -> p
+  | None ->
+      let p = prepare g works in
+      Hashtbl.replace fixed key p;
+      p
+
+let stamp g i =
+  ( compute,
+    Launch (harness g, launch "stamp" ~grid:(1, 1, 1) ~block:1 [ A (word g i) ])
+  )
+
+(* Calls nx.cuda's contraction. *)
+let call_contract c =
+  match Nx_cuda.contract c.spec ~dst:c.dst c.ops with
+  | A.Done -> ()
+  | A.Declined ->
+      failwith "Nx_cuda_support: nx.cuda declines a contraction it computed"
+  | r -> A.refused "Nx_cuda.contract" r (c.dst :: Array.to_list c.ops)
+
+let repeat n xs = List.concat (List.init n (fun _ -> xs))
+
+let run g r =
+  g.page.{1} <- 0L;
+  match r.body with
+  | Contract c ->
+      call_contract c;
+      finish g (Rig.submitted g.device) ~late:""
+  | Launches _ | Copy _ ->
+      finish g (submit g (prepared g r "run" (fun () -> works r))) ~late:""
+
+let enqueue g ~count r =
+  g.page.{1} <- 0L;
+  (match r.body with
+  | Contract c ->
+      ignore (submit g (fixed_prepared g "hold" [ (compute, Hold) ]));
+      for _ = 1 to count do
+        call_contract c
+      done
+  | Launches _ | Copy _ ->
+      let key = strf "enqueue %d" count in
+      let works () = (compute, Hold) :: repeat count (works r) in
+      ignore (submit g (prepared g r key works)));
+  release g
+
+let issue g ~count r =
+  match r.body with
+  | Launches _ | Copy _ -> invalid_arg "Nx_cuda_support.issue: no contraction"
+  | Contract c ->
+      g.page.{1} <- 0L;
+      ignore (submit g (fixed_prepared g "hold" [ (compute, Hold) ]));
+      for _ = 1 to count do
+        call_contract c
+      done;
+      release g;
+      finish g (Rig.submitted g.device) ~late:"the hold ran out"
+
+let call r =
+  match r.body with
+  | Contract c -> call_contract c
+  | Launches _ | Copy _ -> invalid_arg "Nx_cuda_support.call: no contraction"
+
+(* kimchi's driver (615) holds 1,023 launches queued behind a kernel that runs;
+   a round takes half. A contraction is at most four launches. *)
+let round = 512
+
+let device_time g r ~count =
+  let launches =
+    match r.body with
+    | Launches x -> List.length x.launches
+    | Copy _ -> 1
+    | Contract _ -> 4
+  in
+  let per_round = Int.max 1 (round / launches) in
+  let late n = strf "%d runs of %d launches outgrew the stream" n launches in
+  let rec go left span =
+    if left = 0 then span
+    else begin
+      let n = Int.min left per_round in
+      g.page.{1} <- 0L;
+      let v =
+        match r.body with
+        | Contract c ->
+            let head = [ (compute, Hold); stamp g 2 ] in
+            ignore (submit g (fixed_prepared g "timed" head));
+            for _ = 1 to n do
+              call_contract c
+            done;
+            submit g (fixed_prepared g "stamp" [ stamp g 3 ])
+        | Launches _ | Copy _ ->
+            let works () =
+              ((compute, Hold) :: stamp g 2 :: repeat n (works r))
+              @ [ stamp g 3 ]
+            in
+            submit g (prepared g r (strf "timed %d" n) works)
+      in
+      release g;
+      finish g v ~late:(late n);
+      go (left - n) (span + Int64.to_int (Int64.sub g.page.{3} g.page.{2}))
+    end
+  in
+  float (go count 0) *. 1e-9 /. float count
 
 let buffer g n = Rig.Buffer.create g.device n
-
-let hog g ~ns =
-  let blocks = Int.max 1 (sms g / 2) in
-  let started = buffer g 4 and sm = buffer g (4 * blocks) in
-  let run =
-    record (harness g)
-      [
-        launch "hog" ~grid:(blocks, 1, 1) ~block:1024 ~shared:(shared_max ())
-          [ A started; A sm; W ns ];
-      ]
-  in
-  { blocks; started; sm; run }
 
 let read b =
   let h =
@@ -269,55 +359,6 @@ let read b =
   String.init (Bigarray.Array1.dim h) (Bigarray.Array1.get h)
 
 let write b s = Rig.Buffer.copy ~src:(Rig.Buffer.of_string s) ~dst:b
-
-let held_sms h =
-  let s = read h.sm in
-  List.init h.blocks (fun i -> Int32.to_int (String.get_int32_le s (4 * i)))
-
-(* Beside a hog, the work waits on its queue until every hog block holds its SM:
-   rig orders nothing between the two queues. *)
-let run ?beside g r =
-  match beside with
-  | None -> submit g (body (queue r) r 1) [ r ] ~late:""
-  | Some _ when queue r = "COPY:0" ->
-      invalid_arg "Nx_cuda_support.run: a driver copy beside a hog"
-  | Some h ->
-      write h.started "\000\000\000\000";
-      let wait = delay g h.started ~want:h.blocks in
-      let parts = body "COMPUTE:0" wait 1 @ body "COMPUTE:0" r 1 in
-      submit g
-        (parts @ body "COPY:0" h.run 1)
-        [ r; wait; h.run ]
-        ~late:"the hog's blocks did not all start within the hold"
-
-let enqueue g ~count r =
-  let hold = hold_next g and q = queue r in
-  submit ~wait:false g (body q hold 1 @ body q r count) [] ~late:""
-
-(* kimchi's driver (615) holds 1,023 launches queued behind a kernel that runs;
-   a round takes half. *)
-let round = 512
-
-let device_time g r ~count =
-  let stamp i =
-    record (harness g)
-      [ launch "stamp" ~grid:(1, 1, 1) ~block:1 [ A (word g i) ] ]
-  in
-  let t0 = stamp 2 and t1 = stamp 3 and q = queue r in
-  let launches = match r with Records x -> x.launches | Copy _ -> 1 in
-  let per_round = Int.max 1 (round / Int.max 1 launches) in
-  let rec go left span =
-    if left = 0 then span
-    else
-      let n = Int.min left per_round in
-      let on x = body q x 1 and hold = hold_next g in
-      submit g
-        (on hold @ on t0 @ body q r n @ on t1)
-        [ r; hold; t0; t1 ]
-        ~late:(strf "%d runs of %d launches outgrew the stream" n launches);
-      go (left - n) (span + Int64.to_int (Int64.sub g.page.{3} g.page.{2}))
-  in
-  float (go count 0) *. 1e-9 /. float count
 
 (* A million cycles: some 360 us at 2.8 GHz. *)
 let sm_clock g =
@@ -368,75 +409,42 @@ type operand = {
   first : int;
 }
 
-let ops a b init y =
-  match init with None -> [ a; b; y ] | Some i -> [ a; b; i; y ]
-
 let dtype code =
-  List.find (fun (Nx_array.Dtype.Any d) -> Nx_array.Dtype.code d = code)
-    Nx_array.Dtype.all
+  List.find (fun (A.Dtype.Any d) -> A.Dtype.code d = code) A.Dtype.all
 
 (* [o] as an array over its buffer, as nx hands the kernels their operands. *)
 let array (o : operand) =
-  let (Nx_array.Dtype.Any d) = dtype o.dtype in
-  let bytes = Int.max 1 (Nx_array.Dtype.bits d / 8) in
+  let (A.Dtype.Any d) = dtype o.dtype in
+  let bytes = Int.max 1 (A.Dtype.bits d / 8) in
   let layout =
-    Nx_array.Layout.v ~offset:(o.first / bytes) ~strides:o.strides o.shape
+    A.Layout.v ~offset:(o.first / bytes) ~strides:o.strides o.shape
   in
-  Nx_array.Any (Nx_array.v d layout o.buffer)
+  A.Any (A.v d layout o.buffer)
 
-(* The call as the plan reads it: its descriptor, a view to fill, the arrays
-   the view groups, and the operands' addresses and dtypes. *)
-type call = {
-  spec : Spec.contract Spec.t;
-  view : Spec.Contract_view.t;
-  dst : Nx_array.any;
-  arrays : Nx_array.any array;
-  ops_c : bytes;
-}
-
-let call ~a ~b ?init ~y ~batch ~contracting ~acc () =
+let contract (_ : gpu) ~a ~b ?init ~y ~batch ~contracting ~acc () =
   let spec =
     Spec.contract ~batch:(Array.of_list batch)
-      ~contracting:(Array.of_list contracting) ~acc:(dtype acc)
-      ~out:(dtype y.dtype) ~init:(Option.is_some init)
+      ~contracting:(Array.of_list contracting)
+      ~acc:(dtype acc) ~out:(dtype y.dtype) ~init:(Option.is_some init)
   in
-  let op (o : operand) = (Rig.Buffer.address o.buffer, o.dtype) in
-  let init_op = match init with Some i -> op i | None -> (0, 0) in
-  {
-    spec;
-    view = Spec.Contract_view.make ();
-    dst = array y;
-    arrays = Array.of_list (List.map array (a :: b :: Option.to_list init));
-    ops_c = ops_c [| op a; op b; init_op; op y |];
-  }
-
-(* Whether the call's axes group, the view then filled. *)
-let fill c = Spec.Contract_view.fill c.view c.spec ~dst:c.dst c.arrays
-
-let planner ~a ~b ?init ~y ~batch ~contracting ~acc () =
-  let c = call ~a ~b ?init ~y ~batch ~contracting ~acc () in
-  fun () -> if fill c then plan_only c.spec c.view c.ops_c else -1
-
-let contract g ~a ~b ?init ~y ~batch ~contracting ~acc () =
-  let c = call ~a ~b ?init ~y ~batch ~contracting ~acc () in
-  let plan = if fill c then plan_c c.spec c.view c.ops_c else None in
-  let held = List.map (fun (o : operand) -> o.buffer) (ops a b init y) in
-  let image = library g in
-  match plan with
-  | None -> None
-  | Some (records, 0, launches) ->
-      Some (Records { image; records; launches; held })
-  | Some (records, bytes, launches) ->
-      let s = buffer g bytes in
-      let records = rebase records (Rig.Buffer.address s) in
-      Some (Records { image; records; launches; held = s :: held })
+  let c =
+    {
+      spec;
+      dst = array y;
+      ops = Array.of_list (List.map array (a :: b :: Option.to_list init));
+    }
+  in
+  match Nx_cuda.contract c.spec ~dst:c.dst c.ops with
+  | A.Done -> Some { body = Contract c; prepared = [] }
+  | A.Declined -> None
+  | r -> A.refused "Nx_cuda.contract" r (c.dst :: Array.to_list c.ops)
 
 (* Memory *)
 
 type draw = Uniform | Wide of int | Small
 
-let generate (type v s) g b (dt : (v, s) Nx_array.Dtype.t) draw ~seed =
-  let module D = Nx_array.Dtype in
+let generate (type v s) g b (dt : (v, s) A.Dtype.t) draw ~seed =
+  let module D = A.Dtype in
   (match dt with
   | Float4_e2m1fn | Int4 | Uint4 | Complex128 | Complex64 | Bit ->
       invalid_arg (strf "Nx_cuda_support.generate: %s is not drawn" (D.name dt))

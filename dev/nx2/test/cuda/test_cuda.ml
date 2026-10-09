@@ -250,33 +250,6 @@ let codecs_bf16 () = codecs D.Bfloat16 ~code:D.Uint16 ~spread:140
 let codecs_e4m3 () = codecs D.Float8_e4m3fn ~code:D.Uint8 ~spread:20
 let codecs_e5m2 () = codecs D.Float8_e5m2 ~code:D.Uint8 ~spread:30
 
-(* Determinism *)
-
-let sms_of s =
-  List.init
-    (String.length s / 4)
-    (fun i -> Int32.to_int (String.get_int32_le s (4 * i)))
-
-(* Beside the hog, work runs only on the SMs the hog left free. *)
-let hog_holds_its_sms () =
-  let g = S.gpu () in
-  let blocks = 4 * S.sms g in
-  let sm = S.buffer g (4 * blocks) in
-  S.write sm (String.make (4 * blocks) '\xff');
-  let where =
-    S.record (S.harness g)
-      [ S.launch "where" ~grid:(blocks, 1, 1) ~block:256 [ A sm ] ]
-  in
-  let hog = S.hog g ~ns:2_000_000 in
-  S.run g ~beside:hog where;
-  let held = S.held_sms hog in
-  equal int
-    (Int.max 1 (S.sms g / 2))
-    (List.length (List.sort_uniq compare held));
-  let ran = sms_of (S.read sm) in
-  equal (list int) [] (List.filter (fun s -> s < 0 || s >= S.sms g) ran);
-  equal (list int) [] (List.filter (fun s -> List.mem s held) ran)
-
 (* Contract *)
 
 (* How a case draws its operands: floats of exponents in [-e, e] (integers over
@@ -491,9 +464,7 @@ let contract g c ?(skip = 0) ?(seed = 1) () =
       ~acc:(code c.acc) ()
   with
   | None -> failf "the plan declines %s" (case_name c)
-  | Some p ->
-      S.run g p;
-      (a, b, init, y, p)
+  | Some p -> (a, b, init, y, p)
 
 let within_bound c =
   let g = S.gpu () in
@@ -558,8 +529,8 @@ let cases_of ?(layouts = [ (`K, `K); (`K, `Free); (`Free, `K); (`Free, `Free) ])
     configs
 
 (* The bits depend on the shape alone. The same values in the other layouts,
-   behind an element that breaks the 16-byte vectors, and twice beside the hog,
-   give the same bytes. *)
+   behind an element that breaks the 16-byte vectors, and computed again, give
+   the same bytes. *)
 let same_bits c =
   let g = S.gpu () in
   let _, _, _, y, p = contract g c () in
@@ -571,8 +542,8 @@ let same_bits c =
         ~msg:(strf "layouts with %d skipped" skip)
         string want (S.read y.buffer))
     [ (`Free, `K, 0); (`K, `Free, 0); (`Free, `Free, 0); (`K, `K, 1) ];
-  S.run g ~beside:(S.hog g ~ns:2_000_000) p;
-  equal ~msg:"beside the hog" string want (S.read y.buffer)
+  S.run g p;
+  equal ~msg:"again" string want (S.read y.buffer)
 
 let shape_cases =
   List.concat_map
@@ -669,8 +640,7 @@ let sign_extends () =
           ~acc:(D.code D.Int32) ()
       with
       | None -> fail "the plan declines"
-      | Some p ->
-          S.run g p;
+      | Some _ ->
           equal ~msg:(D.name d) int64 (-64L)
             (String.get_int64_le (S.read y.buffer) 0))
     [ D.Any D.Int8; D.Any D.Int16 ]
@@ -746,14 +716,13 @@ let every_quadruple ((a, b, acc, out), init, (batch, m, n, k), broadcast) =
       ~acc:(code acc) ()
   with
   | None -> collect "declines"
-  | Some p ->
+  | Some _ ->
       cover "an init" (Option.is_some init);
       cover "a float sum" (float_dt acc);
       cover "an integer sum" (not (float_dt acc));
       cover "an output of the other kind" (float_dt acc <> float_dt out);
       cover "an unsigned accumulator" (acc = dt "uint32" || acc = dt "uint64");
       cover "a broadcast operand" broadcast;
-      S.run g p;
       let r =
         Nx_gpu_ref.contract ~a:(view x) ~b:(view w) ?init:(Option.map view init)
           ~y:(view y) ~batch ~m ~n ~k ~acc:(code acc) ~samples:512 ()
@@ -854,6 +823,63 @@ let scratch_out_of_memory () =
         ~contracting:[ (2, 2) ]
         ~acc:(D.code D.Float32) ())
 
+(* Calls *)
+
+(* A bfloat16 case that packs a and b, whose rows of 8191 elements are not
+   vectors, and splits its long sum: every piece of the workspace. *)
+let packed_split =
+  {
+    dt = D.Any D.Bfloat16;
+    acc = D.Any D.Float32;
+    out = D.Any D.Float32;
+    batch = 1;
+    m = 64;
+    n = 64;
+    k = 8191;
+    la = `K;
+    lb = `K;
+    init = `Bias;
+    draw = Spread 6;
+    pad = 0;
+  }
+
+(* A call that finds nx.cuda's device, submission and workspace made, and its
+   domain's frame free, allocates nothing. *)
+let warm_calls_allocate_nothing () =
+  let g = S.gpu () in
+  let _, _, _, _, p = contract g packed_split () in
+  S.call p;
+  let before = Gc.minor_words () in
+  for _ = 1 to 64 do
+    S.call p
+  done;
+  let words = Gc.minor_words () -. before in
+  S.run g p;
+  equal ~msg:"words for 64 calls" int 0 (int_of_float words)
+
+(* Domains calling one sequence at once, each on its own operands, get the bits
+   one call alone gets. *)
+let domains_call_alike () =
+  let g = S.gpu () in
+  let _, _, _, (y : S.operand), _ = contract g packed_split () in
+  let want = S.read y.buffer in
+  let calls = List.init 2 (fun _ -> contract g packed_split ()) in
+  let ds =
+    List.map
+      (fun (_, _, _, _, p) ->
+        Domain.spawn (fun () ->
+            for _ = 1 to 50 do
+              S.call p
+            done))
+      calls
+  in
+  List.iter Domain.join ds;
+  List.iteri
+    (fun i (_, _, _, (y : S.operand), p) ->
+      S.run g p;
+      equal ~msg:(strf "domain %d" i) string want (S.read y.buffer))
+    calls
+
 let tests =
   [
     group "records"
@@ -885,7 +911,6 @@ let tests =
         test "float8 e4m3fn as the host's" codecs_e4m3;
         test "float8 e5m2 as the host's" codecs_e5m2;
       ];
-    group "determinism" [ test "the hog holds its SMs" hog_holds_its_sms ];
     group "contract"
       [
         cases ~name:case_name "within the error bound" (cases_of ())
@@ -897,6 +922,8 @@ let tests =
           within_bound;
         test "an int32 sum sign-extends into int64" sign_extends;
         test "scratch past the GPU's memory raises" scratch_out_of_memory;
+        test "warm calls allocate nothing" warm_calls_allocate_nothing;
+        test "domains calling at once get one call's bits" domains_call_alike;
         prop ~count:400 "every dtype quadruple: declines or within the bound"
           quadruples every_quadruple;
         cases
