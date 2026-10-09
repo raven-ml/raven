@@ -71,6 +71,13 @@
    slower take fewer. */
 #define UNITS 4
 
+/* Job costs, in bytes of memcpy (job.c). A flop costs about a byte: peak
+   flops and memcpy bandwidth stand level on the M1's and kimchi's
+   performance cores (99.8 GFLOP/s against 100-160 GB/s, 155 against 146).
+   Packing a byte costs two, a guess no measurement has refined. */
+#define FLOP_COST 1
+#define PACK_COST 2
+
 /* Operands and axes, as the view numbers them. */
 enum { A = NX_VIEW_A, B = NX_VIEW_B, INIT = NX_VIEW_INIT, DST = NX_VIEW_DST };
 enum {
@@ -189,14 +196,36 @@ static void start(const problem *p, int64_t e, int64_t i0, int64_t i1,
 
 /* Chain order */
 
+/* A panel of b: batch elements [e0, e0 + ne), columns [jc, jc + nc), the
+   contraction [pc, pc + kc), packed at [b] in slivers of NR columns. */
 typedef struct {
   problem *p;
-  int64_t e0, ne;      /* the group's batch elements */
+  int64_t e0, ne;
   int64_t jc, nc, pc, kc;
-  int64_t slivers;     /* of b's panel */
-  int64_t mblocks, ranges, per_range;
-  uint8_t *b;          /* the packed panel */
+  int64_t slivers;
+  int64_t mblocks;            /* blocks of MC rows of a */
+  int64_t ranges, per_range;  /* ranges of slivers a compute unit takes */
+  uint8_t *b;
 } panel;
+
+/* Splits the panel's slivers into ranges where its elements' blocks of a
+   are fewer units than [want]: each range packs its block of a again. */
+static void split(panel *c, int64_t want) {
+  int64_t units = c->ne * c->mblocks;
+  c->ranges = units < want ? min64(c->slivers, ceil_div(want, units)) : 1;
+  c->per_range = ceil_div(c->slivers, c->ranges);
+}
+
+/* Compute unit [u]'s work, units being (element, block, range) in C
+   order: element [e], the block of rows from [i0], slivers [v0, v1). */
+static void unit_of(const panel *c, int64_t u, int64_t *e, int64_t *i0,
+                    int64_t *v0, int64_t *v1) {
+  int64_t range = u % c->ranges, ib = u / c->ranges % c->mblocks;
+  *e = c->e0 + u / c->ranges / c->mblocks;
+  *i0 = ib * c->p->g->mc;
+  *v0 = range * c->per_range;
+  *v1 = min64(c->slivers, *v0 + c->per_range);
+}
 
 /* Sliver [s] of element [e]'s panel, packed: kc steps of NR. */
 static uint8_t *sliver(const panel *c, int64_t e, int64_t s) {
@@ -278,12 +307,10 @@ static void compute(int64_t lo, int64_t hi, int worker, void *ctx) {
   uint8_t *ap = scratch(p, worker, rows * min64(g->kc, p->ext[CON]) * w);
   if (ap == NULL) return;
   for (int64_t u = lo; u < hi; u++) {
-    int64_t range = u % c->ranges, ib = u / c->ranges % c->mblocks;
-    int64_t e = c->e0 + u / c->ranges / c->mblocks;
-    int64_t i0 = ib * g->mc, mc = min64(g->mc, m_all - i0);
-    int64_t v0 = range * c->per_range;
-    int64_t v1 = min64(c->slivers, v0 + c->per_range);
+    int64_t e, i0, v0, v1;
+    unit_of(c, u, &e, &i0, &v0, &v1);
     if (v0 >= v1) continue;
+    int64_t mc = min64(g->mc, m_all - i0);
     int64_t j0 = c->jc + v0 * k.nr;
     int64_t j1 = min64(c->jc + c->nc, c->jc + v1 * k.nr);
     int64_t lda = ceil_div(mc, mr) * mr;
@@ -376,18 +403,22 @@ static void few_rows(problem *p) {
   const nx_cpu_gemm *g = p->g;
   int64_t m = p->ext[ROW], n = p->ext[COL], k = p->ext[CON], w = p->w;
   int64_t batch = p->ext[BATCH];
-  few_rows_job r = {p, kernel_of(g, m), 0, ceil_div(k, g->kc), 0, NULL};
-  r.lda = ceil_div(m, r.k.mr) * r.k.mr;
-  r.slivers = ceil_div(n, r.k.nr);
+  nx_cpu_micro km = kernel_of(g, m);
+  few_rows_job r = {.p = p,
+                    .k = km,
+                    .lda = ceil_div(m, km.mr) * km.mr,
+                    .kblocks = ceil_div(k, g->kc),
+                    .slivers = ceil_div(n, km.nr)};
   int64_t packed = batch * k * r.lda * w;
   r.a = alloc(packed);
   if (r.a == NULL) {
     atomic_store(&p->failed, 1);
     return;
   }
-  int64_t bytes = batch * n * k * w + packed;
-  nx_cpu_job(batch * r.kblocks, packed, 2 * packed, few_rows_pack, &r);
-  nx_cpu_job(batch * r.slivers, bytes, 2 * batch * m * n * k + bytes,
+  int64_t bytes = batch * n * k * w + packed, flops = 2 * batch * m * n * k;
+  nx_cpu_job(batch * r.kblocks, packed, PACK_COST * packed, few_rows_pack,
+             &r);
+  nx_cpu_job(batch * r.slivers, bytes, FLOP_COST * flops + bytes,
              few_rows_unit, &r);
   free(r.a);
 }
@@ -412,28 +443,31 @@ static void chain(problem *p) {
   for (int64_t e0 = 0; e0 < batch; e0 += group) {
     int64_t ne = min64(group, batch - e0);
     for (int64_t jc = 0; jc < n; jc += g->nc) {
-      panel c = {p, e0, ne, jc, min64(g->nc, n - jc), 0, 0, 0, mblocks, 1, 0, b};
-      c.slivers = ceil_div(c.nc, nr);
-      /* Enough units for the threads the compute job takes, splitting
-         blocks of a into ranges of slivers only where there are too few:
-         each range packs its block again. */
+      int64_t width = min64(g->nc, n - jc);
+      panel c = {.p = p,
+                 .e0 = e0,
+                 .ne = ne,
+                 .jc = jc,
+                 .nc = width,
+                 .slivers = ceil_div(width, nr),
+                 .mblocks = mblocks,
+                 .b = b};
+      /* Enough units for the threads the compute job takes. */
       int64_t kc = min64(g->kc, k);
       int64_t packed = ne * c.slivers * nr * kc * w;
-      int64_t want =
-          UNITS * nx_cpu_threads(packed, 2 * ne * m * c.nc * kc + packed);
-      int64_t units = ne * mblocks;
-      if (units < want) c.ranges = min64(c.slivers, ceil_div(want, units));
-      c.per_range = ceil_div(c.slivers, c.ranges);
+      int64_t flops = 2 * ne * m * c.nc * kc;
+      split(&c, UNITS * nx_cpu_threads(packed, FLOP_COST * flops + packed));
       int64_t pc = 0;
       do {
         c.pc = pc;
         c.kc = min64(g->kc, k - pc);
-        int64_t flops = 2 * ne * m * c.nc * c.kc;
+        flops = 2 * ne * m * c.nc * c.kc;
         packed = ne * c.slivers * nr * c.kc * w;
         if (c.kc > 0)
-          nx_cpu_job(ne * c.slivers, packed, 2 * packed, pack_panel, &c);
-        nx_cpu_job(ne * mblocks * c.ranges, packed, flops + packed, compute,
-                   &c);
+          nx_cpu_job(ne * c.slivers, packed, PACK_COST * packed, pack_panel,
+                     &c);
+        nx_cpu_job(ne * mblocks * c.ranges, packed,
+                   FLOP_COST * flops + packed, compute, &c);
         if (atomic_load(&p->failed)) goto done;
         pc += g->kc;
       } while (pc < k);
@@ -510,7 +544,8 @@ static void lanes_unit(int64_t lo, int64_t hi, int worker, void *ctx) {
         _Alignas(64) uint8_t l[NX_CPU_LANES * 8] = {0};
         _Alignas(16) uint8_t s[16];
         dot(buf + i * len * w, bb + j * len * w, len, l);
-        uint8_t *d = f->blocks == 1 ? s : f->sums + (((e * m + i) * n + j) * f->blocks + x) * w;
+        int64_t at = ((e * m + i) * n + j) * f->blocks + x;
+        uint8_t *d = f->blocks == 1 ? s : f->sums + at * w;
         lane_sum(p->acc, l, d);
         if (f->blocks == 1) total(p, e, i, j, s, 1, at_r(p, e, i, j));
       }
@@ -535,10 +570,10 @@ static void lanes_finish(int64_t lo, int64_t hi, int worker, void *ctx) {
 static void lanes(problem *p) {
   int64_t batch = p->ext[BATCH], m = p->ext[ROW], n = p->ext[COL];
   int64_t k = p->ext[CON], w = p->w;
-  lanes_job f = {p, ceil_div(k, NX_CPU_FOLD_BLOCK), NULL};
+  lanes_job f = {.p = p, .blocks = ceil_div(k, NX_CPU_FOLD_BLOCK)};
   int64_t bytes = batch * (m + n) * k * w;
   if (f.blocks == 1) {
-    nx_cpu_job(batch, bytes, 2 * bytes, lanes_unit, &f);
+    nx_cpu_job(batch, bytes, PACK_COST * bytes, lanes_unit, &f);
     return;
   }
   if (f.blocks > 1) {
@@ -547,7 +582,7 @@ static void lanes(problem *p) {
       atomic_store(&p->failed, 1);
       return;
     }
-    nx_cpu_job(batch * f.blocks, bytes, 2 * bytes, lanes_unit, &f);
+    nx_cpu_job(batch * f.blocks, bytes, PACK_COST * bytes, lanes_unit, &f);
   }
   if (!atomic_load(&p->failed))
     nx_cpu_job(batch, batch * m * n * w, batch * m * n * (f.blocks + 1) * w,
