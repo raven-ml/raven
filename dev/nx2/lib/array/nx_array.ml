@@ -132,26 +132,21 @@ let identical (Any a) (Any b) =
   Buffer.overlaps a.buffer b.buffer
   && same_bytes a b (Buffer.offset a.buffer) (Buffer.offset b.buffer)
 
-(* The read arrays the claims skip, as a mask, bit [j] for [read.(j)]: those
-   identical to a written array, whose claim for writing covers them. The
-   mask holds the first [skip_last] read arrays; a later one identical to a
-   written array is refused as overlapping it. *)
+(* The read arrays the claims skip: those identical to a written array,
+   whose claim for writing covers them, as a mask, bit [j] for [read.(j)].
+   The mask holds the first [skip_last] read arrays; a later one identical
+   to a written array is refused as overlapping it. *)
 let skip_last = 62
 
-let skips written read =
-  let mask = ref 0 in
-  for j = 0 to min (Array.length read) skip_last - 1 do
-    for i = 0 to Array.length written - 1 do
-      if identical written.(i) read.(j) then mask := !mask lor (1 lsl j)
-    done
-  done;
-  !mask
+(* An answer's code, its immediate (nx_array.h). *)
+external code_of_answer : answer -> int = "%identity"
 
-(* The first refusal of a written array: it reaches an element twice, or
-   shares a byte with another written array or with a read array not
-   identical to it. *)
-let refusal written read =
-  let answer = ref Done and i = ref 0 in
+(* The skip mask, or minus the code of the first refusal of a written
+   array: it reaches an element twice, or shares a byte with another
+   written array or with a read array not identical to it. Identity is
+   tested only for arrays that share bytes. *)
+let check written read =
+  let answer = ref Done and skip = ref 0 and i = ref 0 in
   while !answer = Done && !i < Array.length written do
     let (Any w as aw) = written.(!i) in
     if not (Layout.is_distinct w.layout) then answer := Repeated_elements
@@ -160,15 +155,15 @@ let refusal written read =
         if j <> !i && shares_bytes aw written.(j) then answer := Overlapping
       done;
       for j = 0 to Array.length read - 1 do
-        if
-          shares_bytes aw read.(j)
-          && not (j < skip_last && identical aw read.(j))
-        then answer := Overlapping
+        if shares_bytes aw read.(j) then
+          if j < skip_last && identical aw read.(j) then
+            skip := !skip lor (1 lsl j)
+          else answer := Overlapping
       done
     end;
     incr i
   done;
-  !answer
+  if !answer = Done then !skip else -code_of_answer !answer
 
 (* An asynchronous exception (a signal handler's, a finaliser's) is raised
    at a poll point: an allocation, a function's entry or a loop's back edge.
@@ -204,20 +199,19 @@ let admit written read skip =
         Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
 let door ~written ~read f x =
-  match refusal written read with
-  | Done -> (
-      let skip = skips written read in
-      match admit written read skip with
-      | Done -> (
-          match f x with
-          | () ->
-              release_all written read skip;
-              Done
-          | exception e ->
-              release_all written read skip;
-              Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()))
-      | refusal -> refusal)
-  | refusal -> refusal
+  let skip = check written read in
+  if skip < 0 then answer_of_code (-skip)
+  else
+    match admit written read skip with
+    | Done -> (
+        match f x with
+        | () ->
+            release_all written read skip;
+            Done
+        | exception e ->
+            release_all written read skip;
+            Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()))
+    | refusal -> refusal
 
 (* Making arrays *)
 
