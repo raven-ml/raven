@@ -120,28 +120,38 @@ static int mma_tile(int kind, int64_t batch, int64_t m, int64_t n) {
 
 /* Merges the [count] axes [axes[k]] of each of [n] operands into one: its
    extent and each operand's stride. Answers 0 if they do not merge into
-   one axis. No axis is extent 1, and stride 0. */
+   one axis: the operands' extents differ, or an axis past extent 1 steps
+   by other than the next such axis's stride times that axis's extent. No
+   axis is extent 1, and stride 0. It reads the operands as they are:
+   zeroing a descriptor per operand on the stack, some 2.5 KiB of stores a
+   call, made the loads after it wait on Intel cores in half of all
+   processes, those whose stack met the operands in the low 12 address
+   bits (4K aliasing). */
 static int merge(int n, const nx_cuda_operand *const *ops,
                  const int (*axes)[NX_MAX_RANK], int count, int64_t *extent,
                  int64_t *strides) {
-  nx_array a[NX_MAX_OPERANDS];
-  nx_loop l;
-  memset(a, 0, sizeof a);
-  for (int k = 0; k < n; k++) {
-    a[k].rank = count;
-    for (int i = 0; i < count; i++) {
-      a[k].dim[i] = ops[k]->dim[axes[k][i]];
-      a[k].dim[count + i] = ops[k]->dim[ops[k]->rank + axes[k][i]];
+  int64_t e = 1;
+  int found = 0;
+  for (int i = 0; i < count; i++)
+    for (int k = 1; k < n; k++)
+      if (ops[k]->dim[axes[k][i]] != ops[0]->dim[axes[0][i]]) return 0;
+  for (int k = 0; k < n; k++) strides[k] = 0;
+  for (int i = 0; i < count; i++) {
+    const int64_t d = ops[0]->dim[axes[0][i]];
+    if (d == 0) {
+      *extent = 0;
+      for (int k = 0; k < n; k++) strides[k] = 0;
+      return 1;
     }
+    if (d == 1) continue;
+    for (int k = 0; k < n; k++) {
+      const int64_t s = ops[k]->dim[ops[k]->rank + axes[k][i]];
+      if (found && strides[k] != s * d) return 0;
+      strides[k] = s;
+    }
+    e *= d, found = 1;
   }
-  if (count == 0) {
-    *extent = 1;
-    for (int k = 0; k < n; k++) strides[k] = 0;
-    return 1;
-  }
-  if (nx_coalesce(n, a, &l) != NX_OK || l.rank != 1) return 0;
-  *extent = l.extent[0];
-  for (int k = 0; k < n; k++) strides[k] = l.step[k][0];
+  *extent = e;
   return 1;
 }
 
@@ -273,23 +283,26 @@ int nx_cuda_plan_contract(const nx_cuda_contract_in *in,
 
   /* The axes of each group: batch pairs, a's free axes (m), b's (n), and
      the contracting pairs (k), with y's, and init's as y's. */
-  int used_a[NX_MAX_RANK] = {0}, used_b[NX_MAX_RANK] = {0};
+  _Static_assert(NX_MAX_RANK <= 32, "a rank's axes fit 32 bits");
+  uint32_t used_a = 0, used_b = 0; /* bit i: axis i is grouped */
   int bat[4][NX_MAX_RANK], mm[3][NX_MAX_RANK], nn[3][NX_MAX_RANK],
       kk[2][NX_MAX_RANK];
   int nb = in->nbatch, nm = 0, nnn = 0, nk = in->ncontracting;
   for (int i = 0; i < nb; i++) {
     bat[0][i] = in->batch[i][0], bat[1][i] = in->batch[i][1];
     bat[2][i] = bat[3][i] = i;
-    used_a[in->batch[i][0]] = used_b[in->batch[i][1]] = 1;
+    used_a |= 1u << in->batch[i][0], used_b |= 1u << in->batch[i][1];
   }
   for (int i = 0; i < nk; i++) {
     kk[0][i] = in->contracting[i][0], kk[1][i] = in->contracting[i][1];
-    used_a[in->contracting[i][0]] = used_b[in->contracting[i][1]] = 1;
+    used_a |= 1u << in->contracting[i][0];
+    used_b |= 1u << in->contracting[i][1];
   }
   for (int i = 0; i < a->rank; i++)
-    if (!used_a[i]) mm[0][nm] = i, mm[1][nm] = mm[2][nm] = nb + nm, nm++;
+    if (!(used_a >> i & 1))
+      mm[0][nm] = i, mm[1][nm] = mm[2][nm] = nb + nm, nm++;
   for (int i = 0; i < b->rank; i++)
-    if (!used_b[i])
+    if (!(used_b >> i & 1))
       nn[0][nnn] = i, nn[1][nnn] = nn[2][nnn] = nb + nm + nnn, nnn++;
   if (y->rank != nb + nm + nnn) return NX_NOT_COMPUTED;
 
