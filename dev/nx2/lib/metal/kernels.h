@@ -89,8 +89,8 @@ typedef struct {
    square tiles, NX_METAL_BK otherwise, NX_METAL_BK_WIDE in the wide ones.
    Skinny products of one row: columns of out a threadgroup computes, b
    stored [n][k] (T) or [k][n] (N). Integers on the SIMD units: tile and
-   threads. Packs: a threadgroup's tile side, and its threads, PACK ×
-   PACK_ROWS. */
+   threads. Packs: a threadgroup's tile side, and its threads, PACK / 4
+   × PACK_ROWS. */
 #define NX_METAL_THREADS 128
 #define NX_METAL_LARGE 64
 #define NX_METAL_SMALL 32
@@ -103,8 +103,8 @@ typedef struct {
 #define NX_METAL_SKINNY_N 32
 #define NX_METAL_INT_TILE 64
 #define NX_METAL_INT_THREADS 256
-#define NX_METAL_PACK 32
-#define NX_METAL_PACK_ROWS 8
+#define NX_METAL_PACK 64
+#define NX_METAL_PACK_ROWS 16
 
 /* out[p][i][j] = round_out(init[p][i][j] + Σ_l a[p][i][l] · b[p][l][j]),
    for p < batch, i < m, j < n, l < k: floats sum in float32, integers in

@@ -151,7 +151,7 @@ static int pack(nx_metal_records *r, size_t *used,
   *batch = q.dst_batch;
   uint32_t groups[3] = {(*ld + side - 1) / side, (rows + side - 1) / side,
                         c->batch};
-  uint32_t threads[3] = {side, NX_METAL_PACK_ROWS, 1};
+  uint32_t threads[3] = {side / 4, NX_METAL_PACK_ROWS, 1};
   return append(r, NX_METAL_pack, groups, threads, &q, sizeof q, 2, 1u << 1);
 }
 

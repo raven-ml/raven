@@ -657,13 +657,22 @@ kernel void contract_int(constant nx_metal_contract &p [[buffer(0)]],
    An operand of batch × rows × cols elements of a byte, two or four,
    copied into rows of ld elements with cols contiguous, the ld - cols
    past each row zero. A threadgroup moves a PACK × PACK tile through
-   threadgroup memory: it reads along the source's contiguous axis and
-   writes along the copy's, so both sides stream whole runs. */
+   threadgroup memory: each thread reads runs of 4 elements along the
+   source's contiguous axis and writes runs of 4 along the copy's, so
+   both sides stream whole vectors. */
 
 #define PACK NX_METAL_PACK
 
-/* The [bytes]-byte element at [i] of p, and its store. */
-static uint get(uint bytes, device const uchar *p, uint i) {
+/* The run of 4 [bytes]-byte elements at element [i] of p, as words. */
+static uint4 get4(uint bytes, device const uchar *p, uint i) {
+  switch (bytes) {
+  case 1: return uint4(*(device const packed_uchar4 *)(p + i));
+  case 2: return uint4(*(device const packed_ushort4 *)(p + 2 * i));
+  default: return uint4(*(device const packed_uint4 *)(p + 4 * i));
+  }
+}
+
+static uint get1(uint bytes, device const uchar *p, uint i) {
   switch (bytes) {
   case 1: return p[i];
   case 2: return ((device const ushort *)p)[i];
@@ -671,11 +680,12 @@ static uint get(uint bytes, device const uchar *p, uint i) {
   }
 }
 
-static void set(uint bytes, device uchar *p, ulong i, uint x) {
+/* Stores the run x at element [i] of p, on a 16-byte boundary. */
+static void set4(uint bytes, device uchar *p, ulong i, uint4 x) {
   switch (bytes) {
-  case 1: p[i] = uchar(x); break;
-  case 2: ((device ushort *)p)[i] = ushort(x); break;
-  default: ((device uint *)p)[i] = x;
+  case 1: *(device uchar4 *)(p + i) = uchar4(x); break;
+  case 2: *(device ushort4 *)(p + 2 * i) = ushort4(x); break;
+  default: *(device uint4 *)(p + 4 * i) = x;
   }
 }
 
@@ -686,24 +696,38 @@ kernel void pack(constant nx_metal_pack &p [[buffer(0)]],
   device const uchar *src =
       (device const uchar *)p.src + g.z * p.src_batch * p.bytes;
   uint r0 = g.y * PACK, c0 = g.x * PACK;
-  /* Thread x runs along the source's contiguous axis: cols unless rows'
-     stride is 1. */
-  bool across = p.row != 1;
-  for (uint i = t.y; i < PACK; i += PACK / NX_METAL_PACK_ROWS) {
-    uint r = r0 + (across ? i : t.x), c = c0 + (across ? t.x : i);
-    uint x = r < p.rows && c < p.cols ? get(p.bytes, src, r * p.row + c * p.col)
-                                      : 0;
-    if (across)
-      tile[i][t.x] = x;
-    else
-      tile[t.x][i] = x;
+  /* Runs go along cols, unless rows' stride is 1: (u, v) is the tile's
+     element (r, c) or (c, r), u along the run. */
+  bool down = p.row == 1;
+  uint u_n = down ? p.rows : p.cols, v_n = down ? p.cols : p.rows;
+  uint u0 = down ? r0 : c0, v0 = down ? c0 : r0;
+  uint u_step = down ? p.row : p.col, v_step = down ? p.col : p.row;
+  uint u = 4 * t.x;
+  for (uint v = t.y; v < PACK; v += NX_METAL_PACK_ROWS) {
+    uint4 x = 0;
+    if (v0 + v < v_n) {
+      uint at = (u0 + u) * u_step + (v0 + v) * v_step;
+      if (u_step == 1 && u0 + u + 4 <= u_n)
+        x = get4(p.bytes, src, at);
+      else
+        for (uint e = 0; e < 4 && u0 + u + e < u_n; e++)
+          x[e] = get1(p.bytes, src, at + e * u_step);
+    }
+    for (uint e = 0; e < 4; e++)
+      if (down)
+        tile[u + e][v] = x[e];
+      else
+        tile[v][u + e] = x[e];
   }
   threadgroup_barrier(mem_flags::mem_threadgroup);
   device uchar *dst = (device uchar *)p.dst;
-  for (uint i = t.y; i < PACK; i += PACK / NX_METAL_PACK_ROWS) {
-    uint r = r0 + i, c = c0 + t.x;
-    if (r < p.rows && c < p.ld)
-      set(p.bytes, dst, g.z * p.dst_batch + ulong(r) * p.ld + c, tile[i][t.x]);
+  uint c = c0 + 4 * t.x;
+  for (uint i = t.y; i < PACK; i += NX_METAL_PACK_ROWS) {
+    uint r = r0 + i;
+    if (r >= p.rows || c >= p.ld) continue;
+    uint4 x = uint4(tile[i][4 * t.x], tile[i][4 * t.x + 1],
+                    tile[i][4 * t.x + 2], tile[i][4 * t.x + 3]);
+    set4(p.bytes, dst, g.z * p.dst_batch + ulong(r) * p.ld + c, x);
   }
 }
 
