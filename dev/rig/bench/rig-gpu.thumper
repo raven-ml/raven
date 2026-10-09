@@ -188,10 +188,14 @@ wait/metal/reached	wall_time	batch=1048576	n=20	6.441e-09	6.227e-09 6.276e-09 6.
 # host: nonnormal · Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz · x86_64 · linux
 # ocaml: 5.5.1 · 64-bit · release
 
+copy/amd/borrow-to-host-4M	alloc_words	exact	0
+copy/amd/borrow-to-host-4M	wall_time	batch=64	n=20	1.065e-04	1.064e-04 1.065e-04 1.065e-04 1.065e-04 1.065e-04 1.065e-04 1.065e-04 1.065e-04 1.065e-04 1.065e-04 1.065e-04 1.065e-04 1.065e-04 1.075e-04 1.076e-04 1.076e-04 1.076e-04 1.076e-04 1.076e-04 1.076e-04
 copy/amd/from-device-256M	alloc_words	exact	130
 copy/amd/from-device-256M	wall_time	batch=1	n=20	1.916e-02	1.913e-02 1.913e-02 1.914e-02 1.916e-02 1.916e-02 1.916e-02 1.916e-02 1.916e-02 1.916e-02 1.916e-02 1.916e-02 1.916e-02 1.916e-02 1.916e-02 1.917e-02 1.917e-02 1.918e-02 1.919e-02 1.920e-02 1.956e-02
 copy/amd/from-device-off-page-256M	alloc_words	exact	1344
 copy/amd/from-device-off-page-256M	wall_time	batch=1	n=20	2.437e-02	2.435e-02 2.435e-02 2.435e-02 2.436e-02 2.436e-02 2.436e-02 2.437e-02 2.437e-02 2.437e-02 2.437e-02 2.437e-02 2.437e-02 2.438e-02 2.438e-02 2.438e-02 2.438e-02 2.440e-02 2.441e-02 2.444e-02 2.446e-02
+copy/amd/host-to-borrow-4M	alloc_words	exact	0
+copy/amd/host-to-borrow-4M	wall_time	batch=64	n=20	1.064e-04	1.063e-04 1.063e-04 1.064e-04 1.064e-04 1.064e-04 1.064e-04 1.064e-04 1.064e-04 1.064e-04 1.064e-04 1.064e-04 1.064e-04 1.064e-04 1.064e-04 1.064e-04 1.064e-04 1.064e-04 1.065e-04 1.066e-04 1.070e-04
 copy/amd/to-device-256M	alloc_words	exact	130
 copy/amd/to-device-256M	wall_time	batch=1	n=20	1.929e-02	1.929e-02 1.929e-02 1.929e-02 1.929e-02 1.929e-02 1.929e-02 1.929e-02 1.929e-02 1.929e-02 1.929e-02 1.929e-02 1.929e-02 1.929e-02 1.929e-02 1.930e-02 1.930e-02 1.930e-02 1.930e-02 1.930e-02 1.931e-02
 copy/amd/to-device-off-page-256M	alloc_words	exact	1344
@@ -224,6 +228,8 @@ floor/host/load-cold-256M	alloc_words	exact	194
 floor/host/load-cold-256M	wall_time	batch=1	n=20	9.776e-02	9.551e-02 9.628e-02 9.663e-02 9.688e-02 9.694e-02 9.698e-02 9.708e-02 9.737e-02 9.762e-02 9.766e-02 9.786e-02 9.789e-02 9.789e-02 9.799e-02 9.806e-02 9.813e-02 9.817e-02 9.822e-02 9.852e-02 1.053e-01
 floor/host/memcpy-256M	alloc_words	exact	0
 floor/host/memcpy-256M	wall_time	batch=1	n=20	1.668e-02	1.667e-02 1.667e-02 1.667e-02 1.667e-02 1.667e-02 1.668e-02 1.668e-02 1.668e-02 1.668e-02 1.668e-02 1.668e-02 1.668e-02 1.669e-02 1.669e-02 1.669e-02 1.670e-02 1.670e-02 1.671e-02 1.672e-02 1.672e-02
+floor/host/memcpy-4M	alloc_words	exact	0
+floor/host/memcpy-4M	wall_time	batch=64	n=20	1.069e-04	1.064e-04 1.064e-04 1.064e-04 1.064e-04 1.064e-04 1.065e-04 1.065e-04 1.065e-04 1.065e-04 1.065e-04 1.074e-04 1.075e-04 1.075e-04 1.076e-04 1.083e-04 1.087e-04 1.092e-04 1.092e-04 1.094e-04 1.095e-04
 replay/amd/kernel-pipelined-100	alloc_words	exact	0
 replay/amd/kernel-pipelined-100	wall_time	batch=32	n=20	2.357e-04	2.316e-04 2.337e-04 2.341e-04 2.341e-04 2.344e-04 2.344e-04 2.346e-04 2.351e-04 2.353e-04 2.357e-04 2.357e-04 2.363e-04 2.367e-04 2.395e-04 2.410e-04 2.426e-04 2.520e-04 2.534e-04 2.536e-04 2.563e-04
 replay/amd/params-24	alloc_words	exact	0
