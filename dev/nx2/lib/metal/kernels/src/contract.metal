@@ -285,24 +285,49 @@ static void flush(thread simdgroup_float8x8 (&acc)[TM][TN],
     }
 }
 
-/* One step along k: the staged tiles at pa and pb, each lane's first
-   element, multiplied into acc in steps of 8. */
+/* Loads an 8 x 8 fragment [at] elements past the simdgroup's first
+   element [m0] and the lane's [l0]: by simdgroup_load if DIRECT, by the
+   lane's pieces otherwise. Measured on the large tile: simdgroup_load
+   runs float32 with b stored [k][n] 4-6% faster (2048, 4096, 64 x 512),
+   float32 with b stored [n][k] 5-8% slower, and half 1% slower. */
+template <bool DIRECT> struct frag;
+template <> struct frag<true> {
+  template <int D, int LD, bool TRANS, typename M, typename S>
+  static void load(thread M &x, const threadgroup S *m0, const threadgroup S *,
+                   int at) {
+    simdgroup_load(x, m0 + at, LD, ulong2(0, 0), TRANS);
+  }
+};
+template <> struct frag<false> {
+  template <int D, int LD, bool TRANS, typename M, typename S>
+  static void load(thread M &x, const threadgroup S *, const threadgroup S *l0,
+                   int at) {
+    elements(x) = piece<D, LD, TRANS>(l0, at);
+  }
+};
+
+/* One step along k: the staged tiles at ma and mb, the simdgroup's first
+   element, and pa and pb, the lane's, multiplied into acc in steps of
+   8. */
 template <int D, int TM, int TN, int BK, int ALD, int BLD, bool BT>
 static void multiply(thread simdgroup_float8x8 (&acc)[TM][TN],
+                     const threadgroup typename elt<D>::s *ma,
                      const threadgroup typename elt<D>::s *pa,
+                     const threadgroup typename elt<D>::s *mb,
                      const threadgroup typename elt<D>::s *pb) {
+  typedef frag<D == F32 && !BT> F;
   UNROLL
   for (uint kk = 0; kk < BK; kk += 8) {
     simdgroup_matrix<typename elt<D>::f, 8, 8> af[TM], bf[TN];
     simdgroup_barrier(mem_flags::mem_none);
     UNROLL
     for (uint i = 0; i < TM; i++)
-      elements(af[i]) = piece<D, ALD, false>(pa, 8 * WM * i * ALD + kk);
+      F::template load<D, ALD, false>(af[i], ma, pa, 8 * WM * i * ALD + kk);
     simdgroup_barrier(mem_flags::mem_none);
     UNROLL
     for (uint j = 0; j < TN; j++)
-      elements(bf[j]) = piece<D, BLD, BT>(
-          pb, BT ? 8 * WN * j * BLD + kk : kk * BLD + 8 * WN * j);
+      F::template load<D, BLD, BT>(
+          bf[j], mb, pb, BT ? 8 * WN * j * BLD + kk : kk * BLD + 8 * WN * j);
     simdgroup_barrier(mem_flags::mem_none);
     UNROLL
     for (uint i = 0; i < TM; i++)
@@ -349,6 +374,8 @@ kernel void contract(constant nx_metal_contract &p [[buffer(0)]],
   const threadgroup S *pa = &as[sm + fm][fn];
   const threadgroup S *pb =
       BT ? &bs[sn + fn][fm] : &bs[fm][sn + fn];
+  const threadgroup S *ma = &as[sm][0];
+  const threadgroup S *mb = BT ? &bs[sn][0] : &bs[0][sn];
 
   simdgroup_float8x8 acc[TM][TN];
   UNROLL
@@ -376,7 +403,7 @@ kernel void contract(constant nx_metal_contract &p [[buffer(0)]],
       ta.put();
       tb.put();
       threadgroup_barrier(mem_flags::mem_threadgroup);
-      multiply<D, TM, TN, BK, ALD, BLD, BT>(acc, pa, pb);
+      multiply<D, TM, TN, BK, ALD, BLD, BT>(acc, ma, pa, mb, pb);
       if (chunk_steps && (s + 1) % chunk_steps == 0) flush(acc, sums);
     }
   else if (EDGE)
@@ -387,7 +414,7 @@ kernel void contract(constant nx_metal_contract &p [[buffer(0)]],
       ta.put();
       tb.put();
       threadgroup_barrier(mem_flags::mem_threadgroup);
-      multiply<D, TM, TN, BK, ALD, BLD, BT>(acc, pa, pb);
+      multiply<D, TM, TN, BK, ALD, BLD, BT>(acc, ma, pa, mb, pb);
       if (chunk_steps && (s + 1) % chunk_steps == 0) flush(acc, sums);
     }
   if (EDGE && steps * BK < k) {
@@ -397,7 +424,7 @@ kernel void contract(constant nx_metal_contract &p [[buffer(0)]],
     ta.put();
     tb.put();
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    multiply<D, TM, TN, BK, ALD, BLD, BT>(acc, pa, pb);
+    multiply<D, TM, TN, BK, ALD, BLD, BT>(acc, ma, pa, mb, pb);
   }
 
   ulong out_at = ulong(g.z) * p.m * p.n;
