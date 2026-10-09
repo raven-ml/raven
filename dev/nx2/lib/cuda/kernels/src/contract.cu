@@ -99,6 +99,9 @@ template <> __device__ u64 read(const void *p, int64_t i, int dt) {
 template <> __device__ int read(const void *p, int64_t i, int dt) {
   return (int)read_int(p, i, dt);
 }
+template <> __device__ uint32_t read(const void *p, int64_t i, int dt) {
+  return (uint32_t)read_int(p, i, dt);
+}
 
 /* Stores the bits [c] of an element of the integer, bool or narrow float
    dtype [dt] at element [i] of [p]: their low bits, as wide as [dt]. */
@@ -161,6 +164,10 @@ __device__ void write(const contract_params &p, int64_t i, u64 v) {
 
 __device__ void write(const contract_params &p, int64_t i, int v) {
   write(p, i, (u64)(int64_t)v);
+}
+
+__device__ void write(const contract_params &p, int64_t i, uint32_t v) {
+  write(p, i, (u64)v);
 }
 
 /* y's element (z, i, j), if inside: init added, then rounded once. Out of
@@ -869,24 +876,35 @@ __device__ void skinny_contract(const contract_params &p,
   if (i < R && i0 + i < p.m) store(p, z, i0 + i, j0 + threadIdx.x % 32, v[0]);
 }
 
+/* The integer skinny loop of the sum T, for the integer dtype both
+   operands are read in. */
+template <typename T>
+__device__ void skinny_ints(const contract_params &p, T (*level8)[8][32]) {
+  switch (p.b_dtype) {
+  case NX_INT8: return skinny_contract<T, int8_t>(p, level8);
+  case NX_UINT8:
+  case NX_BOOL: return skinny_contract<T, uint8_t>(p, level8);
+  case NX_INT16: return skinny_contract<T, int16_t>(p, level8);
+  case NX_UINT16: return skinny_contract<T, uint16_t>(p, level8);
+  case NX_INT32: return skinny_contract<T, int32_t>(p, level8);
+  case NX_UINT32: return skinny_contract<T, uint32_t>(p, level8);
+  default: return skinny_contract<T, u64>(p, level8);
+  }
+}
+
 /* The skinny kernel of the accumulator T: a float one reads T; the
    integer one reads the integer dtype both operands are in, its loop
-   compiled for each, one shared buffer for all. */
+   compiled for each, one shared buffer for all. A 32-bit accumulator
+   sums in 32 bits, wrapping: the 64-bit sum's low half, which the store
+   would keep. */
 template <typename T> __device__ void skinny_kernel(const contract_params &p) {
   __shared__ T level8[NX_SKINNY_ROWS][8][32];
   if constexpr (T(-1) < T(0))
     skinny_contract<T, T>(p, level8);
+  else if (p.acc_dtype == NX_INT32 || p.acc_dtype == NX_UINT32)
+    skinny_ints<uint32_t>(p, (uint32_t(*)[8][32])level8);
   else
-    switch (p.b_dtype) {
-    case NX_INT8: return skinny_contract<T, int8_t>(p, level8);
-    case NX_UINT8:
-    case NX_BOOL: return skinny_contract<T, uint8_t>(p, level8);
-    case NX_INT16: return skinny_contract<T, int16_t>(p, level8);
-    case NX_UINT16: return skinny_contract<T, uint16_t>(p, level8);
-    case NX_INT32: return skinny_contract<T, int32_t>(p, level8);
-    case NX_UINT32: return skinny_contract<T, uint32_t>(p, level8);
-    default: return skinny_contract<T, u64>(p, level8);
-    }
+    skinny_ints<T>(p, level8);
 }
 
 /* Packing */

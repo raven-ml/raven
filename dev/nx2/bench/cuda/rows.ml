@@ -176,6 +176,7 @@ let contracts =
       contract i16 i64 i64 1024 1024 1024;
       contract i8 i32 i32 1 5120 2880;
       contract i16 i64 i64 1 5120 2880;
+      contract i32 i32 i32 1 5120 2880;
     ]
 
 let all = floors @ contracts

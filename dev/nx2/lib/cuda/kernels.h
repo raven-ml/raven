@@ -45,7 +45,8 @@ typedef struct __attribute__((aligned(8))) {
    - SKINNY (contract.cu): the accumulator's type.
    Instances are a budget: each names the rows that keep it. A layout or
    tile with no instance is computed by one that has it, its operand
-   packed first; an int32 accumulator sums in int64 and wraps. */
+   packed first; a 32-bit integer accumulator sums in 64 bits and wraps,
+   in 32 on the skinny kernel. */
 #define NX_CUDA_KERNELS(X)                                                    \
   /* every split sum */                                                     \
   X(zero_u32, ZERO)                                                         \
