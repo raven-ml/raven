@@ -86,8 +86,8 @@ let gpus =
     ~unreleased ~teardown_ms:30_000 ~reset:Boot.reset
     (fun (id : Machine.id) -> Amd.is_gpu ~vendor:id.vendor ~class_:id.class_)
 
-let gpus_at root = Gpus.buses gpus (Machine.at root)
-let count ?(machine = Machine.this) () = List.length (Gpus.buses gpus machine)
+let buses ?(machine = Machine.this) () = Gpus.buses gpus machine
+let count ?machine () = List.length (buses ?machine ())
 let device_name i = Gpus.name gpus i
 
 (* Memory *)

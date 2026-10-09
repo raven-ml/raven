@@ -1179,7 +1179,7 @@ let numbering =
           let root = machine () in
           equal (list string)
             [ "0000:02:00.0"; "0000:03:00.0"; "0000:83:00.0" ]
-            (Rig_amd_pci.gpus_at root);
+            (Rig_amd_pci.buses ~machine:(Rig_pci.Machine.at root) ());
           equal int 3 (Rig_amd_pci.count ~machine:(Rig_pci.Machine.at root) ()));
       test "a machine with no PCI functions has no GPU" (fun () ->
           equal int 0

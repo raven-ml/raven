@@ -102,11 +102,16 @@
     - PCI-SIG. {e PCI Express Base Specification}, 7.5.3.7 "Link Control
       Register": ASPM. *)
 
+val buses : ?machine:Rig_pci.Machine.t -> unit -> string list
+(** [buses ~machine ()] is the bus addresses of the AMD GPUs of [machine]
+    (defaults to {!Rig_pci.Machine.this}) ({!Rig_amd.is_gpu}), in bus order: GPU
+    [i] is the [i]th, whichever driver holds it. It is [[]] for a machine with
+    no PCI functions, such as this one elsewhere than Linux. Listing them
+    changes nothing on the machine. *)
+
 val count : ?machine:Rig_pci.Machine.t -> unit -> int
-(** [count ~machine ()] is the number of AMD GPUs of [machine] (defaults to
-    {!Rig_pci.Machine.this}), whichever driver holds them: the indices [0] to
-    [count ~machine () - 1]. It is [0] for a machine with no PCI functions, such
-    as this one elsewhere than Linux. *)
+(** [count ~machine ()] is the number of {!buses}: the indices [0] to
+    [count ~machine () - 1]. *)
 
 val device_name : int -> string
 (** [device_name i] is the name of GPU [i]: ["AMD-PCI"] for [0], ["AMD-PCI:i"]
@@ -241,8 +246,3 @@ module Psp = Psp
 module Gfx = Gfx
 module Boot = Boot
 module Ih = Ih
-
-(* [gpus_at root] is the bus addresses of the AMD GPUs of the machine whose
-   files are under the directory [root], in bus order, as {!count} numbers
-   them. *)
-val gpus_at : string -> string list

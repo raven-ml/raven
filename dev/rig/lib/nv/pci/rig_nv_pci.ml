@@ -33,7 +33,8 @@ let gpus =
     ~teardown_ms:0 ~reset:Function.reset
     (fun (id : Machine.id) -> Rig_nv.is_gpu ~vendor:id.vendor ~class_:id.class_)
 
-let count ?(machine = Machine.this) () = List.length (Gpus.buses gpus machine)
+let buses ?(machine = Machine.this) () = Gpus.buses gpus machine
+let count ?machine () = List.length (buses ?machine ())
 let device_name i = Gpus.name gpus i
 
 (* Memory *)

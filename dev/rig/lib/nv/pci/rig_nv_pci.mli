@@ -102,10 +102,15 @@
 
 (** {1:gpus GPUs} *)
 
+val buses : ?machine:Rig_pci.Machine.t -> unit -> string list
+(** [buses ~machine ()] is the bus addresses of the NVIDIA GPUs of [machine]
+    (defaults to {!Rig_pci.Machine.this}) ({!Rig_nv.is_gpu}), in bus order: GPU
+    [i] is the [i]th, whichever kernel driver holds it. It is [[]] where the
+    machine has no PCI functions, as off Linux. Listing them changes nothing on
+    the machine. *)
+
 val count : ?machine:Rig_pci.Machine.t -> unit -> int
-(** [count ~machine ()] is the number of NVIDIA GPUs of [machine] (defaults to
-    {!Rig_pci.Machine.this}): [0] where the machine has no PCI functions, as off
-    Linux. Counting changes nothing on the machine. *)
+(** [count ~machine ()] is the number of {!buses}. *)
 
 val device_name : int -> string
 (** [device_name i] is the name of GPU [i]: ["NV-PCI"] for [0], ["NV-PCI:i"]

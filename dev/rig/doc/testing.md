@@ -392,9 +392,8 @@ every machine. Otherwise its parsers are tested live, on the host's own
 files, on the host that has the device; no public reader exists only so that
 a test can reach a parser, and hardware no host has gets no fixture test.
 pci's machine at a root (`Machine.at`) is public: pci's suites and the PCI
-paths' numbering run on fixture trees through it. Two suites still reach a
-reader through a hidden section: the GPU lists (`gpus_at`) of amdgpu and
-amd.pci.
+paths' numbering (`buses`) run on fixture trees through it. One suite still
+reaches a reader through a hidden section: amdgpu's GPU list (`gpus_at`).
 
 Tests never exhaust a shared resource: threads, processes, file descriptors,
 memory, GPU memory or disk. A failure path that needs a limit is reached by a

@@ -31,9 +31,13 @@ let numbering =
       test "GPUs are NVIDIA's display and 3D controllers in bus order"
         (fun () ->
           let machine = Rig_pci.Machine.at (machine ()) in
+          equal (list string)
+            [ "0000:03:00.0"; "0000:83:00.0" ]
+            (Rig_nv_pci.buses ~machine ());
           equal int 2 (Rig_nv_pci.count ~machine ()));
       test "a machine with no PCI functions has no GPU" (fun () ->
           let machine = Rig_pci.Machine.at (Tree.make []) in
+          equal (list string) [] (Rig_nv_pci.buses ~machine ());
           equal int 0 (Rig_nv_pci.count ~machine ()));
       cases ~name:fst "GPUs are named by number"
         [
