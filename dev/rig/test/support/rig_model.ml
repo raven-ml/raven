@@ -255,7 +255,6 @@ and rmem = {
   data : Bytes.t;
   defined : Bytes.t;  (** ['\001'] where [data] is known. *)
   stamps : rstamps;
-  mutable hold : rhold option;
   mutable readers : int;  (** Read claims. *)
   mutable generation : int;
   mutable exported : bool;
@@ -330,7 +329,6 @@ let new_mem owner mkind data defined =
       data;
       defined;
       stamps = empty_stamps ();
-      hold = None;
       readers = 0;
       generation = 0;
       exported = false;
@@ -407,20 +405,11 @@ let waits ?(all = false) v (st : rstamps) =
    device's borrow, raise its loss. *)
 let owned v b = uses v [ b.on; b.mem.owner ]
 
-(* Every point of the hold of memory [m], if it is in one: a submission made
-   with the hold may write any of its memory. *)
-let waits_hold v m = Option.iter (fun h -> waits ~all:true v h.hstamps) m.hold
+(* The call reads memory [m]: it waits for its last write. *)
+let reads v m = waits v m.stamps
 
-(* The call reads memory [m]: it waits for its last write and the hold's
-   points. *)
-let reads v m =
-  waits v m.stamps;
-  waits_hold v m
-
-(* The call writes memory [m]: it waits for every point of it and of its hold. *)
-let waits_all v m =
-  waits ~all:true v m.stamps;
-  waits_hold v m
+(* The call writes memory [m]: it waits for every point of it. *)
+let waits_all v m = waits ~all:true v m.stamps
 let invalid_if v c = if c then v.invalid <- true
 
 (* [r] may be lost, and so may the devices whose queue may wait on its work. *)
@@ -1610,7 +1599,6 @@ let submit_ref last rc wc sc outcome =
       uses vd [ d ];
       reads vd r.mem;
       waits_all vd wb.mem;
-      Option.iter (fun h -> waits ~all:true vd h.hstamps) sub.held;
       (match sub.copy with
       | Some (a, b) ->
           reads vd a.mem;
@@ -1624,10 +1612,7 @@ let submit_ref last rc wc sc outcome =
             unknown b)
           (wb :: parts);
         maybe_use r.mem.stamps d;
-        Option.iter (fun h -> maybe_use h.hstamps d) sub.held;
-        List.iter
-          (fun b -> Option.iter (fun h -> maybe_use h.hstamps d) b.mem.hold)
-          (r :: wb :: parts)
+        Option.iter (fun h -> maybe_use h.hstamps d) sub.held
       in
       match outcome with
       | Error (Invalid_argument _) when slot r = `Either || slot wb = `Either ->
@@ -1644,9 +1629,6 @@ let submit_ref last rc wc sc outcome =
               use r.mem.stamps d;
               write wb.mem.stamps d;
               Option.iter (fun h -> use h.hstamps d) sub.held;
-              List.iter
-                (fun b -> Option.iter (fun h -> use h.hstamps d) b.mem.hold)
-                (r :: wb :: parts);
               Option.iter (fun m -> use m.stamps d) sub.arg;
               match sub.copy with
               | Some (a, b) ->
@@ -1719,7 +1701,8 @@ let submit_sys last rc wc sc =
 
 (* Holds *)
 
-let hold_ref a b hc outcome =
+(* A hold holds no memory: making one changes nothing but the cell. *)
+let hold_ref hc outcome =
   match hc.h with
   | Some _ -> (
       match outcome with
@@ -1730,23 +1713,13 @@ let hold_ref a b hc outcome =
       | Error Skipped -> ()
       | _ -> fail "a hold in a dropped cell")
   | None ->
-      with_buf a outcome @@ fun x ->
-      with_buf b outcome @@ fun y ->
-      let vd = verdict () in
-      invalid_if vd (dead x || dead y);
-      invalid_if vd (x.mem.hold <> None || y.mem.hold <> None);
-      judge hc.hw vd outcome (fun () ->
-          let h = { hstamps = empty_stamps () } in
-          x.mem.hold <- Some h;
-          y.mem.hold <- Some h;
-          hc.h <- Some h)
+      judge hc.hw (verdict ()) outcome (fun () ->
+          hc.h <- Some { hstamps = empty_stamps () })
 
-let hold_sys a b hc =
+let hold_sys hc =
   if Atomic.get hc.used then raise Skipped;
-  let x = (get a).b and y = (get b).b in
   let runs = hc.runs in
-  guard a.sw @@ fun () ->
-  let h = Rig.Hold.make ~release:(fun () -> Atomic.incr runs) [ x; y ] in
+  let h = Rig.Hold.make (fun () -> Atomic.incr runs) in
   Atomic.set hc.used true;
   Atomic.set hc.sh (Some h)
 
@@ -2013,12 +1986,7 @@ let fork_ref w outcome =
               let points (st : rstamps) =
                 Option.to_list st.writer @ st.writers @ st.users @ st.maybe
               in
-              let held =
-                match b.mem.hold with Some h -> points h.hstamps | None -> []
-              in
-              let drivers =
-                List.exists device_work (points b.mem.stamps @ held)
-              in
+              let drivers = List.exists device_work (points b.mem.stamps) in
               match seen with
               | (Lost_cell | Read _) when drivers -> ()
               | Read s -> check_bytes b s
@@ -2153,7 +2121,7 @@ let exercise ~fork =
   step (fun () -> barrier_sys false (c 0));
   step (fun () -> file_sys disk 4096 2 false (c 1));
   step (fun () -> array_sys disk 4096 3 (c 2));
-  step (fun () -> hold_sys (c 0) (c 3) (new_hold_sys w));
+  step (fun () -> hold_sys (new_hold_sys w));
   if fork then step (fun () -> ignore (fork_sys w));
   Array.iter (fun c -> Atomic.set c.cell None) cells;
   List.iter (fun (s, _) -> give_device s) devs
@@ -2412,12 +2380,9 @@ let commands ~two ~fork =
   in
   let hold =
     command "hold"
-      (cell ^-> cell ^-> holds ^-> judges unit)
-      (fun a b h o ->
-        one_world [ a.w; b.w; h.hw ] o (fun () -> hold_ref a b h o))
-      (fun a b h ->
-        cells ~ws:[ a.sw; b.sw; h.hsw ] [ a.cl; b.cl; h.hcl ] (fun () ->
-            hold_sys a b h))
+      (holds ^-> judges unit)
+      (fun h o -> hold_ref h o)
+      (fun h -> cells ~ws:[ h.hsw ] [ h.hcl ] (fun () -> hold_sys h))
   in
   let claim =
     command "claim"

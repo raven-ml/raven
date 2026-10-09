@@ -7,4 +7,4 @@
 
 type t = Def.hold
 
-val make : ?release:(unit -> unit) -> Def.buffer list -> t
+val make : (unit -> unit) -> t

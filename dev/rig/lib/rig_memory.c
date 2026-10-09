@@ -227,15 +227,12 @@ static int uses_done(struct rig_stamps *s) {
 }
 
 /* Whether the work of the stamps [s] that an access must follow is done:
-   that of the last write, or of every use if [every], and of every use of
-   their hold's. A use word that a submission reserved holds no value until
-   its first raise. */
+   that of the last write, or of every use if [every]. A use word that a
+   submission reserved holds no value until its first raise. */
 static int stamps_done(struct rig_stamps *s, int every) {
   uint64_t w = atomic_load_explicit(&s->write, memory_order_acquire);
   if (w != 0 && !rig_point_done(w)) return 0;
-  if (every && !uses_done(s)) return 0;
-  struct rig_stamps *hold = held(s);
-  return hold == NULL || uses_done(hold);
+  return !every || uses_done(s);
 }
 
 /* Claims first, then checks [b] under the claim: the compare-and-set

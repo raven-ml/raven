@@ -97,41 +97,21 @@ struct rig_device {
 /* A memory's stamps: the point of its last write and, per device, the point
    of its last use. A chunk never moves, so a raise is one store or
    compare-and-set; a submission reserves its device's use word before its
-   hand-over, so a raise allocates nothing. [refs] counts the memories,
-   holds and memories' links that share it.
-
-   A memory in a hold links to the hold's stamps, set once, which only
-   submissions made with the hold raise, as uses. The memory's uses are its
-   own and the hold's: such a submission may write any of its memory, so
-   a read follows every point of the hold too. */
+   hand-over, so a raise allocates nothing. [refs] counts the memories
+   and holds that share it. A hold's stamps hold only uses: those of the
+   submissions made with it. */
 #define RIG_USES 4
 
 struct rig_stamps {
   _Atomic uint64_t write;
   _Atomic uint64_t use[RIG_USES];
   _Atomic(struct rig_stamps *) next;
-  _Atomic int refs;                  /* in the first chunk only */
-  _Atomic(struct rig_stamps *) hold; /* in the first chunk only */
+  _Atomic int refs; /* in the first chunk only */
 };
 
-/* The hold's stamps that the stamps [s] link to, or NULL. Most memory is
-   in no hold: the load is relaxed, and only a link found acquires. */
-static inline struct rig_stamps *held(struct rig_stamps *s) {
-  struct rig_stamps *hold =
-      atomic_load_explicit(&s->hold, memory_order_relaxed);
-  if (hold != NULL) atomic_thread_fence(memory_order_acquire);
-  return hold;
-}
-
-/* The device's use words a submit reserves for one memory: in its stamps
-   and, for memory in a hold, in the hold's, NULL for memory in no hold. */
-struct rig_uses {
-  _Atomic uint64_t *use;
-  _Atomic uint64_t *held;
-};
-
-/* A buffer a submission's parts name: its memory's stamps, the handle by
-   which the device names it, and whether the part writes it. */
+/* A buffer a submission names, in a part or as fixed memory: its memory's
+   stamps, the handle by which the device names it, and whether the work
+   writes it. */
 struct rig_fixed {
   struct rig_stamps *stamps;
   uint64_t handle;
@@ -139,13 +119,13 @@ struct rig_fixed {
 };
 
 /* A buffer of a run: its memory's stamps, NULL while unset, the handle by
-   which the device names it, and its use words. A slot's handle outlives
+   which the device names it, and its use word. A slot's handle outlives
    its clearing, so a submit whose slots name the handles of the last one
    collects none. */
 struct rig_slot {
   struct rig_stamps *stamps;
   uint64_t handle;
-  struct rig_uses uses;
+  _Atomic uint64_t *use;
 };
 
 /* A handle a collect added, by hash: an entry of an earlier epoch is
@@ -183,7 +163,8 @@ struct rig_run {
   _Atomic int busy; /* taken by a submit's compare-and-set */
   int cfixed, cslots;
   int nslots; /* the slots of the submission it served last */
-  struct rig_uses *fixed; /* the uses of the submission's fixed buffers */
+  /* The use words of the submission's fixed buffers. */
+  _Atomic uint64_t **fixed;
   struct rig_slot *slots;
   struct rig_stamps *hold; /* the hold's stamps, NULL for none */
   _Atomic uint64_t *hold_use;

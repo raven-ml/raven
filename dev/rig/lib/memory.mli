@@ -26,11 +26,8 @@ val page : int
 
     Stamps are the address of a C record ([struct rig_stamps] in [rig_stubs.h])
     as an int, [0] for none. They count references: each memory and hold that
-    shares them holds one, so does each memory linked to a hold's, and the last
-    {!stamps_unref} frees them. Nothing checks a use after that. A memory's
-    points are its stamps' and, once it is in a hold, those of the hold's
-    stamps, to which its own link. The stubs never block or release the
-    runtime. *)
+    shares them holds one, and the last {!stamps_unref} frees them. Nothing
+    checks a use after that. The stubs never block or release the runtime. *)
 
 val stamps_new : unit -> int
 (** [stamps_new ()] is new empty stamps with one reference. Raises
@@ -39,17 +36,9 @@ val stamps_new : unit -> int
 val stamps_ref : int -> unit
 val stamps_unref : int -> unit
 
-val stamps_hold : int -> int -> unit
-(** [stamps_hold st h] links [st], the stamps of memory in no hold, to the
-    hold's stamps [h]. *)
-
-val held : int -> bool
-(** [held st] is [true] iff [st] links to a hold's stamps. *)
-
 val iter_points : (int -> unit) -> int -> unit
 (** [iter_points f st] is [f] over the points of [st], the last write first,
-    then those of the hold's stamps [st] links to, none for [0]. It allocates
-    nothing. *)
+    none for [0]. It allocates nothing. *)
 
 val iter_write : (int -> unit) -> int -> unit
 (** [iter_write f st] is [f] of [st]'s last write, if any. It allocates nothing.

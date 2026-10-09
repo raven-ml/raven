@@ -6,10 +6,10 @@
 (* A compiled step, prepared once and run many times.
 
    Compiled work reaches a device as a fill, a C function the device calls with
-   an argument buffer ([scale.c]). A step keeps its fixed memory, here constants
-   and the argument, in a hold; it passes the buffers that change from run to
-   run to each submit, which orders them. Once the step is unreachable and its
-   work done, its memory returns and the hold's release runs. *)
+   an argument buffer ([scale.c]). A step names its fixed memory, here
+   constants, when it is made, and passes the buffers that change from run to
+   run to each submit; every submit orders both. Once the step is unreachable
+   and its work done, its memory returns and its hold's release runs. *)
 
 open Rig
 
@@ -30,20 +30,21 @@ let show name b =
   let xs = List.init n (fun i -> Int32.to_string a.{i}) in
   Printf.printf "%-4s [%s]\n" name (String.concat "; " xs)
 
-(* The step: its constants [k] and its argument in one hold, one fill that
-   reads one buffer and writes another, and the run each submit uses. [run]
-   sets the argument, then submits with the run's buffers. *)
+(* The step: its constants [k] as fixed memory, a hold whose release says it
+   ran, one fill that reads one buffer and writes another, and the run each
+   submit uses. [run] sets the fill's argument, then submits with the run's
+   buffers. *)
 let step d =
   let k = ints d [ 1l; 10l; 100l; 1000l ] in
   let arg = Buffer.create d 32 in
-  let hold =
-    Hold.make ~release:(fun () -> print_endline "step released") [ k; arg ]
-  in
+  let hold = Hold.make (fun () -> print_endline "step released") in
   let fill =
     Submission.Fill { fill = scale (); arg; ring_units = 0; segment_bytes = 0 }
   in
   let part = { Submission.queue = "COMPUTE:0"; after = [||]; work = fill } in
-  let s = Submission.make ~hold ~reads:1 ~writes:1 d [| part |] in
+  let s =
+    Submission.make ~hold ~fixed:[ (k, Read) ] ~reads:1 ~writes:1 d [| part |]
+  in
   let run = Submission.Run.make () in
   let words =
     Buffer.bigarray Bigarray.int64 (Option.get (Buffer.borrow host arg))

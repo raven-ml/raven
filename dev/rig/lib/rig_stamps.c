@@ -49,34 +49,19 @@ value caml_rig_stamps_ref(value v_s) {
   return Val_unit;
 }
 
-/* Drops a reference to the stamps [s], freeing them with the last, and
-   with them their reference to their hold's. */
+/* Drops a reference to the stamps [s], freeing them with the last. */
 static void unref(struct rig_stamps *s) {
   if (atomic_fetch_sub(&s->refs, 1) != 1) return;
-  struct rig_stamps *hold = atomic_load(&s->hold);
   while (s != NULL) {
     struct rig_stamps *next = atomic_load(&s->next);
     free(s);
     s = next;
   }
-  if (hold != NULL) unref(hold);
 }
 
 value caml_rig_stamps_unref(value v_s) {
   unref(Stamps_val(v_s));
   return Val_unit;
-}
-
-/* Links the stamps [v_s], of memory in no hold, to the hold's [v_hold]. */
-value caml_rig_stamps_hold(value v_s, value v_hold) {
-  struct rig_stamps *hold = Stamps_val(v_hold);
-  atomic_fetch_add(&hold->refs, 1);
-  atomic_store(&Stamps_val(v_s)->hold, hold);
-  return Val_unit;
-}
-
-value caml_rig_stamps_held(value v_s) {
-  return Val_bool(held(Stamps_val(v_s)) != NULL);
 }
 
 /* The use word of the device [index] in the stamps [s]: its existing one,
@@ -138,19 +123,13 @@ static void raise_last_write(struct rig_stamps *s, uint64_t p) {
 }
 
 /* The [v_k]th point of the stamps: 0 the last write, then the uses in
-   order, then those of their hold's; 0 for an empty slot, -1 past the
-   last. */
+   order; 0 for an empty slot, -1 past the last. */
 value caml_rig_stamps_get(value v_s, value v_k) {
   struct rig_stamps *s = Stamps_val(v_s);
   intnat k = Long_val(v_k);
   if (k == 0) return Val_long((intnat)atomic_load(&s->write));
   k -= 1;
-  struct rig_stamps *first = s;
   for (; s != NULL; s = atomic_load(&s->next)) {
-    if (k < RIG_USES) return Val_long((intnat)use_point(&s->use[k]));
-    k -= RIG_USES;
-  }
-  for (s = held(first); s != NULL; s = atomic_load(&s->next)) {
     if (k < RIG_USES) return Val_long((intnat)use_point(&s->use[k]));
     k -= RIG_USES;
   }
@@ -158,14 +137,12 @@ value caml_rig_stamps_get(value v_s, value v_k) {
 }
 
 /* Forgets every point of the stamps [v_s] but those of the device
-   [v_index], and their hold: memory taken out of that device's cache, whose
+   [v_index]: memory taken out of that device's cache, whose
    other points its cache reached before it took the memory in. Nothing else
    names the stamps then, so the stores race with nothing. */
 value caml_rig_stamps_keep(value v_s, value v_index) {
   struct rig_stamps *s = Stamps_val(v_s);
   int index = Int_val(v_index);
-  struct rig_stamps *hold = atomic_exchange(&s->hold, NULL);
-  if (hold != NULL) unref(hold);
   uint64_t w = atomic_load(&s->write);
   if (w != 0 && RIG_INDEX(w) != index) atomic_store(&s->write, 0);
   for (; s != NULL; s = atomic_load(&s->next))
@@ -521,19 +498,15 @@ static void add_uses(struct rig_run *r, int own, struct rig_stamps *st) {
 }
 
 /* Adds the points the use of the memory of the stamps [st] follows: its
-   last write, every use if the work writes it, and every use of its hold's
-   stamps. Reserves [own]'s use words in its stamps and in its hold's: a
-   submission made with the hold may use any of the hold's memory, so it
-   follows every use of any. */
-static void add_memory(struct rig_run *r, int own, struct rig_stamps *st,
-                       int write, struct rig_uses *uses) {
-  uses->use = reserve(st, own);
+   last write, and every use if the work writes it. Is [own]'s use word in
+   the stamps, reserved. */
+static _Atomic uint64_t *add_memory(struct rig_run *r, int own,
+                                    struct rig_stamps *st, int write) {
+  _Atomic uint64_t *use = reserve(st, own);
   uint64_t w = atomic_load_explicit(&st->write, memory_order_acquire);
   if (w != 0 && RIG_INDEX(w) != own) add_point(r, own, w);
   if (write) add_uses(r, own, st);
-  struct rig_stamps *hold = held(st);
-  uses->held = hold != NULL ? reserve(hold, own) : NULL;
-  if (hold != NULL) add_uses(r, own, hold);
+  return use;
 }
 
 /* The handles of the memory [s]'s work names in [r], each once. */
@@ -549,8 +522,9 @@ static void collect_handles(const struct rig_sub *s, struct rig_run *r,
 /* Collects in the run [v_r] the points [v_s]'s work follows, the greatest
    per other device, with the points of [v_waits], and the handles of the
    memory it names, each once, unless every handle is the last collect's,
-   and reserves the use words its raise stores to, in the hold's stamps
-   [v_hold] too, 0 for none. Answers the number of points. */
+   and reserves the use words its raise stores to, and [own]'s in the
+   hold's stamps [v_hold], 0 for none: a hold orders nothing, so its points
+   are not followed. Answers the number of points. */
 value caml_rig_run_collect(value v_s, value v_r, value v_waits,
                            value v_hold) {
   const struct rig_sub *s = Sub_val(v_s);
@@ -564,15 +538,12 @@ value caml_rig_run_collect(value v_s, value v_r, value v_waits,
   r->npoints = r->nwaits = 0;
   r->hold = Stamps_val(v_hold);
   for (int k = 0; k < s->nfixed; k++)
-    add_memory(r, own, s->fixed[k].stamps, s->fixed[k].write, &r->fixed[k]);
+    r->fixed[k] = add_memory(r, own, s->fixed[k].stamps, s->fixed[k].write);
   for (int k = 0; k < nslots; k++)
-    add_memory(r, own, r->slots[k].stamps, k >= s->nreads, &r->slots[k].uses);
+    r->slots[k].use = add_memory(r, own, r->slots[k].stamps, k >= s->nreads);
   for (mlsize_t k = 0; k < Wosize_val(v_waits); k++)
     add_point(r, own, (uint64_t)Long_val(Field(v_waits, k)));
-  if (r->hold != NULL) {
-    r->hold_use = reserve(r->hold, own);
-    add_uses(r, own, r->hold);
-  }
+  if (r->hold != NULL) r->hold_use = reserve(r->hold, own);
   if (r->handles_stale) collect_handles(s, r, nslots);
   return Val_int(r->npoints);
 }
@@ -608,17 +579,12 @@ value caml_rig_run_wait(value v_r, value v_producer, value v_at,
 void rig_sub_raise(const struct rig_sub *s, struct rig_run *r, uint64_t p) {
   for (int k = 0; k < s->nfixed; k++) {
     if (s->fixed[k].write) raise_last_write(s->fixed[k].stamps, p);
-    raise_own(r->fixed[k].use, p);
-    if (r->fixed[k].held != NULL) raise_own(r->fixed[k].held, p);
+    raise_own(r->fixed[k], p);
   }
-  for (int k = 0; k < s->nreads; k++) {
-    raise_own(r->slots[k].uses.use, p);
-    if (r->slots[k].uses.held != NULL) raise_own(r->slots[k].uses.held, p);
-  }
+  for (int k = 0; k < s->nreads; k++) raise_own(r->slots[k].use, p);
   for (int k = s->nreads; k < s->nreads + s->nwrites; k++) {
     raise_last_write(r->slots[k].stamps, p);
-    raise_own(r->slots[k].uses.use, p);
-    if (r->slots[k].uses.held != NULL) raise_own(r->slots[k].uses.held, p);
+    raise_own(r->slots[k].use, p);
   }
   if (r->hold != NULL) raise_own(r->hold_use, p);
 }

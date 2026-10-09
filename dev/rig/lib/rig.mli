@@ -22,9 +22,9 @@
 
     {v
       Buffer.t ──view, borrow──> memory ──stamps──> points
-          │                         ▲                  ▲
-          │ submit ~reads ~writes   │ Hold.make        │ submit
-          ▼                         │                  │
+          │                                            ▲
+          │ submit ~reads ~writes, make ~fixed         │ submit
+          ▼                                            │
       Submission.t ─────────── one device ── facts.edge (C)
     v}
 
@@ -414,9 +414,8 @@ module Buffer : sig
   (** [wait b access] returns once the work on [b]'s memory that an access of
       the host must follow is done: for [Read], the work of its last write; for
       [Read_write], the work of every use, its own device's included. It waits
-      for the work on all of [b]'s memory, through any view, for the work on the
-      memory a borrow maps, and, for memory in a {!Hold}, for every point of the
-      hold, whatever [access]. Host memory and an {!Io} device's memory have
+      for the work on all of [b]'s memory, through any view, and for the work on
+      the memory a borrow maps. Host memory and an {!Io} device's memory have
       work to wait for only where a device borrowed them: an io device's memory,
       through its pages ({!Rig_edge.Io.pages}).
 
@@ -673,39 +672,29 @@ end
 
 (** {1:holds Holds} *)
 
-(** Memory kept across many submissions.
+(** What submissions' work uses beyond memory.
 
-    A linked program keeps its fixed memory in one hold, and its images and the
-    driver objects its work uses reachable through the hold's release. A hold
-    has one stamp per device, raised to the point of each submission made with
-    it ({!Submission.make}), whose work may use any of the hold's memory, and
-    of each submission that names some of that memory. Every use of the
-    memory, and every submission made with the hold, follows each stamp of the
-    hold, a read as a write does, beside the memory's own stamps. The memory
-    returns once the hold is unreachable and each of its stamps is reached. *)
+    A hold retains what its release frees, such as the driver objects a graph
+    or an indirect command buffer makes and the images they name, until every
+    submission made with it ({!Submission.make}) is done. It holds no memory
+    and orders no work: a submission orders its memory itself, its fixed
+    memory included. *)
 module Hold : sig
   type t
   (** The type for holds. *)
 
-  val make : ?release:(unit -> unit) -> Buffer.t list -> t
-  (** [make ~release bs] holds the memory of [bs]. A {!Buffer.wait} on that
-      memory, whatever its access, waits for every stamp of the hold.
-
-      [release] (defaults to doing nothing) frees what the hold's work uses
-      beyond memory, such as a driver object that work runs. It runs once, after
-      the hold is unreachable and each device the hold has a stamp of reached
-      that stamp or, lost, stopped with its word at its last value. It never
-      runs while a lost device's word stays below its last value, and never in a
-      child of [fork] for a hold made before the fork. It runs in the next
-      {{!reclaim}drain} of any device, such as a {!Buffer.copy}'s, or as a lost
-      device's stop returns. It holds no lock of this library, must not call it,
-      and must not raise: an exception it raises is raised again by the call
-      whose drain ran it. It counts as a call in flight on each device of the
-      hold that is not lost, so no {!Rig_edge.Driver.stop} of those devices runs
-      beside it.
-
-      Raises [Invalid_argument] if a buffer is dead or its memory is already in
-      a hold. *)
+  val make : (unit -> unit) -> t
+  (** [make release] is a hold: [release] runs once, after the hold is
+      unreachable and every submission made with it is done on each of its
+      devices, or, on a lost device, once that device's stop returned with its
+      word at its last value. It never runs while a lost device's word stays
+      below its last value, and never in a child of [fork] for a hold made
+      before the fork. It runs in the next {{!reclaim}drain} of any device, such
+      as a {!Buffer.copy}'s, or as a lost device's stop returns. It holds no
+      lock of this library, must not call it, and must not raise: an exception
+      it raises is raised again by the call whose drain ran it. It counts as a
+      call in flight on each device of the hold that is not lost, so no
+      {!Rig_edge.Driver.stop} of those devices runs beside it. *)
 end
 
 (** {1:images Images} *)
@@ -763,11 +752,11 @@ end
     once, each with its own run. Its prepared form and a run live outside the
     OCaml heap, so a submit allocates nothing.
 
-    A submission keeps every buffer its parts name reachable while it is
-    reachable itself, so their memory is never freed between {!make} and a
-    submit: a part never hands its driver memory that was given back. Once the
-    submission is unreachable, that memory returns by its stamps, after the work
-    of the last submit. *)
+    A submission keeps every buffer its parts name and its fixed memory
+    reachable while it is reachable itself, so their memory is never freed
+    between {!make} and a submit: a part never hands its driver memory that was
+    given back. Once the submission is unreachable, that memory returns by its
+    stamps, after the work of the last submit. *)
 module Submission : sig
   type device := t
 
@@ -825,13 +814,26 @@ module Submission : sig
       orders parts of different queues. *)
 
   val make :
-    ?hold:Hold.t -> reads:int -> writes:int -> device -> part array -> t
-  (** [make ~hold ~reads ~writes d parts] is a submission of [parts] on [d]
-      whose every run reads [reads] buffers and writes [writes] buffers
+    ?hold:Hold.t ->
+    ?fixed:(Buffer.t * Buffer.access) list ->
+    reads:int ->
+    writes:int ->
+    device ->
+    part array ->
+    t
+  (** [make ~hold ~fixed ~reads ~writes d parts] is a submission of [parts] on
+      [d] whose every run reads [reads] buffers and writes [writes] buffers
       ({!submit}), a buffer counted as often as it is passed. Every submit of
-      the submission raises [hold]'s stamp of [d], and the submission keeps
-      [hold] reachable. [make] reads [parts], and the arrays in them, once:
-      changing them afterwards changes nothing.
+      the submission is one [hold]'s release waits for ({!Hold.make}), and the
+      submission keeps [hold] reachable. [make] reads [parts], and the arrays in
+      them, once: changing them afterwards changes nothing.
+
+      [fixed] (defaults to none) names memory every run uses besides the run's
+      buffers and the parts' own, such as the memory a [Words] replay's command
+      buffers address, each with its access. Each is ordered by its access on
+      every submit, as a run's buffer is. The submission keeps it reachable
+      while the submission is. A memory may be fixed in any number of
+      submissions.
 
       Raises [Invalid_argument] if [d] is {!host} or an {!Io} device, which run
       no submitted work, [reads] or [writes] is negative, an index of a part's
@@ -841,9 +843,10 @@ module Submission : sig
       device of another machine, one of them may be memory this process's host
       addresses), or its [dst]'s memory is [Read] ({!Buffer.val-access}), or
       [d]'s driver runs no copies (it lists no copy queue, {!queues}), or a
-      part's queue does not run its work, a {!Launch}'s [image] is not loaded on
-      [d] or has no function [kernel], its [params] is negative or above 4096, a
-      ref's [at] is not a multiple of 8, its 8 bytes are not among the
+      part's queue does not run its work, a buffer of [fixed] is dead, not on
+      [d], or [Read_write] on [Read] memory, a {!Launch}'s [image] is not loaded
+      on [d] or has no function [kernel], its [params] is negative or above
+      4096, a ref's [at] is not a multiple of 8, its 8 bytes are not among the
       parameters or its [slot] is not below [reads + writes], or two refs share
       an [at]; as {!Image.entry} where [d] cannot run a launch's function; and
       {!Lost} if [d] is lost. Parts that never fit [d]'s queues, and launches
@@ -965,9 +968,9 @@ val submit :
     by a claim of its own, or by memory nothing else reaches. [submit] does not
     check it. It:
     + Loads the points [s]'s work must follow: the last write of each buffer of
-      [reads] and of each buffer its parts read, every use by another device of
-      each buffer of [writes] and of each copy's [dst], every stamp of another
-      device of the {!Hold} of each memory in one, and the points of [waits].
+      [reads], of each buffer its parts read and of its fixed memory read, every
+      use by another device of each buffer of [writes], of each copy's [dst] and
+      of its fixed memory written, and the points of [waits].
       Each foreign point not yet reached is a wait in [d]'s queue if [d]'s
       queues wait for the producer's completion ({!Rig_edge.waits}) and [d] maps
       the producer's timeline word, decided once per pair of devices, up to the
@@ -978,11 +981,11 @@ val submit :
       hand-over or commit, and asks [d]'s driver for room ([edge] in
       {!Rig_edge.facts}). Once the parts fit, it assigns [v], one more than
       {!submitted}[ d], hands the work over, which encodes it on [d]'s queues,
-      and raises the stamps of [reads], [writes], the parts' buffers and the
-      hold to [(d, v)]. While they do not fit, it commits [d]'s work, waits for
-      [d]'s next value with the turn released, and tries again. No OCaml code
-      runs between the assignment and the turn's release, so a value is handed
-      over or [d] is lost.
+      and raises the stamps of [reads], [writes], the parts' buffers, the fixed
+      memory and the hold to [(d, v)]. While they do not fit, it commits [d]'s
+      work, waits for [d]'s next value with the turn released, and tries again.
+      No OCaml code runs between the assignment and the turn's release, so a
+      value is handed over or [d] is lost.
 
     The work runs after [d]'s earlier work without another call: [v]'s work
     starts once the work of every earlier value of [d] completed, on every
@@ -1006,18 +1009,18 @@ val submit :
     Raises [Invalid_argument] if another submit is using [run] ([submit] takes
     it at entry and gives it back when it returns or raises), if [reads] or
     [writes] holds another number of buffers than {!Submission.make} declared, a
-    buffer of [reads], [writes] or a part is dead, a buffer of [reads] or
-    [writes] is not on [d], the memory of a buffer of [writes] is [Read]
-    ({!Buffer.val-access}), a launch's ref names one whose memory has no address
-    ({!Buffer.address}), [run] does not hold the block of [s]'s last launch,
-    which no setter stored into, or the parts never fit [d]'s empty queues, name
-    one its driver does not run, or hold a launch whose block [d]'s driver
-    refuses: a grid or a group of no size along an axis, or groups, threads per
-    group or shared memory beyond [d]'s or the function's limits; and {!Lost} if
-    [d] is lost, [d]'s hand-over fails, or a producer [d]'s queue waits on is
-    lost before the hand-over, and for the buffers and the points [s] follows as
-    {!Lost} states. A device lost after [v] was handed over raises {!Lost}, with
-    [v]'s stamps naming it. *)
+    buffer of [reads], [writes], a part or [s]'s fixed memory is dead, a buffer
+    of [reads] or [writes] is not on [d], the memory of a buffer of [writes] is
+    [Read] ({!Buffer.val-access}), a launch's ref names one whose memory has no
+    address ({!Buffer.address}), [run] does not hold the block of [s]'s last
+    launch, which no setter stored into, or the parts never fit [d]'s empty
+    queues, name one its driver does not run, or hold a launch whose block [d]'s
+    driver refuses: a grid or a group of no size along an axis, or groups,
+    threads per group or shared memory beyond [d]'s or the function's limits;
+    and {!Lost} if [d] is lost, [d]'s hand-over fails, or a producer [d]'s queue
+    waits on is lost before the hand-over, and for the buffers and the points
+    [s] follows as {!Lost} states. A device lost after [v] was handed over
+    raises {!Lost}, with [v]'s stamps naming it. *)
 
 (** {1:profiles Profiles} *)
 

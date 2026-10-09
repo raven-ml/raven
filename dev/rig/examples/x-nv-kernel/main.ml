@@ -113,15 +113,16 @@ let run g (gpu : Abi.Gpu.t) =
   let words = Buffer.create host (String.length entry_words) in
   write words ~at:0 entry_words;
 
-  (* The step: the launch's memory held with the image; the arrays passed to
-     each submit. *)
-  let hold =
-    Hold.make ~release:(fun () -> ignore (Sys.opaque_identity p)) [ mem ]
-  in
+  (* The step: a hold that keeps the image, the launch's memory as fixed
+     memory, and the arrays passed to each submit. *)
+  let hold = Hold.make (fun () -> ignore (Sys.opaque_identity p)) in
   let part =
     { Submission.queue = "COMPUTE:0"; after = [||]; work = Words words }
   in
-  let s = Submission.make ~hold ~reads:2 ~writes:1 g [| part |] in
+  let s =
+    Submission.make ~hold ~fixed:[ (mem, Read) ] ~reads:2 ~writes:1 g
+      [| part |]
+  in
   let run = Submission.Run.make () in
   let pt = submit s ~run ~reads:[| a; b |] ~writes:[| out |] ~waits:[||] in
   Format.printf "%s (%s) ran simple_add on %d ints at %a@." (name g) (arch g) n

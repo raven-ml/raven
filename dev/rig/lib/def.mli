@@ -193,7 +193,7 @@ type buffer = { mem : memory; offset : int; length : int; generation : int }
 (** {!Rig.Buffer.t}: live while [generation] is its claim's. *)
 
 type image = { idev : device; loaded : loaded; itoken : token }
-type hold = { hstamps : int; members : buffer list; htoken : token }
+type hold = { hstamps : int; htoken : token }
 
 (** {!Rig.Profile.event}. *)
 type event =

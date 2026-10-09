@@ -370,7 +370,8 @@ let pp_access ppf a =
 let access = Testable.make ~pp:pp_access ~equal:( = )
 
 (* A device's work never writes memory that admits only reads: a run that writes
-   it and a copy part into it are refused, and reading it is not. *)
+   it, a copy part into it and fixed memory written are refused, and reading it
+   is not. *)
 let test_read_runs () =
   let io, t = open_pages () in
   let d, _ = P.open_ ~host_visible:false "io:read-runs" in
@@ -386,7 +387,11 @@ let test_read_runs () =
   in
   ignore (Sub.make ~reads:0 ~writes:0 d [| copy on_d own |]);
   raises_match ~msg:"a copy part's destination" Exn.invalid_arg (fun () ->
-      ignore (Sub.make ~reads:0 ~writes:0 d [| copy own on_d |]))
+      ignore (Sub.make ~reads:0 ~writes:0 d [| copy own on_d |]));
+  let fixed access = Sub.make ~fixed:[ (on_d, access) ] ~reads:0 ~writes:0 d [||] in
+  ignore (fixed B.Read);
+  raises_match ~msg:"fixed memory written" Exn.invalid_arg (fun () ->
+      ignore (fixed B.Read_write))
 
 (* A host claim for writing is refused on memory that admits only reads, and one
    for reading is had. *)

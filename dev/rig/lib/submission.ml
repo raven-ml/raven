@@ -255,7 +255,17 @@ let launch_entry fn d slots i image kernel params refs =
   | None ->
       invalid_argf "Rig.%s: part %d's image has no function %S" fn i kernel
 
-let build hold ~reads ~writes d parts =
+(* Refuses fixed memory that is dead, not [d]'s or, written, admits only
+   reads. *)
+let check_memory fn d (b, (access : access)) =
+  Buffer.check_live fn b;
+  if b.mem.dev != d then
+    invalid_argf "Rig.%s: a fixed buffer is on %s, not on %s: borrow it" fn
+      b.mem.dev.name d.name;
+  if access = Read_write && Buffer.access b = Read then
+    invalid_argf "Rig.%s: a fixed buffer written admits only reads" fn
+
+let build hold ~fixed ~reads ~writes d parts =
   let fn = "Submission.make" in
   if reads < 0 || writes < 0 then invalid_argf "Rig.%s: a count is negative" fn;
   if Dev.is_lost d then Dev.raise_lost d;
@@ -300,6 +310,9 @@ let build hold ~reads ~writes d parts =
                  l.refs);
           nrefs := !nrefs + Array.length l.refs)
     parts;
+  let memory = Array.of_list fixed in
+  Array.iter (check_memory fn d) memory;
+  nfixed := !nfixed + Array.length memory;
   let c =
     sub_new d.c (Array.length parts) !nafter !nfixed reads writes !nrefs
   in
@@ -335,6 +348,7 @@ let build hold ~reads ~writes d parts =
           r := !r + Array.length l.refs;
           images := l.image :: !images)
     parts;
+  Array.iter (fun (b, access) -> fix c k fixed d b (access = Read_write)) memory;
   {
     dev = d;
     c;
@@ -346,7 +360,8 @@ let build hold ~reads ~writes d parts =
     blocks;
   }
 
-let make ?hold ~reads ~writes d parts = build hold ~reads ~writes d parts
+let make ?hold ?(fixed = []) ~reads ~writes d parts =
+  build hold ~fixed ~reads ~writes d parts
 
 let block s i =
   if i < 0 || i >= Array.length s.blocks || s.blocks.(i) = no_block then
@@ -582,7 +597,7 @@ let copy_runs = Domain.DLS.new_key run_new
 
 let copy d queue ~src ~dst =
   let part = { queue; after = [||]; work = Copy { src; dst } } in
-  let s = build None ~reads:0 ~writes:0 d [| part |] in
+  let s = build None ~fixed:[] ~reads:0 ~writes:0 d [| part |] in
   let run = Domain.DLS.get copy_runs in
   let run =
     if take run s.c then run

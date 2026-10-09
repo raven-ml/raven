@@ -5,8 +5,8 @@ prints a line and exits.
 
 A kernel reaches a Metal device through a fill, `run.c`, that executes an
 indirect command buffer. This example loads a metallib, records one dispatch of
-its kernel `add` over a million floats, runs it as a step (fixed memory in a
-hold, arrays passed to each submit) and checks the result.
+its kernel `add` over a million floats, runs it as a step (fixed memory named
+once, arrays passed to each submit) and checks the result.
 
 ```bash
 cd dev/rig/examples/x-metal-kernel
@@ -30,7 +30,7 @@ dune exec ./main.exe
 | `Image.load g metallib`            | The image on `g`                            |
 | `Image.entry p "add"`              | Its kernel's pipeline                       |
 | `cap.icb buffer dispatches`        | Record dispatches once                      |
-| `Hold.make ~release bs`            | Keep the step's memory and objects          |
+| `Hold.make release`                | Keep the step's objects until its work ends |
 
 ## The metallib
 

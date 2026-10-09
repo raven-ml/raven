@@ -80,15 +80,16 @@ let run g (cap : Abi.Capability.t) =
   in
   Printf.printf "the dispatch is %d words of PM4\n" (Buffer.length words / 4);
 
-  (* The step: the arguments held with the image; the arrays passed to each
-     submit. *)
-  let hold =
-    Hold.make ~release:(fun () -> ignore (Sys.opaque_identity p)) [ args ]
-  in
+  (* The step: a hold that keeps the image, the arguments as fixed memory,
+     and the arrays passed to each submit. *)
+  let hold = Hold.make (fun () -> ignore (Sys.opaque_identity p)) in
   let part =
     { Submission.queue = "COMPUTE:0"; after = [||]; work = Words words }
   in
-  let s = Submission.make ~hold ~reads:2 ~writes:1 g [| part |] in
+  let s =
+    Submission.make ~hold ~fixed:[ (args, Read) ] ~reads:2 ~writes:1 g
+      [| part |]
+  in
   let run = Submission.Run.make () in
   let pt = submit s ~run ~reads:[| a; b |] ~writes:[| out |] ~waits:[||] in
   Format.printf "%s (%s) ran add on %d floats at %a@." (name g) (arch g) n

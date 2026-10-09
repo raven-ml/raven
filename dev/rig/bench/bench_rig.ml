@@ -120,6 +120,15 @@ let contended () =
   in
   (t, s, run, stop, rival)
 
+(* A submission of no part whose 200 fixed buffers it reads: each submit stamps
+   each, as a compiled step does its constants. *)
+let fixed = 200
+
+let fixing () =
+  let t = dev () in
+  let fixed = List.map (fun b -> (b, B.Read)) (Array.to_list (words t.d fixed)) in
+  (t, Sub.make ~fixed ~reads:0 ~writes:0 t.d [||], Sub.Run.make ())
+
 (* A launch whose 8 refs name a run of 4 reads and 4 writes: each submit stores
    the refs' offsets, as a caller does for each call. *)
 let refs = 8
@@ -162,6 +171,9 @@ let submit_rows =
           drained t);
       row "foreign-24" foreign (fun (t, s, run, bs) ->
           submit_read ~run s bs;
+          drained t);
+      row "fixed-200" fixing (fun (t, s, run) ->
+          ignore (submit ~run s);
           drained t);
       row "launch-refs-8" launching (fun (t, s, run, b, reads, writes) ->
           for k = 0 to refs - 1 do

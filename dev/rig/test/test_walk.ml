@@ -203,19 +203,17 @@ let wait_transport =
       let run = Sub.Run.make () in
       fun _ -> finish d (once ~run s))
 
-(* Submits on [d] once with a hold of [b] whose release raises under [Raise],
+(* Submits on [d] once with a hold whose release raises under [Raise],
    leaving the hold and its submission unreachable. *)
-let[@inline never] submit_held d b failure =
+let[@inline never] submit_held d failure =
   let release () = if failure = Some Raise then raise Exit in
-  let h = Rig.Hold.make ~release [ b ] in
+  let h = Rig.Hold.make release in
   let run = Sub.Run.make () in
   finish d (once ~run (Sub.make ~hold:h ~reads:0 ~writes:0 d [||]))
 
 let hold =
-  op "hold" ~raises:true (fun d ->
-      let b = B.create d 64 in
-      fun failure ->
-        submit_held d b failure;
+  op "hold" ~raises:true (fun d failure ->
+        submit_held d failure;
         collect ();
         ignore (B.create d 0))
 

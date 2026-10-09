@@ -29,7 +29,14 @@ type work =
 
 type part = { queue : string; after : int array; work : work }
 
-val make : ?hold:hold -> reads:int -> writes:int -> device -> part array -> t
+val make :
+  ?hold:hold ->
+  ?fixed:(buffer * access) list ->
+  reads:int ->
+  writes:int ->
+  device ->
+  part array ->
+  t
 
 type block = private int
 

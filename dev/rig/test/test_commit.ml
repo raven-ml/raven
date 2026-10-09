@@ -154,18 +154,18 @@ let scratch =
 
 (* Law 7: a driver commits within its bound. *)
 
-(* Submits once on [d] a submission naming a hold of [m] whose release sets
+(* Submits once on [d] a submission with a hold whose release sets
    [released], and drops both: the hold is unreachable once this returns. *)
-let[@inline never] submit_held d m released =
-  let h = H.make ~release:(fun () -> Atomic.set released true) [ m ] in
+let[@inline never] submit_held d released =
+  let h = H.make (fun () -> Atomic.set released true) in
   ignore (submit (Sub.make ~hold:h ~reads:0 ~writes:0 d [||]))
 
 (* A hold's release runs once its stamp is reached, in a drain: without a wait,
    only the driver's own commit reaches it. *)
 let test_lag_bounded () =
   let d, _ = P.open_ ~lag ~runs:`Itself (fresh "bounded") in
-  let m = B.create d 64 and released = Atomic.make false in
-  submit_held d m released;
+  let released = Atomic.make false in
+  submit_held d released;
   for _ = 1 to lag do
     ignore (submit (empty d))
   done;

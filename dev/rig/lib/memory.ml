@@ -14,10 +14,6 @@ external stamps_new : unit -> int = "caml_rig_stamps_new"
 external stamps_ref : int -> unit = "caml_rig_stamps_ref" [@@noalloc]
 external stamps_unref : int -> unit = "caml_rig_stamps_unref" [@@noalloc]
 external stamps_get : int -> int -> int = "caml_rig_stamps_get" [@@noalloc]
-external stamps_hold : int -> int -> unit = "caml_rig_stamps_hold"
-[@@noalloc]
-
-external stamps_held : int -> bool = "caml_rig_stamps_held" [@@noalloc]
 external stamps_keep : int -> int -> unit = "caml_rig_stamps_keep" [@@noalloc]
 
 (* [f] over the points of the stamps [st] from the [k]th on. *)
@@ -29,7 +25,6 @@ let rec iter_from f st k =
   end
 
 let iter_points f st = if st <> 0 then iter_from f st 0
-let held st = st <> 0 && stamps_held st
 
 let iter_write f st =
   if st <> 0 then

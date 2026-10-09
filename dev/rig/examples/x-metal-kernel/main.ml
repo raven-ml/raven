@@ -68,24 +68,25 @@ let () =
     in
     let icb = Result.get_ok (cap.icb (Buffer.handle args) [| dispatch |]) in
 
-    (* The step: its fixed memory in a hold whose release ends the indirect
-       command buffer and keeps the image until then; its arrays passed to
-       each submit. *)
+    (* The step: a hold whose release ends the indirect command buffer and
+       keeps the image until then, the arguments the buffer reads as fixed
+       memory, and its arrays passed to each submit. *)
     let fill_arg = Buffer.create g 16 in
     words fill_arg [ Nativeint.to_int icb.handle; 1 ];
     let hold =
-      Hold.make
-        ~release:(fun () ->
+      Hold.make (fun () ->
           icb.release ();
           ignore (Sys.opaque_identity p))
-        [ args; fill_arg ]
     in
     let fill =
       Submission.Fill
         { fill = run (); arg = fill_arg; ring_units = 0; segment_bytes = 0 }
     in
     let part = { Submission.queue = "COMPUTE:0"; after = [||]; work = fill } in
-    let s = Submission.make ~hold ~reads:2 ~writes:1 g [| part |] in
+    let s =
+      Submission.make ~hold ~fixed:[ (args, Read) ] ~reads:2 ~writes:1 g
+        [| part |]
+    in
     let run = Submission.Run.make () in
     let pt = submit s ~run ~reads:[| a; b |] ~writes:[| out |] ~waits:[||] in
     Format.printf "%s ran add on %d floats at %a@." (name g) n Point.pp pt;

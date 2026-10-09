@@ -568,18 +568,21 @@ let test_c_lost_points () =
   equal ~msg:"unreached" answer R.Wait (R.claim unreached B.Read);
   R.release unreached
 
-(* Held memory follows every point of its hold, whatever the access. *)
-let test_c_held () =
-  let d, p = P.open_ "claim:c-held" in
+(* Fixed memory is ordered by its access: a claim to read waits for an
+   unreached submission that writes it, and for none that reads it. *)
+let test_c_fixed () =
+  let d, p = P.open_ "claim:c-fixed" in
   let m = B.create d 64 in
-  let h = Rig.Hold.make [ m ] in
-  ignore (submit (Rig.Submission.make ~hold:h ~reads:0 ~writes:0 d [||]));
-  equal ~msg:"an unreached use of the hold" answer R.Wait (R.claim m B.Read);
+  let fixed access = Rig.Submission.make ~fixed:[ (m, access) ] ~reads:0 ~writes:0 d [||] in
+  ignore (submit (fixed B.Read));
+  equal ~msg:"an unreached read" answer R.Claimed (R.claim m B.Read);
+  R.release m;
+  ignore (submit (fixed B.Read_write));
+  equal ~msg:"an unreached write" answer R.Wait (R.claim m B.Read);
   R.release m;
   ignore (P.run p);
   equal ~msg:"reached" answer R.Claimed (R.claim m B.Read);
-  R.release m;
-  ignore (Sys.opaque_identity h)
+  R.release m
 
 (* Claims on a lost device's memory raise Lost, and with_ releases what it took
    first. *)
@@ -673,8 +676,8 @@ let tests =
           test_c_lost_waiting;
         test "a claim on memory a lost device did not reach waits"
           test_c_lost_points;
-        test "a claim on held memory follows every point of the hold"
-          test_c_held;
+        test "a claim on fixed memory follows its uses by their access"
+          test_c_fixed;
       ];
     group ~timeout "domains"
       [
