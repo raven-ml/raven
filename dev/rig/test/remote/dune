@@ -23,7 +23,8 @@
   support/agent.exe
   support/controller.exe
   support/launched.exe
-  (glob_files ../host/fixtures/*.o))
+  (glob_files ../host/fixtures/*.o)
+  (glob_files ../program/fixtures/*.o))
  (libraries
   rig
   rig_remote

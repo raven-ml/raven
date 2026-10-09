@@ -41,7 +41,11 @@
     A [Host] step runs on this process's host once the work that its buffers
     wait for is done ({!Rig.Buffer.wait}), and {!run} calls the steps in order,
     so a step after it follows its writes. Host code that follows a device's
-    work names that work's memory among its buffers.
+    work names that work's memory among its buffers. This is how a device that
+    cannot call a function, such as a GPU, signals a TCP rail
+    ({!Rig_remote_abi}): its step writes the rail's outbound area ([Rail]
+    memory), and a [Host] step that names the area calls the rail's ready
+    function ([Ready]) with the transfer's count.
 
     {1:domains Domains}
 
@@ -67,6 +71,10 @@ type leaf =
           ({!Rig.Image.entry}): a kernel descriptor's address, a [CUfunction],
           an executable graph. *)
   | Code of int  (** The address of host code [i]'s entry. *)
+  | Ready of int
+      (** The address of the ready function of this machine's end of the rail of
+          id [i] ([ready_fn] of {!Rig_remote_abi.end_}). *)
+  | Ready_arg of int  (** That function's argument ([ready_arg]). *)
 
 (** The type for the widths of holes. *)
 type width = W32 | W64
@@ -113,6 +121,9 @@ type copies =
           [n - 2] on it is done. Work a run hands over may then write its copy
           while the previous run's work still reads the other. *)
 
+(** The type for the areas of a rail's end ({!Rig_remote_abi.end_}). *)
+type area = Outbound | Inbound | Counts
+
 (** The type for a program's memory. *)
 type memory =
   | Alloc of {
@@ -124,6 +135,9 @@ type memory =
               for that copy. *)
       copies : copies;
     }  (** Memory made at load ({!Rig.Buffer.create}). *)
+  | Rail of { rail : int; area : area }
+      (** This machine's end's [area] of the rail of id [rail]: host memory the
+          rail made, of one copy, which the program borrows. *)
 
 type image = { device : int; binary : leaf data }
 (** The type for images: [binary] in [device]'s format, loaded in the
@@ -245,9 +259,15 @@ type loaded
     code while it is reachable; once it is not, they return by rig's rules,
     after the work of its last run. *)
 
-val load : t -> Rig.t array -> (loaded, string) result
-(** [load t devices] is [t] loaded on [devices], device [i] of [t] being
-    [devices.(i)], all of one machine ({!Rig.host_of}). It:
+val load :
+  ?rails:(int -> Rig_remote_abi.end_ option) ->
+  t ->
+  Rig.t array ->
+  (loaded, string) result
+(** [load ~rails t devices] is [t] loaded on [devices], device [i] of [t] being
+    [devices.(i)], all of one machine ({!Rig.host_of}). [rails id] is this
+    machine's end of the rail [id] ({!Rig_remote_abi.rail}), for a program on
+    this machine (defaults to none). It:
     + checks [t] against [devices];
     + makes each memory, twice for [Two] copies, and borrows it on the devices
       that name it;
@@ -271,16 +291,18 @@ val load : t -> Rig.t array -> (loaded, string) result
     that a device naming it cannot borrow ({!Rig.Buffer.borrow}), an [Address]
     of memory named by its handle only, an [Int] or a loop's [trip] past the
     ints, a flag of no byte, a [Host] step's memory the host does not address, a
-    [split] whose [blocks], [lo] or [hi] {!Rig_host.split} refuses, or a step
-    whose submission {!Rig.Submission.make} refuses or whose launch geometry a
-    run refuses ({!Rig.Submission.Run}), [why] naming the step; and with the
-    reason, starting with the device's name, if a device refuses an image
-    ({!Rig.Image.load}) or has no function an [Entry] names, and with
+    [split] whose [blocks], [lo] or [hi] {!Rig_host.split} refuses, a [Rail]
+    memory, [Ready] or [Ready_arg] of a rail that [rails] does not give, or a
+    step whose submission {!Rig.Submission.make} refuses or whose launch
+    geometry a run refuses ({!Rig.Submission.Run}), [why] naming the step; and
+    with the reason, starting with the device's name, if a device refuses an
+    image ({!Rig.Image.load}) or has no function an [Entry] names, and with
     [Rig_host.link]'s reason if host code does not link; on another machine, if
     a device is no agent's, and as the agent's load answers.
 
-    Raises [Invalid_argument] if [devices] are of several machines,
-    {!Rig.Out_of_memory} and {!Rig.Lost}. *)
+    Raises [Invalid_argument] if [devices] are of several machines, or of
+    another machine and [rails] is given, {!Rig.Out_of_memory} and {!Rig.Lost}.
+*)
 
 (** {1:running Running} *)
 
@@ -323,11 +345,14 @@ val run : ?after:Rig.Point.t array -> loaded -> frame -> Rig.Point.t array
     of the machine answers with these two functions. *)
 
 val load_share :
-  string -> device:(int -> Rig.t option) -> (loaded, string) result
-(** [load_share b ~device] is {!load} of the description in [b], the binary
-    another process's {!load} sent to this machine's host, on the devices
-    [device] gives for the ids [b] names. [Error why] as {!load}, or if [b] is
-    malformed or names an id that [device] does not give. *)
+  ?rails:(int -> Rig_remote_abi.end_ option) ->
+  string ->
+  device:(int -> Rig.t option) ->
+  (loaded, string) result
+(** [load_share ~rails b ~device] is {!load} [~rails] of the description in [b],
+    the binary another process's {!load} sent to this machine's host, on the
+    devices [device] gives for the ids [b] names. [Error why] as {!load}, or if
+    [b] is malformed or names an id that [device] does not give. *)
 
 val run_share :
   ?after:Rig.Point.t array ->

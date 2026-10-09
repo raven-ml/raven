@@ -1005,6 +1005,8 @@ let gen_t =
         (let+ image = n and+ name = str in
          Entry { image; name });
         map (fun i -> Code i) n;
+        map (fun r -> Ready r) n;
+        map (fun r -> Ready_arg r) n;
       ]
   in
   let value =
@@ -1107,12 +1109,17 @@ let gen_t =
   let+ devices = few str
   and+ memory =
     few
-      (let+ device = n
-       and+ kind = of_list [ B.Device; B.Pinned; B.Mapped ]
-       and+ bytes = n
-       and+ init = data leaf
-       and+ copies = of_list [ One; Two ] in
-       Alloc { device; kind; bytes; init; copies })
+      (one_of
+         [
+           (let+ device = n
+            and+ kind = of_list [ B.Device; B.Pinned; B.Mapped ]
+            and+ bytes = n
+            and+ init = data leaf
+            and+ copies = of_list [ One; Two ] in
+            Alloc { device; kind; bytes; init; copies });
+           (let+ rail = n and+ area = of_list [ Outbound; Inbound; Counts ] in
+            Rail { rail; area });
+         ])
   and+ images =
     few
       (let+ device = n and+ binary = data leaf in
@@ -1164,6 +1171,70 @@ let test_version () =
   let why = require_error (G.of_string (Bytes.to_string s)) in
   contains ~msg:"names the versions" ~sub:"version 2, not 1" why
 
+(* Rails *)
+
+(* test/program's fixture [ready] stores its value 2 at its buffer 0, then calls
+   the function at its value 0 with its values 1 and 3: a rail's ready function,
+   its argument and a count. *)
+let ready =
+  { obj = Rig_host_support.fixture ~dir:"fixtures" "ready"; entry = "ready" }
+
+let area n = Bigarray.(Array1.create char c_layout n)
+
+(* An end of a rail of this process whose ready function is rig's timestamp: a
+   call stores a time at its argument, the word [stamp]. *)
+let fake_end stamp =
+  {
+    Rig_remote_abi.outbound = area 512;
+    inbound = area 512;
+    counts = area 384;
+    ready = ignore;
+    ready_fn = Rig.Profile.timestamp;
+    ready_arg = Nativeint.of_int (B.address stamp);
+  }
+
+let rail_program =
+  {
+    G.devices = [| Rig.arch Rig.host |];
+    memory = [| Rail { rail = 7; area = Outbound } |];
+    images = [||];
+    code = [| ready |];
+    inputs = [||];
+    ints = 1;
+    steps =
+      [|
+        Host
+          {
+            code = 0;
+            buffers =
+              [|
+                (Memory { memory = 0; offset = 0; length = 8 }, B.Read_write);
+              |];
+            values = [| Leaf (Ready 7); Leaf (Ready_arg 7); Int 0; Fixed 1 |];
+            split = None;
+          };
+      |];
+  }
+
+(* Host code writes a rail's outbound area and calls its ready function, which a
+   [Ready] leaf names, with its argument. *)
+let test_rail () =
+  let stamp = B.of_string (le64 0) in
+  let e = fake_end stamp in
+  let rails id = if id = 7 then Some e else None in
+  let p =
+    require_ok ~pp:Format.pp_print_string
+      (G.load ~rails rail_program [| Rig.host |])
+  in
+  ignore (G.run p { inputs = [||]; ints = [| 42 |] });
+  let outbound = String.init 8 (Bigarray.Array1.get e.outbound) in
+  equal ~msg:"the outbound area" int 42 (word outbound 0);
+  greater ~msg:"the ready function's word" int ~than:0 (word (read stamp) 0)
+
+let test_no_rail () =
+  let why = require_error (G.load rail_program [| Rig.host |]) in
+  contains ~msg:"names the rail" ~sub:"rail 7" why
+
 let tests =
   [
     group ~timeout "steps"
@@ -1200,6 +1271,12 @@ let tests =
           (Gen.int_range (-2) 6) loop_law;
         test "a loop stops at a flag a device cleared" test_flag;
         test "host code calls host code a Code leaf names" test_code_leaf;
+      ];
+    group ~timeout "rails"
+      [
+        test "host code fills a rail's area and calls its ready function"
+          test_rail;
+        test "load answers Error for a rail this machine has not" test_no_rail;
       ];
     group ~timeout "order"
       [

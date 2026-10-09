@@ -193,6 +193,106 @@ let refused_binary () =
   | Ok _ -> fail "the agent loaded no program"
   | Error why -> contains ~sub:"not a program" why
 
+(* Rails *)
+
+(* test/program's fixture [ready]: stores its value 2 at its buffer 0, then
+   calls the function at its value 0 with its values 1 and 3. *)
+let ready =
+  {
+    G.obj = Rig_host_support.fixture ~dir:"../program/fixtures" "ready";
+    entry = "ready";
+  }
+
+let host_record h =
+  match Rig.capability h Rig_remote_abi.key with
+  | Some (Rig_remote_abi.Host r) -> r
+  | _ -> failf "%s has no host record" (Rig.name h)
+
+(* The 64-bit word at byte [at] of [a]. *)
+let word_at (a : Rig_remote_abi.area) at =
+  Int64.to_int
+    (String.get_int64_le
+       (String.init 8 (fun i -> Bigarray.Array1.get a (at + i)))
+       0)
+
+(* An agent's program writes a word into its end of a TCP rail and calls the
+   rail's ready function, as host code after a GPU's work does; the word arrives
+   at this process's end, where a program here reads it. *)
+let rail_end_to_end () =
+  with_job @@ fun j _ ->
+  let h = List.hd (Rig_remote.hosts j) in
+  let r =
+    require_ok ~pp:Format.pp_print_string
+      ((host_record h).rail None
+         ~send:[| { Rig_remote_abi.src = 0; dst = 0; length = 8 } |]
+         ~receive:[||])
+  in
+  let local = require_some r.local in
+  let fill =
+    {
+      G.devices = [| Rig.arch h |];
+      memory = [| G.Rail { rail = r.id; area = Outbound } |];
+      images = [||];
+      code = [| ready |];
+      inputs = [||];
+      ints = 1;
+      steps =
+        [|
+          G.Host
+            {
+              code = 0;
+              buffers =
+                [|
+                  ( G.Memory { memory = 0; offset = 0; length = 8 },
+                    Rig.Buffer.Read_write );
+                |];
+              values =
+                [|
+                  G.Leaf (Ready r.id);
+                  G.Leaf (Ready_arg r.id);
+                  G.Int 0;
+                  G.Fixed 1;
+                |];
+              split = None;
+            };
+        |];
+    }
+  in
+  raises_match ~msg:"rails for another machine" Exn.invalid_arg (fun () ->
+      G.load ~rails:(fun _ -> None) fill [| h |]);
+  let far = require_ok ~pp:Format.pp_print_string (G.load fill [| h |]) in
+  let pt = (G.run far { inputs = [||]; ints = [| 42 |] }).(0) in
+  Rig.wait h (Rig.Point.value pt);
+  (* [arrived] is the word at byte 256 of the counts. *)
+  until ~what:"the transfer's arrival" (fun () -> word_at local.counts 256 >= 1);
+  let read_inbound =
+    {
+      G.devices = [| Rig.arch Rig.host |];
+      memory = [| G.Rail { rail = r.id; area = Inbound } |];
+      images = [||];
+      code = [||];
+      inputs = [| { G.device = 0; bytes = 8; access = Rig.Buffer.Read_write } |];
+      ints = 0;
+      steps =
+        [|
+          G.Move
+            {
+              src = G.Memory { memory = 0; offset = 0; length = 8 };
+              dst = G.Input 0;
+            };
+        |];
+    }
+  in
+  let rails id = if id = r.id then Some local else None in
+  let here =
+    require_ok ~pp:Format.pp_print_string
+      (G.load ~rails read_inbound [| Rig.host |])
+  in
+  let x = Rig.Buffer.create Rig.host 8 in
+  ignore (G.run here { inputs = [| x |]; ints = [||] });
+  equal ~msg:"the word, here" string (le64 42) (read_host x);
+  r.release ()
+
 let () =
   Watchdog.start ();
   exit
@@ -205,4 +305,8 @@ let () =
            host_point;
          test ~timeout:60. "an agent refuses a binary that is no program"
            refused_binary;
+         test ~timeout:60.
+           "a program's host code sends a word on a rail, which a program \
+            reads at its other end"
+           rail_end_to_end;
        ])

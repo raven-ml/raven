@@ -15,6 +15,8 @@ type leaf =
   | Handle of int
   | Entry of { image : int; name : string }
   | Code of int
+  | Ready of int
+  | Ready_arg of int
 
 type width = W32 | W64
 type 'a hole = { at : int; width : width; leaf : 'a; add : int; shift : int }
@@ -27,6 +29,7 @@ type value =
   | Leaf of leaf
 
 type copies = One | Two
+type area = Outbound | Inbound | Counts
 
 type memory =
   | Alloc of {
@@ -36,6 +39,7 @@ type memory =
       init : leaf data;
       copies : copies;
     }
+  | Rail of { rail : int; area : area }
 
 type image = { device : int; binary : leaf data }
 type view = { memory : int; offset : int; length : int }
@@ -114,8 +118,10 @@ let ints_view t =
 let index what n i =
   if i < 0 || i >= n then refuse "%s %d: no such %s" what i what
 
-let two t m = match t.memory.(m) with Alloc { copies; _ } -> copies = Two
-let mem_bytes t m = match t.memory.(m) with Alloc { bytes; _ } -> bytes
+let two t m =
+  match t.memory.(m) with
+  | Alloc { copies; _ } -> copies = Two
+  | Rail _ -> false
 
 let check_leaf t ~images = function
   | Address { memory; on } ->
@@ -124,10 +130,11 @@ let check_leaf t ~images = function
   | Handle m -> index "memory" (Array.length t.memory) m
   | Entry { image; _ } -> index "image" images image
   | Code i -> index "code" (Array.length t.code) i
+  | Ready _ | Ready_arg _ -> ()
 
 let leaf_two t = function
   | Address { memory; _ } | Handle memory -> two t memory
-  | Entry _ | Code _ -> false
+  | Entry _ | Code _ | Ready _ | Ready_arg _ -> false
 
 let width h = match h.width with W32 -> 4 | W64 -> 8
 
@@ -151,15 +158,15 @@ let check_holes what len check holes =
       check h.leaf)
     holes
 
-let check_view t (v : view) =
+let check_view t sizes (v : view) =
   index "memory" (Array.length t.memory) v.memory;
-  let n = mem_bytes t v.memory in
+  let n = sizes.(v.memory) in
   if v.offset < 0 || v.length < 0 || v.offset + v.length > n then
     refuse "memory %d: a view of %d bytes at %d outside its %d bytes" v.memory
       v.length v.offset n
 
-let check_slot t = function
-  | Memory v -> check_view t v
+let check_slot t sizes = function
+  | Memory v -> check_view t sizes v
   | Input i -> index "input" (Array.length t.inputs) i
   | Ints -> ()
 
@@ -171,14 +178,14 @@ let check_value t : value -> unit = function
       index "device" (Array.length t.devices) on
   | Leaf l -> check_leaf t ~images:(Array.length t.images) l
 
-let check_work t = function
-  | Words v -> check_view t v
+let check_work t sizes = function
+  | Words v -> check_view t sizes v
   | Fill { fill; arg; _ } ->
       check_leaf t ~images:(Array.length t.images) fill;
-      check_view t arg
+      check_view t sizes arg
   | Copy { src; dst } ->
-      check_view t src;
-      check_view t dst
+      check_view t sizes src;
+      check_view t sizes dst
   | Launch
       { image; params; groups = gx, gy, gz; threads = tx, ty, tz; shared; _ } ->
       index "image" (Array.length t.images) image;
@@ -193,19 +200,19 @@ let check_work t = function
         n (check_value t) params.holes;
       List.iter (check_value t) [ gx; gy; gz; tx; ty; tz; shared ]
 
-let rec check_step t ndev = function
+let rec check_step t sizes ndev = function
   | Submit s ->
       index "device" ndev s.device;
-      Array.iter (fun p -> check_work t p.work) s.parts;
-      Array.iter (check_slot t) s.reads;
-      Array.iter (check_slot t) s.writes;
-      Array.iter (fun (v, _) -> check_view t v) s.fixed
+      Array.iter (fun p -> check_work t sizes p.work) s.parts;
+      Array.iter (check_slot t sizes) s.reads;
+      Array.iter (check_slot t sizes) s.writes;
+      Array.iter (fun (v, _) -> check_view t sizes v) s.fixed
   | Move { src; dst } ->
-      check_slot t src;
-      check_slot t dst
+      check_slot t sizes src;
+      check_slot t sizes dst
   | Host { code; buffers; values; split } ->
       index "code" (Array.length t.code) code;
-      Array.iter (fun (s, _) -> check_slot t s) buffers;
+      Array.iter (fun (s, _) -> check_slot t sizes s) buffers;
       Array.iter (check_value t) values;
       Option.iter
         (fun s ->
@@ -223,12 +230,13 @@ let rec check_step t ndev = function
       Option.iter (index "int" t.ints) trip;
       Option.iter
         (fun (v : view) ->
-          check_view t v;
+          check_view t sizes v;
           if v.length < 1 then refuse "memory %d: a flag of no byte" v.memory)
         flag;
-      Array.iter (check_step t ndev) body
+      Array.iter (check_step t sizes ndev) body
 
-let check t devices =
+(* [sizes] is each memory's bytes; a rail's area's where its end is known. *)
+let check t sizes devices =
   if Array.length devices <> Array.length t.devices then
     refuse "%d devices for a program of %d" (Array.length devices)
       (Array.length t.devices);
@@ -241,18 +249,20 @@ let check t devices =
   if t.ints < 0 then refuse "%d ints" t.ints;
   let ndev = Array.length t.devices in
   Array.iteri
-    (fun i (Alloc { device; bytes; init; copies; _ }) ->
-      index "device" ndev device;
-      if bytes < 0 then refuse "memory %d: %d bytes" i bytes;
-      let n = String.length init.bytes in
-      if n > bytes then
-        refuse "memory %d: %d bytes of init in %d bytes" i n bytes;
-      check_holes (strf "memory %d" i) n
-        (fun l ->
-          check_leaf t ~images:(Array.length t.images) l;
-          if copies = One && leaf_two t l then
-            refuse "memory %d: of one copy, a hole names memory of two" i)
-        init.holes)
+    (fun i -> function
+      | Alloc { device; bytes; init; copies; _ } ->
+          index "device" ndev device;
+          if bytes < 0 then refuse "memory %d: %d bytes" i bytes;
+          let n = String.length init.bytes in
+          if n > bytes then
+            refuse "memory %d: %d bytes of init in %d bytes" i n bytes;
+          check_holes (strf "memory %d" i) n
+            (fun l ->
+              check_leaf t ~images:(Array.length t.images) l;
+              if copies = One && leaf_two t l then
+                refuse "memory %d: of one copy, a hole names memory of two" i)
+            init.holes
+      | Rail _ -> ())
     t.memory;
   Array.iteri
     (fun i (im : image) ->
@@ -269,7 +279,7 @@ let check t devices =
       index "device" ndev input.device;
       if input.bytes < 0 then refuse "input %d: %d bytes" i input.bytes)
     t.inputs;
-  Array.iter (check_step t ndev) t.steps
+  Array.iter (check_step t sizes ndev) t.steps
 
 (* Bytes *)
 
@@ -313,6 +323,12 @@ module W = struct
     | Code i ->
         tag b 3;
         int b i
+    | Ready r ->
+        tag b 4;
+        int b r
+    | Ready_arg r ->
+        tag b 5;
+        int b r
 
   let value b = function
     | Fixed n ->
@@ -346,13 +362,18 @@ module W = struct
   let access b (a : B.access) =
     tag b (match a with Read -> 0 | Read_write -> 1)
 
-  let memory b (Alloc { device; kind; bytes; init; copies }) =
-    tag b 0;
-    int b device;
-    memory_kind b kind;
-    int b bytes;
-    data leaf b init;
-    tag b (match copies with One -> 0 | Two -> 1)
+  let memory b = function
+    | Alloc { device; kind; bytes; init; copies } ->
+        tag b 0;
+        int b device;
+        memory_kind b kind;
+        int b bytes;
+        data leaf b init;
+        tag b (match copies with One -> 0 | Two -> 1)
+    | Rail { rail; area } ->
+        tag b 1;
+        int b rail;
+        tag b (match area with Outbound -> 0 | Inbound -> 1 | Counts -> 2)
 
   let view b (v : view) =
     int b v.memory;
@@ -535,6 +556,8 @@ module R = struct
         let name = string r in
         Entry { image; name }
     | 3 -> Code (int r)
+    | 4 -> Ready (int r)
+    | 5 -> Ready_arg (int r)
     | n -> bad r "a leaf" n
 
   let value r =
@@ -586,6 +609,16 @@ module R = struct
         let init = data leaf r in
         let copies = copies r in
         Alloc { device; kind; bytes; init; copies }
+    | 1 ->
+        let rail = int r in
+        let area =
+          match tag r with
+          | 0 -> Outbound
+          | 1 -> Inbound
+          | 2 -> Counts
+          | n -> bad r "an area" n
+        in
+        Rail { rail; area }
     | n -> bad r "a memory" n
 
   let view r =
@@ -811,6 +844,7 @@ type here = {
       (* By memory, copy and device: the borrows made at load. *)
   mutable images : Rig.Image.t array; (* Those loaded so far, while loading. *)
   code : Rig_host.t array;
+  rails : int -> Rig_remote_abi.end_ option;
   hold : Rig.Hold.t;
       (* What every submission keeps until its work is done: the code, which an
          address in its work may name. *)
@@ -821,6 +855,17 @@ type here = {
   lock : Mutex.t;
   mutable runs : int;
 }
+
+(* This machine's end of the rail [id]. *)
+let rail_end rails id =
+  match rails id with
+  | Some e -> e
+  | None -> refuse "no rail %d on this machine" id
+
+let rail_area (e : Rig_remote_abi.end_) = function
+  | Outbound -> e.outbound
+  | Inbound -> e.inbound
+  | Counts -> e.counts
 
 (* Memory [m]'s copy [k] as device [d] names it. *)
 let on p m k d =
@@ -867,6 +912,8 @@ let leaf_value p k = function
             image name
       | exception Invalid_argument why -> refuse "%s" why)
   | Code i -> Rig_host.address p.code.(i)
+  | Ready r -> Nativeint.to_int (rail_end p.rails r).ready_fn
+  | Ready_arg r -> Nativeint.to_int (rail_end p.rails r).ready_arg
 
 (* The word hole [h] makes of the value [v] over [word], the word of its bytes
    there: the value's low bits ORed into it. *)
@@ -1051,10 +1098,12 @@ let rec lstep p i = function
   | Loop { trips; trip; flag; body } ->
       Lloop { trips; trip; flag; body = Array.map (lstep p i) body }
 
-let make_memory devices = function
+let make_memory devices rails = function
   | Alloc { device; kind; bytes; copies; _ } ->
       let n = match copies with One -> 1 | Two -> 2 in
       Array.init n (fun _ -> B.create ~memory:kind devices.(device) bytes)
+  | Rail { rail; area } ->
+      [| B.of_bigarray (rail_area (rail_end rails rail) area) |]
 
 let load_image p (im : image) =
   match Rig.Image.load p.devices.(im.device) (filled p 0 im.binary) with
@@ -1067,27 +1116,34 @@ let link (c : code) =
   | Error why -> raise (Refused why)
 
 let write_init p m k =
-  let (Alloc { init; _ }) = p.t.memory.(m) in
-  let n = String.length init.bytes in
-  if n > 0 then
-    B.copy
-      ~src:(B.of_string (filled p k init))
-      ~dst:(B.view p.mem.(m).(k) ~first:0 ~length:n)
+  match p.t.memory.(m) with
+  | Rail _ -> ()
+  | Alloc { init; _ } ->
+      let n = String.length init.bytes in
+      if n > 0 then
+        B.copy
+          ~src:(B.of_string (filled p k init))
+          ~dst:(B.view p.mem.(m).(k) ~first:0 ~length:n)
 
 let words b =
   if B.length b = 0 then Bigarray.(Array1.create int64 c_layout 0)
   else B.bigarray Bigarray.int64 b
 
-let load_here t devices =
+let load_here ~rails t devices =
+  let size = function
+    | Alloc { bytes; _ } -> bytes
+    | Rail { rail; area } ->
+        Bigarray.Array1.dim (rail_area (rail_end rails rail) area)
+  in
   match
-    check t devices;
+    check t (Array.map size t.memory) devices;
     Array.map link t.code
   with
   | exception Refused why -> Error why
   | code -> (
       let ints = Array.init 2 (fun _ -> B.create Rig.host (8 * t.ints)) in
       let mem =
-        Array.append (Array.map (make_memory devices) t.memory) [| ints |]
+        Array.append (Array.map (make_memory devices rails) t.memory) [| ints |]
       in
       let twos k =
         Array.to_list mem
@@ -1104,6 +1160,7 @@ let load_here t devices =
           borrows = Hashtbl.create 8;
           images = [||];
           code;
+          rails;
           hold = Rig.Hold.make (fun () -> ignore (Sys.opaque_identity code));
           steps = [||];
           twos = [| twos 0; twos 1 |];
@@ -1315,7 +1372,10 @@ let proxy_id d =
 
 let load_there t devices =
   match
-    check t devices;
+    (* The areas of rails are the agent's to know: their views are checked
+       there. *)
+    let size = function Alloc { bytes; _ } -> bytes | Rail _ -> max_int in
+    check t (Array.map size t.memory) devices;
     Array.map proxy_id devices
   with
   | exception Refused why -> Error why
@@ -1356,9 +1416,14 @@ let load_there t devices =
                      lock = Mutex.create ();
                    })))
 
-let load t devices =
-  if Array.length devices = 0 then
-    Result.map (fun p -> Here p) (load_here t devices)
+let no_rails _ = None
+
+let load ?rails t devices =
+  let here () =
+    let rails = Option.value rails ~default:no_rails in
+    Result.map (fun p -> Here p) (load_here ~rails t devices)
+  in
+  if Array.length devices = 0 then here ()
   else begin
     let h = Rig.host_of devices.(0) in
     Array.iter
@@ -1366,8 +1431,9 @@ let load t devices =
         if not (Rig.equal (Rig.host_of d) h) then
           invalid_arg "Rig_program.load: devices of several machines")
       devices;
-    if Rig.equal h Rig.host then
-      Result.map (fun p -> Here p) (load_here t devices)
+    if Rig.equal h Rig.host then here ()
+    else if Option.is_some rails then
+      invalid_arg "Rig_program.load: rails for another machine's devices"
     else load_there t devices
   end
 
@@ -1398,7 +1464,7 @@ let run_there ~after p (f : frame) =
 let run ?(after = [||]) p f =
   match p with Here p -> run_here ~after p f | There p -> run_there ~after p f
 
-let load_share b ~device =
+let load_share ?rails b ~device =
   let r = { R.s = b; at = 0 } in
   let m = String.length share_magic in
   if String.length b < m || String.sub b 0 m <> share_magic then
@@ -1421,7 +1487,7 @@ let load_share b ~device =
                 ids
             with
             | exception Refused why -> Error why
-            | devices -> load t devices))
+            | devices -> load ?rails t devices))
   end
 
 let run_share ?(after = [||]) w ~program ~region =

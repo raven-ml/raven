@@ -169,7 +169,7 @@ let dial_tcp ~s host port =
 (* The objects the controller names on this machine. *)
 type obj =
   | Buffer of Rig.Buffer.t
-  | Rail of Link.t
+  | Rail of Link.t * Rig_remote_abi.end_
   | Program of Rig_program.loaded
 
 type t = {
@@ -459,8 +459,14 @@ let answer : type a. state -> a Wire.request -> a =
       | None -> false)
   | Wire.Load { id; binary } -> (
       fresh s id;
+      let rails id =
+        match Hashtbl.find_opt s.objects id with
+        | Some (Rail (_, e)) -> Some e
+        | _ -> None
+      in
       match
-        Rig_program.load_share binary ~device:(Hashtbl.find_opt s.devices)
+        Rig_program.load_share ~rails binary
+          ~device:(Hashtbl.find_opt s.devices)
       with
       | Ok p -> Hashtbl.replace s.objects id (Program p)
       | Error why -> raise (Refused why))
@@ -473,12 +479,12 @@ let answer : type a. state -> a Wire.request -> a =
   | Wire.Rail { id; peer; send; receive } ->
       fresh s id;
       let l = peer_link s peer in
-      ignore (Link.rail l ~id ~send ~receive);
-      Hashtbl.replace s.objects id (Rail l)
+      let e = Link.rail l ~id ~send ~receive in
+      Hashtbl.replace s.objects id (Rail (l, e))
 
 let drop s id =
   match Hashtbl.find_opt s.objects id with
-  | Some (Rail l) ->
+  | Some (Rail (l, _)) ->
       Link.release_rail l id;
       Hashtbl.remove s.objects id
   | Some (Buffer _ | Program _) -> Hashtbl.remove s.objects id
