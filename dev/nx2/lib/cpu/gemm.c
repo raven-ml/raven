@@ -80,11 +80,18 @@ enum {
   CON = NX_VIEW_CONTRACTED
 };
 
+/* An operand as the view lays it out: its element (e, i, j, k) lies at
+   position first + e·st[BATCH] + i·st[ROW] + j·st[COL] + k·st[CON], and
+   an axis it lacks has step 0. */
 typedef struct {
-  const nx_array *op[4]; /* by view operand; op[INIT] NULL without init */
+  const nx_array *x; /* NULL for an absent init */
+  int64_t first;
+  int64_t st[4];
+} operand;
+
+typedef struct {
+  operand op[4]; /* by view operand */
   int64_t ext[4];
-  int64_t first[4];
-  int64_t st[4][4];
   int acc, w;
   const nx_cpu_gemm *g;
   int init_is_dst;   /* init is dst itself: R starts as it is */
@@ -94,6 +101,14 @@ typedef struct {
 
 static int64_t ceil_div(int64_t a, int64_t b) { return (a + b - 1) / b; }
 static int64_t min64(int64_t a, int64_t b) { return a < b ? a : b; }
+
+/* The position of operand [o]'s element (e, i, j, k). */
+static int64_t pos(const problem *p, int o, int64_t e, int64_t i, int64_t j,
+                   int64_t k) {
+  const int64_t *s = p->op[o].st;
+  return p->op[o].first + e * s[BATCH] + i * s[ROW] + j * s[COL] +
+         k * s[CON];
+}
 
 static void *alloc(int64_t bytes) {
   return aligned_alloc(64, (size_t)ceil_div(bytes > 0 ? bytes : 1, 64) * 64);
@@ -140,7 +155,7 @@ static int computes(int acc, int out, const int *dts, int n) {
    form fits the stage's slot. */
 static void stage(const problem *p, int o, int64_t at, int64_t s0, int64_t s1,
                   int64_t n0, int64_t n1, uint8_t *dst, int64_t pitch) {
-  const nx_array *x = p->op[o];
+  const nx_array *x = p->op[o].x;
   if (x->dtype == p->acc) {
     /* Elements of acc are copied in one block, through no buffer. */
     nx_cpu_block b = {.n0 = n0, .n1 = n1, .n2 = 1};
@@ -177,9 +192,7 @@ static void stage(const problem *p, int o, int64_t at, int64_t s0, int64_t s1,
 
 /* R's element (e, i, j): dst's, in acc. */
 static uint8_t *at_r(const problem *p, int64_t e, int64_t i, int64_t j) {
-  const int64_t *s = p->st[DST];
-  return p->op[DST]->base +
-         (p->first[DST] + e * s[BATCH] + i * s[ROW] + j * s[COL]) * p->w;
+  return p->op[DST].x->base + pos(p, DST, e, i, j, 0) * p->w;
 }
 
 /* Sets R's rows [i0, i1) × columns [j0, j1) of element [e] to init or +0.
@@ -187,12 +200,12 @@ static uint8_t *at_r(const problem *p, int64_t e, int64_t i, int64_t j) {
    be a memcpy whose source and destination overlap. */
 static void start(const problem *p, int64_t e, int64_t i0, int64_t i1,
                   int64_t j0, int64_t j1) {
-  const int64_t *s = p->st[DST];
+  const int64_t *s = p->op[DST].st;
   if (p->init_is_dst) return;
   for (int64_t i = i0; i < i1; i++) {
-    if (p->op[INIT]) {
-      const int64_t *t = p->st[INIT];
-      int64_t at = p->first[INIT] + e * t[BATCH] + i * t[ROW] + j0 * t[COL];
+    if (p->op[INIT].x) {
+      const int64_t *t = p->op[INIT].st;
+      int64_t at = pos(p, INIT, e, i, j0, 0);
       if (s[COL] == 1 || j1 - j0 == 1)
         stage(p, INIT, at, t[COL], 0, j1 - j0, 1, at_r(p, e, i, j0), 0);
       else
@@ -229,21 +242,19 @@ static uint8_t *sliver(const panel *c, int64_t e, int64_t s) {
    element. */
 static void pack_a(const problem *p, int64_t e, int64_t i, int64_t m,
                    int64_t lda, int64_t pc, int64_t kc, uint8_t *d) {
-  const int64_t *s = p->st[A];
+  const int64_t *s = p->op[A].st;
   for (int64_t q = 0; m < lda && q < kc; q++)
     memset(d + (q * lda + m) * p->w, 0, (size_t)((lda - m) * p->w));
-  stage(p, A, p->first[A] + e * s[BATCH] + i * s[ROW] + pc * s[CON], s[ROW],
-        s[CON], m, kc, d, lda);
+  stage(p, A, pos(p, A, e, i, 0, pc), s[ROW], s[CON], m, kc, d, lda);
 }
 
 /* Packs the sliver of [b]'s columns [j, j + n) likewise, kc steps of
    [nr]. */
 static void pack_b(const problem *p, int64_t e, int64_t j, int64_t n, int nr,
                    int64_t pc, int64_t kc, uint8_t *d) {
-  const int64_t *s = p->st[B];
+  const int64_t *s = p->op[B].st;
   if (n < nr) memset(d, 0, (size_t)(nr * kc * p->w));
-  stage(p, B, p->first[B] + e * s[BATCH] + j * s[COL] + pc * s[CON], s[COL],
-        s[CON], n, kc, d, nr);
+  stage(p, B, pos(p, B, e, 0, j, pc), s[COL], s[CON], n, kc, d, nr);
 }
 
 static void pack_panel(int64_t lo, int64_t hi, int worker, void *ctx) {
@@ -271,7 +282,7 @@ typedef struct {
 static void tile(const problem *p, shape k, int64_t kc, const uint8_t *a,
                  int64_t lda, const uint8_t *b, int64_t e, int64_t i,
                  int64_t j, int64_t m, int64_t n) {
-  const int64_t *s = p->st[DST];
+  const int64_t *s = p->op[DST].st;
   if (m == k.mr && n == k.nr && s[COL] == 1) {
     k.kernel(kc, a, lda, b, at_r(p, e, i, j), s[ROW]);
     return;
@@ -383,23 +394,13 @@ static const nx_cpu_thin *thin_of(const nx_cpu_gemm *g, int64_t m) {
 /* [p] as the product of b's transpose by a's, which has the same outputs
    transposed and the same bits: fma(a, b, c) is fma(b, a, c). */
 static void transpose(problem *p) {
-  const nx_array *a = p->op[A];
-  int64_t at = p->first[A], sa[4];
-  memcpy(sa, p->st[A], sizeof sa);
+  operand a = p->op[A];
   p->op[A] = p->op[B];
-  p->first[A] = p->first[B];
-  p->st[A][BATCH] = p->st[B][BATCH];
-  p->st[A][ROW] = p->st[B][COL];
-  p->st[A][CON] = p->st[B][CON];
   p->op[B] = a;
-  p->first[B] = at;
-  p->st[B][BATCH] = sa[BATCH];
-  p->st[B][COL] = sa[ROW];
-  p->st[B][CON] = sa[CON];
-  for (int o = INIT; o <= DST; o++) {
-    int64_t r = p->st[o][ROW];
-    p->st[o][ROW] = p->st[o][COL];
-    p->st[o][COL] = r;
+  for (int o = 0; o < 4; o++) {
+    int64_t r = p->op[o].st[ROW];
+    p->op[o].st[ROW] = p->op[o].st[COL];
+    p->op[o].st[COL] = r;
   }
   int64_t m = p->ext[ROW];
   p->ext[ROW] = p->ext[COL];
@@ -514,17 +515,14 @@ static void lane_sum(int acc, void *l, uint8_t *d) {
 static void total(const problem *p, int64_t e, int64_t i, int64_t j,
                   const uint8_t *s, int64_t n, uint8_t *d) {
   _Alignas(16) uint8_t x[16] = {0};
-  if (p->op[INIT]) {
-    const int64_t *t = p->st[INIT];
-    stage(p, INIT, p->first[INIT] + e * t[BATCH] + i * t[ROW] + j * t[COL], 1,
-          0, 1, 1, x, 0);
-  }
+  int init = p->op[INIT].x != NULL;
+  if (init) stage(p, INIT, pos(p, INIT, e, i, j, 0), 1, 0, 1, 1, x, 0);
   if (p->acc == NX_FLOAT32) {
     float y = n ? tree_f32((const float *)s, n) : 0.f;
-    *(float *)d = p->op[INIT] ? *(float *)x + y : y;
+    *(float *)d = init ? *(float *)x + y : y;
   } else {
     double y = n ? tree_f64((const double *)s, n) : 0.;
-    *(double *)d = p->op[INIT] ? *(double *)x + y : y;
+    *(double *)d = init ? *(double *)x + y : y;
   }
 }
 
@@ -534,7 +532,7 @@ static void lanes_unit(int64_t lo, int64_t hi, int worker, void *ctx) {
   const lanes_job *f = ctx;
   problem *p = f->p;
   int64_t m = p->ext[ROW], n = p->ext[COL], k = p->ext[CON], w = p->w;
-  const int64_t *sa = p->st[A], *sb = p->st[B];
+  const int64_t *sa = p->op[A].st, *sb = p->op[B].st;
   uint8_t *buf = scratch(p, worker, (m + n) * NX_CPU_FOLD_BLOCK * w);
   if (buf == NULL) return;
   uint8_t *bb = buf + m * NX_CPU_FOLD_BLOCK * w;
@@ -542,10 +540,8 @@ static void lanes_unit(int64_t lo, int64_t hi, int worker, void *ctx) {
   for (int64_t u = lo; u < hi; u++) {
     int64_t e = u / f->blocks, x = u % f->blocks, k0 = x * NX_CPU_FOLD_BLOCK;
     int64_t len = min64(NX_CPU_FOLD_BLOCK, k - k0);
-    stage(p, A, p->first[A] + e * sa[BATCH] + k0 * sa[CON], sa[CON], sa[ROW],
-          len, m, buf, len);
-    stage(p, B, p->first[B] + e * sb[BATCH] + k0 * sb[CON], sb[CON], sb[COL],
-          len, n, bb, len);
+    stage(p, A, pos(p, A, e, 0, 0, k0), sa[CON], sa[ROW], len, m, buf, len);
+    stage(p, B, pos(p, B, e, 0, 0, k0), sb[CON], sb[COL], len, n, bb, len);
     for (int64_t i = 0; i < m; i++)
       for (int64_t j = 0; j < n; j++) {
         _Alignas(64) uint8_t l[NX_CPU_LANES * 8] = {0};
@@ -601,12 +597,12 @@ static void lanes(problem *p) {
 /* Whether [p]'s init is its dst: the door lets a read operand be identical to
    the written one, every index at the same byte. */
 static int init_is_dst(const problem *p) {
-  const nx_array *i = p->op[INIT], *d = p->op[DST];
-  if (i == NULL || i->base != d->base || i->dtype != d->dtype ||
-      p->first[INIT] != p->first[DST])
+  const operand *i = &p->op[INIT], *d = &p->op[DST];
+  if (i->x == NULL || i->x->base != d->x->base ||
+      i->x->dtype != d->x->dtype || i->first != d->first)
     return 0;
   for (int x = BATCH; x <= COL; x++)
-    if (p->ext[x] > 1 && p->st[INIT][x] != p->st[DST][x]) return 0;
+    if (p->ext[x] > 1 && i->st[x] != d->st[x]) return 0;
   return 1;
 }
 
@@ -617,9 +613,9 @@ static int contract(int acc, const nx_contract_view *v,
   problem p = {.acc = acc, .w = nx_cpu_width(acc)};
   p.g = &nx_cpu_table->gemm[acc];
   for (int o = 0; o < 4; o++) {
-    p.op[o] = op[o];
-    p.first[o] = v->offset[o];
-    for (int x = 0; x < 4; x++) p.st[o][x] = v->stride[o][x];
+    p.op[o].x = op[o];
+    p.op[o].first = v->offset[o];
+    for (int x = 0; x < 4; x++) p.op[o].st[x] = v->stride[o][x];
   }
   for (int x = 0; x < 4; x++) p.ext[x] = v->extent[x];
   if (p.ext[BATCH] == 0 || p.ext[ROW] == 0 || p.ext[COL] == 0) return 1;
