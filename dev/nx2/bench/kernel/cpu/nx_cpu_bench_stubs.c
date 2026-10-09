@@ -96,8 +96,8 @@ value nx_cpu_bench_floor_move_byte(value *argv, int argn) {
    the copy kernel the walk runs, without the walk. */
 value nx_cpu_bench_block_transposed(value dst, value src, value n) {
   int64_t k = Long_val(n);
-  nx_copy_block(Caml_ba_data_val(dst), 0, k, 1, Caml_ba_data_val(src), 0, 1, k,
-                k, k, 32);
+  nx_copy_box(Caml_ba_data_val(dst), Caml_ba_data_val(src),
+              &(nx_box){{1, k, k}, {0, 0}, {{0, k, 1}, {0, 1, k}}}, 32);
   return Val_unit;
 }
 

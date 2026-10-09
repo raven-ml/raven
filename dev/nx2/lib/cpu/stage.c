@@ -76,8 +76,11 @@ void nx_cpu_stage(const nx_array *a, const nx_cpu_block *b, int k, uint8_t *dst,
   }
   int w = a->bits / 8;
   if (dt == nx_cpu_carrier(dt)) {
-    nx_copy_block(dst, 0, row / w, 1, a->base, b->at[k], b->s1[k], b->s0[k],
-                  n1, n0, a->bits);
+    nx_copy_box(dst, a->base,
+                &(nx_box){{1, n1, n0},
+                          {0, b->at[k]},
+                          {{0, row / w, 1}, {0, b->s1[k], b->s0[k]}}},
+                a->bits);
     return;
   }
   /* A narrow float: decoded from its memory where its rows are runs, else
@@ -85,8 +88,11 @@ void nx_cpu_stage(const nx_array *a, const nx_cpu_block *b, int k, uint8_t *dst,
   const uint8_t *s = a->base + b->at[k] * w;
   int64_t so = b->s1[k] * w;
   if (b->s0[k] != 1) {
-    nx_copy_block(raw, 0, n0, 1, a->base, b->at[k], b->s1[k], b->s0[k], n1,
-                  n0, a->bits);
+    nx_copy_box(raw, a->base,
+                &(nx_box){{1, n1, n0},
+                          {0, b->at[k]},
+                          {{0, n0, 1}, {0, b->s1[k], b->s0[k]}}},
+                a->bits);
     s = raw;
     so = n0 * w;
   }
@@ -121,6 +127,9 @@ void nx_cpu_unstage(const nx_array *a, const nx_cpu_block *b, int k,
   }
   /* A strided destination: converted into [raw], then scattered. */
   for (int64_t j = 0; j < n1; j++) convert(src + j * row, raw + j * n0 * w, n0);
-  nx_copy_block(a->base, b->at[k], b->s1[k], b->s0[k], raw, 0, n0, 1, n1, n0,
-                a->bits);
+  nx_copy_box(a->base, raw,
+              &(nx_box){{1, n1, n0},
+                        {b->at[k], 0},
+                        {{0, b->s1[k], b->s0[k]}, {0, n0, 1}}},
+              a->bits);
 }

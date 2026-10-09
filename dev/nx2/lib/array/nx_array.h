@@ -164,23 +164,32 @@ int nx_coalesce(int n, const nx_array *a, nx_loop *l);
 
 /* Block copies */
 
-/* Copies [rows] rows of [cols] elements of [bits] bits, bits for bits:
-   element j of row i from position [ps + i·src_row + j·src_col] of [src]
-   to position [pd + i·dst_row + j·dst_col] of [dst]. Positions are at
-   least 0 and steps of either sign, both counted in elements. The
-   destination's elements are distinct and share no byte with the
-   source's. Bytes that hold only copied elements take plain stores; a
+/* A box: [extent[0]] planes of [extent[1]] rows of [extent[2]] elements, in
+   C order, as nx_loop's axes. Element (p, i, j) of operand k, 0 the
+   destination and 1 the source, lies at position
+   first[k] + p·step[k][0] + i·step[k][1] + j·step[k][2], counted in
+   elements from its base. Positions are at least 0; steps have either
+   sign. */
+typedef struct {
+  int64_t extent[3];
+  int64_t first[2];
+  int64_t step[2][3]; /* elements, by operand then axis */
+} nx_box;
+
+/* Copies the box [b] of elements of [bits] bits from [src] to [dst], bits
+   for bits. The destination's elements are distinct and share no byte with
+   the source's. Bytes that hold only copied elements take plain stores; a
    byte shared with other elements takes a compare-and-swap, as
-   nx_sub_store does. Rows of adjacent elements are memcpy; where the
-   source steps one element across rows and the destination one along
-   them, as for a transposed source, it moves square blocks through
-   registers: 8x8 of 4-byte elements, 32 bytes from each of eight columns
-   into each of eight rows, and 4x4 of the others. Two adjacent runs of the
-   source interleaved into adjacent elements, as a window two elements
-   wide reads its rows, zip in registers. */
-void nx_copy_block(uint8_t *dst, int64_t pd, int64_t dst_row, int64_t dst_col,
-                   const uint8_t *src, int64_t ps, int64_t src_row,
-                   int64_t src_col, int64_t rows, int64_t cols, int bits);
+   nx_sub_store does. Each plane copies as one block: rows of adjacent
+   elements are memcpy; where one operand steps one element across rows and
+   the other one along them, whichever operand is transposed, it moves
+   square blocks through registers, 8x8 of 4-byte elements, 32 bytes from
+   each of eight columns into each of eight rows, and 4x4 of the others.
+   Two adjacent runs of the source interleaved into adjacent elements, as a
+   window two elements wide reads its rows, zip in registers. The case is
+   chosen once per box. */
+void nx_copy_box(uint8_t *dst, const uint8_t *src, const nx_box *b,
+                 int bits);
 
 /* Sub-byte elements
 

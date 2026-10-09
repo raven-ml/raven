@@ -700,8 +700,8 @@ value nx_array_of_array(value v, value values) {
 
 /* copy: gathers [src]'s elements into [dst], a fresh contiguous array of
    its dtype and shape, bits for bits: one walk over coalesced runs, each
-   run through nx_copy_block. The host's strided copy, tiled and threaded,
-   is nx.cpu's. */
+   run through a plane of nx_copy_box. The host's strided copy, tiled and
+   threaded, is nx.cpu's. */
 
 typedef struct {
   const nx_array *a; /* dst, src */
@@ -964,7 +964,8 @@ static inline __attribute__((always_inline)) void bytes(
       strided(d + i * dr, dc, s + i * sr, sc, cols, w);
 }
 
-/* nx_copy_block, inlined into the gather's runs, where [rows] is 1. */
+/* A plane of nx_copy_box, inlined into its planes loop and into the
+   gather's runs, where [rows] is 1. */
 static inline __attribute__((always_inline)) void copy_block(
     uint8_t *dst, int64_t pd, int64_t dst_row, int64_t dst_col,
     const uint8_t *src, int64_t ps, int64_t src_row, int64_t src_col,
@@ -999,11 +1000,29 @@ static inline __attribute__((always_inline)) void copy_block(
   }
 }
 
-void nx_copy_block(uint8_t *dst, int64_t pd, int64_t dst_row, int64_t dst_col,
-                   const uint8_t *src, int64_t ps, int64_t src_row,
-                   int64_t src_col, int64_t rows, int64_t cols, int bits) {
-  copy_block(dst, pd, dst_row, dst_col, src, ps, src_row, src_col, rows, cols,
-             bits);
+/* The planes loop below copy_block's dispatch, inlined into it, so a box of
+   small planes chooses its case once. A destination that steps one element
+   across rows, its source one along them, swaps the two axes on both sides:
+   the same copy, as a transposed source, which the square blocks take. */
+void nx_copy_box(uint8_t *dst, const uint8_t *src, const nx_box *b,
+                 int bits) {
+  int64_t pd = b->first[0], ps = b->first[1];
+  int64_t dp = b->step[0][0], dr = b->step[0][1], dc = b->step[0][2];
+  int64_t sp = b->step[1][0], sr = b->step[1][1], sc = b->step[1][2];
+  int64_t rows = b->extent[1], cols = b->extent[2];
+  if (dr == 1 && sc == 1 && !(dc == 1 && sr == 1)) {
+    int64_t x = dr;
+    dr = dc;
+    dc = x;
+    x = sr;
+    sr = sc;
+    sc = x;
+    x = rows;
+    rows = cols;
+    cols = x;
+  }
+  for (int64_t p = 0; p < b->extent[0]; p++, pd += dp, ps += sp)
+    copy_block(dst, pd, dr, dc, src, ps, sr, sc, rows, cols, bits);
 }
 
 static void copy_run(void *ctx, const int64_t *at, int64_t len) {

@@ -5,15 +5,15 @@
 
 /* Copies and casts.
 
-   A copy moves bits, a block at a time through nx.array's nx_copy_block:
-   rows of bytes by memcpy, a transposed source in square blocks (on
-   x86-64 through a buffer where its rows lie 4 KiB apart), sub-byte rows
-   as runs of whole bytes with compare-and-swap ends, other strides
-   element by element. A cast is unstage ∘ stage: the stage brings
-   the source's block to its carrier, in place where the source is already
-   one in contiguous rows, and the unstage converts the carrier into the
-   destination's dtype. A cast to the source's own dtype is a copy, NaN
-   payloads kept. */
+   A copy moves bits, a block of planes at a time through nx.array's
+   nx_copy_box: rows of bytes by memcpy, a transposed source in square
+   blocks (on x86-64 through a buffer where its rows lie 4 KiB apart),
+   sub-byte rows as runs of whole bytes with compare-and-swap ends, other
+   strides element by element. A cast is unstage ∘ stage, plane by plane:
+   the stage brings the source's block to its carrier, in place where the
+   source is already one in contiguous rows, and the unstage converts the
+   carrier into the destination's dtype. A cast to the source's own dtype
+   is a copy, NaN payloads kept. */
 
 #include <caml/mlvalues.h>
 
@@ -33,8 +33,8 @@ static int64_t cast_most(int s, int d) {
   return NX_CPU_SLOT / w;
 }
 
-static void cast_block(const nx_cpu_block *b, void *ctx) {
-  const nx_array *a = ctx;
+/* A plane of a cast. */
+static void cast_plane(const nx_cpu_block *b, const nx_array *a) {
   int s = a[1].dtype, c = nx_cpu_carrier(s), w = nx_cpu_width(c);
   /* A source that is its carrier in rows of contiguous elements is read in
      place. */
@@ -53,6 +53,16 @@ static void cast_block(const nx_cpu_block *b, void *ctx) {
   nx_cpu_unstage(&a[0], b, 0, slot, b->n0 * w, c);
 }
 
+/* A cast stages plane by plane: its slot holds one. */
+static void cast_block(const nx_cpu_block *b, void *ctx) {
+  nx_cpu_block p = *b;
+  p.n2 = 1;
+  for (int64_t q = 0; q < b->n2; q++) {
+    cast_plane(&p, ctx);
+    for (int k = 0; k < 2; k++) p.at[k] += b->s2[k];
+  }
+}
+
 #if defined(__x86_64__)
 /* The bytes of a tile staged on x86-64. There a load waits for an earlier
    store whose address has the same low 12 bits, and the rows of a tile
@@ -67,10 +77,16 @@ static void cast_block(const nx_cpu_block *b, void *ctx) {
 static __attribute__((noinline)) void staged(const nx_cpu_block *b,
                                              const nx_array *a) {
   _Alignas(64) uint8_t tile[STAGE];
-  nx_copy_block(tile, 0, b->n1, 1, a[1].base, b->at[1], b->s0[1], 1, b->n0,
-                b->n1, a[0].bits);
-  nx_copy_block(a[0].base, b->at[0], b->s1[0], 1, tile, 0, 1, b->n1, b->n1,
-                b->n0, a[0].bits);
+  nx_copy_box(tile, a[1].base,
+              &(nx_box){{1, b->n0, b->n1},
+                        {0, b->at[1]},
+                        {{0, b->n1, 1}, {0, b->s0[1], 1}}},
+              a[0].bits);
+  nx_copy_box(a[0].base, tile,
+              &(nx_box){{1, b->n1, b->n0},
+                        {b->at[0], 0},
+                        {{0, b->s1[0], 1}, {0, 1, b->n1}}},
+              a[0].bits);
 }
 #endif
 
@@ -78,14 +94,18 @@ static void copy_block(const nx_cpu_block *b, void *ctx) {
   const nx_array *a = ctx;
 #if defined(__x86_64__)
   int64_t w = a[0].bits / 8;
-  if (b->s0[0] == 1 && b->s1[1] == 1 && a[0].bits >= 8 &&
+  if (b->n2 == 1 && b->s0[0] == 1 && b->s1[1] == 1 && a[0].bits >= 8 &&
       b->s0[1] * w % 4096 == 0 && b->n0 * b->n1 * w <= STAGE) {
     staged(b, a);
     return;
   }
 #endif
-  nx_copy_block(a[0].base, b->at[0], b->s1[0], b->s0[0], a[1].base, b->at[1],
-                b->s1[1], b->s0[1], b->n1, b->n0, a[0].bits);
+  nx_copy_box(a[0].base, a[1].base,
+              &(nx_box){{b->n2, b->n1, b->n0},
+                        {b->at[0], b->at[1]},
+                        {{b->s2[0], b->s1[0], b->s0[0]},
+                         {b->s2[1], b->s1[1], b->s0[1]}}},
+              a[0].bits);
 }
 
 /* Reads [vd], written, and [vs] of the dtypes [d] and [s] through the door,

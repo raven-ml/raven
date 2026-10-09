@@ -90,14 +90,16 @@ void nx_cpu_job(int64_t total, int64_t bytes, int64_t cost, rig_pool_body body,
 
 /* Walks */
 
-/* A block of a loop: [n1] rows of [n0] elements. Operand k's first element
-   is at position at[k] from its base, and it steps s0[k] elements along a
-   row and s1[k] from a row to the next. */
+/* A block of a loop: [n2] planes of [n1] rows of [n0] elements. Operand k's
+   first element is at position at[k] from its base, and it steps s0[k]
+   elements along a row, s1[k] from a row to the next and s2[k] from a plane
+   to the next. */
 typedef struct {
-  int64_t n0, n1;
+  int64_t n0, n1, n2;
   int64_t at[NX_MAX_OPERANDS];
   int64_t s0[NX_MAX_OPERANDS];
   int64_t s1[NX_MAX_OPERANDS];
+  int64_t s2[NX_MAX_OPERANDS];
 } nx_cpu_block;
 
 typedef void (*nx_cpu_block_fn)(const nx_cpu_block *b, void *ctx);
