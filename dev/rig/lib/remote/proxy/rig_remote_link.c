@@ -132,6 +132,7 @@ struct rail {
   uint64_t posted; /* the sending thread's last count sent */
   uint64_t placed; /* the receiving thread's last count placed */
   int users;       /* threads using it outside the link's lock */
+  int releasing;   /* [release_rail] waits for its users */
 };
 
 static pthread_mutex_t jobs_mu = PTHREAD_MUTEX_INITIALIZER;
@@ -375,6 +376,7 @@ static void fail_job(struct rig_remote_job *j, struct rig_remote_why *why) {
       for (int c = 0; c < 3; c++) atomic_store(count(r, c), INT64_MAX);
     l->abort_owed = !l->sent_close;
     pthread_cond_broadcast(&l->cv);
+    pthread_cond_signal(&l->wake);
     pthread_mutex_unlock(&l->mu);
   }
   struct rig_remote_link *links = j->links;
@@ -420,13 +422,29 @@ static void thread_ends(struct rig_remote_link *l) {
   pthread_mutex_unlock(&j->mu);
 }
 
+/* Releases the send claim. Holds [l]'s lock. The writers waiting for it
+   go first. The sending thread wakes only to act: once the link closed, or
+   for a rail that is due once no writer waits, the last writer's release
+   waking it then. */
+static void release_claim(struct rig_remote_link *l) {
+  l->sending = 0;
+  l->sent_ns = now_ns();
+  if (l->writers > 0) pthread_cond_broadcast(&l->cv);
+  if (l->sent_close || (l->due && l->writers == 0))
+    pthread_cond_signal(&l->wake);
+}
+
+/* Ends a rail's use by a thread outside [l]'s lock. Holds [l]'s lock. */
+static void rail_unused(struct rig_remote_link *l, struct rail *r) {
+  if (--r->users == 0 && r->releasing) pthread_cond_broadcast(&l->cv);
+}
+
 /* The sending thread */
 
 /* Sends the transfers of [l]'s rails whose [ready] advanced. Holds [l]'s
-   lock, and releases it while it sends. [1] if it sent, [0] if not, and
-   [-1] if the link failed. */
+   lock, and releases it while it sends. [0], or [-1] if the link
+   failed. */
 static int send_rails(struct rig_remote_link *l) {
-  int sent = 0;
   for (struct rail *r = l->rails; r != NULL; r = r->next) {
     if (r->nsend == 0) continue;
     uint64_t ready = atomic_load_explicit(count(r, READY), memory_order_acquire);
@@ -452,19 +470,16 @@ static int send_rails(struct rig_remote_link *l) {
       }
     }
     pthread_mutex_lock(&l->mu);
-    r->users--;
-    l->sending = 0;
-    l->sent_ns = now_ns();
-    pthread_cond_broadcast(&l->cv);
+    rail_unused(l, r);
+    release_claim(l);
     if (err != 0) {
       pthread_mutex_unlock(&l->mu);
       link_lost(l, err);
       pthread_mutex_lock(&l->mu);
       return -1;
     }
-    sent = 1;
   }
-  return sent;
+  return 0;
 }
 
 /* Sends [f]: its own bytes, then its spans. The first span goes in the
@@ -500,25 +515,21 @@ static void *sender(void *arg) {
   pthread_mutex_lock(&l->mu);
   for (;;) {
     if (atomic_load(&l->failed) || l->sent_close) break;
-    if (l->sending || l->writers > 0) {
-      pthread_cond_wait(&l->cv, &l->mu);
+    int claimed = l->sending || l->writers > 0;
+    if (!claimed && l->due) {
+      l->due = 0;
+      if (send_rails(l) < 0) break;
       continue;
     }
-    if (l->rails != NULL) {
-      int r = send_rails(l);
-      if (r < 0) break;
-      if (r > 0) continue;
-    }
     int64_t now = now_ns();
-    if (now - l->sent_ns >= BEAT_NS) {
+    if (!claimed && now - l->sent_ns >= BEAT_NS) {
       unsigned char h[HEADER];
       put_header(h, 0, K_BEAT);
       l->sending = 1;
       pthread_mutex_unlock(&l->mu);
       int err = send_all(l, h, sizeof h);
       pthread_mutex_lock(&l->mu);
-      l->sending = 0;
-      l->sent_ns = now_ns();
+      release_claim(l);
       if (err != 0) {
         pthread_mutex_unlock(&l->mu);
         link_lost(l, err);
@@ -527,8 +538,13 @@ static void *sender(void *arg) {
       }
       continue;
     }
-    /* A rail's ready function, a writer's send and a failure wake it. */
-    wait_ns(&l->cv, &l->mu, l->sent_ns + BEAT_NS - now);
+    /* A rail's ready function, the claim's release while a rail is due,
+       and the link's end wake it. A claim's release counts as a send, so
+       while one is held the beat is a second away. */
+    if (l->due)
+      pthread_cond_wait(&l->wake, &l->mu);
+    else
+      wait_ns(&l->wake, &l->mu, claimed ? BEAT_NS : l->sent_ns + BEAT_NS - now);
   }
   if (atomic_load(&l->failed)) abort_link(l);
   pthread_mutex_unlock(&l->mu);
@@ -610,8 +626,7 @@ static int recv_rail(struct rig_remote_link *l, uint64_t n, int64_t *last) {
     }
   }
   pthread_mutex_lock(&l->mu);
-  rl->users--;
-  pthread_cond_broadcast(&l->cv);
+  rail_unused(l, rl);
   pthread_mutex_unlock(&l->mu);
   return r;
 }
@@ -912,10 +927,8 @@ int rig_remote_send(struct rig_remote_link *l, struct rig_remote_frame *f,
   pthread_mutex_unlock(&l->mu);
   int err = send_frame(l, f);
   pthread_mutex_lock(&l->mu);
-  l->sending = 0;
-  l->sent_ns = now_ns();
   if (err == 0 && f->kind == K_CLOSE) l->sent_close = 1;
-  pthread_cond_broadcast(&l->cv);
+  release_claim(l);
   /* A failure meanwhile left the link's abort to this sender. */
   if (atomic_load(&l->failed)) abort_link(l);
   pthread_mutex_unlock(&l->mu);
@@ -1041,6 +1054,7 @@ value caml_rig_remote_link_make(value vj, value fd, value name, value peer) {
   l->peer = Int_val(peer);
   pthread_mutex_init(&l->mu, NULL);
   pthread_cond_init(&l->cv, NULL);
+  pthread_cond_init(&l->wake, NULL);
   l->kept = l->gave = Val_unit;
   caml_register_generational_global_root(&l->kept);
   caml_register_generational_global_root(&l->gave);
@@ -1066,6 +1080,7 @@ value caml_rig_remote_link_make(value vj, value fd, value name, value peer) {
     pthread_mutex_unlock(&j->mu);
     pthread_mutex_destroy(&l->mu);
     pthread_cond_destroy(&l->cv);
+    pthread_cond_destroy(&l->wake);
     caml_remove_generational_global_root(&l->kept);
     caml_remove_generational_global_root(&l->gave);
     free(nm);
@@ -1305,15 +1320,17 @@ static uint64_t *transfers(value a) {
 }
 
 /* Advances a rail's [ready] to [c] with release order and wakes its link's
-   sending thread. Calls nothing of the runtime: compiled host code calls it
-   through its address. */
+   sending thread, or, while the send claim is held, has its release wake
+   it. Calls nothing of the runtime: compiled host code calls it through
+   its address. */
 static void rail_ready(void *arg, uint64_t c) {
   struct rail *r = arg;
   struct rig_remote_link *l = r->link;
   atomic_store_explicit(count(r, READY), c, memory_order_release);
   if (rig_remote_forked(l->job)) return;
   pthread_mutex_lock(&l->mu);
-  pthread_cond_broadcast(&l->cv);
+  l->due = 1;
+  if (!l->sending && l->writers == 0) pthread_cond_signal(&l->wake);
   pthread_mutex_unlock(&l->mu);
 }
 
@@ -1369,7 +1386,6 @@ value caml_rig_remote_link_rail(value vl, value id, value send, value receive,
     for (int c = 0; c < 3; c++) atomic_store(count(r, c), INT64_MAX);
   r->next = l->rails;
   l->rails = r;
-  pthread_cond_broadcast(&l->cv);
   pthread_mutex_unlock(&l->mu);
   CAMLreturn(caml_copy_nativeint((intnat)r));
 }
@@ -1393,6 +1409,7 @@ value caml_rig_remote_link_release_rail(value vl, value id) {
   while (*p != NULL && (*p)->id != k) p = &(*p)->next;
   struct rail *r = *p;
   if (r != NULL) {
+    r->releasing = 1;
     while (r->users > 0) pthread_cond_wait(&l->cv, &l->mu);
     p = &l->rails;
     while (*p != r) p = &(*p)->next;

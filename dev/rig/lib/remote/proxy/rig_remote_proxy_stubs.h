@@ -149,10 +149,13 @@ struct rig_remote_link {
   char *name;
   int peer; /* 0 for the controller, i for agent i */
   pthread_mutex_t mu;
-  pthread_cond_t cv; /* any change: the send claim, answers, commands, words */
+  pthread_cond_t cv;   /* callers': the send claim, answers, commands, words */
+  pthread_cond_t wake; /* the sending thread's: a rail is due, the claim it
+                          waits for is free, or the link ends */
   int sending; /* the send claim: a frame, a rail transfer, a beat or an
                   abort is being sent */
   int writers;  /* writers waiting for the claim, which go first */
+  int due;      /* a rail's ready advanced since the sending thread looked */
   int closing, sent_close, got_close, threads, fd_closed;
   int receiving; /* the receiving thread runs: copies' bytes may land */
   int abort_owed; /* the job failed: the peer is owed an abort */
