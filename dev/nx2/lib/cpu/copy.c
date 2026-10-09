@@ -121,7 +121,19 @@ static value walk(value vd, value vs, int d, int s, int64_t most,
   nx_loop l;
   int e = nx_read(2, in, a);
   if (e) return Val_int(e);
-  if (!(e = nx_coalesce(2, a, &l))) nx_cpu_walk(2, a, &l, most, f, a);
+  if (!(e = nx_coalesce(2, a, &l))) {
+    /* A loop of one axis that one block holds runs as that block on the
+       calling thread, as apply.c's run does. */
+    if (l.rank == 1 && l.extent[0] <= most) {
+      nx_cpu_block b = {.n0 = l.extent[0], .n1 = 1, .n2 = 1};
+      for (int k = 0; k < 2; k++) {
+        b.at[k] = l.first[k];
+        b.s0[k] = l.step[k][0];
+      }
+      if (b.n0 > 0) f(&b, a);
+    } else
+      nx_cpu_walk(2, a, &l, most, f, a);
+  }
   nx_done(2, a);
   return Val_int(e);
 }

@@ -192,7 +192,21 @@ static value run(int n, const nx_operand *in, nx_cpu_block_fn f, job *j) {
   if (e) return Val_int(e);
   j->a = a;
   j->n = n;
-  if (!(e = nx_coalesce(n, a, &l))) nx_cpu_walk(n, a, &l, most(n, a), f, j);
+  if (!(e = nx_coalesce(n, a, &l))) {
+    /* A loop of one axis that one block holds, as a small operation's is,
+       runs as that block on the calling thread: the walk and the job would
+       decide the same at a cost that rivals the block's. */
+    int64_t m = most(n, a);
+    if (l.rank == 1 && l.extent[0] <= m) {
+      nx_cpu_block b = {.n0 = l.extent[0], .n1 = 1, .n2 = 1};
+      for (int k = 0; k < n; k++) {
+        b.at[k] = l.first[k];
+        b.s0[k] = l.step[k][0];
+      }
+      if (b.n0 > 0) f(&b, j);
+    } else
+      nx_cpu_walk(n, a, &l, m, f, j);
+  }
   nx_done(n, a);
   return Val_int(e);
 }
