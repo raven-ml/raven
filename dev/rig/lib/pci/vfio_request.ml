@@ -4,7 +4,10 @@
   ---------------------------------------------------------------------------*)
 
 (* The values and layouts are Linux's, from include/uapi/linux/vfio.h, which the
-   64-bit Linux ABIs lay out alike. *)
+   64-bit Linux ABIs lay out alike. They are written here by hand, where the
+   other drivers generate theirs from excerpts of their headers: vfio.h is under
+   GPL-2.0 WITH Linux-syscall-note only, and only these numbers are taken from
+   it. test_vfio_request checks them against the header where it is at hand. *)
 
 type params =
   (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t

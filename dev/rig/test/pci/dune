@@ -20,7 +20,8 @@
  (libraries rig_pci rig_pci_support unix windtrap))
 
 ; test_vfio_request packs VFIO's requests with no function, through the
-; library's private Vfio_request, copied here.
+; library's private Vfio_request, copied here. Its stubs read <linux/vfio.h>
+; where it is at hand.
 
 (copy_files
  (files ../../lib/pci/vfio_request.{ml,mli}))
@@ -28,4 +29,7 @@
 (test
  (name test_vfio_request)
  (modules test_vfio_request vfio_request)
- (libraries windtrap))
+ (libraries windtrap)
+ (foreign_stubs
+  (language c)
+  (names test_vfio_request_stubs)))
