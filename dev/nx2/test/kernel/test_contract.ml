@@ -172,7 +172,7 @@ let extents =
       (1, shaped none (one 1 2) (one 3070 3200) (one 1 6));
       (1, shaped none (one 1 4) (one 16 200) (one 400 1100));
       (1, shaped none (one 16 300) (one 1 4) (one 1 600));
-      (1, shaped (one 340 420) (constant [| 8 |]) (constant [| 8 |]) (one 1 4));
+      (2, shaped (one 342 420) (constant [| 8 |]) (constant [| 8 |]) (one 1 4));
     ]
 
 (* A case in [acc] into [out], each operand of [acc] or of [dts]. *)
