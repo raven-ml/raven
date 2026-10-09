@@ -1,0 +1,13 @@
+{
+ "https://raw.githubusercontent.com/linux-rdma/rdma-core/v56.0/libibverbs/verbs.h": "af4841f3bc010365b9bbe46f95e9f8159d70eb223c0920389fecf47d41d74a31",
+ "https://raw.githubusercontent.com/linux-rdma/rdma-core/v56.0/providers/mlx5/mlx5.h": "d8a283f39a36ac78f5fdef6f5a847b23dfa9a4d51aab2c3b37c4e37c4983cf26",
+ "https://raw.githubusercontent.com/linux-rdma/rdma-core/v56.0/providers/mlx5/mlx5dv.h": "b226030a044ee13e366a90536dd4549c89d4cd6f1a9636e8e822a3cdfffeedce",
+ "https://raw.githubusercontent.com/linux-rdma/rdma-core/v56.0/providers/mlx5/wqe.h": "557f7d14e24b5b317b6c13a37ffb2ad1ccb3f8a6fd6c57fcaf71ded81b1b253b",
+ "https://raw.githubusercontent.com/torvalds/linux/v6.12/drivers/infiniband/hw/mlx5/mlx5_ib.h": "1adfe7da898916e5a21d9670c724c97e39855ebeb6b256c3a33da329e2108616",
+ "https://raw.githubusercontent.com/torvalds/linux/v6.12/include/linux/mlx5/device.h": "e008988ea2f2c09105d97ae20ad2beb4a644960440d8231f75d821c7ce891fac",
+ "https://raw.githubusercontent.com/torvalds/linux/v6.12/include/uapi/rdma/ib_user_ioctl_cmds.h": "ab6ca624bcaddad4c4e8988feec641ffe4f9ba59764fae0ca0184afb44534544",
+ "https://raw.githubusercontent.com/torvalds/linux/v6.12/include/uapi/rdma/ib_user_ioctl_verbs.h": "455b073d4a7f57d73bc24a4f9a457acf62458a2647d31f4be5b05da20f9ad34b",
+ "https://raw.githubusercontent.com/torvalds/linux/v6.12/include/uapi/rdma/ib_user_verbs.h": "7e32869c330291f4ccda8073c57fab2b7df898546eaba16062ee555ee964f861",
+ "https://raw.githubusercontent.com/torvalds/linux/v6.12/include/uapi/rdma/mlx5-abi.h": "a7f67dde22dad0db169bafa10e5fad223725021a9f4ba4ec7f82fb2a9473c830",
+ "https://raw.githubusercontent.com/torvalds/linux/v6.12/include/uapi/rdma/rdma_user_ioctl_cmds.h": "89f85853fba58f7a64ffc3147bf2f57d41cec2373bcfc9b15e4ef2cbbb7c8123"
+}

@@ -1,0 +1,10 @@
+; ConnectX NICs of this machine, opened through Linux's RDMA subsystem.
+
+(library
+ (name rig_mlx5_uverbs)
+ (public_name rig.mlx5.uverbs)
+ (libraries rig_mlx5)
+ (private_modules defs request)
+ (foreign_stubs
+  (language c)
+  (names rig_mlx5_uverbs_stubs)))

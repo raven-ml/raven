@@ -1,0 +1,10 @@
+; ConnectX NICs, driven once open: regions, completion queues and queue pairs.
+
+(library
+ (name rig_mlx5)
+ (public_name rig.mlx5)
+ (libraries rig_mlx5_abi)
+ (private_modules defs)
+ (foreign_stubs
+  (language c)
+  (names rig_mlx5_stubs)))

@@ -1,0 +1,7 @@
+; ConnectX NICs' formats: work entries, completions, doorbell records and
+; access regions.
+
+(library
+ (name rig_mlx5_abi)
+ (public_name rig.mlx5.abi)
+ (private_modules defs))

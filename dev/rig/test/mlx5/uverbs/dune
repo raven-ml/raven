@@ -1,0 +1,15 @@
+(tests
+ (names test_uverbs)
+ (modules test_uverbs)
+ (libraries rig_mlx5 rig_mlx5_uverbs windtrap))
+
+; test_request packs the path's ioctls with no NIC, through the library's
+; private Request and the layouts it reads, copied here.
+
+(copy_files
+ (files ../../../lib/mlx5/uverbs/{request.ml,request.mli,defs.ml}))
+
+(test
+ (name test_request)
+ (modules test_request request defs)
+ (libraries rig_mlx5_uverbs windtrap))
