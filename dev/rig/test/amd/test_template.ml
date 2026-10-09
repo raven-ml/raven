@@ -13,8 +13,7 @@ open Rig_amd_abi
 
 external create : unit -> int = "caml_rig_amd_create"
 
-external set_template :
-  int -> int -> string -> (int * int Packet.word) list -> unit
+external set_template : int -> int -> string -> string -> unit
   = "caml_rig_amd_template"
 
 external fill : int -> int -> int64 -> int64 -> int64 -> string
@@ -25,7 +24,7 @@ let max_words = 16
 let max_holes = 4
 
 let load p =
-  let words, holes = Packet.template (fun _ -> None) p in
+  let words, holes = Template.flatten p in
   set_template self 0 words holes
 
 (* Printing *)

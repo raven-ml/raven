@@ -19,11 +19,15 @@
   (glob_files fixtures/*)))
 
 ; test_template fills the ring writer's templates with no GPU: its stubs read a
-; device state through the driver's own header.
+; device state through the driver's own header, and it loads them through the
+; driver's private Template, copied here.
+
+(copy_files
+ (files ../../lib/amd/template.{ml,mli}))
 
 (test
  (name test_template)
- (modules test_template)
+ (modules test_template template)
  (libraries rig_amd rig_amd_abi rig_edge windtrap)
  (foreign_stubs
   (language c)

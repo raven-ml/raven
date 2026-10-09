@@ -106,9 +106,9 @@ external set_segment : int -> int -> int -> int -> unit = "caml_rig_amd_segment"
 external set_ring : int -> int -> int -> int -> int -> int -> int -> unit
   = "caml_rig_amd_ring_byte" "caml_rig_amd_ring"
 
-external set_template :
-  int -> int -> string -> (int * int Packet.word) list -> unit
+external set_template : int -> int -> string -> string -> unit
   = "caml_rig_amd_template"
+[@@noalloc]
 
 external set_max_copy : int -> int -> unit = "caml_rig_amd_max_copy"
 external hdp_count : int -> int -> int -> bool = "caml_rig_amd_hdp"
@@ -224,7 +224,7 @@ let templates (g : Abi.Gpu.t) ~interrupt ~waits64 ~aql =
 
 let set_templates self g ~interrupt ~waits64 ~aql =
   let set i p =
-    let words, holes = Packet.template (fun _ -> None) p in
+    let words, holes = Template.flatten p in
     set_template self i words holes
   in
   List.iteri set (templates g ~interrupt ~waits64 ~aql);

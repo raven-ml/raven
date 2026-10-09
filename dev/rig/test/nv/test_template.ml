@@ -13,8 +13,7 @@ open Rig_nv_abi
 
 external create : int -> int -> int -> int -> int = "caml_rig_nv_create"
 
-external set_template :
-  int -> int -> string -> (int * int Packet.word) list -> unit
+external set_template : int -> int -> string -> string -> unit
   = "caml_rig_nv_template"
 
 external fill : int -> int -> int64 -> int64 -> int64 -> string
@@ -25,7 +24,7 @@ let max_words = 16
 let max_holes = 6
 
 let load p =
-  let words, holes = Packet.template (fun _ -> None) p in
+  let words, holes = Template.flatten (fun _ -> None) p in
   set_template self 0 words holes
 
 (* Printing *)

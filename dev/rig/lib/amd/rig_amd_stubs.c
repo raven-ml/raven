@@ -83,64 +83,31 @@ value caml_rig_amd_ring_byte(value *argv, int argn) {
                               argv[5], argv[6]);
 }
 
-/* Rig_amd_abi.Packet's terms and the words that hold one, by tag: a term
-   is the value, an argument (0), or an addition (1), a right shift (2) or
-   an or (3) of a term and a constant; a word is W32 (1) or W64 (2). */
-enum { TERM_VALUE, TERM_ADD, TERM_SHIFT, TERM_OR };
-enum { WORD_W64 = 2 };
+/* A hole's record, as Template lays it out: ten 64-bit words, the index of
+   its first word, its argument, its words, its operations' count, then each
+   operation and its constant. */
+enum { HOLE_FIELDS = 4 + 2 * RIG_AMD_HOLE_OPS };
 
-static const uint8_t ops[] = {[TERM_ADD] = OP_ADD, [TERM_SHIFT] = OP_SHIFT,
-                              [TERM_OR] = OP_OR};
-
-/* Sets [h] to the word [v_w] at index [at]: its argument, then its
-   operations in the order they apply, the innermost first. */
-static void read_hole(struct rig_amd_hole *h, intnat at, value v_w) {
-  value t = Field(v_w, 0);
-  int n = 0;
-  for (value u = t; Tag_val(u) != TERM_VALUE; u = Field(u, 0)) n++;
-  if (n > RIG_AMD_HOLE_OPS)
-    caml_invalid_argument("Rig_amd.make: a template hole takes too many "
-                          "operations");
-  h->at = (uint8_t)at;
-  h->wide = Tag_val(v_w) == WORD_W64 ? 2 : 1;
-  h->nops = (uint8_t)n;
-  for (int i = n - 1; i >= 0; i--, t = Field(t, 0)) {
-    h->op[i] = ops[Tag_val(t)];
-    if (Tag_val(t) != TERM_SHIFT) {
-      h->k[i] = (uint64_t)Int64_val(Field(t, 1));
-      continue;
-    }
-    intnat shift = Long_val(Field(t, 1));
-    if (shift < 0 || shift > 63)
-      caml_invalid_argument("Rig_amd.make: a template hole's shift is "
-                            "outside 0 to 63");
-    h->k[i] = (uint64_t)shift;
-  }
-  intnat arg = Long_val(Field(t, 0));
-  if (arg < 0 || arg > 2)
-    caml_invalid_argument("Rig_amd.make: a template hole reads an argument "
-                          "outside 0 to 2");
-  h->arg = (uint8_t)arg;
-}
-
-/* Template [t]: its words as little-endian bytes, and its holes, the
-   list Rig_amd_abi.Packet.template answers over the arguments 0, 1 and
-   2. */
+/* Template [t]: its words as little-endian bytes, and its holes, records
+   Template checked against the template's bounds. */
 value caml_rig_amd_template(value v_self, value v_t, value v_words,
-                               value v_holes) {
-  struct rig_amd_template *t =
-      &Device_val(v_self)->templates[Int_val(v_t)];
-  size_t bytes = caml_string_length(v_words);
-  if (bytes > sizeof t->words)
-    caml_invalid_argument("Rig_amd.make: a packet template exceeds 16 words");
-  t->n = (int)(bytes / 4);
+                            value v_holes) {
+  struct rig_amd_template *t = &Device_val(v_self)->templates[Int_val(v_t)];
+  t->n = (int)(caml_string_length(v_words) / 4);
   memcpy(t->words, String_val(v_words), 4 * (size_t)t->n);
-  t->nholes = 0;
-  for (value l = v_holes; l != Val_emptylist; l = Field(l, 1)) {
-    if (t->nholes == RIG_AMD_TEMPLATE_HOLES)
-      caml_invalid_argument("Rig_amd.make: a packet template has too many holes");
-    value h = Field(l, 0);
-    read_hole(&t->holes[t->nholes++], Long_val(Field(h, 0)), Field(h, 1));
+  t->nholes = (int)(caml_string_length(v_holes) / (8 * HOLE_FIELDS));
+  for (int i = 0; i < t->nholes; i++) {
+    uint64_t f[HOLE_FIELDS];
+    memcpy(f, String_val(v_holes) + 8 * HOLE_FIELDS * i, sizeof f);
+    struct rig_amd_hole *h = &t->holes[i];
+    h->at = (uint8_t)f[0];
+    h->arg = (uint8_t)f[1];
+    h->wide = (uint8_t)f[2];
+    h->nops = (uint8_t)f[3];
+    for (int j = 0; j < h->nops; j++) {
+      h->op[j] = (uint8_t)f[4 + 2 * j];
+      h->k[j] = f[5 + 2 * j];
+    }
   }
   return Val_unit;
 }
@@ -198,20 +165,23 @@ static int rig_amd_commit(void *self, uint64_t v, const char **failure) {
   return RIG_OK;
 }
 
+static rig_room_fn *const room_entry = rig_amd_room;
+static rig_submit_fn *const submit_entry = rig_amd_submit;
+static rig_commit_fn *const commit_entry = rig_amd_commit;
+
 value caml_rig_amd_room_entry(value unit) {
   (void)unit;
-  return Val_long((intnat)rig_amd_room);
+  return Val_long((intnat)room_entry);
 }
 
 value caml_rig_amd_submit_entry(value unit) {
   (void)unit;
-  return Val_long((intnat)rig_amd_submit);
+  return Val_long((intnat)submit_entry);
 }
 
 value caml_rig_amd_commit_entry(value unit) {
   (void)unit;
-  rig_commit_fn *commit = rig_amd_commit;
-  return Val_long((intnat)commit);
+  return Val_long((intnat)commit_entry);
 }
 
 value caml_rig_amd_place_entry(value unit) {

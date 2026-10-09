@@ -137,9 +137,9 @@ external set_channel : int -> int -> int array -> bool = "caml_rig_nv_channel"
 
 external set_doorbell : int -> int -> unit = "caml_rig_nv_doorbell" [@@noalloc]
 
-external set_template :
-  int -> int -> string -> (int * int Packet.word) list -> unit
+external set_template : int -> int -> string -> string -> unit
   = "caml_rig_nv_template"
+[@@noalloc]
 
 external set_entry : int -> int -> int -> unit = "caml_rig_nv_entry" [@@noalloc]
 external set_bar : int -> int -> unit = "caml_rig_nv_bar" [@@noalloc]
@@ -357,7 +357,7 @@ let local d n =
 (* Sets template [k] of [self] to [p]: the words of [p] with a hole for every
    value [known] does not give. *)
 let template self k ~known p =
-  let words, holes = Packet.template known p in
+  let words, holes = Template.flatten known p in
   set_template self k words holes
 
 let unknown _ = None

@@ -15,12 +15,10 @@
 
 #include <stdatomic.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #define CAML_NAME_SPACE
-#include <caml/fail.h>
 #include <caml/mlvalues.h>
 #include <caml/signals.h>
 
@@ -125,59 +123,34 @@ value caml_rig_nv_doorbell(value v_self, value v_at) {
   return Val_unit;
 }
 
-/* Rig_nv_abi.Packet's terms and the words that hold one, by tag: a term
-   is the value, a writer's value number (0), or an addition (1) or a right
-   shift (2) of a term and a constant; a word is W32 (1) or W64 (2). */
-enum { TERM_VALUE, TERM_ADD, TERM_SHIFT };
-enum { WORD_W64 = 2 };
+/* A hole's record, as Template lays it out: ten 64-bit words, the index of
+   its first word, its value's slot, its words, its operations' count, then
+   each operation and its constant. */
+enum { HOLE_FIELDS = 4 + 2 * HOLE_OPS };
+enum { OP_ADD, OP_SHIFT };
 
-static void refuse(const char *why) {
-  char msg[96];
-  snprintf(msg, sizeof msg, "Rig_nv.make: a template %s", why);
-  caml_invalid_argument(msg);
-}
-
-/* Sets [h] to the word [v_w] at index [at]: its value number, then its
-   operations in the order they apply, the innermost first. */
-static void read_hole(struct hole *h, intnat at, value v_w) {
-  value t = Field(v_w, 0);
-  int n = 0;
-  for (value u = t; Tag_val(u) != TERM_VALUE; u = Field(u, 0)) n++;
-  if (n > HOLE_OPS) refuse("hole takes too many operations");
-  h->at = (uint16_t)at;
-  h->wide = Tag_val(v_w) == WORD_W64;
-  h->nops = (uint8_t)n;
-  for (int i = n - 1; i >= 0; i--, t = Field(t, 0)) {
-    if (Tag_val(t) == TERM_ADD) {
-      h->shift[i] = 0;
-      h->n[i] = (uint64_t)Int64_val(Field(t, 1));
-      continue;
-    }
-    intnat shift = Long_val(Field(t, 1));
-    if (shift < 0 || shift > 63) refuse("hole's shift is outside 0 to 63");
-    h->shift[i] = (uint8_t)shift;
-    h->n[i] = 0;
-  }
-  intnat slot = Long_val(Field(t, 0));
-  if (slot < 0 || slot > 2) refuse("hole reads a value outside 0 to 2");
-  h->slot = (uint8_t)slot;
-}
-
-/* Sets template [v_k] to the words [v_words], little-endian bytes, with
-   the holes [v_holes], the list Rig_nv_abi.Packet.template answers over
-   the writer's values 0, 1 and 2. */
+/* Sets template [v_k] to the words [v_words], little-endian bytes, and the
+   holes [v_holes], records Template checked against the template's
+   bounds. */
 value caml_rig_nv_template(value v_self, value v_k, value v_words,
                            value v_holes) {
   struct template *t = &Device_val(v_self)->t[Int_val(v_k)];
-  size_t bytes = caml_string_length(v_words);
-  if (bytes > sizeof t->words) refuse("exceeds 16 words");
-  t->nwords = (int)(bytes / 4);
-  memcpy(t->words, String_val(v_words), bytes);
-  t->nholes = 0;
-  for (value l = v_holes; l != Val_emptylist; l = Field(l, 1)) {
-    if (t->nholes == TEMPLATE_HOLES) refuse("has more than 6 holes");
-    value h = Field(l, 0);
-    read_hole(&t->holes[t->nholes++], Long_val(Field(h, 0)), Field(h, 1));
+  t->nwords = (int)(caml_string_length(v_words) / 4);
+  memcpy(t->words, String_val(v_words), 4 * (size_t)t->nwords);
+  t->nholes = (int)(caml_string_length(v_holes) / (8 * HOLE_FIELDS));
+  for (int i = 0; i < t->nholes; i++) {
+    uint64_t f[HOLE_FIELDS];
+    memcpy(f, String_val(v_holes) + 8 * HOLE_FIELDS * i, sizeof f);
+    struct hole *h = &t->holes[i];
+    h->at = (uint16_t)f[0];
+    h->slot = (uint8_t)f[1];
+    h->wide = f[2] == 2;
+    h->nops = (uint8_t)f[3];
+    for (int j = 0; j < h->nops; j++) {
+      uint64_t op = f[4 + 2 * j], k = f[5 + 2 * j];
+      h->shift[j] = op == OP_SHIFT ? (uint8_t)k : 0;
+      h->n[j] = op == OP_ADD ? k : 0;
+    }
   }
   return Val_unit;
 }

@@ -5,7 +5,7 @@
  (name rig_nv)
  (public_name rig.nv)
  (libraries rig_nv_abi rig_elf rig_edge)
- (private_modules defs)
+ (private_modules defs template)
  (install_c_headers rig_nv)
  (foreign_stubs
   (language c)
