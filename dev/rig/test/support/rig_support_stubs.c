@@ -757,10 +757,17 @@ value rig_test_reader_bytes(value v_b) {
   return Val_long((intnat)rig_buffer_bytes(v_b));
 }
 
+/* The reason lives in the OCaml heap, which the allocation of its copy may
+   move: it is read again after the allocation. */
 value rig_test_reader_why(value v_b) {
   CAMLparam1(v_b);
+  CAMLlocal1(s);
   const char *why = rig_buffer_why(v_b);
-  CAMLreturn(why == NULL ? Val_none : caml_alloc_some(caml_copy_string(why)));
+  if (why == NULL) CAMLreturn(Val_none);
+  size_t n = strlen(why);
+  s = caml_alloc_string(n);
+  memcpy((char *)Bytes_val(s), rig_buffer_why(v_b), n);
+  CAMLreturn(caml_alloc_some(s));
 }
 
 /* rig_buffer_claim, whose answer is the constructor of Reader.answer of

@@ -27,8 +27,12 @@ void *rig_buffer_host(value b);
 /* The number of [b]'s bytes. */
 size_t rig_buffer_bytes(value b);
 
-/* The reason the consumption of [b] gave if [b] is dead, as a C string that
-   lives while [b] is reachable; NULL if [b] is live. */
+/* The reason the consumption of [b] gave if [b] is dead, as a C string in
+   the OCaml heap; NULL if [b] is live. Like String_val's, the pointer holds
+   only until the caller next allocates, runs OCaml code or releases the
+   domain lock, any of which may move the string. A caller that keeps the
+   reason copies its bytes first, into memory of its own or into an OCaml
+   string it allocated, reading the reason again after that allocation. */
 const char *rig_buffer_why(value b);
 
 /* Claims
