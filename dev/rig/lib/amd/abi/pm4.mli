@@ -73,8 +73,9 @@ val set_reg : int -> 'v Packet.t -> 'v Packet.t
     register, in \[[0xc000];[0x10000]\[. Every register the words reach lies in
     [a]'s space.
 
-    Raises [Invalid_argument] if [a] is in neither space, or if the words reach
-    past its end. *)
+    Raises [Invalid_argument] if [a] is in neither space, if the words reach
+    past its end, or if they are more than the 16383 the packet's count holds.
+*)
 
 val write_data : 'v location -> 'v -> 'v Packet.t
 (** [write_data loc v] writes the low 32 bits of [v] to [loc]; a write to memory
@@ -107,7 +108,9 @@ val wait :
 (** [wait g loc cmp v ~mask ~interval ()] waits until the 32 bits at [loc],
     masked by [mask], compare to the low 32 bits of [v] as [cmp] says, reading
     them again every [interval] clocks of the packet's poll timer. [mask]
-    defaults to all 32 bits, [interval] to [4]. *)
+    defaults to all 32 bits, [interval] to [4].
+
+    Raises [Invalid_argument] if [interval] is not in \[[0];[65535]\]. *)
 
 val wait_64 :
   Gpu.t -> 'v -> Packet.comparison -> 'v -> ?interval:int -> unit -> 'v Packet.t
@@ -117,7 +120,8 @@ val wait_64 :
     a queue runs it is a fact of its firmware, which a driver tests before
     relying on it.
 
-    Raises [Invalid_argument] if [g]'s GC has no such packet (GFX9). *)
+    Raises [Invalid_argument] if [g]'s GC has no such packet (GFX9), or if
+    [interval] is not in \[[0];[65535]\]. *)
 
 val acquire_mem : Gpu.t -> Packet.scope -> 'v Packet.t
 (** [acquire_mem g s] invalidates, before the next packet starts, the caches

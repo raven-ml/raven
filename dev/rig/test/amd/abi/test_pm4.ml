@@ -73,7 +73,9 @@ let memory =
       prop "a run of registers is set iff it lies in one range" runs_of_regs
         (fun (a, ws) ->
           let fits (start, stop) =
-            start <= a && a < stop && a + Packet.size ws <= stop
+            start <= a && a < stop
+            && a + Packet.size ws <= stop
+            && Packet.size ws <= 16383
           in
           let range = List.find_opt (fun (_, r) -> fits r) ranges in
           cover "past a range's end" (range = None);
@@ -90,6 +92,14 @@ let memory =
           | exception Invalid_argument m ->
               equal (option int) None (Option.map fst range);
               contains ~sub:"Pm4.set_reg" m);
+      test "a run of 16383 UCONFIG registers counts every word" (fun () ->
+          let ws = List.init 16383 (fun _ -> Packet.Dword 0) in
+          equal int (packet3 0x79 16383)
+            (List.hd (words (Pm4.set_reg 0xc000 ws))));
+      test "a run of 16384 registers, past the count's 14 bits, is refused"
+        (fun () ->
+          raises_match (Exn.invalid_arg ~substring:"Pm4.set_reg") (fun () ->
+              Pm4.set_reg 0xc000 (List.init 16384 (fun _ -> Packet.Dword 0))));
       test "a counter copied to memory through the L2" (fun () ->
           equal (list int)
             [ packet3 0x40 4; (2 lsl 8) lor 4; 0x99; 0; 0x8; 0 ]
@@ -148,6 +158,25 @@ let waits =
             ]
             (words
                (Pm4.wait_64 gfx11 0x2_0000_0010 Greater_equal 0x1_0000_0007 ())));
+      test "a wait every 65535 clocks" (fun () ->
+          equal int 0xffff
+            (List.nth
+               (words (Pm4.wait gfx11 (Memory 8) Equal 0 ~interval:0xffff ()))
+               6));
+      cases ~name:string_of_int "a poll interval outside 16 bits is refused"
+        [ -1; 0x10000 ] (fun interval ->
+          raises_match (Exn.invalid_arg ~substring:"Pm4.wait") (fun () ->
+              Pm4.wait gfx11 (Memory 8) Equal 0 ~interval ()));
+      test "a 64-bit wait every 65535 clocks" (fun () ->
+          equal int 0xffff
+            (List.nth
+               (words (Pm4.wait_64 gfx11 8 Equal 0 ~interval:0xffff ()))
+               8));
+      cases ~name:string_of_int
+        "a 64-bit poll interval outside 16 bits is refused" [ -1; 0x10000 ]
+        (fun interval ->
+          raises_match (Exn.invalid_arg ~substring:"Pm4.wait_64") (fun () ->
+              Pm4.wait_64 gfx11 8 Equal 0 ~interval ()));
       test "GFX9 has no 64-bit wait" (fun () ->
           raises_match (Exn.invalid_arg ~substring:"Pm4.wait_64") (fun () ->
               Pm4.wait_64 gfx9 0 Equal 0 ()));

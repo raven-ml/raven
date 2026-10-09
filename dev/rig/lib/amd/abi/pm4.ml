@@ -16,13 +16,14 @@ let gc_name (g : Gpu.t) =
   let a, b, c = g.gc in
   strf "GC %d.%d.%d" a b c
 
-(* PACKET3: type 3, the opcode, and the words of the body less one. *)
+(* PACKET3: type 3, the opcode, and the words of the body less one, a 14-bit
+   count. Each packet bounds its body to what the count holds. *)
+let max_count = 0x3fff
+
 let packet op body =
   let n = size body - 1 in
-  Dword
-    ((Defs.packet_type3 lsl 30)
-    lor ((op land 0xff) lsl 8)
-    lor ((n land 0x3fff) lsl 16))
+  assert (n <= max_count);
+  Dword ((Defs.packet_type3 lsl 30) lor ((op land 0xff) lsl 8) lor (n lsl 16))
   :: body
 
 (* Memory and registers *)
@@ -51,6 +52,8 @@ let set_reg reg ws =
         reg
   in
   let n = size ws in
+  if n > max_count then
+    invalid_argf "Pm4.set_reg: %d words, expected at most %d" n max_count;
   if reg + n > stop then
     invalid_argf
       "Pm4.set_reg: %d words from register 0x%x pass its space's end 0x%x" n reg
@@ -103,8 +106,16 @@ let copy_data write source addr =
 
 (* Waits, caches and signals *)
 
-(* The poll interval a wait takes by default, in clocks of its poll timer. *)
+(* The poll interval a wait takes by default, in clocks of its poll timer, and
+   the most its 16-bit POLL_INTERVAL holds: PAL's PM4_MEC_WAIT_REG_MEM, ordinal
+   7, and PM4_MEC_WAIT_REG_MEM64, ordinal 9, whose layout gen.py checks. *)
 let default_interval = 4
+let max_interval = 0xffff
+
+let check_interval fn interval =
+  if interval < 0 || interval > max_interval then
+    invalid_argf "Pm4.%s: interval %d, expected 0 to %d" fn interval
+      max_interval
 
 (* The spaces a wait reads: registers, or memory. *)
 let register_space = 0
@@ -121,6 +132,7 @@ let wait_control space cmp =
 
 (* GFX9's wait addresses a UCONFIG register from UCONFIG's start. *)
 let wait g loc cmp v ?(mask = 0xffff_ffff) ?(interval = default_interval) () =
+  check_interval "wait" interval;
   let loc =
     match loc with
     | Register r when major g = 9 && r >= Defs.packet3_set_uconfig_reg_start ->
@@ -137,6 +149,7 @@ let wait g loc cmp v ?(mask = 0xffff_ffff) ?(interval = default_interval) () =
 let wait_64 g addr cmp v ?(interval = default_interval) () =
   if major g = 9 then
     invalid_argf "Pm4.wait_64: %s has no 64-bit wait" (gc_name g);
+  check_interval "wait_64" interval;
   packet Defs.packet3_wait_reg_mem64
     [
       Dword (wait_control memory_space cmp);
