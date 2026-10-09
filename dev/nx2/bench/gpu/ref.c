@@ -7,6 +7,7 @@
    needs more. Elements read through nx_dtype.h, so no format is restated
    here. */
 
+#include <float.h>
 #include <math.h>
 #include <stdint.h>
 #include <string.h>
@@ -138,6 +139,49 @@ static void two_sum(double a, double b, double *s, double *t) {
   *t = (a - (*s - v)) + (b - v);
 }
 
+/* Every operand is scaled by 2^-SCALE where double's range cannot hold the
+   terms or their sum: the products, scaled by 2^-2·SCALE, then fit. */
+#define SCALE 520
+
+/* Output (z, i, j) when double's range cannot hold the terms of y = init +
+   a·b or their sum, which only float64 operands reach: [float_ratio]'s
+   ratio with the sums taken scaled, [g] its γ. What a scaled term loses
+   to underflow is below the slack. A sum in some order, or by fma without
+   a product overflowing, passes double's range upward where the positive
+   terms' magnitudes can sum past it within the bound, and downward
+   likewise: y is that infinity where its side can, NaN where both can,
+   and otherwise within the bound of the exact sum. */
+static double past_range(const view *a, const view *b, const view *init,
+                         const view *y, int64_t k, double g, int64_t z,
+                         int64_t i, int64_t j) {
+  const double scale = ldexp(1.0, -SCALE);
+  double s = init ? ldexp(float_of(init, z, i, j), -2 * SCALE) : 0, c = 0;
+  double up = s > 0 ? s : 0, down = s < 0 ? -s : 0;
+  for (int64_t q = 0; q < k; q++) {
+    double x = float_of(a, z, i, q) * scale, w = float_of(b, z, j, q) * scale;
+    double p, e, t;
+    two_prod(x, w, &p, &e);
+    two_sum(s, p, &s, &t);
+    c += t + e;
+    if (p > 0) up += p;
+    else down -= p;
+  }
+  s += c;
+  /* The least magnitude double rounds to infinity: DBL_MAX and half an
+     ulp. */
+  const double top =
+      ldexp(1.0, 1024 - 2 * SCALE) - ldexp(1.0, 970 - 2 * SCALE);
+  const int rise = up * (1 + g) >= top, fall = down * (1 + g) >= top;
+  double got = float_of(y, z, i, j);
+  if (got == rounded(y->dtype, ldexp(s, 2 * SCALE))) return 0;
+  if (isnan(got)) return rise && fall ? 0 : INFINITY;
+  if (isinf(got)) return (got > 0 ? rise : fall) ? 0 : INFINITY;
+  double allowed =
+      g * (up + down) + ldexp(ulp(y->dtype, DBL_MAX), -2 * SCALE) / 2;
+  double err = fabs(ldexp(got, -2 * SCALE) - s);
+  return err == 0 ? 0 : err / allowed;
+}
+
 /* Output (z, i, j) of y = init + a·b over [k], against the error bound:
    |y - s| / (γ(k + 1, 2u)·(|init| + Σ|a||b|) + ulp_y(y) / 2), s the exact
    sum (Dot2: about twice double's precision), u the accumulator's unit
@@ -146,8 +190,9 @@ static void two_sum(double a, double b, double *s, double *t) {
    among the operands or init asks for IEEE's answer, which the plain sum
    gives in any order: NaN from a NaN, ∞·0 or ∞ - ∞, else the infinity. An
    integer or bool y lies between the casts of the ends of the sums the
-   bound allows. -1 if y misses an answer the cast fixes, or is NaN where
-   the sum is finite. */
+   bound allows. Terms or a sum past double's range go to [past_range].
+   -1 if y misses an answer the cast fixes, or is NaN where the sum is
+   finite. */
 static double float_ratio(const view *a, const view *b, const view *init,
                           const view *y, int64_t k, int acc, int flush,
                           int64_t z, int64_t i, int64_t j) {
@@ -189,7 +234,7 @@ static double float_ratio(const view *a, const view *b, const view *init,
   double got = float_of(y, z, i, j);
   if (special) return (isnan(plain) && isnan(got)) || plain == got ? 0 : -1;
   if (!isfinite(s) || !isfinite(mag))
-    return (isnan(s) && isnan(got)) || s == got ? 0 : INFINITY;
+    return past_range(a, b, init, y, k, g, z, i, j);
   /* The exact sum rounded once is right, past y's range too. */
   double r = rounded(y->dtype, s);
   if (got == r || (isnan(got) && isnan(r))) return 0;
@@ -228,7 +273,7 @@ nx_ref_result nx_ref_contract(const view *a, const view *b,
                    : int_exact(a, b, init, y, k, acc, z, i, j) ? 0 : -1;
     if (x < 0) {
       if (r.wrong++ == 0) r.at = o;
-    } else if (x != 0 && !(x <= r.worst)) {
+    } else if (x > r.worst) {
       r.worst = x;
       if (r.wrong == 0) r.at = o;
     }

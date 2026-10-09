@@ -45,6 +45,8 @@ typedef struct {
    subnormal result as zero: the allowance gains 2^-126·(1 + Σ(1 + |a| +
    |b|)). A NaN or an infinity among the terms asks for IEEE's answer (any
    NaN for NaN), and an exact sum that rounds past y's range its infinity.
+   Finite terms that can sum past double's range in some order allow that
+   infinity, and NaN where both infinities can be reached.
 
    An integer or bool y of a float [acc] lies between the casts of the
    ends of the sums the bound allows. For an integer [acc], y holds the sum

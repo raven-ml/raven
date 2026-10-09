@@ -262,9 +262,16 @@ let plan_contract ?init ?(acc = float32) t dims ~a ~b ~out =
 let entries r = List.map (fun k -> kernels.(k)) r.kernels
 
 let contract_error ?init dims ~a ~b ~out =
-  contract_error
-    (with_acc (code float32) dims)
-    (cpu a) (cpu b) (cpu out) (Option.map cpu init)
+  let worst, at =
+    contract_error
+      (with_acc (code float32) dims)
+      (cpu a) (cpu b) (cpu out) (Option.map cpu init)
+  in
+  (* windtrap's at_most orders NaN below every number: a NaN worst would
+     pass a bound. *)
+  if Float.is_nan worst then
+    failwith "Nx_metal_support.contract_error: a NaN ratio";
+  (worst, at)
 
 let contract_wrong ?init ~acc dims ~a ~b ~out =
   contract_wrong

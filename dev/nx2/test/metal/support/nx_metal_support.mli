@@ -194,4 +194,6 @@ val contract_error :
 (** [contract_error] is, for a float contraction, once its run returned, the
     largest distance of an output to the exact result as a fraction of the
     distance the contraction's bound allows, float32 subnormals flushed, with
-    that output's index: at most [1.] when every output is within it. *)
+    that output's index: at most [1.] when every output is within it.
+
+    Raises [Failure] if an output's ratio is NaN, which no bound orders. *)

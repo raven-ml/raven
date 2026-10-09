@@ -52,9 +52,13 @@ val contract :
     for a device whose arithmetic reads and writes subnormals as zero,
     [2^-126 (1 + Σ(1 + |a| + |b|))] more. A NaN or an infinity among the terms
     asks for IEEE's answer (any NaN for NaN), and an [s] that rounds past [y]'s
-    range its infinity. An integer or bool [y] of a float [acc] lies between the
-    casts of the ends of the sums the bound allows. For an integer [acc], [y]
-    holds [s] wrapped to [acc], then cast from [acc] to [y]'s dtype: widened by
-    [acc]'s sign and wrapped, rounded once to a float, or nonzero for bool.
+    range its infinity. Finite terms that can sum past double's range in some
+    order allow that infinity, and NaN where both infinities can be reached.
+    An integer or bool [y] of a float [acc] lies between the casts of the ends
+    of the sums the bound allows. For an integer [acc], [y] holds [s] wrapped
+    to [acc], then cast from [acc] to [y]'s dtype: widened by [acc]'s sign and
+    wrapped, rounded once to a float, or nonzero for bool.
 
-    [ref.h]'s [nx_ref_contract] is the same check for C callers. *)
+    [ref.h]'s [nx_ref_contract] is the same check for C callers.
+
+    Raises [Failure] if an output's ratio is NaN, which no bound orders. *)

@@ -271,9 +271,10 @@ let hog_holds_its_wgps () =
 
 (* How a case draws its operands: floats of exponents in [-e, e] (integers over
    their range); those with the second half of each row of a negating its first,
-   so that sums cancel; or those with NaN, infinities, -0 and subnormals
-   (integer extremes) at every seventh element. *)
-type draw = Spread of int | Cancel | Edges
+   so that sums cancel; those with NaN, infinities, -0 and subnormals (integer
+   extremes) at every seventh element; or float64 elements all of the largest
+   finite magnitude, their signs drawn, so that every product overflows. *)
+type draw = Spread of int | Cancel | Edges | Overflow
 
 (* A contraction y[z, i, j] = init[z, i, j] + Σ_k a[z, i, k] · b[z, j, k] of
    [batch], [m], [n], [k], a and b of [dt] in the layout whose [`K] or [`Free]
@@ -307,6 +308,7 @@ let case_name c =
     | Spread e -> strf "spread %d" e
     | Cancel -> "cancel"
     | Edges -> "edges"
+    | Overflow -> "overflow"
   in
   strf "%s->%s acc %s %dx%dx%dx%d %s%s%s %s pad %d" (name c.dt) (name c.out)
     (name c.acc) c.batch c.m c.n c.k (l c.la) (l c.lb)
@@ -397,7 +399,7 @@ let values g dt ~batch ~rows ~k ~draw ~seed ~cancel =
     match draw with
     | _ when not (D.is D.Float d) -> S.Uniform
     | Spread e -> S.Wide e
-    | Cancel | Edges -> S.Wide 6
+    | Cancel | Edges | Overflow -> S.Wide 6
   in
   let tmp = S.buffer g (w * Int.max 1 n) in
   S.generate g tmp d gen ~seed;
@@ -420,6 +422,15 @@ let values g dt ~batch ~rows ~k ~draw ~seed ~cancel =
           Bytes.blit_string
             (List.nth es (i / 7 mod List.length es))
             0 v (w * i) w
+      done
+  | Overflow ->
+      if dt <> D.Any D.Float64 then invalid_arg "values: overflow is float64's";
+      (* The drawn sign bit, then max_float's bits. *)
+      for i = 0 to n - 1 do
+        let negative = Bytes.get_uint8 v ((8 * i) + 7) land 0x80 <> 0 in
+        Bytes.set_int64_le v (8 * i)
+          (Int64.logor (Int64.bits_of_float max_float)
+             (if negative then Int64.min_int else 0L))
       done
   | _ -> ());
   Bytes.to_string v
@@ -599,6 +610,20 @@ let edge_cases =
           (2, 17, 129, 65); (2, 64, 64, 64); (1, 1, 64, 300); (1, 64, 64, 8192);
         ])
     configs
+
+(* Float64 sums whose every product passes double's range: each output is
+   the infinity of its products' signs, or, where both signs meet, either
+   infinity or NaN, as the order of the sum makes it. A few terms, so that
+   some rows hold one sign. *)
+let overflow_cases =
+  let f64 = D.Any D.Float64 in
+  List.mapi
+    (fun i (batch, m, n, k) ->
+      let la, lb = if i mod 2 = 0 then (`K, `K) else (`Free, `K) in
+      let draw = Overflow and pad = 0 in
+      { dt = f64; acc = f64; out = f64; batch; m; n; k; la; lb; init = `Bias;
+        draw; pad })
+    [ (1, 1, 64, 1); (1, 5, 40, 2); (2, 17, 33, 3); (1, 20, 70, 1) ]
 
 (* An int32 sum reaches a wider output as a cast from int32 does, by its sign:
    -1 times 1 over 64 terms is -64. *)
@@ -977,6 +1002,8 @@ let tests =
           within_bound;
         cases ~name:case_name "bits fixed by the shape" shape_cases same_bits;
         cases ~name:case_name "edge inputs within the error bound" edge_cases
+          within_bound;
+        cases ~name:case_name "float64 sums past double's range" overflow_cases
           within_bound;
         test "an int32 sum sign-extends into int64" sign_extends;
         cases
