@@ -4,7 +4,6 @@
   ---------------------------------------------------------------------------*)
 
 open Windtrap
-module Discovery = Rig_amd_pci.Discovery
 
 let strf = Printf.sprintf
 
@@ -143,7 +142,6 @@ let damaged =
 
 (* Registers *)
 
-module Regs = Rig_amd_pci.Regs
 
 let layout d =
   match Regs.layout d with Ok l -> l | Error why -> failf "layout: %s" why
@@ -231,7 +229,6 @@ let registers =
 
 (* Page-table entries *)
 
-module Gmc = Rig_amd_pci.Gmc
 
 let gfx9 = (9, 4, 3)
 let gfx11 = (11, 0, 0)
@@ -422,7 +419,6 @@ let dies =
 
 (* Power manager *)
 
-module Smu = Rig_amd_pci.Smu
 
 (* The IDs of amdgpu's message headers (smu_v13_0_0_ppsmc.h,
    smu_v13_0_6_ppsmc.h, smu_v13_0_12_ppsmc.h, smu_v14_0_2_ppsmc.h) and clock
@@ -475,7 +471,6 @@ let power =
 
 (* Security processor *)
 
-module Psp = Rig_amd_pci.Psp
 
 let u32 b off = Int32.to_int (String.get_int32_le b off) land 0xffff_ffff
 
@@ -546,7 +541,6 @@ let security =
 
 (* Compute queues *)
 
-module Gfx = Rig_amd_pci.Gfx
 
 let gfx12_queue =
   {
@@ -710,7 +704,6 @@ let queues =
 
 (* Sessions *)
 
-module Boot = Rig_amd_pci.Boot
 
 let sessions =
   let plan ?(mark = Boot.session) ?(dirty = 0) ?(fault = 0) ?(gc = (12, 0, 1))
@@ -764,7 +757,6 @@ let restoration =
 
 (* Interrupts *)
 
-module Ih = Rig_amd_pci.Ih
 
 (* An entry as the IH v6 lays it out: client in bits 0-7 of word 0, source in
    8-15, ring 16-23, VMID 24-27; PASID in bits 0-15 of word 3, node 16-23; four
@@ -848,7 +840,6 @@ let interrupts =
 
 (* Firmware *)
 
-module Images = Rig_amd_pci.Images
 
 (* Images built as amdgpu_ucode.h lays them out: the common header (size at 0,
    header size at 4, version at 8 and 10, ucode version at 16, ucode size at 20,
@@ -1250,7 +1241,6 @@ let letting_go =
 (* Copy engines: registers in a fixture tree's register BAR, a file of zeroes
    that keeps what is written. *)
 
-module Sdma = Rig_amd_pci.Sdma
 
 let mi350 =
   List.fold_left
@@ -1320,11 +1310,11 @@ let flushes =
          once" (fun () ->
           let f = take () in
           let fault = ref None in
-          let stuck why () = raise (Rig_amd_pci.Regs.Stuck why) in
+          let stuck why () = raise (Regs.Stuck why) in
           equal ~msg:"answer" bool false
-            (Rig_amd_pci.Boot.confirm f fault (stuck "first") ());
+            (Boot.confirm f fault (stuck "first") ());
           equal ~msg:"bus mastering" int 0 (mastering f);
-          ignore (Rig_amd_pci.Boot.confirm f fault (stuck "second") () : bool);
+          ignore (Boot.confirm f fault (stuck "second") () : bool);
           equal ~msg:"the first reason" (option string) (Some "first") !fault;
           Rig_pci.Function.release f);
       test "a confirmed flush leaves bus mastering and the fault as they were"
@@ -1332,7 +1322,7 @@ let flushes =
           let f = take () in
           let fault = ref None in
           equal ~msg:"answer" bool true
-            (Rig_amd_pci.Boot.confirm f fault ignore ());
+            (Boot.confirm f fault ignore ());
           equal ~msg:"bus mastering" int bus_master (mastering f);
           equal ~msg:"fault" (option string) None !fault;
           Rig_pci.Function.release f);

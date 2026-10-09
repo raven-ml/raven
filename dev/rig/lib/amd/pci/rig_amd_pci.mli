@@ -232,20 +232,3 @@ val reset : ?machine:Rig_pci.Machine.t -> int -> (unit, string) result
     a power cycle recovers.
 
     Raises [Invalid_argument] if [i < 0]. *)
-
-(**/**)
-
-(* The parts of a boot: for tests on fixture tables, synthetic images and the
-   layouts amdgpu's headers state, and for bringing a GPU up one block at a
-   time. *)
-module Discovery = Discovery
-module Regs = Regs
-module Images = Images
-module Gmc = Gmc
-module Soc = Soc
-module Sdma = Sdma
-module Smu = Smu
-module Psp = Psp
-module Gfx = Gfx
-module Boot = Boot
-module Ih = Ih

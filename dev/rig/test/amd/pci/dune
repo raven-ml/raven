@@ -1,16 +1,53 @@
-(tests
- (names test_amd_pci test_root)
+; test_root opens the GPU itself, under root, where a detached AMD GPU and its
+; firmware are at hand; elsewhere it skips.
+
+(test
+ (name test_root)
+ (modules test_root)
+ (libraries rig_amd rig_amd_pci rig_edge rig_pci rig_pci_support unix
+  windtrap)
+ (foreign_stubs
+  (language c)
+  (names test_root_stubs)))
+
+; test_amd_pci checks the boot with no GPU: the discovery tables, register
+; tables, firmware, page-table entries, security processor frames, queue
+; descriptors and interrupt entries the path writes and reads, against
+; recorded tables and amdgpu's layouts, and the boot's steps on fixture
+; machines. It goes through the library's private boot modules, copied here,
+; and through its public interface.
+
+(copy_files
+ (files
+  ../../../lib/amd/pci/{boot,discovery,gfx,gmc,ih,images,psp,regs,sdma,smu,soc}.{ml,mli}))
+
+(copy_files
+ (files ../../../lib/amd/pci/defs.ml))
+
+(test
+ (name test_amd_pci)
+ (modules
+  test_amd_pci
+  boot
+  defs
+  discovery
+  gfx
+  gmc
+  ih
+  images
+  psp
+  regs
+  sdma
+  smu
+  soc)
  (libraries
   rig_amd
-  rig_amd_pci
   rig_amd_abi
+  rig_amd_pci
   rig_edge
   rig_pci
   rig_pci_support
   unix
   windtrap)
- (foreign_stubs
-  (language c)
-  (names test_root_stubs))
  (deps
   (glob_files fixtures/*)))

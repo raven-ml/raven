@@ -3,17 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-module Discovery = Discovery
-module Regs = Regs
-module Images = Images
-module Gmc = Gmc
-module Soc = Soc
-module Sdma = Sdma
-module Smu = Smu
-module Psp = Psp
-module Gfx = Gfx
-module Boot = Boot
-module Ih = Ih
 module Machine = Rig_pci.Machine
 module Memory = Rig_pci.Memory
 module Window = Rig_pci.Window
