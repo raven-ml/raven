@@ -1,0 +1,7 @@
+; Programs as data: work for one machine's devices, described once, loaded,
+; and run many times.
+
+(library
+ (name rig_program)
+ (public_name rig.program)
+ (libraries rig))
