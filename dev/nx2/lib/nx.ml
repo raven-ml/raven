@@ -36,8 +36,7 @@ let bit = Dtype.Bit
 type host = Devices.host
 type 'd devices = 'd Devices.t
 
-let host = Devices.host
-let rigs s = Array.init (Devices.count s) (Devices.rig s)
+let rigs s = List.init (Devices.count s) (Devices.rig s)
 
 module Mesh = struct
   type 'd t = 'd Devices.mesh
@@ -48,7 +47,6 @@ end
 module Placement = struct
   type 'd t = 'd Devices.placement
 
-  let host = Devices.one Devices.host 0
   let on = Devices.on
   let split ~axis s = Devices.split ~by:"Nx.Placement.split" ~axis s
   let mesh m cuts = Devices.mesh ~by:"Nx.Placement.mesh" m cuts
@@ -65,6 +63,14 @@ module type Devices = sig
   val split : axis:int -> d Placement.t
 end
 
+module Host = struct
+  type d = host
+
+  let v = Devices.host
+  let on = Devices.on v
+  let split ~axis = Devices.split ~by:"Nx.Placement.split" ~axis v
+end
+
 let devices ?kernels ds : (module Devices) =
   let v = Devices.mint ~by:"Nx.devices" ?kernels ds in
   (module struct
@@ -76,7 +82,7 @@ let devices ?kernels ds : (module Devices) =
   end)
 
 let place p x = Eval.eval ~by:"Nx.place" (Value.Place (p, x))
-let placement = Prim.placement
+let placement x = if Prim.is_constant x then None else Some (Prim.placement x)
 
 module Repr = struct
   let of_array s a = Repr.of_array ~by:"Nx.Repr.of_array" s a

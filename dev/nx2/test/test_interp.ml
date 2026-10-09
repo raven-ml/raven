@@ -21,11 +21,11 @@ module Count = (val Nx.devices ~kernels:(module C) [ Nx_support.memory 0 ])
 let invalid ~sub f = raises_match (Exn.invalid_arg ~substring:sub) f
 let f32 = Nx.float32
 let f64 = Nx.float64
-let host_array x = Option.get (Nx.Repr.array (Nx.place Nx.Placement.host x))
+let host_array x = Option.get (Nx.Repr.array (Nx.place Nx.Host.on x))
 let elements x = A.to_array (host_array x)
 
 let vec dt xs =
-  Nx.Repr.of_array Nx.host (A.of_array dt [| Array.length xs |] xs)
+  Nx.Repr.of_array Nx.Host.v (A.of_array dt [| Array.length xs |] xs)
 
 let on_count dt xs = Nx.place Count.on (vec dt xs)
 
@@ -257,14 +257,14 @@ let operand kind shape : (float, D.float32_elt, Count.d) Nx.t =
   | Constant -> Nx.zeros f32 shape
   | Concrete ->
       Nx.place Count.on
-        (Nx.Repr.of_array Nx.host (A.of_array D.Float32 shape data))
+        (Nx.Repr.of_array Nx.Host.v (A.of_array D.Float32 shape data))
   | View ->
       let r = Array.length shape in
       let rev = Array.init r (fun i -> r - 1 - i) in
       let t = Array.map (fun a -> shape.(a)) rev in
       let base =
         Nx.place Count.on
-          (Nx.Repr.of_array Nx.host (A.of_array D.Float32 t data))
+          (Nx.Repr.of_array Nx.Host.v (A.of_array D.Float32 t data))
       in
       Nx.Prim.eval ~by:"test" (Move (Permute rev, base))
 
@@ -292,7 +292,7 @@ let cases_of shape a b =
     Case ("broadcast", Move (Broadcast (Array.append [| 2 |] shape), x));
     Case ("int32", Bitcast (Nx.int32, x));
     Case ("bytes", Bitcast (Nx.uint8, x));
-    Case ("host", Place (Nx.Placement.host, x));
+    Case ("host", Place (Nx.Host.on, x));
     Case ("count", Place (Count.on, x));
     Case
       ( "add",

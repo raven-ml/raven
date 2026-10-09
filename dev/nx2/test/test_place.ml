@@ -64,7 +64,7 @@ let where_of rank =
 let floats shape = Array.init (Array.fold_left ( * ) 1 shape) float_of_int
 
 let host shape =
-  Nx.Repr.of_array Nx.host (A.of_array A.Dtype.Float32 shape (floats shape))
+  Nx.Repr.of_array Nx.Host.v (A.of_array A.Dtype.Float32 shape (floats shape))
 
 (* The elements of [x]'s window [b] in C order, [x] holding [floats shape]. *)
 let expected shape b =
@@ -121,9 +121,7 @@ let laws =
           holds s w' (Nx.place (placement w') (Nx.place (placement w) (host s))));
       prop "a value placed back on the host has its elements" case
         (fun (s, w, _) ->
-          let back =
-            Nx.place Nx.Placement.host (Nx.place (placement w) (host s))
-          in
+          let back = Nx.place Nx.Host.on (Nx.place (placement w) (host s)) in
           equal (list float_exact)
             (Array.to_list (floats s))
             (Array.to_list (A.to_array (require_some (Nx.Repr.array back)))));
@@ -135,9 +133,9 @@ let narrow (type v s) name (dt : (v, s) A.Dtype.t) (of_int : int -> v) =
   test (name ^ " keeps its elements across a change of arrangement") (fun () ->
       let shape = [| 4; 8 |] in
       let xs = Array.init 32 (fun i -> of_int (i mod 7)) in
-      let x = Nx.Repr.of_array Nx.host (A.of_array dt shape xs) in
+      let x = Nx.Repr.of_array Nx.Host.v (A.of_array dt shape xs) in
       let y = Nx.place (S4.split ~axis:1) (Nx.place (S4.split ~axis:0) x) in
-      let back = Nx.place Nx.Placement.host y in
+      let back = Nx.place Nx.Host.on y in
       equal bool true (A.to_array (require_some (Nx.Repr.array back)) = xs))
 
 let sharing =
@@ -184,10 +182,10 @@ let refusals =
           Rig.close d;
           raises_match
             (function Rig.Lost _ -> true | _ -> false)
-            (fun () -> Nx.place Nx.Placement.host x);
+            (fun () -> Nx.place Nx.Host.on x);
           equal (array int) [| 4 |] (Nx.shape x);
           equal string "nx-place-lost"
-            (Format.asprintf "%a" Nx.Placement.pp (Nx.placement x)));
+            (Format.asprintf "%a" Nx.Placement.pp (Option.get (Nx.placement x))));
     ]
 
 let () = exit (run "nx place" [ laws; sharing; refusals ])

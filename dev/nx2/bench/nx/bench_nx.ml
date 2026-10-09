@@ -19,7 +19,7 @@ let memory k =
   | Error e -> failwith e
 
 let host n =
-  Nx.Repr.of_array Nx.host (A.of_array D.Float32 [| n |] (Array.make n 1.))
+  Nx.Repr.of_array Nx.Host.v (A.of_array D.Float32 [| n |] (Array.make n 1.))
 
 let x1 = host 1
 let x16 = host 16
@@ -36,7 +36,7 @@ let add_direct a =
     A.v D.Float32 l (Rig.Buffer.create (A.device a) (D.bytes D.Float32 1))
   in
   match Nx_cpu.apply2 (Binary Add) ~dst a a with
-  | Done -> Nx.Repr.of_array Nx.host dst
+  | Done -> Nx.Repr.of_array Nx.Host.v dst
   | refusal -> A.refused "add-1-direct" refusal [ A.Any dst; A.Any a ]
 
 let chain n =
@@ -60,7 +60,7 @@ let dispatch_rows =
       Thumper.bench "zeros_like-1M" (fun () ->
           Nx.zeros_like (Thumper.black_box x1m));
       Thumper.bench "zeros-1M" (fun () ->
-          Nx.place Nx.Placement.host (Nx.zeros D.Float32 [| 1 lsl 20 |]));
+          Nx.place Nx.Host.on (Nx.zeros D.Float32 [| 1 lsl 20 |]));
       Thumper.bench "add-scalar-1" (fun () ->
           Nx.add (Thumper.black_box x1) (Nx.scalar D.Float32 1.));
     ]
@@ -69,7 +69,7 @@ let constant_rows =
   Thumper.group "constant"
     [
       Thumper.bench "chain-1000" (fun () ->
-          Nx.Repr.array (Nx.place Nx.Placement.host (chain 1000)));
+          Nx.Repr.array (Nx.place Nx.Host.on (chain 1000)));
     ]
 
 (* A value on a set minted in the worker, of a brand the row does not name. *)
@@ -99,7 +99,7 @@ let place_rows =
   Thumper.group "place"
     [
       Thumper.bench "equal-1" (fun () ->
-          Nx.place Nx.Placement.host (Thumper.black_box x1));
+          Nx.place Nx.Host.on (Thumper.black_box x1));
       Thumper.bench_with_setup "borrow-memory-device-16" ~setup:borrow_16
         (fun (Borrow (on, x)) -> Value (Nx.place on x));
     ]

@@ -20,9 +20,7 @@ module Count2 = (val Nx.devices ~kernels:(module C) [ m 0; m 1 ])
 module Dec = (val Nx.devices ~kernels:(module Nx_support.Declining) [ m 1 ])
 
 let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
-
-let elements x =
-  A.to_array (Option.get (Nx.Repr.array (Nx.place Nx.Placement.host x)))
+let elements x = A.to_array (Option.get (Nx.Repr.array (Nx.place Nx.Host.on x)))
 
 let pp_ints ppf a =
   Format.fprintf ppf "[%s]"
@@ -108,7 +106,7 @@ let case =
      (s, la, lb, xs, ys))
 
 let f32 x = Int32.float_of_bits (Int32.bits_of_float x)
-let on_host l dt s data = Nx.Repr.of_array Nx.host (lay l dt s data)
+let on_host l dt s data = Nx.Repr.of_array Nx.Host.v (lay l dt s data)
 
 let bits =
   Testable.make ~pp:Format.pp_print_float ~equal:(fun a b ->
@@ -259,8 +257,7 @@ let constants =
           equal int 1 (C.calls ()));
       test "placing a constant computes it at the placement, once" (fun () ->
           let c = Nx.zeros D.Float32 [| 2 |] in
-          equal (array bits) [| 0.; 0. |]
-            (elements (Nx.place Nx.Placement.host c));
+          equal (array bits) [| 0.; 0. |] (elements (Nx.place Nx.Host.on c));
           C.reset ();
           let y = Nx.place Count.on c in
           ignore (Nx.place Count.on c);
@@ -273,7 +270,8 @@ let constants =
           in
           let y = Nx.add x (Nx.zeros D.Float32 [| 4 |]) in
           equal bool true
-            (Nx.Placement.equal (Count2.split ~axis:0) (Nx.placement y)));
+            (Nx.Placement.equal (Count2.split ~axis:0)
+               (Option.get (Nx.placement y))));
       test "a rule error in a constant raises at the call" (fun () ->
           invalid ~by:"Nx.zeros" (fun () -> Nx.zeros D.Float32 [| -1 |]));
       test "a decline in a constant raises at its first use, naming its maker"
@@ -292,7 +290,10 @@ let constants =
               (on_host Plain D.Float32 [| 4 |] [| 1.; 2.; 3.; 4. |])
           in
           let z = Nx.zeros_like x in
-          equal bool true (Nx.Placement.equal (Nx.placement x) (Nx.placement z));
+          equal bool true
+            (Nx.Placement.equal
+               (Option.get (Nx.placement x))
+               (Option.get (Nx.placement z)));
           equal (array bits) [| 0.; 0.; 0.; 0. |] (elements z));
     ]
 
@@ -313,22 +314,34 @@ let test_zeros_like_reads_nothing () =
 
 (* Every public function takes a value of every set, a constant included, and
    gives what it gives on the host. *)
-let every_function (type d) name (x : (float, D.float32_elt, d) Nx.t) =
+let every_function (type d) ?(every_set = false) name
+    (x : (float, D.float32_elt, d) Nx.t) =
   let msg f = name ^ ": " ^ f in
   let xs = elements x in
   let ys f = Array.map f xs in
   equal ~msg:(msg "shape") (array int) [| 2; 2 |] (Nx.shape x);
   equal ~msg:(msg "dtype") string "float32" (D.name (Nx.dtype x));
-  ignore (Nx.placement x);
-  equal ~msg:(msg "place") (array bits) xs (elements (Nx.place (Nx.placement x) x));
-  equal ~msg:(msg "zeros_like") (array bits) (ys (fun _ -> 0.)) (elements (Nx.zeros_like x));
-  equal ~msg:(msg "add") (array bits) (ys (fun v -> v +. v)) (elements (Nx.add x x));
-  equal ~msg:(msg "mul") (array bits) (ys (fun v -> v *. v)) (elements (Nx.mul x x));
-  equal ~msg:(msg "add a scalar") (array bits) (ys (fun v -> v +. 1.))
+  equal ~msg:(msg "placement") bool every_set (Nx.placement x = None);
+  Option.iter
+    (fun p ->
+      equal ~msg:(msg "place") (array bits) xs (elements (Nx.place p x)))
+    (Nx.placement x);
+  equal ~msg:(msg "zeros_like") (array bits)
+    (ys (fun _ -> 0.))
+    (elements (Nx.zeros_like x));
+  equal ~msg:(msg "add") (array bits)
+    (ys (fun v -> v +. v))
+    (elements (Nx.add x x));
+  equal ~msg:(msg "mul") (array bits)
+    (ys (fun v -> v *. v))
+    (elements (Nx.mul x x));
+  equal ~msg:(msg "add a scalar") (array bits)
+    (ys (fun v -> v +. 1.))
     (elements (Nx.add x (Nx.scalar D.Float32 1.)));
   let less = Nx.less x (Nx.zeros_like x) in
   equal ~msg:(msg "less") (array bool) (ys (fun v -> v < 0.)) (elements less);
-  equal ~msg:(msg "where") (array bits) (ys (fun v -> if v < 0. then v else 0.))
+  equal ~msg:(msg "where") (array bits)
+    (ys (fun v -> if v < 0. then v else 0.))
     (elements (Nx.where less x (Nx.zeros_like x)));
   equal ~msg:(msg "cast") (array bits) xs (elements (Nx.cast D.Float64 x));
   equal ~msg:(msg "reshape") (array bits) xs (elements (Nx.reshape [| 4 |] x));
@@ -342,7 +355,7 @@ let test_every_set () =
   every_function "one memory device" (Nx.place Count.on host);
   every_function "two, whole on each" (Nx.place Count2.on host);
   every_function "two, split" (Nx.place (Count2.split ~axis:0) host);
-  every_function "a constant"
+  every_function ~every_set:true "a value of every set"
     (Nx.add (Nx.zeros D.Float32 [| 2; 2 |]) (Nx.scalar D.Float32 (-1.5)))
 
 let sets =

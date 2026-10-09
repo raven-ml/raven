@@ -35,22 +35,23 @@ let values =
           cover "no element" (Array.exists (( = ) 0) s);
           cover "rank 0" (s = [||]);
           let x =
-            Nx.Repr.of_array Nx.host (A.of_array A.Dtype.Float32 s (floats s))
+            Nx.Repr.of_array Nx.Host.v (A.of_array A.Dtype.Float32 s (floats s))
           in
           equal (array int) s (Nx.shape x);
           equal bool true (A.Dtype.equal A.Dtype.Float32 (Nx.dtype x)));
       test "shape is a fresh array" (fun () ->
-          let x = Nx.Repr.of_array Nx.host (on Rig.host [| 2; 3 |]) in
+          let x = Nx.Repr.of_array Nx.Host.v (on Rig.host [| 2; 3 |]) in
           (Nx.shape x).(0) <- 7;
           equal (array int) [| 2; 3 |] (Nx.shape x));
       test "a value lies on its array's device" (fun () ->
           let x = Nx.Repr.of_array S2.v (on (m 1) [| 4 |]) in
           equal string "m1"
-            (Format.asprintf "%a" Nx.Placement.pp (Nx.placement x)));
+            (Format.asprintf "%a" Nx.Placement.pp (Option.get (Nx.placement x))));
       test "two values on one device share its placement" (fun () ->
           let x = Nx.Repr.of_array S2.v (on (m 1) [| 4 |])
           and y = Nx.Repr.of_array S2.v (on (m 1) [| 2 |]) in
-          equal bool true (Nx.placement x == Nx.placement y));
+          equal bool true
+            (Option.get (Nx.placement x) == Option.get (Nx.placement y)));
       test "a sharded value's shape is the whole's" (fun () ->
           let x =
             Nx.Repr.of_shards (S2.split ~axis:1)
@@ -113,7 +114,7 @@ let repr =
             Nx.Repr.of_shards (S2.split ~axis:0)
               [| on (m 0) [| 2 |]; on (m 1) [| 2 |] |]
           in
-          equal placement (S2.split ~axis:0) (Nx.placement x));
+          equal placement (S2.split ~axis:0) (Option.get (Nx.placement x)));
     ]
 
 (* The one message format: every refusal of the interface, called wrongly. *)
@@ -130,7 +131,7 @@ let errors =
         fun () ->
           ignore
             (Nx.place (S2.split ~axis:0)
-               (Nx.Repr.of_array Nx.host (on Rig.host [| 3 |]))) );
+               (Nx.Repr.of_array Nx.Host.v (on Rig.host [| 3 |]))) );
       ( "Nx.Repr.of_array",
         fun () -> ignore (Nx.Repr.of_array Other.v (on (m 0) [| 2 |])) );
       ( "Nx.Repr.of_shards",

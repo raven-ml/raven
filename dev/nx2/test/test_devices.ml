@@ -15,7 +15,7 @@ module S2 = (val Nx.devices [ m 0; m 1 ])
 let placement = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
 let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
 let pp p = Format.asprintf "%a" Nx.Placement.pp p
-let names s = Array.to_list (Array.map Rig.name (Nx.rigs s))
+let names s = List.map Rig.name (Nx.rigs s)
 
 module Nowhere = struct
   include Nx_cpu
@@ -27,13 +27,9 @@ let sets =
   group "sets"
     [
       test "the host set is the host alone" (fun () ->
-          equal (list string) [ Rig.name Rig.host ] (names Nx.host));
+          equal (list string) [ Rig.name Rig.host ] (names Nx.Host.v));
       test "a set keeps its devices in order" (fun () ->
           equal (list string) [ "m0"; "m1"; "m2"; "m3" ] (names S4.v));
-      test "rigs is a fresh array" (fun () ->
-          let a = Nx.rigs S2.v in
-          a.(0) <- m 3;
-          equal (list string) [ "m0"; "m1" ] (names S2.v));
       cases "a mint refuses" ~name:fst
         [
           ("no device", fun () -> ignore (Nx.devices []));
@@ -52,7 +48,7 @@ let placements =
           equal placement (Nx.Placement.on S4.v) S4.on;
           equal placement (Nx.Placement.split ~axis:1 S4.v) (S4.split ~axis:1));
       test "placements print as the placement that makes them" (fun () ->
-          equal string (Rig.name Rig.host) (pp Nx.Placement.host);
+          equal string (Rig.name Rig.host) (pp Nx.Host.on);
           equal string "on [m0; m1]" (pp S2.on);
           equal string "split ~axis:1 [m0; m1]" (pp (S2.split ~axis:1)));
       test "a placement over one device is that device" (fun () ->

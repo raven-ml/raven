@@ -63,20 +63,24 @@ val complex64 : (Complex.t, Dtype.complex32_elt) dtype
 val bool : (bool, Dtype.bool_elt) dtype
 val bit : (bool, Dtype.bit_elt) dtype
 
-(** {1:creation Creation and constants}
+(** {1:creation Creation}
 
-    A constant, a value made from a dtype, a shape and numbers, belongs to every
-    device set: its type is polymorphic in ['d], and it is computed on a set the
-    first time an operation there needs it, once per placement. {!zeros_like}
-    and {!copy} make a value from another, where it lies. *)
+    A value made from a dtype, a shape and numbers, or by operations from such
+    values alone, is a value of every set: its type is polymorphic in ['d]. It
+    is a formula and holds no bytes. Each operation that needs its elements
+    computes it on that operation's set, {!place} computes it at a placement,
+    and a read computes it on the host. Its {!placement} is [None].
+    {!zeros_like} and {!copy} make a value from another, where it lies, and of
+    every set from a value of every set. *)
 
 val zeros : ('v, 's) dtype -> int array -> ('v, 's, 'd) t
-(** [zeros dt s] is the constant of shape [s] whose every element is zero.
+(** [zeros dt s] is the value of shape [s] whose every element is zero, of every
+    set.
 
     Raises [Invalid_argument] if an extent is negative. *)
 
 val scalar : ('v, 's) dtype -> 'v -> ('v, 's, 'd) t
-(** [scalar dt v] is the 0-d constant [v].
+(** [scalar dt v] is the 0-d value [v], of every set.
 
     Raises [Invalid_argument] if [v] is an [int] outside [dt]'s range. *)
 
@@ -145,20 +149,18 @@ val reshape : int array -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     A value lies on a device set, a module minted by {!devices} whose brand ['d]
     keeps its values apart from other sets'. Within its set a value has a
     placement: whole on one or every device, or cut into windows across them.
-    {!place} moves a value between sets, and between placements of one. *)
+    {!place} moves a value between sets, and between placements of one. The host
+    is a set like any other, {!Host}. *)
 
 type host
-(** The brand of {!host}. *)
+(** The brand of {!Host}. *)
 
 type +'d devices
 (** The type for device sets of brand ['d]: distinct devices, and the kernels
     that compute on them. *)
 
-val host : host devices
-(** [host] is the process's host, {!Rig.host}, computed by nx.cpu. *)
-
-val rigs : 'd devices -> Rig.t array
-(** [rigs s] is [s]'s devices in order, a fresh array. *)
+val rigs : 'd devices -> Rig.t list
+(** [rigs s] is [s]'s devices in order. *)
 
 (** Named axes over a set's devices. *)
 module Mesh : sig
@@ -176,9 +178,6 @@ end
 module Placement : sig
   type +'d t
   (** The type for placements over a set of brand ['d]. *)
-
-  val host : host t
-  (** [host] is the host's one device. *)
 
   val on : 'd devices -> 'd t
   (** [on s] holds the whole value on every device of [s]. *)
@@ -227,6 +226,9 @@ module type Devices = sig
   (** [split ~axis] is [Placement.split ~axis v]. *)
 end
 
+module Host : Devices with type d = host
+(** The process's host, {!Rig.host}, computed by nx.cpu. *)
+
 val devices : ?kernels:(module Nx_kernel.S) -> Rig.t list -> (module Devices)
 (** [devices ~kernels ds] mints a new set over [ds], in their order, with a
     brand no other set has, computed eagerly by [kernels]. Without [kernels], a
@@ -239,13 +241,15 @@ val devices : ?kernels:(module Nx_kernel.S) -> Rig.t list -> (module Devices)
 val place : 'e Placement.t -> ('v, 's, 'd) t -> ('v, 's, 'e) t
 (** [place p x] is [x]'s elements at [p]: over [x]'s own memory where [x]
     already lies at [p] or where [p]'s device maps [x]'s memory, a copy
-    otherwise. Across sets it changes the brand; within one, the arrangement.
+    otherwise, and computed at [p] for a value of every set. Across sets it
+    changes the brand; within one, the arrangement.
 
     Raises [Invalid_argument] if [p]'s cuts do not divide [x]'s shape, and
     {!Rig.Lost} for a lost device. *)
 
-val placement : ('v, 's, 'd) t -> 'd Placement.t
-(** [placement x] is where [x] lies. *)
+val placement : ('v, 's, 'd) t -> 'd Placement.t option
+(** [placement x] is where [x]'s bytes are, or [None] for a value of every set,
+    which has none. *)
 
 (** {1:errors Errors}
 
@@ -301,8 +305,8 @@ end
     operands' set's kernels, and raises if the set has none. Each refusal raises
     [Invalid_argument] naming [by] and the interpretation.
 
-    No rule receives a constant: each constant operand is computed first, where
-    the operation reads it. *)
+    No rule receives a value of every set: each such operand is computed first,
+    where the operation reads it. *)
 module Prim : sig
   type ('v, 's, 'd) nx := ('v, 's, 'd) t
 
