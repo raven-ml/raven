@@ -23,8 +23,9 @@ val open_gpu : unit -> (Rig_amd.t, string) result
 
 (** {1:gpu The GPU} *)
 
-include Rig_gpu_support.S with type gpu = Rig_amd.t
-(** GPU [0], opened by {!open_gpu}. *)
+include Rig_gpu_support.Conformance with module D = Rig_amd
+(** GPU [0], opened by {!open_gpu}; the second device is GPU [0] opened again
+    through amdgpu, none without a kernel driver. *)
 
 val reached : Rig_amd.t -> int -> unit
 (** [reached g v] returns once [g]'s timeline word reaches [v], sleeping on

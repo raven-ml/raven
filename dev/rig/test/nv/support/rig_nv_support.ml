@@ -12,6 +12,8 @@ module H = Rig_gpu_support.Host
 
 (* The GPU *)
 
+module D = N
+
 include Rig_gpu_support.Make (struct
   module D = N
 
@@ -136,10 +138,12 @@ let take l =
 let at_host l at = host l.memory + at
 let at_gpu l at = address l.memory + at
 
-let entry_of l at words =
+(* The ring entry, as two words, of the segment [words] at the GPU address
+   [a]. *)
+let ring_entry a words =
   let e =
     A.Packet.encode Int64.of_int
-      (A.Gpfifo.entry (at_gpu l at) ~offset:0 ~words:(String.length words / 4))
+      (A.Gpfifo.entry a ~offset:0 ~words:(String.length words / 4))
   in
   Array.init 2 (fun i ->
       Int32.to_int (String.get_int32_le e (4 * i)) land 0xffff_ffff)
@@ -148,11 +152,12 @@ let segment l p =
   let at = take l + segment_at in
   let words = A.Packet.encode Int64.of_int p in
   H.write (at_host l at) words;
-  entry_of l at words
+  ring_entry (at_gpu l at) words
 
-(* A launch of [kernel] of [cubin], whose first instruction is at [entry]. *)
-let launch_kernel l cubin name entry ~blocks args =
-  let g = l.g in
+(* A launch of [kernel] of [cubin], whose first instruction is at [entry], in
+   the slot at the GPU address [addr] whose bytes [put] stores, at an offset of
+   the slot: the ring entry of its segment. *)
+let schedule g ~addr ~put cubin name entry ~blocks args =
   let kernel =
     match A.Cubin.kernel cubin name with
     | Some k -> k
@@ -167,10 +172,9 @@ let launch_kernel l cubin name entry ~blocks args =
   let bytes = A.Launch.local_bytes launch in
   (match cap.local bytes with Ok () -> () | Error e -> failf "local: %s" e);
   let local = A.Local_memory.make cap bytes in
-  let at = take l in
   let base = entry - kernel.code in
   let bank q (b : A.Cubin.bank) =
-    let a = if b.index = 0 then at_gpu l (at + bank_at) else base + b.offset in
+    let a = if b.index = 0 then addr + bank_at else base + b.offset in
     A.Qmd.set_bank b.index a q
   in
   let q =
@@ -183,21 +187,23 @@ let launch_kernel l cubin name entry ~blocks args =
     |> A.Qmd.set_local_memory local.per_thread
   in
   let q = List.fold_left bank q (A.Launch.banks launch) in
-  H.write
-    (at_host l (at + bank_at))
-    (A.Structure.encode Int64.of_int (A.Qmd.parameters q));
+  put bank_at (A.Structure.encode Int64.of_int (A.Qmd.parameters q));
   List.iteri
     (fun i x ->
       let b = Bytes.create 8 in
       Bytes.set_int64_le b 0 (Int64.of_int x);
-      H.write
-        (at_host l (at + bank_at + kernel.params_offset + (8 * i)))
-        (Bytes.to_string b))
+      put (bank_at + kernel.params_offset + (8 * i)) (Bytes.to_string b))
     args;
-  H.write (at_host l at) (A.Structure.encode Int64.of_int (A.Qmd.structure q));
-  let words = A.Packet.encode Int64.of_int (A.Method.schedule (at_gpu l at)) in
-  H.write (at_host l (at + segment_at)) words;
-  entry_of l (at + segment_at) words
+  put 0 (A.Structure.encode Int64.of_int (A.Qmd.structure q));
+  let words = A.Packet.encode Int64.of_int (A.Method.schedule addr) in
+  put segment_at words;
+  ring_entry (addr + segment_at) words
+
+let launch_kernel l cubin name entry ~blocks args =
+  let at = take l in
+  schedule l.g ~addr:(at_gpu l at)
+    ~put:(fun o s -> H.write (at_host l (at + o)) s)
+    cubin name entry ~blocks args
 
 let launch l k f ~blocks args =
   let entry =
@@ -211,3 +217,45 @@ let launch_at l ~code bin f ~blocks args =
   let cubin = cubin_of f bin in
   let kernel = Option.get (A.Cubin.kernel cubin f) in
   launch_kernel l cubin f (code + kernel.code) ~blocks args
+
+(* Conformance *)
+
+let fixtures = "../nv/fixtures"
+let cubin = "kernels_sm89.cubin"
+
+let binary () =
+  ( fixture ~dir:fixtures cubin,
+    [ "empty"; "double_index"; "copy_after"; "spin"; "stack"; "stack_held" ] )
+
+let second () =
+  if Rig_nv_nvidia.count () < 2 then None else Some (Rig_nv_nvidia.open_ 1)
+
+let images = Rig_gpu_support.loader (fun () -> fst (binary ()))
+let parsed = lazy (cubin_of cubin (fst (binary ())))
+
+(* A launch in a slot of its own, Pinned memory of [t] that the submission
+   reads: the slot's last word stays 0, a flag nothing sets. *)
+let flag_at = slot - 8
+
+let in_slot t f ~blocks args =
+  let s = Rig_gpu_support.arguments t.d (String.make slot '\000') in
+  let addr = B.address s in
+  let bytes = Bytes.make slot '\000' in
+  let entry =
+    match Rig.Image.entry (images t.d) f with
+    | Some e -> e
+    | None -> failf "no kernel %s" f
+  in
+  let ring =
+    schedule t.g ~addr
+      ~put:(fun o x -> Bytes.blit_string x 0 bytes o (String.length x))
+      (Lazy.force parsed) f entry ~blocks (args addr)
+  in
+  B.copy ~src:(B.of_string (Bytes.to_string bytes)) ~dst:s;
+  (words ring, s)
+
+let copy_words t ~dst ~src =
+  in_slot t "copy_after" ~blocks:1 (fun _ ->
+      [ 0; B.address dst; B.address src; B.length src ])
+
+let spin t ~ns = in_slot t "spin" ~blocks:1 (fun addr -> [ addr + flag_at; ns ])

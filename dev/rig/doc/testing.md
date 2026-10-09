@@ -34,6 +34,8 @@ a suite and a bench) in `test/<lib>/support/`, and fixtures in
 bench reads each vendor's. A suite reads only its own directory. What every
 GPU suite shares lives once in `test/support/`: `rig_gpu_support`, host
 memory by address and a GPU of one driver opened through rig (below). The
+laws every GPU driver keeps run once, in `test/conformance/`, on each driver
+the machine has ("A new driver's tests", below). The
 machine's GPU lock is the library `rig.gpu_lock`, which links no rig, so
 that suites outside rig take it too. A tool that
 makes fixtures for several libraries lives in `test/gen/`, such as
@@ -299,15 +301,16 @@ What each ring suite holds:
 
 - Room. A driver's `room` answers `Never` for parts that do not fit its empty
   rings or exceed the part bound, and `Rig.submit` raises `Invalid_argument`
-  for them: "a submission of work the device does not run raises"
-  (`test/cuda/test_cuda.ml`, `test/nv/test_nv.ml`) submits ring words, ring
-  units and segment bytes CUDA does not run, and NV's fills, a copy on its
-  compute queue, a ring entry cut in half, more words than a segment holds and
-  more parts than its rings hold, and checks the refusal is the room's and no
-  value was assigned. `Later` is the core's to wait out; Polled's `~capacity`
-  holds it in rig's own suites. Parts whose declared sizes are near `max_int`
-  must answer `Never`: summing them as 64-bit integers can wrap and answer
-  `Fits` for work no ring holds.
+  for them: "a submission the rings have no room for raises"
+  (`test/nv/test_nv.ml`) submits a ring entry cut in half, more words than a
+  segment holds and more parts than its rings hold, and "a fill that declares
+  ring room raises" (`test/cuda/test_cuda.ml`) ring units and segment bytes
+  CUDA's streams do not have; each checks the refusal is the room's and no
+  value was assigned. Kinds of work a queue does not run are refused earlier,
+  by `Submission.make`, on every driver (`test/conformance/`). `Later` is the
+  core's to wait out; Polled's `~capacity` holds it in rig's own suites. Parts
+  whose declared sizes are near `max_int` must answer `Never`: summing them as
+  64-bit integers can wrap and answer `Fits` for work no ring holds.
 - Streams longer than the rings, with every byte of every copy checked at the
   end.
 - Counters past their width. A counter that wraps only after billions of
@@ -560,19 +563,27 @@ rows and their numbers.
 
 ## A new driver's tests
 
-A driver's suite opens its GPU through `Rig_gpu_support.Make` and holds, on
-its GPU:
+The laws every driver keeps live once, in `test/conformance/`, and run on
+each driver the machine has: its facts against `Rig.queues` and
+`Submission.make`'s refusals, copies through any two memories on its copy
+queues, every reader reading the last write, the order of values on every
+queue, a workspace's launches, its images, the timeline (an idle close,
+sleeps, work that runs with no further call, its own commits), a failed fill's
+loss, waits on another device's point, and its peers. A law reads what it
+needs from the device's facts: a device whose queues run no copy draws no
+copy part. A driver joins with its support matching
+`Rig_gpu_support.Conformance`: a binary of its fixtures, a second device
+where the machine has one, and two works on its first queue, a copy of words
+and a spin.
 
-- Its facts and its refusals, with misuse raising `Invalid_argument` at each
-  bound the `.mli` states.
-- Copies through any two kinds of its memory as the identity (`prop`).
-- Room: work the device does not run refused through `Rig.submit`, ring
+A driver's own suite opens its GPU through `Rig_gpu_support.Make` and holds,
+on its GPU, what is its own:
+
+- Its facts as its `.mli` states them, and its refusals, with misuse raising
+  `Invalid_argument` at each bound the `.mli` states.
+- Room: work its rings have no room for refused through `Rig.submit`, ring
   wraps drawn at exact and near fits, and streams longer than the rings.
-- The timeline: values complete in order, the word never moves backwards,
-  long work that is no fault, a close of an idle device that leaves the word
-  at the last value, and a loss that stops running work.
-- End-once for regions, mappings and images from two domains
-  (`stateful ~domains:2`).
+- Its stop: what a loss does to running and queued work.
 - Its fault path, after a guarded run, in a suite of its own if a fault
   outlives the device in its process.
 - Its sanitize run, with any environment its vendor library needs set in its

@@ -47,6 +47,7 @@ module type S = sig
   type gpu
   type t = { d : Rig.t; g : gpu }
 
+  val class_ : string
   val present : unit -> bool
   val hold : unit -> unit
   val open_ : unit -> t
@@ -64,6 +65,7 @@ module Make (G : Gpu) = struct
   type gpu = G.D.t
   type t = { d : Rig.t; g : gpu }
 
+  let class_ = G.class_
   let name = G.class_ ^ ":test"
   let present = G.present
   let hold () = if present () then Rig_gpu_lock.hold ()
@@ -126,3 +128,37 @@ module Make (G : Gpu) = struct
 
   let wait t v = Rig.wait t.d v
 end
+
+(* Conformance *)
+
+module type Conformance = sig
+  module D : Rig.Driver
+  include S with type gpu = D.t
+
+  val binary : unit -> string * string list
+  val second : unit -> (D.t, string) result option
+
+  val copy_words :
+    t -> dst:Rig.Buffer.t -> src:Rig.Buffer.t -> Rig.Submission.part * Rig.Buffer.t
+
+  val spin : t -> ns:int -> Rig.Submission.part * Rig.Buffer.t
+end
+
+let loader bin =
+  let lock = Mutex.create () and loaded = ref [] in
+  fun d ->
+    Mutex.protect lock @@ fun () ->
+    loaded := List.filter (fun (d, _) -> Rig.lost d = None) !loaded;
+    match List.find_opt (fun (d', _) -> Rig.equal d d') !loaded with
+    | Some (_, i) -> i
+    | None -> (
+        match Rig.Image.load d (bin ()) with
+        | Ok i ->
+            loaded := (d, i) :: !loaded;
+            i
+        | Error why -> failf "%a: %s" Rig.pp d why)
+
+let arguments d s =
+  let b = Rig.Buffer.create ~memory:Pinned d (String.length s) in
+  Rig.Buffer.copy ~src:(Rig.Buffer.of_string s) ~dst:b;
+  b

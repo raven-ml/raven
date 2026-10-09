@@ -78,6 +78,9 @@ module type S = sig
   (** The type for an open GPU: [d] as programs reach it, [g] its driver's
       device, which rig owns. *)
 
+  val class_ : string
+  (** [class_] names the GPU, as ["CUDA"]. *)
+
   val present : unit -> bool
   (** [present ()] is [true] iff the machine has the GPU, from its files alone:
       it starts no vendor library. *)
@@ -125,3 +128,41 @@ end
 
 (** [Make (G)] opens [G]'s GPU under the name [G.class_ ^ ":test"]. *)
 module Make (G : Gpu) : S with type gpu = G.D.t
+
+(** {1:conformance Conformance}
+
+    What the conformance suite needs of a GPU beyond its contract: a binary
+    and work on the device's first queue, which a driver's support makes from
+    its suite's fixtures, found from the directory a suite runs in. Each work
+    comes with the buffer of the device it reads its arguments from, which the
+    submission reads, so that rig keeps it until the work ran. *)
+module type Conformance = sig
+  module D : Rig.Driver
+  include S with type gpu = D.t
+
+  val binary : unit -> string * string list
+  (** [binary ()] is a binary of the driver's fixtures and the kernels it
+      holds. *)
+
+  val second : unit -> (D.t, string) result option
+  (** [second ()] opens another device of the driver beside the one {!open_}
+      gave, while that one is open, or is [None] where the machine has none.
+      The caller stops it. *)
+
+  val copy_words :
+    t -> dst:Rig.Buffer.t -> src:Rig.Buffer.t -> Rig.Submission.part * Rig.Buffer.t
+  (** [copy_words t ~dst ~src] is work on [t]'s first queue that copies [src]'s
+      bytes into [dst], buffers of [t] of one length, a positive multiple of 4,
+      and the buffer of [t] it reads its arguments from. *)
+
+  val spin : t -> ns:int -> Rig.Submission.part * Rig.Buffer.t
+  (** [spin t ~ns] is work on [t]'s first queue that runs at least [ns]
+      nanoseconds, and the buffer of [t] it reads its arguments from. *)
+end
+
+val loader : (unit -> string) -> Rig.t -> Rig.Image.t
+(** [loader bin] is [bin ()] loaded on a device, once per device while it is
+    not lost. *)
+
+val arguments : Rig.t -> string -> Rig.Buffer.t
+(** [arguments d s] is new [Pinned] memory of [d] holding [s]. *)

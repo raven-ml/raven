@@ -46,6 +46,8 @@ let bind g =
          "cuCtxSynchronize";
        |])
 
+module D = Rig_cuda
+
 include Rig_gpu_support.Make (struct
   module D = Rig_cuda
 
@@ -154,3 +156,33 @@ let kernels ?dir g =
     loaded (Result.get_ok (Rig_cuda.image g (fixture ?dir "kernels.ptx")))
   in
   (m, fun name -> Option.get (Rig_cuda.entry m name))
+
+(* Conformance *)
+
+let binary () =
+  ( fixture ~dir:"../cuda/fixtures" "kernels.ptx",
+    [ "empty"; "double_index"; "spin"; "step"; "fault" ] )
+
+let second () = if Rig_cuda.count () < 2 then None else Some (Rig_cuda.open_ 1)
+let modules = Rig_gpu_support.loader (fun () -> fst (binary ()))
+let func t f = Option.get (Rig.Image.entry (modules t.d) f)
+
+(* The kernel [spin] holds until its flag, a zero word here, is not 0, or for
+   its nanoseconds. *)
+let zero t = Rig_gpu_support.arguments t.d (String.make 8 '\000')
+
+let copy_words t ~dst ~src =
+  let flag = zero t in
+  let f =
+    delayed ~spin:(func t "spin") ~flag:(Rig.Buffer.address flag) ~ns:0
+      ~dst:(Rig.Buffer.address dst) ~src:(Rig.Buffer.address src)
+      (Rig.Buffer.length src)
+  in
+  (part ~queue:"COMPUTE:0" f, flag)
+
+let spin t ~ns =
+  let flag = zero t in
+  let f =
+    launch (func t "spin") ~grid:1 ~block:1 (Rig.Buffer.address flag) ns
+  in
+  (part ~queue:"COMPUTE:0" f, flag)

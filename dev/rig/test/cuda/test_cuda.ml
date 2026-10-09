@@ -111,51 +111,8 @@ let facts =
 
 (* Memory *)
 
-let kinds : B.memory list = [ Device; Pinned; Mapped ]
-
-let pp_kind ppf (k : B.memory) =
-  Format.pp_print_string ppf
-    (match k with Device -> "Device" | Pinned -> "Pinned" | Mapped -> "Mapped")
-
-let kind = Gen.of_list ~pp:pp_kind kinds
-let size = Gen.of_list ~pp:Format.pp_print_int [ 1; 7; 4096; (1 lsl 20) + 7 ]
-let offset = Gen.of_list ~pp:Format.pp_print_int [ 0; 1; 4095 ]
-
 let pattern n seed =
   String.init n (fun i -> Char.chr (((i * 7) + seed) land 255))
-
-(* Whether the driver's memory [k] has a host address; [None] for memory it
-   does not make. *)
-let on_host g k =
-  match C.alloc g k 1 with
-  | None -> None
-  | Some r ->
-      let h = Option.is_some (C.locate r).host in
-      C.free g r;
-      Some h
-
-(* host -> a -> b -> host through copies, on both queues. *)
-let round_trip ((ka : B.memory), kb, n, (oa, ob)) =
-  S.with_ @@ fun ({ d; g } as t) ->
-  let expected =
-    match ka with Device -> Some false | Pinned -> Some true | Mapped -> None
-  in
-  equal (option bool) ~msg:"host of a" expected (on_host g ka);
-  let at memory o = B.view (B.create ~memory d (n + o)) ~first:o ~length:n in
-  let src = at Pinned 0 and dst = at Pinned 0 in
-  let a = at ka oa and b = at kb ob in
-  let data = pattern n (n + oa) in
-  H.write (B.address src) data;
-  let v =
-    S.submit t
-      [|
-        S.copy ~queue:"COPY:0" ~dst:a src;
-        S.copy ~queue:"COMPUTE:0" ~after:[| 0 |] ~dst:b a;
-        S.copy ~queue:"COPY:0" ~after:[| 1 |] ~dst b;
-      |]
-  in
-  S.wait t v;
-  equal string data (H.read (B.address dst) n)
 
 let past_memory () =
   S.with_ @@ fun { g; _ } -> is_none (C.alloc g Device (2 * (C.facts g).budget))
@@ -180,9 +137,6 @@ let written_on_return () =
 let memory =
   group ~timeout:120. "memory"
     [
-      prop ~count:30 "copies through any two kinds of memory are the identity"
-        (Gen.quad kind kind size (Gen.pair offset offset))
-        round_trip;
       test "an allocation past the GPU's memory is None" past_memory;
       test "write_gpu's bytes are on the GPU when it returns" written_on_return;
     ]
@@ -211,28 +165,6 @@ let fills_in_a_fresh_domain () =
   C.unload g m;
   C.free g out
 
-(* A kernel writes host memory through the address map_host gives for a range
-   inside a registered one, away from its start. *)
-let kernel_through_map_host () =
-  S.with_ @@ fun ({ g; _ } as t) ->
-  let m, kernel = S.kernels g in
-  let n = 1000 in
-  let p = H.pages (2 * H.page) in
-  let whole = require_some (C.map_host g p (2 * H.page)) in
-  let at = p + H.page + 64 in
-  let inside = require_some (C.map_host g at (4 * n)) in
-  let f =
-    S.launch (kernel "double_index") ~grid:4 ~block:256 (address inside) n
-  in
-  S.wait t (S.submit t [| S.part ~queue:"COMPUTE:0" f |]);
-  equal (list int)
-    (List.init n (fun i -> 2 * i))
-    (List.init n (fun i -> H.get32 (at + (4 * i))));
-  C.free g inside;
-  C.free g whole;
-  C.unload g m;
-  H.free_pages p (2 * H.page)
-
 (* Returns once [t]'s word reached [v], which a lost device's stop brings it
    to. *)
 let drained (t : S.t) v =
@@ -258,38 +190,14 @@ let failed_fill () =
   drained t 1;
   equal string ~msg:"copied before the word" data (H.read (B.address dst) 64)
 
-(* A fill that fails behind a 100 ms kernel: the loss's stop finds the kernel
-   running, and the word still reaches the failed value. *)
-let failed_behind_work () =
-  S.with_ @@ fun ({ g; _ } as t) ->
-  if S.attribute watchdog <> 0 then
-    skip ~reason:"a display watchdog ends long kernels" ();
-  let flag = require_some (C.alloc g Pinned 8) in
-  H.set64 (host flag) 0;
-  Fun.protect ~finally:(fun () -> H.set64 (host flag) 1) @@ fun () ->
-  let _, kernel = S.kernels g in
-  let spin =
-    S.launch (kernel "spin") ~grid:1 ~block:1 (address flag) (second / 10)
-  in
-  let parts =
-    [|
-      S.part ~queue:"COMPUTE:0" spin; S.part ~queue:"COMPUTE:0" (S.failing 1);
-    |]
-  in
-  ignore (lost (fun () -> S.submit t parts));
-  H.set64 (host flag) 1;
-  S.close t;
-  drained t 1
-
 let no_bytes () =
   S.with_ @@ fun { g; _ } ->
   let raises name f = raises_match ~msg:name Exn.invalid_arg f in
   raises "alloc of 0 bytes" (fun () -> C.alloc g Device 0);
   raises "map_host of 0 bytes" (fun () -> C.map_host g (word g) 0)
 
-(* Parts CUDA's queues do not run: ring words are refused when the submission
-   is made, as the queues' [runs] list no [Words]; ring units and segment bytes
-   when it is submitted. No value is assigned. *)
+(* Fills that declare ring units or segment bytes, which CUDA's streams do not
+   have, are refused when submitted, and no value is assigned. *)
 let refused () =
   S.with_ @@ fun ({ d; _ } as t) ->
   let fill ~units ~bytes =
@@ -301,21 +209,11 @@ let refused () =
         }
     | p -> p
   in
-  let words =
-    {
-      Rig.Submission.queue = "COMPUTE:0";
-      after = [||];
-      work = Words (B.create Rig.host 8);
-    }
-  in
   let refuses msg p =
     raises_match ~msg
       (Exn.invalid_arg ~substring:"never fit")
       (fun () -> S.submit t [| p |])
   in
-  raises_match ~msg:"ring words"
-    (Exn.invalid_arg ~substring:"runs no words")
-    (fun () -> Rig.Submission.make ~reads:0 ~writes:0 d [| words |]);
   refuses "a ring unit" (fill ~units:1 ~bytes:0);
   refuses "a segment byte" (fill ~units:0 ~bytes:1);
   equal int ~msg:"values assigned" 0 (Rig.submitted d)
@@ -325,13 +223,10 @@ let work =
     [
       test "a fill runs with the context current from a fresh domain"
         fills_in_a_fresh_domain;
-      test "a kernel addresses host memory where map_host says"
-        kernel_through_map_host;
       test "a failed fill loses the device, and its value still drains"
         failed_fill;
-      test "a value failed behind running work drains" failed_behind_work;
       test "an allocation or a mapping of no bytes raises" no_bytes;
-      test "a submission of work the device does not run raises" refused;
+      test "a fill that declares ring room raises" refused;
     ]
 
 (* Images *)
@@ -419,21 +314,6 @@ let rec reopened () =
   | Error _ ->
       Domain.cpu_relax ();
       reopened ()
-
-let long_work () =
-  S.with_ @@ fun ({ g; _ } as t) ->
-  if S.attribute watchdog <> 0 then
-    skip ~reason:"a display watchdog ends long kernels" ();
-  let flag = require_some (C.alloc g Pinned 8) in
-  Fun.protect ~finally:(fun () -> H.set64 (host flag) 1) @@ fun () ->
-  let m = spin t flag in
-  equal int ~msg:"the work committed" 0 (Rig.signaled t.d);
-  C.sleep g ~seen:0 ~still_ms:50;
-  equal int ~msg:"the work still runs" 0 (C.signaled g);
-  H.set64 (host flag) 1;
-  S.wait t 1;
-  C.sleep g ~seen:0 ~still_ms:60_000;
-  C.unload g m
 
 (* A collection needs every domain at a safe point, so it waits for a domain
    whose C call holds the runtime: here, an unload that CUDA holds until the
@@ -547,139 +427,9 @@ let registry_is_the_process () =
   equal bool ~msg:"locked after the last free" false (S.locked p);
   H.free_pages p H.page
 
-(* Commits *)
-
-(* Encoded work starts with no other call: a kernel stores into pinned memory
-   the host reads, while nothing waits for its value. *)
-let runs_uncommitted () =
-  S.with_ @@ fun ({ g; _ } as t) ->
-  let _, kernel = S.kernels g in
-  let out = require_some (C.alloc g Pinned 8) in
-  H.set64 (host out) 0;
-  let f = S.launch (kernel "step") ~grid:1 ~block:1 (address out) 0 in
-  let v = S.submit t [| S.part ~queue:"COMPUTE:0" f |] in
-  let t0 = Rig.Profile.now () in
-  while H.get64 (host out) = 0 do
-    if Rig.Profile.now () - t0 > 10 * second then
-      fail "the kernel did not run within 10 s";
-    Domain.cpu_relax ()
-  done;
-  S.wait t v;
-  C.free g out
-
-(* Submits once on [d] a submission naming a hold of [m] whose release sets
-   [released], and drops both. *)
-let[@inline never] submit_held d m released =
-  let h = Rig.Hold.make ~release:(fun () -> Atomic.set released true) [ m ] in
-  let s = Rig.Submission.make ~hold:h ~reads:0 ~writes:0 d [||] in
-  ignore (Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||])
-
-(* The device commits on its own every 64 values: a hold's release runs in a
-   drain once its value is reached, with no wait for it. *)
-let lag_bounded () =
-  S.with_ @@ fun ({ d; _ } as t) ->
-  let m = B.create d 64 and released = Atomic.make false in
-  submit_held d m released;
-  for _ = 1 to 64 do
-    ignore (S.submit t [||])
-  done;
-  let t0 = Rig.Profile.now () in
-  while
-    Gc.full_major ();
-    ignore (Sys.opaque_identity (B.create d 8));
-    not (Atomic.get released)
-  do
-    if Rig.Profile.now () - t0 > 10 * second then
-      fail "the hold was not released within 10 s";
-    Domain.cpu_relax ()
-  done
-
-(* A value on COPY:0 starts after the values before it on COMPUTE:0, which ended
-   on the other stream: it copies what a late compute copy wrote. *)
-let copy_after_compute () =
-  S.with_ @@ fun ({ d; g } as t) ->
-  let _, kernel = S.kernels g in
-  let flag = require_some (C.alloc g Pinned 8) in
-  H.set64 (host flag) 0;
-  let data = String.init 256 (fun i -> Char.chr (i land 255)) in
-  let src = B.create d 256 and mid = B.create d 256 in
-  let out = B.create ~memory:Pinned d 256 in
-  S.write_gpu (Nativeint.of_int (B.address src)) data;
-  H.write (B.address out) (String.make 256 ' ');
-  let late =
-    S.delayed ~spin:(kernel "spin") ~flag:(address flag) ~ns:(second / 20)
-      ~dst:(B.address mid) ~src:(B.address src) 256
-  in
-  ignore (S.submit t [| S.part ~queue:"COMPUTE:0" late |]);
-  let v = S.submit t [| S.copy ~queue:"COPY:0" ~dst:out mid |] in
-  S.wait t v;
-  equal string ~msg:"the copied bytes" data (H.read (B.address out) 256);
-  C.free g flag
-
-let commits =
-  group ~timeout:60. "commits"
-    [
-      test "encoded work runs while nothing waits for it" runs_uncommitted;
-      test "the device commits on its own within 64 values" lag_bounded;
-      test "a value on the copy stream follows the compute values before it"
-        copy_after_compute;
-    ]
-
-(* Workspace *)
-
-(* Launches through one workspace, each over its first [k] KiB: a kernel on one
-   stream copies the launch's own bytes into it, one on the other copies them
-   out. Nothing waits between launches: the workspace's stamps order each
-   launch after the one before. *)
-let gen_launches = Gen.list ~size:(Gen.int_range 1 12) (Gen.int_range 1 4)
-
-let through_workspace sizes =
-  S.with_ @@ fun { d; g } ->
-  let _, kernel = S.kernels g in
-  let flag = require_some (C.alloc g Pinned 8) in
-  H.set64 (host flag) 1;
-  let copy ~dst ~src n =
-    S.delayed ~spin:(kernel "spin") ~flag:(address flag) ~ns:0 ~dst ~src n
-  in
-  let s = B.create d (4 * 1024) in
-  let launch i k =
-    let n = k * 1024 in
-    let data = pattern n i in
-    let src = B.create ~memory:Pinned d n
-    and out = B.create ~memory:Pinned d n in
-    H.write (B.address src) data;
-    let into = copy ~dst:(B.address s) ~src:(B.address src) n
-    and out_of = copy ~dst:(B.address out) ~src:(B.address s) n in
-    let parts =
-      [|
-        S.part ~queue:"COPY:0" into;
-        S.part ~queue:"COMPUTE:0" ~after:[| 0 |] out_of;
-      |]
-    in
-    let sub = Rig.Submission.make ~reads:1 ~writes:2 d parts in
-    ignore (Rig.submit sub ~reads:[| src |] ~writes:[| s; out |] ~waits:[||]);
-    (out, data)
-  in
-  let outs = List.mapi launch sizes in
-  List.iteri
-    (fun i (out, data) ->
-      B.wait out Read;
-      let got = H.read (B.address out) (String.length data) in
-      equal string ~msg:(strf "launch %d" i) data got)
-    outs;
-  C.free g flag
-
-let workspace =
-  group ~timeout:60. "workspace"
-    [
-      prop ~count:30 "a launch reads what its submission wrote into a workspace"
-        gen_launches through_workspace;
-    ]
-
 let timeline =
   group ~timeout:60. "timeline"
     [
-      test "long work is no fault, and a stale seen returns at once" long_work;
       test
         "unload lets other domains run while CUDA waits for the GPU (sampled)"
         unload_aside;
@@ -693,28 +443,6 @@ let timeline =
       test "an unload after the GPU opened again leaves the new device working"
         unload_after_reopen;
     ]
-
-(* Two GPUs *)
-
-let two_gpus () =
-  if C.count () < 2 then skip ~reason:"CUDA sees fewer than two GPUs" ();
-  S.with_ @@ fun { g = a; _ } ->
-  let b = require_ok (C.open_ 1) in
-  Fun.protect ~finally:(fun () -> C.stop b ~fault:None) @@ fun () ->
-  let h = require_some (C.alloc b Pinned 64) in
-  let d = require_some (C.alloc b Device 64) in
-  let ph = require_some (C.map_peer a b h) in
-  equal (option int) ~msg:"host memory maps" (C.locate h).host
-    (C.locate ph).host;
-  let pd = C.map_peer a b d in
-  equal bool ~msg:"peer is map_peer's answer" (C.peer a b) (Option.is_some pd);
-  (match pd with Some pd -> C.free a pd | None -> ());
-  C.free a ph;
-  C.free b h;
-  C.free b d
-
-let two =
-  group ~timeout:60. "two GPUs" [ test "map each other's memory" two_gpus ]
 
 (* Graphs *)
 
@@ -1104,202 +832,6 @@ let registry_commands ~cover =
       Registry.free Registry.free_sys;
   ]
 
-(* Submissions: the order of values *)
-
-module Order = struct
-  (* A part copies [n] bytes of buffer [src] at [so] to buffer [dst] at [do_],
-     on COPY:0 iff [copy], after the earlier parts [after] lists. A part with a
-     [delay] is a fill that starts its copy that many nanoseconds late, so that
-     work run out of order shows in the buffers. *)
-  type part = {
-    delay : int;
-    copy : bool;
-    src : int;
-    so : int;
-    dst : int;
-    do_ : int;
-    n : int;
-    after : int list;
-  }
-
-  let buffers = 3
-  let size = 65536
-
-  let pp_part ppf p =
-    Format.fprintf ppf "{%s%s %d@%d -> %d@%d n=%d after=[%s]}"
-      (if p.copy then "COPY" else "COMPUTE")
-      (if p.delay > 0 then strf " +%dns" p.delay else "")
-      p.src p.so p.dst p.do_ p.n
-      (String.concat ";" (List.map string_of_int p.after))
-
-  let pp_one ppf ps =
-    Format.fprintf ppf "[%a]"
-      (Format.pp_print_list ~pp_sep:Format.pp_print_space pp_part)
-      ps
-
-  let pp ppf subs =
-    Format.pp_print_list ~pp_sep:Format.pp_print_space pp_one ppf subs
-
-  let initial b =
-    Bytes.init size (fun i -> Char.chr (((b * 61) + (i * 7)) land 255))
-
-  type t = { bufs : Bytes.t array; mutable last : bool option }
-
-  let make () = { bufs = Array.init buffers initial; last = None }
-
-  (* Part [i] runs before part [j], [i < j]: same queue, or [j] runs after a
-     part that runs after [i]. *)
-  let rec before ps i j =
-    let pj = List.nth ps j in
-    (List.nth ps i).copy = pj.copy
-    || List.exists (fun k -> k = i || (k > i && before ps i k)) pj.after
-
-  let overlap (b, o) (b', o') n n' = b = b' && o < o' + n' && o' < o + n
-
-  let conflict p q =
-    overlap (p.dst, p.do_) (q.dst, q.do_) p.n q.n
-    || overlap (p.src, p.so) (q.dst, q.do_) p.n q.n
-    || overlap (p.dst, p.do_) (q.src, q.so) p.n q.n
-
-  (* The result is one: every pair of parts that conflict is ordered, and no
-     part copies over its own source. *)
-  let determined_one ps =
-    List.for_all
-      (fun p -> not (overlap (p.src, p.so) (p.dst, p.do_) p.n p.n))
-      ps
-    &&
-    let n = List.length ps in
-    List.for_all
-      (fun j ->
-        List.for_all
-          (fun i ->
-            before ps i j || not (conflict (List.nth ps i) (List.nth ps j)))
-          (List.init j Fun.id))
-      (List.init n Fun.id)
-
-  let determined _ subs = List.for_all determined_one subs
-
-  let run_one m ps =
-    let queues = List.sort_uniq compare (List.map (fun p -> p.copy) ps) in
-    cover "a submission of no parts after one released on COPY"
-      (ps = [] && m.last = Some true);
-    cover "a submission on the queue that released the last"
-      (queues <> [] && m.last = Some (List.hd (List.rev ps)).copy);
-    cover "a switch of queue"
-      (queues <> [] && m.last = Some (not (List.hd (List.rev ps)).copy));
-    cover "two queues in one submission" (List.length queues = 2);
-    cover "an after across queues"
-      (List.exists
-         (fun p ->
-           List.exists (fun k -> (List.nth ps k).copy <> p.copy) p.after)
-         ps);
-    List.iter
-      (fun p -> Bytes.blit m.bufs.(p.src) p.so m.bufs.(p.dst) p.do_ p.n)
-      ps;
-    m.last <- Some (match List.rev ps with p :: _ -> p.copy | [] -> false)
-
-  let run m subs =
-    cover "several values in flight" (List.length subs > 1);
-    List.iter (run_one m) subs
-
-  (* The system *)
-
-  type sys = {
-    t : S.t;
-    buffers : B.t array;
-    flag : C.region;
-    image : C.image;
-    spin : int;
-  }
-
-  let start () =
-    let t = shared () in
-    let buffers =
-      Array.init buffers (fun b ->
-          let r = B.create t.d size in
-          S.write_gpu
-            (Nativeint.of_int (B.address r))
-            (Bytes.to_string (initial b));
-          r)
-    in
-    let flag = Option.get (C.alloc t.g Pinned 8) in
-    H.set64 (host flag) 0;
-    let image, kernel = S.kernels t.g in
-    { t; buffers; flag; image; spin = kernel "spin" }
-
-  let release s =
-    C.free s.t.g s.flag;
-    C.unload s.t.g s.image
-
-  (* Submits [subs] back to back, then reads the word until it holds the last
-     value: each read is at least the one before. *)
-  let run_sys s subs =
-    let part p =
-      let queue = if p.copy then "COPY:0" else "COMPUTE:0" in
-      let after = Array.of_list p.after in
-      let dst = B.view s.buffers.(p.dst) ~first:p.do_ ~length:p.n
-      and src = B.view s.buffers.(p.src) ~first:p.so ~length:p.n in
-      if p.delay = 0 then S.copy ~queue ~after ~dst src
-      else
-        S.part ~queue ~after
-          (S.delayed ~spin:s.spin ~flag:(address s.flag) ~ns:p.delay
-             ~dst:(B.address dst) ~src:(B.address src) p.n)
-    in
-    let first = Rig.submitted s.t.d + 1 in
-    let hand ps = S.submit s.t (Array.of_list (List.map part ps)) in
-    let last = List.fold_left (fun _ ps -> hand ps) (first - 1) subs in
-    let rec watch seen =
-      let w = Rig.signaled s.t.d in
-      at_least int ~msg:"the word" ~than:seen w;
-      at_most int ~msg:"the word" ~than:last w;
-      if w < last then watch w
-    in
-    watch (first - 1);
-    S.wait s.t last;
-    still ~msg:"the word" int last (fun () -> C.signaled s.t.g) ~ms:1
-
-  let invariant m s =
-    Array.iteri
-      (fun b r ->
-        equal string ~msg:(strf "buffer %d" b)
-          (Bytes.to_string m.bufs.(b))
-          (S.read_gpu (Nativeint.of_int (B.address r)) size))
-      s.buffers
-
-  let parts =
-    let open Gen in
-    let part =
-      let+ delay = frequency [ (2, constant 0); (1, constant 50_000) ]
-      and+ copy = bool
-      and+ src = int_range 0 (buffers - 1)
-      and+ dst = int_range 0 (buffers - 1)
-      and+ n = one_of [ int_range 1 64; int_range 1 16384 ]
-      and+ so = int_range 0 (size - 16384)
-      and+ do_ = int_range 0 (size - 16384)
-      and+ after = list ~size:(int_range 0 2) (int_range 0 2) in
-      { delay; copy; src; so; dst; do_; n; after }
-    in
-    let submission =
-      let+ ps = list ~size:(int_range 0 3) part in
-      List.mapi
-        (fun i p ->
-          let after = List.filter (fun k -> k < i) p.after in
-          { p with after = List.sort_uniq compare after })
-        ps
-    in
-    list ~size:(int_range 1 4) submission
-end
-
-let order = abstract "o" ~invariant:Order.invariant ~release:Order.release
-
-let order_commands =
-  [
-    command "start" (Gen.unit @-> makes order) Order.make Order.start;
-    command "submit" ~pre:Order.determined
-      (order ^-> Gen.with_pp Order.pp Order.parts @-> returns unit)
-      Order.run Order.run_sys;
-  ]
-
 let stateful =
   group ~timeout:300. "stateful"
     [
@@ -1308,9 +840,6 @@ let stateful =
       stateful ~count:20 ~domains:2
         "map_host from two domains shares a host range both ways"
         (registry_commands ~cover:(fun _ _ -> ()));
-      stateful ~count:100 ~steps:20
-        "values complete in order and the word never moves backwards (sampled)"
-        order_commands;
     ]
 
 let () =
@@ -1324,9 +853,6 @@ let () =
          work;
          images;
          graphs;
-         commits;
-         workspace;
          timeline;
-         two;
          stateful;
        ])

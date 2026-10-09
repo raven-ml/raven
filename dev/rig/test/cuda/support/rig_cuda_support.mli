@@ -7,8 +7,9 @@
 
 (** {1:gpu The GPU} *)
 
-include Rig_gpu_support.S with type gpu = Rig_cuda.t
-(** GPU [0], its CUDA functions bound ({!bind}). *)
+include Rig_gpu_support.Conformance with module D = Rig_cuda
+(** GPU [0], its CUDA functions bound ({!bind}); the second device is GPU
+    [1]. *)
 
 val bind : Rig_cuda.t -> unit
 (** [bind g] makes the CUDA functions of [g]'s capability those {!attribute},

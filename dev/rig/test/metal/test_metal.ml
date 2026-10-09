@@ -392,12 +392,6 @@ let bumps_counted fills =
   List.iter (fun (b : Rig_metal_abi.icb) -> b.release ()) !icbs;
   List.iter (Rig_metal.free t.g) [ out; args ]
 
-let empty_submission () =
-  let t = dev () in
-  let v = submit t [||] in
-  wait t v;
-  equal int v (Rig_metal.signaled t.g)
-
 (* Metal hands a command buffer to its completion handler before the word moves
    and releases it, with the objects it holds, once the handler returned: no
    signal marks that, so a test waits for the weak reference [w] to empty under
@@ -437,7 +431,6 @@ let work =
         "a signaled value's submissions and every earlier one are written"
         (Gen.list ~size:(Gen.int_range 1 50) gen_submission)
         prefix_completion;
-      test "an empty submission is signaled" empty_submission;
       test "fills of a submission run in order" several_fills;
       prop ~count:50
         "every bump of every fill is counted, across indirect command buffers \
@@ -788,30 +781,6 @@ let contents b =
 
 let page = 16384
 
-let shared_both_ways (offset, pages) =
-  let t = dev () in
-  let n = (pages * page) - offset in
-  let p = H.pages ((pages + 1) * page) + offset in
-  for i = 0 to n - 1 do
-    H.set8 (p + i) (i mod 251)
-  done;
-  let r = require_some (Rig_metal.map_host t.g p n) in
-  equal int (p land lnot (page - 1)) (host r);
-  let args = alloc t args_bytes in
-  let into = p - host r in
-  set_args args ~at:0 ~out:(gpu r + into) ~c:n;
-  let bump = pipeline t "bump" in
-  let f =
-    S.dispatch ~pipeline:bump args ~groups:((n + 255) / 256) ~threads:256
-  in
-  wait t (submit t [| f |]);
-  for i = 0 to n - 1 do
-    if H.get8 (p + i) <> (i mod 251) + 1 then
-      failf "byte %d reads %d, not %d" i (H.get8 (p + i)) ((i mod 251) + 1)
-  done;
-  Rig_metal.free t.g r;
-  Rig_metal.free t.g args
-
 let aligned_256 n =
   let t = dev () in
   let r = alloc t n in
@@ -845,25 +814,9 @@ let given_back () =
   equal bool ~msg:"allocation" false (S.alive wr);
   equal bool ~msg:"mapping" false (S.alive wm)
 
-(* The host addresses host memory a device borrowed: the copy is its own. *)
-let copied_into_borrow () =
-  let t = dev () in
-  let n = 4 * page in
-  let h = B.create Rig.host n in
-  let b = require_some (B.borrow t.d h) in
-  let s = random_bytes ~seed:19 n in
-  B.copy ~src:(host_buffer s) ~dst:b;
-  equal octets s (contents h)
-
 let memory =
   group ~timeout:60. "memory"
     [
-      cases
-        ~name:(fun (o, n) ->
-          strf "a host range at offset %d over %d pages is shared both ways" o n)
-        "map_host"
-        [ (0, 1); (1, 1); (2, 2); (4095, 3); (0, 3) ]
-        shared_both_ways;
       prop "an allocation starts at a multiple of 256 bytes"
         ~examples:[ 1; 2; 255; 256; 257; 4095; 4096; page; page + 1 ]
         (Gen.int_range 1 (64 lsl 20))
@@ -871,7 +824,6 @@ let memory =
       test "alloc and map_host refuse no bytes" empty_regions;
       test "another device of the GPU maps none of its memory" no_peer;
       test "free releases an allocation's or a mapping's buffer" given_back;
-      test "the host copies into a borrow of host memory" copied_into_borrow;
     ]
 
 (* Files
@@ -1017,59 +969,7 @@ let file_tests =
         created_file_borrow;
     ]
 
-(* Workspace *)
-
-(* Launches through one workspace, each over its first [k] KiB: a fill writes
-   [3i + c] into it, a copy reads it into the launch's own buffer. Nothing waits
-   between them: the workspace's stamps order each launch after the one
-   before. *)
-let gen_launches = Gen.list ~size:(Gen.int_range 1 12) (Gen.int_range 1 4)
-
-let through_workspace sizes =
-  let t = dev () in
-  let args = alloc t (2 * List.length sizes * args_bytes) in
-  let copy = pipeline t "copy" in
-  let s = B.create t.d (4 * 1024) in
-  let launch i k =
-    let words = k * 256 and c = i + 1 and at = 2 * i * args_bytes in
-    let out = B.create t.d (4 * words) in
-    let fill = fill_dispatch t ~args ~at ~out:(B.address s) ~c words in
-    H.set64 (host args + at + args_bytes) (B.address out);
-    H.set64 (host args + at + args_bytes + 8) (B.address s);
-    let read =
-      S.dispatch ~pipeline:copy ~offset:(at + args_bytes) args
-        ~groups:(words / 256) ~threads:256
-    in
-    let parts = [| S.part fill; S.part read |] in
-    let sub = Rig.Submission.make ~reads:0 ~writes:2 t.d parts in
-    ignore (Rig.submit sub ~reads:[||] ~writes:[| s; out |] ~waits:[||]);
-    (out, c, words)
-  in
-  let outs = List.mapi launch sizes in
-  List.iter
-    (fun (out, c, words) ->
-      let h = B.create Rig.host (4 * words) in
-      B.copy ~src:out ~dst:h;
-      for i = 0 to words - 1 do
-        let got = H.get32 (B.address h + (4 * i)) in
-        if got <> (3 * i) + c then
-          failf "launch %d: word %d reads %d, not %d" c i got ((3 * i) + c)
-      done)
-    outs;
-  Rig_metal.free t.g args
-
-let workspace =
-  group ~timeout:60. "workspace"
-    [
-      prop ~count:50 "a launch reads what its submission wrote into a workspace"
-        gen_launches through_workspace;
-    ]
-
 (* Images *)
-
-let not_metallib () =
-  let t = dev () in
-  is_error (Rig_metal.image t.g "not a metallib")
 
 let no_kernel () =
   let t = dev () in
@@ -1100,13 +1000,6 @@ let beyond_limits () =
   refused ();
   refused ();
   Rig_metal.unload t.g i
-
-let entries () =
-  let t = dev () in
-  List.iter
-    (fun f -> ignore (require_some ~msg:f (Rig_metal.entry t.fill f)))
-    [ "fill"; "step"; "spin"; "bump"; "copy" ];
-  equal (option int) None (Rig_metal.entry t.fill "absent")
 
 (* Images entered from two domains: whatever the order, every [entry] of one
    function answers the address the first answered. *)
@@ -1168,10 +1061,8 @@ let unloaded_releases () =
 let images =
   group ~timeout:60. "images"
     [
-      test "bytes that are no metallib are an error" not_metallib;
       test "a function that is no compute kernel is an error" no_kernel;
       test "an entry beyond the GPU's limits raises, each time" beyond_limits;
-      test "each function of the image has an entry" entries;
       stateful ~domains:2 ~count:30
         "an image entered from two domains makes one pipeline a function"
         entry_commands;
@@ -1179,19 +1070,6 @@ let images =
     ]
 
 (* Timeline and loss *)
-
-let sleep_seen () =
-  let t = dev () in
-  let v = submit t [||] in
-  wait t v;
-  Rig_metal.sleep t.g ~seen:(v - 1) ~still_ms:600_000
-
-let stopped_idle () =
-  S.with_ @@ fun t ->
-  let v = S.submit t [||] in
-  S.wait t v;
-  S.close t;
-  equal int v (Rig.signaled t.d)
 
 (* A loss that finds work running stops the device, the work runs to its end,
    and its indirect command buffer is released after. *)
@@ -1241,9 +1119,6 @@ let unload_after_stop () =
 let timeline =
   group ~timeout:60. "timeline"
     [
-      test "sleep returns at once when the word differs from seen" sleep_seen;
-      test "a close of an idle device leaves the word at the last value"
-        stopped_idle;
       test
         "a loss while work runs: the work runs to its end, and its indirect \
          command buffer is released after"
@@ -1269,7 +1144,8 @@ let apple_align () =
     skip ~reason:"the GPU is of a Mac family" ();
   equal int 4 (Rig_metal.capability t.g).align
 
-(* Work the room refuses: words, and a fill that declares room. *)
+(* Fills that declare ring room, which Metal's queue does not have, are
+   refused, and the device runs on. *)
 let refused_work () =
   let t = dev () in
   let refused work =
@@ -1283,7 +1159,6 @@ let refused_work () =
         Rig.Submission.Fill { f with ring_units = units; segment_bytes = bytes }
     | w -> w
   in
-  refused (Words (Rig.Buffer.create Rig.host 4));
   refused (declaring ~units:1 ~bytes:0);
   refused (declaring ~units:0 ~bytes:64);
   let v = submit t [||] in
@@ -1305,8 +1180,7 @@ let opening =
       test "two opens are two devices, each with its own word" two_devices;
       test "an Apple GPU aligns arguments to 4 bytes" apple_align;
       test
-        "the room refuses words and fills that declare room, and the device \
-         runs on"
+        "the room refuses fills that declare room, and the device runs on"
         refused_work;
       test "off macOS no device opens" (fun () ->
           if S.macos then skip ~reason:"macOS" ();
@@ -1327,7 +1201,6 @@ let () =
          icbs;
          memory;
          file_tests;
-         workspace;
          images;
          timeline;
          opening;

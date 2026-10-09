@@ -1,0 +1,24 @@
+; The laws every GPU driver keeps, on each driver the machine has. Each
+; driver's test support makes its work from its suite's fixtures.
+
+(test
+ (name test_conformance)
+ (libraries
+  rig
+  rig_edge
+  rig_support
+  rig_gpu_lock
+  rig_gpu_support
+  rig_metal_support
+  rig_cuda_support
+  rig_nv_support
+  rig_amd_support
+  windtrap)
+ (foreign_stubs
+  (language c)
+  (names rig_conformance_bundle))
+ (deps
+  (glob_files ../metal/fixtures/*.metallib)
+  (glob_files ../cuda/fixtures/*)
+  (glob_files ../nv/fixtures/*)
+  (glob_files ../amd/fixtures/*)))

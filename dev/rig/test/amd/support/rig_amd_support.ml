@@ -31,6 +31,8 @@ let open_gpu () =
   | Some firmware -> Rig_amd_pci.open_ ~firmware 0
   | None -> Rig_amd_amdgpu.open_ 0
 
+module D = Rig_amd
+
 include Rig_gpu_support.Make (struct
   module D = Rig_amd
 
@@ -79,6 +81,66 @@ let words_part ~queue ?(after = [||]) ws =
   let b = Bigarray.(Array1.create int32 c_layout (Array.length ws)) in
   Array.iteri (fun i w -> b.{i} <- Int32.of_int w) ws;
   { Rig.Submission.queue; after; work = Words (Rig.Buffer.of_bigarray b) }
+
+(* Conformance *)
+
+let fixture f = In_channel.with_open_bin ("../amd/fixtures/" ^ f) In_channel.input_all
+let kernels_bin () = fixture "kernels_gfx1201.hsaco"
+let work_bin () = fixture "work_gfx1201.hsaco"
+let binary () = (kernels_bin (), [ "empty"; "double_index"; "spin"; "wild" ])
+let second () = if driverless () then None else Some (open_gpu ())
+
+(* A fixture loaded on each device, and its description. *)
+let code bin =
+  (Rig_gpu_support.loader bin, lazy (Result.get_ok (Rig_amd_abi.Code_object.of_string (bin ()))))
+
+let kernels = code kernels_bin
+let work = code work_bin
+
+(* The [n] low bytes of [x], little-endian. *)
+let le x n =
+  let b = Bytes.create 8 in
+  Bytes.set_int64_le b 0 (Int64.of_int x);
+  Bytes.sub_string b 0 n
+
+(* A part of the words of a dispatch of [name] of [code] over [groups]
+   workgroups of 64, its arguments [args] in Pinned memory of [t]. *)
+let dispatch t (load, co) name ~groups args =
+  let co = Lazy.force co in
+  let gpu = (Rig_amd.capability t.g).gpu in
+  let k = Option.get (Rig_amd_abi.Code_object.kernel co name) in
+  let base = Option.get (Rig.Image.entry (load t.d) name) - k.descriptor in
+  let packet =
+    Rig_amd_abi.Pm4.run gpu
+      (Rig_amd_abi.Pm4.dispatch gpu k ~program:(base + k.entry) ~scratch:0
+         ~args:(Rig.Buffer.address args) ~packet:0 ~threads:(64, 1, 1)
+         ~groups:(groups, 1, 1) ())
+  in
+  let s = Rig_amd_abi.Packet.encode Int64.of_int packet in
+  let ws =
+    Array.init (String.length s / 4) (fun i ->
+        Int32.to_int (String.get_int32_le s (4 * i)) land 0xffff_ffff)
+  in
+  (words_part ~queue:"COMPUTE:0" ws, args)
+
+(* work.cl's [copy dst src n delay] copies [n] words. *)
+let copy_words t ~dst ~src =
+  let n = Rig.Buffer.length src / 4 in
+  dispatch t work "copy" ~groups:1
+    (Rig_gpu_support.arguments t.d
+       (le (Rig.Buffer.address dst) 8
+       ^ le (Rig.Buffer.address src) 8
+       ^ le n 4 ^ le 0 4))
+
+(* kernels.cl's [spin flag n] sleeps [n] times 127 x 64 cycles, at most
+   2.1 us at 4 GHz, then sets its flag, here the arguments' last word. *)
+let spin t ~ns =
+  let args = Rig_gpu_support.arguments t.d (String.make 24 '\000') in
+  let n = (ns / 2000) + 1 in
+  Rig.Buffer.copy
+    ~src:(Rig.Buffer.of_string (le (Rig.Buffer.address args + 16) 8 ^ le n 4))
+    ~dst:(Rig.Buffer.view args ~first:0 ~length:12);
+  dispatch t kernels "spin" ~groups:1 args
 
 (* The C entries *)
 

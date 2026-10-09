@@ -7,8 +7,8 @@
 
 (** {1:gpu The GPU} *)
 
-include Rig_gpu_support.S with type gpu = Rig_nv.t
-(** GPU [0], opened through {!Rig_nv_nvidia}. *)
+include Rig_gpu_support.Conformance with module D = Rig_nv
+(** GPU [0], opened through {!Rig_nv_nvidia}; the second device is GPU [1]. *)
 
 (** {1:work Work through rig} *)
 

@@ -7,8 +7,8 @@
 
 (** {1:gpu The GPU} *)
 
-include Rig_gpu_support.S with type gpu = Rig_metal.t
-(** Metal's device [0]. *)
+include Rig_gpu_support.Conformance with module D = Rig_metal
+(** Metal's device [0]; its second device is device [0] opened again. *)
 
 (** {1:ring A device's ring, by hand}
 
