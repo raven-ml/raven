@@ -40,6 +40,7 @@
     call at a time, as do a completion queue's {!Cq.poll} and {!Cq.arm}, and
     {!wait}. A queue pair may be posted while its completion queue is polled in
     another domain. Destroying an object runs after every other call on it
+    returned, and {!close} after every other call on the NIC and its objects
     returned.
 
     {b Misuse.} Calls on a destroyed object, or on any object of a closed NIC,
