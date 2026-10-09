@@ -609,8 +609,8 @@ end
 
     Memory that something outside this library reaches is {e outside the claims}
     and never exclusive: memory {!Buffer.of_bigarray} and {!Buffer.of_io} make,
-    and memory {!Buffer.bigarray} exported. [Read] memory ({!Buffer.val-access})
-    is never exclusive either.
+    memory {!Buffer.bigarray} exported, and memory {!share} marked. [Read]
+    memory ({!Buffer.val-access}) is never exclusive either.
 
     A claimed memory may be {e consumed}: every buffer over it made before
     becomes {e dead}, and reaching a dead buffer's bytes raises
@@ -633,6 +633,16 @@ module Claim : sig
       Raises [Invalid_argument] and changes nothing if the memory has no read
       claim of a {!read}, a {!with_} or [rig_buffer_claim]: a reader outside the
       claims is not one. *)
+
+  val share : Buffer.t -> unit
+  (** [share b] puts [b]'s memory outside the claims for good: it is never
+      exclusive again, through any of its views and borrows. A library calls it
+      before it hands out a value over the memory that its own claims do not
+      follow, so that no donation writes what that value reads. It is
+      {!Buffer.bigarray}'s mark without the array.
+
+      Raises [Invalid_argument] if [b] is dead or its memory is held exclusive
+      by claims that have not consumed it ({!consume}). *)
 
   type t
   (** The type for the claims of a {!with_}. *)
@@ -657,7 +667,9 @@ module Claim : sig
   val exclusive : t -> Buffer.t -> bool
   (** [exclusive c b] is [true] iff [c] holds [b]'s memory exclusive: the caller
       may write it in place, through the buffer {!consume} returns, and no
-      reader sees the write. *)
+      reader sees the write. It is [false] once [b]'s memory is outside the
+      claims, even while [c] holds it: a consumer that shares or exports the
+      buffer {!consume} returned holds it exclusive no longer. *)
 
   val consume : t -> why:string -> Buffer.t -> Buffer.t
   (** [consume c ~why b] consumes [b]'s memory with the reason [why]: [b] and

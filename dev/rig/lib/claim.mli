@@ -7,6 +7,7 @@
 
 val read : Def.buffer -> unit
 val release : Def.buffer -> unit
+val share : Def.buffer -> unit
 
 type t
 

@@ -96,11 +96,11 @@ val no_entry : entry
     each one compare-and-set with one winner. From zero up, bit 0 ({!outside})
     is set once something outside the claims reaches the memory: the bigarray
     [Buffer.of_bigarray] was given, an io library's region, an array
-    [Buffer.bigarray] made. Bit 1 ({!read_only}) is set for [Read] memory. The
-    read claims count in steps of {!one_claim}. Only the word {!one_claim}, one
-    claim and no bit, becomes {!exclusive}, then {!consumed} once the claims
-    consumed the memory, then {!exported} once the consumer exported it. {!make}
-    sets the bits. *)
+    [Buffer.bigarray] made, a value [Claim.share] marked. Bit 1 ({!read_only})
+    is set for [Read] memory. The read claims count in steps of {!one_claim}.
+    Only the word {!one_claim}, one claim and no bit, becomes {!exclusive}, then
+    {!consumed} once the claims consumed the memory, then {!exported} once the
+    consumer exported or shared it. {!make} sets the bits. *)
 
 val outside : int
 val read_only : int

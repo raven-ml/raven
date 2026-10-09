@@ -41,6 +41,7 @@ let take fn b =
 
 let read b = take "Claim.read" b
 let release b = release_claim b.mem.claim
+let share b = Buffer.share "Claim.share" b
 
 (* [ended] is set once [with_]'s [f] returned or raised, before any claim is
    released: then the claims hold nothing, though the lists still name them. *)
@@ -146,7 +147,12 @@ let with_ ~read ~donate f =
   in
   Fun.protect ~finally:finish (fun () -> f c)
 
-let exclusive c b = (not c.ended) && List.memq b.mem.claim c.exclusive
+(* A word [c] holds is exclusive, consumed, or exported by a share or an export
+   of the consumer's buffer, which puts the memory outside the claims. *)
+let exclusive c b =
+  (not c.ended)
+  && List.memq b.mem.claim c.exclusive
+  && count b.mem.claim <> Memory.exported
 
 let consume c ~why b =
   if c.ended then invalid_arg "Rig.Claim.consume: the claims' with_ returned";

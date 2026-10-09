@@ -119,6 +119,17 @@ let borrow d b =
         Some { b with mem }
     | None -> None
 
+let share fn b =
+  check_live fn b;
+  if not (Memory.export b.mem.claim) then
+    invalid_argf
+      "Rig.%s: the memory is held exclusive by claims that have not consumed \
+       it"
+      fn;
+  (* A consumption between the first check and the export killed [b]: the memory
+     stays marked, which costs only its donations. *)
+  check_live fn b
+
 let wait_points b access =
   let e = b.mem.root.entry in
   if access = Read then Memory.iter_write Dev.wait_point e.stamps
@@ -185,13 +196,7 @@ let bigarray (type a b) (k : (a, b) Bigarray.kind) b :
       "Rig.Buffer.bigarray: %d bytes at offset %d are no whole number of \
        aligned %d-byte elements"
       bytes b.offset size;
-  if not (Memory.export b.mem.claim) then
-    invalid_arg
-      "Rig.Buffer.bigarray: the memory is held exclusive by claims that have \
-       not consumed it";
-  (* A consumption between the first check and the export killed [b]: the memory
-     stays marked, which costs only its donations. *)
-  check_live "Buffer.bigarray" b;
+  share "Buffer.bigarray" b;
   let root = b.mem.root in
   let at = b.mem.host - root.host + b.offset in
   let code = kind_code k and n = bytes / size in
