@@ -182,10 +182,31 @@ typedef void (*nx_cpu_block_fn)(const nx_cpu_block *b, void *ctx);
 
 /* Calls [f] on blocks of at most [most] elements that cover the loop [l]
    over the [n] operands [a], operand 0 the written one, each element once,
-   from a job. Order and threads decide no bit: [f] computes each element
-   from operands' elements at its index alone. */
-void nx_cpu_walk(int n, const nx_array *a, const nx_loop *l, int64_t most,
-                 nx_cpu_block_fn f, void *ctx);
+   from a job, or on the calling thread for a loop that one block holds.
+   Order and threads decide no bit: [f] computes each element from
+   operands' elements at its index alone. Inline, so that a kernel's call
+   of [f] on its one block is direct (walk.c, rule 0). */
+static inline void nx_cpu_walk(int n, const nx_array *a, const nx_loop *l,
+                               int64_t most, nx_cpu_block_fn f, void *ctx);
+
+/* nx_cpu_walk for a loop that one block does not hold (walk.c, rules 1 to
+   3). */
+void nx_cpu_cut(int n, const nx_array *a, const nx_loop *l, int64_t most,
+                nx_cpu_block_fn f, void *ctx);
+
+static inline void nx_cpu_walk(int n, const nx_array *a, const nx_loop *l,
+                               int64_t most, nx_cpu_block_fn f, void *ctx) {
+  if (l->rank > 1 || l->extent[0] > most) {
+    nx_cpu_cut(n, a, l, most, f, ctx);
+    return;
+  }
+  nx_cpu_block b = {.n0 = l->extent[0], .n1 = 1, .n2 = 1};
+  for (int k = 0; k < n; k++) {
+    b.at[k] = l->first[k];
+    b.s0[k] = l->step[k][0];
+  }
+  if (b.n0 > 0) f(&b, ctx);
+}
 
 /* The stage */
 

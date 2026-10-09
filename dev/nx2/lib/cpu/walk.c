@@ -9,6 +9,11 @@
    so the walk's order decides no bit, only how memory is read. Its rules,
    in order:
 
+   0. A loop of one axis that one block holds, as a small operation's is,
+      runs as that block on the calling thread: the rules below and a job
+      would decide the same at a cost that rivals the block's. This rule is
+      cpu.h's nx_cpu_walk, inline, so that a kernel calls its block
+      function directly; the others are nx_cpu_cut.
    1. An innermost axis of fewer than SHORT elements, as a small window's,
       would make a block of a few elements per row: the nearest outer axis
       of at least SHORT becomes the innermost. Byte-wide operands only: a
@@ -146,8 +151,8 @@ static void units(int64_t lo, int64_t hi, int worker, void *ctx) {
   }
 }
 
-void nx_cpu_walk(int n, const nx_array *a, const nx_loop *l, int64_t most,
-                 nx_cpu_block_fn f, void *ctx) {
+void nx_cpu_cut(int n, const nx_array *a, const nx_loop *l, int64_t most,
+                nx_cpu_block_fn f, void *ctx) {
   walk w = {n, *l, 0, 0, 0, 0, 1, 1, f, ctx};
   nx_loop *wl = &w.l;
   int r = wl->rank, bits = 0, widest = 1, byte_wide = 1;
