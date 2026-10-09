@@ -576,11 +576,14 @@ template <typename T, int BM> DEVICE void simt_contract(const contract_params &p
 /* The skinny kernels (m <= 16): lane l of 32 sums, for each t, the run of
    four k0 + 128 t + 4 l + u, u < 4, in increasing k, and the 32 lane sums
    combine by the balanced tree (l, l + 16), then (l, l + 8), (l, l + 4),
-   (l, l + 2), (l, l + 1). One wave per output column j when b's k axis is
-   contiguous (8 columns a workgroup), lanes across k, a run one vector; a
-   workgroup of 32 columns by 8 lane groups otherwise, work-item (x, y)
-   summing the lane classes y, y + 8, y + 16, y + 24 of column x, reading
-   rows of b across x. */
+   (l, l + 2), (l, l + 1). Two forms, each its own kernel so that each has
+   the registers it needs: column, one wave per output column j when b's
+   k axis is contiguous (8 columns a workgroup), lanes across k, a run one
+   vector; across, a workgroup of 32 columns by 8 lane groups, work-item
+   (x, y) summing the lane classes y, y + 8, y + 16, y + 24 of column x,
+   reading rows of b across x. */
+enum { FORM_column, FORM_across };
+
 template <typename T> DEVICE T tree32(T v) {
 #pragma unroll
   for (int d = 16; d > 0; d /= 2) v += xor_lane(v, d);
@@ -605,61 +608,72 @@ DEVICE void run(T (&v)[4], const char *p, int64_t s_row, int64_t s_k,
     v[u] = u < us ? ((const T *)p)[row * s_row + (k + u) * s_k] : T(0);
 }
 
-/* Adds column j's run [bv] of k from [k], its first [us] inside the
-   range, times a's rows, to [c]. a's runs are vectors where
-   NX_CONTRACT_A_VECTORS says so. */
-template <typename T>
-DEVICE void dot4(const contract_params &p, T (&c)[16], const char *a,
-                 const T (&bv)[4], int k, int us) {
+/* Adds column j's runs [bv], run t of k from k + 128 t and the first
+   [us] of each inside the range, times a's rows, to [c] in increasing k:
+   each row's runs loaded together, then summed. a's runs are vectors
+   where NX_CONTRACT_A_VECTORS says so. */
+template <typename T, int F>
+DEVICE void dot(const contract_params &p, T (&c)[16], const char *a,
+                const T (&bv)[F][4], int k, int us) {
 #pragma unroll
   for (int i = 0; i < 16; i++)
     if (i < p.m) {
-      T av[4];
-      run(av, a, p.sa[1], p.sa[2], i, k, us, p.aligned & NX_CONTRACT_A_VECTORS);
+      T av[F][4];
 #pragma unroll
-      for (int u = 0; u < 4; u++)
-        if (u < us) c[i] = fma_(av[u], bv[u], c[i]);
+      for (int t = 0; t < F; t++)
+        run(av[t], a, p.sa[1], p.sa[2], i, k + t * 128, us,
+            p.aligned & NX_CONTRACT_A_VECTORS);
+#pragma unroll
+      for (int t = 0; t < F; t++)
+#pragma unroll
+        for (int u = 0; u < 4; u++)
+          if (u < us) c[i] = fma_(av[t][u], bv[t][u], c[i]);
     }
 }
 
+/* Adds column j's runs from [k] to [k1], every 128th k, times a's rows,
+   to [c]: F whole runs a step, their loads issued before their sums, so
+   that a lane has F in flight; then the runs left, one by one. b's runs
+   are vectors where [vectors] says so. */
+template <typename T, int F>
+DEVICE void add_runs(const contract_params &p, T (&c)[16], const char *a,
+                 const char *b, int j, int k, int k1, bool vectors) {
+  if constexpr (F > 1)
+    for (; k + (F - 1) * 128 + 3 < k1; k += F * 128) {
+      T bv[F][4];
+#pragma unroll
+      for (int t = 0; t < F; t++)
+        run(bv[t], b, p.sb[1], p.sb[2], j, k + t * 128, 4, vectors);
+      dot<T, F>(p, c, a, bv, k, 4);
+    }
+  for (; k < k1; k += 128) {
+    T bv[1][4];
+    const int us = min_(4, k1 - k);
+    run(bv[0], b, p.sb[1], p.sb[2], j, k, us, vectors);
+    dot<T, 1>(p, c, a, bv, k, us);
+  }
+}
+
 /* The workgroup's sums into [level8], row i of column c at element
-   i * 32 + c (its first 512), as the tree leaves them. */
-template <typename T>
+   i * 32 + c (its first 512), as the tree leaves them, by the form
+   [FORM]. Rows from m on stay zero. */
+template <typename T, int FORM>
 DEVICE void skinny_sums(const contract_params &p, T (*level8)[8][32],
                         const char *a, const char *b, int k0, int k1) {
   T *sums = &level8[0][0][0];
-  if ((p.aligned & NX_CONTRACT_B_ACROSS) == 0) {
-    /* Wave per column: lane l holds class l, its runs vectors where b's
-       rows are (NX_CONTRACT_B_VECTORS). */
+  if constexpr (FORM == FORM_column) {
+    /* Lane l holds class l, its runs vectors where b's rows are
+       (NX_CONTRACT_B_VECTORS). */
     const int lane = item() % 32, j = group() * 8 + item() / 32;
     T acc[16];
 #pragma unroll
     for (int i = 0; i < 16; i++) acc[i] = T(0);
-    if (j < p.n) {
-      /* F whole runs a step, their loads issued before their sums, so
-         that a lane has F in flight, two of 8-byte elements to keep the
-         registers they take; then the runs left, one by one. */
-      constexpr int F = sizeof(T) == 8 ? 2 : 4;
-      int k = k0 + 4 * lane;
-      for (; k + (F - 1) * 128 + 3 < k1; k += F * 128) {
-        T bv[F][4];
+    if (j < p.n)
+      add_runs<T, sizeof(T) == 8 ? 2 : 4>(p, acc, a, b, j, k0 + 4 * lane, k1,
+                                          p.aligned & NX_CONTRACT_B_VECTORS);
 #pragma unroll
-        for (int t = 0; t < F; t++)
-          run(bv[t], b, p.sb[1], p.sb[2], j, k + t * 128, 4,
-              p.aligned & NX_CONTRACT_B_VECTORS);
-#pragma unroll
-        for (int t = 0; t < F; t++) dot4(p, acc, a, bv[t], k + t * 128, 4);
-      }
-      for (; k < k1; k += 128) {
-        const int us = min_(4, k1 - k);
-        T bv[4];
-        run(bv, b, p.sb[1], p.sb[2], j, k, us,
-            p.aligned & NX_CONTRACT_B_VECTORS);
-        dot4(p, acc, a, bv, k, us);
-      }
-    }
-#pragma unroll
-    for (int i = 0; i < 16; i++) acc[i] = tree32(acc[i]);
+    for (int i = 0; i < 16; i++)
+      if (i < p.m) acc[i] = tree32(acc[i]);
     barrier();
     if (lane == 0)
 #pragma unroll
@@ -669,9 +683,9 @@ DEVICE void skinny_sums(const contract_params &p, T (*level8)[8][32],
   /* Work-item (x, y): classes y + 8q of column x; its four sums reduce to
      the tree's level of 8, (y + y16) + (y8 + y24), then 8 work-items' in
      the local data share to the root. The pairs q and q + 2 are summed one
-     after the other, so that three sets of sums are live at once. */
+     after the other, the first's sum waiting in the work-item's place of
+     the local data share, so that two sets of sums are live at once. */
   const int x = item() % 32, y = item() / 32, j = group() * 32 + x;
-  T pair[2][16];
 #pragma unroll
   for (int h = 0; h < 2; h++) {
     T c[2][16];
@@ -682,17 +696,14 @@ DEVICE void skinny_sums(const contract_params &p, T (*level8)[8][32],
     if (j < p.n)
 #pragma unroll
       for (int q = 0; q < 2; q++)
-        for (int k = k0 + 4 * (y + 8 * (h + 2 * q)); k < k1; k += 128) {
-          const int us = min_(4, k1 - k);
-          T bv[4];
-          run(bv, b, p.sb[1], p.sb[2], j, k, us, false);
-          dot4(p, c[q], a, bv, k, us);
-        }
+        add_runs<T, 1>(p, c[q], a, b, j, k0 + 4 * (y + 8 * (h + 2 * q)), k1,
+                       false);
 #pragma unroll
-    for (int i = 0; i < 16; i++) pair[h][i] = c[0][i] + c[1][i];
+    for (int i = 0; i < 16; i++) {
+      const T pair = c[0][i] + c[1][i];
+      level8[i][y][x] = h == 0 ? pair : level8[i][y][x] + pair;
+    }
   }
-#pragma unroll
-  for (int i = 0; i < 16; i++) level8[i][y][x] = pair[0][i] + pair[1][i];
   barrier();
   T acc[16];
   if (y == 0)
@@ -708,7 +719,8 @@ DEVICE void skinny_sums(const contract_params &p, T (*level8)[8][32],
     for (int i = 0; i < 16; i++) sums[i * 32 + x] = acc[i];
 }
 
-template <typename T> DEVICE void skinny_contract(const contract_params &p) {
+template <typename T, int FORM>
+DEVICE void skinny_contract(const contract_params &p) {
   constexpr int THREADS = NX_CONTRACT_THREADS;
   const int z = group_z(), split = group_y(), splits = p.splits;
   const char *a = (const char *)p.a + z * p.sa[0] * sizeof(T);
@@ -718,11 +730,11 @@ template <typename T> DEVICE void skinny_contract(const contract_params &p) {
   const int k0 = split * runs / splits * 128;
   const int k1 = min_(p.k, (split + 1) * runs / splits * 128);
   static SHARED T level8[16][8][32];
-  skinny_sums(p, level8, a, b, k0, k1);
+  skinny_sums<T, FORM>(p, level8, a, b, k0, k1);
 
   /* Two of the workgroup's sums per work-item: the partials a split sum
      combines. */
-  const int cols = (p.aligned & NX_CONTRACT_B_ACROSS) ? 32 : 8;
+  constexpr int cols = FORM == FORM_across ? 32 : 8;
   const T *sums = &level8[0][0][0];
   barrier();
   T v[2] = {sums[item()], sums[256 + item()]};
@@ -798,8 +810,8 @@ NX_AMD_TILES(TILE)
   KERNEL SIZED(NX_CONTRACT_THREADS) void name(contract_params p) {             \
     simt_contract<ACC_##acc, bm>(p);                                           \
   }
-#define SKINNY(name, acc)                                                      \
+#define SKINNY(name, acc, form)                                                \
   KERNEL SIZED(NX_CONTRACT_THREADS) void name(contract_params p) {             \
-    skinny_contract<ACC_##acc>(p);                                             \
+    skinny_contract<ACC_##acc, FORM_##form>(p);                                \
   }
 NX_AMD_KERNELS(DEFINE)

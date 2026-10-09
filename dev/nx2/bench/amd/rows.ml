@@ -176,6 +176,7 @@ let contracts =
       contract bf16 f32 bf16 4096 14336 4096;
       contract ~batch:64 bf16 f32 bf16 512 512 512;
       contract f32 f32 f32 1 5120 2880;
+      contract ~lb:`Free f32 f32 f32 1 5120 2880;
     ]
 
 let all = floors @ contracts

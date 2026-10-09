@@ -42,7 +42,8 @@ typedef struct __attribute__((aligned(8))) {
    - WMMA (contract.hip): the operands' kind (bf16, f16, s8) and the tile.
      Both operands k contiguous.
    - SIMT (contract.hip): the accumulator's type and the tile's side.
-   - SKINNY (contract.hip): the accumulator's type.
+   - SKINNY (contract.hip): the accumulator's type and the form: column,
+     b's k axis contiguous, or across, its n axis.
    Instances are a budget: each names the rows that keep it. A layout or
    tile with no instance is computed by one that has it, its operand
    packed first; an int32 accumulator sums in int64 and wraps. */
@@ -70,12 +71,16 @@ typedef struct __attribute__((aligned(8))) {
   /* f32 256 to 1024 */                                                      \
   X(contract_simt_f32_64, SIMT, f32, 64)                                    \
   /* f32 decode 1x5120x2880 */                                               \
-  X(contract_skinny_f32, SKINNY, f32)                                       \
+  X(contract_skinny_f32, SKINNY, f32, column)                               \
+  /* f32 decode 1x5120x2880, b stored k by n */                             \
+  X(contract_skinny_across_f32, SKINNY, f32, across)                        \
   /* float64 and integer sums: no row; they make the family total */         \
   X(contract_simt_f64_64, SIMT, f64, 64)                                    \
   X(contract_simt_i64_64, SIMT, i64, 64)                                    \
-  X(contract_skinny_f64, SKINNY, f64)                                       \
-  X(contract_skinny_i64, SKINNY, i64)
+  X(contract_skinny_f64, SKINNY, f64, column)                               \
+  X(contract_skinny_i64, SKINNY, i64, column)                               \
+  X(contract_skinny_across_f64, SKINNY, f64, across)                        \
+  X(contract_skinny_across_i64, SKINNY, i64, across)
 
 #define NX_AMD_ENUM(name, ...) NX_AMD_##name,
 enum nx_amd_kernel { NX_AMD_KERNELS(NX_AMD_ENUM) NX_AMD_KERNEL_COUNT };
@@ -115,8 +120,7 @@ typedef struct {
 enum {
   NX_CONTRACT_A_VECTORS = 1, /* a's rows are 16-byte vectors */
   NX_CONTRACT_B_VECTORS = 2, /* b's rows are 16-byte vectors */
-  NX_CONTRACT_B_ACROSS = 4,  /* skinny: b's n axis is contiguous */
-  NX_CONTRACT_Y_WHOLE = 8    /* y's outputs store 16 bytes at once */
+  NX_CONTRACT_Y_WHOLE = 4    /* y's outputs store 16 bytes at once */
 };
 
 /* contract_params' addresses, and those that are scratch: a and b when

@@ -43,12 +43,14 @@ static int add(nx_amd_records *out, int kernel, uint32_t gx, uint32_t gy,
 enum { F_ZERO, F_PACK, F_WMMA, F_SIMT, F_SKINNY };
 enum { K_bf16, K_f16, K_s8 };
 enum { ACC_f32, ACC_f64, ACC_i64 };
+enum { S_column, S_across };
 #define TILE_INDEX(name, ...) T_##name,
 enum { NX_AMD_TILES(TILE_INDEX) T_COUNT };
 #undef TILE_INDEX
 
 /* An instance's arguments, by family: WMMA its operands' kind and its tile;
-   SIMT its accumulator and its tile's side; SKINNY its accumulator. */
+   SIMT its accumulator and its tile's side; SKINNY its accumulator and
+   form. */
 typedef struct {
   int family, kind, size;
 } instance;
@@ -57,7 +59,7 @@ typedef struct {
 #define ARGS_PACK() 0, 0
 #define ARGS_WMMA(kind, tile) K_##kind, T_##tile
 #define ARGS_SIMT(acc, side) ACC_##acc, side
-#define ARGS_SKINNY(acc) ACC_##acc, 0
+#define ARGS_SKINNY(acc, form) ACC_##acc, S_##form
 #define INSTANCE(name, FAMILY, ...) {F_##FAMILY, ARGS_##FAMILY(__VA_ARGS__)},
 static const instance instances[] = {NX_AMD_KERNELS(INSTANCE)};
 #undef INSTANCE
@@ -400,14 +402,13 @@ int nx_amd_plan_contract(const nx_amd_contract_in *in,
   }
   if (wmma_kind < 0 && m <= 16) {
     const int nform = sn[0] == 1 && sk[1] != 1;
-    kernel = find(F_SKINNY, simt, 0);
+    kernel = find(F_SKINNY, simt, nform ? S_across : S_column);
     gx = nform ? ceil_div(n, 32) : ceil_div(n, 8);
     /* By the wave-per-column form's grid in both forms: the split, so the
        association, is the shape's. */
     splits = split_count(ceil_div(n, 8) * batch, 256, k, 1024);
     values = 2, threads = NX_CONTRACT_THREADS;
-    p.aligned = (nform ? NX_CONTRACT_B_ACROSS : 0) |
-                (!fb && vb ? NX_CONTRACT_B_VECTORS : 0) |
+    p.aligned = (!fb && vb ? NX_CONTRACT_B_VECTORS : 0) |
                 (!fa && va ? NX_CONTRACT_A_VECTORS : 0);
   } else if (wmma_kind < 0) {
     /* The SIMT tile of least cost among the accumulator's instances, waves
