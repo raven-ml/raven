@@ -271,7 +271,22 @@ module Contract_view = struct
 
   let misfit what = invalid_arg ("Nx_kernel.Spec.Contract_view.fill: " ^ what)
 
-  (* Groups the [count] axes of group [g] into one, or is [false]. *)
+  (* Raises unless the operands of group [g] agree on its [count] extents. *)
+  let fits v s ops dst g count =
+    let ms = members.(g) and l0 = layout ops dst members.(g).(0) in
+    for p = 1 to Array.length ms - 1 do
+      let o = ms.(p) in
+      if o <> 2 || v.init then begin
+        let l = layout ops dst o in
+        for k = 0 to count - 1 do
+          if L.dim l (source v s o g k) <> L.dim l0 (source v s ms.(0) g k)
+          then misfit "extents differ within a group"
+        done
+      end
+    done
+
+  (* Groups the [count] axes of group [g] into one, or is [false]. Its
+     operands agree on the extents ({!fits}). *)
   let group v s ops dst g count =
     let ms = members.(g) in
     let n = ref 0 in
@@ -281,9 +296,7 @@ module Contract_view = struct
         let l = layout ops dst o in
         for k = 0 to count - 1 do
           let ax = source v s o g k in
-          let d = L.dim l ax in
-          if !n = 0 then v.ext.(k) <- d
-          else if v.ext.(k) <> d then misfit "extents differ within a group";
+          v.ext.(k) <- L.dim l ax;
           v.st.((!n * max_rank) + k) <- L.stride l ax
         done;
         v.slot.(o) <- !n;
@@ -325,6 +338,12 @@ module Contract_view = struct
     for o = 0 to 3 do
       if o <> 2 || init then v.offset.(o) <- L.offset (layout ops dst o)
     done;
+    (* Every group fits before any merges: a misfit raises even behind a
+       group that does not merge. *)
+    fits v s ops dst 0 nb;
+    fits v s ops dst 1 fa;
+    fits v s ops dst 2 fb;
+    fits v s ops dst 3 nc;
     group v s ops dst 0 nb && group v s ops dst 1 fa && group v s ops dst 2 fb
     && group v s ops dst 3 nc
 

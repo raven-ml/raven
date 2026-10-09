@@ -375,6 +375,23 @@ let test_view_declines () =
   misfit ~msg:"an init too many"
     (arr [| 2; 3 |])
     [| arr [| 2; 4 |]; arr [| 4; 3 |]; arr [| 2; 3 |] |];
+  (* A misfit raises even behind a group that does not merge: [a]'s batch
+     axes transposed, its contracted extent 4 against [b]'s 5. *)
+  let sb =
+    S.contract
+      ~batch:[| (0, 0); (1, 1) |]
+      ~contracting:[| (3, 2) |]
+      ~acc:(D.Any D.Float32) ~out:(D.Any D.Float32) ~init:false
+  in
+  let at =
+    Option.get
+      (L.move (M.Permute [| 1; 0; 2; 3 |]) (L.contiguous [| 3; 2; 2; 4 |]))
+  in
+  let a = A.Any (A.v D.Float32 at (Rig.Buffer.create Rig.host 192)) in
+  raises_match ~msg:"behind an unmerged group"
+    (Exn.invalid_arg ~substring:"fill")
+    (fun () ->
+      V.fill v sb ~dst:(arr [| 2; 3; 2; 2 |]) [| a; arr [| 2; 3; 5; 2 |] |]);
   (* [b]'s two contracted axes transposed lie as no run. *)
   let s2 =
     S.contract ~batch:[||]
