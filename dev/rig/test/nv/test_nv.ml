@@ -807,6 +807,33 @@ let high_word () =
   S.free_launches l;
   N.free t.g b
 
+(* Parts NV's channels do not run: fills, a copy on COMPUTE:0, a ring entry
+   cut in half, more ring words than a segment holds, and more parts than the
+   rings hold are refused, and no value is assigned. *)
+let refused () =
+  S.with_ @@ fun t ->
+  let fill =
+    let arg = B.create Rig.host 8 in
+    let work =
+      Rig.Submission.Fill
+        { fill = Rig_support.bump; arg; ring_units = 0; segment_bytes = 0 }
+    in
+    { Rig.Submission.queue = "COMPUTE:0"; after = [||]; work }
+  in
+  let a = B.create t.d 16 and b = B.create t.d 16 in
+  let refuses msg ps =
+    raises_match ~msg
+      (Exn.invalid_arg ~substring:"never fit")
+      (fun () -> S.submit t ps)
+  in
+  refuses "a fill" [| fill |];
+  refuses "a copy on COMPUTE:0"
+    [| { (S.copy ~dst:b a) with queue = "COMPUTE:0" } |];
+  refuses "one ring word" [| S.words [| 0 |] |];
+  refuses "32,768 ring words" [| S.words (Array.make 32_768 0) |];
+  refuses "65,536 parts" (Array.make 65_536 (S.words [||]));
+  equal int ~msg:"values assigned" 0 (Rig.submitted t.d)
+
 let work =
   group ~timeout:60. "work"
     [
@@ -817,6 +844,7 @@ let work =
       test "a region, mapping or image of another device raises" another_device;
       test "a wait holds work on another device's host word above 2^40"
         high_word;
+      test "a submission of work the device does not run raises" refused;
     ]
 
 (* Room *)

@@ -269,6 +269,36 @@ let another_device () =
   raises_match Exn.invalid_arg (fun () -> C.free b.g r);
   C.free a.g r
 
+(* Parts CUDA's queues do not run: ring words, ring units and segment bytes
+   are refused, and no value is assigned. *)
+let refused () =
+  S.with_ @@ fun ({ d; _ } as t) ->
+  let fill ~units ~bytes =
+    match S.part ~queue:"COMPUTE:0" (S.failing 0) with
+    | { work = Fill f; _ } as p ->
+        {
+          p with
+          work = Fill { f with ring_units = units; segment_bytes = bytes };
+        }
+    | p -> p
+  in
+  let words =
+    {
+      Rig.Submission.queue = "COMPUTE:0";
+      after = [||];
+      work = Words (B.create Rig.host 8);
+    }
+  in
+  let refuses msg p =
+    raises_match ~msg
+      (Exn.invalid_arg ~substring:"never fit")
+      (fun () -> S.submit t [| p |])
+  in
+  refuses "ring words" words;
+  refuses "a ring unit" (fill ~units:1 ~bytes:0);
+  refuses "a segment byte" (fill ~units:0 ~bytes:1);
+  equal int ~msg:"values assigned" 0 (Rig.submitted d)
+
 let work =
   group ~timeout:60. "work"
     [
@@ -281,6 +311,7 @@ let work =
       test "a value failed behind running work drains" failed_behind_work;
       test "misuse raises" misuse;
       test "a region of another device raises" another_device;
+      test "a submission of work the device does not run raises" refused;
     ]
 
 (* Images *)
