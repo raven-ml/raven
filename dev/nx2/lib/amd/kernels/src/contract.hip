@@ -609,14 +609,14 @@ DEVICE void run(T (&v)[4], const char *p, int64_t s_row, int64_t s_k,
 }
 
 /* Adds column j's runs [bv], run t of k from k + 128 t and the first
-   [us] of each inside the range, times a's rows, to [c] in increasing k:
-   each row's runs loaded together, then summed. a's runs are vectors
-   where NX_CONTRACT_A_VECTORS says so. */
-template <typename T, int F>
+   [us] of each inside the range, times a's rows below [ROWS] and m, to
+   [c] in increasing k: each row's runs loaded together, then summed. a's
+   runs are vectors where NX_CONTRACT_A_VECTORS says so. */
+template <typename T, int F, int ROWS>
 DEVICE void dot(const contract_params &p, T (&c)[16], const char *a,
                 const T (&bv)[F][4], int k, int us) {
 #pragma unroll
-  for (int i = 0; i < 16; i++)
+  for (int i = 0; i < ROWS; i++)
     if (i < p.m) {
       T av[F][4];
 #pragma unroll
@@ -634,9 +634,9 @@ DEVICE void dot(const contract_params &p, T (&c)[16], const char *a,
 /* Adds column j's runs from [k] to [k1], every 128th k, times a's rows,
    to [c]: F whole runs a step, their loads issued before their sums, so
    that a lane has F in flight, two of 8-byte elements to keep the
-   registers they take; then the runs left, one by one. b's runs are
-   vectors where [vectors] says so. */
-template <typename T>
+   registers they take; then the runs left, one by one. a's rows are
+   those below [ROWS] and m; b's runs are vectors where [vectors] says so. */
+template <typename T, int ROWS>
 DEVICE void add_runs(const contract_params &p, T (&c)[16], const char *a,
                      const char *b, int j, int k, int k1, bool vectors) {
   constexpr int F = sizeof(T) == 8 ? 2 : 4;
@@ -645,14 +645,28 @@ DEVICE void add_runs(const contract_params &p, T (&c)[16], const char *a,
 #pragma unroll
     for (int t = 0; t < F; t++)
       run(bv[t], b, p.sb[1], p.sb[2], j, k + t * 128, 4, vectors);
-    dot<T, F>(p, c, a, bv, k, 4);
+    dot<T, F, ROWS>(p, c, a, bv, k, 4);
   }
   for (; k < k1; k += 128) {
     T bv[1][4];
     const int us = min_(4, k1 - k);
     run(bv[0], b, p.sb[1], p.sb[2], j, k, us, vectors);
-    dot<T, 1>(p, c, a, bv, k, us);
+    dot<T, 1, ROWS>(p, c, a, bv, k, us);
   }
+}
+
+/* [add_runs] with a loop for one row of a, and one for up to 16. The
+   loop for 16 unrolls to some 29 KiB, which a product of one row walked
+   by branching over 15 rows a step; on the R9700 it then ran at one of
+   two speeds by where its code landed, mod 32 KiB. The sums are the
+   same. */
+template <typename T>
+DEVICE void add_rows(const contract_params &p, T (&c)[16], const char *a,
+                     const char *b, int j, int k, int k1, bool vectors) {
+  if (p.m == 1)
+    add_runs<T, 1>(p, c, a, b, j, k, k1, vectors);
+  else
+    add_runs<T, 16>(p, c, a, b, j, k, k1, vectors);
 }
 
 /* The workgroup's sums into [level8], row i of column c at element
@@ -670,7 +684,7 @@ DEVICE void skinny_sums(const contract_params &p, T (*level8)[8][32],
 #pragma unroll
     for (int i = 0; i < 16; i++) acc[i] = T(0);
     if (j < p.n)
-      add_runs(p, acc, a, b, j, k0 + 4 * lane, k1,
+      add_rows(p, acc, a, b, j, k0 + 4 * lane, k1,
                p.aligned & NX_CONTRACT_B_VECTORS);
 #pragma unroll
     for (int i = 0; i < 16; i++)
@@ -700,7 +714,7 @@ DEVICE void skinny_sums(const contract_params &p, T (*level8)[8][32],
     if (j < p.n)
 #pragma unroll
       for (int q = 0; q < 2; q++)
-        add_runs(p, c[q], a, b, j, k0 + 4 * (y + 8 * (h + 2 * q)), k1,
+        add_rows(p, c[q], a, b, j, k0 + 4 * (y + 8 * (h + 2 * q)), k1,
                  false);
 #pragma unroll
     for (int i = 0; i < 16; i++) {
