@@ -735,7 +735,8 @@ __device__ void dot4(const contract_params &p, T (&c)[Q][NX_SKINNY_ROWS],
 
 /* Adds the run of k from [k], its first [us] inside the range, of the
    columns j + 8 q, q < 4, times a's rows, to [c]; b's runs are vectors
-   where NX_CONTRACT_B_VECTORS says so. */
+   where NX_CONTRACT_B_VECTORS says so. A column past n reads column
+   n - 1, whose sums the store drops: the loads take no branch. */
 template <typename T>
 __device__ void step4(const contract_params &p, T (&c)[4][NX_SKINNY_ROWS],
                       const char *a, int rows, const char *b, int j, int k,
@@ -743,12 +744,8 @@ __device__ void step4(const contract_params &p, T (&c)[4][NX_SKINNY_ROWS],
   T bv[4][4];
 #pragma unroll
   for (int q = 0; q < 4; q++)
-    if (j + 8 * q < p.n)
-      run(bv[q], b, p.sb[1], p.sb[2], j + 8 * q, k, us,
-          p.aligned & NX_CONTRACT_B_VECTORS);
-    else
-#pragma unroll
-      for (int u = 0; u < 4; u++) bv[q][u] = T(0);
+    run(bv[q], b, p.sb[1], p.sb[2], min(j + 8 * q, p.n - 1), k, us,
+        p.aligned & NX_CONTRACT_B_VECTORS);
   dot4(p, c, a, rows, bv, k, us);
 }
 
