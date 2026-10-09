@@ -6,7 +6,7 @@
 #include <string.h>
 
 #if defined(__x86_64__)
-#include <xmmintrin.h>
+#include <emmintrin.h>
 #endif
 
 #include <caml/alloc.h>
@@ -803,6 +803,52 @@ static inline __attribute__((always_inline)) void block8(uint8_t *d, int64_t dr,
 }
 #endif
 
+/* The 4x4 block of 8-byte elements whose column q is the 32 bytes at
+   [s + q·sc] into the rows at [d + p·dr], in registers: each column read
+   and each row written as two 16-byte vectors, the pairs of columns
+   interleaved. block's round trip through memory made a transposed
+   float64 pack of 96 rows by 256 7.5% slower than moving its elements one
+   by one on six kimchi cores. */
+#if defined(__aarch64__)
+static inline __attribute__((always_inline)) void block4x8(uint8_t *d,
+                                                           int64_t dr,
+                                                           const uint8_t *s,
+                                                           int64_t sc) {
+  uint64x2_t x[4][2];
+  for (int q = 0; q < 4; q++)
+    for (int h = 0; h < 2; h++)
+      x[q][h] = vld1q_u64((const uint64_t *)(s + q * sc + 16 * h));
+  for (int h = 0; h < 2; h++)
+    for (int v = 0; v < 2; v++) {
+      uint64x2_t a = x[2 * v][h], b = x[2 * v + 1][h];
+      vst1q_u64((uint64_t *)(d + 2 * h * dr + 16 * v), vtrn1q_u64(a, b));
+      vst1q_u64((uint64_t *)(d + (2 * h + 1) * dr + 16 * v),
+                vtrn2q_u64(a, b));
+    }
+}
+#elif defined(__x86_64__)
+static inline __attribute__((always_inline)) void block4x8(uint8_t *d,
+                                                           int64_t dr,
+                                                           const uint8_t *s,
+                                                           int64_t sc) {
+  for (int h = 0; h < 2; h++)
+    for (int v = 0; v < 2; v++) {
+      __m128d a = _mm_loadu_pd((const double *)(s + 2 * v * sc + 16 * h));
+      __m128d b = _mm_loadu_pd((const double *)(s + (2 * v + 1) * sc + 16 * h));
+      _mm_storeu_pd((double *)(d + 2 * h * dr + 16 * v), _mm_unpacklo_pd(a, b));
+      _mm_storeu_pd((double *)(d + (2 * h + 1) * dr + 16 * v),
+                    _mm_unpackhi_pd(a, b));
+    }
+}
+#else
+static inline __attribute__((always_inline)) void block4x8(uint8_t *d,
+                                                           int64_t dr,
+                                                           const uint8_t *s,
+                                                           int64_t sc) {
+  block(d, dr, s, sc, 8);
+}
+#endif
+
 /* Interleaves the [n] elements of [w] bytes at [a] and at [b] into [d]:
    a's i-th element at d's 2i-th, b's at the 2i+1-th, as a window two
    elements wide reads its rows. 4- and 8-byte elements zip in registers,
@@ -958,6 +1004,8 @@ static inline __attribute__((always_inline)) void bytes(
       for (; j + side <= cols; j += side)
         if (w == 4)
           block8(d + i * dr + j * sw, dr, s + i * sr + j * sc, sc);
+        else if (w == 8)
+          block4x8(d + i * dr + j * sw, dr, s + i * sr + j * sc, sc);
         else
           block(d + i * dr + j * sw, dr, s + i * sr + j * sc, sc, w);
       for (int p = 0; p < side; p++)

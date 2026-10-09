@@ -91,13 +91,15 @@ value nx_cpu_bench_floor_move_byte(value *argv, int argn) {
                                  argv[5]);
 }
 
-/* [block_transposed dst src n] copies the transpose of [src], [n] x [n]
-   float32, into [dst] with nx_array.h's block copy, on the calling thread:
-   the copy kernel the walk runs, without the walk. */
-value nx_cpu_bench_block_transposed(value dst, value src, value n) {
+/* [block_transposed dst src n bits] copies the transpose of [src], [n] x
+   [n] elements of [bits] bits, into [dst] with nx_array.h's block copy, on
+   the calling thread: the copy kernel the walk runs, without the walk. */
+value nx_cpu_bench_block_transposed(value dst, value src, value n,
+                                    value bits) {
   int64_t k = Long_val(n);
   nx_copy_box(Caml_ba_data_val(dst), Caml_ba_data_val(src),
-              &(nx_box){{1, k, k}, {0, 0}, {{0, k, 1}, {0, 1, k}}}, 32);
+              &(nx_box){{1, k, k}, {0, 0}, {{0, k, 1}, {0, 1, k}}},
+              Int_val(bits));
   return Val_unit;
 }
 

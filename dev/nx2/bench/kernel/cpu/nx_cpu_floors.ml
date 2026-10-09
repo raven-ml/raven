@@ -38,7 +38,7 @@ external codecs_run : unit -> bool = "nx_cpu_bench_codecs_run" [@@noalloc]
 external floor_fma : int -> bool -> int -> unit = "nx_cpu_bench_floor_fma"
 external floor_read : int -> bytes -> unit = "nx_cpu_bench_floor_read"
 
-external block_transposed : bytes -> bytes -> int -> unit
+external block_transposed : bytes -> bytes -> int -> int -> unit
   = "nx_cpu_bench_block_transposed"
 [@@noalloc]
 
@@ -190,17 +190,23 @@ let floor_rows ws =
         threads)
     floors
 
-let block_transposed_row =
-  row "block-transposed-512x512-1t"
+(* The transposing block copy of 512x512 elements of [bits] bits. *)
+let block_transposed_row name bits =
+  row name
     (fun () ->
       let b () =
-        let b = buffer (4 * 512 * 512) in
+        let b = buffer (bits / 8 * 512 * 512) in
         for i = 0 to Bigarray.Array1.dim b - 1 do
           Bigarray.Array1.unsafe_set b i (i land 255)
         done;
         b
       in
       (b (), b ()))
-    (fun (d, s) -> block_transposed d s 512)
+    (fun (d, s) -> block_transposed d s 512 bits)
 
-let rows ws = floor_rows ws @ [ block_transposed_row ]
+let rows ws =
+  floor_rows ws
+  @ [
+      block_transposed_row "block-transposed-512x512-1t" 32;
+      block_transposed_row "block-transposed-f64-512x512-1t" 64;
+    ]

@@ -30,4 +30,4 @@ val rows : work list -> Thumper.bench list
 (** [rows ws] is the floor rows that bound [ws], each once, then
     block-transposed-512x512-1t: nx.cpu's transposing block copy alone on one
     thread over 512x512 float32 in cache, which the vendors' one-thread
-    transposes bound. *)
+    transposes bound, and block-transposed-f64-512x512-1t over float64. *)
