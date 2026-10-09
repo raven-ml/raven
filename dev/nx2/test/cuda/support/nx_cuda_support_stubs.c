@@ -176,7 +176,9 @@ value nx_cuda_support_rebase(value v_r, value v_base) {
   CAMLparam2(v_r, v_base);
   CAMLlocal1(r);
   size_t len = caml_string_length(v_r);
-  r = caml_alloc_initialized_string(len, String_val(v_r));
+  /* v_r is read after the allocation, which may move it. */
+  r = caml_alloc_string(len);
+  memcpy(Bytes_val(r), String_val(v_r), len);
   nx_cuda_rebase((unsigned char *)Bytes_val(r), len, (uint64_t)Long_val(v_base));
   CAMLreturn(r);
 }
