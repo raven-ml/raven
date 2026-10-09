@@ -586,6 +586,14 @@ let int_examples =
        the SIMD units. *)
     int_example ~out:(Dt.Any Dt.Int64) (Dt.Any Dt.Int8) ~m:64 ~k:64;
     int_example ~out:(Dt.Any Dt.Int64) (Dt.Any Dt.Int16) ~m:64 ~k:64;
+    (* Unsigned sums of 2^31 or more into a 64-bit out widen by no sign, on the
+       SIMD units, the matrix units and one row. *)
+    int_example ~acc:(Dt.Any Dt.Uint32) ~out:(Dt.Any Dt.Uint64)
+      (Dt.Any Dt.Uint16) ~m:17 ~k:300;
+    int_example ~acc:(Dt.Any Dt.Uint32) ~out:(Dt.Any Dt.Int64) ~values:Extreme
+      (Dt.Any Dt.Uint8) ~m:64 ~k:608;
+    int_example ~acc:(Dt.Any Dt.Uint32) ~out:(Dt.Any Dt.Uint64)
+      (Dt.Any Dt.Uint16) ~m:1 ~k:300;
     (* Batches whose bytes start off 16-byte alignment. *)
     int_example ~batch:2 ~bpad:1 (Dt.Any Dt.Int8) ~m:64 ~k:64;
     int_example ~batch:2 ~bpad:2 (Dt.Any Dt.Int8) ~m:64 ~k:64;
@@ -702,6 +710,86 @@ let every_kernel () =
   in
   equal ~msg:"kernels no call launched" (list string) [] missing
 
+(* The plan's acceptance: over every (a, b, acc, out) of the dtypes, at a shape
+   of each kernel class, the plan declines, or the results are within the bound
+   (floats) or exact (integers). The reference refuses a dtype it cannot read,
+   so an accepted call it cannot check fails. *)
+let every_quadruple () =
+  let t = dev () in
+  let accepted = ref 0 in
+  let drawable (Dt.Any dt) =
+    match Dt.Any dt with
+    | Dt.Any
+        ( Dt.Float64 | Dt.Float32 | Dt.Float16 | Dt.Bfloat16 | Dt.Int8
+        | Dt.Uint8 | Dt.Int16 | Dt.Uint16 | Dt.Int32 | Dt.Uint32 | Dt.Int64
+        | Dt.Uint64 ) ->
+        true
+    | _ -> false
+  in
+  let floats = function
+    | Dt.Any (Dt.Float32 | Dt.Float16 | Dt.Bfloat16) -> true
+    | _ -> false
+  in
+  (* Small and wide tiles, one row, and a shape of the SIMD integer tile. *)
+  let shapes = [ (64, 64, 64); (3, 70, 300); (1, 70, 300); (17, 129, 30) ] in
+  List.iter
+    (fun (m, n, k) ->
+      let mem len = S.operand t (8 * len) in
+      let am = mem (m * k) and bm = mem (k * n) and om = mem (m * n) in
+      let arg o (Dt.Any dt) strides = S.arg o dt strides in
+      List.iter
+        (fun da ->
+          List.iter
+            (fun db ->
+              List.iter
+                (fun acc ->
+                  List.iter
+                    (fun dout ->
+                      let a = arg am da (m * k, k, 1)
+                      and b = arg bm db (k * n, n, 1)
+                      and out = arg om dout (m * n, n, 1) in
+                      let dims = (1, m, n, k) in
+                      match S.plan_contract ~acc t dims ~a ~b ~out with
+                      | None -> ()
+                      | Some run ->
+                          incr accepted;
+                          let name (Dt.Any dt) = Dt.name dt in
+                          let call =
+                            strf "%s x %s, acc %s -> %s, %d x %d x %d" (name da)
+                              (name db) (name acc) (name dout) m n k
+                          in
+                          if not (drawable da && drawable db) then
+                            failf "%s: accepted operands no draw makes" call;
+                          let draw o (Dt.Any dt) len seed =
+                            S.generate ~spread:8 t o dt len ~seed
+                          in
+                          draw am da (m * k) 1;
+                          draw bm db (k * n) 2;
+                          ignore (S.run t run);
+                          if floats acc then
+                            let worst, at = S.contract_error dims ~a ~b ~out in
+                            at_most
+                              ~msg:
+                                (strf "%s: output %d's error over its bound"
+                                   call at)
+                              float_exact ~than:1. worst
+                          else
+                            let wrong, first =
+                              S.contract_wrong ~acc dims ~a ~b ~out
+                            in
+                            equal
+                              ~msg:
+                                (strf "%s: outputs wrong, the first %d" call
+                                   first)
+                              int 0 wrong)
+                    Dt.all)
+                Dt.all)
+            Dt.all)
+        Dt.all)
+    shapes;
+  (* float32, float16, bfloat16 operands into either, and the integers. *)
+  at_least ~msg:"calls accepted" int ~than:1 !accepted
+
 (* float64 has no arithmetic on Apple GPUs: the library declines it. *)
 let declines_float64 () =
   let t = dev () in
@@ -771,6 +859,7 @@ let contract =
       contract_wraps;
       test "float64 declines" declines_float64;
       test "every kernel runs" every_kernel;
+      test "the plan declines or is right" every_quadruple;
       determinism;
     ]
 

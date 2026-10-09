@@ -368,15 +368,27 @@ value nx_metal_test_plan_contract(value v_dims, value v_a, value v_b,
   CAMLreturn(caml_alloc_some(v));
 }
 
-/* The value of element [i] of the host memory [p] of dtype [dt]. */
+/* The value of element [i] of the host memory [p] of the float dtype [dt],
+   one [floats] accepts. */
 static double element(const void *p, int dt, int64_t i) {
   switch (dt) {
   case NX_FLOAT16: return nx_f16_to_float(((const uint16_t *)p)[i]);
   case NX_BFLOAT16: return nx_bf16_to_float(((const uint16_t *)p)[i]);
-  case NX_FLOAT32: return ((const float *)p)[i];
-  case NX_INT8: return ((const int8_t *)p)[i];
-  case NX_INT32: return ((const int32_t *)p)[i];
-  default: return 0;
+  default: return ((const float *)p)[i];
+  }
+}
+
+/* Raises Invalid_argument unless the reference reads every dtype [ds] of
+   [n]: float32, float16 and bfloat16 if [floats], the integers of 8 to 64
+   bits if not. */
+static void readable(int floats, const int *ds, int n) {
+  for (int i = 0; i < n; i++) {
+    int d = ds[i];
+    int ok = floats ? d == NX_FLOAT32 || d == NX_FLOAT16 || d == NX_BFLOAT16
+                    : d == NX_INT8 || d == NX_UINT8 || d == NX_INT16 ||
+                          d == NX_UINT16 || d == NX_INT32 || d == NX_UINT32 ||
+                          d == NX_INT64 || d == NX_UINT64;
+    if (!ok) caml_invalid_argument("the contraction reference reads no such dtype");
   }
 }
 
@@ -421,6 +433,8 @@ value nx_metal_test_contract_error(value v_dims, value v_a, value v_b,
   nx_metal_operand a = operand(v_a), b = operand(v_b), out = operand(v_out);
   int has_init = Is_some(v_init);
   nx_metal_operand init = has_init ? operand(Some_val(v_init)) : a;
+  int ds[] = {a.dtype, b.dtype, out.dtype, init.dtype};
+  readable(1, ds, 4);
   double u = 0x1p-24, g = (k + 1) * 2 * u / (1 - (k + 1) * 2 * u);
   double worst = 0;
   int64_t at = 0;
@@ -507,6 +521,8 @@ value nx_metal_test_contract_wrong(value v_dims, value v_a, value v_b,
   nx_metal_operand a = operand(v_a), b = operand(v_b), out = operand(v_out);
   int has_init = Is_some(v_init);
   nx_metal_operand init = has_init ? operand(Some_val(v_init)) : a;
+  int ds[] = {a.dtype, b.dtype, out.dtype, init.dtype, acc};
+  readable(0, ds, 5);
   int bits = nx_dtype_row_of(out.dtype).bits;
   uint64_t out_mask = bits == 64 ? ~0ull : (1ull << bits) - 1;
   int64_t wrong = 0, first = -1;
