@@ -86,6 +86,7 @@ typedef struct {
   int64_t st[4][4];
   int acc, w;
   const nx_cpu_gemm *g;
+  int init_is_dst;   /* init is dst itself: R starts as it is */
   void **scratch;    /* per worker, allocated by the worker */
   atomic_int failed; /* an allocation failed */
 } problem;
@@ -190,10 +191,13 @@ static uint8_t *at_r(const problem *p, int64_t e, int64_t i, int64_t j) {
          (p->first[DST] + e * s[BATCH] + i * s[ROW] + j * s[COL]) * p->w;
 }
 
-/* Sets R's rows [i0, i1) × columns [j0, j1) of element [e] to init or +0. */
+/* Sets R's rows [i0, i1) × columns [j0, j1) of element [e] to init or +0.
+   An init that is dst itself is already there: copying it onto itself would
+   be a memcpy whose source and destination overlap. */
 static void start(const problem *p, int64_t e, int64_t i0, int64_t i1,
                   int64_t j0, int64_t j1) {
   const int64_t *s = p->st[DST];
+  if (p->init_is_dst) return;
   for (int64_t i = i0; i < i1; i++) {
     if (p->op[INIT]) {
       const int64_t *t = p->st[INIT];
@@ -601,6 +605,18 @@ static void blocks(problem *p) {
 
 /* The entry */
 
+/* Whether [p]'s init is its dst: the door lets a read operand be identical to
+   the written one, every index at the same byte. */
+static int init_is_dst(const problem *p) {
+  const nx_array *i = p->op[INIT], *d = p->op[DST];
+  if (i == NULL || i->base != d->base || i->dtype != d->dtype ||
+      p->first[INIT] != p->first[DST])
+    return 0;
+  for (int x = BATCH; x <= COL; x++)
+    if (p->ext[x] > 1 && p->st[INIT][x] != p->st[DST][x]) return 0;
+  return 1;
+}
+
 /* Stores into op[DST] the contraction in [acc] of op[A], op[B] and op[INIT]
    (or NULL), laid out as [v]. Answers 0 if an allocation failed. */
 static int run(int acc, const nx_contract_view *v,
@@ -614,6 +630,7 @@ static int run(int acc, const nx_contract_view *v,
   }
   for (int x = 0; x < 4; x++) p.ext[x] = v->extent[x];
   if (p.ext[BATCH] == 0 || p.ext[ROW] == 0 || p.ext[COL] == 0) return 1;
+  p.init_is_dst = init_is_dst(&p);
   int cores = rig_pool_cores();
   p.scratch = calloc((size_t)cores, sizeof(void *));
   if (p.scratch == NULL) return 0;

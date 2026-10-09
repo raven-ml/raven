@@ -471,6 +471,17 @@ let law_bound b c =
       cover "computed" true;
       equal (list string) [] (wrong c y (within c))
 
+(* The first outputs whose bits differ between [y] and [y'], the second
+   named [other]. *)
+let differ_bits ~other y y' =
+  let g = to64 y and g' = to64 y' in
+  let differs i = bits (A.get g i) <> bits (A.get g' i) in
+  let bad = List.filter differs (indices (shape_of y)) in
+  let show i =
+    Format.asprintf "%a: %h, %s %h" pp_ints i (A.get g i) other (A.get g' i)
+  in
+  List.filteri (fun n _ -> n < 8) (List.map show bad)
+
 (* Each operand as a C-contiguous copy of its view gives the same bits,
    where both layouts are computed. *)
 let law_layouts b c =
@@ -482,15 +493,28 @@ let law_layouts b c =
   | Some y, Some y' ->
       cover "computed" true;
       cover "computed from views" (c.views <> []);
-      let g = to64 y and g' = to64 y' in
-      let differs i = bits (A.get g i) <> bits (A.get g' i) in
-      let bad = List.filter differs (indices (shape_of y)) in
-      let show i =
-        Format.asprintf "%a: %h, contiguous %h" pp_ints i (A.get g i)
-          (A.get g' i)
-      in
-      equal (list string) [] (List.filteri (fun n _ -> n < 8) (List.map show bad))
+      equal (list string) [] (differ_bits ~other:"contiguous" y y')
   | _ -> cover "declined" true
+
+(* An init given as dst itself, an operand identical to the written one,
+   gives the bits of the same contraction into a fresh dst. *)
+let law_init_as_dst (b : Support.backend) (c : case) =
+  let module K = (val b.kernels) in
+  match c.init with
+  | None -> cover "no init" true
+  | Some i ->
+      let donated = cast_to c.out i in
+      let c' = { c with init = Some (cast_to c.out donated) } in
+      let ops = [| c.a; c.b; donated |] in
+      begin match (run b c', K.contract c.spec ~dst:donated ops) with
+      | Some y, A.Done ->
+          let per = per_batch c in
+          cover "fewer than 64 outputs" (per > 0 && per < 64);
+          cover "64 outputs or more" (per >= 64);
+          equal (list string) [] (differ_bits ~other:"in place" y donated)
+      | None, A.Declined -> cover "declined" true
+      | _, r -> failf "in place, contract answered %a" Nx_array_support.pp_answer r
+      end
 
 (* A kernel that declines writes nothing: [dst] keeps its values. *)
 let law_declined (b : Support.backend) c =
@@ -600,6 +624,8 @@ let laws (b : Support.backend) =
         computed (run (law_bound b));
       prop "a contraction's bits do not depend on layouts" computed
         (run (law_layouts b));
+      prop "an init given as dst gives the same bits" computed
+        (run (law_init_as_dst b));
       prop "a declined contraction writes nothing" any_case
         (run (law_declined b));
     ]
