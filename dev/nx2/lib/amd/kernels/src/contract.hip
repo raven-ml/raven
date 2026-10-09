@@ -633,19 +633,20 @@ DEVICE void dot(const contract_params &p, T (&c)[16], const char *a,
 
 /* Adds column j's runs from [k] to [k1], every 128th k, times a's rows,
    to [c]: F whole runs a step, their loads issued before their sums, so
-   that a lane has F in flight; then the runs left, one by one. b's runs
-   are vectors where [vectors] says so. */
-template <typename T, int F>
+   that a lane has F in flight, two of 8-byte elements to keep the
+   registers they take; then the runs left, one by one. b's runs are
+   vectors where [vectors] says so. */
+template <typename T>
 DEVICE void add_runs(const contract_params &p, T (&c)[16], const char *a,
                      const char *b, int j, int k, int k1, bool vectors) {
-  if constexpr (F > 1)
-    for (; k + (F - 1) * 128 + 3 < k1; k += F * 128) {
-      T bv[F][4];
+  constexpr int F = sizeof(T) == 8 ? 2 : 4;
+  for (; k + (F - 1) * 128 + 3 < k1; k += F * 128) {
+    T bv[F][4];
 #pragma unroll
-      for (int t = 0; t < F; t++)
-        run(bv[t], b, p.sb[1], p.sb[2], j, k + t * 128, 4, vectors);
-      dot<T, F>(p, c, a, bv, k, 4);
-    }
+    for (int t = 0; t < F; t++)
+      run(bv[t], b, p.sb[1], p.sb[2], j, k + t * 128, 4, vectors);
+    dot<T, F>(p, c, a, bv, k, 4);
+  }
   for (; k < k1; k += 128) {
     T bv[1][4];
     const int us = min_(4, k1 - k);
@@ -669,8 +670,8 @@ DEVICE void skinny_sums(const contract_params &p, T (*level8)[8][32],
 #pragma unroll
     for (int i = 0; i < 16; i++) acc[i] = T(0);
     if (j < p.n)
-      add_runs<T, sizeof(T) == 8 ? 2 : 4>(p, acc, a, b, j, k0 + 4 * lane, k1,
-                                          p.aligned & NX_CONTRACT_B_VECTORS);
+      add_runs(p, acc, a, b, j, k0 + 4 * lane, k1,
+               p.aligned & NX_CONTRACT_B_VECTORS);
 #pragma unroll
     for (int i = 0; i < 16; i++)
       if (i < p.m) acc[i] = tree32(acc[i]);
@@ -699,8 +700,8 @@ DEVICE void skinny_sums(const contract_params &p, T (*level8)[8][32],
     if (j < p.n)
 #pragma unroll
       for (int q = 0; q < 2; q++)
-        add_runs<T, 1>(p, c[q], a, b, j, k0 + 4 * (y + 8 * (h + 2 * q)), k1,
-                       false);
+        add_runs(p, c[q], a, b, j, k0 + 4 * (y + 8 * (h + 2 * q)), k1,
+                 false);
 #pragma unroll
     for (int i = 0; i < 16; i++) {
       const T pair = c[0][i] + c[1][i];
