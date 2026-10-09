@@ -62,7 +62,7 @@ module Entry = struct
     | Write_inline of { data : string; dst : remote }
     | Read of { src : remote; dst : local }
 
-  type t = { op : op; signal : bool; fence : bool }
+  type t = { op : op; signal : bool }
 
   let ctrl = 0
   let raddr = ctrl + D.Ctrl_seg.sizeof
@@ -142,8 +142,7 @@ module Entry = struct
     set_be32 b (at + off D.Ctrl_seg.qpn_ds) ((qp lsl 8) lor units);
     set_byte b
       (at + off D.Ctrl_seg.fm_ce_se)
-      ((if e.signal then D.mlx5_wqe_ctrl_cq_update else 0)
-      lor if e.fence then D.mlx5_wqe_ctrl_fence else 0)
+      (if e.signal then D.mlx5_wqe_ctrl_cq_update else 0)
 end
 
 module Completion = struct
@@ -154,14 +153,12 @@ module Completion = struct
     | Local_qp_operation
     | Local_protection
     | Flushed
-    | Memory_window_bind
     | Bad_response
     | Local_access
     | Remote_invalid_request
     | Remote_access
     | Remote_operation
     | Retry_exceeded
-    | Receiver_not_ready_retry_exceeded
     | Remote_aborted
     | Other_error of int
 
@@ -178,14 +175,12 @@ module Completion = struct
       (D.mlx5_cqe_syndrome_local_qp_op_err, Local_qp_operation);
       (D.mlx5_cqe_syndrome_local_prot_err, Local_protection);
       (D.mlx5_cqe_syndrome_wr_flush_err, Flushed);
-      (D.mlx5_cqe_syndrome_mw_bind_err, Memory_window_bind);
       (D.mlx5_cqe_syndrome_bad_resp_err, Bad_response);
       (D.mlx5_cqe_syndrome_local_access_err, Local_access);
       (D.mlx5_cqe_syndrome_remote_inval_req_err, Remote_invalid_request);
       (D.mlx5_cqe_syndrome_remote_access_err, Remote_access);
       (D.mlx5_cqe_syndrome_remote_op_err, Remote_operation);
       (D.mlx5_cqe_syndrome_transport_retry_exc_err, Retry_exceeded);
-      (D.mlx5_cqe_syndrome_rnr_retry_exc_err, Receiver_not_ready_retry_exceeded);
       (D.mlx5_cqe_syndrome_remote_aborted_err, Remote_aborted);
     ]
 
@@ -233,15 +228,12 @@ module Completion = struct
     | Local_qp_operation -> "local queue pair operation error"
     | Local_protection -> "local protection error"
     | Flushed -> "flushed"
-    | Memory_window_bind -> "memory window bind error"
     | Bad_response -> "bad response"
     | Local_access -> "local access error"
     | Remote_invalid_request -> "remote invalid request"
     | Remote_access -> "remote access error"
     | Remote_operation -> "remote operation error"
     | Retry_exceeded -> "retry counter exceeded"
-    | Receiver_not_ready_retry_exceeded ->
-        "receiver-not-ready retry counter exceeded"
     | Remote_aborted -> "remote aborted"
     | Other_error s -> strf "syndrome 0x%x" s
 

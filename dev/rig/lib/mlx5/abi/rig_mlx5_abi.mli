@@ -40,13 +40,13 @@
 
     {1:references References}
 
-    - rdma-core's [providers/mlx5]: [mlx5dv.h] (work entries, completions,
+    - rdma-core v56.0's [providers/mlx5]: [mlx5dv.h] (work entries, completions,
       doorbell records), [mlx5.h] (the access region's doorbell offset), [qp.c]
       (posting and ringing) and [cq.c] (polling and arming).
-    - The Linux kernel's [include/uapi/rdma/mlx5-abi.h] (the access region's
-      mapping commands), [include/linux/mlx5/device.h] (doorbell registers per
-      access region) and [drivers/infiniband/hw/mlx5/main.c] (the mapping of
-      access region pages). *)
+    - Linux v6.12's [include/uapi/rdma/mlx5-abi.h] (the access region's mapping
+      commands), [include/linux/mlx5/device.h] (doorbell registers per access
+      region) and [drivers/infiniband/hw/mlx5/main.c] (the mapping of access
+      region pages). *)
 
 type buffer =
   (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
@@ -82,16 +82,14 @@ module Entry : sig
         (** [Write_inline {data; dst}] copies [data], which the entry holds, to
             [dst]: the NIC reads no memory of this process. *)
     | Read of { src : remote; dst : local }
-        (** [Read {src; dst}] copies [dst.bytes] bytes from [src] to [dst]. *)
+        (** [Read {src; dst}] copies [dst.bytes] bytes from [src] to [dst]. It
+            reads what the writes posted before it on its queue pair wrote. *)
 
   type t = {
     op : op;
     signal : bool;
         (** The NIC writes a completion once the entry completes. It writes one
             for a failed entry whatever [signal] says. *)
-    fence : bool;
-        (** The NIC starts the entry once every read the queue pair started
-            before it completed. *)
   }
   (** The type for work entries. *)
 
@@ -126,7 +124,6 @@ module Completion : sig
     | Local_qp_operation  (** The entry is malformed for its queue pair. *)
     | Local_protection  (** Local memory is outside its region or its keys. *)
     | Flushed  (** The queue pair failed before the entry ran. *)
-    | Memory_window_bind  (** A memory window bind failed. *)
     | Bad_response  (** The peer answered with an unexpected response. *)
     | Local_access  (** The peer's request violated local access rights. *)
     | Remote_invalid_request
@@ -135,8 +132,6 @@ module Completion : sig
     | Remote_operation  (** The peer could not complete the request. *)
     | Retry_exceeded
         (** The peer acknowledged nothing within the queue pair's retries. *)
-    | Receiver_not_ready_retry_exceeded
-        (** The peer had no receive posted within the queue pair's retries. *)
     | Remote_aborted  (** The peer aborted the operation. *)
     | Other_error of int  (** Another syndrome, by its number. *)
 

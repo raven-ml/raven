@@ -24,11 +24,10 @@
     {[
     let nic = Result.get_ok (Rig_mlx5_uverbs.open_ "mlx5_0") in
     let cq = Result.get_ok (Rig_mlx5.Cq.make nic 256) in
-    let qp = Result.get_ok (Rig_mlx5.Qp.make nic cq 128) in
+    let qp = Result.get_ok (Rig_mlx5.Qp.make cq 128) in
     (* send Qp.endpoint qp to the peer, receive its endpoint [peer] *)
     Result.get_ok (Rig_mlx5.Qp.connect qp peer);
-    Rig_mlx5.Qp.post qp
-      { op = Write { src; dst }; signal = true; fence = false };
+    Rig_mlx5.Qp.post qp { op = Write { src; dst }; signal = true };
     Rig_mlx5.Qp.ring qp
     ]}
 
@@ -41,15 +40,20 @@
     call at a time, as do a completion queue's {!Cq.poll} and {!Cq.arm}, and
     {!wait}. A queue pair may be posted while its completion queue is polled in
     another domain. Destroying an object runs after every other call on it
-    returned, and no call on it follows.
+    returned.
+
+    {b Misuse.} Calls on a destroyed object, or on any object of a closed NIC,
+    raise [Invalid_argument]. A second [destroy], [deregister] or [close] does
+    nothing.
 
     {b Fork.} A child process uses none of its parent's NICs.
 
     {b References.}
-    - rdma-core's [libibverbs] and [providers/mlx5]: [verbs.c] (the driver data
-      of each object), [qp.c] and [cq.c] (posting, polling and arming).
-    - The Linux kernel's [drivers/infiniband/hw/mlx5]: [main.c] (contexts and
-      access regions), [qp.c] and [cq.c] (the user rings). *)
+    - rdma-core v56.0's [libibverbs] and [providers/mlx5]: [verbs.c] (the driver
+      data of each object), [qp.c] and [cq.c] (posting, polling and arming).
+    - Linux v6.12's [include/uapi/rdma/mlx5-abi.h] (the driver data) and
+      [drivers/infiniband/hw/mlx5]: [main.c] (contexts and access regions),
+      [qp.c] and [cq.c] (the user rings). *)
 
 (** {1:nics NICs} *)
 
@@ -112,13 +116,6 @@ module Region : sig
   (** [deregister r] gives [r] back. The NIC reads and writes [r] no more once
       [deregister] returns. *)
 
-  val address : t -> int
-  (** [address r] is the address the NIC knows [r]'s first byte by: a host
-      region's address, a dma-buf region's offset. *)
-
-  val bytes : t -> int
-  (** [bytes r] is the length of [r]. *)
-
   val local : t -> int -> int -> Rig_mlx5_abi.Entry.local
   (** [local r at n] is the [n] bytes at offset [at] of [r], for an entry of
       this process.
@@ -153,7 +150,7 @@ module Cq : sig
       the NIC wrote none since the last. *)
 
   val arm : t -> unit
-  (** [arm cq] asks [nic] to raise one {!Completion} event at the next
+  (** [arm cq] asks [cq]'s NIC to raise one {!Completion} event at the next
       completion of [cq] after those [poll] consumed. *)
 
   val destroy : t -> unit
@@ -166,8 +163,6 @@ end
 
 (** Queue pairs: send rings connected to one queue pair of a peer. *)
 module Qp : sig
-  type nic := t
-
   type t
   (** The type for reliable-connected queue pairs. *)
 
@@ -187,14 +182,15 @@ module Qp : sig
   (** The type for what a peer needs to connect to a queue pair: plain data,
       which crosses machines. *)
 
-  val make : nic -> Cq.t -> int -> (t, string) result
-  (** [make nic cq n] is a queue pair of [nic] with room for [n] entries, [n]
+  val make : Cq.t -> int -> (t, string) result
+  (** [make cq n] is a queue pair of [cq]'s NIC with room for [n] entries, [n]
       rounded up to a power of two, whose completions go to [cq]. It starts at a
       random packet sequence number and connects to nothing. It has no receive
       ring: peers write and read its regions, and send it nothing.
 
       Raises [Invalid_argument] if [n] is not in \[[1];[2{^15}]\], or the queue
-      pairs of [cq] would hold more entries than [cq]. *)
+      pairs of [cq], each counted at its rounded size, would hold more entries
+      than [cq]. *)
 
   val number : t -> int
   (** [number qp] is [qp]'s number, which completions name. *)
@@ -204,13 +200,13 @@ module Qp : sig
 
   val connect : t -> endpoint -> (unit, string) result
   (** [connect qp e] connects [qp] to the peer's queue pair [e], at the smaller
-      of both ports' MTUs, and makes it ready to send. A peer's request that
-      [qp]'s peer does not acknowledge is retried 7 times, each after the port's
-      acknowledgement timeout (1.07 s on InfiniBand, 67 ms on [`Ethernet]); then
+      of both ports' MTUs, and makes it ready to send. A request of [qp] that
+      its peer does not acknowledge is retried 7 times, each after the port's
+      acknowledgement timeout (1.07 s on InfiniBand, 67 ms on Ethernet); then
       the entry fails with {!Rig_mlx5_abi.Completion.Retry_exceeded}.
 
-      Raises [Invalid_argument] if [qp] was connected, or [e]'s address is not
-      of [qp]'s link layer. *)
+      Raises [Invalid_argument] if [qp] was connected, [e]'s address is not of
+      [qp]'s link layer, or a [Gid] is not 16 bytes. *)
 
   val room : t -> int
   (** [room qp] is how many entries [qp] takes before its ring is full: an
@@ -224,10 +220,8 @@ module Qp : sig
       Raises [Invalid_argument] if [qp] is not connected or [room qp] is [0]. *)
 
   val ring : t -> unit
-  (** [ring qp] tells the NIC that the entries posted before it wait: it stores
-      the producer count in [qp]'s doorbell record after the entries, and the
-      last entry's first 8 bytes in [qp]'s doorbell register after the record.
-      It does nothing if no entry was posted since the last. *)
+  (** [ring qp] hands the NIC the entries posted since the last [ring]. It does
+      nothing if there are none. *)
 
   val destroy : t -> unit
   (** [destroy qp] destroys [qp]. The NIC runs none of its entries and reads and
@@ -269,8 +263,8 @@ type kernel_event =
   | Nic_failed  (** The NIC failed. *)
   | Port_changed of string  (** The port's state changed: its new state. *)
 
-(** The type for a queue pair's state changes, in the order {!make} takes them.
-*)
+(** The type for a queue pair's state changes, in the order {!Qp.connect} makes
+    them. *)
 type transition =
   | Init  (** To initialised: on port 1, peers may read and write. *)
   | Ready_to_receive of {
@@ -279,7 +273,7 @@ type transition =
       gid : int option;
           (** The index of the port's global identifier the queue pair sends
               from, on Ethernet. *)
-      reads : int;  (** The peer's reads in flight it serves at once. *)
+      served : int;  (** The peer's reads in flight it serves at once. *)
     }
   | Ready_to_send of {
       psn : int;
@@ -301,6 +295,13 @@ type context = {
 (** The type for what a path learns once the process's context of a NIC exists.
 *)
 
+type registered = {
+  handle : int;  (** The kernel's handle of the region. *)
+  local : int;  (** Its local key. *)
+  remote : int;  (** Its remote key. *)
+}
+(** The type for memory a path registered. *)
+
 type path = {
   name : string;  (** The kernel's name of the NIC. *)
   bus : string;  (** The bus address of its PCI function. *)
@@ -313,9 +314,9 @@ type path = {
   map : int -> int -> (int, string) result;
       (** [map off n] maps the [n] bytes at offset [off] of the NIC's file:
           their host address. *)
-  register : Region.access -> Region.memory -> (int * int * int, string) result;
-      (** [register a m] registers [m] for [a], at the address {!Region.address}
-          names: its handle, local key and remote key. *)
+  register : Region.access -> Region.memory -> (registered, string) result;
+      (** [register a m] registers [m] for [a], at the address the NIC knows its
+          first byte by: a host region's address, a dma-buf region's offset. *)
   cq : entries:int -> tag:int -> string -> int -> (int * string, string) result;
       (** [cq ~entries ~tag d n] makes a completion queue of [entries]
           completions, a power of two, whose events carry [tag], giving the

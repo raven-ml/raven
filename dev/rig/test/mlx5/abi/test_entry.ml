@@ -4,9 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 (* Work entries, against the segments of rdma-core's mlx5dv.h: a control segment
-   (opcode, index, queue pair and 16-byte units, then the completion and fence
-   flags at byte 11), a remote address segment at byte 16, then a data segment
-   or an inline segment at byte 32, every field big-endian. *)
+   (opcode, index, queue pair and 16-byte units, then the completion flag at
+   byte 11), a remote address segment at byte 16, then a data segment or an
+   inline segment at byte 32, every field big-endian. *)
 
 open Windtrap
 open Rig_mlx5_abi
@@ -40,7 +40,6 @@ let hex b at n =
 let rdma_write = 0x08
 let rdma_read = 0x10
 let cq_update = 0x08
-let fence = 0x80
 let inline_seg = 0x8000_0000
 
 (* Generators *)
@@ -79,8 +78,8 @@ let op =
 
 let entry =
   Gen.(
-    let+ op = op and+ signal = bool and+ fence = bool in
-    { Entry.op; signal; fence })
+    let+ op = op and+ signal = bool in
+    { Entry.op; signal })
 
 let placed =
   Gen.(
@@ -102,8 +101,8 @@ let pp_entry ppf ((e : Entry.t), qp, index, slot) =
         strf "read %d bytes 0x%x/%x -> 0x%x/%x" dst.bytes src.address src.key
           dst.address dst.key
   in
-  Format.fprintf ppf "%s, signal %b, fence %b, qp 0x%x, index %d, slot %d" op
-    e.signal e.fence qp index slot
+  Format.fprintf ppf "%s, signal %b, qp 0x%x, index %d, slot %d" op e.signal qp
+    index slot
 
 let placed = Gen.with_pp pp_entry placed
 
@@ -121,9 +120,7 @@ let check_entry b at ((e : Entry.t), qp, index) =
     (be b at 4);
   equal ~msg:"queue pair, units" int ((qp lsl 8) lor units) (be b (at + 4) 4);
   equal ~msg:"signature and stream" int 0 (be b (at + 8) 3);
-  equal ~msg:"flags" int
-    ((if e.signal then cq_update else 0) lor if e.fence then fence else 0)
-    (byte b (at + 11));
+  equal ~msg:"flags" int (if e.signal then cq_update else 0) (byte b (at + 11));
   equal ~msg:"immediate" int 0 (be b (at + 12) 4);
   let remote (r : Entry.remote) =
     equal ~msg:"remote address" int r.address (be b (at + 16) 8);
@@ -207,7 +204,6 @@ let transfer =
                 dst = { address = 0x2_0000_0000; key = 0xabcd };
               };
           signal = false;
-          fence = false;
         };
       Entry.write b 64 ~qp ~index:0x12346
         {
@@ -218,7 +214,6 @@ let transfer =
                 dst = { address = 0x2_0010_0000; key = 0xabce };
               };
           signal = false;
-          fence = false;
         };
       Entry.write b 128 ~qp ~index:0x12347
         {
@@ -229,7 +224,6 @@ let transfer =
                 dst = { address = 0x7f00_2000_0000; bytes = 8; key = 0x1235 };
               };
           signal = true;
-          fence = true;
         };
       print_string
         (String.concat "\n" (List.init 12 (fun i -> hex b (16 * i) 16)));
@@ -244,7 +238,7 @@ let transfer =
         00000002 00100000 0000abce 00000000
         80000008 07000000 00000000 00000000
         00000000 00000000 00000000 00000000
-        00234710 0001c303 00000088 00000000
+        00234710 0001c303 00000008 00000000
         00000002 00100000 0000abce 00000000
         00000008 00001235 00007f00 20000000
         00000000 00000000 00000000 00000000
@@ -260,7 +254,6 @@ let refusals =
             dst = { address = 0; key = 2 };
           };
       signal = false;
-      fence = false;
     }
   in
   let refused name ?(at = 0) ?(qp = 1) ?(index = 0) e =

@@ -39,7 +39,6 @@ let mlx5_send_wqe_bb = 0x40
 let mlx5_opcode_rdma_write = 8
 let mlx5_opcode_rdma_read = 0x10
 let mlx5_wqe_ctrl_cq_update = 8
-let mlx5_wqe_ctrl_fence = 0x80
 let mlx5_inline_seg = 0x80000000
 let mlx5_rcv_dbr = 0
 let mlx5_snd_dbr = 1

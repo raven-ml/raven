@@ -111,14 +111,14 @@ let syndromes =
       (0x02, Local_qp_operation);
       (0x04, Local_protection);
       (0x05, Flushed);
-      (0x06, Memory_window_bind);
+      (0x06, Other_error 0x06);
       (0x10, Bad_response);
       (0x11, Local_access);
       (0x12, Remote_invalid_request);
       (0x13, Remote_access);
       (0x14, Remote_operation);
       (0x15, Retry_exceeded);
-      (0x16, Receiver_not_ready_retry_exceeded);
+      (0x16, Other_error 0x16);
       (0x22, Remote_aborted);
       (0x03, Other_error 0x03);
       (0xff, Other_error 0xff);

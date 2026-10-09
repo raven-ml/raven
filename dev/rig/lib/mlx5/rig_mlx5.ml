@@ -46,7 +46,7 @@ type transition =
       peer : endpoint;
       mtu : int;
       gid : int option;
-      reads : int;
+      served : int;
     }
   | Ready_to_send of { psn : int; timeout : int; retries : int; reads : int }
 
@@ -58,13 +58,15 @@ type context = {
   served : int;
 }
 
+type registered = { handle : int; local : int; remote : int }
+
 type path = {
   name : string;
   bus : string;
   page : int;
   context : string -> int -> (context, string) result;
   map : int -> int -> (int, string) result;
-  register : access -> memory -> (int * int * int, string) result;
+  register : access -> memory -> (registered, string) result;
   cq : entries:int -> tag:int -> string -> int -> (int * string, string) result;
   qp :
     cq:int ->
@@ -305,8 +307,18 @@ module Region = struct
     if bytes <= 0 || address < 0 then
       invalid_arg
         (strf "Rig_mlx5.Region.register: %d bytes at 0x%x" bytes address);
-    let* handle, lkey, rkey = nic.path.register access m in
-    Ok { nic; handle; lkey; rkey; address; bytes; access; gone = false }
+    let* (g : registered) = nic.path.register access m in
+    Ok
+      {
+        nic;
+        handle = g.handle;
+        lkey = g.local;
+        rkey = g.remote;
+        address;
+        bytes;
+        access;
+        gone = false;
+      }
 
   let deregister r =
     alive "Region.deregister" r.nic;
@@ -315,10 +327,8 @@ module Region = struct
       r.nic.path.destroy `Region r.handle
     end
 
-  let address r = r.address
-  let bytes r = r.bytes
-
   let check fn r at n =
+    alive ("Region." ^ fn) r.nic;
     if r.gone then invalid_arg (strf "Rig_mlx5.Region.%s: deregistered" fn);
     if at < 0 || n < 0 || at + n > r.bytes then
       invalid_arg
@@ -338,6 +348,16 @@ module Region = struct
 end
 
 (* Completion queues *)
+
+(* A completion queue or queue pair that calls may use: its NIC open, itself not
+   destroyed. *)
+let live_cq fn cq =
+  alive fn cq.c_nic;
+  if cq.c_destroyed then invalid_arg (strf "Rig_mlx5.%s: destroyed" fn)
+
+let live_qp fn q =
+  alive fn q.q_nic;
+  if q.q_destroyed then invalid_arg (strf "Rig_mlx5.%s: destroyed" fn)
 
 module Cq = struct
   type t = cq
@@ -397,7 +417,7 @@ module Cq = struct
     raise_to (last + 1)
 
   let poll cq =
-    alive "Cq.poll" cq.c_nic;
+    live_cq "Cq.poll" cq;
     let at = cq.count land (cq.c_entries - 1) * A.Completion.size in
     if
       not
@@ -416,7 +436,7 @@ module Cq = struct
     end
 
   let arm cq =
-    alive "Cq.arm" cq.c_nic;
+    live_cq "Cq.arm" cq;
     let word, number =
       A.Doorbell.arm ~sequence:(Atomic.get cq.sequence) ~count:cq.count
         ~cq:cq.c_number
@@ -429,7 +449,7 @@ module Cq = struct
   let destroy cq =
     let nic = cq.c_nic in
     alive "Cq.destroy" nic;
-    if Atomic.get cq.members <> [] then
+    if (not cq.c_destroyed) && Atomic.get cq.members <> [] then
       invalid_arg "Rig_mlx5.Cq.destroy: a queue pair of it is not destroyed";
     if not cq.c_destroyed then begin
       cq.c_destroyed <- true;
@@ -460,8 +480,9 @@ module Qp = struct
   let retries = 7
   let timeout = function `Infiniband _ -> 18 | `Ethernet _ -> 14
 
-  let make nic cq n =
-    alive "Qp.make" nic;
+  let make cq n =
+    let nic = cq.c_nic in
+    live_cq "Qp.make" cq;
     if n < 1 || n > max_entries then
       invalid_arg (strf "Rig_mlx5.Qp.make: %d entries" n);
     let entries = pow2_at_least n 1 in
@@ -529,17 +550,24 @@ module Qp = struct
             Atomic.set cq.members (q :: Atomic.get cq.members));
         Ok q
 
-  let number q = q.q_number
+  let number q =
+    live_qp "Qp.number" q;
+    q.q_number
 
   let endpoint q =
+    live_qp "Qp.endpoint" q;
     let nic = q.q_nic in
     { qp = q.q_number; psn = q.psn; address = nic.address; mtu = nic.facts.mtu }
 
   let connect q (e : endpoint) =
     let nic = q.q_nic in
-    alive "Qp.connect" nic;
+    live_qp "Qp.connect" q;
     if q.connected then invalid_arg "Rig_mlx5.Qp.connect: connected";
     (match (nic.facts.port, e.address) with
+    | `Ethernet _, Gid g when String.length g <> 16 ->
+        invalid_arg
+          (strf "Rig_mlx5.Qp.connect: a global identifier of %d bytes"
+             (String.length g))
     | `Infiniband _, Lid _ | `Ethernet _, Gid _ -> ()
     | _ -> invalid_arg "Rig_mlx5.Qp.connect: an address of another link layer");
     let p = nic.path and f = nic.facts in
@@ -547,7 +575,7 @@ module Qp = struct
       [
         Init;
         Ready_to_receive
-          { peer = e; mtu = min f.mtu e.mtu; gid = nic.gid; reads = f.served };
+          { peer = e; mtu = min f.mtu e.mtu; gid = nic.gid; served = f.served };
         Ready_to_send
           { psn = q.psn; timeout = timeout f.port; retries; reads = f.reads };
       ]
@@ -560,10 +588,12 @@ module Qp = struct
     q.connected <- true;
     Ok ()
 
-  let room q = q.q_entries - (Atomic.get q.posted - Atomic.get q.completed)
+  let room q =
+    live_qp "Qp.room" q;
+    q.q_entries - (Atomic.get q.posted - Atomic.get q.completed)
 
   let post q e =
-    alive "Qp.post" q.q_nic;
+    live_qp "Qp.post" q;
     if not q.connected then invalid_arg "Rig_mlx5.Qp.post: not connected";
     if room q = 0 then invalid_arg "Rig_mlx5.Qp.post: the ring is full";
     let index = Atomic.get q.posted in
@@ -573,7 +603,7 @@ module Qp = struct
     Atomic.set q.posted (index + 1)
 
   let ring q =
-    alive "Qp.ring" q.q_nic;
+    live_qp "Qp.ring" q;
     let posted = Atomic.get q.posted in
     if posted <> q.rung then begin
       let last = (posted - 1) land (q.q_entries - 1) in

@@ -32,15 +32,15 @@
     [UVERBS_METHOD_REG_DMABUF_MR].
 
     {b References.}
-    - The Linux kernel's [include/uapi/rdma]: [rdma_user_ioctl_cmds.h] (the
-      ioctl's header and attributes), [ib_user_ioctl_cmds.h] (objects, methods
-      and attributes) and [ib_user_verbs.h] (the commands the ioctl invokes and
+    - Linux v6.12's [include/uapi/rdma]: [rdma_user_ioctl_cmds.h] (the ioctl's
+      header and attributes), [ib_user_ioctl_cmds.h] (objects, methods and
+      attributes) and [ib_user_verbs.h] (the commands the ioctl invokes and
       their responses).
-    - The Linux kernel's [drivers/infiniband/core]: [uverbs_ioctl.c] (how the
-      kernel reads the ioctl), [uverbs_std_types_device.c] (invoking a command),
+    - Linux v6.12's [drivers/infiniband/core]: [uverbs_ioctl.c] (how the kernel
+      reads the ioctl), [uverbs_std_types_device.c] (invoking a command),
       [uverbs_cmd.c] and [uverbs_std_types_mr.c].
-    - rdma-core's [libibverbs/cmd_*.c]: the same calls as its library makes
-      them. *)
+    - rdma-core v56.0's [libibverbs/cmd_*.c]: the same calls as its library
+      makes them. *)
 
 val names : ?root:string -> unit -> string list
 (** [names ~root ()] is the names of this machine's RDMA devices under [root]
