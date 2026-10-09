@@ -6,7 +6,7 @@
  (libraries nx_array nx_cuda rig rig.cuda windtrap)
  (foreign_stubs
   (language c)
-  (include_dirs ../../../lib/cuda)
+  (include_dirs ../../../lib/cuda ../../../lib/array)
   (extra_deps sm_89.cubin)
   (flags :standard -DNX_HARNESS_CUBIN=sm_89.cubin)
   (names nx_cuda_support_stubs)))

@@ -39,12 +39,6 @@ val sms : gpu -> int
 type image
 (** The type for loaded cubins and the table of their kernels a fill reads. *)
 
-val image : gpu -> string -> string array -> image
-(** [image g cubin names] is [cubin] loaded on [g], its table holding the
-    kernels [names] in order: a record's kernel [i] is [names.(i)].
-
-    Raises [Failure] if [g] refuses [cubin] or it has no kernel of [names]. *)
-
 val harness : gpu -> image
 (** [harness g] is the harness's cubin (harness.h) loaded on [g] once. *)
 
@@ -107,6 +101,12 @@ val run : ?beside:hog -> gpu -> run -> unit
     Raises [Invalid_argument] if [r] is a driver copy beside a hog, and
     [Failure] if the hog's blocks do not all start within 2 s. *)
 
+val enqueue : gpu -> count:int -> run -> unit
+(** [enqueue g ~count r] enqueues [r] [count] times behind a hold, releases the
+    hold once they are queued, and returns without waiting for them: the host's
+    share of [count] runs. The caller keeps [r] until a later {!run} or
+    {!device_time} returns. *)
+
 val device_time : gpu -> run -> count:int -> float
 (** [device_time g r ~count] runs [r] [count] times and is the GPU's time per
     run, in seconds: the span between two timer stamps around the runs on [r]'s
@@ -138,6 +138,59 @@ val floor_read : gpu -> Rig.Buffer.t -> launch
     and writes a word per block: the floor of a reduction over [b].
 
     Raises [Invalid_argument] if [b]'s length is not a multiple of 16. *)
+
+(** {1:contract Contractions} *)
+
+type operand = {
+  buffer : Rig.Buffer.t;
+  dtype : int;  (** Its dtype's code. *)
+  shape : int array;
+  strides : int array;  (** In elements. *)
+  first : int;  (** Bytes from the buffer's start to element 0. *)
+}
+(** The type for operands of nx.cuda's plans. *)
+
+val contract :
+  gpu ->
+  a:operand ->
+  b:operand ->
+  ?init:operand ->
+  y:operand ->
+  batch:(int * int) list ->
+  contracting:(int * int) list ->
+  acc:int ->
+  unit ->
+  run option
+(** [contract g ~a ~b ~init ~y ~batch ~contracting ~acc ()] is nx.cuda's plan of
+    the contraction ([nx_cuda_plan_contract]) on {!library}'s kernels, its
+    scratch allocated on [g] and kept by the run, or [None] if the plan
+    declines. [batch] and [contracting] pair an axis of [a] with one of [b]. *)
+
+val planner :
+  a:operand ->
+  b:operand ->
+  ?init:operand ->
+  y:operand ->
+  batch:(int * int) list ->
+  contracting:(int * int) list ->
+  acc:int ->
+  unit ->
+  unit ->
+  int
+(** [planner ~a ~b ~init ~y ~batch ~contracting ~acc () ()] plans the
+    contraction as {!contract} does, into records it keeps from one call to the
+    next, and is the plan's count of launches: the planner's own cost, for the
+    bench. *)
+
+val library : gpu -> image
+(** [library g] is nx.cuda's cubin for [g]'s architecture loaded on [g] once,
+    its table holding every kernel of [kernels.h].
+
+    Raises [Failure] if nx.cuda has no cubin for [g]. *)
+
+val library_size : gpu -> int * int
+(** [library_size g] is the count of kernels and the bytes of {!library}'s
+    cubin: the instance budget's measure. *)
 
 (** {1:memory Memory} *)
 

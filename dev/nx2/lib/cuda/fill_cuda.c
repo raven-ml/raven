@@ -13,6 +13,11 @@
 #define PARAM_BUFFER_SIZE ((void *)2)
 #define PARAM_END ((void *)0)
 
+#define NAME(name, ...) #name,
+const char *const nx_cuda_kernel_names[NX_CUDA_KERNEL_COUNT] = {
+    NX_CUDA_KERNELS(NAME)};
+#undef NAME
+
 int nx_cuda_add(nx_cuda_records *r, uint32_t kernel, const uint32_t grid[3],
                 const uint32_t block[3], uint32_t shared, const void *params,
                 uint32_t bytes, uint32_t addrs, uint32_t scratch) {
@@ -34,6 +39,22 @@ int nx_cuda_add(nx_cuda_records *r, uint32_t kernel, const uint32_t grid[3],
   memcpy(r->bytes + r->len + sizeof l, params, bytes);
   r->len = need;
   return 0;
+}
+
+void nx_cuda_rebase(unsigned char *r, size_t len, uint64_t base) {
+  for (size_t at = 0; at < len;) {
+    nx_cuda_launch l;
+    memcpy(&l, r + at, sizeof l);
+    for (uint32_t i = 0; i < l.addrs; i++)
+      if (l.scratch >> i & 1) {
+        uint64_t x;
+        unsigned char *w = r + at + sizeof l + 8 * i;
+        memcpy(&x, w, 8);
+        x += base;
+        memcpy(w, &x, 8);
+      }
+    at += sizeof l + l.bytes;
+  }
 }
 
 int nx_cuda_fill(void *stream, void *arg, uint64_t v) {

@@ -11,9 +11,9 @@ which it finds at $CUDA_HOME, else /usr/local/cuda:
   uv run dev/nx2/lib/cuda/kernels/gen.py --pin
 
 An artifact is one translation unit that includes every .cu file of its
-directory in name order. nvcc compiles it to a cubin for each architecture
-and nothing else: no PTX, which the driver would compile at load for GPUs
-no machine here measured.
+sources' directory in name order. nvcc compiles it to a cubin for each
+architecture and nothing else: no PTX, which the driver would compile at
+load for GPUs no machine here measured.
 
 pins.json records the toolchain (nvcc's version, and the digest of each
 program that reads the sources: nvcc, cudafe++, cicc, ptxas, and the host
@@ -27,8 +27,8 @@ differs: nvcc is deterministic for a version and options. A dune rule checks
 the digests on every machine, with no toolchain, so a source changed
 without regenerating, or a cubin edited, fails the tests.
 
---check also checks that each kernel the artifact's list names (the X macro
-of its header) is a symbol of its cubin.
+Each generation checks that each kernel the artifact's list names (the X
+macro of its header, by its first argument) is a symbol of its cubin.
 
 Python's standard library only.
 """
@@ -48,15 +48,17 @@ NX2 = pathlib.Path(__file__).resolve().parents[3]
 PINS = NX2 / "lib/cuda/kernels/pins.json"
 ARCHS = ["sm_89"]
 
-# Each artifact: its directory, the header whose X macro lists its kernels,
-# and that macro's name.
+# Each artifact: the directory of its sources, the directory of its cubins,
+# the header whose X macro lists its kernels by their first argument, and
+# that macro's name.
 ARTIFACTS = [
-    ("test/cuda/support", "test/cuda/support/harness.h", "NX_HARNESS_KERNELS"),
+    ("lib/cuda/kernels/src", "lib/cuda/kernels", "lib/cuda/kernels.h", "NX_CUDA_KERNELS"),
+    ("test/cuda/support", "test/cuda/support", "test/cuda/support/harness.h", "NX_HARNESS_KERNELS"),
 ]
 
 # The headers the sources may include, by name: the only ones copied beside
 # them.
-HEADERS = ["lib/array/nx_dtype.h", "test/cuda/support/harness.h"]
+HEADERS = ["lib/array/nx_dtype.h", "lib/cuda/kernels.h", "test/cuda/support/harness.h"]
 
 # Floats as the kernel contract states them: no contraction of a product
 # into a sum, division and square roots correctly rounded, subnormals kept.
@@ -98,7 +100,7 @@ def toolchain():
 
 def inputs():
     files = [NX2 / h for h in HEADERS] + [pathlib.Path(__file__).resolve()]
-    for d, _, _ in ARTIFACTS:
+    for d, _, _, _ in ARTIFACTS:
         files += sources(d)
     return {str(f.relative_to(NX2)): digest(f) for f in sorted(set(files))}
 
@@ -109,7 +111,7 @@ def kernels(header, macro):
     m = re.search(rf"#define {macro}\(X\)((?:.*\\\n)*.*)", text)
     if m is None:
         sys.exit(f"{header}: no {macro}")
-    return re.findall(r"X\((\w+)\)", m.group(1))
+    return re.findall(r"X\((\w+)", m.group(1))
 
 
 def sources(directory):
@@ -138,9 +140,9 @@ def compile_artifact(directory, arch, out):
 def generate(outdir):
     """Writes every cubin under [outdir]; their digests by path."""
     outputs = {}
-    for directory, header, macro in ARTIFACTS:
+    for directory, cubins, header, macro in ARTIFACTS:
         for arch in ARCHS:
-            path = f"{directory}/{arch}.cubin"
+            path = f"{cubins}/{arch}.cubin"
             out = outdir / path
             out.parent.mkdir(parents=True, exist_ok=True)
             compile_artifact(directory, arch, out)

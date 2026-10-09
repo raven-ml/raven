@@ -7,7 +7,11 @@
  (deps
   (:pins pins.json)
   gen.py
+  ../kernels.h
   ../../array/nx_dtype.h
+  (glob_files src/*.cu)
+  (glob_files src/*.cuh)
+  (glob_files *.cubin)
   ../../../test/cuda/support/harness.h
   (glob_files ../../../test/cuda/support/*.cu)
   (glob_files ../../../test/cuda/support/*.cuh)

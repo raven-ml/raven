@@ -35,9 +35,12 @@
 #include "harness.h"
 #include "nx_cuda.h"
 
+/* The harness's cubin, embedded as nx.cuda embeds its own */
+
+/* Defines [name] and [name]_end around the bytes of the file [file], a
+   string, embedded in read-only data at build time. */
 #define STR_(x) #x
 #define STR(x) STR_(x)
-
 #if defined(__APPLE__)
 #define SECTION ".const"
 #define SYMBOL(s) "_" s
@@ -45,19 +48,14 @@
 #define SECTION ".section .rodata"
 #define SYMBOL(s) s
 #endif
+#define EMBED(name, file)                                                      \
+  __asm__(SECTION "\n.balign 16\n.globl " SYMBOL(#name) "\n"                   \
+          SYMBOL(#name) ":\n.incbin \"" file "\"\n.globl "                     \
+          SYMBOL(#name "_end") "\n" SYMBOL(#name "_end")                       \
+          ":\n.text\n");                                                       \
+  extern const char name[], name##_end[];
 
-/* The harness's cubin */
-
-__asm__(SECTION "\n"
-        ".balign 16\n"
-        ".globl " SYMBOL("nx_harness_cubin") "\n"
-        SYMBOL("nx_harness_cubin") ":\n"
-        ".incbin \"" STR(NX_HARNESS_CUBIN) "\"\n"
-        ".globl " SYMBOL("nx_harness_cubin_end") "\n"
-        SYMBOL("nx_harness_cubin_end") ":\n"
-        ".text\n");
-
-extern const char nx_harness_cubin[], nx_harness_cubin_end[];
+EMBED(nx_harness_cubin, STR(NX_HARNESS_CUBIN))
 
 value nx_cuda_support_cubin(value unit) {
   (void)unit;
@@ -66,17 +64,13 @@ value nx_cuda_support_cubin(value unit) {
 }
 
 value nx_cuda_support_kernels(value unit) {
-  CAMLparam1(unit);
-  CAMLlocal1(r);
-  static const char *const names[] = {
+  static const char *names[] = {
 #define NAME(name) #name,
       NX_HARNESS_KERNELS(NAME)
 #undef NAME
-  };
-  r = caml_alloc(NX_HARNESS_COUNT, 0);
-  for (int i = 0; i < NX_HARNESS_COUNT; i++)
-    Store_field(r, i, caml_copy_string(names[i]));
-  CAMLreturn(r);
+      NULL};
+  (void)unit;
+  return caml_copy_string_array(names);
 }
 
 /* The floors' threads per block and floor_read's vectors per thread, as
@@ -88,6 +82,115 @@ value nx_cuda_support_floors(value unit) {
   Store_field(r, 0, Val_int(NX_COPY_THREADS));
   Store_field(r, 1, Val_int(NX_READ_THREADS));
   Store_field(r, 2, Val_int(NX_READ_VECS));
+  CAMLreturn(r);
+}
+
+/* nx.cuda */
+
+/* The library's cubin for the architecture [v_arch], if it has one. */
+value nx_cuda_support_library(value v_arch) {
+  CAMLparam1(v_arch);
+  CAMLlocal1(s);
+  size_t len;
+  const char *c = nx_cuda_cubin(Int_val(v_arch), &len);
+  if (c == NULL) CAMLreturn(Val_none);
+  s = caml_alloc_initialized_string(len, c);
+  CAMLreturn(caml_alloc_some(s));
+}
+
+value nx_cuda_support_library_kernels(value unit) {
+  CAMLparam1(unit);
+  CAMLlocal1(r);
+  r = caml_alloc(NX_CUDA_KERNEL_COUNT, 0);
+  for (int i = 0; i < NX_CUDA_KERNEL_COUNT; i++)
+    Store_field(r, i, caml_copy_string(nx_cuda_kernel_names[i]));
+  CAMLreturn(r);
+}
+
+static nx_cuda_operand operand_of(value v) {
+  nx_cuda_operand o;
+  memset(&o, 0, sizeof o);
+  o.address = (uint64_t)Long_val(Field(v, 0));
+  o.dtype = Int_val(Field(v, 1));
+  o.rank = (int)Wosize_val(Field(v, 2));
+  for (int i = 0; i < o.rank; i++) {
+    o.dim[i] = Long_val(Field(Field(v, 2), i));
+    o.dim[o.rank + i] = Long_val(Field(Field(v, 3), i));
+  }
+  return o;
+}
+
+static value bytes(size_t n);
+
+/* A contraction as the plan reads it. */
+struct call {
+  nx_cuda_contract_in in;
+  nx_cuda_operand ops[4];
+};
+
+/* The call of a contraction: [v_ops] a, b, init if [v_init], y, each its
+   address, dtype, shape and strides; [v_batch] and [v_contracting] pairs
+   of axes as flat int arrays; [v_acc] the accumulator. */
+value nx_cuda_support_call(value v_ops, value v_batch, value v_contracting,
+                           value v_acc, value v_init) {
+  CAMLparam5(v_ops, v_batch, v_contracting, v_acc, v_init);
+  CAMLlocal1(v);
+  v = bytes(sizeof(struct call));
+  struct call *c = Caml_ba_data_val(v);
+  for (mlsize_t i = 0; i < Wosize_val(v_ops); i++)
+    c->ops[i] = operand_of(Field(v_ops, i));
+  c->in.nbatch = (int)Wosize_val(v_batch) / 2;
+  for (int i = 0; i < c->in.nbatch; i++)
+    c->in.batch[i][0] = Int_val(Field(v_batch, 2 * i)),
+    c->in.batch[i][1] = Int_val(Field(v_batch, 2 * i + 1));
+  c->in.ncontracting = (int)Wosize_val(v_contracting) / 2;
+  for (int i = 0; i < c->in.ncontracting; i++)
+    c->in.contracting[i][0] = Int_val(Field(v_contracting, 2 * i)),
+    c->in.contracting[i][1] = Int_val(Field(v_contracting, 2 * i + 1));
+  c->in.acc = Int_val(v_acc);
+  c->in.init = Bool_val(v_init);
+  CAMLreturn(v);
+}
+
+/* The plan of the call [v_call]: Some (records, scratch bytes, launches),
+   or None if it declines. */
+value nx_cuda_support_plan(value v_call) {
+  CAMLparam1(v_call);
+  CAMLlocal2(r, s);
+  struct call *c = Caml_ba_data_val(v_call);
+  nx_cuda_records rs = {NULL, 0, 0};
+  size_t scratch = 0;
+  int launches = nx_cuda_plan_contract(&c->in, c->ops, 89, &rs, &scratch);
+  if (launches == NX_NOT_COMPUTED) {
+    free(rs.bytes);
+    CAMLreturn(Val_none);
+  }
+  s = caml_alloc_initialized_string(rs.len, (const char *)rs.bytes);
+  free(rs.bytes);
+  r = caml_alloc_tuple(3);
+  Store_field(r, 0, s);
+  Store_field(r, 1, Val_long((intnat)scratch));
+  Store_field(r, 2, Val_int(launches));
+  CAMLreturn(caml_alloc_some(r));
+}
+
+/* The launches of the call [v_call]'s plan, into records kept from one
+   call to the next: the planner's cost alone. */
+value nx_cuda_support_plan_only(value v_call) {
+  static nx_cuda_records rs = {NULL, 0, 0};
+  struct call *c = Caml_ba_data_val(v_call);
+  size_t scratch;
+  rs.len = 0;
+  return Val_int(nx_cuda_plan_contract(&c->in, c->ops, 89, &rs, &scratch));
+}
+
+/* The records [v_r] with their scratch at [v_base]. */
+value nx_cuda_support_rebase(value v_r, value v_base) {
+  CAMLparam2(v_r, v_base);
+  CAMLlocal1(r);
+  size_t len = caml_string_length(v_r);
+  r = caml_alloc_initialized_string(len, String_val(v_r));
+  nx_cuda_rebase((unsigned char *)Bytes_val(r), len, (uint64_t)Long_val(v_base));
   CAMLreturn(r);
 }
 
@@ -172,44 +275,9 @@ value nx_cuda_support_run(value v_entries, value v_records) {
   CAMLreturn(v);
 }
 
-/* A sequence of runs, each run [repeat] times. */
-struct seq {
-  int n;
-  struct {
-    const nx_cuda_run *run;
-    uint32_t repeat;
-  } s[];
-};
-
-static int seq_fill(void *stream, void *arg, uint64_t v) {
-  const struct seq *q = arg;
-  for (int i = 0; i < q->n; i++)
-    for (uint32_t k = 0; k < q->s[i].repeat; k++) {
-      int rc = nx_cuda_fill(stream, (void *)q->s[i].run, v);
-      if (rc != 0) return rc;
-    }
-  return 0;
-}
-
-/* The sequence of the runs [v_runs], each repeated as [v_repeats] says.
-   The caller keeps the runs alive while the sequence runs. */
-value nx_cuda_support_seq(value v_runs, value v_repeats) {
-  CAMLparam2(v_runs, v_repeats);
-  CAMLlocal1(v);
-  int n = (int)Wosize_val(v_runs);
-  v = bytes(sizeof(struct seq) + n * sizeof(((struct seq *)0)->s[0]));
-  struct seq *q = Caml_ba_data_val(v);
-  q->n = n;
-  for (int i = 0; i < n; i++) {
-    q->s[i].run = Caml_ba_data_val(Field(v_runs, i));
-    q->s[i].repeat = (uint32_t)Long_val(Field(v_repeats, i));
-  }
-  CAMLreturn(v);
-}
-
-value nx_cuda_support_seq_fill(value unit) {
+value nx_cuda_support_fill(value unit) {
   (void)unit;
-  return caml_copy_nativeint((intnat)seq_fill);
+  return caml_copy_nativeint((intnat)nx_cuda_fill);
 }
 
 /* The GPU lock */

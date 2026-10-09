@@ -24,6 +24,19 @@
 #include <stdint.h>
 
 #include "kernels.h"
+#include "nx_array.h"
+
+/* What a plan answers when it does not compute a call: nx's expansion of
+   the operation runs instead. */
+#define NX_NOT_COMPUTED (-1)
+
+/* The cubin of the architecture [arch] (89 for sm_89), [*len] bytes, or
+   NULL if the library has none: it computes on the GPUs of the
+   architectures it has a cubin for. */
+const char *nx_cuda_cubin(int arch, size_t *len);
+
+/* The name of each kernel, by its nx_cuda_kernel. */
+extern const char *const nx_cuda_kernel_names[NX_CUDA_KERNEL_COUNT];
 
 /* Runs */
 
@@ -44,6 +57,11 @@ typedef struct {
 int nx_cuda_add(nx_cuda_records *r, uint32_t kernel, const uint32_t grid[3],
                 const uint32_t block[3], uint32_t shared, const void *params,
                 uint32_t bytes, uint32_t addrs, uint32_t scratch);
+
+/* Adds [base] to each address of the [len] bytes of records at [r] that
+   its record's scratch mask names: the call's scratch, allocated after
+   planning, at [base]. */
+void nx_cuda_rebase(unsigned char *r, size_t len, uint64_t base);
 
 /* The fill */
 
@@ -74,5 +92,32 @@ typedef struct {
    the first launch CUDA refused, or 1 (CUDA_ERROR_INVALID_VALUE) for a
    record whose kernel has no entry, launching none after it. */
 int nx_cuda_fill(void *stream, void *arg, uint64_t v);
+
+/* Plans */
+
+/* An operand on the GPU: its element at index (i0, …, ik-1) is at
+   [address] plus the Σ ij·dim[rank + j] elements, ij < dim[j]. */
+typedef struct {
+  uint64_t address;
+  int dtype, rank;
+  int64_t dim[2 * NX_MAX_RANK];
+} nx_cuda_operand;
+
+/* A contraction with plain loads and no scales or segments: the
+   batch pairs and contracting pairs of a's and b's axes, the accumulator's
+   dtype, and whether an init operand is given. */
+typedef struct {
+  int batch[NX_MAX_RANK][2], nbatch;
+  int contracting[NX_MAX_RANK][2], ncontracting;
+  int acc, init;
+} nx_cuda_contract_in;
+
+/* Appends the launches of one contraction to [out] and returns their
+   count, or NX_NOT_COMPUTED having appended nothing. [ops] are a, b, init
+   if [in->init], and y. [arch] is the cubin's architecture, as 89 for
+   sm_89. [*scratch] is set to the scratch bytes the launches address. */
+int nx_cuda_plan_contract(const nx_cuda_contract_in *in,
+                          const nx_cuda_operand *ops, int arch,
+                          nx_cuda_records *out, size_t *scratch);
 
 #endif
