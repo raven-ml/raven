@@ -111,6 +111,11 @@ let descriptor (g : Gpu.t) ~base n =
         lor bits stride index_stride_64
     | _ -> no_layout ()
   in
+  (* The base: word 0 holds its low 32 bits, BASE_ADDRESS_HI the rest. *)
+  let address_bits = 32 + snd l.base_address_hi in
+  if base < 0 || base lsr address_bits <> 0 then
+    invalid_argf "Scratch.descriptor: base %d, expected 0 to 2^%d - 1" base
+      address_bits;
   let word1 =
     bits l.base_address_hi (base lsr 32) lor bits l.swizzle_enable 1
   in

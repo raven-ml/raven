@@ -62,7 +62,14 @@ let descriptors =
        and+ r = int_range 0 (g.xccs - 1) in
        (((1 lsl 32) + d) * g.xccs) + r
      in
-     let+ base = int_range 0 ((1 lsl 48) - 1)
+     let+ base =
+       frequency
+         [
+           (4, int_range 0 ((1 lsl 48) - 1));
+           ( 1,
+             of_list ~pp:Format.pp_print_int
+               [ min_int; -1; (1 lsl 48) - 1; 1 lsl 48; max_int ] );
+         ]
      and+ n =
        frequency
          [
@@ -87,14 +94,20 @@ let laws =
           equal int
             (share * 64 * g.scratch_slots * g.compute_units * g.xccs)
             (Scratch.size g n));
-      prop "a descriptor holds the base and n / xccs bytes, below 2^32 a die"
+      prop
+        "a descriptor holds the base, below 2^48, and n / xccs bytes, below \
+         2^32 a die"
         descriptors (fun ((g : Gpu.t), base, n) ->
           let share = 1 lsl 32 in
+          let address = 1 lsl 48 in
           cover "a share rounded down" (n mod g.xccs <> 0);
           cover "the largest share" (n >= 0 && n / g.xccs = share - 1);
           cover "a share of 2^32" (n / g.xccs = share);
           cover "a negative size" (n < 0);
-          if n < 0 || n / g.xccs >= share then
+          cover "the highest base" (base = address - 1);
+          cover "a base past 48 bits" (base >= address);
+          cover "a negative base" (base < 0);
+          if n < 0 || n / g.xccs >= share || base < 0 || base >= address then
             raises_match (Exn.invalid_arg ~substring:"Scratch.descriptor")
               (fun () -> Scratch.descriptor g ~base n)
           else
