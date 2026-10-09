@@ -803,6 +803,28 @@ typedef struct {
   const nx_loop *l;
 } copy_ctx;
 
+/* Rows of a copy are read ahead: a row that starts apart from the one before,
+   as a box's rows do in a wider array, is a stream the hardware prefetcher has
+   not seen, and its copy would wait on memory. On the M1, 4 MiB in rows of
+   1 KiB, 4 KiB apart, gather in 470 us without it and in 104 us reading two
+   rows ahead, where one memcpy of the 4 MiB takes 90. Only a row's first 4 KiB
+   are asked for: the prefetcher follows a longer row once it has started. A
+   read ahead is a hint: past the buffer's end it loads nothing and faults
+   nothing. */
+#define READ_AHEAD_ROWS 2
+#define READ_AHEAD_BYTES 4096
+#define CACHE_LINE 64
+
+/* Asks for the first bytes, at most [READ_AHEAD_BYTES], of the [n] at
+   [base + off] in cache. The address is formed as an integer, since it may
+   lie past the buffer. */
+static inline __attribute__((always_inline)) void read_ahead(
+    const uint8_t *base, int64_t off, int64_t n) {
+  if (n > READ_AHEAD_BYTES) n = READ_AHEAD_BYTES;
+  for (int64_t b = 0; b < n; b += CACHE_LINE)
+    __builtin_prefetch((const void *)((uintptr_t)base + (uintptr_t)(off + b)));
+}
+
 /* Copies [n] elements of [w] bytes, the [k]th from [s + k·bs] to
    [d + k·bd]. Called with a constant [w], the copies are loads and stores. */
 static inline __attribute__((always_inline)) void strided(
@@ -1101,9 +1123,11 @@ static inline __attribute__((always_inline)) void bytes(
                 cols - j, w);
     }
   for (; i < rows; i++)
-    if (dc == sw && sc == sw)
+    if (dc == sw && sc == sw) {
+      if (sr != cols * sw && i + READ_AHEAD_ROWS < rows)
+        read_ahead(s, (i + READ_AHEAD_ROWS) * sr, cols * sw);
       memcpy(d + i * dr, s + i * sr, (size_t)(cols * sw));
-    else
+    } else
       strided(d + i * dr, dc, s + i * sr, sc, cols, w);
 }
 
@@ -1173,9 +1197,17 @@ void nx_copy_box(uint8_t *dst, const uint8_t *src, const nx_box *b,
     copy_block(dst, pd, dr, dc, src, ps, sr, sc, rows, cols, bits);
 }
 
+/* A run of the gather, the source's run [READ_AHEAD_ROWS] steps along the
+   next axis out read ahead where its elements are adjacent and the runs lie
+   apart: the walk's next runs are most often those. */
 static void copy_run(void *ctx, const int64_t *at, int64_t len) {
   copy_ctx *c = ctx;
   int r = c->l->rank;
+  const nx_array *s = &c->a[1];
+  if (r > 1 && c->l->step[1][r - 1] == 1 && c->l->step[1][r - 2] != len) {
+    int64_t ahead = at[1] + READ_AHEAD_ROWS * c->l->step[1][r - 2];
+    read_ahead(s->base, ahead * s->bits / 8, (len * s->bits + 7) / 8);
+  }
   copy_block(c->a[0].base, at[0], 0, c->l->step[0][r - 1], c->a[1].base,
              at[1], 0, c->l->step[1][r - 1], 1, len, c->a[0].bits);
 }
