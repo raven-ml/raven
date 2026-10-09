@@ -30,7 +30,7 @@
 /* The loops of the target nx.cpu picked on this CPU. */
 static const nx_kinds_loops *nx_kinds_loops_best(void) {
 #if defined(__x86_64__)
-  if (nx_cpu_runs == &nx_cpu_v3) return nx_kinds_loops_v3;
+  if (nx_cpu_table == &nx_cpu_v3) return nx_kinds_loops_v3;
 #endif
   return nx_kinds_loops_base;
 }

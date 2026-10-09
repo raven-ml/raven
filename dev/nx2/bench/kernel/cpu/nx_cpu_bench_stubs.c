@@ -135,7 +135,7 @@ BEST static void stream_slice(int64_t lo, int64_t hi, int worker,
        M1, which no floor may. */
     static const uint8_t one[8] = {1};
     int i = f->outb == 1 ? 0 : f->outb == 2 ? 1 : f->outb == 4 ? 2 : 3;
-    nx_cpu_runs->fill[i](n, d, 1, one);
+    nx_cpu_table->fill[i](n, d, 1, one);
     return;
   }
   if (f->cond) {

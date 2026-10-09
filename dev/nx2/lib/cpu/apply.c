@@ -53,7 +53,7 @@ static int width_index(int bytes) {
 
 static row3 where_of(int bytes) {
   int i = width_index(bytes);
-  return i < 0 ? NULL : nx_cpu_runs->where[i];
+  return i < 0 ? NULL : nx_cpu_table->where[i];
 }
 
 /* Blocks */
@@ -64,7 +64,7 @@ typedef struct {
   row2 f2;
   row3 f3;
   const uint8_t *bits; /* a fill's element */
-} job;
+} op;
 
 /* The address of operand [k]'s element at position [p]. */
 static inline uint8_t *at(const nx_array *a, int k, int64_t p) {
@@ -73,8 +73,8 @@ static inline uint8_t *at(const nx_array *a, int k, int64_t p) {
 
 /* The rows of a plane: operand k's row r at in[k] + r·s1[k] elements of
    its width, stepping s0[k] along it. */
-static void rows(const job *j, int64_t n0, int64_t n1, uint8_t *const *in,
-                 const int64_t *s0, const int64_t *s1) {
+static void each_row(const op *j, int64_t n0, int64_t n1, uint8_t *const *in,
+                     const int64_t *s0, const int64_t *s1) {
   const nx_array *a = j->a;
   for (int64_t r = 0; r < n1; r++) {
     uint8_t *p[NX_MAX_OPERANDS];
@@ -88,10 +88,11 @@ static void rows(const job *j, int64_t n0, int64_t n1, uint8_t *const *in,
 
 /* An input whose rows step more than one element, as a transposed one's
    do, is copied into a slot first through nx_copy_box's block transposes,
-   so the rows read contiguous elements. Out of line, so that only a staged
-   block's call takes the slots' stack. */
+   so the rows read contiguous elements. A block of one row is not staged:
+   its gather would read the same strided elements, plus a copy. Out of
+   line, so that only a staged block's call takes the slots' stack. */
 static __attribute__((noinline)) void staged(const nx_cpu_block *b,
-                                             const job *j) {
+                                             const op *j) {
   _Alignas(64) uint8_t slot[NX_MAX_OPERANDS - 1][NX_CPU_SLOT];
   const nx_array *a = j->a;
   for (int64_t q = 0; q < b->n2; q++) {
@@ -114,12 +115,12 @@ static __attribute__((noinline)) void staged(const nx_cpu_block *b,
       s0[k] = 1;
       s1[k] = b->n0;
     }
-    rows(j, b->n0, b->n1, in, s0, s1);
+    each_row(j, b->n0, b->n1, in, s0, s1);
   }
 }
 
 static void block(const nx_cpu_block *b, void *ctx) {
-  const job *j = ctx;
+  const op *j = ctx;
   const nx_array *a = j->a;
   for (int k = 1; k < j->n; k++)
     if (b->s0[k] != 0 && b->s0[k] != 1 && b->n1 > 1) {
@@ -129,14 +130,14 @@ static void block(const nx_cpu_block *b, void *ctx) {
   for (int64_t q = 0; q < b->n2; q++) {
     uint8_t *in[NX_MAX_OPERANDS];
     for (int k = 0; k < j->n; k++) in[k] = at(a, k, b->at[k] + q * b->s2[k]);
-    rows(j, b->n0, b->n1, in, b->s0, b->s1);
+    each_row(j, b->n0, b->n1, in, b->s0, b->s1);
   }
 }
 
 /* A fill stores its element through the target table's row of its width. */
 static void fill_block(const nx_cpu_block *b, void *ctx) {
-  const job *j = ctx;
-  nx_cpu_row0 f = nx_cpu_runs->fill[width_index(j->a[0].bits / 8)];
+  const op *j = ctx;
+  nx_cpu_row0 f = nx_cpu_table->fill[width_index(j->a[0].bits / 8)];
   for (int64_t q = 0; q < b->n2; q++)
     for (int64_t r = 0; r < b->n1; r++)
       f(b->n0, at(j->a, 0, b->at[0] + q * b->s2[0] + r * b->s1[0]), b->s0[0],
@@ -144,7 +145,8 @@ static void fill_block(const nx_cpu_block *b, void *ctx) {
 }
 
 /* Reads the [n] operands [in] through the door and walks them with [f]. */
-static value run(int n, const nx_operand *in, nx_cpu_block_fn f, job *j) {
+static value walk_operands(int n, const nx_operand *in, nx_cpu_block_fn f,
+                           op *j) {
   nx_array a[NX_MAX_OPERANDS];
   nx_loop l;
   int e = nx_read(n, in, a);
@@ -172,7 +174,7 @@ static value run(int n, const nx_operand *in, nx_cpu_block_fn f, job *j) {
 
 /* Entries */
 
-/* nx_spec.h's code of an Prog.op2 value. */
+/* nx_spec.h's code of a Prog.op2 value. */
 static int op2_code(value k) {
   return Tag_val(k) == 0 ? Int_val(Field(k, 0))
                          : NX_OP2_EQUAL + Int_val(Field(k, 0));
@@ -180,12 +182,12 @@ static int op2_code(value k) {
 
 value nx_cpu_apply2(value k, value vd, value vx, value vy) {
   int x = nx_array_dtype(vx), c = op2_code(k);
-  row2 f = nx_cpu_runs->op2[c][x];
+  row2 f = nx_cpu_table->op2[c][x];
   if (f == NULL) return Val_int(NX_DECLINED);
   int d = c >= NX_OP2_EQUAL ? NX_BOOL : x;
   nx_operand in[3] = {{vd, d, 1}, {vx, x, 0}, {vy, x, 0}};
-  job j = {.f2 = f};
-  return run(3, in, block, &j);
+  op j = {.f2 = f};
+  return walk_operands(3, in, block, &j);
 }
 
 value nx_cpu_apply3(value k, value vd, value vc, value vx, value vy) {
@@ -196,11 +198,11 @@ value nx_cpu_apply3(value k, value vd, value vc, value vx, value vy) {
     f = bits < 8 || nx_array_dtype(vc) == NX_BIT ? NULL : where_of(bits / 8);
     c = NX_BOOL;
   } else
-    f = nx_cpu_runs->fma[x];
+    f = nx_cpu_table->fma[x];
   if (f == NULL) return Val_int(NX_DECLINED);
   nx_operand in[4] = {{vd, x, 1}, {vc, c, 0}, {vx, x, 0}, {vy, x, 0}};
-  job j = {.f3 = f};
-  return run(4, in, block, &j);
+  op j = {.f3 = f};
+  return walk_operands(4, in, block, &j);
 }
 
 value nx_cpu_fill(value vbits, value vd) {
@@ -213,8 +215,8 @@ value nx_cpu_fill(value vbits, value vd) {
   uint8_t element[16];
   memcpy(element, String_val(vbits), bits / 8);
   nx_operand in[1] = {{vd, d, 1}};
-  job j = {.bits = element};
-  CAMLreturn(run(1, in, fill_block, &j));
+  op j = {.bits = element};
+  CAMLreturn(walk_operands(1, in, fill_block, &j));
 }
 
 /* Iota: each element is its index along axis [axis], cast to the dtype. A

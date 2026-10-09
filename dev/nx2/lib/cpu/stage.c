@@ -63,7 +63,7 @@ void nx_cpu_stage(const nx_array *a, const nx_cpu_block *b, int k, uint8_t *dst,
                   int64_t row) {
   int dt = a->dtype;
   int64_t n0 = b->n0, n1 = b->n1;
-  nx_cpu_run decode = nx_cpu_runs->convert[dt][NX_FLOAT32];
+  nx_cpu_run decode = nx_cpu_table->convert[dt][NX_FLOAT32];
   _Alignas(64) uint8_t raw[NX_CPU_SLOT];
   if (a->bits < 8) {
     if (dt != NX_FLOAT4_E2M1FN) {
@@ -101,7 +101,7 @@ void nx_cpu_stage(const nx_array *a, const nx_cpu_block *b, int k, uint8_t *dst,
 
 void nx_cpu_unstage(const nx_array *a, const nx_cpu_block *b, int k,
                     const uint8_t *src, int64_t row, int c) {
-  nx_cpu_run convert = nx_cpu_runs->convert[c][a->dtype];
+  nx_cpu_run convert = nx_cpu_table->convert[c][a->dtype];
   int64_t n0 = b->n0, n1 = b->n1, cw = nx_cpu_width(c);
   int w = nx_cpu_width(a->dtype);
   _Alignas(64) uint8_t raw[NX_CPU_SLOT];

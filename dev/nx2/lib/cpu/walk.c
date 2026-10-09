@@ -136,7 +136,7 @@ static void block_of(const walk *w, int64_t u, nx_cpu_block *b) {
   }
 }
 
-static void run(int64_t lo, int64_t hi, int worker, void *ctx) {
+static void units(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)worker;
   const walk *w = ctx;
   nx_cpu_block b;
@@ -208,5 +208,5 @@ void nx_cpu_walk(int n, const nx_array *a, const nx_loop *l, int64_t most,
   for (int k = 0; k < n; k++) strided |= magnitude(wl->step[k][r - 1]) > 1;
   int64_t bytes = elements * bits / 8;
   nx_cpu_job(planes * w.rowblocks * w.pieces, bytes,
-             strided ? STRIDED_COST * bytes : bytes, run, &w);
+             strided ? STRIDED_COST * bytes : bytes, units, &w);
 }

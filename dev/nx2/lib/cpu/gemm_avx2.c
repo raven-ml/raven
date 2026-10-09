@@ -77,7 +77,7 @@ THIN(thin1_f64, double, __m256d, 4, 1, 12)
 THIN(thin2_f64, double, __m256d, 4, 2, 6)
 THIN(thin4_f64, double, __m256d, 4, 4, 3)
 
-void nx_cpu_fill_avx2(nx_cpu_target *t) {
+void nx_cpu_set_avx2(nx_cpu_target *t) {
   t->gemm[NX_FLOAT32] = (nx_cpu_gemm){
       .kernel = kernel_f32,
       .dot = t->gemm[NX_FLOAT32].dot,

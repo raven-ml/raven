@@ -61,16 +61,13 @@ typedef struct {
   int nr;
 } nx_cpu_thin;
 
-/* A contraction's kernels in one accumulator dtype, the tile they compute
-   and the blocks of the outputs, the contraction and b's columns the
-   driver gives them; thin[i] has 2^i rows, its kernel NULL where the
-   target has none. */
+/* A contraction's kernels in one accumulator dtype. */
 typedef struct {
-  nx_cpu_kernel kernel;
-  nx_cpu_dot dot;
+  nx_cpu_kernel kernel; /* the microkernel, of MR × NR outputs */
+  nx_cpu_dot dot;       /* lane order's dot */
   int mr, nr;
-  int64_t mc, kc, nc;
-  nx_cpu_thin thin[3];
+  int64_t mc, kc, nc;   /* the driver's blocks of rows, of k and of columns */
+  nx_cpu_thin thin[3];  /* thin[i] has 2^i rows; NULL kernel where none */
 } nx_cpu_gemm;
 
 /* A row of a kind of two operands: n elements of [d] from [x] and [y], each
@@ -86,8 +83,9 @@ typedef void (*nx_cpu_row3)(int64_t n, uint8_t *d, int64_t sd,
 typedef void (*nx_cpu_row0)(int64_t n, uint8_t *d, int64_t sd,
                             const uint8_t *bits);
 
-/* The bytes of the largest tile of any target's microkernel. */
-#define NX_CPU_TILE 4096
+/* The bytes of the largest tile of any target's microkernel: 8 × 12
+   float32 on arm64, 6 × 16 on x86-64, 1 × 96 thin. */
+#define NX_CPU_TILE 384
 
 typedef struct {
   const char *name;
@@ -108,28 +106,28 @@ typedef struct {
   nx_cpu_row0 fill[5];
 } nx_cpu_target;
 
-/* The tables, each filled when the program starts on a host that runs it,
-   by convert.c and gemm_generic.c compiled for its target, then by the
+/* The tables, each set when the program starts on a host that runs it, by
+   convert.c, gemm_generic.c and rows.c compiled for its target, then by the
    kernels of its instructions: gemm_neon.c's on arm64, gemm_avx2.c's for
    v3. */
 extern nx_cpu_target nx_cpu_base;
-void nx_cpu_fill_base(nx_cpu_target *t);
-void nx_cpu_fill_generic_base(nx_cpu_target *t);
-void nx_cpu_fill_rows_base(nx_cpu_target *t);
+void nx_cpu_set_convert_base(nx_cpu_target *t);
+void nx_cpu_set_gemm_base(nx_cpu_target *t);
+void nx_cpu_set_rows_base(nx_cpu_target *t);
 #if defined(__aarch64__)
-void nx_cpu_fill_neon(nx_cpu_target *t);
+void nx_cpu_set_neon(nx_cpu_target *t);
 #endif
 #if defined(__x86_64__)
 extern nx_cpu_target nx_cpu_v3;
-void nx_cpu_fill_v3(nx_cpu_target *t);
-void nx_cpu_fill_generic_v3(nx_cpu_target *t);
-void nx_cpu_fill_rows_v3(nx_cpu_target *t);
-void nx_cpu_fill_avx2(nx_cpu_target *t);
+void nx_cpu_set_convert_v3(nx_cpu_target *t);
+void nx_cpu_set_gemm_v3(nx_cpu_target *t);
+void nx_cpu_set_rows_v3(nx_cpu_target *t);
+void nx_cpu_set_avx2(nx_cpu_target *t);
 #endif
 
 /* The table the kernels run: the best one whose instructions the host
    has. */
-extern const nx_cpu_target *nx_cpu_runs;
+extern const nx_cpu_target *nx_cpu_table;
 
 /* The dtype a block of [dt] is staged in: float32 for a narrow float, int8
    for int4, uint8 for uint4, bool for bit, and [dt] itself otherwise. */

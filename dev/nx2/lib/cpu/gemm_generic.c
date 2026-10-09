@@ -54,7 +54,7 @@ DOT(dot_f32, float, fmaf)
 KERNEL(kernel_f64, double, fma)
 DOT(dot_f64, double, fma)
 
-static void fill(nx_cpu_target *t) {
+static void set(nx_cpu_target *t) {
   t->gemm[NX_FLOAT32] = (nx_cpu_gemm){.kernel = kernel_f32,
                                       .dot = dot_f32,
                                       .mr = MR,
@@ -72,9 +72,9 @@ static void fill(nx_cpu_target *t) {
 }
 
 #if defined(NX_CPU_V3)
-void nx_cpu_fill_generic_v3(nx_cpu_target *t) { fill(t); }
+void nx_cpu_set_gemm_v3(nx_cpu_target *t) { set(t); }
 #else
-void nx_cpu_fill_generic_base(nx_cpu_target *t) { fill(t); }
+void nx_cpu_set_gemm_base(nx_cpu_target *t) { set(t); }
 #endif
 
 #else

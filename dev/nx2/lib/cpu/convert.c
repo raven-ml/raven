@@ -3,7 +3,7 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* The conversion runs, compiled once per target, and the fill of its table.
+/* The conversion runs, compiled once per target, and the setting of its table.
 
    dune compiles this file as itself for the base target, the instructions
    every host of the architecture has: SSE2 on x86-64, NEON on arm64. It
@@ -171,7 +171,7 @@ RUN(UINT64, FLOAT32, nx_u64_to_float_run)
 #define ENTRY(S, ST, CL, D, DT, K, A, B, C) t->convert[NX_##S][NX_##D] = S##_##D;
 #define ENTRIES(D, DT, K, A, B, C) SRCS(ENTRY, D, DT, K, A, B, C)
 
-static void fill(nx_cpu_target *t) {
+static void set(nx_cpu_target *t) {
   DSTS(ENTRIES)
   t->convert[NX_BFLOAT16][NX_FLOAT32] = BFLOAT16_FLOAT32;
   t->convert[NX_FLOAT8_E5M2][NX_FLOAT32] = FLOAT8_E5M2_FLOAT32;
@@ -190,9 +190,9 @@ static void fill(nx_cpu_target *t) {
 }
 
 #if defined(NX_CPU_V3)
-void nx_cpu_fill_v3(nx_cpu_target *t) { fill(t); }
+void nx_cpu_set_convert_v3(nx_cpu_target *t) { set(t); }
 #else
-void nx_cpu_fill_base(nx_cpu_target *t) { fill(t); }
+void nx_cpu_set_convert_base(nx_cpu_target *t) { set(t); }
 #endif
 
 #else

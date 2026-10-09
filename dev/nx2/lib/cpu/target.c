@@ -37,21 +37,21 @@ nx_cpu_target nx_cpu_base = {.name = "base"};
 nx_cpu_target nx_cpu_v3 = {.name = "v3"};
 #endif
 
-const nx_cpu_target *nx_cpu_runs = &nx_cpu_base;
+const nx_cpu_target *nx_cpu_table = &nx_cpu_base;
 
 __attribute__((constructor)) static void init(void) {
-  nx_cpu_fill_base(&nx_cpu_base);
-  nx_cpu_fill_generic_base(&nx_cpu_base);
-  nx_cpu_fill_rows_base(&nx_cpu_base);
+  nx_cpu_set_convert_base(&nx_cpu_base);
+  nx_cpu_set_gemm_base(&nx_cpu_base);
+  nx_cpu_set_rows_base(&nx_cpu_base);
 #if defined(__aarch64__)
-  nx_cpu_fill_neon(&nx_cpu_base);
+  nx_cpu_set_neon(&nx_cpu_base);
 #endif
 #if defined(__x86_64__)
   if (!has_v3()) return;
-  nx_cpu_fill_v3(&nx_cpu_v3);
-  nx_cpu_fill_generic_v3(&nx_cpu_v3);
-  nx_cpu_fill_rows_v3(&nx_cpu_v3);
-  nx_cpu_fill_avx2(&nx_cpu_v3);
-  nx_cpu_runs = &nx_cpu_v3;
+  nx_cpu_set_convert_v3(&nx_cpu_v3);
+  nx_cpu_set_gemm_v3(&nx_cpu_v3);
+  nx_cpu_set_rows_v3(&nx_cpu_v3);
+  nx_cpu_set_avx2(&nx_cpu_v3);
+  nx_cpu_table = &nx_cpu_v3;
 #endif
 }

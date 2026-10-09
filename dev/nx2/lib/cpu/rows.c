@@ -4,8 +4,8 @@
   ---------------------------------------------------------------------------*/
 
 /* The rows of the kinds of two and three operands, and of fills, compiled
-   once per target: as itself for base and as its copy rows_v3.c for v3, whose fused
-   multiply-add is an instruction where base's x86-64 is a call.
+   once per target: as itself for base and as its copy rows_v3.c for v3,
+   whose fused multiply-add is an instruction where base's x86-64 is a call.
 
    A row loads each operand's element into its compute type, computes the
    kind as nx_kinds.h does, and stores the result in the destination's
@@ -187,7 +187,7 @@ FILL(16, w16)
   t->op2[NX_OP2_OR][DT] = or_##D;                                            \
   t->op2[NX_OP2_XOR][DT] = xor_##D
 
-static void fill(nx_cpu_target *t) {
+static void set(nx_cpu_target *t) {
   FLOAT_ROWS(NX_FLOAT32, f32);
   FLOAT_ROWS(NX_FLOAT64, f64);
   INT_ROWS(NX_INT8, i8);
@@ -212,9 +212,9 @@ static void fill(nx_cpu_target *t) {
 }
 
 #if defined(NX_CPU_V3)
-void nx_cpu_fill_rows_v3(nx_cpu_target *t) { fill(t); }
+void nx_cpu_set_rows_v3(nx_cpu_target *t) { set(t); }
 #else
-void nx_cpu_fill_rows_base(nx_cpu_target *t) { fill(t); }
+void nx_cpu_set_rows_base(nx_cpu_target *t) { set(t); }
 #endif
 
 #else

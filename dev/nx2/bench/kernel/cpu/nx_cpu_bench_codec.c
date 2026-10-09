@@ -117,7 +117,7 @@ value nx_cpu_bench_floor_codec(value threads, value codec, value dst,
 value nx_cpu_bench_codecs_run(value unit) {
   (void)unit;
 #if defined(__x86_64__)
-  return Val_bool(nx_cpu_runs == &nx_cpu_v3);
+  return Val_bool(nx_cpu_table == &nx_cpu_v3);
 #else
   return Val_true;
 #endif

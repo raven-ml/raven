@@ -14,16 +14,17 @@
 
    The order of each output's sum is a function of M, N and K alone:
 
-   - Chain order, M·N >= FEW: one fused multiply-add chain per output, in
-     increasing k, from init or +0. The microkernels of every target add
-     each product fused, and the blocking stores and reloads the sum in acc
-     exactly, so tile shapes, block sizes and threads change no bit.
-   - Block order, M·N < FEW: the products fall into blocks of FOLD_BLOCK
-     consecutive k and, within a block, into LANES lanes by k modulo LANES,
-     each lane a fused chain from +0; a fixed balanced tree sums the lanes,
-     the left-complete binary tree the blocks, then init is added. A single
-     chain runs at one fused add per latency; FEW outputs or more keep
-     every target's pipes full in chain order.
+   - Chain order, M·N >= CHAIN_OUTPUTS: one fused multiply-add chain per
+     output, in increasing k, from init or +0. The microkernels of every
+     target add each product fused, and the blocking stores and reloads the
+     sum in acc exactly, so tile shapes, block sizes and threads change no
+     bit.
+   - Lane order, M·N < CHAIN_OUTPUTS: the products fall into blocks of
+     FOLD_BLOCK consecutive k and, within a block, into LANES lanes by k
+     modulo LANES, each lane a fused chain from +0; a fixed balanced tree
+     sums the lanes, the left-complete binary tree the blocks, then init is
+     added. A single chain runs at one fused add per latency; CHAIN_OUTPUTS
+     outputs or more keep every target's pipes full in chain order.
 
    Chain order follows BLIS's loops (Goto and van de Geijn, "Anatomy of
    High-Performance Matrix Multiplication", 2008): per NC columns of b and
@@ -59,7 +60,7 @@
 /* Outputs per batch element from which chain order fills the pipes:
    NEON keeps 16 vectors of 4 chains in flight (4 pipes, 4 cycles), AVX2 8
    of 8. */
-#define FEW 64
+#define CHAIN_OUTPUTS 64
 
 /* The bytes of a job's packed b: a group of batch elements shares one job
    while their panels fit, so that small batched products start few
@@ -135,7 +136,7 @@ static int holds(int acc, int d) {
 /* Whether nx.cpu computes a contraction in [acc] into [out] of the [n]
    operands of dtypes [dts]. */
 static int computes(int acc, int out, const int *dts, int n) {
-  if (out != acc || nx_cpu_runs->gemm[acc].kernel == NULL) return 0;
+  if (out != acc || nx_cpu_table->gemm[acc].kernel == NULL) return 0;
   for (int i = 0; i < n; i++)
     if (!holds(acc, dts[i])) return 0;
   return 1;
@@ -163,7 +164,7 @@ static void stage(const problem *p, int o, int64_t at, int64_t s0, int64_t s1,
   int widest = cw > p->w ? cw : p->w;
   if (x->bits / 8 > widest) widest = x->bits / 8;
   int64_t cols = min64(n0, NX_CPU_SLOT / widest);
-  nx_cpu_run convert = nx_cpu_runs->convert[c][p->acc];
+  nx_cpu_run convert = nx_cpu_table->convert[c][p->acc];
   _Alignas(64) uint8_t slot[NX_CPU_SLOT];
   for (int64_t i = 0; i < n0; i += cols) {
     int64_t n = min64(cols, n0 - i), rows = NX_CPU_SLOT / (n * widest);
@@ -346,11 +347,11 @@ typedef struct {
   shape k;
   int64_t lda, kblocks, slivers;
   uint8_t *a; /* element e's step q at a + (e·K + q)·lda·w */
-} rows;
+} few_rows_job;
 
-static void rows_pack(int64_t lo, int64_t hi, int worker, void *ctx) {
+static void few_rows_pack(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)worker;
-  const rows *r = ctx;
+  const few_rows_job *r = ctx;
   const problem *p = r->p;
   int64_t k = p->ext[CON], kc_most = p->g->kc;
   for (int64_t u = lo; u < hi; u++) {
@@ -360,8 +361,8 @@ static void rows_pack(int64_t lo, int64_t hi, int worker, void *ctx) {
   }
 }
 
-static void rows_units(int64_t lo, int64_t hi, int worker, void *ctx) {
-  const rows *r = ctx;
+static void few_rows_unit(int64_t lo, int64_t hi, int worker, void *ctx) {
+  const few_rows_job *r = ctx;
   problem *p = r->p;
   int64_t m = p->ext[ROW], n_all = p->ext[COL], k = p->ext[CON], w = p->w;
   int64_t kc_most = min64(p->g->kc, k), mr = r->k.mr, nr = r->k.nr;
@@ -415,12 +416,12 @@ static void transpose(problem *p) {
   p->ext[COL] = m;
 }
 
-static void rows_product(problem *p) {
+static void few_rows(problem *p) {
   const nx_cpu_gemm *g = p->g;
   int64_t m = p->ext[ROW], n = p->ext[COL], k = p->ext[CON], w = p->w;
   int64_t batch = p->ext[BATCH];
   const nx_cpu_thin *t = thin_of(g, m);
-  rows r = {p, {g->kernel, g->mr, g->nr}, 0, ceil_div(k, g->kc), 0, NULL};
+  few_rows_job r ={p, {g->kernel, g->mr, g->nr}, 0, ceil_div(k, g->kc), 0, NULL};
   if (t) r.k = (shape){t->kernel, m <= 1 ? 1 : m <= 2 ? 2 : 4, t->nr};
   r.lda = ceil_div(m, r.k.mr) * r.k.mr;
   r.slivers = ceil_div(n, r.k.nr);
@@ -431,9 +432,9 @@ static void rows_product(problem *p) {
     return;
   }
   int64_t bytes = batch * n * k * w + packed;
-  nx_cpu_job(batch * r.kblocks, packed, 2 * packed, rows_pack, &r);
+  nx_cpu_job(batch * r.kblocks, packed, 2 * packed, few_rows_pack, &r);
   nx_cpu_job(batch * r.slivers, bytes, 2 * batch * m * n * k + bytes,
-             rows_units, &r);
+             few_rows_unit, &r);
   free(r.a);
 }
 
@@ -487,13 +488,13 @@ done:
   free(b);
 }
 
-/* Block order */
+/* Lane order */
 
 typedef struct {
   problem *p;
   int64_t blocks;
   uint8_t *sums; /* per (element, output, block), in acc, with blocks > 1 */
-} few;
+} lanes_job;
 
 /* The left-complete binary tree's sum of the [n] >= 1 values at [s]. */
 #define TREE(T, name)                                    \
@@ -512,7 +513,7 @@ TREE(float, tree_f32)
 TREE(double, tree_f64)
 
 /* The sum of one block's lanes, at [d]. */
-static void lanes(int acc, void *l, uint8_t *d) {
+static void lane_sum(int acc, void *l, uint8_t *d) {
   if (acc == NX_FLOAT32) *(float *)d = tree_f32_lanes(l);
   else *(double *)d = tree_f64_lanes(l);
 }
@@ -538,8 +539,8 @@ static void total(const problem *p, int64_t e, int64_t i, int64_t j,
 
 /* A unit is one block of one element: its rows of a and columns of b staged
    along k, then each output's lanes. With one block, each output's total. */
-static void block(int64_t lo, int64_t hi, int worker, void *ctx) {
-  const few *f = ctx;
+static void lanes_unit(int64_t lo, int64_t hi, int worker, void *ctx) {
+  const lanes_job *f = ctx;
   problem *p = f->p;
   int64_t m = p->ext[ROW], n = p->ext[COL], k = p->ext[CON], w = p->w;
   const int64_t *sa = p->st[A], *sb = p->st[B];
@@ -559,16 +560,16 @@ static void block(int64_t lo, int64_t hi, int worker, void *ctx) {
         _Alignas(16) uint8_t s[16];
         p->g->dot(buf + i * len * w, bb + j * len * w, len, l);
         uint8_t *d = f->blocks == 1 ? s : f->sums + (((e * m + i) * n + j) * f->blocks + x) * w;
-        lanes(p->acc, l, d);
+        lane_sum(p->acc, l, d);
         if (f->blocks == 1) total(p, e, i, j, s, 1, at_r(p, e, i, j));
       }
   }
 }
 
 /* A unit is one element: each output's total of its blocks. */
-static void finish(int64_t lo, int64_t hi, int worker, void *ctx) {
+static void lanes_finish(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)worker;
-  const few *f = ctx;
+  const lanes_job *f = ctx;
   const problem *p = f->p;
   int64_t m = p->ext[ROW], n = p->ext[COL];
   for (int64_t e = lo; e < hi; e++)
@@ -580,13 +581,13 @@ static void finish(int64_t lo, int64_t hi, int worker, void *ctx) {
               f->blocks, at_r(p, e, i, j));
 }
 
-static void blocks(problem *p) {
+static void lanes(problem *p) {
   int64_t batch = p->ext[BATCH], m = p->ext[ROW], n = p->ext[COL];
   int64_t k = p->ext[CON], w = p->w;
-  few f = {p, ceil_div(k, NX_CPU_FOLD_BLOCK), NULL};
+  lanes_job f = {p, ceil_div(k, NX_CPU_FOLD_BLOCK), NULL};
   int64_t bytes = batch * (m + n) * k * w;
   if (f.blocks == 1) {
-    nx_cpu_job(batch, bytes, 2 * bytes, block, &f);
+    nx_cpu_job(batch, bytes, 2 * bytes, lanes_unit, &f);
     return;
   }
   if (f.blocks > 1) {
@@ -595,11 +596,11 @@ static void blocks(problem *p) {
       atomic_store(&p->failed, 1);
       return;
     }
-    nx_cpu_job(batch * f.blocks, bytes, 2 * bytes, block, &f);
+    nx_cpu_job(batch * f.blocks, bytes, 2 * bytes, lanes_unit, &f);
   }
   if (!atomic_load(&p->failed))
     nx_cpu_job(batch, batch * m * n * w, batch * m * n * (f.blocks + 1) * w,
-               finish, &f);
+               lanes_finish, &f);
   free(f.sums);
 }
 
@@ -619,10 +620,10 @@ static int init_is_dst(const problem *p) {
 
 /* Stores into op[DST] the contraction in [acc] of op[A], op[B] and op[INIT]
    (or NULL), laid out as [v]. Answers 0 if an allocation failed. */
-static int run(int acc, const nx_contract_view *v,
-               const nx_array *const *op) {
+static int contract(int acc, const nx_contract_view *v,
+                    const nx_array *const *op) {
   problem p = {.acc = acc, .w = nx_cpu_width(acc)};
-  p.g = &nx_cpu_runs->gemm[acc];
+  p.g = &nx_cpu_table->gemm[acc];
   for (int o = 0; o < 4; o++) {
     p.op[o] = op[o];
     p.first[o] = v->offset[o];
@@ -635,10 +636,10 @@ static int run(int acc, const nx_contract_view *v,
   p.scratch = calloc((size_t)cores, sizeof(void *));
   if (p.scratch == NULL) return 0;
   atomic_init(&p.failed, 0);
-  if (p.ext[ROW] * p.ext[COL] < FEW) blocks(&p);
+  if (p.ext[ROW] * p.ext[COL] < CHAIN_OUTPUTS) lanes(&p);
   else {
     if (p.ext[COL] < p.ext[ROW] && p.ext[COL] <= p.g->mc) transpose(&p);
-    if (p.ext[ROW] <= p.g->mc) rows_product(&p);
+    if (p.ext[ROW] <= p.g->mc) few_rows(&p);
     else chain(&p);
   }
   for (int i = 0; i < cores; i++) free(p.scratch[i]);
@@ -668,7 +669,7 @@ value nx_cpu_contract(value vs, value vview, value vdst, value va, value vb,
   int e = nx_read(n, in, a);
   if (e) return Val_int(e);
   const nx_array *op[4] = {&a[0], &a[1], init ? &a[3] : NULL, &a[2]};
-  int done = run(acc, &v, op);
+  int done = contract(acc, &v, op);
   nx_done(n, a);
   if (!done) caml_raise_out_of_memory();
   return Val_int(NX_OK);

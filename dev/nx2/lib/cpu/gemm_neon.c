@@ -108,7 +108,7 @@ THIN(thin1_f64, double, float64x2_t, 2, 1, 16)
 THIN(thin2_f64, double, float64x2_t, 2, 2, 8)
 THIN(thin4_f64, double, float64x2_t, 2, 4, 4)
 
-void nx_cpu_fill_neon(nx_cpu_target *t) {
+void nx_cpu_set_neon(nx_cpu_target *t) {
   t->gemm[NX_FLOAT32] = (nx_cpu_gemm){
       .kernel = kernel_f32,
       .dot = t->gemm[NX_FLOAT32].dot,

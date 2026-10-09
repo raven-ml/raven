@@ -26,7 +26,7 @@ static const nx_cpu_target *const tables[] = {
 /* The table the program started with, the best the host runs. */
 static const nx_cpu_target *best(void) {
   static const nx_cpu_target *b = NULL;
-  if (b == NULL) b = nx_cpu_runs;
+  if (b == NULL) b = nx_cpu_table;
   return b;
 }
 
@@ -50,7 +50,7 @@ value nx_kernels_support_targets(value unit) {
 value nx_kernels_support_current(value unit) {
   (void)unit;
   best();
-  return caml_copy_string(nx_cpu_runs->name);
+  return caml_copy_string(nx_cpu_table->name);
 }
 
 /* A table past the best one may use instructions the host lacks. */
@@ -58,7 +58,7 @@ value nx_kernels_support_use(value name) {
   const nx_cpu_target *top = best();
   for (int i = 0; i < TABLES; i++) {
     if (strcmp(tables[i]->name, String_val(name)) == 0) {
-      nx_cpu_runs = tables[i];
+      nx_cpu_table = tables[i];
       return Val_unit;
     }
     if (tables[i] == top) break;

@@ -68,19 +68,19 @@ static void cast_block(const nx_cpu_block *b, void *ctx) {
 }
 
 #if defined(__x86_64__)
-/* The bytes of a tile staged on x86-64. There a load waits for an earlier
+/* The bytes of a tile buffered on x86-64. There a load waits for an earlier
    store whose address has the same low 12 bits, and the rows of a tile
    whose input rows lie a multiple of 4 KiB apart all share theirs with the
    output's: such a tile is first copied row by row into a buffer, then
    transposed from it. A transposed 4096x4096 float32 copy on kimchi takes
    2.91 ms against 3.21; on the M1, which has no such wait, staging took it
    from 1.7 to 2.6 ms. */
-#define STAGE (32 * 1024)
+#define TILE_BUFFER (32 * 1024)
 
-/* Out of line, so that only a staged tile's call takes the buffer's stack. */
-static __attribute__((noinline)) void staged(const nx_cpu_block *b,
-                                             const nx_array *a) {
-  _Alignas(64) uint8_t tile[STAGE];
+/* Out of line, so that only a buffered tile's call takes its stack. */
+static __attribute__((noinline)) void via_buffer(const nx_cpu_block *b,
+                                                 const nx_array *a) {
+  _Alignas(64) uint8_t tile[TILE_BUFFER];
   nx_copy_box(tile, a[1].base,
               &(nx_box){{1, b->n0, b->n1},
                         {0, b->at[1]},
@@ -99,8 +99,8 @@ static void copy_block(const nx_cpu_block *b, void *ctx) {
 #if defined(__x86_64__)
   int64_t w = a[0].bits / 8;
   if (b->n2 == 1 && b->s0[0] == 1 && b->s1[1] == 1 && a[0].bits >= 8 &&
-      b->s0[1] * w % 4096 == 0 && b->n0 * b->n1 * w <= STAGE) {
-    staged(b, a);
+      b->s0[1] * w % 4096 == 0 && b->n0 * b->n1 * w <= TILE_BUFFER) {
+    via_buffer(b, a);
     return;
   }
 #endif
@@ -114,8 +114,8 @@ static void copy_block(const nx_cpu_block *b, void *ctx) {
 
 /* Reads [vd], written, and [vs] of the dtypes [d] and [s] through the door,
    and walks them with [f]. */
-static value walk(value vd, value vs, int d, int s, int64_t most,
-                  nx_cpu_block_fn f) {
+static value walk_operands(value vd, value vs, int d, int s, int64_t most,
+                           nx_cpu_block_fn f) {
   nx_operand in[2] = {{vd, d, 1}, {vs, s, 0}};
   nx_array a[2];
   nx_loop l;
@@ -123,7 +123,7 @@ static value walk(value vd, value vs, int d, int s, int64_t most,
   if (e) return Val_int(e);
   if (!(e = nx_coalesce(2, a, &l))) {
     /* A loop of one axis that one block holds runs as that block on the
-       calling thread, as apply.c's run does. */
+       calling thread, as apply.c's walk_operands does. */
     if (l.rank == 1 && l.extent[0] <= most) {
       nx_cpu_block b = {.n0 = l.extent[0], .n1 = 1, .n2 = 1};
       for (int k = 0; k < 2; k++) {
@@ -140,11 +140,11 @@ static value walk(value vd, value vs, int d, int s, int64_t most,
 
 value nx_cpu_copy(value vd, value vs) {
   int d = nx_array_dtype(vd);
-  return walk(vd, vs, d, d, COPY_MOST, copy_block);
+  return walk_operands(vd, vs, d, d, COPY_MOST, copy_block);
 }
 
 value nx_cpu_cast(value vd, value vs) {
   int d = nx_array_dtype(vd), s = nx_array_dtype(vs);
   if (d == s) return nx_cpu_copy(vd, vs);
-  return walk(vd, vs, d, s, cast_most(s, d), cast_block);
+  return walk_operands(vd, vs, d, s, cast_most(s, d), cast_block);
 }
