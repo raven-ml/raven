@@ -298,12 +298,6 @@ static void free_icb(struct icb *b) {
   free(b);
 }
 
-/* The bytes of [v_buffer], or -1 if it is another GPU's. */
-value caml_rig_metal_buffer_bytes(value v_d, value v_buffer) {
-  id<MTLBuffer> b = Object_val(v_buffer);
-  return Val_long(b.device == Device_val(v_d)->device ? (intnat)b.length : -1);
-}
-
 /* An indirect command buffer of one dispatch per pipeline of [v_pipelines],
    each after the one before, with [v_buffer] as kernel buffer 0; [v_sizes]
    gives each its offset, threadgroups per grid and threads per threadgroup,
@@ -442,7 +436,6 @@ NO_METAL1(caml_rig_metal_free_word)
 NO_METAL1(caml_rig_metal_release)
 NO_METAL2(caml_rig_metal_image)
 NO_METAL2(caml_rig_metal_pipeline)
-NO_METAL2(caml_rig_metal_buffer_bytes)
 NO_METAL1(caml_rig_metal_release_library)
 NO_METAL1(caml_rig_metal_icb_release)
 NO_METAL3(caml_rig_metal_sleep)

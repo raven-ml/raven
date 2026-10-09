@@ -166,8 +166,8 @@ let dev =
         shared := Some t;
         t
 
-(* A second device of the GPU, beside the fixture's: Metal opens a GPU as
-   often as asked. The test stops it. *)
+(* A second device of the GPU, beside the fixture's: Metal opens a GPU as often
+   as asked. The test stops it. *)
 let second () =
   if not (S.present ()) then skip ~reason:"the machine has no METAL GPU" ();
   S.hold ();
@@ -345,7 +345,8 @@ let bumps_counted fills =
   let bump = pipeline t "bump" in
   let bumps k =
     Array.make k
-      (dispatch ~offset:args_bytes ~groups:(bytes / 256, 1, 1)
+      (dispatch ~offset:args_bytes
+         ~groups:(bytes / 256, 1, 1)
          ~threads:(256, 1, 1) bump)
   in
   let icbs = ref [] in
@@ -633,6 +634,20 @@ let foreign_pipelines () =
   invalid step;
   Rig_metal.free t.g args
 
+(* An argument buffer that is no live allocation or mapping of the device: an
+   address of nothing, and one its free released. *)
+let foreign_buffers () =
+  let t = dev () in
+  let step = pipeline t "step" in
+  let freed = alloc t args_bytes in
+  Rig_metal.free t.g freed;
+  let invalid handle =
+    raises_match Exn.invalid_arg (fun () ->
+        (Rig_metal.capability t.g).icb handle [| dispatch step |])
+  in
+  invalid 1n;
+  invalid (Rig_metal.handle freed)
+
 let released_twice () =
   let t = dev () in
   let args = alloc t args_bytes in
@@ -725,6 +740,8 @@ let icbs =
       test "a command runs with the sizes set before its run" resized;
       test "refuses what it cannot record" icb_refusals;
       test "refuses a pipeline no loaded image gave" foreign_pipelines;
+      test "refuses a buffer that is no live region of the device"
+        foreign_buffers;
       test "release frees the buffer and its commands" released_objects;
       test "release raises when called twice" released_twice;
       test "runs after its image is unloaded" after_unload;
@@ -857,9 +874,7 @@ let memory =
         ~examples:[ 1; 2; 255; 256; 257; 4095; 4096; page; page + 1 ]
         (Gen.int_range 1 (64 lsl 20))
         aligned_256;
-      test
-        "free and map_peer refuse another device's region or one \
-         given back"
+      test "free and map_peer refuse another device's region or one given back"
         misused_regions;
       test "free releases an allocation's or a mapping's buffer" given_back;
       test "the host copies into a borrow of host memory" copied_into_borrow;
@@ -1109,15 +1124,19 @@ let unloaded_twice () =
   raises_match Exn.invalid_arg (fun () -> Rig_metal.unload t.g i);
   raises_match Exn.invalid_arg (fun () -> Rig_metal.entry i "fill")
 
-(* Images entered and unloaded from two domains: whatever the order, an
-   image's first [unload] returns and every later one raises, an [entry]
-   after the unload raises, and every [entry] of one function answers the
-   address the first answered. *)
+(* Images entered and unloaded from two domains: whatever the order, an image's
+   first [unload] returns and every later one raises, an [entry] after the
+   unload raises, and every [entry] of one function answers the address the
+   first answered. *)
 
 type loaded = { mutable loaded : bool }
 
 (* An image, with the first address any domain got for each function. *)
-type held = { i : Rig_metal.image; first : (string, int) Hashtbl.t; m : Mutex.t }
+type held = {
+  i : Rig_metal.image;
+  first : (string, int) Hashtbl.t;
+  m : Mutex.t;
+}
 
 let unload_model m =
   if not m.loaded then invalid_arg "unloaded";
@@ -1236,8 +1255,8 @@ let word_after_stop () =
   Rig_metal.free g (Rig_metal.word g);
   raises_match Exn.invalid_arg (fun () -> Rig_metal.free g (Rig_metal.word g))
 
-(* Images still loaded when the device stops stay loaded: their unload after
-   the stop releases them. *)
+(* Images still loaded when the device stops stay loaded: their unload after the
+   stop releases them. *)
 let unload_after_stop () =
   let g = S.driver () in
   let i = load g in
