@@ -20,13 +20,13 @@
  "inputs": {
   "lib/array/nx_dtype.h": "c8cc210b13d22644e92873bce6f82699c23b893c7ae7442b4782f24bfe9609ac",
   "lib/metal/kernels/gen.py": "295f9919009bd71b379ee897d37e870802ff8c520b4828a72b3d14ca0af35e98",
-  "lib/metal/kernels/src/contract.metal": "4a645c9b460e3874d158e0ec30532938b0f684b46fc658f4d0d296dcdf258a76",
+  "lib/metal/kernels/src/contract.metal": "cd662b1ec9e28fcf98382343ced17d3e472f17ad59f0e50fdf0dc01186724d97",
   "lib/metal/kernels.h": "c66d4e251ebf7de78f6af2beefa48f2d65c65688c99baa7640a18b1d9f9a612d",
   "test/metal/support/harness.h": "6f231321ca2cde1cd67313317d1f9f13fd725a745b188eb2ffba83a0ec8ebe6b",
   "test/metal/support/harness.metal": "e2afefbc1d81d112e174df59b367c978284c9035fac6f6a0af1d21c706ac8385"
  },
  "outputs": {
-  "lib/metal/kernels/kernels.metallib": "1e1ba689a8e4f18192c729e1c2c2994f7446d3f3dcbf0f128e8f7e126a4b4878",
+  "lib/metal/kernels/kernels.metallib": "2cb5bf16c93099ddb6372cdae264b246f42c8d5b8e236c04247b3206e6ad1e7f",
   "test/metal/support/harness.metallib": "80c0fa24b4115a05ffae6271e46e54254ebcd9348c8380348ada1aa87ffe3623"
  }
 }

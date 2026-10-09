@@ -388,7 +388,8 @@ static void readable(int floats, const int *ds, int n) {
                     : d == NX_INT8 || d == NX_UINT8 || d == NX_INT16 ||
                           d == NX_UINT16 || d == NX_INT32 || d == NX_UINT32 ||
                           d == NX_INT64 || d == NX_UINT64;
-    if (!ok) caml_invalid_argument("the contraction reference reads no such dtype");
+    if (!ok)
+      caml_invalid_argument("the contraction reference reads no such dtype");
   }
 }
 

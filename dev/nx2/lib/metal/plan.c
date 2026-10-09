@@ -95,7 +95,8 @@ static int fits32(int64_t x) { return x >= 0 && x <= UINT32_MAX; }
    kernels index within a batch in 32 bits. */
 static int spans32(const int64_t s[3], int64_t rows, int64_t cols) {
   return fits32(s[1]) && fits32(s[2]) &&
-         (rows == 0 || cols == 0 || fits32((rows - 1) * s[1] + (cols - 1) * s[2]));
+         (rows == 0 || cols == 0 ||
+          fits32((rows - 1) * s[1] + (cols - 1) * s[2]));
 }
 
 static int integer(int dt) {
@@ -104,9 +105,8 @@ static int integer(int dt) {
          dt == NX_INT64 || dt == NX_UINT64;
 }
 
-
-/* An integer contraction: any strides, operands widened to the
-   accumulator, 32 or 64 bits. */
+/* An integer contraction: any strides, operands widened to 32 or 64 bits,
+   at least the accumulator's width. */
 static int plan_integer(const nx_metal_contract_in *c, nx_metal_contract *p,
                         nx_metal_records *r) {
   if (c->batch == 0 || c->m == 0 || c->n == 0) return 0;
@@ -151,7 +151,8 @@ int nx_metal_plan_contract(const nx_metal_contract_in *c,
   /* The matrix units take an operand with one axis of unit stride, or of
      one element; the order names which, the last axis where both may. */
   int a_t = as[2] != 1 && c->k > 1, b_t = bs[2] != 1 && c->n > 1;
-  int ordered = !(a_t && as[1] != 1 && c->m > 1) && !(b_t && bs[1] != 1 && c->k > 1);
+  int ordered = !(a_t && as[1] != 1 && c->m > 1) &&
+                !(b_t && bs[1] != 1 && c->k > 1);
   /* int8 and uint8 into 32 bits run on the matrix units, exactly. */
   int bytes = (a->dtype == NX_INT8 || a->dtype == NX_UINT8) &&
               (c->acc == NX_INT32 || c->acc == NX_UINT32);
@@ -168,8 +169,8 @@ int nx_metal_plan_contract(const nx_metal_contract_in *c,
     return e ? e : 1;
   }
   uint32_t side = tile_rows[Large];
-  uint64_t large =
-      (uint64_t)((c->m + side - 1) / side) * ((c->n + side - 1) / side) * c->batch;
+  uint64_t large = (uint64_t)((c->m + side - 1) / side) *
+                   ((c->n + side - 1) / side) * c->batch;
   enum size size = !floats                 ? Large
                    : c->m <= wide_rows     ? Wide
                    : large < small_tiles   ? Small
@@ -222,7 +223,8 @@ int nx_metal_plan_contract(const nx_metal_contract_in *c,
   p.out_dtype = NX_FLOAT32;
   groups[2] = parts;
   int e = append(r, entry, groups, threads, &p, sizeof p, 4, 1u << 3);
-  uint32_t cgroups[3] = {(uint32_t)((count + combine_threads - 1) / combine_threads), 1, 1};
+  uint32_t cgroups[3] = {
+      (uint32_t)((count + combine_threads - 1) / combine_threads), 1, 1};
   uint32_t cthreads[3] = {combine_threads, 1, 1};
   if (!e)
     e = append(r, NX_METAL_contract_combine, cgroups, cthreads, &q, sizeof q, 3,
