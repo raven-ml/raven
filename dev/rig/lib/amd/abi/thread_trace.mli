@@ -70,8 +70,10 @@ val waves : Gpu.t -> string -> wave list
 (** [waves g trace] is the waves that start and end in [trace], one shader
     engine's bytes as [g] wrote them, in the order they end. A wave's end is
     paired with the latest start before it of the same compute unit, SIMD and
-    slot that no end took; a start or an end without its pair is no wave. A
-    trace cut short yields the waves of its whole packets. *)
+    slot, unless an end of that slot lies between them. A slot runs one wave at
+    a time, so a second start before an end means the trace lost the first
+    wave's end: that first start is no wave, and neither is an end without a
+    start. A trace cut short yields the waves of its whole packets. *)
 
 val clock : Gpu.t -> string -> (int -> int) option
 (** [clock g trace] maps a shader time of [trace] to the GPU's clock

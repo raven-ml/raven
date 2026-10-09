@@ -272,6 +272,9 @@ type format = Rdna3 | Rdna4 | Gfx9
 let format_of (g : Gpu.t) =
   match g.gc with 9, _, _ -> Gfx9 | 11, _, _ -> Rdna3 | _ -> Rdna4
 
+(* GFX9's packets carry no shader array. *)
+let key_of fmt k = if fmt = Gfx9 then { k with sa = 0 } else k
+
 let pp_key ppf k =
   Format.fprintf ppf "{sa %d; wgp %d; simd %d; slot %d}" k.sa k.wgp k.simd
     k.slot
@@ -387,8 +390,9 @@ let inline_max fmt ~start =
 type wave_t = { key : key; start : int; stop : int }
 
 (* What a trace of [events] holds, as the .mli states it: waves paired by key,
-   in the order they end, each with the unit where its end's packet ends; and
-   markers, as (shader time, realtime). *)
+   an end with its key's latest start, a start on an open key leaving the one
+   before it no wave, in the order they end, each with the unit where its end's
+   packet ends; and markers, as (shader time, realtime). *)
 type model = {
   trace : string;
   waves : (wave_t * int) list;
@@ -445,13 +449,11 @@ let write fmt evs =
           time := !time + n;
           pending := !pending + n
       | Start (k, inline) ->
-          let k = if fmt = Gfx9 then { k with sa = 0 } else k in
-          if not (Hashtbl.mem open_ k) then begin
-            on_wave ~start:true k inline;
-            Hashtbl.replace open_ k !time
-          end
+          let k = key_of fmt k in
+          on_wave ~start:true k inline;
+          Hashtbl.replace open_ k !time
       | End (k, inline) ->
-          let k = if fmt = Gfx9 then { k with sa = 0 } else k in
+          let k = key_of fmt k in
           on_wave ~start:false k inline;
           Option.iter
             (fun start ->
@@ -480,6 +482,22 @@ let write fmt evs =
     evs;
   flush ();
   { trace = bytes fmt s; waves = List.rev !waves; markers = List.rev !markers }
+
+(* Whether [evs] start a key that is open: a trace that lost a wave's end. *)
+let restarts fmt evs =
+  let open_ = Hashtbl.create 8 in
+  List.exists
+    (function
+      | Start (k, _) ->
+          let k = key_of fmt k in
+          let restart = Hashtbl.mem open_ k in
+          Hashtbl.replace open_ k ();
+          restart
+      | End (k, _) ->
+          Hashtbl.remove open_ (key_of fmt k);
+          false
+      | Gap _ | Mark _ | Nop -> false)
+    evs
 
 let decoded =
   Testable.make
@@ -521,7 +539,7 @@ let cut_short name gpus =
 let decoding =
   group ~timeout "decoding"
     [
-      prop "a trace's waves pair each start with its key's next end"
+      prop "a trace's waves pair each end with its key's latest open start"
         (traces (gfx9 :: rdna))
         (fun (g, evs) ->
           let fmt = format_of g in
@@ -531,6 +549,7 @@ let decoding =
             (List.length
                (List.sort_uniq compare (List.map (fun (w, _) -> w.key) m.waves))
             < List.length m.waves);
+          cover "a start on an open key" (restarts fmt evs);
           equal (list decoded)
             (List.map (as_decoded fmt) m.waves)
             (Thread_trace.waves g (m.trace ^ padding)));

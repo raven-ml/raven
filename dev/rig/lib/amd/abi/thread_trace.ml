@@ -417,6 +417,7 @@ let key cu simd slot = (cu lsl 40) lor (simd lsl 20) lor slot
 let waves g data =
   let started = Hashtbl.create 64 and waves = ref [] in
   let on : Rdna_trace.event -> unit = function
+    (* A start on an open slot replaces the one whose end the trace lost. *)
     | Wave_start { time; cu; simd; slot } ->
         Hashtbl.replace started (key cu simd slot) time
     | Wave_end { time; cu; simd; slot } -> (
