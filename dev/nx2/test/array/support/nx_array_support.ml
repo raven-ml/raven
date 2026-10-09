@@ -20,7 +20,6 @@ let answers =
       ("Read_only", Read_only);
       ("Repeated_elements", Repeated_elements);
       ("Overlapping", Overlapping);
-      ("Bad_layout", Bad_layout);
       ("Shape_mismatch", Shape_mismatch);
       ("Bad_arity", Bad_arity);
     ]

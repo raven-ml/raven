@@ -260,9 +260,6 @@ type answer =
   | Overlapping
       (** A written operand shares a byte with another written operand, or
           with a read operand not identical to it ({!door}). *)
-  | Bad_layout
-      (** An operand's layout is not a layout: a guard for C callers, which an
-          array made by this library never meets. *)
   | Shape_mismatch
       (** The operands' shapes do not fit the operation: operands of one loop
           of different shapes, or shapes its descriptor refuses. *)

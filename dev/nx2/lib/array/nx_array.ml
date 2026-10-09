@@ -37,7 +37,6 @@ type answer =
   | Read_only
   | Repeated_elements
   | Overlapping
-  | Bad_layout
   | Shape_mismatch
   | Bad_arity
 
@@ -50,7 +49,6 @@ let reason = function
   | Read_only -> "a written operand's memory is read-only"
   | Repeated_elements -> "a written operand reaches an element twice"
   | Overlapping -> "a written operand shares bytes with another operand"
-  | Bad_layout -> "an operand's layout is not a layout"
   | Shape_mismatch -> "the operands' shapes differ"
   | Bad_arity -> "too many operands"
 

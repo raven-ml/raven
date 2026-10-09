@@ -31,21 +31,20 @@ enum { ARRAY_DTYPE, ARRAY_LAYOUT, ARRAY_BUFFER };
 /* Layouts */
 
 /* Copies the layout [v] into [a]'s rank, flags, offset and dims: the record
-   lives in the OCaml heap, which moves. Answers NX_LAYOUT if its arrays do
-   not make a layout. */
-static int read_layout(value v, nx_array *a) {
+   lives in the OCaml heap, which moves. Layout's constructors make every
+   layout well formed (strides of its shape's length, at most
+   NX_MAX_RANK), so nothing here checks it again. */
+static void read_layout(value v, nx_array *a) {
   value shape = Field(v, NX_LAYOUT_SHAPE);
   value strides = Field(v, NX_LAYOUT_STRIDES);
-  mlsize_t r = Wosize_val(shape);
-  if (r > NX_MAX_RANK || Wosize_val(strides) != r) return NX_LAYOUT;
-  a->rank = (int)r;
+  int r = (int)Wosize_val(shape);
+  a->rank = r;
   a->offset = Long_val(Field(v, NX_LAYOUT_OFFSET));
   a->flags = (int)Long_val(Field(v, NX_LAYOUT_FLAGS));
-  for (mlsize_t i = 0; i < r; i++) {
+  for (int i = 0; i < r; i++) {
     a->dim[i] = Long_val(Field(shape, i));
     a->dim[r + i] = Long_val(Field(strides, i));
   }
-  return NX_OK;
 }
 
 /* The door */
@@ -103,8 +102,7 @@ int nx_read(int n, const nx_operand *in, nx_array *out) {
     a->dtype = nx_array_dtype(v);
     if (a->dtype != in[k].dtype) return NX_DTYPE;
     a->bits = nx_dtype_row_of(a->dtype).bits;
-    int e = read_layout(Field(v, ARRAY_LAYOUT), a);
-    if (e) return e;
+    read_layout(Field(v, ARRAY_LAYOUT), a);
     a->buffer = Field(v, ARRAY_BUFFER);
     a->alias = 0;
   }
@@ -449,10 +447,7 @@ value nx_array_coalesce(value ls, value out) {
   nx_array a[NX_MAX_OPERANDS];
   nx_loop l;
   if (n < 1 || n > NX_MAX_OPERANDS) return Val_int(NX_ARITY);
-  for (int k = 0; k < n; k++) {
-    int e = read_layout(Field(ls, k), &a[k]);
-    if (e) return Val_int(e);
-  }
+  for (int k = 0; k < n; k++) read_layout(Field(ls, k), &a[k]);
   int e = nx_coalesce(n, a, &l);
   if (e) return Val_int(e);
   int r = l.rank;

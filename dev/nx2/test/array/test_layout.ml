@@ -453,6 +453,14 @@ let law_span l =
         (fun p -> if p < lo || p >= hi then failf "%d outside [%d, %d)" p lo hi)
         ps
 
+(* Every layout the constructors and movements make is well formed: strides
+   of its shape's length, at most max_rank axes, a position no lower than
+   0. The doors read layouts without checking this again. *)
+let law_well_formed l =
+  equal ~msg:"strides" int (L.rank l) (Array.length (L.strides l));
+  at_most ~msg:"rank" int ~than:L.max_rank (L.rank l);
+  at_least ~msg:"offset" int ~than:0 (L.offset l)
+
 let law_header l =
   let flag b f = if b then f else 0 in
   let lo, hi = L.span l in
@@ -578,6 +586,7 @@ let tests =
           (Gen.with_pp L.pp (reached ~apart:true))
           law_distinct_views;
         prop "span holds every position, from 0 up" any_layout law_span;
+        prop "every layout made is well formed" any_layout law_well_formed;
         prop "nx_array.h reads the fields the accessors give" any_layout
           law_header;
       ];
