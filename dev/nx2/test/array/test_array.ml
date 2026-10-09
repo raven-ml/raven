@@ -1265,20 +1265,34 @@ let test_ocaml_door_refuses () =
   refuses ~msg:"written twice" A.Overlapping [| A.Any x; A.Any x |] [||];
   let b = A.buffer (zeros [| 8 |]) in
   let at offset = A.v f32 (L.v ~offset ~strides:[| 1 |] [| 3 |]) b in
-  refuses ~msg:"z overlaps y" A.Overlapping [| A.Any (at 0) |] [| A.Any (at 2) |];
+  refuses ~msg:"z overlaps y" A.Overlapping
+    [| A.Any (at 0) |]
+    [| A.Any (at 2) |];
   equal ~msg:"z beside y" (pair answer (option bool)) (A.Done, Some true)
     (ocaml_door [| A.Any (at 0) |] [| A.Any (at 3) |]);
   let r = Option.get (A.move (M.Broadcast [| 3 |]) (zeros [| 1 |])) in
   refuses ~msg:"z broadcast" A.Repeated_elements [| A.Any r |] [| A.Any x |];
   let d = zeros [| 3 |] in
   kill (A.buffer d);
-  refuses ~msg:"dead" A.Dead_buffer [| A.Any (zeros [| 3 |]) |] [| A.Any x; A.Any d |];
+  refuses ~msg:"dead" A.Dead_buffer
+    [| A.Any (zeros [| 3 |]) |]
+    [| A.Any x; A.Any d |];
   let held = zeros [| 3 |] in
   Rig.Claim.with_ ~read:[]
     ~donate:[ [ A.buffer held ] ]
     (fun _ ->
-      equal ~msg:"exclusive" (pair answer (option bool)) (A.Held_exclusive, None)
-        (ocaml_door [| A.Any (zeros [| 3 |]) |] [| A.Any x; A.Any held |]))
+      equal ~msg:"exclusive"
+        (pair answer (option bool))
+        (A.Held_exclusive, None)
+        (ocaml_door [| A.Any (zeros [| 3 |]) |] [| A.Any x; A.Any held |]));
+  (* Read memory is never exclusive, so its release shows no claim is left. *)
+  let ro = A.v f32 (L.contiguous [| 3 |]) (S.read_only 12) in
+  equal ~msg:"read-only" (pair answer (option bool)) (A.Read_only, None)
+    (ocaml_door [| A.Any ro |] [| A.Any x |]);
+  raises_match (Exn.invalid_arg ~substring:"no read claim") (fun () ->
+      Rig.Claim.release (A.buffer ro));
+  equal ~msg:"read-only, read" (pair answer (option bool)) (A.Done, Some true)
+    (ocaml_door [| A.Any (zeros [| 3 |]) |] [| A.Any ro |])
 
 (* Off the host, views of one buffer overlap by their offsets. *)
 let test_ocaml_door_off_host () =
@@ -1396,6 +1410,35 @@ let test_wait_lost () =
   raises_match ~msg:"the kernel" lost (fun () -> S.add z x y);
   List.iter no_claim [ z; x; y ];
   raises_match ~msg:"to_array" lost (fun () -> A.to_array x);
+  no_claim x
+
+(* The OCaml door over a lost device's array raises Lost, having claimed and
+   run nothing, as every use of that memory does. *)
+let test_ocaml_door_lost () =
+  let d, _ = late () in
+  let x = on_late d [| 1.; 2. |] and y = floats32 [| 2 |] [| 1.; 2. |] in
+  Rig.close d;
+  let ran = ref false in
+  raises_match lost (fun () ->
+      A.door ~written:[| A.Any y |] ~read:[| A.Any x |]
+        (fun () -> ran := true)
+        ());
+  equal ~msg:"ran" bool false !ran;
+  no_claim x;
+  no_claim y
+
+(* Work pending on an array: the door runs its function at once, under the
+   claims, and leaves the work for the device to order. *)
+let test_ocaml_door_pending () =
+  let d, _ = late () in
+  let x = on_late d [| 1.; 2. |] in
+  pending x [| 3.; 4. |];
+  let behind = ref false in
+  equal answer A.Done
+    (A.door ~written:[| A.Any x |] ~read:[||]
+       (fun () -> behind := Rig.signaled d < Rig.submitted d)
+       ());
+  equal ~msg:"ran before the pending work" bool true !behind;
   no_claim x
 
 (* Two domains: kernels that read an array on a Late device, against submits
@@ -1603,6 +1646,10 @@ let tests =
           test_wait_copy;
         test "a device lost during the wait raises Lost and leaves no claim"
           test_wait_lost;
+        test "the OCaml door raises Lost for a lost device's array"
+          test_ocaml_door_lost;
+        test "the OCaml door runs before work pending on its arrays"
+          test_ocaml_door_pending;
         stateful ~domains:2
           "kernels against submits and donations on another domain"
           door_commands;

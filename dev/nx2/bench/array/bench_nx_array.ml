@@ -308,6 +308,7 @@ let array_rows =
 
 let door_rows =
   let three () = (operand (), operand (), operand ()) in
+  let lates = ref 0 in
   Thumper.group "door"
     [
       row "read-3" three (fun (z, x, y) -> ok "read-3" (read_3 z x y));
@@ -333,6 +334,23 @@ let door_rows =
           ([| A.Any z |], [| A.Any x; A.Any y |]))
         "ocaml-3"
         (fun (written, read) -> ok "ocaml-3" (A.door ~written ~read ignore ()));
+      (* The same with work pending on the written array, on a Late device,
+         which runs it only once a wait sleeps: the door probes that array for
+         a loss and runs at once. *)
+      Thumper.bench_with_setup ~budgets:no_alloc
+        ~setup:(fun () ->
+          incr lates;
+          let name = Printf.sprintf "nx2-bench-late-door:%d" !lates in
+          let d, _ = Nx_array_support.Late.open_ name in
+          let z = A.create d f32 rank4 and x = A.create d f32 rank4 in
+          let y = A.create d f32 rank4 in
+          let s = Rig.Submission.make ~reads:0 ~writes:1 d [||] in
+          let writes = [| A.buffer z |] in
+          ignore (Rig.submit s ~reads:[||] ~writes ~waits:[||]);
+          ([| A.Any z |], [| A.Any x; A.Any y |]))
+        "ocaml-3-pending"
+        (fun (written, read) ->
+          ok "ocaml-3-pending" (A.door ~written ~read ignore ()));
       row "floor-claim-3"
         (fun () ->
           let z, x, y = three () in

@@ -254,11 +254,18 @@ val door :
     [Dead_buffer] or [Held_exclusive] for an array, or [Read_only] for a written
     array on [Read] memory.
 
-    It waits for no device work: [f] submits work that the device orders after
-    the work before it. [f] may write the elements of [written], but leaves the
-    OCaml arrays [written] and [read] holding the arrays they held: the door
-    releases what they hold when [f] ends. With a [f] that is not a closure and
-    arrays the caller reuses, it allocates nothing. *)
+    It waits for no device work. [f] touches the arrays' elements only through
+    work it submits with {!Rig.submit}, naming each array of [written] in its
+    writes and each of [read] in its reads or writes; rig orders that work after
+    the work before it on every device. [f] leaves the OCaml arrays [written]
+    and [read] holding the arrays they held: the door releases what they hold
+    when [f] ends. With a [f] that is not a closure and arrays the caller
+    reuses, it allocates nothing.
+
+    Raises {!Rig.Lost}, having claimed nothing and run nothing, if, when it
+    claims, an array's memory is a lost device's or must follow work a lost
+    device did not finish. A device lost while [f] runs reaches the caller as
+    [f]'s exception. *)
 
 val refused : string -> answer -> any list -> 'a
 (** [refused name r operands] raises [Invalid_argument] for the refusal [r]

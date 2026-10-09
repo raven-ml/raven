@@ -68,9 +68,21 @@ let refused name answer operands =
    claims every array or none, as nx_read does, and waits for nothing. It
    allocates nothing: the loops index the caller's arrays. *)
 
-external claim : Buffer.t -> bool -> answer = "nx_array_claim" [@@noalloc]
+(* A refusal's code with nothing claimed, or [NX_OK] with every array claimed
+   plus 256 times the mask of the arrays whose claim found work pending or a
+   lost device behind them: bit [k] for the [k]th array of [written], then
+   [read], bit [waits_last] for every array from it on. *)
+external claim_all : any array -> any array -> (int[@untagged])
+  = "nx_array_claim_all_byte" "nx_array_claim_all"
+[@@noalloc]
 
-external release : Buffer.t -> unit = "nx_array_release" [@@noalloc]
+let waits_last = 53
+
+(* An answer is the immediate of its code (nx_array.h). *)
+external answer_of_code : int -> answer = "%identity"
+
+external release_all : any array -> any array -> unit = "nx_array_release_all"
+[@@noalloc]
 
 external shares :
   ('v, 's) t -> ('w, 'r) t -> (int[@untagged]) -> (int[@untagged]) -> bool
@@ -100,46 +112,46 @@ let refusal written read =
   done;
   !answer
 
-(* The [k]th array of [written], then [read]. *)
-let nth written read k =
-  let n = Array.length written in
-  if k < n then written.(k) else read.(k - n)
-
-let release_first written read n =
-  for k = 0 to n - 1 do
-    let (Any a) = nth written read k in
-    release a.buffer
+(* Raises [Rig.Lost] if an array of the mask [waits] is a lost device's
+   memory, or follows work of a lost device: a read claim checks exactly
+   that, and waits for nothing. *)
+let probe_lost written read waits =
+  let nw = Array.length written in
+  for k = 0 to nw + Array.length read - 1 do
+    if waits land (1 lsl min k waits_last) <> 0 then begin
+      let (Any a) = if k < nw then written.(k) else read.(k - nw) in
+      Rig.Claim.read a.buffer;
+      Rig.Claim.release a.buffer
+    end
   done
 
-let claim_all written read =
-  let nw = Array.length written in
-  let n = nw + Array.length read in
-  let answer = ref Done and k = ref 0 in
-  while !answer = Done && !k < n do
-    let (Any a) = nth written read !k in
-    answer := claim a.buffer (!k < nw);
-    incr k
-  done;
-  if !answer <> Done then release_first written read (!k - 1);
-  !answer
-
-(* [Done] with every array claimed, or a refusal with none. *)
+(* [Done] with every array claimed, or a refusal with none. Raises
+   [Rig.Lost], with none, for an array behind a lost device. *)
 let admit written read =
   match refusal written read with
-  | Done -> claim_all written read
+  | Done -> (
+      let claimed = claim_all written read in
+      let waits = claimed lsr 8 in
+      if waits = 0 then answer_of_code claimed
+      else
+        match probe_lost written read waits with
+        | () -> Done
+        | exception e ->
+            let bt = Printexc.get_raw_backtrace () in
+            release_all written read;
+            Printexc.raise_with_backtrace e bt)
   | refusal -> refusal
 
 let door ~written ~read f x =
   match admit written read with
   | Done -> (
-      let n = Array.length written + Array.length read in
       match f x with
       | () ->
-          release_first written read n;
+          release_all written read;
           Done
       | exception e ->
           let bt = Printexc.get_raw_backtrace () in
-          release_first written read n;
+          release_all written read;
           Printexc.raise_with_backtrace e bt)
   | refusal -> refusal
 

@@ -71,6 +71,10 @@ val io_device : unit -> Rig.t
 (** [io_device ()] is an io device over bigarrays: memory the host does not
     address. *)
 
+val read_only : int -> Rig.Buffer.t
+(** [read_only n] is a buffer of [n] bytes on {!io_device} whose memory is
+    [Read]. *)
+
 val io_allocations : unit -> int
 (** [io_allocations ()] is the number of allocations {!io_device}'s memory has
     made so far. *)

@@ -93,6 +93,10 @@ let io =
 let io_device () = Lazy.force io
 let io_allocations () = Atomic.get Io.allocations
 
+let read_only n =
+  let region = Bigarray.Array1.create Bigarray.char Bigarray.c_layout n in
+  Rig.Buffer.of_io (io_device ()) Io.region_key region ~access:Read n
+
 (* Late, a device over host memory whose work runs only when a wait sleeps on
    it: its submit queues the work, its sleep and its stop run it. *)
 

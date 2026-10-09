@@ -163,18 +163,58 @@ void nx_done(int n, nx_array *a) {
   *p = a[0].roots.next;
 }
 
-/* The OCaml door (Nx_array.door) claims through these. It waits for no
-   device work: what it runs submits work, which rig orders after the work
-   before it. */
+/* The OCaml door (Nx_array.door) claims through these, in C, so that no
+   OCaml code, and so no asynchronous exception, runs between two claims.
+   [written] and [read] are OCaml arrays of Nx_array.any, a block over an
+   array. */
 
-value nx_array_claim(value b, value written) {
-  enum rig_claim c =
-      rig_buffer_claim(b, Bool_val(written) ? RIG_READ_WRITE : RIG_READ);
-  return Val_int(c == RIG_WAIT ? NX_OK : claim_code(c));
+static value any_buffer(value anys, mlsize_t k) {
+  return Field(Field(Field(anys, k), 0), ARRAY_BUFFER);
 }
 
-value nx_array_release(value b) {
-  rig_buffer_release(b);
+/* The buffer of the [k]th array of [written], then [read]. */
+static value nth_buffer(value written, value read, mlsize_t k) {
+  mlsize_t nw = Wosize_val(written);
+  return k < nw ? any_buffer(written, k) : any_buffer(read, k - nw);
+}
+
+static void release_first(value written, value read, mlsize_t n) {
+  for (mlsize_t k = 0; k < n; k++)
+    rig_buffer_release(nth_buffer(written, read, k));
+}
+
+/* The array index from which claim_all's mask has one bit for the rest. */
+#define WAITS_LAST 53
+
+/* Claims every array of [written] for writing and of [read] for reading, or
+   none, and waits for nothing. Answers the refusal's code, with nothing
+   claimed; or NX_OK, every array claimed, plus 256 times a mask of the
+   arrays whose claim answered RIG_WAIT: work their access must follow is
+   unfinished, or a lost device is behind them, which the door probes. Bit k
+   is the [k]th array of [written], then [read]; bit WAITS_LAST stands for
+   every array from it on. */
+intnat nx_array_claim_all(value written, value read) {
+  mlsize_t nw = Wosize_val(written), n = nw + Wosize_val(read);
+  intnat waits = 0;
+  for (mlsize_t k = 0; k < n; k++) {
+    enum rig_claim c = rig_buffer_claim(nth_buffer(written, read, k),
+                                        k < nw ? RIG_READ_WRITE : RIG_READ);
+    int e = claim_code(c);
+    if (e) {
+      release_first(written, read, k);
+      return e;
+    }
+    if (c == RIG_WAIT) waits |= (intnat)1 << (k < WAITS_LAST ? k : WAITS_LAST);
+  }
+  return NX_OK + 256 * waits;
+}
+
+value nx_array_claim_all_byte(value written, value read) {
+  return Val_long(nx_array_claim_all(written, read));
+}
+
+value nx_array_release_all(value written, value read) {
+  release_first(written, read, Wosize_val(written) + Wosize_val(read));
   return Val_unit;
 }
 
