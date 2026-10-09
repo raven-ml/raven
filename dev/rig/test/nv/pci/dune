@@ -1,5 +1,22 @@
 (tests
  (names test_nv_pci)
+ (modules test_nv_pci)
  (libraries rig_nv rig_nv_pci rig_pci rig_pci_support unix windtrap)
  (deps
   (source_tree fixtures)))
+
+; test_rpc, test_fb_layout and test_page_entry check, with no GPU, what the
+; path writes and reads in NVIDIA's formats: the GSP's records, calls and CPU
+; sequences, the region its boot reserves and the page-table entries. They go
+; through the library's private Rpc, Fb_layout and Page_entry and the layouts
+; these read, copied here.
+
+(copy_files
+ (files
+  ../../../lib/nv/pci/{rpc.ml,rpc.mli,fb_layout.ml,fb_layout.mli,page_entry.ml,page_entry.mli,field.ml,field.mli,defs.ml}))
+
+(tests
+ (names test_rpc test_fb_layout test_page_entry)
+ (modules test_rpc test_fb_layout test_page_entry rpc fb_layout page_entry
+  field defs)
+ (libraries windtrap))

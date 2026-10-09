@@ -18,22 +18,21 @@
   Without the firmware these skip: it cannot be in the repository, and an
   open reaches nothing past its report without it.
 
-What nothing here checks, since no host that runs the suite gives root on
-an NVIDIA GPU, and nothing but a running GSP reaches it:
+`test_rpc.ml`, `test_fb_layout.ml` and `test_page_entry.ml` check the
+library's private encodings of NVIDIA's formats, copied into the test
+(`dune`): the GSP's records, checksums, messages and fault reports, the RM's
+call bodies and answers, the CPU sequences and their refusals, the radix-3
+table, the WPR metadata, the region the GSP reserves and its check, and the
+page-table entries.
 
-- the GSP's queues: their records, checksums and wrap-around, a full queue,
-  and the decoding of the faults the GSP reports, which a device raises;
-- the GSP's answers and CPU sequences, and their refusals of cut-off input;
-- the WPR metadata, the radix-3 table, the libos arguments, the COT payload
-  and the FSP's messages, the falcons' sequences past FWSEC's DMA, and the
-  page-table entries;
-- the check that a Blackwell GSP's heap lies above the memory the process
-  manages;
+What nothing here checks, since no host that runs the suite gives root on
+an NVIDIA GPU:
+
+- the GSP's queues as rings over a window: wrap-around and a full queue;
+- the falcons' interpreter and its sequences past FWSEC's DMA, the CPU
+  sequences' steps among them;
 - the order of a stop (bus mastering off before the memory is given back),
-  of which a fixture shows only the end, and the memory given back by a boot
-  the machine refuses memory to;
-- the refusals of the firmware parsers: a file is found only with its pinned
-  digest, and the pinned files parse;
+  of which a fixture shows only the end;
 - `detach`'s refusal of a GPU a process holds a device file of: `detach`
   acts on this machine only, and the files it reads (`/dev/nvidia*`,
   `/proc/driver/nvidia`, debugfs) cannot be stood in for;
