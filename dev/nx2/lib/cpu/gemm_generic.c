@@ -11,7 +11,8 @@
    the vector kernels' fused instructions. A target whose instructions
    have no fused multiply-add (base on x86-64) calls the C library's, which
    is exact and slow; every x86-64 host measured runs v3. A target's own
-   kernels replace these where it has them. */
+   microkernels replace these where it has them; every target runs this
+   dot. */
 
 #include <math.h>
 
@@ -55,20 +56,14 @@ KERNEL(kernel_f64, double, fma)
 DOT(dot_f64, double, fma)
 
 static void set(nx_cpu_target *t) {
-  t->gemm[NX_FLOAT32] = (nx_cpu_gemm){.kernel = kernel_f32,
-                                      .dot = dot_f32,
-                                      .mr = MR,
-                                      .nr = NR,
-                                      .mc = 64,
-                                      .kc = 256,
-                                      .nc = 1024};
-  t->gemm[NX_FLOAT64] = (nx_cpu_gemm){.kernel = kernel_f64,
-                                      .dot = dot_f64,
-                                      .mr = MR,
-                                      .nr = NR,
-                                      .mc = 64,
-                                      .kc = 256,
-                                      .nc = 1024};
+  t->gemm[NX_FLOAT32] = (nx_cpu_gemm){
+      .kernel = kernel_f32, .mr = MR, .nr = NR, .mc = 64, .kc = 256,
+      .nc = 1024};
+  t->gemm[NX_FLOAT64] = (nx_cpu_gemm){
+      .kernel = kernel_f64, .mr = MR, .nr = NR, .mc = 64, .kc = 256,
+      .nc = 1024};
+  t->dot[NX_FLOAT32] = dot_f32;
+  t->dot[NX_FLOAT64] = dot_f64;
 }
 
 #if defined(NX_CPU_V3)

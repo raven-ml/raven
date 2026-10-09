@@ -421,7 +421,8 @@ static void few_rows(problem *p) {
   int64_t m = p->ext[ROW], n = p->ext[COL], k = p->ext[CON], w = p->w;
   int64_t batch = p->ext[BATCH];
   const nx_cpu_thin *t = thin_of(g, m);
-  few_rows_job r ={p, {g->kernel, g->mr, g->nr}, 0, ceil_div(k, g->kc), 0, NULL};
+  few_rows_job r = {p, {g->kernel, g->mr, g->nr}, 0, ceil_div(k, g->kc), 0,
+                    NULL};
   if (t) r.k = (shape){t->kernel, m <= 1 ? 1 : m <= 2 ? 2 : 4, t->nr};
   r.lda = ceil_div(m, r.k.mr) * r.k.mr;
   r.slivers = ceil_div(n, r.k.nr);
@@ -547,6 +548,7 @@ static void lanes_unit(int64_t lo, int64_t hi, int worker, void *ctx) {
   uint8_t *buf = scratch(p, worker, (m + n) * NX_CPU_FOLD_BLOCK * w);
   if (buf == NULL) return;
   uint8_t *bb = buf + m * NX_CPU_FOLD_BLOCK * w;
+  nx_cpu_dot dot = nx_cpu_table->dot[p->acc];
   for (int64_t u = lo; u < hi; u++) {
     int64_t e = u / f->blocks, x = u % f->blocks, k0 = x * NX_CPU_FOLD_BLOCK;
     int64_t len = min64(NX_CPU_FOLD_BLOCK, k - k0);
@@ -558,7 +560,7 @@ static void lanes_unit(int64_t lo, int64_t hi, int worker, void *ctx) {
       for (int64_t j = 0; j < n; j++) {
         _Alignas(64) uint8_t l[NX_CPU_LANES * 8] = {0};
         _Alignas(16) uint8_t s[16];
-        p->g->dot(buf + i * len * w, bb + j * len * w, len, l);
+        dot(buf + i * len * w, bb + j * len * w, len, l);
         uint8_t *d = f->blocks == 1 ? s : f->sums + (((e * m + i) * n + j) * f->blocks + x) * w;
         lane_sum(p->acc, l, d);
         if (f->blocks == 1) total(p, e, i, j, s, 1, at_r(p, e, i, j));

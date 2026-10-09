@@ -80,7 +80,6 @@ THIN(thin4_f64, double, __m256d, 4, 4, 3)
 void nx_cpu_set_avx2(nx_cpu_target *t) {
   t->gemm[NX_FLOAT32] = (nx_cpu_gemm){
       .kernel = kernel_f32,
-      .dot = t->gemm[NX_FLOAT32].dot,
       .mr = MR,
       .nr = 16,
       .mc = 96,
@@ -89,7 +88,6 @@ void nx_cpu_set_avx2(nx_cpu_target *t) {
       .thin = {{thin1_f32, 96}, {thin2_f32, 48}, {thin4_f32, 24}}};
   t->gemm[NX_FLOAT64] = (nx_cpu_gemm){
       .kernel = kernel_f64,
-      .dot = t->gemm[NX_FLOAT64].dot,
       .mr = MR,
       .nr = 8,
       .mc = 96,

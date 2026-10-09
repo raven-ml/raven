@@ -61,10 +61,9 @@ typedef struct {
   int nr;
 } nx_cpu_thin;
 
-/* A contraction's kernels in one accumulator dtype. */
+/* A contraction's kernels for chain order in one accumulator dtype. */
 typedef struct {
   nx_cpu_kernel kernel; /* the microkernel, of MR × NR outputs */
-  nx_cpu_dot dot;       /* lane order's dot */
   int mr, nr;
   int64_t mc, kc, nc;   /* the driver's blocks of rows, of k and of columns */
   nx_cpu_thin thin[3];  /* thin[i] has 2^i rows; NULL kernel where none */
@@ -94,9 +93,10 @@ typedef struct {
      float32. A sub-byte dtype has one element per byte, in its low bits:
      int4 and uint4 their value modulo 16, float4 its code, bit 0 or 1. */
   nx_cpu_run convert[NX_DTYPE_COUNT][NX_DTYPE_COUNT];
-  /* gemm[acc] contracts in acc; its kernel is NULL where the target has
-     none. */
+  /* gemm[acc] contracts in acc in chain order; its kernel is NULL where
+     the target has none. dot[acc] is lane order's dot. */
   nx_cpu_gemm gemm[NX_DTYPE_COUNT];
+  nx_cpu_dot dot[NX_DTYPE_COUNT];
   /* op2[k][dt] computes the kind of two operands k (nx_spec.h's code) at
      dt, fma[dt] fma: NULL where the table declines (rows.c). */
   nx_cpu_row2 op2[NX_OP2_COUNT][NX_DTYPE_COUNT];

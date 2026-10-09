@@ -111,7 +111,6 @@ THIN(thin4_f64, double, float64x2_t, 2, 4, 4)
 void nx_cpu_set_neon(nx_cpu_target *t) {
   t->gemm[NX_FLOAT32] = (nx_cpu_gemm){
       .kernel = kernel_f32,
-      .dot = t->gemm[NX_FLOAT32].dot,
       .mr = F32_MR,
       .nr = F32_NR,
       .mc = 128,
@@ -120,7 +119,6 @@ void nx_cpu_set_neon(nx_cpu_target *t) {
       .thin = {{thin1_f32, 64}, {thin2_f32, 32}, {thin4_f32, 16}}};
   t->gemm[NX_FLOAT64] = (nx_cpu_gemm){
       .kernel = kernel_f64,
-      .dot = t->gemm[NX_FLOAT64].dot,
       .mr = F64_MR,
       .nr = F64_NR,
       .mc = 128,
