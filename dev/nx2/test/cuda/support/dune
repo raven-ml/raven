@@ -3,7 +3,7 @@
 
 (library
  (name nx_cuda_support)
- (libraries nx_array nx_cuda rig rig.cuda windtrap)
+ (libraries nx_array nx_cuda rig rig.cuda rig.gpu_lock windtrap)
  (foreign_stubs
   (language c)
   (include_dirs ../../../lib/cuda ../../../lib/array)

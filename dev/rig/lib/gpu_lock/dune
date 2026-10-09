@@ -1,0 +1,9 @@
+; The machine's GPU lock, which every program that acts on a GPU takes,
+; whether or not it links rig.
+
+(library
+ (name rig_gpu_lock)
+ (public_name rig.gpu_lock)
+ (foreign_stubs
+  (language c)
+  (names rig_gpu_lock_stubs)))

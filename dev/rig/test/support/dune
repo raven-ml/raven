@@ -9,15 +9,6 @@
   (language c)
   (names rig_support_stubs)))
 
-; The machine's GPU lock, which suites that link no rig take too.
-
-(library
- (name rig_gpu_lock)
- (modules rig_gpu_lock)
- (foreign_stubs
-  (language c)
-  (names rig_gpu_lock_stubs)))
-
 ; What the GPU suites and benches share: host memory, and a GPU of one
 ; driver opened through rig.
 

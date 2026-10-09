@@ -25,7 +25,6 @@ external run_arg : nativeint -> string -> bytes * int * int
   = "nx_amd_support_run"
 
 external fill_fn : unit -> nativeint = "nx_amd_support_fill"
-external lock : string -> string -> int = "nx_amd_support_lock"
 external library_c : int -> string option = "nx_amd_support_library"
 
 external library_kernels : unit -> string array
@@ -45,30 +44,7 @@ let threads, copy_threads, read_threads, read_vecs, hog_threads = sizes ()
 
 (* The GPU lock *)
 
-let gpu_lock = "/tmp/raven-rig-gpu.lock"
-
-(* The longest wait for the lock, in seconds: the machine's suites, from every
-   checkout and user, take it in turn. [lock] naps 100 ms each time it is
-   refused. *)
-let gpu_wait = 300
-
-let holder () =
-  match In_channel.with_open_bin gpu_lock In_channel.input_all with
-  | note -> String.trim note
-  | exception Sys_error _ -> "a process that left no note"
-
-let rec take refused =
-  match lock gpu_lock Sys.executable_name with
-  | 0 -> ()
-  | -1 when refused < gpu_wait * 10 -> take (refused + 1)
-  | -1 ->
-      failwith
-        (strf "%s: still held after %d s, by %s" gpu_lock gpu_wait (holder ()))
-  | errno -> failwith (strf "%s: errno %d" gpu_lock errno)
-
-let hold_gpu () =
-  if Sys.getenv_opt "RIG_GPU_LOCK_HELD" = None && Rig_amd_amdgpu.count () > 0
-  then take 0
+let hold_gpu () = if Rig_amd_amdgpu.count () > 0 then Rig_gpu_lock.hold ()
 
 (* Devices and images *)
 
@@ -196,10 +172,12 @@ let gpu () =
 
 let arch g = Abi.Gpu.processor g.work.cap.gpu
 
+let wgps g =
+  let rec bits n = if n = 0 then 0 else (n land 1) + bits (n lsr 1) in
+  Array.fold_left (Array.fold_left (fun n w -> n + bits w)) 0 g.work.cap.wgps
+
 (* Each work-group processor has two compute units. *)
-let cus g =
-  let rec units n = if n = 0 then 0 else (2 * (n land 1)) + units (n lsr 1) in
-  Array.fold_left (Array.fold_left (fun n w -> n + units w)) 0 g.work.cap.wgps
+let cus g = 2 * wgps g
 
 (* [ns] nanoseconds as ticks of [d]'s GPU clock, and back. *)
 let ticks d ns = ns * (d.cap.clock_hz / 1_000_000) / 1_000
@@ -305,13 +283,13 @@ let read b =
 let write b s = Rig.Buffer.copy ~src:(Rig.Buffer.of_string s) ~dst:b
 let zero b = write b (String.make (Rig.Buffer.length b) '\000')
 
-(* A hog holds the compute units it fills from a second device of the GPU, whose
-   compute queue runs beside the work's. Its counter and compute units are the
-   work device's memory, which the GPU's devices share. *)
+(* A hog holds the work-group processors it fills from a second device of the
+   GPU, whose compute queue runs beside the work's. Its counter and processors
+   are the work device's memory, which the GPU's devices share. *)
 type hog = {
   blocks : int;
   started : Rig.Buffer.t;
-  cu : Rig.Buffer.t;
+  wgp : Rig.Buffer.t;
   device : device;
   run : run;
 }
@@ -327,27 +305,27 @@ let beside g =
 
 let hog g ~ns =
   let d = beside g in
-  let blocks = Int.max 1 (cus g / 2) in
-  let started = buffer g 4 and cu = buffer g (4 * blocks) in
+  let blocks = Int.max 1 (wgps g / 2) in
+  let started = buffer g 4 and wgp = buffer g (4 * blocks) in
   let on b = Option.get (Rig.Buffer.borrow d.rig b) in
   let run =
     record d.harness
       [
         launch "hog" ~groups:(blocks, 1, 1) ~threads:hog_threads
-          [ A (on started); A (on cu); W (ticks d ns) ];
+          [ A (on started); A (on wgp); W (ticks d ns) ];
       ]
   in
-  { blocks; started; cu; device = d; run }
+  { blocks; started; wgp; device = d; run }
 
-let held_cus h =
-  let s = read h.cu in
+let held_wgps h =
+  let s = read h.wgp in
   List.init h.blocks (fun i -> Int32.to_int (String.get_int32_le s (4 * i)))
 
 (* A delay gives up after 2 s: a hog's workgroups start well within it. *)
 let hold_ns = 2_000_000_000
 
 (* Beside a hog, the work waits on its queue until every hog workgroup holds its
-   compute unit: rig orders nothing between two devices' queues. *)
+   processor: rig orders nothing between two devices' queues. *)
 let run ?beside g r =
   match beside with
   | None ->

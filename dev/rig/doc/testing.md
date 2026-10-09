@@ -32,9 +32,10 @@ a suite and a bench) in `test/<lib>/support/`, and fixtures in
 `test/<lib>/fixtures/` with the command that made them. Its benches live in
 `bench/<lib>/` and read their fixtures from `test/<lib>/fixtures/`; the GPU
 bench reads each vendor's. A suite reads only its own directory. What every
-GPU suite shares lives once in `test/support/`: `rig_gpu_lock`, the
-machine's GPU lock, which links no rig, and `rig_gpu_support`, host memory
-by address and a GPU of one driver opened through rig (below). A tool that
+GPU suite shares lives once in `test/support/`: `rig_gpu_support`, host
+memory by address and a GPU of one driver opened through rig (below). The
+machine's GPU lock is the library `rig.gpu_lock`, which links no rig, so
+that suites outside rig take it too. A tool that
 makes fixtures for several libraries lives in `test/gen/`, such as
 `nvrtc.c`, which compiles the NV suites' cubins. Every top-level group sets
 `~timeout`, and `dev/rig/dune` sets `WINDTRAP_TIMEOUT` to 60 s for any test

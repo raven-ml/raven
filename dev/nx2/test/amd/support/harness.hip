@@ -14,16 +14,15 @@
    hog's spans need it only roughly. */
 DEVICE u64 now(void) { return __builtin_readsteadycounter(); }
 
-/* HW_ID1's shader engine (bits 18-20), shader array (16), work-group
-   processor (10-13) and SIMD's high bit (9): hwreg(HW_REG_HW_ID1), whose
-   id is 23, read whole. The RDNA ISA guide numbers a work-group
-   processor's SIMDs "[0] = row, [1] = column": the high bit names its
-   compute unit. */
+/* HW_ID1's shader engine (bits 18-20), shader array (16) and work-group
+   processor (10-13): hwreg(HW_REG_HW_ID1), whose id is 23, read whole. Its
+   SIMD bits do not tell a processor's two compute units apart on gfx1201:
+   the processor is the unit a wave can name. */
 #define HW_ID1 ((31 << 11) | 23)
-#define HW_ID1_CU 0x001D3E00u
+#define HW_ID1_WGP 0x001D3C00u
 
-DEVICE uint32_t cu_index(void) {
-  return __builtin_amdgcn_s_getreg(HW_ID1) & HW_ID1_CU;
+DEVICE uint32_t wgp_index(void) {
+  return __builtin_amdgcn_s_getreg(HW_ID1) & HW_ID1_WGP;
 }
 
 DEVICE uint32_t load_agent(const uint32_t *p) {
@@ -49,14 +48,16 @@ KERNEL void delay(delay_params p) {
     }
 }
 
-KERNEL SIZED(NX_HOG_THREADS) __attribute__((target("cumode")))
-void hog(hog_params p) {
+KERNEL SIZED(NX_HOG_THREADS) void hog(hog_params p) {
   /* The most local data share a workgroup takes on gfx12: 64 KiB. */
   static __attribute__((shared)) uint32_t held[65536 / 4];
+  /* 192 VGPRs a wave: a SIMD's 1,536 shared by the 8 waves of the
+     workgroup's 32 that each of the processor's 4 SIMDs runs. */
+  asm volatile("" ::: "v191");
   u64 t0 = now();
   if (item() == 0) {
     ((volatile uint32_t *)held)[0] = 0;
-    p.cu[group()] = cu_index();
+    p.wgp[group()] = wgp_index();
     __hip_atomic_fetch_add(p.started, 1u, __ATOMIC_RELAXED,
                            __HIP_MEMORY_SCOPE_AGENT);
   }
@@ -65,7 +66,7 @@ void hog(hog_params p) {
 }
 
 KERNEL SIZED(32) void where(where_params p) {
-  if (item() == 0) p.cu[group()] = cu_index();
+  if (item() == 0) p.wgp[group()] = wgp_index();
 }
 
 /* Operands */

@@ -10,6 +10,7 @@
   rig.amd
   rig.amd.abi
   rig.amd.amdgpu
+  rig.gpu_lock
   windtrap)
  (foreign_stubs
   (language c)

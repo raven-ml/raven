@@ -10,16 +10,9 @@
 (** {1:gpu The GPU} *)
 
 val hold_gpu : unit -> unit
-(** [hold_gpu ()] returns once the process holds the machine's GPU lock, which
-    it keeps until it exits, or at once if the machine has no AMD GPU
-    ({!Rig_amd_amdgpu.count}) or the variable [RIG_GPU_LOCK_HELD] is set: the
-    process that started this one holds it. The lock is [flock] on
-    [/tmp/raven-rig-gpu.lock], which every suite and bench that acts on a GPU of
-    the machine takes. A suite calls it before [Windtrap.run], a bench before
-    [Thumper.run].
-
-    Raises [Failure] naming the holder if another process still holds the lock
-    after 300 s. *)
+(** [hold_gpu ()] is {!Rig_gpu_lock.hold} if the machine has an AMD GPU
+    ({!Rig_amd_amdgpu.count}). A suite calls it before [Windtrap.run], a bench
+    before [Thumper.run]. *)
 
 type gpu
 (** The type for the GPU the suite runs on: AMD GPU 0, opened through the amdgpu
@@ -36,8 +29,12 @@ val gpu : unit -> gpu
 val arch : gpu -> string
 (** [arch g] is the processor [g] runs code objects of, as ["gfx1201"]. *)
 
+val wgps : gpu -> int
+(** [wgps g] is [g]'s count of work-group processors that run work. *)
+
 val cus : gpu -> int
-(** [cus g] is [g]'s count of compute units that run work. *)
+(** [cus g] is [g]'s count of compute units that run work, two a work-group
+    processor. *)
 
 (** {1:images Images} *)
 
@@ -88,21 +85,21 @@ val driver_copy : src:Rig.Buffer.t -> dst:Rig.Buffer.t -> run
 (** {1:runs Runs} *)
 
 type hog
-(** The type for hogs: runs that hold half of a GPU's compute units. *)
+(** The type for hogs: runs that hold half of a GPU's work-group processors. *)
 
 val hog : gpu -> ns:int -> hog
-(** [hog g ~ns] holds half of [g]'s compute units from a second device of the
-    GPU, each for [ns] nanoseconds from the start of the workgroup that holds
-    it. *)
+(** [hog g ~ns] holds half of [g]'s work-group processors from a second device
+    of the GPU, each for [ns] nanoseconds from the start of the workgroup that
+    holds it. *)
 
-val held_cus : hog -> int list
-(** [held_cus h] is the compute units [h] held when it last ran, as the
-    harness's [where] names them. *)
+val held_wgps : hog -> int list
+(** [held_wgps h] is the work-group processors [h] held when it last ran, as
+    the harness's [where] names them. *)
 
 val run : ?beside:hog -> gpu -> run -> unit
 (** [run ~beside g r] runs [r] on [g]'s queue ["COMPUTE:0"], a driver copy on
     ["COPY:0"], and returns once it is done. Beside a hog, [r] starts once the
-    hog holds every compute unit it holds, so that [r]'s workgroups run only on
+    hog holds every processor it holds, so that [r]'s workgroups run only on
     the others while the hog lasts.
 
     Raises [Invalid_argument] if [r] is a driver copy beside a hog or a record's

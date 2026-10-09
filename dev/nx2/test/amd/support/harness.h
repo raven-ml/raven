@@ -50,25 +50,26 @@ typedef struct {
   uint64_t ticks;
 } delay_params;
 
-/* Each workgroup of NX_HOG_THREADS work-items holds its compute unit for
-   [ticks] ticks from its start, when it writes its unit (where's) to
-   cu[group] and adds 1 to [*started]. It runs in CU mode with the largest
-   local data share a workgroup takes, so that it fills one compute unit's
-   waves and its half of the processor's local data share. Work queued
-   behind a delay until [*started] counts every workgroup runs only on the
-   compute units the hog left free. */
+/* Each workgroup of NX_HOG_THREADS work-items holds its work-group
+   processor for [ticks] ticks from its start, when it writes its processor
+   (where's) to wgp[group] and adds 1 to [*started]. It runs in WGP mode,
+   its 32 waves 8 to each of the processor's 4 SIMDs, each wave taking 192
+   VGPRs: every SIMD's 1,536 VGPRs are the hog's, so no other wave fits on
+   the processor, and the workgroup takes the 64 KiB of local data share it
+   can. Work queued behind a delay until [*started] counts every workgroup
+   runs only on the processors the hog left free. */
 #define NX_HOG_THREADS 1024
 
 typedef struct {
-  uint32_t *started, *cu;
+  uint32_t *started, *wgp;
   uint64_t ticks;
 } hog_params;
 
-/* Each workgroup of one wave writes its compute unit to cu[group]: the
-   shader engine, shader array, work-group processor and its compute unit,
-   as bits of the wave's HW_ID1 register. */
+/* Each workgroup of one wave writes its work-group processor to
+   wgp[group]: the shader engine, shader array and processor, as bits of
+   the wave's HW_ID1 register. */
 typedef struct {
-  uint32_t *cu;
+  uint32_t *wgp;
 } where_params;
 
 /* Operands */

@@ -83,7 +83,9 @@ module type S = sig
       it starts no vendor library. *)
 
   val hold : unit -> unit
-  (** [hold ()] is {!Rig_gpu_lock.hold} if {!present}[ ()]. *)
+  (** [hold ()] is {!Rig_gpu_lock.hold} if {!present}[ ()]. A suite calls it
+      before [Windtrap.run], so that the wait counts against no test's
+      timeout. *)
 
   val open_ : unit -> t
   (** [open_ ()] is the GPU opened by its driver and handed to rig under a

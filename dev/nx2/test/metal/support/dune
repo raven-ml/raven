@@ -5,7 +5,7 @@
 
 (library
  (name nx_metal_support)
- (libraries nx_array nx_metal rig rig.metal rig.metal.abi)
+ (libraries nx_array nx_metal rig rig.metal rig.metal.abi rig.gpu_lock)
  (foreign_stubs
   (language c)
   (names nx_metal_support_stubs)

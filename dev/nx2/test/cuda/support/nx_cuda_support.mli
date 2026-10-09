@@ -10,16 +10,9 @@
 (** {1:gpu The GPU} *)
 
 val hold_gpu : unit -> unit
-(** [hold_gpu ()] returns once the process holds the machine's GPU lock, which
-    it keeps until it exits, or at once if the machine has no NVIDIA driver
-    ([/dev/nvidiactl]) or the variable [RIG_GPU_LOCK_HELD] is set: the process
-    that started this one holds it. The lock is [flock] on
-    [/tmp/raven-rig-gpu.lock], which every suite and bench that acts on a GPU of
-    the machine takes. A suite calls it before [Windtrap.run], a bench before
-    [Thumper.run].
-
-    Raises [Failure] naming the holder if another process still holds the lock
-    after 300 s. *)
+(** [hold_gpu ()] is {!Rig_gpu_lock.hold} if the machine has an NVIDIA driver
+    ([/dev/nvidiactl]). A suite calls it before [Windtrap.run], a bench before
+    [Thumper.run]. *)
 
 type gpu
 (** The type for the GPU the suite runs on: CUDA's GPU 0 through rig. *)
