@@ -52,25 +52,29 @@ static int dense_dtype(int dt) {
   return dt == NX_FLOAT32 || dt == NX_FLOAT16 || dt == NX_BFLOAT16;
 }
 
-/* The dense instance for a's and b's dtype, the tile and b's order:
-   kernels.h lists each tile's three float instances in the order f32,
-   f16, bf16. */
-static int dense_entry(int dt, enum size size, int b_t) {
-  if (dt == NX_INT8) return NX_METAL_contract_i8;
-  int first = size == Large   ? (b_t ? NX_METAL_contract_f32_t
-                                     : NX_METAL_contract_f32_n)
-              : size == Small ? NX_METAL_contract_f32_s
-              : b_t           ? NX_METAL_contract_f32_wt
-                              : NX_METAL_contract_f32_wn;
-  return first + (dt == NX_FLOAT32 ? 0 : dt == NX_FLOAT16 ? 1 : 2);
-}
+/* The dense float instances by dtype (float32, float16, bfloat16), tile
+   and b's order (stored [k][n], [n][k]): small tiles read b stored [k][n]
+   only. */
+static const int dense[3][3][2] = {
+    {{NX_METAL_contract_f32_n, NX_METAL_contract_f32_t},
+     {NX_METAL_contract_f32_s, -1},
+     {NX_METAL_contract_f32_wn, NX_METAL_contract_f32_wt}},
+    {{NX_METAL_contract_f16_n, NX_METAL_contract_f16_t},
+     {NX_METAL_contract_f16_s, -1},
+     {NX_METAL_contract_f16_wn, NX_METAL_contract_f16_wt}},
+    {{NX_METAL_contract_bf16_n, NX_METAL_contract_bf16_t},
+     {NX_METAL_contract_bf16_s, -1},
+     {NX_METAL_contract_bf16_wn, NX_METAL_contract_bf16_wt}}};
 
-/* The instance for a's and b's dtype and b's order. */
-static int skinny_entry(int dt, int b_t) {
-  int first = dt == NX_FLOAT32   ? NX_METAL_skinny_f32_n
-              : dt == NX_FLOAT16 ? NX_METAL_skinny_f16_n
-                                 : NX_METAL_skinny_bf16_n;
-  return first + b_t;
+/* The skinny instances by dtype and b's order. */
+static const int skinny[3][2] = {
+    {NX_METAL_skinny_f32_n, NX_METAL_skinny_f32_t},
+    {NX_METAL_skinny_f16_n, NX_METAL_skinny_f16_t},
+    {NX_METAL_skinny_bf16_n, NX_METAL_skinny_bf16_t}};
+
+/* The float dtype [dt]'s index in the tables above. */
+static int dtype_index(int dt) {
+  return dt == NX_FLOAT32 ? 0 : dt == NX_FLOAT16 ? 1 : 2;
 }
 
 static int fits32(int64_t x) { return x >= 0 && x <= UINT32_MAX; }
@@ -221,8 +225,8 @@ int nx_metal_plan_contract(const nx_metal_contract_in *c,
   if (c->m == 1 && floats) {
     uint32_t per = b_t ? NX_METAL_SKINNY_T : NX_METAL_SKINNY_N;
     uint32_t groups[3] = {(c->n + per - 1) / per, 1, c->batch};
-    int e = nx_metal_add(r, skinny_entry(a->dtype, b_t), groups, threads, &p,
-                         sizeof p, 4, 0);
+    int e = nx_metal_add(r, skinny[dtype_index(a->dtype)][b_t], groups,
+                         threads, &p, sizeof p, 4, 0);
     return e ? e : 1;
   }
   /* The tile the shape picks: wide for few rows; large for products of
@@ -279,7 +283,8 @@ int nx_metal_plan_contract(const nx_metal_contract_in *c,
      in order. Integers sum in chunks within one threadgroup: they never
      split. */
   uint32_t parts = split(c, tiles(c, shape), floats);
-  int entry = dense_entry(a->dtype, size, b_t);
+  int entry = a->dtype == NX_INT8 ? NX_METAL_contract_i8
+                                  : dense[dtype_index(a->dtype)][size][b_t];
   if (parts == 1) {
     if (!e)
       e = nx_metal_add(r, entry, groups, threads, &p, sizeof p, 4, mask);
