@@ -132,8 +132,11 @@ val capability : t -> Rig_amd_abi.Capability.t
     other GPUs, the most it keeps. {!map_host} answers a region the GPU's work
     addresses at its {!locate} address, or [None] if the path maps no host
     memory or refuses the pages, such as read-only ones. The kernel driver's
-    path also refuses pages that a region {!map_host} gave a device of the same
-    GPU maps, as it maps a page at most once per GPU.
+    path maps a page once per GPU, for every device of the GPU the process
+    opens: a region whose pages all lie within a region {!map_host} gave a
+    device of the same GPU shares that mapping, which lasts until the last
+    region over it is freed, also after those devices stopped. It refuses
+    pages of which some, but not all, lie within such a region.
 
     {b Images.} {!image} answers [Place (n, lay)] for a code object, whose
     image takes [n] bytes ({!Rig_amd_abi.Code_object.size}): code runs from the

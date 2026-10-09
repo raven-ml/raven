@@ -95,16 +95,32 @@ let event_page : (int * int * int) option ref = ref None
 let views : (int * int, int) Hashtbl.t = Hashtbl.create 16
 let views_lock = Mutex.create ()
 
+(* Host memory mapped for a GPU. A process has one address space per GPU,
+   which every device it opens on the GPU shares, and KFD maps a host page in
+   it once: a mapping serves every device of the GPU, and ends at the last free
+   of a region over it, from any device, stopped or not. *)
+type registration = {
+  gpu_id : int;
+  start : int;
+  bytes : int;
+  handle : int;
+  mutable maps : int;
+}
+
+let registry : registration list ref = ref []
+let registry_lock = Mutex.create ()
+
 (* KFD serves a file to the process that opened it only: a forked child opens
-   its own, and the parent's address spaces, event page and views stay the
-   parent's. The process's first open makes it from [dev/kfd], and later opens
-   take it whatever their [dev]. *)
+   its own, and the parent's address spaces, event page, views and host
+   mappings stay the parent's. The process's first open makes it from
+   [dev/kfd], and later opens take it whatever their [dev]. *)
 let kfd_fd ~dev =
   match !kfd with
   | Some (p, fd) when p = pid () -> Ok fd
   | _ ->
       Hashtbl.reset acquired;
       Hashtbl.reset views;
+      registry := [];
       event_page := None;
       let path = Filename.concat dev "kfd" in
       let* fd = opened path "the compute interface" (open_file path) in
@@ -113,7 +129,7 @@ let kfd_fd ~dev =
 
 (* Memory *)
 
-type kind = Own | Borrowed | Peer | View
+type kind = Own | Borrowed of registration | Peer | View
 
 type mem = {
   handle : int;
@@ -202,26 +218,53 @@ let free fd g (m : mem Amd.memory) =
       if last then
         check "unmapping another GPU's memory"
           (map_gpu fd p.handle g.node.gpu_id false)
-  | Own | Borrowed ->
+  | Own ->
       ignore (map_gpu fd p.handle g.node.gpu_id false);
       check "freeing GPU memory" (kfd_free fd p.handle);
-      if p.kind = Own then unmap_mem p.at p.bytes
+      unmap_mem p.at p.bytes
+  | Borrowed e ->
+      Mutex.protect registry_lock @@ fun () ->
+      e.maps <- e.maps - 1;
+      if e.maps = 0 then begin
+        registry := List.filter (fun e' -> e' != e) !registry;
+        ignore (map_gpu fd e.handle e.gpu_id false);
+        check "freeing GPU memory" (kfd_free fd e.handle)
+      end
 
+(* Pages within a mapping of the GPU share it; pages that only partly overlap
+   one KFD refuses. *)
 let map_host fd g a n : mem Amd.memory option =
-  let base = a land lnot (page - 1) in
-  let bytes = round_up (a + n - base) page in
-  let r = Request.take () in
-  let e = kfd_alloc fd r ~gpu:g.node.gpu_id ~va:base ~bytes `Userptr in
-  let handle = Request.handle r in
-  Request.give r;
-  if e < 0 then None
-  else if map_gpu fd handle g.node.gpu_id true < 0 then begin
-    ignore (kfd_free fd handle);
-    None
-  end
-  else
-    let data = { handle; bytes; at = base; kind = Borrowed; owner = g } in
+  let start = a land lnot (page - 1) in
+  let bytes = round_up (a + n - start) page in
+  let gpu_id = g.node.gpu_id in
+  let inside e =
+    e.gpu_id = gpu_id && e.start <= start && start + bytes <= e.start + e.bytes
+  in
+  let region (e : registration) =
+    let data =
+      { handle = e.handle; bytes; at = start; kind = Borrowed e; owner = g }
+    in
     Some { Amd.address = a; host = Some a; data }
+  in
+  Mutex.protect registry_lock @@ fun () ->
+  match List.find_opt inside !registry with
+  | Some e ->
+      e.maps <- e.maps + 1;
+      region e
+  | None ->
+      let r = Request.take () in
+      let e = kfd_alloc fd r ~gpu:gpu_id ~va:start ~bytes `Userptr in
+      let handle = Request.handle r in
+      Request.give r;
+      if e < 0 then None
+      else if map_gpu fd handle gpu_id true < 0 then begin
+        ignore (kfd_free fd handle);
+        None
+      end
+      else
+        let e = { gpu_id; start; bytes; handle; maps = 1 } in
+        registry := e :: !registry;
+        region e
 
 (* Memory of another device: of the same GPU, in this address space already; of
    a GPU the topology links this one to, mapped for it. *)

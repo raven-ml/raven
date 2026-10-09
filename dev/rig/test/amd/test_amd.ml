@@ -2393,16 +2393,32 @@ let one_gpu_shared ~second g =
             (read_through view);
           A.free g view;
           A.free g' mapped'));
+  (* A host page maps once per GPU: the second device's region shares the
+     first's mapping, which outlives the first region's free. *)
   let page = H.pages n in
   let m = Option.get (A.map_host g page n) in
-  equal bool ~msg:"a page the other device maps" true
-    (Option.is_none (A.map_host g' page n));
+  let m' =
+    require_some ~msg:"a page the other device maps" (A.map_host g' page n)
+  in
+  let back' = Option.get (A.alloc g' Pinned n) in
+  let read_on_second view =
+    H.write (host back') (String.make n '\000');
+    go r' [| copy back' view |];
+    H.read (host back') n
+  in
+  H.write page (pattern n 13);
+  equal string ~msg:"the host's bytes, through the shared mapping"
+    (pattern n 13) (read_on_second m');
   A.free g m;
+  H.write page (pattern n 15);
+  equal string ~msg:"the host's bytes, once the first region is freed"
+    (pattern n 15) (read_on_second m');
+  A.free g' m';
   (match A.map_host g' page n with
   | None -> fail "a page no device maps refused"
   | Some m' -> A.free g' m');
   H.free_pages page n;
-  List.iter (A.free g') [ staging'; theirs ];
+  List.iter (A.free g') [ staging'; theirs; back' ];
   A.free g back
 
 let one_gpu () =
@@ -2455,6 +2471,36 @@ let staged_devices () =
   staged { t with d } 4;
   staged t 5
 
+(* A host page's mapping, shared by two devices of one GPU, outlives the
+   first device's stop and its region's free after it: the second device's
+   work reads the host's bytes through it all along. *)
+let shared_after_stop () =
+  if S.driverless () then skip ~reason:"the path maps no host memory" ();
+  S.with_driver @@ fun g' ->
+  let g = match S.open_gpu () with Ok g -> g | Error why -> fail why in
+  let n = 4096 in
+  let page = H.pages n in
+  let first = Option.get (A.map_host g page n) in
+  let shared =
+    require_some ~msg:"the second device's map" (A.map_host g' page n)
+  in
+  let back = Option.get (A.alloc g' Pinned n) in
+  let r = device g' in
+  let read what seed =
+    H.write page (pattern n seed);
+    H.write (host back) (String.make n '\000');
+    go r [| E.copy ~dst:(address back) ~src:(address shared) n |];
+    equal string ~msg:what (pattern n seed) (H.read (host back) n)
+  in
+  read "both devices open" 21;
+  A.stop g ~fault:None;
+  read "the first device stopped" 22;
+  A.free g first;
+  read "the first region freed" 23;
+  A.free g' shared;
+  A.free g' back;
+  H.free_pages page n
+
 let two =
   group ~timeout:60. "one GPU"
     [
@@ -2464,14 +2510,14 @@ let two =
         one_gpu;
       test "devices of one GPU opened through two roots share its memory"
         two_roots;
-      xfail
-        ~reason:
-          "amdgpu maps a page once per GPU and refuses a device's map of \
-           staging pages another device of the GPU mapped, closed or not"
-        (test
-           "devices of one GPU, one after another and two at once, copy \
-            through the host's staging memory"
-           staged_devices);
+      test
+        "devices of one GPU, one after another and two at once, copy through \
+         the host's staging memory"
+        staged_devices;
+      test
+        "a host mapping two devices of one GPU share outlives the first's stop \
+         and free"
+        shared_after_stop;
     ]
 
 (* Traces *)
