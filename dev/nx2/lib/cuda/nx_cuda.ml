@@ -282,3 +282,5 @@ let apply1 _ ~dst:_ _ = A.Declined
 let apply2 _ ~dst:_ _ _ = A.Declined
 let apply3 _ ~dst:_ _ _ _ = A.Declined
 let map _ ~dsts:_ _ = A.Declined
+let reduce _ ~dsts:_ _ = A.Declined
+let scan _ ~dsts:_ _ = A.Declined

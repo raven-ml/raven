@@ -13,7 +13,8 @@
     claim through {!Nx_array.door} until their work is submitted, and answer
     [Done] once it is on [d]'s timeline.
 
-    [apply0] to [apply3] and [map] answer [Declined] for every kind. [contract]
+    [apply0] to [apply3], [map], [reduce] and [scan] answer [Declined] for
+    every kind. [contract]
     computes plain loads into [float32], [float64] and integer accumulators,
     from operands, [init] and results of a byte or more that are not complex,
     whose layouts {!Nx_kernel.Spec.Contract_view} groups. It declines a float

@@ -11,7 +11,7 @@ let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 (* A descriptor is its family's struct of nx_spec.h: int32 fields in the host's
    byte order, its arrays as long as its counts say. *)
 type 'f t = string
-type contract
+type contract = [ `Contract ]
 
 let max_rank = L.max_rank
 let int32 s at = Int32.to_int (String.get_int32_ne s at)
@@ -61,21 +61,30 @@ type load = Plain | Padded of { fill : string; pad : pad }
 type monoid = Sum | Prod | Max | Min | Logsumexp
 type extreme = Max | Min
 type combine = Set | Add | Max | Min
+type reduction = Monoid of monoid | Moments | Arg of extreme
 
-(* Maps. nx_spec_map: the family, the load count, the program's byte offset
-   and length, then one int32 per load, the byte offset of its record or 0
-   for a plain load. The program follows, then each padded load's record:
-   its rank and window count, sixteen bytes of fill, then int64 [lo], [hi]
-   and [interior] by axis and each window's axis, size, step and dilation.
-   Every part starts on 8 bytes. *)
+(* Loops: maps, reductions and scans. nx_spec_loop: the family, the counts
+   of loads, axes and reductions, the program's byte offset and length, then
+   one int32 per load, the byte offset of its record or 0 for a plain load,
+   one per axis, and three per reduction: its kind, the output it reduces
+   and its dtype's code. The program follows, then each padded load's
+   record: its rank and window count, sixteen bytes of fill, then int64
+   [lo], [hi] and [interior] by axis and each window's axis, size, step and
+   dilation. Every part starts on 8 bytes. *)
 
-type map
+type map = [ `Map ]
+type reduce = [ `Reduce ]
+type scan = [ `Scan ]
 
 let family_map = 2
+let family_reduce = 3
+let family_scan = 4
 let at_nloads = 4
-let at_prog = 8
-let at_prog_len = 12
-let at_loads = 16
+let at_naxes = 8
+let at_nreductions = 12
+let at_prog = 16
+let at_prog_len = 20
+let at_loads = 24
 let at_fill = 8
 let at_geometry = 24
 let align8 n = (n + 7) land lnot 7
@@ -110,8 +119,44 @@ let check_pad fn k (p : pad) =
 let record_bytes (p : pad) =
   at_geometry + (8 * 3 * Array.length p.lo) + (8 * 4 * Array.length p.windows)
 
-let map p ~loads =
-  let fn = "Nx_kernel.Spec.map" in
+(* nx_spec.h's code of each reduction, by index. *)
+let kinds =
+  [|
+    Monoid Sum;
+    Monoid Prod;
+    Monoid Max;
+    Monoid Min;
+    Monoid Logsumexp;
+    Moments;
+    Arg Max;
+    Arg Min;
+  |]
+
+let kind_code r = Option.get (Array.find_index (( = ) r) kinds)
+
+let kind_name = function
+  | Monoid Sum -> "Sum"
+  | Monoid Prod -> "Prod"
+  | Monoid Max -> "Max"
+  | Monoid Min -> "Min"
+  | Monoid Logsumexp -> "Logsumexp"
+  | Moments -> "Moments"
+  | Arg Max -> "Arg Max"
+  | Arg Min -> "Arg Min"
+
+let accepts r (D.Any dt) =
+  match (r, D.kind dt) with
+  | Monoid (Sum | Prod), D.Boolean -> false
+  | (Monoid Logsumexp | Moments), D.Float -> true
+  | (Monoid Logsumexp | Moments), _ -> false
+  | _ -> true
+
+(* The results of a reduction. *)
+let results = function Monoid _ -> 1 | Moments | Arg _ -> 2
+
+(* A loop of the family [family], its loads checked against [p]'s operands;
+   [fn] names the encoder in messages. *)
+let loop fn family p ~loads ~axes ~reductions =
   let ins = Prog.ins p in
   if Array.length loads <> Array.length ins then
     invalid_argf "%s: %d loads for %d operands" fn (Array.length loads)
@@ -126,7 +171,10 @@ let map p ~loads =
           check_pad fn k pad)
     loads;
   let n = Array.length loads in
-  let at_p = align8 (at_loads + (4 * n)) in
+  let na = Array.length axes and nr = Array.length reductions in
+  let at_axes = at_loads + (4 * n) in
+  let at_reductions = at_axes + (4 * na) in
+  let at_p = align8 (at_reductions + (12 * nr)) in
   let p = (p :> string) in
   let len = String.length p in
   let next = ref (align8 (at_p + len)) in
@@ -141,11 +189,21 @@ let map p ~loads =
       loads
   in
   let b = Bytes.make !next '\000' in
-  set b at_family family_map;
+  set b at_family family;
   set b at_nloads n;
+  set b at_naxes na;
+  set b at_nreductions nr;
   set b at_prog at_p;
   set b at_prog_len len;
   Bytes.blit_string p 0 b at_p len;
+  Array.iteri (fun i a -> set b (at_axes + (4 * i)) a) axes;
+  Array.iteri
+    (fun j (r, k, D.Any dt) ->
+      let at = at_reductions + (12 * j) in
+      set b at (kind_code r);
+      set b (at + 4) k;
+      set b (at + 8) (D.code dt))
+    reductions;
   Array.iteri
     (fun k l ->
       set b (at_loads + (4 * k)) ats.(k);
@@ -173,7 +231,54 @@ let map p ~loads =
     loads;
   Bytes.unsafe_to_string b
 
-(* The program's bytes, made by Prog.v when the map was. *)
+let map p ~loads =
+  loop "Nx_kernel.Spec.map" family_map p ~loads ~axes:[||] ~reductions:[||]
+
+(* Checks [axes] and [rs] for a loop over [p] with [loads]. *)
+let check_reductions fn p ~loads ~axes rs =
+  Array.iteri
+    (fun i a ->
+      if a < 0 || a >= max_rank || (i > 0 && a <= axes.(i - 1)) then
+        invalid_argf "%s: axes are not strictly increasing in [0, %d)" fn
+          max_rank)
+    axes;
+  if rs = [||] then invalid_argf "%s: no reduction" fn;
+  let outs = Prog.outs p in
+  Array.iter
+    (fun (r, k, _) ->
+      if k < 0 || k >= Array.length outs then
+        invalid_argf "%s: output %d of a program of %d" fn k
+          (Array.length outs);
+      let (D.Any dt as d) = Prog.dtype p outs.(k) in
+      if not (accepts r d) then
+        invalid_argf "%s: %s of %a" fn (kind_name r) D.pp dt)
+    rs;
+  let n = Array.fold_left (fun n (r, _, _) -> n + results r) 0 rs in
+  if Array.length loads + n > Prog.max_operands then
+    invalid_argf "%s: %d loads and %d results, past %d" fn
+      (Array.length loads) n Prog.max_operands
+
+let reduce p ~loads ~axes rs =
+  let fn = "Nx_kernel.Spec.reduce" in
+  check_reductions fn p ~loads ~axes rs;
+  loop fn family_reduce p ~loads ~axes ~reductions:rs
+
+let scan p ~loads ~axis ((r, _, _) as s) =
+  let fn = "Nx_kernel.Spec.scan" in
+  if r = Moments then invalid_argf "%s: a scan of Moments" fn;
+  check_reductions fn p ~loads ~axes:[| axis |] [| s |];
+  loop fn family_scan p ~loads ~axes:[| axis |] ~reductions:[| s |]
+
+let at_axes s = at_loads + (4 * int32 s at_nloads)
+let axes s = Array.init (int32 s at_naxes) (fun i -> int32 s (at_axes s + (4 * i)))
+
+let reductions s =
+  let at = at_axes s + (4 * int32 s at_naxes) in
+  Array.init (int32 s at_nreductions) (fun j ->
+      let at = at + (12 * j) in
+      (kinds.(int32 s at), int32 s (at + 4), dtypes.(int32 s (at + 8))))
+
+(* The program's bytes, made by Prog.v when the loop was. *)
 let prog s =
   Option.get (Prog.of_string (String.sub s (int32 s at_prog) (int32 s at_prog_len)))
 
@@ -228,15 +333,15 @@ let loaded s k x =
               | exception Invalid_argument msg ->
                   Error (Printf.sprintf "operand %d's windows: %s" k msg)))
 
-let map_shapes s ins =
+(* The one shape the operands of shapes [ins] have once loaded. *)
+let loaded_shape s ins =
   let n = int32 s at_nloads in
   if Array.length ins <> n then
     Error (Printf.sprintf "%d operands, not %d" (Array.length ins) n)
-  else if n = 0 then Error "a map with no operand has no shape of its own"
+  else if n = 0 then Error "a loop with no operand has no shape of its own"
   else
-    let outs = Array.length (Prog.outs (prog s)) in
     let rec go k first =
-      if k = n then Ok (Array.make outs first)
+      if k = n then Ok first
       else
         match loaded s k ins.(k) with
         | Error _ as e -> e
@@ -247,6 +352,40 @@ let map_shapes s ins =
         | Ok y -> go (k + 1) (if k = 0 then y else first)
     in
     go 0 [||]
+
+(* A reduction's results drop its axes, a scan's keep them. A maximum,
+   minimum or extreme with an output and no term has no value. *)
+let reduced_shapes s y =
+  let axes = axes s and rs = reductions s in
+  match Array.find_opt (fun a -> a >= Array.length y) axes with
+  | Some a -> Error (Printf.sprintf "axis %d of a loaded rank %d" a (Array.length y))
+  | None ->
+      let scan = int32 s at_family = family_scan in
+      let kept =
+        if scan then y
+        else
+          Array.of_list
+            (List.filteri (fun i _ -> not (Array.mem i axes)) (Array.to_list y))
+      in
+      let terms = Array.fold_left (fun n a -> n * y.(a)) 1 axes in
+      let total = Array.fold_left ( * ) 1 kept in
+      let extreme = function Monoid (Max | Min) | Arg _ -> true | _ -> false in
+      if (not scan) && terms = 0 && total > 0
+         && Array.exists (fun (r, _, _) -> extreme r) rs
+      then Error "an extreme of no term"
+      else
+        Ok
+          (Array.concat
+             (List.map
+                (fun (r, _, _) -> Array.make (results r) kept)
+                (Array.to_list rs)))
+
+let loop_shapes s ins =
+  match loaded_shape s ins with
+  | Error _ as e -> e
+  | Ok y when int32 s at_family = family_map ->
+      Ok (Array.make (Array.length (Prog.outs (prog s))) y)
+  | Ok y -> reduced_shapes s y
 
 (* Contractions *)
 
@@ -369,7 +508,8 @@ let contract_shapes s ins =
 let shapes s ins =
   let f = int32 s at_family in
   if f = family_contract then contract_shapes s ins
-  else if f = family_map then map_shapes s ins
+  else if f = family_map || f = family_reduce || f = family_scan then
+    loop_shapes s ins
   else invalid_argf "Nx_kernel.Spec.shapes: family %d" f
 
 (* Views *)

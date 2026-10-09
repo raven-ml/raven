@@ -77,6 +77,8 @@ let apply3 k ~dst c x y =
   else apply3_c k dst c x y
 
 let map _ ~dsts:_ _ = Nx_array.Declined
+let reduce _ ~dsts:_ _ = Nx_array.Declined
+let scan _ ~dsts:_ _ = Nx_array.Declined
 
 (* Contractions *)
 

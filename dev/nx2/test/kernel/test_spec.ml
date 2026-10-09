@@ -556,8 +556,9 @@ let prog_of c =
     (Array.mapi (fun k _ -> P.In k) c.ins)
     ~outs:(Array.mapi (fun k _ -> k) c.ins)
 
-(* What C reads, rendered as the support reader renders it. *)
-let render (p : P.t) loads =
+(* What C reads, rendered as the support reader renders it: [family]'s code,
+   the program, the axes, each reduction's codes, the loads. *)
+let render ?(family = 2) ?(axes = [||]) ?(reductions = [||]) (p : P.t) loads =
   let line = function
     | S.Plain -> "\nplain"
     | Padded { fill; pad } ->
@@ -580,13 +581,18 @@ let render (p : P.t) loads =
           (hex (fill ^ String.make (16 - String.length fill) '\000'))
           (String.concat "" (Array.to_list (Array.map (Printf.sprintf " %d") nums)))
   in
-  Printf.sprintf "family 2 prog %s" (hex (p :> string))
+  let reduction (code, k, D.Any dt) =
+    Printf.sprintf "\nreduction %d %d %d" code k (D.code dt)
+  in
+  Printf.sprintf "family %d prog %s\naxes" family (hex (p :> string))
+  ^ String.concat "" (Array.to_list (Array.map (Printf.sprintf " %d") axes))
+  ^ String.concat "" (Array.to_list (Array.map reduction reductions))
   ^ String.concat "" (Array.to_list (Array.map line loads))
 
 let law_map_encoding c =
   let p = prog_of c in
   let s = S.map p ~loads:c.loads in
-  equal ~msg:"C reads" string (render p c.loads) (Nx_kernel_support.map s);
+  equal ~msg:"C reads" string (render p c.loads) (Nx_kernel_support.loop s);
   equal ~msg:"prog" string (p :> string) (S.prog s : P.t :> string);
   equal ~msg:"loads" bool true (S.loads s = c.loads)
 
@@ -665,6 +671,185 @@ let test_map_refuses () =
   equal ~msg:"no operand, no shape" bool true
     (Result.is_error (S.shapes (S.map none ~loads:[||]) [||]))
 
+(* Reductions and scans *)
+
+let reductions_all =
+  S.
+    [
+      Monoid Sum;
+      Monoid Prod;
+      Monoid Max;
+      Monoid Min;
+      Monoid Logsumexp;
+      Moments;
+      Arg Max;
+      Arg Min;
+    ]
+
+(* nx_spec.h's code of each reduction: its place among the type's cases. *)
+let code r = Option.get (List.find_index (( = ) r) reductions_all)
+
+let reduction_name = function
+  | S.Monoid Sum -> "Sum"
+  | Monoid Prod -> "Prod"
+  | Monoid Max -> "Max"
+  | Monoid Min -> "Min"
+  | Monoid Logsumexp -> "Logsumexp"
+  | Moments -> "Moments"
+  | Arg Max -> "Arg Max"
+  | Arg Min -> "Arg Min"
+
+let pp_reduction ppf (r, k, D.Any dt) =
+  Format.fprintf ppf "%s of %d into %a" (reduction_name r) k D.pp dt
+
+(* RFC 0034's domains: Sum and Prod take every dtype but booleans,
+   Logsumexp and Moments floats, the extremes every dtype. *)
+let accepted r (D.Any dt) =
+  match (r, D.kind dt) with
+  | S.Monoid (Sum | Prod), D.Boolean -> false
+  | (Monoid Logsumexp | Moments), D.Float -> true
+  | (Monoid Logsumexp | Moments), _ -> false
+  | _ -> true
+
+let results = function S.Monoid _ -> 1 | Moments | Arg _ -> 2
+
+type reduce_case = {
+  loop : map_case;
+  axes : int array;
+  rs : (S.reduction * int * D.any) array;
+}
+
+let pp_reduce_case ppf c =
+  Format.fprintf ppf "%a, axes %a, %a" pp_map_case c.loop pp_ints c.axes
+    (Format.pp_print_list pp_reduction)
+    (Array.to_list c.rs)
+
+(* A reduction the encoder takes: axes a subset of the shape's, and one or
+   two reductions, each of an output whose dtype it accepts, as many as fit
+   beside the loads. *)
+let reduce_case =
+  Gen.with_pp pp_reduce_case
+    (let open Gen in
+     let* loop = map_case in
+     let rank = Array.length loop.shape in
+     let* keep = array ~size:(constant rank) bool in
+     let axes =
+       Array.of_list (List.filter (fun i -> keep.(i)) (List.init rank Fun.id))
+     in
+     let one =
+       let* k = int_range 0 (Array.length loop.ins - 1) in
+       let* r = of_list (List.filter (fun r -> accepted r loop.ins.(k)) reductions_all) in
+       let+ dt = of_list ~pp:(fun ppf (D.Any d) -> D.pp ppf d) D.all in
+       (r, k, dt)
+     in
+     let+ drawn = list ~size:(int_range 1 2) one in
+     let room = P.max_operands - Array.length loop.ins in
+     let rec fit used = function
+       | [] -> []
+       | ((r, _, _) as x) :: xs ->
+           if used + results r > room then [] else x :: fit (used + results r) xs
+     in
+     { loop; axes; rs = Array.of_list (fit 0 drawn) })
+
+let reduce_of c = S.reduce (prog_of c.loop) ~loads:c.loop.loads ~axes:c.axes c.rs
+
+let law_reduce_encoding c =
+  let p = prog_of c.loop in
+  let s = reduce_of c in
+  let codes = Array.map (fun (r, k, dt) -> (code r, k, dt)) c.rs in
+  equal ~msg:"C reads" string
+    (render ~family:3 ~axes:c.axes ~reductions:codes p c.loop.loads)
+    (Nx_kernel_support.loop s);
+  equal ~msg:"prog" string (p :> string) (S.prog s : P.t :> string);
+  equal ~msg:"loads" bool true (S.loads s = c.loop.loads);
+  equal ~msg:"axes" (array int) c.axes (S.axes s);
+  equal ~msg:"reductions" bool true (S.reductions s = c.rs)
+
+let law_scan_encoding c =
+  let p = prog_of c.loop in
+  let rank = Array.length c.loop.shape in
+  let axis = if rank = 0 then 0 else rank - 1 in
+  let r, k, dt = c.rs.(0) in
+  let r = if r = S.Moments then S.Monoid Max else r in
+  let s = S.scan p ~loads:c.loop.loads ~axis (r, k, dt) in
+  equal ~msg:"C reads" string
+    (render ~family:4 ~axes:[| axis |] ~reductions:[| (code r, k, dt) |] p
+       c.loop.loads)
+    (Nx_kernel_support.loop s);
+  equal ~msg:"axes" (array int) [| axis |] (S.axes s);
+  equal ~msg:"reductions" bool true (S.reductions s = [| (r, k, dt) |])
+
+(* The results' shapes by the rule: the loaded shape, without the axes for
+   a reduction, one per result; an extreme with an output and no term has
+   none. *)
+let law_reduce_shapes c =
+  let s = reduce_of c in
+  let ins = Array.map (fun _ -> c.loop.shape) c.loop.ins in
+  let shapes = Array.map (loaded c.loop.shape) c.loop.loads in
+  let want =
+    match shapes.(0) with
+    | Some y when Array.for_all (fun z -> z = Some y) shapes ->
+        let kept =
+          List.filteri (fun i _ -> not (Array.mem i c.axes)) (Array.to_list y)
+        in
+        let terms = Array.fold_left (fun n a -> n * y.(a)) 1 c.axes in
+        let extreme = function
+          | S.Monoid (Max | Min) | Arg _ -> true
+          | _ -> false
+        in
+        if
+          Array.exists (fun a -> a >= Array.length y) c.axes
+          || terms = 0
+             && List.fold_left ( * ) 1 kept > 0
+             && Array.exists (fun (r, _, _) -> extreme r) c.rs
+        then Error ()
+        else
+          Ok
+            (List.concat_map
+               (fun (r, _, _) -> List.init (results r) (fun _ -> kept))
+               (Array.to_list c.rs))
+    | _ -> Error ()
+  in
+  cover "fits" (Result.is_ok want);
+  cover "no term" (Array.exists (fun a -> c.loop.shape.(a) = 0) c.axes);
+  cover "two results" (Array.exists (fun (r, _, _) -> results r = 2) c.rs);
+  equal (result (list (list int)) unit) want (result_of (S.shapes s ins))
+
+let test_reduce_refuses () =
+  let f32 = D.Any D.Float32 and b8 = D.Any D.Bool and i32 = D.Any D.Int32 in
+  let p dt = P.v ~ins:[| dt |] [| P.In 0 |] ~outs:[| 0 |] in
+  let refuses ~msg ?(dt = f32) ?(loads = [| S.Plain |]) axes rs =
+    raises_match ~msg Exn.invalid_arg (fun () ->
+        S.reduce (p dt) ~loads ~axes rs)
+  in
+  let sum = (S.Monoid Sum, 0, f32) in
+  refuses ~msg:"axes out of order" [| 1; 0 |] [| sum |];
+  refuses ~msg:"a repeated axis" [| 0; 0 |] [| sum |];
+  refuses ~msg:"a negative axis" [| -1 |] [| sum |];
+  refuses ~msg:"an axis past the most rank" [| L.max_rank |] [| sum |];
+  refuses ~msg:"no reduction" [| 0 |] [||];
+  refuses ~msg:"an output the program lacks" [| 0 |] [| (S.Monoid Sum, 1, f32) |];
+  refuses ~msg:"a sum of booleans" ~dt:b8 [| 0 |] [| (S.Monoid Sum, 0, b8) |];
+  refuses ~msg:"moments of integers" ~dt:i32 [| 0 |] [| (S.Moments, 0, i32) |];
+  refuses ~msg:"a load too many" ~loads:[| S.Plain; Plain |] [| 0 |] [| sum |];
+  refuses ~msg:"results past the most operands" [| 0 |]
+    [| (S.Moments, 0, f32); (S.Arg Max, 0, f32) |];
+  raises_match ~msg:"a scan of moments" Exn.invalid_arg (fun () ->
+      S.scan (p f32) ~loads:[| S.Plain |] ~axis:0 (S.Moments, 0, f32));
+  let y = S.shapes (S.scan (p f32) ~loads:[| S.Plain |] ~axis:1 (S.Arg Max, 0, f32)) in
+  equal ~msg:"a scan keeps the shape, twice for Arg"
+    (result (list (list int)) unit)
+    (Ok [ [ 2; 3 ]; [ 2; 3 ] ])
+    (result_of (y [| [| 2; 3 |] |]));
+  equal ~msg:"a scan along an axis past the rank" bool true
+    (Result.is_error (y [| [| 2 |] |]));
+  let max0 = S.reduce (p f32) ~loads:[| S.Plain |] ~axes:[| 1 |] [| (S.Monoid Max, 0, f32) |] in
+  equal ~msg:"a maximum of no term" bool true
+    (Result.is_error (S.shapes max0 [| [| 2; 0 |] |]));
+  equal ~msg:"a maximum with no output" (result (list (list int)) unit)
+    (Ok [ [ 0 ] ])
+    (result_of (S.shapes max0 [| [| 0; 0 |] |]))
+
 let tests =
   [
     group "encoder"
@@ -683,6 +868,17 @@ let tests =
         prop "results have the operands' one shape once loaded" map_case
           law_map_shapes;
         test "refuses loads that do not fit the program" test_map_refuses;
+      ];
+    group "reductions and scans"
+      [
+        prop "C reads what reduce was given, and so do the readers"
+          reduce_case law_reduce_encoding;
+        prop "C reads what scan was given, and so do the readers" reduce_case
+          law_scan_encoding;
+        prop "results drop the axes, one per result" reduce_case
+          law_reduce_shapes;
+        test "refuses axes and reductions that do not fit, and states shapes"
+          test_reduce_refuses;
       ];
     group "shapes"
       [

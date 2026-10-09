@@ -11,5 +11,5 @@ external view_fields : Nx_kernel.Spec.Contract_view.t -> int array
 
 external prog : Nx_kernel.Prog.t -> string = "nx_kernel_support_prog"
 
-external map : Nx_kernel.Spec.map Nx_kernel.Spec.t -> string
-  = "nx_kernel_support_map"
+external loop : [< `Map | `Reduce | `Scan ] Nx_kernel.Spec.t -> string
+  = "nx_kernel_support_loop"

@@ -17,7 +17,12 @@
 #include <stdint.h>
 
 /* A descriptor's family, its first field. */
-enum { NX_SPEC_CONTRACT = 1, NX_SPEC_MAP = 2 };
+enum {
+  NX_SPEC_CONTRACT = 1,
+  NX_SPEC_MAP = 2,
+  NX_SPEC_REDUCE = 3,
+  NX_SPEC_SCAN = 4
+};
 
 /* Prog.t: a scalar program. Counts of operands, nodes and outputs, then a
    record per node, then the operands' dtype codes (nx_dtype.h) and the
@@ -65,17 +70,30 @@ static inline const int32_t *nx_prog_outs(const nx_prog *p) {
   return nx_prog_ins(p) + p->nins;
 }
 
-/* Spec.map: the program, at byte [at_prog] and [prog_len] bytes long, and
-   per load the byte offset of its padding, or 0 for a plain load. A
-   padding holds its operand's rank and window count, the fill's bits,
-   zero-padded, then int64 [lo], [hi] and [interior] by axis and each
-   window's axis, size, step and dilation. */
+/* A reduction's kind, in the order of Spec.reduction's cases: the
+   monoids, Moments, then Arg Max and Arg Min. */
+enum { NX_SUM, NX_PROD, NX_MAX, NX_MIN, NX_LOGSUMEXP, NX_MOMENTS, NX_ARGMAX,
+       NX_ARGMIN };
+
+/* A reduction: its kind, the program output it reduces and its result's
+   dtype code. */
 typedef struct {
-  int32_t family; /* NX_SPEC_MAP */
-  int32_t nloads;
+  int32_t kind, output, dtype;
+} nx_spec_reduction;
+
+/* Spec.map, Spec.reduce and Spec.scan: the program, at byte [at_prog] and
+   [prog_len] bytes long; per load the byte offset of its padding, or 0 for
+   a plain load; then the [naxes] axes reduced and the [nreductions]
+   reductions, none for a map, one each for a scan. A padding holds its
+   operand's rank and window count, the fill's bits, zero-padded, then int64
+   [lo], [hi] and [interior] by axis and each window's axis, size, step and
+   dilation. */
+typedef struct {
+  int32_t family; /* NX_SPEC_MAP, NX_SPEC_REDUCE or NX_SPEC_SCAN */
+  int32_t nloads, naxes, nreductions;
   int32_t at_prog, prog_len;
   int32_t loads[];
-} nx_spec_map;
+} nx_spec_loop;
 
 typedef struct {
   int32_t rank, nwindows;
@@ -83,14 +101,24 @@ typedef struct {
   int64_t geometry[]; /* lo, hi, interior, then windows[nwindows][4] */
 } nx_spec_pad;
 
-static inline const nx_prog *nx_spec_map_prog(const nx_spec_map *m) {
+static inline const nx_prog *nx_spec_loop_prog(const nx_spec_loop *m) {
   return (const nx_prog *)((const uint8_t *)m + m->at_prog);
 }
 
 /* Load [k]'s padding, or NULL for a plain load. */
-static inline const nx_spec_pad *nx_spec_map_pad(const nx_spec_map *m, int k) {
+static inline const nx_spec_pad *nx_spec_loop_pad(const nx_spec_loop *m,
+                                                  int k) {
   if (m->loads[k] == 0) return 0;
   return (const nx_spec_pad *)((const uint8_t *)m + m->loads[k]);
+}
+
+static inline const int32_t *nx_spec_loop_axes(const nx_spec_loop *m) {
+  return m->loads + m->nloads;
+}
+
+static inline const nx_spec_reduction *nx_spec_loop_reductions(
+    const nx_spec_loop *m) {
+  return (const nx_spec_reduction *)(nx_spec_loop_axes(m) + m->naxes);
 }
 
 /* Spec.contract: the dtypes the sum runs in and its result has (nx_dtype.h's

@@ -30,11 +30,15 @@ _Static_assert(offsetof(nx_prog_node, bits) == 24, "at_bits");
 _Static_assert(NX_OP1_COUNT == 28 && NX_OP2_COUNT == 18 && NX_OP3_COUNT == 2,
                "one code per kind");
 
-/* spec.ml writes nx_spec_map and nx_spec_pad at these byte offsets. */
-_Static_assert(offsetof(nx_spec_map, nloads) == 4, "at_nloads");
-_Static_assert(offsetof(nx_spec_map, at_prog) == 8, "at_prog");
-_Static_assert(offsetof(nx_spec_map, prog_len) == 12, "at_prog_len");
-_Static_assert(offsetof(nx_spec_map, loads) == 16, "at_loads");
+/* spec.ml writes nx_spec_loop and nx_spec_pad at these byte offsets. */
+_Static_assert(offsetof(nx_spec_loop, nloads) == 4, "at_nloads");
+_Static_assert(offsetof(nx_spec_loop, naxes) == 8, "at_naxes");
+_Static_assert(offsetof(nx_spec_loop, nreductions) == 12, "at_nreductions");
+_Static_assert(offsetof(nx_spec_loop, at_prog) == 16, "at_prog");
+_Static_assert(offsetof(nx_spec_loop, prog_len) == 20, "at_prog_len");
+_Static_assert(offsetof(nx_spec_loop, loads) == 24, "at_loads");
+_Static_assert(sizeof(nx_spec_reduction) == 12, "three int32 per reduction");
+_Static_assert(NX_ARGMIN == 7, "one code per reduction");
 _Static_assert(offsetof(nx_spec_pad, fill) == 8, "at_fill");
 _Static_assert(offsetof(nx_spec_pad, geometry) == 24, "at_geometry");
 

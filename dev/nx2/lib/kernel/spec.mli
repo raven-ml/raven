@@ -16,8 +16,10 @@ type 'f t
 val shapes : 'f t -> int array array -> (int array array, string) result
 (** [shapes s ins] is the shapes of [s]'s results for operands of the shapes
     [ins], in the order the family's kernel takes them, or why they do not fit
-    [s]. A map's results have the one shape its operands have once loaded;
-    a map with no operand has no shape of its own, and is an [Error]. *)
+    [s]. A map's results have the one shape its operands have once loaded, a
+    reduction's that shape without its axes, a scan's that shape. A loop with
+    no operand has no shape of its own, and is an [Error]; so is a [Max],
+    [Min] or [Arg] reduction with a result and no term. *)
 
 (** {1:loads Loads} *)
 
@@ -54,7 +56,7 @@ type combine = Set | Add | Max | Min
 
 (** {1:maps Maps} *)
 
-type map
+type map = [ `Map ]
 (** The family of maps. *)
 
 val map : Prog.t -> loads:load array -> map t
@@ -68,15 +70,96 @@ val map : Prog.t -> loads:load array -> map t
     increasing axes below that length, with [size], [step] and [dilation] at
     least [1]. *)
 
-val prog : map t -> Prog.t
+val prog : [< `Map | `Reduce | `Scan ] t -> Prog.t
 (** [prog s] is [s]'s program. *)
 
-val loads : map t -> load array
+val loads : [< `Map | `Reduce | `Scan ] t -> load array
 (** [loads s] is how [s] reads each operand. *)
+
+(** {1:reductions Reductions and scans} *)
+
+(** The type for what a reduction computes from the values of one program
+    output along the reduced axes, its terms, numbered from [0] in C order of
+    the reduced axes' indices.
+
+    - [Monoid Sum] adds the terms from [+0], as {!Prog.Add} does: a sum of
+      [-0] terms is [+0]. [Monoid Prod] multiplies them from [1]. Integers
+      wrap.
+    - [Monoid Max] and [Monoid Min] are {!Prog.Maximum} and {!Prog.Minimum}
+      of the terms: [-0] below [+0], any and all on booleans.
+    - [Monoid Logsumexp] is [m + log Σ exp (x - m)], [m] the terms' maximum:
+      [-∞] for no term or terms all [-∞], [+∞] where a term is [+∞] and none
+      is NaN.
+    - [Moments] is the terms' population mean, then their variance; NaN for
+      no term.
+    - [Arg e] is the extreme [e] of the terms, as [Monoid Max] or
+      [Monoid Min] finds it, then its position: the first term with its bits,
+      as an [int64].
+
+    A NaN result, where a term it reduces is a NaN, is the first such term,
+    its bits unchanged; with no NaN term it is the instruction set's NaN, as
+    an infinity less itself gives. A float [Sum] or [Prod] associates in an
+    order that is a function of the shapes alone, never of layouts, threads or
+    the device's size, and each kernel library states its order and the
+    bounds of [Logsumexp] and [Moments]. A float sum of [n] terms is within
+    [γ(n - 1) Σ|x|] of the exact sum, a product within a relative [γ(n - 1)]
+    barring overflow and underflow, where [γ(k) = k u / (1 - k u)] and [u] is
+    the dtype's unit roundoff. *)
+type reduction = Monoid of monoid | Moments | Arg of extreme
+
+val accepts : reduction -> Nx_array.Dtype.any -> bool
+(** [accepts r dt] is [true] iff [r] reduces terms of [dt]: [Sum] and [Prod]
+    every dtype but booleans; [Max], [Min] and [Arg] every dtype;
+    [Logsumexp] and [Moments] floats. *)
+
+type reduce = [ `Reduce ]
+(** The family of reductions. *)
+
+val reduce :
+  Prog.t ->
+  loads:load array ->
+  axes:int array ->
+  (reduction * int * Nx_array.Dtype.any) array ->
+  reduce t
+(** [reduce p ~loads ~axes rs] runs [p] at every index of one shape, reading
+    operand [i] as [loads.(i)] says, and reduces along [axes]. Each
+    [(r, k, dt)] of [rs] reduces output [k] of [p] by [r] in that output's
+    dtype and rounds its results once to [dt]: one result for a [Monoid], the
+    mean and the variance for [Moments], the extreme and its [int64] position
+    for [Arg]. The results come in the order of [rs], each of the loaded
+    shape without [axes].
+
+    Raises [Invalid_argument] as {!map} does, and unless [axes] are strictly
+    increasing, not negative and below {!Nx_array.Layout.max_rank}, [rs] is
+    not empty, each [k] names an output of [p] whose dtype [r] accepts, and
+    the loads and results number at most {!Prog.max_operands}. *)
+
+val axes : [< `Reduce | `Scan ] t -> int array
+(** [axes s] is the axes [s] reduces: one for a scan. *)
+
+val reductions :
+  [< `Reduce | `Scan ] t -> (reduction * int * Nx_array.Dtype.any) array
+(** [reductions s] is [s]'s reductions: one for a scan. *)
+
+type scan = [ `Scan ]
+(** The family of scans. *)
+
+val scan :
+  Prog.t ->
+  loads:load array ->
+  axis:int ->
+  reduction * int * Nx_array.Dtype.any ->
+  scan t
+(** [scan p ~loads ~axis (r, k, dt)] is, at every index of one shape, the
+    reduction [r] of output [k] of [p] over the indices along [axis] up to
+    that index's, inclusive, rounded once to [dt]: one result of the loaded
+    shape, or for [Arg] the running extreme and its position along [axis].
+
+    Raises [Invalid_argument] as {!reduce} does, and if [r] is [Moments]. *)
 
 (** {1:contract Contractions} *)
 
-type contract
+type contract = [ `Contract ]
 (** The family of contractions. *)
 
 val contract :

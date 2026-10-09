@@ -59,8 +59,10 @@ module Spec = Spec
     An [apply] entry answers [Wrong_dtype] for dtypes its kind does not take
     ({!Prog.accepts0} to {!Prog.accepts3}), whatever its caller checked. A
     decline of [apply0] to [apply3] at a base dtype (float32, float64, the 8-
-    to 64-bit integers and bool) is an error its caller raises; elsewhere, and
-    for [map], its caller computes the case from other operations. *)
+    to 64-bit integers and bool), or of [reduce] or [scan] of one [Sum],
+    [Prod], [Max] or [Min] of a program's one operand into its own dtype, read
+    plain, at a base dtype, is an error its caller raises; elsewhere, and for
+    [map], its caller computes the case from other operations. *)
 module type S = sig
   type ('v, 's) a := ('v, 's) Nx_array.t
   type answer := Nx_array.answer
@@ -92,6 +94,16 @@ module type S = sig
   val map : Spec.map Spec.t -> dsts:any array -> any array -> answer
   (** [map s ~dsts ops] stores [s]'s results into [dsts], one per output of
       its program, from [ops], one per load. *)
+
+  (** {1:reductions Reductions and scans} *)
+
+  val reduce : Spec.reduce Spec.t -> dsts:any array -> any array -> answer
+  (** [reduce s ~dsts ops] stores [s]'s results into [dsts], in the order
+      {!Spec.reduce} gives them, from [ops], one per load. *)
+
+  val scan : Spec.scan Spec.t -> dsts:any array -> any array -> answer
+  (** [scan s ~dsts ops] stores [s]'s results into [dsts] from [ops], one per
+      load. *)
 
   (** {1:contraction Contraction} *)
 

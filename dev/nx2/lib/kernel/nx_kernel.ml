@@ -21,5 +21,7 @@ module type S = sig
     Prog.op3 -> dst:('v, 's) a -> ('c, 'e) a -> ('a, 'b) a -> ('a, 'b) a -> answer
 
   val map : Spec.map Spec.t -> dsts:any array -> any array -> answer
+  val reduce : Spec.reduce Spec.t -> dsts:any array -> any array -> answer
+  val scan : Spec.scan Spec.t -> dsts:any array -> any array -> answer
   val contract : Spec.contract Spec.t -> dst:any -> any array -> answer
 end

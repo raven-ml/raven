@@ -119,28 +119,38 @@ value nx_kernel_support_prog(value p) {
   CAMLreturn(r);
 }
 
-/* The map descriptor [s] read through nx_spec_map and nx_spec_pad, copied
-   first: its program's bytes in hex, then per load "plain", or "padded",
+/* The loop descriptor [s] read through nx_spec_loop and nx_spec_pad, copied
+   first: its family and program's bytes in hex, a line of its axes, a line
+   per reduction (kind, output, dtype), then per load "plain", or "padded",
    its rank, window count, fill in hex, lo, hi, interior and each window's
    axis, size, step and dilation. */
-value nx_kernel_support_map(value s) {
+value nx_kernel_support_loop(value s) {
   CAMLparam1(s);
   size_t n = caml_string_length(s);
-  nx_spec_map *m = malloc(n);
+  nx_spec_loop *m = malloc(n);
   if (m == NULL) caml_raise_out_of_memory();
   memcpy(m, String_val(s), n);
-  size_t cap = 64 + 2 * (size_t)m->prog_len + 8192 * (size_t)m->nloads;
+  size_t cap = 64 + 2 * (size_t)m->prog_len + 8192 * (size_t)m->nloads +
+               16 * (size_t)m->naxes + 48 * (size_t)m->nreductions;
   char *r = malloc(cap);
   if (r == NULL) {
     free(m);
     caml_raise_out_of_memory();
   }
   size_t at = snprintf(r, cap, "family %d prog ", m->family);
-  const uint8_t *p = (const uint8_t *)nx_spec_map_prog(m);
+  const uint8_t *p = (const uint8_t *)nx_spec_loop_prog(m);
   for (int i = 0; i < m->prog_len; i++)
     at += snprintf(r + at, cap - at, "%02x", p[i]);
+  at += snprintf(r + at, cap - at, "\naxes");
+  for (int i = 0; i < m->naxes; i++)
+    at += snprintf(r + at, cap - at, " %d", nx_spec_loop_axes(m)[i]);
+  for (int j = 0; j < m->nreductions; j++) {
+    const nx_spec_reduction *d = &nx_spec_loop_reductions(m)[j];
+    at += snprintf(r + at, cap - at, "\nreduction %d %d %d", d->kind,
+                   d->output, d->dtype);
+  }
   for (int k = 0; k < m->nloads; k++) {
-    const nx_spec_pad *d = nx_spec_map_pad(m, k);
+    const nx_spec_pad *d = nx_spec_loop_pad(m, k);
     if (d == NULL) {
       at += snprintf(r + at, cap - at, "\nplain");
       continue;
