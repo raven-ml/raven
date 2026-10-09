@@ -218,6 +218,13 @@ value nx_array_release_all(value written, value read) {
   return Val_unit;
 }
 
+/* Ends a read claim Rig.Claim.read took on [b]: the same claim as
+   rig_buffer_claim's. */
+value nx_array_end_claim(value b) {
+  rig_buffer_release(b);
+  return Val_unit;
+}
+
 /* Whether the arrays [a] and [b] reach a common byte. Their buffers' first
    bytes lie at their host addresses where the host addresses both, and
    otherwise at [pa] and [pb] of one memory. */

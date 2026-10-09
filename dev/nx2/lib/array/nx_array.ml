@@ -84,6 +84,8 @@ external answer_of_code : int -> answer = "%identity"
 external release_all : any array -> any array -> unit = "nx_array_release_all"
 [@@noalloc]
 
+external end_claim : Buffer.t -> unit = "nx_array_end_claim" [@@noalloc]
+
 external shares :
   ('v, 's) t -> ('w, 'r) t -> (int[@untagged]) -> (int[@untagged]) -> bool
   = "nx_array_shares_byte" "nx_array_shares"
@@ -112,16 +114,23 @@ let refusal written read =
   done;
   !answer
 
+(* An asynchronous exception (a signal handler's, a finaliser's) is raised
+   at a poll point: an allocation, a function's entry or a loop's back edge.
+   No claim the door takes is held across one outside a handler that ends
+   it, and every handler ends the claims in C before it allocates the
+   backtrace. *)
+
 (* Raises [Rig.Lost] if an array of the mask [waits] is a lost device's
    memory, or follows work of a lost device: a read claim checks exactly
-   that, and waits for nothing. *)
+   that, and waits for nothing. The claim ends in C as [Rig.Claim.read]
+   returns, with no poll point between. *)
 let probe_lost written read waits =
   let nw = Array.length written in
   for k = 0 to nw + Array.length read - 1 do
     if waits land (1 lsl min k waits_last) <> 0 then begin
       let (Any a) = if k < nw then written.(k) else read.(k - nw) in
       Rig.Claim.read a.buffer;
-      Rig.Claim.release a.buffer
+      end_claim a.buffer
     end
   done
 
@@ -137,9 +146,8 @@ let admit written read =
         match probe_lost written read waits with
         | () -> Done
         | exception e ->
-            let bt = Printexc.get_raw_backtrace () in
             release_all written read;
-            Printexc.raise_with_backtrace e bt)
+            Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()))
   | refusal -> refusal
 
 let door ~written ~read f x =
@@ -150,9 +158,8 @@ let door ~written ~read f x =
           release_all written read;
           Done
       | exception e ->
-          let bt = Printexc.get_raw_backtrace () in
           release_all written read;
-          Printexc.raise_with_backtrace e bt)
+          Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()))
   | refusal -> refusal
 
 (* Making arrays *)
