@@ -3,10 +3,10 @@
 (library
  (name nx_cpu_bench)
  (modules)
- (libraries rig.pool)
+ (libraries nx_cpu rig.pool)
  (foreign_stubs
   (language c)
-  (include_dirs ../../lib/array)
+  (include_dirs ../../lib/array ../../lib/cpu)
   (names nx_cpu_bench_stubs nx_cpu_bench_codec)))
 
 (executable

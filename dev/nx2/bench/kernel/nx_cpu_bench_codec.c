@@ -10,8 +10,8 @@
    or e4m3fn, neither converts a vector of 64-bit integers or narrows a
    double to float16 at once on x86-64, and the M1's conversions of float32
    to float16 and int8 cost more than an integer narrowing. On x86-64 the
-   loops compile for AVX2, F16C and FMA, as nx.cpu's v3 runs do, and run
-   where the host has AVX2. */
+   loops compile for v3's instructions, as nx.cpu's v3 runs do, and run
+   where nx.cpu runs v3. */
 
 #if defined(__x86_64__)
 #if defined(__clang__)
@@ -29,6 +29,7 @@
 #include <caml/mlvalues.h>
 #include <caml/signals.h>
 
+#include "cpu.h"
 #include "nx_array.h"
 #include "rig_pool.h"
 
@@ -98,11 +99,12 @@ value nx_cpu_bench_floor_codec(value threads, value codec, value dst,
   return Val_unit;
 }
 
-/* Whether the host runs the loops. */
+/* Whether the host runs the loops: on x86-64, where nx.cpu runs its v3
+   table, whose instructions they are compiled for. */
 value nx_cpu_bench_codecs_run(value unit) {
   (void)unit;
 #if defined(__x86_64__)
-  return Val_bool(__builtin_cpu_supports("avx2"));
+  return Val_bool(nx_cpu_runs == &nx_cpu_v3);
 #else
   return Val_true;
 #endif

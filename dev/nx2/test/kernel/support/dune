@@ -1,12 +1,14 @@
 ; nx_kinds.h's kinds by name, compiled with every dev/nx2 C library's flags,
-; and their loops per target as nx.cpu compiles its conversions.
+; and their loops per target as nx.cpu compiles its conversions. The loops
+; run at the target nx.cpu picked.
 
 (library
  (name nx_kinds_support)
  (modules nx_kinds_support)
+ (libraries nx_cpu rig.pool)
  (foreign_stubs
   (language c)
-  (include_dirs ../../../lib/array ../../../lib/kernel)
+  (include_dirs ../../../lib/array ../../../lib/kernel ../../../lib/cpu)
   (extra_deps
    ../../../lib/kernel/nx_kinds.h
    ../../../lib/kernel/nx_kinds_real.h
