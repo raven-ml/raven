@@ -291,40 +291,4 @@ let grids =
             (pp_at (Devices.mesh ~by:"t" mesh [ (0, [ "b" ]); (1, [ "a" ]) ])));
     ]
 
-let messages =
-  group "messages"
-    [
-      test "a refusal names the function, then the reason" (fun () ->
-          raises (Invalid_argument "Nx.add: shapes differ") (fun () ->
-              Msg.fail ~by:"Nx.add" "shapes %s" "differ"));
-      test "an operand on the host prints its dtype and shape" (fun () ->
-          equal string "float32 [2; 3]"
-            (Format.asprintf "%a" Msg.operand
-               ( Nx_array.Dtype.Float32,
-                 [| 2; 3 |],
-                 Devices.rebrand (Devices.one Devices.host 0) )));
-      test "an operand on a set prints the set" (fun () ->
-          equal string
-            (Printf.sprintf "int8 [] on set %d [m0; m1]" (Devices.number s2))
-            (Format.asprintf "%a" Msg.operand
-               (Nx_array.Dtype.Int8, [||], Devices.on s2)));
-      test "a declined core case names the kernels, kind, dtypes and device"
-        (fun () ->
-          raises
-            (Invalid_argument
-               "Nx.exp: nx.cpu does not compute Exp on float64, int8 (m1)")
-            (fun () ->
-              Msg.declined ~by:"Nx.exp" ~kind:"Exp" ~kernels:"nx.cpu" (m 1)
-                [ Nx_array.Dtype.Any Float64; Any Int8 ]));
-      test "a set without kernels names the set and the remedies" (fun () ->
-          raises_match
-            (Exn.invalid_arg
-               ~substring:
-                 (Printf.sprintf
-                    "Nx.add: set %d [m0; m1] has no kernels to compute Map; \
-                     place the value"
-                    (Devices.number s2)))
-            (fun () -> Msg.no_kernels ~by:"Nx.add" ~op:"Map" s2));
-    ]
-
-let () = exit (run "nx devices" [ sets; placements; windows; grids; messages ])
+let () = exit (run "nx devices" [ sets; placements; windows; grids ])

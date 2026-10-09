@@ -24,7 +24,7 @@ type 'd placement = place
 type mesh_rt = { mesh_set : set; names : string array; extents : int array }
 type 'd mesh = mesh_rt
 
-let fail by fmt = Printf.ksprintf invalid_arg ("%s: " ^^ fmt) by
+let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 let positions n = Array.init n Fun.id
 
 let whole_grid n =
@@ -57,11 +57,13 @@ let next = Atomic.make 1
 
 let mint ~by ?kernels ds =
   let rigs = Array.of_list ds in
-  if Array.length rigs = 0 then fail by "a device set needs a device";
+  if Array.length rigs = 0 then
+    invalid_argf "%s: a device set needs a device" by;
   Array.iteri
     (fun i d ->
       for j = 0 to i - 1 do
-        if Rig.equal rigs.(j) d then fail by "%s appears twice" (Rig.name d)
+        if Rig.equal rigs.(j) d then
+          invalid_argf "%s: %s appears twice" by (Rig.name d)
       done)
     rigs;
   let kernels =
@@ -70,7 +72,8 @@ let mint ~by ?kernels ds =
         Array.iter
           (fun d ->
             if not (K.computes_on d) then
-              fail by "%s does not compute on %s" K.name (Rig.name d))
+              invalid_argf "%s: %s does not compute on %s" by K.name
+                (Rig.name d))
           rigs;
         k
     | None -> if Array.for_all Rig.runs_on_host rigs then Some cpu else None
@@ -118,13 +121,15 @@ let v ~by s g =
   Array.iter
     (fun k ->
       if k >= count s then
-        fail by "the grid names device %d of a set of %d" k (count s))
+        invalid_argf "%s: the grid names device %d of a set of %d" by k
+          (count s))
     (Grid.devices g);
   normal s g
 
 let check_axis by axis =
   if axis < 0 || axis >= Nx_array.Layout.max_rank then
-    fail by "axis %d is not in [0, %d)" axis Nx_array.Layout.max_rank
+    invalid_argf "%s: axis %d is not in [0, %d)" by axis
+      Nx_array.Layout.max_rank
 
 let split ~by ~axis s =
   check_axis by axis;
@@ -135,14 +140,14 @@ let split ~by ~axis s =
       Grid.v ~devices:(positions n) ~extents:[| n |] ~cuts:[| (axis, [| 0 |]) |]
     with
     | Ok g -> normal s g
-    | Error e -> fail by "%s" e
+    | Error e -> invalid_argf "%s: %s" by e
 
 let mesh ~by m cuts =
   let s = m.mesh_set in
   let axis_of name =
     match Array.find_index (String.equal name) m.names with
     | Some g -> g
-    | None -> fail by "the mesh has no axis %S" name
+    | None -> invalid_argf "%s: the mesh has no axis %S" by name
   in
   let cuts =
     Array.of_list
@@ -154,7 +159,7 @@ let mesh ~by m cuts =
   in
   match Grid.v ~devices:(positions (count s)) ~extents:m.extents ~cuts with
   | Ok g -> normal s g
-  | Error e -> fail by "%s" e
+  | Error e -> invalid_argf "%s: %s" by e
 
 let anywhere = { set = host; grid = Grid.device 0 }
 let set p = p.set
@@ -166,8 +171,11 @@ let equal p q =
 
 let window ~by p shape i =
   if i < 0 || i >= Grid.count p.grid then
-    fail by "position %d of a placement of %d devices" i (Grid.count p.grid);
-  match Grid.window p.grid shape i with Ok w -> w | Error e -> fail by "%s" e
+    invalid_argf "%s: position %d of a placement of %d devices" by i
+      (Grid.count p.grid);
+  match Grid.window p.grid shape i with
+  | Ok w -> w
+  | Error e -> invalid_argf "%s: %s" by e
 
 let with_leading_axis p = normal p.set (Grid.map_axes succ p.grid)
 
@@ -189,14 +197,16 @@ let mesh_v ~by s axes =
   let names = Array.of_list (List.map fst axes)
   and extents = Array.of_list (List.map snd axes) in
   if Array.exists (fun e -> e < 1) extents then
-    fail by "a mesh extent is not positive";
+    invalid_argf "%s: a mesh extent is not positive" by;
   if Array.fold_left ( * ) 1 extents <> count s then
-    fail by "the mesh's extents do not multiply to the set's %d devices"
+    invalid_argf
+      "%s: the mesh's extents do not multiply to the set's %d devices" by
       (count s);
   Array.iteri
     (fun i n ->
       for j = 0 to i - 1 do
-        if String.equal names.(j) n then fail by "the mesh names %S twice" n
+        if String.equal names.(j) n then
+          invalid_argf "%s: the mesh names %S twice" by n
       done)
     names;
   { mesh_set = s; names; extents }

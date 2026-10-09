@@ -2,9 +2,9 @@
 ; directly compile copies of their sources.
 
 (copy_files
- (files ../lib/{grid,devices,msg,route}.{ml,mli}))
+ (files ../lib/{grid,devices,route}.{ml,mli}))
 
 (tests
  (names test_devices test_route)
- (modules test_devices test_route grid devices msg route)
+ (modules test_devices test_route grid devices route)
  (libraries nx_array nx_kernel nx_cpu nx_support rig windtrap))

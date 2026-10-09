@@ -3,6 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+let invalid_argf fmt = Format.kasprintf invalid_arg fmt
+
 type rule =
   | Elementwise
   | Reduce of int array
@@ -76,21 +78,21 @@ let covers g want =
 let route ~by rule ps shapes =
   let n = Array.length ps in
   if n = 0 || n <> Array.length shapes then
-    Msg.fail ~by "a route of %d placements and %d shapes" n
+    invalid_argf "%s: a route of %d placements and %d shapes" by n
       (Array.length shapes);
   let rank i = Array.length shapes.(i) in
   let check axes i =
     Array.iter
       (fun a ->
         if a < 0 || a >= rank i then
-          Msg.fail ~by "axis %d is not an axis of an operand of rank %d" a
-            (rank i))
+          invalid_argf "%s: axis %d is not an axis of an operand of rank %d" by
+            a (rank i))
       axes
   in
   (match rule with
   | Reduce axes | Along axes -> Array.iteri (fun i _ -> check axes i) ps
   | Gather axis ->
-      if n <> 2 then Msg.fail ~by "a gather reads 2 operands, not %d" n;
+      if n <> 2 then invalid_argf "%s: a gather reads 2 operands, not %d" by n;
       check [| axis |] 1
   | Into axis -> Array.iteri (fun i _ -> check [| axis |] i) ps
   | Elementwise | Replicated -> ());
@@ -105,7 +107,8 @@ let route ~by rule ps shapes =
         (fun i ->
           let s = Devices.set ps.(i) in
           if Devices.number s <> Devices.number set then
-            Msg.fail ~by "operands on %a and %a" Devices.pp set Devices.pp s)
+            invalid_argf "%s: operands on %a and %a" by Devices.pp set
+              Devices.pp s)
         concrete;
       let fwd =
         List.map
@@ -126,8 +129,10 @@ let route ~by rule ps shapes =
                 with
                 | [ k ] -> Grid.device k
                 | k :: k' :: _ ->
-                    Msg.fail ~by
-                      "operands on %s and %s alone; place one beside the other"
+                    invalid_argf
+                      "%s: operands on %s and %s alone; place one beside the \
+                       other"
+                      by
                       (Rig.name (Devices.rig set k))
                       (Rig.name (Devices.rig set k'))
                 | [] -> List.hd fwd))
@@ -142,7 +147,7 @@ let route ~by rule ps shapes =
             in
             (match Grid.window (Devices.grid p) shapes.(i) 0 with
             | Ok _ -> ()
-            | Error e -> Msg.fail ~by "%s" e);
+            | Error e -> invalid_argf "%s: %s" by e);
             p)
           ps
       in
