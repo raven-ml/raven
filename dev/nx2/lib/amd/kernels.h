@@ -70,9 +70,9 @@ typedef struct __attribute__((aligned(8))) {
   X(contract_simt_f32_128, SIMT, f32, 128)                                  \
   /* f32 256 to 1024 */                                                      \
   X(contract_simt_f32_64, SIMT, f32, 64)                                    \
-  /* f32 decode 1x5120x2880, 1x20480x2880 */                                 \
+  /* f32 decode 1x5120x2880, 1x20480x2880, 8x20480x2880 */                   \
   X(contract_skinny_f32, SKINNY, f32, column)                               \
-  /* f32 decode 1x5120x2880, 1x20480x2880, b stored k by n */               \
+  /* f32 decode 1x5120x2880, 1x20480x2880, 8x20480x2880, b stored k by n */ \
   X(contract_skinny_across_f32, SKINNY, f32, across)                        \
   /* float64 and integer sums: no row; they make the family total */         \
   X(contract_simt_f64_64, SIMT, f64, 64)                                    \

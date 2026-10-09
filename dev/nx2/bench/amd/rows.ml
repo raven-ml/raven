@@ -195,6 +195,9 @@ let contracts =
       contract ~lb:`Free f32 f32 f32 1 5120 2880;
       contract f32 f32 f32 1 20480 2880;
       contract ~lb:`Free f32 f32 f32 1 20480 2880;
+      (* A decode of 8 rows: the skinny forms past one row. *)
+      contract f32 f32 f32 8 20480 2880;
+      contract ~lb:`Free f32 f32 f32 8 20480 2880;
     ]
 
 let all = floors @ contracts
