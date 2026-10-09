@@ -13,9 +13,7 @@ module Sub = Rig.Submission
 
 let strf = Printf.sprintf
 
-external floor_new :
-  nativeint -> nativeint -> nativeint -> nativeint -> nativeint -> nativeint
-  = "rig_bench_floor_new"
+external floor_new : nativeint -> nativeint -> nativeint = "rig_bench_floor_new"
 
 external floor_submit : nativeint -> int -> unit = "rig_bench_floor_submit"
 [@@noalloc]
@@ -260,9 +258,7 @@ let gpu_rows (type a) (module D : Rig.Driver with type t = a) ?(sleeps = false)
     Rig.wait r.g (Rig.submitted r.g);
     r.keep ()
   in
-  let entries d =
-    floor_new (D.self d) D.room_entry D.submit_entry D.commit_entry 0n
-  in
+  let entries d = floor_new (D.edge d) 0n in
   let alone () =
     let drv = get (open_ ()) in
     { drv; entries = entries drv; sent = ref 0; parts = 0; hold = ignore }

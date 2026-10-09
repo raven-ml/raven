@@ -228,7 +228,7 @@ let in_queue ~completion =
   let a = submit (empty producer) in
   let b = submit (empty consumer) ~waits:[| a |] in
   (* The wait names the producer's word, or its object, by rig_edge.h's kinds:
-     Polled's word and object are both at its [self]. *)
+     Polled's word and object are both at its word's address. *)
   let kind =
     match completion with
     | `Host -> Support.rig_word
@@ -236,7 +236,7 @@ let in_queue ~completion =
   in
   equal
     (list (triple int int int))
-    [ (kind, Nativeint.to_int (P.self pp), 1) ]
+    [ (kind, P.word_at pp, 1) ]
     (P.last_waits cp);
   equal int 1 (P.queued pp);
   equal int 1 (P.queued cp);

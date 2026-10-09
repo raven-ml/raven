@@ -127,7 +127,8 @@ struct queued {
 #define LAST_HANDLES 64
 
 struct polled {
-  _Atomic uint64_t word; /* first, alone in its page */
+  const struct rig_driver *driver; /* first, with the word in its page */
+  _Atomic uint64_t word;
   _Atomic uint64_t committed; /* the last value committed */
   uint64_t lag;               /* the uncommitted values that commit */
   lock_t mu;
@@ -147,7 +148,7 @@ struct polled {
   struct rig_wait last[LAST];
   int nlast_handles; /* its handles, the first [LAST_HANDLES] of them */
   uint64_t last_handles[LAST_HANDLES];
-  int nsides; /* the copy_local of each copy run, the first [LAST_HANDLES] */
+  int nsides; /* the copy.local of each copy run, the first [LAST_HANDLES] */
   int sides[LAST_HANDLES];
   uint64_t received; /* the last value a submit received */
   intnat steps;     /* fallible calls made */
@@ -157,6 +158,13 @@ struct polled {
 };
 
 #define Polled_val(v) ((struct polled *)Nativeint_val(v))
+
+static rig_room_fn polled_room;
+static rig_submit_fn polled_submit;
+static rig_commit_fn polled_commit;
+
+static const struct rig_driver polled_driver = {polled_room, polled_submit,
+                                                polled_commit};
 
 /* Every Polled device, never freed: a sleep runs the ones whose words the
    sleeper's work waits for. */
@@ -180,10 +188,12 @@ static void enrol(struct polled *p) {
   unlock(&all_mu);
 }
 
-static int enrolled(uintptr_t at) {
+/* The Polled device whose word is at [at], or NULL. */
+static struct polled *enrolled(uintptr_t at) {
   lock(&all_mu);
-  int found = 0;
-  for (int i = 0; i < nall && !found; i++) found = (uintptr_t)all[i] == at;
+  struct polled *found = NULL;
+  for (int i = 0; i < nall && found == NULL; i++)
+    if ((uintptr_t)&all[i]->word == at) found = all[i];
   unlock(&all_mu);
   return found;
 }
@@ -193,6 +203,7 @@ value rig_test_polled_new(value v_capacity, value v_may_block,
   struct polled *p = aligned(page(), page() > sizeof *p ? page() : sizeof *p);
   if (p == NULL) caml_raise_out_of_memory();
   memset(p, 0, sizeof *p);
+  p->driver = &polled_driver;
   lock_init(&p->mu);
   cond_init(&p->cv);
   cond_init(&p->work);
@@ -312,7 +323,7 @@ value rig_test_polled_last_handles(value v_p) {
   CAMLreturn(a);
 }
 
-/* The copy_local of each copy part [p] ran, in order. */
+/* The copy.local of each copy part [p] ran, in order. */
 value rig_test_polled_copy_sides(value v_p) {
   CAMLparam1(v_p);
   CAMLlocal1(a);
@@ -384,14 +395,14 @@ static void commit_upto(struct polled *p, uint64_t v) {
 static void run_one(struct polled *p, struct queued *s) {
   for (int i = 0; i < s->nparts; i++) {
     struct rig_part *part = &s->parts[i];
-    if (part->fill != NULL) part->fill(NULL, part->arg, s->v);
-    else if (part->copy_bytes != 0) {
-      /* A side that copy_local names holds a host address, as Polled's own
+    if (part->kind == RIG_FILL) part->fill.fn(NULL, part->fill.arg, s->v);
+    else if (part->copy.bytes != 0) {
+      /* A side that copy.local names holds a host address, as Polled's own
          handles do. */
-      memmove((char *)(uintptr_t)part->copy_dst + part->copy_dst_offset,
-              (const char *)(uintptr_t)part->copy_src + part->copy_src_offset,
-              (size_t)part->copy_bytes);
-      if (p->nsides < LAST_HANDLES) p->sides[p->nsides++] = part->copy_local;
+      memmove((char *)(uintptr_t)part->copy.dst + part->copy.dst_offset,
+              (const char *)(uintptr_t)part->copy.src + part->copy.src_offset,
+              (size_t)part->copy.bytes);
+      if (p->nsides < LAST_HANDLES) p->sides[p->nsides++] = part->copy.local;
     }
   }
   p->held -= s->nparts;
@@ -436,9 +447,10 @@ static int drive(struct polled *p, int depth) {
   if (p->n > 0) {
     struct queued *s = &p->q[0];
     stuck = !committed(p, s);
-    for (int i = 0; i < s->nwaits && n < LAST && depth > 0; i++)
-      if (enrolled((uintptr_t)s->waits[i].at) && !wait_holds(&s->waits[i]))
-        wanted[n++] = (struct polled *)(uintptr_t)s->waits[i].at;
+    for (int i = 0; i < s->nwaits && n < LAST && depth > 0; i++) {
+      struct polled *q = enrolled((uintptr_t)s->waits[i].at);
+      if (q != NULL && !wait_holds(&s->waits[i])) wanted[n++] = q;
+    }
   }
   unlock(&p->mu);
   for (int i = 0; i < n; i++)
@@ -487,7 +499,8 @@ value rig_test_polled_start(value v_p) {
 static int polled_room(void *self, const struct rig_part *parts, int n) {
   struct polled *p = self;
   for (int i = 0; i < n; i++)
-    if (parts[i].words != NULL) return RIG_NEVER;
+    if (parts[i].kind != RIG_FILL && parts[i].kind != RIG_COPY)
+      return RIG_NEVER;
   if (n > p->capacity) return RIG_NEVER;
   if (p->may_block) return RIG_FITS;
   lock(&p->mu);
@@ -588,19 +601,9 @@ static int polled_commit(void *self, uint64_t v, const char **failure) {
   return RIG_OK;
 }
 
-value rig_test_polled_room(value unit) {
-  (void)unit;
-  return caml_copy_nativeint((intnat)&polled_room);
-}
-
-value rig_test_polled_submit(value unit) {
-  (void)unit;
-  return caml_copy_nativeint((intnat)&polled_submit);
-}
-
-value rig_test_polled_commit(value unit) {
-  (void)unit;
-  return caml_copy_nativeint((intnat)&polled_commit);
+/* The host address of the device [v_p]'s word. */
+value rig_test_polled_word_at(value v_p) {
+  return Val_long((intnat)&Polled_val(v_p)->word);
 }
 
 value rig_test_polled_word(value v_p) {

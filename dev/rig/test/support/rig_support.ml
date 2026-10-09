@@ -30,9 +30,7 @@ external polled_copy_sides : nativeint -> int array
 external rig_local : unit -> int * int * int = "rig_test_rig_local"
 external rig_word : unit -> int = "rig_test_rig_word"
 external rig_object : unit -> int = "rig_test_rig_object"
-external polled_room : unit -> nativeint = "rig_test_polled_room"
-external polled_submit : unit -> nativeint = "rig_test_polled_submit"
-external polled_commit : unit -> nativeint = "rig_test_polled_commit"
+external polled_word_at : nativeint -> int = "rig_test_polled_word_at"
 external polled_word : nativeint -> int = "rig_test_polled_word"
 external polled_stop : nativeint -> unit = "rig_test_polled_stop"
 external polled_set_word : nativeint -> int -> unit = "rig_test_polled_set_word"
@@ -65,6 +63,7 @@ module Driver = struct
 
   type t = {
     c : nativeint;
+    word_at : int;  (** The word's host address. *)
     copies : bool;
     host_visible : bool;
     transport : bool;
@@ -169,7 +168,7 @@ module Driver = struct
   (* The word is the device's own record: its free is logged as ["word"]
      alone. *)
   let free d r =
-    if r.kind = None && r.at = Nativeint.to_int d.c then note d "word"
+    if r.kind = None && r.at = d.word_at then note d "word"
     else free_region d r
 
   let address r = Some r.at
@@ -209,7 +208,7 @@ module Driver = struct
 
   let word d =
     {
-      at = Nativeint.to_int d.c;
+      at = d.word_at;
       kind = None;
       bytes = 8;
       visible = not d.transport;
@@ -261,14 +260,12 @@ module Driver = struct
         if polled_drive d.c < 0 && polled_word d.c = seen then
           failwith "Polled: nothing committed"
 
-  let completion d = fact d (if d.objects then `Object d.c else `Host)
+  let completion d =
+    fact d (if d.objects then `Object (Nativeint.of_int d.word_at) else `Host)
   let waits_on d c = fact d (List.mem c d.waits)
   let max_waits d = fact d d.max_waits
   let blocks d = fact d (if d.may_block then `May_block else `Returns)
-  let room_entry = polled_room ()
-  let submit_entry = polled_submit ()
-  let commit_entry = polled_commit ()
-  let self d = d.c
+  let edge d = d.c
   let capability d = fact d ()
   let capability_key : capability Type.Id.t = Type.Id.make ()
 
@@ -293,9 +290,11 @@ module Polled = struct
       | `Mapped -> window
       | `Pinned -> max_int
     in
+    let c = polled_new capacity may_block lag in
     let d =
       {
-        c = polled_new capacity may_block lag;
+        c;
+        word_at = polled_word_at c;
         copies;
         host_visible;
         transport;
@@ -365,6 +364,7 @@ module Polled = struct
     Mutex.protect d.lock (fun () -> d.word_fault <- Some why)
 
   let set_word d v = polled_set_word d.c v
+  let word_at d = d.word_at
   let blocked d = polled_blocked d.c
 
   let last_waits d =

@@ -67,7 +67,7 @@ external fill_arg :
 
 external write : int -> string -> unit = "rig_amd_bench_write"
 
-external raw_submit : nativeint array -> int -> int -> int -> int -> unit
+external raw_submit : nativeint -> int -> int -> int -> int -> unit
   = "rig_amd_bench_submit"
 
 let kib = 1024
@@ -323,12 +323,12 @@ let release_rows =
    waits on other devices' values only, so these rows submit through the
    driver's C entries, on a device opened without it. *)
 let wait_rows =
-  (* The driver's entries, the device, and the word's host and GPU addresses,
+  (* The driver's C state, the device, and the word's host and GPU addresses,
      read once so that a submission allocates nothing. *)
   let raw () =
     let g = opening (get (Rig_amd_support.open_gpu ())) in
     let w = Option.get (A.alloc g `Pinned 8) in
-    ([| A.room_entry; A.submit_entry; A.self g |], g, host w, address w, ref 0)
+    (A.edge g, g, host w, address w, ref 0)
   in
   let floor_waiting () =
     ignore (floor_with ~waits:true ());

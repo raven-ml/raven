@@ -66,7 +66,7 @@ value rig_nv_bench_release(value v_k) {
 /* A part of no entries on COPY:0 at even values, no part at odd ones, so
    that the release changes channel at each value. */
 value rig_nv_bench_switch(value unit) {
-  struct rig_part copy = {.queue = 1};
+  struct rig_part copy = {.queue = 1, .kind = RIG_WORDS};
   (void)unit;
   submit(NULL, 0, &copy, (last & 1) == 0);
   spin();
@@ -88,7 +88,7 @@ value rig_nv_bench_waits(value v_at, value v_n) {
 /* The ring entry of two words [v_lo], [v_hi] on COMPUTE:0. */
 value rig_nv_bench_entry(value v_lo, value v_hi) {
   uint32_t words[2] = {(uint32_t)Long_val(v_lo), (uint32_t)Long_val(v_hi)};
-  struct rig_part p = {.queue = 0, .words = words, .n = 2};
+  struct rig_part p = {.queue = 0, .kind = RIG_WORDS, .words = {words, 2}};
   submit(NULL, 0, &p, 1);
   spin();
   return Val_unit;
@@ -108,7 +108,8 @@ value rig_nv_bench_entries(value v_words) {
   for (int i = 0; i < n; i++) {
     words[2 * i] = (uint32_t)Long_val(Field(v_words, 2 * i));
     words[2 * i + 1] = (uint32_t)Long_val(Field(v_words, 2 * i + 1));
-    parts[i] = (struct rig_part){.queue = 0, .words = &words[2 * i], .n = 2};
+    parts[i] = (struct rig_part){
+        .queue = 0, .kind = RIG_WORDS, .words = {&words[2 * i], 2}};
   }
   for (int i = 0; i < n; i++) submit(NULL, 0, &parts[i], 1);
   spin();
@@ -207,7 +208,8 @@ value rig_nv_bench_rung(value v_words, value v_each) {
   for (int i = 0; i < n; i++) {
     words[2 * i] = (uint32_t)Long_val(Field(v_words, 2 * i));
     words[2 * i + 1] = (uint32_t)Long_val(Field(v_words, 2 * i + 1));
-    parts[i] = (struct rig_part){.queue = 0, .words = &words[2 * i], .n = 2};
+    parts[i] = (struct rig_part){
+        .queue = 0, .kind = RIG_WORDS, .words = {&words[2 * i], 2}};
   }
   /* The words a channel owes come with a submission of rig_nv_submit's. */
   if (c->owes_setup || c->released != last ||
@@ -238,9 +240,10 @@ value rig_nv_bench_rung(value v_words, value v_each) {
    COPY:0. */
 value rig_nv_bench_copy(value v_dst, value v_src, value v_n) {
   struct rig_part p = {.queue = 1,
-                      .copy_dst = (uint64_t)Long_val(v_dst),
-                      .copy_src = (uint64_t)Long_val(v_src),
-                      .copy_bytes = (uint64_t)Long_val(v_n)};
+                      .kind = RIG_COPY,
+                      .copy = {.dst = (uint64_t)Long_val(v_dst),
+                               .src = (uint64_t)Long_val(v_src),
+                               .bytes = (uint64_t)Long_val(v_n)}};
   submit(NULL, 0, &p, 1);
   spin();
   return Val_unit;

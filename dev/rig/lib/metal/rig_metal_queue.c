@@ -169,8 +169,8 @@ int rig_metal_room(void *self, const struct rig_part *parts, int n) {
   (void)self;
   for (int i = 0; i < n; i++) {
     const struct rig_part *p = &parts[i];
-    if (p->queue != 0 || p->fill == NULL || p->n != 0 || p->ring_units != 0 ||
-        p->segment_bytes != 0 || p->copy_bytes != 0)
+    if (p->queue != 0 || p->kind != RIG_FILL || p->fill.ring_units != 0 ||
+        p->fill.segment_bytes != 0)
       return RIG_NEVER;
   }
   return RIG_FITS;
@@ -198,7 +198,7 @@ static const char *run(struct rig_metal *d, uint64_t v,
     if (q->slot < 0) why = begin(q);
     if (why == NULL && n > 0 && q->encoder == nil) why = open_encoder(q);
     for (int i = 0; i < n && why == NULL; i++) {
-      int rc = parts[i].fill(q, parts[i].arg, v);
+      int rc = parts[i].fill.fn(q, parts[i].fill.arg, v);
       if (rc == 0 && q->slot >= 0) continue;
       char text[64];
       snprintf(text, sizeof text, "running a fill: it returned %d", rc);

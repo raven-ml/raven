@@ -7,14 +7,14 @@
 
    The device's room check, submit and commit, over the structures and
    codes of rig_edge.h: the only way work reaches the device. [self] is
-   Rig_cuda.self. They are called without the OCaml runtime: they call no
+   Rig_cuda.edge, whose struct rig_driver holds them. They are called without the OCaml runtime: they call no
    function of it and read no OCaml value. They run one call at a time, in
    value order; Rig_cuda.sleep may run meanwhile.
 
    Queue 0 is the stream "COMPUTE:0", queue 1 the stream "COPY:0". A part is
    a fill, called with the queue's CUstream and the device's context
-   current (rig_cuda_abi.mli), or a copy between handles; it has no
-   words, ring units or segment bytes. A wait is RIG_WORD on a 64-bit word
+   current (rig_cuda_abi.mli) and declaring no ring units or segment bytes,
+   or a copy between handles. A wait is RIG_WORD on a 64-bit word
    the device maps. [handles] is ignored: CUDA's work names its
    memory by address. */
 
@@ -23,8 +23,8 @@
 
 #include <rig_edge.h>
 
-/* RIG_NEVER if a part has words, ring units or segment bytes, or is on no
-   queue of the device; RIG_FITS otherwise. */
+/* RIG_NEVER if a part is no fill or copy, is a fill with ring units or
+   segment bytes, or is on no queue of the device; RIG_FITS otherwise. */
 int rig_cuda_room(void *self, const struct rig_part *parts, int n);
 
 /* Runs [parts], which rig_cuda_room answered RIG_FITS for and whose [after]

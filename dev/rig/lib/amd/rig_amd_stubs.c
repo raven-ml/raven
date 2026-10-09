@@ -33,10 +33,22 @@ static intnat at(value a, int i) { return Long_val(Field(a, i)); }
 
 /* State */
 
+/* Each value's hand-over writes its release: a commit does nothing. */
+static int rig_amd_commit(void *self, uint64_t v, const char **failure) {
+  (void)self;
+  (void)v;
+  (void)failure;
+  return RIG_OK;
+}
+
+static const struct rig_driver driver = {rig_amd_room, rig_amd_submit,
+                                         rig_amd_commit};
+
 value caml_rig_amd_create(value unit) {
   (void)unit;
   struct rig_amd *d = calloc(1, sizeof *d);
   if (d == NULL) caml_raise_out_of_memory();
+  d->driver = &driver;
   return Val_long((intnat)d);
 }
 
@@ -157,33 +169,6 @@ value caml_rig_amd_last(value v_self) {
                                        memory_order_acquire));
 }
 
-/* Each value's hand-over writes its release: a commit does nothing. */
-static int rig_amd_commit(void *self, uint64_t v, const char **failure) {
-  (void)self;
-  (void)v;
-  (void)failure;
-  return RIG_OK;
-}
-
-static rig_room_fn *const room_entry = rig_amd_room;
-static rig_submit_fn *const submit_entry = rig_amd_submit;
-static rig_commit_fn *const commit_entry = rig_amd_commit;
-
-value caml_rig_amd_room_entry(value unit) {
-  (void)unit;
-  return Val_long((intnat)room_entry);
-}
-
-value caml_rig_amd_submit_entry(value unit) {
-  (void)unit;
-  return Val_long((intnat)submit_entry);
-}
-
-value caml_rig_amd_commit_entry(value unit) {
-  (void)unit;
-  return Val_long((intnat)commit_entry);
-}
-
 value caml_rig_amd_place_entry(value unit) {
   (void)unit;
   return Val_long((intnat)rig_amd_place);
@@ -206,13 +191,7 @@ value caml_rig_amd_signaled(value v_self) {
    else writes it. */
 value caml_rig_amd_settle(value v_self) {
   struct rig_amd *d = Device_val(v_self);
-  uint64_t last = atomic_load_explicit(&d->last, memory_order_relaxed);
-  uint64_t seen = atomic_load_explicit(d->word, memory_order_acquire);
-  while (seen < last &&
-         !atomic_compare_exchange_weak_explicit(d->word, &seen, last,
-                                                memory_order_release,
-                                                memory_order_acquire)) {
-  }
+  rig_raise(d->word, atomic_load_explicit(&d->last, memory_order_relaxed));
   return Val_unit;
 }
 

@@ -71,7 +71,7 @@ val words_part :
 
 (** {1:edge The C entries}
 
-    Work handed to a device's {!Rig_amd.room_entry} and {!Rig_amd.submit_entry}
+    Work handed to a device's room check and submit ({!Rig_amd.edge})
     directly, for what rig does not express: the room check's answer, a value
     the test numbers itself, waits on any word. *)
 
@@ -93,16 +93,14 @@ module Edge : sig
 
   val raw :
     queue:int ->
-    ?words:int ->
-    ?fill:bool ->
-    ?copy:int ->
+    ?work:[ `None | `Words of int | `Fill | `Copy of int ] ->
     ?after:int array ->
     unit ->
     part
-  (** [raw ~queue ~words ~fill ~copy ~after ()] is a part on the queue of index
-      [queue] with [words] zero words (defaults to none), the support's fill
-      function with no argument if [fill], and a copy of [copy] bytes between
-      address [0] and itself: a part a device may refuse. *)
+  (** [raw ~queue ~work ~after ()] is a part on the queue of index [queue]
+      whose work is [work] (defaults to [`None], a part of no kind): [n] zero
+      words, the support's fill function with no argument, or a copy of [n]
+      bytes between address [0] and itself. It is a part a device may refuse. *)
 
   val room : Rig_amd.t -> part array -> [ `Fits | `Later | `Never ]
   (** [room g ps] is what [g]'s room entry answers for [ps]. *)

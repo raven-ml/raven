@@ -375,7 +375,7 @@ static CUresult restore(int pushed, CUresult status) {
    would wait for the next leg too. */
 static int copies(const struct rig_part *p, int n) {
   for (int i = 0; i < n; i++)
-    if (p[i].fill == NULL) return 1;
+    if (p[i].kind == RIG_COPY) return 1;
   return 0;
 }
 
@@ -384,8 +384,9 @@ static int copies(const struct rig_part *p, int n) {
    (cuMemHostAlloc's memory, not write-combined, under unified
    addressing). A value ends on one stream, after its work on both; a value
    that starts on the other stream waits for that end. It is never freed:
-   Rig_cuda.self. */
+   Rig_cuda.edge. */
 struct device {
+  const struct rig_driver *driver;
   CUdevice device;
   CUcontext context;
   CUstream streams[2]; /* COMPUTE:0, COPY:0 */
@@ -440,6 +441,9 @@ static CUresult start(struct device *d) {
   return s;
 }
 
+static const struct rig_driver driver = {rig_cuda_room, rig_cuda_submit,
+                                         rig_cuda_commit};
+
 /* Opens a device on the primary context of the CUdevice [v_device]: its
    state's address, or CUDA's status negated. A device that does not open
    gives back its retain of the context. Releases the runtime: CUDA may
@@ -448,6 +452,7 @@ value caml_rig_cuda_open(value v_device) {
   struct device *d = calloc(1, sizeof *d);
   int flush = 0;
   if (d == NULL) caml_raise_out_of_memory();
+  d->driver = &driver;
   d->device = Int_val(v_device);
   caml_enter_blocking_section_no_pending();
   CUresult s = p_cuDeviceGetAttribute(
@@ -846,14 +851,14 @@ static CUresult run(struct submission *s, uint64_t v, const struct rig_part *p,
       across |= p[p[i].after[k]].queue != q;
     if (e == CUDA_SUCCESS && across)
       e = p_cuStreamWaitEvent(stream, d->done[1 - q], 0);
-    s->bytes = p[i].copy_bytes;
-    if (e == CUDA_SUCCESS && p[i].fill != NULL)
-      e = in_step(s, filling, p[i].fill(stream, p[i].arg, v));
+    s->bytes = p[i].kind == RIG_COPY ? p[i].copy.bytes : 0;
+    if (e == CUDA_SUCCESS && p[i].kind == RIG_FILL)
+      e = in_step(s, filling, p[i].fill.fn(stream, p[i].fill.arg, v));
     else if (e == CUDA_SUCCESS)
       e = in_step(s, copying,
-             p_cuMemcpyAsync(p[i].copy_dst + p[i].copy_dst_offset,
-                             p[i].copy_src + p[i].copy_src_offset,
-                             p[i].copy_bytes, stream));
+             p_cuMemcpyAsync(p[i].copy.dst + p[i].copy.dst_offset,
+                             p[i].copy.src + p[i].copy.src_offset,
+                             p[i].copy.bytes, stream));
     if (e == CUDA_SUCCESS && ((i == last[q] && q != r) || awaited(p, n, i)))
       e = p_cuEventRecord(d->done[q], stream);
   }
@@ -905,8 +910,10 @@ static void drain(struct submission *s, uint64_t v) {
 int rig_cuda_room(void *self, const struct rig_part *p, int n) {
   (void)self;
   for (int i = 0; i < n; i++) {
-    if (p[i].queue < 0 || p[i].queue > 1 || p[i].words != NULL ||
-        p[i].n != 0 || p[i].ring_units != 0 || p[i].segment_bytes != 0)
+    int fill = p[i].kind == RIG_FILL;
+    if (p[i].queue < 0 || p[i].queue > 1 ||
+        (!fill && p[i].kind != RIG_COPY) ||
+        (fill && (p[i].fill.ring_units != 0 || p[i].fill.segment_bytes != 0)))
       return RIG_NEVER;
   }
   return RIG_FITS;
@@ -957,26 +964,6 @@ int rig_cuda_commit(void *self, uint64_t v, const char **failure) {
   return RIG_FAILED;
 }
 
-/* Assigned to the edge's types, so a signature that drifts from rig_edge.h
-   is a compile error. */
-static rig_room_fn *const room_entry = rig_cuda_room;
-static rig_submit_fn *const submit_entry = rig_cuda_submit;
-static rig_commit_fn *const commit_entry = rig_cuda_commit;
-
-value caml_rig_cuda_room_entry(value unit) {
-  (void)unit;
-  return Val_long((intnat)room_entry);
-}
-
-value caml_rig_cuda_submit_entry(value unit) {
-  (void)unit;
-  return Val_long((intnat)submit_entry);
-}
-
-value caml_rig_cuda_commit_entry(value unit) {
-  (void)unit;
-  return Val_long((intnat)commit_entry);
-}
 
 /* Timeline */
 
@@ -1062,9 +1049,7 @@ value caml_rig_cuda_stop(value v_self) {
   }
   stopped |= !running;
   if (stopped) {
-    while ((int64_t)(w - d->last) < 0 &&
-           !atomic_compare_exchange_weak(d->word, &w, d->last)) {
-    }
+    rig_raise(d->word, d->last);
     destroy(d);
   }
   pop(CUDA_SUCCESS);

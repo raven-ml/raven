@@ -18,7 +18,7 @@
     work of every value up to [v] completed, whichever channel ran it.
 
     A program opens a GPU through [Rig], which submits by
-    calling this library's C functions ({!room_entry}, {!submit_entry}):
+    calling this library's C functions ({!edge}):
     {[
     let d =
       Result.get_ok
@@ -278,16 +278,20 @@ val sleep : t -> seen:int -> still_ms:int -> unit
 
     The C functions [Rig] submits with, which [rig_nv.h] declares. *)
 
-val room_entry : nativeint
-(** [room_entry] is the address of [rig_nv_room]. It answers whether the
+val edge : t -> nativeint
+(** [edge g] is the address of [g]'s C state, whose first member points to the
+    device's [struct rig_driver] of [rig_edge.h] ({!Rig.Driver.edge}). It is
+    valid while the process runs: the state holds the {!word}, which other
+    devices may read after [g] is gone, so neither is ever freed.
+
+    [rig_nv_room] answers whether the
     device's rings take a submission's parts now ([RIG_FITS]), once one of the
     device's values is reached ([RIG_LATER]), or never ([RIG_NEVER]): for parts
     that exceed the device's empty rings, more than 65,535 parts, or a part the
     device does not run. It reads the timeline word first, so [RIG_LATER] means
-    a value the device was given is not yet reached. *)
+    a value the device was given is not yet reached.
 
-val submit_entry : nativeint
-(** [submit_entry] is the address of [rig_nv_submit]. It hands over parts that
+    [rig_nv_submit] hands over parts that
     [rig_nv_room] answered [RIG_FITS] for as the device's value [v], the value
     after the last one the device was given, and calls no function of the OCaml
     runtime. The work runs after every earlier value of the device and after the
@@ -298,18 +302,10 @@ val submit_entry : nativeint
     A [RIG_WORD] wait names an aligned 64-bit word at an address below [2{^40}]
     that the device's work addresses, and a value [w]. It holds the work back
     until the word holds at least [w], compared circularly: [x] is at least [w]
-    iff [x - w], as a signed 64-bit integer, is not negative. *)
+    iff [x - w], as a signed 64-bit integer, is not negative.
 
-val commit_entry : nativeint
-(** [commit_entry] is the address of the device's commit, in the shape
-    [rig_commit_fn] of [rig_edge.h]. Each value's hand-over writes its release
-    and answers [RIG_COMMITTED]: [commit_entry] does nothing. *)
-
-val self : t -> nativeint
-(** [self g] is the address of [g]'s state, the [self] argument of [rig_nv_room]
-    and [rig_nv_submit] for [g]. It is valid while the process runs: the state
-    holds the {!word}, which other devices may read after [g] is gone, so
-    neither is ever freed. *)
+    Each value's hand-over writes its release and answers [RIG_COMMITTED]: the
+    commit does nothing. *)
 
 (** {1:loss Loss} *)
 

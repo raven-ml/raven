@@ -271,18 +271,20 @@ value caml_rig_sub_part(value v_s, value v_i, value v_queue,
 value caml_rig_sub_words(value v_s, value v_i, value v_host,
                                  value v_n) {
   struct rig_part *p = &Sub_val(v_s)->parts[Int_val(v_i)];
-  p->words = (const uint32_t *)Long_val(v_host);
-  p->n = (size_t)Long_val(v_n);
+  p->kind = RIG_WORDS;
+  p->words.at = (const uint32_t *)Long_val(v_host);
+  p->words.n = (size_t)Long_val(v_n);
   return Val_unit;
 }
 
 value caml_rig_sub_fill(value v_s, value v_i, value v_fill,
                                 value v_arg, value v_units, value v_bytes) {
   struct rig_part *p = &Sub_val(v_s)->parts[Int_val(v_i)];
-  p->fill = (int (*)(void *, void *, uint64_t))Nativeint_val(v_fill);
-  p->arg = (void *)Long_val(v_arg);
-  p->ring_units = (size_t)Long_val(v_units);
-  p->segment_bytes = (size_t)Long_val(v_bytes);
+  p->kind = RIG_FILL;
+  p->fill.fn = (int (*)(void *, void *, uint64_t))Nativeint_val(v_fill);
+  p->fill.arg = (void *)Long_val(v_arg);
+  p->fill.ring_units = (size_t)Long_val(v_units);
+  p->fill.segment_bytes = (size_t)Long_val(v_bytes);
   return Val_unit;
 }
 
@@ -294,18 +296,19 @@ value caml_rig_sub_fill_byte(value *argv, int argn) {
 
 value caml_rig_sub_copy(value v_s, value v_i, value v_args) {
   struct rig_part *p = &Sub_val(v_s)->parts[Int_val(v_i)];
-  p->copy_dst = (uint64_t)Nativeint_val(Field(v_args, 0));
-  p->copy_dst_offset = (uint64_t)Long_val(Field(v_args, 1));
-  p->copy_src = (uint64_t)Nativeint_val(Field(v_args, 2));
-  p->copy_src_offset = (uint64_t)Long_val(Field(v_args, 3));
-  p->copy_bytes = (uint64_t)Long_val(Field(v_args, 4));
+  p->kind = RIG_COPY;
+  p->copy.dst = (uint64_t)Nativeint_val(Field(v_args, 0));
+  p->copy.dst_offset = (uint64_t)Long_val(Field(v_args, 1));
+  p->copy.src = (uint64_t)Nativeint_val(Field(v_args, 2));
+  p->copy.src_offset = (uint64_t)Long_val(Field(v_args, 3));
+  p->copy.bytes = (uint64_t)Long_val(Field(v_args, 4));
   return Val_unit;
 }
 
 /* The side of part [v_i]'s copy that is memory of this process
    ([copy_local]). */
 value caml_rig_sub_copy_local(value v_s, value v_i, value v_side) {
-  Sub_val(v_s)->parts[Int_val(v_i)].copy_local = Int_val(v_side);
+  Sub_val(v_s)->parts[Int_val(v_i)].copy.local = Int_val(v_side);
   return Val_unit;
 }
 

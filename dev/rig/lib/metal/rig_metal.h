@@ -7,11 +7,11 @@
 
    The device's room check and submit, over the structures and codes of
    rig_edge.h: the only way work reaches the device. [self] is
-   Rig_metal.self. Both are called without the OCaml runtime: they call
+   Rig_metal.edge, whose struct rig_driver holds them. Both are called without the OCaml runtime: they call
    no function of it and read no OCaml value.
 
-   The device runs fills only: a part with a [fill] and its [arg], on queue
-   0, with no words, copy, ring units or segment bytes; a fill may start any
+   The device runs fills only: a part of kind RIG_FILL on queue 0, with no
+   ring units or segment bytes; a fill may start any
    number of command buffers (rig_metal_abi.mli). [nwaits] is 0: a Metal
    device waits on no word. */
 
@@ -20,8 +20,8 @@
 
 #include <rig_edge.h>
 
-/* RIG_NEVER if a part is no fill on queue 0: it has words, a copy, no fill,
-   or ring units or segment bytes other than 0. RIG_FITS otherwise. */
+/* RIG_NEVER if a part is no fill on queue 0, or a fill with ring units or
+   segment bytes other than 0. RIG_FITS otherwise. */
 int rig_metal_room(void *self, const struct rig_part *parts, int n);
 
 /* Runs [parts], which rig_metal_room answered RIG_FITS for, as the work of

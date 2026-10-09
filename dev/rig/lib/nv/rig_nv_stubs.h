@@ -111,6 +111,7 @@ struct channel {
 /* A device. The fields up to [last] live for the process; the channels'
    memory ends at a stop that answered Stopped. */
 struct device {
+  const struct rig_driver *driver;
   _Atomic uint64_t *word; /* the timeline word, then the two join words */
   uint64_t word_gpu;
   _Atomic uint64_t last; /* the last value submitted */

@@ -344,7 +344,7 @@ type capability = Rig_cuda_abi.t
 
 let capability g = g.cap
 let capability_key = Rig_cuda_abi.key
-let self g = Nativeint.of_int g.self
+let edge g = Nativeint.of_int g.self
 
 (* Memory *)
 
@@ -505,16 +505,6 @@ let unload g (m : image) =
   match unload_module g.self m.m with
   | 0 -> ()
   | s -> fault "unloading the image" s
-
-(* Work *)
-
-external room_entry : unit -> int = "caml_rig_cuda_room_entry"
-external submit_entry : unit -> int = "caml_rig_cuda_submit_entry"
-external commit_entry : unit -> int = "caml_rig_cuda_commit_entry"
-
-let room_entry = Nativeint.of_int (room_entry ())
-let submit_entry = Nativeint.of_int (submit_entry ())
-let commit_entry = Nativeint.of_int (commit_entry ())
 
 (* Timeline *)
 

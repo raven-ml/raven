@@ -114,7 +114,7 @@ let wait_rows =
   in
   let waiting () =
     let t = dev () in
-    (t, C.self t.g, Option.get (C.address (word t.g)))
+    (t, C.edge t.g, Option.get (C.address (word t.g)))
   in
   let floor_waiting () = host (word (floor ())) in
   Thumper.group "waits"

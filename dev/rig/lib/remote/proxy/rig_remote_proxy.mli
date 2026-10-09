@@ -99,7 +99,7 @@ val blocks : t -> [ `Returns | `May_block ]
     once it is sent, so it waits for the frame the link is sending and for the
     peer to take its bytes. A copy from this process's memory holds the
     submitting thread while its bytes cross the link. Before such a copy it also
-    waits for the work the copy follows ({!submit_entry}). *)
+    waits for the work the copy follows ({!edge}). *)
 
 val maps_host : t -> bool
 (** [maps_host d] is [false]: a copy names this process's memory by its host
@@ -207,21 +207,23 @@ val sleep : t -> seen:int -> still_ms:int -> unit
 
 (** {1:work Work} *)
 
-val room_entry : nativeint
-(** [room_entry] is the address of the proxy's room check, in the shape
-    [rig_room_fn] of [rig_edge.h]. It answers:
-    - [RIG_NEVER] for a fill, for words on a proxy other than the machine's
-      host, and for a submission with a copy from this process's memory after a
-      copy into it: the hand-over reads the source bytes before the agent runs
-      the earlier part.
+val edge : t -> nativeint
+(** [edge d] is the address of [d]'s C state, whose first member points to the
+    proxy's [struct rig_driver] of [rig_edge.h] ({!Rig.Driver.edge}). It is
+    valid while the process runs: the state holds the shadow, which is never
+    freed.
+
+    The room check answers:
+    - [RIG_NEVER] for a part other than words and copies, for words on a proxy
+      other than the machine's host, and for a submission with a copy from this
+      process's memory after a copy into it: the hand-over reads the source
+      bytes before the agent runs the earlier part.
     - [RIG_LATER] while the proxy has more than 64 MiB of copies and words
       handed over and not reported done.
     - [RIG_FITS] otherwise, so that a proxy with nothing in flight takes any
-      submission it can run. *)
+      submission it can run.
 
-val submit_entry : nativeint
-(** [submit_entry] is the address of the proxy's hand-over, in the shape
-    [rig_submit_fn] of [rig_edge.h]. It sends the hand-over's frame on the link
+    The hand-over sends the hand-over's frame on the link
     ({!Wire.handover}): the waits, each as the device [at] and its value, and
     the parts, copies with their sides' handles and offsets, words with their
     words. [handles] is ignored.
@@ -235,17 +237,10 @@ val submit_entry : nativeint
 
     It answers [RIG_COMMITTED] once the frame is sent. It answers [RIG_FAILED]
     with the job's root cause if the job failed, with ["the job is closed"] if
-    it closes, and with ["out of memory for a hand-over"] if memory ran out. *)
+    it closes, and with ["out of memory for a hand-over"] if memory ran out.
 
-val commit_entry : nativeint
-(** [commit_entry] is the address of the proxy's commit, in the shape
-    [rig_commit_fn] of [rig_edge.h]. Each value's hand-over sends its message
-    and answers [RIG_COMMITTED]: [commit_entry] does nothing. *)
-
-val self : t -> nativeint
-(** [self d] is the address of [d]'s C state, the [self] argument of the room
-    check and the hand-over. It is valid while the process runs: the state holds
-    the shadow, which is never freed. *)
+    The commit does nothing: each value's hand-over sends its message and
+    answers [RIG_COMMITTED]. *)
 
 (** {1:stopping Stopping} *)
 

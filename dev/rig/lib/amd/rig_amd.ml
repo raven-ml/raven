@@ -521,7 +521,7 @@ type capability = Abi.Capability.t
 
 let capability g = g.capability
 let capability_key = Abi.Capability.key
-let self g = Nativeint.of_int g.self
+let edge g = Nativeint.of_int g.self
 
 (* Memory *)
 
@@ -644,13 +644,6 @@ let unload g m =
 (* Work *)
 
 external last : int -> int = "caml_rig_amd_last" [@@noalloc]
-external room_entry : unit -> int = "caml_rig_amd_room_entry"
-external submit_entry : unit -> int = "caml_rig_amd_submit_entry"
-external commit_entry : unit -> int = "caml_rig_amd_commit_entry"
-
-let room_entry = Nativeint.of_int (room_entry ())
-let submit_entry = Nativeint.of_int (submit_entry ())
-let commit_entry = Nativeint.of_int (commit_entry ())
 
 (* Timeline *)
 

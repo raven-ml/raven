@@ -36,6 +36,7 @@ struct rig_metal_queue {
    its own, which no completion handler takes; [changed] says whether the
    set holds additions it has not committed. */
 struct rig_metal {
+  const struct rig_driver *driver;
   id<MTLDevice> device;
   id<MTLCommandQueue> queue;
   id<MTLFence> fence;

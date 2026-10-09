@@ -29,7 +29,7 @@ let submit ?(reads = [||]) ?(waits = [||]) s =
   Rig.submit s ~reads ~writes:[||] ~waits
 
 (* The last value [p]'s word holds, read without a call of rig. *)
-let word p = Support.load (Nativeint.to_int (P.self p))
+let word p = Support.load (P.word_at p)
 
 (* Two devices and their order *)
 

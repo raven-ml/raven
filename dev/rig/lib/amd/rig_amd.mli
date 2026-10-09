@@ -17,8 +17,7 @@
     every value below it, whichever queue each ran on.
 
     A program opens a GPU through a path and hands the device to [rig], which
-    submits its work through the device's C entries ({!room_entry},
-    {!submit_entry}):
+    submits its work through the device's C entries ({!edge}):
     {[
     let d =
       Rig.open_
@@ -263,8 +262,8 @@ val sleep : t -> seen:int -> still_ms:int -> unit
 
 (** {1:work Work}
 
-    Work reaches a device in C, through {!room_entry} and {!submit_entry}, over
-    [rig_edge.h]'s structures. A part names its queue by its index in {!queues}.
+    Work reaches a device in C, through its room check and submit ({!edge}),
+    over [rig_edge.h]'s structures. A part names its queue by its index in {!queues}.
     A part is:
     - words, whole packets of the queue's kind: PM4, or AQL in multiples of 16
       words, on ["COMPUTE:0"]; SDMA on ["COPY:0"];
@@ -299,26 +298,17 @@ val sleep : t -> seen:int -> still_ms:int -> unit
     ["a fill on COMPUTE:0 failed with 1"], or if it waits on more words than the
     device holds or where it cannot wait. The queues then run none of its parts,
     and the word still reaches [v] once the earlier values completed. Every
-    later submit answers the same failure and hands nothing over. *)
+    later submit answers the same failure and hands nothing over. Each value's
+    hand-over writes its release and answers [RIG_COMMITTED]: the commit does
+    nothing. *)
 
-val room_entry : nativeint
-(** [room_entry] is the address of the C function [rig_amd_room], which
-    [rig_amd.h] declares. *)
-
-val submit_entry : nativeint
-(** [submit_entry] is the address of the C function [rig_amd_submit], which
-    [rig_amd.h] declares. *)
-
-val commit_entry : nativeint
-(** [commit_entry] is the address of the device's commit, in the shape
-    [rig_commit_fn] of [rig_edge.h]. Each value's hand-over writes its release
-    and answers [RIG_COMMITTED]: [commit_entry] does nothing. *)
-
-val self : t -> nativeint
-(** [self g] is the address of [g]'s state, the first argument of [rig_amd_room]
-    and [rig_amd_submit]. It is valid while the process runs: a device's C state
-    holds its {!word}, which other devices may read after [g] is gone, so
-    neither is ever freed. *)
+val edge : t -> nativeint
+(** [edge g] is the address of [g]'s C state, whose first member points to the
+    device's [struct rig_driver] of [rig_edge.h] ({!Rig.Driver.edge}): the C
+    functions [rig_amd_room] and [rig_amd_submit], which [rig_amd.h] declares,
+    and a commit that does nothing. It is valid while the process runs: a
+    device's C state holds its {!word}, which other devices may read after [g]
+    is gone, so neither is ever freed. *)
 
 (** {1:loss Loss} *)
 

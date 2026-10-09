@@ -50,7 +50,7 @@ let run t s =
 
 (* The floor of [t]: its later values are given from C. *)
 let floor t =
-  start (N.self t.g) (host (N.word t.g)) (Rig.submitted t.d);
+  start (N.edge t.g) (host (N.word t.g)) (Rig.submitted t.d);
   t
 
 let part queue work = { Sub.queue; after = [||]; work }

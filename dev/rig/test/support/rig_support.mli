@@ -124,6 +124,10 @@ module Polled : sig
   val set_word : t -> int -> unit
   (** [set_word d v] writes [v] into [d]'s word. *)
 
+  val word_at : t -> int
+  (** [word_at d] is the host address of [d]'s word, which is also its object
+      ([completion]). *)
+
   val log : t -> string list
   (** [log d] is [d]'s driver calls, oldest first: ["alloc"], ["free"],
       ["map_host"], ["map_peer"], ["unmap"] (a mapping's free), ["word"] (the

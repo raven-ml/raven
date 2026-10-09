@@ -163,25 +163,25 @@ value rig_amd_bench_fill_arg(value v_place, value v_segment, value v_arg,
   CAMLreturn(r);
 }
 
-/* A submission of no parts as value [v_v] through the driver's C entries
-   [v_f] (room, submit, the device's state), after [v_n] waits for the word
-   at GPU address [v_at] to hold at least [v_value]: for the rows rig
-   cannot express, waits on a word of host memory. */
-value rig_amd_bench_submit(value v_f, value v_v, value v_at, value v_value,
+/* A submission of no parts as value [v_v] through the driver whose C state
+   is [v_edge], after [v_n] waits for the word at GPU address [v_at] to hold
+   at least [v_value]: for the rows rig cannot express, waits on a word of
+   host memory. */
+value rig_amd_bench_submit(value v_edge, value v_v, value v_at, value v_value,
                               value v_n) {
-  rig_room_fn *room = (rig_room_fn *)Ptr_val(Field(v_f, 0));
-  rig_submit_fn *submit = (rig_submit_fn *)Ptr_val(Field(v_f, 1));
-  void *self = Ptr_val(Field(v_f, 2));
+  void *self = Ptr_val(v_edge);
+  const struct rig_driver *driver = *(const struct rig_driver **)self;
   struct rig_wait w[16];
   int n = Int_val(v_n);
   if (n > 16) caml_invalid_argument("submit: more than 16 waits");
   for (int i = 0; i < n; i++)
     w[i] = (struct rig_wait){(uint64_t)Long_val(v_at),
                             (uint64_t)Long_val(v_value), RIG_WORD};
-  if (room(self, NULL, 0) != RIG_FITS) caml_failwith("submit: no room");
+  if (driver->room(self, NULL, 0) != RIG_FITS)
+    caml_failwith("submit: no room");
   const char *why = NULL;
-  if (submit(self, (uint64_t)Long_val(v_v), w, n, NULL, 0, NULL, 0, &why) ==
-      RIG_FAILED)
+  if (driver->submit(self, (uint64_t)Long_val(v_v), w, n, NULL, 0, NULL, 0,
+                     &why) == RIG_FAILED)
     caml_failwith(why);
   return Val_unit;
 }

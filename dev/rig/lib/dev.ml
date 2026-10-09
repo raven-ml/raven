@@ -13,16 +13,8 @@ exception Out_of_memory of device * int
 
 (* The C record *)
 
-external c_new :
-  int ->
-  string ->
-  bool ->
-  nativeint ->
-  nativeint ->
-  nativeint ->
-  nativeint ->
-  nativeint ->
-  int = "caml_rig_device_new_byte" "caml_rig_device_new"
+external c_new : int -> string -> bool -> nativeint -> nativeint -> int
+  = "caml_rig_device_new"
 
 external c_io_new : int -> string -> int = "caml_rig_io_new"
 external c_host_new : string -> int = "caml_rig_host_new"
@@ -604,8 +596,7 @@ let driver_device (type a) (module D : Sigs.Driver with type t = a) (h : a)
   let blocks = D.blocks h = `May_block in
   let capability = Capability (D.capability_key, D.capability h) in
   let c =
-    c_new index name blocks (D.self h) D.room_entry D.submit_entry
-      D.commit_entry (Nativeint.of_int word)
+    c_new index name blocks (D.edge h) (Nativeint.of_int word)
   in
   let d =
     make_device ~index ~name ~machine

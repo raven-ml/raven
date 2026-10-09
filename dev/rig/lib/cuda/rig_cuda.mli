@@ -318,20 +318,22 @@ val sleep : t -> seen:int -> still_ms:int -> unit
 
 (** {1:work Work} *)
 
-val room_entry : nativeint
-(** [room_entry] is the address of the C function [rig_cuda_room], in the shape
-    [rig_room_fn] of [rig_edge.h], which [rig_cuda.h] declares. It answers
-    [RIG_NEVER] for a part with words, ring units or segment bytes, or on no
-    queue of the device, and [RIG_FITS] otherwise: CUDA's streams take any
-    amount of work, and a submit that finds a stream full waits for earlier work
-    to free it. *)
+val edge : t -> nativeint
+(** [edge g] is the address of [g]'s C state, whose first member points to the
+    device's [struct rig_driver] of [rig_edge.h] ({!Rig.Driver.edge}): the C
+    functions [rig_cuda_room], [rig_cuda_submit] and [rig_cuda_commit], which
+    [rig_cuda.h] declares. It is valid while the process runs: a device's C
+    state holds its {!word}, which other devices may read after [g] is gone, so
+    neither is ever freed.
 
-val submit_entry : nativeint
-(** [submit_entry] is the address of the C function [rig_cuda_submit], in the
-    shape [rig_submit_fn] of [rig_edge.h], which [rig_cuda.h] declares. It is
-    called without the domain lock, and calls no function of the OCaml runtime.
-    It encodes the parts on the device's streams as the value [v] after the last
-    one the device was given:
+    [rig_cuda_room] answers [RIG_NEVER] for a part that is no fill or copy, a
+    fill with ring units or segment bytes, or a part on no queue of the device,
+    and [RIG_FITS] otherwise: CUDA's streams take any amount of work, and a
+    submit that finds a stream full waits for earlier work to free it.
+
+    [rig_cuda_submit] is called without the domain lock, and calls no function
+    of the OCaml runtime. It encodes the parts on the device's streams as the
+    value [v] after the last one the device was given:
     - A part on queue [0] runs on the stream ["COMPUTE:0"], on queue [1] on
       ["COPY:0"]. Parts on one queue run in array order; parts on two queues
       that [after] does not order may run at once.
@@ -339,7 +341,7 @@ val submit_entry : nativeint
       [f stream arg v], with the device's context current on the calling thread,
       as {!Rig_cuda_abi} states. Nothing bounds what a fill enqueues, so it
       declares no room.
-    - A copy moves [copy_bytes] bytes between the handles of two regions of the
+    - A copy moves [copy.bytes] bytes between the handles of two regions of the
       device ({!handle}) at their offsets. The ranges are apart: a copy between
       overlapping ranges writes undefined bytes.
     - Each wait holds the work back until the aligned 64-bit word at [at], which
@@ -350,7 +352,7 @@ val submit_entry : nativeint
 
     The work runs after every earlier value of the device and after the waits.
     Encoding launches the parts on the device's stream. A commit writes the
-    value with [cuStreamWriteValue64] ({!commit_entry}); the device commits on
+    value with [cuStreamWriteValue64] ([rig_cuda_commit]); the device commits on
     its own every 64 values, and commits a value with a copy as it encodes it,
     since the copy hides the write's cost. Once [v] is committed and its work
     completed, the timeline word holds [v]. A submission of no parts ends after
@@ -373,21 +375,13 @@ val submit_entry : nativeint
     runs, or if CUDA refuses a call that orders the write.
 
     It may block while a stream is full, until the device's earlier work
-    completes. *)
+    completes.
 
-val commit_entry : nativeint
-(** [commit_entry] is the address of the C function [rig_cuda_commit], in the
-    shape [rig_commit_fn] of [rig_edge.h], which [rig_cuda.h] declares. Given
-    [v], it writes [v] with [cuStreamWriteValue64] on the stream the last value
-    ended on, after the work of every value up to [v], unless a commit wrote [v]
-    or a later value. It answers [RIG_FAILED] with the device's failure once a
-    submit or a commit failed. It may block while a stream is full. *)
-
-val self : t -> nativeint
-(** [self g] is the address of [g]'s state, the first argument of
-    [rig_cuda_room], [rig_cuda_submit] and [rig_cuda_commit]. It is valid while
-    the process runs: a device's C state holds its {!word}, which other devices
-    may read after [g] is gone, so neither is ever freed. *)
+    [rig_cuda_commit], given [v], writes [v] with [cuStreamWriteValue64] on the
+    stream the last value ended on, after the work of every value up to [v],
+    unless a commit wrote [v] or a later value. It answers [RIG_FAILED] with the
+    device's failure once a submit or a commit failed. It may block while a
+    stream is full. *)
 
 (** {1:loss Loss} *)
 

@@ -24,10 +24,11 @@
 
 /* Memory devices
 
-   A memory device's state is its word, alone in a page, which other
-   devices may map. */
+   A memory device's state is its driver and its word, alone in a page,
+   which other devices may map. */
 
 struct memory_device {
+  const struct rig_driver *driver;
   _Atomic uint64_t word;
 };
 
@@ -48,15 +49,6 @@ static void aligned_free(void *p) {
 #endif
 }
 
-/* A memory device's state, never freed: its word outlives it. */
-value caml_rig_memory_new(value unit) {
-  (void)unit;
-  size_t page = rig_page_bytes();
-  struct memory_device *m = aligned(page, page);
-  if (m == NULL) caml_raise_out_of_memory();
-  memset(m, 0, page);
-  return caml_copy_nativeint((intnat)m);
-}
 
 /* [v_n] bytes of host memory, on a page from 64 KiB on, or 0. */
 value caml_rig_memory_alloc(value v_n) {
@@ -72,10 +64,13 @@ value caml_rig_memory_free(value v_p) {
 
 static int memory_room(void *self, const struct rig_part *parts, int n) {
   (void)self;
-  for (int i = 0; i < n; i++)
-    if (parts[i].words != NULL || parts[i].ring_units != 0 ||
-        parts[i].segment_bytes != 0)
+  for (int i = 0; i < n; i++) {
+    const struct rig_part *p = &parts[i];
+    if (p->kind == RIG_FILL ? p->fill.ring_units != 0 ||
+                                  p->fill.segment_bytes != 0
+                            : p->kind != RIG_COPY)
       return RIG_NEVER;
+  }
   return RIG_FITS;
 }
 
@@ -92,15 +87,15 @@ static int memory_submit(void *self, uint64_t v, const struct rig_wait *waits,
   (void)nhandles;
   for (int i = 0; i < nparts; i++) {
     const struct rig_part *p = &parts[i];
-    if (p->fill != NULL) {
-      if (p->fill(NULL, p->arg, v) != 0) {
+    if (p->kind == RIG_FILL) {
+      if (p->fill.fn(NULL, p->fill.arg, v) != 0) {
         *failure = "a fill failed";
         return RIG_FAILED;
       }
-    } else if (p->copy_bytes != 0)
-      memmove((char *)(uintptr_t)p->copy_dst + p->copy_dst_offset,
-              (const char *)(uintptr_t)p->copy_src + p->copy_src_offset,
-              (size_t)p->copy_bytes);
+    } else if (p->copy.bytes != 0)
+      memmove((char *)(uintptr_t)p->copy.dst + p->copy.dst_offset,
+              (const char *)(uintptr_t)p->copy.src + p->copy.src_offset,
+              (size_t)p->copy.bytes);
   }
   atomic_store_explicit(&m->word, v, memory_order_release);
   return RIG_COMMITTED;
@@ -114,19 +109,24 @@ static int memory_commit(void *self, uint64_t v, const char **failure) {
   return RIG_OK;
 }
 
-value caml_rig_memory_room(value unit) {
+static const struct rig_driver memory_driver = {memory_room, memory_submit,
+                                                memory_commit};
+
+/* A memory device's state, which the free of its word gives back. */
+value caml_rig_memory_new(value unit) {
   (void)unit;
-  return caml_copy_nativeint((intnat)&memory_room);
+  size_t page = rig_page_bytes();
+  struct memory_device *m = aligned(page, page);
+  if (m == NULL) caml_raise_out_of_memory();
+  memset(m, 0, page);
+  m->driver = &memory_driver;
+  return caml_copy_nativeint((intnat)m);
 }
 
-value caml_rig_memory_submit(value unit) {
-  (void)unit;
-  return caml_copy_nativeint((intnat)&memory_submit);
-}
-
-value caml_rig_memory_commit(value unit) {
-  (void)unit;
-  return caml_copy_nativeint((intnat)&memory_commit);
+/* The host address of the word of the memory device [v_m]. */
+value caml_rig_memory_word(value v_m) {
+  struct memory_device *m = (struct memory_device *)Nativeint_val(v_m);
+  return Val_long((intnat)&m->word);
 }
 
 value caml_rig_load64(value v_addr) {

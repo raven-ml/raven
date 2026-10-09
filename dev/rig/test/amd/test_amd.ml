@@ -526,23 +526,23 @@ let misuse () =
 let c_room () =
   let never = room_answer in
   Host.with_device @@ fun _ g ->
+  let none = `Words 0 in
   equal never ~msg:"a part of 16 words" `Fits
-    (E.room g [| E.raw ~queue:0 ~words:16 () |]);
+    (E.room g [| E.raw ~queue:0 ~work:(`Words 16) () |]);
   equal never ~msg:"a copy on the compute queue" `Never
-    (E.room g [| E.raw ~queue:0 ~copy:64 () |]);
-  equal never ~msg:"words and a fill" `Never
-    (E.room g [| E.raw ~queue:0 ~words:4 ~fill:true () |]);
+    (E.room g [| E.raw ~queue:0 ~work:(`Copy 64) () |]);
+  equal never ~msg:"a part of no kind" `Never (E.room g [| E.raw ~queue:0 () |]);
   equal never ~msg:"after its own index" `Never
-    (E.room g [| E.raw ~queue:1 ~after:[| 0 |] () |]);
+    (E.room g [| E.raw ~queue:1 ~work:none ~after:[| 0 |] () |]);
   equal never ~msg:"a queue of no index" `Never
-    (E.room g [| E.raw ~queue:2 () |]);
+    (E.room g [| E.raw ~queue:2 ~work:none () |]);
   equal never ~msg:"a negative queue" `Never
-    (E.room g [| E.raw ~queue:(-1) () |]);
+    (E.room g [| E.raw ~queue:(-1) ~work:none () |]);
   Host.with_device ~gpu:mi300 @@ fun _ g ->
   equal never ~msg:"AQL: a packet" `Fits
-    (E.room g [| E.raw ~queue:0 ~words:16 () |]);
+    (E.room g [| E.raw ~queue:0 ~work:(`Words 16) () |]);
   equal never ~msg:"AQL: part of a packet" `Never
-    (E.room g [| E.raw ~queue:0 ~words:15 () |])
+    (E.room g [| E.raw ~queue:0 ~work:(`Words 15) () |])
 
 let misuse =
   group ~timeout:30. "misuse"
@@ -2083,11 +2083,11 @@ type run = { g : A.t; mutable v : int }
 let runs = Hashtbl.create 1
 
 let run_of g =
-  match Hashtbl.find_opt runs (A.self g) with
+  match Hashtbl.find_opt runs (A.edge g) with
   | Some r -> r
   | None ->
       let r = { g; v = A.signaled g } in
-      Hashtbl.add runs (A.self g) r;
+      Hashtbl.add runs (A.edge g) r;
       r
 
 let device g = { g; v = 0 }

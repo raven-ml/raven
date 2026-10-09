@@ -129,7 +129,14 @@ static void reclaim(struct channel *c, uint64_t seen) {
   }
 }
 
-static int is_copy(const struct rig_part *p) { return p->copy_bytes > 0; }
+static int is_copy(const struct rig_part *p) {
+  return p->kind == RIG_COPY && p->copy.bytes > 0;
+}
+
+/* The words a part places, which only words do. */
+static size_t words_of(const struct rig_part *p) {
+  return p->kind == RIG_WORDS ? p->words.n : 0;
+}
 
 /* Whether [p]'s parts are ones the device runs. */
 static int runs(const struct rig_part *p, int n) {
@@ -137,10 +144,9 @@ static int runs(const struct rig_part *p, int n) {
   for (int i = 0; i < n; i++) {
     const struct rig_part *x = &p[i];
     if (x->queue != COMPUTE && x->queue != COPY) return 0;
-    if (x->fill != NULL || x->ring_units != 0 || x->segment_bytes != 0)
-      return 0;
-    if (is_copy(x) && (x->queue != COPY || x->n != 0)) return 0;
-    if (x->n % 2 != 0) return 0;
+    if (x->kind != RIG_WORDS && x->kind != RIG_COPY) return 0;
+    if (is_copy(x) && x->queue != COPY) return 0;
+    if (words_of(x) % 2 != 0) return 0;
     for (int j = 0; j < x->nafter; j++)
       if (x->after[j] < 0 || x->after[j] >= i) return 0;
   }
@@ -186,10 +192,10 @@ static void need(const struct device *d, const struct rig_part *p, int n,
   for (int i = 0; i < n; i++) {
     int q = p[i].queue;
     used[q] = 1;
-    entries[q] += 2 + p[i].n / 2;
+    entries[q] += 2 + words_of(&p[i]) / 2;
     bytes[q] += (uint64_t)p[i].nafter * bytes_of(d, T_ACQUIRE);
     if (is_copy(&p[i]))
-      bytes[q] += (p[i].copy_bytes + COPY_MAX - 1) / COPY_MAX *
+      bytes[q] += (p[i].copy.bytes + COPY_MAX - 1) / COPY_MAX *
                   bytes_of(d, T_COPY);
     bytes[q] += bytes_of(d, q == COMPUTE ? T_RELEASE : T_COPY_RELEASE);
     if (q == COMPUTE) bytes[q] += bytes_of(d, T_IDLE);
@@ -263,14 +269,14 @@ static void signal(struct device *d, int q, uint64_t address, uint64_t value) {
 
 static void place(struct device *d, const struct rig_part *p) {
   struct channel *c = &d->ch[p->queue];
-  if (!is_copy(p)) {
-    put_entries(d, c, p->words, p->n);
+  if (p->kind == RIG_WORDS) {
+    put_entries(d, c, p->words.at, p->words.n);
     return;
   }
-  uint64_t dst = p->copy_dst + p->copy_dst_offset;
-  uint64_t src = p->copy_src + p->copy_src_offset;
-  for (uint64_t at = 0; at < p->copy_bytes; at += COPY_MAX) {
-    uint64_t n = p->copy_bytes - at < COPY_MAX ? p->copy_bytes - at : COPY_MAX;
+  uint64_t dst = p->copy.dst + p->copy.dst_offset;
+  uint64_t src = p->copy.src + p->copy.src_offset;
+  for (uint64_t at = 0; at < p->copy.bytes; at += COPY_MAX) {
+    uint64_t n = p->copy.bytes - at < COPY_MAX ? p->copy.bytes - at : COPY_MAX;
     emit(d, c, T_COPY, dst + at, src + at, n);
   }
 }

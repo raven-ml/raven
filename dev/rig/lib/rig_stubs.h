@@ -74,10 +74,8 @@ struct rig_device {
   char *name;
   int io; /* an io device, whose state its library holds */
   int may_block;
-  void *self;
-  rig_room_fn *room;
-  rig_submit_fn *submit;
-  rig_commit_fn *commit;
+  void *self; /* the driver's state, whose first member points to [driver] */
+  struct rig_driver driver; /* copied at open: a call loads no pointer */
   /* The timeline word, or NULL behind a transport. Once the device is
      stopped and nothing else reads the driver's word, it points to [final],
      and the driver's word is given back ([caml_rig_word_retire]). */

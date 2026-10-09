@@ -320,17 +320,14 @@ static struct rig_device *record(value v_index, value v_name) {
 }
 
 /* A driver's device of index [v_index] whose driver blocks ([v_may_block]),
-   with its C entries and its word's host address (0 behind a transport). */
-value caml_rig_device_new(value v_index, value v_name,
-                                  value v_may_block, value v_self,
-                                  value v_room, value v_submit,
-                                  value v_commit, value v_word) {
+   with its driver's C state [v_edge] and its word's host address (0 behind
+   a transport). */
+value caml_rig_device_new(value v_index, value v_name, value v_may_block,
+                          value v_edge, value v_word) {
   struct rig_device *d = record(v_index, v_name);
   d->may_block = Bool_val(v_may_block);
-  d->self = (void *)Nativeint_val(v_self);
-  d->room = (rig_room_fn *)Nativeint_val(v_room);
-  d->submit = (rig_submit_fn *)Nativeint_val(v_submit);
-  d->commit = (rig_commit_fn *)Nativeint_val(v_commit);
+  d->self = (void *)Nativeint_val(v_edge);
+  d->driver = **(const struct rig_driver **)d->self;
   atomic_init(&d->word, (_Atomic uint64_t *)Nativeint_val(v_word));
   return Val_long((intnat)d);
 }
@@ -341,12 +338,6 @@ value caml_rig_io_new(value v_index, value v_name) {
   struct rig_device *d = record(v_index, v_name);
   d->io = 1;
   return Val_long((intnat)d);
-}
-
-value caml_rig_device_new_byte(value *argv, int argn) {
-  (void)argn;
-  return caml_rig_device_new(argv[0], argv[1], argv[2], argv[3],
-                                     argv[4], argv[5], argv[6], argv[7]);
 }
 
 static void put(struct rig_device *d) {
@@ -883,7 +874,7 @@ static int record_waits(struct rig_device *d, struct rig_sub *s) {
    value, stores it as submitted, hands the work over and raises [s]'s
    stamps. Called under [d]'s turn. */
 static int admit(struct rig_device *d, struct rig_sub *s) {
-  int room = d->room(d->self, s->parts, s->nparts);
+  int room = d->driver.room(d->self, s->parts, s->nparts);
   if (room == RIG_NEVER) return SUBMIT_NEVER;
   if (room == RIG_LATER) {
     s->no_room_at = atomic_load(&d->submitted);
@@ -892,8 +883,8 @@ static int admit(struct rig_device *d, struct rig_sub *s) {
   uint64_t v = atomic_load(&d->submitted) + 1;
   atomic_store_explicit(&d->submitted, v, memory_order_release);
   const char *why = NULL;
-  int r = d->submit(d->self, v, s->waits, s->nwaits, s->parts, s->nparts,
-                    s->handles, s->nhandles, &why);
+  int r = d->driver.submit(d->self, v, s->waits, s->nwaits, s->parts,
+                           s->nparts, s->handles, s->nhandles, &why);
   rig_sub_raise(s, RIG_POINT(d->index, v));
   s->v = v;
   if (r == RIG_COMMITTED)
@@ -972,7 +963,7 @@ static int commit(struct rig_device *d) {
   if (atomic_load(&d->committed) >= v) return SUBMIT_OK;
   const char *why = NULL;
   begin_turn(d);
-  int r = d->commit(d->self, v, &why);
+  int r = d->driver.commit(d->self, v, &why);
   end_turn(d);
   if (r == RIG_OK) {
     atomic_store_explicit(&d->committed, v, memory_order_release);

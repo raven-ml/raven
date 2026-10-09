@@ -83,9 +83,9 @@ let words_part ~queue ?(after = [||]) ws =
 (* The C entries *)
 
 module Edge = struct
-  (* The ints the C side reads: queue, fill, argument, ring units, segment
-     bytes, copy destination, source and bytes, the counts of [after] indices
-     and of words, the indices, the words. *)
+  (* The ints the C side reads: queue, kind (rig_edge.h's, 0 for none), fill,
+     argument, ring units, segment bytes, copy destination, source and bytes,
+     the counts of [after] indices and of words, the indices, the words. *)
   type part = { ints : int array; keep : arg option }
 
   let index = function
@@ -93,11 +93,16 @@ module Edge = struct
     | "COPY:0" -> 1
     | q -> invalid_arg ("Rig_amd_support.Edge: queue " ^ q)
 
-  let make ?keep ~queue ~after ?(fill = 0n) ?(arg = 0) ?(units = 0) ?(bytes = 0)
-      ?(dst = 0) ?(src = 0) ?(copy = 0) words =
+  let rig_words = 1
+  let rig_fill = 2
+  let rig_copy = 3
+
+  let make ?keep ~queue ~kind ~after ?(fill = 0n) ?(arg = 0) ?(units = 0)
+      ?(bytes = 0) ?(dst = 0) ?(src = 0) ?(copy = 0) words =
     let head =
       [|
         queue;
+        kind;
         Nativeint.to_int fill;
         arg;
         units;
@@ -116,34 +121,32 @@ module Edge = struct
       keep;
     }
 
-  let words ~queue ?(after = [||]) ws = make ~queue:(index queue) ~after ws
+  let words ~queue ?(after = [||]) ws =
+    make ~queue:(index queue) ~kind:rig_words ~after ws
 
   let fill ~queue ?(after = [||]) f ~units ~bytes =
-    make ~keep:f.arg ~queue:(index queue) ~after ~fill:f.entry ~arg:(data f.arg)
-      ~units ~bytes [||]
+    make ~keep:f.arg ~queue:(index queue) ~kind:rig_fill ~after ~fill:f.entry
+      ~arg:(data f.arg) ~units ~bytes [||]
 
   let copy ?(after = [||]) ~dst ~src n =
-    make ~queue:1 ~after ~dst ~src ~copy:n [||]
+    make ~queue:1 ~kind:rig_copy ~after ~dst ~src ~copy:n [||]
 
-  let raw ~queue ?(words = 0) ?(fill = false) ?(copy = 0) ?(after = [||]) () =
-    let fill = if fill then fill_entry () else 0n in
-    make ~queue ~after ~fill ~copy (Array.make words 0)
+  let raw ~queue ?(work = `None) ?(after = [||]) () =
+    match work with
+    | `None -> make ~queue ~kind:0 ~after [||]
+    | `Words n -> make ~queue ~kind:rig_words ~after (Array.make n 0)
+    | `Fill -> make ~queue ~kind:rig_fill ~after ~fill:(fill_entry ()) [||]
+    | `Copy n -> make ~queue ~kind:rig_copy ~after ~copy:n [||]
 
-  external room_c : nativeint -> nativeint -> int array array -> int
-    = "rig_amd_test_room"
+  external room_c : nativeint -> int array array -> int = "rig_amd_test_room"
 
   external submit_c :
-    nativeint ->
-    nativeint ->
-    int ->
-    int array ->
-    int array array ->
-    string option = "rig_amd_test_submit"
+    nativeint -> int -> int array -> int array array -> string option
+    = "rig_amd_test_submit"
 
   let room g ps =
     match
-      room_c Rig_amd.room_entry (Rig_amd.self g)
-        (Array.map (fun p -> p.ints) ps)
+      room_c (Rig_amd.edge g) (Array.map (fun p -> p.ints) ps)
     with
     | 0 -> `Fits
     | 1 -> `Later
@@ -154,8 +157,7 @@ module Edge = struct
       Array.concat (Array.to_list (Array.map (fun (a, x) -> [| a; x |]) waits))
     in
     let r =
-      submit_c Rig_amd.submit_entry (Rig_amd.self g) v w
-        (Array.map (fun p -> p.ints) ps)
+      submit_c (Rig_amd.edge g) v w (Array.map (fun p -> p.ints) ps)
     in
     (* The fills' arguments lived through the call. *)
     Array.iter (fun p -> ignore (Sys.opaque_identity p.keep)) ps;

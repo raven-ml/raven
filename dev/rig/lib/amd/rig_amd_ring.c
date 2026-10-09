@@ -39,10 +39,9 @@
 
 static uint64_t align_up(uint64_t n, uint64_t a) { return (n + a - 1) / a * a; }
 
-/* A part is words, a fill, or a copy of at least one byte; a part with
-   none of them places nothing. */
+/* A copy of no bytes places nothing. */
 static int is_copy(const struct rig_part *p) {
-  return !p->words && !p->fill && p->copy_bytes > 0;
+  return p->kind == RIG_COPY && p->copy.bytes > 0;
 }
 
 /* Templates */
@@ -142,9 +141,10 @@ static void need(const struct rig_amd *d, const struct rig_part *p, int n,
              words_of(d, S_TRAP);
   *bytes = SEGMENT_ALIGN;
   for (int i = 0; i < n; i++) {
-    uint64_t w = p[i].words ? p[i].n
-                 : p[i].fill ? p[i].ring_units
-                             : copies(d, p[i].copy_bytes) * words_of(d, S_COPY);
+    uint64_t w = p[i].kind == RIG_WORDS ? p[i].words.n
+                 : p[i].kind == RIG_FILL
+                     ? p[i].fill.ring_units
+                     : copies(d, p[i].copy.bytes) * words_of(d, S_COPY);
     if (p[i].queue == c) {
       parts += w;
       pm4 += words_of(d, T_FLUSH) + words_of(d, T_ACQUIRE) +
@@ -154,7 +154,8 @@ static void need(const struct rig_amd *d, const struct rig_part *p, int n,
     } else
       words[s] += w + words_of(d, S_FENCE) +
                   (uint64_t)p[i].nafter * words_of(d, S_POLL);
-    *bytes += align_up(p[i].segment_bytes, SEGMENT_ALIGN);
+    if (p[i].kind == RIG_FILL)
+      *bytes += align_up(p[i].fill.segment_bytes, SEGMENT_ALIGN);
   }
   if (d->rings[c].kind != RING_AQL) words[c] = pm4 + parts;
   else {
@@ -169,13 +170,23 @@ static void need(const struct rig_amd *d, const struct rig_part *p, int n,
 static int runs(const struct rig_amd *d, const struct rig_part *p, int i) {
   if (p->queue != RIG_AMD_COMPUTE && p->queue != RIG_AMD_COPY) return 0;
   uint64_t size = d->rings[p->queue].size;
-  if (p->n >= size || p->ring_units >= size ||
-      p->segment_bytes >= d->segment.size)
+  switch (p->kind) {
+  case RIG_WORDS:
+    if (p->words.n >= size) return 0;
+    if (d->rings[p->queue].kind == RING_AQL && p->words.n % AQL_WORDS)
+      return 0;
+    break;
+  case RIG_FILL:
+    if (p->fill.ring_units >= size ||
+        p->fill.segment_bytes >= d->segment.size)
+      return 0;
+    break;
+  case RIG_COPY:
+    if (is_copy(p) && p->queue != RIG_AMD_COPY) return 0;
+    break;
+  default:
     return 0;
-  if (is_copy(p) && p->queue != RIG_AMD_COPY) return 0;
-  if (p->words && p->fill) return 0;
-  if (p->words && d->rings[p->queue].kind == RING_AQL && p->n % AQL_WORDS)
-    return 0;
+  }
   for (int j = 0; j < p->nafter; j++)
     if (p->after[j] < 0 || p->after[j] >= i) return 0;
   return 1;
@@ -327,10 +338,10 @@ static void signal_slot(struct submission *s, int q, int i) {
 static void copy(struct submission *s, const struct rig_part *p) {
   struct rig_amd *d = s->d;
   struct rig_amd_ring *r = &d->rings[RIG_AMD_COPY];
-  uint64_t dst = p->copy_dst + p->copy_dst_offset;
-  uint64_t src = p->copy_src + p->copy_src_offset;
-  for (uint64_t off = 0; off < p->copy_bytes; off += d->max_copy) {
-    uint64_t n = p->copy_bytes - off;
+  uint64_t dst = p->copy.dst + p->copy.dst_offset;
+  uint64_t src = p->copy.src + p->copy.src_offset;
+  for (uint64_t off = 0; off < p->copy.bytes; off += d->max_copy) {
+    uint64_t n = p->copy.bytes - off;
     emit(d, r, S_COPY, dst + off, src + off, n < d->max_copy ? n : d->max_copy);
   }
 }
@@ -472,12 +483,12 @@ int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
     enter(&s, q, waits, nwaits, copy_parts);
     prepare(&s, parts, i, !placed[q]++);
     flush(d, ring);
-    if (p->words) put_words(ring, p->words, p->n);
-    else if (p->fill) {
+    if (p->kind == RIG_WORDS) put_words(ring, p->words.at, p->words.n);
+    else if (p->kind == RIG_FILL) {
       struct rig_amd_writer w = {
-          d, ring, p->ring_units,
-          g->put + align_up(p->segment_bytes, SEGMENT_ALIGN)};
-      int code = p->fill(&w, p->arg, v);
+          d, ring, p->fill.ring_units,
+          g->put + align_up(p->fill.segment_bytes, SEGMENT_ALIGN)};
+      int code = p->fill.fn(&w, p->fill.arg, v);
       if (code != 0) {
         snprintf(d->failure_text, sizeof d->failure_text,
                  "a fill on %s failed with %d",

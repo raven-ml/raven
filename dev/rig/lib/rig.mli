@@ -25,7 +25,7 @@
           │                         ▲                  ▲
           │ submit ~reads ~writes   │ Hold.make        │ submit
           ▼                         │                  │
-      Submission.t ──────────── one device ── Driver.submit_entry (C)
+      Submission.t ──────────── one device ── Driver.edge (C)
     v}
 
     A program opens devices ({!open_}), allocates {!Buffer}s, and copies between
@@ -699,7 +699,7 @@ module Submission : sig
       }
         (** The C function at [fill], called inside the driver's hand-over with
             the queue's context, the host address of [arg] and the value
-            ({!Driver.submit_entry}). A ring driver's fill writes at most
+            ({!Driver.edge}). A ring driver's fill writes at most
             [ring_units] entries and [segment_bytes] bytes of argument segment;
             a library driver's declares [0] of each. *)
     | Copy of { src : Buffer.t; dst : Buffer.t }
@@ -760,8 +760,8 @@ val submit :
       device, before it takes [d]'s turn.
     + Takes [d]'s {e turn}, the right to be the one call of [d]'s room check,
       hand-over or commit, and asks [d]'s driver for room
-      ({!Driver.room_entry}). Once the parts fit, it assigns [v], one more than
-      {!submitted}[ d], hands the work over ({!Driver.submit_entry}), which
+      ({!Driver.edge}). Once the parts fit, it assigns [v], one more than
+      {!submitted}[ d], hands the work over, which
       encodes it on [d]'s queues, and raises the stamps of [reads], [writes],
       the parts' buffers and the hold to [(d, v)]. While they do not fit, it
       commits [d]'s work, waits for [d]'s next value with the turn released, and
@@ -773,7 +773,7 @@ val submit :
     a value of [d], on the host or in another device's queue, first commits
     [d]'s work, so no wait waits for work that is not committed. [d]'s driver
     also commits on its own, at least once every [k] values, [k] a bound of its
-    own ({!Driver.commit_entry}): while work is submitted the word shows each
+    own ({!Driver.edge}): while work is submitted the word shows each
     value at most [k] values late, and values submitted since the last commit
     show after the next wait for [d] or the next [k] values.
 
@@ -971,16 +971,15 @@ end
     this library; a program passes it to {!open_}.
 
     A device's {e timeline word} is eight bytes the driver alone writes: the
-    last committed value [v] ({!commit_entry}) such that every submission up to
+    last committed value [v] ({!edge}) such that every submission up to
     [v] completed. It never moves backwards, and work never writes it. A
     driver orders the work it is handed on each queue in the order handed
     ({e prefix order}), and lets the host learn that a prefix completed or that
     the device faulted ({e observable completion}).
 
     {b Work} crosses in C only: this library calls the driver's C room check,
-    hand-over and commit ({!room_entry}, {!submit_entry}, {!commit_entry}), in
-    the shapes [rig_edge.h] states, one at a time per device, under the device's
-    turn. A driver's own OCaml forms of them, for a driver used alone, are no
+    hand-over and commit ({!edge}), in the shapes [rig_edge.h] states, one at
+    a time per device, under the device's turn. A driver's own OCaml forms of them, for a driver used alone, are no
     part of this signature.
 
     {b Calls.} {!address}, {!handle}, {!host} and {!peer} call nothing that may
@@ -1159,37 +1158,30 @@ module type Driver = sig
       and the commit.
       Counted. *)
 
-  val room_entry : nativeint
-  (** [room_entry] is the address of [d]'s room check, in the shape
-      [rig_room_fn] of [rig_edge.h]: whether parts fit [d]'s queues now, once
-      one of [d]'s values is reached, or never, for parts that exceed [d]'s
-      empty queues or name work [d] does not run. *)
+  val edge : t -> nativeint
+  (** [edge d] is the address of [d]'s C state, valid while the process runs,
+      whose first member points to the driver's [struct rig_driver] of
+      [rig_edge.h]: its room check, hand-over and commit, each called with
+      [edge d].
+      - The room check answers whether parts fit [d]'s queues now, once one of
+        [d]'s values is reached, or never, for parts that exceed [d]'s empty
+        queues, name work [d] does not run or are of no kind.
+      - The hand-over encodes the parts on [d]'s queues as the work of the
+        value after the last one it received, after the waits and [d]'s
+        earlier work. The work runs without another call. [d] writes the value
+        into the word once the value is committed and the work up to it
+        completed. When it returns, all of the value's work is on [d]'s
+        queues; a failure loses [d].
+      - The commit, given [v], at most the last value [d] received, makes [d]
+        write [v] or a later value into the word once the work up to it
+        completed. Committing a committed value does nothing. A hand-over that
+        answers [RIG_COMMITTED] committed every value up to its own; a driver
+        whose hand-overs all do is never asked to commit. The driver also
+        commits on its own, at least once every [k] values it receives, [k] a
+        bound of its own, so the word shows each value at most [k] values late
+        while work is submitted. A failure loses [d].
 
-  val submit_entry : nativeint
-  (** [submit_entry] is the address of [d]'s hand-over, in the shape
-      [rig_submit_fn] of [rig_edge.h]: it encodes the parts on [d]'s queues as
-      the work of the value after the last one it received, after the waits and
-      [d]'s earlier work. The work runs without another call. [d] writes the
-      value into the word once the value is committed ({!commit_entry}) and the
-      work up to it completed. When it returns, all of the value's work is on
-      [d]'s queues; a failure loses [d]. It calls no function of the OCaml
-      runtime and reads no OCaml value. *)
-
-  val commit_entry : nativeint
-  (** [commit_entry] is the address of [d]'s commit, in the shape
-      [rig_commit_fn] of [rig_edge.h]: given [v], at most the last value [d]
-      received, it makes [d] write [v] or a later value into the word once the
-      work up to it completed. Committing a committed value does nothing. A
-      hand-over that answers [RIG_COMMITTED] committed every value up to its
-      own; a driver whose hand-overs all do is never asked to commit. The
-      driver also commits on its own, at least once every [k] values it
-      receives, [k] a bound of its own, so the word shows each value at most [k]
-      values late while work is submitted. A failure loses [d]. It calls no
-      function of the OCaml runtime and reads no OCaml value. *)
-
-  val self : t -> nativeint
-  (** [self d] is the [self] argument of the C entries for [d], valid while the
-      process runs. *)
+      None calls a function of the OCaml runtime or reads an OCaml value. *)
 
   (** {1:stopping Stopping} *)
 

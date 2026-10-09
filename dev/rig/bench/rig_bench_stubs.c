@@ -52,9 +52,7 @@ static void turn_unlock(turn *t) { pthread_mutex_unlock(t); }
 
 struct floor {
   void *self;
-  rig_room_fn *room;
-  rig_submit_fn *submit;
-  rig_commit_fn *commit;
+  struct rig_driver driver;
   uint64_t v;
   uint64_t committed; /* the last value the driver reported or made committed */
   uint64_t word;
@@ -62,21 +60,21 @@ struct floor {
   uint64_t *handles; /* NULL: the fill's word, for each part */
   int nhandles;
   turn *turn;
-  struct rig_part fill;
+  struct rig_part part;
 };
 
 #define Floor_val(v) ((struct floor *)Nativeint_val(v))
 
-value rig_bench_floor_new(value v_self, value v_room, value v_submit,
-                          value v_commit, value v_fill) {
+/* A floor over the driver's C state [v_edge] ([Rig.Driver.edge]), whose part
+   is the fill [v_fill] of the floor's word. */
+value rig_bench_floor_new(value v_edge, value v_fill) {
   struct floor *f = calloc(1, sizeof *f);
   if (f == NULL) caml_raise_out_of_memory();
-  f->self = (void *)Nativeint_val(v_self);
-  f->room = (rig_room_fn *)Nativeint_val(v_room);
-  f->submit = (rig_submit_fn *)Nativeint_val(v_submit);
-  f->commit = (rig_commit_fn *)Nativeint_val(v_commit);
-  f->fill.fill = (int (*)(void *, void *, uint64_t))Nativeint_val(v_fill);
-  f->fill.arg = &f->word;
+  f->self = (void *)Nativeint_val(v_edge);
+  f->driver = **(const struct rig_driver **)f->self;
+  f->part.kind = RIG_FILL;
+  f->part.fill.fn = (int (*)(void *, void *, uint64_t))Nativeint_val(v_fill);
+  f->part.fill.arg = &f->word;
   f->handle = (uint64_t)(uintptr_t)&f->word;
   f->turn = malloc(sizeof *f->turn);
   if (f->turn == NULL) caml_raise_out_of_memory();
@@ -90,11 +88,12 @@ value rig_bench_floor_new(value v_self, value v_room, value v_submit,
 value rig_bench_floor_fill(value v_f, value v_fill, value v_arg, value v_units,
                            value v_bytes) {
   struct floor *f = Floor_val(v_f);
-  f->fill = (struct rig_part){0};
-  f->fill.fill = (int (*)(void *, void *, uint64_t))Nativeint_val(v_fill);
-  f->fill.arg = (void *)Long_val(v_arg);
-  f->fill.ring_units = (size_t)Long_val(v_units);
-  f->fill.segment_bytes = (size_t)Long_val(v_bytes);
+  f->part = (struct rig_part){0};
+  f->part.kind = RIG_FILL;
+  f->part.fill.fn = (int (*)(void *, void *, uint64_t))Nativeint_val(v_fill);
+  f->part.fill.arg = (void *)Long_val(v_arg);
+  f->part.fill.ring_units = (size_t)Long_val(v_units);
+  f->part.fill.segment_bytes = (size_t)Long_val(v_bytes);
   return Val_unit;
 }
 
@@ -102,9 +101,10 @@ value rig_bench_floor_fill(value v_f, value v_fill, value v_arg, value v_units,
    [v_words]. */
 value rig_bench_floor_words(value v_f, value v_words, value v_n) {
   struct floor *f = Floor_val(v_f);
-  f->fill = (struct rig_part){0};
-  f->fill.words = (const uint32_t *)Long_val(v_words);
-  f->fill.n = (size_t)Long_val(v_n);
+  f->part = (struct rig_part){0};
+  f->part.kind = RIG_WORDS;
+  f->part.words.at = (const uint32_t *)Long_val(v_words);
+  f->part.words.n = (size_t)Long_val(v_n);
   return Val_unit;
 }
 
@@ -114,11 +114,12 @@ value rig_bench_floor_words(value v_f, value v_words, value v_n) {
 value rig_bench_floor_copy(value v_f, value v_queue, value v_dst, value v_src,
                            value v_n) {
   struct floor *f = Floor_val(v_f);
-  f->fill = (struct rig_part){0};
-  f->fill.queue = Int_val(v_queue);
-  f->fill.copy_dst = (uint64_t)Nativeint_val(v_dst);
-  f->fill.copy_src = (uint64_t)Nativeint_val(v_src);
-  f->fill.copy_bytes = (uint64_t)Long_val(v_n);
+  f->part = (struct rig_part){0};
+  f->part.queue = Int_val(v_queue);
+  f->part.kind = RIG_COPY;
+  f->part.copy.dst = (uint64_t)Nativeint_val(v_dst);
+  f->part.copy.src = (uint64_t)Nativeint_val(v_src);
+  f->part.copy.bytes = (uint64_t)Long_val(v_n);
   return Val_unit;
 }
 
@@ -151,8 +152,9 @@ static void encode(struct floor *f, int n) {
   const char *failure = NULL;
   const uint64_t *h = f->handles != NULL ? f->handles : &f->handle;
   int nh = f->handles != NULL ? f->nhandles : n;
-  if (f->room(f->self, &f->fill, n) != RIG_FITS) abort();
-  int r = f->submit(f->self, ++f->v, NULL, 0, &f->fill, n, h, nh, &failure);
+  if (f->driver.room(f->self, &f->part, n) != RIG_FITS) abort();
+  int r = f->driver.submit(f->self, ++f->v, NULL, 0, &f->part, n, h, nh,
+                           &failure);
   if (r == RIG_FAILED) abort();
   if (r == RIG_COMMITTED) f->committed = f->v;
 }
@@ -162,7 +164,7 @@ static void encode(struct floor *f, int n) {
 static void commit(struct floor *f) {
   const char *failure = NULL;
   if (f->committed >= f->v) return;
-  if (f->commit(f->self, f->v, &failure) != RIG_OK) abort();
+  if (f->driver.commit(f->self, f->v, &failure) != RIG_OK) abort();
   f->committed = f->v;
 }
 

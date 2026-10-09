@@ -46,10 +46,7 @@ module type Driver = sig
   val word : t -> region
   val signaled : t -> int
   val sleep : t -> seen:int -> still_ms:int -> unit
-  val room_entry : nativeint
-  val submit_entry : nativeint
-  val commit_entry : nativeint
-  val self : t -> nativeint
+  val edge : t -> nativeint
   val stop : t -> unit
 end
 

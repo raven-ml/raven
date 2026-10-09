@@ -47,10 +47,9 @@ external sleep_word : int -> int -> int -> int = "caml_rig_metal_sleep"
 external failure : int -> string = "caml_rig_metal_failure"
 external stop_ring : int -> unit = "caml_rig_metal_stop"
 
-external entries : unit -> nativeint * nativeint * nativeint * nativeint
-  = "caml_rig_metal_entries"
+external split : unit -> nativeint = "caml_rig_metal_split"
 
-let room_entry, submit_entry, commit_entry, split = entries ()
+let split = split ()
 
 exception Fault of string
 
@@ -249,7 +248,7 @@ let blocks _ = `May_block
 let maps_host _ = true
 let capability d = d.cap
 let capability_key = Rig_metal_abi.key
-let self d = Nativeint.of_int d.self
+let edge d = Nativeint.of_int d.self
 
 (* Memory *)
 

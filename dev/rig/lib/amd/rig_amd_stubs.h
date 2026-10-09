@@ -142,6 +142,7 @@ struct rig_amd_hdp {
 };
 
 struct rig_amd {
+  const struct rig_driver *driver;
   _Atomic uint64_t *word;
   uint64_t word_gpu;
   volatile uint32_t *slots;     /* 64 bits apart, their low 32 bits used */

@@ -27,8 +27,8 @@
       (Rig.Point.value (Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||]))
     ]}
 
-    {b Submissions.} Work reaches the device in C, through {!room_entry} and
-    {!submit_entry}, over [rig_edge.h]'s structures. A submission is a list of
+    {b Submissions.} Work reaches the device in C, through its room check and
+    submit ({!edge}), over [rig_edge.h]'s structures. A submission is a list of
     {e parts} for the device's one queue, ["COMPUTE:0"], possibly empty. A part
     is a {e fill}, a C function that encodes Metal work into a compute command
     encoder the device gives it ({!Rig_metal_abi}); it declares no ring units or
@@ -38,7 +38,7 @@
     buffer, each command buffer after the ones before it, and returns. It does
     not wait for the work. Metal runs a command buffer only once it is
     committed, and the device commits the open one at four points: a commit
-    ({!commit_entry}); a submit that finds fewer than three of its committed
+    ({!edge}); a submit that finds fewer than three of its committed
     command buffers uncompleted, so that the GPU finds work queued behind the
     one it runs; the completion of one of its command buffers while one is open;
     and a submit that leaves 256 values in it, so the device commits each value
@@ -194,11 +194,6 @@ val capability : t -> capability
 val capability_key : capability Type.Id.t
 (** [capability_key] is {!Rig_metal_abi.key}. *)
 
-val self : t -> nativeint
-(** [self d] is the address of [d]'s C state, the [self] argument of
-    {!room_entry} and {!submit_entry}. It is valid while the process runs: a
-    device's C state holds its word, which other devices may read after [d] is
-    gone, so neither is ever freed. *)
 
 (** {1:memory Memory} *)
 
@@ -300,16 +295,20 @@ val unload : t -> image -> unit
 
 (** {1:work Work} *)
 
-val room_entry : nativeint
-(** [room_entry] is the address of [rig_metal_room], in the shape [rig_room_fn]
-    of [rig_edge.h]. It answers [RIG_NEVER] for a part that is no fill on queue
-    [0] or declares ring units or segment bytes, and [RIG_FITS] otherwise: the
-    submit waits inside for command buffers when the queue is full. *)
+val edge : t -> nativeint
+(** [edge d] is the address of [d]'s C state, whose first member points to the
+    device's [struct rig_driver] of [rig_edge.h] ({!Rig.Driver.edge}): the C
+    functions [rig_metal_room], [rig_metal_submit] and [rig_metal_commit], which
+    [rig_metal.h] declares. It is valid while the process runs: a device's C
+    state holds its word, which other devices may read after [d] is gone, so
+    neither is ever freed.
 
-val submit_entry : nativeint
-(** [submit_entry] is the address of [rig_metal_submit], in the shape
-    [rig_submit_fn] of [rig_edge.h]: it runs the parts as the work of [v], the
-    value after the last one it received, and answers [RIG_COMMITTED] if it
+    [rig_metal_room] answers [RIG_NEVER] for a part that is no fill on queue
+    [0] or declares ring units or segment bytes, and [RIG_FITS] otherwise: the
+    submit waits inside for command buffers when the queue is full.
+
+    [rig_metal_submit] runs the parts as the work of [v], the value after the
+    last one it received, and answers [RIG_COMMITTED] if it
     committed the open command buffer, [RIG_OK] if [v]'s work waits in it; [v]
     is observable in {!word} once its command buffers are committed and
     completed. With no part, [v] is observable once the work before it
@@ -317,12 +316,10 @@ val submit_entry : nativeint
     the device is resident. [RIG_FAILED] if the submission failed at once, or if
     the device recorded a failure before; then the parts did not run (Failures,
     above). It calls no function of the OCaml runtime: its caller releases the
-    domain lock. *)
+    domain lock.
 
-val commit_entry : nativeint
-(** [commit_entry] is the address of the device's commit, in the shape
-    [rig_commit_fn] of [rig_edge.h]: it commits the open command buffer, which
-    holds the work of every value not yet committed, whatever [v]. *)
+    [rig_metal_commit] commits the open command buffer, which holds the work of
+    every value not yet committed, whatever [v]. *)
 
 (** {1:timeline Timeline} *)
 

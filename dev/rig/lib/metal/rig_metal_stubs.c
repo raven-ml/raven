@@ -75,6 +75,9 @@ static int family(id<MTLDevice> device) {
   return [device supportsFamily:MTLGPUFamilyMac2] ? 0 : -1;
 }
 
+static const struct rig_driver driver = {rig_metal_room, rig_metal_submit,
+                                         rig_metal_commit};
+
 static intnat open_device(void) API_AVAILABLE(macos(15.0)) {
   id<MTLDevice> device = MTLCreateSystemDefaultDevice();
   if (device == nil) return -no_device;
@@ -85,6 +88,7 @@ static intnat open_device(void) API_AVAILABLE(macos(15.0)) {
     return f >= 0 ? -no_memory : -no_family;
   }
   MTLResidencySetDescriptor *desc = [[MTLResidencySetDescriptor alloc] init];
+  d->driver = &driver;
   d->device = device;
   d->queue = [device newCommandQueueWithMaxCommandBufferCount:ring_slots];
   d->fence = [device newFence];
@@ -459,22 +463,8 @@ value caml_rig_metal_signaled_byte(value v_d) {
   return Val_long(caml_rig_metal_signaled(Long_val(v_d)));
 }
 
-/* The C entries room, submit, commit and split, the first three typed as
-   the edge states. */
-value caml_rig_metal_entries(value unit) {
-  CAMLparam1(unit);
-  CAMLlocal5(room, submit, commit, v_split, t);
-  rig_room_fn *r = rig_metal_room;
-  rig_submit_fn *s = rig_metal_submit;
-  rig_commit_fn *c = rig_metal_commit;
-  room = caml_copy_nativeint((intnat)r);
-  submit = caml_copy_nativeint((intnat)s);
-  commit = caml_copy_nativeint((intnat)c);
-  v_split = caml_copy_nativeint((intnat)split);
-  t = caml_alloc_tuple(4);
-  Store_field(t, 0, room);
-  Store_field(t, 1, submit);
-  Store_field(t, 2, commit);
-  Store_field(t, 3, v_split);
-  CAMLreturn(t);
+/* The C entry rig_metal_split. */
+value caml_rig_metal_split(value unit) {
+  (void)unit;
+  return caml_copy_nativeint((intnat)split);
 }

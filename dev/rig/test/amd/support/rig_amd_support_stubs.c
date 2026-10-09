@@ -87,12 +87,13 @@ value rig_amd_test_data(value v_ba) {
 }
 
 /* The C entries. A part is the ints Rig_amd_support.Edge makes: the queue,
-   the fill, its argument, ring units, segment bytes, the copy's
+   its kind, the fill, its argument, ring units, segment bytes, the copy's
    destination, source and bytes, the counts of [after] indices and of
    words, then the indices, then the words. */
 
 enum {
   part_queue,
+  part_kind,
   part_fill,
   part_arg,
   part_units,
@@ -135,19 +136,27 @@ static void *edge(value v_waits, value v_parts, struct rig_wait **wp,
   for (int i = 0; i < nparts; i++) {
     value k = Field(v_parts, i);
     int na = (int)at(k, part_nafter), nw = (int)at(k, part_nwords);
-    p[i] = (struct rig_part){
-        .queue = (int)at(k, part_queue),
-        .words = nw > 0 ? words : NULL,
-        .n = (size_t)nw,
-        .fill = (int (*)(void *, void *, uint64_t))at(k, part_fill),
-        .arg = (void *)at(k, part_arg),
-        .ring_units = (size_t)at(k, part_units),
-        .segment_bytes = (size_t)at(k, part_bytes),
-        .copy_dst = (uint64_t)at(k, part_dst),
-        .copy_src = (uint64_t)at(k, part_src),
-        .copy_bytes = (uint64_t)at(k, part_copy),
-        .after = na > 0 ? after : NULL,
-        .nafter = na};
+    p[i] = (struct rig_part){.queue = (int)at(k, part_queue),
+                             .kind = (int)at(k, part_kind),
+                             .after = na > 0 ? after : NULL,
+                             .nafter = na};
+    switch (p[i].kind) {
+    case RIG_WORDS:
+      p[i].words.at = nw > 0 ? words : NULL;
+      p[i].words.n = (size_t)nw;
+      break;
+    case RIG_FILL:
+      p[i].fill.fn = (int (*)(void *, void *, uint64_t))at(k, part_fill);
+      p[i].fill.arg = (void *)at(k, part_arg);
+      p[i].fill.ring_units = (size_t)at(k, part_units);
+      p[i].fill.segment_bytes = (size_t)at(k, part_bytes);
+      break;
+    case RIG_COPY:
+      p[i].copy.dst = (uint64_t)at(k, part_dst);
+      p[i].copy.src = (uint64_t)at(k, part_src);
+      p[i].copy.bytes = (uint64_t)at(k, part_copy);
+      break;
+    }
     for (int j = 0; j < na; j++) *after++ = (int)at(k, part_after + j);
     for (int j = 0; j < nw; j++)
       *words++ = (uint32_t)at(k, part_after + na + j);
@@ -157,33 +166,37 @@ static void *edge(value v_waits, value v_parts, struct rig_wait **wp,
   return mem;
 }
 
-/* What the room entry [v_entry] answers for [v_parts] on the device
-   [v_self]. */
-value rig_amd_test_room(value v_entry, value v_self, value v_parts) {
+/* The driver whose C state is [v_self]. */
+static const struct rig_driver *driver_of(value v_self) {
+  return *(const struct rig_driver **)Nativeint_val(v_self);
+}
+
+/* What the room check of the device [v_self] answers for [v_parts]. */
+value rig_amd_test_room(value v_self, value v_parts) {
   struct rig_wait *w;
   struct rig_part *p;
   void *mem = edge(Atom(0), v_parts, &w, &p);
-  rig_room_fn *room = (rig_room_fn *)Nativeint_val(v_entry);
-  int r = room((void *)Nativeint_val(v_self), p, (int)Wosize_val(v_parts));
+  int r = driver_of(v_self)->room((void *)Nativeint_val(v_self), p,
+                                  (int)Wosize_val(v_parts));
   free(mem);
   return Val_int(r);
 }
 
-/* What the submit entry [v_entry] answers for [v_parts] as the value [v_v]
-   after the waits [v_waits] (address, value pairs): [None], or [Some why]
-   for RIG_FAILED. */
-value rig_amd_test_submit(value v_entry, value v_self, value v_v,
-                          value v_waits, value v_parts) {
-  CAMLparam5(v_entry, v_self, v_v, v_waits, v_parts);
+/* What the submit of the device [v_self] answers for [v_parts] as the value
+   [v_v] after the waits [v_waits] (address, value pairs): [None], or
+   [Some why] for RIG_FAILED. */
+value rig_amd_test_submit(value v_self, value v_v, value v_waits,
+                          value v_parts) {
+  CAMLparam4(v_self, v_v, v_waits, v_parts);
   CAMLlocal1(v_why);
   struct rig_wait *w;
   struct rig_part *p;
   void *mem = edge(v_waits, v_parts, &w, &p);
-  rig_submit_fn *submit = (rig_submit_fn *)Nativeint_val(v_entry);
   const char *failure = NULL;
-  int r = submit((void *)Nativeint_val(v_self),
-                 (uint64_t)Long_val(v_v), w, (int)(Wosize_val(v_waits) / 2), p,
-                 (int)Wosize_val(v_parts), NULL, 0, &failure);
+  int r = driver_of(v_self)->submit(
+      (void *)Nativeint_val(v_self), (uint64_t)Long_val(v_v), w,
+      (int)(Wosize_val(v_waits) / 2), p, (int)Wosize_val(v_parts), NULL, 0,
+      &failure);
   free(mem);
   if (r != RIG_FAILED) CAMLreturn(Val_none);
   v_why = caml_copy_string(failure ? failure : "");

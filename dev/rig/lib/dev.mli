@@ -190,7 +190,7 @@ end
 
 val commit : device -> int -> unit
 (** [commit d v] commits [d]'s submitted work under [d]'s turn
-    ({!Rig.Driver.commit_entry}) unless [v] is committed, waiting for the turn.
+    ({!Rig.Driver.edge}) unless [v] is committed, waiting for the turn.
     A commit that fails loses [d]; on a lost device it does nothing. *)
 
 val signaled : device -> int

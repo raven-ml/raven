@@ -162,13 +162,6 @@ external last : int -> int = "caml_rig_nv_last" [@@noalloc]
 external now_ms : unit -> int = "caml_rig_nv_now_ms" [@@noalloc]
 external raise_word : int -> unit = "caml_rig_nv_raise" [@@noalloc]
 external end_channels : int -> unit = "caml_rig_nv_end" [@@noalloc]
-external room_entry_address : unit -> int = "caml_rig_nv_room_entry" [@@noalloc]
-
-external submit_entry_address : unit -> int = "caml_rig_nv_submit_entry"
-[@@noalloc]
-
-external commit_entry_address : unit -> int = "caml_rig_nv_commit_entry"
-[@@noalloc]
 
 (* RM parameters *)
 
@@ -290,7 +283,7 @@ type capability = Abi.Gpu.t
 
 let capability (T d) = d.capability
 let capability_key = Abi.Gpu.key
-let self (T d) = Nativeint.of_int d.self
+let edge (T d) = Nativeint.of_int d.self
 
 (* Gives [m] back to its path. The device holds [m] no more whatever the path
    answers: a path that fails to take it back keeps it. *)
@@ -728,12 +721,6 @@ let unload (T d) c =
     invalid_arg "Rig_nv.unload: the image is another device's";
   if not (Atomic.compare_and_set c.loaded true false) then
     invalid_arg "Rig_nv.unload: the image was unloaded"
-
-(* Work *)
-
-let room_entry = Nativeint.of_int (room_entry_address ())
-let submit_entry = Nativeint.of_int (submit_entry_address ())
-let commit_entry = Nativeint.of_int (commit_entry_address ())
 
 (* Timeline *)
 

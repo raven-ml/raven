@@ -62,6 +62,17 @@ static void poll_pause(void) {
 
 /* Making a device */
 
+/* Each value's hand-over writes its release: a commit does nothing. */
+static int rig_nv_commit(void *self, uint64_t v, const char **failure) {
+  (void)self;
+  (void)v;
+  (void)failure;
+  return RIG_OK;
+}
+
+static const struct rig_driver driver = {rig_nv_room, rig_nv_submit,
+                                         rig_nv_commit};
+
 /* A device whose timeline word is the host's 64-bit word at [v_word], the
    GPU's at [v_word_gpu], followed by its two join words, and whose
    notifications hold their error at [v_info32] and its status at
@@ -70,6 +81,7 @@ value caml_rig_nv_create(value v_word, value v_word_gpu, value v_info32,
                          value v_status) {
   struct device *d = calloc(1, sizeof *d);
   if (d == NULL) return Val_long(0);
+  d->driver = &driver;
   d->word = Pointer_val(v_word);
   d->word_gpu = (uint64_t)Long_val(v_word_gpu);
   d->info32_at = (uint32_t)Long_val(v_info32);
@@ -265,11 +277,7 @@ value caml_rig_nv_now_ms(value unit) {
    never moves backwards. */
 value caml_rig_nv_raise(value v_self) {
   struct device *d = Device_val(v_self);
-  uint64_t last = atomic_load_explicit(&d->last, memory_order_relaxed);
-  uint64_t w = atomic_load_explicit(d->word, memory_order_acquire);
-  while ((int64_t)(w - last) < 0 &&
-         !atomic_compare_exchange_weak(d->word, &w, last)) {
-  }
+  rig_raise(d->word, atomic_load_explicit(&d->last, memory_order_relaxed));
   return Val_unit;
 }
 
@@ -288,31 +296,3 @@ value caml_rig_nv_end(value v_self) {
 
 /* The edge */
 
-/* Each value's hand-over writes its release: a commit does nothing. */
-static int rig_nv_commit(void *self, uint64_t v, const char **failure) {
-  (void)self;
-  (void)v;
-  (void)failure;
-  return RIG_OK;
-}
-
-/* Assigned to the edge's types, so a signature that drifts from rig_edge.h
-   is a compile error. */
-static rig_room_fn *const room_entry = rig_nv_room;
-static rig_submit_fn *const submit_entry = rig_nv_submit;
-static rig_commit_fn *const commit_entry = rig_nv_commit;
-
-value caml_rig_nv_room_entry(value unit) {
-  (void)unit;
-  return Val_long((intnat)room_entry);
-}
-
-value caml_rig_nv_submit_entry(value unit) {
-  (void)unit;
-  return Val_long((intnat)submit_entry);
-}
-
-value caml_rig_nv_commit_entry(value unit) {
-  (void)unit;
-  return Val_long((intnat)commit_entry);
-}
