@@ -146,7 +146,8 @@ static void two_sum(double a, double b, double *s, double *t) {
    among the operands or init asks for IEEE's answer, which the plain sum
    gives in any order: NaN from a NaN, ∞·0 or ∞ - ∞, else the infinity. An
    integer or bool y lies between the casts of the ends of the sums the
-   bound allows. -1 if y misses an answer the cast fixes. */
+   bound allows. -1 if y misses an answer the cast fixes, or is NaN where
+   the sum is finite. */
 static double float_ratio(const view *a, const view *b, const view *init,
                           const view *y, int64_t k, int acc, int flush,
                           int64_t z, int64_t i, int64_t j) {
@@ -192,6 +193,8 @@ static double float_ratio(const view *a, const view *b, const view *init,
   /* The exact sum rounded once is right, past y's range too. */
   double r = rounded(y->dtype, s);
   if (got == r || (isnan(got) && isnan(r))) return 0;
+  /* Its error would be NaN, which no bound orders. */
+  if (isnan(got)) return -1;
   double allowed = slack + ulp(y->dtype, fabs(s) + g * mag) / 2;
   double err = fabs(got - s);
   return err == 0 ? 0 : err / allowed;

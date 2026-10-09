@@ -20,7 +20,7 @@ type result = {
   wrong : int;
       (** The outputs that differ from an exact answer: an integer accumulator's
           sum, or the NaN or infinity of a float sum with a NaN or an infinity
-          among its terms. *)
+          among its terms; and the NaNs of finite float sums. *)
   at : int;
       (** The first wrong output, else the worst one, as [z·m·n + i·n + j], or
           [-1] if every output is exact. *)

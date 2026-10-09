@@ -22,7 +22,8 @@ typedef struct {
 
 /* A check's outcome. [wrong] outputs differ from an answer that is exact:
    an integer accumulator's sum, or the NaN or infinity IEEE arithmetic
-   gives a float sum with a NaN or an infinity among its terms. Of the other
+   gives a float sum with a NaN or an infinity among its terms; and a NaN
+   where the float sum is finite, which has no error to bound. Of the other
    float outputs, [worst] is the largest ratio of an output's error to its
    allowance, and an output is within its bound iff its ratio is at most 1.
    [at] is the first wrong output, else the worst one, as z·m·n + i·n + j,
