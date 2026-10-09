@@ -8,9 +8,9 @@
    result's bits depend on its shape alone.
 
    A plan declines a call, and nx's expansion computes it, when an operand,
-   init or y is complex or narrower than a byte; a float operand is wider
-   than a float accumulator, which would round it before the sum; init is
-   of the other kind than the accumulator; an integer meets a float
+   init or y is complex or narrower than a byte; a float operand or init
+   is wider than a float accumulator, which would round it before the sum;
+   init is of the other kind than the accumulator; an integer meets a float
    accumulator or the reverse; the batch, free or contracting axes do not
    merge into one axis each; the batch is above 65,535 (the grid's z); or
    m, n or k is above 2^31 - 1. */
@@ -49,9 +49,9 @@ enum { ACC_f32, ACC_f64, ACC_i64 };
 enum { NX_CUDA_TILES(TILE_INDEX) T_COUNT };
 #undef TILE_INDEX
 
-/* An instance's arguments, by family: MMA its operands' kind, a's and b's contiguous axes and its tile; SIMT
-   its accumulator in [kind] and its side in [a]; SKINNY its accumulator in
-   [kind]. */
+/* An instance's arguments, by family: MMA its operands' kind, a's and b's
+   contiguous axes and its tile; SIMT its accumulator in [kind] and its side
+   in [a]; SKINNY its accumulator in [kind]. */
 typedef struct {
   int family, kind, a, b, tile;
 } instance;
@@ -282,7 +282,8 @@ int nx_cuda_plan_contract(const nx_cuda_contract_in *in,
   if (!summable(a->dtype) || !summable(b->dtype) || !summable(y->dtype) ||
       (init && (!summable(init->dtype) || is_int(init->dtype) == float_acc)) ||
       (float_acc && (bytes_of(a->dtype) > bytes_of(acc) ||
-                     bytes_of(b->dtype) > bytes_of(acc))))
+                     bytes_of(b->dtype) > bytes_of(acc) ||
+                     (init && bytes_of(init->dtype) > bytes_of(acc)))))
     return NX_NOT_COMPUTED;
 
   contract_params p;

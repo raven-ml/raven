@@ -664,10 +664,14 @@ let any_operand g (D.Any d as dt) ~batch ~rows ~k ~broadcast ~seed : S.operand =
 (* For every operand, accumulator and output dtypes, the plan declines, or its
    result is within the error bound (float sums) or exact (integer sums), the
    output written as a cast from the accumulator writes it. *)
-let every_quadruple ((a, b, acc, out), (batch, m, n, k), broadcast) =
+let every_quadruple ((a, b, acc, out), init, (batch, m, n, k), broadcast) =
   let g = S.gpu () in
   let x = any_operand g a ~batch ~rows:m ~k ~broadcast:false ~seed:1 in
   let w = any_operand g b ~batch ~rows:n ~k ~broadcast ~seed:2 in
+  let operand d =
+    any_operand g d ~batch ~rows:m ~k:n ~broadcast:false ~seed:3
+  in
+  let init = Option.map operand init in
   let (D.Any o) = out in
   let wy = Int.max 1 (D.bits o / 8) in
   let buffer = S.buffer g (wy * batch * m * n) in
@@ -683,13 +687,14 @@ let every_quadruple ((a, b, acc, out), (batch, m, n, k), broadcast) =
   in
   let float_dt (D.Any d) = D.is D.Float d in
   match
-    S.contract g ~a:x ~b:w ~y
+    S.contract g ~a:x ~b:w ?init ~y
       ~batch:[ (0, 0) ]
       ~contracting:[ (2, 2) ]
       ~acc:(code acc) ()
   with
   | None -> collect "declines"
   | Some p ->
+      cover "an init" (Option.is_some init);
       cover "a float sum" (float_dt acc);
       cover "an integer sum" (not (float_dt acc));
       cover "an output of the other kind" (float_dt acc <> float_dt out);
@@ -697,8 +702,8 @@ let every_quadruple ((a, b, acc, out), (batch, m, n, k), broadcast) =
       cover "a broadcast operand" broadcast;
       S.run g p;
       let r =
-        Nx_gpu_ref.contract ~a:(view x) ~b:(view w) ~y:(view y) ~batch ~m ~n ~k
-          ~acc:(code acc) ~samples:512 ()
+        Nx_gpu_ref.contract ~a:(view x) ~b:(view w) ?init:(Option.map view init)
+          ~y:(view y) ~batch ~m ~n ~k ~acc:(code acc) ~samples:512 ()
       in
       equal ~msg:(strf "wrong outputs, the first %d" r.at) int 0 r.wrong;
       at_most ~msg:(strf "worst at output %d" r.at) float_exact ~than:1. r.worst
@@ -741,24 +746,33 @@ let quadruples =
       ]
   in
   let shape = of_list [ (2, 40, 70, 300); (2, 3, 70, 300) ] in
-  let pp ppf ((a, b, acc, out), (batch, m, n, k), broadcast) =
-    Format.fprintf ppf "%a x %a acc %a -> %a, %dx%dx%dx%d%s" pp_dtype a pp_dtype
-      b pp_dtype acc pp_dtype out batch m n k
+  let pp ppf ((a, b, acc, out), init, (batch, m, n, k), broadcast) =
+    Format.fprintf ppf "%a x %a acc %a -> %a%s, %dx%dx%dx%d%s" pp_dtype a
+      pp_dtype b pp_dtype acc pp_dtype out
+      (match init with None -> "" | Some (D.Any d) -> ", init " ^ D.name d)
+      batch m n k
       (if broadcast then ", b broadcast" else "")
   in
-  with_pp pp (triple (quad operand operand acc any) shape bool)
+  with_pp pp (quad (quad operand operand acc any) (option operand) shape bool)
 
-(* A float operand wider than a float accumulator would be rounded before it is
-   summed, and the kernels read no complex element: the plan declines. *)
-let declines (a, b, acc, out) =
+(* A float operand or init wider than a float accumulator would be rounded
+   before it is summed, and the kernels read no complex element: the plan
+   declines. *)
+let declines (a, b, acc, out, init) =
   let g = S.gpu () in
   let x = any_operand g (dt a) ~batch:1 ~rows:3 ~k:5 ~broadcast:false ~seed:1 in
   let w = any_operand g (dt b) ~batch:1 ~rows:4 ~k:5 ~broadcast:false ~seed:2 in
   let y =
     any_operand g (dt out) ~batch:1 ~rows:3 ~k:4 ~broadcast:false ~seed:3
   in
+  let init =
+    Option.map
+      (fun d ->
+        any_operand g (dt d) ~batch:1 ~rows:3 ~k:4 ~broadcast:false ~seed:4)
+      init
+  in
   let p =
-    S.contract g ~a:x ~b:w ~y
+    S.contract g ~a:x ~b:w ?init ~y
       ~batch:[ (0, 0) ]
       ~contracting:[ (2, 2) ]
       ~acc:(code (dt acc))
@@ -807,16 +821,20 @@ let tests =
         prop ~count:400 "every dtype quadruple: declines or within the bound"
           quadruples every_quadruple;
         cases
-          ~name:(fun (a, b, acc, out) ->
-            strf "%s x %s acc %s -> %s" a b acc out)
+          ~name:(fun (a, b, acc, out, init) ->
+            strf "%s x %s acc %s -> %s%s" a b acc out
+              (Option.fold ~none:"" ~some:(( ^ ) ", init ") init))
           "declines what it would round or cannot read"
           [
-            ("float64", "float64", "float32", "float32");
-            ("float64", "float32", "float32", "float64");
-            ("complex64", "complex64", "float32", "float32");
-            ("float32", "complex64", "float64", "float64");
-            ("float32", "float32", "complex64", "complex64");
-            ("float32", "float32", "float32", "complex64");
+            ("float64", "float64", "float32", "float32", None);
+            ("float64", "float32", "float32", "float64", None);
+            ("complex64", "complex64", "float32", "float32", None);
+            ("float32", "complex64", "float64", "float64", None);
+            ("float32", "float32", "complex64", "complex64", None);
+            ("float32", "float32", "float32", "complex64", None);
+            ("float32", "float32", "float32", "float64", Some "float64");
+            ("bfloat16", "bfloat16", "float32", "float32", Some "float64");
+            ("float32", "float32", "float32", "float32", Some "int32");
           ]
           declines;
       ];
