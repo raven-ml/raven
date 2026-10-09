@@ -1254,11 +1254,19 @@ let fill_at_the_end (room, first, second) =
   equal (list int) ~msg:"its words, handed over in order" (Array.to_list ws)
     (List.filter is_marker (handed q start (put ())))
 
+(* Room and calls of any size, and a third of them a first call of exactly the
+   room, which a draw of three sizes alone meets once in about 40 cases. *)
 let at_the_end =
-  Gen.with_pp
+  let open Gen in
+  let call = int_range 1 24 in
+  let exact =
+    let* room = call in
+    map (fun second -> (room, room, second)) call
+  in
+  with_pp
     (fun ppf (r, a, b) ->
       Format.fprintf ppf "%d words left; calls of %d and %d" r a b)
-    Gen.(triple (int_range 1 40) (int_range 1 24) (int_range 1 24))
+    (frequency [ (2, triple (int_range 1 40) call call); (1, exact) ])
 
 (* An AQL queue's scratch
 
