@@ -108,12 +108,14 @@ val programs_kept : unit -> int
 (** [programs_kept ()] is the number of programs the calling domain keeps. *)
 
 val op1 :
+  by:string ->
   Nx_kernel.Prog.op1 ->
   ('w, 'r) dtype ->
   ('v, 's, 'd) t ->
   (('w, 'r, 'd) t * unit) prim
 
 val op2 :
+  by:string ->
   Nx_kernel.Prog.op2 ->
   ('w, 'r) dtype ->
   ('v, 's, 'd) t ->
@@ -121,13 +123,17 @@ val op2 :
   (('w, 'r, 'd) t * unit) prim
 
 val op3 :
+  by:string ->
   Nx_kernel.Prog.op3 ->
   ('a, 'b, 'd) t ->
   ('v, 's, 'd) t ->
   ('v, 's, 'd) t ->
   (('v, 's, 'd) t * unit) prim
-(** [opN k dt x …] is the map of the one node [k] over [x …], of [x]'s shape,
-    with result dtype [dt] ([op3]'s: its second operand's). *)
+(** [opN ~by k dt x …] is the map of the one node [k] over [x …], of [x]'s
+    shape, with result dtype [dt] ([op3]'s: its second operand's).
+
+    Raises [Invalid_argument] naming [by] where [k] does not take the operands'
+    dtypes ({!Nx_kernel.Prog.accepts2} and its siblings). *)
 
 val prepare :
   by:string ->

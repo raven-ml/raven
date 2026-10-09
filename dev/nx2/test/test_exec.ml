@@ -204,6 +204,11 @@ let kernels =
           C.reset ();
           invalid ~by:"Nx.add" (fun () -> Nx.add a b);
           equal int 0 (C.calls ()));
+      test "a kind refusing its operands' dtypes raises naming the function"
+        (fun () ->
+          let a = on_host Plain D.Bool [| 2 |] [| true; false |] in
+          raises (Invalid_argument "Nx.add: Add does not take bool, bool")
+            (fun () -> Nx.add a a));
       test "an operation computes with its set's kernels" (fun () ->
           let a = to_count (on_host Plain D.Float32 [| 2 |] [| 1.; 2. |]) in
           C.reset ();

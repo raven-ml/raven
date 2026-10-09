@@ -485,6 +485,12 @@ let program node ins =
 
 let programs_kept () = Hashtbl.length (Domain.DLS.get programs)
 
+(* Raises naming [by]: [node] does not take operands of [ins]. *)
+let refused ~by node ins =
+  invalid_argf "%s: %s does not take %s" by (kind node)
+    (String.concat ", "
+       (Array.to_list (Array.map (fun (D.Any dt) -> D.name dt) ins)))
+
 let one_node node dt ins loads =
   let shape = match loads.(0) with Plain x -> shape x in
   Map
@@ -495,20 +501,22 @@ let one_node node dt ins loads =
       loads;
     }
 
-let op1 k dt x =
-  one_node (P.Op1 (k, D.Any dt, 0)) dt [| D.Any (dtype x) |] [| Plain x |]
+let op1 ~by k dt x =
+  let node = P.Op1 (k, D.Any dt, 0) and ins = [| D.Any (dtype x) |] in
+  if not (P.accepts1 k (dtype x) dt) then refused ~by node ins;
+  one_node node dt ins [| Plain x |]
 
-let op2 k dt x y =
+let op2 ~by k dt x y =
   let i = D.Any (dtype x) in
-  one_node (P.Op2 (k, 0, 1)) dt [| i; i |] [| Plain x; Plain y |]
+  let node = P.Op2 (k, 0, 1) and ins = [| i; i |] in
+  if not (P.accepts2 k (dtype x)) then refused ~by node ins;
+  one_node node dt ins [| Plain x; Plain y |]
 
-let op3 k c x y =
+let op3 ~by k c x y =
   let i = D.Any (dtype x) in
-  one_node
-    (P.Op3 (k, 0, 1, 2))
-    (dtype x)
-    [| D.Any (dtype c); i; i |]
-    [| Plain c; Plain x; Plain y |]
+  let node = P.Op3 (k, 0, 1, 2) and ins = [| D.Any (dtype c); i; i |] in
+  if not (P.accepts3 k (dtype c) (dtype x)) then refused ~by node ins;
+  one_node node (dtype x) ins [| Plain c; Plain x; Plain y |]
 
 (* Where a route reads operand [i]: [None] where every operand is of every
    set. *)

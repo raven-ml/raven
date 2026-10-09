@@ -30,15 +30,15 @@ let eval ~by op =
 
 (* The one-node maps, built and evaluated: the paths off the fast one. *)
 let eval1 ~by k dt x =
-  let v, () = eval ~by (Prim.op1 k dt x) in
+  let v, () = eval ~by (Prim.op1 ~by k dt x) in
   v
 
 let eval2 ~by k dt x y =
-  let v, () = eval ~by (Prim.op2 k dt x y) in
+  let v, () = eval ~by (Prim.op2 ~by k dt x y) in
   v
 
 let eval3 ~by k c x y =
-  let v, () = eval ~by (Prim.op3 k c x y) in
+  let v, () = eval ~by (Prim.op3 ~by k c x y) in
   v
 
 let apply1 ~by k dt x =

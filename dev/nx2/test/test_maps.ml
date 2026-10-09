@@ -44,7 +44,7 @@ let elements (type v s) (x : (v, s, b) Value.t) : v array =
 let first (x, ()) = x
 
 (* A one-node map built and run: no interpretation reaches the engine here. *)
-let slow2 ~by k dt x y = first (Exec.run ~by (Prim.op2 k dt x y))
+let slow2 ~by k dt x y = first (Exec.run ~by (Prim.op2 ~by k dt x y))
 
 let maps =
   group "maps"
@@ -278,7 +278,8 @@ let donated_add x =
   let d = Exec.donate ~by:"t" x in
   let y =
     first
-      (Exec.run ~by:"t" (Prim.op2 (Binary Add) D.Float32 d (f32 [| 1.; 1. |])))
+      (Exec.run ~by:"t"
+         (Prim.op2 ~by:"t" (Binary Add) D.Float32 d (f32 [| 1.; 1. |])))
   in
   (y, Rig.Buffer.overlaps (A.buffer (array_of x)) (A.buffer (array_of y)))
 
