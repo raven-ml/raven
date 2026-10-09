@@ -1,10 +1,16 @@
 # /// script
 # requires-python = ">=3.10"
 # ///
-"""Generates defs.ml, the tables of rig_nv: the resource manager's
-classes, controls and parameter layouts the driver allocates channels and
-reads faults with, per release of NVIDIA's driver where they differ, and the
-names of the errors and faults it reports.
+"""Generates the tables of rig_nv and rig_nv_nvidia, each library's
+defs.ml, per release of NVIDIA's driver where they differ:
+
+- lib/nv/defs.ml: the resource manager's classes, controls and parameter
+  layouts the driver allocates channels and reads faults with, and the
+  names of the errors and faults it reports;
+- lib/nv/nvidia/defs.ml: the escapes of NVIDIA's kernel driver and the
+  layouts of their parameters, the resource manager's classes and controls
+  a path opens a GPU with, the unified memory driver's ioctls, and each
+  release's status names.
 
 Run from the worktree root:
 
@@ -12,14 +18,15 @@ Run from the worktree root:
   uv run dev/rig/lib/nv/gen/gen.py --check
   uv run dev/rig/lib/nv/gen/gen.py --excerpt [--check]
 
-The inputs are excerpts of NVIDIA's headers, in headers/RELEASE/: each is a
-header's licence notice and the definitions this script reads, verbatim and
-in the header's order, with the definitions they depend on. --excerpt makes
-them from the upstream headers of each release, each pinned in pins.json by
-URL and SHA-256 and checked against its pin; downloads are kept in --cache,
-and --pin records the digests of headers not yet pinned. Generating reads the
-excerpts alone, offline. --check generates into memory and fails if a
-committed file differs.
+The inputs are excerpts of NVIDIA's headers, in headers/LIBRARY/RELEASE/:
+each is a header's licence notice and the definitions that library reads,
+verbatim and in the header's order, with the definitions they depend on, as
+a 64-bit Linux build compiles them. --excerpt makes them from the upstream
+headers of each release, each pinned in pins.json by URL and SHA-256 and
+checked against its pin; downloads are kept in --cache, and --pin records
+the digests of headers not yet pinned. Generating reads the excerpts alone,
+offline. --check generates into memory and fails if a committed file
+differs.
 
 Text is read and written as latin-1, one character per byte, so every byte
 of a header round-trips into its excerpt as upstream wrote it.
@@ -34,8 +41,10 @@ table is a literal, which the compiler lays out as static data.
 """
 
 import argparse
+import dataclasses
 import hashlib
 import json
+import os
 import pathlib
 import re
 import sys
@@ -44,7 +53,7 @@ import urllib.request
 HERE = pathlib.Path(__file__).resolve().parent
 HEADERS = HERE / "headers"
 PINS = HERE / "pins.json"
-OUT = HERE.parent / "defs.ml"
+LIB = HERE.parent
 
 KERNEL = "https://raw.githubusercontent.com/NVIDIA/open-gpu-kernel-modules/"
 # The driver releases, by the branch the RM reports: the tree each is read
@@ -56,84 +65,255 @@ RELEASES = {
     615: ("615.71.09", "615.71.09"),
 }
 SDK = "src/common/sdk/nvidia/inc/"
+UNIX = "src/nvidia/arch/nvalloc/unix/include/"
+UVM = "kernel-open/nvidia-uvm/"
+COMMON = "kernel-open/common/inc/"
 
-# Each excerpt and the header it is cut from, in each release's tree. A name
-# is read from the first header that defines it.
-SOURCES = {
-    "g_allclasses.h": "src/nvidia/generated/g_allclasses.h",
-    "nvlimits.h": SDK + "nvlimits.h",
-    "nvos.h": SDK + "nvos.h",
-    "alloc_channel.h": SDK + "alloc/alloc_channel.h",
-    "nvgputypes.h": SDK + "nvgputypes.h",
-    "nverror.h": SDK + "nverror.h",
-    "cl83de.h": SDK + "class/cl83de.h",
-    "clc56f.h": SDK + "class/clc56f.h",
-    "cl2080_notification.h": SDK + "class/cl2080_notification.h",
-    "ctrla06c.h": SDK + "ctrl/ctrla06c.h",
-    "ctrla06fgpfifo.h": SDK + "ctrl/ctrla06f/ctrla06fgpfifo.h",
-    "ctrlc36f.h": SDK + "ctrl/ctrlc36f.h",
-    "ctrl2080perf.h": SDK + "ctrl/ctrl2080/ctrl2080perf.h",
-    "ctrl83dedebug.h": SDK + "ctrl/ctrl83de/ctrl83dedebug.h",
-    "dev_fault.h": "kernel-open/nvidia-uvm/hwref/ampere/ga100/dev_fault.h",
-}
 
-# Constants, the same in every release.
-CONSTANTS = [
-    # classes
-    "KEPLER_CHANNEL_GROUP_A", "FERMI_CONTEXT_SHARE_A", "GT200_DEBUGGER",
-    # controls
-    "NVA06C_CTRL_CMD_GPFIFO_SCHEDULE", "NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN", "NV2080_CTRL_CMD_PERF_BOOST",
-    "NV2080_CTRL_PERF_BOOST_FLAGS_CMD_BOOST_TO_MAX", "NV2080_CTRL_PERF_BOOST_FLAGS_CUDA_YES",
-    "NV2080_CTRL_PERF_BOOST_FLAGS_CUDA_PRIORITY_HIGH", "NV2080_CTRL_PERF_BOOST_DURATION_INFINITE",
-    "NV83DE_CTRL_CMD_DEBUG_READ_ALL_SM_ERROR_STATES", "NV83DE_CTRL_CMD_DEBUG_READ_MMU_FAULT_INFO",
-    # allocations
-    "NV2080_ENGINE_TYPE_GRAPHICS", "NV_CTXSHARE_ALLOCATION_FLAGS_SUBCONTEXT_ASYNC",
-    # a channel's error notifier
-    "NV_CHANNELGPFIFO_NOTIFICATION_TYPE_ERROR", "NV_CHANNELGPFIFO_NOTIFICATION_TYPE__SIZE_1",
-]
+@dataclasses.dataclass
+class Defs:
+    """A library's defs.ml and what it reads from its excerpts."""
 
-# Bit fields of 32-bit words, "hi:lo" in the headers: (lowest bit, bits).
-FIELDS = [
-    "NV2080_CTRL_PERF_BOOST_FLAGS_CMD", "NV2080_CTRL_PERF_BOOST_FLAGS_CUDA",
-    "NV2080_CTRL_PERF_BOOST_FLAGS_CUDA_PRIORITY", "NV_CTXSHARE_ALLOCATION_FLAGS_SUBCONTEXT",
-]
+    # The directory of its excerpts under headers/, and its defs.ml.
+    name: str
+    out: pathlib.Path
+    # Each excerpt and the header it is cut from, in each release's tree. A
+    # name is read from the first header that defines it.
+    sources: dict
+    # Constants, the same in every release.
+    constants: list
+    # Bit fields of 32-bit words, "hi:lo" in the headers: (lowest bit, bits).
+    fields: list
+    # Structs, by C name: the module they become and the fields read ("a__b"
+    # for a field b of a struct a; "a?" for a field a release may lack).
+    structs: dict
+    # The structs whose layouts differ between the releases.
+    per_release: set
+    # Name tables: (OCaml name, header, the defines read, as a pattern whose
+    # group 1 is the name an entry carries), and those that differ between
+    # the releases.
+    tables: list = ()
+    tables_per_release: frozenset = frozenset()
+    # The statuses read by name from STATUS_HEADER, the same in every
+    # release. A library that reads them also gets each release's table of
+    # every status.
+    statuses: list = ()
+    # The headers some releases lack, by the first release that has each.
+    since: dict = dataclasses.field(default_factory=dict)
 
-# Structs, by C name: the module they become and the fields read ("a__b" for
-# a field b of a struct a).
-STRUCTS = {
-    "NV_CTXSHARE_ALLOCATION_PARAMETERS": ("Ctxshare_alloc", ["hVASpace", "flags"]),
-    "NV83DE_ALLOC_PARAMETERS": ("Nv83de_alloc", ["hAppClient", "hClass3dObject"]),
-    "NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN_PARAMS": ("Work_submit_token", ["workSubmitToken"]),
-    "NV2080_CTRL_PERF_BOOST_PARAMS": ("Perf_boost", ["flags", "duration"]),
-    "NV83DE_CTRL_DEBUG_READ_ALL_SM_ERROR_STATES_PARAMS": ("Sm_error_states", [
-        "hTargetChannel", "numSMsToRead", "smErrorStateArray", "mmuFault__valid"]),
-    "NV83DE_SM_ERROR_STATE_REGISTERS": ("Sm_error_state", ["hwwGlobalEsr", "hwwWarpEsr", "hwwWarpEsrPc64"]),
-    "NV83DE_CTRL_DEBUG_READ_MMU_FAULT_INFO_PARAMS": ("Mmu_fault_info", ["mmuFaultInfoList", "count"]),
-    "NV83DE_CTRL_DEBUG_READ_MMU_FAULT_INFO_ENTRY": ("Mmu_fault_entry", ["faultAddress", "faultType", "accessType"]),
-    "Nvc56fControl": ("Userd", ["GPGet", "GPPut"]),
-    "NvNotification": ("Notification", ["info32", "info16", "status"]),
-    "NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS": ("Channel_group_alloc", ["engineType"]),
-    "NV_CHANNELGPFIFO_ALLOCATION_PARAMETERS": ("Gpfifo_alloc", [
-        "hObjectError", "hObjectBuffer", "gpFifoOffset", "gpFifoEntries", "hContextShare", "hUserdMemory",
-        "userdOffset"]),
-    "NVA06C_CTRL_GPFIFO_SCHEDULE_PARAMS": ("Group_schedule", ["bEnable"]),
-}
+    def headers(self, r):
+        """The headers of release [r]."""
+        return [h for h in self.sources if r >= self.since.get(h, 0)]
 
-# The tables that differ between the releases: later releases add errors.
-TABLES_PER_RELEASE = {"robust_channel_errors"}
 
-# The structs whose layouts differ between the releases.
-PER_RELEASE = {"NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS", "NV_CHANNELGPFIFO_ALLOCATION_PARAMETERS",
-               "NVA06C_CTRL_GPFIFO_SCHEDULE_PARAMS"}
+NV = Defs(
+    name="nv",
+    out=LIB / "defs.ml",
+    sources={
+        "g_allclasses.h": "src/nvidia/generated/g_allclasses.h",
+        "nvlimits.h": SDK + "nvlimits.h",
+        "nvos.h": SDK + "nvos.h",
+        "alloc_channel.h": SDK + "alloc/alloc_channel.h",
+        "nvgputypes.h": SDK + "nvgputypes.h",
+        "nverror.h": SDK + "nverror.h",
+        "cl83de.h": SDK + "class/cl83de.h",
+        "clc56f.h": SDK + "class/clc56f.h",
+        "cl2080_notification.h": SDK + "class/cl2080_notification.h",
+        "ctrla06c.h": SDK + "ctrl/ctrla06c.h",
+        "ctrla06fgpfifo.h": SDK + "ctrl/ctrla06f/ctrla06fgpfifo.h",
+        "ctrlc36f.h": SDK + "ctrl/ctrlc36f.h",
+        "ctrl2080perf.h": SDK + "ctrl/ctrl2080/ctrl2080perf.h",
+        "ctrl83dedebug.h": SDK + "ctrl/ctrl83de/ctrl83dedebug.h",
+        "dev_fault.h": UVM + "hwref/ampere/ga100/dev_fault.h",
+    },
+    constants=[
+        # classes
+        "KEPLER_CHANNEL_GROUP_A", "FERMI_CONTEXT_SHARE_A", "GT200_DEBUGGER",
+        # controls
+        "NVA06C_CTRL_CMD_GPFIFO_SCHEDULE", "NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN",
+        "NV2080_CTRL_CMD_PERF_BOOST", "NV2080_CTRL_PERF_BOOST_FLAGS_CMD_BOOST_TO_MAX",
+        "NV2080_CTRL_PERF_BOOST_FLAGS_CUDA_YES", "NV2080_CTRL_PERF_BOOST_FLAGS_CUDA_PRIORITY_HIGH",
+        "NV2080_CTRL_PERF_BOOST_DURATION_INFINITE", "NV83DE_CTRL_CMD_DEBUG_READ_ALL_SM_ERROR_STATES",
+        "NV83DE_CTRL_CMD_DEBUG_READ_MMU_FAULT_INFO",
+        # allocations
+        "NV2080_ENGINE_TYPE_GRAPHICS", "NV_CTXSHARE_ALLOCATION_FLAGS_SUBCONTEXT_ASYNC",
+        # a channel's error notifier
+        "NV_CHANNELGPFIFO_NOTIFICATION_TYPE_ERROR", "NV_CHANNELGPFIFO_NOTIFICATION_TYPE__SIZE_1",
+    ],
+    fields=[
+        "NV2080_CTRL_PERF_BOOST_FLAGS_CMD", "NV2080_CTRL_PERF_BOOST_FLAGS_CUDA",
+        "NV2080_CTRL_PERF_BOOST_FLAGS_CUDA_PRIORITY", "NV_CTXSHARE_ALLOCATION_FLAGS_SUBCONTEXT",
+    ],
+    structs={
+        "NV_CTXSHARE_ALLOCATION_PARAMETERS": ("Ctxshare_alloc", ["hVASpace", "flags"]),
+        "NV83DE_ALLOC_PARAMETERS": ("Nv83de_alloc", ["hAppClient", "hClass3dObject"]),
+        "NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN_PARAMS": ("Work_submit_token", ["workSubmitToken"]),
+        "NV2080_CTRL_PERF_BOOST_PARAMS": ("Perf_boost", ["flags", "duration"]),
+        "NV83DE_CTRL_DEBUG_READ_ALL_SM_ERROR_STATES_PARAMS": ("Sm_error_states", [
+            "hTargetChannel", "numSMsToRead", "smErrorStateArray", "mmuFault__valid"]),
+        "NV83DE_SM_ERROR_STATE_REGISTERS": ("Sm_error_state", ["hwwGlobalEsr", "hwwWarpEsr", "hwwWarpEsrPc64"]),
+        "NV83DE_CTRL_DEBUG_READ_MMU_FAULT_INFO_PARAMS": ("Mmu_fault_info", ["mmuFaultInfoList", "count"]),
+        "NV83DE_CTRL_DEBUG_READ_MMU_FAULT_INFO_ENTRY": ("Mmu_fault_entry", [
+            "faultAddress", "faultType", "accessType"]),
+        "Nvc56fControl": ("Userd", ["GPGet", "GPPut"]),
+        "NvNotification": ("Notification", ["info32", "info16", "status"]),
+        "NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS": ("Channel_group_alloc", ["engineType"]),
+        "NV_CHANNELGPFIFO_ALLOCATION_PARAMETERS": ("Gpfifo_alloc", [
+            "hObjectError", "hObjectBuffer", "gpFifoOffset", "gpFifoEntries", "hContextShare", "hUserdMemory",
+            "userdOffset"]),
+        "NVA06C_CTRL_GPFIFO_SCHEDULE_PARAMS": ("Group_schedule", ["bEnable"]),
+    },
+    per_release={"NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS", "NV_CHANNELGPFIFO_ALLOCATION_PARAMETERS",
+                 "NVA06C_CTRL_GPFIFO_SCHEDULE_PARAMS"},
+    # The errors leave out the recovery levels and the count, which are no
+    # error. Later releases add errors.
+    tables=[
+        ("robust_channel_errors", "nverror.h", r"ROBUST_CHANNEL_(?!ERROR_RECOVERY_LEVEL_|LAST_ERROR)(\w+)"),
+        ("fault_types", "dev_fault.h", r"NV_PFAULT_FAULT_TYPE_(\w+)"),
+        ("access_types", "dev_fault.h", r"NV_PFAULT_ACCESS_TYPE_(\w+)"),
+    ],
+    tables_per_release={"robust_channel_errors"},
+)
 
-# Name tables: (OCaml name, header, the defines read, as a pattern whose
-# group 1 is the name an entry carries). The errors leave out the recovery
-# levels and the count, which are no error.
-TABLES = [
-    ("robust_channel_errors", "nverror.h", r"ROBUST_CHANNEL_(?!ERROR_RECOVERY_LEVEL_|LAST_ERROR)(\w+)"),
-    ("fault_types", "dev_fault.h", r"NV_PFAULT_FAULT_TYPE_(\w+)"),
-    ("access_types", "dev_fault.h", r"NV_PFAULT_ACCESS_TYPE_(\w+)"),
-]
+NVIDIA = Defs(
+    name="nvidia",
+    out=LIB / "nvidia/defs.ml",
+    sources={
+        "g_allclasses.h": "src/nvidia/generated/g_allclasses.h",
+        "nvmisc.h": COMMON + "nvmisc.h",
+        "nvlimits.h": SDK + "nvlimits.h",
+        "nvos.h": SDK + "nvos.h",
+        "cl0070.h": SDK + "class/cl0070.h",
+        "cl0080.h": SDK + "class/cl0080.h",
+        "cl2080.h": SDK + "class/cl2080.h",
+        "ctrlxxxx.h": SDK + "ctrl/ctrlxxxx.h",
+        "ctrl0000system.h": SDK + "ctrl/ctrl0000/ctrl0000system.h",
+        "ctrl0000gpu.h": SDK + "ctrl/ctrl0000/ctrl0000gpu.h",
+        "ctrl0080gpu.h": SDK + "ctrl/ctrl0080/ctrl0080gpu.h",
+        "ctrl2080gpu.h": SDK + "ctrl/ctrl2080/ctrl2080gpu.h",
+        "ctrl0080gr.h": SDK + "ctrl/ctrl0080/ctrl0080gr.h",
+        "ctrl2080gr.h": SDK + "ctrl/ctrl2080/ctrl2080gr.h",
+        "ctrl2080fb.h": SDK + "ctrl/ctrl2080/ctrl2080fb.h",
+        "nv-ioctl.h": COMMON + "nv-ioctl.h",
+        "nv-ioctl-numbers.h": COMMON + "nv-ioctl-numbers.h",
+        "nv_escape.h": UNIX + "nv_escape.h",
+        "nv-unix-nvos-params-wrappers.h": UNIX + "nv-unix-nvos-params-wrappers.h",
+        "nvCpuUuid.h": COMMON + "nvCpuUuid.h",
+        "uvm_types.h": UVM + "uvm_types.h",
+        "nv_uvm_user_types.h": COMMON + "nv_uvm_user_types.h",
+        "uvm_ioctl.h": UVM + "uvm_ioctl.h",
+        "uvm_linux_ioctl.h": UVM + "uvm_linux_ioctl.h",
+        "nvstatuscodes.h": COMMON + "nvstatuscodes.h",
+        "dev_mmu.h": UVM + "hwref/turing/tu102/dev_mmu.h",
+    },
+    constants=[
+        # classes
+        "NV01_ROOT_CLIENT", "NV01_DEVICE_0", "NV20_SUBDEVICE_0", "NV01_MEMORY_VIRTUAL",
+        "NV01_MEMORY_SYSTEM_OS_DESCRIPTOR", "NV1_MEMORY_SYSTEM", "NV1_MEMORY_USER", "FERMI_VASPACE_A",
+        "TURING_USERMODE_A", "HOPPER_USERMODE_A", "AMPERE_CHANNEL_GPFIFO_A", "BLACKWELL_CHANNEL_GPFIFO_A",
+        "AMPERE_COMPUTE_B", "ADA_COMPUTE_A", "BLACKWELL_COMPUTE_B", "AMPERE_DMA_COPY_B", "BLACKWELL_DMA_COPY_B",
+        # escapes
+        "NV_IOCTL_MAGIC", "NV_ESC_CARD_INFO", "NV_ESC_REGISTER_FD", "NV_ESC_RM_ALLOC", "NV_ESC_RM_ALLOC_MEMORY",
+        "NV_ESC_RM_CONTROL", "NV_ESC_RM_FREE", "NV_ESC_RM_MAP_MEMORY", "NV_ESC_RM_MAP_MEMORY_DMA",
+        # memory
+        "NV_MAX_DEVICES", "NV_MMU_PTE_KIND_GENERIC_MEMORY", "NVOS02_FLAGS_PHYSICALITY_NONCONTIGUOUS",
+        "NVOS02_FLAGS_COHERENCY_CACHED", "NVOS02_FLAGS_MAPPING_NO_MAP",
+        "NVOS32_ATTR_PHYSICALITY_CONTIGUOUS", "NVOS32_ATTR_PHYSICALITY_ALLOW_NONCONTIGUOUS",
+        "NVOS32_ATTR_PAGE_SIZE_HUGE", "NVOS32_ATTR_LOCATION_VIDMEM", "NVOS32_ATTR_LOCATION_PCI",
+        "NVOS32_ATTR2_GPU_CACHEABLE_YES", "NVOS32_ATTR2_GPU_CACHEABLE_NO", "NVOS32_ATTR2_PAGE_SIZE_HUGE_2MB",
+        "NVOS32_ATTR2_ZBC_PREFER_NO_ZBC", "NVOS32_ALLOC_FLAGS_MAP_NOT_REQUIRED",
+        "NVOS32_ALLOC_FLAGS_MEMORY_HANDLE_PROVIDED", "NVOS32_ALLOC_FLAGS_ALIGNMENT_FORCE",
+        "NVOS32_ALLOC_FLAGS_IGNORE_BANK_PLACEMENT", "NVOS32_ALLOC_FLAGS_PERSISTENT_VIDMEM", "NVOS32_TYPE_IMAGE",
+        "NVOS32_TYPE_NOTIFIER", "NVOS33_FLAGS_CACHING_TYPE_CACHED", "NVOS33_FLAGS_CACHING_TYPE_UNCACHED",
+        "NVOS33_FLAGS_CACHING_TYPE_WRITECOMBINED", "NVOS46_FLAGS_PAGE_SIZE_4KB", "NVOS46_FLAGS_CACHE_SNOOP_ENABLE",
+        "NVOS46_FLAGS_DMA_OFFSET_FIXED_TRUE",
+        # controls
+        "NV0000_CTRL_CMD_SYSTEM_GET_BUILD_VERSION_V2", "NV0000_CTRL_CMD_GPU_GET_ID_INFO_V2",
+        "NV0080_CTRL_CMD_GPU_GET_CLASSLIST", "NV2080_CTRL_CMD_GPU_GET_GID_INFO",
+        "NV2080_GPU_CMD_GPU_GET_GID_FLAGS_FORMAT_BINARY", "NV2080_CTRL_CMD_GR_GET_INFO",
+        "NV2080_CTRL_GR_INFO_INDEX_LITTER_NUM_GPCS", "NV2080_CTRL_GR_INFO_INDEX_LITTER_NUM_TPC_PER_GPC",
+        "NV2080_CTRL_GR_INFO_INDEX_LITTER_NUM_SM_PER_TPC", "NV2080_CTRL_GR_INFO_INDEX_MAX_WARPS_PER_SM",
+        "NV2080_CTRL_GR_INFO_INDEX_SM_VERSION", "NV2080_CTRL_CMD_FB_GET_INFO_V2",
+        "NV2080_CTRL_FB_INFO_INDEX_HEAP_SIZE", "NV2080_CTRL_FB_INFO_INDEX_BAR1_SIZE",
+        # allocations
+        "NV_DEVICE_ALLOCATION_VAMODE_OPTIONAL_MULTIPLE_VASPACES", "NV_VASPACE_ALLOCATION_FLAGS_ENABLE_PAGE_FAULTING",
+        "NV_VASPACE_ALLOCATION_FLAGS_IS_EXTERNALLY_OWNED",
+        # the unified memory driver
+        "UVM_INITIALIZE", "UVM_MM_INITIALIZE", "UVM_REGISTER_GPU", "UVM_UNREGISTER_GPU", "UVM_REGISTER_GPU_VASPACE",
+        "UVM_UNREGISTER_GPU_VASPACE", "UVM_ENABLE_PEER_ACCESS", "UVM_REGISTER_CHANNEL", "UVM_UNREGISTER_CHANNEL",
+        "UVM_CREATE_EXTERNAL_RANGE", "UVM_MAP_EXTERNAL_ALLOCATION", "UVM_UNMAP_EXTERNAL", "UVM_FREE",
+        "UvmGpuMappingTypeReadWriteAtomic",
+    ],
+    fields=[
+        "NVOS02_FLAGS_PHYSICALITY", "NVOS02_FLAGS_COHERENCY", "NVOS02_FLAGS_MAPPING", "NVOS32_ATTR_PHYSICALITY",
+        "NVOS32_ATTR_PAGE_SIZE", "NVOS32_ATTR_LOCATION", "NVOS32_ATTR2_GPU_CACHEABLE", "NVOS32_ATTR2_PAGE_SIZE_HUGE",
+        "NVOS32_ATTR2_ZBC", "NVOS33_FLAGS_CACHING_TYPE", "NVOS46_FLAGS_PAGE_SIZE", "NVOS46_FLAGS_CACHE_SNOOP",
+        "NVOS46_FLAGS_DMA_OFFSET_FIXED", "NV2080_GPU_CMD_GPU_GET_GID_FLAGS_FORMAT",
+    ],
+    structs={
+        "nv_ioctl_card_info_t": ("Card_info", ["valid", "pci_info__domain", "pci_info__bus", "pci_info__slot",
+                                               "gpu_id", "minor_number"]),
+        "nv_ioctl_register_fd_t": ("Register_fd", ["ctl_fd"]),
+        "NVOS00_PARAMETERS": ("Nvos00", ["hRoot", "hObjectParent", "hObjectOld", "status"]),
+        "NVOS02_PARAMETERS": ("Nvos02", ["hRoot", "hObjectParent", "hObjectNew", "hClass", "flags", "pMemory",
+                                         "limit", "status"]),
+        "NVOS21_PARAMETERS": ("Nvos21", ["hRoot", "hObjectParent", "hObjectNew", "hClass", "pAllocParms",
+                                         "paramsSize", "status"]),
+        "NVOS33_PARAMETERS": ("Nvos33", ["hClient", "hDevice", "hMemory", "offset", "length", "pLinearAddress",
+                                         "status", "flags"]),
+        "NVOS54_PARAMETERS": ("Nvos54", ["hClient", "hObject", "cmd", "flags", "params", "paramsSize", "status"]),
+        "nv_ioctl_nvos02_parameters_with_fd": ("Nvos02_with_fd", ["params", "fd"]),
+        "nv_ioctl_nvos33_parameters_with_fd": ("Nvos33_with_fd", ["params", "fd"]),
+        "NV0080_ALLOC_PARAMETERS": ("Nv0080_alloc", ["deviceId", "hClientShare", "vaMode"]),
+        "NV2080_ALLOC_PARAMETERS": ("Nv2080_alloc", ["subDeviceId"]),
+        "NV_MEMORY_VIRTUAL_ALLOCATION_PARAMS": ("Memory_virtual_alloc", ["offset", "limit", "hVASpace"]),
+        "NV_MEMORY_ALLOCATION_PARAMS": ("Memory_alloc", ["owner", "type", "flags", "attr", "attr2", "format", "size",
+                                                         "alignment", "offset", "limit"]),
+        "NV0000_CTRL_SYSTEM_GET_BUILD_VERSION_V2_PARAMS": ("Build_version", ["driverVersionBuffer"]),
+        "NV0000_CTRL_GPU_GET_ID_INFO_V2_PARAMS": ("Id_info", ["gpuId", "deviceInstance"]),
+        "NV0080_CTRL_GPU_GET_CLASSLIST_PARAMS": ("Classlist", ["numClasses", "classList"]),
+        "NV2080_CTRL_GPU_GET_GID_INFO_PARAMS": ("Gid_info", ["flags", "length", "data"]),
+        "NV2080_CTRL_GR_INFO": ("Gr_info", ["index", "data"]),
+        "NV2080_CTRL_GR_GET_INFO_PARAMS": ("Gr_get_info", ["grInfoListSize", "grInfoList"]),
+        "NV2080_CTRL_FB_INFO": ("Fb_info", ["index", "data"]),
+        "UVM_INITIALIZE_PARAMS": ("Uvm_initialize", ["flags", "rmStatus"]),
+        "UVM_MM_INITIALIZE_PARAMS": ("Uvm_mm_initialize", ["uvmFd", "rmStatus"]),
+        "UVM_REGISTER_GPU_PARAMS": ("Uvm_register_gpu", [
+            "gpu_uuid", "rmCtrlFd", "hClient", "hSmcPartRef", "rmStatus"]),
+        "UVM_REGISTER_GPU_VASPACE_PARAMS": ("Uvm_register_gpu_vaspace", [
+            "gpuUuid", "rmCtrlFd", "hClient", "hVaSpace", "rmStatus"]),
+        "UVM_UNREGISTER_GPU_PARAMS": ("Uvm_unregister_gpu", ["gpu_uuid", "rmStatus"]),
+        "UVM_UNREGISTER_GPU_VASPACE_PARAMS": ("Uvm_unregister_gpu_vaspace", ["gpuUuid", "rmStatus"]),
+        "UVM_ENABLE_PEER_ACCESS_PARAMS": ("Uvm_enable_peer_access", ["gpuUuidA", "gpuUuidB", "rmStatus"]),
+        "UVM_REGISTER_CHANNEL_PARAMS": ("Uvm_register_channel", [
+            "gpuUuid", "rmCtrlFd", "hClient", "hChannel", "base", "length", "rmStatus"]),
+        "UVM_CREATE_EXTERNAL_RANGE_PARAMS": ("Uvm_create_external_range", ["base", "length", "rmStatus"]),
+        "UVM_MAP_EXTERNAL_ALLOCATION_PARAMS": ("Uvm_map_external_allocation", [
+            "base", "length", "offset", "perGpuAttributes", "gpuAttributesCount", "rmCtrlFd", "hClient", "hMemory",
+            "rmStatus"]),
+        "UvmGpuMappingAttributes": ("Uvm_gpu_mapping", ["gpuUuid", "gpuMappingType"]),
+        "UVM_UNMAP_EXTERNAL_PARAMS": ("Uvm_unmap_external", ["base", "length", "gpuUuid", "rmStatus"]),
+        "NV2080_CTRL_FB_GET_INFO_V2_PARAMS": ("Fb_get_info", ["fbInfoListSize", "fbInfoList"]),
+        "NVOS46_PARAMETERS": ("Nvos46", ["hClient", "hDevice", "hDma", "hMemory", "offset", "length", "flags",
+                                         "dmaOffset", "status"]),
+        "NV_VASPACE_ALLOCATION_PARAMETERS": ("Vaspace_alloc", ["index", "flags", "vaSize", "vaBase"]),
+        "UVM_FREE_PARAMS": ("Uvm_free", ["base", "length?", "rmStatus"]),
+        "UVM_UNREGISTER_CHANNEL_PARAMS": ("Uvm_unregister_channel", [
+            "gpuUuid?", "hClient", "hChannel", "rmStatus"]),
+    },
+    per_release={"NV2080_CTRL_FB_GET_INFO_V2_PARAMS", "NVOS46_PARAMETERS", "NV_VASPACE_ALLOCATION_PARAMETERS",
+                 "UVM_FREE_PARAMS", "UVM_UNREGISTER_CHANNEL_PARAMS"},
+    statuses=["NV_OK", "NV_ERR_NO_MEMORY", "NV_ERR_INVALID_ADDRESS", "NV_ERR_INVALID_ARGUMENT"],
+    # The unified memory driver's mapping types moved to nv_uvm_user_types.h
+    # from uvm_types.h.
+    since={"nv_uvm_user_types.h": 580},
+)
+
+LIBRARIES = [NV, NVIDIA]
+
+# A status: its name, value and description, in nvstatuscodes.h.
+STATUS = re.compile(r'^[ \t]*NV_STATUS_CODE\(\s*(\w+)\s*,\s*(0[xX][0-9A-Fa-f]+)\s*,\s*"[^"]*"\s*\)[^\n]*$', re.M)
+STATUS_HEADER = "nvstatuscodes.h"
 
 # C headers
 
@@ -491,9 +671,9 @@ def licence(text):
     return text[:end] + "\n"
 
 
-def wanted(model):
-    names = set(CONSTANTS) | set(FIELDS) | set(STRUCTS)
-    for _, h, pattern in TABLES:
+def wanted(d, model):
+    names = set(d.constants) | set(d.fields) | set(d.structs)
+    for _, h, pattern in d.tables:
         names |= table_names(model, h, pattern)
     return names
 
@@ -506,19 +686,25 @@ def table_names(model, header, pattern):
             and re.fullmatch(r"\(?\s*(0[xX][0-9a-fA-F]+|\d+)[uUlL]*\s*\)?", it.body)}
 
 
-def excerpts(texts):
+def excerpts(d, texts):
     model = Model(texts)
-    keep = model.closure(wanted(model))
+    keep = model.closure(wanted(d, model))
+    statuses = STATUS_HEADER if d.statuses else None
     out = {}
-    for h in SOURCES:
-        if h not in keep:
+    for h in texts:
+        if h not in keep and h != statuses:
             sys.exit(f"{h}: nothing read from it")
-        spans = sorted(keep[h].values(), key=lambda it: it.start)
+        spans = sorted(keep.get(h, {}).values(), key=lambda it: it.start)
         body = []
         for it in spans:
             if body and it.start < body[-1][1]:
                 continue
             body.append((it.start, it.end))
+        if h == statuses:
+            lines = active(blank(texts[h]))
+            body += [(m.start(), m.end()) for m in STATUS.finditer(texts[h])
+                     if lines[texts[h].count("\n", 0, m.start())]]
+            body.sort()
         out[h] = licence(texts[h]) + "\n" + "\n\n".join(texts[h][s:e] for s, e in body) + "\n"
     return out
 
@@ -564,13 +750,17 @@ def ml_tuple(v):
     return "(" + ", ".join(ml_int(x) for x in v) + ")"
 
 
-def struct(model, cname, where):
+def struct(d, model, cname, where):
+    """(bytes, [(field, its layout, or None if the struct lacks it)])."""
     size, _, fields = model.layout(cname)
-    module, names = STRUCTS[cname]
+    module, names = d.structs[cname]
+    out = []
     for f in names:
-        if f not in fields:
-            sys.exit(f"{where}: {cname} has no field {f}; it has {sorted(fields)}")
-    return size, [(f, fields[f]) for f in names]
+        name = f.rstrip("?")
+        if name not in fields and not f.endswith("?"):
+            sys.exit(f"{where}: {cname} has no field {name}; it has {sorted(fields)}")
+        out.append((f, fields.get(name)))
+    return size, out
 
 
 def emit_struct(out, module, layout, indent=""):
@@ -578,7 +768,11 @@ def emit_struct(out, module, layout, indent=""):
     out.append(f"{indent}module {module} = struct")
     out.append(f"{indent}  let sizeof = {size}")
     for f, v in fields:
-        out.append(f"{indent}  let {snake(f)} = {ml_tuple(v)}")
+        if f.endswith("?"):
+            value = f"Some {ml_tuple(v)}" if v else "None"
+        else:
+            value = ml_tuple(v)
+        out.append(f"{indent}  let {snake(f.rstrip('?'))} = {value}")
     out.append(f"{indent}end")
 
 
@@ -589,8 +783,8 @@ def emit_table(out, name, entries, indent=""):
     out.append(f"{indent}]")
 
 
-def generate():
-    models = {r: Model({h: (HEADERS / str(r) / h).read_text(encoding="latin-1") for h in SOURCES})
+def generate(d):
+    models = {r: Model({h: (HEADERS / d.name / str(r) / h).read_text(encoding="latin-1") for h in d.headers(r)})
               for r in RELEASES}
     out = []
 
@@ -604,68 +798,87 @@ def generate():
     out.append("let releases = [ " + "; ".join(str(r) for r in RELEASES) + " ]")
     out.append("")
     out.append("(* Constants, the same in every release. *)")
-    for c in CONSTANTS:
+    for c in d.constants:
         v = same(c, {r: m.value(c) for r, m in models.items()})
         out.append(f"let {snake(c)} = {ml_int(v)}")
     out.append("")
+    if d.statuses:
+        statuses = {r: tuple((int(v, 16), n) for n, v in STATUS.findall(m.texts[STATUS_HEADER]))
+                    for r, m in models.items()}
+        out.append("(* Statuses, the same in every release. *)")
+        for name in d.statuses:
+            v = same(name, {r: dict((n, v) for v, n in st)[name] for r, st in statuses.items()})
+            out.append(f"let {snake(name)} = {ml_int(v)}")
+        out.append("")
     out.append("(* Bit fields of their words: (lowest bit, bits). *)")
-    for f in FIELDS:
+    for f in d.fields:
         v = same(f, {r: m.bits(f) for r, m in models.items()})
         out.append(f"let {snake(f)} = {ml_tuple(v)}")
     out.append("")
 
-    layouts = {c: {r: struct(m, c, r) for r, m in models.items()} for c in STRUCTS}
+    layouts = {c: {r: struct(d, m, c, r) for r, m in models.items()} for c in d.structs}
     differ = {c for c, per in layouts.items() if len({repr(v) for v in per.values()}) != 1}
-    if differ != PER_RELEASE:
-        sys.exit(f"the structs that differ between releases are {sorted(differ)}, not {sorted(PER_RELEASE)}")
+    if differ != d.per_release:
+        sys.exit(f"the structs that differ between releases are {sorted(differ)}, not {sorted(d.per_release)}")
     out.append("(* Structs: each field is (byte offset, bytes), an array's (offset, bytes")
     out.append("   of an element, elements). *)")
-    for c, (module, _) in STRUCTS.items():
-        if c not in PER_RELEASE:
+    for c, (module, _) in d.structs.items():
+        if c not in d.per_release:
             emit_struct(out, module, layouts[c][min(RELEASES)])
             out.append("")
 
     tables = {name: {r: tuple(sorted((m.value(n), re.fullmatch(pattern, n).group(1))
                                      for n in table_names(m, h, pattern))) for r, m in models.items()}
-              for name, h, pattern in TABLES}
+              for name, h, pattern in d.tables}
     differ = {name for name, per in tables.items() if len(set(per.values())) != 1}
-    if differ != TABLES_PER_RELEASE:
-        sys.exit(f"the tables that differ between releases are {sorted(differ)}, not {sorted(TABLES_PER_RELEASE)}")
-    for name, h, _ in TABLES:
-        if name not in TABLES_PER_RELEASE:
+    if differ != d.tables_per_release:
+        sys.exit(f"the tables that differ between releases are {sorted(differ)}, "
+                 f"not {sorted(d.tables_per_release)}")
+    for name, h, _ in d.tables:
+        if name not in d.tables_per_release:
             out.append(f"(* {h}'s {name.replace('_', ' ')}, by value. *)")
             emit_table(out, name, tables[name][min(RELEASES)])
             out.append("")
 
+    # The signature and each release's module: one item per struct and
+    # table that differs, a blank line between two.
+    sig = []
+    for c, (module, _) in d.structs.items():
+        if c in d.per_release:
+            item = [f"  module {module} : sig", "    val sizeof : int"]
+            arities = {f: len(v) for r in RELEASES for f, v in layouts[c][r][1] if v}
+            for f, _ in layouts[c][min(RELEASES)][1]:
+                ty = " * ".join(["int"] * arities[f])
+                item.append(f"    val {snake(f.rstrip('?'))} : " + (f"({ty}) option" if f.endswith("?") else ty))
+            sig.append(item + ["  end"])
+    for name, h, _ in d.tables:
+        if name in d.tables_per_release:
+            sig.append([f"  (* {h}'s {name.replace('_', ' ')}, by value. *)", f"  val {name} : (int * string) list"])
+    if d.statuses:
+        sig.append([f"  (* {STATUS_HEADER}'s statuses: (value, name). *)", "  val statuses : (int * string) list"])
     out.append("(* What differs between the releases. *)")
     out.append("module type RELEASE = sig")
-    for c, (module, names) in STRUCTS.items():
-        if c in PER_RELEASE:
-            out.append(f"  module {module} : sig")
-            out.append("    val sizeof : int")
-            for f, v in layouts[c][min(RELEASES)][1]:
-                out.append(f"    val {snake(f)} : {' * '.join(['int'] * len(v))}")
-            out.append("  end")
-            out.append("")
-    for name, h, _ in TABLES:
-        if name in TABLES_PER_RELEASE:
-            out.append(f"  (* {h}'s {name.replace('_', ' ')}, by value. *)")
-            out.append(f"  val {name} : (int * string) list")
-            out.append("")
-    out[-1] = "end"
+    out += joined(sig)
+    out.append("end")
     out.append("")
     for r in RELEASES:
-        out.append(f"module R{r} : RELEASE = struct")
         body = []
-        for c, (module, _) in STRUCTS.items():
-            if c in PER_RELEASE:
-                emit_struct(body, module, layouts[c][r], indent="  ")
-                body.append("")
-        for name, _, _ in TABLES:
-            if name in TABLES_PER_RELEASE:
-                emit_table(body, name, tables[name][r], indent="  ")
-                body.append("")
-        out += body[:-1]
+        for c, (module, _) in d.structs.items():
+            if c in d.per_release:
+                item = []
+                emit_struct(item, module, layouts[c][r], indent="  ")
+                body.append(item)
+        for name, _, _ in d.tables:
+            if name in d.tables_per_release:
+                item = []
+                emit_table(item, name, tables[name][r], indent="  ")
+                body.append(item)
+        if d.statuses:
+            item = []
+            emit_table(item, "statuses", statuses[r], indent="  ")
+            body.append(item)
+        out.append(f"module R{r} : RELEASE = struct")
+        out += joined(body)
         out.append("end")
         out.append("")
     out.append("(* The layouts of release [r], if it is one of {!releases}. *)")
@@ -673,12 +886,24 @@ def generate():
     for r in RELEASES:
         out.append(f"  | {r} -> Some (module R{r} : RELEASE)")
     out.append("  | _ -> None")
-    return header(models.values()) + "\n".join(out) + "\n"
+    return header(d, models.values()) + "\n".join(out) + "\n"
 
 
-def header(models):
+def joined(items):
+    """The lines of [items], a blank line between two."""
+    out = []
+    for item in items:
+        if out:
+            out.append("")
+        out += item
+    return out
+
+
+def header(d, models):
     owners = sorted({re.search(r"Copyright \(c\) ([^\n]*?NVIDIA[^\n.]*)", t, re.I).group(1).strip()
                      for m in models for t in m.texts.values()})
+    script = os.path.relpath(HERE / "gen.py", d.out.parent)
+    excerpts = os.path.relpath(HEADERS / d.name, d.out.parent)
     notice = (
         "   Permission is hereby granted, free of charge, to any person obtaining a\n"
         "   copy of this software and associated documentation files (the \"Software\"),\n"
@@ -701,8 +926,8 @@ def header(models):
         "  Copyright (c) 2026 The Raven authors. All rights reserved.\n"
         "  SPDX-License-Identifier: ISC\n"
         "  ---------------------------------------------------------------------------*)\n\n"
-        "(* Generated by gen/gen.py from the excerpts in gen/headers; do not edit.\n"
-        "   The command that regenerates this file is in gen/gen.py.\n\n"
+        f"(* Generated by {script} from the excerpts in {excerpts};\n"
+        f"   do not edit. The command that regenerates this file is in {script}.\n\n"
         "   The values are NVIDIA's, copied from its headers under the MIT licence:\n\n"
         + "\n".join(f"   Copyright (c) {o}" for o in owners) + "\n\n" + notice + " *)\n\n"
     )
@@ -715,20 +940,21 @@ def main():
     p.add_argument("--pin", action="store_true", help="record the digests of headers not yet pinned")
     p.add_argument("--cache", type=pathlib.Path, default=pathlib.Path.home() / ".cache/raven/nv-gen")
     a = p.parse_args()
+    files = {}
     if a.excerpt:
         pins = json.loads(PINS.read_text()) if PINS.exists() else {}
-        files = {}
-        for r, (ref, _) in RELEASES.items():
-            texts = {h: fetch(KERNEL + ref + "/" + path, a.cache, pins, a.pin) for h, path in SOURCES.items()}
-            files.update({HEADERS / str(r) / h: t for h, t in excerpts(texts).items()})
+        for d in LIBRARIES:
+            for r, (ref, _) in RELEASES.items():
+                texts = {h: fetch(KERNEL + ref + "/" + d.sources[h], a.cache, pins, a.pin) for h in d.headers(r)}
+                files.update({HEADERS / d.name / str(r) / h: t for h, t in excerpts(d, texts).items()})
         if a.pin:
             files[PINS] = json.dumps(dict(sorted(pins.items())), indent=1) + "\n"
     else:
-        files = {OUT: generate()}
+        files = {d.out: generate(d) for d in LIBRARIES}
     stale = [f for f, text in files.items() if not f.exists() or f.read_text(encoding="latin-1") != text]
     if a.check:
         if stale:
-            sys.exit("stale: " + ", ".join(str(f.relative_to(HERE.parent)) for f in stale))
+            sys.exit("stale: " + ", ".join(str(f.relative_to(LIB)) for f in stale))
         return
     for f in stale:
         f.parent.mkdir(parents=True, exist_ok=True)
