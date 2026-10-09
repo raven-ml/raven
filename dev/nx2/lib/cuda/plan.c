@@ -40,40 +40,72 @@ static int add(nx_cuda_records *out, int kernel, uint32_t gx, uint32_t gy,
 
 /* Contract */
 
-/* The kernels by family and instance, from kernels.h's list. */
-enum { F_ZERO, F_PACK, F_MMA, F_SIMT, F_SKINNY };
-enum { K_bf16, K_f16, K_s8, K_any };
+/* The kernels by family and instance, from kernels.h's list, a table a
+   family. The mma kinds are bits: an instance of kind any sums each. */
+enum { K_bf16 = 1, K_f16 = 2, K_s8 = 4, K_any = 7 };
 enum { A_k, A_m, A_n };
 enum { ACC_f32, ACC_f64, ACC_i64 };
 #define TILE_INDEX(name, ...) T_##name,
 enum { NX_CUDA_TILES(TILE_INDEX) T_COUNT };
 #undef TILE_INDEX
 
-/* An instance's arguments, by family: MMA its operands' kind, a's and b's
-   contiguous axes and its tile; SIMT its accumulator in [kind] and its side
-   in [a]; SKINNY its accumulator in [kind]. An MMA instance of kind any
-   serves every kind. */
+/* An mma instance by the kinds it sums, a's and b's contiguous axes and
+   its tile; a SIMT one by its accumulator and side; a skinny one by its
+   accumulator. */
 typedef struct {
-  int family, kind, a, b, tile;
-} instance;
+  int kernel, kinds, a, b, tile;
+} mma_instance;
+typedef struct {
+  int kernel, sum, side;
+} simt_instance;
+typedef struct {
+  int kernel, sum;
+} skinny_instance;
 
-#define ARGS_ZERO() 0, 0, 0, 0
-#define ARGS_PACK() 0, 0, 0, 0
-#define ARGS_MMA(kind, a, b, tile) K_##kind, A_##a, A_##b, T_##tile
-#define ARGS_SIMT(acc, side) ACC_##acc, side, 0, 0
-#define ARGS_SKINNY(acc) ACC_##acc, 0, 0, 0
-#define INSTANCE(name, FAMILY, ...) {F_##FAMILY, ARGS_##FAMILY(__VA_ARGS__)},
-static const instance instances[] = {NX_CUDA_KERNELS(INSTANCE)};
-#undef INSTANCE
+#define NONE(...)
+#define MMA_MMA(name, k, la, lb, t) \
+  {NX_CUDA_##name, K_##k, A_##la, A_##lb, T_##t},
+#define SIMT_SIMT(name, acc, side) {NX_CUDA_##name, ACC_##acc, side},
+#define SKINNY_SKINNY(name, acc) {NX_CUDA_##name, ACC_##acc},
+#define MMA_ZERO NONE
+#define MMA_PACK NONE
+#define MMA_SIMT NONE
+#define MMA_SKINNY NONE
+#define SIMT_ZERO NONE
+#define SIMT_PACK NONE
+#define SIMT_MMA NONE
+#define SIMT_SKINNY NONE
+#define SKINNY_ZERO NONE
+#define SKINNY_PACK NONE
+#define SKINNY_MMA NONE
+#define SKINNY_SIMT NONE
+#define MMA_ROW(name, FAMILY, ...) MMA_##FAMILY(name, __VA_ARGS__)
+#define SIMT_ROW(name, FAMILY, ...) SIMT_##FAMILY(name, __VA_ARGS__)
+#define SKINNY_ROW(name, FAMILY, ...) SKINNY_##FAMILY(name, __VA_ARGS__)
+static const mma_instance mmas[] = {NX_CUDA_KERNELS(MMA_ROW)};
+static const simt_instance simts[] = {NX_CUDA_KERNELS(SIMT_ROW)};
+static const skinny_instance skinnies[] = {NX_CUDA_KERNELS(SKINNY_ROW)};
+#define COUNT(xs) ((int)(sizeof xs / sizeof xs[0]))
 
-static int find(int family, int kind, int a, int b, int tile) {
-  for (int i = 0; i < NX_CUDA_KERNEL_COUNT; i++) {
-    const instance *x = &instances[i];
-    const int any = family == F_MMA && x->kind == K_any;
-    if (x->family == family && (x->kind == kind || any) && x->a == a &&
-        x->b == b && x->tile == tile)
-      return i;
-  }
+/* The kernel of the first instance with the arguments given, or -1: an mma
+   one that sums [kind]. */
+static int find_mma(int kind, int a, int b, int t) {
+  for (int i = 0; i < COUNT(mmas); i++)
+    if ((mmas[i].kinds & kind) && mmas[i].a == a && mmas[i].b == b &&
+        mmas[i].tile == t)
+      return mmas[i].kernel;
+  return -1;
+}
+
+static int find_simt(int sum, int side) {
+  for (int i = 0; i < COUNT(simts); i++)
+    if (simts[i].sum == sum && simts[i].side == side) return simts[i].kernel;
+  return -1;
+}
+
+static int find_skinny(int sum) {
+  for (int i = 0; i < COUNT(skinnies); i++)
+    if (skinnies[i].sum == sum) return skinnies[i].kernel;
   return -1;
 }
 
@@ -108,7 +140,7 @@ static int mma_tile(int kind, int64_t batch, int64_t m, int64_t n) {
   int best = -1;
   double least = -1;
   for (int t = 0; t < T_COUNT; t++) {
-    if (find(F_MMA, kind, A_k, A_k, t) < 0 || (m <= 16 && t != T_t16x64))
+    if (find_mma(kind, A_k, A_k, t) < 0 || (m <= 16 && t != T_t16x64))
       continue;
     double cost = (double)ceil_div(blocks(t, batch, m, n), WAVE) * tiles[t].bm *
                   tiles[t].bn / efficiency[t];
@@ -377,17 +409,17 @@ int nx_cuda_plan_contract(const nx_cuda_contract_in *in,
      layout the tile has no instance of. */
   const int pack_a =
       mma_kind >= 0 && (!va || is_f8(at) ||
-                        (la != A_k && find(F_MMA, kind, la, A_k, t) < 0));
+                        (la != A_k && find_mma(kind, la, A_k, t) < 0));
   const int pack_b =
       mma_kind >= 0 &&
       (!vb || is_f8(b->dtype) ||
-       (lb != A_k && find(F_MMA, kind, pack_a ? A_k : la, lb, t) < 0));
+       (lb != A_k && find_mma(kind, pack_a ? A_k : la, lb, t) < 0));
   int side = 64;
   if (mma_kind >= 0) {
-    kernel = find(F_MMA, mma_kind, pack_a ? A_k : la, pack_b ? A_k : lb, t);
+    kernel = find_mma(mma_kind, pack_a ? A_k : la, pack_b ? A_k : lb, t);
     gx = ceil_div(m, tiles[t].bm) * ceil_div(n, tiles[t].bn);
   } else if (m <= 16) {
-    kernel = find(F_SKINNY, sum, 0, 0, 0);
+    kernel = find_skinny(sum);
     gx = ceil_div(m, NX_SKINNY_ROWS) * ceil_div(n, 32);
   } else {
     /* The SIMT tile of least cost among the accumulator's instances, waves
@@ -397,13 +429,13 @@ int nx_cuda_plan_contract(const nx_cuda_contract_in *in,
     double least = -1;
     for (int i = 0; i < 2; i++) {
       const int64_t q = sides[i];
-      if (find(F_SIMT, sum, sides[i], 0, 0) < 0) continue;
+      if (find_simt(sum, sides[i]) < 0) continue;
       const double cost =
           (double)ceil_div(batch * ceil_div(m, q) * ceil_div(n, q), WAVE) * q *
           q / eff[i];
       if (least < 0 || cost < least) least = cost, side = sides[i];
     }
-    kernel = find(F_SIMT, sum, side, 0, 0);
+    kernel = find_simt(sum, side);
     gx = ceil_div(m, side) * ceil_div(n, side);
   }
   if (kernel < 0 || gx > INT32_MAX) return NX_NOT_COMPUTED;
