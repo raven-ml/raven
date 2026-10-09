@@ -18,6 +18,8 @@
 open Windtrap
 module M = Rig_mlx5
 
+let strf = Printf.sprintf
+
 external address : Rig_mlx5_abi.buffer -> int = "rig_mlx5_test_address"
 
 (* A page every host's page size divides. *)
@@ -88,6 +90,31 @@ let path ?(context = context_answer ()) ?(qp = fun () -> ())
 let open_nic ?context ?qp ?wait () =
   let p, calls = path ?context ?qp ?wait () in
   match M.make p with Ok nic -> (nic, calls) | Error e -> failf "make: %s" e
+
+let opening =
+  group "opening"
+    [
+      cases
+        ~name:(fun (log, per_page) ->
+          strf "log_uar_size %d, num_uars_per_page %d" log per_page)
+        "a context that counts no regions per page has one per page"
+        [ (0, 0); (12, 0); (0, 4) ]
+        (fun (log_uar_size, per_page) ->
+          let p, calls =
+            path ~context:(context_answer ~log_uar_size ~per_page ()) ()
+          in
+          (match M.make p with
+          | Ok nic -> M.close nic
+          | Error e -> failf "make: %s" e);
+          equal ~msg:"the path is closed once" int 1 calls.closed);
+      test "a refused context closes the path" (fun () ->
+          let p, calls = path () in
+          let p = { p with context = (fun _ _ -> Error "refused") } in
+          is_error
+            ~pp:(fun ppf _ -> Format.pp_print_string ppf "a NIC")
+            (M.make p);
+          equal int 1 calls.closed);
+    ]
 
 let regions =
   let region () =
@@ -174,4 +201,4 @@ let events =
             (Unix.gettimeofday () -. start));
     ]
 
-let () = exit (run "rig_mlx5" [ regions; room; events ])
+let () = exit (run "rig_mlx5" [ opening; regions; room; events ])

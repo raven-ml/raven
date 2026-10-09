@@ -224,8 +224,10 @@ let make p =
     let* facts = p.context req R.sizeof in
     let* gid, address = port_address facts.port in
     let resp = facts.answer in
+    (* A kernel that gives no access region size, or no count of regions per
+       page, maps one region per page. *)
     let per_page =
-      if read resp R.log_uar_size = 0 && read resp R.num_uars_per_page = 0 then
+      if read resp R.log_uar_size = 0 || read resp R.num_uars_per_page = 0 then
         1
       else read resp R.num_uars_per_page
     in
@@ -265,6 +267,9 @@ let make p =
   | Error e ->
       p.close ();
       Error (strf "%s: %s" p.name e)
+  | exception e ->
+      p.close ();
+      raise e
 
 let close nic =
   if not (Atomic.exchange nic.closed true) then begin
