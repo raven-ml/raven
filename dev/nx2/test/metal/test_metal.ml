@@ -711,24 +711,30 @@ let every_kernel () =
   equal ~msg:"kernels no call launched" (list string) [] missing
 
 (* The plan's acceptance: over every (a, b, acc, out) of the dtypes, at a shape
-   of each kernel class, the plan declines, or the results are within the bound
-   (floats) or exact (integers). The reference refuses a dtype it cannot read,
-   so an accepted call it cannot check fails. *)
+   of each kernel class, the plan accepts exactly the stated set, and an
+   accepted call's results are within the bound (floats) or exact (integers).
+   Out is filled with 0xAA bytes before each run, so a path that writes nothing
+   fails. The reference refuses a dtype it cannot read. *)
 let every_quadruple () =
   let t = dev () in
-  let accepted = ref 0 in
-  let drawable (Dt.Any dt) =
-    match Dt.Any dt with
-    | Dt.Any
-        ( Dt.Float64 | Dt.Float32 | Dt.Float16 | Dt.Bfloat16 | Dt.Int8
-        | Dt.Uint8 | Dt.Int16 | Dt.Uint16 | Dt.Int32 | Dt.Uint32 | Dt.Int64
-        | Dt.Uint64 ) ->
-        true
-    | _ -> false
-  in
   let floats = function
     | Dt.Any (Dt.Float32 | Dt.Float16 | Dt.Bfloat16) -> true
     | _ -> false
+  in
+  let integers = function
+    | Dt.Any
+        ( Dt.Int8 | Dt.Uint8 | Dt.Int16 | Dt.Uint16 | Dt.Int32 | Dt.Uint32
+        | Dt.Int64 | Dt.Uint64 ) ->
+        true
+    | _ -> false
+  in
+  (* Accepted: a = b, both float32, float16 or bfloat16, acc float32, out any of
+     the three; or a = b, integers of 8 to 64 bits, acc and out integers of 8 to
+     64 bits. *)
+  let expected da db acc dout =
+    da = db
+    && ((floats da && acc = Dt.Any Dt.Float32 && floats dout)
+       || (integers da && integers acc && integers dout))
   in
   (* Small and wide tiles, one row, and a shape of the SIMD integer tile. *)
   let shapes = [ (64, 64, 64); (3, 70, 300); (1, 70, 300); (17, 129, 30) ] in
@@ -749,29 +755,33 @@ let every_quadruple () =
                       and b = arg bm db (k * n, n, 1)
                       and out = arg om dout (m * n, n, 1) in
                       let dims = (1, m, n, k) in
-                      match S.plan_contract ~acc t dims ~a ~b ~out with
+                      let plan = S.plan_contract ~acc t dims ~a ~b ~out in
+                      let name (Dt.Any dt) = Dt.name dt in
+                      let call () =
+                        strf "%s x %s, acc %s -> %s, %d x %d x %d" (name da)
+                          (name db) (name acc) (name dout) m n k
+                      in
+                      let want = expected da db acc dout in
+                      if want <> Option.is_some plan then
+                        equal
+                          ~msg:(strf "%s: accepted" (call ()))
+                          bool want (Option.is_some plan);
+                      match plan with
                       | None -> ()
                       | Some run ->
-                          incr accepted;
-                          let name (Dt.Any dt) = Dt.name dt in
-                          let call =
-                            strf "%s x %s, acc %s -> %s, %d x %d x %d" (name da)
-                              (name db) (name acc) (name dout) m n k
-                          in
-                          if not (drawable da && drawable db) then
-                            failf "%s: accepted operands no draw makes" call;
                           let draw o (Dt.Any dt) len seed =
                             S.generate ~spread:8 t o dt len ~seed
                           in
                           draw am da (m * k) 1;
                           draw bm db (k * n) 2;
+                          Bigarray.Array1.fill (S.view Bigarray.char om) '\xaa';
                           ignore (S.run t run);
                           if floats acc then
                             let worst, at = S.contract_error dims ~a ~b ~out in
                             at_most
                               ~msg:
                                 (strf "%s: output %d's error over its bound"
-                                   call at)
+                                   (call ()) at)
                               float_exact ~than:1. worst
                           else
                             let wrong, first =
@@ -779,16 +789,14 @@ let every_quadruple () =
                             in
                             equal
                               ~msg:
-                                (strf "%s: outputs wrong, the first %d" call
-                                   first)
+                                (strf "%s: outputs wrong, the first %d"
+                                   (call ()) first)
                               int 0 wrong)
                     Dt.all)
                 Dt.all)
             Dt.all)
         Dt.all)
-    shapes;
-  (* float32, float16, bfloat16 operands into either, and the integers. *)
-  at_least ~msg:"calls accepted" int ~than:1 !accepted
+    shapes
 
 (* float64 has no arithmetic on Apple GPUs: the library declines it. *)
 let declines_float64 () =
