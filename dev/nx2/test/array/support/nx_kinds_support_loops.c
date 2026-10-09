@@ -3,12 +3,20 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* Every kind as a loop over contiguous operands, for one target: a file
-   defines NX_LOOPS, the table's declaration, and includes this one, as nx.cpu
-   instantiates its loops per target. The trigonometric loops compute the
-   kind below the switch on every lane and redo the lanes past it, as
-   nx_kinds.h says a vector loop does, testing a block for such a lane in a
-   loop that vectorises first. */
+/* Every kind as a loop over contiguous operands, for one target, compiled
+   as nx.cpu's convert.c is: as itself for base, and as its copy
+   nx_kinds_support_loops_v3.c with NX_CPU_V3 and, on x86-64, v3's
+   instructions, the headers included. Elsewhere the v3 table is NULL. The
+   trigonometric loops compute the kind below the switch on every lane and
+   redo the lanes past it, as nx_kinds.h says a vector loop does, testing a
+   block for such a lane in a loop that vectorises first. */
+
+#include <stddef.h>
+
+#include "nx_kinds.h"
+#include "nx_kinds_support.h"
+
+#if !defined(NX_CPU_V3) || defined(__x86_64__)
 
 #define NX_F_UNARY(X)                                                         \
   X(exp) X(exp2) X(expm1) X(log) X(log2) X(log1p) X(asin) X(acos) X(atan)     \
@@ -195,9 +203,21 @@ static void int_threefry(const uint64_t *x, const uint64_t *z,
 #define NX_INT_ROW1(k) {#k, 1, int_##k},
 #define NX_INT_ROW2(k) {#k, 2, int_##k},
 
-NX_LOOPS = {
+static const nx_kinds_loops loops = {
     {NX_F_UNARY(NX_ROW1) NX_F_TRIG(NX_ROW1) NX_F_BINARY(NX_ROW2)
          NX_F_COMPARE(NX_ROW2) NX_REAL_ROW(fma, 3) NX_REAL_ROW(where, 3)},
     {NX_I_UNARY(NX_INT_ROW1) NX_I_BINARY(NX_INT_ROW2) {"fma", 3, int_fma},
      {"where", 3, int_where},
      {"threefry", 2, int_threefry}}};
+
+#if defined(NX_CPU_V3)
+const nx_kinds_loops *const nx_kinds_loops_v3 = &loops;
+#else
+const nx_kinds_loops *const nx_kinds_loops_base = &loops;
+#endif
+
+#else
+
+const nx_kinds_loops *const nx_kinds_loops_v3 = NULL;
+
+#endif

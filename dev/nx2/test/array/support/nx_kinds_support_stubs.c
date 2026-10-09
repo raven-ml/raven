@@ -25,6 +25,29 @@
 #include "nx_kinds_strata.h"
 #include "nx_kinds_support.h"
 
+/* The loops of the target nx.cpu would pick on this CPU. */
+static const nx_kinds_loops *nx_kinds_loops_best(void) {
+#if defined(__x86_64__)
+  if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma"))
+    return nx_kinds_loops_v3;
+#endif
+  return nx_kinds_loops_base;
+}
+
+static const nx_real_loop *nx_kinds_real_loop(const nx_kinds_loops *l,
+                                              const char *name) {
+  for (int i = 0; i < NX_REAL_LOOPS; i++)
+    if (strcmp(l->real[i].name, name) == 0) return &l->real[i];
+  return NULL;
+}
+
+static const nx_int_loop *nx_kinds_int_loop(const nx_kinds_loops *l,
+                                            const char *name) {
+  for (int i = 0; i < NX_INT_LOOPS; i++)
+    if (strcmp(l->ints[i].name, name) == 0) return &l->ints[i];
+  return NULL;
+}
+
 static const nx_real_loop *real_loop(const nx_kinds_loops *l, value name) {
   const nx_real_loop *k = nx_kinds_real_loop(l, String_val(name));
   if (k == NULL) caml_invalid_argument(String_val(name));
@@ -33,7 +56,7 @@ static const nx_real_loop *real_loop(const nx_kinds_loops *l, value name) {
 
 static const nx_kinds_loops *target(value name) {
   const char *t = String_val(name);
-  if (strcmp(t, "base") == 0) return &nx_kinds_loops_base;
+  if (strcmp(t, "base") == 0) return nx_kinds_loops_base;
   if (strcmp(t, "v3") == 0 && nx_kinds_loops_v3 != NULL) return nx_kinds_loops_v3;
   caml_invalid_argument(t);
 }
