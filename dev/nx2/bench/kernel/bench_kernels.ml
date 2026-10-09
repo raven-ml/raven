@@ -34,6 +34,7 @@ type codec =
   | F32_e4m3
   | E4m3_f32
   | I64_f32
+  | U64_f32
   | F64_f16
   | F32_f16
   | F32_i8
@@ -118,9 +119,13 @@ let codec_pair = function
   | F32_e4m3 -> ("f32", 4, "e4m3", 1)
   | E4m3_f32 -> ("e4m3", 1, "f32", 4)
   | I64_f32 -> ("i64", 8, "f32", 4)
+  | U64_f32 -> ("u64", 8, "f32", 4)
   | F64_f16 -> ("f64", 8, "f16", 2)
   | F32_f16 -> ("f32", 4, "f16", 2)
   | F32_i8 -> ("f32", 4, "i8", 1)
+
+let codecs =
+  [ F32_bf16; F32_e4m3; E4m3_f32; I64_f32; U64_f32; F64_f16; F32_f16; F32_i8 ]
 
 let floor_name = function
   | Copy n -> strf "copy-%s" (count n)
@@ -153,7 +158,7 @@ let cast (type v s w r) (module K : Nx_kernel.S) (s : (v, s) D.t)
     (fun c ->
       let cs, _, cd, _ = codec_pair c in
       if (cs, cd) = (short s, short d) then need (Codec (c, n)))
-    [ F32_bf16; F32_e4m3; E4m3_f32; I64_f32; F64_f16; F32_f16; F32_i8 ];
+    codecs;
   row
     (strf "cast-%s-%s-%s" (short s) (short d) (count n))
     (fun () -> (filled s [| n |], A.create Rig.host d [| n |]))

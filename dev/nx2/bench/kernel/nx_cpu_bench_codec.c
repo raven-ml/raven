@@ -34,7 +34,16 @@
 #include "rig_pool.h"
 
 /* The codecs, in the order of the bench's [codec] constructors. */
-enum { F32_BF16, F32_E4M3, E4M3_F32, I64_F32, F64_F16, F32_F16, F32_I8 };
+enum {
+  F32_BF16,
+  F32_E4M3,
+  E4M3_F32,
+  I64_F32,
+  U64_F32,
+  F64_F16,
+  F32_F16,
+  F32_I8
+};
 
 /* Slices of a job per thread, as nx_cpu_bench_stubs.c's. */
 #define SLICES 8
@@ -64,6 +73,10 @@ static void slice(int64_t lo, int64_t hi, int worker, void *ctx) {
       return;
     case I64_F32:
       nx_i64_to_float_run((const int64_t *)c->s + first, (float *)c->d + first,
+                          n);
+      return;
+    case U64_F32:
+      nx_u64_to_float_run((const uint64_t *)c->s + first, (float *)c->d + first,
                           n);
       return;
     case F64_F16:
