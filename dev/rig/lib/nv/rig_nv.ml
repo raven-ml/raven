@@ -13,6 +13,7 @@ module Abi = Rig_nv_abi
 module Packet = Abi.Packet
 module Method = Abi.Method
 module Cubin = Abi.Cubin
+module Launch = Abi.Launch
 
 let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
@@ -98,6 +99,10 @@ let words_bytes = 8 * 3
 let entries = 16384
 let segment_bytes = 1 lsl 20
 
+(* The compute channel's launch ring holds [launch_bytes] bytes of launches'
+   descriptors and banks, a power of two: a launch takes about 1 KiB. *)
+let launch_bytes = 1 lsl 20
+
 (* The addresses at which kernels see their shared and local memory, above 2^40,
    where no memory the device maps lies. *)
 let shared_window = 0x7294_0000_0000
@@ -113,6 +118,20 @@ let t_setup = 5
 let t_setup_copy = 6
 let t_invalidate = 7
 let t_idle = 8
+let t_schedule = 9
+
+(* rig_nv_stubs.h's launch values, by slot: the grid's sizes, the group's,
+   bank 0's address, the next descriptor's, the dynamic shared memory. *)
+let dims =
+  Abi.Qmd.
+    [
+      (Grid X, 0); (Grid Y, 1); (Grid Z, 2); (Block X, 3); (Block Y, 4);
+      (Block Z, 5);
+    ]
+
+let v_bank0 = 6
+let v_next = 7
+let v_shared = 8
 
 (* A pending local memory is one word: its address, below 2^40, and its bytes
    per cluster in units of 32 KiB above them. *)
@@ -136,6 +155,10 @@ external set_channel : int -> int -> int array -> bool = "caml_rig_nv_channel"
 
 external set_doorbell : int -> int -> unit = "caml_rig_nv_doorbell" [@@noalloc]
 
+external set_launches : int -> int -> int -> int -> bool -> unit
+  = "caml_rig_nv_launches"
+[@@noalloc]
+
 external set_template : int -> int -> string -> string -> unit
   = "caml_rig_nv_template"
 
@@ -156,6 +179,11 @@ external notification : int -> int -> int = "caml_rig_nv_notification"
 [@@noalloc]
 
 external watch : int -> int -> int -> bool = "caml_rig_nv_watch"
+external new_launch : string array -> int array -> nativeint
+  = "caml_rig_nv_launch"
+
+external free_launch : nativeint -> unit = "caml_rig_nv_launch_free"
+[@@noalloc]
 external last : int -> int = "caml_rig_nv_last" [@@noalloc]
 external raise_word : int -> unit = "caml_rig_nv_raise" [@@noalloc]
 external end_channels : int -> unit = "caml_rig_nv_end" [@@noalloc]
@@ -246,11 +274,12 @@ let arch_of v =
    one byte each nibble. *)
 let sass_of v = ((v land 0xf00) lsr 4) lor (v land 0xf)
 
-(* The channels, as rig_nv_ring.c runs them: copies on the copy channel only. *)
+(* The channels, as rig_nv_ring.c runs them: copies on the copy channel only,
+   launches on the compute channel only. *)
 let queues =
   Rig_edge.
     [
-      { name = "COMPUTE:0"; runs = [ Words ] };
+      { name = "COMPUTE:0"; runs = [ Words; Launch ] };
       { name = "COPY:0"; runs = [ Words; Copy ] };
     ]
 
@@ -363,6 +392,7 @@ let templates self (g : gpu) =
   template self t_setup_copy ~known (Method.set_object Method.Copy g.copy_class);
   template self t_invalidate ~known (Method.invalidate_caches system);
   template self t_idle ~known Method.wait_for_idle;
+  template self t_schedule ~known:unknown (Method.schedule a);
   (* An entry is its segment's address plus a constant plus its words times
      another: the address is a term's value, and the words a field of their
      own. *)
@@ -421,6 +451,24 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
   let* copy_notifier = notifier 1 in
   let bar = path_alloc p "Rig_nv.make" `Bar page in
   Option.iter (fun m -> taken (fun () -> p.free m)) bar;
+  (* The GPU reads a launch's descriptor and bank as the launch before it
+     completes: from its own memory, through the BAR, where the BAR has
+     room. *)
+  let in_bar =
+    match bar with
+    | None -> None
+    | Some _ -> path_alloc p "Rig_nv.make" `Bar launch_bytes
+  in
+  let* launches, launches_bar =
+    match in_bar with
+    | Some m ->
+        taken (fun () -> p.free m);
+        Ok (m, true)
+    | None ->
+        let* m = alloc `System launch_bytes "launch ring" in
+        Ok (m, false)
+  in
+  let* launches_host = host "launch ring" launches in
   let* group =
     new_object ~parent:p.device D.kepler_channel_group_a "the channel group"
       (fun q ->
@@ -519,6 +567,7 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
         (rm.control p.subdevice D.nv2080_ctrl_cmd_perf_boost (Some boost))
     in
     set_doorbell self p.doorbell;
+    set_launches self launches_host launches.address launch_bytes launches_bar;
     templates self p.gpu;
     let* () =
       match bar with
@@ -527,7 +576,7 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
           let* h = host "BAR page" m in
           Ok (set_bar self h)
     in
-    let owned = [ block; fst compute_notifier; fst copy_notifier ] in
+    let owned = [ block; launches; fst compute_notifier; fst copy_notifier ] in
     let g = p.gpu in
     let rec d =
       {
@@ -641,8 +690,15 @@ let map_host (T d) a n =
 (* Images *)
 
 (* An image is a cubin laid over a region of its device: the address of the
-   region's first byte. *)
-type image = { base : int; cubin : Cubin.t }
+   region's first byte. It keeps the entries made of its functions, each with
+   its C launch, until it is unloaded. *)
+type image = {
+  base : int;
+  cubin : Cubin.t;
+  gpu : Abi.Gpu.t;
+  lock : Mutex.t;
+  entries : (string, Rig_edge.entry) Hashtbl.t;
+}
 
 (* The image of [c] for an upload at [base]: its object's image, zeros up to its
    size, and its relocations' patches. *)
@@ -665,19 +721,83 @@ let image_bytes c ~base =
 let lay d c (R r) =
   let base = r.mem.address in
   owe_invalidate d.self;
-  ({ base; cubin = c }, image_bytes c ~base)
+  let i =
+    {
+      base;
+      cubin = c;
+      gpu = d.capability;
+      lock = Mutex.create ();
+      entries = Hashtbl.create 8;
+    }
+  in
+  (i, image_bytes c ~base)
 
 let image (T d) bin =
   let* c = Cubin.of_string bin in
   Ok (Rig_edge.Place (Cubin.size c, lay d c))
 
-let entry c name =
-  Option.map
-    (fun (k : Cubin.kernel) -> { Rig_edge.code = c.base + k.code; launch = 0n })
-    (Cubin.kernel c.cubin name)
+(* The launch of [k] at [code] on [g]: its descriptors and bank 0, their
+   values known now filled, and its limits, as rig_nv_stubs.h's [struct
+   launch] holds them. Making its local memory serve it here, the hand-over
+   allocates nothing. *)
+let set_up g base code (k : Cubin.kernel) =
+  let open Template in
+  let refuse why = invalid_arg ("Rig_nv.entry: " ^ why) in
+  let l = match Launch.make g k with Ok l -> l | Error why -> refuse why in
+  let bytes = Launch.local_bytes l in
+  (match g.local bytes with Ok () -> () | Error why -> refuse why);
+  let local = Abi.Local_memory.make g bytes in
+  let bank q (b : Cubin.bank) =
+    let at = if b.index = 0 then Slot v_bank0 else Known (base + b.offset) in
+    Abi.Qmd.set_bank b.index at q
+  in
+  let dim q (d, slot) = Abi.Qmd.patch_dim d (Slot slot) q in
+  let q =
+    List.fold_left dim (Abi.Qmd.make l) dims
+    |> Abi.Qmd.set_program (Known code)
+    |> Abi.Qmd.set_local_memory (Known local.per_thread)
+  in
+  let q = List.fold_left bank q (Launch.banks l) in
+  let shared = Abi.Qmd.patch_shared (Slot v_shared) q in
+  let chain q = Abi.Qmd.chain (Slot v_next) q in
+  let flat q = structure (Abi.Qmd.structure q) in
+  let qmds = List.map flat [ q; chain q; shared; chain shared ] in
+  let bank0_bytes =
+    List.fold_left
+      (fun n (b : Cubin.bank) -> if b.index = 0 then b.bytes else n)
+      0 (Launch.banks l)
+  in
+  let strings =
+    List.concat_map
+      (fun (b, f) -> [ b; f ])
+      (qmds @ [ structure (Abi.Qmd.parameters q) ])
+  in
+  let ints =
+    [ k.params_offset; bank0_bytes ]
+    @ List.map (fun (d, _) -> Abi.Qmd.max_size d) dims
+    @ [ Launch.max_threads l; Launch.dynamic_shared l ]
+  in
+  new_launch (Array.of_list strings) (Array.of_list ints)
 
-(* An image holds nothing of its device but its code region, which rig frees. *)
-let unload (T _) _ = ()
+let entry c name =
+  Mutex.protect c.lock @@ fun () ->
+  match Hashtbl.find_opt c.entries name with
+  | Some _ as e -> e
+  | None ->
+      Option.map
+        (fun (k : Cubin.kernel) ->
+          let code = c.base + k.code in
+          let e = { Rig_edge.code; launch = set_up c.gpu c.base code k } in
+          Hashtbl.replace c.entries name e;
+          e)
+        (Cubin.kernel c.cubin name)
+
+(* An image holds of its device its code region, which rig frees, and its
+   functions' launches. *)
+let unload (T _) c =
+  Mutex.protect c.lock @@ fun () ->
+  Hashtbl.iter (fun _ (e : Rig_edge.entry) -> free_launch e.launch) c.entries;
+  Hashtbl.reset c.entries
 
 (* Timeline *)
 

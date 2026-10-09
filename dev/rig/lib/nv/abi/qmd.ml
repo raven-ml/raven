@@ -80,7 +80,8 @@ let address q lower upper t = hole (hole q lower t) upper (Shift (t, 32))
    address carries its field's shift even when it is 0, a size only when its
    field has one. *)
 let shifted v n = Shift (Value v, n)
-let scaled v n = if n = 0 then Value v else Shift (Value v, n)
+let scaled_term t n = if n = 0 then t else Shift (t, n)
+let scaled v n = scaled_term (Value v) n
 
 (* A descriptor *)
 
@@ -157,6 +158,17 @@ let set_dim d n q =
   set q (field q d) n
 
 let patch_dim d v q = hole q (field q d) (Value v)
+
+(* The block's own shared memory, the launch's, plus [v]: the configuration
+   of the most shared memory holds any [v] {!Launch.dynamic_shared} allows. *)
+let patch_shared v q =
+  let p = q.layout and l = q.launch in
+  let q = set q p.min_sm_config_shared_mem_size l.max_shared_config in
+  let q = set q p.target_sm_config_shared_mem_size l.max_shared_config in
+  hole q p.shared_memory_size
+    (scaled_term
+       (Add (Value v, Int64.of_int l.shared_bytes))
+       p.shared_memory_shift)
 
 (* Addresses *)
 

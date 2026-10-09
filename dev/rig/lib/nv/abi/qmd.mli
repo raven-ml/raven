@@ -53,6 +53,13 @@ val patch_dim : dim -> 'v -> 'v t -> 'v t
 (** [patch_dim d v q] is [q] whose launch has the size [v] along [d], a hole of
     its {!structure}. [v] is at most [max_size d]. *)
 
+val patch_shared : 'v -> 'v t -> 'v t
+(** [patch_shared v q] is [q] whose blocks each take [v] bytes of dynamic
+    shared memory beside their own, a hole of its {!structure}. [v] is a
+    multiple of 128, at most {!Launch.dynamic_shared}. The multiprocessors run
+    [q]'s launch in their configuration of the most shared memory, which holds
+    any such [v]. *)
+
 (** {1:addresses Addresses} *)
 
 val set_program : 'v -> 'v t -> 'v t

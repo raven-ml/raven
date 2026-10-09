@@ -187,7 +187,7 @@ static void release(struct device *d, struct channel *c, uint64_t v) {
   close_segment(d, c);
   c->released = v;
   c->marks[(c->first + c->count++) & (c->entries - 1)] =
-      (struct mark){v, c->put, c->written};
+      (struct mark){v, c->put, c->written, c->launched};
   atomic_store_explicit(&d->last, v, memory_order_release);
 }
 

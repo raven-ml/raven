@@ -326,5 +326,28 @@ let threads =
           Law.monotone int int threads (a, b));
     ]
 
+(* Dynamic shared memory: what the block's own leaves of 100 KiB, its own the
+   kernel's and the driver's 1 KiB rounded up to 128 bytes. *)
+let dynamic =
+  group ~timeout:10. "dynamic shared memory"
+    [
+      cases
+        ~name:(fun (n, _) -> strf "%d bytes of the kernel's" n)
+        "a block takes what its own leaves of 100 KiB"
+        [
+          (0, 0x19000 - 0x400);
+          (1, 0x19000 - 0x480);
+          (128, 0x19000 - 0x480);
+          (129, 0x19000 - 0x500);
+          (0x19000 - 0x400, 0);
+        ]
+        (fun (shared_bytes, n) ->
+          equal int n
+            (Launch.dynamic_shared
+               (S.launch (S.gpu ()) (S.kernel ~shared_bytes ()))));
+    ]
+
 let () =
-  exit (run "rig_nv_abi.launch" [ classes; memory; banks; driver; threads ])
+  exit
+    (run "rig_nv_abi.launch"
+       [ classes; memory; banks; driver; threads; dynamic ])

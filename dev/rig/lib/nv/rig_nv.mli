@@ -41,8 +41,9 @@
     after. The device writes each part into its channel's ring, a GPFIFO, after
     a wait for the value before it and before the release of its own value, and
     wakes the channel. A part is ring entries that compiled code wrote
-    ({!Rig_nv_abi.Gpfifo.entry}), or a copy the device encodes. Writing a
-    submission makes no system call and calls no function of the OCaml runtime.
+    ({!Rig_nv_abi.Gpfifo.entry}), or a copy or a launch the device encodes.
+    Writing a submission makes no system call and calls no function of the OCaml
+    runtime.
 
     {b Order.} A channel runs its work in order. The device makes a value's work
     start after the work of every value before it, and releases [v] into the
@@ -92,7 +93,7 @@ include Rig_edge.Driver
       |------|-------|
       | [arch] | The multiprocessors' architecture, as ["sm_89"]. |
       | [budget] | What the path reports the GPU's work may allocate. |
-      | [queues] | ["COMPUTE:0"] runs [Words], ["COPY:0"] [Words] and [Copy]. |
+      | [queues] | ["COMPUTE:0"] runs [Words] and [Launch], ["COPY:0"] [Words] and [Copy]. |
       | [completion] | [Store]: the channels write the word. |
       | [waits] | [stores] and [hosts], not [objects]; [most] is [256]. |
       | [may_block] | [false]: the room check and hand-over store to memory. |
@@ -105,6 +106,30 @@ include Rig_edge.Driver
     {b Queues.} The parts of a submission on one queue run in array order: a
     part starts once the parts before it on its queue completed, and reads what
     they wrote.
+
+    {b Launches.} {!entry} sets a function up for launch
+    ({!Rig_nv_abi.Launch.make}) and makes the compute channel's local memory
+    serve it ({!Rig_nv_abi.Gpu.field-local}); it raises [Invalid_argument]
+    with the reason if the function takes more than a launch can, or if the
+    GPU has no memory for that local memory. The hand-over writes each
+    launch's descriptor and constant bank [0] into 1 MiB the device holds for
+    them, in the GPU's memory through its BAR where the BAR had room at
+    {!make}, else in host memory. A launch that follows another launch on
+    ["COMPUTE:0"] is chained to it, unless a part of ["COPY:0"] waits for the
+    first or the second waits for one: it starts once the one before it
+    completed, without a wait for the channel to be idle.
+
+    The room check refuses a launch with:
+    - an axis of size [0];
+    - a grid of more than [2{^31} - 1] groups along [X], or [65535] along [Y]
+      or [Z];
+    - a group of more than [1024] threads along [X] or [Y], [64] along [Z],
+      or {!Rig_nv_abi.Launch.max_threads} in all;
+    - more dynamic shared memory, rounded up to 128 bytes, than
+      {!Rig_nv_abi.Launch.dynamic_shared}.
+
+    A launch with dynamic shared memory runs in the multiprocessors'
+    configuration of the most shared memory ({!Rig_nv_abi.Qmd.patch_shared}).
 
     {b Waits.} The channels wait on any 64-bit word the device maps, whoever
     writes it; [rig_nv_room] keeps room for [256] waits.

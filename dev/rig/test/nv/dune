@@ -34,7 +34,8 @@
  (deps
   (glob_files fixtures/*)))
 
-; test_template fills the ring writer's templates with no GPU: its stubs read a
+; test_template fills the ring writer's templates and launch structures with
+; no GPU: its stubs read a
 ; device state through the driver's own header, and it loads them through the
 ; driver's private Template, copied here.
 
@@ -44,7 +45,7 @@
 (test
  (name test_template)
  (modules test_template template)
- (libraries rig_nv rig_nv_abi rig_edge windtrap)
+ (libraries rig_nv rig_nv_abi rig_nv_abi_support rig_edge windtrap)
  (foreign_stubs
   (language c)
   (include_dirs

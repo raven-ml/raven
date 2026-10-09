@@ -338,6 +338,29 @@ let descriptors =
             qmd S.ada |> Qmd.patch_dim (Grid Y) 5L |> Qmd.set_dim (Grid Y) 7
           in
           equal int 7 (field (encode q) (dim_field v3 (Grid Y))));
+      cases ~name:S.class_name
+        "dynamic shared memory adds to the block's own, in the largest \
+         configuration"
+        S.classes
+        (fun cls ->
+          let l = S.launch (S.gpu ~compute_class:cls ()) (S.kernel ()) in
+          let own = 0x19000 - Launch.dynamic_shared l in
+          let size, shift, configs =
+            (* SHARED_MEMORY_SIZE, then MIN, TARGET and MAX_SM_CONFIG: 100 KiB
+               is 26, its 4 KiB pages plus one. *)
+            if cls = S.blackwell then
+              ((1162, 1152), 7, [ (1168, 1163); (1180, 1175); (1174, 1169) ])
+            else ((561, 544), 0, [ (567, 562); (662, 657); (574, 569) ])
+          in
+          List.iter
+            (fun v ->
+              let b = encode (Qmd.patch_shared (Int64.of_int v) (Qmd.make l)) in
+              equal ~msg:(strf "size beside %d" v) int ((own + v) lsr shift)
+                (field b size);
+              List.iter
+                (fun c -> equal ~msg:"config" int 26 (field b c))
+                configs)
+            [ 0; 128; Launch.dynamic_shared l ]);
       cases ~name:S.class_name "two releases, then none" S.classes (fun cls ->
           let q = qmd cls in
           let q = require_some (Qmd.release System 0x1000L 1L q) in

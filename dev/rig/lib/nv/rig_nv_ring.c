@@ -30,7 +30,16 @@
    Order: the parts on one channel run in array order. COPY runs its copies
    one after another; on COMPUTE a part placed after launches the channel
    has not waited for starts with a wait for idle, as kernels a channel
-   schedules run at once. */
+   schedules run at once.
+
+   Launches: a submission's launches get their descriptors and constant
+   banks 0 in COMPUTE's launch ring, in part order, before its words; the
+   ring is the GPU's memory where its BAR had room, which the GPU reads
+   faster than host memory. A launch that directly follows a launch on
+   COMPUTE, with no join between them, is chained: the descriptor before
+   it schedules it once its own launch completed, so the writer places
+   nothing for it. Any other launch is scheduled from the segment, after a
+   wait for idle if launches run. */
 
 #define _GNU_SOURCE
 
@@ -124,6 +133,7 @@ static void reclaim(struct channel *c, uint64_t seen) {
     if (m->v > seen) return;
     c->freed = m->put;
     c->reclaimed = m->written;
+    c->landed = m->launched;
     c->first = (c->first + 1) & (c->entries - 1);
     c->count--;
   }
@@ -133,19 +143,65 @@ static int is_copy(const struct rig_part *p) {
   return p->kind == RIG_COPY && p->copy.bytes > 0;
 }
 
+static const struct launch *launch_of(const struct rig_part *p) {
+  return p->launch.launch;
+}
+
+static const struct rig_block *block_of(const struct rig_part *p,
+                                        const uint8_t *args) {
+  return (const struct rig_block *)(args + p->launch.block);
+}
+
+static uint64_t round_up(uint64_t n, uint64_t a) {
+  return (n + a - 1) & ~(a - 1);
+}
+
+/* Whether the launch [p]'s block, in [args], is one its function runs. */
+static int launchable(const struct rig_part *p, const uint8_t *args) {
+  const struct launch *l = launch_of(p);
+  const struct rig_block *b = block_of(p, args);
+  uint64_t threads = 1;
+  for (int i = 0; i < 3; i++) {
+    if (b->groups[i] == 0 || b->groups[i] > l->max[i]) return 0;
+    if (b->threads[i] == 0 || b->threads[i] > l->max[3 + i]) return 0;
+    threads *= b->threads[i];
+  }
+  return threads <= l->max_threads &&
+         round_up(b->shared, 128) <= l->max_shared;
+}
+
+
+/* The bytes of [p]'s constant bank 0: the driver's parameters, the
+   kernel's and the bank the descriptor names, whichever ends last. */
+static uint64_t bank_bytes(const struct rig_part *p) {
+  const struct launch *l = launch_of(p);
+  uint64_t n = (uint64_t)l->params_at + p->launch.params;
+  if (n < l->bank0.nbytes) n = l->bank0.nbytes;
+  return n < l->bank0_bytes ? l->bank0_bytes : n;
+}
+
+static uint64_t qmd_bytes(const struct rig_part *p) {
+  return launch_of(p)->qmd[0][0].nbytes;
+}
+
 /* The words a part places, which only words do. */
 static size_t words_of(const struct rig_part *p) {
   return p->kind == RIG_WORDS ? p->words.n : 0;
 }
 
-/* Whether [p]'s parts are ones the device runs. */
-static int runs(const struct rig_part *p, int n) {
+/* Whether [p]'s parts, whose launches' blocks lie in [args], are ones the
+   device runs. */
+static int runs(const struct rig_part *p, int n, const uint8_t *args) {
   if (n < 0 || n > MAX_PARTS) return 0;
   for (int i = 0; i < n; i++) {
     const struct rig_part *x = &p[i];
     if (x->queue != COMPUTE && x->queue != COPY) return 0;
-    if (x->kind != RIG_WORDS && x->kind != RIG_COPY) return 0;
+    if (x->kind != RIG_WORDS && x->kind != RIG_COPY && x->kind != RIG_LAUNCH)
+      return 0;
     if (is_copy(x) && x->queue != COPY) return 0;
+    if (x->kind == RIG_LAUNCH &&
+        (x->queue != COMPUTE || launch_of(x) == NULL || !launchable(x, args)))
+      return 0;
     if (words_of(x) % 2 != 0) return 0;
     for (int j = 0; j < x->nafter; j++)
       if (x->after[j] < 0 || x->after[j] >= i) return 0;
@@ -183,12 +239,16 @@ static int releaser(const struct rig_part *p, int n, uint64_t v) {
 }
 
 static void need(const struct device *d, const struct rig_part *p, int n,
-                 uint64_t *entries, uint64_t *bytes) {
+                 uint64_t *entries, uint64_t *bytes, uint64_t *launched) {
   uint64_t v = atomic_load_explicit(&d->last, memory_order_relaxed) + 1;
   int r = releaser(p, n, v);
   int used[CHANNELS] = {0, 0};
   used[r] = 1;
   for (int q = 0; q < CHANNELS; q++) entries[q] = bytes[q] = 0;
+  /* The most a wrap past the launch ring's end wastes: the largest of the
+     launches' descriptors and banks. */
+  uint64_t wasted = 0;
+  *launched = 0;
   for (int i = 0; i < n; i++) {
     int q = p[i].queue;
     used[q] = 1;
@@ -197,6 +257,14 @@ static void need(const struct device *d, const struct rig_part *p, int n,
     if (is_copy(&p[i]))
       bytes[q] += (p[i].copy.bytes + COPY_MAX - 1) / COPY_MAX *
                   bytes_of(d, T_COPY);
+    if (p[i].kind == RIG_LAUNCH) {
+      uint64_t qmd = qmd_bytes(&p[i]) + QMD_ALIGN - 1;
+      uint64_t bank = bank_bytes(&p[i]) + BANK_ALIGN - 1;
+      bytes[q] += bytes_of(d, T_SCHEDULE);
+      *launched += qmd + bank;
+      if (qmd > wasted) wasted = qmd;
+      if (bank > wasted) wasted = bank;
+    }
     bytes[q] += bytes_of(d, q == COMPUTE ? T_RELEASE : T_COPY_RELEASE);
     if (q == COMPUTE) bytes[q] += bytes_of(d, T_IDLE);
   }
@@ -210,18 +278,20 @@ static void need(const struct device *d, const struct rig_part *p, int n,
       bytes[q] += bytes_of(d, T_LOCAL) + bytes_of(d, T_INVALIDATE);
   }
   bytes[r] += bytes_of(d, r == COMPUTE ? T_RELEASE : T_COPY_RELEASE);
+  if (*launched > 0) *launched += wasted;
 }
 
 int rig_nv_room(void *self, const struct rig_part *p, int n,
                 const uint8_t *args) {
-  (void)args;
   struct device *d = self;
-  if (!runs(p, n)) return RIG_NEVER;
-  uint64_t entries[CHANNELS], bytes[CHANNELS];
-  need(d, p, n, entries, bytes);
+  if (!runs(p, n, args)) return RIG_NEVER;
+  uint64_t entries[CHANNELS], bytes[CHANNELS], launched;
+  need(d, p, n, entries, bytes, &launched);
   for (int q = 0; q < CHANNELS; q++)
     if (entries[q] > d->ch[q].entries - 1 || bytes[q] > d->ch[q].size)
       return RIG_NEVER;
+  const struct channel *compute = &d->ch[COMPUTE];
+  if (launched > compute->launches_size) return RIG_NEVER;
   uint64_t seen = atomic_load_explicit(d->word, memory_order_acquire);
   for (int q = 0; q < CHANNELS; q++) {
     struct channel *c = &d->ch[q];
@@ -230,6 +300,9 @@ int rig_nv_room(void *self, const struct rig_part *p, int n,
         c->size - (c->written - c->reclaimed) < bytes[q])
       return RIG_LATER;
   }
+  if (compute->launches_size - (compute->launched - compute->landed) <
+      launched)
+    return RIG_LATER;
   return RIG_FITS;
 }
 
@@ -269,6 +342,131 @@ static void signal(struct device *d, int q, uint64_t address, uint64_t value) {
        value, 0);
 }
 
+/* Launches' memory */
+
+/* Takes [bytes] of [c]'s launch ring at the count [*at], aligned to
+   [align], a power of two that divides the ring's size: their count. The
+   bytes never wrap: ones that would pass the ring's end start it. */
+static uint64_t take(const struct channel *c, uint64_t *at, uint64_t bytes,
+                     uint64_t align) {
+  uint64_t size = c->launches_size;
+  uint64_t x = round_up(*at, align);
+  if ((x & (size - 1)) + bytes > size) x = (x | (size - 1)) + 1;
+  *at = x + bytes;
+  return x;
+}
+
+static uint64_t gpu_at(const struct channel *c, uint64_t x) {
+  return c->launches_gpu + (x & (c->launches_size - 1));
+}
+
+static uint8_t *host_at(const struct channel *c, uint64_t x) {
+  return c->launches + (x & (c->launches_size - 1));
+}
+
+/* [p]'s values: its block's sizes, its bank at [bank], the descriptor at
+   [next] it chains, if not 0. */
+static void values_of(const struct rig_part *p, const uint8_t *args,
+                      uint64_t bank, uint64_t next, uint64_t *v) {
+  const struct rig_block *b = block_of(p, args);
+  for (int i = 0; i < 3; i++) {
+    v[V_GRID_X + i] = b->groups[i];
+    v[V_BLOCK_X + i] = b->threads[i];
+  }
+  v[V_BANK0] = bank;
+  v[V_NEXT] = next;
+  v[V_SHARED] = round_up(b->shared, 128);
+}
+
+/* Writes [p]'s constant bank 0 at [bank], a count of COMPUTE's launch
+   ring: the driver's parameters, then the kernel's from [args], whose refs
+   take their slots' addresses. Built on the stack, then copied, so that
+   the ring's memory is only written. */
+static void put_bank(struct device *d, const struct rig_part *p,
+                     const uint8_t *args, const uint64_t *slots,
+                     uint64_t bank) {
+  struct channel *c = &d->ch[COMPUTE];
+  const struct launch *l = launch_of(p);
+  uint8_t w[STRUCTURE_BYTES + RIG_PARAMS];
+  uint64_t v[VALUES];
+  values_of(p, args, gpu_at(c, bank), 0, v);
+  rig_nv_fill_structure(&l->bank0, v, w);
+  uint8_t *params = w + l->params_at;
+  memcpy(params, block_of(p, args)->params, p->launch.params);
+  for (int i = 0; i < p->launch.nrefs; i++) {
+    const struct rig_ref *r = &p->launch.refs[i];
+    uint64_t x;
+    memcpy(&x, params + r->at, 8);
+    x += slots[r->slot];
+    memcpy(params + r->at, &x, 8);
+  }
+  uint64_t n = (uint64_t)l->params_at + p->launch.params;
+  if (n < l->bank0.nbytes) n = l->bank0.nbytes;
+  memcpy(host_at(c, bank), w, n);
+}
+
+/* Writes [p]'s descriptor at [qmd], with its bank at [bank], chaining the
+   descriptor at [next] if not 0. */
+static void put_qmd(struct device *d, const struct rig_part *p,
+                    const uint8_t *args, uint64_t qmd, uint64_t bank,
+                    uint64_t next) {
+  struct channel *c = &d->ch[COMPUTE];
+  const struct launch *l = launch_of(p);
+  uint8_t w[STRUCTURE_BYTES];
+  uint64_t v[VALUES];
+  values_of(p, args, gpu_at(c, bank), next == 0 ? 0 : gpu_at(c, next), v);
+  const struct structure *s = &l->qmd[v[V_SHARED] > 0][next != 0];
+  rig_nv_fill_structure(s, v, w);
+  memcpy(host_at(c, qmd), w, s->nbytes);
+}
+
+/* Whether part [b], on COMPUTE, is a launch chained to [a], the part before
+   it there: a launch neither the other channel waits for nor followed by a
+   wait for that channel. */
+static int chained(const struct device *d, const struct rig_part *p, int a,
+                   int b) {
+  if (a < 0 || p[a].kind != RIG_LAUNCH || p[b].kind != RIG_LAUNCH ||
+      d->awaited[a])
+    return 0;
+  for (int j = 0; j < p[b].nafter; j++)
+    if (p[p[b].after[j]].queue != COMPUTE) return 0;
+  return 1;
+}
+
+/* Takes the descriptor and bank of the launch [p] at the count [*at]. */
+static void take_launch(const struct channel *c, const struct rig_part *p,
+                        uint64_t *at, uint64_t *qmd, uint64_t *bank) {
+  *qmd = take(c, at, qmd_bytes(p), QMD_ALIGN);
+  *bank = take(c, at, bank_bytes(p), BANK_ALIGN);
+}
+
+/* Writes the descriptors and banks of the launches of [p] into COMPUTE's
+   launch ring from its [launched] count, in part order. A descriptor is
+   written once the part after it on COMPUTE is known, which it may
+   chain. */
+static void lay_launches(struct device *d, const struct rig_part *p, int n,
+                         const uint8_t *args, const uint64_t *slots) {
+  struct channel *c = &d->ch[COMPUTE];
+  int before = -1, open = -1;
+  uint64_t open_qmd = 0, open_bank = 0;
+  for (int i = 0; i < n; i++) {
+    if (p[i].queue != COMPUTE) continue;
+    int chain = chained(d, p, before, i);
+    before = i;
+    uint64_t qmd = 0, bank = 0;
+    if (p[i].kind == RIG_LAUNCH) {
+      take_launch(c, &p[i], &c->launched, &qmd, &bank);
+      put_bank(d, &p[i], args, slots, bank);
+    }
+    if (open >= 0)
+      put_qmd(d, &p[open], args, open_qmd, open_bank, chain ? qmd : 0);
+    open = p[i].kind == RIG_LAUNCH ? i : -1;
+    open_qmd = qmd;
+    open_bank = bank;
+  }
+  if (open >= 0) put_qmd(d, &p[open], args, open_qmd, open_bank, 0);
+}
+
 static void place(struct device *d, const struct rig_part *p) {
   struct channel *c = &d->ch[p->queue];
   if (p->kind == RIG_WORDS) {
@@ -287,13 +485,12 @@ int rig_nv_submit(void *self, uint64_t v, const struct rig_wait *waits,
                   int nwaits, const struct rig_part *p, int n,
                   const uint8_t *args, const uint64_t *slots, int nslots,
                   const uint64_t *handles, int nhandles, const char **failure) {
-  (void)args;
-  (void)slots;
   (void)nslots;
   (void)handles;
   (void)nhandles;
   (void)failure;
   struct device *d = self;
+  struct channel *compute = &d->ch[COMPUTE];
   int r = releaser(p, n, v);
   int used[CHANNELS] = {0, 0};
   int last[CHANNELS] = {-1, -1};
@@ -301,6 +498,10 @@ int rig_nv_submit(void *self, uint64_t v, const struct rig_wait *waits,
   int running = 0;
   for (int i = 0; i < n; i++) last[p[i].queue] = i;
   mark_awaited(d, p, n);
+  /* The launches' memory, then the same counts again for their words. */
+  uint64_t start = compute->launched, at = start;
+  lay_launches(d, p, n, args, slots);
+  int before = -1;
   for (int i = 0; i < n; i++) {
     int q = p[i].queue;
     enter(d, q, v, used, waits, nwaits);
@@ -309,9 +510,21 @@ int rig_nv_submit(void *self, uint64_t v, const struct rig_wait *waits,
       if (p[a].queue != q)
         emit(d, &d->ch[q], T_ACQUIRE, JOIN_GPU(d, other(q)), tag(v, a), 0);
     }
-    if (q == COMPUTE && running) emit(d, &d->ch[q], T_IDLE, 0, 0, 0);
-    place(d, &p[i]);
-    if (q == COMPUTE) running = 1;
+    if (p[i].kind == RIG_LAUNCH) {
+      uint64_t qmd, bank;
+      take_launch(compute, &p[i], &at, &qmd, &bank);
+      if (!chained(d, p, before, i)) {
+        if (running) emit(d, compute, T_IDLE, 0, 0, 0);
+        emit(d, compute, T_SCHEDULE, gpu_at(compute, qmd), 0, 0);
+      }
+    } else {
+      if (q == COMPUTE && running) emit(d, &d->ch[q], T_IDLE, 0, 0, 0);
+      place(d, &p[i]);
+    }
+    if (q == COMPUTE) {
+      running = 1;
+      before = i;
+    }
     if (d->awaited[i] || (i == last[q] && q != r)) {
       signal(d, q, JOIN_GPU(d, q), tag(v, i));
       if (q == COMPUTE) running = 0;
@@ -328,13 +541,14 @@ int rig_nv_submit(void *self, uint64_t v, const struct rig_wait *waits,
     struct channel *c = &d->ch[q];
     close_segment(d, c);
     c->marks[(c->first + c->count++) & (c->entries - 1)] =
-        (struct mark){v, c->put, c->written};
+        (struct mark){v, c->put, c->written, c->launched};
   }
   store_fence();
   for (int q = 0; q < CHANNELS; q++)
     if (used[q])
       *d->ch[q].gp_put = (uint32_t)(d->ch[q].put & (d->ch[q].entries - 1));
-  if (atomic_load_explicit(&d->bar_live, memory_order_acquire) > 0) {
+  if (atomic_load_explicit(&d->bar_live, memory_order_acquire) > 0 ||
+      (compute->bar && compute->launched != start)) {
     full_fence();
     (void)*d->bar;
   } else

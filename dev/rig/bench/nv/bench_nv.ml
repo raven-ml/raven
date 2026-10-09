@@ -186,10 +186,24 @@ let wait_rows =
         (fun (_, at) -> floor_waits at 4);
     ]
 
+(* [count] launches of the kernel [empty] over one thread, as Launch parts of
+   one submission on [t], each block stored. *)
+let launching t count =
+  let image = get (Rig.Image.load t.d (Lazy.force cubin)) in
+  let work = Sub.Launch { image; kernel = "empty"; params = 0; refs = [||] } in
+  let s = submission t (Array.make count (part "COMPUTE:0" work)) in
+  for i = 0 to count - 1 do
+    let b = Sub.block s.s i in
+    Sub.Run.groups s.run b 1 1 1;
+    Sub.Run.threads s.run b 1 1 1
+  done;
+  s
+
 (* A run of 64 launches follows the GPU's SM clock, which moves by up to a tenth
-   between and within runs and which no unprivileged process pins. Chained
-   launches in one part are the floor of launches that each wait for the one
-   before; [64-parts] orders them as parts of one queue instead, and
+   between and within runs and which no unprivileged process pins. Launches are
+   Launch parts, which the driver chains on one channel. Chained launches in one
+   part of ring words are their floor; [64-parts] orders launches as ring words
+   of parts of one queue, each scheduled after a wait for idle, and
    [4096-parts] shows what the writer costs per part of a large submission. *)
 let launch_rows =
   let launching_as how count () =
@@ -198,22 +212,23 @@ let launch_rows =
     let part e = part "COMPUTE:0" (Words (entry_words e)) in
     (t, p, es.(0), submission t (Array.map part es))
   in
-  let launching = launching_as `Chained in
   let floor_launching count () =
-    let t, p, e, _ = launching count () in
+    let t, p, e, _ = launching_as `Chained count () in
     (floor t, p, e)
   in
+  let launch_parts count () =
+    let t = dev () in
+    (t, launching t count)
+  in
   let floor_run (_, _, e) = floor_entry e.(0) e.(1) in
-  (* The launches of [64-parts] as 64 submissions, and from C as a submission
-     and a release each through the driver, then as the driver's words written
+  (* 64 launches as 64 submissions, and from C as a submission and a release
+     each through the driver, then as the driver's words written
      from C, 64 values each rung: with a release each, or each ending in the
      wait for idle that orders the next, with one release for them all. The last
      two rows' gap is what the releases cost the GPU. *)
   let submitting () =
     let t = dev () in
-    let p, es = launches t 64 `Apart in
-    let one e = submission t [| part "COMPUTE:0" (Words (entry_words e)) |] in
-    (t, p, Array.map one es)
+    (t, (), Array.init 64 (fun _ -> launching t 1))
   in
   let submit_all (t, _, ss) =
     Array.iter (fun s -> ignore (submit s)) ss;
@@ -226,9 +241,9 @@ let launch_rows =
   in
   Thumper.group "launch"
     [
-      row "1" (launching 1) (fun (t, _, _, s) -> run t s);
+      row "1" (launch_parts 1) (fun (t, s) -> run t s);
       row "floor-1" (floor_launching 1) floor_run;
-      row "64" (launching 64) (fun (t, _, _, s) -> run t s);
+      row "64" (launch_parts 64) (fun (t, s) -> run t s);
       row "floor-64" (floor_launching 64) floor_run;
       row "64-parts" (launching_as `Apart 64) (fun (t, _, _, s) -> run t s);
       row "submits-64" submitting submit_all;

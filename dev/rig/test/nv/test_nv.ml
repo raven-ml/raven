@@ -511,7 +511,7 @@ let facts () =
   greater int ~msg:"budget" ~than:0 f.budget;
   equal
     (list (pair string (list string)))
-    [ ("COMPUTE:0", [ "Words" ]); ("COPY:0", [ "Words"; "Copy" ]) ]
+    [ ("COMPUTE:0", [ "Words"; "Launch" ]); ("COPY:0", [ "Words"; "Copy" ]) ]
     (List.map
        (fun (q : Rig_edge.queue) ->
          ( q.name,
@@ -695,6 +695,240 @@ let work =
       test "a wait holds work on another device's host word above 2^40"
         high_word;
       test "a submission the rings have no room for raises" refused;
+    ]
+
+(* Launches, through rig. The conformance suite states the laws every driver's
+   launches keep; these are NV's. *)
+
+module Sub = Rig.Submission
+module Run = Rig.Submission.Run
+
+let launch_image =
+  Rig_gpu_support.loader (fun () -> S.fixture "launch_sm89.cubin")
+
+let kernel_image =
+  Rig_gpu_support.loader (fun () -> S.fixture "kernels_sm89.cubin")
+
+let refer at slot = { Sub.at; slot }
+
+(* [kernel] of [image] on COMPUTE:0, with [params] bytes of parameters. *)
+let launch_part ?(after = [||]) image kernel ~params refs =
+  {
+    Sub.queue = "COMPUTE:0";
+    after;
+    work = Launch { image; kernel; params; refs };
+  }
+
+let copy_part ?(after = [||]) ~dst src =
+  { Sub.queue = "COPY:0"; after; work = Copy { src; dst } }
+
+(* The [n] 32-bit words of [b] from byte [at], copied to the host. *)
+let words b ~at n =
+  let h = B.create Rig.host (4 * n) in
+  B.copy ~src:(B.view b ~first:at ~length:(4 * n)) ~dst:h;
+  let a = B.bigarray Bigarray.int32 h in
+  Array.init n (fun i -> Int32.to_int a.{i} land 0xffff_ffff)
+
+let submitted s run ~reads ~writes =
+  Rig.submit s ~run ~reads ~writes ~waits:[||]
+
+(* Stores [ids]'s parameters into the block [k] of [run]: its words from [out]
+   [offset] bytes on hold [a + b * k]. *)
+let ids_params run k ~offset ~a ~b =
+  Run.int64 run k 0 offset;
+  Run.int64 run k 8 a;
+  Run.int32 run k 16 b;
+  Run.float32 run k 20 0.
+
+(* A launch of [kernel] (fixtures/launch.cu) over [groups] of [threads] with
+   [shared] bytes of dynamic shared memory, on [d], into a buffer of its own:
+   its submission and run. *)
+let launching ?(kernel = "ids") ?(params = 24) d ~groups:(gx, gy, gz)
+    ~threads:(tx, ty, tz) ~shared =
+  let image = launch_image d in
+  let s =
+    Sub.make ~reads:0 ~writes:1 d
+      [| launch_part image kernel ~params [| refer 0 0 |] |]
+  in
+  let run = Run.make () in
+  let b = Sub.block s 0 in
+  Run.groups run b gx gy gz;
+  Run.threads run b tx ty tz;
+  Run.shared run b shared;
+  (s, run)
+
+(* The most dynamic shared memory a block of [rotate] takes on [g]. *)
+let dynamic_shared g =
+  let c =
+    require_ok ~pp:Format.pp_print_string
+      (A.Cubin.of_string (S.fixture "launch_sm89.cubin"))
+  in
+  let k = require_some (A.Cubin.kernel c "rotate") in
+  A.Launch.dynamic_shared
+    (require_ok ~pp:Format.pp_print_string (A.Launch.make (S.gpu g) k))
+
+(* Launches past NV's limits are refused before any value, and the device
+   stays live. The image's load takes values of its own. *)
+let refused_launches () =
+  S.with_ @@ fun { d; g } ->
+  let out = B.create d 4096 in
+  ignore (launch_image d);
+  let loaded = Rig.submitted d in
+  let refuses msg ?kernel ?params ?(groups = (1, 1, 1)) ?(threads = (1, 1, 1))
+      ?(shared = 0) () =
+    let s, run = launching ?kernel ?params d ~groups ~threads ~shared in
+    raises_match ~msg (Exn.invalid_arg ~substring:"never fit") (fun () ->
+        submitted s run ~reads:[||] ~writes:[| out |])
+  in
+  refuses "65536 groups along y" ~groups:(1, 65536, 1) ();
+  refuses "65536 groups along z" ~groups:(1, 1, 65536) ();
+  refuses "2^31 groups along x" ~groups:(1 lsl 31, 1, 1) ();
+  refuses "1025 threads along x" ~threads:(1025, 1, 1) ();
+  refuses "65 threads along z" ~threads:(1, 1, 65) ();
+  refuses "2048 threads per group" ~threads:(1024, 2, 1) ();
+  refuses "a byte of shared memory past the most, rounded to 128"
+    ~kernel:"rotate" ~params:12
+    ~shared:(dynamic_shared g + 1)
+    ();
+  equal int ~msg:"values assigned" loaded (Rig.submitted d);
+  equal (option string) ~msg:"the device's loss" None (Rig.lost d);
+  let s, run =
+    launching d ~groups:(1, 1, 65535) ~threads:(1024, 1, 1) ~shared:0
+  in
+  ids_params run (Sub.block s 0) ~offset:0 ~a:0 ~b:1;
+  let out = B.create d (4 * 65535 * 1024) in
+  Rig.wait d (Rig.Point.value (submitted s run ~reads:[||] ~writes:[| out |]))
+
+(* A launch takes as much dynamic shared memory as a block may beside its
+   own. *)
+let most_shared_memory () =
+  S.with_ @@ fun { d; g } ->
+  let shared = dynamic_shared g in
+  let s, run =
+    launching ~kernel:"rotate" ~params:12 d ~groups:(2, 1, 1)
+      ~threads:(256, 1, 1) ~shared
+  in
+  let b = Sub.block s 0 in
+  Run.int64 run b 0 0;
+  Run.int32 run b 8 5;
+  let out = B.create d (4 * 512) in
+  Rig.wait d (Rig.Point.value (submitted s run ~reads:[||] ~writes:[| out |]));
+  let value i g = (5 + (3 * i) + (7 * g)) land 0xffff_ffff in
+  equal (array int) ~msg:"the words"
+    (Array.init 512 (fun i ->
+         let g = i / 256 in
+         value ((g * 256) + ((i + 1) mod 256)) g))
+    (words out ~at:0 512)
+
+(* A cached launch submitted with a warm run, its block stored anew each time
+   through every setter, allocates nothing. *)
+let no_allocation () =
+  S.with_ @@ fun { d; _ } ->
+  let s, run = launching d ~groups:(1, 1, 1) ~threads:(32, 1, 1) ~shared:0 in
+  let writes = [| B.create d 4096 |] in
+  let b = Sub.block s 0 in
+  let once i =
+    Run.groups run b 1 1 1;
+    Run.threads run b 32 1 1;
+    Run.shared run b 0;
+    Run.int64 run b 0 0;
+    Run.int64 run b 8 i;
+    Run.int32 run b 16 1;
+    Run.float32 run b 20 1.5;
+    Run.float64 run b 16 2.5;
+    Run.int32 run b 16 1;
+    ignore (Sys.opaque_identity (submitted s run ~reads:[||] ~writes))
+  in
+  once 0;
+  Rig.wait d (Rig.submitted d);
+  let before = Gc.minor_words () in
+  for i = 1 to 100 do
+    once i
+  done;
+  let words = int_of_float (Gc.minor_words () -. before) / 100 in
+  Rig.wait d (Rig.submitted d);
+  equal int ~msg:"words per launch" 0 words
+
+(* Launches with a copy between them on the other channel, each waiting for the
+   part before it: the second launch is scheduled after the copy, not chained
+   to the first. *)
+let launch_copy_launch () =
+  S.with_ @@ fun { d; _ } ->
+  let image = launch_image d in
+  let n = 1024 in
+  let out = B.create d (4 * n) and mid = B.create d (4 * n) in
+  let dst = B.create d (4 * n) in
+  let s =
+    Sub.make ~reads:0 ~writes:3 d
+      [|
+        launch_part image "ids" ~params:24 [| refer 0 0 |];
+        copy_part ~after:[| 0 |] ~dst:mid out;
+        launch_part ~after:[| 1 |] image "twice" ~params:20
+          [| refer 0 2; refer 8 1 |];
+      |]
+  in
+  let run = Run.make () in
+  let b0 = Sub.block s 0 and b2 = Sub.block s 2 in
+  Run.groups run b0 (n / 256) 1 1;
+  Run.threads run b0 256 1 1;
+  ids_params run b0 ~offset:0 ~a:11 ~b:3;
+  Run.groups run b2 (n / 256) 1 1;
+  Run.threads run b2 256 1 1;
+  Run.int64 run b2 0 0;
+  Run.int64 run b2 8 0;
+  Run.int32 run b2 16 1;
+  Rig.wait d
+    (Rig.Point.value (submitted s run ~reads:[||] ~writes:[| out; mid; dst |]));
+  equal (array int)
+    (Array.init n (fun k -> (2 * (11 + (3 * k))) + 1))
+    (words dst ~at:0 n)
+
+(* Launches past the end of the compute channel's launch ring: each writes its
+   own word, through a ref whose offset names it. *)
+let launches_wrap () =
+  S.with_ @@ fun { d; _ } ->
+  let n = 4000 in
+  let out = B.create d (4 * n) in
+  let s, run = launching d ~groups:(1, 1, 1) ~threads:(1, 1, 1) ~shared:0 in
+  let b = Sub.block s 0 in
+  for i = 0 to n - 1 do
+    ids_params run b ~offset:(4 * i) ~a:i ~b:0;
+    ignore (submitted s run ~reads:[||] ~writes:[| out |])
+  done;
+  Rig.wait d (Rig.submitted d);
+  equal (array int) (Array.init n Fun.id) (words out ~at:0 n)
+
+(* A function whose threads keep 2 KiB of local memory runs as a launch: its
+   entry made the channel's local memory serve it. *)
+let local_launch () =
+  S.with_ @@ fun { d; _ } ->
+  let n = 1024 in
+  let out = B.create d (4 * n) in
+  let s =
+    Sub.make ~reads:0 ~writes:1 d
+      [| launch_part (kernel_image d) "stack" ~params:12 [| refer 0 0 |] |]
+  in
+  let run = Run.make () in
+  let b = Sub.block s 0 in
+  Run.groups run b (n / 256) 1 1;
+  Run.threads run b 256 1 1;
+  Run.int64 run b 0 0;
+  Run.int32 run b 8 n;
+  Rig.wait d (Rig.Point.value (submitted s run ~reads:[||] ~writes:[| out |]));
+  equal (array int)
+    (Array.init n (fun i -> (512 * i) + 130816))
+    (words out ~at:0 n)
+
+let launches =
+  group ~timeout:120. "launches"
+    [
+      test "launches past NV's limits are refused" refused_launches;
+      test "a launch takes the most dynamic shared memory" most_shared_memory;
+      test "a cached launch allocates nothing" no_allocation;
+      test "a launch after a copy after a launch reads the copy"
+        launch_copy_launch;
+      test "4,000 launches pass the launch ring's end" launches_wrap;
+      test "a function with local memory runs as a launch" local_launch;
     ]
 
 (* Room *)
@@ -908,17 +1142,16 @@ let images () =
   N.free g r
 
 (* A cubin loads where another one's code ran and was unloaded: its launch runs
-   its own code. Each image goes to its region by a kernel that copies it from
-   Mapped memory. *)
+   its own code. The second cubin is laid over the first one's region, so that
+   its code is where the first one's ran whatever the allocator answers. Each
+   image goes to its region by a kernel that copies it from Mapped memory. *)
 let reloaded () =
   S.with_ @@ fun t ->
   let k = S.kernels t in
   let l = S.launches t.g in
   let n = 1000 in
   let out = alloc t.g Pinned (4 * n) in
-  let place file =
-    let bin = S.fixture file in
-    let i, code, bytes = S.image t.g bin in
+  let copy_in code bytes =
     let staging = alloc t.g Mapped (String.length bytes) in
     H.write (host staging) bytes;
     S.run t
@@ -927,10 +1160,9 @@ let reloaded () =
           (copy_after l k ~dst:(address code) ~src:(address staging)
              (String.length bytes));
       |];
-    N.free t.g staging;
-    (bin, i, code)
+    N.free t.g staging
   in
-  let compute (bin, _, code) factor =
+  let compute bin code factor =
     H.write (host out) (String.make (4 * n) '\000');
     S.run t
       [|
@@ -943,17 +1175,25 @@ let reloaded () =
       (List.init n (fun i -> factor * i))
       (words32 (host out) n)
   in
-  let ((_, i, code) as twice) = place "twice_sm89.cubin" in
-  compute twice 2;
-  let at = address code in
+  let twice = S.fixture "twice_sm89.cubin" in
+  let i, code, bytes = S.image t.g twice in
+  copy_in code bytes;
+  compute twice code 2;
   N.unload t.g i;
-  N.free t.g code;
-  let ((_, i', code') as thrice) = place "thrice_sm89.cubin" in
-  equal int ~msg:"the second loads at the first one's address" at
-    (address code');
-  compute thrice 3;
+  let thrice = S.fixture "thrice_sm89.cubin" in
+  let i', bytes' =
+    match N.image t.g thrice with
+    | Ok (Place (size, lay)) ->
+        equal int ~msg:"the second's image is the first's size"
+          (String.length bytes) size;
+        lay code
+    | Ok (Loaded _) -> fail "an image with nothing to place"
+    | Error e -> failf "loading: %s" e
+  in
+  copy_in code bytes';
+  compute thrice code 3;
   N.unload t.g i';
-  N.free t.g code';
+  N.free t.g code;
   S.free_launches l;
   N.free t.g out
 
@@ -1335,6 +1575,7 @@ let () =
          facts;
          memory;
          work;
+         launches;
          room;
          local;
          images;

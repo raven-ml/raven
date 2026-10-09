@@ -39,6 +39,7 @@ enum {
   T_SETUP_COPY,   /* (): the copy channel's engine binding */
   T_INVALIDATE,   /* (): the compute engine's caches */
   T_IDLE,         /* (): wait for the compute engine's launches */
+  T_SCHEDULE,     /* (address): schedule the launch descriptor there */
   TEMPLATES
 };
 
@@ -80,10 +81,82 @@ static inline int rig_nv_fill(const struct template *t,
   return t->nwords;
 }
 
-/* A submission's use of a channel: the value, and the ring's and the
-   segment ring's counts once it was written. */
+/* Launches
+
+   A function set up for launch, as the driver's [entry] made it: its
+   descriptors and the driver's parameters of its constant bank 0, as
+   structures with holes the writer fills from a launch's values, and the
+   limits the room check holds its launches to.
+
+   A structure's field is the little-endian word of [width] bytes (1, 2, 4
+   or 8) at byte [at] whose low [bits] bits take the writer's value number
+   [slot] after its operations, as a template's hole does; its other bits
+   stay. */
+struct field {
+  uint16_t at;
+  uint8_t width, bits, slot, nops;
+  uint8_t shift[HOLE_OPS];
+  uint64_t n[HOLE_OPS];
+};
+
+#define STRUCTURE_BYTES 1024
+#define STRUCTURE_FIELDS 16
+
+struct structure {
+  uint32_t nbytes, nfields;
+  struct field fields[STRUCTURE_FIELDS];
+  uint8_t bytes[STRUCTURE_BYTES];
+};
+
+/* A launch's values, by slot. */
+enum {
+  V_GRID_X, V_GRID_Y, V_GRID_Z, /* the groups of its grid */
+  V_BLOCK_X, V_BLOCK_Y, V_BLOCK_Z, /* the threads of a group */
+  V_BANK0,  /* the address of its constant bank 0 */
+  V_NEXT,   /* the address of the descriptor it chains */
+  V_SHARED, /* its dynamic shared memory, in bytes, a multiple of 128 */
+  VALUES
+};
+
+/* Structure [s]'s bytes in [w], its fields filled from [values]. The host
+   is little-endian. */
+static inline void rig_nv_fill_structure(const struct structure *s,
+                                         const uint64_t *values, uint8_t *w) {
+  memcpy(w, s->bytes, s->nbytes);
+  for (uint32_t i = 0; i < s->nfields; i++) {
+    const struct field *f = &s->fields[i];
+    uint64_t x = values[f->slot];
+    for (int j = 0; j < f->nops; j++)
+      x = f->shift[j] ? x >> f->shift[j] : x + f->n[j];
+    uint64_t mask = f->bits == 64 ? UINT64_MAX : (UINT64_C(1) << f->bits) - 1;
+    uint64_t word = 0;
+    memcpy(&word, w + f->at, f->width);
+    word = (word & ~mask) | (x & mask);
+    memcpy(w + f->at, &word, f->width);
+  }
+}
+
+/* Descriptor and constant bank alignments, in bytes. */
+#define QMD_ALIGN 256
+#define BANK_ALIGN 64
+
+struct launch {
+  /* [qmd[s][c]]: without (s = 0) or with dynamic shared memory, chaining
+     no descriptor (c = 0) or the one at V_NEXT */
+  struct structure qmd[2][2];
+  struct structure bank0;
+  /* where the kernel's parameters start in bank 0, and the bank's bytes the
+     descriptor names */
+  uint32_t params_at, bank0_bytes;
+  /* the most groups of a grid and threads of a group along X, Y and Z, the
+     most threads of a group, and the most dynamic shared memory */
+  uint32_t max[6], max_threads, max_shared;
+};
+
+/* A submission's use of a channel: the value, and the ring's, the segment
+   ring's and the launch ring's counts once it was written. */
 struct mark {
-  uint64_t v, put, written;
+  uint64_t v, put, written, launched;
 };
 
 /* A channel. Counts grow without wrapping; a position is a count modulo
@@ -96,6 +169,11 @@ struct channel {
   /* the driver's segments, as the host writes them */
   uint8_t *segments;
   uint64_t segments_gpu, size, written, reclaimed;
+  /* the launches' descriptors and banks, as the host writes them, on
+     COMPUTE alone; in the GPU's memory through its BAR when [bar] */
+  uint8_t *launches;
+  uint64_t launches_gpu, launches_size, launched, landed;
+  int bar;
   struct mark *marks; /* a queue of [entries] marks */
   uint64_t first, count;
   uint64_t released; /* the last value this channel released into the word */

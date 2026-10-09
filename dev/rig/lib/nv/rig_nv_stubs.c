@@ -20,6 +20,7 @@
 #include <string.h>
 
 #define CAML_NAME_SPACE
+#include <caml/alloc.h>
 #include <caml/fail.h>
 #include <caml/mlvalues.h>
 #include <caml/signals.h>
@@ -132,6 +133,19 @@ value caml_rig_nv_channel(value v_self, value v_q, value v_ints) {
   return Val_bool(c->marks != NULL);
 }
 
+/* Sets COMPUTE's launch ring to the [v_size] bytes, a power of two, at the
+   host address [v_host] and the GPU's [v_gpu], in the GPU's memory through
+   its BAR if [v_bar]. */
+value caml_rig_nv_launches(value v_self, value v_host, value v_gpu,
+                           value v_size, value v_bar) {
+  struct channel *c = &Device_val(v_self)->ch[COMPUTE];
+  c->launches = Pointer_val(v_host);
+  c->launches_gpu = (uint64_t)Long_val(v_gpu);
+  c->launches_size = (uint64_t)Long_val(v_size);
+  c->bar = Bool_val(v_bar);
+  return Val_unit;
+}
+
 value caml_rig_nv_doorbell(value v_self, value v_at) {
   Device_val(v_self)->doorbell = Pointer_val(v_at);
   return Val_unit;
@@ -185,6 +199,88 @@ value caml_rig_nv_template(value v_self, value v_k, value v_words,
     }
   }
   Device_val(v_self)->t[Int_val(v_k)] = c;
+  return Val_unit;
+}
+
+/* Launches */
+
+static void refuse_launch(struct launch *l, const char *why) {
+  char msg[96];
+  free(l);
+  snprintf(msg, sizeof msg, "Rig_nv.entry: a structure %s", why);
+  caml_invalid_argument(msg);
+}
+
+/* Sets [s] to the bytes [v_bytes] and the fields [v_fields]: 64-bit words,
+   each field's byte, bits, slot and operations' count, then each operation
+   and its constant. A word's width is the narrowest of 1, 2, 4 and 8 bytes
+   that holds its bits. */
+static void structure(struct launch *l, struct structure *s, value v_bytes,
+                      value v_fields) {
+  size_t bytes = caml_string_length(v_bytes);
+  if (bytes > STRUCTURE_BYTES) refuse_launch(l, "exceeds 1 KiB");
+  s->nbytes = (uint32_t)bytes;
+  memcpy(s->bytes, String_val(v_bytes), bytes);
+  size_t n = caml_string_length(v_fields) / 8;
+  uint64_t f[4 + 2 * HOLE_OPS];
+  s->nfields = 0;
+  for (size_t i = 0; i < n; i += 4 + 2 * (size_t)f[3]) {
+    if (s->nfields == STRUCTURE_FIELDS) refuse_launch(l, "has too many holes");
+    if (n - i < 4) refuse_launch(l, "hole is cut short");
+    memcpy(f, String_val(v_fields) + 8 * i, 4 * 8);
+    if (f[3] > HOLE_OPS) refuse_launch(l, "hole takes too many operations");
+    if (n - i - 4 < 2 * f[3]) refuse_launch(l, "hole is cut short");
+    memcpy(f + 4, String_val(v_fields) + 8 * (i + 4), 2 * 8 * f[3]);
+    if (f[2] >= VALUES) refuse_launch(l, "hole reads no launch value");
+    if (f[1] < 1 || f[1] > 64) refuse_launch(l, "hole's bits are not 1 to 64");
+    unsigned width = f[1] <= 8 ? 1 : f[1] <= 16 ? 2 : f[1] <= 32 ? 4 : 8;
+    if (f[0] + width > bytes) refuse_launch(l, "hole lies outside its bytes");
+    struct field *h = &s->fields[s->nfields++];
+    h->at = (uint16_t)f[0];
+    h->width = (uint8_t)width;
+    h->bits = (uint8_t)f[1];
+    h->slot = (uint8_t)f[2];
+    h->nops = (uint8_t)f[3];
+    for (int j = 0; j < h->nops; j++) {
+      uint64_t op = f[4 + 2 * j], k = f[5 + 2 * j];
+      if (op > OP_SHIFT) refuse_launch(l, "hole takes an unknown operation");
+      if (op == OP_SHIFT && k > 63) refuse_launch(l, "hole's shift is past 63");
+      h->shift[j] = op == OP_SHIFT ? (uint8_t)k : 0;
+      h->n[j] = op == OP_ADD ? k : 0;
+    }
+  }
+}
+
+/* The fields of [caml_rig_nv_launch]'s ints. */
+enum { l_params_at, l_bank0_bytes, l_max, l_max_threads = l_max + 6,
+       l_max_shared, l_fields };
+
+/* A function set up for launch: [v_structures] holds the bytes and fields
+   of qmd[0][0], qmd[0][1], qmd[1][0], qmd[1][1] and bank0, in turn, and
+   [v_ints] its numbers, as above. The caller frees it with
+   [caml_rig_nv_launch_free]. */
+value caml_rig_nv_launch(value v_structures, value v_ints) {
+  struct launch *l = malloc(sizeof *l);
+  if (l == NULL) caml_raise_out_of_memory();
+  struct structure *s[5] = {&l->qmd[0][0], &l->qmd[0][1], &l->qmd[1][0],
+                            &l->qmd[1][1], &l->bank0};
+  for (int i = 0; i < 5; i++)
+    structure(l, s[i], Field(v_structures, 2 * i),
+              Field(v_structures, 2 * i + 1));
+#define F(i) ((uint32_t)Long_val(Field(v_ints, i)))
+  l->params_at = F(l_params_at);
+  l->bank0_bytes = F(l_bank0_bytes);
+  for (int i = 0; i < 6; i++) l->max[i] = F(l_max + i);
+  l->max_threads = F(l_max_threads);
+  l->max_shared = F(l_max_shared);
+#undef F
+  if (l->params_at > STRUCTURE_BYTES)
+    refuse_launch(l, "places parameters past 1 KiB");
+  return caml_copy_nativeint((intnat)l);
+}
+
+value caml_rig_nv_launch_free(value v_launch) {
+  free((void *)Nativeint_val(v_launch));
   return Val_unit;
 }
 

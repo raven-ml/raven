@@ -259,4 +259,4 @@ let copy_words t ~dst ~src =
       [ 0; B.address dst; B.address src; B.length src ])
 
 let spin t ~ns = in_slot t "spin" ~blocks:1 (fun addr -> [ addr + flag_at; ns ])
-let launch_binary () = None
+let launch_binary () = Some (fixture ~dir:fixtures "launch_sm89.cubin")

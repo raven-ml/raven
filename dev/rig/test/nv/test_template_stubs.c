@@ -27,3 +27,17 @@ value rig_nv_test_fill(value v_self, value v_t, value v_a0, value v_a1,
   memcpy(Bytes_val(s), w, 4 * (size_t)n);
   return s;
 }
+
+/* The structure qmd[0][0] of the launch [v_launch], filled with the values
+   [v_values], an int64 array. */
+value rig_nv_test_fill_structure(value v_launch, value v_values) {
+  const struct launch *l = (const struct launch *)Nativeint_val(v_launch);
+  uint64_t values[VALUES];
+  for (int i = 0; i < VALUES; i++)
+    values[i] = (uint64_t)Int64_val(Field(v_values, i));
+  uint8_t w[STRUCTURE_BYTES];
+  rig_nv_fill_structure(&l->qmd[0][0], values, w);
+  value s = caml_alloc_string(l->qmd[0][0].nbytes);
+  memcpy(Bytes_val(s), w, l->qmd[0][0].nbytes);
+  return s;
+}

@@ -12,24 +12,26 @@
    and read no OCaml value.
 
    Queue 0 is the channel "COMPUTE:0", queue 1 the channel "COPY:0". A part
-   is ring entries, two words each, low first (Rig_nv_abi.Gpfifo), or a
-   copy between handles on queue 1. The parts on one queue run in array
-   order. A wait is RIG_WORD on a 64-bit word the device maps, compared
-   circularly; a submission has at most 256, for which rig_nv_room, which
-   does not see them, keeps room. [handles] is ignored: the device's work
-   names its memory by address. */
+   is ring entries, two words each, low first (Rig_nv_abi.Gpfifo), a copy
+   between handles on queue 1, or a launch on queue 0 of a function the
+   driver's [entry] set up. The parts on one queue run in array order. A
+   wait is RIG_WORD on a 64-bit word the device maps, compared circularly;
+   a submission has at most 256, for which rig_nv_room, which does not see
+   them, keeps room. [handles] is ignored: the device's work names its
+   memory by address. */
 
 #ifndef RIG_NV_H
 #define RIG_NV_H
 
 #include <rig_edge.h>
 
-/* RIG_NEVER if a part is neither words nor a copy, has an odd number of
-   words, is a copy on queue 0, is on no queue of the device, has an [after]
-   index not below its own part's, or if the parts exceed the
-   device's empty rings or number more than 65,535; RIG_LATER if they fit
-   once a value the device was given is reached, as its timeline word reads
-   now; RIG_FITS otherwise. */
+/* RIG_NEVER if a part is no words, copy or launch, has an odd number of
+   words, is a copy on queue 0 or a launch on queue 1, is on no queue of the
+   device, has an [after] index not below its own part's, is a launch whose
+   block in [args] its function does not run (Rig_nv's facts), or if the
+   parts exceed the device's empty rings or number more than 65,535;
+   RIG_LATER if they fit once a value the device was given is reached, as
+   its timeline word reads now; RIG_FITS otherwise. */
 int rig_nv_room(void *self, const struct rig_part *parts, int n,
                 const uint8_t *args);
 

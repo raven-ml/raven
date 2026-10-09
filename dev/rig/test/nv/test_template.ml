@@ -230,4 +230,91 @@ let templates =
               load [ W32 (Shift (Value 0, n)) ]));
     ]
 
-let () = exit (run "rig_nv.template" [ templates ])
+(* Launch structures: a descriptor whose values are known now or the writer's,
+   flattened, loaded as a launch and filled, is the descriptor's encoding. *)
+
+module S = Rig_nv_abi_support
+
+external new_launch : string array -> int array -> nativeint
+  = "caml_rig_nv_launch"
+
+external free_launch : nativeint -> unit = "caml_rig_nv_launch_free"
+
+external fill_structure : nativeint -> int64 array -> string
+  = "rig_nv_test_fill_structure"
+
+let values = 9
+
+(* A launch whose five structures are [s], with no limits. *)
+let load_structure s =
+  let bytes, fields = Template.structure s in
+  new_launch
+    (Array.concat (List.init 5 (fun _ -> [| bytes; fields |])))
+    (Array.make 10 0)
+
+(* An operand drawn known or the writer's. *)
+let operand =
+  Gen.(
+    frequency
+      [
+        (1, map (fun n -> Template.Known (Int64.to_int n)) u64);
+        (1, map (fun i -> Template.Slot i) (int_range 0 (values - 1)));
+      ])
+
+let descriptor =
+  let open Gen in
+  let* cls = S.compute_class in
+  let* shared_bytes = int_range 0 0x8000 in
+  let* ops = list ~size:(int_range 0 9) (pair (int_range 0 8) operand) in
+  let* vs = array ~size:(constant values) u64 in
+  let l =
+    S.launch
+      (S.gpu ~compute_class:cls ())
+      (S.kernel ~shared_bytes
+         ~banks:[ { index = 0; offset = 0; bytes = 0x200 } ]
+         ())
+  in
+  let dims = Qmd.[| Grid X; Grid Y; Grid Z; Block X; Block Y; Block Z |] in
+  let step q (k, v) =
+    match k with
+    | 0 | 1 | 2 | 3 | 4 | 5 -> Qmd.patch_dim dims.(k) v q
+    | 6 -> Qmd.set_program v q
+    | 7 -> Qmd.chain v q
+    | _ -> Qmd.patch_shared v q
+  in
+  constant (List.fold_left step (Qmd.make l) ops, Qmd.set_bank 0, vs)
+
+let structures =
+  group "structures"
+    [
+      prop "a loaded structure, filled, is its encoding"
+        (Gen.with_pp
+           (fun ppf (_, _, vs) ->
+             Format.fprintf ppf "values [|%s|]"
+               (String.concat "; "
+                  (Array.to_list (Array.map Int64.to_string vs))))
+           descriptor)
+        (fun (q, bank, vs) ->
+          let value = function
+            | Template.Known n -> Int64.of_int n
+            | Slot i -> vs.(i)
+          in
+          List.iter
+            (fun q ->
+              let s = Qmd.structure q in
+              let l = load_structure s in
+              let filled = fill_structure l vs in
+              free_launch l;
+              equal string (Structure.encode value s) filled)
+            [ q; bank (Template.Slot 6) q ]);
+      test "a structure of more than 1 KiB is refused" (fun () ->
+          let s =
+            Qmd.parameters
+              (Qmd.make
+                 (S.launch (S.gpu ()) (S.kernel ~params_offset:0x401 ())))
+          in
+          raises_match (Exn.invalid_arg ~substring:"Rig_nv.entry") (fun () ->
+              load_structure s));
+    ]
+
+let () = exit (run "rig_nv.template" [ templates; structures ])

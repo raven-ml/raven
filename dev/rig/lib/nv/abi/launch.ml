@@ -115,6 +115,7 @@ let banks l =
   else default_bank0 :: banks
 
 let local_bytes l = l.kernel.stack_bytes + reserved_local
+let dynamic_shared l = (max_shared_kib * 1024) - l.shared_bytes
 
 (* A block's threads are at most 1024; fewer when their registers fill the
    register file of 65536: registers are allocated per warp of 32 threads in

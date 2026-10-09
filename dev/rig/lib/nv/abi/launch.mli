@@ -42,6 +42,12 @@ val local_bytes : t -> int
 (** [local_bytes l] is the local memory each thread of a launch needs: the
     kernel's stack and the 576 bytes the driver reserves. *)
 
+val dynamic_shared : t -> int
+(** [dynamic_shared l] is the most dynamic shared memory a block of [l] may
+    take beside its own ({!Qmd.patch_shared}): 100 KiB less the block's own
+    shared memory, the kernel's and the driver's 1 KiB rounded up to 128
+    bytes. *)
+
 val max_threads : t -> int
 (** [max_threads l] is the most threads a block of [l] may have: [1024], or
     fewer for the registers its threads use. *)
