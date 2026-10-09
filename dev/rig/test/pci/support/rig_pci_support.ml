@@ -436,6 +436,8 @@ module Tree = struct
     List.iter (fun g -> write (root / "dev/vfio" / ("noiommu-" ^ g)) "") noiommu;
     mkdir_p (root / "proc/self/fd");
     mkdir_p (root / "dev/hugepages");
+    write (root / "proc/self/mounts")
+      "none /dev/hugepages hugetlbfs rw,relatime,pagesize=2M 0 0\n";
     root
 
   let device_number = device_number

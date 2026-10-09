@@ -187,7 +187,8 @@ end
     driver's directory holds empty [bind] and [unbind], the bus directory empty
     [rescan] and [drivers_probe], and an IOMMU group's directory its [type] and
     its functions. The process's [proc/self/fd] is an empty directory, to which
-    a test adds links, and so is [dev/hugepages]. The machine takes what a
+    a test adds links, and so is [dev/hugepages], which its [proc/self/mounts]
+    shows as a hugetlbfs of 2 MiB pages. The machine takes what a
     change writes as plain files and acts on none of it. Names hold [:], so
     trees are written only where the file system allows it: {!make} skips the
     test on Windows. *)

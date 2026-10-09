@@ -1045,14 +1045,31 @@ let test_renew () =
   equal ~msg:"reset by the next open" int 1 (Atomic.get resets);
   equal ~msg:"and given back" (list string) [] (memory_files root)
 
-(* A huge page is one block: frames that are not, as a file system that is no
-   hugetlbfs gives, are refused, naming the mount. *)
-let test_scattered () =
+(* Only a hugetlbfs of 2 MiB pages mounted at the machine's [dev/hugepages]
+   gives huge pages that are one block of frames: memory on another mount is
+   refused, naming the file system it needs. The mounts are the machine's
+   [proc/self/mounts], where a mount covers the earlier ones it holds. *)
+let other_mounts =
+  [
+    ("a tmpfs over dev", [ "tmpfs /dev tmpfs rw,nosuid 0 0" ]);
+    ( "a hugetlbfs of 1 GiB pages",
+      [ "none /dev/hugepages hugetlbfs rw,relatime,pagesize=1024M 0 0" ] );
+    ( "a hugetlbfs elsewhere",
+      [ "/dev/sda1 / ext4 rw 0 0"; "none /mnt/huge hugetlbfs rw,pagesize=2M 0 0" ]
+    );
+    ( "a hugetlbfs a later mount covers",
+      [
+        "none /dev/hugepages hugetlbfs rw,pagesize=2M 0 0";
+        "tmpfs /dev/hugepages tmpfs rw 0 0";
+      ] );
+  ]
+
+let test_other_mount (_, mounts) =
   with_fixture @@ fun root f ->
   reserved f;
-  let va = free_base + (2 * mib) and page = Machine.page Machine.this in
-  Tree.pagemap root ~page va
-    (List.init (2 * mib / page) (fun i -> 0x30_0000 + (2 * i)));
+  Tree.add root "proc/self/mounts" (String.concat "\n" mounts ^ "\n");
+  let va = free_base + (2 * mib) in
+  ignore (frames root va (300 * kib));
   contains ~sub:"hugetlbfs"
     (require_error (Function.alloc_dma ~va f (300 * kib)))
 
@@ -1182,7 +1199,9 @@ let system_memory =
         "a take deletes the files processes that died left listing no \
          function, and keeps one that lists a function until its reset"
         test_left_files;
-      test "memory whose frames are not one block is refused" test_scattered;
+      cases
+        "memory on a mount that is no hugetlbfs of 2 MiB pages is refused"
+        ~name:fst other_mounts test_other_mount;
       test "memory whose frames read without the privilege is refused"
         test_unprivileged;
       test "memory in one 2 MiB block shares a huge page, gone once both are"

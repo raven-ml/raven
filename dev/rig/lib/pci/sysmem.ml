@@ -264,6 +264,44 @@ let collect f =
     Unix.close f.fd
   end
 
+(* A hugetlbfs lists its page size among its mount options. *)
+let pagesize_2m = "pagesize=2M"
+let hugepages_dir = "/" ^ hugepages
+
+let holds_hugepages point =
+  point = "/" || point = hugepages_dir
+  || String.starts_with ~prefix:(point ^ "/") hugepages_dir
+
+(* The file system, options and mount point of the mount that holds the
+   machine's [dev/hugepages], from its [proc/self/mounts]: the last that holds
+   it, since a mount covers the earlier ones it holds. A mount point with a
+   space, which the file escapes, holds no such path. *)
+let hugepages_mount root =
+  let file = Filename.concat root "proc/self/mounts" in
+  let lines =
+    try In_channel.with_open_text file In_channel.input_lines
+    with Sys_error why -> Fail.fail "reading the machine's mounts: %s" why
+  in
+  List.fold_left
+    (fun found line ->
+      match String.split_on_char ' ' line with
+      | _ :: point :: fs :: options :: _ when holds_hugepages point ->
+          Some (fs, options, point)
+      | _ -> found)
+    None lines
+
+(* Only a hugetlbfs of 2 MiB pages gives huge pages that are one block of
+   frames each, which no other file system's pages are. *)
+let on_hugetlbfs root =
+  match hugepages_mount root with
+  | Some ("hugetlbfs", options, _)
+    when List.mem pagesize_2m (String.split_on_char ',' options) ->
+      ()
+  | Some (fs, options, point) ->
+      Fail.fail "%s lies on a %s (%s) mounted at %s; %s" hugepages_dir fs
+        options point hugetlbfs
+  | None -> Fail.fail "no mount holds %s; %s" hugepages_dir hugetlbfs
+
 (* The process's file under [root], made with its list naming [bus] before it
    holds a page. It has a name only once locked, and its list only once named: a
    process that meets a file unlocked with no list takes it for one that died
@@ -272,6 +310,7 @@ let file_of ~root bus =
   match List.find_opt (fun (f : file) -> f.root = root) !files with
   | Some f -> f
   | None ->
+      on_hugetlbfs root;
       let name =
         strf "%s%d-%.0f" prefix (Unix.getpid ()) (Unix.gettimeofday () *. 1e6)
       in
@@ -350,23 +389,16 @@ let new_block ~root ~bus at =
         (with_remedy
            (strf "mapping a huge page of %s: %s" f.path (Unix.error_message e))
            (match e with EINVAL -> Some hugetlbfs | _ -> None)));
-  (* A huge page is one block of frames, so its first page's frame gives them
-     all, and its last confirms it: a file system that is no hugetlbfs gives
-     pages anywhere. *)
-  let first, last =
-    try (physical root at, physical root (at + huge - page))
+  (* A huge page is one block of frames: its first page's frame gives them
+     all. *)
+  let frame =
+    try physical root at
     with e ->
       unmap_range at huge;
       give_back ();
       raise e
   in
-  if last - first <> huge - page then begin
-    unmap_range at huge;
-    give_back ();
-    Fail.fail "%s gave a huge page that is not one block of memory; %s"
-      (Filename.dirname f.path) hugetlbfs
-  end;
-  let b = { at; file = f; off; frame = first; users = 0 } in
+  let b = { at; file = f; off; frame; users = 0 } in
   Tables.Address.replace blocks at b;
   b
 

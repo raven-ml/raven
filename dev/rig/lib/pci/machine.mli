@@ -40,8 +40,8 @@ val at : string -> t
     and their files under [root/sys/bus/pci], its IOMMU groups under
     [root/sys/kernel/iommu_groups], its lockdown state at
     [root/sys/kernel/security/lockdown], its VFIO files under [root/dev/vfio],
-    the memory of functions taken physically under [root/dev/hugepages] and
-    [root/proc/self/pagemap], and, for {!Gpus.detach}, its processes under
+    the memory of functions taken physically under [root/dev/hugepages],
+    [root/proc/self/mounts] and [root/proc/self/pagemap], and, for {!Gpus.detach}, its processes under
     [root/proc] and its DRM clients under [root/sys/kernel/debug/dri]. A root
     that shows no PCI functions makes a machine with none. Each call makes
     another machine: two machines at one root share no holds ({!Gpus}), and the
