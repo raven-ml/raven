@@ -79,6 +79,22 @@ let records_in_order () =
   equal string (xor (S.read a) (S.read b)) (S.read c);
   equal string (S.read a) (S.read d)
 
+(* Enqueues back to back of copies slower to run than to queue fill the
+   stream past its depth (about 1,023 launches on kimchi's driver), so a
+   later submit blocks while earlier holds are queued: none of those holds
+   may wait out its 2 s limit. *)
+let holds_past_the_queue () =
+  let g = S.gpu () in
+  let n = 1 lsl 24 in
+  let copy =
+    S.record (S.harness g)
+      [ S.floor_copy ~ins:[ S.buffer g n ] ~out:(S.buffer g n) ]
+  in
+  for _ = 1 to 24 do
+    S.enqueue g ~count:64 copy
+  done;
+  S.run g copy
+
 let floor_copy_xors () =
   let g = S.gpu () in
   let a = S.buffer g 4096 and b = S.buffer g 2048 and c = S.buffer g 4096 in
@@ -832,6 +848,8 @@ let tests =
       [
         test "run in order" records_in_order;
         test "the copy floor XORs its inputs" floor_copy_xors;
+        test ~timeout:1. "enqueues past the stream's depth release their holds"
+          holds_past_the_queue;
       ];
     group "operands"
       [

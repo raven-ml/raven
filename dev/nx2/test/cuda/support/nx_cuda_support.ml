@@ -194,16 +194,17 @@ let keep = function
   | Records r -> ignore (Sys.opaque_identity (r.image.loaded, r.held))
   | Copy { src; dst } -> ignore (Sys.opaque_identity (src, dst))
 
-(* Submits [parts] of [runs] with the hold's flag (host word 0) clear, sets it,
-   and with [wait], waits and fails with [late] if a hold timed out (word 1). *)
+(* Submits [parts] of [runs], then releases the hold made for it: host word 0
+   counts the submissions, and a hold waits until it reaches its own
+   ({!hold_next}). With [wait], waits and fails with [late] if a hold timed out
+   (word 1). *)
 let submit ?(wait = true) g parts runs ~late =
-  g.page.{0} <- 0L;
   g.page.{1} <- 0L;
   let s =
     Rig.Submission.make ~reads:0 ~writes:0 g.device (Array.of_list parts)
   in
   let v = Rig.Point.value (Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||]) in
-  g.page.{0} <- 1L;
+  g.page.{0} <- Int64.succ g.page.{0};
   if wait then begin
     Rig.wait g.device v;
     List.iter keep runs;
@@ -211,8 +212,8 @@ let submit ?(wait = true) g parts runs ~late =
     if g.page.{1} <> 0L then failwith late
   end
 
-(* Host words the device maps: the hold's flag (0) and late word (1), and two
-   stamps (2, 3). *)
+(* Host words the device maps: the count of submissions (0), the late word
+   (1), and two stamps (2, 3). *)
 let word g i = Rig.Buffer.view g.mapped ~first:(8 * i) ~length:8
 
 (* A hold gives up after 2 s: a round whose launches outgrow the stream blocks
@@ -225,6 +226,11 @@ let delay g flag ~want =
       launch "delay" ~grid:(1, 1, 1) ~block:1
         [ A flag; A (word g 1); D (want, 0); W hold_ns ];
     ]
+
+(* The hold of the next submission, released once {!submit} counts it. The
+   count only grows, so a hold an earlier submission queued, which the GPU has
+   not run yet, stays released whatever later submissions do. *)
+let hold_next g = delay g (word g 0) ~want:(Int64.to_int g.page.{0} + 1)
 
 type hog = {
   blocks : int;
@@ -277,7 +283,7 @@ let run ?beside g r =
         ~late:"the hog's blocks did not all start within the hold"
 
 let enqueue g ~count r =
-  let hold = delay g (word g 0) ~want:1 and q = queue r in
+  let hold = hold_next g and q = queue r in
   submit ~wait:false g (body q hold 1 @ body q r count) [] ~late:""
 
 (* kimchi's driver (615) holds 1,023 launches queued behind a kernel that runs;
@@ -289,7 +295,6 @@ let device_time g r ~count =
     record (harness g)
       [ launch "stamp" ~grid:(1, 1, 1) ~block:1 [ A (word g i) ] ]
   in
-  let hold = delay g (word g 0) ~want:1 in
   let t0 = stamp 2 and t1 = stamp 3 and q = queue r in
   let launches = match r with Records x -> x.launches | Copy _ -> 1 in
   let per_round = Int.max 1 (round / Int.max 1 launches) in
@@ -297,7 +302,7 @@ let device_time g r ~count =
     if left = 0 then span
     else
       let n = Int.min left per_round in
-      let on x = body q x 1 in
+      let on x = body q x 1 and hold = hold_next g in
       submit g
         (on hold @ on t0 @ body q r n @ on t1)
         [ r; hold; t0; t1 ]
