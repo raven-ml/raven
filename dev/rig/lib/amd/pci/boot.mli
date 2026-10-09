@@ -79,10 +79,11 @@ val start :
     ({!Gmc.window}), or if the machine has no memory for its page tables or
     fault page. [Error `Running], no register written and its BARs unmapped, if
     it is [`Booted] outside a fabric: firmware this library did not start runs
-    on it, which the vendor's reset stops. [Error (`Lost msg)] if a block does
-    not answer, naming the step, or a hub does not translate: the GPU is then
-    stopped ({!stop}). An exception raised during the boot stops it too, and
-    passes through. *)
+    on it, which the vendor's reset stops. A virtual function's access, which a
+    survey asks its host for, goes back to the host with either.
+    [Error (`Lost msg)] if a block does not answer, naming the step, or a hub
+    does not translate: the GPU is then stopped ({!stop}). An exception raised
+    during the boot stops it too, and passes through. *)
 
 val confirm :
   Rig_pci.Function.t -> string option ref -> (unit -> unit) -> unit -> bool

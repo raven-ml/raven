@@ -184,11 +184,22 @@ let with_bar f ~combine bar k =
 let unmap_bars f (vram, doorbells, mmio) =
   List.iter (Function.unmap f) [ vram; doorbells; mmio ]
 
+(* A VF's access taken for a survey or a boot that is refused goes back with the
+   refusal, which leaves the GPU as it found it. *)
+let give_back_lease mmio f lease =
+  if lease <> 0 then ignore (vf_request mmio f ~ready:false lease)
+
 let surveyed f vram doorbells mmio =
   let vf = Window.get32 mmio (D.mmrcc_iov_func_identifier * 4) land 1 = 1 in
   let* lease =
     if vf then vf_request mmio f D.idh_req_gpu_init_access else Ok 0
   in
+  let returning r =
+    Result.iter_error (fun _ -> give_back_lease mmio f lease) r;
+    r
+  in
+  returning
+  @@
   let* () =
     if vf then Ok ()
     else
@@ -439,9 +450,15 @@ let confirm f fault invalidate () =
       false
 
 let start ~gpus f find =
-  let refused r = Result.map_error (fun why -> `Refused why) r in
   let* vram, doorbells, mmio, vf, lease, memory, d =
-    refused (survey ~driven:`Driven f)
+    Result.map_error (fun why -> `Refused why) (survey ~driven:`Driven f)
+  in
+  let refused r =
+    Result.map_error
+      (fun why ->
+        give_back_lease mmio f lease;
+        `Refused why)
+      r
   in
   let* l = refused (Regs.layout d) in
   let r = Regs.make f mmio l ~vf in
@@ -465,12 +482,14 @@ let start ~gpus f find =
   let* () =
     match p with
     | `Booted when Gmc.hive gmc ->
-        Error
-          (`Refused
+        refused
+          (Error
              "the GPU is in a fabric left running; reset its GPUs together \
               outside this process")
     | `Booted ->
-        (* The caller resets the GPU and starts again, which maps anew. *)
+        (* The caller resets the GPU and starts again, which maps anew and asks
+           for access again. *)
+        give_back_lease mmio f lease;
         unmap_bars f (vram, doorbells, mmio);
         Error `Running
     | `Partial | `Full -> refused (Gmc.covers gmc ~memory)
