@@ -1,7 +1,9 @@
+; test_nic runs on a ConnectX NIC of this machine and skips without one.
+
 (test
  (name test_nic)
  (modules test_nic)
- (libraries rig_mlx5 rig_mlx5_abi unix windtrap)
+ (libraries rig_mlx5 rig_mlx5_abi rig_mlx5_uverbs unix windtrap)
  (foreign_stubs
   (language c)
   (names test_nic_stubs)))

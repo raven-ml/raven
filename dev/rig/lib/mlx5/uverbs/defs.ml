@@ -63,6 +63,7 @@ let uverbs_attr_reg_dmabuf_mr_access_flags = 6
 let uverbs_attr_reg_dmabuf_mr_resp_lkey = 7
 let uverbs_attr_reg_dmabuf_mr_resp_rkey = 8
 let rdma_driver_mlx5 = 1
+let rdma_driver_rxe = 0xe
 let ib_uverbs_access_local_write = 1
 let ib_uverbs_access_remote_write = 2
 let ib_uverbs_access_remote_read = 4

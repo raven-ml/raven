@@ -3,13 +3,15 @@
  (modules test_uverbs)
  (libraries rig_mlx5 rig_mlx5_uverbs windtrap))
 
-; test_request packs the path's ioctls with no NIC, through the library's
-; private Request and the layouts it reads, copied here.
+; test_request packs the path's ioctls with no NIC, and test_rxe makes a
+; Soft-RoCE device's objects, skipping without one, through the library's
+; private Path and Request and the layouts they read, copied here.
 
 (copy_files
- (files ../../../lib/mlx5/uverbs/{request.ml,request.mli,defs.ml}))
+ (files
+  ../../../lib/mlx5/uverbs/{path.ml,path.mli,request.ml,request.mli,defs.ml}))
 
-(test
- (name test_request)
- (modules test_request request defs)
- (libraries rig_mlx5_uverbs windtrap))
+(tests
+ (names test_request test_rxe)
+ (modules test_request test_rxe path request defs)
+ (libraries rig_mlx5 rig_mlx5_uverbs unix windtrap))
