@@ -66,10 +66,11 @@ val boot : t -> (unit, string) result
 val stop : t -> [> `Clean | `Unknown ]
 (** [stop g] stops the GPU [g] booted, or began to: it unloads the GSP if the
     GPU answers ({!Rig_pci.Function.failed}) and the GSP set its queue up,
-    waiting for its answer at most 10 seconds, turns the GPU's bus mastering
-    off, and gives back the memory {!create} took. It is [`Unknown], the memory
-    kept, if the GPU did not answer before the stop: it may still read that
-    memory. The GSP runs on until the GPU's next reset. *)
+    waiting at most 10 seconds for room in its queue and 10 more for its answer,
+    turns the GPU's bus mastering off, and gives back the memory {!create} took.
+    It is [`Unknown], the memory kept, if the GPU did not answer once the unload
+    ended: it may still read that memory. The GSP runs on until the GPU's next
+    reset. *)
 
 (** {1:rm The resource manager} *)
 

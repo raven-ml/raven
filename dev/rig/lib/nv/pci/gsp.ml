@@ -1098,11 +1098,13 @@ let boot g =
    nothing an unload would stop. With its bus mastering off the GPU reaches
    system memory no more, whatever its channels do, and the boot's memory goes
    back. Whether that write reached the GPU is known only if the GPU answered
-   before it: one that did not may still read the memory, which stays taken. The
-   GSP runs on, and the next open resets it. *)
+   right before it, after the unload, which may wait long: one that did not may
+   still read the memory, which stays taken. The GSP runs on, and the next open
+   resets it. *)
 let stop g =
-  let reached = Option.is_none (Function.failed g.p.fn) in
-  if reached && Msgq.ready g.q then ignore (unload g);
+  let answers () = Option.is_none (Function.failed g.p.fn) in
+  if answers () && Msgq.ready g.q then ignore (unload g);
+  let reached = answers () in
   Function.set_bus_master g.p.fn false;
   if not reached then `Unknown
   else begin

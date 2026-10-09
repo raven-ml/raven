@@ -57,11 +57,12 @@ let survey ~firmware boot42 rom =
   | [ Ok (_, gsp); Ok (_, bootloader); Ok (_, start) ] ->
       let* fw = Images.parse family ~gsp ~bootloader ~start in
       Ok (report, Ok (fw, fwsec))
-  | rs ->
-      let missing =
+  | rs -> (
+      match
         List.find_map (function Error why -> Some why | Ok _ -> None) rs
-      in
-      Ok (report, Error (Option.get missing))
+      with
+      | Some why -> Ok (report, Error why)
+      | None -> assert false (* three files, not all found *))
 
 let report ~firmware ~chip ~vbios =
   Result.map fst (survey ~firmware chip (fun () -> vbios))
