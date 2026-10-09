@@ -147,6 +147,12 @@ cpu/floor-codec-i64-f32-1M-all	alloc_words	exact	0
 cpu/floor-codec-i64-f32-1M-all	wall_time	batch=128	n=20	4.361e-05	4.344e-05 4.347e-05 4.350e-05 4.350e-05 4.353e-05 4.353e-05 4.354e-05 4.358e-05 4.359e-05 4.359e-05 4.362e-05 4.365e-05 4.368e-05 4.368e-05 4.369e-05 4.371e-05 4.377e-05 4.384e-05 4.386e-05 4.400e-05
 cpu/floor-codec-i64-f32-1M-performance	alloc_words	exact	0
 cpu/floor-codec-i64-f32-1M-performance	wall_time	batch=128	n=20	4.389e-05	4.357e-05 4.358e-05 4.359e-05 4.362e-05 4.373e-05 4.376e-05 4.378e-05 4.383e-05 4.384e-05 4.388e-05 4.390e-05 4.391e-05 4.395e-05 4.398e-05 4.398e-05 4.399e-05 4.403e-05 4.405e-05 4.408e-05 4.476e-05
+cpu/floor-codec-u64-f32-1M-1t	alloc_words	exact	0
+cpu/floor-codec-u64-f32-1M-1t	wall_time	batch=32	n=20	2.723e-04	2.707e-04 2.713e-04 2.713e-04 2.715e-04 2.717e-04 2.717e-04 2.717e-04 2.718e-04 2.719e-04 2.722e-04 2.723e-04 2.724e-04 2.726e-04 2.726e-04 2.728e-04 2.728e-04 2.732e-04 2.736e-04 2.742e-04 2.748e-04
+cpu/floor-codec-u64-f32-1M-all	alloc_words	exact	0
+cpu/floor-codec-u64-f32-1M-all	wall_time	batch=128	n=20	4.866e-05	4.846e-05 4.850e-05 4.852e-05 4.857e-05 4.858e-05 4.860e-05 4.861e-05 4.863e-05 4.864e-05 4.865e-05 4.868e-05 4.868e-05 4.870e-05 4.874e-05 4.874e-05 4.874e-05 4.877e-05 4.881e-05 4.885e-05 4.887e-05
+cpu/floor-codec-u64-f32-1M-performance	alloc_words	exact	0
+cpu/floor-codec-u64-f32-1M-performance	wall_time	batch=128	n=20	4.785e-05	4.758e-05 4.768e-05 4.770e-05 4.773e-05 4.774e-05 4.777e-05 4.780e-05 4.780e-05 4.781e-05 4.781e-05 4.790e-05 4.793e-05 4.795e-05 4.796e-05 4.797e-05 4.797e-05 4.803e-05 4.803e-05 4.805e-05 4.809e-05
 cpu/floor-copy-1352K-1t	alloc_words	exact	0
 cpu/floor-copy-1352K-1t	wall_time	batch=256	n=20	2.081e-05	2.079e-05 2.080e-05 2.080e-05 2.080e-05 2.080e-05 2.081e-05 2.081e-05 2.081e-05 2.081e-05 2.081e-05 2.081e-05 2.081e-05 2.082e-05 2.082e-05 2.082e-05 2.083e-05 2.083e-05 2.083e-05 2.083e-05 2.088e-05
 cpu/floor-copy-1352K-all	alloc_words	exact	0
@@ -444,6 +450,12 @@ cpu/floor-codec-i64-f32-1M-all	alloc_words	exact	0
 cpu/floor-codec-i64-f32-1M-all	wall_time	batch=128	n=20	4.170e-05	3.805e-05 3.900e-05 3.929e-05 3.932e-05 3.942e-05 3.959e-05 4.041e-05 4.096e-05 4.159e-05 4.161e-05 4.179e-05 4.180e-05 4.225e-05 4.254e-05 4.257e-05 4.332e-05 4.416e-05 4.537e-05 4.563e-05 4.595e-05
 cpu/floor-codec-i64-f32-1M-performance	alloc_words	exact	0
 cpu/floor-codec-i64-f32-1M-performance	wall_time	batch=256	n=20	3.609e-05	3.590e-05 3.594e-05 3.595e-05 3.596e-05 3.597e-05 3.602e-05 3.602e-05 3.605e-05 3.608e-05 3.608e-05 3.610e-05 3.612e-05 3.613e-05 3.613e-05 3.614e-05 3.615e-05 3.616e-05 3.628e-05 3.640e-05 3.658e-05
+cpu/floor-codec-u64-f32-1M-1t	alloc_words	exact	0
+cpu/floor-codec-u64-f32-1M-1t	wall_time	batch=16	n=20	2.473e-04	2.425e-04 2.425e-04 2.427e-04 2.430e-04 2.432e-04 2.438e-04 2.447e-04 2.450e-04 2.456e-04 2.467e-04 2.479e-04 2.486e-04 2.493e-04 2.501e-04 2.505e-04 2.517e-04 2.541e-04 2.563e-04 2.622e-04 2.631e-04
+cpu/floor-codec-u64-f32-1M-all	alloc_words	exact	0
+cpu/floor-codec-u64-f32-1M-all	wall_time	batch=128	n=20	4.262e-05	3.920e-05 4.042e-05 4.066e-05 4.104e-05 4.104e-05 4.140e-05 4.141e-05 4.165e-05 4.226e-05 4.251e-05 4.274e-05 4.275e-05 4.341e-05 4.347e-05 4.347e-05 4.365e-05 4.404e-05 4.527e-05 4.966e-05 5.076e-05
+cpu/floor-codec-u64-f32-1M-performance	alloc_words	exact	0
+cpu/floor-codec-u64-f32-1M-performance	wall_time	batch=256	n=20	3.777e-05	3.624e-05 3.636e-05 3.637e-05 3.639e-05 3.645e-05 3.648e-05 3.659e-05 3.674e-05 3.699e-05 3.771e-05 3.783e-05 3.791e-05 3.808e-05 3.826e-05 3.872e-05 3.885e-05 3.959e-05 3.971e-05 4.520e-05 4.707e-05
 cpu/floor-copy-1352K-1t	alloc_words	exact	0
 cpu/floor-copy-1352K-1t	wall_time	batch=256	n=20	2.730e-05	2.709e-05 2.710e-05 2.710e-05 2.711e-05 2.716e-05 2.722e-05 2.722e-05 2.722e-05 2.725e-05 2.728e-05 2.731e-05 2.735e-05 2.737e-05 2.737e-05 2.748e-05 2.767e-05 2.778e-05 2.785e-05 2.867e-05 2.887e-05
 cpu/floor-copy-1352K-all	alloc_words	exact	0
