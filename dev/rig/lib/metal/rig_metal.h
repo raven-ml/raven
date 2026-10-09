@@ -36,4 +36,10 @@ int rig_metal_submit(void *self, uint64_t v, const struct rig_wait *waits,
                         const uint64_t *handles, int nhandles,
                         const char **failure);
 
+/* Commits the device's open command buffer, which holds the work of every
+   value not yet committed: RIG_OK, or RIG_FAILED with [*failure] set as
+   rig_metal_submit's. [v] is unused: the open buffer ends the last value
+   received. */
+int rig_metal_commit(void *self, uint64_t v, const char **failure);
+
 #endif

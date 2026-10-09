@@ -62,6 +62,9 @@ void rig_metal_ring_complete(struct rig_metal_ring *r, int i,
                                 const char *failure, uint64_t start,
                                 uint64_t end);
 
+/* The slots taken and not yet released. */
+int rig_metal_ring_taken(struct rig_metal_ring *r);
+
 /* The first failure, or NULL. It lives as long as [r]. */
 const char *rig_metal_ring_failure(struct rig_metal_ring *r);
 

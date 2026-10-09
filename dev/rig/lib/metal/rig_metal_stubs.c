@@ -104,6 +104,8 @@ static intnat open_device(void) API_AVAILABLE(macos(15.0)) {
   }
   [d->queue addResidencySet:d->set];
   pthread_mutex_init(&d->set_mutex, NULL);
+  pthread_mutex_init(&d->open_mutex, NULL);
+  d->open = (struct rig_metal_queue){nil, nil, -1, d};
   rig_metal_ring_init(&d->ring, d->slots, ring_slots, d->word.contents);
   return (intnat)d;
 }
@@ -432,6 +434,7 @@ value caml_rig_metal_failure(value v_d) {
    and fence go; the residency set stays for the frees that may follow. */
 value caml_rig_metal_stop(value v_d) {
   struct rig_metal *d = Device_val(v_d);
+  rig_metal_drop(d);
   int idle = rig_metal_ring_stop(&d->ring, d->last);
   if (idle) {
     [d->queue release];
@@ -493,15 +496,6 @@ static int (*const split)(void *, uint64_t *, uint64_t *) = NULL;
 
 value caml_rig_metal_signaled_byte(value v_d) {
   return Val_long(caml_rig_metal_signaled(Long_val(v_d)));
-}
-
-/* Each value's hand-over commits its command buffer: a commit does
-   nothing. */
-static int rig_metal_commit(void *self, uint64_t v, const char **failure) {
-  (void)self;
-  (void)v;
-  (void)failure;
-  return RIG_OK;
 }
 
 /* The C entries room, submit, commit and split, the first three typed as

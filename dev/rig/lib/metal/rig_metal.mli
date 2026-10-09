@@ -33,14 +33,21 @@
     is a {e fill}, a C function that encodes Metal work into a compute command
     encoder the device gives it ({!Rig_metal_abi}); it declares no ring units or
     segment bytes. The device runs no words and no copies, and waits on no other
-    device's word. The submit runs the fills in order in one encoder per command
-    buffer, each command buffer after the ones before it, commits the
-    submission's command buffers and returns. It does not wait for the work.
-    Metal calls a handler of the device on one of its own threads once each
-    command buffer completed, successfully or not ([addCompletedHandler:]). The
-    handlers write [v] into the word once every command buffer of the
-    submissions up to [v] completed without failure, whatever order they
-    complete in. Only the handlers and {!stop} write the word.
+    device's word. The submit runs the fills in order into the device's
+    {e open command buffer}, opening one if none is, in one encoder per command
+    buffer, each command buffer after the ones before it, and returns. It does
+    not wait for the work. Metal runs a command buffer only once it is
+    committed, and the device commits the open one at four points: a commit
+    ({!commit_entry}); a submit that finds fewer than three of its committed
+    command buffers uncompleted, so that the GPU finds work queued behind the
+    one it runs; the completion of one of its command buffers while one is open;
+    and a submit that leaves 256 values in it, so the device commits each value
+    at most 256 values late. Metal calls a handler of the device on one of its
+    own threads once each command buffer completed, successfully or not
+    ([addCompletedHandler:]). The handlers write [v] into the word once every
+    command buffer of the submissions up to [v] completed without failure,
+    whatever order they complete in. Only the handlers and {!stop} write the
+    word.
 
     {b Failures.} A submission fails at once if a fill returns a failure, if
     Metal makes no command buffer or no encoder, or if Metal raises an
@@ -302,9 +309,10 @@ val room_entry : nativeint
 val submit_entry : nativeint
 (** [submit_entry] is the address of [rig_metal_submit], in the shape
     [rig_submit_fn] of [rig_edge.h]: it runs the parts as the work of [v], the
-    value after the last one it received, and answers [RIG_COMMITTED] once every
-    command buffer of [v] is committed; [v] is observable in {!word} once they
-    all completed. With no part, [v] is observable once the work before it
+    value after the last one it received, and answers [RIG_COMMITTED] if it
+    committed the open command buffer, [RIG_OK] if [v]'s work waits in it; [v]
+    is observable in {!word} once its command buffers are committed and
+    completed. With no part, [v] is observable once the work before it
     completed. Its waits are none and its handles are ignored: every region of
     the device is resident. [RIG_FAILED] if the submission failed at once, or if
     the device recorded a failure before; then the parts did not run (Failures,
@@ -313,8 +321,8 @@ val submit_entry : nativeint
 
 val commit_entry : nativeint
 (** [commit_entry] is the address of the device's commit, in the shape
-    [rig_commit_fn] of [rig_edge.h]. Each value's hand-over commits its command
-    buffer and answers [RIG_COMMITTED]: [commit_entry] does nothing. *)
+    [rig_commit_fn] of [rig_edge.h]: it commits the open command buffer, which
+    holds the work of every value not yet committed, whatever [v]. *)
 
 (** {1:timeline Timeline} *)
 
@@ -352,7 +360,8 @@ exception Fault of string
     promises. *)
 
 val stop : t -> unit
-(** [stop d] stops [d] without waiting.
+(** [stop d] stops [d] without waiting. It drops the open command buffer
+    uncommitted: its work never runs.
 
     If every command buffer [d] committed completed, it writes the last value
     the submit received into {!word} and releases [d]'s queue; no work of [d]

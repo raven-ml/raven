@@ -96,6 +96,13 @@ void rig_metal_ring_complete(struct rig_metal_ring *r, int i,
   pthread_mutex_unlock(&r->mutex);
 }
 
+int rig_metal_ring_taken(struct rig_metal_ring *r) {
+  pthread_mutex_lock(&r->mutex);
+  int n = (int)(r->tail - r->head);
+  pthread_mutex_unlock(&r->mutex);
+  return n;
+}
+
 const char *rig_metal_ring_failure(struct rig_metal_ring *r) {
   pthread_mutex_lock(&r->mutex);
   const char *failure = r->failure[0] ? r->failure : NULL;

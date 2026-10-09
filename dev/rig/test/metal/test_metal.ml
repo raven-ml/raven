@@ -456,6 +456,122 @@ let work =
         failing_fill;
     ]
 
+(* Commits *)
+
+(* Three command buffers, each one dispatch of [spin] that runs long enough for
+   the work submitted after them to wait in the open command buffer: the regions
+   to free once they completed. *)
+let busy t =
+  let out = alloc t 256 and args = alloc t args_bytes in
+  set_args args ~at:0 ~out:(gpu out) ~c:5_000_000;
+  let f = S.dispatch ~pipeline:(pipeline t "spin") args ~groups:1 ~threads:1 in
+  for _ = 1 to 3 do
+    ignore (submit t [| f |])
+  done;
+  [ out; args ]
+
+(* [n] values behind three running command buffers, each one dispatch of [step]:
+   with no commit and no wait, the word reaches the last and [step] counted
+   each. *)
+let uncommitted n =
+  let t = dev () in
+  let held = busy t in
+  let out = alloc t 256 and args = alloc t args_bytes in
+  H.set32 (host out) 0;
+  set_args args ~at:0 ~out:(gpu out) ~c:0;
+  let f = S.dispatch ~pipeline:(pipeline t "step") args ~groups:1 ~threads:1 in
+  let last = ref 0 in
+  for _ = 1 to n do
+    last := submit t [| f |]
+  done;
+  while Rig_metal.signaled t.g < !last do
+    Domain.cpu_relax ()
+  done;
+  equal int n (H.get32 (host out));
+  List.iter (Rig_metal.free t.g) (out :: args :: held)
+
+(* A region allocated between two submits whose work shares a command buffer is
+   written by the second. *)
+let allocated_between () =
+  let t = dev () in
+  let held = busy t in
+  let first = alloc t 256 and args = alloc t (2 * args_bytes) in
+  let f = fill_dispatch t ~args ~at:0 ~out:(gpu first) ~c:3 64 in
+  ignore (submit t [| f |]);
+  let second = alloc t (1 lsl 20) in
+  let f = fill_dispatch t ~args ~at:args_bytes ~out:(gpu second) ~c:4 64 in
+  wait t (submit t [| f |]);
+  equal bool ~msg:"the first region" true (filled first ~c:3 64);
+  equal bool ~msg:"the second region" true (filled second ~c:4 64);
+  List.iter (Rig_metal.free t.g) (first :: second :: args :: held)
+
+(* The bumps of the submissions of two domains, each submission [k] bumps of
+   every byte of one region. *)
+let gen_bumps =
+  let bumps = Gen.list ~size:(Gen.int_range 0 20) (Gen.int_range 1 3) in
+  Gen.pair bumps bumps
+
+let bumps_across (mine, theirs) =
+  let t = dev () in
+  let bytes = 4096 in
+  let out = alloc t bytes and args = alloc t args_bytes in
+  H.write (host out) (String.make bytes '\000');
+  set_args args ~at:0 ~out:(gpu out) ~c:bytes;
+  let bump =
+    S.dispatch ~pipeline:(pipeline t "bump") args ~groups:(bytes / 256)
+      ~threads:256
+  in
+  let submits = List.iter (fun k -> ignore (submit t (Array.make k bump))) in
+  cover "both domains submit" (mine <> [] && theirs <> []);
+  let other = Domain.spawn (fun () -> submits theirs) in
+  submits mine;
+  Domain.join other;
+  wait t (Rig.submitted t.d);
+  let k = List.fold_left ( + ) 0 (mine @ theirs) in
+  for i = 0 to bytes - 1 do
+    let got = H.get8 (host out + i) in
+    if got <> k then failf "byte %d reads %d, not %d" i got k
+  done;
+  List.iter (Rig_metal.free t.g) [ out; args ]
+
+(* A loss that finds work waiting in the open command buffer drops it, and the
+   stop brings the word to the last value. *)
+let lost_open () =
+  S.with_ @@ fun s ->
+  let t = dev_of s in
+  ignore (busy t);
+  let out = alloc t 256 and args = alloc t args_bytes in
+  let last =
+    submit t [| fill_dispatch t ~args ~at:0 ~out:(gpu out) ~c:2 64 |] + 1
+  in
+  raises_match
+    (function Rig.Lost _ -> true | _ -> false)
+    (fun () -> submit t [| S.failing 7 |]);
+  S.close s;
+  while Rig.signaled t.d < last do
+    Domain.cpu_relax ()
+  done
+
+let commits =
+  group ~timeout:60. "commits"
+    [
+      cases
+        ~name:
+          (strf
+             "%d values behind three running command buffers run with no commit")
+        "uncommitted" [ 2; 257 ] uncommitted;
+      test
+        "a region allocated between two submits of one command buffer is \
+         written"
+        allocated_between;
+      prop ~count:20 "every bump of two domains' submissions is counted"
+        gen_bumps bumps_across;
+      test
+        "a loss drops the open command buffer, and the stop brings the word to \
+         the last value"
+        lost_open;
+    ]
+
 (* Indirect command buffers *)
 
 let run_icb t b = wait t (submit t [| S.execute b |])
@@ -1156,4 +1272,14 @@ let () =
   clear_files ();
   exit
     (run "rig_metal"
-       [ ring_tests; work; icbs; memory; file_tests; images; timeline; opening ])
+       [
+         ring_tests;
+         work;
+         commits;
+         icbs;
+         memory;
+         file_tests;
+         images;
+         timeline;
+         opening;
+       ])
