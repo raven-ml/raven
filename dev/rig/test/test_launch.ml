@@ -296,6 +296,36 @@ let test_device_order () =
     (String.concat "" (List.init 8 (fun i -> le64 (7 + i))))
     (host_bytes out 64)
 
+(* Lifetime *)
+
+(* A submission keeps its launches' images loaded after the caller's parts
+   array changed, and its submit launches the function it was made with. *)
+let test_parts_changed () =
+  let d, _ = polled "parts-changed" in
+  let collected = ref false in
+  let load () =
+    let image = functions d in
+    Gc.finalise_last (fun () -> collected := true) image;
+    image
+  in
+  let fill image =
+    launch image "fill" ~params:16 ~refs:[| { at = 0; slot = 0 } |]
+  in
+  let parts = [| fill (load ()) |] in
+  let s = Sub.make ~reads:0 ~writes:1 d parts in
+  parts.(0) <- fill (functions d);
+  Gc.full_major ();
+  equal ~msg:"the part's image collected" bool false !collected;
+  let out = B.create d 8 in
+  let run = Run.make () and b = Sub.block s 0 in
+  one run b;
+  Run.int64 run b 0 0;
+  Run.int64 run b 8 7;
+  ignore (submit ~writes:[| out |] s run);
+  let host = B.create Rig.host 8 in
+  B.copy ~src:out ~dst:host;
+  equal string (le64 7) (host_bytes host 8)
+
 (* Refusals *)
 
 let refused ~msg f = raises_match ~msg Exn.invalid_arg f
@@ -486,6 +516,11 @@ let tests =
           test_write_seen;
         test "a launch and a copy on another queue follow each other"
           test_device_order;
+      ];
+    group ~timeout "lifetime"
+      [
+        test "a submission keeps its launches' images after their array changed"
+          test_parts_changed;
       ];
     group ~timeout "refusals"
       [

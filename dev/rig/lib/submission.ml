@@ -137,7 +137,12 @@ end
 type t = {
   dev : device;
   c : c;
-  parts : part array;  (** Its buffers are checked live at each submit. *)
+  fixed : buffer array;
+      (** The buffers [c] names, checked live at each submit and kept
+          reachable: [c] holds their stamps without a reference. *)
+  images : image list;
+      (** The images of [c]'s launches, kept loaded: [c] names their
+          templates, which live while the image is loaded. *)
   nreads : int;  (** The buffers each run reads. *)
   nwrites : int;  (** The buffers each run writes. *)
   hold : hold option;
@@ -208,14 +213,15 @@ let copy_local d src dst =
 let copy_handle side k b =
   if side = k then Nativeint.of_int b.mem.host else b.mem.handle
 
-(* Hands the C form [c] its [!k]th fixed buffer [b], and counts it. Only [d]'s
-   own memory names a handle of its driver ([rig_edge.h]'s [handles]):
-   another's, such as this process's memory a copy on another machine's device
-   names, keeps its stamps alone. *)
-let fix c k d b write =
+(* Hands the C form [c] its [!k]th fixed buffer [b], counts it and adds it to
+   [fixed]. Only [d]'s own memory names a handle of its driver ([rig_edge.h]'s
+   [handles]): another's, such as this process's memory a copy on another
+   machine's device names, keeps its stamps alone. *)
+let fix c k fixed d b write =
   let handle = if b.mem.dev == d then b.mem.handle else 0n in
   sub_fixed c !k (entry_of b).stamps handle write;
-  incr k
+  incr k;
+  fixed := b :: !fixed
 
 (* The most parameter bytes of a launch, [rig_edge.h]'s RIG_PARAMS. *)
 let max_params = 4096
@@ -299,6 +305,7 @@ let build hold ~reads ~writes d parts =
   in
   let blocks = Array.make (Array.length parts) no_block in
   let at = ref 0 and k = ref 0 and r = ref 0 in
+  let fixed = ref [] and images = ref [] in
   Array.iteri
     (fun i p ->
       sub_part c i (queue_index d fn p.queue) p.after !at;
@@ -306,11 +313,11 @@ let build hold ~reads ~writes d parts =
       match p.work with
       | Words w ->
           sub_words c i (host_address fn w) (Buffer.length w / 4);
-          fix c k d w false
+          fix c k fixed d w false
       | Fill f ->
           sub_fill c i f.fill (host_address fn f.arg) f.ring_units
             f.segment_bytes;
-          fix c k d f.arg false
+          fix c k fixed d f.arg false
       | Copy { src; dst } ->
           let side = copy_local d src dst in
           sub_copy c i
@@ -320,17 +327,19 @@ let build hold ~reads ~writes d parts =
               src.offset,
               Buffer.length src );
           if side <> local_none then sub_copy_local c i side;
-          fix c k d src false;
-          fix c k d dst true
+          fix c k fixed d src false;
+          fix c k fixed d dst true
       | Launch l ->
           let e = Option.get entries.(i) in
           blocks.(i) <- sub_launch c i e.code e.launch l.params l.refs !r;
-          r := !r + Array.length l.refs)
+          r := !r + Array.length l.refs;
+          images := l.image :: !images)
     parts;
   {
     dev = d;
     c;
-    parts;
+    fixed = Array.of_list !fixed;
+    images = !images;
     nreads = reads;
     nwrites = writes;
     hold;
@@ -409,18 +418,9 @@ let pair d p =
 
 let fn = "submit"
 
-let check_part p =
-  match p.work with
-  | Words b -> Buffer.check_live fn b
-  | Fill f -> Buffer.check_live fn f.arg
-  | Copy { src; dst } ->
-      Buffer.check_live fn src;
-      Buffer.check_live fn dst
-  | Launch _ -> ()
-
-let check_parts s =
-  for k = 0 to Array.length s.parts - 1 do
-    check_part s.parts.(k)
+let check_fixed s =
+  for k = 0 to Array.length s.fixed - 1 do
+    Buffer.check_live fn (Array.unsafe_get s.fixed k)
   done
 
 let counted n what = Printf.sprintf "%d %s%s" n what (if n = 1 then "" else "s")
@@ -549,16 +549,21 @@ let rec go s run reads writes waits k =
     ignore (Sys.opaque_identity b3);
     p
 
-(* Submits [s] with [run], which the caller took. [s] stays reachable until
-   the run is given back: the C submit reads it with the runtime released. *)
+(* Submits [s] with [run], which the caller took. The C submit reads [s]'s C
+   form, and the stamps and templates it names without a reference, with the
+   runtime released: their owners stay reachable until the run is given
+   back. *)
 let taken s run reads writes waits =
   match
-    check_parts s;
+    check_fixed s;
     go s run reads writes waits 0
   with
   | p ->
       run_give run;
-      ignore (Sys.opaque_identity s);
+      ignore (Sys.opaque_identity s.c);
+      ignore (Sys.opaque_identity s.fixed);
+      ignore (Sys.opaque_identity s.images);
+      ignore (Sys.opaque_identity s.hold);
       p
   | exception e ->
       run_give run;

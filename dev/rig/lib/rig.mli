@@ -825,7 +825,8 @@ module Submission : sig
       whose every run reads [reads] buffers and writes [writes] buffers
       ({!submit}), a buffer counted as often as it is passed. Every submit of
       the submission raises [hold]'s stamp of [d], and the submission keeps
-      [hold] reachable.
+      [hold] reachable. [make] reads [parts], and the arrays in them, once:
+      changing them afterwards changes nothing.
 
       Raises [Invalid_argument] if [d] is {!host} or an {!Io} device, which run
       no submitted work, [reads] or [writes] is negative, an index of a part's

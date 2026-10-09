@@ -233,6 +233,47 @@ let test_dead_slot () =
   raises_match Exn.invalid_arg (fun () -> submit s ~reads:[| borrowed |]);
   equal int 0 (Rig.submitted d)
 
+(* A submission checks the buffers it was made with: a part's buffer that died
+   refuses the submit after the caller's parts array changed. *)
+let test_parts_changed () =
+  let d = memory "submit:parts-changed" in
+  let a = B.create Rig.host 8 and b = B.create Rig.host 8 in
+  Support.store (B.address a) 0;
+  Support.store (B.address b) 0;
+  let parts = [| bump a |] in
+  let s = Sub.make ~reads:0 ~writes:0 d parts in
+  parts.(0) <- bump b;
+  let a' =
+    Rig.Claim.with_ ~read:[] ~donate:[ [ a ] ] (fun c ->
+        Rig.Claim.consume c ~why:"donated" a)
+  in
+  raises_match Exn.invalid_arg (fun () -> submit s);
+  equal int 0 (Rig.submitted d);
+  equal ~msg:"the part's buffer" int 0 (word a');
+  equal ~msg:"the array's new buffer" int 0 (word b)
+
+(* A submission keeps the buffers it was made with reachable after the caller's
+   parts array changed, and its work runs on them. *)
+let test_parts_kept () =
+  let d = memory "submit:parts-kept" in
+  let collected = ref false in
+  let fresh () =
+    let a = B.create Rig.host 8 in
+    Support.store (B.address a) 0;
+    Gc.finalise_last (fun () -> collected := true) a;
+    a
+  in
+  let b = B.create Rig.host 8 in
+  Support.store (B.address b) 0;
+  let parts = [| bump (fresh ()) |] in
+  let s = Sub.make ~reads:0 ~writes:0 d parts in
+  parts.(0) <- bump b;
+  Gc.full_major ();
+  equal ~msg:"the part's buffer collected" bool false !collected;
+  ignore (submit s);
+  equal ~msg:"the array's new buffer" int 0 (word b);
+  ignore (Sys.opaque_identity s)
+
 let test_wait_beyond () =
   let d = memory "submit:beyond" and e = memory "submit:beyond-2" in
   let p = submit (empty e) in
@@ -894,6 +935,11 @@ let tests =
         test "a submit that raises keeps nothing of its run"
           test_cleared_on_raise;
         test "a run's buffer that died refuses the submit" test_dead_slot;
+        test "a part's buffer that died refuses the submit after its array \
+              changed"
+          test_parts_changed;
+        test "a submission keeps its parts' buffers after their array changed"
+          test_parts_kept;
         test "a copy on a device that runs no copies is refused"
           test_copy_refused;
         test "a part of a kind its queue does not run is refused at make"
