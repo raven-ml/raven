@@ -3,7 +3,7 @@
 (library
  (name rig_disk)
  (public_name rig.disk)
- (libraries rig)
+ (libraries rig unix)
  (foreign_stubs
   (language c)
   (names rig_disk_stubs)))

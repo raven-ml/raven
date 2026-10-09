@@ -4,21 +4,19 @@
   ---------------------------------------------------------------------------*/
 
 /* Files for the disk: opening, identity, positional reads and writes between
-   a file and host memory, mappings of a file's pages, read-ahead advice and
-   ordering a file's writes before later changes.
+   a file and host memory, read-ahead advice and ordering a file's writes
+   before later changes.
 
    A descriptor crosses to OCaml as an int: a file descriptor on POSIX, a
    HANDLE on Windows. A failure crosses as a code: 0 for none, the system's
-   error (errno, or GetLastError on Windows) positive, or one of NOT_REGULAR,
-   TOO_MANY and UNMAPPABLE; a transfer returns the error negated. The OCaml
-   side names the file. */
+   error (errno, or GetLastError on Windows) positive, or one of NOT_REGULAR
+   and TOO_MANY; a transfer returns the error negated. The OCaml side names
+   the file. */
 
 #define _GNU_SOURCE
 
 #include <caml/alloc.h>
 #include <caml/bigarray.h>
-#include <caml/camlatomic.h>
-#include <caml/custom.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 #include <caml/osdeps.h>
@@ -58,9 +56,6 @@
 
 /* Too many open files, in the process or the system. */
 #define TOO_MANY (-2)
-
-/* A file its file system can never map. */
-#define UNMAPPABLE (-3)
 
 /* How a file is opened: for reading, for reading and writing, or created for
    reading and writing where its path names nothing. */
@@ -660,104 +655,17 @@ value caml_rig_disk_write_byte(value h, value pos, value src, value n) {
                                          Long_val(src), Long_val(n)));
 }
 
-/* Mappings
-
-   [map h n shared] maps the [n > 0] bytes of the file [h] into host memory:
-   shared, where the mapping is the file, or copy-on-write, where a write
-   makes the process's own copy of a page. The result is a bigarray of chars
-   over the mapping, unmapped once it and every sub-array of it are
-   unreachable. Its custom operations are its own, so it neither compares,
-   hashes nor marshals. */
-
-static void unmap(void *addr, uintnat n) {
+/* [descr h] is the descriptor [h] as a [Unix.file_descr]. Keeps the
+   runtime. */
 #ifdef _WIN32
-  (void)n;
-  UnmapViewOfFile(addr);
+extern value caml_win32_alloc_handle(HANDLE);
+
+value caml_rig_disk_descr(value v_handle) {
+  return caml_win32_alloc_handle((HANDLE)Long_val(v_handle));
+}
 #else
-  munmap(addr, n);
+value caml_rig_disk_descr(value v_handle) { return v_handle; }
 #endif
-}
-
-static void mapping_finalize(value v) {
-  struct caml_ba_array *b = Caml_ba_array_val(v);
-  if (b->proxy == NULL) {
-    unmap(b->data, caml_ba_byte_size(b));
-  } else if (atomic_fetch_sub(&b->proxy->refcount, 1) == 1) {
-    unmap(b->proxy->data, b->proxy->size);
-    free(b->proxy);
-  }
-}
-
-static struct custom_operations mapping_ops = {
-    "rig_disk_pages",        mapping_finalize,
-    custom_compare_default,     custom_hash_default,
-    custom_serialize_default,   custom_deserialize_default,
-    custom_compare_ext_default, custom_fixed_length_default};
-
-/* The failures that say the file system can never map the file, whatever
-   the moment: no mapping for its kind of file, or a file too large for the
-   address space. Others, such as a lack of memory or of mappings, may pass. */
-static int unmappable(int code) {
-#ifdef _WIN32
-  return code == ERROR_FILE_INVALID || code == ERROR_INVALID_PARAMETER ||
-         code == ERROR_NOT_SUPPORTED;
-#else
-  return code == ENODEV || code == EINVAL || code == EOVERFLOW ||
-         code == ENOTSUP;
-#endif
-}
-
-static void *map_file(intnat h, intnat n, int shared, int *code) {
-#ifdef _WIN32
-  HANDLE m = CreateFileMappingW((HANDLE)h, NULL,
-                                shared ? PAGE_READWRITE : PAGE_WRITECOPY, 0, 0,
-                                NULL);
-  if (m == NULL) {
-    *code = (int)GetLastError();
-    return NULL;
-  }
-  void *addr =
-      MapViewOfFile(m, shared ? FILE_MAP_WRITE : FILE_MAP_COPY, 0, 0, (SIZE_T)n);
-  if (addr == NULL) *code = (int)GetLastError();
-  CloseHandle(m);
-  return addr;
-#else
-  void *addr = mmap(NULL, (size_t)n, PROT_READ | PROT_WRITE,
-                    shared ? MAP_SHARED : MAP_PRIVATE, (int)h, 0);
-  if (addr != MAP_FAILED) return addr;
-  *code = errno;
-  return NULL;
-#endif
-}
-
-/* [map h n shared] is [(0, Some mapping)], [(UNMAPPABLE, None)] if the file
-   system can never map the file, or [(code, None)] for a failure that may
-   pass. Releases the runtime. */
-value caml_rig_disk_map(value v_handle, value v_n, value v_shared) {
-  CAMLparam3(v_handle, v_n, v_shared);
-  CAMLlocal2(r, ba);
-  intnat h = Long_val(v_handle), n = Long_val(v_n);
-  int shared = Bool_val(v_shared), code = 0;
-  caml_release_runtime_system();
-  void *addr = map_file(h, n, shared, &code);
-  caml_acquire_runtime_system();
-  r = caml_alloc_tuple(2);
-  if (code != 0) {
-    Store_field(r, 0, Val_int(unmappable(code) ? UNMAPPABLE : code));
-    Store_field(r, 1, Val_none);
-    CAMLreturn(r);
-  }
-  ba = caml_alloc_custom(&mapping_ops, SIZEOF_BA_ARRAY + sizeof(intnat), 0, 1);
-  struct caml_ba_array *b = Caml_ba_array_val(ba);
-  b->data = addr;
-  b->num_dims = 1;
-  b->flags = CAML_BA_CHAR | CAML_BA_C_LAYOUT | CAML_BA_MAPPED_FILE;
-  b->proxy = NULL;
-  b->dim[0] = n;
-  Store_field(r, 0, Val_int(0));
-  Store_field(r, 1, caml_alloc_some(ba));
-  CAMLreturn(r);
-}
 
 /* [advise h pages pos n] asks the system to read the [n] bytes of the file
    [h] from byte [pos] ahead of their use, without waiting for them. Linux and
