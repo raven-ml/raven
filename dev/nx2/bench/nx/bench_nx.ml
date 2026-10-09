@@ -11,16 +11,12 @@
 module A = Nx_array
 module D = Nx_array.Dtype
 
+(* A memory device, opened in the measuring worker: a device opened before the
+   fork is lost in it. *)
 let memory k =
   match Rig.memory_device (Printf.sprintf "bench-m%d" k) with
   | Ok d -> d
   | Error e -> failwith e
-
-let m0 = memory 0
-let m1 = memory 1
-
-module Mem = (val Nx.devices [ m0 ])
-module Two = (val Nx.devices [ m0; m1 ])
 
 let host n =
   Nx.Repr.of_array Nx.host (A.of_array D.Float32 [| n |] (Array.make n 1.))
@@ -29,7 +25,6 @@ let x1 = host 1
 let x16 = host 16
 let b1 = Nx.less x1 x1
 let a1 = Option.get (Nx.Repr.array x1)
-let two = Nx.place (Two.split ~axis:0) (host 2)
 let half = Nx.scalar D.Float32 0.5
 
 (* K1's steps over nx.array and nx.cpu, the kernel called statically: the floor
@@ -72,11 +67,26 @@ let constant_rows =
           Nx.Repr.array (Nx.place Nx.Placement.host (chain 1000)));
     ]
 
+(* A value on a set minted in the worker, of a brand the row does not name. *)
+type value = Value : (float, D.float32_elt, 'd) Nx.t -> value
+
+(* One element on each of two memory devices. *)
+let split_two () =
+  let module Two = (val Nx.devices [ memory 0; memory 1 ]) in
+  Value (Nx.place (Two.split ~axis:0) (host 2))
+
+(* Sixteen host elements, and a placement on a memory device. *)
+type borrow = Borrow : 'd Nx.Placement.t * (float, D.float32_elt, Nx.host) Nx.t -> borrow
+
+let borrow_16 () =
+  let module Mem = (val Nx.devices [ memory 0 ]) in
+  Borrow (Mem.on, x16)
+
 let placed_rows =
   Thumper.group "placed"
     [
-      Thumper.bench "add-1-two-memory-devices" (fun () ->
-          Nx.add (Thumper.black_box two) two);
+      Thumper.bench_with_setup "add-1-two-memory-devices" ~setup:split_two
+        (fun (Value two) -> Value (Nx.add two two));
     ]
 
 let place_rows =
@@ -84,8 +94,8 @@ let place_rows =
     [
       Thumper.bench "equal-1" (fun () ->
           Nx.place Nx.Placement.host (Thumper.black_box x1));
-      Thumper.bench "borrow-memory-device-16" (fun () ->
-          Nx.place Mem.on (Thumper.black_box x16));
+      Thumper.bench_with_setup "borrow-memory-device-16" ~setup:borrow_16
+        (fun (Borrow (on, x)) -> Value (Nx.place on x));
     ]
 
 let () =
