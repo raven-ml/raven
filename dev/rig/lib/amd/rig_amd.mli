@@ -292,8 +292,10 @@ val sleep : t -> seen:int -> still_ms:int -> unit
     [after] index not below its own part's.
 
     The submission of [v] runs after every earlier value and after its waits;
-    once it completed, the timeline word holds [v]. A submission of no parts
-    releases [v] alone. The submit answers [RIG_FAILED] if a fill failed, as
+    once it completed, the timeline word holds [v]. The queues read none of a
+    submission's packets before all of them are placed, so its work never
+    waits on the host. A submission of no parts releases [v] alone. The submit
+    answers [RIG_FAILED] if a fill failed, as
     ["a fill on COMPUTE:0 failed with 1"], or if it waits on more words than the
     device holds or where it cannot wait. The queues then run none of its parts,
     and the word still reaches [v] once the earlier values completed. Every
