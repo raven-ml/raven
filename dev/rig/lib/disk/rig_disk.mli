@@ -111,7 +111,9 @@ val create_file : string -> int -> (Rig.Buffer.t, string) result
     file cannot be created or sized; a file it created and could not size is
     removed.
 
-    Raises [Invalid_argument] if [n < 0]. *)
+    Raises [Invalid_argument] if [n < 0]. A create that raises, such as with the
+    exception of a hold's release its drain runs ({!Rig.Hold.make}), removes its
+    file. *)
 
 val barrier : Rig.Buffer.t -> unit
 (** [barrier b] returns once the bytes written to [b]'s file before it, by
