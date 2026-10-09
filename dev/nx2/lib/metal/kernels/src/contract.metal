@@ -5,7 +5,8 @@
 
 /* Contraction, as kernels.h's nx_metal_contract states it: dense products
    on simdgroup matrices, skinny products, of one row of a, on the SIMD
-   units, and integer products of wide integers on the SIMD units.
+   units, and integer products of wide integers on the SIMD units; and the
+   pack, which copies an operand into the layout an instance reads.
 
    Dense: a threadgroup computes a BM × BN tile of out; its four simdgroups
    interleave, each holding TM × TN accumulators of 8 × 8 float32. Each
@@ -15,12 +16,12 @@
    increasing k, 8 at a time in the GPU's matrix product, then adds init:
    an association fixed by the shape.
 
-   int8 and uint8 run there too: they are exact in half, so their sums are
-   exact in float32 while they stay under 2^24, and move into wrapping
-   32-bit sums before they could reach it.
+   int8 runs there too: it is exact in half, so its sums are exact in
+   float32 while they stay under 2^24, and move into wrapping 32-bit sums
+   before they could reach it.
 
-   An instance per operand dtype and operand order: a stored [m][k] (n) or
-   [k][m] (t), b stored [k][n] (n) or [n][k] (t). */
+   Dense kernels read a stored [m][k], and b stored [k][n] (n) or [n][k]
+   (t), as their instance's name says. */
 
 #include "kernels.h"
 #include "nx_dtype.h"
@@ -38,7 +39,7 @@ static_assert(THREADS == 32 * WM * WN, "a dense threadgroup is 4 simdgroups");
 #define PAD 4
 
 /* Operand dtypes, by their storage. */
-enum { F32, F16, BF16, I8, U8 };
+enum { F32, F16, BF16, I8 };
 
 template <int D> struct elt;
 /* t: the storage; s: the type tiles stage in threadgroup memory, into
@@ -81,17 +82,10 @@ template <> struct elt<BF16> {
 };
 
 /* Bytes are exact in half, and stage as half; products of int8 are at
-   most 2^14, of uint8 under 2^16. */
+   most 2^14. */
 template <> struct elt<I8> {
   static constant constexpr uint chunk = 1024, bk = NX_METAL_BK_HALF;
   typedef char t;
-  typedef half s, f;
-  static vec<s, 4> stage(vec<t, 4> x) { return half4(x); }
-  static half2 get(vec<s, 2> x) { return x; }
-};
-template <> struct elt<U8> {
-  static constant constexpr uint chunk = 258, bk = NX_METAL_BK_HALF;
-  typedef uchar t;
   typedef half s, f;
   static vec<s, 4> stage(vec<t, 4> x) { return half4(x); }
   static half2 get(vec<s, 2> x) { return x; }
@@ -178,12 +172,6 @@ template <bool WIDE, uint N>
 static void runs(thread char4 *x, device const char *src) {
   if (WIDE) return bytes<N>(x, src);
   runs<false, N, char>(x, src);
-}
-
-template <bool WIDE, uint N>
-static void runs(thread uchar4 *x, device const uchar *src) {
-  if (WIDE) return bytes<N>(x, src);
-  runs<false, N, uchar>(x, src);
 }
 
 /* An operand's tile as stored: R rows of C elements, contiguous along a
@@ -284,7 +272,7 @@ static void flush(thread simdgroup_float8x8 (&acc)[TM][TN],
 
 /* One step along k: the staged tiles at pa and pb, each lane's first
    element, multiplied into acc in steps of 8. */
-template <int D, int TM, int TN, int BK, int ALD, bool AT, int BLD, bool BT>
+template <int D, int TM, int TN, int BK, int ALD, int BLD, bool BT>
 static void multiply(thread simdgroup_float8x8 (&acc)[TM][TN],
                      const threadgroup typename elt<D>::s *pa,
                      const threadgroup typename elt<D>::s *pb) {
@@ -294,8 +282,7 @@ static void multiply(thread simdgroup_float8x8 (&acc)[TM][TN],
     simdgroup_barrier(mem_flags::mem_none);
     UNROLL
     for (uint i = 0; i < TM; i++)
-      elements(af[i]) = piece<D, ALD, AT>(
-          pa, AT ? kk * ALD + 8 * WM * i : 8 * WM * i * ALD + kk);
+      elements(af[i]) = piece<D, ALD, false>(pa, 8 * WM * i * ALD + kk);
     simdgroup_barrier(mem_flags::mem_none);
     UNROLL
     for (uint j = 0; j < TN; j++)
@@ -310,7 +297,7 @@ static void multiply(thread simdgroup_float8x8 (&acc)[TM][TN],
   }
 }
 
-template <int D, bool AT, bool BT, bool EDGE, int BM, int BN, int BK>
+template <int D, bool BT, bool EDGE, int BM, int BN, int BK>
 kernel void contract(constant nx_metal_contract &p [[buffer(0)]],
                      uint3 g [[threadgroup_position_in_grid]],
                      uint t [[thread_index_in_threadgroup]],
@@ -320,16 +307,15 @@ kernel void contract(constant nx_metal_contract &p [[buffer(0)]],
   /* The tile: TM × TN accumulators of 8 × 8 a simdgroup, and BK steps of
      k at a time. */
   constexpr int TM = BM / (8 * WM), TN = BN / (8 * WN);
-  /* a's and b's tiles as stored: a's BM × BK, or BK × BM if AT; b's
-     BK × BN, or BN × BK if BT. */
-  constexpr int AR = AT ? BK : BM, AC = AT ? BM : BK;
+  /* a's and b's tiles as stored: a's BM × BK; b's BK × BN, or BN × BK if
+     BT. */
   constexpr int BR = BT ? BN : BK, BC = BT ? BK : BN;
   typedef typename elt<D>::s S;
-  threadgroup S as[AR][AC + PAD], bs[BR][BC + PAD];
+  threadgroup S as[BM][BK + PAD], bs[BR][BC + PAD];
   uint z = g.z, k = p.k;
   device const T *a = (device const T *)p.a + z * p.a_batch;
   device const T *b = (device const T *)p.b + z * p.b_batch;
-  uint a_ld = AT ? p.a_k : p.a_m, b_ld = BT ? p.b_n : p.b_k;
+  uint b_ld = BT ? p.b_n : p.b_k;
   /* Threadgroups run in the order of x: 2^swizzle consecutive ones take a
      column of tiles, which read the same tile of b. */
   uint tile_m = (g.y << p.swizzle) + (g.x & ((1u << p.swizzle) - 1));
@@ -344,9 +330,8 @@ kernel void contract(constant nx_metal_contract &p [[buffer(0)]],
   uint fm = (q & 4) + (lane / 2) % 4, fn = (q & 2) * 2 + (lane % 2) * 2;
 
   /* The lane's first element of a's and b's matrices in the tiles. */
-  constexpr int ALD = AC + PAD, BLD = BC + PAD;
-  const threadgroup S *pa =
-      AT ? &as[fn][sm + fm] : &as[sm + fm][fn];
+  constexpr int ALD = BK + PAD, BLD = BC + PAD;
+  const threadgroup S *pa = &as[sm + fm][fn];
   const threadgroup S *pb =
       BT ? &bs[sn + fn][fm] : &bs[fm][sn + fn];
 
@@ -360,7 +345,7 @@ kernel void contract(constant nx_metal_contract &p [[buffer(0)]],
   constexpr uint chunk_steps = elt<D>::chunk ? elt<D>::chunk / BK - 1 : 0;
   uint2 sums[TM][TN] = {};
 
-  tile<D, AR, AC, AT> ta(a, a_ld, AT ? k : p.m, AT ? p.m : k, m0, as, t);
+  tile<D, BM, BK, false> ta(a, p.a_m, p.m, k, m0, as, t);
   tile<D, BR, BC, !BT> tb(b, b_ld, BT ? p.n : k, BT ? k : p.n, n0, bs, t);
   /* The steps wholly inside the k axis, read unchecked where the tile
      lies inside m and n, then the step that reaches k's end. Without EDGE,
@@ -376,7 +361,7 @@ kernel void contract(constant nx_metal_contract &p [[buffer(0)]],
       ta.put();
       tb.put();
       threadgroup_barrier(mem_flags::mem_threadgroup);
-      multiply<D, TM, TN, BK, ALD, AT, BLD, BT>(acc, pa, pb);
+      multiply<D, TM, TN, BK, ALD, BLD, BT>(acc, pa, pb);
       if (chunk_steps && (s + 1) % chunk_steps == 0) flush(acc, sums);
     }
   else if (EDGE)
@@ -387,7 +372,7 @@ kernel void contract(constant nx_metal_contract &p [[buffer(0)]],
       ta.put();
       tb.put();
       threadgroup_barrier(mem_flags::mem_threadgroup);
-      multiply<D, TM, TN, BK, ALD, AT, BLD, BT>(acc, pa, pb);
+      multiply<D, TM, TN, BK, ALD, BLD, BT>(acc, pa, pb);
       if (chunk_steps && (s + 1) % chunk_steps == 0) flush(acc, sums);
     }
   if (EDGE && steps * BK < k) {
@@ -397,7 +382,7 @@ kernel void contract(constant nx_metal_contract &p [[buffer(0)]],
     ta.put();
     tb.put();
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    multiply<D, TM, TN, BK, ALD, AT, BLD, BT>(acc, pa, pb);
+    multiply<D, TM, TN, BK, ALD, BLD, BT>(acc, pa, pb);
   }
 
   ulong out_at = ulong(g.z) * p.m * p.n;
@@ -600,23 +585,23 @@ kernel void contract_combine(constant nx_metal_combine &p [[buffer(0)]],
 }
 
 /* Integer contraction on the SIMD units: operands of any integer dtype
-   widen to A, 32 bits or 64, at least the accumulator's width, which
-   wraps; the sum then wraps to the accumulator and reaches out as a cast
-   from it does. Wrapping at every step equals wrapping once, so the order
-   of the sum is free; this kernel sums in increasing k. A threadgroup of
-   INT_THREADS threads computes an INT_TILE × INT_TILE tile of out, each
-   thread a 4 × 4 block, staging INT_BK steps of a's and b's tiles
-   widened. */
+   widen to 64 bits, whose sum wraps; it then wraps to the accumulator and
+   reaches out as a cast from it does. Wrapping at every step equals
+   wrapping once, so the order of the sum is free, and a sum wrapped to 64
+   bits is the accumulator's modulo its width; this kernel sums in
+   increasing k. A threadgroup of INT_THREADS threads computes an INT_TILE
+   × INT_TILE tile of out, each thread a 4 × 4 block, staging INT_BK steps
+   of a's and b's tiles widened. */
 
 #define INT_TILE NX_METAL_INT_TILE
 #define INT_THREADS NX_METAL_INT_THREADS
 #define INT_BK 16
 
-/* A is unsigned, so the sum wraps as the dtype's arithmetic does. */
-template <typename A>
 kernel void contract_int(constant nx_metal_contract &p [[buffer(0)]],
                          uint3 g [[threadgroup_position_in_grid]],
                          uint t [[thread_index_in_threadgroup]]) {
+  /* Unsigned, so the sum wraps as the dtype's arithmetic does. */
+  typedef ulong A;
   threadgroup A as[INT_BK][INT_TILE], bs[INT_BK][INT_TILE];
   device const uchar *a = (device const uchar *)p.a;
   device const uchar *b = (device const uchar *)p.b;
@@ -667,54 +652,90 @@ kernel void contract_int(constant nx_metal_contract &p [[buffer(0)]],
     }
 }
 
-template [[host_name("contract_i32")]] kernel void contract_int<uint>(
-    constant nx_metal_contract &, uint3, uint);
-template [[host_name("contract_i64")]] kernel void contract_int<ulong>(
-    constant nx_metal_contract &, uint3, uint);
+/* Packs
 
-#define CONTRACT(name, D, AT, BT, EDGE, BM, BN, BK)                      \
+   An operand of batch × rows × cols elements of a byte, two or four,
+   copied into rows of ld elements with cols contiguous, the ld - cols
+   past each row zero. A threadgroup moves a PACK × PACK tile through
+   threadgroup memory: it reads along the source's contiguous axis and
+   writes along the copy's, so both sides stream whole runs. */
+
+#define PACK NX_METAL_PACK
+
+/* The [bytes]-byte element at [i] of p, and its store. */
+static uint get(uint bytes, device const uchar *p, uint i) {
+  switch (bytes) {
+  case 1: return p[i];
+  case 2: return ((device const ushort *)p)[i];
+  default: return ((device const uint *)p)[i];
+  }
+}
+
+static void set(uint bytes, device uchar *p, ulong i, uint x) {
+  switch (bytes) {
+  case 1: p[i] = uchar(x); break;
+  case 2: ((device ushort *)p)[i] = ushort(x); break;
+  default: ((device uint *)p)[i] = x;
+  }
+}
+
+kernel void pack(constant nx_metal_pack &p [[buffer(0)]],
+                 uint3 g [[threadgroup_position_in_grid]],
+                 uint3 t [[thread_position_in_threadgroup]]) {
+  threadgroup uint tile[PACK][PACK + 1];
+  device const uchar *src =
+      (device const uchar *)p.src + g.z * p.src_batch * p.bytes;
+  uint r0 = g.y * PACK, c0 = g.x * PACK;
+  /* Thread x runs along the source's contiguous axis: cols unless rows'
+     stride is 1. */
+  bool across = p.row != 1;
+  for (uint i = t.y; i < PACK; i += PACK / NX_METAL_PACK_ROWS) {
+    uint r = r0 + (across ? i : t.x), c = c0 + (across ? t.x : i);
+    uint x = r < p.rows && c < p.cols ? get(p.bytes, src, r * p.row + c * p.col)
+                                      : 0;
+    if (across)
+      tile[i][t.x] = x;
+    else
+      tile[t.x][i] = x;
+  }
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  device uchar *dst = (device uchar *)p.dst;
+  for (uint i = t.y; i < PACK; i += PACK / NX_METAL_PACK_ROWS) {
+    uint r = r0 + i, c = c0 + t.x;
+    if (r < p.rows && c < p.ld)
+      set(p.bytes, dst, g.z * p.dst_batch + ulong(r) * p.ld + c, tile[i][t.x]);
+  }
+}
+
+#define CONTRACT(name, D, BT, EDGE, BM, BN, BK)                          \
   template [[host_name(name)]] kernel void                                \
-  contract<D, AT, BT, EDGE, BM, BN, BK>(constant nx_metal_contract &,     \
-                                        uint3, uint, uint, uint);
+  contract<D, BT, EDGE, BM, BN, BK>(constant nx_metal_contract &, uint3,  \
+                                    uint, uint, uint);
 
-/* A square tile's instance with no bounds checks, for products of whole
-   tiles, and its twin that reads tiles reaching past the matrix. The
-   checks' absence is measured: the edge instance on whole tiles runs
-   2-11% slower (f32 4096-nt 9%, 64 x 512 batches 8-11%). */
-#define TWINS(name, D, AT, BT, SIDE, BK)                                  \
-  CONTRACT(name, D, AT, BT, false, SIDE, SIDE, BK)                        \
-  CONTRACT(name "_edge", D, AT, BT, true, SIDE, SIDE, BK)
-
-/* Floats: large tiles, small ones (_s) for products of few tiles, and wide
-   ones (_w) for products of few rows. A wide tile has no unchecked twin:
-   on 16-row products the checked instance runs 10-13% faster. */
-#define FLOATS(name, D, AT, BT)                                           \
-  TWINS(name, D, AT, BT, NX_METAL_LARGE, elt<D>::bk)                      \
-  TWINS(name "_s", D, AT, BT, NX_METAL_SMALL, elt<D>::bk)                 \
-  CONTRACT(name "_w", D, AT, BT, true, NX_METAL_WIDE_M, NX_METAL_WIDE_N,  \
+/* Each float dtype: large tiles, unchecked, for products of whole tiles
+   with b stored either way; small ones (_s) for products of few tiles and
+   every product past whole tiles, b stored [k][n]; and wide ones (_w) for
+   products of few rows, b stored either way. The small and wide tiles'
+   one instance each reads tiles reaching past the matrix: measured, its
+   checks cost nothing on whole tiles (256 and 512 squares within 3%;
+   16-row products 10-13% faster than an unchecked twin), where the large
+   tile's cost 2-11% (f32 4096-nt 9%, 64 x 512 batches 8-11%). */
+#define FLOATS(name, D)                                                   \
+  CONTRACT(name "_n", D, false, false, NX_METAL_LARGE, NX_METAL_LARGE,   \
+           elt<D>::bk)                                                    \
+  CONTRACT(name "_t", D, true, false, NX_METAL_LARGE, NX_METAL_LARGE,    \
+           elt<D>::bk)                                                    \
+  CONTRACT(name "_s", D, false, true, NX_METAL_SMALL, NX_METAL_SMALL,    \
+           elt<D>::bk)                                                    \
+  CONTRACT(name "_wn", D, false, true, NX_METAL_WIDE_M, NX_METAL_WIDE_N, \
+           NX_METAL_BK_WIDE)                                              \
+  CONTRACT(name "_wt", D, true, true, NX_METAL_WIDE_M, NX_METAL_WIDE_N,  \
            NX_METAL_BK_WIDE)
 
-FLOATS("contract_f32_nn", F32, false, false)
-FLOATS("contract_f32_nt", F32, false, true)
-FLOATS("contract_f32_tn", F32, true, false)
-FLOATS("contract_f32_tt", F32, true, true)
-FLOATS("contract_f16_nn", F16, false, false)
-FLOATS("contract_f16_nt", F16, false, true)
-FLOATS("contract_f16_tn", F16, true, false)
-FLOATS("contract_f16_tt", F16, true, true)
-FLOATS("contract_bf16_nn", BF16, false, false)
-FLOATS("contract_bf16_nt", BF16, false, true)
-FLOATS("contract_bf16_tn", BF16, true, false)
-FLOATS("contract_bf16_tt", BF16, true, true)
+FLOATS("contract_f32", F32)
+FLOATS("contract_f16", F16)
+FLOATS("contract_bf16", BF16)
 
-#define BYTES(name, D, AT, BT)                                            \
-  TWINS(name, D, AT, BT, NX_METAL_LARGE, elt<D>::bk)
-
-BYTES("contract_i8_nn", I8, false, false)
-BYTES("contract_i8_nt", I8, false, true)
-BYTES("contract_i8_tn", I8, true, false)
-BYTES("contract_i8_tt", I8, true, true)
-BYTES("contract_u8_nn", U8, false, false)
-BYTES("contract_u8_nt", U8, false, true)
-BYTES("contract_u8_tn", U8, true, false)
-BYTES("contract_u8_tt", U8, true, true)
+/* int8 into 32 bits: large tiles, whole, b stored [k][n]. */
+CONTRACT("contract_i8", I8, false, false, NX_METAL_LARGE, NX_METAL_LARGE,
+         elt<I8>::bk)

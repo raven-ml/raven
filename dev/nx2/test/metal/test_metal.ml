@@ -484,31 +484,22 @@ let contract_bound =
           (fun k -> launches_one "contract_f" k || launches_one "contract_bf" k)
           kernels
       in
-      (* A dense kernel's tile, by its name's suffix past "_edge". *)
+      (* A dense kernel's tile, by its name's suffix. Large tiles read whole
+         tiles; small and wide ones, tiles reaching past the matrix. *)
       let tile k =
-        let k =
-          if String.ends_with ~suffix:"_edge" k then
-            String.sub k 0 (String.length k - 5)
-          else k
-        in
         if String.ends_with ~suffix:"_s" k then `Small
-        else if String.ends_with ~suffix:"_w" k then `Wide
+        else if
+          String.ends_with ~suffix:"_wn" k || String.ends_with ~suffix:"_wt" k
+        then `Wide
         else `Large
       in
       let tiles x = List.exists (fun k -> tile k = x) dense in
       cover "64 x 64 tiles" (tiles `Large);
       cover "32 x 32 tiles" (tiles `Small);
       cover "16 x 64 tiles" (tiles `Wide);
-      (* Wide tiles have only the instance that reads past the matrix. *)
-      let edge =
-        List.exists
-          (fun k -> String.ends_with ~suffix:"_edge" k || tile k = `Wide)
-          dense
-      in
-      cover "whole tiles" (dense <> [] && not edge);
-      cover "edge tiles" edge;
       cover "a skinny product, b stored [k][n]" (launches "skinny_" && not c.b_t);
       cover "a skinny product, b stored [n][k]" (launches "skinny_" && c.b_t);
+      cover "a packed operand" (launches "pack");
       cover "a split along k" (launches "contract_combine");
       ignore (S.run t run);
       let worst, at = S.contract_error ?init dims ~a ~b ~out in
@@ -574,9 +565,9 @@ let int_example ?(out = Dt.Any Dt.Int32) ?(acc = Dt.Any Dt.Int32) ?(batch = 1)
 
 let int_examples =
   [
-    (* Bytes into 32 bits sum on the matrix units in float32 chunks: sums longer
-       than a chunk, 1,024 terms of int8 or 258 of uint8, and the extremes'
-       longest. *)
+    (* int8 into 32 bits sums on the matrix units in float32 chunks of 1,024
+       terms, in whole tiles: sums longer than a chunk, and the extremes'
+       longest; past whole tiles, and uint8, on the SIMD units. *)
     int_example (Dt.Any Dt.Int8) ~m:64 ~k:2112;
     int_example (Dt.Any Dt.Int8) ~m:65 ~k:2101;
     int_example (Dt.Any Dt.Uint8) ~m:64 ~k:608;
@@ -594,6 +585,8 @@ let int_examples =
       (Dt.Any Dt.Uint16) ~m:17 ~k:300;
     int_example ~acc:(Dt.Any Dt.Uint32) ~out:(Dt.Any Dt.Int64) ~values:Extreme
       (Dt.Any Dt.Uint8) ~m:64 ~k:608;
+    int_example ~acc:(Dt.Any Dt.Uint32) ~out:(Dt.Any Dt.Uint64)
+      (Dt.Any Dt.Int8) ~m:64 ~k:64;
     int_example ~acc:(Dt.Any Dt.Uint32) ~out:(Dt.Any Dt.Uint64)
       (Dt.Any Dt.Uint16) ~m:1 ~k:300;
     (* Accumulators narrower than 32 bits wrap to their width, then reach out
@@ -648,8 +641,8 @@ let every_kernel () =
     }
   in
   let orders = [ (false, false); (false, true); (true, false); (true, true) ] in
-  (* Large tiles take 128 or more of them; small ones fewer; wide ones few rows;
-     whole and edge by the extents. *)
+  (* Large tiles take 128 or more whole ones; small ones fewer, or tiles past
+     the matrix; wide ones few rows. *)
   let shapes =
     [
       (128, 64, 64, 32);
@@ -710,6 +703,7 @@ let every_kernel () =
   let library k =
     String.starts_with ~prefix:"contract_" k
     || String.starts_with ~prefix:"skinny_" k
+    || k = "pack"
   in
   let missing =
     List.filter

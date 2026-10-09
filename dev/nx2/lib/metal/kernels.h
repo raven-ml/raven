@@ -36,60 +36,34 @@
 #endif
 
 /* X(name) for every kernel of the library, the function [name] of its
-   metallib. Dense instances are named by operand dtype, the orders of a
-   and b (n: stored with the contracted axis last for a, the output's axis
-   last for b; t: the other), 32 x 32 tiles (_s), 16 x 64 tiles (_w), and
-   the twin of a square tile's instance that reads tiles reaching past the
-   matrix (_edge); a wide tile's one instance reads them. */
+   metallib. Dense float instances are named by operand dtype, then tile
+   and b's order: large tiles (_n, _t), small ones (_s), wide ones (_wn,
+   _wt); n: b stored [k][n], t: b stored [n][k]. Every dense instance
+   reads a stored [m][k].
+
+   Instances are a budget: each names the rows that keep it. An operand
+   in a layout with no instance is packed first, and a product past whole
+   tiles runs on small ones. */
 #define NX_METAL_KERNELS(X)                                                \
-  X(contract_f32_nn) X(contract_f32_nn_edge)                               \
-  X(contract_f32_nn_s) X(contract_f32_nn_s_edge)                           \
-  X(contract_f32_nn_w)                                                     \
-  X(contract_f32_nt) X(contract_f32_nt_edge)                               \
-  X(contract_f32_nt_s) X(contract_f32_nt_s_edge)                           \
-  X(contract_f32_nt_w)                                                     \
-  X(contract_f32_tn) X(contract_f32_tn_edge)                               \
-  X(contract_f32_tn_s) X(contract_f32_tn_s_edge)                           \
-  X(contract_f32_tn_w)                                                     \
-  X(contract_f32_tt) X(contract_f32_tt_edge)                               \
-  X(contract_f32_tt_s) X(contract_f32_tt_s_edge)                           \
-  X(contract_f32_tt_w)                                                     \
-  X(contract_f16_nn) X(contract_f16_nn_edge)                               \
-  X(contract_f16_nn_s) X(contract_f16_nn_s_edge)                           \
-  X(contract_f16_nn_w)                                                     \
-  X(contract_f16_nt) X(contract_f16_nt_edge)                               \
-  X(contract_f16_nt_s) X(contract_f16_nt_s_edge)                           \
-  X(contract_f16_nt_w)                                                     \
-  X(contract_f16_tn) X(contract_f16_tn_edge)                               \
-  X(contract_f16_tn_s) X(contract_f16_tn_s_edge)                           \
-  X(contract_f16_tn_w)                                                     \
-  X(contract_f16_tt) X(contract_f16_tt_edge)                               \
-  X(contract_f16_tt_s) X(contract_f16_tt_s_edge)                           \
-  X(contract_f16_tt_w)                                                     \
-  X(contract_bf16_nn) X(contract_bf16_nn_edge)                             \
-  X(contract_bf16_nn_s) X(contract_bf16_nn_s_edge)                         \
-  X(contract_bf16_nn_w)                                                    \
-  X(contract_bf16_nt) X(contract_bf16_nt_edge)                             \
-  X(contract_bf16_nt_s) X(contract_bf16_nt_s_edge)                         \
-  X(contract_bf16_nt_w)                                                    \
-  X(contract_bf16_tn) X(contract_bf16_tn_edge)                             \
-  X(contract_bf16_tn_s) X(contract_bf16_tn_s_edge)                         \
-  X(contract_bf16_tn_w)                                                    \
-  X(contract_bf16_tt) X(contract_bf16_tt_edge)                             \
-  X(contract_bf16_tt_s) X(contract_bf16_tt_s_edge)                         \
-  X(contract_bf16_tt_w)                                                    \
-  X(contract_i8_nn) X(contract_i8_nn_edge)                                 \
-  X(contract_i8_nt) X(contract_i8_nt_edge)                                 \
-  X(contract_i8_tn) X(contract_i8_tn_edge)                                 \
-  X(contract_i8_tt) X(contract_i8_tt_edge)                                 \
-  X(contract_u8_nn) X(contract_u8_nn_edge)                                 \
-  X(contract_u8_nt) X(contract_u8_nt_edge)                                 \
-  X(contract_u8_tn) X(contract_u8_tn_edge)                                 \
-  X(contract_u8_tt) X(contract_u8_tt_edge)                                 \
+  /* squares 1024 to 4096, 4096-tn, 64 x 512 batches */                   \
+  X(contract_f32_n) X(contract_f16_n) X(contract_bf16_n)                   \
+  /* 4096-nt and -tt, 512-row prefills, Llama's up projection */          \
+  X(contract_f32_t) X(contract_f16_t) X(contract_bf16_t)                   \
+  /* squares 256 and 512, and every product past whole tiles */           \
+  X(contract_f32_s) X(contract_f16_s) X(contract_bf16_s)                   \
+  /* 8 rows nn; 3, 8 and 16 rows nt */                                    \
+  X(contract_f32_wn) X(contract_f16_wn) X(contract_bf16_wn)                \
+  X(contract_f32_wt) X(contract_f16_wt) X(contract_bf16_wt)                \
+  /* int8-4096 */                                                         \
+  X(contract_i8)                                                           \
+  /* decode, b stored [k][n] and [n][k]: float16 and bfloat16 reading     \
+     their dtype at run time run 4-5% slower at 1x2880x5120 */            \
   X(skinny_f32_n) X(skinny_f32_t)                                          \
   X(skinny_f16_n) X(skinny_f16_t)                                          \
   X(skinny_bf16_n) X(skinny_bf16_t)                                        \
-  X(contract_combine) X(contract_i32) X(contract_i64)
+  /* every split sum; every other integer contraction; every operand in a \
+     layout with no instance */                                           \
+  X(contract_combine) X(contract_int) X(pack)
 
 #define NX_METAL_ENUM(name) NX_METAL_##name,
 enum nx_metal_kernel { NX_METAL_KERNELS(NX_METAL_ENUM) NX_METAL_KERNEL_COUNT };
@@ -115,7 +89,8 @@ typedef struct {
    square tiles, NX_METAL_BK otherwise, NX_METAL_BK_WIDE in the wide ones.
    Skinny products of one row: columns of out a threadgroup computes, b
    stored [n][k] (T) or [k][n] (N). Integers on the SIMD units: tile and
-   threads. */
+   threads. Packs: a threadgroup's tile side, and its threads, PACK ×
+   PACK_ROWS. */
 #define NX_METAL_THREADS 128
 #define NX_METAL_LARGE 64
 #define NX_METAL_SMALL 32
@@ -128,6 +103,8 @@ typedef struct {
 #define NX_METAL_SKINNY_N 32
 #define NX_METAL_INT_TILE 64
 #define NX_METAL_INT_THREADS 256
+#define NX_METAL_PACK 32
+#define NX_METAL_PACK_ROWS 8
 
 /* out[p][i][j] = round_out(init[p][i][j] + Σ_l a[p][i][l] · b[p][l][j]),
    for p < batch, i < m, j < n, l < k: floats sum in float32, integers in
@@ -157,5 +134,15 @@ typedef struct {
   uint32_t init_m, init_n, batch, m, n, split;
   uint32_t init_dtype, out_dtype;
 } nx_metal_combine;
+
+/* dst[p][r][c] = src[p·src_batch + r·row + c·col] for p < batch (grid
+   z), r < rows, c < cols, elements of [bytes] bytes; dst[p][r][c] = 0 for
+   cols <= c < ld: an operand copied with cols contiguous, rows ld
+   elements apart, batch elements dst_batch apart. */
+typedef struct {
+  uint64_t src, dst;
+  int64_t src_batch, dst_batch;
+  uint32_t row, col, rows, cols, ld, bytes;
+} nx_metal_pack;
 
 #endif /* NX_METAL_KERNELS_H */
