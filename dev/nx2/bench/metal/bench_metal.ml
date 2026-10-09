@@ -212,7 +212,10 @@ let contract_rows =
       (fun dt ->
         List.map
           (fun (m, k, n) -> contract_row dt ~m ~k ~n "nt")
-          [ (32, 2880, 201088); (48, 5120, 2880); (1000, 1000, 1000) ])
+          [ (32, 2880, 201088); (48, 5120, 2880); (1000, 1000, 1000) ]
+        @ List.map
+            (fun (m, k, n) -> contract_row dt ~m ~k ~n "nn")
+            [ (32, 2880, 201088); (48, 5120, 2880); (1000, 1000, 1000) ])
       [ Dt.Any Dt.Bfloat16; Dt.Any Dt.Float16; Dt.Any Dt.Float32 ]
 
 (* Decode's rows as eager calls: each launch in a command buffer of its own,

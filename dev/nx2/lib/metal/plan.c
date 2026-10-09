@@ -52,25 +52,32 @@ static int dense_dtype(int dt) {
   return dt == NX_FLOAT32 || dt == NX_FLOAT16 || dt == NX_BFLOAT16;
 }
 
-/* The dense float instances by dtype (float32, float16, bfloat16), tile
-   and b's order (stored [k][n], [n][k]): small tiles read b stored [k][n]
-   only. */
-static const int dense[3][3][2] = {
-    {{NX_METAL_contract_f32_n, NX_METAL_contract_f32_t},
-     {NX_METAL_contract_f32_s, -1},
-     {NX_METAL_contract_f32_wn, NX_METAL_contract_f32_wt}},
-    {{NX_METAL_contract_f16_n, NX_METAL_contract_f16_t},
-     {NX_METAL_contract_f16_s, -1},
-     {NX_METAL_contract_f16_wn, NX_METAL_contract_f16_wt}},
-    {{NX_METAL_contract_bf16_n, NX_METAL_contract_bf16_t},
-     {NX_METAL_contract_bf16_s, -1},
-     {NX_METAL_contract_bf16_wn, NX_METAL_contract_bf16_wt}}};
-
-/* The skinny instances by dtype and b's order. */
+/* The instances by a's and b's dtype (float32, float16, bfloat16) and
+   order (a stored [m][k] or [k][m], b stored [k][n] or [n][k]). The small
+   tiles read either order from one instance. */
+static const int large[3][2][2] = {
+    {{NX_METAL_contract_f32_nn, NX_METAL_contract_f32_nt},
+     {NX_METAL_contract_f32_tn, NX_METAL_contract_f32_tt}},
+    {{NX_METAL_contract_f16_nn, NX_METAL_contract_f16_nt},
+     {NX_METAL_contract_f16_tn, NX_METAL_contract_f16_tt}},
+    {{NX_METAL_contract_bf16_nn, NX_METAL_contract_bf16_nt},
+     {NX_METAL_contract_bf16_tn, NX_METAL_contract_bf16_tt}}};
+static const int wide[3][2][2] = {
+    {{NX_METAL_contract_f32_wnn, NX_METAL_contract_f32_wnt},
+     {NX_METAL_contract_f32_wtn, NX_METAL_contract_f32_wtt}},
+    {{NX_METAL_contract_f16_wnn, NX_METAL_contract_f16_wnt},
+     {NX_METAL_contract_f16_wtn, NX_METAL_contract_f16_wtt}},
+    {{NX_METAL_contract_bf16_wnn, NX_METAL_contract_bf16_wnt},
+     {NX_METAL_contract_bf16_wtn, NX_METAL_contract_bf16_wtt}}};
+static const int small[3] = {NX_METAL_contract_f32_s, NX_METAL_contract_f16_s,
+                             NX_METAL_contract_bf16_s};
 static const int skinny[3][2] = {
     {NX_METAL_skinny_f32_n, NX_METAL_skinny_f32_t},
     {NX_METAL_skinny_f16_n, NX_METAL_skinny_f16_t},
     {NX_METAL_skinny_bf16_n, NX_METAL_skinny_bf16_t}};
+static const int int8[2][2] = {
+    {NX_METAL_contract_i8_nn, NX_METAL_contract_i8_nt},
+    {NX_METAL_contract_i8_tn, NX_METAL_contract_i8_tt}};
 
 /* The float dtype [dt]'s index in the tables above. */
 static int dtype_index(int dt) {
@@ -112,18 +119,25 @@ static uint64_t tiles(const nx_metal_contract_in *c, enum size size) {
   return (c->m + rows - 1) / rows * ((c->n + cols - 1) / cols) * c->batch;
 }
 
-/* The tile a product's shape picks: wide for few rows; large for products
-   of whole large tiles, enough of them, and whole steps of k in each part;
-   small otherwise. int8 runs on whole large tiles. */
+/* The tile a product's dtype and shape pick: wide for few rows; large
+   for products of whole large tiles, enough of them, and whole steps of k
+   in each part; small for the other products of whole tiles; past whole
+   tiles, small, except that the half types take wide ones where small
+   ones would leave more than an eighth of their rows empty (48 rows: 1.2
+   to 1.7 times faster; at 32 and 1,000 rows, small is). int8 runs on
+   whole large tiles. */
 static enum size tile_of(const nx_metal_contract_in *c, int dt, int floats) {
   if (!floats) return Large;
   if (c->m <= wide_rows) return Wide;
   uint32_t side = tile_rows[Large];
-  if (c->m % side != 0 || c->n % side != 0) return Small;
+  int whole = c->m % side == 0 && c->n % side == 0;
   uint64_t large = tiles(c, Large);
-  if (large < small_tiles) return Small;
-  return c->k / split(c, large, floats) % tile_k(dt, Large) == 0 ? Large
-                                                                  : Small;
+  if (whole && large >= small_tiles &&
+      c->k / split(c, large, floats) % tile_k(dt, Large) == 0)
+    return Large;
+  if (whole || dt == NX_FLOAT32) return Small;
+  uint32_t rows = tile_rows[Small], covered = (c->m + rows - 1) / rows * rows;
+  return 8 * (covered - c->m) > covered ? Wide : Small;
 }
 
 /* [bytes] of the call's scratch after the [*used] bytes taken: their
@@ -134,33 +148,8 @@ static uint64_t take(size_t *used, size_t bytes) {
   return at;
 }
 
-/* Appends the pack of an operand of c->batch × rows × cols elements of
-   [bytes] bytes, at [o] with the batch stride [batch], row and col, into
-   scratch with cols contiguous, its rows 16-byte vectors; sets [o] to the
-   copy, an offset into the scratch, and [*ld] and [*batch] to its
-   strides. 0, or NX_OUT_OF_MEMORY if memory runs out. */
-static int pack(nx_metal_records *r, size_t *used,
-                const nx_metal_contract_in *c, uint32_t bytes, uint64_t *o,
-                int64_t *batch, uint32_t row, uint32_t col, uint32_t rows,
-                uint32_t cols, uint32_t *ld) {
-  uint32_t per = 16 / bytes, side = NX_METAL_PACK;
-  *ld = (cols + per - 1) / per * per;
-  nx_metal_pack q = {
-      .src = *o, .src_batch = *batch, .dst_batch = (int64_t)rows * *ld,
-      .row = row, .col = col, .rows = rows, .cols = cols, .ld = *ld,
-      .bytes = bytes};
-  q.dst = take(used, (size_t)c->batch * rows * *ld * bytes);
-  *o = q.dst;
-  *batch = q.dst_batch;
-  uint32_t groups[3] = {(*ld + side - 1) / side, (rows + side - 1) / side,
-                        c->batch};
-  uint32_t threads[3] = {side / 4, NX_METAL_PACK_ROWS, 1};
-  return nx_metal_add(r, NX_METAL_pack, groups, threads, &q, sizeof q, 2,
-                      1u << 1);
-}
-
-/* Whether an operand's tiles start on 16-byte boundaries: its address,
-   row stride and, past one batch element, batch stride. */
+/* Whether an operand's stored rows start on 16-byte boundaries: its
+   address, row stride and, past one batch element, batch stride. */
 static int aligned(uint64_t address, int64_t row, int64_t batch,
                    uint32_t count) {
   return address % 16 == 0 && row % 16 == 0 && (count == 1 || batch % 16 == 0);
@@ -179,10 +168,10 @@ static int plan_integer(const nx_metal_contract_in *c,
   return e ? e : 1;
 }
 
-/* A float product of one row of a, b stored [n][k] if [b_t]. */
+/* A float product of one row of a. */
 static int plan_skinny(const nx_metal_contract_in *c,
-                       const nx_metal_contract *p, int b_t,
-                       nx_metal_records *r) {
+                       const nx_metal_contract *p, nx_metal_records *r) {
+  int b_t = (p->order & NX_METAL_B_T) != 0;
   uint32_t per = b_t ? NX_METAL_SKINNY_T : NX_METAL_SKINNY_N;
   uint32_t groups[3] = {(c->n + per - 1) / per, 1, c->batch};
   uint32_t threads[3] = {NX_METAL_THREADS, 1, 1};
@@ -191,18 +180,14 @@ static int plan_skinny(const nx_metal_contract_in *c,
   return e ? e : 1;
 }
 
-/* A product on the matrix units, a stored [k][m] if [a_t] and b stored
-   [n][k] if [b_t]; int8 into 32 bits if [i8], floats otherwise. */
+/* A product on the matrix units, each operand read where it lies, as
+   p->order says: int8 into 32 bits if [i8], floats otherwise. */
 static int plan_dense(const nx_metal_contract_in *c, nx_metal_contract *p,
-                      int a_t, int b_t, int i8, nx_metal_records *r,
-                      size_t *scratch) {
+                      int i8, nx_metal_records *r, size_t *scratch) {
   int floats = !i8;
   /* The tile the shape picks fixes the split, so every output's
-     association is the shape's. A b stored [n][k], which small tiles do
-     not read, runs their products on wide ones, which sum an output alike:
-     they read b where it lies, where packing b would copy all of it. */
-  enum size shape = tile_of(c, (int)p->dtype, floats);
-  enum size size = shape == Small && b_t ? Wide : shape;
+     association is the shape's. */
+  enum size size = tile_of(c, (int)p->dtype, floats);
   uint32_t rows = tile_rows[size], cols = tile_cols[size];
   uint32_t tiles_m = (c->m + rows - 1) / rows;
   uint32_t tiles_n = (c->n + cols - 1) / cols;
@@ -211,45 +196,18 @@ static int plan_dense(const nx_metal_contract_in *c, nx_metal_contract *p,
   uint32_t groups[3] = {tiles_n * column, (tiles_m + column - 1) / column,
                         c->batch};
   uint32_t threads[3] = {NX_METAL_THREADS, 1, 1};
-  size_t used = 0, len = r->len;
-  uint32_t mask = 0;
-  int launches = 1;
-
-  /* An operand in a layout the instance does not read is packed into
-     scratch first: every instance reads a stored [m][k], and int8's b
-     stored [k][n]. int8's tiles read 16 bytes at a time, from rows that
-     start on 16-byte boundaries. */
-  uint32_t bytes = (uint32_t)nx_dtype_row_of((int)p->dtype).bits / 8;
-  int pack_a = c->k > 0 && (a_t || (i8 && !aligned(p->a, p->a_m, p->a_batch,
-                                                   c->batch)));
-  int pack_b = c->k > 0 && i8 &&
-               (b_t || !aligned(p->b, p->b_k, p->b_batch, c->batch));
-  if (pack_a) {
-    if (pack(r, &used, c, bytes, &p->a, &p->a_batch, p->a_m, p->a_k, c->m,
-             c->k, &p->a_m))
-      goto fail;
-    p->a_k = 1;
-    mask |= 1u << 0;
-    launches++;
-  }
-  if (pack_b) {
-    if (pack(r, &used, c, bytes, &p->b, &p->b_batch, p->b_k, p->b_n, c->k,
-             c->n, &p->b_k))
-      goto fail;
-    p->b_n = 1;
-    b_t = 0;
-    mask |= 1u << 1;
-    launches++;
-  }
-
-  int entry = i8 ? NX_METAL_contract_i8
-                 : dense[dtype_index((int)p->dtype)][size][b_t];
-  uint32_t parts = split(c, tiles(c, shape), floats);
+  int a_t = (p->order & NX_METAL_A_T) != 0;
+  int b_t = (p->order & NX_METAL_B_T) != 0;
+  int d = dtype_index((int)p->dtype);
+  int entry = i8               ? int8[a_t][b_t]
+              : size == Large ? large[d][a_t][b_t]
+              : size == Small ? small[d]
+                              : wide[d][a_t][b_t];
+  uint32_t parts = split(c, tiles(c, size), floats);
   if (parts == 1) {
-    if (nx_metal_add(r, entry, groups, threads, p, sizeof *p, 4, mask))
-      goto fail;
-    *scratch = (used + 15) / 16 * 16;
-    return launches;
+    if (nx_metal_add(r, entry, groups, threads, p, sizeof *p, 4, 0))
+      return NX_OUT_OF_MEMORY;
+    return 1;
   }
 
   /* A product of few tiles splits along k into parts of equal length: a
@@ -258,6 +216,7 @@ static int plan_dense(const nx_metal_contract_in *c, nx_metal_contract *p,
      in chunks within one threadgroup: they never split. */
   uint32_t part_k = c->k / parts;
   uint64_t count = (uint64_t)c->m * c->n;
+  size_t used = 0, len = r->len;
   nx_metal_combine q = {
       .out = p->out, .parts = take(&used, parts * count * 4), .init = p->init,
       .init_batch = p->init_batch, .init_m = p->init_m,
@@ -274,18 +233,14 @@ static int plan_dense(const nx_metal_contract_in *c, nx_metal_contract *p,
   uint32_t cgroups[3] = {
       (uint32_t)((count + combine_threads - 1) / combine_threads), 1, 1};
   uint32_t cthreads[3] = {combine_threads, 1, 1};
-  if (nx_metal_add(r, entry, groups, threads, p, sizeof *p, 4,
-                   mask | 1u << 3) ||
+  if (nx_metal_add(r, entry, groups, threads, p, sizeof *p, 4, 1u << 3) ||
       nx_metal_add(r, NX_METAL_contract_combine, cgroups, cthreads, &q,
-                   sizeof q, 3, 1u << 1))
-    goto fail;
+                   sizeof q, 3, 1u << 1)) {
+    r->len = len;
+    return NX_OUT_OF_MEMORY;
+  }
   *scratch = (used + 15) / 16 * 16;
-  return launches + 1;
-
-fail:
-  r->len = len;
-  *scratch = 0;
-  return NX_OUT_OF_MEMORY;
+  return 2;
 }
 
 int nx_metal_plan_contract(const nx_metal_contract_in *c,
@@ -322,15 +277,20 @@ int nx_metal_plan_contract(const nx_metal_contract_in *c,
   int a_t = as[2] != 1 && c->k > 1, b_t = bs[2] != 1 && c->n > 1;
   int ordered = !(a_t && as[1] != 1 && c->m > 1) &&
                 !(b_t && bs[1] != 1 && c->k > 1);
-  /* int8 into 32 bits runs on the matrix units, exactly, in whole tiles;
-     every other integer contraction on the SIMD units. */
+  p.order = (a_t ? NX_METAL_A_T : 0) | (b_t ? NX_METAL_B_T : 0);
+  /* int8 into 32 bits runs on the matrix units, exactly, in whole tiles
+     whose stored rows start on 16-byte boundaries, which its 16-byte loads
+     need; every other integer contraction on the SIMD units. */
   uint32_t side = tile_rows[Large];
   int i8 = ints && a->dtype == NX_INT8 &&
            (c->acc == NX_INT32 || c->acc == NX_UINT32) && ordered &&
            c->m % side == 0 && c->n % side == 0 &&
-           c->k % NX_METAL_BK_HALF == 0;
+           c->k % NX_METAL_BK_HALF == 0 &&
+           (c->k == 0 ||
+            (aligned(a->address, a_t ? as[2] : as[1], as[0], c->batch) &&
+             aligned(b->address, b_t ? bs[2] : bs[1], bs[0], c->batch)));
   if (ints && !i8) return plan_integer(c, &p, r);
   if (!ordered) return NX_NOT_COMPUTED;
-  if (c->m == 1 && floats) return plan_skinny(c, &p, b_t, r);
-  return plan_dense(c, &p, a_t, b_t, i8, r, scratch);
+  if (c->m == 1 && floats) return plan_skinny(c, &p, r);
+  return plan_dense(c, &p, i8, r, scratch);
 }

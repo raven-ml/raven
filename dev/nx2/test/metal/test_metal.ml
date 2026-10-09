@@ -452,6 +452,9 @@ let contract_bound =
         ~init:Bias;
       large (Dt.Any Dt.Float32) ~a_t:true ~b_t:true ~m:520 ~n:513 ~k:33
         ~init:Bias;
+      (* A stored [k][m] of 16 MiB: read where it lies, never copied. *)
+      large (Dt.Any Dt.Float32) ~a_t:true ~b_t:false ~m:1024 ~n:32 ~k:4096
+        ~init:No_init;
       (* Few rows of a split along k, on wide tiles. *)
       {
         (large (Dt.Any Dt.Float16) ~a_t:false ~b_t:true ~m:9 ~n:200 ~k:2880
@@ -488,6 +491,9 @@ let contract_bound =
         (match c.values with Subnormal _ -> c.m * c.n * c.k > 0 | _ -> false);
       let t = dev () in
       let dims, a, b, out, init, run = call t c in
+      (* A call's scratch is its split's parts alone, whatever its operands: at
+         most 2 x 256 tiles of 64 x 64 float32 outputs. *)
+      at_most ~msg:"scratch bytes" int ~than:(8 * 1024 * 1024) (S.scratch run);
       let kernels = S.entries run in
       let launches_one prefix = String.starts_with ~prefix in
       let launches prefix = List.exists (launches_one prefix) kernels in
@@ -496,14 +502,14 @@ let contract_bound =
           (fun k -> launches_one "contract_f" k || launches_one "contract_bf" k)
           kernels
       in
-      (* A dense kernel's tile, by its name's suffix. Large tiles read whole
-         tiles; small and wide ones, tiles reaching past the matrix. *)
+      (* A dense kernel's tile, by its name's last part: s small, w and the
+         orders wide, the orders alone large. Large tiles read whole tiles;
+         small and wide ones, tiles reaching past the matrix. *)
       let tile k =
-        if String.ends_with ~suffix:"_s" k then `Small
-        else if
-          String.ends_with ~suffix:"_wn" k || String.ends_with ~suffix:"_wt" k
-        then `Wide
-        else `Large
+        match List.rev (String.split_on_char '_' k) with
+        | "s" :: _ -> `Small
+        | last :: _ when last.[0] = 'w' -> `Wide
+        | _ -> `Large
       in
       let tiles x = List.exists (fun k -> tile k = x) dense in
       cover "64 x 64 tiles" (tiles `Large);
@@ -511,7 +517,6 @@ let contract_bound =
       cover "16 x 64 tiles" (tiles `Wide);
       cover "a skinny product, b stored [k][n]" (launches "skinny_" && not c.b_t);
       cover "a skinny product, b stored [n][k]" (launches "skinny_" && c.b_t);
-      cover "a packed operand" (launches "pack");
       cover "a split along k" (launches "contract_combine");
       ignore (S.run t run);
       let worst, at = S.contract_error ?init dims ~a ~b ~out in
@@ -715,7 +720,6 @@ let every_kernel () =
   let library k =
     String.starts_with ~prefix:"contract_" k
     || String.starts_with ~prefix:"skinny_" k
-    || k = "pack"
   in
   let missing =
     List.filter

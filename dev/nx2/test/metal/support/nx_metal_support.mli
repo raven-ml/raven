@@ -176,6 +176,9 @@ val plan_contract :
 val entries : run -> string list
 (** [entries r] is the kernels [r] launches, in order. *)
 
+val scratch : run -> int
+(** [scratch r] is the bytes of scratch [r]'s launches address. *)
+
 val contract_wrong :
   ?init:arg ->
   ?samples:int ->

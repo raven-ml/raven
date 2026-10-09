@@ -102,9 +102,15 @@ let view k o =
 
 (* Runs *)
 
-(* A run's records, the kernels they launch, by index, and the memory they
-   address beyond the caller's operands, such as their scratch. *)
-type run = { records : string; kernels : int list; holds : operand list }
+(* A run's records, the kernels they launch, by index, the memory they address
+   beyond the caller's operands, such as their scratch, and the scratch's
+   bytes. *)
+type run = {
+  records : string;
+  kernels : int list;
+  holds : operand list;
+  scratch : int;
+}
 
 let index k =
   match Array.find_index (String.equal k) kernels with
@@ -125,13 +131,14 @@ let launch ?(groups = (1, 1, 1)) ?(threads = threads) k ~addrs ~words =
   let records =
     record k groups threads (Bytes.unsafe_to_string b) (List.length addrs)
   in
-  { records; kernels = [ k ]; holds = [] }
+  { records; kernels = [ k ]; holds = []; scratch = 0 }
 
 let seq rs =
   {
     records = String.concat "" (List.map (fun r -> r.records) rs);
     kernels = List.concat_map (fun r -> r.kernels) rs;
     holds = List.concat_map (fun r -> r.holds) rs;
+    scratch = List.fold_left (fun n r -> n + r.scratch) 0 rs;
   }
 
 let prepare t r =
@@ -258,12 +265,13 @@ let plan_contract ?init ?(acc = float32) t dims ~a ~b ~out =
   in
   Fun.flip Option.map planned @@ fun (records, scratch) ->
   let kernels = Array.to_list (record_entries records) in
-  if scratch = 0 then { records; kernels; holds = [] }
+  if scratch = 0 then { records; kernels; holds = []; scratch }
   else
     let s = operand t scratch in
-    { records = rebase records (address s); kernels; holds = [ s ] }
+    { records = rebase records (address s); kernels; holds = [ s ]; scratch }
 
 let entries r = List.map (fun k -> kernels.(k)) r.kernels
+let scratch r = r.scratch
 
 let contract_error ?init ?samples dims ~a ~b ~out =
   let worst, at =

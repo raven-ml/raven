@@ -36,34 +36,39 @@
 #endif
 
 /* X(name) for every kernel of the library, the function [name] of its
-   metallib. Dense float instances are named by operand dtype, then tile
-   and b's order: large tiles (_n, _t), small ones (_s), wide ones (_wn,
-   _wt); n: b stored [k][n], t: b stored [n][k]. Every dense instance
-   reads a stored [m][k].
+   metallib. Dense instances are named by operand dtype, then tile and the
+   orders of a and b, n as named (a stored [m][k], b stored [k][n]) and t
+   transposed (a stored [k][m], b stored [n][k]): large tiles (_nn to _tt),
+   small ones (_s, either order, nx_metal_contract's order says which),
+   wide ones (_wnn to _wtt). Every operand is read where it lies.
 
-   Instances are a budget: each names the rows that keep it. An operand
-   in a layout with no instance is packed first, and a product past whole
-   tiles runs on small ones, or on wide ones if b is stored [n][k]. */
+   An instance reads its order at run time where doing so costs no row
+   measurably, and is compiled per order elsewhere: each instance below
+   names the rows that measured it. */
 #define NX_METAL_KERNELS(X)                                                \
-  /* squares 1024 to 4096, 4096-tn, 64 x 512 batches */                   \
-  X(contract_f32_n) X(contract_f16_n) X(contract_bf16_n)                   \
-  /* 4096-nt and -tt, 512-row prefills, Llama's up projection */          \
-  X(contract_f32_t) X(contract_f16_t) X(contract_bf16_t)                   \
-  /* squares 256 and 512, and every product past whole tiles, b [k][n] */ \
+  /* nn: squares 1024 to 4096, 64 x 512 batches; nt: 4096-nt, 512-row     \
+     prefills, Llama's up projection; tn, tt: 4096-tn and -tt */           \
+  X(contract_f32_nn) X(contract_f32_nt) X(contract_f32_tn)                 \
+  X(contract_f32_tt) X(contract_f16_nn) X(contract_f16_nt)                 \
+  X(contract_f16_tn) X(contract_f16_tt) X(contract_bf16_nn)                \
+  X(contract_bf16_nt) X(contract_bf16_tn) X(contract_bf16_tt)              \
+  /* squares 256 and 512, and products past whole tiles */                \
   X(contract_f32_s) X(contract_f16_s) X(contract_bf16_s)                   \
-  /* 8 rows nn; 3 to 48 rows nt, and every nt product past whole tiles */ \
-  X(contract_f32_wn) X(contract_f16_wn) X(contract_bf16_wn)                \
-  X(contract_f32_wt) X(contract_f16_wt) X(contract_bf16_wt)                \
+  /* few rows: 8 rows nn, 3 to 16 rows nt, 48 rows of the half types */   \
+  X(contract_f32_wnn) X(contract_f32_wnt) X(contract_f32_wtn)              \
+  X(contract_f32_wtt) X(contract_f16_wnn) X(contract_f16_wnt)              \
+  X(contract_f16_wtn) X(contract_f16_wtt) X(contract_bf16_wnn)             \
+  X(contract_bf16_wnt) X(contract_bf16_wtn) X(contract_bf16_wtt)           \
   /* int8-4096 */                                                         \
-  X(contract_i8)                                                           \
+  X(contract_i8_nn) X(contract_i8_nt) X(contract_i8_tn) X(contract_i8_tt)  \
   /* decode, b stored [k][n] and [n][k]: float16 and bfloat16 reading     \
-     their dtype at run time run 4-5% slower at 1x2880x5120 */            \
+     their dtype at run time run 4-5% slower at 1x2880x5120, b's order    \
+     1.6 times slower (-nt) */                                            \
   X(skinny_f32_n) X(skinny_f32_t)                                          \
   X(skinny_f16_n) X(skinny_f16_t)                                          \
   X(skinny_bf16_n) X(skinny_bf16_t)                                        \
-  /* every split sum; every other integer contraction; every operand in a \
-     layout with no instance */                                           \
-  X(contract_combine) X(contract_int) X(pack)
+  /* every split sum; every other integer contraction */                  \
+  X(contract_combine) X(contract_int)
 
 #define NX_METAL_ENUM(name) NX_METAL_##name,
 enum nx_metal_kernel { NX_METAL_KERNELS(NX_METAL_ENUM) NX_METAL_KERNEL_COUNT };
@@ -109,10 +114,6 @@ typedef struct {
 #define NX_METAL_INT_TILE 64
 #define NX_METAL_INT_THREADS 256
 
-/* A pack's tile side, and its threads: PACK / 4 × PACK_ROWS. */
-#define NX_METAL_PACK 64
-#define NX_METAL_PACK_ROWS 16
-
 /* out[p][i][j] = round_out(init[p][i][j] + Σ_l a[p][i][l] · b[p][l][j]),
    for p < batch, i < m, j < n, l < k: floats sum in float32, integers in
    the kernel's accumulator, wrapping, and reach out's width by wrapping.
@@ -129,8 +130,13 @@ typedef struct {
   uint32_t swizzle;               /* tiles of a column, as a power of two */
   uint32_t dtype;                 /* a's and b's */
   uint32_t acc;                   /* the accumulator's dtype */
-  uint32_t unused;                /* 0: the size is a multiple of 8 */
+  uint32_t order;                 /* NX_METAL_A_T | NX_METAL_B_T bits */
 } nx_metal_contract;
+
+/* nx_metal_contract's order: a stored [k][m], b stored [n][k]. An
+   instance compiled for one order ignores it. */
+#define NX_METAL_A_T 1u
+#define NX_METAL_B_T 2u
 
 /* out[p][i][j] = round_out(init[p][i][j] + Σ_q parts[q][p][i][j]) for
    q < split, the sum in increasing q in float32, init as
@@ -142,15 +148,5 @@ typedef struct {
   uint32_t init_m, init_n, batch, m, n, split;
   uint32_t init_dtype, out_dtype;
 } nx_metal_combine;
-
-/* dst[p][r][c] = src[p·src_batch + r·row + c·col] for p < batch (grid
-   z), r < rows, c < cols, elements of [bytes] bytes; dst[p][r][c] = 0 for
-   cols <= c < ld: an operand copied with cols contiguous, rows ld
-   elements apart, batch elements dst_batch apart. */
-typedef struct {
-  uint64_t src, dst;
-  int64_t src_batch, dst_batch;
-  uint32_t row, col, rows, cols, ld, bytes;
-} nx_metal_pack;
 
 #endif /* NX_METAL_KERNELS_H */
