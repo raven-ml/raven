@@ -321,7 +321,9 @@ let alloc d _ n =
 let map_host d p n =
   if n < 1 then
     invalid_argf "Rig_metal.map_host: %d bytes, expected at least 1" n;
-  Option.map (live d n) (map_buffer d.self p n)
+  match map_buffer d.self p n with
+  | None -> None
+  | Some b -> Some (live d n b)
 
 let peer _ _ = false
 
