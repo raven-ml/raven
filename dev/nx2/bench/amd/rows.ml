@@ -169,6 +169,10 @@ let contracts =
       contract bf16 f32 bf16 512 201088 2880;
       contract bf16 f32 bf16 1 5120 2880;
       contract bf16 f32 bf16 1 201088 2880;
+      (* Products of m <= 16 whose grids the plan splits 4, 2 and 8 ways. *)
+      contract bf16 f32 bf16 1 2880 4096;
+      contract bf16 f32 bf16 16 4096 4096;
+      contract bf16 f32 bf16 1 1024 16384;
       contract bf16 f32 bf16 4096 14336 4096;
       contract ~batch:64 bf16 f32 bf16 512 512 512;
       contract f32 f32 f32 1 5120 2880;
