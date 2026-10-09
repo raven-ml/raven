@@ -612,18 +612,9 @@ value nx_array_of_array(value v, value values) {
 }
 
 /* copy: gathers [src]'s elements into [dst], a fresh contiguous array of
-   its dtype and shape, bits for bits.
-
-   Each run of the loop is a row of [dst]. A source that steps through the
-   row with a stride, a transposed one say, reads one cache line per
-   element; the next rows read the same lines. So when an outer axis steps
-   less in [src] than the row does, the copy goes in square tiles over that
-   axis and the row, TILE bytes of elements a side: each tile reads its
-   source lines once. Where the axis steps by one element in [src], a tile
-   moves 4x4 blocks, each four contiguous loads and four contiguous stores.
-   An element of under a byte keeps to rows. */
-
-#define TILE 256
+   its dtype and shape, bits for bits: one walk over coalesced runs, each
+   run through nx_copy_block. The host's strided copy, tiled and threaded,
+   is nx.cpu's. */
 
 typedef struct {
   const nx_array *a; /* dst, src */
@@ -808,91 +799,14 @@ static void copy_run(void *ctx, const int64_t *at, int64_t len) {
              at[1], 0, c->l->step[1][r - 1], 1, len, c->a[0].bits);
 }
 
-/* Copies a plane in tiles: [len] rows along the loop's axis r - 2, each as
-   long as its innermost extent. */
-static void tile_run(void *ctx, const int64_t *at, int64_t len) {
-  copy_ctx *c = ctx;
-  const nx_loop *l = c->l;
-  int r = l->rank, bits = c->a[0].bits;
-  int64_t cols = l->extent[r - 1], side = TILE / (bits / 8);
-  int64_t dr = l->step[0][r - 2], sr = l->step[1][r - 2];
-  int64_t sc = l->step[1][r - 1];
-  for (int64_t i = 0; i < len; i += side)
-    for (int64_t j = 0; j < cols; j += side) {
-      int64_t m = len - i < side ? len - i : side;
-      int64_t n = cols - j < side ? cols - j : side;
-      nx_copy_block(c->a[0].base, at[0] + i * dr + j, dr, 1, c->a[1].base,
-                    at[1] + i * sr + j * sc, sr, sc, m, n, bits);
-    }
-}
-
-static int64_t magnitude(int64_t x) { return x < 0 ? -x : x; }
-
-/* The outer axis of [l] on which [src] (operand 1) steps least, if it
-   steps less there than on the innermost axis, where [dst] steps by one
-   element; -1 otherwise. */
-static int tile_axis(const nx_loop *l) {
-  int r = l->rank, t = -1;
-  if (l->step[0][r - 1] != 1) return -1;
-  int64_t least = magnitude(l->step[1][r - 1]);
-  for (int i = 0; i < r - 1; i++)
-    if (magnitude(l->step[1][i]) < least) {
-      least = magnitude(l->step[1][i]);
-      t = i;
-    }
-  return t;
-}
-
-/* Swaps the axes [i] and [j] of the loop [l] over two operands. */
-static void swap_axes(nx_loop *l, int i, int j) {
-  int64_t x = l->extent[i];
-  l->extent[i] = l->extent[j];
-  l->extent[j] = x;
-  for (int k = 0; k < 2; k++) {
-    x = l->step[k][i];
-    l->step[k][i] = l->step[k][j];
-    l->step[k][j] = x;
-  }
-}
-
-/* The fewest elements a run of the gather takes when an axis has as many. */
-#define SHORT 8
-
 /* The gather: copies the elements of a[1] into a[0], operands of one dtype
-   read through the door. Answers NX_SHAPE if their shapes differ. It is the
-   layer's one tiled walk.
-
-   Elements are independent, so the order of the walk decides no bit. An
-   innermost axis of fewer than SHORT elements, as a small window's, would
-   cost a run per few elements: the nearest outer axis of at least SHORT
-   becomes the innermost. Then where a[0] steps by one element along the
-   innermost axis and a[1] steps less across rows than along them, the copy
-   goes in tiles. */
+   read through the door. Answers NX_SHAPE if their shapes differ. */
 static int gather(nx_array a[2]) {
   nx_loop l;
   int e = nx_coalesce(2, a, &l);
   if (e) return e;
-  int r = l.rank, t = -1;
   copy_ctx c = {a, &l};
-  if (a[0].bits >= 8) {
-    if (l.extent[r - 1] < SHORT)
-      for (int i = r - 2; i >= 0; i--)
-        if (l.extent[i] >= SHORT) {
-          swap_axes(&l, i, r - 1);
-          break;
-        }
-    t = tile_axis(&l);
-  }
-  if (t < 0) {
-    walk(2, &l, &c, copy_run);
-    return NX_OK;
-  }
-  /* Axis t becomes the rows, next to the innermost; the walk visits the
-     axes before them, and each call copies the tiles of a plane. */
-  swap_axes(&l, t, r - 2);
-  nx_loop planes = l;
-  planes.rank = r - 1;
-  walk(2, &planes, &c, tile_run);
+  walk(2, &l, &c, copy_run);
   return NX_OK;
 }
 

@@ -375,10 +375,6 @@ let access_rows =
       row "of_array-e4m3fn-1M" drawn (A.of_array D.Float8_e4m3fn [| n |]);
       Thumper.bench "create-f32-1M" (fun () -> A.create Rig.host f32 [| n |]);
       row "copy-f32-1M" (fun () -> host 1.5) A.copy;
-      row "copy-transposed-512x512"
-        (fun () ->
-          transpose (A.of_array f32 square (Array.make (512 * 512) 1.5)))
-        A.copy;
       row "copy-i4-1M" (fun () -> int4s n) A.copy;
       (* The source starts inside a byte, the copy on one. *)
       row "copy-i4-1M-offset1"

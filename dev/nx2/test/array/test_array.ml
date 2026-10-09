@@ -754,13 +754,14 @@ let law_bool_bytes (Case (a, m)) =
   equal ~msg:"to_array" (array bool) want (A.to_array a);
   equal ~msg:"get" (array bool) want (gets a)
 
-(* Gathers at tile and block edges
+(* Gathers of views about 256 bytes a side
 
-   A gather may work in tiles of 256 bytes a side and 4x4 blocks: views of two
-   or three axes whose extents straddle those sizes, over drawn bytes, checked
-   against the bytes each index's position names. *)
+   A gather copies the runs a layout coalesces into, each through the block
+   copy: views of two or three axes whose extents straddle 256 bytes and four
+   elements, over drawn bytes, checked against the bytes each index's position
+   names. *)
 
-(* The extent, in elements of [dt], of a 256-byte tile side. *)
+(* The extent, in elements of [dt], of 256 bytes. *)
 let side (D.Any dt) = 256 / max 1 (D.bits dt / 8)
 
 type tiles = Tiles : ('v, 's) A.t * string -> tiles
@@ -777,7 +778,7 @@ let bytes_of_seed seed n =
 
 (* A view of an array of [dt] over drawn bytes: transposed, sliced, a row
    broadcast, its last axis from the second element, or as it is, with
-   extents about a tile's side. *)
+   extents about 256 bytes. *)
 let tiles =
   let open Gen in
   let* (D.Any dt as d) = any_dtype in
@@ -910,11 +911,12 @@ let law_tiles (Tiles (a, src)) =
   let t = side (D.Any dt) in
   let ds = L.shape l in
   let at_edge k = Array.exists (fun d -> d = k) ds in
-  cover "an extent of a tile's side less one" (at_edge (t - 1));
-  cover "an extent of a tile's side" (at_edge t);
-  cover "an extent of a tile's side and one" (at_edge (t + 1));
-  cover "an extent past two tiles" (Array.exists (fun d -> d > 2 * t) ds);
-  cover "a partial block" (Array.exists (fun d -> d > 4 && d mod 4 <> 0) ds);
+  cover "an extent of 256 bytes less one element" (at_edge (t - 1));
+  cover "an extent of 256 bytes" (at_edge t);
+  cover "an extent of 256 bytes and one element" (at_edge (t + 1));
+  cover "an extent past 512 bytes" (Array.exists (fun d -> d > 2 * t) ds);
+  cover "an extent past 4 and no multiple of 4"
+    (Array.exists (fun d -> d > 4 && d mod 4 <> 0) ds);
   cover "a transposed view"
     (L.rank l >= 2
     && abs (L.stride l (L.rank l - 2)) = 1
@@ -1449,8 +1451,8 @@ let tests =
         prop "a bool reads true iff its byte is not zero"
           (raw_of [ D.Any D.Bool ]) law_bool_bytes;
         prop ~count:300
-          "copy, to_array and of_array keep every element across tile and \
-           block edges"
+          "copy, to_array and of_array keep every element of views about 256 \
+           bytes a side"
           tiles law_tiles;
         prop "to_device copies and keeps the layout" case law_to_device;
         test "to_device moves sub-byte views through an io device"
