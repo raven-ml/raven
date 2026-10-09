@@ -375,6 +375,8 @@ let kernel : Code_object.kernel =
     wave32 = true;
     dispatch_ptr = false;
     private_segment_buffer = false;
+    max_threads = 256;
+    hidden = [];
   }
 
 let dispatch g =
@@ -415,6 +417,8 @@ let kernels =
        wave32;
        dispatch_ptr;
        private_segment_buffer = psb;
+       max_threads = 1024;
+       hidden = [];
      })
 
 type launch = {

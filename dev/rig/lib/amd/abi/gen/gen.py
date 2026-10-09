@@ -272,9 +272,11 @@ KD_FIELDS = ["group_segment_fixed_size", "private_segment_fixed_size", "kernarg_
              "compute_pgm_rsrc3", "compute_pgm_rsrc1", "compute_pgm_rsrc2", "kernel_code_properties"]
 KD_PROPERTIES = ["ENABLE_SGPR_PRIVATE_SEGMENT_BUFFER", "ENABLE_SGPR_DISPATCH_PTR", "ENABLE_WAVEFRONT_SIZE32"]
 # ELF.h's values of the AMDGPU header: its machine, its ABI version, and the
-# fields of its flags.
+# fields of its flags; and the type of a section of notes and of the note of a
+# code object's metadata.
 ELF_CONSTANTS = ["EM_AMDGPU", "ELFABIVERSION_AMDGPU_HSA_V6", "EF_AMDGPU_MACH",
-                 "EF_AMDGPU_GENERIC_VERSION", "EF_AMDGPU_GENERIC_VERSION_OFFSET"]
+                 "EF_AMDGPU_GENERIC_VERSION", "EF_AMDGPU_GENERIC_VERSION_OFFSET",
+                 "SHT_NOTE", "NT_AMDGPU_METADATA"]
 RST_TABLES = ["amdgpu-ef-amdgpu-mach-table", "amdgpu-generic-processor-table"]
 
 # The performance counters of the blocks a profile counts, for the processors
@@ -1123,7 +1125,7 @@ def generate(h):
     props = {m.group(1): ((1 << int(m.group(3))) - 1) << int(m.group(2)) for m in KD_PROPERTY.finditer(kd)}
     out += [f"let amd_kernel_code_properties_{ml_name(p)} = {ml_int(props[p])}" for p in KD_PROPERTIES]
     elf, machs, generic = processors(h["ELF.h"], h["AMDGPUUsage.rst"])
-    out += ["", "(* The ELF header of a code object. *)"]
+    out += ["", "(* The ELF header of a code object, and its notes' types. *)"]
     out += [f"let {ml_name(c)} = {ml_int(v)}" for c, v in elf.items()]
     out += ["", "(* LLVM's AMDGCN processors, by their EF_AMDGPU_MACH value. *)", "let processors = ["]
     out += [f"  ({ml_int(v)}, {json.dumps(n)});" for v, n in machs]

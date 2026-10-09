@@ -16,3 +16,10 @@ Made in this directory from `many.cl` with the same tools:
   each taking 260 bytes of scratch per work-item, for the bench and the
   lookup of many kernels:
   `clang -c -x cl -cl-std=CL2.0 -target amdgcn-amd-amdhsa -mcpu=gfx1201 -mcode-object-version=5 -nogpulib -O2 many.cl -o many.o && ld.lld -shared --strip-all many.o -o many_gfx1201.hsaco && rm many.o`
+
+Made in this directory from `hidden.s` with the same tools:
+
+- `hidden_gfx1201.hsaco`, two kernels for gfx1201 and their metadata:
+  `every` names each implicit argument of code object version 5, and
+  bounds its workgroups at 128 work-items; `plain` names none:
+  `clang -c -x assembler -target amdgcn-amd-amdhsa -mcpu=gfx1201 -mcode-object-version=5 hidden.s -o hidden.o && ld.lld -shared hidden.o -o hidden_gfx1201.hsaco && rm hidden.o`

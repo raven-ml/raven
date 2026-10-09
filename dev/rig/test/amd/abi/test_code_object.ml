@@ -31,6 +31,12 @@ let patch obj at set =
   set b at;
   Bytes.to_string b
 
+(* The file offset of the first occurrence of [a] in [obj]. *)
+let find obj a =
+  let n = String.length a in
+  let rec go i = if String.sub obj i n = a then i else go (i + 1) in
+  go 0
+
 let set_u8 v b at = Bytes.set_uint8 b at v
 let set_u32 v b at = Bytes.set_int32_le b at (Int32.of_int v)
 let set_u64 v b at = Bytes.set_int64_le b at (Int64.of_int v)
@@ -83,7 +89,9 @@ let both = [ ("relocatable", relocatable); ("linked", linked) ]
 (* A kernel's descriptor as the image holds it: the u32 fields of
    kernel_descriptor_t at 0, 4, 8, 44, 48 and 52, its i64 entry offset at 16,
    and its u16 code properties at 56: bit 0 enables the private segment buffer,
-   bit 1 the dispatch pointer, bit 10 waves of 32 lanes. *)
+   bit 1 the dispatch pointer, bit 10 waves of 32 lanes. kernels.s states no
+   metadata, so no kernel's workgroups are bounded below the 1024 work-items of
+   any GPU. *)
 let descriptor img at : Code_object.kernel =
   let u32 o =
     Int32.to_int (String.get_int32_le img (at + o)) land 0xffff_ffff
@@ -102,7 +110,27 @@ let descriptor img at : Code_object.kernel =
     wave32 = bit 10;
     dispatch_ptr = bit 1;
     private_segment_buffer = bit 0;
+    max_threads = 1024;
+    hidden = [];
   }
+
+let hidden_arg =
+  Testable.make
+    ~pp:(fun ppf (h : Code_object.hidden) ->
+      let axis : Code_object.axis -> string = function
+        | X -> "X"
+        | Y -> "Y"
+        | Z -> "Z"
+      in
+      match h with
+      | Block_count a -> Format.fprintf ppf "Block_count %s" (axis a)
+      | Group_size a -> Format.fprintf ppf "Group_size %s" (axis a)
+      | Remainder a -> Format.fprintf ppf "Remainder %s" (axis a)
+      | Global_offset a -> Format.fprintf ppf "Global_offset %s" (axis a)
+      | Grid_dims -> Format.pp_print_string ppf "Grid_dims"
+      | Dynamic_lds_size -> Format.pp_print_string ppf "Dynamic_lds_size"
+      | Other k -> Format.fprintf ppf "Other %S" k)
+    ~equal:( = )
 
 let kernel =
   Testable.make
@@ -110,9 +138,10 @@ let kernel =
       Format.fprintf ppf
         "{ descriptor = %d; entry = %d; group = %d; private = %d; kernarg = \
          %d; rsrc1 = 0x%x; rsrc2 = 0x%x; rsrc3 = 0x%x; wave32 = %b; \
-         dispatch_ptr = %b; private_segment_buffer = %b }"
+         dispatch_ptr = %b; private_segment_buffer = %b; max_threads = %d }"
         k.descriptor k.entry k.group_segment k.private_segment k.kernarg_size
-        k.rsrc1 k.rsrc2 k.rsrc3 k.wave32 k.dispatch_ptr k.private_segment_buffer)
+        k.rsrc1 k.rsrc2 k.rsrc3 k.wave32 k.dispatch_ptr k.private_segment_buffer
+        k.max_threads)
     ~equal:( = )
 
 let reading =
@@ -244,6 +273,48 @@ let reading =
                 (Some k.descriptor);
               is_none ~msg:(name ^ "!") (Code_object.kernel co (name ^ "!")))
             names);
+      test "a kernel's workgroups are bounded by the metadata" (fun () ->
+          let co = read (fixture "many_gfx1201.hsaco") in
+          List.iter
+            (fun name ->
+              let k = require_some (Code_object.kernel co name) in
+              equal ~msg:name int 256 k.max_threads)
+            (Code_object.kernels co));
+      cases ~name:fst "a kernel the metadata does not bound has 1024 work-items"
+        both (fun (_, obj) ->
+          let co = read (obj ()) in
+          List.iter
+            (fun name ->
+              let k = require_some (Code_object.kernel co name) in
+              equal ~msg:name int 1024 k.max_threads)
+            (Code_object.kernels co));
+      test "a kernel's implicit arguments are its metadata's" (fun () ->
+          let co = read (fixture "hidden_gfx1201.hsaco") in
+          let kernel name = require_some (Code_object.kernel co name) in
+          equal ~msg:"every"
+            (list (pair hidden_arg int))
+            [
+              (Block_count X, 32);
+              (Block_count Y, 36);
+              (Block_count Z, 40);
+              (Group_size X, 44);
+              (Group_size Y, 46);
+              (Group_size Z, 48);
+              (Remainder X, 50);
+              (Remainder Y, 52);
+              (Remainder Z, 54);
+              (Global_offset X, 72);
+              (Global_offset Y, 80);
+              (Global_offset Z, 88);
+              (Grid_dims, 96);
+              (Other "hidden_printf_buffer", 104);
+              (Dynamic_lds_size, 152);
+            ]
+            (kernel "every").hidden;
+          equal ~msg:"every's work-items" int 128 (kernel "every").max_threads;
+          equal ~msg:"plain"
+            (list (pair hidden_arg int))
+            [] (kernel "plain").hidden);
       cases ~name:(strf "%S") "a name that is no kernel's is none"
         [ ""; "c"; "a.kd"; "A"; "ext" ] (fun name ->
           is_none (Code_object.kernel (read (relocatable ())) name));
@@ -315,6 +386,21 @@ let descriptor_field obj field v =
   let rodata = section obj ".rodata" in
   let at = rodata.at + k.descriptor - Option.get rodata.offset in
   patch obj (at + field) (set_u32 v)
+
+(* many_gfx1201.hsaco's metadata note: the file offset of its first
+   [.max_flat_workgroup_size] key, a fixstr of 24 bytes after its 1-byte header,
+   whose value follows it as a uint16, 0xcd and two bytes big-endian
+   (msgpack.org's spec). *)
+let many () = fixture "many_gfx1201.hsaco"
+let max_flat = ".max_flat_workgroup_size"
+let first_max_flat obj = find obj max_flat
+
+let with_max_flat obj v =
+  patch obj
+    (first_max_flat obj + String.length max_flat)
+    (fun b at ->
+      Bytes.set_uint8 b at 0xcd;
+      Bytes.set_uint16_be b (at + 1) v)
 
 let refusals =
   group ~timeout "refusals"
@@ -436,6 +522,44 @@ let refusals =
                  (fun (k : Code_object.kernel) -> k.private_segment)
                  (Code_object.kernel (read obj) "a"))
           else refused ~sub:"scratch" obj);
+      cases ~name:string_of_int
+        "a kernel's workgroups bounded outside [1;1024] are refused"
+        [ 0; 1; 1024; 1025; 0xffff ] (fun n ->
+          let obj = with_max_flat (many ()) n in
+          if n < 1 || n > 1024 then refused ~sub:"work-items" obj
+          else
+            let co = read obj in
+            let bounds =
+              List.map
+                (fun name ->
+                  (require_some (Code_object.kernel co name)).max_threads)
+                (Code_object.kernels co)
+            in
+            equal (pair int int) (1, 127)
+              ( List.length (List.filter (( = ) n) bounds),
+                List.length (List.filter (( = ) 256) bounds) ));
+      test "an implicit argument past the kernel's arguments is refused"
+        (fun () ->
+          let obj = fixture "hidden_gfx1201.hsaco" in
+          let co = read obj in
+          let k = require_some (Code_object.kernel co "every") in
+          let s = section obj ".rodata" in
+          (* kernarg_size, at byte 8 of the descriptor, one byte short of the
+             dynamic LDS size's 4 bytes at 152. *)
+          refused ~sub:"implicit"
+            (patch obj
+               (s.at + k.descriptor - Option.get s.offset + 8)
+               (set_u32 155)));
+      test "a metadata note that is no MessagePack value is refused" (fun () ->
+          let obj = many () in
+          (* 0xc1 starts no MessagePack value. *)
+          refused ~sub:"metadata"
+            (patch obj (first_max_flat obj - 1) (set_u8 0xc1)));
+      test "a note that runs past its section is refused" (fun () ->
+          let obj = many () in
+          (* The first note's description length, after its owner's. *)
+          refused ~sub:"note"
+            (patch obj ((section obj ".note").at + 4) (set_u32 0x7fff_ffff)));
       (* The image starts at 0x300 and ends with .data's 3 bytes. *)
       cases
         ~name:(fun (n, _) -> strf "an image of 2^48%+d bytes" n)

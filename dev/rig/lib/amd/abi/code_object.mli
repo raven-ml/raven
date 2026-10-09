@@ -41,7 +41,11 @@ val of_string : string -> (t, string) result
       of the most scratch a 64-lane wave of its processor takes: 131056 bytes
       before GFX11, 131068 on GFX11 and 1048572 on GFX12;
     - its image is longer than [2{^48}] bytes, which no GPU's virtual addresses
-      reach. *)
+      reach;
+    - a note runs past its section, or its metadata note
+      ([NT_AMDGPU_METADATA]) is no MessagePack value, bounds a kernel's
+      workgroups to fewer than 1 or more than 1024 work-items, or places an
+      implicit argument outside the kernel's arguments. *)
 
 val target : t -> string
 (** [target co] is the processor [co] is compiled for, as LLVM names it: a GPU,
@@ -75,6 +79,29 @@ val kernels : t -> string list
 (** [kernels co] is the names of [co]'s kernels, in increasing order: each
     [name] such that [co] defines the symbol [name ^ ".kd"] in its image. *)
 
+(** The type for the axes of a grid. *)
+type axis = X | Y | Z
+
+(** The type for the implicit arguments a kernel reads, which its dispatcher
+    writes among its arguments (AMDGPUUsage, "Code Object V5 Metadata"): a
+    kernel learns its grid's and its workgroups' sizes from them. *)
+type hidden =
+  | Block_count of axis
+      (** Its grid's whole workgroups along the axis, 32 bits. *)
+  | Group_size of axis
+      (** The work-items of its whole workgroups along the axis, 16 bits. *)
+  | Remainder of axis
+      (** The work-items of its last workgroup along the axis, if that one is
+          partial, else [0], 16 bits. *)
+  | Global_offset of axis
+      (** The index of its first work-item along the axis, 64 bits. *)
+  | Grid_dims  (** The axes of its grid, [1] to [3], 16 bits. *)
+  | Dynamic_lds_size
+      (** The bytes of LDS its dispatch adds to its group segment, 32 bits. *)
+  | Other of string
+      (** Another, by its value kind, such as ["hidden_printf_buffer"]: a
+          service of its runtime. *)
+
 type kernel = {
   descriptor : int;  (** The offset of its kernel descriptor. *)
   entry : int;  (** The offset of its first instruction. *)
@@ -91,6 +118,14 @@ type kernel = {
   private_segment_buffer : bool;
       (** [true] iff its waves read a buffer descriptor of their scratch from
           their first four user SGPRs. *)
+  max_threads : int;
+      (** The most work-items its workgroups have: its
+          [.max_flat_workgroup_size] in the object's metadata, or 1024, the
+          most of any GPU, if the metadata does not bound it. *)
+  hidden : (hidden * int) list;
+      (** The implicit arguments it reads, each with its offset among its
+          arguments, by increasing offset, as the object's metadata lists them;
+          [[]] if the metadata lists none. *)
 }
 (** The type for kernels, as their descriptors describe them. *)
 

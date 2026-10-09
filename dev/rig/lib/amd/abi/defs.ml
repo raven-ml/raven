@@ -4429,12 +4429,14 @@ let amd_kernel_code_properties_enable_sgpr_private_segment_buffer = 1
 let amd_kernel_code_properties_enable_sgpr_dispatch_ptr = 2
 let amd_kernel_code_properties_enable_wavefront_size32 = 0x400
 
-(* The ELF header of a code object. *)
+(* The ELF header of a code object, and its notes' types. *)
 let em_amdgpu = 0xe0
 let elfabiversion_amdgpu_hsa_v6 = 4
 let ef_amdgpu_mach = 0xff
 let ef_amdgpu_generic_version = 0xff000000
 let ef_amdgpu_generic_version_offset = 0x18
+let sht_note = 7
+let nt_amdgpu_metadata = 0x20
 
 (* LLVM's AMDGCN processors, by their EF_AMDGPU_MACH value. *)
 let processors = [

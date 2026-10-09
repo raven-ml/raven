@@ -25,6 +25,8 @@ let kernel : Code_object.kernel =
     wave32 = true;
     dispatch_ptr = true;
     private_segment_buffer = false;
+    max_threads = 256;
+    hidden = [];
   }
 
 (* A barrier, and system scope for both fences. *)
