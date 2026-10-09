@@ -7,6 +7,7 @@ type backend = {
   name : string;
   kernels : (module Nx_kernel.S);
   device : Rig.t;
+  computes : Nx_kernel.Prog.op1 list;
   around : 'a. (unit -> 'a) -> 'a;
 }
 
@@ -25,6 +26,7 @@ let cpu target =
     name = "cpu/" ^ target;
     kernels = (module Nx_cpu);
     device = Rig.host;
+    computes = [ Copy; Cast ];
     around = (fun f -> with_target target f);
   }
 

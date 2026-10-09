@@ -6,8 +6,9 @@
 (* The laws of Nx_kernel.S, run through every kernel library the host runs:
    copies and casts into fresh C-contiguous destinations, each against a
    reference built element by element, over every dtype and pair of dtypes,
-   drawn source layouts and drawn bytes; a decline writes nothing; and operands
-   kept alive across a call. nx.cpu's own refusals have a group of their own. *)
+   drawn source layouts and drawn bytes; a kind the backend states it computes
+   is never declined, and a decline writes nothing; and operands kept alive
+   across a call. nx.cpu's own refusals have a group of their own. *)
 
 open Windtrap
 open Nx_array_gen
@@ -37,16 +38,22 @@ let host a =
 let on (b : Support.backend) a =
   if Rig.equal (A.device a) b.device then a else A.to_device b.device a
 
+(* Fails if [b] declines [op], a kind it states it computes. *)
+let check_declined (b : Support.backend) op =
+  if List.mem op b.computes then failf "%s declined a kind it computes" b.name
+
 (* [op] of [a] by [b]'s kernels, into a fresh C-contiguous array of [dt] on
    [b]'s device, read back where the host reads it; [None] if the kernels
-   decline. *)
+   decline a kind they do not state they compute. *)
 let run_op (b : Support.backend) op dt a =
   let module K = (val b.kernels) in
   let a = on b a in
   let dst = A.create b.device dt (L.shape (A.layout a)) in
   match K.apply1 op ~dst a with
   | A.Done -> Some (host dst)
-  | A.Declined -> None
+  | A.Declined ->
+      check_declined b op;
+      None
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
 
 let declines = function
@@ -638,6 +645,7 @@ let law_declined_apply1 (b : Support.backend) (Case a, D.Any d) =
       match K.apply1 op ~dst a with
       | A.Declined ->
           cover "declined" true;
+          check_declined b op;
           equal (array int) before (bits_of (host dst))
       | _ -> cover "computed" true)
     op1s
@@ -661,9 +669,9 @@ let test_declined_contract (b : Support.backend) () =
 (* nx.cpu's refusals *)
 
 (* Each answers the refusal nx_cpu.mli states, before any write. *)
-let refuses r dst answered =
+let refuses r dst call =
   let before = bits_of dst in
-  equal answer r answered;
+  equal answer r (call ());
   equal (array int) before (bits_of dst)
 
 let test_refusals k () =
@@ -672,25 +680,25 @@ let test_refusals k () =
   let i32 = A.of_array D.Int32 [| 2; 3 |] (Array.make 6 7l) in
   let t = Option.get (A.move (M.Permute [| 1; 0 |]) x) in
   let d = A.of_array f32 [| 2; 3 |] (Array.make 6 9.) in
-  refuses A.Wrong_dtype d (copy k ~dst:d i32);
-  refuses A.Shape_mismatch d (copy k ~dst:d t);
-  refuses A.Shape_mismatch d (cast k ~dst:d t);
+  refuses A.Wrong_dtype d (fun () -> copy k ~dst:d i32);
+  refuses A.Shape_mismatch d (fun () -> copy k ~dst:d t);
+  refuses A.Shape_mismatch d (fun () -> cast k ~dst:d t);
   let d = A.of_array D.Int32 [| 2; 3 |] (Array.make 6 9l) in
-  refuses A.Wrong_dtype d (copy k ~dst:d x);
+  refuses A.Wrong_dtype d (fun () -> copy k ~dst:d x);
   (* Into bytes the source reads, and into a broadcast. *)
   let flat = A.of_array f32 [| 6 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let part start =
     Option.get (A.move (M.Slice [| { M.start; count = 3; step = 1 } |]) flat)
   in
-  refuses A.Overlapping (part 0) (copy k ~dst:(part 0) (part 1));
-  refuses A.Overlapping (part 0) (cast k ~dst:(part 0) (part 2));
+  refuses A.Overlapping (part 0) (fun () -> copy k ~dst:(part 0) (part 1));
+  refuses A.Overlapping (part 0) (fun () -> cast k ~dst:(part 0) (part 2));
   let b =
     Option.get
       (A.move
          (M.Broadcast [| 2; 3 |])
          (A.of_array f32 [| 3 |] [| 0.; 0.; 0. |]))
   in
-  refuses A.Repeated_elements b (cast k ~dst:b i32)
+  refuses A.Repeated_elements b (fun () -> cast k ~dst:b i32)
 
 (* Operands outlive the call *)
 
