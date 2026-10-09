@@ -114,37 +114,41 @@ module Driver = struct
   (* [raw] is what [malloc] gave, [0] for the word. *)
   type region = { at : int; raw : int }
   type image = unit
-  type capability = unit
 
   exception Fault of string
 
   let key : t Type.Id.t = Type.Id.make ()
-  let arch _ = "late"
-  let budget _ = max_int
-  let queues _ = [ "COMPUTE:0" ]
-  let completion _ = `Host
-  let waits_on _ _ = false
-  let max_waits _ = 0
-  let blocks _ = `Returns
-  let maps_host _ = false
-  let capability _ = ()
-  let capability_key : capability Type.Id.t = Type.Id.make ()
+  let capability_key : unit Type.Id.t = Type.Id.make ()
+
+  let facts d =
+    {
+      Rig_edge.arch = "late";
+      budget = max_int;
+      queues = [ { name = "COMPUTE:0"; runs = [ Fill ] } ];
+      completion = Host;
+      waits = { stores = false; hosts = false; objects = false; most = 0 };
+      may_block = false;
+      maps_host = false;
+      capability = Capability (capability_key, ());
+      word = { at = late_word d.self; raw = 0 };
+      edge = d.self;
+    }
 
   let alloc _ _ n =
     let raw = malloc n in
     if raw = 0 then None else Some { at = (raw + 63) land lnot 63; raw }
 
   let free _ r = if r.raw <> 0 then free r.raw
-  let address r = Some r.at
-  let handle r = Nativeint.of_int r.at
-  let host r = Some r.at
+
+  let locate r =
+    { Rig_edge.address = Some r.at; host = Some r.at; handle = Nativeint.of_int r.at }
+
   let peer _ _ = false
   let map_peer _ _ _ = None
   let map_host _ _ _ = None
   let image _ _ = Error "late loads no code"
   let entry () _ = None
   let unload _ () = ()
-  let word d = { at = late_word d.self; raw = 0 }
   let signaled d = late_signaled d.self
 
   let sleep d ~seen:_ ~still_ms:_ =
@@ -152,8 +156,7 @@ module Driver = struct
     | Some why -> raise (Fault why)
     | None -> late_publish d.self
 
-  let edge d = d.self
-  let stop d = late_publish d.self
+  let stop d ~fault:_ = late_publish d.self
 end
 
 module Late = struct

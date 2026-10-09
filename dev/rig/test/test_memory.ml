@@ -42,9 +42,9 @@ let allocs =
       (Format.pp_print_list (fun ppf (k, n, ok) ->
            Format.fprintf ppf "%s %d %b"
              (match k with
-             | `Device -> "device"
-             | `Pinned -> "pinned"
-             | `Mapped -> "mapped")
+             | B.Device -> "device"
+             | B.Pinned -> "pinned"
+             | B.Mapped -> "mapped")
              n ok))
     ~equal:( = )
 
@@ -60,7 +60,7 @@ let test_over_budget () =
     (out_of_memory d ((8 * kib) + 1))
     (fun () -> B.create d ((8 * kib) + 1));
   equal ~msg:"the cached memory" bool false (freed p at);
-  at_least int ~than:(4 * kib) (P.allocated p `Device)
+  at_least int ~than:(4 * kib) (P.allocated p B.Device)
 
 (* An allocation the driver refuses releases the cache, then raises. *)
 let test_refused () =
@@ -92,7 +92,7 @@ let test_set_budget () =
   Rig.set_budget d (12 * kib);
   equal int (12 * kib) (Rig.budget d);
   collect d;
-  at_most ~msg:"held after" int ~than:(12 * kib) (P.allocated p `Device);
+  at_most ~msg:"held after" int ~than:(12 * kib) (P.allocated p B.Device);
   Rig.set_budget d 0;
   collect d;
   equal ~msg:"live memory stays" bool false (freed p (B.address live));
@@ -246,7 +246,7 @@ let test_pinned () =
   let d, p = P.open_ "memory:pinned" in
   Rig.set_budget d 0;
   equal int (4 * kib) (B.length (B.create ~memory:Pinned d (4 * kib)));
-  equal allocs [ (`Pinned, 4 * kib, true) ] (P.allocs p);
+  equal allocs [ (B.Pinned, 4 * kib, true) ] (P.allocs p);
   raises_match (out_of_memory d 1) (fun () -> B.create d 1);
   let n = 1 lsl 40 in
   with_host_budget n (fun () ->
@@ -301,7 +301,7 @@ let test_mapped_window () =
   let b = B.create ~memory:Mapped d (8 * kib) in
   equal ~msg:"the cached memory" bool false (freed p at);
   equal allocs
-    [ (`Mapped, 8 * kib, false); (`Pinned, 8 * kib, true) ]
+    [ (B.Mapped, 8 * kib, false); (B.Pinned, 8 * kib, true) ]
     (last 2 (P.allocs p));
   ignore (Sys.opaque_identity b)
 
@@ -309,12 +309,12 @@ let test_mapped_budget () =
   let d, p = P.open_ "memory:mapped-budget" in
   Rig.set_budget d (4 * kib);
   ignore (B.create ~memory:Mapped d (8 * kib));
-  equal allocs [ (`Pinned, 8 * kib, true) ] (P.allocs p)
+  equal allocs [ (B.Pinned, 8 * kib, true) ] (P.allocs p)
 
 let test_mapped () =
   let d, p = P.open_ "memory:mapped" in
   let b = B.create ~memory:Mapped d (4 * kib) in
-  equal allocs [ (`Mapped, 4 * kib, true) ] (P.allocs p);
+  equal allocs [ (B.Mapped, 4 * kib, true) ] (P.allocs p);
   equal bool true (Rig.equal d (B.device b))
 
 (* Reclamation *)

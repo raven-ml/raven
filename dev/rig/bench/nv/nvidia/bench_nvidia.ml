@@ -11,7 +11,7 @@
 
 let open_stop () =
   match Rig_nv_nvidia.open_ 0 with
-  | Ok g -> Rig_nv.stop g
+  | Ok g -> Rig_nv.stop g ~fault:None
   | Error why -> failwith why
 
 let () =

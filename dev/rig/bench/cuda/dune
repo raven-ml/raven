@@ -15,6 +15,7 @@
   rig_cuda_abi
   rig_cuda_bench
   rig_cuda_support
+  rig_edge
   rig_gpu_support
   thumper))
 

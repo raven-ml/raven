@@ -43,22 +43,24 @@ let mib = 1024 * kib
 type dev = { d : Rig.t; g : M.t; mutable v : int; step : int; args : M.region }
 
 let get = function Ok x -> x | Error why -> failwith why
-let alloc t n = Option.get (M.alloc t.g `Device n)
-let host r = Option.get (M.host r)
+let alloc t n = Option.get (M.alloc t.g Rig_edge.Device n)
+let host r = Option.get (M.locate r).host
+let address r = Option.get (M.locate r).address
+let handle r = (M.locate r).handle
 
 let load d =
   match get (M.image d metallib) with
-  | `Loaded i -> i
-  | `Place _ -> failwith "Metal asked to place its code"
+  | Rig_edge.Loaded i -> i
+  | Place _ -> failwith "Metal asked to place its code"
 
 (* A device opened through rig, whose argument buffer points [step] at a word of
    its own. *)
 let dev () =
   let { S.d; g } = S.open_ () in
   let step = Option.get (M.entry (load g) "step") in
-  let args = Option.get (M.alloc g `Device 16) in
+  let args = Option.get (M.alloc g Rig_edge.Device 16) in
   let t = { d; g; v = 0; step; args } in
-  H.set64 (host args) (Option.get (M.address (alloc t 16)));
+  H.set64 (host args) (address (alloc t 16));
   t
 
 (* The prepared submission of [parts] on [t]. *)
@@ -84,7 +86,7 @@ let launch t n =
     }
   in
   let b =
-    get ((M.capability t.g).icb (M.handle t.args) (Array.make n dispatch))
+    get ((M.capability t.g).icb (handle t.args) (Array.make n dispatch))
   in
   let f = S.execute b in
   (f, prepare t [| S.part f |])
@@ -188,7 +190,7 @@ let alloc_rows =
       floor_row "floor-64MiB" (64 * mib);
       row "first-use-64MiB" stepping (fun (t, (_, s)) ->
           let r = alloc t (64 * mib) in
-          H.set64 (host t.args) (Option.get (M.address r));
+          H.set64 (host t.args) (address r);
           run t s;
           M.free t.g r);
     ]
@@ -238,7 +240,7 @@ let icb_rows =
         threads = (1, 1, 1);
       }
     in
-    (get ((M.capability t.g).icb (M.handle t.args) (Array.make 64 dispatch)))
+    (get ((M.capability t.g).icb (handle t.args) (Array.make 64 dispatch)))
       .release ()
   in
   Thumper.group "icb" [ row "64" dev icb ]
@@ -275,7 +277,7 @@ let residency_rows =
   let gib () =
     let t = dev () in
     let r = alloc t (1024 * mib) in
-    H.set64 (host t.args) (Option.get (M.address r));
+    H.set64 (host t.args) (address r);
     (t, step t)
   in
   Thumper.group "residency"

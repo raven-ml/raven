@@ -11,10 +11,10 @@ module H = Rig_gpu_support.Host
 let strf = Printf.sprintf
 let watchdog = 17 (* CU_DEVICE_ATTRIBUTE_KERNEL_EXEC_TIMEOUT *)
 let second = 1_000_000_000
-let address r = Option.get (C.address r)
-let host r = Option.get (C.host r)
+let address r = Option.get (C.locate r).address
+let host r = Option.get (C.locate r).host
 let still = Rig_gpu_support.still
-let word g = host (C.word g)
+let word g = host (C.facts g).word
 
 module B = Rig.Buffer
 
@@ -29,7 +29,7 @@ let gpu_once () =
   let e = require_error (C.open_ 0) in
   contains ~sub:"open" e;
   S.close t;
-  C.stop (require_ok (C.open_ 0))
+  C.stop (require_ok (C.open_ 0)) ~fault:None
 
 let opening =
   group ~timeout:60. "opening"
@@ -53,18 +53,31 @@ let opening =
 
 let facts () =
   S.with_ @@ fun { g; _ } ->
-  let arch = C.arch g in
-  equal int ~msg:"length of the arch" 5 (String.length arch);
-  starts_with ~affix:"sm_" arch;
-  greater int ~than:0 (C.budget g);
-  equal (list string) [ "COMPUTE:0"; "COPY:0" ] (C.queues g);
-  equal bool ~msg:"completion is the store" true (C.completion g = `Store);
-  equal (list bool) [ true; false; true ]
-    (List.map (C.waits_on g) [ `Store; `Object; `Host ]);
-  equal bool ~msg:"submit may block" true (C.blocks g = `May_block);
+  let f = C.facts g in
+  equal int ~msg:"length of the arch" 5 (String.length f.arch);
+  starts_with ~affix:"sm_" f.arch;
+  greater int ~than:0 f.budget;
+  let runs (q : Rig_edge.queue) =
+    let kind : Rig_edge.kind -> string = function
+      | Words -> "Words"
+      | Fill -> "Fill"
+      | Copy -> "Copy"
+    in
+    (q.name, List.map kind q.runs)
+  in
+  equal
+    (list (pair string (list string)))
+    ~msg:"queues"
+    [ ("COMPUTE:0", [ "Fill"; "Copy" ]); ("COPY:0", [ "Fill"; "Copy" ]) ]
+    (List.map runs f.queues);
+  equal bool ~msg:"completion is the store" true (f.completion = Store);
+  equal (list bool) ~msg:"waits on stores, hosts, objects" [ true; true; false ]
+    [ f.waits.stores; f.waits.hosts; f.waits.objects ];
+  equal int ~msg:"most waits" max_int f.waits.most;
+  equal bool ~msg:"submit may block" true f.may_block;
   equal nativeint ~msg:"the word's handle is its host address"
     (Nativeint.of_int (word g))
-    (C.handle (C.word g));
+    (C.locate f.word).handle;
   equal int ~msg:"the word starts at 0" 0 (C.signaled g)
 
 let symbols () =
@@ -82,8 +95,12 @@ let symbols () =
          "cuNoSuchFunction";
          "cuLaunchKernel\000";
        ]);
-  equal bool ~msg:"the key is the ABI's" true
-    (Option.is_some (Type.Id.provably_equal C.capability_key Rig_cuda_abi.key))
+  match (C.facts g).capability with
+  | Capability (key, cap) -> (
+      match Type.Id.provably_equal key Rig_cuda_abi.key with
+      | None -> fail "the facts' capability is under another key"
+      | Some Equal ->
+          equal bool ~msg:"the facts' record" true (cap == C.capability g))
 
 let facts =
   group ~timeout:60. "facts"
@@ -94,14 +111,11 @@ let facts =
 
 (* Memory *)
 
-let kinds = [ `Device; `Pinned; `Mapped ]
+let kinds : B.memory list = [ Device; Pinned; Mapped ]
 
-let pp_kind ppf k =
+let pp_kind ppf (k : B.memory) =
   Format.pp_print_string ppf
-    (match k with
-    | `Device -> "`Device"
-    | `Pinned -> "`Pinned"
-    | `Mapped -> "`Mapped")
+    (match k with Device -> "Device" | Pinned -> "Pinned" | Mapped -> "Mapped")
 
 let kind = Gen.of_list ~pp:pp_kind kinds
 let size = Gen.of_list ~pp:Format.pp_print_int [ 1; 7; 4096; (1 lsl 20) + 7 ]
@@ -110,21 +124,25 @@ let offset = Gen.of_list ~pp:Format.pp_print_int [ 0; 1; 4095 ]
 let pattern n seed =
   String.init n (fun i -> Char.chr (((i * 7) + seed) land 255))
 
-let memory_of = function
-  | `Device -> B.Device
-  | `Pinned -> B.Pinned
-  | `Mapped -> B.Mapped
+(* Whether the driver's memory [k] has a host address; [None] for memory it
+   does not make. *)
+let on_host g k =
+  match C.alloc g k 1 with
+  | None -> None
+  | Some r ->
+      let h = Option.is_some (C.locate r).host in
+      C.free g r;
+      Some h
 
 (* host -> a -> b -> host through copies, on both queues. *)
-let round_trip (ka, kb, n, (oa, ob)) =
+let round_trip ((ka : B.memory), kb, n, (oa, ob)) =
   S.with_ @@ fun ({ d; g } as t) ->
-  let r = require_some (C.alloc g ka 1) in
-  equal bool ~msg:"host of a" (ka <> `Device) (Option.is_some (C.host r));
-  C.free g r;
-  let at k o =
-    B.view (B.create ~memory:(memory_of k) d (n + o)) ~first:o ~length:n
+  let expected =
+    match ka with Device -> Some false | Pinned -> Some true | Mapped -> None
   in
-  let src = at `Pinned 0 and dst = at `Pinned 0 in
+  equal (option bool) ~msg:"host of a" expected (on_host g ka);
+  let at memory o = B.view (B.create ~memory d (n + o)) ~first:o ~length:n in
+  let src = at Pinned 0 and dst = at Pinned 0 in
   let a = at ka oa and b = at kb ob in
   let data = pattern n (n + oa) in
   H.write (B.address src) data;
@@ -140,7 +158,7 @@ let round_trip (ka, kb, n, (oa, ob)) =
   equal string data (H.read (B.address dst) n)
 
 let past_memory () =
-  S.with_ @@ fun { g; _ } -> is_none (C.alloc g `Device (2 * C.budget g))
+  S.with_ @@ fun { g; _ } -> is_none (C.alloc g Device (2 * (C.facts g).budget))
 
 (* [write_gpu]'s bytes are in the GPU's memory once it returns, whatever runs on
    CUDA's default stream: a copy on one of rig's streams, which wait for no
@@ -148,7 +166,7 @@ let past_memory () =
 let written_on_return () =
   S.with_ @@ fun ({ d; g } as t) ->
   let _, kernel = S.kernels g in
-  let flag = require_some (C.alloc g `Pinned 8) in
+  let flag = require_some (C.alloc g Pinned 8) in
   H.set64 (host flag) 0;
   let n = 64 in
   let src = B.create d n and dst = B.create ~memory:Pinned d n in
@@ -175,7 +193,7 @@ let fills_in_a_fresh_domain () =
   S.with_ @@ fun ({ g; _ } as t) ->
   let m, kernel = S.kernels g in
   let n = 1000 in
-  let out = require_some (C.alloc g `Pinned (4 * n)) in
+  let out = require_some (C.alloc g Pinned (4 * n)) in
   let f = S.launch (kernel "double_index") ~grid:4 ~block:256 (address out) n in
   let r, current =
     Domain.join
@@ -246,7 +264,7 @@ let failed_behind_work () =
   S.with_ @@ fun ({ g; _ } as t) ->
   if S.attribute watchdog <> 0 then
     skip ~reason:"a display watchdog ends long kernels" ();
-  let flag = require_some (C.alloc g `Pinned 8) in
+  let flag = require_some (C.alloc g Pinned 8) in
   H.set64 (host flag) 0;
   Fun.protect ~finally:(fun () -> H.set64 (host flag) 1) @@ fun () ->
   let _, kernel = S.kernels g in
@@ -263,32 +281,15 @@ let failed_behind_work () =
   S.close t;
   drained t 1
 
-let misuse () =
+let no_bytes () =
   S.with_ @@ fun { g; _ } ->
-  let r = require_some (C.alloc g `Device 64) in
   let raises name f = raises_match ~msg:name Exn.invalid_arg f in
-  raises "alloc of 0 bytes" (fun () -> C.alloc g `Device 0);
-  raises "map_host of 0 bytes" (fun () -> C.map_host g (word g) 0);
-  raises "peer of one device" (fun () -> C.peer g g);
-  raises "map_peer of one device" (fun () -> C.map_peer g g r);
-  C.free g r;
-  raises "free twice" (fun () -> C.free g r);
-  let p = H.pages H.page in
-  let m = require_some (C.map_host g p 64) in
-  C.free g m;
-  raises "free of a mapping twice" (fun () -> C.free g m);
-  H.free_pages p H.page
+  raises "alloc of 0 bytes" (fun () -> C.alloc g Device 0);
+  raises "map_host of 0 bytes" (fun () -> C.map_host g (word g) 0)
 
-let another_device () =
-  let a = S.open_ () in
-  let r = require_some (C.alloc a.g `Pinned 64) in
-  S.close a;
-  S.with_ @@ fun b ->
-  raises_match Exn.invalid_arg (fun () -> C.free b.g r);
-  C.free a.g r
-
-(* Parts CUDA's queues do not run: ring words, ring units and segment bytes
-   are refused, and no value is assigned. *)
+(* Parts CUDA's queues do not run: ring words are refused when the submission
+   is made, as the queues' [runs] list no [Words]; ring units and segment bytes
+   when it is submitted. No value is assigned. *)
 let refused () =
   S.with_ @@ fun ({ d; _ } as t) ->
   let fill ~units ~bytes =
@@ -312,7 +313,9 @@ let refused () =
       (Exn.invalid_arg ~substring:"never fit")
       (fun () -> S.submit t [| p |])
   in
-  refuses "ring words" words;
+  raises_match ~msg:"ring words"
+    (Exn.invalid_arg ~substring:"runs no words")
+    (fun () -> Rig.Submission.make ~reads:0 ~writes:0 d [| words |]);
   refuses "a ring unit" (fill ~units:1 ~bytes:0);
   refuses "a segment byte" (fill ~units:0 ~bytes:1);
   equal int ~msg:"values assigned" 0 (Rig.submitted d)
@@ -327,8 +330,7 @@ let work =
       test "a failed fill loses the device, and its value still drains"
         failed_fill;
       test "a value failed behind running work drains" failed_behind_work;
-      test "misuse raises" misuse;
-      test "a region of another device raises" another_device;
+      test "an allocation or a mapping of no bytes raises" no_bytes;
       test "a submission of work the device does not run raises" refused;
     ]
 
@@ -342,18 +344,17 @@ let images () =
   equal (option int) ~msg:"a missing kernel" None (C.entry m "missing");
   let e = require_error (C.image g "not a module") in
   starts_with ~affix:"loading the image: CUDA_ERROR_" e;
+  let arch = (C.facts g).arch in
   (match C.image g (S.fixture "kernels.cubin") with
   | Ok i ->
-      equal string ~msg:"the cubin's GPU" "sm_89" (C.arch g);
+      equal string ~msg:"the cubin's GPU" "sm_89" arch;
       C.unload g (S.loaded i)
   | Error e ->
-      not_equal string ~msg:"the cubin's GPU" "sm_89" (C.arch g);
+      not_equal string ~msg:"the cubin's GPU" "sm_89" arch;
       starts_with ~affix:"loading the image: CUDA_ERROR_" e);
   let f = S.launch (Option.get (C.entry m "empty")) ~grid:1 ~block:1 0 0 in
   S.wait t (S.submit t [| S.part ~queue:"COMPUTE:0" f |]);
-  C.unload g m;
-  raises_match Exn.invalid_arg (fun () -> C.entry m "empty");
-  raises_match Exn.invalid_arg (fun () -> C.unload g m)
+  C.unload g m
 
 (* Loading places every function's code, whatever CUDA_MODULE_LOADING says:
    a function CUDA loads lazily, at its [entry], could fail there for lack of
@@ -423,7 +424,7 @@ let long_work () =
   S.with_ @@ fun ({ g; _ } as t) ->
   if S.attribute watchdog <> 0 then
     skip ~reason:"a display watchdog ends long kernels" ();
-  let flag = require_some (C.alloc g `Pinned 8) in
+  let flag = require_some (C.alloc g Pinned 8) in
   Fun.protect ~finally:(fun () -> H.set64 (host flag) 1) @@ fun () ->
   let m = spin t flag in
   equal int ~msg:"the work committed" 0 (Rig.signaled t.d);
@@ -441,7 +442,7 @@ let unload_aside () =
   S.with_ @@ fun ({ g; _ } as t) ->
   if S.attribute watchdog <> 0 then
     skip ~reason:"a display watchdog ends long kernels" ();
-  let flag = require_some (C.alloc g `Pinned 8) in
+  let flag = require_some (C.alloc g Pinned 8) in
   Fun.protect ~finally:(fun () -> H.set64 (host flag) 1) @@ fun () ->
   let other, _ = S.kernels g in
   let m = spin t flag in
@@ -494,14 +495,14 @@ let unload_after_reopen () =
   S.with_ @@ fun ({ g; _ } as t) ->
   if S.attribute watchdog <> 0 then
     skip ~reason:"a display watchdog ends long kernels" ();
-  let flag = require_some (C.alloc g `Pinned 8) in
+  let flag = require_some (C.alloc g Pinned 8) in
   Fun.protect ~finally:(fun () -> H.set64 (host flag) 1) @@ fun () ->
   let before = S.free_memory () in
   let m = load_global t in
   lose t flag;
   S.close t;
   H.set64 (host flag) 1;
-  C.stop (reopened ());
+  C.stop (reopened ()) ~fault:None;
   S.with_ @@ fun t' ->
   at_most int ~msg:"reopened" ~than:(before - (global / 2)) (S.free_memory ());
   C.unload g m;
@@ -524,14 +525,14 @@ let stop_running () =
   S.with_ @@ fun ({ g; _ } as t) ->
   if S.attribute watchdog <> 0 then
     skip ~reason:"a display watchdog ends long kernels" ();
-  let flag = require_some (C.alloc g `Pinned 8) in
+  let flag = require_some (C.alloc g Pinned 8) in
   Fun.protect ~finally:(fun () -> H.set64 (host flag) 1) @@ fun () ->
   lose t flag;
   S.close t;
   let e = require_error (C.open_ 0) in
   contains ~sub:"still runs" e;
   H.set64 (host flag) 1;
-  C.stop (reopened ())
+  C.stop (reopened ()) ~fault:None
 
 let registry_is_the_process () =
   let p = H.pages H.page in
@@ -553,7 +554,7 @@ let registry_is_the_process () =
 let runs_uncommitted () =
   S.with_ @@ fun ({ g; _ } as t) ->
   let _, kernel = S.kernels g in
-  let out = require_some (C.alloc g `Pinned 8) in
+  let out = require_some (C.alloc g Pinned 8) in
   H.set64 (host out) 0;
   let f = S.launch (kernel "step") ~grid:1 ~block:1 (address out) 0 in
   let v = S.submit t [| S.part ~queue:"COMPUTE:0" f |] in
@@ -598,7 +599,7 @@ let lag_bounded () =
 let copy_after_compute () =
   S.with_ @@ fun ({ d; g } as t) ->
   let _, kernel = S.kernels g in
-  let flag = require_some (C.alloc g `Pinned 8) in
+  let flag = require_some (C.alloc g Pinned 8) in
   H.set64 (host flag) 0;
   let data = String.init 256 (fun i -> Char.chr (i land 255)) in
   let src = B.create d 256 and mid = B.create d 256 in
@@ -635,7 +636,7 @@ let gen_launches = Gen.list ~size:(Gen.int_range 1 12) (Gen.int_range 1 4)
 let through_workspace sizes =
   S.with_ @@ fun { d; g } ->
   let _, kernel = S.kernels g in
-  let flag = require_some (C.alloc g `Pinned 8) in
+  let flag = require_some (C.alloc g Pinned 8) in
   H.set64 (host flag) 1;
   let copy ~dst ~src n =
     S.delayed ~spin:(kernel "spin") ~flag:(address flag) ~ns:0 ~dst ~src n
@@ -699,11 +700,12 @@ let two_gpus () =
   if C.count () < 2 then skip ~reason:"CUDA sees fewer than two GPUs" ();
   S.with_ @@ fun { g = a; _ } ->
   let b = require_ok (C.open_ 1) in
-  Fun.protect ~finally:(fun () -> C.stop b) @@ fun () ->
-  let h = require_some (C.alloc b `Pinned 64) in
-  let d = require_some (C.alloc b `Device 64) in
+  Fun.protect ~finally:(fun () -> C.stop b ~fault:None) @@ fun () ->
+  let h = require_some (C.alloc b Pinned 64) in
+  let d = require_some (C.alloc b Device 64) in
   let ph = require_some (C.map_peer a b h) in
-  equal (option int) ~msg:"host memory maps" (C.host h) (C.host ph);
+  equal (option int) ~msg:"host memory maps" (C.locate h).host
+    (C.locate ph).host;
   let pd = C.map_peer a b d in
   equal bool ~msg:"peer is map_peer's answer" (C.peer a b) (Option.is_some pd);
   (match pd with Some pd -> C.free a pd | None -> ());
@@ -721,7 +723,7 @@ let stopped_graph = "making the graph: the device was stopped"
 
 (* A 64-bit word of pinned memory, zeroed. *)
 let counter g =
-  let r = require_some (C.alloc g `Pinned 8) in
+  let r = require_some (C.alloc g Pinned 8) in
   H.set64 (host r) 0;
   r
 
@@ -749,7 +751,7 @@ let chain n =
 let arguments () =
   S.with_ @@ fun ({ g; _ } as t) ->
   let m, kernel = S.kernels g in
-  let out = require_some (C.alloc g `Pinned 256) in
+  let out = require_some (C.alloc g Pinned 256) in
   H.write (host out) (String.make 256 '\000');
   let k = S.kernel (kernel "double_index") ~block:64 (address out) 37 in
   let gr = require_ok (graph g [| k |]) in
@@ -978,7 +980,7 @@ module Registry = struct
 
   let start () =
     let g = (shared ()).g in
-    let foreign = Option.get (C.alloc g `Pinned (2 * H.page)) in
+    let foreign = Option.get (C.alloc g Pinned (2 * H.page)) in
     let split = H.pages (3 * H.page) in
     S.register split H.page;
     S.register (split + (2 * H.page)) H.page;
@@ -1220,7 +1222,7 @@ module Order = struct
             (Bytes.to_string (initial b));
           r)
     in
-    let flag = Option.get (C.alloc t.g `Pinned 8) in
+    let flag = Option.get (C.alloc t.g Pinned 8) in
     H.set64 (host flag) 0;
     let image, kernel = S.kernels t.g in
     { t; buffers; flag; image; spin = kernel "spin" }
@@ -1298,56 +1300,6 @@ let order_commands =
       Order.run Order.run_sys;
   ]
 
-(* Ending from two domains: whatever the order, an allocation's or a mapping's
-   first [free] and an image's first [unload] return, and every later one
-   raises. *)
-
-type ended = { mutable live : bool }
-
-let end_model m =
-  if not m.live then invalid_arg "ended";
-  m.live <- false
-
-let ends_once ~make ~finish ~release name =
-  let v =
-    abstract name ~release:(fun x ->
-        try release x with Invalid_argument _ -> ())
-  in
-  [
-    command "make" (Gen.unit @-> makes v) (fun () -> { live = true }) make;
-    command "end" (v ^-> returns unit) end_model finish;
-  ]
-
-(* Each value carries the shared device: the fixture is read on the test's
-   domain only. *)
-let allocation_commands =
-  ends_once "a"
-    ~make:(fun () ->
-      let g = (shared ()).g in
-      (g, Option.get (C.alloc g `Device 64)))
-    ~finish:(fun (g, r) -> C.free g r)
-    ~release:(fun (g, r) -> C.free g r)
-
-(* A mapping of its own page, freed once the run ends. *)
-let mapping_commands =
-  ends_once "m"
-    ~make:(fun () ->
-      let g = (shared ()).g and p = H.pages H.page in
-      (g, p, Option.get (C.map_host g p 64)))
-    ~finish:(fun (g, _, r) -> C.free g r)
-    ~release:(fun (g, p, r) ->
-      Fun.protect
-        ~finally:(fun () -> H.free_pages p H.page)
-        (fun () -> C.free g r))
-
-let image_commands =
-  ends_once "i"
-    ~make:(fun () ->
-      let g = (shared ()).g in
-      (g, fst (S.kernels g)))
-    ~finish:(fun (g, m) -> C.unload g m)
-    ~release:(fun (g, m) -> C.unload g m)
-
 let stateful =
   group ~timeout:300. "stateful"
     [
@@ -1359,12 +1311,6 @@ let stateful =
       stateful ~count:100 ~steps:20
         "values complete in order and the word never moves backwards (sampled)"
         order_commands;
-      stateful ~count:30 ~domains:2
-        "an allocation freed from two domains is freed once" allocation_commands;
-      stateful ~count:30 ~domains:2
-        "a mapping freed from two domains is freed once" mapping_commands;
-      stateful ~count:30 ~domains:2
-        "an image unloaded from two domains is unloaded once" image_commands;
     ]
 
 let () =

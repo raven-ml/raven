@@ -45,7 +45,7 @@ let mib = 1024 * kib
 type dev = { d : Rig.t; g : C.t; mutable v : int }
 
 let get = function Ok x -> x | Error why -> failwith why
-let host r = Option.get (C.host r)
+let host r = Option.get (C.locate r).host
 
 (* GPU 0, opened through rig. *)
 let dev () =
@@ -108,13 +108,13 @@ let release_rows =
 
 let wait_rows =
   let word g =
-    let w = Option.get (C.alloc g `Pinned 8) in
+    let w = Option.get (C.alloc g Pinned 8) in
     H.set64 (host w) 1;
     w
   in
   let waiting () =
     let t = dev () in
-    (t, C.edge t.g, Option.get (C.address (word t.g)))
+    (t, (C.facts t.g).edge, Option.get (C.locate (word t.g)).address)
   in
   let floor_waiting () = host (word (floor ())) in
   Thumper.group "waits"
@@ -214,7 +214,7 @@ let copy_rows =
 let alloc_rows =
   let alloc name n =
     [
-      row name dev (fun t -> C.free t.g (Option.get (C.alloc t.g `Device n)));
+      row name dev (fun t -> C.free t.g (Option.get (C.alloc t.g Device n)));
       row ("floor-" ^ name) floor (fun _ -> floor_alloc n);
     ]
   in
@@ -243,8 +243,8 @@ let image_rows =
     [
       row "load-140" loading (fun (t, bin) ->
           match C.image t.g bin with
-          | Ok (`Loaded m) -> C.unload t.g m
-          | Ok (`Place _) -> failwith "a CUDA image is placed by CUDA"
+          | Ok (Loaded m) -> C.unload t.g m
+          | Ok (Place _) -> failwith "a CUDA image is placed by CUDA"
           | Error why -> failwith why);
     ]
 

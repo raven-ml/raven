@@ -229,7 +229,7 @@ val release_list : unit -> int
 
 val open_driver :
   ?memory_device:bool ->
-  (module Sigs.Driver with type t = 'a) ->
+  (module Rig_edge.Driver with type t = 'a) ->
   ?machine:string ->
   ?host:bool ->
   name:string ->
@@ -242,7 +242,7 @@ val open_driver :
     misuse raises under {!Rig.memory_device}'s name. *)
 
 val open_io :
-  (module Sigs.Io with type t = 'a) ->
+  (module Rig_edge.Io with type t = 'a) ->
   ?machine:string ->
   name:string ->
   (unit -> ('a, string) result) ->

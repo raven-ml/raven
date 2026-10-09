@@ -4,7 +4,7 @@
  (name rig)
  (public_name rig)
  (libraries rig_edge)
- (modules_without_implementation def sigs)
+ (modules_without_implementation def)
  (private_modules
   buffer
   claim
@@ -19,7 +19,6 @@
   point
   prof
   profile
-  sigs
   submission)
  (install_c_headers rig)
  (foreign_stubs

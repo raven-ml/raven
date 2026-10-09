@@ -41,8 +41,8 @@ let loaded d binary =
       let module D = (val m) in
       match Dev.counted d (fun () -> D.image h binary) with
       | Error why -> Error (strf "%s: %s" d.name why)
-      | Ok (`Loaded i) -> Ok (Loaded { m; h; i }, None)
-      | Ok (`Place (n, lay)) -> (
+      | Ok (Rig_edge.Loaded i) -> Ok (Loaded { m; h; i }, None)
+      | Ok (Place (n, lay)) -> (
           let e = Memory.alloc_entry d Device n in
           (* [d]'s regions are of [d]'s region type. *)
           match e.region with

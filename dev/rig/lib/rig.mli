@@ -25,16 +25,16 @@
           │                         ▲                  ▲
           │ submit ~reads ~writes   │ Hold.make        │ submit
           ▼                         │                  │
-      Submission.t ─────────── one device ── Driver.edge (C)
+      Submission.t ─────────── one device ── facts.edge (C)
     v}
 
     A program opens devices ({!open_}), allocates {!Buffer}s, and copies between
     them ({!Buffer.copy}), which waits for the work that touched them. A library
     that runs compiled work on devices prepares {!Submission}s once and submits
     each run's buffers with them ({!submit}); it orders its own host access with
-    {!Buffer.wait}. A vendor library matches {!Driver} without linking this
-    library; a program passes it to {!open_} with the library's function that
-    opens the hardware.
+    {!Buffer.wait}. A vendor library links only [rig.edge] and matches
+    {!Rig_edge.Driver}; a program passes it to {!open_} with the library's
+    function that opens the hardware.
 
     {1:domains Domains}
 
@@ -134,19 +134,38 @@ val reaches : t -> t -> bool
     that places copies must know before any buffer exists. A device reaches its
     own memory. Of devices of one machine:
     - {!host} reaches the memory of a {!memory_device} and of a driver's device
-      whose driver runs no copy ({!Driver.queues}): that memory is the host's;
+      that runs no copy ({!queues}): that memory is the host's;
     - a driver's device reaches {!host}'s memory where it maps host memory
-      ({!Driver.maps_host}), a memory device's, and that of a device of its own
-      driver that it maps ({!Driver.peer}). Another machine's host is a driver's
-      device of that machine, and reaches and is reached by this rule.
+      (its [maps_host] fact, {!Rig_edge.facts}), a memory device's, and that
+      of a device of its own
+      driver that it maps ({!Rig_edge.Driver.peer}). Another machine's host is a
+      driver's device of that machine, and reaches and is reached by this rule.
 
     Otherwise it is [false]: across machines, and between an {!Io} device and
     any other device. *)
 
 val capability : t -> 'a Type.Id.t -> 'a option
 (** [capability d k] is [Some c] if [d]'s driver declares its capability record
-    under [k] ({!Driver.capability_key}), [c] being the record it filled when
+    under [k] ({!Rig_edge.capability}), [c] being the record it filled when
     [d] opened, and [None] otherwise. *)
+
+(** The type for the work of a part. *)
+type kind = Rig_edge.kind =
+  | Words  (** 32-bit words placed on the queue: {!Submission.Words}. *)
+  | Fill  (** A C function called on the queue: {!Submission.Fill}. *)
+  | Copy  (** A copy between memory: {!Submission.Copy}. *)
+
+type queue = Rig_edge.queue = {
+  name : string;  (** The name parts give, such as ["COPY:0"]. *)
+  runs : kind list;  (** The work its parts may be. *)
+}
+(** The type for a device's queues. *)
+
+val queues : t -> queue list
+(** [queues d] is [d]'s queues, in its driver's order, and what each runs; [[]]
+    for {!host} and an {!Io} device. A part names its queue by name
+    ({!Submission.part}). A queue named ["COPY:i"] runs [Copy], and [d]'s own
+    copies go to the first one. *)
 
 val equal : t -> t -> bool
 (** [equal d d'] is [true] iff [d] and [d'] are the same device. *)
@@ -159,8 +178,9 @@ val pp : Format.formatter -> t -> unit
 val budget : t -> int
 (** [budget d] is the most bytes [d] holds at once in the memory that counts in
     its budget ({!Buffer.memory}): live buffers, loaded images' code and its
-    cache. It starts at [max_int] for {!host}, {!Driver.budget} for a driver's
-    device and {!Io.budget} for an io device; {!set_budget} changes it. *)
+    cache. It starts at [max_int] for {!host}, its driver's [budget] fact for a
+    driver's device ({!Rig_edge.facts}) and {!Rig_edge.Io.budget} for an io
+    device; {!set_budget} changes it. *)
 
 val set_budget : t -> int -> unit
 (** [set_budget d n] sets [d]'s budget to [n], returning cached memory
@@ -259,7 +279,8 @@ val signaled : t -> int
     to it completed, and its writes are visible to the caller. It first commits
     [d]'s work ({!submit}) unless another call holds [d]'s turn, so that called
     repeatedly it reaches every submitted value once its work completed. The
-    commit may block as [d]'s hand-over does ({!Driver.blocks}), and one that
+    commit may block as [d]'s hand-over does (its [may_block] fact,
+    {!Rig_edge.facts}), and one that
     fails loses [d]. On a lost device it only reads the word.
 
     Raises {!Lost} if [d]'s word is read behind a transport and the read loses
@@ -268,9 +289,9 @@ val signaled : t -> int
 val wait : t -> int -> unit
 (** [wait d v] returns once [d] reached [v], first committing [d]'s work if
     [v] is not committed ({!submit}). For a driver whose host writes the word
-    ([`Host] {!Driver.completion}), or whose word the host does not address, it
-    blocks in the driver ({!Driver.sleep}) from the first read of the word. For
-    another, it spins on the word, then waits with the domain lock released,
+    ([Host] {!Rig_edge.completion}), or whose word the host does not address,
+    it blocks in the driver ({!Rig_edge.Driver.sleep}) from the first read of
+    the word. For another, it spins on the word, then waits with the domain lock released,
     blocking in the driver between reads once the word stood still. It waits
     however long the work runs: only [d]'s driver decides that work hung.
 
@@ -296,7 +317,7 @@ module Buffer : sig
   (** The type for buffers. *)
 
   (** The type for the memories of a device that {!create} allocates. *)
-  type memory =
+  type memory = Rig_edge.memory =
     | Device
         (** The device's own memory, which counts in the device's {!budget}. *)
     | Pinned
@@ -319,7 +340,8 @@ module Buffer : sig
       allocates nothing. On a device whose memory the host addresses, every
       [memory] is the device's own. On {!host}, a buffer of 64 KiB or more (four
       pages, where pages are larger) starts on a page, so devices can {!borrow}
-      it. On an {!Io} device it is memory the device's {!Io.alloc} makes.
+      it. On an {!Io} device it is memory the device's {!Rig_edge.Io.alloc}
+      makes.
 
       Raises [Invalid_argument] if [n < 0] or [d] is an io device that makes no
       memory of its own; {!Out_of_memory}; and {!Lost} if [d] is lost. *)
@@ -331,10 +353,11 @@ module Buffer : sig
 
   val of_io : device -> 'r Type.Id.t -> 'r -> access:access -> int -> t
   (** [of_io d k r ~access n] is a buffer over the [n] bytes of [r], a region of
-      the io device [d] whose library declares [k] ({!Io.region_key}), whose
-      memory admits [access] ({!val-access}): [Read] for a region [d] holds for
-      reading, such as a file opened read-only. It returns to [d]'s {!Io.free}
-      once unreachable. The memory is outside the claims ({!Claim}).
+      the io device [d] whose library declares [k] ({!Rig_edge.Io.region_key}),
+      whose memory admits [access] ({!val-access}): [Read] for a region [d]
+      holds for reading, such as a file opened read-only. It returns to [d]'s
+      {!Rig_edge.Io.free} once unreachable. The memory is outside the claims
+      ({!Claim}).
 
       Raises [Invalid_argument] if [d] is no io device, its library's key is not
       [k], or [n < 0]. *)
@@ -361,22 +384,24 @@ module Buffer : sig
       [b]'s: work through [b'] is work on [b]'s memory.
 
       [d] maps host memory of its machine that starts on a page, where it maps
-      host memory at all ({!Driver.maps_host}), and memory of a device of its
-      own driver that its driver maps ({!Driver.map_peer}). Every borrow on [d]
-      of one memory shares one mapping, made at the first borrow, which lasts
-      while the memory lives and is released with it, once [d]'s work submitted
-      until then is done: a borrow dropped and made again maps nothing. A borrow
-      of a borrow maps the memory the first one maps. A {!memory_device} maps
-      any host memory. Host memory that does not start on a page, such as a host
-      buffer of fewer than 64 KiB, borrows only on {!host} and memory devices.
-      An io device's memory borrows through its pages ({!Io.pages}), as host
-      memory, where its device maps them; a device other than the host asks the
-      io device to read the borrowed bytes ahead ({!Io.prefetch}).
+      host memory at all (its [maps_host] fact, {!Rig_edge.facts}), and memory
+      of a device of its own
+      driver that its driver maps ({!Rig_edge.Driver.map_peer}). Every borrow on
+      [d] of one memory shares one mapping, made at the first borrow, which
+      lasts while the memory lives and is released with it, once [d]'s work
+      submitted until then is done: a borrow dropped and made again maps
+      nothing. A borrow of a borrow maps the memory the first one maps. A
+      {!memory_device} maps any host memory. Host memory that does not start on
+      a page, such as a host buffer of fewer than 64 KiB, borrows only on
+      {!host} and memory devices. An io device's memory borrows through its
+      pages ({!Rig_edge.Io.pages}), as host memory, where its device maps them;
+      a device other than the host asks the io device to read the borrowed bytes
+      ahead ({!Rig_edge.Io.prefetch}).
 
       Raises [Invalid_argument] if [b] is dead ({!Claim.consume}); {!Lost} if
       [d] is lost or is lost by the borrow, and for [b] as {!Lost} states; and
       [Sys_error] where asking an io device for [b]'s pages failed and may pass
-      ({!Io.pages}). *)
+      ({!Rig_edge.Io.pages}). *)
 
   val wait : t -> access -> unit
   (** [wait b access] returns once the work on [b]'s memory that an access of
@@ -386,7 +411,7 @@ module Buffer : sig
       memory a borrow maps, and, for memory in a {!Hold}, for every point of the
       hold, whatever [access]. Host memory and an {!Io} device's memory have
       work to wait for only where a device borrowed them: an io device's memory,
-      through its pages ({!Io.pages}).
+      through its pages ({!Rig_edge.Io.pages}).
 
       It waits for one device after another and holds no lock. Once every point
       is reached it reads one word per device and allocates nothing. Work
@@ -405,20 +430,22 @@ module Buffer : sig
       with a copy queue copies, as work on its timeline: [dst]'s device when
       only [src] is host-addressable, [src]'s otherwise, directly between memory
       it addresses or maps, and through the host's {e staging memory} otherwise:
-      host memory, made at the first copy that needs it and kept for the life
-      of the process ({!domains}). A device of this machine that maps no host
-      memory ({!Driver.maps_host}) stages through [Pinned] memory of its own
-      instead, made at its first copy that needs it and kept until it is lost.
-      A device that runs no copy has memory the host addresses, which the host
-      copies; a borrow on it of another device's memory copies by that device. An {!Io} device's memory,
-      of any machine, is read and written by its {!Io.read} and {!Io.write},
-      through the staging memory when the host does not address the other side,
-      except a copy into it from memory the host does not address, of a device
-      with a copy queue that maps its pages ({!Io.pages}), which that device
-      runs through them. Memory of a driver's device of another machine copies
-      only directly, as one copy on a device of that machine: with memory of its
-      machine, by [src]'s device; with memory this process's host addresses, by
-      the other machine's side's device, whose driver carries the bytes
+      host memory, made at the first copy that needs it and kept for the life of
+      the process ({!domains}). A device of this machine that maps no host
+      memory (its [maps_host] fact, {!Rig_edge.facts}) stages through
+      [Pinned] memory of its own
+      instead, made at its first copy that needs it and kept until it is lost. A
+      device that runs no copy has memory the host addresses, which the host
+      copies; a borrow on it of another device's memory copies by that device.
+      An {!Io} device's memory, of any machine, is read and written by its
+      {!Rig_edge.Io.read} and {!Rig_edge.Io.write}, through the staging memory
+      when the host does not address the other side, except a copy into it from
+      memory the host does not address, of a device with a copy queue that maps
+      its pages ({!Rig_edge.Io.pages}), which that device runs through them.
+      Memory of a driver's device of another machine copies only directly, as
+      one copy on a device of that machine: with memory of its machine, by
+      [src]'s device; with memory this process's host addresses, by the other
+      machine's side's device, whose driver carries the bytes
       ({!Submission.Copy}). No staging memory reaches another machine.
 
       Staging memory that a device lost while it used it is replaced, so a loss
@@ -534,17 +561,17 @@ module Buffer : sig
 
   val address : t -> int
   (** [address b] is the address of [b]'s first byte as [b]'s device's work
-      addresses it: its memory's {!Driver.address} plus {!offset} for a driver's
-      memory, the host address for {!host}'s. An empty buffer that {!create}
-      made on a driver's device names no memory: its address is [0], as work of
-      no bytes reads none. An address fits in the 62 bits of an [int]'s
-      non-negative range.
+      addresses it: its memory's address ({!Rig_edge.location}) plus {!offset}
+      for a driver's memory, the host address for {!host}'s. An empty buffer
+      that {!create} made on a driver's device names no memory: its address is
+      [0], as work of no bytes reads none. An address fits in the 62 bits of an
+      [int]'s non-negative range.
 
       Raises [Invalid_argument] if [b] is dead, is an {!Io} device's memory, or
       is memory its driver names by handle only. *)
 
   val handle : t -> nativeint
-  (** [handle b] is the driver's object for [b]'s memory ({!Driver.handle}),
+  (** [handle b] is the driver's object for [b]'s memory ({!Rig_edge.location}),
       which [b] starts {!offset} bytes into, such as an [MTLBuffer]; [0n] for an
       empty buffer that {!create} made on a driver's device.
 
@@ -656,8 +683,8 @@ module Hold : sig
       device's stop returns. It holds no lock of this library, must not call it,
       and must not raise: an exception it raises is raised again by the call
       whose drain ran it. It counts as a call in flight on each device of the
-      hold that is not lost, so no {!Driver.stop} of those devices runs beside
-      it.
+      hold that is not lost, so no {!Rig_edge.Driver.stop} of those devices runs
+      beside it.
 
       Raises [Invalid_argument] if a buffer is dead or its memory is already in
       a hold. *)
@@ -668,7 +695,7 @@ end
 (** Prepared submissions.
 
     A submission is work for one device: its {e parts}, each for one of the
-    device's queues ({!Driver.queues}), and the parts each waits for within the
+    device's queues ({!queues}), and the parts each waits for within the
     submission. It is made once and run many times. What changes from one run to
     the next, the buffers its work reads and writes and the points it waits for,
     are arguments of {!submit}, which keeps none of them once it returns. Its
@@ -700,7 +727,7 @@ module Submission : sig
       }
         (** The C function at [fill], called inside the driver's hand-over with
             the queue's context, the host address of [arg] and the value
-            ({!Driver.edge}). A ring driver's fill writes at most
+            ([edge] in {!Rig_edge.facts}). A ring driver's fill writes at most
             [ring_units] entries and [segment_bytes] bytes of argument segment;
             a library driver's declares [0] of each. *)
     | Copy of { src : Buffer.t; dst : Buffer.t }
@@ -710,7 +737,7 @@ module Submission : sig
 
   type part = { queue : string; after : int array; work : work }
   (** The type for parts: [work] on [queue], one of the device's
-      ({!Driver.queues}). A part runs after the parts of its submission before
+      ({!queues}). A part runs after the parts of its submission before
       it on its queue, and after those whose indices [after] lists: [after]
       orders parts of different queues. *)
 
@@ -730,8 +757,9 @@ module Submission : sig
       memory (on a driver's device of another machine, one of them may be memory
       this process's host addresses), or its [dst]'s memory is [Read]
       ({!Buffer.val-access}), or [d]'s driver runs no copies (it lists no copy
-      queue, {!Driver.queues}); and {!Lost} if [d] is lost. A part [d]'s
-      driver does not run is refused at {!submit}. *)
+      queue, {!queues}), or a part's queue does not run its work; and {!Lost}
+      if [d] is lost. Parts that never fit [d]'s queues are refused at
+      {!submit}. *)
 end
 
 val submit :
@@ -752,29 +780,31 @@ val submit :
     + Loads the points [s]'s work must follow: the last write of each buffer of
       [reads] and of each buffer its parts read, every use by another device of
       each buffer of [writes] and of each copy's [dst], every stamp of another
-      device of the {!Hold} of each memory in one, and the points of
-      [waits]. Each foreign point not yet reached is a wait in [d]'s queue if
-      [d]'s driver waits on the producer's completion ({!Driver.waits_on}) and
-      [d] maps the producer's timeline word, decided once per pair of devices,
-      up to {!Driver.max_waits} waits; otherwise [submit] waits for it now,
+      device of the {!Hold} of each memory in one, and the points of [waits].
+      Each foreign point not yet reached is a wait in [d]'s queue if [d]'s
+      queues wait for the producer's completion ({!Rig_edge.waits}) and [d] maps
+      the producer's timeline word, decided once per pair of devices, up to the
+      most waits [d]'s queues carry; otherwise [submit] waits for it now,
       holding no lock. Either way it first commits the work of the point's
       device, before it takes [d]'s turn.
     + Takes [d]'s {e turn}, the right to be the one call of [d]'s room check,
-      hand-over or commit, and asks [d]'s driver for room
-      ({!Driver.edge}). Once the parts fit, it assigns [v], one more than
-      {!submitted}[ d], hands the work over, which
-      encodes it on [d]'s queues, and raises the stamps of [reads], [writes],
+      hand-over or commit, and asks [d]'s driver for room ([edge] in
+      {!Rig_edge.facts}). Once the parts fit, it assigns [v], one more than
+      {!submitted}[ d], hands the work over, which encodes it on [d]'s queues,
+      and raises the stamps of [reads], [writes],
       the parts' buffers and the hold to [(d, v)]. While they do not fit, it
       commits [d]'s work, waits for [d]'s next value with the turn released, and
       tries again. No OCaml code runs between the assignment and the turn's
       release, so a value is handed over or [d] is lost.
 
-    The work runs after [d]'s earlier work without another call. [d]'s word
-    shows [v] once [v] is {e committed} and its work completed. Every wait for
+    The work runs after [d]'s earlier work without another call: [v]'s work
+    starts once the work of every earlier value of [d] completed, on every
+    queue of [d]. [d]'s word shows [v] once [v] is {e committed} and its work completed. Every wait for
     a value of [d], on the host or in another device's queue, first commits
     [d]'s work, so no wait waits for work that is not committed. [d]'s driver
     also commits on its own, at least once every [k] values, [k] a bound of its
-    own ({!Driver.edge}): while work is submitted the word shows each
+    own ([edge] in {!Rig_edge.facts}): while work is submitted the word shows
+    each
     value at most [k] values late, and values submitted since the last commit
     show after the next wait for [d] or the next [k] values.
 
@@ -821,14 +851,14 @@ module Image : sig
   (** [device i] is the device [i] is loaded on. *)
 
   val entry : t -> string -> int option
-  (** [entry i f] is the driver's name for [i]'s function [f] ({!Driver.entry}),
-      such as a kernel descriptor's address, a [CUfunction] or an
-      [MTLComputePipelineState], or [None] if [i] has no function [f]. Work that
-      runs [f] keeps [i] reachable until it is done, such as a {!Hold}'s release
-      that holds it.
+  (** [entry i f] is the driver's name for [i]'s function [f]
+      ({!Rig_edge.Driver.entry}), such as a kernel descriptor's address, a
+      [CUfunction] or an [MTLComputePipelineState], or [None] if [i] has no
+      function [f]. Work that runs [f] keeps [i] reachable until it is done,
+      such as a {!Hold}'s release that holds it.
 
       Raises [Invalid_argument] if [i]'s device cannot run [f]
-      ({!Driver.entry}), and {!Lost} if [i]'s device is lost. *)
+      ({!Rig_edge.Driver.entry}), and {!Lost} if [i]'s device is lost. *)
 end
 
 (** {1:profiles Profiles} *)
@@ -962,322 +992,15 @@ end
 
 (** {1:drivers Drivers}
 
-    For the vendor libraries that open devices. *)
+    For the vendor libraries that open devices. A driver links only
+    [rig.edge], whose {!Rig_edge} states the contract, and matches
+    {!Rig_edge.Driver}. *)
 
-(** Drivers.
+module type Driver = Rig_edge.Driver
+(** The type for drivers. *)
 
-    A driver runs one kind of hardware once it is open: it holds the device's
-    memory, writes its queues, makes completion observable and reports faults.
-    It matches this signature structurally, over standard types, without linking
-    this library; a program passes it to {!open_}.
-
-    A device's {e timeline word} is eight bytes the driver alone writes: the
-    last committed value [v] ({!edge}) such that every submission up to
-    [v] completed. It never moves backwards, and work never writes it. A
-    driver orders the work it is handed on each queue in the order handed
-    ({e prefix order}), and lets the host learn that a prefix completed or that
-    the device faulted ({e observable completion}).
-
-    {b Work} crosses in C only: this library calls the driver's C room check,
-    hand-over and commit ({!edge}), in the shapes [rig_edge.h] states, one at
-    a time per device, under the device's turn. A driver's own OCaml forms of
-    them, for a driver used alone, are no part of this signature.
-
-    {b Calls.} {!address}, {!handle}, {!host} and {!peer} call nothing that may
-    block or fault, and this library calls them at any time. Every other call
-    this library makes on a device that is not lost is {e counted}: {!stop}
-    waits for none of them. {!stop} runs once, with no counted call inside, and
-    after it only {!free}, {!unload}, {!signaled} and holds' releases follow. A
-    {!Fault} from a counted call, and a failed hand-over or commit, lose the
-    device. *)
-module type Driver = sig
-  type t
-  (** The type for open devices of the driver. *)
-
-  type region
-  (** The type for memory of a device. *)
-
-  type image
-  (** The type for loaded code. *)
-
-  type capability
-  (** The type for what compiled code needs from a device, declared by the
-      driver's ABI library. *)
-
-  exception Fault of string
-  (** [Fault why] reports that the device faulted. Any counted call may raise
-      it. *)
-
-  val key : t Type.Id.t
-  (** [key] identifies the driver: two devices of one driver map each other's
-      memory ({!map_peer}). *)
-
-  (** {1:facts Facts}
-
-      Read once, when the device opens: a {!Fault} here is the open's [Error].
-  *)
-
-  val arch : t -> string
-  (** [arch d] is [d]'s architecture. *)
-
-  val budget : t -> int
-  (** [budget d] is the bytes of own memory [d] should hold at most. *)
-
-  val queues : t -> string list
-  (** [queues d] is [d]'s queues, ["COMPUTE:0"] first, then ["COPY:i"] for its
-      copy queues. A part's queue is its index in the list. A driver that lists
-      no copy queue runs no {!Submission.Copy}: every region it allocates has a
-      host address, and the host copies it. *)
-
-  val completion : t -> [ `Store | `Object of nativeint | `Host ]
-  (** [completion d] is how [d]'s word advances: the queue stores it ([`Store]);
-      an object of the driver's API completes, and the driver writes the word
-      ([`Object h], [h] fitting in 62 bits, as it crosses the hand-over's waits
-      as an integer); or the host writes it from the driver's handler or before
-      the hand-over or the commit returns ([`Host]). *)
-
-  val waits_on : t -> [ `Store | `Object | `Host ] -> bool
-  (** [waits_on d c] is [true] iff [d]'s queues wait in the queue for a producer
-      of completion [c]; for [`Object], a producer of [d]'s own driver, whose
-      objects [d]'s queues know. *)
-
-  val max_waits : t -> int
-  (** [max_waits d] is the most waits in [d]'s queue ({!waits_on}) one
-      submission carries, [0] or more: this library waits on the host for the
-      others, before the hand-over. It is read only for completions {!waits_on}
-      accepts. *)
-
-  val blocks : t -> [ `Returns | `May_block ]
-  (** [blocks d] is [`Returns] if the C room check, hand-over and commit never
-      block, and [`May_block] if they may block on [d]'s own earlier work, on
-      its own transfers or on its library's back-pressure. A [`May_block]
-      device's room check, hand-over and commit are counted calls: its {!stop}
-      never runs while one blocks. *)
-
-  val maps_host : t -> bool
-  (** [maps_host d] is [true] iff [d] maps host memory of its machine that
-      starts on a page ({!map_host}). Where it is [false], this library never
-      calls {!map_host}. *)
-
-  val capability : t -> capability
-  (** [capability d] is [d]'s record, filled when [d] opened. *)
-
-  val capability_key : capability Type.Id.t
-  (** [capability_key] is the key the driver's ABI library declares. *)
-
-  (** {1:memory Memory} *)
-
-  val alloc : t -> [ `Device | `Pinned | `Mapped ] -> int -> region option
-  (** [alloc d kind n] is [n] bytes of [d]'s memory of [kind]
-      ({!Buffer.memory}), or [None] if [d] has none. [n] is positive. Counted.
-  *)
-
-  val free : t -> region -> unit
-  (** [free d r] gives back [r], a region {!alloc} made, a mapping {!map_peer}
-      or {!map_host} made, or [d]'s {!word}. This library frees [r] once no work
-      of [d] that uses it can run; it may free after {!stop}, and frees the word
-      only after it. *)
-
-  val address : region -> int option
-  (** [address r] is [r]'s address as [d]'s work addresses it, or [None] for
-      memory named by its handle only. *)
-
-  val handle : region -> nativeint
-  (** [handle r] is the driver's object for [r]: a buffer object, a
-      [CUdeviceptr], an [MTLBuffer]. *)
-
-  val host : region -> int option
-  (** [host r] is the host address of [r]'s first byte, if the host addresses
-      it. *)
-
-  val peer : t -> t -> bool
-  (** [peer d d'] is [true] iff {!map_peer}[ d d'] maps [`Device] memory of
-      [d'], a device of the same driver. It answers from what [d] and [d']
-      learned when they opened, also once either is lost. *)
-
-  val map_peer : t -> t -> region -> region option
-  (** [map_peer d d' r] is a region of [d] over [r], any memory of [d'], a
-      device of the same driver, or [None]. Counted. *)
-
-  val map_host : t -> int -> int -> region option
-  (** [map_host d p n] is a region of [d] over the [n] bytes of host memory at
-      [p], or [None] if [d] does not map these pages, such as read-only ones.
-      [p] starts a page and [n] is positive; it is called only where
-      {!maps_host}. The memory stays mapped until the region is freed ({!free}).
-      Counted. *)
-
-  (** {1:code Code} *)
-
-  val image :
-    t ->
-    string ->
-    ( [ `Loaded of image | `Place of int * (region -> image * string) ],
-      string )
-    result
-  (** [image d b] loads the binary [b]. It is [`Loaded i] where the driver's
-      library places the code itself, and [`Place (n, lay)] where the code goes
-      into [n] bytes of [d]'s [`Device] memory: [lay r] is the image over the
-      region [r], which this library allocated with at least [n] bytes, and the
-      bytes to place at [r]'s start, at most [n]. [image] makes nothing on [d]
-      before [lay] is called, so a [`Place] whose function is never called
-      leaves nothing to release; [lay] calls nothing that may block or fault,
-      and raises nothing. [Error why] if [d] refuses [b]. Counted. *)
-
-  val entry : image -> string -> int option
-  (** [entry i f] is the driver's name for [i]'s function [f]: an address or an
-      object, or [None] if [i] has no function [f]. A driver may make it on the
-      first call, compiling [f], and that call may block. Counted.
-
-      Raises [Invalid_argument] with the driver's reason if [f] needs more than
-      the device offers, where the driver finds that only here. *)
-
-  val unload : t -> image -> unit
-  (** [unload d i] releases what {!image} and {!entry} made for [i], once no
-      work of [d] that runs it can run. The region of a [`Place] is not [i]'s:
-      this library frees it after. Counted. *)
-
-  (** {1:timeline Timeline} *)
-
-  val word : t -> region
-  (** [word d] is [d]'s timeline word. Other devices may map it, and it is read
-      after a loss. This library frees it ({!free}) after {!stop}, once nothing
-      reads it: it holds the last value, and no work of another device that
-      waits on it is left. It has a host address except behind a transport. *)
-
-  val signaled : t -> int
-  (** [signaled d] is the value in [d]'s word, read with acquire order. This
-      library calls it only for a word with no host address, behind a transport,
-      and may call it after {!stop}. Counted. *)
-
-  val sleep : t -> seen:int -> still_ms:int -> unit
-  (** [sleep d ~seen ~still_ms] blocks on the device's events until the word
-      differs from [seen], returning at once if it already does, and returns at
-      the latest after [still_ms] milliseconds. It may return earlier, on an
-      event of other work or a timer of the driver's own: this library reads the
-      word again after every return and sleeps again while it is unmoved. It
-      raises {!Fault} once the device faulted. It may run beside the hand-over
-      and the commit.
-      Counted. *)
-
-  val edge : t -> nativeint
-  (** [edge d] is the address of [d]'s C state, valid while the process runs,
-      whose first member points to the driver's [struct rig_driver] of
-      [rig_edge.h]: its room check, hand-over and commit, each called with
-      [edge d].
-      - The room check answers whether parts fit [d]'s queues now, once one of
-        [d]'s values is reached, or never, for parts that exceed [d]'s empty
-        queues, name work [d] does not run or are of no kind.
-      - The hand-over encodes the parts on [d]'s queues as the work of the
-        value after the last one it received, after the waits and [d]'s
-        earlier work. The work runs without another call. [d] writes the value
-        into the word once the value is committed and the work up to it
-        completed. When it returns, all of the value's work is on [d]'s
-        queues; a failure loses [d].
-      - The commit, given [v], at most the last value [d] received, makes [d]
-        write [v] or a later value into the word once the work up to it
-        completed. Committing a committed value does nothing. A hand-over that
-        answers [RIG_COMMITTED] committed every value up to its own; a driver
-        whose hand-overs all do is never asked to commit. The driver also
-        commits on its own, at least once every [k] values it receives, [k] a
-        bound of its own, so the word shows each value at most [k] values late
-        while work is submitted. A failure loses [d].
-
-      None calls a function of the OCaml runtime or reads an OCaml value. *)
-
-  (** {1:stopping Stopping} *)
-
-  val stop : t -> unit
-  (** [stop d] stops the lost [d] without waiting. The driver writes the last
-      value its hand-over received into the word, with release order, once no
-      work of [d] runs: before [stop] returns if none does, otherwise through
-      the queues' releases or its own drain. Work [d] encoded that runs only
-      once committed, such as an open command buffer, is dropped. [stop]
-      releases nothing this library made: this library frees each region and
-      unloads each image itself, also after [stop]. After [stop] it calls only
-      {!free}, {!unload} and {!signaled}, and calls {!free} and {!unload} only
-      once the word reads that last value, uncounted, dropping their faults.
-      {!free} and {!unload} may come after an open of the same hardware made a
-      new device of this driver; they touch nothing of the new device. *)
-end
-
-(** Devices of memory reached by reading and writing.
-
-    An io device holds memory the host does not address and no queue runs, such
-    as files. Its reads and writes are synchronous, in the caller. *)
-module type Io = sig
-  type t
-  (** The type for open io devices. *)
-
-  type region
-  (** The type for memory of an io device. *)
-
-  exception Fault of string
-  (** [Fault why] reports that the device failed, such as a closed connection.
-  *)
-
-  val region_key : region Type.Id.t
-  (** [region_key] identifies the io library and its regions: {!Buffer.of_io}
-      and {!Buffer.io} cast regions by it, and a device's name stays with the
-      library that opened it. *)
-
-  val budget : t -> int
-  (** [budget d] is the bytes [d] should hold at most. *)
-
-  val alloc : t -> int -> region option
-  (** [alloc d n] is [n] new bytes of [d]'s memory, or [None] if [d] has not the
-      room. [n] is positive.
-
-      Raises [Invalid_argument] if [d] makes no memory of its own, which
-      {!Buffer.create} raises in turn. *)
-
-  val free : t -> region -> unit
-  (** [free d r] gives [r] back. *)
-
-  val read : t -> region -> at:int -> dst:int -> len:int -> unit
-  (** [read d r ~at ~dst ~len] reads the [len] bytes at [at] in [r] into host
-      memory at [dst]. A failure of the memory alone, such as a file truncated
-      since it was opened, raises [Sys_error], which loses nothing; {!Fault}
-      loses [d]. *)
-
-  val write : t -> region -> at:int -> src:int -> len:int -> unit
-  (** [write d r ~at ~src ~len] writes the [len] bytes of host memory at [src]
-      at [at] in [r]. It raises as {!read}. *)
-
-  val pages :
-    t ->
-    region ->
-    (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
-    option
-  (** [pages d r] is [r]'s bytes as host memory, or [None] if [d] maps none. The
-      mapping is [r]'s memory: {!read} and {!write} see writes through it, and
-      it sees theirs. For [r] that [d] holds for reading ({!Buffer.val-access}),
-      no write through the mapping reaches [r].
-
-      A device other than the host maps the pages where its driver maps host
-      memory ({!Driver.map_host}), and on Linux every such driver maps it for
-      writing. NVIDIA's kernel driver, for CUDA and NV, pins the pages for
-      writing for as long as they are mapped (its os-mlock.c), which the kernel
-      refuses for a shared mapping of a file (mm/gup.c,
-      [writable_file_mapping_allowed]): those devices map no file that [d] holds
-      for writing, and its copies go through the staging memory. AMD's KFD
-      faults the pages in for writing, and refuses pages mapped read-only
-      (amdgpu_hmm.c), so a region [d] holds for reading is mapped as the
-      process's own copy, as a private mapping of a file is.
-
-      [None] is a fact of [r]: this library asks once per memory, at its first
-      borrow that answers, and keeps the answer. A failure that may pass, of the
-      memory alone, such as too many open files, raises [Sys_error], which loses
-      nothing: the borrow raises it, and the next asks again. {!Fault} loses
-      [d]. *)
-
-  val prefetch : t -> region -> at:int -> len:int -> unit
-  (** [prefetch d r ~at ~len] asks [d] to read the [len] bytes at [at] in [r]
-      ahead, before a device other than the host reaches them through {!pages}.
-      It is a hint: it raises nothing. *)
-
-  val stop : t -> unit
-  (** [stop d] ends [d] once it is lost or closed. *)
-end
+module type Io = Rig_edge.Io
+(** The type for io devices' libraries. *)
 
 (** {1:opening Opening} *)
 
@@ -1296,7 +1019,7 @@ val open_ :
     lock, so one name on one machine has one live device; its [Error] is the
     result, and an exception it raises is raised again, the name left unopened.
     Opens of other names go on meanwhile. A closed or lost device's name opens
-    again once its driver's {!Driver.stop} returned.
+    again once its driver's {!Rig_edge.Driver.stop} returned.
 
     The result is [Error why] if the name's device is lost and its stop has not
     returned, if the process failed ({!fail}), if [machine] is another machine
@@ -1305,8 +1028,9 @@ val open_ :
 
     Raises [Invalid_argument] if the open device of that name is another
     driver's, [machine] is another machine whose host was never opened
-    ({!open_host}), or the driver's {!Driver.edge} is [0n] or its state's first
-    member is [NULL]. *)
+    ({!open_host}), or the driver's facts break the contract: their [edge] is
+    [0n] or its state's first member is [NULL], or a queue named ["COPY:i"]
+    runs no [Copy] ({!Rig_edge.facts}). *)
 
 val open_host :
   (module Driver with type t = 'a) ->

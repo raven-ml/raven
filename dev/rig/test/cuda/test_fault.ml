@@ -9,7 +9,7 @@ module S = Rig_cuda_support
 module H = Rig_gpu_support.Host
 module B = Rig.Buffer
 
-let host r = Option.get (C.host r)
+let host r = Option.get (C.locate r).host
 let still = Rig_gpu_support.still
 
 (* Raises the fault [sleep] reports, waiting at most 10 seconds of the host's
@@ -50,9 +50,9 @@ let faults () =
             ~prefix:"the GPU's work failed: CUDA_ERROR_ILLEGAL_ADDRESS" why
       | _ -> false)
     (fun () -> fault g (Rig.Profile.now ()));
-  sticky "alloc" (fun () -> ignore (C.alloc g `Device 64));
+  sticky "alloc" (fun () -> ignore (C.alloc g Device 64));
   sticky "image" (fun () -> ignore (C.image g (S.fixture "kernels.ptx")));
-  equal int ~msg:"the word after the fault" 0 (H.get64 (host (C.word g)));
+  equal int ~msg:"the word after the fault" 0 (H.get64 (host (C.facts g).word));
   let v = S.submit t [||] in
   equal int ~msg:"value 3" 3 v;
   (match S.wait t v with

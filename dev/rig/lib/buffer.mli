@@ -9,7 +9,7 @@
 open Def
 
 type t = buffer
-type memory = Device | Pinned | Mapped
+type memory = Rig_edge.memory = Device | Pinned | Mapped
 type access = Def.access = Read | Read_write
 
 val is_live : t -> bool

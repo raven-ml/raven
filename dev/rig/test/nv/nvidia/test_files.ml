@@ -54,7 +54,7 @@ let taken () =
   | Error why -> failwith why
   | Ok g ->
       let n = S.files () - base in
-      Rig_nv.stop g;
+      Rig_nv.stop g ~fault:None;
       n
 
 (* Opens at the limits of 0, 1, 2, … more files until one succeeds, each failed
@@ -70,14 +70,14 @@ let limited () =
       match S.with_limit limit open_ with
       | Ok g ->
           let n = S.files () - base in
-          Rig_nv.stop g;
+          Rig_nv.stop g ~fault:None;
           (List.rev failures, Some n)
       | Error why ->
           let after = S.files () in
           let again =
             match S.with_limit limit open_ with
             | Ok g ->
-                Rig_nv.stop g;
+                Rig_nv.stop g ~fault:None;
                 -1
             | Error _ -> S.files ()
           in
@@ -113,9 +113,9 @@ let taken_page = (1 lsl 40) - page
    results, as [Ok ()] or the error. *)
 let reserved () =
   if not (S.occupy taken_page page) then failwith "the page was mapped already";
-  let first = Result.map Rig_nv.stop (open_ ()) in
+  let first = Result.map (Rig_nv.stop ~fault:None) (open_ ()) in
   S.vacate taken_page page;
-  let second = Result.map Rig_nv.stop (open_ ()) in
+  let second = Result.map (Rig_nv.stop ~fault:None) (open_ ()) in
   (first, second)
 
 let addresses () =

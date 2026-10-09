@@ -45,6 +45,19 @@ val host : Rig_nv.region -> int
 val address : Rig_nv.region -> int
 (** [address r] is [r]'s GPU address. *)
 
+val word : Rig_nv.t -> Rig_nv.region
+(** [word g] is [g]'s timeline word. *)
+
+val mapped : Rig_nv.t -> int -> Rig_nv.region
+(** [mapped g n] is [n] bytes of [g]'s [Mapped] memory, or of its [Pinned]
+    memory where it has no [Mapped] memory left, as rig allocates. *)
+
+(** {1:gpu_record The GPU's record} *)
+
+val gpu : Rig_nv.t -> Rig_nv_abi.Gpu.t
+(** [gpu g] is [g]'s capability record. Fails the test if [g] declares
+    another. *)
+
 val pattern : int -> int -> int -> unit
 (** [pattern a n seed] writes the [n] bytes at [a] with the pattern of [seed]:
     byte [i] a hash of [i] and [seed], so that a byte shifted, repeated or left
@@ -71,7 +84,7 @@ val kernels : ?dir:string -> ?file:string -> t -> kernels
 
 val image : Rig_nv.t -> string -> Rig_nv.image * Rig_nv.region * string
 (** [image g bin] is the cubin [bin] loaded on [g] by the driver alone: the
-    image, its new [`Device] code region and the bytes to write there. *)
+    image, its new [Device] code region and the bytes to write there. *)
 
 type launches
 (** The type for driver memory that holds launches: their descriptors, constant

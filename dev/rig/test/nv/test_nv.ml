@@ -275,10 +275,10 @@ let refused_makes () =
         equal int ~msg:(at ^ ": memory") 0 (List.length f.memory);
         equal (list int) ~msg:(at ^ ": registrations") [] f.registered
     | Ok g ->
-        N.stop g;
+        N.stop g ~fault:None;
         equal (list (pair int int)) ~msg:(at ^ ": RM objects") [] f.objects;
         equal (list int) ~msg:(at ^ ": memory")
-          [ address (N.word g) ]
+          [ address (S.word g) ]
           (List.map (fun (a, _, _) -> a) f.memory);
         equal (list int) ~msg:(at ^ ": registrations") [] f.registered);
     equal (list string) ~msg:(at ^ ": given back wrongly") [] f.wrong;
@@ -294,17 +294,17 @@ let image_asks_nothing () =
   let bin = S.fixture "kernels_sm89.cubin" in
   let n, lay =
     match require_ok (N.image g bin) with
-    | `Place (n, lay) -> (n, lay)
-    | `Loaded _ -> fail "an image with nothing to place"
+    | Place (n, lay) -> (n, lay)
+    | Loaded _ -> fail "an image with nothing to place"
   in
-  let r = require_some (N.alloc g `Device n) in
+  let r = require_some (N.alloc g Device n) in
   let calls = f.calls and memory = List.length f.memory in
   let i, _ = lay r in
   equal int ~msg:"the path's calls" calls f.calls;
   equal int ~msg:"the path's memory" memory (List.length f.memory);
   N.unload g i;
   N.free g r;
-  N.stop g
+  N.stop g ~fault:None
 
 (* A device stopped with an image loaded: stop ends the image, and the code
    region is the caller's to free, after which the device keeps only its
@@ -314,15 +314,15 @@ let stop_with_image () =
   let g = require_ok (N.make (Fake.path f)) in
   let n, lay =
     match require_ok (N.image g (S.fixture "kernels_sm89.cubin")) with
-    | `Place (n, lay) -> (n, lay)
-    | `Loaded _ -> fail "an image with nothing to place"
+    | Place (n, lay) -> (n, lay)
+    | Loaded _ -> fail "an image with nothing to place"
   in
-  let r = require_some (N.alloc g `Device n) in
+  let r = require_some (N.alloc g Device n) in
   ignore (lay r);
-  N.stop g;
+  N.stop g ~fault:None;
   N.free g r;
   equal (list int) ~msg:"memory"
-    [ address (N.word g) ]
+    [ address (S.word g) ]
     (List.map (fun (a, _, _) -> a) f.memory);
   equal (list string) ~msg:"given back wrongly" [] f.wrong
 
@@ -334,13 +334,13 @@ let address_limit () =
   let g = require_ok (N.make (Fake.path f)) in
   let g' = require_ok (N.make (Fake.path f')) in
   let limit = 1 lsl 40 and n = 2 * H.page in
-  let r' = require_some (N.alloc g' `Device n) in
+  let r' = require_some (N.alloc g' Device n) in
   let held = List.length f.memory in
   let calls =
     [
-      ("`Device", "Rig_nv.alloc", fun () -> N.alloc g `Device n);
-      ("`Pinned", "Rig_nv.alloc", fun () -> N.alloc g `Pinned n);
-      ("`Mapped", "Rig_nv.alloc", fun () -> N.alloc g `Mapped n);
+      ("Device", "Rig_nv.alloc", fun () -> N.alloc g Device n);
+      ("Pinned", "Rig_nv.alloc", fun () -> N.alloc g Pinned n);
+      ("Mapped", "Rig_nv.alloc", fun () -> N.alloc g Mapped n);
       ("map_host", "Rig_nv.map_host", fun () -> N.map_host g 0 n);
       ("map_peer", "Rig_nv.map_peer", fun () -> N.map_peer g g' r');
     ]
@@ -364,8 +364,8 @@ let address_limit () =
   f.at <- None;
   equal (list string) ~msg:"given back wrongly" [] f.wrong;
   N.free g' r';
-  N.stop g;
-  N.stop g'
+  N.stop g ~fault:None;
+  N.stop g' ~fault:None
 
 (* A device whose channels the RM stopped on a fault, and kept: nothing of it
    runs, so stop raises the word, though its memory stays the path's. *)
@@ -373,7 +373,7 @@ let faulted_stop () =
   let f = Fake.make 0 in
   let g = require_ok (N.make (Fake.path f)) in
   ignore (submit (handed g) [||]);
-  let word = address (N.word g) in
+  let word = address (S.word g) in
   let fault (a, host, bytes) =
     match host with
     | Some h when bytes = H.page && a <> word ->
@@ -384,24 +384,24 @@ let faulted_stop () =
   in
   List.iter fault f.memory;
   f.frees <- false;
-  N.stop g;
+  N.stop g ~fault:None;
   equal int ~msg:"the word" 1 (N.signaled g);
   greater int ~msg:"memories the path still gives" ~than:1
     (List.length f.memory)
 
-(* Mapped memory is the BAR's while it has room, then host memory. *)
-let mapped_fallback () =
+(* Mapped memory is the BAR's while it has room, then None: no other memory
+   is taken. *)
+let mapped_full () =
   let f = Fake.make 0 in
   let g = require_ok (N.make (Fake.path f)) in
-  let r = require_some ~msg:"with room" (N.alloc g `Mapped 64) in
+  let r = require_some ~msg:"with room" (N.alloc g Mapped 64) in
   equal (option string) ~msg:"with room" (Some "`Bar") (List.nth_opt f.kinds 0);
   f.bar_room <- false;
-  let r' = require_some ~msg:"without room" (N.alloc g `Mapped 64) in
-  equal (option string) ~msg:"without room" (Some "`System")
-    (List.nth_opt f.kinds 0);
-  equal bool ~msg:"host addresses it" true (Option.is_some (N.host r'));
-  List.iter (N.free g) [ r; r' ];
-  N.stop g
+  let held = List.length f.memory in
+  is_none ~msg:"without room" (N.alloc g Mapped 64);
+  equal int ~msg:"the path's memory" held (List.length f.memory);
+  N.free g r;
+  N.stop g ~fault:None
 
 (* Compiled code links local memory through the capability, whose [local]
    answers a failure as [Error]. *)
@@ -409,21 +409,19 @@ let failing_local () =
   let f = Fake.make 0 in
   let g = require_ok (N.make (Fake.path f)) in
   f.faults <- true;
-  ignore (require_error ((N.capability g).local 1024) : string);
+  ignore (require_error ((S.gpu g).local 1024) : string);
   f.faults <- false;
-  N.stop g
+  N.stop g ~fault:None
 
 (* A path whose frees raise Fault, as one whose GPU is lost: free and stop still
    return, as rig calls them after a loss. *)
 let failing_frees () =
   let f = Fake.make 0 in
   let g = require_ok (N.make (Fake.path f)) in
-  let r = require_some (N.alloc g `Pinned 64) in
+  let r = require_some (N.alloc g Pinned 64) in
   f.faults <- true;
   N.free g r;
-  raises_match ~msg:"a second free" (Exn.invalid_arg ~substring:"was freed")
-    (fun () -> N.free g r);
-  N.stop g
+  N.stop g ~fault:None
 
 (* A device whose channels the RM keeps at stop: the path's [`Stopped] says none
    of its work runs, so the word reaches the last value and the memory goes
@@ -436,7 +434,7 @@ let path_stops () =
       ignore (submit (handed g) [||]);
       f.frees <- false;
       f.stops <- answer;
-      N.stop g;
+      N.stop g ~fault:None;
       let stopped = answer = `Stopped in
       let what = if stopped then "`Stopped" else "`Unknown" in
       equal int ~msg:(what ^ ": the word")
@@ -445,7 +443,7 @@ let path_stops () =
       equal bool
         ~msg:(what ^ ": only the word's memory left")
         stopped
-        (List.map (fun (a, _, _) -> a) f.memory = [ address (N.word g) ]))
+        (List.map (fun (a, _, _) -> a) f.memory = [ address (S.word g) ]))
     [ `Stopped; `Unknown ]
 
 (* A fault the path reports surfaces from sleep while a value is outstanding. *)
@@ -459,7 +457,7 @@ let path_check () =
   | exception N.Fault why ->
       contains ~msg:"the report" ~sub:"the GPU fell off the bus" why);
   f.report <- None;
-  N.stop g
+  N.stop g ~fault:None
 
 let paths =
   group ~timeout:10. "paths"
@@ -489,8 +487,7 @@ let paths =
       test "local memory answers the path's Fault as Error" failing_local;
       test "stop raises the word of channels the RM stopped on a fault"
         faulted_stop;
-      test "Mapped memory falls back to host memory once the BAR is full"
-        mapped_fallback;
+      test "Mapped memory is None once the BAR is full" mapped_full;
       test
         "a device stopped with an image keeps only its word once its code is \
          freed"
@@ -505,31 +502,41 @@ let digits s = String.for_all (function '0' .. '9' -> true | _ -> false) s
 
 let facts () =
   S.with_driver @@ fun g ->
-  let arch = N.arch g in
-  starts_with ~affix:"sm_" arch;
+  let f = N.facts g in
+  starts_with ~affix:"sm_" f.arch;
   equal bool
-    ~msg:(strf "%s ends in digits" arch)
+    ~msg:(strf "%s ends in digits" f.arch)
     true
-    (String.length arch > 3
-    && digits (String.sub arch 3 (String.length arch - 3)));
-  greater int ~msg:"budget" ~than:0 (N.budget g);
-  equal (list string) [ "COMPUTE:0"; "COPY:0" ] (N.queues g);
-  equal bool ~msg:"completion is the store" true (N.completion g = `Store);
-  equal (list bool) [ true; false; true ]
-    (List.map (N.waits_on g) [ `Store; `Object; `Host ]);
-  equal bool ~msg:"submit returns" true (N.blocks g = `Returns);
-  let w = N.word g in
+    (String.length f.arch > 3
+    && digits (String.sub f.arch 3 (String.length f.arch - 3)));
+  greater int ~msg:"budget" ~than:0 f.budget;
+  equal
+    (list (pair string (list string)))
+    [ ("COMPUTE:0", [ "Words" ]); ("COPY:0", [ "Words"; "Copy" ]) ]
+    (List.map
+       (fun (q : Rig_edge.queue) ->
+         ( q.name,
+           List.map
+             (function
+               | Rig_edge.Words -> "Words" | Fill -> "Fill" | Copy -> "Copy")
+             q.runs ))
+       f.queues);
+  equal bool ~msg:"completion is the store" true (f.completion = Store);
+  equal (list bool) ~msg:"waits on stores, hosts, objects"
+    [ true; true; false ]
+    [ f.waits.stores; f.waits.hosts; f.waits.objects ];
+  equal int ~msg:"most waits" 256 f.waits.most;
+  equal bool ~msg:"may block" false f.may_block;
+  let w = N.locate f.word in
   equal nativeint ~msg:"the word's handle is its address"
-    (Nativeint.of_int (address w))
-    (N.handle w);
-  equal int ~msg:"the word starts at 0" 0 (H.get64 (host w));
+    (Nativeint.of_int (Option.get w.address))
+    w.handle;
+  equal int ~msg:"the word starts at 0" 0 (H.get64 (Option.get w.host));
   equal int ~msg:"signaled reads the word" 0 (N.signaled g)
 
 let capability () =
   S.with_driver @@ fun g ->
-  let c = N.capability g in
-  equal bool ~msg:"the key is the ABI's" true
-    (Option.is_some (Type.Id.provably_equal N.capability_key A.Gpu.key));
+  let c = S.gpu g in
   mem int ~msg:"compute class" c.compute_class [ 0xc7c0; 0xc9c0; 0xcec0 ];
   List.iter
     (fun (what, n) -> greater int ~msg:what ~than:0 n)
@@ -552,11 +559,11 @@ let kinds_of_memory () =
       let r = alloc g kind 4096 in
       equal bool
         ~msg:(name ^ ": the host addresses it")
-        (kind <> `Device)
-        (Option.is_some (N.host r));
+        (kind <> Device)
+        (Option.is_some (N.locate r).host);
       less int ~msg:(name ^ ": its address") ~than:(1 lsl 40) (address r);
       N.free g r)
-    [ ("Device", `Device); ("Pinned", `Pinned); ("Mapped", `Mapped) ]
+    [ ("Device", Device); ("Pinned", Pinned); ("Mapped", Mapped) ]
 
 let facts =
   group ~timeout:60. "facts"
@@ -628,8 +635,8 @@ let mapped () =
   let k = S.kernels t in
   let l = S.launches t.g in
   let n = 4096 in
-  let m = alloc t.g `Mapped n in
-  let p = alloc t.g `Pinned n in
+  let m = alloc t.g Mapped n in
+  let p = alloc t.g Pinned n in
   let across ~dst ~src = S.run t [| S.words (copy_after l k ~dst ~src n) |] in
   for round = 1 to 100 do
     S.pattern (host m) n (2 * round);
@@ -652,9 +659,10 @@ let mapped () =
 let refusal () =
   S.with_driver @@ fun g ->
   for _ = 1 to 100 do
-    is_none ~msg:"twice the budget" (N.alloc g `Device (2 * N.budget g))
+    is_none ~msg:"twice the budget"
+      (N.alloc g Device (2 * (N.facts g).budget))
   done;
-  N.free g (require_some ~msg:"64 MiB after" (N.alloc g `Device (64 lsl 20)))
+  N.free g (require_some ~msg:"64 MiB after" (N.alloc g Device (64 lsl 20)))
 
 (* Host memory no page backs is refused: map_host answers None. *)
 let refused_host () =
@@ -686,7 +694,7 @@ let launch () =
   let k = S.kernels t in
   let l = S.launches t.g in
   let n = 1000 in
-  let out = alloc t.g `Pinned (4 * n) in
+  let out = alloc t.g Pinned (4 * n) in
   S.run t
     [| S.words (S.launch l k "double_index" ~blocks:4 [ address out; n ]) |];
   equal (list int)
@@ -747,34 +755,8 @@ let compute_order () =
 let misuse () =
   S.with_driver @@ fun g ->
   let raises name f = raises_match ~msg:name Exn.invalid_arg f in
-  let r = alloc g `Device 64 in
-  raises "alloc of 0 bytes" (fun () -> N.alloc g `Device 0);
-  raises "map_host of 0 bytes" (fun () -> N.map_host g (host (N.word g)) 0);
-  raises "map_peer of one device" (fun () -> N.map_peer g g r);
-  N.free g r;
-  raises "free twice" (fun () -> N.free g r);
-  let a = H.pages H.page in
-  let m = require_some (N.map_host g a 64) in
-  N.free g m;
-  raises "free of a mapping twice" (fun () -> N.free g m);
-  H.free_pages a H.page
-
-(* A device's region, mapping and image, used on the device opened after it
-   stopped. *)
-let another_device () =
-  let a = S.driver () in
-  let r = alloc a `Pinned 64 in
-  let p = H.pages H.page in
-  let m = require_some (N.map_host a p 64) in
-  let i, code, _ = S.image a (S.fixture "kernels_sm89.cubin") in
-  S.stop_driver a;
-  S.with_driver @@ fun b ->
-  let raises name f = raises_match ~msg:name Exn.invalid_arg f in
-  raises "free of its region" (fun () -> N.free b r);
-  raises "free of its mapping" (fun () -> N.free b m);
-  raises "unload of its image" (fun () -> N.unload b i);
-  List.iter (N.free a) [ r; m; code ];
-  H.free_pages p H.page
+  raises "alloc of 0 bytes" (fun () -> N.alloc g Device 0);
+  raises "map_host of 0 bytes" (fun () -> N.map_host g (host (S.word g)) 0)
 
 (* A wait on another device's word in host memory wherever the process placed
    it, such as above 2^40, the widest address a channel's semaphore names: a
@@ -784,11 +766,11 @@ let high_word () =
   let module P = Rig_support.Polled in
   let pd, p = P.open_ "POLLED:high" in
   Fun.protect ~finally:(fun () -> Rig.close pd) @@ fun () ->
-  let word = require_some (P.host (P.word p)) in
+  let word = require_some (P.locate (P.facts p).word).host in
   at_least int ~msg:"the word's host address" ~than:(1 lsl 40) word;
   let empty = Rig.Submission.make ~reads:0 ~writes:0 pd [||] in
   let point = Rig.submit empty ~reads:[||] ~writes:[||] ~waits:[||] in
-  let b = alloc t.g `Pinned 16 in
+  let b = alloc t.g Pinned 16 in
   H.set64 (host b) 0;
   let l = S.launches t.g in
   let s =
@@ -807,9 +789,10 @@ let high_word () =
   S.free_launches l;
   N.free t.g b
 
-(* Parts NV's channels do not run: fills, a copy on COMPUTE:0, a ring entry
-   cut in half, more ring words than a segment holds, and more parts than the
-   rings hold are refused, and no value is assigned. *)
+(* Parts NV's channels do not run: fills and a copy on COMPUTE:0 are refused
+   when the submission is made, as the channels' [runs] list neither; a ring
+   entry cut in half, more ring words than a segment holds, and more parts than
+   the rings hold when it is submitted. No value is assigned. *)
 let refused () =
   S.with_ @@ fun t ->
   let fill =
@@ -826,9 +809,14 @@ let refused () =
       (Exn.invalid_arg ~substring:"never fit")
       (fun () -> S.submit t ps)
   in
-  refuses "a fill" [| fill |];
-  refuses "a copy on COMPUTE:0"
-    [| { (S.copy ~dst:b a) with queue = "COMPUTE:0" } |];
+  let unrun msg kind p =
+    raises_match ~msg
+      (Exn.invalid_arg ~substring:("runs no " ^ kind))
+      (fun () -> Rig.Submission.make ~reads:0 ~writes:0 t.d [| p |])
+  in
+  unrun "a fill" "fills" fill;
+  unrun "a copy on COMPUTE:0" "copies"
+    { (S.copy ~dst:b a) with queue = "COMPUTE:0" };
   refuses "one ring word" [| S.words [| 0 |] |];
   refuses "32,768 ring words" [| S.words (Array.make 32_768 0) |];
   refuses "65,536 parts" (Array.make 65_536 (S.words [||]));
@@ -840,8 +828,7 @@ let work =
       test "a kernel scheduled from a ring entry computes" launch;
       test "a part runs after the parts of the other channel it names" joins;
       test "parts on COMPUTE:0 run in array order" compute_order;
-      test "misuse raises" misuse;
-      test "a region, mapping or image of another device raises" another_device;
+      test "an allocation or mapping of no bytes raises" misuse;
       test "a wait holds work on another device's host word above 2^40"
         high_word;
       test "a submission of work the device does not run raises" refused;
@@ -942,7 +929,7 @@ let carry_tear () =
 let join_carry () =
   S.with_ @@ fun t ->
   let l = S.launches t.g in
-  let scratch = alloc t.g `Pinned 8 in
+  let scratch = alloc t.g Pinned 8 in
   let segment = release l (address scratch) 1 in
   let h, ha = S.shared t 16 in
   let a = B.create t.d 16 in
@@ -977,7 +964,7 @@ let local () =
   let k = S.kernels t in
   let l = S.launches t.g in
   let n = 1024 in
-  let out = alloc t.g `Pinned (4 * n) in
+  let out = alloc t.g Pinned (4 * n) in
   let compute () =
     H.write (host out) (String.make (4 * n) '\000');
     S.run t [| S.words (S.launch l k "stack" ~blocks:4 [ address out; n ]) |];
@@ -985,7 +972,7 @@ let local () =
     equal (list int) (List.init n stacked) (words32 (host out) n)
   in
   compute ();
-  let { A.Gpu.local; _ } = N.capability t.g in
+  let { A.Gpu.local; _ } = S.gpu t.g in
   equal (result unit string) ~msg:"a smaller one" (Ok ()) (local 1024);
   compute ();
   S.free_launches l;
@@ -998,9 +985,9 @@ let growth () =
   let k = S.kernels t in
   let l = S.launches t.g in
   let n = 1024 in
-  let flag = alloc t.g `Pinned 8 in
-  let first = alloc t.g `Pinned (4 * n) in
-  let next = alloc t.g `Pinned (4 * n) in
+  let flag = alloc t.g Pinned 8 in
+  let first = alloc t.g Pinned (4 * n) in
+  let next = alloc t.g Pinned (4 * n) in
   H.set64 (host flag) 0;
   releasing flag 1 (fun () ->
       let held =
@@ -1008,7 +995,7 @@ let growth () =
           [ address flag; 10 * second; address first; n ]
       in
       ignore (S.submit t [| S.words held |]);
-      let { A.Gpu.local; _ } = N.capability t.g in
+      let { A.Gpu.local; _ } = S.gpu t.g in
       equal (result unit string) ~msg:"grown" (Ok ()) (local 4096);
       let v =
         S.submit t
@@ -1042,11 +1029,11 @@ let images () =
   let size = A.Cubin.size (require_ok (A.Cubin.of_string bin)) in
   let n, lay =
     match require_ok (N.image g bin) with
-    | `Place (n, lay) -> (n, lay)
-    | `Loaded _ -> fail "an image with nothing to place"
+    | Place (n, lay) -> (n, lay)
+    | Loaded _ -> fail "an image with nothing to place"
   in
   equal int ~msg:"the region's bytes" size n;
-  let r = alloc g `Device n in
+  let r = alloc g Device n in
   let i, bytes = lay r in
   equal int ~msg:"the image's bytes" size (String.length bytes);
   equal bool ~msg:"double_index" true
@@ -1054,9 +1041,6 @@ let images () =
   equal (option int) ~msg:"a missing kernel" None (N.entry i "missing");
   is_error ~msg:"not a cubin" (N.image g "not a cubin");
   N.unload g i;
-  raises_match ~msg:"entry after unload" Exn.invalid_arg (fun () ->
-      N.entry i "empty");
-  raises_match ~msg:"unload twice" Exn.invalid_arg (fun () -> N.unload g i);
   N.free g r
 
 (* A cubin loads where another one's code ran and was unloaded: its launch runs
@@ -1067,11 +1051,11 @@ let reloaded () =
   let k = S.kernels t in
   let l = S.launches t.g in
   let n = 1000 in
-  let out = alloc t.g `Pinned (4 * n) in
+  let out = alloc t.g Pinned (4 * n) in
   let place file =
     let bin = S.fixture file in
     let i, code, bytes = S.image t.g bin in
-    let staging = alloc t.g `Mapped (String.length bytes) in
+    let staging = alloc t.g Mapped (String.length bytes) in
     H.write (host staging) bytes;
     S.run t
       [|
@@ -1121,7 +1105,7 @@ let images =
 let long_work () =
   S.with_ @@ fun t ->
   let l = S.launches t.g in
-  let w = alloc t.g `Pinned 8 in
+  let w = alloc t.g Pinned 8 in
   H.set64 (host w) 0;
   releasing w 1 (fun () ->
       let v = S.submit t [| S.words (acquire l (address w) 1) |] in
@@ -1158,7 +1142,7 @@ let sleep_aside () =
 
 let stop_idle () =
   S.with_ @@ fun t ->
-  let r = alloc t.g `Device 64 in
+  let r = alloc t.g Device 64 in
   let a = H.pages H.page in
   let m = require_some (N.map_host t.g a 64) in
   S.run t [||];
@@ -1167,7 +1151,7 @@ let stop_idle () =
   N.free t.g r;
   N.free t.g m;
   H.free_pages a H.page;
-  let { A.Gpu.local; _ } = N.capability t.g in
+  let { A.Gpu.local; _ } = S.gpu t.g in
   is_error ~msg:"local after stop" (local 1024)
 
 (* COMPUTE:0 waits on a host word nobody writes, a release queued behind the
@@ -1177,8 +1161,8 @@ let stop_waiting () =
   let g = S.driver () in
   let t = { S.d = handed g; g } in
   let l = S.launches t.g in
-  let w = alloc t.g `Pinned 8 in
-  let marked = alloc t.g `Pinned 8 in
+  let w = alloc t.g Pinned 8 in
+  let marked = alloc t.g Pinned 8 in
   H.set64 (host w) 0;
   H.set64 (host marked) 0;
   let ws =
@@ -1203,8 +1187,8 @@ let stop_running () =
   let t = { S.d = handed g; g } in
   let k = S.kernels t in
   let l = S.launches t.g in
-  let flag = alloc t.g `Pinned 8 in
-  let marked = alloc t.g `Pinned 8 in
+  let flag = alloc t.g Pinned 8 in
+  let marked = alloc t.g Pinned 8 in
   H.set64 (host flag) 0;
   H.set64 (host marked) 0;
   releasing flag 1 (fun () ->
@@ -1285,9 +1269,9 @@ let two_gpus () =
     skip ~reason:"the machine has fewer than two NVIDIA GPUs" ();
   S.with_driver @@ fun a ->
   let b = require_ok (Rig_nv_nvidia.open_ 1) in
-  Fun.protect ~finally:(fun () -> N.stop b) @@ fun () ->
-  let h = alloc b `Pinned 64 in
-  let d = alloc b `Device 64 in
+  Fun.protect ~finally:(fun () -> N.stop b ~fault:None) @@ fun () ->
+  let h = alloc b Pinned 64 in
+  let d = alloc b Device 64 in
   let ph = require_some ~msg:"host memory maps" (N.map_peer a b h) in
   equal bool ~msg:"Device memory maps iff peer" (N.peer a b)
     (match N.map_peer a b d with
@@ -1367,7 +1351,7 @@ module Registry = struct
     {
       t;
       base = H.pages (arena * H.page);
-      scratch = Option.get (N.alloc t.g `Pinned (arena * H.page));
+      scratch = Option.get (N.alloc t.g Pinned (arena * H.page));
       kernels = S.kernels t;
       launches = S.launches t.g;
       lock = Mutex.create ();
@@ -1667,59 +1651,6 @@ let order_commands =
       Order.run Order.run_sys;
   ]
 
-(* Ending from two domains: whatever the order, an allocation's first [free], a
-   mapping's first [free] and an image's first [unload] return, and every later
-   one raises. *)
-
-type ended = { mutable live : bool }
-
-let end_model m =
-  if not m.live then invalid_arg "ended";
-  m.live <- false
-
-let ends_once ~make ~finish ~release name =
-  let v =
-    abstract name ~release:(fun x ->
-        try release x with Invalid_argument _ -> ())
-  in
-  [
-    command "make" (Gen.unit @-> makes v) (fun () -> { live = true }) make;
-    command "end" (v ^-> returns unit) end_model finish;
-  ]
-
-(* Each value carries the shared device: the fixture is read on the test's
-   domain only. *)
-let allocation_commands =
-  ends_once "a"
-    ~make:(fun () ->
-      let g = (shared ()).g in
-      (g, Option.get (N.alloc g `Device 64)))
-    ~finish:(fun (g, r) -> N.free g r)
-    ~release:(fun (g, r) -> N.free g r)
-
-(* A mapping of its own page, freed once the run ends. *)
-let mapping_commands =
-  ends_once "m"
-    ~make:(fun () ->
-      let g = (shared ()).g and p = H.pages H.page in
-      (g, p, Option.get (N.map_host g p 64)))
-    ~finish:(fun (g, _, r) -> N.free g r)
-    ~release:(fun (g, p, r) ->
-      Fun.protect
-        ~finally:(fun () -> H.free_pages p H.page)
-        (fun () -> N.free g r))
-
-(* An image over a code region of its own, freed once the run ends. *)
-let image_commands =
-  ends_once "i"
-    ~make:(fun () ->
-      let g = (shared ()).g in
-      let i, r, _ = S.image g (S.fixture "kernels_sm89.cubin") in
-      (g, i, r))
-    ~finish:(fun (g, i, _) -> N.unload g i)
-    ~release:(fun (g, i, r) ->
-      Fun.protect ~finally:(fun () -> N.free g r) (fun () -> N.unload g i))
-
 (* Local memory handed over from two domains: one grows the kernels' local
    memory while the other submits through rig, and the word moves on by small
    steps. A local memory the device replaced goes back to the path only once
@@ -1742,7 +1673,7 @@ module Handover = struct
     mutable kib : int; (* the local memory a thread has, in KiB *)
   }
 
-  let word h = host (N.word h.g)
+  let word h = host (S.word h.g)
   let names = Atomic.make 0
 
   let start () =
@@ -1791,7 +1722,7 @@ module Handover = struct
     Fun.protect ~finally:(fun () -> hand h) @@ fun () ->
     Mutex.protect h.grows @@ fun () ->
     h.kib <- h.kib + 1;
-    match (N.capability h.g).local (h.kib * 1024) with
+    match (S.gpu h.g).local (h.kib * 1024) with
     | Error e -> failf "local: %s" e
     | Ok () -> (
         let last = Rig.submitted h.d in
@@ -1848,12 +1779,6 @@ let stateful =
       stateful ~count:100 ~steps:20
         "values complete in order and the word never moves backwards (sampled)"
         order_commands;
-      stateful ~count:30 ~domains:2
-        "an allocation freed from two domains is freed once" allocation_commands;
-      stateful ~count:30 ~domains:2
-        "a mapping freed from two domains is freed once" mapping_commands;
-      stateful ~count:30 ~domains:2
-        "an image unloaded from two domains is unloaded once" image_commands;
       stateful ~count:30 ~steps:10 ~domains:2
         "local memory goes back only once the values that could use it ran"
         handover_commands;
@@ -1880,14 +1805,14 @@ let hangs () =
     | exception N.Fault why -> contains ~msg:"the report" ~sub:"50 ms" why
   in
   sleeps 10;
-  N.stop g
+  N.stop g ~fault:None
 
 let idle () =
   let g = bounded (Some 50) in
   N.sleep g ~seen:0 ~still_ms:150;
   ignore (submit (handed g) [||]);
   N.sleep g ~seen:0 ~still_ms:1;
-  N.stop g
+  N.stop g ~fault:None
 
 let moving () =
   let g = bounded (Some 50) in
@@ -1897,16 +1822,16 @@ let moving () =
   done;
   for v = 1 to 8 do
     N.sleep g ~seen:(v - 1) ~still_ms:20;
-    H.set64 (host (N.word g)) v
+    H.set64 (host (S.word g)) v
   done;
-  N.stop g
+  N.stop g ~fault:None
 
 let unbounded () =
   let g = bounded None in
   ignore (submit (handed g) [||]);
   N.sleep g ~seen:0 ~still_ms:150;
   N.sleep g ~seen:0 ~still_ms:150;
-  N.stop g
+  N.stop g ~fault:None
 
 let bounds () =
   List.iter

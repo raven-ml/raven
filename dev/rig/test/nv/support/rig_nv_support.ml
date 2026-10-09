@@ -26,9 +26,23 @@ external pattern : int -> int -> int -> unit = "rig_nv_test_pattern"
 external mismatch : int -> int -> int -> int = "rig_nv_test_mismatch"
 
 let host r =
-  match N.host r with Some a -> a | None -> fail "the host does not address r"
+  match (N.locate r).host with
+  | Some a -> a
+  | None -> fail "the host does not address r"
 
-let address r = Option.get (N.address r)
+let address r = Option.get (N.locate r).address
+let word g = (N.facts g).word
+
+let gpu g : A.Gpu.t =
+  let (Rig_edge.Capability (k, c)) = (N.facts g).capability in
+  match Type.Id.provably_equal k A.Gpu.key with
+  | Some Equal -> c
+  | None -> fail "the capability is no Rig_nv_abi.Gpu.t"
+
+let mapped g n =
+  match N.alloc g Mapped n with
+  | Some r -> r
+  | None -> require_some (N.alloc g Pinned n)
 
 (* Work through rig *)
 
@@ -90,9 +104,9 @@ let kernels ?dir ?(file = "kernels_sm89.cubin") t =
 let image g bin =
   match N.image g bin with
   | Error e -> failf "loading: %s" e
-  | Ok (`Loaded _) -> fail "an image with nothing to place"
-  | Ok (`Place (n, lay)) ->
-      let r = require_some (N.alloc g `Device n) in
+  | Ok (Loaded _) -> fail "an image with nothing to place"
+  | Ok (Place (n, lay)) ->
+      let r = require_some (N.alloc g Device n) in
       let i, bytes = lay r in
       (i, r, bytes)
 
@@ -108,7 +122,7 @@ let slots = 256
 type launches = { g : N.t; memory : N.region; mutable next : int }
 
 let launches g =
-  { g; memory = require_some (N.alloc g `Mapped (slots * slot)); next = 0 }
+  { g; memory = mapped g (slots * slot); next = 0 }
 
 let reset l = l.next <- 0
 let free_launches l = N.free l.g l.memory
@@ -144,7 +158,7 @@ let launch_kernel l cubin name entry ~blocks args =
     | Some k -> k
     | None -> failf "no kernel %s" name
   in
-  let cap = N.capability g in
+  let cap = gpu g in
   let launch =
     match A.Launch.make cap kernel with
     | Ok l -> l

@@ -28,6 +28,7 @@ external c_state : int -> int = "caml_rig_state" [@@noalloc]
 external c_done : int -> bool = "caml_rig_done" [@@noalloc]
 external c_why : int -> string = "caml_rig_why"
 external c_lose : int -> string -> bool -> bool = "caml_rig_lose"
+external c_faulted : int -> bool = "caml_rig_faulted" [@@noalloc]
 external c_stopped : int -> unit = "caml_rig_stopped"
 external c_upgrade : int -> bool = "caml_rig_upgrade" [@@noalloc]
 external c_await_stop : int -> int -> bool = "caml_rig_await_stop"
@@ -90,10 +91,18 @@ let same_machine d d' = Option.equal String.equal d.machine d'.machine
 
 module Cache = Hashtbl.Make (Int)
 
+(* The queue a device's copies go to: the first named "COPY:i". *)
+let copy_queue queues =
+  Array.find_map
+    (fun (q : Rig_edge.queue) ->
+      if String.starts_with ~prefix:"COPY:" q.name then Some q.name else None)
+    queues
+
+let no_waits = { Rig_edge.stores = false; hosts = false; objects = false; most = 0 }
+
 let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~completion ~waits
-    ~max_waits ~maps_host ~word ~word_region ~key ~memory_device ~fault
-    ~capability ~budget =
-  let waits_store, waits_object, waits_host = waits in
+    ~maps_host ~word ~word_region ~key ~memory_device ~fault ~capability ~budget
+    =
   {
     index;
     name;
@@ -102,12 +111,9 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~completion ~waits
     c;
     arch;
     queues;
-    copy_queue = Array.find_opt (String.starts_with ~prefix:"COPY:") queues;
+    copy_queue = copy_queue queues;
     completion;
-    waits_store;
-    waits_object;
-    waits_host;
-    max_waits;
+    waits;
     maps_host;
     word;
     word_region;
@@ -133,8 +139,7 @@ let host =
   let d =
     make_device ~index:0 ~name:"CPU" ~machine:None ~kind:Host
       ~c:(c_host_new "CPU") ~arch:(host_arch ()) ~queues:[||]
-      ~completion:Host_writes ~waits:(false, false, false) ~max_waits:0
-      ~maps_host:false ~word:0 ~word_region:None ~key:(-1) ~memory_device:false
+      ~completion:Host_writes ~waits:no_waits ~maps_host:false ~word:0 ~word_region:None ~key:(-1) ~memory_device:false
       ~fault:(fun _ -> None)
       ~capability:None ~budget:max_int
   in
@@ -226,7 +231,8 @@ let stop d =
       match d.kind with
       | Driver { m; h; _ } -> (
           let module D = (val m) in
-          try D.stop h with D.Fault _ -> ())
+          let fault = if c_faulted d.c then Some (c_why d.c) else None in
+          try D.stop h ~fault with D.Fault _ -> ())
       | Io { m; h } -> (
           let module I = (val m) in
           try I.stop h with I.Fault _ -> ())
@@ -568,9 +574,9 @@ let open_named ~fn ~machine ~name ~key ~host make =
             Printexc.raise_with_backtrace e bt)
 
 let completion_of = function
-  | `Store -> Store
-  | `Object o -> Object (Nativeint.to_int o)
-  | `Host -> Host_writes
+  | Rig_edge.Store -> Store
+  | Object o -> Object (Nativeint.to_int o)
+  | Host -> Host_writes
 
 (* Puts [d] in the tables, then publishes its C record, which spreads, failures
    and the fork handler walk for good: a device lost at birth by a failure of
@@ -582,37 +588,36 @@ let publish d =
 
 (* The device of the driver's handle [h]. Every fact is read before the C record
    is published: a fault reading one leaves nothing made. *)
-let driver_device (type a) (module D : Sigs.Driver with type t = a) (h : a)
-    ~index ~name ~machine ~memory_device =
+let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
+    (h : a) ~index ~name ~machine ~memory_device =
   let m : (a, D.region, D.image) dm = (module D) in
   let rid : D.region Type.Id.t = Type.Id.make () in
-  let word_region = D.word h in
-  let word = Option.value ~default:0 (D.host word_region) in
-  let arch = D.arch h and queues = Array.of_list (D.queues h) in
-  let completion = completion_of (D.completion h) in
-  let waits = (D.waits_on h `Store, D.waits_on h `Object, D.waits_on h `Host) in
-  let max_waits = D.max_waits h and budget = D.budget h in
-  let maps_host = D.maps_host h in
-  let blocks = D.blocks h = `May_block in
-  let capability = Capability (D.capability_key, D.capability h) in
-  let c =
-    c_new index name blocks (D.edge h) (Nativeint.of_int word)
-  in
+  let f = D.facts h in
+  List.iter
+    (fun (q : Rig_edge.queue) ->
+      if String.starts_with ~prefix:"COPY:" q.name
+         && not (List.mem Rig_edge.Copy q.runs)
+      then invalid_argf "Rig.open_: %s's queue %S runs no copies" name q.name)
+    f.queues;
+  let word = Option.value ~default:0 (D.locate f.word).host in
+  let c = c_new index name f.may_block f.edge (Nativeint.of_int word) in
   let d =
     make_device ~index ~name ~machine
       ~kind:(Driver { m; h; rid })
-      ~c ~arch ~queues ~completion ~waits ~max_waits ~maps_host ~word
-      ~word_region:(Some (Region { m; h; r = word_region; rid }))
+      ~c ~arch:f.arch ~queues:(Array.of_list f.queues)
+      ~completion:(completion_of f.completion) ~waits:f.waits
+      ~maps_host:f.maps_host ~word
+      ~word_region:(Some (Region { m; h; r = f.word; rid }))
       ~key:(Type.Id.uid D.key) ~memory_device
       ~fault:(function D.Fault why -> Some why | _ -> None)
-      ~capability:(Some capability) ~budget
+      ~capability:(Some f.capability) ~budget:f.budget
   in
   publish d;
   d
 
 let open_driver (type a) ?(memory_device = false)
-    (module D : Sigs.Driver with type t = a) ?machine ?(host = false) ~name make
-    =
+    (module D : Rig_edge.Driver with type t = a) ?machine ?(host = false) ~name
+    make =
   let fn = if memory_device then "memory_device" else "open_" in
   open_named ~fn ~machine ~name ~key:(Type.Id.uid D.key) ~host
   @@ fun ~index ~name:full ->
@@ -625,10 +630,15 @@ let open_driver (type a) ?(memory_device = false)
       | d -> Ok d
       | exception D.Fault why ->
           (* A fault at open is a loss: the handle is stopped. *)
-          (try D.stop h with D.Fault _ -> ());
-          Error (strf "%s: %s" full why))
+          (try D.stop h ~fault:(Some why) with D.Fault _ -> ());
+          Error (strf "%s: %s" full why)
+      | exception (Invalid_argument _ as e) ->
+          (* Facts that break the contract: the handle is stopped. *)
+          (try D.stop h ~fault:None with D.Fault _ -> ());
+          raise e)
 
-let open_io (type a) (module I : Sigs.Io with type t = a) ?machine ~name make =
+let open_io (type a) (module I : Rig_edge.Io with type t = a) ?machine ~name
+    make =
   let key = Type.Id.uid I.region_key in
   open_named ~fn:"open_io" ~machine ~name ~key ~host:false
   @@ fun ~index ~name:full ->
@@ -644,8 +654,8 @@ let open_io (type a) (module I : Sigs.Io with type t = a) ?machine ~name make =
           let d =
             make_device ~index ~name:full ~machine
               ~kind:(Io { m = (module I); h })
-              ~c ~arch:"" ~queues:[||] ~completion:Host_writes
-              ~waits:(false, false, false) ~max_waits:0 ~maps_host:false ~word:0
+              ~c ~arch:"" ~queues:[||] ~completion:Host_writes ~waits:no_waits
+              ~maps_host:false ~word:0
               ~word_region:None ~key ~memory_device:false
               ~fault:(function I.Fault why -> Some why | _ -> None)
               ~capability:None ~budget

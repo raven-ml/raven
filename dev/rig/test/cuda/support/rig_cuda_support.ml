@@ -145,9 +145,9 @@ let graph_launch (g : Rig_cuda_abi.graph) updates =
 let fixture ?(dir = "fixtures") f =
   In_channel.with_open_bin (Filename.concat dir f) In_channel.input_all
 
-let loaded = function
-  | `Loaded m -> m
-  | `Place _ -> failwith "a CUDA device asked to place its code"
+let loaded : (Rig_cuda.region, Rig_cuda.image) Rig_edge.code -> _ = function
+  | Loaded m -> m
+  | Place _ -> failwith "a CUDA device asked to place its code"
 
 let kernels ?dir g =
   let m =

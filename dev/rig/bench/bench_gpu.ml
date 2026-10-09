@@ -258,16 +258,16 @@ let gpu_rows (type a) (module D : Rig.Driver with type t = a) ?(sleeps = false)
     Rig.wait r.g (Rig.submitted r.g);
     r.keep ()
   in
-  let entries d = floor_new (D.edge d) 0n in
+  let entries d = floor_new (D.facts d).edge 0n in
   let alone () =
     let drv = get (open_ ()) in
     { drv; entries = entries drv; sent = ref 0; parts = 0; hold = ignore }
   in
   (* The driver naming as many regions as a replay run names. *)
   let named a =
-    let region () = Option.get (D.alloc a.drv `Device 8) in
+    let region () = Option.get (D.alloc a.drv Device 8) in
     floor_handles a.entries
-      (Array.init (slots + 2) (fun _ -> D.handle (region ())));
+      (Array.init (slots + 2) (fun _ -> (D.locate (region ())).handle));
     a
   in
   let part_alone make () =
@@ -349,10 +349,14 @@ let gpu_rows (type a) (module D : Rig.Driver with type t = a) ?(sleeps = false)
      copy queue, into its own memory [to_device] or out of it. *)
   let copy_alone ~to_device () =
     let a = alone () in
-    let queues = D.queues a.drv in
-    let q = List.find_index (String.starts_with ~prefix:"COPY:") queues in
-    let region k = D.handle (Option.get (D.alloc a.drv k copy_bytes)) in
-    let pinned = region `Pinned and device = region `Device in
+    let queues = (D.facts a.drv).queues in
+    let q =
+      List.find_index
+        (fun (q : Rig.queue) -> String.starts_with ~prefix:"COPY:" q.name)
+        queues
+    in
+    let region k = (D.locate (Option.get (D.alloc a.drv k copy_bytes))).handle in
+    let pinned = region Pinned and device = region Device in
     let dst, src = if to_device then (device, pinned) else (pinned, device) in
     floor_copy a.entries (Option.get q) dst src copy_bytes;
     floor_handles a.entries [| dst; src |];
@@ -452,21 +456,21 @@ let gpu_rows (type a) (module D : Rig.Driver with type t = a) ?(sleeps = false)
 
 (* The fixtures of [vendor]'s suite. *)
 let fixtures vendor = "../test/" ^ vendor ^ "/fixtures"
-let host_of r = Option.get (Rig_metal.host r)
+let host_of r = Option.get (Rig_metal.locate r).host
 
 (* [step] over one thread, its argument pointing at a word of its own. *)
 let metal_kernel d _ =
   let module S = Rig_metal_support in
   let image =
     match Rig_metal.image d (S.fixture ~dir:(fixtures "metal") "fill") with
-    | Ok (`Loaded i) -> i
-    | Ok (`Place _) -> failwith "Metal asked to place its code"
+    | Ok (Rig_edge.Loaded i) -> i
+    | Ok (Place _) -> failwith "Metal asked to place its code"
     | Error why -> failwith why
   in
   let step = Option.get (Rig_metal.entry image "step") in
-  let region n = Option.get (Rig_metal.alloc d `Device n) in
+  let region n = Option.get (Rig_metal.alloc d Device n) in
   let args = region 16 in
-  let word = Option.get (Rig_metal.address (region 16)) in
+  let word = Option.get (Rig_metal.locate (region 16)).address in
   Rig_gpu_support.Host.set64 (host_of args) word;
   let f = S.dispatch ~pipeline:step args ~groups:1 ~threads:1 in
   (S.part f, fun () -> ignore (Sys.opaque_identity (image, f)))

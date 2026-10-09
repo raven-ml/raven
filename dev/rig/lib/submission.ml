@@ -74,10 +74,27 @@ let queue_index d fn q =
   let rec go i =
     if i = Array.length d.queues then
       invalid_argf "Rig.%s: %s has no queue %S" fn d.name q
-    else if d.queues.(i) = q then i
+    else if String.equal d.queues.(i).name q then i
     else go (i + 1)
   in
   go 0
+
+let kind_of = function
+  | Words _ -> Rig_edge.Words
+  | Fill _ -> Fill
+  | Copy _ -> Copy
+
+let kind_name = function
+  | Rig_edge.Words -> "words"
+  | Fill -> "fills"
+  | Copy -> "copies"
+
+(* Refuses a part of a kind its queue does not run. *)
+let check_runs d fn q work =
+  let k = kind_of work in
+  if not (List.mem k d.queues.(q).runs) then
+    invalid_argf "Rig.%s: %s's queue %S runs no %s" fn d.name d.queues.(q).name
+      (kind_name k)
 
 (* The record of [b]'s memory, which holds the stamps a submission raises. *)
 let[@inline] entry_of b =
@@ -136,7 +153,7 @@ let build hold ~reads ~writes d parts =
             invalid_argf "Rig.%s: part %d's after names part %d" fn i j)
         p.after;
       nafter := !nafter + Array.length p.after;
-      ignore (queue_index d fn p.queue);
+      check_runs d fn (queue_index d fn p.queue) p.work;
       match p.work with
       | Words w ->
           check_buffer w;
@@ -147,9 +164,6 @@ let build hold ~reads ~writes d parts =
           ignore (host_address fn f.arg);
           incr nfixed
       | Copy { src; dst } ->
-          (* A driver that lists no copy queue runs no copy. *)
-          if d.copy_queue = None then
-            invalid_argf "Rig.%s: %s runs no copies" fn d.name;
           check_buffer src;
           check_buffer dst;
           if Buffer.length src <> Buffer.length dst then
@@ -203,9 +217,9 @@ let host_wait = -1
 let decide d p =
   let waits =
     match p.completion with
-    | Store -> d.waits_store
-    | Object _ -> d.waits_object && d.key = p.key
-    | Host_writes -> d.waits_host
+    | Store -> d.waits.stores
+    | Object _ -> d.waits.objects && d.key = p.key
+    | Host_writes -> d.waits.hosts
   in
   if (not waits) || not (Dev.same_machine p d) then host_wait
   else
@@ -314,7 +328,7 @@ let rec wait_points s n i count =
     else if Dev.is_done p then wait_points s n (i + 1) count
     else
       let way =
-        if count >= s.dev.max_waits then host_wait else pair s.dev producer
+        if count >= s.dev.waits.most then host_wait else pair s.dev producer
       in
       if way = host_wait then begin
         Dev.wait producer v;

@@ -16,7 +16,7 @@
 
     rig.remote opens proxies with [Rig.open_], one per device the agent opened,
     and uses this library's {!Wire} and {!Link} for the job's connections. This
-    module matches [Rig.Driver] without linking rig.
+    module links only [rig.edge] and matches {!Rig_edge.Driver}.
 
     {b Work.} A proxy runs copies, and the machine's host also runs
     [Rig.Submission.Words] parts: each is a run of the code loaded on that host.
@@ -51,10 +51,7 @@ module Link = Link
 type t
 (** The type for proxies. *)
 
-type capability = Rig_remote_abi.t
-(** The type for what compiled code needs from a proxy. *)
-
-val make : Link.t -> Wire.account -> capability -> t
+val make : Link.t -> Wire.account -> Rig_remote_abi.t -> t
 (** [make l a c] is the proxy on [l] of the agent's device [a], whose record is
     [c]. It sends nothing: [a] is the agent's answer for a device it opened.
 
@@ -62,158 +59,88 @@ val make : Link.t -> Wire.account -> capability -> t
     is [Device { id }] and [id] is not [a]'s, or if [l] has a proxy of [a]'s
     device. *)
 
-exception Fault of string
-(** [Fault why] reports that the proxy's job failed, [why] its root cause. *)
+include Rig_edge.Driver with type t := t
 
-(** {1:facts Facts} *)
+val capability : t -> Rig_remote_abi.t
+(** [capability d] is the record {!make} was given, which its facts carry
+    under {!Rig_remote_abi.key}. *)
 
-val key : t Type.Id.t
-(** [key] tells proxies apart from other drivers' devices. Proxies of one link
-    map each other's words ({!map_peer}); proxies of two links map nothing of
-    each other's. *)
+(** {1:this This driver}
 
-val arch : t -> string
-(** [arch d] is the [Rig.arch] of the agent's device, as its account states. *)
+    {t
+      | Fact | Value |
+      |------|-------|
+      | [arch] | The [Rig.arch] of the agent's device, as its account states. |
+      | [budget] | The agent's device's [Rig.budget] when it opened. |
+      | [queues] | ["COMPUTE:0"], ["COPY:0"]; each runs [Copy], and on the machine's host [Words] too. |
+      | [completion] | [Host]: the link's receiving thread writes the shadow as the agent reports. |
+      | [waits] | [hosts] only, with no bound: a wait on a proxy of the same link goes to the agent in the hand-over. |
+      | [may_block] | [true]: the hand-over sends its frame itself. |
+      | [maps_host] | [false]: a copy names this process's memory by its host address instead. |
+      | [capability] | {!capability}, under {!Rig_remote_abi.key}. |
+      | [word] | The shadow. |
+    }
 
-val budget : t -> int
-(** [budget d] is the [Rig.budget] of the agent's device when it opened, as its
-    account states. *)
+    The agent runs the parts of both queues in one order, that of the
+    hand-over. The hand-over returns once its frame is sent, so it waits for
+    the frame the link is sending and for the peer to take its bytes. A copy
+    from this process's memory holds the submitting thread while its bytes
+    cross the link, and before such a copy the hand-over also waits for the
+    work the copy follows.
 
-val queues : t -> string list
-(** [queues d] is [["COMPUTE:0"; "COPY:0"]]. The agent runs the parts of both in
-    one order, that of the hand-over. *)
+    {!Fault} reports that the proxy's job failed, its message the job's root
+    cause.
 
-val completion : t -> [ `Store | `Object of nativeint | `Host ]
-(** [completion d] is [`Host]: the link's receiving thread writes the shadow as
-    the agent reports. *)
+    {b Memory.} A region is an object of the agent, named by an id of the job
+    ({!Link.fresh}), or a proxy's word. {!alloc}[ d m n] asks the agent for [n]
+    bytes of [m] on its device; it is [None] if the agent has not the room or
+    refuses, and raises {!Fault} if the job failed. {!free} sends the release
+    of a region's object, after every frame sent before; the agent releases it
+    once the work handed over before no longer needs it. It does nothing for a
+    word.
 
-val waits_on : t -> [ `Store | `Object | `Host ] -> bool
-(** [waits_on d c] is [true] iff [c] is [`Host]: a wait on a proxy of the same
-    link goes to the agent in the hand-over. *)
+    {!locate} of memory is the object's id as its [handle], which the
+    hand-over sends as a copy's side, with no [address] and no [host]. Of a
+    word it is [Some i] as its [address], [i] the id of the word's device on
+    the agent, which a wait's [at] carries and the hand-over sends as the
+    device to wait on; the shadow's host address as its [host]; and [0n] as
+    its [handle].
 
-val max_waits : t -> int
-(** [max_waits d] is [max_int]: the hand-over carries every wait. *)
-
-val blocks : t -> [ `Returns | `May_block ]
-(** [blocks d] is [`May_block]: the hand-over sends its frame itself and returns
-    once it is sent, so it waits for the frame the link is sending and for the
-    peer to take its bytes. A copy from this process's memory holds the
-    submitting thread while its bytes cross the link. Before such a copy it also
-    waits for the work the copy follows ({!edge}). *)
-
-val maps_host : t -> bool
-(** [maps_host d] is [false]: a copy names this process's memory by its host
-    address instead. *)
-
-val capability : t -> capability
-(** [capability d] is the record {!make} was given. *)
-
-val capability_key : capability Type.Id.t
-(** [capability_key] is {!Rig_remote_abi.key}. *)
-
-(** {1:memory Memory} *)
-
-type region
-(** The type for memory of a proxy: an object of the agent, named by an id of
-    the job ({!Link.fresh}), or a proxy's {!word}. *)
-
-val alloc : t -> [ `Device | `Pinned | `Mapped ] -> int -> region option
-(** [alloc d kind n] asks the agent for [n] bytes of [kind] on its device. It is
-    [None] if the agent has not the room or refuses.
-
-    Raises {!Fault} if the job failed. *)
-
-val free : t -> region -> unit
-(** [free d r] sends the release of [r]'s object, after every frame sent before.
-    The agent releases it once the work handed over before no longer needs it.
-    It does nothing for a word. *)
-
-val address : region -> int option
-(** [address r] is [None] for memory, which the hand-over names by {!handle}.
-    For a word, it is [Some i], [i] the id of the word's device on the agent: a
-    wait's [at] carries it, and the hand-over sends it as the device to wait on.
-*)
-
-val handle : region -> nativeint
-(** [handle r] is the id of [r]'s object on the agent, which the hand-over sends
-    as a copy's side. It is [0n] for a word. *)
-
-val host : region -> int option
-(** [host r] is [None] for memory, and for a word [Some a], [a] the host address
-    of its shadow. *)
-
-val peer : t -> t -> bool
-(** [peer d d'] is [true] iff [d] and [d'] are proxies of one link and the
+    {!peer}[ d d'] is [true] iff [d] and [d'] are proxies of one link and the
     agent's device of [d] reaches the own memory of [d']'s ([reaches] of
-    {!Wire.account}). *)
+    {!Wire.account}). {!map_peer}[ d d' r] is [None] for proxies of two links.
+    A word maps as itself. For memory, it asks the agent to map [r]'s object on
+    [d]'s device as a new object, and is [None] if the agent cannot or refuses;
+    it raises {!Fault} if it asks and the job failed. {!map_host} is [None].
 
-val map_peer : t -> t -> region -> region option
-(** [map_peer d d' r] is a region of [d] over [r], a region of [d'], if [d] and
-    [d'] are proxies of one link, and [None] otherwise. A word maps as itself.
-    For memory, [map_peer] asks the agent to map [r]'s object on [d]'s device as
-    a new object, and is [None] if the agent cannot or refuses.
+    {b Code.} {!val-image}[ d b] loads [b] on the agent's host if [d] is the
+    machine's host: it is [Ok (Loaded i)], or [Error why] with the agent's
+    reason: rig.remote's agent loads no code, so it refuses every binary. On any
+    other proxy it is [Error why], [why] saying the proxy loads no code. It
+    raises {!Fault} if [d] is the machine's host and the job failed. {!entry}
+    is the agent's answer for the function, [None] if the image has none or
+    the agent refuses; it raises {!Fault} if the job failed. {!unload} sends
+    the release of the image, after every frame sent before; the agent
+    releases it once the work handed over before no longer needs it.
 
-    Raises {!Fault} if it asks the agent and the job failed. *)
+    {b Timeline.} The shadow is eight bytes of this process's memory that hold,
+    as an unsigned 64-bit integer in the host's byte order, the last value [v]
+    the agent reported done. The receiving thread writes [v] with release
+    order, after it wrote the bytes of the copies into this process's memory of
+    every value up to [v]. After {!stop} it takes the last value handed over.
+    It never decreases and is never freed. {!signaled} reads it with acquire
+    order. {!sleep} returns once the shadow differs from [seen], at once if it
+    does already, or after [still_ms] milliseconds; it raises {!Fault} if the
+    job failed, before or meanwhile.
 
-val map_host : t -> int -> int -> region option
-(** [map_host d p n] is [None]: proxies map no host memory ({!maps_host}). *)
+    {!stop} writes the last value handed over into [d]'s shadow with release
+    order, unless the shadow holds it already, once no bytes of a copy into this
+    process's memory may still land: at once if none is pending or the link's
+    receiving thread ended, and otherwise as the last pending copy's bytes land
+    or the thread ends. It waits for nothing, and ignores [fault].
 
-(** {1:code Code} *)
-
-type image
-(** The type for code loaded on the machine's host. *)
-
-val image :
-  t ->
-  string ->
-  ( [ `Loaded of image | `Place of int * (region -> image * string) ],
-    string )
-  result
-(** [image d b] loads [b] on the agent's host if [d] is the machine's host: it
-    is [Ok (`Loaded i)], or [Error why] with the agent's reason: rig.remote's
-    agent loads no code, so it refuses every binary. On any other proxy it is
-    [Error why], [why] saying the proxy loads no code.
-
-    Raises {!Fault} if [d] is the machine's host and the job failed. *)
-
-val entry : image -> string -> int option
-(** [entry i f] is the agent's answer for the function [f] of [i]: [Some e], or
-    [None] if [i] has no function [f] or the agent refuses.
-
-    Raises {!Fault} if the job failed. *)
-
-val unload : t -> image -> unit
-(** [unload d i] sends the release of [i], after every frame sent before. The
-    agent releases it once the work handed over before no longer needs it. *)
-
-(** {1:timeline Timeline} *)
-
-val word : t -> region
-(** [word d] is [d]'s word: its shadow, eight bytes of this process's memory
-    that hold, as an unsigned 64-bit integer in the host's byte order, the last
-    value [v] the agent reported done. The receiving thread writes [v] with
-    release order, after it wrote the bytes of the copies into this process's
-    memory of every value up to [v]. After {!stop} it takes the last value
-    handed over, as {!stop} states. It never decreases and is never freed. *)
-
-val signaled : t -> int
-(** [signaled d] is the value in [d]'s shadow, read with acquire order. *)
-
-val sleep : t -> seen:int -> still_ms:int -> unit
-(** [sleep d ~seen ~still_ms] returns once [d]'s shadow differs from [seen], at
-    once if it does already, or after [still_ms] milliseconds.
-
-    Raises {!Fault} if the job failed, before or meanwhile. *)
-
-(** {1:work Work} *)
-
-val edge : t -> nativeint
-(** [edge d] is the address of [d]'s C state, whose first member points to the
-    proxy's [struct rig_driver] of [rig_edge.h] ({!Rig.Driver.edge}). It is
-    valid while the process runs: the state holds the shadow, which is never
-    freed.
-
-    The room check answers:
+    {b Work.} The edge's state holds the shadow, which is never freed. The room
+    check answers:
     - [RIG_NEVER] for a part other than words and copies, for words on a proxy
       other than the machine's host, and for a submission with a copy from this
       process's memory after a copy into it: the hand-over reads the source
@@ -241,12 +168,3 @@ val edge : t -> nativeint
 
     The commit does nothing: each value's hand-over sends its message and
     answers [RIG_COMMITTED]. *)
-
-(** {1:stopping Stopping} *)
-
-val stop : t -> unit
-(** [stop d] writes the last value handed over into [d]'s shadow with release
-    order, unless the shadow holds it already, once no bytes of a copy into this
-    process's memory may still land: at once if none is pending or the link's
-    receiving thread ended, and otherwise as the last pending copy's bytes land
-    or the thread ends. It waits for nothing. *)

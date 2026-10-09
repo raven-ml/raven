@@ -3,7 +3,7 @@
 
 (library
  (name rig_cuda_support)
- (libraries rig rig_cuda rig_cuda_abi rig_gpu_support)
+ (libraries rig rig_cuda rig_cuda_abi rig_edge rig_gpu_support)
  (foreign_stubs
   (language c)
   (names rig_cuda_support_stubs)))

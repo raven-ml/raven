@@ -372,9 +372,9 @@ type floor = {
 let floor () =
   let fp = P.make () in
   let f =
-    floor_new (P.edge fp) Support.bump
+    floor_new (P.facts fp).edge Support.bump
   in
-  let timeline = Option.get (P.address (P.word fp)) in
+  let timeline = Option.get (P.locate (P.facts fp).word).address in
   { f; fp; word = B.address (B.create Rig.host 8); timeline; k = 0 }
 
 let floor_drained t =
@@ -398,7 +398,7 @@ let floor_contended ~share () =
     {
       t with
       f =
-        floor_new (P.edge t.fp) Support.bump;
+        floor_new (P.facts t.fp).edge Support.bump;
       k = 0;
     }
   in

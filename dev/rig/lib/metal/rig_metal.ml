@@ -14,7 +14,7 @@ type buffer = nativeint * int * int
 
 external count : unit -> int = "caml_rig_metal_count"
 external open_device : unit -> int = "caml_rig_metal_open"
-external facts : int -> int * int * buffer = "caml_rig_metal_facts"
+external device_facts : int -> int * int * buffer = "caml_rig_metal_facts"
 external alloc_buffer : int -> int -> buffer option = "caml_rig_metal_alloc"
 
 external map_buffer : int -> int -> int -> buffer option
@@ -56,45 +56,34 @@ exception Fault of string
 (* A region is live while its device's [regions] holds it. [bytes] is what an
    icb may address in it: [0] for the word, which no icb takes. *)
 type region = {
-  owner : int;
   handle : nativeint;
   address : int;
   host : int;
   bytes : int;
 }
 
-let region owner bytes (handle, address, host) =
-  { owner; handle; address; host; bytes }
+let region bytes (handle, address, host) = { handle; address; host; bytes }
 
-let address r = Some r.address
-let handle r = r.handle
-let host r = Some r.host
+let locate r =
+  { Rig_edge.address = Some r.address; host = Some r.host; handle = r.handle }
 
 (* Opening *)
 
-type capability = Rig_metal_abi.t
-
-(* An image's pipelines, 0 until its first [entry], and whether it is loaded,
-   both under [guard]: an [entry] compiles holding it, so calls for one function
-   from several domains make one pipeline, and an [unload] either waits for a
-   compile or makes the [entry] after it raise. [limits] holds each pipeline's
-   most threads per threadgroup. *)
+(* An image's pipelines, 0 until its first [entry], under [guard]: an [entry]
+   compiles holding it, so calls for one function from several domains make one
+   pipeline. [limits] holds each pipeline's most threads per threadgroup. *)
 type image = {
-  owner : int;
   library : nativeint;
   names : string array;
   pipelines : int array;
   limits : int array;
   guard : Mutex.t;
-  mutable loaded : bool;
 }
 
 type t = {
   self : int;
-  arch : string;
-  budget : int;
-  word : region;
-  cap : capability;
+  facts : region Rig_edge.facts;
+  cap : Rig_metal_abi.t;
   guard : Mutex.t;
       (* held by an icb call, by stop, over [images] and [regions] *)
   stopped : bool Atomic.t; (* stop began *)
@@ -233,31 +222,36 @@ let open_ i =
     if self = -no_memory then raise Out_of_memory
     else if self < 0 then Error open_failures.(-self - 1)
     else
-      let family, budget, word = facts self in
+      let family, budget, word = device_facts self in
       let arch = if family > 0 then strf "Apple%d" family else "Mac2" in
       let align = if family > 0 then apple_align else mac_align in
       let guard = Mutex.create () and stopped = Atomic.make false in
-      let word = region self 0 word in
+      let word = region 0 word in
       let images = ref [] and regions = Hashtbl.create 64 in
       Hashtbl.replace regions word.handle word;
       let icb = icb self guard stopped images regions align in
       let cap = { Rig_metal_abi.align; icb; split } in
-      Ok { self; arch; budget; word; cap; guard; stopped; images; regions }
+      let facts =
+        {
+          Rig_edge.arch;
+          budget;
+          queues = [ { name = "COMPUTE:0"; runs = [ Fill ] } ];
+          completion = Host;
+          waits = { stores = false; hosts = false; objects = false; most = 0 };
+          may_block = true;
+          maps_host = true;
+          capability = Capability (Rig_metal_abi.key, cap);
+          word;
+          edge = Nativeint.of_int self;
+        }
+      in
+      Ok { self; facts; cap; guard; stopped; images; regions }
 
 (* Facts *)
 
 let key = Type.Id.make ()
-let arch d = d.arch
-let budget d = d.budget
-let queues _ = [ "COMPUTE:0" ]
-let completion _ = `Host
-let waits_on _ _ = false
-let max_waits _ = 0
-let blocks _ = `May_block
-let maps_host _ = true
+let facts d = d.facts
 let capability d = d.cap
-let capability_key = Rig_metal_abi.key
-let edge d = Nativeint.of_int d.self
 
 (* Memory *)
 
@@ -282,22 +276,11 @@ let locked d g r =
 
 let enter d r = Hashtbl.replace d.regions r.handle r
 
-(* Whether [r] is a live region of [d]: a handle Metal gives again after a free
-   names another region. *)
-let held d r =
-  match Hashtbl.find_opt d.regions r.handle with
-  | Some r' -> r' == r
-  | None -> false
-
-(* Takes [r] out of [d]'s live regions: [false] if it was not in them. *)
-let take d r =
-  let live = held d r in
-  if live then Hashtbl.remove d.regions r.handle;
-  live
+let forget d r = Hashtbl.remove d.regions r.handle
 
 (* The live region of [d]'s [n]-byte buffer [b]. *)
 let live d n b =
-  let r = region d.self n b in
+  let r = region n b in
   locked d enter r;
   r
 
@@ -327,21 +310,11 @@ let map_host d p n =
 
 let peer _ _ = false
 
-let map_peer d d' (r : region) =
-  if d.self = d'.self then
-    invalid_arg "Rig_metal.map_peer: the two devices are one";
-  if r.owner <> d'.self || not (locked d' held r) then
-    invalid_arg
-      "Rig_metal.map_peer: the region is no live region of the second device";
-  None
+let map_peer _ _ _ = None
 
 let free d (r : region) =
-  if r.owner <> d.self then
-    invalid_arg
-      "Rig_metal.free: the region is no allocation or mapping of the device";
-  if not (locked d take r) then
-    invalid_arg "Rig_metal.free: the region was freed";
-  if r == d.word then free_word d.self else free_buffer d.self r.handle
+  locked d forget r;
+  if r == d.facts.word then free_word d.self else free_buffer d.self r.handle
 
 (* Images *)
 
@@ -350,25 +323,14 @@ let image d b =
   | "", library, names ->
       let n = Array.length names in
       let pipelines = Array.make n 0 and limits = Array.make n 0 in
-      let i =
-        {
-          owner = d.self;
-          library;
-          names;
-          pipelines;
-          limits;
-          guard = Mutex.create ();
-          loaded = true;
-        }
-      in
+      let i = { library; names; pipelines; limits; guard = Mutex.create () } in
       Mutex.protect d.guard (fun () -> d.images := i :: !(d.images));
-      Ok (`Loaded i)
+      Ok (Rig_edge.Loaded i)
   | why, _, _ -> Error why
 
 (* A refusal is not kept: a later call compiles again. *)
 let entry (i : image) f =
   Mutex.protect i.guard @@ fun () ->
-  if not i.loaded then invalid_arg "Rig_metal.entry: the image was unloaded";
   match Array.find_index (String.equal f) i.names with
   | None -> None
   | Some k when i.pipelines.(k) <> 0 -> Some i.pipelines.(k)
@@ -383,11 +345,6 @@ let entry (i : image) f =
             why)
 
 let unload d (i : image) =
-  if i.owner <> d.self then
-    invalid_arg "Rig_metal.unload: the image is another device's";
-  Mutex.protect i.guard @@ fun () ->
-  if not i.loaded then invalid_arg "Rig_metal.unload: the image was unloaded";
-  i.loaded <- false;
   Mutex.protect d.guard (fun () ->
       d.images := List.filter (fun j -> j != i) !(d.images));
   Array.iter (fun p -> if p <> 0 then release p) i.pipelines;
@@ -395,13 +352,12 @@ let unload d (i : image) =
 
 (* Timeline and loss *)
 
-let word d = d.word
 let signaled d = signaled_word d.self
 
 let sleep d ~seen ~still_ms =
   if sleep_word d.self seen still_ms <> 0 then raise (Fault (failure d.self))
 
-let stop d =
+let stop d ~fault:_ =
   Mutex.protect d.guard @@ fun () ->
   Atomic.set d.stopped true;
   stop_ring d.self

@@ -5,11 +5,10 @@
 
 (* Any domain may call any function, as the interface states. The loader, the
    table of GPUs and the page-lock registry are the process's, each behind a
-   mutex of its own; a region or an image ends once, by compare-and-set; a
-   device's C state is written only by [submit] and [stop], which their caller
-   serialises. Compiled code calls a device's graph maker beside every other
-   call, so the maker and [stop] exclude each other under the device's
-   [guard]. *)
+   mutex of its own; a device's C state is written only by [submit] and
+   [stop], which their caller serialises. Compiled code calls a device's graph
+   maker beside every other call, so the maker and [stop] exclude each other
+   under the device's [guard]. *)
 
 let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
@@ -132,16 +131,13 @@ type kind =
   | Peer of kind
 
 type region = {
-  owner : int; (* the device's C state *)
   kind : kind;
   address : int;
   handle : int;
-  home : int; (* the device whose GPU holds GPU memory *)
-  live : bool Atomic.t; (* taken once by free *)
+  home : int; (* the C state of the device whose GPU holds GPU memory *)
 }
 
-let region owner kind ~address ~handle =
-  { owner; kind; address; handle; home = owner; live = Atomic.make true }
+let region home kind ~address ~handle = { kind; address; handle; home }
 
 let rec on_host = function
   | Device -> false
@@ -153,16 +149,12 @@ let rec on_host = function
 type image = {
   owner : int;
   m : int;
-  loaded : bool Atomic.t;
   functions : int list Atomic.t; (* those [entry] gave *)
 }
 
 type t = {
   self : int;
-  arch : string;
-  budget : int;
-  word : region;
-  maps_host : bool; (* CUDA page-locks host memory for the device *)
+  facts : region Rig_edge.facts;
   held : int Atomic.t;
   images : image list Atomic.t; (* loaded, whose functions a graph may run *)
   guard : Mutex.t; (* held by a graph call and by stop *)
@@ -269,6 +261,9 @@ let claim held =
     Error "the GPU still runs the work of a stopped device"
   end
 
+(* Each stream runs fills and copies. *)
+let stream name = { Rig_edge.name; runs = [ Fill; Copy ] }
+
 let open_ i =
   if i < 0 then invalid_argf "Rig_cuda.open_: GPU %d is negative" i;
   let* g = find_gpus () in
@@ -313,38 +308,36 @@ let open_ i =
           let guard = Mutex.create () and stopped = Atomic.make false in
           let graph = graph self guard stopped images in
           let cap = { Rig_cuda_abi.symbol = find_symbol; graph } in
-          Ok
+          let facts =
             {
-              self;
-              arch;
+              Rig_edge.arch;
               budget;
-              word;
+              queues = [ stream "COMPUTE:0"; stream "COPY:0" ];
+              completion = Store;
+              (* A submission's waits go to its stream in batches, as many
+                 as it carries. *)
+              waits =
+                {
+                  stores = true;
+                  hosts = true;
+                  objects = false;
+                  most = max_int;
+                };
+              may_block = true;
               maps_host = registers <> 0;
-              held;
-              images;
-              guard;
-              stopped;
-              cap;
+              capability = Capability (Rig_cuda_abi.key, cap);
+              word;
+              edge = Nativeint.of_int self;
             }
+          in
+          Ok { self; facts; held; images; guard; stopped; cap }
         end
 
 (* Facts *)
 
 let key = Type.Id.make ()
-let arch g = g.arch
-let budget g = g.budget
-let queues _ = [ "COMPUTE:0"; "COPY:0" ]
-let completion _ = `Store
-let waits_on _ = function `Store | `Host -> true | `Object -> false
-let max_waits _ = max_int
-let blocks _ = `May_block
-let maps_host g = g.maps_host
-
-type capability = Rig_cuda_abi.t
-
+let facts g = g.facts
 let capability g = g.cap
-let capability_key = Rig_cuda_abi.key
-let edge g = Nativeint.of_int g.self
 
 (* Memory *)
 
@@ -355,17 +348,25 @@ external allocation : int -> int -> int = "caml_rig_cuda_allocation"
 external lock : int -> bool -> int -> int -> int = "caml_rig_cuda_lock"
 external enable_peer : int -> int -> int = "caml_rig_cuda_peer"
 
-let alloc g kind n =
-  if n < 1 then invalid_argf "Rig_cuda.alloc: %d bytes, expected at least 1" n;
-  let host = match kind with `Device -> false | `Pinned | `Mapped -> true in
-  match alloc_memory g.self host n with
-  | a when a >= 0 ->
-      Some (region g.self (if host then Host else Device) ~address:a ~handle:a)
+let allocated g kind n =
+  match alloc_memory g.self (kind = Host) n with
+  | a when a >= 0 -> Some (region g.self kind ~address:a ~handle:a)
   | _ -> refused (strf "allocating %d bytes" n) g.self None
 
-let address r = Some r.address
-let handle r = Nativeint.of_int r.handle
-let host r = if on_host r.kind then Some r.handle else None
+(* CUDA maps no GPU memory for the host: [Mapped] is [None]. *)
+let alloc g (memory : Rig_edge.memory) n =
+  if n < 1 then invalid_argf "Rig_cuda.alloc: %d bytes, expected at least 1" n;
+  match memory with
+  | Device -> allocated g Device n
+  | Pinned -> allocated g Host n
+  | Mapped -> None
+
+let locate r =
+  {
+    Rig_edge.address = Some r.address;
+    host = (if on_host r.kind then Some r.handle else None);
+    handle = Nativeint.of_int r.handle;
+  }
 
 (* Whether [self]'s GPU addresses the GPU memory of [home]'s, enabling the
    access. *)
@@ -376,19 +377,12 @@ let reaches self home =
   | s when -s = cuda_error_peer_access_already_enabled -> true
   | _ -> refused "enabling peer access" self false
 
-let peer g g' =
-  if g.self = g'.self then invalid_arg "Rig_cuda.peer: the two devices are one";
-  reaches g.self g'.self
+let peer g g' = reaches g.self g'.self
 
-let map_peer g g' (r : region) =
-  if g.self = g'.self then
-    invalid_arg "Rig_cuda.map_peer: the two devices are one";
-  if r.owner <> g'.self || not (Atomic.get r.live) then
-    invalid_arg
-      "Rig_cuda.map_peer: the region is no live region of the second device";
+let map_peer g _ (r : region) =
   let kind = match r.kind with Peer k -> k | k -> k in
   if not (on_host kind || reaches g.self r.home) then None
-  else Some { r with owner = g.self; kind = Peer kind; live = Atomic.make true }
+  else Some { r with kind = Peer kind }
 
 let registry : registration list ref = ref []
 let registry_lock = Mutex.create ()
@@ -420,7 +414,7 @@ let page_lock g a n =
 let map_host g a n =
   if n < 1 then
     invalid_argf "Rig_cuda.map_host: %d bytes, expected at least 1" n;
-  if not g.maps_host then None
+  if not g.facts.maps_host then None
   else
     let lo, hi = pages a n in
     let inside e = e.start <= a && a + n <= e.start + e.bytes in
@@ -437,10 +431,6 @@ let map_host g a n =
     | None -> if List.exists shares !registry then None else page_lock g a n
 
 let free g (r : region) =
-  if r.owner <> g.self then
-    invalid_arg "Rig_cuda.free: the region is another device's";
-  if not (Atomic.compare_and_set r.live true false) then
-    invalid_arg "Rig_cuda.free: the region was freed";
   match r.kind with
   | Device | Host ->
       (* CUDA's answer is dropped: after a fault the memory stays with the
@@ -471,23 +461,14 @@ let rec update a f =
 let image g bin =
   match load_module g.self bin with
   | m when m >= 0 ->
-      let i =
-        {
-          owner = g.self;
-          m;
-          loaded = Atomic.make true;
-          functions = Atomic.make [];
-        }
-      in
+      let i = { owner = g.self; m; functions = Atomic.make [] } in
       update g.images (List.cons i);
-      Ok (`Loaded i)
+      Ok (Rig_edge.Loaded i)
   | s ->
       let step = "loading the image" in
       refused step g.self (Error (strf "%s: %s" step (error (-s))))
 
 let entry (m : image) f =
-  if not (Atomic.get m.loaded) then
-    invalid_arg "Rig_cuda.entry: the image was unloaded";
   if String.contains f '\000' then None
   else
     match get_function m.owner m.m f with
@@ -497,10 +478,6 @@ let entry (m : image) f =
     | _ -> refused (strf "finding kernel %S" f) m.owner None
 
 let unload g (m : image) =
-  if m.owner <> g.self then
-    invalid_arg "Rig_cuda.unload: the image is another device's";
-  if not (Atomic.compare_and_set m.loaded true false) then
-    invalid_arg "Rig_cuda.unload: the image was unloaded";
   update g.images (List.filter (fun i -> i != m));
   match unload_module g.self m.m with
   | 0 -> ()
@@ -511,7 +488,6 @@ let unload g (m : image) =
 external signaled : int -> int = "caml_rig_cuda_signaled" [@@noalloc]
 external sleep : int -> int -> int -> int = "caml_rig_cuda_sleep"
 
-let word g = g.word
 let signaled g = signaled g.self
 
 let sleep g ~seen ~still_ms =
@@ -521,7 +497,7 @@ let sleep g ~seen ~still_ms =
 
 (* Loss *)
 
-let stop g =
+let stop g ~fault:_ =
   Mutex.protect g.guard @@ fun () ->
   Atomic.set g.stopped true;
   let stopped = stop_device g.self in

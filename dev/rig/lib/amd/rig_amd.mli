@@ -17,7 +17,7 @@
     every value below it, whichever queue each ran on.
 
     A program opens a GPU through a path and hands the device to [rig], which
-    submits its work through the device's C entries ({!edge}):
+    submits its work through the device's C entries ({!section-this}):
     {[
     let d =
       Rig.open_
@@ -65,264 +65,145 @@
     - ROCm's runtime: [amd_queue.h] (the AQL queue's descriptor) and
       [amd_aql_queue.cpp]. *)
 
-(** {1:facts Facts}
+(** {1:driver Driver} *)
 
-    Fixed when the device is made. *)
+include Rig_edge.Driver
 
-type t
-(** The type for open AMD GPUs: the path that opened one, its queues and its
-    timeline word. *)
+val capability : t -> Rig_amd_abi.Capability.t
+(** [capability g] is the record of [g]'s [capability] fact ({!facts}). *)
 
-val key : t Type.Id.t
-(** [key] tells devices of this library apart from others'. *)
+(** {1:this This driver}
 
-val arch : t -> string
-(** [arch g] is the processor the GPU runs code objects of, as LLVM names it
-    ({!Rig_amd_abi.Gpu.processor}), such as ["gfx1201"]. *)
+    {t
+      | Fact | Value |
+      |------|-------|
+      | [arch] | The processor the GPU runs code objects of, as LLVM names it ({!Rig_amd_abi.Gpu.processor}), such as ["gfx1201"]. |
+      | [budget] | The bytes of the GPU's own memory. |
+      | [queues] | ["COMPUTE:0"] runs [Words] and [Fill]; ["COPY:0"] runs [Words], [Fill] and [Copy]. Index [0] and [1] in C. |
+      | [completion] | [Store]: the queue that releases a value writes the word. |
+      | [waits] | [stores] and [hosts] iff the compute queue compares 64-bit words, never [objects]; [most] is [255]. |
+      | [may_block] | [false]: the C entries write memory and call no system function. |
+      | [maps_host] | [true] iff the path maps host memory ([map_host] of {!type-path}). |
+      | [capability] | A {!Rig_amd_abi.Capability.t} under {!Rig_amd_abi.Capability.key}. |
+      | [word] | Eight bytes of host memory. |
+    }
 
-val budget : t -> int
-(** [budget g] is the bytes of the GPU's own memory. *)
+    {b Waits.} The compute queue compares 64-bit words where this library
+    knows, for the GPU's GC, the first firmware that does, and the GPU's ([mec]
+    of {!type-path}) is that version or later. A submission's reserved ring
+    space holds [255] waits.
 
-val queues : t -> string list
-(** [queues g] is [["COMPUTE:0"; "COPY:0"]]: the compute queue and the copy
-    queue, index [0] and [1] in C. *)
+    {b Capability.} The record holds the GPU, its clock, its compute queue's
+    packets, the C functions a fill calls, its active work-group processors,
+    and its trace buffers, made at the first [trace]. On an AQL queue its
+    [scratch] grows the device's scratch memory.
 
-val completion : t -> [ `Store | `Object of nativeint | `Host ]
-(** [completion g] is [`Store]: [g]'s queues write its timeline word. *)
+    {b Word.} The word holds, as an unsigned 64-bit integer in the host's byte
+    order, the last value [v] such that the work of every value up to [v]
+    completed. The queue that releases [v] writes it whole, after its work's
+    writes reached memory. The device's C state holds the word, and neither is
+    ever freed: other devices may read the word after the device is gone.
 
-val waits_on : t -> [ `Store | `Object | `Host ] -> bool
-(** [waits_on g c] is [true] iff [c] is [`Store] or [`Host] and [g]'s compute
-    queue compares 64-bit words: this library knows, for the GPU's GC, the first
-    firmware that does, and the GPU's ([mec] of {!type-path}) is that version or
-    later. *)
+    {b Memory.}
+    - [Device] memory is GPU memory, which the host does not address.
+    - [Pinned] memory is host memory that the GPU addresses, which the host
+      reads as fast as other memory.
+    - [Mapped] memory is GPU memory the host addresses through the GPU's memory
+      BAR, write-combined: fast to write and slow to read. The host's writes
+      reach the GPU's work submitted after them. {!alloc} answers [None] where
+      the path has no such memory, or cannot flush the host's writes into it.
 
-val max_waits : t -> int
-(** [max_waits g] is [255]: a submission's reserved ring space holds that many
-    waits. *)
+    {!alloc} answers [None] if the GPU or the host lacks the memory. {!alloc}
+    and {!map_host} raise [Invalid_argument] for fewer than one byte. Freeing a
+    mapping ends the mapping alone; the memory it maps stays. A mapping of
+    another device's memory is freed before that memory.
 
-val blocks : t -> [ `Returns | `May_block ]
-(** [blocks g] is [`Returns]: the C entries write memory and call no system
-    function. *)
+    {!locate} answers the GPU address of a region's first byte, and that
+    address again as the handle: the GPU names memory by address. The host
+    address is [None] iff the region is [Device] memory or a {!map_peer} view
+    of [Device] memory.
 
-val maps_host : t -> bool
-(** [maps_host g] is [true] iff [g]'s path maps host memory ([map_host] of
-    {!type-path}). *)
+    {!peer} and {!map_peer} answer [true] and a view at the same address iff
+    the path that opened both devices maps it and this GPU reaches the other's
+    memory: over a link between them, or through a memory BAR as large as the
+    other GPU's memory. {!map_peer} also answers [None] for [Mapped] memory of
+    the other device when this one already flushes the host data path of seven
+    other GPUs, the most it keeps. {!map_host} answers a region the GPU's work
+    addresses at its {!locate} address, or [None] if the path maps no host
+    memory or refuses the pages, such as read-only ones. The kernel driver's
+    path also refuses pages that a region {!map_host} gave a device of the same
+    GPU maps, as it maps a page at most once per GPU.
 
-type capability = Rig_amd_abi.Capability.t
-(** The type for what compiled code needs from a device. *)
-
-val capability : t -> capability
-(** [capability g] is the GPU, its clock, its compute queue's packets, the C
-    functions a fill calls, its active work-group processors, and its trace
-    buffers, made at the first [trace]. On an AQL queue its [scratch] grows the
-    device's scratch memory. *)
-
-val capability_key : capability Type.Id.t
-(** [capability_key] is {!Rig_amd_abi.Capability.key}. *)
-
-(** {1:memory Memory} *)
-
-type region
-(** The type for memory a device's work addresses: an allocation of the device,
-    host memory it maps, or another device's memory it maps. *)
-
-val alloc : t -> [ `Device | `Pinned | `Mapped ] -> int -> region option
-(** [alloc g kind n] is [Some r] with [r] [n] new bytes:
-    - [`Device], GPU memory, which the host does not address;
-    - [`Pinned], host memory that the GPU addresses, which the host reads as
-      fast as other memory;
-    - [`Mapped], GPU memory the host addresses through the GPU's memory BAR,
-      write-combined: fast to write and slow to read. The host's writes reach
-      the GPU's work submitted after them. Where the path has no such memory or
-      cannot flush the host's writes into it, it is host memory, as [`Pinned].
-
-    It is [None] if the GPU or the host lacks the memory.
-
-    Raises [Invalid_argument] if [n < 1]. *)
-
-val free : t -> region -> unit
-(** [free g r] gives back [r], which {!alloc}, {!map_peer} or {!map_host} gave.
-    Freeing a mapping ends the mapping alone; the memory it maps stays. The
-    caller frees [r] once no work that uses it runs, and frees a mapping of
-    another device's memory before that memory.
-
-    Raises [Invalid_argument] if [r] is no such region of [g] nor its {!word},
-    or was freed. *)
-
-val address : region -> int option
-(** [address r] is [Some a], [a] the GPU address of [r]'s first byte. *)
-
-val handle : region -> nativeint
-(** [handle r] is {!address}[ r]: the GPU names memory by address. *)
-
-val host : region -> int option
-(** [host r] is [Some a], [a] the host address of [r]'s first byte. It is [None]
-    iff [r] is [`Device] memory or a {!map_peer} view of [`Device] memory. *)
-
-val peer : t -> t -> bool
-(** [peer g g'] is [true] iff {!map_peer}[ g g'] maps [`Device] memory of [g']:
-    the path that opened both reaches [g']'s GPU from [g]'s. It is [false] for
-    [g] itself. *)
-
-val map_peer : t -> t -> region -> region option
-(** [map_peer g g' r] is [Some r'] with [r'] a new region of [g] over the memory
-    of [g']'s region [r], at the same address, if the path that opened both maps
-    it and [g]'s GPU reaches [g']'s memory: over a link between them, or through
-    a memory BAR as large as [g']'s memory. It is [None] otherwise, for devices
-    two paths opened, and for [`Mapped] memory of [g'] when [g] already flushes
-    the host data path of seven other GPUs, the most it keeps.
-
-    Raises [Invalid_argument] if [g'] is [g], or if [r] is no region of [g'] or
-    was freed. *)
-
-val map_host : t -> int -> int -> region option
-(** [map_host g a n] is [Some r] with [r] the [n] bytes of host memory at [a],
-    which [g]'s work addresses at {!address}[ r]. The path maps the pages that
-    hold them, which must stay mapped in the process until [r] is freed. It is
-    [None] if the path maps no host memory ({!maps_host}) or refuses these
-    pages, such as read-only ones. The kernel driver's path also refuses pages
-    that a region {!map_host} gave a device of the same GPU maps, as it maps a
-    page at most once per GPU.
-
-    Raises [Invalid_argument] if [n < 1]. *)
-
-(** {1:images Images} *)
-
-type image
-(** The type for code objects loaded on a device. *)
-
-val image :
-  t ->
-  string ->
-  ( [ `Loaded of image | `Place of int * (region -> image * string) ],
-    string )
-  result
-(** [image g bin] is [Ok (`Place (n, lay))] for the code object [bin], whose
-    image takes [n] bytes ({!Rig_amd_abi.Code_object.size}). The caller
-    allocates them as [`Device] memory [r] of [g], at least [n] bytes: [lay r]
-    is the code object laid over [r] and the image's bytes, which the caller
-    copies to [r]'s start before work runs a kernel of it. Code runs from the
-    GPU's own memory, so that its fetches never cross the bus. [image] makes
-    nothing on the GPU, and [lay] calls nothing and raises nothing. It is never
-    [`Loaded]: the device's library places no code itself.
-
-    The result is [Error msg] if [bin] is not a code object, with
+    {b Images.} {!image} answers [Place (n, lay)] for a code object, whose
+    image takes [n] bytes ({!Rig_amd_abi.Code_object.size}): code runs from the
+    GPU's own memory, so that its fetches never cross the bus. It answers
+    [Error msg] if the binary is not a code object, with
     {!Rig_amd_abi.Code_object.of_string}'s message, if it is for another
     processor, as ["a code object for gfx90a; the GPU is gfx1201"], or if a
     kernel takes more local data share than the GPU has, as
     ["kernel reduce takes 98304 bytes of local data share; the GPU has 65536"].
-*)
+    {!entry} answers the address of the descriptor of the kernel, the symbol
+    [f ^ ".kd"], which a dispatch names. An image holds nothing of the device
+    but its code region: {!unload} does nothing.
 
-val entry : image -> string -> int option
-(** [entry m f] is [Some a], [a] the address of the descriptor of [m]'s kernel
-    [f], the symbol [f ^ ".kd"], which a dispatch names. It is [None] if [m] has
-    no kernel [f].
+    {b Sleep and faults.} {!sleep} blocks on the path's interrupt, which every
+    release raises, and lets other domains run while it waits. It may return
+    early on an interrupt of an earlier release or of other work of the GPU, or
+    when the hang bound's clock restarts. It raises {!Fault} with the path's
+    report if the device's work met a fault. Where the path bounds progress
+    ([hang_ms] is [Some n]), it also raises {!Fault} once work is outstanding
+    and the word has not moved for [n] milliseconds. That clock runs only while
+    the last value given is above the word: it starts at the later of the
+    word's last move and the first [sleep] after the device was idle, as
+    [sleep] observes them, so an idle device never hangs and the report may
+    come late but never early. Once [sleep] raised {!Fault}, every later
+    [sleep] raises it again. A [sleep] after {!stop} asks the path nothing.
 
-    Raises [Invalid_argument] if [m] was unloaded. *)
-
-val unload : t -> image -> unit
-(** [unload g m] ends [m]: its kernels' addresses are no longer valid. The
-    caller unloads it once no work that runs its kernels runs, and frees the
-    region it was laid over after.
-
-    Raises [Invalid_argument] if [m] is another device's or was unloaded. *)
-
-(** {1:timeline Timeline} *)
-
-val word : t -> region
-(** [word g] is [g]'s timeline word: eight bytes of host memory holding, as an
-    unsigned 64-bit integer in the host's byte order, the last value [v] such
-    that the work of every value up to [v] completed. The queue that releases
-    [v] writes it whole, after its work's writes reached memory; it never
-    decreases. Other devices may map it and wait on it. It lives until
-    {!free}, which the caller calls once [g] is stopped, the word holds its
-    last value, and no other device's work reads it. *)
-
-val signaled : t -> int
-(** [signaled g] is the value in {!word}, read with acquire order: the work of
-    every value up to it completed, and its writes are visible to the reader. *)
-
-val sleep : t -> seen:int -> still_ms:int -> unit
-(** [sleep g ~seen ~still_ms] returns once [g]'s timeline word differs from
-    [seen], at once if it does already, and at the latest after [still_ms]
-    milliseconds. [still_ms >= 0]. It may return earlier with the word still
-    [seen]: on an interrupt of an earlier release, or of other work of the GPU,
-    or when the hang bound's clock restarts. A caller reads the word again after
-    every return. It blocks on the path's interrupt, which every release raises,
-    and lets other domains run while it waits.
-
-    Raises {!Fault} with the path's report if [g]'s work met a fault. Where the
-    path bounds progress ([hang_ms] is [Some n]), it also raises {!Fault} once
-    work is outstanding and the word has not moved for [n] milliseconds. That
-    clock runs only while the last value given is above the word: it starts at
-    the later of the word's last move and the first [sleep] after the device was
-    idle, as [sleep] observes them, so an idle device never hangs and the report
-    may come late but never early. Once [sleep] raised {!Fault}, every later
-    call on [g] raises it again. *)
-
-(** {1:work Work}
-
-    Work reaches a device in C, through its room check and submit ({!edge}),
-    over [rig_edge.h]'s structures. A part names its queue by its index in {!queues}.
-    A part is:
+    {b Hand-over.} [edge]'s room check and hand-over are [rig_amd_room] and
+    [rig_amd_submit], which [rig_amd.h] declares; its commit does nothing. A
+    part is:
     - words, whole packets of the queue's kind: PM4, or AQL in multiples of 16
       words, on ["COMPUTE:0"]; SDMA on ["COPY:0"];
-    - a fill, a C function that places packets on the queue during the submit,
-      as {!Rig_amd_abi.Capability} states. It places at most its ring units of
-      words and takes at most its segment bytes of the device's argument
-      segment;
-    - on ["COPY:0"], a copy between two GPU addresses, its handles, whose ranges
-      do not overlap.
+    - a fill, a C function that places packets on the queue during the
+      hand-over, as {!Rig_amd_abi.Capability} states. It places at most its
+      ring units of words and takes at most its segment bytes of the device's
+      argument segment;
+    - on ["COPY:0"], a copy between two GPU addresses, its handles, whose
+      ranges do not overlap.
 
     Parts on one queue run in array order. A part's [after] indices, each below
     its own, order it after parts of the other queue; parts of the two queues
     that [after] does not order may run at once. A wait is [RIG_WORD]: the
-    compute queue holds the submission back until the aligned 64-bit word at its
-    address, which the device's work addresses, holds at least its value, as
-    unsigned integers. The device waits only where {!waits_on} says so, and on
-    at most {!max_waits} words per submission. [handles] is ignored: the GPU's
-    work names its memory by address.
+    compute queue holds the submission back until the aligned 64-bit word at
+    its address, which the device's work addresses, holds at least its value,
+    as unsigned integers. [handles] is ignored: the GPU's work names its memory
+    by address.
 
-    The room check answers [RIG_NEVER] if the parts exceed what the device holds
-    when it is idle: the compute ring, half the copy ring and half the argument
-    segment (a submission's copy packets and segment bytes never wrap), or 512
-    parts. It also answers [RIG_NEVER] for a part the device does not run: a
-    copy on ["COMPUTE:0"], words on an AQL queue that are not whole packets, an
-    [after] index not below its own part's.
+    The room check answers [RIG_NEVER] if the parts exceed what the device
+    holds when it is idle: the compute ring, half the copy ring and half the
+    argument segment (a submission's copy packets and segment bytes never
+    wrap), or 512 parts. It also answers [RIG_NEVER] for a part the device does
+    not run: a copy on ["COMPUTE:0"], words on an AQL queue that are not whole
+    packets, an [after] index not below its own part's.
 
-    The submission of [v] runs after every earlier value and after its waits;
-    once it completed, the timeline word holds [v]. The queues read none of a
-    submission's packets before all of them are placed, so its work never
-    waits on the host. A submission of no parts releases [v] alone. The submit
-    answers [RIG_FAILED] if a fill failed, as
-    ["a fill on COMPUTE:0 failed with 1"], or if it waits on more words than the
-    device holds or where it cannot wait. The queues then run none of its parts,
-    and the word still reaches [v] once the earlier values completed. Every
-    later submit answers the same failure and hands nothing over. Each value's
-    hand-over writes its release and answers [RIG_COMMITTED]: the commit does
-    nothing. *)
+    The queues read none of a submission's packets before all of them are
+    placed, so its work never waits on the host. A submission of no parts
+    releases its value alone. The hand-over answers [RIG_FAILED] if a fill
+    failed, as ["a fill on COMPUTE:0 failed with 1"], or if it waits on more
+    words than the device holds or where it cannot wait. The queues then run
+    none of its parts, and the word still reaches its value once the earlier
+    values completed. Every later hand-over answers the same failure and hands
+    nothing over. Each value's hand-over writes its release and answers
+    [RIG_COMMITTED].
 
-val edge : t -> nativeint
-(** [edge g] is the address of [g]'s C state, whose first member points to the
-    device's [struct rig_driver] of [rig_edge.h] ({!Rig.Driver.edge}): the C
-    functions [rig_amd_room] and [rig_amd_submit], which [rig_amd.h] declares,
-    and a commit that does nothing. It is valid while the process runs: a
-    device's C state holds its {!word}, which other devices may read after [g]
-    is gone, so neither is ever freed. *)
-
-(** {1:loss Loss} *)
-
-exception Fault of string
-(** [Fault why] reports a fault of a device's work: the path's report, or the
-    end of the progress bound ({!val-sleep}). *)
-
-val stop : t -> unit
-(** [stop g] stops [g] for good, never waiting. It destroys [g]'s queues: once
-    none runs, it writes the last value the submit entry was given into the
-    timeline word, with release order, so work of other devices that waits on it
-    runs on. If the path could not destroy every queue, the word reaches that
-    value only if the queues still run and complete their work. A later [stop]
-    does nothing. *)
+    {b Stop.} {!stop} destroys the device's queues through the path: once none
+    runs, it writes the last value the hand-over was given into the word. If
+    the path could not destroy every queue, the word reaches that value only if
+    the queues still run and complete their work. The path's stop gets the
+    device's first fault: the one {!sleep} raised, else [fault]. A path that
+    keeps the GPU's state for later opens, as {!Rig_amd_pci}'s does, then skips
+    its wait for the queues to leave and leaves the GPU lost, for its next open
+    to reset. A later {!stop} does nothing. *)
 
 (** {1:paths Paths}
 
@@ -418,9 +299,10 @@ type 'm path = {
       (** [stop ~fault] destroys the queues [queue] made: [`Stopped] once none
           of them runs or none can write memory outside the GPU, [`Unknown] if
           one may. [fault] is the device's first fault, if any: the path's own
-          report or the end of the progress bound, a hang ({!val-sleep}). A
-          path that keeps the GPU's state for later opens records it as its
-          own; one that keeps none ignores it. *)
+          report, the end of the progress bound, a hang ({!val-sleep}), or the
+          fault its caller lost the device for ({!val-stop}). A path that keeps
+          the GPU's state for later opens records it as its own; one that keeps
+          none ignores it. *)
 }
 (** The type for what a path gives a device. A path fills it with functions over
     its own state, which this library never names. Each function answers the

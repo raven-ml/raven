@@ -78,13 +78,13 @@ let in_child (f : unit -> 'a) : ('a, string) result =
 
 (* Operations *)
 
-type op = Open | Alloc of [ `Device | `Pinned | `Mapped ] | Map_host
+type op = Open | Alloc of Rig_edge.memory | Map_host
 
 let op_name = function
   | Open -> "open"
-  | Alloc `Device -> "alloc of device memory"
-  | Alloc `Pinned -> "alloc of pinned memory"
-  | Alloc `Mapped -> "alloc of mapped memory"
+  | Alloc Device -> "alloc of device memory"
+  | Alloc Pinned -> "alloc of pinned memory"
+  | Alloc Mapped -> "alloc of mapped memory"
   | Map_host -> "map_host"
 
 (* The operations other than an open act on an open GPU [g], and [map_host] on
@@ -103,7 +103,7 @@ let take on op =
   match (op, on.g) with
   | Open, _ -> (
       match P.open_ 0 with
-      | Ok g -> ("Ok", fun () -> N.stop g)
+      | Ok g -> ("Ok", fun () -> N.stop g ~fault:None)
       | Error e -> ("Error " ^ e, ignore))
   | Alloc kind, Some g -> region g (N.alloc g kind page)
   | Map_host, Some g ->
@@ -140,8 +140,8 @@ let attempt ?(cold = false) op lim =
   give ();
   let files = (files, S.files ()) and maps = (maps, mappings ()) in
   let again = run_once on op in
-  Option.iter N.stop g;
-  let reopened = Result.is_ok (Result.map N.stop (P.open_ 0)) in
+  Option.iter (N.stop ~fault:None) g;
+  let reopened = Result.is_ok (Result.map (N.stop ~fault:None) (P.open_ 0)) in
   ignore (Sys.opaque_identity on);
   { got; files; maps; again; reopened }
 
@@ -206,9 +206,9 @@ let too_large () =
     require_ok
       (in_child (fun () ->
            let g = Result.get_ok (P.open_ 0) in
-           let got = N.alloc g `Device (2 * N.budget g) in
+           let got = N.alloc g Device (2 * (N.facts g).budget) in
            Option.iter (N.free g) got;
-           N.stop g;
+           N.stop g ~fault:None;
            Option.is_some got))
   in
   equal ~msg:"given" bool false got
@@ -226,7 +226,7 @@ let alloc_starved op () =
   need_gpu ();
   equal string "None" (starved op)
 
-let ops = [ Open; Alloc `Device; Alloc `Pinned; Alloc `Mapped; Map_host ]
+let ops = [ Open; Alloc Device; Alloc Pinned; Alloc Mapped; Map_host ]
 
 let () =
   S.hold_gpu ();
@@ -250,5 +250,5 @@ let () =
            :: List.map
                 (fun op ->
                   test (op_name op ^ " answers None") (alloc_starved op))
-                [ Alloc `Pinned; Alloc `Mapped; Map_host ]);
+                [ Alloc Pinned; Alloc Mapped; Map_host ]);
        ])

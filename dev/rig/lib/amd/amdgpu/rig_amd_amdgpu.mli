@@ -11,7 +11,7 @@
     ({!Rig_amd.make}):
     {[
     let g = Result.get_ok (Rig_amd_amdgpu.open_ 0) in
-    Rig_amd.arch g (* "gfx1201" *)
+    (Rig_amd.facts g).arch (* "gfx1201" *)
     ]}
 
     {b Numbering.} GPU [i] is the [i]th of the machine's AMD GPUs in bus order

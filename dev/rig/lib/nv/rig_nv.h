@@ -7,9 +7,9 @@
 
    The device's room check and submission, over the structures and codes of
    rig_edge.h, for rig and any caller that holds its submissions in C.
-   [self] is Rig_nv.edge, whose struct rig_driver holds them. Both are
-   called without the OCaml runtime: they call no function of it and read
-   no OCaml value.
+   [self] is the device's [edge] fact, whose struct rig_driver holds them.
+   Both are called without the OCaml runtime: they call no function of it
+   and read no OCaml value.
 
    Queue 0 is the channel "COMPUTE:0", queue 1 the channel "COPY:0". A part
    is ring entries, two words each, low first (Rig_nv_abi.Gpfifo), or a

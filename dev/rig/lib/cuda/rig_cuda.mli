@@ -69,8 +69,7 @@
     {!val-image}, {!entry}, {!unload} and {!sleep}; the submit answers
     [RIG_FAILED] instead, once it makes a CUDA call (a submission of no parts
     and no waits makes none), and the [graph] function of {!val-capability}
-    answers [Error] with the context's error. Misuse, such as a region of
-    another device, raises [Invalid_argument].
+    answers [Error] with the context's error.
 
     {b Domains.} Every value may be called from any domain, at the same time as
     others, with three exceptions. The C room and submit run one call at a time,
@@ -127,204 +126,116 @@ val open_ : int -> (t, string) result
 
     Raises [Invalid_argument] if [i < 0]. *)
 
-(** {1:facts Facts} *)
+(** {1:driver Driver} *)
 
-val key : t Type.Id.t
-(** [key] tells devices of this library apart from others'. *)
+include Rig_edge.Driver with type t := t
 
-val arch : t -> string
-(** [arch g] is the GPU's compute capability, as ["sm_89"]. *)
+val capability : t -> Rig_cuda_abi.t
+(** [capability g] is [g]'s ABI record, which its facts carry under
+    {!Rig_cuda_abi.key}: the functions of the CUDA library [g] was opened with,
+    and the maker of graphs in [g]'s context. *)
 
-val budget : t -> int
-(** [budget g] is the GPU's memory, in bytes. *)
+(** {1:this This driver}
 
-val queues : t -> string list
-(** [queues g] is [["COMPUTE:0"; "COPY:0"]], one stream each. *)
+    {t
+      | Fact | Value |
+      |------|-------|
+      | [arch] | The GPU's compute capability, as ["sm_89"]. |
+      | [budget] | The GPU's memory, in bytes. |
+      | [queues] | ["COMPUTE:0"], ["COPY:0"]; each runs [Fill], [Copy]. |
+      | [completion] | [Store]: the streams write the word. |
+      | [waits] | [stores] and [hosts]; no [objects]; [most] is [max_int]. |
+      | [may_block] | [true]: the submit calls CUDA, which may block. |
+      | [maps_host] | The GPU's [CU_DEVICE_ATTRIBUTE_HOST_REGISTER_SUPPORTED]. |
+      | [capability] | {!capability}, under {!Rig_cuda_abi.key}. |
+      | [word] | Eight bytes of page-locked host memory. |
+    }
 
-val completion : t -> [ `Store | `Object of nativeint | `Host ]
-(** [completion g] is [`Store]: [g]'s streams write its timeline word. *)
+    {b Waits.} The streams wait on any aligned 64-bit word the device's work
+    addresses, whoever writes it. A submission's waits go to its stream in
+    batches, as many as it carries.
 
-val waits_on : t -> [ `Store | `Object | `Host ] -> bool
-(** [waits_on g c] is [true] for [`Store] and [`Host]: [g] waits in its streams
-    on any 64-bit word it maps, whoever writes it. It is [false] for [`Object].
-*)
+    {b Memory.} A region is an allocation of the device, host memory it maps,
+    or another device's memory it maps. {!alloc} answers:
+    - [Device], GPU memory, which the host does not address;
+    - [Pinned], page-locked host memory that the host and every CUDA device
+      address ([cuMemHostAlloc], portable and mapped). It is not
+      write-combined, so the host reads it as fast as other memory;
+    - [Mapped], [None]: CUDA maps no GPU memory for the host.
 
-val max_waits : t -> int
-(** [max_waits g] is [max_int]: a submission's waits go to its stream in
-    batches, as many as it carries. *)
+    An allocation is [None] if CUDA refuses it, for lack of memory or otherwise.
+    {!alloc} and {!map_host} raise [Invalid_argument] for fewer than one byte.
 
-val blocks : t -> [ `Returns | `May_block ]
-(** [blocks g] is [`May_block]: the submit calls CUDA, which may block. *)
+    A region's {!locate} [address] is the address of its first byte in the
+    process's unified address space, which every CUDA device's work uses. Its
+    [handle] is the address by which CUDA names its allocation: its device
+    address for GPU memory, its host address for host memory. Its [host] is
+    that host address for host memory, and [None] for GPU memory.
 
-val maps_host : t -> bool
-(** [maps_host g] is [true] iff CUDA page-locks host memory for [g]'s GPU, as
-    its [CU_DEVICE_ATTRIBUTE_HOST_REGISTER_SUPPORTED] says. *)
-
-type capability = Rig_cuda_abi.t
-(** The type for what compiled code needs from a device. *)
-
-val capability : t -> capability
-(** [capability g] is [g]'s record: the functions of the CUDA library [g] was
-    opened with, and the maker of graphs in [g]'s context. *)
-
-val capability_key : capability Type.Id.t
-(** [capability_key] is {!Rig_cuda_abi.key}. *)
-
-(** {1:memory Memory} *)
-
-type region
-(** The type for memory a device's work addresses: an allocation of the device,
-    host memory it maps, or another device's memory it maps. *)
-
-val alloc : t -> [ `Device | `Pinned | `Mapped ] -> int -> region option
-(** [alloc g kind n] is [Some r] with [r] [n] new bytes:
-    - [`Device], GPU memory, which the host does not address;
-    - [`Pinned] and [`Mapped], page-locked host memory that the host and every
-      CUDA device address ([cuMemHostAlloc], portable and mapped). It is not
-      write-combined, so the host reads it as fast as other memory. CUDA maps no
-      GPU memory for the host, so [`Mapped] is host memory too.
-
-    It is [None] if CUDA refuses the allocation, for lack of memory or
-    otherwise.
-
-    Raises [Invalid_argument] if [n < 1]. *)
-
-val free : t -> region -> unit
-(** [free g r] gives back [r]: it frees an allocation, and ends a region that
-    {!map_peer} or {!map_host} gave. The caller frees it once no work that uses
-    it runs. CUDA may wait for all of the GPU's work before it frees an
+    {!free} frees an allocation, and ends a region that {!map_peer} or
+    {!map_host} gave. CUDA may wait for all of the GPU's work before it frees an
     allocation. A {!map_host} region whose unregistration CUDA refuses, because
     [g]'s context failed, keeps the pages locked, and every later {!map_host}
-    that overlaps them is [None]. The free of the {!word} ends a stopped [g]:
-    it destroys the streams a {!stop} that found work running left, and the
-    GPU then opens again.
+    that overlaps them is [None]. The free of the word ends a stopped [g]: it
+    destroys the streams a {!stop} that found work running left, and the GPU
+    then opens again.
 
-    Raises [Invalid_argument] if [r] is another device's, or was freed. *)
+    {!peer}[ g g'] is [true] iff CUDA gives [g]'s GPU access to the GPU memory
+    of [g']'s, which {!peer} then enables for the pair: always for two devices
+    of one GPU. {!map_peer} maps host memory always, and GPU memory where CUDA
+    gives that access, which it then enables for the pair. The free of a
+    {!map_peer} region ends only that region.
 
-val address : region -> int option
-(** [address r] is [Some a], [a] the address of [r]'s first byte in the
-    process's unified address space, which every CUDA device's work uses. *)
-
-val handle : region -> nativeint
-(** [handle r] is the address by which CUDA names [r]'s allocation: its device
-    address for GPU memory, its host address for host memory. *)
-
-val host : region -> int option
-(** [host r] is [Some a], [a] the host address of [r]'s first byte, if [r] is
-    host memory, and [None] for GPU memory. *)
-
-val peer : t -> t -> bool
-(** [peer g g'] is [true] iff CUDA gives [g]'s GPU access to the GPU memory of
-    [g']'s, which [peer] then enables for the pair: always for two devices of
-    one GPU. It is {!map_peer}'s answer for GPU memory.
-
-    Raises [Invalid_argument] if [g'] is [g]. *)
-
-val map_peer : t -> t -> region -> region option
-(** [map_peer g g' r] is [Some r'] with [r'] a new region of [g] over the memory
-    of [g']'s region [r], if [g]'s work can address it: always for host memory;
-    for GPU memory if CUDA gives [g]'s GPU access to [g']'s, which [map_peer]
-    then enables for the pair. It is [None] otherwise. {!free} of [r'] ends only
-    [r']. [r'] is [r]'s memory: the caller frees [r'] before it frees [r].
-
-    Raises [Invalid_argument] if [g'] is [g], or if [r] is no region of [g'] or
-    was freed. *)
-
-val map_host : t -> int -> int -> region option
-(** [map_host g a n] is [Some r] with [r] the [n] bytes of host memory at [a],
-    page-locked for every CUDA device and mapped, unless [g] maps no host memory
-    ({!maps_host}) or CUDA refuses to page-lock them. CUDA refuses read-only
-    memory and memory whose pages another page-locked range shares. The host
-    memory must stay mapped until [r] is freed.
-
-    Page-locking is the process's. A range inside one that {!map_host}
-    page-locked counts against it: the pages stay locked until every region
-    {!map_host} gave over them, on any device, is freed. A range that shares a
-    page with one without lying inside it is [None]. Memory that CUDA
-    page-locked for another owner, such as an allocation of {!alloc} or of
-    another library, is mapped as it is, uncounted, if the range lies inside one
-    of its allocations ([None] otherwise), and must stay page-locked until [r]
-    is freed.
-
-    [r]'s {!address} is the one CUDA gives for the memory
+    {!map_host}[ g a n] page-locks the [n] bytes at [a] for every CUDA device
+    and maps them. It is [None] where [g] does not map host memory, or where
+    CUDA refuses to page-lock them: CUDA refuses read-only memory and memory
+    whose pages another page-locked range shares. Page-locking is the process's.
+    A range inside one that {!map_host} page-locked counts against it: the pages
+    stay locked until every region {!map_host} gave over them, on any device, is
+    freed. A range that shares a page with one without lying inside it is
+    [None]. Memory that CUDA page-locked for another owner, such as an
+    allocation of {!alloc} or of another library, is mapped as it is,
+    uncounted, if the range lies inside one of its allocations ([None]
+    otherwise), and must stay page-locked until the region is freed. The
+    region's [address] is the one CUDA gives for the memory
     ([cuMemHostGetDevicePointer]), which every device's work uses under unified
     addressing.
 
-    Raises [Invalid_argument] if [n < 1]. *)
+    {b Images.} {!val-image}[ g bin] is [Ok (Loaded m)] with [m] the CUDA module
+    of [bin], a cubin, a fatbin or PTX text, which CUDA compiles for the GPU.
+    CUDA holds the code itself: {!val-image} places every function's code
+    before it returns, whatever [CUDA_MODULE_LOADING] asks, so {!entry} and a
+    launch place none. CUDA may wait for all of the GPU's work before it loads
+    [bin], and {!val-image} lets other domains run meanwhile. The result is
+    [Error msg] with CUDA's error if CUDA refuses [bin], for instance a cubin
+    for another GPU, or lacks the memory for its code.
 
-(** {1:images Images} *)
+    {!entry}[ m f] is the [CUfunction] of the kernel [f] of [m], which compiled
+    code passes to [cuLaunchKernel]. It is valid until [m] is unloaded. A launch
+    of it may take as much dynamic shared memory as a block of the GPU can have
+    (its opt-in maximum,
+    [CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN]), less [f]'s static
+    shared memory.
 
-type image
-(** The type for CUDA modules a device loaded. *)
+    {!unload} may wait, in CUDA, for all of the GPU's work, and lets other
+    domains run meanwhile.
 
-val image :
-  t ->
-  string ->
-  ( [ `Loaded of image | `Place of int * (region -> image * string) ],
-    string )
-  result
-(** [image g bin] is [Ok (`Loaded m)] with [m] the module of [bin], a cubin, a
-    fatbin or PTX text, which CUDA compiles for the GPU. CUDA holds the code
-    itself: [image] places every function's code before it returns, whatever
-    [CUDA_MODULE_LOADING] asks, so {!entry} and a launch place none. CUDA may
-    wait for all of the GPU's work before it loads [bin], and [image] lets
-    other domains run meanwhile. The result is [Error msg] with CUDA's error
-    if CUDA refuses [bin], for instance a cubin for another GPU, or lacks the
-    memory for its code. *)
+    {b Timeline.} The word holds its value as an unsigned 64-bit integer in the
+    host's byte order. The streams write it after a fence that makes the work's
+    writes visible ([cuStreamWriteValue64] with
+    [CU_STREAM_WRITE_VALUE_DEFAULT], a system-wide memory fence before the
+    write). {!signaled} reads it with acquire order: the work of every value up
+    to its answer completed, and its writes are visible to the reader.
 
-val entry : image -> string -> int option
-(** [entry m f] is [Some h], [h] the [CUfunction] of the kernel [f] of [m],
-    which compiled code passes to [cuLaunchKernel], or [None] if [m] has no
-    kernel [f]. [h] is valid until [m] is unloaded. A launch of [h] may take
-    as much dynamic shared memory as a block of the GPU can have (its opt-in
-    maximum, [CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN]), less
-    [f]'s static shared memory.
+    {!sleep} asks CUDA each millisecond whether [g]'s streams met an error
+    ([cuStreamQuery]), so it finds a fault at most a millisecond after CUDA
+    reports it, and raises {!exception-Fault} with CUDA's error. It lets other
+    domains run while it waits.
 
-    Raises [Invalid_argument] if [m] was unloaded. *)
-
-val unload : t -> image -> unit
-(** [unload g m] unloads [m]. The caller unloads it once no work that runs its
-    kernels runs. CUDA may wait for all of the GPU's work before it returns, and
-    [unload] lets other domains run meanwhile.
-
-    Raises [Invalid_argument] if [m] is another device's or was unloaded. *)
-
-(** {1:timeline Timeline} *)
-
-val word : t -> region
-(** [word g] is [g]'s timeline word: eight bytes of page-locked host memory
-    holding, as an unsigned 64-bit integer in the host's byte order, the last
-    value [v] such that the work of every value up to [v] completed. [g]'s
-    streams write it after a fence that makes the work's writes visible
-    ([cuStreamWriteValue64] with [CU_STREAM_WRITE_VALUE_DEFAULT], a system-wide
-    memory fence before the write); it never decreases. Other devices may map it
-    and wait on it. It lives until
-    {!free}, which the caller calls once [g] is stopped, the word holds its
-    last value, and no other device's work reads it. *)
-
-val signaled : t -> int
-(** [signaled g] is the value in {!word}, read with acquire order: the work of
-    every value up to it completed, and its writes are visible to the reader. *)
-
-val sleep : t -> seen:int -> still_ms:int -> unit
-(** [sleep g ~seen ~still_ms] returns once [g]'s timeline word differs from
-    [seen], at once if it does already, or after [still_ms] milliseconds;
-    [still_ms] is not negative. It asks CUDA each millisecond whether [g]'s
-    streams met an error ([cuStreamQuery]), so it finds a fault at most a
-    millisecond after CUDA reports it. It lets other domains run while it waits,
-    and may run while the submit does.
-
-    Raises {!exception-Fault} with CUDA's error if [g]'s work met one. *)
-
-(** {1:work Work} *)
-
-val edge : t -> nativeint
-(** [edge g] is the address of [g]'s C state, whose first member points to the
-    device's [struct rig_driver] of [rig_edge.h] ({!Rig.Driver.edge}): the C
-    functions [rig_cuda_room], [rig_cuda_submit] and [rig_cuda_commit], which
-    [rig_cuda.h] declares. It is valid while the process runs: a device's C
-    state holds its {!word}, which other devices may read after [g] is gone, so
-    neither is ever freed.
+    {b Work.} The edge's [struct rig_driver] holds the C functions
+    [rig_cuda_room], [rig_cuda_submit] and [rig_cuda_commit], which
+    [rig_cuda.h] declares. The device's C state holds its word, which other
+    devices may read after [g] is gone, so neither is ever freed.
 
     [rig_cuda_room] answers [RIG_NEVER] for a part that is no fill or copy, a
     fill with ring units or segment bytes, or a part on no queue of the device,
@@ -342,20 +253,18 @@ val edge : t -> nativeint
       as {!Rig_cuda_abi} states. Nothing bounds what a fill enqueues, so it
       declares no room.
     - A copy moves [copy.bytes] bytes between the handles of two regions of the
-      device ({!handle}) at their offsets. The ranges are apart: a copy between
-      overlapping ranges writes undefined bytes.
+      device at their offsets. The ranges are apart: a copy between overlapping
+      ranges writes undefined bytes.
     - Each wait holds the work back until the aligned 64-bit word at [at], which
       the device's work addresses, holds at least [value], compared circularly:
       [x] is at least [w] if [x - w], as a signed 64-bit integer, is not
       negative. Its kind is [RIG_WORD].
     - [handles] is ignored: CUDA's work names its memory by address.
 
-    The work runs after every earlier value of the device and after the waits.
     Encoding launches the parts on the device's stream. A commit writes the
     value with [cuStreamWriteValue64] ([rig_cuda_commit]); the device commits on
     its own every 64 values, and commits a value with a copy as it encodes it,
-    since the copy hides the write's cost. Once [v] is committed and its work
-    completed, the timeline word holds [v]. A submission of no parts ends after
+    since the copy hides the write's cost. A submission of no parts ends after
     its waits and after every earlier value. No part writes a timeline word, the
     device's or another's: only the devices' streams write their words, and a
     word the work wrote could move backwards or claim work that has not
@@ -372,33 +281,21 @@ val edge : t -> nativeint
     that work waiting on it elsewhere runs on: a failed submit, and every later
     one, writes [v] after its waits, every earlier value and the work enqueued
     for [v]. It writes nothing once the context failed, whose work no longer
-    runs, or if CUDA refuses a call that orders the write.
-
-    It may block while a stream is full, until the device's earlier work
-    completes.
+    runs, or if CUDA refuses a call that orders the write. It may block while a
+    stream is full, until the device's earlier work completes.
 
     [rig_cuda_commit], given [v], writes [v] with [cuStreamWriteValue64] on the
     stream the last value ended on, after the work of every value up to [v],
     unless a commit wrote [v] or a later value. It answers [RIG_FAILED] with the
     device's failure once a submit or a commit failed. It may block while a
-    stream is full. *)
+    stream is full.
 
-(** {1:loss Loss} *)
-
-exception Fault of string
-(** The exception for a fault of a device's work, with CUDA's error. *)
-
-val stop : t -> unit
-(** [stop g] stops [g] for good, without waiting for [g]'s work. If [g]'s work
-    no longer writes memory (the work of every value it was given completed, its
-    streams are idle, or a fault ended the context's work), the timeline word
-    holds at least the last value the submit was given when [stop] returns, so
-    work of other devices that waits on it runs on, and [g]'s streams are
+    {b Stopping.} {!stop} ignores [fault]. If [g]'s work no longer writes
+    memory (the work of every value it was given completed, its streams are
+    idle, or a fault ended the context's work), the word holds at least the last
+    value the submit was given when {!stop} returns, and [g]'s streams are
     destroyed. Otherwise it commits the last value the submit was given, and the
-    timeline word reaches it once that work ends, unless it waits on a word of
-    another device that never reaches its value; the GPU opens again once that
-    work ends. It releases no region and no image: those end at {!free} and
-    {!unload}, which may follow. A [graph] call of {!val-capability} in flight
-    returns before [stop] begins, and every later one answers [Error]. After
-    [stop], only {!free}, {!unload}, the [symbol] and [graph] functions of
-    {!val-capability} and the release of a graph may be called on [g]. *)
+    word reaches it once that work ends, unless it waits on a word of another
+    device that never reaches its value; the GPU opens again once that work
+    ends. A [graph] call of {!val-capability} in flight returns before {!stop}
+    begins, and every later one answers [Error]. *)

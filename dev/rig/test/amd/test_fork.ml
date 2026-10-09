@@ -9,8 +9,8 @@ module S = Rig_amd_support
 module E = S.Edge
 module H = Rig_gpu_support.Host
 
-let host r = Option.get (A.host r)
-let address r = Option.get (A.address r)
+let host r = Option.get (A.locate r).host
+let address r = Option.get (A.locate r).address
 
 (* A child forked after the parent opened GPU 0 opens the GPU on its own and
    runs a copy. It exits 0 once its copy holds the bytes, 1 if the open failed,
@@ -25,14 +25,14 @@ let forked () =
         match S.open_gpu () with
         | Error _ when S.driverless () -> 0
         | Ok c when S.driverless () ->
-            A.stop c;
+            A.stop c ~fault:None;
             4
         | Error why ->
             prerr_endline why;
             1
         | Ok c ->
-            let src = Option.get (A.alloc c `Pinned 64) in
-            let dst = Option.get (A.alloc c `Pinned 64) in
+            let src = Option.get (A.alloc c Rig_edge.Pinned 64) in
+            let dst = Option.get (A.alloc c Rig_edge.Pinned 64) in
             H.write (host src) (String.make 64 'f');
             H.write (host dst) (String.make 64 '\000');
             ignore

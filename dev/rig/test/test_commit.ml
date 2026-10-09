@@ -110,7 +110,7 @@ let wait_system w i =
 let scratch_system w i =
   let x = w.(i) in
   cover "an allocation over the budget"
-    (P.allocated x.p `Device + scratch_bytes > budget);
+    (P.allocated x.p B.Device + scratch_bytes > budget);
   use x ~scratch:[ B.create x.d scratch_bytes ] ~waits:[||]
 
 (* A program's devices stay open, as every drain walks the closed ones, and

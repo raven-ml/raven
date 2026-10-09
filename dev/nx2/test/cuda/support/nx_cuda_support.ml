@@ -90,7 +90,7 @@ let gpu () =
       if Rig_cuda.count () = 0 then Windtrap.skip ~reason:"CUDA sees no GPU" ();
       hold_gpu ();
       let cuda = Result.get_ok (Rig_cuda.open_ 0) in
-      let arch = Rig_cuda.arch cuda in
+      let arch = (Rig_cuda.facts cuda).arch in
       let open_ () = Ok cuda in
       let device =
         Result.get_ok (Rig.open_ (module Rig_cuda) ~name:"CUDA:nx2" open_)

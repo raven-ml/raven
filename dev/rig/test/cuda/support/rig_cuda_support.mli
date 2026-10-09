@@ -118,13 +118,10 @@ val fixture : ?dir:string -> string -> string
     them compiled for [sm_89]; ["global.ptx"] holds [touch], of the same
     parameters, which stores to a global of 256 MiB. *)
 
-val loaded :
-  [ `Loaded of Rig_cuda.image
-  | `Place of int * (Rig_cuda.region -> Rig_cuda.image * string) ] ->
-  Rig_cuda.image
+val loaded : (Rig_cuda.region, Rig_cuda.image) Rig_edge.code -> Rig_cuda.image
 (** [loaded i] is the image of {!Rig_cuda.image}'s answer [i].
 
-    Raises [Failure] if [i] is [`Place _]. *)
+    Raises [Failure] if [i] is [Place _]. *)
 
 val kernels : ?dir:string -> Rig_cuda.t -> Rig_cuda.image * (string -> int)
 (** [kernels ~dir g] is ["kernels.ptx"] of [dir] loaded on [g], and its kernels

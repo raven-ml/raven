@@ -17,43 +17,47 @@ module D = struct
      is 0 for a mapping of host memory, which [free] leaves alone. *)
   type region = { at : int; base : int }
   type image = unit
-  type capability = unit
 
   exception Fault of string
 
   let key : t Type.Id.t = Type.Id.make ()
-  let arch _ = "memory"
-  let budget _ = max_int
-  let queues _ = [ "COMPUTE:0"; "COPY:0" ]
+  let capability_key : unit Type.Id.t = Type.Id.make ()
+  let all = Rig_edge.[ Fill; Copy ]
+
+  (* Its hand-over runs the submission's work, which may take long. *)
+  let facts d =
+    {
+      Rig_edge.arch = "memory";
+      budget = max_int;
+      queues =
+        [ { name = "COMPUTE:0"; runs = all }; { name = "COPY:0"; runs = all } ];
+      completion = Host;
+      waits = { stores = false; hosts = false; objects = false; most = 0 };
+      may_block = true;
+      maps_host = true;
+      capability = Capability (capability_key, ());
+      word = { at = d.word; base = Nativeint.to_int d.self };
+      edge = d.self;
+    }
 
   let alloc _ _ n =
     let at = malloc n in
     if at = 0 then None else Some { at; base = at }
 
   let free _ r = if r.base <> 0 then free r.base
-  let address r = Some r.at
-  let handle r = Nativeint.of_int r.at
-  let host r = Some r.at
+
+  let locate r =
+    { Rig_edge.address = Some r.at; host = Some r.at; handle = Nativeint.of_int r.at }
+
   let peer _ _ = true
   let map_peer _ _ r = Some { r with base = 0 }
   let map_host _ p _ = Some { at = p; base = 0 }
   let image _ _ = Error "a memory device loads no code"
   let entry () _ = None
   let unload _ () = ()
-  let word d = { at = d.word; base = Nativeint.to_int d.self }
   let signaled d = load d.word
   let sleep _ ~seen:_ ~still_ms:_ = ()
-  let completion _ = `Host
-  let waits_on _ _ = false
-  let max_waits _ = 0
-  let maps_host _ = true
-
-  (* Its hand-over runs the submission's work, which may take long. *)
-  let blocks _ = `May_block
-  let edge d = d.self
-  let capability _ = ()
-  let capability_key : capability Type.Id.t = Type.Id.make ()
-  let stop _ = ()
+  let stop _ ~fault:_ = ()
 end
 
 let open_ name =

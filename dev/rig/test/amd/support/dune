@@ -3,7 +3,14 @@
 
 (library
  (name rig_amd_support)
- (libraries rig rig_amd rig_amd_amdgpu rig_amd_pci rig_edge rig_gpu_support)
+ (libraries
+  rig
+  rig_amd
+  rig_amd_abi
+  rig_amd_amdgpu
+  rig_amd_pci
+  rig_edge
+  rig_gpu_support)
  (foreign_stubs
   (language c)
   (names rig_amd_support_stubs)))

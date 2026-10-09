@@ -63,7 +63,7 @@ let dispatch ~pipeline ?(offset = 0) args ~groups ~threads =
   let arg =
     dispatch_arg
       (Nativeint.of_int pipeline)
-      (Rig_metal.handle args) offset groups threads
+      (Rig_metal.locate args).handle offset groups threads
   in
   { fn = dispatch_fill (); arg }
 

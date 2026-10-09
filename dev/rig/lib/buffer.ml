@@ -8,7 +8,7 @@ open Def
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
 type t = buffer
-type memory = Device | Pinned | Mapped
+type memory = Rig_edge.memory = Device | Pinned | Mapped
 type access = Def.access = Read | Read_write
 
 let generation (c : claim) = Atomic.Loc.get [%atomic.loc c.generation]

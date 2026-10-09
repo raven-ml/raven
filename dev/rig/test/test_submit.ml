@@ -418,6 +418,93 @@ let test_copy_refused () =
   raises_match Exn.invalid_arg (fun () ->
       Sub.make ~reads:0 ~writes:0 d [| copy |])
 
+(* A part of a kind its queue does not run is refused when the submission is
+   made: Polled's queues run fills and copies, and with no copies, fills
+   alone. *)
+let test_runs () =
+  let d, _ = P.open_ "submit:runs" in
+  let e, _ = P.open_ ~copies:false "submit:runs-fills" in
+  let runs d =
+    List.map (fun (q : Rig.queue) -> (q.name, q.runs)) (Rig.queues d)
+  in
+  let kind ppf k =
+    Format.pp_print_string ppf
+      (match k with Rig.Words -> "Words" | Fill -> "Fill" | Copy -> "Copy")
+  in
+  let queue ppf (name, runs) =
+    Format.fprintf ppf "%s: %a" name
+      (Format.pp_print_list ~pp_sep:Format.pp_print_space kind)
+      runs
+  in
+  let kinds =
+    Testable.make ~pp:(Format.pp_print_list queue) ~equal:( = )
+  in
+  equal ~msg:"Polled's queues" kinds
+    [ ("COMPUTE:0", [ Rig.Fill; Copy ]); ("COPY:0", [ Fill; Copy ]) ]
+    (runs d);
+  equal ~msg:"Polled's queues with no copies" kinds
+    [ ("COMPUTE:0", [ Rig.Fill ]) ]
+    (runs e);
+  let words = B.create Rig.host 8 in
+  let part queue work = { Sub.queue; after = [||]; work } in
+  List.iter
+    (fun queue ->
+      raises_match ~msg:("words on " ^ queue) Exn.invalid_arg (fun () ->
+          Sub.make ~reads:0 ~writes:0 d [| part queue (Sub.Words words) |]))
+    [ "COMPUTE:0"; "COPY:0" ];
+  let src = B.create e 8 and dst = B.create e 8 in
+  raises_match ~msg:"a copy where no queue copies" Exn.invalid_arg (fun () ->
+      Sub.make ~reads:0 ~writes:0 e
+        [| part "COMPUTE:0" (Sub.Copy { src; dst }) |]);
+  equal ~msg:"no queues on the host" int 0 (List.length (Rig.queues Rig.host))
+
+(* A value's work starts once the previous value's completed, on every queue:
+   a copy on COPY:0, then a fill on COMPUTE:0 that reads what the copy wrote
+   without naming it, sees the copy, and the other way round. Neither names a
+   buffer of the other, so only the device's order orders them. *)
+let test_device_order () =
+  let d, p = P.open_ "submit:device-order" in
+  (* Host buffers of 64 KiB start on a page, so the device borrows them. *)
+  let n = 64 * 1024 in
+  let filled c =
+    let b = B.create Rig.host n in
+    Bigarray.Array1.fill (B.bigarray Bigarray.char b) c;
+    b
+  in
+  let a = filled 'a' and b = B.create d n in
+  let c = filled '-' and out = filled '-' and z = filled 'z' in
+  let bytes x =
+    String.init n (Bigarray.Array1.get (B.bigarray Bigarray.char x))
+  in
+  let fill ~dst ~src =
+    let arg = B.create Rig.host 24 in
+    let at = B.address arg in
+    Support.store at dst;
+    Support.store (at + 8) src;
+    Support.store (at + 16) n;
+    {
+      Sub.queue = "COMPUTE:0";
+      after = [||];
+      work =
+        Sub.Fill
+          { fill = Support.carry; arg; ring_units = 0; segment_bytes = 0 };
+    }
+  in
+  let copy src dst =
+    { Sub.queue = "COPY:0"; after = [||]; work = Sub.Copy { src; dst } }
+  in
+  let run parts = ignore (submit (Sub.make ~reads:0 ~writes:0 d parts)) in
+  let a' = require_some (B.borrow d a) and c' = require_some (B.borrow d c) in
+  run [| copy a' b |];
+  run [| fill ~dst:(B.address out) ~src:(B.address b) |];
+  ignore (P.run p);
+  equal ~msg:"a fill after a copy" string (String.make n 'a') (bytes out);
+  run [| fill ~dst:(B.address b) ~src:(B.address z) |];
+  run [| copy b c' |];
+  ignore (P.run p);
+  equal ~msg:"a copy after a fill" string (String.make n 'z') (bytes c);
+  ignore (Sys.opaque_identity (a, out, z))
+
 (* Lifetime against the driver's frees *)
 
 (* Each submission copies between two fresh buffers that only it holds, and each
@@ -633,9 +720,13 @@ let tests =
         test "a run's buffer that died refuses the submit" test_dead_slot;
         test "a copy on a device that runs no copies is refused"
           test_copy_refused;
+        test "a part of a kind its queue does not run is refused at make"
+          test_runs;
       ];
     group ~timeout "order"
       [
+        test "a value's work follows the previous value's, on every queue"
+          test_device_order;
         test "a read waits for another device's write" test_read_waits;
         test "a run's buffers stay reachable until its stamps are raised"
           test_run_keeps;

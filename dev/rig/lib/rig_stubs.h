@@ -87,6 +87,7 @@ struct rig_device {
   _Atomic int state;
   _Atomic(char *) lost;     /* NULL, or the loss's reason */
   _Atomic uint64_t reached; /* once lost, the word's value at the loss */
+  int faulted; /* lost for a fault of a counted call, set with [lost] */
   int turn;   /* a May_block submission is between room and hand-over */
   int inside; /* counted calls in flight, the turn holder included */
   struct rig_entry *record;

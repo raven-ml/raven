@@ -6,8 +6,8 @@
 /* Submitting to a Metal device from C.
 
    The device's room check and submit, over the structures and codes of
-   rig_edge.h: the only way work reaches the device. [self] is
-   Rig_metal.edge, whose struct rig_driver holds them. Both are called
+   rig_edge.h: the only way work reaches the device. [self] is the edge of
+   Rig_metal.facts, whose struct rig_driver holds them. Both are called
    without the OCaml runtime: they call no function of it and read no OCaml
    value.
 

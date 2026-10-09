@@ -12,10 +12,13 @@ module Abi = Rig_amd_abi
 module Gpu = Abi.Gpu
 module Pm4 = Abi.Pm4
 
+type memory = Rig_edge.memory = Device | Pinned | Mapped
+
 let strf = Printf.sprintf
 let still = Rig_gpu_support.still
-let host r = Option.get (A.host r)
-let address r = Option.get (A.address r)
+let host r = Option.get (A.locate r).host
+let address r = Option.get (A.locate r).address
+let word g = (A.facts g).word
 let submit g ~v ps = E.submit g ~v ps
 
 let le64 n =
@@ -285,7 +288,7 @@ module Host = struct
     let h, g = device ?gpu ?lds () in
     Fun.protect
       ~finally:(fun () ->
-        A.stop g;
+        A.stop g ~fault:None;
         close h)
       (fun () -> f h g)
 
@@ -297,7 +300,7 @@ module Host = struct
   let position q = H.get64 q.write
 
   (* Reaches [v]: what the queue that releases [v] does. *)
-  let reach g v = H.set64 (host (A.word g)) v
+  let reach g v = H.set64 (host (word g)) v
 end
 
 (* Paths *)
@@ -320,7 +323,7 @@ let make_refuses_families () =
 let make_gives_back () =
   let calls =
     let h, g = Host.device () in
-    A.stop g;
+    A.stop g ~fault:None;
     Host.close h;
     h.calls
   in
@@ -372,15 +375,15 @@ let make_gives_back () =
    timeline word, which its free after the stop gives back. *)
 let stop_gives_back () =
   let h, g = Host.device () in
-  let word = address (A.word g) in
+  let at = address (word g) in
   equal answer ~msg:"submit" `Ok (submit g ~v:1 [||]);
-  A.stop g;
+  A.stop g ~fault:None;
   equal int ~msg:"stops" 1 h.stops;
   equal (option string) ~msg:"the fault the path's stop got" None h.stop_fault;
-  equal bool ~msg:"the word given back" false (List.mem word h.frees);
+  equal bool ~msg:"the word given back" false (List.mem at h.frees);
   equal int ~msg:"the memory left: the word" 1 h.live;
-  A.free g (A.word g);
-  equal bool ~msg:"the word, freed after the stop" true (List.mem word h.frees);
+  A.free g (word g);
+  equal bool ~msg:"the word, freed after the stop" true (List.mem at h.frees);
   Host.close h
 
 (* A device is stopped for good: a later [stop], as rig's own after a loss and
@@ -388,9 +391,9 @@ let stop_gives_back () =
 let stop_twice () =
   let h, g = Host.device () in
   let live = h.live in
-  A.stop g;
+  A.stop g ~fault:None;
   let frees = h.frees in
-  A.stop g;
+  A.stop g ~fault:None;
   equal int ~msg:"stops" 1 h.stops;
   equal (list int) ~msg:"given back" frees h.frees;
   less int ~msg:"the memory left" ~than:live h.live;
@@ -401,15 +404,30 @@ let facts () =
     (fun (g, kind, aql) ->
       let msg = Gpu.processor g in
       Host.with_device ~gpu:g @@ fun h d ->
-      let c = A.capability d in
-      equal string ~msg (Gpu.processor g) (A.arch d);
-      equal int ~msg (1 lsl 34) (A.budget d);
-      equal (list string) ~msg [ "COMPUTE:0"; "COPY:0" ] (A.queues d);
-      equal bool ~msg:"completion is the word" true (A.completion d = `Store);
-      equal bool ~msg:"blocks" true (A.blocks d = `Returns);
-      equal bool ~msg:"waits on objects" false (A.waits_on d `Object);
-      equal bool ~msg:"waits on words as on the host" (A.waits_on d `Host)
-        (A.waits_on d `Store);
+      let f = A.facts d and c = A.capability d in
+      let runs =
+        List.map (function
+          | Rig_edge.Words -> "words"
+          | Fill -> "fill"
+          | Copy -> "copy")
+      in
+      equal string ~msg (Gpu.processor g) f.arch;
+      equal int ~msg (1 lsl 34) f.budget;
+      equal
+        (list (pair string (list string)))
+        ~msg
+        [
+          ("COMPUTE:0", [ "words"; "fill" ]);
+          ("COPY:0", [ "words"; "fill"; "copy" ]);
+        ]
+        (List.map (fun (q : Rig_edge.queue) -> (q.name, runs q.runs)) f.queues);
+      equal bool ~msg:"completion is the word" true (f.completion = Store);
+      equal bool ~msg:"may block" false f.may_block;
+      equal bool ~msg:"maps host memory" true f.maps_host;
+      equal bool ~msg:"waits on objects" false f.waits.objects;
+      equal bool ~msg:"waits on words as on the host" f.waits.hosts
+        f.waits.stores;
+      equal int ~msg:"most waits" 255 f.waits.most;
       equal gpu ~msg c.gpu g;
       equal int ~msg 100_000_000 c.clock_hz;
       equal bool ~msg:"AQL" aql
@@ -424,26 +442,40 @@ let facts () =
            (fun (q : Host.queue) ->
              match q.kind with `Pm4 -> "PM4" | `Aql -> "AQL" | `Sdma -> "SDMA")
            h.queues);
-      equal bool ~msg:"the capability's key" true
-        (Option.is_some
-           (Type.Id.provably_equal A.capability_key Abi.Capability.key)))
+      match f.capability with
+      | Capability (k, c') -> (
+          match Type.Id.provably_equal k Abi.Capability.key with
+          | Some Equal ->
+              equal bool ~msg:"the capability's record" true (c' == c)
+          | None -> fail "the capability is under another key"))
     [ (r9700, "PM4", false); (mi300, "AQL", true) ]
+
+(* [Mapped] memory needs the HDP register that flushes the host's writes into
+   it: a path with none has no [Mapped] memory. *)
+let mapped_needs_hdp () =
+  let h, p = Host.path () in
+  match A.make { p with hdp = None } with
+  | Error why -> fail why
+  | Ok g ->
+      equal bool ~msg:"Mapped is None" true
+        (Option.is_none (A.alloc g Mapped 64));
+      A.stop g ~fault:None;
+      Host.close h
 
 (* [peer g g'] is whether [map_peer g g'] maps [g']'s [`Device] memory. *)
 let peers () =
   let other : Host.mem Type.Id.t = Type.Id.make () in
   let case name ?key ~reaches expected =
     let h, g = Host.device ~reaches () and h', g' = Host.device ?key () in
-    let r = Option.get (A.alloc g' `Device 64) in
+    let r = Option.get (A.alloc g' Device 64) in
     equal bool ~msg:(name ^ ": peer") expected (A.peer g g');
     let view = A.map_peer g g' r in
     equal bool ~msg:(name ^ ": map_peer") expected (Option.is_some view);
     Option.iter (A.free g) view;
-    equal bool ~msg:(name ^ ": itself") false (A.peer g g);
     A.free g' r;
     List.iter
       (fun (h, g) ->
-        A.stop g;
+        A.stop g ~fault:None;
         Host.close h)
       [ (h, g); (h', g') ]
   in
@@ -467,6 +499,7 @@ let paths =
         stop_gives_back;
       test "a second stop does nothing" stop_twice;
       test "a device states its path's facts" facts;
+      test "a path with no HDP register has no Mapped memory" mapped_needs_hdp;
     ]
 
 (* Code objects *)
@@ -482,9 +515,9 @@ let work_bin = lazy (read_fixture "work_gfx1201.hsaco")
 let load g bin =
   match A.image g bin with
   | Error why -> fail why
-  | Ok (`Loaded _) -> fail "an image the device placed itself"
-  | Ok (`Place (n, lay)) ->
-      let r = Option.get (A.alloc g `Device n) in
+  | Ok (Rig_edge.Loaded _) -> fail "an image the device placed itself"
+  | Ok (Rig_edge.Place (n, lay)) ->
+      let r = Option.get (A.alloc g Device n) in
       let m, bytes = lay r in
       (m, r, bytes)
 
@@ -492,34 +525,12 @@ let load g bin =
 
 let misuse () =
   Host.with_device @@ fun _ g ->
-  Host.with_device @@ fun _ g' ->
   let raises fn f =
     raises_match ~msg:fn (Exn.invalid_arg ~substring:("Rig_amd." ^ fn ^ ":")) f
   in
-  let kernels = Lazy.force kernels_bin in
-  raises "alloc" (fun () -> A.alloc g `Pinned 0);
-  let r = Option.get (A.alloc g `Pinned 4096) in
-  let r' = Option.get (A.alloc g' `Pinned 4096) in
   let page = H.pages 4096 in
-  let mapped = Option.get (A.map_host g page 4096) in
-  raises "free" (fun () -> A.free g r');
-  raises "map_peer" (fun () -> A.map_peer g g r);
-  raises "map_peer" (fun () -> A.map_peer g g' r);
+  raises "alloc" (fun () -> A.alloc g Pinned 0);
   raises "map_host" (fun () -> A.map_host g page 0);
-  let view = Option.get (A.map_peer g g' r') in
-  raises "free" (fun () -> A.free g' view);
-  A.free g view;
-  raises "free" (fun () -> A.free g view);
-  let m, code, _ = load g kernels in
-  raises "unload" (fun () -> A.unload g' m);
-  A.unload g m;
-  raises "entry" (fun () -> A.entry m "empty");
-  raises "unload" (fun () -> A.unload g m);
-  A.free g code;
-  A.free g r;
-  raises "free" (fun () -> A.free g r);
-  A.free g mapped;
-  A.free g' r';
   H.free_pages page 4096
 
 (* What rig_amd_room answers for a part the device does not run. *)
@@ -558,9 +569,9 @@ let loads () =
   let bin = Lazy.force kernels_bin in
   let co = Result.get_ok (Abi.Code_object.of_string bin) in
   (match A.image g bin with
-  | Ok (`Place (n, _)) ->
+  | Ok (Rig_edge.Place (n, _)) ->
       equal int ~msg:"the image's size" (Abi.Code_object.size co) n
-  | Ok (`Loaded _) | Error _ -> fail "no image to place");
+  | Ok (Rig_edge.Loaded _) | Error _ -> fail "no image to place");
   match load g bin with
   | m, r, bytes ->
       at_most int ~msg:"the image's bytes" ~than:(Abi.Code_object.size co)
@@ -727,13 +738,13 @@ let program =
     (list ~size:(int_range 1 30) step)
 
 let regions g =
-  (Option.get (A.alloc g `Pinned 4096), Option.get (A.alloc g `Pinned 4096))
+  (Option.get (A.alloc g Pinned 4096), Option.get (A.alloc g Pinned 4096))
 
 (* The fresh device: one that ran nothing, which the law compares with. *)
 let fresh =
   fixture
     ~teardown:(fun (h, g, _) ->
-      A.stop g;
+      A.stop g ~fault:None;
       Host.close h)
     (fun () ->
       let h, g = Host.device () in
@@ -865,7 +876,13 @@ and held = {
 }
 
 type sys_machine = (Host.t * A.t * int ref) array
-type sys_held = { devices : sys_machine; dev : int; r : A.region }
+
+type sys_held = {
+  devices : sys_machine;
+  dev : int;
+  r : A.region;
+  mutable freed : bool;
+}
 
 let device_at (ds : sys_machine) d =
   let _, g, _ = ds.(d) in
@@ -873,13 +890,14 @@ let device_at (ds : sys_machine) d =
 
 let give_back s =
   let g = device_at s.devices s.dev in
+  s.freed <- true;
   A.free g s.r
 
 let machine =
   abstract "machine" ~release:(fun (ds : sys_machine) ->
       Array.iter
         (fun (h, g, _) ->
-          A.stop g;
+          A.stop g ~fault:None;
           Host.close h)
         ds)
 
@@ -890,7 +908,7 @@ let held =
         (if r.mapped then "Mapped" else "Pinned")
         r.owner r.holder
         (if r.live then "" else ", given back"))
-    ~release:(fun s -> try give_back s with Invalid_argument _ -> ())
+    ~release:(fun s -> if not s.freed then give_back s)
 
 let device_index = Gen.int_range 0 (flushers - 1)
 
@@ -933,9 +951,9 @@ let hdp_commands =
       (fun m d mapped ->
         hold m { machine = m; owner = d; holder = d; mapped; live = true })
       (fun ds d mapped ->
-        let kind = if mapped then `Mapped else `Pinned in
+        let kind = if mapped then Mapped else Pinned in
         let r = Option.get (A.alloc (device_at ds d) kind 64) in
-        { devices = ds; dev = d; r });
+        { devices = ds; dev = d; r; freed = false });
     command "map_peer"
       ~pre:(fun d r -> r.live && d <> r.holder)
       (device_index @-> held ^-> makes held)
@@ -943,7 +961,7 @@ let hdp_commands =
       (fun d s ->
         let ds = s.devices in
         match A.map_peer (device_at ds d) (device_at ds s.dev) s.r with
-        | Some r -> { s with dev = d; r }
+        | Some r -> { s with dev = d; r; freed = false }
         | None -> fail "a view refused");
     command "give back"
       ~pre:(fun r -> r.live)
@@ -962,21 +980,21 @@ let with_nine f =
   let peers =
     List.init 8 (fun i ->
         let _, g' = ds.(i + 1) in
-        (g', Option.get (A.alloc g' `Mapped 64)))
+        (g', Option.get (A.alloc g' Mapped 64)))
   in
   Fun.protect
     ~finally:(fun () ->
       List.iter (fun (g', r) -> A.free g' r) peers;
       Array.iter
         (fun (h, g) ->
-          A.stop g;
+          A.stop g ~fault:None;
           Host.close h)
         ds)
     (fun () -> f ds.(0) peers)
 
 let seven_others () =
   with_nine @@ fun (_, g) peers ->
-  let own = Option.get (A.alloc g `Mapped 64) in
+  let own = Option.get (A.alloc g Mapped 64) in
   let views = List.map (fun (g', r) -> A.map_peer g g' r) peers in
   equal (list bool) ~msg:"views given"
     (List.init 8 (fun i -> i < 7))
@@ -989,7 +1007,7 @@ let seven_others () =
 let own_after_views () =
   with_nine @@ fun ((h : Host.t), g) peers ->
   let views = List.filter_map (fun (g', r) -> A.map_peer g g' r) peers in
-  let own = Option.get (A.alloc g `Mapped 64) in
+  let own = Option.get (A.alloc g Mapped 64) in
   H.set32 h.hdp 0xffff_ffff;
   equal answer ~msg:"submit" `Ok (submit g ~v:1 [||]);
   equal int ~msg:"its own HDP register" 0 (H.get32 h.hdp);
@@ -1125,7 +1143,7 @@ let sleeps () =
   h.report <- Some "memory fault at 0x0";
   raises (A.Fault "memory fault at 0x0") (fun () ->
       A.sleep g ~seen:0 ~still_ms:1);
-  A.stop g;
+  A.stop g ~fault:None;
   Host.close h
 
 (* A stopped device's word holds its last value for good: a sleep after the
@@ -1133,7 +1151,7 @@ let sleeps () =
    unmapped. *)
 let sleeps_after_stop () =
   let h, g = Host.device () in
-  A.stop g;
+  A.stop g ~fault:None;
   A.sleep g ~seen:(A.signaled g) ~still_ms:10_000;
   equal int ~msg:"the path's sleeps" 0 h.sleeps;
   Host.close h
@@ -1152,28 +1170,25 @@ let sleeps_after_fault () =
   raises ~msg:"the word past seen" (A.Fault why) (fun () ->
       A.sleep g ~seen:5 ~still_ms:1)
 
-(* [free] never raises the path's faults: a region freed while the path fails is
-   freed, and a second free of it is misuse. *)
+(* [free] never raises the path's faults. *)
 let free_through_fault () =
   Host.with_device @@ fun h g ->
-  let r = Option.get (A.alloc g `Pinned 64) in
+  let r = Option.get (A.alloc g Pinned 64) in
   h.free_fault <- Some "the host frees nothing now";
   A.free g r;
-  h.free_fault <- None;
-  raises_match ~msg:"a second free" (Exn.invalid_arg ~substring:"Rig_amd.free")
-    (fun () -> A.free g r)
+  h.free_fault <- None
 
 (* [stop] writes the last value into the word only once the path stopped every
    queue, and never raises; [free] and [signaled] answer after it. *)
 let stops () =
   let case name path_stop word =
     let h, g = Host.device ~stop:path_stop () in
-    let r = Option.get (A.alloc g `Pinned 64) in
+    let r = Option.get (A.alloc g Pinned 64) in
     let page = H.pages 64 in
     let m = Option.get (A.map_host g page 64) in
     equal answer ~msg:name `Ok (submit g ~v:1 [||]);
     equal answer ~msg:name `Ok (submit g ~v:2 [||]);
-    A.stop g;
+    A.stop g ~fault:None;
     equal int ~msg:(name ^ ": the word") word (A.signaled g);
     equal int ~msg:(name ^ ": stops") 1 h.stops;
     A.free g r;
@@ -1184,6 +1199,26 @@ let stops () =
   case "the path stopped" (fun () -> `Stopped) 2;
   case "the path may run a queue" (fun () -> `Unknown) 0;
   case "the path failed" (fun () -> raise (A.Fault "lost")) 0
+
+(* The path's stop gets the device's first fault: the one [sleep] raised, else
+   the one the device was lost for. *)
+let stop_fault () =
+  let case name ~report ~fault expected =
+    let h, g = Host.device () in
+    Option.iter
+      (fun why ->
+        h.report <- Some why;
+        raises ~msg:name (A.Fault why) (fun () -> A.sleep g ~seen:0 ~still_ms:1))
+      report;
+    A.stop g ~fault;
+    equal (option string) ~msg:name expected h.stop_fault;
+    Host.close h
+  in
+  case "no fault" ~report:None ~fault:None None;
+  case "the fault it was lost for" ~report:None ~fault:(Some "lost")
+    (Some "lost");
+  case "the fault sleep raised" ~report:(Some "page fault") ~fault:(Some "lost")
+    (Some "page fault")
 
 (* NOPs
 
@@ -1287,7 +1322,7 @@ let hangs () =
   (match spin ~ms:2000 (fun () -> A.sleep g ~seen:0 ~still_ms:1) with
   | () -> fail "no Fault after 2 s of a value making no progress"
   | exception A.Fault why -> contains ~msg:"the report" ~sub:"50 ms" why);
-  A.stop g;
+  A.stop g ~fault:None;
   (match h.stop_fault with
   | Some why -> contains ~msg:"the fault the path's stop got" ~sub:"50 ms" why
   | None -> fail "the path's stop got no fault after a hang");
@@ -1298,7 +1333,7 @@ let idle () =
   spin ~ms:150 (fun () -> A.sleep g ~seen:0 ~still_ms:1);
   equal answer ~msg:"submit" `Ok (submit g ~v:1 [||]);
   A.sleep g ~seen:0 ~still_ms:1;
-  A.stop g;
+  A.stop g ~fault:None;
   Host.close h
 
 let moving () =
@@ -1310,14 +1345,14 @@ let moving () =
     spin ~ms:20 (fun () -> A.sleep g ~seen:(v - 1) ~still_ms:1);
     Host.reach g v
   done;
-  A.stop g;
+  A.stop g ~fault:None;
   Host.close h
 
 let unbounded () =
   let h, g = Host.device () in
   equal answer ~msg:"submit" `Ok (submit g ~v:1 [||]);
   spin ~ms:150 (fun () -> A.sleep g ~seen:0 ~still_ms:1);
-  A.stop g;
+  A.stop g ~fault:None;
   Host.close h
 
 let bounds () =
@@ -1349,7 +1384,7 @@ let scratch_taken () =
   in
   let h, g = Host.device ~gpu:mi300 ~on_alloc () in
   Fun.protect ~finally:(fun () ->
-      A.stop g;
+      A.stop g ~fault:None;
       Host.close h)
   @@ fun () ->
   let grow =
@@ -1415,8 +1450,8 @@ let waits_refused () =
     (fun n ->
       Host.with_device @@ fun _ g ->
       let msg = strf "%d waits" n in
-      equal bool ~msg:"waits on words" false (A.waits_on g `Store);
-      let w = host (A.word g) in
+      equal bool ~msg:"waits on words" false (A.facts g).waits.stores;
+      let w = host (word g) in
       match E.submit g ~v:1 ~waits:(Array.make n (w, 1)) [||] with
       | `Ok -> failf "%s: handed over where the device cannot wait" msg
       | `Failed why ->
@@ -1447,63 +1482,8 @@ let failures =
       test "free returns when the path fails to free" free_through_fault;
       test "stop writes the last value only once the path stopped its queues"
         stops;
+      test "stop gives the path the device's first fault" stop_fault;
     ]
-
-(* End once from two domains: whatever the order, the first free, unmap or
-   unload returns and every later one raises; the path gets each back once. *)
-
-let shared_host =
-  fixture
-    ~teardown:(fun (h, g) ->
-      A.stop g;
-      Host.close h)
-    (fun () -> Host.device ())
-
-type ended = { mutable ended : bool }
-
-let end_model m =
-  if m.ended then invalid_arg "ended";
-  m.ended <- true
-
-let ends_once name ~make ~finish ~release =
-  let v =
-    abstract name ~release:(fun x ->
-        try release x with Invalid_argument _ -> ())
-  in
-  [
-    command "make" (Gen.unit @-> makes v) (fun () -> { ended = false }) make;
-    command "end" (v ^-> returns unit) end_model finish;
-  ]
-
-(* Each value carries the shared device: the fixture is read on the test's
-   domain only. *)
-let allocation_commands =
-  ends_once "a"
-    ~make:(fun () ->
-      let g = snd (shared_host ()) in
-      (g, Option.get (A.alloc g `Pinned 64)))
-    ~finish:(fun (g, r) -> A.free g r)
-    ~release:(fun (g, r) -> A.free g r)
-
-(* A mapping of its own page, given back once the program ends. *)
-let mapping_commands =
-  ends_once "m"
-    ~make:(fun () ->
-      let g = snd (shared_host ()) and p = H.pages 64 in
-      (g, p, Option.get (A.map_host g p 64)))
-    ~finish:(fun (g, _, r) -> A.free g r)
-    ~release:(fun (g, p, r) ->
-      Fun.protect ~finally:(fun () -> H.free_pages p 64) (fun () -> A.free g r))
-
-let image_commands =
-  ends_once "i"
-    ~make:(fun () ->
-      let g = snd (shared_host ()) in
-      let m, r, _ = load g (Lazy.force kernels_bin) in
-      (g, m, r))
-    ~finish:(fun (g, m, _) -> A.unload g m)
-    ~release:(fun (g, m, r) ->
-      Fun.protect ~finally:(fun () -> A.free g r) (fun () -> A.unload g m))
 
 (* [sleep] runs while another domain submits: a device whose submissions
    complete at once, the caller serialising its submits, answers as some order
@@ -1512,7 +1492,7 @@ type sleeper = { g : A.t; h : Host.t; lock : Mutex.t; mutable v : int }
 
 let sleeper =
   abstract "s" ~release:(fun s ->
-      A.stop s.g;
+      A.stop s.g ~fault:None;
       Host.close s.h)
 
 let sleep_commands =
@@ -1546,12 +1526,6 @@ let domains =
     [
       stateful ~count:30 ~domains:2 "sleep answers while another domain submits"
         sleep_commands;
-      stateful ~count:30 ~domains:2
-        "an allocation freed from two domains is freed once" allocation_commands;
-      stateful ~count:30 ~domains:2
-        "a mapping unmapped from two domains is unmapped once" mapping_commands;
-      stateful ~count:30 ~domains:2
-        "an image unloaded from two domains is unloaded once" image_commands;
     ]
 
 (* On a GPU *)
@@ -1664,15 +1638,16 @@ let work =
       test "an opened GPU's facts are its capability's" (fun () ->
           S.with_ @@ fun t ->
           let c = A.capability t.g in
-          equal string ~msg:"arch" (Gpu.processor c.gpu) (A.arch t.g);
-          greater int ~msg:"budget" ~than:0 (A.budget t.g);
+          let f = A.facts t.g in
+          equal string ~msg:"arch" (Gpu.processor c.gpu) f.arch;
+          greater int ~msg:"budget" ~than:0 f.budget;
           greater int ~msg:"clock" ~than:0 c.clock_hz;
           equal bool ~msg:"AQL" (c.gpu.xccs > 1)
             (match c.compute with Aql _ -> true | Pm4 -> false));
       test "an allocation past the GPU's memory is None" (fun () ->
           S.with_ @@ fun t ->
           equal bool ~msg:"none" true
-            (Option.is_none (A.alloc t.g `Device (2 * A.budget t.g))));
+            (Option.is_none (A.alloc t.g Device (2 * (A.facts t.g).budget))));
     ]
 
 (* Memory *)
@@ -1857,7 +1832,7 @@ let code =
           (* The flag is the test's memory, which the stop leaves mapped. *)
           S.with_ @@ fun t ->
           let p = image t in
-          let flag = Option.get (A.alloc t.g `Pinned 8) in
+          let flag = Option.get (A.alloc t.g Pinned 8) in
           H.set64 (host flag) 0;
           let args = le64 (address flag) ^ le64 1_500_000 in
           let v = S.submit t [| kernel t p "spin" ~groups:1 args |] in
@@ -2083,11 +2058,11 @@ type run = { g : A.t; mutable v : int }
 let runs = Hashtbl.create 1
 
 let run_of g =
-  match Hashtbl.find_opt runs (A.edge g) with
+  match Hashtbl.find_opt runs (A.facts g).edge with
   | Some r -> r
   | None ->
       let r = { g; v = A.signaled g } in
-      Hashtbl.add runs (A.edge g) r;
+      Hashtbl.add runs (A.facts g).edge r;
       r
 
 let device g = { g; v = 0 }
@@ -2104,12 +2079,12 @@ let entry m f = Option.get (A.entry m f)
 let laid ?(of_ = kernels) r =
   let m, code, bytes = load r.g (Lazy.force of_).binary in
   let n = String.length bytes in
-  let staging = Option.get (A.alloc r.g `Pinned n) in
+  let staging = Option.get (A.alloc r.g Pinned n) in
   H.write (host staging) bytes;
   (m, code, E.copy ~dst:(address code) ~src:(address staging) n)
 
 let arguments r values =
-  let args = Option.get (A.alloc r.g `Pinned 4096) in
+  let args = Option.get (A.alloc r.g Pinned 4096) in
   H.write (host args) (String.concat "" (List.map le64 values));
   args
 
@@ -2121,7 +2096,7 @@ let failures_hw =
       test "a fill past its declaration fails, and the word still moves"
         (fun () ->
           S.with_ @@ fun { g; _ } ->
-          let word = Option.get (A.alloc g `Pinned 8) in
+          let word = Option.get (A.alloc g Pinned 8) in
           H.write (host word) (le64 0);
           let ws = words (Pm4.write_data (Memory (address word)) 1) in
           let f = S.fill (A.capability g) ws ~bytes:0 in
@@ -2141,8 +2116,8 @@ let failures_hw =
       test "a failed submission runs none of its parts" (fun () ->
           S.with_ @@ fun { g; _ } ->
           let n = 4096 in
-          let src = Option.get (A.alloc g `Pinned n) in
-          let dst = Option.get (A.alloc g `Pinned n) in
+          let src = Option.get (A.alloc g Pinned n) in
+          let dst = Option.get (A.alloc g Pinned n) in
           H.write (host src) (pattern n 1);
           H.write (host dst) (String.make n '\000');
           let f = S.fill ~code:5 (A.capability g) [||] ~bytes:0 in
@@ -2160,7 +2135,7 @@ let failures_hw =
           let r = device g in
           let m, _, upload = laid r in
           go r [| upload |];
-          let flag = Option.get (A.alloc g `Pinned 8) in
+          let flag = Option.get (A.alloc g Pinned 8) in
           H.write (host flag) (le64 0);
           let args = arguments r [ address flag; 150_000 ] in
           let spin =
@@ -2263,9 +2238,9 @@ module Wrap = struct
   type sink = { res : A.region; src : A.region; dst : A.region }
 
   let sink g =
-    let res = Option.get (A.alloc g `Pinned (4 * slots)) in
-    let src = Option.get (A.alloc g `Pinned (8 * slots)) in
-    let dst = Option.get (A.alloc g `Pinned (8 * slots)) in
+    let res = Option.get (A.alloc g Pinned (4 * slots)) in
+    let src = Option.get (A.alloc g Pinned (8 * slots)) in
+    let dst = Option.get (A.alloc g Pinned (8 * slots)) in
     H.write (host res) (String.make (4 * slots) '\000');
     H.write (host src)
       (String.concat "" (List.init slots (fun i -> le64 (i + 1))));
@@ -2571,15 +2546,15 @@ module Order = struct
     let next = (((r.v + 8) lsr 32) + 1) lsl 32 in
     A.renumber g (next - 7);
     r.v <- next - 8;
-    let staging = Option.get (A.alloc g `Pinned size) in
+    let staging = Option.get (A.alloc g Pinned size) in
     let regions =
       Array.init buffers (fun b ->
-          let reg = Option.get (A.alloc g `Device size) in
+          let reg = Option.get (A.alloc g Device size) in
           H.write (host staging) (Bytes.to_string (initial b));
           go r [| copy_all (reg, 0) (staging, 0) size |];
           reg)
     in
-    let args = Option.get (A.alloc g `Pinned 4096) in
+    let args = Option.get (A.alloc g Pinned 4096) in
     let image, code, upload = laid ~of_:work_code r in
     go r [| upload |];
     { r; regions; staging; args; image; code }
@@ -2694,7 +2669,7 @@ let order_commands =
    words here are the host's, in memory the device maps. *)
 
 let waits_on g =
-  if not (A.waits_on g `Store) then
+  if not (A.facts g).waits.stores then
     skip ~reason:"the GPU's compute queue does not wait on words" ()
 
 (* [t] at or past 2^32, and a first value of the word below it. *)
@@ -2713,9 +2688,9 @@ let crossing =
 let held (w0, t) =
   S.with_ @@ fun { g; _ } ->
   waits_on g;
-  let word = Option.get (A.alloc g `Pinned 8) in
-  let src = Option.get (A.alloc g `Pinned 64)
-  and dst = Option.get (A.alloc g `Pinned 64) in
+  let word = Option.get (A.alloc g Pinned 8) in
+  let src = Option.get (A.alloc g Pinned 64)
+  and dst = Option.get (A.alloc g Pinned 64) in
   let zeros = String.make 64 '\000' in
   H.write (host src) (String.make 64 'w');
   H.write (host dst) zeros;
@@ -2778,7 +2753,7 @@ let in_queue () =
     | Error why -> fail why
   in
   let pg = Option.get !made in
-  Fun.protect ~finally:(fun () -> A.stop pg) @@ fun () ->
+  Fun.protect ~finally:(fun () -> A.stop pg ~fault:None) @@ fun () ->
   let image =
     match Rig.Image.load pd (Lazy.force kernels).binary with
     | Ok p -> p
@@ -2824,7 +2799,7 @@ let in_queue () =
 let wait_bound () =
   S.with_ @@ fun { g; _ } ->
   waits_on g;
-  let word = Option.get (A.alloc g `Pinned 8) in
+  let word = Option.get (A.alloc g Pinned 8) in
   H.write (host word) (le64 1);
   let waits n = Array.make n (address word, 1) in
   equal answer ~msg:"255 waits" `Ok (E.submit g ~v:1 ~waits:(waits 255) [||]);
@@ -2862,8 +2837,8 @@ let aged_slots () =
   S.with_ @@ fun { g; _ } ->
   let values = 1300 and most = 256 in
   let bytes = 4 * values * most in
-  let cells = Option.get (A.alloc g `Pinned bytes) in
-  let out = Option.get (A.alloc g `Pinned bytes) in
+  let cells = Option.get (A.alloc g Pinned bytes) in
+  let out = Option.get (A.alloc g Pinned bytes) in
   H.write (host cells) (String.make bytes '\000');
   H.write (host out) (String.make bytes '\000');
   let token k m = ((k * 1000) + m + 1) land 0xffff_ffff in
@@ -2935,7 +2910,7 @@ let timeline =
 let one_gpu_driverless t =
   (match S.open_gpu () with
   | Ok g' ->
-      A.stop g';
+      A.stop g' ~fault:None;
       fail "a second open of a GPU the process took"
   | Error why -> contains ~sub:"is open in this process" why);
   equal int ~msg:"the first device's next value" 1 (S.submit t [||]);
@@ -2945,16 +2920,16 @@ let one_gpu_driverless t =
    [g] and one [second] opens, share its memory. *)
 let one_gpu_shared ~second g =
   let g' = match second () with Ok g' -> g' | Error why -> fail why in
-  Fun.protect ~finally:(fun () -> A.stop g') @@ fun () ->
+  Fun.protect ~finally:(fun () -> A.stop g' ~fault:None) @@ fun () ->
   let r = device g and r' = device g' in
   let n = 4096 in
   let p = pattern n 9 in
-  let staging' = Option.get (A.alloc g' `Pinned n) in
-  let theirs = Option.get (A.alloc g' `Device n) in
+  let staging' = Option.get (A.alloc g' Pinned n) in
+  let theirs = Option.get (A.alloc g' Device n) in
   let copy d s = E.copy ~dst:(address d) ~src:(address s) n in
   H.write (host staging') p;
   go r' [| copy theirs staging' |];
-  let back = Option.get (A.alloc g `Pinned n) in
+  let back = Option.get (A.alloc g Pinned n) in
   let read_through view =
     H.write (host back) (String.make n '\000');
     go r [| copy back view |];
@@ -2969,15 +2944,19 @@ let one_gpu_shared ~second g =
   H.write (host staging') (String.make n '\000');
   go r' [| copy staging' theirs |];
   equal string ~msg:"the memory, its view unmapped" p (H.read (host staging') n);
-  let mapped' = Option.get (A.alloc g' `Mapped n) in
-  (match A.map_peer g g' mapped' with
-  | None -> fail "a device refused Mapped memory of its own GPU"
-  | Some view ->
-      let p = pattern n 11 in
-      H.write (host mapped') p;
-      equal string ~msg:"the host's writes, read through a view" p
-        (read_through view);
-      A.free g view);
+  (* A GPU whose BAR the host does not reach whole has no Mapped memory. *)
+  (match A.alloc g' Mapped n with
+  | None -> ()
+  | Some mapped' -> (
+      match A.map_peer g g' mapped' with
+      | None -> fail "a device refused Mapped memory of its own GPU"
+      | Some view ->
+          let p = pattern n 11 in
+          H.write (host mapped') p;
+          equal string ~msg:"the host's writes, read through a view" p
+            (read_through view);
+          A.free g view;
+          A.free g' mapped'));
   let page = H.pages n in
   let m = Option.get (A.map_host g page n) in
   equal bool ~msg:"a page the other device maps" true
@@ -2987,7 +2966,7 @@ let one_gpu_shared ~second g =
   | None -> fail "a page no device maps refused"
   | Some m' -> A.free g' m');
   H.free_pages page n;
-  List.iter (A.free g') [ staging'; theirs; mapped' ];
+  List.iter (A.free g') [ staging'; theirs ];
   A.free g back
 
 let one_gpu () =
@@ -3013,7 +2992,7 @@ let two_roots () =
   let through_mirror () = Rig_amd_amdgpu.open_ ~root:mirror 0 in
   S.with_ (fun t -> one_gpu_shared ~second:through_mirror t.g);
   let g = match through_mirror () with Ok g -> g | Error why -> fail why in
-  Fun.protect ~finally:(fun () -> A.stop g) @@ fun () ->
+  Fun.protect ~finally:(fun () -> A.stop g ~fault:None) @@ fun () ->
   one_gpu_shared ~second:S.open_gpu g
 
 let two =

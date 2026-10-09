@@ -77,7 +77,7 @@ module Make (G : Gpu) = struct
   let release () =
     (match !opened with
     | In_rig d -> Rig.close d
-    | Alone g -> G.D.stop g
+    | Alone g -> G.D.stop g ~fault:None
     | Nothing -> ());
     opened := Nothing
 
@@ -96,7 +96,7 @@ module Make (G : Gpu) = struct
         opened := In_rig d;
         { d; g }
     | Error why ->
-        G.D.stop g;
+        G.D.stop g ~fault:None;
         failf "%s in rig: %s" name why
 
   let close t =
@@ -114,7 +114,7 @@ module Make (G : Gpu) = struct
 
   let stop_driver g =
     (match !opened with Alone a when a == g -> opened := Nothing | _ -> ());
-    G.D.stop g
+    G.D.stop g ~fault:None
 
   let with_driver f =
     let g = driver () in

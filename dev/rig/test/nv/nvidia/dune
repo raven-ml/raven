@@ -14,7 +14,7 @@
 (tests
  (names test_nvidia test_files)
  (modules test_nvidia test_files)
- (libraries rig rig_nv rig_nv_nvidia rig_nv_nvidia_support unix windtrap))
+ (libraries rig rig_edge rig_nv rig_nv_nvidia rig_nv_nvidia_support unix windtrap))
 
 ; test_walk forks a child per failure, which alone carries the limit: an
 ; executable of its own, which runs no other test.
@@ -22,7 +22,7 @@
 (test
  (name test_walk)
  (modules test_walk)
- (libraries rig rig_nv rig_nv_nvidia rig_nv_nvidia_support unix windtrap)
+ (libraries rig rig_edge rig_nv rig_nv_nvidia rig_nv_nvidia_support unix windtrap)
  (foreign_stubs
   (language c)
   (names rig_nv_nvidia_walk_stubs)))

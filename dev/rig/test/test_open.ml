@@ -87,6 +87,24 @@ module Other = struct
   let region_key : region Type.Id.t = Type.Id.make ()
 end
 
+(* Polled whose queue named "COPY:0" runs no copy, against the contract. *)
+module Copyless = struct
+  include P
+
+  let facts d =
+    let f = P.facts d in
+    let fills name = { Rig.name; runs = [ Fill ] } in
+    { f with queues = [ fills "COMPUTE:0"; fills "COPY:0" ] }
+end
+
+(* Facts that break the contract refuse the open, and the driver's device is
+   stopped. *)
+let test_copy_queue_refused () =
+  let p = P.make () in
+  raises_match Exn.invalid_arg (fun () ->
+      Rig.open_ (module Copyless) ~name:"open:copyless" (fun () -> Ok p));
+  equal ~msg:"stopped" bool true (List.mem "stop" (P.log p))
+
 let open_store name =
   require_ok ~pp:Format.pp_print_string
     (Rig.open_io (module Store) ~name (fun () -> Ok ()))
@@ -339,6 +357,8 @@ let tests =
       test "one name opens one device, until it is lost" test_same_name;
       test "a name open as another driver's device raises" test_other_driver;
       test "a device states its facts" test_facts;
+      test "a queue named COPY:0 that runs no copy refuses the open"
+        test_copy_queue_refused;
       test "the host states its facts" test_host;
       test "a driver's device reaches by its copies and its peers" test_reach;
       test "an io device computes nothing and reaches nothing" test_io;

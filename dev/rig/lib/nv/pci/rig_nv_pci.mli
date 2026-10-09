@@ -50,7 +50,7 @@
     next open resets it, as it does a GPU that no longer answered at the stop.
 
     {b Memory.} The memory a device gives the host is the GPU's own, through its
-    memory BAR, while the BAR reaches it ([`Mapped] of {!Rig_nv.alloc}), and the
+    memory BAR, while the BAR reaches it ([Mapped] of {!Rig_nv.alloc}), and the
     machine's system memory otherwise. GPU addresses and the process's addresses
     of system memory coincide, from [64 GiB] to [1 TiB], which the process
     reserves at its first open; every memory of the GPUs it opens takes its GPU
@@ -61,9 +61,9 @@
     hugetlbfs at [/dev/hugepages], one for each 2 MiB block of addresses that
     holds some ({!Rig_pci.Function.alloc_dma}): once no huge page is free,
     {!Rig_nv.alloc} answers [None], and reserving more ([vm.nr_hugepages]) or
-    freeing memory is the cure. Such a GPU maps no host memory:
-    {!Rig_nv.maps_host} is [false] for its device, as the process's pages would
-    go back to the system at its death with the GPU still writing them.
+    freeing memory is the cure. Such a GPU maps no host memory: its device's
+    [maps_host] fact is [false], as the process's pages would go back to the
+    system at its death with the GPU still writing them.
 
     {b Requirements.} Linux. Taking a GPU's function needs either an IOMMU and
     the GPU bound to [vfio-pci] with its group's file granted to the user, or

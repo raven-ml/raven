@@ -12,7 +12,9 @@ module A = Rig_amd
 module P = Rig_amd_amdgpu
 
 let open_stop () =
-  match P.open_ 0 with Ok g -> ignore (A.stop g) | Error why -> failwith why
+  match P.open_ 0 with
+  | Ok g -> A.stop g ~fault:None
+  | Error why -> failwith why
 
 let () =
   if P.count () > 0 then begin

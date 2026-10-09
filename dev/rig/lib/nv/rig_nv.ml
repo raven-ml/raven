@@ -6,8 +6,7 @@
 (* Any domain may call any function, as the interface says. The C state is
    written by [make], then by [room] and [submit] under the caller's turn;
    [local] holds the device's lock while it grows the local memory, and [stop]
-   while it marks the device stopped; regions' [live] flags only detect
-   misuse. *)
+   while it marks the device stopped. *)
 
 module D = Defs
 module Abi = Rig_nv_abi
@@ -230,27 +229,12 @@ type 'm dev = {
    when, in milliseconds of the monotonic clock. *)
 and progress = { seen : int; idle : bool; since : int }
 
-and 'm reg = {
-  dev : 'm dev;
-  mem : 'm memory;
-  bytes : int;
-  kind : kind;
-  live : bool Atomic.t;
-}
+and 'm reg = { dev : 'm dev; mem : 'm memory; bytes : int; kind : kind }
 
 type t = T : 'm dev -> t
 type region = R : 'm reg -> region
 
 let key : t Type.Id.t = Type.Id.make ()
-
-(* [r], if it is a region of [d]. *)
-let mine : type m. m dev -> region -> m reg option =
- fun d (R r) ->
-  if r.dev.self <> d.self then None
-  else
-    match Type.Id.provably_equal d.path.key r.dev.path.key with
-    | Some Type.Equal -> Some r
-    | None -> None
 
 (* Facts *)
 
@@ -267,22 +251,33 @@ let arch_of v =
 (* The SASS version of SM version [v], as cubins state it: major and minor in
    one byte each nibble. *)
 let sass_of v = ((v land 0xf00) lsr 4) lor (v land 0xf)
-let arch (T d) = d.arch
-let budget (T d) = d.path.budget
-let queues (T _) = [ "COMPUTE:0"; "COPY:0" ]
-let completion (T _) = `Store
-let waits_on (T _) = function `Store | `Host -> true | `Object -> false
 
-(* rig_nv_ring.c's MAX_WAITS. *)
-let max_waits (T _) = 256
-let blocks (T _) = `Returns
-let maps_host (T d) = Option.is_some d.path.map_host
+(* The channels, as rig_nv_ring.c runs them: copies on the copy channel only. *)
+let queues =
+  Rig_edge.
+    [
+      { name = "COMPUTE:0"; runs = [ Words ] };
+      { name = "COPY:0"; runs = [ Words; Copy ] };
+    ]
 
-type capability = Abi.Gpu.t
+(* Its channels wait on any 64-bit word the device maps, whoever writes it, up
+   to rig_nv_ring.c's MAX_WAITS. *)
+let waits =
+  { Rig_edge.stores = true; hosts = true; objects = false; most = 256 }
 
-let capability (T d) = d.capability
-let capability_key = Abi.Gpu.key
-let edge (T d) = Nativeint.of_int d.self
+let facts (T d) =
+  {
+    Rig_edge.arch = d.arch;
+    budget = d.path.budget;
+    queues;
+    completion = Store;
+    waits;
+    may_block = false;
+    maps_host = Option.is_some d.path.map_host;
+    capability = Capability (Abi.Gpu.key, d.capability);
+    word = R d.word;
+    edge = Nativeint.of_int d.self;
+  }
 
 (* Gives [m] back to its path. The device holds [m] no more whatever the path
    answers: a path that fails to take it back keeps it. *)
@@ -556,14 +551,7 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
             local_window;
             local = (fun n -> local d n);
           };
-        word =
-          {
-            dev = d;
-            mem = words;
-            bytes = 8;
-            kind = Word;
-            live = Atomic.make true;
-          };
+        word = { dev = d; mem = words; bytes = 8; kind = Word };
         owned = (match bar with Some m -> m :: owned | None -> owned);
         bar = Option.is_some bar;
         group;
@@ -610,56 +598,47 @@ let make p =
 
 (* Memory *)
 
-let region d kind bytes m =
-  R { dev = d; mem = m; bytes; kind; live = Atomic.make true }
+let region d kind bytes m = R { dev = d; mem = m; bytes; kind }
 
-let alloc (T d) kind n =
+let alloc (T d) (memory : Rig_edge.memory) n =
   if n < 1 then invalid_argf "Rig_nv.alloc: %d bytes, expected at least 1" n;
   let p = d.path and fn = "Rig_nv.alloc" in
-  match kind with
-  | `Device -> Option.map (region d Path n) (path_alloc p fn `Gpu n)
-  | `Pinned -> Option.map (region d Path n) (path_alloc p fn `System n)
-  | `Mapped -> (
-      match if d.bar then path_alloc p fn `Bar n else None with
+  match memory with
+  | Device -> Option.map (region d Path n) (path_alloc p fn `Gpu n)
+  | Pinned -> Option.map (region d Path n) (path_alloc p fn `System n)
+  | Mapped when not d.bar -> None
+  | Mapped -> (
+      match path_alloc p fn `Bar n with
+      | None -> None
       | Some m ->
           bar_live d.self 1;
-          Some (region d Bar n m)
-      | None -> Option.map (region d Path n) (path_alloc p fn `System n))
+          Some (region d Bar n m))
 
-let free (T d) r =
-  match mine d r with
-  | None -> invalid_arg "Rig_nv.free: the region is not the device's"
-  | Some r -> (
-      if not (Atomic.compare_and_set r.live true false) then
-        invalid_arg "Rig_nv.free: the region was freed";
-      give d r.mem;
-      if r.kind = Bar then bar_live d.self (-1))
+(* A region holds its device: rig frees it on that device. *)
+let free (T _) (R r) =
+  give r.dev r.mem;
+  if r.kind = Bar then bar_live r.dev.self (-1)
 
-let address (R r) = Some r.mem.address
-let handle (R r) = Nativeint.of_int r.mem.address
-let host (R r) = r.mem.host
+let locate (R r) =
+  {
+    Rig_edge.address = Some r.mem.address;
+    host = r.mem.host;
+    handle = Nativeint.of_int r.mem.address;
+  }
 
 let peer (T d) (T d') =
-  d.self <> d'.self
-  &&
   match Type.Id.provably_equal d.path.key d'.path.key with
   | Some Type.Equal -> d.path.reaches d'.path.index
   | None -> false
 
-let map_peer (T d) (T d') r =
-  if d.self = d'.self then
-    invalid_arg "Rig_nv.map_peer: the two devices are one";
-  match mine d' r with
-  | None -> invalid_arg "Rig_nv.map_peer: the region is not the other device's"
-  | Some r when not (Atomic.get r.live) ->
-      invalid_arg "Rig_nv.map_peer: the region was freed"
-  | Some r -> (
-      match Type.Id.provably_equal d.path.key d'.path.key with
-      | None -> None
-      | Some Type.Equal ->
-          let m = d.path.map_peer r.mem in
-          Option.map (region d Path r.bytes)
-            (below d.path "Rig_nv.map_peer" r.bytes m))
+(* [r] holds its device, the other one. *)
+let map_peer (T d) (T _) (R r) =
+  match Type.Id.provably_equal d.path.key r.dev.path.key with
+  | None -> None
+  | Some Type.Equal ->
+      let m = d.path.map_peer r.mem in
+      Option.map (region d Path r.bytes)
+        (below d.path "Rig_nv.map_peer" r.bytes m)
 
 let map_host (T d) a n =
   if n < 1 then invalid_argf "Rig_nv.map_host: %d bytes, expected at least 1" n;
@@ -673,12 +652,7 @@ let map_host (T d) a n =
 
 (* An image is a cubin laid over a region of its device: the address of the
    region's first byte. *)
-type image = {
-  owner : int;
-  base : int;
-  cubin : Cubin.t;
-  loaded : bool Atomic.t;
-}
+type image = { base : int; cubin : Cubin.t }
 
 (* The image of [c] for an upload at [base]: its object's image, zeros up to its
    size, and its relocations' patches. *)
@@ -701,29 +675,22 @@ let image_bytes c ~base =
 let lay d c (R r) =
   let base = r.mem.address in
   owe_invalidate d.self;
-  ( { owner = d.self; base; cubin = c; loaded = Atomic.make true },
-    image_bytes c ~base )
+  ({ base; cubin = c }, image_bytes c ~base)
 
 let image (T d) bin =
   let* c = Cubin.of_string bin in
-  Ok (`Place (Cubin.size c, lay d c))
+  Ok (Rig_edge.Place (Cubin.size c, lay d c))
 
 let entry c name =
-  if not (Atomic.get c.loaded) then
-    invalid_arg "Rig_nv.entry: the image was unloaded";
   Option.map
     (fun (k : Cubin.kernel) -> c.base + k.code)
     (Cubin.kernel c.cubin name)
 
-let unload (T d) c =
-  if c.owner <> d.self then
-    invalid_arg "Rig_nv.unload: the image is another device's";
-  if not (Atomic.compare_and_set c.loaded true false) then
-    invalid_arg "Rig_nv.unload: the image was unloaded"
+(* An image holds nothing of its device but its code region, which rig frees. *)
+let unload (T _) _ = ()
 
 (* Timeline *)
 
-let word (T d) = R d.word
 let signaled (T d) = read_word d.self
 
 let fault_name table v =
@@ -826,7 +793,7 @@ let sleep (T d) ~seen ~still_ms =
 
 (* Loss *)
 
-let stop (T d) =
+let stop (T d) ~fault:_ =
   Mutex.protect d.local_lock (fun () -> d.stopped <- true);
   let ok f =
     match f () with Ok () -> true | Error _ | (exception Fault _) -> false

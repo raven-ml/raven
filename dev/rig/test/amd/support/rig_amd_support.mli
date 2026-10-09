@@ -40,7 +40,7 @@ type fill
 val fill :
   ?code:int ->
   ?split:int ->
-  Rig_amd.capability ->
+  Rig_amd_abi.Capability.t ->
   int array ->
   bytes:int ->
   fill
@@ -71,7 +71,7 @@ val words_part :
 
 (** {1:edge The C entries}
 
-    Work handed to a device's room check and submit ({!Rig_amd.edge})
+    Work handed to a device's room check and submit ([edge] of {!Rig_amd.facts})
     directly, for what rig does not express: the room check's answer, a value
     the test numbers itself, waits on any word. *)
 

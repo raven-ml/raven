@@ -36,7 +36,7 @@
     this library reserves in the process at its first open, from [384 GiB] up.
     Memory the library allocates for the host lies at the same address for the
     host and the GPU; host memory [Rig_nv.map_host] maps lies at its own GPU
-    address, as the host's may lie higher. {!Rig_nv.alloc}'s [`Mapped] memory
+    address, as the host's may lie higher. [Mapped] memory ({!Rig_nv.alloc})
     lies in the GPU's BAR1, which the kernel driver sizes, often at 256 MiB.
 
     {b Domains.} Any domain may call any function, at the same time as others.

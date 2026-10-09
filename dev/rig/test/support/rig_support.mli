@@ -36,13 +36,13 @@ module Polled : sig
       1024): beyond it [room] answers [`Later], or, with [may_block], submit
       waits for room. Without [copies] (defaults to [true]) it lists no copy
       queue. Without [host_visible] (defaults to [true]) the host does not
-      address its [`Device] memory. With [transport] (defaults to [false]) the
+      address its [Device] memory. With [transport] (defaults to [false]) the
       host does not address its word either, which is read through [signaled],
       as behind a transport. Without [peers] (defaults to [true]) it maps no
       memory of another device, and without [maps_host] (defaults to [true]) no
       host memory. Its budget is [budget] (defaults to 1 GiB); it holds at most
-      [memory] bytes of [`Device] memory and [window] bytes of [`Mapped] memory
-      (default to [max_int]); [`Pinned] memory is unbounded. Its word advances
+      [memory] bytes of [Device] memory and [window] bytes of [Mapped] memory
+      (default to [max_int]); [Pinned] memory is unbounded. Its word advances
       as [completion] says (defaults to [`Host]): with [`Object], it is the
       driver's object, its handle the word's address. Its queue waits for
       producers of the completions [waits_on] lists (defaults to none), at most
@@ -124,6 +124,13 @@ module Polled : sig
   val set_word : t -> int -> unit
   (** [set_word d v] writes [v] into [d]'s word. *)
 
+  val capability_key : unit Type.Id.t
+  (** [capability_key] is the key of Polled's capability, [()]. *)
+
+  val stop_fault : t -> string option
+  (** [stop_fault d] is the [fault] [d]'s stop was given, [None] before a stop.
+  *)
+
   val word_at : t -> int
   (** [word_at d] is the host address of [d]'s word, which is also its object
       ([completion]). *)
@@ -138,7 +145,7 @@ module Polled : sig
   (** [frees d] is the address of each region [d] freed, oldest first, with
       [d]'s word when it was freed. *)
 
-  val allocs : t -> ([ `Device | `Pinned | `Mapped ] * int * bool) list
+  val allocs : t -> (Rig_edge.memory * int * bool) list
   (** [allocs d] is each allocation asked of [d], oldest first: its kind, its
       bytes and whether [d] gave it. *)
 
@@ -146,7 +153,7 @@ module Polled : sig
   (** [host_maps d] is the bytes of each host memory [d] mapped, oldest first.
   *)
 
-  val allocated : t -> [ `Device | `Pinned | `Mapped ] -> int
+  val allocated : t -> Rig_edge.memory -> int
   (** [allocated d kind] is the bytes of [kind] [d] holds allocated. *)
 
   val last_waits : t -> (int * int * int) list

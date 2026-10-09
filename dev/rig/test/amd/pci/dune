@@ -1,6 +1,14 @@
 (tests
  (names test_amd_pci test_root)
- (libraries rig_amd rig_amd_pci rig_amd_abi rig_pci rig_pci_support unix windtrap)
+ (libraries
+  rig_amd
+  rig_amd_pci
+  rig_amd_abi
+  rig_edge
+  rig_pci
+  rig_pci_support
+  unix
+  windtrap)
  (foreign_stubs
   (language c)
   (names test_root_stubs))

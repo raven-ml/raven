@@ -85,9 +85,9 @@ let once () =
   let g = require_ok (N.open_ 0) in
   let e = require_error ~msg:"a second open" (N.open_ 0) in
   contains ~sub:"has a device open" e;
-  Rig_nv.stop g;
+  Rig_nv.stop g ~fault:None;
   let g' = require_ok ~msg:"an open after stop" (N.open_ 0) in
-  Rig_nv.stop g'
+  Rig_nv.stop g' ~fault:None
 
 (* Every root shows this machine: a root that links to [/] names the same
    GPUs, so a GPU open through one is open through the other. The link lives
@@ -109,13 +109,13 @@ let other_root () =
       (N.open_ ~root:mirror 0)
   in
   contains ~sub:"has a device open" e;
-  Rig_nv.stop g;
+  Rig_nv.stop g ~fault:None;
   let g' =
     require_ok ~msg:"an open through it after stop" (N.open_ ~root:mirror 0)
   in
   let e = require_error ~msg:"an open through /" (N.open_ 0) in
   contains ~sub:"has a device open" e;
-  Rig_nv.stop g'
+  Rig_nv.stop g' ~fault:None
 
 (* Opening and stopping a GPU again and again, its word freed after each stop,
    leaves the process's mappings as one open and stop left them. *)
@@ -128,8 +128,8 @@ let reopen () =
   S.hold_gpu ();
   let cycle () =
     let g = require_ok (N.open_ 0) in
-    Rig_nv.stop g;
-    Rig_nv.free g (Rig_nv.word g)
+    Rig_nv.stop g ~fault:None;
+    Rig_nv.free g (Rig_nv.facts g).word
   in
   cycle ();
   let before = mappings () in

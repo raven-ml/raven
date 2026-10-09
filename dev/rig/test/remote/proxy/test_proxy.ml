@@ -28,30 +28,29 @@ let rec_w =
 
 let completion_w =
   Testable.structural ~pp:(fun ppf -> function
-    | `Host -> Format.pp_print_string ppf "`Host"
-    | `Store -> Format.pp_print_string ppf "`Store"
-    | `Object h -> Format.fprintf ppf "`Object %nd" h)
-
-let blocks_w =
-  Testable.structural ~pp:(fun ppf -> function
-    | `Returns -> Format.pp_print_string ppf "`Returns"
-    | `May_block -> Format.pp_print_string ppf "`May_block")
+    | Rig_edge.Host -> Format.pp_print_string ppf "Host"
+    | Store -> Format.pp_print_string ppf "Store"
+    | Object h -> Format.fprintf ppf "Object %nd" h)
 
 let driver_facts () =
   with_job_link @@ fun far ->
   let a = account 3 ~reaches:[] in
   let c = Rig_remote_abi.Device { id = 3 } in
   let p = Proxy.make far a c in
-  equal (list string) [ "COMPUTE:0"; "COPY:0" ] (Proxy.queues p);
-  equal completion_w `Host (Proxy.completion p);
+  let f = Proxy.facts p in
+  equal (list string) [ "COMPUTE:0"; "COPY:0" ]
+    (List.map (fun (q : Rig_edge.queue) -> q.name) f.queues);
+  equal ~msg:"a device's queues run copies" bool true
+    (List.for_all (fun (q : Rig_edge.queue) -> q.runs = [ Copy ]) f.queues);
+  equal completion_w Host f.completion;
   equal (list bool) [ true; false; false ]
-    (List.map (Proxy.waits_on p) [ `Host; `Store; `Object ]);
-  equal int max_int (Proxy.max_waits p);
-  equal blocks_w `May_block (Proxy.blocks p);
-  equal bool false (Proxy.maps_host p);
+    [ f.waits.hosts; f.waits.stores; f.waits.objects ];
+  equal int max_int f.waits.most;
+  equal bool true f.may_block;
+  equal bool false f.maps_host;
   equal rec_w c (Proxy.capability p);
-  equal string "mem3" (Proxy.arch p);
-  equal int ((1 lsl 30) + 3) (Proxy.budget p)
+  equal string "mem3" f.arch;
+  equal int ((1 lsl 30) + 3) f.budget
 
 let rig_facts () =
   with_machine ~reaches:[ [] ] @@ fun m ->
@@ -93,17 +92,18 @@ let two_links () =
       let q' = Proxy.make l1 (account 2 ~reaches:[]) (device 2) in
       equal bool false (Proxy.peer p q);
       equal bool true (Proxy.peer p q');
-      let r = Proxy.word q' in
-      equal ~msg:"a word's handle" nativeint 0n (Proxy.handle r);
+      let word p = (Proxy.facts p).word in
+      let r = word q' in
+      equal ~msg:"a word's handle" nativeint 0n (Proxy.locate r).handle;
       equal ~msg:"a word's shadow is this process's" bool true
-        (Option.is_some (Proxy.host r));
+        (Option.is_some (Proxy.locate r).host);
       equal ~msg:"map_host" bool true
         (Option.is_none (Proxy.map_host p 4096 4096));
       Link.fail job "lost";
       equal ~msg:"once lost" bool true (Proxy.peer p q');
-      equal bool true (Option.is_none (Proxy.map_peer p q (Proxy.word q)));
-      match Proxy.map_peer p q' (Proxy.word q') with
-      | Some r -> equal (option int) (Some 2) (Proxy.address r)
+      equal bool true (Option.is_none (Proxy.map_peer p q (word q)));
+      match Proxy.map_peer p q' (word q') with
+      | Some r -> equal (option int) (Some 2) (Proxy.locate r).address
       | None -> fail "a proxy of the same link maps the word")
 
 let make_misuse () =
@@ -401,18 +401,18 @@ let never () =
   let h = B.create Rig.host 16 in
   let both =
     Sub.make ~reads:0 ~writes:0 m.host
-      [|
-        {
-          Sub.queue = "COPY:0";
-          after = [||];
-          work = Sub.Copy { src = far; dst = h };
-        };
-        {
-          Sub.queue = "COPY:0";
-          after = [||];
-          work = Sub.Copy { src = h; dst = far2 };
-        };
-      |]
+    [|
+      {
+        Sub.queue = "COPY:0";
+        after = [||];
+        work = Sub.Copy { src = far; dst = h };
+      };
+      {
+        Sub.queue = "COPY:0";
+        after = [||];
+        work = Sub.Copy { src = h; dst = far2 };
+      };
+    |]
   in
   raises_match ~msg:"a copy from here after a copy into here" Exn.invalid_arg
     (fun () -> submit both);
@@ -433,12 +433,13 @@ let never () =
          | _ -> false)
        (events m.ag))
 
-(* The fill is rig's timestamp, harmless if a hand-over called it. *)
+(* A proxy's queues run no fill: the submission is refused when it is made.
+   The fill is rig's timestamp, harmless if a hand-over called it. *)
 let fill_refused () =
   with_machine @@ fun m ->
   let arg = B.create Rig.host 64 in
-  let fill =
-    Sub.make ~reads:0 ~writes:0 m.host
+  raises_match Exn.invalid_arg @@ fun () ->
+  Sub.make ~reads:0 ~writes:0 m.host
       [|
         {
           Sub.queue = "COMPUTE:0";
@@ -453,8 +454,6 @@ let fill_refused () =
               };
         };
       |]
-  in
-  raises_match Exn.invalid_arg (fun () -> submit fill)
 
 (* Waits between devices of one link travel with the hand-over, as the
    producer's id and value. *)
@@ -570,7 +569,7 @@ let in_flight_fails () =
    image the agent made before the job failed. *)
 let counted =
   [
-    ("alloc", fun p _ _ -> ignore (Proxy.alloc p `Device 16));
+    ("alloc", fun p _ _ -> ignore (Proxy.alloc p Device 16));
     ("map_peer", fun p r _ -> ignore (Proxy.map_peer p p r));
     ("image", fun p _ _ -> ignore (Proxy.image p "run"));
     ("entry", fun _ _ i -> ignore (Proxy.entry i "run"));
@@ -582,11 +581,11 @@ let counted =
 let quiet_after_failure () =
   with_machine @@ fun m ->
   let p = m.raw in
-  let r = require_some (Proxy.alloc p `Device 16) in
+  let r = require_some (Proxy.alloc p Device 16) in
   let i =
     match Proxy.image p "run" with
-    | Ok (`Loaded i) -> i
-    | Ok (`Place _) -> fail "the host loads its own code"
+    | Ok (Rig_edge.Loaded i) -> i
+    | Ok (Place _) -> fail "the host loads its own code"
     | Error why -> fail why
   in
   Link.fail m.ag.job "root";
@@ -597,11 +596,11 @@ let quiet_after_failure () =
 let counted_after_failure (_, call) =
   with_machine @@ fun m ->
   let p = m.raw in
-  let r = require_some (Proxy.alloc p `Device 16) in
+  let r = require_some (Proxy.alloc p Device 16) in
   let i =
     match Proxy.image p "run" with
-    | Ok (`Loaded i) -> i
-    | Ok (`Place _) -> fail "the host loads its own code"
+    | Ok (Rig_edge.Loaded i) -> i
+    | Ok (Place _) -> fail "the host loads its own code"
     | Error why -> fail why
   in
   Link.fail m.ag.job "root";

@@ -5,6 +5,7 @@
  (name rig_nv_support)
  (libraries
   rig
+  rig_edge
   rig_gpu_support
   rig_nv
   rig_nv_abi

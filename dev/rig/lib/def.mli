@@ -11,9 +11,12 @@
     change of their order changes it too. *)
 
 type ('a, 'r, 'i) dm =
-  (module Sigs.Driver with type t = 'a and type region = 'r and type image = 'i)
+  (module Rig_edge.Driver
+     with type t = 'a
+      and type region = 'r
+      and type image = 'i)
 
-type ('a, 'r) im = (module Sigs.Io with type t = 'a and type region = 'r)
+type ('a, 'r) im = (module Rig_edge.Io with type t = 'a and type region = 'r)
 
 (** The type for a region of a driver, with the module and the device that hold
     it, and the witness of its type, which equates the regions of one device. *)
@@ -27,7 +30,6 @@ type region =
       -> region
 
 type io_region = Io_region : { m : ('a, 'r) im; h : 'a; r : 'r } -> io_region
-type capability = Capability : 'c Type.Id.t * 'c -> capability
 
 type token
 (** The type for custom blocks whose collection puts a release record on a
@@ -38,7 +40,8 @@ type kind =
   | Driver : { m : ('a, 'r, 'i) dm; h : 'a; rid : 'r Type.Id.t } -> kind
   | Io : { m : ('a, 'r) im; h : 'a } -> kind
 
-(** The type for how a device's word advances ({!Rig.Driver.completion}). *)
+(** The type for how a device's word advances ({!Rig_edge.completion}), an
+    object as an int. *)
 type completion = Store | Object of int | Host_writes
 
 (** The type for a memory's kind: {!Rig.Buffer.memory}'s three, host memory its
@@ -70,13 +73,10 @@ type device = {
   kind : kind;
   c : int;  (** The C record. *)
   arch : string;
-  queues : string array;
-  copy_queue : string option;  (** Its first copy queue, which runs copies. *)
+  queues : Rig_edge.queue array;
+  copy_queue : string option;  (** The queue its copies go to. *)
   completion : completion;
-  waits_store : bool;
-  waits_object : bool;
-  waits_host : bool;
-  max_waits : int;  (** The waits in its queue one submission carries. *)
+  waits : Rig_edge.waits;
   maps_host : bool;  (** Whether it maps host memory. *)
   word : int;  (** The word's host address, 0 behind a transport. *)
   word_region : region option;
@@ -85,7 +85,7 @@ type device = {
           the host. *)
   memory_device : bool;
   fault : exn -> string option;  (** The driver's faults. *)
-  capability : capability option;
+  capability : Rig_edge.capability option;
   release : int;  (** The C release list. *)
   lock : Lock.t;
       (** Guards everything mutable below. The atomic fields are written under

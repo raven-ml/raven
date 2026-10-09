@@ -3,6 +3,7 @@
  (libraries
   rig
   rig_disk
+  rig_edge
   rig_gpu_support
   rig_metal
   rig_metal_abi

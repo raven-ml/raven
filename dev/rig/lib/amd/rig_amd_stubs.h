@@ -31,7 +31,7 @@
 #define RIG_AMD_MARKS 4096
 #define RIG_AMD_HDPS 8
 
-/* The queues, in Rig_amd.queues's order. */
+/* The queues, in the order of Rig_amd's facts. */
 enum { RIG_AMD_COMPUTE, RIG_AMD_COPY, RIG_AMD_QUEUES };
 
 /* The packets a ring reads, in Rig_amd's order. On an AQL ring a packet

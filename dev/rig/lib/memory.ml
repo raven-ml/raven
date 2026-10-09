@@ -216,9 +216,10 @@ let stamps m = m.root.entry.stamps
 
 let region_info (Region { m; r; _ }) =
   let module D = (val m) in
-  let address = Option.value ~default:(-1) (D.address r) in
-  let host = Option.value ~default:(-1) (D.host r) in
-  (address, D.handle r, host)
+  let l = D.locate r in
+  let address = Option.value ~default:(-1) l.address in
+  let host = Option.value ~default:(-1) l.host in
+  (address, l.handle, host)
 
 (* Allocation events *)
 
@@ -229,10 +230,10 @@ let note d =
 
 (* Driver calls *)
 
-let poly = function
-  | Pinned -> `Pinned
-  | Mapped -> `Mapped
-  | Device | Host_kept | Io_made | Io_given -> `Device
+let edge_memory : memory_kind -> Rig_edge.memory = function
+  | Pinned -> Pinned
+  | Mapped -> Mapped
+  | Device | Host_kept | Io_made | Io_given -> Device
 
 (* [n] new bytes of [d]'s memory of [kind] as a release record, or [None] if [d]
    has not the room. *)
@@ -240,7 +241,7 @@ let new_entry d kind n =
   match d.kind with
   | Driver { m; h; rid } -> (
       let module D = (val m) in
-      match Dev.counted d (fun () -> D.alloc h (poly kind) n) with
+      match Dev.counted d (fun () -> D.alloc h (edge_memory kind) n) with
       | None -> None
       | Some r ->
           Some

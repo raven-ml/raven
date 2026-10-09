@@ -12,7 +12,7 @@
     ({!Rig_amd.make}):
     {[
     let g = Result.get_ok (Rig_amd_pci.open_ ~firmware:[ "/lib/firmware" ] 0) in
-    Rig_amd.arch g (* "gfx1201" *)
+    (Rig_amd.facts g).arch (* "gfx1201" *)
     ]}
 
     GPUs are counted and reset on this machine or on another one a transport
@@ -44,8 +44,9 @@
     its next open. The kernel may still move them to allocate a contiguous area
     or to take memory offline, which only an IOMMU prevents
     ({!Rig_pci.Function.alloc_dma}). Such a GPU maps no other host memory:
-    {!Rig_amd.maps_host} is [false] for its device, as the process's pages would
-    go back to the system at its death with the GPU still writing them.
+    [maps_host] of {!Rig_amd.facts} is [false] for its device, as the process's
+    pages would go back to the system at its death with the GPU still writing
+    them.
 
     {b Firmware.} An open reads the GPU's firmware images from the directories
     its caller names, files of linux-firmware's [amdgpu/] directory at commit
@@ -82,7 +83,9 @@
     machine-check banks. {!Rig_amd.sleep} raises them. No kernel bounds the
     GPU's work, so this library states a bound: work that leaves the device's
     timeline word below its last value for {!Rig_pci.Gpus.hang_ms} is a hang,
-    which {!Rig_amd.sleep} raises too.
+    which {!Rig_amd.sleep} raises too. A device stopped with the fault it was
+    lost for ({!Rig_amd.stop}) leaves its GPU lost as well: the stop waits for
+    no queue to leave, and the GPU's next open resets it.
 
     {b Domains.} Every value may be called from any domain. Opens, resets and
     changes to the machine of AMD GPUs run one at a time, so a boot delays the

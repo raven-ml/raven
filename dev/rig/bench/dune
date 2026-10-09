@@ -19,6 +19,7 @@
  (modules bench_gpu)
  (libraries
   rig
+  rig_edge
   rig_bench
   rig_gpu_lock
   rig_gpu_support

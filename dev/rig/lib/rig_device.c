@@ -473,16 +473,17 @@ static void spread(struct rig_device *p) {
   free(why);
 }
 
-/* Loses [d] for the reason [v_why], a failure of the process if
-   [v_counts]: whether this call lost it. [v_why] is copied before the
-   runtime is released; [v_d] is an immediate. */
-value caml_rig_lose(value v_d, value v_why, value v_counts) {
+/* Loses [d] for the reason [v_why], a fault of a counted call and a
+   failure of the process if [v_fault]: whether this call lost it. [v_why]
+   is copied before the runtime is released; [v_d] is an immediate. */
+value caml_rig_lose(value v_d, value v_why, value v_fault) {
   struct rig_device *d = Device_val(v_d);
   char *why = strdup(String_val(v_why));
   if (why == NULL) caml_raise_out_of_memory();
   caml_enter_blocking_section_no_pending();
   mu_lock(d);
-  int won = lose_locked(d, why, Bool_val(v_counts));
+  int won = lose_locked(d, why, Bool_val(v_fault));
+  if (won) d->faulted = Bool_val(v_fault);
   mu_unlock(d);
   if (won) {
     spread(d);
@@ -491,6 +492,12 @@ value caml_rig_lose(value v_d, value v_why, value v_counts) {
     free(why);
   caml_leave_blocking_section();
   return Val_bool(won);
+}
+
+/* Whether [v_d] was lost for a fault of a counted call. Read by its stop,
+   which runs after the loss, under no lock. */
+value caml_rig_faulted(value v_d) {
+  return Val_bool(Device_val(v_d)->faulted);
 }
 
 /* Publishes the record [v_d], once its OCaml device is in the table: it

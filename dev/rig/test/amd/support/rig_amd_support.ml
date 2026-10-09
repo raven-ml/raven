@@ -53,7 +53,7 @@ let reached g v =
 
 type fill = { entry : nativeint; arg : arg }
 
-let fill ?(code = 0) ?(split = 0) (c : Rig_amd.capability) ws ~bytes =
+let fill ?(code = 0) ?(split = 0) (c : Rig_amd_abi.Capability.t) ws ~bytes =
   {
     entry = fill_entry ();
     arg = fill_arg c.place c.segment ws split bytes code;
@@ -146,7 +146,7 @@ module Edge = struct
 
   let room g ps =
     match
-      room_c (Rig_amd.edge g) (Array.map (fun p -> p.ints) ps)
+      room_c (Rig_amd.facts g).edge (Array.map (fun p -> p.ints) ps)
     with
     | 0 -> `Fits
     | 1 -> `Later
@@ -157,7 +157,7 @@ module Edge = struct
       Array.concat (Array.to_list (Array.map (fun (a, x) -> [| a; x |]) waits))
     in
     let r =
-      submit_c (Rig_amd.edge g) v w (Array.map (fun p -> p.ints) ps)
+      submit_c (Rig_amd.facts g).edge v w (Array.map (fun p -> p.ints) ps)
     in
     (* The fills' arguments lived through the call. *)
     Array.iter (fun p -> ignore (Sys.opaque_identity p.keep)) ps;

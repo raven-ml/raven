@@ -1,9 +1,10 @@
-; The C structures and codes by which a caller hands work to a driver. A
-; header only: its interface is rig_edge.h, which the stubs of a library
-; that depends on it include.
+; What a driver is to rig: the C structures and codes by which a caller
+; hands work to a driver (rig_edge.h), and the OCaml facts and signature a
+; driver matches (rig_edge.mli).
 
 (library
  (name rig_edge)
  (public_name rig.edge)
- (modules)
+ (modules rig_edge)
+ (modules_without_implementation rig_edge)
  (install_c_headers rig_edge))

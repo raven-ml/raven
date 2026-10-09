@@ -59,7 +59,7 @@ let carry = carry ()
 let countdown = countdown ()
 
 module Driver = struct
-  type kind = [ `Device | `Pinned | `Mapped ]
+  type kind = Rig_edge.memory
 
   type t = {
     c : nativeint;
@@ -91,12 +91,12 @@ module Driver = struct
     mutable stalls : int;
     mutable gated : bool;
     mutable sleepers : int;
+    mutable stop_fault : string option;  (** What its stop was given. *)
   }
 
   (* A region the driver allocated has a kind; a mapping has none. *)
   type region = { at : int; kind : kind option; bytes : int; visible : bool }
   type image = { code : region; owner : t }
-  type capability = unit
 
   exception Fault of string
 
@@ -117,16 +117,37 @@ module Driver = struct
     | Some why -> raise (Fault why)
     | None -> countdown d
 
-  (* A fact goes on whether or not it refuses. *)
-  let fact d v =
+  let capability_key : unit Type.Id.t = Type.Id.make ()
+
+  (* Its queues run fills and, with copies, copies. The facts are one call,
+     which goes on whether or not it refuses. *)
+  let facts d =
     ignore (step d : bool);
-    v
-
-  let arch d = fact d "polled"
-  let budget d = fact d d.budget
-
-  let queues d =
-    fact d (if d.copies then [ "COMPUTE:0"; "COPY:0" ] else [ "COMPUTE:0" ])
+    let runs = Rig_edge.(if d.copies then [ Fill; Copy ] else [ Fill ]) in
+    let compute = { Rig_edge.name = "COMPUTE:0"; runs } in
+    let has c = List.mem c d.waits in
+    {
+      Rig_edge.arch = "polled";
+      budget = d.budget;
+      queues =
+        (if d.copies then [ compute; { name = "COPY:0"; runs } ]
+         else [ compute ]);
+      completion =
+        (if d.objects then Object (Nativeint.of_int d.word_at) else Host);
+      waits =
+        {
+          stores = has `Store;
+          hosts = has `Host;
+          objects = has `Object;
+          most = d.max_waits;
+        };
+      may_block = d.may_block;
+      maps_host = d.maps_host;
+      capability = Capability (capability_key, ());
+      word =
+        { at = d.word_at; kind = None; bytes = 8; visible = not d.transport };
+      edge = d.c;
+    }
 
   let counted d call =
     note d call;
@@ -147,7 +168,7 @@ module Driver = struct
     if not fits then None
     else
       let at = host_alloc n in
-      let visible = d.host_visible || kind <> `Device in
+      let visible = d.host_visible || kind <> Device in
       Some { at; kind = Some kind; bytes = n; visible }
 
   let rec remove x = function
@@ -171,11 +192,14 @@ module Driver = struct
     if r.kind = None && r.at = d.word_at then note d "word"
     else free_region d r
 
-  let address r = Some r.at
-  let handle r = Nativeint.of_int r.at
-  let host r = if r.visible then Some r.at else None
+  let locate r =
+    {
+      Rig_edge.address = Some r.at;
+      host = (if r.visible then Some r.at else None);
+      handle = Nativeint.of_int r.at;
+    }
+
   let peer d _ = d.peers
-  let maps_host d = fact d d.maps_host
 
   let mapping d m =
     Mutex.protect d.lock (fun () -> d.mapped <- m.bytes :: d.mapped);
@@ -198,21 +222,15 @@ module Driver = struct
       match String.split_on_char ':' b with
       | [ "code"; n ] ->
           let n = int_of_string n in
-          Ok (`Place (n, fun r -> ({ code = r; owner = d }, String.make n 'c')))
+          Ok
+            (Rig_edge.Place
+               (n, fun r -> ({ code = r; owner = d }, String.make n 'c')))
       | _ -> Error "not a polled binary"
 
   let entry i f =
     if counted i.owner "entry" || f <> "main" then None else Some i.code.at
 
   let unload d _ = ignore (counted d "unload" : bool)
-
-  let word d =
-    {
-      at = d.word_at;
-      kind = None;
-      bytes = 8;
-      visible = not d.transport;
-    }
 
   (* Reads the fault under the lock without a closure, so that a read of the
      word allocates nothing, as a driver's must not. *)
@@ -260,17 +278,9 @@ module Driver = struct
         if polled_drive d.c < 0 && polled_word d.c = seen then
           failwith "Polled: nothing committed"
 
-  let completion d =
-    fact d (if d.objects then `Object (Nativeint.of_int d.word_at) else `Host)
-  let waits_on d c = fact d (List.mem c d.waits)
-  let max_waits d = fact d d.max_waits
-  let blocks d = fact d (if d.may_block then `May_block else `Returns)
-  let edge d = d.c
-  let capability d = fact d ()
-  let capability_key : capability Type.Id.t = Type.Id.make ()
-
-  let stop d =
+  let stop d ~fault =
     note d "stop";
+    Mutex.protect d.lock (fun () -> d.stop_fault <- fault);
     Mutex.protect d.lock (fun () -> at_gate d);
     if d.answer = `Stopped then polled_stop d.c
 end
@@ -286,9 +296,9 @@ module Polled = struct
       ?(lag = 1) () =
     if lag < 1 then invalid_arg "Polled.make: lag is below 1";
     let limits = function
-      | `Device -> memory
-      | `Mapped -> window
-      | `Pinned -> max_int
+      | Rig_edge.Device -> memory
+      | Mapped -> window
+      | Pinned -> max_int
     in
     let c = polled_new capacity may_block lag in
     let d =
@@ -322,6 +332,7 @@ module Polled = struct
         stalls = 0;
         gated = false;
         sleepers = 0;
+        stop_fault = None;
       }
     in
     if runs = `Itself then polled_start d.c;
@@ -365,6 +376,7 @@ module Polled = struct
 
   let set_word d v = polled_set_word d.c v
   let word_at d = d.word_at
+  let stop_fault d = Mutex.protect d.lock (fun () -> d.stop_fault)
   let blocked d = polled_blocked d.c
 
   let last_waits d =

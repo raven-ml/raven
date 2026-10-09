@@ -30,8 +30,8 @@ external floor_copy : int -> int -> int -> unit = "rig_nv_bench_copy"
 let kib = 1024
 let mib = 1024 * kib
 let get = function Ok x -> x | Error why -> failwith why
-let host r = Option.get (N.host r)
-let address r = Option.get (N.address r)
+let host = S.host
+let address = S.address
 let at r off = host r + off
 let row name setup f = Thumper.bench_with_setup ~setup name f
 
@@ -50,7 +50,8 @@ let run t s =
 
 (* The floor of [t]: its later values are given from C. *)
 let floor t =
-  start (N.edge t.g) (host (N.word t.g)) (Rig.submitted t.d);
+  let f = N.facts t.g in
+  start f.edge (host f.word) (Rig.submitted t.d);
   t
 
 let part queue work = { Sub.queue; after = [||]; work }
@@ -77,7 +78,7 @@ let words s =
 let encode = Abi.Structure.encode Int64.of_int
 
 (* [count] launches of the kernel [empty] over one thread, their descriptors and
-   constant bank 0 in [`Mapped] memory, as compiled code places them:
+   constant bank 0 in [Mapped] memory, as compiled code places them:
    [`Chained], descriptors chained from one segment that schedules the first;
    [`Apart], a segment scheduling each. The result is the loaded image, which
    stays loaded while reachable, and the segments' ring entries, two words
@@ -87,11 +88,11 @@ let launches t count how =
   let k = Option.get (Abi.Cubin.kernel c "empty") in
   let p = get (Rig.Image.load t.d (Lazy.force cubin)) in
   let entry = Option.get (Rig.Image.entry p "empty") in
-  let cap = N.capability t.g in
+  let cap = S.gpu t.g in
   let l = get (Abi.Launch.make cap k) in
   get (cap.local (Abi.Launch.local_bytes l));
   let local = Abi.Local_memory.make cap (Abi.Launch.local_bytes l) in
-  let bank0 = alloc t `Mapped 4096 in
+  let bank0 = S.mapped t.g 4096 in
   let base = entry - k.code in
   let bank (q : int Abi.Qmd.t) (b : Abi.Cubin.bank) =
     let at = if b.index = 0 then address bank0 else base + b.offset in
@@ -106,7 +107,7 @@ let launches t count how =
   let q = List.fold_left bank q (Abi.Launch.banks l) in
   H.write (host bank0) (encode (Abi.Qmd.parameters q));
   let stride = 512 in
-  let qmds = alloc t `Mapped (count * stride) in
+  let qmds = S.mapped t.g (count * stride) in
   for i = 0 to count - 1 do
     let next = address qmds + ((i + 1) * stride) in
     let q =
@@ -116,7 +117,7 @@ let launches t count how =
   done;
   let segments = match how with `Chained -> 1 | `Apart -> count in
   let segment_bytes = 256 in
-  let segment = alloc t `Mapped (segments * segment_bytes) in
+  let segment = S.mapped t.g (segments * segment_bytes) in
   let entry i =
     let qmd = address qmds + (i * stride) in
     let ws = Abi.Packet.encode Int64.of_int (Abi.Method.schedule qmd) in
@@ -174,7 +175,7 @@ let wait_rows =
       row "floor-4"
         (fun () ->
           let t = dev () in
-          let w = alloc t `Pinned 8 in
+          let w = alloc t Pinned 8 in
           H.set64 (host w) 1;
           ignore (floor t);
           (t, address w))
@@ -273,10 +274,10 @@ let alloc_rows =
   in
   Thumper.group "alloc"
     [
-      alloc "64KiB" `Device (64 * kib);
-      alloc "64MiB" `Device (64 * mib);
-      alloc "pinned-64KiB" `Pinned (64 * kib);
-      alloc "pinned-64MiB" `Pinned (64 * mib);
+      alloc "64KiB" Device (64 * kib);
+      alloc "64MiB" Device (64 * mib);
+      alloc "pinned-64KiB" Pinned (64 * kib);
+      alloc "pinned-64MiB" Pinned (64 * mib);
     ]
 
 let map_host_rows =
@@ -293,14 +294,14 @@ let map_host_rows =
 let image_rows =
   Thumper.group "image"
     [
-      row "kernels" (live `Device) (fun t ->
+      row "kernels" (live Device) (fun t ->
           match N.image t.g (Lazy.force cubin) with
-          | Ok (`Place (n, lay)) ->
-              let code = alloc t `Device n in
+          | Ok (Place (n, lay)) ->
+              let code = alloc t Device n in
               let m, _ = lay code in
               N.unload t.g m;
               N.free t.g code
-          | Ok (`Loaded _) -> failwith "an image without code"
+          | Ok (Loaded _) -> failwith "an image without code"
           | Error why -> failwith why);
     ]
 

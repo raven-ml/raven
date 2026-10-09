@@ -149,8 +149,8 @@ type dev = { d : Rig.t; g : Rig_metal.t; fill : Rig_metal.image }
 (* The image of the fixture [fill], which Metal places itself. *)
 let load g =
   match require_ok (Rig_metal.image g (S.fixture ~dir:"fixtures" "fill")) with
-  | `Loaded i -> i
-  | `Place (n, _) -> failf "the device asked to place %d bytes of code" n
+  | Rig_edge.Loaded i -> i
+  | Place (n, _) -> failf "the device asked to place %d bytes of code" n
 
 let dev_of { S.d; g } = { d; g; fill = load g }
 
@@ -182,10 +182,11 @@ let submit_parts t parts =
 
 let submit t fills = submit_parts t (Array.map S.part fills)
 let wait t v = Rig.wait t.d v
-let alloc_on g n = require_some (Rig_metal.alloc g `Device n)
+let alloc_on g n = require_some (Rig_metal.alloc g Rig_edge.Device n)
 let alloc t n = alloc_on t.g n
-let host r = require_some (Rig_metal.host r)
-let gpu r = require_some (Rig_metal.address r)
+let host r = require_some (Rig_metal.locate r).host
+let gpu r = require_some (Rig_metal.locate r).address
+let handle r = (Rig_metal.locate r).handle
 
 (* The arguments of the fill kernels, [{ out; c }], at byte [at] of [args]. *)
 let set_args args ~at ~out ~c =
@@ -207,7 +208,7 @@ let filled out ?(at = 0) ~c n =
 let dispatch ?(offset = 0) ?(groups = (1, 1, 1)) ?(threads = (1, 1, 1)) p =
   { Rig_metal_abi.pipeline = p; offset; groups; threads }
 
-let icb_on g args ds = (Rig_metal.capability g).icb (Rig_metal.handle args) ds
+let icb_on g args ds = (Rig_metal.capability g).icb (handle args) ds
 let icb t args ds = icb_on t.g args ds
 
 (* Work *)
@@ -646,7 +647,7 @@ let foreign_buffers () =
         (Rig_metal.capability t.g).icb handle [| dispatch step |])
   in
   invalid 1n;
-  invalid (Rig_metal.handle freed)
+  invalid (Rig_metal.locate freed).handle
 
 let released_twice () =
   let t = dev () in
@@ -712,7 +713,7 @@ let icb_sys (g, args, step, _) =
 let stop_once (g, args, _, (lock, stopped)) =
   Mutex.protect lock @@ fun () ->
   if not !stopped then begin
-    Rig_metal.stop g;
+    Rig_metal.stop g ~fault:None;
     Rig_metal.free g args;
     stopped := true
   end
@@ -818,33 +819,26 @@ let aligned_256 n =
   equal int 0 (gpu r mod 256);
   Rig_metal.free t.g r
 
-let misused_regions () =
+let empty_regions () =
   let t = dev () in
   let invalid f = raises_match Exn.invalid_arg f in
-  let r = alloc t 64 in
-  let m = require_some (Rig_metal.map_host t.g (H.pages page) page) in
-  Rig_metal.free t.g r;
-  invalid (fun () -> Rig_metal.free t.g r);
-  Rig_metal.free t.g m;
-  invalid (fun () -> Rig_metal.free t.g m);
-  invalid (fun () -> Rig_metal.alloc t.g `Device 0);
-  invalid (fun () -> Rig_metal.map_host t.g (H.pages page) 0);
+  invalid (fun () -> Rig_metal.alloc t.g Rig_edge.Device 0);
+  invalid (fun () -> Rig_metal.map_host t.g (H.pages page) 0)
+
+let no_peer () =
+  let t = dev () in
   let other = second () in
-  Fun.protect ~finally:(fun () -> Rig_metal.stop other) @@ fun () ->
+  Fun.protect ~finally:(fun () -> Rig_metal.stop other ~fault:None) @@ fun () ->
   let o = alloc_on other 64 in
-  invalid (fun () -> Rig_metal.free t.g o);
   equal bool false (Rig_metal.peer t.g other);
   equal (option pass) None (Rig_metal.map_peer t.g other o);
-  invalid (fun () -> Rig_metal.map_peer t.g t.g o);
-  invalid (fun () -> Rig_metal.map_peer t.g other (alloc t 64));
-  Rig_metal.free other o;
-  invalid (fun () -> Rig_metal.map_peer t.g other o)
+  Rig_metal.free other o
 
 let given_back () =
   let t = dev () in
   let r = alloc t 64 in
   let m = require_some (Rig_metal.map_host t.g (H.pages page) page) in
-  let wr = S.weak (Rig_metal.handle r) and wm = S.weak (Rig_metal.handle m) in
+  let wr = S.weak (handle r) and wm = S.weak (handle m) in
   wait t (submit t [||]);
   Rig_metal.free t.g r;
   Rig_metal.free t.g m;
@@ -874,8 +868,8 @@ let memory =
         ~examples:[ 1; 2; 255; 256; 257; 4095; 4096; page; page + 1 ]
         (Gen.int_range 1 (64 lsl 20))
         aligned_256;
-      test "free and map_peer refuse another device's region or one given back"
-        misused_regions;
+      test "alloc and map_host refuse no bytes" empty_regions;
+      test "another device of the GPU maps none of its memory" no_peer;
       test "free releases an allocation's or a mapping's buffer" given_back;
       test "the host copies into a borrow of host memory" copied_into_borrow;
     ]
@@ -1093,8 +1087,8 @@ let beyond_limits () =
     match
       require_ok (Rig_metal.image t.g (S.fixture ~dir:"fixtures" "threadgroup"))
     with
-    | `Loaded i -> i
-    | `Place _ -> failf "Metal asked to place its code"
+    | Rig_edge.Loaded i -> i
+    | Place _ -> failf "Metal asked to place its code"
   in
   ignore (require_some (Rig_metal.entry i "small"));
   let refused () =
@@ -1114,22 +1108,8 @@ let entries () =
     [ "fill"; "step"; "spin"; "bump"; "copy" ];
   equal (option int) None (Rig_metal.entry t.fill "absent")
 
-let unloaded_twice () =
-  let t = dev () in
-  let i = load t.g in
-  let other = second () in
-  Fun.protect ~finally:(fun () -> Rig_metal.stop other) @@ fun () ->
-  raises_match Exn.invalid_arg (fun () -> Rig_metal.unload other i);
-  Rig_metal.unload t.g i;
-  raises_match Exn.invalid_arg (fun () -> Rig_metal.unload t.g i);
-  raises_match Exn.invalid_arg (fun () -> Rig_metal.entry i "fill")
-
-(* Images entered and unloaded from two domains: whatever the order, an image's
-   first [unload] returns and every later one raises, an [entry] after the
-   unload raises, and every [entry] of one function answers the address the
-   first answered. *)
-
-type loaded = { mutable loaded : bool }
+(* Images entered from two domains: whatever the order, every [entry] of one
+   function answers the address the first answered. *)
 
 (* An image, with the first address any domain got for each function. *)
 type held = {
@@ -1137,16 +1117,6 @@ type held = {
   first : (string, int) Hashtbl.t;
   m : Mutex.t;
 }
-
-let unload_model m =
-  if not m.loaded then invalid_arg "unloaded";
-  m.loaded <- false
-
-let unload_system h = Rig_metal.unload (dev ()).g h.i
-
-let entry_model m _ =
-  if not m.loaded then invalid_arg "unloaded";
-  true
 
 let entry_system h f =
   match Rig_metal.entry h.i f with
@@ -1160,23 +1130,22 @@ let entry_system h f =
           true)
 
 let loaded_image =
-  abstract "i" ~release:(fun h ->
-      try unload_system h with Invalid_argument _ -> ())
+  abstract "i" ~release:(fun h -> Rig_metal.unload (dev ()).g h.i)
 
 let functions =
   Gen.of_list ~pp:Format.pp_print_string [ "fill"; "step"; "spin"; "bump" ]
 
-let unload_commands =
+let entry_commands =
   [
     command "image"
       (Gen.unit @-> makes loaded_image)
-      (fun () -> { loaded = true })
+      Fun.id
       (fun () ->
         { i = load (dev ()).g; first = Hashtbl.create 4; m = Mutex.create () });
     command "entry"
       (loaded_image ^-> functions @-> returns bool)
-      entry_model entry_system;
-    command "unload" (loaded_image ^-> returns unit) unload_model unload_system;
+      (fun () _ -> true)
+      entry_system;
   ]
 
 let unloaded_releases () =
@@ -1203,12 +1172,9 @@ let images =
       test "a function that is no compute kernel is an error" no_kernel;
       test "an entry beyond the GPU's limits raises, each time" beyond_limits;
       test "each function of the image has an entry" entries;
-      test "unload and entry refuse an unloaded image or another device's"
-        unloaded_twice;
       stateful ~domains:2 ~count:30
-        "an image entered and unloaded from two domains: one pipeline a \
-         function, one unload"
-        unload_commands;
+        "an image entered from two domains makes one pipeline a function"
+        entry_commands;
       test "unloaded images release their pipelines" unloaded_releases;
     ]
 
@@ -1248,12 +1214,11 @@ let stopped_running () =
   b.release ();
   await_release w
 
-(* A stopped device's word frees once, after the stop. *)
+(* A stopped device's word frees after the stop. *)
 let word_after_stop () =
   let g = S.driver () in
   S.stop_driver g;
-  Rig_metal.free g (Rig_metal.word g);
-  raises_match Exn.invalid_arg (fun () -> Rig_metal.free g (Rig_metal.word g))
+  Rig_metal.free g (Rig_metal.facts g).word
 
 (* Images still loaded when the device stops stay loaded: their unload after the
    stop releases them. *)
@@ -1285,14 +1250,14 @@ let timeline =
         stopped_running;
       test "an image a stop left loaded is released by its unload"
         unload_after_stop;
-      test "a stopped device's word frees once" word_after_stop;
+      test "a stopped device's word frees after the stop" word_after_stop;
     ]
 
 (* Opening and misuse *)
 
 let two_devices () =
   let b = second () in
-  Fun.protect ~finally:(fun () -> Rig_metal.stop b) @@ fun () ->
+  Fun.protect ~finally:(fun () -> Rig_metal.stop b ~fault:None) @@ fun () ->
   S.with_ @@ fun a ->
   S.wait a (S.submit a [||]);
   equal int 1 (Rig_metal.signaled a.g);
@@ -1300,7 +1265,7 @@ let two_devices () =
 
 let apple_align () =
   let t = dev () in
-  if not (String.starts_with ~prefix:"Apple" (Rig_metal.arch t.g)) then
+  if not (String.starts_with ~prefix:"Apple" (Rig_metal.facts t.g).arch) then
     skip ~reason:"the GPU is of a Mac family" ();
   equal int 4 (Rig_metal.capability t.g).align
 

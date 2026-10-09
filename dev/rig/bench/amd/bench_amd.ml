@@ -73,8 +73,8 @@ external raw_submit : nativeint -> int -> int -> int -> int -> unit
 let kib = 1024
 let mib = 1024 * kib
 let get = function Ok x -> x | Error why -> failwith why
-let host r = Option.get (A.host r)
-let address r = Option.get (A.address r)
+let host r = Option.get (A.locate r).host
+let address r = Option.get (A.locate r).address
 (* Whether the rows open the GPU with no kernel driver. *)
 let pci = Rig_amd_support.driverless ()
 
@@ -90,7 +90,7 @@ let opening g =
 
 let stop_opened () =
   Rig_amd_support.release ();
-  List.iter A.stop !opened;
+  List.iter (fun g -> A.stop g ~fault:None) !opened;
   opened := []
 
 let row name setup f =
@@ -327,8 +327,8 @@ let wait_rows =
      read once so that a submission allocates nothing. *)
   let raw () =
     let g = opening (get (Rig_amd_support.open_gpu ())) in
-    let w = Option.get (A.alloc g `Pinned 8) in
-    (A.edge g, g, host w, address w, ref 0)
+    let w = Option.get (A.alloc g Rig_edge.Pinned 8) in
+    ((A.facts g).edge, g, host w, address w, ref 0)
   in
   let floor_waiting () =
     ignore (floor_with ~waits:true ());
@@ -398,7 +398,7 @@ let launch_rows =
     let t = dev () in
     let p, base = load t in
     let gpu = (A.capability t.g).gpu in
-    let out = Option.get (A.alloc t.g `Device 256) in
+    let out = Option.get (A.alloc t.g Rig_edge.Device 256) in
     let k = kernel "double_index" in
     let known = function `Known n -> Some (Int64.of_int n) | `Args -> None in
     let run =
@@ -418,8 +418,13 @@ let launch_rows =
     let t = dev () in
     let p, base = load t in
     let gpu = (A.capability t.g).gpu in
-    let out = Option.get (A.alloc t.g `Device 256) in
-    let args = Option.get (A.alloc t.g `Mapped 8) in
+    let out = Option.get (A.alloc t.g Rig_edge.Device 256) in
+    (* Pinned where the GPU has no Mapped memory, as rig allocates. *)
+    let args =
+      match A.alloc t.g Rig_edge.Mapped 8 with
+      | Some r -> r
+      | None -> Option.get (A.alloc t.g Rig_edge.Pinned 8)
+    in
     let ws =
       encode
         (dispatch gpu (kernel "double_index") ~base ~args:(address args)
@@ -483,7 +488,7 @@ let copy_rows =
   let host_n = 64 * mib in
   let pinned () =
     let t = dev () in
-    let r = Option.get (A.alloc t.g `Pinned host_n) in
+    let r = Option.get (A.alloc t.g Rig_edge.Pinned host_n) in
     write (host r) (String.make host_n '\001');
     (t, host r)
   in
@@ -502,7 +507,8 @@ let copy_rows =
 
 let alloc_rows =
   let alloc name n =
-    row name dev (fun t -> A.free t.g (Option.get (A.alloc t.g `Device n)))
+    row name dev (fun t ->
+        A.free t.g (Option.get (A.alloc t.g Rig_edge.Device n)))
     :: kfd_row ("floor-" ^ name) floor (fun _ -> floor_alloc gpu_memory n)
   in
   Thumper.group "alloc" (alloc "64KiB" (64 * kib) @ alloc "64MiB" (64 * mib))
@@ -528,11 +534,12 @@ let image_rows =
          freed. *)
       row "one-object" dev (fun t ->
           match A.image t.g (Lazy.force binary) with
-          | Ok (`Place (n, lay)) ->
-              let code = Option.get (A.alloc t.g `Device n) in
+          | Ok (Rig_edge.Place (n, lay)) ->
+              let code = Option.get (A.alloc t.g Rig_edge.Device n) in
               A.unload t.g (fst (lay code));
               A.free t.g code
-          | Ok (`Loaded _) -> failwith "code the device's library placed"
+          | Ok (Rig_edge.Loaded _) ->
+              failwith "code the device's library placed"
           | Error why -> failwith why);
     ]
 
@@ -568,7 +575,7 @@ let wake_rows =
    the last stop left, and a full one, which only a GPU reset to its bootloader
    takes, so that row times the reset too. Neither has a KFD twin. *)
 let open_rows =
-  let open_stop () = A.stop (get (Rig_amd_support.open_gpu ())) in
+  let open_stop () = A.stop (get (Rig_amd_support.open_gpu ())) ~fault:None in
   Thumper.group "open"
     [
       row "partial" open_stop (fun () -> open_stop ());
@@ -586,8 +593,8 @@ let waits_on () =
       let on =
         match Rig_amd_support.open_gpu () with
         | Ok g ->
-            let on = A.waits_on g `Store in
-            A.stop g;
+            let on = (A.facts g).waits.stores in
+            A.stop g ~fault:None;
             on
         | Error _ -> false
       in

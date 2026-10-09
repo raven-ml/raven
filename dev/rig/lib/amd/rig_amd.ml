@@ -84,15 +84,12 @@ let ops (type m) (p : m path) =
 (* Memory *)
 
 type region = {
-  owner : int; (* the device's C state *)
   bytes : int;
   mem : mem;
   flush : int option; (* the HDP register this region keeps flushed *)
-  live : bool Atomic.t; (* taken once, by the free that ends it *)
 }
 
-let region owner ?flush n m =
-  { owner; bytes = n; mem = m; flush; live = Atomic.make true }
+let region ?flush n m = { bytes = n; mem = m; flush }
 
 (* C state *)
 
@@ -128,14 +125,12 @@ type t = {
   path : int; (* the path's key, as an integer *)
   index : int; (* the GPU's number in bus order *)
   gpu : Abi.Gpu.t;
-  budget : int;
   lds : int;
-  waits64 : bool;
   hdp : int option;
   hdps : Mutex.t; (* the HDP registers' counts *)
   ops : ops;
   capability : Abi.Capability.t;
-  word : region;
+  facts : region Rig_edge.facts;
   own : mem list; (* rings, pointers, segment, slots *)
   scratch : scratch;
   traces : traces;
@@ -176,6 +171,17 @@ let ring_bytes = 16 lsl 20
 let segment_bytes = 1 lsl 20
 let slots = 513
 let pointers_bytes = 4096
+
+(* RIG_AMD_WAITS, the waits a submission's reserved room holds *)
+let max_waits = 255
+
+(* The queues, as rig_amd_ring.c's [runs] accepts their parts. *)
+let device_queues =
+  Rig_edge.
+    [
+      { name = "COMPUTE:0"; runs = [ Words; Fill ] };
+      { name = "COPY:0"; runs = [ Words; Fill; Copy ] };
+    ]
 
 (* The queues' positions in the pointers: the compute queue's at the start,
    where an AQL queue's descriptor (amd_hsa_queue.h, amd_queue_t) holds them,
@@ -465,21 +471,39 @@ let make (type m) (p : m path) =
     let grow =
       grow_scratch self ops p.gpu ~desc:(mem_address pointers) scratch
     in
-    let word = region self 8 word in
+    let capability = capability_of p ~aql ~grow ~trace in
+    let facts =
+      {
+        Rig_edge.arch = Abi.Gpu.processor p.gpu;
+        budget = p.budget;
+        queues = device_queues;
+        completion = Store;
+        waits =
+          {
+            stores = waits64;
+            hosts = waits64;
+            objects = false;
+            most = max_waits;
+          };
+        may_block = false;
+        maps_host = Option.is_some ops.map_host;
+        capability = Capability (Abi.Capability.key, capability);
+        word = region 8 word;
+        edge = Nativeint.of_int self;
+      }
+    in
     Ok
       {
         self;
         path = Type.Id.uid p.key;
         index = p.index;
         gpu = p.gpu;
-        budget = p.budget;
         lds = p.lds;
-        waits64;
         hdp = p.hdp;
         hdps = Mutex.create ();
         ops;
-        capability = capability_of p ~aql ~grow ~trace;
-        word;
+        capability;
+        facts;
         own = [ slot_words; segment; compute; copy; pointers ];
         scratch;
         traces;
@@ -505,22 +529,8 @@ let is_gpu ~vendor ~class_ =
 (* Facts *)
 
 let key = Type.Id.make ()
-let arch g = Abi.Gpu.processor g.gpu
-let budget g = g.budget
-let queues _ = [ "COMPUTE:0"; "COPY:0" ]
-let completion _ = `Store
-let waits_on g = function `Store | `Host -> g.waits64 | `Object -> false
-
-(* RIG_AMD_WAITS, the waits a submission's reserved room holds *)
-let max_waits _ = 255
-let blocks _ = `Returns
-let maps_host g = Option.is_some g.ops.map_host
-
-type capability = Abi.Capability.t
-
+let facts g = g.facts
 let capability g = g.capability
-let capability_key = Abi.Capability.key
-let edge g = Nativeint.of_int g.self
 
 (* Memory *)
 
@@ -529,52 +539,45 @@ let edge g = Nativeint.of_int g.self
 let count_hdp g reg delta =
   Mutex.protect g.hdps (fun () -> hdp_count g.self reg delta)
 
-let alloc g kind n =
+let alloc g (kind : Rig_edge.memory) n =
   if n < 1 then invalid_argf "Rig_amd.alloc: %d bytes, expected at least 1" n;
-  let system () = Option.map (region g.self n) (g.ops.alloc `System n) in
   match kind with
-  | `Device -> Option.map (region g.self n) (g.ops.alloc `Gpu n)
-  | `Pinned -> system ()
-  | `Mapped -> (
+  | Device -> Option.map (region n) (g.ops.alloc `Gpu n)
+  | Pinned -> Option.map (region n) (g.ops.alloc `System n)
+  | Mapped -> (
       match g.hdp with
-      | None -> system ()
+      | None -> None
       | Some reg -> (
           match g.ops.alloc `Bar n with
-          | None -> system ()
+          | None -> None
           | Some m ->
               ignore (count_hdp g reg 1);
-              Some (region g.self ~flush:reg n m)))
+              Some (region ~flush:reg n m)))
 
 (* Gives back [m]: a free the path refuses loses the memory, which no caller can
    act on. *)
 let give_back g m = try g.ops.free m with Fault _ -> ()
 
-(* Gives back [r], whose [live] the caller took. *)
-let release g r =
+let free g r =
   Option.iter (fun reg -> ignore (count_hdp g reg (-1))) r.flush;
   give_back g r.mem
 
-let free g r =
-  if r.owner <> g.self then
-    invalid_arg
-      "Rig_amd.free: the region is no allocation or mapping of the device";
-  if not (Atomic.compare_and_set r.live true false) then
-    invalid_arg "Rig_amd.free: the region was freed";
-  release g r
+(* The GPU names memory by address: the handle is the address. *)
+let locate r =
+  let a = mem_address r.mem in
+  {
+    Rig_edge.address = Some a;
+    host = mem_host r.mem;
+    handle = Nativeint.of_int a;
+  }
 
-let address r = Some (mem_address r.mem)
-let handle r = Nativeint.of_int (mem_address r.mem)
-let host r = mem_host r.mem
-let peer g g' = g.self <> g'.self && g.path = g'.path && g.ops.reaches g'.index
+let peer g g' = g.path = g'.path && g.ops.reaches g'.index
 
-let map_peer g g' r =
-  if g.self = g'.self then invalid_arg "Rig_amd.map_peer: the devices are one";
-  if r.owner <> g'.self || not (Atomic.get r.live) then
-    invalid_arg "Rig_amd.map_peer: the region is no live region of the peer";
+let map_peer g _ r =
   match g.ops.map_peer r.mem with
   | None -> None
   | Some m -> (
-      let view flush = Some (region g.self ?flush r.bytes m) in
+      let view flush = Some (region ?flush r.bytes m) in
       match r.flush with
       | Some reg when count_hdp g reg 1 -> view (Some reg)
       | Some _ ->
@@ -586,17 +589,15 @@ let map_host g a n =
   if n < 1 then invalid_argf "Rig_amd.map_host: %d bytes, expected at least 1" n;
   match g.ops.map_host with
   | None -> None
-  | Some map -> Option.map (region g.self n) (map a n)
+  | Some map -> Option.map (region n) (map a n)
 
 (* Images *)
 
 module Code_object = Abi.Code_object
 
 type image = {
-  holder : int;
   co : Code_object.t;
   base : int; (* the address of the region it was laid over *)
-  loaded : bool Atomic.t; (* taken once, by the unload *)
 }
 
 let too_large g co =
@@ -612,7 +613,7 @@ let image g bin =
   if not (Code_object.runs_on co g.gpu) then
     Error
       (strf "a code object for %s; the GPU is %s" (Code_object.target co)
-         (arch g))
+         g.facts.arch)
   else
     match too_large g co with
     | Some (name, n) ->
@@ -622,23 +623,17 @@ let image g bin =
     | None ->
         let lay r =
           let base = mem_address r.mem in
-          ( { holder = g.self; co; base; loaded = Atomic.make true },
-            Code_object.image co )
+          ({ co; base }, Code_object.image co)
         in
-        Ok (`Place (Code_object.size co, lay))
+        Ok (Rig_edge.Place (Code_object.size co, lay))
 
 let entry m f =
-  if not (Atomic.get m.loaded) then
-    invalid_arg "Rig_amd.entry: the image was unloaded";
   Option.map
     (fun (k : Code_object.kernel) -> m.base + k.descriptor)
     (Code_object.kernel m.co f)
 
-let unload g m =
-  if m.holder <> g.self then
-    invalid_arg "Rig_amd.unload: the image is another device's";
-  if not (Atomic.compare_and_set m.loaded true false) then
-    invalid_arg "Rig_amd.unload: the image was unloaded"
+(* An image holds nothing on the GPU: its code is in a region rig frees. *)
+let unload _ _ = ()
 
 (* Work *)
 
@@ -648,7 +643,6 @@ external last : int -> int = "caml_rig_amd_last" [@@noalloc]
 
 external settle : int -> unit = "caml_rig_amd_settle"
 
-let word g = g.word
 let signaled g = signaled_word g.self
 
 (* A fault is the device's for good: the first one raised is raised again by
@@ -684,10 +678,12 @@ let sleep g ~seen ~still_ms =
 (* Loss *)
 
 (* A queue the path could not destroy may still run, so its memory stays and its
-   own releases raise the word. *)
-let stop g =
+   own releases raise the word. The path gets the first fault: the one [sleep]
+   raised, else the one rig lost the device for. *)
+let stop g ~fault =
   if Atomic.compare_and_set g.stopped false true then
-    match g.ops.stop ~fault:(Atomic.get g.fault) with
+    let fault = match Atomic.get g.fault with None -> fault | f -> f in
+    match g.ops.stop ~fault with
     | exception Fault _ -> ()
     | `Unknown -> ()
     | `Stopped ->

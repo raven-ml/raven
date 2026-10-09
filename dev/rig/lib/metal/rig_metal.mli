@@ -8,10 +8,10 @@
     A device is the Mac's GPU opened with a command queue of its own. Its work
     is one sequence of {e submissions}. The caller numbers them [1], [2], …, the
     {e values} of the device's {e timeline}, and the device makes each
-    observable in its {e timeline word} ({!word}), a host word that reads [v]
-    once every submission up to [v] completed. Memory is shared with the host:
-    every region the device allocates is the host's memory too, at the same
-    bytes.
+    observable in its {e timeline word} (the [word] of {!facts}), a host word
+    that reads [v] once every submission up to [v] completed. Memory is shared
+    with the host: every region the device allocates is the host's memory too,
+    at the same bytes.
 
     A device opened through rig, running an empty submission:
     {[
@@ -28,26 +28,26 @@
     ]}
 
     {b Submissions.} Work reaches the device in C, through its room check and
-    submit ({!edge}), over [rig_edge.h]'s structures. A submission is a list of
-    {e parts} for the device's one queue, ["COMPUTE:0"], possibly empty. A part
-    is a {e fill}, a C function that encodes Metal work into a compute command
-    encoder the device gives it ({!Rig_metal_abi}); it declares no ring units or
-    segment bytes. The device runs no words and no copies, and waits on no other
-    device's word. The submit runs the fills in order into the device's
-    {e open command buffer}, opening one if none is, in one encoder per command
-    buffer, each command buffer after the ones before it, and returns. It does
-    not wait for the work. Metal runs a command buffer only once it is
-    committed, and the device commits the open one at four points: a commit
-    ({!edge}); a submit that finds fewer than three of its committed
-    command buffers uncompleted, so that the GPU finds work queued behind the
-    one it runs; the completion of one of its command buffers while one is open;
-    and a submit that leaves 256 values in it, so the device commits each value
-    at most 256 values late. Metal calls a handler of the device on one of its
-    own threads once each command buffer completed, successfully or not
-    ([addCompletedHandler:]). The handlers write [v] into the word once every
-    command buffer of the submissions up to [v] completed without failure,
-    whatever order they complete in. Only the handlers and {!stop} write the
-    word.
+    submit (the [edge] of {!facts}), over [rig_edge.h]'s structures. A
+    submission is a list of {e parts} for the device's one queue, ["COMPUTE:0"],
+    possibly empty. A part is a {e fill}, a C function that encodes Metal work
+    into a compute command encoder the device gives it ({!Rig_metal_abi}); it
+    declares no ring units or segment bytes. The device runs no words and no
+    copies, and waits on no other device's word. The submit runs the fills in
+    order into the device's {e open command buffer}, opening one if none is, in
+    one encoder per command buffer, each command buffer after the ones before
+    it, and returns. It does not wait for the work. Metal runs a command buffer
+    only once it is committed, and the device commits the open one at four
+    points: the edge's commit; a submit that finds fewer than three of its
+    committed command buffers uncompleted, so that the GPU finds work queued
+    behind the one it runs; the completion of one of its command buffers while
+    one is open; and a submit that leaves 256 values in it, so the device
+    commits each value at most 256 values late. Metal calls a handler of the
+    device on one of its own threads once each command buffer completed,
+    successfully or not ([addCompletedHandler:]). The handlers write [v] into
+    the word once every command buffer of the submissions up to [v] completed
+    without failure, whatever order they complete in. Only the handlers and
+    {!stop} write the word.
 
     {b Failures.} A submission fails at once if a fill returns a failure, if
     Metal makes no command buffer or no encoder, or if Metal raises an
@@ -66,17 +66,10 @@
     alignment. The fill's calling convention is stated there.
 
     {b Domains.} Any domain may call any function, at the same time as others,
-    with three exceptions. The C room and submit are called one at a time: the
-    caller holds the device's {e turn} from a room check to the end of the
-    submit it precedes. {!stop} is called once, after every other call returned
-    but the [icb] function of {!val-capability}, which compiled code may call at
-    any time and which a stop waits for. After {!stop} only {!free},
-    {!unload}, the [icb] function and the release of an indirect command buffer
-    are called, also after the GPU opened again. These
-    rules are the caller's; the device does not check them. {!sleep} may run
-    while another domain submits. A region or an image is given back once: of
-    two {!free}s or {!unload}s of one value, from any domains, one gives it back
-    and the other raises [Invalid_argument].
+    as {!Rig_edge.Driver} states. Compiled code may also call the [icb] function
+    of {!val-capability} at any time, beside {!stop}, which waits for a call in
+    flight, and after it; an indirect command buffer may be released after
+    {!stop} too, also after the GPU opened again.
 
     {b Platforms.} A device opens on macOS 15 and later: its queue keeps every
     region resident through a residency set, which Metal has from macOS 15
@@ -134,52 +127,13 @@ val open_ : int -> (t, string) result
 
     Raises [Invalid_argument] if [i < 0]. *)
 
-(** {1:facts Facts} *)
+(** {1:driver The driver} *)
 
-val key : t Type.Id.t
-(** [key] is the key of this library's devices, by which a caller holding
-    devices of several drivers finds which are Metal's. *)
+include Rig_edge.Driver with type t := t
 
-val arch : t -> string
-(** [arch d] is [d]'s GPU family as Metal names it: the highest Apple family the
-    GPU supports, such as ["Apple7"] for an M1, else its Mac family, ["Mac2"].
-*)
-
-val budget : t -> int
-(** [budget d] is the memory, in bytes, Metal recommends the device keep
-    allocated at most ([recommendedMaxWorkingSetSize]). *)
-
-val queues : t -> string list
-(** [queues d] is [["COMPUTE:0"]], the device's one queue. It lists no copy
-    queue: the device runs no copies, and its memory is the host's, which copies
-    it. *)
-
-val completion : t -> [ `Store | `Object of nativeint | `Host ]
-(** [completion d] is [`Host]: the device's handlers write {!word} from the
-    host. *)
-
-val waits_on : t -> [ `Store | `Object | `Host ] -> bool
-(** [waits_on d c] is [false]: a Metal queue waits on no other device's word.
-    Work that depends on another device starts after the caller waited for it on
-    the host. *)
-
-val max_waits : t -> int
-(** [max_waits d] is [0]: a Metal queue waits on no other device's word. *)
-
-val blocks : t -> [ `Returns | `May_block ]
-(** [blocks d] is [`May_block]: the submit calls Metal, and waits for [d]'s
-    oldest command buffer to complete when 1,024 of them are uncommitted or
-    uncompleted, as many as [d]'s queue holds. *)
-
-val maps_host : t -> bool
-(** [maps_host d] is [true]: Metal maps host memory that starts on a page
-    without a copy. *)
-
-type capability = Rig_metal_abi.t
-(** The type for what compiled code needs from the device. *)
-
-val capability : t -> capability
-(** [capability d] is [d]'s record.
+val capability : t -> Rig_metal_abi.t
+(** [capability d] is [d]'s record, which {!facts} declares under
+    {!Rig_metal_abi.key}.
 
     Its [align] is [4] on Apple GPU families, the feature set tables' minimum
     constant buffer offset alignment. The tables list none for Mac families,
@@ -191,185 +145,108 @@ val capability : t -> capability
     Its indirect command buffers retain their pipelines, so an {!unload} cannot
     end one. *)
 
-val capability_key : capability Type.Id.t
-(** [capability_key] is {!Rig_metal_abi.key}. *)
+(** {1:this This driver}
 
+    {t
+      | Fact         | Value                                  |
+      |--------------|----------------------------------------|
+      | [arch]       | ["AppleN"] or ["Mac2"]                 |
+      | [budget]     | [recommendedMaxWorkingSetSize]         |
+      | [queues]     | ["COMPUTE:0"], which runs [Fill]       |
+      | [completion] | [Host]                                 |
+      | [waits]      | None, [most = 0]                       |
+      | [may_block]  | [true]                                 |
+      | [maps_host]  | [true]                                 |
+      | [capability] | {!Rig_metal_abi.t} ({!val-capability}) |
+      | [word]       | Eight bytes of host memory             |
+    }
 
-(** {1:memory Memory} *)
+    {b Facts.} [arch] is the highest Apple GPU family the GPU supports, such as
+    ["Apple7"] for an M1, else its Mac family, ["Mac2"]. [budget] is the memory,
+    in bytes, Metal recommends the device keep allocated at most. The word is an
+    [MTLBuffer] holding an unsigned 64-bit integer in the host's byte order,
+    which the device's handlers write from the host.
 
-type region
-(** The type for memory of a device: an [MTLBuffer] the host and the GPU share.
-*)
+    {b Queues.} The device lists no copy queue: its memory is the host's, which
+    copies it. Work that depends on another device starts after the caller
+    waited for it on the host.
 
-val alloc : t -> [ `Device | `Pinned | `Mapped ] -> int -> region option
-(** [alloc d kind n] is a region of [n] bytes of [d], or [None] if Metal has no
-    memory for it. Every kind is the same shared memory. The region is resident
-    for the work of every submission whose submit starts after [alloc] returned.
+    {b The C edge.} The edge's functions are [rig_metal_room],
+    [rig_metal_submit] and [rig_metal_commit], which [rig_metal.h] declares. The
+    edge is valid while the process runs: a device's C state holds its word,
+    which other devices may read after [d] is gone, so neither is ever freed.
+    - [rig_metal_room] answers [RIG_NEVER] for a part that is no fill on queue
+      [0] or declares ring units or segment bytes, and [RIG_FITS] otherwise: the
+      submit waits inside for command buffers when the queue is full.
+    - [rig_metal_submit] runs the parts as the work of [v] and answers
+      [RIG_COMMITTED] if it committed the open command buffer, [RIG_OK] if [v]'s
+      work waits in it. With no part, [v] is observable once the work before it
+      completed. Its waits are none and its handles are ignored: every region of
+      the device is resident. It answers [RIG_FAILED] if the submission failed
+      at once, or if the device recorded a failure before; then the parts did
+      not run (Failures, above). It may block: it calls Metal, and waits for the
+      device's oldest command buffer to complete when 1,024 of them are
+      uncommitted or uncompleted, as many as the device's queue holds.
+    - [rig_metal_commit] commits the open command buffer, which holds the work
+      of every value not yet committed, whatever [v].
 
-    The region's GPU and host addresses are multiples of 256 bytes. Apple
-    documents no alignment for a buffer's first byte, so the device checks the
-    one Metal gives: an allocation that breaks it is given back and raises
-    {!exception-Fault}.
+    {b Memory.} {!alloc} makes the same shared memory for every
+    {!Rig_edge.memory}. A region is resident for the work of every submission
+    whose submit starts after {!alloc} or {!map_host} returned. An allocation's
+    GPU and host addresses are multiples of 256 bytes: Apple documents no
+    alignment for a buffer's first byte, so the device checks the one Metal
+    gives, and an allocation that breaks it is given back and raises
+    {!exception-Fault}. {!alloc} and {!map_host} raise [Invalid_argument] for
+    fewer than one byte.
 
-    Raises [Invalid_argument] if [n < 1]. *)
+    {!locate} answers the region's GPU address ([gpuAddress]), the address
+    kernels read and write, its host address, and its [MTLBuffer], which lives
+    until {!free}, and the word's while the process runs. {!free} releases the
+    buffer.
 
-val free : t -> region -> unit
-(** [free d r] gives back [r], an allocation, a {!map_host} region or the
-    {!word} of [d]. The caller frees a region once no work of [d] that uses it
-    is in flight, and the word once [d] is stopped and holds its last value.
+    {!peer} is [false] and {!map_peer} answers [None]: a Mac has one GPU, and a
+    region of another device of it is not mapped into [d].
 
-    Raises [Invalid_argument] if [r] is another device's, or was freed. *)
+    {!map_host} answers [None] if Metal cannot wrap the memory. It accepts any
+    [p]: Metal wraps memory that starts at a page, so the region covers the
+    pages holding the [n] bytes at [p]. Its host address is the page holding
+    [p], and [p] lies [p - host] bytes in.
 
-val address : region -> int option
-(** [address r] is [Some a] with [a] the GPU address of [r]'s first byte
-    ([gpuAddress]), the address kernels read and write. *)
+    {b Code.} {!image} loads a metallib and makes no pipeline: Metal places the
+    code itself, and the result is [Ok (Loaded i)]. It is [Error msg] if the
+    bytes are no metallib, or if one of its functions is no compute kernel.
 
-val handle : region -> nativeint
-(** [handle r] is [r]'s [MTLBuffer]. It lives until {!free}, and for {!word}
-    while the process runs. *)
+    {!entry} answers the address of the [MTLComputePipelineState] of the
+    function, usable from an indirect command buffer. The first call for a
+    function makes the pipeline: Metal compiles it for the GPU, 0.1 to 1 s when
+    its shader cache does not hold it, and the call releases the domain lock
+    meanwhile. Every later call answers the same address, which is valid until
+    {!unload}. Calls for one function from several domains at once make one
+    pipeline. It raises [Invalid_argument] with Metal's reason if Metal makes no
+    pipeline of the function: the function needs what the GPU family lacks
+    (Apple's Metal feature set tables), such as more than its 32 KB of
+    threadgroup memory on the Apple families. A refusal is not kept: a later
+    call compiles again.
 
-val host : region -> int option
-(** [host r] is [Some p] with [p] the host address of [r]'s first byte. *)
+    {!unload} releases the image's library and the pipelines {!entry} made of
+    it. An indirect command buffer made with one of them keeps it until its own
+    release ({!Rig_metal_abi.field-release}).
 
-val peer : t -> t -> bool
-(** [peer d d'] is [false]: a Mac has one GPU, and {!map_peer} maps no memory of
-    another device of it. *)
-
-val map_peer : t -> t -> region -> region option
-(** [map_peer d d' r] is [None]: a Mac has one GPU, and a region of another
-    device of it is not mapped into [d].
-
-    Raises [Invalid_argument] if [d'] is [d], or if [r] is no region of [d'] or
-    was freed. *)
-
-val map_host : t -> int -> int -> region option
-(** [map_host d p n] is a region of [d] over the host memory holding the [n]
-    bytes at [p], shared without a copy, or [None] if Metal cannot wrap it.
-    Metal wraps memory that starts at a page, so the region covers the pages
-    holding the [n] bytes: {!host} of it is the page holding [p], and [p] lies
-    [p - host r] bytes in. The memory stays mapped until {!free}. The region is
-    resident as {!alloc}'s.
-
-    Raises [Invalid_argument] if [n < 1]. *)
-
-(** {1:images Images} *)
-
-type image
-(** The type for loaded code: a Metal library, whose functions' compute
-    pipelines are made as they are first asked for ({!entry}). *)
-
-val image :
-  t ->
-  string ->
-  ( [ `Loaded of image | `Place of int * (region -> image * string) ],
-    string )
-  result
-(** [image d b] loads the metallib [b] and makes no pipeline. Metal places the
-    code itself: the result is [Ok (`Loaded i)].
-
-    The result is [Error msg] if [b] is no metallib, or if one of its functions
-    is no compute kernel. *)
-
-val entry : image -> string -> int option
-(** [entry i f] is the address of the [MTLComputePipelineState] of [i]'s
-    function [f], usable from an indirect command buffer, or [None] if [i] has
-    no function [f]. The first call for [f] makes the pipeline: Metal compiles
-    [f] for the GPU, 0.1 to 1 s when its shader cache does not hold [f], and the
-    call releases the domain lock meanwhile. Every later call answers the same
-    address, which is valid until {!unload}. Calls for [f] from several domains
-    at once make one pipeline. An [entry] that {!unload} overtakes raises
-    [Invalid_argument] and keeps no pipeline.
-
-    Raises [Invalid_argument] if [i] was unloaded, or, with Metal's reason, if
-    Metal makes no pipeline of [f]: [f] needs what [i]'s GPU family lacks
-    ({!arch}; Apple's Metal feature set tables), such as more than its 32 KB of
-    threadgroup memory on the Apple families. *)
-
-val unload : t -> image -> unit
-(** [unload d i] releases [i]'s library and the pipelines {!entry} made of it.
-    An indirect command buffer made with one of them keeps it until its own
-    release ({!Rig_metal_abi.field-release}). The caller unloads once no work
-    that names a pipeline of [i] directly is in flight.
-
-    Raises [Invalid_argument] if [i] is another device's or was unloaded. *)
-
-(** {1:work Work} *)
-
-val edge : t -> nativeint
-(** [edge d] is the address of [d]'s C state, whose first member points to the
-    device's [struct rig_driver] of [rig_edge.h] ({!Rig.Driver.edge}): the C
-    functions [rig_metal_room], [rig_metal_submit] and [rig_metal_commit], which
-    [rig_metal.h] declares. It is valid while the process runs: a device's C
-    state holds its word, which other devices may read after [d] is gone, so
-    neither is ever freed.
-
-    [rig_metal_room] answers [RIG_NEVER] for a part that is no fill on queue
-    [0] or declares ring units or segment bytes, and [RIG_FITS] otherwise: the
-    submit waits inside for command buffers when the queue is full.
-
-    [rig_metal_submit] runs the parts as the work of [v], the value after the
-    last one it received, and answers [RIG_COMMITTED] if it
-    committed the open command buffer, [RIG_OK] if [v]'s work waits in it; [v]
-    is observable in {!word} once its command buffers are committed and
-    completed. With no part, [v] is observable once the work before it
-    completed. Its waits are none and its handles are ignored: every region of
-    the device is resident. [RIG_FAILED] if the submission failed at once, or if
-    the device recorded a failure before; then the parts did not run (Failures,
-    above). It calls no function of the OCaml runtime: its caller releases the
-    domain lock.
-
-    [rig_metal_commit] commits the open command buffer, which holds the work of
-    every value not yet committed, whatever [v]. *)
-
-(** {1:timeline Timeline} *)
-
-val word : t -> region
-(** [word d] is [d]'s timeline word: eight bytes of host memory holding, as an
-    unsigned 64-bit integer in the host's byte order, the last value [v] such
-    that every submission up to [v] completed without failure. The device's
-    handlers write it with release order, and never lower it. Once {!stop} was
-    called and no work of [d] is in flight, it holds the last value the submit
-    received, whatever that work did. It lives until {!free}. *)
-
-val signaled : t -> int
-(** [signaled d] is the value in {!word}, read with acquire order: every
-    submission up to it completed, and its writes are visible to the reader,
-    unless {!stop} was called. *)
-
-val sleep : t -> seen:int -> still_ms:int -> unit
-(** [sleep d ~seen ~still_ms] returns once {!word} holds a value other than
-    [seen], at once if it already does, or after [still_ms] milliseconds of the
-    monotonic clock, whichever comes first; [still_ms] is not negative. It
-    blocks on a condition the handlers signal, using no processor time while it
-    waits, and releases the domain lock.
-
-    Raises {!exception-Fault} if [d] recorded a failure, with its reason: for a
+    {b Timeline.} The handlers write the word with release order, and never
+    lower it. {!sleep} blocks on a condition the handlers signal, using no
+    processor time while it waits, and releases the domain lock. Once the device
+    recorded a failure it raises {!exception-Fault} with its reason: for a
     command buffer Metal reports failed, ["the GPU's work failed: "] followed by
     Metal's description of its error, such as
     ["the GPU's work failed: Impacting Interactivity
-     (0000000e:kIOGPUCommandBufferCallbackErrorImpactingInteractivity)"]. *)
+     (0000000e:kIOGPUCommandBufferCallbackErrorImpactingInteractivity)"].
 
-(** {1:loss Loss} *)
-
-exception Fault of string
-(** [Fault why] is raised by {!sleep} once its device recorded a failure, and by
-    {!alloc} when Metal places an allocation off the 256-byte alignment {!alloc}
-    promises. *)
-
-val stop : t -> unit
-(** [stop d] stops [d] without waiting. It drops the open command buffer
-    uncommitted: its work never runs.
-
-    If every command buffer [d] committed completed, it writes the last value
-    the submit received into {!word} and releases [d]'s queue; no work of [d]
-    writes memory again.
-
-    Otherwise the work still in flight may write memory as long as it runs, and
-    [d] keeps its queue. Metal calls a handler for every committed command
-    buffer once it completed, failed ones included; once the last command buffer
-    [d] committed completed, its handler writes the last value the submit
-    received into {!word}, whatever that work did.
-
-    It releases no region and no image: those end at {!free} and {!unload},
-    which may follow. An [icb] call of {!val-capability} in flight returns
-    before [stop] begins, and every later one answers [Error]. *)
+    {b Stopping.} {!stop} ignores [fault]. It drops the open command buffer
+    uncommitted: its work never runs. If every command buffer the device
+    committed completed, it writes the last value the submit received into the
+    word and releases the device's queue; no work of the device writes memory
+    again. Otherwise the work still in flight may write memory as long as it
+    runs, and the device keeps its queue: once the last command buffer it
+    committed completed, its handler writes the last value into the word,
+    whatever that work did. An [icb] call of {!val-capability} in flight returns
+    before {!stop} begins, and every later one answers [Error]. *)

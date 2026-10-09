@@ -8,8 +8,6 @@ module Link = Link
 
 let strf = Printf.sprintf
 
-type capability = Rig_remote_abi.t
-
 exception Fault of string
 
 (* A region is memory of the agent, named by its id, or a proxy's word: its
@@ -22,7 +20,7 @@ type t = {
   c : nativeint;
   link : Link.t;
   account : Wire.account;
-  capability : capability;
+  capability : Rig_remote_abi.t;
   word : region;
 }
 
@@ -61,20 +59,31 @@ let request l q =
 (* Facts *)
 
 let key : t Type.Id.t = Type.Id.make ()
-let arch d = d.account.arch
-let budget d = d.account.budget
-let queues _ = [ "COMPUTE:0"; "COPY:0" ]
-let completion _ = `Host
-let waits_on _ = function `Host -> true | `Store | `Object -> false
-let max_waits _ = max_int
-let blocks _ = `May_block
-let maps_host _ = false
+
+(* The machine's host runs words too: the runs of its loaded code. *)
+let facts d =
+  let runs = Rig_edge.(if d.account.id = 0 then [ Words; Copy ] else [ Copy ]) in
+  {
+    Rig_edge.arch = d.account.arch;
+    budget = d.account.budget;
+    queues = [ { name = "COMPUTE:0"; runs }; { name = "COPY:0"; runs } ];
+    completion = Host;
+    waits = { stores = false; hosts = true; objects = false; most = max_int };
+    may_block = true;
+    maps_host = false;
+    capability = Capability (Rig_remote_abi.key, d.capability);
+    word = d.word;
+    edge = d.c;
+  }
+
 let capability d = d.capability
-let capability_key = Rig_remote_abi.key
 
 (* Memory *)
 
-let alloc d memory bytes =
+let alloc d (memory : Rig_edge.memory) bytes =
+  let memory =
+    match memory with Device -> `Device | Pinned -> `Pinned | Mapped -> `Mapped
+  in
   let id = Link.fresh () in
   match
     request d.link (Wire.Alloc { id; device = d.account.id; memory; bytes })
@@ -83,9 +92,11 @@ let alloc d memory bytes =
   | Ok false | Error _ -> None
 
 let free d = function Memory { id } -> Link.drop d.link id | Word _ -> ()
-let address = function Memory _ -> None | Word { id; _ } -> Some id
-let handle = function Memory { id } -> Nativeint.of_int id | Word _ -> 0n
-let host = function Memory _ -> None | Word { at; _ } -> Some at
+let locate = function
+  | Memory { id } ->
+      { Rig_edge.address = None; host = None; handle = Nativeint.of_int id }
+  | Word { id; at } -> { address = Some id; host = Some at; handle = 0n }
+
 let peer d d' = d.link == d'.link && List.mem d'.account.id d.account.reaches
 
 let map_peer d d' r =
@@ -110,7 +121,7 @@ let image d binary =
   else
     let id = Link.fresh () in
     match request d.link (Wire.Load { id; binary }) with
-    | Ok () -> Ok (`Loaded { id; link = d.link })
+    | Ok () -> Ok (Rig_edge.Loaded { id; link = d.link })
     | Error why -> Error why
 
 let entry (i : image) name =
@@ -122,7 +133,6 @@ let unload d (i : image) = Link.drop d.link i.id
 
 (* Timeline *)
 
-let word d = d.word
 let signaled d = signaled_c d.c
 
 let fault d =
@@ -130,5 +140,4 @@ let fault d =
     (Option.value ~default:"the job failed" (Link.failure (Link.job_of d.link)))
 
 let sleep d ~seen ~still_ms = if sleep_c d.c seen still_ms then raise (fault d)
-let edge d = d.c
-let stop d = stop_c d.c
+let stop d ~fault:_ = stop_c d.c

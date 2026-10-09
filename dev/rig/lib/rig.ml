@@ -10,7 +10,7 @@ open Def
 type t = device
 
 let host = Dev.host
-let name d = d.name
+let name (d : t) = d.name
 let host_of = Dev.host_of
 let arch d = d.arch
 let computes d = not (Dev.is_io d)
@@ -23,14 +23,18 @@ let free_cache = Memory.free_cache
 
 let capability (type a) d (k : a Type.Id.t) : a option =
   match d.capability with
-  | Some (Capability (k', c)) -> (
+  | Some (Rig_edge.Capability (k', c)) -> (
       match Type.Id.provably_equal k' k with
       | Some Type.Equal -> Some c
       | None -> None)
   | None -> None
 
+type kind = Rig_edge.kind = Words | Fill | Copy
+type queue = Rig_edge.queue = { name : string; runs : kind list }
+
+let queues d = Array.to_list d.queues
 let equal = ( == )
-let pp ppf d = Format.pp_print_string ppf d.name
+let pp ppf (d : t) = Format.pp_print_string ppf d.name
 
 (* Timeline *)
 
@@ -74,8 +78,8 @@ module Profile = Profile
 
 (* Drivers *)
 
-module type Driver = Sigs.Driver
-module type Io = Sigs.Io
+module type Driver = Rig_edge.Driver
+module type Io = Rig_edge.Io
 
 let open_ m ?machine ~name make = Dev.open_driver m ?machine ~name make
 
