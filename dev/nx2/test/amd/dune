@@ -1,0 +1,6 @@
+; Correctness on AMD GPU 0 through the amdgpu driver, skipping without one.
+
+(tests
+ (names test_amd)
+ (modules test_amd)
+ (libraries nx_array nx_amd_support rig windtrap))

@@ -1,0 +1,10 @@
+; nx.amd: nx's kernels for AMD GPUs, compiled ahead of time into code
+; objects (kernels/). C only until the binding: launch records and the fill
+; that places them through rig.amd.
+
+(library
+ (name nx_amd)
+ (modules)
+ (foreign_stubs
+  (language c)
+  (names fill_amd)))
