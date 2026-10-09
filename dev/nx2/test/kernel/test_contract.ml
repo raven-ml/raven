@@ -37,6 +37,16 @@ let cast_to (D.Any dt) x =
   cast_into d x;
   A.Any d
 
+(* [x] where the host reads it: [x] itself on the host, a copy elsewhere. *)
+let host (A.Any x as a) =
+  if Rig.equal (A.device x) Rig.host then a
+  else A.Any (A.to_device Rig.host x)
+
+(* [x] on [b]'s device, its layout kept. *)
+let on (b : Support.backend) (A.Any x as a) =
+  if Rig.equal (A.device x) b.device then a
+  else A.Any (A.to_device b.device x)
+
 (* [x] as float64: every value of a dtype a contraction takes is one of
    float64's. *)
 let to64 x =
@@ -408,15 +418,18 @@ let covers c =
     (fun v -> cover v (List.mem v c.views))
     [ "stepped"; "broadcast"; "permuted" ]
 
-(* The kernels' result; [None] if they declined. *)
+(* [c]'s operands on [b]'s device. *)
+let operands_on b c = Array.map (on b) (operands c)
+
+(* The kernels' result on [b]'s device, read back where the host reads it;
+   [None] if they declined. *)
 let run (b : Support.backend) c =
   let module K = (val b.kernels) in
   let y, _, _ = sizes c in
   let (D.Any out) = c.out in
-  let dst = A.create Rig.host out y in
-  let ops = Array.of_list ([ c.a; c.b ] @ Option.to_list c.init) in
-  match K.contract c.spec ~dst:(A.Any dst) ops with
-  | A.Done -> Some (A.Any dst)
+  let dst = A.Any (A.create b.device out y) in
+  match K.contract c.spec ~dst (operands_on b c) with
+  | A.Done -> Some (host dst)
   | A.Declined -> None
   | r -> failf "contract answered %a" Nx_array_support.pp_answer r
 
@@ -504,15 +517,16 @@ let law_init_as_dst (b : Support.backend) (c : case) =
   match c.init with
   | None -> cover "no init" true
   | Some i ->
-      let donated = cast_to c.out i in
-      let c' = { c with init = Some (cast_to c.out donated) } in
-      let ops = [| c.a; c.b; donated |] in
+      let c' = { c with init = Some (cast_to c.out i) } in
+      let donated = on b (cast_to c.out i) in
+      let ops = [| on b c.a; on b c.b; donated |] in
       begin match (run b c', K.contract c.spec ~dst:donated ops) with
       | Some y, A.Done ->
           let per = per_batch c in
           cover "fewer than 64 outputs" (per > 0 && per < 64);
           cover "64 outputs or more" (per >= 64);
-          equal (list string) [] (differ_bits ~other:"in place" y donated)
+          equal (list string) []
+            (differ_bits ~other:"in place" y (host donated))
       | None, A.Declined -> cover "declined" true
       | _, r -> failf "in place, contract answered %a" Nx_array_support.pp_answer r
       end
@@ -526,12 +540,14 @@ let law_in_place (b : Support.backend) (c : case) =
   | Some i -> (
       let module K = (val b.kernels) in
       let c = { c with init = Some (cast_to c.out i) } in
-      let alias = cast_to c.out i in
-      let answer = K.contract c.spec ~dst:alias [| c.a; c.b; alias |] in
+      let alias = on b (cast_to c.out i) in
+      let answer =
+        K.contract c.spec ~dst:alias [| on b c.a; on b c.b; alias |]
+      in
       match (run b c, answer) with
       | Some y, A.Done ->
           cover "computed" true;
-          let g = to64 y and g' = to64 alias in
+          let g = to64 y and g' = to64 (host alias) in
           let differs i = bits (A.get g i) <> bits (A.get g' i) in
           let bad = List.filter differs (indices (shape_of y)) in
           let show i =
@@ -551,13 +567,12 @@ let law_declined (b : Support.backend) c =
   let module K = (val b.kernels) in
   let y, _, _ = sizes c in
   let threes = A.Any (A.of_array D.Float64 y (Array.make (total y) 3.)) in
-  let dst = cast_to c.out threes in
-  let before = A.to_array (to64 dst) in
-  let ops = Array.of_list ([ c.a; c.b ] @ Option.to_list c.init) in
-  match K.contract c.spec ~dst ops with
+  let dst = on b (cast_to c.out threes) in
+  let before = A.to_array (to64 (host dst)) in
+  match K.contract c.spec ~dst (operands_on b c) with
   | A.Declined ->
       cover "declined" true;
-      equal (array float_exact) before (A.to_array (to64 dst))
+      equal (array float_exact) before (A.to_array (to64 (host dst)))
   | A.Done -> cover "computed" true
   | r -> failf "contract answered %a" Nx_array_support.pp_answer r
 
@@ -676,4 +691,4 @@ let cpu (b : Support.backend) =
 let () =
   exit
     (Windtrap.run "nx_kernel.contract"
-       (List.map laws Support.backends @ List.map cpu Support.backends))
+       (List.map laws Support.backends @ List.map cpu Support.cpus))

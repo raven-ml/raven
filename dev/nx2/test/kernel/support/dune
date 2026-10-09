@@ -50,7 +50,15 @@
 (library
  (name nx_kernels_support)
  (modules nx_kernels_support)
- (libraries nx_array nx_kernel nx_cpu rig rig.pool)
+ (libraries
+  nx_array
+  nx_kernel
+  nx_cpu
+  nx_cuda
+  rig
+  rig.pool
+  rig.cuda
+  rig.gpu_lock)
  (foreign_stubs
   (language c)
   (include_dirs ../../../lib/cpu ../../../lib/array ../../../lib/kernel)

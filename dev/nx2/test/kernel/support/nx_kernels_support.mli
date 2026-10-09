@@ -18,17 +18,21 @@ type backend = {
   device : Rig.t;  (** The device whose memory its laws compute on. *)
   computes : kind -> Nx_array.Dtype.any -> bool;
       (** [computes k dt] is [true] iff it states it computes [k] at [dt]: the
-          result's dtype for [K0], the operand's for [K1] and [K2], and for
-          [K3] the second operand's, with a [bool] condition. The suite fails
-          when it declines one. *)
+          result's dtype for [K0], the operand's for [K1] and [K2], and for [K3]
+          the second operand's, with a [bool] condition. The suite fails when it
+          declines one. *)
   around : 'a. (unit -> 'a) -> 'a;
       (** [around f] is [f ()] run as the backend: nx.cpu's under its target
           table. *)
 }
 (** The type for kernel libraries in one configuration. *)
 
+val cpus : backend list
+(** [cpus] is nx.cpu under each target table the host runs, base first. *)
+
 val backends : backend list
-(** [backends] is nx.cpu under each target table the host runs, base first. *)
+(** [backends] is {!cpus}, then nx.cuda on CUDA's GPU 0 where the machine has
+    one, opened under the GPU lock ({!Rig_gpu_lock.hold}). *)
 
 val serial_reduce :
   Nx_kernel.Spec.reduce Nx_kernel.Spec.t ->

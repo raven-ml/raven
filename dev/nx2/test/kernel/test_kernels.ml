@@ -1089,7 +1089,7 @@ let test_declined_map (b : Support.backend) () =
 let in_place ~msg (b : Support.backend) a k =
   let fresh = A.create b.device (A.dtype a) (L.shape (A.layout a)) in
   let want = k fresh a in
-  let alias = A.copy a in
+  let alias = on b (A.copy (host a)) in
   equal ~msg answer want (k alias alias);
   if want = A.Done then begin
     cover "computed" true;

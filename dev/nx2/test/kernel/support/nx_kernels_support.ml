@@ -55,7 +55,33 @@ let cpu target =
     around = (fun f -> with_target target f);
   }
 
-let backends = List.map cpu (targets ())
+let cpus = List.map cpu (targets ())
+
+(* nx.cuda on CUDA's GPU 0, where there is one; the suite then holds the GPU
+   lock. nx_cuda.mli states it computes no kind. *)
+let cuda () =
+  if Rig_cuda.count () = 0 then []
+  else begin
+    Rig_gpu_lock.hold ();
+    let c = Result.get_ok (Rig_cuda.open_ 0) in
+    let d =
+      Result.get_ok
+        (Rig.open_ (module Rig_cuda) ~name:"CUDA:0" (fun () -> Ok c))
+    in
+    if not (Nx_cuda.computes_on d) then []
+    else
+      [
+        {
+          name = "cuda";
+          kernels = (module Nx_cuda);
+          device = d;
+          computes = (fun _ _ -> false);
+          around = (fun f -> f ());
+        };
+      ]
+  end
+
+let backends = cpus @ cuda ()
 
 (* nx.cpu's reductions and scans on one thread. *)
 external serial_reduce :
