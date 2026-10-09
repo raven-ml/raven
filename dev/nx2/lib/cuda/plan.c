@@ -429,7 +429,10 @@ int nx_cuda_plan_contract(const nx_cuda_contract_in *in,
     }
     kernel = find(F_SIMT, simt, side, 0, 0);
     gx = ceil_div(m, side) * ceil_div(n, side);
-    splits = split_count(gx * batch, 64, k, 128);
+    /* A SIMT block's k-tiles run one after another, each waiting on its
+       loads: split while the grid has fewer than 256 blocks, down to 64
+       of k a range. */
+    splits = split_count(gx * batch, 256, k, 64);
     values = side * side / 256, threads = 256;
     p.aligned = (va ? NX_CONTRACT_A_VECTORS : 0) |
                 (vb ? NX_CONTRACT_B_VECTORS : 0);
