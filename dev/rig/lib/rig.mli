@@ -828,7 +828,8 @@ module Image : sig
       runs [f] keeps [i] reachable until it is done, such as a {!Hold}'s release
       that holds it.
 
-      Raises {!Lost} if [i]'s device is lost. *)
+      Raises [Invalid_argument] if [i]'s device cannot run [f]
+      ({!Driver.entry}), and {!Lost} if [i]'s device is lost. *)
 end
 
 (** {1:profiles Profiles} *)
@@ -1124,12 +1125,16 @@ module type Driver = sig
 
   val entry : image -> string -> int option
   (** [entry i f] is the driver's name for [i]'s function [f]: an address or an
-      object. Counted. *)
+      object, or [None] if [i] has no function [f]. A driver may make it on the
+      first call, compiling [f], and that call may block. Counted.
+
+      Raises [Invalid_argument] with the driver's reason if [f] needs more than
+      the device offers, where the driver finds that only here. *)
 
   val unload : t -> image -> unit
-  (** [unload d i] releases what {!image} made for [i], once no work of [d] that
-      runs it can run. The region of a [`Place] is not [i]'s: this library frees
-      it after. Counted. *)
+  (** [unload d i] releases what {!image} and {!entry} made for [i], once no
+      work of [d] that runs it can run. The region of a [`Place] is not [i]'s:
+      this library frees it after. Counted. *)
 
   (** {1:timeline Timeline} *)
 

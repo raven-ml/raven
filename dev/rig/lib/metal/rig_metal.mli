@@ -87,7 +87,8 @@
       [newBufferWithBytesNoCopy:length:options:deallocator:],
       [recommendedMaxWorkingSetSize], [supportsFamily:]), [MTLBuffer.h]
       ([gpuAddress], [contents]), [MTLLibrary.h] ([newLibraryWithData:error:],
-      [functionNames]), [MTLComputePipeline.h] ([supportIndirectCommandBuffers],
+      [functionNames], [newFunctionWithName:]), [MTLFunction.h]
+      ([functionType]), [MTLComputePipeline.h] ([supportIndirectCommandBuffers],
       [maxTotalThreadsPerThreadgroup]), [MTLIndirectCommandBuffer.h].
     - {{:https://developer.apple.com/documentation/metal/simplifying-gpu-resource-management-with-residency-sets}
        Simplifying GPU resource management with residency sets}: a set added to
@@ -252,8 +253,8 @@ val map_host : t -> int -> int -> region option
 (** {1:images Images} *)
 
 type image
-(** The type for loaded code: a Metal library, with a compute pipeline for each
-    of its functions. *)
+(** The type for loaded code: a Metal library, whose functions' compute
+    pipelines are made as they are first asked for ({!entry}). *)
 
 val image :
   t ->
@@ -261,26 +262,32 @@ val image :
   ( [ `Loaded of image | `Place of int * (region -> image * string) ],
     string )
   result
-(** [image d b] loads the metallib [b] and makes a compute pipeline, usable from
-    an indirect command buffer, for each function it holds. Metal places the
+(** [image d b] loads the metallib [b] and makes no pipeline. Metal places the
     code itself: the result is [Ok (`Loaded i)].
 
-    The result is [Error msg] if [b] is no metallib, or if Metal makes no
-    pipeline of one of its functions. It releases the domain lock while Metal
-    compiles. *)
+    The result is [Error msg] if [b] is no metallib, or if one of its functions
+    is no compute kernel. *)
 
 val entry : image -> string -> int option
 (** [entry i f] is the address of the [MTLComputePipelineState] of [i]'s
-    function [f], or [None] if [i] has no function [f]. The address is valid
-    until {!unload}.
+    function [f], usable from an indirect command buffer, or [None] if [i] has
+    no function [f]. The first call for [f] makes the pipeline: Metal compiles
+    [f] for the GPU, 0.1 to 1 s when its shader cache does not hold [f], and the
+    call releases the domain lock meanwhile. Every later call answers the same
+    address, which is valid until {!unload}. Calls for [f] from several domains
+    at once make one pipeline. An [entry] that {!unload} overtakes raises
+    [Invalid_argument] and keeps no pipeline.
 
-    Raises [Invalid_argument] if [i] was unloaded. *)
+    Raises [Invalid_argument] if [i] was unloaded, or, with Metal's reason, if
+    Metal makes no pipeline of [f]: [f] needs what [i]'s GPU family lacks
+    ({!arch}; Apple's Metal feature set tables), such as more than its 32 KB of
+    threadgroup memory on the Apple families. *)
 
 val unload : t -> image -> unit
-(** [unload d i] releases [i]'s pipelines. An indirect command buffer made with
-    one of them keeps it until its own release ({!Rig_metal_abi.field-release}).
-    The caller unloads once no work that names a pipeline of [i] directly is in
-    flight.
+(** [unload d i] releases [i]'s library and the pipelines {!entry} made of it.
+    An indirect command buffer made with one of them keeps it until its own
+    release ({!Rig_metal_abi.field-release}). The caller unloads once no work
+    that names a pipeline of [i] directly is in flight.
 
     Raises [Invalid_argument] if [i] is another device's or was unloaded. *)
 

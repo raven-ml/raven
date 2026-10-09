@@ -879,12 +879,35 @@ let not_metallib () =
   let t = dev () in
   is_error (Rig_metal.image t.g "not a metallib")
 
-let no_pipeline () =
+let no_kernel () =
   let t = dev () in
   match Rig_metal.image t.g (S.fixture ~dir:"fixtures" "vertex") with
-  | Ok _ -> failf "a vertex function made a compute pipeline"
+  | Ok _ -> failf "a vertex function loaded as an image"
   | Error why ->
-      starts_with ~affix:"building the pipeline of \"position\": " why
+      equal string "the function \"position\" is no compute kernel" why
+
+(* An image loads whatever its kernels need; the entry of one that needs more
+   than the GPU has raises with Metal's reason, each time it is asked, and the
+   others' entries work. *)
+let beyond_limits () =
+  let t = dev () in
+  let i =
+    match
+      require_ok (Rig_metal.image t.g (S.fixture ~dir:"fixtures" "threadgroup"))
+    with
+    | `Loaded i -> i
+    | `Place _ -> failf "Metal asked to place its code"
+  in
+  ignore (require_some (Rig_metal.entry i "small"));
+  let refused () =
+    raises_match
+      (Exn.invalid_arg
+         ~substring:"Rig_metal.entry: Metal makes no pipeline of \"wide\": ")
+      (fun () -> Rig_metal.entry i "wide")
+  in
+  refused ();
+  refused ();
+  Rig_metal.unload t.g i
 
 let entries () =
   let t = dev () in
@@ -903,27 +926,54 @@ let unloaded_twice () =
   raises_match Exn.invalid_arg (fun () -> Rig_metal.unload t.g i);
   raises_match Exn.invalid_arg (fun () -> Rig_metal.entry i "fill")
 
-(* Images unloaded from two domains: whatever the order, an image's first
-   [unload] returns and every later one raises. *)
+(* Images entered and unloaded from two domains: whatever the order, an
+   image's first [unload] returns and every later one raises, an [entry]
+   after the unload raises, and every [entry] of one function answers the
+   address the first answered. *)
 
 type loaded = { mutable loaded : bool }
+
+(* An image, with the first address any domain got for each function. *)
+type held = { i : Rig_metal.image; first : (string, int) Hashtbl.t; m : Mutex.t }
 
 let unload_model m =
   if not m.loaded then invalid_arg "unloaded";
   m.loaded <- false
 
-let unload_system i = Rig_metal.unload (dev ()).g i
+let unload_system h = Rig_metal.unload (dev ()).g h.i
+
+let entry_model m _ =
+  if not m.loaded then invalid_arg "unloaded";
+  true
+
+let entry_system h f =
+  match Rig_metal.entry h.i f with
+  | None -> false
+  | Some p -> (
+      Mutex.protect h.m @@ fun () ->
+      match Hashtbl.find_opt h.first f with
+      | Some q -> p = q
+      | None ->
+          Hashtbl.add h.first f p;
+          true)
 
 let loaded_image =
-  abstract "i" ~release:(fun i ->
-      try unload_system i with Invalid_argument _ -> ())
+  abstract "i" ~release:(fun h ->
+      try unload_system h with Invalid_argument _ -> ())
+
+let functions =
+  Gen.of_list ~pp:Format.pp_print_string [ "fill"; "step"; "spin"; "bump" ]
 
 let unload_commands =
   [
     command "image"
       (Gen.unit @-> makes loaded_image)
       (fun () -> { loaded = true })
-      (fun () -> load (dev ()).g);
+      (fun () ->
+        { i = load (dev ()).g; first = Hashtbl.create 4; m = Mutex.create () });
+    command "entry"
+      (loaded_image ^-> functions @-> returns bool)
+      entry_model entry_system;
     command "unload" (loaded_image ^-> returns unit) unload_model unload_system;
   ]
 
@@ -948,12 +998,15 @@ let images =
   group ~timeout:60. "images"
     [
       test "bytes that are no metallib are an error" not_metallib;
-      test "a function no compute pipeline runs is an error" no_pipeline;
+      test "a function that is no compute kernel is an error" no_kernel;
+      test "an entry beyond the GPU's limits raises, each time" beyond_limits;
       test "each function of the image has an entry" entries;
       test "unload and entry refuse an unloaded image or another device's"
         unloaded_twice;
       stateful ~domains:2 ~count:30
-        "an image unloaded from two domains is unloaded once" unload_commands;
+        "an image entered and unloaded from two domains: one pipeline a \
+         function, one unload"
+        unload_commands;
       test "unloaded images release their pipelines" unloaded_releases;
     ]
 

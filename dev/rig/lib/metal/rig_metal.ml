@@ -24,8 +24,13 @@ external free_buffer : int -> nativeint -> unit = "caml_rig_metal_free"
 external free_word : int -> unit = "caml_rig_metal_free_word"
 external release : int -> unit = "caml_rig_metal_release"
 
-external load : int -> string -> string * string array * int array
+external load : int -> string -> string * nativeint * string array
   = "caml_rig_metal_image"
+
+external pipeline : nativeint -> string -> string * int
+  = "caml_rig_metal_pipeline"
+
+external release_library : nativeint -> unit = "caml_rig_metal_release_library"
 
 external make_icb :
   int -> nativeint -> int array -> int array -> string * nativeint array
@@ -69,11 +74,17 @@ let host r = Some r.host
 
 type capability = Rig_metal_abi.t
 
+(* An image's pipelines, 0 until its first [entry], and whether it is loaded,
+   both under [guard]: an [entry] compiles holding it, so calls for one function
+   from several domains make one pipeline, and an [unload] either waits for a
+   compile or makes the [entry] after it raise. *)
 type image = {
   owner : int;
+  library : nativeint;
   names : string array;
   pipelines : int array;
-  loaded : bool Atomic.t;
+  guard : Mutex.t;
+  mutable loaded : bool;
 }
 
 type t = {
@@ -242,23 +253,38 @@ let free d (r : region) =
 
 let image d b =
   match load d.self b with
-  | "", names, pipelines ->
-      let loaded = Atomic.make true in
-      Ok (`Loaded { owner = d.self; names; pipelines; loaded })
+  | "", library, names ->
+      let pipelines = Array.make (Array.length names) 0 in
+      let guard = Mutex.create () in
+      Ok
+        (`Loaded
+           { owner = d.self; library; names; pipelines; guard; loaded = true })
   | why, _, _ -> Error why
 
-let entry i f =
-  if not (Atomic.get i.loaded) then
-    invalid_arg "Rig_metal.entry: the image was unloaded";
-  Array.find_index (String.equal f) i.names
-  |> Option.map (Array.get i.pipelines)
+(* A refusal is not kept: a later call compiles again. *)
+let entry (i : image) f =
+  Mutex.protect i.guard @@ fun () ->
+  if not i.loaded then invalid_arg "Rig_metal.entry: the image was unloaded";
+  match Array.find_index (String.equal f) i.names with
+  | None -> None
+  | Some k when i.pipelines.(k) <> 0 -> Some i.pipelines.(k)
+  | Some k -> (
+      match pipeline i.library f with
+      | "", p ->
+          i.pipelines.(k) <- p;
+          Some p
+      | why, _ ->
+          invalid_argf "Rig_metal.entry: Metal makes no pipeline of %S: %s" f
+            why)
 
-let unload d i =
+let unload d (i : image) =
   if i.owner <> d.self then
     invalid_arg "Rig_metal.unload: the image is another device's";
-  if not (Atomic.compare_and_set i.loaded true false) then
-    invalid_arg "Rig_metal.unload: the image was unloaded";
-  Array.iter release i.pipelines
+  Mutex.protect i.guard @@ fun () ->
+  if not i.loaded then invalid_arg "Rig_metal.unload: the image was unloaded";
+  i.loaded <- false;
+  Array.iter (fun p -> if p <> 0 then release p) i.pipelines;
+  release_library i.library
 
 (* Timeline and loss *)
 

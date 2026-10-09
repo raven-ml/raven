@@ -30,7 +30,7 @@ external floor_alloc : nativeint -> int -> unit = "rig_metal_bench_alloc"
 external floor_map_host : nativeint -> int -> int -> unit
   = "rig_metal_bench_map_host"
 
-external floor_image : nativeint -> unit = "rig_metal_bench_image"
+external floor_image : nativeint -> string -> unit = "rig_metal_bench_image"
 external default_class : unit -> unit = "rig_metal_bench_default_class"
 external load_start : int -> unit = "rig_metal_bench_load_start"
 external load_stop : unit -> unit = "rig_metal_bench_load_stop"
@@ -204,11 +204,20 @@ let map_host_rows =
       row "floor-64MiB" floor_pages (fun (f, p) -> floor_map_host f p n);
     ]
 
+(* An image's load makes no pipeline; its first entry makes one, which Metal's
+   shader cache holds after the first run on the machine. *)
 let image_rows =
+  let first t =
+    let i = load t.g in
+    ignore (M.entry i "fill");
+    M.unload t.g i
+  in
   Thumper.group "image"
     [
       row "fill" dev (fun t -> M.unload t.g (load t.g));
-      row "floor" floor floor_image;
+      row "floor" floor (fun f -> floor_image f "");
+      row "first-entry" dev first;
+      row "floor-first-entry" floor (fun f -> floor_image f "fill");
     ]
 
 let icb_rows =

@@ -202,25 +202,36 @@ value rig_metal_bench_map_host(value v_f, value v_p, value v_n) {
   return Val_unit;
 }
 
-/* The floor's metallib loaded, with a pipeline of each function usable
-   from an indirect command buffer, released. */
-value rig_metal_bench_image(value v_f) {
+/* The floor's metallib loaded as Rig_metal.image loads it, each
+   function's kind read, then, unless [v_name] is empty, the pipeline of its
+   function [v_name] made as Rig_metal.entry makes it, each call in a pool
+   of its own as rig's stubs are; the pipeline then the library released,
+   as Rig_metal.unload releases them. */
+value rig_metal_bench_image(value v_f, value v_name) {
   struct floor *f = Floor_val(v_f);
+  id<MTLLibrary> l;
+  id<MTLComputePipelineState> p = nil;
   @autoreleasepool {
-    id<MTLLibrary> l = [f->device newLibraryWithData:f->metallib error:NULL];
-    for (NSString *name in l.functionNames) {
+    NSError *error = nil;
+    l = [f->device newLibraryWithData:f->metallib error:&error];
+    for (NSString *name in l.functionNames)
+      (void)[[l newFunctionWithName:name] autorelease].functionType;
+  }
+  if (caml_string_length(v_name) > 0) @autoreleasepool {
       MTLComputePipelineDescriptor *d =
           [[MTLComputePipelineDescriptor alloc] init];
-      d.computeFunction = [[l newFunctionWithName:name] autorelease];
+      d.computeFunction = [[l newFunctionWithName:
+          [NSString stringWithUTF8String:String_val(v_name)]] autorelease];
       d.supportIndirectCommandBuffers = YES;
-      [[f->device newComputePipelineStateWithDescriptor:d
-                                                options:0
-                                             reflection:nil
-                                                  error:NULL] release];
+      NSError *error = nil;
+      p = [l.device newComputePipelineStateWithDescriptor:d
+                                                  options:0
+                                               reflection:nil
+                                                    error:&error];
       [d release];
     }
-    [l release];
-  }
+  [p release];
+  [l release];
   return Val_unit;
 }
 
@@ -289,7 +300,9 @@ value rig_metal_bench_buffers(value a, value b) {
 value rig_metal_bench_map_host(value a, value b, value c) {
   (void)a, (void)b, (void)c, no_metal();
 }
-value rig_metal_bench_image(value a) { (void)a, no_metal(); }
+value rig_metal_bench_image(value a, value b) {
+  (void)a, (void)b, no_metal();
+}
 value rig_metal_bench_icb(value a, value b) { (void)a, (void)b, no_metal(); }
 value rig_metal_bench_execute(value a, value b, value c) {
   (void)a, (void)b, (void)c, no_metal();

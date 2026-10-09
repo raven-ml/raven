@@ -192,67 +192,86 @@ value caml_rig_metal_free_word(value v_d) {
 
 /* Images */
 
-/* The metallib [v_b] with a pipeline for each of its functions:
-   [("", names, pipelines)], or [(why, [||], [||])]. */
+/* The metallib [v_b], which makes no pipeline: [("", library, names)],
+   or [(why, 0, [||])] if Metal loads no library of [v_b] or one of its
+   functions is no compute kernel. Loading compiles nothing for the GPU. */
 value caml_rig_metal_image(value v_d, value v_b) {
   CAMLparam2(v_d, v_b);
-  CAMLlocal4(names, pipelines, why, v);
+  CAMLlocal3(names, why, lib);
   id<MTLDevice> device = Device_val(v_d)->device;
   dispatch_data_t data =
       dispatch_data_create(String_val(v_b), caml_string_length(v_b), NULL,
                            DISPATCH_DATA_DESTRUCTOR_DEFAULT);
   char text[512] = "";
-  int oom;
   @autoreleasepool {
-    caml_enter_blocking_section_no_pending();
     NSError *error = nil;
     id<MTLLibrary> library = [device newLibraryWithData:data error:&error];
     NSArray<NSString *> *fs = library ? library.functionNames : @[];
-    id *ps = calloc(fs.count + 1, sizeof(id));
-    if (ps == NULL) fs = @[];
-    oom = ps == NULL;
     if (library == nil)
       snprintf(text, sizeof text, "loading the image: %s",
                error.localizedDescription.UTF8String ?: "no reason given");
     for (NSUInteger i = 0; i < fs.count && text[0] == '\0'; i++) {
-      MTLComputePipelineDescriptor *desc =
-          [[MTLComputePipelineDescriptor alloc] init];
-      desc.computeFunction = [[library newFunctionWithName:fs[i]] autorelease];
-      desc.supportIndirectCommandBuffers = YES;
-      ps[i] = [device newComputePipelineStateWithDescriptor:desc
-                                                    options:0
-                                                 reflection:nil
-                                                      error:&error];
-      if (ps[i] == nil)
-        snprintf(text, sizeof text, "building the pipeline of \"%s\": %s",
-                 fs[i].UTF8String,
-                 error.localizedDescription.UTF8String ?: "no reason given");
-      [desc release];
+      id<MTLFunction> f = [[library newFunctionWithName:fs[i]] autorelease];
+      if (f.functionType != MTLFunctionTypeKernel)
+        snprintf(text, sizeof text, "the function \"%s\" is no compute kernel",
+                 fs[i].UTF8String);
     }
-    [library release];
-    caml_leave_blocking_section();
-    mlsize_t n = text[0] ? 0 : fs.count;
-    names = caml_alloc_tuple(n);
-    pipelines = caml_alloc_tuple(n);
-    for (mlsize_t i = 0; i < fs.count; i++) {
-      if (i >= n) {
-        [ps[i] release];
-        continue;
-      }
-      v = caml_copy_string(fs[i].UTF8String);
-      Store_field(names, i, v);
-      Store_field(pipelines, i, Val_long((intnat)ps[i]));
+    if (text[0]) {
+      [library release];
+      library = nil;
+      fs = @[];
     }
-    free(ps);
+    names = caml_alloc_tuple(fs.count);
+    for (NSUInteger i = 0; i < fs.count; i++)
+      Store_field(names, i, caml_copy_string(fs[i].UTF8String));
+    lib = object(library);
   }
   dispatch_release(data);
-  if (oom) caml_raise_out_of_memory();
   why = caml_copy_string(text);
-  CAMLreturn(tuple(3, why, names, pipelines));
+  CAMLreturn(tuple(3, why, lib, names));
+}
+
+/* The pipeline, usable from an indirect command buffer, of the function
+   [v_f] of the library [v_lib]: [("", pipeline)], or [(why, 0)] with
+   Metal's reason if Metal makes none. It releases the runtime while Metal
+   compiles. */
+value caml_rig_metal_pipeline(value v_lib, value v_f) {
+  CAMLparam2(v_lib, v_f);
+  CAMLlocal1(why);
+  id<MTLLibrary> library = Object_val(v_lib);
+  char *f = caml_stat_strdup(String_val(v_f));
+  char text[512] = "";
+  id<MTLComputePipelineState> p = nil;
+  caml_enter_blocking_section_no_pending();
+  @autoreleasepool {
+    MTLComputePipelineDescriptor *desc =
+        [[MTLComputePipelineDescriptor alloc] init];
+    desc.computeFunction = [[library
+        newFunctionWithName:[NSString stringWithUTF8String:f]] autorelease];
+    desc.supportIndirectCommandBuffers = YES;
+    NSError *error = nil;
+    p = [library.device newComputePipelineStateWithDescriptor:desc
+                                                       options:0
+                                                    reflection:nil
+                                                         error:&error];
+    if (p == nil)
+      snprintf(text, sizeof text, "%s",
+               error.localizedDescription.UTF8String ?: "no reason given");
+    [desc release];
+  }
+  caml_leave_blocking_section();
+  caml_stat_free(f);
+  why = caml_copy_string(text);
+  CAMLreturn(tuple(2, why, Val_long((intnat)p), Val_unit));
 }
 
 value caml_rig_metal_release(value v_pipeline) {
   [(id)Long_val(v_pipeline) release];
+  return Val_unit;
+}
+
+value caml_rig_metal_release_library(value v_lib) {
+  [Object_val(v_lib) release];
   return Val_unit;
 }
 
@@ -455,6 +474,8 @@ NO_METAL2(caml_rig_metal_free)
 NO_METAL1(caml_rig_metal_free_word)
 NO_METAL1(caml_rig_metal_release)
 NO_METAL2(caml_rig_metal_image)
+NO_METAL2(caml_rig_metal_pipeline)
+NO_METAL1(caml_rig_metal_release_library)
 NO_METAL1(caml_rig_metal_icb_release)
 NO_METAL3(caml_rig_metal_sleep)
 NO_METAL1(caml_rig_metal_failure)

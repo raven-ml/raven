@@ -5,6 +5,8 @@
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed under load 11.7 on 10 cores
+# forced: blessed image/fill image/floor image/first-entry image/floor-first-entry under load 11.7 on 10 cores
+# forced: blessed image/fill image/floor image/first-entry image/floor-first-entry under load 6.3 on 10 cores
 
 alloc/64KiB	alloc_words	exact	19
 alloc/64KiB	wall_time	batch=1024	n=20	4.513e-06	4.352e-06 4.365e-06 4.365e-06 4.404e-06 4.418e-06 4.423e-06 4.429e-06 4.453e-06 4.464e-06 4.481e-06 4.545e-06 4.578e-06 4.604e-06 4.612e-06 4.623e-06 4.641e-06 4.645e-06 4.661e-06 4.663e-06 4.728e-06
@@ -18,10 +20,14 @@ alloc/floor-64MiB	alloc_words	exact	0
 alloc/floor-64MiB	wall_time	batch=512	n=20	1.194e-05	1.115e-05 1.131e-05 1.133e-05 1.134e-05 1.135e-05 1.139e-05 1.143e-05 1.164e-05 1.176e-05 1.187e-05 1.201e-05 1.205e-05 1.214e-05 1.237e-05 1.244e-05 1.261e-05 1.261e-05 1.294e-05 1.296e-05 1.313e-05
 icb/64	alloc_words	exact	1459
 icb/64	wall_time	batch=256	n=20	2.549e-05	2.403e-05 2.412e-05 2.432e-05 2.469e-05 2.473e-05 2.498e-05 2.499e-05 2.529e-05 2.540e-05 2.547e-05 2.551e-05 2.553e-05 2.557e-05 2.559e-05 2.565e-05 2.589e-05 3.022e-05 3.181e-05 3.211e-05 3.592e-05
-image/fill	alloc_words	exact	56
-image/fill	wall_time	batch=64	n=20	7.734e-05	7.261e-05 7.269e-05 7.398e-05 7.421e-05 7.528e-05 7.538e-05 7.567e-05 7.593e-05 7.650e-05 7.721e-05 7.747e-05 7.779e-05 7.795e-05 7.814e-05 7.828e-05 7.869e-05 7.923e-05 7.953e-05 8.006e-05 8.106e-05
+image/fill	alloc_words	exact	46
+image/fill	wall_time	batch=1024	n=20	6.951e-06	6.937e-06 6.937e-06 6.940e-06 6.944e-06 6.944e-06 6.945e-06 6.945e-06 6.948e-06 6.949e-06 6.950e-06 6.951e-06 6.954e-06 6.962e-06 6.986e-06 6.993e-06 7.004e-06 7.025e-06 7.041e-06 7.061e-06 7.102e-06
+image/first-entry	alloc_words	exact	71
+image/first-entry	wall_time	batch=1024	n=20	8.973e-06	8.886e-06 8.907e-06 8.912e-06 8.920e-06 8.921e-06 8.926e-06 8.930e-06 8.950e-06 8.968e-06 8.972e-06 8.974e-06 8.975e-06 8.998e-06 9.092e-06 9.212e-06 9.217e-06 9.243e-06 9.266e-06 9.281e-06 9.332e-06
 image/floor	alloc_words	exact	0
-image/floor	wall_time	batch=128	n=20	7.424e-05	7.127e-05 7.148e-05 7.292e-05 7.305e-05 7.337e-05 7.374e-05 7.395e-05 7.398e-05 7.405e-05 7.411e-05 7.437e-05 7.465e-05 7.519e-05 7.573e-05 7.598e-05 7.666e-05 7.702e-05 7.741e-05 7.887e-05 1.015e-04
+image/floor	wall_time	batch=512	n=20	9.658e-06	9.558e-06 9.565e-06 9.586e-06 9.588e-06 9.599e-06 9.601e-06 9.639e-06 9.649e-06 9.652e-06 9.654e-06 9.663e-06 9.682e-06 9.682e-06 9.694e-06 9.702e-06 9.711e-06 9.746e-06 9.829e-06 9.858e-06 9.866e-06
+image/floor-first-entry	alloc_words	exact	0
+image/floor-first-entry	wall_time	batch=256	n=20	2.519e-05	2.479e-05 2.498e-05 2.505e-05 2.505e-05 2.507e-05 2.507e-05 2.511e-05 2.513e-05 2.516e-05 2.519e-05 2.520e-05 2.529e-05 2.529e-05 2.534e-05 2.535e-05 2.538e-05 2.538e-05 2.545e-05 2.571e-05 2.587e-05
 launch/1	alloc_words	exact	0
 launch/1	wall_time	batch=1	n=20	2.545e-04	2.263e-04 2.292e-04 2.330e-04 2.374e-04 2.382e-04 2.398e-04 2.412e-04 2.441e-04 2.473e-04 2.506e-04 2.583e-04 2.602e-04 2.604e-04 2.704e-04 2.719e-04 2.792e-04 2.841e-04 2.885e-04 3.202e-04 3.805e-04
 launch/1-live-4096	alloc_words	exact	0
