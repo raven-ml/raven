@@ -152,23 +152,27 @@ let version l b = Option.get (Discovery.version l.d b)
 let has l name = Hashtbl.mem l.regs name
 let guarded l = l.guarded
 
+(* A register is found by name with no allocation: waits poll registers by
+   name, and each poll would allocate otherwise. *)
 let find l name =
-  match Hashtbl.find_opt l.regs name with
-  | Some r -> r
-  | None ->
+  match Hashtbl.find l.regs name with
+  | r -> r
+  | exception Not_found ->
       invalid_argf "Rig_amd_pci.open_: GC %s has no register %s"
         (dotted l.gpu.gc) name
 
 let register l name = fst (find l name)
 
+let no_segment name inst (r : Register.t) =
+  invalid_argf "Rig_amd_pci.open_: %s has no instance %d with segment %d" name
+    inst r.segment
+
 let address ?(inst = 0) l name =
   let r, b = find l name in
-  let insts = Option.value ~default:[] (List.assoc_opt b l.d.bases) in
-  match List.assoc_opt inst insts with
-  | Some segs when r.segment < Array.length segs -> segs.(r.segment) + r.offset
-  | _ ->
-      invalid_argf "Rig_amd_pci.open_: %s has no instance %d with segment %d"
-        name inst r.segment
+  match List.assoc inst (List.assoc b l.d.bases) with
+  | segs when r.segment < Array.length segs -> segs.(r.segment) + r.offset
+  | _ -> no_segment name inst r
+  | exception Not_found -> no_segment name inst r
 
 (* Access *)
 
@@ -201,8 +205,11 @@ let words r = Window.length r.mmio / 4
 let lo32 v = v land 0xffff_ffff
 let hi32 v = (v lsr 32) land 0xffff_ffff
 
-let in_guarded r a =
-  r.vf && List.exists (fun (lo, hi) -> lo <= a && a <= hi) r.layout.guarded
+let rec within a = function
+  | (lo, hi) :: rest -> (lo <= a && a <= hi) || within a rest
+  | [] -> false
+
+let in_guarded r a = r.vf && within a r.layout.guarded
 
 (* The registers of the RLC's gateway, and of the RSMU's window past the end of
    the register BAR. *)
