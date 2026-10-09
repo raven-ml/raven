@@ -987,6 +987,183 @@ let test_ints_refusal () =
       G.run p { inputs = [| B.create d 64 |]; ints = [| 1; 2 |] });
   Rig.wait d (Rig.submitted d)
 
+(* Bytes *)
+
+(* Descriptions of any shape, well formed or not: the format holds every value
+   of the type. *)
+let gen_t =
+  let open Gen in
+  let n = int_range (-2) 5000 in
+  let few g = array ~size:(int_range 0 3) g in
+  let str = string_of ~size:(int_range 0 12) char in
+  let leaf =
+    one_of
+      [
+        (let+ memory = n and+ on = n in
+         Address { memory; on });
+        map (fun m -> Handle m) n;
+        (let+ image = n and+ name = str in
+         Entry { image; name });
+        map (fun i -> Code i) n;
+      ]
+  in
+  let value =
+    one_of
+      [
+        map (fun x -> Fixed x) int;
+        map (fun i -> Int i) n;
+        (let+ input = n and+ on = n in
+         (Input { input; on } : value));
+        map (fun l -> Leaf l) leaf;
+      ]
+  in
+  let data f =
+    let+ bytes = str
+    and+ holes =
+      few
+        (let+ at = n
+         and+ width = of_list [ W32; W64 ]
+         and+ leaf = f
+         and+ add = int
+         and+ shift = n in
+         { at; width; leaf; add; shift })
+    in
+    { bytes; holes }
+  in
+  let view =
+    let+ memory = n and+ offset = n and+ length = n in
+    { memory; offset; length }
+  in
+  let slot =
+    one_of
+      [
+        map (fun v -> Memory v) view;
+        map (fun i -> (Input i : slot)) n;
+        constant Ints;
+      ]
+  in
+  let access = of_list [ B.Read; B.Read_write ] in
+  let triple = triple value value value in
+  let work =
+    one_of
+      [
+        map (fun v -> Words v) view;
+        (let+ fill = leaf
+         and+ arg = view
+         and+ ring_units = n
+         and+ segment_bytes = n in
+         G.Fill { fill; arg; ring_units; segment_bytes });
+        (let+ src = view and+ dst = view in
+         (Copy { src; dst } : work));
+        (let+ image = n
+         and+ kernel = str
+         and+ params = data value
+         and+ refs =
+           few
+             (let+ at = n and+ slot = n in
+              { Rig.Submission.at; slot })
+         and+ groups = triple
+         and+ threads = triple
+         and+ shared = value in
+         Launch { image; kernel; params; refs; groups; threads; shared });
+      ]
+  in
+  let part =
+    let+ queue = str and+ after = few n and+ work = work in
+    { queue; after; work }
+  in
+  let rec step depth =
+    let leaves =
+      [
+        (let+ device = n
+         and+ parts = few part
+         and+ reads = few slot
+         and+ writes = few slot
+         and+ fixed = few (pair view access) in
+         Submit { device; parts; reads; writes; fixed });
+        (let+ src = slot and+ dst = slot in
+         G.Move { src; dst });
+        (let+ code = n
+         and+ buffers = few (pair slot access)
+         and+ values = few value
+         and+ split =
+           option
+             (let+ extent = value and+ blocks = n and+ lo = n and+ hi = n in
+              { extent; blocks; lo; hi })
+         in
+         Host { code; buffers; values; split });
+      ]
+    in
+    if depth = 0 then one_of leaves
+    else
+      one_of
+        ((let+ trips = value
+          and+ trip = option n
+          and+ flag = option view
+          and+ body = few (step (depth - 1)) in
+          Loop { trips; trip; flag; body })
+        :: leaves)
+  in
+  let+ devices = few str
+  and+ memory =
+    few
+      (let+ device = n
+       and+ kind = of_list [ B.Device; B.Pinned; B.Mapped ]
+       and+ bytes = n
+       and+ init = data leaf
+       and+ copies = of_list [ One; Two ] in
+       Alloc { device; kind; bytes; init; copies })
+  and+ images =
+    few
+      (let+ device = n and+ binary = data leaf in
+       { device; binary })
+  and+ code =
+    few
+      (let+ obj = str and+ entry = str in
+       { obj; entry })
+  and+ inputs =
+    few
+      (let+ device = n and+ bytes = n and+ access = access in
+       { device; bytes; access })
+  and+ ints = n
+  and+ steps = few (step 2) in
+  { devices; memory; images; code; inputs; ints; steps }
+
+let pp_t ppf t =
+  Format.fprintf ppf "a description of %d bytes, %d steps"
+    (String.length (G.to_string t))
+    (Array.length t.steps)
+
+let gen_t = Gen.with_pp pp_t gen_t
+let description = Testable.make ~pp:pp_t ~equal:( = )
+
+let round_trip t =
+  equal (result description string) (Ok t) (G.of_string (G.to_string t))
+
+(* A cut or a changed byte of a description's bytes decodes or answers [Error]:
+   [of_string] raises nothing. *)
+let damaged (t, cut, at, byte) =
+  let s = G.to_string t in
+  let n = String.length s in
+  let cut = String.sub s 0 (cut mod (n + 1)) in
+  let changed =
+    String.mapi (fun i c -> if i = at mod n then Char.chr byte else c) s
+  in
+  ignore (G.of_string cut : (G.t, string) result);
+  ignore (G.of_string changed : (G.t, string) result);
+  cover "a cut inside" (String.length cut < n)
+
+let gen_damage =
+  let open Gen in
+  let+ t = gen_t and+ cut = nat and+ at = nat and+ byte = int_range 0 255 in
+  (t, cut, at, byte)
+
+let test_version () =
+  let s = Bytes.of_string (G.to_string (base (fst (polled "version")))) in
+  Bytes.set_int64_le s 12 2L;
+  let why = require_error (G.of_string (Bytes.to_string s)) in
+  contains ~msg:"names the versions" ~sub:"version 2, not 1" why
+
 let tests =
   [
     group ~timeout "steps"
@@ -1003,6 +1180,13 @@ let tests =
           "a hole holds the low bits of its leaf plus add, shifted, in memory \
            and in a launch"
           gen_hole hole_law;
+      ];
+    group ~timeout "bytes"
+      [
+        prop "of_string reads back what to_string wrote" gen_t round_trip;
+        prop "of_string answers a cut or a changed byte without raising"
+          gen_damage damaged;
+        test "of_string names another version" test_version;
       ];
     group ~timeout "host code"
       [

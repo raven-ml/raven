@@ -9,11 +9,12 @@
     A {e program} is memory, images and host code on the devices of one machine,
     and the {e steps} of its {e run}: submissions, copies, calls of host code
     and loops. Its {e description} ({!t}) is plain data that names each of these
-    by its index in the description, and links no vendor library. What only the
-    loading process knows, such as an address or an image's function, is a
-    {e hole} in the description's bytes, filled when it is loaded ({!leaf}).
-    What changes from one run to the next is the run's {e frame}: the buffers it
-    reads and writes, and its ints ({!frame}).
+    by its index in the description, so it crosses between processes as bytes
+    ({!to_string}) and links no vendor library. What only the loading process
+    knows, such as an address or an image's function, is a {e hole} in the
+    description's bytes, filled when it is loaded ({!leaf}). What changes from
+    one run to the next is the run's {e frame}: the buffers it reads and writes,
+    and its ints ({!frame}).
 
     {!load} makes a program's memory, loads its images, links its host code and
     prepares one submission per step, on the devices it is given. {!run} runs
@@ -225,6 +226,17 @@ type t = {
   steps : step array;
 }
 (** The type for descriptions. *)
+
+(** {1:bytes Bytes} *)
+
+val to_string : t -> string
+(** [to_string t] is [t] as bytes, in a format of a version of its own. *)
+
+val of_string : string -> (t, string) result
+(** [of_string s] is the description {!to_string} wrote as [s]. [Error why] if
+    [s] is malformed, [why] saying where, or is of another version of the
+    format, [why] naming both versions. It decodes only: {!load} checks the
+    description. *)
 
 (** {1:loading Loading} *)
 

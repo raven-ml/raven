@@ -271,6 +271,490 @@ let check t devices =
     t.inputs;
   Array.iter (check_step t ndev) t.steps
 
+(* Bytes *)
+
+(* A description as bytes: the magic, the format's version, then the
+   description. An integer is 64 bits, little-endian; a string or an array its
+   count, then its elements; a variant its tag, a byte, then its arguments. *)
+
+let magic = "rig.program\n"
+let version = 1
+
+module W = struct
+  let int b n = Buffer.add_int64_le b (Int64.of_int n)
+  let tag b n = Buffer.add_uint8 b n
+
+  let string b s =
+    int b (String.length s);
+    Buffer.add_string b s
+
+  let array f b a =
+    int b (Array.length a);
+    Array.iter (f b) a
+
+  let option f b = function
+    | None -> tag b 0
+    | Some x ->
+        tag b 1;
+        f b x
+
+  let leaf b = function
+    | Address { memory; on } ->
+        tag b 0;
+        int b memory;
+        int b on
+    | Handle m ->
+        tag b 1;
+        int b m
+    | Entry { image; name } ->
+        tag b 2;
+        int b image;
+        string b name
+    | Code i ->
+        tag b 3;
+        int b i
+
+  let value b = function
+    | Fixed n ->
+        tag b 0;
+        int b n
+    | Int i ->
+        tag b 1;
+        int b i
+    | Input { input; on } ->
+        tag b 2;
+        int b input;
+        int b on
+    | Leaf l ->
+        tag b 3;
+        leaf b l
+
+  let data f b (d : _ data) =
+    string b d.bytes;
+    array
+      (fun b h ->
+        int b h.at;
+        tag b (match h.width with W32 -> 0 | W64 -> 1);
+        f b h.leaf;
+        int b h.add;
+        int b h.shift)
+      b d.holes
+
+  let memory_kind b (k : B.memory) =
+    tag b (match k with Device -> 0 | Pinned -> 1 | Mapped -> 2)
+
+  let access b (a : B.access) =
+    tag b (match a with Read -> 0 | Read_write -> 1)
+
+  let memory b (Alloc { device; kind; bytes; init; copies }) =
+    tag b 0;
+    int b device;
+    memory_kind b kind;
+    int b bytes;
+    data leaf b init;
+    tag b (match copies with One -> 0 | Two -> 1)
+
+  let view b (v : view) =
+    int b v.memory;
+    int b v.offset;
+    int b v.length
+
+  let slot b = function
+    | Memory v ->
+        tag b 0;
+        view b v
+    | Input i ->
+        tag b 1;
+        int b i
+    | Ints -> tag b 2
+
+  let triple b (x, y, z) =
+    value b x;
+    value b y;
+    value b z
+
+  let work b = function
+    | Words v ->
+        tag b 0;
+        view b v
+    | Fill { fill; arg; ring_units; segment_bytes } ->
+        tag b 1;
+        leaf b fill;
+        view b arg;
+        int b ring_units;
+        int b segment_bytes
+    | Copy { src; dst } ->
+        tag b 2;
+        view b src;
+        view b dst
+    | Launch { image; kernel; params; refs; groups; threads; shared } ->
+        tag b 3;
+        int b image;
+        string b kernel;
+        data value b params;
+        array
+          (fun b (r : Sub.ref) ->
+            int b r.Sub.at;
+            int b r.Sub.slot)
+          b refs;
+        triple b groups;
+        triple b threads;
+        value b shared
+
+  let part b (p : part) =
+    string b p.queue;
+    array int b p.after;
+    work b p.work
+
+  let rec step b = function
+    | Submit s ->
+        tag b 0;
+        int b s.device;
+        array part b s.parts;
+        array slot b s.reads;
+        array slot b s.writes;
+        array
+          (fun b (v, a) ->
+            view b v;
+            access b a)
+          b s.fixed
+    | Move { src; dst } ->
+        tag b 1;
+        slot b src;
+        slot b dst
+    | Host { code; buffers; values; split } ->
+        tag b 2;
+        int b code;
+        array
+          (fun b (s, a) ->
+            slot b s;
+            access b a)
+          b buffers;
+        array value b values;
+        option
+          (fun b (s : split) ->
+            value b s.extent;
+            int b s.blocks;
+            int b s.lo;
+            int b s.hi)
+          b split
+    | Loop { trips; trip; flag; body } ->
+        tag b 3;
+        value b trips;
+        option int b trip;
+        option view b flag;
+        array step b body
+
+  let t b t =
+    array string b t.devices;
+    array memory b t.memory;
+    array
+      (fun b (i : image) ->
+        int b i.device;
+        data leaf b i.binary)
+      b t.images;
+    array
+      (fun b (c : code) ->
+        string b c.obj;
+        string b c.entry)
+      b t.code;
+    array
+      (fun b (i : input) ->
+        int b i.device;
+        int b i.bytes;
+        access b i.access)
+      b t.inputs;
+    int b t.ints;
+    array step b t.steps
+end
+
+module R = struct
+  exception Malformed of int * string
+
+  type r = { s : string; mutable at : int }
+
+  let fail r fmt =
+    Printf.ksprintf (fun why -> raise (Malformed (r.at, why))) fmt
+
+  let left r = String.length r.s - r.at
+
+  let int r =
+    if left r < 8 then fail r "an integer past the end";
+    let x = String.get_int64_le r.s r.at in
+    let n = Int64.to_int x in
+    if Int64.of_int n <> x then fail r "an integer of more than 63 bits";
+    r.at <- r.at + 8;
+    n
+
+  let tag r =
+    if left r < 1 then fail r "a tag past the end";
+    let n = String.get_uint8 r.s r.at in
+    r.at <- r.at + 1;
+    n
+
+  (* A count of elements, each of at least one byte. *)
+  let count r =
+    let n = int r in
+    if n < 0 || n > left r then fail r "a count of %d" n;
+    n
+
+  let string r =
+    let n = count r in
+    let s = String.sub r.s r.at n in
+    r.at <- r.at + n;
+    s
+
+  let array f r =
+    let n = count r in
+    if n = 0 then [||]
+    else begin
+      let a = Array.make n (f r) in
+      for i = 1 to n - 1 do
+        a.(i) <- f r
+      done;
+      a
+    end
+
+  let option f r =
+    match tag r with
+    | 0 -> None
+    | 1 -> Some (f r)
+    | n -> fail r "an option of tag %d" n
+
+  let bad r what n = fail r "%s of tag %d" what n
+
+  let leaf r =
+    match tag r with
+    | 0 ->
+        let memory = int r in
+        let on = int r in
+        Address { memory; on }
+    | 1 -> Handle (int r)
+    | 2 ->
+        let image = int r in
+        let name = string r in
+        Entry { image; name }
+    | 3 -> Code (int r)
+    | n -> bad r "a leaf" n
+
+  let value r =
+    match tag r with
+    | 0 -> Fixed (int r)
+    | 1 -> Int (int r)
+    | 2 ->
+        let input = int r in
+        let on = int r in
+        Input { input; on }
+    | 3 -> Leaf (leaf r)
+    | n -> bad r "a value" n
+
+  let width r = match tag r with 0 -> W32 | 1 -> W64 | n -> bad r "a width" n
+
+  let data f r =
+    let bytes = string r in
+    let holes =
+      array
+        (fun r ->
+          let at = int r in
+          let width = width r in
+          let leaf = f r in
+          let add = int r in
+          let shift = int r in
+          { at; width; leaf; add; shift })
+        r
+    in
+    { bytes; holes }
+
+  let memory_kind r : B.memory =
+    match tag r with
+    | 0 -> Device
+    | 1 -> Pinned
+    | 2 -> Mapped
+    | n -> bad r "a memory kind" n
+
+  let access r : B.access =
+    match tag r with 0 -> Read | 1 -> Read_write | n -> bad r "an access" n
+
+  let copies r = match tag r with 0 -> One | 1 -> Two | n -> bad r "copies" n
+
+  let memory r =
+    match tag r with
+    | 0 ->
+        let device = int r in
+        let kind = memory_kind r in
+        let bytes = int r in
+        let init = data leaf r in
+        let copies = copies r in
+        Alloc { device; kind; bytes; init; copies }
+    | n -> bad r "a memory" n
+
+  let view r =
+    let memory = int r in
+    let offset = int r in
+    let length = int r in
+    { memory; offset; length }
+
+  let slot r =
+    match tag r with
+    | 0 -> Memory (view r)
+    | 1 -> Input (int r)
+    | 2 -> Ints
+    | n -> bad r "a slot" n
+
+  let triple r =
+    let x = value r in
+    let y = value r in
+    let z = value r in
+    (x, y, z)
+
+  let work r =
+    match tag r with
+    | 0 -> Words (view r)
+    | 1 ->
+        let fill = leaf r in
+        let arg = view r in
+        let ring_units = int r in
+        let segment_bytes = int r in
+        Fill { fill; arg; ring_units; segment_bytes }
+    | 2 ->
+        let src = view r in
+        let dst = view r in
+        Copy { src; dst }
+    | 3 ->
+        let image = int r in
+        let kernel = string r in
+        let params = data value r in
+        let refs =
+          array
+            (fun r ->
+              let at = int r in
+              let slot = int r in
+              { Sub.at; slot })
+            r
+        in
+        let groups = triple r in
+        let threads = triple r in
+        let shared = value r in
+        Launch { image; kernel; params; refs; groups; threads; shared }
+    | n -> bad r "a work" n
+
+  let part r =
+    let queue = string r in
+    let after = array int r in
+    let work = work r in
+    { queue; after; work }
+
+  let rec step r =
+    match tag r with
+    | 0 ->
+        let device = int r in
+        let parts = array part r in
+        let reads = array slot r in
+        let writes = array slot r in
+        let fixed =
+          array
+            (fun r ->
+              let v = view r in
+              let a = access r in
+              (v, a))
+            r
+        in
+        Submit { device; parts; reads; writes; fixed }
+    | 1 ->
+        let src = slot r in
+        let dst = slot r in
+        Move { src; dst }
+    | 2 ->
+        let code = int r in
+        let buffers =
+          array
+            (fun r ->
+              let s = slot r in
+              let a = access r in
+              (s, a))
+            r
+        in
+        let values = array value r in
+        let split =
+          option
+            (fun r ->
+              let extent = value r in
+              let blocks = int r in
+              let lo = int r in
+              let hi = int r in
+              { extent; blocks; lo; hi })
+            r
+        in
+        Host { code; buffers; values; split }
+    | 3 ->
+        let trips = value r in
+        let trip = option int r in
+        let flag = option view r in
+        let body = array step r in
+        Loop { trips; trip; flag; body }
+    | n -> bad r "a step" n
+
+  let t r =
+    let devices = array string r in
+    let memory = array memory r in
+    let images =
+      array
+        (fun r ->
+          let device = int r in
+          let binary = data leaf r in
+          { device; binary })
+        r
+    in
+    let code =
+      array
+        (fun r ->
+          let obj = string r in
+          let entry = string r in
+          { obj; entry })
+        r
+    in
+    let inputs =
+      array
+        (fun r ->
+          let device = int r in
+          let bytes = int r in
+          let access = access r in
+          { device; bytes; access })
+        r
+    in
+    let ints = int r in
+    let steps = array step r in
+    { devices; memory; images; code; inputs; ints; steps }
+end
+
+let to_string t =
+  let b = Buffer.create 4096 in
+  Buffer.add_string b magic;
+  W.int b version;
+  W.t b t;
+  Buffer.contents b
+
+let of_string s =
+  let r = { R.s; at = 0 } in
+  let m = String.length magic in
+  if String.length s < m || String.sub s 0 m <> magic then
+    Error "not a program description"
+  else begin
+    r.R.at <- m;
+    match R.int r with
+    | exception R.Malformed (_, why) -> Error why
+    | v when v <> version ->
+        Error
+          (strf "a program description of format version %d, not %d" v version)
+    | _ -> (
+        match R.t r with
+        | t when R.left r = 0 -> Ok t
+        | _ -> Error (strf "%d bytes after a program description" (R.left r))
+        | exception R.Malformed (at, why) ->
+            Error (strf "a malformed program description at byte %d: %s" at why)
+        )
+  end
+
 (* Loading *)
 
 external host_address : B.t -> int = "caml_rig_program_host"
