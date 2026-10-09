@@ -164,15 +164,15 @@ let facts (module G : Gpu) () =
    make, and no value is assigned. *)
 let refusals (module G : Gpu) () =
   G.with_ @@ fun t ->
+  (* A load may copy the code as a submission: values are counted after it. *)
+  let bin, kernels = G.binary () in
+  let image = require_ok ~pp:Format.pp_print_string (Rig.Image.load t.d bin) in
+  let before = Rig.submitted t.d in
   let work : Rig.kind -> Sub.work = function
     | Words -> Words (B.create Rig.host 8)
     | Fill -> (failing_fill "").work
     | Copy -> Copy { src = B.create t.d 8; dst = B.create t.d 8 }
     | Launch ->
-        let bin, kernels = G.binary () in
-        let image =
-          require_ok ~pp:Format.pp_print_string (Rig.Image.load t.d bin)
-        in
         Launch { image; kernel = List.hd kernels; params = 0; refs = [||] }
   in
   let refused queue kind =
@@ -190,7 +190,7 @@ let refusals (module G : Gpu) () =
         [ Rig.Words; Fill; Copy; Launch ])
     (Rig.queues t.d);
   refused "NONE:0" Copy;
-  equal int ~msg:"values assigned" 0 (Rig.submitted t.d)
+  equal int ~msg:"values assigned" before (Rig.submitted t.d)
 
 (* Copies *)
 
