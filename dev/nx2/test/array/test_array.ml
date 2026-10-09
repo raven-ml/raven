@@ -776,7 +776,8 @@ let bytes_of_seed seed n =
       Char.chr ((!x lsr 24) land 0xFF))
 
 (* A view of an array of [dt] over drawn bytes: transposed, sliced, a row
-   broadcast, or as it is, with extents about a tile's side. *)
+   broadcast, its last axis from the second element, or as it is, with
+   extents about a tile's side. *)
 let tiles =
   let open Gen in
   let* (D.Any dt as d) = any_dtype in
@@ -828,15 +829,25 @@ let tiles =
            if i = r - 2 then { M.start = 0; count = 1; step = 1 }
            else { M.start = 0; count = s.(i); step = 1 }))
   in
+  (* The last axis from its second element: a sub-byte view then starts
+     inside a byte. *)
+  let shift =
+    M.Slice
+      (Array.init r (fun i ->
+           let d = s.(i) in
+           if i = r - 1 && d > 1 then { M.start = 1; count = d - 1; step = 1 }
+           else { M.start = 0; count = d; step = 1 }))
+  in
   let+ moves =
-    one_of
+    frequency
       [
-        constant [];
-        constant [ swap ];
-        constant [ reverse ];
-        map (fun m -> [ m; swap ]) slice;
-        constant [ row; M.Broadcast s ];
-        constant [ row; M.Broadcast s; swap ];
+        (1, constant []);
+        (1, constant [ swap ]);
+        (1, constant [ reverse ]);
+        (1, map (fun m -> [ m; swap ]) slice);
+        (1, constant [ row; M.Broadcast s ]);
+        (1, constant [ row; M.Broadcast s; swap ]);
+        (2, constant [ shift ]);
       ]
   in
   let a =
