@@ -395,11 +395,23 @@ static double rounding(int dt, double x) {
   return 0;
 }
 
+/* x as the GPU's float32 arithmetic reads an operand of dtype [dt]: a
+   float32 or bfloat16 subnormal is a zero of its sign; half keeps its
+   subnormals. */
+static double device_read(int dt, double x) {
+  if (dt != NX_FLOAT16 && fabs(x) < 0x1p-126) return copysign(0, x);
+  return x;
+}
+
 /* Over every output of the contraction (batch, m, n, k), the largest
    |out - s| / allowed, s the sum in double: allowed is the contraction's
-   bound γ(k + 1, 2u)·(|init| + Σ|a||b|) at float32's u, plus k·2^-126 for
-   the flushed subnormals, widened by the rounding to out's dtype. Operands are host triples (address, dtype, strides);
-   out is C-contiguous. With the worst element's index. */
+   bound γ(k + 1, 2u)·(|init| + Σ|a||b|) at float32's u, plus
+   2^-126·(1 + Σ(1 + |a| + |b|)) for the flushed subnormals, operands,
+   products and sums, widened by the rounding to out's dtype. An output
+   whose terms, as the GPU reads them, sum to a NaN or an infinity in
+   IEEE arithmetic must be a NaN, or that infinity; its ratio is 0 if it
+   is and infinite if not. Operands are host triples (address, dtype,
+   strides); out is C-contiguous. With the worst element's index. */
 value nx_metal_test_contract_error(value v_dims, value v_a, value v_b,
                                    value v_out, value v_init) {
   CAMLparam5(v_dims, v_a, v_b, v_out, v_init);
@@ -410,13 +422,12 @@ value nx_metal_test_contract_error(value v_dims, value v_a, value v_b,
   int has_init = Is_some(v_init);
   nx_metal_operand init = has_init ? operand(Some_val(v_init)) : a;
   double u = 0x1p-24, g = (k + 1) * 2 * u / (1 - (k + 1) * 2 * u);
-  double flush = k * 0x1p-126; /* the GPU's flushed subnormals */
   double worst = 0;
   int64_t at = 0;
   for (int64_t p = 0; p < batch; p++)
     for (int64_t i = 0; i < m; i++)
       for (int64_t j = 0; j < n; j++) {
-        double s = 0, mag = 0;
+        double s = 0, mag = 0, flush = 1, read = 0;
         for (int64_t l = 0; l < k; l++) {
           double x = element((void *)a.address, a.dtype,
                              p * a.strides[0] + i * a.strides[1] +
@@ -426,6 +437,8 @@ value nx_metal_test_contract_error(value v_dims, value v_a, value v_b,
                                  j * b.strides[2]);
           s += x * y;
           mag += fabs(x * y);
+          flush += 1 + fabs(x) + fabs(y);
+          read += device_read(a.dtype, x) * device_read(b.dtype, y);
         }
         if (has_init) {
           double z = element((void *)init.address, init.dtype,
@@ -433,17 +446,27 @@ value nx_metal_test_contract_error(value v_dims, value v_a, value v_b,
                                  j * init.strides[2]);
           s += z;
           mag += fabs(z);
+          read += z;
         }
+        flush *= 0x1p-126;
         int64_t o = (p * m + i) * n + j;
         double got = element((void *)out.address, out.dtype, o);
+        if (!isfinite(read)) {
+          int same = isnan(read) ? isnan(got) : got == read;
+          if (!same && worst < INFINITY) {
+            worst = INFINITY;
+            at = o;
+          }
+          continue;
+        }
         double allowed = g * mag + flush +
                          1.01 * rounding(out.dtype, fabs(s) + g * mag + flush);
         double e = fabs(got - s);
         double ratio = allowed > 0 ? e / allowed : (e > 0 ? INFINITY : 0);
-        /* Past out's range a result within the bound rounds to infinity. */
-        if (isinf(got) && signbit(got) == signbit(s) &&
-            fabs(s) + g * mag >= overflow(out.dtype))
-          ratio = 0;
+        /* A float32 result within the bound past out's range rounds to the
+           infinity of its sign. */
+        double far = copysign(1, got) * s + g * mag + flush;
+        if (isinf(got) && far >= overflow(out.dtype)) ratio = 0;
         if (!(ratio <= worst)) {
           worst = ratio;
           at = o;
