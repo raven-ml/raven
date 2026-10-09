@@ -71,7 +71,14 @@ let dim (type v s d) (x : (v, s, d) t) i =
   | Array _ | Deferred _ | Traced _ -> L.dim l i
   | Shards { at; _ } | Donated { at; _ } -> L.dim l i * tiles at i
 
-let shape x = Array.init (rank x) (dim x)
+let shape (type v s d) (x : (v, s, d) t) =
+  match x with
+  | Array _ | Deferred _ | Traced _ -> L.shape (own_layout x)
+  | Shards _ | Donated _ -> Array.init (rank x) (fun i -> dim x i)
+
+let has_shape x s =
+  let rec go i = i = Array.length s || (dim x i = s.(i) && go (i + 1)) in
+  rank x = Array.length s && go 0
 
 let rec layouts_equal la lb i =
   i = L.rank la || (L.dim la i = L.dim lb i && layouts_equal la lb (i + 1))
@@ -131,6 +138,41 @@ let operands : type r. r prim -> operands = function
   | Bitcast (_, x) -> Operands [ Any x ]
   | Place (_, x) -> Operands [ Any x ]
   | Check { ok; data; _ } -> Operands (Any ok :: data)
+
+let iteri : type r. ('v 's 'd. int -> ('v, 's, 'd) t -> unit) -> r prim -> unit
+    =
+ fun f op ->
+  match op with
+  | Map { loads; _ } ->
+      for i = 0 to Array.length loads - 1 do
+        let (Plain x) = loads.(i) in
+        f i x
+      done
+  | Copy x -> f 0 x
+  | Move (_, x) -> f 0 x
+  | Bitcast (_, x) -> f 0 x
+  | Place (_, x) -> f 0 x
+  | Check { ok; data; _ } ->
+      f 0 ok;
+      List.iteri (fun i (Any x) -> f (i + 1) x) data
+
+let rec loads_exist : type d.
+    ('v 's. ('v, 's, d) t -> bool) -> d load array -> int -> bool =
+ fun f loads i ->
+  i < Array.length loads
+  &&
+  let (Plain x) = loads.(i) in
+  f x || loads_exist f loads (i + 1)
+
+let exists : type r. ('v 's 'd. ('v, 's, 'd) t -> bool) -> r prim -> bool =
+ fun f op ->
+  match op with
+  | Map { loads; _ } -> loads_exist f loads 0
+  | Copy x -> f x
+  | Move (_, x) -> f x
+  | Bitcast (_, x) -> f x
+  | Place (_, x) -> f x
+  | Check { ok; data; _ } -> f ok || List.exists (fun (Any x) -> f x) data
 
 let map : type r.
     ('v 's 'd. ('v, 's, 'd) t -> ('v, 's, 'd) t) -> r prim -> r prim =
@@ -363,8 +405,36 @@ let rec make_outs : type d r.
 
 let one_route ~by rule x = Route.route ~by rule [| at x |] [| shape x |]
 
+(* Where an operation of one operand by [rule], not [Replicated], reads [x] and
+   puts its result, where [x] is of every set or lies at a placement that cuts
+   no axis: where [x] lies. Elsewhere, where its route says. *)
+let lies_simply (type v s d) (x : (v, s, d) t) =
+  let simply p = not (Grid.is_cut (Devices.grid p)) in
+  match x with
+  | Array { at; _ } | Shards { at; _ } | Donated { at; _ } -> simply at
+  | Deferred { form; _ } | Traced { form; _ } -> (
+      match form.placement with None -> true | Some p -> simply p)
+
+let one_result ~by rule x =
+  if lies_simply x then at x
+  else Option.map (fun (r : _ Route.t) -> r.result) (one_route ~by rule x)
+
+(* [x]'s layout, as its form has it, allocating nothing for a value on one
+   device. *)
+let form_layout (type v s d) (x : (v, s, d) t) =
+  match x with
+  | Array { a; _ } | Donated { arrays = [| a |]; _ } -> Nx_array.layout a
+  | Shards _ | Donated _ -> L.contiguous (shape x)
+  | Deferred { form; _ } | Traced { form; _ } -> form.layout
+
 let result (r : _ Route.t option) =
   Option.map (fun (r : _ Route.t) -> r.result) r
+
+(* [x]'s shape moved by [mv]. Raises naming [by] where [mv] does not apply. *)
+let moved_shape ~by mv x =
+  match Nx_array.Move.shape mv (shape x) with
+  | s' -> s'
+  | exception Invalid_argument e -> invalid_argf "%s: %s" by e
 
 let bitcast_rule dt x =
   if D.bits dt > D.bits (dtype x) then Route.Reduce [| rank x - 1 |]
@@ -418,26 +488,22 @@ let results : type r.
       let placement = result (map_route ~by layout loads) in
       make_outs m 0 layout placement outs
   | Copy x ->
-      let placement = result (one_route ~by Elementwise x) in
+      let placement = one_result ~by Elementwise x in
       m 0 { dtype = dtype x; layout = L.contiguous (shape x); placement }
   | Move (mv, x) ->
-      let s' =
-        match Nx_array.Move.shape mv (shape x) with
-        | s' -> s'
-        | exception Invalid_argument e -> invalid_argf "%s: %s" by e
-      in
-      let placement = result (one_route ~by (Move mv) x) in
+      let s' = moved_shape ~by mv x in
+      let placement = one_result ~by (Move mv) x in
       let layout =
-        match L.move mv (form x).layout with
+        match L.move mv (form_layout x) with
         | Some l -> l
         | None -> L.contiguous s'
       in
       m 0 { dtype = dtype x; layout; placement }
   | Bitcast (dt, x) ->
       let layout =
-        bitcast_layout ~by (form x).layout (D.Any (dtype x)) (D.Any dt)
+        bitcast_layout ~by (form_layout x) (D.Any (dtype x)) (D.Any dt)
       in
-      let placement = result (one_route ~by (bitcast_rule dt x) x) in
+      let placement = one_result ~by (bitcast_rule dt x) x in
       m 0 { dtype = dt; layout; placement }
   | Place (p, x) ->
       let s = shape x in
@@ -529,7 +595,10 @@ let prepare : type r.
     r prim ->
     r prim =
  fun ~by place op ->
-  let one rule x = place (read_at (one_route ~by rule x) 0) x in
+  let one rule x =
+    if lies_simply x then place (at x) x
+    else place (read_at (one_route ~by rule x) 0) x
+  in
   match op with
   | Map p ->
       check_map ~by p.layout p.prog p.outs p.loads;
@@ -548,7 +617,9 @@ let prepare : type r.
       in
       if !moved then Map { p with loads } else op
   | Copy x -> Copy (one Elementwise x)
-  | Move (mv, x) -> Move (mv, one (Move mv) x)
+  | Move (mv, x) ->
+      ignore (moved_shape ~by mv x);
+      Move (mv, one (Move mv) x)
   | Bitcast (dt, x) -> Bitcast (dt, one (bitcast_rule dt x) x)
   | Place _ | Check _ -> op
 

@@ -61,7 +61,7 @@ let live_word w = String.length w = 0
 (* Raises unless operand [i], [x], is alive and concrete or a constant: an
    interpretation receives every operation on its traced values before eager
    execution can. *)
-let checked ~by i (Value.Any x) =
+let checked (type v s d) ~by i (x : (v, s, d) Value.t) =
   match x with
   | Value.Traced { owner; _ } ->
       invalid_argf "%s: a value traced by %s reached eager execution" by
@@ -115,6 +115,13 @@ let live (type v s d) (x : (v, s, d) Value.t) : (v, s, d) Value.t =
   | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> x
 
 type handle = Handle : ('v, 's, 'd) Value.t -> handle
+
+let is_handle (type v s d) (x : (v, s, d) Value.t) =
+  match x with
+  | Value.Donated _ -> true
+  | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> false
+
+let is_concrete x = not (Prim.is_constant x)
 
 (* The donated operands among [xs]. Two handles of one donation, or over one
    memory, raise naming [Nx.donate]. *)
@@ -475,7 +482,7 @@ let unravel i shape =
   idx
 
 (* Whether [p] cuts no axis: one device, or the whole on each. *)
-let uncut p = Grid.cuts (Devices.grid p) = [||]
+let uncut p = not (Grid.is_cut (Devices.grid p))
 
 (* The constant operation at [p] reads its operands at this placement: [p] for a
    map, whose operands have its shape, and for a placement that cuts no axis;
@@ -544,9 +551,11 @@ let rec outs_of : type d. A.any list -> d outs = function
 
 let rec run : type r. by:string -> r Value.prim -> r =
  fun ~by op ->
-  let (Prim.Operands xs) = Prim.operands op in
-  List.iteri (checked ~by) xs;
-  match handles ~by xs with [] -> plain ~by op | hs -> donated ~by op hs
+  Prim.iteri (fun i x -> checked ~by i x) op;
+  if not (Prim.exists is_handle op) then plain ~by op
+  else
+    let (Prim.Operands xs) = Prim.operands op in
+    donated ~by op (handles ~by xs)
 
 (* [op] over donated operands [hs]: a movement that maps elements one to one
    passes a new handle on; any other operation reads the handles' memory, writes
@@ -598,7 +607,6 @@ and donated : type r. by:string -> r Value.prim -> handle list -> r =
 
 and plain : type r. by:string -> ?into:A.any -> r Value.prim -> r =
  fun ~by ?into op ->
-  let (Prim.Operands xs) = Prim.operands op in
   match op with
   | Value.Place (p, x) -> (
       match x with
@@ -620,8 +628,7 @@ and plain : type r. by:string -> ?into:A.any -> r Value.prim -> r =
       Prim.results ~by (fun k f -> alloc ~by k f) op;
       check ~by ok data fail
   | _ ->
-      if List.for_all (fun (Value.Any x) -> Prim.is_constant x) xs then
-        defer ~by op
+      if not (Prim.exists is_concrete op) then defer ~by op
       else compute ~by ?into (Prim.prepare ~by (fun p x -> placer ~by p x) op)
 
 (* [x] readable at [p]. Exec defers an operation over values of every set alone,
@@ -779,6 +786,23 @@ and own : type v s d.
    node computes once in an evaluation, in dependency order, with a stack of its
    own: a chain of any length takes no stack depth. *)
 and evaluate root p =
+  match pending root p with
+  | [] -> compute_node ~resolve:memoised root p
+  | _ -> evaluate_all root p
+
+(* A constant operand at [q], from its memo: every one an operation reads is
+   there. *)
+and memoised : type v s d.
+    d Devices.placement -> (v, s, d) Value.t -> (v, s, d) Value.t =
+ fun q x ->
+  match x with
+  | Value.Deferred { form; node = Value.Node n; k } ->
+      let arrays = Option.get (find n.memo (Devices.rebrand q)) in
+      make q (Array.map (A.expect form.dtype) arrays.(k))
+  | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ -> x
+
+(* [evaluate] where some constant [root] reads is in no memo. *)
+and evaluate_all root p =
   let local = Hashtbl.create 16 in
   let lookup (Value.Node n) q =
     match find n.memo q with

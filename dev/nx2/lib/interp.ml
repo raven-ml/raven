@@ -98,17 +98,24 @@ let innermost a b =
   | None, x | x, None -> x
   | Some i, Some j -> if j.start > i.start then b else a
 
+let is_traced (type v s d) (x : (v, s, d) t) =
+  match x with
+  | Traced _ -> true
+  | Array _ | Shards _ | Donated _ | Deferred _ -> false
+
 let receiver ~by op =
-  let (Prim.Operands xs) = Prim.operands op in
   let best =
-    List.fold_left
-      (fun best (Any x) ->
-        match x with
-        | Traced { owner; _ } ->
-            check ~by owner;
-            innermost best (Some owner)
-        | Array _ | Shards _ | Donated _ | Deferred _ -> best)
-      None xs
+    if not (Prim.exists is_traced op) then None
+    else
+      let (Prim.Operands xs) = Prim.operands op in
+      List.fold_left
+        (fun best (Any x) ->
+          match x with
+          | Traced { owner; _ } ->
+              check ~by owner;
+              innermost best (Some owner)
+          | Array _ | Shards _ | Donated _ | Deferred _ -> best)
+        None xs
   in
   if quiet () then best
   else

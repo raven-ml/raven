@@ -58,6 +58,9 @@ val shape : ('v, 's, 'd) t -> int array
 (** [shape x] is a fresh array. [dtype], [placement], [rank] and [dim] of a
     value on one device allocate nothing. *)
 
+val has_shape : ('v, 's, 'd) t -> int array -> bool
+(** [has_shape x s] is [shape x = s]. It allocates nothing. *)
+
 val expect : ('v, 's) dtype -> 'd any -> ('v, 's, 'd) t
 (** [expect dt (Any x)] is [x] at [dt]'s type. Raises [Invalid_argument] naming
     both dtypes if [x]'s dtype is another. *)
@@ -81,6 +84,14 @@ val kind : Nx_kernel.Prog.node -> string
 val operands : 'r prim -> operands
 (** [operands op] is [op]'s operands in order: a map's loads, [Check]'s [ok]
     then its data, the one operand of the others. *)
+
+val iteri : ('v 's 'd. int -> ('v, 's, 'd) t -> unit) -> 'r prim -> unit
+(** [iteri f op] is [f i x] for each operand [x] of [op], at its position [i] in
+    {!operands}. *)
+
+val exists : ('v 's 'd. ('v, 's, 'd) t -> bool) -> 'r prim -> bool
+(** [exists f op] is whether [f x] for some operand [x] of [op]. Neither
+    allocates for an operation other than [Check]. *)
 
 val map : ('v 's 'd. ('v, 's, 'd) t -> ('v, 's, 'd) t) -> 'r prim -> 'r prim
 (** [map m op] is [op] with each operand [x] replaced by [m x]. *)

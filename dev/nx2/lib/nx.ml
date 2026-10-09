@@ -150,7 +150,7 @@ let broadcast_shape ~by s s' =
           pp_shape s')
 
 let broadcast ~by s x =
-  if shape x = s then x else Eval.eval ~by (Value.Move (Broadcast s, x))
+  if Prim.has_shape x s then x else Eval.eval ~by (Value.Move (Broadcast s, x))
 
 let same_shape = Prim.same_shape
 

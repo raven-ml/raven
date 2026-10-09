@@ -99,6 +99,8 @@ let one = function One k -> Some k | Grid _ -> None
 let tiles extents c =
   List.fold_left (fun n g -> n * List.nth extents g) 1 c.over
 
+let is_cut = function One _ -> false | Grid { cuts; _ } -> cuts <> []
+
 let cuts = function
   | One _ -> [||]
   | Grid { extents; cuts; _ } ->

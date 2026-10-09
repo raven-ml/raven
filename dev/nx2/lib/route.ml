@@ -19,7 +19,6 @@ type 'd t = {
   result : 'd Devices.placement;
 }
 
-
 (* The axes operand [i] of shape [shape] reads whole on each device. *)
 let whole rule i shape =
   match rule with
@@ -106,7 +105,7 @@ let backward rule i shape target =
    it: the same windows, or the whole on each of those devices. *)
 let covers g want =
   Grid.equal g want
-  || Grid.cuts g = [||]
+  || (not (Grid.is_cut g))
      && Array.for_all
           (fun k -> Array.mem k (Grid.devices g))
           (Grid.devices want)
@@ -128,7 +127,7 @@ let common (type d) (ps : d Devices.placement option array) : d common =
   in
   match go 0 None with
   | None -> Every_set
-  | Some p -> if Grid.cuts (Devices.grid p) = [||] then Uncut p else Other
+  | Some p -> if Grid.is_cut (Devices.grid p) then Other else Uncut p
   | exception Exit -> Other
 
 (* Any route, worked out from the operands' grids. *)
@@ -178,7 +177,7 @@ let general ~by rule ps shapes =
         | Into _ when ps.(n - 1) <> None ->
             forward rule (n - 1) shapes.(n - 1) (Devices.grid (placed (n - 1)))
         | _ -> (
-            match List.rev (List.filter (fun g -> Grid.cuts g <> [||]) fwd) with
+            match List.rev (List.filter Grid.is_cut fwd) with
             | g :: _ -> g
             | [] -> (
                 match

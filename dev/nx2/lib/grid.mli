@@ -42,6 +42,9 @@ val one : t -> int option
 val cuts : t -> (int * int) array
 (** [cuts g] is each cut axis with its number of tiles, by increasing axis. *)
 
+val is_cut : t -> bool
+(** [is_cut g] is [cuts g <> [||]]. It allocates nothing. *)
+
 val window : t -> int array -> int -> (Nx_array.Move.range array, string) result
 (** [window g shape i] is the window of a value of [shape] that the [i]th device
     of [devices g] holds: the whole shape on an axis no cut names. It is [Error]
