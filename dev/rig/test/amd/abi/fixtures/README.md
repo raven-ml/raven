@@ -13,5 +13,6 @@ Made in this directory from `kernels.s` with Homebrew clang 22.1.7
 Made in this directory from `many.cl` with the same tools:
 
 - `many_gfx1201.hsaco`, 128 kernels for gfx1201 without a symbol table,
-  each taking 260 bytes of scratch per work-item, for the bench:
+  each taking 260 bytes of scratch per work-item, for the bench and the
+  lookup of many kernels:
   `clang -c -x cl -cl-std=CL2.0 -target amdgcn-amd-amdhsa -mcpu=gfx1201 -mcode-object-version=5 -nogpulib -O2 many.cl -o many.o && ld.lld -shared --strip-all many.o -o many_gfx1201.hsaco && rm many.o`

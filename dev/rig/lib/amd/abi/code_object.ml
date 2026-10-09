@@ -27,7 +27,10 @@ type t = {
   target : string;
   size : int;
   patches : (int * string) list;
-  kernels : (string * kernel) list; (* by name, in increasing order *)
+  names : string array; (* every kernel's name, in increasing order *)
+  records : kernel option array;
+      (* each kernel's record, in the order of [names], all [Some]: [kernel]
+         returns one without allocating *)
 }
 
 (* LLVM's AMDGPU relocations, ELFRelocs/AMDGPU.def. *)
@@ -229,7 +232,14 @@ let of_string obj =
   let* ps = patches ~size 0 [] o.relocations in
   let most = max_private_segment target in
   let* ks = kernels o ~target ~most ~size ps [] (descriptors o) in
-  Ok { elf = o; target; size; patches = ps; kernels = ks }
+  let n = List.length ks in
+  let names = Array.make n "" and records = Array.make n None in
+  List.iteri
+    (fun i (name, k) ->
+      names.(i) <- name;
+      records.(i) <- Some k)
+    ks;
+  Ok { elf = o; target; size; patches = ps; names; records }
 
 let target co = co.target
 let size co = co.size
@@ -248,8 +258,21 @@ let image co =
   List.iter patch co.patches;
   Bytes.unsafe_to_string b
 
-let kernels co = List.map fst co.kernels
-let kernel co name = List.assoc_opt name co.kernels
+let kernels co = Array.to_list co.names
+
+(* The position of [name] in [names], by bisection, or [-1]. *)
+let rec find names name lo hi =
+  if lo >= hi then -1
+  else
+    let mid = (lo + hi) / 2 in
+    let c = String.compare name (Array.unsafe_get names mid) in
+    if c = 0 then mid
+    else if c < 0 then find names name lo mid
+    else find names name (mid + 1) hi
+
+let kernel co name =
+  let i = find co.names name 0 (Array.length co.names) in
+  if i < 0 then None else Array.unsafe_get co.records i
 
 let runs_on co g =
   let gpu = Gpu.processor g in

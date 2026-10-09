@@ -231,6 +231,19 @@ let reading =
           let w = pair (triple int int int) (triple bool bool bool) in
           equal ~msg:"a" w ((256, 64, 24), (true, false, true)) (fields "a");
           equal ~msg:"b" w ((0, 0, 8), (false, true, false)) (fields "b"));
+      test "each of 128 kernels is found by its name, and no name after it"
+        (fun () ->
+          let co = read (fixture "many_gfx1201.hsaco") in
+          let names = Code_object.kernels co in
+          equal int 128 (List.length names);
+          List.iter
+            (fun name ->
+              let k = require_some ~msg:name (Code_object.kernel co name) in
+              equal ~msg:name (option int)
+                (Rig_elf.symbol (Code_object.elf co) (name ^ ".kd"))
+                (Some k.descriptor);
+              is_none ~msg:(name ^ "!") (Code_object.kernel co (name ^ "!")))
+            names);
       cases ~name:(strf "%S") "a name that is no kernel's is none"
         [ ""; "c"; "a.kd"; "A"; "ext" ] (fun name ->
           is_none (Code_object.kernel (read (relocatable ())) name));
