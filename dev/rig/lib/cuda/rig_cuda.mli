@@ -274,7 +274,10 @@ val image :
 val entry : image -> string -> int option
 (** [entry m f] is [Some h], [h] the [CUfunction] of the kernel [f] of [m],
     which compiled code passes to [cuLaunchKernel], or [None] if [m] has no
-    kernel [f]. [h] is valid until [m] is unloaded.
+    kernel [f]. [h] is valid until [m] is unloaded. A launch of [h] may take
+    as much dynamic shared memory as a block of the GPU can have (its opt-in
+    maximum, [CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN]), less
+    [f]'s static shared memory.
 
     Raises [Invalid_argument] if [m] was unloaded. *)
 

@@ -69,7 +69,7 @@ type arg =
 external failing_arg : int -> arg = "rig_cuda_test_failing"
 external failing_fill : unit -> nativeint = "rig_cuda_test_failing_fill"
 
-external launch_arg : int -> int -> int -> int -> int -> int -> arg
+external launch_arg : int -> int -> int -> int -> int -> int -> int -> arg
   = "rig_cuda_test_launch_byte" "rig_cuda_test_launch"
 
 external launch_fill : unit -> nativeint = "rig_cuda_test_launch_fill"
@@ -90,8 +90,8 @@ let copy ~queue ?(after = [||]) ~dst src =
 
 let failing code = { fn = failing_fill (); arg = failing_arg code }
 
-let launch ?(count = 1) f ~grid ~block a b =
-  { fn = launch_fill (); arg = launch_arg f grid block count a b }
+let launch ?(count = 1) ?(shared = 0) f ~grid ~block a b =
+  { fn = launch_fill (); arg = launch_arg f grid block shared count a b }
 
 let seen f = seen_arg f.arg
 

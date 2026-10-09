@@ -316,11 +316,25 @@ let loads_every_function () =
     (S.functions_loaded (Option.get (C.entry m "empty")));
   C.unload g m
 
+(* An entry launches with as much dynamic shared memory as the GPU allows
+   a block, beyond the 48 KiB CUDA allows by default. *)
+let largest_shared_memory () =
+  S.with_ @@ fun ({ g; _ } as t) ->
+  let m = S.loaded (require_ok (C.image g (S.fixture "kernels.ptx"))) in
+  (* cuda.h's CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN. *)
+  let shared = S.attribute 97 in
+  let f =
+    S.launch ~shared (Option.get (C.entry m "empty")) ~grid:1 ~block:1 0 0
+  in
+  S.wait t (S.submit t [| S.part ~queue:"COMPUTE:0" f |]);
+  C.unload g m
+
 let images =
   group ~timeout:60. "images"
     [
       test "load, find their kernels and unload" images;
       test "loading places every function's code" loads_every_function;
+      test "an entry takes the largest shared memory" largest_shared_memory;
     ]
 
 (* Timeline and loss *)

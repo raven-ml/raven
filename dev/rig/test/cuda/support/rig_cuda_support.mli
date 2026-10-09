@@ -72,9 +72,11 @@ val copy :
 val failing : int -> fill
 (** [failing code] returns [code] and enqueues nothing. *)
 
-val launch : ?count:int -> int -> grid:int -> block:int -> int -> int -> fill
-(** [launch ~count f ~grid ~block a b] launches the kernel [f] [count] times
-    (defaults to [1]) over [grid] blocks of [block] threads with the 64-bit
+val launch :
+  ?count:int -> ?shared:int -> int -> grid:int -> block:int -> int -> int -> fill
+(** [launch ~count ~shared f ~grid ~block a b] launches the kernel [f] [count]
+    times (defaults to [1]) over [grid] blocks of [block] threads, each with
+    [shared] bytes of dynamic shared memory (defaults to [0]), with the 64-bit
     parameters [a] and [b], through the device's capability. *)
 
 val delayed :

@@ -249,7 +249,7 @@ value rig_cuda_test_failing_fill(value unit) {
    the context current while it ran. */
 struct launch {
   void *f;
-  unsigned int grid, block;
+  unsigned int grid, block, shared;
   int count;
   uint64_t a, b;
   CUcontext seen;
@@ -261,20 +261,22 @@ static int launch(void *queue, void *arg, uint64_t v) {
   (void)v;
   if (get_current(&l->seen) != 0) l->seen = NULL;
   for (int i = 0; i < l->count; i++) {
-    CUresult s = launch_kernel(l->f, l->grid, 1, 1, l->block, 1, 1, 0, queue,
-                               params, NULL);
+    CUresult s = launch_kernel(l->f, l->grid, 1, 1, l->block, 1, 1, l->shared,
+                               queue, params, NULL);
     if (s != 0) return s;
   }
   return 0;
 }
 
 value rig_cuda_test_launch(value v_f, value v_grid, value v_block,
-                              value v_count, value v_a, value v_b) {
+                              value v_shared, value v_count, value v_a,
+                              value v_b) {
   value v = arg(sizeof(struct launch));
   struct launch *l = Arg_val(v);
   l->f = (void *)Long_val(v_f);
   l->grid = (unsigned int)Long_val(v_grid);
   l->block = (unsigned int)Long_val(v_block);
+  l->shared = (unsigned int)Long_val(v_shared);
   l->count = Int_val(v_count);
   l->a = (uint64_t)Long_val(v_a);
   l->b = (uint64_t)Long_val(v_b);
@@ -284,7 +286,7 @@ value rig_cuda_test_launch(value v_f, value v_grid, value v_block,
 value rig_cuda_test_launch_byte(value *argv, int argn) {
   (void)argn;
   return rig_cuda_test_launch(argv[0], argv[1], argv[2], argv[3], argv[4],
-                                 argv[5]);
+                              argv[5], argv[6]);
 }
 
 value rig_cuda_test_launch_fill(value unit) {
