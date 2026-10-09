@@ -268,20 +268,18 @@ val slots : t -> Nx_device.Buffer.t list array
 (** {1:timing Timing}
 
     A search times many programs of one kernel, each a few times: it links each
-    program ({!link_program}), allocates slots once, for the first ({!slots}),
-    and times the runs of each on them ({!time}). *)
+    call ({!link_call}), allocates slots once, for the first ({!slots}), and
+    times the runs of each on them ({!time}). *)
 
-val link_program : devices:(string -> device) -> string -> Ops.t -> t
-(** [link_program ~devices name prg] is the compiled program [prg]
-    ({!Tolk.Op.Program}) linked on the device [devices] maps [name] to, as a
-    schedule of one call of [prg] that records its kernel's span while a profile
-    is taken ({!Tolk.Hcq2.compile_linear}[ ~profile:Stamped]). Its parameter [i]
-    is the buffer [prg] takes as its argument [i] ({!Tolk.Ops.program_info}'s
-    [globals]), or a byte for an argument below the last that [prg] does not
-    take.
+val link_call : devices:(string -> device) -> Ops.t -> t
+(** [link_call ~devices call] is the call [call] of a compiled program
+    ({!Tolk.Op.Program}) linked as a schedule of one call that records its
+    kernel's span while a profile is taken
+    ({!Tolk.Hcq2.compile_linear}[ ~profile:Stamped]). [call]'s arguments supply
+    its buffers and positional scalars; {!time}'s [vars] bind free variables.
 
-    Raises [Invalid_argument] if [prg] is not a compiled program, and as {!link}
-    does. *)
+    Raises [Invalid_argument] if [call] is not a call of a compiled program, and
+    as {!link} does. *)
 
 val clock : t -> Tolk.Search.clock
 (** [clock s] is the clock {!time} times [s] on: {!Tolk.Search.Device} if every

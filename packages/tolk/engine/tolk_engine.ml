@@ -1494,30 +1494,9 @@ let slots t =
     t.params;
   slots
 
-let link_program ~devices name prg =
-  let info =
-    match Ops.arg prg with
-    | Ops.Program info -> info
-    | _ -> fail "Tolk_engine.link_program" "not a compiled program"
-  in
-  let buffers =
-    List.filteri
-      (fun i _ -> i < List.length info.globals)
-      (Device.Tiny_elf.of_program prg).signature
-    |> List.combine info.globals
-  in
-  (* The call's arguments are the program's slots in order: one the program does
-     not read is a byte. *)
-  let arg slot =
-    match List.assoc_opt slot buffers with
-    | Some (b : Device.Tiny_elf.param) ->
-        Call.param
-          ~shape:(List.map (fun n -> Ops.Int n) b.shape)
-          ~device:(Single name) slot b.dtype
-    | None -> Call.param ~shape:[ Ops.Int 1 ] ~device:(Single name) slot Uint8
-  in
-  let n = List.fold_left (fun n slot -> max n (slot + 1)) 0 info.globals in
-  let args = List.init n arg in
+let link_call ~devices call =
+  if Ops.op call <> Op.Call || Ops.op (Ops.body call) <> Op.Program then
+    fail "Tolk_engine.link_call" "not a call of a compiled program";
   (* The host launches the program itself, as a call of its own: a host batch
      around one call would time the batch. *)
   let compiler n =
@@ -1526,4 +1505,4 @@ let link_program ~devices name prg =
   in
   link ~devices
     (Hcq2.compile_linear ~profile:Stamped ~devices:compiler
-       (Ops.v Op.Linear ~src:[ Ops.call prg args ]))
+       (Ops.v Op.Linear ~src:[ call ]))

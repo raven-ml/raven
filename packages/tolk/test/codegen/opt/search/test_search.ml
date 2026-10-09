@@ -102,7 +102,8 @@ type record = { linked : Ops.t list; calls : call list }
    number of samples of it before, and its record. *)
 let sampling sample =
   let linked = ref [] and calls = ref [] in
-  let link prg =
+  let link call =
+    let prg = Ops.body call in
     linked := prg :: !linked;
     (prg, ref 0)
   in
@@ -433,6 +434,36 @@ let midpoints =
         (fun c -> equal (list (pair string int)) [ ("n", 8) ] c.vars)
         calls)
 
+let positional =
+  cases ~name:string_of_bool
+    "a search binds a positional size in its call and launch" [ false; true ]
+    (fun allow_test_size ->
+      let ast = kernel "symbolic" in
+      let v = List.hd (Call.variables ast) in
+      let p = Call.param_like v 4 in
+      let ast = Ops.substitute ~calls:Skip ~pass:Once ast [ (v, p) ] in
+      let k = K.v ast (renderer "hip") in
+      K.convert_loop_to_global k;
+      let linked = ref 0 in
+      let link call =
+        incr linked;
+        equal Dtypes.const
+          (`Int (Bigint.of_int 4))
+          (Ops.value (List.nth (Ops.src_without_body call) 4));
+        match Ops.arg (Ops.body call) with
+        | Program info ->
+            List.iter
+              (fun s -> ignore (Shape.sym_infer s []))
+              (info.global_size @ info.local_size)
+        | _ -> fail "the timed call has no program"
+      in
+      let time ~vars () =
+        equal (list (pair string int)) [] vars;
+        1.
+      in
+      ignore (search ~allow_test_size ~timing:(link, time) 2 k);
+      greater int ~than:0 !linked)
+
 (* The timing's stages *)
 
 let small_searches =
@@ -537,7 +568,7 @@ let early_stops =
 (* A timing of constant samples that raises [e] when it links a program, or when
    it samples one. *)
 let raising_at stage e =
-  ( (fun prg -> if stage = `Link then raise e else prg),
+  ( (fun call -> if stage = `Link then raise e else call),
     fun ~vars:_ _ -> if stage = `Time then raise e else 1e-3 )
 
 let stages = [ ("a link", `Link); ("a sample", `Time) ]
@@ -1402,6 +1433,7 @@ let () =
          chooses_the_fastest;
          is_deterministic;
          midpoints;
+         positional;
          links_once;
          early_stops;
          exceptions;

@@ -84,17 +84,22 @@ val beam_search :
     it, with the optimisations that a beam search of width [amt] finds fastest.
     [k]'s kernel is the sink that {!Postrange.apply_opts} optimises.
 
-    [link prg] is the compiled program [prg] ({!Op.Program}) of [k]'s kernel
-    made ready to run on a device of the target of [k]'s renderer, and
+    [link call] is the call [call] ({!Op.Call}) of a compiled program of [k]'s
+    kernel made ready to run on the device of [k]'s renderer. Its arguments hold
+    storage parameters in their slots and constant values for positional scalar
+    parameters; an unused slot before the last argument holds a byte. Each
+    scalar of [k]'s kernel ({!Call.variables}) is sampled at the middle of its
+    bounds, [(vmin + vmax) / 2] rounded down. Launch sizes are evaluated with
+    these samples, and the kernel keeps its parameters.
+
     [time ~vars p] is the time in seconds of one run of the program [p] links,
     from cold caches where the device can, with each variable bound to its value
-    in [vars]: each variable of [k]'s kernel ({!Call.variables}) bound to the
-    middle of its bounds, [(vmin + vmax) / 2] rounded down. [clock p] is the
-    clock [time] times the runs of [p] on. The search links each program it
-    times once, and times it once per sample. A program whose [link] or [time]
-    raises [Failure] is dropped; the search raises any other exception. The
-    search limits neither a compilation nor a run: a candidate whose compilation
-    or run hangs hangs the search, one more reason to run it offline.
+    in [vars], the samples of the named variables. [clock p] is the clock [time]
+    times the runs of [p] on. The search links each program it times once, and
+    times it once per sample. A program whose [link] or [time] raises [Failure]
+    is dropped; the search raises any other exception. The search limits neither
+    a compilation nor a run: a candidate whose compilation or run hangs hangs
+    the search, one more reason to run it offline.
 
     A kernel is compiled for [k]'s renderer named ["test"], with its storage
     placed on the renderer's device. It is first linearized

@@ -4229,6 +4229,12 @@ stores through a pad.
   cells. The kernel's program depends on neither the range nor its trips, so
   that loops of any range and length compile one. tinygrad has no loop of
   calls, and its calls bind a scalar only to a variable, by name.
+  Beam search samples positional scalars by slot and named variables by name.
+  Its `link` callback takes a complete call, with the scalar samples passed in
+  their slots and the launch sizes evaluated from the same samples; the
+  candidate's compiled body keeps its parameters. `Tolk_engine.link_call`
+  links that call. tinygrad's `codegen/opt/postrange.py:255` (`args_from_ast`)
+  reads every scalar's `expr` and constructs only buffer arguments.
 - **Reason:** (b). rune's `Loop.repeat` and staged scans give each step its
   trip's index, which a kernel or a buffer of indices would otherwise compute.
 - **Pinned by:** the `Schedule` suite: `create_linear_with_vars › loops of
@@ -4243,7 +4249,10 @@ stores through a pad.
   its call the trip as a scalar argument`, `› loops of any range and trips
   around one call compile one program`, and the same two on Metal; the
   Hcq2 suite: `ranges › each trip of a chunked range reads its trip as a scalar
-  argument`.
+  argument`; `Tolk.Search › a search binds a positional size in its call and
+  launch`; `Tolk.Search on the host › a search runs candidates with named and
+  positional scalars`; `Rune.jit › keys › a scan searched with beam 2 draws as
+  eager does`.
 
 ## D141. The host computes upcast lanes as vectors of 64 bytes
 

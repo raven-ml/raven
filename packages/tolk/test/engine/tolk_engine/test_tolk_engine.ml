@@ -1801,11 +1801,20 @@ let timing_on name =
   | "CPU:1" -> (on_null, Lazy.force clang)
   | _ -> (devices, Lazy.force clang)
 
+let timing_call name ~size ~slots prg =
+  let args =
+    List.init slots (fun slot ->
+        Call.param ~shape:[ Ops.Int size ] ~device:(Single name) slot Float32)
+  in
+  Ops.call prg args
+
 (* The program of [long_axpy ()] linked on [name], and its slots. *)
 let timed name =
   let devices, ren = timing_on name in
   let s =
-    Engine.link_program ~devices name (Codegen.to_program (long_axpy ()) ren)
+    Engine.link_call ~devices
+      (timing_call name ~size:(1 lsl 18) ~slots:3
+         (Codegen.to_program (long_axpy ()) ren))
   in
   (s, Engine.slots s)
 
@@ -1987,15 +1996,21 @@ let timing =
     [
       cases ~name:Fun.id "run takes the slots of a linked schedule"
         [ "add"; "shard_add" ] slots_fit;
-      test "link_program refuses a name the map does not hold" (fun () ->
+      test "link_call refuses a program without its call" (fun () ->
           raises_match Exn.invalid_arg (fun () ->
-              Engine.link_program ~devices "CPU:9" (Lazy.force axpy)));
+              Engine.link_call ~devices (Lazy.force axpy)));
+      test "link_call refuses a name the map does not hold" (fun () ->
+          raises_match Exn.invalid_arg (fun () ->
+              Engine.link_call ~devices
+                (timing_call "CPU:9" ~size:4 ~slots:3 (Lazy.force axpy))));
       test "a program whose buffers skip a slot links and runs on its slots"
         (fun () ->
           let prg =
             Codegen.to_program (skipping_a_slot ()) (Lazy.force clang)
           in
-          let s = Engine.link_program ~devices "CPU" prg in
+          let s =
+            Engine.link_call ~devices (timing_call "CPU" ~size:4 ~slots:4 prg)
+          in
           let slots = Engine.slots s in
           equal ~msg:"buffers by slot" (list int) [ 1; 1; 1; 1 ]
             (Array.to_list (Array.map List.length slots));

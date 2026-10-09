@@ -52,8 +52,7 @@ let actions () =
    lanes and threads of a kernel, can multiply past an int. *)
 let zprod l = List.fold_left (fun z n -> Bigint.(z * of_int n)) Bigint.one l
 
-let get_test_global_size global_size max_global_size vars =
-  let input = List.map (fun s -> sym_infer s vars) global_size in
+let get_test_global_size input max_global_size =
   let rec halve_last_above_16 = function
     | [] -> []
     | n :: rest when n > 16 -> (n / 2) :: rest
@@ -71,15 +70,46 @@ let most = List.fold_left Float.max neg_infinity
 
 (* The program timed for [prg]: with [allow_test_size], one launching fewer
    workgroups, and the factor that scales its times up. *)
-let test_size ~allow_test_size ~vars prg =
+let test_size ~allow_test_size ~value prg =
   match arg prg with
-  | Program info when allow_test_size ->
+  | Program info ->
+      let infer s = sym_compile s (fun v () -> value v) () in
+      let size = List.map infer info.global_size in
       let global_size, factor =
-        get_test_global_size info.global_size 65536 vars
+        if allow_test_size then get_test_global_size size 65536 else (size, 1.)
       in
       let global_size = List.map (fun n -> Int n) global_size in
-      (replace prg ~arg:(Program { info with global_size }), factor)
+      let local_size = List.map (fun s -> Int (infer s)) info.local_size in
+      (replace prg ~arg:(Program { info with global_size; local_size }), factor)
   | _ -> (prg, 1.)
+
+(* A candidate is timed through its call: storage keeps its slots, and each
+   positional scalar is passed its sample. Free variables are bound by
+   [time]. *)
+let timed_call ~value prg =
+  let info = match arg prg with Program p -> p | _ -> assert false in
+  let arguments =
+    List.filter_map
+      (fun u ->
+        match arg u with
+        | Param p when op u = Op.Param ->
+            if p.addrspace <> Some Dtype.Alu then Some (p.slot, u)
+            else if p.name = None then
+              Some
+                (p.slot, const ~dtype:(dtype u) (`Int (Bigint.of_int (value u))))
+            else None
+        | _ -> None)
+      (src (nth prg 1))
+  in
+  let n = List.fold_left (fun n (slot, _) -> max n (slot + 1)) 0 arguments in
+  let argument slot =
+    match List.assoc_opt slot arguments with
+    | Some u -> u
+    | None ->
+        param ~shape:[ Int 1 ] ~device:(Single info.target.device) slot
+          Dtype.Uint8
+  in
+  call prg (List.init n argument)
 
 (* [linked] timed up to [cnt] times, stopping once its least exceeds
    [early_stop]: the samples. *)
@@ -283,7 +313,14 @@ let binary prg =
 let midpoint v =
   match (vmin v, vmax v) with
   | `Int lo, `Int hi -> Bigint.(to_int (fdiv (lo + hi) (of_int 2)))
-  | _ -> invalid_arg ("the variable " ^ expr v ^ " has no integer bounds")
+  | _ ->
+      invalid_arg (Format.asprintf "the variable %a has no integer bounds" pp v)
+
+(* Lowering may change a parameter's dtype. Its binding is still identified by
+   its name, or by its slot within this kernel. *)
+let scalar_key v =
+  let p = match arg v with Param p -> p | _ -> assert false in
+  match p.name with Some name -> `Name name | None -> `Slot p.slot
 
 type clock = Device | Host
 
@@ -329,8 +366,14 @@ let beam_search ~link ~time ~clock ?allow_test_size amt s =
       List.iteri apply (decode_opts opts);
       ret
   | None ->
+      let values =
+        List.map (fun v -> (scalar_key v, midpoint v)) (variables (K.ast s))
+      in
+      let value v = List.assoc (scalar_key v) values in
       let vars =
-        List.map (fun v -> (expr v, midpoint v)) (variables (K.ast s))
+        List.filter_map
+          (function `Name n, x -> Some (n, x) | `Slot _, _ -> None)
+          values
       in
       let min_progress = setting Setting.beam_min_progress /. 1e6 in
       let seen_libs = Hashtbl.create 256 in
@@ -377,8 +420,8 @@ let beam_search ~link ~time ~clock ?allow_test_size amt s =
          linking or timing failed. *)
       let sampled k prg ~early_stop =
         match
-          let prg, factor = test_size ~allow_test_size ~vars prg in
-          let linked = link prg in
+          let prg, factor = test_size ~allow_test_size ~value prg in
+          let linked = link (timed_call ~value prg) in
           (linked, time_program ~time ~vars ~early_stop ~factor linked)
         with
         | r -> Some r
@@ -417,7 +460,7 @@ let beam_search ~link ~time ~clock ?allow_test_size amt s =
               let this_compute_ops =
                 match arg (nth prg 0) with
                 | Kernel { estimates = Some e; _ } ->
-                    Float.of_int (sym_infer e.ops vars)
+                    Float.of_int (sym_compile e.ops (fun v () -> value v) ())
                 | _ -> 0.
               in
               least_compute_ops := Float.min this_compute_ops !least_compute_ops;

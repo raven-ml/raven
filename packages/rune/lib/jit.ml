@@ -681,9 +681,8 @@ let compile ?beam ?parallel ~profile (type a r) (args_s : a Ptree.t)
          cache answers allocates nothing. *)
       let search width k =
         report "searched a kernel at width %d" width;
-        let name = (Tolk.Postrange.Scheduler.ren k).target.device in
         let slots = ref None in
-        let link prg = Engine.link_program ~devices name prg in
+        let link call = Engine.link_call ~devices call in
         let time ~vars s =
           let slots =
             match !slots with

@@ -1220,6 +1220,9 @@ thread.
 
 ### Tolk (new)
 
+- Beam search accepts positional scalar arguments, fixing `PARAM has no name`
+  when `Rune.jit ~beam` searches a loop that reads its index. `Search` links
+  complete calls through `Tolk_engine.link_call`, which replaces `link_program`.
 - Reductions over one domain that read none of each other share their loop
   and compute what their sources share once. A compiled gradient in a
   parameter that many operations broadcast sums one reduction per broadcast,

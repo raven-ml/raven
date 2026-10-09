@@ -18,9 +18,10 @@ let applied_opts prg =
    host's noise: when a search stops is the Search suite's. *)
 let timing () =
   let slots = ref None in
-  let link prg =
+  let link call =
+    let prg = Ops.body call in
     let scale = if applied_opts prg = [] then 1. else 1e-3 in
-    (Tolk_engine.link_program ~devices "CPU" prg, scale)
+    (Tolk_engine.link_call ~devices call, scale)
   in
   let time ~vars (s, scale) =
     if Option.is_none !slots then slots := Some (Tolk_engine.slots s);
@@ -62,10 +63,65 @@ let searched name =
   is_true ~msg:"optimised" (applied_opts prg <> []);
   equal values (run k unoptimised) (run k prg)
 
+let scalar_arguments =
+  cases ~name:string_of_int
+    "a search runs candidates with named and positional scalars" [ 1; 4 ]
+    (fun slot ->
+      let z n = `Int (Bigint.of_int n) in
+      let named = Ops.variable ~dtype:Int32 "n" (z 3) (z 9) in
+      let positional =
+        Call.param ~addrspace:(Some Alu) ~vmin_vmax:(z (-7), z (-1)) slot Int32
+      in
+      let output = Call.param ~shape:[ Ops.Int 4 ] 0 Float32 in
+      let r = Ops.range (Int 4) [ 0 ] in
+      let value = Ops.cast (Ops.add named positional) Float32 in
+      let ast =
+        Ops.sink
+          ~kernel:(Ops.kernel_info ~beam:2 ())
+          [ Ops.end_ (Ops.store (Ops.index output [ r ]) value) [ r ] ]
+      in
+      let measured = ref 0 in
+      let link call = Tolk_engine.link_call ~devices call in
+      let time ~vars s =
+        let slots = Tolk_engine.slots s in
+        Tolk_engine.run ~vars s slots;
+        equal (array Dtypes.value)
+          (Array.make 4 (`Float 2.))
+          (Run.values Float32 (List.hd slots.(0)));
+        incr measured;
+        1.
+      in
+      let prg =
+        Setting.context
+          [ B (Setting.ignore_beam_cache, true) ]
+          (fun () ->
+            Codegen.to_program
+              ~beam:(Search.beam_search ~link ~time ~clock:Tolk_engine.clock)
+              ast host)
+      in
+      greater int ~than:0 !measured;
+      (* The chosen program still reads its argument on every call. *)
+      List.iter
+        (fun scalar ->
+          let args =
+            List.init (slot + 1) (fun i ->
+                if i = slot then Ops.const ~dtype:Int32 (z scalar)
+                else
+                  Call.param ~shape:[ Int 4 ] ~device:(Single "CPU") i Float32)
+          in
+          let s = Tolk_engine.link_call ~devices (Ops.call prg args) in
+          let slots = Tolk_engine.slots s in
+          Tolk_engine.run ~vars:[ ("n", 3) ] s slots;
+          equal (array Dtypes.value)
+            (Array.make 4 (`Float (float_of_int (3 + scalar))))
+            (Run.values Float32 (List.hd slots.(0))))
+        [ -7; -1 ])
+
 let () =
   exit
     (Windtrap.run "Tolk.Search on the host"
        [
+         scalar_arguments;
          cases ~tags:[ "slow" ] ~name:Fun.id
            "a searched kernel computes what its unoptimised kernel computes"
            [ "symbolic"; "add_small"; "sum_rows"; "variable_rows"; "pad_7x7" ]

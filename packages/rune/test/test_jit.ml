@@ -728,6 +728,30 @@ let keys =
       test "a call compiled with ~beam:1 computes eager's values" (fun () ->
           let f a = Nx.add_s (poly a) 0.6875 in
           equal close (f (x ())) (Rune.jit' ~beam:1 ~parallel:2 f (x ())));
+      prop ~count:2 "a scan searched with beam 2 draws as eager does"
+        Gen.(with_pp Format.pp_print_int (of_list [ 4; 6 ]))
+        (fun n ->
+          let f key xs =
+            Nx.Rng.with_key key (fun () ->
+                fst
+                  (Rune.scan'
+                     ~f:(fun c x ->
+                       let c =
+                         Nx.add (Nx.mul c (Nx.rand Nx.float32 [| 2 |])) x
+                       in
+                       (c, c))
+                     ~init:(Nx.zeros Nx.float32 [| 2 |])
+                     xs))
+          in
+          let xs = Nx.ones Nx.float32 [| n; 2 |] and key = Nx.Rng.key 7 in
+          let compiled =
+            Rune.jit ~beam:2 ~parallel:2
+              Nx.Ptree.(Nx.Rng.ptree @-> tensor @-> returns tensor)
+              f
+          in
+          Tolk.Setting.context
+            [ B (Tolk.Setting.ignore_beam_cache, true) ]
+            (fun () -> equal close (f key xs) (compiled key xs)));
       test
         "a call compiled with ~beam replays its program under another BEAM or \
          JITBEAM" (fun () ->
