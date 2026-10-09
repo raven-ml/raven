@@ -7,8 +7,8 @@
 
    One pool per process: rig_pool_cores () - 1 persistent workers, made at
    the first job of more than one thread. A job is published behind a
-   generation counter; its threads claim chunk indices from a shared counter
-   with one relaxed fetch-add each. A worker enters the job before it
+   generation counter; its threads claim runs of chunk indices from a shared
+   counter (see claim). A worker enters the job before it
    claims, while the caller has not closed it. The caller closes the job
    once its own claims find no chunk left and waits only for the workers
    inside, so a worker late to see the job, or kept off its core by the
@@ -62,6 +62,15 @@ static const size_t stack_bytes = 8 << 20;
 /* A cache line on Apple silicon, and the pair of lines x86 fetches
    together. */
 enum { line_bytes = 128 };
+
+/* A claim takes 1 / claim_split of the claiming thread's share of the chunks
+   left, and at least one. One claim a chunk costs a fetch-add that every
+   thread contends for, 28 ns a chunk on 6 x86 cores, more than a short
+   chunk's work. While a claim runs, the other threads claim claim_split
+   times its chunks, so a core up to about claim_split times slower than the
+   others ends about when they do. A job of fewer than 2 * claim_split chunks
+   a thread claims them one at a time. */
+enum { claim_split = 8 };
 
 /* Hook points: the suite compiles this file again with RIG_POOL_HOOK defined
    (test/rig_pool_hooked_probe_stubs.c), to stop threads at the named points
@@ -232,11 +241,14 @@ int rig_pool_performance_cores(void) {
 /* Jobs */
 
 /* A job as its caller passes it. [wide] says i * total may overflow 64 bits
-   for some chunk bound i <= chunks, so the bounds take 128. */
+   for some chunk bound i <= chunks, so the bounds take 128. [split] divides
+   the chunks left into a run: claim_split times the caller's threads,
+   before the workers made bound them, as rig_pool.h states the runs. */
 typedef struct {
   rig_pool_body body;
   void *ctx;
   int64_t total, chunks;
+  uint64_t split;
   int threads, wide;
 } job;
 
@@ -276,7 +288,7 @@ struct pool {
      moves two lines between caller and worker instead of one: 100 ns
      became 130. */
   char gap[line_bytes];
-  _Atomic int64_t next; /* next unclaimed chunk index */
+  _Atomic uint64_t next; /* next unclaimed chunk index */
   char gap2[line_bytes];
   _Atomic uint64_t inside; /* the workers inside the job, | closed */
   _Atomic int waiting;     /* whether the caller parked on [done] */
@@ -321,17 +333,30 @@ static uint64_t spin(_Atomic uint64_t *word, uint64_t value, spin_until until,
   }
 }
 
-/* Claims chunks of [j] until none remains, one call a chunk, which
-   rig_pool.h does not promise: the thread that frees first takes the next
-   chunk, so a costly one holds only its own thread. A relaxed fetch-add
-   makes every index unique; ordering rides the opening and closing of the
-   job. */
+/* Claims runs of chunks of [j] until none remains, one call a run. A
+   thread's last run ends below the counter, so at most the chunks past it
+   are left: while those are too few for a run of two, the thread claims one
+   chunk without reading the counter first, as a short job's threads always
+   do. Else the run's length comes from a load of the counter, which other
+   claims may pass before the fetch-add lands: the run is then longer than
+   its share by their few chunks at most. The counter is unsigned: past the
+   last chunk it grows by at most a run a thread, below 2^64 for any job. A
+   relaxed fetch-add makes every index unique; ordering rides the opening
+   and closing of the job. */
 static void claim(pool *p, const job *j, int id) {
+  uint64_t c = (uint64_t)j->chunks, split = j->split;
+  uint64_t past = 0; /* the end of the thread's last run */
   for (;;) {
-    int64_t i = atomic_fetch_add_explicit(&p->next, 1, memory_order_relaxed);
-    if (i >= j->chunks) return;
+    uint64_t run = 1;
+    if (c - past >= 2 * split) {
+      uint64_t at = atomic_load_explicit(&p->next, memory_order_relaxed);
+      if (at < c && c - at >= 2 * split) run = (c - at) / split;
+    }
+    uint64_t i = atomic_fetch_add_explicit(&p->next, run, memory_order_relaxed);
+    if (i >= c) return;
+    past = c - i > run ? i + run : c;
     RIG_POOL_HOOK(chunk);
-    j->body(bound(j, i), bound(j, i + 1), id, j->ctx);
+    j->body(bound(j, (int64_t)i), bound(j, (int64_t)past), id, j->ctx);
   }
 }
 
@@ -574,13 +599,14 @@ static int64_t clamp(int64_t x, int64_t lo, int64_t hi) {
    job opens. Out of line, so a serial rig_pool_run saves no registers. */
 __attribute__((noinline)) static void run(int t, int64_t total, int64_t c,
                                           rig_pool_body body, void *ctx) {
+  uint64_t split = (uint64_t)t * claim_split;
   pool *p = in_body ? NULL : get();
   if (p && t > p->threads) t = p->threads;
   if (p == NULL || t == 1) {
     body(0, total, 0, ctx);
     return;
   }
-  job j = {body, ctx, total, c, t, total > INT64_MAX / c};
+  job j = {body, ctx, total, c, split, t, total > INT64_MAX / c};
 
   pthread_mutex_lock(&p->drive);
   p->job = j;

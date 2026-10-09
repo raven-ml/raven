@@ -81,8 +81,16 @@ typedef void (*rig_pool_body)(int64_t lo, int64_t hi, int worker, void *ctx);
 
    exactly, for every total and c. The chunks partition [0, total), none is
    empty, and floor (total / c) <= hi - lo <= ceil (total / c). Chunks are
-   claimed in index order: a caller that puts its costliest chunks first
-   has them start first.
+   claimed in index order, in runs that hold at most an eighth of a
+   thread's share (see Runs): a caller that puts its costliest chunks
+   first has them start first, spread over the threads.
+
+   Runs. On t > 1 threads, a thread claims a run of consecutive chunks at a
+   time, in one call: about an eighth of a thread's share of the chunks
+   left, which shrinks as the job goes, so that a job of many short chunks
+   costs few claims and a thread up to about eight times slower than the
+   others ends about when they do. A run is at most max (1, floor (c / 8t))
+   chunks, so a job of fewer than 16 t chunks makes one call a chunk.
 
    Worker index. 0 <= worker < t <= max (threads, 1), and the calling
    thread's worker is 0. A thread keeps its index for the whole job and

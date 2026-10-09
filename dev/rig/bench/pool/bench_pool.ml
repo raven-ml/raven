@@ -15,12 +15,18 @@
    busy that long before each job, within the spin window and past it, where the
    job wakes parked workers.
 
-   Claims are a job of 65,536 empty chunks: one claim each.
+   Claims are a job of 65,536 empty chunks, which the threads claim in runs:
+   what the claims cost beyond the empty job on every core, whose floor is
+   launch/floor-empty-all-cores.
 
    Compute jobs are 65,536 units of 64 dependent multiply-adds, 8 chunks a
    thread: on one thread, on the performance cores, on every core, with the cost
    skewed (the costliest units first, the threads balanced by claiming), and
-   against one spinning process per core, another program on the host.
+   against one spinning process per core, another program on the host. Again in
+   chunks of one unit, claimed in runs: balanced on every core, where the
+   efficiency cores must end with the others, and skewed on the performance
+   cores, where a run must not hold the costliest units on one thread. Both run
+   as fast as 8 chunks a thread.
 
    A floor row runs the job of the row above it on threads of the bench's own,
    each with a fixed share of the chunks and nothing claimed: what announcing a
@@ -136,8 +142,6 @@ let claim =
     [
       Thumper.bench "65536-empty-chunks-all-cores" (fun () ->
           empty cores chunks chunks);
-      floor "floor-65536-empty-chunks-all-cores" (fun () ->
-          floor_empty chunks chunks);
     ]
 
 let compute =
@@ -149,7 +153,11 @@ let compute =
       Thumper.bench "balanced-1-thread" (job 1);
       Thumper.bench "balanced-performance-cores" (job fast);
       Thumper.bench "balanced-all-cores" (job cores);
+      Thumper.bench "balanced-all-cores-65536-chunks" (fun () ->
+          compute cores units units false);
       Thumper.bench "skewed-performance-cores" (job ~skewed:true fast);
+      Thumper.bench "skewed-performance-cores-65536-chunks" (fun () ->
+          compute fast units units true);
       Thumper.bench_with_setup
         ~setup:(fun () -> load_start cores)
         ~teardown:load_stop "balanced-performance-cores-under-load"
