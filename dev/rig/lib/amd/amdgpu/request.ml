@@ -91,7 +91,10 @@ let make () =
 (* Each domain's request. A thread's request may release the runtime while its
    ioctl runs, and another thread of the domain run meanwhile, so a request is
    taken from its domain's slot, which holds [busy] until it is given back; a
-   thread that finds [busy] makes a request of its own. *)
+   thread that finds [busy] makes a request of its own. A [give] fills the slot
+   whatever it held, so a request an exception never gives back costs one new
+   request, and the slot holds a request again at the next [give]. Wrapping each
+   use in a handler would allocate a closure per request instead. *)
 let busy = make ()
 let slot = Domain.DLS.new_key (fun () -> Atomic.make (make ()))
 

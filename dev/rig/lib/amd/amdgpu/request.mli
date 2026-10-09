@@ -29,7 +29,10 @@ val take : unit -> t
 
 val give : t -> unit
 (** [give r] gives [r] back to the domain, once its ioctl returned and its
-    answer was read. *)
+    answer was read: the domain's next {!take} is [r].
+
+    A request an exception kept from its [give] costs the domain one new
+    request, at its next {!take}, whose [give] makes it the domain's. *)
 
 (** {1:kfd KFD} *)
 

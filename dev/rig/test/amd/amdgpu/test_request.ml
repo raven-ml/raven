@@ -308,6 +308,13 @@ let domains =
           equal bool false (r == s);
           Request.give s;
           Request.give r);
+      test "a request never given back costs one new request" (fun () ->
+          let lost = Request.take () in
+          let r = Request.take () in
+          equal bool false (lost == r);
+          Request.give r;
+          equal bool true (r == Request.take ());
+          Request.give r);
       test "each domain has its own" (fun () ->
           let r = Request.take () in
           let s = Domain.join (Domain.spawn Request.take) in
