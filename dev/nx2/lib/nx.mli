@@ -490,6 +490,217 @@ val placement : ('v, 's, 'd) t -> 'd Placement.t option
 (** [placement x] is where [x]'s bytes are, or [None] for a value of every set,
     which has none. *)
 
+(** {1:random Random numbers} *)
+
+(** Random numbers from one Threefry-2x32 generator.
+
+    A key is the generator's whole state: every draw is a function of its key,
+    dtype and shape, the same on every set. Fresh draws come from fresh keys, by
+    {!split} or {!fold_in}. A scope lets one key stand for a region: a sampler
+    called without [~key] takes the scope's next key.
+
+    A draw is a value of every set when its key is: a formula that computes on
+    the set of each operation that reads it. *)
+module Rng : sig
+  type +'d key = private (int32, Dtype.int32_elt, 'd) t
+  (** The type for keys, of shape [[|2|]], and batches of keys, of shape
+      [[|…; 2|]]: two 32-bit words per key. Arithmetic on a key gives an array,
+      which no sampler takes. *)
+
+  (** {1:keys Keys} *)
+
+  val key : int -> 'd key
+  (** [key seed] is the key of [seed], a value of every set. Equal seeds give
+      equal keys. *)
+
+  val of_tensor : (int32, Dtype.int32_elt, 'd) t -> 'd key
+  (** [of_tensor t] is the key, or batch of keys, whose words are [t], for words
+      that were saved: the inverse of {!to_tensor}.
+
+      Raises [Invalid_argument] unless [t]'s last axis has extent [2]. *)
+
+  val to_tensor : 'd key -> (int32, Dtype.int32_elt, 'd) t
+  (** [to_tensor k] is [k]'s words: the inverse of {!of_tensor}, and what the
+      coercion of [k] to an array is. *)
+
+  val place : 'e Placement.t -> 'd key -> 'e key
+  (** [place p k] is [k] at [p], as {!Nx.place}; a draw from it computes at [p].
+  *)
+
+  val split : ?n:int -> 'd key -> 'd key array
+  (** [split ~n k] is [n] keys derived from [k] ([n] defaults to [2]),
+      independent of each other and of [k]'s own draws.
+
+      Raises [Invalid_argument] if [n < 1] or [k] is a batch. *)
+
+  val split_batch : n:int -> 'd key -> 'd key
+  (** [split_batch ~n k] is [split ~n k] as one batch of shape [[|n; 2|]]: row
+      [i] holds [(split ~n k).(i)]'s words.
+
+      Raises [Invalid_argument] if [n < 1] or [k] is a batch. *)
+
+  val fold_in : 'd key -> int -> 'd key
+  (** [fold_in k i] is the key of [k] indexed by [i]: distinct [i] give
+      independent keys. A batch of keys gives a batch. *)
+
+  val fold_in_tensor : 'd key -> (int32, Dtype.int32_elt, 'd) t -> 'd key
+  (** [fold_in_tensor k i] is [fold_in k] of the indices held in [i], for an
+      index known only as data. Its shape is [k]'s batch broadcast with [i]'s,
+      then [2]; where [i] holds [n] it is [fold_in k n].
+
+      Raises [Invalid_argument] if the shapes do not broadcast. *)
+
+  (** {1:samplers Samplers}
+
+      A sampler draws from [~key], or without it from the scope's next key. A
+      key with batch axes [b] draws [b] followed by the draw's shape, one draw
+      per key, each the draw that key alone gives. Float draws compute at
+      float64 for float64 and at float32 for the other floats, and round once to
+      their dtype.
+
+      A sampler's parameters are arrays, and the draw has their broadcast
+      shape. Each parameter is checked against its domain: an element outside
+      raises [Invalid_argument] naming the sampler, the parameter, the element's
+      index and its value, as in
+      [Nx.Rng.bernoulli: p at [3] is 1.5, not in [0, 1]]. The check runs as the
+      sampler is called, computing the parameter if it is a formula; under an
+      interpretation it is a [Check] operation, which raises
+      where the interpretation computes it. *)
+
+  val bits : ?key:'d key -> int array -> (int32, Dtype.int32_elt, 'd) t
+  (** [bits shape] is uniformly random 32-bit words: word [j] in C order is word
+      [j mod 2] of the generator's block [j / 2].
+
+      Raises [Invalid_argument] if an extent is negative. *)
+
+  val uniform :
+    ?key:'d key -> (float, 's) dtype -> int array -> (float, 's, 'd) t
+  (** [uniform dt shape] is draws from [\[0, 1)]: multiples of [2{^-p}], [p]
+      [dt]'s significand width, each equally likely.
+
+      Raises [Invalid_argument] if an extent is negative. *)
+
+  val normal :
+    ?key:'d key -> (float, 's) dtype -> int array -> (float, 's, 'd) t
+  (** [normal dt shape] is standard normal draws, by the Box-Muller transform of
+      two uniform draws.
+
+      Raises [Invalid_argument] if an extent is negative. *)
+
+  val exponential :
+    ?key:'d key -> (float, 's) dtype -> int array -> (float, 's, 'd) t
+  (** [exponential dt shape] is exponential draws of rate 1, by inverting the
+      distribution at [1 - u] for a uniform [u]: finite, and never negative.
+
+      Raises [Invalid_argument] if an extent is negative. *)
+
+  val randint :
+    ?key:'d key ->
+    ?low:int ->
+    high:int ->
+    int array ->
+    (int32, Dtype.int32_elt, 'd) t
+  (** [randint ~low ~high shape] is integers drawn uniformly from
+      [\[low, high)] ([low] defaults to [0]): a 64-bit draw times [high - low],
+      shifted down by 64 bits, whose biased low part, at most one draw in
+      [2{^32}], takes a second draw (Lemire's multiply-shift).
+
+      Raises [Invalid_argument] if [low >= high], a bound is outside int32, or
+      an extent is negative. *)
+
+  val bernoulli :
+    ?key:'d key -> (float, 's, 'd) t -> (bool, Dtype.bool_elt, 'd) t
+  (** [bernoulli p] is [true] with probability [p], elementwise: a uniform draw
+      below [p].
+
+      Raises [Invalid_argument] if an element of [p] is outside [[0, 1]]. *)
+
+  val gamma : ?key:'d key -> (float, 's, 'd) t -> (float, 's, 'd) t
+  (** [gamma a] is gamma draws of concentration [a] and unit rate, elementwise:
+      Marsaglia and Tsang's rejection, below a concentration of 1 through
+      [Gamma(a) = Gamma(a + 1) U{^1/a}]. Divide by a rate for the two-parameter
+      family.
+
+      It is not exact: a draw takes the first of eight rounds that accepts, each
+      accepting more than 98% of proposals, and the one element in about
+      [10{^14}] that no round accepts is the distribution's mean.
+
+      Raises [Invalid_argument] if an element of [a] is outside [(0, inf)]. *)
+
+  val beta :
+    ?key:'d key -> (float, 's, 'd) t -> (float, 's, 'd) t -> (float, 's, 'd) t
+  (** [beta a b] is beta draws on [[0, 1]] of concentrations [a] and [b],
+      elementwise over their broadcast shape: [G(a) / (G(a) + G(b))] for two
+      independent {!gamma} draws, formed from their logarithms so that two draws
+      that underflow keep their ratio. It inherits {!gamma}'s rounds.
+
+      Raises [Invalid_argument] if the shapes do not broadcast or an element of
+      [a] or [b] is outside [(0, inf)]. *)
+
+  val von_mises : ?key:'d key -> (float, 's, 'd) t -> (float, 's, 'd) t
+  (** [von_mises k] is von Mises draws of mean direction 0 and concentration
+      [k], elementwise, as angles in [[-π, π]]: uniform on the circle at
+      [k = 0], near a normal of variance [1 / k] for a large [k].
+
+      It is not exact: Best and Fisher's rejection from a wrapped Cauchy
+      envelope runs twenty rounds, and the one element in about [2·10{^9}] that
+      no round accepts is a draw from the envelope. Add a mean direction,
+      wrapped into [\[-π, π\]], for the general family.
+
+      Raises [Invalid_argument] if an element of [k] is outside [\[0, inf)]. *)
+
+  val poisson :
+    ?key:'d key -> (float, 's, 'd) t -> (int32, Dtype.int32_elt, 'd) t
+  (** [poisson rate] is Poisson counts of [rate], elementwise; a rate of 0 gives
+      0. Below 10 a count inverts the distribution with one uniform draw, with
+      no fallback. From 10 up it is Hörmann's transformed rejection over
+      sixteen rounds, and the one element in about [5·10{^9}] that no round
+      accepts takes its last proposal, a count near the rate clamped to at
+      least 0. A count past int32's largest saturates there. A float32 rate
+      places its proposals exactly up to about [10{^5}]; beyond, float32's
+      spacing near the rate exceeds a hundredth of a count, so proposals drift
+      off their counts and the distribution is biased: give a float64 rate.
+
+      Raises [Invalid_argument] if an element of [rate] is outside
+      [\[0, 2{^31})]. *)
+
+  val binomial :
+    ?key:'d key ->
+    (int32, Dtype.int32_elt, 'd) t ->
+    (float, 's, 'd) t ->
+    (int32, Dtype.int32_elt, 'd) t
+  (** [binomial n p] is the number of successes in [n] trials that each succeed
+      with probability [p], elementwise over their broadcast shape: 0 at
+      [p = 0], [n] at [p = 1]. Where the mean of the rarer outcome is below 10 a
+      count inverts the distribution with one uniform draw, with no fallback;
+      from 10 up it is Hörmann's transformed rejection over eighteen rounds,
+      and the one element in about [4·10{^9}] that no round accepts takes its
+      last proposal, clamped into [\[0, n\]]. A float32 [p] places its
+      proposals exactly up to a mean of about [10{^5}]; beyond, float32's
+      spacing near the mean exceeds a hundredth of a count, so proposals drift
+      off their counts and the distribution is biased: give a float64 [p].
+
+      Raises [Invalid_argument] if the shapes do not broadcast, an element of
+      [n] is negative, or one of [p] is outside [[0, 1]]. *)
+
+  (** {1:scope Scope} *)
+
+  val with_key : 'd key -> (unit -> 'a) -> 'a
+  (** [with_key k f] runs [f] in a scope rooted at [k]: the samplers called in
+      [f] without [~key] take successive keys of [k], [fold_in k 0],
+      [fold_in k 1], …. Scopes nest, the inner replacing the outer. A scope is
+      per fiber and per domain.
+
+      A keyless draw is a value of every set, so its key must be one: raises
+      [Invalid_argument] if [k] has bytes ({!place}d, or made by {!of_tensor}
+      from an array that has). *)
+
+  val next_key : unit -> 'd key
+  (** [next_key ()] is the scope's next key, a value of every set. Outside every
+      scope, it is the next key of the domain's own, seeded from the system's
+      entropy. *)
+end
+
 (** {1:errors Errors}
 
     Every misuse raises [Invalid_argument] whose message is the function the

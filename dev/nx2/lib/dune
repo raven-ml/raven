@@ -16,6 +16,7 @@
   eval
   repr
   pattern
+  rng
   nx)
  (private_modules
   grid
@@ -29,6 +30,7 @@
   exec
   eval
   repr
-  pattern)
+  pattern
+  rng)
  (modules_without_implementation value)
  (libraries nx_array nx_kernel nx_cpu rig))

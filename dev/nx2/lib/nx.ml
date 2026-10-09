@@ -84,6 +84,8 @@ let devices ?kernels ds : (module Devices) =
 let place p x = Eval.place ~by:"Nx.place" p x
 let placement = Prim.at
 
+module Rng = Rng
+
 module Repr = struct
   let of_array s a = Repr.of_array ~by:"Nx.Repr.of_array" s a
   let array = Repr.array
