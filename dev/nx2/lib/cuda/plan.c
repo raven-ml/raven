@@ -97,8 +97,7 @@ static uint64_t blocks(int t, int64_t batch, int64_t m, int64_t n) {
    A GPU of another size runs the same tiles, with the same bits. */
 #define WAVE 100
 static const int efficiency[T_COUNT] = {[T_t128x128] = 90, [T_t128x256] = 100,
-                                        [T_t128x64] = 85, [T_t64x64] = 60,
-                                        [T_t16x64] = 30};
+                                        [T_t64x64] = 60, [T_t16x64] = 30};
 
 /* The mma tile of a product among those [kind] has an instance of with k
    contiguous: the one of least cost, waves times outputs per tile over its

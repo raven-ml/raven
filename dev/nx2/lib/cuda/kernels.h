@@ -102,7 +102,6 @@ enum nx_cuda_kernel { NX_CUDA_KERNELS(NX_CUDA_ENUM) NX_CUDA_KERNEL_COUNT };
 #define NX_CUDA_TILES(X)                     \
   X(t128x128, 128, 128, 64, 64, 32, 4)       \
   X(t128x256, 128, 256, 64, 64, 64, 4)       \
-  X(t128x64, 128, 64, 128, 64, 32, 3)        \
   X(t64x64, 64, 64, 128, 32, 32, 4)          \
   X(t16x64, 16, 64, 128, 16, 16, 4)
 
