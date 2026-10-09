@@ -171,6 +171,25 @@ val contract :
     Raises [Out_of_memory] if the host's memory cannot hold the plan, and
     {!Rig.Out_of_memory} if [g]'s cannot hold its scratch. *)
 
+val records :
+  paint:int ->
+  a:operand ->
+  b:operand ->
+  ?init:operand ->
+  y:operand ->
+  batch:(int * int) list ->
+  contracting:(int * int) list ->
+  acc:int ->
+  unit ->
+  string option
+(** [records ~paint ~a ~b ~init ~y ~batch ~contracting ~acc ()] is the plan's
+    records as {!contract} plans them, or [None] if it declines, planned on a
+    stack whose bytes below the planner were [paint] (a byte) first: a record
+    holds no byte the plan did not write. The operands' memory is never read,
+    so host buffers serve.
+
+    Raises [Out_of_memory] if the host's memory cannot hold the plan. *)
+
 val planner :
   a:operand ->
   b:operand ->

@@ -266,6 +266,36 @@ value nx_amd_support_plan(value v_call) {
   CAMLreturn(caml_alloc_some(r));
 }
 
+/* Fills 16 KiB of the stack below the caller with [b], so that the frames
+   of the calls it makes next start there. */
+static __attribute__((noinline)) void paint_stack(int b) {
+  volatile unsigned char s[16384];
+  for (size_t i = 0; i < sizeof s; i++) s[i] = (unsigned char)b;
+}
+
+/* The records of the call [v_call]'s plan, or None if it declines, planned
+   on a stack filled with the byte [v_paint]. */
+value nx_amd_support_plan_records(value v_call, value v_paint) {
+  CAMLparam2(v_call, v_paint);
+  CAMLlocal1(s);
+  struct call *c = Caml_ba_data_val(v_call);
+  nx_amd_records rs = {NULL, 0, 0};
+  size_t scratch = 0;
+  paint_stack(Int_val(v_paint));
+  int launches = nx_amd_plan_contract(&c->in, c->ops, ARCH, &rs, &scratch);
+  if (launches == NX_OUT_OF_MEMORY) {
+    free(rs.bytes);
+    caml_raise_out_of_memory();
+  }
+  if (launches == NX_NOT_COMPUTED) {
+    free(rs.bytes);
+    CAMLreturn(Val_none);
+  }
+  s = caml_alloc_initialized_string(rs.len, (const char *)rs.bytes);
+  free(rs.bytes);
+  CAMLreturn(caml_alloc_some(s));
+}
+
 /* The launches of the call [v_call]'s plan, into records kept from one
    call to the next: the planner's cost alone. */
 value nx_amd_support_plan_only(value v_call) {

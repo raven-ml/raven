@@ -114,6 +114,8 @@ typedef struct {
   int32_t batch, m, n, k;
   int32_t splits, a_dtype, b_dtype, init_dtype;
   int32_t y_dtype, acc_dtype, aligned;
+  int32_t zero; /* 0: the last word, which would be padding, so that a
+                   record's bytes are its fields' alone */
 } contract_params;
 
 /* contract_params' bits of [aligned]. */

@@ -38,6 +38,9 @@ external call_c : op_c array -> int array -> int array -> int -> bool -> bytes
 
 external plan_c : bytes -> (string * int * int) option = "nx_amd_support_plan"
 external plan_only : bytes -> int = "nx_amd_support_plan_only" [@@noalloc]
+
+external plan_records : bytes -> int -> string option
+  = "nx_amd_support_plan_records"
 external rebase : string -> int -> string = "nx_amd_support_rebase"
 
 let threads, copy_threads, read_threads, read_vecs, hog_threads = sizes ()
@@ -499,6 +502,9 @@ let call ~a ~b ?init ~y ~batch ~contracting ~acc () =
 let planner ~a ~b ?init ~y ~batch ~contracting ~acc () =
   let c = call ~a ~b ?init ~y ~batch ~contracting ~acc () in
   fun () -> plan_only c
+
+let records ~paint ~a ~b ?init ~y ~batch ~contracting ~acc () =
+  plan_records (call ~a ~b ?init ~y ~batch ~contracting ~acc ()) paint
 
 let contract g ~a ~b ?init ~y ~batch ~contracting ~acc () =
   let plan = plan_c (call ~a ~b ?init ~y ~batch ~contracting ~acc ()) in

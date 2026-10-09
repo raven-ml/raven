@@ -630,6 +630,39 @@ let overflow_cases =
 
 (* An int32 sum reaches a wider output as a cast from int32 does, by its sign:
    -1 times 1 over 64 terms is -64. *)
+(* A record holds only the bytes the plan writes: every case of the suite,
+   planned on a stack of zeros and on one of 0xff bytes, gives the same
+   records. The plan reads no operand's memory, so host buffers serve. *)
+let records_written () =
+  let host = Rig.Buffer.create Rig.host (1 lsl 16) in
+  let operand dt shape strides : S.operand =
+    { buffer = host; dtype = code dt; shape; strides; first = 0 }
+  in
+  let laid c rows = function
+    | `K -> [| (rows * c.k) + c.pad; c.k; 1 |]
+    | `Free -> [| (rows * c.k) + c.pad; 1; rows |]
+  in
+  List.iter
+    (fun c ->
+      let a = operand c.dt [| c.batch; c.m; c.k |] (laid c c.m c.la) in
+      let b = operand c.dt [| c.batch; c.n; c.k |] (laid c c.n c.lb) in
+      let shape = [| c.batch; c.m; c.n |] in
+      let y = operand c.out shape [| c.m * c.n; c.n; 1 |] in
+      let init =
+        match c.init with
+        | `None -> None
+        | `Bias -> Some (operand c.out shape [| 0; 0; 1 |])
+        | `Full -> Some y
+      in
+      let plan paint =
+        S.records ~paint ~a ~b ?init ~y
+          ~batch:[ (0, 0) ]
+          ~contracting:[ (2, 2) ]
+          ~acc:(code c.acc) ()
+      in
+      equal ~msg:(case_name c) (option string) (plan 0) (plan 0xff))
+    (cases_of () @ edge_cases)
+
 (* Out of memory raises: the plan never declines a call for want of it. a,
    broadcast from one element, packs into 2^21 rows of 2^14 bfloat16, 64 GiB
    of scratch, more than the GPU holds. *)
@@ -1031,6 +1064,7 @@ let tests =
           within_bound;
         test "an int32 sum sign-extends into int64" sign_extends;
         test "scratch past the GPU's memory raises" scratch_out_of_memory;
+        test "records hold only the bytes the plan writes" records_written;
         cases
           ~name:(fun (D.Any d, _, _) -> D.name d)
           "rows past k: their gaps enter no sum"
