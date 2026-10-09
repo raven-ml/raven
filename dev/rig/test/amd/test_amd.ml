@@ -2431,6 +2431,30 @@ let two_roots () =
   Fun.protect ~finally:(fun () -> A.stop g ~fault:None) @@ fun () ->
   one_gpu_shared ~second:S.open_gpu g
 
+(* Host memory of fewer than 64 KiB, which no device maps, copies into Device
+   memory through the host's staging memory, which the process keeps: devices
+   of one GPU, one after another and two at once, each map it. *)
+let staged t seed =
+  let n = 16384 in
+  let s = pattern n seed in
+  let b = buffer t n in
+  put b s;
+  equal string ~msg:(strf "the copy of seed %d" seed) s (get b)
+
+let staged_devices () =
+  if S.driverless () then skip ~reason:"the path maps no host memory" ();
+  S.with_ (fun t -> staged t 1);
+  S.with_ (fun t -> staged t 2);
+  S.with_ @@ fun t ->
+  let d =
+    require_ok ~pp:Format.pp_print_string
+      (Rig.open_ (module A) ~name:"AMD:test-second" S.open_gpu)
+  in
+  Fun.protect ~finally:(fun () -> Rig.close d) @@ fun () ->
+  staged t 3;
+  staged { t with d } 4;
+  staged t 5
+
 let two =
   group ~timeout:60. "one GPU"
     [
@@ -2440,6 +2464,14 @@ let two =
         one_gpu;
       test "devices of one GPU opened through two roots share its memory"
         two_roots;
+      xfail
+        ~reason:
+          "amdgpu maps a page once per GPU and refuses a device's map of \
+           staging pages another device of the GPU mapped, closed or not"
+        (test
+           "devices of one GPU, one after another and two at once, copy \
+            through the host's staging memory"
+           staged_devices);
     ]
 
 (* Traces *)
