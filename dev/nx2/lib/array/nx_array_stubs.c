@@ -341,37 +341,47 @@ int nx_coalesce(int n, const nx_array *a, nx_loop *l) {
     for (int k = 0; k < n; k++) l->step[k][0] = e > 1;
     return NX_OK;
   }
-  int out = 0;
   for (int i = 0; i < r; i++) {
-    int64_t d = a[0].dim[i];
+    l->extent[i] = a[0].dim[i];
+    for (int k = 0; k < n; k++) l->step[k][i] = a[k].dim[r + i];
+  }
+  l->rank = nx_coalesce_dims(n, r, l->extent, l->step);
+  return NX_OK;
+}
+
+int nx_coalesce_dims(int n, int rank, int64_t *extent,
+                     int64_t (*step)[NX_MAX_RANK]) {
+  /* Axis i lands at [out] or merges into out - 1, both at most i: the
+     loop rewrites only what it has read. */
+  int out = 0;
+  for (int i = 0; i < rank; i++) {
+    const int64_t d = extent[i];
     if (d == 0) {
-      l->rank = 1;
-      l->extent[0] = 0;
-      for (int k = 0; k < n; k++) l->step[k][0] = 0;
-      return NX_OK;
+      extent[0] = 0;
+      for (int k = 0; k < n; k++) step[k][0] = 0;
+      return 1;
     }
     if (d == 1) continue;
     /* The axis joins the previous one if every operand's previous stride
        is this stride times this extent: the two axes are one run. */
     int joins = out > 0;
     for (int k = 0; k < n && joins; k++)
-      joins = l->step[k][out - 1] == a[k].dim[r + i] * d;
+      joins = step[k][out - 1] == step[k][i] * d;
     if (joins) {
-      l->extent[out - 1] *= d;
-      for (int k = 0; k < n; k++) l->step[k][out - 1] = a[k].dim[r + i];
+      extent[out - 1] *= d;
+      for (int k = 0; k < n; k++) step[k][out - 1] = step[k][i];
     } else {
-      l->extent[out] = d;
-      for (int k = 0; k < n; k++) l->step[k][out] = a[k].dim[r + i];
+      extent[out] = d;
+      for (int k = 0; k < n; k++) step[k][out] = step[k][i];
       out++;
     }
   }
   if (out == 0) {
-    l->extent[0] = 1;
-    for (int k = 0; k < n; k++) l->step[k][0] = 0;
+    extent[0] = 1;
+    for (int k = 0; k < n; k++) step[k][0] = 0;
     out = 1;
   }
-  l->rank = out;
-  return NX_OK;
+  return out;
 }
 
 /* Calls [run] on each run of the loop [l] over [n] operands: the positions

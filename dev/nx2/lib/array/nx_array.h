@@ -168,6 +168,17 @@ typedef struct {
    and merged, never reordered. */
 int nx_coalesce(int n, const nx_array *a, nx_loop *l);
 
+/* Coalesces in place the loop of [n] operands over [rank] axes, [rank] 0
+   or more: their [extent]s and operand k's steps step[k], by axis. Drops
+   the axes of extent 1 and merges an axis into the one before it where
+   every operand's step there is this axis's step times its extent,
+   keeping the C order. Answers the merged rank, at least 1: a loop with no
+   element has rank 1, extent[0] = 0 and every step 0; one of one element,
+   a rank-0 loop included, rank 1, extent 1 and every step 0. nx_coalesce's
+   loop is this over its operands' shapes and strides. */
+int nx_coalesce_dims(int n, int rank, int64_t *extent,
+                     int64_t (*step)[NX_MAX_RANK]);
+
 /* Block copies */
 
 /* A box: [extent[0]] planes of [extent[1]] rows of [extent[2]] elements, in
