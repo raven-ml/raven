@@ -213,6 +213,12 @@ let templates =
           equal string
             (Packet.encode (fun _ -> 7L) [ W32 (Value 2) ])
             (fill self 0 5L 6L 7L));
+      test "a refused template leaves the one before" (fun () ->
+          let p = [ Packet.Dword 1; W32 (Value 0) ] in
+          load p;
+          (try load (List.init 17 (fun i -> Packet.Dword i))
+           with Invalid_argument _ -> ());
+          equal string (Packet.encode (fun _ -> 5L) p) (fill self 0 5L 6L 7L));
       refused "17 words are refused" (List.init 17 (fun i -> Packet.Dword i));
       refused "5 holes are refused"
         (List.init 5 (fun _ -> Packet.W32 (Value 0)));

@@ -10,6 +10,7 @@
 
 #include <stdatomic.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #if defined(_WIN32)
@@ -95,32 +96,53 @@ value caml_rig_amd_ring_byte(value *argv, int argn) {
                               argv[5], argv[6]);
 }
 
-/* A hole's record, as Template lays it out: ten 64-bit words, the index of
-   its first word, its argument, its words, its operations' count, then each
-   operation and its constant. */
-enum { HOLE_FIELDS = 4 + 2 * RIG_AMD_HOLE_OPS };
+/* A hole's record, as Template lays it out: 64-bit words, the index of its
+   first word, its argument, its words (1 or 2), its operations' count, then
+   each operation and its constant. */
 
-/* Template [t]: its words as little-endian bytes, and its holes, records
-   Template checked against the template's bounds. */
+static void refuse(const char *why) {
+  char msg[96];
+  snprintf(msg, sizeof msg, "Rig_amd.make: a packet template %s", why);
+  caml_invalid_argument(msg);
+}
+
+/* Template [t]: its words as little-endian bytes, and its holes, records as
+   above, once they fit the template's bounds: a refused template leaves the
+   one before. */
 value caml_rig_amd_template(value v_self, value v_t, value v_words,
                             value v_holes) {
-  struct rig_amd_template *t = &Device_val(v_self)->templates[Int_val(v_t)];
-  t->n = (int)(caml_string_length(v_words) / 4);
-  memcpy(t->words, String_val(v_words), 4 * (size_t)t->n);
-  t->nholes = (int)(caml_string_length(v_holes) / (8 * HOLE_FIELDS));
-  for (int i = 0; i < t->nholes; i++) {
-    uint64_t f[HOLE_FIELDS];
-    memcpy(f, String_val(v_holes) + 8 * HOLE_FIELDS * i, sizeof f);
-    struct rig_amd_hole *h = &t->holes[i];
+  struct rig_amd_template c;
+  size_t bytes = caml_string_length(v_words);
+  if (bytes > sizeof c.words) refuse("exceeds 16 words");
+  c.n = (int)(bytes / 4);
+  memcpy(c.words, String_val(v_words), 4 * (size_t)c.n);
+  size_t n = caml_string_length(v_holes) / 8;
+  uint64_t f[4 + 2 * RIG_AMD_HOLE_OPS];
+  c.nholes = 0;
+  for (size_t i = 0; i < n; i += 4 + 2 * (size_t)f[3]) {
+    if (c.nholes == RIG_AMD_TEMPLATE_HOLES) refuse("has too many holes");
+    if (n - i < 4) refuse("hole is cut short");
+    memcpy(f, String_val(v_holes) + 8 * i, 4 * 8);
+    if (f[3] > RIG_AMD_HOLE_OPS) refuse("hole takes too many operations");
+    if (n - i - 4 < 2 * f[3]) refuse("hole is cut short");
+    memcpy(f + 4, String_val(v_holes) + 8 * (i + 4), 2 * 8 * f[3]);
+    if (f[1] > 2) refuse("hole reads an argument outside 0 to 2");
+    if (f[2] < 1 || f[2] > 2 || f[0] + f[2] > (uint64_t)c.n)
+      refuse("hole lies outside its words");
+    struct rig_amd_hole *h = &c.holes[c.nholes++];
     h->at = (uint8_t)f[0];
     h->arg = (uint8_t)f[1];
     h->wide = (uint8_t)f[2];
     h->nops = (uint8_t)f[3];
     for (int j = 0; j < h->nops; j++) {
-      h->op[j] = (uint8_t)f[4 + 2 * j];
-      h->k[j] = f[5 + 2 * j];
+      uint64_t op = f[4 + 2 * j], k = f[5 + 2 * j];
+      if (op > OP_OR) refuse("hole takes an unknown operation");
+      if (op == OP_SHIFT && k > 63) refuse("hole's shift is outside 0 to 63");
+      h->op[j] = (uint8_t)op;
+      h->k[j] = k;
     }
   }
+  Device_val(v_self)->templates[Int_val(v_t)] = c;
   return Val_unit;
 }
 

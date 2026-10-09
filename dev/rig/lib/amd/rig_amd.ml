@@ -108,7 +108,6 @@ external set_ring : int -> int -> int -> int -> int -> int -> int -> unit
 
 external set_template : int -> int -> string -> string -> unit
   = "caml_rig_amd_template"
-[@@noalloc]
 
 external set_max_copy : int -> int -> unit = "caml_rig_amd_max_copy"
 external hdp_count : int -> int -> int -> bool = "caml_rig_amd_hdp"

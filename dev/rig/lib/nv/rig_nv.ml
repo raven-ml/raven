@@ -139,7 +139,6 @@ external set_doorbell : int -> int -> unit = "caml_rig_nv_doorbell" [@@noalloc]
 
 external set_template : int -> int -> string -> string -> unit
   = "caml_rig_nv_template"
-[@@noalloc]
 
 external set_entry : int -> int -> int -> unit = "caml_rig_nv_entry" [@@noalloc]
 external set_bar : int -> int -> unit = "caml_rig_nv_bar" [@@noalloc]
