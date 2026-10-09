@@ -449,7 +449,7 @@ let confirm f fault invalidate () =
       if !fault = None then fault := Some why;
       false
 
-let start ~gpus f find =
+let start ~gpus f first =
   let* vram, doorbells, mmio, vf, lease, memory, d =
     Result.map_error (fun why -> `Refused why) (survey ~driven:`Driven f)
   in
@@ -460,9 +460,8 @@ let start ~gpus f find =
         `Refused why)
       r
   in
-  let* l = refused (Regs.layout d) in
+  let* l, images = refused (first d) in
   let r = Regs.make f mmio l ~vf in
-  let* images = refused (Images.load find (Regs.discovery l)) in
   let gc = Regs.version l D.gc_hwid in
   let* gmc, p =
     refused

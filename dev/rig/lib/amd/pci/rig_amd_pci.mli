@@ -141,20 +141,78 @@ val open_ :
     holds the GPU, if amdgpu, unbound from it, has not let go of it yet (KFD's
     topology still lists it, or its [ip_discovery] directory stays), naming the
     holder's reason, if its function cannot be taken, with
-    {!Rig_pci.Function.take}'s reason, if one of its blocks has a version this
-    library does not boot, naming the block and the version, if an image is
-    missing, with {!Rig_pci.Firmware.find}'s reason, if it is in a fabric left
-    running, if the memory controller does not place all of the GPU's memory, or
-    if [machine]'s windows are not mapped into the process, as through a
-    transport, before anything is written. It is [Error msg] if the reset of a
-    GPU this process lost or of one running firmware this library did not start
-    fails, with its reason, the GPU then lost, or if such firmware still runs
-    after that reset. It is also [Error msg] if a block does not answer during
-    the boot, naming the step, or with {!Rig_amd.make}'s message; the GPU is
-    then lost, and its next open resets it. An exception raised after the boot's
-    first write stops the GPU the same way and passes through.
+    {!Rig_pci.Function.take}'s reason, if {!report} of its discovery table
+    answers [Error] or finds an image missing, with {!Rig_pci.Firmware.find}'s
+    reason, if it is in a fabric left running, if the memory controller does not
+    place all of the GPU's memory, or if [machine]'s windows are not mapped into
+    the process, as through a transport, before anything is written. It is
+    [Error msg] if the reset of a GPU this process lost or of one running
+    firmware this library did not start fails, with its reason, the GPU then
+    lost, or if such firmware still runs after that reset. It is also
+    [Error msg] if a block does not answer during the boot, naming the step, or
+    with {!Rig_amd.make}'s message; the GPU is then lost, and its next open
+    resets it. An exception raised after the boot's first write stops the GPU
+    the same way and passes through.
 
     Raises [Invalid_argument] if [i < 0]. *)
+
+(** {1:reports Boot reports}
+
+    A report says what {!open_} loads to boot a GPU, and whether it refuses the
+    GPU for its blocks or its firmware, from the GPU's discovery table, which an
+    open reads before it changes anything on the GPU. It needs no GPU and writes
+    nothing. *)
+
+type block = {
+  name : string;  (** As the kernel names it, such as ["GC"]. *)
+  version : int * int * int;
+      (** (major, minor, revision), as the table and the firmware files' names
+          give them, such as [(13, 0, 3)]. *)
+  instances : int list;
+      (** The instances the boot drives, in order; harvested ones are absent. *)
+}
+(** The type for a block a boot programs. *)
+
+type image = {
+  file : string;
+      (** The file's path under a firmware directory, such as
+          ["amdgpu/psp_14_0_3_sos.bin"]. *)
+  found : string option;
+      (** The path of the file with its pinned digest, in the first directory
+          that holds one, if any does. *)
+}
+(** The type for a firmware file a boot loads. *)
+
+type report = {
+  blocks : block list;
+      (** The blocks a boot programs: GC, SDMA0, MP0, MP1, MMHUB, OSSSYS, NBIF
+          and HDP, in that order. *)
+  images : image list;  (** In the order the boot loads them. *)
+}
+(** The type for boot reports. *)
+
+val report : firmware:string list -> string -> (report, string) result
+(** [report ~firmware table] is what {!open_} loads to boot a GPU whose IP
+    discovery table is [table]: its blocks, their versions and the instances
+    harvesting left, and its firmware files, each looked up in the directories
+    [firmware] as {!open_} looks it up. It reads files and nothing else.
+
+    [table] is the 10 KiB the GPU's firmware leaves 64 KiB below the end of its
+    memory, which Linux's amdgpu driver shows, while it is bound to the GPU, in
+    the debugfs file [/sys/kernel/debug/dri/<bus address>/amdgpu_discovery],
+    which root reads.
+
+    {!open_} of that GPU computes this report from the table it reads before it
+    changes anything on the GPU, but for the reset it gives a GPU this process
+    lost or a process that died left. If [report] answers [Error why], {!open_}
+    answers [Error] with [why] after the GPU's name; if an image is not [found],
+    [Error] naming it. Otherwise no refusal of {!open_} is about the GPU's
+    blocks or firmware.
+
+    [Error why] if [table] is not a discovery table, if a block a boot programs
+    is missing or has a version this library does not boot, or no pinned image,
+    naming the block and its version, or if a file found with its pinned digest
+    is not laid out as its format says. *)
 
 (** {1:changes Changes to the machine}
 

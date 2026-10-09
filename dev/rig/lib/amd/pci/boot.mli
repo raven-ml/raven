@@ -59,31 +59,32 @@ val space : Rig_pci.Space.t
 val start :
   gpus:int Lazy.t ->
   Rig_pci.Function.t ->
-  (string -> digest:string -> (string, string) result) ->
+  (Discovery.t -> (Regs.layout * Images.t, string) result) ->
   (t, [ `Refused of string | `Running | `Lost of string ]) result
-(** [start ~gpus f find] boots the GPU of [f], whose function the caller took
-    and whose machine has {!space} reserved and [gpus] AMD GPUs, its firmware
-    read with [find]: a partial or full boot as {!plan} says. Its memory joins
-    its fabric's links as {!Gmc.link} says. A partial boot first stops the
-    engines the last session may have left running, as {!stop} does, before its
-    hubs take this boot's tables. The GPU masters the bus only once booted,
-    every flush confirmed ({!confirm}) and both its hubs read back as
-    translating ({!Gmc.translates}), its hubs' faults reaching a page of system
-    memory the boot owns.
+(** [start ~gpus f first] boots the GPU of [f], whose function the caller took
+    and whose machine has {!space} reserved and [gpus] AMD GPUs: a partial or
+    full boot as {!plan} says. [first d] is the boot's first half from the GPU's
+    discovery table [d], read before anything is written: its registers' layout
+    and its firmware. Its memory joins its fabric's links as {!Gmc.link} says. A
+    partial boot first stops the engines the last session may have left running,
+    as {!stop} does, before its hubs take this boot's tables. The GPU masters
+    the bus only once booted, every flush confirmed ({!confirm}) and both its
+    hubs read back as translating ({!Gmc.translates}), its hubs' faults reaching
+    a page of system memory the boot owns.
 
     [Error (`Refused msg)], no register written, if a BAR cannot be mapped, if
     its register or doorbell BAR is not mapped into the process, as through a
-    transport, if its discovery table is refused, if a block has a version this
-    library does not boot, if firmware is missing, if it is in a fabric left
-    running, if its memory controller's window does not hold its memory
-    ({!Gmc.window}), or if the machine has no memory for its page tables or
-    fault page. [Error `Running], no register written and its BARs unmapped, if
-    it is [`Booted] outside a fabric: firmware this library did not start runs
-    on it, which the vendor's reset stops. A virtual function's access, which a
-    survey asks its host for, goes back to the host with either.
-    [Error (`Lost msg)] if a block does not answer, naming the step, or a hub
-    does not translate: the GPU is then stopped ({!stop}). An exception raised
-    during the boot stops it too, and passes through. *)
+    transport, if its discovery table is refused, if [first] answers [Error],
+    with its message, if it is in a fabric left running, if its memory
+    controller's window does not hold its memory ({!Gmc.window}), or if the
+    machine has no memory for its page tables or fault page. [Error `Running],
+    no register written and its BARs unmapped, if it is [`Booted] outside a
+    fabric: firmware this library did not start runs on it, which the vendor's
+    reset stops. A virtual function's access, which a survey asks its host for,
+    goes back to the host with either. [Error (`Lost msg)] if a block does not
+    answer, naming the step, or a hub does not translate: the GPU is then
+    stopped ({!stop}). An exception raised during the boot stops it too, and
+    passes through. *)
 
 val confirm :
   Rig_pci.Function.t -> string option ref -> (unit -> unit) -> unit -> bool

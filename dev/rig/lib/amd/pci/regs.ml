@@ -41,6 +41,19 @@ let mp1_messages = (11, 0, 0)
 (* GC 9.4.3 runs the code objects of gfx942. *)
 let target = function 9, 4, 3 -> (9, 4, 2) | gc -> gc
 
+let blocks =
+  D.
+    [
+      gc_hwid;
+      sdma0_hwid;
+      mp0_hwid;
+      mp1_hwid;
+      mmhub_hwid;
+      osssys_hwid;
+      nbif_hwid;
+      hdp_hwid;
+    ]
+
 let layout d =
   let block b =
     match Discovery.version d b with
@@ -152,8 +165,8 @@ let version l b = Option.get (Discovery.version l.d b)
 let has l name = Hashtbl.mem l.regs name
 let guarded l = l.guarded
 
-(* A register is found by name with no allocation: waits poll registers by
-   name, and each poll would allocate otherwise. *)
+(* A register is found by name with no allocation: waits poll registers by name,
+   and each poll would allocate otherwise. *)
 let find l name =
   match Hashtbl.find l.regs name with
   | r -> r

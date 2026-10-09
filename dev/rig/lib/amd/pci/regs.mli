@@ -21,10 +21,13 @@
 type layout
 (** The type for the registers of one GPU, placed. *)
 
+val blocks : int list
+(** [blocks] is the blocks a boot programs: GC, SDMA0, MP0, MP1, MMHUB, OSSSYS,
+    NBIF and HDP. *)
+
 val layout : Discovery.t -> (layout, string) result
-(** [layout d] places the registers of the GPU [d] describes. [Error msg] if a
-    block a boot programs (GC, SDMA, MP0, MP1, MMHUB, OSSSYS, NBIO, HDP) is
-    missing or has a version with no table, as
+(** [layout d] places the registers of the GPU [d] describes. [Error msg] if one
+    of {!blocks} is missing or has a version with no table, as
     ["MMHUB 1.7.0 is a version this library does not boot"]. *)
 
 val gpu : layout -> Rig_amd_abi.Gpu.t

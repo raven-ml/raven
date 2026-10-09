@@ -79,6 +79,54 @@ let buses ?(machine = Machine.this) () = Gpus.buses gpus machine
 let count ?machine () = List.length (buses ?machine ())
 let device_name i = Gpus.name gpus i
 
+(* Boot reports *)
+
+type block = { name : string; version : int * int * int; instances : int list }
+type image = { file : string; found : string option }
+type report = { blocks : block list; images : image list }
+
+(* [survey ~firmware d] is the report on a GPU whose discovery table is [d] and,
+   once every image is found, what its boot loads: its registers' layout and its
+   firmware. [open_] and [report] both answer from it. *)
+let survey ~firmware (d : Discovery.t) =
+  let* layout = Regs.layout d in
+  let* names = Images.names d in
+  let looked =
+    List.map
+      (fun file ->
+        let digest = List.assoc file Images.pinned in
+        (file, Rig_pci.Firmware.find firmware file ~digest))
+      names
+  in
+  let found (i : Rig_pci.Firmware.image) = i.path in
+  let images =
+    List.map
+      (fun (file, r) -> { file; found = Option.map found (Result.to_option r) })
+      looked
+  in
+  (* [Regs.layout] found each block. *)
+  let block hw =
+    let version = Option.get (Discovery.version d hw) in
+    let instances = List.map fst (Discovery.live d hw) in
+    { name = Discovery.name hw; version; instances }
+  in
+  let report = { blocks = List.map block Regs.blocks; images } in
+  let missing (_, r) = match r with Error why -> Some why | Ok _ -> None in
+  match List.find_map missing looked with
+  | Some why -> Ok (report, Error why)
+  | None ->
+      let contents file ~digest:_ =
+        Result.map
+          (fun (i : Rig_pci.Firmware.image) -> i.contents)
+          (List.assoc file looked)
+      in
+      let* firmware = Images.load contents d in
+      Ok (report, Ok (layout, firmware))
+
+let report ~firmware table =
+  let* d = Discovery.of_string table in
+  Result.map fst (survey ~firmware d)
+
 (* Memory *)
 
 let host r =
@@ -187,12 +235,16 @@ let path g h fn ~index : Memory.region Amd.path =
 
 (* A boot that wrote to the GPU and failed stopped it, as lost, before it
    answered: the hold's stop then answers so. *)
-let boot h fn find =
+let boot h fn ~firmware =
   let lost () = Gpus.set_stop h (fun () -> `Lost) in
   let gpus =
     lazy (List.length (Gpus.buses gpus (Rig_pci.Function.machine fn)))
   in
-  match Boot.start ~gpus fn find with
+  let first d =
+    let* _, loads = survey ~firmware d in
+    loads
+  in
+  match Boot.start ~gpus fn first with
   | Ok g -> Ok g
   | Error (`Refused why) -> Error (`Refused why)
   | Error `Running -> Error `Running
@@ -206,13 +258,13 @@ let boot h fn find =
 
 (* Firmware this library did not start, as a process that died leaves, is reset
    through the hold, and the GPU booted in full. *)
-let booted h fn find =
-  match boot h fn find with
+let booted h fn ~firmware =
+  match boot h fn ~firmware with
   | Ok g -> Ok g
   | Error (`Refused why) -> Error why
   | Error `Running -> (
       let* () = Gpus.renew h in
-      match boot h fn find with
+      match boot h fn ~firmware with
       | Ok g -> Ok g
       | Error (`Refused why) -> Error why
       | Error `Running ->
@@ -227,12 +279,7 @@ let start ~firmware ~index h fn =
       ~base:(Rig_pci.Space.base Boot.space)
       (Rig_pci.Space.length Boot.space)
   in
-  let find name ~digest =
-    Result.map
-      (fun (i : Rig_pci.Firmware.image) -> i.contents)
-      (Rig_pci.Firmware.find firmware name ~digest)
-  in
-  let* g = booted h fn find in
+  let* g = booted h fn ~firmware in
   Gpus.set_stop h (fun () -> Boot.stop g);
   match Amd.make (path g h fn ~index) with
   | Ok d ->

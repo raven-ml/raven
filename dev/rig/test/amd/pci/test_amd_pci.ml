@@ -142,7 +142,6 @@ let damaged =
 
 (* Registers *)
 
-
 let layout d =
   match Regs.layout d with Ok l -> l | Error why -> failf "layout: %s" why
 
@@ -228,7 +227,6 @@ let registers =
     ]
 
 (* Page-table entries *)
-
 
 let gfx9 = (9, 4, 3)
 let gfx11 = (11, 0, 0)
@@ -419,7 +417,6 @@ let dies =
 
 (* Power manager *)
 
-
 (* The IDs of amdgpu's message headers (smu_v13_0_0_ppsmc.h,
    smu_v13_0_6_ppsmc.h, smu_v13_0_12_ppsmc.h, smu_v14_0_2_ppsmc.h) and clock
    enumerations, by the MP1 versions amdgpu drives with each. *)
@@ -470,7 +467,6 @@ let power =
     ]
 
 (* Security processor *)
-
 
 let u32 b off = Int32.to_int (String.get_int32_le b off) land 0xffff_ffff
 
@@ -540,7 +536,6 @@ let security =
     ]
 
 (* Compute queues *)
-
 
 let gfx12_queue =
   {
@@ -704,7 +699,6 @@ let queues =
 
 (* Sessions *)
 
-
 let sessions =
   let plan ?(mark = Boot.session) ?(dirty = 0) ?(fault = 0) ?(gc = (12, 0, 1))
       os =
@@ -756,7 +750,6 @@ let restoration =
         (Boot.writes ~pcie:(Some 0x80) ~rebars:[ 0x208; 0x210 ]))
 
 (* Interrupts *)
-
 
 (* An entry as the IH v6 lays it out: client in bits 0-7 of word 0, source in
    8-15, ring 16-23, VMID 24-27; PASID in bits 0-15 of word 3, node 16-23; four
@@ -839,7 +832,6 @@ let interrupts =
     ]
 
 (* Firmware *)
-
 
 (* Images built as amdgpu_ucode.h lays them out: the common header (size at 0,
    header size at 4, version at 8 and 10, ucode version at 16, ucode size at 20,
@@ -1144,6 +1136,107 @@ let firmware =
             (List.length (List.sort_uniq compare paths)));
     ]
 
+(* Boot reports *)
+
+(* The blocks a boot programs: GC, SDMA0, MP0, MP1, MMHUB, OSSSYS, NBIF and HDP
+   (soc15_hw_ip.h's IDs), with the names amdgpu gives them. *)
+let programmed =
+  [
+    (11, "GC");
+    (42, "SDMA0");
+    (255, "MP0");
+    (1, "MP1");
+    (34, "MMHUB");
+    (40, "OSSSYS");
+    (108, "NBIF");
+    (41, "HDP");
+  ]
+
+let r9700_files =
+  [
+    "amdgpu/psp_14_0_3_sos.bin";
+    "amdgpu/smu_14_0_3.bin";
+    "amdgpu/sdma_7_0_1.bin";
+    "amdgpu/gc_12_0_1_pfp.bin";
+    "amdgpu/gc_12_0_1_me.bin";
+    "amdgpu/gc_12_0_1_mec.bin";
+    "amdgpu/gc_12_0_1_imu.bin";
+    "amdgpu/gc_12_0_1_rlc.bin";
+  ]
+
+let block =
+  Testable.contramap
+    (fun (b : Rig_amd_pci.block) -> (b.name, b.version, b.instances))
+    (triple string version (list int))
+
+let image =
+  Testable.contramap
+    (fun (i : Rig_amd_pci.image) -> (i.file, i.found))
+    (pair string (option string))
+
+(* The programmed blocks, in that order, as amdgpu lists them: the version of
+   instance 0 and every instance. *)
+let listed_blocks =
+  List.map
+    (fun (hw, name) ->
+      let insts = List.filter (fun (h, _, _, _) -> h = hw) listing in
+      let version = List.hd (List.map (fun (_, _, v, _) -> v) insts) in
+      {
+        Rig_amd_pci.name;
+        version;
+        instances = List.map (fun (_, i, _, _) -> i) insts;
+      })
+    programmed
+
+let rec remove path =
+  if Sys.is_directory path then begin
+    Array.iter (fun f -> remove (Filename.concat path f)) (Sys.readdir path);
+    Sys.rmdir path
+  end
+  else Sys.remove path
+
+let temp_dir () =
+  let d = Filename.temp_dir "rig_amd_pci" "" in
+  at_exit (fun () -> if Sys.file_exists d then remove d);
+  d
+
+let reports =
+  group ~timeout:10. "boot reports"
+    [
+      cases ~name:Fun.id "the R9700's report names its blocks and images"
+        [ "r9700.bin"; "r9700_wide.bin" ] (fun name ->
+          let r = require_ok (Rig_amd_pci.report ~firmware:[] (fixture name)) in
+          equal (list block) listed_blocks r.blocks;
+          equal (list image)
+            (List.map
+               (fun file -> { Rig_amd_pci.file; found = None })
+               r9700_files)
+            r.images);
+      test "a file with another digest is not found" (fun () ->
+          let dir = temp_dir () in
+          let file = List.hd r9700_files in
+          let path = Filename.concat dir file in
+          Sys.mkdir (Filename.dirname path) 0o755;
+          Out_channel.with_open_bin path (fun oc ->
+              output_string oc "not AMD's firmware");
+          let r =
+            require_ok
+              (Rig_amd_pci.report ~firmware:[ dir ] (fixture "r9700.bin"))
+          in
+          equal (list image)
+            (List.map
+               (fun file -> { Rig_amd_pci.file; found = None })
+               r9700_files)
+            r.images);
+      test "what is no discovery table is refused" (fun () ->
+          ignore (require_error (Rig_amd_pci.report ~firmware:[] "short"));
+          let t = Bytes.of_string (fixture "r9700.bin") in
+          Bytes.set t 0 '\000';
+          ignore
+            (require_error
+               (Rig_amd_pci.report ~firmware:[] (Bytes.to_string t))));
+    ]
+
 (* Numbering *)
 
 module Tree = Rig_pci_support.Tree
@@ -1241,7 +1334,6 @@ let letting_go =
 (* Copy engines: registers in a fixture tree's register BAR, a file of zeroes
    that keeps what is written. *)
 
-
 let mi350 =
   List.fold_left
     (fun d (b, v) -> with_version d b v)
@@ -1321,8 +1413,7 @@ let flushes =
         (fun () ->
           let f = take () in
           let fault = ref None in
-          equal ~msg:"answer" bool true
-            (Boot.confirm f fault ignore ());
+          equal ~msg:"answer" bool true (Boot.confirm f fault ignore ());
           equal ~msg:"bus mastering" int bus_master (mastering f);
           equal ~msg:"fault" (option string) None !fault;
           Rig_pci.Function.release f);
@@ -1345,6 +1436,7 @@ let () =
          restoration;
          interrupts;
          firmware;
+         reports;
          numbering;
          letting_go;
          copy_engines;
