@@ -1,3 +1,15 @@
 (tests
  (names test_amdgpu)
+ (modules test_amdgpu)
  (libraries rig_amd rig_amd_abi rig_amd_amdgpu windtrap))
+
+; test_request packs the path's requests with no GPU, through the library's
+; private Request and the layouts it reads, copied here.
+
+(copy_files
+ (files ../../../lib/amd/amdgpu/{request.ml,request.mli,defs.ml}))
+
+(test
+ (name test_request)
+ (modules test_request request defs)
+ (libraries rig_amd_amdgpu windtrap))

@@ -29,35 +29,20 @@
  *    Keith Whitwell <keith@tungstengraphics.com>
  */
 
-/* An excerpt of Linux's include/uapi/drm/amdgpu_drm.h (commit
-   33970e1351f5e511029602454979f3de7e22260f): the render node's requests the
-   amdgpu path makes, its INFO query of the device and its context requests,
-   with the request numbers drm.h defines. */
-
-#ifndef RIG_AMD_AMDGPU_DRM_H
-#define RIG_AMD_AMDGPU_DRM_H
-
-#include <linux/ioctl.h>
-#include <linux/types.h>
-
-#define DRM_IOCTL_BASE 'd'
-#define DRM_IOW(nr, type) _IOW(DRM_IOCTL_BASE, nr, type)
-#define DRM_IOWR(nr, type) _IOWR(DRM_IOCTL_BASE, nr, type)
-#define DRM_COMMAND_BASE 0x40
-
 #define DRM_AMDGPU_CTX			0x02
+
 #define DRM_AMDGPU_INFO			0x05
+
 #define DRM_IOCTL_AMDGPU_CTX		DRM_IOWR(DRM_COMMAND_BASE + DRM_AMDGPU_CTX, union drm_amdgpu_ctx)
+
 #define DRM_IOCTL_AMDGPU_INFO		DRM_IOW(DRM_COMMAND_BASE + DRM_AMDGPU_INFO, struct drm_amdgpu_info)
 
 #define AMDGPU_CTX_OP_ALLOC_CTX	1
+
 #define AMDGPU_CTX_OP_FREE_CTX	2
-#define AMDGPU_CTX_OP_QUERY_STATE	3
-#define AMDGPU_CTX_OP_QUERY_STATE2	4
-#define AMDGPU_CTX_OP_GET_STABLE_PSTATE	5
+
 #define AMDGPU_CTX_OP_SET_STABLE_PSTATE	6
-#define AMDGPU_CTX_STABLE_PSTATE_FLAGS_MASK  0xf
-#define AMDGPU_CTX_STABLE_PSTATE_NONE  0
+
 #define AMDGPU_CTX_STABLE_PSTATE_STANDARD  1
 
 struct drm_amdgpu_ctx_in {
@@ -278,5 +263,3 @@ struct drm_amdgpu_info_device {
 	__u32 userq_ip_mask;
 	__u32 pad;
 };
-
-#endif
