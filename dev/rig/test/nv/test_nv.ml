@@ -50,7 +50,8 @@ let handed =
 (* Submits [ps] on [d], and is their value. *)
 let submit d ps =
   let s = Rig.Submission.make ~reads:0 ~writes:0 d ps in
-  Rig.Point.value (Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||])
+  let run = Rig.Submission.Run.make () in
+  Rig.Point.value (Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||])
 
 (* Paths *)
 
@@ -647,7 +648,8 @@ let high_word () =
   let word = require_some (P.locate (P.facts p).word).host in
   at_least int ~msg:"the word's host address" ~than:(1 lsl 40) word;
   let empty = Rig.Submission.make ~reads:0 ~writes:0 pd [||] in
-  let point = Rig.submit empty ~reads:[||] ~writes:[||] ~waits:[||] in
+  let run = Rig.Submission.Run.make () in
+  let point = Rig.submit empty ~run ~reads:[||] ~writes:[||] ~waits:[||] in
   let b = alloc t.g Pinned 16 in
   H.set64 (host b) 0;
   let l = S.launches t.g in
@@ -658,7 +660,7 @@ let high_word () =
   S.watchdog "a wait on a high host word" (fun () ->
       let v =
         Rig.Point.value
-          (Rig.submit s ~reads:[||] ~writes:[||] ~waits:[| point |])
+          (Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[| point |])
       in
       still ~msg:"the word" int (v - 1) (fun () -> N.signaled t.g) ~ms:20;
       ignore (P.run p);

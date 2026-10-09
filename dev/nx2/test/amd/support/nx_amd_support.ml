@@ -265,7 +265,8 @@ let body r n =
 
 let submit d parts =
   let s = Rig.Submission.make ~reads:0 ~writes:0 d.rig (Array.of_list parts) in
-  Rig.Point.value (Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||])
+  let run = Rig.Submission.Run.make () in
+  Rig.Point.value (Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||])
 
 (* The images and buffers a run's work uses stay alive until it is done
    (Rig.Image.entry). *)

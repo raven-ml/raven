@@ -43,10 +43,11 @@ let () =
   List.iteri (fun i v -> (int32s host_src).{i} <- v) [ 5l; 6l; 7l; 8l ];
 
   (* A's work writes [x]: [x]'s last write is A's point. *)
+  let run = Submission.Run.make () in
   let p =
     submit
       (Submission.make ~reads:0 ~writes:0 a [| copy src x |])
-      ~reads:[||] ~writes:[||] ~waits:[||]
+      ~run ~reads:[||] ~writes:[||] ~waits:[||]
   in
   Format.printf "A wrote x at %a@." Point.pp p;
 
@@ -63,7 +64,7 @@ let () =
      value. *)
   let s = Submission.make ~reads:0 ~writes:0 b [| copy x_on_b y |] in
   Format.printf "B read x at %a@." Point.pp
-    (submit s ~reads:[||] ~writes:[||] ~waits:[| p |]);
+    (submit s ~run ~reads:[||] ~writes:[||] ~waits:[| p |]);
   show "y" y;
 
   (* A host copy orders itself the same way: it waits for [y]'s last write and

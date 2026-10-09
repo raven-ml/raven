@@ -16,8 +16,9 @@ let memory name = require_ok ~pp:Format.pp_print_string (Rig.memory_device name)
 let on d b = require_some (B.borrow d b)
 let empty ?(reads = 0) ?(writes = 0) d = Sub.make ~reads ~writes d [||]
 
-let submit ?(reads = [||]) ?(writes = [||]) ?(waits = [||]) s =
-  Rig.submit s ~reads ~writes ~waits
+let submit ?(run = Sub.Run.make ()) ?(reads = [||]) ?(writes = [||])
+    ?(waits = [||]) s =
+  Rig.submit s ~run ~reads ~writes ~waits
 
 let page_bytes = 1 lsl 16
 
@@ -34,28 +35,29 @@ let word b = Support.load (B.address b)
 
 let test_values () =
   let d = memory "submit:values" in
-  let s = empty d in
-  let values = List.init 5 (fun _ -> Rig.Point.value (submit s)) in
+  let s = empty d and run = Sub.Run.make () in
+  let values = List.init 5 (fun _ -> Rig.Point.value (submit ~run s)) in
   equal (list int) [ 1; 2; 3; 4; 5 ] values;
   equal int 5 (Rig.submitted d);
   equal int 5 (Rig.signaled d);
-  equal bool true (Rig.equal d (Rig.Point.device (submit s)))
+  equal bool true (Rig.equal d (Rig.Point.device (submit ~run s)))
 
 let test_fill () =
   let d = memory "submit:fill" in
   let arg = B.create Rig.host 8 in
   Support.store (B.address arg) 0;
   let s = Sub.make ~reads:0 ~writes:0 d [| bump arg; bump arg |] in
-  ignore (submit s);
-  ignore (submit s);
+  let run = Sub.Run.make () in
+  ignore (submit ~run s);
+  ignore (submit ~run s);
   equal int 4 (word arg)
 
 (* Polled runs nothing until a wait reaches its sleep. *)
 let test_polled () =
   let d, p = P.open_ "submit:polled" in
-  let s = empty d in
-  let a = submit s in
-  let b = submit s in
+  let s = empty d and run = Sub.Run.make () in
+  let a = submit ~run s in
+  let b = submit ~run s in
   equal int 2 (P.queued p);
   equal int 0 (Rig.signaled d);
   Rig.wait d (Rig.Point.value b);
@@ -94,9 +96,9 @@ let test_hang () =
    runs in all: here 15 values reached 20 ms apart. *)
 let test_hang_moving () =
   let d, p = P.open_ ~hang_ms "submit:hang-moving" in
-  let s = empty d in
+  let s = empty d and run = Sub.Run.make () in
   for _ = 1 to 15 do
-    ignore (submit s)
+    ignore (submit ~run s)
   done;
   let last = Rig.submitted d in
   P.stall p max_int;
@@ -115,10 +117,10 @@ let test_hang_moving () =
    only while a committed value stays above the word. *)
 let test_hang_idle () =
   let d, _ = P.open_ ~hang_ms "submit:hang-idle" in
-  let s = empty d in
-  Rig.wait d (Rig.Point.value (submit s));
+  let s = empty d and run = Sub.Run.make () in
+  Rig.wait d (Rig.Point.value (submit ~run s));
   Thread.delay (3. *. Float.of_int hang_ms /. 1000.);
-  Rig.wait d (Rig.Point.value (submit s));
+  Rig.wait d (Rig.Point.value (submit ~run s));
   equal (option string) None (Rig.lost d)
 
 (* A device whose queue waits on a value of a device lost to its bound is lost
@@ -214,10 +216,11 @@ let test_cleared_on_raise () =
   P.fail pp;
   (try ignore (submit (empty producer)) with Rig.Lost _ -> ());
   let s = empty ~reads:1 d and b = on d (B.create Rig.host 8) in
+  let run = Sub.Run.make () in
   raises_match
     (function Rig.Lost _ -> true | _ -> false)
-    (fun () -> submit s ~reads:[| b |] ~waits:[| point |]);
-  equal int 1 (Rig.Point.value (submit s ~reads:[| b |]))
+    (fun () -> submit ~run s ~reads:[| b |] ~waits:[| point |]);
+  equal int 1 (Rig.Point.value (submit ~run s ~reads:[| b |]))
 
 (* A run's buffer whose memory was consumed through another buffer refuses the
    submit. *)
@@ -257,12 +260,12 @@ let test_part_points () =
   let copy =
     { Sub.queue = "COPY:0"; after = [||]; work = Sub.Copy { src; dst } }
   in
-  let s = Sub.make ~reads:0 ~writes:0 d [| copy |] in
+  let s = Sub.make ~reads:0 ~writes:0 d [| copy |] and run = Sub.Run.make () in
   ignore (submit (empty ~writes:1 e) ~writes:[| on e src |]);
-  ignore (submit s);
+  ignore (submit ~run s);
   equal ~msg:"after a write of the source" int 0 (P.queued pe);
   ignore (submit (empty ~reads:1 e) ~reads:[| on e dst |]);
-  ignore (submit s);
+  ignore (submit ~run s);
   equal ~msg:"after a read of the destination" int 0 (P.queued pe)
 
 (* A run's buffers stay reachable until their stamps are raised: a buffer only
@@ -415,13 +418,18 @@ let handles_case =
 
 let handles_device = lazy (P.open_ "submit:handles")
 
+(* One run for every case's submits: each follows a submit that named other
+   regions, whose names the run kept. *)
+let handles_run = Sub.Run.make ()
+
 let handles_law c =
   let d, p = Lazy.force handles_device in
   let bs = Array.init c.n (fun _ -> B.create d 8) in
   let reads = List.length c.reads and writes = List.length c.writes in
   let s = Sub.make ~reads ~writes d [| bump (B.create Rig.host 8) |] in
   let pick ks = Array.of_list (List.map (fun k -> bs.(k)) ks) in
-  ignore (submit s ~reads:(pick c.reads) ~writes:(pick c.writes));
+  ignore
+    (submit ~run:handles_run s ~reads:(pick c.reads) ~writes:(pick c.writes));
   let named = List.sort_uniq Int.compare (c.reads @ c.writes) in
   cover "a buffer named twice"
     (List.length named < List.length c.reads + List.length c.writes);
@@ -463,7 +471,7 @@ let rerun_law c =
   let named run =
     let run = Array.of_list (List.map (fun k -> bs.(k)) run) in
     ignore
-      (submit s ~reads:(Array.sub run 0 c.reads)
+      (submit ~run:handles_run s ~reads:(Array.sub run 0 c.reads)
          ~writes:(Array.sub run c.reads c.writes));
     List.sort Int.compare (P.last_handles p)
   in
@@ -484,10 +492,57 @@ let test_room () =
   let d, p = P.open_ ~capacity:1 "submit:room" in
   let arg = B.create Rig.host 8 in
   let s = Sub.make ~reads:0 ~writes:0 d [| bump arg |] in
-  ignore (submit s);
-  ignore (submit s);
+  let run = Sub.Run.make () in
+  ignore (submit ~run s);
+  ignore (submit ~run s);
   equal int 1 (P.queued p);
   equal int 1 (Rig.signaled d)
+
+(* Runs *)
+
+(* While a submit of a submission waits on the host for a producer, a submit of
+   the same submission on another domain, with its own run, completes. *)
+let test_run_beside_wait () =
+  let producer, pp = P.open_ "submit:beside-producer" in
+  let d, _ = P.open_ "submit:beside" in
+  let s = empty d and point = submit (empty producer) in
+  P.gate pp;
+  let waiting =
+    Domain.spawn (fun () -> Rig.Point.value (submit s ~waits:[| point |]))
+  in
+  Support.await "a sleep at the gate" (fun () -> P.sleepers pp = 1);
+  equal ~msg:"the submit beside the wait" int 1 (Rig.Point.value (submit s));
+  P.open_gate pp;
+  equal ~msg:"the waiting submit" int 2 (Domain.join waiting)
+
+(* A submit made inside another's wait, as a signal handler runs, completes
+   with its own run, and raises with the run the waiting submit holds. *)
+let test_run_reentrant () =
+  let producer, pp = P.open_ "submit:reentrant-producer" in
+  let d, _ = P.open_ "submit:reentrant" in
+  let s = empty d and point = submit (empty producer) in
+  let held = Sub.Run.make () in
+  let inner = ref None and refused = ref None in
+  let handle _ =
+    inner := Some (Rig.Point.value (submit s));
+    refused :=
+      Some
+        (match submit ~run:held s with
+        | _ -> "submitted"
+        | exception Invalid_argument why -> why)
+  in
+  P.interrupt pp;
+  let before = Sys.signal Sys.sigint (Sys.Signal_handle handle) in
+  let outer =
+    Fun.protect
+      ~finally:(fun () -> Sys.set_signal Sys.sigint before)
+      (fun () -> submit ~run:held s ~waits:[| point |])
+  in
+  equal ~msg:"the submit inside the wait" (option int) (Some 1) !inner;
+  equal ~msg:"the waiting submit" int 2 (Rig.Point.value outer);
+  is_some ~msg:"a submit with the held run raised" !refused;
+  contains ~msg:"its reason" ~sub:"another submit is using the run"
+    (Option.get !refused)
 
 (* A copy on a device that runs no copies is refused where the caller can act:
    when the submission is made. *)
@@ -602,7 +657,14 @@ type watched = {
 }
 
 type device = { d : Rig.t; p : P.t; mutable watched : watched list }
-type submission = { dev : device; mutable s : Sub.t option; parts : watched }
+
+type submission = {
+  dev : device;
+  mutable s : Sub.t option;
+  run : Sub.Run.t;
+  parts : watched;
+}
+
 type device_model = { mutable value : int }
 type submission_model = { model : device_model; mutable live : bool }
 
@@ -646,14 +708,14 @@ let make t =
     { Sub.queue = "COPY:0"; after = [||]; work = Sub.Copy { src; dst } }
   in
   let s = Sub.make ~reads:0 ~writes:1 t.d [| copy |] in
-  { dev = t; s = Some s; parts }
+  { dev = t; s = Some s; run = Sub.Run.make (); parts }
 
 let submit_sub sub =
   let t = sub.dev in
   let s = Option.get sub.s in
   let out = B.create t.d 256 in
   let at = B.address out in
-  let v = Rig.Point.value (submit s ~writes:[| out |]) in
+  let v = Rig.Point.value (submit ~run:sub.run s ~writes:[| out |]) in
   sub.parts.last <- v;
   ignore (watch t ~dropped:(frees t) ~last:v [ at ]);
   v
@@ -708,10 +770,12 @@ let lifetime =
 let test_allocation () =
   let d = memory "submit:words" in
   let s = empty ~reads:1 d and reads = [| on d (B.create Rig.host 8) |] in
-  ignore (Rig.submit s ~reads ~writes:[||] ~waits:[||]);
+  let run = Sub.Run.make () in
+  ignore (Rig.submit s ~run ~reads ~writes:[||] ~waits:[||]);
   let before = Gc.minor_words () in
   for _ = 1 to 100 do
-    ignore (Sys.opaque_identity (Rig.submit s ~reads ~writes:[||] ~waits:[||]))
+    ignore
+      (Sys.opaque_identity (Rig.submit s ~run ~reads ~writes:[||] ~waits:[||]))
   done;
   let words = int_of_float (Gc.minor_words () -. before) / 100 in
   equal int 0 words
@@ -762,6 +826,9 @@ let shared =
     ~pp:(fun ppf r -> Format.fprintf ppf "values %d" r.values)
     ~release:release_shared "s"
 
+(* Each domain submits with its own run. *)
+let shared_run = Domain.DLS.new_key Sub.Run.make
+
 let judge_submit r = function
   | Ok v ->
       equal ~msg:"value" int (r.values + 1) v;
@@ -777,7 +844,9 @@ let shared_commands =
     command "submit"
       (shared ^-> judges int)
       judge_submit
-      (fun t -> Rig.Point.value (submit t.sub) - t.base);
+      (fun t ->
+        let run = Domain.DLS.get shared_run in
+        Rig.Point.value (submit ~run t.sub) - t.base);
   ]
 
 let tests =
@@ -786,7 +855,7 @@ let tests =
       [
         test "values follow one another from 1" test_values;
         test "a submission's fills run with its value" test_fill;
-        stateful ~domains:2 "two domains submit one submission in turn"
+        stateful ~domains:2 "two domains submit one submission at once"
           shared_commands;
         test "a device's work completes once a wait reaches it" test_polled;
         test "a wait names a submitted value" test_wait_beyond;
@@ -801,6 +870,13 @@ let tests =
           test_hang_spread;
         test "a queue waiting on longer work elsewhere loses nothing"
           test_hang_in_queue;
+      ];
+    group ~timeout "runs"
+      [
+        test "a submit beside another's wait completes with its own run"
+          test_run_beside_wait;
+        test "a submit inside another's wait completes with its own run"
+          test_run_reentrant;
       ];
     group ~timeout "refusals"
       [

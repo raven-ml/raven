@@ -124,7 +124,8 @@ module Make (G : Gpu) = struct
 
   let submit t ps =
     let s = Rig.Submission.make ~reads:0 ~writes:0 t.d ps in
-    Rig.Point.value (Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||])
+    let run = Rig.Submission.Run.make () in
+    Rig.Point.value (Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||])
 
   let wait t v = Rig.wait t.d v
 end

@@ -89,7 +89,8 @@ let run g (cap : Abi.Capability.t) =
     { Submission.queue = "COMPUTE:0"; after = [||]; work = Words words }
   in
   let s = Submission.make ~hold ~reads:2 ~writes:1 g [| part |] in
-  let pt = submit s ~reads:[| a; b |] ~writes:[| out |] ~waits:[||] in
+  let run = Submission.Run.make () in
+  let pt = submit s ~run ~reads:[| a; b |] ~writes:[| out |] ~waits:[||] in
   Format.printf "%s (%s) ran add on %d floats at %a@." (name g) (arch g) n
     Point.pp pt;
 

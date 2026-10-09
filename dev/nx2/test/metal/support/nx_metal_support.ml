@@ -134,7 +134,7 @@ let seq rs =
     holds = List.concat_map (fun r -> r.holds) rs;
   }
 
-let prepare t run =
+let prepare t r =
   (* A fill resolves nothing: each pipeline is made before the submission. *)
   let entry k =
     let image =
@@ -144,8 +144,8 @@ let prepare t run =
       t.pipelines.{k} <-
         Int64.of_int (Option.get (Rig.Image.entry image kernels.(k)))
   in
-  List.iter entry run.kernels;
-  let a = arg t.split t.pipelines run.records in
+  List.iter entry r.kernels;
+  let a = arg t.split t.pipelines r.records in
   let work =
     Rig.Submission.Fill
       {
@@ -159,10 +159,11 @@ let prepare t run =
     Rig.Submission.make ~reads:0 ~writes:0 t.rig
       [| { queue = "COMPUTE:0"; after = [||]; work } |]
   in
+  let run = Rig.Submission.Run.make () in
   fun () ->
-    let p = Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||] in
+    let p = Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||] in
     Rig.wait t.rig (Rig.Point.value p);
-    ignore (Sys.opaque_identity run.holds);
+    ignore (Sys.opaque_identity r.holds);
     span a
 
 let run t r = prepare t r ()

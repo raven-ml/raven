@@ -8,7 +8,7 @@ module P = Rig_support.Polled
 module Support = Rig_support
 
 let submit ?(reads = [||]) ?(writes = [||]) ?(waits = [||]) s =
-  Rig.submit s ~reads ~writes ~waits
+  Rig.submit s ~run:(Rig.Submission.Run.make ()) ~reads ~writes ~waits
 
 let timeout = 60.
 let device = Testable.make ~pp:Rig.pp ~equal:Rig.equal

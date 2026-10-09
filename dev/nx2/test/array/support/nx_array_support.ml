@@ -188,4 +188,5 @@ let write b s =
     Rig.Submission.make ~reads:0 ~writes:1 (Rig.Buffer.device b)
       [| { queue = "COMPUTE:0"; after = [||]; work } |]
   in
-  ignore (Rig.submit s ~reads:[||] ~writes:[| b |] ~waits:[||])
+  let run = Rig.Submission.Run.make () in
+  ignore (Rig.submit s ~run ~reads:[||] ~writes:[| b |] ~waits:[||])

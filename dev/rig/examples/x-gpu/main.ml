@@ -102,7 +102,8 @@ let () =
       (* Work runs after [submit] returns: right after it, the GPU has not
          always reached the value it assigned. [wait] returns once it has. *)
       let s = Submission.make ~reads:0 ~writes:0 g [||] in
-      let p = submit s ~reads:[||] ~writes:[||] ~waits:[||] in
+      let run = Submission.Run.make () in
+      let p = submit s ~run ~reads:[||] ~writes:[||] ~waits:[||] in
       Format.printf "submitted %a; signaled %d on return@." Point.pp p
         (signaled g);
       wait g (Point.value p);

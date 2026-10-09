@@ -13,7 +13,7 @@ module P = Rig_support.Polled
 module Support = Rig_support
 
 let submit ?(reads = [||]) ?(writes = [||]) ?(waits = [||]) s =
-  Rig.submit s ~reads ~writes ~waits
+  Rig.submit s ~run:(Sub.Run.make ()) ~reads ~writes ~waits
 
 let timeout = 60.
 let empty d = Sub.make ~reads:0 ~writes:0 d [||]

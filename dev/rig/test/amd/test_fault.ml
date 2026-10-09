@@ -92,7 +92,10 @@ let after () =
     Rig.Submission.make ~reads:0 ~writes:0 c
       [| copy ~dst src; copy ~dst:back dst |]
   in
-  let v = Rig.Point.value (Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||]) in
+  let run = Rig.Submission.Run.make () in
+  let v =
+    Rig.Point.value (Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||])
+  in
   let rec reached n =
     A.signaled g >= v
     || n > 0
@@ -123,7 +126,7 @@ let unread () =
   ignore
     (Rig.submit
        (Rig.Submission.make ~reads:0 ~writes:0 c [| dispatch g co p "wild" |])
-       ~reads:[||] ~writes:[||] ~waits:[||]);
+       ~run:(Rig.Submission.Run.make ()) ~reads:[||] ~writes:[||] ~waits:[||]);
   let t0 = Sys.time () in
   while Sys.time () -. t0 < 0.5 do
     ()

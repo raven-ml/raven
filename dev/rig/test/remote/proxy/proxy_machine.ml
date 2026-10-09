@@ -370,7 +370,8 @@ let copy_submission d ~src ~dst =
   Sub.make ~reads:0 ~writes:0 d
     [| { Sub.queue = "COPY:0"; after = [||]; work = Sub.Copy { src; dst } } |]
 
-let submit ?(waits = [||]) s = Rig.submit s ~reads:[||] ~writes:[||] ~waits
+let submit ?(waits = [||]) s =
+  Rig.submit s ~run:(Sub.Run.make ()) ~reads:[||] ~writes:[||] ~waits
 
 let lost_w =
   Testable.structural ~pp:(fun ppf -> function

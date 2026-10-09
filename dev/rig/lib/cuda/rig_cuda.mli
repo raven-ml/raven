@@ -32,8 +32,9 @@
       }
     in
     let s = Rig.Submission.make ~reads:0 ~writes:0 g [| copy |] in
-    Rig.wait g
-      (Rig.Point.value (Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||]))
+    let run = Rig.Submission.Run.make () in
+    let p = Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||] in
+    Rig.wait g (Rig.Point.value p)
     ]}
 
     {b The CUDA library} ([libcuda]) is loaded at the first call of {!count} or

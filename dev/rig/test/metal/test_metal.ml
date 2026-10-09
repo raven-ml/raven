@@ -178,7 +178,8 @@ let pipeline t f = require_some (Rig_metal.entry t.fill f)
 (* Submits [parts] as [t]'s next value, which it is. *)
 let submit_parts t parts =
   let s = Rig.Submission.make ~reads:0 ~writes:0 t.d parts in
-  Rig.Point.value (Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||])
+  let run = Rig.Submission.Run.make () in
+  Rig.Point.value (Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||])
 
 let submit t fills = submit_parts t (Array.map S.part fills)
 let wait t v = Rig.wait t.d v
@@ -868,7 +869,8 @@ let bump t b =
       ~threads:256
   in
   let s = Rig.Submission.make ~reads:0 ~writes:1 t.d [| S.part f |] in
-  ignore (Rig.submit s ~reads:[||] ~writes:[| b |] ~waits:[||]);
+  let run = Rig.Submission.Run.make () in
+  ignore (Rig.submit s ~run ~reads:[||] ~writes:[| b |] ~waits:[||]);
   B.wait b Read;
   Rig_metal.free t.g args
 

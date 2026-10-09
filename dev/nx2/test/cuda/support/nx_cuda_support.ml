@@ -203,7 +203,9 @@ let submit ?(wait = true) g parts runs ~late =
   let s =
     Rig.Submission.make ~reads:0 ~writes:0 g.device (Array.of_list parts)
   in
-  let v = Rig.Point.value (Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||]) in
+  let run = Rig.Submission.Run.make () in
+  let p = Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||] in
+  let v = Rig.Point.value p in
   g.page.{0} <- Int64.succ g.page.{0};
   if wait then begin
     Rig.wait g.device v;

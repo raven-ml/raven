@@ -123,17 +123,29 @@ static inline struct rig_stamps *held(struct rig_stamps *s) {
   return hold;
 }
 
-/* A slot of a prepared submission: a memory's stamps, NULL while unset,
-   the handle by which the device names it, and the device's use word in
-   the stamps and, for memory in a hold, in the hold's, reserved at each
-   submit. A slot's handle outlives its
-   clearing, so a submit whose slots name the handles of the last one
+/* The device's use words a submit reserves for one memory: in its stamps
+   and, for memory in a hold, in the hold's, NULL for memory in no hold. */
+struct rig_uses {
+  _Atomic uint64_t *use;
+  _Atomic uint64_t *held;
+};
+
+/* A buffer a submission's parts name: its memory's stamps, the handle by
+   which the device names it, and whether the part writes it. */
+struct rig_fixed {
+  struct rig_stamps *stamps;
+  uint64_t handle;
+  int write;
+};
+
+/* A buffer of a run: its memory's stamps, NULL while unset, the handle by
+   which the device names it, and its use words. A slot's handle outlives
+   its clearing, so a submit whose slots name the handles of the last one
    collects none. */
 struct rig_slot {
   struct rig_stamps *stamps;
   uint64_t handle;
-  _Atomic uint64_t *use;
-  _Atomic uint64_t *held_use; /* NULL for memory in no hold */
+  struct rig_uses uses;
 };
 
 /* A handle a collect added, by hash: an entry of an earlier epoch is
@@ -142,24 +154,29 @@ struct rig_seen {
   uint64_t handle, epoch;
 };
 
-/* The prepared form of a submission on one device. */
+/* The prepared form of a submission on one device, fixed when it is made:
+   any number of submits read it at once. */
 struct rig_sub {
-  /* Held by a submit from its first touch of what follows to its last:
-     two domains' submits take turns. A free guard is taken by one
-     compare-and-set; a submit that finds it held waits on [freed]. */
-  _Atomic int busy, waiting;
-  rig_mutex guard;
-  rig_cond freed;
+  uint64_t id; /* unique for the life of the process */
   struct rig_device *dev;
   int nparts;
   struct rig_part *parts;
   int *after; /* every part's [after], one after the other */
   int nfixed; /* the buffers the parts name */
-  struct rig_slot *fixed;
-  unsigned char *fixed_write;
+  struct rig_fixed *fixed;
   int nreads, nwrites; /* a run's buffers: those it reads, then writes */
+};
+
+/* The state of one submit: what it collects, the handles it names and
+   what it answers, in the caller's run, which one submit uses at a time.
+   Its arrays grow to the largest submission it served. */
+struct rig_run {
+  _Atomic int busy; /* taken by a submit's compare-and-set */
+  int cfixed, cslots;
+  int nslots; /* the slots of the submission it served last */
+  struct rig_uses *fixed; /* the uses of the submission's fixed buffers */
   struct rig_slot *slots;
-  struct rig_stamps *hold; /* a run's hold's stamps, NULL for none */
+  struct rig_stamps *hold; /* the hold's stamps, NULL for none */
   _Atomic uint64_t *hold_use;
   /* Built for one submit, cleared after it. */
   int npoints, cpoints;
@@ -167,9 +184,11 @@ struct rig_sub {
   int nwaits, cwaits;
   struct rig_wait *waits;
   int *producers;
-  /* Built by a collect once a slot's handle changed, kept after. */
+  /* Built by a collect once a slot's handle or the submission changed,
+     kept after. */
+  uint64_t sub; /* the [id] of the submission the handles are of */
   int handles_stale;
-  int nhandles; /* at most one per fixed buffer and slot */
+  int nhandles, chandles; /* at most one per fixed buffer and slot */
   uint64_t *handles;
   int seen_bits; /* [seen] has 2^seen_bits entries, twice the handles */
   struct rig_seen *seen;
@@ -194,11 +213,7 @@ size_t rig_page_bytes(void);
    the time base of Metal's command buffer times. */
 uint64_t rig_now_ns(void);
 
-/* Raises the stamps [s]'s work names to [p]. */
-void rig_sub_raise(struct rig_sub *s, uint64_t p);
-
-/* Makes and unmakes the guard of a submission no submit holds. */
-void rig_guard_init(struct rig_sub *s);
-void rig_guard_destroy(struct rig_sub *s);
+/* Raises the stamps [s]'s work names in the run [r] to [p]. */
+void rig_sub_raise(const struct rig_sub *s, struct rig_run *r, uint64_t p);
 
 #endif

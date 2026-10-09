@@ -14,7 +14,9 @@ let timeout = 60.
 let lost d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
 let count call p = List.length (List.filter (( = ) call) (P.log p))
 let empty d = Sub.make ~reads:0 ~writes:0 d [||]
-let submit s = Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||]
+
+let submit s =
+  Rig.submit s ~run:(Sub.Run.make ()) ~reads:[||] ~writes:[||] ~waits:[||]
 
 (* A drain on [d]: what {!Buffer.create} does first. *)
 let drain d = ignore (Sys.opaque_identity (B.create d 8))
@@ -169,7 +171,8 @@ let test_named () =
     (Support.Reader.claim m B.Read);
   equal ~msg:"the hold's work, unrun" int 1 (P.queued pe);
   let s = Sub.make ~hold:h' ~reads:1 ~writes:1 d [||] in
-  ignore (Rig.submit s ~reads:[| m |] ~writes:[| m' |] ~waits:[||]);
+  let run = Sub.Run.make () in
+  ignore (Rig.submit s ~run ~reads:[| m |] ~writes:[| m' |] ~waits:[||]);
   at_least ~msg:"a read follows the hold's work" int ~than:v (Rig.signaled e);
   let copy = Sub.Copy { src = m'; dst = m } in
   let part = { Sub.queue = "COPY:0"; after = [||]; work = copy } in
@@ -200,8 +203,10 @@ let test_follows_hold () =
   let h = H.make [ m; m' ] in
   let w = require_some (B.borrow e m') in
   let writes = Sub.make ~reads:0 ~writes:1 e [||] in
+  let run = Sub.Run.make () in
   let v =
-    Rig.Point.value (Rig.submit writes ~reads:[||] ~writes:[| w |] ~waits:[||])
+    Rig.Point.value
+      (Rig.submit writes ~run ~reads:[||] ~writes:[| w |] ~waits:[||])
   in
   equal ~msg:"the write, unrun" int 1 (P.queued pe);
   ignore (submit (Sub.make ~hold:h ~reads:0 ~writes:0 d [||]));

@@ -44,20 +44,49 @@ external sub_copy_local : c -> int -> int -> unit = "caml_rig_sub_copy_local"
 external sub_fixed : c -> int -> int -> nativeint -> bool -> unit
   = "caml_rig_sub_fixed"
 
-external sub_slot : c -> int -> int -> nativeint -> unit = "caml_rig_sub_slot"
+external ensure_record : int -> int -> unit = "caml_rig_ensure_record"
+
+(* Runs *)
+
+(* A run's state, C memory a custom block holds and frees once collected. *)
+type run
+
+external run_new : unit -> run = "caml_rig_run_new"
+external run_take : run -> c -> int = "caml_rig_run_take" [@@noalloc]
+external run_fit : run -> c -> unit = "caml_rig_run_fit"
+external run_give : run -> unit = "caml_rig_run_give" [@@noalloc]
+
+(* Takes [run] for a submit of [c], fitting it to [c] unless it served [c]
+   last: whether no other submit held it. *)
+let take run c =
+  match run_take run c with
+  | 0 -> false
+  | 1 -> true
+  | _ ->
+      run_fit run c;
+      true
+
+external run_slot : run -> int -> int -> nativeint -> unit = "caml_rig_run_slot"
 [@@noalloc]
 
-external sub_collect : c -> int array -> int -> int = "caml_rig_sub_collect"
-external sub_point : c -> int -> int = "caml_rig_sub_point" [@@noalloc]
-external sub_wait : c -> int -> int -> int -> int -> unit = "caml_rig_sub_wait"
-external sub_clear : c -> unit = "caml_rig_sub_clear" [@@noalloc]
-external sub_value : c -> int = "caml_rig_sub_value" [@@noalloc]
-external sub_no_room_at : c -> int = "caml_rig_sub_no_room_at" [@@noalloc]
-external sub_producer : c -> int = "caml_rig_sub_producer" [@@noalloc]
-external c_submit : c -> int = "caml_rig_submit"
-external sub_take : c -> unit = "caml_rig_sub_take"
-external sub_give : c -> unit = "caml_rig_sub_give" [@@noalloc]
-external ensure_record : int -> int -> unit = "caml_rig_ensure_record"
+external run_collect : c -> run -> int array -> int -> int
+  = "caml_rig_run_collect"
+
+external run_point : run -> int -> int = "caml_rig_run_point" [@@noalloc]
+
+external run_wait : run -> int -> int -> int -> int -> unit
+  = "caml_rig_run_wait"
+
+external run_value : run -> int = "caml_rig_run_value" [@@noalloc]
+external run_no_room_at : run -> int = "caml_rig_run_no_room_at" [@@noalloc]
+external run_producer : run -> int = "caml_rig_run_producer" [@@noalloc]
+external c_submit : c -> run -> int = "caml_rig_submit"
+
+module Run = struct
+  type t = run
+
+  let make = run_new
+end
 
 type t = {
   dev : device;
@@ -294,10 +323,10 @@ let check_counts s reads writes =
 
 (* Refuses [b], element [i] of the run's array of [access] ([reads] or
    [writes]), unless it is live, on [s]'s device and, written, of memory that
-   admits writes; and hands its stamps and handle to the C slot [k]. Memory of
-   another device that is lost raises its loss; [s]'s device's own loss is the
-   hand-over's. *)
-let name_one s (access : access) i k b =
+   admits writes; and hands its stamps and handle to the run's slot [k].
+   Memory of another device that is lost raises its loss; [s]'s device's own
+   loss is the hand-over's. *)
+let name_one s run (access : access) i k b =
   let what = match access with Read -> "reads" | Read_write -> "writes" in
   if not (Buffer.is_live b) then
     invalid_argf "Rig.%s: %s.(%d) is dead: %s" fn what i b.mem.claim.why;
@@ -311,28 +340,28 @@ let name_one s (access : access) i k b =
   let e = m.entry in
   if access = Read_write && e.access = Read then
     invalid_argf "Rig.%s: %s.(%d)'s memory admits only reads" fn what i;
-  sub_slot s.c k e.stamps b.mem.handle
+  run_slot run k e.stamps b.mem.handle
 
 (* Waits on the host for the foreign points [s]'s device cannot wait for in its
-   queue, or that its queue has no room for, adds the others to [s]'s waits
+   queue, or that its queue has no room for, adds the others to the run's waits
    after committing their producers' work, and is their number. *)
-let rec wait_points s n i count =
+let rec wait_points s run n i count =
   if i = n then count
   else
-    let p = sub_point s.c i in
+    let p = run_point run i in
     let producer = Dev.of_index (Point.index p) and v = Point.value p in
     if Dev.is_lost producer then begin
       Dev.check p;
-      wait_points s n (i + 1) count
+      wait_points s run n (i + 1) count
     end
-    else if Dev.is_done p then wait_points s n (i + 1) count
+    else if Dev.is_done p then wait_points s run n (i + 1) count
     else
       let way =
         if count >= s.dev.waits.most then host_wait else pair s.dev producer
       in
       if way = host_wait then begin
         Dev.wait producer v;
-        wait_points s n (i + 1) count
+        wait_points s run n (i + 1) count
       end
       else begin
         Dev.commit producer v;
@@ -341,25 +370,25 @@ let rec wait_points s n i count =
           | Object _ -> rig_object
           | _ -> rig_word
         in
-        sub_wait s.c producer.index way v kind;
-        wait_points s n (i + 1) (count + 1)
+        run_wait run producer.index way v kind;
+        wait_points s run n (i + 1) (count + 1)
       end
 
-let rec hand_over s nwaits =
+let rec hand_over s run nwaits =
   let d = s.dev in
-  let r = c_submit s.c in
+  let r = c_submit s.c run in
   Dev.run_owed ();
-  if r = Dev.Answer.ok then Point.make d.index (sub_value s.c)
-  else if r = Dev.Answer.busy then hand_over s nwaits
+  if r = Dev.Answer.ok then Point.make d.index (run_value run)
+  else if r = Dev.Answer.busy then hand_over s run nwaits
   else if r = Dev.Answer.no_room then begin
-    let at = sub_no_room_at s.c in
+    let at = run_no_room_at run in
     let w = Dev.word d in
     if w < at then Dev.wait d (w + 1);
-    hand_over s nwaits
+    hand_over s run nwaits
   end
   else if r = Dev.Answer.need_record then begin
     ensure_record d.c nwaits;
-    hand_over s nwaits
+    hand_over s run nwaits
   end
   else if r = Dev.Answer.never then
     invalid_argf
@@ -367,21 +396,21 @@ let rec hand_over s nwaits =
        not run"
       fn d.name
   else if r = Dev.Answer.producer_lost then
-    Dev.raise_lost (Dev.of_index (sub_producer s.c))
+    Dev.raise_lost (Dev.of_index (run_producer run))
   else Dev.raise_lost d
 
 (* Names the run's [k]th buffer, a read below [s.nreads], else a write: the
    buffer. *)
-let name s reads writes k =
+let name s run reads writes k =
   let nr = s.nreads in
   if k < nr then begin
     let b = Array.unsafe_get reads k in
-    name_one s Read k k b;
+    name_one s run Read k k b;
     b
   end
   else begin
     let b = Array.unsafe_get writes (k - nr) in
-    name_one s Read_write (k - nr) k b;
+    name_one s run Read_write (k - nr) k b;
     b
   end
 
@@ -390,45 +419,58 @@ let name s reads writes k =
    hand-over returned: the C slots hold its stamps without a reference, and the
    caller's array may change meanwhile. A frame keeps four buffers, so the
    rooting costs a call per four. *)
-let rec run s reads writes waits k =
+let rec go s run reads writes waits k =
   let n = s.nreads + s.nwrites in
   if k >= n then
     let hold = match s.hold with Some h -> h.hstamps | None -> 0 in
-    hand_over s (wait_points s (sub_collect s.c waits hold) 0 0)
+    hand_over s run (wait_points s run (run_collect s.c run waits hold) 0 0)
   else
-    let b0 = name s reads writes k in
-    let b1 = if k + 1 < n then name s reads writes (k + 1) else b0 in
-    let b2 = if k + 2 < n then name s reads writes (k + 2) else b0 in
-    let b3 = if k + 3 < n then name s reads writes (k + 3) else b0 in
-    let p = run s reads writes waits (k + 4) in
+    let b0 = name s run reads writes k in
+    let b1 = if k + 1 < n then name s run reads writes (k + 1) else b0 in
+    let b2 = if k + 2 < n then name s run reads writes (k + 2) else b0 in
+    let b3 = if k + 3 < n then name s run reads writes (k + 3) else b0 in
+    let p = go s run reads writes waits (k + 4) in
     ignore (Sys.opaque_identity b0);
     ignore (Sys.opaque_identity b1);
     ignore (Sys.opaque_identity b2);
     ignore (Sys.opaque_identity b3);
     p
 
-(* A forked child never waits on a guard its parent's thread may hold: every
-   submission made before the fork is on a device the child inherited, which is
-   lost. *)
-let submit s ~reads ~writes ~waits =
-  if Dev.is_lost s.dev then Dev.raise_lost s.dev;
-  check_counts s reads writes;
-  sub_take s.c;
+(* Submits [s] with [run], which the caller took. [s] stays reachable until
+   the run is given back: the C submit reads it with the runtime released. *)
+let taken s run reads writes waits =
   match
     check_parts s;
-    run s reads writes waits 0
+    go s run reads writes waits 0
   with
   | p ->
-      sub_clear s.c;
-      sub_give s.c;
+      run_give run;
+      ignore (Sys.opaque_identity s);
       p
   | exception e ->
-      sub_clear s.c;
-      sub_give s.c;
+      run_give run;
       raise e
+
+let submit s ~run ~reads ~writes ~waits =
+  if Dev.is_lost s.dev then Dev.raise_lost s.dev;
+  check_counts s reads writes;
+  if not (take run s.c) then
+    invalid_argf "Rig.%s: another submit is using the run" fn;
+  taken s run reads writes waits
+
+(* Each domain's run for copies; one another thread of the domain holds is
+   replaced by a fresh one for the copy. *)
+let copy_runs = Domain.DLS.new_key run_new
 
 let copy d queue ~src ~dst =
   let part = { queue; after = [||]; work = Copy { src; dst } } in
-  submit
-    (build None ~reads:0 ~writes:0 d [| part |])
-    ~reads:[||] ~writes:[||] ~waits:[||]
+  let s = build None ~reads:0 ~writes:0 d [| part |] in
+  let run = Domain.DLS.get copy_runs in
+  let run =
+    if take run s.c then run
+    else
+      let fresh = run_new () in
+      ignore (take fresh s.c : bool);
+      fresh
+  in
+  taken s run [||] [||] [||]

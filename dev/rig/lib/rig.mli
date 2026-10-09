@@ -701,8 +701,11 @@ end
     device's queues ({!queues}), and the parts each waits for within the
     submission. It is made once and run many times. What changes from one run to
     the next, the buffers its work reads and writes and the points it waits for,
-    are arguments of {!submit}, which keeps none of them once it returns. Its
-    prepared form lives outside the OCaml heap, so a submit allocates nothing.
+    are arguments of {!submit}, which keeps none of them once it returns, with a
+    {!Submission.Run}, the caller's storage for one submit at a time. A
+    submission holds nothing of a run, so any number of threads submit it at
+    once, each with its own run. Its prepared form and a run live outside the
+    OCaml heap, so a submit allocates nothing.
 
     A submission keeps every buffer its parts name reachable while it is
     reachable itself, so their memory is never freed between {!make} and a
@@ -763,23 +766,38 @@ module Submission : sig
       queue, {!queues}), or a part's queue does not run its work; and {!Lost}
       if [d] is lost. Parts that never fit [d]'s queues are refused at
       {!submit}. *)
+
+  (** Runs. *)
+  module Run : sig
+    type t
+    (** The type for runs: the storage of one submit at a time, which holds
+        what rig records while the submit runs, such as the points it
+        follows, the regions its work names and its answer. *)
+
+    val make : unit -> t
+    (** [make ()] is a run. It grows to the largest submission it serves,
+        outside the OCaml heap. *)
+  end
 end
 
 val submit :
   Submission.t ->
+  run:Submission.Run.t ->
   reads:Buffer.t array ->
   writes:Buffer.t array ->
   waits:Point.t array ->
   Point.t
-(** [submit s ~reads ~writes ~waits] runs [s]'s work once, reading the buffers
-    of [reads] and writing those of [writes] after the points of [waits]. It
-    hands the work to [s]'s device [d] as the value [v] it assigns, and is the
-    point [(d, v)]. A buffer may appear more than once, in either array. The
-    buffers are on [d]: [d]'s work reaches other memory through a
-    {!Buffer.borrow}, an {!Io} device's through its pages. [submit] reads each
-    element of [reads] and [writes] once and keeps the buffer reachable until it
-    has raised its stamps. The caller holds its claims on them until [submit]
-    returns. It:
+(** [submit s ~run ~reads ~writes ~waits] runs [s]'s work once, reading the
+    buffers of [reads] and writing those of [writes] after the points of
+    [waits], with [run] as its storage. It hands the work to [s]'s device [d] as
+    the value [v] it assigns, and is the point [(d, v)]. A buffer may appear
+    more than once, in either array. The buffers are on [d]: [d]'s work reaches
+    other memory through a {!Buffer.borrow}, an {!Io} device's through its
+    pages. [submit] reads each element of [reads] and [writes] once and keeps
+    the buffer reachable until it has raised its stamps. While [submit] runs, no
+    claim holds a buffer it is passed exclusive ({!Claim}): a caller ensures it
+    by a claim of its own, or by memory nothing else reaches. [submit] does not
+    check it. It:
     + Loads the points [s]'s work must follow: the last write of each buffer of
       [reads] and of each buffer its parts read, every use by another device of
       each buffer of [writes] and of each copy's [dst], every stamp of another
@@ -794,34 +812,35 @@ val submit :
       hand-over or commit, and asks [d]'s driver for room ([edge] in
       {!Rig_edge.facts}). Once the parts fit, it assigns [v], one more than
       {!submitted}[ d], hands the work over, which encodes it on [d]'s queues,
-      and raises the stamps of [reads], [writes],
-      the parts' buffers and the hold to [(d, v)]. While they do not fit, it
-      commits [d]'s work, waits for [d]'s next value with the turn released, and
-      tries again. No OCaml code runs between the assignment and the turn's
-      release, so a value is handed over or [d] is lost.
+      and raises the stamps of [reads], [writes], the parts' buffers and the
+      hold to [(d, v)]. While they do not fit, it commits [d]'s work, waits for
+      [d]'s next value with the turn released, and tries again. No OCaml code
+      runs between the assignment and the turn's release, so a value is handed
+      over or [d] is lost.
 
     The work runs after [d]'s earlier work without another call: [v]'s work
     starts once the work of every earlier value of [d] completed, on every
-    queue of [d]. [d]'s word shows [v] once [v] is {e committed} and its work completed. Every wait for
-    a value of [d], on the host or in another device's queue, first commits
-    [d]'s work, so no wait waits for work that is not committed. [d]'s driver
-    also commits on its own, at least once every [k] values, [k] a bound of its
-    own ([edge] in {!Rig_edge.facts}): while work is submitted the word shows
-    each
-    value at most [k] values late, and values submitted since the last commit
-    show after the next wait for [d] or the next [k] values.
+    queue of [d]. [d]'s word shows [v] once [v] is {e committed} and its work
+    completed. Every wait for a value of [d], on the host or in another
+    device's queue, first commits [d]'s work, so no wait waits for work that is
+    not committed. [d]'s driver also commits on its own, at least once every [k]
+    values, [k] a bound of its own ([edge] in {!Rig_edge.facts}): while work is
+    submitted the word shows each value at most [k] values late, and values
+    submitted since the last commit show after the next wait for [d] or the
+    next [k] values.
 
     It allocates nothing unless it waits.
 
-    Raises [Invalid_argument] if [reads] or [writes] holds another number of
-    buffers than {!Submission.make} declared, a buffer of [reads], [writes] or a
-    part is dead, a buffer of [reads] or [writes] is not on [d], the memory of
-    a buffer of [writes] is [Read] ({!Buffer.val-access}), or the parts never
-    fit [d]'s empty queues or name one its driver does not run;
-    and {!Lost} if [d] is lost, [d]'s hand-over fails, or a producer [d]'s
-    queue waits on is lost before the hand-over, and for the buffers and the
-    points [s] follows as {!Lost} states. A device lost after [v] was handed
-    over raises {!Lost}, with [v]'s stamps naming it. *)
+    Raises [Invalid_argument] if another submit is using [run] ([submit] takes
+    it at entry and gives it back when it returns or raises), if [reads] or
+    [writes] holds another number of buffers than {!Submission.make} declared,
+    a buffer of [reads], [writes] or a part is dead, a buffer of [reads] or
+    [writes] is not on [d], the memory of a buffer of [writes] is [Read]
+    ({!Buffer.val-access}), or the parts never fit [d]'s empty queues or name
+    one its driver does not run; and {!Lost} if [d] is lost, [d]'s hand-over
+    fails, or a producer [d]'s queue waits on is lost before the hand-over, and
+    for the buffers and the points [s] follows as {!Lost} states. A device lost
+    after [v] was handed over raises {!Lost}, with [v]'s stamps naming it. *)
 
 (** {1:images Images} *)
 

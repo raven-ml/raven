@@ -30,8 +30,10 @@
       let work = Rig.Submission.Copy { src; dst } in
       { Rig.Submission.queue = "COPY:0"; after = [||]; work }
     in
-    let s = Rig.Submission.make ~reads:0 ~writes:0 ~waits:0 d [| copy |] in
-    Rig.wait d (Rig.Point.value (Rig.submit s))
+    let s = Rig.Submission.make ~reads:0 ~writes:0 d [| copy |] in
+    let run = Rig.Submission.Run.make () in
+    let p = Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||] in
+    Rig.wait d (Rig.Point.value p)
     ]}
 
     {b Submissions.} A submission is the work of one value: {e parts}, each for

@@ -43,13 +43,15 @@ let () =
   List.iteri (fun i x -> (int32s init).{i} <- x) [ 1l; 2l; 3l; 4l ];
   Buffer.copy ~src:init ~dst:src;
 
-  (* A submission is made once and submitted many times. Each submit is the
+  (* A submission is made once and submitted many times, each submit with a
+     run, the caller's storage for one submit at a time. Each submit is the
      point of the value it assigns. *)
   let s = Submission.make ~reads:0 ~writes:0 d [| copy src mid |] in
-  let p = submit s ~reads:[||] ~writes:[||] ~waits:[||] in
+  let run = Submission.Run.make () in
+  let p = submit s ~run ~reads:[||] ~writes:[||] ~waits:[||] in
   Format.printf "first submit: %a@." Point.pp p;
   Format.printf "again:        %a@." Point.pp
-    (submit s ~reads:[||] ~writes:[||] ~waits:[||]);
+    (submit s ~run ~reads:[||] ~writes:[||] ~waits:[||]);
   timeline d;
 
   (* Parts of one submission run in order: the second copy runs after the first,
@@ -58,7 +60,7 @@ let () =
     Submission.make ~reads:0 ~writes:0 d
       [| copy src mid; copy ~after:[| 0 |] mid dst |]
   in
-  let p = submit chain ~reads:[||] ~writes:[||] ~waits:[||] in
+  let p = submit chain ~run ~reads:[||] ~writes:[||] ~waits:[||] in
   wait d (Point.value p);
   Format.printf "chain:        %a@." Point.pp p;
   show "dst" dst;
@@ -66,7 +68,7 @@ let () =
   (* An empty submission takes a value too: a point after all earlier work. *)
   let empty = Submission.make ~reads:0 ~writes:0 d [||] in
   Format.printf "empty:        %a@." Point.pp
-    (submit empty ~reads:[||] ~writes:[||] ~waits:[||]);
+    (submit empty ~run ~reads:[||] ~writes:[||] ~waits:[||]);
   timeline d;
 
   (* A value not yet submitted cannot be waited for. *)

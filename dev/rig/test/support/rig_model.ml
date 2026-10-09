@@ -682,7 +682,16 @@ and sbuf = { b : B.t; m : smem }
    program's own variables change as some order of the calls says. *)
 and scell = { cell : sbuf option Atomic.t; sw : sworld; cl : smem }
 
-type ssub = { s : Sub.t; sd : Rig.t; sarg : B.t option; slock : Mutex.t }
+(* A submission's submits hold [slock]: one at a time uses its argument and its
+   run. *)
+type ssub = {
+  s : Sub.t;
+  sd : Rig.t;
+  sarg : B.t option;
+  slock : Mutex.t;
+  srun : Sub.Run.t;
+}
+
 type sscell = { ss : ssub option Atomic.t; ssw : sworld; scl : smem }
 
 type shcell = {
@@ -1457,7 +1466,14 @@ let make_sys ?hold ((s : sdev), w) pair sc =
   in
   let sub = Sub.make ?hold ~reads:1 ~writes:1 s.d [| part |] in
   Atomic.set sc.ss
-    (Some { s = sub; sd = s.d; sarg = arg; slock = Mutex.create () })
+    (Some
+       {
+         s = sub;
+         sd = s.d;
+         sarg = arg;
+         slock = Mutex.create ();
+         srun = Sub.Run.make ();
+       })
 
 (* A copy between two buffers of [n] bytes that the submission alone holds. *)
 let make_own_ref (v : rdevv) n sc outcome =
@@ -1503,7 +1519,14 @@ let make_own_sys ((s : sdev), w) n sc =
   in
   let sub = Sub.make ~reads:1 ~writes:1 s.d [| part |] in
   Atomic.set sc.ss
-    (Some { s = sub; sd = s.d; sarg = None; slock = Mutex.create () })
+    (Some
+       {
+         s = sub;
+         sd = s.d;
+         sarg = None;
+         slock = Mutex.create ();
+         srun = Sub.Run.make ();
+       })
 
 let submit_ref last rc wc sc outcome =
   match sc.sub with
@@ -1621,7 +1644,8 @@ let submit_sys last rc wc sc =
       end
   | None -> ());
   Rig.Point.value
-    (Rig.submit sub.s ~reads:[| r.b |] ~writes:[| wb.b |] ~waits:[||])
+    (Rig.submit sub.s ~run:sub.srun ~reads:[| r.b |] ~writes:[| wb.b |]
+       ~waits:[||])
 
 (* Holds *)
 

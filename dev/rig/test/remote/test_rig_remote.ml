@@ -298,7 +298,7 @@ let copies_law ops =
         if i < 2 then B.of_string init.(i)
         else far_of_string devices.(if i < 4 then 0 else 1) init.(i))
   in
-  let last = Array.make 2 0 in
+  let last = Array.make 2 0 and run = Sub.Run.make () in
   List.iteri
     (fun k o ->
       let d =
@@ -333,7 +333,8 @@ let copies_law ops =
           |]
       in
       last.(d) <-
-        Rig.Point.value (Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||]);
+        Rig.Point.value
+          (Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||]);
       Bytes.blit model.(index o.src) o.at_src model.(index o.dst) o.at_dst o.len)
     ops;
   Array.iteri (fun d v -> if v > 0 then Rig.wait devices.(d) v) last;
@@ -404,7 +405,7 @@ let close_waits () =
               work = Sub.Copy { src = far; dst = here };
             };
           |])
-       ~reads:[||] ~writes:[||] ~waits:[||]);
+       ~run:(Sub.Run.make ()) ~reads:[||] ~writes:[||] ~waits:[||]);
   Rig_remote.close j;
   equal ~msg:"the copy's bytes" bool true (read_host here = s);
   equal exit_w (0, [ "closed" ]) (finish (List.hd agents))

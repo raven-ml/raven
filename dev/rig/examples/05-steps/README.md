@@ -19,8 +19,8 @@ same way.
   (`Buffer.address`)
 - Holds: fixed memory kept across submissions, with a release that runs once
   the step is unreachable and its work done
-- A run's buffers: what it reads and writes, passed to each submit:
-  `submit s ~reads ~writes ~waits`
+- A run's buffers: what it reads and writes, passed to each submit with the
+  storage it uses: `submit s ~run ~reads ~writes ~waits`
 - The host rewriting the argument only after the work that read it:
   `Buffer.wait arg Read_write`
 
@@ -31,7 +31,8 @@ same way.
 | `Submission.Fill { fill; arg; _ }`           | Work that is a C function               |
 | `Hold.make ~release bs`                      | Memory kept for a step's life           |
 | `Submission.make ~hold ~reads ~writes ...`   | A step's submission, and its run's arity |
-| `submit s ~reads ~writes ~waits`             | Run it once with these buffers           |
+| `Submission.Run.make ()`                     | Storage for one submit at a time         |
+| `submit s ~run ~reads ~writes ~waits`        | Run it once with these buffers           |
 
 ## Next Steps
 

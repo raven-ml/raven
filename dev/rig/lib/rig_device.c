@@ -100,20 +100,6 @@ static void cv_broadcast(struct rig_device *d) { cond_broadcast(&d->cv); }
 static void mu_lock(struct rig_device *d) { mutex_lock(&d->mu); }
 static void mu_unlock(struct rig_device *d) { mutex_unlock(&d->mu); }
 
-void rig_guard_init(struct rig_sub *s) {
-  mutex_init(&s->guard);
-  cond_init(&s->freed);
-}
-
-void rig_guard_destroy(struct rig_sub *s) {
-#ifdef _WIN32
-  (void)s;
-#else
-  pthread_mutex_destroy(&s->guard);
-  pthread_cond_destroy(&s->freed);
-#endif
-}
-
 /* Takes the mutex [m] from a stub holding the domain lock: by try-lock,
    and otherwise after releasing the domain lock. Answers whether it
    released it, for [give]. */
@@ -864,30 +850,30 @@ static int give_turn(struct rig_device *d, int released, int r) {
 
 /* Submitting */
 
-/* Records [s]'s in-queue waits in [d]'s record, for spread, after dropping
-   the entries [d]'s word shows reached, and refuses if a producer is lost.
-   The mutex is held. */
-static int record_waits(struct rig_device *d, struct rig_sub *s) {
+/* Records the run [r]'s in-queue waits in [d]'s record, for spread, after
+   dropping the entries [d]'s word shows reached, and refuses if a producer
+   is lost. The mutex is held. */
+static int record_waits(struct rig_device *d, struct rig_run *r) {
   /* Nothing to drop or record reads no word: the device writes its line,
      so a read is a cache miss on every submit. */
-  if (d->nrecord == 0 && s->nwaits == 0) return SUBMIT_OK;
+  if (d->nrecord == 0 && r->nwaits == 0) return SUBMIT_OK;
   uint64_t w = device_word(d);
   int k = 0;
   for (int j = 0; j < d->nrecord; j++)
     if (d->record[j].u > w) d->record[k++] = d->record[j];
   d->nrecord = k;
-  if (s->nwaits == 0) return SUBMIT_OK;
-  if (k + s->nwaits > d->crecord) return SUBMIT_NEED_RECORD;
+  if (r->nwaits == 0) return SUBMIT_OK;
+  if (k + r->nwaits > d->crecord) return SUBMIT_NEED_RECORD;
   uint64_t u = atomic_load(&d->submitted) + 1;
-  for (int j = 0; j < s->nwaits; j++)
+  for (int j = 0; j < r->nwaits; j++)
     d->record[k + j] =
-        (struct rig_entry){s->producers[j], s->waits[j].value, u};
-  d->nrecord = k + s->nwaits;
-  for (int j = 0; j < s->nwaits; j++) {
-    struct rig_device *p = device_of(s->producers[j]);
+        (struct rig_entry){r->producers[j], r->waits[j].value, u};
+  d->nrecord = k + r->nwaits;
+  for (int j = 0; j < r->nwaits; j++) {
+    struct rig_device *p = device_of(r->producers[j]);
     if (p != NULL && is_lost(p)) {
       d->nrecord = k;
-      s->producer = s->producers[j];
+      r->producer = r->producers[j];
       return SUBMIT_PRODUCER_LOST;
     }
   }
@@ -895,85 +881,47 @@ static int record_waits(struct rig_device *d, struct rig_sub *s) {
 }
 
 /* Asks [d]'s driver for room for [s]; once the parts fit, assigns the next
-   value, stores it as submitted, hands the work over and raises [s]'s
-   stamps. Called under [d]'s turn. */
-static int admit(struct rig_device *d, struct rig_sub *s) {
+   value, stores it as submitted, hands the work over with the run [r]'s
+   waits and handles, and raises the stamps. Called under [d]'s turn. */
+static int admit(struct rig_device *d, const struct rig_sub *s,
+                 struct rig_run *r) {
   int room = d->driver.room(d->self, s->parts, s->nparts);
   if (room == RIG_NEVER) return SUBMIT_NEVER;
   if (room == RIG_LATER) {
-    s->no_room_at = atomic_load(&d->submitted);
+    r->no_room_at = atomic_load(&d->submitted);
     return SUBMIT_NO_ROOM;
   }
   uint64_t v = atomic_load(&d->submitted) + 1;
   atomic_store_explicit(&d->submitted, v, memory_order_release);
   const char *why = NULL;
-  int r = d->driver.submit(d->self, v, s->waits, s->nwaits, s->parts,
-                           s->nparts, s->handles, s->nhandles, &why);
-  rig_sub_raise(s, RIG_POINT(d->index, v));
-  s->v = v;
-  if (r == RIG_COMMITTED)
+  int a = d->driver.submit(d->self, v, r->waits, r->nwaits, s->parts,
+                           s->nparts, r->handles, r->nhandles, &why);
+  rig_sub_raise(s, r, RIG_POINT(d->index, v));
+  r->v = v;
+  if (a == RIG_COMMITTED)
     atomic_store_explicit(&d->committed, v, memory_order_release);
-  if (r != RIG_FAILED) return SUBMIT_OK;
-  s->why = why != NULL ? why : "the driver's submit failed";
+  if (a != RIG_FAILED) return SUBMIT_OK;
+  r->why = why != NULL ? why : "the driver's submit failed";
   return SUBMIT_FAILED;
 }
 
-/* Takes and gives the guard of the submission [v_s], which a submit holds
-   throughout: two domains' submits of one submission take turns. A guard
-   is taken before anything else of a submit, and nothing a submit runs
-   holding a device's mutex or turn takes a guard, so a guard never waits
-   on what waits for it. */
-static int guard_try(struct rig_sub *s) {
-  int free = 0;
-  return atomic_compare_exchange_strong(&s->busy, &free, 1);
-}
-
-/* A waiter counts itself under the mutex before it tries, and a giver
-   frees the guard before it reads the count: either the try sees the
-   guard free, or the giver sees the waiter and wakes it under the mutex,
-   which the waiter holds until it waits. [s] is read with the runtime
-   released: [Submission.submit] uses the submission after the call, which
-   keeps its custom block, whose finaliser frees [s], reachable. */
-value caml_rig_sub_take(value v_s) {
-  struct rig_sub *s = *(struct rig_sub **)Data_custom_val(v_s);
-  if (guard_try(s)) return Val_unit;
-  caml_enter_blocking_section_no_pending();
-  mutex_lock(&s->guard);
-  atomic_fetch_add(&s->waiting, 1);
-  while (!guard_try(s)) cond_wait(&s->freed, &s->guard);
-  atomic_fetch_sub(&s->waiting, 1);
-  mutex_unlock(&s->guard);
-  caml_leave_blocking_section();
-  return Val_unit;
-}
-
-value caml_rig_sub_give(value v_s) {
-  struct rig_sub *s = *(struct rig_sub **)Data_custom_val(v_s);
-  atomic_store(&s->busy, 0);
-  if (atomic_load(&s->waiting) > 0) {
-    mutex_lock(&s->guard);
-    cond_broadcast(&s->freed);
-    mutex_unlock(&s->guard);
-  }
-  return Val_unit;
-}
-
-/* Submits [s] on its device: the turn, room, the value, the hand-over and
-   the stamps, in one call that runs no OCaml. [s] is read with the runtime
-   released: [Submission.submit] uses it after the call, which keeps its
-   custom block reachable until then. */
-value caml_rig_submit(value v_s) {
-  struct rig_sub *s = *(struct rig_sub **)Data_custom_val(v_s);
+/* Submits [s] on its device with the run [r]: the turn, room, the value,
+   the hand-over and the stamps, in one call that runs no OCaml. [s] and
+   [r] are read with the runtime released: [Submission.submit] uses both
+   after the call, which keeps their custom blocks reachable until then. */
+value caml_rig_submit(value v_s, value v_r) {
+  const struct rig_sub *s = *(struct rig_sub **)Data_custom_val(v_s);
+  struct rig_run *run = *(struct rig_run **)Data_custom_val(v_r);
   struct rig_device *d = s->dev;
   int released;
   if (!lock_turn(d, 1, &released)) return Val_int(SUBMIT_BUSY);
-  int r = is_lost(d) ? SUBMIT_LOST : record_waits(d, s);
+  int r = is_lost(d) ? SUBMIT_LOST : record_waits(d, run);
   if (r != SUBMIT_OK) return Val_int(give_turn(d, released, r));
   begin_turn(d);
-  r = admit(d, s);
+  r = admit(d, s, run);
   end_turn(d);
-  if (r == SUBMIT_NO_ROOM || r == SUBMIT_NEVER) d->nrecord -= s->nwaits;
-  if (r == SUBMIT_FAILED) r = fail_locked(d, s->why);
+  if (r == SUBMIT_NO_ROOM || r == SUBMIT_NEVER) d->nrecord -= run->nwaits;
+  if (r == SUBMIT_FAILED) r = fail_locked(d, run->why);
   else if (r == SUBMIT_OK && is_lost(d)) r = SUBMIT_LOST_AFTER;
   return Val_int(give_turn(d, released, r));
 }

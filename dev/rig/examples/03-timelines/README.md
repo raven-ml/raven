@@ -16,7 +16,8 @@ at once. A GPU's work runs after `submit` returns, with the same calls; see
 ## What You'll Learn
 
 - Memory devices: `Rig.memory_device`
-- Submissions made once and submitted many times: `Submission.make`, `submit`
+- Submissions made once and submitted many times, each submit with a run:
+  `Submission.make`, `Submission.Run.make`, `submit`
 - Parts on a device's queues, ordered by `after`
 - Points and values: `Point.pp`, `submitted`, `signaled`, `wait`
 
@@ -25,8 +26,9 @@ at once. A GPU's work runs after `submit` returns, with the same calls; see
 | Function                                  | Purpose                                |
 | ----------------------------------------- | -------------------------------------- |
 | `memory_device name`                      | A device with a timeline on the host   |
-| `Submission.make ~reads ~writes ~waits d` | Work for `d`, prepared once            |
-| `submit s`                                | Hand `s` over; the point of its value  |
+| `Submission.make ~reads ~writes d`        | Work for `d`, prepared once            |
+| `Submission.Run.make ()`                  | Storage for one submit at a time       |
+| `submit s ~run`                           | Hand `s` over; the point of its value  |
 | `wait d v`                                | Return once `d` reached `v`            |
 
 ## Next Steps

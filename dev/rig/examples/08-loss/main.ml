@@ -31,10 +31,11 @@ let () =
 
   (* A writes [x]: [x]'s stamps name A. *)
   let src = Buffer.create a 16 and x = Buffer.create a 16 in
+  let run = Submission.Run.make () in
   ignore
     (submit
        (Submission.make ~reads:0 ~writes:0 a [| copy src x |])
-       ~reads:[||] ~writes:[||] ~waits:[||]);
+       ~run ~reads:[||] ~writes:[||] ~waits:[||]);
 
   (* A's next work fails, and A is lost. *)
   let arg = Buffer.create a 8 in
@@ -43,7 +44,7 @@ let () =
   in
   let part = { Submission.queue = "COMPUTE:0"; after = [||]; work = bad } in
   let s = Submission.make ~reads:0 ~writes:0 a [| part |] in
-  lost (fun () -> ignore (submit s ~reads:[||] ~writes:[||] ~waits:[||]));
+  lost (fun () -> ignore (submit s ~run ~reads:[||] ~writes:[||] ~waits:[||]));
 
   (* Its facts answer: the reason, its name, its values. *)
   Printf.printf "lost: %s\n" (Option.value (Rig.lost a) ~default:"no");
@@ -59,7 +60,7 @@ let () =
   let p =
     submit
       (Submission.make ~reads:0 ~writes:0 b [| copy y z |])
-      ~reads:[||] ~writes:[||] ~waits:[||]
+      ~run ~reads:[||] ~writes:[||] ~waits:[||]
   in
   Format.printf "B goes on: %a@." Point.pp p;
 

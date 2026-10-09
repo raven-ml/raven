@@ -40,7 +40,15 @@ let metallib = S.fixture ~dir:"../../test/metal/fixtures" "fill"
 let kib = 1024
 let mib = 1024 * kib
 
-type dev = { d : Rig.t; g : M.t; mutable v : int; step : int; args : M.region }
+(* A device and the run its row submits with. *)
+type dev = {
+  d : Rig.t;
+  g : M.t;
+  run : Rig.Submission.Run.t;
+  mutable v : int;
+  step : int;
+  args : M.region;
+}
 
 let get = function Ok x -> x | Error why -> failwith why
 let alloc t n = Option.get (M.alloc t.g Rig_edge.Device n)
@@ -59,7 +67,7 @@ let dev () =
   let { S.d; g } = S.open_ () in
   let step = Option.get (M.entry (load g) "step") in
   let args = Option.get (M.alloc g Rig_edge.Device 16) in
-  let t = { d; g; v = 0; step; args } in
+  let t = { d; g; run = Rig.Submission.Run.make (); v = 0; step; args } in
   H.set64 (host args) (address (alloc t 16));
   t
 
@@ -67,7 +75,8 @@ let dev () =
 let prepare t parts = Rig.Submission.make ~reads:0 ~writes:0 t.d parts
 
 let submit t s =
-  t.v <- Rig.Point.value (Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||])
+  let p = Rig.submit s ~run:t.run ~reads:[||] ~writes:[||] ~waits:[||] in
+  t.v <- Rig.Point.value p
 
 let wait t = Rig.wait t.d t.v
 

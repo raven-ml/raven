@@ -67,79 +67,96 @@ let bumping ?(reads = 0) ?(writes = 0) d =
 
 (* A submit of a run that reads nothing, writes nothing and waits for
    nothing. *)
-let submit s = Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||]
-let submit_read s bs = ignore (Rig.submit s ~reads:bs ~writes:[||] ~waits:[||])
+let submit ~run s = Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||]
+
+let submit_read ~run s bs =
+  ignore (Rig.submit s ~run ~reads:bs ~writes:[||] ~waits:[||])
 
 (* Submits *)
 
+(* A row's setup makes its submission and the one run it submits with. *)
+
 let empty () =
   let t = dev () in
-  (t, Sub.make ~reads:0 ~writes:0 t.d [||])
+  (t, Sub.make ~reads:0 ~writes:0 t.d [||], Sub.Run.make ())
 
 let costing () =
   let t = dev () in
-  (t, bumping t.d)
+  (t, bumping t.d, Sub.Run.make ())
 
 let reading () =
   let t = dev () in
-  (t, bumping ~reads:slots t.d, words t.d slots)
+  (t, bumping ~reads:slots t.d, Sub.Run.make (), words t.d slots)
 
 (* Buffers of another device, its last write reached, borrowed on [t]'s. *)
 let foreign () =
   let t = dev () and o = dev () in
   let bs = words o.d slots in
   let w = Sub.make ~reads:0 ~writes:slots o.d [||] in
-  let v = Rig.Point.value (Rig.submit w ~reads:[||] ~writes:bs ~waits:[||]) in
+  let run = Sub.Run.make () in
+  let v =
+    Rig.Point.value (Rig.submit w ~run ~reads:[||] ~writes:bs ~waits:[||])
+  in
   ignore (P.run o.p);
   Rig.wait o.d v;
   ( t,
     bumping ~reads:slots t.d,
+    Sub.Run.make (),
     Array.map (fun b -> Option.get (B.borrow t.d b)) bs )
 
-(* Another domain submitting to the same device until the row ends. *)
+(* Another domain submitting to the same device until the row ends, with its
+   own run. *)
 let contended () =
-  let t, s = costing () in
+  let t, s, run = costing () in
   let stop = Atomic.make false in
   let other = { t with n = 0 } and s' = bumping t.d in
   let rival =
     Domain.spawn (fun () ->
+        let run' = Sub.Run.make () in
         while not (Atomic.get stop) do
-          ignore (submit s');
+          ignore (submit ~run:run' s');
           drained other
         done)
   in
-  (t, s, stop, rival)
+  (t, s, run, stop, rival)
 
 let submit_rows =
   let row name setup f = Thumper.bench_with_setup ~setup name f in
   Thumper.group "submit/polled"
     [
-      row "empty" empty (fun (t, s) ->
-          let v = Rig.Point.value (submit s) in
+      row "empty" empty (fun (t, s, run) ->
+          let v = Rig.Point.value (submit ~run s) in
           ignore (P.run t.p);
           Rig.wait t.d v);
-      row "cost" costing (fun (t, s) ->
-          ignore (submit s);
+      row "cost" costing (fun (t, s, run) ->
+          ignore (submit ~run s);
           drained t);
-      row "slots-24" reading (fun (t, s, bs) ->
-          submit_read s bs;
+      row "slots-24" reading (fun (t, s, run, bs) ->
+          submit_read ~run s bs;
           drained t);
-      row "foreign-24" foreign (fun (t, s, bs) ->
-          submit_read s bs;
+      row "foreign-24" foreign (fun (t, s, run, bs) ->
+          submit_read ~run s bs;
           drained t);
       Thumper.bench_with_setup ~setup:contended
-        ~teardown:(fun (_, _, stop, rival) ->
+        ~teardown:(fun (_, _, _, stop, rival) ->
           Atomic.set stop true;
           Domain.join rival)
         "two-domains"
-        (fun (t, s, _, _) ->
-          ignore (submit s);
+        (fun (t, s, run, _, _) ->
+          ignore (submit ~run s);
           drained t);
     ]
 
 (* Replays *)
 
-type copy = { s : Sub.t; args : B.t; at : int; outs : B.t array }
+type copy = {
+  s : Sub.t;
+  run : Sub.Run.t;
+  args : B.t;
+  at : int;
+  outs : B.t array;
+}
+
 type replay = { t : dev; params : B.t array; copies : copy array }
 
 (* Two copies of a step over [slots] parameters: each reads them, writes its
@@ -150,7 +167,8 @@ let replaying () =
   let copy () =
     let args = B.create Rig.host 8 in
     let s = Sub.make ~reads:slots ~writes:1 t.d [| bump args |] in
-    { s; args; at = B.address args; outs = [| B.create t.d 8 |] }
+    let run = Sub.Run.make () in
+    { s; run; args; at = B.address args; outs = [| B.create t.d 8 |] }
   in
   { t; params = words t.d slots; copies = [| copy (); copy () |] }
 
@@ -160,7 +178,7 @@ let run r =
   B.wait c.args B.Read_write;
   ignore (P.run r.t.p);
   Support.store c.at r.t.n;
-  ignore (Rig.submit c.s ~reads:r.params ~writes:c.outs ~waits:[||])
+  ignore (Rig.submit c.s ~run:c.run ~reads:r.params ~writes:c.outs ~waits:[||])
 
 let replay_rows =
   Thumper.group "replay/polled"
@@ -197,8 +215,9 @@ let chars n = Bigarray.Array1.create Bigarray.char Bigarray.c_layout n
 (* Buffers of [d] whose last write, a submission of [d], is reached. *)
 let written d n =
   let bs = Array.init n (fun _ -> B.create d 8) in
-  let w = Sub.make ~reads:0 ~writes:n d [||] in
-  Rig.wait d (Rig.Point.value (Rig.submit w ~reads:[||] ~writes:bs ~waits:[||]));
+  let w = Sub.make ~reads:0 ~writes:n d [||] and run = Sub.Run.make () in
+  let p = Rig.submit w ~run ~reads:[||] ~writes:bs ~waits:[||] in
+  Rig.wait d (Rig.Point.value p);
   bs
 
 let row name setup f = Thumper.bench_with_setup ~setup name f
@@ -293,8 +312,9 @@ let wait_rows =
     [
       row "reached"
         (fun () ->
-          let d = memory () in
-          (d, Rig.Point.value (submit (Sub.make ~reads:0 ~writes:0 d [||]))))
+          let d = memory () and run = Sub.Run.make () in
+          let s = Sub.make ~reads:0 ~writes:0 d [||] in
+          (d, Rig.Point.value (submit ~run s)))
         (fun (d, v) -> Rig.wait d v);
     ]
 

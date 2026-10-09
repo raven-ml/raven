@@ -10,7 +10,7 @@ module P = Rig_support.Polled
 module R = Rig_support.Reader
 
 let submit ?(reads = [||]) ?(writes = [||]) ?(waits = [||]) s =
-  Rig.submit s ~reads ~writes ~waits
+  Rig.submit s ~run:(Rig.Submission.Run.make ()) ~reads ~writes ~waits
 
 let timeout = 60.
 let answer = Testable.make ~pp:R.pp_answer ~equal:( = )

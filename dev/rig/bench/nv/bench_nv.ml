@@ -42,11 +42,15 @@ type dev = S.t = { d : Rig.t; g : N.t }
 let dev = S.open_
 
 let alloc t kind n = Option.get (N.alloc t.g kind n)
-let submission t ps = Sub.make ~reads:0 ~writes:0 t.d ps
 
-let run t s =
-  let p = Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||] in
-  Rig.wait t.d (Rig.Point.value p)
+(* A submission of parts on [t] and the run it submits with. *)
+type submission = { s : Sub.t; run : Sub.Run.t }
+
+let submission t ps =
+  { s = Sub.make ~reads:0 ~writes:0 t.d ps; run = Sub.Run.make () }
+
+let submit { s; run } = Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||]
+let run t s = Rig.wait t.d (Rig.Point.value (submit s))
 
 (* The floor of [t]: its later values are given from C. *)
 let floor t =
@@ -160,7 +164,7 @@ let release_rows =
       row "floor-switch" (floor_of empty) (fun _ -> floor_switch ());
       row "no-wait-100" empty (fun (t, s) ->
           for _ = 1 to 99 do
-            ignore (Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||])
+            ignore (submit s)
           done;
           run t s);
       row "floor-no-wait-100" (floor_of empty) (fun _ -> floor_release 100);
@@ -212,9 +216,7 @@ let launch_rows =
     (t, p, Array.map one es)
   in
   let submit_all (t, _, ss) =
-    Array.iter
-      (fun s -> ignore (Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||]))
-      ss;
+    Array.iter (fun s -> ignore (submit s)) ss;
     Rig.wait t.d (Rig.submitted t.d)
   in
   let floor_apart () =

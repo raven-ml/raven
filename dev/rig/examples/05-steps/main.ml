@@ -30,9 +30,9 @@ let show name b =
   let xs = List.init n (fun i -> Int32.to_string a.{i}) in
   Printf.printf "%-4s [%s]\n" name (String.concat "; " xs)
 
-(* The step: its constants [k] and its argument in one hold, and one fill that
-   reads one buffer and writes another. [run] sets the argument, then submits
-   with the run's buffers. *)
+(* The step: its constants [k] and its argument in one hold, one fill that
+   reads one buffer and writes another, and the run each submit uses. [run]
+   sets the argument, then submits with the run's buffers. *)
 let step d =
   let k = ints d [ 1l; 10l; 100l; 1000l ] in
   let arg = Buffer.create d 32 in
@@ -44,6 +44,7 @@ let step d =
   in
   let part = { Submission.queue = "COMPUTE:0"; after = [||]; work = fill } in
   let s = Submission.make ~hold ~reads:1 ~writes:1 d [| part |] in
+  let run = Submission.Run.make () in
   let words =
     Buffer.bigarray Bigarray.int64 (Option.get (Buffer.borrow host arg))
   in
@@ -53,7 +54,7 @@ let step d =
     List.iteri
       (fun i a -> words.{i} <- Int64.of_int a)
       [ Buffer.address dst; Buffer.address src; Buffer.address k; n ];
-    submit s ~reads:[| src |] ~writes:[| dst |] ~waits:[||]
+    submit s ~run ~reads:[| src |] ~writes:[| dst |] ~waits:[||]
 
 (* Two runs of one step, each on buffers of its own. *)
 let runs d =

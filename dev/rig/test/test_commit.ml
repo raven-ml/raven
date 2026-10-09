@@ -26,7 +26,7 @@ let fresh what =
   Printf.sprintf "commit:%s-%d" what (Atomic.fetch_and_add names 1)
 
 let submit ?(reads = [||]) ?(waits = [||]) s =
-  Rig.submit s ~reads ~writes:[||] ~waits
+  Rig.submit s ~run:(Sub.Run.make ()) ~reads ~writes:[||] ~waits
 
 (* The last value [p]'s word holds, read without a call of rig. *)
 let word p = Support.load (P.word_at p)

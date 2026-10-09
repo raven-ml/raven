@@ -345,8 +345,8 @@ let door_rows =
           let z = A.create d f32 rank4 and x = A.create d f32 rank4 in
           let y = A.create d f32 rank4 in
           let s = Rig.Submission.make ~reads:0 ~writes:1 d [||] in
-          let writes = [| A.buffer z |] in
-          ignore (Rig.submit s ~reads:[||] ~writes ~waits:[||]);
+          let run = Rig.Submission.Run.make () and writes = [| A.buffer z |] in
+          ignore (Rig.submit s ~run ~reads:[||] ~writes ~waits:[||]);
           ([| A.Any z |], [| A.Any x; A.Any y |]))
         "ocaml-3-pending"
         (fun (written, read) ->
@@ -486,10 +486,11 @@ let kernel_rows =
     let d, _ = Nx_array_support.Late.open_ name in
     let z = A.create d f32 [| 1 |] and x = A.create d f32 [| 1 |] in
     let y = A.create d f32 [| 1 |] in
-    (Rig.Submission.make ~reads:0 ~writes:1 d [||], z, x, y)
+    let s = Rig.Submission.make ~reads:0 ~writes:1 d [||] in
+    ((s, Rig.Submission.Run.make ()), z, x, y)
   in
-  let writes s b =
-    ignore (Rig.submit s ~reads:[||] ~writes:[| b |] ~waits:[||])
+  let writes (s, run) b =
+    ignore (Rig.submit s ~run ~reads:[||] ~writes:[| b |] ~waits:[||])
   in
   let pending () =
     let ((s, z, x, y) as env) = late () in

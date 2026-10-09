@@ -86,7 +86,8 @@ let () =
     in
     let part = { Submission.queue = "COMPUTE:0"; after = [||]; work = fill } in
     let s = Submission.make ~hold ~reads:2 ~writes:1 g [| part |] in
-    let pt = submit s ~reads:[| a; b |] ~writes:[| out |] ~waits:[||] in
+    let run = Submission.Run.make () in
+    let pt = submit s ~run ~reads:[| a; b |] ~writes:[| out |] ~waits:[||] in
     Format.printf "%s ran add on %d floats at %a@." (name g) n Point.pp pt;
 
     (* The host reads the result once the GPU wrote it. *)

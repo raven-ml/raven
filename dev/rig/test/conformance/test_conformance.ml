@@ -75,8 +75,8 @@ let submit ?(waits = [||]) d ps ~reads ~writes =
       (Array.of_list ps)
   in
   Rig.Point.value
-    (Rig.submit s ~reads:(Array.of_list reads) ~writes:(Array.of_list writes)
-       ~waits)
+    (Rig.submit s ~run:(Sub.Run.make ()) ~reads:(Array.of_list reads)
+       ~writes:(Array.of_list writes) ~waits)
 
 let copy_part ?(after = [||]) queue ~dst src =
   { Sub.queue; after; work = Copy { src; dst } }
@@ -553,8 +553,9 @@ let holds (module G : Gpu) (t : G.t) point go =
   ignore (Sys.opaque_identity dst)
 
 let empty_point d =
-  Rig.submit (Sub.make ~reads:0 ~writes:0 d [||]) ~reads:[||] ~writes:[||]
-    ~waits:[||]
+  Rig.submit
+    (Sub.make ~reads:0 ~writes:0 d [||])
+    ~run:(Sub.Run.make ()) ~reads:[||] ~writes:[||] ~waits:[||]
 
 (* The producer, a Polled device, whose work runs when the test runs it. *)
 let polled_waits (module G : Gpu) () =
@@ -585,7 +586,7 @@ let device_waits (module G : Gpu) () =
   let point =
     Rig.submit
       (Sub.make ~reads:1 ~writes:0 pd [| sp |])
-      ~reads:[| sa |] ~writes:[||] ~waits:[||]
+      ~run:(Sub.Run.make ()) ~reads:[| sa |] ~writes:[||] ~waits:[||]
   in
   holds (module G) t point ignore
 

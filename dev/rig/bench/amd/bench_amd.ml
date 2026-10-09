@@ -101,18 +101,20 @@ let kfd_row name setup f = if pci then [] else [ row name setup f ]
 
 (* The driver *)
 
-type dev = { d : Rig.t; g : A.t; mutable v : int }
+(* A device and the run its row submits with. *)
+type dev = { d : Rig.t; g : A.t; run : Rig.Submission.Run.t; mutable v : int }
 
 (* A device opened through rig. *)
 let dev () =
   let { Rig_amd_support.d; g } = Rig_amd_support.open_ () in
-  { d; g; v = 0 }
+  { d; g; run = Rig.Submission.Run.make (); v = 0 }
 
 (* The prepared submission of [parts] on [t]. *)
 let prepare t parts = Rig.Submission.make ~reads:0 ~writes:0 t.d parts
 
 let submit t s =
-  t.v <- Rig.Point.value (Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||])
+  let p = Rig.submit s ~run:t.run ~reads:[||] ~writes:[||] ~waits:[||] in
+  t.v <- Rig.Point.value p
 
 let wait t =
   while A.signaled t.g < t.v do

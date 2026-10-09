@@ -141,7 +141,7 @@ let bump arg =
     work = Fill { fill = S.bump; arg; ring_units = 0; segment_bytes = 0 };
   }
 
-let once s = Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||]
+let once ~run s = Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||]
 let finish d p = Rig.wait d (Rig.Point.value p)
 
 let submit =
@@ -149,8 +149,9 @@ let submit =
       let arg = B.create Rig.host 8 in
       Bigarray.Array1.fill (B.bigarray Bigarray.char arg) '\000';
       let s = Sub.make ~reads:0 ~writes:0 d [| bump arg |] in
+      let run = Sub.Run.make () in
       fun _ ->
-        finish d (once s);
+        finish d (once ~run s);
         equal string "\001\000\000\000\000\000\000\000" (bytes arg))
 
 (* A device whose memory the host does not address, which copied through the
@@ -199,14 +200,16 @@ let load =
 let wait_transport =
   op "wait behind a transport" ~opener:(P.open_ ~transport:true) (fun d ->
       let s = Sub.make ~reads:0 ~writes:0 d [||] in
-      fun _ -> finish d (once s))
+      let run = Sub.Run.make () in
+      fun _ -> finish d (once ~run s))
 
 (* Submits on [d] once with a hold of [b] whose release raises under [Raise],
    leaving the hold and its submission unreachable. *)
 let[@inline never] submit_held d b failure =
   let release () = if failure = Some Raise then raise Exit in
   let h = Rig.Hold.make ~release [ b ] in
-  finish d (once (Sub.make ~hold:h ~reads:0 ~writes:0 d [||]))
+  let run = Sub.Run.make () in
+  finish d (once ~run (Sub.make ~hold:h ~reads:0 ~writes:0 d [||]))
 
 let hold =
   op "hold" ~raises:true (fun d ->
@@ -219,11 +222,12 @@ let hold =
 let profile =
   op "profile" ~raises:true (fun d ->
       let s = Sub.make ~reads:0 ~writes:0 d [||] in
+      let run = Sub.Run.make () in
       fun failure ->
         let events () = if failure = Some Raise then raise Exit else [] in
         ignore
           (Rig.Profile.take (fun () ->
-               let p = once s in
+               let p = once ~run s in
                Rig.Profile.after p events;
                finish d p)))
 
@@ -393,10 +397,11 @@ let memory_attempt n =
   in
   let part = { Sub.queue = "COMPUTE:0"; after = [||]; work = fill } in
   let s = ref (Some (Sub.make ~reads:0 ~writes:0 d (Array.make fills part))) in
-  finish d (once (Option.get !s));
+  let run = Sub.Run.make () in
+  finish d (once ~run (Option.get !s));
   let heap, fds = census () in
   S.store (B.address counter) n;
-  let got = outcome d (fun () -> finish d (once (Option.get !s))) in
+  let got = outcome d (fun () -> finish d (once ~run (Option.get !s))) in
   let at = Printf.sprintf ", fill %d" n in
   equal ~msg:("outcome" ^ at) string "lost: a fill failed" got;
   settle d;
