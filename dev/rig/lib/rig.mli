@@ -126,9 +126,10 @@ val shares_host_memory : t -> bool
 (** [shares_host_memory d] is [true] iff this process addresses [d]'s memory as
     host memory: [d] and {!host} reach each other's memory,
     [reaches host d && reaches d host]. It holds for {!host}, a
-    {!memory_device}, and a driver's device of this machine that runs no copy,
-    such as Metal's; it is [false] for every device of another machine, that
-    machine's host included. *)
+    {!memory_device}, and a driver's device of this machine whose regions the
+    host addresses and that maps host memory (its [host_addresses] and
+    [maps_host] facts, {!Rig_edge.facts}), such as Metal's; it is [false] for
+    every device of another machine, that machine's host included. *)
 
 val reaches : t -> t -> bool
 (** [reaches d d'] is [true] iff [d]'s work addresses [d']'s own memory
@@ -136,7 +137,8 @@ val reaches : t -> t -> bool
     that places copies must know before any buffer exists. A device reaches its
     own memory. Of devices of one machine:
     - {!host} reaches the memory of a {!memory_device} and of a driver's device
-      that runs no copy ({!queues}): that memory is the host's;
+      whose regions it addresses (its [host_addresses] fact,
+      {!Rig_edge.facts});
     - a driver's device reaches {!host}'s memory where it maps host memory
       (its [maps_host] fact, {!Rig_edge.facts}), a memory device's, and that
       of a device of its own
@@ -167,8 +169,9 @@ type queue = Rig_edge.queue = {
 val queues : t -> queue list
 (** [queues d] is [d]'s queues, in its driver's order, and what each runs; [[]]
     for {!host} and an {!Io} device. A part names its queue by name
-    ({!Submission.part}). A queue named ["COPY:i"] runs [Copy], and [d]'s own
-    copies go to the first one. *)
+    ({!Submission.part}). [d]'s copy queue runs rig's own copies
+    ({!Buffer.copy}): the first queue after the first whose [runs] lists
+    [Copy], or, where none does, the first queue if its [runs] lists [Copy]. *)
 
 val equal : t -> t -> bool
 (** [equal d d'] is [true] iff [d] and [d'] are the same device. *)
@@ -347,8 +350,10 @@ module Buffer : sig
       it. On an {!Io} device it is memory the device's {!Rig_edge.Io.alloc}
       makes.
 
-      Raises [Invalid_argument] if [n < 0] or [d] is an io device that makes no
-      memory of its own; {!Out_of_memory}; and {!Lost} if [d] is lost. *)
+      Raises [Invalid_argument] if [n < 0], [d] is an io device that makes no
+      memory of its own, or [d]'s driver allocated a region without the host
+      address its [host_addresses] fact promises ({!Rig_edge.facts});
+      {!Out_of_memory}; and {!Lost} if [d] is lost. *)
 
   (** The type for accesses to memory. *)
   type access =
@@ -441,8 +446,8 @@ module Buffer : sig
       memory (its [maps_host] fact, {!Rig_edge.facts}) stages through
       [Pinned] memory of its own
       instead, made at its first copy that needs it and kept until it is lost. A
-      device that runs no copy has memory the host addresses, which the host
-      copies; a borrow on it of another device's memory copies by that device.
+      borrow on a device that runs no copy, of another device's memory, copies
+      by that device.
       An {!Io} device's memory, of any machine, is read and written by its
       {!Rig_edge.Io.read} and {!Rig_edge.Io.write}, through the staging memory
       when the host does not address the other side, except a copy into it from
@@ -465,9 +470,9 @@ module Buffer : sig
       Raises [Invalid_argument] if [src] and [dst] differ in size, overlap
       ({!overlaps}), or either is dead, one is an {!Io} device's memory and the
       other a borrow of it, or a view of one, [dst]'s memory is [Read]
-      ({!val-access}), or one is memory of a driver's device of another
-      machine and the device that would copy runs no copy, or the other is
-      memory of this machine that this process's host does not address, of a
+      ({!val-access}), or the device that would copy runs no copy, or one is
+      memory of a driver's device of another machine and the other is memory
+      of this machine that this process's host does not address, of a
       third machine, or of its machine that [src]'s device does not reach
       ({!reaches}), or the copy would stage through the [Pinned] memory of a
       device that maps no host memory and the other side's device maps neither
@@ -731,8 +736,10 @@ module Image : sig
       starts with [d]'s {!name}. [d] stays usable.
 
       Raises [Invalid_argument] if [d] loads no code ({!host} or an {!Io}
-      device), {!Out_of_memory}, and {!Lost} if [d] is lost or is lost by the
-      load. *)
+      device), or its driver places the code in [d]'s memory ([Place] of
+      {!Rig_edge.code}) where [d] has no copy queue and the host does not
+      address that memory, {!Out_of_memory}, and {!Lost} if [d] is lost or is
+      lost by the load. *)
 
   val device : t -> device
   (** [device i] is the device [i] is loaded on. *)
@@ -852,7 +859,7 @@ module Submission : sig
       {!Copy}'s buffers differ in size, are not [d]'s memory (on a driver's
       device of another machine, one of them may be memory this process's host
       addresses), or its [dst]'s memory is [Read] ({!Buffer.val-access}), or
-      [d]'s driver runs no copies (it lists no copy queue, {!queues}), or a
+      no queue of [d] runs [Copy] ({!queues}), or a
       part's queue does not run its work, a buffer of [fixed] is dead, not on
       [d], or [Read_write] on [Read] memory, a {!Launch}'s [image] is not loaded
       on [d] or has no function [kernel], its [params] is negative or above
@@ -1200,8 +1207,8 @@ val open_ :
     Raises [Invalid_argument] if the open device of that name is another
     driver's, [machine] is another machine whose host was never opened
     ({!open_host}), or the driver's facts break the contract: their [edge] is
-    [0n] or its state's first member is [NULL], a queue named ["COPY:i"] runs
-    no [Copy], or [hang_ms] is [Some n] with [n < 1] ({!Rig_edge.facts}). *)
+    [0n] or its state's first member is [NULL], or [hang_ms] is [Some n] with
+    [n < 1] ({!Rig_edge.facts}). *)
 
 val open_host :
   (module Driver with type t = 'a) ->

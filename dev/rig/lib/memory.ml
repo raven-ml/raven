@@ -241,6 +241,12 @@ let new_entry d kind n =
       let module D = (val m) in
       match Dev.counted d (fun () -> D.alloc h (edge_memory kind) n) with
       | None -> None
+      | Some r when d.host_addresses && (D.locate r).host = None ->
+          ignore (Dev.give d (fun () -> D.free h r) : bool);
+          invalid_argf
+            "Rig: %s's driver states the host addresses its memory, and \
+             allocated a region without a host address"
+            d.name
       | Some r ->
           Some
             (entry ~region:(Region { m; h; r; rid }) d kind n (stamps_new ())))

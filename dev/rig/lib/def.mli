@@ -86,6 +86,7 @@ type device = {
   mutable progress : progress; [@atomic]
       (** The word as the last wait under [hang_ms] saw it. *)
   maps_host : bool;  (** Whether it maps host memory. *)
+  host_addresses : bool;  (** Whether the host addresses all its regions. *)
   word : int;  (** The word's host address, 0 behind a transport. *)
   word_region : region option;
   key : int;

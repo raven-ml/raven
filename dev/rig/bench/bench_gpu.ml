@@ -380,15 +380,16 @@ let gpu_rows (type a) (module D : Rig.Driver with type t = a) ?(sleeps = false)
   let paged () = written copy_bytes
   and off_page () = written ~off:true copy_bytes in
   let copy (src, dst) = B.copy ~src ~dst in
-  (* The driver alone copying between its pinned memory and its own on its first
-     copy queue, into its own memory [to_device] or out of it. *)
+  (* The driver alone copying between its pinned memory and its own on its copy
+     queue (Rig.queues), into its own memory [to_device] or out of it. *)
   let copy_alone ~to_device () =
     let a = alone () in
     let queues = (D.facts a.drv).queues in
+    let copies (q : Rig.queue) = List.mem Rig.Copy q.runs in
     let q =
-      List.find_index
-        (fun (q : Rig.queue) -> String.starts_with ~prefix:"COPY:" q.name)
-        queues
+      match List.find_index copies (List.tl queues) with
+      | Some i -> Some (i + 1)
+      | None -> if copies (List.hd queues) then Some 0 else None
     in
     let region k = (D.locate (Option.get (D.alloc a.drv k copy_bytes))).handle in
     let pinned = region Pinned and device = region Device in

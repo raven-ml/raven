@@ -97,6 +97,7 @@ include Rig_edge.Driver
       | [waits] | [stores] and [hosts], not [objects]; [most] is [256]. |
       | [may_block] | [false]: the room check and hand-over store to memory. |
       | [maps_host] | Whether the path maps host memory ({!type-path}). |
+      | [host_addresses] | [false]: the host does not address [Device] memory. |
       | [capability] | A {!Rig_nv_abi.Gpu.t} under {!Rig_nv_abi.Gpu.key}. |
       | [word] | Eight bytes of host memory. |
     }

@@ -230,9 +230,11 @@ let facts (module G : Gpu) () =
   (match host Mapped with
   | Some h -> equal bool ~msg:"Mapped memory's host address" true h
   | None -> ());
-  if copy_queues t.d = [] then
-    equal (option bool) ~msg:"Device memory's host address, running no copy"
-      (Some true) (host Device)
+  equal bool ~msg:"Rig.reaches host" f.host_addresses
+    (Rig.reaches Rig.host t.d);
+  if f.host_addresses then
+    equal (option bool) ~msg:"Device memory's host address" (Some true)
+      (host Device)
 
 (* Each kind a queue's runs omit, and a queue the device lacks, are refused by
    make, and no value is assigned. *)

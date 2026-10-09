@@ -473,6 +473,7 @@ let make (type m) (p : m path) =
         may_block = false;
         hang_ms = p.hang_ms;
         maps_host = Option.is_some ops.map_host;
+        host_addresses = false;
         capability = Capability (Abi.Capability.key, capability);
         word = region 8 word;
         edge = Nativeint.of_int self;

@@ -44,18 +44,60 @@ let test_host () =
   equal bool true (Rig.shares_host_memory Rig.host);
   equal device Rig.host (Rig.host_of Rig.host)
 
-(* What a driver's device reaches follows its copy queue and its peers. *)
+(* What a driver's device reaches follows its facts: the host reaches its memory
+   where the host addresses its regions, whatever its queues, and it reaches the
+   host's and its peers' where it maps them. *)
 let test_reach () =
   let d, _ = P.open_ "open:reach" in
   let e, _ = P.open_ "open:reach-peer" in
   let f, _ = P.open_ ~peers:false "open:reach-alone" in
-  let g, _ = P.open_ ~copies:false "open:reach-no-copy" in
+  let h, _ = P.open_ ~host_visible:false "open:reach-hidden" in
+  let g, _ = P.open_ ~copies:false ~host_visible:false "open:reach-no-copy" in
+  let reach d =
+    [ Rig.reaches d Rig.host; Rig.reaches Rig.host d; Rig.shares_host_memory d ]
+  in
   equal string "polled" (Rig.arch d);
-  equal (list bool) [ true; false; false ]
-    [ Rig.reaches d Rig.host; Rig.reaches Rig.host d; Rig.shares_host_memory d ];
-  equal (list bool) [ true; true; true ]
-    [ Rig.reaches g Rig.host; Rig.reaches Rig.host g; Rig.shares_host_memory g ];
+  equal ~msg:"a copy queue, memory the host addresses" (list bool)
+    [ true; true; true ] (reach d);
+  equal ~msg:"a copy queue, memory the host does not address" (list bool)
+    [ true; false; false ] (reach h);
+  equal ~msg:"no copy queue, memory the host does not address" (list bool)
+    [ true; false; false ] (reach g);
   equal (list bool) [ true; false ] [ Rig.reaches d e; Rig.reaches f d ]
+
+(* Where the host reaches a device's memory, every buffer of it has a host
+   address, of each memory and in each of Polled's modes, and on a memory
+   device. *)
+let test_reach_addresses () =
+  let n = ref 0 in
+  let check ~msg d =
+    if Rig.reaches Rig.host d then
+      List.iter
+        (fun memory ->
+          let b = Rig.Buffer.create ~memory d 64 in
+          not_equal ~msg int 0 (Support.Reader.host b))
+        Rig.Buffer.[ Device; Pinned; Mapped ]
+  in
+  let bools = [ false; true ] in
+  List.iter
+    (fun copies ->
+      List.iter
+        (fun host_visible ->
+          List.iter
+            (fun transport ->
+              incr n;
+              let name = Printf.sprintf "open:reach-addresses-%d" !n in
+              let d, _ = P.open_ ~copies ~host_visible ~transport name in
+              let msg =
+                Printf.sprintf "copies %b, host_visible %b, transport %b" copies
+                  host_visible transport
+              in
+              check ~msg d;
+              Rig.close d)
+            bools)
+        bools)
+    bools;
+  check ~msg:"a memory device" (memory "open:reach-addresses-memory")
 
 (* An io device whose memory is bytes that nothing reads, as host pages. *)
 module Store = struct
@@ -87,7 +129,17 @@ module Other = struct
   let region_key : region Type.Id.t = Type.Id.make ()
 end
 
-(* Polled whose queue named "COPY:0" runs no copy, against the contract. *)
+(* Polled whose queues are named ["Q0"], ["Q1"]. *)
+module Renamed = struct
+  include P
+
+  let facts d =
+    let f = P.facts d in
+    let name i (q : Rig.queue) = { q with name = Printf.sprintf "Q%d" i } in
+    { f with queues = List.mapi name f.queues }
+end
+
+(* Polled whose queue named "COPY:0" runs no copy. *)
 module Copyless = struct
   include P
 
@@ -97,13 +149,64 @@ module Copyless = struct
     { f with queues = [ fills "COMPUTE:0"; fills "COPY:0" ] }
 end
 
-(* Facts that break the contract refuse the open, and the driver's device is
-   stopped. *)
-let test_copy_queue_refused () =
-  let p = P.make () in
-  raises_match Exn.invalid_arg (fun () ->
-      Rig.open_ (module Copyless) ~name:"open:copyless" (fun () -> Ok p));
-  equal ~msg:"stopped" bool true (List.mem "stop" (P.log p))
+(* Polled with its first queue alone, which runs fills, copies and launches. *)
+module One_queue = struct
+  include P
+
+  let facts d =
+    let f = P.facts d in
+    { f with queues = [ List.hd f.queues ] }
+end
+
+(* Polled that states the host addresses its memory, which it does not. *)
+module Overstated = struct
+  include P
+
+  let facts d = { (P.facts d) with host_addresses = true }
+end
+
+let open_as (module D : Rig.Driver with type t = P.t) name p =
+  require_ok ~pp:Format.pp_print_string
+    (Rig.open_ (module D) ~name (fun () -> Ok p))
+
+(* Bytes into memory of [d] the host does not address and back, which [d]'s
+   copy queue runs: the copies [p] ran and the bytes back. *)
+let round_trip d p =
+  let n = 1 lsl 16 in
+  let src = Rig.Buffer.create Rig.host n in
+  Bigarray.Array1.fill (Rig.Buffer.bigarray Bigarray.char src) 'q';
+  let dst = Rig.Buffer.create d n in
+  let back = Rig.Buffer.create Rig.host n in
+  Rig.Buffer.copy ~src ~dst;
+  Rig.Buffer.copy ~src:dst ~dst:back;
+  let ba = Rig.Buffer.bigarray Bigarray.char back in
+  (P.submits p, String.init n (Bigarray.Array1.get ba) = String.make n 'q')
+
+(* rig's copies go to the first queue after the first that runs copies, or to
+   the first where it alone does, whatever the queues' names: a queue named
+   "COPY:0" may run none. *)
+let test_queue_names () =
+  let p = P.make ~host_visible:false () in
+  let d = open_as (module Renamed) "open:renamed" p in
+  equal ~msg:"renamed: copies run, bytes back" (pair int bool) (2, true)
+    (round_trip d p);
+  let p = P.make ~host_visible:false () in
+  let d = open_as (module One_queue) "open:one-queue" p in
+  equal ~msg:"one queue: copies run, bytes back" (pair int bool) (2, true)
+    (round_trip d p);
+  let c = open_as (module Copyless) "open:copyless" (P.make ()) in
+  equal (list string) [ "COMPUTE:0"; "COPY:0" ]
+    (List.map (fun (q : Rig.queue) -> q.name) (Rig.queues c))
+
+(* A region without the host address the facts promise refuses the
+   allocation, and goes back to the driver. *)
+let test_overstated () =
+  let p = P.make ~host_visible:false () in
+  let d = open_as (module Overstated) "open:overstated" p in
+  raises_match (Exn.invalid_arg ~substring:"host address") (fun () ->
+      Rig.Buffer.create d 64);
+  equal ~msg:"the region freed" (list string) [ "alloc"; "free" ]
+    (List.filter (fun c -> c = "alloc" || c = "free") (P.log p))
 
 let test_hang_refused () =
   List.iteri
@@ -368,11 +471,14 @@ let tests =
       test "one name opens one device, until it is lost" test_same_name;
       test "a name open as another driver's device raises" test_other_driver;
       test "a device states its facts" test_facts;
-      test "a queue named COPY:0 that runs no copy refuses the open"
-        test_copy_queue_refused;
+      test "a queue's name gives it no meaning to rig" test_queue_names;
+      test "a region against the host_addresses fact refuses the allocation"
+        test_overstated;
       test "a hang bound below 1 ms refuses the open" test_hang_refused;
       test "the host states its facts" test_host;
-      test "a driver's device reaches by its copies and its peers" test_reach;
+      test "a driver's device reaches by its facts and its peers" test_reach;
+      test "where the host reaches a device, its buffers have host addresses"
+        test_reach_addresses;
       test "an io device computes nothing and reaches nothing" test_io;
       test "a name stays with the io library that opened it" test_io_key;
       test "a region an io library gave is a buffer of its device" test_of_io;

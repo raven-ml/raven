@@ -41,9 +41,10 @@ module Polled : sig
       address its [Device] memory. Without [addresses] (defaults to [true]) its
       [Device] memory has no address: its work names it by handle alone. With
       [transport] (defaults to [false]) the host does not address its word
-      either, which is read through [signaled], as behind a transport. Without
-      [peers] (defaults to [true]) it maps no memory of another device, and
-      without [maps_host] (defaults to [true]) no host memory. Its budget is
+      either, which is read through [signaled], as behind a transport. Its
+      [host_addresses] fact holds with [host_visible] and without [transport].
+      Without [peers] (defaults to [true]) it maps no memory of another device,
+      and without [maps_host] (defaults to [true]) no host memory. Its budget is
       [budget] (defaults to 1 GiB); it holds at most [memory] bytes of [Device]
       memory and [window] bytes of [Mapped] memory (default to [max_int]);
       [Pinned] memory is unbounded. Its word advances as [completion] says

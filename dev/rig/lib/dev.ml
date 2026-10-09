@@ -92,17 +92,26 @@ let same_machine d d' = Option.equal String.equal d.machine d'.machine
 
 module Cache = Hashtbl.Make (Int)
 
-(* The queue a device's copies go to: the first named "COPY:i". *)
+(* The queue a device's copies go to: the first after the first that runs
+   copies, beside its compute, else the first if it runs them. *)
 let copy_queue queues =
-  Array.find_map
-    (fun (q : Rig_edge.queue) ->
-      if String.starts_with ~prefix:"COPY:" q.name then Some q.name else None)
-    queues
+  let copies (q : Rig_edge.queue) = List.mem Rig_edge.Copy q.runs in
+  let n = Array.length queues in
+  let rec beside i =
+    if i >= n then None
+    else if copies queues.(i) then Some queues.(i).name
+    else beside (i + 1)
+  in
+  match beside 1 with
+  | Some _ as q -> q
+  | None when n > 0 && copies queues.(0) -> Some queues.(0).name
+  | None -> None
 
 let no_waits = { Rig_edge.stores = false; hosts = false; objects = false; most = 0 }
 
 let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~completion ~waits
-    ~hang_ms ~maps_host ~word ~word_region ~key ~memory_device ~fault
+    ~hang_ms ~maps_host ~host_addresses ~word ~word_region ~key ~memory_device
+    ~fault
     ~capability ~budget =
   {
     index;
@@ -118,6 +127,7 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~completion ~waits
     hang_ms;
     progress = { seen = 0; idle = true; since = 0 };
     maps_host;
+    host_addresses;
     word;
     word_region;
     key;
@@ -144,7 +154,8 @@ let host =
     make_device ~index:0 ~name:"CPU" ~machine:None ~kind:Host
       ~c:(c_host_new "CPU") ~arch:(host_arch ()) ~queues:[||]
       ~completion:Host_writes ~waits:no_waits ~hang_ms:None ~maps_host:false
-      ~word:0 ~word_region:None ~key:(-1) ~memory_device:false
+      ~host_addresses:false ~word:0 ~word_region:None ~key:(-1)
+      ~memory_device:false
       ~fault:(fun _ -> None)
       ~capability:None ~budget:max_int
   in
@@ -641,12 +652,6 @@ let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
   let m : (a, D.region, D.image) dm = (module D) in
   let rid : D.region Type.Id.t = Type.Id.make () in
   let f = D.facts h in
-  List.iter
-    (fun (q : Rig_edge.queue) ->
-      if String.starts_with ~prefix:"COPY:" q.name
-         && not (List.mem Rig_edge.Copy q.runs)
-      then invalid_argf "Rig.open_: %s's queue %S runs no copies" name q.name)
-    f.queues;
   Option.iter
     (fun n ->
       if n < 1 then
@@ -660,7 +665,8 @@ let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
       ~kind:(Driver { m; h; rid })
       ~c ~arch:f.arch ~queues:(Array.of_list f.queues)
       ~completion:(completion_of f.completion) ~waits:f.waits
-      ~hang_ms:f.hang_ms ~maps_host:f.maps_host ~word
+      ~hang_ms:f.hang_ms ~maps_host:f.maps_host
+      ~host_addresses:f.host_addresses ~word
       ~word_region:(Some (Region { m; h; r = f.word; rid }))
       ~key:(Type.Id.uid D.key) ~memory_device
       ~fault:(function D.Fault why -> Some why | _ -> None)
@@ -709,7 +715,7 @@ let open_io (type a) (module I : Rig_edge.Io with type t = a) ?machine ~name
             make_device ~index ~name:full ~machine
               ~kind:(Io { m = (module I); h })
               ~c ~arch:"" ~queues:[||] ~completion:Host_writes ~waits:no_waits
-              ~hang_ms:None ~maps_host:false ~word:0
+              ~hang_ms:None ~maps_host:false ~host_addresses:false ~word:0
               ~word_region:None ~key ~memory_device:false
               ~fault:(function I.Fault why -> Some why | _ -> None)
               ~capability:None ~budget
@@ -783,6 +789,6 @@ let reaches d d' =
      match (d.kind, d'.kind) with
      | Io _, _ | _, Io _ -> false
      | Host, Host -> false
-     | Host, Driver _ -> d'.memory_device || d'.copy_queue = None
+     | Host, Driver _ -> d'.host_addresses
      | Driver _, Host -> d.maps_host
      | Driver _, Driver _ -> d'.memory_device || peer d d'

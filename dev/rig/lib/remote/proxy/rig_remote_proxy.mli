@@ -77,6 +77,7 @@ val capability : t -> Rig_remote_abi.t
       | [waits] | [hosts] only, with no bound: a wait on a proxy of the same link goes to the agent in the hand-over. |
       | [may_block] | [true]: the hand-over sends its frame itself. |
       | [maps_host] | [false]: a copy names this process's memory by its host address instead. |
+      | [host_addresses] | [false]: the memory is another machine's. |
       | [capability] | {!capability}, under {!Rig_remote_abi.key}. |
       | [word] | The shadow. |
     }

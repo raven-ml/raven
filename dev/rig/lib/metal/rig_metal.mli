@@ -149,17 +149,18 @@ val capability : t -> Rig_metal_abi.t
 (** {1:this This driver}
 
     {t
-      | Fact         | Value                                  |
-      |--------------|----------------------------------------|
-      | [arch]       | ["AppleN"] or ["Mac2"]                 |
-      | [budget]     | [recommendedMaxWorkingSetSize]         |
-      | [queues]     | ["COMPUTE:0"], which runs [Fill]       |
-      | [completion] | [Host]                                 |
-      | [waits]      | None, [most = 0]                       |
-      | [may_block]  | [true]                                 |
-      | [maps_host]  | [true]                                 |
-      | [capability] | {!Rig_metal_abi.t} ({!val-capability}) |
-      | [word]       | Eight bytes of host memory             |
+      | Fact             | Value                                  |
+      |------------------|----------------------------------------|
+      | [arch]           | ["AppleN"] or ["Mac2"]                 |
+      | [budget]         | [recommendedMaxWorkingSetSize]         |
+      | [queues]         | ["COMPUTE:0"], which runs [Fill]       |
+      | [completion]     | [Host]                                 |
+      | [waits]          | None, [most = 0]                       |
+      | [may_block]      | [true]                                 |
+      | [maps_host]      | [true]                                 |
+      | [host_addresses] | [true]                                 |
+      | [capability]     | {!Rig_metal_abi.t} ({!val-capability}) |
+      | [word]           | Eight bytes of host memory             |
     }
 
     {b Facts.} [arch] is the highest Apple GPU family the GPU supports, such as
@@ -168,9 +169,9 @@ val capability : t -> Rig_metal_abi.t
     [MTLBuffer] holding an unsigned 64-bit integer in the host's byte order,
     which the device's handlers write from the host.
 
-    {b Queues.} The device lists no copy queue: its memory is the host's, which
-    copies it. Work that depends on another device starts after the caller
-    waited for it on the host.
+    {b Queues.} The device lists no copy queue: its memory is the host's
+    ([host_addresses]), which copies it. Work that depends on another device
+    starts after the caller waited for it on the host.
 
     {b The C edge.} The edge's functions are [rig_metal_room],
     [rig_metal_submit] and [rig_metal_commit], which [rig_metal.h] declares. The

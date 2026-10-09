@@ -165,6 +165,7 @@ module Driver = struct
       may_block = d.may_block;
       hang_ms = d.hang_ms;
       maps_host = d.maps_host;
+      host_addresses = d.host_visible && not d.transport;
       capability = Capability (capability_key, ());
       word =
         {

@@ -69,12 +69,17 @@ let polled =
     lag = 1;
   }
 
+(* Whether the host addresses every region of a Polled device of [c]: its
+   [host_addresses] fact (rig_support.mli). *)
+let host_addresses c = c.visible && not c.transport
+
 (* Polled's configurations and the weight each is drawn with: memory the host
-   does not address is what a device's queue copies, so it weighs most. A device
-   that runs no copy has memory the host addresses: [copies = false] keeps
-   [visible]. A device of driver objects keeps its word behind a transport: rig
-   spins a still interval, 200 ms, on a word of driver objects the host reads
-   before it sleeps in the driver, which is where Polled runs its queue. *)
+   does not address is what a device's queue copies, so it weighs most. Only
+   the host copies the memory of a device that runs no copy: [copies = false]
+   keeps [visible]. A device of driver objects keeps its word behind a
+   transport: rig spins a still interval, 200 ms, on a word of driver objects
+   the host reads before it sleeps in the driver, which is where Polled runs
+   its queue. *)
 let configs =
   [
     (1, polled);
@@ -557,7 +562,7 @@ let check_bytes b s =
 (* Whether [m] counts in its owner's budget for sure. *)
 let counts m =
   match (m.owner.kind, m.mkind) with
-  | Polled { copies = false; _ }, Owned _ -> true
+  | Polled c, Owned _ when host_addresses c -> true
   | Polled _, Owned B.Device -> true
   | _ -> false
 
@@ -1027,7 +1032,8 @@ let create_ref (v : rdevv) memory n c outcome =
   invalid_if vd (d.kind = Disk && n > 0);
   let budgeted =
     match (d.kind, memory) with
-    | Polled { copies = false; _ }, _ | Polled _, B.Device -> n > 0
+    | Polled c, _ when host_addresses c -> n > 0
+    | Polled _, B.Device -> n > 0
     | _ -> false
   in
   (* On two domains the other's budgets and allocations change what [d] may hold

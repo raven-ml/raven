@@ -269,6 +269,7 @@ let facts (T d) =
     may_block = false;
     hang_ms = d.path.hang_ms;
     maps_host = Option.is_some d.path.map_host;
+    host_addresses = false;
     capability = Capability (Abi.Gpu.key, d.capability);
     word = R d.word;
     edge = Nativeint.of_int d.self;

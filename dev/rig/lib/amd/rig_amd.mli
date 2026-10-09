@@ -87,6 +87,7 @@ val capability : t -> Rig_amd_abi.Capability.t
       | [waits] | [stores] and [hosts] iff the compute queue compares 64-bit words, never [objects]; [most] is [255]. |
       | [may_block] | [false]: the C entries write memory and call no system function. |
       | [maps_host] | [true] iff the path maps host memory ([map_host] of {!type-path}). |
+      | [host_addresses] | [false]: the host does not address [Device] memory. |
       | [capability] | A {!Rig_amd_abi.Capability.t} under {!Rig_amd_abi.Capability.key}. |
       | [word] | Eight bytes of host memory. |
     }

@@ -95,7 +95,7 @@ let test_collects () =
   equal int (4 * kib) (B.length (B.create d (4 * kib)))
 
 let test_set_budget () =
-  let d, p = P.open_ "memory:set-budget" in
+  let d, p = P.open_ ~host_visible:false "memory:set-budget" in
   let live = B.create d (8 * kib) in
   List.iter (fun _ -> ignore (dropped d (4 * kib))) [ 1; 2; 3 ];
   collect d;
@@ -140,7 +140,7 @@ let test_budget_beside_loss () =
    host memory, and a fault that wait finds is that device's loss, never the
    allocation's: the host allocation raises Out_of_memory for itself. *)
 let test_ladder_beside_fault () =
-  let d, p = P.open_ "memory:ladder-fault" in
+  let d, p = P.open_ ~host_visible:false "memory:ladder-fault" in
   let s = Sub.make ~reads:0 ~writes:1 d [||] in
   ignore (Sys.opaque_identity (dropped_written s ~memory:Pinned d (64 * kib)));
   collect Rig.host;
@@ -302,10 +302,10 @@ let test_host_held () =
         int before (Support.host_held ()))
     [ 16; 4 * kib; 128 * kib ]
 
-(* On a device with copies, pinned memory is host memory: it counts in the
-   host's budget, not the device's. *)
+(* On a device whose memory the host does not address, pinned memory is host
+   memory: it counts in the host's budget, not the device's. *)
 let test_pinned () =
-  let d, p = P.open_ "memory:pinned" in
+  let d, p = P.open_ ~host_visible:false "memory:pinned" in
   Rig.set_budget d 0;
   equal int (4 * kib) (B.length (B.create ~memory:Pinned d (4 * kib)));
   equal allocs [ (B.Pinned, 4 * kib, true) ] (P.allocs p);
@@ -321,8 +321,8 @@ let test_pinned () =
    cache returns when a pinned allocation the host's budget refuses reclaims:
    the allocation is made. *)
 let test_pinned_reclaims () =
-  let a, _ = P.open_ "memory:pinned-asker" in
-  let b, _ = P.open_ "memory:pinned-keeper" in
+  let a, _ = P.open_ ~host_visible:false "memory:pinned-asker" in
+  let b, _ = P.open_ ~host_visible:false "memory:pinned-keeper" in
   let n = 64 * kib in
   ignore (dropped ~memory:Pinned b n);
   collect b;
@@ -333,7 +333,7 @@ let test_pinned_reclaims () =
    allocation the host's budget refuses reclaims: the reclaim drains the host,
    whose list holds the buffer, and the allocation is made. *)
 let test_borrowed_reclaimed () =
-  let d, _ = P.open_ "memory:borrowed-reclaim" in
+  let d, _ = P.open_ ~host_visible:false "memory:borrowed-reclaim" in
   let n = 64 * kib in
   let[@inline never] borrowed () =
     ignore (Sys.opaque_identity (B.borrow d (B.create Rig.host n)))
@@ -345,7 +345,7 @@ let test_borrowed_reclaimed () =
 (* On a device whose memory the host addresses, pinned memory is the device's
    own: it counts in the device's budget. *)
 let test_pinned_own () =
-  let d, _ = P.open_ ~copies:false "memory:pinned-own" in
+  let d, _ = P.open_ "memory:pinned-own" in
   Rig.set_budget d (8 * kib);
   raises_match
     (out_of_memory d (16 * kib))
@@ -368,7 +368,7 @@ let test_mapped_window () =
   ignore (Sys.opaque_identity b)
 
 let test_mapped_budget () =
-  let d, p = P.open_ "memory:mapped-budget" in
+  let d, p = P.open_ ~host_visible:false "memory:mapped-budget" in
   Rig.set_budget d (4 * kib);
   ignore (B.create ~memory:Mapped d (8 * kib));
   equal allocs [ (B.Pinned, 8 * kib, true) ] (P.allocs p)
@@ -723,7 +723,7 @@ let tests =
       ];
     group ~timeout "kinds"
       [
-        test "pinned memory on a device with copies counts in the host's budget"
+        test "pinned memory of hidden device memory counts in the host's budget"
           test_pinned;
         test "pinned memory the host addresses counts in its device's budget"
           test_pinned_own;

@@ -36,6 +36,7 @@ module D = struct
       may_block = true;
       hang_ms = None;
       maps_host = true;
+      host_addresses = true;
       capability = Capability (capability_key, ());
       word = { at = d.word; base = Nativeint.to_int d.self };
       edge = d.self;

@@ -72,6 +72,7 @@ let facts d =
     may_block = true;
     hang_ms = None;
     maps_host = false;
+    host_addresses = false;
     capability = Capability (Rig_remote_abi.key, d.capability);
     word = d.word;
     edge = d.c;

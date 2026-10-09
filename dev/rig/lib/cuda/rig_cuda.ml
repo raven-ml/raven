@@ -333,6 +333,7 @@ let open_ i =
               may_block = true;
               hang_ms = None;
               maps_host = registers <> 0;
+              host_addresses = false;
               capability = Capability (Rig_cuda_abi.key, cap);
               word;
               edge = Nativeint.of_int self;

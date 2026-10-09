@@ -148,6 +148,7 @@ val capability : t -> Rig_cuda_abi.t
       | [waits] | [stores] and [hosts]; no [objects]; [most] is [max_int]. |
       | [may_block] | [true]: the submit calls CUDA, which may block. |
       | [maps_host] | The GPU's [CU_DEVICE_ATTRIBUTE_HOST_REGISTER_SUPPORTED]. |
+      | [host_addresses] | [false]: the host does not address [Device] memory. |
       | [capability] | {!capability}, under {!Rig_cuda_abi.key}. |
       | [word] | Eight bytes of page-locked host memory. |
     }

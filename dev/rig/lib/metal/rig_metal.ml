@@ -241,6 +241,7 @@ let open_ i =
           may_block = true;
           hang_ms = None;
           maps_host = true;
+          host_addresses = true;
           capability = Capability (Rig_metal_abi.key, cap);
           word;
           edge = Nativeint.of_int self;

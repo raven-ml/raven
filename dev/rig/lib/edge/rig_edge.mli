@@ -44,14 +44,15 @@ type kind =
 
 type queue = {
   name : string;
-      (** The name parts give: ["COMPUTE:0"] first, then ["COPY:i"] for copy
-          queues. A queue named ["COPY:i"] runs [Copy]. *)
+      (** The name parts give, such as ["COMPUTE:0"]. rig reads nothing else
+          from it. *)
   runs : kind list;
       (** What the queue runs: rig refuses a part of another kind. *)
 }
 (** The type for a device's queues. A device's first queue is the one rig waits
-    through and its default compute queue. rig's own copies go to the first
-    queue named ["COPY:i"]. *)
+    through and its default compute queue. Its {e copy queue} is the first
+    queue after the first whose [runs] lists [Copy], or, where none does, the
+    first queue if its [runs] lists [Copy]: rig's own copies go there. *)
 
 (** The type for how a device's word advances. *)
 type completion =
@@ -83,9 +84,7 @@ type 'region facts = {
   arch : string;  (** The device's architecture, such as ["gfx1100"]. *)
   budget : int;  (** The bytes of own memory the device should hold at most. *)
   queues : queue list;
-      (** The device's queues. A part names its queue by name. A device that
-          lists no queue named ["COPY:i"] runs no copy: it has a host address
-          for every region it allocates, and the host copies its memory. *)
+      (** The device's queues. A part names its queue by name. *)
   completion : completion;  (** How the word advances. *)
   waits : waits;  (** The producers its queues wait for. *)
   may_block : bool;
@@ -106,6 +105,12 @@ type 'region facts = {
   maps_host : bool;
       (** Whether the device maps host memory of its machine that starts on a
           page ({!Driver.map_host}). *)
+  host_addresses : bool;
+      (** Whether the host addresses every region the device allocates: each
+          one's location has a [host] address ({!Driver.locate}). The host then
+          reaches the device's memory and copies it, and the device's [Pinned]
+          memory is its own, counting in [budget]. An allocation whose region
+          breaks it raises [Invalid_argument], the region freed. *)
   capability : capability;
       (** The ABI record, filled when the device opened. *)
   word : 'region;

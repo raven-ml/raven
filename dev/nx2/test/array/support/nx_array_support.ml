@@ -130,6 +130,7 @@ module Driver = struct
       may_block = false;
       hang_ms = None;
       maps_host = false;
+      host_addresses = true;
       capability = Capability (capability_key, ());
       word = { at = late_word d.self; raw = 0 };
       edge = d.self;
