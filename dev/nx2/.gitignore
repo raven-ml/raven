@@ -1,0 +1,6 @@
+# Compiled kernels: each gen.py writes them and pins.json holds their
+# digests, so a checkout regenerates or copies them in.
+*.cubin
+*.metallib
+*.co
+*.hsaco
