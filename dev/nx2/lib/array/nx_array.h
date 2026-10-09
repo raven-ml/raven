@@ -122,6 +122,7 @@ typedef struct {
   int wait;
   int alias; /* identical to a written operand, whose claim covers it */
   struct caml__roots_block roots;
+  struct caml__roots_block **local; /* the domain's local roots */
 } nx_array;
 
 /* The dtype of the OCaml array [v], a code. */

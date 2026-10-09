@@ -144,6 +144,8 @@ int nx_read(int n, const nx_operand *in, nx_array *out) {
      has no thread-local variables to share (macOS), each access to the
      domain's state is a function call. */
   struct caml__roots_block **roots = &CAML_LOCAL_ROOTS, *top = *roots;
+  /* nx_done unlinks through the same pointer: one lookup a call. */
+  out[0].local = roots;
   for (int k = 0; k < n; k++) {
     out[k].roots.next = top;
     out[k].roots.ntables = 1;
@@ -172,7 +174,7 @@ void nx_done(int n, nx_array *a) {
   for (int k = 0; k < n; k++)
     if (!a[k].alias) rig_buffer_release(a[k].buffer);
   /* Unlink the roots nx_read pushed, under any pushed since. */
-  struct caml__roots_block **p = &CAML_LOCAL_ROOTS;
+  struct caml__roots_block **p = a[0].local;
   while (*p != &a[n - 1].roots) {
     if (*p == NULL)
       caml_fatal_error("nx_done: the descriptors' roots were popped before "
