@@ -45,7 +45,6 @@
 (executable
  (name test_threads)
  (modules test_threads)
- (modes native byte)
  (enabled_if
   (<> %{os_type} Win32))
  (libraries rig_pool_probe rig_pool_thread_probe unix windtrap))
@@ -70,12 +69,13 @@
   (run %{dep:test_interleavings.exe})))
 
 ; ocamlrun loads each library's stubs as a shared library of its own, found
-; on CAML_LD_LIBRARY_PATH; the pool's symbols resolve at load. windtrap's
-; stubs sit in the stublibs directory beside its library. ':' separates the
-; path's directories off Windows only, so the bytecode runs are POSIX's.
-; Under the sanitize profile the stubs need the sanitizer runtime, which is
-; linked into the native executables and absent from ocamlrun, so the
-; bytecode runs are skipped.
+; on CAML_LD_LIBRARY_PATH, and resolves every symbol of it as it loads it:
+; listing test_pool's tests in bytecode checks that the pool's symbols
+; resolve, without running the suite again. windtrap's stubs sit in the
+; stublibs directory beside its library. ':' separates the path's
+; directories off Windows only, so the run is POSIX's. Under the sanitize
+; profile the stubs need the sanitizer runtime, which is linked into the
+; native executables and absent from ocamlrun, so the run is skipped.
 
 (rule
  (alias runtest)
@@ -87,21 +87,7 @@
  (action
   (setenv
    CAML_LD_LIBRARY_PATH
-   "../../lib/pool:.:support:%{lib:windtrap:../stublibs}"
-   (run %{dep:test_pool.bc}))))
-
-(rule
- (alias runtest)
- (enabled_if
-  (and
-   (<> %{os_type} Win32)
-   (<> %{profile} sanitize)))
- (deps
-  ../../lib/pool/dllrig_pool_stubs.so
-  support/dllrig_pool_probe_stubs.so
-  dllrig_pool_thread_probe_stubs.so)
- (action
-  (setenv
-   CAML_LD_LIBRARY_PATH
-   "../../lib/pool:.:support:%{lib:windtrap:../stublibs}"
-   (run %{dep:test_threads.bc}))))
+   "../../lib/pool:support:%{lib:windtrap:../stublibs}"
+   (with-stdout-to
+    %{null}
+    (run %{dep:test_pool.bc} --list)))))
