@@ -417,6 +417,27 @@ let copy_array ~by (module K : Nx_kernel.S) a =
       (A.device a) [ A.Any a ];
   dst
 
+(* [a] moved by [mv]: a view over [a]'s memory where a layout expresses it, a
+   copy moved otherwise. *)
+let moved ~by set mv a =
+  match A.move mv a with
+  | Some v ->
+      view_of a;
+      v
+  | None ->
+      let kernels = kernels_of ~by ~op:"Copy" set in
+      Option.get (A.move mv (copy_array ~by kernels a))
+
+(* [a] bitcast to [dt], as {!moved}. *)
+let cast ~by set dt a =
+  match A.bitcast dt a with
+  | Some v ->
+      view_of a;
+      v
+  | None ->
+      let kernels = kernels_of ~by ~op:"Copy" set in
+      Option.get (A.bitcast dt (copy_array ~by kernels a))
+
 (* [mv] on one shard of a value of [shape] cut as [cuts], the shard of shape
    [local]: a cut axis is one the movement keeps in order ({!Route.moved}), so
    its extents are divided where the movement names them. *)
@@ -453,6 +474,9 @@ let unravel i shape =
   done;
   idx
 
+(* Whether [p] cuts no axis: one device, or the whole on each. *)
+let uncut p = Grid.cuts (Devices.grid p) = [||]
+
 (* The constant operation at [p] reads its operands at this placement: [p] for a
    map, whose operands have its shape, and for a placement that cuts no axis;
    the whole on every device otherwise. *)
@@ -461,9 +485,13 @@ let operand_at : type r.
  fun op p ->
   match op with
   | Value.Map _ -> p
-  | _ ->
-      if Grid.cuts (Devices.grid p) = [||] then p
-      else Devices.on (Devices.set p)
+  | _ -> if uncut p then p else Devices.on (Devices.set p)
+
+(* Whether [op] is a view of its operand: a constant's keeps no results of its
+   own, and an operation reads it through to its operand's. *)
+let is_view : type r. r Value.prim -> bool = function
+  | Value.Move _ | Value.Bitcast _ -> true
+  | Value.Map _ | Value.Copy _ | Value.Place _ | Value.Check _ -> false
 
 let find memo p =
   List.find_map
@@ -640,30 +668,15 @@ and compute : type r. by:string -> ?into:A.any -> r Value.prim -> r =
       r
   | Value.Move (mv, x) ->
       let xp = Prim.placement x and shape = Prim.shape x and xs = arrays_of x in
-      let cuts = Grid.cuts (Devices.grid xp) in
-      let moved a =
-        let local = localize mv shape cuts (L.shape (A.layout a)) in
-        match A.move local a with
-        | Some v ->
-            view_of a;
-            v
-        | None ->
-            let kernels = kernels_of ~by ~op:"Copy" (Devices.set xp) in
-            Option.get (A.move local (copy_array ~by kernels a))
+      let cuts = Grid.cuts (Devices.grid xp) and set = Devices.set xp in
+      let move a =
+        moved ~by set (localize mv shape cuts (L.shape (A.layout a))) a
       in
-      shard_views ~by op xp (fun () -> Array.map moved xs)
+      shard_views ~by op xp (fun () -> Array.map move xs)
   | Value.Bitcast (dt, x) ->
       let xp = Prim.placement x and xs = arrays_of x in
-      let cast a =
-        match A.bitcast dt a with
-        | Some v ->
-            view_of a;
-            v
-        | None ->
-            let kernels = kernels_of ~by ~op:"Copy" (Devices.set xp) in
-            Option.get (A.bitcast dt (copy_array ~by kernels a))
-      in
-      shard_views ~by op xp (fun () -> Array.map cast xs)
+      let set = Devices.set xp in
+      shard_views ~by op xp (fun () -> Array.map (cast ~by set dt) xs)
   | Value.Place _ | Value.Check _ -> run ~by op
 
 (* The one result of [op] over the arrays [views ()], one per device of [xp] in
@@ -721,8 +734,9 @@ and check : type d.
       in
       raise (fail idx (List.map at_idx data))
 
-(* A constant read at [p] by an operation: its results there, kept in its memo,
-   which every later read at [p] finds. *)
+(* A constant read at [p] by an operation: a view of a constant is its operand's
+   results read at [p] and viewed; any other its results there, kept in its
+   memo, which every later read at [p] finds. *)
 and at : type v s d.
     d Devices.placement -> (v, s, d) Value.t -> (v, s, d) Value.t =
  fun p x ->
@@ -731,25 +745,32 @@ and at : type v s d.
   | Value.Deferred { form; node = Value.Node n as node; k } ->
       let key = Devices.rebrand p in
       let arrays =
-        match find n.memo key with
-        | Some a -> a
-        | None ->
-            let a = evaluate node key in
-            remember n.memo key a;
-            Option.get (find n.memo key)
+        if is_view n.op then compute_node ~resolve:at node key
+        else
+          match find n.memo key with
+          | Some a -> a
+          | None ->
+              let a = evaluate node key in
+              remember n.memo key a;
+              Option.get (find n.memo key)
       in
       make p (Array.map (A.expect form.dtype) arrays.(k))
 
 (* The constant [c] computed at [p] into memory of its own, its operands taken
    from their memos or computed for this alone: a value given to a caller shares
-   no memory with a memo. *)
+   no memory with a memo. A view of a constant views its operand computed into
+   memory of its own. *)
 and own : type v s d.
     d Devices.placement -> (v, s, d) Value.t -> (v, s, d) Value.t =
  fun p x ->
   match x with
   | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ -> x
-  | Value.Deferred { form; node; k } ->
-      let arrays = evaluate node (Devices.rebrand p) in
+  | Value.Deferred { form; node = Value.Node n as node; k } ->
+      let key = Devices.rebrand p in
+      let arrays =
+        if is_view n.op then compute_node ~resolve:own node key
+        else evaluate node key
+      in
       make p (Array.map (A.expect form.dtype) arrays.(k))
 
 (* [root]'s results at [p], fresh: the constants it reads are taken from their
@@ -897,6 +918,14 @@ and compute_node :
   | Value.Map _ ->
       (* Its loads are computed at [p] already. *)
       Prim.arrays n.op (compute_at ~by ~resolve p n.op)
+  | Value.Move (mv, x) when uncut p ->
+      (* A view at a placement that cuts no axis: each device's whole operand
+         there, moved. Its rule held when it was made. *)
+      let xs = arrays_of (resolve (Devices.rebrand p) x) in
+      [| Array.map (fun a -> A.Any (moved ~by (Devices.set p) mv a)) xs |]
+  | Value.Bitcast (dt, x) when uncut p ->
+      let xs = arrays_of (resolve (Devices.rebrand p) x) in
+      [| Array.map (fun a -> A.Any (cast ~by (Devices.set p) dt a)) xs |]
   | op ->
       let q = operand_at op p in
       (* Its rule held when it was made, and its operands lie at [q]. *)
@@ -990,8 +1019,30 @@ let apply1 (type v s w r d) ~slow ~by k (dt : (w, r) D.t)
   | Value.Traced _ ->
       slow ~by k dt x
 
-let apply2 (type v s w r d) ~slow ~by k (dt : (w, r) D.t)
-    (x : (v, s, d) Value.t) (y : (v, s, d) Value.t) : (w, r, d) Value.t =
+(* Whether the one-node map [k] over [x] and [y] is well formed. A constant is
+   read for an operation only once its rule holds, so that a refused operation
+   computes nothing. *)
+let well_formed2 k x y = P.accepts2 k (Prim.dtype x) && Prim.same_shape x y
+
+let well_formed3 k c x y =
+  P.accepts3 k (Prim.dtype c) (Prim.dtype x)
+  && Prim.same_shape c x && Prim.same_shape x y
+
+let rec apply2 : type v s w r d.
+    slow:
+      (by:string ->
+      P.op2 ->
+      (w, r) D.t ->
+      (v, s, d) Value.t ->
+      (v, s, d) Value.t ->
+      (w, r, d) Value.t) ->
+    by:string ->
+    P.op2 ->
+    (w, r) D.t ->
+    (v, s, d) Value.t ->
+    (v, s, d) Value.t ->
+    (w, r, d) Value.t =
+ fun ~slow ~by k dt x y ->
   match (x, y) with
   | Value.Array rx, Value.Array ry
     when rx.at == ry.at && live_word rx.dead && live_word ry.dead -> (
@@ -1014,10 +1065,47 @@ let apply2 (type v s w r d) ~slow ~by k (dt : (w, r) D.t)
          && Array.length dy.arrays = 1
          && Devices.kernels (Devices.set dy.at) <> None ->
       donated2 ~slow ~by k dt dy.at y dy.arrays.(0) rx.a ~first:false
+  | Value.Array rx, Value.Deferred _
+    when live_word rx.dead && well_formed2 k x y ->
+      (* A constant beside a value is read where the value lies. *)
+      apply2 ~slow ~by k dt x (at rx.at y)
+  | Value.Deferred _, Value.Array ry
+    when live_word ry.dead && well_formed2 k x y ->
+      apply2 ~slow ~by k dt (at ry.at x) y
   | _ -> slow ~by k dt x y
 
-let apply3 (type a b v s d) ~slow ~by k (c : (a, b, d) Value.t)
-    (x : (v, s, d) Value.t) (y : (v, s, d) Value.t) : (v, s, d) Value.t =
+(* Where the constants among [c], [x] and [y] are read: the one placement of the
+   live arrays among them, where every other is a constant. *)
+let beside3 (type a b v s d) (c : (a, b, d) Value.t) (x : (v, s, d) Value.t)
+    (y : (v, s, d) Value.t) : d Devices.placement option =
+  let place : type v s. (v, s, d) Value.t -> d Devices.placement option option =
+    function
+    | Value.Deferred _ -> Some None
+    | Value.Array r when live_word r.dead -> Some (Some r.at)
+    | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ -> None
+  in
+  match (place c, place x, place y) with
+  | Some pc, Some px, Some py -> (
+      match List.filter_map Fun.id [ pc; px; py ] with
+      | p :: rest when List.for_all (( == ) p) rest -> Some p
+      | _ -> None)
+  | _ -> None
+
+let rec apply3 : type a b v s d.
+    slow:
+      (by:string ->
+      P.op3 ->
+      (a, b, d) Value.t ->
+      (v, s, d) Value.t ->
+      (v, s, d) Value.t ->
+      (v, s, d) Value.t) ->
+    by:string ->
+    P.op3 ->
+    (a, b, d) Value.t ->
+    (v, s, d) Value.t ->
+    (v, s, d) Value.t ->
+    (v, s, d) Value.t =
+ fun ~slow ~by k c x y ->
   match (c, x, y) with
   | Value.Array rc, Value.Array rx, Value.Array ry
     when rc.at == rx.at && rc.at == ry.at && live_word rc.dead
@@ -1032,4 +1120,9 @@ let apply3 (type a b v s d) ~slow ~by k (c : (a, b, d) Value.t)
           | Declined | Wrong_dtype | Shape_mismatch -> slow ~by k c x y
           | refusal ->
               A.refused by refusal [ A.Any dst; A.Any ca; A.Any a; A.Any b ]))
+  | (Value.Deferred _, _, _ | _, Value.Deferred _, _ | _, _, Value.Deferred _)
+    when well_formed3 k c x y -> (
+      match beside3 c x y with
+      | Some p -> apply3 ~slow ~by k (at p c) (at p x) (at p y)
+      | None -> slow ~by k c x y)
   | _ -> slow ~by k c x y

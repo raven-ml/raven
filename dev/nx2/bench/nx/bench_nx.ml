@@ -69,6 +69,8 @@ let dispatch_rows =
           Nx.add (Nx.donate (Nx.add x x)) x);
       Thumper.bench "add-scalar-1" (fun () ->
           Nx.add (Thumper.black_box x1) (Nx.scalar D.Float32 1.));
+      Thumper.bench "add-held-scalar-1" (fun () ->
+          Nx.add (Thumper.black_box x1) half);
     ]
 
 let constant_rows =

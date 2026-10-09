@@ -204,6 +204,12 @@ let kernels =
           C.reset ();
           invalid ~by:"Nx.add" (fun () -> Nx.add a b);
           equal int 0 (C.calls ()));
+      test "a refused operation beside a constant calls no kernel" (fun () ->
+          let a = to_count (on_host Plain D.Bool [| 2 |] [| true; false |]) in
+          let c = Nx.zeros D.Bool [| 2 |] in
+          C.reset ();
+          invalid ~by:"Nx.add" (fun () -> Nx.add a c);
+          equal int 0 (C.calls ()));
       test "a kind refusing its operands' dtypes raises naming the function"
         (fun () ->
           let a = on_host Plain D.Bool [| 2 |] [| true; false |] in
@@ -260,6 +266,20 @@ let constants =
           ignore (Nx.add a c);
           equal int 2 first;
           equal int 1 (C.calls ()));
+      test "a constant read through a movement computes once, at its first use"
+        (fun () ->
+          let c = Nx.scalar D.Float32 2. in
+          let a = to_count (on_host Plain D.Float32 [| 2 |] [| 1.; 2. |]) in
+          ignore (Nx.add a c);
+          C.reset ();
+          let y = Nx.add a c in
+          equal ~msg:"kernel calls: the add alone" int 1 (C.calls ());
+          equal (array bits) [| 3.; 4. |] (elements y);
+          let b = Nx.less a c in
+          C.reset ();
+          let w = Nx.where b c a in
+          equal ~msg:"kernel calls: the where alone" int 1 (C.calls ());
+          equal (array bits) [| 2.; 2. |] (elements w));
       test "placing a constant computes it at the placement, each time"
         (fun () ->
           let z = Nx.zeros D.Float32 [| 2 |] in
@@ -420,6 +440,18 @@ let test_placed_owns () =
   A.set first [| 0 |] 42.;
   equal ~msg:"a later use" (array bits) [| 2.; 2. |] (elements (Nx.add c c))
 
+(* A movement of a formula placed after an operation read the formula: memory of
+   its own, which the formula's later uses never see. *)
+let test_placed_view_owns () =
+  let c = Nx.add (Nx.zeros D.Float32 [| 2 |]) (Nx.scalar D.Float32 1.) in
+  let h = on_host Plain D.Float32 [| 2 |] [| 1.; 1. |] in
+  equal ~msg:"a first use" (array bits) [| 2.; 2. |] (elements (Nx.add h c));
+  let v =
+    Option.get (Nx.Repr.array (Nx.place Nx.Host.on (Nx.reshape [| 2; 1 |] c)))
+  in
+  A.set v [| 0; 0 |] 42.;
+  equal ~msg:"a later use" (array bits) [| 2.; 2. |] (elements (Nx.add h c))
+
 let sets =
   group "sets"
     [
@@ -428,6 +460,8 @@ let sets =
       test "every function takes a value of every set" test_every_set;
       test "zeros keeps nothing of its shape argument" test_zeros_shape_owned;
       test "a placed formula is memory of its own" test_placed_owns;
+      test "a placed movement of a formula is memory of its own"
+        test_placed_view_owns;
       prop "an int-array argument overwritten after the call changes nothing"
         int_arrays law_arguments_owned;
     ]

@@ -84,7 +84,8 @@ and node =
       (** An operation whose every operand is a constant, applied by [by].
           [memo] holds its results computed so far at the placements an
           operation read it at: per result, one array per device, of the
-          device's window. *)
+          device's window. A movement or a bitcast keeps none: an operation
+          reads it as a view of its operand's results. *)
 
 and 'd any = Any : ('v, 's, 'd) t -> 'd any
 

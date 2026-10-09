@@ -73,12 +73,13 @@ val apply3 :
 (** [applyN ~slow ~by k dt x …] is the one-node map [k] over [x …], of one
     shape, with result dtype [dt] (the second operand's for [apply3]), where no
     interpretation reaches it. For operands on one device at physically one
-    placement it builds no operation: it allocates the result, sharing the first
-    operand's layout when that is C-contiguous at offset 0 and of the result's
-    dtype, and calls the set's kernel, which checks the dtypes and shapes.
-    Otherwise, and where the kernel declines or refuses them, it is
-    [slow ~by k dt x …], the operation built and evaluated, whose rule raises.
-*)
+    placement, and constants beside them, read there once [k] takes the
+    operands' dtypes and shapes, it builds no operation: it allocates the
+    result, sharing the first operand's layout when that is C-contiguous at
+    offset 0 and of the result's dtype, and calls the set's kernel, which checks
+    the dtypes and shapes. Otherwise, and where the kernel declines or refuses
+    them, it is [slow ~by k dt x …], the operation built and evaluated, whose
+    rule raises. *)
 
 val at : 'd Devices.placement -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
 (** [at p c] is the constant [c] computed at [p] for an operation that reads it:
@@ -87,11 +88,13 @@ val at : 'd Devices.placement -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
     in memory of its own. [c] keeps its results at [p]: it computes once per
     placement within a domain; across domains, at most once per domain whose
     first use races, every result equal bit for bit and the first one stored
-    kept. It takes no lock. The constants [c] is computed from are taken from
-    their own results where an operation read them at the placement [c] reads
-    them, and are otherwise computed for this alone, once each, and dropped. A
-    kernel's refusal or decline raises here, naming the function that made the
-    constant. A value that is not a constant is returned as it is. *)
+    kept. It takes no lock. A movement or a bitcast of a constant keeps nothing:
+    it is its operand read at [p], viewed. The constants [c] is computed from
+    are taken from their own results where an operation read them at the
+    placement [c] reads them, and are otherwise computed for this alone, once
+    each, and dropped. A kernel's refusal or decline raises here, naming the
+    function that made the constant. A value that is not a constant is returned
+    as it is. *)
 
 val donate : by:string -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
 (** [donate ~by x] is a handle over [x]'s memory that one operation reads
