@@ -104,8 +104,9 @@ val grid : 'd placement -> Grid.t
 val device : 'd placement -> int option
 (** [device p] is [Some k] iff [p] is its set's device [k] alone. *)
 
-val equal : 'd placement -> 'd placement -> bool
-(** [equal p q] compares physically, then sets by number and grids. *)
+val equal : 'd placement -> 'e placement -> bool
+(** [equal p q] compares physically, then sets by number and grids. It takes two
+    brands: placing compares a value's placement with its destination's. *)
 
 val window :
   by:string -> 'd placement -> int array -> int -> Nx_array.Move.range array

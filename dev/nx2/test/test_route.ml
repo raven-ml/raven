@@ -199,6 +199,21 @@ let keeps =
 let cases_ =
   group "routes"
     [
+      test "a constant's placement is the host's device, apart from it"
+        (fun () ->
+          let a : b Devices.placement = Devices.anywhere in
+          equal int 0 (Devices.number (Devices.set a));
+          equal (option int) (Some 0) (Devices.device a);
+          equal bool false (a == Devices.rebrand (Devices.one Devices.host 0));
+          equal string "anywhere" (Format.asprintf "%a" Devices.pp_placement a));
+      test "a constant beside a host value is read on the host" (fun () ->
+          let h : b Devices.placement =
+            Devices.rebrand (Devices.one Devices.host 0)
+          in
+          let r =
+            route Elementwise [| Devices.anywhere; h |] [| [| 4 |]; [| 4 |] |]
+          in
+          equal bool true (r.result == h));
       test "a constant beside a split operand is read split" (fun () ->
           let x = Devices.split ~by:"t" ~axis:0 s4 in
           let r =
