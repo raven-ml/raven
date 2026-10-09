@@ -641,8 +641,8 @@ module Claim : sig
       follow, so that no donation writes what that value reads. It is
       {!Buffer.bigarray}'s mark without the array.
 
-      Raises [Invalid_argument] if [b] is dead or its memory is held exclusive
-      by claims that have not consumed it ({!consume}). *)
+      Raises [Invalid_argument] if [b] is dead, or claims hold its memory
+      exclusive, whether or not they consumed it ({!consume}). *)
 
   type t
   (** The type for the claims of a {!with_}. *)
@@ -667,9 +667,7 @@ module Claim : sig
   val exclusive : t -> Buffer.t -> bool
   (** [exclusive c b] is [true] iff [c] holds [b]'s memory exclusive: the caller
       may write it in place, through the buffer {!consume} returns, and no
-      reader sees the write. It is [false] once [b]'s memory is outside the
-      claims, even while [c] holds it: a consumer that shares or exports the
-      buffer {!consume} returned holds it exclusive no longer. *)
+      reader sees the write. *)
 
   val consume : t -> why:string -> Buffer.t -> Buffer.t
   (** [consume c ~why b] consumes [b]'s memory with the reason [why]: [b] and
