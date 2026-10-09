@@ -42,7 +42,7 @@ external advise : int -> pages option -> int -> int -> unit
   = "caml_rig_disk_advise"
 
 external msync : pages -> int = "caml_rig_disk_msync"
-external watch_forks : unit -> unit = "caml_rig_disk_watch_forks"
+external watch_forks : unit -> unit = "caml_rig_disk_watch_forks" [@@noalloc]
 external forks : unit -> int = "caml_rig_disk_forks" [@@noalloc]
 
 (* The codes [open_path] answers besides the system's, and its modes. *)
