@@ -88,8 +88,12 @@ module Contract_view : sig
     t -> contract spec -> dst:Nx_array.any -> Nx_array.any array -> bool
   (** [fill v s ~dst ops] groups the axes of [ops], ordered as
       {!Nx_kernel.S.contract} takes them, and of [dst] into [v]. It is [false]
-      if [ops] and [dst] do not fit [s] or a group does not merge into one axis,
-      and [v] is then unspecified. It allocates nothing. *)
+      if a group does not merge into one axis, and [v] is then unspecified. It
+      allocates nothing.
+
+      Raises [Invalid_argument] if [ops] and [dst] do not fit [s]: another
+      number of operands, ranks the pairs do not fit, or extents that differ
+      within a group. *)
 
   val extent : t -> axis -> int
   (** [extent v x] is [v]'s extent along [x]: [1] for a group of no axis. *)

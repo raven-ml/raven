@@ -269,10 +269,12 @@ module Contract_view = struct
         | _ -> contracting_axis s k 1)
     | _ -> ( match g with 0 -> k | 1 -> v.nb + k | _ -> v.nb + v.fa + k)
 
+  let misfit what = invalid_arg ("Nx_kernel.Spec.Contract_view.fill: " ^ what)
+
   (* Groups the [count] axes of group [g] into one, or is [false]. *)
   let group v s ops dst g count =
     let ms = members.(g) in
-    let n = ref 0 and fits = ref true in
+    let n = ref 0 in
     for p = 0 to Array.length ms - 1 do
       let o = ms.(p) in
       if o <> 2 || v.init then begin
@@ -281,15 +283,14 @@ module Contract_view = struct
           let ax = source v s o g k in
           let d = L.dim l ax in
           if !n = 0 then v.ext.(k) <- d
-          else if v.ext.(k) <> d then fits := false;
+          else if v.ext.(k) <> d then misfit "extents differ within a group";
           v.st.((!n * max_rank) + k) <- L.stride l ax
         done;
         v.slot.(o) <- !n;
         incr n
       end
     done;
-    !fits
-    && coalesce !n count v.ext v.st = 1
+    coalesce !n count v.ext v.st = 1
     && begin
       v.extent.(g) <- v.ext.(0);
       for p = 0 to Array.length ms - 1 do
@@ -304,28 +305,28 @@ module Contract_view = struct
 
   let fill v s ~dst ops =
     let init = int32 s at_init <> 0 in
-    Array.length ops = 2 + Bool.to_int init
-    &&
+    if Array.length ops <> 2 + Bool.to_int init then
+      misfit "another number of operands";
     let nb = nbatch s and nc = ncontracting s in
     let ra = rank ops dst 0 and rb = rank ops dst 1 in
     let fa = ra - nb - nc and fb = rb - nb - nc in
     let ry = nb + fa + fb in
-    fa >= 0 && fb >= 0
-    && rank ops dst 3 = ry
-    && ((not init) || rank ops dst 2 = ry)
     (* A pair past an operand's rank leaves more free axes than [fa]. *)
-    && fill_free v s 0 ra 0 = fa
-    && fill_free v s 1 rb max_rank = fb
-    && begin
-      v.init <- init;
-      v.nb <- nb;
-      v.fa <- fa;
-      for o = 0 to 3 do
-        if o <> 2 || init then v.offset.(o) <- L.offset (layout ops dst o)
-      done;
-      group v s ops dst 0 nb && group v s ops dst 1 fa && group v s ops dst 2 fb
-      && group v s ops dst 3 nc
-    end
+    if
+      fa < 0 || fb < 0
+      || rank ops dst 3 <> ry
+      || (init && rank ops dst 2 <> ry)
+      || fill_free v s 0 ra 0 <> fa
+      || fill_free v s 1 rb max_rank <> fb
+    then misfit "ranks the pairs do not fit";
+    v.init <- init;
+    v.nb <- nb;
+    v.fa <- fa;
+    for o = 0 to 3 do
+      if o <> 2 || init then v.offset.(o) <- L.offset (layout ops dst o)
+    done;
+    group v s ops dst 0 nb && group v s ops dst 1 fa && group v s ops dst 2 fb
+    && group v s ops dst 3 nc
 
   let extent v x = v.extent.(axis_index x)
 

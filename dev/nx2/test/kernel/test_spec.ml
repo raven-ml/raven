@@ -349,7 +349,8 @@ let law_canonical c =
   equal ~msg:"groups" bool true (V.fill v (spec c) ~dst ops);
   check_view c v
 
-(* A view that has grouped one call declines another that does not fit. *)
+(* A view refuses a call that does not fit its descriptor, and declines one
+   whose group does not merge. *)
 let test_view_declines () =
   let s =
     S.contract ~batch:[||]
@@ -360,17 +361,32 @@ let test_view_declines () =
   let v = V.make () in
   equal ~msg:"fits" bool true
     (V.fill v s ~dst:(arr [| 2; 3 |]) [| arr [| 2; 4 |]; arr [| 4; 3 |] |]);
-  let declines ~msg dst ops = equal ~msg bool false (V.fill v s ~dst ops) in
-  declines ~msg:"contracted extents"
+  let misfit ~msg dst ops =
+    raises_match ~msg (Exn.invalid_arg ~substring:"fill") (fun () ->
+        V.fill v s ~dst ops)
+  in
+  misfit ~msg:"contracted extents"
     (arr [| 2; 3 |])
     [| arr [| 2; 4 |]; arr [| 5; 3 |] |];
-  declines ~msg:"dst's shape"
+  misfit ~msg:"dst's shape"
     (arr [| 3; 2 |])
     [| arr [| 2; 4 |]; arr [| 4; 3 |] |];
-  declines ~msg:"a's rank" (arr [| 2; 3 |]) [| arr [| 4 |]; arr [| 4; 3 |] |];
-  declines ~msg:"an init too many"
+  misfit ~msg:"a's rank" (arr [| 2; 3 |]) [| arr [| 4 |]; arr [| 4; 3 |] |];
+  misfit ~msg:"an init too many"
     (arr [| 2; 3 |])
     [| arr [| 2; 4 |]; arr [| 4; 3 |]; arr [| 2; 3 |] |];
+  (* [b]'s two contracted axes transposed lie as no run. *)
+  let s2 =
+    S.contract ~batch:[||]
+      ~contracting:[| (1, 0); (2, 1) |]
+      ~acc:(D.Any D.Float32) ~out:(D.Any D.Float32) ~init:false
+  in
+  let bt =
+    Option.get (L.move (M.Permute [| 1; 0; 2 |]) (L.contiguous [| 3; 4; 5 |]))
+  in
+  let b = A.Any (A.v D.Float32 bt (Rig.Buffer.create Rig.host 240)) in
+  equal ~msg:"no run" bool false
+    (V.fill v s2 ~dst:(arr [| 2; 5 |]) [| arr [| 2; 4; 3 |]; b |]);
   let a =
     A.Any
       (A.v D.Float32
@@ -430,7 +446,9 @@ let tests =
         prop "places every element where its layout does" any_case law_view;
         prop "groups C-contiguous operands of any axis order" canonical_case
           law_canonical;
-        test "declines what does not fit, and names only an operand's axes"
+        test
+          "refuses what does not fit, declines an unmerged group and names \
+           only an operand's axes"
           test_view_declines;
         test "fill allocates nothing" test_view_allocates_nothing;
       ];
