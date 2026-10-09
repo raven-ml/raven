@@ -8,7 +8,10 @@
    headers (rdma_user_ioctl_cmds.h, ib_user_ioctl_cmds.h, ib_user_verbs.h) packs
    for the same call, filling attributes as rdma-core's cmd_ioctl.h does, every
    one mandatory. The expected bytes are that program's, with the pointers
-   zeroed; each pointer must name its attribute's bytes. *)
+   zeroed; each pointer must name its attribute's bytes. A dma-buf's
+   descriptor is a 4-byte input inline, as Linux v6.12's
+   uverbs_std_types_mr.c declares UVERBS_ATTR_REG_DMABUF_MR_FD
+   (UVERBS_ATTR_PTR_IN of a u32) and rdma-core's cmd_mr.c fills it. *)
 
 open Windtrap
 module R = Request

@@ -89,10 +89,16 @@ module Entry = struct
     set_be64 b (at + off D.Raddr_seg.raddr) r.address;
     set_be32 b (at + off D.Raddr_seg.rkey) r.key
 
+  (* The data segment of [l], and the bytes it ends the entry at. A byte count
+     of 0 means 2^31 to the NIC: a copy of no bytes has no segment. *)
   let write_local b at (l : local) =
-    set_be32 b (at + off D.Data_seg.byte_count) l.bytes;
-    set_be32 b (at + off D.Data_seg.lkey) l.key;
-    set_be64 b (at + off D.Data_seg.addr) l.address
+    if l.bytes = 0 then data
+    else begin
+      set_be32 b (at + data + off D.Data_seg.byte_count) l.bytes;
+      set_be32 b (at + data + off D.Data_seg.lkey) l.key;
+      set_be64 b (at + data + off D.Data_seg.addr) l.address;
+      data + D.Data_seg.sizeof
+    end
 
   let write b at ~qp ~index e =
     check_bytes "Entry.write" b at size;
@@ -119,8 +125,7 @@ module Entry = struct
       match e.op with
       | Write { src; dst } ->
           write_remote b (at + raddr) dst;
-          write_local b (at + data) src;
-          (D.mlx5_opcode_rdma_write, data + D.Data_seg.sizeof)
+          (D.mlx5_opcode_rdma_write, write_local b at src)
       | Write_inline { data = s; dst } ->
           let n = String.length s in
           write_remote b (at + raddr) dst;
@@ -132,8 +137,7 @@ module Entry = struct
           (D.mlx5_opcode_rdma_write, data + D.Inline_seg.sizeof + n)
       | Read { src; dst } ->
           write_remote b (at + raddr) src;
-          write_local b (at + data) dst;
-          (D.mlx5_opcode_rdma_read, data + D.Data_seg.sizeof)
+          (D.mlx5_opcode_rdma_read, write_local b at dst)
     in
     let units = (bytes + unit - 1) / unit in
     set_be32 b

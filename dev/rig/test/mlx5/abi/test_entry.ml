@@ -6,7 +6,9 @@
 (* Work entries, against the segments of rdma-core's mlx5dv.h: a control segment
    (opcode, index, queue pair and 16-byte units, then the completion flag at
    byte 11), a remote address segment at byte 16, then a data segment or an
-   inline segment at byte 32, every field big-endian. *)
+   inline segment at byte 32, every field big-endian. A data segment's byte
+   count of 0 means 2{^31} bytes to the NIC, so a copy of no bytes carries no
+   data segment, as rdma-core's qp.c skips a zero-length one. *)
 
 open Windtrap
 open Rig_mlx5_abi
@@ -51,7 +53,11 @@ let address =
 
 let length =
   Gen.frequency
-    [ (3, Gen.int_range 0 (1 lsl 20)); (1, Gen.constant 0x7fff_ffff) ]
+    [
+      (3, Gen.int_range 1 (1 lsl 20));
+      (1, Gen.constant 0);
+      (1, Gen.constant 0x7fff_ffff);
+    ]
 
 let local =
   Gen.(
@@ -110,8 +116,9 @@ let placed = Gen.with_pp pp_entry placed
 let check_entry b at ((e : Entry.t), qp, index) =
   let opcode, units =
     match e.op with
-    | Write _ | Read _ ->
-        ((match e.op with Read _ -> rdma_read | _ -> rdma_write), 3)
+    | Write { src = l; _ } | Read { dst = l; _ } ->
+        ( (match e.op with Read _ -> rdma_read | _ -> rdma_write),
+          if l.bytes = 0 then 2 else 3 )
     | Write_inline { data; _ } ->
         (rdma_write, (36 + String.length data + 15) / 16)
   in
@@ -137,15 +144,19 @@ let check_entry b at ((e : Entry.t), qp, index) =
       equal ~msg:(strf "byte %d" i) int 0 (byte b (at + i))
     done
   in
+  let data (l : Entry.local) =
+    if l.bytes = 0 then rest 32
+    else (
+      local l;
+      rest 48)
+  in
   match e.op with
   | Write { src; dst } ->
       remote dst;
-      local src;
-      rest 48
+      data src
   | Read { src; dst } ->
       remote src;
-      local dst;
-      rest 48
+      data dst
   | Write_inline { data; dst } ->
       let n = String.length data in
       remote dst;
@@ -166,6 +177,10 @@ let layout =
       prop "an entry's fields are where mlx5dv.h lays them out" placed
         (fun (e, qp, index, slot) ->
           cover "a read" (match e.op with Read _ -> true | _ -> false);
+          cover "a copy of no bytes"
+            (match e.op with
+            | Write { src = l; _ } | Read { dst = l; _ } -> l.bytes = 0
+            | _ -> false);
           cover "a full inline write"
             (match e.op with
             | Write_inline { data; _ } -> String.length data = Entry.max_inline
