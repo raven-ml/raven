@@ -22,8 +22,8 @@ let apply1 (k : Nx_kernel.Prog.op1) ~dst x =
   | Cast -> cast ~dst x
   | Unary _ | Bitcast -> Declined
 
-(* Kinds of no, two and three operands (apply.c): the kind passes as its
-   value. *)
+(* Kinds of no, two and three operands (apply.c, iota.c): the kind passes
+   as its value. *)
 
 external fill : string -> ('v, 's) Nx_array.t -> Nx_array.answer
   = "nx_cpu_fill"
