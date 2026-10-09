@@ -1,18 +1,10 @@
-; The CPU's floors, in C: loops that move a row's bytes, and codecs.
-
-(library
- (name nx_cpu_bench)
- (modules)
- (libraries nx_cpu rig.pool)
- (foreign_stubs
-  (language c)
-  (include_dirs ../../lib/array ../../lib/cpu)
-  (names nx_cpu_bench_stubs nx_cpu_bench_codec)))
+; Kernel libraries' rows through Nx_kernel.S, each backend beside the floors
+; of its own support (cpu/).
 
 (executable
  (name bench_kernels)
  (modules bench_kernels)
- (libraries nx_array nx_kernel nx_cpu nx_cpu_bench rig thumper))
+ (libraries nx_array nx_kernel nx_cpu nx_cpu_floors rig thumper))
 
 (rule
  (alias bench)

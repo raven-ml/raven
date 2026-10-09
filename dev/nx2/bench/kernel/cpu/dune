@@ -1,0 +1,11 @@
+; nx.cpu's floors for the kernel bench: loops that move a row's bytes, and
+; codecs, in C.
+
+(library
+ (name nx_cpu_floors)
+ (modules nx_cpu_floors)
+ (libraries nx_array nx_cpu rig rig.pool thumper)
+ (foreign_stubs
+  (language c)
+  (include_dirs ../../../lib/array ../../../lib/cpu)
+  (names nx_cpu_bench_stubs nx_cpu_bench_codec)))
