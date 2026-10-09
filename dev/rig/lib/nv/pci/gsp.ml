@@ -450,12 +450,13 @@ let call g fn body =
       wait_for g fn)
 
 let check g =
-  if Mutex.try_lock g.lock then begin
-    (match drain g ~want:None with
-    | Ok _ -> ()
-    | Error why -> if g.fault = None then g.fault <- Some why);
-    Mutex.unlock g.lock
-  end;
+  if Mutex.try_lock g.lock then
+    Fun.protect
+      ~finally:(fun () -> Mutex.unlock g.lock)
+      (fun () ->
+        match drain g ~want:None with
+        | Ok _ -> ()
+        | Error why -> if g.fault = None then g.fault <- Some why);
   g.fault
 
 let unload g =
