@@ -760,6 +760,68 @@ let law_copy (Case (a, m)) =
       check b
   | None -> check a
 
+(* [blit] into the transpose of a fresh array, a destination whose layout is not
+   C order for two axes or more. *)
+let law_blit (Case (a, m)) =
+  let check : type v s. (v, s) A.t -> unit =
+   fun a ->
+    let s = L.shape (A.layout a) in
+    let r = Array.length s in
+    let rev x = Array.init r (fun i -> x.(r - 1 - i)) in
+    let base = A.create Rig.host (A.dtype a) (rev s) in
+    let dst =
+      Option.get (A.move (M.Permute (rev (Array.init r Fun.id))) base)
+    in
+    cover "a strided destination" (not (L.is_contiguous (A.layout dst)));
+    A.blit ~src:a ~dst;
+    equal (values (A.dtype a)) (A.to_array a) (A.to_array dst)
+  in
+  match Option.bind m (fun m -> A.move m a) with
+  | Some b ->
+      cover "a strided source" (not (L.is_contiguous (A.layout b)));
+      check b
+  | None -> check a
+
+let test_blit_refuses () =
+  let a = floats32 [| 2 |] [| 1.; 2. |] in
+  let fails what substring f =
+    raises_match ~msg:what (Exn.invalid_arg ~substring) f
+  in
+  fails "another shape" "Nx_array.blit" (fun () ->
+      A.blit ~src:a ~dst:(A.create Rig.host f32 [| 3 |]));
+  fails "a broadcast destination" "Nx_array.blit" (fun () ->
+      let one = A.create Rig.host f32 [| 1 |] in
+      A.blit ~src:a ~dst:(Option.get (A.move (M.Broadcast [| 2 |]) one)));
+  fails "memory the host does not address" "host" (fun () ->
+      A.blit
+        ~src:(A.to_device (S.io_device ()) a)
+        ~dst:(A.create Rig.host f32 [| 2 |]));
+  let dead = A.create Rig.host f32 [| 2 |] in
+  kill (A.buffer dead);
+  fails "a dead destination" "consumed by the test" (fun () ->
+      A.blit ~src:a ~dst:dead);
+  let b = floats32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
+  let part first =
+    Option.get (A.move (M.Slice [| { start = first; count = 3; step = 1 } |]) b)
+  in
+  fails "a destination overlapping the source" "Nx_array.blit" (fun () ->
+      A.blit ~src:(part 0) ~dst:(part 1))
+
+(* [blit] writes its destination's elements alone: an int4 window starting
+   inside a byte keeps its neighbours, and an array stored into itself is
+   unchanged. *)
+let test_blit_writes () =
+  let base = A.of_array D.Int4 [| 6 |] [| 1; 2; 3; 4; 5; 6 |] in
+  let mid =
+    Option.get (A.move (M.Slice [| { start = 1; count = 3; step = 1 } |]) base)
+  in
+  A.blit ~src:(A.of_array D.Int4 [| 3 |] [| -1; -2; -3 |]) ~dst:mid;
+  equal ~msg:"a window" (values D.Int4) [| 1; -1; -2; -3; 5; 6 |]
+    (A.to_array base);
+  A.blit ~src:base ~dst:base;
+  equal ~msg:"itself" (values D.Int4) [| 1; -1; -2; -3; 5; 6 |]
+    (A.to_array base)
+
 (* Arrays of the byte-wide dtypes [dts] over drawn bytes, NaN payloads, non-0/1
    bools and every other pattern included, and a movement of them. *)
 let raw_of dts =
@@ -1701,6 +1763,9 @@ let tests =
         test "copy keeps NaN payloads" test_copy_bits;
         prop "copy is contiguous with the same elements" case law_copy;
         prop "copy keeps every byte of every element" raw law_copy_bits;
+        prop "blit stores any layout's elements into any layout" case law_blit;
+        test "blit refuses what it cannot store" test_blit_refuses;
+        test "blit writes its destination's elements alone" test_blit_writes;
         prop "a bool reads true iff its byte is not zero"
           (raw_of [ D.Any D.Bool ]) law_bool_bytes;
         prop ~count:300

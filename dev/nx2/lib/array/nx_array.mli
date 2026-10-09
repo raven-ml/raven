@@ -169,6 +169,17 @@ val copy : ('v, 's) t -> ('v, 's) t
 (** [copy a] is a fresh C-contiguous array on [a]'s device holding [a]'s
     elements bit for bit, NaN payloads included. *)
 
+val blit : src:('v, 's) t -> dst:('v, 's) t -> unit
+(** [blit ~src ~dst] stores [src]'s elements into [dst], of the same shape, bit
+    for bit, NaN payloads included, on the host. It writes [dst]'s elements and
+    no other bit of its buffer, a sub-byte neighbour included.
+
+    Raises [Invalid_argument] naming both if their shapes differ, a buffer is
+    dead, the host does not address its memory or it is held exclusive, [dst]'s
+    memory is [Read], [dst] reaches an element twice ({!Layout.is_distinct}),
+    or [dst] shares a byte with [src] without being identical to it
+    ({!door}). *)
+
 (** {1:placement Placement} *)
 
 val to_device : Rig.t -> ('v, 's) t -> ('v, 's) t

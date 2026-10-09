@@ -618,6 +618,14 @@ let copy a =
   | Done -> dst
   | refusal -> refused fn refusal [ Any dst; Any a ]
 
+let blit ~src ~dst =
+  let fn = "Nx_array.blit" in
+  live fn src.buffer;
+  live fn dst.buffer;
+  match copy_into dst src with
+  | Done -> ()
+  | refusal -> refused fn refusal [ Any dst; Any src ]
+
 external load_byte : Buffer.t -> (int[@untagged]) -> (int[@untagged])
   = "nx_array_load_byte_byte" "nx_array_load_byte"
 [@@noalloc]
