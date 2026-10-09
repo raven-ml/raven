@@ -94,7 +94,7 @@ cubin/elf-of-string/nv-128-kernels	wall_time	batch=64	n=20	1.465e-04	1.442e-04 1
 cubin/kernel/last-of-128	alloc_words	exact	0
 cubin/kernel/last-of-128	wall_time	batch=262144	n=20	1.968e-08	1.967e-08 1.967e-08 1.967e-08 1.967e-08 1.967e-08 1.967e-08 1.967e-08 1.967e-08 1.968e-08 1.968e-08 1.968e-08 1.968e-08 1.968e-08 1.968e-08 1.968e-08 1.968e-08 1.968e-08 1.968e-08 1.968e-08 1.980e-08
 cubin/of-string/nv-128-kernels	alloc_words	exact	50491
-cubin/of-string/nv-128-kernels	wall_time	batch=32	n=20	2.257e-04	2.221e-04 2.222e-04 2.224e-04 2.235e-04 2.244e-04 2.246e-04 2.246e-04 2.254e-04 2.254e-04 2.256e-04 2.257e-04 2.260e-04 2.260e-04 2.261e-04 2.261e-04 2.265e-04 2.267e-04 2.268e-04 2.286e-04 2.375e-04
+cubin/of-string/nv-128-kernels	wall_time	batch=32	n=20	2.213e-04	2.176e-04 2.195e-04 2.196e-04 2.198e-04 2.202e-04 2.202e-04 2.205e-04 2.206e-04 2.208e-04 2.212e-04 2.215e-04 2.216e-04 2.216e-04 2.216e-04 2.217e-04 2.217e-04 2.218e-04 2.218e-04 2.219e-04 2.219e-04
 cubin/patches/128-relocations	alloc_words	exact	1156
 cubin/patches/128-relocations	wall_time	batch=4096	n=20	1.295e-06	1.280e-06 1.282e-06 1.284e-06 1.286e-06 1.288e-06 1.289e-06 1.290e-06 1.290e-06 1.290e-06 1.294e-06 1.296e-06 1.296e-06 1.300e-06 1.300e-06 1.304e-06 1.308e-06 1.310e-06 1.312e-06 1.315e-06 1.316e-06
 gpfifo/entry-encode	alloc_words	exact	30
@@ -122,6 +122,6 @@ qmd/encode/ada	wall_time	batch=32768	n=20	1.672e-07	1.671e-07 1.671e-07 1.671e-0
 qmd/fill-into-bytes/ada	alloc_words	exact	0
 qmd/fill-into-bytes/ada	wall_time	batch=262144	n=20	3.173e-08	3.173e-08 3.173e-08 3.173e-08 3.173e-08 3.173e-08 3.173e-08 3.173e-08 3.173e-08 3.173e-08 3.173e-08 3.173e-08 3.174e-08 3.174e-08 3.174e-08 3.174e-08 3.175e-08 3.175e-08 3.175e-08 3.176e-08 3.185e-08
 qmd/launch/ada	alloc_words	exact	709
-qmd/launch/ada	wall_time	batch=8192	n=20	8.948e-07	8.932e-07 8.935e-07 8.936e-07 8.937e-07 8.937e-07 8.938e-07 8.940e-07 8.942e-07 8.943e-07 8.944e-07 8.953e-07 8.963e-07 8.966e-07 9.001e-07 9.003e-07 9.005e-07 9.006e-07 9.007e-07 9.010e-07 9.017e-07
+qmd/launch/ada	wall_time	batch=8192	n=20	8.627e-07	8.537e-07 8.538e-07 8.538e-07 8.539e-07 8.544e-07 8.546e-07 8.550e-07 8.583e-07 8.588e-07 8.627e-07 8.627e-07 8.641e-07 8.641e-07 8.648e-07 8.654e-07 8.885e-07 8.887e-07 8.888e-07 8.893e-07 8.904e-07
 qmd/launch/blackwell	alloc_words	exact	744
-qmd/launch/blackwell	wall_time	batch=8192	n=20	9.223e-07	9.130e-07 9.157e-07 9.158e-07 9.194e-07 9.197e-07 9.197e-07 9.198e-07 9.209e-07 9.220e-07 9.223e-07 9.223e-07 9.224e-07 9.227e-07 9.227e-07 9.230e-07 9.231e-07 9.232e-07 9.240e-07 9.242e-07 9.277e-07
+qmd/launch/blackwell	wall_time	batch=8192	n=20	9.039e-07	8.965e-07 8.971e-07 9.007e-07 9.008e-07 9.009e-07 9.011e-07 9.012e-07 9.018e-07 9.034e-07 9.038e-07 9.039e-07 9.039e-07 9.040e-07 9.041e-07 9.042e-07 9.044e-07 9.050e-07 9.053e-07 9.082e-07 9.084e-07
