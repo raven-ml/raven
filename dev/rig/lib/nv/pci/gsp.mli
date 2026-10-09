@@ -68,9 +68,9 @@ val stop : t -> [> `Clean | `Unknown ]
     GPU answers ({!Rig_pci.Function.failed}) and the GSP set its queue up,
     waiting at most 10 seconds for room in its queue and 10 more for its answer,
     turns the GPU's bus mastering off, and gives back the memory {!create} took.
-    It is [`Unknown], the memory kept, if the GPU did not answer once the unload
-    ended: it may still read that memory. The GSP runs on until the GPU's next
-    reset. *)
+    It is [`Unknown], the memory kept, if the GPU does not answer once its bus
+    mastering is off: it may still read that memory. The GSP runs on until the
+    GPU's next reset. *)
 
 (** {1:rm The resource manager} *)
 
