@@ -30,9 +30,10 @@
    rounds once to y's dtype. An mma operand whose rows are not 16-byte
    vectors, or in a layout its tile has no instance of, is first packed
    into rows that are, k contiguous (pack): the same values in the same
-   tiles, so the same bits. A SIMT or skinny operand of a dtype other than
-   its accumulator's is packed into the accumulator's dtype, exactly, so
-   these kernels read their own dtype alone. */
+   tiles, so the same bits. A SIMT or float skinny operand of a dtype
+   other than its accumulator's is packed into the accumulator's dtype,
+   exactly; the integer skinny kernel reads one integer dtype both its
+   operands hold, an operand of another packed into it. */
 
 #include "combine.cuh"
 #include "kernels.h"
@@ -686,45 +687,52 @@ template <typename T> __device__ T tree32(T v) {
   return v;
 }
 
-/* The four elements at [src], 16-byte aligned, as one or two vector loads
-   into registers. */
-__device__ void load4(float (&v)[4], const char *src) {
-  const float4 t = *(const float4 *)src;
-  v[0] = t.x, v[1] = t.y, v[2] = t.z, v[3] = t.w;
-}
-__device__ void load4(uint32_t (&v)[4], const char *src) {
-  const uint4 t = *(const uint4 *)src;
-  v[0] = t.x, v[1] = t.y, v[2] = t.z, v[3] = t.w;
-}
-__device__ void load4(double (&v)[4], const char *src) {
-  const double2 t = *(const double2 *)src, u = *(const double2 *)(src + 16);
-  v[0] = t.x, v[1] = t.y, v[2] = u.x, v[3] = u.y;
-}
-__device__ void load4(u64 (&v)[4], const char *src) {
-  const ulonglong2 t = *(const ulonglong2 *)src, u = *(const ulonglong2 *)(src + 16);
-  v[0] = t.x, v[1] = t.y, v[2] = u.x, v[3] = u.y;
+/* [s] as the accumulator T: an integer widened by its own sign. */
+template <typename T, typename S> __device__ T widen(S s) {
+  if constexpr (T(-1) > T(0) && S(-1) < S(0))
+    return (T)(int64_t)s;
+  else
+    return (T)s;
 }
 
-/* The run of four k from [k] of the operand at [p] with strides [s_row]
-   and [s_k], row [row]: its first [us] elements, the rest zero, as one
-   vector where [vectors] (its k contiguous, its rows aligned). */
-template <typename T>
-__device__ void run(T (&v)[4], const char *p, int64_t s_row,
-                           int64_t s_k, int row, int k, int us, bool vectors) {
+/* The four elements of S at [src], aligned on their 4 sizeof(S) bytes,
+   as one or two vector loads, each widened to T. */
+template <typename T, typename S>
+__device__ void load4(T (&v)[4], const char *src) {
+  constexpr int N = 4 * sizeof(S);
+  union {
+    uint4 q[2];
+    S e[4];
+  } u;
+  if (N == 32) u.q[0] = ((const uint4 *)src)[0], u.q[1] = ((const uint4 *)src)[1];
+  if (N == 16) u.q[0] = *(const uint4 *)src;
+  if (N == 8) *(uint2 *)u.q = *(const uint2 *)src;
+  if (N == 4) *(uint32_t *)u.q = *(const uint32_t *)src;
+#pragma unroll
+  for (int e = 0; e < 4; e++) v[e] = widen<T>(u.e[e]);
+}
+
+/* The run of four k from [k] of the operand at [p], of elements S with
+   strides [s_row] and [s_k], row [row]: its first [us] elements, the rest
+   zero, widened to T, as one vector where [vectors] (its k contiguous, its
+   rows aligned). */
+template <typename T, typename S>
+__device__ void run(T (&v)[4], const char *p, int64_t s_row, int64_t s_k,
+                    int row, int k, int us, bool vectors) {
   if (vectors && us == 4) {
-    load4(v, p + (row * s_row + k) * sizeof(T));
+    load4<T, S>(v, p + (row * s_row + k) * sizeof(S));
     return;
   }
 #pragma unroll
   for (int u = 0; u < 4; u++)
-    v[u] = u < us ? ((const T *)p)[row * s_row + (k + u) * s_k] : T(0);
+    v[u] = u < us ? widen<T>(((const S *)p)[row * s_row + (k + u) * s_k]) : T(0);
 }
 
 /* Adds the runs [bv] of k from [k] of Q columns, their first [us] inside
    the range, times a's [rows] rows from [a], to [c]: each of a's runs
    loaded once for the Q columns. a's runs are vectors where
    NX_CONTRACT_A_VECTORS says so. */
-template <int Q, typename T>
+template <int Q, typename T, typename S>
 __device__ void dot4(const contract_params &p, T (&c)[Q][NX_SKINNY_ROWS],
                      const char *a, int rows, const T (&bv)[Q][4], int k,
                      int us) {
@@ -732,7 +740,8 @@ __device__ void dot4(const contract_params &p, T (&c)[Q][NX_SKINNY_ROWS],
   for (int i = 0; i < NX_SKINNY_ROWS; i++)
     if (i < rows) {
       T av[4];
-      run(av, a, p.sa[1], p.sa[2], i, k, us, p.aligned & NX_CONTRACT_A_VECTORS);
+      run<T, S>(av, a, p.sa[1], p.sa[2], i, k, us,
+                p.aligned & NX_CONTRACT_A_VECTORS);
 #pragma unroll
       for (int q = 0; q < Q; q++)
 #pragma unroll
@@ -745,22 +754,22 @@ __device__ void dot4(const contract_params &p, T (&c)[Q][NX_SKINNY_ROWS],
    columns j + 8 q, q < 4, times a's rows, to [c]; b's runs are vectors
    where NX_CONTRACT_B_VECTORS says so. A column past n reads column
    n - 1, whose sums the store drops: the loads take no branch. */
-template <typename T>
+template <typename T, typename S>
 __device__ void step4(const contract_params &p, T (&c)[4][NX_SKINNY_ROWS],
                       const char *a, int rows, const char *b, int j, int k,
                       int us) {
   T bv[4][4];
 #pragma unroll
   for (int q = 0; q < 4; q++)
-    run(bv[q], b, p.sb[1], p.sb[2], min(j + 8 * q, p.n - 1), k, us,
-        p.aligned & NX_CONTRACT_B_VECTORS);
-  dot4(p, c, a, rows, bv, k, us);
+    run<T, S>(bv[q], b, p.sb[1], p.sb[2], min(j + 8 * q, p.n - 1), k, us,
+              p.aligned & NX_CONTRACT_B_VECTORS);
+  dot4<4, T, S>(p, c, a, rows, bv, k, us);
 }
 
 /* The block's sums of [rows] rows from [a] and the 32 columns from [j0]
    into [level8], row i of column c at element i * 32 + c, as the tree
    leaves them. */
-template <typename T>
+template <typename T, typename S>
 __device__ void skinny_sums(const contract_params &p,
                             T (*level8)[8][32], const char *a, int rows,
                             const char *b, int j0, int k0, int k1) {
@@ -776,8 +785,9 @@ __device__ void skinny_sums(const contract_params &p,
 #pragma unroll
       for (int i = 0; i < R; i++) acc[q][i] = T(0);
     int k = k0 + 4 * lane;
-    for (; k + 3 < k1; k += 128) step4(p, acc, a, rows, b, j0 + w, k, 4);
-    if (k < k1) step4(p, acc, a, rows, b, j0 + w, k, k1 - k);
+    for (; k + 3 < k1; k += 128)
+      step4<T, S>(p, acc, a, rows, b, j0 + w, k, 4);
+    if (k < k1) step4<T, S>(p, acc, a, rows, b, j0 + w, k, k1 - k);
 #pragma unroll
     for (int q = 0; q < 4; q++)
 #pragma unroll
@@ -804,8 +814,8 @@ __device__ void skinny_sums(const contract_params &p,
       for (int k = k0 + 4 * (y + 8 * q); k < k1; k += 128) {
         const int us = min(4, k1 - k);
         T bv[1][4];
-        run(bv[0], b, p.sb[1], p.sb[2], j, k, us, false);
-        dot4(p, c[q], a, rows, bv, k, us);
+        run<T, S>(bv[0], b, p.sb[1], p.sb[2], j, k, us, false);
+        dot4<1, T, S>(p, c[q], a, rows, bv, k, us);
       }
 #pragma unroll
   for (int i = 0; i < R; i++)
@@ -825,8 +835,9 @@ __device__ void skinny_sums(const contract_params &p,
     for (int i = 0; i < R; i++) sums[i * 32 + x] = acc[i];
 }
 
-template <typename T>
-__device__ void skinny_contract(const contract_params &p) {
+template <typename T, typename S>
+__device__ void skinny_contract(const contract_params &p,
+                                T (*level8)[8][32]) {
   constexpr int R = NX_SKINNY_ROWS;
   static_assert(R * 32 <= 256, "a thread holds one of the block's sums");
   /* Block x: the rows from R (x % groups) and the columns from 32
@@ -835,14 +846,13 @@ __device__ void skinny_contract(const contract_params &p) {
   const int groups = (p.m + R - 1) / R;
   const int i0 = blockIdx.x % groups * R, j0 = blockIdx.x / groups * 32;
   const int z = blockIdx.z, split = blockIdx.y, splits = p.splits;
-  const char *a = (const char *)p.a + (z * p.sa[0] + i0 * p.sa[1]) * sizeof(T);
-  const char *b = (const char *)p.b + z * p.sb[0] * sizeof(T);
+  const char *a = (const char *)p.a + (z * p.sa[0] + i0 * p.sa[1]) * sizeof(S);
+  const char *b = (const char *)p.b + z * p.sb[0] * sizeof(S);
   /* The range of k: whole 128-element runs, one t of the lanes. */
   const int runs = (p.k + 127) / 128;
   const int k0 = split * runs / splits * 128;
   const int k1 = min(p.k, (split + 1) * runs / splits * 128);
-  __shared__ T level8[R][8][32];
-  skinny_sums(p, level8, a, min(R, p.m - i0), b, j0, k0, k1);
+  skinny_sums<T, S>(p, level8, a, min(R, p.m - i0), b, j0, k0, k1);
 
   /* One of the block's sums per thread: the partials a split sum
      combines. */
@@ -857,6 +867,26 @@ __device__ void skinny_contract(const contract_params &p) {
   }
   const int i = threadIdx.x / 32;
   if (i < R && i0 + i < p.m) store(p, z, i0 + i, j0 + threadIdx.x % 32, v[0]);
+}
+
+/* The skinny kernel of the accumulator T: a float one reads T; the
+   integer one reads the integer dtype both operands are in, its loop
+   compiled for each, one shared buffer for all. */
+template <typename T> __device__ void skinny_kernel(const contract_params &p) {
+  __shared__ T level8[NX_SKINNY_ROWS][8][32];
+  if constexpr (T(-1) < T(0))
+    skinny_contract<T, T>(p, level8);
+  else
+    switch (p.b_dtype) {
+    case NX_INT8: return skinny_contract<T, int8_t>(p, level8);
+    case NX_UINT8:
+    case NX_BOOL: return skinny_contract<T, uint8_t>(p, level8);
+    case NX_INT16: return skinny_contract<T, int16_t>(p, level8);
+    case NX_UINT16: return skinny_contract<T, uint16_t>(p, level8);
+    case NX_INT32: return skinny_contract<T, int32_t>(p, level8);
+    case NX_UINT32: return skinny_contract<T, uint32_t>(p, level8);
+    default: return skinny_contract<T, u64>(p, level8);
+    }
 }
 
 /* Packing */
@@ -1045,6 +1075,6 @@ __device__ void mma_kernel(const contract_params &p) {
 #define SKINNY(name, acc)                                                      \
   extern "C" __global__ void __launch_bounds__(256)                            \
       name(const __grid_constant__ contract_params p) {                        \
-    skinny_contract<ACC_##acc>(p);                                             \
+    skinny_kernel<ACC_##acc>(p);                                               \
   }
 NX_CUDA_KERNELS(DEFINE)

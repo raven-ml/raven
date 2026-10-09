@@ -208,6 +208,28 @@ static int own_dtype(int simt) {
   return NX_INT64;
 }
 
+/* The integer dtype the skinny kernel reads integer operands [x] and [y]
+   in: the narrowest that holds both exactly, or 64 bits, whose products
+   wrap as the accumulator's sum does. */
+static int common_int(int x, int y) {
+  static const int types[2][4] = {{NX_UINT8, NX_UINT16, NX_UINT32, NX_INT64},
+                                  {NX_INT8, NX_INT16, NX_INT32, NX_INT64}};
+  const nx_dtype_row rx = nx_dtype_row_of(x), ry = nx_dtype_row_of(y);
+  const int sx = rx.kind == NX_KIND_SIGNED, sy = ry.kind == NX_KIND_SIGNED;
+  int bits = rx.bits > ry.bits ? rx.bits : ry.bits;
+  /* A signed type holds an unsigned one's values with a bit to spare. */
+  if (sx != sy && 2 * (sx ? ry.bits : rx.bits) > bits)
+    bits = 2 * (sx ? ry.bits : rx.bits);
+  return types[sx || sy][bits <= 8 ? 0 : bits <= 16 ? 1 : bits <= 32 ? 2 : 3];
+}
+
+/* Whether the skinny kernel reads [dt] as [to] with no pack: the same
+   bytes, bool as uint8, and either 64-bit integer as the other. */
+static int reads_as(int dt, int to) {
+  return dt == to || (dt == NX_BOOL && to == NX_UINT8) ||
+         (bytes_of(dt) == 8 && bytes_of(to) == 8);
+}
+
 static int is_f8(int dt) {
   return dt == NX_FLOAT8_E4M3FN || dt == NX_FLOAT8_E5M2;
 }
@@ -381,10 +403,12 @@ int nx_cuda_plan_contract(const nx_cuda_contract_in *in,
     values = tl->bm * tl->bn / tl->threads, threads = tl->threads;
     shared = tl->shared;
   } else {
-    /* SIMT and skinny kernels read their accumulator's own dtype: an
+    /* SIMT kernels read their accumulator's own dtype, the skinny kernels
+       a float accumulator's or one integer dtype both operands hold: an
        operand of another is packed into it, exactly, with k contiguous. */
-    const int to = own_dtype(simt);
-    if (!own(simt, at)) {
+    const int narrow = simt == ACC_i64 && m <= 16;
+    const int to = narrow ? common_int(at, b->dtype) : own_dtype(simt);
+    if (narrow ? !reads_as(at, to) : !own(simt, at)) {
       if (pack(out, &used, &p.a, p.sa, a->address, at, to, batch, m, k,
                sbat[0], sm[0], sk[0]) != 0)
         goto fail;
@@ -392,7 +416,7 @@ int nx_cuda_plan_contract(const nx_cuda_contract_in *in,
       mask |= NX_CONTRACT_SCRATCH_A;
       sm[0] = p.sa[1], sk[0] = 1;
     }
-    if (!own(simt, b->dtype)) {
+    if (narrow ? !reads_as(b->dtype, to) : !own(simt, b->dtype)) {
       if (pack(out, &used, &p.b, p.sb, b->address, b->dtype, to, batch, n, k,
                sbat[1], sn[0], sk[1]) != 0)
         goto fail;
