@@ -443,6 +443,8 @@ cpu/less-f32-1M	alloc_words	exact	0
 cpu/less-f32-1M	wall_time	batch=256	n=20	2.429e-05	2.415e-05 2.419e-05 2.421e-05 2.423e-05 2.424e-05 2.425e-05 2.426e-05 2.427e-05 2.427e-05 2.428e-05 2.429e-05 2.429e-05 2.430e-05 2.433e-05 2.435e-05 2.437e-05 2.439e-05 2.441e-05 2.455e-05 2.487e-05
 cpu/where-f32-1M	alloc_words	exact	0
 cpu/where-f32-1M	wall_time	batch=128	n=20	3.995e-05	3.951e-05 3.962e-05 3.973e-05 3.978e-05 3.980e-05 3.989e-05 3.989e-05 3.990e-05 3.992e-05 3.993e-05 3.998e-05 3.999e-05 4.000e-05 4.003e-05 4.003e-05 4.008e-05 4.011e-05 4.013e-05 4.025e-05 4.063e-05
+spec/contract-view-bf16-4096	alloc_words	exact	0
+spec/contract-view-bf16-4096	wall_time	batch=131072	n=20	4.497e-08	4.469e-08 4.475e-08 4.478e-08 4.480e-08 4.483e-08 4.485e-08 4.487e-08 4.491e-08 4.491e-08 4.495e-08 4.499e-08 4.501e-08 4.501e-08 4.501e-08 4.502e-08 4.503e-08 4.504e-08 4.506e-08 4.602e-08 4.604e-08
 
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
