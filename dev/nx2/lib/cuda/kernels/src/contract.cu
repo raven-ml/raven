@@ -941,6 +941,20 @@ __device__ void pack_vectors(const pack_params &p) {
   constexpr int PER = 16 / OB;
   const char *src = (const char *)p.src;
   const I per_row = (I)(p.lead / PER), n = (I)p.batch * p.rows * per_row;
+  /* A float8 source converts through a table of its 256 codes' values,
+     made by the block from the same conversion. */
+  constexpr bool TABLE = DT == NX_FLOAT8_E4M3FN || DT == NX_FLOAT8_E5M2;
+  __shared__ Out table[TABLE ? 256 : 1];
+  if (TABLE) {
+    for (int c = threadIdx.x; c < 256; c += blockDim.x) {
+      const uint8_t code = (uint8_t)c;
+      table[c] = (Out)packed(&code, 0, dt, out);
+    }
+    __syncthreads();
+  }
+  auto conv = [&](const void *at, int64_t x) {
+    return TABLE ? table[((const uint8_t *)at)[x]] : (Out)packed(at, x, dt, out);
+  };
   for (I v = blockIdx.x * (I)blockDim.x + threadIdx.x; v < n;
        v += (I)gridDim.x * blockDim.x) {
     const I row = v / per_row, z = row / (I)p.rows;
@@ -959,12 +973,11 @@ __device__ void pack_vectors(const pack_params &p) {
         uint8_t b[sizeof(R)];
       } in = {*(const R *)(src + at * SB)};
 #pragma unroll
-      for (int e = 0; e < PER; e++) o.e[e] = (Out)packed(in.b, e, dt, out);
+      for (int e = 0; e < PER; e++) o.e[e] = conv(in.b, e);
     } else
 #pragma unroll
       for (int e = 0; e < PER; e++)
-        o.e[e] = q0 + e < p.k ? (Out)packed(src, at + e * p.s[2], dt, out)
-                              : Out(0);
+        o.e[e] = q0 + e < p.k ? conv(src, at + e * p.s[2]) : Out(0);
     ((uint4 *)p.dst)[v] = o.all;
   }
 }
