@@ -365,10 +365,20 @@ let open_file path mode n =
           Ok f
       | code, _, _, _ -> Error (strf "%s: %s" path (why code))
     in
-    locked opened ()
-    |> Result.map (fun f ->
-        let access = if f.writable then Rig.Buffer.Read_write else Read in
-        Rig.Buffer.of_io device Io.region_key f ~access f.size)
+    match locked opened () with
+    | Error _ as e -> e
+    | Ok f -> (
+        let access = if writable then Rig.Buffer.Read_write else Read in
+        match Rig.Buffer.of_io device Io.region_key f ~access f.size with
+        | b -> Ok b
+        | exception e ->
+            (* A drain [of_io] ran raised, which no buffer of the file survives:
+               the file goes as a failed create's does. *)
+            let bt = Printexc.get_raw_backtrace () in
+            locked close_fd f;
+            (if mode = create_mode then
+               try Sys.remove path with Sys_error _ -> ());
+            Printexc.raise_with_backtrace e bt)
 
 let of_file path = open_file path read_mode 0
 

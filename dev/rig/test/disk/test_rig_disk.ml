@@ -750,6 +750,29 @@ let test_unsized () =
   removing [ path ] @@ fun () ->
   equal string "refused, removed" (child [ "unsized"; path ])
 
+(* A hold's release that raises is raised again by the next drain
+   ([Rig.Hold.make]), here the one an open runs once its file is open: the open
+   raises it, leaving its file neither open nor, if it created it, at its
+   path. *)
+let test_drain_raises kind =
+  needs_dev_fd ();
+  let path = new_path () in
+  removing [ path ] @@ fun () ->
+  let opened =
+    match kind with
+    | Opened ->
+        ignore (make_file ~path "abc");
+        fun () -> Rig_disk.of_file path
+    | Created -> fun () -> Rig_disk.create_file path 3
+  in
+  ignore (Rig.Hold.make ~release:(fun () -> raise Exit) [ B.create host 16 ]);
+  Gc.full_major ();
+  raises Exit opened;
+  match kind with
+  | Opened ->
+      equal int ~msg:"descriptors" 0 (open_where (on_inode (inode path)))
+  | Created -> equal bool ~msg:"a file at the path" false (Sys.file_exists path)
+
 let opening =
   group ~timeout "opening and creating"
     [
@@ -779,6 +802,11 @@ let opening =
       test "a created file of no bytes is an empty file at its path"
         test_create_empty;
       test "a file create_file could not size is removed" test_unsized;
+      cases
+        ~name:(fun k -> Format.asprintf "%a" pp_kind k)
+        "an open whose drain raises leaves its file closed, and a created one \
+         removed"
+        [ Opened; Created ] test_drain_raises;
     ]
 
 (* Descriptors *)
