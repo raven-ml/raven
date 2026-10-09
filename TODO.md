@@ -72,10 +72,10 @@ next model targets:
   should vanish with commit 4a's per-device staging slots: check the seed then
 - rig: `Rig.set_budget` on a device that faulted can raise `Lost` from
   `Memory.give_back` while a copy on another domain loses it. rig.model, "calls
-  on two domains answer as some order of them", seed s1:42573910ee757b5b, fails
-  about one run in three on the base before commit 9 as on commit 9 (budget
-  1048576 on a faulted polled-copyless-itself device). Fix test-first from the
-  seed
+  on two domains answer as some order of them", seed s1:42573910ee757b5b,
+  failed once on the Mac with commit 9 and once in three kimchi runs before it
+  (budget 1048576 on a faulted polled-copyless-itself device): the seed does
+  not fix the two domains' schedule. Fix test-first from the seed
 
 ## perf
 
