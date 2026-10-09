@@ -1318,6 +1318,12 @@ let test_door_buffers () =
   let d = zeros [| 2 |] in
   kill (A.buffer d);
   equal ~msg:"dead" answer A.Dead_buffer (S.add (zeros [| 2 |]) x d);
+  (* A dead buffer is refused as dead before any overlap is compared. *)
+  let b = A.buffer (zeros [| 4 |]) in
+  let at offset = A.v f32 (L.v ~offset ~strides:[| 1 |] [| 3 |]) b in
+  let z = at 0 and y = at 1 in
+  kill b;
+  equal ~msg:"dead and overlapping" answer A.Dead_buffer (S.add z x y);
   let io = A.to_device (S.io_device ()) x in
   equal ~msg:"io" answer A.Off_host (S.add (zeros [| 2 |]) x io);
   let held = zeros [| 2 |] in

@@ -76,19 +76,6 @@ static int claim_code(enum rig_claim c) {
   caml_fatal_error("nx_read: rig_buffer_claim answered %d", (int)c);
 }
 
-/* The bytes [[first, last)] that the array [v], read into [a], reaches, as
-   host addresses; none for an array with no element. */
-static void reach(value v, const nx_array *a, int64_t *first, int64_t *last) {
-  if (a->base == NULL) {
-    *first = *last = 0;
-    return;
-  }
-  value l = Field(v, ARRAY_LAYOUT);
-  int64_t base = (int64_t)(intptr_t)a->base;
-  *first = base + Long_val(Field(l, NX_LAYOUT_LO)) * a->bits / 8;
-  *last = base + (Long_val(Field(l, NX_LAYOUT_HI)) * a->bits + 7) / 8;
-}
-
 /* Whether the descriptors [a] and [b], both with elements, are identical:
    one width, and every index at one byte: equal extents and strides, and
    one first bit. */
@@ -98,6 +85,14 @@ static int identical(const nx_array *a, const nx_array *b) {
     if (a->dim[i] != b->dim[i]) return 0;
   return (int64_t)(intptr_t)a->base * 8 + a->offset * a->bits ==
          (int64_t)(intptr_t)b->base * 8 + b->offset * b->bits;
+}
+
+/* Releases the claims of the first [n] operands [a] made, but an alias's,
+   and answers [e]: a refusal after some claims. */
+static int refuse_claimed(int n, const nx_array *a, int e) {
+  for (int k = 0; k < n; k++)
+    if (!a[k].alias) rig_buffer_release(a[k].buffer);
+  return e;
 }
 
 int nx_read(int n, const nx_operand *in, nx_array *out) {
@@ -111,45 +106,55 @@ int nx_read(int n, const nx_operand *in, nx_array *out) {
     int e = read_layout(Field(v, ARRAY_LAYOUT), a);
     if (e) return e;
     a->buffer = Field(v, ARRAY_BUFFER);
-    if (rig_buffer_why(a->buffer) != NULL) return NX_DEAD;
-    if (a->flags & NX_EMPTY)
-      a->base = NULL;
-    else if ((a->base = rig_buffer_host(a->buffer)) == NULL)
-      return NX_NOT_HOST;
-    if (in[k].written && !(a->flags & NX_DISTINCT)) return NX_NOT_DISTINCT;
+    a->alias = 0;
   }
-  for (int k = 0; k < n; k++) out[k].alias = 0;
-  for (int k = 0; k < n; k++) {
-    int64_t first, last, first_j, last_j;
-    if (!in[k].written) continue;
-    reach(in[k].array, &out[k], &first, &last);
-    if (first == last) continue;
-    for (int j = 0; j < n; j++) {
-      if (j == k) continue;
-      reach(in[j].array, &out[j], &first_j, &last_j);
-      if (!(first_j < last && first < last_j)) continue;
-      /* A read operand identical to a written one is claimed through it. */
-      if (in[j].written || !identical(&out[k], &out[j])) return NX_OVERLAP;
-      out[j].alias = 1;
-    }
-  }
-  /* Every operand is claimed before any wait: a refusal of a later operand
-     spends no wait, and a wait runs under every claim, so no donation on
-     another domain consumes an operand while the call waits. */
+  /* Every operand is claimed before anything else is checked: the claim
+     checks under it that the buffer lives, so a dead operand is refused as
+     dead whatever else is wrong with it, and before any wait, so a wait
+     runs under every claim and no donation on another domain consumes an
+     operand while the call waits. */
   int waits = 0;
   for (int k = 0; k < n; k++) {
-    out[k].wait = 0;
-    if (out[k].alias) continue;
     enum rig_claim c = rig_buffer_claim(
         out[k].buffer, in[k].written ? RIG_READ_WRITE : RIG_READ);
     int e = claim_code(c);
-    if (e) {
-      while (k-- > 0)
-        if (!out[k].alias) rig_buffer_release(out[k].buffer);
-      return e;
-    }
+    if (e) return refuse_claimed(k, out, e);
     out[k].wait = c == RIG_WAIT;
     waits |= out[k].wait;
+  }
+  /* Each operand's bytes, as host addresses, read once with its layout's
+     span. */
+  int64_t first[NX_MAX_OPERANDS], last[NX_MAX_OPERANDS];
+  for (int k = 0; k < n; k++) {
+    nx_array *a = &out[k];
+    if (in[k].written && !(a->flags & NX_DISTINCT))
+      return refuse_claimed(n, out, NX_NOT_DISTINCT);
+    if (a->flags & NX_EMPTY) {
+      a->base = NULL;
+      first[k] = last[k] = 0;
+      continue;
+    }
+    if ((a->base = rig_buffer_host(a->buffer)) == NULL)
+      return refuse_claimed(n, out, NX_NOT_HOST);
+    value l = Field(in[k].array, ARRAY_LAYOUT);
+    int64_t base = (int64_t)(intptr_t)a->base;
+    first[k] = base + Long_val(Field(l, NX_LAYOUT_LO)) * a->bits / 8;
+    last[k] = base + (Long_val(Field(l, NX_LAYOUT_HI)) * a->bits + 7) / 8;
+  }
+  /* A written operand shares bytes with no other but a read operand
+     identical to it, which its claim for writing covers: that read
+     operand's own claim ends here. */
+  for (int k = 0; k < n; k++) {
+    if (!in[k].written || first[k] == last[k]) continue;
+    for (int j = 0; j < n; j++) {
+      if (j == k || out[j].alias) continue;
+      if (!(first[j] < last[k] && first[k] < last[j])) continue;
+      if (in[j].written || !identical(&out[k], &out[j]))
+        return refuse_claimed(n, out, NX_OVERLAP);
+      rig_buffer_release(out[j].buffer);
+      out[j].alias = 1;
+      out[j].wait = 0;
+    }
   }
   /* Each buffer becomes a local root, so that a kernel that allocates or
      releases the domain lock keeps it reachable and finds it again in
