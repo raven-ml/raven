@@ -91,27 +91,17 @@ extern "C" __global__ void generate(const __grid_constant__ generate_params p) {
   for (u64 i = thread_index(); i < p.n; i += (u64)gridDim.x * blockDim.x) {
     u64 h = mix(p.seed ^ mix(i));
     double f = draw_float(h, p.draw, p.spread);
-    /* NX_DRAW_SMALL's integers: [-8, 8) as signed, [0, 16) as unsigned. */
-    u64 s = p.draw == NX_DRAW_SMALL ? (h & 15) - 8 : h;
-    u64 u = p.draw == NX_DRAW_SMALL ? h & 15 : h;
-    switch (p.dtype) {
-    case NX_FLOAT64: ((double *)p.out)[i] = f; break;
-    case NX_FLOAT32: ((float *)p.out)[i] = (float)f; break;
-    case NX_FLOAT16: ((uint16_t *)p.out)[i] = nx_double_to_f16(f); break;
-    case NX_BFLOAT16: ((uint16_t *)p.out)[i] = nx_double_to_bf16(f); break;
-    case NX_FLOAT8_E4M3FN:
-      ((uint8_t *)p.out)[i] = nx_double_to_e4m3fn(f);
-      break;
-    case NX_FLOAT8_E5M2: ((uint8_t *)p.out)[i] = nx_double_to_e5m2(f); break;
-    case NX_INT64: ((u64 *)p.out)[i] = s; break;
-    case NX_UINT64: ((u64 *)p.out)[i] = u; break;
-    case NX_INT32: ((uint32_t *)p.out)[i] = (uint32_t)s; break;
-    case NX_UINT32: ((uint32_t *)p.out)[i] = (uint32_t)u; break;
-    case NX_INT16: ((uint16_t *)p.out)[i] = (uint16_t)s; break;
-    case NX_UINT16: ((uint16_t *)p.out)[i] = (uint16_t)u; break;
-    case NX_INT8: ((uint8_t *)p.out)[i] = (uint8_t)s; break;
-    case NX_UINT8: ((uint8_t *)p.out)[i] = (uint8_t)u; break;
-    case NX_BOOL: ((uint8_t *)p.out)[i] = (uint8_t)(h & 1); break;
+    /* An integer's low bits; NX_DRAW_SMALL's from [lo, lo + 16). */
+    u64 v = p.draw == NX_DRAW_SMALL ? (u64)((int64_t)(h & 15) + p.lo) : h;
+    if (p.dtype == NX_FLOAT64) v = nx_double_bits(f);
+    else if (p.dtype == NX_FLOAT32) v = nx_float_bits((float)f);
+    else if (p.dtype == NX_BOOL) v = h & 1;
+    else if (p.narrow) v = (u64)nx_double_to_bits(p.dtype, f);
+    switch (p.bytes) {
+    case 1: ((uint8_t *)p.out)[i] = (uint8_t)v; break;
+    case 2: ((uint16_t *)p.out)[i] = (uint16_t)v; break;
+    case 4: ((uint32_t *)p.out)[i] = (uint32_t)v; break;
+    default: ((u64 *)p.out)[i] = v;
     }
   }
 }

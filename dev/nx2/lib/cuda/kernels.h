@@ -80,7 +80,9 @@ typedef struct __attribute__((aligned(8))) {
   X(contract_simt_f32_64, SIMT, f32, 64)                                    \
   /* f32 decode 1x5120x2880 */                                              \
   X(contract_skinny_f32, SKINNY, f32)                                       \
-  /* float64 and integer sums: no row; they make the family total */        \
+  /* float64 and integer sums, which every library computes: float64-       \
+     1024x1024x1024 and -1x5120x2880, int16-1024x1024x1024 (int64 sums),    \
+     int8-1x5120x2880 (int32 sums) */                                       \
   X(contract_simt_f64_64, SIMT, f64, 64)                                    \
   X(contract_simt_i64_64, SIMT, i64, 64)                                    \
   X(contract_skinny_f64, SKINNY, f64)                                       \

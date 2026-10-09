@@ -29,24 +29,17 @@ let row name work run =
 let harness g launches = S.record (S.harness g) launches
 
 let copy n =
-  row
-    (strf "floor/copy-%sB" (size n))
-    (Bytes (2 * n))
-    (fun g ->
-      harness g [ S.floor_copy ~ins:[ S.buffer g n ] ~out:(S.buffer g n) ])
+  row (strf "floor/copy-%sB" (size n)) (Bytes (2 * n)) @@ fun g ->
+  harness g [ S.floor_copy ~ins:[ S.buffer g n ] ~out:(S.buffer g n) ]
 
 (* The driver's copy, which a copy floor should not trail. *)
 let copy_driver n =
-  row
-    (strf "floor/copy-driver-%sB" (size n))
-    (Bytes (2 * n))
-    (fun g -> S.driver_copy ~src:(S.buffer g n) ~dst:(S.buffer g n))
+  row (strf "floor/copy-driver-%sB" (size n)) (Bytes (2 * n)) @@ fun g ->
+  S.driver_copy ~src:(S.buffer g n) ~dst:(S.buffer g n)
 
 let read n =
-  row
-    (strf "floor/read-%sB" (size n))
-    (Bytes n)
-    (fun g -> harness g [ S.floor_read g (S.buffer g n) ])
+  row (strf "floor/read-%sB" (size n)) (Bytes n) @@ fun g ->
+  harness g [ S.floor_read g (S.buffer g n) ]
 
 let launch =
   row "floor/launch" (Bytes 0) (fun g ->
@@ -150,7 +143,8 @@ let contract ?(batch = 1) ?(la = `K) ?(lb = `K) (D.Any d as dt) (D.Any c as acc)
 let contracts =
   let open D in
   let bf16 = Any Bfloat16 and f16 = Any Float16 and f32 = Any Float32 in
-  let i8 = Any Int8 and i32 = Any Int32 in
+  let i8 = Any Int8 and i32 = Any Int32 and f64 = Any Float64 in
+  let i16 = Any Int16 and i64 = Any Int64 in
   let squares dt =
     List.map
       (fun s -> contract dt f32 dt s s s)
@@ -173,6 +167,11 @@ let contracts =
       contract bf16 f32 bf16 4096 14336 4096;
       contract ~batch:64 bf16 f32 bf16 512 512 512;
       contract f32 f32 f32 1 5120 2880;
+      (* float64 and integer sums, which the core computes: SIMT and skinny *)
+      contract f64 f64 f64 1024 1024 1024;
+      contract f64 f64 f64 1 5120 2880;
+      contract i16 i64 i64 1024 1024 1024;
+      contract i8 i32 i32 1 5120 2880;
     ]
 
 let all = floors @ contracts

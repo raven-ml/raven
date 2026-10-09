@@ -143,11 +143,6 @@ let library g = Lazy.force g.library
 let library_size g =
   (Array.length (library g).names, String.length (library_cubin g.arch))
 
-let kernel i name =
-  match Array.find_index (String.equal name) i.names with
-  | Some k -> k
-  | None -> invalid_arg ("Nx_cuda_support.record: no kernel " ^ name)
-
 (* Records *)
 
 type param = A of Rig.Buffer.t | W of int | D of int * int
@@ -186,7 +181,12 @@ type launch = image -> (int array * string) * Rig.Buffer.t list
 
 let launch name ~grid:(gx, gy, gz) ~block ?(shared = 0) ps image =
   let addrs, words = words ps in
-  ( ([| kernel image name; gx; gy; gz; block; shared; addrs; 0 |], words),
+  let k =
+    match Array.find_index (String.equal name) image.names with
+    | Some k -> k
+    | None -> invalid_arg ("Nx_cuda_support.record: no kernel " ^ name)
+  in
+  ( ([| k; gx; gy; gz; block; shared; addrs; 0 |], words),
     List.filter_map (function A b -> Some b | _ -> None) ps )
 
 let record image ls =
@@ -346,10 +346,8 @@ let copy_threads, read_threads, read_vecs = floors ()
 
 let vectors what b =
   let n = Rig.Buffer.length b in
-  if n mod 16 <> 0 then
-    invalid_arg
-      (strf "Nx_cuda_support.%s: %d bytes are no whole vectors" what n);
-  n / 16
+  if n mod 16 = 0 then n / 16
+  else invalid_arg (strf "Nx_cuda_support.%s: %d bytes, not vectors" what n)
 
 let blocks n per = Int.max 1 ((n + per - 1) / per)
 
@@ -417,21 +415,20 @@ let contract g ~a ~b ?init ~y ~batch ~contracting ~acc () =
 type draw = Uniform | Wide of int | Small
 
 let generate (type v s) g b (dt : (v, s) Nx_array.Dtype.t) draw ~seed =
+  let module D = Nx_array.Dtype in
   (match dt with
   | Float4_e2m1fn | Int4 | Uint4 | Complex128 | Complex64 | Bit ->
-      invalid_arg
-        (strf "Nx_cuda_support.generate: %s is not drawn"
-           (Nx_array.Dtype.name dt))
+      invalid_arg (strf "Nx_cuda_support.generate: %s is not drawn" (D.name dt))
   | _ -> ());
-  let n = Rig.Buffer.length b * 8 / Nx_array.Dtype.bits dt in
+  let bits = D.bits dt and code = D.code dt in
+  let n = Rig.Buffer.length b * 8 / bits in
   let draw, spread =
     match draw with Uniform -> (0, 0) | Wide e -> (1, e) | Small -> (2, 0)
   in
-  run g
-    (record (harness g)
-       [
-         launch "generate"
-           ~grid:(Int.min 4096 (blocks n 256), 1, 1)
-           ~block:256
-           [ A b; W n; W seed; D (Nx_array.Dtype.code dt, draw); D (spread, 0) ];
-       ])
+  let lo = if D.is Signed dt then -8 else 0 in
+  let narrow = Bool.to_int (D.is Float dt && bits < 32) in
+  let ps =
+    [ A b; W n; W seed; D (code, draw); D (spread, bits / 8); D (lo, narrow) ]
+  in
+  let grid = (Int.min 4096 (blocks n 256), 1, 1) in
+  run g (record (harness g) [ launch "generate" ~grid ~block:256 ps ])

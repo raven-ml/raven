@@ -82,14 +82,15 @@ enum nx_harness_draw {
   NX_DRAW_SMALL
 };
 
-/* Element i of [out], of the dtype [dtype] (nx_dtype.h's code), is a draw
-   of [draw] from the hash of [seed] and i, for i < n. Byte-wide or wider
-   dtypes. */
+/* Element i of [out], of the dtype [dtype] (nx_dtype.h's code), [bytes]
+   bytes, is a draw of [draw] from the hash of [seed] and i, for i < n:
+   [narrow] for a float narrower than float32, [lo] -8 for a signed integer
+   and 0 for an unsigned one. Byte-wide or wider dtypes. */
 typedef struct {
   void *out;
   uint64_t n, seed;
   uint32_t dtype, draw;
-  int32_t spread, unused;
+  int32_t spread, bytes, lo, narrow;
 } generate_params;
 
 /* Floors */
