@@ -207,6 +207,14 @@ val v : ins:Nx_array.Dtype.any array -> node array -> outs:int array -> t
     [outs] is not empty and names nodes; and operands plus outputs are at
     most {!max_operands}. *)
 
+val of_node : ins:Nx_array.Dtype.any array -> node -> t
+(** [of_node ~ins n] is the program of the one node [n] over operands of dtypes
+    [ins]: [v ~ins nodes ~outs:[| k |]], [nodes] being [In 0] to [In (k - 1)]
+    then [n], [k] the length of [ins]. [n]'s references name operands: node
+    [j] is operand [j].
+
+    Raises [Invalid_argument] as {!v} does. *)
+
 val of_string : string -> t option
 (** [of_string s] is [Some p] iff [s] is the program [p]: the bytes {!v}
     makes for some arguments. *)

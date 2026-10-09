@@ -390,6 +390,10 @@ let node p i =
   | 4 -> Op2 (op2_of (f 4), a, b)
   | _ -> Op3 (op3_of (f 4), a, b, c)
 
+let of_node ~ins n =
+  let k = Array.length ins in
+  v ~ins (Array.append (Array.init k (fun i -> In i)) [| n |]) ~outs:[| k |]
+
 let of_string s =
   let n = String.length s in
   if n < header then None

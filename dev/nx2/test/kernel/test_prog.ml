@@ -451,6 +451,47 @@ let law_program d =
   equal ~msg:"equal programs are equal strings" bool true
     (P.v ~ins:d.ins d.nodes ~outs:d.outs = p)
 
+(* One node over drawn operands, its references in and around the operands'
+   range, and its program built by v from the operands' nodes. *)
+let one_node =
+  let open Gen in
+  let f32 = D.Any D.Float32 in
+  with_pp
+    (fun ppf (ins, n) ->
+      Format.fprintf ppf "%d operands, %a" (Array.length ins) pp_node n)
+    (let* ins = array ~size:(int_range 0 3) (of_list ~pp:pp_dtype base_dtypes) in
+     let k = Array.length ins in
+     let ref_ = int_range (-1) (k + 1) in
+     let+ n =
+       one_of
+         [
+           map (fun j -> P.In j) ref_;
+           map (fun a -> P.Coord a) (int_range 0 Nx_array.Layout.max_rank);
+           constant ~pp:pp_node (P.Const (f32, P.bits D.Float32 1.5));
+           map (fun j -> P.Op1 (Copy, (if k > 0 && j >= 0 && j < k then ins.(j) else f32), j)) ref_;
+           map (fun (j, l) -> P.Op2 (Binary Add, j, l)) (pair ref_ ref_);
+           map (fun (c, j, l) -> P.Op3 (Where, c, j, l)) (triple ref_ ref_ ref_);
+         ]
+     in
+     (ins, n))
+
+let law_of_node (ins, n) =
+  let k = Array.length ins in
+  let built f = match f () with p -> Ok p | exception Invalid_argument _ -> Error () in
+  let by_v =
+    built (fun () ->
+        P.v ~ins (Array.append (Array.init k (fun i -> P.In i)) [| n |]) ~outs:[| k |])
+  in
+  cover "built" (Result.is_ok by_v);
+  cover "refused" (Result.is_error by_v);
+  match (by_v, built (fun () -> P.of_node ~ins n)) with
+  | Ok p, Ok q ->
+      equal ~msg:"v's program" string (p :> string) (q :> string);
+      equal ~msg:"round trip" bool true (P.of_string (q :> string) = Some q)
+  | Error (), Error () -> ()
+  | Ok _, Error () -> fail "of_node refused what v builds"
+  | Error (), Ok _ -> fail "of_node built what v refuses"
+
 let test_program_refuses () =
   let f32 = D.Any D.Float32 in
   let refuses ~msg ?(ins = [| f32 |]) nodes outs =
@@ -508,6 +549,8 @@ let tests =
         prop "C reads what v was given, and so do the readers" drawn
           law_program;
         test "v refuses ill-formed programs" test_program_refuses;
+        prop "of_node is v over the operands' nodes, and round-trips" one_node
+          law_of_node;
         test "readers refuse a node past the program" test_readers_refuse;
       ];
   ]
