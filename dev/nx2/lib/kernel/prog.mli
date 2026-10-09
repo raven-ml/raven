@@ -117,9 +117,11 @@ type op3 =
 
     Where each kind is defined. Every dtype has one order: [false < true];
     integers by value; floats by value, [-0] below [+0]; complex numbers by
-    real part, then imaginary part. A NaN, and a complex number with a NaN
-    part, is a NaN to each kind: comparisons with it are [false], [Maximum]
-    and [Minimum] give it. On booleans [Maximum] is [Or] and [Minimum] is
+    real part, then imaginary part. The comparisons compare floats by value,
+    so [-0] equals [+0]; the order's [-0] below [+0] holds for [Maximum],
+    [Minimum] and sorting. A NaN, and a complex number with a NaN part, is a
+    NaN to each kind: comparisons with it are [false], [Maximum] and
+    [Minimum] give it. On booleans [Maximum] is [Or] and [Minimum] is
     [And]. A kind keeps its operands' dtype where its type says so: the
     absolute value of a complex number is no kind.
 

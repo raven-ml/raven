@@ -934,6 +934,15 @@ let test_apply_values () =
   let b = A.create Rig.host D.Bool [| 2 |] in
   done_ ~msg:"less" (K.apply2 (Compare Less) ~dst:b (u8 [| 200; 1 |]) (u8 [| 100; 2 |]));
   equal ~msg:"less: unsigned order" (array bool) [| false; true |] (A.to_array b);
+  let b2 = A.create Rig.host D.Bool [| 1 |] in
+  done_ ~msg:"less"
+    (K.apply2 (Compare Less) ~dst:b2 (f32 [| -0. |]) (f32 [| 0. |]));
+  equal ~msg:"less: -0 equals +0" (array bool) [| false |] (A.to_array b2);
+  let m = A.create Rig.host D.Float32 [| 1 |] in
+  done_ ~msg:"maximum"
+    (K.apply2 (Binary Maximum) ~dst:m (f32 [| -0. |]) (f32 [| 0. |]));
+  equal ~msg:"maximum: -0 orders below +0" bool false
+    (Float.sign_bit (A.get m [| 0 |]));
   let d = A.create Rig.host D.Float32 [| 2 |] in
   done_ ~msg:"where" (K.apply3 Where ~dst:d b (f32 [| 1.; 2. |]) (f32 [| 3.; 4. |]));
   equal ~msg:"where" (array float_exact) [| 3.; 2. |] (A.to_array d);
