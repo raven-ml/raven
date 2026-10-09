@@ -370,6 +370,29 @@ let test_close () =
       equal string "closed" why;
       equal string "loss:close lost: closed" (Printexc.to_string e)
 
+(* Two domains close one device: its stop runs once, and both closes return
+   once it answered. The stop waits at the gate while the second close is
+   sampled for 50 ms. *)
+let test_two_closes () =
+  let d, p = P.open_ "loss:two-closes" in
+  P.gate p;
+  let returned = Atomic.make 0 in
+  let close () =
+    Rig.close d;
+    Atomic.incr returned;
+    count "stop" p
+  in
+  let first = Domain.spawn close in
+  Support.await "the stop at the gate" (fun () -> P.sleepers p = 1);
+  let second = Domain.spawn close in
+  Unix.sleepf 0.05;
+  equal ~msg:"closes returned while the stop waits" int 0 (Atomic.get returned);
+  equal ~msg:"stops at the gate" int 1 (P.sleepers p);
+  P.open_gate p;
+  equal ~msg:"the stops each close saw" (list int) [ 1; 1 ]
+    [ Domain.join first; Domain.join second ];
+  equal (option string) (Some "closed") (Rig.lost d)
+
 (* A closed device's name opens a new device. *)
 let test_close_reopen () =
   let d, _ = P.open_ "loss:reopen" in
@@ -554,6 +577,10 @@ let tests =
     group ~timeout "close"
       [
         test "a close waits for the work, then ends the device" test_close;
+        test
+          "two domains closing one device stop it once, and both return after \
+           it (sampled for 50 ms)"
+          test_two_closes;
         test "a closed device's name opens a new device" test_close_reopen;
         test "a closed device's memory returns as it is collected"
           test_close_frees;
