@@ -231,7 +231,7 @@ let case =
   and+ batch = int_range 1 3
   and+ m = frequency [ (1, of_list [ 1 ]); (4, extent_gen 64) ]
   and+ n = extent_gen 64
-  and+ k = Gen.one_of [ extent_gen 16; Gen.of_list [ 300; 1000 ] ]
+  and+ k = Gen.one_of [ extent_gen 16; Gen.of_list [ 300; 1000; 2880 ] ]
   and+ init = of_list [ No_init; Full; Bias ]
   and+ pad = of_list [ 0; 3 ]
   and+ spread = of_list [ 0; 8 ] in
@@ -315,6 +315,13 @@ let contract_bound =
         ~init:Bias;
       large (Dt.Any Dt.Float32) ~a_t:true ~b_t:true ~m:520 ~n:513 ~k:33
         ~init:Bias;
+      (* Few rows of a split along k, on wide tiles. *)
+      {
+        (large (Dt.Any Dt.Float16) ~a_t:false ~b_t:true ~m:9 ~n:200 ~k:2880
+           ~init:Full)
+        with
+        batch = 1;
+      };
     ]
   in
   prop ~count:60 ~examples "a float contraction is within its bound" case
@@ -333,11 +340,24 @@ let contract_bound =
           (fun k -> launches_one "contract_f" k || launches_one "contract_bf" k)
           kernels
       in
-      let ends suffix = List.exists (String.ends_with ~suffix) dense in
-      cover "64 x 64 tiles" (dense <> [] && not (ends "_s" || ends "_s_edge"));
-      cover "32 x 32 tiles" (ends "_s" || ends "_s_edge");
-      cover "whole tiles" (dense <> [] && not (ends "_edge"));
-      cover "edge tiles" (ends "_edge");
+      (* A dense kernel's tile, by its name's suffix past "_edge". *)
+      let tile k =
+        let k =
+          if String.ends_with ~suffix:"_edge" k then
+            String.sub k 0 (String.length k - 5)
+          else k
+        in
+        if String.ends_with ~suffix:"_s" k then `Small
+        else if String.ends_with ~suffix:"_w" k then `Wide
+        else `Large
+      in
+      let tiles x = List.exists (fun k -> tile k = x) dense in
+      cover "64 x 64 tiles" (tiles `Large);
+      cover "32 x 32 tiles" (tiles `Small);
+      cover "16 x 64 tiles" (tiles `Wide);
+      let edge = List.exists (String.ends_with ~suffix:"_edge") dense in
+      cover "whole tiles" (dense <> [] && not edge);
+      cover "edge tiles" edge;
       cover "a skinny product, b stored [k][n]" (launches "skinny_" && not c.b_t);
       cover "a skinny product, b stored [n][k]" (launches "skinny_" && c.b_t);
       cover "a split along k" (launches "contract_combine");

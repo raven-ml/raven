@@ -38,33 +38,45 @@
 /* X(name) for every kernel of the library, the function [name] of its
    metallib. Dense instances are named by operand dtype, the orders of a
    and b (n: stored with the contracted axis last for a, the output's axis
-   last for b; t: the other), 32 x 32 tiles (_s) and the twin that reads
-   tiles reaching past the matrix (_edge). */
+   last for b; t: the other), 32 x 32 tiles (_s), 16 x 64 tiles (_w) and
+   the twin that reads tiles reaching past the matrix (_edge). */
 #define NX_METAL_KERNELS(X)                                                \
   X(contract_f32_nn) X(contract_f32_nn_edge)                               \
   X(contract_f32_nn_s) X(contract_f32_nn_s_edge)                           \
+  X(contract_f32_nn_w) X(contract_f32_nn_w_edge)                           \
   X(contract_f32_nt) X(contract_f32_nt_edge)                               \
   X(contract_f32_nt_s) X(contract_f32_nt_s_edge)                           \
+  X(contract_f32_nt_w) X(contract_f32_nt_w_edge)                           \
   X(contract_f32_tn) X(contract_f32_tn_edge)                               \
   X(contract_f32_tn_s) X(contract_f32_tn_s_edge)                           \
+  X(contract_f32_tn_w) X(contract_f32_tn_w_edge)                           \
   X(contract_f32_tt) X(contract_f32_tt_edge)                               \
   X(contract_f32_tt_s) X(contract_f32_tt_s_edge)                           \
+  X(contract_f32_tt_w) X(contract_f32_tt_w_edge)                           \
   X(contract_f16_nn) X(contract_f16_nn_edge)                               \
   X(contract_f16_nn_s) X(contract_f16_nn_s_edge)                           \
+  X(contract_f16_nn_w) X(contract_f16_nn_w_edge)                           \
   X(contract_f16_nt) X(contract_f16_nt_edge)                               \
   X(contract_f16_nt_s) X(contract_f16_nt_s_edge)                           \
+  X(contract_f16_nt_w) X(contract_f16_nt_w_edge)                           \
   X(contract_f16_tn) X(contract_f16_tn_edge)                               \
   X(contract_f16_tn_s) X(contract_f16_tn_s_edge)                           \
+  X(contract_f16_tn_w) X(contract_f16_tn_w_edge)                           \
   X(contract_f16_tt) X(contract_f16_tt_edge)                               \
   X(contract_f16_tt_s) X(contract_f16_tt_s_edge)                           \
+  X(contract_f16_tt_w) X(contract_f16_tt_w_edge)                           \
   X(contract_bf16_nn) X(contract_bf16_nn_edge)                             \
   X(contract_bf16_nn_s) X(contract_bf16_nn_s_edge)                         \
+  X(contract_bf16_nn_w) X(contract_bf16_nn_w_edge)                         \
   X(contract_bf16_nt) X(contract_bf16_nt_edge)                             \
   X(contract_bf16_nt_s) X(contract_bf16_nt_s_edge)                         \
+  X(contract_bf16_nt_w) X(contract_bf16_nt_w_edge)                         \
   X(contract_bf16_tn) X(contract_bf16_tn_edge)                             \
   X(contract_bf16_tn_s) X(contract_bf16_tn_s_edge)                         \
+  X(contract_bf16_tn_w) X(contract_bf16_tn_w_edge)                         \
   X(contract_bf16_tt) X(contract_bf16_tt_edge)                             \
   X(contract_bf16_tt_s) X(contract_bf16_tt_s_edge)                         \
+  X(contract_bf16_tt_w) X(contract_bf16_tt_w_edge)                         \
   X(contract_i8_nn) X(contract_i8_nn_edge)                                 \
   X(contract_i8_nt) X(contract_i8_nt_edge)                                 \
   X(contract_i8_tn) X(contract_i8_tn_edge)                                 \

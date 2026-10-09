@@ -25,27 +25,35 @@ static int append(nx_metal_records *r, int entry, const uint32_t groups[3],
 
 /* Contract */
 
-/* The dense kernels' tiles, 64 × 64 or 32 × 32, and threadgroup
+/* The dense kernels' tiles, rows × columns, and threadgroup
    (contract.metal), and the column of tiles that consecutive threadgroups
    take, as a power of two: 4 tiles reading one tile of b share it in the
    GPU's cache. */
-enum { tile = 64, small_tile = 32, tile_threads = 128, swizzle = 2 };
+enum { tile_threads = 128, swizzle = 2 };
+enum size { Large, Small, Wide };
+static const uint32_t tile_rows[] = {64, 32, 16}, tile_cols[] = {64, 32, 64};
 
-/* The steps of k the dense kernel stages for a dtype (contract.metal's
-   elt::bk). */
-static uint32_t tile_k(int dt) {
-  return dt == NX_FLOAT16 || dt == NX_INT8 || dt == NX_UINT8 ? 32 : 16;
+/* The steps of k the dense kernel stages for a dtype and tile
+   (contract.metal's elt::bk, and 32 for wide tiles). */
+static uint32_t tile_k(int dt, enum size size) {
+  return size == Wide || dt == NX_FLOAT16 || dt == NX_INT8 || dt == NX_UINT8
+             ? 32
+             : 16;
 }
 
 /* A float product of fewer large tiles than this runs on small ones, which
-   give the GPU's cores 4 times as many threadgroups. */
-enum { small_tiles = 128 };
+   give the GPU's cores 4 times as many threadgroups; one of at most
+   wide_rows rows runs on wide ones, which waste fewer of the matrix
+   units' rows. */
+enum { small_tiles = 128, wide_rows = 16 };
 
 /* A product of fewer tiles than this splits along k into parts whose sums
-   contract_combine adds, so that the GPU's cores have work: up to
-   max_parts parts of at least min_part_k terms each. A function of the
-   shape, as every association is. */
-enum { split_tiles = 64, max_parts = 16, min_part_k = 64 };
+   contract_combine adds, so that the GPU's cores have work and each
+   threadgroup a shorter chain of steps: up to max_parts parts of at least
+   min_part_k terms each, since shorter parts cost more in their partial
+   sums than they save. A function of the shape, as every association
+   is. */
+enum { split_tiles = 256, max_parts = 16, min_part_k = 256 };
 
 /* The combine's threads per threadgroup. */
 enum { combine_threads = 256 };
@@ -56,15 +64,14 @@ static int dense_dtype(int dt) {
 
 /* The instance for a's and b's dtype and order: NX_METAL_contract_<dt>_<a
    order><b order>, n where the operand's last axis has unit stride; its
-   _s twin, of small tiles (floats only); and the _edge twin of either,
-   which reads tiles that reach past m, n or k. */
-static int dense_entry(int dt, int a_t, int b_t, int small, int edge) {
-  int order = 2 * a_t + b_t;
+   _s and _w twins, of small and wide tiles (floats only); and the _edge
+   twin of each, which reads tiles that reach past m, n or k. */
+static int dense_entry(int dt, int a_t, int b_t, enum size size, int edge) {
+  int order = 2 * a_t + b_t, at = 6 * order + 2 * size + edge;
   switch (dt) {
-  case NX_FLOAT32: return NX_METAL_contract_f32_nn + 4 * order + 2 * small + edge;
-  case NX_FLOAT16: return NX_METAL_contract_f16_nn + 4 * order + 2 * small + edge;
-  case NX_BFLOAT16:
-    return NX_METAL_contract_bf16_nn + 4 * order + 2 * small + edge;
+  case NX_FLOAT32: return NX_METAL_contract_f32_nn + at;
+  case NX_FLOAT16: return NX_METAL_contract_f16_nn + at;
+  case NX_BFLOAT16: return NX_METAL_contract_bf16_nn + at;
   case NX_INT8: return NX_METAL_contract_i8_nn + 2 * order + edge;
   default: return NX_METAL_contract_u8_nn + 2 * order + edge;
   }
@@ -159,11 +166,16 @@ int nx_metal_plan_contract(const nx_metal_contract_in *c,
                    sizeof p, 4, 0);
     return e ? e : 1;
   }
-  uint64_t large = (uint64_t)((c->m + tile - 1) / tile) * ((c->n + tile - 1) / tile) * c->batch;
-  int small = floats && large < small_tiles;
-  uint32_t side = small ? small_tile : tile;
-  uint32_t tiles_m = (c->m + side - 1) / side;
-  uint32_t tiles_n = (c->n + side - 1) / side;
+  uint32_t side = tile_rows[Large];
+  uint64_t large =
+      (uint64_t)((c->m + side - 1) / side) * ((c->n + side - 1) / side) * c->batch;
+  enum size size = !floats                 ? Large
+                   : c->m <= wide_rows     ? Wide
+                   : large < small_tiles   ? Small
+                                           : Large;
+  uint32_t rows = tile_rows[size], cols = tile_cols[size];
+  uint32_t tiles_m = (c->m + rows - 1) / rows;
+  uint32_t tiles_n = (c->n + cols - 1) / cols;
   p.swizzle = tiles_m >= 2 * (1 << swizzle) ? swizzle : 0;
   uint32_t column = 1u << p.swizzle;
   uint32_t groups[3] = {tiles_n * column, (tiles_m + column - 1) / column,
@@ -183,9 +195,9 @@ int nx_metal_plan_contract(const nx_metal_contract_in *c,
   int unaligned = bytes && ((a->address | b->address) % 16 ||
                             (a_t ? as[2] : as[1]) % 16 ||
                             (b_t ? bs[2] : bs[1]) % 16);
-  int edge = c->m % side || c->n % side || part_k % tile_k(a->dtype) ||
+  int edge = c->m % rows || c->n % cols || part_k % tile_k(a->dtype, size) ||
              unaligned;
-  int entry = dense_entry(a->dtype, a_t, b_t, small, edge);
+  int entry = dense_entry(a->dtype, a_t, b_t, size, edge);
   if (parts == 1) {
     int e = append(r, entry, groups, threads, &p, sizeof p, 4, 0);
     return e ? e : 1;
