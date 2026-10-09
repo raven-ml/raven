@@ -48,6 +48,8 @@ let look file ~pinned =
               `Image s
           | _ -> `Other))
 
+type image = { path : string; contents : string }
+
 let missing dirs name ~digest others unreadable =
   let others =
     match others with
@@ -66,7 +68,7 @@ let find dirs name ~digest:pinned =
     | dir :: rest -> (
         let file = Filename.concat dir name in
         match look file ~pinned with
-        | `Image s -> Ok s
+        | `Image contents -> Ok { path = file; contents }
         | `Other -> go (file :: others) unreadable rest
         | `Absent -> go others unreadable rest
         | `Unreadable why -> go others (why :: unreadable) rest)

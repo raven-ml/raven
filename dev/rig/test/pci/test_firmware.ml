@@ -65,22 +65,31 @@ let root =
 
 let temp_dir () = Filename.temp_dir ~temp_dir:(Lazy.force root) "d" ""
 let name = "amdgpu/image.bin"
-let found = result string string
+
+let found =
+  result
+    (Testable.contramap
+       (fun (i : Firmware.image) -> (i.path, i.contents))
+       (pair string string))
+    string
+
+(* The image, found in [dir]. *)
+let in_ dir = Ok { Firmware.path = Filename.concat dir name; contents = image }
 
 let test_first () =
   let a = temp_dir () and b = temp_dir () in
   write b name image;
-  equal ~msg:"from the directory that holds it" found (Ok image)
+  equal ~msg:"from the directory that holds it" found (in_ b)
     (Firmware.find [ a; b ] name ~digest:pinned);
   write a name image;
-  equal ~msg:"from the first that holds it" found (Ok image)
+  equal ~msg:"from the first that holds it" found (in_ a)
     (Firmware.find [ a; b ] name ~digest:pinned)
 
 let test_other_digest () =
   let a = temp_dir () and b = temp_dir () in
   write a name "another image\n";
   write b name image;
-  equal ~msg:"another digest is skipped" found (Ok image)
+  equal ~msg:"another digest is skipped" found (in_ b)
     (Firmware.find [ a; b ] name ~digest:pinned)
 
 let test_missing () =
@@ -107,7 +116,7 @@ let test_unreadable () =
         ~sub:("reading " ^ Filename.concat a name ^ ": ")
         why);
   write b name image;
-  equal ~msg:"the next directory gives it" found (Ok image)
+  equal ~msg:"the next directory gives it" found (in_ b)
     (Firmware.find [ a; b ] name ~digest:pinned);
   Unix.chmod (Filename.concat a name) 0o644
 
@@ -128,10 +137,12 @@ let test_writes_nothing () =
   write a name "another image\n";
   write b name image;
   let before = files (Lazy.force root) in
-  ignore (Firmware.find [ a; b ] name ~digest:pinned : (string, string) result);
+  ignore
+    (Firmware.find [ a; b ] name ~digest:pinned
+      : (Firmware.image, string) result);
   ignore
     (Firmware.find [ a; b ] "amdgpu/missing.bin" ~digest:pinned
-      : (string, string) result);
+      : (Firmware.image, string) result);
   equal (list (pair string string)) before (files (Lazy.force root))
 
 let test_compressed () =
@@ -151,9 +162,9 @@ let test_read_once () =
     skip ~reason:"root reads a file whatever its mode" ();
   let a = temp_dir () in
   write a name image;
-  equal ~msg:"read" found (Ok image) (Firmware.find [ a ] name ~digest:pinned);
+  equal ~msg:"read" found (in_ a) (Firmware.find [ a ] name ~digest:pinned);
   Unix.chmod (Filename.concat a name) 0o000;
-  equal ~msg:"not read again" found (Ok image)
+  equal ~msg:"not read again" found (in_ a)
     (Firmware.find [ a ] name ~digest:pinned);
   Unix.chmod (Filename.concat a name) 0o644
 
@@ -163,10 +174,10 @@ let test_changed () =
   let a = temp_dir () and b = temp_dir () in
   write a name image;
   write b name image;
-  equal ~msg:"read" found (Ok image) (Firmware.find [ a ] name ~digest:pinned);
+  equal ~msg:"read" found (in_ a) (Firmware.find [ a ] name ~digest:pinned);
   write a name "another image, longer\n";
   is_error ~msg:"rewritten" (Firmware.find [ a ] name ~digest:pinned);
-  equal ~msg:"skipped" found (Ok image)
+  equal ~msg:"skipped" found (in_ b)
     (Firmware.find [ a; b ] name ~digest:pinned);
   Sys.remove (Filename.concat b name);
   is_error ~msg:"removed" (Firmware.find [ b ] name ~digest:pinned)
@@ -175,7 +186,7 @@ let test_changed () =
 let test_other_pin () =
   let a = temp_dir () in
   write a name image;
-  equal ~msg:"read" found (Ok image) (Firmware.find [ a ] name ~digest:pinned);
+  equal ~msg:"read" found (in_ a) (Firmware.find [ a ] name ~digest:pinned);
   is_error ~msg:"another pinned digest"
     (Firmware.find [ a ] name ~digest:(Firmware.digest "another image\n"))
 

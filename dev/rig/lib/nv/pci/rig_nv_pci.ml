@@ -44,7 +44,9 @@ let survey ~firmware boot42 rom =
   in
   let images =
     List.map
-      (fun (file, r) -> { file; found = Option.map fst (Result.to_option r) })
+      (fun (file, r) ->
+        let found = Option.map (fun (i : Firmware.image) -> i.path) in
+        { file; found = found (Result.to_option r) })
       looked
   in
   let* fwsec =
@@ -54,8 +56,11 @@ let survey ~firmware boot42 rom =
   in
   let report = { chip = Chip.name family implementation; images } in
   match List.map snd looked with
-  | [ Ok (_, gsp); Ok (_, bootloader); Ok (_, start) ] ->
-      let* fw = Images.parse family ~gsp ~bootloader ~start in
+  | [ Ok gsp; Ok bootloader; Ok start ] ->
+      let* fw =
+        Images.parse family ~gsp:gsp.contents ~bootloader:bootloader.contents
+          ~start:start.contents
+      in
       Ok (report, Ok (fw, fwsec))
   | rs -> (
       match

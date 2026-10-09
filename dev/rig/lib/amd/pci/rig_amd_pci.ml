@@ -238,7 +238,12 @@ let start ~firmware ~index h fn =
       ~base:(Rig_pci.Space.base Boot.space)
       (Rig_pci.Space.length Boot.space)
   in
-  let* g = booted h fn (Rig_pci.Firmware.find firmware) in
+  let find name ~digest =
+    Result.map
+      (fun (i : Rig_pci.Firmware.image) -> i.contents)
+      (Rig_pci.Firmware.find firmware name ~digest)
+  in
+  let* g = booted h fn find in
   Gpus.set_stop h (fun () -> Boot.stop g);
   match Amd.make (path g h fn ~index) with
   | Ok d ->

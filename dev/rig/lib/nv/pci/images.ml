@@ -143,23 +143,8 @@ let fmc s =
 
 (* Reading the files *)
 
-(* Each directory is asked alone, so that the one holding the file is known; the
-   files' cache makes the second find of a file free. *)
-let rec find dirs name =
-  let digest = List.assoc name pinned in
-  let holds dir =
-    match Rig_pci.Firmware.find [ dir ] name ~digest with
-    | Ok contents -> Some (Filename.concat dir name, contents)
-    | Error _ -> None
-  in
-  match List.find_map holds dirs with
-  | Some found -> Ok found
-  | None -> (
-      (* The reason names every directory; a file put there since is found
-         again. *)
-      match Rig_pci.Firmware.find dirs name ~digest with
-      | Error _ as e -> e
-      | Ok _ -> find dirs name)
+let find dirs name =
+  Rig_pci.Firmware.find dirs name ~digest:(List.assoc name pinned)
 
 let parse family ~gsp:g ~bootloader:b ~start:st =
   let* gsp, signature = gsp family g in
