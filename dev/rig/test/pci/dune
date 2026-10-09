@@ -8,4 +8,24 @@
   test_space
   test_page_table
   test_firmware)
+ (modules
+  test_window
+  test_memory
+  test_machine
+  test_function
+  test_gpus
+  test_space
+  test_page_table
+  test_firmware)
  (libraries rig_pci rig_pci_support unix windtrap))
+
+; test_vfio_request packs VFIO's requests with no function, through the
+; library's private Vfio_request, copied here.
+
+(copy_files
+ (files ../../lib/pci/vfio_request.{ml,mli}))
+
+(test
+ (name test_vfio_request)
+ (modules test_vfio_request vfio_request)
+ (libraries windtrap))

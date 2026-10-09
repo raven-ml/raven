@@ -4,41 +4,85 @@
   ---------------------------------------------------------------------------*)
 
 (* A function opened through VFIO, and the container that maps system memory for
-   it behind an IOMMU. VFIO's requests (rig_pci_vfio.c) raise Unix.Unix_error
-   with their errno when refused, ENOSYS without Linux. *)
+   it behind an IOMMU. VFIO's requests raise Unix.Unix_error with their errno
+   when refused, ENOSYS without Linux. *)
+
+module R = Vfio_request
 
 let strf = Printf.sprintf
 
-(* The IOMMU models. rig_pci_vfio.c reads the constructors in this order as its
-   enum model: keep the two in sync. *)
+(* The IOMMU models. *)
 type model = Type1v2 | No_iommu
 
-(* VFIO_API_VERSION, the version of VFIO's requests; rig_pci_vfio.c asserts it
-   against <linux/vfio.h>. *)
-let api_version = 0
-
-(* VFIO_PCI_CONFIG_REGION_INDEX: the region of configuration space. *)
-let config_region = 7
+let model = function Type1v2 -> R.type1v2_iommu | No_iommu -> R.noiommu_iommu
 
 type fd = Unix.file_descr
 
-external version : fd -> int = "caml_rig_pci_vfio_version"
-external supports : fd -> model -> bool = "caml_rig_pci_vfio_supports"
-external viable : fd -> bool = "caml_rig_pci_vfio_viable"
-external set_container : fd -> fd -> unit = "caml_rig_pci_vfio_set_container"
-external set_iommu : fd -> model -> unit = "caml_rig_pci_vfio_set_iommu"
-external open_device : fd -> string -> fd = "caml_rig_pci_vfio_device"
-
-external region : fd -> int -> int * int * bool * (int * int) list option
-  = "caml_rig_pci_vfio_region"
-
-external msi : fd -> fd -> unit = "caml_rig_pci_vfio_msi"
-external reset : fd -> unit = "caml_rig_pci_vfio_reset"
-external iommu : fd -> int * (int * int) list = "caml_rig_pci_vfio_iommu"
-external map : fd -> int -> int -> int -> unit = "caml_rig_pci_vfio_map"
-external unmap : fd -> int -> int -> unit = "caml_rig_pci_vfio_unmap"
+(* A descriptor is its number on Linux, the only system VFIO runs on. *)
+external fd_number : fd -> int = "%identity"
+external descriptor : int -> fd = "%identity"
+external ioctl : fd -> int -> int -> int = "caml_rig_pci_vfio_ioctl"
+external address : R.params -> int = "caml_rig_pci_vfio_address"
 external eventfd : unit -> fd = "caml_rig_pci_eventfd"
 external wait : fd -> int -> bool = "caml_rig_pci_wait"
+
+(* Makes the request [number] of [fd] with the parameters [p]: the ioctl's
+   result. *)
+let call fd number p =
+  let r = ioctl fd number (address p) in
+  ignore (Sys.opaque_identity p);
+  r
+
+(* Makes a request that asks for a structure, [ask n] in at least [n] bytes:
+   with the structure's own bytes, then again with those the kernel says its
+   capabilities need. *)
+let query fd number ask =
+  let p = ask 0 in
+  ignore (call fd number p);
+  let need = R.needs p in
+  if need <= Bigarray.Array1.dim p then p
+  else
+    let p = ask need in
+    ignore (call fd number p);
+    p
+
+let version fd = ioctl fd R.get_api_version 0
+let supports fd m = ioctl fd R.check_extension (model m) > 0
+let set_iommu fd m = ignore (ioctl fd R.set_iommu (model m))
+
+let viable group =
+  let p = R.group_status () in
+  ignore (call group R.group_get_status p);
+  R.viable p
+
+let set_container group container =
+  ignore (call group R.group_set_container (R.int (fd_number container)))
+
+(* Opening the function may reset it, which takes up to seconds. A name with a
+   NUL byte names no function: the kernel would read a shorter one. *)
+let open_device group bus : fd =
+  if String.contains bus '\000' then
+    raise (Unix.Unix_error (ENODEV, "ioctl", bus));
+  descriptor (call group R.group_get_device_fd (R.name bus))
+
+let region device i =
+  R.region
+    (query device R.device_get_region_info (fun size -> R.region_info i ~size))
+
+let msi device efd =
+  ignore (call device R.device_set_irqs (R.msi (fd_number efd)))
+
+let reset device = ignore (ioctl device R.device_reset 0)
+
+let iommu container =
+  R.iommu (query container R.iommu_get_info (fun size -> R.iommu_info ~size))
+
+(* The kernel pins the [n] bytes at [va] it maps. *)
+let map container va iova n =
+  ignore (call container R.iommu_map_dma (R.dma_map ~va ~iova ~bytes:n))
+
+let unmap container iova n =
+  ignore (call container R.iommu_unmap_dma (R.dma_unmap ~iova ~bytes:n))
 
 let page = Sysmem.page
 let round_page n = (n + page - 1) / page * page
@@ -110,8 +154,8 @@ let open_function files fds bus m =
   let v =
     Fail.step "checking VFIO's API version" (fun () -> version container)
   in
-  if v <> api_version then
-    Fail.fail "VFIO speaks API version %d, expected %d" v api_version;
+  if v <> R.api_version then
+    Fail.fail "VFIO speaks API version %d, expected %d" v R.api_version;
   if
     not
       (Fail.step "checking VFIO's IOMMU models" (fun () -> supports container m))
@@ -173,7 +217,7 @@ let bar_offset bus device i off n =
 let config_offset bus device =
   let _, offset, _, _ =
     Fail.step ("reading the configuration space of " ^ bus) (fun () ->
-        region device config_region)
+        region device R.config_region)
   in
   offset
 
