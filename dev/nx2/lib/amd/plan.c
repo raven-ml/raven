@@ -41,7 +41,7 @@ static int add(nx_amd_records *out, int kernel, uint32_t gx, uint32_t gy,
 
 /* The kernels by family and instance, from kernels.h's list. */
 enum { F_ZERO, F_PACK, F_WMMA, F_SIMT, F_SKINNY };
-enum { K_h16, K_s8 };
+enum { K_bf16, K_f16, K_s8 };
 enum { ACC_f32, ACC_f64, ACC_i64 };
 #define TILE_INDEX(name, ...) T_##name,
 enum { NX_AMD_TILES(TILE_INDEX) T_COUNT };
@@ -89,8 +89,9 @@ static uint64_t workgroups(int t, int64_t batch, int64_t m, int64_t n) {
    tile's, in percent. Measured on the R9700: the 128 x 128 tile's time
    steps every 96 workgroups, three to each of its 32 work-group
    processors; the 64 x 64 tile makes 76-83% of its outputs per unit of
-   time at 2048 and 4096 cubed, bfloat16 and float16. A GPU of another
-   size runs the same tiles, with the same bits. */
+   time at 2048 and 4096 cubed, bfloat16 and float16. The 16 x 64 tile's
+   33 is Ada's: m <= 16 takes that tile alone, so its rate is never weighed.
+   A GPU of another size runs the same tiles, with the same bits. */
 #define WAVE 96
 static const int efficiency[T_COUNT] = {[T_t128x128] = 100, [T_t64x64] = 80,
                                         [T_t16x64] = 33};
@@ -225,7 +226,10 @@ static int is_int(int dt) {
 /* The split count of a grid of [grid] workgroups: doubled while the grid has
    fewer than [target] workgroups and each range keeps at least [k_min] of k,
    at most 16. The targets are constants of the processor, never a GPU's
-   own count, measured on the R9700. */
+   own count. The 16 x 64 tile's target of 128 is measured on the R9700;
+   the other rules' targets and k_min (WMMA m > 16: 64 and 1024, SIMT: 64
+   and 128, skinny: 256 and 1024) carry over from Ada's, as the R9700's
+   runs at those shapes did not favour other values. */
 static int split_count(uint64_t grid, uint64_t target, int64_t k,
                        int64_t k_min) {
   int s = 1;
@@ -309,11 +313,11 @@ int nx_amd_plan_contract(const nx_amd_contract_in *in,
   const int f16 = at == NX_FLOAT16 && b->dtype == NX_FLOAT16;
   const int kind =
       acc != NX_FLOAT32 && acc != NX_INT32 ? -1
-      : (bf16_like_a && bf16_like_b) || f16 ? (acc == NX_FLOAT32 ? K_h16 : -1)
+      : bf16_like_a && bf16_like_b ? (acc == NX_FLOAT32 ? K_bf16 : -1)
+      : f16 ? (acc == NX_FLOAT32 ? K_f16 : -1)
       : at == NX_INT8 && b->dtype == NX_INT8 && acc == NX_INT32 ? K_s8 : -1;
   const int t = kind < 0 ? -1 : wmma_tile(kind, batch, m, n);
   const int wmma_kind = t < 0 ? -1 : kind;
-  p.f16 = f16;
   int simt = -1;
   if (acc == NX_FLOAT32 || acc == NX_FLOAT64) {
     if (is_int(at) || is_int(b->dtype) || bytes_of(at) == 0 ||
@@ -346,7 +350,9 @@ int nx_amd_plan_contract(const nx_amd_contract_in *in,
     const int pack_a = fa || !va || is_f8(at);
     const int pack_b = fb || !vb || is_f8(b->dtype);
     const int mes = wmma_kind == K_s8 ? 1 : 2;
-    const int to = wmma_kind == K_s8 ? NX_INT8 : f16 ? NX_FLOAT16 : NX_BFLOAT16;
+    const int to = wmma_kind == K_s8   ? NX_INT8
+                   : wmma_kind == K_f16 ? NX_FLOAT16
+                                        : NX_BFLOAT16;
     if (pack_a) {
       if (pack(out, &used, &p.a, p.sa, a->address, at, to, batch, m, k,
                sbat[0], sm[0], sk[0]) != 0)
