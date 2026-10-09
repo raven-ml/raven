@@ -20,7 +20,9 @@ val hold : unit -> unit
     it before it forks its workers, which then run under the lock.
 
     A suite calls it before [Windtrap.run], so that the wait counts against no
-    test's timeout.
+    test's timeout. While another process holds the lock, it prints the
+    file's note once on [stderr]: the holder's, or an earlier holder's when the
+    holder took the lock with the shell's [flock].
 
     Raises [Failure] naming the holder if the lock is still held after 300 s,
     or naming the errno if the file cannot be locked. *)

@@ -18,11 +18,17 @@ let holder () =
   | note -> String.trim note
   | exception Sys_error _ -> "a process that left no note"
 
-(* [lock] naps 100 ms each time it is refused. *)
+(* [lock] naps 100 ms each time it is refused. The first refusal prints the
+   file's note, so a run that waits says for what. A holder that took the
+   lock with the shell's flock writes none, so the note may be an earlier
+   holder's. *)
 let rec take refused =
   match lock file Sys.executable_name with
   | 0 -> ()
-  | -1 when refused < wait_s * 10 -> take (refused + 1)
+  | -1 when refused < wait_s * 10 ->
+      if refused = 0 then
+        prerr_endline (strf "%s: waiting; last noted by %s" file (holder ()));
+      take (refused + 1)
   | -1 ->
       failwith
         (strf "%s: still held after %d s, by %s" file wait_s (holder ()))
