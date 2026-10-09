@@ -349,6 +349,55 @@ let law_canonical c =
   equal ~msg:"groups" bool true (V.fill v (spec c) ~dst ops);
   check_view c v
 
+(* C reads, through nx_contract_view, what the accessors give, and 0 for an
+   axis an operand lacks and for an absent init, though the view held a call
+   with init and every axis before. *)
+let law_view_in_c c =
+  let v = V.make () in
+  let arr s = over (L.contiguous s) in
+  let full =
+    S.contract
+      ~batch:[| (0, 0) |]
+      ~contracting:[| (2, 1) |]
+      ~acc:(D.Any D.Float32) ~out:(D.Any D.Float32) ~init:true
+  in
+  let ops = [| arr [| 2; 3; 4 |]; arr [| 2; 4; 5 |]; arr [| 2; 3; 5 |] |] in
+  equal ~msg:"the first call groups" bool true
+    (V.fill v full ~dst:(arr [| 2; 3; 5 |]) ops);
+  let ops, dst = operands c in
+  cover "without init" (Option.is_none c.li);
+  if V.fill v (spec c) ~dst ops then begin
+    let f = Nx_kernel_support.view_fields v in
+    let present o = o <> V.Init || Option.is_some c.li in
+    let has o x =
+      present o
+      &&
+      match (o, x) with
+      | V.A, V.Column | V.B, V.Row | (V.Init | V.Dst), V.Contracted -> false
+      | _ -> true
+    in
+    let axes = V.[| Batch; Row; Column; Contracted |] in
+    let operands = V.[| A; B; Init; Dst |] in
+    let want =
+      Array.concat
+        [
+          Array.map (V.extent v) axes;
+          Array.map
+            (fun o -> if present o then V.offset v o else 0)
+            operands;
+          Array.concat
+            (Array.to_list
+               (Array.map
+                  (fun o ->
+                    Array.map
+                      (fun x -> if has o x then V.stride v o x else 0)
+                      axes)
+                  operands));
+        ]
+    in
+    equal (array int) want f
+  end
+
 (* A view refuses a call that does not fit its descriptor, and declines one
    whose group does not merge. *)
 let test_view_declines () =
@@ -467,6 +516,8 @@ let tests =
           "refuses what does not fit, declines an unmerged group and names \
            only an operand's axes"
           test_view_declines;
+        prop "C reads what the accessors give, and 0 where they raise" any_case
+          law_view_in_c;
         test "fill allocates nothing" test_view_allocates_nothing;
       ];
   ]

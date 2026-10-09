@@ -22,12 +22,23 @@ _Static_assert(offsetof(nx_spec_contract, pairs) == 24, "at_pairs");
 _Static_assert(sizeof(((nx_spec_contract *)0)->pairs[0]) == 8,
                "two int32 per pair");
 
+/* spec.ml writes nx_contract_view at these byte offsets. */
+_Static_assert(offsetof(nx_contract_view, extent) == 0, "at_extent");
+_Static_assert(offsetof(nx_contract_view, offset) == 32, "at_offset");
+_Static_assert(offsetof(nx_contract_view, stride) == 64, "at_stride");
+_Static_assert(NX_VIEW_DST == 3 && NX_VIEW_CONTRACTED == 3,
+               "operand and axis indices");
+_Static_assert(sizeof(nx_contract_view) == 192, "view_bytes");
+
 /* Spec.Contract_view's grouping: nx_coalesce over [n] operands of the [r]
-   extents [ext], operand k's strides from [st] + k·NX_MAX_RANK, rewritten in
-   place. Answers the coalesced rank, or 0 if nx_coalesce refuses, which it
-   cannot: the caller passes 2 to NX_MAX_OPERANDS operands, every one of the
-   extents [ext]. */
-intnat nx_kernel_coalesce(intnat n, intnat r, value ext, value st) {
+   int64 extents at byte [at_ext] of the view [v], operand k's strides from
+   byte [at_st] + 8·k·NX_MAX_RANK, rewritten in place. Answers the coalesced
+   rank, or 0 if nx_coalesce refuses, which it cannot: the caller passes 2
+   to NX_MAX_OPERANDS operands, every one of the extents [ext]. */
+intnat nx_kernel_coalesce(intnat n, intnat r, value v, intnat at_ext,
+                          intnat at_st) {
+  int64_t *ext = (int64_t *)(Bytes_val(v) + at_ext);
+  int64_t *st = (int64_t *)(Bytes_val(v) + at_st);
   nx_array a[NX_MAX_OPERANDS];
   nx_loop l;
   for (int k = 0; k < n; k++) {
@@ -35,20 +46,20 @@ intnat nx_kernel_coalesce(intnat n, intnat r, value ext, value st) {
     a[k].flags = 0;
     a[k].offset = 0;
     for (int i = 0; i < r; i++) {
-      a[k].dim[i] = Long_val(Field(ext, i));
-      a[k].dim[r + i] = Long_val(Field(st, k * NX_MAX_RANK + i));
+      a[k].dim[i] = ext[i];
+      a[k].dim[r + i] = st[k * NX_MAX_RANK + i];
     }
   }
   if (nx_coalesce((int)n, a, &l) != NX_OK) return 0;
-  /* Int arrays: immediates need no write barrier. */
   for (int i = 0; i < l.rank; i++) {
-    Field(ext, i) = Val_long(l.extent[i]);
-    for (int k = 0; k < n; k++)
-      Field(st, k * NX_MAX_RANK + i) = Val_long(l.step[k][i]);
+    ext[i] = l.extent[i];
+    for (int k = 0; k < n; k++) st[k * NX_MAX_RANK + i] = l.step[k][i];
   }
   return l.rank;
 }
 
-value nx_kernel_coalesce_byte(value n, value r, value ext, value st) {
-  return Val_long(nx_kernel_coalesce(Long_val(n), Long_val(r), ext, st));
+value nx_kernel_coalesce_byte(value n, value r, value v, value at_ext,
+                              value at_st) {
+  return Val_long(nx_kernel_coalesce(Long_val(n), Long_val(r), v,
+                                     Long_val(at_ext), Long_val(at_st)));
 }

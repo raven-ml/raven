@@ -71,7 +71,9 @@ module Contract_view : sig
   type 'f spec := 'f t
 
   type t
-  (** The type for views, rewritten by {!fill}. *)
+  (** The type for views, rewritten by {!fill}. A C kernel reads a view as
+      [nx_spec.h]'s [nx_contract_view]: its value is bytes that begin with
+      that struct. *)
 
   (** The type for a contraction's operands and its result. *)
   type operand = A | B | Init | Dst

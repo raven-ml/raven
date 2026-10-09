@@ -37,3 +37,22 @@ value nx_kernel_support_contract(value s) {
     for (int j = 0; j < 2; j++) Store_field(r, at++, Val_int(c->pairs[k][j]));
   CAMLreturn(r);
 }
+
+/* The view [v] read through nx_contract_view, copied first as a kernel
+   does: its 4 extents, 4 offsets, then 16 strides by operand then axis. */
+value nx_kernel_support_view(value v) {
+  CAMLparam1(v);
+  CAMLlocal1(r);
+  if (caml_string_length(v) < sizeof(nx_contract_view))
+    caml_invalid_argument("not an nx_contract_view");
+  nx_contract_view c;
+  memcpy(&c, Bytes_val(v), sizeof c);
+  r = caml_alloc_tuple(24);
+  for (int i = 0; i < 4; i++) {
+    Store_field(r, i, Val_long(c.extent[i]));
+    Store_field(r, 4 + i, Val_long(c.offset[i]));
+    for (int x = 0; x < 4; x++)
+      Store_field(r, 8 + 4 * i + x, Val_long(c.stride[i][x]));
+  }
+  CAMLreturn(r);
+}

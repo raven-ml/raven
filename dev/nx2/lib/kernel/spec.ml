@@ -178,36 +178,28 @@ module Contract_view = struct
   type operand = A | B | Init | Dst
   type axis = Batch | Row | Column | Contracted
 
-  (* Operands and axes by index: A 0, B 1, Init 2, Dst 3; Batch 0, Row 1, Column
-     2, Contracted 3. [stride] is by operand then axis. [ext] and [st] are the
-     coalescer's arrays, [slot] each operand's place in them, and [free] the
-     free axes of [a] then of [b]. *)
-  type t = {
-    extent : int array;
-    offset : int array;
-    stride : int array;
-    mutable init : bool;
-    mutable nb : int;
-    mutable fa : int;
-    ext : int array;
-    st : int array;
-    slot : int array;
-    free : int array;
-  }
+  (* A view is nx_spec.h's nx_contract_view, int64 fields in the host's byte
+     order, followed by [fill]'s scratch. Operands and axes by index: A 0, B 1,
+     Init 2, Dst 3; Batch 0, Row 1, Column 2, Contracted 3. The scratch holds
+     the coalescer's extents and strides, each operand's place in them, the
+     free axes of [a] then of [b], and three numbers. *)
+  type t = Bytes.t
 
-  let make () =
-    {
-      extent = Array.make 4 0;
-      offset = Array.make 4 0;
-      stride = Array.make 16 0;
-      init = false;
-      nb = 0;
-      fa = 0;
-      ext = Array.make max_rank 0;
-      st = Array.make (4 * max_rank) 0;
-      slot = Array.make 4 0;
-      free = Array.make (2 * max_rank) 0;
-    }
+  let at_extent = 0
+  let at_offset = 32
+  let at_strides = 64
+  let view_bytes = 192
+  let at_ext = view_bytes
+  let at_st = at_ext + (8 * max_rank)
+  let at_slot = at_st + (8 * 4 * max_rank)
+  let at_free = at_slot + (8 * 4)
+  let at_has_init = at_free + (8 * 2 * max_rank)
+  let at_nb = at_has_init + 8
+  let at_fa = at_nb + 8
+  let size = at_fa + 8
+  let get v at = Int64.to_int (Bytes.get_int64_ne v at)
+  let put v at x = Bytes.set_int64_ne v at (Int64.of_int x)
+  let make () = Bytes.make size '\000'
 
   let operand_index = function A -> 0 | B -> 1 | Init -> 2 | Dst -> 3
 
@@ -217,11 +209,13 @@ module Contract_view = struct
     | Column -> 2
     | Contracted -> 3
 
-  (* nx_array.h's coalescer over [n] operands of the [r] extents [ext], operand
-     k's strides from [st] + k·max_rank, in place; answers the merged rank. *)
+  (* nx_array.h's coalescer over [n] operands of the [r] extents at [at_ext]
+     of [v], operand k's strides from [at_st] + 8·k·max_rank, in place;
+     answers the merged rank. *)
   external coalesce :
-    (int[@untagged]) -> (int[@untagged]) -> int array -> int array ->
-    (int[@untagged]) = "nx_kernel_coalesce_byte" "nx_kernel_coalesce"
+    (int[@untagged]) -> (int[@untagged]) -> t -> (int[@untagged]) ->
+    (int[@untagged]) -> (int[@untagged])
+    = "nx_kernel_coalesce_byte" "nx_kernel_coalesce"
   [@@noalloc]
 
   (* The operands of each group, by index. *)
@@ -242,17 +236,19 @@ module Contract_view = struct
     done;
     !found
 
-  (* Writes the free axes of a side of rank [r] from [v.free.(at)]; answers
+  (* Writes the free axes of a side of rank [r] from free axis [at]; answers
      their count. *)
   let fill_free v s side r at =
     let n = ref 0 in
     for ax = 0 to r - 1 do
       if not (named s side ax) then begin
-        v.free.(at + !n) <- ax;
+        put v (at_free + (8 * (at + !n))) ax;
         incr n
       end
     done;
     !n
+
+  let has_init v = get v at_has_init <> 0
 
   (* The axis of operand [o]'s layout that is the [k]th of group [g]. *)
   let source v s o g k =
@@ -260,14 +256,18 @@ module Contract_view = struct
     | 0 -> (
         match g with
         | 0 -> batch_axis s k 0
-        | 1 -> v.free.(k)
+        | 1 -> get v (at_free + (8 * k))
         | _ -> contracting_axis s k 0)
     | 1 -> (
         match g with
         | 0 -> batch_axis s k 1
-        | 2 -> v.free.(max_rank + k)
+        | 2 -> get v (at_free + (8 * (max_rank + k)))
         | _ -> contracting_axis s k 1)
-    | _ -> ( match g with 0 -> k | 1 -> v.nb + k | _ -> v.nb + v.fa + k)
+    | _ -> (
+        match g with
+        | 0 -> k
+        | 1 -> get v at_nb + k
+        | _ -> get v at_nb + get v at_fa + k)
 
   let misfit what = invalid_arg ("Nx_kernel.Spec.Contract_view.fill: " ^ what)
 
@@ -276,7 +276,7 @@ module Contract_view = struct
     let ms = members.(g) and l0 = layout ops dst members.(g).(0) in
     for p = 1 to Array.length ms - 1 do
       let o = ms.(p) in
-      if o <> 2 || v.init then begin
+      if o <> 2 || has_init v then begin
         let l = layout ops dst o in
         for k = 0 to count - 1 do
           if L.dim l (source v s o g k) <> L.dim l0 (source v s ms.(0) g k)
@@ -285,6 +285,8 @@ module Contract_view = struct
       end
     done
 
+  let at_stride o x = at_strides + (8 * ((4 * o) + x))
+
   (* Groups the [count] axes of group [g] into one, or is [false]. Its
      operands agree on the extents ({!fits}). *)
   let group v s ops dst g count =
@@ -292,24 +294,25 @@ module Contract_view = struct
     let n = ref 0 in
     for p = 0 to Array.length ms - 1 do
       let o = ms.(p) in
-      if o <> 2 || v.init then begin
+      if o <> 2 || has_init v then begin
         let l = layout ops dst o in
         for k = 0 to count - 1 do
           let ax = source v s o g k in
-          v.ext.(k) <- L.dim l ax;
-          v.st.((!n * max_rank) + k) <- L.stride l ax
+          put v (at_ext + (8 * k)) (L.dim l ax);
+          put v (at_st + (8 * ((!n * max_rank) + k))) (L.stride l ax)
         done;
-        v.slot.(o) <- !n;
+        put v (at_slot + (8 * o)) !n;
         incr n
       end
     done;
-    coalesce !n count v.ext v.st = 1
+    coalesce !n count v at_ext at_st = 1
     && begin
-      v.extent.(g) <- v.ext.(0);
+      put v (at_extent + (8 * g)) (get v at_ext);
       for p = 0 to Array.length ms - 1 do
         let o = ms.(p) in
-        if o <> 2 || v.init then
-          v.stride.((4 * o) + g) <- v.st.(v.slot.(o) * max_rank)
+        if o <> 2 || has_init v then
+          put v (at_stride o g)
+            (get v (at_st + (8 * get v (at_slot + (8 * o)) * max_rank)))
       done;
       true
     end
@@ -332,11 +335,14 @@ module Contract_view = struct
       || fill_free v s 0 ra 0 <> fa
       || fill_free v s 1 rb max_rank <> fb
     then misfit "ranks the pairs do not fit";
-    v.init <- init;
-    v.nb <- nb;
-    v.fa <- fa;
+    put v at_has_init (Bool.to_int init);
+    put v at_nb nb;
+    put v at_fa fa;
+    (* What an operand lacks reads 0: its axes, and an absent init. *)
+    Bytes.fill v at_offset (view_bytes - at_offset) '\000';
     for o = 0 to 3 do
-      if o <> 2 || init then v.offset.(o) <- L.offset (layout ops dst o)
+      if o <> 2 || init then
+        put v (at_offset + (8 * o)) (L.offset (layout ops dst o))
     done;
     (* Every group fits before any merges: a misfit raises even behind a
        group that does not merge. *)
@@ -347,16 +353,16 @@ module Contract_view = struct
     group v s ops dst 0 nb && group v s ops dst 1 fa && group v s ops dst 2 fb
     && group v s ops dst 3 nc
 
-  let extent v x = v.extent.(axis_index x)
+  let extent v x = get v (at_extent + (8 * axis_index x))
 
   let check_init fn v o =
-    if o = Init && not v.init then
+    if o = Init && not (has_init v) then
       invalid_arg
         ("Nx_kernel.Spec.Contract_view." ^ fn ^ ": the view has no init")
 
   let offset v o =
     check_init "offset" v o;
-    v.offset.(operand_index o)
+    get v (at_offset + (8 * operand_index o))
 
   let stride v o x =
     check_init "stride" v o;
@@ -366,5 +372,5 @@ module Contract_view = struct
           "Nx_kernel.Spec.Contract_view.stride: an axis the operand does not \
            have"
     | _ -> ());
-    v.stride.((4 * operand_index o) + axis_index x)
+    get v (at_stride (operand_index o) (axis_index x))
 end

@@ -10,3 +10,8 @@ val contract_fields : Nx_kernel.Spec.contract Nx_kernel.Spec.t -> int array
     [nx_spec_contract]: the family, [acc]'s and [out]'s codes, [init], the
     counts of batch and contracting pairs, then each pair's two axes, batch
     pairs first. *)
+
+val view_fields : Nx_kernel.Spec.Contract_view.t -> int array
+(** [view_fields v] is [v] read by C through [nx_spec.h]'s [nx_contract_view]:
+    its four extents and four offsets, then each operand's four strides, by
+    operand then axis. *)

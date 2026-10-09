@@ -5,3 +5,6 @@
 
 external contract_fields : Nx_kernel.Spec.contract Nx_kernel.Spec.t -> int array
   = "nx_kernel_support_contract"
+
+external view_fields : Nx_kernel.Spec.Contract_view.t -> int array
+  = "nx_kernel_support_view"
