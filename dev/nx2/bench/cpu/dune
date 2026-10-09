@@ -10,7 +10,7 @@
 (executable
  (name bench_nx_cpu)
  (modules bench_nx_cpu)
- (libraries nx_array nx_cpu nx_cpu_bench rig thumper))
+ (libraries nx_array nx_kernel nx_cpu nx_cpu_bench rig thumper))
 
 (rule
  (alias bench)

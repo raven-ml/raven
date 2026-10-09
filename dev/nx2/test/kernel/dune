@@ -1,0 +1,9 @@
+(tests
+ (names test_kinds)
+ (modules test_kinds)
+ (libraries nx_kinds_support windtrap)
+ (deps
+  (glob_files golden/kinds/*.golden)
+  golden/kinds/f32-sweep.txt
+  ../../lib/kernel/nx_kinds.h
+  ../../lib/kernel/nx_kinds_real.h))

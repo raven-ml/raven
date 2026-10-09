@@ -6,7 +6,7 @@
 
 (library
  (name nx_cpu)
- (libraries nx_array rig rig.pool)
+ (libraries nx_array nx_kernel rig rig.pool)
  (foreign_stubs
   (language c)
   (include_dirs ../array)

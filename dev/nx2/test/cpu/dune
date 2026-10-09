@@ -1,4 +1,4 @@
 (tests
  (names test_copy)
  (modules test_copy)
- (libraries nx_array nx_cpu nx_cpu_support nx_array_gen rig windtrap))
+ (libraries nx_array nx_kernel nx_cpu nx_cpu_support nx_array_gen rig windtrap))

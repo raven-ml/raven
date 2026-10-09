@@ -37,8 +37,8 @@
    too. C++ needs no static: an inline function may be defined in every
    unit that uses it, and nvcc warns of an unused static one. HIP spells
    the attributes itself: nx.amd compiles with no HIP header, which is
-   what defines __host__ and __device__. It stays defined for the headers beside this one (nx_kinds.h) to qualify
-   theirs. */
+   what defines __host__ and __device__. It stays defined for the headers
+   that include this one (nx.kernel's nx_kinds.h) to qualify theirs. */
 #if defined(__CUDACC__)
 #define NX_INLINE inline __host__ __device__
 #elif defined(__HIP__)

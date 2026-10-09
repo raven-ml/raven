@@ -19,36 +19,3 @@
  (name nx_array_gen)
  (modules nx_array_gen)
  (libraries nx_array windtrap))
-
-; nx_kinds.h's kinds by name, compiled with every dev/nx2 C library's flags,
-; and their loops per target as nx.cpu compiles its conversions.
-
-(library
- (name nx_kinds_support)
- (modules nx_kinds_support)
- (foreign_stubs
-  (language c)
-  (include_dirs ../../../lib/array)
-  (extra_deps
-   ../../../lib/array/nx_kinds.h
-   ../../../lib/array/nx_kinds_real.h
-   ../../../lib/array/nx_dtype.h
-   nx_kinds_support.h
-   nx_kinds_strata.h)
-  (names nx_kinds_support_stubs nx_kinds_support_loops))
- (foreign_stubs
-  (language c)
-  (include_dirs ../../../lib/array)
-  (extra_deps
-   ../../../lib/array/nx_kinds.h
-   ../../../lib/array/nx_kinds_real.h
-   ../../../lib/array/nx_dtype.h
-   nx_kinds_support.h)
-  (flags
-   :standard
-   -DNX_CPU_V3
-   (:include ../../../lib/cpu/v3_flags.sexp))
-  (names nx_kinds_support_loops_v3)))
-
-(rule
- (copy nx_kinds_support_loops.c nx_kinds_support_loops_v3.c))

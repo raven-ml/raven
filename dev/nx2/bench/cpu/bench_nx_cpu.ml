@@ -90,7 +90,7 @@ let filled (type v s) (dt : (v, s) D.t) s : (v, s) A.t =
   let x i = float_of_int ((i * 7919 mod 251) - 125) *. 0.37 in
   let src = A.of_array D.Float64 s (Array.init n x) in
   let a = A.create Rig.host dt s in
-  ok (Nx_cpu.cast ~dst:a src);
+  ok (Nx_cpu.apply1 Nx_kernel.Prog.Cast ~dst:a src);
   a
 
 (* Floors: memcpy of [n] bytes, [n] elements of [inb] bytes moved into [outb],
@@ -126,7 +126,7 @@ let copy ?floor name a =
     (fun () ->
       let a = a () in
       (a, A.create Rig.host (A.dtype a) (A.Layout.shape (A.layout a))))
-    (fun (a, dst) -> ok (Nx_cpu.copy ~dst a))
+    (fun (a, dst) -> ok (Nx_cpu.apply1 Nx_kernel.Prog.Copy ~dst a))
 
 (* A cast of [n] elements of [s] into [d]. Its floor moves a sub-byte side's
    pairs of elements as bytes. *)
@@ -144,7 +144,7 @@ let cast (type v s w r) (s : (v, s) D.t) (d : (w, r) D.t) n =
   row
     (strf "cast-%s-%s-%s" (short s) (short d) (count n))
     (fun () -> (filled s [| n |], A.create Rig.host d [| n |]))
-    (fun (a, dst) -> ok (Nx_cpu.cast ~dst a))
+    (fun (a, dst) -> ok (Nx_cpu.apply1 Nx_kernel.Prog.Cast ~dst a))
 
 let f32 = D.Float32
 

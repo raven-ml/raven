@@ -14,6 +14,9 @@ module D = Nx_array.Dtype
 module B = Rig.Buffer
 module S = Nx_cpu_support
 
+let copy ~dst a = Nx_cpu.apply1 Nx_kernel.Prog.Copy ~dst a
+let cast ~dst a = Nx_cpu.apply1 Nx_kernel.Prog.Cast ~dst a
+
 let strf = Printf.sprintf
 let pp_dtype ppf (D.Any dt) = D.pp ppf dt
 let dtypes = Gen.of_list ~pp:pp_dtype D.all
@@ -386,7 +389,7 @@ let covers_large (Case a) =
 
 let law_copy (Case a) =
   let dst = A.create Rig.host (A.dtype a) (L.shape (A.layout a)) in
-  equal int 0 (Nx_cpu.copy ~dst a);
+  equal int 0 (copy ~dst a);
   same a dst
 
 (* A written view: the array transposed, or every other element of an array
@@ -438,7 +441,7 @@ let copy_into_keeps (Case a, Case base, Case dst) =
     A.v (A.dtype a) (A.layout base) (B.of_string (contents (A.buffer base)))
   in
   set_bits a (A.v (A.dtype a) (A.layout dst) (A.buffer want));
-  equal int 0 (Nx_cpu.copy ~dst a);
+  equal int 0 (copy ~dst a);
   equal string (contents (A.buffer want)) (contents (A.buffer base))
 
 let law_copy_into ((Case a, _, Case dst) as c) =
@@ -461,14 +464,14 @@ let test_copy_nan_payloads () =
   let bits = [| 0x7fc00001l; 0xffa00002l; 0x80000000l; 0x7f800001l |] in
   let f = Option.get (A.bitcast D.Float32 (A.of_array D.Uint32 [| 4 |] bits)) in
   let dst = A.create Rig.host D.Float32 [| 4 |] in
-  equal int 0 (Nx_cpu.copy ~dst f);
+  equal int 0 (copy ~dst f);
   equal (array int32) bits (A.to_array (Option.get (A.bitcast D.Uint32 dst)))
 
 (* Casts *)
 
 let law_cast (Case a, D.Any d) =
   let dst = A.create Rig.host d (L.shape (A.layout a)) in
-  equal int 0 (Nx_cpu.cast ~dst a);
+  equal int 0 (cast ~dst a);
   same ~src:(A.Any a) (reference a d) dst
 
 (* A case and a destination dtype, the case's own one time in five. *)
@@ -487,7 +490,7 @@ let cast_into_keeps (Case a, Case base, Case dst) =
   let dst = A.expect d (A.Any dst) in
   let want = A.v d (A.layout base) (B.of_string (contents (A.buffer base))) in
   set_bits (reference a d) (A.v d (A.layout dst) (A.buffer want));
-  equal int 0 (Nx_cpu.cast ~dst a);
+  equal int 0 (cast ~dst a);
   equal string (contents (A.buffer want)) (contents (A.buffer base))
 
 let law_cast_into ((Case a, Case base, Case dst) as c) =
@@ -525,7 +528,7 @@ let test_every_code (D.Any s) () =
   List.iter
     (fun (D.Any d) ->
       let dst = A.create Rig.host d [| L.numel (A.layout a) |] in
-      equal int 0 (Nx_cpu.cast ~dst a);
+      equal int 0 (cast ~dst a);
       equal ~msg:(D.name d) (list string) []
         (differ ~src:(A.Any a) (reference a d) dst))
     D.all
@@ -571,7 +574,7 @@ let test_sweep (type s) (s : (float, s) D.t) (xs : float array Lazy.t) () =
   List.iter
     (fun (D.Any d) ->
       let dst = A.create Rig.host d [| Array.length xs |] in
-      equal int 0 (Nx_cpu.cast ~dst a);
+      equal int 0 (cast ~dst a);
       equal ~msg:(D.name d) (list string) []
         (differ ~src:(A.Any a) (reference a d) dst))
     D.all
@@ -606,7 +609,7 @@ let test_integer_ties () =
       List.iter
         (fun (D.Any d) ->
           let dst = A.create Rig.host d [| n |] in
-          equal int 0 (Nx_cpu.cast ~dst a);
+          equal int 0 (cast ~dst a);
           equal
             ~msg:(strf "%s to %s" (D.name (A.dtype a)) (D.name d))
             (list string) []
@@ -623,7 +626,7 @@ let test_past_the_caches () =
   List.iter
     (fun (D.Any d) ->
       let dst = A.create Rig.host d [| n |] in
-      equal int 0 (Nx_cpu.cast ~dst a);
+      equal int 0 (cast ~dst a);
       equal ~msg:(D.name d) (list string) [] (differ (reference a d) dst))
     [ D.Any D.Float64; D.Any D.Int32; D.Any D.Float16 ]
 
@@ -669,25 +672,25 @@ let test_refusals () =
   let i32 = A.of_array D.Int32 [| 2; 3 |] (Array.make 6 7l) in
   let t = Option.get (A.move (M.Permute [| 1; 0 |]) x) in
   let d = A.of_array f32 [| 2; 3 |] (Array.make 6 9.) in
-  refused ~substring:"dtype" (S.copy d i32) d;
-  refused ~substring:"shapes" (S.copy d t) d;
-  refused ~substring:"shapes" (S.cast d t) d;
+  refused ~substring:"dtype" (copy ~dst:d i32) d;
+  refused ~substring:"shapes" (copy ~dst:d t) d;
+  refused ~substring:"shapes" (cast ~dst:d t) d;
   let d = A.of_array D.Int32 [| 2; 3 |] (Array.make 6 9l) in
-  refused ~substring:"dtype" (S.copy d x) d;
+  refused ~substring:"dtype" (copy ~dst:d x) d;
   (* Into bytes the source reads, and into a broadcast. *)
   let flat = A.of_array f32 [| 6 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let part start =
     Option.get (A.move (M.Slice [| { M.start; count = 3; step = 1 } |]) flat)
   in
-  refused ~substring:"shares bytes" (S.copy (part 0) (part 1)) (part 0);
-  refused ~substring:"shares bytes" (S.cast (part 0) (part 2)) (part 0);
+  refused ~substring:"shares bytes" (copy ~dst:(part 0) (part 1)) (part 0);
+  refused ~substring:"shares bytes" (cast ~dst:(part 0) (part 2)) (part 0);
   let b =
     Option.get
       (A.move
          (M.Broadcast [| 2; 3 |])
          (A.of_array f32 [| 3 |] [| 0.; 0.; 0. |]))
   in
-  refused ~substring:"twice" (S.cast b i32) b
+  refused ~substring:"twice" (cast ~dst:b i32) b
 
 (* Operands outlive the call *)
 
@@ -711,7 +714,7 @@ let test_collect_during_call () =
       for k = 1 to 4 do
         let dst = A.create Rig.host D.Float64 [| n |] in
         let e =
-          Nx_cpu.cast ~dst (A.of_array D.Float32 [| n |] (Array.make n 1.5))
+          cast ~dst (A.of_array D.Float32 [| n |] (Array.make n 1.5))
         in
         equal int 0 e;
         equal ~msg:(strf "round %d" k) float_exact 1.5 (A.get dst [| n - 1 |])
@@ -741,7 +744,7 @@ let into_middle cast phase xs a =
     Option.get (A.move (M.Slice [| { M.start = 1; count = 4; step = 1 } |]) a)
   in
   let (A.Any src) = src in
-  Nx_cpu.cast ~dst src
+  Nx_cpu.apply1 Nx_kernel.Prog.Cast ~dst src
 
 let commands =
   let nibbles = Gen.array ~size:(Gen.constant 4) nibble in

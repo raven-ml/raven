@@ -11,6 +11,3 @@ let with_target t f =
   let before = current () in
   use t;
   Fun.protect ~finally:(fun () -> use before) f
-
-external copy : 'd -> 's -> int = "nx_cpu_copy"
-external cast : 'd -> 's -> int = "nx_cpu_cast"

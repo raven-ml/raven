@@ -3,8 +3,17 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-external copy : dst:('v, 's) Nx_array.t -> ('v, 's) Nx_array.t -> int
+let name = "nx.cpu"
+let computes_on = Rig.shares_host_memory
+
+external copy : dst:('v, 's) Nx_array.t -> ('a, 'b) Nx_array.t -> int
   = "nx_cpu_copy"
 
-external cast : dst:('w, 'r) Nx_array.t -> ('v, 's) Nx_array.t -> int
+external cast : dst:('v, 's) Nx_array.t -> ('a, 'b) Nx_array.t -> int
   = "nx_cpu_cast"
+
+let apply1 (k : Nx_kernel.Prog.op1) ~dst x =
+  match k with
+  | Copy -> copy ~dst x
+  | Cast -> cast ~dst x
+  | Unary _ | Bitcast -> Nx_kernel.not_computed

@@ -1,5 +1,5 @@
 ; What nx.cpu's suite needs beyond the library's interface: its target
-; tables, and its externals at untyped signatures.
+; tables.
 
 (library
  (name nx_cpu_support)
