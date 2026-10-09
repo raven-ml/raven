@@ -1,3 +1,5 @@
+; The CPU's floors, in C: loops that move a row's bytes, and codecs.
+
 (library
  (name nx_cpu_bench)
  (modules)
@@ -8,8 +10,8 @@
   (names nx_cpu_bench_stubs nx_cpu_bench_codec)))
 
 (executable
- (name bench_nx_cpu)
- (modules bench_nx_cpu)
+ (name bench_kernels)
+ (modules bench_kernels)
  (libraries nx_array nx_kernel nx_cpu nx_cpu_bench rig thumper))
 
 (rule
@@ -18,4 +20,4 @@
  (deps
   (glob_files *.thumper))
  (action
-  (run %{exe:bench_nx_cpu.exe})))
+  (run %{exe:bench_kernels.exe})))
