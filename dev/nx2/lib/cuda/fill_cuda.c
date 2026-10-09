@@ -29,7 +29,7 @@ int nx_cuda_add(nx_cuda_records *r, uint32_t kernel, const uint32_t grid[3],
     size_t cap = r->cap ? r->cap : 256;
     while (cap < need) cap *= 2;
     unsigned char *b = realloc(r->bytes, cap);
-    if (b == NULL) return -2;
+    if (b == NULL) return NX_OUT_OF_MEMORY;
     r->bytes = b, r->cap = cap;
   }
   nx_cuda_launch l = {kernel, {grid[0], grid[1], grid[2]},

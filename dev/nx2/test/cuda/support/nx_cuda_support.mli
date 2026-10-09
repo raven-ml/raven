@@ -157,7 +157,10 @@ val contract :
 (** [contract g ~a ~b ~init ~y ~batch ~contracting ~acc ()] is nx.cuda's plan of
     the contraction ([nx_cuda_plan_contract]) on {!library}'s kernels, its
     scratch allocated on [g] and kept by the run, or [None] if the plan
-    declines. [batch] and [contracting] pair an axis of [a] with one of [b]. *)
+    declines. [batch] and [contracting] pair an axis of [a] with one of [b].
+
+    Raises [Out_of_memory] if the host's memory cannot hold the plan, and
+    {!Rig.Out_of_memory} if [g]'s cannot hold its scratch. *)
 
 val planner :
   a:operand ->

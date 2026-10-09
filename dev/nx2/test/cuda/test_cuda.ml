@@ -805,6 +805,27 @@ let declines (a, b, acc, out, init) =
   in
   equal ~msg:"the plan" (option pass) None p
 
+(* Out of memory raises: the plan never declines a call for want of it. a,
+   broadcast from one element, packs into 2^21 rows of 2^14 bfloat16, 64 GiB
+   of scratch, more than the GPU holds. *)
+let scratch_out_of_memory () =
+  let g = S.gpu () in
+  let m = 1 lsl 21 and n = 16 and k = 1 lsl 14 in
+  let bf16 = D.code D.Bfloat16 in
+  let operand buffer shape strides =
+    { S.buffer; dtype = bf16; shape; strides; first = 0 }
+  in
+  let a = operand (S.buffer g 2) [| 1; m; k |] [| 0; 0; 0 |] in
+  let b = operand (S.buffer g (2 * n * k)) [| 1; n; k |] [| n * k; k; 1 |] in
+  let y = operand (S.buffer g (2 * m * n)) [| 1; m; n |] [| m * n; n; 1 |] in
+  raises_match
+    (function Rig.Out_of_memory (_, bytes) -> bytes = 1 lsl 36 | _ -> false)
+    (fun () ->
+      S.contract g ~a ~b ~y
+        ~batch:[ (0, 0) ]
+        ~contracting:[ (2, 2) ]
+        ~acc:(D.code D.Float32) ())
+
 let tests =
   [
     group "records"
@@ -845,6 +866,7 @@ let tests =
         cases ~name:case_name "float64 sums past double's range" overflow_cases
           within_bound;
         test "an int32 sum sign-extends into int64" sign_extends;
+        test "scratch past the GPU's memory raises" scratch_out_of_memory;
         prop ~count:400 "every dtype quadruple: declines or within the bound"
           quadruples every_quadruple;
         cases

@@ -30,6 +30,9 @@
    the operation runs instead. */
 #define NX_NOT_COMPUTED (-1)
 
+/* What a plan answers when the host's memory runs out. */
+#define NX_OUT_OF_MEMORY (-2)
+
 /* The cubin of the architecture [arch] (89 for sm_89), [*len] bytes, or
    NULL if the library has none: it computes on the GPUs of the
    architectures it has a cubin for. */
@@ -52,8 +55,8 @@ typedef struct {
    [params], their first [addrs] 8-byte words addresses and [scratch] the
    mask of those that are scratch offsets. Returns 0; -1 if [bytes] is not
    a multiple of 8, [addrs] words outgrow [bytes] or [scratch] marks a word
-   past the addresses; or -2 if memory runs out. The run is unchanged
-   unless it returns 0. */
+   past the addresses; or NX_OUT_OF_MEMORY if memory runs out. The run is
+   unchanged unless it returns 0. */
 int nx_cuda_add(nx_cuda_records *r, uint32_t kernel, const uint32_t grid[3],
                 const uint32_t block[3], uint32_t shared, const void *params,
                 uint32_t bytes, uint32_t addrs, uint32_t scratch);
@@ -113,7 +116,8 @@ typedef struct {
 } nx_cuda_contract_in;
 
 /* Appends the launches of one contraction to [out] and returns their
-   count, or NX_NOT_COMPUTED having appended nothing. [ops] are a, b, init
+   count; or NX_NOT_COMPUTED, or NX_OUT_OF_MEMORY if the records cannot
+   grow, having appended nothing. [ops] are a, b, init
    if [in->init], and y. [arch] is the cubin's architecture, as 89 for
    sm_89. [*scratch] is set to the scratch bytes the launches address. */
 int nx_cuda_plan_contract(const nx_cuda_contract_in *in,

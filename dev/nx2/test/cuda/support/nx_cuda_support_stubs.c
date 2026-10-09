@@ -140,7 +140,7 @@ value nx_cuda_support_call(value v_ops, value v_batch, value v_contracting,
 }
 
 /* The plan of the call [v_call]: Some (records, scratch bytes, launches),
-   or None if it declines. */
+   or None if it declines; Out_of_memory if the host's memory runs out. */
 value nx_cuda_support_plan(value v_call) {
   CAMLparam1(v_call);
   CAMLlocal2(r, s);
@@ -148,6 +148,10 @@ value nx_cuda_support_plan(value v_call) {
   nx_cuda_records rs = {NULL, 0, 0};
   size_t scratch = 0;
   int launches = nx_cuda_plan_contract(&c->in, c->ops, 89, &rs, &scratch);
+  if (launches == NX_OUT_OF_MEMORY) {
+    free(rs.bytes);
+    caml_raise_out_of_memory();
+  }
   if (launches == NX_NOT_COMPUTED) {
     free(rs.bytes);
     CAMLreturn(Val_none);
