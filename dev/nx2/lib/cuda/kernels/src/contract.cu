@@ -665,11 +665,13 @@ __device__ void simt_contract(const contract_params &p) {
 /* The skinny kernels (m <= 16): lane l of 32 sums, for each t, the run of
    four k0 + 128 t + 4 l + u, u < 4, in increasing k, and the 32 lane sums
    combine by the balanced tree (l, l + 16), then (l, l + 8), (l, l + 4),
-   (l, l + 2), (l, l + 1). One warp per output column j when b's k axis
-   is contiguous (8 columns a block), lanes across k, a run one vector; a
-   block of 32 columns by 8 lane groups otherwise, thread (x, y) summing
-   the lane classes y, y + 8, y + 16, y + 24 of column x, reading rows of
-   b across x. */
+   (l, l + 2), (l, l + 1). A block computes NX_SKINNY_ROWS rows of 32
+   columns: few rows a thread keep its registers few, so that an SM holds
+   enough warps to cover a load's latency. When b's k axis is contiguous,
+   warp w takes the columns w + 8 q, q < 4, lanes across k, a run one
+   vector, and loads each of a's runs once for its four columns; otherwise
+   thread (x, y) sums the lane classes y, y + 8, y + 16, y + 24 of column
+   x, reading rows of b across x. */
 template <typename T> __device__ T tree32(T v) {
 #pragma unroll
   for (int d = 16; d > 0; d /= 2) v += __shfl_xor_sync(0xFFFFFFFFu, v, d);
@@ -710,91 +712,104 @@ __device__ void run(T (&v)[4], const char *p, int64_t s_row,
     v[u] = u < us ? ((const T *)p)[row * s_row + (k + u) * s_k] : T(0);
 }
 
-/* Adds column j's run [bv] of k from [k], its first [us] inside the
-   range, times a's rows, to [c]. a's runs are vectors where
+/* Adds the runs [bv] of k from [k] of Q columns, their first [us] inside
+   the range, times a's [rows] rows from [a], to [c]: each of a's runs
+   loaded once for the Q columns. a's runs are vectors where
    NX_CONTRACT_A_VECTORS says so. */
-template <typename T>
-__device__ void dot4(const contract_params &p, T (&c)[16], const char *a,
-                            const T (&bv)[4], int k, int us) {
+template <int Q, typename T>
+__device__ void dot4(const contract_params &p, T (&c)[Q][NX_SKINNY_ROWS],
+                     const char *a, int rows, const T (&bv)[Q][4], int k,
+                     int us) {
 #pragma unroll
-  for (int i = 0; i < 16; i++)
-    if (i < p.m) {
+  for (int i = 0; i < NX_SKINNY_ROWS; i++)
+    if (i < rows) {
       T av[4];
       run(av, a, p.sa[1], p.sa[2], i, k, us, p.aligned & NX_CONTRACT_A_VECTORS);
 #pragma unroll
-      for (int u = 0; u < 4; u++)
-        if (u < us) c[i] = fma_(av[u], bv[u], c[i]);
+      for (int q = 0; q < Q; q++)
+#pragma unroll
+        for (int u = 0; u < 4; u++)
+          if (u < us) c[q][i] = fma_(av[u], bv[q][u], c[q][i]);
     }
 }
 
-/* The block's sums into [level8], row i of column c at element i * 32 + c
-   (its first 512), as the tree leaves them. */
+/* Adds the run of k from [k], its first [us] inside the range, of the
+   columns j + 8 q, q < 4, times a's rows, to [c]; b's runs are vectors
+   where NX_CONTRACT_B_VECTORS says so. */
 template <typename T>
-__device__ void skinny_sums(const contract_params &p, T (*level8)[8][32],
-                                   const char *a, const char *b, int k0, int k1) {
+__device__ void step4(const contract_params &p, T (&c)[4][NX_SKINNY_ROWS],
+                      const char *a, int rows, const char *b, int j, int k,
+                      int us) {
+  T bv[4][4];
+#pragma unroll
+  for (int q = 0; q < 4; q++)
+    if (j + 8 * q < p.n)
+      run(bv[q], b, p.sb[1], p.sb[2], j + 8 * q, k, us,
+          p.aligned & NX_CONTRACT_B_VECTORS);
+    else
+#pragma unroll
+      for (int u = 0; u < 4; u++) bv[q][u] = T(0);
+  dot4(p, c, a, rows, bv, k, us);
+}
+
+/* The block's sums of [rows] rows from [a] and the 32 columns from [j0]
+   into [level8], row i of column c at element i * 32 + c, as the tree
+   leaves them. */
+template <typename T>
+__device__ void skinny_sums(const contract_params &p,
+                            T (*level8)[8][32], const char *a, int rows,
+                            const char *b, int j0, int k0, int k1) {
+  constexpr int R = NX_SKINNY_ROWS;
   T *sums = &level8[0][0][0];
   if ((p.aligned & NX_CONTRACT_B_ACROSS) == 0) {
-    /* Warp per column: lane l holds class l, its runs vectors where b's
-       rows are (NX_CONTRACT_B_VECTORS). */
-    const int lane = threadIdx.x % 32, j = blockIdx.x * 8 + threadIdx.x / 32;
-    T acc[16];
+    /* Warp w: columns j0 + w + 8 q, lane l holding class l. Whole runs,
+       then the last one's elements inside the range. */
+    const int lane = threadIdx.x % 32, w = threadIdx.x / 32;
+    T acc[4][R];
 #pragma unroll
-    for (int i = 0; i < 16; i++) acc[i] = T(0);
-    if (j < p.n) {
-      /* Four whole runs a step, their loads issued before their sums, so
-         that a lane has four in flight; then the runs left, one by one. */
-      int k = k0 + 4 * lane;
-      for (; k + 3 * 128 + 3 < k1; k += 4 * 128) {
-        T bv[4][4];
+    for (int q = 0; q < 4; q++)
 #pragma unroll
-        for (int t = 0; t < 4; t++)
-          run(bv[t], b, p.sb[1], p.sb[2], j, k + t * 128, 4,
-              p.aligned & NX_CONTRACT_B_VECTORS);
+      for (int i = 0; i < R; i++) acc[q][i] = T(0);
+    int k = k0 + 4 * lane;
+    for (; k + 3 < k1; k += 128) step4(p, acc, a, rows, b, j0 + w, k, 4);
+    if (k < k1) step4(p, acc, a, rows, b, j0 + w, k, k1 - k);
 #pragma unroll
-        for (int t = 0; t < 4; t++) dot4(p, acc, a, bv[t], k + t * 128, 4);
-      }
-      for (; k < k1; k += 128) {
-        const int us = min(4, k1 - k);
-        T bv[4];
-        run(bv, b, p.sb[1], p.sb[2], j, k, us,
-            p.aligned & NX_CONTRACT_B_VECTORS);
-        dot4(p, acc, a, bv, k, us);
-      }
-    }
+    for (int q = 0; q < 4; q++)
 #pragma unroll
-    for (int i = 0; i < 16; i++) acc[i] = tree32(acc[i]);
-    __syncthreads();
+      for (int i = 0; i < R; i++) acc[q][i] = tree32(acc[q][i]);
     if (lane == 0)
 #pragma unroll
-      for (int i = 0; i < 16; i++) sums[i * 32 + threadIdx.x / 32] = acc[i];
+      for (int q = 0; q < 4; q++)
+#pragma unroll
+        for (int i = 0; i < R; i++) sums[i * 32 + w + 8 * q] = acc[q][i];
     return;
   }
   /* Thread (x, y): classes y + 8q of column x; its four sums reduce to the
      tree's level of 8, (y + y16) + (y8 + y24), then 8 threads' in shared
      memory to the root. */
-  const int x = threadIdx.x % 32, y = threadIdx.x / 32, j = blockIdx.x * 32 + x;
-  T c[4][16];
+  const int x = threadIdx.x % 32, y = threadIdx.x / 32, j = j0 + x;
+  T c[4][1][R];
 #pragma unroll
   for (int q = 0; q < 4; q++)
 #pragma unroll
-    for (int i = 0; i < 16; i++) c[q][i] = T(0);
+    for (int i = 0; i < R; i++) c[q][0][i] = T(0);
   if (j < p.n)
 #pragma unroll
     for (int q = 0; q < 4; q++)
       for (int k = k0 + 4 * (y + 8 * q); k < k1; k += 128) {
         const int us = min(4, k1 - k);
-        T bv[4];
-        run(bv, b, p.sb[1], p.sb[2], j, k, us, false);
-        dot4(p, c[q], a, bv, k, us);
+        T bv[1][4];
+        run(bv[0], b, p.sb[1], p.sb[2], j, k, us, false);
+        dot4(p, c[q], a, rows, bv, k, us);
       }
 #pragma unroll
-  for (int i = 0; i < 16; i++)
-    level8[i][y][x] = (c[0][i] + c[2][i]) + (c[1][i] + c[3][i]);
+  for (int i = 0; i < R; i++)
+    level8[i][y][x] = (c[0][0][i] + c[2][0][i]) + (c[1][0][i] + c[3][0][i]);
   __syncthreads();
-  T acc[16];
+  T acc[R];
   if (y == 0)
 #pragma unroll
-    for (int i = 0; i < 16; i++) {
+    for (int i = 0; i < R; i++) {
       const T(&l)[8][32] = level8[i];
       acc[i] = ((l[0][x] + l[4][x]) + (l[2][x] + l[6][x])) +
                ((l[1][x] + l[5][x]) + (l[3][x] + l[7][x]));
@@ -802,38 +817,41 @@ __device__ void skinny_sums(const contract_params &p, T (*level8)[8][32],
   __syncthreads();
   if (y == 0)
 #pragma unroll
-    for (int i = 0; i < 16; i++) sums[i * 32 + x] = acc[i];
+    for (int i = 0; i < R; i++) sums[i * 32 + x] = acc[i];
 }
 
 template <typename T>
 __device__ void skinny_contract(const contract_params &p) {
+  constexpr int R = NX_SKINNY_ROWS;
+  static_assert(R * 32 <= 256, "a thread holds one of the block's sums");
+  /* Block x: the rows from R (x % groups) and the columns from 32
+     (x / groups), so that the groups of a column run together and read b
+     from L2. */
+  const int groups = (p.m + R - 1) / R;
+  const int i0 = blockIdx.x % groups * R, j0 = blockIdx.x / groups * 32;
   const int z = blockIdx.z, split = blockIdx.y, splits = p.splits;
-  const char *a = (const char *)p.a + z * p.sa[0] * sizeof(T);
+  const char *a = (const char *)p.a + (z * p.sa[0] + i0 * p.sa[1]) * sizeof(T);
   const char *b = (const char *)p.b + z * p.sb[0] * sizeof(T);
   /* The range of k: whole 128-element runs, one t of the lanes. */
   const int runs = (p.k + 127) / 128;
   const int k0 = split * runs / splits * 128;
   const int k1 = min(p.k, (split + 1) * runs / splits * 128);
-  __shared__ T level8[16][8][32];
-  skinny_sums(p, level8, a, b, k0, k1);
+  __shared__ T level8[R][8][32];
+  skinny_sums(p, level8, a, min(R, p.m - i0), b, j0, k0, k1);
 
-  /* Two of the block's sums per thread: the partials a split sum
+  /* One of the block's sums per thread: the partials a split sum
      combines. */
-  const int cols = (p.aligned & NX_CONTRACT_B_ACROSS) ? 32 : 8;
   const T *sums = &level8[0][0][0];
   __syncthreads();
-  T v[2] = {sums[threadIdx.x], sums[256 + threadIdx.x]};
+  T v[1] = {threadIdx.x < R * 32 ? sums[threadIdx.x] : T(0)};
   if (splits > 1) {
     const int tile = z * gridDim.x + blockIdx.x;
-    if (!combine(v, (T *)p.partials + (size_t)tile * splits * 2 * blockDim.x,
+    if (!combine(v, (T *)p.partials + (size_t)tile * splits * blockDim.x,
                  p.tickets + tile, splits, split))
       return;
   }
-#pragma unroll
-  for (int h = 0; h < 2; h++) {
-    const int e = h * 256 + threadIdx.x, i = e / 32, c = e % 32;
-    if (i < p.m && c < cols) store(p, z, i, blockIdx.x * cols + c, v[h]);
-  }
+  const int i = threadIdx.x / 32;
+  if (i < R && i0 + i < p.m) store(p, z, i0 + i, j0 + threadIdx.x % 32, v[0]);
 }
 
 /* Packing */

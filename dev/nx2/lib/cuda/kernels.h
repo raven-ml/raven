@@ -132,6 +132,9 @@ enum {
   NX_CONTRACT_Y_WHOLE = 8    /* y's outputs store 16 bytes at once */
 };
 
+/* The skinny kernels' block: NX_SKINNY_ROWS rows of 32 columns. */
+#define NX_SKINNY_ROWS 4
+
 /* contract_params' addresses, and those that are scratch: a and b when
    packed, the split sum's partials and tickets. */
 #define NX_CONTRACT_ADDRS 6

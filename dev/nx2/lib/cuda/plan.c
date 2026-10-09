@@ -400,11 +400,11 @@ int nx_cuda_plan_contract(const nx_cuda_contract_in *in,
   if (mma_kind < 0 && m <= 16) {
     const int nform = sn[0] == 1 && sk[1] != 1;
     kernel = find(F_SKINNY, simt, 0, 0, 0);
-    gx = nform ? ceil_div(n, 32) : ceil_div(n, 8);
-    /* By the warp-per-column form's grid in both forms: the split, so the
-       association, is the shape's. */
-    splits = split_count(ceil_div(n, 8) * batch, 256, k, 1024);
-    values = 2, threads = 256;
+    gx = ceil_div(m, NX_SKINNY_ROWS) * ceil_div(n, 32);
+    /* By the columns alone: a row's sums are the same bits whatever rows
+       come with it. */
+    splits = split_count(ceil_div(n, 32) * batch, 64, k, 1024);
+    values = 1, threads = 256;
     p.aligned = (nform ? NX_CONTRACT_B_ACROSS : 0) |
                 (lb == A_k && vb ? NX_CONTRACT_B_VECTORS : 0) |
                 (la == A_k && va ? NX_CONTRACT_A_VECTORS : 0);
