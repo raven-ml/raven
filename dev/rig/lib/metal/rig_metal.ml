@@ -53,16 +53,18 @@ exception Fault of string
 
 (* Memory *)
 
+(* A region is live while its device's [regions] holds it. [bytes] is what an
+   icb may address in it: [0] for the word, which no icb takes. *)
 type region = {
   owner : int;
   handle : nativeint;
   address : int;
   host : int;
-  live : bool Atomic.t;
+  bytes : int;
 }
 
-let region owner (handle, address, host) =
-  { owner; handle; address; host; live = Atomic.make true }
+let region owner bytes (handle, address, host) =
+  { owner; handle; address; host; bytes }
 
 let address r = Some r.address
 let handle r = r.handle
@@ -94,12 +96,11 @@ type t = {
   word : region;
   cap : capability;
   guard : Mutex.t;
-      (* held by an icb call, by stop, over [images] and [buffers] *)
+      (* held by an icb call, by stop, over [images] and [regions] *)
   stopped : bool Atomic.t; (* stop began *)
   images : image list ref; (* loaded, whose pipelines an icb may record *)
-  buffers : (nativeint, int) Hashtbl.t;
-      (* the live regions an icb may take as its argument buffer, by handle,
-         with their bytes *)
+  regions : (nativeint, region) Hashtbl.t;
+      (* the live regions, by handle: its allocations, mappings and word *)
 }
 
 let device_name i =
@@ -150,7 +151,7 @@ let refusal images bytes i (d : Rig_metal_abi.dispatch) =
    [stop], an [unload] and a [free] exclude each other under the device's
    [guard]: once the stop began, the unload took the image or the free took the
    region, the pipelines [icb] would retain or its buffer may be released. *)
-let icb self guard stopped images buffers align buffer
+let icb self guard stopped images regions align buffer
     (ds : Rig_metal_abi.dispatch array) =
   let sizes = Array.make (7 * Array.length ds) 0 in
   let record i (d : Rig_metal_abi.dispatch) =
@@ -175,8 +176,8 @@ let icb self guard stopped images buffers align buffer
   if Atomic.get stopped then Error "the device was stopped"
   else
     let bytes =
-      match Hashtbl.find_opt buffers buffer with
-      | Some bytes -> bytes
+      match Hashtbl.find_opt regions buffer with
+      | Some r -> r.bytes
       | None ->
           invalid_arg
             "Rig_metal_abi.icb: the argument buffer is no live region of the \
@@ -236,11 +237,12 @@ let open_ i =
       let arch = if family > 0 then strf "Apple%d" family else "Mac2" in
       let align = if family > 0 then apple_align else mac_align in
       let guard = Mutex.create () and stopped = Atomic.make false in
-      let images = ref [] and buffers = Hashtbl.create 64 in
-      let icb = icb self guard stopped images buffers align in
-      let word = region self word in
+      let word = region self 0 word in
+      let images = ref [] and regions = Hashtbl.create 64 in
+      Hashtbl.replace regions word.handle word;
+      let icb = icb self guard stopped images regions align in
       let cap = { Rig_metal_abi.align; icb; split } in
-      Ok { self; arch; budget; word; cap; guard; stopped; images; buffers }
+      Ok { self; arch; budget; word; cap; guard; stopped; images; regions }
 
 (* Facts *)
 
@@ -264,13 +266,18 @@ let edge d = Nativeint.of_int d.self
    driver promises 256 and checks it. *)
 let region_align = 256
 
-(* The region of [d]'s [n]-byte buffer [b], which an icb may take as its
-   argument buffer until its [free]. *)
-let live d n ((handle, _, _) as b) =
-  Mutex.lock d.guard;
-  Hashtbl.replace d.buffers handle n;
-  Mutex.unlock d.guard;
-  region d.self b
+(* The live region of [d]'s [n]-byte buffer [b]. *)
+let live d n b =
+  let r = region d.self n b in
+  Mutex.protect d.guard (fun () -> Hashtbl.replace d.regions r.handle r);
+  r
+
+(* Whether [r] is a live region of [d], under [d.guard]: a handle Metal gives
+   again after a free names another region. *)
+let held d r =
+  match Hashtbl.find_opt d.regions r.handle with
+  | Some r' -> r' == r
+  | None -> false
 
 let alloc d _ n =
   if n < 1 then invalid_argf "Rig_metal.alloc: %d bytes, expected at least 1" n;
@@ -299,7 +306,8 @@ let peer _ _ = false
 let map_peer d d' (r : region) =
   if d.self = d'.self then
     invalid_arg "Rig_metal.map_peer: the two devices are one";
-  if r.owner <> d'.self || not (Atomic.get r.live) then
+  if r.owner <> d'.self || not (Mutex.protect d'.guard (fun () -> held d' r))
+  then
     invalid_arg
       "Rig_metal.map_peer: the region is no live region of the second device";
   None
@@ -308,15 +316,14 @@ let free d (r : region) =
   if r.owner <> d.self then
     invalid_arg
       "Rig_metal.free: the region is no allocation or mapping of the device";
-  if not (Atomic.compare_and_set r.live true false) then
-    invalid_arg "Rig_metal.free: the region was freed";
-  if r == d.word then free_word d.self
-  else begin
-    Mutex.lock d.guard;
-    Hashtbl.remove d.buffers r.handle;
-    Mutex.unlock d.guard;
-    free_buffer d.self r.handle
-  end
+  let taken =
+    Mutex.protect d.guard @@ fun () ->
+    let live = held d r in
+    if live then Hashtbl.remove d.regions r.handle;
+    live
+  in
+  if not taken then invalid_arg "Rig_metal.free: the region was freed";
+  if r == d.word then free_word d.self else free_buffer d.self r.handle
 
 (* Images *)
 
