@@ -69,9 +69,14 @@
    slower take fewer. */
 #define UNITS 4
 
-/* Operands, as the view numbers them, and axes. */
-enum { A, B, INIT, DST };
-enum { BATCH, ROW, COL, CON };
+/* Operands and axes, as the view numbers them. */
+enum { A = NX_VIEW_A, B = NX_VIEW_B, INIT = NX_VIEW_INIT, DST = NX_VIEW_DST };
+enum {
+  BATCH = NX_VIEW_BATCH,
+  ROW = NX_VIEW_ROW,
+  COL = NX_VIEW_COLUMN,
+  CON = NX_VIEW_CONTRACTED
+};
 
 typedef struct {
   const nx_array *op[4]; /* by view operand; op[INIT] NULL without init */
@@ -556,17 +561,10 @@ static void blocks(problem *p) {
 
 /* The entry */
 
-/* A contraction's axes grouped as Nx_kernel.Spec.Contract_view groups them:
-   extent[x] by axis, offset[o] and stride[o][x] by operand, in elements. */
-typedef struct {
-  int64_t extent[4];
-  int64_t offset[4];
-  int64_t stride[4][4];
-} view;
-
 /* Stores into op[DST] the contraction in [acc] of op[A], op[B] and op[INIT]
    (or NULL), laid out as [v]. Answers 0 if an allocation failed. */
-static int run(int acc, const view *v, const nx_array *const *op) {
+static int run(int acc, const nx_contract_view *v,
+               const nx_array *const *op) {
   problem p = {.acc = acc, .w = nx_cpu_width(acc)};
   p.g = &nx_cpu_runs->gemm[acc];
   for (int o = 0; o < 4; o++) {
@@ -592,22 +590,16 @@ static int run(int acc, const view *v, const nx_array *const *op) {
   return !atomic_load(&p.failed);
 }
 
-/* The external: reads the view, declines what it does not compute, then
-   reads the operands through the door. The view, an int array of the
-   extents, offsets and strides (operand by operand) that
-   Nx_kernel.Spec.Contract_view gives, and the spec's fields are copied
-   before nx_read, which may run OCaml code: a collection may move them. */
+/* The external: copies the view, declines what it does not compute, then
+   reads the operands through the door. The spec's fields and the view are
+   copied before nx_read, which may run OCaml code: a collection may move
+   their bytes. */
 value nx_cpu_contract(value vs, value vview, value vdst, value va, value vb,
                       value vi) {
   const nx_spec_contract *s = (const nx_spec_contract *)String_val(vs);
   int acc = s->acc, out = s->out, init = s->init;
-  view v;
-  for (int x = 0; x < 4; x++) {
-    v.extent[x] = Long_val(Field(vview, x));
-    v.offset[x] = Long_val(Field(vview, 4 + x));
-    for (int y = 0; y < 4; y++)
-      v.stride[x][y] = Long_val(Field(vview, 8 + 4 * x + y));
-  }
+  nx_contract_view v;
+  memcpy(&v, Bytes_val(vview), sizeof v);
   int dts[3] = {nx_array_dtype(va), nx_array_dtype(vb), nx_array_dtype(vi)};
   if (!computes(acc, out, dts, 2 + init))
     return Val_int(NX_DECLINED);
