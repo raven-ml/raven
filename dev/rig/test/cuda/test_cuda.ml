@@ -408,6 +408,7 @@ let long_work () =
   let flag = require_some (C.alloc g `Pinned 8) in
   Fun.protect ~finally:(fun () -> H.set64 (host flag) 1) @@ fun () ->
   let m = spin t flag in
+  equal int ~msg:"the work committed" 0 (Rig.signaled t.d);
   C.sleep g ~seen:0 ~still_ms:50;
   equal int ~msg:"the work still runs" 0 (C.signaled g);
   H.set64 (host flag) 1;
@@ -426,6 +427,7 @@ let unload_aside () =
   Fun.protect ~finally:(fun () -> H.set64 (host flag) 1) @@ fun () ->
   let other, _ = S.kernels g in
   let m = spin t flag in
+  equal int ~msg:"the work committed" 0 (Rig.signaled t.d);
   let unloading = Atomic.make false in
   let d =
     Domain.spawn (fun () ->
@@ -525,6 +527,84 @@ let registry_is_the_process () =
   C.free b.g rb;
   equal bool ~msg:"locked after the last free" false (S.locked p);
   H.free_pages p H.page
+
+(* Commits *)
+
+(* Encoded work starts with no other call: a kernel stores into pinned memory
+   the host reads, while nothing waits for its value. *)
+let runs_uncommitted () =
+  S.with_ @@ fun ({ g; _ } as t) ->
+  let _, kernel = S.kernels g in
+  let out = require_some (C.alloc g `Pinned 8) in
+  H.set64 (host out) 0;
+  let f = S.launch (kernel "step") ~grid:1 ~block:1 (address out) 0 in
+  let v = S.submit t [| S.part ~queue:"COMPUTE:0" f |] in
+  let t0 = Rig.Profile.now () in
+  while H.get64 (host out) = 0 do
+    if Rig.Profile.now () - t0 > 10 * second then
+      fail "the kernel did not run within 10 s";
+    Domain.cpu_relax ()
+  done;
+  S.wait t v;
+  C.free g out
+
+(* Submits once on [d] a submission naming a hold of [m] whose release sets
+   [released], and drops both. *)
+let[@inline never] submit_held d m released =
+  let h = Rig.Hold.make ~release:(fun () -> Atomic.set released true) [ m ] in
+  let s = Rig.Submission.make ~hold:h ~reads:0 ~writes:0 d [||] in
+  ignore (Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||])
+
+(* The device commits on its own every 64 values: a hold's release runs in a
+   drain once its value is reached, with no wait for it. *)
+let lag_bounded () =
+  S.with_ @@ fun ({ d; _ } as t) ->
+  let m = B.create d 64 and released = Atomic.make false in
+  submit_held d m released;
+  for _ = 1 to 64 do
+    ignore (S.submit t [||])
+  done;
+  let t0 = Rig.Profile.now () in
+  while
+    Gc.full_major ();
+    ignore (Sys.opaque_identity (B.create d 8));
+    not (Atomic.get released)
+  do
+    if Rig.Profile.now () - t0 > 10 * second then
+      fail "the hold was not released within 10 s";
+    Domain.cpu_relax ()
+  done
+
+(* A value on COPY:0 starts after the values before it on COMPUTE:0, which ended
+   on the other stream: it copies what a late compute copy wrote. *)
+let copy_after_compute () =
+  S.with_ @@ fun ({ d; g } as t) ->
+  let _, kernel = S.kernels g in
+  let flag = require_some (C.alloc g `Pinned 8) in
+  H.set64 (host flag) 0;
+  let data = String.init 256 (fun i -> Char.chr (i land 255)) in
+  let src = B.create d 256 and mid = B.create d 256 in
+  let out = B.create ~memory:Pinned d 256 in
+  S.write_gpu (Nativeint.of_int (B.address src)) data;
+  H.write (B.address out) (String.make 256 ' ');
+  let late =
+    S.delayed ~spin:(kernel "spin") ~flag:(address flag) ~ns:(second / 20)
+      ~dst:(B.address mid) ~src:(B.address src) 256
+  in
+  ignore (S.submit t [| S.part ~queue:"COMPUTE:0" late |]);
+  let v = S.submit t [| S.copy ~queue:"COPY:0" ~dst:out mid |] in
+  S.wait t v;
+  equal string ~msg:"the copied bytes" data (H.read (B.address out) 256);
+  C.free g flag
+
+let commits =
+  group ~timeout:60. "commits"
+    [
+      test "encoded work runs while nothing waits for it" runs_uncommitted;
+      test "the device commits on its own within 64 values" lag_bounded;
+      test "a value on the copy stream follows the compute values before it"
+        copy_after_compute;
+    ]
 
 let timeline =
   group ~timeout:60. "timeline"
@@ -1098,7 +1178,7 @@ module Order = struct
     let hand ps = S.submit s.t (Array.of_list (List.map part ps)) in
     let last = List.fold_left (fun _ ps -> hand ps) (first - 1) subs in
     let rec watch seen =
-      let w = C.signaled s.t.g in
+      let w = Rig.signaled s.t.d in
       at_least int ~msg:"the word" ~than:seen w;
       at_most int ~msg:"the word" ~than:last w;
       if w < last then watch w
@@ -1222,4 +1302,15 @@ let () =
   S.hold ();
   exit
     (run "rig_cuda"
-       [ opening; facts; memory; work; images; graphs; timeline; two; stateful ])
+       [
+         opening;
+         facts;
+         memory;
+         work;
+         images;
+         graphs;
+         commits;
+         timeline;
+         two;
+         stateful;
+       ])

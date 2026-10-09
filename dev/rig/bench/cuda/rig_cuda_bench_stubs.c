@@ -193,18 +193,20 @@ value rig_cuda_bench_waits(value v_at, value v_n) {
 }
 
 /* The driver's submit of value [v_v] on the device [v_self], with no part
-   and [v_n] satisfied waits on the 64-bit word at [v_at]. */
+   and [v_n] satisfied waits on the 64-bit word at [v_at], and its commit. */
 value rig_cuda_bench_entry_waits(value v_self, value v_v, value v_at,
                                     value v_n) {
   struct rig_wait w[16];
   int n = Int_val(v_n);
+  void *self = (void *)Nativeint_val(v_self);
+  uint64_t v = (uint64_t)Long_val(v_v);
   for (int i = 0; i < n; i++)
     w[i] = (struct rig_wait){.at = (uint64_t)Long_val(v_at), .value = 1,
                             .kind = RIG_WORD};
   const char *why = NULL;
-  if (rig_cuda_submit((void *)Nativeint_val(v_self), (uint64_t)Long_val(v_v),
-                         w, n, NULL, 0, NULL, 0, &why) == RIG_FAILED)
-    caml_failwith(why);
+  int r = rig_cuda_submit(self, v, w, n, NULL, 0, NULL, 0, &why);
+  if (r == RIG_OK) r = rig_cuda_commit(self, v, &why);
+  if (r == RIG_FAILED) caml_failwith(why);
   return Val_unit;
 }
 

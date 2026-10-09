@@ -12,7 +12,8 @@
    the status. A stub that calls CUDA in a context pushes the device's
    context on the calling thread and pops it before returning: OCaml domains
    run on threads of their own, and other CUDA libraries in the process keep
-   the context they had current.
+   the context they had current. The submit and the commit push it only
+   where another context is current.
 
    A stub whose comment says it releases the runtime does so without running
    pending signal handlers, so no OCaml code runs between CUDA's answer and
@@ -162,6 +163,7 @@ enum {
   X(cuDevicePrimaryCtxRelease_v2, (CUdevice))                                  \
   X(cuCtxPushCurrent_v2, (CUcontext))                                          \
   X(cuCtxPopCurrent_v2, (CUcontext *))                                         \
+  X(cuCtxGetCurrent, (CUcontext *))                                            \
   X(cuCtxEnablePeerAccess, (CUcontext, unsigned int))                          \
   X(cuStreamCreate, (CUstream *, unsigned int))                                \
   X(cuStreamDestroy_v2, (CUstream))                                            \
@@ -328,6 +330,22 @@ static CUresult pop(CUresult status) {
   return status != CUDA_SUCCESS ? status : popped;
 }
 
+/* Makes [c] current on the calling thread where another context is:
+   whether it pushed [c], which [restore] pops. */
+static CUresult own(CUcontext c, int *pushed) {
+  CUcontext current = NULL;
+  CUresult s = p_cuCtxGetCurrent(&current);
+  *pushed = 0;
+  if (s != CUDA_SUCCESS || current == c) return s;
+  s = push(c);
+  *pushed = s == CUDA_SUCCESS;
+  return s;
+}
+
+static CUresult restore(int pushed, CUresult status) {
+  return pushed ? pop(status) : status;
+}
+
 /* Sets [s] to the status of [call], made with [d]'s context current, or to
    the push's if the context cannot be made current, and [call] is not
    made. */
@@ -347,20 +365,37 @@ static CUresult pop(CUresult status) {
 
 /* Devices */
 
+/* The values a device encodes past its last commit before it commits on
+   its own: a commit, a stream write, costs about a kernel launch. */
+#define COMMIT_EVERY 64
+
+/* Whether [v]'s parts hold a copy. A value with a copy commits as it is
+   encoded: the copy hides the write's cost, and a commit made later lands
+   after the work encoded since, so a wait for one leg of a staged copy
+   would wait for the next leg too. */
+static int copies(const struct rig_part *p, int n) {
+  for (int i = 0; i < n; i++)
+    if (p[i].fill == NULL) return 1;
+  return 0;
+}
+
 /* A device: its context, its two streams and the events that order them,
    and its timeline word, whose host address CUDA's work also uses
    (cuMemHostAlloc's memory, not write-combined, under unified
-   addressing). It is never freed: Rig_cuda.self. */
+   addressing). A value ends on one stream, after its work on both; a value
+   that starts on the other stream waits for that end. It is never freed:
+   Rig_cuda.self. */
 struct device {
   CUdevice device;
   CUcontext context;
   CUstream streams[2]; /* COMPUTE:0, COPY:0 */
   CUevent done[2];     /* the latest part of a stream another one waits for */
-  CUevent released;    /* the release of the last value */
+  CUevent ended;       /* the end of the last value, for the other stream */
   CUevent waited;      /* the foreign waits of the value being submitted */
   _Atomic uint64_t *word;
   uint64_t last;       /* the last value submit received */
-  int released_on;     /* the stream that released it */
+  uint64_t committed;  /* the last value written to the word */
+  int tail;            /* the stream the last value ended on */
   int flush;           /* the last foreign wait flushes remote writes */
   int failed;
   char failure[256];
@@ -375,9 +410,9 @@ static void destroy(struct device *d) {
     if (d->done[q] != NULL) p_cuEventDestroy_v2(d->done[q]);
     d->streams[q] = d->done[q] = NULL;
   }
-  if (d->released != NULL) p_cuEventDestroy_v2(d->released);
+  if (d->ended != NULL) p_cuEventDestroy_v2(d->ended);
   if (d->waited != NULL) p_cuEventDestroy_v2(d->waited);
-  d->released = d->waited = NULL;
+  d->ended = d->waited = NULL;
 }
 
 /* Makes [d]'s word, streams and events, or none of them. The events record
@@ -392,7 +427,7 @@ static CUresult start(struct device *d) {
       s = p_cuEventCreate(&d->done[q], CU_EVENT_DISABLE_TIMING);
   }
   if (s == CUDA_SUCCESS)
-    s = p_cuEventCreate(&d->released, CU_EVENT_DISABLE_TIMING);
+    s = p_cuEventCreate(&d->ended, CU_EVENT_DISABLE_TIMING);
   if (s == CUDA_SUCCESS)
     s = p_cuEventCreate(&d->waited, CU_EVENT_DISABLE_TIMING);
   if (s == CUDA_SUCCESS) {
@@ -758,15 +793,16 @@ static CUresult wait_words(struct device *d, CUstream q,
   return CUDA_SUCCESS;
 }
 
-/* Before the first command of the submission on stream [q]: the release of
-   the last value, if another stream made it, and the foreign waits, placed
-   on the first stream entered and reached by the other through an event. */
+/* Before the first command of the submission on stream [q]: the end of the
+   last value, if it ended on the other stream, and the foreign waits,
+   placed on the first stream entered and reached by the other through an
+   event. */
 static CUresult enter(struct submission *s, int q) {
   struct device *d = s->d;
   CUstream stream = d->streams[q];
   CUresult r = CUDA_SUCCESS;
   if (s->entered[q]) return r;
-  if (d->released_on != q) r = p_cuStreamWaitEvent(stream, d->released, 0);
+  if (d->tail != q) r = p_cuStreamWaitEvent(stream, d->ended, 0);
   if (r != CUDA_SUCCESS) return r;
   s->entered[q] = 1;
   if (s->nwaits == 0) return r;
@@ -788,18 +824,20 @@ static int awaited(const struct rig_part *p, int n, int i) {
 }
 
 /* Enqueues the parts in array order, each after the parts of the other
-   stream it names, then releases [v] on the stream of the last part (on
-   COMPUTE:0 for none) once both streams' work is done. A part's
+   stream it names, and ends [v] on the stream of the last part (on the
+   last value's stream for none) once both streams' work is done. A part's
    completion is recorded when a later part of the other stream, or the
-   release, waits for it. */
+   end, waits for it. */
 static CUresult run(struct submission *s, uint64_t v, const struct rig_part *p,
                     int n) {
   struct device *d = s->d;
   int last[2] = {-1, -1};
   for (int i = 0; i < n; i++) last[p[i].queue] = i;
-  int r = n > 0 ? p[n - 1].queue : 0, o = 1 - r;
+  int r = n > 0 ? p[n - 1].queue : d->tail, o = 1 - r;
   CUresult e = CUDA_SUCCESS;
   s->both = last[0] >= 0 && last[1] >= 0;
+  if (last[1 - d->tail] >= 0)
+    e = p_cuEventRecord(d->ended, d->streams[d->tail]);
   for (int i = 0; i < n && e == CUDA_SUCCESS; i++) {
     int q = p[i].queue, across = 0;
     CUstream stream = d->streams[q];
@@ -822,12 +860,16 @@ static CUresult run(struct submission *s, uint64_t v, const struct rig_part *p,
   if (e == CUDA_SUCCESS) e = enter(s, r);
   if (e == CUDA_SUCCESS && last[o] >= 0)
     e = p_cuStreamWaitEvent(d->streams[r], d->done[o], 0);
-  if (e == CUDA_SUCCESS)
-    e = in_step(s, writing,
-           p_cuStreamWriteValue64_v2(d->streams[r],
-                                     (CUdeviceptr)(uintptr_t)d->word, v, 0));
-  if (e == CUDA_SUCCESS) e = p_cuEventRecord(d->released, d->streams[r]);
-  if (e == CUDA_SUCCESS) d->released_on = r;
+  if (e == CUDA_SUCCESS) d->tail = r;
+  return e;
+}
+
+/* Writes [v] into the word after the last value's end, which follows every
+   earlier value's. */
+static CUresult write_word(struct device *d, uint64_t v) {
+  CUresult e = p_cuStreamWriteValue64_v2(
+      d->streams[d->tail], (CUdeviceptr)(uintptr_t)d->word, v, 0);
+  if (e == CUDA_SUCCESS) d->committed = v;
   return e;
 }
 
@@ -843,10 +885,10 @@ static void fail(struct device *d, const struct submission *s, CUresult e) {
              s->step != NULL ? s->step : "ordering the streams", cause);
 }
 
-/* After a failure, releases [v] after the work [s] queued, so that the word
+/* After a failure, writes [v] after the work [s] queued, so that the word
    still reaches every value: on COMPUTE:0 after COPY:0's work, or on the one
    stream entered. It writes nothing if the context failed, whose work no
-   longer runs, or if CUDA refuses a call that orders the release so. */
+   longer runs, or if CUDA refuses a call that orders the write so. */
 static void drain(struct submission *s, uint64_t v) {
   struct device *d = s->d;
   int r = s->entered[1] && !s->entered[0];
@@ -856,11 +898,8 @@ static void drain(struct submission *s, uint64_t v) {
     if (e == CUDA_SUCCESS) e = p_cuStreamWaitEvent(d->streams[0], d->done[1], 0);
   }
   if (e == CUDA_SUCCESS) e = enter(s, r);
-  if (e == CUDA_SUCCESS)
-    e = p_cuStreamWriteValue64_v2(d->streams[r],
-                                  (CUdeviceptr)(uintptr_t)d->word, v, 0);
-  if (e == CUDA_SUCCESS) e = p_cuEventRecord(d->released, d->streams[r]);
-  if (e == CUDA_SUCCESS) d->released_on = r;
+  if (e == CUDA_SUCCESS) d->tail = r;
+  if (e == CUDA_SUCCESS) write_word(d, v);
 }
 
 int rig_cuda_room(void *self, const struct rig_part *p, int n) {
@@ -879,30 +918,43 @@ int rig_cuda_submit(void *self, uint64_t v, const struct rig_wait *waits,
                        const char **failure) {
   struct device *d = self;
   struct submission s = {d, waits, nwaits, {0, 0}, 0, 0, NULL, 0};
+  int pushed;
   (void)handles;
   (void)nhandles;
   d->last = v;
-  CUresult e = push(d->context);
+  CUresult e = own(d->context, &pushed);
   if (e == CUDA_SUCCESS) {
     if (!d->failed) e = run(&s, v, parts, nparts);
+    if (e == CUDA_SUCCESS && !d->failed &&
+        (v - d->committed >= COMMIT_EVERY || copies(parts, nparts)))
+      e = in_step(&s, writing, write_word(d, v));
     if (d->failed || e != CUDA_SUCCESS) drain(&s, v);
-    e = pop(e);
+    e = restore(pushed, e);
   }
   if (e != CUDA_SUCCESS && !d->failed) {
     fail(d, &s, e);
     d->failed = 1;
   }
-  if (!d->failed) return RIG_COMMITTED;
+  if (!d->failed) return d->committed == v ? RIG_COMMITTED : RIG_OK;
   *failure = d->failure;
   return RIG_FAILED;
 }
 
-/* Each value's hand-over writes its value: a commit does nothing. */
-static int rig_cuda_commit(void *self, uint64_t v, const char **failure) {
-  (void)self;
-  (void)v;
-  (void)failure;
-  return RIG_OK;
+int rig_cuda_commit(void *self, uint64_t v, const char **failure) {
+  struct device *d = self;
+  int pushed;
+  if (!d->failed && v > d->committed) {
+    CUresult e = own(d->context, &pushed);
+    if (e == CUDA_SUCCESS) e = restore(pushed, write_word(d, v));
+    if (e != CUDA_SUCCESS) {
+      struct submission s = {d, NULL, 0, {0, 0}, 0, 0, writing, 0};
+      fail(d, &s, e);
+      d->failed = 1;
+    }
+  }
+  if (!d->failed) return RIG_OK;
+  *failure = d->failure;
+  return RIG_FAILED;
 }
 
 /* Assigned to the edge's types, so a signature that drifts from rig_edge.h
@@ -992,13 +1044,17 @@ value caml_rig_cuda_sleep(value v_self, value v_seen, value v_ms) {
    raising the word to the last value by compare-and-set and destroying the
    streams and events; [false] if work still runs, or the context cannot be
    made current to ask. The work no longer writes once the word holds the
-   last value (what follows a release only records an event), or once both
-   streams are idle or one met an error. */
+   last value (its write is the work's last command), or once both streams
+   are idle or one met an error. Work that still runs gets the write of the
+   last value, if no commit wrote it, so the word reaches it once the work
+   ends. */
 value caml_rig_cuda_stop(value v_self) {
   struct device *d = Device_val(v_self);
   uint64_t w = atomic_load_explicit(d->word, memory_order_acquire);
   int stopped = (int64_t)(w - d->last) >= 0, running = 0;
   if (push(d->context) != CUDA_SUCCESS) return Val_false;
+  if (!stopped && !d->failed && d->committed != d->last)
+    write_word(d, d->last);
   for (int q = 0; q < 2 && !stopped; q++) {
     CUresult s = p_cuStreamQuery(d->streams[q]);
     if (s == CUDA_ERROR_NOT_READY) running = 1;

@@ -67,9 +67,10 @@
     {!exception-Fault} with the context's error once a fault left one there. The
     functions that raise it are {!alloc}, {!map_peer}, {!map_host},
     {!val-image}, {!entry}, {!unload} and {!sleep}; the submit answers
-    [RIG_FAILED] instead, and the [graph] function of {!val-capability} answers
-    [Error] with the context's error. Misuse, such as a region of another
-    device, raises [Invalid_argument].
+    [RIG_FAILED] instead, once it makes a CUDA call (a submission of no parts
+    and no waits makes none), and the [graph] function of {!val-capability}
+    answers [Error] with the context's error. Misuse, such as a region of
+    another device, raises [Invalid_argument].
 
     {b Domains.} Every value may be called from any domain, at the same time as
     others, with three exceptions. The C room and submit run one call at a time,
@@ -329,8 +330,8 @@ val submit_entry : nativeint
 (** [submit_entry] is the address of the C function [rig_cuda_submit], in the
     shape [rig_submit_fn] of [rig_edge.h], which [rig_cuda.h] declares. It is
     called without the domain lock, and calls no function of the OCaml runtime.
-    It hands over the parts as the value [v] after the last one the device was
-    given:
+    It encodes the parts on the device's streams as the value [v] after the last
+    one the device was given:
     - A part on queue [0] runs on the stream ["COMPUTE:0"], on queue [1] on
       ["COPY:0"]. Parts on one queue run in array order; parts on two queues
       that [after] does not order may run at once.
@@ -347,15 +348,20 @@ val submit_entry : nativeint
       negative. Its kind is [RIG_WORD].
     - [handles] is ignored: CUDA's work names its memory by address.
 
-    The work runs after every earlier value of the device and after the waits;
-    once it completed, the timeline word holds [v]. A submission of no parts
-    writes [v] after its waits and after every earlier value. No part writes a
-    timeline word, the device's or another's: only the devices' streams write
-    their words, and a word the work wrote could move backwards or claim work
-    that has not completed.
+    The work runs after every earlier value of the device and after the waits.
+    Encoding launches the parts on the device's stream. A commit writes the
+    value with [cuStreamWriteValue64] ({!commit_entry}); the device commits on
+    its own every 64 values, and commits a value with a copy as it encodes it,
+    since the copy hides the write's cost. Once [v] is committed and its work
+    completed, the timeline word holds [v]. A submission of no parts ends after
+    its waits and after every earlier value. No part writes a timeline word, the
+    device's or another's: only the devices' streams write their words, and a
+    word the work wrote could move backwards or claim work that has not
+    completed.
 
-    It answers [RIG_COMMITTED] once every part is enqueued, or [RIG_FAILED] with
-    the step and the error of the first CUDA call that failed, a fill too, as
+    Once every part is enqueued it answers [RIG_COMMITTED] if it committed [v],
+    and [RIG_OK] otherwise. It answers [RIG_FAILED] with the step and the error
+    of the first CUDA call that failed, a fill too, as
     ["running a fill: CUDA_ERROR_ILLEGAL_ADDRESS: an illegal memory access was
      encountered"]. The parts enqueued before the failure may run; the others
     never do. A failed device stays failed, since CUDA may keep the context's
@@ -370,15 +376,18 @@ val submit_entry : nativeint
     completes. *)
 
 val commit_entry : nativeint
-(** [commit_entry] is the address of the device's commit, in the shape
-    [rig_commit_fn] of [rig_edge.h]. Each value's hand-over writes its value and
-    answers [RIG_COMMITTED]: [commit_entry] does nothing. *)
+(** [commit_entry] is the address of the C function [rig_cuda_commit], in the
+    shape [rig_commit_fn] of [rig_edge.h], which [rig_cuda.h] declares. Given
+    [v], it writes [v] with [cuStreamWriteValue64] on the stream the last value
+    ended on, after the work of every value up to [v], unless a commit wrote [v]
+    or a later value. It answers [RIG_FAILED] with the device's failure once a
+    submit or a commit failed. It may block while a stream is full. *)
 
 val self : t -> nativeint
 (** [self g] is the address of [g]'s state, the first argument of
-    [rig_cuda_room] and [rig_cuda_submit]. It is valid while the process runs: a
-    device's C state holds its {!word}, which other devices may read after [g]
-    is gone, so neither is ever freed. *)
+    [rig_cuda_room], [rig_cuda_submit] and [rig_cuda_commit]. It is valid while
+    the process runs: a device's C state holds its {!word}, which other devices
+    may read after [g] is gone, so neither is ever freed. *)
 
 (** {1:loss Loss} *)
 
@@ -391,11 +400,11 @@ val stop : t -> unit
     streams are idle, or a fault ended the context's work), the timeline word
     holds at least the last value the submit was given when [stop] returns, so
     work of other devices that waits on it runs on, and [g]'s streams are
-    destroyed. Otherwise the timeline word reaches the last value the submit
-    was given once that work ends, unless it waits on a word of another device
-    that never reaches its value; the GPU opens again once that work ends. It
-    releases no region and no image: those end at {!free} and {!unload}, which
-    may follow. A [graph] call of {!val-capability} in flight returns before
-    [stop] begins, and every later one answers [Error]. After [stop], only
-    {!free}, {!unload}, the [symbol] and [graph] functions of
+    destroyed. Otherwise it commits the last value the submit was given, and the
+    timeline word reaches it once that work ends, unless it waits on a word of
+    another device that never reaches its value; the GPU opens again once that
+    work ends. It releases no region and no image: those end at {!free} and
+    {!unload}, which may follow. A [graph] call of {!val-capability} in flight
+    returns before [stop] begins, and every later one answers [Error]. After
+    [stop], only {!free}, {!unload}, the [symbol] and [graph] functions of
     {!val-capability} and the release of a graph may be called on [g]. *)

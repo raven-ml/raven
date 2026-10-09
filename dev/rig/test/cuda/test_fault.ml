@@ -30,8 +30,9 @@ let sticky name f =
       contains ~msg:name ~sub:"CUDA_ERROR_ILLEGAL_ADDRESS" why
 
 (* Value 1 stores to address 0; value 2, queued behind it, would copy into a
-   watched host buffer and write the word. Value 3 is submitted after the fault,
-   through rig, which loses the device and stops it. *)
+   watched host buffer and write the word. Value 3, of no parts, submitted after
+   the fault through rig, makes no CUDA call; the wait for it commits, meets the
+   fault, which loses the device and stops it. *)
 let faults () =
   let ({ S.d; g } as t) = S.open_ () in
   let _, kernel = S.kernels g in
@@ -52,10 +53,12 @@ let faults () =
   sticky "alloc" (fun () -> ignore (C.alloc g `Device 64));
   sticky "image" (fun () -> ignore (C.image g (S.fixture "kernels.ptx")));
   equal int ~msg:"the word after the fault" 0 (H.get64 (host (C.word g)));
-  (match S.submit t [||] with
-  | _ -> fail "a submit after the fault is no loss"
+  let v = S.submit t [||] in
+  equal int ~msg:"value 3" 3 v;
+  (match S.wait t v with
+  | () -> fail "a wait after the fault is no loss"
   | exception Rig.Lost (_, why) ->
-      contains ~msg:"submit" ~sub:"CUDA_ERROR_ILLEGAL_ADDRESS" why);
+      contains ~msg:"wait" ~sub:"CUDA_ERROR_ILLEGAL_ADDRESS" why);
   let w = C.signaled g in
   equal int ~msg:"the word after stop" 3 w;
   still ~msg:"the word" int w (fun () -> C.signaled g) ~ms:200;
