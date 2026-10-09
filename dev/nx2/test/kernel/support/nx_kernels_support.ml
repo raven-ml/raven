@@ -6,6 +6,7 @@
 type backend = {
   name : string;
   kernels : (module Nx_kernel.S);
+  device : Rig.t;
   around : 'a. (unit -> 'a) -> 'a;
 }
 
@@ -23,6 +24,7 @@ let cpu target =
   {
     name = "cpu/" ^ target;
     kernels = (module Nx_cpu);
+    device = Rig.host;
     around = (fun f -> with_target target f);
   }
 

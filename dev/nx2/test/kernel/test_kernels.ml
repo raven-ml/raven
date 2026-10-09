@@ -28,6 +28,31 @@ let cast (k : kernels) ~dst a =
   K.apply1 Nx_kernel.Prog.Cast ~dst a
 
 let answer = Testable.make ~pp:Nx_array_support.pp_answer ~equal:( = )
+
+(* [a] where the host reads it: [a] itself on the host, a copy elsewhere. *)
+let host a =
+  if Rig.equal (A.device a) Rig.host then a else A.to_device Rig.host a
+
+(* [a] on [b]'s device, its layout kept. *)
+let on (b : Support.backend) a =
+  if Rig.equal (A.device a) b.device then a else A.to_device b.device a
+
+(* [op] of [a] by [b]'s kernels, into a fresh C-contiguous array of [dt] on
+   [b]'s device, read back where the host reads it; [None] if the kernels
+   decline. *)
+let run_op (b : Support.backend) op dt a =
+  let module K = (val b.kernels) in
+  let a = on b a in
+  let dst = A.create b.device dt (L.shape (A.layout a)) in
+  match K.apply1 op ~dst a with
+  | A.Done -> Some (host dst)
+  | A.Declined -> None
+  | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
+
+let declines = function
+  | Some _ -> cover "computed" true
+  | None -> cover "declined" true
+
 let strf = Printf.sprintf
 let pp_dtype ppf (D.Any dt) = D.pp ppf dt
 let dtypes = Gen.of_list ~pp:pp_dtype D.all
@@ -392,24 +417,26 @@ let covers_large (Case a) =
 
 (* Copies *)
 
-let law_copy k (Case a) =
-  let dst = A.create Rig.host (A.dtype a) (L.shape (A.layout a)) in
-  equal answer A.Done (copy k ~dst a);
-  same a dst
+let law_copy b (Case a) =
+  let r = run_op b Copy (A.dtype a) a in
+  declines r;
+  Option.iter (same a) r
 
-let test_copy_nan_payloads k () =
+let test_copy_nan_payloads b () =
   let bits = [| 0x7fc00001l; 0xffa00002l; 0x80000000l; 0x7f800001l |] in
   let f = Option.get (A.bitcast D.Float32 (A.of_array D.Uint32 [| 4 |] bits)) in
-  let dst = A.create Rig.host D.Float32 [| 4 |] in
-  equal answer A.Done (copy k ~dst f);
-  equal (array int32) bits (A.to_array (Option.get (A.bitcast D.Uint32 dst)))
+  Option.iter
+    (fun dst ->
+      equal (array int32) bits
+        (A.to_array (Option.get (A.bitcast D.Uint32 dst))))
+    (run_op b Copy D.Float32 f)
 
 (* Casts *)
 
-let law_cast k (Case a, D.Any d) =
-  let dst = A.create Rig.host d (L.shape (A.layout a)) in
-  equal answer A.Done (cast k ~dst a);
-  same ~src:(A.Any a) (reference a d) dst
+let law_cast b (Case a, D.Any d) =
+  let r = run_op b Cast d a in
+  declines r;
+  Option.iter (same ~src:(A.Any a) (reference a d)) r
 
 (* A case and a destination dtype, the case's own one time in five. *)
 let pair c =
@@ -421,7 +448,7 @@ let pair c =
   (c, d)
 
 (* Every code of a format of at most 16 bits, cast to every dtype. *)
-let test_every_code k (D.Any s) () =
+let test_every_code b (D.Any s) () =
   let w = D.bits s in
   let n = 1 lsl w in
   let codes = Array.init n Fun.id in
@@ -440,10 +467,11 @@ let test_every_code k (D.Any s) () =
   in
   List.iter
     (fun (D.Any d) ->
-      let dst = A.create Rig.host d [| L.numel (A.layout a) |] in
-      equal answer A.Done (cast k ~dst a);
-      equal ~msg:(D.name d) (list string) []
-        (differ ~src:(A.Any a) (reference a d) dst))
+      Option.iter
+        (fun dst ->
+          equal ~msg:(D.name d) (list string) []
+            (differ ~src:(A.Any a) (reference a d) dst))
+        (run_op b Cast d a))
     D.all
 
 let narrow = List.filter (fun (D.Any dt) -> D.bits dt <= 16) D.all
@@ -481,15 +509,16 @@ let sweep64 =
             else [ x ])
           (List.init 0x10000 Fun.id)))
 
-let test_sweep k (type s) (s : (float, s) D.t) (xs : float array Lazy.t) () =
+let test_sweep b (type s) (s : (float, s) D.t) (xs : float array Lazy.t) () =
   let xs = Lazy.force xs in
   let a = A.of_array s [| Array.length xs |] xs in
   List.iter
     (fun (D.Any d) ->
-      let dst = A.create Rig.host d [| Array.length xs |] in
-      equal answer A.Done (cast k ~dst a);
-      equal ~msg:(D.name d) (list string) []
-        (differ ~src:(A.Any a) (reference a d) dst))
+      Option.iter
+        (fun dst ->
+          equal ~msg:(D.name d) (list string) []
+            (differ ~src:(A.Any a) (reference a d) dst))
+        (run_op b Cast d a))
     D.all
 
 (* Integers about every rounding point of the float formats: m·2^e and the
@@ -509,7 +538,7 @@ let ties =
         (List.init (64 - p) (fun e -> e + 1)))
     [ 2; 3; 4; 8; 11; 24; 25; 53; 54 ]
 
-let test_integer_ties k () =
+let test_integer_ties b () =
   let n = List.length ties in
   let srcs =
     [
@@ -521,26 +550,28 @@ let test_integer_ties k () =
     (fun (A.Any a) ->
       List.iter
         (fun (D.Any d) ->
-          let dst = A.create Rig.host d [| n |] in
-          equal answer A.Done (cast k ~dst a);
-          equal
-            ~msg:(strf "%s to %s" (D.name (A.dtype a)) (D.name d))
-            (list string) []
-            (differ ~src:(A.Any a) (reference a d) dst))
+          Option.iter
+            (fun dst ->
+              equal
+                ~msg:(strf "%s to %s" (D.name (A.dtype a)) (D.name d))
+                (list string) []
+                (differ ~src:(A.Any a) (reference a d) dst))
+            (run_op b Cast d a))
         D.all)
     srcs
 
 (* A cast whose operands do not fit the caches reads and writes them through
    buffers. *)
-let test_past_the_caches k () =
+let test_past_the_caches b () =
   let n = (1 lsl 22) + 3 in
   let x i = float_of_int ((i * 7919 mod 65537) - 32768) *. 1.25 in
   let a = A.of_array D.Float32 [| n |] (Array.init n x) in
   List.iter
     (fun (D.Any d) ->
-      let dst = A.create Rig.host d [| n |] in
-      equal answer A.Done (cast k ~dst a);
-      equal ~msg:(D.name d) (list string) [] (differ (reference a d) dst))
+      Option.iter
+        (fun dst ->
+          equal ~msg:(D.name d) (list string) [] (differ (reference a d) dst))
+        (run_op b Cast d a))
     [ D.Any D.Float64; D.Any D.Int32; D.Any D.Float16 ]
 
 (* Declines *)
@@ -580,32 +611,32 @@ let op1s =
       ]
 
 (* A kernel that declines writes nothing: [dst] keeps its drawn bytes. *)
-let law_declined_apply1 (k : kernels) (Case a, D.Any d) =
-  let module K = (val k) in
-  let dst = seeded d (L.shape (A.layout a)) 99 in
+let law_declined_apply1 (b : Support.backend) (Case a, D.Any d) =
+  let module K = (val b.kernels) in
+  let a = on b a and dst = on b (seeded d (L.shape (A.layout a)) 99) in
   List.iter
     (fun op ->
-      let before = bits_of dst in
+      let before = bits_of (host dst) in
       match K.apply1 op ~dst a with
       | A.Declined ->
           cover "declined" true;
-          equal (array int) before (bits_of dst)
+          equal (array int) before (bits_of (host dst))
       | _ -> cover "computed" true)
     op1s
 
-let test_declined_contract (k : kernels) () =
-  let module K = (val k) in
+let test_declined_contract (b : Support.backend) () =
+  let module K = (val b.kernels) in
   let spec =
     Nx_kernel.Spec.contract ~batch:[||]
       ~contracting:[| (1, 0) |]
       ~acc:(D.Any D.Float32) ~out:(D.Any D.Float32) ~init:false
   in
-  let a = A.of_array D.Float32 [| 2; 3 |] (Array.make 6 1.) in
-  let b = A.of_array D.Float32 [| 3; 2 |] (Array.make 6 2.) in
-  let y = A.of_array D.Float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |] in
-  let before = bits_of y in
-  match K.contract spec ~dst:(A.Any y) [| A.Any a; A.Any b |] with
-  | A.Declined -> equal (array int) before (bits_of y)
+  let x = on b (A.of_array D.Float32 [| 2; 3 |] (Array.make 6 1.)) in
+  let z = on b (A.of_array D.Float32 [| 3; 2 |] (Array.make 6 2.)) in
+  let y = on b (A.of_array D.Float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |]) in
+  let before = bits_of (host y) in
+  match K.contract spec ~dst:(A.Any y) [| A.Any x; A.Any z |] with
+  | A.Declined -> equal (array int) before (bits_of (host y))
   | A.Done -> ()
   | r -> failf "contract answered %a" Nx_array_support.pp_answer r
 
@@ -648,7 +679,7 @@ let test_refusals k () =
 (* While another domain collects and compacts, copies of arrays no other value
    holds run with the runtime released: their buffers stay alive until the call
    ends. *)
-let test_collect_during_call k () =
+let test_collect_during_call b () =
   let stop = Atomic.make false in
   let gc =
     Domain.spawn (fun () ->
@@ -663,17 +694,17 @@ let test_collect_during_call k () =
       Domain.join gc)
     (fun () ->
       for round = 1 to 4 do
-        let dst = A.create Rig.host D.Float64 [| n |] in
-        let e = cast k ~dst (A.of_array D.Float32 [| n |] (Array.make n 1.5)) in
-        equal answer A.Done e;
-        equal ~msg:(strf "round %d" round) float_exact 1.5
-          (A.get dst [| n - 1 |])
+        let src = A.of_array D.Float32 [| n |] (Array.make n 1.5) in
+        Option.iter
+          (fun dst ->
+            equal ~msg:(strf "round %d" round) float_exact 1.5
+              (A.get dst [| n - 1 |]))
+          (run_op b Cast D.Float64 src)
       done)
 
 (* The suite *)
 
 let laws (b : Support.backend) =
-  let k = b.kernels in
   let run f x = b.around (fun () -> f x) in
   let unit f () = b.around f in
   group b.name
@@ -681,38 +712,38 @@ let laws (b : Support.backend) =
       prop "copy is bits for bits" case
         (run (fun c ->
              covers c;
-             law_copy k c));
+             law_copy b c));
       prop ~count:20 "copy of large views is bits for bits" large
         (run (fun c ->
              covers_large c;
-             law_copy k c));
-      test "copy keeps NaN payloads" (unit (test_copy_nan_payloads k));
+             law_copy b c));
+      test "copy keeps NaN payloads" (unit (test_copy_nan_payloads b));
       prop "cast is the reference, element by element" (pair case)
         (run (fun ((Case a as c), D.Any d) ->
              covers c;
              cover "to the source's dtype" (D.equal (A.dtype a) d);
-             law_cast k (c, D.Any d)));
+             law_cast b (c, D.Any d)));
       prop ~count:20 "cast of large views is the reference" (pair large)
         (run (fun (c, d) ->
              covers_large c;
-             law_cast k (c, d)));
+             law_cast b (c, d)));
       group "every code of the narrow dtypes"
         (List.map
-           (fun (D.Any s as d) -> test (D.name s) (unit (test_every_code k d)))
+           (fun (D.Any s as d) -> test (D.name s) (unit (test_every_code b d)))
            narrow);
       test "float32 about every rounding point, to every dtype"
-        (unit (test_sweep k D.Float32 sweep32));
+        (unit (test_sweep b D.Float32 sweep32));
       test "float64 about every tie, to every dtype"
-        (unit (test_sweep k D.Float64 sweep64));
-      test "integers about every rounding point" (unit (test_integer_ties k));
+        (unit (test_sweep b D.Float64 sweep64));
+      test "integers about every rounding point" (unit (test_integer_ties b));
       test "a cast past the caches is the reference"
-        (unit (test_past_the_caches k));
+        (unit (test_past_the_caches b));
       prop "a declined kind of one operand writes nothing" (pair case)
-        (run (law_declined_apply1 k));
+        (run (law_declined_apply1 b));
       test "a declined contraction writes nothing"
-        (unit (test_declined_contract k));
+        (unit (test_declined_contract b));
       test "operands outlive a released call"
-        (unit (test_collect_during_call k));
+        (unit (test_collect_during_call b));
     ]
 
 (* nx.cpu under the table the host runs best: what nx_cpu.mli promises beyond
