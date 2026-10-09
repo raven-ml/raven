@@ -65,32 +65,13 @@ _Static_assert(NX_VIEW_DST == 3 && NX_VIEW_CONTRACTED == 3,
                "operand and axis indices");
 _Static_assert(sizeof(nx_contract_view) == 192, "view_bytes");
 
-/* Spec.Contract_view's grouping: nx_coalesce over [n] operands of the [r]
-   int64 extents at byte [at_ext] of the view [v], operand k's strides from
-   byte [at_st] + 8·k·NX_MAX_RANK, rewritten in place. Answers the coalesced
-   rank, or 0 if nx_coalesce refuses, which it cannot: the caller passes 2
-   to NX_MAX_OPERANDS operands, every one of the extents [ext]. */
+/* Spec.Contract_view's grouping: nx_coalesce_dims over [n] operands of the
+   [r] int64 extents at byte [at_ext] of the view [v], operand k's strides
+   from byte [at_st] + 8·k·NX_MAX_RANK, in place. Answers the merged rank. */
 intnat nx_kernel_coalesce(intnat n, intnat r, value v, intnat at_ext,
                           intnat at_st) {
-  int64_t *ext = (int64_t *)(Bytes_val(v) + at_ext);
-  int64_t *st = (int64_t *)(Bytes_val(v) + at_st);
-  nx_array a[NX_MAX_OPERANDS];
-  nx_loop l;
-  for (int k = 0; k < n; k++) {
-    a[k].rank = (int)r;
-    a[k].flags = 0;
-    a[k].offset = 0;
-    for (int i = 0; i < r; i++) {
-      a[k].dim[i] = ext[i];
-      a[k].dim[r + i] = st[k * NX_MAX_RANK + i];
-    }
-  }
-  if (nx_coalesce((int)n, a, &l) != NX_OK) return 0;
-  for (int i = 0; i < l.rank; i++) {
-    ext[i] = l.extent[i];
-    for (int k = 0; k < n; k++) st[k * NX_MAX_RANK + i] = l.step[k][i];
-  }
-  return l.rank;
+  return nx_coalesce_dims((int)n, (int)r, (int64_t *)(Bytes_val(v) + at_ext),
+                          (int64_t (*)[NX_MAX_RANK])(Bytes_val(v) + at_st));
 }
 
 value nx_kernel_coalesce_byte(value n, value r, value v, value at_ext,
