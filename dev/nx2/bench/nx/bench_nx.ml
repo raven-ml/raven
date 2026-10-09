@@ -142,6 +142,31 @@ let place_rows =
         (fun (Reshard (p, x)) -> Value (Nx.place p x));
     ]
 
+(* Movements: a view costs the same at one element and at a million, and a
+   movement no stride expresses costs a copy of its result, as copy-1M does. *)
+
+let x1_2d = Nx.reshape [| 1; 1 |] x1
+let split_heads = Nx.Pattern.v "b t (h d) -> b h t d"
+let rows = Nx.reshape [| 1; 1024; 1024 |] square
+let quarter = host (1 lsl 18)
+
+let move_rows =
+  Thumper.group "move"
+    [
+      Thumper.bench "transpose-1" (fun () ->
+          Nx.transpose (Thumper.black_box x1_2d));
+      Thumper.bench "transpose-1M" (fun () ->
+          Nx.transpose (Thumper.black_box square));
+      Thumper.bench "rearrange-heads-1M" (fun () ->
+          Nx.rearrange ~sizes:[ ("h", 16) ] split_heads (Thumper.black_box rows));
+      Thumper.bench "reshape-swapaxes-heads-1M" (fun () ->
+          Nx.swapaxes 1 2
+            (Nx.reshape [| 1; 1024; 16; 64 |] (Thumper.black_box rows)));
+      Thumper.bench "repeat-256K-4" (fun () ->
+          Nx.repeat ~axis:0 4 (Thumper.black_box quarter));
+      Thumper.bench "copy-1M" (fun () -> Nx.copy (Thumper.black_box x1m));
+    ]
+
 (* Interpretations. Each row adds one-element host values 100 times: eagerly;
    under a Values interpretation that does not reach them; while an Extent lives
    on another domain; while one lives on this domain around another fiber, which
@@ -226,4 +251,11 @@ let interp_rows =
 let () =
   exit
   @@ Thumper.run "nx"
-       [ dispatch_rows; constant_rows; placed_rows; place_rows; interp_rows ]
+       [
+         dispatch_rows;
+         constant_rows;
+         placed_rows;
+         place_rows;
+         move_rows;
+         interp_rows;
+       ]
