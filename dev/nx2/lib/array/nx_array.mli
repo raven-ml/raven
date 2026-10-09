@@ -263,7 +263,9 @@ type answer =
   | Bad_layout
       (** An operand's layout is not a layout: a guard for C callers, which an
           array made by this library never meets. *)
-  | Shape_mismatch  (** The operands of one loop have different shapes. *)
+  | Shape_mismatch
+      (** The operands' shapes do not fit the operation: operands of one loop
+          of different shapes, or shapes its descriptor refuses. *)
   | Bad_arity
       (** No operand, or more than a loop takes: a guard for C callers, which a
           kernel of this library's contract never meets. *)

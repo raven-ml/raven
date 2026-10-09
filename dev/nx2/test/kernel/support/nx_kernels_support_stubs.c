@@ -66,3 +66,12 @@ value nx_kernels_support_use(value name) {
   caml_invalid_argument(
       "Nx_kernels_support.with_target: not a target the host runs");
 }
+
+/* nx.cpu's reductions and scans on one thread. */
+value nx_kernels_support_serial_reduce(value s, value dsts, value ops) {
+  return nx_cpu_reduce_on(s, dsts, ops, 1);
+}
+
+value nx_kernels_support_serial_scan(value s, value dsts, value ops) {
+  return nx_cpu_scan_on(s, dsts, ops, 1);
+}

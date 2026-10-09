@@ -29,3 +29,17 @@ type backend = {
 
 val backends : backend list
 (** [backends] is nx.cpu under each target table the host runs, base first. *)
+
+val serial_reduce :
+  Nx_kernel.Spec.reduce Nx_kernel.Spec.t ->
+  dsts:Nx_array.any array ->
+  Nx_array.any array ->
+  Nx_array.answer
+(** [serial_reduce] is {!Nx_cpu.reduce} on one thread. *)
+
+val serial_scan :
+  Nx_kernel.Spec.scan Nx_kernel.Spec.t ->
+  dsts:Nx_array.any array ->
+  Nx_array.any array ->
+  Nx_array.answer
+(** [serial_scan] is {!Nx_cpu.scan} on one thread. *)

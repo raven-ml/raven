@@ -68,7 +68,7 @@ enum {
   NX_OVERLAP,      /* a written operand shares a byte with another written
                       operand, or a read one not identical to it */
   NX_LAYOUT,       /* an operand's layout is not one */
-  NX_SHAPE,        /* operands of one loop have different shapes */
+  NX_SHAPE,        /* the operands' shapes do not fit the operation */
   NX_ARITY         /* no operand, or more than NX_MAX_OPERANDS, to a loop */
 };
 

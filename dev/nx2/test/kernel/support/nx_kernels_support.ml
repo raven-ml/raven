@@ -56,3 +56,16 @@ let cpu target =
   }
 
 let backends = List.map cpu (targets ())
+
+(* nx.cpu's reductions and scans on one thread. *)
+external serial_reduce :
+  Nx_kernel.Spec.reduce Nx_kernel.Spec.t ->
+  dsts:Nx_array.any array ->
+  Nx_array.any array ->
+  Nx_array.answer = "nx_kernels_support_serial_reduce"
+
+external serial_scan :
+  Nx_kernel.Spec.scan Nx_kernel.Spec.t ->
+  dsts:Nx_array.any array ->
+  Nx_array.any array ->
+  Nx_array.answer = "nx_kernels_support_serial_scan"

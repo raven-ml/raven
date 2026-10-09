@@ -77,8 +77,19 @@ let apply3 k ~dst c x y =
   else apply3_c k dst c x y
 
 let map _ ~dsts:_ _ = Nx_array.Declined
-let reduce _ ~dsts:_ _ = Nx_array.Declined
-let scan _ ~dsts:_ _ = Nx_array.Declined
+(* Reductions and scans (fold.c) *)
+
+external reduce :
+  Nx_kernel.Spec.reduce Nx_kernel.Spec.t ->
+  dsts:Nx_array.any array ->
+  Nx_array.any array ->
+  Nx_array.answer = "nx_cpu_reduce"
+
+external scan :
+  Nx_kernel.Spec.scan Nx_kernel.Spec.t ->
+  dsts:Nx_array.any array ->
+  Nx_array.any array ->
+  Nx_array.answer = "nx_cpu_scan"
 
 (* Contractions *)
 

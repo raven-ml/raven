@@ -43,6 +43,7 @@ __attribute__((constructor)) static void init(void) {
   nx_cpu_set_convert_base(&nx_cpu_base);
   nx_cpu_set_gemm_base(&nx_cpu_base);
   nx_cpu_set_rows_base(&nx_cpu_base);
+  nx_cpu_set_folds_base(&nx_cpu_base);
 #if defined(__aarch64__)
   nx_cpu_set_neon(&nx_cpu_base);
 #endif
@@ -51,6 +52,7 @@ __attribute__((constructor)) static void init(void) {
   nx_cpu_set_convert_v3(&nx_cpu_v3);
   nx_cpu_set_gemm_v3(&nx_cpu_v3);
   nx_cpu_set_rows_v3(&nx_cpu_v3);
+  nx_cpu_set_folds_v3(&nx_cpu_v3);
   nx_cpu_set_avx2(&nx_cpu_v3);
   nx_cpu_table = &nx_cpu_v3;
 #endif

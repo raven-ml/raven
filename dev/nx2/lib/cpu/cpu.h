@@ -84,6 +84,21 @@ typedef void (*nx_cpu_row3)(int64_t n, uint8_t *d, int64_t sd,
 typedef void (*nx_cpu_row0)(int64_t n, uint8_t *d, int64_t sd,
                             const uint8_t *bits);
 
+/* A monoid's fold at a dtype (folds.c). [lanes] adds the [n] terms at [x],
+   stepping [s] elements, into the NX_CPU_LANES lanes at [l]: term i into
+   lane (first + i) mod NX_CPU_LANES. [combine] adds the [n] elements at
+   [x], stepping [s], into the [n] contiguous accumulators at [a], element
+   by element. [scan] adds the [n] elements at [x], stepping [s], into the
+   one accumulator at [a] in order, storing each sum into [y], stepping
+   [sy]. */
+typedef struct {
+  void (*lanes)(const uint8_t *x, int64_t s, int64_t n, uint8_t *l,
+                int first);
+  void (*combine)(uint8_t *a, const uint8_t *x, int64_t s, int64_t n);
+  void (*scan)(uint8_t *a, const uint8_t *x, int64_t s, uint8_t *y,
+               int64_t sy, int64_t n);
+} nx_cpu_fold;
+
 /* The bytes of the largest tile of any target's microkernel: 8 × 12
    float32 on arm64, 6 × 16 on x86-64, 1 × 96 thin. */
 #define NX_CPU_TILE 384
@@ -108,16 +123,20 @@ typedef struct {
   /* where[i] and fill[i] move elements of 2^i bytes, i in 0..4. */
   nx_cpu_row3 where[5];
   nx_cpu_row0 fill[5];
+  /* fold[m][dt] folds the monoid m (nx_spec.h's NX_SUM to NX_MIN) at dt:
+     lanes NULL where the table declines. */
+  nx_cpu_fold fold[NX_MIN + 1][NX_DTYPE_COUNT];
 } nx_cpu_target;
 
 /* The tables, each set when the program starts on a host that runs it, by
-   convert.c, gemm_generic.c and rows.c compiled for its target, then by the
-   kernels of its instructions: gemm_neon.c's on arm64, gemm_avx2.c's for
-   v3. */
+   convert.c, gemm_generic.c, rows.c and folds.c compiled for its target,
+   then by the kernels of its instructions: gemm_neon.c's on arm64,
+   gemm_avx2.c's for v3. */
 extern nx_cpu_target nx_cpu_base;
 void nx_cpu_set_convert_base(nx_cpu_target *t);
 void nx_cpu_set_gemm_base(nx_cpu_target *t);
 void nx_cpu_set_rows_base(nx_cpu_target *t);
+void nx_cpu_set_folds_base(nx_cpu_target *t);
 #if defined(__aarch64__)
 void nx_cpu_set_neon(nx_cpu_target *t);
 #endif
@@ -126,6 +145,7 @@ extern nx_cpu_target nx_cpu_v3;
 void nx_cpu_set_convert_v3(nx_cpu_target *t);
 void nx_cpu_set_gemm_v3(nx_cpu_target *t);
 void nx_cpu_set_rows_v3(nx_cpu_target *t);
+void nx_cpu_set_folds_v3(nx_cpu_target *t);
 void nx_cpu_set_avx2(nx_cpu_target *t);
 #endif
 
@@ -167,6 +187,15 @@ void nx_cpu_job(int64_t total, int64_t bytes, int64_t cost, rig_pool_body body,
 /* The threads nx_cpu_job gives such work, if it has as many units: at
    least 1. */
 int nx_cpu_threads(int64_t bytes, int64_t cost);
+
+/* Folds */
+
+/* nx.cpu's reduce and scan (fold.c) of the descriptor [s], the
+   destinations [dsts] and the operands [ops]: on one thread where
+   [threads] is 1, on as many as the job gives where it is 0. The bits do
+   not change. */
+value nx_cpu_reduce_on(value s, value dsts, value ops, int threads);
+value nx_cpu_scan_on(value s, value dsts, value ops, int threads);
 
 /* Walks */
 

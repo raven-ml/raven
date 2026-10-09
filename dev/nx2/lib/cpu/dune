@@ -1,8 +1,8 @@
 ; Kernels for host memory.
 ;
-; convert.c, gemm_generic.c and rows.c are compiled once per target: as
-; themselves for base, and as their copies convert_v3.c, gemm_generic_v3.c
-; and rows_v3.c for v3,
+; convert.c, gemm_generic.c, rows.c and folds.c are compiled once per target:
+; as themselves for base, and as their copies convert_v3.c, gemm_generic_v3.c,
+; rows_v3.c and folds_v3.c for v3,
 ; with v3's instructions on x86-64 and as empty units elsewhere.
 ; gemm_neon.c holds arm64's kernels, in base; gemm_avx2.c, compiled with
 ; v3's instructions, x86-64's. target.c picks the table at run time.
@@ -13,12 +13,12 @@
  (foreign_stubs
   (language c)
   (include_dirs ../array ../kernel)
-  (names target job walk stage copy apply iota rows convert gemm gemm_generic gemm_neon))
+  (names target job walk stage copy apply iota rows folds fold convert gemm gemm_generic gemm_neon))
  (foreign_stubs
   (language c)
   (include_dirs ../array ../kernel)
   (flags :standard -DNX_CPU_V3 (:include v3_flags.sexp))
-  (names convert_v3 gemm_generic_v3 rows_v3 gemm_avx2)))
+  (names convert_v3 gemm_generic_v3 rows_v3 folds_v3 gemm_avx2)))
 
 (rule
  (copy convert.c convert_v3.c))
@@ -28,6 +28,9 @@
 
 (rule
  (copy rows.c rows_v3.c))
+
+(rule
+ (copy folds.c folds_v3.c))
 
 (rule
  (target v3_flags.sexp)
