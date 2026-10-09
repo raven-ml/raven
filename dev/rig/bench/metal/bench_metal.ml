@@ -9,7 +9,8 @@
    the same indirect command buffer and by the same dispatches encoded directly;
    memory and images by the Metal objects they make. A row waits as a caller
    does, through rig's wait; the rows of [sleep] wait while spinning threads
-   hold every core. Each case opens its device in its own worker, so that no
+   hold every core. A floor waits as Metal's own API does, blocking in
+   waitUntilCompleted. Each case opens its device in its own worker, so that no
    process forks after Metal started. *)
 
 module M = Rig_metal

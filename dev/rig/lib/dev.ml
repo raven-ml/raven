@@ -251,6 +251,17 @@ let leave d =
   c_exit d.c;
   run_owed ()
 
+(* Ends the counted call on [d] that raised [e]: a fault of [d] loses it. *)
+let raised d e bt =
+  leave d;
+  match d.fault e with
+  | Some why -> lose d why
+  | None -> Printexc.raise_with_backtrace e bt
+
+let refused d =
+  run_owed ();
+  raise_lost d
+
 let counted d f =
   match c_enter d.c with
   | 0 -> (
@@ -258,15 +269,8 @@ let counted d f =
       | r ->
           leave d;
           r
-      | exception e -> (
-          let bt = Printexc.get_raw_backtrace () in
-          leave d;
-          match d.fault e with
-          | Some why -> lose d why
-          | None -> Printexc.raise_with_backtrace e bt))
-  | _ ->
-      run_owed ();
-      raise_lost d
+      | exception e -> raised d e (Printexc.get_raw_backtrace ()))
+  | _ -> refused d
 
 (* On a stopped device a failure of the call, its fault or its memory's, gives
    back nothing more. *)
@@ -304,11 +308,15 @@ let word d =
         w
     | _ -> c_word d.c
 
+(* A counted call, written out so that a wait's sleep allocates nothing. *)
 let sleep d ~seen ~still_ms =
   match d.kind with
-  | Driver { m; h; _ } ->
+  | Driver { m; h; _ } -> (
       let module D = (val m) in
-      counted d (fun () -> D.sleep h ~seen ~still_ms)
+      if c_enter d.c <> 0 then refused d;
+      match D.sleep h ~seen ~still_ms with
+      | () -> leave d
+      | exception e -> raised d e (Printexc.get_raw_backtrace ()))
   | _ -> ()
 
 let now_ms () = Prof.now () / 1_000_000
