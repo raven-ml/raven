@@ -12,8 +12,10 @@ let write fd s =
   try ignore (Unix.write_substring fd s 0 (String.length s))
   with Unix.Unix_error _ -> ()
 
-external fd_number : Unix.file_descr -> int = "caml_rig_bin_fd_number"
-[@@noalloc]
+(* A descriptor's number, which the launchers pass to the processes they start
+   in RIG_REMOTE_REPORT: on POSIX, the only systems rig runs on, a
+   [Unix.file_descr] is its number. *)
+external fd_number : Unix.file_descr -> int = "%identity"
 
 let inherited fd f =
   Unix.clear_close_on_exec fd;

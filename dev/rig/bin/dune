@@ -17,10 +17,7 @@
   rig.amd.pci
   rig.pci
   unix
-  threads.posix)
- (foreign_stubs
-  (language c)
-  (names rig_bin_stubs)))
+  threads.posix))
 
 (rule
  (with-stdout-to
