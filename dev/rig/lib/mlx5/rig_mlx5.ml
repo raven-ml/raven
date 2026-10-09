@@ -94,7 +94,7 @@ type t = {
   gid : int option; (* the index of the RoCE v2 identifier queue pairs use *)
   address : address; (* the port's, as peers name it *)
   random : Random.State.t;
-  lock : Mutex.t; (* guards [cqs], [qps], [tags] and [random] *)
+  lock : Mutex.t; (* guards [cqs], [qps], [tags], [random] and [held] *)
   closed : bool Atomic.t;
   mutable tags : int;
   mutable cqs : (int * cq) list; (* by tag *)
@@ -111,6 +111,7 @@ and cq = {
   mutable count : int; (* completions consumed *)
   sequence : int Atomic.t; (* events raised *)
   members : qp list Atomic.t;
+  mutable held : int; (* entries its queue pairs hold or are made with *)
   mutable c_destroyed : bool;
 }
 
@@ -398,6 +399,7 @@ module Cq = struct
             count = 0;
             sequence = Atomic.make 0;
             members = Atomic.make [];
+            held = 0;
             c_destroyed = false;
           }
         in
@@ -449,7 +451,7 @@ module Cq = struct
   let destroy cq =
     let nic = cq.c_nic in
     alive "Cq.destroy" nic;
-    if (not cq.c_destroyed) && Atomic.get cq.members <> [] then
+    if (not cq.c_destroyed) && with_lock nic (fun () -> cq.held > 0) then
       invalid_arg "Rig_mlx5.Cq.destroy: a queue pair of it is not destroyed";
     if not cq.c_destroyed then begin
       cq.c_destroyed <- true;
@@ -486,69 +488,78 @@ module Qp = struct
     if n < 1 || n > max_entries then
       invalid_arg (strf "Rig_mlx5.Qp.make: %d entries" n);
     let entries = pow2_at_least n 1 in
-    let held =
-      List.fold_left (fun a q -> a + q.q_entries) 0 (Atomic.get cq.members)
-    in
-    if held + entries > cq.c_entries then
-      invalid_arg
-        (strf "Rig_mlx5.Qp.make: %d entries beside %d, past the queue's %d"
-           entries held cq.c_entries);
-    let* ring = ring_of nic (entries * A.Entry.size) in
-    let tag = tag nic in
-    let d =
-      data D.Create_qp.sizeof
-        [
-          (D.Create_qp.buf_addr, ring.mem);
-          (D.Create_qp.db_addr, ring.record);
-          (D.Create_qp.sq_wqe_count, entries);
-          (D.Create_qp.uidx, D.mlx5_ib_default_uidx);
-        ]
-    in
-    let made =
-      let* handle, number, resp =
-        nic.path.qp ~cq:cq.c_handle ~entries ~tag d D.Create_qp_resp.sizeof
-      in
-      let page, at =
-        A.Uar.register ~per_page:nic.per_page ~size:nic.register_size
-          (read resp D.Create_qp_resp.bfreg_index)
-      in
-      if page >= Array.length nic.uar then begin
-        nic.path.destroy `Qp handle;
-        Error
-          (strf "the kernel gave a doorbell register on page %d, unmapped" page)
-      end
-      else Ok (handle, number, nic.uar.(page) + at)
-    in
-    match made with
+    (* The queue's room is taken before the kernel makes the pair, so that makes
+       at once never hold more than the queue. *)
+    with_lock nic (fun () ->
+        if cq.held + entries > cq.c_entries then
+          invalid_arg
+            (strf "Rig_mlx5.Qp.make: %d entries beside %d, past the queue's %d"
+               entries cq.held cq.c_entries);
+        cq.held <- cq.held + entries);
+    let give_back () = with_lock nic (fun () -> cq.held <- cq.held - entries) in
+    match ring_of nic (entries * A.Entry.size) with
     | Error e ->
-        free_ring ring;
+        give_back ();
         Error e
-    | Ok (handle, number, register) ->
-        let psn =
-          with_lock nic (fun () -> Random.State.bits nic.random land 0xff_ffff)
+    | Ok ring -> (
+        let tag = tag nic in
+        let d =
+          data D.Create_qp.sizeof
+            [
+              (D.Create_qp.buf_addr, ring.mem);
+              (D.Create_qp.db_addr, ring.record);
+              (D.Create_qp.sq_wqe_count, entries);
+              (D.Create_qp.uidx, D.mlx5_ib_default_uidx);
+            ]
         in
-        let q =
-          {
-            q_nic = nic;
-            q_cq = cq;
-            q_handle = handle;
-            q_number = number;
-            q_tag = tag;
-            q_entries = entries;
-            q_ring = ring;
-            register;
-            psn;
-            posted = Atomic.make 0;
-            completed = Atomic.make 0;
-            rung = 0;
-            connected = false;
-            q_destroyed = false;
-          }
+        let made =
+          let* handle, number, resp =
+            nic.path.qp ~cq:cq.c_handle ~entries ~tag d D.Create_qp_resp.sizeof
+          in
+          let page, at =
+            A.Uar.register ~per_page:nic.per_page ~size:nic.register_size
+              (read resp D.Create_qp_resp.bfreg_index)
+          in
+          if page >= Array.length nic.uar then begin
+            nic.path.destroy `Qp handle;
+            Error
+              (strf "the kernel gave a doorbell register on page %d, unmapped"
+                 page)
+          end
+          else Ok (handle, number, nic.uar.(page) + at)
         in
-        with_lock nic (fun () ->
-            nic.qps <- (tag, q) :: nic.qps;
-            Atomic.set cq.members (q :: Atomic.get cq.members));
-        Ok q
+        match made with
+        | Error e ->
+            free_ring ring;
+            give_back ();
+            Error e
+        | Ok (handle, number, register) ->
+            let psn =
+              with_lock nic (fun () ->
+                  Random.State.bits nic.random land 0xff_ffff)
+            in
+            let q =
+              {
+                q_nic = nic;
+                q_cq = cq;
+                q_handle = handle;
+                q_number = number;
+                q_tag = tag;
+                q_entries = entries;
+                q_ring = ring;
+                register;
+                psn;
+                posted = Atomic.make 0;
+                completed = Atomic.make 0;
+                rung = 0;
+                connected = false;
+                q_destroyed = false;
+              }
+            in
+            with_lock nic (fun () ->
+                nic.qps <- (tag, q) :: nic.qps;
+                Atomic.set cq.members (q :: Atomic.get cq.members));
+            Ok q)
 
   let number q =
     live_qp "Qp.number" q;
@@ -622,6 +633,7 @@ module Qp = struct
       nic.path.destroy `Qp q.q_handle;
       with_lock nic (fun () ->
           nic.qps <- List.remove_assoc q.q_tag nic.qps;
+          q.q_cq.held <- q.q_cq.held - q.q_entries;
           Atomic.set q.q_cq.members
             (List.filter (fun m -> m != q) (Atomic.get q.q_cq.members)));
       free_ring q.q_ring

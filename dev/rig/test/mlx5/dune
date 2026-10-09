@@ -1,0 +1,7 @@
+(test
+ (name test_nic)
+ (modules test_nic)
+ (libraries rig_mlx5 rig_mlx5_abi unix windtrap)
+ (foreign_stubs
+  (language c)
+  (names test_nic_stubs)))

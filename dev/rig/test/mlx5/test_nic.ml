@@ -1,0 +1,125 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+(* What a NIC does between the calls it makes of its path, with no NIC: the path
+   here answers each call as its record's contract states, with objects numbered
+   in order and access regions in this process's memory. No NIC reads a ring, so
+   nothing here completes an entry; these tests hold what Rig_mlx5 decides
+   itself: the access regions it maps, the bounds of a region's pieces, the room
+   a completion queue gives its queue pairs, and the events it reports.
+
+   The driver's answers are laid out as Linux v6.12's mlx5-abi.h lays them out:
+   a context's at bf_reg_size 4, tot_bfregs 8, log_uar_size 56 and
+   num_uars_per_page 60, in 72 bytes; a completion queue's cqn at 0, in 8; a
+   queue pair's bfreg_index at 0, in 40. *)
+
+open Windtrap
+module M = Rig_mlx5
+
+external address : Rig_mlx5_abi.buffer -> int = "rig_mlx5_test_address"
+
+(* A page every host's page size divides. *)
+let page = 65536
+
+(* Memory the path maps, kept for the run. *)
+let mapped = ref []
+
+let map _ n =
+  let b = Bigarray.Array1.create Bigarray.char Bigarray.c_layout n in
+  Bigarray.Array1.fill b '\000';
+  mapped := b :: !mapped;
+  Ok (address b)
+
+let le fields size =
+  let b = Bytes.make size '\000' in
+  List.iter (fun (at, v) -> Bytes.set_int32_le b at (Int32.of_int v)) fields;
+  Bytes.to_string b
+
+let context_answer ?(log_uar_size = 12) ?(per_page = 1) ?(registers = 2) () =
+  le [ (4, 512); (8, registers); (56, log_uar_size); (60, per_page) ] 72
+
+type calls = { mutable closed : int; mutable made : int }
+
+(* A path over this process. [qp] runs before each queue pair is made; [wait]
+   answers the NIC's events. *)
+let path ?(context = context_answer ()) ?(qp = fun () -> ())
+    ?(wait = fun _ -> []) () =
+  let calls = { closed = 0; made = 0 } in
+  let next () =
+    calls.made <- calls.made + 1;
+    calls.made
+  in
+  let p =
+    {
+      M.name = "mlx5_test";
+      bus = "0000:00:00.0";
+      page;
+      context =
+        (fun _ _ ->
+          Ok
+            {
+              M.answer = context;
+              port = `Infiniband 1;
+              mtu = 4096;
+              reads = 16;
+              served = 16;
+            });
+      map;
+      register =
+        (fun _ _ ->
+          let h = next () in
+          Ok { M.handle = h; local = h; remote = h + 0x1000 });
+      cq = (fun ~entries:_ ~tag:_ _ _ -> Ok (next (), le [ (0, 0x40) ] 8));
+      qp =
+        (fun ~cq:_ ~entries:_ ~tag:_ _ _ ->
+          qp ();
+          let h = next () in
+          Ok (h, 0x100 + h, le [ (0, 1) ] 40));
+      modify = (fun _ _ -> Ok ());
+      destroy = (fun _ _ -> ());
+      wait;
+      close = (fun () -> calls.closed <- calls.closed + 1);
+    }
+  in
+  (p, calls)
+
+let open_nic ?context ?qp ?wait () =
+  let p, calls = path ?context ?qp ?wait () in
+  match M.make p with Ok nic -> (nic, calls) | Error e -> failf "make: %s" e
+
+(* Two queue pairs made at once on a completion queue with room for one: the
+   first holds in its path call until the second's make returned, so both check
+   the queue's room before either is made. *)
+let room =
+  test "two queue pairs made at once share their queue's room" (fun () ->
+      let inside = Semaphore.Binary.make false in
+      let release = Semaphore.Binary.make false in
+      let first = Atomic.make true in
+      let qp () =
+        if Atomic.exchange first false then begin
+          Semaphore.Binary.release inside;
+          Semaphore.Binary.acquire release
+        end
+      in
+      let nic, _ = open_nic ~qp () in
+      let cq = Result.get_ok (M.Cq.make nic 2) in
+      let a = Domain.spawn (fun () -> M.Qp.make cq 2) in
+      Semaphore.Binary.acquire inside;
+      let b =
+        match M.Qp.make cq 2 with
+        | _ -> `Made
+        | exception Invalid_argument _ -> `Refused
+      in
+      Semaphore.Binary.release release;
+      is_ok ~pp:Format.pp_print_string (Domain.join a);
+      equal ~msg:"the second make"
+        (Testable.make
+           ~pp:(fun ppf -> function
+             | `Made -> Format.pp_print_string ppf "made"
+             | `Refused -> Format.pp_print_string ppf "refused")
+           ~equal:( = ))
+        `Refused b)
+
+let () = exit (run "rig_mlx5" [ room ])
