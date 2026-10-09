@@ -849,10 +849,8 @@ let large_pairs =
    complex dtypes), a decline only of a case [b] does not claim, and nothing
    written
    but on [Done]. *)
-type into = { into : 'v 's. ('v, 's) A.t -> A.answer }
-
 let answers ?checked (b : Support.backend) kind (D.Any at) (D.Any dt) shape
-    ~accepted ~want { into } =
+    ~accepted ~want (into : 'v 's. ('v, 's) A.t -> A.answer) =
   let dst = on b (seeded dt shape 99) in
   let before = bits_of (host dst) in
   match into dst with
@@ -882,7 +880,7 @@ let law_apply1 ?(kinds = unaries) (b : Support.backend) (Case x) =
       answers b (K1 k) (D.Any dt) (D.Any dt) shape
         ~accepted:(P.accepts1 k dt dt)
         ~want:(fun () -> expected name dt ~compare:false [| x |])
-        { into = (fun dst -> K.apply1 k ~dst x) })
+        (fun dst -> K.apply1 k ~dst x))
     kinds
 
 (* A bitcast keeps every element's bits, sub-byte codes and NaN payloads
@@ -896,7 +894,7 @@ let law_bitcast (b : Support.backend) (Case x, D.Any d) =
     (L.shape (A.layout x))
     ~accepted:(P.accepts1 Bitcast dt d)
     ~want:(fun () -> bits_of (host x))
-    { into = (fun dst -> K.apply1 Bitcast ~dst x) }
+    (fun dst -> K.apply1 Bitcast ~dst x)
 
 (* A case and a dtype of its width, or any dtype one time in five. *)
 let same_width c =
@@ -919,7 +917,7 @@ let law_apply2 ?(kinds = op2s) (b : Support.backend) (Pair (x, y)) =
       let rd = if compare then D.Any D.Bool else D.Any dt in
       answers b (K2 k) (D.Any dt) rd shape ~accepted:(P.accepts2 k dt)
         ~want:(fun () -> expected (name2 k) dt ~compare [| x; y |])
-        { into = (fun dst -> K.apply2 k ~dst x y) })
+        (fun dst -> K.apply2 k ~dst x y))
     kinds
 
 (* Where picks each element's bytes; Fma is nx_kinds.h's. *)
@@ -939,7 +937,7 @@ let law_apply3 (b : Support.backend) (Pair (x, y), seed) =
           (List.mapi
              (fun i c -> Array.sub (if c then xs else ys) (i * w) w)
              (Array.to_list cs)))
-      { into = (fun dst -> K.apply3 Where ~dst c x y) }
+      (fun dst -> K.apply3 Where ~dst c x y)
   in
   if seed mod 2 = 0 then where (seeded D.Bool shape seed)
   else where (seeded D.Bit shape seed);
@@ -947,7 +945,7 @@ let law_apply3 (b : Support.backend) (Pair (x, y), seed) =
   answers b (K3 Fma) (D.Any dt) (D.Any dt) shape
     ~accepted:(P.accepts3 Fma dt dt)
     ~want:(fun () -> expected "fma" dt ~compare:false [| x; y; z |])
-    { into = (fun dst -> K.apply3 Fma ~dst x y z) }
+    (fun dst -> K.apply3 Fma ~dst x y z)
 
 let law_apply0 (b : Support.backend) (D.Any dt, shape, seed) =
   let module K = (val b.kernels) in
@@ -958,7 +956,7 @@ let law_apply0 (b : Support.backend) (D.Any dt, shape, seed) =
   answers b (K0 (Fill fill)) (D.Any dt) (D.Any dt) shape
     ~accepted:(P.accepts0 (Fill fill) dt)
     ~want:(fun () -> Array.concat (List.init n (fun _ -> Array.sub e 0 w)))
-    { into = (fun dst -> K.apply0 (Fill fill) ~dst) };
+    (fun dst -> K.apply0 (Fill fill) ~dst);
   if Array.length shape > 0 then begin
     let axis = seed mod Array.length shape in
     answers b (K0 (Iota axis)) (D.Any dt) (D.Any dt) shape
@@ -974,7 +972,7 @@ let law_apply0 (b : Support.backend) (D.Any dt, shape, seed) =
                | D.Float -> low_bytes 8 (Int64.bits_of_float (Float.of_int i))
                | _ -> low_bytes w (Int64.of_int i))
              (indices shape)))
-      { into = (fun dst -> K.apply0 (Iota axis) ~dst) }
+      (fun dst -> K.apply0 (Iota axis) ~dst)
   end
 
 (* Values the kinds' documentation states, through nx.cpu. *)
