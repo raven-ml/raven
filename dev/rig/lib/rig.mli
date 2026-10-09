@@ -291,10 +291,11 @@ val wait : t -> int -> unit
     [v] is not committed ({!submit}). For a driver whose host writes the word
     ([`Host] {!Driver.completion}), or whose word the host does not address, it
     blocks in the driver ({!Driver.sleep}) from the first read of the word. For
-    another, it spins on the word, yielding the processor and with the domain
-    lock released, and blocks in the driver between reads once the word stood
-    still for the still interval. It waits however long the work runs: only
-    [d]'s driver decides that work hung.
+    another, it reads the word for up to 4 us holding the domain lock, so that
+    the domain's other threads wait at most that long, then spins on it,
+    yielding the processor and with the domain lock released, and blocks in the
+    driver between reads once the word stood still for the still interval. It
+    waits however long the work runs: only [d]'s driver decides that work hung.
 
     Raises [Invalid_argument] if [v > submitted d], and {!Lost} if [d] is lost
     or is lost by the wait. *)

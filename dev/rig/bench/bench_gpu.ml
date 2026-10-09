@@ -189,26 +189,34 @@ let floor_part f (p : Sub.part) =
 
 (* A GPU's submits through rig, beside the same submits through its driver's C
    entries alone. [empty] and [cost] submit no work and wait for each submit or
-   every [drain]; [kernel] submits the part [kernel] makes over three buffers
-   and waits every [drain]. A floor submits and commits each value; [encode]
-   commits every [drain], as [cost]'s waits do. The replay rows run [depth]
-   copies of a step over [slots] parameters, each run waiting for its copy's
-   last run: with no part, and with the part [kernel] makes, a launch of the
-   vendor's smallest kernel. A floor spins on the word; [release-sleep], for a
-   driver whose host writes the word ([sleeps]), and the replay floors wait as
-   rig waits for that driver: in its [sleep] from the first read, or spinning.
-   The kernel floor drives the device rig opened, through its driver's entries
-   alone, after rig loaded the kernel. With [graph], the graph rows do the same
-   with the part [graph] makes, the launch of a recorded step of 64 such
-   kernels. Each case opens its GPU in its own worker, so that no process forks
-   after a vendor library started: through rig with [opened], or the driver
-   alone with [open_]. *)
+   every [drain]; [wait/reached] waits for a value reached; [kernel] submits the
+   part [kernel] makes over three buffers and waits every [drain]. A floor
+   submits and commits each value; [encode] commits every [drain], as [cost]'s
+   waits do. The replay rows run [depth] copies of a step over [slots]
+   parameters, each run waiting for its copy's last run: with no part, and with
+   the part [kernel] makes, a launch of the vendor's smallest kernel. A floor
+   spins on the word; [release-sleep], for a driver whose host writes the word
+   ([sleeps]), and the replay floors wait as rig waits for that driver: in its
+   [sleep] from the first read, or spinning. The kernel floor drives the device
+   rig opened, through its driver's entries alone, after rig loaded the kernel.
+   With [graph], the graph rows do the same with the part [graph] makes, the
+   launch of a recorded step of 64 such kernels. Each case opens its GPU in its
+   own worker, so that no process forks after a vendor library started: through
+   rig with [opened], or the driver alone with [open_]. *)
 let gpu_rows (type a) (module D : Rig.Driver with type t = a) ?(sleeps = false)
     ?(copies = true) ?graph v ~opened open_ ~kernel =
   let get = function Ok x -> x | Error why -> failwith why in
   let rig () =
     let g, _ = opened () in
     (g, Sub.make ~reads:0 ~writes:0 g [||], ref 0)
+  in
+  (* A device whose last value is reached. *)
+  let reached () =
+    let g, s, _ = rig () in
+    let p = Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||] in
+    let v = Rig.Point.value p in
+    Rig.wait g v;
+    (g, v)
   in
   (* A launch of [kernel] reading two buffers and writing a third, as an
      operation of two operands. *)
@@ -382,6 +390,8 @@ let gpu_rows (type a) (module D : Rig.Driver with type t = a) ?(sleeps = false)
         row "to-device-off-page-256M" (copying off_page ~to_device:true) copy;
         row "from-device-off-page-256M" (copying off_page ~to_device:false) copy;
       ];
+    Thumper.group (strf "wait/%s" v)
+      [ row "reached" reached (fun (g, v) -> Rig.wait g v) ];
     Thumper.group (strf "submit/%s" v)
       [
         row "empty" rig (fun (g, s, _) ->

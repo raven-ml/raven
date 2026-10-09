@@ -9,7 +9,7 @@ type t = {
   events : (int * Def.event) list Atomic.t;
 }
 
-external now : unit -> int = "caml_rig_now"
+external now : unit -> int = "caml_rig_now" [@@noalloc]
 
 let profiles : t list Atomic.t = Atomic.make []
 let numbers = Atomic.make 0

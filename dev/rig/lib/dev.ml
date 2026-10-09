@@ -65,6 +65,13 @@ let orphaned_state = 6
    where a pending [Sys.Break] raises. *)
 let still_ms = 200
 
+(* How long a wait reads a word the device writes before it releases the
+   domain lock to spin: past a submission's round trip on the GPUs measured
+   (3.5 us on kimchi's RTX 5000), so that a wait for work about to complete
+   costs no release; the domain's other threads wait at most this long. It
+   polls, so other domains' collections never wait on it. *)
+let held_ns = 4_000
+
 (* The table of devices *)
 
 (* The devices by index; an index whose open failed holds the host. *)
@@ -373,6 +380,15 @@ let look_at_producers d =
         try sleep p ~seen:(word p) ~still_ms:0 with Lost _ -> ())
     (c_producers d.c)
 
+(* Reads [d]'s word until it reaches [v] or the clock [until]: the word. *)
+let rec spin_held d v until =
+  let w = c_word d.c in
+  if w >= v || Prof.now () >= until then w
+  else begin
+    Domain.cpu_relax ();
+    spin_held d v until
+  end
+
 (* Waits for [d]'s value [v], the word having read [seen] since [since]: the
    word once it reads [v] or [d] is lost. Until [v] is committed, each round
    commits [d]'s work unless another holds [d]'s turn throughout the still
@@ -393,7 +409,9 @@ let rec wait_from d v seen since =
     | (Store | Object _) when still >= still_ms ->
         look_at_producers d;
         sleep d ~seen:w ~still_ms
-    | Store | Object _ -> ignore (c_spin d.c v (still_ms - still)));
+    | Store | Object _ ->
+        if spin_held d v (Prof.now () + held_ns) < v then
+          ignore (c_spin d.c v (still_ms - still)));
     wait_from d v w since
   end
 
