@@ -10,7 +10,6 @@
  (foreign_stubs
   (language c)
   (include_dirs ../array)
-  (extra_deps
-   (glob_files kernels/*.cubin))
+  (extra_deps kernels/sm_89.cubin)
   (flags :standard -DNX_CUDA_KERNELS_DIR=kernels)
   (names fill_cuda plan nx_cuda_stubs)))

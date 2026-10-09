@@ -1,7 +1,7 @@
 ; What the Metal suite and bench share: the GPU through rig with the
 ; harness's metallib, operands, and runs of launch records through
-; nx.metal's fill. The harness's metallib is built by gen.py with nx.metal's
-; (lib/metal/kernels) and embedded here.
+; nx.metal's fill. The harness's metallib is built with nx.metal's by
+; lib/metal/kernels/build.sh and embedded here.
 
 (library
  (name nx_metal_support)
@@ -15,3 +15,11 @@
    (:standard
     -DNX_HARNESS_METALLIB=harness.metallib
     (:include ../../../lib/metal/objc_flags.sexp)))))
+
+(rule
+ (targets harness.metallib)
+ (mode fallback)
+ (action
+  (progn
+   (echo "dev/nx2/test/metal/support/harness.metallib is missing: build it with `dev/nx2/lib/metal/kernels/build.sh`, or copy it in\n")
+   (system "exit 1"))))

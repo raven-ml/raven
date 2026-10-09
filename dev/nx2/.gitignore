@@ -1,5 +1,5 @@
-# Compiled kernels: each gen.py writes them and pins.json holds their
-# digests, so a checkout regenerates or copies them in.
+# Compiled kernels: each backend's kernels/build script writes them, by hand
+# on a machine with its toolchain, and other checkouts copy them in.
 *.cubin
 *.metallib
 *.co

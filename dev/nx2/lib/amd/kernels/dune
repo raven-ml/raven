@@ -1,20 +1,11 @@
-; The code objects of nx.amd's kernels and of the AMD suite's harness,
-; which gen.py compiles ahead of time on a machine with the pinned comgr.
-; Their digests are checked here on every machine.
+; nx.amd's code object, which build.py compiles by hand on a machine with
+; comgr. It is not committed: a checkout without it fails here, naming the
+; script.
 
 (rule
- (alias runtest)
- (deps
-  (:pins pins.json)
-  gen.py
-  ../kernels.h
-  ../../array/nx_dtype.h
-  (glob_files libc/*.h)
-  (glob_files src/*.hip)
-  (glob_files src/*.h)
-  (glob_files *.co)
-  ../../../test/amd/support/harness.h
-  (glob_files ../../../test/amd/support/*.hip)
-  (glob_files ../../../test/amd/support/*.co))
+ (targets gfx1201.co)
+ (mode fallback)
  (action
-  (run %{exe:../../../tools/pins/pins.exe} %{pins} lib/amd/kernels %{deps})))
+  (progn
+   (echo "dev/nx2/lib/amd/kernels/gfx1201.co is missing: build it with `uv run dev/nx2/lib/amd/kernels/build.py`, or copy it in\n")
+   (system "exit 1"))))

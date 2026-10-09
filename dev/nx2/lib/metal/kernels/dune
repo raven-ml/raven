@@ -1,18 +1,11 @@
-; The metallibs of nx.metal's kernels and of the Metal suite's harness,
-; which gen.py compiles ahead of time on a Mac with the pinned Metal
-; toolchain. Their digests are checked here on every machine.
+; nx.metal's metallib, which build.sh compiles by hand on a Mac with the
+; Metal toolchain. It is not committed: a checkout without it fails here,
+; naming the script.
 
 (rule
- (alias runtest)
- (deps
-  (:pins pins.json)
-  gen.py
-  ../kernels.h
-  ../../array/nx_dtype.h
-  kernels.metallib
-  (glob_files src/*.metal)
-  ../../../test/metal/support/harness.h
-  (glob_files ../../../test/metal/support/*.metal)
-  (glob_files ../../../test/metal/support/*.metallib))
+ (targets kernels.metallib)
+ (mode fallback)
  (action
-  (run %{exe:../../../tools/pins/pins.exe} %{pins} lib/metal/kernels %{deps})))
+  (progn
+   (echo "dev/nx2/lib/metal/kernels/kernels.metallib is missing: build it with `dev/nx2/lib/metal/kernels/build.sh`, or copy it in\n")
+   (system "exit 1"))))

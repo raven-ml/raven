@@ -17,3 +17,11 @@
   (extra_deps gfx1201.co)
   (flags :standard -DNX_HARNESS_CO=gfx1201.co)
   (names nx_amd_support_stubs)))
+
+(rule
+ (targets gfx1201.co)
+ (mode fallback)
+ (action
+  (progn
+   (echo "dev/nx2/test/amd/support/gfx1201.co is missing: build it with `uv run dev/nx2/lib/amd/kernels/build.py`, or copy it in\n")
+   (system "exit 1"))))

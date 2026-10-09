@@ -10,3 +10,11 @@
   (extra_deps sm_89.cubin)
   (flags :standard -DNX_HARNESS_CUBIN=sm_89.cubin)
   (names nx_cuda_support_stubs)))
+
+(rule
+ (targets sm_89.cubin)
+ (mode fallback)
+ (action
+  (progn
+   (echo "dev/nx2/test/cuda/support/sm_89.cubin is missing: build it with `dev/nx2/lib/cuda/kernels/build.sh`, or copy it in\n")
+   (system "exit 1"))))

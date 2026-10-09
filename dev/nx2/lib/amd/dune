@@ -10,7 +10,6 @@
  (foreign_stubs
   (language c)
   (include_dirs ../array)
-  (extra_deps
-   (glob_files kernels/*.co))
+  (extra_deps kernels/gfx1201.co)
   (flags :standard -DNX_AMD_KERNELS_DIR=kernels)
   (names fill_amd plan nx_amd_stubs)))

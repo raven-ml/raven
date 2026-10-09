@@ -1,20 +1,11 @@
-; The cubins of nx.cuda's kernels and of the CUDA suite's harness, which
-; gen.py compiles ahead of time on a machine with the pinned CUDA toolkit.
-; Their digests are checked here on every machine.
+; nx.cuda's cubin, which build.sh compiles by hand on a machine with the
+; CUDA toolkit. It is not committed: a checkout without it fails here,
+; naming the script.
 
 (rule
- (alias runtest)
- (deps
-  (:pins pins.json)
-  gen.py
-  ../kernels.h
-  ../../array/nx_dtype.h
-  (glob_files src/*.cu)
-  (glob_files src/*.cuh)
-  (glob_files *.cubin)
-  ../../../test/cuda/support/harness.h
-  (glob_files ../../../test/cuda/support/*.cu)
-  (glob_files ../../../test/cuda/support/*.cuh)
-  (glob_files ../../../test/cuda/support/*.cubin))
+ (targets sm_89.cubin)
+ (mode fallback)
  (action
-  (run %{exe:../../../tools/pins/pins.exe} %{pins} lib/cuda/kernels %{deps})))
+  (progn
+   (echo "dev/nx2/lib/cuda/kernels/sm_89.cubin is missing: build it with `dev/nx2/lib/cuda/kernels/build.sh`, or copy it in\n")
+   (system "exit 1"))))
