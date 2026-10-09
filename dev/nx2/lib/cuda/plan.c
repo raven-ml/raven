@@ -118,33 +118,36 @@ typedef struct {
 static const tile tiles[] = {NX_CUDA_TILES(TILE_ROW)};
 #undef TILE_ROW
 
-/* The blocks of a tile over [batch] x [m] x [n] outputs. */
-static uint64_t blocks(int t, int64_t batch, int64_t m, int64_t n) {
-  return batch * ceil_div(m, tiles[t].bm) * ceil_div(n, tiles[t].bn);
+/* What a tile of [bm] x [bn] outputs costs over [batch] x [m] x [n]
+   outputs on sm_89: blocks run in waves of [WAVE], the GPU's 100 SMs, and
+   a wave lasts the tile's outputs over its [efficiency], its outputs per
+   unit of time relative to its family's fastest tile, in percent. Measured
+   on kimchi's RTX 5000 Ada; a GPU of another size runs the same tiles, with
+   the same bits. */
+#define WAVE 100
+static double cost(int64_t batch, int64_t m, int64_t n, int64_t bm,
+                   int64_t bn, int efficiency) {
+  const uint64_t blocks = batch * ceil_div(m, bm) * ceil_div(n, bn);
+  return (double)ceil_div(blocks, WAVE) * bm * bn / efficiency;
 }
 
-/* What the mma tiles cost on sm_89, measured on kimchi's RTX 5000 Ada:
-   blocks run in waves of [WAVE], the GPU's 100 SMs, and each tile's
-   outputs per unit of time relative to the 128 x 256 tile's, in percent.
-   A GPU of another size runs the same tiles, with the same bits. */
-#define WAVE 100
+/* The mma tiles' efficiency, against the 128 x 256 tile's. */
 static const int efficiency[T_COUNT] = {[T_t128x128] = 90, [T_t128x256] = 100,
                                         [T_t64x64] = 60, [T_t16x64] = 30};
 
 /* The mma tile of a product among those [kind] has an instance of with k
-   contiguous: the one of least cost, waves times outputs per tile over its
-   efficiency, by its shape alone; m <= 16 takes the 16-row tile, which
-   larger m take where it costs least. -1 if [kind] has none for the shape:
-   the SIMT or skinny kernels sum it. */
+   contiguous: the one of least cost, by its shape alone; m <= 16 takes the
+   16-row tile, which larger m take where it costs least. -1 if [kind] has
+   none for the shape: the SIMT or skinny kernels sum it. */
 static int mma_tile(int kind, int64_t batch, int64_t m, int64_t n) {
   int best = -1;
   double least = -1;
   for (int t = 0; t < T_COUNT; t++) {
     if (find_mma(kind, A_k, A_k, t) < 0 || (m <= 16 && t != T_t16x64))
       continue;
-    double cost = (double)ceil_div(blocks(t, batch, m, n), WAVE) * tiles[t].bm *
-                  tiles[t].bn / efficiency[t];
-    if (least < 0 || cost < least) least = cost, best = t;
+    const double c =
+        cost(batch, m, n, tiles[t].bm, tiles[t].bn, efficiency[t]);
+    if (least < 0 || c < least) least = c, best = t;
   }
   return best;
 }
@@ -422,18 +425,14 @@ int nx_cuda_plan_contract(const nx_cuda_contract_in *in,
     kernel = find_skinny(sum);
     gx = ceil_div(m, NX_SKINNY_ROWS) * ceil_div(n, 32);
   } else {
-    /* The SIMT tile of least cost among the accumulator's instances, waves
-       times outputs over efficiency: on sm_89, the 64-wide tile computes
-       70% as fast as the 128-wide one. */
+    /* The SIMT tile of least cost among the accumulator's instances: on
+       sm_89, the 64-wide tile computes 70% as fast as the 128-wide one. */
     static const int sides[2] = {128, 64}, eff[2] = {100, 70};
     double least = -1;
     for (int i = 0; i < 2; i++) {
-      const int64_t q = sides[i];
       if (find_simt(sum, sides[i]) < 0) continue;
-      const double cost =
-          (double)ceil_div(batch * ceil_div(m, q) * ceil_div(n, q), WAVE) * q *
-          q / eff[i];
-      if (least < 0 || cost < least) least = cost, side = sides[i];
+      const double c = cost(batch, m, n, sides[i], sides[i], eff[i]);
+      if (least < 0 || c < least) least = c, side = sides[i];
     }
     kernel = find_simt(sum, side);
     gx = ceil_div(m, side) * ceil_div(n, side);
