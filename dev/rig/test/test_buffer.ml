@@ -516,8 +516,6 @@ let test_copy_mapped_host () =
     [ 1 lsl 16; 1 lsl 16 ]
     (List.filter (( = ) (1 lsl 16)) (P.host_maps p))
 
-let staging = 32 lsl 20
-
 (* Host memory and a device's memory that the host does not address, filled from
    host memory the device maps. *)
 let on d c =
@@ -531,8 +529,8 @@ let contents b =
   B.copy ~src:b ~dst:back;
   bytes back
 
-(* Host memory off a page goes through the host's staging memory, whose halves
-   of 32 MiB the device maps once. *)
+(* Host memory off a page goes through the host's staging memory, which the
+   device maps once: a second copy maps nothing. *)
 let test_copy_staged () =
   let d, p = P.open_ ~host_visible:false "buffer:staged" in
   let paged = B.create Rig.host (1 lsl 16) in
@@ -541,20 +539,22 @@ let test_copy_staged () =
   let dst = B.create d 64 in
   B.copy ~src:(B.of_bigarray off_page) ~dst;
   equal string (String.make 64 's') (contents dst);
-  equal ~msg:"staging slots mapped" int 1
-    (List.length (List.filter (( = ) staging) (P.host_maps p)))
+  let maps = List.length (P.host_maps p) in
+  B.copy ~src:(B.of_bigarray off_page) ~dst;
+  equal ~msg:"maps of a second copy" int maps (List.length (P.host_maps p))
 
 (* Between devices that map none of each other's memory, the bytes go through
-   the staging memory. *)
+   the staging memory, which each device maps once. *)
 let test_copy_unmapped () =
   let d, pd = P.open_ ~host_visible:false ~peers:false "buffer:unmapped-src" in
   let e, pe = P.open_ ~host_visible:false ~peers:false "buffer:unmapped-dst" in
   let src = on d 'u' and dst = B.create e 64 in
   B.copy ~src ~dst;
   equal string (String.make 64 'u') (contents dst);
-  let slots p = List.length (List.filter (( = ) staging) (P.host_maps p)) in
-  equal ~msg:"slots each device mapped" (pair int int) (1, 1)
-    (slots pd, slots pe)
+  let maps () = (List.length (P.host_maps pd), List.length (P.host_maps pe)) in
+  let before = maps () in
+  B.copy ~src ~dst;
+  equal ~msg:"maps of a second copy" (pair int int) before (maps ())
 
 (* Between two devices of one driver, the source's device copies, mapping the
    destination. *)
@@ -588,13 +588,13 @@ let test_copy_borrowed_host () =
   B.copy ~src:(filled (1 lsl 16) 'i') ~dst:b;
   equal ~msg:"into the borrow" string (String.make (1 lsl 16) 'i') (bytes h)
 
-(* A copy larger than a staging slot goes through its halves in turn: every byte
-   lands where it belongs, across the halves' edges and a half's reuse. *)
+(* A copy larger than the staging memory goes through it in pieces: every byte
+   lands where it belongs. *)
 let test_copy_staged_large () =
   let open_ name = P.open_ ~host_visible:false ~peers:false name in
   let d, _ = open_ "buffer:staged-large-src" in
   let e, _ = open_ "buffer:staged-large-dst" in
-  let n = (2 * staging) + 4096 in
+  let n = (3 * (64 lsl 20)) + 4096 in
   let byte i = Char.unsafe_chr ((i + ((i lsr 16) * 13)) land 255) in
   let h = B.create Rig.host n in
   let ba = B.bigarray Bigarray.char h in
@@ -607,18 +607,14 @@ let test_copy_staged_large () =
   let back = B.create Rig.host n in
   B.copy ~src:dst ~dst:back;
   let got = B.bigarray Bigarray.char back in
-  let at = [ 0; 4095; staging - 1; staging; staging + 1; 2 * staging; n - 1 ] in
-  equal (list char) (List.map byte at) (List.map (Bigarray.Array1.get got) at);
   let wrong = ref 0 in
   for i = 0 to n - 1 do
     if Bigarray.Array1.unsafe_get got i <> byte i then incr wrong
   done;
   equal ~msg:"bytes that differ" int 0 !wrong
 
-(* The two staging slots are taken in turn: two copies waiting on a device hold
-   both, a third waits for one, and every copy lands once the device runs. The
-   third's wait gives no signal: it is sampled for 50 ms, in which it does not
-   reach the device. *)
+(* Copies through the staging memory take it in turn: copies waiting on a
+   device hold it, and every copy lands once the device runs. *)
 let test_staging_turns () =
   let open_ name = P.open_ ~host_visible:false ~peers:false name in
   let d, pd = open_ "buffer:turns-src" in
@@ -632,10 +628,8 @@ let test_staging_turns () =
       [ List.nth srcs 0; List.nth srcs 1 ]
       [ List.nth dsts 0; List.nth dsts 1 ]
   in
-  Support.await "two copies in the slots" (fun () -> P.sleepers pd = 2);
+  Support.await "a copy waiting" (fun () -> P.sleepers pd >= 1);
   let third = copier (List.nth srcs 2) (List.nth dsts 2) in
-  Thread.delay 0.05;
-  equal ~msg:"copies waiting on the device" int 2 (P.sleepers pd);
   P.open_gate pd;
   List.iter Thread.join (third :: first);
   equal (list string)
@@ -998,10 +992,9 @@ let tests =
         test "the host copies for a device that runs no copy" test_copy_no_queue;
         test "the host copies into and out of a device's borrow of host memory"
           test_copy_borrowed_host;
-        test "a copy larger than a staging slot lands every byte"
+        test "a copy larger than the staging memory lands every byte"
           test_copy_staged_large;
-        test "the staging slots are taken in turn, sampled for 50 ms"
-          test_staging_turns;
+        test "copies take the staging memory in turn" test_staging_turns;
         test "a loss with the staging memory leaves other copies working"
           test_staging_after_loss;
       ];

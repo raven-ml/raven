@@ -41,12 +41,11 @@
     Every function may be called from any domain, at the same time as others. No
     function but {!open_} holds a lock while it waits: {!open_} holds its name's
     lock while the opener runs, so opens of one name run one at a time and opens
-    of other names go on. A copy through the host's staging memory
-    ({!Buffer.copy}) holds a staging slot while it waits for devices, and a copy
-    that finds both slots held waits for one. A wait releases the domain lock
-    while it blocks and returns to OCaml at least every still interval (200 ms),
-    so a pending [Sys.Break] from Ctrl-C raises there; an interrupted wait loses
-    no device and assigns no value.
+    of other names go on. A copy through staging memory ({!Buffer.copy}) holds
+    part of it while it waits for devices, and a copy that finds it all held
+    waits. A wait releases the domain lock while it blocks and returns to OCaml
+    at least every 200 ms, so a pending [Sys.Break] from Ctrl-C raises there;
+    an interrupted wait loses no device and assigns no value.
 
     {1:loss Loss}
 
@@ -77,33 +76,13 @@
     values ({!submit}). {!Buffer.create}, {!Buffer.of_io} and
     {!Buffer.copy} drain the devices they use first. An allocation of more than
     the device's {!budget} raises {!Out_of_memory} at once and keeps the cache.
-    Another that the budget or the driver refuses runs rounds of reclamation for
-    the budget that refused, the device's or, for memory the host's budget
-    counts, the host's, and tries again after each, four tries in all, before it
-    raises {!Out_of_memory}. A round returns every cached memory, on any device,
-    that counts in that budget, once its device's submitted work is done, and
-    for the host its kept buffers; waits for the submitted work of every device
-    whose work holds back the return of other such memory, such as memory
-    collected over the budget, so a device's loss raises {!Lost}; drains every
-    device, the host included; and from the second round collects unreachable
-    buffers and drains every device again. A copy whose device's driver refuses
-    to map the staging memory runs the same rounds for that device.
-
-    The host keeps the memory of collected buffers of 64 KiB or more in a cache
-    for the next buffers of their sizes. It returns what the cache holds beyond
-    a major cycle's share of the program's memory, or beyond 32 MiB where that
-    is more, as it keeps a buffer and at the end of each major cycle.
-
-    The host memory of buffers of 64 KiB or more paces the collector's major
-    cycles by the program's memory: its OCaml heap and the host memory its live
-    buffers hold. A cycle is due once the memory allocated since the last one
-    reaches [custom_major_ratio / 150] of it ({!Gc.control}), 29% by default.
-    Unreachable buffers then hold at most three such shares, 88% of the
-    program's memory by default. The memory of another device's buffers paces
-    major cycles by the room left in that device's budget, the same share of it,
-    and at least a page: a device that fills up runs cycles more often before it
-    refuses an allocation. Smaller host buffers pace the collector as any
-    bigarray does. *)
+    Another that the budget or the driver refuses runs rounds of reclamation
+    for the budget that refused (cached memory returned, work that holds memory
+    back waited for, unreachable buffers collected) before it raises
+    {!Out_of_memory}; a wait in a round raises {!Lost} for a lost device. A
+    copy whose device's driver refuses to map the staging memory runs the same
+    rounds for that device. Buffer memory paces the collector, so unreachable
+    buffers hold a bounded share of the program's memory. *)
 
 (** {1:devices Devices} *)
 
@@ -291,11 +270,9 @@ val wait : t -> int -> unit
     [v] is not committed ({!submit}). For a driver whose host writes the word
     ([`Host] {!Driver.completion}), or whose word the host does not address, it
     blocks in the driver ({!Driver.sleep}) from the first read of the word. For
-    another, it reads the word for up to 4 us holding the domain lock, so that
-    the domain's other threads wait at most that long, then spins on it,
-    yielding the processor and with the domain lock released, and blocks in the
-    driver between reads once the word stood still for the still interval. It
-    waits however long the work runs: only [d]'s driver decides that work hung.
+    another, it spins on the word, then waits with the domain lock released,
+    blocking in the driver between reads once the word stood still. It waits
+    however long the work runs: only [d]'s driver decides that work hung.
 
     Raises [Invalid_argument] if [v > submitted d], and {!Lost} if [d] is lost
     or is lost by the wait. *)
@@ -427,11 +404,11 @@ module Buffer : sig
       with a copy queue copies, as work on its timeline: [dst]'s device when
       only [src] is host-addressable, [src]'s otherwise, directly between memory
       it addresses or maps, and through the host's {e staging memory} otherwise:
-      two slots of 64 MiB of host memory, made at the first copy that needs them
-      and kept for the life of the process ({!domains}). A device of this
-      machine that maps no host memory ({!Driver.maps_host}) stages through two
-      slots of its own [Pinned] memory instead, made at its first copy that
-      needs them and kept until it is lost. A device that runs no copy has
+      host memory, made at the first copy that needs it and kept for the life
+      of the process ({!domains}). A device of this machine that maps no host
+      memory ({!Driver.maps_host}) stages through staging memory of its own
+      [Pinned] memory instead, made at its first copy that needs it and kept
+      until it is lost. A device that runs no copy has
       memory the host addresses, which the host copies; a borrow on it of
       another device's memory copies by that device. An {!Io} device's memory,
       of any machine, is read and written by its {!Io.read} and {!Io.write},

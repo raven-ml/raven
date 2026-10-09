@@ -764,18 +764,12 @@ value rig_test_shares(value v_ba) {
   return Val_long(p == NULL ? 0 : (intnat)atomic_load(&p->refcount));
 }
 
-/* Rig's own: the bytes its host heap keeps for reuse. */
-extern intnat rig_heap_kept(void);
+/* Rig's own: the bytes host buffers hold in the host's budget. */
 extern intnat rig_heap_held(void);
 
 value rig_test_host_held(value unit) {
   (void)unit;
   return Val_long(rig_heap_held());
-}
-
-value rig_test_host_kept(value unit) {
-  (void)unit;
-  return Val_long(rig_heap_kept());
 }
 
 /* The bytes the C heap holds allocated, or -1 where its allocator does not

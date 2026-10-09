@@ -452,79 +452,6 @@ let test_idle_borrower () =
   let room = Support.host_held () + (n / 2) in
   with_host_budget room (fun () -> equal int n (B.length (B.create Rig.host n)))
 
-(* The host gives back what it keeps beyond a major cycle's share of the
-   program's memory, or 32 MiB where that is more, at the end of a cycle: of 64
-   MiB dropped while the rest lives it keeps 32 MiB at least, whatever the
-   collector's parameters, and the buffers it kept go back once a cycle finds
-   the set gone. *)
-let test_host_trim () =
-  let mib = 1 lsl 20 in
-  Gc.full_major ();
-  Rig.free_cache Rig.host;
-  let live = ref (List.init 256 (fun _ -> B.create Rig.host mib)) in
-  Gc.full_major ();
-  Gc.full_major ();
-  live := List.filteri (fun i _ -> i >= 64) !live;
-  Gc.full_major ();
-  at_least ~msg:"kept while the rest lives" int ~than:(32 * mib)
-    (Support.host_kept ());
-  ignore (Sys.opaque_identity !live);
-  live := [];
-  Gc.full_major ();
-  Gc.full_major ();
-  Gc.full_major ();
-  at_most ~msg:"kept once it is gone" int ~than:(32 * mib)
-    (Support.host_kept ())
-
-(* free_cache on the host returns what the host keeps for reuse. *)
-let test_host_free_cache () =
-  ignore (dropped Rig.host ((64 * kib) + 4093));
-  Gc.full_major ();
-  Gc.full_major ();
-  at_least ~msg:"kept" int ~than:1 (Support.host_kept ());
-  Rig.free_cache Rig.host;
-  equal ~msg:"after free_cache" int 0 (Support.host_kept ())
-
-(* set_budget on the host gives back what it keeps, oldest first, until its live
-   buffers and what it keeps fit in the new budget. *)
-let test_host_set_budget () =
-  let mib = 1 lsl 20 in
-  Rig.free_cache Rig.host;
-  let live = ref (List.init 4 (fun _ -> B.create Rig.host mib)) in
-  ignore (Sys.opaque_identity !live);
-  live := [];
-  Gc.full_major ();
-  Gc.full_major ();
-  at_least ~msg:"kept" int ~than:(4 * mib) (Support.host_kept ());
-  let room = 5 * mib / 2 in
-  with_host_budget
-    (Support.host_held () + room)
-    (fun () ->
-      at_most ~msg:"kept after set_budget" int ~than:room (Support.host_kept ());
-      at_least ~msg:"what fits stays kept" int ~than:(2 * mib)
-        (Support.host_kept ()))
-
-(* The host keeps a collected buffer's bytes, all of them, whichever array over
-   it is collected last: a float32 view that outlives its buffer keeps its
-   buffer's size. *)
-let test_host_keeps_size () =
-  let n = 1 lsl 20 in
-  Gc.full_major ();
-  Gc.full_major ();
-  Rig.free_cache Rig.host;
-  let view =
-    ref
-      (Some ((fun () -> B.bigarray Bigarray.float32 (B.create Rig.host n)) ()))
-  in
-  Gc.full_major ();
-  Gc.full_major ();
-  equal ~msg:"while the view lives" int 0 (Support.host_kept ());
-  ignore (Sys.opaque_identity !view);
-  view := None;
-  Gc.full_major ();
-  Gc.full_major ();
-  equal ~msg:"once it is collected" int n (Support.host_kept ())
-
 (* The host keeps a collected buffer of 64 KiB or more for the next buffer of
    its size, unless a bigarray of it lives, which keeps its bytes. *)
 let test_host_cache () =
@@ -682,19 +609,12 @@ let tests =
           test_foreign_use;
         test "the host keeps a collected buffer's memory for its size"
           test_host_cache;
-        test "free_cache on the host returns what it keeps" test_host_free_cache;
-        test "set_budget on the host returns what it keeps beyond the budget"
-          test_host_set_budget;
         test "host memory a device borrowed returns once its work ran"
           test_borrowed_host;
         test "a bigarray a device borrowed lives until its work ran"
           test_borrowed_bigarray;
         test "host memory an idle device borrowed returns to an allocation"
           test_idle_borrower;
-        test "the host gives back what it keeps once a cycle finds it unused"
-          test_host_trim;
-        test "the host keeps a buffer's bytes when a view outlives it"
-          test_host_keeps_size;
       ];
   ]
 

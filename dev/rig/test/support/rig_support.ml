@@ -47,7 +47,6 @@ external interrupt : unit -> unit = "rig_test_interrupt"
 external shares : ('a, 'b, 'c) Bigarray.Array1.t -> int = "rig_test_shares"
 [@@noalloc]
 
-external host_kept : unit -> int = "rig_test_host_kept"
 external host_held : unit -> int = "rig_test_host_held"
 external heap_bytes : unit -> int = "rig_test_heap_bytes"
 external load : int -> int = "rig_test_load"

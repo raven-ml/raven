@@ -474,10 +474,8 @@ value caml_rig_heap_release(value v_n) {
   return Val_unit;
 }
 
-/* The bytes the heap keeps for reuse, and the bytes host buffers hold
-   reserved against the host's budget, for tests. */
-intnat rig_heap_kept(void) { return heap_kept(); }
-
+/* The bytes host buffers hold reserved against the host's budget, for
+   tests. */
 intnat rig_heap_held(void) {
   return atomic_load_explicit(&heap_bytes, memory_order_relaxed);
 }
