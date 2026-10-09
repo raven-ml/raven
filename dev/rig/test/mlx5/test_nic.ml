@@ -122,4 +122,26 @@ let room =
            ~equal:( = ))
         `Refused b)
 
-let () = exit (run "rig_mlx5" [ room ])
+(* A kernel that reports, at once and every time, a completion of a queue this
+   NIC no longer has: no event of the NIC's. *)
+let events =
+  group "events"
+    [
+      test "wait waits its time when the kernel reports nothing of the NIC's"
+        (fun () ->
+          let nic, _ = open_nic ~wait:(fun _ -> [ M.Completed 0x7fff ]) () in
+          let start = Unix.gettimeofday () in
+          let e = M.wait nic ~ms:50 in
+          let elapsed = Unix.gettimeofday () -. start in
+          equal int 0 (List.length e);
+          at_least ~msg:"seconds waited" float_exact ~than:0.05 elapsed);
+      test "wait answers an event at once" (fun () ->
+          let nic, _ = open_nic ~wait:(fun _ -> [ M.Nic_failed ]) () in
+          let start = Unix.gettimeofday () in
+          let e = M.wait nic ~ms:10_000 in
+          equal int 1 (List.length e);
+          less ~msg:"seconds waited" float_exact ~than:1.
+            (Unix.gettimeofday () -. start));
+    ]
+
+let () = exit (run "rig_mlx5" [ room; events ])

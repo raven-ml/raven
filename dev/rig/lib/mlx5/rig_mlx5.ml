@@ -22,6 +22,7 @@ external arm_stub : int -> int -> int -> int -> unit = "caml_rig_mlx5_arm"
 [@@noalloc]
 
 external acquire : unit -> unit = "caml_rig_mlx5_acquire" [@@noalloc]
+external now_ns : unit -> int = "caml_rig_mlx5_now_ns" [@@noalloc]
 
 (* Types *)
 
@@ -672,4 +673,13 @@ let wait nic ~ms =
     | Nic_failed -> Some (Failure (strf "%s: the NIC failed" nic.path.name))
     | Port_changed s -> Some (Port (strf "%s: port 1 %s" nic.path.name s))
   in
-  List.filter_map event (nic.path.wait ms)
+  (* The kernel may report only events of objects since destroyed: the wait goes
+     on until one of the NIC's, or the end of its time. *)
+  let deadline = now_ns () + (ms * 1_000_000) in
+  let rec go () =
+    let left = max 0 ((deadline - now_ns () + 999_999) / 1_000_000) in
+    match List.filter_map event (nic.path.wait left) with
+    | [] when left > 0 -> go ()
+    | events -> events
+  in
+  go ()

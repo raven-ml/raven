@@ -94,8 +94,9 @@ value caml_rig_mlx5_uverbs_page_size(value unit) {
   return Val_long(sysconf(_SC_PAGESIZE));
 }
 
-/* Waits until [v_a] or [v_b] is readable, at most [v_ms] milliseconds: bit
-   0 set if [v_a] is, bit 1 if [v_b] is. Releases the runtime. */
+/* Waits until [v_a] or [v_b] is readable or hung up, at most [v_ms]
+   milliseconds: bit 0 set if [v_a] is readable, bit 1 if [v_b] is, bit 2 if
+   either hung up or failed. Releases the runtime. */
 value caml_rig_mlx5_uverbs_poll(value v_a, value v_b, value v_ms) {
   struct pollfd fds[2] = {{.fd = Int_val(v_a), .events = POLLIN},
                           {.fd = Int_val(v_b), .events = POLLIN}};
@@ -105,7 +106,10 @@ value caml_rig_mlx5_uverbs_poll(value v_a, value v_b, value v_ms) {
   int e = errno;
   caml_acquire_runtime_system();
   if (r < 0) return Val_long(e == EINTR ? 0 : -e);
-  return Val_long((fds[0].revents ? 1 : 0) | (fds[1].revents ? 2 : 0));
+  short down = POLLHUP | POLLERR | POLLNVAL;
+  return Val_long((fds[0].revents & POLLIN ? 1 : 0) |
+                  (fds[1].revents & POLLIN ? 2 : 0) |
+                  ((fds[0].revents | fds[1].revents) & down ? 4 : 0));
 }
 
 /* Reads what [v_fd] holds into [v_params]: the bytes read, or -errno. */

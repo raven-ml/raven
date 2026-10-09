@@ -19,6 +19,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <time.h>
 
 #define CAML_NAME_SPACE
 #include <caml/bigarray.h>
@@ -126,4 +127,12 @@ value caml_rig_mlx5_acquire(value unit) {
   (void)unit;
   from_device();
   return Val_unit;
+}
+
+/* A monotonic clock, in nanoseconds. */
+value caml_rig_mlx5_now_ns(value unit) {
+  struct timespec t;
+  (void)unit;
+  clock_gettime(CLOCK_MONOTONIC, &t);
+  return Val_long((intnat)t.tv_sec * 1000000000 + t.tv_nsec);
 }

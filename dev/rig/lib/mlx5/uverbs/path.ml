@@ -444,7 +444,10 @@ let wait f ms : M.kernel_event list =
               M.Completed
                 (R.field buf (at + fst D.Comp_event_desc.cq_handle, 8)))
       in
-      async @ completions
+      (* An event descriptor hangs up once the device is gone, and stays
+         readable: the NIC failed. *)
+      let gone = if ready land 4 = 0 then [] else [ M.Nic_failed ] in
+      async @ completions @ gone
 
 let close f () =
   List.iter (fun (at, n) -> unmap at n) f.maps;
