@@ -119,6 +119,7 @@ module Fake = struct
     mutable stops : [ `Stopped | `Unknown ]; (* what the path's stop answers *)
     mutable bar_room : bool; (* whether [`Bar] memory is given *)
     mutable kinds : string list; (* the kinds of memory given, newest first *)
+    mutable on_free : unit N.memory -> unit; (* runs before each free *)
   }
 
   (* The path's own objects. *)
@@ -187,6 +188,7 @@ module Fake = struct
 
   let free f (m : unit N.memory) =
     if f.faults then raise (N.Fault "the GPU fell off the bus");
+    f.on_free m;
     match List.find_opt (fun (a, _, _) -> a = m.address) f.memory with
     | None -> f.wrong <- Printf.sprintf "freed memory 0x%x" m.address :: f.wrong
     | Some ((_, host, bytes) as x) ->
@@ -256,6 +258,7 @@ module Fake = struct
       stops = `Unknown;
       bar_room = true;
       kinds = [];
+      on_free = ignore;
     }
 end
 
@@ -1647,6 +1650,126 @@ let image_commands =
     ~release:(fun (g, i, r) ->
       Fun.protect ~finally:(fun () -> N.free g r) (fun () -> N.unload g i))
 
+(* Local memory handed over from two domains: one grows the kernels' local
+   memory while the other submits through rig, and the word moves on by small
+   steps. A local memory the device replaced goes back to the path only once
+   the word reached every value that could run on it: those rig assigned
+   before its successor's [local] returned. Each program opens a fake device
+   of its own: a run of 30 cases opens at most 15,000, and the opens grow
+   with --prop-count, so 150 cases or more can reach the 65,535 devices a
+   process may open. *)
+module Handover = struct
+  type t = {
+    g : N.t;
+    d : Rig.t;
+    f : Fake.t;
+    grows : Mutex.t; (* one growth and its record at a time *)
+    lock : Mutex.t; (* the word's steps and the memories' last users *)
+    mutable newest : int option; (* the newest local memory *)
+    users : (int, int) Hashtbl.t; (* a replaced memory's last possible user *)
+    mutable early : string option; (* a memory freed before its users ran *)
+    mutable returned : int; (* replaced memories gone back *)
+    mutable kib : int; (* the local memory a thread has, in KiB *)
+  }
+
+  let word h = host (N.word h.g)
+  let names = Atomic.make 0
+
+  let start () =
+    let f = Fake.make 0 in
+    let g = require_ok (N.make (Fake.path f)) in
+    let name = strf "NV:handover-%d" (Atomic.fetch_and_add names 1) in
+    let d = require_ok (Rig.open_ (module N) ~name (fun () -> Ok g)) in
+    let h =
+      {
+        g;
+        d;
+        f;
+        grows = Mutex.create ();
+        lock = Mutex.create ();
+        newest = None;
+        users = Hashtbl.create 8;
+        early = None;
+        returned = 0;
+        kib = 0;
+      }
+    in
+    let held = List.map (fun (a, _, _) -> a) f.memory in
+    f.on_free <-
+      (fun m ->
+        Mutex.protect h.lock @@ fun () ->
+        if not (List.mem m.address held) then
+          match Hashtbl.find_opt h.users m.address with
+          | Some v when H.get64 (word h) < v ->
+              h.early <-
+                Some
+                  (strf "0x%x freed at word %d, used up to %d" m.address
+                     (H.get64 (word h))
+                     v)
+          | Some _ -> h.returned <- h.returned + 1
+          | None -> ());
+    h
+
+  (* Hands one empty submission, which takes a pending local memory. *)
+  let hand h = ignore (submit h.d [||])
+
+  (* Grows local memory by 1 KiB a thread, which replaces it, then hands a
+     submission that takes the new one. A value rig assigned before [local]
+     returned is at most [Rig.submitted] after it: no OCaml code runs between
+     a value's assignment and its hand-over. *)
+  let grow h =
+    Fun.protect ~finally:(fun () -> hand h) @@ fun () ->
+    Mutex.protect h.grows @@ fun () ->
+    h.kib <- h.kib + 1;
+    match (N.capability h.g).local (h.kib * 1024) with
+    | Error e -> failf "local: %s" e
+    | Ok () -> (
+        let last = Rig.submitted h.d in
+        let newest =
+          List.find_map
+            (fun (a, host, _) -> if host = None then Some a else None)
+            h.f.memory
+        in
+        Mutex.protect h.lock @@ fun () ->
+        match (h.newest, newest) with
+        | Some old, Some m when old <> m ->
+            Hashtbl.replace h.users old last;
+            h.newest <- Some m
+        | None, m -> h.newest <- m
+        | Some _, _ -> ())
+
+  (* Hands one submission, then moves the word on by [k] values, up to the
+     last handed. *)
+  let submit k h =
+    hand h;
+    Mutex.protect h.lock @@ fun () ->
+    let w = H.get64 (word h) in
+    H.set64 (word h) (Int.min (Rig.submitted h.d) (w + k))
+
+  (* At the program's end, branches included: a replaced memory went back
+     while the program ran. Then the word reaches every value handed, which
+     nothing else completes, so the close does not wait for ever, and the
+     close's frees are judged too. *)
+  let release h =
+    cover "a replaced local memory went back"
+      (Mutex.protect h.lock (fun () -> h.returned > 0));
+    Mutex.protect h.lock (fun () -> H.set64 (word h) (Rig.submitted h.d));
+    Rig.close h.d;
+    equal (option string) ~msg:"a local memory freed early" None h.early
+end
+
+let handover = abstract "h" ~release:Handover.release
+
+let handover_commands =
+  [
+    command "start" (Gen.unit @-> makes handover) ignore Handover.start;
+    command "grow" (handover ^-> returns unit) ignore Handover.grow;
+    command "submit"
+      (Gen.int_range 0 2 @-> handover ^-> returns unit)
+      (fun _ () -> ())
+      Handover.submit;
+  ]
+
 let stateful =
   group ~timeout:300. "stateful"
     [
@@ -1661,6 +1784,9 @@ let stateful =
         "a mapping freed from two domains is freed once" mapping_commands;
       stateful ~count:30 ~domains:2
         "an image unloaded from two domains is unloaded once" image_commands;
+      stateful ~count:30 ~steps:10 ~domains:2
+        "local memory goes back only once the values that could use it ran"
+        handover_commands;
     ]
 
 (* Progress bounds
