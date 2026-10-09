@@ -56,8 +56,7 @@ let loaded d binary =
                     let i, code = lay r in
                     (try place d e code
                      with x ->
-                       (try Memory.unload d (Loaded { m; h; i })
-                        with Dev.Lost _ -> ());
+                       Memory.unload d (Loaded { m; h; i });
                        raise x);
                     i
                   with

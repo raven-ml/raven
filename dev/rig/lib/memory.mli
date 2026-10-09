@@ -223,7 +223,8 @@ val retire : device -> entry -> unit
     lost, once it counts as stopped. *)
 
 val unload : device -> loaded -> unit
-(** [unload d i] releases what [d]'s driver made for [i] ({!Dev.give}). *)
+(** [unload d i] releases what [d]'s driver made for [i] ({!Dev.give}), once
+    [d] stopped if it is lost and not stopped. *)
 
 val kernel_entry : image -> string -> Rig_edge.entry option
 (** [kernel_entry i f] is the driver's entry for [i]'s function [f], a counted

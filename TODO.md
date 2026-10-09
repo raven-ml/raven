@@ -70,12 +70,6 @@ next model targets:
   call answers as rig.mli says", seed s1:6946fc93e9c8e1e8 (case 229, a
   transfer between two Polled devices raising a lost device of case 78). It
   should vanish with commit 4a's per-device staging slots: check the seed then
-- rig: `Rig.set_budget` on a device that faulted can raise `Lost` from
-  `Memory.give_back` while a copy on another domain loses it. rig.model, "calls
-  on two domains answer as some order of them", seed s1:42573910ee757b5b,
-  failed once on the Mac with commit 9 and once in three kimchi runs before it
-  (budget 1048576 on a faulted polled-copyless-itself device): the seed does
-  not fix the two domains' schedule. Fix test-first from the seed
 
 ## perf
 

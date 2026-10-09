@@ -570,6 +570,39 @@ let test_word_waited () =
   equal ~msg:"once it ran" int 1 (count "word" pp);
   equal ~msg:"the consumer's mapping" int 1 (count "unmap" pc)
 
+(* A release on a device lost and still stopping, here a consumer's mapping of a
+   closed producer's word, waits for the stop, and never raises the consumer's
+   loss to whoever drains: the consumer's stop waits at the gate on another
+   domain while the producer's word ends. *)
+let test_release_while_stopping () =
+  let producer, _ = P.open_ "loss:stopping-producer" in
+  let consumer, pc = P.open_ ~waits_on:[ `Host ] "loss:stopping-consumer" in
+  let v = submit (empty producer) in
+  let w = submit (empty consumer) ~waits:[| v |] in
+  Rig.wait consumer (Rig.Point.value w);
+  P.gate pc;
+  let loser =
+    Domain.spawn (fun () ->
+        P.fail pc;
+        try ignore (submit (empty consumer)) with Rig.Lost _ -> ())
+  in
+  Support.await "the consumer's stop at the gate" (fun () -> P.sleepers pc = 1);
+  Rig.close producer;
+  let drained =
+    match
+      collect ();
+      collect ()
+    with
+    | () -> "drained"
+    | exception e -> Printexc.to_string e
+  in
+  equal ~msg:"the drains" string "drained" drained;
+  equal ~msg:"the mapping, while the stop runs" int 0 (count "unmap" pc);
+  P.open_gate pc;
+  Domain.join loser;
+  collect ();
+  equal ~msg:"the mapping, once stopped" int 1 (count "unmap" pc)
+
 (* The word of a device whose work may still run is never given back. *)
 let test_word_unknown () =
   let d, p = P.open_ ~answer:`Unknown "loss:word-unknown" in
@@ -698,6 +731,10 @@ let tests =
           test_close_word;
         test "a word another queue waits on goes back once the wait ran"
           test_word_waited;
+        test
+          "a release on a device still stopping waits for its stop and raises \
+           nothing"
+          test_release_while_stopping;
         test "the word of a device whose work may run is kept"
           test_word_unknown;
         test "the host is never closed" test_close_host;

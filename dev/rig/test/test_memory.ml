@@ -98,6 +98,34 @@ let test_set_budget () =
   equal ~msg:"live memory stays" bool false (freed p (B.address live));
   raises_match Exn.invalid_arg (fun () -> Rig.set_budget d (-1))
 
+(* A budget set while another domain loses the device raises nothing, and the
+   cache it took returns once the device stopped, each memory once. The first
+   free of the cache waits at Polled's free gate while the loss runs. *)
+let test_budget_beside_loss () =
+  let d, p = P.open_ "memory:budget-loss" in
+  let ats = List.map (fun _ -> dropped d (4 * kib)) [ 1; 2; 3 ] in
+  collect d;
+  P.gate_frees p;
+  let setter =
+    Domain.spawn (fun () ->
+        match Rig.set_budget d 0 with
+        | () -> "returned"
+        | exception e -> Printexc.to_string e)
+  in
+  Support.await "the cache's first free at the gate" (fun () ->
+      P.freers p = 1);
+  P.fail p;
+  (try ignore (submit (Sub.make ~reads:0 ~writes:0 d [||])) with
+  | Rig.Lost _ -> ());
+  P.open_frees p;
+  equal ~msg:"the budget" string "returned" (Domain.join setter);
+  Gc.full_major ();
+  ignore (B.create Rig.host 8);
+  equal ~msg:"the cached memory, freed once"
+    (list bool) [ true; true; true ] (List.map (freed p) ats);
+  equal ~msg:"frees" int 3
+    (List.length (List.filter (fun (a, _) -> List.mem a ats) (P.frees p)))
+
 (* Memory collected while its device holds more than its budget returns to the
    driver: an allocation the budget refuses finds none of it to reuse, and the
    live buffers stay within the budget. *)
@@ -643,6 +671,10 @@ let tests =
           test_collects;
         test "set_budget returns cached memory, never live memory"
           test_set_budget;
+        test
+          "set_budget while another domain loses the device raises nothing \
+           and returns its cache once"
+          test_budget_beside_loss;
         test "free_cache with no work in flight returns the cache at once"
           test_free_cache;
         test "the host's budget is max_int" test_host_budget;

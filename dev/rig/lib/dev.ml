@@ -283,16 +283,36 @@ let counted d f =
   | _ -> refused d
 
 (* On a stopped device a failure of the call, its fault or its memory's, gives
-   back nothing more. *)
+   back nothing more. On a live one a fault loses the device, which its caller
+   never sees: a give is no use of the device. *)
 let give d f =
   let s = c_state d.c in
-  if s = orphaned_state then ()
-  else if s = stopped_state || (s = ended_state && upgrade d) then
-    match f () with
+  if s = orphaned_state then true
+  else if s = stopped_state || (s = ended_state && upgrade d) then begin
+    (match f () with
     | () -> ()
     | exception Sys_error _ -> ()
-    | exception e when Option.is_some (d.fault e) -> ()
-  else counted d f
+    | exception e when Option.is_some (d.fault e) -> ());
+    true
+  end
+  else if c_enter d.c <> 0 then begin
+    run_owed ();
+    false
+  end
+  else
+    match f () with
+    | () ->
+        leave d;
+        true
+    | exception e -> (
+        let bt = Printexc.get_raw_backtrace () in
+        leave d;
+        match d.fault e with
+        | Some why ->
+            ignore (c_lose d.c why true : bool);
+            run_owed ();
+            true
+        | None -> Printexc.raise_with_backtrace e bt)
 
 let move_word d = c_word_retire d.c
 let fail why = if c_fail why then run_owed ()

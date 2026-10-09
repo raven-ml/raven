@@ -260,7 +260,8 @@ let new_entry d kind n =
                d Io_made n (stamps_new ())))
   | Host -> None
 
-(* Gives back a region [d] allocated or mapped. *)
+(* Gives back a region [d] allocated or mapped, an io region or an image:
+   whether it did, which a device lost and not stopped does not ([Dev.give]). *)
 let free_region d (Region { m; h; r; _ }) =
   let module D = (val m) in
   Dev.give d (fun () -> D.free h r)
@@ -269,7 +270,7 @@ let free_io d (Io_region { m; h; r }) =
   let module I = (val m) in
   Dev.give d (fun () -> I.free h r)
 
-let unload d (Loaded { m; h; i }) =
+let unload_now d (Loaded { m; h; i }) =
   let module D = (val m) in
   Dev.give d (fun () -> D.unload h i)
 
@@ -321,17 +322,29 @@ let defer d p =
 
 let retire d e = defer d (Free e)
 
+(* Gives back [d]'s mapping [r] now, or once [d] stopped. *)
+let unmap d r = if not (free_region d r) then defer d (Unmap (r, None))
+
+(* Unloads [d]'s image [l] now, or once [d] stopped. *)
+let unload d l = if not (unload_now d l) then defer d (Unload (l, None))
+
 let drop_stamps (e : entry) = if e.stamps <> 0 then stamps_unref e.stamps
 
-(* Gives [e]'s region back to its driver, and its bytes to their keeper. *)
+(* Gives [e]'s region back to its driver, and its bytes to their keeper; once
+   its device stopped if it is lost and not stopped. *)
 let give_back (e : entry) =
   let d = e.owner in
-  (match e.region with Some r -> free_region d r | None -> ());
-  (match e.io_region with Some r -> free_io d r | None -> ());
-  drop_stamps e;
-  let budget = budget_of d e.memory in
-  give_room d budget e.bytes;
-  if budget = Device_budget then note d
+  let given =
+    (match e.region with Some r -> free_region d r | None -> true)
+    && match e.io_region with Some r -> free_io d r | None -> true
+  in
+  if not given then defer d (Free e)
+  else begin
+    drop_stamps e;
+    let budget = budget_of d e.memory in
+    give_room d budget e.bytes;
+    if budget = Device_budget then note d
+  end
 
 (* Releases the mapping [mp] now if its mapper ran all the work submitted so
    far, which is then all that could use it, and is whether it did. An orphaned
@@ -343,10 +356,7 @@ let unmap_now mp =
   Dev.orphaned d
   || ((not (Dev.is_lost d)) || Dev.stopped d)
      && Dev.word d >= v
-     && begin
-       free_region d mp.map;
-       true
-     end
+     && free_region d mp.map
 
 (* [e] waits for its last unmap: until then a mapper's driver may still name the
    memory's pages, and a driver that maps host memory by its address would hand
@@ -596,17 +606,19 @@ let due_pending d =
         d.pending <- later;
         List.map snd pending)
 
+(* A release that [d], lost and not stopped since, cannot run waits again: its
+   code memory only after the image's unload. *)
 let run_pending d = function
   | Free e -> free_entry e
-  | Unmap (r, after) ->
-      free_region d r;
-      Option.iter unmapped after
-  | Unload (loaded, code) -> (
-      unload d loaded;
-      match code with
-      | Some e when Dev.is_lost d || over_budget d e -> free_entry e
-      | Some e -> to_cache d e
-      | None -> ())
+  | Unmap (r, after) as p ->
+      if free_region d r then Option.iter unmapped after else defer d p
+  | Unload (loaded, code) as p -> (
+      if not (unload_now d loaded) then defer d p
+      else
+        match code with
+        | Some e when Dev.is_lost d || over_budget d e -> free_entry e
+        | Some e -> to_cache d e
+        | None -> ())
 
 let rec route_all d = function
   | [] -> ()
@@ -657,7 +669,7 @@ let unmap_all d =
                 Some mp
             | None -> None)
       in
-      Option.iter (fun mp -> free_region d mp.map) mine)
+      Option.iter (fun mp -> unmap d mp.map) mine)
     mapped
 
 (* Gives back the stopped [d]'s timeline word once nothing reads it: its
@@ -691,9 +703,9 @@ let end_word d =
               c.pair_maps <- others;
               of_d)
         in
-        Dev.iter (fun c -> List.iter (fun (_, r) -> free_region c r) (maps_of c));
+        Dev.iter (fun c -> List.iter (fun (_, r) -> unmap c r) (maps_of c));
         unmap_all d;
-        Option.iter (free_region d) d.word_region
+        Option.iter (unmap d) d.word_region
       end
 
 (* Drains the devices of [l] whose stop returned, other than [d], and ends

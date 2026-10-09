@@ -140,11 +140,13 @@ val counted : device -> (unit -> 'a) -> 'a
     Raises {!Lost} without calling [f] if [d] is lost, running the owed stops
     first. *)
 
-val give : device -> (unit -> unit) -> unit
-(** [give d f] gives an object back to [d]'s driver through [f]: as a {!counted}
-    call on a live device, uncounted on a Stopped one, dropping a fault and a
-    [Sys_error] it raises, and not at all on an Orphaned one. On a device lost
-    and not Stopped it raises {!Lost} without calling [f]. *)
+val give : device -> (unit -> unit) -> bool
+(** [give d f] gives an object back to [d]'s driver through [f]: as a counted
+    call on a live device, where a fault of [f] loses [d] and is not raised;
+    uncounted on a Stopped one, dropping a fault and a [Sys_error] it raises;
+    and not at all on an Orphaned one. It is [false], without calling [f], on a
+    device lost and not Stopped, whose objects go back only after its stop:
+    the caller gives the object again then. *)
 
 val move_word : device -> bool
 (** [move_word d] moves the readers of the stopped [d]'s word to a copy in its C
