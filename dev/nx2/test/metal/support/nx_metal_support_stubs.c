@@ -506,6 +506,12 @@ static uint64_t widened(const void *p, int dt, int64_t i) {
   }
 }
 
+/* x's low [bits] bits, widened by their sign. */
+static uint64_t widen_sign(uint64_t x, int bits) {
+  uint64_t top = 1ull << (bits - 1), low = x & ((top << 1) - 1);
+  return (low ^ top) - top;
+}
+
 /* Over every output of the integer contraction (batch, m, n, k, acc), how
    many differ from the sum wrapped to acc's width, widened by acc's sign,
    then wrapped to out's, as a cast from acc does, with the first such
@@ -517,7 +523,10 @@ value nx_metal_test_contract_wrong(value v_dims, value v_a, value v_b,
   int64_t batch = Long_val(Field(v_dims, 0)), m = Long_val(Field(v_dims, 1)),
           n = Long_val(Field(v_dims, 2)), k = Long_val(Field(v_dims, 3));
   int acc = Int_val(Field(v_dims, 4));
-  int acc_wide = acc == NX_INT64 || acc == NX_UINT64;
+  int acc_bits = nx_dtype_row_of(acc).bits;
+  int acc_signed = acc == NX_INT8 || acc == NX_INT16 || acc == NX_INT32 ||
+                   acc == NX_INT64;
+  uint64_t acc_mask = acc_bits == 64 ? ~0ull : (1ull << acc_bits) - 1;
   nx_metal_operand a = operand(v_a), b = operand(v_b), out = operand(v_out);
   int has_init = Is_some(v_init);
   nx_metal_operand init = has_init ? operand(Some_val(v_init)) : a;
@@ -541,9 +550,7 @@ value nx_metal_test_contract_wrong(value v_dims, value v_a, value v_b,
                            j * init.strides[2]);
         int64_t o = (p * m + i) * n + j;
         uint64_t got = widened((void *)out.address, out.dtype, o);
-        uint64_t want = acc_wide            ? s
-                        : acc == NX_INT32 ? (uint64_t)(int64_t)(int32_t)s
-                                          : (uint64_t)(uint32_t)s;
+        uint64_t want = acc_signed ? widen_sign(s, acc_bits) : s & acc_mask;
         if ((want & out_mask) != (got & out_mask)) {
           if (first < 0) first = o;
           wrong++;

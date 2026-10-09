@@ -128,11 +128,19 @@ static A widen(uint dt, device const uchar *p, ulong i) {
   }
 }
 
-/* Stores x, the accumulator's bits, at [i] of the integer array [p] of
-   dtype [dt], as a cast from the accumulator does: its low bits, or, into
-   a wider out, x widened by the accumulator's sign. */
-template <typename A>
-static void narrow(uint dt, bool sign, device uchar *p, ulong i, A x) {
+/* Stores the sum x, wrapped to the accumulator of dtype [acc], at [i] of
+   the integer array [p] of dtype [dt], as a cast from the accumulator
+   does: its low bits, or, into a wider out, widened by the accumulator's
+   sign. */
+static void narrow(uint dt, uint acc, device uchar *p, ulong i, ulong x) {
+  switch (acc) {
+  case NX_INT8: x = ulong(long(char(x))); break;
+  case NX_UINT8: x = ulong(uchar(x)); break;
+  case NX_INT16: x = ulong(long(short(x))); break;
+  case NX_UINT16: x = ulong(ushort(x)); break;
+  case NX_INT32: x = ulong(long(int(x))); break;
+  case NX_UINT32: x = ulong(uint(x)); break;
+  }
   switch (dt) {
   case NX_INT8:
   case NX_UINT8: ((device uchar *)p)[i] = uchar(x); break;
@@ -140,8 +148,7 @@ static void narrow(uint dt, bool sign, device uchar *p, ulong i, A x) {
   case NX_UINT16: ((device ushort *)p)[i] = ushort(x); break;
   case NX_INT32:
   case NX_UINT32: ((device uint *)p)[i] = uint(x); break;
-  default:
-    ((device ulong *)p)[i] = sizeof(A) == 4 && sign ? ulong(long(int(x))) : ulong(x);
+  default: ((device ulong *)p)[i] = x;
   }
 }
 
@@ -413,8 +420,8 @@ kernel void contract(constant nx_metal_contract &p [[buffer(0)]],
             x += widen<uint>(p.init_dtype, (device const uchar *)init,
                              z * p.init_batch + ulong(r) * p.init_m +
                                  ulong(c) * p.init_n);
-          narrow<uint>(p.out_dtype, p.acc == NX_INT32, (device uchar *)p.out,
-                       out_at + ulong(r) * p.n + c, x);
+          narrow(p.out_dtype, p.acc, (device uchar *)p.out,
+                 out_at + ulong(r) * p.n + c, x);
         }
       }
     return;
@@ -652,8 +659,8 @@ kernel void contract_int(constant nx_metal_contract &p [[buffer(0)]],
         x += widen<A>(p.init_dtype, (device const uchar *)p.init,
                       g.z * p.init_batch + ulong(r) * p.init_m +
                           ulong(c) * p.init_n);
-      narrow<A>(p.out_dtype, p.acc == NX_INT32, (device uchar *)p.out,
-                out_at + ulong(r) * p.n + c, x);
+      narrow(p.out_dtype, p.acc, (device uchar *)p.out,
+             out_at + ulong(r) * p.n + c, x);
     }
 }
 

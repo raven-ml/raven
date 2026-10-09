@@ -538,7 +538,9 @@ let int_case =
   let+ c = case
   and+ dt = of_list int_dt
   and+ out = of_list Dt.[ Any Int8; Any Int32; Any Int64 ]
-  and+ acc = of_list Dt.[ Any Int32; Any Uint32; Any Int64 ] in
+  and+ acc =
+    of_list Dt.[ Any Int32; Any Uint32; Any Int64; Any Int16; Any Uint8 ]
+  in
   { case = { c with dt; out; spread = 0; values = Drawn }; acc }
 
 let int_case =
@@ -594,6 +596,12 @@ let int_examples =
       (Dt.Any Dt.Uint8) ~m:64 ~k:608;
     int_example ~acc:(Dt.Any Dt.Uint32) ~out:(Dt.Any Dt.Uint64)
       (Dt.Any Dt.Uint16) ~m:1 ~k:300;
+    (* Accumulators narrower than 32 bits wrap to their width, then reach out
+       widened by their sign. *)
+    int_example ~acc:(Dt.Any Dt.Int16) ~out:(Dt.Any Dt.Int64) (Dt.Any Dt.Int16)
+      ~m:17 ~k:300;
+    int_example ~acc:(Dt.Any Dt.Uint8) ~out:(Dt.Any Dt.Int32) (Dt.Any Dt.Int8)
+      ~m:17 ~k:300;
     (* Batches whose bytes start off 16-byte alignment. *)
     int_example ~batch:2 ~bpad:1 (Dt.Any Dt.Int8) ~m:64 ~k:64;
     int_example ~batch:2 ~bpad:2 (Dt.Any Dt.Int8) ~m:64 ~k:64;
