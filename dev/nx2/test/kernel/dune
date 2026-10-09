@@ -1,11 +1,13 @@
 (tests
- (names test_kinds test_spec)
- (modules test_kinds test_spec)
+ (names test_kinds test_spec test_kernels)
+ (modules test_kinds test_spec test_kernels)
  (libraries
   nx_array
   nx_array_gen
+  nx_array_support
   nx_kernel
   nx_kernel_support
+  nx_kernels_support
   nx_kinds_support
   rig
   windtrap)

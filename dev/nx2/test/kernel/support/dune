@@ -41,3 +41,15 @@
   (language c)
   (include_dirs ../../../lib/kernel)
   (names nx_kernel_support_stubs)))
+
+; The kernel libraries the suite runs its laws through, and nx.cpu's target
+; tables.
+
+(library
+ (name nx_kernels_support)
+ (modules nx_kernels_support)
+ (libraries nx_kernel nx_cpu rig.pool)
+ (foreign_stubs
+  (language c)
+  (include_dirs ../../../lib/cpu ../../../lib/array)
+  (names nx_kernels_support_stubs)))

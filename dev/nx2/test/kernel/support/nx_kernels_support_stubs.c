@@ -30,7 +30,7 @@ static const nx_cpu_target *best(void) {
   return b;
 }
 
-value nx_cpu_support_targets(value unit) {
+value nx_kernels_support_targets(value unit) {
   CAMLparam1(unit);
   CAMLlocal2(l, cell);
   const nx_cpu_target *top = best();
@@ -47,14 +47,14 @@ value nx_cpu_support_targets(value unit) {
   CAMLreturn(l);
 }
 
-value nx_cpu_support_current(value unit) {
+value nx_kernels_support_current(value unit) {
   (void)unit;
   best();
   return caml_copy_string(nx_cpu_runs->name);
 }
 
 /* A table past the best one may use instructions the host lacks. */
-value nx_cpu_support_use(value name) {
+value nx_kernels_support_use(value name) {
   const nx_cpu_target *top = best();
   for (int i = 0; i < TABLES; i++) {
     if (strcmp(tables[i]->name, String_val(name)) == 0) {
@@ -63,5 +63,6 @@ value nx_cpu_support_use(value name) {
     }
     if (tables[i] == top) break;
   }
-  caml_invalid_argument("Nx_cpu_support.use: not a target the host runs");
+  caml_invalid_argument(
+      "Nx_kernels_support.with_target: not a target the host runs");
 }
