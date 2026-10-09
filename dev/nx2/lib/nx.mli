@@ -96,11 +96,12 @@ val donate : ('v, 's, 'd) t -> ('v, 's, 'd) t
     the handle die: a later operation on either raises [Invalid_argument] naming
     the consumer, and its shape, dtype and placement still answer.
 
-    A movement that maps the elements one to one ({!reshape}) spends its handle
-    and passes a new one to its result, whether it makes a view or a copy; the
-    deaths wait for the final consumer. Any other operation consumes it. Two
-    handles of one donor reaching one operation raise naming [Nx.donate]: the
-    same handle twice, two donations, or one chain read twice.
+    A movement that maps the elements one to one ({!reshape}, {!flatten},
+    {!squeeze}, {!unsqueeze}, {!transpose}, {!moveaxis}, {!swapaxes}, {!flip})
+    spends its handle and passes a new one to its result, whether it makes a
+    view or a copy; the deaths wait for the final consumer. Any other operation
+    consumes it. Two handles of one donor reaching one operation raise naming
+    [Nx.donate]: the same handle twice, two donations, or one chain read twice.
 
     The consumer may write its result into the donated memory when it reads the
     operand only at the result's own index (an elementwise operand), the memory
@@ -117,6 +118,141 @@ val donate : ('v, 's, 'd) t -> ('v, 's, 'd) t
 
 val copy : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [copy x] is [x] stored afresh: equal elements in new memory. *)
+
+(** {1:shapes Shapes, broadcasting and movements}
+
+    Axes count from [0], and a negative axis from the end: [-1] is the last.
+    Shapes broadcast from their last axes: aligned there, each pair of extents
+    is equal or one of them is [1], and missing leading axes count as [1].
+
+    A movement rearranges elements without computing on them. Each says whether
+    it makes a {e view}, a value over its operand's memory that costs no copy.
+    That is a cost, never part of the result's meaning: a value never changes,
+    so a view and a copy read the same. *)
+
+val ndim : ('v, 's, 'd) t -> int
+(** [ndim x] is [x]'s number of axes. *)
+
+val dim : int -> ('v, 's, 'd) t -> int
+(** [dim a x] is the extent of [x]'s axis [a].
+
+    Raises [Invalid_argument] if [a] is not an axis of [x]. *)
+
+val numel : ('v, 's, 'd) t -> int
+(** [numel x] is [x]'s number of elements: the product of its extents, [1] for a
+    0-d value. *)
+
+val nbytes : ('v, 's, 'd) t -> int
+(** [nbytes x] is the bytes [x]'s elements fill when stored contiguously,
+    [(numel x * b + 7) / 8] for a dtype of [b] bits. *)
+
+val reshape : int array -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [reshape s x] is [x]'s elements in C order at shape [s]. One extent of [s]
+    may be [-1]; it is inferred from the others. A view where strides express
+    it, a copy otherwise.
+
+    Raises [Invalid_argument] if the element counts differ, an extent is below
+    [-1], or two are [-1]. *)
+
+val broadcast_to : int array -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [broadcast_to s x] is [x] stretched to shape [s]: an axis of extent [1], or
+    one [x] lacks, repeats [x]'s elements along it. A view.
+
+    Raises [Invalid_argument] unless [x]'s shape broadcasts with [s] to [s]. *)
+
+val broadcast_shapes : int array list -> int array
+(** [broadcast_shapes ss] is the shape that [ss] broadcast to, [[||]] for [[]].
+
+    Raises [Invalid_argument] if an extent is negative or two of them do not
+    broadcast. *)
+
+val broadcast_arrays : ('v, 's, 'd) t list -> ('v, 's, 'd) t list
+(** [broadcast_arrays xs] is each of [xs] stretched to {!broadcast_shapes} of
+    their shapes, in order. Views.
+
+    Raises [Invalid_argument] if two of their shapes do not broadcast. *)
+
+val squeeze : ?axes:int list -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [squeeze ~axes x] is [x] without the axes [axes]; without [axes], without
+    every axis of extent [1]. A view.
+
+    Raises [Invalid_argument] if an axis of [axes] is not [x]'s, repeats, or has
+    an extent other than [1]. *)
+
+val unsqueeze : axes:int list -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [unsqueeze ~axes x] is [x] with an axis of extent [1] at each position of
+    [axes], positions of the result: [unsqueeze ~axes:[ 0; -1 ]] of a [[3]]
+    value is [[1; 3; 1]]. A view.
+
+    Raises [Invalid_argument] if a position is not an axis of the result or
+    repeats. *)
+
+val flatten : ?start_dim:int -> ?end_dim:int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [flatten ~start_dim ~end_dim x] is [x] with its axes [start_dim] to
+    [end_dim], both included, merged into one. [start_dim] defaults to [0] and
+    [end_dim] to [-1]; a 0-d [x] flattens to [[1]]. A view where strides express
+    it, a copy otherwise.
+
+    Raises [Invalid_argument] if either is not an axis of [x] or [start_dim]
+    comes after [end_dim]. *)
+
+val transpose : ?axes:int list -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [transpose ~axes x] has [x]'s axis [List.nth axes i] as its axis [i];
+    without [axes], [x]'s axes in reverse order. A view.
+
+    Raises [Invalid_argument] unless [axes] lists each of [x]'s axes once. *)
+
+val moveaxis : int -> int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [moveaxis a b x] is [x] with its axis [a] moved to position [b], the other
+    axes in their order. A view.
+
+    Raises [Invalid_argument] if [a] or [b] is not an axis of [x]. *)
+
+val swapaxes : int -> int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [swapaxes a b x] is [x] with its axes [a] and [b] exchanged. A view.
+
+    Raises [Invalid_argument] if [a] or [b] is not an axis of [x]. *)
+
+val flip : ?axes:int list -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [flip ~axes x] is [x] with the order of elements along each axis of [axes]
+    reversed; without [axes], along every axis. A view.
+
+    Raises [Invalid_argument] if an axis of [axes] is not [x]'s or repeats. *)
+
+val sliding_window :
+  ?axis:int -> window:int -> ?step:int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [sliding_window ~axis ~window ~step x] is [x]'s windows of [window]
+    consecutive elements along [axis] (default [-1]), one every [step] (default
+    [1]). Axis [axis] becomes the number of windows, [(d - window) / step + 1]
+    for an extent [d], and an axis of extent [window] is appended: window [w]'s
+    element [j] is [x]'s element [w * step + j] along [axis]. A view, whose
+    windows share elements where [step < window].
+
+    Raises [Invalid_argument] if [axis] is not [x]'s, [window] or [step] is
+    below [1], or [window] exceeds [d]. *)
+
+val split : axis:int -> int -> ('v, 's, 'd) t -> ('v, 's, 'd) t list
+(** [split ~axis n x] is [x] cut along [axis] into [n] runs of consecutive
+    elements, in order. With [d] the extent, the first [d mod n] runs have
+    [d / n + 1] elements and the others [d / n]. Views.
+
+    Raises [Invalid_argument] if [axis] is not [x]'s or [n < 1]. *)
+
+val tile : int array -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [tile reps x] is [x] repeated [reps.(i)] times, end to end, along its axis
+    [i]. With more entries in [reps] than [x] has axes, [x] first gains leading
+    axes of extent [1]. A view where strides express it, a copy otherwise.
+
+    Raises [Invalid_argument] if [reps] has fewer entries than [x] has axes or a
+    negative one. *)
+
+val repeat : ?axis:int -> int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [repeat ~axis n x] is [x] with each element repeated [n] times in place
+    along [axis]: [repeat ~axis:0 2] of [[a; b]] is [[a; a; b; b]]. Without
+    [axis], [flatten x] repeated. A view where strides express it, a copy
+    otherwise.
+
+    Raises [Invalid_argument] if [axis] is not an axis of [x] or [n < 0]. *)
 
 (** {1:arith Arithmetic}
 
@@ -166,12 +302,6 @@ val cast : ('w, 'r) dtype -> ('v, 's, 'd) t -> ('w, 'r, 'd) t
     number stores part by part into a complex dtype, as [true] into a boolean if
     a part is not zero, and by its real part into any other dtype. *)
 
-val reshape : int array -> ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [reshape s x] is [x]'s elements in C order of indices, of shape [s].
-
-    Raises [Invalid_argument] unless [s]'s extents are not negative and multiply
-    to [x]'s number of elements. *)
-
 (** {1:devices Device sets and placement}
 
     A value lies on a device set, a module minted by {!devices} whose brand ['d]
@@ -204,6 +334,12 @@ end
 
 (** Where a value's elements lie over its set. *)
 module Placement : sig
+  (* CR: Expose [device : 'd devices -> Rig.t -> 'd t], checking membership.
+     No public constructor selects one member of a multi-device set. A new
+     singleton set changes the brand, preventing a Check's condition and data
+     from occupying different devices of one set. Recovering this placement
+     through Nx_array and Repr needs storage solely to name a placement that
+     Devices.one already caches. *)
   type +'d t
   (** The type for placements over a set of brand ['d]. *)
 

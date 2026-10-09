@@ -186,11 +186,285 @@ let cast (type v s w r d) (dt : (w, r) D.t) (x : (v, s, d) t) : (w, r, d) t =
   | Some Type.Equal -> x
   | None -> Eval.apply1 ~by:"Nx.cast" Cast dt x
 
-let reshape s x =
-  Eval.eval ~by:"Nx.reshape" (Value.Move (Reshape (Array.copy s), x))
-
 let copy x = Eval.eval ~by:"Nx.copy" (Value.Copy x)
 let donate x = Exec.donate ~by:"Nx.donate" x
+
+(* Shapes, broadcasting and movements *)
+
+let ndim = Prim.rank
+let numel x = Array.fold_left ( * ) 1 (shape x)
+let nbytes x = ((numel x * D.bits (dtype x)) + 7) / 8
+
+(* An operand in messages, as [float32 [2; 3]]. *)
+let pp_value ppf x =
+  Format.fprintf ppf "%s %a" (D.name (dtype x)) pp_shape (shape x)
+
+let pp_ints ppf l = pp_shape ppf (Array.of_list l)
+
+(* [a] as an axis of a value of rank [r], counting from the end where negative.
+   [what] names the value in the message. *)
+let axis_of ~by r a what =
+  let a' = if a < 0 then a + r else a in
+  if a' < 0 || a' >= r then invalid_argf "%s: %d is not an axis of %t" by a what
+  else a'
+
+let axis ~by x a = axis_of ~by (ndim x) a (fun ppf -> pp_value ppf x)
+let dim a x = Prim.dim x (axis ~by:"Nx.dim" x a)
+
+(* Distinct axes of [x], or raises naming the repeated one. *)
+let axes ~by x l =
+  let seen = Array.make (ndim x) false in
+  List.map
+    (fun a ->
+      let a' = axis ~by x a in
+      if seen.(a') then invalid_argf "%s: axis %d repeats" by a;
+      seen.(a') <- true;
+      a')
+    l
+
+let move ~by mv x = Eval.eval ~by (Value.Move (mv, x))
+
+let reshape s x =
+  let by = "Nx.reshape" in
+  let n = numel x in
+  let s = Array.copy s in
+  let unknown = ref None and known = ref 1 in
+  Array.iteri
+    (fun i e ->
+      if e < -1 then invalid_argf "%s: extent %d in %a" by e pp_shape s;
+      if e = -1 then begin
+        if !unknown <> None then
+          invalid_argf "%s: %a has two unknown extents" by pp_shape s;
+        unknown := Some i
+      end
+      else known := !known * e)
+    s;
+  (match !unknown with
+  | Some i when !known > 0 && n mod !known = 0 -> s.(i) <- n / !known
+  | Some _ ->
+      invalid_argf "%s: %a has %d elements, which %a cannot hold" by pp_shape
+        (shape x) n pp_shape s
+  | None ->
+      if !known <> n then
+        invalid_argf "%s: %a has %d elements, %a has %d" by pp_shape (shape x) n
+          pp_shape s !known);
+  move ~by (Reshape s) x
+
+let broadcast_to s x =
+  let by = "Nx.broadcast_to" in
+  let xs = shape x in
+  let r = Array.length s and k = Array.length xs in
+  let fits i e =
+    e >= 0 && (i < r - k || xs.(i - (r - k)) = 1 || xs.(i - (r - k)) = e)
+  in
+  if k > r || not (Array.for_all Fun.id (Array.mapi fits s)) then
+    invalid_argf "%s: %a does not broadcast to %a" by pp_shape xs pp_shape s;
+  move ~by (Broadcast (Array.copy s)) x
+
+let broadcast_shapes ss =
+  let by = "Nx.broadcast_shapes" in
+  List.iter
+    (fun s ->
+      if Array.exists (fun e -> e < 0) s then
+        invalid_argf "%s: %a has a negative extent" by pp_shape s)
+    ss;
+  List.fold_left (broadcast_shape ~by) [||] ss
+
+let broadcast_arrays xs =
+  let by = "Nx.broadcast_arrays" in
+  let s = List.fold_left (fun s x -> broadcast_shape ~by s (shape x)) [||] xs in
+  List.map (broadcast ~by s) xs
+
+let squeeze ?axes:l x =
+  let by = "Nx.squeeze" in
+  let s = shape x in
+  let drop =
+    match l with
+    | None -> Array.map (fun e -> e = 1) s
+    | Some l ->
+        let drop = Array.make (Array.length s) false in
+        List.iter
+          (fun a ->
+            if s.(a) <> 1 then
+              invalid_argf "%s: axis %d of %a has extent %d" by a pp_value x
+                s.(a);
+            drop.(a) <- true)
+          (axes ~by x l);
+        drop
+  in
+  let kept = List.filteri (fun i _ -> not drop.(i)) (Array.to_list s) in
+  move ~by (Reshape (Array.of_list kept)) x
+
+let unsqueeze ~axes:l x =
+  let by = "Nx.unsqueeze" in
+  let s = shape x in
+  let r = Array.length s + List.length l in
+  let added = Array.make r false in
+  List.iter
+    (fun a ->
+      let a' =
+        axis_of ~by r a (fun ppf -> Format.fprintf ppf "a rank %d result" r)
+      in
+      if added.(a') then invalid_argf "%s: position %d repeats" by a;
+      added.(a') <- true)
+    l;
+  let next = ref 0 in
+  let s' =
+    Array.map
+      (fun added ->
+        if added then 1
+        else begin
+          incr next;
+          s.(!next - 1)
+        end)
+      added
+  in
+  move ~by (Reshape s') x
+
+let flatten ?(start_dim = 0) ?(end_dim = -1) x =
+  let by = "Nx.flatten" in
+  let s = shape x in
+  if Array.length s = 0 then move ~by (Reshape [| 1 |]) x
+  else
+    let a = axis ~by x start_dim and b = axis ~by x end_dim in
+    if a > b then
+      invalid_argf "%s: start_dim %d comes after end_dim %d in %a" by start_dim
+        end_dim pp_value x;
+    let merged = Array.fold_left ( * ) 1 (Array.sub s a (b - a + 1)) in
+    let s' =
+      Array.concat
+        [
+          Array.sub s 0 a;
+          [| merged |];
+          Array.sub s (b + 1) (Array.length s - b - 1);
+        ]
+    in
+    move ~by (Reshape s') x
+
+let permute ~by p x = move ~by (Permute p) x
+
+let transpose ?axes:l x =
+  let by = "Nx.transpose" in
+  let r = ndim x in
+  match l with
+  | None -> permute ~by (Array.init r (fun i -> r - 1 - i)) x
+  | Some l ->
+      let seen = Array.make r false in
+      let p =
+        List.map
+          (fun a ->
+            let a' = if a < 0 then a + r else a in
+            if a' >= 0 && a' < r && not seen.(a') then (
+              seen.(a') <- true;
+              a')
+            else -1)
+          l
+      in
+      if List.length l <> r || List.mem (-1) p then
+        invalid_argf "%s: axes %a are not a permutation of %a's" by pp_ints l
+          pp_value x;
+      permute ~by (Array.of_list p) x
+
+let moveaxis a b x =
+  let by = "Nx.moveaxis" in
+  let a = axis ~by x a and b = axis ~by x b in
+  let rest = List.filter (( <> ) a) (List.init (ndim x) Fun.id) in
+  let p =
+    List.filteri (fun i _ -> i < b) rest
+    @ (a :: List.filteri (fun i _ -> i >= b) rest)
+  in
+  permute ~by (Array.of_list p) x
+
+let swapaxes a b x =
+  let by = "Nx.swapaxes" in
+  let a = axis ~by x a and b = axis ~by x b in
+  let p = Array.init (ndim x) Fun.id in
+  p.(a) <- b;
+  p.(b) <- a;
+  permute ~by p x
+
+(* The whole of an axis of extent [d]. *)
+let whole d : Nx_array.Move.range = { start = 0; count = d; step = 1 }
+
+let flip ?axes:l x =
+  let by = "Nx.flip" in
+  let s = shape x in
+  let flipped =
+    match l with
+    | None -> Array.make (Array.length s) true
+    | Some l ->
+        let f = Array.make (Array.length s) false in
+        List.iter (fun a -> f.(a) <- true) (axes ~by x l);
+        f
+  in
+  let range i d : Nx_array.Move.range =
+    if flipped.(i) then { start = max 0 (d - 1); count = d; step = -1 }
+    else whole d
+  in
+  move ~by (Slice (Array.mapi range s)) x
+
+let sliding_window ?axis:(a = -1) ~window ?(step = 1) x =
+  let by = "Nx.sliding_window" in
+  let axis = axis ~by x a in
+  let d = Prim.dim x axis in
+  if window < 1 || step < 1 then
+    invalid_argf "%s: window %d and step %d must be at least 1" by window step;
+  if window > d then
+    invalid_argf "%s: window %d exceeds axis %d of %a" by window a pp_value x;
+  move ~by (Window [| { axis; size = window; step; dilation = 1 } |]) x
+
+let split ~axis:a n x =
+  let by = "Nx.split" in
+  let a = axis ~by x a in
+  if n < 1 then invalid_argf "%s: %d runs" by n;
+  let s = shape x in
+  let d = s.(a) in
+  let start = ref 0 in
+  List.init n (fun k ->
+      let count = (d / n) + if k < d mod n then 1 else 0 in
+      let rs = Array.map whole s in
+      rs.(a) <- { start = !start; count; step = 1 };
+      start := !start + count;
+      move ~by (Slice rs) x)
+
+(* [x] with its axis [i] repeated [n.(i)] times: whole, end to end, where
+   [outer]; element by element otherwise. Each repeated axis gains a unit axis
+   beside it, before it where [outer], which is broadcast to the count and
+   merged into it. *)
+let stretch ~by ~outer n x =
+  if Array.for_all (( = ) 1) n then x
+  else
+    let s = shape x in
+    let axes f = Array.of_list (List.concat (List.mapi f (Array.to_list s))) in
+    let beside k i d =
+      if n.(i) = 1 then [ d ] else if outer then [ k; d ] else [ d; k ]
+    in
+    let unit = axes (beside 1) and wide = axes (fun i -> beside n.(i) i) in
+    let merged = Array.mapi (fun i d -> n.(i) * d) s in
+    move ~by (Reshape merged)
+      (move ~by (Broadcast wide) (move ~by (Reshape unit) x))
+
+let tile reps x =
+  let by = "Nx.tile" in
+  let s = shape x in
+  let r = Array.length reps and k = Array.length s in
+  if r < k || Array.exists (fun n -> n < 0) reps then
+    invalid_argf "%s: reps %a for %a" by pp_shape reps pp_value x;
+  let lead = Array.append (Array.make (r - k) 1) s in
+  let x = if r = k then x else move ~by (Reshape lead) x in
+  stretch ~by ~outer:true reps x
+
+let repeat ?axis:a n x =
+  let by = "Nx.repeat" in
+  if n < 0 then invalid_argf "%s: count %d is negative" by n;
+  let x, a =
+    match a with
+    | None -> (move ~by (Reshape [| numel x |]) x, 0)
+    | Some a -> (x, axis ~by x a)
+  in
+  stretch ~by ~outer:false
+    (Array.init (ndim x) (fun i -> if i = a then n else 1))
+    x
 
 (* Operations as data *)
 
