@@ -57,8 +57,32 @@ let reason = function
 let pp_operand ppf (Any a) =
   Format.fprintf ppf "%a %a" Dtype.pp a.dtype Shape.pp (Layout.shape a.layout)
 
+(* The reason a [Dead_buffer] gives: each dead operand, numbered from 1 in
+   [operands]' order, with the reason its consumer gave. *)
+let dead operands =
+  let ds =
+    List.filter_map Fun.id
+      (List.mapi
+         (fun i (Any a) ->
+           Option.map (fun why -> (i + 1, why)) (Buffer.dead a.buffer))
+         operands)
+  in
+  match List.rev ds with
+  | [] -> reason Dead_buffer
+  | [ (i, why) ] -> Printf.sprintf "operand %d was consumed, %s" i why
+  | (last, _) :: before ->
+      Printf.sprintf "operands %s and %d were consumed: %s"
+        (String.concat ", "
+           (List.rev_map (fun (i, _) -> string_of_int i) before))
+        last
+        (String.concat ", "
+           (List.map (fun (i, why) -> Printf.sprintf "%d %s" i why) ds))
+
 let refused name answer operands =
-  invalid_argf "%s: %s (%a)" name (reason answer)
+  let why =
+    match answer with Dead_buffer -> dead operands | _ -> reason answer
+  in
+  invalid_argf "%s: %s (%a)" name why
     (Format.pp_print_list
        ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ")
        pp_operand)

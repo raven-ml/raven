@@ -282,5 +282,9 @@ val refused : string -> answer -> any list -> 'a
 (** [refused name r operands] raises [Invalid_argument] for the refusal [r]
     that a kernel answered for [operands], naming [name], the reason [r] gives,
     and each operand's dtype and shape. [name] is the function the user called,
-    as ["Nx.add"]. [Done] and [Declined] are no refusal, and raise
-    [Invalid_argument] saying so. *)
+    as ["Nx.add"]. For [Dead_buffer] the reason names each operand whose
+    buffer is dead, numbered from 1 in [operands]' order, with the reason its
+    consumer gave ({!Rig.Buffer.dead}), as
+    [Nx.add: operand 2 was consumed, donated (Nx.donate) (float32 [3], …)].
+    [Done] and [Declined] are no refusal, and raise [Invalid_argument] saying
+    so. *)

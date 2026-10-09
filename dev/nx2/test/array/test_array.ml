@@ -33,10 +33,10 @@ let floats32 s xs = A.of_array f32 s xs
 (* Every index's element by [get], in C order. *)
 let gets a = Array.of_list (List.map (A.get a) (indices (L.shape (A.layout a))))
 
-(* Kills [b]: a donation consumes its memory. *)
-let kill b =
+(* Kills [b]: a donation consumes its memory, giving [why]. *)
+let kill ?(why = "consumed by the test") b =
   Rig.Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
-      ignore (Rig.Claim.consume c ~why:"consumed by the test" b))
+      ignore (Rig.Claim.consume c ~why b))
 
 (* Whether no claim holds [b]'s memory: a donation of it is exclusive. *)
 let unclaimed b =
@@ -384,6 +384,24 @@ let test_refused () =
   raises_match (Exn.invalid_arg ~substring:"not a refusal") (fun () ->
       A.refused "add" A.Declined [ A.Any a ])
 
+(* A dead operand's reason is its consumer's, given before the operands, each
+   dead operand numbered from 1 in the list's order. *)
+let test_refused_dead () =
+  let a = floats32 [| 3 |] [| 1.; 2.; 3. |] in
+  let b = floats32 [| 3 |] [| 4.; 5.; 6. |] in
+  kill ~why:"donated (Nx.donate)" (A.buffer b);
+  raises
+    (Invalid_argument
+       "Nx.add: operand 2 was consumed, donated (Nx.donate) (float32 [3], \
+        float32 [3])")
+    (fun () -> A.refused "Nx.add" A.Dead_buffer [ A.Any a; A.Any b ]);
+  kill ~why:"donated to Nx.set" (A.buffer a);
+  raises
+    (Invalid_argument
+       "Nx.add: operands 1 and 2 were consumed: 1 donated to Nx.set, 2 donated \
+        (Nx.donate) (float32 [3], float32 [3])")
+    (fun () -> A.refused "Nx.add" A.Dead_buffer [ A.Any a; A.Any b ])
+
 (* Every refusal raises, naming the function and each operand, with a reason
    of its own. *)
 let test_refused_codes () =
@@ -505,7 +523,13 @@ let test_io_refuses () =
 let test_dead_access () =
   let a = floats32 [| 2 |] [| 1.; 2. |] in
   kill (A.buffer a);
-  let fails f = raises_match (Exn.invalid_arg ~substring:"dead") f in
+  let fails f =
+    raises_match
+      (fun e ->
+        Exn.invalid_arg ~substring:"dead" e
+        || Exn.invalid_arg ~substring:"consumed by the test" e)
+      f
+  in
   fails (fun () -> A.get a [| 0 |]);
   fails (fun () -> A.to_array a);
   fails (fun () -> A.bitcast D.Uint32 a);
@@ -541,7 +565,8 @@ let test_dead_empty () =
   kill b;
   raises_match (Exn.invalid_arg ~substring:"dead") (fun () ->
       A.to_device Rig.host a);
-  raises_match (Exn.invalid_arg ~substring:"dead") (fun () -> A.to_array a)
+  raises_match (Exn.invalid_arg ~substring:"consumed by the test") (fun () ->
+      A.to_array a)
 
 (* A copy the host cannot make is refused before it allocates. *)
 let test_refused_copy () =
@@ -1591,6 +1616,8 @@ let tests =
         test "refused names the function, the reason and every operand"
           test_refused;
         test "refused gives each refusal its own reason" test_refused_codes;
+        test "refused names a dead operand's consumer, before the operands"
+          test_refused_dead;
         test "C answers the constructors' codes" test_codes;
       ];
     group "elements"
