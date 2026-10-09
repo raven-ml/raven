@@ -3,9 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* nx2's Metal floors on the Mac's GPU. A row runs [n] launches in one command
-   buffer, enough for 10 ms of GPU time, so that the host's submission and wait
-   are a small part of a call.
+(* nx2's Metal floors and kernels on the Mac's GPU, each kernel row beside the
+   floor that bounds it. A row runs [n] launches in one command buffer, enough
+   for 10 ms of GPU time, so that the host's submission and wait are a small
+   part of a call.
 
    [bench_metal.exe] runs the rows under thumper, which times calls on the
    host's clock. [bench_metal.exe gate [PAT]] prints each row's GPU time per
@@ -92,6 +93,105 @@ let peak_row name kernel (Dt.Any dt) ~flops_per_round =
           ~words:[ iters; 0 ]);
   }
 
+(* Contractions of a [batch][m][k] and b [batch][k][n], stored transposed where
+   [trans] says ("nt": b stored [n][k]), against the simdgroup-matrix peak of
+   the type their fragments hold. A skinny product (m at most 16) streams b: its
+   floor reads as many bytes. *)
+let contract_row ?(batch = 1) ?name ?acc ?out (Dt.Any dt) ~m ~k ~n trans =
+  let a_t = trans.[0] = 't' and b_t = trans.[1] = 't' in
+  let short = function
+    | "float32" -> "f32"
+    | "float16" -> "f16"
+    | "bfloat16" -> "bf16"
+    | "int8" -> "i8"
+    | d -> d
+  in
+  let base = strf "contract-%s" (short (Dt.name dt)) in
+  let name =
+    match name with
+    | Some x -> base ^ "-" ^ x
+    | None -> strf "%s-%dx%dx%d-%s" base m k n trans
+  in
+  let peak =
+    match Dt.Any dt with
+    | Dt.Any Dt.Float16 | Dt.Any Dt.Int8 -> "floor/simdgroup-matrix-f16-peak"
+    | _ -> "floor/simdgroup-matrix-f32-peak"
+  in
+  let b_bytes = Dt.bytes dt (batch * k * n) in
+  let floor, work =
+    if m <= 16 then
+      (strf "floor/read-%dMB" (b_bytes / 1_000_000), `Bytes b_bytes)
+    else (peak, `Flops (2 * batch * m * n * k))
+  in
+  {
+    name;
+    floor = Some floor;
+    work;
+    setup =
+      (fun t ->
+        let matrix ~trans ~rows ~cols ~seed =
+          let o = S.operand t (Dt.bytes dt (batch * rows * cols)) in
+          S.generate t o dt (batch * rows * cols) ~seed;
+          S.arg o dt
+            (if trans then (rows * cols, 1, rows) else (rows * cols, cols, 1))
+        in
+        let a = matrix ~trans:a_t ~rows:m ~cols:k ~seed:1 in
+        let b = matrix ~trans:b_t ~rows:k ~cols:n ~seed:2 in
+        let (Dt.Any out_dt) = Option.value out ~default:(Dt.Any dt) in
+        let out =
+          S.arg
+            (S.operand t (Dt.bytes out_dt (batch * m * n)))
+            out_dt
+            (m * n, n, 1)
+        in
+        Option.get (S.plan_contract ?acc t (batch, m, n, k) ~a ~b ~out));
+  }
+
+(* Squares, the four orders, gpt-oss's prefill, few-row and decode products (k
+   2880), a decode product with b stored [k][n], Llama 3 8B's MLP up projection,
+   and a batch of small products. *)
+let contract_rows =
+  let floats = [ Dt.Any Dt.Bfloat16; Dt.Any Dt.Float16; Dt.Any Dt.Float32 ] in
+  List.concat_map
+    (fun dt ->
+      List.map
+        (fun s -> contract_row ~name:(string_of_int s) dt ~m:s ~k:s ~n:s "nn")
+        [ 256; 512; 1024; 2048; 4096 ]
+      @ List.map
+          (fun tr ->
+            contract_row ~name:("4096-" ^ tr) dt ~m:4096 ~k:4096 ~n:4096 tr)
+          [ "nt"; "tn"; "tt" ]
+      @ List.map
+          (fun (m, k, n) -> contract_row dt ~m ~k ~n "nt")
+          [
+            (512, 2880, 5120);
+            (512, 4096, 2880);
+            (512, 2880, 201088);
+            (1, 2880, 5120);
+            (8, 2880, 5120);
+            (1, 2880, 201088);
+            (4096, 4096, 14336);
+          ]
+      @ [ contract_row dt ~m:1 ~k:2880 ~n:5120 "nn" ]
+      @ [ contract_row ~batch:64 ~name:"64x512" dt ~m:512 ~k:512 ~n:512 "nn" ])
+    floats
+  @ [
+      contract_row ~name:"4096" ~acc:(Dt.Any Dt.Int32) ~out:(Dt.Any Dt.Int32)
+        (Dt.Any Dt.Int8) ~m:4096 ~k:4096 ~n:4096 "nn";
+    ]
+
+(* The floors of the skinny rows, a read of the bytes of b they stream. *)
+let skinny_floors =
+  List.sort_uniq compare
+    (List.filter_map
+       (fun r ->
+         match (r.work, r.floor) with
+         | `Bytes b, Some f -> Some (f, b)
+         | _ -> None)
+       contract_rows)
+  |> List.map (fun (name, b) ->
+      { (stream_row "read" ~ins:1 ~out:false (b / 4)) with name })
+
 let rows =
   [ launch_row ]
   @ List.concat_map
@@ -109,6 +209,7 @@ let rows =
       peak_row "floor/simdgroup-matrix-f16-peak" "mma_f16" (Dt.Any Dt.Float16)
         ~flops_per_round:(8 * 1024 / 32);
     ]
+  @ skinny_floors @ contract_rows
 
 (* Timing *)
 
@@ -161,7 +262,7 @@ let gate pat =
   let time r =
     let ns = per_launch t (r.setup t) in
     Gc.full_major ();
-    if r.floor = None then Hashtbl.replace floors r.name ns;
+    if r.floor = None then Hashtbl.replace floors r.name (ns, r.work);
     if selected r then
       let rate =
         match r.work with
@@ -169,10 +270,14 @@ let gate pat =
         | `Flops f -> strf "%.0f GF/s" (float f /. ns)
         | `Launch -> ""
       in
+      (* A memory-bound row's time over its floor's; a compute-bound row's
+         fraction of its peak. *)
       let ratio =
-        match Option.bind r.floor (Hashtbl.find_opt floors) with
-        | Some f -> strf "%.2f" (ns /. f)
-        | None -> ""
+        match (r.work, Option.bind r.floor (Hashtbl.find_opt floors)) with
+        | `Flops f, Some (fns, `Flops ff) ->
+            strf "%.0f%%" (100. *. (float f /. ns) /. (float ff /. fns))
+        | _, Some (fns, _) -> strf "%.2f" (ns /. fns)
+        | _, None -> ""
       in
       Printf.printf "%-40s %12.2f %12s %8s\n%!" r.name (ns /. 1000.) rate ratio
   in
