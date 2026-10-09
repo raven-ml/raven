@@ -265,18 +265,24 @@ val placement : ('v, 's, 'd) t -> 'd Placement.t option
 
     The crossing to the array layer, for libraries that read or make bytes:
     formats, C bindings, compilers. Layouts and buffers are visible here and
-    nowhere else in this module. *)
+    nowhere else in this module. It shares memory, copying nothing: a value and
+    the arrays crossing with it read the same bytes, so a caller who writes them
+    breaks "nothing changes a value". {!copy} gives a value memory of its own.
+*)
 
 module Repr : sig
   val of_array : 'd devices -> ('v, 's) Nx_array.t -> ('v, 's, 'd) t
-  (** [of_array s a] is the value whose bytes are [a]'s.
+  (** [of_array s a] is the value whose bytes are [a]'s. The value reads [a]'s
+      memory from then on: a write to it through any handle leaves what values
+      over it read unspecified.
 
       Raises [Invalid_argument] naming [Nx.Repr.of_array] unless [a] lies on a
       device of [s]. *)
 
   val array : ('v, 's, 'd) t -> ('v, 's) Nx_array.t option
-  (** [array x] is [Some a] iff [x] lies on one device, [a] its array. [a] may
-      be strided or offset. *)
+  (** [array x] is [Some a] iff [x] has bytes on one device, [a] its array, and
+      [None] for a value on several devices or of every set. [a] may be strided
+      or offset. It is for reading: writing through it changes [x]. *)
 
   val of_shards : 'd Placement.t -> ('v, 's) Nx_array.t array -> ('v, 's, 'd) t
   (** [of_shards p arrays] is the value whose bytes are [arrays], one per device
@@ -288,7 +294,8 @@ module Repr : sig
 
   val shards : ('v, 's, 'd) t -> ('v, 's) Nx_array.t array option
   (** [shards x] is [Some arrays], one per device of [x]'s placement, in order:
-      [[| a |]] for a value on one device. *)
+      [[| a |]] for a value on one device; [None] for a value of every set. The
+      arrays are for reading, as {!array}'s. *)
 end
 
 (**/**)

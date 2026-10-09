@@ -351,7 +351,7 @@ let every_function (type d) ?(every_set = false) name
   equal ~msg:(msg "reshape") (array bits) xs (elements (Nx.reshape [| 4 |] x));
   equal ~msg:(msg "copy") (array bits) xs (elements (Nx.copy x));
   ignore (Nx.Repr.array x);
-  equal ~msg:(msg "shards") bool true (Nx.Repr.shards x <> None)
+  equal ~msg:(msg "shards") bool (not every_set) (Nx.Repr.shards x <> None)
 
 let test_every_set () =
   let host = on_host Plain D.Float32 [| 2; 2 |] [| 1.; -2.; 3.; -4. |] in

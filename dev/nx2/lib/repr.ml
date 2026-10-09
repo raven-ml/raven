@@ -45,11 +45,10 @@ let of_shards ~by p arrays =
   if n = 1 then Value.Array { at = p; a = arrays.(0) }
   else Value.Shards { at = p; arrays = Array.copy arrays }
 
-(* A constant reads as computed on the host, its reported placement. A traced
-   value has no bytes to read. *)
+(* A traced value has no bytes to read; a formula answers [None]. *)
 let concrete (type v s d) ~by (x : (v, s, d) Value.t) =
   match x with
-  | Value.Deferred _ -> Exec.read x
+  | Value.Deferred _ -> x
   | Value.Traced { owner; _ } ->
       invalid_argf "%s: a value traced by %s has no bytes" by owner.name
   | Value.Array _ | Value.Shards _ -> x

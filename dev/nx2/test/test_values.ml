@@ -145,8 +145,8 @@ let errors =
           greater int ~than:(String.length name + 2) (String.length msg))
 
 (* Values of every set have no placement, and a value placed on a set lies
-   there: a formula never names a set (the external review's program, which
-   no longer type-checks, read a host set at another brand from one). *)
+   there: a formula never names a set (the external review's program, which no
+   longer type-checks, read a host set at another brand from one). *)
 
 module Host2 = (val Nx.devices [ Rig.host ])
 
@@ -164,7 +164,8 @@ let test_two_values_of_a_host_set () =
   let x = Nx.place Host2.on (Nx.zeros f32 [| 2 |]) in
   let y = Nx.place Host2.on (Nx.zeros f32 [| 2 |]) in
   let z = Nx.add x y in
-  equal ~msg:"lies on its set" (list string) [ Rig.name Rig.host ]
+  equal ~msg:"lies on its set" (list string)
+    [ Rig.name Rig.host ]
     (List.map Rig.name
        (Nx.rigs (Nx.Placement.devices (Option.get (Nx.placement z)))))
 
@@ -188,12 +189,21 @@ let law_placed ((_, p), shape) =
     (List.map Rig.name (Nx.rigs (Nx.Placement.devices p)))
     (List.map Rig.name (Nx.rigs (Nx.Placement.devices q)))
 
+(* A formula has no bytes for Repr to hand out. *)
+let test_repr_of_formula () =
+  let c = Nx.add (Nx.zeros f32 [| 2 |]) (Nx.scalar f32 1.) in
+  equal ~msg:"array" bool true (Nx.Repr.array c = None);
+  equal ~msg:"shards" bool true (Nx.Repr.shards c = None)
+
 let every_set =
   group "every set"
     [
+      test "Repr reads no array of a value of every set" test_repr_of_formula;
       test "a value of every set has no placement" test_every_set_unplaced;
-      test "values placed on a set over the host meet" test_two_values_of_a_host_set;
-      prop "a placed value lies where it was placed" (Gen.pair placements shapes)
+      test "values placed on a set over the host meet"
+        test_two_values_of_a_host_set;
+      prop "a placed value lies where it was placed"
+        (Gen.pair placements shapes)
         law_placed;
     ]
 
