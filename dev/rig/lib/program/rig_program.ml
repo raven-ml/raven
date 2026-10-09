@@ -799,7 +799,8 @@ type lstep =
       body : lstep array;
     }
 
-type loaded = {
+(* A program loaded on this machine. *)
+type here = {
   t : t;
   devices : Rig.t array;
   mem : B.t array array;
@@ -1073,22 +1074,11 @@ let write_init p m k =
       ~src:(B.of_string (filled p k init))
       ~dst:(B.view p.mem.(m).(k) ~first:0 ~length:n)
 
-let one_machine devices =
-  if Array.length devices > 0 then begin
-    let h = Rig.host_of devices.(0) in
-    Array.iter
-      (fun d ->
-        if not (Rig.equal (Rig.host_of d) h) then
-          invalid_arg "Rig_program.load: devices of several machines")
-      devices
-  end
-
 let words b =
   if B.length b = 0 then Bigarray.(Array1.create int64 c_layout 0)
   else B.bigarray Bigarray.int64 b
 
-let load t devices =
-  one_machine devices;
+let load_here t devices =
   match
     check t devices;
     Array.map link t.code
@@ -1143,13 +1133,13 @@ type frame = { inputs : B.t array; ints : int array }
 
 let invalid fmt = Printf.ksprintf invalid_arg ("Rig_program.run: " ^^ fmt)
 
-let check_frame p (f : frame) =
-  let n = Array.length p.t.inputs in
+let check_frame (t : t) devices (f : frame) =
+  let n = Array.length t.inputs in
   if Array.length f.inputs <> n then
     invalid "%d inputs for a program of %d" (Array.length f.inputs) n;
   Array.iteri
     (fun i (spec : input) ->
-      let b = f.inputs.(i) and d = p.devices.(spec.device) in
+      let b = f.inputs.(i) and d = devices.(spec.device) in
       if not (Rig.equal (B.device b) d) then
         invalid "input %d is on %s, not %s" i
           (Rig.name (B.device b))
@@ -1159,9 +1149,9 @@ let check_frame p (f : frame) =
           spec.bytes;
       if spec.access = B.Read_write && B.access b = B.Read then
         invalid "input %d is read-only memory, which the program writes" i)
-    p.t.inputs;
-  if Array.length f.ints > p.t.ints then
-    invalid "%d ints for a program of %d" (Array.length f.ints) p.t.ints
+    t.inputs;
+  if Array.length f.ints > t.ints then
+    invalid "%d ints for a program of %d" (Array.length f.ints) t.ints
 
 (* Input [i] of [f] as device [d] names it. *)
 let input_on p (f : frame) i d =
@@ -1172,7 +1162,7 @@ let input_on p (f : frame) i d =
     | Some b -> b
     | None -> invalid "input %d: %s cannot borrow it" i (Rig.name dev)
 
-let run_value (p : loaded) f k : value -> int = function
+let run_value (p : here) f k : value -> int = function
   | Fixed n -> n
   | Int i -> Int64.to_int (Bigarray.Array1.unsafe_get p.ints.(k) i)
   | Input { input; on } -> B.address (input_on p f input on)
@@ -1259,7 +1249,7 @@ let flag_holds p k (v : view) =
   B.blit_to_bytes p.flag 0 c 0 1;
   Bytes.get c 0 <> '\000'
 
-let rec exec (p : loaded) f k after = function
+let rec exec (p : here) f k after = function
   | Lmove { src; dst } ->
       B.copy ~src:(slot_buffer p f k src) ~dst:(slot_buffer p f k dst)
   | Lsubmit { spec; copies } -> submit_step p f k after spec copies
@@ -1278,9 +1268,9 @@ let rec exec (p : loaded) f k after = function
       in
       go 0
 
-let run ?(after = [||]) (p : loaded) (f : frame) =
+let run_here ~after (p : here) (f : frame) =
   Mutex.protect p.lock @@ fun () ->
-  check_frame p f;
+  check_frame p.t p.devices f;
   let k = p.runs land 1 in
   p.runs <- p.runs + 1;
   Array.iter (fun b -> B.wait b B.Read_write) p.twos.(k);
@@ -1290,3 +1280,176 @@ let run ?(after = [||]) (p : loaded) (f : frame) =
   Array.fill p.last 0 (Array.length p.last) None;
   Array.iter (exec p f k after) p.steps;
   Array.of_list (List.filter_map Fun.id (Array.to_list p.last))
+
+(* Programs of another machine *)
+
+(* The binary [load] sends another machine's host: the magic, then each device's
+   id on that machine, then the description's bytes. A run's words: the
+   program's entry, each input's memory id, offset and length, the number of the
+   frame's ints, then the description's [ints] words, the frame's first. *)
+
+let share_magic = "rig.share\n"
+
+(* A program loaded on another machine, which a submission on its host runs. *)
+type there = {
+  t : t;
+  devices : Rig.t array;
+  entry : int;
+  sub : Sub.t;
+  srun : Sub.Run.t;
+  words :
+    (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t;
+  lock : Mutex.t;
+}
+
+type loaded = Here of here | There of there
+
+let words_bytes (t : t) = 8 + (24 * Array.length t.inputs) + 8 + (8 * t.ints)
+
+(* [d]'s id on its machine, as its agent names it. *)
+let proxy_id d =
+  match Rig.capability d Rig_remote_abi.key with
+  | Some (Rig_remote_abi.Host _) -> 0
+  | Some (Rig_remote_abi.Device d) -> d.Rig_remote_abi.id
+  | None -> refuse "%s is no device of an agent" (Rig.name d)
+
+let load_there t devices =
+  match
+    check t devices;
+    Array.map proxy_id devices
+  with
+  | exception Refused why -> Error why
+  | ids -> (
+      let b = Buffer.create 4096 in
+      Buffer.add_string b share_magic;
+      W.array W.int b ids;
+      Buffer.add_string b (to_string t);
+      let host = Rig.host_of devices.(0) in
+      match Rig.Image.load host (Buffer.contents b) with
+      | Error why -> Error why
+      | Ok image -> (
+          match Rig.Image.entry image "run" with
+          | None -> Error (strf "%s: the program has no run" (Rig.name host))
+          | Some entry ->
+              let buffer = B.create Rig.host (words_bytes t) in
+              let part =
+                {
+                  Sub.queue = "COMPUTE:0";
+                  after = [||];
+                  work = Sub.Words buffer;
+                }
+              in
+              (* The image stays loaded until the runs' work is done. *)
+              let hold =
+                Rig.Hold.make (fun () -> ignore (Sys.opaque_identity image))
+              in
+              let sub = Sub.make ~hold ~reads:0 ~writes:0 host [| part |] in
+              Ok
+                (There
+                   {
+                     t;
+                     devices;
+                     entry;
+                     sub;
+                     srun = Sub.Run.make ();
+                     words = B.bigarray Bigarray.char buffer;
+                     lock = Mutex.create ();
+                   })))
+
+let load t devices =
+  if Array.length devices = 0 then
+    Result.map (fun p -> Here p) (load_here t devices)
+  else begin
+    let h = Rig.host_of devices.(0) in
+    Array.iter
+      (fun d ->
+        if not (Rig.equal (Rig.host_of d) h) then
+          invalid_arg "Rig_program.load: devices of several machines")
+      devices;
+    if Rig.equal h Rig.host then
+      Result.map (fun p -> Here p) (load_here t devices)
+    else load_there t devices
+  end
+
+let set_word words at v =
+  Bigarray.Array1.(
+    for i = 0 to 7 do
+      unsafe_set words (at + i) (Char.unsafe_chr ((v lsr (8 * i)) land 0xff))
+    done)
+
+(* The words are placed on the host's queue when [submit] hands them over, so
+   the next run writes them again once it returned. *)
+let run_there ~after p (f : frame) =
+  Mutex.protect p.lock @@ fun () ->
+  check_frame p.t p.devices f;
+  set_word p.words 0 p.entry;
+  Array.iteri
+    (fun i b ->
+      let at = 8 + (24 * i) in
+      set_word p.words at (Nativeint.to_int (B.handle b));
+      set_word p.words (at + 8) (B.offset b);
+      set_word p.words (at + 16) (B.length b))
+    f.inputs;
+  let at = 8 + (24 * Array.length f.inputs) in
+  set_word p.words at (Array.length f.ints);
+  Array.iteri (fun i v -> set_word p.words (at + 8 + (8 * i)) v) f.ints;
+  [| Rig.submit p.sub ~run:p.srun ~reads:[||] ~writes:[||] ~waits:after |]
+
+let run ?(after = [||]) p f =
+  match p with Here p -> run_here ~after p f | There p -> run_there ~after p f
+
+let load_share b ~device =
+  let r = { R.s = b; at = 0 } in
+  let m = String.length share_magic in
+  if String.length b < m || String.sub b 0 m <> share_magic then
+    Error "not a program another process loads"
+  else begin
+    r.R.at <- m;
+    match R.array R.int r with
+    | exception R.Malformed (at, why) ->
+        Error (strf "a malformed program at byte %d: %s" at why)
+    | ids -> (
+        match of_string (String.sub b r.R.at (R.left r)) with
+        | Error _ as e -> e
+        | Ok t -> (
+            match
+              Array.map
+                (fun id ->
+                  match device id with
+                  | Some d -> d
+                  | None -> refuse "no device %d on this machine" id)
+                ids
+            with
+            | exception Refused why -> Error why
+            | devices -> load t devices))
+  end
+
+let run_share ?(after = [||]) w ~program ~region =
+  let r = { R.s = w; at = 0 } in
+  match
+    let p =
+      match program (R.int r) with
+      | Some (Here p) -> p
+      | Some (There _) | None -> R.fail r "no program of this entry"
+    in
+    let input _ =
+      let id = R.int r in
+      let first = R.int r in
+      let length = R.int r in
+      match region id with
+      | None -> R.fail r "no memory %d" id
+      | Some b -> (
+          try B.view b ~first ~length
+          with Invalid_argument _ ->
+            R.fail r "%d bytes at %d past memory %d" length first id)
+    in
+    let inputs = Array.init (Array.length p.t.inputs) input in
+    let n = R.int r in
+    if n < 0 || n > p.t.ints then
+      R.fail r "%d ints for a program of %d" n p.t.ints;
+    let ints = Array.init p.t.ints (fun _ -> R.int r) in
+    (p, { inputs; ints = Array.sub ints 0 n })
+  with
+  | exception R.Malformed (at, why) ->
+      Error (strf "a malformed run at byte %d: %s" at why)
+  | p, f -> Ok (run_here ~after p f)

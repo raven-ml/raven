@@ -6,7 +6,8 @@
   test_rig_remote_killed
   test_rig_remote_abort
   test_rig_remote_join
-  test_rig_remote_ids)
+  test_rig_remote_ids
+  test_rig_remote_program)
  (modules
   test_rig_remote
   test_rig_remote_lost
@@ -15,15 +16,22 @@
   test_rig_remote_abort
   test_rig_remote_join
   test_rig_remote_ids
+  test_rig_remote_program
   remote_job
   watchdog)
- (deps support/agent.exe support/controller.exe support/launched.exe)
+ (deps
+  support/agent.exe
+  support/controller.exe
+  support/launched.exe
+  (glob_files ../host/fixtures/*.o))
  (libraries
   rig
   rig_remote
   rig_remote_proxy
   rig_remote_abi
+  rig_program
   rig_support
+  rig_host_support
   threads.posix
   unix
   windtrap))

@@ -19,15 +19,14 @@
     module links only [rig.edge] and matches {!Rig_edge.Driver}.
 
     {b Work.} A proxy runs copies, and the machine's host also runs
-    [Rig.Submission.Words] parts: each is a run of the code loaded on that host.
-    rig.remote's agent loads and runs no code: a hand-over with words fails its
-    job. A copy moves bytes between memory of the agent's machine, or between
-    that memory and this process's. A copy from this process's memory carries
-    its bytes across the link in its hand-over; a copy into it, in a frame of
-    the agent's, which the receiving thread writes where the copy names before
-    the shadow reaches the copy's value. Either crosses the link once. The agent
-    runs a hand-over's parts in their order, after its waits, and after the
-    proxy's earlier values.
+    [Rig.Submission.Words] parts: each is a run of the code loaded on that host,
+    which rig.remote's agent runs as rig.program's. A copy moves bytes between
+    memory of the agent's machine, or between that memory and this process's. A
+    copy from this process's memory carries its bytes across the link in its
+    hand-over; a copy into it, in a frame of the agent's, which the receiving
+    thread writes where the copy names before the shadow reaches the copy's
+    value. Either crosses the link once. The agent runs a hand-over's parts in
+    their order, after its waits, and after the proxy's earlier values.
 
     {b Failure.} Proxies fail with their link's job, as {!Link} states. Once the
     job failed, the calls that ask the agent ({!alloc}, {!map_peer} of memory,
@@ -116,13 +115,13 @@ val capability : t -> Rig_remote_abi.t
 
     {b Code.} {!val-image}[ d b] loads [b] on the agent's host if [d] is the
     machine's host: it is [Ok (Loaded i)], or [Error why] with the agent's
-    reason: rig.remote's agent loads no code, so it refuses every binary. On any
-    other proxy it is [Error why], [why] saying the proxy loads no code. It
-    raises {!Fault} if [d] is the machine's host and the job failed. {!entry}
-    is the agent's answer for the function, [None] if the image has none or
-    the agent refuses; it raises {!Fault} if the job failed. {!unload} sends
-    the release of the image, after every frame sent before; the agent
-    releases it once the work handed over before no longer needs it.
+    reason, rig.program's for a binary it does not load. On any other proxy it
+    is [Error why], [why] saying the proxy loads no code. It raises {!Fault} if
+    [d] is the machine's host and the job failed. {!entry} is the agent's answer
+    for the function, [None] if the image has none or the agent refuses; it
+    raises {!Fault} if the job failed. {!unload} sends the release of the image,
+    after every frame sent before; the agent releases it once the work handed
+    over before no longer needs it.
 
     {b Timeline.} The shadow is eight bytes of this process's memory that hold,
     as an unsigned 64-bit integer in the host's byte order, the last value [v]

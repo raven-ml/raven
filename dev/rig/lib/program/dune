@@ -4,7 +4,7 @@
 (library
  (name rig_program)
  (public_name rig.program)
- (libraries rig rig_host)
+ (libraries rig rig_host rig_remote_abi)
  (foreign_stubs
   (language c)
   (names rig_program_stubs)))

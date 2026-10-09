@@ -64,8 +64,9 @@
       least once a second, or a send on one makes no progress for 10 seconds;
     - a frame is malformed;
     - a hand-over names memory the job does not hold on its machine, asks for a
-      copy the agent's rig refuses, or carries words, which agents do not run,
-      or a release names an object the job does not hold there;
+      copy the agent's rig refuses, or carries a run that names no program the
+      job holds there or that [Rig_program.run_share] refuses, or a release
+      names an object the job does not hold there;
     - a device of any of its processes is lost other than by a close, as
       {!Rig.failure} reports it. This process notices its own within a second.
 
@@ -205,7 +206,11 @@ val hosts : t -> Rig.t list
     every device of its machine. Its {!Rig.arch} is the agent's instruction set,
     and its memory is the agent's. Its queues are ["COMPUTE:0"] and ["COPY:0"];
     it runs copies between its memory and this process's ({!Rig.Buffer.copy}).
-    It loads no code: {!Rig.Image.load} on it is [Error].
+    It loads programs of rig.program, which [Rig_program.load] sends it for
+    devices of its machine: {!Rig.Image.load} on it is the agent's
+    [Rig_program.load_share], and a [Rig.Submission.Words] part on it a run
+    ([Rig_program.run_share]), whose value the host reaches once the run's work
+    is done.
 
     Its capability record ({!Rig.capability}, {!Rig_remote_abi.key}) is a
     {!Rig_remote_abi.Host}, whose function makes rails between its machine and

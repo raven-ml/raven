@@ -1,0 +1,208 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+(* Programs of rig.program loaded and run on an agent's devices: they leave the
+   bytes they leave on this machine's. *)
+
+open Windtrap
+open Remote_job
+module G = Rig_program
+module P = Rig_support.Polled
+
+let le64 v =
+  let b = Bytes.create 8 in
+  Bytes.set_int64_le b 0 (Int64.of_int v);
+  Bytes.to_string b
+
+let words n f = String.concat "" (List.init n (fun i -> le64 (f i)))
+let size = 64
+
+let polled h =
+  match Rig_remote.devices h "POLLED" with
+  | Ok ds -> ds
+  | Error why -> failf "devices: %s" why
+
+let affine =
+  {
+    G.obj = Rig_host_support.fixture ~dir:"../host/fixtures" "affine";
+    entry = "affine";
+  }
+
+let launch ?(holes = [||]) ~image ~groups kernel bytes refs =
+  {
+    G.queue = "COMPUTE:0";
+    after = [||];
+    work =
+      G.Launch
+        {
+          image;
+          kernel;
+          params = { G.bytes; holes };
+          refs;
+          groups = (groups, G.Fixed 1, G.Fixed 1);
+          threads = (G.Fixed 1, G.Fixed 1, G.Fixed 1);
+          shared = G.Fixed 0;
+        };
+  }
+
+let ref_ at slot = { Rig.Submission.at; slot }
+
+(* Device 0 fills [Int 0] words of memory 0 from 100, memory of two copies that
+   starts as zeros; device 1 copies all of it into input 0 through its borrow;
+   host code adds one to input 1's first word [Int 1] times. *)
+let description archs =
+  {
+    G.devices = archs;
+    memory =
+      [|
+        G.Alloc
+          {
+            device = 0;
+            kind = Rig.Buffer.Device;
+            bytes = size;
+            init = { bytes = String.make size '\000'; holes = [||] };
+            copies = Two;
+          };
+      |];
+    images =
+      [|
+        { G.device = 0; binary = { bytes = "functions"; holes = [||] } };
+        { G.device = 1; binary = { bytes = "functions"; holes = [||] } };
+      |];
+    code = [| affine |];
+    inputs =
+      [|
+        { G.device = 1; bytes = size; access = Rig.Buffer.Read_write };
+        { G.device = 0; bytes = 8; access = Rig.Buffer.Read_write };
+      |];
+    ints = 2;
+    steps =
+      [|
+        G.Submit
+          {
+            device = 0;
+            reads = [||];
+            writes = [| G.Memory { memory = 0; offset = 0; length = size } |];
+            fixed = [||];
+            parts =
+              [|
+                launch ~image:0 ~groups:(G.Int 0) "fill"
+                  (le64 0 ^ le64 100)
+                  [| ref_ 0 0 |];
+              |];
+          };
+        G.Submit
+          {
+            device = 1;
+            reads = [| G.Memory { memory = 0; offset = 0; length = size } |];
+            writes = [| G.Input 0 |];
+            fixed = [||];
+            parts =
+              [|
+                launch ~image:1 ~groups:(G.Fixed 1) "copy"
+                  (le64 0 ^ le64 0 ^ le64 size)
+                  [| ref_ 0 0; ref_ 8 1 |];
+              |];
+          };
+        G.Loop
+          {
+            trips = G.Int 1;
+            trip = None;
+            flag = None;
+            body =
+              [|
+                G.Host
+                  {
+                    code = 0;
+                    buffers =
+                      [|
+                        (G.Input 1, Rig.Buffer.Read_write);
+                        (G.Input 1, Rig.Buffer.Read);
+                      |];
+                    values = [| G.Fixed 1; G.Fixed 1; G.Fixed 1 |];
+                    split = None;
+                  };
+              |];
+          };
+      |];
+  }
+
+(* Three runs of the description on [ds], with ints [(groups, trips)], their
+   inputs' bytes after each. *)
+let runs ds =
+  let p =
+    require_ok ~pp:Format.pp_print_string
+      (G.load (description (Array.map Rig.arch ds)) ds)
+  in
+  List.map
+    (fun (groups, trips) ->
+      let x = far_of_string ds.(1) (String.make size '\000') in
+      let c = far_of_string ds.(0) (le64 0) in
+      ignore (G.run p { inputs = [| x; c |]; ints = [| groups; trips |] });
+      (read x, read c))
+    [ (8, 1); (3, 0); (5, 4) ]
+
+let here () =
+  let open_ i =
+    fst (P.open_ (Printf.sprintf "program-here:%d-%d" i (Unix.getpid ())))
+  in
+  [| open_ 0; open_ 1 |]
+
+(* RFC 0031's Law 11: a share loaded here and on an agent leaves equal bytes. *)
+let same_bytes () =
+  let local = runs (here ()) in
+  equal ~msg:"here, by the description's own account"
+    (list (pair string string))
+    [
+      (words 8 (fun i -> 100 + i), le64 1);
+      (* Run 1 fills the other copy. *)
+      (words 3 (fun i -> 100 + i) ^ String.make (size - 24) '\000', le64 0);
+      (* Run 2 fills run 0's copy, whose last words run 0 left. *)
+      (words 8 (fun i -> 100 + i), le64 4);
+    ]
+    local;
+  with_job @@ fun j _ ->
+  let h = List.hd (Rig_remote.hosts j) in
+  let far = runs (Array.of_list (polled h)) in
+  equal ~msg:"on the agent" (list (pair string string)) local far
+
+(* A run's answer is the host's point, reached once the run's work there is
+   done. *)
+let host_point () =
+  with_job @@ fun j _ ->
+  let h = List.hd (Rig_remote.hosts j) in
+  let ds = Array.of_list (polled h) in
+  let p =
+    require_ok ~pp:Format.pp_print_string
+      (G.load (description (Array.map Rig.arch ds)) ds)
+  in
+  let x = Rig.Buffer.create ds.(1) size and c = Rig.Buffer.create ds.(0) 8 in
+  let points = G.run p { inputs = [| x; c |]; ints = [| 1; 0 |] } in
+  equal ~msg:"the host's point" (list string)
+    [ Rig.name h ]
+    (List.map (fun p -> Rig.name (Rig.Point.device p)) (Array.to_list points));
+  Rig.wait h (Rig.Point.value points.(0))
+
+(* A binary that is no program is the agent's refusal. *)
+let refused_binary () =
+  with_job @@ fun j _ ->
+  let h = List.hd (Rig_remote.hosts j) in
+  match Rig.Image.load h "no program" with
+  | Ok _ -> fail "the agent loaded no program"
+  | Error why -> contains ~sub:"not a program" why
+
+let () =
+  Watchdog.start ();
+  exit
+    (run "rig_remote.program"
+       [
+         test ~timeout:60.
+           "a program leaves the same bytes on an agent's devices as here"
+           same_bytes;
+         test ~timeout:60. "a run on an agent is a point of its machine's host"
+           host_point;
+         test ~timeout:60. "an agent refuses a binary that is no program"
+           refused_binary;
+       ])

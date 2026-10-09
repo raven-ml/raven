@@ -16,9 +16,10 @@
    key to the controller, then stops listening, so no other agent of the job
    reaches it, and waits for the job to end.
 
-   It serves three kinds. "MEM" is two memory devices. "FAULTY" is a device
-   whose next fallible call faults with "the agent's device faulted", which
-   loses it. "NONE" is an opener that fails with "no such hardware". *)
+   It serves four kinds. "MEM" is two memory devices. "POLLED" is two Polled
+   devices, which launch Polled's host functions. "FAULTY" is a device whose
+   next fallible call faults with "the agent's device faulted", which loses it.
+   "NONE" is an opener that fails with "no such hardware". *)
 
 module Wire = Rig_remote_proxy.Wire
 module Link = Rig_remote_proxy.Link
@@ -38,6 +39,13 @@ let mem () =
       Ok [ a; b ]
   | Error e, _ | _, Error e -> Error e
 
+let polled () =
+  let open_ i = fst (Rig_support.Polled.open_ (Printf.sprintf "POLLED:%d" i)) in
+  let a = open_ 0 in
+  let b = open_ 1 in
+  opened := a :: b :: !opened;
+  Ok [ a; b ]
+
 let faulty () =
   let d, p = Rig_support.Polled.open_ "FAULTY:0" in
   Rig_support.Polled.fail_at p 1 (`Fault "the agent's device faulted");
@@ -47,6 +55,7 @@ let faulty () =
 let kinds =
   [
     ("MEM", mem);
+    ("POLLED", polled);
     ("FAULTY", faulty);
     ("NONE", fun () -> Error "no such hardware");
   ]

@@ -167,7 +167,10 @@ let dial_tcp ~s host port =
 (* Agents *)
 
 (* The objects the controller names on this machine. *)
-type obj = Buffer of Rig.Buffer.t | Rail of Link.t
+type obj =
+  | Buffer of Rig.Buffer.t
+  | Rail of Link.t
+  | Program of Rig_program.loaded
 
 type t = {
   key : string;
@@ -454,8 +457,19 @@ let answer : type a. state -> a Wire.request -> a =
           Hashtbl.replace s.objects id (Buffer b);
           true
       | None -> false)
-  | Wire.Load _ -> raise (Refused "the agent loads no code")
-  | Wire.Entry _ -> None
+  | Wire.Load { id; binary } -> (
+      fresh s id;
+      match
+        Rig_program.load_share binary ~device:(Hashtbl.find_opt s.devices)
+      with
+      | Ok p -> Hashtbl.replace s.objects id (Program p)
+      | Error why -> raise (Refused why))
+  | Wire.Entry { image; name } -> (
+      (* A program has one function, its run, which a run's words name by the
+         program's id. *)
+      match Hashtbl.find_opt s.objects image with
+      | Some (Program _) when name = "run" -> Some image
+      | _ -> None)
   | Wire.Rail { id; peer; send; receive } ->
       fresh s id;
       let l = peer_link s peer in
@@ -467,7 +481,7 @@ let drop s id =
   | Some (Rail l) ->
       Link.release_rail l id;
       Hashtbl.remove s.objects id
-  | Some (Buffer _) -> Hashtbl.remove s.objects id
+  | Some (Buffer _ | Program _) -> Hashtbl.remove s.objects id
   | None -> ()
 
 (* [b]'s bytes as the host reads them in place: [b]'s own memory on this
@@ -484,6 +498,26 @@ let host_bytes b =
   Rig.Buffer.wait b Rig.Buffer.Read;
   Rig.Buffer.bigarray Bigarray.char b
 
+let program s id =
+  match Hashtbl.find_opt s.objects id with
+  | Some (Program p) -> Some p
+  | _ -> None
+
+let region s id =
+  match Hashtbl.find_opt s.objects id with
+  | Some (Buffer b) -> Some b
+  | _ -> None
+
+(* Runs a program's run, whose words name it and its frame, and waits for the
+   points its work ends at. *)
+let run s words =
+  match Rig_program.run_share words ~program:(program s) ~region:(region s) with
+  | Error why -> raise (Refused why)
+  | Ok points ->
+      Array.iter
+        (fun p -> Rig.wait (Rig.Point.device p) (Rig.Point.value p))
+        points
+
 (* Runs a hand-over's parts in order, sending the bytes of each copy into the
    controller's memory as it comes, then the word of its value. *)
 let hand_over s (h : Wire.handover) local =
@@ -498,7 +532,7 @@ let hand_over s (h : Wire.handover) local =
   in
   Array.iter
     (function
-      | Wire.Words _ -> raise (Refused "the agent runs no code")
+      | Wire.Words w -> run s w
       | Wire.Copy { src; dst = Wire.Local; bytes } ->
           Link.bytes s.link ~device:h.device ~value:h.value
             (host_bytes (side bytes src))

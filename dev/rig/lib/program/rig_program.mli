@@ -258,6 +258,10 @@ val load : t -> Rig.t array -> (loaded, string) result
       of [Two] copies, and stores its launches' parameters and geometry that no
       run changes.
 
+    On another machine, whose devices are an agent's ({!Rig_remote_abi}), it
+    checks [t] and the architectures here and loads [t] on that machine's host
+    ({!Rig.Image.load}), whose agent loads it there ({!load_share}).
+
     [Error why] if [t] is not well formed for [devices]: an index out of its
     array, other than as many devices as [t]'s, a device whose arch differs, a
     negative size, a hole outside its bytes, sharing a byte with another or with
@@ -272,7 +276,8 @@ val load : t -> Rig.t array -> (loaded, string) result
     run refuses ({!Rig.Submission.Run}), [why] naming the step; and with the
     reason, starting with the device's name, if a device refuses an image
     ({!Rig.Image.load}) or has no function an [Entry] names, and with
-    [Rig_host.link]'s reason if host code does not link.
+    [Rig_host.link]'s reason if host code does not link; on another machine, if
+    a device is no agent's, and as the agent's load answers.
 
     Raises [Invalid_argument] if [devices] are of several machines,
     {!Rig.Out_of_memory} and {!Rig.Lost}. *)
@@ -293,6 +298,9 @@ val run : ?after:Rig.Point.t array -> loaded -> frame -> Rig.Point.t array
     on the host ([Move] and [Host] steps, a loop's flag) is done when it
     returns.
 
+    On another machine it is one submission on that machine's host, and the
+    host's point: the agent reaches it once the run's points there are reached.
+
     Raises [Invalid_argument] if [f]'s inputs are not as many as [p]'s, an input
     is not on its device, holds fewer bytes, or admits less access than [p]
     declares, an input of another device cannot be borrowed, an input a [Host]
@@ -301,3 +309,34 @@ val run : ?after:Rig.Point.t array -> loaded -> frame -> Rig.Point.t array
     run's setters refuse ({!Rig.Submission.Run}), and as {!Rig.submit},
     {!Rig.Buffer.copy} and {!Rig_host.call} raise; {!Rig.Lost} as the devices
     raise it. *)
+
+(** {1:machines Programs of another machine}
+
+    {!load} on another machine's devices sends that machine's host the
+    description with each device's id there, as the binary of {!Rig.Image.load},
+    and asks for the image's function ["run"] ({!Rig.Image.entry}). Each {!run}
+    is one submission on the host whose one part is {!Rig.Submission.Words}: the
+    entry {!Rig.Image.entry} answered, then the frame, each input as its
+    memory's id on the machine, its offset and its length. The submission names
+    no memory: the agent orders the run after the work handed over before it,
+    and the work handed over after it after the run ({!Rig_remote}). The agent
+    of the machine answers with these two functions. *)
+
+val load_share :
+  string -> device:(int -> Rig.t option) -> (loaded, string) result
+(** [load_share b ~device] is {!load} of the description in [b], the binary
+    another process's {!load} sent to this machine's host, on the devices
+    [device] gives for the ids [b] names. [Error why] as {!load}, or if [b] is
+    malformed or names an id that [device] does not give. *)
+
+val run_share :
+  ?after:Rig.Point.t array ->
+  string ->
+  program:(int -> loaded option) ->
+  region:(int -> Rig.Buffer.t option) ->
+  (Rig.Point.t array, string) result
+(** [run_share ~after w ~program ~region] is {!run} [~after] of the program that
+    [program] gives for the entry [w] starts with, over the frame [w] holds,
+    each input the view of [region id] at its offset and length. [Error why] if
+    [w] is malformed, or [program] or [region] gives nothing for an id it names;
+    otherwise it raises as {!run}. *)
