@@ -111,8 +111,11 @@ let is_io_memory (e : entry) =
   | Io_made | Io_given -> true
   | Device | Pinned | Mapped | Host_kept -> false
 
+let entry_ids = Atomic.make 0
+
 let entry ?region ?io_region ?(access = Read_write) owner memory bytes stamps =
   {
+    id = Atomic.fetch_and_add entry_ids 1;
     owner;
     memory;
     bytes;
@@ -347,10 +350,30 @@ let unmap_now mp =
 
 (* [e] waits for its last unmap: until then a mapper's driver may still name the
    memory's pages, and a driver that maps host memory by its address would hand
-   them to new memory at that address. *)
+   them to new memory at that address. Its mappings are taken under its owner's
+   lock, as a mapper's word end takes its own: each is released once. *)
+let rec forget (e : entry) = function
+  | [] -> ()
+  | mp :: maps ->
+      Dev.hold mp.on;
+      Cache.remove mp.on.mapped e.id;
+      Dev.release mp.on;
+      forget e maps
+
 let free_entry (e : entry) =
-  let later = List.filter (fun mp -> not (unmap_now mp)) e.maps in
-  e.maps <- [];
+  (* No mapping is made of dead memory: one seen gone stays gone. *)
+  let maps =
+    if e.maps == [] then []
+    else begin
+      Dev.hold e.owner;
+      let maps = e.maps in
+      e.maps <- [];
+      Dev.release e.owner;
+      maps
+    end
+  in
+  forget e maps;
+  let later = List.filter (fun mp -> not (unmap_now mp)) maps in
   match later with
   | [] -> give_back e
   | _ ->
@@ -613,6 +636,30 @@ let drain_own d =
    value. A drain of an idle device allocates nothing. *)
 let idle d = d.retiring == [] && d.pending == [] && not (released_any d.release)
 
+(* Releases [d]'s mappings of the memory that outlives it, once its word shows
+   its last value: each is taken out of its memory's [maps] under the memory's
+   owner's lock, which [free_entry] takes, so whichever comes first releases
+   it. *)
+let unmap_all d =
+  let mapped =
+    Dev.protect d (fun () ->
+        let l = Cache.fold (fun _ e l -> e :: l) d.mapped [] in
+        Cache.reset d.mapped;
+        l)
+  in
+  List.iter
+    (fun (e : entry) ->
+      let mine =
+        Dev.protect e.owner (fun () ->
+            match List.find_opt (fun mp -> mp.on == d) e.maps with
+            | Some mp ->
+                e.maps <- List.filter (fun mp' -> mp' != mp) e.maps;
+                Some mp
+            | None -> None)
+      in
+      Option.iter (fun mp -> free_region d mp.map) mine)
+    mapped
+
 (* Gives back the stopped [d]'s timeline word once nothing reads it: its
    readers move to the C record's copy, then, once every domain passed a minor
    collection since, the driver gets the word back, after every other device's
@@ -645,6 +692,7 @@ let end_word d =
               of_d)
         in
         Dev.iter (fun c -> List.iter (fun (_, r) -> free_region c r) (maps_of c));
+        unmap_all d;
         Option.iter (free_region d) d.word_region
       end
 
@@ -974,6 +1022,10 @@ let mapping d m host =
       | Some r -> (
           let at, by, _ = region_info r in
           let mp = { on = d; map = r; at; by } in
+          (* Noted on [d] before the memory has it: a word end of [d] that takes
+             [d]'s notes between the two leaves the mapping in the memory's
+             [maps], which [free_entry] releases. *)
+          Dev.protect d (fun () -> Cache.replace d.mapped m.entry.id m.entry);
           let raced =
             Dev.protect m.dev (fun () ->
                 match find_map m.entry d with

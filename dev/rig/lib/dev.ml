@@ -134,6 +134,7 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~completion ~waits
     pending = [];
     pairs = [||];
     pair_maps = [];
+    mapped = Cache.create 4;
     word_end = Read;
     afters = [];
   }

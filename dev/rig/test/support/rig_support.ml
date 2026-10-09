@@ -100,6 +100,8 @@ module Driver = struct
     mutable stalls : int;
     mutable gated : bool;
     mutable sleepers : int;
+    mutable frees_gated : bool;
+    mutable freers : int;
     mutable stop_fault : string option;  (** What its stop was given. *)
   }
 
@@ -202,8 +204,17 @@ module Driver = struct
     | [] -> []
     | y :: l -> if y = x then l else y :: remove x l
 
-  (* A mapping's free is logged as ["unmap"]. *)
+  (* A free waits at the free gate while it is shut. A mapping's is logged as
+     ["unmap"]. *)
   let free_region d r =
+    Mutex.protect d.lock (fun () ->
+        if d.frees_gated then begin
+          d.freers <- d.freers + 1;
+          while d.frees_gated do
+            Condition.wait d.opened d.lock
+          done;
+          d.freers <- d.freers - 1
+        end);
     note d (if r.kind = None then "unmap" else "free");
     let w = polled_word d.c in
     Mutex.protect d.lock (fun () ->
@@ -368,6 +379,8 @@ module Polled = struct
         stalls = 0;
         gated = false;
         sleepers = 0;
+        frees_gated = false;
+        freers = 0;
         stop_fault = None;
       }
     in
@@ -465,6 +478,14 @@ module Polled = struct
   let open_gate d =
     Mutex.protect d.lock (fun () ->
         d.gated <- false;
+        Condition.broadcast d.opened)
+
+  let gate_frees d = Mutex.protect d.lock (fun () -> d.frees_gated <- true)
+  let freers d = Mutex.protect d.lock (fun () -> d.freers)
+
+  let open_frees d =
+    Mutex.protect d.lock (fun () ->
+        d.frees_gated <- false;
         Condition.broadcast d.opened)
 end
 

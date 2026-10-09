@@ -389,13 +389,16 @@ module Buffer : sig
 
       [d] maps host memory of its machine that starts on a page, where it maps
       host memory at all (its [maps_host] fact, {!Rig_edge.facts}), and memory
-      of a device of its own
-      driver that its driver maps ({!Rig_edge.Driver.map_peer}). Every borrow on
-      [d] of one memory shares one mapping, made at the first borrow, which
-      lasts while the memory lives and is released with it, once [d]'s work
-      submitted until then is done: a borrow dropped and made again maps
-      nothing. A borrow of a borrow maps the memory the first one maps. A
-      {!memory_device} maps any host memory. Host memory that does not start on
+      of a device of its own driver that its driver maps
+      ({!Rig_edge.Driver.map_peer}). Every borrow on [d] of one memory shares
+      one mapping, made at the first borrow. It lasts while both the memory and
+      [d] live, and is released by whichever ends first: with the memory, once
+      [d]'s work submitted until then is done; or with [d], once [d] is lost or
+      closed and its word shows its last submitted value, which a lost [d]'s
+      may never do ({{!loss}Loss}). A borrow dropped and made again while both
+      live maps nothing. Uses of a borrow on a lost [d] raise {!Lost}. A borrow
+      of a borrow maps the memory the first one maps. A {!memory_device} maps
+      any host memory. Host memory that does not start on
       a page, such as a host buffer of fewer than 64 KiB, borrows only on
       {!host} and memory devices. An io device's memory borrows through its
       pages ({!Rig_edge.Io.pages}), as host memory, where its device maps them;

@@ -116,6 +116,9 @@ type device = {
   mutable pair_maps : (int * region) list;
       (** The mappings of producers' words, by producer index, kept until the
           producer's word ends. *)
+  mapped : entry Hashtbl.Make(Int).t;
+      (** By [id], the memory it maps: their mappings, in their [maps], end
+          with its word if they do not end with the memory first. *)
   mutable word_end : word_end;  (** Guarded by [lock]. *)
   mutable afters : (int * (unit -> unit)) list;
 }
@@ -128,7 +131,8 @@ and entry = {
   io_region : io_region option;
   access : access;
   stamps : int;  (** The C stamps, which link to a hold's once held. *)
-  mutable maps : mapping list;  (** Other devices' mappings of it. *)
+  mutable maps : mapping list;
+      (** Other devices' mappings of it. Guarded by [owner]'s lock. *)
   mutable unmaps : int; [@atomic]
       (** The unmaps left before a dead memory is given back. *)
   mutable pages : pages;
@@ -138,6 +142,9 @@ and entry = {
   mutable kept : keep;
       (** Host memory a device borrowed: its bytes, held until its uses are
           reached. *)
+  id : int;
+      (** Unique for the life of the process. Last: [rig_memory.c] reads the
+          fields before it by their place. *)
 }
 
 and pages =

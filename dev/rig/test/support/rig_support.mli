@@ -221,6 +221,16 @@ module Polled : sig
   val sleepers : t -> int
   (** [sleepers d] is the number of [d]'s calls blocked at its gate. *)
 
+  val gate_frees : t -> unit
+  (** [gate_frees d] makes [d]'s frees of regions and mappings, but not of its
+      word, block before they are logged, until {!open_frees}. *)
+
+  val open_frees : t -> unit
+  (** [open_frees d] lets [d]'s blocked frees go on. *)
+
+  val freers : t -> int
+  (** [freers d] is the number of [d]'s frees blocked. *)
+
   val interrupt : t -> unit
   (** [interrupt d] makes [d]'s next sleep raise SIGINT in its thread and return
       without running the queue. *)
