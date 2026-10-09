@@ -33,6 +33,16 @@ let collect d =
   Gc.full_major ();
   ignore (Sys.opaque_identity (B.create ~memory:Pinned d 8))
 
+(* A buffer of [n] bytes on [d] that the submission [s], of one write, writes
+   once, and that is unreachable once this returns: its address. Its return
+   waits for that work. *)
+let[@inline never] dropped_written ?memory s d n =
+  let b = B.create ?memory d n in
+  ignore
+    (Rig.submit s ~run:(Sub.Run.make ()) ~reads:[||] ~writes:[| b |]
+       ~waits:[||]);
+  B.address b
+
 let last n l = List.filteri (fun i _ -> i >= List.length l - n) l
 let freed p at = List.exists (fun (a, _) -> a = at) (P.frees p)
 
@@ -125,6 +135,30 @@ let test_budget_beside_loss () =
     (list bool) [ true; true; true ] (List.map (freed p) ats);
   equal ~msg:"frees" int 3
     (List.length (List.filter (fun (a, _) -> List.mem a ats) (P.frees p)))
+
+(* The host's out-of-memory ladder waits for a device whose work holds back
+   host memory, and a fault that wait finds is that device's loss, never the
+   allocation's: the host allocation raises Out_of_memory for itself. *)
+let test_ladder_beside_fault () =
+  let d, p = P.open_ "memory:ladder-fault" in
+  let s = Sub.make ~reads:0 ~writes:1 d [||] in
+  ignore (Sys.opaque_identity (dropped_written s ~memory:Pinned d (64 * kib)));
+  collect Rig.host;
+  P.fault p "the engine hung";
+  let budget = Rig.budget Rig.host in
+  Rig.set_budget Rig.host 0;
+  let raised =
+    Fun.protect
+      ~finally:(fun () -> Rig.set_budget Rig.host budget)
+      (fun () ->
+        match B.create Rig.host (64 * kib) with
+        | _ -> "allocated"
+        | exception Rig.Out_of_memory (d', _) when Rig.equal d' Rig.host ->
+            "out of memory"
+        | exception e -> Printexc.to_string e)
+  in
+  equal ~msg:"the host allocation" string "out of memory" raised;
+  equal ~msg:"the device" (option string) (Some "the engine hung") (Rig.lost d)
 
 (* Memory collected while its device holds more than its budget returns to the
    driver: an allocation the budget refuses finds none of it to reuse, and the
@@ -675,6 +709,10 @@ let tests =
           "set_budget while another domain loses the device raises nothing \
            and returns its cache once"
           test_budget_beside_loss;
+        test
+          "the host's out-of-memory ladder raises a device's fault it finds as \
+           that device's loss, never the allocation's"
+          test_ladder_beside_fault;
         test "free_cache with no work in flight returns the cache at once"
           test_free_cache;
         test "the host's budget is max_int" test_host_budget;

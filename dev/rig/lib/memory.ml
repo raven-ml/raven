@@ -789,14 +789,23 @@ let take_cache ?upto d =
    at once if it is, after waiting for it when [wait], and otherwise each free
    is deferred until it is. A lost device's cache waits for it to count as
    stopped. *)
+(* Waits for [d]'s value [v] on behalf of memory, never of [d]'s caller: a loss
+   the wait finds is [d]'s alone, whose memory then returns once it stopped. *)
+let wait_for d v = try Dev.wait d v with Dev.Lost (d', _) when d' == d -> ()
+
+(* Whether [d]'s work up to [v] is done, or [d] is lost: its frees then wait for
+   its stop themselves. *)
+let reached_or_lost d v =
+  Dev.is_lost d || match Dev.word d >= v with r -> r | exception Dev.Lost _ -> true
+
 let release_taken ~wait d take =
   if (not (Dev.is_lost d)) || Dev.stopped d then
     match take d with
     | [] -> ()
     | taken ->
         let v = Dev.submitted d in
-        if wait && not (Dev.is_lost d) then Dev.wait d v;
-        if Dev.is_lost d || Dev.word d >= v then List.iter free_entry taken
+        if wait && not (Dev.is_lost d) then wait_for d v;
+        if reached_or_lost d v then List.iter free_entry taken
         else List.iter (fun e -> defer d (Free e)) taken
 
 let release_cache ?upto ~wait d = release_taken ~wait d (take_cache ?upto)
@@ -844,7 +853,7 @@ let reclaim_round pool round =
   Dev.iter (fun d ->
       if not (Dev.busy d) then begin
         if holds_back pool d && not (Dev.is_lost d) then
-          Dev.wait d (Dev.submitted d);
+          wait_for d (Dev.submitted d);
         release_taken ~wait:true d (fun d -> take_cache_if d (charged pool d))
       end);
   drain_all ();

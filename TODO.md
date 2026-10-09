@@ -60,17 +60,6 @@ next model targets:
   gpt2 example's gguf path), int8/int4 kernels (int4 currently rejected by
   rune's jit) — pairs with llama3
 
-## bugs
-
-- rig: a copy can raise another device's pending fault through a shared
-  staging half. Copy's `names_lost` replaces a half only for devices already
-  lost; a device faulted but not yet seen lost leaves its unreached use on the
-  half, and the next copy through it waits on that point, surfaces the fault
-  and raises the other device's `Lost`. Seen on the Mac in rig.model, "every
-  call answers as rig.mli says", seed s1:6946fc93e9c8e1e8 (case 229, a
-  transfer between two Polled devices raising a lost device of case 78). It
-  should vanish with commit 4a's per-device staging slots: check the seed then
-
 ## perf
 
 - rig pool, kimchi: launch/empty-performance-cores and launch/empty-all-cores
