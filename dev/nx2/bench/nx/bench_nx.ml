@@ -67,6 +67,12 @@ let dispatch_rows =
       Thumper.bench "add-1-twice-donated" (fun () ->
           let x = Thumper.black_box x1 in
           Nx.add (Nx.donate (Nx.add x x)) x);
+      Thumper.bench "where-1-twice-donated" (fun () ->
+          let x = Thumper.black_box x1 in
+          Nx.where b1 (Nx.donate (Nx.add x x)) x);
+      Thumper.bench "cast-1-twice-donated" (fun () ->
+          let x = Thumper.black_box x1 in
+          Nx.cast D.Float64 (Nx.donate (Nx.add x x)));
       Thumper.bench "add-scalar-1" (fun () ->
           Nx.add (Thumper.black_box x1) (Nx.scalar D.Float32 1.));
       Thumper.bench "add-held-scalar-1" (fun () ->

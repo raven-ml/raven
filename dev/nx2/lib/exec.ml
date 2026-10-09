@@ -959,48 +959,54 @@ let destination (type v s w r) (dt : (w, r) D.t) (x : (v, s) A.t) : (w, r) A.t =
     A.v dt l (Rig.Buffer.create (A.device x) (D.bytes dt (L.numel l)))
   else A.create (A.device x) dt (L.shape l)
 
-(* The one-node map [k] over the handle [h], whose array is [a], and the live
-   array [o], [first] if [h] is the first operand, on [at]'s one device: [h] is
-   claimed, then its memory takes the result where rig holds it exclusive and it
-   has the result's dtype and C-contiguous layout over all of its memory;
+(* The one-node map over the handle [h], whose array is [a], its result of [dt]:
+   [h] is claimed, then its memory takes the result where rig holds it exclusive
+   and it has the result's dtype and C-contiguous layout over all of its memory;
    otherwise the result is fresh and the memory, where no other value reads it,
-   is consumed after the kernel. *)
-let donated2 (type v s w r d) ~slow ~by k (dt : (w, r) D.t)
-    (at : d Devices.placement) (h : (v, s, d) Value.t) (a : (v, s) A.t)
-    (o : (v, s) A.t) ~first : (w, r, d) Value.t =
-  let (module K) = Option.get (Devices.kernels (Devices.set at)) in
+   is consumed after the kernel. [run dst a'] is the kernel into [dst] with [a']
+   for [h]. *)
+let donated (type v s w r d) ~by (dt : (w, r) D.t) (h : (v, s, d) Value.t)
+    (a : (v, s) A.t) (run : (w, r) A.t -> (v, s) A.t -> (w, r, d) Value.t) :
+    (w, r, d) Value.t =
   let l = A.layout a in
   let reusable =
     L.is_contiguous l && L.offset l = 0 && Rig.Buffer.spans (A.buffer a)
   in
   claim_handle ~by h;
-  let run_on (dst : (w, r) A.t) x y : (w, r, d) Value.t =
-    match K.apply2 k ~dst x y with
-    | A.Done -> Value.Array { at; a = dst; dead = Prim.live }
-    | Declined | Wrong_dtype | Shape_mismatch ->
-        let lx = Value.Array { at; a = x; dead = Prim.live }
-        and ly = Value.Array { at; a = y; dead = Prim.live } in
-        slow ~by k dt lx ly
-    | refusal -> A.refused by refusal [ A.Any dst; A.Any x; A.Any y ]
-  in
-  let pair a' = if first then (a', o) else (o, a') in
-  let fresh () =
-    let x, y = pair a in
-    let r = run_on (destination dt a) x y in
-    ignore (take ~by (A.buffer a));
-    r
-  in
   match D.equal_witness (A.dtype a) dt with
   | Some Type.Equal when reusable -> (
       match take ~by (A.buffer a) with
       | Some b' ->
           let a' = A.v (A.dtype a) l b' in
-          let x, y = pair a' in
-          run_on a' x y
-      | None ->
-          let x, y = pair a in
-          run_on (destination dt a) x y)
-  | Some _ | None -> fresh ()
+          run a' a'
+      | None -> run (destination dt a) a)
+  | Some _ | None ->
+      let r = run (destination dt a) a in
+      ignore (take ~by (A.buffer a));
+      r
+
+(* Whether [x] is a live array at [at]. *)
+let live_at (type v s d) (at : d Devices.placement) (x : (v, s, d) Value.t) =
+  match x with
+  | Value.Array r -> r.at == at && live_word r.dead
+  | Value.Shards _ | Value.Donated _ | Value.Deferred _ | Value.Traced _ ->
+      false
+
+(* Whether [h] is a handle over one array at [at], whose set has kernels: the
+   donated fast paths'. *)
+let handle_at (type v s d) (at : d Devices.placement) (h : (v, s, d) Value.t) =
+  match h with
+  | Value.Donated d ->
+      d.at == at
+      && Array.length d.arrays = 1
+      && Devices.kernels (Devices.set at) <> None
+  | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> false
+
+(* [a] as a live value at [at]. *)
+let value_of at a = Value.Array { at; a; dead = Prim.live }
+
+(* [at]'s kernels, where [handle_at] holds. *)
+let kernels_at at = Option.get (Devices.kernels (Devices.set at))
 
 let apply1 (type v s w r d) ~slow ~by k (dt : (w, r) D.t)
     (x : (v, s, d) Value.t) : (w, r, d) Value.t =
@@ -1015,9 +1021,38 @@ let apply1 (type v s w r d) ~slow ~by k (dt : (w, r) D.t)
           | Done -> Value.Array { at; a = dst; dead = Prim.live }
           | Declined | Wrong_dtype -> slow ~by k dt x
           | refusal -> A.refused by refusal [ A.Any dst; A.Any a ]))
+  | Value.Donated dx when handle_at dx.at x ->
+      let (module K) = kernels_at dx.at in
+      donated ~by dt x dx.arrays.(0) (fun dst a ->
+          match K.apply1 k ~dst a with
+          | Done -> value_of dx.at dst
+          | Declined | Wrong_dtype -> slow ~by k dt (value_of dx.at a)
+          | refusal -> A.refused by refusal [ A.Any dst; A.Any a ])
   | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Deferred _
   | Value.Traced _ ->
       slow ~by k dt x
+
+(* [k] into [dst] over the arrays [a] and [b] at [at]: [Done] is the result, a
+   decline or a dtype or shape refusal the slow path over them as live
+   values. *)
+let kernel2 (type v s w r d) ~slow ~by (module K : Nx_kernel.S) k
+    (dt : (w, r) D.t) (at : d Devices.placement) (dst : (w, r) A.t)
+    (a : (v, s) A.t) (b : (v, s) A.t) : (w, r, d) Value.t =
+  match K.apply2 k ~dst a b with
+  | Done -> value_of at dst
+  | Declined | Wrong_dtype | Shape_mismatch ->
+      slow ~by k dt (value_of at a) (value_of at b)
+  | refusal -> A.refused by refusal [ A.Any dst; A.Any a; A.Any b ]
+
+(* As [kernel2], for [apply3]. *)
+let kernel3 (type a b v s d) ~slow ~by (module K : Nx_kernel.S) k
+    (at : d Devices.placement) (dst : (v, s) A.t) (c : (a, b) A.t)
+    (x : (v, s) A.t) (y : (v, s) A.t) : (v, s, d) Value.t =
+  match K.apply3 k ~dst c x y with
+  | Done -> value_of at dst
+  | Declined | Wrong_dtype | Shape_mismatch ->
+      slow ~by k (value_of at c) (value_of at x) (value_of at y)
+  | refusal -> A.refused by refusal [ A.Any dst; A.Any c; A.Any x; A.Any y ]
 
 (* Whether the one-node map [k] over [x] and [y] is well formed. A constant is
    read for an operation only once its rule holds, so that a refused operation
@@ -1055,16 +1090,16 @@ let rec apply2 : type v s w r d.
           | Done -> Value.Array { at; a = dst; dead = Prim.live }
           | Declined | Wrong_dtype | Shape_mismatch -> slow ~by k dt x y
           | refusal -> A.refused by refusal [ A.Any dst; A.Any a; A.Any b ]))
-  | Value.Donated dx, Value.Array ry
-    when dx.at == ry.at && live_word ry.dead
-         && Array.length dx.arrays = 1
-         && Devices.kernels (Devices.set dx.at) <> None ->
-      donated2 ~slow ~by k dt dx.at x dx.arrays.(0) ry.a ~first:true
-  | Value.Array rx, Value.Donated dy
-    when dy.at == rx.at && live_word rx.dead
-         && Array.length dy.arrays = 1
-         && Devices.kernels (Devices.set dy.at) <> None ->
-      donated2 ~slow ~by k dt dy.at y dy.arrays.(0) rx.a ~first:false
+  | Value.Donated dx, Value.Array ry when handle_at ry.at x && live_at ry.at y
+    ->
+      let (module K) = kernels_at ry.at in
+      donated ~by dt x dx.arrays.(0) (fun dst a ->
+          kernel2 ~slow ~by (module K) k dt ry.at dst a ry.a)
+  | Value.Array rx, Value.Donated dy when handle_at rx.at y && live_at rx.at x
+    ->
+      let (module K) = kernels_at rx.at in
+      donated ~by dt y dy.arrays.(0) (fun dst b ->
+          kernel2 ~slow ~by (module K) k dt rx.at dst rx.a b)
   | Value.Array rx, Value.Deferred _
     when live_word rx.dead && well_formed2 k x y ->
       (* A constant beside a value is read where the value lies. *)
@@ -1120,6 +1155,21 @@ let rec apply3 : type a b v s d.
           | Declined | Wrong_dtype | Shape_mismatch -> slow ~by k c x y
           | refusal ->
               A.refused by refusal [ A.Any dst; A.Any ca; A.Any a; A.Any b ]))
+  | Value.Donated dc, Value.Array rx, Value.Array ry
+    when handle_at rx.at c && live_at rx.at x && live_at rx.at y ->
+      let (module K) = kernels_at rx.at in
+      donated ~by (A.dtype rx.a) c dc.arrays.(0) (fun dst c' ->
+          kernel3 ~slow ~by (module K) k rx.at dst c' rx.a ry.a)
+  | Value.Array rc, Value.Donated dx, Value.Array ry
+    when handle_at rc.at x && live_at rc.at c && live_at rc.at y ->
+      let (module K) = kernels_at rc.at in
+      donated ~by (A.dtype ry.a) x dx.arrays.(0) (fun dst x' ->
+          kernel3 ~slow ~by (module K) k rc.at dst rc.a x' ry.a)
+  | Value.Array rc, Value.Array rx, Value.Donated dy
+    when handle_at rc.at y && live_at rc.at c && live_at rc.at x ->
+      let (module K) = kernels_at rc.at in
+      donated ~by (A.dtype rx.a) y dy.arrays.(0) (fun dst y' ->
+          kernel3 ~slow ~by (module K) k rc.at dst rc.a rx.a y')
   | (Value.Deferred _, _, _ | _, Value.Deferred _, _ | _, _, Value.Deferred _)
     when well_formed3 k c x y -> (
       match beside3 c x y with
