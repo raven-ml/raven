@@ -19,6 +19,16 @@
 #include "nx_array.h"
 #include "rig_pool.h"
 
+/* The loops are compiled for x86-64's v3 too, and the host's best runs, as
+   nx.cpu's own loops are (convert_v3.c, rows_v3.c): a floor compiled for
+   base alone ran less-f32-1M's bytes at 35 us on kimchi, slower than the
+   kernel's 24-30. */
+#if defined(__x86_64__) && defined(__linux__)
+#define BEST __attribute__((target_clones("avx2", "default")))
+#else
+#define BEST
+#endif
+
 /* Slices of a job per thread: as many as nx.cpu's jobs make. */
 #define SLICES 8
 
@@ -38,7 +48,7 @@ typedef struct {
 #define MOVE(SI, SO)                                               \
   for (int64_t i = 0; i < n; i++) ((SO *)d)[i] = (SO)((const SI *)s)[i]
 
-static void slice(int64_t lo, int64_t hi, int worker, void *ctx) {
+BEST static void slice(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)worker;
   const floor_job *f = ctx;
   int64_t first = f->n * lo / f->total, n = f->n * hi / f->total - first;
@@ -111,7 +121,8 @@ typedef struct {
     }                                                                        \
   }
 
-static void stream_slice(int64_t lo, int64_t hi, int worker, void *ctx) {
+BEST static void stream_slice(int64_t lo, int64_t hi, int worker,
+                              void *ctx) {
   (void)worker;
   const stream_job *f = ctx;
   int64_t first = f->n * lo / f->total, n = f->n * hi / f->total - first;
