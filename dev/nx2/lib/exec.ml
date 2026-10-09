@@ -90,7 +90,10 @@ let alloc ~by ?(at : unit Devices.placement option) ?where () =
     Prim.make =
       (fun _ f ->
         let p =
-          match at with Some p -> Devices.rebrand p | None -> f.placement
+          match (at, f.placement) with
+          | Some p, _ -> Devices.rebrand p
+          | None, Some p -> p
+          | None, None -> invalid_arg "Exec.alloc: a value of every set"
         in
         Option.iter (fun r -> r := Some (Devices.rebrand p)) where;
         make p (fresh ~by p f.dtype (L.shape f.layout)));
@@ -291,6 +294,9 @@ let pending (Value.Node n) p =
       | Value.Array _ | Value.Shards _ | Value.Traced _ -> None)
     xs
 
+(* The host's device, at the brand of a value this library reads there: a check's
+   flag, a value of every set an interpretation receives. No value at it
+   reaches a function of nx's own. *)
 let host () = Devices.rebrand (Devices.one Devices.host 0)
 
 (* The results of a map into arrays of the dtypes of [dsts]. *)
@@ -323,6 +329,9 @@ and placer ~by =
   {
     Prim.place =
       (fun p x ->
+        (* Exec defers an operation over values of every set alone, so [p] is
+           [Some _] here. *)
+        let p = Option.get p in
         match x with
         | Value.Deferred _ -> at p x
         | Value.Array _ | Value.Shards _ | Value.Traced _ ->
@@ -399,7 +408,8 @@ and shard_views : type v s d.
       make =
         (fun _ f ->
           let vs = views () in
-          let p = f.placement in
+          (* Its operand lies at [xp], so it has a placement. *)
+          let p = Option.get f.placement in
           make p
             (Array.map
                (fun k ->
@@ -446,7 +456,6 @@ and at : type v s d.
   match x with
   | Value.Array _ | Value.Shards _ | Value.Traced _ -> x
   | Value.Deferred { form; node = Value.Node n as node; k } ->
-      let p = if Devices.rebrand p == Devices.anywhere then host () else p in
       let key = Devices.rebrand p in
       if find n.memo key = None then fill node key;
       let arrays = Option.get (find n.memo key) in
@@ -565,6 +574,8 @@ and compute_node (Value.Node n) p =
                 A.Any (Option.get (A.move (Slice w) a)))
               (Grid.devices (Devices.grid p)))
           arrays
+
+let read x = at (host ()) x
 
 (* The fast path *)
 

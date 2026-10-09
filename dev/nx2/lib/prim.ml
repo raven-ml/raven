@@ -12,9 +12,14 @@ let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 
 (* Values' facts *)
 
+let at : type v s d. (v, s, d) t -> d Devices.placement option = function
+  | Array { at; _ } | Shards { at; _ } -> Some at
+  | Deferred { form; _ } | Traced { form; _ } -> form.placement
+
 let placement : type v s d. (v, s, d) t -> d Devices.placement = function
   | Array { at; _ } | Shards { at; _ } -> at
-  | Deferred { form; _ } | Traced { form; _ } -> form.placement
+  | Traced { form = { placement = Some p; _ }; _ } -> p
+  | Deferred _ | Traced _ -> invalid_arg "Prim.placement: a value of every set"
 
 let dtype : type v s d. (v, s, d) t -> (v, s) dtype = function
   | Array { a; _ } -> Nx_array.dtype a
@@ -63,9 +68,13 @@ let same_shape (type v s w r d) (x : (v, s, d) t) (y : (w, r, d) t) =
 let form (type v s d) (x : (v, s, d) t) : (v, s, d) form =
   match x with
   | Array { at; a } ->
-      { dtype = Nx_array.dtype a; layout = Nx_array.layout a; placement = at }
+      {
+        dtype = Nx_array.dtype a;
+        layout = Nx_array.layout a;
+        placement = Some at;
+      }
   | Shards { at; _ } ->
-      { dtype = dtype x; layout = L.contiguous (shape x); placement = at }
+      { dtype = dtype x; layout = L.contiguous (shape x); placement = Some at }
   | Deferred { form; _ } | Traced { form; _ } -> form
 
 let is_constant : type v s d. (v, s, d) t -> bool = function
@@ -225,9 +234,12 @@ let pp_shape ppf s =
     (String.concat "; " (Array.to_list (Array.map string_of_int s)))
 
 let pp_operand ppf (Any x) =
-  Format.fprintf ppf "%s %a at %a"
-    (D.name (dtype x))
-    pp_shape (shape x) Devices.pp_placement (placement x)
+  let pp_at ppf = function
+    | Some p -> Format.fprintf ppf "at %a" Devices.pp_placement p
+    | None -> Format.pp_print_string ppf "of every set"
+  in
+  Format.fprintf ppf "%s %a %a" (D.name (dtype x)) pp_shape (shape x) pp_at
+    (at x)
 
 let pp ppf op =
   let (Operands xs) = operands op in
@@ -247,8 +259,8 @@ let pp ppf op =
 let same_dtype a b = D.code a = D.code b
 let load_shape (type d) (Plain x : d load) = shape x
 
-let load_placement (type d) (Plain x : d load) : d Devices.placement =
-  placement x
+let load_placement (type d) (Plain x : d load) : d Devices.placement option =
+  at x
 
 (* Whether [x]'s shape is [s], allocating nothing. *)
 let has_shape x s =
@@ -312,22 +324,23 @@ let check_map (type d r) ~by shape prog (outs : (d, r) outs)
    alone. *)
 
 (* A map's route, its loads of the map's [shape] by its rule. *)
-let map_route (type d) ~by shape (loads : d load array) : d Route.t =
-  if Array.length loads = 0 then { operands = [||]; result = Devices.anywhere }
+let map_route (type d) ~by shape (loads : d load array) : d Route.t option =
+  if Array.length loads = 0 then None
   else
     Route.route ~by Elementwise
       (Array.map load_placement loads)
       (Array.make (Array.length loads) shape)
 
 let rec make_outs : type d r.
-    maker -> int -> L.t -> d Devices.placement -> (d, r) outs -> r =
+    maker -> int -> L.t -> d Devices.placement option -> (d, r) outs -> r =
  fun m k layout placement -> function
   | [] -> ()
   | dtype :: rest ->
       let v = m.make k { dtype; layout; placement } in
       (v, make_outs m (k + 1) layout placement rest)
 
-let one_route ~by rule x = Route.route ~by rule [| placement x |] [| shape x |]
+let one_route ~by rule x = Route.route ~by rule [| at x |] [| shape x |]
+let result (r : _ Route.t option) = Option.map (fun (r : _ Route.t) -> r.result) r
 
 let bitcast_rule dt x =
   if D.bits dt > D.bits (dtype x) then Route.Reduce [| rank x - 1 |]
@@ -374,10 +387,10 @@ let results : type r. by:string -> maker -> r prim -> r =
   match op with
   | Map { shape; prog; outs; loads } ->
       let layout = check_map ~by shape prog outs loads in
-      let placement = (map_route ~by shape loads).result in
+      let placement = result (map_route ~by shape loads) in
       make_outs m 0 layout placement outs
   | Copy x ->
-      let placement = (one_route ~by Elementwise x).result in
+      let placement = result (one_route ~by Elementwise x) in
       m.make 0 { dtype = dtype x; layout = L.contiguous (shape x); placement }
   | Move (mv, x) ->
       let s' =
@@ -385,7 +398,7 @@ let results : type r. by:string -> maker -> r prim -> r =
         | s' -> s'
         | exception Invalid_argument e -> invalid_argf "%s: %s" by e
       in
-      let placement = (one_route ~by (Move mv) x).result in
+      let placement = result (one_route ~by (Move mv) x) in
       let layout =
         match L.move mv (form x).layout with
         | Some l -> l
@@ -396,7 +409,7 @@ let results : type r. by:string -> maker -> r prim -> r =
       let layout =
         bitcast_layout ~by (form x).layout (D.Any (dtype x)) (D.Any dt)
       in
-      let placement = (one_route ~by (bitcast_rule dt x) x).result in
+      let placement = result (one_route ~by (bitcast_rule dt x) x) in
       m.make 0 { dtype = dt; layout; placement }
   | Place (p, x) ->
       let s = shape x in
@@ -406,7 +419,7 @@ let results : type r. by:string -> maker -> r prim -> r =
         | Array { a; _ }, Some _ -> Nx_array.layout a
         | _ -> L.contiguous s
       in
-      m.make 0 { dtype = dtype x; layout; placement = p }
+      m.make 0 { dtype = dtype x; layout; placement = Some p }
   | Check { ok; data; _ } ->
       let s = shape ok in
       List.iteri
@@ -453,12 +466,19 @@ let op3 k c x y =
     [| Plain c; Plain x; Plain y |]
 
 type placer = {
-  place : 'v 's 'd. 'd Devices.placement -> ('v, 's, 'd) t -> ('v, 's, 'd) t;
+  place :
+    'v 's 'd.
+    'd Devices.placement option -> ('v, 's, 'd) t -> ('v, 's, 'd) t;
 }
+
+(* Where a route reads operand [i]: [None] where every operand is of every
+   set. *)
+let read_at (r : _ Route.t option) i =
+  Option.map (fun (r : _ Route.t) -> r.operands.(i)) r
 
 let prepare : type r. by:string -> placer -> r prim -> r prim =
  fun ~by pl op ->
-  let one rule x = pl.place (one_route ~by rule x).operands.(0) x in
+  let one rule x = pl.place (read_at (one_route ~by rule x) 0) x in
   match op with
   | Map p ->
       ignore (check_map ~by p.shape p.prog p.outs p.loads);
@@ -467,7 +487,7 @@ let prepare : type r. by:string -> placer -> r prim -> r prim =
       let loads =
         Array.mapi
           (fun i (Plain x as l) ->
-            let y = pl.place r.operands.(i) x in
+            let y = pl.place (read_at r i) x in
             if y == x then l
             else begin
               moved := true;

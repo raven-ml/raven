@@ -7,10 +7,10 @@
     mentions the other. This module has no implementation.
 
     A value is concrete, arrays on the devices of its placement; a constant not
-    yet computed; or an interpretation's stand-in. The brand ['d] is phantom:
+    yet computed, a value of every set; or an interpretation's stand-in. The brand ['d] is phantom:
     every function that makes a value checks that its arrays lie on its
-    placement's devices, and nothing at run time reads ['d]. A constant's
-    placement is {!Devices.anywhere}. *)
+    placement's devices, and nothing at run time reads ['d]. A constant has no
+    placement. *)
 
 type ('v, 's) dtype = ('v, 's) Nx_array.Dtype.t
 
@@ -37,7 +37,7 @@ type ('v, 's, 'd) t =
 and ('v, 's, 'd) form = {
   dtype : ('v, 's) dtype;
   layout : Nx_array.Layout.t;
-  placement : 'd Devices.placement;
+  placement : 'd Devices.placement option;  (** [None] for every set. *)
 }
 (** A value without its bytes. A sharded value's layout is the C-contiguous
     layout of the whole. *)

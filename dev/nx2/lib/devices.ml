@@ -161,7 +161,6 @@ let mesh ~by m cuts =
   | Ok g -> normal s g
   | Error e -> invalid_argf "%s: %s" by e
 
-let anywhere = { set = host; grid = Grid.device 0 }
 let set p = p.set
 let grid p = p.grid
 let device p = Grid.one p.grid
@@ -185,11 +184,9 @@ let without_leading_axis p =
 let rebrand p = p
 
 let pp_placement ppf p =
-  if p == anywhere then Format.pp_print_string ppf "anywhere"
-  else
-    Grid.pp
-      (fun ppf k -> Format.pp_print_string ppf (Rig.name p.set.rigs.(k)))
-      ppf p.grid
+  Grid.pp
+    (fun ppf k -> Format.pp_print_string ppf (Rig.name p.set.rigs.(k)))
+    ppf p.grid
 
 (* Meshes *)
 

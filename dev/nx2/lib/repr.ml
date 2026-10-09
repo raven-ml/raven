@@ -49,7 +49,7 @@ let of_shards ~by p arrays =
    value has no bytes to read. *)
 let concrete (type v s d) ~by (x : (v, s, d) Value.t) =
   match x with
-  | Value.Deferred _ -> Exec.at Devices.anywhere x
+  | Value.Deferred _ -> Exec.read x
   | Value.Traced { owner; _ } ->
       invalid_argf "%s: a value traced by %s has no bytes" by owner.name
   | Value.Array _ | Value.Shards _ -> x

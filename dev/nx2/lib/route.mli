@@ -9,9 +9,9 @@
     engine takes placements from it alone, for traced results and eager ones, so
     a traced result lies where its eager twin does.
 
-    The rule: every result lies at one placement, the {e target}. A constant's
-    placement ({!Devices.anywhere}) joins the others: operands that are all
-    constants give [anywhere]. Each other operand is first given the axes the
+    The rule: every result lies at one placement, the {e target}. An operand of
+    every set has no placement and joins the others: operands that are all of
+    every set give no route. Each other operand is first given the axes the
     operation reads whole on each device (an axis it acts along), and moved to
     the result's axes. The target is the last of these that cuts an axis; else,
     where some lie on one device, that device, which every such operand must
@@ -68,9 +68,15 @@ type 'd t = {
 }
 
 val route :
-  by:string -> rule -> 'd Devices.placement array -> int array array -> 'd t
+  by:string ->
+  rule ->
+  'd Devices.placement option array ->
+  int array array ->
+  'd t option
 (** [route ~by r ps shapes] routes an operation of rule [r] over operands at
-    [ps] of [shapes].
+    [ps] of [shapes], [None] for an operand of every set. It is [None] where
+    every operand is: the operation is of every set too. An operand of every
+    set is read at the target moved back to its axes.
 
     Raises [Invalid_argument] naming [by] if operands lie on two sets or on two
     devices alone, if a placement an operand is read at does not divide its

@@ -144,4 +144,57 @@ let errors =
           starts_with ~affix:(name ^ ": ") msg;
           greater int ~than:(String.length name + 2) (String.length msg))
 
-let () = exit (run "nx values" [ values; repr; errors ])
+(* Values of every set have no placement, and a value placed on a set lies
+   there: a formula never names a set (the external review's program, which
+   no longer type-checks, read a host set at another brand from one). *)
+
+module Host2 = (val Nx.devices [ Rig.host ])
+
+let f32 = Nx.float32
+
+let test_every_set_unplaced () =
+  let c = Nx.zeros f32 [| 2 |] in
+  let none ~msg x = equal ~msg bool true (Nx.placement x = None) in
+  none ~msg:"zeros" c;
+  none ~msg:"scalar" (Nx.scalar f32 1.);
+  none ~msg:"an operation over formulas" (Nx.add c c);
+  none ~msg:"a movement of one" (Nx.reshape [| 1; 2 |] c)
+
+let test_two_values_of_a_host_set () =
+  let x = Nx.place Host2.on (Nx.zeros f32 [| 2 |]) in
+  let y = Nx.place Host2.on (Nx.zeros f32 [| 2 |]) in
+  let z = Nx.add x y in
+  equal ~msg:"lies on its set" (list string) [ Rig.name Rig.host ]
+    (List.map Rig.name
+       (Nx.rigs (Nx.Placement.devices (Option.get (Nx.placement z)))))
+
+(* A placement over a set of two memory devices, drawn. *)
+let placements =
+  Gen.of_list
+    ~pp:(fun ppf (name, _) -> Format.pp_print_string ppf name)
+    [
+      ("on", S2.on);
+      ("split 0", S2.split ~axis:0);
+      ("first", Nx.Placement.mesh (Nx.Mesh.v S2.v [ ("x", 2) ]) []);
+    ]
+
+let law_placed ((_, p), shape) =
+  let shape = Array.map (fun n -> 2 * n) shape in
+  assume (Array.length shape > 0);
+  let x = Nx.place p (Nx.zeros f32 shape) in
+  let q = Option.get (Nx.placement x) in
+  equal placement p q;
+  equal (list string)
+    (List.map Rig.name (Nx.rigs (Nx.Placement.devices p)))
+    (List.map Rig.name (Nx.rigs (Nx.Placement.devices q)))
+
+let every_set =
+  group "every set"
+    [
+      test "a value of every set has no placement" test_every_set_unplaced;
+      test "values placed on a set over the host meet" test_two_values_of_a_host_set;
+      prop "a placed value lies where it was placed" (Gen.pair placements shapes)
+        law_placed;
+    ]
+
+let () = exit (run "nx values" [ values; repr; errors; every_set ])

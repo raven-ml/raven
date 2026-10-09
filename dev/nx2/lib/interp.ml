@@ -13,10 +13,10 @@ type domain = { mutable next : int; extents : int Atomic.t }
 let here = Domain.DLS.new_key (fun () -> { next = 0; extents = Atomic.make 0 })
 (* Live [Extent] interpretations on every domain: with none, an operation
    reads this and not its domain's count, a domain-local read it saves. *)
-let anywhere = Atomic.make 0
+let all_extents = Atomic.make 0
 
 let quiet () =
-  Atomic.get anywhere = 0 || Atomic.get (Domain.DLS.get here).extents = 0
+  Atomic.get all_extents = 0 || Atomic.get (Domain.DLS.get here).extents = 0
 
 (* The innermost [Extent] interpretation around the calling fiber that may
    receive an operation. *)
@@ -56,13 +56,13 @@ let interpret ~name reach rule f =
   | Extent ->
       (* The count is the start domain's, decremented there whichever domain the
          fiber ends on. *)
-      Atomic.incr anywhere;
+      Atomic.incr all_extents;
       Atomic.incr i.extents;
       Fun.protect
         ~finally:(fun () ->
           Atomic.set i.live false;
           Atomic.decr i.extents;
-          Atomic.decr anywhere)
+          Atomic.decr all_extents)
         (fun () -> Effect.Deep.try_with f i (handler i))
 
 let traced i form payload = Traced { form; owner = i; payload }

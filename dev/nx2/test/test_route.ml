@@ -20,6 +20,13 @@ let placement = Testable.make ~pp:Devices.pp_placement ~equal:Devices.equal
 let invalid f = raises_match (Exn.invalid_arg ~substring:"Nx.f: ") f
 let route r ps shapes = Route.route ~by:"Nx.f" r ps shapes
 
+(* The route of operands that all have a placement. *)
+let placed r ps shapes = Option.get (route r (Array.map Option.some ps) shapes)
+
+let pp_at ppf = function
+  | Some p -> Devices.pp_placement ppf p
+  | None -> Format.pp_print_string ppf "every set"
+
 let pp_ints ppf a =
   Format.fprintf ppf "[%s]"
     (String.concat "; " (Array.to_list (Array.map string_of_int a)))
@@ -37,7 +44,7 @@ let pp_rule ppf = function
    each but along the axes the rule reads whole. *)
 type case = {
   rule : Route.rule;
-  ps : b Devices.placement array;
+  ps : b Devices.placement option array;
   shapes : int array array;
 }
 
@@ -45,22 +52,22 @@ let pp_case ppf c =
   Format.fprintf ppf "%a over" pp_rule c.rule;
   Array.iteri
     (fun i p ->
-      Format.fprintf ppf " %a at %a," pp_ints c.shapes.(i) Devices.pp_placement
-        p)
+      Format.fprintf ppf " %a at %a," pp_ints c.shapes.(i) pp_at p)
     c.ps
 
 let placement_of rank =
   let axis = Gen.int_range 0 (rank - 1) in
   Gen.one_of
     [
-      Gen.constant Devices.anywhere;
-      Gen.map (Devices.one s4) (Gen.int_range 0 3);
-      Gen.constant (Devices.on s4);
-      Gen.map (fun axis -> Devices.split ~by:"t" ~axis s4) axis;
+      Gen.constant None;
+      Gen.map (fun k -> Some (Devices.one s4 k)) (Gen.int_range 0 3);
+      Gen.constant (Some (Devices.on s4));
+      Gen.map (fun axis -> Some (Devices.split ~by:"t" ~axis s4)) axis;
       Gen.map
         (fun (x, y) ->
-          if x = y then Devices.mesh ~by:"t" mesh [ (x, [ "a"; "b" ]) ]
-          else Devices.mesh ~by:"t" mesh [ (x, [ "a" ]); (y, [ "b" ]) ])
+          Some
+            (if x = y then Devices.mesh ~by:"t" mesh [ (x, [ "a"; "b" ]) ]
+             else Devices.mesh ~by:"t" mesh [ (x, [ "a" ]); (y, [ "b" ]) ]))
         (Gen.pair axis axis);
     ]
 
@@ -147,7 +154,7 @@ let position p k = Array.find_index (( = ) k) (Grid.devices (Devices.grid p))
 let law =
   prop ~count:500 "each result window reads operands on its own device" case
     (fun c ->
-      let all_constant = Array.for_all (fun p -> p == Devices.anywhere) c.ps in
+      let all_constant = Array.for_all (fun p -> p = None) c.ps in
       cover "constants only" all_constant;
       match route c.rule c.ps c.shapes with
       | exception Invalid_argument msg ->
@@ -156,14 +163,14 @@ let law =
           let alone =
             List.sort_uniq compare
               (List.filter_map
-                 (fun p ->
-                   if p == Devices.anywhere then None else Devices.device p)
+                 (fun p -> Option.bind p Devices.device)
                  (Array.to_list c.ps))
           in
           cover "two devices alone" true;
           greater int ~msg ~than:1 (List.length alone)
-      | r ->
-          if all_constant then equal placement Devices.anywhere r.result
+      | None -> equal bool ~msg:"no route of values of every set" true all_constant
+      | Some r ->
+          if all_constant then fail "a route of values of every set"
           else begin
             let rs = result_shape c in
             let target = Devices.grid r.result in
@@ -187,13 +194,13 @@ let law =
 
 let keeps =
   prop "operands already at the result's placement stay there" case (fun c ->
-      let p = c.ps.(0) in
-      assume (p != Devices.anywhere);
+      assume (c.ps.(0) <> None);
+      let p = Option.get c.ps.(0) in
       let ps = Array.make (Array.length c.ps) p in
       let shapes = Array.make (Array.length c.ps) c.shapes.(0) in
       match c.rule with
       | Route.Elementwise ->
-          let r = route Elementwise ps shapes in
+          let r = placed Elementwise ps shapes in
           Array.iter (fun q -> equal bool true (q == p)) r.operands;
           equal placement p r.result
       | _ -> ())
@@ -201,65 +208,65 @@ let keeps =
 let cases_ =
   group "routes"
     [
-      test "a constant's placement is the host's device, apart from it"
+      test "operands of every set alone have no route" (fun () ->
+          equal bool true
+            (route Elementwise [| None; None |] [| [| 4 |]; [| 4 |] |] = None));
+      test "a value of every set beside a host value is read on the host"
         (fun () ->
-          let a : b Devices.placement = Devices.anywhere in
-          equal int 0 (Devices.number (Devices.set a));
-          equal (option int) (Some 0) (Devices.device a);
-          equal bool false (a == Devices.rebrand (Devices.one Devices.host 0));
-          equal string "anywhere" (Format.asprintf "%a" Devices.pp_placement a));
-      test "a constant beside a host value is read on the host" (fun () ->
           let h : b Devices.placement =
             Devices.rebrand (Devices.one Devices.host 0)
           in
           let r =
-            route Elementwise [| Devices.anywhere; h |] [| [| 4 |]; [| 4 |] |]
+            Option.get
+              (route Elementwise [| None; Some h |] [| [| 4 |]; [| 4 |] |])
           in
           equal bool true (r.result == h));
-      test "a constant beside a split operand is read split" (fun () ->
+      test "a value of every set beside a split operand is read split"
+        (fun () ->
           let x = Devices.split ~by:"t" ~axis:0 s4 in
           let r =
-            route Elementwise [| x; Devices.anywhere |] [| [| 8 |]; [| 8 |] |]
+            Option.get
+              (route Elementwise [| Some x; None |] [| [| 8 |]; [| 8 |] |])
           in
           equal placement x r.result;
           equal placement x r.operands.(1));
       test "a reduction of a split axis is whole on each device" (fun () ->
           let x = Devices.split ~by:"t" ~axis:1 s4 in
-          let r = route (Reduce [| 1 |]) [| x |] [| [| 4; 8 |] |] in
+          let r = placed (Reduce [| 1 |]) [| x |] [| [| 4; 8 |] |] in
           equal placement (Devices.on s4) r.result;
           equal placement (Devices.on s4) r.operands.(0));
       test "a reduction keeps the cut of an axis it does not reduce" (fun () ->
           let x = Devices.split ~by:"t" ~axis:1 s4 in
-          let r = route (Reduce [| 0 |]) [| x |] [| [| 4; 8 |] |] in
+          let r = placed (Reduce [| 0 |]) [| x |] [| [| 4; 8 |] |] in
           equal placement (Devices.split ~by:"t" ~axis:0 s4) r.result;
           equal bool true (r.operands.(0) == x));
       test "a scatter writes where its target lies" (fun () ->
           let into = Devices.split ~by:"t" ~axis:1 s4 and u = Devices.on s4 in
-          let r = route (Into 0) [| u; into |] [| [| 4; 8 |]; [| 8; 8 |] |] in
+          let r = placed (Into 0) [| u; into |] [| [| 4; 8 |]; [| 8; 8 |] |] in
           equal placement into r.result);
       test "the result of a replicated operation is on every device" (fun () ->
-          let r = route Replicated [| Devices.one s4 2 |] [| [| 4 |] |] in
+          let r = placed Replicated [| Devices.one s4 2 |] [| [| 4 |] |] in
           equal placement (Devices.on s4) r.result);
       test "operands on two sets raise" (fun () ->
           invalid (fun () ->
-              route Elementwise
+              placed Elementwise
                 [| Devices.on s4; Devices.rebrand (Devices.on other) |]
                 [| [| 4 |]; [| 4 |] |]));
       test "operands alone on two devices raise" (fun () ->
           invalid (fun () ->
-              route Elementwise
+              placed Elementwise
                 [| Devices.one s4 0; Devices.one s4 1 |]
                 [| [| 4 |]; [| 4 |] |]));
       test "a split that does not divide its axis raises" (fun () ->
           invalid (fun () ->
-              route Elementwise
+              placed Elementwise
                 [| Devices.split ~by:"t" ~axis:0 s4 |]
                 [| [| 6 |] |]));
       test "an axis the operand lacks raises" (fun () ->
           invalid (fun () ->
-              route (Along [| 2 |]) [| Devices.on s4 |] [| [| 4; 4 |] |]));
+              placed (Along [| 2 |]) [| Devices.on s4 |] [| [| 4; 4 |] |]));
       test "placements and shapes of two lengths raise" (fun () ->
-          invalid (fun () -> route Elementwise [| Devices.on s4 |] [||]));
+          invalid (fun () -> placed Elementwise [| Devices.on s4 |] [||]));
     ]
 
 (* Movements: the operand index each result index reads, as Move states it. *)
@@ -333,19 +340,22 @@ let move_case =
       Format.fprintf ppf "%a at %a" pp_ints s Devices.pp_placement p)
     (let* rank = int_range 1 3 in
      let* s = array ~size:(constant rank) (of_list [ 4; 8 ]) in
-     let* p = placement_of rank in
+     let* p =
+       map
+         (function Some p -> p | None -> Devices.on s4)
+         (placement_of rank)
+     in
      let+ mv = move_of s in
      (s, p, mv))
 
 let move_law =
   prop ~count:300 "each moved result window reads the operand on its own device"
     move_case (fun (s, p, mv) ->
-      let r = route (Move mv) [| p |] [| s |] in
+      let r = placed (Move mv) [| p |] [| s |] in
       let s' = R.shape mv s in
       cover "a split operand" (Grid.cuts (Devices.grid p) <> [||]);
       cover "a split result" (Grid.cuts (Devices.grid r.result) <> [||]);
-      if p != Devices.anywhere then
-        Array.iteri
+      Array.iteri
           (fun j k ->
             let w = Devices.window ~by:"t" r.result s' j in
             let pos = require_some (position r.operands.(0) k) in

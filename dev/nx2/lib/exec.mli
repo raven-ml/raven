@@ -88,5 +88,10 @@ val at : 'd Devices.placement -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
     placement within a domain; across domains, at most once per domain whose
     first use races, every result equal bit for bit and the first one stored
     kept. It takes no lock. A kernel's refusal or decline raises here, naming
-    the function that made the constant. At {!Devices.anywhere} it computes on
-    the host. A value that is not a constant is returned as it is. *)
+    the function that made the constant. A value that is not a constant is
+    returned as it is. *)
+
+val read : ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
+(** [read c] is {!at} on the host's device: a value of every set computed for
+    this library to read, its placement the host's whatever ['d]. It never
+    reaches a function of nx's own as an operand. *)

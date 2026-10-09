@@ -90,14 +90,6 @@ val v : by:string -> 'd t -> Grid.t -> 'd placement
     [on s] when [g] is [s]'s devices in order with no cut. Raises
     [Invalid_argument] naming [by] if a device of [g] is not below [count s]. *)
 
-val anywhere : 'd placement
-(** [anywhere] is the placement of a constant: {!host}'s device, at every brand.
-    Its {!set} is {!host}'s at every brand and its {!device} is [Some 0]. It is
-    physically distinct from [one host 0], so a route tells a constant, which
-    joins any placement, from a value on the host. Only the engine's routes and
-    its computation of constants read it; [Nx.placement] of a constant answers
-    it. *)
-
 val set : 'd placement -> 'd t
 val grid : 'd placement -> Grid.t
 
@@ -127,8 +119,7 @@ val rebrand : 'd placement -> 'e placement
 (** [rebrand p] is [p] at another brand. *)
 
 val pp_placement : Format.formatter -> 'd placement -> unit
-(** [pp_placement] formats {!anywhere} as [anywhere], a placement on one device
-    as the device's name, and others as the placement that builds them over the
+(** [pp_placement] formats a placement on one device as the device's name, and others as the placement that builds them over the
     set: [on [CUDA:0; CUDA:1]], [split ~axis:0 [CUDA:0; CUDA:1]], or a mesh's
     grid ({!Grid.pp}). *)
 

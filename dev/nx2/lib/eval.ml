@@ -5,14 +5,21 @@
 
 open Value
 
-(* Computes each constant operand where the operation reads it. *)
-let computing = { Prim.place = (fun p x -> Exec.at p x) }
-let at_host = { Prim.map = (fun x -> Exec.at Devices.anywhere x) }
+(* Computes each constant operand where the operation reads it; on the host
+   where every operand is of every set. *)
+let computing =
+  {
+    Prim.place =
+      (fun p x -> match p with Some p -> Exec.at p x | None -> Exec.read x);
+  }
+
+let read = { Prim.map = Exec.read }
 
 let delivered : type r. by:string -> r prim -> r prim =
  fun ~by op ->
   match op with
-  | Place _ | Check _ -> Prim.map at_host op
+  | Place (p, x) -> Place (p, Exec.at (Devices.rebrand p) x)
+  | Check _ -> Prim.map read op
   | Map _ | Copy _ | Move _ | Bitcast _ -> Prim.prepare ~by computing op
 
 let eval ~by op =

@@ -335,7 +335,10 @@ let same_form ~msg (x : ('v, 's, 'd) Nx.t) (y : ('v, 's, 'd) Nx.t) =
     (Testable.make ~pp:L.pp ~equal:L.equal)
     f.layout g.layout;
   equal ~msg:(msg ^ ": placement") bool true
-    (Nx.Placement.equal f.placement g.placement)
+    (match (f.placement, g.placement) with
+    | Some p, Some q -> Nx.Placement.equal p q
+    | None, None -> true
+    | Some _, None | None, Some _ -> false)
 
 let rec same_outs : type d r. string -> (d, r) Nx.Prim.outs -> r -> r -> unit =
  fun msg outs a b ->

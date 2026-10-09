@@ -33,7 +33,9 @@ let recording () =
   let forms = ref [] in
   let make : type v s d. int -> (v, s, d) Value.form -> (v, s, d) Value.t =
    fun k f ->
-    forms := (k, D.Any f.dtype, f.layout, Devices.rebrand f.placement) :: !forms;
+    forms :=
+      (k, D.Any f.dtype, f.layout, Option.map Devices.rebrand f.placement)
+      :: !forms;
     let a = A.create Rig.host f.dtype (L.shape f.layout) in
     Value.Array { at = Devices.rebrand (Devices.one Devices.host 0); a }
   in
@@ -49,7 +51,7 @@ let forms (Op op) =
 
 let one_form op =
   match forms op with
-  | [ (_, dt, l, (p : b Devices.placement)) ] -> (dt, l, p)
+  | [ (_, dt, l, (p : b Devices.placement option)) ] -> (dt, l, p)
   | fs -> failf "%d results where one was expected" (List.length fs)
 
 let refuses (Op op) = invalid (fun () -> Prim.results ~by:"Nx.f" refusing op)
@@ -101,14 +103,14 @@ let maps =
           List.iter
             (fun (_, _, l, p) ->
               equal layout (L.contiguous [| 2; 3 |]) l;
-              equal bool true (Devices.equal p at0))
+              equal bool true (Devices.equal (Option.get p) at0))
             fs);
       test "a map over split loads is split" (fun () ->
           let x = split_x () in
           List.iter
             (fun (_, _, _, p) ->
               equal bool true
-                (Devices.equal p (Devices.split ~by:"t" ~axis:0 s2)))
+                (Devices.equal (Option.get p) (Devices.split ~by:"t" ~axis:0 s2)))
             (forms
                (Op
                   (Map
@@ -118,7 +120,7 @@ let maps =
                        outs = two;
                        loads = [| Plain x; Plain x |];
                      }))));
-      test "a creation lies anywhere" (fun () ->
+      test "a creation is of every set" (fun () ->
           let one =
             P.v ~ins:[||]
               [| Const (D.Any D.Float32, P.bits D.Float32 1.) |]
@@ -135,7 +137,7 @@ let maps =
                       loads = [||];
                     }))
           in
-          equal bool true (p == Devices.anywhere));
+          equal bool true (p = None));
       cases "a map refuses, before any result is made" ~name:fst
         [
           ( "one load for two operands",
@@ -306,7 +308,7 @@ let movements =
               refuses (Op (Move (mv, x)))
           | s' -> (
               let _, l, p = one_form (Op (Move (mv, x))) in
-              equal bool true (Devices.equal p at0);
+              equal bool true (Devices.equal (Option.get p) at0);
               match A.move mv (array_of x) with
               | Some a' ->
                   cover "a view" true;
@@ -329,7 +331,7 @@ let bitcast (type v s w r) (dt : (w, r) D.t) (x : (v, s, b) Value.t) () =
           (* No view and no shape: a trailing axis that is not the ratio. *)
           is_none ~msg expected
       | _, l, p -> (
-          equal bool true (Devices.equal p at0);
+          equal bool true (Devices.equal (Option.get p) at0);
           match expected with
           | Some a' -> equal layout (A.layout a') l
           | None -> equal bool true (L.is_contiguous l)))
@@ -390,12 +392,12 @@ let others =
         (fun () ->
           let x = moved_by (M.Permute [| 1; 0 |]) (f32 [| 3; 2 |]) in
           let _, l, p = one_form (Op (Place (Devices.one s2 1, x))) in
-          equal bool true (Devices.equal p (Devices.one s2 1));
+          equal bool true (Devices.equal (Option.get p) (Devices.one s2 1));
           equal layout (A.layout (array_of x)) l);
       test "a place split over two devices is C order of the whole" (fun () ->
           let split = Devices.split ~by:"t" ~axis:0 s2 in
           let _, l, p = one_form (Op (Place (split, f32 [| 4; 2 |]))) in
-          equal bool true (Devices.equal p split);
+          equal bool true (Devices.equal (Option.get p) split);
           equal layout (L.contiguous [| 4; 2 |]) l);
       test "a place whose split does not divide the shape raises" (fun () ->
           refuses (Op (Place (Devices.split ~by:"t" ~axis:0 s2, f32 [| 3 |]))));

@@ -20,7 +20,15 @@ open Value
 
 val form : ('v, 's, 'd) t -> ('v, 's, 'd) form
 val dtype : ('v, 's, 'd) t -> ('v, 's) dtype
+
+val at : ('v, 's, 'd) t -> 'd Devices.placement option
+(** [at x] is where [x]'s bytes are, or will be for a traced value: [None]
+    for a value of every set. *)
+
 val placement : ('v, 's, 'd) t -> 'd Devices.placement
+(** [placement x] is [x]'s placement, as {!at} gives it. Raises
+    [Invalid_argument] for a value of every set. *)
+
 val rank : ('v, 's, 'd) t -> int
 
 val dim : ('v, 's, 'd) t -> int -> int
@@ -100,9 +108,12 @@ val op3 :
     with result dtype [dt] ([op3]'s: its second operand's). *)
 
 type placer = {
-  place : 'v 's 'd. 'd Devices.placement -> ('v, 's, 'd) t -> ('v, 's, 'd) t;
+  place :
+    'v 's 'd.
+    'd Devices.placement option -> ('v, 's, 'd) t -> ('v, 's, 'd) t;
 }
-(** How the engine makes an operand readable at a placement of its set. *)
+(** How the engine makes an operand readable at a placement of its set; [None]
+    where every operand of the operation is of every set. *)
 
 val prepare : by:string -> placer -> 'r prim -> 'r prim
 (** [prepare ~by pl op] is [op] with each operand [x] replaced by

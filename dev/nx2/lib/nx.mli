@@ -313,7 +313,7 @@ module Prim : sig
   type ('v, 's, 'd) form = {
     dtype : ('v, 's) dtype;
     layout : Nx_array.Layout.t;
-    placement : 'd Placement.t;
+    placement : 'd Placement.t option;
   }
   (** A value without its bytes. A value cut over devices has the C-contiguous
       layout of the whole. *)

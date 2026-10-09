@@ -19,7 +19,6 @@ type 'd t = {
   result : 'd Devices.placement;
 }
 
-let is_constant p = p == Devices.anywhere
 
 (* The axes operand [i] of shape [shape] reads whole on each device. *)
 let whole rule i shape =
@@ -113,21 +112,23 @@ let covers g want =
           (Grid.devices want)
 
 (* Placements an elementwise operation or a movement reads its operands at with
-   nothing to work out: every operand a constant, or every one at one placement
-   [p], constants apart, that cuts no axis. *)
-type 'd common = Constants | Uncut of 'd Devices.placement | Other
+   nothing to work out: every operand of every set, or every one at one
+   placement [p], those of every set apart, that cuts no axis. *)
+type 'd common = Every_set | Uncut of 'd Devices.placement | Other
 
-let common (type d) (ps : d Devices.placement array) : d common =
+let common (type d) (ps : d Devices.placement option array) : d common =
   let n = Array.length ps in
-  let rec go i (p : d Devices.placement) =
+  let rec go i (p : d Devices.placement option) =
     if i = n then p
-    else if is_constant ps.(i) then go (i + 1) p
-    else if is_constant p || ps.(i) == p then go (i + 1) ps.(i)
-    else raise_notrace Exit
+    else
+      match (ps.(i), p) with
+      | None, _ -> go (i + 1) p
+      | Some q, None -> go (i + 1) (Some q)
+      | Some q, Some p' -> if q == p' then go (i + 1) p else raise_notrace Exit
   in
-  match go 0 Devices.anywhere with
-  | p when is_constant p -> Constants
-  | p -> if Grid.cuts (Devices.grid p) = [||] then Uncut p else Other
+  match go 0 None with
+  | None -> Every_set
+  | Some p -> if Grid.cuts (Devices.grid p) = [||] then Uncut p else Other
   | exception Exit -> Other
 
 (* Any route, worked out from the operands' grids. *)
@@ -153,30 +154,29 @@ let general ~by rule ps shapes =
       try ignore (Nx_array.Move.shape m shapes.(0))
       with Invalid_argument e -> invalid_argf "%s: %s" by e)
   | Elementwise | Replicated -> ());
-  let concrete =
-    List.filter (fun i -> not (is_constant ps.(i))) (List.init n Fun.id)
-  in
+  let placed i = Option.get ps.(i) in
+  let concrete = List.filter (fun i -> ps.(i) <> None) (List.init n Fun.id) in
   match concrete with
-  | [] -> { operands = Array.copy ps; result = Devices.anywhere }
+  | [] -> None
   | first :: _ ->
-      let set = Devices.set ps.(first) in
+      let set = Devices.set (placed first) in
       List.iter
         (fun i ->
-          let s = Devices.set ps.(i) in
+          let s = Devices.set (placed i) in
           if Devices.number s <> Devices.number set then
             invalid_argf "%s: operands on %a and %a" by Devices.pp set
               Devices.pp s)
         concrete;
       let fwd =
         List.map
-          (fun i -> forward rule i shapes.(i) (Devices.grid ps.(i)))
+          (fun i -> forward rule i shapes.(i) (Devices.grid (placed i)))
           concrete
       in
       let target =
         match rule with
         | Replicated -> Devices.grid (Devices.on set)
-        | Into _ when not (is_constant ps.(n - 1)) ->
-            forward rule (n - 1) shapes.(n - 1) (Devices.grid ps.(n - 1))
+        | Into _ when ps.(n - 1) <> None ->
+            forward rule (n - 1) shapes.(n - 1) (Devices.grid (placed (n - 1)))
         | _ -> (
             match List.rev (List.filter (fun g -> Grid.cuts g <> [||]) fwd) with
             | g :: _ -> g
@@ -199,8 +199,9 @@ let general ~by rule ps shapes =
           (fun i p ->
             let want = backward rule i shapes.(i) target in
             let p =
-              if (not (is_constant p)) && covers (Devices.grid p) want then p
-              else Devices.v ~by set want
+              match p with
+              | Some p when covers (Devices.grid p) want -> p
+              | Some _ | None -> Devices.v ~by set want
             in
             (match Grid.window (Devices.grid p) shapes.(i) 0 with
             | Ok _ -> ()
@@ -208,7 +209,7 @@ let general ~by rule ps shapes =
             p)
           ps
       in
-      { operands; result = Devices.v ~by set target }
+      Some { operands; result = Devices.v ~by set target }
 
 let route ~by rule ps shapes =
   let n = Array.length ps in
@@ -217,20 +218,21 @@ let route ~by rule ps shapes =
       (Array.length shapes);
   let simple p =
     match rule with
-    | Elementwise -> Some { operands = Array.make n p; result = p }
+    | Elementwise -> Some (Some { operands = Array.make n p; result = p })
     | Move m when n = 1 -> (
         match Nx_array.Move.shape m shapes.(0) with
-        | _ -> Some { operands = [| p |]; result = p }
+        | _ -> Some (Some { operands = [| p |]; result = p })
         | exception Invalid_argument e -> invalid_argf "%s: %s" by e)
     | Move _ | Reduce _ | Along _ | Gather _ | Into _ | Replicated -> None
   in
   let fast =
-    match common ps with
-    | Constants -> (
-        match simple Devices.anywhere with
-        | Some r -> Some { r with operands = Array.copy ps }
-        | None -> None)
-    | Uncut p -> simple p
-    | Other -> None
+    match (common ps, rule) with
+    | Every_set, (Elementwise | Replicated) -> Some None
+    | Every_set, Move m -> (
+        match Nx_array.Move.shape m shapes.(0) with
+        | _ -> Some None
+        | exception Invalid_argument e -> invalid_argf "%s: %s" by e)
+    | Uncut p, _ -> simple p
+    | (Every_set | Other), _ -> None
   in
   match fast with Some r -> r | None -> general ~by rule ps shapes

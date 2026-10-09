@@ -82,7 +82,7 @@ let devices ?kernels ds : (module Devices) =
   end)
 
 let place p x = Eval.place ~by:"Nx.place" p x
-let placement x = if Prim.is_constant x then None else Some (Prim.placement x)
+let placement = Prim.at
 
 module Repr = struct
   let of_array s a = Repr.of_array ~by:"Nx.Repr.of_array" s a
@@ -123,8 +123,9 @@ let zeros_like x =
   let by = "Nx.zeros_like" in
   let dt = dtype x in
   let z = fill ~by dt (shape x) (D.zero dt) in
-  if Prim.is_constant x then z
-  else Eval.eval ~by (Value.Place (Prim.placement x, z))
+  match Prim.at x with
+  | None -> z
+  | Some p -> Eval.eval ~by (Value.Place (p, z))
 
 (* The shape [s] and [s'] broadcast to: aligned at their last axes, each extent
    equal or [1]. *)
@@ -190,7 +191,7 @@ module Prim = struct
   type ('v, 's, 'd) form = ('v, 's, 'd) Value.form = {
     dtype : ('v, 's) dtype;
     layout : Nx_array.Layout.t;
-    placement : 'd Placement.t;
+    placement : 'd Placement.t option;
   }
 
   type 'd any = 'd Value.any = Any : ('v, 's, 'd) t -> 'd any
