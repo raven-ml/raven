@@ -24,6 +24,8 @@
 
 #include "nx_kinds.h"
 
+#define BLOCK NX_CPU_FOLD_BLOCK
+
 /* A lane fold and a combine of [F] over elements of [T]. */
 #define FOLD(NAME, T, F)                                                     \
   static void lanes_##NAME(const uint8_t *x_, int64_t s, int64_t n,          \
@@ -46,8 +48,14 @@
                              int64_t n) {                                    \
     T *a = (T *)a_;                                                          \
     const T *x = (const T *)x_;                                              \
+    /* Steps of 2 and 4, a window's or a short row's, as constants the     \
+       compiler loads interleaved. */                                        \
     if (s == 1)                                                              \
       for (int64_t i = 0; i < n; i++) a[i] = F(a[i], x[i]);                  \
+    else if (s == 2)                                                         \
+      for (int64_t i = 0; i < n; i++) a[i] = F(a[i], x[2 * i]);              \
+    else if (s == 4)                                                         \
+      for (int64_t i = 0; i < n; i++) a[i] = F(a[i], x[4 * i]);              \
     else                                                                     \
       for (int64_t i = 0; i < n; i++) a[i] = F(a[i], x[i * s]);              \
   }                                                                          \
@@ -58,6 +66,39 @@
     memcpy(&a, a_, sizeof a);                                                \
     for (int64_t i = 0; i < n; i++) y[i * sy] = a = F(a, x[i * s]);          \
     memcpy(a_, &a, sizeof a);                                                \
+  }                                                                          \
+  /* Four blocks' lanes at once, so that more additions are in flight. */ \
+  static inline void four_##NAME(const T *x, T e, T *v) {             \
+    T l[4][16];                                                              \
+    for (int j = 0; j < 4; j++)                                              \
+      for (int k = 0; k < 16; k++) l[j][k] = e;                              \
+    for (int i = 0; i < BLOCK; i += 16)                                      \
+      for (int j = 0; j < 4; j++)                                            \
+        for (int k = 0; k < 16; k++)                                         \
+          l[j][k] = F(l[j][k], x[j * BLOCK + i + k]);                        \
+    for (int j = 0; j < 4; j++) {                                            \
+      for (int h = 8; h >= 1; h /= 2)                                        \
+        for (int k = 0; k < h; k++) l[j][k] = F(l[j][k], l[j][k + h]);      \
+      v[j] = l[j][0];                                                        \
+    }                                                                        \
+  }                                                                          \
+  static inline void one_##NAME(const T *x, T e, T *v) {                 \
+    T l[16];                                                                 \
+    for (int k = 0; k < 16; k++) l[k] = e;                                   \
+    for (int i = 0; i < BLOCK; i += 16)                                      \
+      for (int k = 0; k < 16; k++) l[k] = F(l[k], x[i + k]);                 \
+    for (int h = 8; h >= 1; h /= 2)                                          \
+      for (int k = 0; k < h; k++) l[k] = F(l[k], l[k + h]);                  \
+    *v = l[0];                                                               \
+  }                                                                          \
+  static void blocks_##NAME(const uint8_t *x_, int64_t n, const uint8_t *e_, \
+                            uint8_t *v_) {                                   \
+    const T *x = (const T *)x_;                                              \
+    T *v = (T *)v_, e;                                                       \
+    memcpy(&e, e_, sizeof e);                                                \
+    int64_t b = 0;                                                           \
+    for (; b + 4 <= n; b += 4) four_##NAME(x + b * BLOCK, e, v + b);  \
+    for (; b < n; b++) one_##NAME(x + b * BLOCK, e, v + b);              \
   }
 
 #define ADD(a, b) ((a) + (b))
@@ -99,7 +140,7 @@ FOLD(min_b, uint8_t, ALL)
 
 /* The table's folds, by monoid then dtype: NULL where declined. */
 #define SET(M, DT, F)                                                        \
-  t->fold[M][DT] = (nx_cpu_fold){lanes_##F, combine_##F, scan_##F}
+  t->fold[M][DT] = (nx_cpu_fold){lanes_##F, combine_##F, scan_##F, blocks_##F}
 
 #define ALL4(DT, D)                                                          \
   SET(NX_SUM, DT, sum_##D);                                                  \

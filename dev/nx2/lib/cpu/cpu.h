@@ -90,13 +90,16 @@ typedef void (*nx_cpu_row0)(int64_t n, uint8_t *d, int64_t sd,
    [x], stepping [s], into the [n] contiguous accumulators at [a], element
    by element. [scan] adds the [n] elements at [x], stepping [s], into the
    one accumulator at [a] in order, storing each sum into [y], stepping
-   [sy]. */
+   [sy]. [blocks] stores into [v] the values of the [n] blocks of
+   NX_CPU_FOLD_BLOCK contiguous terms from [x], each its lanes from the
+   identity [e] and the lanes' tree, as [lanes] and [combine] give them. */
 typedef struct {
   void (*lanes)(const uint8_t *x, int64_t s, int64_t n, uint8_t *l,
                 int first);
   void (*combine)(uint8_t *a, const uint8_t *x, int64_t s, int64_t n);
   void (*scan)(uint8_t *a, const uint8_t *x, int64_t s, uint8_t *y,
                int64_t sy, int64_t n);
+  void (*blocks)(const uint8_t *x, int64_t n, const uint8_t *e, uint8_t *v);
 } nx_cpu_fold;
 
 /* The bytes of the largest tile of any target's microkernel: 8 × 12

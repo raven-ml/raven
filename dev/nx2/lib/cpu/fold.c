@@ -64,6 +64,9 @@
 /* Fewer terms per output take the streaming path. */
 #define FEW 16
 
+/* Full blocks whose values the table computes in one call. */
+#define RUN 64
+
 /* Units the groups of blocks aim for where outputs are few. */
 #define UNITS 64
 
@@ -116,8 +119,12 @@ static void identity(int monoid, int dt, uint8_t *id) {
   }
 }
 
+/* [n] identities at [d], copied in doubling runs. */
 static void fill(const fold *q, uint8_t *d, int64_t n) {
-  for (int64_t j = 0; j < n; j++) memcpy(d + j * q->w, q->id, q->w);
+  if (n == 0) return;
+  memcpy(d, q->id, q->w);
+  for (int64_t k = 1; k < n; k *= 2)
+    memcpy(d + k * q->w, d, (k < n - k ? k : n - k) * q->w);
 }
 
 static int is_nan(const fold *q, const uint8_t *p) {
@@ -129,6 +136,20 @@ static int is_nan(const fold *q, const uint8_t *p) {
   double v;
   memcpy(&v, p, 8);
   return v != v;
+}
+
+/* Whether one of the [n] values at [v] is NaN, in one pass the compiler
+   vectorises. */
+static int any_nan(const fold *q, const uint8_t *v, int64_t n) {
+  int bad = 0;
+  if (q->dtype == NX_FLOAT32) {
+    const float *f = (const float *)v;
+    for (int64_t j = 0; j < n; j++) bad |= f[j] != f[j];
+  } else {
+    const double *f = (const double *)v;
+    for (int64_t j = 0; j < n; j++) bad |= f[j] != f[j];
+  }
+  return bad;
 }
 
 static const uint8_t *at(const fold *q, int64_t p) {
@@ -185,8 +206,22 @@ static void block(const fold *q, int64_t p, int64_t s, int64_t W, int64_t b,
   uint8_t l[LANES * ROW];
   int64_t row = W * q->w;
   for (int i = 0; i < used; i++) fill(q, l + i * row, W);
-  for (int64_t t = t0; t < t0 + n; t++)
-    q->f->combine(l + (t & (LANES - 1)) * row, at(q, term(q, p, t)), s, W);
+  /* The terms' positions step through the reduced axes as an odometer. */
+  int64_t idx[NX_MAX_RANK], pos = term(q, p, t0), r = q->nr - 1;
+  for (int64_t i = r, t = t0; i >= 0; i--) {
+    idx[i] = t % q->re[i];
+    t /= q->re[i];
+  }
+  for (int64_t t = t0; t < t0 + n; t++) {
+    q->f->combine(l + (t & (LANES - 1)) * row, at(q, pos), s, W);
+    int64_t i = r;
+    pos += q->rs[i];
+    while (++idx[i] == q->re[i] && i > 0) {
+      pos -= q->re[i] * q->rs[i];
+      idx[i--] = 0;
+      pos += q->rs[i];
+    }
+  }
   lane_tree(q, l, W, used);
   memcpy(v, l, row);
 }
@@ -195,13 +230,25 @@ static void block(const fold *q, int64_t p, int64_t s, int64_t W, int64_t b,
    [v]: the identity for no block. */
 static void blocks(const fold *q, int64_t p, int64_t s, int64_t W, int64_t b0,
                    int64_t b1, uint8_t *v) {
-  uint8_t stack[LEVELS][ROW];
+  uint8_t stack[LEVELS][ROW], run[RUN * 8];
   int top = 0;
   int64_t row = W * q->w;
-  for (int64_t b = b0; b < b1; b++) {
-    block(q, p, s, W, b, stack[top++]);
-    for (int64_t k = b - b0 + 1; (k & 1) == 0; k >>= 1, top--)
-      q->f->combine(stack[top - 2], stack[top - 1], 1, W);
+  /* One output's full blocks of contiguous terms take the table's blocks,
+     RUN at a time. */
+  int64_t full = W == 1 && q->nr == 1 && q->rs[0] == 1 ? q->terms / BLOCK : 0;
+  for (int64_t b = b0; b < b1;) {
+    int64_t n = (b1 < full ? b1 : full) - b;
+    if (n > RUN) n = RUN;
+    if (n > 0)
+      q->f->blocks(at(q, p + b * BLOCK), n, q->id, run);
+    else
+      n = 1;
+    for (int64_t i = 0; i < n; i++, b++) {
+      if (b < full) memcpy(stack[top++], run + i * q->w, q->w);
+      else block(q, p, s, W, b, stack[top++]);
+      for (int64_t k = b - b0 + 1; (k & 1) == 0; k >>= 1, top--)
+        q->f->combine(stack[top - 2], stack[top - 1], 1, W);
+    }
   }
   for (; top > 1; top--) q->f->combine(stack[top - 2], stack[top - 1], 1, W);
   if (top == 0) fill(q, v, W);
@@ -241,17 +288,17 @@ static unit unit_of(const fold *q, int64_t u) {
 
 /* Stores the unit's values [v], each NaN replaced by its first NaN term. */
 static void store(const fold *q, const unit *x, const uint8_t *v) {
+  uint8_t *d = q->a[0].base + x->d * q->w;
+  if (x->sd == 1) memcpy(d, v, x->W * q->w);
+  else
+    for (int64_t j = 0; j < x->W; j++)
+      memcpy(d + j * x->sd * q->w, v + j * q->w, q->w);
+  if (!q->nan || !any_nan(q, v, x->W)) return;
   for (int64_t j = 0; j < x->W; j++) {
-    const uint8_t *e = v + j * q->w;
-    if (q->nan && is_nan(q, e)) {
-      int64_t p = x->p + j * x->s;
-      for (int64_t t = 0; t < q->terms; t++)
-        if (is_nan(q, at(q, term(q, p, t)))) {
-          e = at(q, term(q, p, t));
-          break;
-        }
-    }
-    memcpy(q->a[0].base + (x->d + j * x->sd) * q->w, e, q->w);
+    if (!is_nan(q, v + j * q->w)) continue;
+    int64_t p = x->p + j * x->s, t = 0;
+    while (t < q->terms && !is_nan(q, at(q, term(q, p, t)))) t++;
+    if (t < q->terms) memcpy(d + j * x->sd * q->w, at(q, term(q, p, t)), q->w);
   }
 }
 
