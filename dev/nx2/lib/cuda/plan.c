@@ -289,17 +289,13 @@ static int reads_as(int dt, int to) {
 }
 
 /* Packs each operand the SIMT or skinny kernel cannot read as [to] into
-   [to], exactly, with k contiguous. 0, or add's failure. */
+   [to], exactly, with k contiguous: the kernel then reads both as [to].
+   0, or add's failure. */
 static int pack_into(plan *c, int to) {
   int e;
-  if (!reads_as(c->p.a_dtype, to)) {
-    if ((e = pack(c, 0, to)) != 0) return e;
-    c->p.a_dtype = to;
-  }
-  if (!reads_as(c->p.b_dtype, to)) {
-    if ((e = pack(c, 1, to)) != 0) return e;
-    c->p.b_dtype = to;
-  }
+  if (!reads_as(c->p.a_dtype, to) && (e = pack(c, 0, to)) != 0) return e;
+  if (!reads_as(c->p.b_dtype, to) && (e = pack(c, 1, to)) != 0) return e;
+  c->p.a_dtype = c->p.b_dtype = to;
   return 0;
 }
 
@@ -365,6 +361,7 @@ static int plan_mma(plan *c, int kind, int t, launch *l) {
   int e;
   if (pack_a && (e = pack(c, 0, to)) != 0) return e;
   if (pack_b && (e = pack(c, 1, to)) != 0) return e;
+  c->p.a_dtype = c->p.b_dtype = to;
   /* A split sum stores and reloads its partials: worth it to fill a GPU
      short of blocks, or to stream a long k for a few rows. */
   const int mes = kind == K_s8 ? 1 : 2;

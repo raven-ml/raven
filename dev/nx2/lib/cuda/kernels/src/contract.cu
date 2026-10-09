@@ -17,9 +17,8 @@
        operand whose free axis is contiguous)--> fragments --mma.sync-->
        accumulators --> combine (splits) --> + init --> y
 
-   - simt (m > 16): float32 or float64 sums by fma, integer sums wrapping
-     in 64 bits (a 32-bit accumulator's wrap to 32 bits at the store: the
-     same sum modulo 2^32); each output summed in increasing k.
+   - simt (m > 16): float32 or float64 sums by fma, integer sums wrapping;
+     each output summed in increasing k.
    - skinny (m <= 16): lane l of 32 sums the runs k0 + 128 t + 4 l + u,
      u < 4, of its range in increasing k, and the 32 lane sums combine by
      the balanced tree (l, l + 16), then (l, l + 8), (l, l + 4), (l, l + 2),
@@ -27,13 +26,9 @@
 
    In each, [splits] ranges of k (whole k-tiles for mma and simt) combine
    in range order (combine.cuh); init then enters the sum, and the result
-   rounds once to y's dtype. An mma operand whose rows are not 16-byte
-   vectors, or in a layout its tile has no instance of, is first packed
-   into rows that are, k contiguous (pack): the same values in the same
-   tiles, so the same bits. A SIMT or float skinny operand of a dtype
-   other than its accumulator's is packed into the accumulator's dtype,
-   exactly; the integer skinny kernel reads one integer dtype both its
-   operands hold, an operand of another packed into it. */
+   rounds once to y's dtype. Each body reads its operands in the layout
+   and dtype the plan packs them into (pack): the same values in the same
+   tiles, so the same bits. */
 
 #include "combine.cuh"
 #include "kernels.h"

@@ -43,10 +43,8 @@ typedef struct __attribute__((aligned(8))) {
      axis of a (k or m) and of b (k or n), and the tile.
    - SIMT (contract.cu): the accumulator's type and the tile's side.
    - SKINNY (contract.cu): the accumulator's type.
-   Instances are a budget: each names the rows that keep it. A layout or
-   tile with no instance is computed by one that has it, its operand
-   packed first; a 32-bit integer accumulator sums in 64 bits and wraps,
-   in 32 on the skinny kernel. */
+   Instances are a budget: each names the rows that keep it. The plan
+   packs an operand into a layout and dtype an instance reads. */
 #define NX_CUDA_KERNELS(X)                                                    \
   /* every split sum */                                                     \
   X(zero_u32, ZERO)                                                         \
@@ -113,9 +111,11 @@ enum nx_cuda_kernel { NX_CUDA_KERNELS(NX_CUDA_ENUM) NX_CUDA_KERNEL_COUNT };
    [init] is NULL for none. [partials] and [tickets] are scratch when
    [splits] > 1: the sum over k is cut into [splits] ranges, each summed by
    its own block, and the last block to arrive adds them in range order
-   (combine.cuh). A SIMT kernel reads a and b of [a_dtype] and [b_dtype],
-   converting to its accumulator. The sum, of [acc_dtype], reaches y as a
-   cast from it does. [aligned] holds the NX_CONTRACT_ bits below. */
+   (combine.cuh). a and b are of the dtypes [a_dtype] and [b_dtype], the
+   kernel's own: an mma kernel of kind any sums the kind of [a_dtype], and
+   the integer skinny kernel's loop reads [b_dtype]. The sum, of
+   [acc_dtype], reaches y as a cast from it does. [aligned] holds the
+   NX_CONTRACT_ bits below. */
 typedef struct {
   const void *a, *b, *init;
   void *y, *partials;
