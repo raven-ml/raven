@@ -16,7 +16,8 @@ module M = Nx_array.Move
 module B = Rig.Buffer
 module A1 = Bigarray.Array1
 
-external read_3 : ('v, 's) A.t -> ('v, 's) A.t -> ('v, 's) A.t -> int
+external read_3 :
+  ('v, 's) A.t -> ('v, 's) A.t -> ('v, 's) A.t -> A.answer
   = "nx_array_bench_read_3"
 
 external loop_3 : ('v, 's) A.t -> ('v, 's) A.t -> ('v, 's) A.t -> int
@@ -257,7 +258,9 @@ let layout_rows =
 (* Arrays and the door. A kernel's operands are rank-4 float32 arrays of 120
    elements on the host; [t] is the transposed view of one. *)
 
-let ok name e = if e <> 0 then failwith (name ^ ": the door refused")
+let ok name = function
+  | A.Done -> ()
+  | _ -> failwith (name ^ ": the door refused")
 let operand ?(shape = rank4) () = A.create Rig.host f32 shape
 
 (* [a] with its axes reversed. *)
@@ -265,10 +268,11 @@ let transpose a =
   let r = L.rank (A.layout a) in
   Option.get (A.move (M.Permute (Array.init r (fun i -> r - 1 - i))) a)
 
-(* A kernel's OCaml wrapper: a code other than [NX_OK] is a refusal. *)
+(* A kernel's OCaml wrapper: an answer other than [Done] is a refusal. *)
 let add z x y =
-  let e = Nx_array_support.add z x y in
-  if e <> 0 then A.refused "add" e [ A.Any z; A.Any x; A.Any y ]
+  match Nx_array_support.add z x y with
+  | A.Done -> ()
+  | refusal -> A.refused "add" refusal [ A.Any z; A.Any x; A.Any y ]
 
 (* A kernel of one element: the result made, three operands read through the
    door and coalesced, one add. Its floor is rig's buffer. The views and

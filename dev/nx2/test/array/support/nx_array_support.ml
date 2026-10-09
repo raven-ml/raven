@@ -8,12 +8,36 @@ external decode : int -> int -> int = "nx_array_support_decode"
 external of_int64 : int -> int64 -> int = "nx_array_support_of_i64"
 external of_uint64 : int -> int64 -> int = "nx_array_support_of_u64"
 external layout : Nx_array.Layout.t -> int array = "nx_array_support_layout"
-external add : 'z -> 'x -> 'y -> int = "nx_array_support_add"
+let answers =
+  Nx_array.
+    [
+      ("Done", Done);
+      ("Declined", Declined);
+      ("Wrong_dtype", Wrong_dtype);
+      ("Dead_buffer", Dead_buffer);
+      ("Off_host", Off_host);
+      ("Held_exclusive", Held_exclusive);
+      ("Read_only", Read_only);
+      ("Repeated_elements", Repeated_elements);
+      ("Overlapping", Overlapping);
+      ("Bad_layout", Bad_layout);
+      ("Shape_mismatch", Shape_mismatch);
+      ("Bad_arity", Bad_arity);
+    ]
 
-external copy_into : ('v, 's) Nx_array.t -> ('v, 's) Nx_array.t -> int
+let pp_answer ppf a =
+  Format.pp_print_string ppf (fst (List.find (fun (_, b) -> a = b) answers))
+
+external codes : unit -> int array = "nx_array_support_codes"
+external code : Nx_array.answer -> int = "%identity"
+
+external add : 'z -> 'x -> 'y -> Nx_array.answer = "nx_array_support_add"
+
+external copy_into :
+  ('v, 's) Nx_array.t -> ('v, 's) Nx_array.t -> Nx_array.answer
   = "nx_array_copy"
 
-external of_array_into : ('v, 's) Nx_array.t -> 'v array -> int
+external of_array_into : ('v, 's) Nx_array.t -> 'v array -> Nx_array.answer
   = "nx_array_of_array"
 
 external int16_at :
@@ -22,7 +46,8 @@ external int16_at :
   (int, Bigarray.int16_signed_elt, Bigarray.c_layout) Bigarray.Genarray.t
   = "nx_array_support_int16_at"
 
-external collect : ('v, 's) Nx_array.t -> int = "nx_array_support_collect"
+external collect : ('v, 's) Nx_array.t -> Nx_array.answer
+  = "nx_array_support_collect"
 
 (* An io device over bigarrays *)
 
@@ -74,9 +99,7 @@ let io_allocations () = Atomic.get Io.allocations
 external late_new : unit -> nativeint = "nx_array_support_late_new"
 external late_publish : nativeint -> unit = "nx_array_support_late_publish"
 external late_signaled : nativeint -> int = "nx_array_support_late_signaled"
-external late_room : unit -> nativeint = "nx_array_support_late_room"
-external late_submit : unit -> nativeint = "nx_array_support_late_submit"
-external late_commit : unit -> nativeint = "nx_array_support_late_commit"
+external late_word : nativeint -> int = "nx_array_support_late_word"
 external malloc : int -> int = "nx_array_support_malloc"
 external free : int -> unit = "nx_array_support_free"
 external store_fill : unit -> nativeint = "nx_array_support_store"
@@ -117,7 +140,7 @@ module Driver = struct
   let image _ _ = Error "late loads no code"
   let entry () _ = None
   let unload _ () = ()
-  let word d = { at = Nativeint.to_int d.self; raw = 0 }
+  let word d = { at = late_word d.self; raw = 0 }
   let signaled d = late_signaled d.self
 
   let sleep d ~seen:_ ~still_ms:_ =
@@ -125,10 +148,7 @@ module Driver = struct
     | Some why -> raise (Fault why)
     | None -> late_publish d.self
 
-  let room_entry = late_room ()
-  let submit_entry = late_submit ()
-  let commit_entry = late_commit ()
-  let self d = d.self
+  let edge d = d.self
   let stop d = late_publish d.self
 end
 

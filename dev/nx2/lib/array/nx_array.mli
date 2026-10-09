@@ -19,21 +19,24 @@
 
     Host kernels are C and read arrays only through the door of [nx_array.h],
     which claims every operand of a call or none, waits under the claims for
-    unfinished device work on them, and answers a code. A kernel's OCaml wrapper
-    hands any code but [NX_OK] to {!refused}, which raises. The door may run
-    OCaml code while it waits, so a kernel's external is never [[@@noalloc]]:
+    unfinished device work on them, and answers an {!answer}. A kernel's caller
+    hands a refusal to {!refused}, which raises. The door may run OCaml code
+    while it waits, so a kernel's external is never [[@@noalloc]]:
     {[
     external add_kernel :
-      ('v, 's) Nx_array.t -> ('v, 's) Nx_array.t -> ('v, 's) Nx_array.t -> int
-      = "nx_cpu_add"
+      ('v, 's) Nx_array.t -> ('v, 's) Nx_array.t -> ('v, 's) Nx_array.t ->
+      Nx_array.answer = "nx_cpu_add"
 
     let add z x y =
-      let e = add_kernel z x y in
-      if e <> 0 then Nx_array.refused "Nx.add" e [ Any z; Any x; Any y ]
+      match add_kernel z x y with
+      | Done -> z
+      | Declined -> add_by_parts z x y
+      | refusal -> Nx_array.refused "Nx.add" refusal [ Any z; Any x; Any y ]
     ]}
     Kernels that submit device work from OCaml claim their arrays through
-    {!door}, which answers the same codes. [nx_dtype.h] holds the dtypes' codes, their facts and every
-    conversion into them for C, CUDA, HIP and Metal sources. *)
+    {!door}, which answers the same refusals. [nx_dtype.h] holds the dtypes'
+    codes, their facts and every conversion into them for C, CUDA, HIP and
+    Metal sources. *)
 
 (** {1:dtypes Dtypes} *)
 
@@ -218,14 +221,38 @@ val of_bigarray :
 
 (** {1:kernels Kernels} *)
 
-val door : written:any array -> read:any array -> ('a -> unit) -> 'a -> int
+(** The type for what a kernel answers, and the door. A kernel answers [Done]
+    once its work is done on the host or queued on the device's timeline,
+    [Declined] for a case it does not compute, and otherwise, before any write,
+    a refusal: what is wrong with an operand. C answers [Val_int] of
+    [nx_array.h]'s code, whose enum lists the constructors in this order. *)
+type answer =
+  | Done
+  | Declined
+  | Wrong_dtype  (** An operand's dtype is not the one the kernel loads. *)
+  | Dead_buffer  (** An operand's buffer is dead. *)
+  | Off_host  (** The host does not address an operand's memory. *)
+  | Held_exclusive  (** An operand's memory is held exclusive. *)
+  | Read_only  (** A written operand's memory is [Read]. *)
+  | Repeated_elements  (** A written operand reaches an element twice. *)
+  | Overlapping  (** A written operand shares a byte with another operand. *)
+  | Bad_layout
+      (** An operand's layout is not a layout: a guard for C callers, which an
+          array made by this library never meets. *)
+  | Shape_mismatch  (** The operands of one loop have different shapes. *)
+  | Bad_arity
+      (** No operand, or more than a loop takes: a guard for C callers, which a
+          kernel of this library's contract never meets. *)
+
+val door :
+  written:any array -> read:any array -> ('a -> unit) -> 'a -> answer
 (** [door ~written ~read f x] claims the memory of [written] for writing and of
     [read] for reading, every claim or none, runs [f x], and releases the claims
     when [f] returns or raises; an exception of [f] propagates once they are
-    released. It answers [0] once [f] returns, or, having claimed nothing and
-    run nothing, a code of [nx_array.h]: that a written array reaches an element
-    twice or shares a byte with another array, that an array's buffer is dead,
-    or that its memory is held exclusive or, for a written array, [Read].
+    released. It answers [Done] once [f] returns, or, having claimed nothing
+    and run nothing, [Repeated_elements] or [Overlapping] for a written array,
+    [Dead_buffer] or [Held_exclusive] for an array, or [Read_only] for a written
+    array on [Read] memory.
 
     It waits for no device work: [f] submits work that the device orders after
     the work before it. [f] may write the elements of [written], but leaves the
@@ -233,8 +260,9 @@ val door : written:any array -> read:any array -> ('a -> unit) -> 'a -> int
     releases what they hold when [f] ends. With a [f] that is not a closure and
     arrays the caller reuses, it allocates nothing. *)
 
-val refused : string -> int -> any list -> 'a
-(** [refused name code operands] raises [Invalid_argument] for [code], a code
-    of [nx_array.h] other than [NX_OK] that a kernel answered for [operands],
-    naming [name], the reason the code gives, and each operand's dtype and
-    shape. [name] is the function the user called, as ["Nx.add"]. *)
+val refused : string -> answer -> any list -> 'a
+(** [refused name r operands] raises [Invalid_argument] for the refusal [r]
+    that a kernel answered for [operands], naming [name], the reason [r] gives,
+    and each operand's dtype and shape. [name] is the function the user called,
+    as ["Nx.add"]. [Done] and [Declined] are no refusal, and raise
+    [Invalid_argument] saying so. *)

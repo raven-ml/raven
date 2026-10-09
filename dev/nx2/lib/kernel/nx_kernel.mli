@@ -13,9 +13,8 @@
 
     include Nx_kernel.S
     ]}
-    {!Prog} names what a kernel computes. In C, [nx_kinds.h] computes each kind
-    and [nx_spec.h] holds the code {!not_computed}, with no OCaml header, so
-    device sources include them. *)
+    {!Prog} names what a kernel computes. In C, [nx_kinds.h] computes each kind,
+    with no OCaml header, so device sources include it. *)
 
 module Prog = Prog
 (** Scalar kinds. *)
@@ -32,30 +31,25 @@ module Prog = Prog
     A kernel claims [dst] and its operands for the extent of its call through a
     door: [nx_read] of [nx_array.h] for host kernels, {!Nx_array.door} for
     kernels that submit device work. [nx_read] waits, under its claims, for
-    earlier device work on the operands; {!Nx_array.door} holds its claims
-    until the work is submitted. A kernel answers [0] once
-    its work is done on the host or queued on the device's timeline; the door's
-    code if the door refused an operand, before any write; {!not_computed} if it
-    does not compute the case, before any write or queued work.
-    {!Nx_array.refused} raises a door's code. Value-dependent failures are NaN.
-    A kernel's result is a function of its operands' values alone: neither
-    layouts nor threads change a bit. *)
+    earlier device work on the operands; {!Nx_array.door} holds its claims until
+    the work is submitted. A kernel answers [Done] once its work is done on the
+    host or queued on the device's timeline; the door's refusal, before any
+    write; [Declined] if it does not compute the case, before any write or
+    queued work. Value-dependent failures are NaN. A kernel's result is a
+    function of its operands' values alone: neither layouts nor threads change a
+    bit. *)
 module type S = sig
   type ('v, 's) a := ('v, 's) Nx_array.t
+  type answer := Nx_array.answer
 
   val name : string
   (** [name] names the kernels in messages, as ["nx.cpu"]. *)
 
   val computes_on : Rig.t -> bool
-  (** [computes_on d] is [true] iff these kernels read and write [d]'s
-      memory. *)
+  (** [computes_on d] is [true] iff these kernels compute on [d]'s memory. *)
 
   (** {1:elementwise Elementwise} *)
 
-  val apply1 : Prog.op1 -> dst:('v, 's) a -> ('a, 'b) a -> int
+  val apply1 : Prog.op1 -> dst:('v, 's) a -> ('a, 'b) a -> answer
   (** [apply1 k ~dst x] stores [k] of each element of [x] into [dst]. *)
 end
-
-val not_computed : int
-(** [not_computed] is the code a kernel answers for a case it does not compute,
-    before any write or queued work. It is none of the door's codes. *)

@@ -22,26 +22,40 @@ val of_int64 : int -> int64 -> int
 val of_uint64 : int -> int64 -> int
 (** [of_uint64 code v] is {!of_int64} for the uint64 whose bits [v] holds. *)
 
+val answers : (string * Nx_array.answer) list
+(** [answers] is every answer, in its type's order, beside its name. *)
+
+val pp_answer : Format.formatter -> Nx_array.answer -> unit
+(** [pp_answer] formats an answer's name. *)
+
+val codes : unit -> int array
+(** [codes ()] is [nx_array.h]'s codes in the order of {!Nx_array.answer}'s
+    constructors: [NX_OK], [NX_DECLINED], [NX_DTYPE] and on. *)
+
+val code : Nx_array.answer -> int
+(** [code a] is the integer OCaml represents [a] by, which C reads. *)
+
 val layout : Nx_array.Layout.t -> int array
 (** [layout l] is [l]'s fields as C reads them through [nx_layout.h]'s field
     order: rank, flags, offset, lo, hi, then the extents and the strides. *)
 
-val add : 'z -> 'x -> 'y -> int
+val add : 'z -> 'x -> 'y -> Nx_array.answer
 (** [add z x y] is a float32 kernel through [nx_read] and [nx_coalesce]: it
-    stores [x + y] into [z] and answers [nx_array.h]'s code. Its operands are
+    stores [x + y] into [z] and answers as a kernel does. Its operands are
     untyped, as an array built from parts can be. *)
 
-val copy_into : ('v, 's) Nx_array.t -> ('v, 's) Nx_array.t -> int
+val copy_into :
+  ('v, 's) Nx_array.t -> ('v, 's) Nx_array.t -> Nx_array.answer
 (** [copy_into dst src] is the gather {!Nx_array.copy} runs, into [dst], any
     written operand of [src]'s dtype and shape: it copies [src]'s elements into
-    [dst] through [nx_read] and answers [nx_array.h]'s code. *)
+    [dst] through [nx_read] and answers as a kernel does. *)
 
-val of_array_into : ('v, 's) Nx_array.t -> 'v array -> int
+val of_array_into : ('v, 's) Nx_array.t -> 'v array -> Nx_array.answer
 (** [of_array_into a xs] is the store {!Nx_array.of_array} runs, into [a], any
     array of [Array.length xs] elements: it writes [xs] in C order of indices
-    through [nx_read] and answers [nx_array.h]'s code. *)
+    through [nx_read] and answers as a kernel does. *)
 
-val collect : ('v, 's) Nx_array.t -> int
+val collect : ('v, 's) Nx_array.t -> Nx_array.answer
 (** [collect a] reads [a] through [nx_read], empties the minor heap and compacts
     the major one while it holds the read, then calls [nx_done]. *)
 

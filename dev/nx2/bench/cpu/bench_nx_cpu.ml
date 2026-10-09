@@ -39,6 +39,10 @@ external floor_codec : int -> codec -> bytes -> bytes -> int -> unit
   = "nx_cpu_bench_floor_codec"
 
 external codecs_run : unit -> bool = "nx_cpu_bench_codecs_run" [@@noalloc]
+external block_transposed : bytes -> bytes -> int -> unit
+  = "nx_cpu_bench_block_transposed"
+[@@noalloc]
+
 external cores : unit -> int = "nx_cpu_bench_cores" [@@noalloc]
 
 external performance_cores : unit -> int = "nx_cpu_bench_performance_cores"
@@ -46,7 +50,9 @@ external performance_cores : unit -> int = "nx_cpu_bench_performance_cores"
 
 let strf = Printf.sprintf
 let row name setup f = Thumper.bench_with_setup ~setup name f
-let ok e = if e <> 0 then failwith "nx.cpu refused a bench operand"
+let ok = function
+  | A.Done -> ()
+  | _ -> failwith "nx.cpu refused a bench operand"
 let kib = 1024
 let mib = 1024 * kib
 
@@ -171,6 +177,30 @@ let copy_rows () =
           (fun () ->
             Option.get
               (A.move (M.Permute [| 1; 0 |]) (filled f32 [| 4096; 4096 |])));
+        (* Past the M1 Max's 48 MiB system cache and TLB reach, as 4096x4096
+           is, with rows that are no power of two apart. *)
+        copy
+          ~floor:(Copy (4 * 4000 * 4000))
+          "copy-transposed-4000x4000"
+          (fun () ->
+            Option.get
+              (A.move (M.Permute [| 1; 0 |]) (filled f32 [| 4000; 4000 |])));
+        (* The copy kernel alone on one thread, the transpose of 512x512
+           float32 in cache: the vendors' one-thread transposes bound it. *)
+        row "block-transposed-512x512-1t"
+          (fun () ->
+            let b () =
+              let b =
+                Rig.Buffer.bigarray Bigarray.int8_unsigned
+                  (Rig.Buffer.create Rig.host (4 * 512 * 512))
+              in
+              for i = 0 to Bigarray.Array1.dim b - 1 do
+                Bigarray.Array1.unsafe_set b i (i land 255)
+              done;
+              b
+            in
+            (b (), b ()))
+          (fun (d, s) -> block_transposed d s 512);
         (* A row broadcast over rows. *)
         copy ~floor:(Copy (4 * mib)) "copy-broadcast-1024x1024-1024" (fun () ->
             Option.get

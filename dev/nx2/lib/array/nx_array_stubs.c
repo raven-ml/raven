@@ -5,6 +5,10 @@
 
 #include <string.h>
 
+#if defined(__x86_64__)
+#include <xmmintrin.h>
+#endif
+
 #include <caml/alloc.h>
 #include <caml/bigarray.h>
 #include <caml/fail.h>
@@ -163,13 +167,10 @@ void nx_done(int n, nx_array *a) {
    device work: what it runs submits work, which rig orders after the work
    before it. */
 
-intnat nx_array_claim(value b, intnat written) {
-  enum rig_claim c = rig_buffer_claim(b, written ? RIG_READ_WRITE : RIG_READ);
-  return c == RIG_WAIT ? NX_OK : claim_code(c);
-}
-
-value nx_array_claim_byte(value b, value written) {
-  return Val_long(nx_array_claim(b, Long_val(written)));
+value nx_array_claim(value b, value written) {
+  enum rig_claim c =
+      rig_buffer_claim(b, Bool_val(written) ? RIG_READ_WRITE : RIG_READ);
+  return Val_int(c == RIG_WAIT ? NX_OK : claim_code(c));
 }
 
 value nx_array_release(value b) {
@@ -685,6 +686,69 @@ static inline __attribute__((always_inline)) void block(
     for (int q = 0; q < 4; q++) memcpy(d + p * dr + q * w, x[q] + p * w, w);
 }
 
+/* The 8x8 block of 4-byte elements whose column q is the 32 bytes at
+   [s + q·sc] into the rows at [d + p·dr], in registers: eight 32-byte
+   loads and eight 32-byte stores, which read and write whole lines faster
+   than 4x4 blocks: a transposed 512x512 float32 copy on one thread takes
+   36.4 us against 59.2 in 4x4 blocks on the M1, where Accelerate's
+   vDSP_mtrans takes 35.4, and 44.3 against 61.7 on kimchi. */
+#if defined(__aarch64__)
+static inline __attribute__((always_inline)) void transpose4(
+    uint32x4_t a, uint32x4_t b, uint32x4_t c, uint32x4_t e, uint32x4_t *o) {
+  uint64x2_t t0 = vreinterpretq_u64_u32(vtrn1q_u32(a, b));
+  uint64x2_t t1 = vreinterpretq_u64_u32(vtrn2q_u32(a, b));
+  uint64x2_t t2 = vreinterpretq_u64_u32(vtrn1q_u32(c, e));
+  uint64x2_t t3 = vreinterpretq_u64_u32(vtrn2q_u32(c, e));
+  o[0] = vreinterpretq_u32_u64(vtrn1q_u64(t0, t2));
+  o[1] = vreinterpretq_u32_u64(vtrn1q_u64(t1, t3));
+  o[2] = vreinterpretq_u32_u64(vtrn2q_u64(t0, t2));
+  o[3] = vreinterpretq_u32_u64(vtrn2q_u64(t1, t3));
+}
+
+static inline __attribute__((always_inline)) void block8(uint8_t *d, int64_t dr,
+                                                         const uint8_t *s,
+                                                         int64_t sc) {
+  uint32x4_t x[8][2], o[4];
+  for (int q = 0; q < 8; q++)
+    for (int h = 0; h < 2; h++)
+      x[q][h] = vld1q_u32((const uint32_t *)(s + q * sc + 16 * h));
+  for (int h = 0; h < 2; h++)
+    for (int v = 0; v < 2; v++) {
+      transpose4(x[4 * v][h], x[4 * v + 1][h], x[4 * v + 2][h],
+                 x[4 * v + 3][h], o);
+      for (int p = 0; p < 4; p++)
+        vst1q_u32((uint32_t *)(d + (4 * h + p) * dr + 16 * v), o[p]);
+    }
+}
+#elif defined(__x86_64__)
+static inline __attribute__((always_inline)) void block8(uint8_t *d, int64_t dr,
+                                                         const uint8_t *s,
+                                                         int64_t sc) {
+  for (int h = 0; h < 2; h++)
+    for (int v = 0; v < 2; v++) {
+      const float *b = (const float *)(s + 4 * v * sc + 16 * h);
+      __m128 x0 = _mm_loadu_ps(b);
+      __m128 x1 = _mm_loadu_ps((const float *)((const uint8_t *)b + sc));
+      __m128 x2 = _mm_loadu_ps((const float *)((const uint8_t *)b + 2 * sc));
+      __m128 x3 = _mm_loadu_ps((const float *)((const uint8_t *)b + 3 * sc));
+      _MM_TRANSPOSE4_PS(x0, x1, x2, x3);
+      uint8_t *o = d + 4 * h * dr + 16 * v;
+      _mm_storeu_ps((float *)o, x0);
+      _mm_storeu_ps((float *)(o + dr), x1);
+      _mm_storeu_ps((float *)(o + 2 * dr), x2);
+      _mm_storeu_ps((float *)(o + 3 * dr), x3);
+    }
+}
+#else
+static inline __attribute__((always_inline)) void block8(uint8_t *d, int64_t dr,
+                                                         const uint8_t *s,
+                                                         int64_t sc) {
+  for (int h = 0; h < 2; h++)
+    for (int v = 0; v < 2; v++)
+      block(d + 4 * h * dr + 16 * v, dr, s + 4 * v * sc + 16 * h, sc, 4);
+}
+#endif
+
 /* Sub-byte runs
 
    A run of sub-byte elements written one after another covers whole bytes,
@@ -775,17 +839,21 @@ static __attribute__((noinline)) void sub_run(uint8_t *d, int64_t pd,
 
 /* A block of elements of [w] bytes, steps in bytes: rows of adjacent
    elements are memcpy, a source that steps one element across rows into
-   adjacent elements moves in 4x4 blocks, other steps element by element. */
+   adjacent elements moves in square blocks, 8x8 of 4-byte elements and 4x4
+   of the others, other steps element by element. */
 static inline __attribute__((always_inline)) void bytes(
     uint8_t *d, int64_t dr, int64_t dc, const uint8_t *s, int64_t sr,
     int64_t sc, int64_t rows, int64_t cols, size_t w) {
-  int64_t i = 0, sw = (int64_t)w;
+  int64_t i = 0, sw = (int64_t)w, side = w == 4 ? 8 : 4;
   if (dc == sw && sr == sw)
-    for (; i + 4 <= rows; i += 4) {
+    for (; i + side <= rows; i += side) {
       int64_t j = 0;
-      for (; j + 4 <= cols; j += 4)
-        block(d + i * dr + j * sw, dr, s + i * sr + j * sc, sc, w);
-      for (int p = 0; p < 4; p++)
+      for (; j + side <= cols; j += side)
+        if (w == 4)
+          block8(d + i * dr + j * sw, dr, s + i * sr + j * sc, sc);
+        else
+          block(d + i * dr + j * sw, dr, s + i * sr + j * sc, sc, w);
+      for (int p = 0; p < side; p++)
         strided(d + (i + p) * dr + j * sw, sw, s + (i + p) * sr + j * sc, sc,
                 cols - j, w);
     }

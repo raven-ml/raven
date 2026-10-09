@@ -42,6 +42,13 @@ let kill b =
 let unclaimed b =
   Rig.Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c -> Rig.Claim.exclusive c b)
 
+(* Answers *)
+
+let answer = Testable.make ~pp:S.pp_answer ~equal:( = )
+
+let refusals =
+  List.filter (fun (_, a) -> a <> A.Done && a <> A.Declined) S.answers
+
 (* Arrays of every dtype *)
 
 (* A host array of [dt] of shape [s], its values stores of drawn floats. *)
@@ -363,7 +370,7 @@ let test_expect () =
 let test_refused () =
   let a = floats32 [| 2; 3 |] (Array.make 6 0.) in
   let b = A.create Rig.host D.Int8 [| 4 |] in
-  (match A.refused "add" 1 [ A.Any a; A.Any b ] with
+  (match A.refused "add" A.Wrong_dtype [ A.Any a; A.Any b ] with
   | () -> fail "refused returned"
   | exception Invalid_argument m ->
       starts_with ~affix:"add: " m;
@@ -371,24 +378,33 @@ let test_refused () =
       contains ~sub:"float32 [2; 3]" m;
       contains ~sub:"int8 [4]" m);
   raises_match (Exn.invalid_arg ~substring:"shapes") (fun () ->
-      A.refused "add" 9 [ A.Any a ])
+      A.refused "add" A.Shape_mismatch [ A.Any a ]);
+  raises_match (Exn.invalid_arg ~substring:"not a refusal") (fun () ->
+      A.refused "add" A.Done [ A.Any a ]);
+  raises_match (Exn.invalid_arg ~substring:"not a refusal") (fun () ->
+      A.refused "add" A.Declined [ A.Any a ])
 
-(* Every refusal code raises, naming the function and each operand, with a
-   reason of its own. *)
+(* Every refusal raises, naming the function and each operand, with a reason
+   of its own. *)
 let test_refused_codes () =
   let a = floats32 [| 2; 3 |] (Array.make 6 0.) in
-  let refusals = [ 1; 2; 3; 4; 5; 6; 7; 8; 9; 10 ] in
-  let reason code =
-    match A.refused "Nx.f" code [ A.Any a ] with
-    | () -> failf "refused returned on code %d" code
+  let reason (name, r) =
+    match A.refused "Nx.f" r [ A.Any a ] with
+    | () -> failf "refused returned on %s" name
     | exception Invalid_argument m ->
-        starts_with ~msg:(string_of_int code) ~affix:"Nx.f: " m;
-        contains ~msg:(string_of_int code) ~sub:"float32 [2; 3]" m;
+        starts_with ~msg:name ~affix:"Nx.f: " m;
+        contains ~msg:name ~sub:"float32 [2; 3]" m;
         m
   in
   let reasons = List.map reason refusals in
   equal int (List.length refusals)
     (List.length (List.sort_uniq compare reasons))
+
+(* C answers nx_array.h's codes, which OCaml reads as the constructors. *)
+let test_codes () =
+  equal (array int)
+    (Array.of_list (List.map (fun (_, a) -> S.code a) S.answers))
+    (S.codes ())
 
 (* Elements *)
 
@@ -579,10 +595,10 @@ let gather_commands =
       (fun () -> Array.make 4 0)
       (fun () -> A.of_array D.Int4 [| 4 |] (Array.make 4 0));
     command "copy"
-      (Gen.int_range 0 1 @-> nibbles @-> int4s ^-> returns int)
+      (Gen.int_range 0 1 @-> nibbles @-> int4s ^-> returns answer)
       (fun _ xs m ->
         Array.blit xs 0 m 1 2;
-        0)
+        A.Done)
       gather_into;
     command "set"
       (neighbour @-> nibble @-> int4s ^-> returns unit)
@@ -1097,15 +1113,6 @@ let test_of_bigarray () =
 
 let zeros s = floats32 s (Array.make (Array.fold_left ( * ) 1 s) 0.)
 
-let ok = 0
-and dtype_code = 1
-and dead = 2
-and not_host = 3
-and exclusive = 4
-
-let not_distinct = 6
-and overlap = 7
-and shape_code = 9
 
 let test_door_add () =
   let x = floats32 [| 2; 3 |] [| 0.; 1.; 2.; 3.; 4.; 5. |] in
@@ -1116,9 +1123,9 @@ let test_door_add () =
          (floats32 [| 3; 2 |] [| 10.; 20.; 30.; 40.; 50.; 60. |]))
   in
   let z = zeros [| 2; 3 |] in
-  equal int ok (S.add z x y);
+  equal answer A.Done (S.add z x y);
   equal (values f32) [| 10.; 31.; 52.; 23.; 44.; 65. |] (A.to_array z);
-  equal int ok (S.add (zeros [| 0; 3 |]) (zeros [| 0; 3 |]) (zeros [| 0; 3 |]))
+  equal answer A.Done (S.add (zeros [| 0; 3 |]) (zeros [| 0; 3 |]) (zeros [| 0; 3 |]))
 
 (* Each operand position given another dtype, then another shape: the call is
    refused and touches no byte. *)
@@ -1138,46 +1145,46 @@ let test_door_positions () =
       | [| A.Any z; A.Any x; A.Any y |] -> S.add z x y
       | _ -> assert false
     in
-    equal ~msg:(Printf.sprintf "dtype at %d" k) int dtype_code e;
+    equal ~msg:(Printf.sprintf "dtype at %d" k) answer A.Wrong_dtype e;
     equal (values f32) (Array.make 6 0.) (A.to_array ops.(0));
     let ops = operands () in
     ops.(k) <- zeros [| 3; 2 |];
-    equal ~msg:(Printf.sprintf "shape at %d" k) int shape_code (call ops);
+    equal ~msg:(Printf.sprintf "shape at %d" k) answer A.Shape_mismatch (call ops);
     if k > 0 then equal (values f32) (Array.make 6 0.) (A.to_array ops.(0))
   done
 
 let test_door_written () =
   let x = floats32 [| 3 |] [| 1.; 2.; 3. |] in
-  equal ~msg:"z is x" int overlap (S.add x x (zeros [| 3 |]));
+  equal ~msg:"z is x" answer A.Overlapping (S.add x x (zeros [| 3 |]));
   let b = A.buffer (zeros [| 8 |]) in
   let z = A.v f32 (L.contiguous [| 3 |]) b in
   let y = A.v f32 (L.v ~offset:2 ~strides:[| 1 |] [| 3 |]) b in
-  equal ~msg:"z overlaps y" int overlap (S.add z x y);
+  equal ~msg:"z overlaps y" answer A.Overlapping (S.add z x y);
   let y = A.v f32 (L.v ~offset:3 ~strides:[| 1 |] [| 3 |]) b in
-  equal ~msg:"z beside y" int ok (S.add z x y);
+  equal ~msg:"z beside y" answer A.Done (S.add z x y);
   let r = Option.get (A.move (M.Broadcast [| 3 |]) (zeros [| 1 |])) in
-  equal ~msg:"z broadcast" int not_distinct (S.add r x x)
+  equal ~msg:"z broadcast" answer A.Repeated_elements (S.add r x x)
 
 let test_door_buffers () =
   let x = floats32 [| 2 |] [| 1.; 2. |] in
   let d = zeros [| 2 |] in
   kill (A.buffer d);
-  equal ~msg:"dead" int dead (S.add (zeros [| 2 |]) x d);
+  equal ~msg:"dead" answer A.Dead_buffer (S.add (zeros [| 2 |]) x d);
   let io = A.to_device (S.io_device ()) x in
-  equal ~msg:"io" int not_host (S.add (zeros [| 2 |]) x io);
+  equal ~msg:"io" answer A.Off_host (S.add (zeros [| 2 |]) x io);
   let held = zeros [| 2 |] in
   Rig.Claim.with_ ~read:[]
     ~donate:[ [ A.buffer held ] ]
     (fun c ->
       equal bool true (Rig.Claim.exclusive c (A.buffer held));
-      equal ~msg:"exclusive" int exclusive (S.add (zeros [| 2 |]) x held))
+      equal ~msg:"exclusive" answer A.Held_exclusive (S.add (zeros [| 2 |]) x held))
 
 (* Each refusal the door answers reaches the user as its own reason. *)
 let test_door_reasons () =
   let x = floats32 [| 2 |] [| 1.; 2. |] in
   let reason ~sub e =
     match A.refused "k" e [ A.Any x ] with
-    | () -> failf "refused returned on code %d" e
+    | () -> fail "refused returned"
     | exception Invalid_argument m -> contains ~msg:sub ~sub m
   in
   let wrong = A.of_array D.Float64 [| 2 |] [| 1.; 2. |] in
@@ -1201,20 +1208,20 @@ let test_door_empty () =
   let host = zeros [| 0; 2 |] in
   let off = Option.get (A.move (M.Permute [| 1; 0 |]) (zeros [| 2; 0 |])) in
   let io = A.to_device (S.io_device ()) host in
-  equal ~msg:"host" int ok (S.add (zeros [| 0; 2 |]) host host);
-  equal ~msg:"a view" int ok (S.add (zeros [| 0; 2 |]) off host);
-  equal ~msg:"off the host" int ok (S.add (zeros [| 0; 2 |]) io io)
+  equal ~msg:"host" answer A.Done (S.add (zeros [| 0; 2 |]) host host);
+  equal ~msg:"a view" answer A.Done (S.add (zeros [| 0; 2 |]) off host);
+  equal ~msg:"off the host" answer A.Done (S.add (zeros [| 0; 2 |]) io io)
 
 let test_door_releases () =
   let z = zeros [| 2 |] and x = floats32 [| 2 |] [| 1.; 2. |] in
-  equal int ok (S.add z x x);
-  equal int shape_code (S.add z x (zeros [| 3 |]));
+  equal answer A.Done (S.add z x x);
+  equal answer A.Shape_mismatch (S.add z x (zeros [| 3 |]));
   equal bool true (unclaimed (A.buffer z));
   equal bool true (unclaimed (A.buffer x))
 
 let test_door_moving_gc () =
   let x = floats32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
-  equal int ok (S.collect x);
+  equal answer A.Done (S.collect x);
   equal bool true (unclaimed (A.buffer x));
   equal (values f32) [| 1.; 2.; 3.; 4. |] (A.to_array x)
 
@@ -1244,33 +1251,33 @@ let released arrays =
 
 let test_ocaml_door_runs () =
   let z = A.Any (zeros [| 2 |]) and x = A.Any (floats32 [| 2 |] [| 1.; 2. |]) in
-  equal (pair int (option bool)) (ok, Some true) (ocaml_door [| z |] [| x; x |]);
+  equal (pair answer (option bool)) (A.Done, Some true) (ocaml_door [| z |] [| x; x |]);
   released [| z; x |];
-  equal (pair int (option bool)) (ok, Some true) (ocaml_door [||] [||])
+  equal (pair answer (option bool)) (A.Done, Some true) (ocaml_door [||] [||])
 
 let test_ocaml_door_refuses () =
   let x = floats32 [| 3 |] [| 1.; 2.; 3. |] in
-  let refuses ~msg code written read =
-    equal ~msg (pair int (option bool)) (code, None) (ocaml_door written read);
+  let refuses ~msg r written read =
+    equal ~msg (pair answer (option bool)) (r, None) (ocaml_door written read);
     released (Array.append written read)
   in
-  refuses ~msg:"z is x" overlap [| A.Any x |] [| A.Any x |];
-  refuses ~msg:"written twice" overlap [| A.Any x; A.Any x |] [||];
+  refuses ~msg:"z is x" A.Overlapping [| A.Any x |] [| A.Any x |];
+  refuses ~msg:"written twice" A.Overlapping [| A.Any x; A.Any x |] [||];
   let b = A.buffer (zeros [| 8 |]) in
   let at offset = A.v f32 (L.v ~offset ~strides:[| 1 |] [| 3 |]) b in
-  refuses ~msg:"z overlaps y" overlap [| A.Any (at 0) |] [| A.Any (at 2) |];
-  equal ~msg:"z beside y" (pair int (option bool)) (ok, Some true)
+  refuses ~msg:"z overlaps y" A.Overlapping [| A.Any (at 0) |] [| A.Any (at 2) |];
+  equal ~msg:"z beside y" (pair answer (option bool)) (A.Done, Some true)
     (ocaml_door [| A.Any (at 0) |] [| A.Any (at 3) |]);
   let r = Option.get (A.move (M.Broadcast [| 3 |]) (zeros [| 1 |])) in
-  refuses ~msg:"z broadcast" not_distinct [| A.Any r |] [| A.Any x |];
+  refuses ~msg:"z broadcast" A.Repeated_elements [| A.Any r |] [| A.Any x |];
   let d = zeros [| 3 |] in
   kill (A.buffer d);
-  refuses ~msg:"dead" dead [| A.Any (zeros [| 3 |]) |] [| A.Any x; A.Any d |];
+  refuses ~msg:"dead" A.Dead_buffer [| A.Any (zeros [| 3 |]) |] [| A.Any x; A.Any d |];
   let held = zeros [| 3 |] in
   Rig.Claim.with_ ~read:[]
     ~donate:[ [ A.buffer held ] ]
     (fun _ ->
-      equal ~msg:"exclusive" (pair int (option bool)) (exclusive, None)
+      equal ~msg:"exclusive" (pair answer (option bool)) (A.Held_exclusive, None)
         (ocaml_door [| A.Any (zeros [| 3 |]) |] [| A.Any x; A.Any held |]))
 
 (* Off the host, views of one buffer overlap by their offsets. *)
@@ -1278,9 +1285,9 @@ let test_ocaml_door_off_host () =
   let io = S.io_device () in
   let b = A.buffer (A.to_device io (zeros [| 8 |])) in
   let at offset = A.Any (A.v f32 (L.v ~offset ~strides:[| 1 |] [| 3 |]) b) in
-  equal ~msg:"overlap" (pair int (option bool)) (overlap, None)
+  equal ~msg:"overlap" (pair answer (option bool)) (A.Overlapping, None)
     (ocaml_door [| at 0 |] [| at 2 |]);
-  equal ~msg:"beside" (pair int (option bool)) (ok, Some true)
+  equal ~msg:"beside" (pair answer (option bool)) (A.Done, Some true)
     (ocaml_door [| at 0 |] [| at 3 |])
 
 (* Two bigarrays over one memory's bytes overlap by their addresses. *)
@@ -1295,9 +1302,9 @@ let test_ocaml_door_bigarrays () =
       (Option.get (A.move (M.Slice [| { M.start; count = 2; step = 1 } |]) a))
   in
   let head = part 0 and tail = part 2 in
-  equal ~msg:"overlap" (pair int (option bool)) (overlap, None)
+  equal ~msg:"overlap" (pair answer (option bool)) (A.Overlapping, None)
     (ocaml_door [| tail (over 0) |] [| head (over 2) |]);
-  equal ~msg:"beside" (pair int (option bool)) (ok, Some true)
+  equal ~msg:"beside" (pair answer (option bool)) (A.Done, Some true)
     (ocaml_door [| head (over 0) |] [| head (over 2) |])
 
 exception Raised
@@ -1348,7 +1355,7 @@ let test_wait_add () =
     let y = on_late d [| 10.; 20. |] in
     pending [| z; x; y |].(k) [| 100.; 200. |];
     let msg = strf "work on operand %d" k in
-    equal ~msg int ok (S.add z x y);
+    equal ~msg answer A.Done (S.add z x y);
     equal ~msg (values f32) sums.(k) (A.to_array z)
   done
 
@@ -1365,7 +1372,7 @@ let test_wait_of_array () =
   let d, _ = late () in
   let a = on_late d [| 0.; 0. |] in
   pending a [| 3.; 4. |];
-  equal int ok (S.of_array_into a [| 7.; 8. |]);
+  equal answer A.Done (S.of_array_into a [| 7.; 8. |]);
   equal (values f32) [| 7.; 8. |] (A.to_array a)
 
 let test_wait_copy () =
@@ -1375,7 +1382,7 @@ let test_wait_copy () =
   equal ~msg:"copy" (values f32) [| 3.; 4. |] (A.to_array (A.copy a));
   let dst = on_late d [| 0.; 0. |] in
   pending dst [| 5.; 6. |];
-  equal ~msg:"into written work" int ok (S.copy_into dst a);
+  equal ~msg:"into written work" answer A.Done (S.copy_into dst a);
   equal ~msg:"into written work" (values f32) [| 3.; 4. |] (A.to_array dst)
 
 (* A device lost while a kernel waits for its work raises Lost, and the kernel
@@ -1404,12 +1411,12 @@ let ones = Array.make 4 1.
 let shared_device = lazy (fst (late ()))
 
 let judge_kernel r = function
-  | Ok (e, z) when e = ok ->
+  | Ok (A.Done, z) ->
       equal ~msg:"dead" bool false r.dead;
       equal ~msg:"x + x" (values f32) (Array.make 4 2.) z
-  | Ok (e, _) when e = dead || e = exclusive ->
+  | Ok ((A.Dead_buffer | A.Held_exclusive), _) ->
       equal ~msg:"dead" bool true r.dead
-  | Ok (e, _) -> failf "the kernel answered %d" e
+  | Ok (e, _) -> failf "the kernel answered %a" (Testable.pp answer) e
   | Error e -> raise e
 
 let judge_live r = function
@@ -1427,7 +1434,7 @@ let judge_donate r = function
 let kernel x =
   let z = zeros [| 4 |] in
   let e = S.add z x x in
-  (e, if e = ok then A.to_array z else [||])
+  (e, if e = A.Done then A.to_array z else [||])
 
 let to_array x = equal (values f32) ones (A.to_array x)
 
@@ -1453,7 +1460,7 @@ let door_commands =
       (fun () -> { dead = false })
       (fun () -> on_late (Lazy.force shared_device) ones);
     command "kernel"
-      (shared ^-> judges (pair int (values f32)))
+      (shared ^-> judges (pair answer (values f32)))
       judge_kernel kernel;
     command "to_array" (shared ^-> judges unit) judge_live to_array;
     command "submit" (shared ^-> judges unit) judge_live submit;
@@ -1497,6 +1504,7 @@ let tests =
         test "refused names the function, the reason and every operand"
           test_refused;
         test "refused gives each refusal its own reason" test_refused_codes;
+        test "C answers the constructors' codes" test_codes;
       ];
     group "elements"
       [

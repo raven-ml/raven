@@ -99,6 +99,20 @@ static void add_loop(const nx_array *a, const nx_loop *l) {
   }
 }
 
+value nx_array_support_codes(value unit) {
+  CAMLparam1(unit);
+  CAMLlocal1(r);
+  static const int codes[] = {
+      NX_OK,      NX_DECLINED,    NX_DTYPE,       NX_DEAD,
+      NX_NOT_HOST, NX_EXCLUSIVE,  NX_READ_ONLY,   NX_NOT_DISTINCT,
+      NX_OVERLAP, NX_LAYOUT,      NX_SHAPE,       NX_ARITY,
+  };
+  int n = sizeof codes / sizeof codes[0];
+  r = caml_alloc_tuple(n);
+  for (int i = 0; i < n; i++) Store_field(r, i, Val_int(codes[i]));
+  CAMLreturn(r);
+}
+
 value nx_array_support_add(value z, value x, value y) {
   nx_operand in[3] = {{z, NX_FLOAT32, 1}, {x, NX_FLOAT32, 0}, {y, NX_FLOAT32, 0}};
   nx_array a[3];
@@ -168,6 +182,7 @@ struct late_fill {
 };
 
 struct late {
+  const struct rig_driver *driver;
   _Atomic uint64_t word;
   _Atomic uint64_t last;
   _Atomic int queued;
@@ -193,12 +208,25 @@ static void late_show(struct late *l, uint64_t v) {
     ;
 }
 
+static rig_room_fn late_room;
+static rig_submit_fn late_submit;
+static rig_commit_fn late_commit;
+
+static const struct rig_driver late_driver = {late_room, late_submit,
+                                              late_commit};
+
 value nx_array_support_late_new(value unit) {
   (void)unit;
   struct late *l = calloc(1, sizeof *l);
   if (l == NULL) caml_raise_out_of_memory();
+  l->driver = &late_driver;
   atomic_flag_clear(&l->busy);
   return caml_copy_nativeint((intnat)l);
+}
+
+/* The host address of the Late device [self]'s word. */
+value nx_array_support_late_word(value self) {
+  return Val_long((intnat)&((struct late *)Nativeint_val(self))->word);
 }
 
 value nx_array_support_late_publish(value self) {
@@ -227,8 +255,8 @@ value nx_array_support_late_signaled(value self) {
 static int late_room(void *self, const struct rig_part *parts, int n) {
   struct late *l = self;
   for (int i = 0; i < n; i++)
-    if (parts[i].fill == NULL || parts[i].words != NULL ||
-        parts[i].ring_units != 0 || parts[i].segment_bytes != 0)
+    if (parts[i].kind != RIG_FILL || parts[i].fill.ring_units != 0 ||
+        parts[i].fill.segment_bytes != 0)
       return RIG_NEVER;
   if (n > LATE_QUEUE) return RIG_NEVER;
   int q = atomic_load_explicit(&l->queued, memory_order_acquire);
@@ -253,7 +281,8 @@ static int late_submit(void *self, uint64_t v, const struct rig_wait *waits,
   late_lock(l);
   int q = atomic_load_explicit(&l->queued, memory_order_relaxed);
   for (int i = 0; i < nparts; i++)
-    l->queue[q++] = (struct late_fill){parts[i].fill, parts[i].arg, v};
+    l->queue[q++] =
+        (struct late_fill){parts[i].fill.fn, parts[i].fill.arg, v};
   atomic_store_explicit(&l->queued, q, memory_order_release);
   atomic_store_explicit(&l->last, v, memory_order_release);
   late_unlock(l);
@@ -269,20 +298,6 @@ static int late_commit(void *self, uint64_t v, const char **failure) {
   return RIG_OK;
 }
 
-value nx_array_support_late_room(value unit) {
-  (void)unit;
-  return caml_copy_nativeint((intnat)&late_room);
-}
-
-value nx_array_support_late_submit(value unit) {
-  (void)unit;
-  return caml_copy_nativeint((intnat)&late_submit);
-}
-
-value nx_array_support_late_commit(value unit) {
-  (void)unit;
-  return caml_copy_nativeint((intnat)&late_commit);
-}
 
 /* [v_n] bytes and 64 more, so the region can start on a multiple of 64; 0
    if malloc fails. */

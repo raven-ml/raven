@@ -24,28 +24,41 @@ let layout a = a.layout
 let buffer a = a.buffer
 let device a = Buffer.device a.buffer
 
-(* Refusals. The codes are nx_array.h's, named in this library only here. *)
+(* Answers. C answers Val_int of nx_array.h's codes, whose enum lists them
+   in this order. *)
 
-let not_host = 3
+type answer =
+  | Done
+  | Declined
+  | Wrong_dtype
+  | Dead_buffer
+  | Off_host
+  | Held_exclusive
+  | Read_only
+  | Repeated_elements
+  | Overlapping
+  | Bad_layout
+  | Shape_mismatch
+  | Bad_arity
 
 let reason = function
-  | 1 -> "an operand's dtype is not the one the kernel loads"
-  | 2 -> "an operand's buffer is dead"
-  | 3 -> "the host does not address an operand's memory"
-  | 4 -> "an operand's memory is held exclusive"
-  | 5 -> "a written operand's memory is read-only"
-  | 6 -> "a written operand reaches an element twice"
-  | 7 -> "a written operand shares bytes with another operand"
-  | 8 -> "an operand's layout is not a layout"
-  | 9 -> "the operands' shapes differ"
-  | 10 -> "too many operands"
-  | c -> Printf.sprintf "code %d" c
+  | Done | Declined -> invalid_arg "Nx_array.refused: not a refusal"
+  | Wrong_dtype -> "an operand's dtype is not the one the kernel loads"
+  | Dead_buffer -> "an operand's buffer is dead"
+  | Off_host -> "the host does not address an operand's memory"
+  | Held_exclusive -> "an operand's memory is held exclusive"
+  | Read_only -> "a written operand's memory is read-only"
+  | Repeated_elements -> "a written operand reaches an element twice"
+  | Overlapping -> "a written operand shares bytes with another operand"
+  | Bad_layout -> "an operand's layout is not a layout"
+  | Shape_mismatch -> "the operands' shapes differ"
+  | Bad_arity -> "too many operands"
 
 let pp_operand ppf (Any a) =
   Format.fprintf ppf "%a %a" Dtype.pp a.dtype Shape.pp (Layout.shape a.layout)
 
-let refused name code operands =
-  invalid_argf "%s: %s (%a)" name (reason code)
+let refused name answer operands =
+  invalid_argf "%s: %s (%a)" name (reason answer)
     (Format.pp_print_list
        ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ")
        pp_operand)
@@ -55,12 +68,7 @@ let refused name code operands =
    claims every array or none, as nx_read does, and waits for nothing. It
    allocates nothing: the loops index the caller's arrays. *)
 
-let not_distinct = 6
-let overlap = 7
-
-external claim : Buffer.t -> (int[@untagged]) -> (int[@untagged])
-  = "nx_array_claim_byte" "nx_array_claim"
-[@@noalloc]
+external claim : Buffer.t -> bool -> answer = "nx_array_claim" [@@noalloc]
 
 external release : Buffer.t -> unit = "nx_array_release" [@@noalloc]
 
@@ -76,21 +84,21 @@ let shares_bytes (Any a) (Any b) =
 (* The first refusal of a written array: it reaches an element twice, or
    shares a byte with another array. *)
 let refusal written read =
-  let code = ref 0 and i = ref 0 in
-  while !code = 0 && !i < Array.length written do
+  let answer = ref Done and i = ref 0 in
+  while !answer = Done && !i < Array.length written do
     let (Any w as aw) = written.(!i) in
-    if not (Layout.is_distinct w.layout) then code := not_distinct
+    if not (Layout.is_distinct w.layout) then answer := Repeated_elements
     else begin
       for j = 0 to Array.length written - 1 do
-        if j <> !i && shares_bytes aw written.(j) then code := overlap
+        if j <> !i && shares_bytes aw written.(j) then answer := Overlapping
       done;
       for j = 0 to Array.length read - 1 do
-        if shares_bytes aw read.(j) then code := overlap
+        if shares_bytes aw read.(j) then answer := Overlapping
       done
     end;
     incr i
   done;
-  !code
+  !answer
 
 (* The [k]th array of [written], then [read]. *)
 let nth written read k =
@@ -106,31 +114,34 @@ let release_first written read n =
 let claim_all written read =
   let nw = Array.length written in
   let n = nw + Array.length read in
-  let code = ref 0 and k = ref 0 in
-  while !code = 0 && !k < n do
+  let answer = ref Done and k = ref 0 in
+  while !answer = Done && !k < n do
     let (Any a) = nth written read !k in
-    code := claim a.buffer (if !k < nw then 1 else 0);
+    answer := claim a.buffer (!k < nw);
     incr k
   done;
-  if !code <> 0 then release_first written read (!k - 1);
-  !code
+  if !answer <> Done then release_first written read (!k - 1);
+  !answer
+
+(* [Done] with every array claimed, or a refusal with none. *)
+let admit written read =
+  match refusal written read with
+  | Done -> claim_all written read
+  | refusal -> refusal
 
 let door ~written ~read f x =
-  let code = refusal written read in
-  if code <> 0 then code
-  else
-    let code = claim_all written read in
-    if code <> 0 then code
-    else
+  match admit written read with
+  | Done -> (
       let n = Array.length written + Array.length read in
       match f x with
       | () ->
           release_first written read n;
-          0
+          Done
       | exception e ->
           let bt = Printexc.get_raw_backtrace () in
           release_first written read n;
-          Printexc.raise_with_backtrace e bt
+          Printexc.raise_with_backtrace e bt)
+  | refusal -> refusal
 
 (* Making arrays *)
 
@@ -433,23 +444,26 @@ let set a idx x =
 
 (* Bulk access *)
 
-external to_array_into : ('v, 's) t -> 'v array -> int = "nx_array_to_array"
+external to_array_into : ('v, 's) t -> 'v array -> answer
+  = "nx_array_to_array"
 
 external to_bigarray :
-  ('v, 's) t -> ('v, 'b, Bigarray.c_layout) Bigarray.Array1.t -> int
+  ('v, 's) t -> ('v, 'b, Bigarray.c_layout) Bigarray.Array1.t -> answer
   = "nx_array_to_bigarray"
 
-external of_array_from : ('v, 's) t -> 'v array -> int = "nx_array_of_array"
-external copy_into : ('v, 's) t -> ('v, 's) t -> int = "nx_array_copy"
+external of_array_from : ('v, 's) t -> 'v array -> answer
+  = "nx_array_of_array"
+
+external copy_into : ('v, 's) t -> ('v, 's) t -> answer = "nx_array_copy"
 
 (* Elements that box are copied unboxed into a bigarray of their width under the
    claim and boxed after it, so that an allocation that raises holds no claim.
    Each kind has its own loop, where the bigarray access is inlined. *)
 let unboxed fn a k n =
   let b = Bigarray.Array1.create k Bigarray.c_layout n in
-  let e = to_bigarray a b in
-  if e <> 0 then refused fn e [ Any a ];
-  b
+  match to_bigarray a b with
+  | Done -> b
+  | refusal -> refused fn refusal [ Any a ]
 
 let int32s fn a n =
   let b = unboxed fn a Bigarray.int32 n in
@@ -471,9 +485,9 @@ let to_array (type v s) (a : (v, s) t) : v array =
   let fn = "Nx_array.to_array" in
   let n = Layout.numel a.layout in
   let into (out : v array) =
-    let e = to_array_into a out in
-    if e <> 0 then refused fn e [ Any a ];
-    out
+    match to_array_into a out with
+    | Done -> out
+    | refusal -> refused fn refusal [ Any a ]
   in
   match a.dtype with
   | Float64 -> into (Array.create_float n)
@@ -512,9 +526,9 @@ let of_array (type v s) (dt : (v, s) Dtype.t) s (values : v array) =
   | Float | Complex | Boolean -> ()
   | Signed | Unsigned -> Array.iter (checked fn dt) values);
   let a = alloc Rig.host dt layout in
-  let e = of_array_from a values in
-  if e <> 0 then refused fn e [ Any a ];
-  a
+  match of_array_from a values with
+  | Done -> a
+  | refusal -> refused fn refusal [ Any a ]
 
 (* The host gathers, so memory it does not address is refused before the copy is
    allocated on [a]'s device. *)
@@ -522,11 +536,11 @@ let copy a =
   let fn = "Nx_array.copy" in
   live fn a.buffer;
   if Layout.numel a.layout > 0 && host_address a.buffer < 0 then
-    refused fn not_host [ Any a ];
+    refused fn Off_host [ Any a ];
   let dst = create (device a) a.dtype (Layout.shape a.layout) in
-  let e = copy_into dst a in
-  if e <> 0 then refused fn e [ Any dst; Any a ];
-  dst
+  match copy_into dst a with
+  | Done -> dst
+  | refusal -> refused fn refusal [ Any dst; Any a ]
 
 external load_byte : Buffer.t -> (int[@untagged]) -> (int[@untagged])
   = "nx_array_load_byte_byte" "nx_array_load_byte"

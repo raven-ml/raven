@@ -14,14 +14,14 @@
      nx_array a[3];
      nx_loop l;
      int e = nx_read(3, in, a);
-     if (e) return e;
+     if (e) return Val_int(e);
      if (!(e = nx_coalesce(3, a, &l))) run(&l);
      nx_done(3, a);
-     return e;
+     return Val_int(e);
 
-   The kernel answers its code to its OCaml wrapper, which hands any code but
-   NX_OK to Nx_array.refused, which raises: every code but NX_OK is a
-   refusal.
+   The kernel answers Val_int of a code, an Nx_array.answer: NX_OK is Done,
+   NX_DECLINED a case the kernel does not compute, and every other code a
+   refusal, which Nx_array.refused raises.
 
    A descriptor's element at index (i0, …, ik-1), 0 <= ij < dim[j], lies at
    position offset + Σ ij·dim[rank + j], counted in elements from base, as
@@ -54,10 +54,11 @@ enum {
   NX_EMPTY = 4       /* no element */
 };
 
-/* Codes */
+/* Codes: the constructors of Nx_array.answer, in its order. */
 
 enum {
-  NX_OK,
+  NX_OK,           /* Done */
+  NX_DECLINED,     /* the kernel does not compute the case */
   NX_DTYPE,        /* an operand's dtype is not the one named */
   NX_DEAD,         /* an operand's buffer is dead */
   NX_NOT_HOST,     /* the host does not address an operand's memory */
@@ -172,8 +173,9 @@ int nx_coalesce(int n, const nx_array *a, nx_loop *l);
    byte shared with other elements takes a compare-and-swap, as
    nx_sub_store does. Rows of adjacent elements are memcpy; where the
    source steps one element across rows and the destination one along
-   them, as for a transposed source, it moves 4x4 blocks, four contiguous
-   loads and four contiguous stores each. */
+   them, as for a transposed source, it moves square blocks through
+   registers: 8x8 of 4-byte elements, eight 32-byte loads and stores
+   each, and 4x4 of the others, four contiguous loads and stores each. */
 void nx_copy_block(uint8_t *dst, int64_t pd, int64_t dst_row, int64_t dst_col,
                    const uint8_t *src, int64_t ps, int64_t src_row,
                    int64_t src_col, int64_t rows, int64_t cols, int bits);
