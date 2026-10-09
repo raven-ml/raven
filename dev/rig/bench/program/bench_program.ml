@@ -290,4 +290,131 @@ let step_rows =
         step;
     ]
 
-let () = exit @@ Thumper.run "rig_program" [ polled_rows; step_rows ]
+(* Runs whose work takes an agent's device a while *)
+
+(* test/program's fixture [spin]: a fill that counts to the word its argument
+   points at. *)
+let spin_object () =
+  let machine = match Rig.arch Rig.host with "arm64" -> "aarch64" | m -> m in
+  let file =
+    Filename.concat
+      (Filename.dirname Sys.executable_name)
+      (strf "../../test/program/fixtures/spin_%s.o" machine)
+  in
+  In_channel.with_open_bin file In_channel.input_all
+
+(* Counts that take the M1 Max's fill about 100 us. *)
+let iterations = 100_000
+let spins = 16
+
+type spinning = {
+  sjob : Rig_remote.t;
+  spid : int;
+  sprogram : G.loaded;
+}
+
+(* A program of one step on [d]: the [spin] fill. *)
+let spinner d =
+  let t =
+    {
+      G.devices = [| Rig.arch d |];
+      memory =
+        [|
+          G.Alloc
+            {
+              device = 0;
+              kind = B.Device;
+              bytes = 8;
+              init = { bytes = le64 iterations; holes = [||] };
+              copies = G.One;
+            };
+        |];
+      images = [||];
+      code = [| { G.obj = spin_object (); entry = "spin" } |];
+      inputs = [||];
+      ints = 0;
+      steps =
+        [|
+          G.Submit
+            {
+              device = 0;
+              parts =
+                [|
+                  {
+                    G.queue = "COMPUTE:0";
+                    after = [||];
+                    work =
+                      G.Fill
+                        {
+                          fill = G.Code 0;
+                          arg = { memory = 0; offset = 0; length = 8 };
+                          ring_units = 0;
+                          segment_bytes = 0;
+                        };
+                  };
+                |];
+              reads = [||];
+              writes = [||];
+              fixed = [||];
+            };
+        |];
+    }
+  in
+  Result.get_ok (G.load t [| d |])
+
+(* bench_agent.exe, whose Polled device runs its own queue, and the spinner on
+   it. *)
+let spinning () =
+  let exe =
+    Filename.concat (Filename.dirname Sys.executable_name) "bench_agent.exe"
+  in
+  let out_r, out_w = Unix.pipe ~cloexec:true () in
+  let spid = Unix.create_process exe [| exe |] Unix.stdin out_w Unix.stderr in
+  Unix.close out_w;
+  let ic = Unix.in_channel_of_descr out_r in
+  let port = int_of_string (input_line ic) in
+  close_in ic;
+  let sjob =
+    Result.get_ok
+      (Rig_remote.connect
+         ~key:(Result.get_ok (Rig_remote.key key))
+         [ ("127.0.0.1", port) ])
+  in
+  let host = List.hd (Rig_remote.hosts sjob) in
+  let d = List.hd (Result.get_ok (Rig_remote.devices host "POLLED")) in
+  { sjob; spid; sprogram = spinner d }
+
+let spun s =
+  Rig_remote.close s.sjob;
+  ignore (Unix.waitpid [] s.spid)
+
+let no_frame = { G.inputs = [||]; ints = [||] }
+
+(* [spins] runs handed over at once, until the controller sees the last one's
+   value: each run's fill, plus what the agent does between them that its device
+   does not overlap. *)
+let spins_of p =
+  let pt = ref (G.run p no_frame).(0) in
+  for _ = 2 to spins do
+    pt := (G.run p no_frame).(0)
+  done;
+  Rig.wait (Rig.Point.device !pt) (Rig.Point.value !pt)
+
+(* The floor: the same runs on a Polled device of this process that runs its own
+   queue, which no agent sits in front of. *)
+let spinning_here () =
+  incr opened;
+  let d, _ = P.open_ ~runs:`Itself (strf "bench-spin:%d" !opened) in
+  spinner d
+
+let spin_rows =
+  Thumper.group "agent"
+    [
+      Thumper.bench_with_setup ~setup:spinning ~teardown:spun
+        (strf "spins-%d" spins) (fun s -> spins_of s.sprogram);
+      Thumper.bench_with_setup ~setup:spinning_here
+        (strf "floor-spins-%d" spins)
+        spins_of;
+    ]
+
+let () = exit @@ Thumper.run "rig_program" [ polled_rows; step_rows; spin_rows ]

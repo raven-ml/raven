@@ -11,3 +11,9 @@ ready function, whose source says what it does:
 
 - `ready_x86_64.o`: `clang $H $X ready.c -o ready_x86_64.o`
 - `ready_aarch64.o`: `clang $H $A ready.c -o ready_aarch64.o`
+
+`spin`, the bench's fill that counts to the word its argument points at,
+as work that takes a device a known while:
+
+- `spin_x86_64.o`: `clang $H $X spin.c -o spin_x86_64.o`
+- `spin_aarch64.o`: `clang $H $A spin.c -o spin_aarch64.o`
