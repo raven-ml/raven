@@ -333,6 +333,47 @@ value nx_array_identical_byte(value a, value b, value pa, value pb) {
 
 /* Coalescing */
 
+/* The coalescer, written once: it reads axis i's extent at [ein][i] and
+   operand k's step at [sin][k][i], and writes the merged loop into
+   [extent] and [step], which may be [ein] and [sin] themselves. Axis i
+   lands at [out] or merges into out - 1, both at most i: the loop
+   rewrites only what it has read. Inlined at both callers: through a call,
+   nx_coalesce read the descriptors into its loop first, and a door's loop
+   over strided operands cost about 7 ns more on the M1 Max. */
+static inline __attribute__((always_inline)) int coalesce(
+    int n, int rank, const int64_t *ein, const int64_t *const *sin,
+    int64_t *extent, int64_t (*step)[NX_MAX_RANK]) {
+  int out = 0;
+  for (int i = 0; i < rank; i++) {
+    const int64_t d = ein[i];
+    if (d == 0) {
+      extent[0] = 0;
+      for (int k = 0; k < n; k++) step[k][0] = 0;
+      return 1;
+    }
+    if (d == 1) continue;
+    /* The axis joins the previous one if every operand's previous stride
+       is this stride times this extent: the two axes are one run. */
+    int joins = out > 0;
+    for (int k = 0; k < n && joins; k++)
+      joins = step[k][out - 1] == sin[k][i] * d;
+    if (joins) {
+      extent[out - 1] *= d;
+      for (int k = 0; k < n; k++) step[k][out - 1] = sin[k][i];
+    } else {
+      extent[out] = d;
+      for (int k = 0; k < n; k++) step[k][out] = sin[k][i];
+      out++;
+    }
+  }
+  if (out == 0) {
+    extent[0] = 1;
+    for (int k = 0; k < n; k++) step[k][0] = 0;
+    out = 1;
+  }
+  return out;
+}
+
 int nx_coalesce(int n, const nx_array *a, nx_loop *l) {
   if (n < 1 || n > NX_MAX_OPERANDS) return NX_ARITY;
   int r = a[0].rank;
@@ -354,47 +395,17 @@ int nx_coalesce(int n, const nx_array *a, nx_loop *l) {
     for (int k = 0; k < n; k++) l->step[k][0] = e > 1;
     return NX_OK;
   }
-  for (int i = 0; i < r; i++) {
-    l->extent[i] = a[0].dim[i];
-    for (int k = 0; k < n; k++) l->step[k][i] = a[k].dim[r + i];
-  }
-  l->rank = nx_coalesce_dims(n, r, l->extent, l->step);
+  const int64_t *steps[NX_MAX_OPERANDS];
+  for (int k = 0; k < n; k++) steps[k] = a[k].dim + r;
+  l->rank = coalesce(n, r, a[0].dim, steps, l->extent, l->step);
   return NX_OK;
 }
 
 int nx_coalesce_dims(int n, int rank, int64_t *extent,
                      int64_t (*step)[NX_MAX_RANK]) {
-  /* Axis i lands at [out] or merges into out - 1, both at most i: the
-     loop rewrites only what it has read. */
-  int out = 0;
-  for (int i = 0; i < rank; i++) {
-    const int64_t d = extent[i];
-    if (d == 0) {
-      extent[0] = 0;
-      for (int k = 0; k < n; k++) step[k][0] = 0;
-      return 1;
-    }
-    if (d == 1) continue;
-    /* The axis joins the previous one if every operand's previous stride
-       is this stride times this extent: the two axes are one run. */
-    int joins = out > 0;
-    for (int k = 0; k < n && joins; k++)
-      joins = step[k][out - 1] == step[k][i] * d;
-    if (joins) {
-      extent[out - 1] *= d;
-      for (int k = 0; k < n; k++) step[k][out - 1] = step[k][i];
-    } else {
-      extent[out] = d;
-      for (int k = 0; k < n; k++) step[k][out] = step[k][i];
-      out++;
-    }
-  }
-  if (out == 0) {
-    extent[0] = 1;
-    for (int k = 0; k < n; k++) step[k][0] = 0;
-    out = 1;
-  }
-  return out;
+  const int64_t *steps[NX_MAX_OPERANDS];
+  for (int k = 0; k < n; k++) steps[k] = step[k];
+  return coalesce(n, rank, extent, steps, extent, step);
 }
 
 /* Calls [run] on each run of the loop [l] over [n] operands: the positions
