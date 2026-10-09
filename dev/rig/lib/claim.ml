@@ -52,13 +52,24 @@ let rec mark_outside c =
      || swap c n (n lor Memory.outside)
      || mark_outside c)
 
-let share b =
+let mark b =
   Buffer.check_live "Claim.share" b;
   if not (mark_outside b.mem.claim) then
     invalid_arg "Rig.Claim.share: the memory is held exclusive by claims";
   (* A consumption between the check and the mark killed [b]: the memory stays
      marked, which costs only its donations. *)
   Buffer.check_live "Claim.share" b
+
+(* Memory a library hands out again is marked already: two loads answer, the
+   word unheld and marked, then [b] live, with no call. *)
+let share b =
+  let c = b.mem.claim in
+  let n = count c in
+  if
+    n < 0
+    || n land Memory.outside = 0
+    || Atomic.Loc.get [%atomic.loc c.generation] <> b.generation
+  then mark b
 
 (* [ended] is set once [with_]'s [f] returned or raised, before any claim is
    released: then the claims hold nothing, though the lists still name them. *)

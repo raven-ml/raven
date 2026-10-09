@@ -316,6 +316,14 @@ let claim_rows =
               for _ = 1 to 1000 do
                 ignore (Sys.opaque_identity (Claim.exclusive c b))
               done));
+      (* A share of memory already shared, as a library makes on each value it
+         hands out over the same memory. *)
+      row "share-shared"
+        (fun () ->
+          let b = host 16 in
+          Claim.share b;
+          b)
+        Claim.share;
       row "c-read-release-3"
         (fun () -> (host 16, host 16, host 16))
         (fun (a, b, c) -> claim_3 a b c);

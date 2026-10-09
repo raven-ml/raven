@@ -363,7 +363,10 @@ let test_share_refused () =
         Claim.consume c ~why:"donated" b)
   in
   raises_match ~msg:"dead" (dead "donated") (fun () -> Claim.share b);
-  equal ~msg:"the live buffer" bool true (donated_exclusive b')
+  equal ~msg:"the live buffer" bool true (donated_exclusive b');
+  Claim.share b';
+  raises_match ~msg:"dead, its memory shared" (dead "donated") (fun () ->
+      Claim.share b)
 
 (* Claims that outlive their with_ hold nothing: beside a live with_ over the
    same memory, a stale claim is not exclusive and consumes nothing. *)
