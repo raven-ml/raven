@@ -221,4 +221,20 @@ let rules =
           refused "a reshape of another size" (Value.Move (Reshape [| 4 |], x)));
     ]
 
-let () = exit (run "nx maps" [ maps; checks; constants; rules ])
+(* Programs of distinct literals are not kept: a loop of scalars leaves the
+   domain's table as it was. *)
+let test_literals_not_kept () =
+  let one v = Prim.program (Const (D.Any D.Float32, P.bits D.Float32 v)) [||] in
+  ignore (one 0.);
+  let before = Prim.programs_kept () in
+  for i = 1 to 10_000 do
+    ignore (one (Float.of_int i))
+  done;
+  ignore (one 0.);
+  equal ~msg:"programs kept" int before (Prim.programs_kept ())
+
+let programs =
+  group "programs"
+    [ test "programs of distinct literals are not kept" test_literals_not_kept ]
+
+let () = exit (run "nx maps" [ maps; checks; constants; rules; programs ])

@@ -433,18 +433,29 @@ let results : type r. by:string -> maker -> r prim -> r =
 
 (* Each domain's one-node programs, by node and operand dtypes: plain data,
    compared structurally. A slow-path operation finds its program here instead
-   of building it, 7% of dispatch/zeros_like-1. *)
+   of building it, 7% of dispatch/zeros_like-1. Only nodes from a finite set are
+   kept: kinds over dtypes, and each dtype's zero. A program of another literal
+   lives in its operation alone, or a loop of distinct scalars would fill the
+   table for the domain's life. *)
 let programs = Domain.DLS.new_key (fun () -> Hashtbl.create 64)
 
+let finite : P.node -> bool = function
+  | Const (_, bits) -> String.for_all (fun c -> c = '\000') bits
+  | In _ | Coord _ | Op1 _ | Op2 _ | Op3 _ -> true
+
 let program node ins =
-  let table = Domain.DLS.get programs in
-  let key = (node, ins) in
-  match Hashtbl.find_opt table key with
-  | Some p -> p
-  | None ->
-      let p = P.of_node ~ins node in
-      Hashtbl.add table key p;
-      p
+  if not (finite node) then P.of_node ~ins node
+  else
+    let table = Domain.DLS.get programs in
+    let key = (node, ins) in
+    match Hashtbl.find_opt table key with
+    | Some p -> p
+    | None ->
+        let p = P.of_node ~ins node in
+        Hashtbl.add table key p;
+        p
+
+let programs_kept () = Hashtbl.length (Domain.DLS.get programs)
 
 let one_node node dt ins loads =
   let shape = match loads.(0) with Plain x -> shape x in

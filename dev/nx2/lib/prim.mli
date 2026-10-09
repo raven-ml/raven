@@ -22,8 +22,8 @@ val form : ('v, 's, 'd) t -> ('v, 's, 'd) form
 val dtype : ('v, 's, 'd) t -> ('v, 's) dtype
 
 val at : ('v, 's, 'd) t -> 'd Devices.placement option
-(** [at x] is where [x]'s bytes are, or will be for a traced value: [None]
-    for a value of every set. *)
+(** [at x] is where [x]'s bytes are, or will be for a traced value: [None] for a
+    value of every set. *)
 
 val placement : ('v, 's, 'd) t -> 'd Devices.placement
 (** [placement x] is [x]'s placement, as {!at} gives it. Raises
@@ -78,12 +78,16 @@ val results : by:string -> maker -> 'r prim -> 'r
     Raises [Invalid_argument] naming [by], before [m] is called, where [op]'s
     operands break its rule. *)
 
-val program : Nx_kernel.Prog.node -> Nx_array.Dtype.any array -> Nx_kernel.Prog.t
-(** [program n ins] is {!Nx_kernel.Prog.of_node}[ ~ins n]. Each domain keeps
-    the programs it made: a call equal to an earlier one on the domain makes
-    none.
+val program :
+  Nx_kernel.Prog.node -> Nx_array.Dtype.any array -> Nx_kernel.Prog.t
+(** [program n ins] is {!Nx_kernel.Prog.of_node}[ ~ins n]. Each domain keeps the
+    programs it made: a call equal to an earlier one on the domain makes none.
 
-    Raises [Invalid_argument] as {!Nx_kernel.Prog.v} does. *)
+    Raises [Invalid_argument] as {!Nx_kernel.Prog.v} does. A node with a literal
+    other than its dtype's zero is not kept. *)
+
+val programs_kept : unit -> int
+(** [programs_kept ()] is the number of programs the calling domain keeps. *)
 
 val op1 :
   Nx_kernel.Prog.op1 ->
@@ -109,8 +113,7 @@ val op3 :
 
 type placer = {
   place :
-    'v 's 'd.
-    'd Devices.placement option -> ('v, 's, 'd) t -> ('v, 's, 'd) t;
+    'v 's 'd. 'd Devices.placement option -> ('v, 's, 'd) t -> ('v, 's, 'd) t;
 }
 (** How the engine makes an operand readable at a placement of its set; [None]
     where every operand of the operation is of every set. *)
