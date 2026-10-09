@@ -29,6 +29,9 @@
    the operation runs instead. */
 #define NX_NOT_COMPUTED (-1)
 
+/* What a plan answers when the host's memory runs out. */
+#define NX_OUT_OF_MEMORY (-2)
+
 /* The code object of the processor [arch] (1201 for gfx1201), [*len]
    bytes, or NULL if the library has none: it computes on the GPUs of the
    processors it has a code object for. */
@@ -51,8 +54,8 @@ typedef struct {
    first [addrs] 8-byte words addresses and [scratch] the mask of those
    that are scratch offsets. Returns 0; -1 if [bytes] is not a multiple of
    8, [addrs] words outgrow [bytes] or [scratch] marks a word past the
-   addresses; or -2 if memory runs out. The run is unchanged unless it
-   returns 0. */
+   addresses; or NX_OUT_OF_MEMORY if memory runs out. The run is unchanged
+   unless it returns 0. */
 int nx_amd_add(nx_amd_records *r, uint32_t kernel, const uint32_t groups[3],
                const uint32_t threads[3], const void *params, uint32_t bytes,
                uint32_t addrs, uint32_t scratch);
@@ -132,7 +135,8 @@ typedef struct {
 } nx_amd_contract_in;
 
 /* Appends the launches of one contraction to [out] and returns their
-   count, or NX_NOT_COMPUTED having appended nothing. [ops] are a, b, init
+   count; or NX_NOT_COMPUTED, or NX_OUT_OF_MEMORY if the records cannot
+   grow, having appended nothing. [ops] are a, b, init
    if [in->init], and y. [arch] is the code object's processor, as 1201 for
    gfx1201. [*scratch] is set to the scratch bytes the launches address. */
 int nx_amd_plan_contract(const nx_amd_contract_in *in,

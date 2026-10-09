@@ -352,6 +352,7 @@ int nx_amd_plan_contract(const nx_amd_contract_in *in,
   size_t used = 0;
   const size_t len = out->len;
   int records = 0;
+  int e = 0; /* the last append's answer: NX_OUT_OF_MEMORY passes on */
   /* Whether a's and b's free axes are contiguous rather than k, and their
      rows along the contiguous axis 16-byte vectors. */
   int fa = sm[0] == 1 && sk[0] != 1, fb = sn[0] == 1 && sk[1] != 1;
@@ -371,14 +372,14 @@ int nx_amd_plan_contract(const nx_amd_contract_in *in,
                    : wmma_kind == K_f16 ? NX_FLOAT16
                                         : NX_BFLOAT16;
     if (pack_a) {
-      if (pack(out, &used, &p.a, p.sa, a->address, at, to, batch, m, k,
-               sbat[0], sm[0], sk[0]) != 0)
+      if ((e = pack(out, &used, &p.a, p.sa, a->address, at, to, batch, m, k,
+                    sbat[0], sm[0], sk[0])) != 0)
         goto fail;
       records++;
     }
     if (pack_b) {
-      if (pack(out, &used, &p.b, p.sb, b->address, b->dtype, to, batch, n, k,
-               sbat[1], sn[0], sk[1]) != 0)
+      if ((e = pack(out, &used, &p.b, p.sb, b->address, b->dtype, to, batch,
+                    n, k, sbat[1], sn[0], sk[1])) != 0)
         goto fail;
       records++;
     }
@@ -397,16 +398,16 @@ int nx_amd_plan_contract(const nx_amd_contract_in *in,
        operand of another is packed into it, exactly, with k contiguous. */
     const int to = own_dtype(simt);
     if (!own(simt, at)) {
-      if (pack(out, &used, &p.a, p.sa, a->address, at, to, batch, m, k,
-               sbat[0], sm[0], sk[0]) != 0)
+      if ((e = pack(out, &used, &p.a, p.sa, a->address, at, to, batch, m, k,
+                    sbat[0], sm[0], sk[0])) != 0)
         goto fail;
       records++, fa = 0, va = 1, p.a_dtype = to;
       mask |= NX_CONTRACT_SCRATCH_A;
       sm[0] = p.sa[1], sk[0] = 1;
     }
     if (!own(simt, b->dtype)) {
-      if (pack(out, &used, &p.b, p.sb, b->address, b->dtype, to, batch, n, k,
-               sbat[1], sn[0], sk[1]) != 0)
+      if ((e = pack(out, &used, &p.b, p.sb, b->address, b->dtype, to, batch,
+                    n, k, sbat[1], sn[0], sk[1])) != 0)
         goto fail;
       records++, fb = 0, vb = 1, p.b_dtype = to;
       mask |= NX_CONTRACT_SCRATCH_B;
@@ -472,16 +473,16 @@ int nx_amd_plan_contract(const nx_amd_contract_in *in,
         &used, (size_t)tickets * splits * values * threads * acc_bytes);
     p.tickets = (uint32_t *)(uintptr_t)take(&used, tickets * 4);
     zero_params z = {p.tickets, tickets};
-    if (add(out, NX_AMD_zero_u32,
-            (uint32_t)ceil_div(tickets, NX_CONTRACT_THREADS), 1, 1,
-            NX_CONTRACT_THREADS, &z, sizeof z, NX_ZERO_ADDRS,
-            NX_ZERO_SCRATCH) != 0)
+    if ((e = add(out, NX_AMD_zero_u32,
+                 (uint32_t)ceil_div(tickets, NX_CONTRACT_THREADS), 1, 1,
+                 NX_CONTRACT_THREADS, &z, sizeof z, NX_ZERO_ADDRS,
+                 NX_ZERO_SCRATCH)) != 0)
       goto fail;
     records++;
     mask |= NX_CONTRACT_SCRATCH_SPLIT;
   }
-  if (add(out, kernel, (uint32_t)gx, (uint32_t)splits, (uint32_t)batch,
-          (uint32_t)threads, &p, sizeof p, NX_CONTRACT_ADDRS, mask) != 0)
+  if ((e = add(out, kernel, (uint32_t)gx, (uint32_t)splits, (uint32_t)batch,
+               (uint32_t)threads, &p, sizeof p, NX_CONTRACT_ADDRS, mask)) != 0)
     goto fail;
   *scratch = used;
   return records + 1;
@@ -489,5 +490,5 @@ int nx_amd_plan_contract(const nx_amd_contract_in *in,
 fail:
   out->len = len;
   *scratch = 0;
-  return NX_NOT_COMPUTED;
+  return e == NX_OUT_OF_MEMORY ? NX_OUT_OF_MEMORY : NX_NOT_COMPUTED;
 }
