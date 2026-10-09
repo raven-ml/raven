@@ -151,43 +151,11 @@ static int computes(int acc, int out, const int *dts, int n) {
 
 /* Stages operand [o]'s block of [n1] rows of [n0] elements, the first at
    position [at], stepping [s0] along a row and [s1] across rows, into [dst]
-   in acc: row j's element i at dst + (j·pitch + i)·w. In pieces whose every
-   form fits the stage's slot. */
-static void stage(const problem *p, int o, int64_t at, int64_t s0, int64_t s1,
-                  int64_t n0, int64_t n1, uint8_t *dst, int64_t pitch) {
-  const nx_array *x = p->op[o].x;
-  if (x->dtype == p->acc) {
-    /* Elements of acc are copied in one block, through no buffer. */
-    nx_cpu_block b = {.n0 = n0, .n1 = n1, .n2 = 1};
-    b.at[0] = at;
-    b.s0[0] = s0;
-    b.s1[0] = s1;
-    nx_cpu_stage(x, &b, 0, dst, pitch * p->w);
-    return;
-  }
-  int c = nx_cpu_carrier(x->dtype), cw = nx_cpu_width(c);
-  int widest = cw > p->w ? cw : p->w;
-  if (x->bits / 8 > widest) widest = x->bits / 8;
-  int64_t cols = min64(n0, NX_CPU_SLOT / widest);
-  nx_cpu_run convert = nx_cpu_table->convert[c][p->acc];
-  _Alignas(64) uint8_t slot[NX_CPU_SLOT];
-  for (int64_t i = 0; i < n0; i += cols) {
-    int64_t n = min64(cols, n0 - i), rows = NX_CPU_SLOT / (n * widest);
-    for (int64_t j = 0; j < n1; j += rows) {
-      nx_cpu_block b = {.n0 = n, .n1 = min64(rows, n1 - j), .n2 = 1};
-      b.at[0] = at + i * s0 + j * s1;
-      b.s0[0] = s0;
-      b.s1[0] = s1;
-      uint8_t *d = dst + (j * pitch + i) * p->w;
-      if (c == p->acc) {
-        nx_cpu_stage(x, &b, 0, d, pitch * p->w);
-        continue;
-      }
-      nx_cpu_stage(x, &b, 0, slot, n * cw);
-      for (int64_t r = 0; r < b.n1; r++)
-        convert(slot + r * n * cw, d + r * pitch * p->w, n);
-    }
-  }
+   in acc: row j's element i at dst + (j·pitch + i)·w. */
+static void stage_acc(const problem *p, int o, int64_t at, int64_t s0,
+                      int64_t s1, int64_t n0, int64_t n1, uint8_t *dst,
+                      int64_t pitch) {
+  nx_cpu_stage_as(p->op[o].x, at, s0, s1, n0, n1, p->acc, dst, pitch);
 }
 
 /* R's element (e, i, j): dst's, in acc. */
@@ -205,11 +173,12 @@ static void start(const problem *p, int64_t e, int64_t i0, int64_t i1,
   for (int64_t i = i0; i < i1; i++) {
     if (p->op[INIT].x) {
       const int64_t *t = p->op[INIT].st;
-      int64_t at = pos(p, INIT, e, i, j0, 0);
-      if (s[COL] == 1 || j1 - j0 == 1)
-        stage(p, INIT, at, t[COL], 0, j1 - j0, 1, at_r(p, e, i, j0), 0);
+      int64_t at = pos(p, INIT, e, i, j0, 0), n = j1 - j0;
+      uint8_t *r = at_r(p, e, i, j0);
+      if (s[COL] == 1 || n == 1)
+        stage_acc(p, INIT, at, t[COL], 0, n, 1, r, 0);
       else
-        stage(p, INIT, at, 1, t[COL], 1, j1 - j0, at_r(p, e, i, j0), s[COL]);
+        stage_acc(p, INIT, at, 1, t[COL], 1, n, r, s[COL]);
     } else if (s[COL] == 1 || j1 - j0 == 1) {
       memset(at_r(p, e, i, j0), 0, (size_t)((j1 - j0) * p->w));
     } else {
@@ -245,7 +214,7 @@ static void pack_a(const problem *p, int64_t e, int64_t i, int64_t m,
   const int64_t *s = p->op[A].st;
   for (int64_t q = 0; m < lda && q < kc; q++)
     memset(d + (q * lda + m) * p->w, 0, (size_t)((lda - m) * p->w));
-  stage(p, A, pos(p, A, e, i, 0, pc), s[ROW], s[CON], m, kc, d, lda);
+  stage_acc(p, A, pos(p, A, e, i, 0, pc), s[ROW], s[CON], m, kc, d, lda);
 }
 
 /* Packs the sliver of [b]'s columns [j, j + n) likewise, kc steps of
@@ -254,7 +223,7 @@ static void pack_b(const problem *p, int64_t e, int64_t j, int64_t n, int nr,
                    int64_t pc, int64_t kc, uint8_t *d) {
   const int64_t *s = p->op[B].st;
   if (n < nr) memset(d, 0, (size_t)(nr * kc * p->w));
-  stage(p, B, pos(p, B, e, 0, j, pc), s[COL], s[CON], n, kc, d, nr);
+  stage_acc(p, B, pos(p, B, e, 0, j, pc), s[COL], s[CON], n, kc, d, nr);
 }
 
 static void pack_panel(int64_t lo, int64_t hi, int worker, void *ctx) {
@@ -510,7 +479,7 @@ static void total(const problem *p, int64_t e, int64_t i, int64_t j,
                   const uint8_t *s, int64_t n, uint8_t *d) {
   _Alignas(16) uint8_t x[16] = {0};
   int init = p->op[INIT].x != NULL;
-  if (init) stage(p, INIT, pos(p, INIT, e, i, j, 0), 1, 0, 1, 1, x, 0);
+  if (init) stage_acc(p, INIT, pos(p, INIT, e, i, j, 0), 1, 0, 1, 1, x, 0);
   if (p->acc == NX_FLOAT32) {
     float y = n ? tree_f32((const float *)s, n) : 0.f;
     *(float *)d = init ? *(float *)x + y : y;
@@ -534,8 +503,8 @@ static void lanes_unit(int64_t lo, int64_t hi, int worker, void *ctx) {
   for (int64_t u = lo; u < hi; u++) {
     int64_t e = u / f->blocks, x = u % f->blocks, k0 = x * NX_CPU_FOLD_BLOCK;
     int64_t len = min64(NX_CPU_FOLD_BLOCK, k - k0);
-    stage(p, A, pos(p, A, e, 0, 0, k0), sa[CON], sa[ROW], len, m, buf, len);
-    stage(p, B, pos(p, B, e, 0, 0, k0), sb[CON], sb[COL], len, n, bb, len);
+    stage_acc(p, A, pos(p, A, e, 0, 0, k0), sa[CON], sa[ROW], len, m, buf, len);
+    stage_acc(p, B, pos(p, B, e, 0, 0, k0), sb[CON], sb[COL], len, n, bb, len);
     for (int64_t i = 0; i < m; i++)
       for (int64_t j = 0; j < n; j++) {
         _Alignas(64) uint8_t l[NX_CPU_LANES * 8] = {0};

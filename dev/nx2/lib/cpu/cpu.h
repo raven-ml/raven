@@ -225,4 +225,14 @@ void nx_cpu_stage(const nx_array *a, const nx_cpu_block *b, int k, uint8_t *dst,
 void nx_cpu_unstage(const nx_array *a, const nx_cpu_block *b, int k,
                     const uint8_t *src, int64_t row, int c);
 
+/* Copies the [n1] rows of [n0] elements of [a] from position [at], each
+   stepping [s0] along a row and [s1] across rows, into [dst] in the
+   carrier [d], converted as a cast does: row j's element i at
+   dst + (j·pitch + i)·w, w [d]'s width. An operand of the dtype [d] is
+   one stage, whatever its size; another goes through a slot, in pieces
+   whose every form fits it. */
+void nx_cpu_stage_as(const nx_array *a, int64_t at, int64_t s0, int64_t s1,
+                     int64_t n0, int64_t n1, int d, uint8_t *dst,
+                     int64_t pitch);
+
 #endif /* NX_CPU_H */

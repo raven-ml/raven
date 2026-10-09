@@ -133,3 +133,40 @@ void nx_cpu_unstage(const nx_array *a, const nx_cpu_block *b, int k,
                         {{0, b->s1[k], b->s0[k]}, {0, n0, 1}}},
               a->bits);
 }
+
+void nx_cpu_stage_as(const nx_array *a, int64_t at, int64_t s0, int64_t s1,
+                     int64_t n0, int64_t n1, int d, uint8_t *dst,
+                     int64_t pitch) {
+  int w = nx_cpu_width(d);
+  nx_cpu_block b = {.n0 = n0, .n1 = n1, .n2 = 1};
+  b.s0[0] = s0;
+  b.s1[0] = s1;
+  if (a->dtype == d) {
+    b.at[0] = at;
+    nx_cpu_stage(a, &b, 0, dst, pitch * w);
+    return;
+  }
+  int c = nx_cpu_carrier(a->dtype), cw = nx_cpu_width(c);
+  int widest = cw > w ? cw : w;
+  if (a->bits / 8 > widest) widest = a->bits / 8;
+  int64_t cols = n0 < NX_CPU_SLOT / widest ? n0 : NX_CPU_SLOT / widest;
+  nx_cpu_run convert = nx_cpu_table->convert[c][d];
+  _Alignas(64) uint8_t slot[NX_CPU_SLOT];
+  for (int64_t i = 0; i < n0; i += cols) {
+    int64_t n = cols < n0 - i ? cols : n0 - i;
+    int64_t rows = NX_CPU_SLOT / (n * widest);
+    for (int64_t j = 0; j < n1; j += rows) {
+      b.n0 = n;
+      b.n1 = rows < n1 - j ? rows : n1 - j;
+      b.at[0] = at + i * s0 + j * s1;
+      uint8_t *o = dst + (j * pitch + i) * w;
+      if (c == d) {
+        nx_cpu_stage(a, &b, 0, o, pitch * w);
+        continue;
+      }
+      nx_cpu_stage(a, &b, 0, slot, n * cw);
+      for (int64_t r = 0; r < b.n1; r++)
+        convert(slot + r * n * cw, o + r * pitch * w, n);
+    }
+  }
+}
