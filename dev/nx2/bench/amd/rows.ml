@@ -187,8 +187,14 @@ let contracts =
       contract bf16 f32 bf16 1 1024 16384;
       contract bf16 f32 bf16 4096 14336 4096;
       contract ~batch:64 bf16 f32 bf16 512 512 512;
+      (* b, 59 MB, nearly fills the R9700's 64 MB Infinity Cache: these two
+         rows run at one of two speeds, by where b's pages land, which each
+         process draws. The 236 MB rows after them read past the cache and
+         judge the skinny forms' speed. *)
       contract f32 f32 f32 1 5120 2880;
       contract ~lb:`Free f32 f32 f32 1 5120 2880;
+      contract f32 f32 f32 1 20480 2880;
+      contract ~lb:`Free f32 f32 f32 1 20480 2880;
     ]
 
 let all = floors @ contracts
