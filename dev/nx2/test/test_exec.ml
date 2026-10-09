@@ -255,7 +255,7 @@ let constants =
           ignore (Nx.add a c);
           equal int 2 first;
           equal int 1 (C.calls ()));
-      test "placing a constant computes it at the placement, its operands once"
+      test "placing a constant computes it at the placement, each time"
         (fun () ->
           let z = Nx.zeros D.Float32 [| 2 |] in
           let c = Nx.add z z in
@@ -264,7 +264,7 @@ let constants =
           let y = Nx.place Count.on c in
           equal ~msg:"kernel calls: the zeros, then the add" int 2 (C.calls ());
           ignore (Nx.place Count.on c);
-          equal ~msg:"kernel calls: the add again, into memory of its own" int 3
+          equal ~msg:"kernel calls: both again, into memory of its own" int 4
             (C.calls ());
           equal (array bits) [| 0.; 0. |] (elements y));
       test "a constant beside a split value is split with it" (fun () ->

@@ -154,7 +154,9 @@ let fresh_one () =
 let constants =
   group "constants"
     [
-      test "a node shared by many values computes once per placement" (fun () ->
+      test
+        "a constant read computes once per placement, its intermediates once \
+         per read" (fun () ->
           let one = fresh_one () in
           let c =
             Exec.apply2 ~slow:slow2 ~by:"t" (Binary Add) D.Float32 one one
@@ -164,11 +166,33 @@ let constants =
           C.reset ();
           ignore (Exec.at at1 e);
           (* one, c, d, e: four nodes. *)
-          equal int 4 (C.calls ());
+          equal ~msg:"reading e" int 4 (C.calls ());
+          C.reset ();
+          ignore (Exec.at at1 e);
+          equal ~msg:"reading e again" int 0 (C.calls ());
+          ignore (Exec.at at1 d);
+          (* e's intermediates were its read's alone: one, c and d again. *)
+          equal ~msg:"reading d" int 3 (C.calls ());
           C.reset ();
           ignore (Exec.at at1 d);
-          ignore (Exec.at at1 c);
-          equal int 0 (C.calls ()));
+          equal ~msg:"reading d again" int 0 (C.calls ()));
+      test "a read keeps the read constant's results, and no intermediate's"
+        (fun () ->
+          let one = fresh_one () in
+          let c =
+            Exec.apply2 ~slow:slow2 ~by:"t" (Binary Add) D.Float32 one one
+          in
+          let d = Exec.apply2 ~slow:slow2 ~by:"t" (Binary Mul) D.Float32 c c in
+          let kept (type v s) (x : (v, s, b) Value.t) =
+            match x with
+            | Value.Deferred { node = Value.Node n; _ } ->
+                List.length (Atomic.get n.memo)
+            | Value.Array _ | Value.Shards _ | Value.Traced _ -> -1
+          in
+          ignore (Exec.at at1 d);
+          equal ~msg:"d" int 1 (kept d);
+          equal ~msg:"c" int 0 (kept c);
+          equal ~msg:"one" int 0 (kept one));
       test "a chain of constants computes in one pass per node, at any length"
         (fun () ->
           let n = 100_000 in

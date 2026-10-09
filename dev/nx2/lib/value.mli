@@ -44,14 +44,16 @@ and ('v, 's, 'd) form = {
 
 and node =
   | Node : {
+      id : int;  (** Unique among a process's nodes. *)
       by : string;
       op : 'r prim;
       memo : (unit Devices.placement * Nx_array.any array array) list Atomic.t;
     }
       -> node
       (** An operation whose every operand is a constant, applied by [by].
-          [memo] holds its results computed so far, per placement: per result,
-          one array per device. *)
+          [memo] holds its results computed so far at the placements an
+          operation read it at: per result, one array per device, of the
+          device's window. *)
 
 and 'd any = Any : ('v, 's, 'd) t -> 'd any
 

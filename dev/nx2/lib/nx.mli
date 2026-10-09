@@ -69,9 +69,12 @@ val bit : (bool, Dtype.bit_elt) dtype
     values alone, is a value of every set: its type is polymorphic in ['d]. It
     is a formula and holds no bytes. Each operation that needs its elements
     computes it on that operation's set, {!place} computes it at a placement,
-    and a read computes it on the host. Its {!placement} is [None].
-    {!zeros_like} and {!copy} make a value from another, where it lies, and of
-    every set from a value of every set. *)
+    and a read computes it on the host. Its {!placement} is [None]. An operation
+    that reads such a value keeps the elements it computed, once per placement,
+    for as long as the value lives; the values it was computed from keep none
+    for it. {!place} gives a value memory of its own. {!zeros_like} and {!copy}
+    make a value from another, where it lies, and of every set from a value of
+    every set. *)
 
 val zeros : ('v, 's) dtype -> int array -> ('v, 's, 'd) t
 (** [zeros dt s] is the value of shape [s] whose every element is zero, of every

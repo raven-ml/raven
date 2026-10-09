@@ -299,6 +299,20 @@ let pending (Value.Node n) p =
    reaches a function of nx's own. *)
 let host () = Devices.rebrand (Devices.one Devices.host 0)
 
+(* The next node's id. *)
+let nodes = Atomic.make 0
+
+(* How an evaluation reads a constant operand: at a placement, from a memo or
+   from the evaluation's own table. *)
+type resolve = {
+  get :
+    'v 's 'd.
+    'd Devices.placement -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t;
+}
+
+(* A resolver for operations whose operands have bytes already. *)
+let as_they_are = { get = (fun _ x -> x) }
+
 (* The results of a map into arrays of the dtypes of [dsts]. *)
 type 'd outs = Outs : ('d, 'r) Value.outs -> 'd outs
 
@@ -341,7 +355,8 @@ and placer ~by =
 
 and defer : type r. by:string -> r Value.prim -> r =
  fun ~by op ->
-  let node = Value.Node { by; op; memo = Atomic.make [] } in
+  let id = Atomic.fetch_and_add nodes 1 in
+  let node = Value.Node { id; by; op; memo = Atomic.make [] } in
   Prim.results ~by
     { make = (fun k form -> Value.Deferred { form; node; k }) }
     op
@@ -450,6 +465,8 @@ and check : type d.
       in
       raise (fail idx (List.map at_idx data))
 
+(* A constant read at [p] by an operation: its results there, kept in its memo,
+   which every later read at [p] finds. *)
 and at : type v s d.
     d Devices.placement -> (v, s, d) Value.t -> (v, s, d) Value.t =
  fun p x ->
@@ -457,37 +474,77 @@ and at : type v s d.
   | Value.Array _ | Value.Shards _ | Value.Traced _ -> x
   | Value.Deferred { form; node = Value.Node n as node; k } ->
       let key = Devices.rebrand p in
-      if find n.memo key = None then fill node key;
-      let arrays = Option.get (find n.memo key) in
+      let arrays =
+        match find n.memo key with
+        | Some a -> a
+        | None ->
+            let a = evaluate node key in
+            remember n.memo key a;
+            Option.get (find n.memo key)
+      in
       make p (Array.map (A.expect form.dtype) arrays.(k))
 
-(* Computes [node] at [p] after the constants it reads, depth first, with a
-   stack of its own: a chain of any length takes no stack depth. *)
 (* The constant [c] computed at [p] into memory of its own, its operands taken
-   from their memos: a value given to a caller shares no memory with a memo. *)
+   from their memos or computed for this alone: a value given to a caller shares
+   no memory with a memo. *)
 and own : type v s d.
     d Devices.placement -> (v, s, d) Value.t -> (v, s, d) Value.t =
  fun p x ->
   match x with
   | Value.Array _ | Value.Shards _ | Value.Traced _ -> x
   | Value.Deferred { form; node; k } ->
-      let key = Devices.rebrand p in
-      List.iter (fun (dep, q) -> fill dep q) (pending node key);
-      make p (Array.map (A.expect form.dtype) (compute_node node key).(k))
+      let arrays = evaluate node (Devices.rebrand p) in
+      make p (Array.map (A.expect form.dtype) arrays.(k))
 
-and fill node p =
+(* [root]'s results at [p], fresh: the constants it reads are taken from their
+   memos where an operation read them at the placement it reads them, and
+   computed otherwise in a table of this evaluation's alone, dropped after. Each
+   node computes once in an evaluation, in dependency order, with a stack of its
+   own: a chain of any length takes no stack depth. *)
+and evaluate root p =
+  let local = Hashtbl.create 16 in
+  let lookup (Value.Node n) q =
+    match find n.memo q with
+    | Some a -> Some a
+    | None ->
+        List.find_map
+          (fun (q', a) -> if Devices.equal q' q then Some a else None)
+          (Option.value ~default:[] (Hashtbl.find_opt local n.id))
+  in
+  let resolve =
+    {
+      get =
+        (fun (type v s d)
+          (q : d Devices.placement)
+          (x : (v, s, d) Value.t)
+          :
+          (v, s, d) Value.t
+        ->
+          match x with
+          | Value.Deferred { form; node; k } ->
+              let arrays = Option.get (lookup node (Devices.rebrand q)) in
+              make q (Array.map (A.expect form.dtype) arrays.(k))
+          | Value.Array _ | Value.Shards _ | Value.Traced _ -> x);
+    }
+  in
+  let missing node q =
+    List.filter (fun (dep, q) -> lookup dep q = None) (pending node q)
+  in
   let stack = Stack.create () in
-  Stack.push (node, p) stack;
+  List.iter (fun d -> Stack.push d stack) (missing root p);
   while not (Stack.is_empty stack) do
     let (Value.Node n as top), q = Stack.top stack in
-    if find n.memo q <> None then ignore (Stack.pop stack)
+    if lookup top q <> None then ignore (Stack.pop stack)
     else
-      match pending top q with
+      match missing top q with
       | [] ->
           ignore (Stack.pop stack);
-          remember n.memo q (compute_node top q)
+          let a = compute_node ~resolve top q in
+          let kept = Option.value ~default:[] (Hashtbl.find_opt local n.id) in
+          Hashtbl.replace local n.id ((q, a) :: kept)
       | deps -> List.iter (fun d -> Stack.push d stack) deps
-  done
+  done;
+  compute_node ~resolve root p
 
 (* A map's results [dsts] at [p], computed per device: [ops k w] are the
    operands on device [k] for its window [w]. A device whose kernels decline the
@@ -532,7 +589,9 @@ and expand_on ~by (set : unit Devices.t) k prog shape first ops dsts =
         loads;
       }
   in
-  let on_device = { Expand.apply = (fun ~by op -> compute_at ~by at op) } in
+  let on_device =
+    { Expand.apply = (fun ~by op -> compute_at ~by ~resolve:as_they_are at op) }
+  in
   match Expand.run on_device ~by op with
   | None -> invalid_arg "Exec.expand_on: a map of one node"
   | Some r ->
@@ -551,13 +610,14 @@ and expand_on ~by (set : unit Devices.t) k prog shape first ops dsts =
 (* A map [op] computed at [p], its results there: its operands lie at [p] or are
    constants, and its rule holds. Any other operation is [run]'s. *)
 and compute_at : type r.
-    by:string -> unit Devices.placement -> r Value.prim -> r =
- fun ~by p op ->
+    by:string -> resolve:resolve -> unit Devices.placement -> r Value.prim -> r
+    =
+ fun ~by ~resolve p op ->
   match op with
   | Value.Map { loads; layout; prog; _ } ->
       let r = Prim.results ~by (alloc ~by ~at:p ()) op in
       let view k w (Value.Plain x) =
-        A.Any (Place.view ~by (at (Devices.rebrand p) x) k w)
+        A.Any (Place.view ~by (resolve.get (Devices.rebrand p) x) k w)
       in
       map_devices ~by p (L.shape layout) prog
         (fun k w -> Array.map (view k w) loads)
@@ -569,20 +629,23 @@ and compute_at : type r.
 
 (* [node]'s results at [p], its constant operands already computed where it
    reads them. *)
-and compute_node (Value.Node n) p =
+and compute_node ~resolve (Value.Node n) p =
   let by = n.by in
   match n.op with
   | Value.Map _ ->
       (* Its loads are computed at [p] already. *)
-      Prim.arrays n.op (compute_at ~by p n.op)
+      Prim.arrays n.op (compute_at ~by ~resolve p n.op)
   | op ->
       let q = operand_at op p in
       (* Its rule held when it was made, and its operands lie at [q]. *)
-      let op' = Prim.map { map = (fun y -> at (Devices.rebrand q) y) } op in
+      let op' =
+        Prim.map { map = (fun y -> resolve.get (Devices.rebrand q) y) } op
+      in
       let arrays = Prim.arrays op' (compute ~by op') in
       if Devices.equal q p then arrays
       else
-        (* Whole on every device: each device of [p] keeps its window. *)
+        (* Whole on every device: each device of [p] keeps its window, in memory
+           of its own, so that no memo holds the whole on each. *)
         Array.map
           (fun per ->
             let (A.Any a0) = per.(0) in
@@ -591,7 +654,7 @@ and compute_node (Value.Node n) p =
               (fun j k ->
                 let (A.Any a) = per.(k) in
                 let w = Devices.window ~by p shape j in
-                A.Any (Option.get (A.move (Slice w) a)))
+                A.Any (A.copy (Option.get (A.move (Slice w) a))))
               (Grid.devices (Devices.grid p)))
           arrays
 

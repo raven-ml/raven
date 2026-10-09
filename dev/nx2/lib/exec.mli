@@ -81,15 +81,17 @@ val apply3 :
 *)
 
 val at : 'd Devices.placement -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
-(** [at p c] is the constant [c] computed at [p]: a map, a creation included, at
-    [p] itself, each device its window; any other operation whole on each device
-    of [p]'s set, each device keeping its window. Its operands are computed the
-    same way. A node, however many values or chains share it, computes once per
+(** [at p c] is the constant [c] computed at [p] for an operation that reads it:
+    a map, a creation included, at [p] itself, each device its window; any other
+    operation whole on each device of [p]'s set, each device keeping its window
+    in memory of its own. [c] keeps its results at [p]: it computes once per
     placement within a domain; across domains, at most once per domain whose
     first use races, every result equal bit for bit and the first one stored
-    kept. It takes no lock. A kernel's refusal or decline raises here, naming
-    the function that made the constant. A value that is not a constant is
-    returned as it is. *)
+    kept. It takes no lock. The constants [c] is computed from are taken from
+    their own results where an operation read them at the placement [c] reads
+    them, and are otherwise computed for this alone, once each, and dropped. A
+    kernel's refusal or decline raises here, naming the function that made the
+    constant. A value that is not a constant is returned as it is. *)
 
 val read : ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
 (** [read c] is [c] computed on the host's device into memory of its own: a
