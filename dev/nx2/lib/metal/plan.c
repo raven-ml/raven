@@ -146,7 +146,7 @@ int nx_metal_plan_contract(const nx_metal_contract_in *c,
       (uint32_t)is[1], (uint32_t)is[2],
       c->batch, c->m, c->n, c->k,
       init ? (uint32_t)init->dtype : NX_DTYPE_COUNT, (uint32_t)out->dtype,
-      0, (uint32_t)a->dtype};
+      0, (uint32_t)a->dtype, (uint32_t)c->acc};
   /* The matrix units take an operand with one axis of unit stride, or of
      one element; the order names which, the last axis where both may. */
   int a_t = as[2] != 1 && c->k > 1, b_t = bs[2] != 1 && c->n > 1;
@@ -191,10 +191,13 @@ int nx_metal_plan_contract(const nx_metal_contract_in *c,
          c->k / (2 * parts) >= min_part_k)
     parts *= 2;
   uint32_t part_k = c->k / parts;
-  /* Whole tiles read bytes 16 at a time, from multiples of 16 bytes. */
+  /* Whole tiles read bytes 16 at a time: every tile's first byte, which
+     the addresses, the row strides and the batch strides place, lies at a
+     multiple of 16. */
   int unaligned = bytes && ((a->address | b->address) % 16 ||
                             (a_t ? as[2] : as[1]) % 16 ||
-                            (b_t ? bs[2] : bs[1]) % 16);
+                            (b_t ? bs[2] : bs[1]) % 16 ||
+                            (c->batch > 1 && (as[0] % 16 || bs[0] % 16)));
   int edge = c->m % rows || c->n % cols || part_k % tile_k(a->dtype, size) ||
              unaligned;
   int entry = dense_entry(a->dtype, a_t, b_t, size, edge);

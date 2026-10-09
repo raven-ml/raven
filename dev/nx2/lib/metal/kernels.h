@@ -122,6 +122,7 @@ typedef struct {
   uint32_t init_dtype, out_dtype; /* init_dtype NX_DTYPE_COUNT: no init */
   uint32_t swizzle;               /* tiles of a column, as a power of two */
   uint32_t dtype;                 /* a's and b's */
+  uint32_t acc;                   /* the accumulator's dtype */
 } nx_metal_contract;
 
 /* out[p][i][j] = round_out(init[p][i][j] + Σ_q parts[q][p][i][j]) for

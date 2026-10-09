@@ -127,10 +127,11 @@ static A widen(uint dt, device const uchar *p, ulong i) {
   }
 }
 
-/* Stores the low bits of x at [i] of the integer array [p] of dtype
-   [dt]. */
+/* Stores x, the accumulator's bits, at [i] of the integer array [p] of
+   dtype [dt], as a cast from the accumulator does: its low bits, or, into
+   a wider out, x widened by the accumulator's sign. */
 template <typename A>
-static void narrow(uint dt, device uchar *p, ulong i, A x) {
+static void narrow(uint dt, bool sign, device uchar *p, ulong i, A x) {
   switch (dt) {
   case NX_INT8:
   case NX_UINT8: ((device uchar *)p)[i] = uchar(x); break;
@@ -138,7 +139,8 @@ static void narrow(uint dt, device uchar *p, ulong i, A x) {
   case NX_UINT16: ((device ushort *)p)[i] = ushort(x); break;
   case NX_INT32:
   case NX_UINT32: ((device uint *)p)[i] = uint(x); break;
-  default: ((device ulong *)p)[i] = ulong(x);
+  default:
+    ((device ulong *)p)[i] = sizeof(A) == 4 && sign ? ulong(long(int(x))) : ulong(x);
   }
 }
 
@@ -410,7 +412,7 @@ kernel void contract(constant nx_metal_contract &p [[buffer(0)]],
             x += widen<uint>(p.init_dtype, (device const uchar *)init,
                              z * p.init_batch + ulong(r) * p.init_m +
                                  ulong(c) * p.init_n);
-          narrow<uint>(p.out_dtype, (device uchar *)p.out,
+          narrow<uint>(p.out_dtype, p.acc == NX_INT32, (device uchar *)p.out,
                        out_at + ulong(r) * p.n + c, x);
         }
       }
@@ -590,8 +592,8 @@ kernel void contract_combine(constant nx_metal_combine &p [[buffer(0)]],
 }
 
 /* Integer contraction on the SIMD units: operands of any integer dtype
-   widen to the accumulator, 32 or 64 bits, which wraps, and out keeps its
-   low bits. Wrapping at every step equals wrapping once, so the order of
+   widen to the accumulator, 32 or 64 bits, which wraps, and reach out as a
+   cast from the accumulator does. Wrapping at every step equals wrapping once, so the order of
    the sum is free; this kernel sums in increasing k. A threadgroup of
    INT_THREADS threads computes an INT_TILE × INT_TILE tile of out, each
    thread a 4 × 4 block, staging INT_BK steps of a's and b's tiles widened. */
@@ -649,8 +651,8 @@ kernel void contract_int(constant nx_metal_contract &p [[buffer(0)]],
         x += widen<A>(p.init_dtype, (device const uchar *)p.init,
                       g.z * p.init_batch + ulong(r) * p.init_m +
                           ulong(c) * p.init_n);
-      narrow<A>(p.out_dtype, (device uchar *)p.out, out_at + ulong(r) * p.n + c,
-                x);
+      narrow<A>(p.out_dtype, p.acc == NX_INT32, (device uchar *)p.out,
+                out_at + ulong(r) * p.n + c, x);
     }
 }
 

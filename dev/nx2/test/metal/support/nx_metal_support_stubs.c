@@ -470,8 +470,9 @@ static uint64_t widened(const void *p, int dt, int64_t i) {
 }
 
 /* Over every output of the integer contraction (batch, m, n, k, acc), how
-   many differ from the sum wrapped in acc's width and out's, with the
-   first such output's index, or -1. */
+   many differ from the sum wrapped to acc's width, widened by acc's sign,
+   then wrapped to out's, as a cast from acc does, with the first such
+   output's index, or -1. */
 value nx_metal_test_contract_wrong(value v_dims, value v_a, value v_b,
                                    value v_out, value v_init) {
   CAMLparam5(v_dims, v_a, v_b, v_out, v_init);
@@ -479,7 +480,7 @@ value nx_metal_test_contract_wrong(value v_dims, value v_a, value v_b,
   int64_t batch = Long_val(Field(v_dims, 0)), m = Long_val(Field(v_dims, 1)),
           n = Long_val(Field(v_dims, 2)), k = Long_val(Field(v_dims, 3));
   int acc = Int_val(Field(v_dims, 4));
-  uint64_t acc_mask = acc == NX_INT64 || acc == NX_UINT64 ? ~0ull : 0xffffffffull;
+  int acc_wide = acc == NX_INT64 || acc == NX_UINT64;
   nx_metal_operand a = operand(v_a), b = operand(v_b), out = operand(v_out);
   int has_init = Is_some(v_init);
   nx_metal_operand init = has_init ? operand(Some_val(v_init)) : a;
@@ -501,7 +502,10 @@ value nx_metal_test_contract_wrong(value v_dims, value v_a, value v_b,
                            j * init.strides[2]);
         int64_t o = (p * m + i) * n + j;
         uint64_t got = widened((void *)out.address, out.dtype, o);
-        if (((s & acc_mask) & out_mask) != (got & out_mask)) {
+        uint64_t want = acc_wide            ? s
+                        : acc == NX_INT32 ? (uint64_t)(int64_t)(int32_t)s
+                                          : (uint64_t)(uint32_t)s;
+        if ((want & out_mask) != (got & out_mask)) {
           if (first < 0) first = o;
           wrong++;
         }

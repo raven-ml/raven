@@ -196,19 +196,21 @@ type case = {
   k : int;
   init : init;
   pad : int; (* extra elements per row of a and b *)
+  bpad : int; (* extra elements per batch of a and b *)
   spread : int;
 }
 
 let pp_case ppf c =
   let name (Dt.Any dt) = Dt.name dt in
   Format.fprintf ppf
-    "%s -> %s, a%s b%s, %d x (%d x %d x %d), init %s, pad %d, spread %d"
+    "%s -> %s, a%s b%s, %d x (%d x %d x %d), init %s, pad %d, bpad %d, spread \
+     %d"
     (name c.dt) (name c.out)
     (if c.a_t then "^T" else "")
     (if c.b_t then "^T" else "")
     c.batch c.m c.n c.k
     (match c.init with No_init -> "none" | Full -> "full" | Bias -> "bias")
-    c.pad c.spread
+    c.pad c.bpad c.spread
 
 let floats_dt = [ Dt.Any Dt.Float32; Dt.Any Dt.Float16; Dt.Any Dt.Bfloat16 ]
 
@@ -234,16 +236,18 @@ let case =
   and+ k = Gen.one_of [ extent_gen 16; Gen.of_list [ 300; 1000; 2880 ] ]
   and+ init = of_list [ No_init; Full; Bias ]
   and+ pad = of_list [ 0; 3 ]
+  and+ bpad = of_list [ 0; 1; 4 ]
   and+ spread = of_list [ 0; 8 ] in
-  { dt; out; a_t; b_t; batch; m; n; k; init; pad; spread }
+  { dt; out; a_t; b_t; batch; m; n; k; init; pad; bpad; spread }
 
 let case = Gen.with_pp pp_case case
 
 (* An operand of [rows] x [cols] per batch, stored [cols][rows] if [trans], each
-   stored row [pad] elements longer, with values from [seed]. *)
-let matrix t (Dt.Any dt) ~trans ~batch ~rows ~cols ~pad ~seed ~spread =
+   stored row [pad] elements longer and each batch [bpad], with values from
+   [seed]. *)
+let matrix t (Dt.Any dt) ~trans ~batch ~rows ~cols ~pad ~bpad ~seed ~spread =
   let ld = (if trans then rows else cols) + pad in
-  let per = (if trans then cols else rows) * ld in
+  let per = ((if trans then cols else rows) * ld) + bpad in
   let o = S.operand t (max 1 (Dt.bytes dt (batch * per))) in
   if batch * per > 0 then S.generate ~spread t o dt (batch * per) ~seed;
   S.arg o dt (if trans then (per, 1, ld) else (per, ld, 1))
@@ -254,21 +258,21 @@ let init_arg t c (Dt.Any dt) =
   | Full ->
       Some
         (matrix t (Dt.Any dt) ~trans:false ~batch:c.batch ~rows:c.m ~cols:c.n
-           ~pad:0 ~seed:3 ~spread:c.spread)
+           ~pad:0 ~bpad:0 ~seed:3 ~spread:c.spread)
   | Bias ->
       let o = S.operand t (max 1 (Dt.bytes dt c.n)) in
       if c.n > 0 then S.generate ~spread:c.spread t o dt c.n ~seed:4;
       Some (S.arg o dt (0, 0, 1))
 
 (* The call's operands and its run. *)
-let call t c =
+let call ?acc t c =
   let a =
     matrix t c.dt ~trans:c.a_t ~batch:c.batch ~rows:c.m ~cols:c.k ~pad:c.pad
-      ~seed:1 ~spread:c.spread
+      ~bpad:c.bpad ~seed:1 ~spread:c.spread
   in
   let b =
     matrix t c.dt ~trans:c.b_t ~batch:c.batch ~rows:c.k ~cols:c.n ~pad:c.pad
-      ~seed:2 ~spread:c.spread
+      ~bpad:c.bpad ~seed:2 ~spread:c.spread
   in
   let (Dt.Any out_dt) = c.out in
   let mn = c.batch * c.m * c.n in
@@ -279,7 +283,7 @@ let call t c =
   let dims = (c.batch, c.m, c.n, c.k) in
   let run =
     require_some ~msg:"the planner declined"
-      (S.plan_contract ?init t dims ~a ~b ~out)
+      (S.plan_contract ?init ?acc t dims ~a ~b ~out)
   in
   (dims, a, b, out, init, run)
 
@@ -297,6 +301,7 @@ let contract_bound =
       k = 0;
       init = Bias;
       pad = 0;
+      bpad = 0;
       spread = 8;
     }
   in
@@ -330,6 +335,7 @@ let contract_bound =
       cover "a transposed operand" (c.a_t || c.b_t);
       cover "a bias" (c.init = Bias);
       cover "narrow out" (c.out <> Dt.Any Dt.Float32);
+      cover "a batch pad" (c.batch > 1 && c.bpad > 0);
       let t = dev () in
       let dims, a, b, out, init, run = call t c in
       let kernels = S.entries run in
@@ -367,7 +373,8 @@ let contract_bound =
         ~msg:(strf "output %d's error over its bound" at)
         float_exact ~than:1. worst)
 
-(* Integer contractions wrap in the accumulator and then in out. *)
+(* Integer contractions wrap in the accumulator and reach out as a cast from it
+   does. *)
 
 type int_case = { case : case; acc : Dt.any }
 
@@ -388,7 +395,7 @@ let int_case =
   let+ c = case
   and+ dt = of_list int_dt
   and+ out = of_list Dt.[ Any Int8; Any Int32; Any Int64 ]
-  and+ acc = of_list Dt.[ Any Int32; Any Int64 ] in
+  and+ acc = of_list Dt.[ Any Int32; Any Uint32; Any Int64 ] in
   { case = { c with dt; out; spread = 0 }; acc }
 
 let int_case =
@@ -398,63 +405,51 @@ let int_case =
       Format.fprintf ppf "%a, acc %s" pp_case c.case (Dt.name acc))
     int_case
 
-(* Bytes into 32 bits sum on the matrix units in float32 chunks: sums longer
-   than a chunk, 1,024 terms of int8 or 258 of uint8. *)
-let long_sums =
-  let case dt ~m ~k =
-    {
-      case =
-        {
-          dt;
-          out = Dt.Any Dt.Int32;
-          a_t = false;
-          b_t = true;
-          batch = 1;
-          m;
-          n = m;
-          k;
-          init = Full;
-          pad = 0;
-          spread = 0;
-        };
-      acc = Dt.Any Dt.Int32;
-    }
-  in
+let int_example ?(out = Dt.Any Dt.Int32) ?(batch = 1) ?(bpad = 0) dt ~m ~k =
+  {
+    case =
+      {
+        dt;
+        out;
+        a_t = false;
+        b_t = true;
+        batch;
+        m;
+        n = m;
+        k;
+        init = Full;
+        pad = 0;
+        bpad;
+        spread = 0;
+      };
+    acc = Dt.Any Dt.Int32;
+  }
+
+let int_examples =
   [
-    case (Dt.Any Dt.Int8) ~m:64 ~k:2112;
-    case (Dt.Any Dt.Int8) ~m:65 ~k:2101;
-    case (Dt.Any Dt.Uint8) ~m:64 ~k:608;
-    case (Dt.Any Dt.Uint8) ~m:65 ~k:601;
+    (* Bytes into 32 bits sum on the matrix units in float32 chunks: sums longer
+       than a chunk, 1,024 terms of int8 or 258 of uint8. *)
+    int_example (Dt.Any Dt.Int8) ~m:64 ~k:2112;
+    int_example (Dt.Any Dt.Int8) ~m:65 ~k:2101;
+    int_example (Dt.Any Dt.Uint8) ~m:64 ~k:608;
+    int_example (Dt.Any Dt.Uint8) ~m:65 ~k:601;
+    (* Negative sums in 32 bits into a 64-bit out, on the matrix units and on
+       the SIMD units. *)
+    int_example ~out:(Dt.Any Dt.Int64) (Dt.Any Dt.Int8) ~m:64 ~k:64;
+    int_example ~out:(Dt.Any Dt.Int64) (Dt.Any Dt.Int16) ~m:64 ~k:64;
+    (* Batches whose bytes start off 16-byte alignment. *)
+    int_example ~batch:2 ~bpad:1 (Dt.Any Dt.Int8) ~m:64 ~k:64;
+    int_example ~batch:2 ~bpad:2 (Dt.Any Dt.Int8) ~m:64 ~k:64;
   ]
 
 let contract_wraps =
-  prop ~count:40 ~examples:long_sums "an integer contraction wraps" int_case
+  prop ~count:40 ~examples:int_examples "an integer contraction wraps" int_case
     (fun { case = c; acc } ->
       cover "64-bit accumulator" (acc = Dt.Any Dt.Int64);
       cover "narrow operands" (c.dt = Dt.Any Dt.Int8 || c.dt = Dt.Any Dt.Uint8);
+      cover "a batch pad" (c.batch > 1 && c.bpad > 0);
       let t = dev () in
-      let a =
-        matrix t c.dt ~trans:c.a_t ~batch:c.batch ~rows:c.m ~cols:c.k ~pad:c.pad
-          ~seed:1 ~spread:0
-      in
-      let b =
-        matrix t c.dt ~trans:c.b_t ~batch:c.batch ~rows:c.k ~cols:c.n ~pad:c.pad
-          ~seed:2 ~spread:0
-      in
-      let (Dt.Any out_dt) = c.out in
-      let mn = c.batch * c.m * c.n in
-      let out =
-        S.arg
-          (S.operand t (max 1 (Dt.bytes out_dt mn)))
-          out_dt
-          (c.m * c.n, c.n, 1)
-      in
-      let init = init_arg t c c.out in
-      let dims = (c.batch, c.m, c.n, c.k) in
-      let run =
-        require_some ~msg:"the planner declined"
-          (S.plan_contract ?init ~acc t dims ~a ~b ~out)
-      in
+      let dims, a, b, out, init, run = call ~acc t c in
       ignore (S.run t run);
       let wrong, first = S.contract_wrong ?init ~acc dims ~a ~b ~out in
       equal ~msg:(strf "outputs wrong, the first %d" first) int 0 wrong)
@@ -464,7 +459,7 @@ let declines_float64 () =
   let t = dev () in
   let m =
     matrix t (Dt.Any Dt.Float64) ~trans:false ~batch:1 ~rows:4 ~cols:4 ~pad:0
-      ~seed:1 ~spread:0
+      ~bpad:0 ~seed:1 ~spread:0
   in
   let plan =
     S.plan_contract ~acc:(Dt.Any Dt.Float64) t (1, 4, 4, 4) ~a:m ~b:m ~out:m
@@ -501,6 +496,7 @@ let determinism =
       k;
       init = Full;
       pad = 0;
+      bpad = 0;
       spread = 8;
     }
   in
