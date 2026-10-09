@@ -94,60 +94,37 @@ value nx_cuda_support_library_kernels(value unit) {
   CAMLreturn(r);
 }
 
-static nx_cuda_operand operand_of(value v) {
-  nx_cuda_operand o;
-  memset(&o, 0, sizeof o);
-  o.address = (uint64_t)Long_val(Field(v, 0));
-  o.dtype = Int_val(Field(v, 1));
-  o.rank = (int)Wosize_val(Field(v, 2));
-  for (int i = 0; i < o.rank; i++) {
-    o.dim[i] = Long_val(Field(Field(v, 2), i));
-    o.dim[o.rank + i] = Long_val(Field(Field(v, 3), i));
-  }
-  return o;
-}
-
 static value bytes(size_t n);
 
-/* A contraction as the plan reads it. */
-struct call {
-  nx_cuda_contract_in in;
-  nx_cuda_operand ops[4];
-};
-
-/* The call of a contraction: [v_ops] a, b, init if [v_init], y, each its
-   address, dtype, shape and strides; [v_batch] and [v_contracting] pairs
-   of axes as flat int arrays; [v_acc] the accumulator. */
-value nx_cuda_support_call(value v_ops, value v_batch, value v_contracting,
-                           value v_acc, value v_init) {
-  CAMLparam5(v_ops, v_batch, v_contracting, v_acc, v_init);
+/* The operands of a contraction as the plan reads them, by the view's
+   indices: [v_ops] a, b, init (address 0 for none) and y, each the address
+   of its buffer's first byte and its dtype. */
+value nx_cuda_support_ops(value v_ops) {
+  CAMLparam1(v_ops);
   CAMLlocal1(v);
-  v = bytes(sizeof(struct call));
-  struct call *c = Caml_ba_data_val(v);
-  for (mlsize_t i = 0; i < Wosize_val(v_ops); i++)
-    c->ops[i] = operand_of(Field(v_ops, i));
-  c->in.nbatch = (int)Wosize_val(v_batch) / 2;
-  for (int i = 0; i < c->in.nbatch; i++)
-    c->in.batch[i][0] = Int_val(Field(v_batch, 2 * i)),
-    c->in.batch[i][1] = Int_val(Field(v_batch, 2 * i + 1));
-  c->in.ncontracting = (int)Wosize_val(v_contracting) / 2;
-  for (int i = 0; i < c->in.ncontracting; i++)
-    c->in.contracting[i][0] = Int_val(Field(v_contracting, 2 * i)),
-    c->in.contracting[i][1] = Int_val(Field(v_contracting, 2 * i + 1));
-  c->in.acc = Int_val(v_acc);
-  c->in.init = Bool_val(v_init);
+  v = bytes(4 * sizeof(nx_cuda_operand));
+  nx_cuda_operand *o = Caml_ba_data_val(v);
+  for (mlsize_t i = 0; i < 4; i++) {
+    o[i].address = (uint64_t)Long_val(Field(Field(v_ops, i), 0));
+    o[i].dtype = Int_val(Field(Field(v_ops, i), 1));
+  }
   CAMLreturn(v);
 }
 
-/* The plan of the call [v_call]: Some (records, scratch bytes, launches),
-   or None if it declines; Out_of_memory if the host's memory runs out. */
-value nx_cuda_support_plan(value v_call) {
-  CAMLparam1(v_call);
+/* The plan of the contraction [v_spec] (a descriptor), its axes grouped in
+   the filled view [v_view], over the operands [v_ops]: Some (records,
+   scratch bytes, launches), or None if it declines; Out_of_memory if the
+   host's memory runs out. The plan reads the descriptor and the view in
+   place before anything here allocates. */
+value nx_cuda_support_plan(value v_spec, value v_view, value v_ops) {
+  CAMLparam3(v_spec, v_view, v_ops);
   CAMLlocal2(r, s);
-  struct call *c = Caml_ba_data_val(v_call);
   nx_cuda_records rs = {NULL, 0, 0};
   size_t scratch = 0;
-  int launches = nx_cuda_plan_contract(&c->in, c->ops, 89, &rs, &scratch);
+  int launches = nx_cuda_plan_contract(
+      (const nx_spec_contract *)String_val(v_spec),
+      (const nx_contract_view *)Bytes_val(v_view), Caml_ba_data_val(v_ops), 89,
+      &rs, &scratch);
   if (launches == NX_OUT_OF_MEMORY) {
     free(rs.bytes);
     caml_raise_out_of_memory();
@@ -165,14 +142,16 @@ value nx_cuda_support_plan(value v_call) {
   CAMLreturn(caml_alloc_some(r));
 }
 
-/* The launches of the call [v_call]'s plan, into records kept from one
-   call to the next: the planner's cost alone. */
-value nx_cuda_support_plan_only(value v_call) {
+/* The launches of the same plan, into records kept from one call to the
+   next: the planner's cost alone. */
+value nx_cuda_support_plan_only(value v_spec, value v_view, value v_ops) {
   static nx_cuda_records rs = {NULL, 0, 0};
-  struct call *c = Caml_ba_data_val(v_call);
   size_t scratch;
   rs.len = 0;
-  return Val_int(nx_cuda_plan_contract(&c->in, c->ops, 89, &rs, &scratch));
+  return Val_int(nx_cuda_plan_contract(
+      (const nx_spec_contract *)String_val(v_spec),
+      (const nx_contract_view *)Bytes_val(v_view), Caml_ba_data_val(v_ops), 89,
+      &rs, &scratch));
 }
 
 /* The records [v_r] with their scratch at [v_base]. */

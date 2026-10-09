@@ -3,4 +3,4 @@
 (tests
  (names test_cuda)
  (modules test_cuda)
- (libraries nx_array nx_cuda_support nx_gpu_ref rig windtrap))
+ (libraries nx_array nx_kernel nx_cuda_support nx_gpu_ref rig windtrap))

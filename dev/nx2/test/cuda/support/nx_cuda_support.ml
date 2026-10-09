@@ -26,14 +26,20 @@ external library_c : int -> string option = "nx_cuda_support_library"
 external library_kernels : unit -> string array
   = "nx_cuda_support_library_kernels"
 
-(* An operand as the plan's stub reads it: address, dtype, shape, strides. *)
-type op_c = int * int * int array * int array
+module Spec = Nx_kernel.Spec
 
-external call_c : op_c array -> int array -> int array -> int -> bool -> bytes
-  = "nx_cuda_support_call"
+(* The operands as the plan's stub reads them: each the address of its
+   buffer's first byte and its dtype. *)
+external ops_c : (int * int) array -> bytes = "nx_cuda_support_ops"
 
-external plan_c : bytes -> (string * int * int) option = "nx_cuda_support_plan"
-external plan_only : bytes -> int = "nx_cuda_support_plan_only" [@@noalloc]
+external plan_c :
+  Spec.contract Spec.t -> Spec.Contract_view.t -> bytes ->
+  (string * int * int) option = "nx_cuda_support_plan"
+
+external plan_only :
+  Spec.contract Spec.t -> Spec.Contract_view.t -> bytes -> int
+  = "nx_cuda_support_plan_only"
+[@@noalloc]
 external rebase : string -> int -> string = "nx_cuda_support_rebase"
 
 (* The GPU lock *)
@@ -365,21 +371,55 @@ type operand = {
 let ops a b init y =
   match init with None -> [ a; b; y ] | Some i -> [ a; b; i; y ]
 
-let call ~a ~b ?init ~y ~batch ~contracting ~acc () =
-  let op (o : operand) : op_c =
-    (Rig.Buffer.address o.buffer + o.first, o.dtype, o.shape, o.strides)
+let dtype code =
+  List.find (fun (Nx_array.Dtype.Any d) -> Nx_array.Dtype.code d = code)
+    Nx_array.Dtype.all
+
+(* [o] as an array over its buffer, as nx hands the kernels their operands. *)
+let array (o : operand) =
+  let (Nx_array.Dtype.Any d) = dtype o.dtype in
+  let bytes = Int.max 1 (Nx_array.Dtype.bits d / 8) in
+  let layout =
+    Nx_array.Layout.v ~offset:(o.first / bytes) ~strides:o.strides o.shape
   in
-  let pairs l = Array.of_list (List.concat_map (fun (x, y) -> [ x; y ]) l) in
-  call_c
-    (Array.of_list (List.map op (ops a b init y)))
-    (pairs batch) (pairs contracting) acc (Option.is_some init)
+  Nx_array.Any (Nx_array.v d layout o.buffer)
+
+(* The call as the plan reads it: its descriptor, a view to fill, the arrays
+   the view groups, and the operands' addresses and dtypes. *)
+type call = {
+  spec : Spec.contract Spec.t;
+  view : Spec.Contract_view.t;
+  dst : Nx_array.any;
+  arrays : Nx_array.any array;
+  ops_c : bytes;
+}
+
+let call ~a ~b ?init ~y ~batch ~contracting ~acc () =
+  let spec =
+    Spec.contract ~batch:(Array.of_list batch)
+      ~contracting:(Array.of_list contracting) ~acc:(dtype acc)
+      ~out:(dtype y.dtype) ~init:(Option.is_some init)
+  in
+  let op (o : operand) = (Rig.Buffer.address o.buffer, o.dtype) in
+  let init_op = match init with Some i -> op i | None -> (0, 0) in
+  {
+    spec;
+    view = Spec.Contract_view.make ();
+    dst = array y;
+    arrays = Array.of_list (List.map array (a :: b :: Option.to_list init));
+    ops_c = ops_c [| op a; op b; init_op; op y |];
+  }
+
+(* Whether the call's axes group, the view then filled. *)
+let fill c = Spec.Contract_view.fill c.view c.spec ~dst:c.dst c.arrays
 
 let planner ~a ~b ?init ~y ~batch ~contracting ~acc () =
   let c = call ~a ~b ?init ~y ~batch ~contracting ~acc () in
-  fun () -> plan_only c
+  fun () -> if fill c then plan_only c.spec c.view c.ops_c else -1
 
 let contract g ~a ~b ?init ~y ~batch ~contracting ~acc () =
-  let plan = plan_c (call ~a ~b ?init ~y ~batch ~contracting ~acc ()) in
+  let c = call ~a ~b ?init ~y ~batch ~contracting ~acc () in
+  let plan = if fill c then plan_c c.spec c.view c.ops_c else None in
   let held = List.map (fun (o : operand) -> o.buffer) (ops a b init y) in
   let image = library g in
   match plan with

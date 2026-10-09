@@ -11,9 +11,8 @@
    init or y is complex or narrower than a byte; a float operand or init
    is wider than a float accumulator, which would round it before the sum;
    init is of the other kind than the accumulator; an integer meets a float
-   accumulator or the reverse; the batch, free or contracting axes do not
-   merge into one axis each; the batch is above 65,535 (the grid's z); or
-   m, n or k is above 2^31 - 1. */
+   accumulator or the reverse; the batch is above 65,535 (the grid's z);
+   or m, n or k is above 2^31 - 1. */
 
 #include "nx_array.h"
 #include "nx_cuda.h"
@@ -150,43 +149,6 @@ static int mma_tile(int kind, int64_t batch, int64_t m, int64_t n) {
   return best;
 }
 
-/* Merges the [count] axes [axes[k]] of each of [n] operands into one: its
-   extent and each operand's stride. Answers 0 if they do not merge into
-   one axis: the operands' extents differ, or an axis past extent 1 steps
-   by other than the next such axis's stride times that axis's extent. No
-   axis is extent 1, and stride 0. It reads the operands as they are:
-   zeroing a descriptor per operand on the stack, some 2.5 KiB of stores a
-   call, made the loads after it wait on Intel cores in half of all
-   processes, those whose stack met the operands in the low 12 address
-   bits (4K aliasing). */
-static int merge(int n, const nx_cuda_operand *const *ops,
-                 const int (*axes)[NX_MAX_RANK], int count, int64_t *extent,
-                 int64_t *strides) {
-  int64_t e = 1;
-  int found = 0;
-  for (int i = 0; i < count; i++)
-    for (int k = 1; k < n; k++)
-      if (ops[k]->dim[axes[k][i]] != ops[0]->dim[axes[0][i]]) return 0;
-  for (int k = 0; k < n; k++) strides[k] = 0;
-  for (int i = 0; i < count; i++) {
-    const int64_t d = ops[0]->dim[axes[0][i]];
-    if (d == 0) {
-      *extent = 0;
-      for (int k = 0; k < n; k++) strides[k] = 0;
-      return 1;
-    }
-    if (d == 1) continue;
-    for (int k = 0; k < n; k++) {
-      const int64_t s = ops[k]->dim[ops[k]->rank + axes[k][i]];
-      if (found && strides[k] != s * d) return 0;
-      strides[k] = s;
-    }
-    e *= d, found = 1;
-  }
-  *extent = e;
-  return 1;
-}
-
 /* Whether operand rows along [contiguous] (stride 1) load as 16-byte
    vectors: every other stride a whole number of vectors, and the first
    element on a vector. */
@@ -198,6 +160,12 @@ static int vectors(uint64_t address, int64_t contiguous, int64_t lead,
 }
 
 static int bytes_of(int dt) { return nx_dtype_row_of(dt).bits / 8; }
+
+/* The address of the operand [o]'s element [offset] elements from its
+   buffer's first byte. */
+static uint64_t first(const nx_cuda_operand *o, int64_t offset) {
+  return o->address + (uint64_t)(offset * bytes_of(o->dtype));
+}
 
 /* Whether an operand of the strides [s] (batch, row, k) has its rows
    contiguous rather than its k. */
@@ -430,52 +398,22 @@ static int plan_skinny(plan *c, int sum, launch *l) {
   return 0;
 }
 
-int nx_cuda_plan_contract(const nx_cuda_contract_in *in,
+int nx_cuda_plan_contract(const nx_spec_contract *s,
+                          const nx_contract_view *v,
                           const nx_cuda_operand *ops, int arch,
                           nx_cuda_records *out, size_t *scratch) {
-  const nx_cuda_operand *a = &ops[0], *b = &ops[1];
-  const nx_cuda_operand *init = in->init ? &ops[2] : NULL;
-  const nx_cuda_operand *y = &ops[in->init ? 3 : 2];
+  const nx_cuda_operand *a = &ops[NX_VIEW_A], *b = &ops[NX_VIEW_B];
+  const nx_cuda_operand *init = s->init ? &ops[NX_VIEW_INIT] : NULL;
+  const nx_cuda_operand *y = &ops[NX_VIEW_DST];
   *scratch = 0;
   if (arch != ARCH_SM_89) return NX_NOT_COMPUTED;
-
-  /* The axes of each group: batch pairs, a's free axes (m), b's (n), and
-     the contracting pairs (k), with y's, and init's as y's. */
-  _Static_assert(NX_MAX_RANK <= 32, "a rank's axes fit 32 bits");
-  uint32_t used_a = 0, used_b = 0; /* bit i: axis i is grouped */
-  int bat[4][NX_MAX_RANK], mm[3][NX_MAX_RANK], nn[3][NX_MAX_RANK],
-      kk[2][NX_MAX_RANK];
-  int nb = in->nbatch, nm = 0, nnn = 0, nk = in->ncontracting;
-  for (int i = 0; i < nb; i++) {
-    bat[0][i] = in->batch[i][0], bat[1][i] = in->batch[i][1];
-    bat[2][i] = bat[3][i] = i;
-    used_a |= 1u << in->batch[i][0], used_b |= 1u << in->batch[i][1];
-  }
-  for (int i = 0; i < nk; i++) {
-    kk[0][i] = in->contracting[i][0], kk[1][i] = in->contracting[i][1];
-    used_a |= 1u << in->contracting[i][0];
-    used_b |= 1u << in->contracting[i][1];
-  }
-  for (int i = 0; i < a->rank; i++)
-    if (!(used_a >> i & 1))
-      mm[0][nm] = i, mm[1][nm] = mm[2][nm] = nb + nm, nm++;
-  for (int i = 0; i < b->rank; i++)
-    if (!(used_b >> i & 1))
-      nn[0][nnn] = i, nn[1][nnn] = nn[2][nnn] = nb + nm + nnn, nnn++;
-  if (y->rank != nb + nm + nnn) return NX_NOT_COMPUTED;
-
-  const nx_cuda_operand *gb[4] = {a, b, y, init ? init : y};
-  const nx_cuda_operand *gm[3] = {a, y, init ? init : y};
-  const nx_cuda_operand *gn[3] = {b, y, init ? init : y};
-  const nx_cuda_operand *gk[2] = {a, b};
-  int64_t batch, m, n, k, sbat[4], sm[3], sn[3], sk[2];
-  if (!merge(4, gb, bat, nb, &batch, sbat) || !merge(3, gm, mm, nm, &m, sm) ||
-      !merge(3, gn, nn, nnn, &n, sn) || !merge(2, gk, kk, nk, &k, sk))
-    return NX_NOT_COMPUTED;
+  const int64_t batch = v->extent[NX_VIEW_BATCH], m = v->extent[NX_VIEW_ROW],
+                n = v->extent[NX_VIEW_COLUMN],
+                k = v->extent[NX_VIEW_CONTRACTED];
   if (batch > 65535 || m > INT32_MAX || n > INT32_MAX || k > INT32_MAX)
     return NX_NOT_COMPUTED;
   if (batch * m * n == 0) return 0;
-  const int acc = in->acc, float_acc = acc == NX_FLOAT32 || acc == NX_FLOAT64;
+  const int acc = s->acc, float_acc = acc == NX_FLOAT32 || acc == NX_FLOAT64;
   if (!summable(a->dtype) || !summable(b->dtype) || !summable(y->dtype) ||
       (init && (!summable(init->dtype) || is_int(init->dtype) == float_acc)) ||
       (float_acc && (bytes_of(a->dtype) > bytes_of(acc) ||
@@ -485,19 +423,29 @@ int nx_cuda_plan_contract(const nx_cuda_contract_in *in,
 
   plan c = {.out = out};
   contract_params *p = &c.p;
-  p->a = (const void *)(uintptr_t)a->address;
-  p->b = (const void *)(uintptr_t)b->address;
-  p->init = init ? (const void *)(uintptr_t)init->address : NULL;
-  p->y = (void *)(uintptr_t)y->address;
-  p->sa[0] = sbat[0], p->sa[1] = sm[0], p->sa[2] = sk[0];
-  p->sb[0] = sbat[1], p->sb[1] = sn[0], p->sb[2] = sk[1];
-  p->sy[0] = sbat[2], p->sy[1] = sm[1], p->sy[2] = sn[1];
-  p->si[0] = sbat[3], p->si[1] = sm[2], p->si[2] = sn[2];
+  /* Each operand's first element and its strides along the view's axes;
+     init's are y's where there is none. */
+  const int64_t(*st)[4] = v->stride;
+  const uint64_t ya = first(y, v->offset[NX_VIEW_DST]);
+  p->a = (const void *)(uintptr_t)first(a, v->offset[NX_VIEW_A]);
+  p->b = (const void *)(uintptr_t)first(b, v->offset[NX_VIEW_B]);
+  p->init = init ? (const void *)(uintptr_t)first(init, v->offset[NX_VIEW_INIT])
+                 : NULL;
+  p->y = (void *)(uintptr_t)ya;
+  p->sa[0] = st[NX_VIEW_A][NX_VIEW_BATCH], p->sa[1] = st[NX_VIEW_A][NX_VIEW_ROW],
+  p->sa[2] = st[NX_VIEW_A][NX_VIEW_CONTRACTED];
+  p->sb[0] = st[NX_VIEW_B][NX_VIEW_BATCH], p->sb[1] = st[NX_VIEW_B][NX_VIEW_COLUMN],
+  p->sb[2] = st[NX_VIEW_B][NX_VIEW_CONTRACTED];
+  p->sy[0] = st[NX_VIEW_DST][NX_VIEW_BATCH], p->sy[1] = st[NX_VIEW_DST][NX_VIEW_ROW],
+  p->sy[2] = st[NX_VIEW_DST][NX_VIEW_COLUMN];
+  const int io = init ? NX_VIEW_INIT : NX_VIEW_DST;
+  p->si[0] = st[io][NX_VIEW_BATCH], p->si[1] = st[io][NX_VIEW_ROW],
+  p->si[2] = st[io][NX_VIEW_COLUMN];
   p->batch = (int32_t)batch, p->m = (int32_t)m, p->n = (int32_t)n,
   p->k = (int32_t)k;
   p->a_dtype = a->dtype, p->b_dtype = b->dtype, p->y_dtype = y->dtype;
   p->init_dtype = init ? init->dtype : y->dtype;
-  p->acc_dtype = in->acc;
+  p->acc_dtype = s->acc;
 
   /* The family, by the operands' and the accumulator's dtypes, then the
      shape. float8 operands decode exactly to bfloat16 and sum on its matrix
@@ -542,7 +490,7 @@ int nx_cuda_plan_contract(const nx_cuda_contract_in *in,
       : sum == ACC_f64 ? yd == NX_FLOAT64
                        : wide && (acc == NX_INT64 || acc == NX_UINT64);
   if (!init && natural && p->sy[2] == 1 && p->sy[1] * yb % 16 == 0 &&
-      p->sy[0] * yb % 16 == 0 && y->address % 16 == 0)
+      p->sy[0] * yb % 16 == 0 && ya % 16 == 0)
     p->aligned |= NX_CONTRACT_Y_WHOLE;
 
   /* The split sum's partials and tickets, the tickets zeroed first. */

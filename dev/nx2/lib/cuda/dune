@@ -6,10 +6,10 @@
 (library
  (name nx_cuda)
  (modules)
- (libraries nx_array)
+ (libraries nx_array nx_kernel)
  (foreign_stubs
   (language c)
-  (include_dirs ../array)
+  (include_dirs ../array ../kernel)
   (extra_deps kernels/sm_89.cubin)
   (flags :standard -DNX_CUDA_KERNELS_DIR=kernels)
   (names fill_cuda plan nx_cuda_stubs)))

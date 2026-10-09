@@ -25,6 +25,7 @@
 
 #include "kernels.h"
 #include "nx_array.h"
+#include "nx_spec.h"
 
 /* What a plan answers when it does not compute a call: nx's expansion of
    the operation runs instead. */
@@ -98,29 +99,23 @@ int nx_cuda_fill(void *stream, void *arg, uint64_t v);
 
 /* Plans */
 
-/* An operand on the GPU: its element at index (i0, …, ik-1) is at
-   [address] plus the Σ ij·dim[rank + j] elements, ij < dim[j]. */
+/* An operand on the GPU: the address of its buffer's first byte and its
+   dtype. A contraction view places its elements. */
 typedef struct {
   uint64_t address;
-  int dtype, rank;
-  int64_t dim[2 * NX_MAX_RANK];
+  int dtype;
 } nx_cuda_operand;
 
-/* A contraction with plain loads and no scales or segments: the
-   batch pairs and contracting pairs of a's and b's axes, the accumulator's
-   dtype, and whether an init operand is given. */
-typedef struct {
-  int batch[NX_MAX_RANK][2], nbatch;
-  int contracting[NX_MAX_RANK][2], ncontracting;
-  int acc, init;
-} nx_cuda_contract_in;
-
-/* Appends the launches of one contraction to [out] and returns their
-   count; or NX_NOT_COMPUTED, or NX_OUT_OF_MEMORY if the records cannot
-   grow, having appended nothing. [ops] are a, b, init
-   if [in->init], and y. [arch] is the cubin's architecture, as 89 for
-   sm_89. [*scratch] is set to the scratch bytes the launches address. */
-int nx_cuda_plan_contract(const nx_cuda_contract_in *in,
+/* Appends the launches of the contraction [s], its axes grouped in the
+   view [v] (Spec.Contract_view, filled), to [out] and returns their count;
+   or NX_NOT_COMPUTED, or NX_OUT_OF_MEMORY if the records cannot grow,
+   having appended nothing. [ops] are the view's operands, by its indices
+   (NX_VIEW_A to NX_VIEW_DST); ops[NX_VIEW_INIT] is unread where [s] has no
+   init. [s] and [v] are read during the call alone. [arch] is the cubin's
+   architecture, as 89 for sm_89. [*scratch] is set to the scratch bytes
+   the launches address. */
+int nx_cuda_plan_contract(const nx_spec_contract *s,
+                          const nx_contract_view *v,
                           const nx_cuda_operand *ops, int arch,
                           nx_cuda_records *out, size_t *scratch);
 

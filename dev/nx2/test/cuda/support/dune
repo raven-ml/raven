@@ -3,10 +3,10 @@
 
 (library
  (name nx_cuda_support)
- (libraries nx_array nx_cuda rig rig.cuda rig.edge rig.gpu_lock windtrap)
+ (libraries nx_array nx_kernel nx_cuda rig rig.cuda rig.edge rig.gpu_lock windtrap)
  (foreign_stubs
   (language c)
-  (include_dirs ../../../lib/cuda ../../../lib/array)
+  (include_dirs ../../../lib/cuda ../../../lib/array ../../../lib/kernel)
   (extra_deps sm_89.cubin)
   (flags :standard -DNX_HARNESS_CUBIN=sm_89.cubin)
   (names nx_cuda_support_stubs)))
