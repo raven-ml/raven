@@ -18,23 +18,26 @@ type t = {
 
 let field (lo, n) x = (x lsr lo) land ((1 lsl n) - 1)
 
-(* The families by their architecture in NV_PMC_BOOT_42: each one's name prefix
-   and the implementations linux-firmware has GSP firmware for. *)
+(* The prefix of a family's chip names. *)
+let prefix = function Ampere -> "GA10" | Ada -> "AD10" | Blackwell -> "GB20"
+
+(* The families by their architecture in NV_PMC_BOOT_42, with the
+   implementations linux-firmware has GSP firmware for. *)
 let families =
   [
-    (Defs.nv_pmc_boot_42_architecture_ga100, (Ampere, "GA10", [ 2; 3; 4; 6; 7 ]));
-    (Defs.nv_pmc_boot_42_architecture_ad100, (Ada, "AD10", [ 2; 3; 4; 6; 7 ]));
-    ( Defs.nv_pmc_boot_42_architecture_gb200,
-      (Blackwell, "GB20", [ 2; 3; 5; 6; 7 ]) );
+    (Defs.nv_pmc_boot_42_architecture_ga100, (Ampere, [ 2; 3; 4; 6; 7 ]));
+    (Defs.nv_pmc_boot_42_architecture_ad100, (Ada, [ 2; 3; 4; 6; 7 ]));
+    (Defs.nv_pmc_boot_42_architecture_gb200, (Blackwell, [ 2; 3; 5; 6; 7 ]));
   ]
 
 let chip boot42 =
   let arch = field Defs.nv_pmc_boot_42_architecture boot42 in
   let impl = field Defs.nv_pmc_boot_42_implementation boot42 in
   match List.assoc_opt arch families with
-  | Some (family, _, impls) when List.mem impl impls -> Ok (family, impl)
-  | Some (_, prefix, _) ->
-      Error (strf "the chip %s%X is not one this library boots" prefix impl)
+  | Some (family, impls) when List.mem impl impls -> Ok (family, impl)
+  | Some (family, _) ->
+      Error
+        (strf "the chip %s%X is not one this library boots" (prefix family) impl)
   | None ->
       Error
         (strf
@@ -42,12 +45,7 @@ let chip boot42 =
             this library boots"
            arch impl)
 
-let name c =
-  let prefix =
-    match c.family with Ampere -> "GA10" | Ada -> "AD10" | Blackwell -> "GB20"
-  in
-  strf "%s%X" prefix c.implementation
-
+let name c = strf "%s%X" (prefix c.family) c.implementation
 let get c r = Window.get32 c.regs r
 let set c r x = Window.set32 c.regs r x
 

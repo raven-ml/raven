@@ -15,6 +15,11 @@ let levels = function
 
 let bits = function V2 -> 49 | V3 -> 57
 
+(* Pages map at the leaf, the dual level and the one above it. *)
+let pages v =
+  List.filteri (fun i _ -> i < 3) (levels v)
+  |> List.rev_map (fun b -> (1 lsl b, 1 lsl b))
+
 (* Entries *)
 
 (* [put (lo, n) x e] is [e] with its [n]-bit field from bit [lo] set to [x]; a
@@ -144,8 +149,7 @@ let format (c : Chip.t) bar ~failed : Page_table.format =
   let v = version c.family in
   let levels = levels v in
   let n = List.length levels in
-  (* The dual level is the one above the leaf; pages map at the leaf, the dual
-     level and the one above it (4 KiB, 2 MiB, 512 MiB). *)
+  (* The dual level is the one above the leaf. *)
   let dual_level = n - 2 in
   let set64 table i e = Window.set64 bar (table + (8 * i)) e in
   let set_dual table i (lo, hi) =

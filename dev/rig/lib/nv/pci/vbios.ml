@@ -215,23 +215,18 @@ let fwsec_desc rom =
    GPU's own ROM, and the 1 MiB region at [frts] of the GPU's memory. *)
 let frts_command frts =
   let module C = Defs.Frts_cmd in
-  let b = Bytes.make C.sizeof '\000' in
-  let set (off, n) x =
-    match n with
-    | 4 -> Bytes.set_int32_le b off (Int32.of_int x)
-    | _ -> Bytes.set_int64_le b off (Int64.of_int x)
-  in
-  set C.read_vbios_desc_version 1;
-  set C.read_vbios_desc_size Defs.Read_vbios_desc.sizeof;
-  set C.read_vbios_desc_flags Defs.fwseclic_read_vbios_struct_flags;
-  set C.frts_region_desc_version 1;
-  set C.frts_region_desc_size Defs.Frts_region_desc.sizeof;
-  set C.frts_region_desc_frts_region_offset4_k (frts lsr 12);
-  set C.frts_region_desc_frts_region_size
-    Defs.fwseclic_frts_region_size_1mb_in_4k;
-  set C.frts_region_desc_frts_region_media_type
-    Defs.fwseclic_frts_region_media_fb;
-  Bytes.unsafe_to_string b
+  Field.record C.sizeof (fun b ->
+      let set = Field.set b in
+      set C.read_vbios_desc_version 1;
+      set C.read_vbios_desc_size Defs.Read_vbios_desc.sizeof;
+      set C.read_vbios_desc_flags Defs.fwseclic_read_vbios_struct_flags;
+      set C.frts_region_desc_version 1;
+      set C.frts_region_desc_size Defs.Frts_region_desc.sizeof;
+      set C.frts_region_desc_frts_region_offset4_k (frts lsr 12);
+      set C.frts_region_desc_frts_region_size
+        Defs.fwseclic_frts_region_size_1mb_in_4k;
+      set C.frts_region_desc_frts_region_media_type
+        Defs.fwseclic_frts_region_media_fb)
 
 let round_up n a = (n + a - 1) / a * a
 

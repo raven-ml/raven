@@ -27,6 +27,11 @@ val levels : version -> int list
 val bits : version -> int
 (** [bits v] is the width of a virtual address: [49] or [57]. *)
 
+val pages : version -> (int * int) list
+(** [pages v] is the blocks [v]'s tables map memory with, largest first, each
+    aligned to its size: pages of 512 MiB, 2 MiB and 4 KiB, at the level above
+    the dual level, the dual level and the leaf. *)
+
 val pte :
   version ->
   pa:int ->

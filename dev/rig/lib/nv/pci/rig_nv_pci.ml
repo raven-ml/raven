@@ -7,7 +7,6 @@ open Rig_pci
 
 let strf = Printf.sprintf
 let ( let* ) = Result.bind
-let mib = 1 lsl 20
 let gib = 1 lsl 30
 
 module Chip = Chip
@@ -167,9 +166,6 @@ let stop_gsp fn gsp =
 
 (* Opening *)
 
-(* The blocks the page tables map memory with: 512 MiB, 2 MiB and 4 KiB. *)
-let pages = [ (512 * mib, 512 * mib); (2 * mib, 2 * mib); (0x1000, 0x1000) ]
-
 (* The usermode doorbell, [NVC361_NOTIFY_CHANNEL_PENDING], in BAR 0. *)
 let doorbell_at = 0xbb0090
 
@@ -248,7 +244,7 @@ let start fn (c : Chip.t) (fw : Images.t) ~failed =
     Page_table.create (Mmu.format c bar ~failed) space ~memory:top
       ~boot:(Gsp.boot_pool fw.start)
       ~tables:(if Window.length bar >= memory then Main else Pool)
-      ~pages
+      ~pages:(Mmu.pages (Mmu.version c.family))
   in
   (* The boot pool holds only the falcons' images: the GSP's objects come from
      the main pool. *)
