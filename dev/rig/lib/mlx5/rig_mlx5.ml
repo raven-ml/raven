@@ -83,8 +83,15 @@ type path = {
 }
 
 (* Memory a ring and its doorbell record live in: the ring's bytes rounded up to
-   pages, then a page whose first 8 bytes are the record. *)
-type ring = { mem : int; size : int; buf : A.buffer; record : int }
+   pages, then a page whose first 8 bytes are the record. [owned] is cleared
+   once the memory is given back, which happens once whoever gives it. *)
+type ring = {
+  mem : int;
+  size : int;
+  buf : A.buffer;
+  record : int;
+  owned : bool Atomic.t;
+}
 
 type t = {
   path : path;
@@ -156,9 +163,16 @@ let ring_of nic bytes =
   if mem < 0 then
     Error (strf "allocating %d bytes of rings: errno %d" size (-mem))
   else
-    Ok { mem; size; buf = view mem bytes; record = mem + round_up bytes page }
+    Ok
+      {
+        mem;
+        size;
+        buf = view mem bytes;
+        record = mem + round_up bytes page;
+        owned = Atomic.make true;
+      }
 
-let free_ring r = free r.mem r.size
+let free_ring r = if Atomic.exchange r.owned false then free r.mem r.size
 
 (* Driver data *)
 

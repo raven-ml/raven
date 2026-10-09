@@ -191,7 +191,9 @@ let events =
           let e = M.wait nic ~ms:50 in
           let elapsed = Unix.gettimeofday () -. start in
           equal int 0 (List.length e);
-          at_least ~msg:"seconds waited" float_exact ~than:0.05 elapsed);
+          (* The library times on a monotonic clock, this test on the wall
+             clock: a millisecond covers their difference. *)
+          at_least ~msg:"seconds waited" float_exact ~than:0.049 elapsed);
       test "wait answers an event at once" (fun () ->
           let nic, _ = open_nic ~wait:(fun _ -> [ M.Nic_failed ]) () in
           let start = Unix.gettimeofday () in
@@ -201,4 +203,21 @@ let events =
             (Unix.gettimeofday () -. start));
     ]
 
-let () = exit (run "rig_mlx5" [ opening; regions; room; events ])
+let closing =
+  group "closing"
+    [
+      test "calls after close raise, and a second close does nothing" (fun () ->
+          let nic, calls = open_nic () in
+          let cq = Result.get_ok (M.Cq.make nic 4) in
+          let qp = Result.get_ok (M.Qp.make cq 2) in
+          M.Qp.destroy qp;
+          M.close nic;
+          M.close nic;
+          equal ~msg:"the path is closed once" int 1 calls.closed;
+          raises_match (Exn.invalid_arg ~substring:"closed") (fun () ->
+              M.Cq.poll cq);
+          raises_match (Exn.invalid_arg ~substring:"closed") (fun () ->
+              M.Cq.destroy cq));
+    ]
+
+let () = exit (run "rig_mlx5" [ opening; regions; room; events; closing ])
