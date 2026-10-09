@@ -204,6 +204,8 @@ let describe c =
   let a, b = Lazy.force devices in
   {
     G.devices = [| Rig.arch a; Rig.arch b |];
+    code = [||];
+    ints = 0;
     memory =
       Array.init 3 (fun m ->
           alloc
@@ -251,7 +253,7 @@ let model_law c =
   let expect = model c in
   for n = 0 to 2 do
     let xs = Array.map2 (fun d s -> of_bytes ds.(d) s) c.in_dev c.inputs in
-    let points = G.run p { inputs = xs } in
+    let points = G.run p { inputs = xs; ints = [||] } in
     let ran =
       List.filter
         (fun d ->
@@ -359,6 +361,8 @@ let hole_law h =
   let t =
     {
       G.devices = [| Rig.arch d |];
+      code = [||];
+      ints = 0;
       memory = [| alloc 0 8; alloc ~init 0 16 |];
       images = [| { device = 0; binary = functions } |];
       inputs =
@@ -382,7 +386,7 @@ let hole_law h =
   in
   let p = load_ok t [ d ] in
   let x = B.create d 16 and y = B.create d 16 in
-  ignore (G.run p { inputs = [| x; y |] });
+  ignore (G.run p { inputs = [| x; y |]; ints = [||] });
   let x = read x and y = read y in
   let a = word x 0 in
   let w = (a + h.add) lsr h.shift in
@@ -405,6 +409,8 @@ let hole_law h =
 let one_device_fill ?(copies = G.One) d =
   {
     G.devices = [| Rig.arch d |];
+    code = [||];
+    ints = 0;
     memory = [| alloc ~copies 0 64 |];
     images = [| { device = 0; binary = functions } |];
     inputs = [||];
@@ -415,7 +421,7 @@ let test_two_waits () =
   let d, pd = polled "two" in
   let p = load_ok (one_device_fill ~copies:Two d) [ d ] in
   ignore (P.launches pd);
-  let empty = { G.inputs = [||] } in
+  let empty = { G.inputs = [||]; ints = [||] } in
   ignore (G.run p empty);
   ignore (G.run p empty);
   equal ~msg:"runs 0 and 1 handed over, neither run" int 0
@@ -429,7 +435,7 @@ let test_one_waits_not () =
   let d, pd = polled "one" in
   let p = load_ok (one_device_fill d) [ d ] in
   ignore (P.launches pd);
-  let empty = { G.inputs = [||] } in
+  let empty = { G.inputs = [||]; ints = [||] } in
   for _ = 1 to 3 do
     ignore (G.run p empty)
   done;
@@ -444,7 +450,7 @@ let test_after () =
   let a, _ = polled "after-a" and b, _ = polled "after-b" in
   let pa = load_ok (one_device_fill a) [ a ] in
   let pb = load_ok (one_device_fill b) [ b ] in
-  let empty = { G.inputs = [||] } in
+  let empty = { G.inputs = [||]; ints = [||] } in
   let pt = (G.run pa empty).(0) in
   equal ~msg:"a's run not reached" bool true
     (Rig.signaled a < Rig.Point.value pt);
@@ -459,6 +465,8 @@ let test_after () =
 let base d =
   {
     G.devices = [| Rig.arch d |];
+    code = [||];
+    ints = 0;
     memory = [| alloc 0 64 |];
     images = [| { device = 0; binary = functions } |];
     inputs = [| { device = 0; bytes = 64; access = B.Read_write } |];
@@ -669,6 +677,8 @@ let test_unborrowable () =
   let t =
     {
       G.devices = [| Rig.arch a; Rig.arch b |];
+      code = [||];
+      ints = 0;
       memory = [| alloc 1 64 |];
       images = [| { device = 0; binary = functions } |];
       inputs = [||];
@@ -690,13 +700,291 @@ let test_frame_refusals () =
   let d = fst (polled "frame") and e = fst (polled "frame-other") in
   let p = load_ok (base d) [ d ] in
   let refused msg inputs =
-    raises_match ~msg Exn.invalid_arg (fun () -> G.run p { inputs })
+    raises_match ~msg Exn.invalid_arg (fun () ->
+        G.run p { inputs; ints = [||] })
   in
   refused "no input" [||];
   refused "two inputs" [| B.create d 64; B.create d 64 |];
   refused "an input of another device" [| B.create e 64 |];
   refused "an input of fewer bytes" [| B.create d 63 |];
-  ignore (G.run p { inputs = [| B.create d 65 |] });
+  ignore (G.run p { inputs = [| B.create d 65 |]; ints = [||] });
+  Rig.wait d (Rig.submitted d)
+
+(* Host code and loops *)
+
+(* test/host's fixtures: [affine] stores [a * in[i] + c] at [out[i]] for [i]
+   below [n], over buffers [out], [in] and values [n], [a], [c]; [loop] calls
+   the program at its value 0 as many times as its value 1, directly when its
+   value 2 is [2], on its buffers and the values after its eighth. *)
+let affine =
+  {
+    obj = Rig_host_support.fixture ~dir:"../host/fixtures" "affine";
+    entry = "affine";
+  }
+
+let loop =
+  {
+    obj = Rig_host_support.fixture ~dir:"../host/fixtures" "loop";
+    entry = "loop";
+  }
+
+(* [x.(0) <- a * x.(0) + c], for host code [code]'s [affine]. *)
+let step_affine ?(code = 0) x ~a ~c =
+  G.Host
+    {
+      code;
+      buffers = [| (x, B.Read_write); (x, B.Read) |];
+      values = [| Fixed 1; a; c |];
+      split = None;
+    }
+
+let one_word d = of_bytes d (le64 0)
+let word_of b = word (read b) 0
+
+type ints_case = { n : int; a : int; c : int }
+
+let gen_ints =
+  let open Gen in
+  let+ n = int_range 0 8 and+ a = int_range 0 3 and+ c = int_range 1 4 in
+  { n; a; c }
+
+let gen_ints =
+  Gen.with_pp
+    (fun ppf i -> Format.fprintf ppf "n %d, a %d, c %d" i.n i.a i.c)
+    gen_ints
+
+(* The frame's int [n] becomes [a * n + c] through host code; a launch over as
+   many groups writes as many words. *)
+let ints_law i =
+  let d = fst (Lazy.force devices) in
+  let t =
+    {
+      G.devices = [| Rig.arch d |];
+      code = [| affine |];
+      ints = 1;
+      memory = [||];
+      images = [| { device = 0; binary = functions } |];
+      inputs = [| { device = 0; bytes = 256; access = B.Read_write } |];
+      steps =
+        [|
+          step_affine Ints ~a:(Fixed i.a) ~c:(Fixed i.c);
+          G.Submit
+            {
+              device = 0;
+              reads = [||];
+              writes = [| Input 0 |];
+              fixed = [||];
+              parts =
+                [|
+                  (let f = fill ~image:0 ~groups:1 100 in
+                   match f.work with
+                   | Launch l ->
+                       {
+                         f with
+                         work =
+                           Launch { l with groups = (Int 0, Fixed 1, Fixed 1) };
+                       }
+                   | _ -> f);
+                |];
+            };
+        |];
+    }
+  in
+  let p = load_ok t [ d ] in
+  let x = of_bytes d (String.make 256 '\000') in
+  ignore (G.run p { inputs = [| x |]; ints = [| i.n |] });
+  let m = (i.a * i.n) + i.c in
+  equal ~msg:"a launch over the computed groups" string
+    (String.concat "" (List.init m (fun j -> le64 (100 + j)))
+    ^ String.make (256 - (8 * m)) '\000')
+    (read x)
+
+(* A loop of [k] trips: host code counts the trips in input 0, and a launch
+   stores each trip's index in input 1. *)
+let loop_law k =
+  let d = fst (Lazy.force devices) in
+  let t =
+    {
+      G.devices = [| Rig.arch d |];
+      code = [| affine |];
+      ints = 2;
+      memory = [||];
+      images = [| { device = 0; binary = functions } |];
+      inputs = Array.make 2 { G.device = 0; bytes = 8; access = B.Read_write };
+      steps =
+        [|
+          Loop
+            {
+              trips = Int 0;
+              trip = Some 1;
+              flag = None;
+              body =
+                [|
+                  step_affine (Input 0) ~a:(Fixed 1) ~c:(Fixed 1);
+                  submit 0 ~writes:[| Input 1 |]
+                    [|
+                      fill ~image:0 ~groups:1 0
+                        ~holes:[| hole 8 (G.Int 1 : value) |];
+                    |];
+                |];
+            };
+        |];
+    }
+  in
+  let p = load_ok t [ d ] in
+  let counter = one_word d and last = one_word d in
+  ignore (G.run p { inputs = [| counter; last |]; ints = [| k |] });
+  equal ~msg:"trips" int (max 0 k) (word_of counter);
+  equal ~msg:"the last trip's index" int (max 0 (k - 1)) (word_of last)
+
+(* A loop whose flag a device's step clears in its first trip runs once: the
+   flag is read after that work. *)
+let test_flag () =
+  let d, _ = polled "flag" in
+  let t =
+    {
+      G.devices = [| Rig.arch d |];
+      code = [| affine |];
+      ints = 0;
+      memory = [| alloc ~init:(data (le64 1)) 0 8 |];
+      images = [| { device = 0; binary = functions } |];
+      inputs = [| { device = 0; bytes = 8; access = B.Read_write } |];
+      steps =
+        [|
+          Loop
+            {
+              trips = Fixed 10;
+              trip = None;
+              flag = Some { memory = 0; offset = 0; length = 8 };
+              body =
+                [|
+                  submit 0
+                    ~writes:[| Memory { memory = 0; offset = 0; length = 8 } |]
+                    [| fill ~image:0 ~groups:1 0 |];
+                  step_affine (Input 0) ~a:(Fixed 1) ~c:(Fixed 1);
+                |];
+            };
+        |];
+    }
+  in
+  let p = load_ok t [ d ] in
+  let counter = one_word d in
+  ignore (G.run p { inputs = [| counter |]; ints = [||] });
+  equal ~msg:"trips" int 1 (word_of counter)
+
+(* Host code calls other host code through its address, a [Code] leaf. *)
+let test_code_leaf () =
+  let d = fst (Lazy.force devices) in
+  let t =
+    {
+      G.devices = [| Rig.arch d |];
+      code = [| loop; affine |];
+      ints = 0;
+      memory = [||];
+      images = [||];
+      inputs = [| { device = 0; bytes = 8; access = B.Read_write } |];
+      steps =
+        [|
+          Host
+            {
+              code = 0;
+              buffers = [| (Input 0, B.Read_write); (Input 0, B.Read) |];
+              values =
+                [|
+                  Leaf (Code 1);
+                  Fixed 3;
+                  Fixed 2;
+                  Fixed 0;
+                  Fixed 0;
+                  Fixed 0;
+                  Fixed 0;
+                  Fixed 3;
+                  Fixed 1;
+                  Fixed 1;
+                  Fixed 1;
+                |];
+              split = None;
+            };
+        |];
+    }
+  in
+  let p = load_ok t [ d ] in
+  let counter = one_word d in
+  ignore (G.run p { inputs = [| counter |]; ints = [||] });
+  equal ~msg:"three calls of affine" int 3 (word_of counter)
+
+let host_refusals =
+  let one d = [ d ] in
+  let with_steps ?(ints = 0) ?(code = [| affine |]) d steps =
+    { (base d) with code; ints; steps }
+  in
+  [
+    ( "host code that does not link",
+      (fun d -> with_steps ~code:[| { obj = "nonsense"; entry = "f" } |] d [||]),
+      one );
+    ( "an int past the ints",
+      (fun d ->
+        with_steps ~ints:1 d [| step_affine Ints ~a:(Int 1) ~c:(Fixed 0) |]),
+      one );
+    ( "a trip past the ints",
+      (fun d ->
+        with_steps ~ints:1 d
+          [|
+            Loop { trips = Fixed 1; trip = Some 1; flag = None; body = [||] };
+          |]),
+      one );
+    ( "a flag of no byte",
+      (fun d ->
+        with_steps d
+          [|
+            Loop
+              {
+                trips = Fixed 1;
+                trip = None;
+                flag = Some { memory = 0; offset = 0; length = 0 };
+                body = [||];
+              };
+          |]),
+      one );
+    ( "a split over one value",
+      (fun d ->
+        with_steps d
+          [|
+            Host
+              {
+                code = 0;
+                buffers = [||];
+                values = [| Fixed 0; Fixed 0 |];
+                split = Some { extent = Fixed 1; blocks = 1; lo = 1; hi = 1 };
+              };
+          |]),
+      one );
+    ( "a code's index",
+      (fun d ->
+        with_steps d [| step_affine ~code:3 Ints ~a:(Fixed 1) ~c:(Fixed 0) |]),
+      one );
+  ]
+
+(* Memory a host step names that the host does not address. *)
+let test_host_unaddressed () =
+  let d, _ =
+    P.open_ ~host_visible:false
+      (strf "program:hidden-%d" (Atomic.fetch_and_add opened 1))
+  in
+  let t =
+    {
+      (base d) with
+      code = [| affine |];
+      steps = [| step_affine (all 0) ~a:(Fixed 1) ~c:(Fixed 0) |];
+    }
+  in
+  is_error ~pp:(fun _ _ -> ()) (G.load t [| d |])
+
+let test_ints_refusal () =
+  let d = fst (polled "ints") in
+  let p = load_ok { (base d) with ints = 1 } [ d ] in
+  raises_match ~msg:"two ints for one" Exn.invalid_arg (fun () ->
+      G.run p { inputs = [| B.create d 64 |]; ints = [| 1; 2 |] });
   Rig.wait d (Rig.submitted d)
 
 let tests =
@@ -716,6 +1004,19 @@ let tests =
            and in a launch"
           gen_hole hole_law;
       ];
+    group ~timeout "host code"
+      [
+        prop
+          "host code computes ints from the frame's, which a launch's geometry \
+           reads"
+          gen_ints ints_law;
+        prop
+          "a loop runs its body as many times as its trips, none for a \
+           negative count, each trip's index in the ints"
+          (Gen.int_range (-2) 6) loop_law;
+        test "a loop stops at a flag a device cleared" test_flag;
+        test "host code calls host code a Code leaf names" test_code_leaf;
+      ];
     group ~timeout "order"
       [
         test "run n of memory of two copies follows run n - 2 on its copy"
@@ -728,11 +1029,16 @@ let tests =
       [
         cases
           ~name:(fun (n, _, _) -> n)
-          "load answers Error for" refusals test_refusal;
+          "load answers Error for" (refusals @ host_refusals) test_refusal;
         test "load answers Error for memory a device cannot borrow"
           test_unborrowable;
+        test
+          "load answers Error for host code over memory the host does not \
+           address"
+          test_host_unaddressed;
         test "load raises for devices of several machines" test_machines;
         test "run raises for a frame that does not fit" test_frame_refusals;
+        test "run raises for more ints than the program's" test_ints_refusal;
       ];
   ]
 

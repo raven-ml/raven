@@ -14,11 +14,18 @@ type leaf =
   | Address of { memory : int; on : int }
   | Handle of int
   | Entry of { image : int; name : string }
+  | Code of int
 
 type width = W32 | W64
 type 'a hole = { at : int; width : width; leaf : 'a; add : int; shift : int }
 type 'a data = { bytes : string; holes : 'a hole array }
-type value = Fixed of int | Input of { input : int; on : int } | Leaf of leaf
+
+type value =
+  | Fixed of int
+  | Int of int
+  | Input of { input : int; on : int }
+  | Leaf of leaf
+
 type copies = One | Two
 
 type memory =
@@ -32,7 +39,7 @@ type memory =
 
 type image = { device : int; binary : leaf data }
 type view = { memory : int; offset : int; length : int }
-type slot = Memory of view | Input of int
+type slot = Memory of view | Input of int | Ints
 
 type work =
   | Words of view
@@ -58,14 +65,34 @@ type submit = {
   fixed : (view * B.access) array;
 }
 
-type step = Submit of submit | Move of { src : slot; dst : slot }
+type code = { obj : string; entry : string }
+type split = { extent : value; blocks : int; lo : int; hi : int }
+
+type step =
+  | Submit of submit
+  | Move of { src : slot; dst : slot }
+  | Host of {
+      code : int;
+      buffers : (slot * B.access) array;
+      values : value array;
+      split : split option;
+    }
+  | Loop of {
+      trips : value;
+      trip : int option;
+      flag : view option;
+      body : step array;
+    }
+
 type input = { device : int; bytes : int; access : B.access }
 
 type t = {
   devices : string array;
   memory : memory array;
   images : image array;
+  code : code array;
   inputs : input array;
+  ints : int;
   steps : step array;
 }
 
@@ -73,6 +100,11 @@ type t = {
 exception Refused of string
 
 let refuse fmt = Printf.ksprintf (fun why -> raise (Refused why)) fmt
+
+(* The run's ints are memory [Array.length t.memory] of two copies, which [load]
+   makes on the host: a slot [Ints] is its view. *)
+let ints_view t =
+  { memory = Array.length t.memory; offset = 0; length = 8 * t.ints }
 
 (* Checks *)
 
@@ -91,13 +123,15 @@ let check_leaf t ~images = function
       index "device" (Array.length t.devices) on
   | Handle m -> index "memory" (Array.length t.memory) m
   | Entry { image; _ } -> index "image" images image
+  | Code i -> index "code" (Array.length t.code) i
 
 let leaf_two t = function
   | Address { memory; _ } | Handle memory -> two t memory
-  | Entry _ -> false
+  | Entry _ | Code _ -> false
+
+let width h = match h.width with W32 -> 4 | W64 -> 8
 
 let check_holes what len check holes =
-  let width h = match h.width with W32 -> 4 | W64 -> 8 in
   let sorted = List.sort (fun a b -> compare a.at b.at) (Array.to_list holes) in
   ignore
     (List.fold_left
@@ -110,8 +144,7 @@ let check_holes what len check holes =
        None sorted);
   Array.iter
     (fun h ->
-      let w = match h.width with W32 -> 4 | W64 -> 8 in
-      if h.at < 0 || h.at + w > len then
+      if h.at < 0 || h.at + width h > len then
         refuse "%s: a hole at %d outside its %d bytes" what h.at len;
       if h.shift < 0 || h.shift > 62 then
         refuse "%s: a hole's shift %d outside 0 to 62" what h.shift;
@@ -128,9 +161,11 @@ let check_view t (v : view) =
 let check_slot t = function
   | Memory v -> check_view t v
   | Input i -> index "input" (Array.length t.inputs) i
+  | Ints -> ()
 
 let check_value t : value -> unit = function
   | Fixed _ -> ()
+  | Int i -> index "int" t.ints i
   | Input { input; on } ->
       index "input" (Array.length t.inputs) input;
       index "device" (Array.length t.devices) on
@@ -158,6 +193,41 @@ let check_work t = function
         n (check_value t) params.holes;
       List.iter (check_value t) [ gx; gy; gz; tx; ty; tz; shared ]
 
+let rec check_step t ndev = function
+  | Submit s ->
+      index "device" ndev s.device;
+      Array.iter (fun p -> check_work t p.work) s.parts;
+      Array.iter (check_slot t) s.reads;
+      Array.iter (check_slot t) s.writes;
+      Array.iter (fun (v, _) -> check_view t v) s.fixed
+  | Move { src; dst } ->
+      check_slot t src;
+      check_slot t dst
+  | Host { code; buffers; values; split } ->
+      index "code" (Array.length t.code) code;
+      Array.iter (fun (s, _) -> check_slot t s) buffers;
+      Array.iter (check_value t) values;
+      Option.iter
+        (fun s ->
+          check_value t s.extent;
+          let n = Array.length values in
+          if
+            s.blocks < 1 || s.lo < 0 || s.lo >= n || s.hi < 0 || s.hi >= n
+            || s.lo = s.hi
+          then
+            refuse "code %d: a split of %d blocks over values %d and %d of %d"
+              code s.blocks s.lo s.hi n)
+        split
+  | Loop { trips; trip; flag; body } ->
+      check_value t trips;
+      Option.iter (index "int" t.ints) trip;
+      Option.iter
+        (fun (v : view) ->
+          check_view t v;
+          if v.length < 1 then refuse "memory %d: a flag of no byte" v.memory)
+        flag;
+      Array.iter (check_step t ndev) body
+
 let check t devices =
   if Array.length devices <> Array.length t.devices then
     refuse "%d devices for a program of %d" (Array.length devices)
@@ -168,6 +238,7 @@ let check t devices =
       if a <> arch then
         refuse "device %d: %s is %S, not %S" i (Rig.name devices.(i)) a arch)
     t.devices;
+  if t.ints < 0 then refuse "%d ints" t.ints;
   let ndev = Array.length t.devices in
   Array.iteri
     (fun i (Alloc { device; bytes; init; copies; _ }) ->
@@ -198,23 +269,14 @@ let check t devices =
       index "device" ndev input.device;
       if input.bytes < 0 then refuse "input %d: %d bytes" i input.bytes)
     t.inputs;
-  Array.iter
-    (function
-      | Submit s ->
-          index "device" ndev s.device;
-          Array.iter (fun p -> check_work t p.work) s.parts;
-          Array.iter (check_slot t) s.reads;
-          Array.iter (check_slot t) s.writes;
-          Array.iter (fun (v, _) -> check_view t v) s.fixed
-      | Move { src; dst } ->
-          check_slot t src;
-          check_slot t dst)
-    t.steps
+  Array.iter (check_step t ndev) t.steps
 
 (* Loading *)
 
+external host_address : B.t -> int = "caml_rig_program_host"
+
 (* A launch's words that a run writes into its block before each submit: its
-   parameters' holes over the run's inputs, and its geometry. *)
+   parameters' holes over the run's values, and its geometry. *)
 type launch_run = {
   block : Sub.block;
   params : string;
@@ -238,16 +300,38 @@ type prepared = {
 type lstep =
   | Lsubmit of { spec : submit; copies : prepared array }
   | Lmove of { src : slot; dst : slot }
+  | Lhost of {
+      code : Rig_host.t;
+      buffers : (slot * B.access) array;
+      values : value array;
+      split : split option;
+      addresses : int array;
+      words : int array;
+    }
+  | Lloop of {
+      trips : value;
+      trip : int option;
+      flag : view option;
+      body : lstep array;
+    }
 
 type loaded = {
   t : t;
   devices : Rig.t array;
-  mem : B.t array array; (* Each memory's copies, on its device. *)
+  mem : B.t array array;
+      (* Each memory's copies, on its device, then the run's ints. *)
+  ints : (int64, Bigarray.int64_elt, Bigarray.c_layout) Bigarray.Array1.t array;
+      (* Each copy of the run's ints, as words. *)
   borrows : (int * int * int, B.t) Hashtbl.t;
       (* By memory, copy and device: the borrows made at load. *)
   mutable images : Rig.Image.t array; (* Those loaded so far, while loading. *)
+  code : Rig_host.t array;
+  hold : Rig.Hold.t;
+      (* What every submission keeps until its work is done: the code, which an
+         address in its work may name. *)
   mutable steps : lstep array;
-  twos : B.t array array; (* Copy [k] of each memory of [Two] copies. *)
+  twos : B.t array array; (* Copy [k] of each memory of two copies. *)
+  flag : B.t; (* The byte a loop's flag is read into. *)
   last : Rig.Point.t option array; (* By device: the run's last point. *)
   lock : Mutex.t;
   mutable runs : int;
@@ -267,12 +351,18 @@ let on p m k d =
             b'
         | None -> refuse "memory %d: %s cannot borrow it" m (Rig.name dev))
 
-let copy_of p m k = if two p.t m then k else 0
+let copy_of p m k = if Array.length p.mem.(m) = 2 then k else 0
 
 let view p k d (v : view) =
   B.view
     (on p v.memory (copy_of p v.memory k) d)
     ~first:v.offset ~length:v.length
+
+(* The memory of [s], [None] for an input. *)
+let slot_view p = function
+  | Memory v -> Some v
+  | Ints -> Some (ints_view p.t)
+  | Input _ -> None
 
 (* The value of [l] for copy [k]. *)
 let leaf_value p k = function
@@ -291,6 +381,7 @@ let leaf_value p k = function
             (Rig.name (Rig.Image.device i))
             image name
       | exception Invalid_argument why -> refuse "%s" why)
+  | Code i -> Rig_host.address p.code.(i)
 
 (* The word hole [h] makes of the value [v] over [word], the word of its bytes
    there: the value's low bits ORed into it. *)
@@ -322,10 +413,10 @@ let filled p k (d : leaf data) =
    copy. *)
 let per_copy t (s : submit) =
   let view (v : view) = two t v.memory in
-  let slot = function Memory v -> view v | Input _ -> false in
+  let slot = function Memory v -> view v | Ints -> true | Input _ -> false in
   let value : value -> bool = function
     | Leaf l -> leaf_two t l
-    | Fixed _ | Input _ -> false
+    | Fixed _ | Int _ | Input _ -> false
   in
   let work = function
     | Words v -> view v
@@ -340,7 +431,7 @@ let per_copy t (s : submit) =
   || Array.exists (fun (v, _) -> view v) s.fixed
 
 let per_run : value -> bool = function
-  | Input _ -> true
+  | Int _ | Input _ -> true
   | Fixed _ | Leaf _ -> false
 
 (* Stores hole [h] of a launch's parameters [params] over [v] into its block
@@ -385,13 +476,15 @@ let prepared p k (s : submit) =
     Array.to_list (Array.map (fun (v, a) -> (view p k d v, a)) s.fixed)
   in
   let reads = Array.length s.reads and writes = Array.length s.writes in
-  let sub = Sub.make ~fixed ~reads ~writes p.devices.(d) parts in
-  let slot = function Memory v -> view p k d v | Input _ -> unset in
+  let sub = Sub.make ~hold:p.hold ~fixed ~reads ~writes p.devices.(d) parts in
+  let slot s =
+    match slot_view p s with Some v -> view p k d v | None -> unset
+  in
   let srun = Sub.Run.make () in
   let value : value -> int = function
     | Fixed n -> n
     | Leaf l -> leaf_value p k l
-    | Input _ -> 0
+    | Int _ | Input _ -> 0
   in
   let launch i (q : part) =
     match q.work with
@@ -408,22 +501,21 @@ let prepared p k (s : submit) =
               store_hole srun b params.bytes h (value h.leaf))
           params.holes;
         store_geometry srun b groups threads shared value;
-        let holes =
-          List.filter (fun h -> per_run h.leaf) (Array.to_list params.holes)
-        in
         let gx, gy, gz = groups and tx, ty, tz = threads in
-        let geometry_per_run =
-          List.exists per_run [ gx; gy; gz; tx; ty; tz; shared ]
-        in
         Some
           {
             block = b;
             params = params.bytes;
-            holes = Array.of_list holes;
+            holes =
+              Array.of_list
+                (List.filter
+                   (fun h -> per_run h.leaf)
+                   (Array.to_list params.holes));
             groups;
             threads;
             shared;
-            geometry_per_run;
+            geometry_per_run =
+              List.exists per_run [ gx; gy; gz; tx; ty; tz; shared ];
           }
   in
   {
@@ -441,6 +533,39 @@ let prepared p k (s : submit) =
 let prepare p i k s =
   try prepared p k s with Invalid_argument why -> refuse "step %d: %s" i why
 
+(* A [Host] step's memory is the host's to address, in each copy. *)
+let check_host p i buffers =
+  Array.iter
+    (fun (s, _) ->
+      match slot_view p s with
+      | Some v ->
+          Array.iter
+            (fun b ->
+              if host_address b = 0 then
+                refuse "step %d: the host does not address memory %d" i v.memory)
+            p.mem.(v.memory)
+      | None -> ())
+    buffers
+
+let rec lstep p i = function
+  | Submit s ->
+      let n = if per_copy p.t s then 2 else 1 in
+      Lsubmit { spec = s; copies = Array.init n (fun k -> prepare p i k s) }
+  | Move { src; dst } -> Lmove { src; dst }
+  | Host { code; buffers; values; split } ->
+      check_host p i buffers;
+      Lhost
+        {
+          code = p.code.(code);
+          buffers;
+          values;
+          split;
+          addresses = Array.make (Array.length buffers) 0;
+          words = Array.make (Array.length values) 0;
+        }
+  | Loop { trips; trip; flag; body } ->
+      Lloop { trips; trip; flag; body = Array.map (lstep p i) body }
+
 let make_memory devices = function
   | Alloc { device; kind; bytes; copies; _ } ->
       let n = match copies with One -> 1 | Two -> 2 in
@@ -449,6 +574,11 @@ let make_memory devices = function
 let load_image p (im : image) =
   match Rig.Image.load p.devices.(im.device) (filled p 0 im.binary) with
   | Ok i -> i
+  | Error why -> raise (Refused why)
+
+let link (c : code) =
+  match Rig_host.link ~entry:c.entry c.obj with
+  | Ok c -> c
   | Error why -> raise (Refused why)
 
 let write_init p m k =
@@ -469,14 +599,25 @@ let one_machine devices =
       devices
   end
 
+let words b =
+  if B.length b = 0 then Bigarray.(Array1.create int64 c_layout 0)
+  else B.bigarray Bigarray.int64 b
+
 let load t devices =
   one_machine devices;
-  match check t devices with
+  match
+    check t devices;
+    Array.map link t.code
+  with
   | exception Refused why -> Error why
-  | () -> (
-      let mem = Array.map (make_memory devices) t.memory in
+  | code -> (
+      let ints = Array.init 2 (fun _ -> B.create Rig.host (8 * t.ints)) in
+      let mem =
+        Array.append (Array.map (make_memory devices) t.memory) [| ints |]
+      in
       let twos k =
-        List.filteri (fun m _ -> two t m) (Array.to_list mem)
+        Array.to_list mem
+        |> List.filter (fun c -> Array.length c = 2)
         |> List.map (fun c -> c.(k))
         |> Array.of_list
       in
@@ -485,21 +626,18 @@ let load t devices =
           t;
           devices;
           mem;
+          ints = Array.map words ints;
           borrows = Hashtbl.create 8;
           images = [||];
+          code;
+          hold = Rig.Hold.make (fun () -> ignore (Sys.opaque_identity code));
           steps = [||];
           twos = [| twos 0; twos 1 |];
+          flag = B.create Rig.host 1;
           last = Array.make (Array.length devices) None;
           lock = Mutex.create ();
           runs = 0;
         }
-      in
-      let step i = function
-        | Submit s ->
-            let n = if per_copy t s then 2 else 1 in
-            Lsubmit
-              { spec = s; copies = Array.init n (fun k -> prepare p i k s) }
-        | Move { src; dst } -> Lmove { src; dst }
       in
       match
         (* An image's holes name earlier images' entries: each loads once those
@@ -507,15 +645,17 @@ let load t devices =
         Array.iter
           (fun im -> p.images <- Array.append p.images [| load_image p im |])
           t.images;
-        Array.iteri (fun m c -> Array.iteri (fun k _ -> write_init p m k) c) mem;
-        p.steps <- Array.mapi step t.steps
+        Array.iteri
+          (fun m _ -> Array.iteri (fun k _ -> write_init p m k) mem.(m))
+          t.memory;
+        p.steps <- Array.mapi (lstep p) t.steps
       with
       | () -> Ok p
       | exception Refused why -> Error why)
 
 (* Running *)
 
-type frame = { inputs : B.t array }
+type frame = { inputs : B.t array; ints : int array }
 
 let invalid fmt = Printf.ksprintf invalid_arg ("Rig_program.run: " ^^ fmt)
 
@@ -535,7 +675,9 @@ let check_frame p (f : frame) =
           spec.bytes;
       if spec.access = B.Read_write && B.access b = B.Read then
         invalid "input %d is read-only memory, which the program writes" i)
-    p.t.inputs
+    p.t.inputs;
+  if Array.length f.ints > p.t.ints then
+    invalid "%d ints for a program of %d" (Array.length f.ints) p.t.ints
 
 (* Input [i] of [f] as device [d] names it. *)
 let input_on p (f : frame) i d =
@@ -546,66 +688,121 @@ let input_on p (f : frame) i d =
     | Some b -> b
     | None -> invalid "input %d: %s cannot borrow it" i (Rig.name dev)
 
-let run_value p f k : value -> int = function
+let run_value (p : loaded) f k : value -> int = function
   | Fixed n -> n
+  | Int i -> Int64.to_int (Bigarray.Array1.unsafe_get p.ints.(k) i)
   | Input { input; on } -> B.address (input_on p f input on)
   | Leaf l -> leaf_value p k l
 
 let pass p f (s : slot array) bufs d =
   Array.iteri
     (fun i -> function
-      | Input j -> bufs.(i) <- input_on p f j d | Memory _ -> ())
+      | Input j -> bufs.(i) <- input_on p f j d | Memory _ | Ints -> ())
     s
 
 (* Drops the inputs [bufs] held, so a loaded program keeps no caller's buffer
    past its run. *)
 let unpass (s : slot array) bufs =
   Array.iteri
-    (fun i -> function Input _ -> bufs.(i) <- unset | Memory _ -> ())
+    (fun i -> function Input _ -> bufs.(i) <- unset | Memory _ | Ints -> ())
     s
 
-let slot_buffer p (f : frame) k = function
-  | Memory v ->
-      B.view
-        p.mem.(v.memory).(copy_of p v.memory k)
-        ~first:v.offset ~length:v.length
-  | Input j -> f.inputs.(j)
+let mem_buffer p k (v : view) =
+  B.view
+    p.mem.(v.memory).(copy_of p v.memory k)
+    ~first:v.offset ~length:v.length
 
-let exec p f k after = function
+let slot_buffer p (f : frame) k = function
+  | Input j -> f.inputs.(j)
+  | Memory v -> mem_buffer p k v
+  | Ints -> mem_buffer p k (ints_view p.t)
+
+let submit_step p f k after (spec : submit) copies =
+  let q = copies.(if Array.length copies = 2 then k else 0) in
+  let d = spec.device in
+  pass p f spec.reads q.reads d;
+  pass p f spec.writes q.writes d;
+  Array.iter
+    (fun l ->
+      Array.iter
+        (fun h -> store_hole q.srun l.block l.params h (run_value p f k h.leaf))
+        l.holes;
+      if l.geometry_per_run then
+        store_geometry q.srun l.block l.groups l.threads l.shared
+          (run_value p f k))
+    q.launches;
+  let waits = match p.last.(d) with None -> after | Some _ -> [||] in
+  let point =
+    Fun.protect
+      ~finally:(fun () ->
+        unpass spec.reads q.reads;
+        unpass spec.writes q.writes)
+      (fun () ->
+        Rig.submit q.sub ~run:q.srun ~reads:q.reads ~writes:q.writes ~waits)
+  in
+  p.last.(d) <- Some point
+
+let host p f k code buffers values split addresses words =
+  Array.iteri
+    (fun i (s, access) ->
+      let b = slot_buffer p f k s in
+      B.wait b access;
+      let a = host_address b in
+      (* [load] checked the memory: only an input can fail. *)
+      if a = 0 then
+        invalid "a host step's buffer %d: the host does not address it" i;
+      addresses.(i) <- a)
+    buffers;
+  Array.iteri (fun i v -> words.(i) <- run_value p f k v) values;
+  let split =
+    Option.map
+      (fun (s : split) ->
+        {
+          Rig_host.extent = run_value p f k s.extent;
+          blocks = s.blocks;
+          lo = s.lo;
+          hi = s.hi;
+        })
+      split
+  in
+  Rig_host.call ?split code addresses words
+
+(* Whether [flag]'s first byte is not [0], once the work that wrote it is
+   done. *)
+let flag_holds p k (v : view) =
+  B.copy ~src:(mem_buffer p k { v with length = 1 }) ~dst:p.flag;
+  let c = Bytes.create 1 in
+  B.blit_to_bytes p.flag 0 c 0 1;
+  Bytes.get c 0 <> '\000'
+
+let rec exec (p : loaded) f k after = function
   | Lmove { src; dst } ->
       B.copy ~src:(slot_buffer p f k src) ~dst:(slot_buffer p f k dst)
-  | Lsubmit { spec; copies } ->
-      let q = copies.(if Array.length copies = 2 then k else 0) in
-      let d = spec.device in
-      pass p f spec.reads q.reads d;
-      pass p f spec.writes q.writes d;
-      Array.iter
-        (fun l ->
-          Array.iter
-            (fun h ->
-              store_hole q.srun l.block l.params h (run_value p f k h.leaf))
-            l.holes;
-          if l.geometry_per_run then
-            store_geometry q.srun l.block l.groups l.threads l.shared
-              (run_value p f k))
-        q.launches;
-      let waits = match p.last.(d) with None -> after | Some _ -> [||] in
-      let point =
-        Fun.protect
-          ~finally:(fun () ->
-            unpass spec.reads q.reads;
-            unpass spec.writes q.writes)
-          (fun () ->
-            Rig.submit q.sub ~run:q.srun ~reads:q.reads ~writes:q.writes ~waits)
+  | Lsubmit { spec; copies } -> submit_step p f k after spec copies
+  | Lhost { code; buffers; values; split; addresses; words } ->
+      host p f k code buffers values split addresses words
+  | Lloop { trips; trip; flag; body } ->
+      let n = run_value p f k trips in
+      let rec go i =
+        if i < n && Option.fold ~none:true ~some:(flag_holds p k) flag then begin
+          Option.iter
+            (fun w -> Bigarray.Array1.set p.ints.(k) w (Int64.of_int i))
+            trip;
+          Array.iter (exec p f k after) body;
+          go (i + 1)
+        end
       in
-      p.last.(d) <- Some point
+      go 0
 
-let run ?(after = [||]) p f =
+let run ?(after = [||]) (p : loaded) (f : frame) =
   Mutex.protect p.lock @@ fun () ->
   check_frame p f;
   let k = p.runs land 1 in
   p.runs <- p.runs + 1;
   Array.iter (fun b -> B.wait b B.Read_write) p.twos.(k);
+  Array.iteri
+    (fun i v -> Bigarray.Array1.set p.ints.(k) i (Int64.of_int v))
+    f.ints;
   Array.fill p.last 0 (Array.length p.last) None;
   Array.iter (exec p f k after) p.steps;
   Array.of_list (List.filter_map Fun.id (Array.to_list p.last))

@@ -93,6 +93,8 @@ let described d binary queue =
   in
   {
     G.devices = [| Rig.arch d |];
+    code = [||];
+    ints = 0;
     memory = [||];
     images = [| { G.device = 0; binary = { G.bytes = binary; holes = [||] } } |];
     inputs =
@@ -143,7 +145,7 @@ let same_bytes (module Gpu : Gpu) () =
       (G.load (described d binary queue) [| d |])
   in
   let x' = B.create d (4 * words) and y' = B.create d (4 * words) in
-  ignore (G.run p { inputs = [| x'; y' |] });
+  ignore (G.run p { inputs = [| x'; y' |]; ints = [||] });
   let le32s f = String.concat "" (List.init words (fun k -> le32 (f k))) in
   equal string ~msg:"ids, by hand" (le32s (fun k -> 7 + (3 * k))) (get x);
   equal string ~msg:"twice, by hand" (le32s (fun k -> 15 + (6 * k))) (get y);
