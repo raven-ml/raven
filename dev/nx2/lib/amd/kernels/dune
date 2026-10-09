@@ -7,8 +7,12 @@
  (deps
   (:pins pins.json)
   gen.py
+  ../kernels.h
   ../../array/nx_dtype.h
   (glob_files libc/*.h)
+  (glob_files src/*.hip)
+  (glob_files src/*.h)
+  (glob_files *.co)
   ../../../test/amd/support/harness.h
   (glob_files ../../../test/amd/support/*.hip)
   (glob_files ../../../test/amd/support/*.co))

@@ -23,7 +23,7 @@
 #define NX_HARNESS_KERNELS(X)                                     \
   X(empty) X(cu_clock) X(delay) X(hog) X(where) X(generate)       \
   X(floor_copy) X(floor_read) X(wmma_bf16) X(fma_f32)             \
-  X(div_sqrt_f32) X(div_sqrt_f64) X(codecs)
+  X(div_sqrt_f32) X(div_sqrt_f64) X(wmma_probe) X(codecs)
 
 #define NX_HARNESS_ENUM(name) NX_HARNESS_##name,
 enum nx_harness_kernel { NX_HARNESS_KERNELS(NX_HARNESS_ENUM) NX_HARNESS_COUNT };
@@ -142,6 +142,16 @@ typedef struct {
   void *q, *r;
   uint64_t n;
 } div_sqrt_params;
+
+/* d = c + a b^T for one 16 x 16 x 16 tile, a WMMA of one wave: a and b
+   16 x 16 bfloat16 (float16 if [f16]) rows of k, c and d 16 x 16 float32
+   rows. The suite reads the matrix unit's sums off it. */
+typedef struct {
+  const void *a, *b;
+  const float *c;
+  float *d;
+  uint32_t f16, unused;
+} wmma_probe_params;
 
 /* For the narrow float dtype [dtype] (float16, bfloat16, float8 e4m3fn or
    e5m2): dec[c] is the value of the code c, for every code of the dtype,

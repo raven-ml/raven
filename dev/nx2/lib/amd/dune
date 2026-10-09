@@ -1,10 +1,16 @@
 ; nx.amd: nx's kernels for AMD GPUs, compiled ahead of time into code
-; objects (kernels/). C only until the binding: launch records and the fill
-; that places them through rig.amd.
+; objects (kernels/) and embedded. C only until the binding: launch
+; records, the plans that make them, and the fill that places them through
+; rig.amd.
 
 (library
  (name nx_amd)
  (modules)
+ (libraries nx_array)
  (foreign_stubs
   (language c)
-  (names fill_amd)))
+  (include_dirs ../array)
+  (extra_deps
+   (glob_files kernels/*.co))
+  (flags :standard -DNX_AMD_KERNELS_DIR=kernels)
+  (names fill_amd plan nx_amd_stubs)))

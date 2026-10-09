@@ -2,7 +2,7 @@
 """Compiles nx.amd's kernels ahead of time into the code objects nx.amd
 embeds, and the AMD suite's harness kernels into the code object the suite
 and the bench load: one code object per artifact and processor,
-<artifact>/<processor>.co.
+lib/amd/kernels/<processor>.co and test/amd/support/<processor>.co.
 
 Run from the repository root, on a machine with the pinned comgr (ROCm's
 code object manager), which it loads from $COMGR_PATH, else
@@ -31,7 +31,7 @@ with no toolchain, so a source changed without regenerating, or a code
 object edited, fails the tests.
 
 Each generation checks that each kernel the artifact's list names (the X
-macro of its header) is a kernel of its code object.
+macro of its header, by its first argument) is a kernel of its code object.
 
 Python's standard library only.
 """
@@ -50,16 +50,20 @@ NX2 = pathlib.Path(__file__).resolve().parents[3]
 PINS = NX2 / "lib/amd/kernels/pins.json"
 PROCESSORS = ["gfx1201"]
 
-# Each artifact: its directory, the header whose X macro lists its kernels,
-# and that macro's name.
+# Each artifact: the directory of its sources, the directory of its code
+# objects, the header whose X macro lists its kernels by their first
+# argument, and that macro's name.
 ARTIFACTS = [
-    ("test/amd/support", "test/amd/support/harness.h", "NX_HARNESS_KERNELS"),
+    ("lib/amd/kernels/src", "lib/amd/kernels", "lib/amd/kernels.h", "NX_AMD_KERNELS"),
+    ("test/amd/support", "test/amd/support", "test/amd/support/harness.h", "NX_HARNESS_KERNELS"),
 ]
 
 # The headers the sources may include, by name: the only ones the unit sees.
 HEADERS = [
-    "lib/array/nx_dtype.h", "lib/amd/kernels/libc/math.h", "lib/amd/kernels/libc/stdint.h",
-    "lib/amd/kernels/libc/string.h", "test/amd/support/harness.h",
+    "lib/array/nx_dtype.h", "lib/amd/kernels.h", "lib/amd/kernels/src/combine.h",
+    "lib/amd/kernels/src/device.h", "lib/amd/kernels/libc/math.h",
+    "lib/amd/kernels/libc/stdint.h", "lib/amd/kernels/libc/string.h",
+    "test/amd/support/harness.h",
 ]
 
 # Floats as the kernel contract states them: no contraction of a product
@@ -104,7 +108,7 @@ def sources(directory):
 
 def inputs():
     files = [NX2 / h for h in HEADERS] + [pathlib.Path(__file__).resolve()]
-    for d, _, _ in ARTIFACTS:
+    for d, _, _, _ in ARTIFACTS:
         files += sources(d)
     return {str(f.relative_to(NX2)): digest(f) for f in sorted(set(files))}
 
@@ -115,7 +119,7 @@ def kernels(header, macro):
     m = re.search(rf"#define {macro}\(X\)((?:.*\\\n)*.*)", text)
     if m is None:
         sys.exit(f"{header}: no {macro}")
-    return re.findall(r"X\((\w+)\)", m.group(1))
+    return re.findall(r"X\((\w+)", m.group(1))
 
 
 # comgr 3.0 (amd_comgr.h)
@@ -189,14 +193,14 @@ def generate(outdir):
     """Writes every code object under [outdir]; their digests by path."""
     comgr = Comgr()
     outputs = {}
-    for directory, header, macro in ARTIFACTS:
+    for directory, objects, header, macro in ARTIFACTS:
         files = sources(directory) + [NX2 / h for h in HEADERS]
         includes = {f.name: f.read_bytes() for f in files}
         if len(includes) != len(files):
             sys.exit(f"{directory}: two inputs share a name")
         unit = "".join(f'#include "{f.name}"\n' for f in sources(directory)).encode()
         for processor in PROCESSORS:
-            path = f"{directory}/{processor}.co"
+            path = f"{objects}/{processor}.co"
             co = comgr.compile(processor, unit, includes)
             missing = [k for k in kernels(header, macro) if b"\0" + k.encode() + b".kd\0" not in co]
             if missing:

@@ -6,27 +6,13 @@
 /* The harness's kernels, as harness.h states them. The host sizes their
    grids. */
 
+#include "device.h"
 #include "harness.h"
 #include "nx_dtype.h"
-
-typedef unsigned long long u64;
-typedef uint32_t u32x4 __attribute__((ext_vector_type(4)));
-
-#define KERNEL extern "C" __attribute__((global))
-/* A kernel whose workgroups have [n] work-items. */
-#define SIZED(n) __attribute__((amdgpu_flat_work_group_size(n, n)))
-#define DEVICE static __attribute__((device)) inline
 
 /* The GPU's real-time clock, counted at [clock_hz]: the delay's and the
    hog's spans need it only roughly. */
 DEVICE u64 now(void) { return __builtin_readsteadycounter(); }
-
-DEVICE uint32_t group(void) { return __builtin_amdgcn_workgroup_id_x(); }
-
-DEVICE uint32_t item(void) { return __builtin_amdgcn_workitem_id_x(); }
-
-/* The work-item's index in a grid of workgroups of [n] work-items. */
-DEVICE u64 index_of(uint32_t n) { return (u64)group() * n + item(); }
 
 /* HW_ID1's shader engine (bits 18-20), shader array (16), work-group
    processor (10-13) and SIMD's high bit (9): hwreg(HW_REG_HW_ID1), whose
@@ -38,14 +24,6 @@ DEVICE u64 index_of(uint32_t n) { return (u64)group() * n + item(); }
 
 DEVICE uint32_t cu_index(void) {
   return __builtin_amdgcn_s_getreg(HW_ID1) & HW_ID1_CU;
-}
-
-/* Waits for the workgroup's work-items, each seeing the others' writes to
-   the local data share before it. */
-DEVICE void barrier(void) {
-  __builtin_amdgcn_fence(__ATOMIC_RELEASE, "workgroup");
-  __builtin_amdgcn_s_barrier();
-  __builtin_amdgcn_fence(__ATOMIC_ACQUIRE, "workgroup");
 }
 
 DEVICE uint32_t load_agent(const uint32_t *p) {
@@ -227,6 +205,23 @@ KERNEL SIZED(NX_THREADS) void div_sqrt_f64(div_sqrt_params p) {
   double a = ((const double *)p.a)[i], b = ((const double *)p.b)[i];
   ((double *)p.q)[i] = a / b;
   ((double *)p.r)[i] = sqrt(a);
+}
+
+/* One WMMA: lane l loads k 8 (l / 16) + e of a's and b's row l % 16, and
+   holds rows 8 (l / 16) + e of column l % 16 of c and d. */
+KERNEL SIZED(32) void wmma_probe(wmma_probe_params p) {
+  typedef _Float16 f16x8 __attribute__((ext_vector_type(8)));
+  const int l = item(), r = l % 16, k = l / 16 * 8;
+  const u32x4 a = *(const u32x4 *)((const uint16_t *)p.a + r * 16 + k);
+  const u32x4 b = *(const u32x4 *)((const uint16_t *)p.b + r * 16 + k);
+  f32x8 c;
+  for (int e = 0; e < 8; e++) c[e] = p.c[(k + e) * 16 + r];
+  c = p.f16 ? __builtin_amdgcn_wmma_f32_16x16x16_f16_w32_gfx12(
+                  __builtin_bit_cast(f16x8, a), __builtin_bit_cast(f16x8, b), c)
+            : __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32_gfx12(
+                  __builtin_bit_cast(bf16x8, a), __builtin_bit_cast(bf16x8, b),
+                  c);
+  for (int e = 0; e < 8; e++) p.d[(k + e) * 16 + r] = c[e];
 }
 
 KERNEL SIZED(NX_THREADS) void codecs(codecs_params p) {

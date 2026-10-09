@@ -32,15 +32,20 @@
   "-amdgpu-internalize-symbols"
  ],
  "inputs": {
-  "lib/amd/kernels/gen.py": "133447ab3cb1fa87a654ed7e6e5f152137af607b329fce2b6b9d3c264dee8f0c",
+  "lib/amd/kernels/gen.py": "624da3848d75403815a90bcf5f49270702b5f90d3d860696a562bd58ed6a7cea",
   "lib/amd/kernels/libc/math.h": "d5ee181299753e520bbe83b02d6e0190ac42e87733e08b52f939d1052e420fd1",
   "lib/amd/kernels/libc/stdint.h": "9a60210520ab3b74fdfc225a0617148e393f73109bb001360d191d5bfe601e6d",
   "lib/amd/kernels/libc/string.h": "874e93e9055dba9cc5ff5269deca224cffbb655d96ce03042a4662024dbbcd45",
+  "lib/amd/kernels/src/combine.h": "276eabf43642eca0446cd66cbb959dacc4afebbe3062b0a287b64af1d6d1b321",
+  "lib/amd/kernels/src/contract.hip": "710bc92fd50ec24493f5fb49c2620cb05881db3b858791a19fd5da22f42ca70b",
+  "lib/amd/kernels/src/device.h": "c79f5603631de6bd37312f615fe683681bbe7f129dfb4e98a1136478518a9386",
+  "lib/amd/kernels.h": "dfe83fcc7182949c919440074057e9253ffcf735fef69a56fc9625471958e1ef",
   "lib/array/nx_dtype.h": "c8cc210b13d22644e92873bce6f82699c23b893c7ae7442b4782f24bfe9609ac",
-  "test/amd/support/harness.h": "d273f8732060511f6bdf123ca6c6d61ad3125a2d057e5ab4f27c42b2876a21f7",
-  "test/amd/support/harness.hip": "a01409929cb4f5d1f6703ccaa01a60a24beaa5b9de76b6a5bede9248236dcda1"
+  "test/amd/support/harness.h": "0307386d65dad5956df79a517ba550c7ec410faa866fd2824b668d5cb5201df5",
+  "test/amd/support/harness.hip": "da267f522fd3cc95f7f8ec7fee43fc4ef169286942ba82293321a2928bf7c3e0"
  },
  "outputs": {
-  "test/amd/support/gfx1201.co": "5f6bcd022cc66a4704b08d4610b578e37ec843fa19947caebe41ba7138d7e4e4"
+  "lib/amd/kernels/gfx1201.co": "cf4a1b8896fb856980f6cd3280875e2098ddb037abc48a00d90eff8883554e6d",
+  "test/amd/support/gfx1201.co": "78cef86abde65c31e227b20c74b141d2403ae51056d55511a34ae426cc8effec"
  }
 }

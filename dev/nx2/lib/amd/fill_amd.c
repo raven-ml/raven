@@ -8,6 +8,11 @@
 
 #include "nx_amd.h"
 
+#define NAME(name, ...) #name,
+const char *const nx_amd_kernel_names[NX_AMD_KERNEL_COUNT] = {
+    NX_AMD_KERNELS(NAME)};
+#undef NAME
+
 /* The argument segment hands out multiples of its addresses' alignment. */
 #define SEGMENT_ALIGN 64
 
@@ -32,6 +37,22 @@ int nx_amd_add(nx_amd_records *r, uint32_t kernel, const uint32_t groups[3],
   memcpy(r->bytes + r->len + sizeof l, params, bytes);
   r->len = need;
   return 0;
+}
+
+void nx_amd_rebase(unsigned char *r, size_t len, uint64_t base) {
+  for (size_t at = 0; at < len;) {
+    nx_amd_launch l;
+    memcpy(&l, r + at, sizeof l);
+    for (uint32_t i = 0; i < l.addrs; i++)
+      if (l.scratch >> i & 1) {
+        uint64_t x;
+        unsigned char *w = r + at + sizeof l + 8 * i;
+        memcpy(&x, w, 8);
+        x += base;
+        memcpy(w, &x, 8);
+      }
+    at += sizeof l + l.bytes;
+  }
 }
 
 /* The dispatch of [l]'s kernel, or NULL if it has none the fill places or

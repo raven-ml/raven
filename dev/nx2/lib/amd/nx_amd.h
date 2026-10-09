@@ -23,6 +23,19 @@
 #include <stdint.h>
 
 #include "kernels.h"
+#include "nx_array.h"
+
+/* What a plan answers when it does not compute a call: nx's expansion of
+   the operation runs instead. */
+#define NX_NOT_COMPUTED (-1)
+
+/* The code object of the processor [arch] (1201 for gfx1201), [*len]
+   bytes, or NULL if the library has none: it computes on the GPUs of the
+   processors it has a code object for. */
+const char *nx_amd_code_object(int arch, size_t *len);
+
+/* The name of each kernel, by its nx_amd_kernel. */
+extern const char *const nx_amd_kernel_names[NX_AMD_KERNEL_COUNT];
 
 /* Runs */
 
@@ -43,6 +56,11 @@ typedef struct {
 int nx_amd_add(nx_amd_records *r, uint32_t kernel, const uint32_t groups[3],
                const uint32_t threads[3], const void *params, uint32_t bytes,
                uint32_t addrs, uint32_t scratch);
+
+/* Adds [base] to each address of the [len] bytes of records at [r] that
+   its record's scratch mask names: the call's scratch, allocated after
+   planning, at [base]. */
+void nx_amd_rebase(unsigned char *r, size_t len, uint64_t base);
 
 /* The fill */
 
@@ -93,5 +111,32 @@ int nx_amd_size(const nx_amd_run *run, uint64_t *words, uint64_t *bytes);
    failed, or -1 for a record nx_amd_size refuses, placing none after
    it. */
 int nx_amd_fill(void *queue, void *arg, uint64_t v);
+
+/* Plans */
+
+/* An operand on the GPU: its element at index (i0, ..., ik-1) is at
+   [address] plus the sum of ij * dim[rank + j] elements, ij < dim[j]. */
+typedef struct {
+  uint64_t address;
+  int dtype, rank;
+  int64_t dim[2 * NX_MAX_RANK];
+} nx_amd_operand;
+
+/* A contraction with plain loads and no scales or segments: the batch
+   pairs and contracting pairs of a's and b's axes, the accumulator's
+   dtype, and whether an init operand is given. */
+typedef struct {
+  int batch[NX_MAX_RANK][2], nbatch;
+  int contracting[NX_MAX_RANK][2], ncontracting;
+  int acc, init;
+} nx_amd_contract_in;
+
+/* Appends the launches of one contraction to [out] and returns their
+   count, or NX_NOT_COMPUTED having appended nothing. [ops] are a, b, init
+   if [in->init], and y. [arch] is the code object's processor, as 1201 for
+   gfx1201. [*scratch] is set to the scratch bytes the launches address. */
+int nx_amd_plan_contract(const nx_amd_contract_in *in,
+                         const nx_amd_operand *ops, int arch,
+                         nx_amd_records *out, size_t *scratch);
 
 #endif

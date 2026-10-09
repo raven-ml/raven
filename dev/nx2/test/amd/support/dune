@@ -13,7 +13,7 @@
   windtrap)
  (foreign_stubs
   (language c)
-  (include_dirs ../../../lib/amd)
+  (include_dirs ../../../lib/amd ../../../lib/array)
   (extra_deps gfx1201.co)
   (flags :standard -DNX_HARNESS_CO=gfx1201.co)
   (names nx_amd_support_stubs)))

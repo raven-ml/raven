@@ -4,8 +4,8 @@
   ---------------------------------------------------------------------------*/
 
 /* The AMD suite's and bench's C: the machine's GPU lock, the harness's code
-   object, tables of dispatches, and a fill that runs a sequence of record
-   runs. Every stub holds the runtime: none blocks but the lock's nap. */
+   object, tables of dispatches, runs of records, and nx.amd's plans. Every
+   stub holds the runtime: none blocks but the lock's nap. */
 
 #define _GNU_SOURCE
 
@@ -65,17 +65,13 @@ value nx_amd_support_code_object(value unit) {
 }
 
 value nx_amd_support_kernels(value unit) {
-  CAMLparam1(unit);
-  CAMLlocal1(r);
-  static const char *const names[] = {
+  static const char *names[] = {
 #define NAME(name) #name,
       NX_HARNESS_KERNELS(NAME)
 #undef NAME
-  };
-  r = caml_alloc(NX_HARNESS_COUNT, 0);
-  for (int i = 0; i < NX_HARNESS_COUNT; i++)
-    Store_field(r, i, caml_copy_string(names[i]));
-  CAMLreturn(r);
+      NULL};
+  (void)unit;
+  return caml_copy_string_array(names);
 }
 
 /* The workgroup sizes harness.h fixes: generate's and the probes', the
@@ -164,68 +160,139 @@ static value bytes(size_t n) {
 }
 
 /* An nx_amd_run of the records [v_records], placed with the entries
-   [v_entries], the records copied after it. */
+   [v_entries], the records copied after it, with the ring words and
+   segment bytes its fill takes, as nx_amd_size gives them. */
 value nx_amd_support_run(value v_entries, value v_records) {
   CAMLparam2(v_entries, v_records);
-  CAMLlocal1(v);
+  CAMLlocal2(v, r);
   size_t len = caml_string_length(v_records);
   v = bytes(sizeof(nx_amd_run) + len);
-  nx_amd_run *r = Caml_ba_data_val(v);
-  unsigned char *records = (unsigned char *)(r + 1);
+  nx_amd_run *run = Caml_ba_data_val(v);
+  unsigned char *records = (unsigned char *)(run + 1);
   memcpy(records, String_val(v_records), len);
-  *r = (nx_amd_run){(const nx_amd_entries *)Nativeint_val(v_entries), records,
-                    len};
-  CAMLreturn(v);
-}
-
-/* A sequence of runs, each run [repeat] times. */
-struct seq {
-  int n;
-  struct {
-    const nx_amd_run *run;
-    uint32_t repeat;
-  } s[];
-};
-
-static int seq_fill(void *queue, void *arg, uint64_t v) {
-  const struct seq *q = arg;
-  for (int i = 0; i < q->n; i++)
-    for (uint32_t k = 0; k < q->s[i].repeat; k++) {
-      int rc = nx_amd_fill(queue, (void *)q->s[i].run, v);
-      if (rc != 0) return rc;
-    }
-  return 0;
-}
-
-/* The sequence of the runs [v_runs], each repeated as [v_repeats] says,
-   with the ring words and segment bytes its fill takes, as nx_amd_size
-   gives them. The caller keeps the runs alive while the sequence runs. */
-value nx_amd_support_seq(value v_runs, value v_repeats) {
-  CAMLparam2(v_runs, v_repeats);
-  CAMLlocal2(v, r);
-  int n = (int)Wosize_val(v_runs);
-  v = bytes(sizeof(struct seq) + n * sizeof(((struct seq *)0)->s[0]));
-  struct seq *q = Caml_ba_data_val(v);
-  q->n = n;
-  uint64_t words = 0, total = 0;
-  for (int i = 0; i < n; i++) {
-    q->s[i].run = Caml_ba_data_val(Field(v_runs, i));
-    q->s[i].repeat = (uint32_t)Long_val(Field(v_repeats, i));
-    uint64_t w, b;
-    if (nx_amd_size(q->s[i].run, &w, &b) != 0)
-      caml_invalid_argument("nx_amd_size refused a record");
-    words += q->s[i].repeat * w, total += q->s[i].repeat * b;
-  }
+  *run = (nx_amd_run){(const nx_amd_entries *)Nativeint_val(v_entries),
+                      records, len};
+  uint64_t words, n;
+  if (nx_amd_size(run, &words, &n) != 0)
+    caml_invalid_argument("nx_amd_size refused a record");
   r = caml_alloc_tuple(3);
   Store_field(r, 0, v);
   Store_field(r, 1, Val_long(words));
-  Store_field(r, 2, Val_long(total));
+  Store_field(r, 2, Val_long(n));
   CAMLreturn(r);
 }
 
-value nx_amd_support_seq_fill(value unit) {
+value nx_amd_support_fill(value unit) {
   (void)unit;
-  return caml_copy_nativeint((intnat)seq_fill);
+  return caml_copy_nativeint((intnat)nx_amd_fill);
+}
+
+/* nx.amd */
+
+/* The library's code object for the processor [v_arch], if it has one. */
+value nx_amd_support_library(value v_arch) {
+  CAMLparam1(v_arch);
+  CAMLlocal1(s);
+  size_t len;
+  const char *c = nx_amd_code_object(Int_val(v_arch), &len);
+  if (c == NULL) CAMLreturn(Val_none);
+  s = caml_alloc_initialized_string(len, c);
+  CAMLreturn(caml_alloc_some(s));
+}
+
+value nx_amd_support_library_kernels(value unit) {
+  const char *names[NX_AMD_KERNEL_COUNT + 1] = {NULL};
+  memcpy(names, nx_amd_kernel_names, sizeof nx_amd_kernel_names);
+  (void)unit;
+  return caml_copy_string_array(names);
+}
+
+static nx_amd_operand operand_of(value v) {
+  nx_amd_operand o;
+  memset(&o, 0, sizeof o);
+  o.address = (uint64_t)Long_val(Field(v, 0));
+  o.dtype = Int_val(Field(v, 1));
+  o.rank = (int)Wosize_val(Field(v, 2));
+  for (int i = 0; i < o.rank; i++) {
+    o.dim[i] = Long_val(Field(Field(v, 2), i));
+    o.dim[o.rank + i] = Long_val(Field(Field(v, 3), i));
+  }
+  return o;
+}
+
+/* A contraction as the plan reads it. */
+struct call {
+  nx_amd_contract_in in;
+  nx_amd_operand ops[4];
+};
+
+/* The call of a contraction: [v_ops] a, b, init if [v_init], y, each its
+   address, dtype, shape and strides; [v_batch] and [v_contracting] pairs
+   of axes as flat int arrays; [v_acc] the accumulator. */
+value nx_amd_support_call(value v_ops, value v_batch, value v_contracting,
+                          value v_acc, value v_init) {
+  CAMLparam5(v_ops, v_batch, v_contracting, v_acc, v_init);
+  CAMLlocal1(v);
+  v = bytes(sizeof(struct call));
+  struct call *c = Caml_ba_data_val(v);
+  for (mlsize_t i = 0; i < Wosize_val(v_ops); i++)
+    c->ops[i] = operand_of(Field(v_ops, i));
+  c->in.nbatch = (int)Wosize_val(v_batch) / 2;
+  for (int i = 0; i < c->in.nbatch; i++)
+    c->in.batch[i][0] = Int_val(Field(v_batch, 2 * i)),
+    c->in.batch[i][1] = Int_val(Field(v_batch, 2 * i + 1));
+  c->in.ncontracting = (int)Wosize_val(v_contracting) / 2;
+  for (int i = 0; i < c->in.ncontracting; i++)
+    c->in.contracting[i][0] = Int_val(Field(v_contracting, 2 * i)),
+    c->in.contracting[i][1] = Int_val(Field(v_contracting, 2 * i + 1));
+  c->in.acc = Int_val(v_acc);
+  c->in.init = Bool_val(v_init);
+  CAMLreturn(v);
+}
+
+/* The processor the suite's code object is for. */
+#define ARCH 1201
+
+/* The plan of the call [v_call]: Some (records, scratch bytes, launches),
+   or None if it declines. */
+value nx_amd_support_plan(value v_call) {
+  CAMLparam1(v_call);
+  CAMLlocal2(r, s);
+  struct call *c = Caml_ba_data_val(v_call);
+  nx_amd_records rs = {NULL, 0, 0};
+  size_t scratch = 0;
+  int launches = nx_amd_plan_contract(&c->in, c->ops, ARCH, &rs, &scratch);
+  if (launches == NX_NOT_COMPUTED) {
+    free(rs.bytes);
+    CAMLreturn(Val_none);
+  }
+  s = caml_alloc_initialized_string(rs.len, (const char *)rs.bytes);
+  free(rs.bytes);
+  r = caml_alloc_tuple(3);
+  Store_field(r, 0, s);
+  Store_field(r, 1, Val_long((intnat)scratch));
+  Store_field(r, 2, Val_int(launches));
+  CAMLreturn(caml_alloc_some(r));
+}
+
+/* The launches of the call [v_call]'s plan, into records kept from one
+   call to the next: the planner's cost alone. */
+value nx_amd_support_plan_only(value v_call) {
+  static nx_amd_records rs = {NULL, 0, 0};
+  struct call *c = Caml_ba_data_val(v_call);
+  size_t scratch;
+  rs.len = 0;
+  return Val_int(nx_amd_plan_contract(&c->in, c->ops, ARCH, &rs, &scratch));
+}
+
+/* The records [v_r] with their scratch at [v_base]. */
+value nx_amd_support_rebase(value v_r, value v_base) {
+  CAMLparam2(v_r, v_base);
+  CAMLlocal1(r);
+  size_t len = caml_string_length(v_r);
+  r = caml_alloc_initialized_string(len, String_val(v_r));
+  nx_amd_rebase((unsigned char *)Bytes_val(r), len, (uint64_t)Long_val(v_base));
+  CAMLreturn(r);
 }
 
 /* The GPU lock */
