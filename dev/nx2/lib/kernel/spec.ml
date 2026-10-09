@@ -9,7 +9,7 @@ module L = Nx_array.Layout
 let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 
 (* A descriptor is its family's struct of nx_spec.h: int32 fields in the host's
-   byte order, entries no attribute uses zero. *)
+   byte order, its arrays as long as its counts say. *)
 type 'f t = string
 type contract
 
@@ -29,16 +29,18 @@ let at_out = 8
 let at_init = 12
 let at_nbatch = 16
 let at_ncontracting = 20
-let at_batch = 24
-let at_contracting = at_batch + (8 * max_rank)
-let contract_bytes = at_contracting + (8 * max_rank)
+
+(* The pairs, batch then contracting, two int32 each. *)
+let at_pairs = 24
 
 (* Pair [k] of the pairs from [at]: its axis of [a] (side 0) or of [b]. *)
 let pair_axis s at k side = int32 s (at + (8 * k) + (4 * side))
 let nbatch s = int32 s at_nbatch
 let ncontracting s = int32 s at_ncontracting
+let at_batch = at_pairs
+let at_contracting s = at_pairs + (8 * nbatch s)
 let batch_axis s k side = pair_axis s at_batch k side
-let contracting_axis s k side = pair_axis s at_contracting k side
+let contracting_axis s k side = pair_axis s (at_contracting s) k side
 
 (* Contractions *)
 
@@ -74,28 +76,29 @@ let contract ~batch ~contracting ~acc ~out ~init =
   in
   check "batch" batch;
   check "contracting" contracting;
-  let b = Bytes.make contract_bytes '\000' in
+  let nb = Array.length batch and nc = Array.length contracting in
+  let b = Bytes.make (at_pairs + (8 * (nb + nc))) '\000' in
   let code (D.Any dt) = D.code dt in
   set b at_family family_contract;
   set b at_acc (code acc);
   set b at_out (code out);
   set b at_init (Bool.to_int init);
-  set b at_nbatch (Array.length batch);
-  set b at_ncontracting (Array.length contracting);
+  set b at_nbatch nb;
+  set b at_ncontracting nc;
   let pairs at =
     Array.iteri (fun k (i, j) ->
         set b (at + (8 * k)) i;
         set b (at + (8 * k) + 4) j)
   in
-  pairs at_batch batch;
-  pairs at_contracting contracting;
+  pairs at_pairs batch;
+  pairs (at_pairs + (8 * nb)) contracting;
   Bytes.unsafe_to_string b
 
 let pairs s n at =
   Array.init n (fun k -> (pair_axis s at k 0, pair_axis s at k 1))
 
 let batch s = pairs s (nbatch s) at_batch
-let contracting s = pairs s (ncontracting s) at_contracting
+let contracting s = pairs s (ncontracting s) (at_contracting s)
 let acc s = dtypes.(int32 s at_acc)
 let out s = dtypes.(int32 s at_out)
 let init s = int32 s at_init <> 0
@@ -107,7 +110,7 @@ let free s side r =
     let rec any at n k =
       k < n && (pair_axis s at k side = ax || any at n (k + 1))
     in
-    any at_batch (nbatch s) 0 || any at_contracting (ncontracting s) 0
+    any at_batch (nbatch s) 0 || any (at_contracting s) (ncontracting s) 0
   in
   List.filter (fun ax -> not (named ax)) (List.init r Fun.id)
 
@@ -141,7 +144,7 @@ let contract_shapes s ins =
       pair "batch" at_batch k
     done;
     for k = 0 to nc - 1 do
-      pair "contracting" at_contracting k
+      pair "contracting" (at_contracting s) k
     done;
     match !bad with
     | Some msg -> Error msg
