@@ -118,6 +118,11 @@ struct rig_driver {
   rig_commit_fn *commit;
 };
 
+/* The functions of the driver whose C state for one device is [self]. */
+static inline const struct rig_driver *rig_driver_of(const void *self) {
+  return *(const struct rig_driver *const *)self;
+}
+
 /* Raises the timeline word [word] to [last] with release order, unless it
    shows [last] or later: a word never moves backwards. */
 static inline void rig_raise(_Atomic uint64_t *word, uint64_t last) {

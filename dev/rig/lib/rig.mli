@@ -25,7 +25,7 @@
           │                         ▲                  ▲
           │ submit ~reads ~writes   │ Hold.make        │ submit
           ▼                         │                  │
-      Submission.t ──────────── one device ── Driver.edge (C)
+      Submission.t ─────────── one device ── Driver.edge (C)
     v}
 
     A program opens devices ({!open_}), allocates {!Buffer}s, and copies between
@@ -175,8 +175,8 @@ val free_cache : t -> unit
 
 exception Out_of_memory of t * int
 (** [Out_of_memory (d, n)] is raised when [d] cannot allocate [n] bytes, at once
-    or after the tries {!reclaim} describes, [d] being the device asked,
-    whichever budget refused ({!Buffer.Pinned}). *)
+    or after the rounds of reclamation {!reclaim} describes, [d] being the
+    device asked, whichever budget refused ({!Buffer.Pinned}). *)
 
 (** {2:lost Lost devices} *)
 
@@ -373,9 +373,10 @@ module Buffer : sig
       memory, where its device maps them; a device other than the host asks the
       io device to read the borrowed bytes ahead ({!Io.prefetch}).
 
-      Raises [Invalid_argument] if [b] is dead ({!Claim.consume}); {!Lost} if [d] is lost or is lost by the borrow, and for [b]
-      as {!Lost} states; and [Sys_error] where asking an io device for [b]'s
-      pages failed and may pass ({!Io.pages}). *)
+      Raises [Invalid_argument] if [b] is dead ({!Claim.consume}); {!Lost} if
+      [d] is lost or is lost by the borrow, and for [b] as {!Lost} states; and
+      [Sys_error] where asking an io device for [b]'s pages failed and may pass
+      ({!Io.pages}). *)
 
   val wait : t -> access -> unit
   (** [wait b access] returns once the work on [b]'s memory that an access of
@@ -406,11 +407,10 @@ module Buffer : sig
       it addresses or maps, and through the host's {e staging memory} otherwise:
       host memory, made at the first copy that needs it and kept for the life
       of the process ({!domains}). A device of this machine that maps no host
-      memory ({!Driver.maps_host}) stages through staging memory of its own
-      [Pinned] memory instead, made at its first copy that needs it and kept
-      until it is lost. A device that runs no copy has
-      memory the host addresses, which the host copies; a borrow on it of
-      another device's memory copies by that device. An {!Io} device's memory,
+      memory ({!Driver.maps_host}) stages through [Pinned] memory of its own
+      instead, made at its first copy that needs it and kept until it is lost.
+      A device that runs no copy has memory the host addresses, which the host
+      copies; a borrow on it of another device's memory copies by that device. An {!Io} device's memory,
       of any machine, is read and written by its {!Io.read} and {!Io.write},
       through the staging memory when the host does not address the other side,
       except a copy into it from memory the host does not address, of a device
@@ -980,8 +980,8 @@ end
 
     {b Work} crosses in C only: this library calls the driver's C room check,
     hand-over and commit ({!edge}), in the shapes [rig_edge.h] states, one at
-    a time per device, under the device's turn. A driver's own OCaml forms of them, for a driver used alone, are no
-    part of this signature.
+    a time per device, under the device's turn. A driver's own OCaml forms of
+    them, for a driver used alone, are no part of this signature.
 
     {b Calls.} {!address}, {!handle}, {!host} and {!peer} call nothing that may
     block or fault, and this library calls them at any time. Every other call
@@ -1304,8 +1304,9 @@ val open_ :
     process opened 65,535 devices already: device indices are never reused.
 
     Raises [Invalid_argument] if the open device of that name is another
-    driver's, or [machine] is another machine whose host was never opened
-    ({!open_host}). *)
+    driver's, [machine] is another machine whose host was never opened
+    ({!open_host}), or the driver's {!Driver.edge} is [0n] or its state's first
+    member is [NULL]. *)
 
 val open_host :
   (module Driver with type t = 'a) ->

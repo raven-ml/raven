@@ -324,10 +324,13 @@ static struct rig_device *record(value v_index, value v_name) {
    a transport). */
 value caml_rig_device_new(value v_index, value v_name, value v_may_block,
                           value v_edge, value v_word) {
+  void *self = (void *)Nativeint_val(v_edge);
+  if (self == NULL || rig_driver_of(self) == NULL)
+    caml_invalid_argument("Rig.open_: the driver's edge names no rig_driver");
   struct rig_device *d = record(v_index, v_name);
   d->may_block = Bool_val(v_may_block);
-  d->self = (void *)Nativeint_val(v_edge);
-  d->driver = **(const struct rig_driver **)d->self;
+  d->self = self;
+  d->driver = *rig_driver_of(self);
   atomic_init(&d->word, (_Atomic uint64_t *)Nativeint_val(v_word));
   return Val_long((intnat)d);
 }

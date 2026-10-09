@@ -71,7 +71,7 @@ value rig_bench_floor_new(value v_edge, value v_fill) {
   struct floor *f = calloc(1, sizeof *f);
   if (f == NULL) caml_raise_out_of_memory();
   f->self = (void *)Nativeint_val(v_edge);
-  f->driver = **(const struct rig_driver **)f->self;
+  f->driver = *rig_driver_of(f->self);
   f->part.kind = RIG_FILL;
   f->part.fill.fn = (int (*)(void *, void *, uint64_t))Nativeint_val(v_fill);
   f->part.fill.arg = &f->word;

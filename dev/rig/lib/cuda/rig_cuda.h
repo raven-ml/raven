@@ -7,9 +7,10 @@
 
    The device's room check, submit and commit, over the structures and
    codes of rig_edge.h: the only way work reaches the device. [self] is
-   Rig_cuda.edge, whose struct rig_driver holds them. They are called without the OCaml runtime: they call no
-   function of it and read no OCaml value. They run one call at a time, in
-   value order; Rig_cuda.sleep may run meanwhile.
+   Rig_cuda.edge, whose struct rig_driver holds them. They are called
+   without the OCaml runtime: they call no function of it and read no OCaml
+   value. They run one call at a time, in value order; Rig_cuda.sleep may
+   run meanwhile.
 
    Queue 0 is the stream "COMPUTE:0", queue 1 the stream "COPY:0". A part is
    a fill, called with the queue's CUstream and the device's context

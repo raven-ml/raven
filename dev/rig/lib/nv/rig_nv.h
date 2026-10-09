@@ -13,11 +13,11 @@
 
    Queue 0 is the channel "COMPUTE:0", queue 1 the channel "COPY:0". A part
    is ring entries, two words each, low first (Rig_nv_abi.Gpfifo), or a
-   copy between handles on queue 1. The parts on one queue run in array order. A wait is
-   RIG_WORD on a 64-bit word the device maps, compared circularly; a
-   submission has at most 256, for which rig_nv_room, which does not see
-   them, keeps room. [handles] is ignored: the device's work names its memory
-   by address. */
+   copy between handles on queue 1. The parts on one queue run in array
+   order. A wait is RIG_WORD on a 64-bit word the device maps, compared
+   circularly; a submission has at most 256, for which rig_nv_room, which
+   does not see them, keeps room. [handles] is ignored: the device's work
+   names its memory by address. */
 
 #ifndef RIG_NV_H
 #define RIG_NV_H

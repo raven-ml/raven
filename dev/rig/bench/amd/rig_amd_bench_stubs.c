@@ -170,7 +170,7 @@ value rig_amd_bench_fill_arg(value v_place, value v_segment, value v_arg,
 value rig_amd_bench_submit(value v_edge, value v_v, value v_at, value v_value,
                               value v_n) {
   void *self = Ptr_val(v_edge);
-  const struct rig_driver *driver = *(const struct rig_driver **)self;
+  const struct rig_driver *driver = rig_driver_of(self);
   struct rig_wait w[16];
   int n = Int_val(v_n);
   if (n > 16) caml_invalid_argument("submit: more than 16 waits");

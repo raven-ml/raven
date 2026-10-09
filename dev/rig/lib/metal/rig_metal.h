@@ -7,8 +7,9 @@
 
    The device's room check and submit, over the structures and codes of
    rig_edge.h: the only way work reaches the device. [self] is
-   Rig_metal.edge, whose struct rig_driver holds them. Both are called without the OCaml runtime: they call
-   no function of it and read no OCaml value.
+   Rig_metal.edge, whose struct rig_driver holds them. Both are called
+   without the OCaml runtime: they call no function of it and read no OCaml
+   value.
 
    The device runs fills only: a part of kind RIG_FILL on queue 0, with no
    ring units or segment bytes; a fill may start any

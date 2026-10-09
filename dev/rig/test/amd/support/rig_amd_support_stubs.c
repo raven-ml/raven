@@ -168,7 +168,7 @@ static void *edge(value v_waits, value v_parts, struct rig_wait **wp,
 
 /* The driver whose C state is [v_self]. */
 static const struct rig_driver *driver_of(value v_self) {
-  return *(const struct rig_driver **)Nativeint_val(v_self);
+  return rig_driver_of((void *)Nativeint_val(v_self));
 }
 
 /* What the room check of the device [v_self] answers for [v_parts]. */

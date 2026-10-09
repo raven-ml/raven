@@ -4,8 +4,8 @@
 or a driver refuses runs rounds of reclamation before it raises
 `Out_of_memory`, buffer memory paces the collector, and a wait returns
 to OCaml often enough for Ctrl-C. This note records how, with the
-constants the implementation uses today. They may change without a
-change to the interface.
+implementation's constants, which may change without a change to the
+interface.
 
 ## Rounds of reclamation
 
