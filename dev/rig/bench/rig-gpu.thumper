@@ -6,26 +6,18 @@
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed under load 3.3 on 6 cores
 
-copy/cuda/borrow-to-host-256M	alloc_words	exact	0
-copy/cuda/borrow-to-host-256M	wall_time	batch=1	n=20	9.340e-03	9.314e-03 9.316e-03 9.320e-03 9.324e-03 9.325e-03 9.330e-03 9.330e-03 9.334e-03 9.336e-03 9.338e-03 9.342e-03 9.344e-03 9.347e-03 9.353e-03 9.355e-03 9.356e-03 9.356e-03 9.362e-03 9.370e-03 9.379e-03
 copy/cuda/from-device-256M	alloc_words	exact	120
 copy/cuda/from-device-256M	wall_time	batch=1	n=20	1.410e-02	1.409e-02 1.409e-02 1.409e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.410e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.412e-02
 copy/cuda/from-device-off-page-256M	alloc_words	exact	1153
 copy/cuda/from-device-off-page-256M	wall_time	batch=1	n=20	1.719e-02	1.717e-02 1.717e-02 1.718e-02 1.718e-02 1.718e-02 1.718e-02 1.719e-02 1.719e-02 1.719e-02 1.719e-02 1.719e-02 1.719e-02 1.719e-02 1.719e-02 1.719e-02 1.719e-02 1.720e-02 1.720e-02 1.720e-02 1.720e-02
-copy/cuda/host-to-borrow-256M	alloc_words	exact	0
-copy/cuda/host-to-borrow-256M	wall_time	batch=1	n=20	9.354e-03	9.328e-03 9.333e-03 9.334e-03 9.335e-03 9.337e-03 9.337e-03 9.340e-03 9.342e-03 9.354e-03 9.354e-03 9.354e-03 9.355e-03 9.357e-03 9.362e-03 9.363e-03 9.365e-03 9.369e-03 9.374e-03 9.377e-03 9.408e-03
 copy/cuda/to-device-256M	alloc_words	exact	120
 copy/cuda/to-device-256M	wall_time	batch=1	n=20	1.068e-02	1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.069e-02 1.069e-02 1.069e-02 1.069e-02 1.069e-02 1.069e-02
 copy/cuda/to-device-off-page-256M	alloc_words	exact	1153
 copy/cuda/to-device-off-page-256M	wall_time	batch=1	n=20	1.416e-02	1.412e-02 1.414e-02 1.414e-02 1.415e-02 1.415e-02 1.415e-02 1.415e-02 1.415e-02 1.415e-02 1.415e-02 1.416e-02 1.416e-02 1.416e-02 1.416e-02 1.416e-02 1.416e-02 1.416e-02 1.417e-02 1.417e-02 1.417e-02
-copy/nv/borrow-to-host-256M	alloc_words	exact	0
-copy/nv/borrow-to-host-256M	wall_time	batch=1	n=20	9.499e-03	9.471e-03 9.477e-03 9.477e-03 9.482e-03 9.488e-03 9.490e-03 9.492e-03 9.492e-03 9.498e-03 9.498e-03 9.500e-03 9.502e-03 9.503e-03 9.503e-03 9.505e-03 9.508e-03 9.509e-03 9.522e-03 9.527e-03 9.573e-03
 copy/nv/from-device-256M	alloc_words	exact	120
 copy/nv/from-device-256M	wall_time	batch=1	n=20	1.411e-02	1.410e-02 1.410e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.411e-02 1.412e-02 1.412e-02 1.412e-02 1.412e-02
 copy/nv/from-device-off-page-256M	alloc_words	exact	1153
 copy/nv/from-device-off-page-256M	wall_time	batch=1	n=20	1.722e-02	1.720e-02 1.720e-02 1.721e-02 1.721e-02 1.721e-02 1.722e-02 1.722e-02 1.722e-02 1.722e-02 1.722e-02 1.722e-02 1.722e-02 1.722e-02 1.722e-02 1.723e-02 1.723e-02 1.724e-02 1.724e-02 1.724e-02 1.724e-02
-copy/nv/host-to-borrow-256M	alloc_words	exact	0
-copy/nv/host-to-borrow-256M	wall_time	batch=1	n=20	9.237e-03	9.221e-03 9.222e-03 9.225e-03 9.226e-03 9.228e-03 9.230e-03 9.231e-03 9.232e-03 9.233e-03 9.237e-03 9.238e-03 9.239e-03 9.242e-03 9.244e-03 9.247e-03 9.249e-03 9.260e-03 9.262e-03 9.273e-03 9.294e-03
 copy/nv/to-device-256M	alloc_words	exact	120
 copy/nv/to-device-256M	wall_time	batch=1	n=20	1.068e-02	1.067e-02 1.067e-02 1.067e-02 1.067e-02 1.067e-02 1.067e-02 1.067e-02 1.067e-02 1.067e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02 1.068e-02
 copy/nv/to-device-off-page-256M	alloc_words	exact	1153
@@ -119,14 +111,10 @@ submit/nv/kernel	wall_time	batch=4096	n=20	1.631e-06	1.623e-06 1.630e-06 1.630e-
 # forced: blessed under load 8.6 on 10 cores
 # forced: blessed floor/metal/encode under load 12.2 on 10 cores
 
-copy/metal/borrow-to-host-256M	alloc_words	exact	0
-copy/metal/borrow-to-host-256M	wall_time	batch=1	n=20	6.561e-03	6.020e-03 6.160e-03 6.167e-03 6.202e-03 6.253e-03 6.282e-03 6.290e-03 6.339e-03 6.343e-03 6.438e-03 6.684e-03 7.248e-03 7.379e-03 7.382e-03 7.449e-03 7.521e-03 7.553e-03 7.706e-03 7.772e-03 7.986e-03
 copy/metal/from-device-256M	alloc_words	exact	0
 copy/metal/from-device-256M	wall_time	batch=1	n=20	5.967e-03	5.808e-03 5.822e-03 5.890e-03 5.891e-03 5.894e-03 5.913e-03 5.914e-03 5.927e-03 5.937e-03 5.945e-03 5.990e-03 6.055e-03 6.162e-03 6.197e-03 6.239e-03 6.274e-03 6.304e-03 6.430e-03 6.671e-03 7.728e-03
 copy/metal/from-device-off-page-256M	alloc_words	exact	0
 copy/metal/from-device-off-page-256M	wall_time	batch=1	n=20	6.070e-03	5.842e-03 5.896e-03 5.926e-03 5.936e-03 5.968e-03 5.982e-03 5.988e-03 6.029e-03 6.050e-03 6.056e-03 6.083e-03 6.095e-03 6.115e-03 6.150e-03 6.164e-03 6.167e-03 6.197e-03 6.204e-03 6.280e-03 6.306e-03
-copy/metal/host-to-borrow-256M	alloc_words	exact	0
-copy/metal/host-to-borrow-256M	wall_time	batch=1	n=20	6.616e-03	6.060e-03 6.147e-03 6.180e-03 6.201e-03 6.231e-03 6.291e-03 6.376e-03 6.458e-03 6.550e-03 6.616e-03 6.617e-03 6.870e-03 6.938e-03 7.053e-03 7.115e-03 7.250e-03 7.788e-03 7.838e-03 8.147e-03 1.361e-02
 copy/metal/to-device-256M	alloc_words	exact	0
 copy/metal/to-device-256M	wall_time	batch=1	n=20	6.735e-03	6.132e-03 6.359e-03 6.385e-03 6.400e-03 6.453e-03 6.577e-03 6.588e-03 6.630e-03 6.687e-03 6.695e-03 6.774e-03 6.813e-03 6.844e-03 6.875e-03 6.928e-03 6.947e-03 6.959e-03 6.983e-03 7.289e-03 7.674e-03
 copy/metal/to-device-off-page-256M	alloc_words	exact	0
@@ -176,14 +164,10 @@ submit/metal/kernel	wall_time	batch=256	n=40	2.769e-05	2.397e-05 2.651e-05 2.671
 # host: nonnormal · Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz · x86_64 · linux
 # ocaml: 5.5.1 · 64-bit · release
 
-copy/amd/borrow-to-host-256M	alloc_words	exact	0
-copy/amd/borrow-to-host-256M	wall_time	batch=1	n=20	1.567e-02	1.566e-02 1.566e-02 1.566e-02 1.566e-02 1.567e-02 1.567e-02 1.567e-02 1.567e-02 1.567e-02 1.567e-02 1.567e-02 1.567e-02 1.567e-02 1.567e-02 1.567e-02 1.567e-02 1.567e-02 1.568e-02 1.568e-02 1.568e-02
 copy/amd/from-device-256M	alloc_words	exact	130
 copy/amd/from-device-256M	wall_time	batch=1	n=20	1.916e-02	1.913e-02 1.913e-02 1.914e-02 1.916e-02 1.916e-02 1.916e-02 1.916e-02 1.916e-02 1.916e-02 1.916e-02 1.916e-02 1.916e-02 1.916e-02 1.916e-02 1.917e-02 1.917e-02 1.918e-02 1.919e-02 1.920e-02 1.956e-02
 copy/amd/from-device-off-page-256M	alloc_words	exact	1344
 copy/amd/from-device-off-page-256M	wall_time	batch=1	n=20	2.437e-02	2.435e-02 2.435e-02 2.435e-02 2.436e-02 2.436e-02 2.436e-02 2.437e-02 2.437e-02 2.437e-02 2.437e-02 2.437e-02 2.437e-02 2.438e-02 2.438e-02 2.438e-02 2.438e-02 2.440e-02 2.441e-02 2.444e-02 2.446e-02
-copy/amd/host-to-borrow-256M	alloc_words	exact	0
-copy/amd/host-to-borrow-256M	wall_time	batch=1	n=20	1.631e-02	1.629e-02 1.629e-02 1.630e-02 1.630e-02 1.630e-02 1.630e-02 1.630e-02 1.630e-02 1.630e-02 1.631e-02 1.631e-02 1.631e-02 1.631e-02 1.631e-02 1.631e-02 1.631e-02 1.631e-02 1.632e-02 1.632e-02 1.637e-02
 copy/amd/to-device-256M	alloc_words	exact	130
 copy/amd/to-device-256M	wall_time	batch=1	n=20	1.929e-02	1.929e-02 1.929e-02 1.929e-02 1.929e-02 1.929e-02 1.929e-02 1.929e-02 1.929e-02 1.929e-02 1.929e-02 1.929e-02 1.929e-02 1.929e-02 1.929e-02 1.930e-02 1.930e-02 1.930e-02 1.930e-02 1.930e-02 1.931e-02
 copy/amd/to-device-off-page-256M	alloc_words	exact	1344

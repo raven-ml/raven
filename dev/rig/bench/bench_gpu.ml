@@ -129,16 +129,26 @@ let written ?(off = false) n =
   Bigarray.Array1.fill ba 'w';
   if off then B.of_bigarray ba else b
 
-(* The host's copy of as many bytes, which bounds a staged copy. *)
+(* A copy between host memory and a borrow of host memory: a size whose two
+   buffers fit the last-level cache. A copy of a size that does not is bound
+   by the machine's memory bandwidth, which every process on the host shares,
+   and lands on levels up to 20% apart from one run to the next; in the cache
+   a second copy still doubles the time. *)
+let borrow_bytes = 4 lsl 20
+
+(* The host's copy of as many bytes, which bounds a staged copy, and of the
+   bytes a borrow copies. *)
 let host_rows =
-  let chars () =
-    let b () = B.bigarray Bigarray.char (written copy_bytes) in
+  let chars n () =
+    let b () = B.bigarray Bigarray.char (written n) in
     (b (), b ())
   in
+  let blit (a, b) = Bigarray.Array1.blit a b in
   let file () = (data "file" file_bytes, written file_bytes) in
   Thumper.group "floor/host"
     [
-      row "memcpy-256M" chars (fun (a, b) -> Bigarray.Array1.blit a b);
+      row "memcpy-256M" (chars copy_bytes) blit;
+      row "memcpy-4M" (chars borrow_bytes) blit;
       row "load-256M" file (load ~cold:false);
       row "load-cold-256M" file (load ~cold:true);
     ]
@@ -320,7 +330,7 @@ let gpu_rows (type a) (module D : Rig.Driver with type t = a) ?(sleeps = false)
      between them, as between any memory it addresses. *)
   let borrowed () =
     let g, _ = opened () in
-    (written file_bytes, Option.get (B.borrow g (written file_bytes)))
+    (written borrow_bytes, Option.get (B.borrow g (written borrow_bytes)))
   in
   let copying host ~to_device () =
     let g, _ = opened () in
@@ -365,8 +375,8 @@ let gpu_rows (type a) (module D : Rig.Driver with type t = a) ?(sleeps = false)
       ];
     Thumper.group (strf "copy/%s" v)
       [
-        row "host-to-borrow-256M" borrowed (fun (h, b) -> B.copy ~src:h ~dst:b);
-        row "borrow-to-host-256M" borrowed (fun (h, b) -> B.copy ~src:b ~dst:h);
+        row "host-to-borrow-4M" borrowed (fun (h, b) -> B.copy ~src:h ~dst:b);
+        row "borrow-to-host-4M" borrowed (fun (h, b) -> B.copy ~src:b ~dst:h);
         row "to-device-256M" (copying paged ~to_device:true) copy;
         row "from-device-256M" (copying paged ~to_device:false) copy;
         row "to-device-off-page-256M" (copying off_page ~to_device:true) copy;
