@@ -26,6 +26,8 @@ value nx_kernel_support_contract(value s) {
       sizeof(nx_spec_contract) + sizeof c->pairs[0] * (size_t)(nb + nc))
     caml_invalid_argument("not an nx_spec_contract");
   r = caml_alloc_tuple(6 + 2 * (nb + nc));
+  /* The allocation may have moved [s]. */
+  c = (const nx_spec_contract *)String_val(s);
   int at = 0;
   Store_field(r, at++, Val_int(c->family));
   Store_field(r, at++, Val_int(c->acc));
