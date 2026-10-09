@@ -38,8 +38,9 @@ typedef struct __attribute__((aligned(8))) {
 /* X(name, FAMILY, ...) for every kernel of the cubin, in enum order; the
    arguments after the family are its instance's:
    - ZERO, PACK: none.
-   - MMA (contract.cu): the operands' kind (bf16, f16, s8), the contiguous
-     axis of a (k or m) and of b (k or n), and the tile.
+   - MMA (contract.cu): the operands' kind (bf16, f16, s8, or h16 for
+     bf16 and f16 both, by a's dtype at the kernel's entry), the
+     contiguous axis of a (k or m) and of b (k or n), and the tile.
    - SIMT (contract.cu): the accumulator's type and the tile's side.
    - SKINNY (contract.cu): the accumulator's type.
    Instances are a budget: each names the rows that keep it. A layout or
@@ -58,10 +59,8 @@ typedef struct __attribute__((aligned(8))) {
   X(contract_bf16_mn_t128x256, MMA, bf16, m, n, t128x256)                   \
   /* bf16 1024, 2048, 512x5120x2880, 512x2880x4096, 64x512x512x512 */       \
   X(contract_bf16_kk_t128x128, MMA, bf16, k, k, t128x128)                   \
-  /* bf16 256, 512 */                                                       \
+  /* bf16 512 */                                                            \
   X(contract_bf16_kk_t64x64, MMA, bf16, k, k, t64x64)                       \
-  /* bf16 decode: 1x5120x2880, 1x201088x2880 */                             \
-  X(contract_bf16_kk_t16x64, MMA, bf16, k, k, t16x64)                       \
   /* f16 4096, 8192 */                                                      \
   X(contract_f16_kk_t128x256, MMA, f16, k, k, t128x256)                     \
   /* the 4096 rows in layouts kf, fk and ff */                              \
@@ -70,8 +69,11 @@ typedef struct __attribute__((aligned(8))) {
   X(contract_f16_mn_t128x256, MMA, f16, m, n, t128x256)                     \
   /* f16 1024, 2048 */                                                      \
   X(contract_f16_kk_t128x128, MMA, f16, k, k, t128x128)                     \
-  /* f16 256, 512 */                                                        \
+  /* f16 512 */                                                             \
   X(contract_f16_kk_t64x64, MMA, f16, k, k, t64x64)                         \
+  /* bf16 and f16 256, and decode: bf16 1x5120x2880 and 1x201088x2880,      \
+     f16 1x5120x2880 */                                                     \
+  X(contract_h16_kk_t16x64, MMA, h16, k, k, t16x64)                         \
   /* int8 4096 */                                                           \
   X(contract_s8_kk_t128x256, MMA, s8, k, k, t128x256)                       \
   /* f32 2048 to 8192 and the 4096 layouts */                               \

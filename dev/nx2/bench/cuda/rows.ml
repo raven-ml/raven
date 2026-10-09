@@ -163,6 +163,7 @@ let contracts =
       contract bf16 f32 bf16 512 2880 4096;
       contract bf16 f32 bf16 512 201088 2880;
       contract bf16 f32 bf16 1 5120 2880;
+      contract f16 f32 f16 1 5120 2880;
       contract bf16 f32 bf16 1 201088 2880;
       contract bf16 f32 bf16 4096 14336 4096;
       contract ~batch:64 bf16 f32 bf16 512 512 512;

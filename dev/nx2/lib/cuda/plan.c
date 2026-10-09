@@ -42,7 +42,7 @@ static int add(nx_cuda_records *out, int kernel, uint32_t gx, uint32_t gy,
 
 /* The kernels by family and instance, from kernels.h's list. */
 enum { F_ZERO, F_PACK, F_MMA, F_SIMT, F_SKINNY };
-enum { K_bf16, K_f16, K_s8 };
+enum { K_bf16, K_f16, K_s8, K_h16 };
 enum { A_k, A_m, A_n };
 enum { ACC_f32, ACC_f64, ACC_i64 };
 #define TILE_INDEX(name, ...) T_##name,
@@ -51,7 +51,8 @@ enum { NX_CUDA_TILES(TILE_INDEX) T_COUNT };
 
 /* An instance's arguments, by family: MMA its operands' kind, a's and b's
    contiguous axes and its tile; SIMT its accumulator in [kind] and its side
-   in [a]; SKINNY its accumulator in [kind]. */
+   in [a]; SKINNY its accumulator in [kind]. An h16 MMA instance serves the
+   kinds bf16 and f16. */
 typedef struct {
   int family, kind, a, b, tile;
 } instance;
@@ -68,8 +69,10 @@ static const instance instances[] = {NX_CUDA_KERNELS(INSTANCE)};
 static int find(int family, int kind, int a, int b, int tile) {
   for (int i = 0; i < NX_CUDA_KERNEL_COUNT; i++) {
     const instance *x = &instances[i];
-    if (x->family == family && x->kind == kind && x->a == a && x->b == b &&
-        x->tile == tile)
+    const int h16 = family == F_MMA && x->kind == K_h16 &&
+                    (kind == K_bf16 || kind == K_f16);
+    if (x->family == family && (x->kind == kind || h16) && x->a == a &&
+        x->b == b && x->tile == tile)
       return i;
   }
   return -1;
@@ -100,13 +103,14 @@ static const int efficiency[T_COUNT] = {[T_t128x128] = 90, [T_t128x256] = 100,
 
 /* The mma tile of a product among those [kind] has an instance of with k
    contiguous: the one of least cost, waves times outputs per tile over its
-   efficiency, by its shape alone; m <= 16 takes the 16-row tile. -1 if
-   [kind] has none for the shape: the SIMT or skinny kernels sum it. */
+   efficiency, by its shape alone; m <= 16 takes the 16-row tile, which
+   larger m take where it costs least. -1 if [kind] has none for the shape:
+   the SIMT or skinny kernels sum it. */
 static int mma_tile(int kind, int64_t batch, int64_t m, int64_t n) {
   int best = -1;
   double least = -1;
   for (int t = 0; t < T_COUNT; t++) {
-    if (find(F_MMA, kind, A_k, A_k, t) < 0 || (m <= 16) != (t == T_t16x64))
+    if (find(F_MMA, kind, A_k, A_k, t) < 0 || (m <= 16 && t != T_t16x64))
       continue;
     double cost = (double)ceil_div(blocks(t, batch, m, n), WAVE) * tiles[t].bm *
                   tiles[t].bn / efficiency[t];

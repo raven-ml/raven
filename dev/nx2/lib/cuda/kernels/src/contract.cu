@@ -895,6 +895,7 @@ extern "C" __global__ void zero_u32(const __grid_constant__ zero_params p) {
 #define KIND_bf16 0
 #define KIND_f16 1
 #define KIND_s8 2
+#define KIND_h16 3
 #define TRANSPOSED_k false
 #define TRANSPOSED_m true
 #define TRANSPOSED_n true
@@ -910,6 +911,19 @@ extern "C" __global__ void zero_u32(const __grid_constant__ zero_params p) {
 NX_CUDA_TILES(TILE)
 #undef TILE
 
+/* The mma kernel of [KIND]; for KIND_h16, bfloat16's or float16's by a's
+   dtype, each loop compiled apart so that neither keeps the other's
+   registers live. */
+template <int KIND, bool AM, bool BN_, typename Tile>
+__device__ void mma_kernel(const contract_params &p) {
+  if constexpr (KIND != KIND_h16)
+    mma_contract<KIND, AM, BN_, Tile>(p);
+  else if (p.a_dtype == NX_FLOAT16)
+    mma_contract<KIND_f16, AM, BN_, Tile>(p);
+  else
+    mma_contract<KIND_bf16, AM, BN_, Tile>(p);
+}
+
 #define DEFINE(name, FAMILY, ...) FAMILY(name, __VA_ARGS__)
 #define ZERO(name, ...)
 #define PACK(name, ...)                                                        \
@@ -919,7 +933,7 @@ NX_CUDA_TILES(TILE)
 #define MMA(name, kind, a, b, tile)                                            \
   extern "C" __global__ void __launch_bounds__(tile::THREADS)                  \
       name(const __grid_constant__ contract_params p) {                        \
-    mma_contract<KIND_##kind, TRANSPOSED_##a, TRANSPOSED_##b, tile>(p);        \
+    mma_kernel<KIND_##kind, TRANSPOSED_##a, TRANSPOSED_##b, tile>(p);          \
   }
 #define SIMT(name, acc, bm)                                                    \
   extern "C" __global__ void __launch_bounds__(256)                            \
